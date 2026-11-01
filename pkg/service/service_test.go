@@ -90,64 +90,6 @@ func (m *mockLoggerForAdapter) WithError(err error) interfaces.Logger {
 	return m
 }
 
-type coverageReencInfoWithGetters struct {
-	active   bool
-	progress float64
-}
-
-func (m *coverageReencInfoWithGetters) GetActive() bool {
-	return m.active
-}
-
-func (m *coverageReencInfoWithGetters) GetProgress() float64 {
-	return m.progress
-}
-
-type coverageReencStatusWithAllGetters struct {
-	active        bool
-	startedAt     time.Time
-	totalKeys     uint64
-	processedKeys uint64
-	progress      float64
-	oldVersion    uint64
-}
-
-func (m *coverageReencStatusWithAllGetters) GetActive() bool         { return m.active }
-func (m *coverageReencStatusWithAllGetters) GetProgress() float64    { return m.progress }
-func (m *coverageReencStatusWithAllGetters) GetStartedAt() time.Time { return m.startedAt }
-
-func (m *coverageReencStatusWithAllGetters) GetTotalKeys() uint64 { return m.totalKeys }
-
-func (m *coverageReencStatusWithAllGetters) GetProcessedKeys() uint64 {
-	return m.processedKeys
-}
-
-func (m *coverageReencStatusWithAllGetters) GetOldVersion() uint64 { return m.oldVersion }
-
-func (m *coverageReencStatusWithAllGetters) GetNewVersion() uint64 { return m.oldVersion + 1 }
-
-func (m *coverageReencStatusWithAllGetters) GetFailedKeys() uint64 { return 0 }
-
-func (m *coverageReencStatusWithAllGetters) GetLastError() string { return "" }
-
-func (m *coverageReencStatusWithAllGetters) GetCompletedAt() *time.Time { return nil }
-
-type mockStatusWithSyncedNodes struct {
-	syncedNodes map[uint64]string
-}
-
-func (m *mockStatusWithSyncedNodes) GetSyncedNodes() map[uint64]string {
-	return m.syncedNodes
-}
-
-type mockStatusWithSyncedNodesMethod struct {
-	syncedNodes map[uint64]string
-}
-
-func (m *mockStatusWithSyncedNodesMethod) SyncedNodes() map[uint64]string {
-	return m.syncedNodes
-}
-
 func TestServiceImpl_Close_Idempotent(t *testing.T) {
 	mockRaft := &mockRaftNode{}
 	svc := createTestService(t, withMockRaftNode(mockRaft))
@@ -793,67 +735,12 @@ func TestClusterService_NilQRDBClient(t *testing.T) {
 	}
 }
 
-type coverageRaftNode struct{}
-
 type coverageEmbeddingManager struct {
 	mock.Mock
 }
 
-func newCoverageEmbeddingManager() *coverageEmbeddingManager {
-	return &coverageEmbeddingManager{}
-}
-
-type coverageEmbeddingProvider struct {
-	mock.Mock
-}
-
-func newCoverageEmbeddingProvider() *coverageEmbeddingProvider {
-	return &coverageEmbeddingProvider{}
-}
-
-func (m *coverageEmbeddingProvider) MaxTokens() int {
-	args := m.Called()
-	return args.Int(0)
-}
-
-func (m *coverageEmbeddingProvider) Name() string {
-	args := m.Called()
-	return args.String(0)
-}
-
-func (m *coverageEmbeddingProvider) Embed(ctx context.Context, text string) ([]float32, error) {
-	args := m.Called(ctx, text)
-	if v := args.Get(0); v != nil {
-		return v.([]float32), args.Error(1)
-	}
-	return nil, args.Error(1)
-}
-
-func (m *coverageEmbeddingProvider) EmbedBatch(ctx context.Context, texts []string) ([][]float32, error) {
-	args := m.Called(ctx, texts)
-	if v := args.Get(0); v != nil {
-		return v.([][]float32), args.Error(1)
-	}
-	return nil, args.Error(1)
-}
-
-func (m *coverageEmbeddingProvider) Dimensions() int {
-	args := m.Called()
-	return args.Int(0)
-}
-
-func (m *coverageEmbeddingProvider) Close() error {
-	return nil
-}
-
 type coverageEmbeddingLogger struct {
 	fields map[string]interface{}
-}
-
-func newCoverageEmbeddingLogger() *coverageEmbeddingLogger {
-	return &coverageEmbeddingLogger{
-		fields: make(map[string]interface{}),
-	}
 }
 
 type mockKMSScheduler struct{}
@@ -869,30 +756,6 @@ func newTestKMSServiceForValidation() *kmsServiceImpl {
 		dekStore: newDEKStore(),
 	}
 }
-
-type mockReencStatusPartialGetters struct {
-	active bool
-}
-
-func (m *mockReencStatusPartialGetters) GetActive() bool { return m.active }
-
-type mockReencStatusWithStartTime struct {
-	startedAt time.Time
-}
-
-func (m *mockReencStatusWithStartTime) GetStartedAt() time.Time { return m.startedAt }
-
-type mockReencStatusWithProgress struct {
-	progress float64
-}
-
-func (m *mockReencStatusWithProgress) GetProgress() float64 { return m.progress }
-
-type mockReencStatusWithOldVersion struct {
-	oldVersion uint64
-}
-
-func (m *mockReencStatusWithOldVersion) GetOldVersion() uint64 { return m.oldVersion }
 
 type cov90MockCacheManager struct {
 	getFn    func(ctx context.Context, key string) ([]byte, error)
@@ -934,24 +797,6 @@ func (m *cov90MockClosingQRDBProvider) ForShard(_ uint64) (*qrdbsdk.Client, erro
 }
 
 func (m *cov90MockClosingQRDBProvider) IsEmbedded() bool { return true }
-
-type svcBoostUser struct {
-	id       string
-	username string
-	roles    []string
-	created  time.Time
-	lastAuth time.Time
-}
-
-func (u *svcBoostUser) GetID() string { return u.id }
-
-func (u *svcBoostUser) GetUsername() string { return u.username }
-
-func (u *svcBoostUser) GetRoles() []string { return u.roles }
-
-func (u *svcBoostUser) GetCreated() time.Time { return u.created }
-
-func (u *svcBoostUser) GetLastAuth() time.Time { return u.lastAuth }
 
 type svcBoostRaftNode struct {
 	syncReadFn     func(ctx context.Context, shardID uint64, query interface{}) (interface{}, error)
@@ -2268,16 +2113,6 @@ func TestEmbeddingService_ValidateRequests(t *testing.T) {
 		})
 	}
 }
-
-type mockReencInfoWithInterface struct {
-	totalKeys     uint64
-	processedKeys uint64
-	startedAt     time.Time
-}
-
-func (m *mockReencInfoWithInterface) GetTotalKeys() uint64     { return m.totalKeys }
-func (m *mockReencInfoWithInterface) GetProcessedKeys() uint64 { return m.processedKeys }
-func (m *mockReencInfoWithInterface) GetStartedAt() time.Time  { return m.startedAt }
 
 type vecTransport struct {
 	svcBoostMockTransport
