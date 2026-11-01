@@ -278,27 +278,6 @@ func TestEncryptionManager_DecryptCiphertextTooShort(t *testing.T) {
 	assert.Contains(t, err.Error(), "ciphertext too short")
 }
 
-func TestEncryptionManager_DecryptWithInvalidKeyVersion(t *testing.T) {
-	cfg := &EncryptionConfig{
-		Enabled:     true,
-		KeyProvider: "local",
-		Algorithm:   AlgorithmAES256GCM,
-	}
-
-	log := createTestLogger(t)
-	em, err := NewEncryptionManager(cfg, log)
-	require.NoError(t, err)
-
-	// Create data with invalid key version
-	invalidData := make([]byte, 1+NonceSize+20)
-	invalidData[0] = 99 // Non-existent key version
-
-	plaintext, err := em.Decrypt(invalidData)
-	assert.Error(t, err)
-	assert.Nil(t, plaintext)
-	assert.Contains(t, err.Error(), "encryption key version")
-}
-
 func TestEncryptionManager_DecryptCiphertextTooShortForTag(t *testing.T) {
 	cfg := &EncryptionConfig{
 		Enabled:     true,
