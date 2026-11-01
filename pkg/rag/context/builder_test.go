@@ -588,8 +588,6 @@ func TestXMLRenderer_ValidOutput(t *testing.T) {
 	}
 }
 
-// TestSmartTruncate_FirstResultTooLarge tests when first result exceeds limit
-// This covers truncation.go:49-58 (the path where first result is truncated)
 func TestSmartTruncate_EdgeCases(t *testing.T) {
 	tokenizer := NewSimpleTokenizer()
 
@@ -737,53 +735,6 @@ func TestRenderers_ComplexMetadata(t *testing.T) {
 	}
 }
 
-// TestMarkdownRenderer_NoLanguage tests default language fallback
-// This covers templates.go:52-55
-func TestMarkdownRenderer_NoLanguage(t *testing.T) {
-	renderer := &MarkdownRenderer{}
-
-	results := []Result{
-		{
-			Content:     "content without language",
-			FusionScore: 0.9,
-			Metadata: Metadata{
-				FilePath: "/path/to/file.txt",
-				// No Language field set
-			},
-		},
-	}
-
-	output := renderer.Render(results, nil, false)
-
-	// Should default to "text" for code blocks
-	if !strings.Contains(output, "```text") {
-		t.Error("Expected default language 'text' in code block")
-	}
-}
-
-// TestPlainRenderer_NoStartLine tests line number handling
-func TestPlainRenderer_NoStartLine(t *testing.T) {
-	renderer := &PlainRenderer{}
-
-	results := []Result{
-		{
-			Content:     "content",
-			FusionScore: 0.9,
-			Metadata: Metadata{
-				FilePath: "/path/to/file.txt",
-				// StartLine is 0 (not set)
-			},
-		},
-	}
-
-	output := renderer.Render(results, nil, false)
-
-	// Should not include ":0" for missing line numbers
-	if strings.Contains(output, ":0-0") {
-		t.Error("Should not show :0-0 for missing line numbers")
-	}
-}
-
 // TestMarkdownRenderer_ConditionalMetadata tests conditional metadata rendering
 // Covers templates.go:37-47 (conditional metadata fields)
 func TestMarkdownRenderer_ConditionalMetadata(t *testing.T) {
@@ -800,7 +751,8 @@ func TestMarkdownRenderer_ConditionalMetadata(t *testing.T) {
 			metadata: Metadata{
 				FilePath: "/path/to/file.txt",
 			},
-			contains:    []string{"/path/to/file.txt"},
+			// A missing language defaults the code block to "text".
+			contains:    []string{"/path/to/file.txt", "```text"},
 			notContains: []string{"**Language:**", "**Function:**", "**Class:**"},
 		},
 		{
@@ -865,9 +817,10 @@ func TestPlainRenderer_ConditionalMetadata(t *testing.T) {
 	renderer := &PlainRenderer{}
 
 	tests := []struct {
-		name     string
-		metadata Metadata
-		contains []string
+		name        string
+		metadata    Metadata
+		contains    []string
+		notContains []string
 	}{
 		{
 			name: "with all metadata",
@@ -892,6 +845,8 @@ func TestPlainRenderer_ConditionalMetadata(t *testing.T) {
 			contains: []string{
 				"/path/to/file.txt",
 			},
+			// No ":0-0" when line numbers are unset.
+			notContains: []string{":0-0"},
 		},
 	}
 
@@ -910,6 +865,12 @@ func TestPlainRenderer_ConditionalMetadata(t *testing.T) {
 			for _, expected := range tt.contains {
 				if !strings.Contains(output, expected) {
 					t.Errorf("Expected output to contain %q", expected)
+				}
+			}
+
+			for _, notExpected := range tt.notContains {
+				if strings.Contains(output, notExpected) {
+					t.Errorf("Expected output not to contain %q", notExpected)
 				}
 			}
 		})
