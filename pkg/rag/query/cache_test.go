@@ -307,72 +307,104 @@ func BenchmarkCache_Concurrent(b *testing.B) {
 	})
 }
 
-func TestHandler_StreamQuery_Error(t *testing.T) {
-	embedder := newMockEmbedder()
-	searcher := newMockSearcher()
-
-	// Set embedder to fail
-	embedder.setError(errors.New("embedding failed"))
-
-	config := DefaultConfig()
-
-	h, err := NewHandler(embedder, searcher, config)
-	require.NoError(t, err)
-	defer h.Close()
-
-	ctx := context.Background()
-	ch, err := h.StreamQuery(ctx, "test query", DefaultOptions())
-	require.NoError(t, err)
-	require.NotNil(t, ch)
-
-	// Should receive error chunk
-	chunk := <-ch
-	assert.Error(t, chunk.Error)
-	assert.ErrorIs(t, chunk.Error, ErrEmbeddingFailed)
-
-	// Channel should be closed
-	_, ok := <-ch
-	assert.False(t, ok)
-}
-
-// TestHandler_buildContext_EmptyResults tests buildContext with no results.
-func TestHandler_buildContext_EmptyResults(t *testing.T) {
-	embedder := newMockEmbedder()
-	searcher := newMockSearcher()
-	config := DefaultConfig()
-
-	h, err := NewHandler(embedder, searcher, config)
-	require.NoError(t, err)
-	defer h.Close()
-
-	// Cast to concrete type to access buildContext
-	handler := h.(*handler)
-
-	// Test with empty results
-	context := handler.buildContext([]Result{}, DefaultOptions())
-	assert.Equal(t, "No relevant results found.", context)
-}
-
-// TestHandler_buildContext_NoSourceMetadata tests buildContext with results missing source metadata.
-func TestHandler_buildContext_NoSourceMetadata(t *testing.T) {
-	embedder := newMockEmbedder()
-	searcher := newMockSearcher()
-	config := DefaultConfig()
-
-	h, err := NewHandler(embedder, searcher, config)
-	require.NoError(t, err)
-	defer h.Close()
-
-	handler := h.(*handler)
-
-	// Create results without source metadata
-	results := []Result{
+func TestHandler_StreamQuery(t *testing.T) {
+	tests := []struct {
+		name    string
+		query   string
+		setup   func(e *mockEmbedder, s *mockSearcher)
+		wantErr error
+	}{
+		{name: "ends with a done chunk", query: "test query"},
+		{name: "empty query", query: "", wantErr: ErrEmptyQuery},
 		{
-			ID:      "1",
-			Score:   0.95,
-			Content: "Test content",
-			Metadata: map[string]interface{}{
-				"other": "value",
+			name:    "embedding error",
+			query:   "test query",
+			setup:   func(e *mockEmbedder, _ *mockSearcher) { e.setError(errors.New("embedding failed")) },
+			wantErr: ErrEmbeddingFailed,
+		},
+		{
+			name:    "search error",
+			query:   "test query",
+			setup:   func(_ *mockEmbedder, s *mockSearcher) { s.setError(errors.New("search failed")) },
+			wantErr: ErrSearchFailed,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			embedder := newMockEmbedder()
+			searcher := newMockSearcher()
+			if tt.setup != nil {
+				tt.setup(embedder, searcher)
+			}
+
+			h, err := NewHandler(embedder, searcher, DefaultConfig())
+			require.NoError(t, err)
+			defer h.Close()
+
+			ch, err := h.StreamQuery(context.Background(), tt.query, DefaultOptions())
+			require.NoError(t, err)
+			require.NotNil(t, ch)
+
+			if tt.wantErr != nil {
+				chunk := <-ch
+				assert.ErrorIs(t, chunk.Error, tt.wantErr)
+				_, ok := <-ch
+				assert.False(t, ok, "channel must close after the error chunk")
+				return
+			}
+
+			var lastChunk StreamChunk
+			for chunk := range ch {
+				lastChunk = chunk
+			}
+			assert.True(t, lastChunk.Done)
+			assert.Nil(t, lastChunk.Error)
+			assert.Nil(t, lastChunk.Result)
+		})
+	}
+}
+
+func TestHandler_buildContext(t *testing.T) {
+	tests := []struct {
+		name        string
+		results     []Result
+		want        []string
+		wantMissing []string
+	}{
+		{
+			name:    "empty results",
+			results: []Result{},
+			want:    []string{"No relevant results found."},
+		},
+		{
+			name: "no source metadata",
+			results: []Result{
+				{ID: "1", Score: 0.95, Content: "Test content", Metadata: map[string]interface{}{"other": "value"}},
+			},
+			want:        []string{"Test content"},
+			wantMissing: []string{"Source:"},
+		},
+		{
+			name: "non-string source",
+			results: []Result{
+				{ID: "1", Score: 0.95, Content: "Test content", Metadata: map[string]interface{}{"source": 123}},
+			},
+			want:        []string{"Test content"},
+			wantMissing: []string{"Source:"},
+		},
+		{
+			name: "multiple results with sources",
+			results: []Result{
+				{ID: "1", Score: 0.95, Content: "First result", Metadata: map[string]interface{}{"source": "file1.go"}},
+				{ID: "2", Score: 0.85, Content: "Second result", Metadata: map[string]interface{}{"source": "file2.go"}},
+				{ID: "3", Score: 0.75, Content: "Third result", Metadata: map[string]interface{}{"source": "file3.go"}},
+			},
+			want: []string{
+				"First result", "Second result", "Third result",
+				"0.95", "0.85", "0.75",
+				"Source: file1.go", "Source: file2.go", "Source: file3.go",
+				"\n\n",
 			},
 		},
 	}
@@ -380,41 +412,17 @@ func TestHandler_buildContext_NoSourceMetadata(t *testing.T) {
 	opts := DefaultOptions()
 	opts.IncludeSource = true
 
-	context := handler.buildContext(results, opts)
-	assert.Contains(t, context, "Test content")
-	assert.NotContains(t, context, "Source:")
-}
-
-// TestHandler_buildContext_NonStringSource tests buildContext with non-string source metadata.
-func TestHandler_buildContext_NonStringSource(t *testing.T) {
-	embedder := newMockEmbedder()
-	searcher := newMockSearcher()
-	config := DefaultConfig()
-
-	h, err := NewHandler(embedder, searcher, config)
-	require.NoError(t, err)
-	defer h.Close()
-
-	handler := h.(*handler)
-
-	// Create results with non-string source
-	results := []Result{
-		{
-			ID:      "1",
-			Score:   0.95,
-			Content: "Test content",
-			Metadata: map[string]interface{}{
-				"source": 123, // Non-string source
-			},
-		},
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := (&handler{}).buildContext(tt.results, opts)
+			for _, want := range tt.want {
+				assert.Contains(t, got, want)
+			}
+			for _, missing := range tt.wantMissing {
+				assert.NotContains(t, got, missing)
+			}
+		})
 	}
-
-	opts := DefaultOptions()
-	opts.IncludeSource = true
-
-	context := handler.buildContext(results, opts)
-	assert.Contains(t, context, "Test content")
-	assert.NotContains(t, context, "Source:")
 }
 
 // TestHandler_cleanupLoop tests the cleanup loop goroutine.
@@ -587,69 +595,6 @@ func TestHandler_Query_ParseError(t *testing.T) {
 	assert.Equal(t, ErrEmptyQuery, err)
 }
 
-// TestHandler_buildContext_MultipleResults tests buildContext with multiple results.
-func TestHandler_buildContext_MultipleResults(t *testing.T) {
-	embedder := newMockEmbedder()
-	searcher := newMockSearcher()
-	config := DefaultConfig()
-
-	h, err := NewHandler(embedder, searcher, config)
-	require.NoError(t, err)
-	defer h.Close()
-
-	handler := h.(*handler)
-
-	results := []Result{
-		{
-			ID:      "1",
-			Score:   0.95,
-			Content: "First result",
-			Metadata: map[string]interface{}{
-				"source": "file1.go",
-			},
-		},
-		{
-			ID:      "2",
-			Score:   0.85,
-			Content: "Second result",
-			Metadata: map[string]interface{}{
-				"source": "file2.go",
-			},
-		},
-		{
-			ID:      "3",
-			Score:   0.75,
-			Content: "Third result",
-			Metadata: map[string]interface{}{
-				"source": "file3.go",
-			},
-		},
-	}
-
-	opts := DefaultOptions()
-	opts.IncludeSource = true
-
-	context := handler.buildContext(results, opts)
-
-	// Should contain all results
-	assert.Contains(t, context, "First result")
-	assert.Contains(t, context, "Second result")
-	assert.Contains(t, context, "Third result")
-
-	// Should contain scores
-	assert.Contains(t, context, "0.95")
-	assert.Contains(t, context, "0.85")
-	assert.Contains(t, context, "0.75")
-
-	// Should contain sources
-	assert.Contains(t, context, "file1.go")
-	assert.Contains(t, context, "file2.go")
-	assert.Contains(t, context, "file3.go")
-
-	// Should have proper separation
-	assert.Contains(t, context, "\n\n")
-}
-
 // TestHandler_cleanupLoop_CacheExpiry tests that cleanup loop actually cleans cache.
 func TestHandler_cleanupLoop_CacheExpiry(t *testing.T) {
 	embedder := newMockEmbedder()
@@ -680,75 +625,6 @@ func TestHandler_cleanupLoop_CacheExpiry(t *testing.T) {
 	response3, err := h.Query(ctx, "test query", DefaultOptions())
 	require.NoError(t, err)
 	assert.False(t, response3.CacheHit)
-}
-
-// TestHandler_StreamQuery_EmptyQuery tests streaming with empty query.
-func TestHandler_StreamQuery_EmptyQuery(t *testing.T) {
-	embedder := newMockEmbedder()
-	searcher := newMockSearcher()
-	config := DefaultConfig()
-
-	h, err := NewHandler(embedder, searcher, config)
-	require.NoError(t, err)
-	defer h.Close()
-
-	ctx := context.Background()
-	ch, err := h.StreamQuery(ctx, "", DefaultOptions())
-	require.NoError(t, err)
-
-	// Should get error chunk
-	chunk := <-ch
-	assert.Error(t, chunk.Error)
-	assert.Equal(t, ErrEmptyQuery, chunk.Error)
-}
-
-// TestHandler_StreamQuery_SearchError tests streaming with search error.
-func TestHandler_StreamQuery_SearchError(t *testing.T) {
-	embedder := newMockEmbedder()
-	searcher := newMockSearcher()
-	searcher.setError(errors.New("search failed"))
-
-	config := DefaultConfig()
-
-	h, err := NewHandler(embedder, searcher, config)
-	require.NoError(t, err)
-	defer h.Close()
-
-	ctx := context.Background()
-	ch, err := h.StreamQuery(ctx, "test query", DefaultOptions())
-	require.NoError(t, err)
-
-	// Should get error chunk
-	chunk := <-ch
-	assert.Error(t, chunk.Error)
-	assert.ErrorIs(t, chunk.Error, ErrSearchFailed)
-}
-
-// TestHandler_StreamQuery_DoneChunk tests that stream sends done chunk.
-func TestHandler_StreamQuery_DoneChunk(t *testing.T) {
-	embedder := newMockEmbedder()
-	searcher := newMockSearcher()
-
-	config := DefaultConfig()
-
-	h, err := NewHandler(embedder, searcher, config)
-	require.NoError(t, err)
-	defer h.Close()
-
-	ctx := context.Background()
-	ch, err := h.StreamQuery(ctx, "test query", DefaultOptions())
-	require.NoError(t, err)
-
-	// Drain all chunks
-	var lastChunk StreamChunk
-	for chunk := range ch {
-		lastChunk = chunk
-	}
-
-	// Last chunk should be done
-	assert.True(t, lastChunk.Done)
-	assert.Nil(t, lastChunk.Error)
-	assert.Nil(t, lastChunk.Result)
 }
 
 // TestParser_detectLanguage_Node tests Node.js detection.
