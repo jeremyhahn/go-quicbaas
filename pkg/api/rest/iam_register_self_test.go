@@ -299,58 +299,51 @@ func TestRegisterSelfFinish_DisabledReturns403(t *testing.T) {
 	assert.Equal(t, ErrSelfRegistrationDisabled, body["error"])
 }
 
-func TestRegisterSelfFinish_MissingSessionID(t *testing.T) {
-	handler, cleanup := buildHandlerWithRegEnabled(t, config.IAMSelfServiceRegistrationConfig{
-		Enabled: true,
-	})
-	defer cleanup()
+func TestRegisterSelfFinish_InvalidRequestReturns400(t *testing.T) {
+	tests := []struct {
+		name    string
+		body    string
+		wantErr string
+	}{
+		{
+			name: "missing session ID",
+			body: `{"credential":{"id":"abc"}}`,
+		},
+		{
+			name: "missing credential",
+			body: `{"session_id":"some-session"}`,
+		},
+		{
+			// No session was stored → get returns not-ok.
+			name:    "expired session",
+			body:    `{"session_id":"nonexistent-session-id","credential":{"id":"abc"}}`,
+			wantErr: ErrRegistrationSessionExpired,
+		},
+		{
+			name: "invalid JSON",
+			body: "not-json",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			handler, cleanup := buildHandlerWithRegEnabled(t, config.IAMSelfServiceRegistrationConfig{
+				Enabled: true,
+			})
+			defer cleanup()
 
-	w := postJSON(t, handler.RegisterSelfFinish, SelfRegisterFinishRequest{
-		Credential: map[string]interface{}{"id": "abc"},
-	})
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
+			req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(tt.body))
+			req.Header.Set("Content-Type", "application/json")
+			w := httptest.NewRecorder()
+			handler.RegisterSelfFinish(w, req)
 
-func TestRegisterSelfFinish_MissingCredential(t *testing.T) {
-	handler, cleanup := buildHandlerWithRegEnabled(t, config.IAMSelfServiceRegistrationConfig{
-		Enabled: true,
-	})
-	defer cleanup()
-
-	w := postJSON(t, handler.RegisterSelfFinish, SelfRegisterFinishRequest{
-		SessionID: "some-session",
-	})
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestRegisterSelfFinish_ExpiredSession(t *testing.T) {
-	handler, cleanup := buildHandlerWithRegEnabled(t, config.IAMSelfServiceRegistrationConfig{
-		Enabled: true,
-	})
-	defer cleanup()
-
-	// No session was stored → get returns not-ok.
-	w := postJSON(t, handler.RegisterSelfFinish, SelfRegisterFinishRequest{
-		SessionID:  "nonexistent-session-id",
-		Credential: map[string]interface{}{"id": "abc"},
-	})
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-	var body map[string]interface{}
-	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body))
-	assert.Equal(t, ErrRegistrationSessionExpired, body["error"])
-}
-
-func TestRegisterSelfFinish_InvalidJSON(t *testing.T) {
-	handler, cleanup := buildHandlerWithRegEnabled(t, config.IAMSelfServiceRegistrationConfig{
-		Enabled: true,
-	})
-	defer cleanup()
-
-	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader("not-json"))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-	handler.RegisterSelfFinish(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
+			assert.Equal(t, http.StatusBadRequest, w.Code)
+			if tt.wantErr != "" {
+				var body map[string]interface{}
+				require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body))
+				assert.Equal(t, tt.wantErr, body["error"])
+			}
+		})
+	}
 }
 
 // --------------------------------------------------------------------------
