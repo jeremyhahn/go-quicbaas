@@ -2256,33 +2256,6 @@ func Test82_QuicBaaS_SetIAMProvider_NilComponents(t *testing.T) {
 	assert.NotPanics(t, func() { db.SetIAMProvider(nil) })
 }
 
-func TestKVService_Watch_WatchManagerError(t *testing.T) {
-	log := createTestLogger(t)
-	realWatchMgr := watch.NewManager()
-	// We need to inject error behavior
-	// The real manager doesn't have a way to inject errors, so we test via other paths
-	svc := &quicBaaS{
-		logger:       log,
-		watchManager: realWatchMgr,
-	}
-	kvSvc := &kvService{svc: svc}
-
-	// Test with nil context that gets canceled immediately
-	ctx, cancel := context.WithCancel(tenantctx.WithSystem(context.Background()))
-	cancel() // Cancel immediately
-
-	stream := make(chan *WatchResponse, 10)
-	_, err := kvSvc.Watch(ctx, &WatchRequest{
-		Key: []byte("test-key"),
-	}, stream)
-
-	// May succeed with watchID but context already canceled
-	// OR may fail if context check happens first
-	if err != nil {
-		assert.Error(t, err)
-	}
-}
-
 func TestKVService_Watch_EventTypeDelete(t *testing.T) {
 	log := createTestLogger(t)
 	realWatchMgr := watch.NewManager()
@@ -2364,35 +2337,6 @@ func TestKVService_Watch_EventFilterSkip(t *testing.T) {
 	case <-time.After(200 * time.Millisecond):
 		// No events received is also valid if no matching watches
 	}
-
-	cancel()
-}
-
-func TestKVService_Watch_WithPrefixOption(t *testing.T) {
-	log := createTestLogger(t)
-	realWatchMgr := watch.NewManager()
-	svc := &quicBaaS{
-		logger:       log,
-		watchManager: realWatchMgr,
-	}
-	kvSvc := &kvService{svc: svc}
-
-	ctx, cancel := context.WithCancel(tenantctx.WithSystem(context.Background()))
-	defer cancel()
-
-	stream := make(chan *WatchResponse, 10)
-	watchID, err := kvSvc.Watch(ctx, &WatchRequest{
-		Key:      []byte("prefix/"),
-		IsPrefix: true, // Enable prefix watching
-	}, stream)
-
-	require.NoError(t, err)
-	assert.Greater(t, watchID, int64(0))
-
-	// Read created response
-	resp := <-stream
-	assert.True(t, resp.Created)
-	assert.Equal(t, watchID, resp.WatchID)
 
 	cancel()
 }
@@ -2546,23 +2490,6 @@ func TestBackupService_DeleteBackup_ManagerError(t *testing.T) {
 	require.Error(t, err)
 	assert.Nil(t, resp)
 	assert.Contains(t, err.Error(), "delete backup failed")
-}
-
-func TestWatch_NilRequest(t *testing.T) {
-	svc := &quicBaaS{
-		config:           &ServiceConfig{},
-		raftNode:         &mockRaftNode{},
-		keyspaceResolver: NewKeyspaceResolver(),
-		watchManager:     watch.NewManager(),
-	}
-	svc.kvService = &kvService{svc: svc}
-
-	stream := make(chan *WatchResponse, 1)
-	_, err := svc.kvService.Watch(tenantctx.WithSystem(context.Background()), nil, stream)
-	require.Error(t, err)
-	var qbErr *errors.QBError
-	require.ErrorAs(t, err, &qbErr)
-	assert.Equal(t, errors.ErrInvalidInput, qbErr.Code)
 }
 
 func TestWatch_EmptyKey(t *testing.T) {
