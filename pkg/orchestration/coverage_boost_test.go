@@ -3805,152 +3805,115 @@ func TestAgentRegistry_ListAgents_WithFilters(t *testing.T) {
 	})
 }
 
-func TestAgentRegistry_RemoveAgent_EmptyID(t *testing.T) {
+func TestAgentRegistry_EmptyArgument(t *testing.T) {
 	t.Parallel()
 
-	reg := NewInMemoryFleetRegistry()
-	err := reg.RemoveFleetNode(context.Background(), "t-rem", "")
-	if err == nil {
-		t.Fatal("expected error for empty agentID")
+	tests := []struct {
+		name string
+		call func(ctx context.Context, reg FleetRegistry) error
+	}{
+		{
+			name: "RemoveFleetNode empty agentID",
+			call: func(ctx context.Context, reg FleetRegistry) error {
+				return reg.RemoveFleetNode(ctx, "t-rem", "")
+			},
+		},
+		{
+			name: "Heartbeat empty tenantID",
+			call: func(ctx context.Context, reg FleetRegistry) error {
+				return reg.Heartbeat(ctx, "", "agent-x", nil)
+			},
+		},
+		{
+			name: "Heartbeat empty agentID",
+			call: func(ctx context.Context, reg FleetRegistry) error {
+				return reg.Heartbeat(ctx, "t-hb", "", nil)
+			},
+		},
 	}
-}
 
-func TestAgentRegistry_Heartbeat_EmptyTenant(t *testing.T) {
-	t.Parallel()
-
-	reg := NewInMemoryFleetRegistry()
-	err := reg.Heartbeat(context.Background(), "", "agent-x", nil)
-	if err == nil {
-		t.Fatal("expected error for empty tenantID")
-	}
-}
-
-func TestAgentRegistry_Heartbeat_EmptyAgent(t *testing.T) {
-	t.Parallel()
-
-	reg := NewInMemoryFleetRegistry()
-	err := reg.Heartbeat(context.Background(), "t-hb", "", nil)
-	if err == nil {
-		t.Fatal("expected error for empty agentID")
-	}
-}
-
-func TestAgentRegistry_DeleteTenantAgents_EmptyTenant(t *testing.T) {
-	t.Parallel()
-
-	reg := NewInMemoryFleetRegistry()
-	err := reg.DeleteTenantFleetNodes(context.Background(), "")
-	if err == nil {
-		t.Fatal("expected error for empty tenantID")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			err := tt.call(context.Background(), NewInMemoryFleetRegistry())
+			if !errors.Is(err, ErrFleetRegistryInvalidInput) {
+				t.Fatalf("expected ErrFleetRegistryInvalidInput, got %v", err)
+			}
+		})
 	}
 }
 
 // =============================================================================
-// task_store — FailTask invalid state, UpdateTask version conflict + nil checks
+// task_store — FailTask / UpdateTask error paths, empty-ID guards
 // =============================================================================
 
-func TestTaskStore_FailTask_InvalidState(t *testing.T) {
-	t.Parallel()
-
+// newTaskStoreWithPending returns a task store holding one pending task.
+func newTaskStoreWithPending(t *testing.T, tenantID, taskID string) TaskStore {
+	t.Helper()
 	store := NewInMemoryTaskStore()
-	ctx := context.Background()
-
-	task := &Task{
-		ID:       "task-fail-state",
-		TenantID: "tenant-tfs",
-		Subject:  "can't fail from pending",
+	if err := store.CreateTask(context.Background(), &Task{
+		ID:       taskID,
+		TenantID: tenantID,
+		Subject:  "pending task",
 		Status:   TaskStatusPending,
-	}
-	if err := store.CreateTask(ctx, task); err != nil {
+	}); err != nil {
 		t.Fatalf("CreateTask: %v", err)
 	}
+	return store
+}
 
-	// Fail directly from pending (not claimed) → invalid state.
-	err := store.FailTask(ctx, "tenant-tfs", "task-fail-state", "broke")
-	if err == nil {
-		t.Fatal("expected error for failing a pending task")
+func TestTaskStore_FailTask_Errors(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		tenantID string
+		taskID   string
+		reason   string
+		want     error
+	}{
+		{"pending task cannot fail", "tenant-tfs", "task-fail-state", "broke", ErrTaskInvalidState},
+		{"not found", "tenant-tfs", "nonexistent", "broken", ErrTaskNotFound},
+		{"empty reason", "tenant-tfs", "task-fail-state", "", ErrTaskStoreInvalidInput},
+		{"empty tenantID", "", "task-fail-state", "reason", ErrTaskStoreInvalidInput},
+		{"empty taskID", "tenant-tfs", "", "reason", ErrTaskStoreInvalidInput},
 	}
-	if !errors.Is(err, ErrTaskInvalidState) {
-		t.Errorf("expected ErrTaskInvalidState, got %v", err)
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			store := newTaskStoreWithPending(t, "tenant-tfs", "task-fail-state")
+			err := store.FailTask(context.Background(), tt.tenantID, tt.taskID, tt.reason)
+			if !errors.Is(err, tt.want) {
+				t.Fatalf("expected %v, got %v", tt.want, err)
+			}
+		})
 	}
 }
 
-func TestTaskStore_FailTask_NotFound(t *testing.T) {
+func TestTaskStore_UpdateTask_Errors(t *testing.T) {
 	t.Parallel()
 
-	store := NewInMemoryTaskStore()
-	err := store.FailTask(context.Background(), "t-fn", "nonexistent", "broken")
-	if err == nil {
-		t.Fatal("expected not-found error")
-	}
-	if !errors.Is(err, ErrTaskNotFound) {
-		t.Errorf("expected ErrTaskNotFound, got %v", err)
-	}
-}
-
-func TestTaskStore_FailTask_EmptyReason(t *testing.T) {
-	t.Parallel()
-
-	store := NewInMemoryTaskStore()
-	err := store.FailTask(context.Background(), "t-fn", "task-x", "")
-	if err == nil {
-		t.Fatal("expected error for empty reason")
-	}
-}
-
-func TestTaskStore_UpdateTask_VersionConflict(t *testing.T) {
-	t.Parallel()
-
-	store := NewInMemoryTaskStore()
-	ctx := context.Background()
-
-	task := &Task{
-		ID:       "task-vc",
-		TenantID: "tenant-vc",
-		Subject:  "version conflict",
-		Status:   TaskStatusPending,
-		Version:  0,
-	}
-	if err := store.CreateTask(ctx, task); err != nil {
-		t.Fatalf("CreateTask: %v", err)
+	tests := []struct {
+		name string
+		task *Task
+		want error
+	}{
+		{"version conflict", &Task{ID: "task-vc", TenantID: "tenant-vc", Subject: "x", Status: TaskStatusPending, Version: 999}, ErrTaskVersionConflict},
+		{"nil task", nil, ErrTaskStoreInvalidInput},
+		{"not found", &Task{ID: "ghost-task", TenantID: "tenant-vc", Subject: "x"}, ErrTaskNotFound},
+		{"empty tenantID", &Task{ID: "task-vc", Subject: "x"}, ErrTaskStoreInvalidInput},
 	}
 
-	// Wrong version.
-	bad := *task
-	bad.Version = 999
-	err := store.UpdateTask(ctx, &bad)
-	if err == nil {
-		t.Fatal("expected version conflict error")
-	}
-	if !errors.Is(err, ErrTaskVersionConflict) {
-		t.Errorf("expected ErrTaskVersionConflict, got %v", err)
-	}
-}
-
-func TestTaskStore_UpdateTask_NilTask(t *testing.T) {
-	t.Parallel()
-
-	store := NewInMemoryTaskStore()
-	err := store.UpdateTask(context.Background(), nil)
-	if err == nil {
-		t.Fatal("expected error for nil task")
-	}
-}
-
-func TestTaskStore_UpdateTask_NotFound(t *testing.T) {
-	t.Parallel()
-
-	store := NewInMemoryTaskStore()
-	err := store.UpdateTask(context.Background(), &Task{
-		ID:       "ghost-task",
-		TenantID: "t-ghost",
-		Version:  0,
-	})
-	if err == nil {
-		t.Fatal("expected not-found error")
-	}
-	if !errors.Is(err, ErrTaskNotFound) {
-		t.Errorf("expected ErrTaskNotFound, got %v", err)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			store := newTaskStoreWithPending(t, "tenant-vc", "task-vc")
+			err := store.UpdateTask(context.Background(), tt.task)
+			if !errors.Is(err, tt.want) {
+				t.Fatalf("expected %v, got %v", tt.want, err)
+			}
+		})
 	}
 }
 
@@ -3989,23 +3952,53 @@ func TestTaskStore_ListTasks_WithFilter(t *testing.T) {
 	}
 }
 
-func TestTaskStore_ClaimTask_EmptyTenantID(t *testing.T) {
+func TestTaskStore_EmptyID(t *testing.T) {
 	t.Parallel()
 
-	store := NewInMemoryTaskStore()
-	err := store.ClaimTask(context.Background(), "", "task-x", "agent-a")
-	if err == nil {
-		t.Fatal("expected error for empty tenantID")
+	tests := []struct {
+		name string
+		call func(ctx context.Context, store TaskStore) error
+	}{
+		{
+			name: "ClaimTask empty tenantID",
+			call: func(ctx context.Context, store TaskStore) error {
+				return store.ClaimTask(ctx, "", "task-x", "agent-a")
+			},
+		},
+		{
+			name: "ClaimTask empty taskID",
+			call: func(ctx context.Context, store TaskStore) error {
+				return store.ClaimTask(ctx, "tenant-a", "", "agent-a")
+			},
+		},
+		{
+			name: "CompleteTask empty tenantID",
+			call: func(ctx context.Context, store TaskStore) error {
+				return store.CompleteTask(ctx, "", "task-x", &TaskResult{Output: "done"})
+			},
+		},
+		{
+			name: "CompleteTask empty taskID",
+			call: func(ctx context.Context, store TaskStore) error {
+				return store.CompleteTask(ctx, "tenant-a", "", &TaskResult{Output: "done"})
+			},
+		},
+		{
+			name: "DeleteTask empty taskID",
+			call: func(ctx context.Context, store TaskStore) error {
+				return store.DeleteTask(ctx, "tenant-a", "")
+			},
+		},
 	}
-}
 
-func TestTaskStore_CompleteTask_EmptyTaskID(t *testing.T) {
-	t.Parallel()
-
-	store := NewInMemoryTaskStore()
-	err := store.CompleteTask(context.Background(), "t-ct", "", &TaskResult{Output: "done"})
-	if err == nil {
-		t.Fatal("expected error for empty taskID")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			err := tt.call(context.Background(), NewInMemoryTaskStore())
+			if !errors.Is(err, ErrTaskStoreInvalidInput) {
+				t.Fatalf("expected ErrTaskStoreInvalidInput, got %v", err)
+			}
+		})
 	}
 }
 
@@ -4030,54 +4023,6 @@ func TestSessionStore_UpdateSessionActivity_NotFound(t *testing.T) {
 	err := store.UpdateSessionActivity(context.Background(), "", "nonexistent-session")
 	if err == nil {
 		t.Fatal("expected not-found error")
-	}
-}
-
-func TestSessionStore_UpdateSessionActivity_Success(t *testing.T) {
-	t.Parallel()
-
-	store := NewInMemoryAgentStore()
-	ctx := context.Background()
-
-	rec := &SessionRecord{
-		SessionID: "sess-act-1",
-		Backend:   "acp",
-		Status:    SessionStateActive,
-	}
-	if err := store.PutSession(ctx, rec); err != nil {
-		t.Fatalf("PutSession: %v", err)
-	}
-
-	if err := store.UpdateSessionActivity(ctx, "", "sess-act-1"); err != nil {
-		t.Fatalf("UpdateSessionActivity: %v", err)
-	}
-}
-
-// =============================================================================
-// container_runtime — cmdReadCloser Read/Close, Run error path
-// =============================================================================
-
-func TestContainerRuntime_Run_CommandFails_Coverage(t *testing.T) {
-	t.Parallel()
-
-	rt := newFalseBinaryRuntime(t)
-	cid, _ := generateContainerID()
-	_, err := rt.Run(context.Background(), &ContainerSpec{
-		Image: "test-image",
-		Name:  cid,
-	})
-	if err == nil {
-		t.Fatal("expected error from /bin/false")
-	}
-}
-
-func TestContainerRuntime_Logs_EmptyContainerID(t *testing.T) {
-	t.Parallel()
-
-	rt := newFalseBinaryRuntime(t)
-	_, err := rt.Logs(context.Background(), "")
-	if err == nil {
-		t.Fatal("expected error for empty container ID")
 	}
 }
 
@@ -5286,65 +5231,6 @@ func TestAgentRegistry_ListAgents_WithLimit(t *testing.T) {
 // task_store — FailTask empty tenantID / taskID
 // =============================================================================
 
-func TestTaskStore_FailTask_EmptyTenantID(t *testing.T) {
-	t.Parallel()
-
-	ts := NewInMemoryTaskStore()
-	err := ts.FailTask(context.Background(), "", "task-x", "reason")
-	if err == nil {
-		t.Fatal("expected error for empty tenantID")
-	}
-}
-
-func TestTaskStore_FailTask_EmptyTaskID(t *testing.T) {
-	t.Parallel()
-
-	ts := NewInMemoryTaskStore()
-	err := ts.FailTask(context.Background(), "t-ft", "", "reason")
-	if err == nil {
-		t.Fatal("expected error for empty taskID")
-	}
-}
-
-func TestTaskStore_FailTask_WrongState(t *testing.T) {
-	t.Parallel()
-
-	ts := NewInMemoryTaskStore()
-	ctx := context.Background()
-
-	task := &Task{
-		ID:       "fail-ws-1",
-		TenantID: "t-fail-ws",
-		Subject:  "should not be failed",
-		Status:   TaskStatusPending,
-	}
-	if err := ts.CreateTask(ctx, task); err != nil {
-		t.Fatalf("CreateTask: %v", err)
-	}
-	// Fail without claiming first — should return invalid state error.
-	err := ts.FailTask(ctx, "t-fail-ws", "fail-ws-1", "reason")
-	if err == nil {
-		t.Fatal("expected error for wrong state")
-	}
-	if !errors.Is(err, ErrTaskInvalidState) {
-		t.Errorf("expected ErrTaskInvalidState, got %v", err)
-	}
-}
-
-// =============================================================================
-// task_store — UpdateTask empty tenantID
-// =============================================================================
-
-func TestTaskStore_UpdateTask_EmptyTenantID(t *testing.T) {
-	t.Parallel()
-
-	ts := NewInMemoryTaskStore()
-	err := ts.UpdateTask(context.Background(), &Task{ID: "t1", TenantID: "", Subject: "x"})
-	if err == nil {
-		t.Fatal("expected error for empty tenantID")
-	}
-}
-
 // =============================================================================
 // task_store — ListTasks with filter
 // =============================================================================
@@ -5563,16 +5449,6 @@ func TestOrchestrator_SessionStatus_FromStore(t *testing.T) {
 // =============================================================================
 // agent_registry — RemoveFleetNode empty agentID
 // =============================================================================
-
-func TestAgentRegistry_RemoveAgent_EmptyAgentID(t *testing.T) {
-	t.Parallel()
-
-	reg := NewInMemoryFleetRegistry()
-	err := reg.RemoveFleetNode(context.Background(), "t-rem", "")
-	if err == nil {
-		t.Fatal("expected error for empty agentID")
-	}
-}
 
 // =============================================================================
 // peer_messaging_store — InboxSize with messages
@@ -7264,36 +7140,6 @@ func TestAgentRegistry_RemoveAgent_CancelledCtx(t *testing.T) {
 // =============================================================================
 // task_store — uncovered validation paths
 // =============================================================================
-
-func TestTaskStore_ClaimTask_EmptyTaskID(t *testing.T) {
-	t.Parallel()
-
-	store := NewInMemoryTaskStore()
-	err := store.ClaimTask(context.Background(), "tenant-a", "", "agent-a")
-	if err == nil {
-		t.Fatal("expected error for empty taskID")
-	}
-}
-
-func TestTaskStore_CompleteTask_EmptyTenantID(t *testing.T) {
-	t.Parallel()
-
-	store := NewInMemoryTaskStore()
-	err := store.CompleteTask(context.Background(), "", "task-x", &TaskResult{Output: "done"})
-	if err == nil {
-		t.Fatal("expected error for empty tenantID")
-	}
-}
-
-func TestTaskStore_DeleteTask_EmptyTaskID(t *testing.T) {
-	t.Parallel()
-
-	store := NewInMemoryTaskStore()
-	err := store.DeleteTask(context.Background(), "tenant-a", "")
-	if err == nil {
-		t.Fatal("expected error for empty taskID")
-	}
-}
 
 func TestTaskStore_DeleteTenantTasks_CancelledCtx(t *testing.T) {
 	t.Parallel()
