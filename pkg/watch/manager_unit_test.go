@@ -16,6 +16,7 @@ package watch
 import (
 	"context"
 	"sync"
+	"sync/atomic"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -251,227 +252,132 @@ func TestMatchesRange(t *testing.T) {
 	}
 }
 
-// TestAddInternal_ExactWatch verifies exact key watch registration.
-func TestAddInternal_ExactWatch(t *testing.T) {
-	mgr := NewManager()
-	stream := newMockWatchStream()
-
-	key := []byte("test-key")
-	watch, err := mgr.addInternal(key, nil, 0, WatchFilters{}, stream, &watchOptions{}, true)
-
-	require.NoError(t, err)
-	require.NotNil(t, watch)
-
-	// Verify watch properties
-	assert.Equal(t, uint64(1), watch.ID)
-	assert.Equal(t, key, watch.Key)
-	assert.Nil(t, watch.RangeEnd)
-	assert.Equal(t, int64(0), watch.StartRev)
-	assert.NotNil(t, watch.Events)
-	assert.NotNil(t, watch.ctx)
-	assert.NotNil(t, watch.cancel)
-	assert.True(t, watch.skipDeliver)
-
-	// Verify watch was added to correct shard
-	shard := mgr.getShard(key)
-	shard.mu.RLock()
-	watches := shard.exactWatches[string(key)]
-	shard.mu.RUnlock()
-
-	require.Len(t, watches, 1)
-	assert.Equal(t, watch, watches[0])
-
-	// Verify watch count
-	assert.Equal(t, uint64(1), mgr.watchCount)
-}
-
-// TestAddInternal_PrefixWatch verifies prefix watch registration.
-func TestAddInternal_PrefixWatch(t *testing.T) {
-	mgr := NewManager()
-	stream := newMockWatchStream()
-
-	key := []byte("/config/")
-	rangeEnd := []byte("/config0")
-	watch, err := mgr.addInternal(key, rangeEnd, 0, WatchFilters{}, stream, &watchOptions{}, true)
-
-	require.NoError(t, err)
-	require.NotNil(t, watch)
-
-	// Verify watch properties
-	assert.Equal(t, uint64(1), watch.ID)
-	assert.Equal(t, key, watch.Key)
-	assert.Equal(t, rangeEnd, watch.RangeEnd)
-
-	// Verify watch was added to shard's prefix watches
-	shard := mgr.getShard(key)
-	shard.mu.RLock()
-	prefixWatches := shard.prefixWatches
-	shard.mu.RUnlock()
-
-	require.Len(t, prefixWatches, 1)
-	assert.Equal(t, watch, prefixWatches[0])
-
-	// Verify watch count
-	assert.Equal(t, uint64(1), mgr.watchCount)
-}
-
-// TestAddInternal_MultipleWatchesSameKey verifies multiple watches on same key.
-func TestAddInternal_MultipleWatchesSameKey(t *testing.T) {
-	mgr := NewManager()
-	stream := newMockWatchStream()
-
-	key := []byte("test-key")
-
-	// Add first watch
-	watch1, err := mgr.addInternal(key, nil, 0, WatchFilters{}, stream, &watchOptions{}, true)
-	require.NoError(t, err)
-	require.NotNil(t, watch1)
-
-	// Add second watch
-	watch2, err := mgr.addInternal(key, nil, 0, WatchFilters{}, stream, &watchOptions{}, true)
-	require.NoError(t, err)
-	require.NotNil(t, watch2)
-
-	// Verify unique IDs
-	assert.NotEqual(t, watch1.ID, watch2.ID)
-	assert.Equal(t, uint64(1), watch1.ID)
-	assert.Equal(t, uint64(2), watch2.ID)
-
-	// Verify both watches are in shard
-	shard := mgr.getShard(key)
-	shard.mu.RLock()
-	watches := shard.exactWatches[string(key)]
-	shard.mu.RUnlock()
-
-	require.Len(t, watches, 2)
-	assert.Equal(t, uint64(2), mgr.watchCount)
-}
-
-// TestAddInternal_WithFilters verifies filter configuration.
-func TestAddInternal_WithFilters(t *testing.T) {
-	mgr := NewManager()
-	stream := newMockWatchStream()
-
-	filters := WatchFilters{
-		NoPut:    true,
-		NoDelete: false,
+// TestAdd verifies that Add and addInternal register exact and prefix watches
+// in the key's shard with sequential IDs and the given filters.
+func TestAdd(t *testing.T) {
+	tests := []struct {
+		name     string
+		key      []byte
+		rangeEnd []byte
+		filters  WatchFilters
+		count    int
+		public   bool
+	}{
+		{name: "exact watch", key: []byte("test-key"), count: 1},
+		{name: "prefix watch", key: []byte("/config/"), rangeEnd: []byte("/config0"), count: 1},
+		{name: "multiple watches same key", key: []byte("test-key"), count: 2},
+		{name: "filters kept", key: []byte("key"), filters: WatchFilters{NoPut: true}, count: 1},
+		{name: "public Add starts delivery", key: []byte("key"), count: 1, public: true},
 	}
 
-	watch, err := mgr.addInternal([]byte("key"), nil, 0, filters, stream, &watchOptions{}, true)
-	require.NoError(t, err)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mgr := NewManager()
+			stream := newMockWatchStream()
 
-	assert.Equal(t, filters, watch.Filters)
+			var added []*Watch
+			for i := 0; i < tt.count; i++ {
+				var watch *Watch
+				var err error
+				if tt.public {
+					watch, err = mgr.Add(tt.key, tt.rangeEnd, 0, tt.filters, stream)
+				} else {
+					watch, err = mgr.addInternal(tt.key, tt.rangeEnd, 0, tt.filters, stream, &watchOptions{}, true)
+				}
+				require.NoError(t, err)
+				require.NotNil(t, watch)
+				added = append(added, watch)
+			}
+
+			for i, watch := range added {
+				assert.Equal(t, uint64(i+1), watch.ID)
+				assert.Equal(t, tt.key, watch.Key)
+				assert.Equal(t, tt.rangeEnd, watch.RangeEnd)
+				assert.Equal(t, int64(0), watch.StartRev)
+				assert.Equal(t, tt.filters, watch.Filters)
+				assert.NotNil(t, watch.Events)
+				assert.Equal(t, !tt.public, watch.skipDeliver)
+			}
+
+			shard := mgr.getShard(tt.key)
+			shard.mu.RLock()
+			registered := shard.exactWatches[string(tt.key)]
+			if tt.rangeEnd != nil {
+				registered = shard.prefixWatches
+			}
+			registered = append([]*Watch(nil), registered...)
+			shard.mu.RUnlock()
+
+			assert.Equal(t, added, registered)
+			assert.Equal(t, uint64(tt.count), atomic.LoadUint64(&mgr.watchCount))
+
+			if tt.public {
+				for _, watch := range added {
+					watch.cancel()
+				}
+			}
+		})
+	}
 }
 
-// TestAdd verifies public Add method.
-func TestAdd(t *testing.T) {
-	mgr := NewManager()
-	stream := newMockWatchStream()
+// TestRemove verifies that Remove drops only the named watch from its shard,
+// and that an unknown ID leaves every watch in place.
+func TestRemove(t *testing.T) {
+	tests := []struct {
+		name     string
+		key      []byte
+		rangeEnd []byte
+		count    int
+		remove   int // index into the added watches; -1 removes an unknown ID
+		wantLeft []int
+	}{
+		{name: "exact watch", key: []byte("test-key"), count: 1, remove: 0},
+		{name: "prefix watch", key: []byte("/config/"), rangeEnd: []byte("/config0"), count: 1, remove: 0},
+		{name: "one of multiple watches", key: []byte("test-key"), count: 3, remove: 1, wantLeft: []int{0, 2}},
+		{name: "unknown watch ID", key: []byte("test-key"), count: 1, remove: -1, wantLeft: []int{0}},
+	}
 
-	watch, err := mgr.Add([]byte("key"), nil, 0, WatchFilters{}, stream)
-	require.NoError(t, err)
-	require.NotNil(t, watch)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mgr := NewManager()
+			stream := newMockWatchStream()
 
-	// Verify skipDeliver is false (deliverEvents should start)
-	assert.False(t, watch.skipDeliver)
+			var added []*Watch
+			for i := 0; i < tt.count; i++ {
+				watch, err := mgr.addInternal(tt.key, tt.rangeEnd, 0, WatchFilters{}, stream, &watchOptions{}, true)
+				require.NoError(t, err)
+				added = append(added, watch)
+			}
 
-	// Clean up
-	watch.cancel()
-}
+			removeID := uint64(999)
+			if tt.remove >= 0 {
+				removeID = added[tt.remove].ID
+			}
+			mgr.Remove(removeID)
 
-// TestRemove_ExactWatch verifies removing exact watch.
-func TestRemove_ExactWatch(t *testing.T) {
-	mgr := NewManager()
-	stream := newMockWatchStream()
+			shard := mgr.getShard(tt.key)
+			shard.mu.RLock()
+			remaining := shard.exactWatches[string(tt.key)]
+			if tt.rangeEnd != nil {
+				remaining = shard.prefixWatches
+			}
+			var remainingIDs []uint64
+			for _, w := range remaining {
+				remainingIDs = append(remainingIDs, w.ID)
+			}
+			shard.mu.RUnlock()
 
-	key := []byte("test-key")
-	watch, err := mgr.addInternal(key, nil, 0, WatchFilters{}, stream, &watchOptions{}, true)
-	require.NoError(t, err)
-
-	// Verify watch exists
-	assert.Equal(t, uint64(1), mgr.watchCount)
-
-	// Remove watch
-	mgr.Remove(watch.ID)
-
-	// Verify watch removed
-	assert.Equal(t, uint64(0), mgr.watchCount)
-
-	// Verify shard is clean
-	shard := mgr.getShard(key)
-	shard.mu.RLock()
-	watches := shard.exactWatches[string(key)]
-	shard.mu.RUnlock()
-
-	assert.Len(t, watches, 0)
-}
-
-// TestRemove_PrefixWatch verifies removing prefix watch.
-func TestRemove_PrefixWatch(t *testing.T) {
-	mgr := NewManager()
-	stream := newMockWatchStream()
-
-	key := []byte("/config/")
-	rangeEnd := []byte("/config0")
-	watch, err := mgr.addInternal(key, rangeEnd, 0, WatchFilters{}, stream, &watchOptions{}, true)
-	require.NoError(t, err)
-
-	// Verify watch exists
-	assert.Equal(t, uint64(1), mgr.watchCount)
-
-	// Remove watch
-	mgr.Remove(watch.ID)
-
-	// Verify watch removed
-	assert.Equal(t, uint64(0), mgr.watchCount)
-
-	// Verify shard is clean
-	shard := mgr.getShard(key)
-	shard.mu.RLock()
-	prefixWatches := shard.prefixWatches
-	shard.mu.RUnlock()
-
-	assert.Len(t, prefixWatches, 0)
-}
-
-// TestRemove_NonExistentWatch verifies removing non-existent watch doesn't panic.
-func TestRemove_NonExistentWatch(t *testing.T) {
-	mgr := NewManager()
-
-	// Should not panic
-	assert.NotPanics(t, func() {
-		mgr.Remove(999)
-	})
-}
-
-// TestRemove_OneOfMultipleWatches verifies removing one watch leaves others.
-func TestRemove_OneOfMultipleWatches(t *testing.T) {
-	mgr := NewManager()
-	stream := newMockWatchStream()
-
-	key := []byte("test-key")
-
-	// Add three watches
-	watch1, _ := mgr.addInternal(key, nil, 0, WatchFilters{}, stream, &watchOptions{}, true)
-	watch2, _ := mgr.addInternal(key, nil, 0, WatchFilters{}, stream, &watchOptions{}, true)
-	watch3, _ := mgr.addInternal(key, nil, 0, WatchFilters{}, stream, &watchOptions{}, true)
-
-	assert.Equal(t, uint64(3), mgr.watchCount)
-
-	// Remove middle watch
-	mgr.Remove(watch2.ID)
-
-	assert.Equal(t, uint64(2), mgr.watchCount)
-
-	// Verify remaining watches
-	shard := mgr.getShard(key)
-	shard.mu.RLock()
-	watches := shard.exactWatches[string(key)]
-	shard.mu.RUnlock()
-
-	require.Len(t, watches, 2)
-	assert.Equal(t, watch1.ID, watches[0].ID)
-	assert.Equal(t, watch3.ID, watches[1].ID)
+			var wantIDs []uint64
+			for _, i := range tt.wantLeft {
+				wantIDs = append(wantIDs, added[i].ID)
+			}
+			assert.Equal(t, wantIDs, remainingIDs)
+			assert.Equal(t, uint64(len(tt.wantLeft)), atomic.LoadUint64(&mgr.watchCount))
+			if tt.remove >= 0 {
+				assert.Error(t, added[tt.remove].ctx.Err(), "removed watch context must be cancelled")
+			}
+		})
+	}
 }
 
 // TestSendEvent_WithFilters verifies event filtering.
