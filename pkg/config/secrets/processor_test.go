@@ -171,9 +171,10 @@ func TestConfigProcessor_Process_Slices(t *testing.T) {
 	}
 }
 
-func TestConfigProcessor_Process_Maps(t *testing.T) {
+func TestConfigProcessor_Process_MapStringValues(t *testing.T) {
 	type Config struct {
-		Secrets map[string]string
+		Secrets   map[string]string
+		IntKeyMap map[int]string
 	}
 
 	registry := NewResolverRegistry()
@@ -183,14 +184,17 @@ func TestConfigProcessor_Process_Maps(t *testing.T) {
 
 	cfg := &Config{
 		Secrets: map[string]string{
-			"api_key":  "mock://api-key-value",
-			"password": "mock://password-value",
-			"literal":  "plain-text",
+			"api_key": "mock://api-key-value",
+			"literal": "plain-text",
+			"host":    "localhost",
+			"empty":   "",
+		},
+		IntKeyMap: map[int]string{
+			1: "mock://int-key-1",
 		},
 	}
 
-	ctx := context.Background()
-	result, err := processor.Process(ctx, cfg)
+	result, err := processor.Process(context.Background(), cfg)
 
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -200,15 +204,73 @@ func TestConfigProcessor_Process_Maps(t *testing.T) {
 		t.Fatalf("expected 2 resolved secrets, got %d", result.Resolved)
 	}
 
-	// Verify map values are updated
-	if cfg.Secrets["api_key"] != "api-key-value" {
-		t.Errorf("expected 'api-key-value', got %q", cfg.Secrets["api_key"])
+	checks := []struct {
+		name, got, want string
+	}{
+		{"api_key", cfg.Secrets["api_key"], "api-key-value"},
+		{"literal", cfg.Secrets["literal"], "plain-text"},
+		{"host", cfg.Secrets["host"], "localhost"},
+		{"empty", cfg.Secrets["empty"], ""},
+		{"int key", cfg.IntKeyMap[1], "int-key-1"},
 	}
-	if cfg.Secrets["password"] != "password-value" {
-		t.Errorf("expected 'password-value', got %q", cfg.Secrets["password"])
+	for _, c := range checks {
+		if c.got != c.want {
+			t.Errorf("%s: expected %q, got %q", c.name, c.want, c.got)
+		}
 	}
-	if cfg.Secrets["literal"] != "plain-text" {
-		t.Errorf("expected 'plain-text' unchanged, got %q", cfg.Secrets["literal"])
+}
+
+func TestConfigProcessor_Process_MapContainerValues(t *testing.T) {
+	type Item struct {
+		Secret string
+	}
+
+	type Config struct {
+		Slices   map[string][]string
+		Pointers map[string]*Item
+		Nested   map[string]map[string]map[string]string
+	}
+
+	registry := NewResolverRegistry()
+	registry.Register(&mockResolver{})
+
+	processor := NewConfigProcessor(registry)
+
+	cfg := &Config{
+		Slices: map[string][]string{
+			"secrets": {"mock://s1", "literal"},
+		},
+		Pointers: map[string]*Item{
+			"item1": {Secret: "mock://ptr-map-1"},
+			"item2": nil, // nil pointer should be skipped
+		},
+		Nested: map[string]map[string]map[string]string{
+			"a": {"b": {"secret": "mock://deep-nested-map"}},
+		},
+	}
+
+	result, err := processor.Process(context.Background(), cfg)
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if result.Resolved != 3 {
+		t.Fatalf("expected 3 resolved secrets, got %d", result.Resolved)
+	}
+
+	checks := []struct {
+		name, got, want string
+	}{
+		{"slice[0]", cfg.Slices["secrets"][0], "s1"},
+		{"slice[1]", cfg.Slices["secrets"][1], "literal"},
+		{"pointer", cfg.Pointers["item1"].Secret, "ptr-map-1"},
+		{"nested", cfg.Nested["a"]["b"]["secret"], "deep-nested-map"},
+	}
+	for _, c := range checks {
+		if c.got != c.want {
+			t.Errorf("%s: expected %q, got %q", c.name, c.want, c.got)
+		}
 	}
 }
 
@@ -660,43 +722,6 @@ func TestConfigProcessor_Process_SchemelessValueIsVerbatim(t *testing.T) {
 	}
 }
 
-func TestConfigProcessor_Process_MapWithEmptyStringValue(t *testing.T) {
-	type Config struct {
-		Secrets map[string]string
-	}
-
-	registry := NewResolverRegistry()
-	registry.Register(&mockResolver{})
-
-	processor := NewConfigProcessor(registry)
-
-	cfg := &Config{
-		Secrets: map[string]string{
-			"empty":  "",
-			"secret": "mock://value",
-		},
-	}
-
-	ctx := context.Background()
-	result, err := processor.Process(ctx, cfg)
-
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	// Only non-empty secret should be resolved.
-	if result.Resolved != 1 {
-		t.Fatalf("expected 1 resolved secret, got %d", result.Resolved)
-	}
-
-	if cfg.Secrets["empty"] != "" {
-		t.Errorf("empty string should remain empty, got %q", cfg.Secrets["empty"])
-	}
-	if cfg.Secrets["secret"] != "value" {
-		t.Errorf("expected 'value', got %q", cfg.Secrets["secret"])
-	}
-}
-
 func TestConfigProcessor_Process_MapWithFailingSecret(t *testing.T) {
 	type Config struct {
 		Secrets map[string]string
@@ -739,130 +764,6 @@ func TestConfigProcessor_Process_MapWithFailingSecret(t *testing.T) {
 	// Bad value should be unchanged.
 	if cfg.Secrets["bad"] != "fail://bad-value" {
 		t.Errorf("expected 'fail://bad-value', got %q", cfg.Secrets["bad"])
-	}
-}
-
-func TestConfigProcessor_Process_MapWithSliceValues(t *testing.T) {
-	type Config struct {
-		Data map[string][]string
-	}
-
-	registry := NewResolverRegistry()
-	registry.Register(&mockResolver{})
-
-	processor := NewConfigProcessor(registry)
-
-	cfg := &Config{
-		Data: map[string][]string{
-			"secrets": {"mock://s1", "literal", "mock://s3"},
-		},
-	}
-
-	ctx := context.Background()
-	result, err := processor.Process(ctx, cfg)
-
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	// Slices in maps should be processed.
-	if result.Resolved != 2 {
-		t.Fatalf("expected 2 resolved secrets, got %d", result.Resolved)
-	}
-
-	if cfg.Data["secrets"][0] != "s1" {
-		t.Errorf("expected 's1', got %q", cfg.Data["secrets"][0])
-	}
-	if cfg.Data["secrets"][1] != "literal" {
-		t.Errorf("expected 'literal', got %q", cfg.Data["secrets"][1])
-	}
-	if cfg.Data["secrets"][2] != "s3" {
-		t.Errorf("expected 's3', got %q", cfg.Data["secrets"][2])
-	}
-}
-
-func TestConfigProcessor_Process_MapWithPointerValues(t *testing.T) {
-	type Item struct {
-		Secret string
-	}
-
-	type Config struct {
-		Items map[string]*Item
-	}
-
-	registry := NewResolverRegistry()
-	registry.Register(&mockResolver{})
-
-	processor := NewConfigProcessor(registry)
-
-	cfg := &Config{
-		Items: map[string]*Item{
-			"item1": {Secret: "mock://ptr-map-1"},
-			"item2": nil, // nil pointer
-			"item3": {Secret: "mock://ptr-map-3"},
-		},
-	}
-
-	ctx := context.Background()
-	result, err := processor.Process(ctx, cfg)
-
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	if result.Resolved != 2 {
-		t.Fatalf("expected 2 resolved secrets, got %d", result.Resolved)
-	}
-
-	if cfg.Items["item1"].Secret != "ptr-map-1" {
-		t.Errorf("expected 'ptr-map-1', got %q", cfg.Items["item1"].Secret)
-	}
-	if cfg.Items["item3"].Secret != "ptr-map-3" {
-		t.Errorf("expected 'ptr-map-3', got %q", cfg.Items["item3"].Secret)
-	}
-}
-
-func TestConfigProcessor_Process_MapWithMapValues(t *testing.T) {
-	type Config struct {
-		NestedMaps map[string]map[string]string
-	}
-
-	registry := NewResolverRegistry()
-	registry.Register(&mockResolver{})
-
-	processor := NewConfigProcessor(registry)
-
-	cfg := &Config{
-		NestedMaps: map[string]map[string]string{
-			"group1": {
-				"secret1": "mock://nested-1",
-				"secret2": "mock://nested-2",
-			},
-			"group2": {
-				"secret3": "mock://nested-3",
-			},
-		},
-	}
-
-	ctx := context.Background()
-	result, err := processor.Process(ctx, cfg)
-
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	if result.Resolved != 3 {
-		t.Fatalf("expected 3 resolved secrets, got %d", result.Resolved)
-	}
-
-	if cfg.NestedMaps["group1"]["secret1"] != "nested-1" {
-		t.Errorf("expected 'nested-1', got %q", cfg.NestedMaps["group1"]["secret1"])
-	}
-	if cfg.NestedMaps["group1"]["secret2"] != "nested-2" {
-		t.Errorf("expected 'nested-2', got %q", cfg.NestedMaps["group1"]["secret2"])
-	}
-	if cfg.NestedMaps["group2"]["secret3"] != "nested-3" {
-		t.Errorf("expected 'nested-3', got %q", cfg.NestedMaps["group2"]["secret3"])
 	}
 }
 
@@ -995,7 +896,7 @@ func TestConfigProcessor_Process_NonStringFieldsUntouched(t *testing.T) {
 
 // TestConfigProcessor_Process_FuncField tests that func types are skipped.
 // TestConfigProcessor_Process_MapInterfaceWithString tests maps with interface{} values.
-func TestConfigProcessor_Process_MapInterfaceWithString(t *testing.T) {
+func TestConfigProcessor_Process_MapInterfaceValues(t *testing.T) {
 	type Config struct {
 		Data map[string]interface{}
 	}
@@ -1005,6 +906,7 @@ func TestConfigProcessor_Process_MapInterfaceWithString(t *testing.T) {
 
 	processor := NewConfigProcessor(registry)
 
+	slice := []string{"mock://slice-in-interface-1", "mock://slice-in-interface-2"}
 	cfg := &Config{
 		Data: map[string]interface{}{
 			"secret":  "mock://interface-map-value",
@@ -1013,59 +915,30 @@ func TestConfigProcessor_Process_MapInterfaceWithString(t *testing.T) {
 			"nested": map[string]interface{}{
 				"inner": "mock://nested-interface",
 			},
+			"secrets": slice,
 		},
 	}
 
-	ctx := context.Background()
-	result, err := processor.Process(ctx, cfg)
+	result, err := processor.Process(context.Background(), cfg)
 
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-
-	// Interface string values in maps are not directly settable.
 	if len(result.Errors) > 0 {
 		t.Errorf("unexpected errors: %v", result.Errors)
+	}
+
+	// A slice inside an interface map value shares its backing array, so
+	// its elements are settable and resolved in place.
+	if slice[0] != "slice-in-interface-1" || slice[1] != "slice-in-interface-2" {
+		t.Errorf("expected slice elements resolved, got %q", slice)
+	}
+	if cfg.Data["literal"] != "plain-text" || cfg.Data["number"] != 42 {
+		t.Errorf("non-secret values changed: %v", cfg.Data)
 	}
 }
 
 // TestConfigProcessor_Process_DeeplyNestedMaps tests deeply nested map structures.
-func TestConfigProcessor_Process_DeeplyNestedMaps(t *testing.T) {
-	type Config struct {
-		Level1 map[string]map[string]map[string]string
-	}
-
-	registry := NewResolverRegistry()
-	registry.Register(&mockResolver{})
-
-	processor := NewConfigProcessor(registry)
-
-	cfg := &Config{
-		Level1: map[string]map[string]map[string]string{
-			"a": {
-				"b": {
-					"secret": "mock://deep-nested-map",
-				},
-			},
-		},
-	}
-
-	ctx := context.Background()
-	result, err := processor.Process(ctx, cfg)
-
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	if result.Resolved != 1 {
-		t.Fatalf("expected 1 resolved secret, got %d", result.Resolved)
-	}
-
-	if cfg.Level1["a"]["b"]["secret"] != "deep-nested-map" {
-		t.Errorf("expected 'deep-nested-map', got %q", cfg.Level1["a"]["b"]["secret"])
-	}
-}
-
 // TestConfigProcessor_Process_InterfaceWithStruct tests interface fields containing structs.
 func TestConfigProcessor_Process_StructInInterface(t *testing.T) {
 	type Inner struct {
@@ -1133,75 +1006,9 @@ func TestConfigProcessor_Process_StructInInterface(t *testing.T) {
 // cancellation while processing struct fields.
 // TestConfigProcessor_Process_MapWithInterfaceContainingSlice tests map with
 // interface values containing slices.
-func TestConfigProcessor_Process_MapWithInterfaceContainingSlice(t *testing.T) {
-	type Config struct {
-		Data map[string]interface{}
-	}
-
-	registry := NewResolverRegistry()
-	registry.Register(&mockResolver{})
-
-	processor := NewConfigProcessor(registry)
-
-	cfg := &Config{
-		Data: map[string]interface{}{
-			"secrets": []string{"mock://slice-in-interface-1", "mock://slice-in-interface-2"},
-		},
-	}
-
-	ctx := context.Background()
-	result, err := processor.Process(ctx, cfg)
-
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	// Slices inside interface values in maps should be processed.
-	if result.Resolved != 2 {
-		t.Fatalf("expected 2 resolved secrets (from slice in interface), got %d", result.Resolved)
-	}
-}
-
 // TestConfigProcessor_Process_NumericTypes tests that various numeric types are skipped.
 // TestConfigProcessor_Process_BoolField tests that bool types are skipped.
 // TestConfigProcessor_Process_MapWithNonStringKey tests maps with non-string keys.
-func TestConfigProcessor_Process_MapWithNonStringKey(t *testing.T) {
-	type Config struct {
-		IntKeyMap map[int]string
-	}
-
-	registry := NewResolverRegistry()
-	registry.Register(&mockResolver{})
-
-	processor := NewConfigProcessor(registry)
-
-	cfg := &Config{
-		IntKeyMap: map[int]string{
-			1: "mock://int-key-1",
-			2: "mock://int-key-2",
-		},
-	}
-
-	ctx := context.Background()
-	result, err := processor.Process(ctx, cfg)
-
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	// Maps with non-string keys should still be processed.
-	if result.Resolved != 2 {
-		t.Fatalf("expected 2 resolved secrets, got %d", result.Resolved)
-	}
-
-	if cfg.IntKeyMap[1] != "int-key-1" {
-		t.Errorf("expected 'int-key-1', got %q", cfg.IntKeyMap[1])
-	}
-	if cfg.IntKeyMap[2] != "int-key-2" {
-		t.Errorf("expected 'int-key-2', got %q", cfg.IntKeyMap[2])
-	}
-}
-
 // TestConfigProcessor_Process_NonSecretURINotResolved tests that strings
 // without secret URI prefix are not resolved.
 func TestConfigProcessor_Process_NonSecretURINotResolved(t *testing.T) {
@@ -1253,47 +1060,6 @@ func TestConfigProcessor_Process_NonSecretURINotResolved(t *testing.T) {
 
 // TestConfigProcessor_Process_MapNonSecretNotResolved tests that map string values
 // without secret URI are not resolved.
-func TestConfigProcessor_Process_MapNonSecretNotResolved(t *testing.T) {
-	type Config struct {
-		Settings map[string]string
-	}
-
-	registry := NewResolverRegistry()
-	registry.Register(&mockResolver{})
-
-	processor := NewConfigProcessor(registry)
-
-	cfg := &Config{
-		Settings: map[string]string{
-			"host":     "localhost",
-			"port":     "8080",
-			"password": "mock://the-password",
-		},
-	}
-
-	ctx := context.Background()
-	result, err := processor.Process(ctx, cfg)
-
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	// Only password should be resolved.
-	if result.Resolved != 1 {
-		t.Fatalf("expected 1 resolved secret, got %d", result.Resolved)
-	}
-
-	if cfg.Settings["host"] != "localhost" {
-		t.Errorf("host should be unchanged, got %q", cfg.Settings["host"])
-	}
-	if cfg.Settings["port"] != "8080" {
-		t.Errorf("port should be unchanged, got %q", cfg.Settings["port"])
-	}
-	if cfg.Settings["password"] != "the-password" {
-		t.Errorf("expected 'the-password', got %q", cfg.Settings["password"])
-	}
-}
-
 // TestConfigProcessor_Process_EmbeddedStruct tests embedded struct fields.
 func TestConfigProcessor_Process_EmbeddedStruct(t *testing.T) {
 	type Credentials struct {
