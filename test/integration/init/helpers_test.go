@@ -94,6 +94,16 @@ func TestDaemonStartArgs_NoConfig(t *testing.T) {
 	}
 }
 
+func TestAllocPortBundle_QUICIsTheRESTPort(t *testing.T) {
+	bundle := allocPortBundle(t, "quic", t.TempDir())
+	if bundle.REST == 0 {
+		t.Fatalf("allocPortBundle(quic) REST port is zero")
+	}
+	if bundle.QUIC != bundle.REST {
+		t.Errorf("allocPortBundle(quic) QUIC = %d, REST = %d; HTTP/3 is served on the REST port", bundle.QUIC, bundle.REST)
+	}
+}
+
 // TestDaemonStartArgs_UnknownTransport checks a transport the matrix does
 // not know is refused with a typed error rather than started.
 func TestDaemonStartArgs_UnknownTransport(t *testing.T) {

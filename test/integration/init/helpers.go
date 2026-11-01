@@ -218,7 +218,8 @@ func allocPortBundle(t *testing.T, transport string, dataDir string) PortBundle 
 	case "grpc":
 		bundle.GRPC = netport.MustReserveOne(t)
 	case "quic":
-		bundle.QUIC = netport.MustReserveOne(t)
+		// QUIC is HTTP/3, served on the REST listener's own port.
+		bundle.QUIC = bundle.REST
 	case "mcp":
 		bundle.MCP = netport.MustReserveOne(t)
 	default:
@@ -658,14 +659,6 @@ func startDaemonWithConfig(
 			"QUICBAAS_SEAL_STRATEGY=passphrase",
 			"QUICBAAS_SEAL_PASSPHRASE="+matrixPassphrase,
 		)
-	}
-	if transport == "quic" {
-		env = append(env,
-			"QUICBAAS_SERVER_QUIC_ENABLED=true",
-			fmt.Sprintf("QUICBAAS_SERVER_QUIC_PORT=%d", ports.QUIC),
-		)
-	} else {
-		env = append(env, "QUICBAAS_SERVER_QUIC_ENABLED=false")
 	}
 	if transport == "mcp" {
 		env = append(env,
