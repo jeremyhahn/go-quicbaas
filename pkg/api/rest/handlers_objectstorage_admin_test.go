@@ -275,22 +275,6 @@ func TestHandleCreateObjectBackend_MissingTier(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
-func TestHandleCreateObjectBackend_ServiceUnavailable(t *testing.T) {
-	s := newTestObjectStorageAdminServer(nil)
-
-	r := chi.NewRouter()
-	r.Post("/api/v1/admin/object-backends", s.HandleCreateObjectBackend)
-
-	body := `{"name":"test-backend","type":"local","tier":"hot"}`
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/object-backends", bytes.NewReader([]byte(body)))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-
-	r.ServeHTTP(w, req)
-
-	assert.Equal(t, http.StatusServiceUnavailable, w.Code)
-}
-
 func TestHandleCreateObjectBackend_AlreadyExists(t *testing.T) {
 	mockAdminSvc := &mockObjectStorageAdminService{
 		createBackendFunc: func(ctx context.Context, req *service.CreateBackendRequest) (*service.CreateBackendResponse, error) {
@@ -393,22 +377,6 @@ func TestHandleUpdateObjectBackend_NotFound(t *testing.T) {
 	assert.Equal(t, http.StatusNotFound, w.Code)
 }
 
-func TestHandleUpdateObjectBackend_ServiceUnavailable(t *testing.T) {
-	s := newTestObjectStorageAdminServer(nil)
-
-	r := chi.NewRouter()
-	r.Put("/api/v1/admin/object-backends/{name}", s.HandleUpdateObjectBackend)
-
-	body := `{"config":{"key":"value"}}`
-	req := httptest.NewRequest(http.MethodPut, "/api/v1/admin/object-backends/test-backend", bytes.NewReader([]byte(body)))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-
-	r.ServeHTTP(w, req)
-
-	assert.Equal(t, http.StatusServiceUnavailable, w.Code)
-}
-
 // =============================================================================
 // HandleDeleteObjectBackend Tests
 // =============================================================================
@@ -500,20 +468,6 @@ func TestHandleDeleteObjectBackend_NotFound(t *testing.T) {
 	assert.Equal(t, http.StatusNotFound, w.Code)
 }
 
-func TestHandleDeleteObjectBackend_ServiceUnavailable(t *testing.T) {
-	s := newTestObjectStorageAdminServer(nil)
-
-	r := chi.NewRouter()
-	r.Delete("/api/v1/admin/object-backends/{name}", s.HandleDeleteObjectBackend)
-
-	req := httptest.NewRequest(http.MethodDelete, "/api/v1/admin/object-backends/test-backend", nil)
-	w := httptest.NewRecorder()
-
-	r.ServeHTTP(w, req)
-
-	assert.Equal(t, http.StatusServiceUnavailable, w.Code)
-}
-
 // =============================================================================
 // HandleSetObjectBackendStatus Tests
 // =============================================================================
@@ -600,22 +554,6 @@ func TestHandleSetObjectBackendStatus_NotFound(t *testing.T) {
 	assert.Equal(t, http.StatusNotFound, w.Code)
 }
 
-func TestHandleSetObjectBackendStatus_ServiceUnavailable(t *testing.T) {
-	s := newTestObjectStorageAdminServer(nil)
-
-	r := chi.NewRouter()
-	r.Put("/api/v1/admin/object-backends/{name}/status", s.HandleSetObjectBackendStatus)
-
-	body := `{"enabled":true}`
-	req := httptest.NewRequest(http.MethodPut, "/api/v1/admin/object-backends/test-backend/status", bytes.NewReader([]byte(body)))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-
-	r.ServeHTTP(w, req)
-
-	assert.Equal(t, http.StatusServiceUnavailable, w.Code)
-}
-
 // =============================================================================
 // HandleGetStorageStats Tests
 // =============================================================================
@@ -688,20 +626,6 @@ func TestHandleGetStorageStats_WithTenants(t *testing.T) {
 	assert.Equal(t, http.StatusOK, w.Code)
 }
 
-func TestHandleGetStorageStats_ServiceUnavailable(t *testing.T) {
-	s := newTestObjectStorageAdminServer(nil)
-
-	r := chi.NewRouter()
-	r.Get("/api/v1/admin/storage/stats", s.HandleGetStorageStats)
-
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/admin/storage/stats", nil)
-	w := httptest.NewRecorder()
-
-	r.ServeHTTP(w, req)
-
-	assert.Equal(t, http.StatusServiceUnavailable, w.Code)
-}
-
 // =============================================================================
 // HandleRunGarbageCollection Tests
 // =============================================================================
@@ -760,20 +684,6 @@ func TestHandleRunGarbageCollection_DryRun(t *testing.T) {
 	assert.Equal(t, http.StatusAccepted, w.Code)
 }
 
-func TestHandleRunGarbageCollection_ServiceUnavailable(t *testing.T) {
-	s := newTestObjectStorageAdminServer(nil)
-
-	r := chi.NewRouter()
-	r.Post("/api/v1/admin/storage/gc", s.HandleRunGarbageCollection)
-
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/storage/gc", nil)
-	w := httptest.NewRecorder()
-
-	r.ServeHTTP(w, req)
-
-	assert.Equal(t, http.StatusServiceUnavailable, w.Code)
-}
-
 // =============================================================================
 // HandleGetGarbageCollectionProgress Tests
 // =============================================================================
@@ -830,20 +740,6 @@ func TestHandleGetGarbageCollectionProgress_NotFound(t *testing.T) {
 	r.ServeHTTP(w, req)
 
 	assert.Equal(t, http.StatusNotFound, w.Code)
-}
-
-func TestHandleGetGarbageCollectionProgress_ServiceUnavailable(t *testing.T) {
-	s := newTestObjectStorageAdminServer(nil)
-
-	r := chi.NewRouter()
-	r.Get("/api/v1/admin/storage/gc/progress", s.HandleGetGarbageCollectionProgress)
-
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/admin/storage/gc/progress?operation_id=gc-123", nil)
-	w := httptest.NewRecorder()
-
-	r.ServeHTTP(w, req)
-
-	assert.Equal(t, http.StatusServiceUnavailable, w.Code)
 }
 
 // =============================================================================
@@ -927,22 +823,6 @@ func TestHandleRepairObject_NotFound(t *testing.T) {
 	assert.Equal(t, http.StatusNotFound, w.Code)
 }
 
-func TestHandleRepairObject_ServiceUnavailable(t *testing.T) {
-	s := newTestObjectStorageAdminServer(nil)
-
-	r := chi.NewRouter()
-	r.Post("/api/v1/admin/objects/repair", s.HandleRepairObject)
-
-	body := `{"key":"test-key"}`
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/objects/repair", bytes.NewReader([]byte(body)))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-
-	r.ServeHTTP(w, req)
-
-	assert.Equal(t, http.StatusServiceUnavailable, w.Code)
-}
-
 // =============================================================================
 // HandleCompactObjectBackend Tests
 // =============================================================================
@@ -1021,20 +901,6 @@ func TestHandleCompactObjectBackend_NotFound(t *testing.T) {
 	assert.Equal(t, http.StatusNotFound, w.Code)
 }
 
-func TestHandleCompactObjectBackend_ServiceUnavailable(t *testing.T) {
-	s := newTestObjectStorageAdminServer(nil)
-
-	r := chi.NewRouter()
-	r.Post("/api/v1/admin/object-backends/{name}/compact", s.HandleCompactObjectBackend)
-
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/object-backends/test-backend/compact", nil)
-	w := httptest.NewRecorder()
-
-	r.ServeHTTP(w, req)
-
-	assert.Equal(t, http.StatusServiceUnavailable, w.Code)
-}
-
 // =============================================================================
 // Route Registration Tests
 // =============================================================================
@@ -1058,6 +924,54 @@ func mountObjectStorageAdminTestRoutes(s *Server, r chi.Router) {
 
 		r.Post("/objects/repair", s.HandleRepairObject)
 	})
+}
+
+// serveObjectStorageAdmin sends one request through the mounted admin routes
+// of a server backed by adminService and returns the recorded response.
+func serveObjectStorageAdmin(adminService service.ObjectStorageAdminService, method, path, body string) *httptest.ResponseRecorder {
+	s := newTestObjectStorageAdminServer(adminService)
+	r := chi.NewRouter()
+	r.Route("/api/v1", func(r chi.Router) {
+		mountObjectStorageAdminTestRoutes(s, r)
+	})
+
+	var bodyReader io.Reader
+	if body != "" {
+		bodyReader = bytes.NewReader([]byte(body))
+	}
+	req := httptest.NewRequest(method, path, bodyReader)
+	if body != "" {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	return w
+}
+
+func TestObjectStorageAdmin_ServiceUnavailable(t *testing.T) {
+	tests := []struct {
+		name   string
+		method string
+		path   string
+		body   string
+	}{
+		{"create backend", http.MethodPost, "/api/v1/admin/object-backends", `{"name":"test-backend","type":"local","tier":"hot"}`},
+		{"update backend", http.MethodPut, "/api/v1/admin/object-backends/test-backend", `{"config":{"key":"value"}}`},
+		{"delete backend", http.MethodDelete, "/api/v1/admin/object-backends/test-backend", ""},
+		{"set backend status", http.MethodPut, "/api/v1/admin/object-backends/test-backend/status", `{"enabled":true}`},
+		{"get storage stats", http.MethodGet, "/api/v1/admin/storage/stats", ""},
+		{"run garbage collection", http.MethodPost, "/api/v1/admin/storage/gc", ""},
+		{"get gc progress", http.MethodGet, "/api/v1/admin/storage/gc/progress?operation_id=gc-123", ""},
+		{"repair object", http.MethodPost, "/api/v1/admin/objects/repair", `{"key":"test-key"}`},
+		{"compact backend", http.MethodPost, "/api/v1/admin/object-backends/test-backend/compact", ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			w := serveObjectStorageAdmin(nil, tt.method, tt.path, tt.body)
+			assert.Equal(t, http.StatusServiceUnavailable, w.Code)
+		})
+	}
 }
 
 func TestRegisterObjectStorageAdminRoutes(t *testing.T) {
