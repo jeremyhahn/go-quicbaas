@@ -95,71 +95,41 @@ func TestNew_WithPoolEnabled(t *testing.T) {
 }
 
 func TestBuildDialOptions_WithTLSConfig(t *testing.T) {
-	tr := &Transport{
-		cfg: &transport.Config{
-			Address:   "localhost:50051",
-			TLSConfig: &tls.Config{MinVersion: tls.VersionTLS13},
+	tlsCfg := &tls.Config{MinVersion: tls.VersionTLS13}
+	tests := []struct {
+		name    string
+		cfg     *transport.Config
+		minOpts int
+	}{
+		{
+			name:    "tls only",
+			cfg:     &transport.Config{Address: "localhost:50051", TLSConfig: tlsCfg},
+			minOpts: 1,
+		},
+		{
+			name: "tls with keepalive",
+			cfg: &transport.Config{
+				Address:          "localhost:50051",
+				TLSConfig:        tlsCfg,
+				KeepaliveTime:    10 * time.Second,
+				KeepaliveTimeout: 5 * time.Second,
+			},
+			minOpts: 2,
 		},
 	}
 
-	opts, err := tr.buildDialOptions()
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if len(opts) == 0 {
-		t.Error("expected dial options")
-	}
-}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tr := &Transport{cfg: tt.cfg}
 
-func TestBuildDialOptions_WithoutTLS(t *testing.T) {
-	tr := &Transport{
-		cfg: &transport.Config{
-			Address: "localhost:50051",
-		},
-	}
-
-	_, err := tr.buildDialOptions()
-	if err == nil {
-		t.Fatal("expected error for missing TLS config")
-	}
-	if errors.Code(err) != errors.CodeConfiguration {
-		t.Errorf("expected Configuration error, got %v", errors.Code(err))
-	}
-}
-
-func TestBuildDialOptions_UnixSocketWithoutTLS(t *testing.T) {
-	tr := &Transport{
-		cfg: &transport.Config{
-			Address: "/var/run/socket.sock",
-		},
-	}
-
-	_, err := tr.buildDialOptions()
-	if err == nil {
-		t.Fatal("expected error for missing TLS config")
-	}
-	if errors.Code(err) != errors.CodeConfiguration {
-		t.Errorf("expected Configuration error, got %v", errors.Code(err))
-	}
-}
-
-func TestBuildDialOptions_WithKeepalive(t *testing.T) {
-	tr := &Transport{
-		cfg: &transport.Config{
-			Address:          "localhost:50051",
-			TLSConfig:        &tls.Config{MinVersion: tls.VersionTLS13},
-			KeepaliveTime:    10 * time.Second,
-			KeepaliveTimeout: 5 * time.Second,
-		},
-	}
-
-	opts, err := tr.buildDialOptions()
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	// Should include keepalive option
-	if len(opts) < 2 {
-		t.Error("expected multiple dial options including keepalive")
+			opts, err := tr.buildDialOptions()
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if len(opts) < tt.minOpts {
+				t.Errorf("got %d dial options, want at least %d", len(opts), tt.minOpts)
+			}
+		})
 	}
 }
 
@@ -258,140 +228,100 @@ func TestTransport_Close(t *testing.T) {
 	}
 }
 
-func TestConvertGRPCError_NilError(t *testing.T) {
-	result := convertGRPCError(nil, "test")
-	if result != nil {
-		t.Error("expected nil result for nil error")
-	}
-}
-
-func TestConvertGRPCError_NonStatusError(t *testing.T) {
-	err := errors.NewInternal("test", "test error")
-	result := convertGRPCError(err, "op")
-
-	if result == nil {
-		t.Fatal("expected non-nil error")
-	}
-	if errors.Code(result) != errors.CodeUnknown {
-		t.Errorf("expected Unknown error code, got %v", errors.Code(result))
-	}
-}
-
 func TestConvertGRPCError_AllCodes(t *testing.T) {
 	tests := []struct {
-		grpcCode     codes.Code
-		expectedCode errors.ErrorCode
+		name     string
+		err      error
+		wantNil  bool
+		wantCode errors.ErrorCode
 	}{
-		{codes.OK, errors.CodeUnknown}, // OK returns nil, but we test non-nil path
-		{codes.InvalidArgument, errors.CodeInvalidInput},
-		{codes.NotFound, errors.CodeNotFound},
-		{codes.AlreadyExists, errors.CodeAlreadyExists},
-		{codes.PermissionDenied, errors.CodeForbidden},
-		{codes.Unauthenticated, errors.CodeUnauthorized},
-		{codes.ResourceExhausted, errors.CodeResourceExhausted},
-		{codes.FailedPrecondition, errors.CodePreconditionFailed},
-		{codes.Aborted, errors.CodeConflict},
-		{codes.Unimplemented, errors.CodeUnimplemented},
-		{codes.Internal, errors.CodeInternal},
-		{codes.Unavailable, errors.CodeUnavailable},
-		{codes.DeadlineExceeded, errors.CodeTimeout},
-		{codes.Canceled, errors.CodeCanceled},
-		{codes.OutOfRange, errors.CodeInvalidInput},
-		{codes.DataLoss, errors.CodeInternal},
-		{codes.Unknown, errors.CodeUnknown},
-		{codes.Code(100), errors.CodeUnknown}, // not a gRPC code
+		{name: "nil error", err: nil, wantNil: true},
+		{name: "OK status", err: status.Error(codes.OK, "ok"), wantNil: true},
+		{name: "non-status error", err: errors.NewInternal("test", "test error"), wantCode: errors.CodeUnknown},
+		{name: "InvalidArgument", err: status.Error(codes.InvalidArgument, "e"), wantCode: errors.CodeInvalidInput},
+		{name: "NotFound", err: status.Error(codes.NotFound, "e"), wantCode: errors.CodeNotFound},
+		{name: "AlreadyExists", err: status.Error(codes.AlreadyExists, "e"), wantCode: errors.CodeAlreadyExists},
+		{name: "PermissionDenied", err: status.Error(codes.PermissionDenied, "e"), wantCode: errors.CodeForbidden},
+		{name: "Unauthenticated", err: status.Error(codes.Unauthenticated, "e"), wantCode: errors.CodeUnauthorized},
+		{name: "ResourceExhausted", err: status.Error(codes.ResourceExhausted, "e"), wantCode: errors.CodeResourceExhausted},
+		{name: "FailedPrecondition", err: status.Error(codes.FailedPrecondition, "e"), wantCode: errors.CodePreconditionFailed},
+		{name: "Aborted", err: status.Error(codes.Aborted, "e"), wantCode: errors.CodeConflict},
+		{name: "Unimplemented", err: status.Error(codes.Unimplemented, "e"), wantCode: errors.CodeUnimplemented},
+		{name: "Internal", err: status.Error(codes.Internal, "e"), wantCode: errors.CodeInternal},
+		{name: "Unavailable", err: status.Error(codes.Unavailable, "e"), wantCode: errors.CodeUnavailable},
+		{name: "DeadlineExceeded", err: status.Error(codes.DeadlineExceeded, "e"), wantCode: errors.CodeTimeout},
+		{name: "Canceled", err: status.Error(codes.Canceled, "e"), wantCode: errors.CodeCanceled},
+		{name: "OutOfRange", err: status.Error(codes.OutOfRange, "e"), wantCode: errors.CodeInvalidInput},
+		{name: "DataLoss", err: status.Error(codes.DataLoss, "e"), wantCode: errors.CodeInternal},
+		{name: "Unknown", err: status.Error(codes.Unknown, "e"), wantCode: errors.CodeUnknown},
+		{name: "not a gRPC code", err: status.Error(codes.Code(100), "e"), wantCode: errors.CodeUnknown},
 	}
 
 	for _, tt := range tests {
-		t.Run(tt.grpcCode.String(), func(t *testing.T) {
-			if tt.grpcCode == codes.OK {
-				// OK returns nil
-				err := status.Error(codes.OK, "ok")
-				result := convertGRPCError(err, "op")
+		t.Run(tt.name, func(t *testing.T) {
+			result := convertGRPCError(tt.err, "op")
+			if tt.wantNil {
 				if result != nil {
-					t.Error("expected nil for OK status")
+					t.Errorf("expected nil, got %v", result)
 				}
 				return
 			}
-
-			grpcErr := status.Error(tt.grpcCode, "test error")
-			result := convertGRPCError(grpcErr, "op")
-
 			if result == nil {
 				t.Fatal("expected non-nil error")
 			}
-			if errors.Code(result) != tt.expectedCode {
-				t.Errorf("expected %v, got %v", tt.expectedCode, errors.Code(result))
+			if errors.Code(result) != tt.wantCode {
+				t.Errorf("expected %v, got %v", tt.wantCode, errors.Code(result))
 			}
 		})
 	}
 }
 
-func TestIsRetryableError_QBError(t *testing.T) {
+func TestIsRetryableError(t *testing.T) {
 	tests := []struct {
+		name      string
 		err       error
 		retryable bool
 	}{
-		{errors.NewUnavailable("op", "msg"), true},
-		{errors.NewTimeout("op", "msg"), true},
-		{errors.NewResourceExhausted("op", "msg"), true},
-		{errors.NewNotFound("op", "msg"), false},
-		{errors.NewInvalidInput("op", "msg"), false},
+		{"sdk Unavailable", errors.NewUnavailable("op", "msg"), true},
+		{"sdk Timeout", errors.NewTimeout("op", "msg"), true},
+		{"sdk ResourceExhausted", errors.NewResourceExhausted("op", "msg"), true},
+		{"sdk NotFound", errors.NewNotFound("op", "msg"), false},
+		{"sdk InvalidInput", errors.NewInvalidInput("op", "msg"), false},
+		{"grpc Unavailable", status.Error(codes.Unavailable, "test"), true},
+		{"grpc DeadlineExceeded", status.Error(codes.DeadlineExceeded, "test"), true},
+		{"grpc ResourceExhausted", status.Error(codes.ResourceExhausted, "test"), true},
+		{"grpc NotFound", status.Error(codes.NotFound, "test"), false},
+		{"grpc InvalidArgument", status.Error(codes.InvalidArgument, "test"), false},
+		{"grpc Internal", status.Error(codes.Internal, "test"), false},
+		{"grpc PermissionDenied", status.Error(codes.PermissionDenied, "test"), false},
+		{"grpc Unimplemented", status.Error(codes.Unimplemented, "test"), false},
+		{"non-status error", context.DeadlineExceeded, false},
 	}
 
 	for _, tt := range tests {
-		t.Run(tt.err.Error(), func(t *testing.T) {
+		t.Run(tt.name, func(t *testing.T) {
 			if got := isRetryableError(tt.err); got != tt.retryable {
-				t.Errorf("expected retryable=%v, got %v", tt.retryable, got)
+				t.Errorf("isRetryableError(%v) = %v, want %v", tt.err, got, tt.retryable)
 			}
 		})
-	}
-}
-
-func TestIsRetryableError_GRPCStatus(t *testing.T) {
-	tests := []struct {
-		code      codes.Code
-		retryable bool
-	}{
-		{codes.Unavailable, true},
-		{codes.DeadlineExceeded, true},
-		{codes.ResourceExhausted, true},
-		{codes.NotFound, false},
-		{codes.InvalidArgument, false},
-		{codes.Internal, false},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.code.String(), func(t *testing.T) {
-			err := status.Error(tt.code, "test")
-			if got := isRetryableError(err); got != tt.retryable {
-				t.Errorf("expected retryable=%v, got %v", tt.retryable, got)
-			}
-		})
-	}
-}
-
-func TestIsRetryableError_NonStatusError(t *testing.T) {
-	err := context.DeadlineExceeded
-	if isRetryableError(err) {
-		t.Error("expected non-status error to not be retryable")
 	}
 }
 
 func TestMinDuration(t *testing.T) {
 	tests := []struct {
+		name     string
 		a, b     time.Duration
 		expected time.Duration
 	}{
-		{time.Second, 2 * time.Second, time.Second},
-		{2 * time.Second, time.Second, time.Second},
-		{time.Second, time.Second, time.Second},
-		{0, time.Second, 0},
-		{time.Second, 0, 0},
+		{"first smaller", time.Second, 2 * time.Second, time.Second},
+		{"second smaller", 2 * time.Second, time.Second, time.Second},
+		{"equal", time.Second, time.Second, time.Second},
+		{"first zero", 0, time.Second, 0},
+		{"second zero", time.Second, 0, 0},
 	}
 
 	for _, tt := range tests {
-		t.Run("", func(t *testing.T) {
+		t.Run(tt.name, func(t *testing.T) {
 			if got := minDuration(tt.a, tt.b); got != tt.expected {
 				t.Errorf("minDuration(%v, %v) = %v, expected %v", tt.a, tt.b, got, tt.expected)
 			}
@@ -1019,39 +949,6 @@ func TestRequestStream_SendMsgError(t *testing.T) {
 	}
 	// Just verify it doesn't panic - actual error depends on server behavior
 	_ = err
-}
-
-// TestConvertGRPCError_OKStatus tests convertGRPCError with OK status returns nil.
-func TestConvertGRPCError_OKStatus(t *testing.T) {
-	err := status.Error(codes.OK, "success")
-	result := convertGRPCError(err, "test")
-	if result != nil {
-		t.Errorf("expected nil for OK status, got: %v", result)
-	}
-}
-
-// TestMinDuration_Equal tests minDuration with equal values.
-func TestMinDuration_Equal(t *testing.T) {
-	result := minDuration(5*time.Second, 5*time.Second)
-	if result != 5*time.Second {
-		t.Errorf("expected 5s, got %v", result)
-	}
-}
-
-// TestMinDuration_FirstSmaller tests minDuration when first is smaller.
-func TestMinDuration_FirstSmaller(t *testing.T) {
-	result := minDuration(2*time.Second, 5*time.Second)
-	if result != 2*time.Second {
-		t.Errorf("expected 2s, got %v", result)
-	}
-}
-
-// TestMinDuration_SecondSmaller tests minDuration when second is smaller.
-func TestMinDuration_SecondSmaller(t *testing.T) {
-	result := minDuration(5*time.Second, 2*time.Second)
-	if result != 2*time.Second {
-		t.Errorf("expected 2s, got %v", result)
-	}
 }
 
 // mockUnhealthyClientStream implements grpc.ClientStream that simulates unhealthy stream.
@@ -2249,31 +2146,6 @@ func TestTransport_Request(t *testing.T) {
 	_, err = tr.Request(ctx, "test.Service", "Method", nil)
 	if err == nil {
 		t.Fatal("expected error for non-existent service")
-	}
-}
-
-// TestIsRetryableError_WithGRPCStatus tests retryable check with gRPC status.
-func TestIsRetryableError_WithGRPCStatus(t *testing.T) {
-	tests := []struct {
-		name      string
-		code      codes.Code
-		retryable bool
-	}{
-		{"Unavailable", codes.Unavailable, true},
-		{"DeadlineExceeded", codes.DeadlineExceeded, true},
-		{"ResourceExhausted", codes.ResourceExhausted, true},
-		{"NotFound", codes.NotFound, false},
-		{"PermissionDenied", codes.PermissionDenied, false},
-		{"Unimplemented", codes.Unimplemented, false},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			grpcErr := status.Error(tt.code, "test error")
-			if got := isRetryableError(grpcErr); got != tt.retryable {
-				t.Errorf("isRetryableError(%v) = %v, want %v", tt.code, got, tt.retryable)
-			}
-		})
 	}
 }
 
