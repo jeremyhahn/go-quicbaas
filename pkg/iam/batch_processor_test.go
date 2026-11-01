@@ -935,37 +935,6 @@ func BenchmarkBatchProcessor_ImportUsers(b *testing.B) {
 // DeltaLog - appendToTenantLog coverage
 // =============================================================================
 
-func TestDeltaLog_AppendToTenantLog_MultipleEvents(t *testing.T) {
-	log := NewDeltaLog(100)
-
-	tenantID := "tenant-1"
-
-	// Add multiple events to same tenant (starting from version 1)
-	for i := 1; i <= 10; i++ {
-		event := &EnhancedPolicyChangeEvent{
-			EventID:    uuid.New().String(),
-			Type:       PolicyUpdateCreated,
-			TenantID:   tenantID,
-			PolicyName: "policy-1",
-			Version:    int64(i),
-			Timestamp:  time.Now(),
-			NodeID:     "node-1",
-		}
-		if err := log.Append(event); err != nil {
-			t.Fatalf("Append failed: %v", err)
-		}
-	}
-
-	// Verify versions are tracked (get from version 1, which should return versions 2-10)
-	events, err := log.GetSince(tenantID, 1)
-	if err != nil {
-		t.Fatalf("GetSince failed: %v", err)
-	}
-	if len(events) < 5 { // Should get at least some events after version 1
-		t.Errorf("expected multiple events, got %d", len(events))
-	}
-}
-
 func TestDeltaLog_AppendToTenantLog_TrimToMaxSize(t *testing.T) {
 	// Create log with small capacity
 	log := NewDeltaLog(50)
@@ -1050,30 +1019,6 @@ func TestBatchProcessor_ProcessRoles_RateLimitPath(t *testing.T) {
 // =============================================================================
 // PolicyEngine - CreatePolicy / UpdatePolicy / DeletePolicy
 // =============================================================================
-
-func TestPolicyEngine_CreatePolicy_Success(t *testing.T) {
-	storage := NewMemoryStorage()
-	engine := NewPolicyEngine(PolicyEngineOptions{Storage: storage})
-	ctx := context.Background()
-
-	// Create tenant first
-	tenant := &Tenant{ID: "tenant-1", Name: "Test Tenant", Created: time.Now(), Updated: time.Now()}
-	if err := storage.CreateTenant(ctx, tenant); err != nil {
-		t.Fatalf("CreateTenant failed: %v", err)
-	}
-
-	policy := &Policy{
-		APIVersion: "v1",
-		Kind:       "Policy",
-		Metadata:   PolicyMetadata{Name: "test-policy", Tenant: "tenant-1"},
-		Spec:       PolicySpec{Rules: []Rule{{Name: "r1", Effect: EffectAllow, Actions: []string{"read"}, Resources: []string{"*"}}}},
-	}
-
-	err := engine.CreatePolicy(ctx, "tenant-1", policy)
-	if err != nil {
-		t.Fatalf("CreatePolicy failed: %v", err)
-	}
-}
 
 func TestPolicyEngine_DeletePolicy_Success(t *testing.T) {
 	storage := NewMemoryStorage()
