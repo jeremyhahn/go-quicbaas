@@ -827,49 +827,66 @@ func TestClient_ListParameters_Success(t *testing.T) {
 }
 
 func TestClient_ListParameters_Validation(t *testing.T) {
-	mockT := &mockTransport{
-		requestFn: func(ctx context.Context, service, method string, req interface{}) (interface{}, error) {
-			return &ListParametersResponse{
-				Parameters: []*ParameterValue{},
-				Timestamp:  time.Now(),
-			}, nil
-		},
-	}
-	c := NewClient(mockT)
 	ctx := context.Background()
+	validReq := &ListParametersRequest{Prefix: "/app/"}
+	validResp := &ListParametersResponse{
+		Parameters: []*ParameterValue{},
+		Timestamp:  time.Now(),
+	}
 
 	tests := []struct {
-		name    string
-		req     *ListParametersRequest
-		wantErr bool
+		name     string
+		req      *ListParametersRequest
+		resp     interface{}
+		respErr  error
+		wantErr  bool
+		wantCode errors.ErrorCode
 	}{
 		{
-			name:    "nil request",
-			req:     nil,
-			wantErr: true,
+			name:     "nil request",
+			req:      nil,
+			wantErr:  true,
+			wantCode: errors.CodeInvalidInput,
 		},
 		{
-			name:    "empty prefix is valid (lists all)",
-			req:     &ListParametersRequest{},
-			wantErr: false,
+			name:     "transport error",
+			req:      validReq,
+			respErr:  errors.NewUnavailable("test", "server unavailable"),
+			wantErr:  true,
+			wantCode: errors.CodeUnavailable,
 		},
 		{
-			name:    "valid request with prefix",
-			req:     &ListParametersRequest{Prefix: "/app/"},
-			wantErr: false,
+			name:     "invalid response type",
+			req:      validReq,
+			resp:     "invalid-type",
+			wantErr:  true,
+			wantCode: errors.CodeInternal,
+		},
+		{
+			name: "empty prefix is valid (lists all)",
+			req:  &ListParametersRequest{},
+			resp: validResp,
+		},
+		{
+			name: "valid request with prefix",
+			req:  validReq,
+			resp: validResp,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			c := NewClient(&mockTransport{
+				requestFn: func(ctx context.Context, service, method string, req interface{}) (interface{}, error) {
+					return tt.resp, tt.respErr
+				},
+			})
 			_, err := c.ListParameters(ctx, tt.req)
 			if (err != nil) != tt.wantErr {
-				t.Errorf("ListParameters() error = %v, wantErr %v", err, tt.wantErr)
+				t.Fatalf("ListParameters() error = %v, wantErr %v", err, tt.wantErr)
 			}
-			if tt.wantErr && err != nil {
-				if !errors.IsInvalidInput(err) {
-					t.Errorf("expected InvalidInput error, got %v", err)
-				}
+			if tt.wantErr && errors.Code(err) != tt.wantCode {
+				t.Errorf("expected %v error, got %v", tt.wantCode, err)
 			}
 		})
 	}
@@ -893,39 +910,6 @@ func TestClient_ListParameters_NilResponse(t *testing.T) {
 	}
 	if resp.Parameters == nil {
 		t.Error("expected non-nil parameters slice")
-	}
-}
-
-func TestClient_ListParameters_TransportError(t *testing.T) {
-	mockT := &mockTransport{
-		requestFn: func(ctx context.Context, service, method string, req interface{}) (interface{}, error) {
-			return nil, errors.NewUnavailable("test", "server unavailable")
-		},
-	}
-	c := NewClient(mockT)
-	ctx := context.Background()
-
-	_, err := c.ListParameters(ctx, &ListParametersRequest{Prefix: "/app/"})
-	if err == nil {
-		t.Error("expected error")
-	}
-	if !errors.IsUnavailable(err) {
-		t.Errorf("expected Unavailable error, got %v", err)
-	}
-}
-
-func TestClient_ListParameters_InvalidResponseType(t *testing.T) {
-	mockT := &mockTransport{
-		requestFn: func(ctx context.Context, service, method string, req interface{}) (interface{}, error) {
-			return "invalid-type", nil
-		},
-	}
-	c := NewClient(mockT)
-	ctx := context.Background()
-
-	_, err := c.ListParameters(ctx, &ListParametersRequest{Prefix: "/app/"})
-	if err == nil {
-		t.Error("expected error for invalid response type")
 	}
 }
 
