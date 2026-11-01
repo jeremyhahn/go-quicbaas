@@ -490,7 +490,9 @@ jobs:
     # with CI Gate's FULL_TIER expression as `if:`, and marks it full there.
     timeout-minutes: 120      # CUSTOMIZE
     needs: [changes]
-    if: ${{ needs.changes.outputs.docs_only != 'true' }}
+    # Ruling 283(9): drafts run lint and unit only. A draft's Integration
+    # runs on the first push after the pull request is marked ready.
+    if: ${{ needs.changes.outputs.docs_only != 'true' && !github.event.pull_request.draft }}
     env:
       CI_STACK_PREFIX: ${{ github.event.repository.name }}-ci-
       IT_PROJECT: ${{ github.event.repository.name }}-ci-${{ github.run_id }}-${{ github.run_attempt }}

@@ -324,7 +324,7 @@ func TestDocsOnlyBuildsTheToolchainImageAlone(t *testing.T) {
 
 func TestIntegrationSkipsOnlyForADocsOnlyPullRequest(t *testing.T) {
 	_, jobs := ciJobs(t, readFile(t, ciWorkflowPath))
-	const cond = "if: ${{ needs.changes.outputs.docs_only != 'true' }}"
+	const cond = "if: ${{ needs.changes.outputs.docs_only != 'true' && !github.event.pull_request.draft }}"
 	if !strings.Contains(jobs["integration"], "\n    "+cond+"\n") {
 		t.Errorf("integration job lacks %q. It must skip for a docs-only pull "+
 			"request and run for every other change.", cond)
