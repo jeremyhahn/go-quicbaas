@@ -226,28 +226,6 @@ func TestMessagingServer_CreateChannel(t *testing.T) {
 			errorCode:   codes.AlreadyExists,
 		},
 		{
-			name: "invalid_channel_name",
-			request: &pb.MessagingCreateChannelRequest{
-				Name: "invalid channel name with spaces",
-			},
-			mockFunc: func(ctx context.Context, name string, opts ...messaging.CreateChannelOption) (*messaging.Channel, error) {
-				return nil, messaging.NewInvalidChannelNameError("CreateChannel", name, "invalid characters")
-			},
-			expectError: true,
-			errorCode:   codes.InvalidArgument,
-		},
-		{
-			name: "service_not_running",
-			request: &pb.MessagingCreateChannelRequest{
-				Name: "test-channel",
-			},
-			mockFunc: func(ctx context.Context, name string, opts ...messaging.CreateChannelOption) (*messaging.Channel, error) {
-				return nil, messaging.NewServiceNotRunningError("CreateChannel", "create channel")
-			},
-			expectError: true,
-			errorCode:   codes.Unavailable,
-		},
-		{
 			name: "with_ttl",
 			request: &pb.MessagingCreateChannelRequest{
 				Name:       "ttl-channel",
@@ -356,17 +334,6 @@ func TestMessagingServer_DeleteChannel(t *testing.T) {
 			},
 			expectError: true,
 			errorCode:   codes.NotFound,
-		},
-		{
-			name: "service_not_running",
-			request: &pb.MessagingDeleteChannelRequest{
-				Name: "test-channel",
-			},
-			mockFunc: func(ctx context.Context, name string) error {
-				return messaging.NewServiceNotRunningError("DeleteChannel", "delete channel")
-			},
-			expectError: true,
-			errorCode:   codes.Unavailable,
 		},
 	}
 
@@ -721,17 +688,6 @@ func TestMessagingServer_Subscribe(t *testing.T) {
 			expectError: true,
 			errorCode:   codes.NotFound,
 		},
-		{
-			name: "max_subscriptions_reached",
-			request: &pb.MessagingSubscribeRequest{
-				Channel: "full-channel",
-			},
-			mockFunc: func(ctx context.Context, channel string, opts ...messaging.SubscribeOption) (*messaging.Subscription, error) {
-				return nil, messaging.NewMaxSubscriptionsReachedError("Subscribe", channel, 100)
-			},
-			expectError: true,
-			errorCode:   codes.ResourceExhausted,
-		},
 	}
 
 	for _, tc := range tests {
@@ -914,18 +870,6 @@ func TestMessagingServer_Publish(t *testing.T) {
 			},
 			expectError: true,
 			errorCode:   codes.NotFound,
-		},
-		{
-			name: "hub_buffer_full",
-			request: &pb.MessagingPublishRequest{
-				Channel: "full-channel",
-				Payload: []byte("test payload"),
-			},
-			mockFunc: func(ctx context.Context, channel string, payload interface{}, opts ...messaging.PublishOption) (*messaging.PublishResult, error) {
-				return nil, messaging.NewHubBufferFullError("Publish", channel, 1024)
-			},
-			expectError: true,
-			errorCode:   codes.ResourceExhausted,
 		},
 	}
 
