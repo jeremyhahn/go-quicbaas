@@ -747,38 +747,6 @@ func TestSessionManager_EnforcePolicy(t *testing.T) {
 	})
 }
 
-func TestSessionPolicy_Validation(t *testing.T) {
-	t.Run("valid_policy", func(t *testing.T) {
-		policy := &SessionPolicy{
-			MaxConcurrent:      5,
-			IdleTimeout:        30 * time.Minute,
-			AbsoluteTimeout:    24 * time.Hour,
-			RememberDeviceDays: 7,
-		}
-
-		err := policy.Validate()
-		assert.NoError(t, err)
-	})
-
-	t.Run("invalid_max_concurrent", func(t *testing.T) {
-		policy := &SessionPolicy{
-			MaxConcurrent: -1,
-		}
-
-		err := policy.Validate()
-		assert.Error(t, err)
-	})
-
-	t.Run("invalid_idle_timeout", func(t *testing.T) {
-		policy := &SessionPolicy{
-			IdleTimeout: -1 * time.Minute,
-		}
-
-		err := policy.Validate()
-		assert.Error(t, err)
-	})
-}
-
 func TestDeviceInfo_Validation(t *testing.T) {
 	t.Run("valid_device_info", func(t *testing.T) {
 		device := &DeviceInfo{
@@ -1219,26 +1187,6 @@ func TestSessionExt_Validate_MissingTenantID(t *testing.T) {
 	err := session.Validate()
 	if err == nil {
 		t.Fatal("expected error for missing tenant ID")
-	}
-}
-
-func TestSessionPolicy_Validate_NegativeMaxConcurrent(t *testing.T) {
-	p := &SessionPolicy{
-		MaxConcurrent: -1,
-	}
-	err := p.Validate()
-	if err == nil {
-		t.Fatal("expected error for negative max concurrent")
-	}
-}
-
-func TestSessionPolicy_Validate_NegativeIdleTimeout(t *testing.T) {
-	p := &SessionPolicy{
-		IdleTimeout: -1 * time.Second,
-	}
-	err := p.Validate()
-	if err == nil {
-		t.Fatal("expected error for negative idle timeout")
 	}
 }
 
@@ -2140,29 +2088,6 @@ func TestBackendStorage_ListPoliciesFinal(t *testing.T) {
 // Session Storage Coverage Improvement Tests
 // =============================================================================
 
-func TestMemorySessionExtStorage_GetByToken_SuccessFinal(t *testing.T) {
-	ctx := context.Background()
-	storage := NewMemorySessionExtStorage()
-
-	tokenHash := hashTokenForTestFinal("test-token-for-lookup-final")
-	session := &SessionExt{
-		ID:         uuid.New().String(),
-		UserID:     40044,
-		TenantID:   "tenant-storage-1",
-		TokenHash:  tokenHash,
-		Created:    time.Now(),
-		LastActive: time.Now(),
-		ExpiresAt:  time.Now().Add(24 * time.Hour),
-	}
-	err := storage.Create(ctx, session)
-	require.NoError(t, err)
-
-	// Retrieve by token
-	retrieved, err := storage.GetByToken(ctx, tokenHash)
-	require.NoError(t, err)
-	assert.Equal(t, session.ID, retrieved.ID)
-}
-
 func TestMemorySessionExtStorage_Update_SuccessFinal(t *testing.T) {
 	ctx := context.Background()
 	storage := NewMemorySessionExtStorage()
@@ -2191,99 +2116,29 @@ func TestMemorySessionExtStorage_Update_SuccessFinal(t *testing.T) {
 	assert.Equal(t, "192.168.1.100", retrieved.IPAddress)
 }
 
-func TestMemorySessionExtStorage_CleanupExpired_WithExpiredSessionsFinal(t *testing.T) {
-	ctx := context.Background()
-	storage := NewMemorySessionExtStorage()
-
-	// Create expired session
-	expiredSession := &SessionExt{
-		ID:         uuid.New().String(),
-		UserID:     40046,
-		TenantID:   "tenant-cleanup-1",
-		TokenHash:  hashTokenForTestFinal("expired-cleanup-token-final"),
-		Created:    time.Now().Add(-2 * time.Hour),
-		LastActive: time.Now().Add(-2 * time.Hour),
-		ExpiresAt:  time.Now().Add(-1 * time.Hour), // Already expired
-	}
-	err := storage.Create(ctx, expiredSession)
-	require.NoError(t, err)
-
-	// Create valid session
-	validSession := &SessionExt{
-		ID:         uuid.New().String(),
-		UserID:     40047,
-		TenantID:   "tenant-cleanup-1",
-		TokenHash:  hashTokenForTestFinal("valid-cleanup-token-final"),
-		Created:    time.Now(),
-		LastActive: time.Now(),
-		ExpiresAt:  time.Now().Add(24 * time.Hour),
-	}
-	err = storage.Create(ctx, validSession)
-	require.NoError(t, err)
-
-	// Cleanup expired
-	count, err := storage.CleanupExpired(ctx)
-	require.NoError(t, err)
-	assert.Equal(t, 1, count)
-
-	// Verify expired session is gone
-	_, err = storage.Get(ctx, expiredSession.ID)
-	assert.Error(t, err)
-
-	// Verify valid session remains
-	retrieved, err := storage.Get(ctx, validSession.ID)
-	require.NoError(t, err)
-	assert.Equal(t, validSession.ID, retrieved.ID)
-}
-
 // =============================================================================
 // SessionExt - IsIdle tests
 // =============================================================================
 
-func TestSessionExt_IsIdle_WithinTimeoutFinal(t *testing.T) {
-	policy := &SessionPolicy{
-		IdleTimeout: 30 * time.Minute,
+func TestSessionExt_IsIdleTimeout(t *testing.T) {
+	tests := []struct {
+		name       string
+		policy     *SessionPolicy
+		lastActive time.Duration
+		want       bool
+	}{
+		{"within_timeout", &SessionPolicy{IdleTimeout: 30 * time.Minute}, 10 * time.Minute, false},
+		{"beyond_timeout", &SessionPolicy{IdleTimeout: 30 * time.Minute}, 45 * time.Minute, true},
+		{"nil_policy", nil, 2 * time.Hour, false},
+		{"zero_timeout", &SessionPolicy{IdleTimeout: 0}, 24 * time.Hour, false},
 	}
 
-	session := &SessionExt{
-		LastActive: time.Now().Add(-10 * time.Minute), // Active 10 mins ago
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			session := &SessionExt{LastActive: time.Now().Add(-tt.lastActive)}
+			assert.Equal(t, tt.want, session.IsIdle(tt.policy))
+		})
 	}
-
-	assert.False(t, session.IsIdle(policy))
-}
-
-func TestSessionExt_IsIdle_BeyondTimeoutFinal(t *testing.T) {
-	policy := &SessionPolicy{
-		IdleTimeout: 30 * time.Minute,
-	}
-
-	session := &SessionExt{
-		LastActive: time.Now().Add(-45 * time.Minute), // Active 45 mins ago
-	}
-
-	assert.True(t, session.IsIdle(policy))
-}
-
-func TestSessionExt_IsIdle_NilPolicyFinal(t *testing.T) {
-	session := &SessionExt{
-		LastActive: time.Now().Add(-2 * time.Hour),
-	}
-
-	// Should not be idle if no policy
-	assert.False(t, session.IsIdle(nil))
-}
-
-func TestSessionExt_IsIdle_ZeroTimeoutFinal(t *testing.T) {
-	policy := &SessionPolicy{
-		IdleTimeout: 0, // No idle timeout
-	}
-
-	session := &SessionExt{
-		LastActive: time.Now().Add(-24 * time.Hour), // Very old
-	}
-
-	// Should not be idle if timeout is 0
-	assert.False(t, session.IsIdle(policy))
 }
 
 // =============================================================================
@@ -2338,7 +2193,7 @@ func TestWithSessionStorageCoverage(t *testing.T) {
 // Tests for session_types.go - SessionPolicy.Validate
 // =============================================================================
 
-func TestSessionPolicy_ValidateCoverage(t *testing.T) {
+func TestSessionPolicy_Validate(t *testing.T) {
 	tests := []struct {
 		name    string
 		policy  *SessionPolicy
@@ -2396,45 +2251,6 @@ func TestSessionPolicy_ValidateCoverage(t *testing.T) {
 // =============================================================================
 // Tests for session_storage.go - MemorySessionExtStorage.Update
 // =============================================================================
-
-func TestMemorySessionExtStorage_UpdateCoverage(t *testing.T) {
-	storage := NewMemorySessionExtStorage()
-	ctx := context.Background()
-
-	t.Run("update nonexistent session", func(t *testing.T) {
-		session := &SessionExt{
-			ID:        uuid.New().String(),
-			TenantID:  "tenant-1",
-			UserID:    10001,
-			TokenHash: "token-hash-for-update-test",
-		}
-		err := storage.Update(ctx, session)
-		assert.Error(t, err)
-	})
-
-	t.Run("update existing session", func(t *testing.T) {
-		session := &SessionExt{
-			ID:        uuid.New().String(),
-			TenantID:  "tenant-1",
-			UserID:    10001,
-			TokenHash: "update-token-hash-123456789",
-			UserAgent: "original-agent",
-			IPAddress: "127.0.0.1",
-		}
-		err := storage.Create(ctx, session)
-		require.NoError(t, err)
-
-		// Update the session
-		session.UserAgent = "updated-agent"
-		err = storage.Update(ctx, session)
-		require.NoError(t, err)
-
-		// Verify the update
-		retrieved, err := storage.Get(ctx, session.ID)
-		require.NoError(t, err)
-		assert.Equal(t, "updated-agent", retrieved.UserAgent)
-	})
-}
 
 func TestSessionExtCopyBehavior(t *testing.T) {
 	// Test that MemorySessionExtStorage returns copies, not original references
