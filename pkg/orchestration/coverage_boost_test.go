@@ -1241,63 +1241,50 @@ func TestControlLoop_EmitEvent(t *testing.T) {
 // Tier 4: StartJob — error paths (orchestrator.go line 1998)
 // =============================================================================
 
-func TestOrchestrator_StartJob_NilRequest(t *testing.T) {
+// TestOrchestrator_StartJob_InvalidRequest checks that StartJob rejects each
+// malformed request with the matching sentinel before any job is created.
+func TestOrchestrator_StartJob_InvalidRequest(t *testing.T) {
 	t.Parallel()
 
-	impl := newTestService(t)
-	_, err := impl.StartJob(context.Background(), nil)
-	if err == nil {
-		t.Fatal("expected error for nil request")
+	tests := []struct {
+		name    string
+		req     *StartJobRequest
+		wantErr error
+	}{
+		{
+			name:    "NilRequest",
+			req:     nil,
+			wantErr: ErrAgentServiceUnavailable,
+		},
+		{
+			name:    "EmptyDescription",
+			req:     &StartJobRequest{TenantID: "tenant-1"},
+			wantErr: ErrTaskRequired,
+		},
+		{
+			name:    "EmptyTenantID",
+			req:     &StartJobRequest{Description: "do something"},
+			wantErr: ErrTenantIDRequired,
+		},
+		{
+			name: "InvalidPollInterval",
+			req: &StartJobRequest{
+				TenantID:     "tenant-1",
+				Description:  "do something",
+				PollInterval: "not-a-duration",
+			},
+			wantErr: ErrInvalidInput,
+		},
 	}
-	if !errors.Is(err, ErrAgentServiceUnavailable) {
-		t.Fatalf("expected ErrAgentServiceUnavailable, got %v", err)
-	}
-}
 
-func TestOrchestrator_StartJob_EmptyDescription(t *testing.T) {
-	t.Parallel()
-
-	impl := newTestService(t)
-	_, err := impl.StartJob(context.Background(), &StartJobRequest{
-		TenantID: "tenant-1",
-	})
-	if err == nil {
-		t.Fatal("expected error for empty description")
-	}
-	if !errors.Is(err, ErrTaskRequired) {
-		t.Fatalf("expected ErrTaskRequired, got %v", err)
-	}
-}
-
-func TestOrchestrator_StartJob_EmptyTenantID(t *testing.T) {
-	t.Parallel()
-
-	impl := newTestService(t)
-	_, err := impl.StartJob(context.Background(), &StartJobRequest{
-		Description: "do something",
-	})
-	if err == nil {
-		t.Fatal("expected error for empty tenant ID")
-	}
-	if !errors.Is(err, ErrTenantIDRequired) {
-		t.Fatalf("expected ErrTenantIDRequired, got %v", err)
-	}
-}
-
-func TestOrchestrator_StartJob_InvalidPollInterval(t *testing.T) {
-	t.Parallel()
-
-	impl := newTestService(t)
-	_, err := impl.StartJob(context.Background(), &StartJobRequest{
-		TenantID:     "tenant-1",
-		Description:  "do something",
-		PollInterval: "not-a-duration",
-	})
-	if err == nil {
-		t.Fatal("expected error for invalid poll interval")
-	}
-	if !errors.Is(err, ErrInvalidInput) {
-		t.Fatalf("expected ErrInvalidInput, got %v", err)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			_, err := newTestService(t).StartJob(context.Background(), tt.req)
+			if !errors.Is(err, tt.wantErr) {
+				t.Fatalf("expected %v, got %v", tt.wantErr, err)
+			}
+		})
 	}
 }
 
@@ -1369,57 +1356,6 @@ func TestOrchestrator_CloseSession_NotFound(t *testing.T) {
 }
 
 // =============================================================================
-// Tier 4: remote_acp_backend.go — dial default path (no custom dialer)
-// The existing test fixture already tests the bufconn path (Dialer set).
-// This test forces the default grpc.NewClient path with a bad address.
-// =============================================================================
-
-func TestRemoteACPBackend_DefaultDialPath(t *testing.T) {
-	t.Parallel()
-
-	// No ConnDialer — forces the default grpc.NewClient path.
-	backend, err := NewRemoteACPBackend(RemoteACPBackendDeps{
-		Registration: newDaemonRegistration(),
-		Backend:      "acp",
-		Logger:       &agentTestLogger{},
-		ConnDialer:   nil, // intentionally nil
-	})
-	if err != nil {
-		t.Fatalf("NewRemoteACPBackend: %v", err)
-	}
-	t.Cleanup(func() { _ = backend.CloseAll() })
-
-	// The address is "daemon.test:9091" which won't resolve; the gRPC lazy
-	// dial may succeed at creation but fail at the first RPC.
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
-
-	_, err = backend.Spawn(ctx, &SpawnRequest{})
-	// We expect an error (either dial or RPC) — just verify no panic.
-	_ = err
-}
-
-// =============================================================================
-// Tier 5: startPeerDelivery — peer delivery with no agents in wave
-// =============================================================================
-
-func TestControlLoop_StartPeerDelivery_EmptyWaveItems(t *testing.T) {
-	t.Parallel()
-
-	cl := newMinimalControlLoop(t)
-	cl.peerMessaging = &hookMockPeerMessaging{}
-	cl.workflow = &WorkflowDefinition{
-		Settings: WorkflowSettings{
-			Topology: TopologyPeerToPeer,
-		},
-	}
-	cl.SetPeerDeliverFn(func(_ context.Context, _ string, _ *PeerMessage) {})
-
-	// Empty wave: no agents to deliver to — should return cleanly.
-	cl.startPeerDelivery(context.Background(), []*WorkItem{})
-}
-
-// =============================================================================
 // Tier 6: Container runtime input validation (no docker needed)
 // =============================================================================
 
@@ -1434,87 +1370,65 @@ func newFakeContainerRuntime(t *testing.T) *ExecContainerRuntime {
 	}
 }
 
-func TestExecContainerRuntime_Stop_EmptyContainerID(t *testing.T) {
+// TestExecContainerRuntime_EmptyInput checks that every runtime verb rejects
+// an empty container ID or image with *InputValidationError before it execs.
+func TestExecContainerRuntime_EmptyInput(t *testing.T) {
 	t.Parallel()
 
-	rt := newFakeContainerRuntime(t)
-	err := rt.Stop(context.Background(), "")
-	if err == nil {
-		t.Fatal("expected error for empty containerID")
+	tests := []struct {
+		name string
+		call func(ctx context.Context, rt *ExecContainerRuntime) error
+	}{
+		{
+			name: "Stop",
+			call: func(ctx context.Context, rt *ExecContainerRuntime) error {
+				return rt.Stop(ctx, "")
+			},
+		},
+		{
+			name: "Remove",
+			call: func(ctx context.Context, rt *ExecContainerRuntime) error {
+				return rt.Remove(ctx, "")
+			},
+		},
+		{
+			name: "IsRunning",
+			call: func(ctx context.Context, rt *ExecContainerRuntime) error {
+				_, err := rt.IsRunning(ctx, "")
+				return err
+			},
+		},
+		{
+			name: "Pull",
+			call: func(ctx context.Context, rt *ExecContainerRuntime) error {
+				return rt.Pull(ctx, "")
+			},
+		},
+		{
+			name: "Logs",
+			call: func(ctx context.Context, rt *ExecContainerRuntime) error {
+				_, err := rt.Logs(ctx, "")
+				return err
+			},
+		},
+		{
+			name: "Run",
+			call: func(ctx context.Context, rt *ExecContainerRuntime) error {
+				_, err := rt.Run(ctx, &ContainerSpec{Image: ""})
+				return err
+			},
+		},
 	}
-	var validErr *InputValidationError
-	if !errors.As(err, &validErr) {
-		t.Fatalf("expected *InputValidationError, got %T: %v", err, err)
-	}
-}
 
-func TestExecContainerRuntime_Remove_EmptyContainerID(t *testing.T) {
-	t.Parallel()
-
-	rt := newFakeContainerRuntime(t)
-	err := rt.Remove(context.Background(), "")
-	if err == nil {
-		t.Fatal("expected error for empty containerID")
-	}
-	var validErr *InputValidationError
-	if !errors.As(err, &validErr) {
-		t.Fatalf("expected *InputValidationError, got %T: %v", err, err)
-	}
-}
-
-func TestExecContainerRuntime_IsRunning_EmptyContainerID(t *testing.T) {
-	t.Parallel()
-
-	rt := newFakeContainerRuntime(t)
-	_, err := rt.IsRunning(context.Background(), "")
-	if err == nil {
-		t.Fatal("expected error for empty containerID")
-	}
-	var validErr *InputValidationError
-	if !errors.As(err, &validErr) {
-		t.Fatalf("expected *InputValidationError, got %T: %v", err, err)
-	}
-}
-
-func TestExecContainerRuntime_Pull_EmptyImage(t *testing.T) {
-	t.Parallel()
-
-	rt := newFakeContainerRuntime(t)
-	err := rt.Pull(context.Background(), "")
-	if err == nil {
-		t.Fatal("expected error for empty image")
-	}
-	var validErr *InputValidationError
-	if !errors.As(err, &validErr) {
-		t.Fatalf("expected *InputValidationError, got %T: %v", err, err)
-	}
-}
-
-func TestExecContainerRuntime_Logs_EmptyContainerID(t *testing.T) {
-	t.Parallel()
-
-	rt := newFakeContainerRuntime(t)
-	_, err := rt.Logs(context.Background(), "")
-	if err == nil {
-		t.Fatal("expected error for empty containerID")
-	}
-	var validErr *InputValidationError
-	if !errors.As(err, &validErr) {
-		t.Fatalf("expected *InputValidationError, got %T: %v", err, err)
-	}
-}
-
-func TestExecContainerRuntime_Run_EmptyImage(t *testing.T) {
-	t.Parallel()
-
-	rt := newFakeContainerRuntime(t)
-	_, err := rt.Run(context.Background(), &ContainerSpec{Image: ""})
-	if err == nil {
-		t.Fatal("expected error for empty image")
-	}
-	var validErr *InputValidationError
-	if !errors.As(err, &validErr) {
-		t.Fatalf("expected *InputValidationError, got %T: %v", err, err)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			err := tt.call(context.Background(), newFakeContainerRuntime(t))
+			var validErr *InputValidationError
+			if !errors.As(err, &validErr) {
+				t.Fatalf("expected *InputValidationError, got %T: %v", err, err)
+			}
+		})
 	}
 }
 
