@@ -2997,247 +2997,76 @@ func TestList_EmptyValueIncluded(t *testing.T) {
 // were removed. Input-validation, fail-closed, and end-to-end bind/unbind
 // coverage lives in rbac_role_store_iam_test.go.
 
-func TestAggregate_NilRequest(t *testing.T) {
-	log := createTestLogger(t)
-	svc := &quicBaaS{logger: log}
-	tsSvc := &timeSeriesService{svc: svc}
+func TestAggregate_Errors(t *testing.T) {
+	validRange := &AggregateRequest{EntityType: "metrics", StartTime: 1, EndTime: 100}
+	tests := []struct {
+		name     string
+		qrdb     bool
+		req      *AggregateRequest
+		wantCode errors.ErrorCode
+	}{
+		{name: "nil request", req: nil, wantCode: errors.ErrInvalidInput},
+		{name: "empty entity type", req: &AggregateRequest{StartTime: 1, EndTime: 2}, wantCode: errors.ErrInvalidInput},
+		{name: "zero start time", req: &AggregateRequest{EntityType: "metrics", EndTime: 100}, wantCode: errors.ErrInvalidInput},
+		{name: "zero end time", req: &AggregateRequest{EntityType: "metrics", StartTime: 100}, wantCode: errors.ErrInvalidInput},
+		{name: "end before start", req: &AggregateRequest{EntityType: "metrics", StartTime: 100, EndTime: 50}, wantCode: errors.ErrInvalidInput},
+		{name: "no qrdb client", req: validRange, wantCode: errors.ErrInternal},
+		{name: "raft read error", qrdb: true, req: validRange, wantCode: errors.ErrRaft},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			svc := &quicBaaS{logger: createTestLogger(t)}
+			if tt.qrdb {
+				svc.qrdbClient = newSvcBoostMockQRDBProvider(nil, stderrors.New("raft read failed"))
+			}
+			tsSvc := &timeSeriesService{svc: svc}
 
-	_, err := tsSvc.Aggregate(tenantctx.WithSystem(context.Background()), nil)
-	require.Error(t, err)
+			_, err := tsSvc.Aggregate(tenantctx.WithSystem(context.Background()), tt.req)
+			require.Error(t, err)
 
-	qbErr, ok := err.(*errors.QBError)
-	assert.True(t, ok)
-	assert.Equal(t, errors.ErrInvalidInput, qbErr.Code)
+			qbErr, ok := err.(*errors.QBError)
+			require.True(t, ok)
+			assert.Equal(t, tt.wantCode, qbErr.Code)
+		})
+	}
 }
 
-func TestAggregate_EmptyEntityType(t *testing.T) {
-	log := createTestLogger(t)
-	svc := &quicBaaS{logger: log}
-	tsSvc := &timeSeriesService{svc: svc}
-
-	req := &AggregateRequest{
-		EntityType: "",
-		StartTime:  1,
-		EndTime:    2,
+func TestAggregate_Functions(t *testing.T) {
+	tests := []struct {
+		name       string
+		function   AggregateFunction
+		second     float64
+		wantResult float64
+	}{
+		{name: "sum", function: AggregateFunctionSum, second: 200, wantResult: 300},
+		{name: "avg", function: AggregateFunctionAvg, second: 200, wantResult: 150},
+		{name: "min", function: AggregateFunctionMin, second: 50, wantResult: 50},
+		{name: "max", function: AggregateFunctionMax, second: 200, wantResult: 200},
+		{name: "count", function: AggregateFunctionCount, second: 200, wantResult: 2},
 	}
-	_, err := tsSvc.Aggregate(tenantctx.WithSystem(context.Background()), req)
-	require.Error(t, err)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			json1, err := json.Marshal(map[string]interface{}{"timestamp": float64(10), "value": float64(100)})
+			require.NoError(t, err)
+			json2, err := json.Marshal(map[string]interface{}{"timestamp": float64(20), "value": tt.second})
+			require.NoError(t, err)
 
-	qbErr, ok := err.(*errors.QBError)
-	assert.True(t, ok)
-	assert.Equal(t, errors.ErrInvalidInput, qbErr.Code)
-}
+			qrdbProvider := newSvcBoostMockQRDBProvider(sliceToCannedScanResult([][]byte{json1, json2}), nil)
+			svc := &quicBaaS{logger: createTestLogger(t), qrdbClient: qrdbProvider}
+			tsSvc := &timeSeriesService{svc: svc}
 
-func TestAggregate_InvalidStartTime(t *testing.T) {
-	log := createTestLogger(t)
-	svc := &quicBaaS{logger: log}
-	tsSvc := &timeSeriesService{svc: svc}
-
-	req := &AggregateRequest{
-		EntityType: "metrics",
-		StartTime:  0,
-		EndTime:    100,
+			req := &AggregateRequest{
+				EntityType: "metrics",
+				StartTime:  1,
+				EndTime:    100,
+				Function:   tt.function,
+			}
+			resp, err := tsSvc.Aggregate(tenantctx.WithSystem(context.Background()), req)
+			require.NoError(t, err)
+			assert.Equal(t, tt.wantResult, resp.Result)
+			assert.Equal(t, uint64(2), resp.Count)
+		})
 	}
-	_, err := tsSvc.Aggregate(tenantctx.WithSystem(context.Background()), req)
-	require.Error(t, err)
-
-	qbErr, ok := err.(*errors.QBError)
-	assert.True(t, ok)
-	assert.Equal(t, errors.ErrInvalidInput, qbErr.Code)
-}
-
-func TestAggregate_InvalidEndTime(t *testing.T) {
-	log := createTestLogger(t)
-	svc := &quicBaaS{logger: log}
-	tsSvc := &timeSeriesService{svc: svc}
-
-	req := &AggregateRequest{
-		EntityType: "metrics",
-		StartTime:  100,
-		EndTime:    0,
-	}
-	_, err := tsSvc.Aggregate(tenantctx.WithSystem(context.Background()), req)
-	require.Error(t, err)
-
-	qbErr, ok := err.(*errors.QBError)
-	assert.True(t, ok)
-	assert.Equal(t, errors.ErrInvalidInput, qbErr.Code)
-}
-
-func TestAggregate_EndTimeBeforeStartTime(t *testing.T) {
-	log := createTestLogger(t)
-	svc := &quicBaaS{logger: log}
-	tsSvc := &timeSeriesService{svc: svc}
-
-	req := &AggregateRequest{
-		EntityType: "metrics",
-		StartTime:  100,
-		EndTime:    50,
-	}
-	_, err := tsSvc.Aggregate(tenantctx.WithSystem(context.Background()), req)
-	require.Error(t, err)
-
-	qbErr, ok := err.(*errors.QBError)
-	assert.True(t, ok)
-	assert.Equal(t, errors.ErrInvalidInput, qbErr.Code)
-}
-
-func TestAggregate_NilRaftNode(t *testing.T) {
-	log := createTestLogger(t)
-	svc := &quicBaaS{logger: log, raftNode: nil}
-	tsSvc := &timeSeriesService{svc: svc}
-
-	req := &AggregateRequest{
-		EntityType: "metrics",
-		StartTime:  1,
-		EndTime:    100,
-	}
-	_, err := tsSvc.Aggregate(tenantctx.WithSystem(context.Background()), req)
-	require.Error(t, err)
-
-	qbErr, ok := err.(*errors.QBError)
-	assert.True(t, ok)
-	assert.Equal(t, errors.ErrInternal, qbErr.Code)
-}
-
-func TestAggregate_RaftReadError(t *testing.T) {
-	log := createTestLogger(t)
-	qrdbProvider := newSvcBoostMockQRDBProvider(nil, stderrors.New("raft read failed"))
-	svc := &quicBaaS{logger: log, qrdbClient: qrdbProvider}
-	tsSvc := &timeSeriesService{svc: svc}
-
-	req := &AggregateRequest{
-		EntityType: "metrics",
-		StartTime:  1,
-		EndTime:    100,
-	}
-	_, err := tsSvc.Aggregate(tenantctx.WithSystem(context.Background()), req)
-	require.Error(t, err)
-
-	qbErr, ok := err.(*errors.QBError)
-	assert.True(t, ok)
-	assert.Equal(t, errors.ErrRaft, qbErr.Code)
-}
-
-func TestAggregate_SuccessSum(t *testing.T) {
-	log := createTestLogger(t)
-
-	// Create time-series data with timestamp field
-	data1 := map[string]interface{}{"timestamp": float64(10), "value": float64(100)}
-	data2 := map[string]interface{}{"timestamp": float64(20), "value": float64(200)}
-	json1, _ := json.Marshal(data1)
-	json2, _ := json.Marshal(data2)
-
-	qrdbProvider := newSvcBoostMockQRDBProvider(sliceToCannedScanResult([][]byte{json1, json2}), nil)
-	svc := &quicBaaS{logger: log, qrdbClient: qrdbProvider}
-	tsSvc := &timeSeriesService{svc: svc}
-
-	req := &AggregateRequest{
-		EntityType: "metrics",
-		StartTime:  1,
-		EndTime:    100,
-		Function:   AggregateFunctionSum,
-	}
-	resp, err := tsSvc.Aggregate(tenantctx.WithSystem(context.Background()), req)
-	require.NoError(t, err)
-	assert.Equal(t, float64(300), resp.Result)
-	assert.Equal(t, uint64(2), resp.Count)
-}
-
-func TestAggregate_SuccessAvg(t *testing.T) {
-	log := createTestLogger(t)
-
-	data1 := map[string]interface{}{"timestamp": float64(10), "value": float64(100)}
-	data2 := map[string]interface{}{"timestamp": float64(20), "value": float64(200)}
-	json1, _ := json.Marshal(data1)
-	json2, _ := json.Marshal(data2)
-
-	qrdbProvider := newSvcBoostMockQRDBProvider(sliceToCannedScanResult([][]byte{json1, json2}), nil)
-	svc := &quicBaaS{logger: log, qrdbClient: qrdbProvider}
-	tsSvc := &timeSeriesService{svc: svc}
-
-	req := &AggregateRequest{
-		EntityType: "metrics",
-		StartTime:  1,
-		EndTime:    100,
-		Function:   AggregateFunctionAvg,
-	}
-	resp, err := tsSvc.Aggregate(tenantctx.WithSystem(context.Background()), req)
-	require.NoError(t, err)
-	assert.Equal(t, float64(150), resp.Result)
-	assert.Equal(t, uint64(2), resp.Count)
-}
-
-func TestAggregate_SuccessMin(t *testing.T) {
-	log := createTestLogger(t)
-
-	data1 := map[string]interface{}{"timestamp": float64(10), "value": float64(100)}
-	data2 := map[string]interface{}{"timestamp": float64(20), "value": float64(50)}
-	json1, _ := json.Marshal(data1)
-	json2, _ := json.Marshal(data2)
-
-	qrdbProvider := newSvcBoostMockQRDBProvider(sliceToCannedScanResult([][]byte{json1, json2}), nil)
-	svc := &quicBaaS{logger: log, qrdbClient: qrdbProvider}
-	tsSvc := &timeSeriesService{svc: svc}
-
-	req := &AggregateRequest{
-		EntityType: "metrics",
-		StartTime:  1,
-		EndTime:    100,
-		Function:   AggregateFunctionMin,
-	}
-	resp, err := tsSvc.Aggregate(tenantctx.WithSystem(context.Background()), req)
-	require.NoError(t, err)
-	assert.Equal(t, float64(50), resp.Result)
-	assert.Equal(t, uint64(2), resp.Count)
-}
-
-func TestAggregate_SuccessMax(t *testing.T) {
-	log := createTestLogger(t)
-
-	data1 := map[string]interface{}{"timestamp": float64(10), "value": float64(100)}
-	data2 := map[string]interface{}{"timestamp": float64(20), "value": float64(200)}
-	json1, _ := json.Marshal(data1)
-	json2, _ := json.Marshal(data2)
-
-	qrdbProvider := newSvcBoostMockQRDBProvider(sliceToCannedScanResult([][]byte{json1, json2}), nil)
-	svc := &quicBaaS{logger: log, qrdbClient: qrdbProvider}
-	tsSvc := &timeSeriesService{svc: svc}
-
-	req := &AggregateRequest{
-		EntityType: "metrics",
-		StartTime:  1,
-		EndTime:    100,
-		Function:   AggregateFunctionMax,
-	}
-	resp, err := tsSvc.Aggregate(tenantctx.WithSystem(context.Background()), req)
-	require.NoError(t, err)
-	assert.Equal(t, float64(200), resp.Result)
-	assert.Equal(t, uint64(2), resp.Count)
-}
-
-func TestAggregate_SuccessCount(t *testing.T) {
-	log := createTestLogger(t)
-
-	data1 := map[string]interface{}{"timestamp": float64(10), "value": float64(100)}
-	data2 := map[string]interface{}{"timestamp": float64(20), "value": float64(200)}
-	json1, _ := json.Marshal(data1)
-	json2, _ := json.Marshal(data2)
-
-	qrdbProvider := newSvcBoostMockQRDBProvider(sliceToCannedScanResult([][]byte{json1, json2}), nil)
-	svc := &quicBaaS{logger: log, qrdbClient: qrdbProvider}
-	tsSvc := &timeSeriesService{svc: svc}
-
-	req := &AggregateRequest{
-		EntityType: "metrics",
-		StartTime:  1,
-		EndTime:    100,
-		Function:   AggregateFunctionCount,
-	}
-	resp, err := tsSvc.Aggregate(tenantctx.WithSystem(context.Background()), req)
-	require.NoError(t, err)
-	assert.Equal(t, float64(2), resp.Result)
-	assert.Equal(t, uint64(2), resp.Count)
 }
 
 func TestAggregate_TimeRangeFiltering(t *testing.T) {
@@ -3365,133 +3194,39 @@ func TestAggregate_EmptyResult(t *testing.T) {
 	assert.Equal(t, uint64(0), resp.Count)
 }
 
-func TestTimeSeriesQuery_NilRequest(t *testing.T) {
-	log := createTestLogger(t)
-	svc := &quicBaaS{logger: log}
-	tsSvc := &timeSeriesService{svc: svc}
-
-	stream := make(chan *TimeSeriesQueryResponse, 1)
-	err := tsSvc.TimeSeriesQuery(tenantctx.WithSystem(context.Background()), nil, stream)
-	require.Error(t, err)
-
-	qbErr, ok := err.(*errors.QBError)
-	assert.True(t, ok)
-	assert.Equal(t, errors.ErrInvalidInput, qbErr.Code)
-}
-
-func TestTimeSeriesQuery_EmptyEntityType(t *testing.T) {
-	log := createTestLogger(t)
-	svc := &quicBaaS{logger: log}
-	tsSvc := &timeSeriesService{svc: svc}
-
-	req := &TimeSeriesQueryRequest{
-		EntityType: "",
-		StartTime:  1,
-		EndTime:    2,
+func TestTimeSeriesQuery_Errors(t *testing.T) {
+	validRange := &TimeSeriesQueryRequest{EntityType: "metrics", StartTime: 1, EndTime: 100}
+	tests := []struct {
+		name     string
+		qrdb     bool
+		req      *TimeSeriesQueryRequest
+		wantCode errors.ErrorCode
+	}{
+		{name: "nil request", req: nil, wantCode: errors.ErrInvalidInput},
+		{name: "empty entity type", req: &TimeSeriesQueryRequest{StartTime: 1, EndTime: 2}, wantCode: errors.ErrInvalidInput},
+		{name: "zero start time", req: &TimeSeriesQueryRequest{EntityType: "metrics", EndTime: 100}, wantCode: errors.ErrInvalidInput},
+		{name: "zero end time", req: &TimeSeriesQueryRequest{EntityType: "metrics", StartTime: 100}, wantCode: errors.ErrInvalidInput},
+		{name: "end before start", req: &TimeSeriesQueryRequest{EntityType: "metrics", StartTime: 100, EndTime: 50}, wantCode: errors.ErrInvalidInput},
+		{name: "no qrdb client", req: validRange, wantCode: errors.ErrInternal},
+		{name: "raft read error", qrdb: true, req: validRange, wantCode: errors.ErrRaft},
 	}
-	stream := make(chan *TimeSeriesQueryResponse, 1)
-	err := tsSvc.TimeSeriesQuery(tenantctx.WithSystem(context.Background()), req, stream)
-	require.Error(t, err)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			svc := &quicBaaS{logger: createTestLogger(t)}
+			if tt.qrdb {
+				svc.qrdbClient = newSvcBoostMockQRDBProvider(nil, stderrors.New("raft read failed"))
+			}
+			tsSvc := &timeSeriesService{svc: svc}
 
-	qbErr, ok := err.(*errors.QBError)
-	assert.True(t, ok)
-	assert.Equal(t, errors.ErrInvalidInput, qbErr.Code)
-}
+			stream := make(chan *TimeSeriesQueryResponse, 1)
+			err := tsSvc.TimeSeriesQuery(tenantctx.WithSystem(context.Background()), tt.req, stream)
+			require.Error(t, err)
 
-func TestTimeSeriesQuery_InvalidStartTime(t *testing.T) {
-	log := createTestLogger(t)
-	svc := &quicBaaS{logger: log}
-	tsSvc := &timeSeriesService{svc: svc}
-
-	req := &TimeSeriesQueryRequest{
-		EntityType: "metrics",
-		StartTime:  0,
-		EndTime:    100,
+			qbErr, ok := err.(*errors.QBError)
+			require.True(t, ok)
+			assert.Equal(t, tt.wantCode, qbErr.Code)
+		})
 	}
-	stream := make(chan *TimeSeriesQueryResponse, 1)
-	err := tsSvc.TimeSeriesQuery(tenantctx.WithSystem(context.Background()), req, stream)
-	require.Error(t, err)
-
-	qbErr, ok := err.(*errors.QBError)
-	assert.True(t, ok)
-	assert.Equal(t, errors.ErrInvalidInput, qbErr.Code)
-}
-
-func TestTimeSeriesQuery_InvalidEndTime(t *testing.T) {
-	log := createTestLogger(t)
-	svc := &quicBaaS{logger: log}
-	tsSvc := &timeSeriesService{svc: svc}
-
-	req := &TimeSeriesQueryRequest{
-		EntityType: "metrics",
-		StartTime:  100,
-		EndTime:    0,
-	}
-	stream := make(chan *TimeSeriesQueryResponse, 1)
-	err := tsSvc.TimeSeriesQuery(tenantctx.WithSystem(context.Background()), req, stream)
-	require.Error(t, err)
-
-	qbErr, ok := err.(*errors.QBError)
-	assert.True(t, ok)
-	assert.Equal(t, errors.ErrInvalidInput, qbErr.Code)
-}
-
-func TestTimeSeriesQuery_EndTimeBeforeStartTime(t *testing.T) {
-	log := createTestLogger(t)
-	svc := &quicBaaS{logger: log}
-	tsSvc := &timeSeriesService{svc: svc}
-
-	req := &TimeSeriesQueryRequest{
-		EntityType: "metrics",
-		StartTime:  100,
-		EndTime:    50,
-	}
-	stream := make(chan *TimeSeriesQueryResponse, 1)
-	err := tsSvc.TimeSeriesQuery(tenantctx.WithSystem(context.Background()), req, stream)
-	require.Error(t, err)
-
-	qbErr, ok := err.(*errors.QBError)
-	assert.True(t, ok)
-	assert.Equal(t, errors.ErrInvalidInput, qbErr.Code)
-}
-
-func TestTimeSeriesQuery_NilRaftNode(t *testing.T) {
-	log := createTestLogger(t)
-	svc := &quicBaaS{logger: log, raftNode: nil}
-	tsSvc := &timeSeriesService{svc: svc}
-
-	req := &TimeSeriesQueryRequest{
-		EntityType: "metrics",
-		StartTime:  1,
-		EndTime:    100,
-	}
-	stream := make(chan *TimeSeriesQueryResponse, 1)
-	err := tsSvc.TimeSeriesQuery(tenantctx.WithSystem(context.Background()), req, stream)
-	require.Error(t, err)
-
-	qbErr, ok := err.(*errors.QBError)
-	assert.True(t, ok)
-	assert.Equal(t, errors.ErrInternal, qbErr.Code)
-}
-
-func TestTimeSeriesQuery_RaftReadError(t *testing.T) {
-	log := createTestLogger(t)
-	qrdbProvider := newSvcBoostMockQRDBProvider(nil, stderrors.New("raft read failed"))
-	svc := &quicBaaS{logger: log, qrdbClient: qrdbProvider}
-	tsSvc := &timeSeriesService{svc: svc}
-
-	req := &TimeSeriesQueryRequest{
-		EntityType: "metrics",
-		StartTime:  1,
-		EndTime:    100,
-	}
-	stream := make(chan *TimeSeriesQueryResponse, 1)
-	err := tsSvc.TimeSeriesQuery(tenantctx.WithSystem(context.Background()), req, stream)
-	require.Error(t, err)
-
-	qbErr, ok := err.(*errors.QBError)
-	assert.True(t, ok)
-	assert.Equal(t, errors.ErrRaft, qbErr.Code)
 }
 
 func TestTimeSeriesQuery_Success(t *testing.T) {
@@ -5307,22 +5042,6 @@ func TestBackupService_CreateBackup_Error(t *testing.T) {
 	resp, err := svc.CreateBackup(tenantctx.WithSystem(context.Background()), req)
 	require.Error(t, err)
 	require.Nil(t, resp)
-}
-
-func TestTimeSeriesQuery_Coverage(t *testing.T) {
-	log := createTestLogger(t)
-	svc := &quicBaaS{logger: log, raftNode: nil}
-	svc.queryService = &queryService{svc: svc}
-	tsSvc := &timeSeriesService{svc: svc}
-
-	stream := make(chan *TimeSeriesQueryResponse, 1)
-	err := tsSvc.TimeSeriesQuery(tenantctx.WithSystem(context.Background()), &TimeSeriesQueryRequest{
-		EntityType: "metrics",
-		StartTime:  time.Now().Add(-1 * time.Hour).UnixNano(),
-		EndTime:    time.Now().UnixNano(),
-	}, stream)
-
-	require.Error(t, err)
 }
 
 // =============================================================================
