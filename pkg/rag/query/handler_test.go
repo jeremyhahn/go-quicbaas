@@ -517,24 +517,10 @@ func TestHandler_Close(t *testing.T) {
 	h, err := NewHandler(embedder, searcher, config)
 	require.NoError(t, err)
 
-	err = h.Close()
-	assert.NoError(t, err)
+	require.NoError(t, h.Close())
 
 	// Second close should be safe
-	err = h.Close()
-	assert.NoError(t, err)
-}
-
-func TestHandler_ClosedHandler(t *testing.T) {
-	embedder := newMockEmbedder()
-	searcher := newMockSearcher()
-	config := DefaultConfig()
-
-	h, err := NewHandler(embedder, searcher, config)
-	require.NoError(t, err)
-
-	err = h.Close()
-	require.NoError(t, err)
+	assert.NoError(t, h.Close())
 
 	ctx := context.Background()
 
