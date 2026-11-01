@@ -57,6 +57,27 @@ func TestXKMSToolsRegistered(t *testing.T) {
 		"xkms.seal",
 		"xkms.unseal",
 		"xkms.canSeal",
+		"xkms.piv.listSlots",
+		"xkms.piv.getCert",
+		"xkms.piv.storeCert",
+		"xkms.piv.deleteCert",
+		"xkms.piv.generateKey",
+		"xkms.piv.generateCSR",
+		"xkms.ca.getBundle",
+		"xkms.ca.getCert",
+		"xkms.ca.signCSR",
+		"xkms.ca.issueCert",
+		"xkms.ca.revokeCert",
+		"xkms.ca.generateCRL",
+		"xkms.ca.isRevoked",
+		"xkms.pin.setSO",
+		"xkms.pin.setUser",
+		"xkms.pin.changeSO",
+		"xkms.pin.changeUser",
+		"xkms.pin.verifySO",
+		"xkms.pin.verifyUser",
+		"xkms.pin.lockoutStatus",
+		"xkms.pin.resetLockout",
 	}
 
 	tools := registry.ListTools()
@@ -558,29 +579,6 @@ func TestXKMSVerifyInvalidBase64Signature(t *testing.T) {
 }
 
 // =============================================================================
-// ListKeys Handler Tests
-// =============================================================================
-
-// TestXKMSListKeysWithoutXKMS verifies listKeys handles uninitialized xkms.
-// The handler will attempt to call xkms.ListKeys which may return an error
-// if xkms is not initialized. This is expected behavior in unit tests.
-func TestXKMSListKeysWithoutXKMS(t *testing.T) {
-	log := newTestLogger(t)
-	svc := newMinimalMockService()
-	registry := NewToolRegistry(svc, log)
-
-	ctx := context.Background()
-	_, err := registry.handleXKMSListKeys(ctx, map[string]interface{}{})
-
-	// If xkms is not initialized, we expect an operation error
-	if err != nil {
-		var opErr *XKMSOperationError
-		assert.ErrorAs(t, err, &opErr)
-		assert.Equal(t, "listKeys", opErr.Operation)
-	}
-}
-
-// =============================================================================
 // ensureXKMSInitialized Tests
 // =============================================================================
 
@@ -793,134 +791,54 @@ func TestXKMSPINHandlersNotInitialized(t *testing.T) {
 }
 
 // =============================================================================
-// ListCerts Handler Tests
+// Handler Tests (xkms not initialized)
 // =============================================================================
 
-// TestXKMSListCertsUninitialized verifies listCerts returns an operation error
+// TestXKMSHandlersUninitialized verifies that each key and certificate handler,
+// given valid arguments, returns an XKMSOperationError naming its operation
 // when xkms is not initialized.
-func TestXKMSListCertsUninitialized(t *testing.T) {
+func TestXKMSHandlersUninitialized(t *testing.T) {
 	log := newTestLogger(t)
 	svc := newMinimalMockService()
 	registry := NewToolRegistry(svc, log)
-	ctx := context.Background()
 
-	_, err := registry.handleXKMSListCerts(ctx, map[string]interface{}{})
-	require.Error(t, err)
+	b64 := func(s string) string { return base64.StdEncoding.EncodeToString([]byte(s)) }
+	keyArgs := map[string]interface{}{"key_id": "test-key"}
 
-	var opErr *XKMSOperationError
-	assert.ErrorAs(t, err, &opErr)
-	assert.Equal(t, "listCerts", opErr.Operation)
+	tests := []struct {
+		name      string
+		handler   XKMSToolHandler
+		args      map[string]interface{}
+		operation string
+	}{
+		{"listCerts", registry.handleXKMSListCerts, map[string]interface{}{}, "listCerts"},
+		{"listCerts with backend", registry.handleXKMSListCerts, map[string]interface{}{"backend": "software"}, "listCerts"},
+		{"certExists", registry.handleXKMSCertExists, keyArgs, "certExists"},
+		{"getCert", registry.handleXKMSGetCert, keyArgs, "getCert"},
+		{"deleteCert", registry.handleXKMSDeleteCert, keyArgs, "deleteCert"},
+		{"getCertChain", registry.handleXKMSGetCertChain, keyArgs, "getCertChain"},
+		{"generateKey", registry.handleXKMSGenerateKey, keyArgs, "generateKey"},
+		{"getKey", registry.handleXKMSGetKey, keyArgs, "getKey"},
+		{"deleteKey", registry.handleXKMSDeleteKey, keyArgs, "deleteKey"},
+		{"rotateKey", registry.handleXKMSRotateKey, keyArgs, "rotateKey"},
+		{"sign", registry.handleXKMSSign, map[string]interface{}{"key_id": "test-key", "data": b64("data-to-sign")}, "sign"},
+		{"encrypt", registry.handleXKMSEncrypt, map[string]interface{}{"key_id": "test-key", "plaintext": b64("secret-data")}, "encrypt"},
+		{"decrypt", registry.handleXKMSDecrypt, map[string]interface{}{"key_id": "test-key", "ciphertext": b64("cipher")}, "decrypt"},
+		{"listKeys", registry.handleXKMSListKeys, map[string]interface{}{}, "listKeys"},
+		{"listKeys with backend", registry.handleXKMSListKeys, map[string]interface{}{"backend": "software"}, "listKeys"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := tt.handler(context.Background(), tt.args)
+			require.Error(t, err)
+
+			var opErr *XKMSOperationError
+			require.ErrorAs(t, err, &opErr)
+			assert.Equal(t, tt.operation, opErr.Operation)
+		})
+	}
 }
-
-// TestXKMSListCertsWithBackendUninitialized verifies listCerts with a backend
-// parameter returns an operation error when xkms is not initialized.
-func TestXKMSListCertsWithBackendUninitialized(t *testing.T) {
-	log := newTestLogger(t)
-	svc := newMinimalMockService()
-	registry := NewToolRegistry(svc, log)
-	ctx := context.Background()
-
-	_, err := registry.handleXKMSListCerts(ctx, map[string]interface{}{
-		"backend": "software",
-	})
-	require.Error(t, err)
-
-	var opErr *XKMSOperationError
-	assert.ErrorAs(t, err, &opErr)
-	assert.Equal(t, "listCerts", opErr.Operation)
-}
-
-// =============================================================================
-// CertExists Handler Tests
-// =============================================================================
-
-// TestXKMSCertExistsUninitialized verifies certExists returns an operation error
-// when xkms is not initialized.
-func TestXKMSCertExistsUninitialized(t *testing.T) {
-	log := newTestLogger(t)
-	svc := newMinimalMockService()
-	registry := NewToolRegistry(svc, log)
-	ctx := context.Background()
-
-	_, err := registry.handleXKMSCertExists(ctx, map[string]interface{}{
-		"key_id": "test-key",
-	})
-	require.Error(t, err)
-
-	var opErr *XKMSOperationError
-	assert.ErrorAs(t, err, &opErr)
-	assert.Equal(t, "certExists", opErr.Operation)
-}
-
-// =============================================================================
-// GetCert Handler Tests
-// =============================================================================
-
-// TestXKMSGetCertUninitialized verifies getCert returns an operation error
-// when xkms is not initialized.
-func TestXKMSGetCertUninitialized(t *testing.T) {
-	log := newTestLogger(t)
-	svc := newMinimalMockService()
-	registry := NewToolRegistry(svc, log)
-	ctx := context.Background()
-
-	_, err := registry.handleXKMSGetCert(ctx, map[string]interface{}{
-		"key_id": "test-key",
-	})
-	require.Error(t, err)
-
-	var opErr *XKMSOperationError
-	assert.ErrorAs(t, err, &opErr)
-	assert.Equal(t, "getCert", opErr.Operation)
-}
-
-// =============================================================================
-// DeleteCert Handler Tests
-// =============================================================================
-
-// TestXKMSDeleteCertUninitialized verifies deleteCert returns an operation error
-// when xkms is not initialized.
-func TestXKMSDeleteCertUninitialized(t *testing.T) {
-	log := newTestLogger(t)
-	svc := newMinimalMockService()
-	registry := NewToolRegistry(svc, log)
-	ctx := context.Background()
-
-	_, err := registry.handleXKMSDeleteCert(ctx, map[string]interface{}{
-		"key_id": "test-key",
-	})
-	require.Error(t, err)
-
-	var opErr *XKMSOperationError
-	assert.ErrorAs(t, err, &opErr)
-	assert.Equal(t, "deleteCert", opErr.Operation)
-}
-
-// =============================================================================
-// GetCertChain Handler Tests
-// =============================================================================
-
-// TestXKMSGetCertChainUninitialized verifies getCertChain returns an operation error
-// when xkms is not initialized.
-func TestXKMSGetCertChainUninitialized(t *testing.T) {
-	log := newTestLogger(t)
-	svc := newMinimalMockService()
-	registry := NewToolRegistry(svc, log)
-	ctx := context.Background()
-
-	_, err := registry.handleXKMSGetCertChain(ctx, map[string]interface{}{
-		"key_id": "test-key",
-	})
-	require.Error(t, err)
-
-	var opErr *XKMSOperationError
-	assert.ErrorAs(t, err, &opErr)
-	assert.Equal(t, "getCertChain", opErr.Operation)
-}
-
-// =============================================================================
-// SaveCertChain Handler Tests
-// =============================================================================
 
 // TestXKMSSaveCertChainInvalidPEM verifies saveCertChain rejects invalid PEM data.
 func TestXKMSSaveCertChainInvalidPEM(t *testing.T) {
@@ -937,121 +855,6 @@ func TestXKMSSaveCertChainInvalidPEM(t *testing.T) {
 	var pemErr *XKMSInvalidPEMError
 	assert.ErrorAs(t, err, &pemErr)
 }
-
-// =============================================================================
-// GenerateKey Handler Tests
-// =============================================================================
-
-// TestXKMSGenerateKeyUninitialized verifies generateKey returns an operation error
-// when xkms is not initialized (key generation fails).
-func TestXKMSGenerateKeyUninitialized(t *testing.T) {
-	log := newTestLogger(t)
-	svc := newMinimalMockService()
-	registry := NewToolRegistry(svc, log)
-	ctx := context.Background()
-
-	_, err := registry.handleXKMSGenerateKey(ctx, map[string]interface{}{
-		"key_id": "test-key",
-	})
-	require.Error(t, err)
-
-	var opErr *XKMSOperationError
-	assert.ErrorAs(t, err, &opErr)
-	assert.Equal(t, "generateKey", opErr.Operation)
-}
-
-// =============================================================================
-// GetKey Handler Tests
-// =============================================================================
-
-// TestXKMSGetKeyUninitialized verifies getKey returns an operation error when
-// xkms is not initialized.
-func TestXKMSGetKeyUninitialized(t *testing.T) {
-	log := newTestLogger(t)
-	svc := newMinimalMockService()
-	registry := NewToolRegistry(svc, log)
-	ctx := context.Background()
-
-	_, err := registry.handleXKMSGetKey(ctx, map[string]interface{}{
-		"key_id": "test-key",
-	})
-	require.Error(t, err)
-
-	var opErr *XKMSOperationError
-	assert.ErrorAs(t, err, &opErr)
-	assert.Equal(t, "getKey", opErr.Operation)
-}
-
-// =============================================================================
-// DeleteKey Handler Tests
-// =============================================================================
-
-// TestXKMSDeleteKeyUninitialized verifies deleteKey returns an operation error when
-// xkms is not initialized.
-func TestXKMSDeleteKeyUninitialized(t *testing.T) {
-	log := newTestLogger(t)
-	svc := newMinimalMockService()
-	registry := NewToolRegistry(svc, log)
-	ctx := context.Background()
-
-	_, err := registry.handleXKMSDeleteKey(ctx, map[string]interface{}{
-		"key_id": "test-key",
-	})
-	require.Error(t, err)
-
-	var opErr *XKMSOperationError
-	assert.ErrorAs(t, err, &opErr)
-	assert.Equal(t, "deleteKey", opErr.Operation)
-}
-
-// =============================================================================
-// RotateKey Handler Tests
-// =============================================================================
-
-// TestXKMSRotateKeyUninitialized verifies rotateKey returns an operation error when
-// xkms is not initialized.
-func TestXKMSRotateKeyUninitialized(t *testing.T) {
-	log := newTestLogger(t)
-	svc := newMinimalMockService()
-	registry := NewToolRegistry(svc, log)
-	ctx := context.Background()
-
-	_, err := registry.handleXKMSRotateKey(ctx, map[string]interface{}{
-		"key_id": "test-key",
-	})
-	require.Error(t, err)
-
-	var opErr *XKMSOperationError
-	assert.ErrorAs(t, err, &opErr)
-	assert.Equal(t, "rotateKey", opErr.Operation)
-}
-
-// =============================================================================
-// Sign Handler Tests (xkms not initialized)
-// =============================================================================
-
-// TestXKMSSignUninitialized verifies sign returns an operation error when
-// xkms is not initialized.
-func TestXKMSSignUninitialized(t *testing.T) {
-	log := newTestLogger(t)
-	svc := newMinimalMockService()
-	registry := NewToolRegistry(svc, log)
-	ctx := context.Background()
-
-	_, err := registry.handleXKMSSign(ctx, map[string]interface{}{
-		"key_id": "test-key",
-		"data":   base64.StdEncoding.EncodeToString([]byte("data-to-sign")),
-	})
-	require.Error(t, err)
-
-	var opErr *XKMSOperationError
-	assert.ErrorAs(t, err, &opErr)
-	assert.Equal(t, "sign", opErr.Operation)
-}
-
-// =============================================================================
-// Verify Handler Tests (xkms not initialized)
-// =============================================================================
 
 // TestXKMSVerifyUninitialized verifies verify returns valid=false when
 // xkms is not initialized (verification fails gracefully).
@@ -1075,167 +878,6 @@ func TestXKMSVerifyUninitialized(t *testing.T) {
 	valid, ok := resultMap["valid"].(bool)
 	require.True(t, ok)
 	assert.False(t, valid, "verification with uninitialized xkms should be invalid")
-}
-
-// =============================================================================
-// Encrypt Handler Tests (xkms not initialized)
-// =============================================================================
-
-// TestXKMSEncryptUninitialized verifies encrypt returns an operation error when
-// xkms is not initialized.
-func TestXKMSEncryptUninitialized(t *testing.T) {
-	log := newTestLogger(t)
-	svc := newMinimalMockService()
-	registry := NewToolRegistry(svc, log)
-	ctx := context.Background()
-
-	_, err := registry.handleXKMSEncrypt(ctx, map[string]interface{}{
-		"key_id":    "test-key",
-		"plaintext": base64.StdEncoding.EncodeToString([]byte("secret-data")),
-	})
-	require.Error(t, err)
-
-	var opErr *XKMSOperationError
-	assert.ErrorAs(t, err, &opErr)
-	assert.Equal(t, "encrypt", opErr.Operation)
-}
-
-// =============================================================================
-// Decrypt Handler Tests (xkms not initialized)
-// =============================================================================
-
-// TestXKMSDecryptUninitialized verifies decrypt returns an operation error when
-// xkms is not initialized.
-func TestXKMSDecryptUninitialized(t *testing.T) {
-	log := newTestLogger(t)
-	svc := newMinimalMockService()
-	registry := NewToolRegistry(svc, log)
-	ctx := context.Background()
-
-	_, err := registry.handleXKMSDecrypt(ctx, map[string]interface{}{
-		"key_id":     "test-key",
-		"ciphertext": base64.StdEncoding.EncodeToString([]byte("cipher")),
-	})
-	require.Error(t, err)
-
-	var opErr *XKMSOperationError
-	assert.ErrorAs(t, err, &opErr)
-	assert.Equal(t, "decrypt", opErr.Operation)
-}
-
-// =============================================================================
-// ListKeys with Backend Handler Tests
-// =============================================================================
-
-// TestXKMSListKeysWithBackendUninitialized verifies listKeys with a backend
-// parameter returns an error when xkms is not initialized.
-func TestXKMSListKeysWithBackendUninitialized(t *testing.T) {
-	log := newTestLogger(t)
-	svc := newMinimalMockService()
-	registry := NewToolRegistry(svc, log)
-	ctx := context.Background()
-
-	_, err := registry.handleXKMSListKeys(ctx, map[string]interface{}{
-		"backend": "software",
-	})
-	require.Error(t, err)
-
-	var opErr *XKMSOperationError
-	assert.ErrorAs(t, err, &opErr)
-	assert.Equal(t, "listKeys", opErr.Operation)
-}
-
-// =============================================================================
-// PIV Tool Registration Tests
-// =============================================================================
-
-// TestXKMSPIVToolsRegistered verifies that all PIV tools are registered.
-func TestXKMSPIVToolsRegistered(t *testing.T) {
-	log := newTestLogger(t)
-	svc := newMinimalMockService()
-	registry := NewToolRegistry(svc, log)
-
-	expectedPIVTools := []string{
-		"xkms.piv.listSlots",
-		"xkms.piv.getCert",
-		"xkms.piv.storeCert",
-		"xkms.piv.deleteCert",
-		"xkms.piv.generateKey",
-		"xkms.piv.generateCSR",
-	}
-
-	tools := registry.ListTools()
-	toolNames := make(map[string]bool, len(tools))
-	for _, tool := range tools {
-		toolNames[tool.Name] = true
-	}
-
-	for _, name := range expectedPIVTools {
-		assert.True(t, toolNames[name], "expected PIV tool %q to be registered", name)
-	}
-}
-
-// =============================================================================
-// CA Tool Registration Tests
-// =============================================================================
-
-// TestTrustedCAToolsRegistered verifies that all CA tools are registered.
-func TestTrustedCAToolsRegistered(t *testing.T) {
-	log := newTestLogger(t)
-	svc := newMinimalMockService()
-	registry := NewToolRegistry(svc, log)
-
-	expectedCATools := []string{
-		"xkms.ca.getBundle",
-		"xkms.ca.getCert",
-		"xkms.ca.signCSR",
-		"xkms.ca.issueCert",
-		"xkms.ca.revokeCert",
-		"xkms.ca.generateCRL",
-		"xkms.ca.isRevoked",
-	}
-
-	tools := registry.ListTools()
-	toolNames := make(map[string]bool, len(tools))
-	for _, tool := range tools {
-		toolNames[tool.Name] = true
-	}
-
-	for _, name := range expectedCATools {
-		assert.True(t, toolNames[name], "expected CA tool %q to be registered", name)
-	}
-}
-
-// =============================================================================
-// PIN Tool Registration Tests
-// =============================================================================
-
-// TestXKMSPINToolsRegistered verifies that all PIN tools are registered.
-func TestXKMSPINToolsRegistered(t *testing.T) {
-	log := newTestLogger(t)
-	svc := newMinimalMockService()
-	registry := NewToolRegistry(svc, log)
-
-	expectedPINTools := []string{
-		"xkms.pin.setSO",
-		"xkms.pin.setUser",
-		"xkms.pin.changeSO",
-		"xkms.pin.changeUser",
-		"xkms.pin.verifySO",
-		"xkms.pin.verifyUser",
-		"xkms.pin.lockoutStatus",
-		"xkms.pin.resetLockout",
-	}
-
-	tools := registry.ListTools()
-	toolNames := make(map[string]bool, len(tools))
-	for _, tool := range tools {
-		toolNames[tool.Name] = true
-	}
-
-	for _, name := range expectedPINTools {
-		assert.True(t, toolNames[name], "expected PIN tool %q to be registered", name)
-	}
 }
 
 // =============================================================================
