@@ -31,7 +31,7 @@ import (
 // EmbeddedDialerRegistry tests
 // =============================================================================
 
-func TestEmbeddedDialerRegistry_RegisterAndLookup(t *testing.T) {
+func TestEmbeddedDialerRegistry_RegisterLookupUnregister(t *testing.T) {
 	t.Parallel()
 
 	reg := NewEmbeddedDialerRegistry()
@@ -43,29 +43,14 @@ func TestEmbeddedDialerRegistry_RegisterAndLookup(t *testing.T) {
 	assert.True(t, ok, "registered host must be found")
 	assert.Nil(t, d, "stored nil dialer should return nil")
 
-	_, ok2 := reg.Lookup("unknown-host")
-	assert.False(t, ok2, "unknown host must return not-found")
-}
+	_, ok = reg.Lookup("unknown-host")
+	assert.False(t, ok, "unknown host must return not-found")
 
-func TestEmbeddedDialerRegistry_Unregister(t *testing.T) {
-	t.Parallel()
-
-	reg := NewEmbeddedDialerRegistry()
-	reg.Register("host-a", nil)
-
-	_, ok := reg.Lookup("host-a")
-	require.True(t, ok, "must be registered before unregister")
-
-	reg.Unregister("host-a")
-
-	_, ok = reg.Lookup("host-a")
+	reg.Unregister("test-host")
+	_, ok = reg.Lookup("test-host")
 	assert.False(t, ok, "must be absent after unregister")
-}
 
-func TestEmbeddedDialerRegistry_UnregisterNonexistent(t *testing.T) {
-	t.Parallel()
-	// Should be a no-op — must not panic.
-	reg := NewEmbeddedDialerRegistry()
+	// Unregistering an absent host is a no-op.
 	reg.Unregister("does-not-exist")
 }
 
@@ -73,28 +58,44 @@ func TestEmbeddedDialerRegistry_UnregisterNonexistent(t *testing.T) {
 // Typed error tests
 // =============================================================================
 
-func TestEmbeddedAgentAlreadyStartedError_ErrorAndUnwrap(t *testing.T) {
+func TestEmbeddedFleetNodeErrors(t *testing.T) {
 	t.Parallel()
 
-	err := &EmbeddedFleetNodeAlreadyStartedError{AgentID: "embedded-host-abc123"}
-	assert.Contains(t, err.Error(), "already started", "error message must mention already started")
-	assert.Contains(t, err.Error(), "embedded-host-abc123", "error must include agent ID")
-	assert.True(t, errors.Is(err, ErrEmbeddedFleetNodeAlreadyStarted), "Unwrap must return sentinel")
-}
-
-func TestEmbeddedAgentNotEnabledError_ErrorAndUnwrap(t *testing.T) {
-	t.Parallel()
-
-	err := &EmbeddedFleetNodeNotEnabledError{}
-	assert.Contains(t, err.Error(), "not enabled", "error message must mention not enabled")
-	assert.True(t, errors.Is(err, ErrEmbeddedFleetNodeNotEnabled), "Unwrap must return sentinel")
-}
-
-func TestEmbeddedAgentBuildBackendsError_Error(t *testing.T) {
-	t.Parallel()
-
-	err := &EmbeddedFleetNodeBuildBackendsError{Kinds: []string{"unknown", "fake"}}
-	assert.Contains(t, err.Error(), "no backends constructed", "error must describe failure")
+	tests := []struct {
+		name     string
+		err      error
+		wantText []string
+		sentinel error
+	}{
+		{
+			name:     "already started",
+			err:      &EmbeddedFleetNodeAlreadyStartedError{AgentID: "embedded-host-abc123"},
+			wantText: []string{"already started", "embedded-host-abc123"},
+			sentinel: ErrEmbeddedFleetNodeAlreadyStarted,
+		},
+		{
+			name:     "not enabled",
+			err:      &EmbeddedFleetNodeNotEnabledError{},
+			wantText: []string{"not enabled"},
+			sentinel: ErrEmbeddedFleetNodeNotEnabled,
+		},
+		{
+			name:     "build backends",
+			err:      &EmbeddedFleetNodeBuildBackendsError{Kinds: []string{"unknown", "fake"}},
+			wantText: []string{"no backends constructed"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			for _, text := range tt.wantText {
+				assert.Contains(t, tt.err.Error(), text)
+			}
+			if tt.sentinel != nil {
+				assert.True(t, errors.Is(tt.err, tt.sentinel), "Unwrap must return the sentinel")
+			}
+		})
+	}
 }
 
 // =============================================================================
@@ -143,6 +144,11 @@ func TestStartEmbeddedAgent_ErrorOnUnknownBackend(t *testing.T) {
 // startEmbeddedFleetNode + stopEmbeddedFleetNode — happy path (no TLS, no CA)
 // =============================================================================
 
+// TestStartAndStopEmbeddedAgent_OllamaBackend starts the embedded agent,
+// checks its fleet registration reflects the configuration (capabilities,
+// GPU, host affinity, metadata), then stops it and checks that both a second
+// stop of the stopped agent and a server-level stop with no agent running
+// are no-ops.
 func TestStartAndStopEmbeddedAgent_OllamaBackend(t *testing.T) {
 	t.Parallel()
 
@@ -151,14 +157,16 @@ func TestStartAndStopEmbeddedAgent_OllamaBackend(t *testing.T) {
 	srv.config.Server.EmbeddedFleetNode.Enabled = true
 	srv.config.Server.EmbeddedFleetNode.Backends = []string{"ollama"}
 	srv.config.Server.EmbeddedFleetNode.OllamaURL = "http://127.0.0.1:11434"
+	srv.config.Server.EmbeddedFleetNode.GPUAvailable = true
+	srv.config.Server.EmbeddedFleetNode.HostAffinity = "gpu-node-42"
 	srv.config.Server.EmbeddedFleetNode.DataDir = t.TempDir()
 
 	err := srv.startEmbeddedFleetNode()
 	require.NoError(t, err, "embedded agent must start without error")
-	require.NotNil(t, srv.embeddedFleetNodeState, "embeddedFleetNodeState must be set after start")
+	ea := srv.embeddedFleetNodeState
+	require.NotNil(t, ea, "embeddedFleetNodeState must be set after start")
 
-	nodeID := srv.embeddedFleetNodeState.nodeID
-	assert.True(t, len(nodeID) > 0, "agent ID must be non-empty")
+	nodeID := ea.nodeID
 	assert.Contains(t, nodeID, "embedded-", "agent ID must have embedded prefix")
 
 	// Verify the agent is registered in the fleet registry.
@@ -168,6 +176,8 @@ func TestStartAndStopEmbeddedAgent_OllamaBackend(t *testing.T) {
 	assert.Equal(t, orchestration.FleetNodeKindEmbedded, reg.Kind)
 	assert.Equal(t, orchestration.FleetNodeStatusIdle, reg.Status)
 	assert.Contains(t, reg.Capabilities, "ollama", "capabilities must include ollama")
+	assert.Contains(t, reg.Capabilities, "gpu", "capabilities must include gpu when GPUAvailable=true")
+	assert.Equal(t, "gpu-node-42", reg.Host, "registration host must match configured host affinity")
 	assert.Equal(t, "true", reg.Metadata["embedded"], "metadata must mark agent as embedded")
 
 	// Graceful stop.
@@ -179,137 +189,89 @@ func TestStartAndStopEmbeddedAgent_OllamaBackend(t *testing.T) {
 	// Agent must be deregistered.
 	_, getErr := srv.fleetRegistry.GetFleetNode(ctx, embeddedFleetNodeTenantID, nodeID)
 	assert.Error(t, getErr, "agent must be removed from registry on stop")
-}
 
-func TestStartEmbeddedAgent_GPUCapability(t *testing.T) {
-	t.Parallel()
+	// A second stop of the stopped agent takes the already-stopped fast path.
+	require.NoError(t, ea.stop(stopCtx), "second stop must be an idempotent no-op")
 
-	srv := withTempServer(t)
-	srv.fleetRegistry = orchestration.NewInMemoryFleetRegistry()
-	srv.config.Server.EmbeddedFleetNode.Backends = []string{"ollama"}
-	srv.config.Server.EmbeddedFleetNode.GPUAvailable = true
-	srv.config.Server.EmbeddedFleetNode.DataDir = t.TempDir()
-
-	err := srv.startEmbeddedFleetNode()
-	require.NoError(t, err)
-	defer srv.stopEmbeddedFleetNode(context.Background())
-
-	nodeID := srv.embeddedFleetNodeState.nodeID
-	reg, err := srv.fleetRegistry.GetFleetNode(context.Background(), embeddedFleetNodeTenantID, nodeID)
-	require.NoError(t, err)
-	assert.Contains(t, reg.Capabilities, "gpu", "capabilities must include gpu when GPUAvailable=true")
-}
-
-func TestStartEmbeddedAgent_HostAffinityTag(t *testing.T) {
-	t.Parallel()
-
-	srv := withTempServer(t)
-	srv.fleetRegistry = orchestration.NewInMemoryFleetRegistry()
-	srv.config.Server.EmbeddedFleetNode.Backends = []string{"ollama"}
-	srv.config.Server.EmbeddedFleetNode.HostAffinity = "gpu-node-42"
-	srv.config.Server.EmbeddedFleetNode.DataDir = t.TempDir()
-
-	err := srv.startEmbeddedFleetNode()
-	require.NoError(t, err)
-	defer srv.stopEmbeddedFleetNode(context.Background())
-
-	nodeID := srv.embeddedFleetNodeState.nodeID
-	reg, err := srv.fleetRegistry.GetFleetNode(context.Background(), embeddedFleetNodeTenantID, nodeID)
-	require.NoError(t, err)
-	assert.Equal(t, "gpu-node-42", reg.Host, "registration host must match configured host affinity")
-}
-
-func TestStopEmbeddedAgent_IdempotentWhenNotStarted(t *testing.T) {
-	t.Parallel()
-
-	srv := withTempServer(t)
-	srv.fleetRegistry = orchestration.NewInMemoryFleetRegistry()
-
-	// Must not panic when called without a running embedded agent.
-	srv.stopEmbeddedFleetNode(context.Background())
-	srv.stopEmbeddedFleetNode(context.Background()) // second call must also be safe
+	// A server-level stop with no agent running is a no-op.
+	srv.stopEmbeddedFleetNode(stopCtx)
+	assert.Nil(t, srv.embeddedFleetNodeState)
 }
 
 // =============================================================================
 // buildEmbeddedFleetNodeBackends tests
 // =============================================================================
 
-func TestBuildEmbeddedAgentBackends_DefaultsToOllama(t *testing.T) {
+// TestBuildEmbeddedAgentBackends covers the kinds the embedded agent builds:
+// an empty list defaults to ollama, unknown kinds are skipped, a list of only
+// unknown kinds is an error, and the claude backend names DefaultClaudeModel
+// instead of leaving the choice to the CLI, whose own default is below the
+// Opus floor (go-quicbaas#1012).
+func TestBuildEmbeddedAgentBackends(t *testing.T) {
 	t.Parallel()
 
-	log := makeNoopLogger()
-	backends, err := buildEmbeddedFleetNodeBackends(nil, "http://127.0.0.1:11434", orchestration.SandboxNetworkDefault, orchestration.SandboxSecurity{}, nil, log)
-	require.NoError(t, err)
-	_, ok := backends["ollama"]
-	assert.True(t, ok, "default backend must be ollama")
-}
+	tests := []struct {
+		name    string
+		kinds   []string
+		url     string
+		want    []string
+		wantErr bool
+	}{
+		{name: "defaults to ollama", kinds: nil, url: "http://127.0.0.1:11434", want: []string{"ollama"}},
+		{name: "unknown kind skipped", kinds: []string{"ollama", "unknown-kind"}, url: config.DefaultOllamaBaseURL, want: []string{"ollama"}},
+		{name: "all unknown", kinds: []string{"unsupported-a", "unsupported-b"}, wantErr: true},
+		{name: "ACP kinds", kinds: []string{"ollama", "claude", "codex", "opencode"}, url: config.DefaultOllamaBaseURL, want: []string{"ollama", "claude", "codex", "opencode"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 
-func TestBuildEmbeddedAgentBackends_UnknownKindSkipped(t *testing.T) {
-	t.Parallel()
-
-	log := makeNoopLogger()
-	// Mixing a valid backend with an unknown one: should succeed with just the valid backend.
-	backends, err := buildEmbeddedFleetNodeBackends([]string{"ollama", "unknown-kind"}, config.DefaultOllamaBaseURL, orchestration.SandboxNetworkDefault, orchestration.SandboxSecurity{}, nil, log)
-	require.NoError(t, err)
-	_, ok := backends["ollama"]
-	assert.True(t, ok)
-}
-
-func TestBuildEmbeddedAgentBackends_AllUnknownReturnsError(t *testing.T) {
-	t.Parallel()
-
-	log := makeNoopLogger()
-	_, err := buildEmbeddedFleetNodeBackends([]string{"unsupported-a", "unsupported-b"}, "", orchestration.SandboxNetworkDefault, orchestration.SandboxSecurity{}, nil, log)
-	require.Error(t, err, "all-unknown backends must return error")
+			backends, err := buildEmbeddedFleetNodeBackends(tt.kinds, tt.url, orchestration.SandboxNetworkDefault, orchestration.SandboxSecurity{}, nil, makeNoopLogger())
+			if tt.wantErr {
+				var buildErr *EmbeddedFleetNodeBuildBackendsError
+				require.ErrorAs(t, err, &buildErr)
+				return
+			}
+			require.NoError(t, err)
+			require.Len(t, backends, len(tt.want))
+			for _, name := range tt.want {
+				require.Contains(t, backends, name)
+			}
+			if b, ok := backends["claude"]; ok {
+				claude, isACP := b.(*orchestration.ACPBackend)
+				require.True(t, isACP, "the claude backend must be an ACP backend")
+				assert.Equal(t, orchestration.DefaultClaudeModel, claude.DefaultModel())
+			}
+		})
+	}
 }
 
 // =============================================================================
 // buildEmbeddedFleetNodeCapabilities tests
 // =============================================================================
 
-func TestBuildEmbeddedAgentCapabilities_IncludesBackendsAndGPU(t *testing.T) {
+func TestBuildEmbeddedAgentCapabilities(t *testing.T) {
 	t.Parallel()
 
-	caps := buildEmbeddedFleetNodeCapabilities([]string{"ollama", "acp"}, true)
-	assert.Contains(t, caps, "ollama")
-	assert.Contains(t, caps, "acp")
-	assert.Contains(t, caps, "gpu")
-}
+	withGPU := buildEmbeddedFleetNodeCapabilities([]string{"ollama", "acp"}, true)
+	assert.Contains(t, withGPU, "ollama")
+	assert.Contains(t, withGPU, "acp")
+	assert.Contains(t, withGPU, "gpu")
 
-func TestBuildEmbeddedAgentCapabilities_NoGPU(t *testing.T) {
-	t.Parallel()
-
-	caps := buildEmbeddedFleetNodeCapabilities([]string{"ollama"}, false)
-	assert.Contains(t, caps, "ollama")
-	assert.NotContains(t, caps, "gpu", "gpu must not appear when GPUAvailable=false")
+	noGPU := buildEmbeddedFleetNodeCapabilities([]string{"ollama"}, false)
+	assert.Contains(t, noGPU, "ollama")
+	assert.NotContains(t, noGPU, "gpu", "gpu must not appear when GPUAvailable=false")
 }
 
 // =============================================================================
 // primaryBackend tests
 // =============================================================================
 
-func TestPrimaryBackend_ReturnsFirstKind(t *testing.T) {
+func TestPrimaryBackend(t *testing.T) {
 	t.Parallel()
-	assert.Equal(t, "ollama", primaryBackend([]string{"ollama", "acp"}))
-}
-
-func TestPrimaryBackend_DefaultsToOllama(t *testing.T) {
-	t.Parallel()
+	assert.Equal(t, "acp", primaryBackend([]string{"acp", "ollama"}), "the first kind is primary")
 	assert.Equal(t, "ollama", primaryBackend(nil))
 	assert.Equal(t, "ollama", primaryBackend([]string{}))
-}
-
-// =============================================================================
-// Config field tests
-// =============================================================================
-
-func TestEmbeddedAgentConfig_DefaultsOllamaURL(t *testing.T) {
-	t.Parallel()
-
-	cfg := config.EmbeddedFleetNodeConfig{}
-	assert.Equal(t, "", cfg.OllamaURL, "zero value must be empty (CLI default applied at flag parse)")
-	assert.False(t, cfg.Enabled)
-	assert.False(t, cfg.GPUAvailable)
 }
 
 // =============================================================================
@@ -321,6 +283,8 @@ func TestInstallEmbeddedBackendDialer_WiresDialerRegistry(t *testing.T) {
 
 	srv := withTempServer(t)
 	srv.embeddedDialerRegistry = NewEmbeddedDialerRegistry()
+	// embeddedBackendDialers is nil by default.
+	require.Nil(t, srv.embeddedBackendDialers)
 
 	reg := &orchestration.FleetNode{
 		ID:   "embedded-test-001",
@@ -329,46 +293,26 @@ func TestInstallEmbeddedBackendDialer_WiresDialerRegistry(t *testing.T) {
 
 	srv.installEmbeddedBackendDialer("embedded-test-001", reg, nil)
 
-	// Verify the dialer registry got the entry.
+	assert.NotNil(t, srv.embeddedBackendDialers, "must be initialized after first call")
 	_, ok := srv.embeddedDialerRegistry.Lookup("test-embedded-host")
 	assert.True(t, ok, "dialer must be registered by host key")
-}
-
-func TestInstallEmbeddedBackendDialer_InitializesMap(t *testing.T) {
-	t.Parallel()
-
-	srv := withTempServer(t)
-	// embeddedBackendDialers is nil by default.
-	assert.Nil(t, srv.embeddedBackendDialers)
-
-	reg := &orchestration.FleetNode{
-		ID:   "embedded-init-test",
-		Host: "host-x",
-	}
-	srv.installEmbeddedBackendDialer("embedded-init-test", reg, nil)
-
-	assert.NotNil(t, srv.embeddedBackendDialers, "must be initialized after first call")
 }
 
 // =============================================================================
 // buildEmbeddedFleetNodeMetadata tests
 // =============================================================================
 
-func TestBuildEmbeddedAgentMetadata_WithCert(t *testing.T) {
+func TestBuildEmbeddedAgentMetadata(t *testing.T) {
 	t.Parallel()
 
-	m := buildEmbeddedFleetNodeMetadata("myhost", []byte("fake-cert-pem"))
-	assert.Equal(t, "true", m["embedded"])
-	assert.Equal(t, "myhost", m["hostname"])
-	assert.Equal(t, "true", m["cert_issued"], "cert_issued must be set when certPEM is non-empty")
-}
+	withCert := buildEmbeddedFleetNodeMetadata("myhost", []byte("fake-cert-pem"))
+	assert.Equal(t, "true", withCert["embedded"])
+	assert.Equal(t, "myhost", withCert["hostname"])
+	assert.Equal(t, "true", withCert["cert_issued"], "cert_issued must be set when certPEM is non-empty")
 
-func TestBuildEmbeddedAgentMetadata_WithoutCert(t *testing.T) {
-	t.Parallel()
-
-	m := buildEmbeddedFleetNodeMetadata("myhost", nil)
-	assert.Equal(t, "true", m["embedded"])
-	_, hasCert := m["cert_issued"]
+	withoutCert := buildEmbeddedFleetNodeMetadata("myhost", nil)
+	assert.Equal(t, "true", withoutCert["embedded"])
+	_, hasCert := withoutCert["cert_issued"]
 	assert.False(t, hasCert, "cert_issued must be absent when certPEM is empty")
 }
 
@@ -376,9 +320,10 @@ func TestBuildEmbeddedAgentMetadata_WithoutCert(t *testing.T) {
 // buildEmbeddedFleetNodeIdentity tests
 // =============================================================================
 
-// TestBuildEmbeddedAgentIdentity_ContainsRequiredFields verifies that the
-// synthetic identity satisfies all fields expected by GRPCSpawnServer.authorize.
-func TestBuildEmbeddedAgentIdentity_ContainsRequiredFields(t *testing.T) {
+// TestBuildEmbeddedAgentIdentity verifies that the synthetic identity carries
+// every field GRPCSpawnServer.authorize expects and passes
+// AgentIdentity.Validate, the check used before RPC dispatch.
+func TestBuildEmbeddedAgentIdentity(t *testing.T) {
 	t.Parallel()
 
 	id := buildEmbeddedFleetNodeIdentity("embedded-host-abc123", "default")
@@ -387,22 +332,8 @@ func TestBuildEmbeddedAgentIdentity_ContainsRequiredFields(t *testing.T) {
 	assert.Equal(t, "embedded-host-abc123", id.ServiceAccountID, "ServiceAccountID must match")
 	assert.Equal(t, "default", id.TenantID, "TenantID must match")
 	assert.Equal(t, "agent-runtime", id.Role, "Role must be agent-runtime")
-	assert.NotEmpty(t, id.Scopes, "Scopes must be non-empty")
 	assert.NotEmpty(t, id.ClientID, "ClientID must be non-empty")
-
-	// Verify all runtime scopes are present.
-	expectedScopes := orchestration.FleetRuntimeScopes()
-	for _, scope := range expectedScopes {
-		assert.Contains(t, id.Scopes, scope, "identity must include scope %q", scope)
-	}
-}
-
-// TestBuildEmbeddedAgentIdentity_PassesValidate verifies the synthetic identity
-// satisfies AgentIdentity.Validate — the same check used before RPC dispatch.
-func TestBuildEmbeddedAgentIdentity_PassesValidate(t *testing.T) {
-	t.Parallel()
-
-	id := buildEmbeddedFleetNodeIdentity("embedded-mynode-1234abcd", "tenant-1")
+	assert.Subset(t, id.Scopes, orchestration.FleetRuntimeScopes(), "identity must carry the runtime scopes")
 	assert.NoError(t, id.Validate(), "embedded identity must pass Validate()")
 }
 
@@ -489,65 +420,6 @@ func TestStartEmbeddedAgent_IssuesMTLSIdentityWhenCAPresent(t *testing.T) {
 
 // buildEmbeddedFleetNodeBackends constructs the ACP/exec backends for the
 // claude, codex, and opencode kinds in addition to ollama.
-func TestBuildEmbeddedAgentBackends_ACPKinds(t *testing.T) {
-	t.Parallel()
-
-	log := makeNoopLogger()
-	backends, err := buildEmbeddedFleetNodeBackends(
-		[]string{"ollama", "claude", "codex", "opencode"}, config.DefaultOllamaBaseURL, orchestration.SandboxNetworkDefault, orchestration.SandboxSecurity{}, nil, log)
-	require.NoError(t, err)
-
-	for _, name := range []string{"ollama", "claude", "codex", "opencode"} {
-		if _, ok := backends[name]; !ok {
-			t.Fatalf("expected backend %q to be constructed", name)
-		}
-	}
-}
-
-// TestBuildEmbeddedAgentBackends_ClaudeRunsTheCodingTierByDefault asserts the
-// embedded agent's claude backend names DefaultClaudeModel instead of leaving
-// the choice to the CLI, whose own default is below the Opus floor
-// (go-quicbaas#1012).
-func TestBuildEmbeddedAgentBackends_ClaudeRunsTheCodingTierByDefault(t *testing.T) {
-	t.Parallel()
-
-	backends, err := buildEmbeddedFleetNodeBackends(
-		[]string{"claude"}, "", orchestration.SandboxNetworkDefault, orchestration.SandboxSecurity{}, nil, makeNoopLogger())
-	require.NoError(t, err)
-
-	claude, ok := backends["claude"].(*orchestration.ACPBackend)
-	require.True(t, ok, "the claude backend must be an ACP backend")
-	assert.Equal(t, orchestration.DefaultClaudeModel, claude.DefaultModel())
-}
-
-// TestEmbeddedAgent_StopIsIdempotent covers the already-stopped guard of
-// embeddedFleetNode.stop: a second stop on the same agent returns nil immediately
-// without re-invoking the spawn server's Stop.
-func TestEmbeddedAgent_StopIsIdempotent(t *testing.T) {
-	t.Parallel()
-
-	srv := withTempServer(t)
-	srv.fleetRegistry = orchestration.NewInMemoryFleetRegistry()
-	srv.config.Server.EmbeddedFleetNode.Enabled = true
-	srv.config.Server.EmbeddedFleetNode.Backends = []string{"ollama"}
-	srv.config.Server.EmbeddedFleetNode.OllamaURL = "http://127.0.0.1:11434"
-	srv.config.Server.EmbeddedFleetNode.DataDir = t.TempDir()
-
-	require.NoError(t, srv.startEmbeddedFleetNode())
-	ea := srv.embeddedFleetNodeState
-	require.NotNil(t, ea)
-
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	require.NoError(t, ea.stop(ctx), "first stop must succeed")
-	// Second stop must take the already-stopped fast path and return nil.
-	require.NoError(t, ea.stop(ctx), "second stop must be an idempotent no-op")
-
-	// Clean up server-level state so Shutdown does not double-stop.
-	srv.embeddedFleetNodeState = nil
-}
-
 // removeErrRegistry embeds a FleetRegistry but makes RemoveFleetNode fail, so the
 // deregister-error warning branch of stopEmbeddedFleetNode runs.
 type removeErrRegistry struct{ orchestration.FleetRegistry }
