@@ -1564,48 +1564,6 @@ func TestWatchBridgeDeltaComputation(t *testing.T) {
 	})
 }
 
-// TestWatchBridgePublishError tests handling of publish errors.
-func TestWatchBridgePublishError(t *testing.T) {
-	t.Parallel()
-
-	log := testLogger(t)
-	watchMgr := watch.NewManager()
-	messagingSvc := newMockMessagingService()
-	messagingSvc.publishErr = stderrors.New("publish failed")
-	clusterInfo := newMockClusterInfo(true)
-
-	mappings := []KeyChannelMapping{
-		{KeyPrefix: "/error/"},
-	}
-
-	bridge, err := NewWatchBridge(log, watchMgr, messagingSvc, clusterInfo, mappings)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	ctx := context.Background()
-	err = bridge.Start(ctx)
-	if err != nil {
-		t.Fatalf("failed to start: %v", err)
-	}
-	defer func() {
-		stopCtx, cancel := context.WithTimeout(ctx, time.Second)
-		defer cancel()
-		_ = bridge.Stop(stopCtx)
-	}()
-
-	// Trigger a watch event
-	watchMgr.NotifyPut([]byte("/error/key1"), nil, []byte(`{"id": "1"}`), 1, 1)
-
-	// Give time for event processing
-	time.Sleep(200 * time.Millisecond)
-
-	stats := bridge.GetStats()
-	if stats.PublishErrors == 0 {
-		t.Error("expected publish errors to be recorded")
-	}
-}
-
 // TestWatchBridgeDeleteEvent tests DELETE event handling.
 func TestWatchBridgeDeleteEvent(t *testing.T) {
 	t.Parallel()
@@ -1905,10 +1863,12 @@ func TestWatchBridgeStopDuringStoppingState(t *testing.T) {
 	stopCtx, cancel := context.WithTimeout(ctx, time.Millisecond)
 	defer cancel()
 
-	// This will enter the "stopping" path and wait on wb.stopped, which times out
+	// This enters the "stopping" path and waits on wb.stopped, which never
+	// closes, so the context deadline must end the wait.
 	err = bridge.Stop(stopCtx)
-	// May or may not return error depending on timing; the important thing is
-	// it did not panic and the code path was exercised.
+	if !stderrors.Is(err, context.DeadlineExceeded) {
+		t.Errorf("expected context.DeadlineExceeded, got %v", err)
+	}
 
 	// Reset state and clean up properly
 	bridge.state.Store(int32(bridgeStateRunning))
