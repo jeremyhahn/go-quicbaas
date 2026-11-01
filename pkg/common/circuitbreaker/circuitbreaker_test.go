@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
+	promtestutil "github.com/prometheus/client_golang/prometheus/testutil"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/errors"
 )
@@ -56,79 +57,57 @@ func (c *fakeClock) Advance(d time.Duration) {
 
 // --- New ---
 
-func TestNew_ValidConfig(t *testing.T) {
-	cb, err := New(DefaultConfig("test"))
-	if err != nil {
-		t.Fatalf("expected no error, got: %v", err)
+func TestNew(t *testing.T) {
+	tests := []struct {
+		name    string
+		cfg     Config
+		wantErr bool
+	}{
+		{name: "valid default config", cfg: DefaultConfig("test")},
+		{
+			name:    "empty name",
+			cfg:     Config{Name: "", FailureThreshold: 5, SuccessThreshold: 2, OpenTimeout: 30 * time.Second},
+			wantErr: true,
+		},
+		{
+			name:    "zero failure threshold",
+			cfg:     Config{Name: "test", FailureThreshold: 0, SuccessThreshold: 2, OpenTimeout: 30 * time.Second},
+			wantErr: true,
+		},
+		{
+			name:    "negative success threshold",
+			cfg:     Config{Name: "test", FailureThreshold: 5, SuccessThreshold: -1, OpenTimeout: 30 * time.Second},
+			wantErr: true,
+		},
+		{
+			name:    "zero open timeout",
+			cfg:     Config{Name: "test", FailureThreshold: 5, SuccessThreshold: 2, OpenTimeout: 0},
+			wantErr: true,
+		},
 	}
-	if cb == nil {
-		t.Fatal("expected non-nil circuit breaker")
-	}
-	if cb.Name() != "test" {
-		t.Fatalf("expected name 'test', got: %s", cb.Name())
-	}
-	if cb.State() != StateClosed {
-		t.Fatalf("expected initial state Closed, got: %s", cb.State())
-	}
-}
 
-func TestNew_EmptyName(t *testing.T) {
-	_, err := New(Config{
-		Name:             "",
-		FailureThreshold: 5,
-		SuccessThreshold: 2,
-		OpenTimeout:      30 * time.Second,
-	})
-	if err == nil {
-		t.Fatal("expected error for empty name")
-	}
-	if !errors.Is(err, errors.ErrInvalidInput) {
-		t.Fatalf("expected ErrInvalidInput, got: %v", err)
-	}
-}
-
-func TestNew_InvalidFailureThreshold(t *testing.T) {
-	_, err := New(Config{
-		Name:             "test",
-		FailureThreshold: 0,
-		SuccessThreshold: 2,
-		OpenTimeout:      30 * time.Second,
-	})
-	if err == nil {
-		t.Fatal("expected error for zero failure threshold")
-	}
-	if !errors.Is(err, errors.ErrInvalidInput) {
-		t.Fatalf("expected ErrInvalidInput, got: %v", err)
-	}
-}
-
-func TestNew_InvalidSuccessThreshold(t *testing.T) {
-	_, err := New(Config{
-		Name:             "test",
-		FailureThreshold: 5,
-		SuccessThreshold: -1,
-		OpenTimeout:      30 * time.Second,
-	})
-	if err == nil {
-		t.Fatal("expected error for negative success threshold")
-	}
-	if !errors.Is(err, errors.ErrInvalidInput) {
-		t.Fatalf("expected ErrInvalidInput, got: %v", err)
-	}
-}
-
-func TestNew_InvalidOpenTimeout(t *testing.T) {
-	_, err := New(Config{
-		Name:             "test",
-		FailureThreshold: 5,
-		SuccessThreshold: 2,
-		OpenTimeout:      0,
-	})
-	if err == nil {
-		t.Fatal("expected error for zero open timeout")
-	}
-	if !errors.Is(err, errors.ErrInvalidInput) {
-		t.Fatalf("expected ErrInvalidInput, got: %v", err)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cb, err := New(tt.cfg)
+			if tt.wantErr {
+				if !errors.Is(err, errors.ErrInvalidInput) {
+					t.Fatalf("expected ErrInvalidInput, got: %v", err)
+				}
+				if cb != nil {
+					t.Fatal("expected nil circuit breaker on error")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("expected no error, got: %v", err)
+			}
+			if cb.Name() != tt.cfg.Name {
+				t.Fatalf("expected name %q, got: %s", tt.cfg.Name, cb.Name())
+			}
+			if cb.State() != StateClosed {
+				t.Fatalf("expected initial state Closed, got: %s", cb.State())
+			}
+		})
 	}
 }
 
@@ -768,16 +747,6 @@ func TestDefaultConfig_Values(t *testing.T) {
 	}
 }
 
-func TestDefaultConfig_CreatesValidBreaker(t *testing.T) {
-	cb, err := New(DefaultConfig("valid"))
-	if err != nil {
-		t.Fatalf("expected no error, got: %v", err)
-	}
-	if cb == nil {
-		t.Fatal("expected non-nil circuit breaker")
-	}
-}
-
 // --- Metrics ---
 
 func TestMetrics_RecordsTransitions(t *testing.T) {
@@ -831,19 +800,6 @@ func TestMetrics_RecordsTransitions(t *testing.T) {
 	}
 	if !foundCalls {
 		t.Fatal("expected calls_total metric to be recorded")
-	}
-}
-
-func TestMetrics_NilMetricsSafe(t *testing.T) {
-	cb, err := New(DefaultConfig("nil-metrics"))
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	// Execute without setting metrics should not panic
-	execErr := cb.Execute(func() error { return nil })
-	if execErr != nil {
-		t.Fatalf("expected no error, got: %v", execErr)
 	}
 }
 
@@ -938,61 +894,49 @@ func TestExecute_SuccessInClosedClearsFailures(t *testing.T) {
 	}
 }
 
-func TestName_ReturnsConfiguredName(t *testing.T) {
-	cb, err := New(DefaultConfig("my-service"))
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if cb.Name() != "my-service" {
-		t.Fatalf("expected 'my-service', got: %s", cb.Name())
-	}
-}
-
-func TestName_EmptyAfterCreation(t *testing.T) {
-	// Cannot create with empty name, this is validated
-	_, err := New(Config{
-		Name:             "",
-		FailureThreshold: 1,
-		SuccessThreshold: 1,
-		OpenTimeout:      time.Second,
-	})
-	if err == nil {
-		t.Fatal("expected error for empty name")
-	}
-}
-
 // --- SetMetrics ---
 
-func TestSetMetrics_SetsMetricsCorrectly(t *testing.T) {
-	cb, err := New(DefaultConfig("set-metrics"))
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+func TestSetMetrics(t *testing.T) {
+	tests := []struct {
+		name        string
+		withMetrics bool
+	}{
+		{name: "counters record calls", withMetrics: true},
+		{name: "nil counters disable recording", withMetrics: false},
 	}
 
-	reg := prometheus.NewRegistry()
-	m := NewMetrics(reg)
-	cb.SetMetrics(m.StateTransitions, m.CallTotal)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cb, err := New(DefaultConfig("set-metrics"))
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
 
-	// Execute and verify no panic
-	_ = cb.Execute(func() error { return nil })
-}
+			var m *Metrics
+			if tt.withMetrics {
+				m = NewMetrics(prometheus.NewRegistry())
+				cb.SetMetrics(m.StateTransitions, m.CallTotal)
+			} else {
+				cb.SetMetrics(nil, nil)
+			}
 
-func TestSetMetrics_NilIsSafe(t *testing.T) {
-	cb, err := New(DefaultConfig("nil-set"))
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+			if execErr := cb.Execute(func() error { return nil }); execErr != nil {
+				t.Fatalf("expected no error, got: %v", execErr)
+			}
+
+			if tt.withMetrics {
+				got := promtestutil.ToFloat64(m.CallTotal.WithLabelValues("set-metrics", "success"))
+				if got != 1 {
+					t.Fatalf("expected 1 success call recorded, got: %v", got)
+				}
+			}
+		})
 	}
-
-	cb.SetMetrics(nil, nil)
-
-	// Execute without panic
-	_ = cb.Execute(func() error { return nil })
 }
 
 // --- NewMetrics ---
 
-func TestNewMetrics_DefaultRegisterer(t *testing.T) {
-	// Create a separate registry to avoid polluting the default one
+func TestNewMetrics_RegistersCollectors(t *testing.T) {
 	reg := prometheus.NewRegistry()
 	m := NewMetrics(reg)
 
@@ -1004,22 +948,14 @@ func TestNewMetrics_DefaultRegisterer(t *testing.T) {
 	}
 }
 
-func TestNewMetrics_CustomRegisterer(t *testing.T) {
+func TestNewMetrics_DuplicateRegistrationPanics(t *testing.T) {
 	reg := prometheus.NewRegistry()
-	m := NewMetrics(reg)
+	NewMetrics(reg)
 
-	if m.StateTransitions == nil {
-		t.Fatal("expected non-nil StateTransitions")
-	}
-	if m.CallTotal == nil {
-		t.Fatal("expected non-nil CallTotal")
-	}
-
-	// Verify metrics are registered
-	families, err := reg.Gather()
-	if err != nil {
-		t.Fatalf("failed to gather: %v", err)
-	}
-	// Metrics exist but may have no samples yet
-	_ = families
+	defer func() {
+		if recover() == nil {
+			t.Fatal("expected panic registering the collectors twice")
+		}
+	}()
+	NewMetrics(reg)
 }
