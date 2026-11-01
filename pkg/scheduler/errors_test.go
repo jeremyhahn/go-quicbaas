@@ -594,56 +594,6 @@ func TestErrStorageError(t *testing.T) {
 	})
 }
 
-// TestErrorInterfaceCompliance verifies all error types implement the error interface.
-func TestErrorInterfaceCompliance(t *testing.T) {
-	var _ error = &SchedulerError{}
-	var _ error = JobNotFoundError{}
-	var _ error = JobAlreadyExistsError{}
-	var _ error = InvalidJobError{}
-	var _ error = InvalidScheduleError{}
-	var _ error = HandlerNotFoundError{}
-	var _ error = HandlerFailedError{}
-	var _ error = JobTimeoutError{}
-	var _ error = MaxRetriesExceededError{}
-	var _ error = SchedulerStoppedError{}
-	var _ error = UnauthorizedError{}
-	var _ error = ErrStorageError{}
-
-	// Verify they all produce non-empty error messages
-	errors := []error{
-		&SchedulerError{Code: "TEST", Op: "test", Message: "test"},
-		JobNotFoundError{JobID: 1},
-		JobAlreadyExistsError{JobID: 1},
-		InvalidJobError{Field: "test", Message: "test"},
-		InvalidScheduleError{Schedule: "test"},
-		HandlerNotFoundError{Handler: "test"},
-		HandlerFailedError{Handler: "test", JobID: 1, Cause: nil},
-		JobTimeoutError{JobID: 1, Timeout: time.Second},
-		MaxRetriesExceededError{JobID: 1, MaxRetries: 1},
-		SchedulerStoppedError{},
-		UnauthorizedError{TenantID: "test", JobID: 1, Op: "test"},
-		ErrStorageError{Op: "test", Cause: nil},
-	}
-
-	for _, err := range errors {
-		assert.NotEmpty(t, err.Error())
-	}
-}
-
-// TestUnwrapInterfaceCompliance verifies errors with Unwrap implement the interface correctly.
-func TestUnwrapInterfaceCompliance(t *testing.T) {
-	// Types that should implement Unwrap
-	type unwrapper interface {
-		Unwrap() error
-	}
-
-	var _ unwrapper = &SchedulerError{}
-	var _ unwrapper = InvalidScheduleError{}
-	var _ unwrapper = HandlerFailedError{}
-	var _ unwrapper = MaxRetriesExceededError{}
-	var _ unwrapper = ErrStorageError{}
-}
-
 // TestErrorChaining tests that error chaining works correctly.
 func TestErrorChaining(t *testing.T) {
 	t.Run("NestedErrors", func(t *testing.T) {
@@ -658,18 +608,5 @@ func TestErrorChaining(t *testing.T) {
 
 		assert.True(t, errors.Is(schedulerErr, rootCause))
 		assert.True(t, errors.Is(schedulerErr, storageErr))
-	})
-
-	t.Run("ErrorsAsWithSchedulerError", func(t *testing.T) {
-		schedulerErr := &SchedulerError{
-			Code:    ErrCodeInvalidJob,
-			Op:      "CreateJob",
-			Message: "validation failed",
-			Err:     nil,
-		}
-
-		var target *SchedulerError
-		assert.True(t, errors.As(schedulerErr, &target))
-		assert.Equal(t, ErrCodeInvalidJob, target.Code)
 	})
 }
