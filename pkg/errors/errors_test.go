@@ -505,18 +505,50 @@ func TestErrorCode_String(t *testing.T) {
 		code ErrorCode
 		want string
 	}{
+		{ErrUnknown, "unknown"},
 		{ErrNotFound, "not_found"},
-		{ErrTimeout, "timeout"},
 		{ErrConflict, "conflict"},
+		{ErrTimeout, "timeout"},
 		{ErrInternal, "internal"},
+		{ErrInvalidInput, "invalid_input"},
+		{ErrUnauthorized, "unauthorized"},
+		{ErrForbidden, "forbidden"},
+		{ErrUnavailable, "unavailable"},
+		{ErrStorage, "storage"},
+		{ErrRaft, "raft"},
+		{ErrEncryption, "encryption"},
+		{ErrDecryption, "decryption"},
+		{ErrValidation, "validation"},
+		{ErrConfiguration, "configuration"},
+		{ErrCanceled, "canceled"},
+		{ErrDeadlineExceeded, "deadline_exceeded"},
+		{ErrAlreadyExists, "already_exists"},
+		{ErrResourceExhausted, "resource_exhausted"},
+		{ErrPreconditionFailed, "precondition_failed"},
+		{ErrAborted, "aborted"},
+		{ErrOutOfRange, "out_of_range"},
+		{ErrUnimplemented, "unimplemented"},
+		{ErrDataLoss, "data_loss"},
+		{ErrSnapshot, "snapshot"},
+		{ErrReplication, "replication"},
+		{ErrLeaderNotAvailable, "leader_not_available"},
+		{ErrClusterNotReady, "cluster_not_ready"},
+		{ErrQuorumLost, "quorum_lost"},
+		{ErrSplitBrain, "split_brain"},
+		{ErrRateLimited, "rate_limited"},
+		{ErrNotImplemented, "not_implemented"},
+		{ErrNotAllowed, "not_allowed"},
+		{ErrSystemKeyspaceViolation, "system_keyspace_violation"},
+		{ErrCrossTenantAccess, "cross_tenant_access"},
+		{ErrMissingTenantContext, "missing_tenant_context"},
+		{ErrMissingJustification, "missing_justification"},
+		{ErrMissingUserContext, "missing_user_context"},
 		{ErrorCode(9999), "unknown"},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.want, func(t *testing.T) {
-			if got := tt.code.String(); got != tt.want {
-				t.Errorf("ErrorCode.String() = %v, want %v", got, tt.want)
-			}
+			assert.Equal(t, tt.want, tt.code.String())
 		})
 	}
 }
@@ -528,19 +560,47 @@ func TestErrorCode_HTTPStatus(t *testing.T) {
 	}{
 		{ErrNotFound, 404},
 		{ErrConflict, 409},
+		{ErrAlreadyExists, 409},
 		{ErrTimeout, 408},
+		{ErrDeadlineExceeded, 408},
 		{ErrInvalidInput, 400},
+		{ErrValidation, 400},
+		{ErrOutOfRange, 400},
+		{ErrMissingTenantContext, 400},
+		{ErrMissingJustification, 400},
+		{ErrMissingUserContext, 400},
 		{ErrUnauthorized, 401},
 		{ErrForbidden, 403},
-		{ErrUnavailable, 503},
+		{ErrNotAllowed, 403},
+		{ErrSystemKeyspaceViolation, 403},
+		{ErrCrossTenantAccess, 403},
+		{ErrPreconditionFailed, 412},
+		{ErrResourceExhausted, 429},
+		{ErrRateLimited, 429},
 		{ErrInternal, 500},
+		{ErrUnknown, 500},
+		{ErrEncryption, 500},
+		{ErrDecryption, 500},
+		{ErrConfiguration, 500},
+		{ErrCanceled, 500},
+		{ErrAborted, 500},
+		{ErrDataLoss, 500},
+		{ErrSnapshot, 500},
+		{ErrReplication, 500},
+		{ErrSplitBrain, 500},
+		{ErrUnimplemented, 501},
+		{ErrNotImplemented, 501},
+		{ErrUnavailable, 503},
+		{ErrLeaderNotAvailable, 503},
+		{ErrClusterNotReady, 503},
+		{ErrStorage, 503},
+		{ErrRaft, 503},
+		{ErrQuorumLost, 503},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.code.String(), func(t *testing.T) {
-			if got := tt.code.HTTPStatus(); got != tt.want {
-				t.Errorf("ErrorCode.HTTPStatus() = %v, want %v", got, tt.want)
-			}
+			assert.Equal(t, tt.want, tt.code.HTTPStatus())
 		})
 	}
 }
@@ -554,6 +614,7 @@ func TestErrorCode_IsRetryable(t *testing.T) {
 		ErrDeadlineExceeded,
 		ErrResourceExhausted,
 		ErrAborted,
+		ErrRateLimited,
 	}
 
 	for _, code := range retryable {
@@ -1082,60 +1143,6 @@ func TestNotImplementedHelper(t *testing.T) {
 	})
 }
 
-func TestErrorCode_String_RemainingCodes(t *testing.T) {
-	// Test codes that were not covered in existing tests
-	codes := []struct {
-		code ErrorCode
-		want string
-	}{
-		{ErrQuorumLost, "quorum_lost"},
-		{ErrSplitBrain, "split_brain"},
-		{ErrRateLimited, "rate_limited"},
-		{ErrNotImplemented, "not_implemented"},
-		{ErrNotAllowed, "not_allowed"},
-		{ErrSystemKeyspaceViolation, "system_keyspace_violation"},
-		{ErrCrossTenantAccess, "cross_tenant_access"},
-		{ErrMissingTenantContext, "missing_tenant_context"},
-		{ErrMissingJustification, "missing_justification"},
-		{ErrMissingUserContext, "missing_user_context"},
-	}
-
-	for _, tc := range codes {
-		t.Run(tc.want, func(t *testing.T) {
-			assert.Equal(t, tc.want, tc.code.String())
-		})
-	}
-}
-
-func TestErrorCode_HTTPStatus_RemainingCodes(t *testing.T) {
-	// Test codes that were not covered in existing tests
-	codes := []struct {
-		code   ErrorCode
-		status int
-	}{
-		{ErrNotAllowed, 403},
-		{ErrSystemKeyspaceViolation, 403},
-		{ErrCrossTenantAccess, 403},
-		{ErrMissingTenantContext, 400},
-		{ErrMissingJustification, 400},
-		{ErrMissingUserContext, 400},
-		{ErrQuorumLost, 503},
-		{ErrNotImplemented, 501},
-		{ErrRateLimited, 429},
-		{ErrSplitBrain, 500},
-	}
-
-	for _, tc := range codes {
-		t.Run(tc.code.String(), func(t *testing.T) {
-			assert.Equal(t, tc.status, tc.code.HTTPStatus())
-		})
-	}
-}
-
-func TestErrorCode_IsRetryable_RateLimited(t *testing.T) {
-	assert.True(t, ErrRateLimited.IsRetryable())
-}
-
 // =============================================================================
 // Consolidated from errors_additional_test.go
 // =============================================================================
@@ -1283,90 +1290,6 @@ func TestUnavailablef(t *testing.T) {
 	assert.Equal(t, "cluster", de.Op)
 	assert.Contains(t, err.Error(), "no leader available in 3 nodes")
 	assert.True(t, IsRetryable(err))
-}
-
-func TestErrorCode_String_AllCodes(t *testing.T) {
-	codes := []struct {
-		code ErrorCode
-		want string
-	}{
-		{ErrUnknown, "unknown"},
-		{ErrNotFound, "not_found"},
-		{ErrConflict, "conflict"},
-		{ErrTimeout, "timeout"},
-		{ErrInternal, "internal"},
-		{ErrInvalidInput, "invalid_input"},
-		{ErrUnauthorized, "unauthorized"},
-		{ErrForbidden, "forbidden"},
-		{ErrUnavailable, "unavailable"},
-		{ErrStorage, "storage"},
-		{ErrRaft, "raft"},
-		{ErrEncryption, "encryption"},
-		{ErrDecryption, "decryption"},
-		{ErrValidation, "validation"},
-		{ErrConfiguration, "configuration"},
-		{ErrCanceled, "canceled"},
-		{ErrDeadlineExceeded, "deadline_exceeded"},
-		{ErrAlreadyExists, "already_exists"},
-		{ErrResourceExhausted, "resource_exhausted"},
-		{ErrPreconditionFailed, "precondition_failed"},
-		{ErrAborted, "aborted"},
-		{ErrOutOfRange, "out_of_range"},
-		{ErrUnimplemented, "unimplemented"},
-		{ErrDataLoss, "data_loss"},
-		{ErrSnapshot, "snapshot"},
-		{ErrReplication, "replication"},
-		{ErrLeaderNotAvailable, "leader_not_available"},
-		{ErrClusterNotReady, "cluster_not_ready"},
-	}
-
-	for _, tc := range codes {
-		t.Run(tc.want, func(t *testing.T) {
-			assert.Equal(t, tc.want, tc.code.String())
-		})
-	}
-}
-
-func TestErrorCode_HTTPStatus_AllCodes(t *testing.T) {
-	codes := []struct {
-		code   ErrorCode
-		status int
-	}{
-		{ErrNotFound, 404},
-		{ErrConflict, 409},
-		{ErrAlreadyExists, 409},
-		{ErrTimeout, 408},
-		{ErrDeadlineExceeded, 408},
-		{ErrInvalidInput, 400},
-		{ErrValidation, 400},
-		{ErrOutOfRange, 400},
-		{ErrUnauthorized, 401},
-		{ErrForbidden, 403},
-		{ErrUnavailable, 503},
-		{ErrLeaderNotAvailable, 503},
-		{ErrClusterNotReady, 503},
-		{ErrUnimplemented, 501},
-		{ErrResourceExhausted, 429},
-		{ErrPreconditionFailed, 412},
-		{ErrInternal, 500},
-		{ErrUnknown, 500},
-		{ErrStorage, 503},
-		{ErrRaft, 503},
-		{ErrEncryption, 500},
-		{ErrDecryption, 500},
-		{ErrConfiguration, 500},
-		{ErrCanceled, 500},
-		{ErrAborted, 500},
-		{ErrDataLoss, 500},
-		{ErrSnapshot, 500},
-		{ErrReplication, 500},
-	}
-
-	for _, tc := range codes {
-		t.Run(tc.code.String(), func(t *testing.T) {
-			assert.Equal(t, tc.status, tc.code.HTTPStatus())
-		})
-	}
 }
 
 func TestWrap_PreservesContext(t *testing.T) {
