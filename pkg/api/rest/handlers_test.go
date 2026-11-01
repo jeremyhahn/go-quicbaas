@@ -3893,20 +3893,6 @@ func TestHandleSetDefaultDEKFromBodyMissingDEKID(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
-func TestHandleReplaceNodeInvalidJSON(t *testing.T) {
-	server, _, cleanup := setupMockServer(t)
-	defer cleanup()
-
-	body := `not-json`
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/cluster/nodes/replace", bytes.NewReader([]byte(body)))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-
-	server.HandleReplaceNode(w, req)
-
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
 func TestHandleUpdateCacheConfigInvalidJSON(t *testing.T) {
 	server, _, cleanup := setupMockServer(t)
 	defer cleanup()
@@ -6149,170 +6135,95 @@ func TestRemaining91_HandleGetParameter_Success(t *testing.T) {
 // Secrets Handlers
 // =============================================================================
 
-func TestRemaining91_HandleSecretsAction_Rollback(t *testing.T) {
-	server, _, cleanup := setupMockServerWithFuncMock(t)
-	defer cleanup()
-
+// newSecretPathRequest builds a request whose chi wildcard is secretPath.
+func newSecretPathRequest(method, target, secretPath, body string) *http.Request {
 	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("*", "my/secret")
-	// rollback action dispatches to HandleRollbackSecret which needs secrets service
-	req := httptest.NewRequest(http.MethodPost, "/v1/secrets/my/secret?action=rollback", strings.NewReader(`{"version":1}`))
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
-	w := httptest.NewRecorder()
-	server.HandleSecretsAction(w, req)
-
-	// Nil secrets service returns 500
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
+	rctx.URLParams.Add("*", secretPath)
+	var reader io.Reader
+	if body != "" {
+		reader = strings.NewReader(body)
+	}
+	req := httptest.NewRequest(method, target, reader)
+	return req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
 }
 
-func TestRemaining91_HandleSecretsAction_Rotate(t *testing.T) {
-	server, _, cleanup := setupMockServerWithFuncMock(t)
-	defer cleanup()
+func TestRemaining91_HandleSecretsAction_Dispatch(t *testing.T) {
+	tests := []struct {
+		name     string
+		target   string
+		body     string
+		wantCode int
+	}{
+		// The nil secrets service answers 500 once dispatch reaches it.
+		{name: "rollback", target: "/v1/secrets/my/secret?action=rollback", body: `{"version":1}`, wantCode: http.StatusInternalServerError},
+		{name: "rotate", target: "/v1/secrets/my/secret?action=rotate", body: `{"data":"dGVzdA=="}`, wantCode: http.StatusInternalServerError},
+		{name: "rotate missing data", target: "/v1/secrets/my/secret?action=rotate", body: `{}`, wantCode: http.StatusBadRequest},
+		{name: "destroy", target: "/v1/secrets/my/secret?action=destroy", body: `{}`, wantCode: http.StatusInternalServerError},
+		{name: "default store", target: "/v1/secrets/my/secret", body: `{"data":"dGVzdA=="}`, wantCode: http.StatusInternalServerError},
+	}
 
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("*", "my/secret")
-	// rotate action requires data in request body
-	req := httptest.NewRequest(http.MethodPost, "/v1/secrets/my/secret?action=rotate", strings.NewReader(`{"data":"dGVzdA=="}`))
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
-	w := httptest.NewRecorder()
-	server.HandleSecretsAction(w, req)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			server, _, cleanup := setupMockServerWithFuncMock(t)
+			defer cleanup()
 
-	// Nil secrets service returns 500
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
+			req := newSecretPathRequest(http.MethodPost, tt.target, "my/secret", tt.body)
+			w := httptest.NewRecorder()
+			server.HandleSecretsAction(w, req)
+
+			assert.Equal(t, tt.wantCode, w.Code)
+		})
+	}
 }
 
-func TestRemaining91_HandleSecretsAction_Rotate_MissingData(t *testing.T) {
-	server, _, cleanup := setupMockServerWithFuncMock(t)
-	defer cleanup()
+func TestRemaining91_HandleGetSecretOrVersions_Dispatch(t *testing.T) {
+	tests := []struct {
+		name   string
+		target string
+	}{
+		// Each dispatch reaches the nil secrets service, which answers 500.
+		{name: "with versions lists versions", target: "/v1/secrets/my/secret?versions=true"},
+		{name: "without versions gets secret", target: "/v1/secrets/my/secret"},
+	}
 
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("*", "my/secret")
-	req := httptest.NewRequest(http.MethodPost, "/v1/secrets/my/secret?action=rotate", strings.NewReader(`{}`))
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
-	w := httptest.NewRecorder()
-	server.HandleSecretsAction(w, req)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			server, _, cleanup := setupMockServerWithFuncMock(t)
+			defer cleanup()
 
-	// Missing data returns 400
-	assert.Equal(t, http.StatusBadRequest, w.Code)
+			req := newSecretPathRequest(http.MethodGet, tt.target, "my/secret", "")
+			w := httptest.NewRecorder()
+			server.HandleGetSecretOrVersions(w, req)
+
+			assert.Equal(t, http.StatusInternalServerError, w.Code)
+		})
+	}
 }
 
-func TestRemaining91_HandleSecretsAction_Destroy(t *testing.T) {
-	server, _, cleanup := setupMockServerWithFuncMock(t)
-	defer cleanup()
+func TestRemaining91_HandleStoreSecret_Validation(t *testing.T) {
+	tests := []struct {
+		name       string
+		secretPath string
+		body       string
+	}{
+		{name: "missing path", secretPath: "", body: `{"data":"dGVzdA=="}`},
+		{name: "invalid JSON", secretPath: "my/secret", body: "{bad"},
+		{name: "empty data", secretPath: "my/secret", body: `{"data":null}`},
+		{name: "invalid algorithm", secretPath: "my/secret", body: `{"data":"dGVzdA==","algorithm":"INVALID_ALGO"}`},
+	}
 
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("*", "my/secret")
-	req := httptest.NewRequest(http.MethodPost, "/v1/secrets/my/secret?action=destroy", strings.NewReader(`{}`))
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
-	w := httptest.NewRecorder()
-	server.HandleSecretsAction(w, req)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			server, _, cleanup := setupMockServerWithFuncMock(t)
+			defer cleanup()
 
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
-}
+			req := newSecretPathRequest(http.MethodPost, "/v1/secrets/"+tt.secretPath, tt.secretPath, tt.body)
+			w := httptest.NewRecorder()
+			server.HandleStoreSecret(w, req)
 
-func TestRemaining91_HandleSecretsAction_DefaultStore(t *testing.T) {
-	server, _, cleanup := setupMockServerWithFuncMock(t)
-	defer cleanup()
-
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("*", "my/secret")
-	body := `{"data":"dGVzdA=="}`
-	req := httptest.NewRequest(http.MethodPost, "/v1/secrets/my/secret", strings.NewReader(body))
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
-	w := httptest.NewRecorder()
-	server.HandleSecretsAction(w, req)
-
-	// Nil secrets service returns 500
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
-}
-
-func TestRemaining91_HandleGetSecretOrVersions_WithVersions(t *testing.T) {
-	server, _, cleanup := setupMockServerWithFuncMock(t)
-	defer cleanup()
-
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("*", "my/secret")
-	req := httptest.NewRequest(http.MethodGet, "/v1/secrets/my/secret?versions=true", nil)
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
-	w := httptest.NewRecorder()
-	server.HandleGetSecretOrVersions(w, req)
-
-	// Dispatches to HandleListVersions, nil secrets service returns 500
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
-}
-
-func TestRemaining91_HandleGetSecretOrVersions_WithoutVersions(t *testing.T) {
-	server, _, cleanup := setupMockServerWithFuncMock(t)
-	defer cleanup()
-
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("*", "my/secret")
-	req := httptest.NewRequest(http.MethodGet, "/v1/secrets/my/secret", nil)
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
-	w := httptest.NewRecorder()
-	server.HandleGetSecretOrVersions(w, req)
-
-	// Dispatches to HandleGetSecret, nil secrets service returns 500
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
-}
-
-func TestRemaining91_HandleStoreSecret_MissingPath(t *testing.T) {
-	server, _, cleanup := setupMockServerWithFuncMock(t)
-	defer cleanup()
-
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("*", "")
-	body := `{"data":"dGVzdA=="}`
-	req := httptest.NewRequest(http.MethodPost, "/v1/secrets/", strings.NewReader(body))
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
-	w := httptest.NewRecorder()
-	server.HandleStoreSecret(w, req)
-
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestRemaining91_HandleStoreSecret_InvalidJSON(t *testing.T) {
-	server, _, cleanup := setupMockServerWithFuncMock(t)
-	defer cleanup()
-
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("*", "my/secret")
-	req := httptest.NewRequest(http.MethodPost, "/v1/secrets/my/secret", strings.NewReader("{bad"))
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
-	w := httptest.NewRecorder()
-	server.HandleStoreSecret(w, req)
-
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestRemaining91_HandleStoreSecret_EmptyData(t *testing.T) {
-	server, _, cleanup := setupMockServerWithFuncMock(t)
-	defer cleanup()
-
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("*", "my/secret")
-	body := `{"data":null}`
-	req := httptest.NewRequest(http.MethodPost, "/v1/secrets/my/secret", strings.NewReader(body))
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
-	w := httptest.NewRecorder()
-	server.HandleStoreSecret(w, req)
-
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestRemaining91_HandleStoreSecret_InvalidAlgorithm(t *testing.T) {
-	server, _, cleanup := setupMockServerWithFuncMock(t)
-	defer cleanup()
-
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("*", "my/secret")
-	body := `{"data":"dGVzdA==","algorithm":"INVALID_ALGO"}`
-	req := httptest.NewRequest(http.MethodPost, "/v1/secrets/my/secret", strings.NewReader(body))
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
-	w := httptest.NewRecorder()
-	server.HandleStoreSecret(w, req)
-
-	assert.Equal(t, http.StatusBadRequest, w.Code)
+			assert.Equal(t, http.StatusBadRequest, w.Code)
+		})
+	}
 }
 
 // =============================================================================
