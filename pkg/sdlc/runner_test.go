@@ -1472,199 +1472,140 @@ func refreshedOnce(call int) *orchestration.SessionAccountFreshness {
 	return nil
 }
 
-// TestRunner_AnAccountRotationResumesTheConversationByDefault: on a project
-// that never chose a session rotation policy, a session whose pooled account
-// rotated under it is replaced BEFORE its next prompt, and the replacement
-// CONTINUES its conversation: the transcript is read before the old session is
-// closed and carried into the new session's first prompt. Neither a round nor
-// an attempt is spent (go-quicbaas#997, owner ruling 2026-09-24).
-func TestRunner_AnAccountRotationResumesTheConversationByDefault(t *testing.T) {
-	rig := newRunnerRig(t)
-	rig.rebindVerification(t, "true")
-	rig.workerWrote()
-	rig.verdictOnPublish("APPROVED", "lgtm")
-	rig.agents.freshnessFn = refreshedOnce
-	rig.agents.transcriptFn = func(sessionID string) (*orchestration.ReplayTranscript, error) {
+// TestRunner_AnAccountRotationReplacesTheSessionAsTheProjectAsks: a session
+// whose pooled account rotated under it is closed and replaced by one session
+// in the same workspace, at no cost of a round. A project that never chose a
+// session rotation policy resumes the conversation, read before the old
+// session is closed; a project that says fresh, or a resume whose
+// conversation cannot be read, starts a fresh session and says why.
+func TestRunner_AnAccountRotationReplacesTheSessionAsTheProjectAsks(t *testing.T) {
+	conversation := func(sessionID string) (*orchestration.ReplayTranscript, error) {
 		return workerTranscript(sessionID), nil
 	}
-	rig.agents.onPrompt = func(*orchestration.PromptSessionRequest) { rig.workerWrote() }
+	cases := map[string]struct {
+		policy      orchestration.SessionRotationPolicy
+		transcript  func(sessionID string) (*orchestration.ReplayTranscript, error)
+		promptHas   []string
+		promptLacks []string
+		// resumed and rolled are what the one session_resumed or
+		// session_rolled audit records; nil means that audit is absent.
+		resumed []string
+		rolled  []string
+	}{
+		"by default the conversation is resumed": {
+			transcript: conversation,
+			promptHas: []string{"continues on a refreshed provider credential", "This is the same conversation, continued.",
+				"the handler table lives in pkg/router/table.go", "1 earlier turn(s) omitted"},
+			resumed: []string{"reason=account_rotated", "account=acct-1", "round=0", "session=session-1",
+				"rotated_at=", "replayed_turns=2", "omitted_turns=1"},
+		},
+		"a resume of an unprompted session carries no conversation": {
+			promptHas:   []string{"continues on a refreshed provider credential"},
+			promptLacks: []string{"same conversation, continued"},
+			resumed:     []string{"replayed_turns=0"},
+		},
+		"a project that says fresh starts fresh": {
+			policy:      orchestration.SessionRotationFresh,
+			transcript:  conversation,
+			promptHas:   []string{"provider account was refreshed"},
+			promptLacks: []string{"pkg/router/table.go"},
+			rolled:      []string{"reason=account_rotated", "account=acct-1", "round=0", "rotated_at="},
+		},
+		"a resume with no readable conversation starts fresh": {
+			transcript: func(sessionID string) (*orchestration.ReplayTranscript, error) {
+				return nil, &orchestration.SessionTranscriptUnavailableError{SessionID: sessionID, Reason: "no session event log is configured"}
+			},
+			promptHas: []string{"provider account was refreshed"},
+			rolled:    []string{`resume_unavailable="no session event log is configured"`},
+		},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			rig := newRunnerRig(t)
+			if tc.policy != "" {
+				rig.sessionRotation = tc.policy
+			}
+			rig.rebindVerification(t, "true")
+			rig.workerWrote()
+			rig.verdictOnPublish("APPROVED", "lgtm")
+			rig.agents.freshnessFn = refreshedOnce
+			rig.agents.transcriptFn = tc.transcript
+			rig.agents.onPrompt = func(*orchestration.PromptSessionRequest) { rig.workerWrote() }
 
-	job := rig.job(t)
-	if err := rig.runner.Run(context.Background(), job); err != nil {
-		t.Fatalf("Run: %v", err)
-	}
+			job := rig.job(t)
+			if err := rig.runner.Run(context.Background(), job); err != nil {
+				t.Fatalf("Run: %v", err)
+			}
 
-	if len(rig.agents.spawns) != 2 {
-		t.Fatalf("spawns = %d, want the left-behind session replaced by one resumed one", len(rig.agents.spawns))
-	}
-	if first, second := rig.agents.spawns[0].WorkDir, rig.agents.spawns[1].WorkDir; first != second {
-		t.Errorf("the resumed session was spawned in %q, want the same workspace %q", second, first)
-	}
-	if !slices.Contains(rig.agents.closed, "session-1") {
-		t.Errorf("the session holding the retired credential was not closed: %v", rig.agents.closed)
-	}
-	// THE CONVERSATION IS READ BEFORE THE SESSION IS CLOSED: a backend that
-	// keeps it in the process would otherwise lose it. The resumed session's
-	// own conversation is read again when it is released for the review.
-	if len(rig.agents.transcriptReads) == 0 || rig.agents.transcriptReads[0] != "session-1" ||
-		slices.Index(rig.agents.transcriptReads[1:], "session-1") >= 0 {
-		t.Fatalf("transcript reads = %v, want one of session-1, first", rig.agents.transcriptReads)
-	}
-	if rig.agents.closedAtRead[0] != 0 {
-		t.Errorf("the transcript was read after %d close(s), want before any", rig.agents.closedAtRead[0])
-	}
-	if len(rig.agents.prompts) == 0 {
-		t.Fatal("the resumed session was never prompted")
-	}
-	first := rig.agents.prompts[0]
-	if first.SessionID == "session-1" {
-		t.Errorf("the session holding the retired credential was prompted anyway")
-	}
-	for _, want := range []string{
-		"continues on a refreshed provider credential",
-		"This is the same conversation, continued.",
-		"the handler table lives in pkg/router/table.go",
-		"1 earlier turn(s) omitted",
-	} {
-		if !strings.Contains(first.Prompt, want) {
-			t.Errorf("the resumed session's first prompt does not carry %q:\n%s", want, first.Prompt)
-		}
-	}
+			if len(rig.agents.spawns) != 2 {
+				t.Fatalf("spawns = %d, want the left-behind session replaced by one", len(rig.agents.spawns))
+			}
+			if first, second := rig.agents.spawns[0].WorkDir, rig.agents.spawns[1].WorkDir; first != second {
+				t.Errorf("the replacement was spawned in %q, want the same workspace %q", second, first)
+			}
+			if !slices.Contains(rig.agents.closed, "session-1") {
+				t.Errorf("the session holding the retired credential was not closed: %v", rig.agents.closed)
+			}
+			if job.Iteration() != 0 {
+				t.Errorf("iteration = %d, want the replacement to spend no round", job.Iteration())
+			}
+			if len(rig.agents.prompts) == 0 {
+				t.Fatal("the replacement was never prompted")
+			}
+			first := rig.agents.prompts[0]
+			if first.SessionID == "session-1" {
+				t.Errorf("the session holding the retired credential was prompted anyway")
+			}
+			for _, want := range tc.promptHas {
+				if !strings.Contains(first.Prompt, want) {
+					t.Errorf("the replacement's first prompt does not carry %q:\n%s", want, first.Prompt)
+				}
+			}
+			for _, unwanted := range tc.promptLacks {
+				if strings.Contains(first.Prompt, unwanted) {
+					t.Errorf("the replacement's first prompt carries %q:\n%s", unwanted, first.Prompt)
+				}
+			}
+			for _, audit := range []struct {
+				event string
+				want  []string
+			}{{auditSessionResumed, tc.resumed}, {auditSessionRolled, tc.rolled}} {
+				details := rig.auditDetails(audit.event)
+				if audit.want == nil {
+					if len(details) != 0 {
+						t.Errorf("%s audits = %v, want none", audit.event, details)
+					}
+					continue
+				}
+				if len(details) != 1 {
+					t.Errorf("%s audits = %v, want one", audit.event, details)
+					continue
+				}
+				for _, want := range audit.want {
+					if !strings.Contains(details[0], want) {
+						t.Errorf("%s audit %q does not record %q", audit.event, details[0], want)
+					}
+				}
+			}
 
-	resumed := rig.auditDetails(auditSessionResumed)
-	if len(resumed) != 1 {
-		t.Fatalf("session_resumed audits = %v, want one", resumed)
-	}
-	for _, want := range []string{"reason=account_rotated", "account=acct-1", "round=0", "session=session-1",
-		"rotated_at=", "replayed_turns=2", "omitted_turns=1"} {
-		if !strings.Contains(resumed[0], want) {
-			t.Errorf("session_resumed audit %q does not record %q", resumed[0], want)
-		}
-	}
-	if rolled := rig.auditDetails(auditSessionRolled); len(rolled) != 0 {
-		t.Errorf("session_rolled audits = %v, want none on a resume", rolled)
-	}
-	if job.Iteration() != 0 {
-		t.Errorf("iteration = %d, want the resume to spend no round", job.Iteration())
-	}
-}
-
-// TestRunner_AResumeOfAnUnpromptedSessionCarriesNoConversation: a session
-// whose account rotated before it was ever prompted has no conversation. It is
-// still resumed — told why it is in a new container — but handed no empty
-// transcript to "continue".
-func TestRunner_AResumeOfAnUnpromptedSessionCarriesNoConversation(t *testing.T) {
-	rig := newRunnerRig(t)
-	rig.rebindVerification(t, "true")
-	rig.workerWrote()
-	rig.verdictOnPublish("APPROVED", "lgtm")
-	rig.agents.freshnessFn = refreshedOnce
-	rig.agents.onPrompt = func(*orchestration.PromptSessionRequest) { rig.workerWrote() }
-
-	if err := rig.runner.Run(context.Background(), rig.job(t)); err != nil {
-		t.Fatalf("Run: %v", err)
-	}
-	if len(rig.agents.prompts) == 0 {
-		t.Fatal("the resumed session was never prompted")
-	}
-	prompt := rig.agents.prompts[0].Prompt
-	if !strings.Contains(prompt, "continues on a refreshed provider credential") {
-		t.Errorf("the resumed session was not told why it is in a new container:\n%s", prompt)
-	}
-	if strings.Contains(prompt, "same conversation, continued") {
-		t.Errorf("an empty conversation was handed over as one to continue:\n%s", prompt)
-	}
-	if resumed := rig.auditDetails(auditSessionResumed); len(resumed) != 1 || !strings.Contains(resumed[0], "replayed_turns=0") {
-		t.Errorf("session_resumed audits = %v, want one recording replayed_turns=0", resumed)
-	}
-}
-
-// TestRunner_AnAccountRotationStartsFreshWhenTheProjectSaysSo: a project whose
-// session_rotation is fresh gets go-quicbaas#997's first behaviour: the
-// replacement starts a new conversation, told only why it is new. No
-// conversation is read at all.
-func TestRunner_AnAccountRotationStartsFreshWhenTheProjectSaysSo(t *testing.T) {
-	rig := newRunnerRig(t)
-	rig.sessionRotation = orchestration.SessionRotationFresh
-	rig.rebindVerification(t, "true")
-	rig.workerWrote()
-	rig.verdictOnPublish("APPROVED", "lgtm")
-	rig.agents.freshnessFn = refreshedOnce
-	rig.agents.transcriptFn = func(sessionID string) (*orchestration.ReplayTranscript, error) {
-		return workerTranscript(sessionID), nil
-	}
-	rig.agents.onPrompt = func(*orchestration.PromptSessionRequest) { rig.workerWrote() }
-
-	job := rig.job(t)
-	if err := rig.runner.Run(context.Background(), job); err != nil {
-		t.Fatalf("Run: %v", err)
-	}
-
-	if len(rig.agents.spawns) != 2 {
-		t.Fatalf("spawns = %d, want the left-behind session replaced by one fresh one", len(rig.agents.spawns))
-	}
-	if len(rig.agents.transcriptReads) != 0 {
-		t.Errorf("transcript reads = %v, want none on a fresh project", rig.agents.transcriptReads)
-	}
-	if len(rig.agents.prompts) == 0 {
-		t.Fatal("the fresh session was never prompted")
-	}
-	prompt := rig.agents.prompts[0].Prompt
-	if !strings.Contains(prompt, "provider account was refreshed") {
-		t.Errorf("the fresh session was not told why it is fresh:\n%s", prompt)
-	}
-	if strings.Contains(prompt, "pkg/router/table.go") {
-		t.Errorf("a fresh session was handed the old conversation:\n%s", prompt)
-	}
-
-	rolled := rig.auditDetails(auditSessionRolled)
-	if len(rolled) != 1 {
-		t.Fatalf("session_rolled audits = %v, want one", rolled)
-	}
-	for _, want := range []string{"reason=account_rotated", "account=acct-1", "round=0", "rotated_at="} {
-		if !strings.Contains(rolled[0], want) {
-			t.Errorf("session_rolled audit %q does not record %q", rolled[0], want)
-		}
-	}
-	if resumed := rig.auditDetails(auditSessionResumed); len(resumed) != 0 {
-		t.Errorf("session_resumed audits = %v, want none on a fresh project", resumed)
-	}
-	if job.Iteration() != 0 {
-		t.Errorf("iteration = %d, want the roll to spend no round", job.Iteration())
-	}
-}
-
-// TestRunner_AResumeWithNoReadableConversationStartsFresh: a project that
-// resumes, on a service whose session log will not answer, still gets its
-// session off the retired credential — fresh, and the audit record says the
-// resume was unavailable and why. Prompting the old session instead would lose
-// the round to the provider's refusal.
-func TestRunner_AResumeWithNoReadableConversationStartsFresh(t *testing.T) {
-	rig := newRunnerRig(t)
-	rig.rebindVerification(t, "true")
-	rig.workerWrote()
-	rig.verdictOnPublish("APPROVED", "lgtm")
-	rig.agents.freshnessFn = refreshedOnce
-	rig.agents.transcriptFn = func(sessionID string) (*orchestration.ReplayTranscript, error) {
-		return nil, &orchestration.SessionTranscriptUnavailableError{SessionID: sessionID, Reason: "no session event log is configured"}
-	}
-	rig.agents.onPrompt = func(*orchestration.PromptSessionRequest) { rig.workerWrote() }
-
-	if err := rig.runner.Run(context.Background(), rig.job(t)); err != nil {
-		t.Fatalf("Run: %v", err)
-	}
-	if len(rig.agents.spawns) != 2 {
-		t.Fatalf("spawns = %d, want one replacement", len(rig.agents.spawns))
-	}
-	rolled := rig.auditDetails(auditSessionRolled)
-	if len(rolled) != 1 || !strings.Contains(rolled[0], `resume_unavailable="no session event log is configured"`) {
-		t.Fatalf("session_rolled audits = %v, want one naming why the resume was unavailable", rolled)
-	}
-	if resumed := rig.auditDetails(auditSessionResumed); len(resumed) != 0 {
-		t.Errorf("session_resumed audits = %v, want none", resumed)
-	}
-	if prompt := rig.agents.prompts[0].Prompt; !strings.Contains(prompt, "provider account was refreshed") {
-		t.Errorf("the fresh session was not told why it is fresh:\n%s", prompt)
+			reads := rig.agents.transcriptReads
+			if tc.policy == orchestration.SessionRotationFresh {
+				if len(reads) != 0 {
+					t.Errorf("transcript reads = %v, want none on a fresh project", reads)
+				}
+				return
+			}
+			// THE CONVERSATION IS READ BEFORE THE SESSION IS CLOSED: a backend
+			// that keeps it in the process would otherwise lose it. The
+			// replacement's own conversation is read again when it is released
+			// for the review.
+			if len(reads) == 0 || reads[0] != "session-1" || slices.Index(reads[1:], "session-1") >= 0 {
+				t.Fatalf("transcript reads = %v, want one of session-1, first", reads)
+			}
+			if rig.agents.closedAtRead[0] != 0 {
+				t.Errorf("the transcript was read after %d close(s), want before any", rig.agents.closedAtRead[0])
+			}
+		})
 	}
 }
 
