@@ -50,6 +50,11 @@ func TestNew(t *testing.T) {
 			config: LogConfig{Level: "debug", Format: "console", Output: "stdout", NoColor: true},
 		},
 		{
+			name:   "valid console stdout config with color",
+			config: LogConfig{Level: "debug", Format: "console", Output: "stdout"},
+			check:  func(t *testing.T, logger *Logger) { logger.Info("colored console output") },
+		},
+		{
 			name:   "valid config with component",
 			config: LogConfig{Level: "info", Format: "json", Output: "stdout", Component: "test-component"},
 		},
@@ -154,10 +159,11 @@ func TestLogger_WithField(t *testing.T) {
 		t.Fatalf("Failed to create logger: %v", err)
 	}
 
-	newLogger := logger.WithField("key", "value")
+	newLogger := logger.WithField("key1", "value1").WithField("key2", "value2")
 
-	if val, ok := newLogger.GetFields()["key"]; !ok || val != "value" {
-		t.Errorf("Field key = %v, want value", val)
+	fields := newLogger.GetFields()
+	if len(fields) != 2 || fields["key1"] != "value1" || fields["key2"] != "value2" {
+		t.Errorf("chained WithField() fields = %v, want key1=value1 key2=value2", fields)
 	}
 }
 
@@ -528,127 +534,59 @@ func TestLogger_LogMethods(t *testing.T) {
 
 // TestNew_FileOutputError tests the New function with an invalid file path.
 // TestLogger_WithFieldChaining tests chaining WithField calls.
-func TestLogger_WithFieldChaining(t *testing.T) {
-	logger, err := New(LogConfig{
-		Level:  "info",
-		Format: "json",
-		Output: "stdout",
-	})
-	if err != nil {
-		t.Fatalf("Failed to create logger: %v", err)
-	}
-
-	// Chain multiple WithField calls
-	newLogger := logger.WithField("key1", "value1").WithField("key2", "value2")
-	if newLogger == nil {
-		t.Error("WithField chaining returned nil logger")
-	}
-
-	// Verify both fields are present
-	fields := newLogger.GetFields()
-	if len(fields) != 2 {
-		t.Errorf("Expected 2 fields, got %d", len(fields))
-	}
-}
-
 // TestLogger_Panic tests the Panic method.
 func TestLogger_Panic(t *testing.T) {
-	logger, err := New(LogConfig{
-		Level:  "info",
-		Format: "json",
-		Output: "stdout",
-	})
-	if err != nil {
-		t.Fatalf("Failed to create logger: %v", err)
+	tests := map[string]func(*Logger){
+		"Panic":  func(l *Logger) { l.Panic("panic test message") },
+		"Panicf": func(l *Logger) { l.Panicf("panic test %s %d", "formatted", 123) },
 	}
 
-	defer func() {
-		if r := recover(); r == nil {
-			t.Error("Panic() should have panicked")
-		}
-	}()
+	for name, logPanic := range tests {
+		t.Run(name, func(t *testing.T) {
+			logger, err := New(LogConfig{Level: "info", Format: "json", Output: "stdout"})
+			if err != nil {
+				t.Fatalf("Failed to create logger: %v", err)
+			}
 
-	logger.Panic("panic test message")
-}
+			defer func() {
+				if r := recover(); r == nil {
+					t.Errorf("%s() should have panicked", name)
+				}
+			}()
 
-// TestLogger_Panicf tests the Panicf method.
-func TestLogger_Panicf(t *testing.T) {
-	logger, err := New(LogConfig{
-		Level:  "info",
-		Format: "json",
-		Output: "stdout",
-	})
-	if err != nil {
-		t.Fatalf("Failed to create logger: %v", err)
+			logPanic(logger)
+		})
 	}
-
-	defer func() {
-		if r := recover(); r == nil {
-			t.Error("Panicf() should have panicked")
-		}
-	}()
-
-	logger.Panicf("panic test %s %d", "formatted", 123)
 }
 
-// TestLogger_Fatal tests the Fatal method using subprocess pattern.
 func TestLogger_Fatal(t *testing.T) {
-	if os.Getenv("BE_FATAL") == "1" {
-		logger, err := New(LogConfig{
-			Level:  "info",
-			Format: "json",
-			Output: "stdout",
-		})
+	tests := map[string]func(*Logger){
+		"Fatal":  func(l *Logger) { l.Fatal("fatal test message") },
+		"Fatalf": func(l *Logger) { l.Fatalf("fatal test %s %d", "formatted", 456) },
+	}
+
+	// In the subprocess, run only the case named by BE_FATAL; it must exit.
+	if name := os.Getenv("BE_FATAL"); name != "" {
+		logger, err := New(LogConfig{Level: "info", Format: "json", Output: "stdout"})
 		if err != nil {
 			panic(err)
 		}
-		logger.Fatal("fatal test message")
+		tests[name](logger)
 		return
 	}
 
-	// Run the test in a subprocess
-	cmd := exec.Command(os.Args[0], "-test.run=TestLogger_Fatal")
-	cmd.Env = append(os.Environ(), "BE_FATAL=1")
-	err := cmd.Run()
+	for name := range tests {
+		t.Run(name, func(t *testing.T) {
+			cmd := exec.Command(os.Args[0], "-test.run=^TestLogger_Fatal$")
+			cmd.Env = append(os.Environ(), "BE_FATAL="+name)
+			err := cmd.Run()
 
-	// Fatal should cause the process to exit with non-zero status
-	var e *exec.ExitError
-	if errors.As(err, &e) && !e.Success() {
-		// Expected behavior - process exited with non-zero status
-		return
-	}
-
-	t.Error("Fatal() should have caused process to exit with non-zero status")
-}
-
-// TestLogger_Fatalf tests the Fatalf method using subprocess pattern.
-func TestLogger_Fatalf(t *testing.T) {
-	if os.Getenv("BE_FATALF") == "1" {
-		logger, err := New(LogConfig{
-			Level:  "info",
-			Format: "json",
-			Output: "stdout",
+			var e *exec.ExitError
+			if !errors.As(err, &e) || e.Success() {
+				t.Errorf("%s() should have caused process to exit with non-zero status, err = %v", name, err)
+			}
 		})
-		if err != nil {
-			panic(err)
-		}
-		logger.Fatalf("fatal test %s %d", "formatted", 456)
-		return
 	}
-
-	// Run the test in a subprocess
-	cmd := exec.Command(os.Args[0], "-test.run=TestLogger_Fatalf")
-	cmd.Env = append(os.Environ(), "BE_FATALF=1")
-	err := cmd.Run()
-
-	// Fatalf should cause the process to exit with non-zero status
-	var e *exec.ExitError
-	if errors.As(err, &e) && !e.Success() {
-		// Expected behavior - process exited with non-zero status
-		return
-	}
-
-	t.Error("Fatalf() should have caused process to exit with non-zero status")
 }
 
 // TestWithContext_NilContext tests WithContext with a nil context.
@@ -736,26 +674,6 @@ func TestLogger_AllLevels(t *testing.T) {
 
 // TestNew_FileOutputWithDefaultFilename tests file output without specifying a filename.
 // TestLogger_ConsoleFormatWithColor tests console format without NoColor flag.
-func TestLogger_ConsoleFormatWithColor(t *testing.T) {
-	config := LogConfig{
-		Level:   "debug",
-		Format:  "console",
-		Output:  "stdout",
-		NoColor: false, // Enable color
-	}
-
-	logger, err := New(config)
-	if err != nil {
-		t.Errorf("New() error = %v, want nil", err)
-	}
-	if logger == nil {
-		t.Error("New() returned nil logger")
-	}
-
-	// Log a message to ensure it works
-	logger.Info("colored console output")
-}
-
 // TestLogger_WithAttrs tests the strongly-typed slog attributes method.
 func TestLogger_WithAttrs(t *testing.T) {
 	tests := []struct {
