@@ -237,6 +237,40 @@ func TestSessionManager_GetByToken(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, session.ID, retrieved.ID)
 	})
+
+	t.Run("get_by_token_idle_session", func(t *testing.T) {
+		policy := &SessionPolicy{
+			IdleTimeout:     time.Minute,
+			AbsoluteTimeout: 24 * time.Hour,
+		}
+		mgr, err := NewSessionManager(WithSessionPolicy(policy))
+		require.NoError(t, err)
+
+		tokenHash := hashToken("idle-token")
+		session := &SessionExt{
+			ID:         uuid.New().String(),
+			UserID:     40041,
+			TenantID:   "tenant-idle",
+			TokenHash:  tokenHash,
+			Created:    time.Now().Add(-2 * time.Hour),
+			LastActive: time.Now().Add(-2 * time.Minute),
+			ExpiresAt:  time.Now().Add(24 * time.Hour),
+		}
+		require.NoError(t, mgr.storage.Create(ctx, session))
+
+		_, err = mgr.GetByToken(ctx, tokenHash)
+		assert.ErrorIs(t, err, ErrSessionExpired)
+	})
+
+	t.Run("get_by_token_cancelled_context", func(t *testing.T) {
+		mgr, err := NewSessionManager()
+		require.NoError(t, err)
+
+		cancelled, cancel := context.WithCancel(ctx)
+		cancel()
+		_, err = mgr.GetByToken(cancelled, "some-token-hash")
+		assert.Equal(t, context.Canceled, err)
+	})
 }
 
 func TestSessionManager_List(t *testing.T) {
@@ -316,6 +350,22 @@ func TestSessionManager_List(t *testing.T) {
 		assert.Len(t, sessions, 1)
 		assert.Equal(t, activeSession.ID, sessions[0].ID)
 	})
+
+	t.Run("list_sessions_invalid_input", func(t *testing.T) {
+		mgr, err := NewSessionManager()
+		require.NoError(t, err)
+
+		cancelled, cancel := context.WithCancel(ctx)
+		cancel()
+		_, err = mgr.List(cancelled, 10001, "tenant-1")
+		assert.Equal(t, context.Canceled, err)
+
+		_, err = mgr.List(ctx, 0, "tenant-1")
+		assert.Error(t, err, "empty user ID")
+
+		_, err = mgr.List(ctx, 10001, "")
+		assert.Error(t, err, "empty tenant ID")
+	})
 }
 
 func TestSessionManager_UpdateActivity(t *testing.T) {
@@ -325,17 +375,17 @@ func TestSessionManager_UpdateActivity(t *testing.T) {
 		mgr, err := NewSessionManager()
 		require.NoError(t, err)
 
+		originalActivity := time.Now().Add(-1 * time.Minute)
 		session := &SessionExt{
-			UserID:    10001,
-			TenantID:  "tenant-1",
-			TokenHash: hashToken("token-123"),
+			ID:         uuid.New().String(),
+			UserID:     10001,
+			TenantID:   "tenant-1",
+			TokenHash:  hashToken("token-123"),
+			Created:    originalActivity,
+			LastActive: originalActivity,
+			ExpiresAt:  time.Now().Add(1 * time.Hour),
 		}
-
-		err = mgr.Create(ctx, session)
-		require.NoError(t, err)
-
-		originalActivity := session.LastActive
-		time.Sleep(10 * time.Millisecond)
+		require.NoError(t, mgr.storage.Create(ctx, session))
 
 		err = mgr.UpdateActivity(ctx, session.ID)
 		require.NoError(t, err)
@@ -352,6 +402,38 @@ func TestSessionManager_UpdateActivity(t *testing.T) {
 		err = mgr.UpdateActivity(ctx, "non-existent")
 		assert.Error(t, err)
 		assert.ErrorIs(t, err, ErrSessionNotFound)
+	})
+
+	t.Run("update_activity_expired_session", func(t *testing.T) {
+		mgr, err := NewSessionManager()
+		require.NoError(t, err)
+
+		session := &SessionExt{
+			ID:         uuid.New().String(),
+			UserID:     40042,
+			TenantID:   "tenant-update-expired",
+			TokenHash:  hashToken("expired-update-token"),
+			ExpiresAt:  time.Now().Add(-1 * time.Hour),
+			Created:    time.Now().Add(-2 * time.Hour),
+			LastActive: time.Now().Add(-2 * time.Hour),
+		}
+		require.NoError(t, mgr.storage.Create(ctx, session))
+
+		err = mgr.UpdateActivity(ctx, session.ID)
+		assert.ErrorIs(t, err, ErrSessionExpired)
+	})
+
+	t.Run("update_activity_invalid_input", func(t *testing.T) {
+		mgr, err := NewSessionManager()
+		require.NoError(t, err)
+
+		cancelled, cancel := context.WithCancel(ctx)
+		cancel()
+		err = mgr.UpdateActivity(cancelled, "session-123")
+		assert.Equal(t, context.Canceled, err)
+
+		err = mgr.UpdateActivity(ctx, "")
+		assert.Error(t, err, "empty session ID")
 	})
 }
 
@@ -386,6 +468,19 @@ func TestSessionManager_Revoke(t *testing.T) {
 		err = mgr.Revoke(ctx, "non-existent")
 		assert.NoError(t, err) // Should not error
 	})
+
+	t.Run("revoke_session_invalid_input", func(t *testing.T) {
+		mgr, err := NewSessionManager()
+		require.NoError(t, err)
+
+		cancelled, cancel := context.WithCancel(ctx)
+		cancel()
+		err = mgr.Revoke(cancelled, "session-123")
+		assert.Equal(t, context.Canceled, err)
+
+		err = mgr.Revoke(ctx, "")
+		assert.Error(t, err, "empty session ID")
+	})
 }
 
 func TestSessionManager_RevokeAllForUser(t *testing.T) {
@@ -412,6 +507,22 @@ func TestSessionManager_RevokeAllForUser(t *testing.T) {
 		sessions, err := mgr.List(ctx, 10001, "tenant-1")
 		require.NoError(t, err)
 		assert.Empty(t, sessions)
+	})
+
+	t.Run("revoke_all_invalid_input", func(t *testing.T) {
+		mgr, err := NewSessionManager()
+		require.NoError(t, err)
+
+		cancelled, cancel := context.WithCancel(ctx)
+		cancel()
+		err = mgr.RevokeAllForUser(cancelled, 10001, "tenant-1")
+		assert.Equal(t, context.Canceled, err)
+
+		err = mgr.RevokeAllForUser(ctx, 0, "tenant-1")
+		assert.Error(t, err, "empty user ID")
+
+		err = mgr.RevokeAllForUser(ctx, 10001, "")
+		assert.Error(t, err, "empty tenant ID")
 	})
 }
 
@@ -446,6 +557,25 @@ func TestSessionManager_RevokeAllExcept(t *testing.T) {
 		require.NoError(t, err)
 		assert.Len(t, sessions, 1)
 		assert.Equal(t, keepSessionID, sessions[0].ID)
+	})
+
+	t.Run("revoke_all_except_invalid_input", func(t *testing.T) {
+		mgr, err := NewSessionManager()
+		require.NoError(t, err)
+
+		cancelled, cancel := context.WithCancel(ctx)
+		cancel()
+		err = mgr.RevokeAllExcept(cancelled, 10001, "tenant-1", "session-1")
+		assert.Equal(t, context.Canceled, err)
+
+		err = mgr.RevokeAllExcept(ctx, 0, "tenant-1", "session-1")
+		assert.Error(t, err, "empty user ID")
+
+		err = mgr.RevokeAllExcept(ctx, 10001, "", "session-1")
+		assert.Error(t, err, "empty tenant ID")
+
+		err = mgr.RevokeAllExcept(ctx, 10001, "tenant-1", "")
+		assert.Error(t, err, "empty except session ID")
 	})
 }
 
@@ -492,6 +622,16 @@ func TestSessionManager_CleanupExpired(t *testing.T) {
 		_, err = mgr.Get(ctx, activeSession.ID)
 		assert.NoError(t, err)
 	})
+
+	t.Run("cleanup_cancelled_context", func(t *testing.T) {
+		mgr, err := NewSessionManager()
+		require.NoError(t, err)
+
+		cancelled, cancel := context.WithCancel(ctx)
+		cancel()
+		_, err = mgr.CleanupExpired(cancelled)
+		assert.Equal(t, context.Canceled, err)
+	})
 }
 
 func TestSessionManager_ValidateSession(t *testing.T) {
@@ -534,6 +674,39 @@ func TestSessionManager_ValidateSession(t *testing.T) {
 		err = mgr.ValidateSession(ctx, session.ID)
 		assert.Error(t, err)
 		assert.ErrorIs(t, err, ErrSessionExpired)
+	})
+
+	t.Run("validate_idle_session", func(t *testing.T) {
+		policy := &SessionPolicy{
+			IdleTimeout:     time.Minute,
+			AbsoluteTimeout: 24 * time.Hour,
+		}
+		mgr, err := NewSessionManager(WithSessionPolicy(policy))
+		require.NoError(t, err)
+
+		session := &SessionExt{
+			ID:         uuid.New().String(),
+			UserID:     40043,
+			TenantID:   "tenant-validate",
+			TokenHash:  hashToken("validate-token"),
+			Created:    time.Now().Add(-1 * time.Hour),
+			LastActive: time.Now().Add(-1 * time.Hour),
+			ExpiresAt:  time.Now().Add(1 * time.Hour),
+		}
+		require.NoError(t, mgr.storage.Create(ctx, session))
+
+		err = mgr.ValidateSession(ctx, session.ID)
+		assert.ErrorIs(t, err, ErrSessionExpired)
+	})
+
+	t.Run("validate_cancelled_context", func(t *testing.T) {
+		mgr, err := NewSessionManager()
+		require.NoError(t, err)
+
+		cancelled, cancel := context.WithCancel(ctx)
+		cancel()
+		err = mgr.ValidateSession(cancelled, "session-123")
+		assert.Equal(t, context.Canceled, err)
 	})
 }
 
@@ -1072,349 +1245,6 @@ func TestSessionPolicy_Validate_NegativeIdleTimeout(t *testing.T) {
 // =============================================================================
 // Session Manager - RevokeAllForUser, RevokeAllExcept tests
 // =============================================================================
-
-func TestSessionManager_RevokeAllForUser_SuccessFinal(t *testing.T) {
-	ctx := context.Background()
-	mgr, err := NewSessionManager()
-	require.NoError(t, err)
-
-	// Create multiple sessions for a user
-	userID := uint64(40030)
-	tenantID := "tenant-revoke-1"
-
-	for i := 0; i < 3; i++ {
-		session := &SessionExt{
-			ID:        uuid.New().String(),
-			UserID:    userID,
-			TenantID:  tenantID,
-			TokenHash: hashTokenForTestFinal("token-" + uuid.New().String()),
-		}
-		err := mgr.Create(ctx, session)
-		require.NoError(t, err)
-	}
-
-	// Verify sessions exist
-	sessions, err := mgr.List(ctx, userID, tenantID)
-	require.NoError(t, err)
-	assert.Len(t, sessions, 3)
-
-	// Revoke all
-	err = mgr.RevokeAllForUser(ctx, userID, tenantID)
-	require.NoError(t, err)
-
-	// Verify all sessions are gone
-	sessions, err = mgr.List(ctx, userID, tenantID)
-	require.NoError(t, err)
-	assert.Len(t, sessions, 0)
-}
-
-func TestSessionManager_RevokeAllForUser_EmptyUserIDFinal(t *testing.T) {
-	ctx := context.Background()
-	mgr, err := NewSessionManager()
-	require.NoError(t, err)
-
-	err = mgr.RevokeAllForUser(ctx, 0, "tenant-1")
-	assert.Error(t, err)
-}
-
-func TestSessionManager_RevokeAllForUser_EmptyTenantIDFinal(t *testing.T) {
-	ctx := context.Background()
-	mgr, err := NewSessionManager()
-	require.NoError(t, err)
-
-	err = mgr.RevokeAllForUser(ctx, 10001, "")
-	assert.Error(t, err)
-}
-
-func TestSessionManager_RevokeAllForUser_CancelledContextFinal(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-
-	mgr, err := NewSessionManager()
-	require.NoError(t, err)
-
-	err = mgr.RevokeAllForUser(ctx, 10001, "tenant-1")
-	assert.Error(t, err)
-	assert.Equal(t, context.Canceled, err)
-}
-
-func TestSessionManager_RevokeAllExcept_SuccessFinal(t *testing.T) {
-	ctx := context.Background()
-	mgr, err := NewSessionManager()
-	require.NoError(t, err)
-
-	userID := uint64(40030)
-	tenantID := "tenant-except-2"
-	var keepSessionID string
-
-	// Create multiple sessions
-	for i := 0; i < 4; i++ {
-		session := &SessionExt{
-			ID:        uuid.New().String(),
-			UserID:    userID,
-			TenantID:  tenantID,
-			TokenHash: hashTokenForTestFinal("token-" + uuid.New().String()),
-		}
-		err := mgr.Create(ctx, session)
-		require.NoError(t, err)
-		if i == 2 {
-			keepSessionID = session.ID
-		}
-	}
-
-	// Verify sessions exist
-	sessions, err := mgr.List(ctx, userID, tenantID)
-	require.NoError(t, err)
-	assert.Len(t, sessions, 4)
-
-	// Revoke all except one
-	err = mgr.RevokeAllExcept(ctx, userID, tenantID, keepSessionID)
-	require.NoError(t, err)
-
-	// Verify only the kept session remains
-	sessions, err = mgr.List(ctx, userID, tenantID)
-	require.NoError(t, err)
-	assert.Len(t, sessions, 1)
-	assert.Equal(t, keepSessionID, sessions[0].ID)
-}
-
-func TestSessionManager_RevokeAllExcept_EmptyUserIDFinal(t *testing.T) {
-	ctx := context.Background()
-	mgr, err := NewSessionManager()
-	require.NoError(t, err)
-
-	err = mgr.RevokeAllExcept(ctx, 0, "tenant-1", "session-1")
-	assert.Error(t, err)
-}
-
-func TestSessionManager_RevokeAllExcept_EmptyTenantIDFinal(t *testing.T) {
-	ctx := context.Background()
-	mgr, err := NewSessionManager()
-	require.NoError(t, err)
-
-	err = mgr.RevokeAllExcept(ctx, 10001, "", "session-1")
-	assert.Error(t, err)
-}
-
-func TestSessionManager_RevokeAllExcept_EmptyExceptSessionIDFinal(t *testing.T) {
-	ctx := context.Background()
-	mgr, err := NewSessionManager()
-	require.NoError(t, err)
-
-	err = mgr.RevokeAllExcept(ctx, 10001, "tenant-1", "")
-	assert.Error(t, err)
-}
-
-func TestSessionManager_RevokeAllExcept_CancelledContextFinal(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-
-	mgr, err := NewSessionManager()
-	require.NoError(t, err)
-
-	err = mgr.RevokeAllExcept(ctx, 10001, "tenant-1", "session-1")
-	assert.Error(t, err)
-	assert.Equal(t, context.Canceled, err)
-}
-
-// =============================================================================
-// Session Manager - GetByToken, List, UpdateActivity, Revoke, ValidateSession tests
-// =============================================================================
-
-func TestSessionManager_GetByToken_CancelledContextFinal(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-
-	mgr, err := NewSessionManager()
-	require.NoError(t, err)
-
-	_, err = mgr.GetByToken(ctx, "some-token-hash")
-	assert.Error(t, err)
-	assert.Equal(t, context.Canceled, err)
-}
-
-func TestSessionManager_GetByToken_IdleSessionFinal(t *testing.T) {
-	ctx := context.Background()
-
-	policy := &SessionPolicy{
-		IdleTimeout:     1 * time.Millisecond, // Very short idle timeout
-		AbsoluteTimeout: 24 * time.Hour,
-	}
-	storage := NewMemorySessionExtStorage()
-	mgr, err := NewSessionManager(WithSessionPolicy(policy), WithSessionStorage(storage))
-	require.NoError(t, err)
-
-	tokenHash := hashTokenForTestFinal("idle-token-final-123")
-	session := &SessionExt{
-		ID:         uuid.New().String(),
-		UserID:     40041,
-		TenantID:   "tenant-idle",
-		TokenHash:  tokenHash,
-		Created:    time.Now().Add(-2 * time.Hour),
-		LastActive: time.Now().Add(-2 * time.Minute), // Last active 2 minutes ago
-		ExpiresAt:  time.Now().Add(24 * time.Hour),
-	}
-	err = storage.Create(ctx, session)
-	require.NoError(t, err)
-
-	// Wait for idle timeout
-	time.Sleep(5 * time.Millisecond)
-
-	// GetByToken should return expired error due to idle
-	_, err = mgr.GetByToken(ctx, tokenHash)
-	assert.ErrorIs(t, err, ErrSessionExpired)
-}
-
-func TestSessionManager_List_CancelledContextFinal(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-
-	mgr, err := NewSessionManager()
-	require.NoError(t, err)
-
-	_, err = mgr.List(ctx, 10001, "tenant-1")
-	assert.Error(t, err)
-	assert.Equal(t, context.Canceled, err)
-}
-
-func TestSessionManager_List_EmptyUserIDFinal(t *testing.T) {
-	ctx := context.Background()
-	mgr, err := NewSessionManager()
-	require.NoError(t, err)
-
-	_, err = mgr.List(ctx, 0, "tenant-1")
-	assert.Error(t, err)
-}
-
-func TestSessionManager_List_EmptyTenantIDFinal(t *testing.T) {
-	ctx := context.Background()
-	mgr, err := NewSessionManager()
-	require.NoError(t, err)
-
-	_, err = mgr.List(ctx, 10001, "")
-	assert.Error(t, err)
-}
-
-func TestSessionManager_UpdateActivity_CancelledContextFinal(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-
-	mgr, err := NewSessionManager()
-	require.NoError(t, err)
-
-	err = mgr.UpdateActivity(ctx, "session-123")
-	assert.Error(t, err)
-	assert.Equal(t, context.Canceled, err)
-}
-
-func TestSessionManager_UpdateActivity_EmptySessionIDFinal(t *testing.T) {
-	ctx := context.Background()
-	mgr, err := NewSessionManager()
-	require.NoError(t, err)
-
-	err = mgr.UpdateActivity(ctx, "")
-	assert.Error(t, err)
-}
-
-func TestSessionManager_UpdateActivity_ExpiredSessionFinal(t *testing.T) {
-	ctx := context.Background()
-	storage := NewMemorySessionExtStorage()
-	mgr, err := NewSessionManager(WithSessionStorage(storage))
-	require.NoError(t, err)
-
-	// Manually create an expired session in storage
-	session := &SessionExt{
-		ID:         uuid.New().String(),
-		UserID:     40042,
-		TenantID:   "tenant-update-expired",
-		TokenHash:  hashTokenForTestFinal("expired-update-token"),
-		ExpiresAt:  time.Now().Add(-1 * time.Hour), // Expired
-		Created:    time.Now().Add(-2 * time.Hour),
-		LastActive: time.Now().Add(-2 * time.Hour),
-	}
-	err = storage.Create(ctx, session)
-	require.NoError(t, err)
-
-	// UpdateActivity should fail
-	err = mgr.UpdateActivity(ctx, session.ID)
-	assert.ErrorIs(t, err, ErrSessionExpired)
-}
-
-func TestSessionManager_Revoke_CancelledContextFinal(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-
-	mgr, err := NewSessionManager()
-	require.NoError(t, err)
-
-	err = mgr.Revoke(ctx, "session-123")
-	assert.Error(t, err)
-	assert.Equal(t, context.Canceled, err)
-}
-
-func TestSessionManager_Revoke_EmptySessionIDFinal(t *testing.T) {
-	ctx := context.Background()
-	mgr, err := NewSessionManager()
-	require.NoError(t, err)
-
-	err = mgr.Revoke(ctx, "")
-	assert.Error(t, err)
-}
-
-func TestSessionManager_CleanupExpired_CancelledContextFinal(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-
-	mgr, err := NewSessionManager()
-	require.NoError(t, err)
-
-	_, err = mgr.CleanupExpired(ctx)
-	assert.Error(t, err)
-	assert.Equal(t, context.Canceled, err)
-}
-
-func TestSessionManager_ValidateSession_CancelledContextFinal(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-
-	mgr, err := NewSessionManager()
-	require.NoError(t, err)
-
-	err = mgr.ValidateSession(ctx, "session-123")
-	assert.Error(t, err)
-	assert.Equal(t, context.Canceled, err)
-}
-
-func TestSessionManager_ValidateSession_IdleSessionFinal(t *testing.T) {
-	ctx := context.Background()
-
-	policy := &SessionPolicy{
-		IdleTimeout:     1 * time.Millisecond,
-		AbsoluteTimeout: 24 * time.Hour,
-	}
-	storage := NewMemorySessionExtStorage()
-	mgr, err := NewSessionManager(WithSessionPolicy(policy), WithSessionStorage(storage))
-	require.NoError(t, err)
-
-	// Create a session
-	session := &SessionExt{
-		ID:         uuid.New().String(),
-		UserID:     40043,
-		TenantID:   "tenant-validate",
-		TokenHash:  hashTokenForTestFinal("validate-token-final"),
-		Created:    time.Now().Add(-1 * time.Hour),
-		LastActive: time.Now().Add(-1 * time.Hour), // Idle
-		ExpiresAt:  time.Now().Add(1 * time.Hour),
-	}
-	err = storage.Create(ctx, session)
-	require.NoError(t, err)
-
-	// Wait for idle timeout
-	time.Sleep(5 * time.Millisecond)
-
-	err = mgr.ValidateSession(ctx, session.ID)
-	assert.ErrorIs(t, err, ErrSessionExpired)
-}
 
 // =============================================================================
 // OIDC Provider - handleClientCredentialsGrant tests
