@@ -34,14 +34,6 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/pkg/testutil"
 )
 
-// setupMockVectorService creates a mock service with vector capabilities
-func setupMockVectorService() *testutil.MockQuicBaaS {
-	mockSvc := testutil.NewMockQuicBaaS()
-	mockVectorSvc := &MockVectorService{}
-	mockSvc.VectorService = mockVectorSvc
-	return mockSvc
-}
-
 // ========================================
 // Health and Monitoring Handler Tests
 // ========================================
