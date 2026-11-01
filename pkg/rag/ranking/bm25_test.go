@@ -156,6 +156,69 @@ func TestBM25_ScoreWithMetadata(t *testing.T) {
 			},
 			expectBoosted: true,
 		},
+		{
+			name:     "all four boosts",
+			query:    "auth handler security go",
+			document: "authentication handler implementation",
+			metadata: map[string]interface{}{
+				"function_name": "auth_handler",
+				"file_path":     "/pkg/auth/handler.go",
+				"tags":          []string{"security"},
+				"language":      "go",
+			},
+			expectBoosted: true,
+		},
+		{
+			name:          "empty metadata map is ignored",
+			query:         "test query",
+			document:      "test document content",
+			metadata:      map[string]interface{}{},
+			expectBoosted: false,
+		},
+		{
+			name:     "empty string values are ignored",
+			query:    "test",
+			document: "test content",
+			metadata: map[string]interface{}{
+				"function_name": "",
+				"file_path":     "",
+				"language":      "",
+			},
+			expectBoosted: false,
+		},
+		{
+			name:     "wrong value types are ignored",
+			query:    "test",
+			document: "test content",
+			metadata: map[string]interface{}{
+				"function_name": 123,
+				"file_path":     []int{1, 2, 3},
+				"tags":          "not-a-slice",
+				"language":      map[string]string{},
+			},
+			expectBoosted: false,
+		},
+		{
+			name:     "empty tags slice is ignored",
+			query:    "test",
+			document: "test content",
+			metadata: map[string]interface{}{
+				"tags": []string{},
+			},
+			expectBoosted: false,
+		},
+		{
+			name:     "metadata with no matches",
+			query:    "database",
+			document: "user interface",
+			metadata: map[string]interface{}{
+				"function_name": "render_ui",
+				"file_path":     "/pkg/ui/render.go",
+				"tags":          []string{"ui", "frontend"},
+				"language":      "go",
+			},
+			expectBoosted: false,
+		},
 	}
 
 	for _, tt := range tests {
@@ -166,6 +229,8 @@ func TestBM25_ScoreWithMetadata(t *testing.T) {
 			if tt.expectBoosted {
 				assert.Greater(t, boostedScore, baselineScore,
 					"expected boosted score (%.4f) to be higher than baseline (%.4f)", boostedScore, baselineScore)
+			} else {
+				assert.Equal(t, baselineScore, boostedScore)
 			}
 
 			assert.GreaterOrEqual(t, boostedScore, float32(0.0), "score should not be negative")
@@ -311,33 +376,6 @@ func TestBM25_ScoreConsistency(t *testing.T) {
 
 	assert.Equal(t, score1, score2)
 	assert.Equal(t, score2, score3)
-}
-
-func TestBM25_ParameterSensitivity(t *testing.T) {
-	query := "database connection"
-	document := "database connection pool implementation with timeout handling"
-
-	// Test different k1 values - note: BM25 doesn't use avgDocLen parameter
-	bm25_k1_1 := NewBM25(1.0, 0.75)
-	bm25_k1_2 := NewBM25(2.0, 0.75)
-
-	score_k1_1 := bm25_k1_1.Score(query, document, 100)
-	score_k1_2 := bm25_k1_2.Score(query, document, 100)
-
-	// Scores should be positive
-	assert.Greater(t, score_k1_1, float32(0.0))
-	assert.Greater(t, score_k1_2, float32(0.0))
-
-	// Test different b values
-	bm25_b_0 := NewBM25(1.2, 0.0)
-	bm25_b_1 := NewBM25(1.2, 1.0)
-
-	score_b_0 := bm25_b_0.Score(query, document, 100)
-	score_b_1 := bm25_b_1.Score(query, document, 100)
-
-	// Scores should be positive
-	assert.Greater(t, score_b_0, float32(0.0))
-	assert.Greater(t, score_b_1, float32(0.0))
 }
 
 func BenchmarkBM25_Score(b *testing.B) {
@@ -744,215 +782,6 @@ func TestHybridRanker_RankHybrid_AllPaths(t *testing.T) {
 	}
 }
 
-// TestBM25_ScoreWithMetadata_ComprehensiveMetadataTests tests all metadata paths
-func TestBM25_ScoreWithMetadata_ComprehensiveMetadataTests(t *testing.T) {
-	bm25 := NewBM25(1.2, 0.75)
-
-	tests := []struct {
-		name     string
-		query    string
-		document string
-		metadata map[string]interface{}
-		check    func(t *testing.T, score float32)
-	}{
-		{
-			name:     "nil metadata",
-			query:    "test query",
-			document: "test document content",
-			metadata: nil,
-			check: func(t *testing.T, score float32) {
-				assert.Greater(t, score, float32(0.0))
-			},
-		},
-		{
-			name:     "empty metadata map",
-			query:    "test query",
-			document: "test document content",
-			metadata: map[string]interface{}{},
-			check: func(t *testing.T, score float32) {
-				assert.Greater(t, score, float32(0.0))
-			},
-		},
-		{
-			name:     "metadata with empty string values",
-			query:    "test",
-			document: "test content",
-			metadata: map[string]interface{}{
-				"function_name": "",
-				"file_path":     "",
-				"language":      "",
-			},
-			check: func(t *testing.T, score float32) {
-				assert.Greater(t, score, float32(0.0))
-			},
-		},
-		{
-			name:     "metadata with wrong types",
-			query:    "test",
-			document: "test content",
-			metadata: map[string]interface{}{
-				"function_name": 123,
-				"file_path":     []int{1, 2, 3},
-				"tags":          "not-a-slice",
-				"language":      map[string]string{},
-			},
-			check: func(t *testing.T, score float32) {
-				assert.Greater(t, score, float32(0.0))
-			},
-		},
-		{
-			name:     "metadata with all boosts applied",
-			query:    "test auth security go",
-			document: "test authentication security implementation",
-			metadata: map[string]interface{}{
-				"function_name": "test_auth",
-				"file_path":     "/test/security.go",
-				"tags":          []string{"security"},
-				"language":      "go",
-			},
-			check: func(t *testing.T, score float32) {
-				assert.Greater(t, score, float32(0.0))
-			},
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			score := bm25.ScoreWithMetadata(tt.query, tt.document, tt.metadata)
-			tt.check(t, score)
-		})
-	}
-}
-
-func TestBM25_ScoreWithMetadata_EdgeCases(t *testing.T) {
-	bm25 := NewBM25(1.2, 0.75)
-
-	tests := []struct {
-		name     string
-		query    string
-		document string
-		metadata map[string]interface{}
-		wantZero bool
-	}{
-		{
-			name:     "empty function name in metadata",
-			query:    "authenticate",
-			document: "authentication handler",
-			metadata: map[string]interface{}{
-				"function_name": "",
-			},
-			wantZero: false,
-		},
-		{
-			name:     "empty file path in metadata",
-			query:    "handler",
-			document: "authentication handler",
-			metadata: map[string]interface{}{
-				"file_path": "",
-			},
-			wantZero: false,
-		},
-		{
-			name:     "empty language in metadata",
-			query:    "code",
-			document: "some code implementation",
-			metadata: map[string]interface{}{
-				"language": "",
-			},
-			wantZero: false,
-		},
-		{
-			name:     "non-string function name",
-			query:    "test",
-			document: "test function",
-			metadata: map[string]interface{}{
-				"function_name": 123, // Not a string
-			},
-			wantZero: false,
-		},
-		{
-			name:     "non-string file path",
-			query:    "test",
-			document: "test file",
-			metadata: map[string]interface{}{
-				"file_path": []string{"not", "a", "string"},
-			},
-			wantZero: false,
-		},
-		{
-			name:     "non-string-slice tags",
-			query:    "security",
-			document: "security feature",
-			metadata: map[string]interface{}{
-				"tags": "not-a-slice",
-			},
-			wantZero: false,
-		},
-		{
-			name:     "non-string language",
-			query:    "golang",
-			document: "golang implementation",
-			metadata: map[string]interface{}{
-				"language": 123,
-			},
-			wantZero: false,
-		},
-		{
-			name:     "metadata with no matches",
-			query:    "database",
-			document: "user interface",
-			metadata: map[string]interface{}{
-				"function_name": "render_ui",
-				"file_path":     "/pkg/ui/render.go",
-				"tags":          []string{"ui", "frontend"},
-				"language":      "go",
-			},
-			wantZero: false,
-		},
-		{
-			name:     "empty tags slice",
-			query:    "test",
-			document: "test content",
-			metadata: map[string]interface{}{
-				"tags": []string{},
-			},
-			wantZero: false,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			score := bm25.ScoreWithMetadata(tt.query, tt.document, tt.metadata)
-			if tt.wantZero {
-				assert.Equal(t, float32(0.0), score)
-			} else {
-				assert.GreaterOrEqual(t, score, float32(0.0))
-			}
-		})
-	}
-}
-
-// TestHybridRanker_RankWithMetadata_TopKGreaterThanResults tests topK boundary
-func TestHybridRanker_RankWithMetadata_TopKGreaterThanResults(t *testing.T) {
-	config := DefaultConfig()
-	config.EnableRerank = true
-	config.RerankTopK = 100 // Much larger than result set
-
-	reranker := NewSimpleReranker()
-	ranker := NewHybridRanker(config, reranker)
-
-	results := []Result{
-		{ID: "doc1", Content: "test content"},
-		{ID: "doc2", Content: "more content"},
-	}
-
-	scored, err := ranker.RankWithMetadata(results, "test", nil)
-
-	require.NoError(t, err)
-	// Should get all results, not limited by topK
-	assert.Len(t, scored, 2)
-}
-
 // TestSimilarityReranker_Rerank_EmbeddingGenerationFailure tests partial embedding failures
 func TestSimilarityReranker_Rerank_EmbeddingGenerationFailure(t *testing.T) {
 	embedder := &partialFailEmbedder{
@@ -1093,16 +922,6 @@ func TestBM25_ScoreWithMetadata_TokenizeEdgeCases(t *testing.T) {
 			assert.Equal(t, float32(0.0), score)
 		})
 	}
-}
-
-// TestBM25_Score_DirectCall tests direct Score method call
-func TestBM25_Score_DirectCall(t *testing.T) {
-	bm25 := NewBM25(1.2, 0.75)
-
-	// Test Score method which calls ScoreWithMetadata with nil metadata
-	score := bm25.Score("test query", "test document content", 100)
-
-	assert.Greater(t, score, float32(0.0))
 }
 
 // TestHybridRanker_Rank_DirectCall tests direct Rank method call
@@ -1331,66 +1150,4 @@ func TestSimilarityReranker_Rerank_TopKClamp(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.Len(t, reranked, 3, "should return exactly topK results")
-}
-
-// TestBM25_ScoreWithMetadata_AllBoosts tests all boost paths combined
-func TestBM25_ScoreWithMetadata_AllBoosts(t *testing.T) {
-	bm25 := NewBM25(1.2, 0.75)
-
-	// Test with all possible boost types
-	query := "auth handler security go"
-	document := "authentication handler implementation"
-
-	tests := []struct {
-		name      string
-		metadata  map[string]interface{}
-		wantBoost bool
-	}{
-		{
-			name: "all boosts active",
-			metadata: map[string]interface{}{
-				"function_name": "auth_handler",
-				"file_path":     "/pkg/auth/handler.go",
-				"tags":          []string{"security"},
-				"language":      "go",
-			},
-			wantBoost: true,
-		},
-		{
-			name: "function and language boost",
-			metadata: map[string]interface{}{
-				"function_name": "authenticate",
-				"language":      "go",
-			},
-			wantBoost: true,
-		},
-		{
-			name: "filepath and tags boost",
-			metadata: map[string]interface{}{
-				"file_path": "/pkg/auth/security.go",
-				"tags":      []string{"security"},
-			},
-			wantBoost: true,
-		},
-		{
-			name: "only language boost",
-			metadata: map[string]interface{}{
-				"language": "go",
-			},
-			wantBoost: true,
-		},
-	}
-
-	baselineScore := bm25.ScoreWithMetadata(query, document, nil)
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			boostedScore := bm25.ScoreWithMetadata(query, document, tt.metadata)
-
-			if tt.wantBoost {
-				assert.Greater(t, boostedScore, baselineScore,
-					"expected boosted score to be higher than baseline")
-			}
-		})
-	}
 }
