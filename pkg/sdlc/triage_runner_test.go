@@ -279,6 +279,12 @@ func TestTriageRunner_NeedsInfoLabelsAndNamesWhatIsMissing(t *testing.T) {
 	if !strings.Contains(comments[0], "which of the three Encode overloads") {
 		t.Fatalf("the comment must name what is missing, got:\n%s", comments[0])
 	}
+	if !strings.Contains(comments[0], "1. Which of the three Encode overloads is affected?") {
+		t.Fatalf("the comment must list the question, got:\n%s", comments[0])
+	}
+	if strings.Contains(comments[0], TriageQuestionMarker) {
+		t.Fatalf("the marker itself means nothing to a reader, got:\n%s", comments[0])
+	}
 }
 
 // TestTriageRunner_NotActionableCommentsAndLeavesItAlone proves the third
@@ -458,8 +464,9 @@ func TestTriageRunner_NeverClosesAnIssue(t *testing.T) {
 // go-luks2 on 2026-09-21 and a person then had to undo.
 func TestTriageRunner_AnUnreadableReplyIsNeverReady(t *testing.T) {
 	tests := []struct {
-		name  string
-		reply string
+		name   string
+		reply  string
+		reason string
 	}{
 		{
 			name:  "prose that sounds approving but declares nothing",
@@ -493,6 +500,11 @@ func TestTriageRunner_AnUnreadableReplyIsNeverReady(t *testing.T) {
 			name:  "a duplicate of an unlisted issue",
 			reply: "Same thing.\n\nSDLC-TRIAGE-DUPLICATE: #999\nSDLC-TRIAGE: duplicate",
 		},
+		{
+			name:   "a needs-info with evidence that asks nothing",
+			reply:  triageSummaryReply + "SDLC-TRIAGE: needs-info",
+			reason: "asks no question",
+		},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -510,8 +522,8 @@ func TestTriageRunner_AnUnreadableReplyIsNeverReady(t *testing.T) {
 				t.Fatalf("a reply that is not a verdict labels nothing, not even the trigger label, got %v", got)
 			}
 			details, ok := rig.auditDetails("sdlc:triage_unusable")
-			if !ok || !strings.Contains(details, "issue=301") {
-				t.Fatalf("setting a reply aside is audited with the issue, got %q", details)
+			if !ok || !strings.Contains(details, "issue=301") || !strings.Contains(details, tc.reason) {
+				t.Fatalf("setting a reply aside is audited with the issue and the reason %q, got %q", tc.reason, details)
 			}
 		})
 	}
@@ -2133,51 +2145,6 @@ func TestTriageRunner_TwoDifferentQuestionsAreBothPosted(t *testing.T) {
 const triageSummaryReply = "## Review of Issue #826\n\n### Issue Summary\n\n" +
 	"The issue asks for the scheduler to coalesce leases in pkg/scheduler/lease.go.\n\n" +
 	"### What is missing:\n\nThe issue describes lease coalescing for the scheduler.\n\n"
-
-func TestTriageRunner_ANeedsInfoThatAsksNothingIsNotAVerdict(t *testing.T) {
-	rig := newTriageRig(t)
-	rig.forge.putIssue(826, "Coalesce scheduler leases")
-	rig.answers(triageSummaryReply + "SDLC-TRIAGE: needs-info")
-
-	if err := rig.run(); err != nil {
-		t.Fatalf("run: %v", err)
-	}
-	if got := rig.comments(826); len(got) != 0 {
-		t.Fatalf("a needs-info that asks nothing is not posted, got %v", got)
-	}
-	if got := rig.labels(826); len(got) != 0 {
-		t.Fatalf("a needs-info that asks nothing parks nothing, got %v", got)
-	}
-	details, ok := rig.auditDetails("sdlc:triage_unusable")
-	if !ok || !strings.Contains(details, "issue=826") || !strings.Contains(details, "asks no question") {
-		t.Fatalf("the audit trail names the issue and the reason, got %q", details)
-	}
-}
-
-func TestTriageRunner_ANeedsInfoListsTheQuestionsItAsks(t *testing.T) {
-	rig := newTriageRig(t)
-	rig.forge.putIssue(851, "Coalesce scheduler leases")
-	rig.answers(triageSummaryReply +
-		"SDLC-TRIAGE-QUESTION: Should a coalesced lease keep the earliest or the latest deadline?\n" +
-		"SDLC-TRIAGE: needs-info")
-
-	if err := rig.run(); err != nil {
-		t.Fatalf("run: %v", err)
-	}
-	if !rig.hasLabel(851, rig.binding.Forge.Label(LabelNeedsInfo)) {
-		t.Fatalf("a needs-info that asks a question is parked, got %v", rig.labels(851))
-	}
-	comments := rig.comments(851)
-	if len(comments) != 1 {
-		t.Fatalf("needs-info comments exactly once, got %d", len(comments))
-	}
-	if !strings.Contains(comments[0], "1. Should a coalesced lease keep the earliest or the latest deadline?") {
-		t.Fatalf("the comment must list the question, got:\n%s", comments[0])
-	}
-	if strings.Contains(comments[0], TriageQuestionMarker) {
-		t.Fatalf("the marker itself means nothing to a reader, got:\n%s", comments[0])
-	}
-}
 
 func TestTriageRunner_ADuplicateMustShareAPathOrIdentifier(t *testing.T) {
 	const dice = "Add `dice.Attestation` to sdk/go/xkms/dice/dice.go."
