@@ -906,25 +906,74 @@ func TestHandleEmbeddingBatch_WithResultError(t *testing.T) {
 // Ollama Service Error Path Tests
 // =============================================================================
 
-func TestHandleOllamaModelInfo_ServiceError(t *testing.T) {
-	expectedErr := errors.New("model not found")
-	svc := &extendedMockService{
-		ollamaSvc: &mockOllamaService{
-			getModelFunc: func(ctx context.Context, req *service.OllamaGetModelInfoRequest) (*service.OllamaGetModelInfoResponse, error) {
-				return nil, expectedErr
+// TestOllamaTools_ServiceError checks that each ollama tool wraps a service
+// failure in its operation error and returns no result.
+func TestOllamaTools_ServiceError(t *testing.T) {
+	svcErr := errors.New("service failure")
+	tests := []struct {
+		name        string
+		tool        string
+		svc         *mockOllamaService
+		args        map[string]interface{}
+		errContains string
+	}{
+		{
+			name: "model info",
+			tool: "quicbaas_ollama_model_info",
+			svc: &mockOllamaService{
+				getModelFunc: func(ctx context.Context, req *service.OllamaGetModelInfoRequest) (*service.OllamaGetModelInfoResponse, error) {
+					return nil, svcErr
+				},
 			},
+			args:        map[string]interface{}{"model": "nonexistent-model"},
+			errContains: "get model info failed",
+		},
+		{
+			name: "embed",
+			tool: "quicbaas_ollama_embed",
+			svc: &mockOllamaService{
+				embedFunc: func(ctx context.Context, req *service.OllamaEmbedRequest) (*service.OllamaEmbedResponse, error) {
+					return nil, svcErr
+				},
+			},
+			args:        map[string]interface{}{"text": "test"},
+			errContains: "embed failed",
+		},
+		{
+			name: "embed batch",
+			tool: "quicbaas_ollama_embed_batch",
+			svc: &mockOllamaService{
+				embedBatchFunc: func(ctx context.Context, req *service.OllamaEmbedBatchRequest) (*service.OllamaEmbedBatchResponse, error) {
+					return nil, svcErr
+				},
+			},
+			args:        map[string]interface{}{"texts": `["hello","world"]`},
+			errContains: "embed batch failed",
+		},
+		{
+			name: "model list",
+			tool: "quicbaas_ollama_model_list",
+			svc: &mockOllamaService{
+				listModelsFunc: func(ctx context.Context, req *service.OllamaListModelsRequest) (*service.OllamaListModelsResponse, error) {
+					return nil, svcErr
+				},
+			},
+			args:        map[string]interface{}{},
+			errContains: "list models failed",
 		},
 	}
-	log, _ := logger.New(logger.LogConfig{Level: "error", Output: "stdout"})
-	registry := NewToolRegistry(svc, log)
-	ctx := context.Background()
 
-	result, err := registry.ExecuteTool(ctx, "quicbaas_ollama_model_info", map[string]interface{}{
-		"model": "nonexistent-model",
-	})
-	require.Error(t, err)
-	assert.Nil(t, result)
-	assert.Contains(t, err.Error(), "get model info failed")
+	log, err := logger.New(logger.LogConfig{Level: "error", Output: "stdout"})
+	require.NoError(t, err)
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			registry := NewToolRegistry(&extendedMockService{ollamaSvc: tc.svc}, log)
+			result, err := registry.ExecuteTool(context.Background(), tc.tool, tc.args)
+			require.Error(t, err)
+			assert.Nil(t, result)
+			assert.Contains(t, err.Error(), tc.errContains)
+		})
+	}
 }
 
 func TestHandleOllamaHealth_ServiceError(t *testing.T) {
@@ -974,91 +1023,111 @@ func TestHandleOllamaHealth_WithErrorResponse(t *testing.T) {
 	assert.Equal(t, "service degraded", resultMap["error"])
 }
 
-func TestHandleOllamaEmbed_ServiceError(t *testing.T) {
-	expectedErr := errors.New("embed failed")
-	svc := &extendedMockService{
-		ollamaSvc: &mockOllamaService{
-			embedFunc: func(ctx context.Context, req *service.OllamaEmbedRequest) (*service.OllamaEmbedResponse, error) {
-				return nil, expectedErr
-			},
-		},
-	}
-	log, _ := logger.New(logger.LogConfig{Level: "error", Output: "stdout"})
-	registry := NewToolRegistry(svc, log)
-	ctx := context.Background()
-
-	result, err := registry.ExecuteTool(ctx, "quicbaas_ollama_embed", map[string]interface{}{
-		"text": "test",
-	})
-	require.Error(t, err)
-	assert.Nil(t, result)
-	assert.Contains(t, err.Error(), "embed failed")
-}
-
-func TestHandleOllamaEmbedBatch_ServiceError(t *testing.T) {
-	expectedErr := errors.New("batch embed failed")
-	svc := &extendedMockService{
-		ollamaSvc: &mockOllamaService{
-			embedBatchFunc: func(ctx context.Context, req *service.OllamaEmbedBatchRequest) (*service.OllamaEmbedBatchResponse, error) {
-				return nil, expectedErr
-			},
-		},
-	}
-	log, _ := logger.New(logger.LogConfig{Level: "error", Output: "stdout"})
-	registry := NewToolRegistry(svc, log)
-	ctx := context.Background()
-
-	result, err := registry.ExecuteTool(ctx, "quicbaas_ollama_embed_batch", map[string]interface{}{
-		"texts": `["hello","world"]`,
-	})
-	require.Error(t, err)
-	assert.Nil(t, result)
-	assert.Contains(t, err.Error(), "embed batch failed")
-}
-
-func TestHandleOllamaModelList_ServiceError(t *testing.T) {
-	expectedErr := errors.New("list models failed")
-	svc := &extendedMockService{
-		ollamaSvc: &mockOllamaService{
-			listModelsFunc: func(ctx context.Context, req *service.OllamaListModelsRequest) (*service.OllamaListModelsResponse, error) {
-				return nil, expectedErr
-			},
-		},
-	}
-	log, _ := logger.New(logger.LogConfig{Level: "error", Output: "stdout"})
-	registry := NewToolRegistry(svc, log)
-	ctx := context.Background()
-
-	result, err := registry.ExecuteTool(ctx, "quicbaas_ollama_model_list", map[string]interface{}{})
-	require.Error(t, err)
-	assert.Nil(t, result)
-	assert.Contains(t, err.Error(), "list models failed")
-}
-
 // =============================================================================
 // Parameter Store Error Path Tests
 // =============================================================================
 
-func TestHandleParameterSet_ServiceError(t *testing.T) {
-	expectedErr := errors.New("parameter set failed")
-	svc := &extendedMockService{
-		parameterSvc: &mockParameterStoreService{
-			setFunc: func(ctx context.Context, req *interfaces.SetParameterRequest) (*interfaces.SetParameterResponse, error) {
-				return nil, expectedErr
+// TestParameterTools_ServiceError checks that each parameter tool wraps a
+// service failure in its operation error and returns no result.
+func TestParameterTools_ServiceError(t *testing.T) {
+	svcErr := errors.New("service failure")
+	tests := []struct {
+		name        string
+		tool        string
+		svc         *mockParameterStoreService
+		args        map[string]interface{}
+		errContains string
+	}{
+		{
+			name: "set",
+			tool: "quicbaas_parameter_set",
+			svc: &mockParameterStoreService{
+				setFunc: func(ctx context.Context, req *interfaces.SetParameterRequest) (*interfaces.SetParameterResponse, error) {
+					return nil, svcErr
+				},
 			},
+			args:        map[string]interface{}{"path": "/app/config", "value": "test"},
+			errContains: "set parameter failed",
+		},
+		{
+			name: "delete",
+			tool: "quicbaas_parameter_delete",
+			svc: &mockParameterStoreService{
+				deleteFunc: func(ctx context.Context, req *interfaces.DeleteParameterRequest) (*interfaces.DeleteParameterResponse, error) {
+					return nil, svcErr
+				},
+			},
+			args:        map[string]interface{}{"path": "/app/config"},
+			errContains: "delete parameter failed",
+		},
+		{
+			name: "list",
+			tool: "quicbaas_parameter_list",
+			svc: &mockParameterStoreService{
+				listFunc: func(ctx context.Context, req *interfaces.ListParametersRequest) (*interfaces.ListParametersResponse, error) {
+					return nil, svcErr
+				},
+			},
+			args:        map[string]interface{}{"prefix": "/app"},
+			errContains: "list parameters failed",
+		},
+		{
+			name: "batch get",
+			tool: "quicbaas_parameter_batch_get",
+			svc: &mockParameterStoreService{
+				getMultiFunc: func(ctx context.Context, req *interfaces.GetParametersRequest) (*interfaces.GetParametersResponse, error) {
+					return nil, svcErr
+				},
+			},
+			args:        map[string]interface{}{"paths": `["/app/config1","/app/config2"]`},
+			errContains: "batch get parameters failed",
+		},
+		{
+			name: "batch set",
+			tool: "quicbaas_parameter_batch_set",
+			svc: &mockParameterStoreService{
+				setMultiFunc: func(ctx context.Context, req *interfaces.SetParametersRequest) (*interfaces.SetParametersResponse, error) {
+					return nil, svcErr
+				},
+			},
+			args:        map[string]interface{}{"parameters": `[{"path":"/app/config","value":"test"}]`},
+			errContains: "batch set parameters failed",
+		},
+		{
+			name: "batch delete",
+			tool: "quicbaas_parameter_batch_delete",
+			svc: &mockParameterStoreService{
+				delMultiFunc: func(ctx context.Context, req *interfaces.DeleteParametersRequest) (*interfaces.DeleteParametersResponse, error) {
+					return nil, svcErr
+				},
+			},
+			args:        map[string]interface{}{"paths": `["/app/config1","/app/config2"]`},
+			errContains: "batch delete parameters failed",
+		},
+		{
+			name: "search",
+			tool: "quicbaas_parameter_search",
+			svc: &mockParameterStoreService{
+				searchFunc: func(ctx context.Context, req *interfaces.SearchByTagsRequest) (*interfaces.SearchByTagsResponse, error) {
+					return nil, svcErr
+				},
+			},
+			args:        map[string]interface{}{"tags": `{"env":"prod"}`},
+			errContains: "search parameters failed",
 		},
 	}
-	log, _ := logger.New(logger.LogConfig{Level: "error", Output: "stdout"})
-	registry := NewToolRegistry(svc, log)
-	ctx := context.Background()
 
-	result, err := registry.ExecuteTool(ctx, "quicbaas_parameter_set", map[string]interface{}{
-		"path":  "/app/config",
-		"value": "test",
-	})
-	require.Error(t, err)
-	assert.Nil(t, result)
-	assert.Contains(t, err.Error(), "set parameter failed")
+	log, err := logger.New(logger.LogConfig{Level: "error", Output: "stdout"})
+	require.NoError(t, err)
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			registry := NewToolRegistry(&extendedMockService{parameterSvc: tc.svc}, log)
+			result, err := registry.ExecuteTool(context.Background(), tc.tool, tc.args)
+			require.Error(t, err)
+			assert.Nil(t, result)
+			assert.Contains(t, err.Error(), tc.errContains)
+		})
+	}
 }
 
 func TestHandleParameterSet_InvalidTagsJSON(t *testing.T) {
@@ -1077,48 +1146,6 @@ func TestHandleParameterSet_InvalidTagsJSON(t *testing.T) {
 	require.Error(t, err)
 	assert.Nil(t, result)
 	assert.Contains(t, err.Error(), "invalid tags JSON")
-}
-
-func TestHandleParameterDelete_ServiceError(t *testing.T) {
-	expectedErr := errors.New("parameter delete failed")
-	svc := &extendedMockService{
-		parameterSvc: &mockParameterStoreService{
-			deleteFunc: func(ctx context.Context, req *interfaces.DeleteParameterRequest) (*interfaces.DeleteParameterResponse, error) {
-				return nil, expectedErr
-			},
-		},
-	}
-	log, _ := logger.New(logger.LogConfig{Level: "error", Output: "stdout"})
-	registry := NewToolRegistry(svc, log)
-	ctx := context.Background()
-
-	result, err := registry.ExecuteTool(ctx, "quicbaas_parameter_delete", map[string]interface{}{
-		"path": "/app/config",
-	})
-	require.Error(t, err)
-	assert.Nil(t, result)
-	assert.Contains(t, err.Error(), "delete parameter failed")
-}
-
-func TestHandleParameterList_ServiceError(t *testing.T) {
-	expectedErr := errors.New("list parameters failed")
-	svc := &extendedMockService{
-		parameterSvc: &mockParameterStoreService{
-			listFunc: func(ctx context.Context, req *interfaces.ListParametersRequest) (*interfaces.ListParametersResponse, error) {
-				return nil, expectedErr
-			},
-		},
-	}
-	log, _ := logger.New(logger.LogConfig{Level: "error", Output: "stdout"})
-	registry := NewToolRegistry(svc, log)
-	ctx := context.Background()
-
-	result, err := registry.ExecuteTool(ctx, "quicbaas_parameter_list", map[string]interface{}{
-		"prefix": "/app",
-	})
-	require.Error(t, err)
-	assert.Nil(t, result)
-	assert.Contains(t, err.Error(), "list parameters failed")
 }
 
 func TestHandleParameterList_WithOptionalFields(t *testing.T) {
@@ -1154,27 +1181,6 @@ func TestHandleParameterList_WithOptionalFields(t *testing.T) {
 	assert.NotNil(t, resultMap["total_count"])
 }
 
-func TestHandleParameterBatchGet_ServiceError(t *testing.T) {
-	expectedErr := errors.New("batch get failed")
-	svc := &extendedMockService{
-		parameterSvc: &mockParameterStoreService{
-			getMultiFunc: func(ctx context.Context, req *interfaces.GetParametersRequest) (*interfaces.GetParametersResponse, error) {
-				return nil, expectedErr
-			},
-		},
-	}
-	log, _ := logger.New(logger.LogConfig{Level: "error", Output: "stdout"})
-	registry := NewToolRegistry(svc, log)
-	ctx := context.Background()
-
-	result, err := registry.ExecuteTool(ctx, "quicbaas_parameter_batch_get", map[string]interface{}{
-		"paths": `["/app/config1","/app/config2"]`,
-	})
-	require.Error(t, err)
-	assert.Nil(t, result)
-	assert.Contains(t, err.Error(), "batch get parameters failed")
-}
-
 func TestHandleParameterBatchGet_WithErrors(t *testing.T) {
 	svc := &extendedMockService{
 		parameterSvc: &mockParameterStoreService{
@@ -1201,27 +1207,6 @@ func TestHandleParameterBatchGet_WithErrors(t *testing.T) {
 
 	resultMap := result.(map[string]interface{})
 	assert.Contains(t, resultMap, "errors")
-}
-
-func TestHandleParameterBatchSet_ServiceError(t *testing.T) {
-	expectedErr := errors.New("batch set failed")
-	svc := &extendedMockService{
-		parameterSvc: &mockParameterStoreService{
-			setMultiFunc: func(ctx context.Context, req *interfaces.SetParametersRequest) (*interfaces.SetParametersResponse, error) {
-				return nil, expectedErr
-			},
-		},
-	}
-	log, _ := logger.New(logger.LogConfig{Level: "error", Output: "stdout"})
-	registry := NewToolRegistry(svc, log)
-	ctx := context.Background()
-
-	result, err := registry.ExecuteTool(ctx, "quicbaas_parameter_batch_set", map[string]interface{}{
-		"parameters": `[{"path":"/app/config","value":"test"}]`,
-	})
-	require.Error(t, err)
-	assert.Nil(t, result)
-	assert.Contains(t, err.Error(), "batch set parameters failed")
 }
 
 func TestHandleParameterBatchSet_WithResultError(t *testing.T) {
@@ -1258,27 +1243,6 @@ func TestHandleParameterBatchSet_WithResultError(t *testing.T) {
 	assert.Equal(t, "validation failed", results[1]["error"])
 }
 
-func TestHandleParameterBatchDelete_ServiceError(t *testing.T) {
-	expectedErr := errors.New("batch delete failed")
-	svc := &extendedMockService{
-		parameterSvc: &mockParameterStoreService{
-			delMultiFunc: func(ctx context.Context, req *interfaces.DeleteParametersRequest) (*interfaces.DeleteParametersResponse, error) {
-				return nil, expectedErr
-			},
-		},
-	}
-	log, _ := logger.New(logger.LogConfig{Level: "error", Output: "stdout"})
-	registry := NewToolRegistry(svc, log)
-	ctx := context.Background()
-
-	result, err := registry.ExecuteTool(ctx, "quicbaas_parameter_batch_delete", map[string]interface{}{
-		"paths": `["/app/config1","/app/config2"]`,
-	})
-	require.Error(t, err)
-	assert.Nil(t, result)
-	assert.Contains(t, err.Error(), "batch delete parameters failed")
-}
-
 func TestHandleParameterBatchDelete_WithResultError(t *testing.T) {
 	svc := &extendedMockService{
 		parameterSvc: &mockParameterStoreService{
@@ -1312,27 +1276,6 @@ func TestHandleParameterBatchDelete_WithResultError(t *testing.T) {
 	resultMap := result.(map[string]interface{})
 	results := resultMap["results"].([]map[string]interface{})
 	assert.Equal(t, "protected parameter", results[1]["error"])
-}
-
-func TestHandleParameterSearch_ServiceError(t *testing.T) {
-	expectedErr := errors.New("search failed")
-	svc := &extendedMockService{
-		parameterSvc: &mockParameterStoreService{
-			searchFunc: func(ctx context.Context, req *interfaces.SearchByTagsRequest) (*interfaces.SearchByTagsResponse, error) {
-				return nil, expectedErr
-			},
-		},
-	}
-	log, _ := logger.New(logger.LogConfig{Level: "error", Output: "stdout"})
-	registry := NewToolRegistry(svc, log)
-	ctx := context.Background()
-
-	result, err := registry.ExecuteTool(ctx, "quicbaas_parameter_search", map[string]interface{}{
-		"tags": `{"env":"prod"}`,
-	})
-	require.Error(t, err)
-	assert.Nil(t, result)
-	assert.Contains(t, err.Error(), "search parameters failed")
 }
 
 func TestHandleParameterSearch_WithOptionalFields(t *testing.T) {
