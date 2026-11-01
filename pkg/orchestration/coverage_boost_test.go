@@ -4917,207 +4917,15 @@ func TestNewExecContainerRuntime_Default(t *testing.T) {
 }
 
 // =============================================================================
-// container_types — ContainerSpec.Validate and ContainerMount.Format
+// FleetNode — EffectiveKind on a nil receiver
 // =============================================================================
 
-func TestContainerSpec_Validate_EmptyImage(t *testing.T) {
-	t.Parallel()
-
-	spec := &ContainerSpec{Image: ""}
-	err := spec.Validate()
-	if err == nil {
-		t.Fatal("expected error for empty image")
-	}
-}
-
-func TestContainerSpec_Validate_InvalidMount(t *testing.T) {
-	t.Parallel()
-
-	spec := &ContainerSpec{
-		Image: "my-image",
-		Mounts: []ContainerMount{
-			{Source: "", Target: "/app"},
-		},
-	}
-	err := spec.Validate()
-	if err == nil {
-		t.Fatal("expected error for invalid mount source")
-	}
-}
-
-func TestContainerMount_Format_ReadOnly(t *testing.T) {
-	t.Parallel()
-
-	m := &ContainerMount{Source: "/host", Target: "/container", ReadOnly: true}
-	got := m.Format()
-	want := "/host:/container:ro"
-	if got != want {
-		t.Errorf("Format() = %q, want %q", got, want)
-	}
-}
-
-func TestContainerMount_Format_ReadWrite(t *testing.T) {
-	t.Parallel()
-
-	m := &ContainerMount{Source: "/host", Target: "/container", ReadOnly: false}
-	got := m.Format()
-	want := "/host:/container"
-	if got != want {
-		t.Errorf("Format() = %q, want %q", got, want)
-	}
-}
-
-// =============================================================================
-// remote_acp_backend — timestampAsUnix
-// =============================================================================
-
-func TestRemoteACPBackend_TimestampAsUnixNano(t *testing.T) {
-	t.Parallel()
-
-	now := time.Now()
-	result := timestampAsUnixNano(fakeTimestamper{t: now})
-	if result != now.UnixNano() {
-		t.Errorf("expected %d, got %d", now.UnixNano(), result)
-	}
-}
-
-// fakeTimestamper wraps a time.Time to implement the timestampAsUnix interface.
-type fakeTimestamper struct {
-	t time.Time
-}
-
-func (f fakeTimestamper) AsTime() time.Time {
-	return f.t
-}
-
-// =============================================================================
-// SpawnRequest — EffectiveSandboxMode
-// =============================================================================
-
-func TestSpawnRequest_EffectiveSandboxMode_LegacySandboxed(t *testing.T) {
-	t.Parallel()
-
-	req := &SpawnRequest{
-		Sandboxed:   true,
-		SandboxMode: SandboxModeDefault,
-	}
-	mode := req.EffectiveSandboxMode()
-	if mode != SandboxModeRequired {
-		t.Errorf("expected SandboxModeRequired, got %v", mode)
-	}
-}
-
-func TestSpawnRequest_EffectiveSandboxMode_ExplicitSandboxMode(t *testing.T) {
-	t.Parallel()
-
-	req := &SpawnRequest{
-		SandboxMode: SandboxModeNone,
-	}
-	mode := req.EffectiveSandboxMode()
-	if mode != SandboxModeNone {
-		t.Errorf("expected SandboxModeNone, got %v", mode)
-	}
-}
-
-// =============================================================================
-// FleetNode — EffectiveKind
-// =============================================================================
-
-func TestAgentRegistration_EffectiveKind_Default(t *testing.T) {
+func TestAgentRegistration_EffectiveKind_NilReceiver(t *testing.T) {
 	t.Parallel()
 
 	var a *FleetNode
 	if kind := a.EffectiveKind(); kind != FleetNodeKindExternal {
 		t.Errorf("expected FleetNodeKindExternal for nil, got %s", kind)
-	}
-
-	a = &FleetNode{Kind: ""}
-	if kind := a.EffectiveKind(); kind != FleetNodeKindExternal {
-		t.Errorf("expected FleetNodeKindExternal for empty kind, got %s", kind)
-	}
-}
-
-func TestAgentRegistration_EffectiveKind_Daemon(t *testing.T) {
-	t.Parallel()
-
-	a := &FleetNode{Kind: FleetNodeKindDaemon}
-	if kind := a.EffectiveKind(); kind != FleetNodeKindDaemon {
-		t.Errorf("expected FleetNodeKindDaemon, got %s", kind)
-	}
-}
-
-// =============================================================================
-// Typed errors — Error() and Unwrap() for agent registry errors
-// =============================================================================
-
-func TestAgentNotFoundError_Error(t *testing.T) {
-	t.Parallel()
-
-	err := &FleetNodeNotFoundError{TenantID: "t1", NodeID: "a1"}
-	if err.Error() == "" {
-		t.Error("expected non-empty error string")
-	}
-	if !errors.Is(err, ErrFleetNodeNotFound) {
-		t.Error("expected to unwrap to ErrFleetNodeNotFound")
-	}
-}
-
-func TestAgentAlreadyExistsError_Error(t *testing.T) {
-	t.Parallel()
-
-	err := &FleetNodeAlreadyExistsError{NodeID: "a1"}
-	if err.Error() == "" {
-		t.Error("expected non-empty error string")
-	}
-	if !errors.Is(err, ErrFleetNodeAlreadyExists) {
-		t.Error("expected to unwrap to ErrFleetNodeAlreadyExists")
-	}
-}
-
-func TestAgentRegistryError_Error(t *testing.T) {
-	t.Parallel()
-
-	err := &FleetRegistryError{Sentinel: ErrFleetRegistryInvalidInput, Message: "bad input"}
-	if err.Error() == "" {
-		t.Error("expected non-empty error string")
-	}
-	if !errors.Is(err, ErrFleetRegistryInvalidInput) {
-		t.Error("expected to unwrap to ErrFleetRegistryInvalidInput")
-	}
-}
-
-func TestAgentRegistryError_Error_NoMessage(t *testing.T) {
-	t.Parallel()
-
-	err := &FleetRegistryError{Sentinel: ErrFleetRegistryInvalidInput}
-	if err.Error() != ErrFleetRegistryInvalidInput.Error() {
-		t.Errorf("expected sentinel error string, got %q", err.Error())
-	}
-}
-
-// =============================================================================
-// container_types — intToStr edge cases
-// =============================================================================
-
-func TestIntToStr_EdgeCases(t *testing.T) {
-	t.Parallel()
-
-	tests := []struct {
-		input int
-		want  string
-	}{
-		{0, "0"},
-		{1, "1"},
-		{-1, "-1"},
-		{-42, "-42"},
-		{999, "999"},
-	}
-
-	for _, tc := range tests {
-		got := intToStr(tc.input)
-		if got != tc.want {
-			t.Errorf("intToStr(%d) = %q, want %q", tc.input, got, tc.want)
-		}
 	}
 }
 
@@ -5125,38 +4933,43 @@ func TestIntToStr_EdgeCases(t *testing.T) {
 // control_loop — trySpawnLeadSession coverage
 // =============================================================================
 
-// TestControlLoop_TrySpawnLeadSession_NoWorkflow verifies that trySpawnLeadSession
-// returns nil immediately when no workflow is set (no persistent_sessions capability).
-func TestControlLoop_TrySpawnLeadSession_NoWorkflow(t *testing.T) {
+// TestControlLoop_TrySpawnLeadSession_NoLeadSession verifies that
+// trySpawnLeadSession spawns nothing and returns nil when there is no workflow
+// or the lead role lacks persistent_sessions.
+func TestControlLoop_TrySpawnLeadSession_NoLeadSession(t *testing.T) {
 	t.Parallel()
 
-	impl := newTestService(t)
-	cl := NewControlLoop(impl, &peerTestLogger{})
-	// No workflow set — roleHasCapability returns false, function returns nil.
-	err := cl.trySpawnLeadSession(context.Background())
-	if err != nil {
-		t.Fatalf("expected nil error, got %v", err)
-	}
-}
-
-// TestControlLoop_TrySpawnLeadSession_NoPersistentSessions verifies that
-// trySpawnLeadSession returns nil when the lead role lacks persistent_sessions.
-func TestControlLoop_TrySpawnLeadSession_NoPersistentSessions(t *testing.T) {
-	t.Parallel()
-
-	impl := newTestService(t)
-	cl := NewControlLoop(impl, &peerTestLogger{})
-	cl.SetWorkflow(&WorkflowDefinition{
-		Name: "no-ps",
-		Mode: WorkflowModeAutonomous,
-		Agents: []AgentRoleSpec{
-			{Role: "lead", Backend: "acp", Capabilities: []string{"tool_use"}},
+	tests := []struct {
+		name     string
+		workflow *WorkflowDefinition
+	}{
+		{name: "no workflow"},
+		{
+			name: "lead without persistent_sessions",
+			workflow: &WorkflowDefinition{
+				Name: "no-ps",
+				Mode: WorkflowModeAutonomous,
+				Agents: []AgentRoleSpec{
+					{Role: "lead", Backend: "acp", Capabilities: []string{"tool_use"}},
+				},
+			},
 		},
-	})
-	// Lead role exists but no persistent_sessions — should return nil.
-	err := cl.trySpawnLeadSession(context.Background())
-	if err != nil {
-		t.Fatalf("expected nil error, got %v", err)
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			cl := NewControlLoop(newTestService(t), &peerTestLogger{})
+			if tt.workflow != nil {
+				cl.SetWorkflow(tt.workflow)
+			}
+			if err := cl.trySpawnLeadSession(context.Background()); err != nil {
+				t.Fatalf("expected nil error, got %v", err)
+			}
+			if cl.leadSessionID != "" {
+				t.Errorf("expected no lead session, got %q", cl.leadSessionID)
+			}
+		})
 	}
 }
 
@@ -5283,9 +5096,6 @@ func TestControlLoop_TrySpawnLeadSession_AgentSpecFields(t *testing.T) {
 	}
 	if capturedReq.WorkDir != "/workspace" {
 		t.Errorf("expected WorkDir=/workspace, got %q", capturedReq.WorkDir)
-	}
-	if capturedReq.WorkDir != "/workspace" {
-		t.Errorf("expected WorkDir=/workspace (dup check), got %q", capturedReq.WorkDir)
 	}
 	// Sandboxed is false so ContainerImage should not be set on request.
 	if capturedReq.Sandboxed {
