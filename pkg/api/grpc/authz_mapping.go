@@ -198,6 +198,8 @@ var grpcMethodPermissions = map[string]methodPermission{
 	"/quicbaas.v1.QuicBaaS/ScanIndex":      {"index", "scan"},
 	"/quicbaas.v1.QuicBaaS/Put":            {"kv", "put"},
 	"/quicbaas.v1.QuicBaaS/Delete":         {"kv", "delete"},
+	"/quicbaas.v1.QuicBaaS/CompareAndSwap": {"kv", "put"},
+	"/quicbaas.v1.QuicBaaS/PutIfAbsent":    {"kv", "put"},
 	"/quicbaas.v1.QuicBaaS/BatchGet":       {"batch", "execute"},
 	"/quicbaas.v1.QuicBaaS/BatchPut":       {"batch", "execute"},
 	"/quicbaas.v1.QuicBaaS/BatchDelete":    {"batch", "execute"},

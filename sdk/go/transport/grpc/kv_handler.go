@@ -68,6 +68,10 @@ func (h *kvHandler) handleRequest(ctx context.Context, svc, method string, req i
 		return h.handleList(ctx, client, req)
 	case "ListEntityTypes":
 		return h.handleListEntityTypes(ctx, client, req)
+	case "CompareAndSwap":
+		return h.handleCompareAndSwap(ctx, client, req)
+	case "PutIfAbsent":
+		return h.handlePutIfAbsent(ctx, client, req)
 
 	// Batch operations
 	case "BatchPut":
@@ -116,6 +120,43 @@ func (h *kvHandler) handlePut(ctx context.Context, client pb.QuicBaaSClient, req
 		Timestamp: pbResp.Timestamp,
 		LeaderID:  pbResp.LeaderId,
 	}, nil
+}
+
+func (h *kvHandler) handleCompareAndSwap(ctx context.Context, client pb.QuicBaaSClient, req interface{}) (interface{}, error) {
+	sdkReq, ok := req.(*service.CompareAndSwapRequest)
+	if !ok || sdkReq == nil {
+		return nil, errors.NewInvalidInput("kvHandler.handleCompareAndSwap", "invalid request type, expected *service.CompareAndSwapRequest")
+	}
+
+	pbResp, err := client.CompareAndSwap(ctx, &pb.CompareAndSwapRequest{
+		EntityType: sdkReq.EntityType,
+		Id:         sdkReq.ID,
+		Expect:     sdkReq.Expect,
+		Set:        sdkReq.Set,
+		ShardId:    sdkReq.ShardID,
+	})
+	if err != nil {
+		return nil, convertGRPCError(err, "kvHandler.handleCompareAndSwap")
+	}
+	return &service.ConditionalPutResponse{Applied: pbResp.GetApplied()}, nil
+}
+
+func (h *kvHandler) handlePutIfAbsent(ctx context.Context, client pb.QuicBaaSClient, req interface{}) (interface{}, error) {
+	sdkReq, ok := req.(*service.PutIfAbsentRequest)
+	if !ok || sdkReq == nil {
+		return nil, errors.NewInvalidInput("kvHandler.handlePutIfAbsent", "invalid request type, expected *service.PutIfAbsentRequest")
+	}
+
+	pbResp, err := client.PutIfAbsent(ctx, &pb.PutIfAbsentRequest{
+		EntityType: sdkReq.EntityType,
+		Id:         sdkReq.ID,
+		Data:       sdkReq.Data,
+		ShardId:    sdkReq.ShardID,
+	})
+	if err != nil {
+		return nil, convertGRPCError(err, "kvHandler.handlePutIfAbsent")
+	}
+	return &service.ConditionalPutResponse{Applied: pbResp.GetApplied()}, nil
 }
 
 // handleGet handles Get requests.
