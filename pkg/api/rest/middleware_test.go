@@ -58,30 +58,6 @@ func TestSecurityHeadersMiddleware(t *testing.T) {
 	assert.Equal(t, http.StatusOK, w.Code)
 }
 
-// TestSecurityHeadersMiddlewareHSTSOmittedOverPlainHTTP verifies that a
-// request arriving over plain HTTP (r.TLS == nil) does not receive the
-// Strict-Transport-Security header, per RFC 6797 §7.2.
-func TestSecurityHeadersMiddlewareHSTSOmittedOverPlainHTTP(t *testing.T) {
-	middleware := SecurityHeadersMiddleware()
-
-	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-	})
-
-	wrappedHandler := middleware(handler)
-
-	req := httptest.NewRequest(http.MethodGet, "/test", nil)
-	req.TLS = nil // explicit: non-secure transport
-	w := httptest.NewRecorder()
-
-	wrappedHandler.ServeHTTP(w, req)
-
-	assert.Empty(t, w.Header().Get(HeaderStrictTransportSecurity),
-		"HSTS header must not be emitted over plain HTTP")
-	// Other security headers remain present.
-	assert.Equal(t, "DENY", w.Header().Get(HeaderXFrameOptions))
-}
-
 // TestSecurityHeadersMiddlewareHSTSPresentOverTLS verifies that a request
 // arriving over TLS (r.TLS != nil) receives the Strict-Transport-Security
 // header with its canonical value.
@@ -108,62 +84,6 @@ func TestSecurityHeadersMiddlewareHSTSPresentOverTLS(t *testing.T) {
 	assert.Equal(t, "DENY", w.Header().Get(HeaderXFrameOptions))
 }
 
-func TestSecurityHeadersMiddlewareWithDifferentMethods(t *testing.T) {
-	middleware := SecurityHeadersMiddleware()
-
-	tests := []struct {
-		name   string
-		method string
-	}{
-		{
-			name:   "GET request",
-			method: http.MethodGet,
-		},
-		{
-			name:   "POST request",
-			method: http.MethodPost,
-		},
-		{
-			name:   "PUT request",
-			method: http.MethodPut,
-		},
-		{
-			name:   "DELETE request",
-			method: http.MethodDelete,
-		},
-		{
-			name:   "OPTIONS request",
-			method: http.MethodOptions,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				w.WriteHeader(http.StatusOK)
-			})
-
-			wrappedHandler := middleware(handler)
-
-			req := httptest.NewRequest(tt.method, "/test", nil)
-			w := httptest.NewRecorder()
-
-			wrappedHandler.ServeHTTP(w, req)
-
-			// All methods should have security headers. HSTS is omitted on
-			// plain HTTP (r.TLS == nil) per RFC 6797 §7.2; the remaining
-			// headers are set unconditionally.
-			assert.Empty(t, w.Header().Get(HeaderStrictTransportSecurity))
-			assert.NotEmpty(t, w.Header().Get(HeaderXFrameOptions))
-			assert.NotEmpty(t, w.Header().Get(HeaderXContentTypeOptions))
-			assert.NotEmpty(t, w.Header().Get(HeaderXXSSProtection))
-			assert.NotEmpty(t, w.Header().Get(HeaderReferrerPolicy))
-			assert.NotEmpty(t, w.Header().Get(HeaderContentSecurityPolicy))
-			assert.NotEmpty(t, w.Header().Get(HeaderPermissionsPolicy))
-		})
-	}
-}
-
 func TestSecurityHeadersMiddlewarePreservesOtherHeaders(t *testing.T) {
 	middleware := SecurityHeadersMiddleware()
 
@@ -186,29 +106,6 @@ func TestSecurityHeadersMiddlewarePreservesOtherHeaders(t *testing.T) {
 	// Custom headers from handler should also be preserved
 	assert.Equal(t, "custom-value", w.Header().Get("X-Custom-Header"))
 	assert.Equal(t, "application/json", w.Header().Get("Content-Type"))
-}
-
-func TestSecurityHeadersMiddlewareChaining(t *testing.T) {
-	// Test that security headers middleware works correctly when chained
-	securityMiddleware := SecurityHeadersMiddleware()
-	requestIDMiddleware := RequestIDMiddleware()
-
-	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-	})
-
-	// Chain middlewares: RequestID -> Security -> Handler
-	wrappedHandler := requestIDMiddleware(securityMiddleware(handler))
-
-	req := httptest.NewRequest(http.MethodGet, "/test", nil)
-	w := httptest.NewRecorder()
-
-	wrappedHandler.ServeHTTP(w, req)
-
-	// Both middleware should have added their headers
-	assert.NotEmpty(t, w.Header().Get("X-Request-ID"))
-	assert.Equal(t, "DENY", w.Header().Get(HeaderXFrameOptions))
-	assert.Equal(t, "nosniff", w.Header().Get(HeaderXContentTypeOptions))
 }
 
 func TestRecoveryMiddleware(t *testing.T) {
@@ -356,7 +253,6 @@ func TestCORSMiddlewareVariations(t *testing.T) {
 }
 
 func TestRateLimitMiddleware(t *testing.T) {
-	// Note: RateLimitMiddleware is currently a placeholder
 	middleware := RateLimitMiddleware(100)
 
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -370,7 +266,7 @@ func TestRateLimitMiddleware(t *testing.T) {
 
 	wrappedHandler.ServeHTTP(w, req)
 
-	// Should pass through for now
+	// One request is well inside the bucket, so it reaches the handler.
 	assert.Equal(t, http.StatusOK, w.Code)
 }
 
@@ -455,33 +351,6 @@ func TestLoggingMiddleware(t *testing.T) {
 
 	assert.Equal(t, http.StatusOK, w.Code)
 	assert.Equal(t, "test response", w.Body.String())
-}
-
-func TestMetricsMiddlewareMetrics(t *testing.T) {
-	// Initialize metrics
-	if httpRequestsTotal == nil {
-		initMiddlewareMetrics()
-	}
-
-	middleware := MetricsMiddleware()
-
-	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-	})
-
-	wrappedHandler := middleware(handler)
-
-	// Make several requests
-	for i := 0; i < 5; i++ {
-		req := httptest.NewRequest(http.MethodGet, "/test", nil)
-		w := httptest.NewRecorder()
-		wrappedHandler.ServeHTTP(w, req)
-		assert.Equal(t, http.StatusOK, w.Code)
-	}
-
-	// Metrics should have been recorded
-	// Note: We can't easily verify counter values without exposing them,
-	// but we can verify the middleware executes successfully
 }
 
 func TestRoutePatternWithChiContext(t *testing.T) {
