@@ -246,8 +246,44 @@ func TestHandleWriteBatch(t *testing.T) {
 			setupMock:      func() {},
 			expectedStatus: http.StatusBadRequest,
 			checkResponse: func(t *testing.T, resp *httptest.ResponseRecorder) {
-				assert.Contains(t, resp.Body.String(), "metric is required")
+				assert.Contains(t, resp.Body.String(), "metric is required for point 1")
 			},
+		},
+		{
+			name: "missing_timestamp_in_point",
+			requestBody: WriteBatchRequest{
+				Points: []WritePointRequest{
+					{Metric: "cpu.usage", Value: 75.5, Timestamp: time.Now()},
+					{Metric: "memory.usage", Value: 60.2},
+				},
+			},
+			setupMock:      func() {},
+			expectedStatus: http.StatusBadRequest,
+			checkResponse: func(t *testing.T, resp *httptest.ResponseRecorder) {
+				assert.Contains(t, resp.Body.String(), "timestamp is required for point 1")
+			},
+		},
+		{
+			name:           "invalid_json",
+			requestBody:    "invalid",
+			setupMock:      func() {},
+			expectedStatus: http.StatusBadRequest,
+		},
+		{
+			name: "service_error",
+			requestBody: WriteBatchRequest{
+				Points: []WritePointRequest{
+					{Metric: "cpu.usage", Value: 75.5, Timestamp: time.Now()},
+				},
+			},
+			setupMock: func() {
+				mockService.On("WriteBatch", mock.Anything, mock.Anything).Return(nil, &errors.QBError{
+					Code: errors.ErrInternal,
+					Op:   "WriteBatch",
+					Err:  stderrors.New("internal error"),
+				}).Once()
+			},
+			expectedStatus: http.StatusInternalServerError,
 		},
 	}
 
@@ -376,6 +412,100 @@ func TestHandleTSQuery(t *testing.T) {
 				err := json.Unmarshal(resp.Body.Bytes(), &response)
 				require.NoError(t, err)
 				assert.NotEmpty(t, response.Points)
+			},
+		},
+		{
+			name: "missing_end_time",
+			requestBody: TSQueryRequest{
+				Metric:    "cpu.usage",
+				StartTime: startTime,
+			},
+			setupMock:      func() {},
+			expectedStatus: http.StatusBadRequest,
+			checkResponse: func(t *testing.T, resp *httptest.ResponseRecorder) {
+				assert.Contains(t, resp.Body.String(), "end_time is required")
+			},
+		},
+		{
+			name: "end_before_start",
+			requestBody: TSQueryRequest{
+				Metric:    "cpu.usage",
+				StartTime: now,
+				EndTime:   startTime,
+			},
+			setupMock:      func() {},
+			expectedStatus: http.StatusBadRequest,
+			checkResponse: func(t *testing.T, resp *httptest.ResponseRecorder) {
+				assert.Contains(t, resp.Body.String(), "end_time must be after start_time")
+			},
+		},
+		{
+			name:           "invalid_json",
+			requestBody:    "invalid",
+			setupMock:      func() {},
+			expectedStatus: http.StatusBadRequest,
+		},
+		{
+			name: "service_error",
+			requestBody: TSQueryRequest{
+				Metric:    "cpu.usage",
+				StartTime: startTime,
+				EndTime:   now,
+			},
+			setupMock: func() {
+				mockService.On("TSQuery", mock.Anything, mock.Anything).Return(nil, &errors.QBError{
+					Code: errors.ErrInternal,
+					Op:   "TSQuery",
+					Err:  stderrors.New("internal error"),
+				}).Once()
+			},
+			expectedStatus: http.StatusInternalServerError,
+		},
+		{
+			name: "grouped_results",
+			requestBody: TSQueryRequest{
+				Metric:      "cpu.usage",
+				StartTime:   startTime,
+				EndTime:     now,
+				Aggregation: "avg",
+				GroupBy:     []string{"host"},
+			},
+			setupMock: func() {
+				aggTotal := 75.5
+				aggServer1 := 80.0
+				aggServer2 := 70.0
+				mockService.On("TSQuery", mock.Anything, mock.Anything).
+					Return(&service.TSQueryResponse{
+						Metric:          "cpu.usage",
+						AggregatedValue: &aggTotal,
+						GroupedResults: []*service.TSGroupedResult{
+							{
+								Tags:            map[string]string{"host": "server1"},
+								AggregatedValue: &aggServer1,
+								Points: []*service.TSDataPoint{
+									{Metric: "cpu.usage", Value: 80.0, Timestamp: startTime},
+								},
+							},
+							{
+								Tags:            map[string]string{"host": "server2"},
+								AggregatedValue: &aggServer2,
+							},
+						},
+					}, nil).Once()
+			},
+			expectedStatus: http.StatusOK,
+			checkResponse: func(t *testing.T, resp *httptest.ResponseRecorder) {
+				var response TSQueryResponse
+				err := json.Unmarshal(resp.Body.Bytes(), &response)
+				require.NoError(t, err)
+				assert.Equal(t, "cpu.usage", response.Metric)
+				require.NotNil(t, response.AggregatedValue)
+				assert.Equal(t, 75.5, *response.AggregatedValue)
+				require.Len(t, response.GroupedResults, 2)
+				assert.Len(t, response.GroupedResults[0].Points, 1)
+				assert.Empty(t, response.GroupedResults[1].Points)
+				require.NotNil(t, response.GroupedResults[1].AggregatedValue)
+				assert.Equal(t, 70.0, *response.GroupedResults[1].AggregatedValue)
 			},
 		},
 	}
@@ -560,38 +690,6 @@ func TestHandleListMetrics(t *testing.T) {
 	assert.Len(t, metrics, 3)
 }
 
-func TestCov91_HandleWriteBatch_ServiceError(t *testing.T) {
-	server, mockService, cleanup := setupMockServerWithFuncMock(t)
-	defer cleanup()
-
-	mockService.WriteBatchFunc = func(ctx context.Context, req *service.WriteBatchRequest) (*service.WriteBatchResponse, error) {
-		return nil, &errors.QBError{Code: errors.ErrInternal, Err: stderrors.New("batch error")}
-	}
-
-	body := `{"points":[{"metric":"cpu.usage","value":75.5,"timestamp":"2024-01-01T00:00:00Z","tags":{"host":"server1"}}]}`
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/timeseries/write/batch", strings.NewReader(body))
-	w := httptest.NewRecorder()
-	server.HandleWriteBatch(w, req)
-
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
-}
-
-func TestCov91_HandleTSQuery_ServiceError(t *testing.T) {
-	server, mockService, cleanup := setupMockServerWithFuncMock(t)
-	defer cleanup()
-
-	mockService.TSQueryFunc = func(ctx context.Context, req *service.TSQueryRequest) (*service.TSQueryResponse, error) {
-		return nil, &errors.QBError{Code: errors.ErrInternal, Err: stderrors.New("query error")}
-	}
-
-	body := `{"metric":"cpu.usage","start_time":"2024-01-01T00:00:00Z","end_time":"2024-01-02T00:00:00Z"}`
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/timeseries/query", strings.NewReader(body))
-	w := httptest.NewRecorder()
-	server.HandleTSQuery(w, req)
-
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
-}
-
 func TestCov91_HandleDeleteSeries_ServiceError(t *testing.T) {
 	server, mockService, cleanup := setupMockServerWithFuncMock(t)
 	defer cleanup()
@@ -658,43 +756,6 @@ func TestCov91_HandleListMetrics_ServiceError(t *testing.T) {
 	server.HandleListMetrics(w, req)
 
 	assert.Equal(t, http.StatusInternalServerError, w.Code)
-}
-
-func TestCov91_HandleWriteBatch_Success(t *testing.T) {
-	server, mockService, cleanup := setupMockServerWithFuncMock(t)
-	defer cleanup()
-
-	mockService.WriteBatchFunc = func(ctx context.Context, req *service.WriteBatchRequest) (*service.WriteBatchResponse, error) {
-		return &service.WriteBatchResponse{Success: true, PointsWritten: len(req.Points)}, nil
-	}
-
-	body := `{"points":[{"metric":"cpu.usage","value":75.5,"timestamp":"2024-01-01T00:00:00Z","tags":{"host":"server1"}}]}`
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/timeseries/write/batch", strings.NewReader(body))
-	w := httptest.NewRecorder()
-	server.HandleWriteBatch(w, req)
-
-	assert.Equal(t, http.StatusOK, w.Code)
-}
-
-func TestCov91_HandleTSQuery_Success(t *testing.T) {
-	server, mockService, cleanup := setupMockServerWithFuncMock(t)
-	defer cleanup()
-
-	mockService.TSQueryFunc = func(ctx context.Context, req *service.TSQueryRequest) (*service.TSQueryResponse, error) {
-		return &service.TSQueryResponse{
-			Metric: req.Metric,
-			Points: []*service.TSDataPoint{
-				{Metric: "cpu.usage", Value: 75.5, Timestamp: time.Now(), Tags: map[string]string{"host": "server1"}},
-			},
-		}, nil
-	}
-
-	body := `{"metric":"cpu.usage","start_time":"2024-01-01T00:00:00Z","end_time":"2024-01-02T00:00:00Z"}`
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/timeseries/query", strings.NewReader(body))
-	w := httptest.NewRecorder()
-	server.HandleTSQuery(w, req)
-
-	assert.Equal(t, http.StatusOK, w.Code)
 }
 
 func TestCov91_HandleDeleteSeries_Success(t *testing.T) {
@@ -773,90 +834,6 @@ func TestCov91_HandleListMetrics_Success(t *testing.T) {
 	assert.Equal(t, http.StatusOK, w.Code)
 }
 
-func TestCov91_HandleWriteBatch_EmptyPoints(t *testing.T) {
-	server, _, cleanup := setupMockServerWithFuncMock(t)
-	defer cleanup()
-
-	body := `{"points":[]}`
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/timeseries/write/batch", strings.NewReader(body))
-	w := httptest.NewRecorder()
-	server.HandleWriteBatch(w, req)
-
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestCov91_HandleWriteBatch_MissingMetricInPoint(t *testing.T) {
-	server, _, cleanup := setupMockServerWithFuncMock(t)
-	defer cleanup()
-
-	body := `{"points":[{"value":75.5,"timestamp":"2024-01-01T00:00:00Z"}]}`
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/timeseries/write/batch", strings.NewReader(body))
-	w := httptest.NewRecorder()
-	server.HandleWriteBatch(w, req)
-
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestCov91_HandleWriteBatch_MissingTimestampInPoint(t *testing.T) {
-	server, _, cleanup := setupMockServerWithFuncMock(t)
-	defer cleanup()
-
-	body := `{"points":[{"metric":"cpu.usage","value":75.5}]}`
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/timeseries/write/batch", strings.NewReader(body))
-	w := httptest.NewRecorder()
-	server.HandleWriteBatch(w, req)
-
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestCov91_HandleTSQuery_MissingMetric(t *testing.T) {
-	server, _, cleanup := setupMockServerWithFuncMock(t)
-	defer cleanup()
-
-	body := `{"start_time":"2024-01-01T00:00:00Z","end_time":"2024-01-02T00:00:00Z"}`
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/timeseries/query", strings.NewReader(body))
-	w := httptest.NewRecorder()
-	server.HandleTSQuery(w, req)
-
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestCov91_HandleTSQuery_MissingStartTime(t *testing.T) {
-	server, _, cleanup := setupMockServerWithFuncMock(t)
-	defer cleanup()
-
-	body := `{"metric":"cpu.usage","end_time":"2024-01-02T00:00:00Z"}`
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/timeseries/query", strings.NewReader(body))
-	w := httptest.NewRecorder()
-	server.HandleTSQuery(w, req)
-
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestCov91_HandleTSQuery_MissingEndTime(t *testing.T) {
-	server, _, cleanup := setupMockServerWithFuncMock(t)
-	defer cleanup()
-
-	body := `{"metric":"cpu.usage","start_time":"2024-01-01T00:00:00Z"}`
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/timeseries/query", strings.NewReader(body))
-	w := httptest.NewRecorder()
-	server.HandleTSQuery(w, req)
-
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestCov91_HandleTSQuery_EndBeforeStart(t *testing.T) {
-	server, _, cleanup := setupMockServerWithFuncMock(t)
-	defer cleanup()
-
-	body := `{"metric":"cpu.usage","start_time":"2024-01-02T00:00:00Z","end_time":"2024-01-01T00:00:00Z"}`
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/timeseries/query", strings.NewReader(body))
-	w := httptest.NewRecorder()
-	server.HandleTSQuery(w, req)
-
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
 func TestCov91_HandleDeleteSeries_MissingMetric(t *testing.T) {
 	server, _, cleanup := setupMockServerWithFuncMock(t)
 	defer cleanup()
@@ -927,41 +904,6 @@ func TestCov91_HandleSetRetentionPolicy_InvalidJSON(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
-func TestCov91_HandleTSQuery_WithGroupedResults(t *testing.T) {
-	server, mockService, cleanup := setupMockServerWithFuncMock(t)
-	defer cleanup()
-
-	mockService.TSQueryFunc = func(ctx context.Context, req *service.TSQueryRequest) (*service.TSQueryResponse, error) {
-		aggTotal := 75.5
-		aggServer1 := 80.0
-		aggServer2 := 70.0
-		return &service.TSQueryResponse{
-			Metric:          req.Metric,
-			AggregatedValue: &aggTotal,
-			GroupedResults: []*service.TSGroupedResult{
-				{
-					Tags:            map[string]string{"host": "server1"},
-					AggregatedValue: &aggServer1,
-					Points: []*service.TSDataPoint{
-						{Metric: "cpu.usage", Value: 80.0, Timestamp: time.Now()},
-					},
-				},
-				{
-					Tags:            map[string]string{"host": "server2"},
-					AggregatedValue: &aggServer2,
-				},
-			},
-		}, nil
-	}
-
-	body := `{"metric":"cpu.usage","start_time":"2024-01-01T00:00:00Z","end_time":"2024-01-02T00:00:00Z","aggregation":"avg","group_by":["host"]}`
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/timeseries/query", strings.NewReader(body))
-	w := httptest.NewRecorder()
-	server.HandleTSQuery(w, req)
-
-	assert.Equal(t, http.StatusOK, w.Code)
-}
-
 type MockTimeSeriesService struct {
 	mock.Mock
 }
@@ -1020,324 +962,6 @@ func (m *MockTimeSeriesService) ListMetrics(ctx context.Context, req *service.TS
 		return nil, args.Error(1)
 	}
 	return args.Get(0).(*service.TSListMetricsResponse), args.Error(1)
-}
-
-func TestHandleWriteBatchSuccess(t *testing.T) {
-	server, mockService, cleanup := setupMockServer(t)
-	defer cleanup()
-
-	mockService.On("WriteBatch", mock.Anything, mock.Anything).Return(&service.WriteBatchResponse{
-		Success:       true,
-		PointsWritten: 3,
-	}, nil).Once()
-
-	ts := time.Now()
-	batchReq := WriteBatchRequest{
-		Points: []WritePointRequest{
-			{Metric: "cpu.usage", Value: 75.5, Timestamp: ts},
-			{Metric: "memory.usage", Value: 60.2, Timestamp: ts},
-			{Metric: "disk.usage", Value: 45.0, Timestamp: ts},
-		},
-	}
-
-	body, err := json.Marshal(batchReq)
-	require.NoError(t, err)
-
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/timeseries/batch", bytes.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-
-	server.HandleWriteBatch(w, req)
-
-	assert.Equal(t, http.StatusOK, w.Code)
-
-	var resp WriteBatchResponse
-	err = json.NewDecoder(w.Body).Decode(&resp)
-	require.NoError(t, err)
-	assert.True(t, resp.Success)
-	assert.Equal(t, 3, resp.PointsWritten)
-}
-
-func TestHandleWriteBatchEmptyPoints(t *testing.T) {
-	server, _, cleanup := setupMockServer(t)
-	defer cleanup()
-
-	batchReq := WriteBatchRequest{
-		Points: []WritePointRequest{},
-	}
-
-	body, err := json.Marshal(batchReq)
-	require.NoError(t, err)
-
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/timeseries/batch", bytes.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-
-	server.HandleWriteBatch(w, req)
-
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-	assert.Contains(t, w.Body.String(), "no points provided")
-}
-
-func TestHandleWriteBatchMissingMetricInPoint(t *testing.T) {
-	server, _, cleanup := setupMockServer(t)
-	defer cleanup()
-
-	ts := time.Now()
-	batchReq := WriteBatchRequest{
-		Points: []WritePointRequest{
-			{Metric: "cpu.usage", Value: 75.5, Timestamp: ts},
-			{Metric: "", Value: 60.2, Timestamp: ts}, // Missing metric
-		},
-	}
-
-	body, err := json.Marshal(batchReq)
-	require.NoError(t, err)
-
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/timeseries/batch", bytes.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-
-	server.HandleWriteBatch(w, req)
-
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-	assert.Contains(t, w.Body.String(), "metric is required for point 1")
-}
-
-func TestHandleWriteBatchMissingTimestampInPoint(t *testing.T) {
-	server, _, cleanup := setupMockServer(t)
-	defer cleanup()
-
-	ts := time.Now()
-	batchReq := WriteBatchRequest{
-		Points: []WritePointRequest{
-			{Metric: "cpu.usage", Value: 75.5, Timestamp: ts},
-			{Metric: "memory.usage", Value: 60.2}, // Missing timestamp
-		},
-	}
-
-	body, err := json.Marshal(batchReq)
-	require.NoError(t, err)
-
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/timeseries/batch", bytes.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-
-	server.HandleWriteBatch(w, req)
-
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-	assert.Contains(t, w.Body.String(), "timestamp is required for point 1")
-}
-
-func TestHandleWriteBatchInvalidJSON(t *testing.T) {
-	server, _, cleanup := setupMockServer(t)
-	defer cleanup()
-
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/timeseries/batch", bytes.NewReader([]byte("invalid")))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-
-	server.HandleWriteBatch(w, req)
-
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestHandleWriteBatchServiceError(t *testing.T) {
-	server, mockService, cleanup := setupMockServer(t)
-	defer cleanup()
-
-	mockService.On("WriteBatch", mock.Anything, mock.Anything).Return(nil, &errors.QBError{
-		Code: errors.ErrInternal,
-		Op:   "WriteBatch",
-		Err:  stderrors.New("internal error"),
-	}).Once()
-
-	ts := time.Now()
-	batchReq := WriteBatchRequest{
-		Points: []WritePointRequest{
-			{Metric: "cpu.usage", Value: 75.5, Timestamp: ts},
-		},
-	}
-
-	body, err := json.Marshal(batchReq)
-	require.NoError(t, err)
-
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/timeseries/batch", bytes.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-
-	server.HandleWriteBatch(w, req)
-
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
-}
-
-func TestHandleTSQuerySuccess(t *testing.T) {
-	server, mockService, cleanup := setupMockServer(t)
-	defer cleanup()
-
-	now := time.Now()
-	mockService.On("TSQuery", mock.Anything, mock.Anything).Return(&service.TSQueryResponse{
-		Metric: "cpu.usage",
-		Points: []*service.TSDataPoint{
-			{Metric: "cpu.usage", Value: 75.5, Timestamp: now},
-			{Metric: "cpu.usage", Value: 80.2, Timestamp: now.Add(time.Minute)},
-		},
-	}, nil).Once()
-
-	start := now.Add(-time.Hour)
-	end := now
-	queryReq := TSQueryRequest{
-		Metric:    "cpu.usage",
-		StartTime: start,
-		EndTime:   end,
-	}
-
-	body, err := json.Marshal(queryReq)
-	require.NoError(t, err)
-
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/timeseries/query", bytes.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-
-	server.HandleTSQuery(w, req)
-
-	assert.Equal(t, http.StatusOK, w.Code)
-}
-
-func TestHandleTSQueryMissingMetric(t *testing.T) {
-	server, _, cleanup := setupMockServer(t)
-	defer cleanup()
-
-	now := time.Now()
-	queryReq := TSQueryRequest{
-		Metric:    "",
-		StartTime: now.Add(-time.Hour),
-		EndTime:   now,
-	}
-
-	body, err := json.Marshal(queryReq)
-	require.NoError(t, err)
-
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/timeseries/query", bytes.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-
-	server.HandleTSQuery(w, req)
-
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-	assert.Contains(t, w.Body.String(), "metric is required")
-}
-
-func TestHandleTSQueryMissingStartTime(t *testing.T) {
-	server, _, cleanup := setupMockServer(t)
-	defer cleanup()
-
-	now := time.Now()
-	queryReq := TSQueryRequest{
-		Metric:  "cpu.usage",
-		EndTime: now,
-	}
-
-	body, err := json.Marshal(queryReq)
-	require.NoError(t, err)
-
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/timeseries/query", bytes.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-
-	server.HandleTSQuery(w, req)
-
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-	assert.Contains(t, w.Body.String(), "start_time is required")
-}
-
-func TestHandleTSQueryMissingEndTime(t *testing.T) {
-	server, _, cleanup := setupMockServer(t)
-	defer cleanup()
-
-	now := time.Now()
-	queryReq := TSQueryRequest{
-		Metric:    "cpu.usage",
-		StartTime: now.Add(-time.Hour),
-	}
-
-	body, err := json.Marshal(queryReq)
-	require.NoError(t, err)
-
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/timeseries/query", bytes.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-
-	server.HandleTSQuery(w, req)
-
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-	assert.Contains(t, w.Body.String(), "end_time is required")
-}
-
-func TestHandleTSQueryEndBeforeStart(t *testing.T) {
-	server, _, cleanup := setupMockServer(t)
-	defer cleanup()
-
-	now := time.Now()
-	queryReq := TSQueryRequest{
-		Metric:    "cpu.usage",
-		StartTime: now,
-		EndTime:   now.Add(-time.Hour), // End before start
-	}
-
-	body, err := json.Marshal(queryReq)
-	require.NoError(t, err)
-
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/timeseries/query", bytes.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-
-	server.HandleTSQuery(w, req)
-
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-	assert.Contains(t, w.Body.String(), "end_time must be after start_time")
-}
-
-func TestHandleTSQueryInvalidJSON(t *testing.T) {
-	server, _, cleanup := setupMockServer(t)
-	defer cleanup()
-
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/timeseries/query", bytes.NewReader([]byte("invalid")))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-
-	server.HandleTSQuery(w, req)
-
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestHandleTSQueryServiceError(t *testing.T) {
-	server, mockService, cleanup := setupMockServer(t)
-	defer cleanup()
-
-	mockService.On("TSQuery", mock.Anything, mock.Anything).Return(nil, &errors.QBError{
-		Code: errors.ErrInternal,
-		Op:   "TSQuery",
-		Err:  stderrors.New("internal error"),
-	}).Once()
-
-	now := time.Now()
-	queryReq := TSQueryRequest{
-		Metric:    "cpu.usage",
-		StartTime: now.Add(-time.Hour),
-		EndTime:   now,
-	}
-
-	body, err := json.Marshal(queryReq)
-	require.NoError(t, err)
-
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/timeseries/query", bytes.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-
-	server.HandleTSQuery(w, req)
-
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
 }
 
 func TestHandleDeleteSeriesSuccess(t *testing.T) {
@@ -1738,36 +1362,6 @@ func TestHandleListMetricsServiceError(t *testing.T) {
 	server.HandleListMetrics(w, req)
 
 	assert.Equal(t, http.StatusInternalServerError, w.Code)
-}
-
-func TestConvertTSQueryResponseWithGroupedResults(t *testing.T) {
-	now := time.Now()
-	aggVal := 80.0
-	totalAggVal := 77.75
-	resp := &service.TSQueryResponse{
-		Metric: "cpu.usage",
-		Tags:   map[string]string{"host": "server1"},
-		Points: []*service.TSDataPoint{
-			{Metric: "cpu.usage", Value: 75.5, Timestamp: now},
-		},
-		GroupedResults: []*service.TSGroupedResult{
-			{
-				Tags:            map[string]string{"region": "us-east"},
-				AggregatedValue: &aggVal,
-				Points: []*service.TSDataPoint{
-					{Metric: "cpu.usage", Value: 80.0, Timestamp: now},
-				},
-			},
-		},
-		AggregatedValue: &totalAggVal,
-	}
-
-	restResp := convertTSQueryResponse(resp)
-
-	assert.Equal(t, "cpu.usage", restResp.Metric)
-	assert.Len(t, restResp.Points, 1)
-	assert.Len(t, restResp.GroupedResults, 1)
-	assert.Len(t, restResp.GroupedResults[0].Points, 1)
 }
 
 func TestConvertTSQueryResponseEmptyPoints(t *testing.T) {
