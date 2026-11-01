@@ -324,47 +324,194 @@ func TestTimeSeriesWriteBatch_ExecuteErrors(t *testing.T) {
 	}
 }
 
-func TestTimeSeriesQuery_ExecuteSuccess(t *testing.T) {
-	registry := newTSRegistry(t)
-	ctx := context.Background()
+func TestTimeSeriesQuery_Success(t *testing.T) {
+	tests := []struct {
+		name string
+		args map[string]interface{}
+	}{
+		{
+			name: "required params only",
+			args: map[string]interface{}{
+				"metric":     "cpu.usage",
+				"start_time": float64(1700000000000000000),
+				"end_time":   float64(1700000001000000000),
+			},
+		},
+		{
+			name: "all optional params",
+			args: map[string]interface{}{
+				"metric":           "cpu.usage",
+				"start_time":       float64(1700000000000000000),
+				"end_time":         float64(1700000001000000000),
+				"tags":             `{"host":"server-1","region":"us-east"}`,
+				"aggregation":      "avg",
+				"interval_seconds": float64(60),
+				"group_by":         `["host","region"]`,
+				"limit":            float64(100),
+				"percentile":       "95.0",
+			},
+		},
+	}
 
-	result, err := registry.ExecuteTool(ctx, "qrdb_ts_query", map[string]interface{}{
-		"metric":     "cpu.usage",
-		"start_time": float64(1700000000000000000),
-		"end_time":   float64(1700000001000000000),
-	})
-	require.NoError(t, err)
-	require.NotNil(t, result)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			registry := newTSRegistry(t)
+			result, err := registry.ExecuteTool(context.Background(), "qrdb_ts_query", tt.args)
+			require.NoError(t, err)
+			require.NotNil(t, result)
+		})
+	}
 }
 
-func TestTimeSeriesQuery_MissingMetric(t *testing.T) {
-	registry := newTSRegistry(t)
-	ctx := context.Background()
+func TestTimeSeriesQuery_InvalidArgs(t *testing.T) {
+	validRange := func(extra map[string]interface{}) map[string]interface{} {
+		args := map[string]interface{}{
+			"metric":     "cpu.usage",
+			"start_time": float64(1700000000000000000),
+			"end_time":   float64(1700000001000000000),
+		}
+		for k, v := range extra {
+			args[k] = v
+		}
+		return args
+	}
 
-	result, err := registry.ExecuteTool(ctx, "qrdb_ts_query", map[string]interface{}{})
-	require.Error(t, err)
-	assert.Nil(t, result)
-	assert.Contains(t, err.Error(), "metric")
+	tests := []struct {
+		name        string
+		args        map[string]interface{}
+		errContains []string
+	}{
+		{
+			name:        "missing metric",
+			args:        map[string]interface{}{},
+			errContains: []string{"metric"},
+		},
+		{
+			name: "missing start_time",
+			args: map[string]interface{}{
+				"metric":   "cpu.usage",
+				"end_time": float64(1700000001000000000),
+			},
+			errContains: []string{"start_time"},
+		},
+		{
+			name: "missing end_time",
+			args: map[string]interface{}{
+				"metric":     "cpu.usage",
+				"start_time": float64(1700000000000000000),
+			},
+			errContains: []string{"end_time"},
+		},
+		{
+			name:        "invalid tags JSON",
+			args:        validRange(map[string]interface{}{"tags": "{not-valid-json"}),
+			errContains: []string{"invalid JSON"},
+		},
+		{
+			name:        "invalid group_by JSON",
+			args:        validRange(map[string]interface{}{"group_by": "not-valid-json"}),
+			errContains: []string{"group_by", "invalid JSON array"},
+		},
+		{
+			name:        "invalid percentile",
+			args:        validRange(map[string]interface{}{"percentile": "not-a-number"}),
+			errContains: []string{"percentile", "invalid numeric value"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			registry := newTSRegistry(t)
+			result, err := registry.ExecuteTool(context.Background(), "qrdb_ts_query", tt.args)
+			require.Error(t, err)
+			assert.Nil(t, result)
+			for _, want := range tt.errContains {
+				assert.Contains(t, err.Error(), want)
+			}
+		})
+	}
 }
 
-func TestTimeSeriesDeleteSeries_ExecuteSuccess(t *testing.T) {
-	registry := newTSRegistry(t)
-	ctx := context.Background()
+func TestTimeSeriesDeleteSeries_Success(t *testing.T) {
+	tests := []struct {
+		name string
+		args map[string]interface{}
+	}{
+		{
+			name: "metric only",
+			args: map[string]interface{}{"metric": "old.metric"},
+		},
+		{
+			name: "time range",
+			args: map[string]interface{}{
+				"metric":     "old.metric",
+				"start_time": float64(1700000000000000000),
+				"end_time":   float64(1700000001000000000),
+			},
+		},
+		{
+			name: "start_time only",
+			args: map[string]interface{}{
+				"metric":     "old.metric",
+				"start_time": float64(1700000000000000000),
+			},
+		},
+		{
+			name: "end_time only",
+			args: map[string]interface{}{
+				"metric":   "old.metric",
+				"end_time": float64(1700000001000000000),
+			},
+		},
+		{
+			name: "tags",
+			args: map[string]interface{}{
+				"metric": "old.metric",
+				"tags":   `{"host":"decommissioned-server"}`,
+			},
+		},
+	}
 
-	result, err := registry.ExecuteTool(ctx, "qrdb_ts_delete_series", map[string]interface{}{
-		"metric": "old.metric",
-	})
-	require.NoError(t, err)
-	require.NotNil(t, result)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			registry := newTSRegistry(t)
+			result, err := registry.ExecuteTool(context.Background(), "qrdb_ts_delete_series", tt.args)
+			require.NoError(t, err)
+			require.NotNil(t, result)
+		})
+	}
 }
 
-func TestTimeSeriesDeleteSeries_MissingMetric(t *testing.T) {
-	registry := newTSRegistry(t)
-	ctx := context.Background()
+func TestTimeSeriesDeleteSeries_InvalidArgs(t *testing.T) {
+	tests := []struct {
+		name        string
+		args        map[string]interface{}
+		errContains string
+	}{
+		{
+			name:        "missing metric",
+			args:        map[string]interface{}{},
+			errContains: "metric",
+		},
+		{
+			name: "invalid tags JSON",
+			args: map[string]interface{}{
+				"metric": "old.metric",
+				"tags":   "{invalid-json",
+			},
+			errContains: "invalid JSON",
+		},
+	}
 
-	result, err := registry.ExecuteTool(ctx, "qrdb_ts_delete_series", map[string]interface{}{})
-	require.Error(t, err)
-	assert.Nil(t, result)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			registry := newTSRegistry(t)
+			result, err := registry.ExecuteTool(context.Background(), "qrdb_ts_delete_series", tt.args)
+			require.Error(t, err)
+			assert.Nil(t, result)
+			assert.Contains(t, err.Error(), tt.errContains)
+		})
+	}
 }
 
 func TestTimeSeriesRetention_GetSuccess(t *testing.T) {
@@ -535,163 +682,9 @@ func newTSRegistryForCoverage(t *testing.T) *ToolRegistry {
 // Time Series Query Tests - Additional coverage for optional parameters
 // =============================================================================
 
-func TestTimeSeriesQuery_WithGroupByInvalidJSON(t *testing.T) {
-	registry := newTSRegistryForCoverage(t)
-	ctx := context.Background()
-
-	result, err := registry.ExecuteTool(ctx, "qrdb_ts_query", map[string]interface{}{
-		"metric":     "cpu.usage",
-		"start_time": float64(1700000000000000000),
-		"end_time":   float64(1700000001000000000),
-		"group_by":   "not-valid-json",
-	})
-	require.Error(t, err)
-	assert.Nil(t, result)
-	assert.Contains(t, err.Error(), "group_by")
-	assert.Contains(t, err.Error(), "invalid JSON array")
-}
-
-func TestTimeSeriesQuery_WithInvalidPercentile(t *testing.T) {
-	registry := newTSRegistryForCoverage(t)
-	ctx := context.Background()
-
-	result, err := registry.ExecuteTool(ctx, "qrdb_ts_query", map[string]interface{}{
-		"metric":     "cpu.usage",
-		"start_time": float64(1700000000000000000),
-		"end_time":   float64(1700000001000000000),
-		"percentile": "not-a-number",
-	})
-	require.Error(t, err)
-	assert.Nil(t, result)
-	assert.Contains(t, err.Error(), "percentile")
-	assert.Contains(t, err.Error(), "invalid numeric value")
-}
-
-func TestTimeSeriesQuery_WithAllOptionalParams(t *testing.T) {
-	registry := newTSRegistryForCoverage(t)
-	ctx := context.Background()
-
-	result, err := registry.ExecuteTool(ctx, "qrdb_ts_query", map[string]interface{}{
-		"metric":           "cpu.usage",
-		"start_time":       float64(1700000000000000000),
-		"end_time":         float64(1700000001000000000),
-		"tags":             `{"host":"server-1","region":"us-east"}`,
-		"aggregation":      "avg",
-		"interval_seconds": float64(60),
-		"group_by":         `["host","region"]`,
-		"limit":            float64(100),
-		"percentile":       "95.0",
-	})
-	require.NoError(t, err)
-	require.NotNil(t, result)
-}
-
-func TestTimeSeriesQuery_MissingStartTime(t *testing.T) {
-	registry := newTSRegistryForCoverage(t)
-	ctx := context.Background()
-
-	result, err := registry.ExecuteTool(ctx, "qrdb_ts_query", map[string]interface{}{
-		"metric":   "cpu.usage",
-		"end_time": float64(1700000001000000000),
-	})
-	require.Error(t, err)
-	assert.Nil(t, result)
-	assert.Contains(t, err.Error(), "start_time")
-}
-
-func TestTimeSeriesQuery_MissingEndTime(t *testing.T) {
-	registry := newTSRegistryForCoverage(t)
-	ctx := context.Background()
-
-	result, err := registry.ExecuteTool(ctx, "qrdb_ts_query", map[string]interface{}{
-		"metric":     "cpu.usage",
-		"start_time": float64(1700000000000000000),
-	})
-	require.Error(t, err)
-	assert.Nil(t, result)
-	assert.Contains(t, err.Error(), "end_time")
-}
-
-func TestTimeSeriesQuery_InvalidTagsJSON(t *testing.T) {
-	registry := newTSRegistryForCoverage(t)
-	ctx := context.Background()
-
-	result, err := registry.ExecuteTool(ctx, "qrdb_ts_query", map[string]interface{}{
-		"metric":     "cpu.usage",
-		"start_time": float64(1700000000000000000),
-		"end_time":   float64(1700000001000000000),
-		"tags":       "{not-valid-json",
-	})
-	require.Error(t, err)
-	assert.Nil(t, result)
-	assert.Contains(t, err.Error(), "invalid JSON")
-}
-
 // =============================================================================
 // Time Series Delete Series Tests - coverage for time range parameters
 // =============================================================================
-
-func TestTimeSeriesDeleteSeries_WithTimeRange(t *testing.T) {
-	registry := newTSRegistryForCoverage(t)
-	ctx := context.Background()
-
-	result, err := registry.ExecuteTool(ctx, "qrdb_ts_delete_series", map[string]interface{}{
-		"metric":     "old.metric",
-		"start_time": float64(1700000000000000000),
-		"end_time":   float64(1700000001000000000),
-	})
-	require.NoError(t, err)
-	require.NotNil(t, result)
-}
-
-func TestTimeSeriesDeleteSeries_WithTags(t *testing.T) {
-	registry := newTSRegistryForCoverage(t)
-	ctx := context.Background()
-
-	result, err := registry.ExecuteTool(ctx, "qrdb_ts_delete_series", map[string]interface{}{
-		"metric": "old.metric",
-		"tags":   `{"host":"decommissioned-server"}`,
-	})
-	require.NoError(t, err)
-	require.NotNil(t, result)
-}
-
-func TestTimeSeriesDeleteSeries_WithInvalidTags(t *testing.T) {
-	registry := newTSRegistryForCoverage(t)
-	ctx := context.Background()
-
-	result, err := registry.ExecuteTool(ctx, "qrdb_ts_delete_series", map[string]interface{}{
-		"metric": "old.metric",
-		"tags":   "{invalid-json",
-	})
-	require.Error(t, err)
-	assert.Nil(t, result)
-	assert.Contains(t, err.Error(), "invalid JSON")
-}
-
-func TestTimeSeriesDeleteSeries_WithOnlyStartTime(t *testing.T) {
-	registry := newTSRegistryForCoverage(t)
-	ctx := context.Background()
-
-	result, err := registry.ExecuteTool(ctx, "qrdb_ts_delete_series", map[string]interface{}{
-		"metric":     "old.metric",
-		"start_time": float64(1700000000000000000),
-	})
-	require.NoError(t, err)
-	require.NotNil(t, result)
-}
-
-func TestTimeSeriesDeleteSeries_WithOnlyEndTime(t *testing.T) {
-	registry := newTSRegistryForCoverage(t)
-	ctx := context.Background()
-
-	result, err := registry.ExecuteTool(ctx, "qrdb_ts_delete_series", map[string]interface{}{
-		"metric":   "old.metric",
-		"end_time": float64(1700000001000000000),
-	})
-	require.NoError(t, err)
-	require.NotNil(t, result)
-}
 
 // =============================================================================
 // Time Series List Metrics Tests
