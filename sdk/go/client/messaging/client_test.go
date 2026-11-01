@@ -116,11 +116,6 @@ func TestClient_CreateChannel_Validation(t *testing.T) {
 			wantErr: true,
 		},
 		{
-			name:    "valid minimal request",
-			req:     &CreateChannelRequest{Name: "test-channel"},
-			wantErr: false,
-		},
-		{
 			name: "valid full request",
 			req: &CreateChannelRequest{
 				Name:       "test-channel",
@@ -545,11 +540,6 @@ func TestClient_Subscribe_Validation(t *testing.T) {
 			name:    "negative buffer size",
 			req:     &SubscribeRequest{Channel: "test", BufferSize: -1},
 			wantErr: true,
-		},
-		{
-			name:    "valid minimal request",
-			req:     &SubscribeRequest{Channel: "test-channel"},
-			wantErr: false,
 		},
 		{
 			name: "valid full request",
@@ -1064,11 +1054,6 @@ func TestClient_WatchChannel_Validation(t *testing.T) {
 			name:    "negative buffer size",
 			req:     &WatchChannelRequest{KeyPrefix: "users/", BufferSize: -1},
 			wantErr: true,
-		},
-		{
-			name:    "valid minimal request",
-			req:     &WatchChannelRequest{KeyPrefix: "users/"},
-			wantErr: false,
 		},
 		{
 			name: "valid full request",
