@@ -536,24 +536,6 @@ func TestFlushEvents_SmallBuffer(t *testing.T) {
 	<-timer.C
 }
 
-func TestNew_GitIgnoreMatcherError(t *testing.T) {
-	tmpDir := t.TempDir()
-
-	// Normal patterns should work - gitignore matcher doesn't return errors for any pattern
-	config := Config{
-		Paths:         []string{tmpDir},
-		Exclude:       []string{"*.tmp", "test/"},
-		DebounceDelay: 50 * time.Millisecond,
-		BatchInterval: 100 * time.Millisecond,
-		BufferSize:    100,
-	}
-
-	w, err := New(config)
-	require.NoError(t, err)
-	require.NotNil(t, w)
-	defer w.Stop()
-}
-
 // TestNew_InvalidPath tests New with an invalid path that doesn't exist.
 func TestNew_InvalidPath(t *testing.T) {
 	config := Config{
@@ -587,7 +569,7 @@ func TestAddRecursive_ErrorReadDir(t *testing.T) {
 	noReadDir := filepath.Join(subDir, "noread")
 	err = os.Mkdir(noReadDir, 0000)
 	require.NoError(t, err)
-	defer os.Chmod(noReadDir, 0755) // Cleanup
+	t.Cleanup(func() { require.NoError(t, os.Chmod(noReadDir, 0755)) })
 
 	config := Config{
 		Paths:         []string{tmpDir},
@@ -604,42 +586,14 @@ func TestAddRecursive_ErrorReadDir(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	// Start should handle the error gracefully
-	err = w.Start(ctx)
-	if err != nil {
-		// It's OK if it errors on unreadable directories
-		assert.Contains(t, err.Error(), "permission denied")
-	}
-}
-
-// TestAddRecursive_WatcherAddError tests error handling when watcher.Add fails.
-func TestAddRecursive_WatcherAddError(t *testing.T) {
-	tmpDir := t.TempDir()
-
-	// Create deep directory structure
-	deepDir := tmpDir
-	for i := 0; i < 10; i++ {
-		deepDir = filepath.Join(deepDir, "level")
-		os.Mkdir(deepDir, 0755)
-	}
-
-	config := Config{
-		Paths:         []string{tmpDir},
-		Recursive:     true,
-		DebounceDelay: 50 * time.Millisecond,
-		BatchInterval: 100 * time.Millisecond,
-		BufferSize:    100,
-	}
-
-	w, err := New(config)
-	require.NoError(t, err)
-	defer w.Stop()
-
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-
-	err = w.Start(ctx)
-	require.NoError(t, err)
+	// A failure below the root is skipped, so Start succeeds and the
+	// readable siblings stay watched.
+	require.NoError(t, w.Start(ctx))
+	fw := w.(*fsWatcher)
+	fw.mu.RLock()
+	_, hasSub := fw.paths[subDir]
+	fw.mu.RUnlock()
+	assert.True(t, hasSub, "readable subdirectory should be watched")
 }
 
 // TestFlushEvents_StopChannel tests flushEvents with stopCh triggered.
@@ -1205,24 +1159,6 @@ func TestAddPath_FileNotDirectory(t *testing.T) {
 	assert.NoError(t, err)
 }
 
-func TestWatcher_AddPath_NonExistent(t *testing.T) {
-	tmpDir := t.TempDir()
-
-	config := Config{
-		Paths:         []string{tmpDir},
-		DebounceDelay: 50 * time.Millisecond,
-		BatchInterval: 100 * time.Millisecond,
-		BufferSize:    100,
-	}
-
-	w, err := New(config)
-	require.NoError(t, err)
-	defer w.Stop()
-
-	err = w.AddPath("/nonexistent/path/that/does/not/exist")
-	assert.Error(t, err)
-}
-
 // TestWatcher_RemovePath_WithError tests removing a path that fails.
 func TestWatcher_RemovePath_WithError(t *testing.T) {
 	tmpDir := t.TempDir()
@@ -1459,8 +1395,7 @@ func TestWatcher_ErrorHandling(t *testing.T) {
 	time.Sleep(500 * time.Millisecond)
 }
 
-// TestAddPath_AddError tests addPath when watcher.Add fails.
-// This is difficult to trigger without reaching OS limits, but we can test the path exists check.
+// TestAddPath_StatError tests that AddPath rejects a path that does not exist.
 func TestAddPath_StatError(t *testing.T) {
 	tmpDir := t.TempDir()
 
@@ -1479,40 +1414,6 @@ func TestAddPath_StatError(t *testing.T) {
 	err = w.AddPath("/this/path/absolutely/does/not/exist/anywhere")
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to stat path")
-}
-
-// TestAddPath_DirectoryRecursive tests addPath with a directory when recursive is enabled.
-func TestAddPath_DirectoryWithRecursive(t *testing.T) {
-	tmpDir := t.TempDir()
-	subDir1 := filepath.Join(tmpDir, "sub1")
-	subDir2 := filepath.Join(subDir1, "sub2")
-	err := os.MkdirAll(subDir2, 0755)
-	require.NoError(t, err)
-
-	config := Config{
-		Paths:         []string{tmpDir},
-		Recursive:     true,
-		DebounceDelay: 50 * time.Millisecond,
-		BatchInterval: 100 * time.Millisecond,
-		BufferSize:    100,
-	}
-
-	w, err := New(config)
-	require.NoError(t, err)
-	defer w.Stop()
-
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-
-	err = w.Start(ctx)
-	require.NoError(t, err)
-
-	// sub2 should be watched due to recursive
-	fw := w.(*fsWatcher)
-	fw.mu.RLock()
-	_, hasSub2 := fw.paths[subDir2]
-	fw.mu.RUnlock()
-	assert.True(t, hasSub2, "sub2 should be watched recursively")
 }
 
 // TestProcessEvents_ContextDoneBeforeEvent tests processEvents exiting on context.Done().
@@ -1553,44 +1454,6 @@ func TestProcessEvents_ContextCancellation(t *testing.T) {
 	}
 }
 
-// TestNew_WithMaxDepthZero tests New with MaxDepth set to 0 (unlimited).
-func TestNew_MaxDepthZero(t *testing.T) {
-	tmpDir := t.TempDir()
-
-	// Create deep structure
-	deep := tmpDir
-	for i := 0; i < 5; i++ {
-		deep = filepath.Join(deep, "level")
-		os.Mkdir(deep, 0755)
-	}
-
-	config := Config{
-		Paths:         []string{tmpDir},
-		Recursive:     true,
-		MaxDepth:      0, // Unlimited depth
-		DebounceDelay: 50 * time.Millisecond,
-		BatchInterval: 100 * time.Millisecond,
-		BufferSize:    100,
-	}
-
-	w, err := New(config)
-	require.NoError(t, err)
-	defer w.Stop()
-
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-
-	err = w.Start(ctx)
-	require.NoError(t, err)
-
-	// All levels should be watched
-	fw := w.(*fsWatcher)
-	fw.mu.RLock()
-	pathCount := len(fw.paths)
-	fw.mu.RUnlock()
-	assert.Greater(t, pathCount, 5, "should watch multiple levels")
-}
-
 // TestStop_BeforeStart tests stopping a watcher that hasn't been started.
 func TestStop_NotStarted(t *testing.T) {
 	tmpDir := t.TempDir()
@@ -1610,43 +1473,49 @@ func TestStop_NotStarted(t *testing.T) {
 	assert.NoError(t, err)
 }
 
-// TestAddRecursive_MaxDepthReached tests addRecursive when max depth is reached.
-func TestAddRecursive_MaxDepthLimit(t *testing.T) {
-	tmpDir := t.TempDir()
-
-	// Create deeper structure than max depth
-	level1 := filepath.Join(tmpDir, "l1")
-	level2 := filepath.Join(level1, "l2")
-	level3 := filepath.Join(level2, "l3")
-	level4 := filepath.Join(level3, "l4")
-	err := os.MkdirAll(level4, 0755)
-	require.NoError(t, err)
-
-	config := Config{
-		Paths:         []string{tmpDir},
-		Recursive:     true,
-		MaxDepth:      2, // Only go 2 levels deep
-		DebounceDelay: 50 * time.Millisecond,
-		BatchInterval: 100 * time.Millisecond,
-		BufferSize:    100,
+// TestAddRecursive_MaxDepth tests how deep a recursive walk watches.
+func TestAddRecursive_MaxDepth(t *testing.T) {
+	tests := []struct {
+		name       string
+		maxDepth   int
+		watched    []string
+		notWatched []string
+	}{
+		{name: "unlimited", maxDepth: 0, watched: []string{"l1", "l1/l2", "l1/l2/l3", "l1/l2/l3/l4"}},
+		{name: "limited to two levels", maxDepth: 2, watched: []string{"l1", "l1/l2"}, notWatched: []string{"l1/l2/l3", "l1/l2/l3/l4"}},
 	}
 
-	w, err := New(config)
-	require.NoError(t, err)
-	defer w.Stop()
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tmpDir := t.TempDir()
+			require.NoError(t, os.MkdirAll(filepath.Join(tmpDir, "l1", "l2", "l3", "l4"), 0755))
 
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
+			w, err := New(Config{
+				Paths:         []string{tmpDir},
+				Recursive:     true,
+				MaxDepth:      tt.maxDepth,
+				DebounceDelay: 50 * time.Millisecond,
+				BatchInterval: 100 * time.Millisecond,
+				BufferSize:    100,
+			})
+			require.NoError(t, err)
+			defer w.Stop()
 
-	err = w.Start(ctx)
-	require.NoError(t, err)
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			require.NoError(t, w.Start(ctx))
 
-	// Level 4 should NOT be watched
-	fw := w.(*fsWatcher)
-	fw.mu.RLock()
-	_, hasLevel4 := fw.paths[level4]
-	fw.mu.RUnlock()
-	assert.False(t, hasLevel4, "level4 should not be watched (exceeds max depth)")
+			fw := w.(*fsWatcher)
+			fw.mu.RLock()
+			defer fw.mu.RUnlock()
+			for _, p := range tt.watched {
+				assert.Contains(t, fw.paths, filepath.Join(tmpDir, p), "%s should be watched", p)
+			}
+			for _, p := range tt.notWatched {
+				assert.NotContains(t, fw.paths, filepath.Join(tmpDir, p), "%s should not be watched", p)
+			}
+		})
+	}
 }
 
 // TestProcessEvents_StopChannelClosed tests processEvents when stopCh is closed.
