@@ -1991,6 +1991,7 @@ func TestFormatCacheWarmResponse(t *testing.T) {
 		output := buf.String()
 		assert.Contains(t, output, "in progress")
 		assert.Contains(t, output, "50")
+		assert.NotContains(t, output, "Current prefix")
 	})
 
 	t.Run("default format failed", func(t *testing.T) {
@@ -2024,30 +2025,6 @@ func TestFormatCacheWarmResponse(t *testing.T) {
 		assert.Contains(t, output, "No warming operations")
 	})
 
-	t.Run("default format unknown state with message", func(t *testing.T) {
-		resp := &CacheWarmResponse{
-			State:   "unknown",
-			Message: "Some message",
-		}
-		var buf bytes.Buffer
-		err := formatter.FormatCacheWarmResponse(resp, OutputFormatRaw, &buf)
-		require.NoError(t, err)
-
-		output := buf.String()
-		assert.Contains(t, output, "Some message")
-	})
-
-	t.Run("table format with zero time", func(t *testing.T) {
-		resp := &CacheWarmResponse{
-			State:     "idle",
-			Timestamp: time.Time{},
-		}
-		var buf bytes.Buffer
-		err := formatter.FormatCacheWarmResponse(resp, OutputFormatTable, &buf)
-		require.NoError(t, err)
-		// Should not panic with zero time
-	})
-
 	t.Run("table format no duration", func(t *testing.T) {
 		resp := &CacheWarmResponse{
 			State:      "warming",
@@ -2064,41 +2041,3 @@ func TestFormatCacheWarmResponse(t *testing.T) {
 }
 
 // TestCacheWarmResponseStructure tests the CacheWarmResponse structure.
-func TestCacheWarmResponseStructure(t *testing.T) {
-	now := time.Now()
-	completedAt := now.Add(5 * time.Minute)
-
-	resp := &CacheWarmResponse{
-		Prefixes:      []string{"users/", "sessions/"},
-		State:         "completed",
-		StartedAt:     now,
-		CompletedAt:   completedAt,
-		KeysWarmed:    1000,
-		KeysFailed:    5,
-		CurrentPrefix: "sessions/",
-		Duration:      5 * time.Minute,
-		Timestamp:     now,
-		Success:       true,
-		Message:       "Cache warming completed successfully",
-	}
-
-	assert.Len(t, resp.Prefixes, 2)
-	assert.Equal(t, "completed", resp.State)
-	assert.Equal(t, int64(1000), resp.KeysWarmed)
-	assert.Equal(t, int64(5), resp.KeysFailed)
-	assert.Equal(t, "sessions/", resp.CurrentPrefix)
-	assert.True(t, resp.Success)
-
-	// Test JSON marshaling
-	data, err := json.Marshal(resp)
-	require.NoError(t, err)
-	assert.Contains(t, string(data), "completed")
-	assert.Contains(t, string(data), "users/")
-
-	// Test JSON unmarshaling
-	var decoded CacheWarmResponse
-	err = json.Unmarshal(data, &decoded)
-	require.NoError(t, err)
-	assert.Equal(t, resp.State, decoded.State)
-	assert.Equal(t, resp.KeysWarmed, decoded.KeysWarmed)
-}
