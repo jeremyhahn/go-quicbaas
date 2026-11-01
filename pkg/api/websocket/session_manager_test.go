@@ -124,52 +124,33 @@ func TestSessionManager_AddDuplicateID(t *testing.T) {
 }
 
 func TestSessionManager_Remove(t *testing.T) {
-	sm := NewSessionManager()
-
-	session := NewSession("session-1", "echo", nil)
-	sm.Add(session)
-
-	if sm.Count() != 1 {
-		t.Errorf("Count() = %d, want 1", sm.Count())
+	tests := []struct {
+		name      string
+		sessions  []string
+		removeID  string
+		wantCount int
+	}{
+		{name: "existing session", sessions: []string{"session-1"}, removeID: "session-1", wantCount: 0},
+		{name: "nonexistent session", sessions: []string{"session-1"}, removeID: "nonexistent", wantCount: 1},
+		{name: "empty manager", removeID: "nonexistent", wantCount: 0},
 	}
 
-	sm.Remove("session-1")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			sm := NewSessionManager()
+			for _, id := range tt.sessions {
+				sm.Add(NewSession(id, "echo", nil))
+			}
 
-	if sm.Count() != 0 {
-		t.Errorf("Count() = %d, want 0", sm.Count())
-	}
+			sm.Remove(tt.removeID)
 
-	// Verify session is no longer retrievable
-	_, exists := sm.Get("session-1")
-	if exists {
-		t.Error("Session should not exist after Remove")
-	}
-}
-
-func TestSessionManager_RemoveNonexistent(t *testing.T) {
-	sm := NewSessionManager()
-
-	// Add one session
-	session := NewSession("session-1", "echo", nil)
-	sm.Add(session)
-
-	// Try to remove a nonexistent session
-	sm.Remove("nonexistent")
-
-	// Count should remain unchanged
-	if sm.Count() != 1 {
-		t.Errorf("Count() = %d, want 1", sm.Count())
-	}
-}
-
-func TestSessionManager_RemoveEmpty(t *testing.T) {
-	sm := NewSessionManager()
-
-	// Remove from empty manager should not panic or error
-	sm.Remove("nonexistent")
-
-	if sm.Count() != 0 {
-		t.Errorf("Count() = %d, want 0", sm.Count())
+			if sm.Count() != tt.wantCount {
+				t.Errorf("Count() = %d, want %d", sm.Count(), tt.wantCount)
+			}
+			if _, exists := sm.Get(tt.removeID); exists {
+				t.Errorf("Get(%q) found a session after Remove", tt.removeID)
+			}
+		})
 	}
 }
 
@@ -199,16 +180,9 @@ func TestSessionManager_Get(t *testing.T) {
 	if retrieved.UserID != "user-1" {
 		t.Errorf("UserID = %q, want %q", retrieved.UserID, "user-1")
 	}
-}
 
-func TestSessionManager_GetNonexistent(t *testing.T) {
-	sm := NewSessionManager()
-
-	session := NewSession("session-1", "echo", nil)
-	sm.Add(session)
-
-	_, exists := sm.Get("session-2")
-	if exists {
+	// Get an ID the populated manager does not hold
+	if _, exists := sm.Get("session-2"); exists {
 		t.Error("Get for nonexistent session should return false")
 	}
 }
@@ -382,6 +356,10 @@ func TestSessionManager_CloseAllEmpty(t *testing.T) {
 func TestSessionManager_GetByUserID(t *testing.T) {
 	sm := NewSessionManager()
 
+	if sessions := sm.GetByUserID("user-1"); len(sessions) != 0 {
+		t.Errorf("GetByUserID on empty manager returned %d sessions, want 0", len(sessions))
+	}
+
 	// Add sessions with different user IDs
 	for i := 0; i < 5; i++ {
 		session := NewSession(fmt.Sprintf("session-user1-%d", i), "echo", nil)
@@ -414,17 +392,12 @@ func TestSessionManager_GetByUserID(t *testing.T) {
 	}
 }
 
-func TestSessionManager_GetByUserIDEmpty(t *testing.T) {
-	sm := NewSessionManager()
-
-	sessions := sm.GetByUserID("user-1")
-	if len(sessions) != 0 {
-		t.Errorf("GetByUserID on empty manager returned %d sessions, want 0", len(sessions))
-	}
-}
-
 func TestSessionManager_GetBySubprotocol(t *testing.T) {
 	sm := NewSessionManager()
+
+	if sessions := sm.GetBySubprotocol("echo"); len(sessions) != 0 {
+		t.Errorf("GetBySubprotocol on empty manager returned %d sessions, want 0", len(sessions))
+	}
 
 	// Add sessions with different subprotocols
 	for i := 0; i < 4; i++ {
@@ -464,17 +437,12 @@ func TestSessionManager_GetBySubprotocol(t *testing.T) {
 	}
 }
 
-func TestSessionManager_GetBySubprotocolEmpty(t *testing.T) {
-	sm := NewSessionManager()
-
-	sessions := sm.GetBySubprotocol("echo")
-	if len(sessions) != 0 {
-		t.Errorf("GetBySubprotocol on empty manager returned %d sessions, want 0", len(sessions))
-	}
-}
-
 func TestSessionManager_GetSubscribersForChannel(t *testing.T) {
 	sm := NewSessionManager()
+
+	if subs := sm.GetSubscribersForChannel("channel-a"); len(subs) != 0 {
+		t.Errorf("GetSubscribersForChannel on empty manager returned %d sessions, want 0", len(subs))
+	}
 
 	// Add sessions and subscribe some to channels
 	for i := 0; i < 10; i++ {
@@ -508,17 +476,16 @@ func TestSessionManager_GetSubscribersForChannel(t *testing.T) {
 	}
 }
 
-func TestSessionManager_GetSubscribersForChannelEmpty(t *testing.T) {
-	sm := NewSessionManager()
-
-	subs := sm.GetSubscribersForChannel("channel")
-	if len(subs) != 0 {
-		t.Errorf("GetSubscribersForChannel on empty manager returned %d sessions, want 0", len(subs))
-	}
-}
-
 func TestSessionManager_GetStats(t *testing.T) {
 	sm := NewSessionManager()
+
+	empty := sm.GetStats()
+	if empty.TotalSessions != 0 {
+		t.Errorf("empty TotalSessions = %d, want 0", empty.TotalSessions)
+	}
+	if len(empty.SessionsByProtocol) != 0 {
+		t.Errorf("empty SessionsByProtocol has %d entries, want 0", len(empty.SessionsByProtocol))
+	}
 
 	// Add sessions with different subprotocols
 	for i := 0; i < 5; i++ {
@@ -549,20 +516,6 @@ func TestSessionManager_GetStats(t *testing.T) {
 
 	if stats.SessionsByProtocol["stomp"] != 2 {
 		t.Errorf("SessionsByProtocol[stomp] = %d, want 2", stats.SessionsByProtocol["stomp"])
-	}
-}
-
-func TestSessionManager_GetStatsEmpty(t *testing.T) {
-	sm := NewSessionManager()
-
-	stats := sm.GetStats()
-
-	if stats.TotalSessions != 0 {
-		t.Errorf("TotalSessions = %d, want 0", stats.TotalSessions)
-	}
-
-	if len(stats.SessionsByProtocol) != 0 {
-		t.Errorf("SessionsByProtocol has %d entries, want 0", len(stats.SessionsByProtocol))
 	}
 }
 
