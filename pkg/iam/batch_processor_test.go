@@ -773,35 +773,48 @@ func TestBatchOperation_Validation(t *testing.T) {
 }
 
 func TestBatchProgress_UpdateProgress(t *testing.T) {
-	progress := &BatchProgress{
-		Total:     100,
-		Processed: 50,
+	tests := []struct {
+		name             string
+		total, processed int
+		want             float64
+	}{
+		{name: "half done", total: 100, processed: 50, want: 50.0},
+		{name: "zero total", total: 0, processed: 0, want: 0},
 	}
 
-	progress.UpdateProgress()
-
-	if progress.PercentComplete != 50.0 {
-		t.Errorf("expected 50%% complete, got %.2f%%", progress.PercentComplete)
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			progress := &BatchProgress{Total: tc.total, Processed: tc.processed}
+			progress.UpdateProgress()
+			if progress.PercentComplete != tc.want {
+				t.Errorf("expected %.2f%% complete, got %.2f%%", tc.want, progress.PercentComplete)
+			}
+		})
 	}
 }
 
 func TestBatchProgress_CalculateRate(t *testing.T) {
-	progress := &BatchProgress{
-		Total:     100,
-		Processed: 50,
+	tests := []struct {
+		name     string
+		elapsed  time.Duration
+		wantRate float64
+		wantETA  time.Duration
+	}{
+		{name: "50 items in 10s", elapsed: 10 * time.Second, wantRate: 5.0, wantETA: 10 * time.Second},
+		{name: "zero elapsed leaves rate unset", elapsed: 0, wantRate: 0, wantETA: 0},
 	}
 
-	elapsed := 10 * time.Second
-	progress.CalculateRate(elapsed)
-
-	expectedRate := 5.0 // 50 items / 10 seconds
-	if progress.ItemsPerSecond != expectedRate {
-		t.Errorf("expected rate %.2f, got %.2f", expectedRate, progress.ItemsPerSecond)
-	}
-
-	// Should have estimated time remaining
-	if progress.EstimatedTimeRemaining == 0 {
-		t.Error("expected estimated time remaining to be calculated")
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			progress := &BatchProgress{Total: 100, Processed: 50}
+			progress.CalculateRate(tc.elapsed)
+			if progress.ItemsPerSecond != tc.wantRate {
+				t.Errorf("expected rate %.2f, got %.2f", tc.wantRate, progress.ItemsPerSecond)
+			}
+			if progress.EstimatedTimeRemaining != tc.wantETA {
+				t.Errorf("expected estimated time remaining %v, got %v", tc.wantETA, progress.EstimatedTimeRemaining)
+			}
+		})
 	}
 }
 
@@ -839,6 +852,7 @@ func TestBatchOperation_CanCancel(t *testing.T) {
 		{BatchStatusCompleted, false},
 		{BatchStatusFailed, false},
 		{BatchStatusCancelled, false},
+		{BatchStatusPartialSuccess, false},
 	}
 
 	for _, tc := range testCases {
@@ -1867,76 +1881,6 @@ func TestPolicyImportItem_Validation(t *testing.T) {
 		if err := item.Validate(); err == nil {
 			t.Error("expected error for empty item")
 		}
-	})
-}
-
-// =============================================================================
-// BatchOperation status methods
-// =============================================================================
-
-func TestBatchOperation_StatusMethods(t *testing.T) {
-	t.Run("IsTerminal", func(t *testing.T) {
-		statuses := map[BatchStatus]bool{
-			BatchStatusPending:        false,
-			BatchStatusValidating:     false,
-			BatchStatusProcessing:     false,
-			BatchStatusCompleted:      true,
-			BatchStatusFailed:         true,
-			BatchStatusCancelled:      true,
-			BatchStatusPartialSuccess: true,
-		}
-
-		for status, expected := range statuses {
-			op := &BatchOperation{Status: status}
-			if op.IsTerminal() != expected {
-				t.Errorf("IsTerminal for %s: expected %v, got %v", status, expected, op.IsTerminal())
-			}
-		}
-	})
-
-	t.Run("CanCancel", func(t *testing.T) {
-		statuses := map[BatchStatus]bool{
-			BatchStatusPending:        true,
-			BatchStatusValidating:     true,
-			BatchStatusProcessing:     true,
-			BatchStatusCompleted:      false,
-			BatchStatusFailed:         false,
-			BatchStatusCancelled:      false,
-			BatchStatusPartialSuccess: false,
-		}
-
-		for status, expected := range statuses {
-			op := &BatchOperation{Status: status}
-			if op.CanCancel() != expected {
-				t.Errorf("CanCancel for %s: expected %v, got %v", status, expected, op.CanCancel())
-			}
-		}
-	})
-}
-
-// =============================================================================
-// BatchProgress methods
-// =============================================================================
-
-func TestBatchProgress_Methods(t *testing.T) {
-	t.Run("UpdateProgress with zero total", func(t *testing.T) {
-		progress := &BatchProgress{
-			Total:     0,
-			Processed: 0,
-		}
-		progress.UpdateProgress()
-		if progress.PercentComplete != 0 {
-			t.Errorf("expected 0%%, got %.2f%%", progress.PercentComplete)
-		}
-	})
-
-	t.Run("CalculateRate with zero elapsed", func(t *testing.T) {
-		progress := &BatchProgress{
-			Total:     100,
-			Processed: 50,
-		}
-		progress.CalculateRate(0)
-		// Should handle zero elapsed gracefully
 	})
 }
 
