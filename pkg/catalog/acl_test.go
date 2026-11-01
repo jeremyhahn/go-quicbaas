@@ -1074,50 +1074,32 @@ func TestBatchCheckAccess(t *testing.T) {
 		}
 	})
 
-	t.Run("BatchCheckAccessWithMissingKey", func(t *testing.T) {
-		catalog := newACLTestCatalogManager()
+	missingKey := []struct {
+		name   string
+		logger interfaces.Logger
+	}{
+		{"BatchCheckAccessWithMissingKey", &aclTestLogger{}},
+		{"BatchCheckAccessWithoutLogger", nil},
+	}
+	for _, tc := range missingKey {
+		t.Run(tc.name, func(t *testing.T) {
+			catalog := newACLTestCatalogManager()
+			catalog.Put(ctx, createACLTestEntry("obj1", "user1", nil))
+			manager, _ := NewACLManager(&ACLManagerConfig{Catalog: catalog, Logger: tc.logger})
 
-		entry1 := createACLTestEntry("obj1", "user1", nil)
-		catalog.Put(ctx, entry1)
+			results, err := manager.BatchCheckAccess(ctx, "user1", []string{"obj1", "nonexistent"}, ActionRead)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
 
-		config := &ACLManagerConfig{Catalog: catalog, Logger: &aclTestLogger{}}
-		manager, _ := NewACLManager(config)
-
-		results, err := manager.BatchCheckAccess(ctx, "user1", []string{"obj1", "nonexistent"}, ActionRead)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-
-		if !results["obj1"] {
-			t.Error("user1 should have access to obj1")
-		}
-		if results["nonexistent"] {
-			t.Error("nonexistent should be denied")
-		}
-	})
-
-	t.Run("BatchCheckAccessWithoutLogger", func(t *testing.T) {
-		catalog := newACLTestCatalogManager()
-
-		entry1 := createACLTestEntry("obj1", "user1", nil)
-		catalog.Put(ctx, entry1)
-
-		// No logger configured
-		config := &ACLManagerConfig{Catalog: catalog}
-		manager, _ := NewACLManager(config)
-
-		results, err := manager.BatchCheckAccess(ctx, "user1", []string{"obj1", "nonexistent"}, ActionRead)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-
-		if !results["obj1"] {
-			t.Error("user1 should have access to obj1")
-		}
-		if results["nonexistent"] {
-			t.Error("nonexistent should be denied")
-		}
-	})
+			if !results["obj1"] {
+				t.Error("user1 should have access to obj1")
+			}
+			if results["nonexistent"] {
+				t.Error("nonexistent should be denied")
+			}
+		})
+	}
 }
 
 // TestObjectACLHelpers tests ObjectACL helper methods.
