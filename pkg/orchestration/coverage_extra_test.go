@@ -29,53 +29,62 @@ import (
 // project_store: context cancellation and input-validation branches
 // -----------------------------------------------------------------------------
 
-// TestProjectStore_GetByName_CancelledContext covers the ctx.Err() early-return.
-func TestProjectStore_GetByName_CancelledContext(t *testing.T) {
-	store := NewInMemoryProjectStore()
-	ctx, cancel := context.WithCancel(context.Background())
+// TestProjectStore_BadInput covers each method's cancelled-context guard and
+// its empty-ID and empty-tenant validation, one row per method and bad input.
+func TestProjectStore_BadInput(t *testing.T) {
+	cancelled, cancel := context.WithCancel(context.Background())
 	cancel()
-	if _, err := store.GetByName(ctx, "tenant-1", "name"); !errors.Is(err, context.Canceled) {
-		t.Fatalf("want context.Canceled, got %v", err)
-	}
-}
+	bg := context.Background()
 
-// TestProjectStore_GetByName_EmptyTenantID covers the empty-tenant guard.
-func TestProjectStore_GetByName_EmptyTenantID(t *testing.T) {
-	store := NewInMemoryProjectStore()
-	_, err := store.GetByName(context.Background(), "", "name")
-	var inv *ProjectInvalidError
-	if !errors.As(err, &inv) || inv.Field != "tenant_id" {
-		t.Fatalf("want ProjectInvalidError(tenant_id), got %v", err)
+	tests := []struct {
+		name      string
+		call      func(ProjectStore) error
+		wantField string // empty means the error must be context.Canceled
+	}{
+		{"Get/cancelled", func(s ProjectStore) error {
+			_, err := s.Get(cancelled, "tenant-1", "p1")
+			return err
+		}, ""},
+		{"Get/empty id", func(s ProjectStore) error {
+			_, err := s.Get(bg, "tenant-1", "")
+			return err
+		}, "id"},
+		{"GetByName/cancelled", func(s ProjectStore) error {
+			_, err := s.GetByName(cancelled, "tenant-1", "name")
+			return err
+		}, ""},
+		{"GetByName/empty tenant", func(s ProjectStore) error {
+			_, err := s.GetByName(bg, "", "name")
+			return err
+		}, "tenant_id"},
+		{"Update/cancelled", func(s ProjectStore) error {
+			return s.Update(cancelled, newTestProject("p1", "tenant-1", "n"))
+		}, ""},
+		{"Update/empty id", func(s ProjectStore) error {
+			return s.Update(bg, &Project{TenantID: "tenant-1"})
+		}, "id"},
+		{"Update/empty tenant", func(s ProjectStore) error {
+			return s.Update(bg, &Project{ID: "p1"})
+		}, "tenant_id"},
+		{"ListByTenant/cancelled", func(s ProjectStore) error {
+			_, err := s.ListByTenant(cancelled, "tenant-1")
+			return err
+		}, ""},
 	}
-}
-
-// TestProjectStore_Update_CancelledContext covers Update's ctx.Err() guard.
-func TestProjectStore_Update_CancelledContext(t *testing.T) {
-	store := NewInMemoryProjectStore()
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-	if err := store.Update(ctx, newTestProject("p1", "tenant-1", "n")); !errors.Is(err, context.Canceled) {
-		t.Fatalf("want context.Canceled, got %v", err)
-	}
-}
-
-// TestProjectStore_Update_EmptyID covers Update's empty-ID validation.
-func TestProjectStore_Update_EmptyID(t *testing.T) {
-	store := NewInMemoryProjectStore()
-	err := store.Update(context.Background(), &Project{TenantID: "tenant-1"})
-	var inv *ProjectInvalidError
-	if !errors.As(err, &inv) || inv.Field != "id" {
-		t.Fatalf("want ProjectInvalidError(id), got %v", err)
-	}
-}
-
-// TestProjectStore_Update_EmptyTenantID covers Update's empty-tenant validation.
-func TestProjectStore_Update_EmptyTenantID(t *testing.T) {
-	store := NewInMemoryProjectStore()
-	err := store.Update(context.Background(), &Project{ID: "p1"})
-	var inv *ProjectInvalidError
-	if !errors.As(err, &inv) || inv.Field != "tenant_id" {
-		t.Fatalf("want ProjectInvalidError(tenant_id), got %v", err)
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			err := tc.call(NewInMemoryProjectStore())
+			if tc.wantField == "" {
+				if !errors.Is(err, context.Canceled) {
+					t.Fatalf("want context.Canceled, got %v", err)
+				}
+				return
+			}
+			var inv *ProjectInvalidError
+			if !errors.As(err, &inv) || inv.Field != tc.wantField {
+				t.Fatalf("want ProjectInvalidError(%s), got %v", tc.wantField, err)
+			}
+		})
 	}
 }
 
@@ -102,16 +111,6 @@ func TestProjectStore_Update_NameConflict(t *testing.T) {
 	// p2 must still be reachable under its original name "beta".
 	if _, gErr := store.GetByName(ctx, "tenant-1", "beta"); gErr != nil {
 		t.Fatalf("p2 should still resolve under original name beta: %v", gErr)
-	}
-}
-
-// TestProjectStore_ListByTenant_CancelledContext covers ListByTenant's guard.
-func TestProjectStore_ListByTenant_CancelledContext(t *testing.T) {
-	store := NewInMemoryProjectStore()
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-	if _, err := store.ListByTenant(ctx, "tenant-1"); !errors.Is(err, context.Canceled) {
-		t.Fatalf("want context.Canceled, got %v", err)
 	}
 }
 
@@ -377,30 +376,6 @@ func TestNewInMemoryTaskStoreWithKV_DefaultLimit(t *testing.T) {
 	}
 	if int64(len(payload)) != InlineLimit+1 {
 		t.Fatalf("offloaded payload = %d bytes, want %d", len(payload), InlineLimit+1)
-	}
-}
-
-// -----------------------------------------------------------------------------
-// project_store: Get validation branches
-// -----------------------------------------------------------------------------
-
-// TestProjectStore_Get_EmptyProjectID covers Get's empty-projectID guard.
-func TestProjectStore_Get_EmptyProjectID(t *testing.T) {
-	store := NewInMemoryProjectStore()
-	_, err := store.Get(context.Background(), "tenant-1", "")
-	var inv *ProjectInvalidError
-	if !errors.As(err, &inv) || inv.Field != "id" {
-		t.Fatalf("want ProjectInvalidError(id), got %v", err)
-	}
-}
-
-// TestProjectStore_Get_CancelledContext covers Get's ctx.Err() guard.
-func TestProjectStore_Get_CancelledContext(t *testing.T) {
-	store := NewInMemoryProjectStore()
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-	if _, err := store.Get(ctx, "tenant-1", "p1"); !errors.Is(err, context.Canceled) {
-		t.Fatalf("want context.Canceled, got %v", err)
 	}
 }
 
