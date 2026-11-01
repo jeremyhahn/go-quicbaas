@@ -505,34 +505,67 @@ func createJWTWithKID(t *testing.T, signer crypto.Signer, kid string, claims JWT
 // PublicKey Tests
 // -----------------------------------------------------------------------------
 
-func TestPublicKey_NotInitialized(t *testing.T) {
+// resetTestXKMS leaves the package uninitialized, or initialized with the
+// full software backend when initialize is true.
+func resetTestXKMS(t *testing.T, initialize bool) {
+	t.Helper()
+
+	if initialize {
+		setupFullTestXKMS(t)
+		return
+	}
 	Reset()
-
-	_, err := PublicKey(context.Background(), "software:signing:ecdsa-p256:test-key")
-	assert.ErrorIs(t, err, ErrNotInitialized)
 }
 
-func TestPublicKey_Success(t *testing.T) {
-	setupFullTestXKMS(t)
-	_, fullKeyID := createTestECDSAKey(t, "public-key-test")
+func TestPublicKey(t *testing.T) {
+	tests := []struct {
+		name    string
+		init    bool
+		create  string
+		keyID   string
+		wantErr bool
+		errIs   error
+	}{
+		{
+			name:    "not initialized",
+			keyID:   "software:signing:ecdsa-p256:test-key",
+			wantErr: true,
+			errIs:   ErrNotInitialized,
+		},
+		{
+			name:   "success",
+			init:   true,
+			create: "public-key-test",
+			keyID:  "software:signing:ecdsa-p256:public-key-test",
+		},
+		{
+			name:    "not found",
+			init:    true,
+			keyID:   "software:signing:ecdsa-p256:non-existent-key",
+			wantErr: true,
+		},
+	}
 
-	// Use SignerByID with full key ID (ID-based lookup now works correctly)
-	signer, err := SignerByID(context.Background(), fullKeyID)
-	require.NoError(t, err)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			resetTestXKMS(t, tt.init)
+			if tt.create != "" {
+				createTestECDSAKey(t, tt.create)
+			}
 
-	pub := signer.Public()
-	assert.NotNil(t, pub)
-
-	// Verify it's an ECDSA public key
-	_, ok := pub.(*ecdsa.PublicKey)
-	assert.True(t, ok)
-}
-
-func TestPublicKey_NotFound(t *testing.T) {
-	setupFullTestXKMS(t)
-
-	_, err := PublicKey(context.Background(), "software:signing:ecdsa-p256:non-existent-key")
-	require.Error(t, err)
+			pub, err := PublicKey(context.Background(), tt.keyID)
+			if tt.wantErr {
+				require.Error(t, err)
+				if tt.errIs != nil {
+					assert.ErrorIs(t, err, tt.errIs)
+				}
+				return
+			}
+			require.NoError(t, err)
+			_, ok := pub.(*ecdsa.PublicKey)
+			assert.True(t, ok, "want *ecdsa.PublicKey, got %T", pub)
+		})
+	}
 }
 
 // -----------------------------------------------------------------------------
@@ -581,18 +614,10 @@ func TestParseCertificateID_Success(t *testing.T) {
 // GenerateKey Tests
 // -----------------------------------------------------------------------------
 
-func TestGenerateKey_NotInitialized(t *testing.T) {
-	Reset()
-
-	_, err := GenerateKey(context.Background(), &xkmssdk.KeyAttributes{})
-	assert.ErrorIs(t, err, ErrNotInitialized)
-}
-
-func TestGenerateKey_Success(t *testing.T) {
-	setupFullTestXKMS(t)
-
-	attrs := &xkmssdk.KeyAttributes{
-		CN:           "generated-key",
+// testECDSAKeyAttrs returns valid software ECDSA P-256 signing key attributes.
+func testECDSAKeyAttrs(cn string) *xkmssdk.KeyAttributes {
+	return &xkmssdk.KeyAttributes{
+		CN:           cn,
 		KeyType:      xkmssdk.KeyTypeSigning,
 		StoreType:    xkmssdk.StoreSoftware,
 		KeyAlgorithm: x509.ECDSA,
@@ -600,121 +625,216 @@ func TestGenerateKey_Success(t *testing.T) {
 			Curve: elliptic.P256(),
 		},
 	}
-
-	key, err := GenerateKey(context.Background(), attrs)
-	require.NoError(t, err)
-	assert.NotNil(t, key)
 }
 
-func TestGenerateKey_InvalidAttributes(t *testing.T) {
-	setupFullTestXKMS(t)
-
-	// Invalid attributes - no CN
-	attrs := &xkmssdk.KeyAttributes{
-		KeyType:      xkmssdk.KeyTypeSigning,
-		StoreType:    xkmssdk.StoreSoftware,
-		KeyAlgorithm: x509.ECDSA,
-	}
-
-	_, err := GenerateKey(context.Background(), attrs)
-	require.Error(t, err)
-	assert.ErrorIs(t, err, ErrKeyGenerationFailed)
-}
-
-func TestGenerateKeyWithBackend_NotInitialized(t *testing.T) {
-	Reset()
-
-	_, err := GenerateKeyWithBackend(context.Background(), "software", &xkmssdk.KeyAttributes{})
-	assert.ErrorIs(t, err, ErrNotInitialized)
-}
-
-func TestGenerateKeyWithBackend_Success(t *testing.T) {
-	setupFullTestXKMS(t)
-
-	attrs := &xkmssdk.KeyAttributes{
-		CN:           "backend-generated-key",
-		KeyType:      xkmssdk.KeyTypeSigning,
-		StoreType:    xkmssdk.StoreSoftware,
-		KeyAlgorithm: x509.ECDSA,
-		ECCAttributes: &xkmssdk.ECCAttributes{
-			Curve: elliptic.P256(),
+func TestGenerateKey(t *testing.T) {
+	tests := []struct {
+		name  string
+		init  bool
+		attrs *xkmssdk.KeyAttributes
+		errIs error
+	}{
+		{
+			name:  "not initialized",
+			attrs: &xkmssdk.KeyAttributes{},
+			errIs: ErrNotInitialized,
+		},
+		{
+			name:  "success",
+			init:  true,
+			attrs: testECDSAKeyAttrs("generated-key"),
+		},
+		{
+			name: "missing CN",
+			init: true,
+			attrs: &xkmssdk.KeyAttributes{
+				KeyType:      xkmssdk.KeyTypeSigning,
+				StoreType:    xkmssdk.StoreSoftware,
+				KeyAlgorithm: x509.ECDSA,
+			},
+			errIs: ErrKeyGenerationFailed,
+		},
+		{
+			name: "unknown algorithm",
+			init: true,
+			attrs: &xkmssdk.KeyAttributes{
+				CN:           "invalid-algo-test",
+				KeyType:      xkmssdk.KeyTypeSigning,
+				StoreType:    xkmssdk.StoreSoftware,
+				KeyAlgorithm: x509.UnknownPublicKeyAlgorithm,
+			},
+			errIs: ErrKeyGenerationFailed,
 		},
 	}
 
-	key, err := GenerateKeyWithBackend(context.Background(), "software", attrs)
-	require.NoError(t, err)
-	assert.NotNil(t, key)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			resetTestXKMS(t, tt.init)
+
+			key, err := GenerateKey(context.Background(), tt.attrs)
+			if tt.errIs != nil {
+				assert.ErrorIs(t, err, tt.errIs)
+				return
+			}
+			require.NoError(t, err)
+			assert.NotNil(t, key)
+		})
+	}
 }
 
-func TestGenerateKeyWithBackend_InvalidBackend(t *testing.T) {
-	setupFullTestXKMS(t)
-
-	attrs := &xkmssdk.KeyAttributes{
-		CN: "test-key",
+func TestGenerateKeyWithBackend(t *testing.T) {
+	tests := []struct {
+		name    string
+		init    bool
+		backend string
+		attrs   *xkmssdk.KeyAttributes
+		errIs   error
+	}{
+		{
+			name:    "not initialized",
+			backend: "software",
+			attrs:   &xkmssdk.KeyAttributes{},
+			errIs:   ErrNotInitialized,
+		},
+		{
+			name:    "success",
+			init:    true,
+			backend: "software",
+			attrs:   testECDSAKeyAttrs("backend-generated-key"),
+		},
+		{
+			name:    "unknown backend",
+			init:    true,
+			backend: "non-existent",
+			attrs:   &xkmssdk.KeyAttributes{CN: "test-key"},
+			errIs:   ErrKeyGenerationFailed,
+		},
+		{
+			name:    "unknown algorithm",
+			init:    true,
+			backend: "software",
+			attrs: &xkmssdk.KeyAttributes{
+				CN:           "invalid-backend-gen",
+				KeyType:      xkmssdk.KeyTypeSigning,
+				StoreType:    xkmssdk.StoreSoftware,
+				KeyAlgorithm: x509.UnknownPublicKeyAlgorithm,
+			},
+			errIs: ErrKeyGenerationFailed,
+		},
 	}
 
-	_, err := GenerateKeyWithBackend(context.Background(), "non-existent", attrs)
-	require.Error(t, err)
-	assert.ErrorIs(t, err, ErrKeyGenerationFailed)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			resetTestXKMS(t, tt.init)
+
+			key, err := GenerateKeyWithBackend(context.Background(), tt.backend, tt.attrs)
+			if tt.errIs != nil {
+				assert.ErrorIs(t, err, tt.errIs)
+				return
+			}
+			require.NoError(t, err)
+			assert.NotNil(t, key)
+		})
+	}
 }
 
 // -----------------------------------------------------------------------------
 // Key Retrieval Tests
 // -----------------------------------------------------------------------------
 
-func TestKey_NotInitialized(t *testing.T) {
-	Reset()
-
-	_, err := Key(context.Background(), &xkmssdk.KeyAttributes{CN: "test"})
-	assert.ErrorIs(t, err, ErrNotInitialized)
-}
-
-func TestKey_Success(t *testing.T) {
-	setupFullTestXKMS(t)
-	attrs, _ := createTestECDSAKey(t, "retrieve-key-test")
-
-	key, err := Key(context.Background(), attrs)
-	require.NoError(t, err)
-	assert.NotNil(t, key)
-}
-
-func TestKey_NotFound(t *testing.T) {
-	setupFullTestXKMS(t)
-
-	attrs := &xkmssdk.KeyAttributes{
-		CN:        "non-existent-key",
-		StoreType: xkmssdk.StoreSoftware,
-		KeyType:   xkmssdk.KeyTypeSigning,
+func TestKey(t *testing.T) {
+	tests := []struct {
+		name   string
+		init   bool
+		create bool
+		attrs  *xkmssdk.KeyAttributes
+		errIs  error
+	}{
+		{
+			name:  "not initialized",
+			attrs: &xkmssdk.KeyAttributes{CN: "test"},
+			errIs: ErrNotInitialized,
+		},
+		{
+			name:   "success",
+			init:   true,
+			create: true,
+			attrs:  &xkmssdk.KeyAttributes{CN: "retrieve-key-test"},
+		},
+		{
+			name: "not found",
+			init: true,
+			attrs: &xkmssdk.KeyAttributes{
+				CN:        "non-existent-key",
+				StoreType: xkmssdk.StoreSoftware,
+				KeyType:   xkmssdk.KeyTypeSigning,
+			},
+			errIs: ErrKeyNotFound,
+		},
 	}
 
-	_, err := Key(context.Background(), attrs)
-	require.Error(t, err)
-	assert.ErrorIs(t, err, ErrKeyNotFound)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			resetTestXKMS(t, tt.init)
+			attrs := tt.attrs
+			if tt.create {
+				attrs, _ = createTestECDSAKey(t, tt.attrs.CN)
+			}
+
+			key, err := Key(context.Background(), attrs)
+			if tt.errIs != nil {
+				assert.ErrorIs(t, err, tt.errIs)
+				return
+			}
+			require.NoError(t, err)
+			assert.NotNil(t, key)
+		})
+	}
 }
 
-func TestKeyByID_NotInitialized(t *testing.T) {
-	Reset()
+func TestKeyByID(t *testing.T) {
+	tests := []struct {
+		name   string
+		init   bool
+		create string
+		keyID  string
+		errIs  error
+	}{
+		{
+			name:  "not initialized",
+			keyID: "software:signing:ecdsa-p256:test-key",
+			errIs: ErrNotInitialized,
+		},
+		{
+			name:   "success",
+			init:   true,
+			create: "key-by-id-test",
+			keyID:  "software:signing:ecdsa-p256:key-by-id-test",
+		},
+		{
+			name:  "not found",
+			init:  true,
+			keyID: "software:signing:ecdsa-p256:non-existent-key",
+			errIs: ErrKeyNotFound,
+		},
+	}
 
-	_, err := KeyByID(context.Background(), "software:signing:ecdsa-p256:test-key")
-	assert.ErrorIs(t, err, ErrNotInitialized)
-}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			resetTestXKMS(t, tt.init)
+			if tt.create != "" {
+				createTestECDSAKey(t, tt.create)
+			}
 
-func TestKeyByID_Success(t *testing.T) {
-	setupFullTestXKMS(t)
-	attrs, _ := createTestECDSAKey(t, "key-by-id-test")
-
-	// Use attribute-based lookup (attribute-based lookup works correctly)
-	key, err := Key(context.Background(), attrs)
-	require.NoError(t, err)
-	assert.NotNil(t, key)
-}
-
-func TestKeyByID_NotFound(t *testing.T) {
-	setupFullTestXKMS(t)
-
-	_, err := KeyByID(context.Background(), "software:signing:ecdsa-p256:non-existent-key")
-	require.Error(t, err)
-	assert.ErrorIs(t, err, ErrKeyNotFound)
+			key, err := KeyByID(context.Background(), tt.keyID)
+			if tt.errIs != nil {
+				assert.ErrorIs(t, err, tt.errIs)
+				return
+			}
+			require.NoError(t, err)
+			assert.NotNil(t, key)
+		})
+	}
 }
 
 // -----------------------------------------------------------------------------
@@ -3160,39 +3280,6 @@ func TestJWTVerifyWithKey_NoAlgorithmValidation(t *testing.T) {
 	result, err := JWTVerifyWithKey(tokenStr, &ecKey.PublicKey, "")
 	require.NoError(t, err)
 	assert.True(t, result.Valid)
-}
-
-// TestGenerateKey_ErrorWrapping exercises the error wrapping in GenerateKey.
-func TestGenerateKey_ErrorWrapping(t *testing.T) {
-	setupFullTestXKMS(t)
-
-	// Invalid key attributes should produce wrapped error
-	attrs := &xkmssdk.KeyAttributes{
-		CN:           "invalid-algo-test",
-		KeyType:      xkmssdk.KeyTypeSigning,
-		StoreType:    xkmssdk.StoreSoftware,
-		KeyAlgorithm: x509.UnknownPublicKeyAlgorithm,
-	}
-
-	_, err := GenerateKey(context.Background(), attrs)
-	require.Error(t, err)
-	assert.ErrorIs(t, err, ErrKeyGenerationFailed)
-}
-
-// TestGenerateKeyWithBackend_ErrorWrapping exercises the error wrapping.
-func TestGenerateKeyWithBackend_ErrorWrapping(t *testing.T) {
-	setupFullTestXKMS(t)
-
-	attrs := &xkmssdk.KeyAttributes{
-		CN:           "invalid-backend-gen",
-		KeyType:      xkmssdk.KeyTypeSigning,
-		StoreType:    xkmssdk.StoreSoftware,
-		KeyAlgorithm: x509.UnknownPublicKeyAlgorithm,
-	}
-
-	_, err := GenerateKeyWithBackend(context.Background(), "software", attrs)
-	require.Error(t, err)
-	assert.ErrorIs(t, err, ErrKeyGenerationFailed)
 }
 
 // TestWrapKeyWithECDHES_NonExistentKey exercises the error path for missing keys.
