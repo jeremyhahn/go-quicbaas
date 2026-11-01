@@ -345,180 +345,52 @@ func TestEventDisplay_Render(t *testing.T) {
 	}
 }
 
-func TestEventDisplay_Render_ToolCallInProgress(t *testing.T) {
-	var buf strings.Builder
-	d := newEventDisplay(&buf)
+// TestEventDisplay_Render_AgentEvents covers the session/update and
+// jsonrpc_result events of an agent session registered as sess-1 (coder).
+// A row with no want expects the event to be skipped (no output at all).
+func TestEventDisplay_Render_AgentEvents(t *testing.T) {
+	const update = "agent:notification:session/update"
+	tests := []struct {
+		name      string
+		evtType   string
+		message   string
+		want      []string
+		streaming bool
+	}{
+		{"tool call in progress", update, `session=sess-1 {"jsonrpc":"2.0","method":"update","params":{"update":{"sessionUpdate":"tool_call","title":"Write","status":"in_progress","locations":[{"path":"/workspace/main.go"}]}}}`, []string{"[WRITE]", "/workspace/main.go", "in_progress"}, false},
+		{"tool call pending skipped", update, `session=sess-1 {"jsonrpc":"2.0","method":"update","params":{"update":{"sessionUpdate":"tool_call","title":"Write","status":"pending"}}}`, nil, false},
+		{"tool call failed", update, `session=sess-1 {"jsonrpc":"2.0","method":"update","params":{"update":{"sessionUpdate":"tool_call","title":"Write","status":"failed","locations":[{"path":"/workspace/file.js"}],"rawOutput":{"error":"You must read file first"}}}}`, []string{"[FAIL]", "/workspace/file.js", "You must read file first"}, false},
+		{"tool call failed no error", update, `session=sess-1 {"jsonrpc":"2.0","method":"update","params":{"update":{"sessionUpdate":"tool_call","title":"Bash","status":"failed"}}}`, []string{"[FAIL]"}, false},
+		{"flat tool call", update, `session=sess-1 {"type":"tool_call","title":"Read","status":"in_progress","locations":[{"path":"/workspace/go.mod"}]}`, []string{"[READ]", "/workspace/go.mod"}, false},
+		{"invalid json", update, "not-json-at-all", []string{"not-json-at-all"}, false},
+		{"message chunk", update, `session=sess-1 {"jsonrpc":"2.0","method":"update","params":{"update":{"sessionUpdate":"agent_message_chunk","text":"Hello world"}}}`, []string{">>>", "Hello world"}, true},
+		{"message chunk empty text skipped", update, `session=sess-1 {"jsonrpc":"2.0","method":"update","params":{"update":{"sessionUpdate":"agent_message_chunk","text":""}}}`, nil, false},
+		{"thought chunk", update, `session=sess-1 {"jsonrpc":"2.0","method":"update","params":{"update":{"sessionUpdate":"agent_thought_chunk","text":"Thinking..."}}}`, []string{"...", "Thinking...", colorDim}, true},
+		{"available commands update skipped", update, `session=sess-1 {"jsonrpc":"2.0","method":"update","params":{"update":{"sessionUpdate":"available_commands_update"}}}`, nil, false},
+		{"jsonrpc result with tokens", "agent:jsonrpc_result", `session=sess-1 {"usage":{"totalTokens":17942}}`, []string{"Done (17942 tokens)", "coder"}, false},
+		{"jsonrpc result no tokens", "agent:jsonrpc_result", `session=sess-1 {"result":"ok"}`, []string{"Done"}, false},
+		{"jsonrpc result invalid json", "agent:jsonrpc_result", "not json at all", []string{"Done"}, false},
+	}
 
-	d.registerSession("sess-1", "coder")
-	msg := `session=sess-1 {"jsonrpc":"2.0","method":"update","params":{"update":{"sessionUpdate":"tool_call","title":"Write","status":"in_progress","locations":[{"path":"/workspace/main.go"}]}}}`
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var buf strings.Builder
+			d := newEventDisplay(&buf)
+			d.registerSession("sess-1", "coder")
 
-	d.render(&orchestratorSDK.JobEvent{
-		Type:    "agent:notification:session/update",
-		Message: msg,
-	})
+			d.render(&orchestratorSDK.JobEvent{Type: tt.evtType, Message: tt.message})
 
-	output := buf.String()
-	assert.Contains(t, output, "[WRITE]")
-	assert.Contains(t, output, "/workspace/main.go")
-	assert.Contains(t, output, "in_progress")
-}
-
-func TestEventDisplay_Render_ToolCallPending_Skipped(t *testing.T) {
-	var buf strings.Builder
-	d := newEventDisplay(&buf)
-
-	d.registerSession("sess-1", "coder")
-	msg := `session=sess-1 {"jsonrpc":"2.0","method":"update","params":{"update":{"sessionUpdate":"tool_call","title":"Write","status":"pending"}}}`
-
-	d.render(&orchestratorSDK.JobEvent{
-		Type:    "agent:notification:session/update",
-		Message: msg,
-	})
-
-	assert.Equal(t, "", buf.String(), "pending tool calls should be skipped")
-}
-
-func TestEventDisplay_Render_ToolCallFailed(t *testing.T) {
-	var buf strings.Builder
-	d := newEventDisplay(&buf)
-
-	d.registerSession("sess-1", "coder")
-	msg := `session=sess-1 {"jsonrpc":"2.0","method":"update","params":{"update":{"sessionUpdate":"tool_call","title":"Write","status":"failed","locations":[{"path":"/workspace/file.js"}],"rawOutput":{"error":"You must read file first"}}}}`
-
-	d.render(&orchestratorSDK.JobEvent{
-		Type:    "agent:notification:session/update",
-		Message: msg,
-	})
-
-	output := buf.String()
-	assert.Contains(t, output, "[FAIL]")
-	assert.Contains(t, output, "/workspace/file.js")
-	assert.Contains(t, output, "You must read file first")
-}
-
-func TestEventDisplay_Render_ToolCallFailed_NoError(t *testing.T) {
-	var buf strings.Builder
-	d := newEventDisplay(&buf)
-
-	d.registerSession("sess-1", "coder")
-	msg := `session=sess-1 {"jsonrpc":"2.0","method":"update","params":{"update":{"sessionUpdate":"tool_call","title":"Bash","status":"failed"}}}`
-
-	d.render(&orchestratorSDK.JobEvent{
-		Type:    "agent:notification:session/update",
-		Message: msg,
-	})
-
-	output := buf.String()
-	assert.Contains(t, output, "[FAIL]")
-}
-
-func TestEventDisplay_Render_MessageChunk(t *testing.T) {
-	var buf strings.Builder
-	d := newEventDisplay(&buf)
-
-	d.registerSession("sess-1", "coder")
-	msg := `session=sess-1 {"jsonrpc":"2.0","method":"update","params":{"update":{"sessionUpdate":"agent_message_chunk","text":"Hello world"}}}`
-
-	d.render(&orchestratorSDK.JobEvent{
-		Type:    "agent:notification:session/update",
-		Message: msg,
-	})
-
-	output := buf.String()
-	assert.Contains(t, output, ">>>")
-	assert.Contains(t, output, "Hello world")
-	assert.True(t, d.streaming)
-}
-
-func TestEventDisplay_Render_MessageChunk_EmptyText(t *testing.T) {
-	var buf strings.Builder
-	d := newEventDisplay(&buf)
-
-	msg := `session=sess-1 {"jsonrpc":"2.0","method":"update","params":{"update":{"sessionUpdate":"agent_message_chunk","text":""}}}`
-
-	d.render(&orchestratorSDK.JobEvent{
-		Type:    "agent:notification:session/update",
-		Message: msg,
-	})
-
-	assert.Equal(t, "", buf.String())
-	assert.False(t, d.streaming)
-}
-
-func TestEventDisplay_Render_ThoughtChunk(t *testing.T) {
-	var buf strings.Builder
-	d := newEventDisplay(&buf)
-
-	d.registerSession("sess-1", "coder")
-	msg := `session=sess-1 {"jsonrpc":"2.0","method":"update","params":{"update":{"sessionUpdate":"agent_thought_chunk","text":"Thinking..."}}}`
-
-	d.render(&orchestratorSDK.JobEvent{
-		Type:    "agent:notification:session/update",
-		Message: msg,
-	})
-
-	output := buf.String()
-	assert.Contains(t, output, "...")
-	assert.Contains(t, output, "Thinking...")
-	assert.Contains(t, output, colorDim)
-	assert.True(t, d.streaming)
-}
-
-func TestEventDisplay_Render_AvailableCommandsUpdate_Skipped(t *testing.T) {
-	var buf strings.Builder
-	d := newEventDisplay(&buf)
-
-	msg := `session=sess-1 {"jsonrpc":"2.0","method":"update","params":{"update":{"sessionUpdate":"available_commands_update"}}}`
-
-	d.render(&orchestratorSDK.JobEvent{
-		Type:    "agent:notification:session/update",
-		Message: msg,
-	})
-
-	assert.Equal(t, "", buf.String())
-}
-
-func TestEventDisplay_Render_JSONRPCResult_WithTokens(t *testing.T) {
-	var buf strings.Builder
-	d := newEventDisplay(&buf)
-
-	d.registerSession("sess-1", "coder")
-	msg := `session=sess-1 {"usage":{"totalTokens":17942}}`
-
-	d.render(&orchestratorSDK.JobEvent{
-		Type:    "agent:jsonrpc_result",
-		Message: msg,
-	})
-
-	output := buf.String()
-	assert.Contains(t, output, "Done (17942 tokens)")
-	assert.Contains(t, output, "coder")
-}
-
-func TestEventDisplay_Render_JSONRPCResult_NoTokens(t *testing.T) {
-	var buf strings.Builder
-	d := newEventDisplay(&buf)
-
-	d.render(&orchestratorSDK.JobEvent{
-		Type:    "agent:jsonrpc_result",
-		Message: `session=sess-1 {"result":"ok"}`,
-	})
-
-	output := buf.String()
-	assert.Contains(t, output, "Done")
-}
-
-func TestEventDisplay_Render_JSONRPCResult_InvalidJSON(t *testing.T) {
-	var buf strings.Builder
-	d := newEventDisplay(&buf)
-
-	d.render(&orchestratorSDK.JobEvent{
-		Type:    "agent:jsonrpc_result",
-		Message: "not json at all",
-	})
-
-	output := buf.String()
-	assert.Contains(t, output, "Done")
+			output := buf.String()
+			assert.Equal(t, tt.streaming, d.streaming)
+			if tt.want == nil {
+				assert.Empty(t, output, "%s should be skipped", tt.name)
+				return
+			}
+			for _, w := range tt.want {
+				assert.Contains(t, output, w)
+			}
+		})
+	}
 }
 
 func TestEventDisplay_Render_StreamingInterrupted(t *testing.T) {
@@ -750,36 +622,6 @@ func TestExtractMapString(t *testing.T) {
 		assert.False(t, ok)
 		assert.Equal(t, "", v)
 	})
-}
-
-func TestEventDisplay_Render_SessionUpdate_InvalidJSON(t *testing.T) {
-	var buf strings.Builder
-	d := newEventDisplay(&buf)
-
-	d.render(&orchestratorSDK.JobEvent{
-		Type:    "agent:notification:session/update",
-		Message: "not-json-at-all",
-	})
-
-	output := buf.String()
-	assert.Contains(t, output, "not-json-at-all")
-}
-
-func TestEventDisplay_Render_SessionUpdate_FlatJSON(t *testing.T) {
-	var buf strings.Builder
-	d := newEventDisplay(&buf)
-
-	d.registerSession("sess-1", "coder")
-	msg := `session=sess-1 {"type":"tool_call","title":"Read","status":"in_progress","locations":[{"path":"/workspace/go.mod"}]}`
-
-	d.render(&orchestratorSDK.JobEvent{
-		Type:    "agent:notification:session/update",
-		Message: msg,
-	})
-
-	output := buf.String()
-	assert.Contains(t, output, "[READ]")
-	assert.Contains(t, output, "/workspace/go.mod")
 }
 
 func TestEventDisplay_Render_MultipleEvents_RoleAlignment(t *testing.T) {
