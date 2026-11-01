@@ -903,10 +903,6 @@ func TestTransactionService_Transaction_WithMetrics(t *testing.T) {
 }
 
 // =============================================================================
-// Query Service Tests
-// =============================================================================
-
-// =============================================================================
 // Cluster Service Tests
 // =============================================================================
 
@@ -1021,47 +1017,27 @@ func TestClusterService_RemoveNode_Success(t *testing.T) {
 	assert.True(t, resp.Success)
 }
 
-func TestClusterService_RemoveNode_NilRequest(t *testing.T) {
-	mockRaft := &mockRaftNode{}
-	svc := createTestService(t, withMockRaftNode(mockRaft))
-	defer svc.Close()
-
-	resp, err := svc.RemoveNode(tenantctx.WithSystem(context.Background()), nil)
-	require.Error(t, err)
-	require.Nil(t, resp)
-	assert.Contains(t, err.Error(), "request cannot be nil")
-}
-
-func TestClusterService_RemoveNode_InvalidShardID(t *testing.T) {
-	mockRaft := &mockRaftNode{}
-	svc := createTestService(t, withMockRaftNode(mockRaft))
-	defer svc.Close()
-
-	req := &RemoveNodeRequest{
-		ShardID: 0,
-		NodeID:  2,
+func TestClusterService_RemoveNode_InvalidRequest(t *testing.T) {
+	tests := []struct {
+		name    string
+		req     *RemoveNodeRequest
+		wantErr string
+	}{
+		{name: "nil request", req: nil, wantErr: "request cannot be nil"},
+		{name: "zero shard id", req: &RemoveNodeRequest{ShardID: 0, NodeID: 2}, wantErr: "shard_id must be greater than 0"},
+		{name: "zero node id", req: &RemoveNodeRequest{ShardID: 1, NodeID: 0}, wantErr: "node_id must be greater than 0"},
 	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			svc := createTestService(t, withMockRaftNode(&mockRaftNode{}))
+			defer svc.Close()
 
-	resp, err := svc.RemoveNode(tenantctx.WithSystem(context.Background()), req)
-	require.Error(t, err)
-	require.Nil(t, resp)
-	assert.Contains(t, err.Error(), "shard_id must be greater than 0")
-}
-
-func TestClusterService_RemoveNode_InvalidNodeID(t *testing.T) {
-	mockRaft := &mockRaftNode{}
-	svc := createTestService(t, withMockRaftNode(mockRaft))
-	defer svc.Close()
-
-	req := &RemoveNodeRequest{
-		ShardID: 1,
-		NodeID:  0,
+			resp, err := svc.RemoveNode(tenantctx.WithSystem(context.Background()), tt.req)
+			require.Error(t, err)
+			require.Nil(t, resp)
+			assert.Contains(t, err.Error(), tt.wantErr)
+		})
 	}
-
-	resp, err := svc.RemoveNode(tenantctx.WithSystem(context.Background()), req)
-	require.Error(t, err)
-	require.Nil(t, resp)
-	assert.Contains(t, err.Error(), "node_id must be greater than 0")
 }
 
 func TestClusterService_RemoveNode_RaftError(t *testing.T) {
@@ -1098,47 +1074,35 @@ func TestClusterService_CreateShard_NotImplemented(t *testing.T) {
 	assert.Contains(t, err.Error(), "not yet implemented")
 }
 
-func TestClusterService_CreateShard_NilRequest(t *testing.T) {
-	mockRaft := &mockRaftNode{}
-	svc := createTestService(t, withMockRaftNode(mockRaft))
-	defer svc.Close()
-
-	resp, err := svc.CreateShard(tenantctx.WithSystem(context.Background()), nil)
-	require.Error(t, err)
-	require.Nil(t, resp)
-	assert.Contains(t, err.Error(), "request cannot be nil")
-}
-
-func TestClusterService_CreateShard_InvalidShardID(t *testing.T) {
-	mockRaft := &mockRaftNode{}
-	svc := createTestService(t, withMockRaftNode(mockRaft))
-	defer svc.Close()
-
-	req := &CreateShardRequest{
-		ShardID:        0,
-		InitialMembers: map[uint64]string{1: "localhost:5001"},
+func TestClusterService_CreateShard_InvalidRequest(t *testing.T) {
+	tests := []struct {
+		name    string
+		req     *CreateShardRequest
+		wantErr string
+	}{
+		{name: "nil request", req: nil, wantErr: "request cannot be nil"},
+		{
+			name:    "zero shard id",
+			req:     &CreateShardRequest{ShardID: 0, InitialMembers: map[uint64]string{1: "localhost:5001"}},
+			wantErr: "shard_id must be greater than 0",
+		},
+		{
+			name:    "empty members",
+			req:     &CreateShardRequest{ShardID: 1, InitialMembers: map[uint64]string{}},
+			wantErr: "initial_members cannot be empty",
+		},
 	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			svc := createTestService(t, withMockRaftNode(&mockRaftNode{}))
+			defer svc.Close()
 
-	resp, err := svc.CreateShard(tenantctx.WithSystem(context.Background()), req)
-	require.Error(t, err)
-	require.Nil(t, resp)
-	assert.Contains(t, err.Error(), "shard_id must be greater than 0")
-}
-
-func TestClusterService_CreateShard_EmptyMembers(t *testing.T) {
-	mockRaft := &mockRaftNode{}
-	svc := createTestService(t, withMockRaftNode(mockRaft))
-	defer svc.Close()
-
-	req := &CreateShardRequest{
-		ShardID:        1,
-		InitialMembers: map[uint64]string{},
+			resp, err := svc.CreateShard(tenantctx.WithSystem(context.Background()), tt.req)
+			require.Error(t, err)
+			require.Nil(t, resp)
+			assert.Contains(t, err.Error(), tt.wantErr)
+		})
 	}
-
-	resp, err := svc.CreateShard(tenantctx.WithSystem(context.Background()), req)
-	require.Error(t, err)
-	require.Nil(t, resp)
-	assert.Contains(t, err.Error(), "initial_members cannot be empty")
 }
 
 func TestClusterService_RebalanceCluster_Success(t *testing.T) {
@@ -1353,10 +1317,6 @@ func TestAuthService_Login_ReturnsNotImplemented(t *testing.T) {
 }
 
 // =============================================================================
-// RBAC Service Tests
-// =============================================================================
-
-// =============================================================================
 // Additional Coverage Tests
 // =============================================================================
 
@@ -1403,31 +1363,26 @@ func TestKVService_Get_NotFound(t *testing.T) {
 	assert.Contains(t, err.Error(), "not found")
 }
 
-func TestKVService_Get_NilRequest(t *testing.T) {
-	mockRaft := &mockRaftNode{}
-	svc := createTestService(t, withMockRaftNode(mockRaft))
-	defer svc.Close()
-
-	resp, err := svc.Get(tenantctx.WithSystem(context.Background()), nil)
-	require.Error(t, err)
-	require.Nil(t, resp)
-	assert.Contains(t, err.Error(), "request cannot be nil")
-}
-
-func TestKVService_Get_EmptyEntityType(t *testing.T) {
-	mockRaft := &mockRaftNode{}
-	svc := createTestService(t, withMockRaftNode(mockRaft))
-	defer svc.Close()
-
-	req := &GetRequest{
-		EntityType: "",
-		ID:         1,
+func TestKVService_Get_InvalidRequest(t *testing.T) {
+	tests := []struct {
+		name    string
+		req     *GetRequest
+		wantErr string
+	}{
+		{name: "nil request", req: nil, wantErr: "request cannot be nil"},
+		{name: "empty entity type", req: &GetRequest{EntityType: "", ID: 1}, wantErr: "entity type is required"},
 	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			svc := createTestService(t, withMockRaftNode(&mockRaftNode{}))
+			defer svc.Close()
 
-	resp, err := svc.Get(tenantctx.WithSystem(context.Background()), req)
-	require.Error(t, err)
-	require.Nil(t, resp)
-	assert.Contains(t, err.Error(), "entity type is required")
+			resp, err := svc.Get(tenantctx.WithSystem(context.Background()), tt.req)
+			require.Error(t, err)
+			require.Nil(t, resp)
+			assert.Contains(t, err.Error(), tt.wantErr)
+		})
+	}
 }
 
 // =============================================================================
@@ -1576,35 +1531,27 @@ func TestKVService_ListEntityTypes_SkipsSystemKeys(t *testing.T) {
 	assert.NotContains(t, resp.EntityTypes, "__sys")
 }
 
-func TestKVService_ListEntityTypes_WithCustomShardID(t *testing.T) {
-	scanData := map[string][]byte{
-		"Test:1": []byte("data"),
+func TestKVService_ListEntityTypes_ShardID(t *testing.T) {
+	tests := []struct {
+		name      string
+		shardID   uint64
+		wantShard uint64
+	}{
+		{name: "custom shard", shardID: 5, wantShard: 5},
+		{name: "zero defaults to shard 1", shardID: 0, wantShard: 1},
 	}
-	qrdbProvider := newSvcBoostMockQRDBProvider(scanData, nil)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			qrdbProvider := newSvcBoostMockQRDBProvider(map[string][]byte{"Test:1": []byte("data")}, nil)
+			svc := createTestService(t, withQRDBClientProvider(qrdbProvider))
+			defer svc.Close()
 
-	svc := createTestService(t, withQRDBClientProvider(qrdbProvider))
-	defer svc.Close()
-
-	req := &ListEntityTypesRequest{
-		ShardID: 5,
+			req := &ListEntityTypesRequest{ShardID: tt.shardID}
+			_, err := svc.ListEntityTypes(tenantctx.WithSystem(context.Background()), req)
+			require.NoError(t, err)
+			assert.Equal(t, tt.wantShard, qrdbProvider.lastShardID.Load())
+		})
 	}
-	_, err := svc.ListEntityTypes(tenantctx.WithSystem(context.Background()), req)
-	require.NoError(t, err)
-	assert.Equal(t, uint64(5), qrdbProvider.lastShardID.Load())
-}
-
-func TestKVService_ListEntityTypes_DefaultsShardID(t *testing.T) {
-	qrdbProvider := newSvcBoostMockQRDBProvider(map[string][]byte{}, nil)
-
-	svc := createTestService(t, withQRDBClientProvider(qrdbProvider))
-	defer svc.Close()
-
-	req := &ListEntityTypesRequest{
-		ShardID: 0, // Should default to 1
-	}
-	_, err := svc.ListEntityTypes(tenantctx.WithSystem(context.Background()), req)
-	require.NoError(t, err)
-	assert.Equal(t, uint64(1), qrdbProvider.lastShardID.Load())
 }
 
 func TestKVService_ListEntityTypes_MultiTenant(t *testing.T) {
