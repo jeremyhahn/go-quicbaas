@@ -1556,42 +1556,8 @@ func TestPolicyEngine_SimulatePolicy_SuccessFinal(t *testing.T) {
 	assert.NotEmpty(t, result.EvaluationSteps)
 }
 
-func TestPolicyEngine_SimulatePolicy_NilRequestFinal(t *testing.T) {
+func TestPolicyEngine_SimulatePolicy_InvalidRequestFinal(t *testing.T) {
 	ctx := context.Background()
-
-	storage := newMockPolicyStorage()
-	engine := NewPolicyEngine(PolicyEngineOptions{
-		Storage: storage,
-	})
-
-	_, err := engine.SimulatePolicy(ctx, nil)
-	assert.Error(t, err)
-}
-
-func TestPolicyEngine_SimulatePolicy_NilPolicyFinal(t *testing.T) {
-	ctx := context.Background()
-
-	storage := newMockPolicyStorage()
-	engine := NewPolicyEngine(PolicyEngineOptions{
-		Storage: storage,
-	})
-
-	req := &PolicySimulationRequest{
-		Policy:       nil,
-		CheckRequest: &CheckRequest{},
-	}
-
-	_, err := engine.SimulatePolicy(ctx, req)
-	assert.Error(t, err)
-}
-
-func TestPolicyEngine_SimulatePolicy_NilCheckRequestFinal(t *testing.T) {
-	ctx := context.Background()
-
-	storage := newMockPolicyStorage()
-	engine := NewPolicyEngine(PolicyEngineOptions{
-		Storage: storage,
-	})
 
 	policy := &Policy{
 		APIVersion: "iam.quicbaas.io/v1",
@@ -1602,13 +1568,24 @@ func TestPolicyEngine_SimulatePolicy_NilCheckRequestFinal(t *testing.T) {
 		},
 	}
 
-	req := &PolicySimulationRequest{
-		Policy:       policy,
-		CheckRequest: nil,
+	tests := []struct {
+		name string
+		req  *PolicySimulationRequest
+	}{
+		{"nil_request", nil},
+		{"nil_policy", &PolicySimulationRequest{Policy: nil, CheckRequest: &CheckRequest{}}},
+		{"nil_check_request", &PolicySimulationRequest{Policy: policy, CheckRequest: nil}},
 	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			engine := NewPolicyEngine(PolicyEngineOptions{
+				Storage: newMockPolicyStorage(),
+			})
 
-	_, err := engine.SimulatePolicy(ctx, req)
-	assert.Error(t, err)
+			_, err := engine.SimulatePolicy(ctx, tt.req)
+			assert.Error(t, err)
+		})
+	}
 }
 
 func TestPolicyEngine_SimulatePolicy_DenyEffectFinal(t *testing.T) {
@@ -1713,50 +1690,27 @@ func TestPolicyEngine_GetEffectivePermissions_SuccessFinal(t *testing.T) {
 	assert.NotNil(t, result.Permissions)
 }
 
-func TestPolicyEngine_GetEffectivePermissions_NilRequestFinal(t *testing.T) {
+func TestPolicyEngine_GetEffectivePermissions_InvalidRequestFinal(t *testing.T) {
 	ctx := context.Background()
 
-	storage := newMockPolicyStorage()
-	engine := NewPolicyEngine(PolicyEngineOptions{
-		Storage: storage,
-	})
-
-	_, err := engine.GetEffectivePermissions(ctx, "tenant-1", nil)
-	assert.Error(t, err)
-}
-
-func TestPolicyEngine_GetEffectivePermissions_NilSubjectFinal(t *testing.T) {
-	ctx := context.Background()
-
-	storage := newMockPolicyStorage()
-	engine := NewPolicyEngine(PolicyEngineOptions{
-		Storage: storage,
-	})
-
-	req := &EffectivePermissionsRequest{
-		Subject:          nil,
-		ResourcePatterns: []string{"/test/*"},
+	tests := []struct {
+		name string
+		req  *EffectivePermissionsRequest
+	}{
+		{"nil_request", nil},
+		{"nil_subject", &EffectivePermissionsRequest{Subject: nil, ResourcePatterns: []string{"/test/*"}}},
+		{"empty_resource_patterns", &EffectivePermissionsRequest{Subject: &Subject{ID: "user-1"}, ResourcePatterns: []string{}}},
 	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			engine := NewPolicyEngine(PolicyEngineOptions{
+				Storage: newMockPolicyStorage(),
+			})
 
-	_, err := engine.GetEffectivePermissions(ctx, "tenant-1", req)
-	assert.Error(t, err)
-}
-
-func TestPolicyEngine_GetEffectivePermissions_EmptyResourcePatternsFinal(t *testing.T) {
-	ctx := context.Background()
-
-	storage := newMockPolicyStorage()
-	engine := NewPolicyEngine(PolicyEngineOptions{
-		Storage: storage,
-	})
-
-	req := &EffectivePermissionsRequest{
-		Subject:          &Subject{ID: "user-1"},
-		ResourcePatterns: []string{},
+			_, err := engine.GetEffectivePermissions(ctx, "tenant-1", tt.req)
+			assert.Error(t, err)
+		})
 	}
-
-	_, err := engine.GetEffectivePermissions(ctx, "tenant-1", req)
-	assert.Error(t, err)
 }
 
 // =============================================================================
