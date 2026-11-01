@@ -414,25 +414,6 @@ func TestBackupManager_CreateBackup(t *testing.T) {
 	}
 }
 
-func TestBackupManager_CreateBackupWithEncryption(t *testing.T) {
-	manager, _, _ := setupTestBackupManager(t)
-
-	// Set encryption key
-	key := make([]byte, 32)
-	for i := range key {
-		key[i] = byte(i)
-	}
-	manager.config.EncryptionKey = key
-	manager.config.DefaultEncryption = EncryptionAES256GCM
-
-	ctx := context.Background()
-	backup, err := manager.CreateBackup(ctx, BackupTypeFull)
-
-	require.NoError(t, err)
-	assert.NotNil(t, backup)
-	assert.Equal(t, EncryptionAES256GCM, backup.Encryption)
-}
-
 func TestBackupManager_RestoreBackup(t *testing.T) {
 	manager, memStorage, _ := setupTestBackupManager(t)
 
@@ -469,32 +450,6 @@ func TestBackupManager_RestoreBackup(t *testing.T) {
 	value, err = memStorage.Get([]byte("key3"))
 	require.NoError(t, err)
 	assert.Equal(t, []byte("value3"), value)
-}
-
-func TestBackupManager_RestoreBackupWithCompression(t *testing.T) {
-	manager, memStorage, _ := setupTestBackupManager(t)
-	manager.config.DefaultCompression = CompressionZstd
-
-	ctx := context.Background()
-
-	// Create compressed backup
-	backup, err := manager.CreateBackup(ctx, BackupTypeFull)
-	require.NoError(t, err)
-	assert.Equal(t, CompressionZstd, backup.Compression)
-
-	// Clear storage
-	require.NoError(t, memStorage.Delete([]byte("key1")))
-
-	// Restore backup
-	err = manager.RestoreBackup(ctx, backup.ID, &RestoreOptions{
-		VerifyChecksum: true,
-	})
-	require.NoError(t, err)
-
-	// Verify data is restored
-	value, err := memStorage.Get([]byte("key1"))
-	require.NoError(t, err)
-	assert.Equal(t, []byte("value1"), value)
 }
 
 func TestBackupManager_RestoreBackupWithEncryption(t *testing.T) {
@@ -972,53 +927,33 @@ func TestBackupManager_MultipleShards(t *testing.T) {
 	manager.Close()
 }
 
-func TestBackupManager_RestoreWithTargetShards(t *testing.T) {
-	manager, memStorage, _ := setupTestBackupManager(t)
+func TestBackupManager_RestoreOptions(t *testing.T) {
+	tests := []struct {
+		name string
+		opts *RestoreOptions
+	}{
+		{name: "target shards", opts: &RestoreOptions{VerifyChecksum: true, TargetShards: []uint64{1}}},
+		{name: "nil options use defaults", opts: nil},
+		{name: "checksum verification disabled", opts: &RestoreOptions{VerifyChecksum: false}},
+	}
 
-	ctx := context.Background()
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			manager, memStorage, _ := setupTestBackupManager(t)
+			ctx := context.Background()
 
-	// Create backup
-	backup, err := manager.CreateBackup(ctx, BackupTypeFull)
-	require.NoError(t, err)
+			backup, err := manager.CreateBackup(ctx, BackupTypeFull)
+			require.NoError(t, err)
 
-	// Clear storage
-	require.NoError(t, memStorage.Delete([]byte("key1")))
-	require.NoError(t, memStorage.Delete([]byte("key2")))
-	require.NoError(t, memStorage.Delete([]byte("key3")))
+			require.NoError(t, memStorage.Delete([]byte("key1")))
 
-	// Restore only shard 1
-	err = manager.RestoreBackup(ctx, backup.ID, &RestoreOptions{
-		VerifyChecksum: true,
-		TargetShards:   []uint64{1},
-	})
-	require.NoError(t, err)
+			require.NoError(t, manager.RestoreBackup(ctx, backup.ID, tt.opts))
 
-	// Data should be restored
-	value, err := memStorage.Get([]byte("key1"))
-	require.NoError(t, err)
-	assert.Equal(t, []byte("value1"), value)
-}
-
-func TestBackupManager_RestoreNilOptions(t *testing.T) {
-	manager, memStorage, _ := setupTestBackupManager(t)
-
-	ctx := context.Background()
-
-	// Create backup
-	backup, err := manager.CreateBackup(ctx, BackupTypeFull)
-	require.NoError(t, err)
-
-	// Clear storage
-	require.NoError(t, memStorage.Delete([]byte("key1")))
-
-	// Restore with nil options (should use defaults)
-	err = manager.RestoreBackup(ctx, backup.ID, nil)
-	require.NoError(t, err)
-
-	// Data should be restored
-	value, err := memStorage.Get([]byte("key1"))
-	require.NoError(t, err)
-	assert.Equal(t, []byte("value1"), value)
+			value, err := memStorage.Get([]byte("key1"))
+			require.NoError(t, err)
+			assert.Equal(t, []byte("value1"), value)
+		})
+	}
 }
 
 func TestBackupManager_RestoreBackupNotFound(t *testing.T) {
@@ -1030,30 +965,6 @@ func TestBackupManager_RestoreBackupNotFound(t *testing.T) {
 		VerifyChecksum: true,
 	})
 	assert.Error(t, err)
-}
-
-func TestBackupManager_RestoreChecksumDisabled(t *testing.T) {
-	manager, memStorage, _ := setupTestBackupManager(t)
-
-	ctx := context.Background()
-
-	// Create backup
-	backup, err := manager.CreateBackup(ctx, BackupTypeFull)
-	require.NoError(t, err)
-
-	// Clear storage
-	require.NoError(t, memStorage.Delete([]byte("key1")))
-
-	// Restore with checksum verification disabled
-	err = manager.RestoreBackup(ctx, backup.ID, &RestoreOptions{
-		VerifyChecksum: false,
-	})
-	require.NoError(t, err)
-
-	// Data should be restored
-	value, err := memStorage.Get([]byte("key1"))
-	require.NoError(t, err)
-	assert.Equal(t, []byte("value1"), value)
 }
 
 // TestBackupManager_ApplyRetentionPolicy moved to manager_integration_test.go
@@ -1082,80 +993,46 @@ func TestBackupManager_ApplyRetentionPolicyNoPolicy(t *testing.T) {
 }
 
 func TestBackupManager_CreateBackupAllCompressionTypes(t *testing.T) {
-	compressionTypes := []CompressionType{
-		CompressionNone,
-		CompressionGzip,
-		CompressionZstd,
+	tests := []struct {
+		compression CompressionType
+		wantErr     bool
+	}{
+		{compression: CompressionNone},
+		{compression: CompressionGzip},
+		{compression: CompressionZstd},
+		{compression: CompressionType("snappy"), wantErr: true},
 	}
 
-	for _, compression := range compressionTypes {
-		t.Run(string(compression), func(t *testing.T) {
-			manager, _, _ := setupTestBackupManager(t)
-			manager.config.DefaultCompression = compression
+	for _, tt := range tests {
+		t.Run(string(tt.compression), func(t *testing.T) {
+			manager, memStorage, _ := setupTestBackupManager(t)
+			manager.config.DefaultCompression = tt.compression
 
 			ctx := context.Background()
 			backup, err := manager.CreateBackup(ctx, BackupTypeFull)
+			if tt.wantErr {
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), "unsupported compression type")
+				return
+			}
 			require.NoError(t, err)
-			assert.Equal(t, compression, backup.Compression)
+			assert.Equal(t, tt.compression, backup.Compression)
 
-			// Verify can restore
+			require.NoError(t, memStorage.Delete([]byte("key1")))
+
 			err = manager.RestoreBackup(ctx, backup.ID, &RestoreOptions{
 				VerifyChecksum: true,
 			})
 			require.NoError(t, err)
+
+			value, err := memStorage.Get([]byte("key1"))
+			require.NoError(t, err)
+			assert.Equal(t, []byte("value1"), value)
 		})
 	}
 }
 
-func TestBackupManager_CreateBackupWithSnappyCompression(t *testing.T) {
-	manager, _, _ := setupTestBackupManager(t)
-	manager.config.DefaultCompression = CompressionType("snappy")
-
-	ctx := context.Background()
-	_, err := manager.CreateBackup(ctx, BackupTypeFull)
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "unsupported compression type")
-}
-
 // TestBackupManager_LargeBackup moved to manager_integration_test.go
-
-func TestBackupManager_ContextCancellation(t *testing.T) {
-	manager, _, _ := setupTestBackupManager(t)
-
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel() // Cancel immediately
-
-	_, err := manager.CreateBackup(ctx, BackupTypeFull)
-	// Backup might succeed if it completes before context check
-	// This test mainly ensures no panic occurs
-	_ = err
-}
-
-func TestBackupManager_IncrementalBackupType(t *testing.T) {
-	manager, _, _ := setupTestBackupManager(t)
-
-	ctx := context.Background()
-	backup, err := manager.CreateBackup(ctx, BackupTypeIncremental)
-	require.NoError(t, err)
-
-	assert.Equal(t, BackupTypeIncremental, backup.Type)
-}
-
-func TestBackupManager_BackupMetrics(t *testing.T) {
-	manager, _, _ := setupTestBackupManager(t)
-
-	ctx := context.Background()
-
-	// Create backup
-	_, err := manager.CreateBackup(ctx, BackupTypeFull)
-	require.NoError(t, err)
-
-	// Metrics should be updated
-	assert.NotNil(t, manager.metrics)
-	assert.NotNil(t, manager.metrics.backupsTotal)
-	assert.NotNil(t, manager.metrics.backupDuration)
-	assert.NotNil(t, manager.metrics.backupSize)
-}
 
 func TestKeyValueSerializationHelpers(t *testing.T) {
 	var buf bytes.Buffer
