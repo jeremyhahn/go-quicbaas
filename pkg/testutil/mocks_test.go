@@ -267,39 +267,32 @@ func runMockCalls(t *testing.T, calls []mockCall) {
 	}
 }
 
+// reqRespCall builds the mockCall for the common method shape
+// Method(ctx, *Req) (*Resp, error), given its method expression.
+func reqRespCall[Req, Resp any](method string, fn func(*MockQuicBaaS, context.Context, *Req) (*Resp, error)) mockCall {
+	ctx := context.Background()
+	req := new(Req)
+	return mockCall{
+		method: method,
+		args:   []any{ctx, req},
+		ok:     new(Resp),
+		fail:   (*Resp)(nil),
+		call:   func(m *MockQuicBaaS) (any, error) { return fn(m, ctx, req) },
+	}
+}
+
 func TestMockQuicBaaS_KV(t *testing.T) {
 	ctx := context.Background()
-	putReq := &service.PutRequest{EntityType: "test", Data: []byte("v1")}
-	getReq := &service.GetRequest{EntityType: "test", ID: 1}
-	deleteReq := &service.DeleteRequest{EntityType: "test", ID: 1}
 	listReq := &service.ListRequest{EntityType: "test"}
 	listStream := make(chan<- *service.ListResponse, 1)
 	watchReq := &service.WatchRequest{}
 	watchStream := make(chan<- *service.WatchResponse, 1)
-	typesReq := &service.ListEntityTypesRequest{}
 
 	runMockCalls(t, []mockCall{
-		{
-			method: "Put",
-			args:   []any{ctx, putReq},
-			ok:     &service.PutResponse{},
-			fail:   (*service.PutResponse)(nil),
-			call:   func(m *MockQuicBaaS) (any, error) { return m.Put(ctx, putReq) },
-		},
-		{
-			method: "Get",
-			args:   []any{ctx, getReq},
-			ok:     &service.GetResponse{Data: []byte("v1")},
-			fail:   (*service.GetResponse)(nil),
-			call:   func(m *MockQuicBaaS) (any, error) { return m.Get(ctx, getReq) },
-		},
-		{
-			method: "Delete",
-			args:   []any{ctx, deleteReq},
-			ok:     &service.DeleteResponse{},
-			fail:   (*service.DeleteResponse)(nil),
-			call:   func(m *MockQuicBaaS) (any, error) { return m.Delete(ctx, deleteReq) },
-		},
+		reqRespCall("Put", (*MockQuicBaaS).Put),
+		reqRespCall("Get", (*MockQuicBaaS).Get),
+		reqRespCall("Delete", (*MockQuicBaaS).Delete),
+		reqRespCall("ListEntityTypes", (*MockQuicBaaS).ListEntityTypes),
 		{
 			method:  "List",
 			args:    []any{ctx, listReq, listStream},
@@ -313,1255 +306,163 @@ func TestMockQuicBaaS_KV(t *testing.T) {
 			fail:   int64(0),
 			call:   func(m *MockQuicBaaS) (any, error) { return m.Watch(ctx, watchReq, watchStream) },
 		},
-		{
-			method: "ListEntityTypes",
-			args:   []any{ctx, typesReq},
-			ok:     &service.ListEntityTypesResponse{},
-			fail:   (*service.ListEntityTypesResponse)(nil),
-			call:   func(m *MockQuicBaaS) (any, error) { return m.ListEntityTypes(ctx, typesReq) },
-		},
 	})
 }
 
 // ---------------------------------------------------------------------------
-// Batch Service Methods
+// Batch, Transaction and Query Service Methods
 // ---------------------------------------------------------------------------
 
-func TestMockQuicBaaS_BatchPut_Success(t *testing.T) {
-	m := NewMockQuicBaaS()
+func TestMockQuicBaaS_BatchTransactionQuery(t *testing.T) {
 	ctx := context.Background()
-	req := &service.BatchPutRequest{}
-	expected := &service.BatchPutResponse{}
-	m.On("BatchPut", ctx, req).Return(expected, nil)
+	queryReq := &service.QueryRequest{}
+	queryStream := make(chan<- *service.QueryResponse, 1)
+	scanReq := &service.ScanRequest{}
+	scanStream := make(chan<- *service.ScanResponse, 1)
 
-	resp, err := m.BatchPut(ctx, req)
-	assert.NoError(t, err)
-	assert.Equal(t, expected, resp)
-	m.AssertExpectations(t)
-}
-
-func TestMockQuicBaaS_BatchPut_Error(t *testing.T) {
-	m := NewMockQuicBaaS()
-	ctx := context.Background()
-	req := &service.BatchPutRequest{}
-	m.On("BatchPut", ctx, req).Return((*service.BatchPutResponse)(nil), errTest)
-
-	resp, err := m.BatchPut(ctx, req)
-	assert.ErrorIs(t, err, errTest)
-	assert.Nil(t, resp)
-	m.AssertExpectations(t)
-}
-
-func TestMockQuicBaaS_BatchGet_Success(t *testing.T) {
-	m := NewMockQuicBaaS()
-	ctx := context.Background()
-	req := &service.BatchGetRequest{}
-	expected := &service.BatchGetResponse{}
-	m.On("BatchGet", ctx, req).Return(expected, nil)
-
-	resp, err := m.BatchGet(ctx, req)
-	assert.NoError(t, err)
-	assert.Equal(t, expected, resp)
-	m.AssertExpectations(t)
-}
-
-func TestMockQuicBaaS_BatchGet_Error(t *testing.T) {
-	m := NewMockQuicBaaS()
-	ctx := context.Background()
-	req := &service.BatchGetRequest{}
-	m.On("BatchGet", ctx, req).Return((*service.BatchGetResponse)(nil), errTest)
-
-	resp, err := m.BatchGet(ctx, req)
-	assert.ErrorIs(t, err, errTest)
-	assert.Nil(t, resp)
-	m.AssertExpectations(t)
-}
-
-func TestMockQuicBaaS_BatchDelete_Success(t *testing.T) {
-	m := NewMockQuicBaaS()
-	ctx := context.Background()
-	req := &service.BatchDeleteRequest{}
-	expected := &service.BatchDeleteResponse{}
-	m.On("BatchDelete", ctx, req).Return(expected, nil)
-
-	resp, err := m.BatchDelete(ctx, req)
-	assert.NoError(t, err)
-	assert.Equal(t, expected, resp)
-	m.AssertExpectations(t)
-}
-
-func TestMockQuicBaaS_BatchDelete_Error(t *testing.T) {
-	m := NewMockQuicBaaS()
-	ctx := context.Background()
-	req := &service.BatchDeleteRequest{}
-	m.On("BatchDelete", ctx, req).Return((*service.BatchDeleteResponse)(nil), errTest)
-
-	resp, err := m.BatchDelete(ctx, req)
-	assert.ErrorIs(t, err, errTest)
-	assert.Nil(t, resp)
-	m.AssertExpectations(t)
-}
-
-// ---------------------------------------------------------------------------
-// Transaction Service Methods
-// ---------------------------------------------------------------------------
-
-func TestMockQuicBaaS_Transaction_Success(t *testing.T) {
-	m := NewMockQuicBaaS()
-	ctx := context.Background()
-	req := &service.TransactionRequest{}
-	expected := &service.TransactionResponse{}
-	m.On("Transaction", ctx, req).Return(expected, nil)
-
-	resp, err := m.Transaction(ctx, req)
-	assert.NoError(t, err)
-	assert.Equal(t, expected, resp)
-	m.AssertExpectations(t)
-}
-
-func TestMockQuicBaaS_Transaction_Error(t *testing.T) {
-	m := NewMockQuicBaaS()
-	ctx := context.Background()
-	req := &service.TransactionRequest{}
-	m.On("Transaction", ctx, req).Return((*service.TransactionResponse)(nil), errTest)
-
-	resp, err := m.Transaction(ctx, req)
-	assert.ErrorIs(t, err, errTest)
-	assert.Nil(t, resp)
-	m.AssertExpectations(t)
-}
-
-// ---------------------------------------------------------------------------
-// Query Service Methods
-// ---------------------------------------------------------------------------
-
-func TestMockQuicBaaS_Query_Success(t *testing.T) {
-	m := NewMockQuicBaaS()
-	ctx := context.Background()
-	req := &service.QueryRequest{}
-	stream := make(chan<- *service.QueryResponse, 1)
-	m.On("Query", ctx, req, stream).Return(nil)
-
-	err := m.Query(ctx, req, stream)
-	assert.NoError(t, err)
-	m.AssertExpectations(t)
-}
-
-func TestMockQuicBaaS_Query_Error(t *testing.T) {
-	m := NewMockQuicBaaS()
-	ctx := context.Background()
-	req := &service.QueryRequest{}
-	stream := make(chan<- *service.QueryResponse, 1)
-	m.On("Query", ctx, req, stream).Return(errTest)
-
-	err := m.Query(ctx, req, stream)
-	assert.ErrorIs(t, err, errTest)
-	m.AssertExpectations(t)
-}
-
-func TestMockQuicBaaS_ScanIndex_Success(t *testing.T) {
-	m := NewMockQuicBaaS()
-	ctx := context.Background()
-	req := &service.ScanRequest{}
-	stream := make(chan<- *service.ScanResponse, 1)
-	m.On("ScanIndex", ctx, req, stream).Return(nil)
-
-	err := m.ScanIndex(ctx, req, stream)
-	assert.NoError(t, err)
-	m.AssertExpectations(t)
-}
-
-func TestMockQuicBaaS_ScanIndex_Error(t *testing.T) {
-	m := NewMockQuicBaaS()
-	ctx := context.Background()
-	req := &service.ScanRequest{}
-	stream := make(chan<- *service.ScanResponse, 1)
-	m.On("ScanIndex", ctx, req, stream).Return(errTest)
-
-	err := m.ScanIndex(ctx, req, stream)
-	assert.ErrorIs(t, err, errTest)
-	m.AssertExpectations(t)
+	runMockCalls(t, []mockCall{
+		reqRespCall("BatchPut", (*MockQuicBaaS).BatchPut),
+		reqRespCall("BatchGet", (*MockQuicBaaS).BatchGet),
+		reqRespCall("BatchDelete", (*MockQuicBaaS).BatchDelete),
+		reqRespCall("Transaction", (*MockQuicBaaS).Transaction),
+		{
+			method:  "Query",
+			args:    []any{ctx, queryReq, queryStream},
+			errOnly: true,
+			call:    func(m *MockQuicBaaS) (any, error) { return nil, m.Query(ctx, queryReq, queryStream) },
+		},
+		{
+			method:  "ScanIndex",
+			args:    []any{ctx, scanReq, scanStream},
+			errOnly: true,
+			call:    func(m *MockQuicBaaS) (any, error) { return nil, m.ScanIndex(ctx, scanReq, scanStream) },
+		},
+	})
 }
 
 // ---------------------------------------------------------------------------
 // Cluster Service Methods
 // ---------------------------------------------------------------------------
 
-func TestMockQuicBaaS_ClusterStatus_Success(t *testing.T) {
-	m := NewMockQuicBaaS()
-	ctx := context.Background()
-	req := &service.ClusterStatusRequest{}
-	expected := &service.ClusterStatusResponse{}
-	m.On("ClusterStatus", ctx, req).Return(expected, nil)
-
-	resp, err := m.ClusterStatus(ctx, req)
-	assert.NoError(t, err)
-	assert.Equal(t, expected, resp)
-	m.AssertExpectations(t)
-}
-
-func TestMockQuicBaaS_ClusterStatus_Error(t *testing.T) {
-	m := NewMockQuicBaaS()
-	ctx := context.Background()
-	req := &service.ClusterStatusRequest{}
-	m.On("ClusterStatus", ctx, req).Return((*service.ClusterStatusResponse)(nil), errTest)
-
-	resp, err := m.ClusterStatus(ctx, req)
-	assert.ErrorIs(t, err, errTest)
-	assert.Nil(t, resp)
-	m.AssertExpectations(t)
-}
-
-func TestMockQuicBaaS_GetLeader_Success(t *testing.T) {
-	m := NewMockQuicBaaS()
-	ctx := context.Background()
-	req := &service.GetLeaderRequest{}
-	expected := &service.GetLeaderResponse{}
-	m.On("GetLeader", ctx, req).Return(expected, nil)
-
-	resp, err := m.GetLeader(ctx, req)
-	assert.NoError(t, err)
-	assert.Equal(t, expected, resp)
-	m.AssertExpectations(t)
-}
-
-func TestMockQuicBaaS_GetLeader_Error(t *testing.T) {
-	m := NewMockQuicBaaS()
-	ctx := context.Background()
-	req := &service.GetLeaderRequest{}
-	m.On("GetLeader", ctx, req).Return((*service.GetLeaderResponse)(nil), errTest)
-
-	resp, err := m.GetLeader(ctx, req)
-	assert.ErrorIs(t, err, errTest)
-	assert.Nil(t, resp)
-	m.AssertExpectations(t)
-}
-
-func TestMockQuicBaaS_AddNode_Success(t *testing.T) {
-	m := NewMockQuicBaaS()
-	ctx := context.Background()
-	req := &service.AddNodeRequest{}
-	expected := &service.AddNodeResponse{}
-	m.On("AddNode", ctx, req).Return(expected, nil)
-
-	resp, err := m.AddNode(ctx, req)
-	assert.NoError(t, err)
-	assert.Equal(t, expected, resp)
-	m.AssertExpectations(t)
-}
-
-func TestMockQuicBaaS_AddNode_Error(t *testing.T) {
-	m := NewMockQuicBaaS()
-	ctx := context.Background()
-	req := &service.AddNodeRequest{}
-	m.On("AddNode", ctx, req).Return((*service.AddNodeResponse)(nil), errTest)
-
-	resp, err := m.AddNode(ctx, req)
-	assert.ErrorIs(t, err, errTest)
-	assert.Nil(t, resp)
-	m.AssertExpectations(t)
-}
-
-func TestMockQuicBaaS_RemoveNode_Success(t *testing.T) {
-	m := NewMockQuicBaaS()
-	ctx := context.Background()
-	req := &service.RemoveNodeRequest{}
-	expected := &service.RemoveNodeResponse{}
-	m.On("RemoveNode", ctx, req).Return(expected, nil)
-
-	resp, err := m.RemoveNode(ctx, req)
-	assert.NoError(t, err)
-	assert.Equal(t, expected, resp)
-	m.AssertExpectations(t)
-}
-
-func TestMockQuicBaaS_RemoveNode_Error(t *testing.T) {
-	m := NewMockQuicBaaS()
-	ctx := context.Background()
-	req := &service.RemoveNodeRequest{}
-	m.On("RemoveNode", ctx, req).Return((*service.RemoveNodeResponse)(nil), errTest)
-
-	resp, err := m.RemoveNode(ctx, req)
-	assert.ErrorIs(t, err, errTest)
-	assert.Nil(t, resp)
-	m.AssertExpectations(t)
-}
-
-func TestMockQuicBaaS_CreateShard_Success(t *testing.T) {
-	m := NewMockQuicBaaS()
-	ctx := context.Background()
-	req := &service.CreateShardRequest{}
-	expected := &service.CreateShardResponse{}
-	m.On("CreateShard", ctx, req).Return(expected, nil)
-
-	resp, err := m.CreateShard(ctx, req)
-	assert.NoError(t, err)
-	assert.Equal(t, expected, resp)
-	m.AssertExpectations(t)
-}
-
-func TestMockQuicBaaS_CreateShard_Error(t *testing.T) {
-	m := NewMockQuicBaaS()
-	ctx := context.Background()
-	req := &service.CreateShardRequest{}
-	m.On("CreateShard", ctx, req).Return((*service.CreateShardResponse)(nil), errTest)
-
-	resp, err := m.CreateShard(ctx, req)
-	assert.ErrorIs(t, err, errTest)
-	assert.Nil(t, resp)
-	m.AssertExpectations(t)
-}
-
-func TestMockQuicBaaS_RebalanceCluster_Success(t *testing.T) {
-	m := NewMockQuicBaaS()
-	ctx := context.Background()
-	req := &service.RebalanceClusterRequest{}
-	expected := &service.RebalanceClusterResponse{}
-	m.On("RebalanceCluster", ctx, req).Return(expected, nil)
-
-	resp, err := m.RebalanceCluster(ctx, req)
-	assert.NoError(t, err)
-	assert.Equal(t, expected, resp)
-	m.AssertExpectations(t)
-}
-
-func TestMockQuicBaaS_RebalanceCluster_Error(t *testing.T) {
-	m := NewMockQuicBaaS()
-	ctx := context.Background()
-	req := &service.RebalanceClusterRequest{}
-	m.On("RebalanceCluster", ctx, req).Return((*service.RebalanceClusterResponse)(nil), errTest)
-
-	resp, err := m.RebalanceCluster(ctx, req)
-	assert.ErrorIs(t, err, errTest)
-	assert.Nil(t, resp)
-	m.AssertExpectations(t)
-}
-
-func TestMockQuicBaaS_GetRebalanceProgress_Success(t *testing.T) {
-	m := NewMockQuicBaaS()
-	ctx := context.Background()
-	req := &service.GetRebalanceProgressRequest{}
-	expected := &service.GetRebalanceProgressResponse{}
-	m.On("GetRebalanceProgress", ctx, req).Return(expected, nil)
-
-	resp, err := m.GetRebalanceProgress(ctx, req)
-	assert.NoError(t, err)
-	assert.Equal(t, expected, resp)
-	m.AssertExpectations(t)
-}
-
-func TestMockQuicBaaS_GetRebalanceProgress_Error(t *testing.T) {
-	m := NewMockQuicBaaS()
-	ctx := context.Background()
-	req := &service.GetRebalanceProgressRequest{}
-	m.On("GetRebalanceProgress", ctx, req).Return((*service.GetRebalanceProgressResponse)(nil), errTest)
-
-	resp, err := m.GetRebalanceProgress(ctx, req)
-	assert.ErrorIs(t, err, errTest)
-	assert.Nil(t, resp)
-	m.AssertExpectations(t)
+func TestMockQuicBaaS_Cluster(t *testing.T) {
+	runMockCalls(t, []mockCall{
+		reqRespCall("ClusterStatus", (*MockQuicBaaS).ClusterStatus),
+		reqRespCall("GetLeader", (*MockQuicBaaS).GetLeader),
+		reqRespCall("AddNode", (*MockQuicBaaS).AddNode),
+		reqRespCall("RemoveNode", (*MockQuicBaaS).RemoveNode),
+		reqRespCall("CreateShard", (*MockQuicBaaS).CreateShard),
+		reqRespCall("RebalanceCluster", (*MockQuicBaaS).RebalanceCluster),
+		reqRespCall("GetRebalanceProgress", (*MockQuicBaaS).GetRebalanceProgress),
+	})
 }
 
 // ---------------------------------------------------------------------------
 // Backup Service Methods
 // ---------------------------------------------------------------------------
 
-func TestMockQuicBaaS_CreateBackup_Success(t *testing.T) {
-	m := NewMockQuicBaaS()
-	ctx := context.Background()
-	req := &service.CreateBackupRequest{}
-	expected := &service.CreateBackupResponse{}
-	m.On("CreateBackup", ctx, req).Return(expected, nil)
-
-	resp, err := m.CreateBackup(ctx, req)
-	assert.NoError(t, err)
-	assert.Equal(t, expected, resp)
-	m.AssertExpectations(t)
-}
-
-func TestMockQuicBaaS_CreateBackup_Error(t *testing.T) {
-	m := NewMockQuicBaaS()
-	ctx := context.Background()
-	req := &service.CreateBackupRequest{}
-	m.On("CreateBackup", ctx, req).Return((*service.CreateBackupResponse)(nil), errTest)
-
-	resp, err := m.CreateBackup(ctx, req)
-	assert.ErrorIs(t, err, errTest)
-	assert.Nil(t, resp)
-	m.AssertExpectations(t)
-}
-
-func TestMockQuicBaaS_ListBackups_Success(t *testing.T) {
-	m := NewMockQuicBaaS()
-	ctx := context.Background()
-	req := &service.ListBackupsRequest{}
-	expected := &service.ListBackupsResponse{}
-	m.On("ListBackups", ctx, req).Return(expected, nil)
-
-	resp, err := m.ListBackups(ctx, req)
-	assert.NoError(t, err)
-	assert.Equal(t, expected, resp)
-	m.AssertExpectations(t)
-}
-
-func TestMockQuicBaaS_ListBackups_Error(t *testing.T) {
-	m := NewMockQuicBaaS()
-	ctx := context.Background()
-	req := &service.ListBackupsRequest{}
-	m.On("ListBackups", ctx, req).Return((*service.ListBackupsResponse)(nil), errTest)
-
-	resp, err := m.ListBackups(ctx, req)
-	assert.ErrorIs(t, err, errTest)
-	assert.Nil(t, resp)
-	m.AssertExpectations(t)
-}
-
-func TestMockQuicBaaS_RestoreBackup_Success(t *testing.T) {
-	m := NewMockQuicBaaS()
-	ctx := context.Background()
-	req := &service.RestoreBackupRequest{}
-	expected := &service.RestoreBackupResponse{}
-	m.On("RestoreBackup", ctx, req).Return(expected, nil)
-
-	resp, err := m.RestoreBackup(ctx, req)
-	assert.NoError(t, err)
-	assert.Equal(t, expected, resp)
-	m.AssertExpectations(t)
-}
-
-func TestMockQuicBaaS_RestoreBackup_Error(t *testing.T) {
-	m := NewMockQuicBaaS()
-	ctx := context.Background()
-	req := &service.RestoreBackupRequest{}
-	m.On("RestoreBackup", ctx, req).Return((*service.RestoreBackupResponse)(nil), errTest)
-
-	resp, err := m.RestoreBackup(ctx, req)
-	assert.ErrorIs(t, err, errTest)
-	assert.Nil(t, resp)
-	m.AssertExpectations(t)
-}
-
-func TestMockQuicBaaS_DeleteBackup_Success(t *testing.T) {
-	m := NewMockQuicBaaS()
-	ctx := context.Background()
-	req := &service.DeleteBackupRequest{}
-	expected := &service.DeleteBackupResponse{}
-	m.On("DeleteBackup", ctx, req).Return(expected, nil)
-
-	resp, err := m.DeleteBackup(ctx, req)
-	assert.NoError(t, err)
-	assert.Equal(t, expected, resp)
-	m.AssertExpectations(t)
-}
-
-func TestMockQuicBaaS_DeleteBackup_Error(t *testing.T) {
-	m := NewMockQuicBaaS()
-	ctx := context.Background()
-	req := &service.DeleteBackupRequest{}
-	m.On("DeleteBackup", ctx, req).Return((*service.DeleteBackupResponse)(nil), errTest)
-
-	resp, err := m.DeleteBackup(ctx, req)
-	assert.ErrorIs(t, err, errTest)
-	assert.Nil(t, resp)
-	m.AssertExpectations(t)
-}
-
-func TestMockQuicBaaS_VerifyBackup_Success(t *testing.T) {
-	m := NewMockQuicBaaS()
-	ctx := context.Background()
-	req := &service.VerifyBackupRequest{}
-	expected := &service.VerifyBackupResponse{}
-	m.On("VerifyBackup", ctx, req).Return(expected, nil)
-
-	resp, err := m.VerifyBackup(ctx, req)
-	assert.NoError(t, err)
-	assert.Equal(t, expected, resp)
-	m.AssertExpectations(t)
-}
-
-func TestMockQuicBaaS_VerifyBackup_Error(t *testing.T) {
-	m := NewMockQuicBaaS()
-	ctx := context.Background()
-	req := &service.VerifyBackupRequest{}
-	m.On("VerifyBackup", ctx, req).Return((*service.VerifyBackupResponse)(nil), errTest)
-
-	resp, err := m.VerifyBackup(ctx, req)
-	assert.ErrorIs(t, err, errTest)
-	assert.Nil(t, resp)
-	m.AssertExpectations(t)
+func TestMockQuicBaaS_Backup(t *testing.T) {
+	runMockCalls(t, []mockCall{
+		reqRespCall("CreateBackup", (*MockQuicBaaS).CreateBackup),
+		reqRespCall("ListBackups", (*MockQuicBaaS).ListBackups),
+		reqRespCall("RestoreBackup", (*MockQuicBaaS).RestoreBackup),
+		reqRespCall("DeleteBackup", (*MockQuicBaaS).DeleteBackup),
+		reqRespCall("VerifyBackup", (*MockQuicBaaS).VerifyBackup),
+	})
 }
 
 // ---------------------------------------------------------------------------
 // Auth Service Methods
 // ---------------------------------------------------------------------------
 
-func TestMockQuicBaaS_Login_Success(t *testing.T) {
-	m := NewMockQuicBaaS()
-	ctx := context.Background()
-	req := &service.LoginRequest{}
-	expected := &service.LoginResponse{AccessToken: "test-token"}
-	m.On("Login", ctx, req).Return(expected, nil)
-
-	resp, err := m.Login(ctx, req)
-	assert.NoError(t, err)
-	assert.Equal(t, expected, resp)
-	m.AssertExpectations(t)
-}
-
-func TestMockQuicBaaS_Login_Error(t *testing.T) {
-	m := NewMockQuicBaaS()
-	ctx := context.Background()
-	req := &service.LoginRequest{}
-	m.On("Login", ctx, req).Return((*service.LoginResponse)(nil), errTest)
-
-	resp, err := m.Login(ctx, req)
-	assert.ErrorIs(t, err, errTest)
-	assert.Nil(t, resp)
-	m.AssertExpectations(t)
-}
-
-func TestMockQuicBaaS_Logout_Success(t *testing.T) {
-	m := NewMockQuicBaaS()
-	ctx := context.Background()
-	req := &service.LogoutRequest{}
-	expected := &service.LogoutResponse{}
-	m.On("Logout", ctx, req).Return(expected, nil)
-
-	resp, err := m.Logout(ctx, req)
-	assert.NoError(t, err)
-	assert.Equal(t, expected, resp)
-	m.AssertExpectations(t)
-}
-
-func TestMockQuicBaaS_Logout_Error(t *testing.T) {
-	m := NewMockQuicBaaS()
-	ctx := context.Background()
-	req := &service.LogoutRequest{}
-	m.On("Logout", ctx, req).Return((*service.LogoutResponse)(nil), errTest)
-
-	resp, err := m.Logout(ctx, req)
-	assert.ErrorIs(t, err, errTest)
-	assert.Nil(t, resp)
-	m.AssertExpectations(t)
-}
-
-func TestMockQuicBaaS_RefreshToken_Success(t *testing.T) {
-	m := NewMockQuicBaaS()
-	ctx := context.Background()
-	req := &service.RefreshTokenRequest{}
-	expected := &service.RefreshTokenResponse{}
-	m.On("RefreshToken", ctx, req).Return(expected, nil)
-
-	resp, err := m.RefreshToken(ctx, req)
-	assert.NoError(t, err)
-	assert.Equal(t, expected, resp)
-	m.AssertExpectations(t)
-}
-
-func TestMockQuicBaaS_RefreshToken_Error(t *testing.T) {
-	m := NewMockQuicBaaS()
-	ctx := context.Background()
-	req := &service.RefreshTokenRequest{}
-	m.On("RefreshToken", ctx, req).Return((*service.RefreshTokenResponse)(nil), errTest)
-
-	resp, err := m.RefreshToken(ctx, req)
-	assert.ErrorIs(t, err, errTest)
-	assert.Nil(t, resp)
-	m.AssertExpectations(t)
-}
-
-func TestMockQuicBaaS_ValidateToken_Success(t *testing.T) {
-	m := NewMockQuicBaaS()
-	ctx := context.Background()
-	req := &service.ValidateTokenRequest{}
-	expected := &service.ValidateTokenResponse{}
-	m.On("ValidateToken", ctx, req).Return(expected, nil)
-
-	resp, err := m.ValidateToken(ctx, req)
-	assert.NoError(t, err)
-	assert.Equal(t, expected, resp)
-	m.AssertExpectations(t)
-}
-
-func TestMockQuicBaaS_ValidateToken_Error(t *testing.T) {
-	m := NewMockQuicBaaS()
-	ctx := context.Background()
-	req := &service.ValidateTokenRequest{}
-	m.On("ValidateToken", ctx, req).Return((*service.ValidateTokenResponse)(nil), errTest)
-
-	resp, err := m.ValidateToken(ctx, req)
-	assert.ErrorIs(t, err, errTest)
-	assert.Nil(t, resp)
-	m.AssertExpectations(t)
+func TestMockQuicBaaS_Auth(t *testing.T) {
+	runMockCalls(t, []mockCall{
+		reqRespCall("Login", (*MockQuicBaaS).Login),
+		reqRespCall("Logout", (*MockQuicBaaS).Logout),
+		reqRespCall("RefreshToken", (*MockQuicBaaS).RefreshToken),
+		reqRespCall("ValidateToken", (*MockQuicBaaS).ValidateToken),
+	})
 }
 
 // ---------------------------------------------------------------------------
 // RBAC Service Methods
 // ---------------------------------------------------------------------------
 
-func TestMockQuicBaaS_CreateAuthRole_Success(t *testing.T) {
-	m := NewMockQuicBaaS()
-	ctx := context.Background()
-	req := &service.AuthCreateRoleRequest{}
-	expected := &service.AuthCreateRoleResponse{}
-	m.On("CreateAuthRole", ctx, req).Return(expected, nil)
-
-	resp, err := m.CreateAuthRole(ctx, req)
-	assert.NoError(t, err)
-	assert.Equal(t, expected, resp)
-	m.AssertExpectations(t)
-}
-
-func TestMockQuicBaaS_CreateAuthRole_Error(t *testing.T) {
-	m := NewMockQuicBaaS()
-	ctx := context.Background()
-	req := &service.AuthCreateRoleRequest{}
-	m.On("CreateAuthRole", ctx, req).Return((*service.AuthCreateRoleResponse)(nil), errTest)
-
-	resp, err := m.CreateAuthRole(ctx, req)
-	assert.ErrorIs(t, err, errTest)
-	assert.Nil(t, resp)
-	m.AssertExpectations(t)
-}
-
-func TestMockQuicBaaS_AssignRole_Success(t *testing.T) {
-	m := NewMockQuicBaaS()
-	ctx := context.Background()
-	req := &service.AuthAssignRoleRequest{}
-	expected := &service.AuthAssignRoleResponse{}
-	m.On("AssignRole", ctx, req).Return(expected, nil)
-
-	resp, err := m.AssignRole(ctx, req)
-	assert.NoError(t, err)
-	assert.Equal(t, expected, resp)
-	m.AssertExpectations(t)
-}
-
-func TestMockQuicBaaS_AssignRole_Error(t *testing.T) {
-	m := NewMockQuicBaaS()
-	ctx := context.Background()
-	req := &service.AuthAssignRoleRequest{}
-	m.On("AssignRole", ctx, req).Return((*service.AuthAssignRoleResponse)(nil), errTest)
-
-	resp, err := m.AssignRole(ctx, req)
-	assert.ErrorIs(t, err, errTest)
-	assert.Nil(t, resp)
-	m.AssertExpectations(t)
-}
-
-func TestMockQuicBaaS_RevokeRole_Success(t *testing.T) {
-	m := NewMockQuicBaaS()
-	ctx := context.Background()
-	req := &service.AuthRevokeRoleRequest{}
-	expected := &service.AuthRevokeRoleResponse{}
-	m.On("RevokeRole", ctx, req).Return(expected, nil)
-
-	resp, err := m.RevokeRole(ctx, req)
-	assert.NoError(t, err)
-	assert.Equal(t, expected, resp)
-	m.AssertExpectations(t)
-}
-
-func TestMockQuicBaaS_RevokeRole_Error(t *testing.T) {
-	m := NewMockQuicBaaS()
-	ctx := context.Background()
-	req := &service.AuthRevokeRoleRequest{}
-	m.On("RevokeRole", ctx, req).Return((*service.AuthRevokeRoleResponse)(nil), errTest)
-
-	resp, err := m.RevokeRole(ctx, req)
-	assert.ErrorIs(t, err, errTest)
-	assert.Nil(t, resp)
-	m.AssertExpectations(t)
-}
-
-func TestMockQuicBaaS_DeleteAuthRole_Success(t *testing.T) {
-	m := NewMockQuicBaaS()
-	ctx := context.Background()
-	req := &service.AuthDeleteRoleRequest{}
-	expected := &service.AuthDeleteRoleResponse{}
-	m.On("DeleteAuthRole", ctx, req).Return(expected, nil)
-
-	resp, err := m.DeleteAuthRole(ctx, req)
-	assert.NoError(t, err)
-	assert.Equal(t, expected, resp)
-	m.AssertExpectations(t)
-}
-
-func TestMockQuicBaaS_DeleteAuthRole_Error(t *testing.T) {
-	m := NewMockQuicBaaS()
-	ctx := context.Background()
-	req := &service.AuthDeleteRoleRequest{}
-	m.On("DeleteAuthRole", ctx, req).Return((*service.AuthDeleteRoleResponse)(nil), errTest)
-
-	resp, err := m.DeleteAuthRole(ctx, req)
-	assert.ErrorIs(t, err, errTest)
-	assert.Nil(t, resp)
-	m.AssertExpectations(t)
-}
-
-func TestMockQuicBaaS_ListAuthRoles_Success(t *testing.T) {
-	m := NewMockQuicBaaS()
-	ctx := context.Background()
-	req := &service.AuthListRolesRequest{}
-	expected := &service.AuthListRolesResponse{}
-	m.On("ListAuthRoles", ctx, req).Return(expected, nil)
-
-	resp, err := m.ListAuthRoles(ctx, req)
-	assert.NoError(t, err)
-	assert.Equal(t, expected, resp)
-	m.AssertExpectations(t)
-}
-
-func TestMockQuicBaaS_ListAuthRoles_Error(t *testing.T) {
-	m := NewMockQuicBaaS()
-	ctx := context.Background()
-	req := &service.AuthListRolesRequest{}
-	m.On("ListAuthRoles", ctx, req).Return((*service.AuthListRolesResponse)(nil), errTest)
-
-	resp, err := m.ListAuthRoles(ctx, req)
-	assert.ErrorIs(t, err, errTest)
-	assert.Nil(t, resp)
-	m.AssertExpectations(t)
+func TestMockQuicBaaS_RBAC(t *testing.T) {
+	runMockCalls(t, []mockCall{
+		reqRespCall("CreateAuthRole", (*MockQuicBaaS).CreateAuthRole),
+		reqRespCall("AssignRole", (*MockQuicBaaS).AssignRole),
+		reqRespCall("RevokeRole", (*MockQuicBaaS).RevokeRole),
+		reqRespCall("DeleteAuthRole", (*MockQuicBaaS).DeleteAuthRole),
+		reqRespCall("ListAuthRoles", (*MockQuicBaaS).ListAuthRoles),
+	})
 }
 
 // ---------------------------------------------------------------------------
 // Cache Service Methods
 // ---------------------------------------------------------------------------
 
-func TestMockQuicBaaS_GetCacheStats_Success(t *testing.T) {
-	m := NewMockQuicBaaS()
-	ctx := context.Background()
-	req := &service.GetCacheStatsRequest{}
-	expected := &service.GetCacheStatsResponse{}
-	m.On("GetCacheStats", ctx, req).Return(expected, nil)
-
-	resp, err := m.GetCacheStats(ctx, req)
-	assert.NoError(t, err)
-	assert.Equal(t, expected, resp)
-	m.AssertExpectations(t)
-}
-
-func TestMockQuicBaaS_GetCacheStats_Error(t *testing.T) {
-	m := NewMockQuicBaaS()
-	ctx := context.Background()
-	req := &service.GetCacheStatsRequest{}
-	m.On("GetCacheStats", ctx, req).Return((*service.GetCacheStatsResponse)(nil), errTest)
-
-	resp, err := m.GetCacheStats(ctx, req)
-	assert.ErrorIs(t, err, errTest)
-	assert.Nil(t, resp)
-	m.AssertExpectations(t)
-}
-
-func TestMockQuicBaaS_ClearCache_Success(t *testing.T) {
-	m := NewMockQuicBaaS()
-	ctx := context.Background()
-	req := &service.ClearCacheRequest{}
-	expected := &service.ClearCacheResponse{}
-	m.On("ClearCache", ctx, req).Return(expected, nil)
-
-	resp, err := m.ClearCache(ctx, req)
-	assert.NoError(t, err)
-	assert.Equal(t, expected, resp)
-	m.AssertExpectations(t)
-}
-
-func TestMockQuicBaaS_ClearCache_Error(t *testing.T) {
-	m := NewMockQuicBaaS()
-	ctx := context.Background()
-	req := &service.ClearCacheRequest{}
-	m.On("ClearCache", ctx, req).Return((*service.ClearCacheResponse)(nil), errTest)
-
-	resp, err := m.ClearCache(ctx, req)
-	assert.ErrorIs(t, err, errTest)
-	assert.Nil(t, resp)
-	m.AssertExpectations(t)
-}
-
-func TestMockQuicBaaS_GetCacheConfig_Success(t *testing.T) {
-	m := NewMockQuicBaaS()
-	ctx := context.Background()
-	req := &service.GetCacheConfigRequest{}
-	expected := &service.GetCacheConfigResponse{}
-	m.On("GetCacheConfig", ctx, req).Return(expected, nil)
-
-	resp, err := m.GetCacheConfig(ctx, req)
-	assert.NoError(t, err)
-	assert.Equal(t, expected, resp)
-	m.AssertExpectations(t)
-}
-
-func TestMockQuicBaaS_GetCacheConfig_Error(t *testing.T) {
-	m := NewMockQuicBaaS()
-	ctx := context.Background()
-	req := &service.GetCacheConfigRequest{}
-	m.On("GetCacheConfig", ctx, req).Return((*service.GetCacheConfigResponse)(nil), errTest)
-
-	resp, err := m.GetCacheConfig(ctx, req)
-	assert.ErrorIs(t, err, errTest)
-	assert.Nil(t, resp)
-	m.AssertExpectations(t)
-}
-
-func TestMockQuicBaaS_UpdateCacheConfig_Success(t *testing.T) {
-	m := NewMockQuicBaaS()
-	ctx := context.Background()
-	req := &service.UpdateCacheConfigRequest{}
-	expected := &service.UpdateCacheConfigResponse{}
-	m.On("UpdateCacheConfig", ctx, req).Return(expected, nil)
-
-	resp, err := m.UpdateCacheConfig(ctx, req)
-	assert.NoError(t, err)
-	assert.Equal(t, expected, resp)
-	m.AssertExpectations(t)
-}
-
-func TestMockQuicBaaS_UpdateCacheConfig_Error(t *testing.T) {
-	m := NewMockQuicBaaS()
-	ctx := context.Background()
-	req := &service.UpdateCacheConfigRequest{}
-	m.On("UpdateCacheConfig", ctx, req).Return((*service.UpdateCacheConfigResponse)(nil), errTest)
-
-	resp, err := m.UpdateCacheConfig(ctx, req)
-	assert.ErrorIs(t, err, errTest)
-	assert.Nil(t, resp)
-	m.AssertExpectations(t)
+func TestMockQuicBaaS_Cache(t *testing.T) {
+	runMockCalls(t, []mockCall{
+		reqRespCall("GetCacheStats", (*MockQuicBaaS).GetCacheStats),
+		reqRespCall("ClearCache", (*MockQuicBaaS).ClearCache),
+		reqRespCall("GetCacheConfig", (*MockQuicBaaS).GetCacheConfig),
+		reqRespCall("UpdateCacheConfig", (*MockQuicBaaS).UpdateCacheConfig),
+	})
 }
 
 // ---------------------------------------------------------------------------
 // Health Service Methods
 // ---------------------------------------------------------------------------
 
-func TestMockQuicBaaS_Health_Success(t *testing.T) {
-	m := NewMockQuicBaaS()
-	ctx := context.Background()
-	req := &service.HealthRequest{}
-	expected := &service.HealthResponse{}
-	m.On("Health", ctx, req).Return(expected, nil)
-
-	resp, err := m.Health(ctx, req)
-	assert.NoError(t, err)
-	assert.Equal(t, expected, resp)
-	m.AssertExpectations(t)
-}
-
-func TestMockQuicBaaS_Health_Error(t *testing.T) {
-	m := NewMockQuicBaaS()
-	ctx := context.Background()
-	req := &service.HealthRequest{}
-	m.On("Health", ctx, req).Return((*service.HealthResponse)(nil), errTest)
-
-	resp, err := m.Health(ctx, req)
-	assert.ErrorIs(t, err, errTest)
-	assert.Nil(t, resp)
-	m.AssertExpectations(t)
-}
-
-func TestMockQuicBaaS_Liveness_Success(t *testing.T) {
-	m := NewMockQuicBaaS()
-	ctx := context.Background()
-	req := &service.LivenessRequest{}
-	expected := &service.LivenessResponse{}
-	m.On("Liveness", ctx, req).Return(expected, nil)
-
-	resp, err := m.Liveness(ctx, req)
-	assert.NoError(t, err)
-	assert.Equal(t, expected, resp)
-	m.AssertExpectations(t)
-}
-
-func TestMockQuicBaaS_Liveness_Error(t *testing.T) {
-	m := NewMockQuicBaaS()
-	ctx := context.Background()
-	req := &service.LivenessRequest{}
-	m.On("Liveness", ctx, req).Return((*service.LivenessResponse)(nil), errTest)
-
-	resp, err := m.Liveness(ctx, req)
-	assert.ErrorIs(t, err, errTest)
-	assert.Nil(t, resp)
-	m.AssertExpectations(t)
-}
-
-func TestMockQuicBaaS_Readiness_Success(t *testing.T) {
-	m := NewMockQuicBaaS()
-	ctx := context.Background()
-	req := &service.ReadinessRequest{}
-	expected := &service.ReadinessResponse{}
-	m.On("Readiness", ctx, req).Return(expected, nil)
-
-	resp, err := m.Readiness(ctx, req)
-	assert.NoError(t, err)
-	assert.Equal(t, expected, resp)
-	m.AssertExpectations(t)
-}
-
-func TestMockQuicBaaS_Readiness_Error(t *testing.T) {
-	m := NewMockQuicBaaS()
-	ctx := context.Background()
-	req := &service.ReadinessRequest{}
-	m.On("Readiness", ctx, req).Return((*service.ReadinessResponse)(nil), errTest)
-
-	resp, err := m.Readiness(ctx, req)
-	assert.ErrorIs(t, err, errTest)
-	assert.Nil(t, resp)
-	m.AssertExpectations(t)
+func TestMockQuicBaaS_Health(t *testing.T) {
+	runMockCalls(t, []mockCall{
+		reqRespCall("Health", (*MockQuicBaaS).Health),
+		reqRespCall("Liveness", (*MockQuicBaaS).Liveness),
+		reqRespCall("Readiness", (*MockQuicBaaS).Readiness),
+	})
 }
 
 // ---------------------------------------------------------------------------
 // Time-Series Service Methods
 // ---------------------------------------------------------------------------
 
-func TestMockQuicBaaS_WritePoint_Success(t *testing.T) {
-	m := NewMockQuicBaaS()
+func TestMockQuicBaaS_TimeSeries(t *testing.T) {
 	ctx := context.Background()
-	req := &service.WritePointRequest{}
-	expected := &service.WritePointResponse{}
-	m.On("WritePoint", ctx, req).Return(expected, nil)
+	queryReq := &service.TimeSeriesQueryRequest{}
+	queryStream := make(chan<- *service.TimeSeriesQueryResponse, 1)
 
-	resp, err := m.WritePoint(ctx, req)
-	assert.NoError(t, err)
-	assert.Equal(t, expected, resp)
-	m.AssertExpectations(t)
-}
-
-func TestMockQuicBaaS_WritePoint_Error(t *testing.T) {
-	m := NewMockQuicBaaS()
-	ctx := context.Background()
-	req := &service.WritePointRequest{}
-	m.On("WritePoint", ctx, req).Return((*service.WritePointResponse)(nil), errTest)
-
-	resp, err := m.WritePoint(ctx, req)
-	assert.ErrorIs(t, err, errTest)
-	assert.Nil(t, resp)
-	m.AssertExpectations(t)
-}
-
-func TestMockQuicBaaS_Aggregate_Success(t *testing.T) {
-	m := NewMockQuicBaaS()
-	ctx := context.Background()
-	req := &service.AggregateRequest{}
-	expected := &service.AggregateResponse{}
-	m.On("Aggregate", ctx, req).Return(expected, nil)
-
-	resp, err := m.Aggregate(ctx, req)
-	assert.NoError(t, err)
-	assert.Equal(t, expected, resp)
-	m.AssertExpectations(t)
-}
-
-func TestMockQuicBaaS_Aggregate_Error(t *testing.T) {
-	m := NewMockQuicBaaS()
-	ctx := context.Background()
-	req := &service.AggregateRequest{}
-	m.On("Aggregate", ctx, req).Return((*service.AggregateResponse)(nil), errTest)
-
-	resp, err := m.Aggregate(ctx, req)
-	assert.ErrorIs(t, err, errTest)
-	assert.Nil(t, resp)
-	m.AssertExpectations(t)
-}
-
-func TestMockQuicBaaS_TimeSeriesQuery_Success(t *testing.T) {
-	m := NewMockQuicBaaS()
-	ctx := context.Background()
-	req := &service.TimeSeriesQueryRequest{}
-	stream := make(chan<- *service.TimeSeriesQueryResponse, 1)
-	m.On("TimeSeriesQuery", ctx, req, stream).Return(nil)
-
-	err := m.TimeSeriesQuery(ctx, req, stream)
-	assert.NoError(t, err)
-	m.AssertExpectations(t)
-}
-
-func TestMockQuicBaaS_TimeSeriesQuery_Error(t *testing.T) {
-	m := NewMockQuicBaaS()
-	ctx := context.Background()
-	req := &service.TimeSeriesQueryRequest{}
-	stream := make(chan<- *service.TimeSeriesQueryResponse, 1)
-	m.On("TimeSeriesQuery", ctx, req, stream).Return(errTest)
-
-	err := m.TimeSeriesQuery(ctx, req, stream)
-	assert.ErrorIs(t, err, errTest)
-	m.AssertExpectations(t)
-}
-
-func TestMockQuicBaaS_WriteBatch_Success(t *testing.T) {
-	m := NewMockQuicBaaS()
-	ctx := context.Background()
-	req := &service.WriteBatchRequest{}
-	expected := &service.WriteBatchResponse{}
-	m.On("WriteBatch", ctx, req).Return(expected, nil)
-
-	resp, err := m.WriteBatch(ctx, req)
-	assert.NoError(t, err)
-	assert.Equal(t, expected, resp)
-	m.AssertExpectations(t)
-}
-
-func TestMockQuicBaaS_WriteBatch_Error(t *testing.T) {
-	m := NewMockQuicBaaS()
-	ctx := context.Background()
-	req := &service.WriteBatchRequest{}
-	m.On("WriteBatch", ctx, req).Return((*service.WriteBatchResponse)(nil), errTest)
-
-	resp, err := m.WriteBatch(ctx, req)
-	assert.ErrorIs(t, err, errTest)
-	assert.Nil(t, resp)
-	m.AssertExpectations(t)
-}
-
-func TestMockQuicBaaS_TSQuery_Success(t *testing.T) {
-	m := NewMockQuicBaaS()
-	ctx := context.Background()
-	req := &service.TSQueryRequest{}
-	expected := &service.TSQueryResponse{}
-	m.On("TSQuery", ctx, req).Return(expected, nil)
-
-	resp, err := m.TSQuery(ctx, req)
-	assert.NoError(t, err)
-	assert.Equal(t, expected, resp)
-	m.AssertExpectations(t)
-}
-
-func TestMockQuicBaaS_TSQuery_Error(t *testing.T) {
-	m := NewMockQuicBaaS()
-	ctx := context.Background()
-	req := &service.TSQueryRequest{}
-	m.On("TSQuery", ctx, req).Return((*service.TSQueryResponse)(nil), errTest)
-
-	resp, err := m.TSQuery(ctx, req)
-	assert.ErrorIs(t, err, errTest)
-	assert.Nil(t, resp)
-	m.AssertExpectations(t)
-}
-
-func TestMockQuicBaaS_DeleteSeries_Success(t *testing.T) {
-	m := NewMockQuicBaaS()
-	ctx := context.Background()
-	req := &service.TSDeleteRequest{}
-	expected := &service.TSDeleteResponse{}
-	m.On("DeleteSeries", ctx, req).Return(expected, nil)
-
-	resp, err := m.DeleteSeries(ctx, req)
-	assert.NoError(t, err)
-	assert.Equal(t, expected, resp)
-	m.AssertExpectations(t)
-}
-
-func TestMockQuicBaaS_DeleteSeries_Error(t *testing.T) {
-	m := NewMockQuicBaaS()
-	ctx := context.Background()
-	req := &service.TSDeleteRequest{}
-	m.On("DeleteSeries", ctx, req).Return((*service.TSDeleteResponse)(nil), errTest)
-
-	resp, err := m.DeleteSeries(ctx, req)
-	assert.ErrorIs(t, err, errTest)
-	assert.Nil(t, resp)
-	m.AssertExpectations(t)
-}
-
-func TestMockQuicBaaS_GetRetentionPolicy_Success(t *testing.T) {
-	m := NewMockQuicBaaS()
-	ctx := context.Background()
-	req := &service.TSGetRetentionPolicyRequest{}
-	expected := &service.TSGetRetentionPolicyResponse{}
-	m.On("GetRetentionPolicy", ctx, req).Return(expected, nil)
-
-	resp, err := m.GetRetentionPolicy(ctx, req)
-	assert.NoError(t, err)
-	assert.Equal(t, expected, resp)
-	m.AssertExpectations(t)
-}
-
-func TestMockQuicBaaS_GetRetentionPolicy_Error(t *testing.T) {
-	m := NewMockQuicBaaS()
-	ctx := context.Background()
-	req := &service.TSGetRetentionPolicyRequest{}
-	m.On("GetRetentionPolicy", ctx, req).Return((*service.TSGetRetentionPolicyResponse)(nil), errTest)
-
-	resp, err := m.GetRetentionPolicy(ctx, req)
-	assert.ErrorIs(t, err, errTest)
-	assert.Nil(t, resp)
-	m.AssertExpectations(t)
-}
-
-func TestMockQuicBaaS_SetRetentionPolicy_Success(t *testing.T) {
-	m := NewMockQuicBaaS()
-	ctx := context.Background()
-	req := &service.TSSetRetentionPolicyRequest{}
-	expected := &service.TSSetRetentionPolicyResponse{}
-	m.On("SetRetentionPolicy", ctx, req).Return(expected, nil)
-
-	resp, err := m.SetRetentionPolicy(ctx, req)
-	assert.NoError(t, err)
-	assert.Equal(t, expected, resp)
-	m.AssertExpectations(t)
-}
-
-func TestMockQuicBaaS_SetRetentionPolicy_Error(t *testing.T) {
-	m := NewMockQuicBaaS()
-	ctx := context.Background()
-	req := &service.TSSetRetentionPolicyRequest{}
-	m.On("SetRetentionPolicy", ctx, req).Return((*service.TSSetRetentionPolicyResponse)(nil), errTest)
-
-	resp, err := m.SetRetentionPolicy(ctx, req)
-	assert.ErrorIs(t, err, errTest)
-	assert.Nil(t, resp)
-	m.AssertExpectations(t)
-}
-
-func TestMockQuicBaaS_ListMetrics_Success(t *testing.T) {
-	m := NewMockQuicBaaS()
-	ctx := context.Background()
-	req := &service.TSListMetricsRequest{}
-	expected := &service.TSListMetricsResponse{}
-	m.On("ListMetrics", ctx, req).Return(expected, nil)
-
-	resp, err := m.ListMetrics(ctx, req)
-	assert.NoError(t, err)
-	assert.Equal(t, expected, resp)
-	m.AssertExpectations(t)
-}
-
-func TestMockQuicBaaS_ListMetrics_Error(t *testing.T) {
-	m := NewMockQuicBaaS()
-	ctx := context.Background()
-	req := &service.TSListMetricsRequest{}
-	m.On("ListMetrics", ctx, req).Return((*service.TSListMetricsResponse)(nil), errTest)
-
-	resp, err := m.ListMetrics(ctx, req)
-	assert.ErrorIs(t, err, errTest)
-	assert.Nil(t, resp)
-	m.AssertExpectations(t)
+	runMockCalls(t, []mockCall{
+		reqRespCall("WritePoint", (*MockQuicBaaS).WritePoint),
+		reqRespCall("Aggregate", (*MockQuicBaaS).Aggregate),
+		reqRespCall("WriteBatch", (*MockQuicBaaS).WriteBatch),
+		reqRespCall("TSQuery", (*MockQuicBaaS).TSQuery),
+		reqRespCall("DeleteSeries", (*MockQuicBaaS).DeleteSeries),
+		reqRespCall("GetRetentionPolicy", (*MockQuicBaaS).GetRetentionPolicy),
+		reqRespCall("SetRetentionPolicy", (*MockQuicBaaS).SetRetentionPolicy),
+		reqRespCall("ListMetrics", (*MockQuicBaaS).ListMetrics),
+		{
+			method:  "TimeSeriesQuery",
+			args:    []any{ctx, queryReq, queryStream},
+			errOnly: true,
+			call: func(m *MockQuicBaaS) (any, error) {
+				return nil, m.TimeSeriesQuery(ctx, queryReq, queryStream)
+			},
+		},
+	})
 }
 
 // ---------------------------------------------------------------------------
 // Operations Service Methods
 // ---------------------------------------------------------------------------
 
-func TestMockQuicBaaS_MigrateData_Success(t *testing.T) {
-	m := NewMockQuicBaaS()
-	ctx := context.Background()
-	req := &service.MigrateDataRequest{}
-	expected := &service.MigrateDataResponse{}
-	m.On("MigrateData", ctx, req).Return(expected, nil)
-
-	resp, err := m.MigrateData(ctx, req)
-	assert.NoError(t, err)
-	assert.Equal(t, expected, resp)
-	m.AssertExpectations(t)
-}
-
-func TestMockQuicBaaS_MigrateData_Error(t *testing.T) {
-	m := NewMockQuicBaaS()
-	ctx := context.Background()
-	req := &service.MigrateDataRequest{}
-	m.On("MigrateData", ctx, req).Return((*service.MigrateDataResponse)(nil), errTest)
-
-	resp, err := m.MigrateData(ctx, req)
-	assert.ErrorIs(t, err, errTest)
-	assert.Nil(t, resp)
-	m.AssertExpectations(t)
-}
-
-func TestMockQuicBaaS_GetMigrationProgress_Success(t *testing.T) {
-	m := NewMockQuicBaaS()
-	ctx := context.Background()
-	req := &service.GetMigrationProgressRequest{}
-	expected := &service.GetMigrationProgressResponse{}
-	m.On("GetMigrationProgress", ctx, req).Return(expected, nil)
-
-	resp, err := m.GetMigrationProgress(ctx, req)
-	assert.NoError(t, err)
-	assert.Equal(t, expected, resp)
-	m.AssertExpectations(t)
-}
-
-func TestMockQuicBaaS_GetMigrationProgress_Error(t *testing.T) {
-	m := NewMockQuicBaaS()
-	ctx := context.Background()
-	req := &service.GetMigrationProgressRequest{}
-	m.On("GetMigrationProgress", ctx, req).Return((*service.GetMigrationProgressResponse)(nil), errTest)
-
-	resp, err := m.GetMigrationProgress(ctx, req)
-	assert.ErrorIs(t, err, errTest)
-	assert.Nil(t, resp)
-	m.AssertExpectations(t)
-}
-
-func TestMockQuicBaaS_ReplaceNode_Success(t *testing.T) {
-	m := NewMockQuicBaaS()
-	ctx := context.Background()
-	req := &service.ReplaceNodeRequest{}
-	expected := &service.ReplaceNodeResponse{}
-	m.On("ReplaceNode", ctx, req).Return(expected, nil)
-
-	resp, err := m.ReplaceNode(ctx, req)
-	assert.NoError(t, err)
-	assert.Equal(t, expected, resp)
-	m.AssertExpectations(t)
-}
-
-func TestMockQuicBaaS_ReplaceNode_Error(t *testing.T) {
-	m := NewMockQuicBaaS()
-	ctx := context.Background()
-	req := &service.ReplaceNodeRequest{}
-	m.On("ReplaceNode", ctx, req).Return((*service.ReplaceNodeResponse)(nil), errTest)
-
-	resp, err := m.ReplaceNode(ctx, req)
-	assert.ErrorIs(t, err, errTest)
-	assert.Nil(t, resp)
-	m.AssertExpectations(t)
-}
-
-func TestMockQuicBaaS_UpgradeNode_Success(t *testing.T) {
-	m := NewMockQuicBaaS()
-	ctx := context.Background()
-	req := &service.UpgradeNodeRequest{}
-	expected := &service.UpgradeNodeResponse{}
-	m.On("UpgradeNode", ctx, req).Return(expected, nil)
-
-	resp, err := m.UpgradeNode(ctx, req)
-	assert.NoError(t, err)
-	assert.Equal(t, expected, resp)
-	m.AssertExpectations(t)
-}
-
-func TestMockQuicBaaS_UpgradeNode_Error(t *testing.T) {
-	m := NewMockQuicBaaS()
-	ctx := context.Background()
-	req := &service.UpgradeNodeRequest{}
-	m.On("UpgradeNode", ctx, req).Return((*service.UpgradeNodeResponse)(nil), errTest)
-
-	resp, err := m.UpgradeNode(ctx, req)
-	assert.ErrorIs(t, err, errTest)
-	assert.Nil(t, resp)
-	m.AssertExpectations(t)
-}
-
-func TestMockQuicBaaS_GetUpgradeStatus_Success(t *testing.T) {
-	m := NewMockQuicBaaS()
-	ctx := context.Background()
-	req := &service.GetUpgradeStatusRequest{}
-	expected := &service.GetUpgradeStatusResponse{}
-	m.On("GetUpgradeStatus", ctx, req).Return(expected, nil)
-
-	resp, err := m.GetUpgradeStatus(ctx, req)
-	assert.NoError(t, err)
-	assert.Equal(t, expected, resp)
-	m.AssertExpectations(t)
-}
-
-func TestMockQuicBaaS_GetUpgradeStatus_Error(t *testing.T) {
-	m := NewMockQuicBaaS()
-	ctx := context.Background()
-	req := &service.GetUpgradeStatusRequest{}
-	m.On("GetUpgradeStatus", ctx, req).Return((*service.GetUpgradeStatusResponse)(nil), errTest)
-
-	resp, err := m.GetUpgradeStatus(ctx, req)
-	assert.ErrorIs(t, err, errTest)
-	assert.Nil(t, resp)
-	m.AssertExpectations(t)
+func TestMockQuicBaaS_Operations(t *testing.T) {
+	runMockCalls(t, []mockCall{
+		reqRespCall("MigrateData", (*MockQuicBaaS).MigrateData),
+		reqRespCall("GetMigrationProgress", (*MockQuicBaaS).GetMigrationProgress),
+		reqRespCall("ReplaceNode", (*MockQuicBaaS).ReplaceNode),
+		reqRespCall("UpgradeNode", (*MockQuicBaaS).UpgradeNode),
+		reqRespCall("GetUpgradeStatus", (*MockQuicBaaS).GetUpgradeStatus),
+	})
 }
 
 // ---------------------------------------------------------------------------
