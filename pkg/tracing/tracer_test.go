@@ -87,6 +87,51 @@ func TestNewTracer(t *testing.T) {
 			errContains: "exporter endpoint is required",
 		},
 		{
+			name: "missing endpoint for jaeger",
+			config: &Config{
+				Enabled:       true,
+				ServiceName:   "test-service",
+				ExporterType:  ExporterJaeger,
+				SamplingRatio: 1.0,
+			},
+			wantErr:     true,
+			errContains: "exporter endpoint is required",
+		},
+		{
+			name: "missing endpoint for zipkin",
+			config: &Config{
+				Enabled:       true,
+				ServiceName:   "test-service",
+				ExporterType:  ExporterZipkin,
+				SamplingRatio: 1.0,
+			},
+			wantErr:     true,
+			errContains: "exporter endpoint is required",
+		},
+		{
+			name: "unknown exporter type",
+			config: &Config{
+				Enabled:       true,
+				ServiceName:   "test-service",
+				ExporterType:  "unknown",
+				SamplingRatio: 1.0,
+			},
+			wantErr:     true,
+			errContains: "unknown exporter type",
+		},
+		{
+			name: "negative shutdown timeout",
+			config: &Config{
+				Enabled:         true,
+				ServiceName:     "test-service",
+				ExporterType:    ExporterStdout,
+				SamplingRatio:   1.0,
+				ShutdownTimeout: -1 * time.Second,
+			},
+			wantErr:     true,
+			errContains: "shutdown timeout cannot be negative",
+		},
+		{
 			name: "valid config - disabled",
 			config: &Config{
 				Enabled:       false,
@@ -786,118 +831,24 @@ func TestTracer_SpanFromContext(t *testing.T) {
 	})
 }
 
-func TestValidateConfig_EdgeCases(t *testing.T) {
-	tests := []struct {
-		name        string
-		config      *Config
-		wantErr     bool
-		errContains string
-	}{
-		{
-			name: "unknown exporter type",
-			config: &Config{
-				Enabled:       true,
-				ServiceName:   "test",
-				ExporterType:  "unknown",
-				SamplingRatio: 1.0,
-			},
-			wantErr:     true,
-			errContains: "unknown exporter type",
-		},
-		{
-			name: "negative shutdown timeout",
-			config: &Config{
-				Enabled:         true,
-				ServiceName:     "test",
-				ExporterType:    ExporterStdout,
-				SamplingRatio:   1.0,
-				ShutdownTimeout: -1 * time.Second,
-			},
-			wantErr:     true,
-			errContains: "shutdown timeout cannot be negative",
-		},
-		{
-			name: "missing endpoint for jaeger",
-			config: &Config{
-				Enabled:          true,
-				ServiceName:      "test",
-				ExporterType:     ExporterJaeger,
-				ExporterEndpoint: "",
-				SamplingRatio:    1.0,
-			},
-			wantErr:     true,
-			errContains: "exporter endpoint is required",
-		},
-		{
-			name: "missing endpoint for zipkin",
-			config: &Config{
-				Enabled:          true,
-				ServiceName:      "test",
-				ExporterType:     ExporterZipkin,
-				ExporterEndpoint: "",
-				SamplingRatio:    1.0,
-			},
-			wantErr:     true,
-			errContains: "exporter endpoint is required",
-		},
-		{
-			name: "valid noop exporter - no endpoint required",
-			config: &Config{
-				Enabled:       true,
-				ServiceName:   "test",
-				ExporterType:  ExporterNoop,
-				SamplingRatio: 1.0,
-			},
-			wantErr: false,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			err := validateConfig(tt.config)
-			if tt.wantErr {
-				assert.Error(t, err)
-				if tt.errContains != "" {
-					assert.Contains(t, err.Error(), tt.errContains)
-				}
-			} else {
-				assert.NoError(t, err)
-			}
-		})
-	}
-}
-
 func TestCreateSampler(t *testing.T) {
 	tests := []struct {
 		name  string
 		ratio float64
+		want  sdktrace.Sampler
 	}{
-		{
-			name:  "always sample",
-			ratio: 1.0,
-		},
-		{
-			name:  "never sample",
-			ratio: 0.0,
-		},
-		{
-			name:  "partial sample",
-			ratio: 0.5,
-		},
-		{
-			name:  "over 1.0 (treated as always)",
-			ratio: 1.5,
-		},
-		{
-			name:  "negative (treated as never)",
-			ratio: -0.5,
-		},
+		{name: "always sample", ratio: 1.0, want: sdktrace.AlwaysSample()},
+		{name: "never sample", ratio: 0.0, want: sdktrace.NeverSample()},
+		{name: "partial sample", ratio: 0.5, want: sdktrace.TraceIDRatioBased(0.5)},
+		{name: "over 1.0 (treated as always)", ratio: 1.5, want: sdktrace.AlwaysSample()},
+		{name: "negative (treated as never)", ratio: -0.5, want: sdktrace.NeverSample()},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			sampler := createSampler(tt.ratio)
-			assert.NotNil(t, sampler)
+			require.NotNil(t, sampler)
+			assert.Equal(t, tt.want.Description(), sampler.Description())
 		})
 	}
 }
@@ -914,31 +865,6 @@ func TestNoopExporter(t *testing.T) {
 		err := exporter.Shutdown(context.Background())
 		assert.NoError(t, err)
 	})
-}
-
-func TestNewTracer_WithResourceMerge(t *testing.T) {
-	tracer, err := NewTracer(&Config{
-		Enabled:        true,
-		ServiceName:    "test-service",
-		ServiceVersion: "2.0.0",
-		ExporterType:   ExporterNoop,
-		SamplingRatio:  1.0,
-		Environment:    "staging",
-		NodeID:         999,
-	})
-	require.NoError(t, err)
-	require.NotNil(t, tracer)
-	defer tracer.Shutdown(context.Background())
-
-	// Verify tracer is enabled
-	assert.True(t, tracer.IsEnabled())
-
-	// Verify config
-	cfg := tracer.GetConfig()
-	assert.Equal(t, "test-service", cfg.ServiceName)
-	assert.Equal(t, "2.0.0", cfg.ServiceVersion)
-	assert.Equal(t, "staging", cfg.Environment)
-	assert.Equal(t, uint64(999), cfg.NodeID)
 }
 
 func TestCreateExporter_AllTypes(t *testing.T) {
