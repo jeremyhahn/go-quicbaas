@@ -528,66 +528,6 @@ func buildBasicConsumeFrame(channel uint16, queueName, consumerTag string, noAck
 	return buildAMQPMethodFrame(channel, ClassBasic, MethodBasicConsume, args.Bytes())
 }
 
-func TestAMQPHandler_HandleConnection_ProtocolHeader(t *testing.T) {
-	handler := NewAMQPHandler(nil)
-	handlerDone := make(chan error, 1)
-
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		conn, err := websocket.Accept(w, r, nil)
-		if err != nil {
-			t.Logf("Accept error: %v", err)
-			return
-		}
-
-		session := ws.NewSession("test-session", "amqp", conn)
-
-		err = handler.HandleConnection(session.Context(), conn, session)
-		handlerDone <- err
-	}))
-	defer server.Close()
-
-	wsURL := "ws" + strings.TrimPrefix(server.URL, "http")
-
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	conn, resp, err := websocket.Dial(ctx, wsURL, nil)
-	if resp != nil && resp.Body != nil {
-		resp.Body.Close()
-	}
-	if err != nil {
-		t.Fatalf("WebSocket dial failed: %v", err)
-	}
-	defer conn.Close(websocket.StatusNormalClosure, "test complete")
-
-	// Send AMQP protocol header
-	err = conn.Write(ctx, websocket.MessageBinary, buildAMQPProtocolHeader())
-	if err != nil {
-		t.Fatalf("Write protocol header failed: %v", err)
-	}
-
-	// Read Connection.Start
-	_, startData, err := conn.Read(ctx)
-	if err != nil {
-		t.Fatalf("Read Connection.Start failed: %v", err)
-	}
-
-	// Verify it's a method frame
-	if len(startData) < 1 || startData[0] != FrameMethod {
-		t.Errorf("Expected method frame (type 1), got type %d", startData[0])
-	}
-
-	// Verify message counter
-	if handler.MessagesReceived() != 1 {
-		t.Errorf("MessagesReceived() = %d, want 1", handler.MessagesReceived())
-	}
-
-	// Wait for the MessagesSent counter to be incremented
-	if !waitForCounter(handler.MessagesSent, 1, 1*time.Second) {
-		t.Errorf("MessagesSent() = %d, want >= 1", handler.MessagesSent())
-	}
-}
-
 func TestAMQPHandler_HandleConnection_FullHandshake(t *testing.T) {
 	handler := NewAMQPHandler(nil)
 	handlerDone := make(chan error, 1)
@@ -902,8 +842,7 @@ func TestAMQPHandler_HandleConnection_ContextCancel(t *testing.T) {
 			close(handlerDone)
 		}()
 
-		// Close session after brief delay
-		time.Sleep(50 * time.Millisecond)
+		// Closing the session cancels the handler's context.
 		session.Close()
 	}))
 	defer server.Close()
@@ -1146,10 +1085,13 @@ func TestAMQPHandler_ConcurrentClients(t *testing.T) {
 			}
 
 			// Read Connection.Start
-			_, _, err = conn.Read(ctx)
+			_, startData, err := conn.Read(ctx)
 			if err != nil {
 				t.Errorf("Client %d read Connection.Start failed: %v", idx, err)
 				return
+			}
+			if len(startData) < 1 || startData[0] != FrameMethod {
+				t.Errorf("Client %d expected method frame for Connection.Start", idx)
 			}
 		}(i)
 	}
@@ -1164,7 +1106,7 @@ func TestAMQPHandler_ConcurrentClients(t *testing.T) {
 
 	// Each client receives Connection.Start (1 message)
 	expectedSent := uint64(numClients)
-	if handler.MessagesSent() != expectedSent {
+	if !waitForCounter(handler.MessagesSent, expectedSent, time.Second) {
 		t.Errorf("MessagesSent() = %d, want %d", handler.MessagesSent(), expectedSent)
 	}
 }
