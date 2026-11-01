@@ -14,136 +14,10 @@
 package interfaces
 
 import (
-	"context"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 )
-
-// mockAuthorizationProvider is a mock implementation for testing.
-type mockAuthorizationProvider struct {
-	authorizeFunc      func(ctx context.Context, req *AuthorizationRequest) (*AuthorizationDecision, error)
-	batchAuthorizeFunc func(ctx context.Context, reqs []*AuthorizationRequest) ([]*AuthorizationDecision, error)
-	providerType       string
-	closed             bool
-}
-
-func (m *mockAuthorizationProvider) Authorize(ctx context.Context, req *AuthorizationRequest) (*AuthorizationDecision, error) {
-	if m.authorizeFunc != nil {
-		return m.authorizeFunc(ctx, req)
-	}
-	return &AuthorizationDecision{Allowed: true, Provider: m.providerType}, nil
-}
-
-func (m *mockAuthorizationProvider) BatchAuthorize(ctx context.Context, reqs []*AuthorizationRequest) ([]*AuthorizationDecision, error) {
-	if m.batchAuthorizeFunc != nil {
-		return m.batchAuthorizeFunc(ctx, reqs)
-	}
-	decisions := make([]*AuthorizationDecision, len(reqs))
-	for i := range reqs {
-		decisions[i] = &AuthorizationDecision{Allowed: true, Provider: m.providerType}
-	}
-	return decisions, nil
-}
-
-func (m *mockAuthorizationProvider) GetProviderType() string {
-	if m.providerType == "" {
-		return "mock"
-	}
-	return m.providerType
-}
-
-func (m *mockAuthorizationProvider) Close() error {
-	m.closed = true
-	return nil
-}
-
-// Compile-time check that mockAuthorizationProvider implements AuthorizationProvider.
-var _ AuthorizationProvider = (*mockAuthorizationProvider)(nil)
-
-
-// TestMockAuthorizationProvider tests the mock provider implementation.
-func TestMockAuthorizationProvider(t *testing.T) {
-	t.Run("default authorize returns allowed", func(t *testing.T) {
-		provider := &mockAuthorizationProvider{providerType: "test"}
-		req := &AuthorizationRequest{
-			Subject:  Subject{ID: "user-1"},
-			Resource: ResourceKeys,
-			Action:   ActionRead,
-		}
-
-		decision, err := provider.Authorize(context.Background(), req)
-		require.NoError(t, err)
-		assert.True(t, decision.Allowed)
-		assert.Equal(t, "test", decision.Provider)
-	})
-
-	t.Run("custom authorize function", func(t *testing.T) {
-		provider := &mockAuthorizationProvider{
-			authorizeFunc: func(ctx context.Context, req *AuthorizationRequest) (*AuthorizationDecision, error) {
-				if req.Action == ActionAdmin {
-					return &AuthorizationDecision{
-						Allowed: false,
-						Reason:  "admin access denied",
-					}, nil
-				}
-				return &AuthorizationDecision{Allowed: true}, nil
-			},
-		}
-
-		// Test allowed
-		req := &AuthorizationRequest{
-			Subject:  Subject{ID: "user-1"},
-			Resource: ResourceKeys,
-			Action:   ActionRead,
-		}
-		decision, err := provider.Authorize(context.Background(), req)
-		require.NoError(t, err)
-		assert.True(t, decision.Allowed)
-
-		// Test denied
-		req.Action = ActionAdmin
-		decision, err = provider.Authorize(context.Background(), req)
-		require.NoError(t, err)
-		assert.False(t, decision.Allowed)
-		assert.Equal(t, "admin access denied", decision.Reason)
-	})
-
-	t.Run("batch authorize", func(t *testing.T) {
-		provider := &mockAuthorizationProvider{providerType: "batch-test"}
-		reqs := []*AuthorizationRequest{
-			{Subject: Subject{ID: "user-1"}, Resource: ResourceKeys, Action: ActionRead},
-			{Subject: Subject{ID: "user-1"}, Resource: ResourceSecrets, Action: ActionWrite},
-			{Subject: Subject{ID: "user-1"}, Resource: ResourceCluster, Action: ActionAdmin},
-		}
-
-		decisions, err := provider.BatchAuthorize(context.Background(), reqs)
-		require.NoError(t, err)
-		require.Len(t, decisions, 3)
-		for _, d := range decisions {
-			assert.True(t, d.Allowed)
-			assert.Equal(t, "batch-test", d.Provider)
-		}
-	})
-
-	t.Run("get provider type", func(t *testing.T) {
-		provider := &mockAuthorizationProvider{providerType: "rbac"}
-		assert.Equal(t, "rbac", provider.GetProviderType())
-
-		provider2 := &mockAuthorizationProvider{}
-		assert.Equal(t, "mock", provider2.GetProviderType())
-	})
-
-	t.Run("close", func(t *testing.T) {
-		provider := &mockAuthorizationProvider{}
-		assert.False(t, provider.closed)
-
-		err := provider.Close()
-		require.NoError(t, err)
-		assert.True(t, provider.closed)
-	})
-}
 
 // TestPermissionWireValues pins the resource and action strings policies store.
 func TestPermissionWireValues(t *testing.T) {
@@ -218,35 +92,6 @@ func TestPermissionWireValues(t *testing.T) {
 	for _, tt := range tests {
 		assert.Equal(t, tt.want, tt.got)
 	}
-}
-
-
-// TestContextCancellation tests that providers respect context cancellation.
-func TestContextCancellation(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel() // Cancel immediately
-
-	provider := &mockAuthorizationProvider{
-		authorizeFunc: func(ctx context.Context, req *AuthorizationRequest) (*AuthorizationDecision, error) {
-			// Check if context is cancelled
-			select {
-			case <-ctx.Done():
-				return nil, ctx.Err()
-			default:
-				return &AuthorizationDecision{Allowed: true}, nil
-			}
-		},
-	}
-
-	req := &AuthorizationRequest{
-		Subject:  Subject{ID: "user-1"},
-		Resource: ResourceKeys,
-		Action:   ActionRead,
-	}
-
-	_, err := provider.Authorize(ctx, req)
-	assert.Error(t, err)
-	assert.Equal(t, context.Canceled, err)
 }
 
 
@@ -371,7 +216,6 @@ func TestMatchesVectorNamespace(t *testing.T) {
 		})
 	}
 }
-
 
 // TestObjectBucketResource tests the ObjectBucketResource function.
 func TestObjectBucketResource(t *testing.T) {
@@ -501,8 +345,6 @@ func TestMatchesObjectBucket(t *testing.T) {
 		})
 	}
 }
-
-
 
 // TestParameterPathResource tests the ParameterPathResource function.
 func TestParameterPathResource(t *testing.T) {
@@ -643,40 +485,3 @@ func TestMatchesParameterPath(t *testing.T) {
 	}
 }
 
-
-
-
-// TestBatchAuthorizeWithCustomFunction tests BatchAuthorize with a custom function.
-func TestBatchAuthorizeWithCustomFunction(t *testing.T) {
-	provider := &mockAuthorizationProvider{
-		batchAuthorizeFunc: func(ctx context.Context, reqs []*AuthorizationRequest) ([]*AuthorizationDecision, error) {
-			decisions := make([]*AuthorizationDecision, len(reqs))
-			for i, req := range reqs {
-				allowed := req.Action != ActionAdmin
-				decisions[i] = &AuthorizationDecision{
-					Allowed:  allowed,
-					Provider: "custom-batch",
-				}
-				if !allowed {
-					decisions[i].Reason = "admin access denied in batch"
-				}
-			}
-			return decisions, nil
-		},
-	}
-
-	reqs := []*AuthorizationRequest{
-		{Subject: Subject{ID: "user-1"}, Resource: ResourceKeys, Action: ActionRead},
-		{Subject: Subject{ID: "user-1"}, Resource: ResourceCluster, Action: ActionAdmin},
-		{Subject: Subject{ID: "user-1"}, Resource: ResourceSecrets, Action: ActionWrite},
-	}
-
-	decisions, err := provider.BatchAuthorize(context.Background(), reqs)
-	require.NoError(t, err)
-	require.Len(t, decisions, 3)
-
-	assert.True(t, decisions[0].Allowed)
-	assert.False(t, decisions[1].Allowed)
-	assert.Equal(t, "admin access denied in batch", decisions[1].Reason)
-	assert.True(t, decisions[2].Allowed)
-}
