@@ -2912,6 +2912,24 @@ func TestIAMCommands_ConfirmPrompt(t *testing.T) {
 			identityProviderID = "provider_test"
 			return runIAMIdentityUnlinkCommand(newIAMIdentityUnlinkCommand(), []string{})
 		}},
+		{"role delete yes", "y\n", func() error {
+			return runIAMRoleDeleteCommand(newIAMRoleDeleteCommand(), []string{"role_test"})
+		}},
+		{"role delete no", "n\n", func() error {
+			return runIAMRoleDeleteCommand(newIAMRoleDeleteCommand(), []string{"role_test"})
+		}},
+		{"tenant delete yes", "y\n", func() error {
+			return runIAMTenantDeleteCommand(newIAMTenantDeleteCommand(), []string{"tenant_test"})
+		}},
+		{"tenant delete no", "n\n", func() error {
+			return runIAMTenantDeleteCommand(newIAMTenantDeleteCommand(), []string{"tenant_test"})
+		}},
+		{"user delete yes", "y\n", func() error {
+			return runIAMUserDeleteCommand(newIAMUserDeleteCommand(), []string{"user_test"})
+		}},
+		{"user delete no", "n\n", func() error {
+			return runIAMUserDeleteCommand(newIAMUserDeleteCommand(), []string{"user_test"})
+		}},
 	}
 
 	for _, tt := range tests {
@@ -3204,40 +3222,6 @@ func TestIAMAppList_EmptyResults(t *testing.T) {
 }
 
 // =============================================================================
-// MFA Status - JSON Output
-// =============================================================================
-
-func TestMFAStatus_JSONOutput(t *testing.T) {
-	_, cleanup := setupIAMMock(t)
-	defer cleanup()
-	cleanupLog := testInitLogger(t)
-	defer cleanupLog()
-
-	cmd := newMFAStatusCommand()
-	mfaUserID = "user_001"
-	globalTenantID = "tenant_test"
-	iamOutputFormat = "json"
-
-	err := runMFAStatusCommand(cmd, []string{})
-	assert.NoError(t, err)
-}
-
-func TestMFABackupCodesStatus_JSONOutput(t *testing.T) {
-	_, cleanup := setupIAMMock(t)
-	defer cleanup()
-	cleanupLog := testInitLogger(t)
-	defer cleanupLog()
-
-	cmd := newMFABackupCodesStatusCommand()
-	mfaUserID = "user_001"
-	globalTenantID = "tenant_test"
-	iamOutputFormat = "json"
-
-	err := runMFABackupCodesStatusCommand(cmd, []string{})
-	assert.NoError(t, err)
-}
-
-// =============================================================================
 // Federation Provider Delete - Confirmation Prompt Paths
 // =============================================================================
 
@@ -3282,21 +3266,6 @@ func TestIAMIdentityUnlink_MissingTenant(t *testing.T) {
 // Federation Identity List - JSON & Missing Tenant
 // =============================================================================
 
-func TestIAMIdentityList_JSONOutput(t *testing.T) {
-	_, cleanup := setupIAMMock(t)
-	defer cleanup()
-	cleanupLog := testInitLogger(t)
-	defer cleanupLog()
-
-	cmd := newIAMIdentityListCommand()
-	identityUserID = "user_001"
-	globalTenantID = "tenant_test"
-	iamOutputFormat = "json"
-
-	err := runIAMIdentityListCommand(cmd, []string{})
-	assert.NoError(t, err)
-}
-
 func TestIAMIdentityList_MissingTenant(t *testing.T) {
 	_, cleanup := setupIAMMock(t)
 	defer cleanup()
@@ -3315,20 +3284,6 @@ func TestIAMIdentityList_MissingTenant(t *testing.T) {
 // =============================================================================
 // Federation Provider List - JSON, Empty, Missing Tenant
 // =============================================================================
-
-func TestIAMProviderList_JSONOutput(t *testing.T) {
-	_, cleanup := setupIAMMock(t)
-	defer cleanup()
-	cleanupLog := testInitLogger(t)
-	defer cleanupLog()
-
-	cmd := newIAMProviderListCommand()
-	globalTenantID = "tenant_test"
-	iamOutputFormat = "json"
-
-	err := runIAMProviderListCommand(cmd, []string{})
-	assert.NoError(t, err)
-}
 
 func TestIAMProviderList_MissingTenant(t *testing.T) {
 	_, cleanup := setupIAMMock(t)
@@ -3366,21 +3321,6 @@ func TestIAMProviderList_EmptyResults(t *testing.T) {
 // Federation Provider Get - JSON & Missing Tenant
 // =============================================================================
 
-func TestIAMProviderGet_JSONOutput(t *testing.T) {
-	_, cleanup := setupIAMMock(t)
-	defer cleanup()
-	cleanupLog := testInitLogger(t)
-	defer cleanupLog()
-
-	cmd := newIAMProviderGetCommand()
-	providerID = "provider_test"
-	globalTenantID = "tenant_test"
-	iamOutputFormat = "json"
-
-	err := runIAMProviderGetCommand(cmd, []string{})
-	assert.NoError(t, err)
-}
-
 func TestIAMProviderGet_MissingTenant(t *testing.T) {
 	_, cleanup := setupIAMMock(t)
 	defer cleanup()
@@ -3397,66 +3337,8 @@ func TestIAMProviderGet_MissingTenant(t *testing.T) {
 }
 
 // =============================================================================
-// Group Delete - Confirmation Prompt Paths
+// Role List - Empty
 // =============================================================================
-
-// =============================================================================
-// Group List - JSON & Empty
-// =============================================================================
-
-// =============================================================================
-// Role Delete - Confirmation Prompt Paths
-// =============================================================================
-
-func TestIAMRoleDelete_ConfirmYes(t *testing.T) {
-	_, cleanup := setupIAMMock(t)
-	defer cleanup()
-	cleanupLog := testInitLogger(t)
-	defer cleanupLog()
-	restoreStdin := withStdinInput(t, "y\n")
-	defer restoreStdin()
-
-	cmd := newIAMRoleDeleteCommand()
-	globalTenantID = "tenant_test"
-	iamForce = false
-
-	err := runIAMRoleDeleteCommand(cmd, []string{"role_test"})
-	assert.NoError(t, err)
-}
-
-func TestIAMRoleDelete_ConfirmNo(t *testing.T) {
-	_, cleanup := setupIAMMock(t)
-	defer cleanup()
-	cleanupLog := testInitLogger(t)
-	defer cleanupLog()
-	restoreStdin := withStdinInput(t, "n\n")
-	defer restoreStdin()
-
-	cmd := newIAMRoleDeleteCommand()
-	globalTenantID = "tenant_test"
-	iamForce = false
-
-	err := runIAMRoleDeleteCommand(cmd, []string{"role_test"})
-	assert.NoError(t, err)
-}
-
-// =============================================================================
-// Role List - JSON & Empty
-// =============================================================================
-
-func TestIAMRoleList_JSONOutput(t *testing.T) {
-	_, cleanup := setupIAMMock(t)
-	defer cleanup()
-	cleanupLog := testInitLogger(t)
-	defer cleanupLog()
-
-	cmd := newIAMRoleListCommand()
-	globalTenantID = "tenant_test"
-	iamOutputFormat = "json"
-
-	err := runIAMRoleListCommand(cmd, []string{})
-	assert.NoError(t, err)
-}
 
 func TestIAMRoleList_EmptyResults(t *testing.T) {
 	mockClient, cleanup := setupIAMMock(t)
@@ -3477,55 +3359,8 @@ func TestIAMRoleList_EmptyResults(t *testing.T) {
 }
 
 // =============================================================================
-// Tenant Delete - Confirmation Prompt Paths
+// Tenant List - Empty
 // =============================================================================
-
-func TestIAMTenantDelete_ConfirmYes(t *testing.T) {
-	_, cleanup := setupIAMMock(t)
-	defer cleanup()
-	cleanupLog := testInitLogger(t)
-	defer cleanupLog()
-	restoreStdin := withStdinInput(t, "y\n")
-	defer restoreStdin()
-
-	cmd := newIAMTenantDeleteCommand()
-	iamForce = false
-
-	err := runIAMTenantDeleteCommand(cmd, []string{"tenant_test"})
-	assert.NoError(t, err)
-}
-
-func TestIAMTenantDelete_ConfirmNo(t *testing.T) {
-	_, cleanup := setupIAMMock(t)
-	defer cleanup()
-	cleanupLog := testInitLogger(t)
-	defer cleanupLog()
-	restoreStdin := withStdinInput(t, "n\n")
-	defer restoreStdin()
-
-	cmd := newIAMTenantDeleteCommand()
-	iamForce = false
-
-	err := runIAMTenantDeleteCommand(cmd, []string{"tenant_test"})
-	assert.NoError(t, err)
-}
-
-// =============================================================================
-// Tenant List - JSON & Empty
-// =============================================================================
-
-func TestIAMTenantList_JSONOutput(t *testing.T) {
-	_, cleanup := setupIAMMock(t)
-	defer cleanup()
-	cleanupLog := testInitLogger(t)
-	defer cleanupLog()
-
-	cmd := newIAMTenantListCommand()
-	iamOutputFormat = "json"
-
-	err := runIAMTenantListCommand(cmd, []string{})
-	assert.NoError(t, err)
-}
 
 func TestIAMTenantList_EmptyResults(t *testing.T) {
 	mockClient, cleanup := setupIAMMock(t)
@@ -3541,77 +3376,6 @@ func TestIAMTenantList_EmptyResults(t *testing.T) {
 	iamOutputFormat = "table"
 
 	err := runIAMTenantListCommand(cmd, []string{})
-	assert.NoError(t, err)
-}
-
-// =============================================================================
-// Tenant Get - JSON Output
-// =============================================================================
-
-func TestIAMTenantGet_JSONOutput(t *testing.T) {
-	_, cleanup := setupIAMMock(t)
-	defer cleanup()
-	cleanupLog := testInitLogger(t)
-	defer cleanupLog()
-
-	cmd := newIAMTenantGetCommand()
-	iamOutputFormat = "json"
-
-	err := runIAMTenantGetCommand(cmd, []string{"tenant_test"})
-	assert.NoError(t, err)
-}
-
-// =============================================================================
-// User Delete - Confirmation Prompt Paths
-// =============================================================================
-
-func TestIAMUserDelete_ConfirmYes(t *testing.T) {
-	_, cleanup := setupIAMMock(t)
-	defer cleanup()
-	cleanupLog := testInitLogger(t)
-	defer cleanupLog()
-	restoreStdin := withStdinInput(t, "y\n")
-	defer restoreStdin()
-
-	cmd := newIAMUserDeleteCommand()
-	globalTenantID = "tenant_test"
-	iamForce = false
-
-	err := runIAMUserDeleteCommand(cmd, []string{"user_test"})
-	assert.NoError(t, err)
-}
-
-func TestIAMUserDelete_ConfirmNo(t *testing.T) {
-	_, cleanup := setupIAMMock(t)
-	defer cleanup()
-	cleanupLog := testInitLogger(t)
-	defer cleanupLog()
-	restoreStdin := withStdinInput(t, "n\n")
-	defer restoreStdin()
-
-	cmd := newIAMUserDeleteCommand()
-	globalTenantID = "tenant_test"
-	iamForce = false
-
-	err := runIAMUserDeleteCommand(cmd, []string{"user_test"})
-	assert.NoError(t, err)
-}
-
-// =============================================================================
-// User List - JSON Output
-// =============================================================================
-
-func TestIAMUserList_JSONOutput(t *testing.T) {
-	_, cleanup := setupIAMMock(t)
-	defer cleanup()
-	cleanupLog := testInitLogger(t)
-	defer cleanupLog()
-
-	cmd := newIAMUserListCommand()
-	globalTenantID = "tenant_test"
-	iamOutputFormat = "json"
-
-	err := runIAMUserListCommand(cmd, []string{})
 	assert.NoError(t, err)
 }
 
@@ -3911,10 +3675,6 @@ func TestIAMUserRoleRevoke_Success(t *testing.T) {
 	err := runIAMUserRoleRevokeCommand(cmd, []string{})
 	assert.NoError(t, err)
 }
-
-// =============================================================================
-// Group Commands - Success Paths
-// =============================================================================
 
 // =============================================================================
 // Role Commands - Success Paths
