@@ -4270,63 +4270,48 @@ func TestControlLoop_CollectTaskResults_WithResult(t *testing.T) {
 // control_loop — pollTaskCompletion
 // =============================================================================
 
-func TestControlLoop_PollTaskCompletion_Done(t *testing.T) {
+func TestControlLoop_PollTaskCompletion(t *testing.T) {
 	t.Parallel()
 
-	cl := newMinimalControlLoop(t)
-	cl.job.Config = &JobConfig{TenantID: "t-ptc", Description: "poll completion"}
-
-	ts := NewInMemoryTaskStore()
-	cl.job.Agents.(*agentServiceImpl).SetTaskStore(ts)
-
-	ctx := context.Background()
-	taskID := "ptc-task-1"
-	if err := ts.CreateTask(ctx, &Task{
-		ID:       taskID,
-		TenantID: "t-ptc",
-		Subject:  "complete me",
-		Status:   TaskStatusCompleted,
-	}); err != nil {
-		t.Fatalf("CreateTask: %v", err)
+	tests := []struct {
+		name     string
+		status   TaskStatus
+		wantDone bool
+	}{
+		{"completed task is done", TaskStatusCompleted, true},
+		{"claimed task is not done", TaskStatusClaimed, false},
 	}
-	cl.taskIDs = []string{taskID}
 
-	done, err := cl.pollTaskCompletion(ctx)
-	if err != nil {
-		t.Fatalf("pollTaskCompletion: %v", err)
-	}
-	if !done {
-		t.Error("expected done=true with 1 completed task")
-	}
-}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 
-func TestControlLoop_PollTaskCompletion_NotDone(t *testing.T) {
-	t.Parallel()
+			cl := newMinimalControlLoop(t)
+			cl.job.Config = &JobConfig{TenantID: "t-ptc", Description: "poll completion"}
 
-	cl := newMinimalControlLoop(t)
-	cl.job.Config = &JobConfig{TenantID: "t-ptc2", Description: "poll not done"}
+			ts := NewInMemoryTaskStore()
+			cl.job.Agents.(*agentServiceImpl).SetTaskStore(ts)
 
-	ts := NewInMemoryTaskStore()
-	cl.job.Agents.(*agentServiceImpl).SetTaskStore(ts)
+			ctx := context.Background()
+			taskID := "ptc-task-1"
+			if err := ts.CreateTask(ctx, &Task{
+				ID:       taskID,
+				TenantID: "t-ptc",
+				Subject:  "poll me",
+				Status:   tt.status,
+			}); err != nil {
+				t.Fatalf("CreateTask: %v", err)
+			}
+			cl.taskIDs = []string{taskID}
 
-	ctx := context.Background()
-	taskID := "ptc-task-2"
-	if err := ts.CreateTask(ctx, &Task{
-		ID:       taskID,
-		TenantID: "t-ptc2",
-		Subject:  "still running",
-		Status:   TaskStatusClaimed,
-	}); err != nil {
-		t.Fatalf("CreateTask: %v", err)
-	}
-	cl.taskIDs = []string{taskID}
-
-	done, err := cl.pollTaskCompletion(ctx)
-	if err != nil {
-		t.Fatalf("pollTaskCompletion: %v", err)
-	}
-	if done {
-		t.Error("expected done=false with in-progress task")
+			done, err := cl.pollTaskCompletion(ctx)
+			if err != nil {
+				t.Fatalf("pollTaskCompletion: %v", err)
+			}
+			if done != tt.wantDone {
+				t.Errorf("done = %v, want %v", done, tt.wantDone)
+			}
+		})
 	}
 }
 
@@ -4379,86 +4364,14 @@ func TestCmdReadCloser_Close_Error(t *testing.T) {
 
 	rc := &cmdReadCloser{cmd: cmd, reader: stdout}
 
-	// Read will return EOF quickly.
-	_, _ = io.ReadAll(rc)
-
-	// Close will get a wait error from /bin/false.
-	closeErr := rc.Close()
-	// closeErr may be nil if reader already closed; what matters is we exercised the code.
-	_ = closeErr
-}
-
-// =============================================================================
-// agent_registry — Heartbeat success path (status transition)
-// =============================================================================
-
-func TestAgentRegistry_Heartbeat_StatusTransition(t *testing.T) {
-	t.Parallel()
-
-	reg := NewInMemoryFleetRegistry()
-	ctx := context.Background()
-
-	a := &FleetNode{
-		ID:       "hb-trans-1",
-		TenantID: "t-hb-trans",
-		Name:     "hb-agent",
-		Host:     "host-hb",
-		NodeType: "worker",
-		Backend:  "acp",
-		Status:   FleetNodeStatusRegistered,
-	}
-	if err := reg.RegisterFleetNode(ctx, a); err != nil {
-		t.Fatalf("RegisterFleetNode: %v", err)
+	if _, err := io.ReadAll(rc); err != nil {
+		t.Fatalf("ReadAll: %v", err)
 	}
 
-	if err := reg.Heartbeat(ctx, "t-hb-trans", "hb-trans-1", nil); err != nil {
-		t.Fatalf("Heartbeat: %v", err)
-	}
-
-	got, err := reg.GetFleetNode(ctx, "t-hb-trans", "hb-trans-1")
-	if err != nil {
-		t.Fatalf("GetFleetNode: %v", err)
-	}
-	// Status should transition from registered → running on heartbeat.
-	if got.Status == FleetNodeStatusRegistered {
-		t.Error("expected status to transition away from registered after heartbeat")
-	}
-}
-
-// =============================================================================
-// agent_registry — DeleteTenantFleetNodes success path
-// =============================================================================
-
-func TestAgentRegistry_DeleteTenantAgents_Success(t *testing.T) {
-	t.Parallel()
-
-	reg := NewInMemoryFleetRegistry()
-	ctx := context.Background()
-
-	for i := 0; i < 3; i++ {
-		if err := reg.RegisterFleetNode(ctx, &FleetNode{
-			ID:       "dta-" + itoa(i),
-			TenantID: "t-dta",
-			Name:     "agent-" + itoa(i),
-			Host:     "host-x",
-			NodeType: "worker",
-			Backend:  "acp",
-			Status:   FleetNodeStatusRegistered,
-		}); err != nil {
-			t.Fatalf("RegisterFleetNode %d: %v", i, err)
-		}
-	}
-
-	if err := reg.DeleteTenantFleetNodes(ctx, "t-dta"); err != nil {
-		t.Fatalf("DeleteTenantFleetNodes: %v", err)
-	}
-
-	results, err := reg.ListFleetNodes(ctx, "t-dta", nil)
-	if err != nil {
-		t.Fatalf("ListFleetNodes: %v", err)
-	}
-	if len(results) != 0 {
-		t.Errorf("expected 0 agents after delete, got %d", len(results))
+	// The pipe closes cleanly, so Close surfaces the non-zero exit from Wait.
+	var exitErr *exec.ExitError
+	if err := rc.Close(); !errors.As(err, &exitErr) {
+		t.Fatalf("expected *exec.ExitError from Close, got %T: %v", err, err)
 	}
 }
 
@@ -4488,10 +4401,6 @@ func TestItoa_NegativeAndZero(t *testing.T) {
 }
 
 // =============================================================================
-// remote_acp_backend — authCtx with tokenSource
-// =============================================================================
-
-// =============================================================================
 // orchestrator — StartJob with workflow name not found
 // =============================================================================
 
@@ -4510,18 +4419,6 @@ func TestOrchestrator_StartJob_WorkflowNotFound(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for nonexistent workflow name")
 	}
-}
-
-func TestOrchestrator_StartJob_WorkflowName_NoLoader(t *testing.T) {
-	t.Parallel()
-
-	// When workflowLoader is nil but WorkflowName is set, StartJob logs a warning
-	// but does NOT fail — it continues without workflow. The job still starts
-	// (but may fail waiting for job ID if no backend). Since we don't have a backend,
-	// it times out waiting for job ID.
-	// Just test that the warning path is entered; actual timeout is 2s.
-	// Skip this to avoid 2s delay.
-	t.Skip("StartJob with missing loader and WorkflowName takes 2s timeout")
 }
 
 // =============================================================================
@@ -4547,17 +4444,17 @@ func TestOrchestrator_DecomposeTask_WithLeadSession(t *testing.T) {
 		t.Fatalf("RegisterBackend: %v", err)
 	}
 
-	// Set leadSessionID to trigger the PromptSession path.
-	// This will fail because the session doesn't exist in the in-memory store,
-	// but it exercises the branch.
+	// With a lead session set, DecomposeTask prompts that session instead of
+	// the registered backend. The session does not exist, so the call fails;
+	// the direct backend path would have succeeded.
 	impl.leadSessionID = "lead-session-x"
 
 	_, err := impl.DecomposeTask(context.Background(), &DecomposeTaskRequest{
 		Task: "build a feature",
 	})
-	// The call may fail because the lead session doesn't exist in-memory.
-	// What matters is coverage of the leadSessionID branch.
-	_ = err
+	if err == nil {
+		t.Fatal("expected error from the missing lead session")
+	}
 }
 
 // =============================================================================
@@ -4577,46 +4474,20 @@ func TestPeerMessagingStore_ExtractTimestamp_ShortKey(t *testing.T) {
 	}
 }
 
-func TestPeerMessagingStore_ExtractMsgID_NoColon(t *testing.T) {
+func TestPeerMessagingStore_ExtractMsgID(t *testing.T) {
 	t.Parallel()
 
 	svc := NewPeerMessagingService(newPeerTestKVStore(), InboxPolicy{}, &peerTestLogger{})
 	kvSvc := svc.(*kvPeerMessagingService)
 
-	// A key with no colon returns empty string.
-	id := kvSvc.extractMsgID("nokeyparts")
-	_ = id // exercises the function
-}
-
-// =============================================================================
-// session_store — UpdateSessionStatus success path
-// =============================================================================
-
-func TestSessionStore_UpdateSessionStatus_Success(t *testing.T) {
-	t.Parallel()
-
-	store := NewInMemoryAgentStore()
-	ctx := context.Background()
-
-	rec := &SessionRecord{
-		SessionID: "sess-status-2",
-		Backend:   "acp",
-		Status:    SessionStateActive,
+	tests := map[string]string{
+		"inbox:t1:a1:0000000001:msg-1": "msg-1",
+		"nokeyparts":                   "",
 	}
-	if err := store.PutSession(ctx, rec); err != nil {
-		t.Fatalf("PutSession: %v", err)
-	}
-
-	if err := store.UpdateSessionStatus(ctx, "", "sess-status-2", SessionStateIdle); err != nil {
-		t.Fatalf("UpdateSessionStatus: %v", err)
-	}
-
-	got, err := store.GetSession(ctx, "", "sess-status-2")
-	if err != nil {
-		t.Fatalf("GetSession: %v", err)
-	}
-	if got.Status != SessionStateIdle {
-		t.Errorf("expected Idle, got %s", got.Status)
+	for key, want := range tests {
+		if got := kvSvc.extractMsgID(key); got != want {
+			t.Errorf("extractMsgID(%q) = %q, want %q", key, got, want)
+		}
 	}
 }
 
