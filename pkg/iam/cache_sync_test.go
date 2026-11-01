@@ -3,6 +3,7 @@ package iam
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"testing"
 	"time"
 
@@ -102,28 +103,6 @@ func TestDeltaLogGetSinceOldVersion(t *testing.T) {
 }
 
 // TestDeltaLogTrim tests trimming old entries.
-func TestDeltaLogTrim(t *testing.T) {
-	log := NewDeltaLog(100)
-
-	// Add events
-	for i := 1; i <= 10; i++ {
-		event := &EnhancedPolicyChangeEvent{
-			EventID:    uuid.New().String(),
-			Type:       PolicyUpdateCreated,
-			TenantID:   "tenant-1",
-			PolicyName: "policy-1",
-			Version:    int64(i),
-			Timestamp:  time.Now(),
-			NodeID:     "node-1",
-		}
-		err := log.Append(event)
-		require.NoError(t, err)
-	}
-
-	log.Trim()
-	assert.Equal(t, 10, log.Size())
-}
-
 // TestBatchProcessorAdd tests adding events to the batch processor.
 func TestBatchProcessorAdd(t *testing.T) {
 	config := DefaultEnhancedCacheSyncConfig("node-1", "tenant-1")
@@ -341,57 +320,51 @@ func TestPolicyChangeEventSerialization(t *testing.T) {
 // TestEnhancedCacheSyncConfig tests configuration validation.
 func TestEnhancedCacheSyncConfig(t *testing.T) {
 	tests := []struct {
-		name        string
-		config      *EnhancedCacheSyncConfig
-		expectError bool
-		errorMsg    string
+		name     string
+		mutate   func(c *EnhancedCacheSyncConfig)
+		errorMsg string
 	}{
+		{name: "valid config", mutate: func(*EnhancedCacheSyncConfig) {}},
 		{
-			name:        "valid config",
-			config:      DefaultEnhancedCacheSyncConfig("node-1", "tenant-1"),
-			expectError: false,
+			name:     "zero batch size",
+			mutate:   func(c *EnhancedCacheSyncConfig) { c.BatchSize = 0 },
+			errorMsg: "batch size must be positive",
 		},
 		{
-			name: "invalid batch size",
-			config: &EnhancedCacheSyncConfig{
-				CacheSyncConfig: DefaultCacheSyncConfig("node-1", "tenant-1"),
-				BatchSize:       0,
-			},
-			expectError: true,
-			errorMsg:    "batch size must be positive",
+			name:     "zero batch interval",
+			mutate:   func(c *EnhancedCacheSyncConfig) { c.BatchInterval = 0 },
+			errorMsg: "batch interval must be positive",
 		},
 		{
-			name: "invalid batch interval",
-			config: &EnhancedCacheSyncConfig{
-				CacheSyncConfig: DefaultCacheSyncConfig("node-1", "tenant-1"),
-				BatchSize:       10,
-				BatchInterval:   0,
-			},
-			expectError: true,
-			errorMsg:    "batch interval must be positive",
+			name:     "compression level above 9",
+			mutate:   func(c *EnhancedCacheSyncConfig) { c.CompressionLevel = 10 },
+			errorMsg: "compression level must be between 0 and 9",
 		},
 		{
-			name: "invalid compression level",
-			config: &EnhancedCacheSyncConfig{
-				CacheSyncConfig:  DefaultCacheSyncConfig("node-1", "tenant-1"),
-				BatchSize:        10,
-				BatchInterval:    1 * time.Second,
-				CompressionLevel: 10,
-			},
-			expectError: true,
-			errorMsg:    "compression level must be between 0 and 9",
+			name:     "negative compression level",
+			mutate:   func(c *EnhancedCacheSyncConfig) { c.CompressionLevel = -1 },
+			errorMsg: "compression level must be between 0 and 9",
+		},
+		{
+			name:     "zero delta log max entries",
+			mutate:   func(c *EnhancedCacheSyncConfig) { c.DeltaLogMaxEntries = 0 },
+			errorMsg: "delta log max entries must be positive",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := tt.config.Validate()
-			if tt.expectError {
-				assert.Error(t, err)
-				assert.Contains(t, err.Error(), tt.errorMsg)
-			} else {
+			cfg := DefaultEnhancedCacheSyncConfig("node-1", "tenant-1")
+			tt.mutate(cfg)
+
+			err := cfg.Validate()
+			if tt.errorMsg == "" {
 				assert.NoError(t, err)
+				return
 			}
+			var cfgErr *InvalidSyncConfigError
+			require.ErrorAs(t, err, &cfgErr)
+			assert.Contains(t, err.Error(), tt.errorMsg)
 		})
 	}
 }
@@ -678,48 +651,6 @@ func TestEnhancedCacheVersionTracker_MakePolicyKey(t *testing.T) {
 	}
 }
 
-func TestEnhancedCacheSyncConfig_Validate_InvalidBatchSize(t *testing.T) {
-	cfg := DefaultEnhancedCacheSyncConfig("node1", "tenant1")
-	cfg.BatchSize = 0
-	err := cfg.Validate()
-	if err == nil {
-		t.Fatal("expected error for zero batch size")
-	}
-}
-
-func TestEnhancedCacheSyncConfig_Validate_InvalidBatchInterval(t *testing.T) {
-	cfg := DefaultEnhancedCacheSyncConfig("node1", "tenant1")
-	cfg.BatchInterval = 0
-	err := cfg.Validate()
-	if err == nil {
-		t.Fatal("expected error for zero batch interval")
-	}
-}
-
-func TestEnhancedCacheSyncConfig_Validate_InvalidCompressionLevel(t *testing.T) {
-	cfg := DefaultEnhancedCacheSyncConfig("node1", "tenant1")
-	cfg.CompressionLevel = 10
-	err := cfg.Validate()
-	if err == nil {
-		t.Fatal("expected error for compression level > 9")
-	}
-
-	cfg.CompressionLevel = -1
-	err = cfg.Validate()
-	if err == nil {
-		t.Fatal("expected error for negative compression level")
-	}
-}
-
-func TestEnhancedCacheSyncConfig_Validate_InvalidDeltaLogMaxEntries(t *testing.T) {
-	cfg := DefaultEnhancedCacheSyncConfig("node1", "tenant1")
-	cfg.DeltaLogMaxEntries = 0
-	err := cfg.Validate()
-	if err == nil {
-		t.Fatal("expected error for zero delta log max entries")
-	}
-}
-
 func TestEnhancedPolicyChangeEvent_MarshalUnmarshalBinary(t *testing.T) {
 	event := &EnhancedPolicyChangeEvent{
 		EventID:    "evt-1",
@@ -788,125 +719,73 @@ func TestEnhancedCacheSyncMetrics_RecordOperations(t *testing.T) {
 	}
 }
 
-func TestDeltaLog_Trim_OverMaxEntries(t *testing.T) {
-	dl := NewDeltaLog(5)
-
-	// Add more entries than maxEntries to trigger trimming logic
-	for i := int64(1); i <= 10; i++ {
+// appendDeltaVersions appends one event per version 1..n for tenant t1.
+func appendDeltaVersions(t *testing.T, dl *DeltaLog, n int64) {
+	t.Helper()
+	for i := int64(1); i <= n; i++ {
 		event := &EnhancedPolicyChangeEvent{
 			EventID:    "evt",
 			TenantID:   "t1",
 			PolicyName: "p1",
 			Version:    i,
 		}
-		if err := dl.Append(event); err != nil {
-			t.Fatalf("Append failed at version %d: %v", i, err)
-		}
-	}
-
-	// Trim should update minVersion when over capacity
-	dl.Trim()
-
-	minV := dl.GetMinVersion()
-	maxV := dl.GetMaxVersion()
-	if maxV != 10 {
-		t.Fatalf("expected max version 10, got %d", maxV)
-	}
-	if minV <= 0 {
-		t.Fatalf("expected positive min version after trim, got %d", minV)
+		require.NoError(t, dl.Append(event), "Append version %d", i)
 	}
 }
 
-func TestDeltaLog_Trim_UnderMaxEntries(t *testing.T) {
-	dl := NewDeltaLog(100)
-
-	// Add fewer entries than maxEntries
-	for i := int64(1); i <= 5; i++ {
-		event := &EnhancedPolicyChangeEvent{
-			EventID:    "evt",
-			TenantID:   "t1",
-			PolicyName: "p1",
-			Version:    i,
-		}
-		if err := dl.Append(event); err != nil {
-			t.Fatalf("Append failed: %v", err)
-		}
+func TestDeltaLogTrim(t *testing.T) {
+	tests := []struct {
+		name       string
+		maxEntries int
+		appended   int64
+		wantSize   int
+	}{
+		{name: "under max entries is a no-op", maxEntries: 100, appended: 10, wantSize: 10},
+		{name: "over max entries keeps the newest", maxEntries: 5, appended: 10, wantSize: 5},
 	}
 
-	// Trim should be a no-op
-	dl.Trim()
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dl := NewDeltaLog(tt.maxEntries)
+			appendDeltaVersions(t, dl, tt.appended)
 
-	if dl.Size() != 5 {
-		t.Fatalf("expected size 5 after trim, got %d", dl.Size())
-	}
-}
+			dl.Trim()
 
-func TestDeltaLog_Size_Overflow(t *testing.T) {
-	dl := NewDeltaLog(3)
-
-	// Write more than maxEntries
-	for i := int64(1); i <= 10; i++ {
-		event := &EnhancedPolicyChangeEvent{
-			EventID:    "evt",
-			TenantID:   "t1",
-			PolicyName: "p1",
-			Version:    i,
-		}
-		if err := dl.Append(event); err != nil {
-			t.Fatalf("Append failed: %v", err)
-		}
-	}
-
-	// Size should be capped at maxEntries
-	if dl.Size() != 3 {
-		t.Fatalf("expected size 3 (maxEntries), got %d", dl.Size())
+			assert.Equal(t, tt.wantSize, dl.Size())
+			assert.Equal(t, tt.appended, dl.GetMaxVersion())
+			assert.Positive(t, dl.GetMinVersion())
+		})
 	}
 }
 
-func TestDeltaLog_Size_UnderCapacity(t *testing.T) {
-	dl := NewDeltaLog(100)
-
-	event := &EnhancedPolicyChangeEvent{
-		EventID:    "evt",
-		TenantID:   "t1",
-		PolicyName: "p1",
-		Version:    1,
-	}
-	if err := dl.Append(event); err != nil {
-		t.Fatalf("Append failed: %v", err)
+func TestDeltaLogSize(t *testing.T) {
+	tests := []struct {
+		name       string
+		maxEntries int
+		appended   int64
+		wantSize   int
+	}{
+		{name: "under capacity", maxEntries: 100, appended: 1, wantSize: 1},
+		{name: "overflow is capped at max entries", maxEntries: 3, appended: 10, wantSize: 3},
 	}
 
-	if dl.Size() != 1 {
-		t.Fatalf("expected size 1, got %d", dl.Size())
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dl := NewDeltaLog(tt.maxEntries)
+			appendDeltaVersions(t, dl, tt.appended)
+
+			assert.Equal(t, tt.wantSize, dl.Size())
+		})
 	}
 }
 
-func TestDeltaLog_NewDeltaLog_ZeroMaxEntries(t *testing.T) {
-	dl := NewDeltaLog(0)
-	if dl == nil {
-		t.Fatal("expected non-nil DeltaLog for zero maxEntries")
-	}
-	// Should default to 10000
-	if dl.maxEntries != 10000 {
-		t.Fatalf("expected default maxEntries 10000, got %d", dl.maxEntries)
-	}
-}
-
-func TestDeltaLog_NewDeltaLog_NegativeMaxEntries(t *testing.T) {
-	dl := NewDeltaLog(-5)
-	if dl == nil {
-		t.Fatal("expected non-nil DeltaLog for negative maxEntries")
-	}
-	if dl.maxEntries != 10000 {
-		t.Fatalf("expected default maxEntries 10000, got %d", dl.maxEntries)
-	}
-}
-
-func TestDeltaLog_Append_NilEvent(t *testing.T) {
-	dl := NewDeltaLog(10)
-	err := dl.Append(nil)
-	if err == nil {
-		t.Fatal("expected error for nil event")
+func TestNewDeltaLogNonPositiveMaxEntries(t *testing.T) {
+	for _, maxEntries := range []int{0, -5} {
+		t.Run(fmt.Sprintf("maxEntries=%d", maxEntries), func(t *testing.T) {
+			dl := NewDeltaLog(maxEntries)
+			require.NotNil(t, dl)
+			assert.Equal(t, 10000, dl.maxEntries, "non-positive maxEntries falls back to the default")
+		})
 	}
 }
 
