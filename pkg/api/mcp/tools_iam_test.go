@@ -1150,33 +1150,28 @@ func newMFATestRegistry(mfaMgr service.MFAManager) *ToolRegistry {
 }
 
 // =============================================================================
-// MFA Error Type Tests
+// MFA and PEP Error Type Tests
 // =============================================================================
 
-func TestMFAServiceUnavailableError(t *testing.T) {
-	err := &MFAServiceUnavailableError{Reason: "not configured"}
-	assert.Contains(t, err.Error(), "MFA service unavailable")
-	assert.Contains(t, err.Error(), "not configured")
-}
+func TestMFAAndPEPErrorMessages(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+		want []string
+	}{
+		{"mfa service unavailable", &MFAServiceUnavailableError{Reason: "not configured"}, []string{"MFA service unavailable", "not configured"}},
+		{"mfa invalid input", &MFAInvalidInputError{Field: "user_id", Message: "required"}, []string{"MFA invalid input", "user_id", "required"}},
+		{"pep service unavailable", &PEPServiceUnavailableError{Reason: "not supported"}, []string{"PEP service unavailable", "not supported"}},
+		{"pep invalid input", &PEPInvalidInputError{Field: "action", Message: "is required"}, []string{"PEP invalid input", "action", "is required"}},
+	}
 
-func TestMFAInvalidInputError(t *testing.T) {
-	err := &MFAInvalidInputError{Field: "user_id", Message: "required"}
-	assert.Contains(t, err.Error(), "MFA invalid input")
-	assert.Contains(t, err.Error(), "user_id")
-	assert.Contains(t, err.Error(), "required")
-}
-
-func TestPEPServiceUnavailableError(t *testing.T) {
-	err := &PEPServiceUnavailableError{Reason: "not supported"}
-	assert.Contains(t, err.Error(), "PEP service unavailable")
-	assert.Contains(t, err.Error(), "not supported")
-}
-
-func TestPEPInvalidInputError(t *testing.T) {
-	err := &PEPInvalidInputError{Field: "action", Message: "is required"}
-	assert.Contains(t, err.Error(), "PEP invalid input")
-	assert.Contains(t, err.Error(), "action")
-	assert.Contains(t, err.Error(), "is required")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			for _, want := range tt.want {
+				assert.Contains(t, tt.err.Error(), want)
+			}
+		})
+	}
 }
 
 // =============================================================================
@@ -1202,330 +1197,124 @@ func TestGetMFAManager_NilManager(t *testing.T) {
 	assert.Contains(t, err.Error(), "MFA")
 }
 
-func TestGetMFAManager_Success(t *testing.T) {
-	reg := newMFATestRegistry(&mockMFAManager{})
-
-	mgr, err := reg.getMFAManager(context.Background())
-	require.NoError(t, err)
-	require.NotNil(t, mgr)
-}
-
 // =============================================================================
-// MFA Enrollment Execution Tests
+// MFA Execution Tests
 // =============================================================================
 
-func TestExecuteMFABeginEnroll_Success(t *testing.T) {
-	reg := newMFATestRegistry(&mockMFAManager{})
-	ctx := tenantctx.WithTenant(context.Background(), "t1")
-
-	args := map[string]interface{}{
-		"user_id":   "30001",
-		"tenant_id": "t1",
-		"method":    "totp",
-	}
-
-	result, err := reg.executeMFABeginEnroll(ctx, args)
-	require.NoError(t, err)
-	require.NotNil(t, result)
-}
-
-func TestExecuteMFABeginEnroll_DefaultMethod(t *testing.T) {
-	reg := newMFATestRegistry(&mockMFAManager{})
-	ctx := tenantctx.WithTenant(context.Background(), "t1")
-
-	args := map[string]interface{}{
-		"user_id":   "30001",
-		"tenant_id": "t1",
-	}
-
-	result, err := reg.executeMFABeginEnroll(ctx, args)
-	require.NoError(t, err)
-	require.NotNil(t, result)
-}
-
-func TestExecuteMFABeginEnroll_MissingUserID(t *testing.T) {
-	reg := newMFATestRegistry(&mockMFAManager{})
-	args := map[string]interface{}{"tenant_id": "t1"}
-
-	_, err := reg.executeMFABeginEnroll(tenantctx.WithTenant(context.Background(), "t1"), args)
-	require.Error(t, err)
-	var inputErr *MFAInvalidInputError
-	assert.True(t, errors.As(err, &inputErr))
-	assert.Equal(t, "user_id", inputErr.Field)
-}
-
-func TestExecuteMFABeginEnroll_MissingTenantID(t *testing.T) {
-	reg := newMFATestRegistry(&mockMFAManager{})
-	args := map[string]interface{}{"user_id": "30001"}
-
-	_, err := reg.executeMFABeginEnroll(tenantctx.WithTenant(context.Background(), "t1"), args)
-	require.Error(t, err)
-	var inputErr *MFAInvalidInputError
-	assert.True(t, errors.As(err, &inputErr))
-	assert.Equal(t, "tenant_id", inputErr.Field)
-}
-
-func TestExecuteMFACompleteEnroll_Success(t *testing.T) {
-	reg := newMFATestRegistry(&mockMFAManager{})
-	args := map[string]interface{}{"enrollment_id": "e1", "code": "123456"}
-
-	result, err := reg.executeMFACompleteEnroll(tenantctx.WithTenant(context.Background(), "tenant-1"), args)
-	require.NoError(t, err)
-	require.NotNil(t, result)
-}
-
-func TestExecuteMFACompleteEnroll_MissingEnrollmentID(t *testing.T) {
-	reg := newMFATestRegistry(&mockMFAManager{})
-	args := map[string]interface{}{"code": "123456"}
-
-	_, err := reg.executeMFACompleteEnroll(context.Background(), args)
-	require.Error(t, err)
-	var inputErr *MFAInvalidInputError
-	assert.True(t, errors.As(err, &inputErr))
-	assert.Equal(t, "enrollment_id", inputErr.Field)
-}
-
-func TestExecuteMFACompleteEnroll_MissingCode(t *testing.T) {
-	reg := newMFATestRegistry(&mockMFAManager{})
-	args := map[string]interface{}{"enrollment_id": "e1"}
-
-	_, err := reg.executeMFACompleteEnroll(context.Background(), args)
-	require.Error(t, err)
-	var inputErr *MFAInvalidInputError
-	assert.True(t, errors.As(err, &inputErr))
-	assert.Equal(t, "code", inputErr.Field)
-}
-
-func TestExecuteMFACancelEnroll_Success(t *testing.T) {
-	reg := newMFATestRegistry(&mockMFAManager{})
-	args := map[string]interface{}{"enrollment_id": "e1"}
-
-	result, err := reg.executeMFACancelEnroll(tenantctx.WithTenant(context.Background(), "tenant-1"), args)
-	require.NoError(t, err)
-	require.NotNil(t, result)
-}
-
-func TestExecuteMFACancelEnroll_MissingEnrollmentID(t *testing.T) {
-	reg := newMFATestRegistry(&mockMFAManager{})
-	args := map[string]interface{}{}
-
-	_, err := reg.executeMFACancelEnroll(context.Background(), args)
-	require.Error(t, err)
-	var inputErr *MFAInvalidInputError
-	assert.True(t, errors.As(err, &inputErr))
-}
-
-// =============================================================================
-// MFA Status Tests
-// =============================================================================
-
-func TestExecuteMFAGetStatus_Success(t *testing.T) {
-	reg := newMFATestRegistry(&mockMFAManager{})
-	args := map[string]interface{}{"user_id": "30001", "tenant_id": "t1"}
-
-	result, err := reg.executeMFAGetStatus(tenantctx.WithTenant(context.Background(), "t1"), args)
-	require.NoError(t, err)
-	require.NotNil(t, result)
-}
-
-func TestExecuteMFAGetStatus_MissingUserID(t *testing.T) {
-	reg := newMFATestRegistry(&mockMFAManager{})
-	args := map[string]interface{}{"tenant_id": "t1"}
-
-	_, err := reg.executeMFAGetStatus(tenantctx.WithTenant(context.Background(), "t1"), args)
-	require.Error(t, err)
-}
-
-func TestExecuteMFAGetStatus_MissingTenantID(t *testing.T) {
-	reg := newMFATestRegistry(&mockMFAManager{})
-	args := map[string]interface{}{"user_id": "30001"}
-
-	_, err := reg.executeMFAGetStatus(tenantctx.WithTenant(context.Background(), "t1"), args)
-	require.Error(t, err)
-}
-
-func TestExecuteMFADisable_Success(t *testing.T) {
-	reg := newMFATestRegistry(&mockMFAManager{})
-	args := map[string]interface{}{"user_id": "30001", "tenant_id": "t1"}
-
-	result, err := reg.executeMFADisable(tenantctx.WithTenant(context.Background(), "t1"), args)
-	require.NoError(t, err)
-	require.NotNil(t, result)
-}
-
-func TestExecuteMFADisable_MissingFields(t *testing.T) {
-	reg := newMFATestRegistry(&mockMFAManager{})
-
-	t.Run("missing_user_id", func(t *testing.T) {
-		_, err := reg.executeMFADisable(tenantctx.WithTenant(context.Background(), "t1"), map[string]interface{}{"tenant_id": "t1"})
-		require.Error(t, err)
-	})
-	t.Run("missing_tenant_id", func(t *testing.T) {
-		_, err := reg.executeMFADisable(tenantctx.WithTenant(context.Background(), "t1"), map[string]interface{}{"user_id": "30001"})
-		require.Error(t, err)
-	})
-}
-
-// =============================================================================
-// MFA Challenge Tests
-// =============================================================================
-
-func TestExecuteMFABeginChallenge_Success(t *testing.T) {
-	reg := newMFATestRegistry(&mockMFAManager{})
-	args := map[string]interface{}{"user_id": "30001", "tenant_id": "t1", "session_token": "tok"}
-
-	result, err := reg.executeMFABeginChallenge(tenantctx.WithTenant(context.Background(), "t1"), args)
-	require.NoError(t, err)
-	require.NotNil(t, result)
-}
-
-func TestExecuteMFABeginChallenge_MissingFields(t *testing.T) {
+func TestExecuteMFATools_Success(t *testing.T) {
 	reg := newMFATestRegistry(&mockMFAManager{})
 
 	tests := []struct {
-		name  string
-		args  map[string]interface{}
-		field string
+		name    string
+		tenant  string
+		execute func(context.Context, map[string]interface{}) (interface{}, error)
+		args    map[string]interface{}
 	}{
-		{"missing_user_id", map[string]interface{}{"tenant_id": "t1", "session_token": "tok"}, "user_id"},
-		{"missing_tenant_id", map[string]interface{}{"user_id": "30001", "session_token": "tok"}, "tenant_id"},
-		{"missing_session_token", map[string]interface{}{"user_id": "30001", "tenant_id": "t1"}, "session_token"},
+		{"begin enroll", "t1", reg.executeMFABeginEnroll, map[string]interface{}{"user_id": "30001", "tenant_id": "t1", "method": "totp"}},
+		{"begin enroll with default method", "t1", reg.executeMFABeginEnroll, map[string]interface{}{"user_id": "30001", "tenant_id": "t1"}},
+		{"complete enroll", "tenant-1", reg.executeMFACompleteEnroll, map[string]interface{}{"enrollment_id": "e1", "code": "123456"}},
+		{"cancel enroll", "tenant-1", reg.executeMFACancelEnroll, map[string]interface{}{"enrollment_id": "e1"}},
+		{"get status", "t1", reg.executeMFAGetStatus, map[string]interface{}{"user_id": "30001", "tenant_id": "t1"}},
+		{"disable", "t1", reg.executeMFADisable, map[string]interface{}{"user_id": "30001", "tenant_id": "t1"}},
+		{"begin challenge", "t1", reg.executeMFABeginChallenge, map[string]interface{}{"user_id": "30001", "tenant_id": "t1", "session_token": "tok"}},
+		{"verify challenge", "tenant-1", reg.executeMFAVerifyChallenge, map[string]interface{}{"challenge_id": "chal-1", "code": "123456"}},
+		{"generate backup codes", "t1", reg.executeMFAGenerateBackupCodes, map[string]interface{}{"user_id": "30001", "tenant_id": "t1"}},
+		{"verify backup code", "t1", reg.executeMFAVerifyBackupCode, map[string]interface{}{"user_id": "30001", "tenant_id": "t1", "code": "backup-code-1"}},
+		{"get backup code status", "t1", reg.executeMFAGetBackupCodeStatus, map[string]interface{}{"user_id": "30001", "tenant_id": "t1"}},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, err := reg.executeMFABeginChallenge(tenantctx.WithTenant(context.Background(), "t1"), tt.args)
-			require.Error(t, err)
-			var inputErr *MFAInvalidInputError
-			assert.True(t, errors.As(err, &inputErr))
-			assert.Equal(t, tt.field, inputErr.Field)
+			result, err := tt.execute(tenantctx.WithTenant(context.Background(), tt.tenant), tt.args)
+			require.NoError(t, err)
+			require.NotNil(t, result)
 		})
 	}
 }
 
-func TestExecuteMFAVerifyChallenge_Success(t *testing.T) {
-	reg := newMFATestRegistry(&mockMFAManager{})
-	args := map[string]interface{}{"challenge_id": "chal-1", "code": "123456"}
-
-	result, err := reg.executeMFAVerifyChallenge(tenantctx.WithTenant(context.Background(), "tenant-1"), args)
-	require.NoError(t, err)
-	require.NotNil(t, result)
-}
-
-func TestExecuteMFAVerifyChallenge_MissingFields(t *testing.T) {
-	reg := newMFATestRegistry(&mockMFAManager{})
-
-	t.Run("missing_challenge_id", func(t *testing.T) {
-		_, err := reg.executeMFAVerifyChallenge(context.Background(), map[string]interface{}{"code": "123456"})
-		require.Error(t, err)
-	})
-	t.Run("missing_code", func(t *testing.T) {
-		_, err := reg.executeMFAVerifyChallenge(context.Background(), map[string]interface{}{"challenge_id": "c1"})
-		require.Error(t, err)
-	})
-}
-
-// =============================================================================
-// MFA Backup Code Tests
-// =============================================================================
-
-func TestExecuteMFAGenerateBackupCodes_Success(t *testing.T) {
-	reg := newMFATestRegistry(&mockMFAManager{})
-	args := map[string]interface{}{"user_id": "30001", "tenant_id": "t1"}
-
-	result, err := reg.executeMFAGenerateBackupCodes(tenantctx.WithTenant(context.Background(), "t1"), args)
-	require.NoError(t, err)
-	require.NotNil(t, result)
-}
-
-func TestExecuteMFAGenerateBackupCodes_MissingFields(t *testing.T) {
-	reg := newMFATestRegistry(&mockMFAManager{})
-
-	t.Run("missing_user_id", func(t *testing.T) {
-		_, err := reg.executeMFAGenerateBackupCodes(tenantctx.WithTenant(context.Background(), "t1"), map[string]interface{}{"tenant_id": "t1"})
-		require.Error(t, err)
-	})
-	t.Run("missing_tenant_id", func(t *testing.T) {
-		_, err := reg.executeMFAGenerateBackupCodes(tenantctx.WithTenant(context.Background(), "t1"), map[string]interface{}{"user_id": "30001"})
-		require.Error(t, err)
-	})
-}
-
-func TestExecuteMFAVerifyBackupCode_Success(t *testing.T) {
-	reg := newMFATestRegistry(&mockMFAManager{})
-	args := map[string]interface{}{"user_id": "30001", "tenant_id": "t1", "code": "backup-code-1"}
-
-	result, err := reg.executeMFAVerifyBackupCode(tenantctx.WithTenant(context.Background(), "t1"), args)
-	require.NoError(t, err)
-	require.NotNil(t, result)
-}
-
-func TestExecuteMFAVerifyBackupCode_MissingFields(t *testing.T) {
+func TestExecuteMFATools_MissingRequiredField(t *testing.T) {
 	reg := newMFATestRegistry(&mockMFAManager{})
 
 	tests := []struct {
-		name  string
-		args  map[string]interface{}
-		field string
+		name    string
+		tenant  string
+		execute func(context.Context, map[string]interface{}) (interface{}, error)
+		args    map[string]interface{}
+		field   string
 	}{
-		{"missing_user_id", map[string]interface{}{"tenant_id": "t1", "code": "c"}, "user_id"},
-		{"missing_tenant_id", map[string]interface{}{"user_id": "30001", "code": "c"}, "tenant_id"},
-		{"missing_code", map[string]interface{}{"user_id": "30001", "tenant_id": "t1"}, "code"},
+		{"begin enroll without user_id", "t1", reg.executeMFABeginEnroll, map[string]interface{}{"tenant_id": "t1"}, "user_id"},
+		{"begin enroll without tenant_id", "t1", reg.executeMFABeginEnroll, map[string]interface{}{"user_id": "30001"}, "tenant_id"},
+		{"complete enroll without enrollment_id", "", reg.executeMFACompleteEnroll, map[string]interface{}{"code": "123456"}, "enrollment_id"},
+		{"complete enroll without code", "", reg.executeMFACompleteEnroll, map[string]interface{}{"enrollment_id": "e1"}, "code"},
+		{"cancel enroll without enrollment_id", "", reg.executeMFACancelEnroll, map[string]interface{}{}, "enrollment_id"},
+		{"get status without user_id", "t1", reg.executeMFAGetStatus, map[string]interface{}{"tenant_id": "t1"}, "user_id"},
+		{"get status without tenant_id", "t1", reg.executeMFAGetStatus, map[string]interface{}{"user_id": "30001"}, "tenant_id"},
+		{"disable without user_id", "t1", reg.executeMFADisable, map[string]interface{}{"tenant_id": "t1"}, "user_id"},
+		{"disable without tenant_id", "t1", reg.executeMFADisable, map[string]interface{}{"user_id": "30001"}, "tenant_id"},
+		{"begin challenge without user_id", "t1", reg.executeMFABeginChallenge, map[string]interface{}{"tenant_id": "t1", "session_token": "tok"}, "user_id"},
+		{"begin challenge without tenant_id", "t1", reg.executeMFABeginChallenge, map[string]interface{}{"user_id": "30001", "session_token": "tok"}, "tenant_id"},
+		{"begin challenge without session_token", "t1", reg.executeMFABeginChallenge, map[string]interface{}{"user_id": "30001", "tenant_id": "t1"}, "session_token"},
+		{"verify challenge without challenge_id", "", reg.executeMFAVerifyChallenge, map[string]interface{}{"code": "123456"}, "challenge_id"},
+		{"verify challenge without code", "", reg.executeMFAVerifyChallenge, map[string]interface{}{"challenge_id": "c1"}, "code"},
+		{"generate backup codes without user_id", "t1", reg.executeMFAGenerateBackupCodes, map[string]interface{}{"tenant_id": "t1"}, "user_id"},
+		{"generate backup codes without tenant_id", "t1", reg.executeMFAGenerateBackupCodes, map[string]interface{}{"user_id": "30001"}, "tenant_id"},
+		{"verify backup code without user_id", "t1", reg.executeMFAVerifyBackupCode, map[string]interface{}{"tenant_id": "t1", "code": "c"}, "user_id"},
+		{"verify backup code without tenant_id", "t1", reg.executeMFAVerifyBackupCode, map[string]interface{}{"user_id": "30001", "code": "c"}, "tenant_id"},
+		{"verify backup code without code", "t1", reg.executeMFAVerifyBackupCode, map[string]interface{}{"user_id": "30001", "tenant_id": "t1"}, "code"},
+		{"backup code status without user_id", "t1", reg.executeMFAGetBackupCodeStatus, map[string]interface{}{"tenant_id": "t1"}, "user_id"},
+		{"backup code status without tenant_id", "t1", reg.executeMFAGetBackupCodeStatus, map[string]interface{}{"user_id": "30001"}, "tenant_id"},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, err := reg.executeMFAVerifyBackupCode(tenantctx.WithTenant(context.Background(), "t1"), tt.args)
+			ctx := context.Background()
+			if tt.tenant != "" {
+				ctx = tenantctx.WithTenant(ctx, tt.tenant)
+			}
+			_, err := tt.execute(ctx, tt.args)
 			require.Error(t, err)
 			var inputErr *MFAInvalidInputError
-			assert.True(t, errors.As(err, &inputErr))
+			require.True(t, errors.As(err, &inputErr), "expected MFAInvalidInputError, got %T: %v", err, err)
 			assert.Equal(t, tt.field, inputErr.Field)
 		})
 	}
-}
-
-func TestExecuteMFAGetBackupCodeStatus_Success(t *testing.T) {
-	reg := newMFATestRegistry(&mockMFAManager{})
-	args := map[string]interface{}{"user_id": "30001", "tenant_id": "t1"}
-
-	result, err := reg.executeMFAGetBackupCodeStatus(tenantctx.WithTenant(context.Background(), "t1"), args)
-	require.NoError(t, err)
-	require.NotNil(t, result)
-}
-
-func TestExecuteMFAGetBackupCodeStatus_MissingFields(t *testing.T) {
-	reg := newMFATestRegistry(&mockMFAManager{})
-
-	t.Run("missing_user_id", func(t *testing.T) {
-		_, err := reg.executeMFAGetBackupCodeStatus(tenantctx.WithTenant(context.Background(), "t1"), map[string]interface{}{"tenant_id": "t1"})
-		require.Error(t, err)
-	})
-	t.Run("missing_tenant_id", func(t *testing.T) {
-		_, err := reg.executeMFAGetBackupCodeStatus(tenantctx.WithTenant(context.Background(), "t1"), map[string]interface{}{"user_id": "30001"})
-		require.Error(t, err)
-	})
 }
 
 // =============================================================================
 // PEP Tests
 // =============================================================================
 
-func TestExecutePEPCheck_ServiceNotSupported(t *testing.T) {
+func TestExecutePEPTools_ServiceNotSupported(t *testing.T) {
 	log, _ := logger.New(logger.LogConfig{Level: "error", Output: "stdout"})
 	// mockService does NOT implement pepServiceAccessor
 	reg := NewToolRegistry(&mockService{}, log)
 
-	args := map[string]interface{}{
-		"tenant_id": "t1",
-		"principal": "u1",
-		"action":    "read",
-		"resource":  "data",
+	tests := []struct {
+		name    string
+		execute func(context.Context, map[string]interface{}) (interface{}, error)
+		args    map[string]interface{}
+	}{
+		{"check", reg.executePEPCheck, map[string]interface{}{
+			"tenant_id": "t1",
+			"principal": "u1",
+			"action":    "read",
+			"resource":  "data",
+		}},
+		{"check batch", reg.executePEPCheckBatch, map[string]interface{}{
+			"checks": []interface{}{
+				map[string]interface{}{"tenant_id": "t1", "principal": "u1", "action": "read", "resource": "data"},
+			},
+		}},
 	}
 
-	_, err := reg.executePEPCheck(context.Background(), args)
-	require.Error(t, err)
-	var pepErr *PEPServiceUnavailableError
-	assert.True(t, errors.As(err, &pepErr))
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := tt.execute(context.Background(), tt.args)
+			require.Error(t, err)
+			var pepErr *PEPServiceUnavailableError
+			assert.True(t, errors.As(err, &pepErr))
+		})
+	}
 }
 
 func TestExecutePEPCheck_MissingFields(t *testing.T) {
@@ -1554,22 +1343,6 @@ func TestExecutePEPCheck_MissingFields(t *testing.T) {
 	}
 }
 
-func TestExecutePEPCheckBatch_ServiceNotSupported(t *testing.T) {
-	log, _ := logger.New(logger.LogConfig{Level: "error", Output: "stdout"})
-	reg := NewToolRegistry(&mockService{}, log)
-
-	args := map[string]interface{}{
-		"checks": []interface{}{
-			map[string]interface{}{"tenant_id": "t1", "principal": "u1", "action": "read", "resource": "data"},
-		},
-	}
-
-	_, err := reg.executePEPCheckBatch(context.Background(), args)
-	require.Error(t, err)
-	var pepErr *PEPServiceUnavailableError
-	assert.True(t, errors.As(err, &pepErr))
-}
-
 func TestExecutePEPCheckBatch_MissingChecksArray(t *testing.T) {
 	reg := newMFATestRegistry(&mockMFAManager{})
 
@@ -1582,79 +1355,47 @@ func TestExecutePEPCheckBatch_MissingChecksArray(t *testing.T) {
 // MFA Service Error Propagation Tests
 // =============================================================================
 
-func TestExecuteMFABeginEnroll_ServiceError(t *testing.T) {
-	testErr := errors.New("enrollment failed")
+func TestExecuteMFATools_ServiceError(t *testing.T) {
+	testErr := errors.New("mfa manager failed")
 	mfaMgr := &mockMFAManager{
 		beginEnrollFunc: func(_ context.Context, _ uint64, _ string, _ iam.MFAMethod) (*iam.MFAEnrollResponse, error) {
 			return nil, testErr
 		},
-	}
-	reg := newMFATestRegistry(mfaMgr)
-	args := map[string]interface{}{"user_id": "30001", "tenant_id": "t1"}
-
-	_, err := reg.executeMFABeginEnroll(tenantctx.WithTenant(context.Background(), "t1"), args)
-	require.Error(t, err)
-	assert.Equal(t, testErr, err)
-}
-
-func TestExecuteMFACompleteEnroll_ServiceError(t *testing.T) {
-	testErr := errors.New("invalid code")
-	mfaMgr := &mockMFAManager{
 		completeFunc: func(_ context.Context, _, _ string) error {
 			return testErr
 		},
-	}
-	reg := newMFATestRegistry(mfaMgr)
-	args := map[string]interface{}{"enrollment_id": "e1", "code": "wrong"}
-
-	_, err := reg.executeMFACompleteEnroll(tenantctx.WithTenant(context.Background(), "tenant-1"), args)
-	require.Error(t, err)
-	assert.Equal(t, testErr, err)
-}
-
-func TestExecuteMFACancelEnroll_ServiceError(t *testing.T) {
-	testErr := errors.New("cancel failed")
-	mfaMgr := &mockMFAManager{
 		cancelFunc: func(_ context.Context, _ string) error {
 			return testErr
 		},
-	}
-	reg := newMFATestRegistry(mfaMgr)
-	args := map[string]interface{}{"enrollment_id": "e1"}
-
-	_, err := reg.executeMFACancelEnroll(tenantctx.WithTenant(context.Background(), "tenant-1"), args)
-	require.Error(t, err)
-	assert.Equal(t, testErr, err)
-}
-
-func TestExecuteMFAGetStatus_ServiceError(t *testing.T) {
-	testErr := errors.New("status retrieval failed")
-	mfaMgr := &mockMFAManager{
 		getStatusF: func(_ context.Context, _ uint64, _ string) (*iam.MFAStatus, error) {
 			return nil, testErr
 		},
-	}
-	reg := newMFATestRegistry(mfaMgr)
-	args := map[string]interface{}{"user_id": "30001", "tenant_id": "t1"}
-
-	_, err := reg.executeMFAGetStatus(tenantctx.WithTenant(context.Background(), "t1"), args)
-	require.Error(t, err)
-	assert.Equal(t, testErr, err)
-}
-
-func TestExecuteMFADisable_ServiceError(t *testing.T) {
-	testErr := errors.New("disable failed")
-	mfaMgr := &mockMFAManager{
 		disableF: func(_ context.Context, _ uint64, _ string) error {
 			return testErr
 		},
 	}
 	reg := newMFATestRegistry(mfaMgr)
-	args := map[string]interface{}{"user_id": "30001", "tenant_id": "t1"}
 
-	_, err := reg.executeMFADisable(tenantctx.WithTenant(context.Background(), "t1"), args)
-	require.Error(t, err)
-	assert.Equal(t, testErr, err)
+	tests := []struct {
+		name    string
+		tenant  string
+		execute func(context.Context, map[string]interface{}) (interface{}, error)
+		args    map[string]interface{}
+	}{
+		{"begin enroll", "t1", reg.executeMFABeginEnroll, map[string]interface{}{"user_id": "30001", "tenant_id": "t1"}},
+		{"complete enroll", "tenant-1", reg.executeMFACompleteEnroll, map[string]interface{}{"enrollment_id": "e1", "code": "wrong"}},
+		{"cancel enroll", "tenant-1", reg.executeMFACancelEnroll, map[string]interface{}{"enrollment_id": "e1"}},
+		{"get status", "t1", reg.executeMFAGetStatus, map[string]interface{}{"user_id": "30001", "tenant_id": "t1"}},
+		{"disable", "t1", reg.executeMFADisable, map[string]interface{}{"user_id": "30001", "tenant_id": "t1"}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := tt.execute(tenantctx.WithTenant(context.Background(), tt.tenant), tt.args)
+			require.Error(t, err)
+			assert.Equal(t, testErr, err)
+		})
+	}
 }
 
 // errIAMTest is a test error for IAM service failures.
