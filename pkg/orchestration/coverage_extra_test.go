@@ -208,8 +208,9 @@ func TestPeerMessaging_Poll_SkipsMalformedEntries(t *testing.T) {
 // -----------------------------------------------------------------------------
 
 // TestCostTracker_CollectAgentUsage_SkipsCorrupt covers collectAgentUsage's
-// corrupt-entry skip branch: a well-formed 8-byte counter is summed while a
-// short (corrupt) counter under the same job is skipped without failing.
+// skip branches: a well-formed 8-byte counter is summed, while a short
+// (corrupt) counter and a key with no agent segment under the same job are
+// skipped without failing.
 func TestCostTracker_CollectAgentUsage_SkipsCorrupt(t *testing.T) {
 	store := newPeerTestKVStore()
 	tracker := NewCostTracker(store, &peerTestLogger{}).(*kvCostTracker)
@@ -224,16 +225,17 @@ func TestCostTracker_CollectAgentUsage_SkipsCorrupt(t *testing.T) {
 	if err := store.Put(ctx, prefix+"agent-corrupt", []byte{0x01, 0x02}); err != nil {
 		t.Fatalf("put corrupt: %v", err)
 	}
+	// Key exactly equal to the prefix -> agentID == "" -> skipped.
+	if err := store.Put(ctx, prefix, int64ToBytes(7)); err != nil {
+		t.Fatalf("put empty-agent key: %v", err)
+	}
 
 	usage, err := tracker.collectAgentUsage(ctx, "t1", "job1")
 	if err != nil {
 		t.Fatalf("collectAgentUsage: %v", err)
 	}
-	if usage["agent-good"] != 42 {
-		t.Fatalf("want agent-good=42, got %d", usage["agent-good"])
-	}
-	if _, ok := usage["agent-corrupt"]; ok {
-		t.Fatal("corrupt entry must be skipped, not included")
+	if len(usage) != 1 || usage["agent-good"] != 42 {
+		t.Fatalf("expected only {agent-good:42}, got %+v", usage)
 	}
 }
 
@@ -585,31 +587,6 @@ func TestCostTracker_GetJobUsage_ReadCounterError(t *testing.T) {
 	var ure *UsageRetrievalError
 	if !errors.As(err, &ure) {
 		t.Fatalf("want *UsageRetrievalError, got %T: %v", err, err)
-	}
-}
-
-// TestCostTracker_CollectAgentUsage_SkipsEmptyAgentID covers the empty-agent-ID
-// skip branch: a key equal to the prefix (no agent segment) is ignored.
-func TestCostTracker_CollectAgentUsage_SkipsEmptyAgentID(t *testing.T) {
-	store := newPeerTestKVStore()
-	tracker := NewCostTracker(store, &peerTestLogger{}).(*kvCostTracker)
-	ctx := context.Background()
-
-	prefix := costKeyPrefix + "t1" + jobSegment + "job1" + agentSegment
-	// Key exactly equal to the prefix -> agentID == "" -> skipped.
-	if err := store.Put(ctx, prefix, int64ToBytes(7)); err != nil {
-		t.Fatalf("put empty-agent key: %v", err)
-	}
-	if err := store.Put(ctx, prefix+"real", int64ToBytes(9)); err != nil {
-		t.Fatalf("put real agent: %v", err)
-	}
-
-	usage, err := tracker.collectAgentUsage(ctx, "t1", "job1")
-	if err != nil {
-		t.Fatalf("collectAgentUsage: %v", err)
-	}
-	if len(usage) != 1 || usage["real"] != 9 {
-		t.Fatalf("expected only {real:9}, got %+v", usage)
 	}
 }
 
