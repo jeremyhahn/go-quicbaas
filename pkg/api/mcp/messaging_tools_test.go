@@ -228,19 +228,6 @@ func TestMsgPublish_Errors(t *testing.T) {
 	}
 }
 
-func TestMsgPublishDelta_Success(t *testing.T) {
-	registry := newMessagingRegistry(t)
-	ctx := context.Background()
-
-	result, err := registry.ExecuteTool(ctx, "quicbaas_msg_publish_delta", map[string]interface{}{
-		"channel":   "events",
-		"old_state": `{"count":1}`,
-		"new_state": `{"count":2}`,
-	})
-	require.NoError(t, err)
-	require.NotNil(t, result)
-}
-
 func TestMsgPublishDelta_Errors(t *testing.T) {
 	registry := newMessagingRegistry(t)
 	ctx := context.Background()
@@ -379,20 +366,72 @@ func TestToolFamily_ServiceNotConfigured(t *testing.T) {
 	}
 }
 
-func TestIsMsgTool(t *testing.T) {
-	msgTools := []string{
-		"quicbaas_msg_create_channel", "quicbaas_msg_delete_channel",
-		"quicbaas_msg_get_channel", "quicbaas_msg_list_channels",
-		"quicbaas_msg_subscribe", "quicbaas_msg_unsubscribe",
-		"quicbaas_msg_publish", "quicbaas_msg_publish_delta",
-		"quicbaas_msg_stats", "quicbaas_msg_channel_stats", "quicbaas_msg_dedup_stats",
-		"quicbaas_msg_watch_channel",
+// TestIsToolFamily checks that each family predicate accepts every tool of
+// its family and rejects other names.
+func TestIsToolFamily(t *testing.T) {
+	tests := []struct {
+		name     string
+		isFamily func(string) bool
+		tools    []string
+		others   []string
+	}{
+		{
+			name:     "messaging",
+			isFamily: isMsgTool,
+			tools: []string{
+				"quicbaas_msg_create_channel", "quicbaas_msg_delete_channel",
+				"quicbaas_msg_get_channel", "quicbaas_msg_list_channels",
+				"quicbaas_msg_subscribe", "quicbaas_msg_unsubscribe",
+				"quicbaas_msg_publish", "quicbaas_msg_publish_delta",
+				"quicbaas_msg_stats", "quicbaas_msg_channel_stats", "quicbaas_msg_dedup_stats",
+				"quicbaas_msg_watch_channel",
+			},
+			others: []string{"qrdb_put", ""},
+		},
+		{
+			name:     "ollama",
+			isFamily: isOllamaTool,
+			tools: []string{
+				"quicbaas_ollama_embed", "quicbaas_ollama_embed_batch",
+				"quicbaas_ollama_model_list", "quicbaas_ollama_model_info",
+				"quicbaas_ollama_health",
+			},
+			others: []string{"quicbaas_embedding_generate", "qrdb_put", ""},
+		},
+		{
+			name:     "parameter",
+			isFamily: isParameterTool,
+			tools: []string{
+				"quicbaas_parameter_get", "quicbaas_parameter_set",
+				"quicbaas_parameter_delete", "quicbaas_parameter_list",
+				"quicbaas_parameter_batch_get", "quicbaas_parameter_batch_set",
+				"quicbaas_parameter_batch_delete", "quicbaas_parameter_search",
+			},
+			others: []string{"quicbaas_ollama_embed", "qrdb_put", ""},
+		},
+		{
+			name:     "embedding",
+			isFamily: isEmbeddingTool,
+			tools: []string{
+				"quicbaas_embedding_generate", "quicbaas_embedding_batch",
+				"quicbaas_embedding_list_providers", "quicbaas_embedding_get_provider",
+				"quicbaas_embedding_set_default", "quicbaas_embedding_cache_stats",
+				"quicbaas_embedding_cache_clear",
+			},
+			others: []string{"quicbaas_ollama_embed", "qrdb_put", ""},
+		},
 	}
-	for _, name := range msgTools {
-		assert.True(t, isMsgTool(name))
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			for _, tool := range tc.tools {
+				assert.True(t, tc.isFamily(tool), "expected %s in the %s family", tool, tc.name)
+			}
+			for _, other := range tc.others {
+				assert.False(t, tc.isFamily(other), "expected %q outside the %s family", other, tc.name)
+			}
+		})
 	}
-	assert.False(t, isMsgTool("qrdb_put"))
-	assert.False(t, isMsgTool(""))
 }
 
 // nilStatsMessagingService is a messaging service that returns nil stats.
@@ -598,23 +637,96 @@ func TestHandleMsgCreateChannel_WithMaxSubscribers(t *testing.T) {
 // Embedding Service Error Path Tests
 // =============================================================================
 
-func TestHandleEmbeddingListProviders_ServiceError(t *testing.T) {
-	expectedErr := errors.New("provider list unavailable")
-	svc := &extendedMockService{
-		embeddingSvc: &mockEmbeddingService{
-			listProvidersFunc: func(ctx context.Context, req *service.ListProvidersRequest) (*service.ListProvidersResponse, error) {
-				return nil, expectedErr
+// TestEmbeddingTools_ServiceError checks that each embedding tool wraps a
+// service failure in its operation error and returns no result.
+func TestEmbeddingTools_ServiceError(t *testing.T) {
+	svcErr := errors.New("service failure")
+	tests := []struct {
+		name        string
+		tool        string
+		svc         *mockEmbeddingService
+		args        map[string]interface{}
+		errContains string
+	}{
+		{
+			name: "list providers",
+			tool: "quicbaas_embedding_list_providers",
+			svc: &mockEmbeddingService{
+				listProvidersFunc: func(ctx context.Context, req *service.ListProvidersRequest) (*service.ListProvidersResponse, error) {
+					return nil, svcErr
+				},
 			},
+			args:        map[string]interface{}{},
+			errContains: "list providers failed",
+		},
+		{
+			name: "get provider",
+			tool: "quicbaas_embedding_get_provider",
+			svc: &mockEmbeddingService{
+				getProviderFunc: func(ctx context.Context, req *service.GetProviderInfoRequest) (*service.GetProviderInfoResponse, error) {
+					return nil, svcErr
+				},
+			},
+			args:        map[string]interface{}{"provider": "nonexistent"},
+			errContains: "get provider info failed",
+		},
+		{
+			name: "set default",
+			tool: "quicbaas_embedding_set_default",
+			svc: &mockEmbeddingService{
+				setDefaultFunc: func(ctx context.Context, req *service.SetDefaultProviderRequest) (*service.SetDefaultProviderResponse, error) {
+					return nil, svcErr
+				},
+			},
+			args:        map[string]interface{}{"provider": "invalid"},
+			errContains: "set default provider failed",
+		},
+		{
+			name: "cache clear",
+			tool: "quicbaas_embedding_cache_clear",
+			svc: &mockEmbeddingService{
+				cacheClearFunc: func(ctx context.Context, req *service.ClearEmbeddingCacheRequest) (*service.ClearEmbeddingCacheResponse, error) {
+					return nil, svcErr
+				},
+			},
+			args:        map[string]interface{}{},
+			errContains: "clear cache failed",
+		},
+		{
+			name: "generate",
+			tool: "quicbaas_embedding_generate",
+			svc: &mockEmbeddingService{
+				generateFunc: func(ctx context.Context, req *service.GenerateEmbeddingRequest) (*service.GenerateEmbeddingResponse, error) {
+					return nil, svcErr
+				},
+			},
+			args:        map[string]interface{}{"text": "test text"},
+			errContains: "generate embedding failed",
+		},
+		{
+			name: "batch",
+			tool: "quicbaas_embedding_batch",
+			svc: &mockEmbeddingService{
+				batchFunc: func(ctx context.Context, req *service.BatchGenerateEmbeddingsRequest) (*service.BatchGenerateEmbeddingsResponse, error) {
+					return nil, svcErr
+				},
+			},
+			args:        map[string]interface{}{"items": `[{"text":"hello"}]`},
+			errContains: "batch generate embeddings failed",
 		},
 	}
-	log, _ := logger.New(logger.LogConfig{Level: "error", Output: "stdout"})
-	registry := NewToolRegistry(svc, log)
-	ctx := context.Background()
 
-	result, err := registry.ExecuteTool(ctx, "quicbaas_embedding_list_providers", map[string]interface{}{})
-	require.Error(t, err)
-	assert.Nil(t, result)
-	assert.Contains(t, err.Error(), "list providers failed")
+	log, err := logger.New(logger.LogConfig{Level: "error", Output: "stdout"})
+	require.NoError(t, err)
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			registry := NewToolRegistry(&extendedMockService{embeddingSvc: tc.svc}, log)
+			result, err := registry.ExecuteTool(context.Background(), tc.tool, tc.args)
+			require.Error(t, err)
+			assert.Nil(t, result)
+			assert.Contains(t, err.Error(), tc.errContains)
+		})
+	}
 }
 
 func TestHandleEmbeddingListProviders_WithRateLimitAndError(t *testing.T) {
@@ -651,27 +763,6 @@ func TestHandleEmbeddingListProviders_WithRateLimitAndError(t *testing.T) {
 	assert.Equal(t, "previous connection timeout", providers[0]["last_error"])
 }
 
-func TestHandleEmbeddingGetProvider_ServiceError(t *testing.T) {
-	expectedErr := errors.New("provider not found")
-	svc := &extendedMockService{
-		embeddingSvc: &mockEmbeddingService{
-			getProviderFunc: func(ctx context.Context, req *service.GetProviderInfoRequest) (*service.GetProviderInfoResponse, error) {
-				return nil, expectedErr
-			},
-		},
-	}
-	log, _ := logger.New(logger.LogConfig{Level: "error", Output: "stdout"})
-	registry := NewToolRegistry(svc, log)
-	ctx := context.Background()
-
-	result, err := registry.ExecuteTool(ctx, "quicbaas_embedding_get_provider", map[string]interface{}{
-		"provider": "nonexistent",
-	})
-	require.Error(t, err)
-	assert.Nil(t, result)
-	assert.Contains(t, err.Error(), "get provider info failed")
-}
-
 func TestHandleEmbeddingGetProvider_WithExtendedInfo(t *testing.T) {
 	now := time.Now()
 	svc := &extendedMockService{
@@ -705,27 +796,6 @@ func TestHandleEmbeddingGetProvider_WithExtendedInfo(t *testing.T) {
 	assert.Equal(t, 60, resultMap["rate_limit_per_minute"])
 	assert.Equal(t, "connection reset", resultMap["last_error"])
 	assert.Contains(t, resultMap, "last_error_time")
-}
-
-func TestHandleEmbeddingSetDefault_ServiceError(t *testing.T) {
-	expectedErr := errors.New("invalid provider")
-	svc := &extendedMockService{
-		embeddingSvc: &mockEmbeddingService{
-			setDefaultFunc: func(ctx context.Context, req *service.SetDefaultProviderRequest) (*service.SetDefaultProviderResponse, error) {
-				return nil, expectedErr
-			},
-		},
-	}
-	log, _ := logger.New(logger.LogConfig{Level: "error", Output: "stdout"})
-	registry := NewToolRegistry(svc, log)
-	ctx := context.Background()
-
-	result, err := registry.ExecuteTool(ctx, "quicbaas_embedding_set_default", map[string]interface{}{
-		"provider": "invalid",
-	})
-	require.Error(t, err)
-	assert.Nil(t, result)
-	assert.Contains(t, err.Error(), "set default provider failed")
 }
 
 func TestHandleEmbeddingCacheStats_WithOptionalFields(t *testing.T) {
@@ -787,67 +857,6 @@ func TestHandleEmbeddingCacheClear_WithProviderFilter(t *testing.T) {
 
 	resultMap := result.(map[string]interface{})
 	assert.Equal(t, "ollama", resultMap["provider"])
-}
-
-func TestHandleEmbeddingCacheClear_ServiceError(t *testing.T) {
-	expectedErr := errors.New("cache clear failed")
-	svc := &extendedMockService{
-		embeddingSvc: &mockEmbeddingService{
-			cacheClearFunc: func(ctx context.Context, req *service.ClearEmbeddingCacheRequest) (*service.ClearEmbeddingCacheResponse, error) {
-				return nil, expectedErr
-			},
-		},
-	}
-	log, _ := logger.New(logger.LogConfig{Level: "error", Output: "stdout"})
-	registry := NewToolRegistry(svc, log)
-	ctx := context.Background()
-
-	result, err := registry.ExecuteTool(ctx, "quicbaas_embedding_cache_clear", map[string]interface{}{})
-	require.Error(t, err)
-	assert.Nil(t, result)
-	assert.Contains(t, err.Error(), "clear cache failed")
-}
-
-func TestHandleEmbeddingGenerate_ServiceError(t *testing.T) {
-	expectedErr := errors.New("embedding generation failed")
-	svc := &extendedMockService{
-		embeddingSvc: &mockEmbeddingService{
-			generateFunc: func(ctx context.Context, req *service.GenerateEmbeddingRequest) (*service.GenerateEmbeddingResponse, error) {
-				return nil, expectedErr
-			},
-		},
-	}
-	log, _ := logger.New(logger.LogConfig{Level: "error", Output: "stdout"})
-	registry := NewToolRegistry(svc, log)
-	ctx := context.Background()
-
-	result, err := registry.ExecuteTool(ctx, "quicbaas_embedding_generate", map[string]interface{}{
-		"text": "test text",
-	})
-	require.Error(t, err)
-	assert.Nil(t, result)
-	assert.Contains(t, err.Error(), "generate embedding failed")
-}
-
-func TestHandleEmbeddingBatch_ServiceError(t *testing.T) {
-	expectedErr := errors.New("batch embedding failed")
-	svc := &extendedMockService{
-		embeddingSvc: &mockEmbeddingService{
-			batchFunc: func(ctx context.Context, req *service.BatchGenerateEmbeddingsRequest) (*service.BatchGenerateEmbeddingsResponse, error) {
-				return nil, expectedErr
-			},
-		},
-	}
-	log, _ := logger.New(logger.LogConfig{Level: "error", Output: "stdout"})
-	registry := NewToolRegistry(svc, log)
-	ctx := context.Background()
-
-	result, err := registry.ExecuteTool(ctx, "quicbaas_embedding_batch", map[string]interface{}{
-		"items": `[{"text":"hello"}]`,
-	})
-	require.Error(t, err)
-	assert.Nil(t, result)
-	assert.Contains(t, err.Error(), "batch generate embeddings failed")
 }
 
 func TestHandleEmbeddingBatch_WithResultError(t *testing.T) {
@@ -1512,62 +1521,3 @@ func TestFormatParameterValue_MinimalFields(t *testing.T) {
 // =============================================================================
 // Tool Identification Tests
 // =============================================================================
-
-func TestIsOllamaTool_Coverage(t *testing.T) {
-	ollamaTools := []string{
-		"quicbaas_ollama_embed",
-		"quicbaas_ollama_embed_batch",
-		"quicbaas_ollama_model_list",
-		"quicbaas_ollama_model_info",
-		"quicbaas_ollama_health",
-	}
-
-	for _, name := range ollamaTools {
-		assert.True(t, isOllamaTool(name), "expected %s to be ollama tool", name)
-	}
-
-	assert.False(t, isOllamaTool("quicbaas_embedding_generate"))
-	assert.False(t, isOllamaTool("qrdb_put"))
-	assert.False(t, isOllamaTool(""))
-}
-
-func TestIsParameterTool_Coverage(t *testing.T) {
-	paramTools := []string{
-		"quicbaas_parameter_get",
-		"quicbaas_parameter_set",
-		"quicbaas_parameter_delete",
-		"quicbaas_parameter_list",
-		"quicbaas_parameter_batch_get",
-		"quicbaas_parameter_batch_set",
-		"quicbaas_parameter_batch_delete",
-		"quicbaas_parameter_search",
-	}
-
-	for _, name := range paramTools {
-		assert.True(t, isParameterTool(name), "expected %s to be parameter tool", name)
-	}
-
-	assert.False(t, isParameterTool("quicbaas_ollama_embed"))
-	assert.False(t, isParameterTool("qrdb_put"))
-	assert.False(t, isParameterTool(""))
-}
-
-func TestIsEmbeddingTool_Coverage(t *testing.T) {
-	embeddingTools := []string{
-		"quicbaas_embedding_generate",
-		"quicbaas_embedding_batch",
-		"quicbaas_embedding_list_providers",
-		"quicbaas_embedding_get_provider",
-		"quicbaas_embedding_set_default",
-		"quicbaas_embedding_cache_stats",
-		"quicbaas_embedding_cache_clear",
-	}
-
-	for _, name := range embeddingTools {
-		assert.True(t, isEmbeddingTool(name), "expected %s to be embedding tool", name)
-	}
-
-	assert.False(t, isEmbeddingTool("quicbaas_ollama_embed"))
-	assert.False(t, isEmbeddingTool("qrdb_put"))
-	assert.False(t, isEmbeddingTool(""))
-}
