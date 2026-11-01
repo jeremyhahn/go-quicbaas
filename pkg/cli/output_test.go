@@ -135,6 +135,19 @@ func TestFormatPutResponse(t *testing.T) {
 		output := buf.String()
 		assert.Contains(t, output, "testkey")
 		assert.Contains(t, output, "true")
+		assert.Contains(t, output, "Message:")
+	})
+
+	t.Run("Table format omits empty message", func(t *testing.T) {
+		noMessage := &PutResponse{Key: "testkey", Success: true, Timestamp: now}
+
+		var buf bytes.Buffer
+		err := formatter.FormatPutResponse(noMessage, OutputFormatTable, &buf)
+		require.NoError(t, err)
+
+		output := buf.String()
+		assert.Contains(t, output, "testkey")
+		assert.NotContains(t, output, "Message:")
 	})
 
 	t.Run("Default format", func(t *testing.T) {
@@ -146,11 +159,25 @@ func TestFormatPutResponse(t *testing.T) {
 		assert.Contains(t, output, "Successfully stored")
 		assert.Contains(t, output, "testkey")
 	})
+
+	t.Run("Default format failed put", func(t *testing.T) {
+		failed := &PutResponse{Key: "failkey", Success: false, Message: "write failed", Timestamp: now}
+
+		var buf bytes.Buffer
+		err := formatter.FormatPutResponse(failed, "", &buf)
+		require.NoError(t, err)
+
+		output := buf.String()
+		assert.Contains(t, output, "Failed")
+		assert.Contains(t, output, "failkey")
+		assert.Contains(t, output, "write failed")
+	})
 }
 
 // TestFormatGetResponse tests Get response formatting.
 func TestFormatGetResponse(t *testing.T) {
 	now := time.Now()
+	formatter := NewFormatter(false)
 
 	t.Run("Found response", func(t *testing.T) {
 		resp := &GetResponse{
@@ -159,8 +186,6 @@ func TestFormatGetResponse(t *testing.T) {
 			Found:     true,
 			Timestamp: now,
 		}
-
-		formatter := NewFormatter(false)
 
 		t.Run("JSON format", func(t *testing.T) {
 			var buf bytes.Buffer
@@ -171,6 +196,16 @@ func TestFormatGetResponse(t *testing.T) {
 			err = json.Unmarshal(buf.Bytes(), &result)
 			require.NoError(t, err)
 			assert.True(t, result["found"].(bool))
+		})
+
+		t.Run("YAML format", func(t *testing.T) {
+			var buf bytes.Buffer
+			err := formatter.FormatGetResponse(resp, OutputFormatYAML, &buf)
+			require.NoError(t, err)
+
+			output := buf.String()
+			assert.Contains(t, output, "testkey")
+			assert.Contains(t, output, "true")
 		})
 
 		t.Run("Table format", func(t *testing.T) {
@@ -199,14 +234,26 @@ func TestFormatGetResponse(t *testing.T) {
 			Found: false,
 		}
 
-		formatter := NewFormatter(false)
+		t.Run("Default format", func(t *testing.T) {
+			var buf bytes.Buffer
+			err := formatter.FormatGetResponse(resp, "", &buf)
+			require.NoError(t, err)
+			assert.Contains(t, buf.String(), "not found")
+		})
 
-		var buf bytes.Buffer
-		err := formatter.FormatGetResponse(resp, "", &buf)
-		require.NoError(t, err)
+		t.Run("Table format", func(t *testing.T) {
+			var buf bytes.Buffer
+			err := formatter.FormatGetResponse(resp, OutputFormatTable, &buf)
+			require.NoError(t, err)
+			assert.Contains(t, buf.String(), "false")
+		})
 
-		output := buf.String()
-		assert.Contains(t, output, "not found")
+		t.Run("Raw format", func(t *testing.T) {
+			var buf bytes.Buffer
+			err := formatter.FormatGetResponse(resp, OutputFormatRaw, &buf)
+			require.NoError(t, err)
+			assert.Empty(t, buf.String())
+		})
 	})
 }
 
@@ -234,6 +281,13 @@ func TestFormatDeleteResponse(t *testing.T) {
 		assert.True(t, result.Deleted)
 	})
 
+	t.Run("YAML format", func(t *testing.T) {
+		var buf bytes.Buffer
+		err := formatter.FormatDeleteResponse(resp, OutputFormatYAML, &buf)
+		require.NoError(t, err)
+		assert.Contains(t, buf.String(), "testkey")
+	})
+
 	t.Run("Table format", func(t *testing.T) {
 		var buf bytes.Buffer
 		err := formatter.FormatDeleteResponse(resp, OutputFormatTable, &buf)
@@ -242,6 +296,18 @@ func TestFormatDeleteResponse(t *testing.T) {
 		output := buf.String()
 		assert.Contains(t, output, "testkey")
 		assert.Contains(t, output, "true")
+	})
+
+	t.Run("Default format failed delete", func(t *testing.T) {
+		failed := &DeleteResponse{Key: "testkey", Deleted: false, Message: "key not found", Timestamp: now}
+
+		var buf bytes.Buffer
+		err := formatter.FormatDeleteResponse(failed, "", &buf)
+		require.NoError(t, err)
+
+		output := buf.String()
+		assert.Contains(t, output, "Failed")
+		assert.Contains(t, output, "testkey")
 	})
 }
 
@@ -270,6 +336,13 @@ func TestFormatListResponse(t *testing.T) {
 		assert.NotNil(t, result["items"])
 	})
 
+	t.Run("YAML format", func(t *testing.T) {
+		var buf bytes.Buffer
+		err := formatter.FormatListResponse(resp, OutputFormatYAML, &buf)
+		require.NoError(t, err)
+		assert.Contains(t, buf.String(), "cursor123")
+	})
+
 	t.Run("Table format", func(t *testing.T) {
 		var buf bytes.Buffer
 		err := formatter.FormatListResponse(resp, OutputFormatTable, &buf)
@@ -291,6 +364,21 @@ func TestFormatListResponse(t *testing.T) {
 		assert.Contains(t, output, "key1")
 		assert.Contains(t, output, "key2")
 		assert.Contains(t, output, "cursor123")
+	})
+
+	t.Run("Default format without cursor", func(t *testing.T) {
+		noCursor := &ListResponse{
+			Items: []ListItem{{Key: "key1", Value: []byte("value1"), Timestamp: now}},
+			Total: 1,
+		}
+
+		var buf bytes.Buffer
+		err := formatter.FormatListResponse(noCursor, "", &buf)
+		require.NoError(t, err)
+
+		output := buf.String()
+		assert.Contains(t, output, "key1")
+		assert.NotContains(t, output, "cursor")
 	})
 }
 
@@ -322,6 +410,13 @@ func TestFormatQueryResponse(t *testing.T) {
 		assert.NotNil(t, result["items"])
 	})
 
+	t.Run("YAML format", func(t *testing.T) {
+		var buf bytes.Buffer
+		err := formatter.FormatQueryResponse(resp, OutputFormatYAML, &buf)
+		require.NoError(t, err)
+		assert.Contains(t, buf.String(), "key1")
+	})
+
 	t.Run("Table format", func(t *testing.T) {
 		var buf bytes.Buffer
 		err := formatter.FormatQueryResponse(resp, OutputFormatTable, &buf)
@@ -330,6 +425,28 @@ func TestFormatQueryResponse(t *testing.T) {
 		output := buf.String()
 		assert.Contains(t, output, "key1")
 		assert.Contains(t, output, "email")
+	})
+
+	t.Run("Table format with empty indexed fields", func(t *testing.T) {
+		noIndex := &QueryResponse{
+			Items: []QueryItem{{Key: "key1", Value: []byte("value1"), IndexedBy: map[string]interface{}{}, Timestamp: now}},
+			Total: 1,
+		}
+
+		var buf bytes.Buffer
+		err := formatter.FormatQueryResponse(noIndex, OutputFormatTable, &buf)
+		require.NoError(t, err)
+		assert.Contains(t, buf.String(), "key1")
+	})
+
+	t.Run("Default format", func(t *testing.T) {
+		var buf bytes.Buffer
+		err := formatter.FormatQueryResponse(resp, "", &buf)
+		require.NoError(t, err)
+
+		output := buf.String()
+		assert.Contains(t, output, "key1")
+		assert.Contains(t, output, "Total:")
 	})
 }
 
@@ -594,244 +711,6 @@ func BenchmarkFormatListLarge(b *testing.B) {
 }
 
 // Additional edge case tests for 90%+ coverage
-
-func TestFormatPutResponse_EdgeCases(t *testing.T) {
-	now := time.Now()
-	formatter := NewFormatter(false)
-
-	t.Run("failed put response", func(t *testing.T) {
-		resp := &PutResponse{
-			Key:       "failkey",
-			Success:   false,
-			Message:   "write failed",
-			Timestamp: now,
-		}
-
-		var buf bytes.Buffer
-		err := formatter.FormatPutResponse(resp, "", &buf)
-		require.NoError(t, err)
-
-		output := buf.String()
-		assert.Contains(t, output, "Failed")
-		assert.Contains(t, output, "failkey")
-	})
-
-	t.Run("put response with empty message", func(t *testing.T) {
-		resp := &PutResponse{
-			Key:       "testkey",
-			Success:   true,
-			Message:   "",
-			Timestamp: now,
-		}
-
-		var buf bytes.Buffer
-		err := formatter.FormatPutResponse(resp, OutputFormatTable, &buf)
-		require.NoError(t, err)
-		assert.NotEmpty(t, buf.String())
-	})
-}
-
-func TestFormatGetResponse_EdgeCases(t *testing.T) {
-	now := time.Now()
-	formatter := NewFormatter(false)
-
-	t.Run("not found with table format", func(t *testing.T) {
-		resp := &GetResponse{
-			Key:   "missing",
-			Found: false,
-		}
-
-		var buf bytes.Buffer
-		err := formatter.FormatGetResponse(resp, OutputFormatTable, &buf)
-		require.NoError(t, err)
-
-		output := buf.String()
-		assert.Contains(t, output, "false")
-	})
-
-	t.Run("raw format not found", func(t *testing.T) {
-		resp := &GetResponse{
-			Key:   "missing",
-			Found: false,
-		}
-
-		var buf bytes.Buffer
-		err := formatter.FormatGetResponse(resp, OutputFormatRaw, &buf)
-		require.NoError(t, err)
-		assert.Empty(t, buf.String())
-	})
-
-	t.Run("yaml format found", func(t *testing.T) {
-		resp := &GetResponse{
-			Key:       "testkey",
-			Value:     []byte("testvalue"),
-			Found:     true,
-			Timestamp: now,
-		}
-
-		var buf bytes.Buffer
-		err := formatter.FormatGetResponse(resp, OutputFormatYAML, &buf)
-		require.NoError(t, err)
-
-		output := buf.String()
-		assert.Contains(t, output, "testkey")
-		assert.Contains(t, output, "true")
-	})
-}
-
-func TestFormatDeleteResponse_EdgeCases(t *testing.T) {
-	now := time.Now()
-	formatter := NewFormatter(false)
-
-	t.Run("failed delete", func(t *testing.T) {
-		resp := &DeleteResponse{
-			Key:       "testkey",
-			Deleted:   false,
-			Message:   "key not found",
-			Timestamp: now,
-		}
-
-		var buf bytes.Buffer
-		err := formatter.FormatDeleteResponse(resp, "", &buf)
-		require.NoError(t, err)
-
-		output := buf.String()
-		assert.Contains(t, output, "Failed")
-		assert.Contains(t, output, "testkey")
-	})
-
-	t.Run("yaml format", func(t *testing.T) {
-		resp := &DeleteResponse{
-			Key:       "testkey",
-			Deleted:   true,
-			Timestamp: now,
-		}
-
-		var buf bytes.Buffer
-		err := formatter.FormatDeleteResponse(resp, OutputFormatYAML, &buf)
-		require.NoError(t, err)
-		assert.NotEmpty(t, buf.String())
-	})
-}
-
-func TestFormatListResponse_EdgeCases(t *testing.T) {
-	now := time.Now()
-	formatter := NewFormatter(false)
-
-	t.Run("no cursor", func(t *testing.T) {
-		resp := &ListResponse{
-			Items: []ListItem{
-				{Key: "key1", Value: []byte("value1"), Timestamp: now},
-			},
-			NextCursor: "",
-			Total:      1,
-		}
-
-		var buf bytes.Buffer
-		err := formatter.FormatListResponse(resp, "", &buf)
-		require.NoError(t, err)
-
-		output := buf.String()
-		assert.Contains(t, output, "key1")
-		assert.NotContains(t, output, "cursor")
-	})
-
-	t.Run("yaml format", func(t *testing.T) {
-		resp := &ListResponse{
-			Items:      []ListItem{},
-			NextCursor: "abc123",
-			Total:      0,
-		}
-
-		var buf bytes.Buffer
-		err := formatter.FormatListResponse(resp, OutputFormatYAML, &buf)
-		require.NoError(t, err)
-		assert.NotEmpty(t, buf.String())
-	})
-}
-
-func TestFormatQueryResponse_EdgeCases(t *testing.T) {
-	now := time.Now()
-	formatter := NewFormatter(false)
-
-	t.Run("empty indexed fields", func(t *testing.T) {
-		resp := &QueryResponse{
-			Items: []QueryItem{
-				{
-					Key:       "key1",
-					Value:     []byte("value1"),
-					IndexedBy: map[string]interface{}{},
-					Timestamp: now,
-				},
-			},
-			Total: 1,
-		}
-
-		var buf bytes.Buffer
-		err := formatter.FormatQueryResponse(resp, OutputFormatTable, &buf)
-		require.NoError(t, err)
-		assert.NotEmpty(t, buf.String())
-	})
-
-	t.Run("multiple indexed fields", func(t *testing.T) {
-		resp := &QueryResponse{
-			Items: []QueryItem{
-				{
-					Key:   "key1",
-					Value: []byte("value1"),
-					IndexedBy: map[string]interface{}{
-						"email": "test@example.com",
-						"age":   30,
-						"name":  "John",
-					},
-					Timestamp: now,
-				},
-			},
-			Total: 1,
-		}
-
-		var buf bytes.Buffer
-		err := formatter.FormatQueryResponse(resp, OutputFormatTable, &buf)
-		require.NoError(t, err)
-
-		output := buf.String()
-		assert.Contains(t, output, "key1")
-	})
-
-	t.Run("default format", func(t *testing.T) {
-		resp := &QueryResponse{
-			Items: []QueryItem{
-				{
-					Key:       "key1",
-					Value:     []byte("value1"),
-					IndexedBy: map[string]interface{}{"field": "value"},
-					Timestamp: now,
-				},
-			},
-			Total: 1,
-		}
-
-		var buf bytes.Buffer
-		err := formatter.FormatQueryResponse(resp, "", &buf)
-		require.NoError(t, err)
-
-		output := buf.String()
-		assert.Contains(t, output, "key1")
-		assert.Contains(t, output, "Total:")
-	})
-
-	t.Run("yaml format", func(t *testing.T) {
-		resp := &QueryResponse{
-			Items: []QueryItem{},
-			Total: 0,
-		}
-
-		var buf bytes.Buffer
-		err := formatter.FormatQueryResponse(resp, OutputFormatYAML, &buf)
-		require.NoError(t, err)
-		assert.NotEmpty(t, buf.String())
-	})
-}
 
 func TestFormatClusterStatus_EdgeCases(t *testing.T) {
 	now := time.Now()
