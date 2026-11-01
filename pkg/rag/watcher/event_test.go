@@ -486,6 +486,42 @@ func TestFlushEvents_ChannelFull(t *testing.T) {
 
 	assert.Len(t, fw.events, 2, "only the buffered events are delivered")
 	assert.Zero(t, fw.debouncer.Count(), "the debouncer is drained")
+
+	// Once stopping, a flush into the full channel returns at once.
+	close(fw.stopCh)
+	fw.debouncer.Add(Event{Type: EventCreate, Path: "/late.txt"})
+	fw.flushEvents()
+
+	assert.Len(t, fw.events, 2)
+	assert.Zero(t, fw.debouncer.Count())
+}
+
+// TestProcessEvents_ForwardsNotifierErrors tests that an fsnotify error
+// reaches the watcher's error channel.
+func TestProcessEvents_ForwardsNotifierErrors(t *testing.T) {
+	w, err := New(Config{
+		Paths:         []string{t.TempDir()},
+		DebounceDelay: 50 * time.Millisecond,
+		BatchInterval: 100 * time.Millisecond,
+		BufferSize:    100,
+	})
+	require.NoError(t, err)
+	defer w.Stop()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	require.NoError(t, w.Start(ctx))
+
+	fw := w.(*fsWatcher)
+	errNotify := errors.New("notify failed")
+	fw.watcher.Errors <- errNotify
+
+	select {
+	case got := <-fw.errors:
+		assert.ErrorIs(t, got, errNotify)
+	case <-time.After(5 * time.Second):
+		t.Fatal("timeout waiting for forwarded error")
+	}
 }
 
 // TestNew_InvalidPath tests New with an invalid path that doesn't exist.
@@ -910,6 +946,9 @@ func TestWatcher_NonRecursive(t *testing.T) {
 	case <-time.After(1 * time.Second):
 		// Expected - no event
 	}
+
+	// A chmod in the root produces no event.
+	require.NoError(t, os.Chmod(subDir, 0700))
 
 	// But file in root should be watched
 	rootFile := filepath.Join(tmpDir, "root.txt")
