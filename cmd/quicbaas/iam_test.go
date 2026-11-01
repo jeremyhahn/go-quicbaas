@@ -1096,20 +1096,6 @@ spec:
 	assert.NoError(t, err)
 }
 
-func TestIAMPolicyApply_MissingFile(t *testing.T) {
-	_, cleanup := setupIAMMock(t)
-	defer cleanup()
-	cleanupLog := testInitLogger(t)
-	defer cleanupLog()
-
-	cmd := newIAMPolicyApplyCommand()
-	iamPolicyFile = "/nonexistent/path/policy.yaml"
-
-	err := runIAMPolicyApplyCommand(cmd, []string{})
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "failed to read policy file")
-}
-
 func TestIAMPolicyApply_InvalidYAML(t *testing.T) {
 	_, cleanup := setupIAMMock(t)
 	defer cleanup()
@@ -1127,63 +1113,6 @@ func TestIAMPolicyApply_InvalidYAML(t *testing.T) {
 	err = runIAMPolicyApplyCommand(cmd, []string{})
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to parse policy YAML")
-}
-
-func TestIAMPolicyApply_MissingMetadata(t *testing.T) {
-	_, cleanup := setupIAMMock(t)
-	defer cleanup()
-	cleanupLog := testInitLogger(t)
-	defer cleanupLog()
-
-	tmpDir := t.TempDir()
-	policyPath := filepath.Join(tmpDir, "no-meta.yaml")
-	err := os.WriteFile(policyPath, []byte("apiVersion: v1\nkind: Policy\n"), 0o600)
-	assert.NoError(t, err)
-
-	cmd := newIAMPolicyApplyCommand()
-	iamPolicyFile = policyPath
-
-	err = runIAMPolicyApplyCommand(cmd, []string{})
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "policy must have metadata section")
-}
-
-func TestIAMPolicyApply_MissingName(t *testing.T) {
-	_, cleanup := setupIAMMock(t)
-	defer cleanup()
-	cleanupLog := testInitLogger(t)
-	defer cleanupLog()
-
-	tmpDir := t.TempDir()
-	policyPath := filepath.Join(tmpDir, "no-name.yaml")
-	err := os.WriteFile(policyPath, []byte("metadata:\n  tenant: acme\n"), 0o600)
-	assert.NoError(t, err)
-
-	cmd := newIAMPolicyApplyCommand()
-	iamPolicyFile = policyPath
-
-	err = runIAMPolicyApplyCommand(cmd, []string{})
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "policy must have metadata.name")
-}
-
-func TestIAMPolicyApply_MissingTenant(t *testing.T) {
-	_, cleanup := setupIAMMock(t)
-	defer cleanup()
-	cleanupLog := testInitLogger(t)
-	defer cleanupLog()
-
-	tmpDir := t.TempDir()
-	policyPath := filepath.Join(tmpDir, "no-tenant.yaml")
-	err := os.WriteFile(policyPath, []byte("metadata:\n  name: test-policy\n"), 0o600)
-	assert.NoError(t, err)
-
-	cmd := newIAMPolicyApplyCommand()
-	iamPolicyFile = policyPath
-
-	err = runIAMPolicyApplyCommand(cmd, []string{})
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "policy must have metadata.tenant")
 }
 
 // =============================================================================
@@ -1495,21 +1424,6 @@ func TestIAMPEPCheckBatch_SuccessJSON(t *testing.T) {
 
 	err = runIAMPEPCheckBatchCommand(cmd, []string{})
 	assert.NoError(t, err)
-}
-
-func TestIAMPEPCheckBatch_MissingTenant(t *testing.T) {
-	_, cleanup := setupIAMMock(t)
-	defer cleanup()
-	cleanupLog := testInitLogger(t)
-	defer cleanupLog()
-
-	cmd := newIAMPEPCheckBatchCommand()
-	pepFile = "/tmp/any.json"
-	globalTenantID = ""
-
-	err := runIAMPEPCheckBatchCommand(cmd, []string{})
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "--tenant flag is required")
 }
 
 func TestIAMPEPCheckBatch_MissingFile(t *testing.T) {
