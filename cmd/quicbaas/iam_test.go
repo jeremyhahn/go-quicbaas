@@ -598,6 +598,25 @@ func TestIAMCommands_ClientError(t *testing.T) {
 	}
 }
 
+// TestIAMSessionList_NoUserNoToken checks that session list without --user
+// fails when no stored token names the current user. HOME points at an empty
+// temp dir so the host's own token is never read.
+func TestIAMSessionList_NoUserNoToken(t *testing.T) {
+	cleanupLog := testInitLogger(t)
+	defer cleanupLog()
+
+	origTenant := globalTenantID
+	defer func() { globalTenantID = origTenant }()
+
+	t.Setenv("HOME", t.TempDir())
+
+	cmd := newIAMSessionListCommand()
+	globalTenantID = "test-tenant"
+
+	err := runIAMSessionListCommand(cmd, []string{})
+	assert.ErrorContains(t, err, "failed to get current user ID")
+}
+
 // TestTruncateString tests the truncateString helper function.
 
 // =============================================================================
