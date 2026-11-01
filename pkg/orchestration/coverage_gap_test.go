@@ -755,10 +755,18 @@ func TestWorkflowLoader_Update_WithPersistor(t *testing.T) {
 	}
 }
 
-func TestWorkflowLoader_Update_NotFound(t *testing.T) {
+func TestWorkflowLoader_UpdateDelete_NotFound(t *testing.T) {
 	loader := NewWorkflowLoader()
-	if err := loader.Update(SystemTenantID, newValidWorkflowDef("ghost")); !errors.Is(err, ErrWorkflowNotFound) {
-		t.Fatalf("expected ErrWorkflowNotFound, got %v", err)
+	ops := map[string]func() error{
+		"update": func() error { return loader.Update(SystemTenantID, newValidWorkflowDef("ghost")) },
+		"delete": func() error { return loader.Delete(SystemTenantID, "ghost") },
+	}
+	for name, op := range ops {
+		t.Run(name, func(t *testing.T) {
+			if err := op(); !errors.Is(err, ErrWorkflowNotFound) {
+				t.Fatalf("expected ErrWorkflowNotFound, got %v", err)
+			}
+		})
 	}
 }
 
@@ -802,13 +810,6 @@ func TestWorkflowLoader_Delete_WithPersistor(t *testing.T) {
 	}
 	if _, ok := persistor.saved["wf"]; ok {
 		t.Fatal("persistor should have removed the definition")
-	}
-}
-
-func TestWorkflowLoader_Delete_NotFound(t *testing.T) {
-	loader := NewWorkflowLoader()
-	if err := loader.Delete(SystemTenantID, "ghost"); !errors.Is(err, ErrWorkflowNotFound) {
-		t.Fatalf("expected ErrWorkflowNotFound, got %v", err)
 	}
 }
 
