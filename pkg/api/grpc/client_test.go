@@ -718,303 +718,137 @@ func newNotConnectedClient() *Client {
 }
 
 // =============================================================================
-// Vector Functions - Not Connected Tests
+// Not Connected Tests
 // =============================================================================
 
-func TestClient_VectorHybridSearch_NotConnected(t *testing.T) {
+func TestClientVector_NotConnected(t *testing.T) {
 	t.Parallel()
-	client := newNotConnectedClient()
-	ctx := context.Background()
-
-	resp, err := client.VectorHybridSearch(ctx, nil)
-	assert.Error(t, err)
-	assert.Nil(t, resp)
-	assert.Contains(t, err.Error(), "closed")
+	runNotConnectedCases(t, []clientCallCase{
+		{"VectorCreateNamespace", func(c *Client, ctx context.Context) (any, error) {
+			return c.VectorCreateNamespace(ctx, &pb.CreateNamespaceRequest{})
+		}},
+		{"VectorDeleteNamespace", func(c *Client, ctx context.Context) (any, error) {
+			return c.VectorDeleteNamespace(ctx, &pb.DeleteNamespaceRequest{})
+		}},
+		{"VectorListNamespaces", func(c *Client, ctx context.Context) (any, error) {
+			return c.VectorListNamespaces(ctx, &pb.ListNamespacesRequest{})
+		}},
+		{"VectorGetNamespaceInfo", func(c *Client, ctx context.Context) (any, error) {
+			return c.VectorGetNamespaceInfo(ctx, &pb.GetNamespaceInfoRequest{})
+		}},
+		{"VectorUpsert", func(c *Client, ctx context.Context) (any, error) {
+			return c.VectorUpsert(ctx, &pb.UpsertVectorRequest{})
+		}},
+		{"VectorGet", func(c *Client, ctx context.Context) (any, error) {
+			return c.VectorGet(ctx, &pb.GetVectorRequest{})
+		}},
+		{"VectorDelete", func(c *Client, ctx context.Context) (any, error) {
+			return c.VectorDelete(ctx, &pb.DeleteVectorRequest{})
+		}},
+		{"VectorBatchUpsert", func(c *Client, ctx context.Context) (any, error) {
+			return c.VectorBatchUpsert(ctx, &pb.BatchUpsertVectorsRequest{})
+		}},
+		{"VectorBatchDelete", func(c *Client, ctx context.Context) (any, error) {
+			return c.VectorBatchDelete(ctx, &pb.BatchDeleteVectorsRequest{})
+		}},
+		{"VectorUpdateMetadata", func(c *Client, ctx context.Context) (any, error) {
+			return c.VectorUpdateMetadata(ctx, &pb.UpdateMetadataRequest{})
+		}},
+		{"VectorHealth", func(c *Client, ctx context.Context) (any, error) {
+			return c.VectorHealth(ctx, &pb.VectorHealthRequest{})
+		}},
+		{"VectorGetStats", func(c *Client, ctx context.Context) (any, error) {
+			return c.VectorGetStats(ctx, &pb.GetVectorStatsRequest{})
+		}},
+		{"VectorSearchSimilar", func(c *Client, ctx context.Context) (any, error) {
+			return c.VectorSearchSimilar(ctx, &pb.SearchSimilarRequest{})
+		}},
+		{"VectorSearchByID", func(c *Client, ctx context.Context) (any, error) {
+			return c.VectorSearchByID(ctx, &pb.SearchByIDRequest{})
+		}},
+		{"VectorHybridSearch", func(c *Client, ctx context.Context) (any, error) {
+			return c.VectorHybridSearch(ctx, &pb.HybridSearchRequest{})
+		}},
+		{"VectorSearchByMetadata", func(c *Client, ctx context.Context) (any, error) {
+			return c.VectorSearchByMetadata(ctx, &pb.SearchByMetadataRequest{})
+		}},
+		{"VectorList", func(c *Client, ctx context.Context) (any, error) {
+			return c.VectorList(ctx, &pb.ListVectorsRequest{})
+		}},
+		{"VectorRebuildIndex", func(c *Client, ctx context.Context) (any, error) {
+			return c.VectorRebuildIndex(ctx, &pb.RebuildIndexRequest{})
+		}},
+		{"VectorGetIndexProgress", func(c *Client, ctx context.Context) (any, error) {
+			return c.VectorGetIndexProgress(ctx, &pb.GetIndexProgressRequest{})
+		}},
+		{"VectorExport", func(c *Client, ctx context.Context) (any, error) {
+			return c.VectorExport(ctx, &pb.ExportVectorsRequest{})
+		}},
+		{"VectorImport", func(c *Client, ctx context.Context) (any, error) {
+			return c.VectorImport(ctx, []*pb.ImportVectorsRequest{})
+		}},
+		{"VectorCompact", func(c *Client, ctx context.Context) (any, error) {
+			return c.VectorCompact(ctx, &pb.CompactNamespaceRequest{})
+		}},
+		{"VectorGetCompactionProgress", func(c *Client, ctx context.Context) (any, error) {
+			return c.VectorGetCompactionProgress(ctx, &pb.GetCompactionProgressRequest{})
+		}},
+	})
 }
 
-func TestClient_VectorSearchByMetadata_NotConnected(t *testing.T) {
+func TestClientRebalance_NotConnected(t *testing.T) {
 	t.Parallel()
-	client := newNotConnectedClient()
-	ctx := context.Background()
-
-	resp, err := client.VectorSearchByMetadata(ctx, nil)
-	assert.Error(t, err)
-	assert.Nil(t, resp)
-	assert.Contains(t, err.Error(), "closed")
+	runNotConnectedCases(t, []clientCallCase{
+		{"RebalanceCluster", func(c *Client, ctx context.Context) (any, error) { return c.RebalanceCluster(ctx, nil) }},
+		{"GetRebalanceProgress", func(c *Client, ctx context.Context) (any, error) { return c.GetRebalanceProgress(ctx, nil) }},
+	})
 }
 
-func TestClient_VectorExport_NotConnected(t *testing.T) {
+func TestClientKMS_NotConnected(t *testing.T) {
 	t.Parallel()
-	client := newNotConnectedClient()
-	ctx := context.Background()
-
-	resp, err := client.VectorExport(ctx, nil)
-	assert.Error(t, err)
-	assert.Nil(t, resp)
-	assert.Contains(t, err.Error(), "closed")
+	runNotConnectedCases(t, []clientCallCase{
+		{"KMSListKeys", func(c *Client, ctx context.Context) (any, error) { return c.KMSListKeys(ctx, nil) }},
+		{"KMSBackendStatus", func(c *Client, ctx context.Context) (any, error) { return c.KMSBackendStatus(ctx) }},
+		{"KMSBackendTest", func(c *Client, ctx context.Context) (any, error) { return c.KMSBackendTest(ctx) }},
+	})
 }
 
-func TestClient_VectorImport_NotConnected(t *testing.T) {
+func TestClientObjectStorage_NotConnected(t *testing.T) {
 	t.Parallel()
-	client := newNotConnectedClient()
-	ctx := context.Background()
-
-	resp, err := client.VectorImport(ctx, nil)
-	assert.Error(t, err)
-	assert.Nil(t, resp)
-	assert.Contains(t, err.Error(), "closed")
+	runNotConnectedCases(t, []clientCallCase{
+		{"ObjectStoragePutObject", func(c *Client, ctx context.Context) (any, error) { return c.ObjectStoragePutObject(ctx, nil) }},
+		{"ObjectStorageGetObject", func(c *Client, ctx context.Context) (any, error) { return c.ObjectStorageGetObject(ctx, nil) }},
+		{"ObjectStorageDeleteObject", func(c *Client, ctx context.Context) (any, error) {
+			return c.ObjectStorageDeleteObject(ctx, nil)
+		}},
+		{"ObjectStorageHeadObject", func(c *Client, ctx context.Context) (any, error) { return c.ObjectStorageHeadObject(ctx, nil) }},
+		{"ObjectStorageListObjects", func(c *Client, ctx context.Context) (any, error) {
+			return c.ObjectStorageListObjects(ctx, nil)
+		}},
+		{"ObjectStorageListByTag", func(c *Client, ctx context.Context) (any, error) { return c.ObjectStorageListByTag(ctx, nil) }},
+		{"ObjectStorageListByTenant", func(c *Client, ctx context.Context) (any, error) {
+			return c.ObjectStorageListByTenant(ctx, nil)
+		}},
+		{"ObjectStorageCopyObject", func(c *Client, ctx context.Context) (any, error) { return c.ObjectStorageCopyObject(ctx, nil) }},
+		{"ObjectStorageReplicateObject", func(c *Client, ctx context.Context) (any, error) {
+			return c.ObjectStorageReplicateObject(ctx, nil)
+		}},
+		{"ObjectStorageMigrateObject", func(c *Client, ctx context.Context) (any, error) {
+			return c.ObjectStorageMigrateObject(ctx, nil)
+		}},
+	})
 }
 
-// =============================================================================
-// Rebalance Functions - Not Connected Tests
-// =============================================================================
-
-func TestClient_RebalanceCluster_NotConnected(t *testing.T) {
+func TestClientOllama_NotConnected(t *testing.T) {
 	t.Parallel()
-	client := newNotConnectedClient()
-	ctx := context.Background()
-
-	resp, err := client.RebalanceCluster(ctx, nil)
-	assert.Error(t, err)
-	assert.Nil(t, resp)
-	assert.Contains(t, err.Error(), "closed")
-}
-
-func TestClient_GetRebalanceProgress_NotConnected(t *testing.T) {
-	t.Parallel()
-	client := newNotConnectedClient()
-	ctx := context.Background()
-
-	resp, err := client.GetRebalanceProgress(ctx, nil)
-	assert.Error(t, err)
-	assert.Nil(t, resp)
-	assert.Contains(t, err.Error(), "closed")
-}
-
-// =============================================================================
-// KMS Functions - Not Connected Tests
-// KMSListKeys calls ensureConnected first, so we test not connected
-// =============================================================================
-
-func TestClient_KMSListKeys_NotConnected(t *testing.T) {
-	t.Parallel()
-	client := newNotConnectedClient()
-	ctx := context.Background()
-
-	resp, err := client.KMSListKeys(ctx, nil)
-	assert.Error(t, err)
-	assert.Nil(t, resp)
-	assert.Contains(t, err.Error(), "closed")
-}
-
-// =============================================================================
-// KMS Backend Functions - Not Connected Tests
-// =============================================================================
-
-func TestClient_KMSBackendStatus_NotConnected(t *testing.T) {
-	t.Parallel()
-	client := newNotConnectedClient()
-	ctx := context.Background()
-
-	resp, err := client.KMSBackendStatus(ctx)
-	assert.Error(t, err)
-	assert.Nil(t, resp)
-	assert.Contains(t, err.Error(), "closed")
-}
-
-func TestClient_KMSBackendTest_NotConnected(t *testing.T) {
-	t.Parallel()
-	client := newNotConnectedClient()
-	ctx := context.Background()
-
-	resp, err := client.KMSBackendTest(ctx)
-	assert.Error(t, err)
-	assert.Nil(t, resp)
-	assert.Contains(t, err.Error(), "closed")
-}
-
-// =============================================================================
-// Object Storage Functions - Not Connected Tests
-// =============================================================================
-
-func TestClient_ObjectStoragePutObject_NotConnected(t *testing.T) {
-	t.Parallel()
-	client := newNotConnectedClient()
-	ctx := context.Background()
-
-	resp, err := client.ObjectStoragePutObject(ctx, nil)
-	assert.Error(t, err)
-	assert.Nil(t, resp)
-	assert.Contains(t, err.Error(), "closed")
-}
-
-func TestClient_ObjectStorageGetObject_NotConnected(t *testing.T) {
-	t.Parallel()
-	client := newNotConnectedClient()
-	ctx := context.Background()
-
-	resp, err := client.ObjectStorageGetObject(ctx, nil)
-	assert.Error(t, err)
-	assert.Nil(t, resp)
-	assert.Contains(t, err.Error(), "closed")
-}
-
-func TestClient_ObjectStorageDeleteObject_NotConnected(t *testing.T) {
-	t.Parallel()
-	client := newNotConnectedClient()
-	ctx := context.Background()
-
-	resp, err := client.ObjectStorageDeleteObject(ctx, nil)
-	assert.Error(t, err)
-	assert.Nil(t, resp)
-	assert.Contains(t, err.Error(), "closed")
-}
-
-func TestClient_ObjectStorageHeadObject_NotConnected(t *testing.T) {
-	t.Parallel()
-	client := newNotConnectedClient()
-	ctx := context.Background()
-
-	resp, err := client.ObjectStorageHeadObject(ctx, nil)
-	assert.Error(t, err)
-	assert.Nil(t, resp)
-	assert.Contains(t, err.Error(), "closed")
-}
-
-func TestClient_ObjectStorageListObjects_NotConnected(t *testing.T) {
-	t.Parallel()
-	client := newNotConnectedClient()
-	ctx := context.Background()
-
-	resp, err := client.ObjectStorageListObjects(ctx, nil)
-	assert.Error(t, err)
-	assert.Nil(t, resp)
-	assert.Contains(t, err.Error(), "closed")
-}
-
-func TestClient_ObjectStorageListByTag_NotConnected(t *testing.T) {
-	t.Parallel()
-	client := newNotConnectedClient()
-	ctx := context.Background()
-
-	resp, err := client.ObjectStorageListByTag(ctx, nil)
-	assert.Error(t, err)
-	assert.Nil(t, resp)
-	assert.Contains(t, err.Error(), "closed")
-}
-
-func TestClient_ObjectStorageListByTenant_NotConnected(t *testing.T) {
-	t.Parallel()
-	client := newNotConnectedClient()
-	ctx := context.Background()
-
-	resp, err := client.ObjectStorageListByTenant(ctx, nil)
-	assert.Error(t, err)
-	assert.Nil(t, resp)
-	assert.Contains(t, err.Error(), "closed")
-}
-
-func TestClient_ObjectStorageCopyObject_NotConnected(t *testing.T) {
-	t.Parallel()
-	client := newNotConnectedClient()
-	ctx := context.Background()
-
-	resp, err := client.ObjectStorageCopyObject(ctx, nil)
-	assert.Error(t, err)
-	assert.Nil(t, resp)
-	assert.Contains(t, err.Error(), "closed")
-}
-
-func TestClient_ObjectStorageReplicateObject_NotConnected(t *testing.T) {
-	t.Parallel()
-	client := newNotConnectedClient()
-	ctx := context.Background()
-
-	resp, err := client.ObjectStorageReplicateObject(ctx, nil)
-	assert.Error(t, err)
-	assert.Nil(t, resp)
-	assert.Contains(t, err.Error(), "closed")
-}
-
-func TestClient_ObjectStorageMigrateObject_NotConnected(t *testing.T) {
-	t.Parallel()
-	client := newNotConnectedClient()
-	ctx := context.Background()
-
-	resp, err := client.ObjectStorageMigrateObject(ctx, nil)
-	assert.Error(t, err)
-	assert.Nil(t, resp)
-	assert.Contains(t, err.Error(), "closed")
-}
-
-// =============================================================================
-// Ollama Functions - Not Connected Tests
-// =============================================================================
-
-func TestClient_OllamaHealth_NotConnected(t *testing.T) {
-	t.Parallel()
-	client := newNotConnectedClient()
-	ctx := context.Background()
-
-	resp, err := client.OllamaHealth(ctx, nil)
-	assert.Error(t, err)
-	assert.Nil(t, resp)
-	assert.Contains(t, err.Error(), "closed")
-}
-
-func TestClient_OllamaListModels_NotConnected(t *testing.T) {
-	t.Parallel()
-	client := newNotConnectedClient()
-	ctx := context.Background()
-
-	resp, err := client.OllamaListModels(ctx, nil)
-	assert.Error(t, err)
-	assert.Nil(t, resp)
-	assert.Contains(t, err.Error(), "closed")
-}
-
-func TestClient_OllamaGetModelInfo_NotConnected(t *testing.T) {
-	t.Parallel()
-	client := newNotConnectedClient()
-	ctx := context.Background()
-
-	resp, err := client.OllamaGetModelInfo(ctx, nil)
-	assert.Error(t, err)
-	assert.Nil(t, resp)
-	assert.Contains(t, err.Error(), "closed")
-}
-
-func TestClient_OllamaEmbed_NotConnected(t *testing.T) {
-	t.Parallel()
-	client := newNotConnectedClient()
-	ctx := context.Background()
-
-	resp, err := client.OllamaEmbed(ctx, nil)
-	assert.Error(t, err)
-	assert.Nil(t, resp)
-	assert.Contains(t, err.Error(), "closed")
-}
-
-func TestClient_OllamaEmbedWithModel_NotConnected(t *testing.T) {
-	t.Parallel()
-	client := newNotConnectedClient()
-	ctx := context.Background()
-
-	resp, err := client.OllamaEmbedWithModel(ctx, nil)
-	assert.Error(t, err)
-	assert.Nil(t, resp)
-	assert.Contains(t, err.Error(), "closed")
-}
-
-func TestClient_OllamaEmbedBatch_NotConnected(t *testing.T) {
-	t.Parallel()
-	client := newNotConnectedClient()
-	ctx := context.Background()
-
-	resp, err := client.OllamaEmbedBatch(ctx, nil)
-	assert.Error(t, err)
-	assert.Nil(t, resp)
-	assert.Contains(t, err.Error(), "closed")
+	runNotConnectedCases(t, []clientCallCase{
+		{"OllamaHealth", func(c *Client, ctx context.Context) (any, error) { return c.OllamaHealth(ctx, nil) }},
+		{"OllamaListModels", func(c *Client, ctx context.Context) (any, error) { return c.OllamaListModels(ctx, nil) }},
+		{"OllamaGetModelInfo", func(c *Client, ctx context.Context) (any, error) { return c.OllamaGetModelInfo(ctx, nil) }},
+		{"OllamaEmbed", func(c *Client, ctx context.Context) (any, error) { return c.OllamaEmbed(ctx, nil) }},
+		{"OllamaEmbedWithModel", func(c *Client, ctx context.Context) (any, error) { return c.OllamaEmbedWithModel(ctx, nil) }},
+		{"OllamaEmbedBatch", func(c *Client, ctx context.Context) (any, error) { return c.OllamaEmbedBatch(ctx, nil) }},
+	})
 }
 
 // --- Merged from coverage_extended_additional_test.go ---
@@ -1023,31 +857,44 @@ func TestClient_OllamaEmbedBatch_NotConnected(t *testing.T) {
 // Nil Request Tests
 // =============================================================================
 
-// nilRequestCase calls one client method with a nil request.
-type nilRequestCase struct {
+// clientCallCase calls one client method.
+type clientCallCase struct {
 	name string
 	call func(c *Client, ctx context.Context) (any, error)
 }
 
-// runNilRequestCases asserts that every method rejects a nil request
-// before it touches the connection.
-func runNilRequestCases(t *testing.T, cases []nilRequestCase) {
+// runFailingCalls asserts that every call on a client from newClient fails
+// with an error containing want and returns no response.
+func runFailingCalls(t *testing.T, newClient func() *Client, want string, cases []clientCallCase) {
 	t.Helper()
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			resp, err := tc.call(&Client{}, context.Background())
+			resp, err := tc.call(newClient(), context.Background())
 			if assert.Error(t, err) {
-				assert.Contains(t, err.Error(), "request cannot be nil")
+				assert.Contains(t, err.Error(), want)
 			}
 			assert.Nil(t, resp)
 		})
 	}
 }
 
+// runNilRequestCases asserts that every method rejects a nil request
+// before it touches the connection.
+func runNilRequestCases(t *testing.T, cases []clientCallCase) {
+	t.Helper()
+	runFailingCalls(t, func() *Client { return &Client{} }, "request cannot be nil", cases)
+}
+
+// runNotConnectedCases asserts that every method fails on a closed client.
+func runNotConnectedCases(t *testing.T, cases []clientCallCase) {
+	t.Helper()
+	runFailingCalls(t, newNotConnectedClient, "closed", cases)
+}
+
 func TestClientSecrets_NilRequest(t *testing.T) {
 	t.Parallel()
-	runNilRequestCases(t, []nilRequestCase{
+	runNilRequestCases(t, []clientCallCase{
 		{"StoreSecret", func(c *Client, ctx context.Context) (any, error) { return c.StoreSecret(ctx, nil) }},
 		{"GetSecret", func(c *Client, ctx context.Context) (any, error) { return c.GetSecret(ctx, nil) }},
 		{"ListSecrets", func(c *Client, ctx context.Context) (any, error) { return c.ListSecrets(ctx, nil) }},
@@ -1063,7 +910,7 @@ func TestClientSecrets_NilRequest(t *testing.T) {
 
 func TestClientKMS_NilRequest(t *testing.T) {
 	t.Parallel()
-	runNilRequestCases(t, []nilRequestCase{
+	runNilRequestCases(t, []clientCallCase{
 		{"KMSGenerateKey", func(c *Client, ctx context.Context) (any, error) { return c.KMSGenerateKey(ctx, nil) }},
 		{"KMSImportKey", func(c *Client, ctx context.Context) (any, error) { return c.KMSImportKey(ctx, nil) }},
 		{"KMSGetKey", func(c *Client, ctx context.Context) (any, error) { return c.KMSGetKey(ctx, nil) }},
@@ -1092,7 +939,7 @@ func TestClientKMS_NilRequest(t *testing.T) {
 
 func TestClientScheduler_NilRequest(t *testing.T) {
 	t.Parallel()
-	runNilRequestCases(t, []nilRequestCase{
+	runNilRequestCases(t, []clientCallCase{
 		{"SchedulerCreateJob", func(c *Client, ctx context.Context) (any, error) { return c.SchedulerCreateJob(ctx, nil) }},
 		{"SchedulerGetJob", func(c *Client, ctx context.Context) (any, error) { return c.SchedulerGetJob(ctx, nil) }},
 		{"SchedulerUpdateJob", func(c *Client, ctx context.Context) (any, error) { return c.SchedulerUpdateJob(ctx, nil) }},
@@ -1107,7 +954,7 @@ func TestClientScheduler_NilRequest(t *testing.T) {
 
 func TestClientMessaging_NilRequest(t *testing.T) {
 	t.Parallel()
-	runNilRequestCases(t, []nilRequestCase{
+	runNilRequestCases(t, []clientCallCase{
 		{"MessagingCreateChannel", func(c *Client, ctx context.Context) (any, error) { return c.MessagingCreateChannel(ctx, nil) }},
 		{"MessagingDeleteChannel", func(c *Client, ctx context.Context) (any, error) { return c.MessagingDeleteChannel(ctx, nil) }},
 		{"MessagingGetChannel", func(c *Client, ctx context.Context) (any, error) { return c.MessagingGetChannel(ctx, nil) }},
@@ -1355,287 +1202,6 @@ func TestNormalizeUnixSocketAddressCases(t *testing.T) {
 			assert.Equal(t, tt.expected, result)
 		})
 	}
-}
-
-// =============================================================================
-// Client Vector Tests - ensureConnected Error Paths
-// =============================================================================
-
-func TestClientVectorCreateNamespaceNotConnected(t *testing.T) {
-	client := &Client{
-		closed: true,
-	}
-
-	ctx := context.Background()
-	resp, err := client.VectorCreateNamespace(ctx, &pb.CreateNamespaceRequest{})
-
-	assert.Error(t, err)
-	assert.Nil(t, resp)
-}
-
-func TestClientVectorDeleteNamespaceNotConnected(t *testing.T) {
-	client := &Client{
-		closed: true,
-	}
-
-	ctx := context.Background()
-	resp, err := client.VectorDeleteNamespace(ctx, &pb.DeleteNamespaceRequest{})
-
-	assert.Error(t, err)
-	assert.Nil(t, resp)
-}
-
-func TestClientVectorListNamespacesNotConnected(t *testing.T) {
-	client := &Client{
-		closed: true,
-	}
-
-	ctx := context.Background()
-	resp, err := client.VectorListNamespaces(ctx, &pb.ListNamespacesRequest{})
-
-	assert.Error(t, err)
-	assert.Nil(t, resp)
-}
-
-func TestClientVectorGetNamespaceInfoNotConnected(t *testing.T) {
-	client := &Client{
-		closed: true,
-	}
-
-	ctx := context.Background()
-	resp, err := client.VectorGetNamespaceInfo(ctx, &pb.GetNamespaceInfoRequest{})
-
-	assert.Error(t, err)
-	assert.Nil(t, resp)
-}
-
-func TestClientVectorUpsertNotConnected(t *testing.T) {
-	client := &Client{
-		closed: true,
-	}
-
-	ctx := context.Background()
-	resp, err := client.VectorUpsert(ctx, &pb.UpsertVectorRequest{})
-
-	assert.Error(t, err)
-	assert.Nil(t, resp)
-}
-
-func TestClientVectorGetNotConnected(t *testing.T) {
-	client := &Client{
-		closed: true,
-	}
-
-	ctx := context.Background()
-	resp, err := client.VectorGet(ctx, &pb.GetVectorRequest{})
-
-	assert.Error(t, err)
-	assert.Nil(t, resp)
-}
-
-func TestClientVectorDeleteNotConnected(t *testing.T) {
-	client := &Client{
-		closed: true,
-	}
-
-	ctx := context.Background()
-	resp, err := client.VectorDelete(ctx, &pb.DeleteVectorRequest{})
-
-	assert.Error(t, err)
-	assert.Nil(t, resp)
-}
-
-func TestClientVectorBatchUpsertNotConnected(t *testing.T) {
-	client := &Client{
-		closed: true,
-	}
-
-	ctx := context.Background()
-	resp, err := client.VectorBatchUpsert(ctx, &pb.BatchUpsertVectorsRequest{})
-
-	assert.Error(t, err)
-	assert.Nil(t, resp)
-}
-
-func TestClientVectorBatchDeleteNotConnected(t *testing.T) {
-	client := &Client{
-		closed: true,
-	}
-
-	ctx := context.Background()
-	resp, err := client.VectorBatchDelete(ctx, &pb.BatchDeleteVectorsRequest{})
-
-	assert.Error(t, err)
-	assert.Nil(t, resp)
-}
-
-func TestClientVectorUpdateMetadataNotConnected(t *testing.T) {
-	client := &Client{
-		closed: true,
-	}
-
-	ctx := context.Background()
-	resp, err := client.VectorUpdateMetadata(ctx, &pb.UpdateMetadataRequest{})
-
-	assert.Error(t, err)
-	assert.Nil(t, resp)
-}
-
-func TestClientVectorHealthNotConnected(t *testing.T) {
-	client := &Client{
-		closed: true,
-	}
-
-	ctx := context.Background()
-	resp, err := client.VectorHealth(ctx, &pb.VectorHealthRequest{})
-
-	assert.Error(t, err)
-	assert.Nil(t, resp)
-}
-
-func TestClientVectorGetStatsNotConnected(t *testing.T) {
-	client := &Client{
-		closed: true,
-	}
-
-	ctx := context.Background()
-	resp, err := client.VectorGetStats(ctx, &pb.GetVectorStatsRequest{})
-
-	assert.Error(t, err)
-	assert.Nil(t, resp)
-}
-
-func TestClientVectorSearchSimilarNotConnected(t *testing.T) {
-	client := &Client{
-		closed: true,
-	}
-
-	ctx := context.Background()
-	resp, err := client.VectorSearchSimilar(ctx, &pb.SearchSimilarRequest{})
-
-	assert.Error(t, err)
-	assert.Nil(t, resp)
-}
-
-func TestClientVectorSearchByIDNotConnected(t *testing.T) {
-	client := &Client{
-		closed: true,
-	}
-
-	ctx := context.Background()
-	resp, err := client.VectorSearchByID(ctx, &pb.SearchByIDRequest{})
-
-	assert.Error(t, err)
-	assert.Nil(t, resp)
-}
-
-func TestClientVectorHybridSearchNotConnected(t *testing.T) {
-	client := &Client{
-		closed: true,
-	}
-
-	ctx := context.Background()
-	resp, err := client.VectorHybridSearch(ctx, &pb.HybridSearchRequest{})
-
-	assert.Error(t, err)
-	assert.Nil(t, resp)
-}
-
-func TestClientVectorSearchByMetadataNotConnected(t *testing.T) {
-	client := &Client{
-		closed: true,
-	}
-
-	ctx := context.Background()
-	resp, err := client.VectorSearchByMetadata(ctx, &pb.SearchByMetadataRequest{})
-
-	assert.Error(t, err)
-	assert.Nil(t, resp)
-}
-
-func TestClientVectorListNotConnected(t *testing.T) {
-	client := &Client{
-		closed: true,
-	}
-
-	ctx := context.Background()
-	resp, err := client.VectorList(ctx, &pb.ListVectorsRequest{})
-
-	assert.Error(t, err)
-	assert.Nil(t, resp)
-}
-
-func TestClientVectorRebuildIndexNotConnected(t *testing.T) {
-	client := &Client{
-		closed: true,
-	}
-
-	ctx := context.Background()
-	resp, err := client.VectorRebuildIndex(ctx, &pb.RebuildIndexRequest{})
-
-	assert.Error(t, err)
-	assert.Nil(t, resp)
-}
-
-func TestClientVectorGetIndexProgressNotConnected(t *testing.T) {
-	client := &Client{
-		closed: true,
-	}
-
-	ctx := context.Background()
-	resp, err := client.VectorGetIndexProgress(ctx, &pb.GetIndexProgressRequest{})
-
-	assert.Error(t, err)
-	assert.Nil(t, resp)
-}
-
-func TestClientVectorExportNotConnected(t *testing.T) {
-	client := &Client{
-		closed: true,
-	}
-
-	ctx := context.Background()
-	resp, err := client.VectorExport(ctx, &pb.ExportVectorsRequest{})
-
-	assert.Error(t, err)
-	assert.Nil(t, resp)
-}
-
-func TestClientVectorImportNotConnected(t *testing.T) {
-	client := &Client{
-		closed: true,
-	}
-
-	ctx := context.Background()
-	// VectorImport takes a slice of requests
-	resp, err := client.VectorImport(ctx, []*pb.ImportVectorsRequest{})
-
-	assert.Error(t, err)
-	assert.Nil(t, resp)
-}
-
-func TestClientVectorCompactNotConnected(t *testing.T) {
-	client := &Client{
-		closed: true,
-	}
-
-	ctx := context.Background()
-	resp, err := client.VectorCompact(ctx, &pb.CompactNamespaceRequest{})
-
-	assert.Error(t, err)
-	assert.Nil(t, resp)
-}
-
-func TestClientVectorGetCompactionProgressNotConnected(t *testing.T) {
-	client := &Client{
-		closed: true,
-	}
-
-	ctx := context.Background()
-	resp, err := client.VectorGetCompactionProgress(ctx, &pb.GetCompactionProgressRequest{})
-
-	assert.Error(t, err)
-	assert.Nil(t, resp)
 }
 
 // =============================================================================
