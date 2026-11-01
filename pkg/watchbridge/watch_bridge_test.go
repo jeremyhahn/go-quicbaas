@@ -1508,31 +1508,6 @@ func TestWatchBridgeDeltaComputation(t *testing.T) {
 		}
 	})
 
-	t.Run("no delta for empty value", func(t *testing.T) {
-		mappings := []KeyChannelMapping{
-			{
-				KeyPrefix:  "/emptyval/",
-				EntityType: &TestEntity{},
-			},
-		}
-
-		bridge, err := NewWatchBridge(log, watchMgr, messagingSvc, clusterInfo, mappings)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-
-		// Test computeDelta directly with empty value
-		event := watch.Event{
-			Type:  watch.EventTypePut,
-			Key:   []byte("/emptyval/key"),
-			Value: []byte{},
-		}
-		delta := bridge.computeDelta(event, mappings[0])
-		if delta != nil {
-			t.Error("expected no delta for empty value")
-		}
-	})
-
 	t.Run("clears old values when not requested", func(t *testing.T) {
 		mappings := []KeyChannelMapping{
 			{
@@ -1853,102 +1828,52 @@ func TestWatchBridgeAutoCreateChannelCreationError(t *testing.T) {
 	_ = bridge.Stop(stopCtx)
 }
 
-// TestWatchBridgeComputeDeltaNilDeltaComputer verifies computeDelta returns nil
-// when the delta computer is nil.
-func TestWatchBridgeComputeDeltaNilDeltaComputer(t *testing.T) {
+// TestWatchBridgeComputeDeltaReturnsNil verifies computeDelta returns nil
+// for every input it cannot compute a delta from.
+func TestWatchBridgeComputeDeltaReturnsNil(t *testing.T) {
 	t.Parallel()
 
 	type TestEntity struct {
 		ID string `json:"id"`
 	}
 
-	log := testLoggerCov(t)
-	watchMgr := watch.NewManager()
-	messagingSvc := newMockMessagingService()
-
-	bridge, err := NewWatchBridge(log, watchMgr, messagingSvc, nil, nil)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	tests := []struct {
+		name        string
+		nilComputer bool
+		entityType  interface{}
+		value       []byte
+	}{
+		{name: "nil delta computer", nilComputer: true, entityType: &TestEntity{}, value: []byte(`{"id": "1"}`)},
+		{name: "nil entity type", entityType: nil, value: []byte(`{"id": "1"}`)},
+		{name: "empty value", entityType: &TestEntity{}, value: []byte{}},
+		{name: "invalid JSON", entityType: &TestEntity{}, value: []byte(`{not-valid-json`)},
 	}
 
-	// Nil deltaComputer returns nil
-	bridge.deltaComputer = nil
-	event := watch.Event{
-		Type:  watch.EventTypePut,
-		Key:   []byte("/test/key"),
-		Value: []byte(`{"id": "1"}`),
-	}
-	mapping := KeyChannelMapping{
-		KeyPrefix:  "/test/",
-		EntityType: &TestEntity{},
-	}
-	delta := bridge.computeDelta(event, mapping)
-	if delta != nil {
-		t.Error("expected nil delta when deltaComputer is nil")
-	}
-}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 
-// TestWatchBridgeComputeDeltaNilEntityType verifies computeDelta returns nil
-// when entity type is nil.
-func TestWatchBridgeComputeDeltaNilEntityType(t *testing.T) {
-	t.Parallel()
+			bridge, err := NewWatchBridge(testLoggerCov(t), watch.NewManager(), newMockMessagingService(), nil, nil)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if tc.nilComputer {
+				bridge.deltaComputer = nil
+			}
 
-	log := testLoggerCov(t)
-	watchMgr := watch.NewManager()
-	messagingSvc := newMockMessagingService()
-
-	bridge, err := NewWatchBridge(log, watchMgr, messagingSvc, nil, nil)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	event := watch.Event{
-		Type:  watch.EventTypePut,
-		Key:   []byte("/test/key"),
-		Value: []byte(`{"id": "1"}`),
-	}
-	mapping := KeyChannelMapping{
-		KeyPrefix:  "/test/",
-		EntityType: nil,
-	}
-	delta := bridge.computeDelta(event, mapping)
-	if delta != nil {
-		t.Error("expected nil delta when EntityType is nil")
-	}
-}
-
-// TestWatchBridgeComputeDeltaInvalidJSON verifies computeDelta handles invalid
-// JSON gracefully by returning nil.
-func TestWatchBridgeComputeDeltaInvalidJSON(t *testing.T) {
-	t.Parallel()
-
-	type TestEntity struct {
-		ID string `json:"id"`
-	}
-
-	log := testLoggerCov(t)
-	watchMgr := watch.NewManager()
-	messagingSvc := newMockMessagingService()
-	clusterInfo := newMockClusterInfo(true)
-
-	bridge, err := NewWatchBridge(log, watchMgr, messagingSvc, clusterInfo, nil)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	// Invalid JSON should cause ComputeBytes to fail, returning nil
-	event := watch.Event{
-		Type:  watch.EventTypePut,
-		Key:   []byte("/test/key"),
-		Value: []byte(`{not-valid-json`),
-	}
-	mapping := KeyChannelMapping{
-		KeyPrefix:  "/test/",
-		EntityType: &TestEntity{},
-	}
-	delta := bridge.computeDelta(event, mapping)
-	if delta != nil {
-		t.Error("expected nil delta for invalid JSON")
+			event := watch.Event{
+				Type:  watch.EventTypePut,
+				Key:   []byte("/test/key"),
+				Value: tc.value,
+			}
+			mapping := KeyChannelMapping{
+				KeyPrefix:  "/test/",
+				EntityType: tc.entityType,
+			}
+			if delta := bridge.computeDelta(event, mapping); delta != nil {
+				t.Errorf("expected nil delta, got %+v", delta)
+			}
+		})
 	}
 }
 
