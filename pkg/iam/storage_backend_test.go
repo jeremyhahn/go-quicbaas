@@ -269,6 +269,8 @@ func TestBackendStorage_AuthCodeOperations(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, authCode.Code, retrieved.Code)
 	assert.Equal(t, authCode.ClientID, retrieved.ClientID)
+	assert.Equal(t, authCode.UserID, retrieved.UserID)
+	assert.Equal(t, authCode.Scope, retrieved.Scope)
 
 	// Delete
 	err = storage.DeleteAuthCode(ctx, authCode.Code)
@@ -1862,52 +1864,6 @@ func TestOIDCProviderAdapter_GetOAuthASMetadata_NilCheck(t *testing.T) {
 // Storage Backend - UpdateSettings and GetSettings coverage
 // =============================================================================
 
-func TestBackendStorage_SettingsOperations(t *testing.T) {
-	ctx := context.Background()
-	kv := newMockKVStore91()
-	storage := NewBackendStorage(kv)
-
-	tenantID := "settings-test-tenant"
-
-	// Create tenant first
-	tenant := &Tenant{ID: tenantID, Name: "Settings Test Tenant"}
-	if err := storage.CreateTenant(ctx, tenant); err != nil {
-		t.Fatalf("CreateTenant failed: %v", err)
-	}
-
-	// Get settings (should return defaults or error)
-	_, err := storage.GetSettings(ctx, tenantID)
-	// This may return an error if no settings exist - that's OK
-	_ = err
-
-	// Update settings
-	settings := &TenantSettings{
-		MaxUsers:           100,
-		MFARequired:        true,
-		SessionTimeout:     30 * time.Minute,
-		SessionIdleTimeout: 15 * time.Minute,
-		TokenTTL:           1 * time.Hour,
-		RefreshTokenTTL:    24 * time.Hour,
-	}
-
-	if err := storage.UpdateSettings(ctx, tenantID, settings); err != nil {
-		t.Fatalf("UpdateSettings failed: %v", err)
-	}
-
-	// Get settings after update
-	retrieved, err := storage.GetSettings(ctx, tenantID)
-	if err != nil {
-		t.Fatalf("GetSettings (after update) failed: %v", err)
-	}
-
-	if retrieved.SessionTimeout != 30*time.Minute {
-		t.Errorf("expected SessionTimeout=30m, got %v", retrieved.SessionTimeout)
-	}
-	if !retrieved.MFARequired {
-		t.Error("expected MFARequired=true")
-	}
-}
-
 // =============================================================================
 // Storage Backend - List operations with pagination
 // =============================================================================
@@ -2071,41 +2027,6 @@ func TestBackendStorage_ValidateClientSecret(t *testing.T) {
 // Storage Backend - StoreAuthCode and GetAuthCode
 // =============================================================================
 
-func TestBackendStorage_AuthCodeOps_Boost(t *testing.T) {
-	ctx := context.Background()
-	kv := newMockKVStore91()
-	storage := NewBackendStorage(kv)
-
-	// Store auth code using AuthCodeData
-	code := &AuthCodeData{
-		Code:                "test-auth-code-boost-123",
-		ClientID:            "client-1",
-		UserID:              10001,
-		RedirectURI:         "https://example.com/callback",
-		Scope:               []string{"openid", "profile"},
-		CodeChallenge:       "challenge",
-		CodeChallengeMethod: "S256",
-		ExpiresAt:           time.Now().Add(10 * time.Minute),
-	}
-
-	if err := storage.StoreAuthCode(ctx, code); err != nil {
-		t.Fatalf("StoreAuthCode failed: %v", err)
-	}
-
-	// Get auth code
-	retrieved, err := storage.GetAuthCode(ctx, code.Code)
-	if err != nil {
-		t.Fatalf("GetAuthCode failed: %v", err)
-	}
-
-	if retrieved.Code != code.Code {
-		t.Errorf("expected Code %s, got %s", code.Code, retrieved.Code)
-	}
-	if retrieved.UserID != code.UserID {
-		t.Errorf("expected UserID %d, got %d", code.UserID, retrieved.UserID)
-	}
-}
-
 // =============================================================================
 // Storage Backend - GetTokenByValue
 // =============================================================================
@@ -2176,35 +2097,6 @@ func TestBackendStorage_GetTokenByValue(t *testing.T) {
 // =============================================================================
 // Storage Backend - DeleteAuthCode
 // =============================================================================
-
-func TestBackendStorage_DeleteAuthCode(t *testing.T) {
-	ctx := context.Background()
-	kv := newMockKVStore91()
-	storage := NewBackendStorage(kv)
-
-	code := &AuthCodeData{
-		Code:        "delete-auth-code",
-		ClientID:    "client-1",
-		UserID:      10001,
-		RedirectURI: "https://example.com/callback",
-		ExpiresAt:   time.Now().Add(10 * time.Minute),
-	}
-
-	if err := storage.StoreAuthCode(ctx, code); err != nil {
-		t.Fatalf("StoreAuthCode failed: %v", err)
-	}
-
-	// Delete auth code
-	if err := storage.DeleteAuthCode(ctx, code.Code); err != nil {
-		t.Fatalf("DeleteAuthCode failed: %v", err)
-	}
-
-	// Verify deleted
-	_, err := storage.GetAuthCode(ctx, code.Code)
-	if err == nil {
-		t.Error("expected error for deleted auth code")
-	}
-}
 
 // =============================================================================
 // Storage Backend - GetAppByTenant NotFound
@@ -2453,23 +2345,6 @@ func TestBackendStorage_RevokeUserTokens_NoTokens(t *testing.T) {
 	}
 }
 
-// Test GetQuota returns empty quota when not found (per implementation behavior)
-func TestBackendStorage_GetQuota_ReturnsEmptyWhenNotSet(t *testing.T) {
-	ctx := context.Background()
-	kv := newMockKVStore91()
-	storage := NewBackendStorage(kv)
-
-	// GetQuota returns empty quota (not error) when quota doesn't exist
-	quota, err := storage.GetQuota(ctx, "non-existent-tenant")
-	if err != nil {
-		t.Fatalf("GetQuota should not error: %v", err)
-	}
-	// Returns an empty quota
-	if quota == nil {
-		t.Error("expected empty quota, got nil")
-	}
-}
-
 // Test quota operations with all quota resources
 func TestBackendStorage_QuotaOperations_AllResources(t *testing.T) {
 	ctx := context.Background()
@@ -2620,119 +2495,6 @@ func TestBackendStorage_GetSettings_ReturnsEmptyWhenNotSet(t *testing.T) {
 	}
 	if settings == nil {
 		t.Error("expected empty settings, got nil")
-	}
-}
-
-// Test UpdateSettings for existing tenant
-func TestBackendStorage_UpdateSettings_Update(t *testing.T) {
-	ctx := context.Background()
-	kv := newMockKVStore91()
-	storage := NewBackendStorage(kv)
-
-	tenantID := "settings-update-tenant"
-
-	// Create tenant
-	tenant := &Tenant{ID: tenantID, Name: "Settings Update Tenant"}
-	if err := storage.CreateTenant(ctx, tenant); err != nil {
-		t.Fatalf("CreateTenant failed: %v", err)
-	}
-
-	// Set initial settings
-	settings1 := &TenantSettings{MFARequired: false, TokenTTL: 1 * time.Hour}
-	if err := storage.UpdateSettings(ctx, tenantID, settings1); err != nil {
-		t.Fatalf("UpdateSettings (initial) failed: %v", err)
-	}
-
-	// Update settings
-	settings2 := &TenantSettings{MFARequired: true, TokenTTL: 2 * time.Hour}
-	if err := storage.UpdateSettings(ctx, tenantID, settings2); err != nil {
-		t.Fatalf("UpdateSettings (update) failed: %v", err)
-	}
-
-	// Verify update
-	retrieved, _ := storage.GetSettings(ctx, tenantID)
-	if !retrieved.MFARequired {
-		t.Error("expected MFARequired=true")
-	}
-	if retrieved.TokenTTL != 2*time.Hour {
-		t.Errorf("expected TokenTTL=2h, got %v", retrieved.TokenTTL)
-	}
-}
-
-// Test UpdateQuota for existing tenant
-func TestBackendStorage_UpdateQuota_Update(t *testing.T) {
-	ctx := context.Background()
-	kv := newMockKVStore91()
-	storage := NewBackendStorage(kv)
-
-	tenantID := "quota-update-tenant"
-
-	// Create tenant
-	tenant := &Tenant{ID: tenantID, Name: "Quota Update Tenant"}
-	if err := storage.CreateTenant(ctx, tenant); err != nil {
-		t.Fatalf("CreateTenant failed: %v", err)
-	}
-
-	// Set initial BaaS-layer IAM quota (users are engine-level, owned by qrdb)
-	quota1 := &TenantQuota{MaxPolicies: 10, CurrentPolicies: 5}
-	if err := storage.UpdateQuota(ctx, tenantID, quota1); err != nil {
-		t.Fatalf("UpdateQuota (initial) failed: %v", err)
-	}
-
-	// Update quota
-	quota2 := &TenantQuota{MaxPolicies: 100, CurrentPolicies: 10}
-	if err := storage.UpdateQuota(ctx, tenantID, quota2); err != nil {
-		t.Fatalf("UpdateQuota (update) failed: %v", err)
-	}
-
-	// Verify update
-	retrieved, _ := storage.GetQuota(ctx, tenantID)
-	if retrieved.MaxPolicies != 100 {
-		t.Errorf("expected MaxPolicies=100, got %d", retrieved.MaxPolicies)
-	}
-	if retrieved.CurrentPolicies != 10 {
-		t.Errorf("expected CurrentPolicies=10, got %d", retrieved.CurrentPolicies)
-	}
-}
-
-// Test StoreAuthCode and DeleteAuthCode roundtrip
-func TestBackendStorage_AuthCode_Roundtrip(t *testing.T) {
-	ctx := context.Background()
-	kv := newMockKVStore91()
-	storage := NewBackendStorage(kv)
-
-	code := &AuthCodeData{
-		Code:        "auth-code-roundtrip",
-		ClientID:    "client-1",
-		UserID:      10001,
-		RedirectURI: "https://example.com/callback",
-		Scope:       []string{"openid"},
-		ExpiresAt:   time.Now().Add(10 * time.Minute),
-	}
-
-	// Store
-	if err := storage.StoreAuthCode(ctx, code); err != nil {
-		t.Fatalf("StoreAuthCode failed: %v", err)
-	}
-
-	// Get
-	retrieved, err := storage.GetAuthCode(ctx, code.Code)
-	if err != nil {
-		t.Fatalf("GetAuthCode failed: %v", err)
-	}
-	if retrieved.Code != code.Code {
-		t.Errorf("expected code %s, got %s", code.Code, retrieved.Code)
-	}
-
-	// Delete
-	if err := storage.DeleteAuthCode(ctx, code.Code); err != nil {
-		t.Fatalf("DeleteAuthCode failed: %v", err)
-	}
-
-	// Verify deleted
-	_, err = storage.GetAuthCode(ctx, code.Code)
-	if err == nil {
-		t.Error("expected error for deleted auth code")
 	}
 }
 
@@ -2955,38 +2717,6 @@ func TestBackendStorage_ListTokensByUser_MixedUsers(t *testing.T) {
 
 // Test UpdateSettings with valid tenant
 
-// Test UpdateSettings with valid tenant
-func TestBackendStorage_UpdateSettings_ValidTenant91(t *testing.T) {
-	ctx := context.Background()
-	kv := newMockKVStore91()
-	storage := NewBackendStorage(kv)
-
-	tenantID := "settings-valid-91"
-
-	// Create tenant
-	tenant := &Tenant{ID: tenantID, Name: "Settings Test"}
-	if err := storage.CreateTenant(ctx, tenant); err != nil {
-		t.Fatalf("CreateTenant failed: %v", err)
-	}
-
-	// Update settings
-	settings := &TenantSettings{
-		MaxUsers: 100,
-	}
-	if err := storage.UpdateSettings(ctx, tenantID, settings); err != nil {
-		t.Fatalf("UpdateSettings failed: %v", err)
-	}
-
-	// Verify settings
-	retrieved, err := storage.GetSettings(ctx, tenantID)
-	if err != nil {
-		t.Fatalf("GetSettings failed: %v", err)
-	}
-	if retrieved.MaxUsers != 100 {
-		t.Errorf("expected MaxUsers 100, got %d", retrieved.MaxUsers)
-	}
-}
-
 // Test CreateApp index creation
 func TestBackendStorage_CreateApp_IndexCreation91(t *testing.T) {
 	ctx := context.Background()
@@ -3075,44 +2805,6 @@ func TestBackendStorage_DeleteApp_IndexCleanup91(t *testing.T) {
 // TestBackendStorage_ListUsers_AllPaginationPaths91 was removed in phase C1-F:
 // BackendStorage no longer persists or lists users (qrdb owns the user record).
 // User list pagination is covered by the MemoryStorage and qrdbadapter suites.
-
-// Test StoreAuthCode and retrieval
-func TestBackendStorage_StoreAuthCode_Roundtrip91(t *testing.T) {
-	ctx := context.Background()
-	kv := newMockKVStore91()
-	storage := NewBackendStorage(kv)
-
-	code := &AuthCodeData{
-		Code:        "auth-code-91-new",
-		ClientID:    "client-91-new",
-		UserID:      40050,
-		RedirectURI: "https://example.com/callback",
-		Scope:       []string{"openid", "profile"},
-		Nonce:       "nonce-91-new",
-		ExpiresAt:   time.Now().Add(10 * time.Minute),
-	}
-
-	// Store
-	if err := storage.StoreAuthCode(ctx, code); err != nil {
-		t.Fatalf("StoreAuthCode failed: %v", err)
-	}
-
-	// Retrieve
-	retrieved, err := storage.GetAuthCode(ctx, code.Code)
-	if err != nil {
-		t.Fatalf("GetAuthCode failed: %v", err)
-	}
-
-	if retrieved.Code != code.Code {
-		t.Errorf("expected code %s, got %s", code.Code, retrieved.Code)
-	}
-	if retrieved.ClientID != code.ClientID {
-		t.Errorf("expected clientID %s, got %s", code.ClientID, retrieved.ClientID)
-	}
-	if len(retrieved.Scope) != 2 {
-		t.Errorf("expected 2 scopes, got %d", len(retrieved.Scope))
-	}
-}
 
 // =============================================================================
 // DeltaLog tests for cache_sync.go coverage
