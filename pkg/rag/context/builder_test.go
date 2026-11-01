@@ -18,6 +18,7 @@ package context
 import (
 	"encoding/json"
 	"encoding/xml"
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -112,54 +113,76 @@ func TestBuilder_BuildWithTemplate(t *testing.T) {
 func TestBuilder_EstimateTokens(t *testing.T) {
 	builder := NewBuilder()
 
-	results := []Result{
-		{Content: "short"},
-		{Content: "another short text"},
-		{Content: "and one more"},
+	tests := []struct {
+		name      string
+		results   []Result
+		minTokens int
+	}{
+		{
+			name: "results include formatting overhead",
+			results: []Result{
+				{Content: "short"},
+				{Content: "another short text"},
+				{Content: "and one more"},
+			},
+			minTokens: 200,
+		},
+		{
+			name:      "empty results keep header and footer overhead",
+			results:   []Result{},
+			minTokens: 100,
+		},
 	}
 
-	tokens := builder.EstimateTokens(results)
-
-	if tokens <= 0 {
-		t.Error("EstimateTokens() returned non-positive value")
-	}
-
-	// Should include overhead for formatting
-	if tokens < 200 {
-		t.Errorf("EstimateTokens() = %d, seems too low (should include overhead)", tokens)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tokens := builder.EstimateTokens(tt.results)
+			if tokens < tt.minTokens {
+				t.Errorf("EstimateTokens() = %d, want at least %d", tokens, tt.minTokens)
+			}
+		})
 	}
 }
 
 func TestBuilder_Build_MaxTokens(t *testing.T) {
-	builder := NewBuilder()
-
-	// Create results that exceed token limit
-	results := []Result{
-		{Content: strings.Repeat("word ", 500), FusionScore: 0.9, Metadata: Metadata{FilePath: "1.go"}},
-		{Content: strings.Repeat("word ", 500), FusionScore: 0.8, Metadata: Metadata{FilePath: "2.go"}},
-		{Content: strings.Repeat("word ", 500), FusionScore: 0.7, Metadata: Metadata{FilePath: "3.go"}},
+	tests := []struct {
+		name      string
+		strategy  TruncationStrategy
+		count     int
+		words     int
+		maxTokens int
+		limit     int // maxTokens plus the allowed variance
+	}{
+		{name: "default strategy, few large results", strategy: DefaultConfig().TruncationStrategy, count: 3, words: 500, maxTokens: 500, limit: 600},
+		{name: "smart strategy, many results", strategy: TruncationSmart, count: 20, words: 200, maxTokens: 1000, limit: 1200},
 	}
 
-	context, err := builder.Build(results, 500)
-	if err != nil {
-		t.Fatalf("Build() returned error: %v", err)
-	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			builder := NewBuilderWithConfig(DefaultConfig().WithTruncationStrategy(tt.strategy))
 
-	// Should truncate to fit
-	if context.Tokens > 600 { // Allow some variance
-		t.Errorf("Build() resulted in %d tokens, exceeds limit of 500", context.Tokens)
-	}
+			results := make([]Result, tt.count)
+			for i := range results {
+				results[i] = Result{
+					Content:     strings.Repeat("word ", tt.words),
+					FusionScore: float32(0.9 - float32(i)*0.01),
+					Metadata:    Metadata{FilePath: "test.go"},
+				}
+			}
 
-	// Should have fewer results than input
-	if len(context.Results) >= len(results) {
-		t.Logf("Warning: All results included despite token limit")
+			context, err := builder.Build(results, tt.maxTokens)
+			if err != nil {
+				t.Fatalf("Build() returned error: %v", err)
+			}
+
+			if context.Tokens > tt.limit {
+				t.Errorf("Build() resulted in %d tokens, exceeds limit of %d", context.Tokens, tt.maxTokens)
+			}
+		})
 	}
 }
 
 func TestBuilder_Build_Citations(t *testing.T) {
-	config := DefaultConfig().WithCitations(true)
-	builder := NewBuilderWithConfig(config)
-
 	results := []Result{
 		{
 			Content:     "content 1",
@@ -181,43 +204,37 @@ func TestBuilder_Build_Citations(t *testing.T) {
 		},
 	}
 
-	context, err := builder.Build(results, 8000)
-	if err != nil {
-		t.Fatalf("Build() returned error: %v", err)
-	}
+	for _, enabled := range []bool{true, false} {
+		t.Run(fmt.Sprintf("citations=%t", enabled), func(t *testing.T) {
+			builder := NewBuilderWithConfig(DefaultConfig().WithCitations(enabled))
 
-	if len(context.Citations) != len(context.Results) {
-		t.Errorf("Got %d citations, want %d (one per result)",
-			len(context.Citations), len(context.Results))
-	}
+			context, err := builder.Build(results, 8000)
+			if err != nil {
+				t.Fatalf("Build() returned error: %v", err)
+			}
 
-	// Verify citation details
-	for i, citation := range context.Citations {
-		if citation.Index != i+1 {
-			t.Errorf("Citation %d has index %d", i, citation.Index)
-		}
+			if !enabled {
+				if len(context.Citations) != 0 {
+					t.Errorf("Got %d citations, want 0", len(context.Citations))
+				}
+				return
+			}
 
-		if citation.FilePath == "" {
-			t.Errorf("Citation %d has empty file path", i)
-		}
-	}
-}
+			if len(context.Citations) != len(context.Results) {
+				t.Errorf("Got %d citations, want %d (one per result)",
+					len(context.Citations), len(context.Results))
+			}
 
-func TestBuilder_Build_NoCitations(t *testing.T) {
-	config := DefaultConfig().WithCitations(false)
-	builder := NewBuilderWithConfig(config)
+			for i, citation := range context.Citations {
+				if citation.Index != i+1 {
+					t.Errorf("Citation %d has index %d", i, citation.Index)
+				}
 
-	results := []Result{
-		{Content: "test", FusionScore: 0.9, Metadata: Metadata{FilePath: "test.go"}},
-	}
-
-	context, err := builder.Build(results, 8000)
-	if err != nil {
-		t.Fatalf("Build() returned error: %v", err)
-	}
-
-	if len(context.Citations) != 0 {
-		t.Errorf("Got %d citations, want 0", len(context.Citations))
+				if citation.FilePath == "" {
+					t.Errorf("Citation %d has empty file path", i)
+				}
+			}
+		})
 	}
 }
 
@@ -274,64 +291,39 @@ func TestBuilder_Build_TruncationStrategies(t *testing.T) {
 	}
 }
 
-func TestBuilder_Build_EmptyResults(t *testing.T) {
+func TestBuilder_Build_EdgeInputs(t *testing.T) {
 	builder := NewBuilder()
-
-	context, err := builder.Build([]Result{}, 8000)
-	if err != nil {
-		t.Fatalf("Build() with empty results returned error: %v", err)
-	}
-
-	// Should handle gracefully
-	if context == nil {
-		t.Fatal("Build() returned nil context")
-	}
-}
-
-func TestBuilder_Build_ZeroMaxTokens(t *testing.T) {
-	builder := NewBuilder()
-
-	results := []Result{
+	oneResult := []Result{
 		{Content: "test", FusionScore: 0.9, Metadata: Metadata{FilePath: "test.go"}},
 	}
 
-	// Should use default max tokens
-	context, err := builder.Build(results, 0)
-	if err != nil {
-		t.Fatalf("Build() with zero maxTokens returned error: %v", err)
+	tests := []struct {
+		name        string
+		results     []Result
+		maxTokens   int
+		wantContent bool
+	}{
+		{name: "empty results", results: []Result{}, maxTokens: 8000},
+		// Zero and negative maxTokens fall back to the default limit.
+		{name: "zero maxTokens", results: oneResult, maxTokens: 0, wantContent: true},
+		{name: "negative maxTokens", results: oneResult, maxTokens: -100, wantContent: true},
 	}
 
-	if context.Content == "" {
-		t.Error("Build() returned empty content")
-	}
-}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			context, err := builder.Build(tt.results, tt.maxTokens)
+			if err != nil {
+				t.Fatalf("Build() returned error: %v", err)
+			}
 
-func TestBuilder_Build_NegativeMaxTokens(t *testing.T) {
-	builder := NewBuilder()
+			if context == nil {
+				t.Fatal("Build() returned nil context")
+			}
 
-	results := []Result{
-		{Content: "test", FusionScore: 0.9, Metadata: Metadata{FilePath: "test.go"}},
-	}
-
-	// Should use default max tokens
-	context, err := builder.Build(results, -100)
-	if err != nil {
-		t.Fatalf("Build() with negative maxTokens returned error: %v", err)
-	}
-
-	if context.Content == "" {
-		t.Error("Build() returned empty content")
-	}
-}
-
-func TestBuilder_EstimateTokens_Empty(t *testing.T) {
-	builder := NewBuilder()
-
-	tokens := builder.EstimateTokens([]Result{})
-
-	// Should at least have header/footer overhead
-	if tokens < 100 {
-		t.Errorf("EstimateTokens() for empty results = %d, expected at least 100", tokens)
+			if tt.wantContent && context.Content == "" {
+				t.Error("Build() returned empty content")
+			}
+		})
 	}
 }
 
@@ -467,36 +459,6 @@ func TestBuildCitations(t *testing.T) {
 		if citation.Score != results[i].FusionScore {
 			t.Errorf("Citation %d has wrong score", i)
 		}
-	}
-}
-
-func TestBuilder_Build_Truncated(t *testing.T) {
-	config := DefaultConfig().WithTruncationStrategy(TruncationSmart)
-	builder := NewBuilderWithConfig(config)
-
-	// Create many large results
-	results := make([]Result, 20)
-	for i := range results {
-		results[i] = Result{
-			Content:     strings.Repeat("word ", 200),
-			FusionScore: float32(0.9 - float32(i)*0.01),
-			Metadata:    Metadata{FilePath: "test.go"},
-		}
-	}
-
-	context, err := builder.Build(results, 1000)
-	if err != nil {
-		t.Fatalf("Build() returned error: %v", err)
-	}
-
-	// Should have truncated
-	if len(context.Results) >= len(results) {
-		t.Logf("Warning: Expected truncation but got all results")
-	}
-
-	// Verify token limit respected
-	if context.Tokens > 1200 { // Allow some variance
-		t.Errorf("Context has %d tokens, exceeds limit", context.Tokens)
 	}
 }
 
