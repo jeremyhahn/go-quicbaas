@@ -348,18 +348,18 @@ func TestNewQRDBVectorIndex(t *testing.T) {
 // Tenant isolation tests
 // ---------------------------------------------------------------------------
 
-func TestPhysicalNamespace_WithTenant(t *testing.T) {
-	got := physicalNamespace("acme", "embeddings")
-	want := "acme:embeddings"
-	if got != want {
-		t.Fatalf("physicalNamespace(%q, %q) = %q, want %q", "acme", "embeddings", got, want)
+func TestPhysicalNamespace(t *testing.T) {
+	tests := []struct {
+		tenantID string
+		want     string
+	}{
+		{tenantID: "acme", want: "acme:embeddings"},
+		{tenantID: "", want: "embeddings"},
 	}
-}
-
-func TestPhysicalNamespace_NoTenant(t *testing.T) {
-	got := physicalNamespace("", "embeddings")
-	if got != "embeddings" {
-		t.Fatalf("expected %q, got %q", "embeddings", got)
+	for _, tt := range tests {
+		if got := physicalNamespace(tt.tenantID, "embeddings"); got != tt.want {
+			t.Fatalf("physicalNamespace(%q, %q) = %q, want %q", tt.tenantID, "embeddings", got, tt.want)
+		}
 	}
 }
 
@@ -588,16 +588,6 @@ func TestQRDBVectorIndex_Size_ReturnsZeroOnError(t *testing.T) {
 // ---------------------------------------------------------------------------
 // stringToUint64 stability
 // ---------------------------------------------------------------------------
-
-func TestStringToUint64_Stability(t *testing.T) {
-	// Same input always produces the same output.
-	id := "rag-ns:abc123:0"
-	first := stringToUint64(id)
-	second := stringToUint64(id)
-	if first != second {
-		t.Fatalf("stringToUint64 should be deterministic: %d != %d", first, second)
-	}
-}
 
 // TestStringToUint64_PinnedValue pins the FNV-1a 64 id of a known vector ID.
 // The id is the persisted vector key, so the algorithm must never change.
