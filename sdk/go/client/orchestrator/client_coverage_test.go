@@ -73,7 +73,11 @@ type clientCall struct {
 // failureCalls lists every method whose nil-context, transport-error and
 // type-mismatch paths share the same shape.
 func failureCalls() []clientCall {
-	return append(unaryCalls(), listCalls()...)
+	history := clientCall{"GetSessionHistory", func(c Client, ctx context.Context) error {
+		_, err := c.GetSessionHistory(ctx, &GetSessionHistoryRequest{SessionID: "s1"})
+		return err
+	}}
+	return append(append(unaryCalls(), listCalls()...), history)
 }
 
 // listCalls lists the methods that turn a nil response into an empty result;
@@ -106,6 +110,10 @@ func listCalls() []clientCall {
 // unaryCalls lists the methods that reject a nil response with an error.
 func unaryCalls() []clientCall {
 	return []clientCall{
+		{"Inference", func(c Client, ctx context.Context) error {
+			_, err := c.Inference(ctx, &InferenceRequest{Backend: "ollama", Prompt: "hi"})
+			return err
+		}},
 		{"DecomposeTask", func(c Client, ctx context.Context) error {
 			_, err := c.DecomposeTask(ctx, &DecomposeTaskRequest{Task: "x"})
 			return err
@@ -732,28 +740,11 @@ func TestGetSessionHistory_HappyPath(t *testing.T) {
 
 func TestGetSessionHistory_Validation(t *testing.T) {
 	c := NewClient(failTransport())
-	var nilCtx context.Context
-	_, err := c.GetSessionHistory(nilCtx, &GetSessionHistoryRequest{SessionID: "s1"})
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "context is required")
-	_, err = c.GetSessionHistory(context.Background(), nil)
+	_, err := c.GetSessionHistory(context.Background(), nil)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "session_id is required")
 	_, err = c.GetSessionHistory(context.Background(), &GetSessionHistoryRequest{})
 	require.Error(t, err)
-}
-
-func TestGetSessionHistory_TransportError(t *testing.T) {
-	c := NewClient(failTransport())
-	_, err := c.GetSessionHistory(context.Background(), &GetSessionHistoryRequest{SessionID: "s1"})
-	require.Error(t, err)
-}
-
-func TestGetSessionHistory_TypeMismatch(t *testing.T) {
-	c := NewClient(mismatchTransport())
-	_, err := c.GetSessionHistory(context.Background(), &GetSessionHistoryRequest{SessionID: "s1"})
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "invalid response type")
 }
 
 // =============================================================================
@@ -949,16 +940,8 @@ func TestSubscribeJobEvents_WrongMessageTypeSkipped(t *testing.T) {
 }
 
 // =============================================================================
-// Inference / InferenceStream nil-context guards.
+// InferenceStream nil-context guard.
 // =============================================================================
-
-func TestInference_NilContext(t *testing.T) {
-	c := NewClient(okTransport(t, "Inference", &InferenceResponse{}))
-	var nilCtx context.Context
-	_, err := c.Inference(nilCtx, &InferenceRequest{Backend: "ollama", Prompt: "hi"})
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "context is required")
-}
 
 func TestInferenceStream_NilContext(t *testing.T) {
 	c := NewClient(&mockTransport{})
