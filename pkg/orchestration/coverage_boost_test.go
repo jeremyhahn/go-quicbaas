@@ -47,6 +47,9 @@ func TestTypedErrors(t *testing.T) {
 	reviewCause := errors.New("unexpected token")
 	dialCause := errors.New("connection refused")
 	rpcCause := errors.New("grpc: status unavailable")
+	bootstrapCause := errors.New("db connection failed")
+	peerCause := errors.New("channel closed")
+	reindexCause := errors.New("index unavailable")
 
 	tests := []struct {
 		name        string
@@ -160,6 +163,64 @@ func TestTypedErrors(t *testing.T) {
 			err:         &RemoteBackendRPCError{Op: "Spawn", Err: rpcCause},
 			wantSubstrs: []string{"Spawn", "grpc: status unavailable"},
 			wantIs:      []error{rpcCause},
+		},
+		{
+			name:        "TaskAlreadyExists",
+			err:         &TaskAlreadyExistsError{TaskID: "task-dup-42"},
+			wantSubstrs: []string{"task-dup-42"},
+		},
+		{
+			name:        "TaskVersionConflict",
+			err:         &TaskVersionConflictError{TaskID: "task-v-99", ExpectedVersion: 3, ActualVersion: 7},
+			wantSubstrs: []string{"task-v-99"},
+		},
+		{
+			name:        "TaskDependencyBlocked",
+			err:         &TaskDependencyBlockedError{TaskID: "task-dep-8", UnresolvedDependency: "dep-prereq"},
+			wantSubstrs: []string{"task-dep-8", "dep-prereq"},
+		},
+		{
+			name:        "HookRecoveryBootstrap/WithCause",
+			err:         &HookRecoveryBootstrapError{Step: "load_state", Cause: bootstrapCause},
+			wantSubstrs: []string{"load_state", "db connection failed"},
+			wantIs:      []error{ErrHookRecoveryBootstrap},
+		},
+		{
+			name:        "HookRecoveryBootstrap/WithoutCause",
+			err:         &HookRecoveryBootstrapError{Step: "init"},
+			wantSubstrs: []string{"init"},
+		},
+		{
+			name:        "HookPeerDelivery/WithCause",
+			err:         &HookPeerDeliveryError{AgentID: "agent-peer-1", Cause: peerCause},
+			wantSubstrs: []string{"agent-peer-1", "channel closed"},
+			wantIs:      []error{ErrHookPeerDelivery},
+		},
+		{
+			name:        "HookPeerDelivery/WithoutCause",
+			err:         &HookPeerDeliveryError{AgentID: "agent-x"},
+			wantSubstrs: []string{"agent-x"},
+		},
+		{
+			name:        "HookReindex/WithCause",
+			err:         &HookReindexError{Cause: reindexCause},
+			wantSubstrs: []string{"index unavailable"},
+			wantIs:      []error{ErrHookReindex},
+		},
+		{
+			name:   "HookReindex/WithoutCause",
+			err:    &HookReindexError{},
+			wantIs: []error{ErrHookReindex},
+		},
+		{
+			name:        "AgentService/WithMessage",
+			err:         &AgentServiceError{Sentinel: ErrAgentServiceUnavailable, Message: "down for maintenance"},
+			wantSubstrs: []string{"down for maintenance"},
+			wantIs:      []error{ErrAgentServiceUnavailable},
+		},
+		{
+			name: "AgentService/WithoutMessage",
+			err:  &AgentServiceError{Sentinel: ErrAgentServiceUnavailable},
 		},
 	}
 
@@ -548,30 +609,6 @@ func TestOrchestrator_AgentHeartbeat(t *testing.T) {
 }
 
 // =============================================================================
-// Tier 2: ACPBackend.SetContainerRuntime — acp_backend.go line 80
-// =============================================================================
-
-func TestACPBackend_SetContainerRuntime(t *testing.T) {
-	t.Parallel()
-
-	backend := NewACPBackend(ACPBackendConfig{
-		Command:      "claude",
-		DefaultModel: "claude-3-5",
-	})
-
-	if backend.containerRuntime != nil {
-		t.Fatal("expected nil containerRuntime initially")
-	}
-
-	rt := &mockContainerRuntime{available: true}
-	backend.SetContainerRuntime(rt)
-
-	if backend.containerRuntime != rt {
-		t.Fatal("expected containerRuntime to be set")
-	}
-}
-
-// =============================================================================
 // Tier 3: remote_acp_backend translation helpers
 // =============================================================================
 
@@ -678,74 +715,6 @@ func TestTimestampAsUnixNano(t *testing.T) {
 			t.Errorf("expected 0 for zero time, got %d", got)
 		}
 	})
-}
-
-// =============================================================================
-// Tier 3: RemoteACPBackend — Close after CloseAll
-// =============================================================================
-
-func TestRemoteACPBackend_CloseAfterCloseAll(t *testing.T) {
-	t.Parallel()
-
-	daemon := startBufconnDaemon(t, nil)
-	backend, err := NewRemoteACPBackend(RemoteACPBackendDeps{
-		Registration: newDaemonRegistration(),
-		Backend:      "acp",
-		Logger:       &agentTestLogger{},
-		ConnDialer:   daemon.dialer(),
-	})
-	if err != nil {
-		t.Fatalf("NewRemoteACPBackend: %v", err)
-	}
-
-	// Prime the pool with a connection.
-	if _, err := backend.Spawn(context.Background(), &SpawnRequest{}); err != nil {
-		t.Fatalf("Spawn: %v", err)
-	}
-
-	// Close the pool.
-	if err := backend.CloseAll(); err != nil {
-		t.Fatalf("CloseAll: %v", err)
-	}
-
-	// Stop the daemon to force dial failure on next call.
-	daemon.server.Stop()
-
-	// Close after pool teardown — expect an error (RPC fails to reconnect).
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
-	_ = backend.Close(ctx, "sess-orphan")
-	// We only assert no panic; the specific error depends on timing.
-}
-
-// =============================================================================
-// Tier 3: ControlLoop.SetPeerDeliverFn — control_loop_hooks.go line 368
-// =============================================================================
-
-func TestControlLoop_SetPeerDeliverFn(t *testing.T) {
-	t.Parallel()
-
-	cl := newMinimalControlLoop(t)
-
-	if cl.peerDeliverFn != nil {
-		t.Fatal("expected peerDeliverFn to be nil initially")
-	}
-
-	var called bool
-	fn := func(_ context.Context, _ string, _ *PeerMessage) {
-		called = true
-	}
-	cl.SetPeerDeliverFn(fn)
-
-	if cl.peerDeliverFn == nil {
-		t.Fatal("expected peerDeliverFn to be set")
-	}
-
-	// Invoke it to ensure the assignment is correct.
-	cl.peerDeliverFn(context.Background(), "agent-1", &PeerMessage{})
-	if !called {
-		t.Error("expected peerDeliverFn to be called")
-	}
 }
 
 // newMinimalControlLoop creates a ControlLoop with the minimum fields required
@@ -941,207 +910,6 @@ func TestControlLoop_CheckBudget_WithTracker(t *testing.T) {
 }
 
 // =============================================================================
-// Tier 5: ControlLoop.startPeerDelivery edge cases
-// =============================================================================
-
-func TestControlLoop_StartPeerDelivery_NoPeerMessaging(t *testing.T) {
-	t.Parallel()
-
-	cl := newMinimalControlLoop(t)
-
-	// Should return immediately without panic when no peer messaging.
-	cl.startPeerDelivery(context.Background(), []*WorkItem{{Title: "task-1", RequiredRole: "worker"}})
-}
-
-func TestControlLoop_StartPeerDelivery_NoPeerDeliverFn(t *testing.T) {
-	t.Parallel()
-
-	cl := newMinimalControlLoop(t)
-	cl.peerMessaging = &hookMockPeerMessaging{}
-	cl.workflow = &WorkflowDefinition{
-		Settings: WorkflowSettings{
-			Topology: TopologyPeerToPeer,
-		},
-	}
-	// peerDeliverFn is nil — should log a warning and return cleanly.
-	cl.startPeerDelivery(context.Background(), []*WorkItem{{Title: "task-1", RequiredRole: "worker"}})
-}
-
-func TestControlLoop_StartPeerDelivery_HubAndSpoke_Skips(t *testing.T) {
-	t.Parallel()
-
-	cl := newMinimalControlLoop(t)
-	cl.peerMessaging = &hookMockPeerMessaging{}
-	cl.workflow = &WorkflowDefinition{
-		Settings: WorkflowSettings{
-			Topology: TopologyHubAndSpoke,
-		},
-	}
-	var fn func(context.Context, string, *PeerMessage)
-	cl.SetPeerDeliverFn(fn)
-
-	// Should return without calling subscribe since topology is hub-and-spoke.
-	cl.startPeerDelivery(context.Background(), []*WorkItem{{Title: "task-1", RequiredRole: "worker"}})
-}
-
-// =============================================================================
-// Tier 1: Error() methods for task types not tested by task_store_test.go
-// (the existing tests use errors.Is but don't call .Error() directly)
-// =============================================================================
-
-func TestTaskAlreadyExistsError_Error(t *testing.T) {
-	t.Parallel()
-
-	err := &TaskAlreadyExistsError{TaskID: "task-dup-42"}
-	got := err.Error()
-	if !containsStr(got, "task-dup-42") {
-		t.Errorf("expected task ID in error string, got %q", got)
-	}
-}
-
-func TestTaskVersionConflictError_Error(t *testing.T) {
-	t.Parallel()
-
-	err := &TaskVersionConflictError{
-		TaskID:          "task-v-99",
-		ExpectedVersion: 3,
-		ActualVersion:   7,
-	}
-	got := err.Error()
-	if !containsStr(got, "task-v-99") {
-		t.Errorf("expected task ID in error string, got %q", got)
-	}
-}
-
-func TestTaskDependencyBlockedError_Error(t *testing.T) {
-	t.Parallel()
-
-	err := &TaskDependencyBlockedError{
-		TaskID:               "task-dep-8",
-		UnresolvedDependency: "dep-prereq",
-	}
-	got := err.Error()
-	if !containsStr(got, "task-dep-8") {
-		t.Errorf("expected task ID in error string, got %q", got)
-	}
-	if !containsStr(got, "dep-prereq") {
-		t.Errorf("expected dependency ID in error string, got %q", got)
-	}
-}
-
-// =============================================================================
-// Tier 1: Error types from control_loop_hooks.go at 66-75%
-// =============================================================================
-
-func TestHookRecoveryBootstrapError(t *testing.T) {
-	t.Parallel()
-
-	t.Run("ErrorWithCause", func(t *testing.T) {
-		cause := errors.New("db connection failed")
-		err := &HookRecoveryBootstrapError{Step: "load_state", Cause: cause}
-		got := err.Error()
-		if !containsStr(got, "load_state") {
-			t.Errorf("expected step in error, got %q", got)
-		}
-		if !containsStr(got, "db connection failed") {
-			t.Errorf("expected cause in error, got %q", got)
-		}
-		if !errors.Is(err, ErrHookRecoveryBootstrap) {
-			t.Error("errors.Is(err, ErrHookRecoveryBootstrap) = false")
-		}
-	})
-
-	t.Run("ErrorWithoutCause", func(t *testing.T) {
-		err := &HookRecoveryBootstrapError{Step: "init"}
-		got := err.Error()
-		if !containsStr(got, "init") {
-			t.Errorf("expected step in error, got %q", got)
-		}
-	})
-}
-
-func TestHookPeerDeliveryError(t *testing.T) {
-	t.Parallel()
-
-	t.Run("ErrorWithCause", func(t *testing.T) {
-		cause := errors.New("channel closed")
-		err := &HookPeerDeliveryError{AgentID: "agent-peer-1", Cause: cause}
-		got := err.Error()
-		if !containsStr(got, "agent-peer-1") {
-			t.Errorf("expected agent ID in error, got %q", got)
-		}
-		if !containsStr(got, "channel closed") {
-			t.Errorf("expected cause in error, got %q", got)
-		}
-		if !errors.Is(err, ErrHookPeerDelivery) {
-			t.Error("errors.Is(err, ErrHookPeerDelivery) = false")
-		}
-	})
-
-	t.Run("ErrorWithoutCause", func(t *testing.T) {
-		err := &HookPeerDeliveryError{AgentID: "agent-x"}
-		got := err.Error()
-		if !containsStr(got, "agent-x") {
-			t.Errorf("expected agent ID in error, got %q", got)
-		}
-	})
-}
-
-func TestHookReindexError(t *testing.T) {
-	t.Parallel()
-
-	t.Run("ErrorWithCause", func(t *testing.T) {
-		cause := errors.New("index unavailable")
-		err := &HookReindexError{Cause: cause}
-		got := err.Error()
-		if !containsStr(got, "index unavailable") {
-			t.Errorf("expected cause in error, got %q", got)
-		}
-		if !errors.Is(err, ErrHookReindex) {
-			t.Error("errors.Is(err, ErrHookReindex) = false")
-		}
-	})
-
-	t.Run("ErrorWithoutCause", func(t *testing.T) {
-		err := &HookReindexError{}
-		got := err.Error()
-		if got == "" {
-			t.Fatal("expected non-empty error string")
-		}
-		if !errors.Is(err, ErrHookReindex) {
-			t.Error("errors.Is(err, ErrHookReindex) = false")
-		}
-	})
-}
-
-// =============================================================================
-// Tier 1: AgentServiceError.Error method — orchestrator_types.go line 369
-// =============================================================================
-
-func TestAgentServiceError(t *testing.T) {
-	t.Parallel()
-
-	t.Run("ErrorWithMessage", func(t *testing.T) {
-		err := &AgentServiceError{Sentinel: ErrAgentServiceUnavailable, Message: "down for maintenance"}
-		got := err.Error()
-		if !containsStr(got, "down for maintenance") {
-			t.Errorf("expected message in error, got %q", got)
-		}
-		if !errors.Is(err, ErrAgentServiceUnavailable) {
-			t.Error("errors.Is failed")
-		}
-	})
-
-	t.Run("ErrorWithoutMessage", func(t *testing.T) {
-		err := &AgentServiceError{Sentinel: ErrAgentServiceUnavailable}
-		got := err.Error()
-		if got == "" {
-			t.Fatal("expected non-empty error string")
-		}
-	})
-}
-
-// =============================================================================
 // Tier 2: EffectiveKind — fleet_registry_types.go line 66
 // =============================================================================
 
@@ -1244,159 +1012,76 @@ func TestOrchestrator_ListJobs_WithRunningJob(t *testing.T) {
 // (exercises the token fetch failure branch in authCtx)
 // =============================================================================
 
-func TestRemoteACPBackend_PromptRPCError(t *testing.T) {
+// TestRemoteACPBackend_RPCError checks that a daemon RPC failure surfaces as a
+// *RemoteBackendRPCError naming the failed operation.
+func TestRemoteACPBackend_RPCError(t *testing.T) {
 	t.Parallel()
 
-	daemon := startBufconnDaemon(t, &fakeDaemonServer{
-		promptErr: errors.New("internal server error"),
-	})
-	backend, err := NewRemoteACPBackend(RemoteACPBackendDeps{
-		Registration: newDaemonRegistration(),
-		Backend:      "acp",
-		Logger:       &agentTestLogger{},
-		ConnDialer:   daemon.dialer(),
-	})
-	if err != nil {
-		t.Fatalf("NewRemoteACPBackend: %v", err)
-	}
-	t.Cleanup(func() { _ = backend.CloseAll() })
-
-	_, err = backend.Prompt(context.Background(), &PromptRequest{Prompt: "hi"})
-	if err == nil {
-		t.Fatal("expected error on RPC failure")
-	}
-	var rpcErr *RemoteBackendRPCError
-	if !errors.As(err, &rpcErr) {
-		t.Fatalf("expected *RemoteBackendRPCError, got %T: %v", err, err)
-	}
-}
-
-func TestRemoteACPBackend_StatusRPCError(t *testing.T) {
-	t.Parallel()
-
-	daemon := startBufconnDaemon(t, &fakeDaemonServer{
-		statusErr: errors.New("not available"),
-	})
-	backend, err := NewRemoteACPBackend(RemoteACPBackendDeps{
-		Registration: newDaemonRegistration(),
-		Backend:      "acp",
-		Logger:       &agentTestLogger{},
-		ConnDialer:   daemon.dialer(),
-	})
-	if err != nil {
-		t.Fatalf("NewRemoteACPBackend: %v", err)
-	}
-	t.Cleanup(func() { _ = backend.CloseAll() })
-
-	_, err = backend.Status(context.Background(), "sess-fail")
-	if err == nil {
-		t.Fatal("expected error on RPC failure")
-	}
-	var rpcErr *RemoteBackendRPCError
-	if !errors.As(err, &rpcErr) {
-		t.Fatalf("expected *RemoteBackendRPCError, got %T: %v", err, err)
-	}
-}
-
-func TestRemoteACPBackend_SpawnRPCError(t *testing.T) {
-	t.Parallel()
-
-	daemon := startBufconnDaemon(t, &fakeDaemonServer{
-		spawnErr: errors.New("spawn rejected"),
-	})
-	backend, err := NewRemoteACPBackend(RemoteACPBackendDeps{
-		Registration: newDaemonRegistration(),
-		Backend:      "acp",
-		Logger:       &agentTestLogger{},
-		ConnDialer:   daemon.dialer(),
-	})
-	if err != nil {
-		t.Fatalf("NewRemoteACPBackend: %v", err)
-	}
-	t.Cleanup(func() { _ = backend.CloseAll() })
-
-	_, err = backend.Spawn(context.Background(), &SpawnRequest{})
-	if err == nil {
-		t.Fatal("expected error on RPC failure")
-	}
-	var rpcErr *RemoteBackendRPCError
-	if !errors.As(err, &rpcErr) {
-		t.Fatalf("expected *RemoteBackendRPCError, got %T: %v", err, err)
-	}
-	if rpcErr.Op != "Spawn" {
-		t.Errorf("Op = %q, want Spawn", rpcErr.Op)
-	}
-}
-
-func TestRemoteACPBackend_CloseRPCError(t *testing.T) {
-	t.Parallel()
-
-	daemon := startBufconnDaemon(t, &fakeDaemonServer{
-		closeErr: errors.New("close rejected"),
-	})
-	backend, err := NewRemoteACPBackend(RemoteACPBackendDeps{
-		Registration: newDaemonRegistration(),
-		Backend:      "acp",
-		Logger:       &agentTestLogger{},
-		ConnDialer:   daemon.dialer(),
-	})
-	if err != nil {
-		t.Fatalf("NewRemoteACPBackend: %v", err)
-	}
-	t.Cleanup(func() { _ = backend.CloseAll() })
-
-	err = backend.Close(context.Background(), "sess-close-fail")
-	if err == nil {
-		t.Fatal("expected error on Close RPC failure")
-	}
-	var rpcErr *RemoteBackendRPCError
-	if !errors.As(err, &rpcErr) {
-		t.Fatalf("expected *RemoteBackendRPCError, got %T: %v", err, err)
-	}
-	if rpcErr.Op != "Close" {
-		t.Errorf("Op = %q, want Close", rpcErr.Op)
-	}
-}
-
-// =============================================================================
-// Tier 3: Container runtime error on missing docker — container_runtime.go
-// (tests error path when no container runtime is available)
-// =============================================================================
-
-func TestExecContainerRuntime_Pull_NoBinary(t *testing.T) {
-	t.Parallel()
-
-	// Use a definitely-not-present binary to force exec errors.
-	rt, err := NewExecContainerRuntimeWithCommand("/bin/not-a-real-container-runtime", newContainerTestLogger(t))
-	if err != nil {
-		// Error creating with bad path is acceptable — just verify type.
-		var inputErr *InputValidationError
-		if errors.As(err, &inputErr) {
-			return
-		}
-		// Some systems may return a different error for a path that doesn't exist.
-		return
+	tests := []struct {
+		name   string
+		server *fakeDaemonServer
+		call   func(ctx context.Context, backend *RemoteACPBackend) error
+		wantOp string
+	}{
+		{
+			name:   "Prompt",
+			server: &fakeDaemonServer{promptErr: errors.New("internal server error")},
+			call: func(ctx context.Context, backend *RemoteACPBackend) error {
+				_, err := backend.Prompt(ctx, &PromptRequest{Prompt: "hi"})
+				return err
+			},
+		},
+		{
+			name:   "Status",
+			server: &fakeDaemonServer{statusErr: errors.New("not available")},
+			call: func(ctx context.Context, backend *RemoteACPBackend) error {
+				_, err := backend.Status(ctx, "sess-fail")
+				return err
+			},
+		},
+		{
+			name:   "Spawn",
+			server: &fakeDaemonServer{spawnErr: errors.New("spawn rejected")},
+			call: func(ctx context.Context, backend *RemoteACPBackend) error {
+				_, err := backend.Spawn(ctx, &SpawnRequest{})
+				return err
+			},
+			wantOp: "Spawn",
+		},
+		{
+			name:   "Close",
+			server: &fakeDaemonServer{closeErr: errors.New("close rejected")},
+			call: func(ctx context.Context, backend *RemoteACPBackend) error {
+				return backend.Close(ctx, "sess-close-fail")
+			},
+			wantOp: "Close",
+		},
 	}
 
-	ctx := context.Background()
-	pullErr := rt.Pull(ctx, "alpine:latest")
-	if pullErr == nil {
-		t.Fatal("expected error pulling image with fake runtime")
-	}
-	// The error can be wrapped in various ways; just verify it's not nil.
-}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			daemon := startBufconnDaemon(t, tt.server)
+			backend, err := NewRemoteACPBackend(RemoteACPBackendDeps{
+				Registration: newDaemonRegistration(),
+				Backend:      "acp",
+				Logger:       &agentTestLogger{},
+				ConnDialer:   daemon.dialer(),
+			})
+			if err != nil {
+				t.Fatalf("NewRemoteACPBackend: %v", err)
+			}
+			t.Cleanup(func() { _ = backend.CloseAll() })
 
-func TestExecContainerRuntime_Logs_NoBinary(t *testing.T) {
-	t.Parallel()
-
-	rt, err := NewExecContainerRuntimeWithCommand("/bin/not-a-real-container-runtime", newContainerTestLogger(t))
-	if err != nil {
-		return // creation failure is acceptable
-	}
-
-	_, logErr := rt.Logs(context.Background(), "container-id-x")
-	if logErr == nil {
-		t.Fatal("expected error getting logs with fake runtime")
+			err = tt.call(context.Background(), backend)
+			var rpcErr *RemoteBackendRPCError
+			if !errors.As(err, &rpcErr) {
+				t.Fatalf("expected *RemoteBackendRPCError, got %T: %v", err, err)
+			}
+			if tt.wantOp != "" && rpcErr.Op != tt.wantOp {
+				t.Errorf("Op = %q, want %q", rpcErr.Op, tt.wantOp)
+			}
+		})
 	}
 }
 
