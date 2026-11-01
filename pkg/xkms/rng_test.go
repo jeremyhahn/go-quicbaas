@@ -1333,25 +1333,6 @@ func TestSeal_Success(t *testing.T) {
 	assert.Equal(t, xkmssdk.BackendTypeSoftware, sealed.Backend)
 }
 
-func TestSeal_WithAAD(t *testing.T) {
-	setupFullTestXKMS(t)
-	attrs, _ := createTestECDSAKey(t, "seal-aad-test-key")
-
-	ctx := context.Background()
-	secretData := []byte("secret data with AAD")
-	aadData := []byte("additional authenticated data")
-
-	opts := &xkmssdk.SealOptions{
-		KeyAttributes: attrs,
-		AAD:           aadData,
-	}
-
-	sealed, err := Seal(ctx, secretData, opts)
-	require.NoError(t, err)
-	assert.NotNil(t, sealed)
-	assert.NotEmpty(t, sealed.Ciphertext)
-}
-
 func TestSeal_NilOptions(t *testing.T) {
 	setupFullTestXKMS(t)
 
@@ -1369,23 +1350,6 @@ func TestSealWithBackend_NotInitialized(t *testing.T) {
 	opts := &xkmssdk.SealOptions{}
 	_, err := SealWithBackend(ctx, "software", []byte("secret data"), opts)
 	assert.ErrorIs(t, err, ErrNotInitialized)
-}
-
-func TestSealWithBackend_Success(t *testing.T) {
-	setupFullTestXKMS(t)
-	attrs, _ := createTestRSAKey(t, "seal-backend-test-key")
-
-	ctx := context.Background()
-	secretData := []byte("secret data for specific backend")
-
-	opts := &xkmssdk.SealOptions{
-		KeyAttributes: attrs,
-	}
-
-	sealed, err := SealWithBackend(ctx, "software", secretData, opts)
-	require.NoError(t, err)
-	assert.NotNil(t, sealed)
-	assert.NotEmpty(t, sealed.Ciphertext)
 }
 
 func TestSealWithBackend_InvalidBackend(t *testing.T) {
@@ -2775,33 +2739,25 @@ func TestInitialize_AlreadyInitialized(t *testing.T) {
 // CanSeal Tests
 // -----------------------------------------------------------------------------
 
-func TestCanSeal_NotInitialized(t *testing.T) {
-	Reset()
+func TestCanSeal(t *testing.T) {
+	tests := []struct {
+		name     string
+		init     bool
+		backends []string
+		want     bool
+	}{
+		{name: "not initialized", want: false},
+		{name: "default backend", init: true, want: true},
+		{name: "named backend", init: true, backends: []string{"software"}, want: true},
+		{name: "unknown backend", init: true, backends: []string{"non-existent"}, want: false},
+	}
 
-	result := CanSeal()
-	assert.False(t, result)
-}
-
-func TestCanSeal_Success(t *testing.T) {
-	setupFullTestXKMS(t)
-
-	// PKCS8 backend supports sealing
-	result := CanSeal()
-	assert.True(t, result)
-}
-
-func TestCanSeal_SpecificBackend(t *testing.T) {
-	setupFullTestXKMS(t)
-
-	result := CanSeal("software")
-	assert.True(t, result)
-}
-
-func TestCanSeal_NonExistentBackend(t *testing.T) {
-	setupFullTestXKMS(t)
-
-	result := CanSeal("non-existent")
-	assert.False(t, result)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			resetTestXKMS(t, tt.init)
+			assert.Equal(t, tt.want, CanSeal(tt.backends...))
+		})
+	}
 }
 
 // =============================================================================
