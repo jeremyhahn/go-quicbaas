@@ -230,8 +230,14 @@ func TestSchedulerListJobs_Success(t *testing.T) {
 		args map[string]interface{}
 	}{
 		{"no filters", map[string]interface{}{}},
-		{"with status filter", map[string]interface{}{"status": "pending"}},
-		{"with limit", map[string]interface{}{"limit": float64(10)}},
+		{"with owner type and labels", map[string]interface{}{
+			"owner_type": "system",
+			"labels": map[string]interface{}{
+				"env":     "production",
+				"team":    "backend",
+				"invalid": float64(123), // non-string values are skipped
+			},
+		}},
 	}
 
 	for _, tc := range tests {
@@ -496,49 +502,6 @@ func TestSchedulerTools_ServiceError(t *testing.T) {
 	}
 }
 
-func TestExecuteSchedulerListJobs_WithPagination(t *testing.T) {
-	svc := &extendedMockService{
-		schedulerSvc: &mockSchedulerService{
-			listJobsFunc: func(ctx context.Context, req *service.ListSchedulerJobsRequest) (*service.ListSchedulerJobsResponse, error) {
-				return &service.ListSchedulerJobsResponse{
-					Jobs: []*service.SchedulerJob{
-						{
-							ID:        1,
-							Name:      "test-job",
-							Type:      service.SchedulerJobTypeRecurring,
-							Schedule:  "*/5 * * * *",
-							Status:    service.SchedulerJobStatusPending,
-							CreatedAt: time.Now(),
-						},
-					},
-					HasMore:    true,
-					NextCursor: "cursor-123",
-					TotalCount: 10,
-					Timestamp:  time.Now(),
-				}, nil
-			},
-		},
-	}
-	log, _ := logger.New(logger.LogConfig{Level: "error", Output: "stdout"})
-	registry := NewToolRegistry(svc, log)
-	ctx := context.Background()
-
-	result, err := registry.ExecuteTool(ctx, "quicbaas_scheduler_list_jobs", map[string]interface{}{
-		"cursor": "prev-cursor",
-		"limit":  float64(10),
-	})
-	require.NoError(t, err)
-	require.NotNil(t, result)
-
-	resultMap := result.(map[string]interface{})
-	assert.Equal(t, true, resultMap["has_more"])
-	assert.Equal(t, "cursor-123", resultMap["next_cursor"])
-}
-
-// =============================================================================
-// Scheduler Tool Validation Tests
-// =============================================================================
-
 // =============================================================================
 // Scheduler Update Job Tests (coverage at 40.6%)
 // =============================================================================
@@ -586,95 +549,48 @@ func TestExecuteSchedulerUpdateJob_AllParameters(t *testing.T) {
 			"env":     "production",
 			"team":    "backend",
 			"version": "1.0",
+			"invalid": float64(123), // non-string values are skipped
+			"another": true,
 		},
 	})
 	require.NoError(t, err)
 	require.NotNil(t, result)
 }
 
-func TestExecuteSchedulerUpdateJob_InvalidExecuteAt(t *testing.T) {
-	svc := &extendedMockService{
-		schedulerSvc: &mockSchedulerService{},
-	}
-	log, _ := logger.New(logger.LogConfig{Level: "error", Output: "stdout"})
-	registry := NewToolRegistry(svc, log)
+func TestExecuteSchedulerUpdateJob_InvalidArguments(t *testing.T) {
+	registry := newSchedulerRegistry(t)
 	ctx := context.Background()
 
-	result, err := registry.ExecuteTool(ctx, "quicbaas_scheduler_update_job", map[string]interface{}{
-		"job_id":     float64(123),
-		"execute_at": "invalid-timestamp",
-	})
-	require.Error(t, err)
-	assert.Nil(t, result)
-	assert.Contains(t, err.Error(), "invalid execute_at format")
-}
-
-func TestExecuteSchedulerUpdateJob_InvalidTimeout(t *testing.T) {
-	svc := &extendedMockService{
-		schedulerSvc: &mockSchedulerService{},
-	}
-	log, _ := logger.New(logger.LogConfig{Level: "error", Output: "stdout"})
-	registry := NewToolRegistry(svc, log)
-	ctx := context.Background()
-
-	result, err := registry.ExecuteTool(ctx, "quicbaas_scheduler_update_job", map[string]interface{}{
-		"job_id":  float64(123),
-		"timeout": "not-a-duration",
-	})
-	require.Error(t, err)
-	assert.Nil(t, result)
-	assert.Contains(t, err.Error(), "invalid timeout format")
-}
-
-func TestExecuteSchedulerUpdateJob_InvalidPayloadEncoding(t *testing.T) {
-	svc := &extendedMockService{
-		schedulerSvc: &mockSchedulerService{},
-	}
-	log, _ := logger.New(logger.LogConfig{Level: "error", Output: "stdout"})
-	registry := NewToolRegistry(svc, log)
-	ctx := context.Background()
-
-	result, err := registry.ExecuteTool(ctx, "quicbaas_scheduler_update_job", map[string]interface{}{
-		"job_id":  float64(123),
-		"payload": "not-valid-base64!!!",
-	})
-	require.Error(t, err)
-	assert.Nil(t, result)
-	assert.Contains(t, err.Error(), "invalid payload encoding")
-}
-
-func TestExecuteSchedulerUpdateJob_WithLabelsNonString(t *testing.T) {
-	svc := &extendedMockService{
-		schedulerSvc: &mockSchedulerService{
-			updateJobFunc: func(ctx context.Context, req *service.UpdateSchedulerJobRequest) (*service.UpdateSchedulerJobResponse, error) {
-				return &service.UpdateSchedulerJobResponse{
-					Job: &service.SchedulerJob{
-						ID:        req.JobID,
-						Name:      req.Name,
-						Status:    service.SchedulerJobStatusPending,
-						UpdatedAt: time.Now(),
-					},
-					Timestamp: time.Now(),
-				}, nil
-			},
+	tests := []struct {
+		name        string
+		args        map[string]interface{}
+		errContains string
+	}{
+		{
+			name:        "invalid execute_at",
+			args:        map[string]interface{}{"job_id": float64(123), "execute_at": "invalid-timestamp"},
+			errContains: "invalid execute_at format",
+		},
+		{
+			name:        "invalid timeout",
+			args:        map[string]interface{}{"job_id": float64(123), "timeout": "not-a-duration"},
+			errContains: "invalid timeout format",
+		},
+		{
+			name:        "invalid payload encoding",
+			args:        map[string]interface{}{"job_id": float64(123), "payload": "not-valid-base64!!!"},
+			errContains: "invalid payload encoding",
 		},
 	}
-	log, _ := logger.New(logger.LogConfig{Level: "error", Output: "stdout"})
-	registry := NewToolRegistry(svc, log)
-	ctx := context.Background()
 
-	// Labels with non-string values (should be ignored)
-	result, err := registry.ExecuteTool(ctx, "quicbaas_scheduler_update_job", map[string]interface{}{
-		"job_id": float64(123),
-		"name":   "test-job",
-		"labels": map[string]interface{}{
-			"valid":   "label-value",
-			"invalid": float64(123), // Non-string, should be skipped
-			"another": true,         // Non-string, should be skipped
-		},
-	})
-	require.NoError(t, err)
-	require.NotNil(t, result)
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			result, err := registry.ExecuteTool(ctx, "quicbaas_scheduler_update_job", tc.args)
+			require.Error(t, err)
+			assert.Nil(t, result)
+			assert.Contains(t, err.Error(), tc.errContains)
+		})
+	}
 }
 
 // =============================================================================
@@ -730,62 +646,6 @@ func TestExecuteSchedulerListJobs_AllFilters(t *testing.T) {
 	assert.Equal(t, true, resultMap["has_more"])
 	assert.Equal(t, "cursor-xyz", resultMap["next_cursor"])
 }
-
-func TestExecuteSchedulerListJobs_DefaultLimit(t *testing.T) {
-	svc := &extendedMockService{
-		schedulerSvc: &mockSchedulerService{
-			listJobsFunc: func(ctx context.Context, req *service.ListSchedulerJobsRequest) (*service.ListSchedulerJobsResponse, error) {
-				// Default limit should be 100
-				return &service.ListSchedulerJobsResponse{
-					Jobs:       []*service.SchedulerJob{},
-					HasMore:    false,
-					TotalCount: 0,
-					Timestamp:  time.Now(),
-				}, nil
-			},
-		},
-	}
-	log, _ := logger.New(logger.LogConfig{Level: "error", Output: "stdout"})
-	registry := NewToolRegistry(svc, log)
-	ctx := context.Background()
-
-	result, err := registry.ExecuteTool(ctx, "quicbaas_scheduler_list_jobs", map[string]interface{}{})
-	require.NoError(t, err)
-	require.NotNil(t, result)
-}
-
-func TestExecuteSchedulerListJobs_WithOwnerTypeAndLabels(t *testing.T) {
-	svc := &extendedMockService{
-		schedulerSvc: &mockSchedulerService{
-			listJobsFunc: func(ctx context.Context, req *service.ListSchedulerJobsRequest) (*service.ListSchedulerJobsResponse, error) {
-				return &service.ListSchedulerJobsResponse{
-					Jobs:       []*service.SchedulerJob{},
-					HasMore:    false,
-					TotalCount: 0,
-					Timestamp:  time.Now(),
-				}, nil
-			},
-		},
-	}
-	log, _ := logger.New(logger.LogConfig{Level: "error", Output: "stdout"})
-	registry := NewToolRegistry(svc, log)
-	ctx := context.Background()
-
-	result, err := registry.ExecuteTool(ctx, "quicbaas_scheduler_list_jobs", map[string]interface{}{
-		"owner_type": "system",
-		"labels": map[string]interface{}{
-			"env":     "production",
-			"team":    "backend",
-			"invalid": float64(123), // Non-string values should be skipped
-		},
-	})
-	require.NoError(t, err)
-	require.NotNil(t, result)
-}
-
-// =============================================================================
-// Scheduler Create Job Tests (additional coverage)
-// =============================================================================
 
 // =============================================================================
 // Helper Function Tests (additional coverage)
