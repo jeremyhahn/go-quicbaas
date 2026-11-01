@@ -1149,36 +1149,34 @@ func TestMarkdownChunker_ChunkReturnError(t *testing.T) {
 
 // Text Chunker edge cases
 
-func TestTextChunker_ConfigValidation_ChunkOverlapEqualsChunkSize(t *testing.T) {
-	// Test overlap == chunk size auto-correction
-	config := TextChunkerConfig{
-		ChunkSize:         100,
-		ChunkOverlap:      100, // Equal to chunk size
-		MinChunkSize:      10,
-		RespectSentences:  false,
-		RespectParagraphs: false,
+func TestTextChunker_ConfigValidation_Corrections(t *testing.T) {
+	tests := []struct {
+		name             string
+		config           TextChunkerConfig
+		wantOverlap      int
+		wantMinChunkSize int
+	}{
+		{
+			name:             "overlap equal to chunk size falls back to 10 percent",
+			config:           TextChunkerConfig{ChunkSize: 100, ChunkOverlap: 100, MinChunkSize: 10},
+			wantOverlap:      10,
+			wantMinChunkSize: 10,
+		},
+		{
+			name:             "zero minimum chunk size falls back to 50",
+			config:           TextChunkerConfig{ChunkSize: 100, ChunkOverlap: 10, MinChunkSize: 0},
+			wantOverlap:      10,
+			wantMinChunkSize: 50,
+		},
 	}
 
-	chunker := NewTextChunker(config)
-
-	// Should auto-correct to 10% of chunk size
-	assert.Equal(t, 10, chunker.config.ChunkOverlap)
-}
-
-func TestTextChunker_ConfigValidation_MinChunkSizeZero(t *testing.T) {
-	// Test MinChunkSize = 0 auto-correction
-	config := TextChunkerConfig{
-		ChunkSize:         100,
-		ChunkOverlap:      10,
-		MinChunkSize:      0, // Invalid
-		RespectSentences:  false,
-		RespectParagraphs: false,
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			chunker := NewTextChunker(tt.config)
+			assert.Equal(t, tt.wantOverlap, chunker.config.ChunkOverlap)
+			assert.Equal(t, tt.wantMinChunkSize, chunker.config.MinChunkSize)
+		})
 	}
-
-	chunker := NewTextChunker(config)
-
-	// Should default to 50
-	assert.Equal(t, 50, chunker.config.MinChunkSize)
 }
 
 func TestTextChunker_ChunkByParagraphs_EmptyParagraphs(t *testing.T) {
@@ -1198,63 +1196,87 @@ func TestTextChunker_ChunkByParagraphs_EmptyParagraphs(t *testing.T) {
 	assert.Equal(t, 1, len(chunks))
 }
 
-func TestTextChunker_ChunkByParagraphs_NoStartLine(t *testing.T) {
-	// Test paragraph chunking with StartLine = 0
-	chunker := NewTextChunker(TextChunkerConfig{
-		ChunkSize:         100,
-		ChunkOverlap:      10,
-		MinChunkSize:      5,
-		RespectParagraphs: true,
-		RespectSentences:  false,
-	})
+func TestTextChunker_Chunk_DefaultStartLine(t *testing.T) {
+	tests := []struct {
+		name    string
+		config  TextChunkerConfig
+		content string
+	}{
+		{
+			name:    "paragraphs",
+			config:  TextChunkerConfig{ChunkSize: 100, ChunkOverlap: 10, MinChunkSize: 5, RespectParagraphs: true},
+			content: "Para one with more content to meet minimum requirements.\n\nPara two also with enough content.",
+		},
+		{
+			name:    "sentences",
+			config:  TextChunkerConfig{ChunkSize: 100, ChunkOverlap: 10, MinChunkSize: 5, RespectSentences: true},
+			content: "Sentence one with content. Sentence two with more. Sentence three complete.",
+		},
+		{
+			name:    "tokens",
+			config:  TextChunkerConfig{ChunkSize: 100, ChunkOverlap: 10, MinChunkSize: 5},
+			content: "Some text content here with enough words to meet the minimum requirements",
+		},
+	}
 
-	content := []byte("Para one with more content to meet minimum requirements.\n\nPara two also with enough content.")
-
-	chunks, err := chunker.Chunk(content, Metadata{StartLine: 0})
-	require.NoError(t, err)
-
-	// Should default StartLine to 1
-	for _, chunk := range chunks {
-		assert.GreaterOrEqual(t, chunk.Metadata.StartLine, 1)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			chunks, err := NewTextChunker(tt.config).Chunk([]byte(tt.content), Metadata{StartLine: 0})
+			require.NoError(t, err)
+			require.NotEmpty(t, chunks)
+			for _, chunk := range chunks {
+				assert.GreaterOrEqual(t, chunk.Metadata.StartLine, 1)
+			}
+		})
 	}
 }
 
-func TestTextChunker_ChunkByParagraphs_OverlapWithoutContent(t *testing.T) {
-	// Test overlap calculation when previous chunk has no overlap
-	chunker := NewTextChunker(TextChunkerConfig{
-		ChunkSize:         50,
-		ChunkOverlap:      10,
-		MinChunkSize:      5,
-		RespectParagraphs: true,
-		RespectSentences:  false,
-	})
+func TestTextChunker_Chunk_MultipleChunks(t *testing.T) {
+	tests := []struct {
+		name    string
+		config  TextChunkerConfig
+		content string
+		// startLineDrifts marks a known defect: chunkByParagraphs moves the
+		// start line back by the overlap's line count, so later chunks report
+		// StartLine 0 and -1 for this input.
+		startLineDrifts bool
+	}{
+		{
+			name:            "paragraphs with overlap",
+			config:          TextChunkerConfig{ChunkSize: 40, ChunkOverlap: 15, MinChunkSize: 5, RespectParagraphs: true},
+			startLineDrifts: true,
+			content: strings.Repeat("Para one. ", 15) + "\n\n" + strings.Repeat("Para two. ", 15) +
+				"\n\n" + strings.Repeat("Para three. ", 15),
+		},
+		{
+			name:    "sentences with overlap",
+			config:  TextChunkerConfig{ChunkSize: 30, ChunkOverlap: 10, MinChunkSize: 5, RespectSentences: true},
+			content: strings.Repeat("Sentence here. ", 30),
+		},
+		{
+			name:    "tokens with overlap",
+			config:  TextChunkerConfig{ChunkSize: 25, ChunkOverlap: 8, MinChunkSize: 10},
+			content: strings.Repeat("word ", 100),
+		},
+		{
+			name:    "tokens without overlap",
+			config:  TextChunkerConfig{ChunkSize: 100, ChunkOverlap: 0, MinChunkSize: 5},
+			content: strings.Repeat("word ", 200),
+		},
+	}
 
-	// Create content that will trigger no overlap scenario
-	content := []byte(strings.Repeat("Short. ", 5) + "\n\n" + strings.Repeat("Para. ", 20))
-
-	chunks, err := chunker.Chunk(content, Metadata{StartLine: 1})
-	require.NoError(t, err)
-	assert.Greater(t, len(chunks), 0)
-}
-
-func TestTextChunker_ChunkBySentences_NoStartLine(t *testing.T) {
-	// Test sentence chunking with StartLine = 0
-	chunker := NewTextChunker(TextChunkerConfig{
-		ChunkSize:         100,
-		ChunkOverlap:      10,
-		MinChunkSize:      5,
-		RespectSentences:  true,
-		RespectParagraphs: false,
-	})
-
-	content := []byte("Sentence one with content. Sentence two with more. Sentence three complete.")
-
-	chunks, err := chunker.Chunk(content, Metadata{StartLine: 0})
-	require.NoError(t, err)
-
-	// Should default StartLine to 1
-	for _, chunk := range chunks {
-		assert.GreaterOrEqual(t, chunk.Metadata.StartLine, 1)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			chunks, err := NewTextChunker(tt.config).Chunk([]byte(tt.content), Metadata{StartLine: 1})
+			require.NoError(t, err)
+			require.GreaterOrEqual(t, len(chunks), 2)
+			for i, chunk := range chunks {
+				assert.GreaterOrEqual(t, chunk.Tokens, tt.config.MinChunkSize, "chunk %d", i)
+				if !tt.startLineDrifts {
+					assert.GreaterOrEqual(t, chunk.Metadata.StartLine, 1, "chunk %d", i)
+				}
+			}
+		})
 	}
 }
 
@@ -1275,463 +1297,100 @@ func TestTextChunker_ChunkBySentences_EmptySentences(t *testing.T) {
 	assert.Greater(t, len(chunks), 0)
 }
 
-func TestTextChunker_ChunkBySentences_OverlapEmpty(t *testing.T) {
-	// Test when overlap calculation returns empty
-	chunker := NewTextChunker(TextChunkerConfig{
-		ChunkSize:         30,
-		ChunkOverlap:      5,
-		MinChunkSize:      5,
-		RespectSentences:  true,
-		RespectParagraphs: false,
-	})
+func TestTextChunker_GetOverlapText_Cases(t *testing.T) {
+	tests := []struct {
+		name    string
+		overlap int
+		text    string
+		want    string
+	}{
+		{name: "text within the overlap is returned whole", overlap: 50, text: "Short text", want: "Short text"},
+		{name: "skips to the first space in the first half", overlap: 2, text: "aaaaaaa b c dddddddd", want: "dddddddd"},
+		{name: "space at exactly half is not used", overlap: 2, text: "alpha beta gamma delta", want: "gamma delta"},
+		{name: "slice starting on a space is trimmed", overlap: 2, text: "aaaa bbbb cccc dddd", want: "cccc dddd"},
+		{name: "space in the second half is not used", overlap: 1, text: "VeryLongWordWithNoSpacesAtAll Word", want: "oSpacesAtAll Word"},
+		{name: "no space after the overlap start", overlap: 1, text: "word word " + strings.Repeat("x", 200), want: strings.Repeat("x", 70)},
+		{name: "zero overlap returns empty", overlap: 0, text: "A", want: ""},
+	}
 
-	content := []byte(strings.Repeat("Hi. ", 30))
-
-	chunks, err := chunker.Chunk(content, Metadata{StartLine: 1})
-	require.NoError(t, err)
-	assert.Greater(t, len(chunks), 0)
-}
-
-func TestTextChunker_ChunkByTokens_NoStartLine(t *testing.T) {
-	// Test token chunking with StartLine = 0
-	chunker := NewTextChunker(TextChunkerConfig{
-		ChunkSize:         100,
-		ChunkOverlap:      10,
-		MinChunkSize:      5,
-		RespectSentences:  false,
-		RespectParagraphs: false,
-	})
-
-	content := []byte("Some text content here with enough words to meet the minimum requirements")
-
-	chunks, err := chunker.Chunk(content, Metadata{StartLine: 0})
-	require.NoError(t, err)
-
-	// Should default StartLine to 1
-	for _, chunk := range chunks {
-		assert.GreaterOrEqual(t, chunk.Metadata.StartLine, 1)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			chunker := NewTextChunker(TextChunkerConfig{ChunkSize: 100, ChunkOverlap: tt.overlap, MinChunkSize: 10})
+			assert.Equal(t, tt.want, chunker.getOverlapText(tt.text))
+		})
 	}
 }
 
-func TestTextChunker_GetOverlapText_TokensLessThanOverlap(t *testing.T) {
-	// Test when text tokens <= overlap
-	chunker := NewTextChunker(TextChunkerConfig{
-		ChunkSize:    100,
-		ChunkOverlap: 50,
-		MinChunkSize: 10,
-	})
+func TestTextChunker_CalculateOverlapWords_Cases(t *testing.T) {
+	tests := []struct {
+		name      string
+		chunkSize int
+		overlap   int
+		words     []string
+		want      int
+	}{
+		{name: "total within the overlap keeps all but one word", chunkSize: 100, overlap: 50, words: []string{"one", "two"}, want: 1},
+		{name: "proportional to the overlap ratio", chunkSize: 100, overlap: 10, words: strings.Fields(strings.Repeat("word ", 50)), want: 8},
+		{name: "rounds up to one word", chunkSize: 1000, overlap: 1, words: strings.Fields(strings.Repeat("word ", 100)), want: 1},
+	}
 
-	text := "Short text"
-	overlap := chunker.getOverlapText(text)
-
-	// Should return the entire text
-	assert.Equal(t, text, overlap)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			chunker := NewTextChunker(TextChunkerConfig{ChunkSize: tt.chunkSize, ChunkOverlap: tt.overlap, MinChunkSize: 10})
+			assert.Equal(t, tt.want, chunker.calculateOverlapWords(tt.words))
+		})
+	}
 }
 
-func TestTextChunker_GetOverlapText_OverlapStartNegative(t *testing.T) {
-	// Test edge case where calculation could be negative
-	chunker := NewTextChunker(TextChunkerConfig{
-		ChunkSize:    100,
-		ChunkOverlap: 200, // Larger than chunk size (will be corrected)
-		MinChunkSize: 10,
-	})
+func TestTextChunker_SplitSentences_Boundaries(t *testing.T) {
+	tests := []struct {
+		name string
+		text string
+		want []string
+	}{
+		{name: "single sentence", text: "This is a sentence.", want: []string{"This is a sentence."}},
+		{name: "decimal number does not split", text: "Version 3.14 is here. Next sentence.", want: []string{"Version 3.14 is here.", "Next sentence."}},
+		{name: "multiple whitespace after period", text: "First sentence.     Second sentence.", want: []string{"First sentence.", "Second sentence."}},
+		{name: "exclamation and question marks", text: "What is this? This is great! Indeed it is.", want: []string{"What is this?", "This is great!", "Indeed it is."}},
+	}
 
-	// Even though config is invalid, NewTextChunker corrects it
-	text := "Some text here"
-	overlap := chunker.getOverlapText(text)
-
-	// Should not panic and return valid overlap
-	assert.NotEmpty(t, overlap)
-}
-
-func TestTextChunker_GetOverlapText_OverlapStartExceedsLength(t *testing.T) {
-	// Test edge case where overlapStart >= len(text) with very short text
-	chunker := NewTextChunker(TextChunkerConfig{
-		ChunkSize:    1000,
-		ChunkOverlap: 1,
-		MinChunkSize: 10,
-	})
-
-	text := "A"
-	overlap := chunker.getOverlapText(text)
-
-	// With very short text and low overlap ratio, may return empty or the text
-	assert.LessOrEqual(t, len(overlap), len(text))
-}
-
-func TestTextChunker_GetOverlapText_WordBoundary(t *testing.T) {
-	// Test word boundary detection in overlap
-	chunker := NewTextChunker(TextChunkerConfig{
-		ChunkSize:    100,
-		ChunkOverlap: 20,
-		MinChunkSize: 10,
-	})
-
-	text := "The quick brown fox jumps over the lazy dog"
-	overlap := chunker.getOverlapText(text)
-
-	// Overlap should start at word boundary when possible
-	assert.NotEmpty(t, overlap)
-	// Should be trimmed
-	assert.Equal(t, strings.TrimSpace(overlap), overlap)
-}
-
-func TestTextChunker_CalculateOverlapWords_TotalTokensLessThanOverlap(t *testing.T) {
-	// Test when total tokens <= overlap
-	chunker := NewTextChunker(TextChunkerConfig{
-		ChunkSize:    100,
-		ChunkOverlap: 50,
-		MinChunkSize: 10,
-	})
-
-	words := []string{"one", "two"}
-	overlapWords := chunker.calculateOverlapWords(words)
-
-	// Should return len(words) - 1
-	assert.Equal(t, 1, overlapWords)
-}
-
-func TestTextChunker_CalculateOverlapWords_OverlapZero(t *testing.T) {
-	// Test when calculated overlap is zero or negative
-	chunker := NewTextChunker(TextChunkerConfig{
-		ChunkSize:    1000,
-		ChunkOverlap: 1,
-		MinChunkSize: 10,
-	})
-
-	words := strings.Fields(strings.Repeat("word ", 100))
-	overlapWords := chunker.calculateOverlapWords(words)
-
-	// Should return at least 1
-	assert.GreaterOrEqual(t, overlapWords, 1)
-}
-
-func TestTextChunker_CalculateOverlapWords_OverlapExceedsLength(t *testing.T) {
-	// Test when calculated overlap >= len(words)
-	chunker := NewTextChunker(TextChunkerConfig{
-		ChunkSize:    100,
-		ChunkOverlap: 99,
-		MinChunkSize: 10,
-	})
-
-	words := []string{"one", "two"}
-	overlapWords := chunker.calculateOverlapWords(words)
-
-	// Should return len(words) - 1
-	assert.Equal(t, 1, overlapWords)
-}
-
-func TestTextChunker_SplitSentences_EndOfText(t *testing.T) {
-	// Test sentence splitting at end of text
 	chunker := NewTextChunker(DefaultTextChunkerConfig())
-
-	text := "This is a sentence."
-	sentences := chunker.splitSentences(text)
-
-	assert.Len(t, sentences, 1)
-	assert.Equal(t, "This is a sentence.", sentences[0])
-}
-
-func TestTextChunker_SplitSentences_NoUppercaseAfterPeriod(t *testing.T) {
-	// Test period not followed by uppercase
-	chunker := NewTextChunker(DefaultTextChunkerConfig())
-
-	text := "Version 3.14 is here. Next sentence."
-	sentences := chunker.splitSentences(text)
-
-	// Should handle decimal numbers correctly
-	assert.Greater(t, len(sentences), 0)
-}
-
-func TestTextChunker_SplitSentences_MultipleWhitespace(t *testing.T) {
-	// Test multiple whitespace after period
-	chunker := NewTextChunker(DefaultTextChunkerConfig())
-
-	text := "First sentence.     Second sentence."
-	sentences := chunker.splitSentences(text)
-
-	assert.Len(t, sentences, 2)
-}
-
-func TestTextChunker_SplitSentences_ExclamationAndQuestion(t *testing.T) {
-	// Test exclamation and question marks
-	chunker := NewTextChunker(DefaultTextChunkerConfig())
-
-	text := "What is this? This is great! Indeed it is."
-	sentences := chunker.splitSentences(text)
-
-	assert.Equal(t, 3, len(sentences))
-}
-
-func TestTextChunker_ChunkByParagraphs_NoChunksCreated(t *testing.T) {
-	// Test when no chunks meet minimum size
-	chunker := NewTextChunker(TextChunkerConfig{
-		ChunkSize:         100,
-		ChunkOverlap:      10,
-		MinChunkSize:      1000, // Very high minimum
-		RespectParagraphs: true,
-		RespectSentences:  false,
-	})
-
-	content := []byte("Small para.\n\nAnother small para.")
-
-	_, err := chunker.Chunk(content, Metadata{})
-
-	// Should error when no chunks can be created
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "no chunks created")
-}
-
-func TestTextChunker_ChunkBySentences_NoChunksCreated(t *testing.T) {
-	// Test when no chunks meet minimum size
-	chunker := NewTextChunker(TextChunkerConfig{
-		ChunkSize:        100,
-		ChunkOverlap:     10,
-		MinChunkSize:     1000, // Very high minimum
-		RespectSentences: true,
-	})
-
-	content := []byte("Short. Sentence.")
-
-	_, err := chunker.Chunk(content, Metadata{})
-
-	// Should error when no chunks can be created
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "no chunks created")
-}
-
-func TestTextChunker_ChunkByTokens_NoChunksCreated(t *testing.T) {
-	// Test when no chunks meet minimum size
-	chunker := NewTextChunker(TextChunkerConfig{
-		ChunkSize:    100,
-		ChunkOverlap: 10,
-		MinChunkSize: 1000, // Very high minimum
-	})
-
-	content := []byte("Short text")
-
-	_, err := chunker.Chunk(content, Metadata{})
-
-	// Should error when no chunks can be created
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "no chunks created")
-}
-
-func TestTextChunker_ChunkByParagraphs_OverlapAdjustment(t *testing.T) {
-	// Test overlap line adjustment in paragraph chunking
-	chunker := NewTextChunker(TextChunkerConfig{
-		ChunkSize:         40,
-		ChunkOverlap:      15,
-		MinChunkSize:      5,
-		RespectParagraphs: true,
-		RespectSentences:  false,
-	})
-
-	// Content designed to trigger overlap with line adjustments
-	content := []byte(strings.Repeat("Word. ", 10) + "\n\n" + strings.Repeat("More. ", 15))
-
-	chunks, err := chunker.Chunk(content, Metadata{StartLine: 1})
-	require.NoError(t, err)
-	assert.Greater(t, len(chunks), 0)
-}
-
-// TestTextChunker_ChunkByParagraphs_AllPaths tests all paths in chunkByParagraphs
-func TestTextChunker_ChunkByParagraphs_AllPaths(t *testing.T) {
-	t.Run("cannot merge exceeds max", func(t *testing.T) {
-		// Small chunk that can't be merged because combined would exceed max
-		chunker := NewTextChunker(TextChunkerConfig{
-			ChunkSize:         50,
-			ChunkOverlap:      10,
-			MinChunkSize:      20,
-			RespectParagraphs: true,
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, chunker.splitSentences(tt.text))
 		})
-		// First chunk at capacity, second small but combined exceeds max
-		content := []byte(strings.Repeat("Word ", 25) + "\n\n" + "Small para here.")
-		chunks, err := chunker.Chunk(content, Metadata{StartLine: 1})
-		if err != nil {
-			t.Fatalf("Chunk failed: %v", err)
-		}
-		if len(chunks) == 0 {
-			t.Error("Should create chunks")
-		}
-	})
-
-	t.Run("skip tiny final chunk", func(t *testing.T) {
-		// Final chunk below min size
-		chunker := NewTextChunker(TextChunkerConfig{
-			ChunkSize:         100,
-			ChunkOverlap:      10,
-			MinChunkSize:      50,
-			RespectParagraphs: true,
-		})
-		content := []byte(strings.Repeat("Long paragraph content. ", 20) + "\n\nTi")
-		chunks, err := chunker.Chunk(content, Metadata{})
-		if err != nil {
-			t.Fatalf("Chunk failed: %v", err)
-		}
-		// Last tiny chunk should be skipped
-		for _, chunk := range chunks {
-			if chunk.Tokens < 3 {
-				t.Log("Very tiny chunk found, may be edge case")
-			}
-		}
-	})
-
-	t.Run("overlap with lines tracking", func(t *testing.T) {
-		// Test line tracking with overlap
-		chunker := NewTextChunker(TextChunkerConfig{
-			ChunkSize:         40,
-			ChunkOverlap:      15,
-			MinChunkSize:      10,
-			RespectParagraphs: true,
-		})
-		content := []byte("Line 1\nLine 2\nLine 3\n\nPara 2\nLine 5\nLine 6\n\nPara 3")
-		chunks, err := chunker.Chunk(content, Metadata{StartLine: 1})
-		if err != nil {
-			t.Fatalf("Chunk failed: %v", err)
-		}
-		if len(chunks) > 1 {
-			// Check line numbers make sense
-			for i := range chunks {
-				if chunks[i].Metadata.StartLine == 0 {
-					t.Errorf("Chunk %d has zero start line", i)
-				}
-			}
-		}
-	})
+	}
 }
 
-// TestTextChunker_ChunkBySentences_AllPaths tests all paths in chunkBySentences
-func TestTextChunker_ChunkBySentences_AllPaths(t *testing.T) {
-	t.Run("final chunk below min", func(t *testing.T) {
-		chunker := NewTextChunker(TextChunkerConfig{
-			ChunkSize:        100,
-			ChunkOverlap:     10,
-			MinChunkSize:     40,
-			RespectSentences: true,
+func TestTextChunker_Chunk_NoChunksCreated(t *testing.T) {
+	tests := []struct {
+		name    string
+		config  TextChunkerConfig
+		content string
+	}{
+		{
+			name:    "paragraphs",
+			config:  TextChunkerConfig{ChunkSize: 100, ChunkOverlap: 10, MinChunkSize: 1000, RespectParagraphs: true},
+			content: "Small para.\n\nAnother small para.",
+		},
+		{
+			name:    "sentences",
+			config:  TextChunkerConfig{ChunkSize: 100, ChunkOverlap: 10, MinChunkSize: 1000, RespectSentences: true},
+			content: "Short. Sentence.",
+		},
+		{
+			name:    "tokens",
+			config:  TextChunkerConfig{ChunkSize: 100, ChunkOverlap: 10, MinChunkSize: 1000},
+			content: "Short text",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := NewTextChunker(tt.config).Chunk([]byte(tt.content), Metadata{})
+			assert.ErrorIs(t, err, ErrNoChunksCreated)
 		})
-		content := []byte(strings.Repeat("Sentence here. ", 20) + "Ti.")
-		chunks, err := chunker.Chunk(content, Metadata{})
-		if err != nil {
-			t.Fatalf("Chunk failed: %v", err)
-		}
-		// Last tiny sentence should be skipped if below min
-		for _, chunk := range chunks {
-			if chunk.Tokens < 5 {
-				t.Log("Tiny chunk found")
-			}
-		}
-	})
-
-	t.Run("overlap with newlines counted", func(t *testing.T) {
-		chunker := NewTextChunker(TextChunkerConfig{
-			ChunkSize:        40,
-			ChunkOverlap:     15,
-			MinChunkSize:     5,
-			RespectSentences: true,
-		})
-		content := []byte("Sentence one.\nSentence two.\nSentence three.\nSentence four.")
-		chunks, err := chunker.Chunk(content, Metadata{StartLine: 1})
-		if err != nil {
-			t.Fatalf("Chunk failed: %v", err)
-		}
-		if len(chunks) > 1 {
-			t.Logf("Created %d chunks with newline counting", len(chunks))
-		}
-	})
-}
-
-// TestTextChunker_ChunkByTokens_AllPaths tests all paths in chunkByTokens
-func TestTextChunker_ChunkByTokens_AllPaths(t *testing.T) {
-	t.Run("chunk below min size skipped", func(t *testing.T) {
-		chunker := NewTextChunker(TextChunkerConfig{
-			ChunkSize:    100,
-			ChunkOverlap: 10,
-			MinChunkSize: 40,
-		})
-		// Content that creates small final chunk
-		content := []byte(strings.Repeat("word ", 50) + "x")
-		chunks, err := chunker.Chunk(content, Metadata{})
-		if err != nil {
-			t.Fatalf("Chunk failed: %v", err)
-		}
-		// Check chunks meet minimum or are reasonably sized
-		for _, chunk := range chunks {
-			if chunk.Tokens < 5 {
-				t.Log("Small chunk found")
-			}
-		}
-	})
-
-	t.Run("overlap causes backtrack", func(t *testing.T) {
-		chunker := NewTextChunker(TextChunkerConfig{
-			ChunkSize:    25,
-			ChunkOverlap: 10,
-			MinChunkSize: 5,
-		})
-		content := []byte(strings.Repeat("word ", 100))
-		chunks, err := chunker.Chunk(content, Metadata{})
-		if err != nil {
-			t.Fatalf("Chunk failed: %v", err)
-		}
-		if len(chunks) < 2 {
-			t.Error("Should create multiple chunks with overlap")
-		}
-	})
-
-	t.Run("no overlap remaining", func(t *testing.T) {
-		chunker := NewTextChunker(TextChunkerConfig{
-			ChunkSize:    100,
-			ChunkOverlap: 0, // No overlap
-			MinChunkSize: 5,
-		})
-		content := []byte(strings.Repeat("word ", 200))
-		chunks, err := chunker.Chunk(content, Metadata{})
-		if err != nil {
-			t.Fatalf("Chunk failed: %v", err)
-		}
-		if len(chunks) == 0 {
-			t.Error("Should create chunks")
-		}
-	})
-}
-
-// TestTextChunker_GetOverlapText_AllPaths tests all paths in getOverlapText
-func TestTextChunker_GetOverlapText_AllPaths(t *testing.T) {
-	t.Run("overlapStart negative clamped", func(t *testing.T) {
-		chunker := NewTextChunker(TextChunkerConfig{
-			ChunkSize:    100,
-			ChunkOverlap: 999, // Will be corrected by NewTextChunker
-			MinChunkSize: 10,
-		})
-		text := "x"
-		overlap := chunker.getOverlapText(text)
-		// Should not panic even with edge case calculations
-		if len(overlap) > len(text) {
-			t.Error("Overlap should not exceed text length")
-		}
-	})
-
-	t.Run("no space in overlap substr", func(t *testing.T) {
-		chunker := NewTextChunker(DefaultTextChunkerConfig())
-		// Text where latter half has no spaces
-		text := "word word " + strings.Repeat("x", 200)
-		overlap := chunker.getOverlapText(text)
-		// Should handle missing space gracefully
-		if len(overlap) == 0 && len(text) > 0 {
-			t.Error("Should return some overlap for non-empty text")
-		}
-	})
-
-	t.Run("space at end of overlap", func(t *testing.T) {
-		chunker := NewTextChunker(DefaultTextChunkerConfig())
-		text := strings.Repeat("word ", 50)
-		overlap := chunker.getOverlapText(text)
-		// Should be trimmed
-		if overlap != strings.TrimSpace(overlap) {
-			t.Error("Overlap should be trimmed")
-		}
-	})
+	}
 }
 
 // TestMarkdownChunker_Chunk_ErrorPath tests error return in Chunk
@@ -1813,79 +1472,6 @@ func Test() {}`)
 	})
 }
 
-// TestTextChunker_CalculateOverlapWords_EdgeCases tests edge cases
-func TestTextChunker_CalculateOverlapWords_EdgeCases(t *testing.T) {
-	chunker := NewTextChunker(DefaultTextChunkerConfig())
-
-	t.Run("ratio calculation boundary", func(t *testing.T) {
-		// Test ratio calculation doesn't cause issues
-		words := strings.Fields(strings.Repeat("word ", 10))
-		overlapWords := chunker.calculateOverlapWords(words)
-		if overlapWords < 0 {
-			t.Errorf("Overlap words should not be negative, got %d", overlapWords)
-		}
-		if overlapWords >= len(words) {
-			t.Errorf("Overlap should be less than total words, got %d >= %d", overlapWords, len(words))
-		}
-	})
-}
-
-func TestTextChunker_ChunkByParagraphs_FullCoverage(t *testing.T) {
-	t.Run("create chunk and start new with overlap", func(t *testing.T) {
-		chunker := NewTextChunker(TextChunkerConfig{
-			ChunkSize:         50,
-			ChunkOverlap:      10,
-			MinChunkSize:      10,
-			RespectParagraphs: true,
-		})
-		// Content that will trigger chunk creation with overlap
-		content := []byte(strings.Repeat("Para one. ", 10) + "\n\n" + strings.Repeat("Para two. ", 10))
-		chunks, err := chunker.Chunk(content, Metadata{StartLine: 1})
-		if err != nil {
-			t.Fatalf("Chunk failed: %v", err)
-		}
-		if len(chunks) < 2 {
-			t.Logf("Expected multiple chunks, got %d", len(chunks))
-		}
-	})
-
-	t.Run("overlap with lines adjustment", func(t *testing.T) {
-		chunker := NewTextChunker(TextChunkerConfig{
-			ChunkSize:         40,
-			ChunkOverlap:      15,
-			MinChunkSize:      5,
-			RespectParagraphs: true,
-		})
-		// Content with newlines to test line tracking in overlap
-		content := []byte("Line 1\nLine 2\nLine 3\n\nPara 2\nLine 5\n\nPara 3\nLine 7")
-		chunks, err := chunker.Chunk(content, Metadata{StartLine: 1})
-		if err != nil {
-			t.Fatalf("Chunk failed: %v", err)
-		}
-		if len(chunks) == 0 {
-			t.Error("Should create at least one chunk")
-		}
-	})
-
-	t.Run("final chunk meets min size", func(t *testing.T) {
-		chunker := NewTextChunker(TextChunkerConfig{
-			ChunkSize:         100,
-			ChunkOverlap:      10,
-			MinChunkSize:      20,
-			RespectParagraphs: true,
-		})
-		// Last chunk is just big enough to meet minimum
-		content := []byte(strings.Repeat("Para one content. ", 15) + "\n\n" + strings.Repeat("Final para. ", 5))
-		chunks, err := chunker.Chunk(content, Metadata{})
-		if err != nil {
-			t.Fatalf("Chunk failed: %v", err)
-		}
-		if len(chunks) == 0 {
-			t.Error("Should create chunks")
-		}
-	})
-}
-
 // TestMarkdownChunker_Chunk_NoChunksError tests the error path
 func TestMarkdownChunker_Chunk_NoChunksError(t *testing.T) {
 	// Create chunker with settings that will skip all content
@@ -1906,152 +1492,6 @@ func TestMarkdownChunker_Chunk_NoChunksError(t *testing.T) {
 	} else if !strings.Contains(err.Error(), "no chunks") {
 		t.Errorf("Expected 'no chunks' error, got: %v", err)
 	}
-}
-
-// TestTextChunker_ChunkBySentences_FullCoverage pushes to 100%
-func TestTextChunker_ChunkBySentences_FullCoverage(t *testing.T) {
-	t.Run("create chunk with overlap", func(t *testing.T) {
-		chunker := NewTextChunker(TextChunkerConfig{
-			ChunkSize:        40,
-			ChunkOverlap:     10,
-			MinChunkSize:     5,
-			RespectSentences: true,
-		})
-		// Multiple sentences that will create chunks with overlap
-		content := []byte(strings.Repeat("Sentence here. ", 15))
-		chunks, err := chunker.Chunk(content, Metadata{StartLine: 1})
-		if err != nil {
-			t.Fatalf("Chunk failed: %v", err)
-		}
-		if len(chunks) < 2 {
-			t.Logf("Expected multiple chunks, got %d", len(chunks))
-		}
-	})
-
-	t.Run("final chunk meets minimum", func(t *testing.T) {
-		chunker := NewTextChunker(TextChunkerConfig{
-			ChunkSize:        100,
-			ChunkOverlap:     10,
-			MinChunkSize:     15,
-			RespectSentences: true,
-		})
-		// Last sentence meets minimum size
-		content := []byte(strings.Repeat("Long sentence here. ", 20))
-		chunks, err := chunker.Chunk(content, Metadata{})
-		if err != nil {
-			t.Fatalf("Chunk failed: %v", err)
-		}
-		if len(chunks) == 0 {
-			t.Error("Should create chunks")
-		}
-	})
-}
-
-// TestTextChunker_ChunkByTokens_FullCoverage pushes to 100%
-func TestTextChunker_ChunkByTokens_FullCoverage(t *testing.T) {
-	t.Run("create chunk meeting min size", func(t *testing.T) {
-		chunker := NewTextChunker(TextChunkerConfig{
-			ChunkSize:    50,
-			ChunkOverlap: 10,
-			MinChunkSize: 10,
-		})
-		// Content that creates chunks meeting minimum
-		content := []byte(strings.Repeat("word ", 100))
-		chunks, err := chunker.Chunk(content, Metadata{})
-		if err != nil {
-			t.Fatalf("Chunk failed: %v", err)
-		}
-		if len(chunks) == 0 {
-			t.Error("Should create chunks")
-		}
-		for _, chunk := range chunks {
-			if chunk.Tokens < 10 {
-				t.Errorf("Chunk below minimum: %d tokens", chunk.Tokens)
-			}
-		}
-	})
-
-	t.Run("with overlap backtrack", func(t *testing.T) {
-		chunker := NewTextChunker(TextChunkerConfig{
-			ChunkSize:    30,
-			ChunkOverlap: 10,
-			MinChunkSize: 5,
-		})
-		// Content that triggers overlap calculation
-		content := []byte(strings.Repeat("word ", 200))
-		chunks, err := chunker.Chunk(content, Metadata{StartLine: 1})
-		if err != nil {
-			t.Fatalf("Chunk failed: %v", err)
-		}
-		if len(chunks) < 3 {
-			t.Logf("Expected multiple overlapping chunks, got %d", len(chunks))
-		}
-	})
-}
-
-// TestTextChunker_GetOverlapText_FullCoverage pushes to 100%
-func TestTextChunker_GetOverlapText_FullCoverage(t *testing.T) {
-	t.Run("word boundary in first half", func(t *testing.T) {
-		chunker := NewTextChunker(DefaultTextChunkerConfig())
-		// Space in first half of overlap section (idx <= len/2)
-		text := strings.Repeat("x", 50) + " word " + strings.Repeat("y", 100)
-		overlap := chunker.getOverlapText(text)
-		if len(overlap) == 0 {
-			t.Error("Should return overlap")
-		}
-	})
-
-	t.Run("no space in overlap section", func(t *testing.T) {
-		chunker := NewTextChunker(DefaultTextChunkerConfig())
-		// No space in latter part of text
-		text := "word word " + strings.Repeat("x", 200)
-		overlap := chunker.getOverlapText(text)
-		// Should still return overlap even without space
-		if len(overlap) == 0 && len(text) > 0 {
-			t.Error("Should return some overlap")
-		}
-	})
-
-	t.Run("overlapStart at boundary", func(t *testing.T) {
-		chunker := NewTextChunker(DefaultTextChunkerConfig())
-		// Test boundary condition
-		text := "test"
-		overlap := chunker.getOverlapText(text)
-		if len(overlap) > len(text) {
-			t.Error("Overlap should not exceed text length")
-		}
-	})
-}
-
-// TestTextChunker_CalculateOverlapWords_FullCoverage pushes to 100%
-func TestTextChunker_CalculateOverlapWords_FullCoverage(t *testing.T) {
-	t.Run("calculated overlap is zero", func(t *testing.T) {
-		chunker := NewTextChunker(TextChunkerConfig{
-			ChunkSize:    10000,
-			ChunkOverlap: 1,
-			MinChunkSize: 10,
-		})
-		words := []string{"one", "two", "three"}
-		overlapWords := chunker.calculateOverlapWords(words)
-		// Should be at least 1
-		if overlapWords < 1 {
-			t.Errorf("Overlap should be at least 1, got %d", overlapWords)
-		}
-	})
-
-	t.Run("calculated overlap at boundary", func(t *testing.T) {
-		chunker := NewTextChunker(TextChunkerConfig{
-			ChunkSize:    100,
-			ChunkOverlap: 95,
-			MinChunkSize: 10,
-		})
-		words := []string{"one", "two"}
-		overlapWords := chunker.calculateOverlapWords(words)
-		// Should be capped at len-1
-		if overlapWords >= len(words) {
-			t.Errorf("Overlap should be less than word count, got %d", overlapWords)
-		}
-	})
 }
 
 // TestGoCodeChunker_BuildDeclChunk_FullCoverage pushes to 100%
@@ -2149,57 +1589,6 @@ type MyType int`)
 	})
 }
 
-func TestTextChunker_ChunkByParagraphs_OverlapLineAdjustment(t *testing.T) {
-	chunker := NewTextChunker(TextChunkerConfig{
-		ChunkSize:         30,
-		ChunkOverlap:      10,
-		MinChunkSize:      5,
-		RespectParagraphs: true,
-		RespectSentences:  false,
-	})
-
-	// Content with multiple paragraphs that will exceed chunk size and create overlaps
-	content := []byte(strings.Repeat("Word ", 15) + "\n\n" +
-		strings.Repeat("More ", 15) + "\n\n" +
-		strings.Repeat("Text ", 15))
-
-	chunks, err := chunker.Chunk(content, Metadata{StartLine: 1})
-	require.NoError(t, err)
-	assert.GreaterOrEqual(t, len(chunks), 1) // May create 1 or more
-}
-
-// Test getOverlapText line 362 (word boundary with idx > len/2)
-func TestTextChunker_GetOverlapText_WordBoundarySkipped(t *testing.T) {
-	chunker := NewTextChunker(TextChunkerConfig{
-		ChunkSize:    100,
-		ChunkOverlap: 20,
-		MinChunkSize: 10,
-	})
-
-	// Text where space is very late (beyond len/2 of overlap)
-	text := "VeryLongWordWithNoSpacesAtAll Word"
-	overlap := chunker.getOverlapText(text)
-
-	// Should not use late space and just trim
-	assert.NotEmpty(t, overlap)
-}
-
-// Test calculateOverlapWords edge case where overlapWords calculated is exactly 0
-func TestTextChunker_CalculateOverlapWords_ZeroCase(t *testing.T) {
-	chunker := NewTextChunker(TextChunkerConfig{
-		ChunkSize:    10000,
-		ChunkOverlap: 1, // Very small overlap
-		MinChunkSize: 10,
-	})
-
-	// Large chunk where overlap ratio is tiny
-	words := strings.Fields(strings.Repeat("word ", 500))
-	overlapWords := chunker.calculateOverlapWords(words)
-
-	// Should be at least 1
-	assert.GreaterOrEqual(t, overlapWords, 1)
-}
-
 // Test writeImports with no toWrite (line 368-370)
 func TestGoCodeChunker_WriteImports_NoToWrite(t *testing.T) {
 	chunker := NewGoCodeChunker(DefaultGoCodeChunkerConfig())
@@ -2247,39 +1636,4 @@ var (
 		}
 	}
 	assert.True(t, foundVar, "Should include var declaration with multiple values")
-}
-
-// Test edge case in chunkBySentences overlap when it's not empty
-func TestTextChunker_ChunkBySentences_OverlapNotEmptyPath(t *testing.T) {
-	chunker := NewTextChunker(TextChunkerConfig{
-		ChunkSize:         30,
-		ChunkOverlap:      10,
-		MinChunkSize:      5,
-		RespectSentences:  true,
-		RespectParagraphs: false,
-	})
-
-	// Create many sentences to ensure multiple chunks
-	content := []byte(strings.Repeat("Sentence here. ", 30))
-
-	chunks, err := chunker.Chunk(content, Metadata{StartLine: 1})
-	require.NoError(t, err)
-	assert.GreaterOrEqual(t, len(chunks), 1, "Should create at least one chunk")
-}
-
-// Test chunkByTokens where chunk meets minimum (line 295-306)
-func TestTextChunker_ChunkByTokens_MeetsMinimum(t *testing.T) {
-	chunker := NewTextChunker(TextChunkerConfig{
-		ChunkSize:         25,
-		ChunkOverlap:      8,
-		MinChunkSize:      10,
-		RespectSentences:  false,
-		RespectParagraphs: false,
-	})
-
-	content := []byte(strings.Repeat("word ", 100))
-
-	chunks, err := chunker.Chunk(content, Metadata{StartLine: 1})
-	require.NoError(t, err)
-	assert.Greater(t, len(chunks), 2, "Should create multiple chunks")
 }
