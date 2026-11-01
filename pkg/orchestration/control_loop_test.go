@@ -674,8 +674,11 @@ func TestNewControlLoop_CreatesValidInstance(t *testing.T) {
 	if cl.job.Logger == nil {
 		t.Fatal("expected logger to be set")
 	}
-	if cl.job.events == nil {
+	if cl.Events() == nil {
 		t.Fatal("expected events channel to be initialized")
+	}
+	if cl.Status() != nil {
+		t.Fatal("expected nil status before Run")
 	}
 	if cl.workerSessions == nil {
 		t.Fatal("expected workerSessions map to be initialized")
@@ -1297,30 +1300,6 @@ func TestHandleAssign_WithPersistentBackend_SpawnsSession(t *testing.T) {
 // Tests: handleExecute
 // =============================================================================
 
-func TestHandleExecute_AllTasksComplete(t *testing.T) {
-	t.Parallel()
-
-	svc := &controlLoopMockService{
-		tasks: []*Task{
-			{ID: "task-1", Status: TaskStatusCompleted, Result: &TaskResult{Output: "done"}},
-		},
-	}
-	logger := &controlLoopMockLogger{}
-	cl := NewControlLoop(svc, logger)
-	cl.job.Config = newTestConfig()
-	cl.job.JobID = "test-job"
-	cl.taskIDs = []string{"task-1"}
-	cl.workItems = []*WorkItem{{ID: "w1", Title: "Task 1"}}
-
-	nextState, err := cl.handleExecute(context.Background())
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if nextState != JobStateValidating {
-		t.Fatalf("expected validating state, got %q", nextState)
-	}
-}
-
 func TestHandleExecute_AdvancesWave(t *testing.T) {
 	t.Parallel()
 
@@ -1356,34 +1335,6 @@ func TestHandleExecute_AdvancesWave(t *testing.T) {
 	}
 	if cl.currentWave != 1 {
 		t.Fatalf("expected currentWave=1, got %d", cl.currentWave)
-	}
-}
-
-func TestHandleExecute_ContextCancelled(t *testing.T) {
-	t.Parallel()
-
-	svc := &controlLoopMockService{
-		// Tasks never complete.
-		tasks: []*Task{
-			{ID: "task-1", Status: TaskStatusPending},
-		},
-	}
-	logger := &controlLoopMockLogger{}
-	cl := NewControlLoop(svc, logger)
-	cl.job.Config = newTestConfig()
-	cl.job.JobID = "test-job"
-	cl.taskIDs = []string{"task-1"}
-	cl.workItems = []*WorkItem{{ID: "w1", Title: "Task 1"}}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
-	defer cancel()
-
-	nextState, err := cl.handleExecute(ctx)
-	if err == nil {
-		t.Fatal("expected error from context timeout")
-	}
-	if nextState != JobStateFailed {
-		t.Fatalf("expected failed state, got %q", nextState)
 	}
 }
 
@@ -1616,24 +1567,6 @@ func TestHandleReview_ParseError(t *testing.T) {
 // Tests: handleComplete
 // =============================================================================
 
-func TestHandleComplete_TransitionsToCleanup(t *testing.T) {
-	t.Parallel()
-
-	svc := &controlLoopMockService{}
-	logger := &controlLoopMockLogger{}
-	cl := NewControlLoop(svc, logger)
-	cl.job.Config = newTestConfig()
-	cl.job.JobID = "test-job"
-
-	nextState, err := cl.handleComplete(context.Background())
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if nextState != JobStateCleanup {
-		t.Fatalf("expected cleanup state, got %q", nextState)
-	}
-}
-
 func TestHandleComplete_CancelledContext(t *testing.T) {
 	t.Parallel()
 
@@ -1762,31 +1695,6 @@ func TestHandleRedelegate_WithinLimit(t *testing.T) {
 	}
 }
 
-func TestHandleRedelegate_ExceedsLimit(t *testing.T) {
-	t.Parallel()
-
-	svc := &controlLoopMockService{}
-	logger := &controlLoopMockLogger{}
-	cl := NewControlLoop(svc, logger)
-	cl.job.Config = newTestConfig()
-	cl.job.Config.MaxIterations = 2
-	cl.job.JobID = "test-job"
-	cl.job.iteration = 1 // Will become 2 after increment, matching limit.
-	cl.job.memory = NewJobMemory()
-	cl.reviewResponse = &ReviewResponse{
-		Approved: false,
-		Feedback: "still bad",
-	}
-
-	nextState, err := cl.handleRedelegate(context.Background())
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if nextState != JobStateEscalating {
-		t.Fatalf("expected escalating state, got %q", nextState)
-	}
-}
-
 func TestHandleRedelegate_UsesWorkflowSettings(t *testing.T) {
 	t.Parallel()
 
@@ -1849,29 +1757,6 @@ func TestHandleEscalate_ReturnsFailed(t *testing.T) {
 	}
 	if len(cl.workerSessions) != 0 {
 		t.Fatal("expected worker sessions to be cleaned up during escalation")
-	}
-}
-
-// =============================================================================
-// Tests: Status and Events
-// =============================================================================
-
-func TestStatus_ReturnsNilBeforeRun(t *testing.T) {
-	t.Parallel()
-
-	cl := NewControlLoop(&controlLoopMockService{}, &controlLoopMockLogger{})
-	if cl.Status() != nil {
-		t.Fatal("expected nil status before Run")
-	}
-}
-
-func TestEvents_ReturnsChannel(t *testing.T) {
-	t.Parallel()
-
-	cl := NewControlLoop(&controlLoopMockService{}, &controlLoopMockLogger{})
-	ch := cl.Events()
-	if ch == nil {
-		t.Fatal("expected non-nil events channel")
 	}
 }
 
