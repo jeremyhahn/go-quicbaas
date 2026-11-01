@@ -11,7 +11,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	dberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 )
@@ -261,25 +260,6 @@ func TestObjectAdminCreateBackend_Errors(t *testing.T) {
 	}
 }
 
-func TestObjectAdminCreateBackend_ServiceError(t *testing.T) {
-	adminSvc := &mockObjectStorageAdminService{
-		createBackendFunc: func(ctx context.Context, req *service.CreateBackendRequest) (*service.CreateBackendResponse, error) {
-			return nil, &dberrors.MessageError{Message: "backend already exists"}
-		},
-	}
-	registry := newObjAdminRegistryWithMock(t, adminSvc)
-	ctx := context.Background()
-
-	result, err := registry.ExecuteTool(ctx, "quicbaas_object_admin_create_backend", map[string]interface{}{
-		"name": "existing",
-		"type": "local",
-		"tier": "hot",
-	})
-	require.Error(t, err)
-	assert.Nil(t, result)
-	assert.Contains(t, err.Error(), "already exists")
-}
-
 // =============================================================================
 // UpdateBackend Tests
 // =============================================================================
@@ -322,18 +302,6 @@ func TestObjectAdminUpdateBackend_Success(t *testing.T) {
 			assert.Contains(t, resultMap, "success")
 		})
 	}
-}
-
-func TestObjectAdminUpdateBackend_MissingName(t *testing.T) {
-	registry := newObjAdminRegistry(t)
-	ctx := context.Background()
-
-	result, err := registry.ExecuteTool(ctx, "quicbaas_object_admin_update_backend", map[string]interface{}{
-		"tier": "warm",
-	})
-	require.Error(t, err)
-	assert.Nil(t, result)
-	assert.Contains(t, err.Error(), "name")
 }
 
 // =============================================================================
@@ -382,16 +350,6 @@ func TestObjectAdminDeleteBackend_Success(t *testing.T) {
 	}
 }
 
-func TestObjectAdminDeleteBackend_MissingName(t *testing.T) {
-	registry := newObjAdminRegistry(t)
-	ctx := context.Background()
-
-	result, err := registry.ExecuteTool(ctx, "quicbaas_object_admin_delete_backend", map[string]interface{}{})
-	require.Error(t, err)
-	assert.Nil(t, result)
-	assert.Contains(t, err.Error(), "name")
-}
-
 // =============================================================================
 // SetBackendStatus Tests
 // =============================================================================
@@ -432,18 +390,6 @@ func TestObjectAdminSetBackendStatus_Success(t *testing.T) {
 			assert.Contains(t, resultMap, "enabled")
 		})
 	}
-}
-
-func TestObjectAdminSetBackendStatus_MissingName(t *testing.T) {
-	registry := newObjAdminRegistry(t)
-	ctx := context.Background()
-
-	result, err := registry.ExecuteTool(ctx, "quicbaas_object_admin_set_backend_status", map[string]interface{}{
-		"enabled": true,
-	})
-	require.Error(t, err)
-	assert.Nil(t, result)
-	assert.Contains(t, err.Error(), "name")
 }
 
 // =============================================================================
@@ -554,16 +500,6 @@ func TestObjectAdminGetGCProgress_Success(t *testing.T) {
 	assert.Contains(t, resultMap, "percent_complete")
 }
 
-func TestObjectAdminGetGCProgress_MissingOperationID(t *testing.T) {
-	registry := newObjAdminRegistry(t)
-	ctx := context.Background()
-
-	result, err := registry.ExecuteTool(ctx, "quicbaas_object_admin_get_gc_progress", map[string]interface{}{})
-	require.Error(t, err)
-	assert.Nil(t, result)
-	assert.Contains(t, err.Error(), "operation_id")
-}
-
 // =============================================================================
 // RepairObject Tests
 // =============================================================================
@@ -582,16 +518,6 @@ func TestObjectAdminRepairObject_Success(t *testing.T) {
 	require.True(t, ok)
 	assert.Contains(t, resultMap, "key")
 	assert.Contains(t, resultMap, "success")
-}
-
-func TestObjectAdminRepairObject_MissingKey(t *testing.T) {
-	registry := newObjAdminRegistry(t)
-	ctx := context.Background()
-
-	result, err := registry.ExecuteTool(ctx, "quicbaas_object_admin_repair_object", map[string]interface{}{})
-	require.Error(t, err)
-	assert.Nil(t, result)
-	assert.Contains(t, err.Error(), "key")
 }
 
 // =============================================================================
@@ -633,16 +559,6 @@ func TestObjectAdminCompactBackend_Success(t *testing.T) {
 	}
 }
 
-func TestObjectAdminCompactBackend_MissingName(t *testing.T) {
-	registry := newObjAdminRegistry(t)
-	ctx := context.Background()
-
-	result, err := registry.ExecuteTool(ctx, "quicbaas_object_admin_compact_backend", map[string]interface{}{})
-	require.Error(t, err)
-	assert.Nil(t, result)
-	assert.Contains(t, err.Error(), "name")
-}
-
 // =============================================================================
 // Service Unavailable Tests
 // =============================================================================
@@ -682,304 +598,132 @@ func TestObjectAdminTools_ServiceUnavailable(t *testing.T) {
 }
 
 // =============================================================================
-// Object Admin Delete Backend - Service Error
+// Service Error Tests
 // =============================================================================
 
-func TestExecuteObjectAdminDeleteBackend_ServiceError(t *testing.T) {
-	expectedErr := errors.New("delete backend failed")
-	adminSvc := &mockObjectStorageAdminService{
-		deleteBackendFunc: func(ctx context.Context, req *service.DeleteBackendRequest) (*service.DeleteBackendResponse, error) {
-			return nil, expectedErr
+func TestObjectAdminTools_ServiceError(t *testing.T) {
+	tests := []struct {
+		tool  string
+		args  map[string]interface{}
+		setup func(m *mockObjectStorageAdminService, err error)
+	}{
+		{
+			tool: "quicbaas_object_admin_create_backend",
+			args: map[string]interface{}{"name": "new-backend", "type": "local", "tier": "hot"},
+			setup: func(m *mockObjectStorageAdminService, err error) {
+				m.createBackendFunc = func(ctx context.Context, req *service.CreateBackendRequest) (*service.CreateBackendResponse, error) {
+					return nil, err
+				}
+			},
+		},
+		{
+			tool: "quicbaas_object_admin_update_backend",
+			args: map[string]interface{}{"name": "local"},
+			setup: func(m *mockObjectStorageAdminService, err error) {
+				m.updateBackendFunc = func(ctx context.Context, req *service.UpdateBackendRequest) (*service.UpdateBackendResponse, error) {
+					return nil, err
+				}
+			},
+		},
+		{
+			tool: "quicbaas_object_admin_delete_backend",
+			args: map[string]interface{}{"name": "test-backend"},
+			setup: func(m *mockObjectStorageAdminService, err error) {
+				m.deleteBackendFunc = func(ctx context.Context, req *service.DeleteBackendRequest) (*service.DeleteBackendResponse, error) {
+					return nil, err
+				}
+			},
+		},
+		{
+			tool: "quicbaas_object_admin_get_storage_stats",
+			args: map[string]interface{}{},
+			setup: func(m *mockObjectStorageAdminService, err error) {
+				m.getStorageStatsFunc = func(ctx context.Context, req *service.GetStorageStatsRequest) (*service.GetStorageStatsResponse, error) {
+					return nil, err
+				}
+			},
+		},
+		{
+			tool: "quicbaas_object_admin_run_gc",
+			args: map[string]interface{}{},
+			setup: func(m *mockObjectStorageAdminService, err error) {
+				m.runGCFunc = func(ctx context.Context, req *service.RunGarbageCollectionRequest) (*service.RunGarbageCollectionResponse, error) {
+					return nil, err
+				}
+			},
+		},
+		{
+			tool: "quicbaas_object_admin_get_gc_progress",
+			args: map[string]interface{}{"operation_id": "gc-123"},
+			setup: func(m *mockObjectStorageAdminService, err error) {
+				m.getGCProgressFunc = func(ctx context.Context, req *service.GetGarbageCollectionProgressRequest) (*service.GetGarbageCollectionProgressResponse, error) {
+					return nil, err
+				}
+			},
+		},
+		{
+			tool: "quicbaas_object_admin_repair_object",
+			args: map[string]interface{}{"key": "test:object.txt"},
+			setup: func(m *mockObjectStorageAdminService, err error) {
+				m.repairObjectFunc = func(ctx context.Context, req *service.RepairObjectRequest) (*service.RepairObjectResponse, error) {
+					return nil, err
+				}
+			},
+		},
+		{
+			tool: "quicbaas_object_admin_compact_backend",
+			args: map[string]interface{}{"name": "local"},
+			setup: func(m *mockObjectStorageAdminService, err error) {
+				m.compactBackendFunc = func(ctx context.Context, req *service.CompactBackendRequest) (*service.CompactBackendResponse, error) {
+					return nil, err
+				}
+			},
 		},
 	}
 
-	svc := &objStorageAdminMockService{
-		objAdminSvc: adminSvc,
+	for _, tt := range tests {
+		t.Run(tt.tool, func(t *testing.T) {
+			adminSvc := &mockObjectStorageAdminService{}
+			tt.setup(adminSvc, errors.New(tt.tool+" failed"))
+			registry := newObjAdminRegistryWithMock(t, adminSvc)
+
+			result, err := registry.ExecuteTool(context.Background(), tt.tool, tt.args)
+			require.Error(t, err)
+			assert.Nil(t, result)
+			assert.Contains(t, err.Error(), tt.tool+" failed")
+		})
 	}
-
-	log := newTestLogger(t)
-	registry := NewToolRegistry(svc, log)
-	ctx := context.Background()
-
-	result, err := registry.ExecuteTool(ctx, "quicbaas_object_admin_delete_backend", map[string]interface{}{
-		"name": "test-backend",
-	})
-	require.Error(t, err)
-	assert.Nil(t, result)
-	assert.Contains(t, err.Error(), "delete backend failed")
 }
 
 // =============================================================================
-// Object Admin Run GC - Service Error
+// Missing Required Parameter Tests
 // =============================================================================
 
-func TestExecuteObjectAdminRunGC_ServiceError(t *testing.T) {
-	expectedErr := errors.New("gc failed")
-	adminSvc := &mockObjectStorageAdminService{
-		runGCFunc: func(ctx context.Context, req *service.RunGarbageCollectionRequest) (*service.RunGarbageCollectionResponse, error) {
-			return nil, expectedErr
-		},
+func TestObjectAdminTools_MissingRequired(t *testing.T) {
+	tests := []struct {
+		tool  string
+		args  map[string]interface{}
+		field string
+	}{
+		{tool: "quicbaas_object_admin_update_backend", args: map[string]interface{}{"tier": "warm"}, field: "name"},
+		{tool: "quicbaas_object_admin_delete_backend", args: map[string]interface{}{}, field: "name"},
+		{tool: "quicbaas_object_admin_set_backend_status", args: map[string]interface{}{"enabled": true}, field: "name"},
+		{tool: "quicbaas_object_admin_set_backend_status", args: map[string]interface{}{"name": "local"}, field: "enabled"},
+		{tool: "quicbaas_object_admin_get_gc_progress", args: map[string]interface{}{}, field: "operation_id"},
+		{tool: "quicbaas_object_admin_repair_object", args: map[string]interface{}{}, field: "key"},
+		{tool: "quicbaas_object_admin_compact_backend", args: map[string]interface{}{}, field: "name"},
 	}
 
-	svc := &objStorageAdminMockService{
-		objAdminSvc: adminSvc,
+	for _, tt := range tests {
+		t.Run(tt.tool+"/"+tt.field, func(t *testing.T) {
+			registry := newObjAdminRegistry(t)
+
+			result, err := registry.ExecuteTool(context.Background(), tt.tool, tt.args)
+			require.Error(t, err)
+			assert.Nil(t, result)
+			assert.Contains(t, err.Error(), tt.field+" is required")
+		})
 	}
-
-	log := newTestLogger(t)
-	registry := NewToolRegistry(svc, log)
-	ctx := context.Background()
-
-	result, err := registry.ExecuteTool(ctx, "quicbaas_object_admin_run_gc", map[string]interface{}{})
-	require.Error(t, err)
-	assert.Nil(t, result)
-	assert.Contains(t, err.Error(), "gc failed")
-}
-
-// =============================================================================
-// Object Admin Get GC Progress - Service Error
-// =============================================================================
-
-func TestExecuteObjectAdminGetGCProgress_ServiceError(t *testing.T) {
-	expectedErr := errors.New("get gc progress failed")
-	adminSvc := &mockObjectStorageAdminService{
-		getGCProgressFunc: func(ctx context.Context, req *service.GetGarbageCollectionProgressRequest) (*service.GetGarbageCollectionProgressResponse, error) {
-			return nil, expectedErr
-		},
-	}
-
-	svc := &objStorageAdminMockService{
-		objAdminSvc: adminSvc,
-	}
-
-	log := newTestLogger(t)
-	registry := NewToolRegistry(svc, log)
-	ctx := context.Background()
-
-	result, err := registry.ExecuteTool(ctx, "quicbaas_object_admin_get_gc_progress", map[string]interface{}{
-		"operation_id": "gc-123",
-	})
-	require.Error(t, err)
-	assert.Nil(t, result)
-	assert.Contains(t, err.Error(), "get gc progress failed")
-}
-
-// =============================================================================
-// Object Admin Repair Object - Service Error
-// =============================================================================
-
-func TestExecuteObjectAdminRepairObject_ServiceError(t *testing.T) {
-	expectedErr := errors.New("repair object failed")
-	adminSvc := &mockObjectStorageAdminService{
-		repairObjectFunc: func(ctx context.Context, req *service.RepairObjectRequest) (*service.RepairObjectResponse, error) {
-			return nil, expectedErr
-		},
-	}
-
-	svc := &objStorageAdminMockService{
-		objAdminSvc: adminSvc,
-	}
-
-	log := newTestLogger(t)
-	registry := NewToolRegistry(svc, log)
-	ctx := context.Background()
-
-	result, err := registry.ExecuteTool(ctx, "quicbaas_object_admin_repair_object", map[string]interface{}{
-		"key": "test:object.txt",
-	})
-	require.Error(t, err)
-	assert.Nil(t, result)
-	assert.Contains(t, err.Error(), "repair object failed")
-}
-
-// =============================================================================
-// Object Admin Compact Backend - Service Error
-// =============================================================================
-
-func TestExecuteObjectAdminCompactBackend_ServiceError(t *testing.T) {
-	expectedErr := errors.New("compact backend failed")
-	adminSvc := &mockObjectStorageAdminService{
-		compactBackendFunc: func(ctx context.Context, req *service.CompactBackendRequest) (*service.CompactBackendResponse, error) {
-			return nil, expectedErr
-		},
-	}
-
-	svc := &objStorageAdminMockService{
-		objAdminSvc: adminSvc,
-	}
-
-	log := newTestLogger(t)
-	registry := NewToolRegistry(svc, log)
-	ctx := context.Background()
-
-	result, err := registry.ExecuteTool(ctx, "quicbaas_object_admin_compact_backend", map[string]interface{}{
-		"name": "local",
-	})
-	require.Error(t, err)
-	assert.Nil(t, result)
-	assert.Contains(t, err.Error(), "compact backend failed")
-}
-
-// =============================================================================
-// Object Admin Update Backend - Service Error
-// =============================================================================
-
-func TestExecuteObjectAdminUpdateBackend_ServiceError(t *testing.T) {
-	expectedErr := errors.New("update backend failed")
-	adminSvc := &mockObjectStorageAdminService{
-		updateBackendFunc: func(ctx context.Context, req *service.UpdateBackendRequest) (*service.UpdateBackendResponse, error) {
-			return nil, expectedErr
-		},
-	}
-
-	svc := &objStorageAdminMockService{
-		objAdminSvc: adminSvc,
-	}
-
-	log := newTestLogger(t)
-	registry := NewToolRegistry(svc, log)
-	ctx := context.Background()
-
-	result, err := registry.ExecuteTool(ctx, "quicbaas_object_admin_update_backend", map[string]interface{}{
-		"name": "local",
-	})
-	require.Error(t, err)
-	assert.Nil(t, result)
-	assert.Contains(t, err.Error(), "update backend failed")
-}
-
-// =============================================================================
-// Object Admin Get Storage Stats - Service Error
-// =============================================================================
-
-func TestExecuteObjectAdminGetStorageStats_ServiceError(t *testing.T) {
-	expectedErr := errors.New("storage stats failed")
-	adminSvc := &mockObjectStorageAdminService{
-		getStorageStatsFunc: func(ctx context.Context, req *service.GetStorageStatsRequest) (*service.GetStorageStatsResponse, error) {
-			return nil, expectedErr
-		},
-	}
-
-	svc := &objStorageAdminMockService{
-		objAdminSvc: adminSvc,
-	}
-
-	log := newTestLogger(t)
-	registry := NewToolRegistry(svc, log)
-	ctx := context.Background()
-
-	result, err := registry.ExecuteTool(ctx, "quicbaas_object_admin_get_storage_stats", map[string]interface{}{})
-	require.Error(t, err)
-	assert.Nil(t, result)
-	assert.Contains(t, err.Error(), "storage stats failed")
-}
-
-// =============================================================================
-// Object Admin Create Backend - Service Error
-// =============================================================================
-
-func TestExecuteObjectAdminCreateBackend_ServiceError(t *testing.T) {
-	expectedErr := errors.New("create backend failed")
-	adminSvc := &mockObjectStorageAdminService{
-		createBackendFunc: func(ctx context.Context, req *service.CreateBackendRequest) (*service.CreateBackendResponse, error) {
-			return nil, expectedErr
-		},
-	}
-
-	svc := &objStorageAdminMockService{
-		objAdminSvc: adminSvc,
-	}
-
-	log := newTestLogger(t)
-	registry := NewToolRegistry(svc, log)
-	ctx := context.Background()
-
-	result, err := registry.ExecuteTool(ctx, "quicbaas_object_admin_create_backend", map[string]interface{}{
-		"name": "new-backend",
-		"type": "local",
-		"tier": "hot",
-	})
-	require.Error(t, err)
-	assert.Nil(t, result)
-	assert.Contains(t, err.Error(), "create backend failed")
-}
-
-// =============================================================================
-// Object Admin Tools - Missing Required Parameters
-// =============================================================================
-
-func TestExecuteObjectAdminCompactBackend_MissingName(t *testing.T) {
-	adminSvc := &mockObjectStorageAdminService{}
-	svc := &objStorageAdminMockService{
-		objAdminSvc: adminSvc,
-	}
-	log := newTestLogger(t)
-	registry := NewToolRegistry(svc, log)
-	ctx := context.Background()
-
-	result, err := registry.ExecuteTool(ctx, "quicbaas_object_admin_compact_backend", map[string]interface{}{})
-	require.Error(t, err)
-	assert.Nil(t, result)
-	assert.Contains(t, err.Error(), "name is required")
-}
-
-func TestExecuteObjectAdminRepairObject_MissingKey(t *testing.T) {
-	adminSvc := &mockObjectStorageAdminService{}
-	svc := &objStorageAdminMockService{
-		objAdminSvc: adminSvc,
-	}
-	log := newTestLogger(t)
-	registry := NewToolRegistry(svc, log)
-	ctx := context.Background()
-
-	result, err := registry.ExecuteTool(ctx, "quicbaas_object_admin_repair_object", map[string]interface{}{})
-	require.Error(t, err)
-	assert.Nil(t, result)
-	assert.Contains(t, err.Error(), "key is required")
-}
-
-func TestExecuteObjectAdminDeleteBackend_MissingName(t *testing.T) {
-	adminSvc := &mockObjectStorageAdminService{}
-	svc := &objStorageAdminMockService{
-		objAdminSvc: adminSvc,
-	}
-	log := newTestLogger(t)
-	registry := NewToolRegistry(svc, log)
-	ctx := context.Background()
-
-	result, err := registry.ExecuteTool(ctx, "quicbaas_object_admin_delete_backend", map[string]interface{}{})
-	require.Error(t, err)
-	assert.Nil(t, result)
-	assert.Contains(t, err.Error(), "name is required")
-}
-
-func TestExecuteObjectAdminUpdateBackend_MissingName(t *testing.T) {
-	adminSvc := &mockObjectStorageAdminService{}
-	svc := &objStorageAdminMockService{
-		objAdminSvc: adminSvc,
-	}
-	log := newTestLogger(t)
-	registry := NewToolRegistry(svc, log)
-	ctx := context.Background()
-
-	result, err := registry.ExecuteTool(ctx, "quicbaas_object_admin_update_backend", map[string]interface{}{})
-	require.Error(t, err)
-	assert.Nil(t, result)
-	assert.Contains(t, err.Error(), "name is required")
-}
-
-func TestExecuteObjectAdminGetGCProgress_MissingOperationID(t *testing.T) {
-	adminSvc := &mockObjectStorageAdminService{}
-	svc := &objStorageAdminMockService{
-		objAdminSvc: adminSvc,
-	}
-	log := newTestLogger(t)
-	registry := NewToolRegistry(svc, log)
-	ctx := context.Background()
-
-	result, err := registry.ExecuteTool(ctx, "quicbaas_object_admin_get_gc_progress", map[string]interface{}{})
-	require.Error(t, err)
-	assert.Nil(t, result)
-	assert.Contains(t, err.Error(), "operation_id is required")
 }
 
 // =============================================================================
@@ -1085,20 +829,6 @@ func TestObjectAdminGetStorageStats_WithTenantStats(t *testing.T) {
 	assert.Equal(t, "tenant-1", first["tenant_id"])
 }
 
-func TestObjectAdminGetStorageStats_ServiceError(t *testing.T) {
-	adminSvc := &mockObjectStorageAdminService{
-		getStorageStatsFunc: func(ctx context.Context, req *service.GetStorageStatsRequest) (*service.GetStorageStatsResponse, error) {
-			return nil, &dberrors.MessageError{Message: "stats unavailable"}
-		},
-	}
-	registry := newObjAdminRegistryWithMock(t, adminSvc)
-	ctx := context.Background()
-
-	_, err := registry.ExecuteTool(ctx, "quicbaas_object_admin_get_storage_stats", map[string]interface{}{})
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "stats unavailable")
-}
-
 // =============================================================================
 // GetGCProgress - Error and CompletedAt Branches
 // =============================================================================
@@ -1134,22 +864,6 @@ func TestObjectAdminGetGCProgress_WithErrorAndCompletedAt(t *testing.T) {
 	assert.Equal(t, "partial error: 3 objects skipped", resultMap["error"])
 }
 
-func TestObjectAdminGetGCProgress_ServiceError(t *testing.T) {
-	adminSvc := &mockObjectStorageAdminService{
-		getGCProgressFunc: func(ctx context.Context, req *service.GetGarbageCollectionProgressRequest) (*service.GetGarbageCollectionProgressResponse, error) {
-			return nil, &dberrors.MessageError{Message: "gc operation not found"}
-		},
-	}
-	registry := newObjAdminRegistryWithMock(t, adminSvc)
-	ctx := context.Background()
-
-	_, err := registry.ExecuteTool(ctx, "quicbaas_object_admin_get_gc_progress", map[string]interface{}{
-		"operation_id": "gc-unknown",
-	})
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "gc operation not found")
-}
-
 // =============================================================================
 // RepairObject - Error Field Branch
 // =============================================================================
@@ -1178,20 +892,4 @@ func TestObjectAdminRepairObject_WithError(t *testing.T) {
 	require.True(t, ok)
 	assert.Contains(t, resultMap, "error")
 	assert.Equal(t, "checksum mismatch at location-2", resultMap["error"])
-}
-
-func TestObjectAdminRepairObject_ServiceError(t *testing.T) {
-	adminSvc := &mockObjectStorageAdminService{
-		repairObjectFunc: func(ctx context.Context, req *service.RepairObjectRequest) (*service.RepairObjectResponse, error) {
-			return nil, &dberrors.MessageError{Message: "repair timeout"}
-		},
-	}
-	registry := newObjAdminRegistryWithMock(t, adminSvc)
-	ctx := context.Background()
-
-	_, err := registry.ExecuteTool(ctx, "quicbaas_object_admin_repair_object", map[string]interface{}{
-		"key": "test:object",
-	})
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "repair timeout")
 }
