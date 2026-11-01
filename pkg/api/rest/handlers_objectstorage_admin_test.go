@@ -208,94 +208,6 @@ func TestHandleCreateObjectBackend_Success(t *testing.T) {
 	assert.Equal(t, "test-backend", resp.Name)
 }
 
-func TestHandleCreateObjectBackend_InvalidJSON(t *testing.T) {
-	mockAdminSvc := &mockObjectStorageAdminService{}
-	s := newTestObjectStorageAdminServer(mockAdminSvc)
-
-	r := chi.NewRouter()
-	r.Post("/api/v1/admin/object-backends", s.HandleCreateObjectBackend)
-
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/object-backends", bytes.NewReader([]byte("invalid json")))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-
-	r.ServeHTTP(w, req)
-
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestHandleCreateObjectBackend_MissingName(t *testing.T) {
-	mockAdminSvc := &mockObjectStorageAdminService{}
-	s := newTestObjectStorageAdminServer(mockAdminSvc)
-
-	r := chi.NewRouter()
-	r.Post("/api/v1/admin/object-backends", s.HandleCreateObjectBackend)
-
-	body := `{"type":"local","tier":"hot"}`
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/object-backends", bytes.NewReader([]byte(body)))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-
-	r.ServeHTTP(w, req)
-
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestHandleCreateObjectBackend_MissingType(t *testing.T) {
-	mockAdminSvc := &mockObjectStorageAdminService{}
-	s := newTestObjectStorageAdminServer(mockAdminSvc)
-
-	r := chi.NewRouter()
-	r.Post("/api/v1/admin/object-backends", s.HandleCreateObjectBackend)
-
-	body := `{"name":"test-backend","tier":"hot"}`
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/object-backends", bytes.NewReader([]byte(body)))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-
-	r.ServeHTTP(w, req)
-
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestHandleCreateObjectBackend_MissingTier(t *testing.T) {
-	mockAdminSvc := &mockObjectStorageAdminService{}
-	s := newTestObjectStorageAdminServer(mockAdminSvc)
-
-	r := chi.NewRouter()
-	r.Post("/api/v1/admin/object-backends", s.HandleCreateObjectBackend)
-
-	body := `{"name":"test-backend","type":"local"}`
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/object-backends", bytes.NewReader([]byte(body)))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-
-	r.ServeHTTP(w, req)
-
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestHandleCreateObjectBackend_AlreadyExists(t *testing.T) {
-	mockAdminSvc := &mockObjectStorageAdminService{
-		createBackendFunc: func(ctx context.Context, req *service.CreateBackendRequest) (*service.CreateBackendResponse, error) {
-			return nil, &errors.QBError{Code: errors.ErrAlreadyExists, Err: nil}
-		},
-	}
-	s := newTestObjectStorageAdminServer(mockAdminSvc)
-
-	r := chi.NewRouter()
-	r.Post("/api/v1/admin/object-backends", s.HandleCreateObjectBackend)
-
-	body := `{"name":"test-backend","type":"local","tier":"hot"}`
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/object-backends", bytes.NewReader([]byte(body)))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-
-	r.ServeHTTP(w, req)
-
-	assert.Equal(t, http.StatusConflict, w.Code)
-}
-
 // =============================================================================
 // HandleUpdateObjectBackend Tests
 // =============================================================================
@@ -320,61 +232,6 @@ func TestHandleUpdateObjectBackend_Success(t *testing.T) {
 	err := json.Unmarshal(w.Body.Bytes(), &resp)
 	require.NoError(t, err)
 	assert.Equal(t, "test-backend", resp.Name)
-}
-
-func TestHandleUpdateObjectBackend_InvalidJSON(t *testing.T) {
-	mockAdminSvc := &mockObjectStorageAdminService{}
-	s := newTestObjectStorageAdminServer(mockAdminSvc)
-
-	r := chi.NewRouter()
-	r.Put("/api/v1/admin/object-backends/{name}", s.HandleUpdateObjectBackend)
-
-	req := httptest.NewRequest(http.MethodPut, "/api/v1/admin/object-backends/test-backend", bytes.NewReader([]byte("invalid")))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-
-	r.ServeHTTP(w, req)
-
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestHandleUpdateObjectBackend_MissingName(t *testing.T) {
-	mockAdminSvc := &mockObjectStorageAdminService{}
-	s := newTestObjectStorageAdminServer(mockAdminSvc)
-
-	r := chi.NewRouter()
-	r.Put("/api/v1/admin/object-backends/{name}", s.HandleUpdateObjectBackend)
-
-	body := `{"config":{"key":"value"}}`
-	req := httptest.NewRequest(http.MethodPut, "/api/v1/admin/object-backends/", bytes.NewReader([]byte(body)))
-	w := httptest.NewRecorder()
-
-	r.ServeHTTP(w, req)
-
-	// Chi router returns 404 when the route pattern with a trailing slash
-	// doesn't match any registered route
-	assert.Equal(t, http.StatusNotFound, w.Code)
-}
-
-func TestHandleUpdateObjectBackend_NotFound(t *testing.T) {
-	mockAdminSvc := &mockObjectStorageAdminService{
-		updateBackendFunc: func(ctx context.Context, req *service.UpdateBackendRequest) (*service.UpdateBackendResponse, error) {
-			return nil, &errors.QBError{Code: errors.ErrNotFound, Err: nil}
-		},
-	}
-	s := newTestObjectStorageAdminServer(mockAdminSvc)
-
-	r := chi.NewRouter()
-	r.Put("/api/v1/admin/object-backends/{name}", s.HandleUpdateObjectBackend)
-
-	body := `{"config":{"key":"value"}}`
-	req := httptest.NewRequest(http.MethodPut, "/api/v1/admin/object-backends/nonexistent", bytes.NewReader([]byte(body)))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-
-	r.ServeHTTP(w, req)
-
-	assert.Equal(t, http.StatusNotFound, w.Code)
 }
 
 // =============================================================================
@@ -449,25 +306,6 @@ func TestHandleDeleteObjectBackend_WithQueryParams(t *testing.T) {
 	assert.Equal(t, http.StatusOK, w.Code)
 }
 
-func TestHandleDeleteObjectBackend_NotFound(t *testing.T) {
-	mockAdminSvc := &mockObjectStorageAdminService{
-		deleteBackendFunc: func(ctx context.Context, req *service.DeleteBackendRequest) (*service.DeleteBackendResponse, error) {
-			return nil, &errors.QBError{Code: errors.ErrNotFound, Err: nil}
-		},
-	}
-	s := newTestObjectStorageAdminServer(mockAdminSvc)
-
-	r := chi.NewRouter()
-	r.Delete("/api/v1/admin/object-backends/{name}", s.HandleDeleteObjectBackend)
-
-	req := httptest.NewRequest(http.MethodDelete, "/api/v1/admin/object-backends/nonexistent", nil)
-	w := httptest.NewRecorder()
-
-	r.ServeHTTP(w, req)
-
-	assert.Equal(t, http.StatusNotFound, w.Code)
-}
-
 // =============================================================================
 // HandleSetObjectBackendStatus Tests
 // =============================================================================
@@ -515,43 +353,6 @@ func TestHandleSetObjectBackendStatus_Disable(t *testing.T) {
 	err := json.Unmarshal(w.Body.Bytes(), &resp)
 	require.NoError(t, err)
 	assert.False(t, resp.Enabled)
-}
-
-func TestHandleSetObjectBackendStatus_InvalidJSON(t *testing.T) {
-	mockAdminSvc := &mockObjectStorageAdminService{}
-	s := newTestObjectStorageAdminServer(mockAdminSvc)
-
-	r := chi.NewRouter()
-	r.Put("/api/v1/admin/object-backends/{name}/status", s.HandleSetObjectBackendStatus)
-
-	req := httptest.NewRequest(http.MethodPut, "/api/v1/admin/object-backends/test-backend/status", bytes.NewReader([]byte("invalid")))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-
-	r.ServeHTTP(w, req)
-
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestHandleSetObjectBackendStatus_NotFound(t *testing.T) {
-	mockAdminSvc := &mockObjectStorageAdminService{
-		setBackendStatusFunc: func(ctx context.Context, req *service.SetBackendStatusRequest) (*service.SetBackendStatusResponse, error) {
-			return nil, &errors.QBError{Code: errors.ErrNotFound, Err: nil}
-		},
-	}
-	s := newTestObjectStorageAdminServer(mockAdminSvc)
-
-	r := chi.NewRouter()
-	r.Put("/api/v1/admin/object-backends/{name}/status", s.HandleSetObjectBackendStatus)
-
-	body := `{"enabled":true}`
-	req := httptest.NewRequest(http.MethodPut, "/api/v1/admin/object-backends/nonexistent/status", bytes.NewReader([]byte(body)))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-
-	r.ServeHTTP(w, req)
-
-	assert.Equal(t, http.StatusNotFound, w.Code)
 }
 
 // =============================================================================
@@ -708,40 +509,6 @@ func TestHandleGetGarbageCollectionProgress_Success(t *testing.T) {
 	assert.Equal(t, "gc-123", resp.OperationID)
 }
 
-func TestHandleGetGarbageCollectionProgress_MissingOperationID(t *testing.T) {
-	mockAdminSvc := &mockObjectStorageAdminService{}
-	s := newTestObjectStorageAdminServer(mockAdminSvc)
-
-	r := chi.NewRouter()
-	r.Get("/api/v1/admin/storage/gc/progress", s.HandleGetGarbageCollectionProgress)
-
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/admin/storage/gc/progress", nil)
-	w := httptest.NewRecorder()
-
-	r.ServeHTTP(w, req)
-
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestHandleGetGarbageCollectionProgress_NotFound(t *testing.T) {
-	mockAdminSvc := &mockObjectStorageAdminService{
-		getGarbageCollectionProgressFunc: func(ctx context.Context, req *service.GetGarbageCollectionProgressRequest) (*service.GetGarbageCollectionProgressResponse, error) {
-			return nil, &errors.QBError{Code: errors.ErrNotFound, Err: nil}
-		},
-	}
-	s := newTestObjectStorageAdminServer(mockAdminSvc)
-
-	r := chi.NewRouter()
-	r.Get("/api/v1/admin/storage/gc/progress", s.HandleGetGarbageCollectionProgress)
-
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/admin/storage/gc/progress?operation_id=nonexistent", nil)
-	w := httptest.NewRecorder()
-
-	r.ServeHTTP(w, req)
-
-	assert.Equal(t, http.StatusNotFound, w.Code)
-}
-
 // =============================================================================
 // HandleRepairObject Tests
 // =============================================================================
@@ -767,60 +534,6 @@ func TestHandleRepairObject_Success(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "test-key", resp.Key)
 	assert.True(t, resp.Success)
-}
-
-func TestHandleRepairObject_InvalidJSON(t *testing.T) {
-	mockAdminSvc := &mockObjectStorageAdminService{}
-	s := newTestObjectStorageAdminServer(mockAdminSvc)
-
-	r := chi.NewRouter()
-	r.Post("/api/v1/admin/objects/repair", s.HandleRepairObject)
-
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/objects/repair", bytes.NewReader([]byte("invalid")))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-
-	r.ServeHTTP(w, req)
-
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestHandleRepairObject_MissingKey(t *testing.T) {
-	mockAdminSvc := &mockObjectStorageAdminService{}
-	s := newTestObjectStorageAdminServer(mockAdminSvc)
-
-	r := chi.NewRouter()
-	r.Post("/api/v1/admin/objects/repair", s.HandleRepairObject)
-
-	body := `{"source_location":"primary"}`
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/objects/repair", bytes.NewReader([]byte(body)))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-
-	r.ServeHTTP(w, req)
-
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestHandleRepairObject_NotFound(t *testing.T) {
-	mockAdminSvc := &mockObjectStorageAdminService{
-		repairObjectFunc: func(ctx context.Context, req *service.RepairObjectRequest) (*service.RepairObjectResponse, error) {
-			return nil, &errors.QBError{Code: errors.ErrNotFound, Err: nil}
-		},
-	}
-	s := newTestObjectStorageAdminServer(mockAdminSvc)
-
-	r := chi.NewRouter()
-	r.Post("/api/v1/admin/objects/repair", s.HandleRepairObject)
-
-	body := `{"key":"nonexistent-key"}`
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/objects/repair", bytes.NewReader([]byte(body)))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-
-	r.ServeHTTP(w, req)
-
-	assert.Equal(t, http.StatusNotFound, w.Code)
 }
 
 // =============================================================================
@@ -880,25 +593,6 @@ func TestHandleCompactObjectBackend_EmptyBody(t *testing.T) {
 	r.ServeHTTP(w, req)
 
 	assert.Equal(t, http.StatusAccepted, w.Code)
-}
-
-func TestHandleCompactObjectBackend_NotFound(t *testing.T) {
-	mockAdminSvc := &mockObjectStorageAdminService{
-		compactBackendFunc: func(ctx context.Context, req *service.CompactBackendRequest) (*service.CompactBackendResponse, error) {
-			return nil, &errors.QBError{Code: errors.ErrNotFound, Err: nil}
-		},
-	}
-	s := newTestObjectStorageAdminServer(mockAdminSvc)
-
-	r := chi.NewRouter()
-	r.Post("/api/v1/admin/object-backends/{name}/compact", s.HandleCompactObjectBackend)
-
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/object-backends/nonexistent/compact", nil)
-	w := httptest.NewRecorder()
-
-	r.ServeHTTP(w, req)
-
-	assert.Equal(t, http.StatusNotFound, w.Code)
 }
 
 // =============================================================================
@@ -970,6 +664,133 @@ func TestObjectStorageAdmin_ServiceUnavailable(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			w := serveObjectStorageAdmin(nil, tt.method, tt.path, tt.body)
 			assert.Equal(t, http.StatusServiceUnavailable, w.Code)
+		})
+	}
+}
+
+func TestObjectStorageAdmin_BadRequest(t *testing.T) {
+	tests := []struct {
+		name   string
+		method string
+		path   string
+		body   string
+	}{
+		{"create backend invalid json", http.MethodPost, "/api/v1/admin/object-backends", "invalid json"},
+		{"create backend missing name", http.MethodPost, "/api/v1/admin/object-backends", `{"type":"local","tier":"hot"}`},
+		{"create backend missing type", http.MethodPost, "/api/v1/admin/object-backends", `{"name":"test-backend","tier":"hot"}`},
+		{"create backend missing tier", http.MethodPost, "/api/v1/admin/object-backends", `{"name":"test-backend","type":"local"}`},
+		{"update backend invalid json", http.MethodPut, "/api/v1/admin/object-backends/test-backend", "invalid"},
+		{"set backend status invalid json", http.MethodPut, "/api/v1/admin/object-backends/test-backend/status", "invalid"},
+		{"get gc progress missing operation id", http.MethodGet, "/api/v1/admin/storage/gc/progress", ""},
+		{"repair object invalid json", http.MethodPost, "/api/v1/admin/objects/repair", "invalid"},
+		{"repair object missing key", http.MethodPost, "/api/v1/admin/objects/repair", `{"source_location":"primary"}`},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			w := serveObjectStorageAdmin(&mockObjectStorageAdminService{}, tt.method, tt.path, tt.body)
+			assert.Equal(t, http.StatusBadRequest, w.Code)
+		})
+	}
+}
+
+func TestObjectStorageAdmin_ServiceError(t *testing.T) {
+	notFound := &errors.QBError{Code: errors.ErrNotFound}
+	tests := []struct {
+		name   string
+		svc    *mockObjectStorageAdminService
+		method string
+		path   string
+		body   string
+		status int
+	}{
+		{
+			name: "create backend already exists",
+			svc: &mockObjectStorageAdminService{
+				createBackendFunc: func(ctx context.Context, req *service.CreateBackendRequest) (*service.CreateBackendResponse, error) {
+					return nil, &errors.QBError{Code: errors.ErrAlreadyExists}
+				},
+			},
+			method: http.MethodPost,
+			path:   "/api/v1/admin/object-backends",
+			body:   `{"name":"test-backend","type":"local","tier":"hot"}`,
+			status: http.StatusConflict,
+		},
+		{
+			name: "update backend not found",
+			svc: &mockObjectStorageAdminService{
+				updateBackendFunc: func(ctx context.Context, req *service.UpdateBackendRequest) (*service.UpdateBackendResponse, error) {
+					return nil, notFound
+				},
+			},
+			method: http.MethodPut,
+			path:   "/api/v1/admin/object-backends/nonexistent",
+			body:   `{"config":{"key":"value"}}`,
+			status: http.StatusNotFound,
+		},
+		{
+			name: "delete backend not found",
+			svc: &mockObjectStorageAdminService{
+				deleteBackendFunc: func(ctx context.Context, req *service.DeleteBackendRequest) (*service.DeleteBackendResponse, error) {
+					return nil, notFound
+				},
+			},
+			method: http.MethodDelete,
+			path:   "/api/v1/admin/object-backends/nonexistent",
+			status: http.StatusNotFound,
+		},
+		{
+			name: "set backend status not found",
+			svc: &mockObjectStorageAdminService{
+				setBackendStatusFunc: func(ctx context.Context, req *service.SetBackendStatusRequest) (*service.SetBackendStatusResponse, error) {
+					return nil, notFound
+				},
+			},
+			method: http.MethodPut,
+			path:   "/api/v1/admin/object-backends/nonexistent/status",
+			body:   `{"enabled":true}`,
+			status: http.StatusNotFound,
+		},
+		{
+			name: "get gc progress not found",
+			svc: &mockObjectStorageAdminService{
+				getGarbageCollectionProgressFunc: func(ctx context.Context, req *service.GetGarbageCollectionProgressRequest) (*service.GetGarbageCollectionProgressResponse, error) {
+					return nil, notFound
+				},
+			},
+			method: http.MethodGet,
+			path:   "/api/v1/admin/storage/gc/progress?operation_id=nonexistent",
+			status: http.StatusNotFound,
+		},
+		{
+			name: "repair object not found",
+			svc: &mockObjectStorageAdminService{
+				repairObjectFunc: func(ctx context.Context, req *service.RepairObjectRequest) (*service.RepairObjectResponse, error) {
+					return nil, notFound
+				},
+			},
+			method: http.MethodPost,
+			path:   "/api/v1/admin/objects/repair",
+			body:   `{"key":"nonexistent-key"}`,
+			status: http.StatusNotFound,
+		},
+		{
+			name: "compact backend not found",
+			svc: &mockObjectStorageAdminService{
+				compactBackendFunc: func(ctx context.Context, req *service.CompactBackendRequest) (*service.CompactBackendResponse, error) {
+					return nil, notFound
+				},
+			},
+			method: http.MethodPost,
+			path:   "/api/v1/admin/object-backends/nonexistent/compact",
+			status: http.StatusNotFound,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			w := serveObjectStorageAdmin(tt.svc, tt.method, tt.path, tt.body)
+			assert.Equal(t, tt.status, w.Code)
 		})
 	}
 }
