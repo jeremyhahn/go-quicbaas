@@ -155,42 +155,27 @@ func TestOwnershipManager_GetOwner(t *testing.T) {
 		tenantID     string
 		resourceType string
 		resourceID   string
-		wantErr      bool
+		errMsg       string
 	}{
-		{
-			name:         "existing ownership",
-			tenantID:     "tenant1",
-			resourceType: "database",
-			resourceID:   "db1",
-			wantErr:      false,
-		},
-		{
-			name:         "non-existent ownership",
-			tenantID:     "tenant1",
-			resourceType: "database",
-			resourceID:   "db2",
-			wantErr:      true,
-		},
-		{
-			name:         "missing tenant ID",
-			tenantID:     "",
-			resourceType: "database",
-			resourceID:   "db1",
-			wantErr:      true,
-		},
+		{name: "existing ownership", tenantID: "tenant1", resourceType: "database", resourceID: "db1"},
+		{name: "non-existent ownership", tenantID: "tenant1", resourceType: "database", resourceID: "db2", errMsg: "not found"},
+		{name: "missing tenant ID", tenantID: "", resourceType: "database", resourceID: "db1", errMsg: "tenant ID"},
+		{name: "missing resource type", tenantID: "tenant1", resourceType: "", resourceID: "db1", errMsg: "resource type"},
+		{name: "missing resource ID", tenantID: "tenant1", resourceType: "database", resourceID: "", errMsg: "resource ID"},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			result, err := mgr.GetOwner(ctx, tt.tenantID, tt.resourceType, tt.resourceID)
-			if tt.wantErr {
-				assert.Error(t, err)
-			} else {
-				assert.NoError(t, err)
-				require.NotNil(t, result)
-				assert.Equal(t, ownership.ID, result.ID)
-				assert.Equal(t, ownership.OwnerID, result.OwnerID)
+			if tt.errMsg != "" {
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), tt.errMsg)
+				return
 			}
+			assert.NoError(t, err)
+			require.NotNil(t, result)
+			assert.Equal(t, ownership.ID, result.ID)
+			assert.Equal(t, ownership.OwnerID, result.OwnerID)
 		})
 	}
 }
@@ -212,12 +197,28 @@ func TestOwnershipManager_TransferOwnership(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "user2", ownership.OwnerID)
 
-	// Test error cases
-	err = mgr.TransferOwnership(ctx, "", "database", "db1", "user3")
-	assert.Error(t, err)
+	errorCases := []struct {
+		name         string
+		tenantID     string
+		resourceType string
+		resourceID   string
+		newOwnerID   string
+		errMsg       string
+	}{
+		{name: "missing tenant ID", tenantID: "", resourceType: "database", resourceID: "db1", newOwnerID: "user3", errMsg: "tenant ID"},
+		{name: "missing resource type", tenantID: "tenant1", resourceType: "", resourceID: "db1", newOwnerID: "user3", errMsg: "resource type"},
+		{name: "missing resource ID", tenantID: "tenant1", resourceType: "database", resourceID: "", newOwnerID: "user3", errMsg: "resource ID"},
+		{name: "missing new owner ID", tenantID: "tenant1", resourceType: "database", resourceID: "db1", newOwnerID: "", errMsg: "owner ID"},
+		{name: "non-existent ownership", tenantID: "tenant1", resourceType: "database", resourceID: "nonexistent", newOwnerID: "user3", errMsg: "not found"},
+	}
 
-	err = mgr.TransferOwnership(ctx, "tenant1", "database", "nonexistent", "user3")
-	assert.Error(t, err)
+	for _, tt := range errorCases {
+		t.Run(tt.name, func(t *testing.T) {
+			err := mgr.TransferOwnership(ctx, tt.tenantID, tt.resourceType, tt.resourceID, tt.newOwnerID)
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), tt.errMsg)
+		})
+	}
 }
 
 func TestOwnershipManager_ShareResource(t *testing.T) {
@@ -392,18 +393,27 @@ func TestOwnershipManager_UpdateShare(t *testing.T) {
 	assert.Contains(t, updated.Permissions, PermissionRead)
 	assert.Contains(t, updated.Permissions, PermissionWrite)
 
-	// Test error cases
-	_, err = mgr.UpdateShare(ctx, "tenant1", "nonexistent", []SharePermission{PermissionRead})
-	assert.Error(t, err)
+	errorCases := []struct {
+		name        string
+		tenantID    string
+		shareID     string
+		permissions []SharePermission
+		errMsg      string
+	}{
+		{name: "non-existent share", tenantID: "tenant1", shareID: "nonexistent", permissions: []SharePermission{PermissionRead}, errMsg: "not found"},
+		{name: "missing tenant ID", tenantID: "", shareID: share.ID, permissions: []SharePermission{PermissionRead}, errMsg: "tenant ID"},
+		{name: "missing share ID", tenantID: "tenant1", shareID: "", permissions: []SharePermission{PermissionRead}, errMsg: "share ID"},
+		{name: "no permissions", tenantID: "tenant1", shareID: share.ID, permissions: nil, errMsg: "at least one permission"},
+		{name: "invalid permission", tenantID: "tenant1", shareID: share.ID, permissions: []SharePermission{"invalid"}, errMsg: "invalid permission"},
+	}
 
-	_, err = mgr.UpdateShare(ctx, "", share.ID, []SharePermission{PermissionRead})
-	assert.Error(t, err)
-
-	_, err = mgr.UpdateShare(ctx, "tenant1", share.ID, []SharePermission{})
-	assert.Error(t, err)
-
-	_, err = mgr.UpdateShare(ctx, "tenant1", share.ID, []SharePermission{"invalid"})
-	assert.Error(t, err)
+	for _, tt := range errorCases {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := mgr.UpdateShare(ctx, tt.tenantID, tt.shareID, tt.permissions)
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), tt.errMsg)
+		})
+	}
 }
 
 func TestOwnershipManager_RevokeShare(t *testing.T) {
@@ -1639,87 +1649,6 @@ func TestMemoryShareStorage_UpdatePreservesCreatedAt(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, originalCreated.Unix(), updated.CreatedAt.Unix())
 	assert.True(t, updated.UpdatedAt.After(originalCreated))
-}
-
-func TestOwnershipManager_GetOwner_AllValidationPaths(t *testing.T) {
-	ctx := context.Background()
-	mgr := createTestOwnershipManager(t)
-
-	// Test all error paths
-	_, err := mgr.GetOwner(ctx, "", "database", "db1")
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "tenant ID")
-
-	_, err = mgr.GetOwner(ctx, "tenant1", "", "db1")
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "resource type")
-
-	_, err = mgr.GetOwner(ctx, "tenant1", "database", "")
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "resource ID")
-}
-
-func TestOwnershipManager_TransferOwnership_AllValidationPaths(t *testing.T) {
-	ctx := context.Background()
-	mgr := createTestOwnershipManager(t)
-
-	// Create ownership first
-	_, err := mgr.SetOwner(ctx, "tenant1", "database", "db1", "user1")
-	require.NoError(t, err)
-
-	// Test all error paths
-	err = mgr.TransferOwnership(ctx, "", "database", "db1", "user2")
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "tenant ID")
-
-	err = mgr.TransferOwnership(ctx, "tenant1", "", "db1", "user2")
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "resource type")
-
-	err = mgr.TransferOwnership(ctx, "tenant1", "database", "", "user2")
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "resource ID")
-
-	err = mgr.TransferOwnership(ctx, "tenant1", "database", "db1", "")
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "owner ID")
-}
-
-func TestOwnershipManager_UpdateShare_AllValidationPaths(t *testing.T) {
-	ctx := context.Background()
-	mgr := createTestOwnershipManager(t)
-
-	// Setup
-	_, err := mgr.SetOwner(ctx, "tenant1", "database", "db1", "user1")
-	require.NoError(t, err)
-
-	share, err := mgr.ShareResource(ctx, &CreateShareRequest{
-		TenantID:     "tenant1",
-		ResourceType: "database",
-		ResourceID:   "db1",
-		GranteeType:  GranteeTypeUser,
-		GranteeID:    "user2",
-		Permissions:  []SharePermission{PermissionRead},
-		CreatedBy:    "user1",
-	})
-	require.NoError(t, err)
-
-	// Test all error paths
-	_, err = mgr.UpdateShare(ctx, "", share.ID, []SharePermission{PermissionRead})
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "tenant ID")
-
-	_, err = mgr.UpdateShare(ctx, "tenant1", "", []SharePermission{PermissionRead})
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "share ID")
-
-	_, err = mgr.UpdateShare(ctx, "tenant1", share.ID, nil)
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "at least one permission")
-
-	_, err = mgr.UpdateShare(ctx, "tenant1", share.ID, []SharePermission{"badperm"})
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "invalid permission")
 }
 
 func TestOwnershipManager_CheckAccess_WrongResource(t *testing.T) {
