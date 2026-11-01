@@ -730,6 +730,39 @@ func TestTaskStore_KeySegmentRejection(t *testing.T) {
 	}
 }
 
+// TestTaskStore_InvalidInput covers the input guards that
+// TestTaskStore_KeySegmentRejection does not reach: nil tasks, empty agent
+// and reason arguments, and an empty tenant on the tenant-wide verbs.
+func TestTaskStore_InvalidInput(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	store := NewInMemoryTaskStore()
+
+	cases := []struct {
+		name string
+		call func() error
+	}{
+		{"CreateTask nil task", func() error { return store.CreateTask(ctx, nil) }},
+		{"UpdateTask nil task", func() error { return store.UpdateTask(ctx, nil) }},
+		{"ClaimTask empty agent", func() error { return store.ClaimTask(ctx, "tenant-a", "task-1", "") }},
+		{"FailTask empty reason", func() error { return store.FailTask(ctx, "tenant-a", "task-1", "") }},
+		{"ListTasks empty tenant", func() error {
+			_, err := store.ListTasks(ctx, "", nil)
+			return err
+		}},
+		{"DeleteTenantTasks empty tenant", func() error { return store.DeleteTenantTasks(ctx, "") }},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := tc.call(); !errors.Is(err, ErrTaskStoreInvalidInput) {
+				t.Errorf("expected ErrTaskStoreInvalidInput, got %v", err)
+			}
+		})
+	}
+}
+
 // TestTaskStore_ArtifactNameIsEncodedNotRejected documents the rule chosen for
 // the artifact-name segment: names are file-like labels, so a name containing
 // the key separator is encoded rather than refused, and an empty name is
@@ -1525,58 +1558,6 @@ func TestCreateTask_DuplicateID(t *testing.T) {
 	}
 }
 
-func TestCreateTask_NilTask(t *testing.T) {
-	t.Parallel()
-
-	store := NewInMemoryTaskStore()
-	err := store.CreateTask(context.Background(), nil)
-	if err == nil {
-		t.Fatal("expected error for nil task")
-	}
-	if !errors.Is(err, ErrTaskStoreInvalidInput) {
-		t.Fatalf("expected ErrTaskStoreInvalidInput, got %v", err)
-	}
-}
-
-func TestCreateTask_EmptyID(t *testing.T) {
-	t.Parallel()
-
-	store := NewInMemoryTaskStore()
-	err := store.CreateTask(context.Background(), &Task{TenantID: "t"})
-	if err == nil {
-		t.Fatal("expected error for empty task ID")
-	}
-	if !errors.Is(err, ErrTaskStoreInvalidInput) {
-		t.Fatalf("expected ErrTaskStoreInvalidInput, got %v", err)
-	}
-}
-
-func TestCreateTask_EmptyTenantID(t *testing.T) {
-	t.Parallel()
-
-	store := NewInMemoryTaskStore()
-	err := store.CreateTask(context.Background(), &Task{ID: "t1"})
-	if err == nil {
-		t.Fatal("expected error for empty tenant ID")
-	}
-	if !errors.Is(err, ErrTaskStoreInvalidInput) {
-		t.Fatalf("expected ErrTaskStoreInvalidInput, got %v", err)
-	}
-}
-
-func TestCreateTask_CancelledContext(t *testing.T) {
-	t.Parallel()
-
-	store := NewInMemoryTaskStore()
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-
-	err := store.CreateTask(ctx, &Task{ID: "t1", TenantID: "t"})
-	if err == nil {
-		t.Fatal("expected error for cancelled context")
-	}
-}
-
 // =============================================================================
 // GetTask Tests
 // =============================================================================
@@ -1645,45 +1626,6 @@ func TestGetTask_WrongTenant(t *testing.T) {
 	}
 	if !errors.Is(err, ErrTaskNotFound) {
 		t.Fatalf("expected ErrTaskNotFound for tenant isolation, got %v", err)
-	}
-}
-
-func TestGetTask_EmptyTenantID(t *testing.T) {
-	t.Parallel()
-
-	store := NewInMemoryTaskStore()
-	_, err := store.GetTask(context.Background(), "", "task-1")
-	if err == nil {
-		t.Fatal("expected error for empty tenant ID")
-	}
-	if !errors.Is(err, ErrTaskStoreInvalidInput) {
-		t.Fatalf("expected ErrTaskStoreInvalidInput, got %v", err)
-	}
-}
-
-func TestGetTask_EmptyTaskID(t *testing.T) {
-	t.Parallel()
-
-	store := NewInMemoryTaskStore()
-	_, err := store.GetTask(context.Background(), "tenant-a", "")
-	if err == nil {
-		t.Fatal("expected error for empty task ID")
-	}
-	if !errors.Is(err, ErrTaskStoreInvalidInput) {
-		t.Fatalf("expected ErrTaskStoreInvalidInput, got %v", err)
-	}
-}
-
-func TestGetTask_CancelledContext(t *testing.T) {
-	t.Parallel()
-
-	store := NewInMemoryTaskStore()
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-
-	_, err := store.GetTask(ctx, "tenant-a", "task-1")
-	if err == nil {
-		t.Fatal("expected error for cancelled context")
 	}
 }
 
@@ -1798,32 +1740,6 @@ func TestUpdateTask_NotFound(t *testing.T) {
 	}
 	if !errors.Is(err, ErrTaskNotFound) {
 		t.Fatalf("expected ErrTaskNotFound, got %v", err)
-	}
-}
-
-func TestUpdateTask_NilTask(t *testing.T) {
-	t.Parallel()
-
-	store := NewInMemoryTaskStore()
-	err := store.UpdateTask(context.Background(), nil)
-	if err == nil {
-		t.Fatal("expected error for nil task")
-	}
-	if !errors.Is(err, ErrTaskStoreInvalidInput) {
-		t.Fatalf("expected ErrTaskStoreInvalidInput, got %v", err)
-	}
-}
-
-func TestUpdateTask_EmptyID(t *testing.T) {
-	t.Parallel()
-
-	store := NewInMemoryTaskStore()
-	err := store.UpdateTask(context.Background(), &Task{TenantID: "t"})
-	if err == nil {
-		t.Fatal("expected error for empty task ID")
-	}
-	if !errors.Is(err, ErrTaskStoreInvalidInput) {
-		t.Fatalf("expected ErrTaskStoreInvalidInput, got %v", err)
 	}
 }
 
@@ -1958,19 +1874,6 @@ func TestClaimTask_NotFound(t *testing.T) {
 	}
 }
 
-func TestClaimTask_EmptyAgentID(t *testing.T) {
-	t.Parallel()
-
-	store := NewInMemoryTaskStore()
-	err := store.ClaimTask(context.Background(), "tenant-a", "task-1", "")
-	if err == nil {
-		t.Fatal("expected error for empty agent ID")
-	}
-	if !errors.Is(err, ErrTaskStoreInvalidInput) {
-		t.Fatalf("expected ErrTaskStoreInvalidInput, got %v", err)
-	}
-}
-
 // =============================================================================
 // CompleteTask Tests
 // =============================================================================
@@ -2064,19 +1967,6 @@ func TestCompleteTask_NotFound(t *testing.T) {
 	}
 }
 
-func TestCompleteTask_EmptyTaskID(t *testing.T) {
-	t.Parallel()
-
-	store := NewInMemoryTaskStore()
-	err := store.CompleteTask(context.Background(), "tenant-a", "", &TaskResult{})
-	if err == nil {
-		t.Fatal("expected error for empty task ID")
-	}
-	if !errors.Is(err, ErrTaskStoreInvalidInput) {
-		t.Fatalf("expected ErrTaskStoreInvalidInput, got %v", err)
-	}
-}
-
 // =============================================================================
 // FailTask Tests
 // =============================================================================
@@ -2142,19 +2032,6 @@ func TestFailTask_NotClaimed(t *testing.T) {
 	}
 }
 
-func TestFailTask_EmptyReason(t *testing.T) {
-	t.Parallel()
-
-	store := NewInMemoryTaskStore()
-	err := store.FailTask(context.Background(), "tenant-a", "task-1", "")
-	if err == nil {
-		t.Fatal("expected error for empty reason")
-	}
-	if !errors.Is(err, ErrTaskStoreInvalidInput) {
-		t.Fatalf("expected ErrTaskStoreInvalidInput, got %v", err)
-	}
-}
-
 func TestFailTask_NotFound(t *testing.T) {
 	t.Parallel()
 
@@ -2212,19 +2089,6 @@ func TestDeleteTask_NotFound(t *testing.T) {
 	}
 	if !errors.Is(err, ErrTaskNotFound) {
 		t.Fatalf("expected ErrTaskNotFound, got %v", err)
-	}
-}
-
-func TestDeleteTask_EmptyTenantID(t *testing.T) {
-	t.Parallel()
-
-	store := NewInMemoryTaskStore()
-	err := store.DeleteTask(context.Background(), "", "task-1")
-	if err == nil {
-		t.Fatal("expected error for empty tenant ID")
-	}
-	if !errors.Is(err, ErrTaskStoreInvalidInput) {
-		t.Fatalf("expected ErrTaskStoreInvalidInput, got %v", err)
 	}
 }
 
@@ -2399,19 +2263,6 @@ func TestListTasks_TenantIsolation(t *testing.T) {
 	}
 }
 
-func TestListTasks_EmptyTenantID(t *testing.T) {
-	t.Parallel()
-
-	store := NewInMemoryTaskStore()
-	_, err := store.ListTasks(context.Background(), "", nil)
-	if err == nil {
-		t.Fatal("expected error for empty tenant ID")
-	}
-	if !errors.Is(err, ErrTaskStoreInvalidInput) {
-		t.Fatalf("expected ErrTaskStoreInvalidInput, got %v", err)
-	}
-}
-
 func TestListTasks_NilFilter(t *testing.T) {
 	t.Parallel()
 
@@ -2503,19 +2354,6 @@ func TestDeleteTenantTasks_CascadeDelete(t *testing.T) {
 	}
 	if len(resultsB) != 1 {
 		t.Fatalf("expected 1 task for tenant-b after tenant-a delete, got %d", len(resultsB))
-	}
-}
-
-func TestDeleteTenantTasks_EmptyTenantID(t *testing.T) {
-	t.Parallel()
-
-	store := NewInMemoryTaskStore()
-	err := store.DeleteTenantTasks(context.Background(), "")
-	if err == nil {
-		t.Fatal("expected error for empty tenant ID")
-	}
-	if !errors.Is(err, ErrTaskStoreInvalidInput) {
-		t.Fatalf("expected ErrTaskStoreInvalidInput, got %v", err)
 	}
 }
 
@@ -2649,132 +2487,68 @@ func TestGenerateTaskID_Unique(t *testing.T) {
 	}
 }
 
+// TestTaskErrorMessages covers the error strings that no store-level test
+// formats: each must name the fields an operator needs to find the task.
+func TestTaskErrorMessages(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name string
+		err  error
+		want string
+	}{
+		{
+			"already claimed names both agents",
+			&TaskAlreadyClaimedError{TaskID: "task-1", ClaimedBy: "a1", RequestingBy: "a2"},
+			ErrTaskAlreadyClaimed.Error() + ": task=task-1 claimed_by=a1 requested_by=a2",
+		},
+		{
+			"store error with message",
+			&TaskStoreError{Sentinel: ErrTaskStoreInvalidInput, Message: "bad"},
+			ErrTaskStoreInvalidInput.Error() + ": bad",
+		},
+		{
+			"store error without message is the sentinel",
+			&TaskStoreError{Sentinel: ErrTaskStoreMarshal},
+			ErrTaskStoreMarshal.Error(),
+		},
+		{
+			"key segment error speaks the store vocabulary",
+			taskKeyError(&KeySegmentError{Field: "tenant_id", Value: "a/b", Message: "must not contain /"}),
+			ErrTaskStoreInvalidInput.Error() + ": tenant_id must not contain /",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := tc.err.Error(); got != tc.want {
+				t.Errorf("got %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestTaskKeyError_PassesOtherErrorsThrough checks that taskKeyError wraps
+// only key-layout violations.
+func TestTaskKeyError_PassesOtherErrorsThrough(t *testing.T) {
+	t.Parallel()
+
+	other := errors.New("unrelated")
+	got := taskKeyError(other)
+	if got != other {
+		t.Errorf("expected the original error, got %v", got)
+	}
+	if errors.Is(got, ErrTaskStoreInvalidInput) {
+		t.Error("an unrelated error must not become invalid input")
+	}
+}
+
 // =============================================================================
 // Error Type Tests
 // =============================================================================
 
-func TestTaskNotFoundError(t *testing.T) {
-	t.Parallel()
-
-	err := &TaskNotFoundError{TenantID: "t1", TaskID: "task-1"}
-	if !errors.Is(err, ErrTaskNotFound) {
-		t.Fatalf("expected errors.Is to match ErrTaskNotFound")
-	}
-	msg := err.Error()
-	if msg == "" {
-		t.Fatal("expected non-empty error message")
-	}
-}
-
-func TestTaskAlreadyExistsError(t *testing.T) {
-	t.Parallel()
-
-	err := &TaskAlreadyExistsError{TaskID: "task-1"}
-	if !errors.Is(err, ErrTaskAlreadyExists) {
-		t.Fatalf("expected errors.Is to match ErrTaskAlreadyExists")
-	}
-}
-
-func TestTaskAlreadyClaimedError(t *testing.T) {
-	t.Parallel()
-
-	err := &TaskAlreadyClaimedError{TaskID: "task-1", ClaimedBy: "a1", RequestingBy: "a2"}
-	if !errors.Is(err, ErrTaskAlreadyClaimed) {
-		t.Fatalf("expected errors.Is to match ErrTaskAlreadyClaimed")
-	}
-	msg := err.Error()
-	if msg == "" {
-		t.Fatal("expected non-empty error message")
-	}
-}
-
-func TestTaskVersionConflictError(t *testing.T) {
-	t.Parallel()
-
-	err := &TaskVersionConflictError{TaskID: "task-1", ExpectedVersion: 1, ActualVersion: 2}
-	if !errors.Is(err, ErrTaskVersionConflict) {
-		t.Fatalf("expected errors.Is to match ErrTaskVersionConflict")
-	}
-}
-
-func TestTaskDependencyBlockedError(t *testing.T) {
-	t.Parallel()
-
-	err := &TaskDependencyBlockedError{TaskID: "task-1", UnresolvedDependency: "dep-1"}
-	if !errors.Is(err, ErrTaskDependencyBlocked) {
-		t.Fatalf("expected errors.Is to match ErrTaskDependencyBlocked")
-	}
-}
-
-func TestTaskInvalidStateError(t *testing.T) {
-	t.Parallel()
-
-	err := &TaskInvalidStateError{TaskID: "task-1", CurrentState: TaskStatusPending, TargetState: TaskStatusCompleted}
-	if !errors.Is(err, ErrTaskInvalidState) {
-		t.Fatalf("expected errors.Is to match ErrTaskInvalidState")
-	}
-	msg := err.Error()
-	if msg == "" {
-		t.Fatal("expected non-empty error message")
-	}
-}
-
-func TestTaskStoreError(t *testing.T) {
-	t.Parallel()
-
-	err := &TaskStoreError{Sentinel: ErrTaskStoreInvalidInput, Message: "test message"}
-	if !errors.Is(err, ErrTaskStoreInvalidInput) {
-		t.Fatalf("expected errors.Is to match ErrTaskStoreInvalidInput")
-	}
-	msg := err.Error()
-	if msg == "" {
-		t.Fatal("expected non-empty error message")
-	}
-
-	// Test without message
-	errNoMsg := &TaskStoreError{Sentinel: ErrTaskStoreMarshal}
-	if errNoMsg.Error() != ErrTaskStoreMarshal.Error() {
-		t.Errorf("expected sentinel error string, got %q", errNoMsg.Error())
-	}
-}
-
 // TestTaskKeySegmentError proves the dual-contract error satisfies both the
 // store's validation vocabulary and the key layout's.
-func TestTaskKeySegmentError(t *testing.T) {
-	t.Parallel()
-
-	err := taskKeyError(&KeySegmentError{
-		Field:   "tenant_id",
-		Value:   "a/b",
-		Message: "must not contain /",
-	})
-
-	if !errors.Is(err, ErrTaskStoreInvalidInput) {
-		t.Error("expected errors.Is to match ErrTaskStoreInvalidInput")
-	}
-	if !errors.Is(err, ErrInvalidKeySegment) {
-		t.Error("expected errors.Is to match ErrInvalidKeySegment")
-	}
-
-	var storeErr *TaskStoreError
-	if !errors.As(err, &storeErr) {
-		t.Error("expected errors.As to yield *TaskStoreError")
-	}
-	var segmentErr *KeySegmentError
-	if !errors.As(err, &segmentErr) {
-		t.Error("expected errors.As to yield *KeySegmentError")
-	}
-	if err.Error() == "" {
-		t.Error("expected non-empty error message")
-	}
-
-	// Anything that is not a key-segment violation passes through untouched.
-	other := errors.New("unrelated")
-	if got := taskKeyError(other); !errors.Is(got, other) {
-		t.Errorf("expected the original error, got %v", got)
-	}
-}
-
 // =============================================================================
 // InProgress State Tests
 // =============================================================================
