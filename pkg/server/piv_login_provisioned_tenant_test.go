@@ -108,8 +108,15 @@ func TestPIVLogin_TenantBearerCreatesRoleThroughComposedNode(t *testing.T) {
 	status, body = postBearerOnlyToNodeREST(t, srv, root, "/api/v1/tenants/acme/roles",
 		tokens.AccessToken, `{"name":"itest-role"}`)
 	t.Logf("POST /api/v1/tenants/acme/roles: %d %s", status, body)
-	assert.NotEqual(t, http.StatusForbidden, status, body)
-	assert.NotContains(t, body, "no tenant is bound")
+	require.Equal(t, http.StatusCreated, status, body)
+
+	var role struct {
+		Name     string `json:"name"`
+		TenantID string `json:"tenant_id"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(body), &role))
+	assert.Equal(t, "itest-role", role.Name)
+	assert.Equal(t, "acme", role.TenantID)
 }
 
 // hostedXKMSPIVLoginModule hosts the xkms PIV login module the way the node
