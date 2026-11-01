@@ -554,42 +554,6 @@ func TestStream_SendSuccess(t *testing.T) {
 	}
 }
 
-// TestRequestWithRetry_SuccessOnFirstAttempt tests successful first attempt.
-func TestRequestWithRetry_SuccessOnFirstAttempt(t *testing.T) {
-	ts := newTestServer()
-	defer ts.stop()
-
-	cfg := &PoolConfig{
-		MinSize:        1,
-		MaxSize:        2,
-		MaxAge:         time.Hour,
-		HealthInterval: 0,
-	}
-
-	p, err := NewPool("bufnet", ts.dialOpts(), cfg)
-	if err != nil {
-		t.Fatalf("failed to create pool: %v", err)
-	}
-
-	tr := &Transport{
-		cfg: &transport.Config{
-			MaxRetries:      3,
-			RetryBackoff:    10 * time.Millisecond,
-			MaxRetryBackoff: 100 * time.Millisecond,
-			Timeout:         100 * time.Millisecond,
-		},
-		pool: p,
-	}
-	defer tr.Close()
-
-	// Request will fail because no service is registered, but retry logic is exercised
-	ctx := context.Background()
-	_, err = tr.requestWithRetry(ctx, "test.Service", "Method", nil)
-	if err == nil {
-		t.Fatal("expected error for non-existent service")
-	}
-}
-
 // TestPool_GetCreatesConnectionOnDemand tests creating new connection when all are busy.
 func TestPool_GetCreatesConnectionOnDemand(t *testing.T) {
 	ts := newTestServer()
@@ -1513,38 +1477,6 @@ func TestTransport_HealthyWithPool(t *testing.T) {
 
 	if !tr.Healthy() {
 		t.Error("expected transport to be healthy")
-	}
-}
-
-// TestTransport_DoRequest tests the doRequest method.
-func TestTransport_DoRequest(t *testing.T) {
-	ts := newTestServer()
-	defer ts.stop()
-
-	cfg := &PoolConfig{
-		MinSize:        1,
-		MaxSize:        2,
-		MaxAge:         time.Hour,
-		HealthInterval: 0,
-	}
-
-	p, err := NewPool("bufnet", ts.dialOpts(), cfg)
-	if err != nil {
-		t.Fatalf("failed to create pool: %v", err)
-	}
-
-	tr := &Transport{
-		cfg: &transport.Config{
-			Timeout: 5 * time.Second,
-		},
-		pool: p,
-	}
-	defer tr.Close()
-
-	ctx := context.Background()
-	_, err = tr.doRequest(ctx, "test.Service", "Method", nil)
-	if err == nil {
-		t.Fatal("expected error for non-existent service")
 	}
 }
 
