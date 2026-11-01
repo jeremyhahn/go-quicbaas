@@ -183,37 +183,29 @@ func TestSaveCert_Success(t *testing.T) {
 	assert.Equal(t, cert.Raw, raw)
 }
 
-func TestSaveCert_EmptyID(t *testing.T) {
-	ctx := context.Background()
-	store := newMockKVStore()
-	cs, err := NewKVStoreCertStorage(store)
-	require.NoError(t, err)
+func TestSaveCert_Errors(t *testing.T) {
+	tests := []struct {
+		name    string
+		id      string
+		cert    *x509.Certificate
+		failPut bool
+		wantErr error
+	}{
+		{name: "empty id", id: "", cert: generateTestCert(t, "test"), wantErr: ErrEmptyCertID},
+		{name: "nil cert", id: "cert-1", cert: nil, wantErr: ErrNilCertificate},
+		{name: "storage failure", id: "cert-1", cert: generateTestCert(t, "test"), failPut: true, wantErr: ErrStoragePut},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			store := newMockKVStore()
+			store.failPut = tt.failPut
+			cs, err := NewKVStoreCertStorage(store)
+			require.NoError(t, err)
 
-	cert := generateTestCert(t, "test")
-	err = cs.SaveCert(ctx, "", cert)
-	assert.ErrorIs(t, err, ErrEmptyCertID)
-}
-
-func TestSaveCert_NilCert(t *testing.T) {
-	ctx := context.Background()
-	store := newMockKVStore()
-	cs, err := NewKVStoreCertStorage(store)
-	require.NoError(t, err)
-
-	err = cs.SaveCert(ctx, "cert-1", nil)
-	assert.ErrorIs(t, err, ErrNilCertificate)
-}
-
-func TestSaveCert_StorageFailure(t *testing.T) {
-	ctx := context.Background()
-	store := newMockKVStore()
-	store.failPut = true
-	cs, err := NewKVStoreCertStorage(store)
-	require.NoError(t, err)
-
-	cert := generateTestCert(t, "test")
-	err = cs.SaveCert(ctx, "cert-1", cert)
-	assert.ErrorIs(t, err, ErrStoragePut)
+			err = cs.SaveCert(context.Background(), tt.id, tt.cert)
+			assert.ErrorIs(t, err, tt.wantErr)
+		})
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -236,42 +228,36 @@ func TestGetCert_Success(t *testing.T) {
 	assert.Equal(t, cert.Subject.CommonName, retrieved.Subject.CommonName)
 }
 
-func TestGetCert_NotFound(t *testing.T) {
-	ctx := context.Background()
-	store := newMockKVStore()
-	cs, err := NewKVStoreCertStorage(store)
-	require.NoError(t, err)
+func TestGetCert_Errors(t *testing.T) {
+	tests := []struct {
+		name    string
+		id      string
+		stored  map[string][]byte
+		wantErr error
+	}{
+		{name: "not found", id: "nonexistent", wantErr: ErrCertNotFound},
+		{name: "empty id", id: "", wantErr: ErrEmptyCertID},
+		{
+			name:    "corrupted data",
+			id:      "corrupt",
+			stored:  map[string][]byte{"certs/corrupt": []byte("not-a-valid-der-certificate")},
+			wantErr: ErrCertCorrupted,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			store := newMockKVStore()
+			for k, v := range tt.stored {
+				store.data[k] = v
+			}
+			cs, err := NewKVStoreCertStorage(store)
+			require.NoError(t, err)
 
-	retrieved, err := cs.GetCert(ctx, "nonexistent")
-	assert.Nil(t, retrieved)
-	assert.ErrorIs(t, err, ErrCertNotFound)
-}
-
-func TestGetCert_EmptyID(t *testing.T) {
-	ctx := context.Background()
-	store := newMockKVStore()
-	cs, err := NewKVStoreCertStorage(store)
-	require.NoError(t, err)
-
-	retrieved, err := cs.GetCert(ctx, "")
-	assert.Nil(t, retrieved)
-	assert.ErrorIs(t, err, ErrEmptyCertID)
-}
-
-func TestGetCert_CorruptedData(t *testing.T) {
-	ctx := context.Background()
-	store := newMockKVStore()
-	cs, err := NewKVStoreCertStorage(store)
-	require.NoError(t, err)
-
-	// Write garbage data directly to the store.
-	store.mu.Lock()
-	store.data["certs/corrupt"] = []byte("not-a-valid-der-certificate")
-	store.mu.Unlock()
-
-	retrieved, err := cs.GetCert(ctx, "corrupt")
-	assert.Nil(t, retrieved)
-	assert.ErrorIs(t, err, ErrCertCorrupted)
+			retrieved, err := cs.GetCert(context.Background(), tt.id)
+			assert.Nil(t, retrieved)
+			assert.ErrorIs(t, err, tt.wantErr)
+		})
+	}
 }
 
 // ---------------------------------------------------------------------------
