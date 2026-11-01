@@ -358,48 +358,6 @@ func TestParseSpecialEnvVars_InvalidShardID(t *testing.T) {
 	}
 }
 
-// TestParseSpecialEnvVars_InvalidEntityPinFormat tests that parseSpecialEnvVars
-// exits when an entity shard pin has invalid format (missing colon).
-func TestParseSpecialEnvVars_InvalidEntityPinFormat(t *testing.T) {
-	if os.Getenv("TEST_SUBPROCESS") == "1" {
-		os.Setenv("QUICBAAS_SERVER_ENTITY_SHARD_PINS", "user100")
-		cfg = nil
-		initConfig()
-		return
-	}
-
-	cmd := exec.Command(os.Args[0], "-test.run=TestParseSpecialEnvVars_InvalidEntityPinFormat")
-	cmd.Env = append(os.Environ(), "TEST_SUBPROCESS=1")
-	output, err := cmd.CombinedOutput()
-
-	// Expect exit code 1 and error message about invalid format
-	if e, ok := err.(*exec.ExitError); ok {
-		assert.False(t, e.Success())
-		assert.Contains(t, string(output), config.ErrInvalidEnvValue.Error())
-	}
-}
-
-// TestParseSpecialEnvVars_InvalidEntityPinShardID tests that parseSpecialEnvVars
-// exits when an entity shard pin has an invalid shard ID.
-func TestParseSpecialEnvVars_InvalidEntityPinShardID(t *testing.T) {
-	if os.Getenv("TEST_SUBPROCESS") == "1" {
-		os.Setenv("QUICBAAS_SERVER_ENTITY_SHARD_PINS", "user:notanumber")
-		cfg = nil
-		initConfig()
-		return
-	}
-
-	cmd := exec.Command(os.Args[0], "-test.run=TestParseSpecialEnvVars_InvalidEntityPinShardID")
-	cmd.Env = append(os.Environ(), "TEST_SUBPROCESS=1")
-	output, err := cmd.CombinedOutput()
-
-	// Expect exit code 1 and error message about invalid shard ID
-	if e, ok := err.(*exec.ExitError); ok {
-		assert.False(t, e.Success())
-		assert.Contains(t, string(output), config.ErrInvalidEnvValue.Error())
-	}
-}
-
 // TestMain_HelpFlag tests that the main function works with --help.
 func TestMain_HelpFlag(t *testing.T) {
 	// Capture the original args
@@ -682,22 +640,6 @@ func TestInitConfig_NoConfigFileFoundPath(t *testing.T) {
 	require.NotNil(t, log)
 }
 
-// TestParseSpecialEnvVars_VectorOn tests the "on" value for vector enabled.
-func TestParseSpecialEnvVars_VectorOn(t *testing.T) {
-	cfg = config.Default()
-	t.Setenv("QUICBAAS_VECTOR_ENABLED", "on")
-	require.NoError(t, parseSpecialEnvVars())
-	assert.True(t, cfg.Vector.Enabled)
-}
-
-// TestParseSpecialEnvVars_SchedulerOne tests the "1" value for scheduler.
-func TestParseSpecialEnvVars_SchedulerOne(t *testing.T) {
-	cfg = config.Default()
-	t.Setenv("QUICBAAS_ENABLE_SCHEDULER", "1")
-	require.NoError(t, parseSpecialEnvVars())
-	assert.True(t, cfg.Scheduler.Enabled)
-}
-
 // TestPrepareDaemon_ServerModeDevCluster tests the DevCluster mode logging path.
 func TestPrepareDaemon_ServerModeDevCluster(t *testing.T) {
 	testLog := createTestLogger(t)
@@ -915,28 +857,6 @@ func TestPrepareDaemon_AllLoggingPathsCombined(t *testing.T) {
 	assert.NoError(t, err)
 }
 
-// TestParseSpecialEnvVars_EntityPinsWithSpaces tests entity shard pins
-// with spaces around values.
-func TestParseSpecialEnvVars_EntityPinsWithSpaces(t *testing.T) {
-	cfg = config.Default()
-	t.Setenv("QUICBAAS_SERVER_ENTITY_SHARD_PINS", " user : 100 , group : 200 ")
-	require.NoError(t, parseSpecialEnvVars())
-
-	assert.Equal(t, uint64(100), cfg.Server.EntityShardPins["user"])
-	assert.Equal(t, uint64(200), cfg.Server.EntityShardPins["group"])
-}
-
-// TestParseSpecialEnvVars_ShardsEmptyAfterTrim tests shards with only
-// whitespace values that should be skipped.
-func TestParseSpecialEnvVars_ShardsEmptyAfterTrim(t *testing.T) {
-	cfg = config.Default()
-	t.Setenv("QUICBAAS_SERVER_SHARDS", "  ,  ,  ")
-	require.NoError(t, parseSpecialEnvVars())
-
-	// All empty after trim, so no shards should be added
-	assert.Empty(t, cfg.Server.Shards)
-}
-
 // =============================================================================
 // Consolidated from coverage_boost_test.go
 // =============================================================================
@@ -1141,38 +1061,6 @@ func TestApplyRaftFlagsWithDirectAddress(t *testing.T) {
 	raftAddress = ""
 }
 
-// TestParseSpecialEnvVarsSchedulerAndVector exercises the scheduler and vector
-// environment variable parsing paths including edge cases.
-func TestParseSpecialEnvVarsSchedulerAndVector(t *testing.T) {
-	t.Run("scheduler off values", func(t *testing.T) {
-		cfg = config.Default()
-		t.Setenv("QUICBAAS_ENABLE_SCHEDULER", "off")
-		require.NoError(t, parseSpecialEnvVars())
-		assert.False(t, cfg.Scheduler.Enabled)
-	})
-
-	t.Run("vector off values", func(t *testing.T) {
-		cfg = config.Default()
-		t.Setenv("QUICBAAS_VECTOR_ENABLED", "off")
-		require.NoError(t, parseSpecialEnvVars())
-		assert.False(t, cfg.Vector.Enabled)
-	})
-
-	t.Run("scheduler with uppercase TRUE", func(t *testing.T) {
-		cfg = config.Default()
-		t.Setenv("QUICBAAS_ENABLE_SCHEDULER", "TRUE")
-		require.NoError(t, parseSpecialEnvVars())
-		assert.True(t, cfg.Scheduler.Enabled)
-	})
-
-	t.Run("vector with uppercase YES", func(t *testing.T) {
-		cfg = config.Default()
-		t.Setenv("QUICBAAS_VECTOR_ENABLED", "YES")
-		require.NoError(t, parseSpecialEnvVars())
-		assert.True(t, cfg.Vector.Enabled)
-	})
-}
-
 // TestPrepareDaemonRoutingValidationSuccess tests prepareDaemon with valid routing config.
 func TestPrepareDaemonRoutingValidationSuccess(t *testing.T) {
 	testLog := createTestLogger(t)
@@ -1295,93 +1183,6 @@ func TestApplyServerFlagsGRPCDisabled(t *testing.T) {
 // =============================================================================
 // Consolidated from coverage_91_test.go
 // =============================================================================
-
-func TestParseSpecialEnvVars_EntityShardPins_Valid(t *testing.T) {
-	cfg = config.Default()
-
-	t.Setenv("QUICBAAS_SERVER_ENTITY_SHARD_PINS", "user:1,group:2,role:3")
-	require.NoError(t, parseSpecialEnvVars())
-
-	if len(cfg.Server.EntityShardPins) != 3 {
-		t.Fatalf("expected 3 entity shard pins, got %d", len(cfg.Server.EntityShardPins))
-	}
-	if cfg.Server.EntityShardPins["user"] != 1 {
-		t.Fatalf("expected user pinned to shard 1, got %d", cfg.Server.EntityShardPins["user"])
-	}
-	if cfg.Server.EntityShardPins["group"] != 2 {
-		t.Fatalf("expected group pinned to shard 2, got %d", cfg.Server.EntityShardPins["group"])
-	}
-	if cfg.Server.EntityShardPins["role"] != 3 {
-		t.Fatalf("expected role pinned to shard 3, got %d", cfg.Server.EntityShardPins["role"])
-	}
-}
-
-func TestParseSpecialEnvVars_EntityShardPins_EmptyPairs(t *testing.T) {
-	cfg = config.Default()
-
-	// Trailing comma creates empty pair that should be skipped
-	t.Setenv("QUICBAAS_SERVER_ENTITY_SHARD_PINS", "user:1,,")
-	require.NoError(t, parseSpecialEnvVars())
-
-	if len(cfg.Server.EntityShardPins) != 1 {
-		t.Fatalf("expected 1 entity shard pin, got %d", len(cfg.Server.EntityShardPins))
-	}
-}
-
-func TestParseSpecialEnvVars_Shards_WithSpaces(t *testing.T) {
-	cfg = config.Default()
-
-	t.Setenv("QUICBAAS_SERVER_SHARDS", " 1 , 2 , 3 , ")
-	require.NoError(t, parseSpecialEnvVars())
-
-	if len(cfg.Server.Shards) != 3 {
-		t.Fatalf("expected 3 shards, got %d", len(cfg.Server.Shards))
-	}
-}
-
-func TestParseSpecialEnvVars_SchedulerEnabled(t *testing.T) {
-	cfg = config.Default()
-
-	t.Setenv("QUICBAAS_ENABLE_SCHEDULER", "yes")
-	require.NoError(t, parseSpecialEnvVars())
-
-	if !cfg.Scheduler.Enabled {
-		t.Fatal("expected scheduler to be enabled with 'yes'")
-	}
-}
-
-func TestParseSpecialEnvVars_SchedulerOn(t *testing.T) {
-	cfg = config.Default()
-
-	t.Setenv("QUICBAAS_ENABLE_SCHEDULER", "on")
-	require.NoError(t, parseSpecialEnvVars())
-
-	if !cfg.Scheduler.Enabled {
-		t.Fatal("expected scheduler to be enabled with 'on'")
-	}
-}
-
-func TestParseSpecialEnvVars_VectorEnabled(t *testing.T) {
-	cfg = config.Default()
-
-	t.Setenv("QUICBAAS_VECTOR_ENABLED", "1")
-	require.NoError(t, parseSpecialEnvVars())
-
-	if !cfg.Vector.Enabled {
-		t.Fatal("expected vector to be enabled with '1'")
-	}
-}
-
-func TestParseSpecialEnvVars_VectorEnabledYes(t *testing.T) {
-	cfg = config.Default()
-
-	t.Setenv("QUICBAAS_VECTOR_ENABLED", "yes")
-	require.NoError(t, parseSpecialEnvVars())
-
-	if !cfg.Vector.Enabled {
-		t.Fatal("expected vector to be enabled with 'yes'")
-	}
-}
 
 func TestInitConfig_NoConfigFile_DefaultLogging(t *testing.T) {
 	// Reset viper and config state
@@ -1926,93 +1727,128 @@ func TestApplyRaftFlags(t *testing.T) {
 
 // TestParseSpecialEnvVars tests the parseSpecialEnvVars function.
 func TestParseSpecialEnvVars(t *testing.T) {
-	t.Run("parses QUICBAAS_SERVER_SHARDS", func(t *testing.T) {
-		cfg = config.Default()
-		t.Setenv("QUICBAAS_SERVER_SHARDS", "100,200,300")
-		require.NoError(t, parseSpecialEnvVars())
-		assert.Equal(t, []uint64{100, 200, 300}, cfg.Server.Shards)
-	})
+	// Value parsing (bool spellings, durations) belongs to the config
+	// package; these cases cover the wiring of each variable to its field
+	// and the shard and pin list parsers that live in this package.
+	tests := []struct {
+		name  string
+		env   map[string]string
+		check func(t *testing.T)
+		errIs error
+	}{
+		{
+			name: "shards",
+			env:  map[string]string{"QUICBAAS_SERVER_SHARDS": "100,200,300"},
+			check: func(t *testing.T) {
+				assert.Equal(t, []uint64{100, 200, 300}, cfg.Server.Shards)
+			},
+		},
+		{
+			name: "shards skip empty and padded parts",
+			env:  map[string]string{"QUICBAAS_SERVER_SHARDS": " 100 ,, 200, ,300, "},
+			check: func(t *testing.T) {
+				assert.Equal(t, []uint64{100, 200, 300}, cfg.Server.Shards)
+			},
+		},
+		{
+			name: "shards all empty after trim",
+			env:  map[string]string{"QUICBAAS_SERVER_SHARDS": "  ,  ,  "},
+			check: func(t *testing.T) {
+				assert.Empty(t, cfg.Server.Shards)
+			},
+		},
+		{
+			name:  "shards invalid id",
+			env:   map[string]string{"QUICBAAS_SERVER_SHARDS": "100,invalid,200"},
+			errIs: config.ErrInvalidEnvValue,
+		},
+		{
+			name: "entity shard pins",
+			env:  map[string]string{"QUICBAAS_SERVER_ENTITY_SHARD_PINS": "user:100,session:200"},
+			check: func(t *testing.T) {
+				assert.Equal(t, map[string]uint64{"user": 100, "session": 200}, cfg.Server.EntityShardPins)
+			},
+		},
+		{
+			name: "entity shard pins skip empty and padded pairs",
+			env:  map[string]string{"QUICBAAS_SERVER_ENTITY_SHARD_PINS": " user : 100 ,, session:200, "},
+			check: func(t *testing.T) {
+				assert.Equal(t, map[string]uint64{"user": 100, "session": 200}, cfg.Server.EntityShardPins)
+			},
+		},
+		{
+			name:  "entity shard pin without separator",
+			env:   map[string]string{"QUICBAAS_SERVER_ENTITY_SHARD_PINS": "user100"},
+			errIs: config.ErrInvalidEnvValue,
+		},
+		{
+			name:  "entity shard pin with invalid shard id",
+			env:   map[string]string{"QUICBAAS_SERVER_ENTITY_SHARD_PINS": "user:notanumber"},
+			errIs: config.ErrInvalidEnvValue,
+		},
+		{
+			name: "empty variables are no-ops",
+			env: map[string]string{
+				"QUICBAAS_SERVER_SHARDS":            "",
+				"QUICBAAS_SERVER_ENTITY_SHARD_PINS": "",
+				"QUICBAAS_ENABLE_SCHEDULER":         "",
+				"QUICBAAS_VECTOR_ENABLED":           "",
+			},
+			check: func(t *testing.T) {
+				def := config.Default()
+				assert.Equal(t, def.Server.Shards, cfg.Server.Shards)
+				assert.Equal(t, def.Server.EntityShardPins, cfg.Server.EntityShardPins)
+				assert.Equal(t, def.Scheduler.Enabled, cfg.Scheduler.Enabled)
+				assert.Equal(t, def.Vector.Enabled, cfg.Vector.Enabled)
+			},
+		},
+		{
+			name: "feature flags enabled",
+			env: map[string]string{
+				"QUICBAAS_ENABLE_SCHEDULER":   "true",
+				"QUICBAAS_TIMESERIES_ENABLED": "1",
+				"QUICBAAS_VECTOR_ENABLED":     "yes",
+				"QUICBAAS_BACKUP_ENABLED":     "on",
+			},
+			check: func(t *testing.T) {
+				assert.True(t, cfg.Scheduler.Enabled)
+				assert.True(t, cfg.TimeSeries.Enabled)
+				assert.True(t, cfg.Vector.Enabled)
+				assert.True(t, cfg.Backup.Enabled)
+			},
+		},
+		{
+			name: "feature flags disabled",
+			env: map[string]string{
+				"QUICBAAS_ENABLE_SCHEDULER":   "false",
+				"QUICBAAS_TIMESERIES_ENABLED": "0",
+				"QUICBAAS_VECTOR_ENABLED":     "no",
+				"QUICBAAS_BACKUP_ENABLED":     "off",
+			},
+			check: func(t *testing.T) {
+				assert.False(t, cfg.Scheduler.Enabled)
+				assert.False(t, cfg.TimeSeries.Enabled)
+				assert.False(t, cfg.Vector.Enabled)
+				assert.False(t, cfg.Backup.Enabled)
+			},
+		},
+	}
 
-	t.Run("ignores empty shard parts", func(t *testing.T) {
-		cfg = config.Default()
-		t.Setenv("QUICBAAS_SERVER_SHARDS", "100,,200, ,300")
-		require.NoError(t, parseSpecialEnvVars())
-		assert.Equal(t, []uint64{100, 200, 300}, cfg.Server.Shards)
-	})
-
-	t.Run("empty QUICBAAS_SERVER_SHARDS is no-op", func(t *testing.T) {
-		cfg = config.Default()
-		t.Setenv("QUICBAAS_SERVER_SHARDS", "")
-		originalShards := cfg.Server.Shards
-		require.NoError(t, parseSpecialEnvVars())
-		assert.Equal(t, originalShards, cfg.Server.Shards)
-	})
-
-	t.Run("parses QUICBAAS_SERVER_ENTITY_SHARD_PINS", func(t *testing.T) {
-		cfg = config.Default()
-		t.Setenv("QUICBAAS_SERVER_ENTITY_SHARD_PINS", "user:100,session:200")
-		require.NoError(t, parseSpecialEnvVars())
-		assert.Equal(t, uint64(100), cfg.Server.EntityShardPins["user"])
-		assert.Equal(t, uint64(200), cfg.Server.EntityShardPins["session"])
-	})
-
-	t.Run("ignores empty pin pairs", func(t *testing.T) {
-		cfg = config.Default()
-		t.Setenv("QUICBAAS_SERVER_ENTITY_SHARD_PINS", "user:100,,session:200, ")
-		require.NoError(t, parseSpecialEnvVars())
-		assert.Equal(t, uint64(100), cfg.Server.EntityShardPins["user"])
-		assert.Equal(t, uint64(200), cfg.Server.EntityShardPins["session"])
-	})
-
-	t.Run("empty QUICBAAS_SERVER_ENTITY_SHARD_PINS is no-op", func(t *testing.T) {
-		cfg = config.Default()
-		t.Setenv("QUICBAAS_SERVER_ENTITY_SHARD_PINS", "")
-		require.NoError(t, parseSpecialEnvVars())
-	})
-
-	t.Run("parses QUICBAAS_ENABLE_SCHEDULER true variants", func(t *testing.T) {
-		for _, val := range []string{"true", "1", "yes", "on"} {
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
 			cfg = config.Default()
-			t.Setenv("QUICBAAS_ENABLE_SCHEDULER", val)
-			require.NoError(t, parseSpecialEnvVars())
-			assert.True(t, cfg.Scheduler.Enabled, "expected enabled for %q", val)
-		}
-	})
-
-	t.Run("QUICBAAS_ENABLE_SCHEDULER false", func(t *testing.T) {
-		cfg = config.Default()
-		t.Setenv("QUICBAAS_ENABLE_SCHEDULER", "false")
-		require.NoError(t, parseSpecialEnvVars())
-		assert.False(t, cfg.Scheduler.Enabled)
-	})
-
-	t.Run("empty QUICBAAS_ENABLE_SCHEDULER is no-op", func(t *testing.T) {
-		cfg = config.Default()
-		t.Setenv("QUICBAAS_ENABLE_SCHEDULER", "")
-		require.NoError(t, parseSpecialEnvVars())
-	})
-
-	t.Run("parses QUICBAAS_VECTOR_ENABLED true variants", func(t *testing.T) {
-		for _, val := range []string{"true", "1", "yes", "on"} {
-			cfg = config.Default()
-			t.Setenv("QUICBAAS_VECTOR_ENABLED", val)
-			require.NoError(t, parseSpecialEnvVars())
-			assert.True(t, cfg.Vector.Enabled, "expected enabled for %q", val)
-		}
-	})
-
-	t.Run("QUICBAAS_VECTOR_ENABLED false", func(t *testing.T) {
-		cfg = config.Default()
-		t.Setenv("QUICBAAS_VECTOR_ENABLED", "false")
-		require.NoError(t, parseSpecialEnvVars())
-		assert.False(t, cfg.Vector.Enabled)
-	})
-
-	t.Run("empty QUICBAAS_VECTOR_ENABLED is no-op", func(t *testing.T) {
-		cfg = config.Default()
-		t.Setenv("QUICBAAS_VECTOR_ENABLED", "")
-		require.NoError(t, parseSpecialEnvVars())
-	})
+			for k, v := range tt.env {
+				t.Setenv(k, v)
+			}
+			err := parseSpecialEnvVars()
+			if tt.errIs != nil {
+				require.ErrorIs(t, err, tt.errIs)
+				return
+			}
+			require.NoError(t, err)
+			tt.check(t)
+		})
+	}
 }
 
 // TestBindEnvVars tests that bindEnvVars does not panic.
@@ -2545,22 +2381,6 @@ func TestGetSocketDir_TrailingSlash(t *testing.T) {
 	assert.Equal(t, "/var/run", result)
 }
 
-// TestParseSpecialEnvVars_SchedulerDisabled tests scheduler with "false".
-func TestParseSpecialEnvVars_SchedulerDisabled(t *testing.T) {
-	cfg = config.Default()
-	t.Setenv("QUICBAAS_ENABLE_SCHEDULER", "false")
-	require.NoError(t, parseSpecialEnvVars())
-	assert.False(t, cfg.Scheduler.Enabled)
-}
-
-// TestParseSpecialEnvVars_VectorDisabled tests vector with "no".
-func TestParseSpecialEnvVars_VectorDisabled(t *testing.T) {
-	cfg = config.Default()
-	t.Setenv("QUICBAAS_VECTOR_ENABLED", "no")
-	require.NoError(t, parseSpecialEnvVars())
-	assert.False(t, cfg.Vector.Enabled)
-}
-
 // TestApplyServerFlags_AllFlagsChanged tests all server flags changing.
 func TestApplyServerFlags_AllFlagsChanged(t *testing.T) {
 	testLog := createTestLogger(t)
@@ -2865,58 +2685,6 @@ func TestRunDaemon_ServerNewServerError(t *testing.T) {
 
 	err := runDaemon("test-newserver-fail")
 	require.Error(t, err)
-}
-
-// TestParseSpecialEnvVars_TimeSeriesEnabled tests the QUICBAAS_TIMESERIES_ENABLED
-// environment variable parsing with a truthy value.
-func TestParseSpecialEnvVars_TimeSeriesEnabled(t *testing.T) {
-	cfg = config.Default()
-	t.Setenv("QUICBAAS_TIMESERIES_ENABLED", "true")
-	require.NoError(t, parseSpecialEnvVars())
-	assert.True(t, cfg.TimeSeries.Enabled)
-}
-
-// TestParseSpecialEnvVars_TimeSeriesEnabledOne tests parsing "1" as truthy.
-func TestParseSpecialEnvVars_TimeSeriesEnabledOne(t *testing.T) {
-	cfg = config.Default()
-	t.Setenv("QUICBAAS_TIMESERIES_ENABLED", "1")
-	require.NoError(t, parseSpecialEnvVars())
-	assert.True(t, cfg.TimeSeries.Enabled)
-}
-
-// TestParseSpecialEnvVars_TimeSeriesDisabled tests that a non-truthy value
-// leaves timeseries disabled.
-func TestParseSpecialEnvVars_TimeSeriesDisabled(t *testing.T) {
-	cfg = config.Default()
-	t.Setenv("QUICBAAS_TIMESERIES_ENABLED", "false")
-	require.NoError(t, parseSpecialEnvVars())
-	assert.False(t, cfg.TimeSeries.Enabled)
-}
-
-// TestParseSpecialEnvVars_BackupEnabled tests the QUICBAAS_BACKUP_ENABLED
-// environment variable parsing.
-func TestParseSpecialEnvVars_BackupEnabled(t *testing.T) {
-	cfg = config.Default()
-	t.Setenv("QUICBAAS_BACKUP_ENABLED", "true")
-	require.NoError(t, parseSpecialEnvVars())
-	assert.True(t, cfg.Backup.Enabled)
-}
-
-// TestParseSpecialEnvVars_BackupEnabledYes tests parsing "yes" as truthy.
-func TestParseSpecialEnvVars_BackupEnabledYes(t *testing.T) {
-	cfg = config.Default()
-	t.Setenv("QUICBAAS_BACKUP_ENABLED", "yes")
-	require.NoError(t, parseSpecialEnvVars())
-	assert.True(t, cfg.Backup.Enabled)
-}
-
-// TestParseSpecialEnvVars_BackupDisabled tests that a non-truthy value
-// leaves backup disabled.
-func TestParseSpecialEnvVars_BackupDisabled(t *testing.T) {
-	cfg = config.Default()
-	t.Setenv("QUICBAAS_BACKUP_ENABLED", "no")
-	require.NoError(t, parseSpecialEnvVars())
-	assert.False(t, cfg.Backup.Enabled)
 }
 
 // TestInitConfig_ConfigFileFoundInSearchPath tests the initConfig path where
