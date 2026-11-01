@@ -148,6 +148,7 @@ func TestTracer_TraceRequest(t *testing.T) {
 		name          string
 		enabled       bool
 		operationName string
+		nilTracer     bool
 		attributes    []attribute.KeyValue
 		wantSpan      bool
 	}{
@@ -175,6 +176,12 @@ func TestTracer_TraceRequest(t *testing.T) {
 			attributes:    nil,
 			wantSpan:      false,
 		},
+		{
+			name:          "nil tracer",
+			nilTracer:     true,
+			operationName: "test.operation",
+			wantSpan:      false,
+		},
 	}
 
 	for _, tt := range tests {
@@ -197,6 +204,9 @@ func TestTracer_TraceRequest(t *testing.T) {
 			if !tt.enabled {
 				tracer.tracer = trace.NewNoopTracerProvider().Tracer("")
 			}
+			if tt.nilTracer {
+				tracer.tracer = nil
+			}
 
 			ctx := context.Background()
 			newCtx, finish := tracer.TraceRequest(ctx, tt.operationName, tt.attributes...)
@@ -204,9 +214,6 @@ func TestTracer_TraceRequest(t *testing.T) {
 
 			// Context should always be returned
 			assert.NotNil(t, newCtx)
-
-			// Simulate work
-			time.Sleep(1 * time.Millisecond)
 
 			// End span
 			finish()
@@ -240,76 +247,102 @@ func TestTracer_TraceRequest(t *testing.T) {
 }
 
 func TestTracer_StartSpan(t *testing.T) {
-	sr := tracetest.NewSpanRecorder()
-	provider := sdktrace.NewTracerProvider(
-		sdktrace.WithSpanProcessor(sr),
-	)
-
-	tracer := &Tracer{
-		config: &Config{
-			Enabled:     true,
-			ServiceName: "test-service",
-		},
-		provider: provider,
-		tracer:   provider.Tracer("test"),
+	tests := []struct {
+		name      string
+		nilTracer bool
+		wantSpans int
+	}{
+		{name: "enabled tracer records span", wantSpans: 1},
+		{name: "nil tracer returns no-op span", nilTracer: true, wantSpans: 0},
 	}
 
-	ctx := context.Background()
-	spanCtx, span := tracer.StartSpan(ctx, "test.span",
-		trace.WithAttributes(
-			attribute.String("test.key", "test.value"),
-		),
-	)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			sr := tracetest.NewSpanRecorder()
+			provider := sdktrace.NewTracerProvider(
+				sdktrace.WithSpanProcessor(sr),
+			)
 
-	assert.NotNil(t, spanCtx)
-	assert.NotNil(t, span)
+			tracer := &Tracer{
+				config: &Config{
+					Enabled:     !tt.nilTracer,
+					ServiceName: "test-service",
+				},
+				provider: provider,
+				tracer:   provider.Tracer("test"),
+			}
+			if tt.nilTracer {
+				tracer.tracer = nil
+			}
 
-	// Add some operations
-	span.SetAttributes(attribute.Int("test.count", 42))
-	span.AddEvent("test.event")
+			spanCtx, span := tracer.StartSpan(context.Background(), "test.span",
+				trace.WithAttributes(
+					attribute.String("test.key", "test.value"),
+				),
+			)
 
-	span.End()
+			assert.NotNil(t, spanCtx)
+			require.NotNil(t, span)
 
-	// Verify span
-	spans := sr.Ended()
-	require.Len(t, spans, 1)
-	assert.Equal(t, "test.span", spans[0].Name())
-	assert.Len(t, spans[0].Events(), 1)
-	assert.Equal(t, "test.event", spans[0].Events()[0].Name)
+			span.SetAttributes(attribute.Int("test.count", 42))
+			span.AddEvent("test.event")
+			span.End()
+
+			spans := sr.Ended()
+			require.Len(t, spans, tt.wantSpans)
+			if tt.wantSpans == 0 {
+				return
+			}
+			assert.Equal(t, "test.span", spans[0].Name())
+			assert.Len(t, spans[0].Events(), 1)
+			assert.Equal(t, "test.event", spans[0].Events()[0].Name)
+		})
+	}
 }
 
 func TestTracer_RecordError(t *testing.T) {
-	sr := tracetest.NewSpanRecorder()
-	provider := sdktrace.NewTracerProvider(
-		sdktrace.WithSpanProcessor(sr),
-	)
-
-	tracer := &Tracer{
-		config: &Config{
-			Enabled:     true,
-			ServiceName: "test-service",
-		},
-		provider: provider,
-		tracer:   provider.Tracer("test"),
+	tests := []struct {
+		name       string
+		err        error
+		wantEvents int
+	}{
+		{name: "error is recorded as exception event", err: errors.New("test error"), wantEvents: 1},
+		{name: "nil error records nothing", err: nil, wantEvents: 0},
 	}
 
-	ctx, span := tracer.StartSpan(context.Background(), "test.error")
-	testErr := errors.New("test error")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			sr := tracetest.NewSpanRecorder()
+			provider := sdktrace.NewTracerProvider(
+				sdktrace.WithSpanProcessor(sr),
+			)
 
-	// Record error
-	tracer.RecordError(ctx, testErr)
-	span.End()
+			tracer := &Tracer{
+				config: &Config{
+					Enabled:     true,
+					ServiceName: "test-service",
+				},
+				provider: provider,
+				tracer:   provider.Tracer("test"),
+			}
 
-	// Verify error was recorded
-	spans := sr.Ended()
-	require.Len(t, spans, 1)
+			ctx, span := tracer.StartSpan(context.Background(), "test.error")
+			tracer.RecordError(ctx, tt.err)
+			span.End()
 
-	events := spans[0].Events()
-	require.Len(t, events, 1)
-	assert.Equal(t, "exception", events[0].Name)
+			spans := sr.Ended()
+			require.Len(t, spans, 1)
 
-	// Check status
-	assert.Equal(t, codes.Unset, spans[0].Status().Code)
+			events := spans[0].Events()
+			require.Len(t, events, tt.wantEvents)
+			if tt.wantEvents > 0 {
+				assert.Equal(t, "exception", events[0].Name)
+			}
+
+			// RecordError does not set the span status
+			assert.Equal(t, codes.Unset, spans[0].Status().Code)
+		})
+	}
 }
 
 func TestTracer_ContextPropagation(t *testing.T) {
@@ -438,18 +471,9 @@ func TestTracer_Shutdown(t *testing.T) {
 	tests := []struct {
 		name    string
 		timeout time.Duration
-		wantErr bool
 	}{
-		{
-			name:    "successful shutdown",
-			timeout: 5 * time.Second,
-			wantErr: false,
-		},
-		{
-			name:    "shutdown with timeout",
-			timeout: 1 * time.Nanosecond,
-			wantErr: true, // May timeout
-		},
+		{name: "shutdown with timeout", timeout: 5 * time.Second},
+		{name: "shutdown without timeout", timeout: 0},
 	}
 
 	for _, tt := range tests {
@@ -457,28 +481,26 @@ func TestTracer_Shutdown(t *testing.T) {
 			tracer, err := NewTracer(&Config{
 				Enabled:         true,
 				ServiceName:     "test-service",
-				ExporterType:    ExporterStdout,
+				ExporterType:    ExporterNoop,
 				SamplingRatio:   1.0,
 				ShutdownTimeout: tt.timeout,
 			})
 			require.NoError(t, err)
 			require.NotNil(t, tracer)
 
-			// Create and end a span
 			ctx, span := tracer.StartSpan(context.Background(), "test.shutdown")
 			span.End()
 
-			// Shutdown
-			err = tracer.Shutdown(ctx)
-			if tt.wantErr && tt.timeout < time.Millisecond {
-				// Very short timeout may cause error, but not required
-				// Just verify no panic
-				t.Logf("Shutdown result: %v", err)
-			} else {
-				assert.NoError(t, err)
-			}
+			assert.NoError(t, tracer.Shutdown(ctx))
 		})
 	}
+
+	t.Run("nil shutdown func", func(t *testing.T) {
+		tracer := &Tracer{
+			config: &Config{ServiceName: "test-service"},
+		}
+		assert.NoError(t, tracer.Shutdown(context.Background()))
+	})
 }
 
 func TestTracer_IsEnabled(t *testing.T) {
@@ -890,113 +912,6 @@ func TestNoopExporter(t *testing.T) {
 		err := exporter.Shutdown(context.Background())
 		assert.NoError(t, err)
 	})
-}
-
-func TestTracer_RecordError_WithNilError(t *testing.T) {
-	sr := tracetest.NewSpanRecorder()
-	provider := sdktrace.NewTracerProvider(
-		sdktrace.WithSpanProcessor(sr),
-	)
-
-	tracer := &Tracer{
-		config: &Config{
-			Enabled:     true,
-			ServiceName: "test-service",
-		},
-		provider: provider,
-		tracer:   provider.Tracer("test"),
-	}
-
-	ctx, span := tracer.StartSpan(context.Background(), "test.nil-error")
-
-	// Record nil error - should not add error event
-	tracer.RecordError(ctx, nil)
-	span.End()
-
-	spans := sr.Ended()
-	require.Len(t, spans, 1)
-
-	// Verify no error events
-	events := spans[0].Events()
-	assert.Len(t, events, 0)
-}
-
-func TestTracer_Shutdown_WithNilShutdown(t *testing.T) {
-	tracer := &Tracer{
-		config: &Config{
-			Enabled:     false,
-			ServiceName: "test-service",
-		},
-		shutdown: nil,
-	}
-
-	err := tracer.Shutdown(context.Background())
-	assert.NoError(t, err)
-}
-
-func TestTracer_Shutdown_WithTimeout(t *testing.T) {
-	tracer, err := NewTracer(&Config{
-		Enabled:         true,
-		ServiceName:     "test-service",
-		ExporterType:    ExporterNoop,
-		SamplingRatio:   1.0,
-		ShutdownTimeout: 5 * time.Second,
-	})
-	require.NoError(t, err)
-
-	// Create and end a span
-	ctx, span := tracer.StartSpan(context.Background(), "test.shutdown")
-	span.End()
-
-	// Shutdown with timeout
-	err = tracer.Shutdown(ctx)
-	assert.NoError(t, err)
-}
-
-func TestTracer_Shutdown_WithoutTimeout(t *testing.T) {
-	tracer, err := NewTracer(&Config{
-		Enabled:         true,
-		ServiceName:     "test-service",
-		ExporterType:    ExporterNoop,
-		SamplingRatio:   1.0,
-		ShutdownTimeout: 0, // No timeout
-	})
-	require.NoError(t, err)
-
-	ctx, span := tracer.StartSpan(context.Background(), "test.shutdown-no-timeout")
-	span.End()
-
-	err = tracer.Shutdown(ctx)
-	assert.NoError(t, err)
-}
-
-func TestTracer_StartSpan_WithNilTracer(t *testing.T) {
-	tracer := &Tracer{
-		config: &Config{
-			Enabled:     false,
-			ServiceName: "test-service",
-		},
-		tracer: nil,
-	}
-
-	ctx, span := tracer.StartSpan(context.Background(), "test-span")
-	assert.NotNil(t, ctx)
-	assert.NotNil(t, span)
-}
-
-func TestTracer_TraceRequest_WithNilTracer(t *testing.T) {
-	tracer := &Tracer{
-		config: &Config{
-			Enabled:     false,
-			ServiceName: "test-service",
-		},
-		tracer: nil,
-	}
-
-	ctx, finish := tracer.TraceRequest(context.Background(), "test-operation")
-	assert.NotNil(t, ctx)
-	assert.NotNil(t, finish)
-	finish()
 }
 
 func TestNewTracer_WithResourceMerge(t *testing.T) {
