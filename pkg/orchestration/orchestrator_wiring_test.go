@@ -947,6 +947,7 @@ func TestOrchestrator_SpawnSession_DefaultPreferred_FallsBack(t *testing.T) {
 func TestOrchestrator_SpawnSession_NonSandboxed(t *testing.T) {
 	t.Parallel()
 
+	pub := &mockMessagingPublisher{}
 	backends := map[string]AgentBackend{
 		"mock": &mockAgentBackend{},
 	}
@@ -954,6 +955,7 @@ func TestOrchestrator_SpawnSession_NonSandboxed(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create service: %v", err)
 	}
+	svc.(*agentServiceImpl).SetMessaging(pub)
 
 	resp, spawnErr := svc.SpawnSession(context.Background(), &SpawnSessionRequest{
 		Backend:   "mock",
@@ -967,6 +969,15 @@ func TestOrchestrator_SpawnSession_NonSandboxed(t *testing.T) {
 	}
 	if resp.SessionID == "" {
 		t.Fatal("expected non-empty session ID")
+	}
+
+	pub.mu.Lock()
+	defer pub.mu.Unlock()
+	if len(pub.calls) != 1 {
+		t.Fatalf("expected 1 messaging call, got %d", len(pub.calls))
+	}
+	if pub.calls[0].Channel != "orchestrator:events" {
+		t.Errorf("expected channel 'orchestrator:events', got %q", pub.calls[0].Channel)
 	}
 }
 
@@ -1014,41 +1025,6 @@ func TestOrchestrator_SpawnSession_WithEnv(t *testing.T) {
 	}
 	if capturedReq.WorkDir != "/custom/workspace" {
 		t.Errorf("expected WorkDir '/custom/workspace', got %q", capturedReq.WorkDir)
-	}
-}
-
-// =============================================================================
-// SpawnSession Event Publishing Tests
-// =============================================================================
-
-func TestOrchestrator_SpawnSession_PublishesEvent(t *testing.T) {
-	t.Parallel()
-
-	pub := &mockMessagingPublisher{}
-	backends := map[string]AgentBackend{
-		"mock": &mockAgentBackend{},
-	}
-	svc, err := NewAgentService(NewInMemoryAgentStore(), backends, &agentTestLogger{})
-	if err != nil {
-		t.Fatalf("failed to create service: %v", err)
-	}
-	impl := svc.(*agentServiceImpl)
-	impl.SetMessaging(pub)
-
-	_, spawnErr := svc.SpawnSession(context.Background(), &SpawnSessionRequest{
-		Backend: "mock",
-	})
-	if spawnErr != nil {
-		t.Fatalf("expected no error, got %v", spawnErr)
-	}
-
-	pub.mu.Lock()
-	defer pub.mu.Unlock()
-	if len(pub.calls) != 1 {
-		t.Fatalf("expected 1 messaging call, got %d", len(pub.calls))
-	}
-	if pub.calls[0].Channel != "orchestrator:events" {
-		t.Errorf("expected channel 'orchestrator:events', got %q", pub.calls[0].Channel)
 	}
 }
 
