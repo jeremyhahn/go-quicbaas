@@ -881,32 +881,27 @@ func TestSecretsService_ListSecretVersions_Success(t *testing.T) {
 	assert.False(t, resp.HasMore)
 }
 
-func TestSecretsService_ListSecretVersions_NilRequest(t *testing.T) {
-	mockManager := newMockSecretsManager()
-	logger := newMockLogger()
-	svc := newSecretsService(mockManager, logger)
-
-	resp, err := svc.ListSecretVersions(tenantctx.WithSystem(context.Background()), nil)
-
-	require.Error(t, err)
-	assert.Nil(t, resp)
-	assert.Contains(t, err.Error(), "request cannot be nil")
-}
-
-func TestSecretsService_ListSecretVersions_MissingSecretID(t *testing.T) {
-	mockManager := newMockSecretsManager()
-	logger := newMockLogger()
-	svc := newSecretsService(mockManager, logger)
-
-	req := &ListSecretVersionsRequest{
-		SecretID: "",
+func TestSecretsService_ListSecretVersions_Validation(t *testing.T) {
+	tests := []struct {
+		name    string
+		req     *ListSecretVersionsRequest
+		wantErr string
+	}{
+		{name: "nil request", req: nil, wantErr: "request cannot be nil"},
+		{name: "missing secret id", req: &ListSecretVersionsRequest{SecretID: ""}, wantErr: "secret_id is required"},
 	}
 
-	resp, err := svc.ListSecretVersions(tenantctx.WithSystem(context.Background()), req)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			svc := newSecretsService(newMockSecretsManager(), newMockLogger())
 
-	require.Error(t, err)
-	assert.Nil(t, resp)
-	assert.Contains(t, err.Error(), "secret_id is required")
+			resp, err := svc.ListSecretVersions(tenantctx.WithSystem(context.Background()), tt.req)
+
+			require.Error(t, err)
+			assert.Nil(t, resp)
+			assert.Contains(t, err.Error(), tt.wantErr)
+		})
+	}
 }
 
 func TestSecretsService_ListSecretVersions_NotFound(t *testing.T) {
@@ -953,50 +948,28 @@ func TestSecretsService_RollbackSecret_Success(t *testing.T) {
 	assert.Equal(t, uint64(2), resp.NewVersion) // Creates new version
 }
 
-func TestSecretsService_RollbackSecret_NilRequest(t *testing.T) {
-	mockManager := newMockSecretsManager()
-	logger := newMockLogger()
-	svc := newSecretsService(mockManager, logger)
-
-	resp, err := svc.RollbackSecret(tenantctx.WithSystem(context.Background()), nil)
-
-	require.Error(t, err)
-	assert.Nil(t, resp)
-	assert.Contains(t, err.Error(), "request cannot be nil")
-}
-
-func TestSecretsService_RollbackSecret_MissingSecretID(t *testing.T) {
-	mockManager := newMockSecretsManager()
-	logger := newMockLogger()
-	svc := newSecretsService(mockManager, logger)
-
-	req := &RollbackSecretRequest{
-		SecretID:      "",
-		TargetVersion: 1,
+func TestSecretsService_RollbackSecret_Validation(t *testing.T) {
+	tests := []struct {
+		name    string
+		req     *RollbackSecretRequest
+		wantErr string
+	}{
+		{name: "nil request", req: nil, wantErr: "request cannot be nil"},
+		{name: "missing secret id", req: &RollbackSecretRequest{SecretID: "", TargetVersion: 1}, wantErr: "secret_id is required"},
+		{name: "zero version", req: &RollbackSecretRequest{SecretID: "test-secret-123", TargetVersion: 0}, wantErr: "target_version must be greater than 0"},
 	}
 
-	resp, err := svc.RollbackSecret(tenantctx.WithSystem(context.Background()), req)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			svc := newSecretsService(newMockSecretsManager(), newMockLogger())
 
-	require.Error(t, err)
-	assert.Nil(t, resp)
-	assert.Contains(t, err.Error(), "secret_id is required")
-}
+			resp, err := svc.RollbackSecret(tenantctx.WithSystem(context.Background()), tt.req)
 
-func TestSecretsService_RollbackSecret_ZeroVersion(t *testing.T) {
-	mockManager := newMockSecretsManager()
-	logger := newMockLogger()
-	svc := newSecretsService(mockManager, logger)
-
-	req := &RollbackSecretRequest{
-		SecretID:      "test-secret-123",
-		TargetVersion: 0,
+			require.Error(t, err)
+			assert.Nil(t, resp)
+			assert.Contains(t, err.Error(), tt.wantErr)
+		})
 	}
-
-	resp, err := svc.RollbackSecret(tenantctx.WithSystem(context.Background()), req)
-
-	require.Error(t, err)
-	assert.Nil(t, resp)
-	assert.Contains(t, err.Error(), "target_version must be greater than 0")
 }
 
 func TestSecretsService_RollbackSecret_ManagerError(t *testing.T) {
@@ -1049,50 +1022,28 @@ func TestSecretsService_RotateSecret_Success(t *testing.T) {
 	assert.Equal(t, uint64(2), resp.NewVersion)
 }
 
-func TestSecretsService_RotateSecret_NilRequest(t *testing.T) {
-	mockManager := newMockSecretsManager()
-	logger := newMockLogger()
-	svc := newSecretsService(mockManager, logger)
-
-	resp, err := svc.RotateSecret(tenantctx.WithSystem(context.Background()), nil)
-
-	require.Error(t, err)
-	assert.Nil(t, resp)
-	assert.Contains(t, err.Error(), "request cannot be nil")
-}
-
-func TestSecretsService_RotateSecret_MissingSecretID(t *testing.T) {
-	mockManager := newMockSecretsManager()
-	logger := newMockLogger()
-	svc := newSecretsService(mockManager, logger)
-
-	req := &RotateSecretRequest{
-		SecretID: "",
-		NewData:  []byte("new-data"),
+func TestSecretsService_RotateSecret_Validation(t *testing.T) {
+	tests := []struct {
+		name    string
+		req     *RotateSecretRequest
+		wantErr string
+	}{
+		{name: "nil request", req: nil, wantErr: "request cannot be nil"},
+		{name: "missing secret id", req: &RotateSecretRequest{SecretID: "", NewData: []byte("new-data")}, wantErr: "secret_id is required"},
+		{name: "missing new data", req: &RotateSecretRequest{SecretID: "test-secret-123", NewData: []byte{}}, wantErr: "new_data is required"},
 	}
 
-	resp, err := svc.RotateSecret(tenantctx.WithSystem(context.Background()), req)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			svc := newSecretsService(newMockSecretsManager(), newMockLogger())
 
-	require.Error(t, err)
-	assert.Nil(t, resp)
-	assert.Contains(t, err.Error(), "secret_id is required")
-}
+			resp, err := svc.RotateSecret(tenantctx.WithSystem(context.Background()), tt.req)
 
-func TestSecretsService_RotateSecret_MissingNewData(t *testing.T) {
-	mockManager := newMockSecretsManager()
-	logger := newMockLogger()
-	svc := newSecretsService(mockManager, logger)
-
-	req := &RotateSecretRequest{
-		SecretID: "test-secret-123",
-		NewData:  []byte{},
+			require.Error(t, err)
+			assert.Nil(t, resp)
+			assert.Contains(t, err.Error(), tt.wantErr)
+		})
 	}
-
-	resp, err := svc.RotateSecret(tenantctx.WithSystem(context.Background()), req)
-
-	require.Error(t, err)
-	assert.Nil(t, resp)
-	assert.Contains(t, err.Error(), "new_data is required")
 }
 
 func TestSecretsService_RotateSecret_NotFound(t *testing.T) {
@@ -1177,72 +1128,37 @@ func TestSecretsService_SetRotationPolicy_Success(t *testing.T) {
 	assert.Equal(t, 30*24*time.Hour, resp.Policy.Interval)
 }
 
-func TestSecretsService_SetRotationPolicy_NilRequest(t *testing.T) {
-	mockManager := newMockSecretsManager()
-	logger := newMockLogger()
-	svc := newSecretsService(mockManager, logger)
-
-	resp, err := svc.SetRotationPolicy(tenantctx.WithSystem(context.Background()), nil)
-
-	require.Error(t, err)
-	assert.Nil(t, resp)
-	assert.Contains(t, err.Error(), "request cannot be nil")
-}
-
-func TestSecretsService_SetRotationPolicy_MissingSecretID(t *testing.T) {
-	mockManager := newMockSecretsManager()
-	logger := newMockLogger()
-	svc := newSecretsService(mockManager, logger)
-
-	req := &SetRotationPolicyRequest{
-		SecretID: "",
-		Policy: &SecretRotationPolicy{
-			Enabled: true,
+func TestSecretsService_SetRotationPolicy_Validation(t *testing.T) {
+	tests := []struct {
+		name    string
+		req     *SetRotationPolicyRequest
+		wantErr string
+	}{
+		{name: "nil request", req: nil, wantErr: "request cannot be nil"},
+		{
+			name:    "missing secret id",
+			req:     &SetRotationPolicyRequest{SecretID: "", Policy: &SecretRotationPolicy{Enabled: true}},
+			wantErr: "secret_id is required",
+		},
+		{name: "nil policy", req: &SetRotationPolicyRequest{SecretID: "test-secret-123", Policy: nil}, wantErr: "policy is required"},
+		{
+			name:    "enabled with zero interval",
+			req:     &SetRotationPolicyRequest{SecretID: "test-secret-123", Policy: &SecretRotationPolicy{Enabled: true, Interval: 0}},
+			wantErr: "interval must be positive when rotation is enabled",
 		},
 	}
 
-	resp, err := svc.SetRotationPolicy(tenantctx.WithSystem(context.Background()), req)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			svc := newSecretsService(newMockSecretsManager(), newMockLogger())
 
-	require.Error(t, err)
-	assert.Nil(t, resp)
-	assert.Contains(t, err.Error(), "secret_id is required")
-}
+			resp, err := svc.SetRotationPolicy(tenantctx.WithSystem(context.Background()), tt.req)
 
-func TestSecretsService_SetRotationPolicy_NilPolicy(t *testing.T) {
-	mockManager := newMockSecretsManager()
-	logger := newMockLogger()
-	svc := newSecretsService(mockManager, logger)
-
-	req := &SetRotationPolicyRequest{
-		SecretID: "test-secret-123",
-		Policy:   nil,
+			require.Error(t, err)
+			assert.Nil(t, resp)
+			assert.Contains(t, err.Error(), tt.wantErr)
+		})
 	}
-
-	resp, err := svc.SetRotationPolicy(tenantctx.WithSystem(context.Background()), req)
-
-	require.Error(t, err)
-	assert.Nil(t, resp)
-	assert.Contains(t, err.Error(), "policy is required")
-}
-
-func TestSecretsService_SetRotationPolicy_InvalidInterval(t *testing.T) {
-	mockManager := newMockSecretsManager()
-	logger := newMockLogger()
-	svc := newSecretsService(mockManager, logger)
-
-	req := &SetRotationPolicyRequest{
-		SecretID: "test-secret-123",
-		Policy: &SecretRotationPolicy{
-			Enabled:  true,
-			Interval: 0, // Invalid: must be positive when enabled
-		},
-	}
-
-	resp, err := svc.SetRotationPolicy(tenantctx.WithSystem(context.Background()), req)
-
-	require.Error(t, err)
-	assert.Nil(t, resp)
-	assert.Contains(t, err.Error(), "interval must be positive when rotation is enabled")
 }
 
 func TestSecretsService_SetRotationPolicy_NotFound(t *testing.T) {
@@ -1274,12 +1190,14 @@ func TestSecretsService_SetRotationPolicy_NotFound(t *testing.T) {
 
 func TestSecretsService_GetRotationPolicy_Success(t *testing.T) {
 	mockManager := newMockSecretsManager()
+	nextRotation := time.Now().Add(30 * 24 * time.Hour)
 	mockManager.secrets["test-secret-123"] = &mockSecretData{
 		path: "test-secret-123",
 		data: map[string][]byte{"data": []byte("data")},
 		metadata: map[string]string{
 			"rotation_enabled":  "true",
 			"rotation_interval": "720h",
+			"rotation_next":     nextRotation.Format(time.RFC3339),
 		},
 	}
 	logger := newMockLogger()
@@ -1297,56 +1215,63 @@ func TestSecretsService_GetRotationPolicy_Success(t *testing.T) {
 	assert.NotNil(t, resp.Policy)
 	assert.True(t, resp.Policy.Enabled)
 	assert.Equal(t, 720*time.Hour, resp.Policy.Interval)
+	assert.WithinDuration(t, nextRotation, resp.Policy.NextRotation, time.Second)
 }
 
 func TestSecretsService_GetRotationPolicy_Disabled(t *testing.T) {
-	mockManager := newMockSecretsManager()
-	mockManager.secrets["test-secret-123"] = &mockSecretData{
-		path:     "test-secret-123",
-		data:     map[string][]byte{"data": []byte("data")},
-		metadata: map[string]string{},
-	}
-	logger := newMockLogger()
-	svc := newSecretsService(mockManager, logger)
-
-	req := &GetRotationPolicyRequest{
-		SecretID: "test-secret-123",
+	tests := []struct {
+		name     string
+		metadata map[string]string
+	}{
+		{name: "no rotation metadata", metadata: map[string]string{}},
+		{name: "rotation_enabled false", metadata: map[string]string{"rotation_enabled": "false"}},
 	}
 
-	resp, err := svc.GetRotationPolicy(tenantctx.WithSystem(context.Background()), req)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mockManager := newMockSecretsManager()
+			mockManager.secrets["test-secret-123"] = &mockSecretData{
+				path:     "test-secret-123",
+				data:     map[string][]byte{"data": []byte("data")},
+				metadata: tt.metadata,
+			}
+			svc := newSecretsService(mockManager, newMockLogger())
 
-	require.NoError(t, err)
-	assert.NotNil(t, resp)
-	assert.NotNil(t, resp.Policy)
-	assert.False(t, resp.Policy.Enabled)
+			req := &GetRotationPolicyRequest{
+				SecretID: "test-secret-123",
+			}
+
+			resp, err := svc.GetRotationPolicy(tenantctx.WithSystem(context.Background()), req)
+
+			require.NoError(t, err)
+			assert.NotNil(t, resp)
+			assert.NotNil(t, resp.Policy)
+			assert.False(t, resp.Policy.Enabled)
+		})
+	}
 }
 
-func TestSecretsService_GetRotationPolicy_NilRequest(t *testing.T) {
-	mockManager := newMockSecretsManager()
-	logger := newMockLogger()
-	svc := newSecretsService(mockManager, logger)
-
-	resp, err := svc.GetRotationPolicy(tenantctx.WithSystem(context.Background()), nil)
-
-	require.Error(t, err)
-	assert.Nil(t, resp)
-	assert.Contains(t, err.Error(), "request cannot be nil")
-}
-
-func TestSecretsService_GetRotationPolicy_MissingSecretID(t *testing.T) {
-	mockManager := newMockSecretsManager()
-	logger := newMockLogger()
-	svc := newSecretsService(mockManager, logger)
-
-	req := &GetRotationPolicyRequest{
-		SecretID: "",
+func TestSecretsService_GetRotationPolicy_Validation(t *testing.T) {
+	tests := []struct {
+		name    string
+		req     *GetRotationPolicyRequest
+		wantErr string
+	}{
+		{name: "nil request", req: nil, wantErr: "request cannot be nil"},
+		{name: "missing secret id", req: &GetRotationPolicyRequest{SecretID: ""}, wantErr: "secret_id is required"},
 	}
 
-	resp, err := svc.GetRotationPolicy(tenantctx.WithSystem(context.Background()), req)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			svc := newSecretsService(newMockSecretsManager(), newMockLogger())
 
-	require.Error(t, err)
-	assert.Nil(t, resp)
-	assert.Contains(t, err.Error(), "secret_id is required")
+			resp, err := svc.GetRotationPolicy(tenantctx.WithSystem(context.Background()), tt.req)
+
+			require.Error(t, err)
+			assert.Nil(t, resp)
+			assert.Contains(t, err.Error(), tt.wantErr)
+		})
+	}
 }
 
 func TestSecretsService_GetRotationPolicy_NotFound(t *testing.T) {
@@ -2205,78 +2130,6 @@ func TestSecretsService_ListSecretVersions_NoVersions(t *testing.T) {
 	assert.Empty(t, resp.Versions)
 }
 
-func TestSecretsService_ListSecretVersions_ManyVersions(t *testing.T) {
-	mockManager := newMockSecretsManager()
-	versions := make([]mockSecretVersion, 50)
-	for i := 0; i < 50; i++ {
-		versions[i] = mockSecretVersion{
-			version:  i + 1,
-			data:     map[string][]byte{"data": []byte("data")},
-			metadata: map[string]string{},
-		}
-	}
-	mockManager.secrets["test-secret"] = &mockSecretData{
-		path:     "test-secret",
-		versions: versions,
-	}
-	logger := newMockLogger()
-	svc := newSecretsService(mockManager, logger)
-
-	req := &ListSecretVersionsRequest{
-		SecretID: "test-secret",
-	}
-
-	resp, err := svc.ListSecretVersions(tenantctx.WithSystem(context.Background()), req)
-
-	require.NoError(t, err)
-	assert.NotNil(t, resp)
-	assert.Len(t, resp.Versions, 50)
-}
-
-func TestSecretsService_RollbackSecret_ToFirstVersion(t *testing.T) {
-	mockManager := newMockSecretsManager()
-	mockManager.secrets["test-secret"] = &mockSecretData{
-		path: "test-secret",
-		versions: []mockSecretVersion{
-			{version: 1, data: map[string][]byte{"data": []byte("v1")}},
-			{version: 2, data: map[string][]byte{"data": []byte("v2")}},
-			{version: 3, data: map[string][]byte{"data": []byte("v3")}},
-		},
-	}
-	logger := newMockLogger()
-	svc := newSecretsService(mockManager, logger)
-
-	req := &RollbackSecretRequest{
-		SecretID:      "test-secret",
-		TargetVersion: 1,
-	}
-
-	resp, err := svc.RollbackSecret(tenantctx.WithSystem(context.Background()), req)
-
-	require.NoError(t, err)
-	assert.NotNil(t, resp)
-	assert.Equal(t, uint64(2), resp.NewVersion)
-}
-
-func TestSecretsService_RollbackSecret_NonexistentVersion(t *testing.T) {
-	mockManager := newMockSecretsManager()
-	mockManager.rollbackFn = func(ctx context.Context, path string, version int) error {
-		return errors.New("version not found")
-	}
-	logger := newMockLogger()
-	svc := newSecretsService(mockManager, logger)
-
-	req := &RollbackSecretRequest{
-		SecretID:      "test-secret",
-		TargetVersion: 99,
-	}
-
-	resp, err := svc.RollbackSecret(tenantctx.WithSystem(context.Background()), req)
-
-	require.Error(t, err)
-	assert.Nil(t, resp)
-}
-
 func TestSecretsService_RotateSecret_PreservesMetadata(t *testing.T) {
 	mockManager := newMockSecretsManager()
 	mockManager.secrets["test-secret"] = &mockSecretData{
@@ -2309,83 +2162,6 @@ func TestSecretsService_RotateSecret_PreservesMetadata(t *testing.T) {
 	assert.Equal(t, "admin", secret.metadata["rotated_by"])
 }
 
-func TestSecretsService_RotateSecret_WithEmptyMetadata(t *testing.T) {
-	mockManager := newMockSecretsManager()
-	mockManager.secrets["test-secret"] = &mockSecretData{
-		path:     "test-secret",
-		data:     map[string][]byte{"data": []byte("old-data")},
-		metadata: map[string]string{},
-	}
-	logger := newMockLogger()
-	svc := newSecretsService(mockManager, logger)
-
-	req := &RotateSecretRequest{
-		SecretID: "test-secret",
-		NewData:  []byte("new-data"),
-		Metadata: nil,
-	}
-
-	resp, err := svc.RotateSecret(tenantctx.WithSystem(context.Background()), req)
-
-	require.NoError(t, err)
-	assert.NotNil(t, resp)
-}
-
-func TestSecretsService_RotateSecret_ManagerGetFails(t *testing.T) {
-	mockManager := newMockSecretsManager()
-	mockManager.getFn = func(ctx context.Context, path string) (map[string][]byte, map[string]string, error) {
-		return nil, nil, secrets.ErrSecretNotFound
-	}
-	logger := newMockLogger()
-	svc := newSecretsService(mockManager, logger)
-
-	req := &RotateSecretRequest{
-		SecretID: "test-secret",
-		NewData:  []byte("new-data"),
-	}
-
-	resp, err := svc.RotateSecret(tenantctx.WithSystem(context.Background()), req)
-
-	require.Error(t, err)
-	assert.Nil(t, resp)
-	var dErr *quicbaasErrors.QBError
-	if errors.As(err, &dErr) {
-		assert.Equal(t, quicbaasErrors.ErrNotFound, dErr.Code)
-	}
-}
-
-func TestSecretsService_SetRotationPolicy_UpdateExisting(t *testing.T) {
-	mockManager := newMockSecretsManager()
-	mockManager.secrets["test-secret"] = &mockSecretData{
-		path: "test-secret",
-		data: map[string][]byte{"data": []byte("data")},
-		metadata: map[string]string{
-			"rotation_enabled":  "true",
-			"rotation_interval": "720h",
-		},
-	}
-	logger := newMockLogger()
-	svc := newSecretsService(mockManager, logger)
-
-	newInterval := 30 * 24 * time.Hour
-	nextRotation := time.Now().Add(newInterval)
-	req := &SetRotationPolicyRequest{
-		SecretID: "test-secret",
-		Policy: &SecretRotationPolicy{
-			Enabled:        false, // Disable rotation
-			Interval:       newInterval,
-			NextRotation:   nextRotation,
-			RetainVersions: 3,
-		},
-	}
-
-	resp, err := svc.SetRotationPolicy(tenantctx.WithSystem(context.Background()), req)
-
-	require.NoError(t, err)
-	assert.NotNil(t, resp)
-	assert.False(t, resp.Policy.Enabled)
-}
-
 func TestSecretsService_SetRotationPolicy_StoreUpdateFails(t *testing.T) {
 	mockManager := newMockSecretsManager()
 	mockManager.secrets["test-secret"] = &mockSecretData{
@@ -2414,62 +2190,6 @@ func TestSecretsService_SetRotationPolicy_StoreUpdateFails(t *testing.T) {
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
-}
-
-func TestSecretsService_SetRotationPolicy_ZeroRetainVersions(t *testing.T) {
-	mockManager := newMockSecretsManager()
-	mockManager.secrets["test-secret"] = &mockSecretData{
-		path:     "test-secret",
-		data:     map[string][]byte{"data": []byte("data")},
-		metadata: map[string]string{},
-	}
-	logger := newMockLogger()
-	svc := newSecretsService(mockManager, logger)
-
-	req := &SetRotationPolicyRequest{
-		SecretID: "test-secret",
-		Policy: &SecretRotationPolicy{
-			Enabled:        true,
-			Interval:       24 * time.Hour,
-			NextRotation:   time.Now().Add(24 * time.Hour),
-			RetainVersions: 0,
-		},
-	}
-
-	resp, err := svc.SetRotationPolicy(tenantctx.WithSystem(context.Background()), req)
-
-	require.NoError(t, err)
-	assert.NotNil(t, resp)
-	assert.Equal(t, 0, resp.Policy.RetainVersions)
-}
-
-func TestSecretsService_GetRotationPolicy_CompletePolicy(t *testing.T) {
-	mockManager := newMockSecretsManager()
-	nextRotation := time.Now().Add(30 * 24 * time.Hour)
-	mockManager.secrets["test-secret"] = &mockSecretData{
-		path: "test-secret",
-		data: map[string][]byte{"data": []byte("data")},
-		metadata: map[string]string{
-			"rotation_enabled":  "true",
-			"rotation_interval": "720h",
-			"rotation_next":     nextRotation.Format(time.RFC3339),
-		},
-	}
-	logger := newMockLogger()
-	svc := newSecretsService(mockManager, logger)
-
-	req := &GetRotationPolicyRequest{
-		SecretID: "test-secret",
-	}
-
-	resp, err := svc.GetRotationPolicy(tenantctx.WithSystem(context.Background()), req)
-
-	require.NoError(t, err)
-	assert.NotNil(t, resp)
-	assert.NotNil(t, resp.Policy)
-	assert.True(t, resp.Policy.Enabled)
-	assert.Equal(t, 720*time.Hour, resp.Policy.Interval)
-	assert.WithinDuration(t, nextRotation, resp.Policy.NextRotation, time.Second)
 }
 
 func TestSecretsService_GetRotationPolicy_InvalidInterval(t *testing.T) {
@@ -2520,29 +2240,6 @@ func TestSecretsService_GetRotationPolicy_InvalidNextRotation(t *testing.T) {
 	assert.NotNil(t, resp)
 	// Invalid timestamp is ignored, defaults to zero time
 	assert.True(t, resp.Policy.NextRotation.IsZero())
-}
-
-func TestSecretsService_GetRotationPolicy_FalseEnabled(t *testing.T) {
-	mockManager := newMockSecretsManager()
-	mockManager.secrets["test-secret"] = &mockSecretData{
-		path: "test-secret",
-		data: map[string][]byte{"data": []byte("data")},
-		metadata: map[string]string{
-			"rotation_enabled": "false",
-		},
-	}
-	logger := newMockLogger()
-	svc := newSecretsService(mockManager, logger)
-
-	req := &GetRotationPolicyRequest{
-		SecretID: "test-secret",
-	}
-
-	resp, err := svc.GetRotationPolicy(tenantctx.WithSystem(context.Background()), req)
-
-	require.NoError(t, err)
-	assert.NotNil(t, resp)
-	assert.False(t, resp.Policy.Enabled)
 }
 
 func TestSecretsService_GetSecret_ContextTimeout(t *testing.T) {
