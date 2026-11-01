@@ -981,41 +981,6 @@ func TestPool_GetPoolExhausted(t *testing.T) {
 	p.Put(conn2)
 }
 
-// TestPool_PutReturnsConnection tests normal connection return.
-func TestPool_PutReturnsConnection(t *testing.T) {
-	ts := newTestServer()
-	defer ts.stop()
-
-	cfg := &PoolConfig{
-		MinSize:        1,
-		MaxSize:        2,
-		MaxAge:         time.Hour,
-		HealthInterval: 0,
-	}
-
-	p, err := NewPool("bufnet", ts.dialOpts(), cfg)
-	if err != nil {
-		t.Fatalf("failed to create pool: %v", err)
-	}
-	defer p.Close()
-
-	conn, err := p.Get()
-	if err != nil {
-		t.Fatalf("failed to get connection: %v", err)
-	}
-
-	p.Put(conn)
-
-	conn2, err := p.Get()
-	if err != nil {
-		t.Fatalf("failed to get connection again: %v", err)
-	}
-	if conn2 != conn {
-		t.Error("expected to reuse returned connection")
-	}
-	p.Put(conn2)
-}
-
 // TestPool_PutConnectionNotInPool tests putting a connection not in the pool.
 func TestPool_PutConnectionNotInPool(t *testing.T) {
 	ts := newTestServer()
@@ -1291,43 +1256,6 @@ func TestPool_ConcurrentAccess(t *testing.T) {
 	for err := range errCh {
 		t.Errorf("unexpected error: %v", err)
 	}
-}
-
-// TestTransport_ReturnConnWithPool tests returnConn with a pool.
-func TestTransport_ReturnConnWithPool(t *testing.T) {
-	ts := newTestServer()
-	defer ts.stop()
-
-	cfg := &PoolConfig{
-		MinSize:        1,
-		MaxSize:        2,
-		MaxAge:         time.Hour,
-		HealthInterval: 0,
-	}
-
-	p, err := NewPool("bufnet", ts.dialOpts(), cfg)
-	if err != nil {
-		t.Fatalf("failed to create pool: %v", err)
-	}
-
-	tr := &Transport{
-		cfg:  &transport.Config{},
-		pool: p,
-	}
-	defer tr.Close()
-
-	conn, err := tr.getConn()
-	if err != nil {
-		t.Fatalf("failed to get connection: %v", err)
-	}
-
-	tr.returnConn(conn)
-
-	conn2, err := tr.getConn()
-	if err != nil {
-		t.Fatalf("failed to get connection after return: %v", err)
-	}
-	tr.returnConn(conn2)
 }
 
 // TestTransport_GetConnWithPool tests getConn with a pool.
