@@ -1749,6 +1749,14 @@ func TestXKMS91_CertExists(t *testing.T) {
 		server.router.ServeHTTP(w, req)
 		assert.Equal(t, http.StatusNotFound, w.Code)
 	})
+
+	t.Run("invalid cert ID format returns 404", func(t *testing.T) {
+		// 3-part ID (a:b:c) is invalid format - must be 4-part or simple name
+		req := httptest.NewRequest(http.MethodHead, "/api/v1/xkms/certs/a:b:c", nil)
+		w := httptest.NewRecorder()
+		server.router.ServeHTTP(w, req)
+		assert.Equal(t, http.StatusNotFound, w.Code)
+	})
 }
 
 // =============================================================================
@@ -2497,24 +2505,4 @@ type errReader int
 
 func (errReader) Read(p []byte) (int, error) {
 	return 0, &XKMSOperationError{Op: "read", Detail: "simulated io error"}
-}
-
-// =============================================================================
-// HandleXKMSCertExists - ParseCertificateID error path
-// =============================================================================
-
-func TestXKMS91_CertExists_InvalidCertID(t *testing.T) {
-	cleanup := initXKMSForTest(t)
-	defer cleanup()
-
-	server, _, srvCleanup := setupMockServer(t)
-	defer srvCleanup()
-
-	t.Run("invalid cert ID format returns 404", func(t *testing.T) {
-		// 3-part ID (a:b:c) is invalid format - must be 4-part or simple name
-		req := httptest.NewRequest(http.MethodHead, "/api/v1/xkms/certs/a:b:c", nil)
-		w := httptest.NewRecorder()
-		server.router.ServeHTTP(w, req)
-		assert.Equal(t, http.StatusNotFound, w.Code)
-	})
 }
