@@ -845,18 +845,12 @@ func TestPushService_GetStats(t *testing.T) {
 		// runner. Poll to the expected state instead, and report whatever it
 		// last saw if it never gets there (testing-guidelines.md: never treat
 		// elapsed time as a synchronization primitive).
-		var stats *Stats
-		deadline := time.Now().Add(5 * time.Second)
-		for {
-			stats = ps.GetStats()
-			if stats != nil && stats.TotalChannels == 2 && stats.TotalSubscriptions == 3 {
-				break
-			}
-			if time.Now().After(deadline) {
-				break
-			}
-			time.Sleep(5 * time.Millisecond)
-		}
+		assert.Eventually(t, func() bool {
+			s := ps.GetStats()
+			return s != nil && s.TotalChannels == 2 && s.TotalSubscriptions == 3
+		}, testTimeout, testPollInterval)
+
+		stats := ps.GetStats()
 
 		if stats == nil {
 			t.Fatal("expected non-nil stats")
@@ -1528,9 +1522,7 @@ func TestNotificationHub_RegisterAndSubscribe_KeepsTheStrictFormStrict(t *testin
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	go hub.Run(ctx)
-	for !hub.IsRunning() {
-		time.Sleep(time.Millisecond)
-	}
+	require.Eventually(t, hub.IsRunning, testTimeout, testPollInterval)
 
 	strict := NewClient("never-registered", DefaultBufferSize)
 	if err := hub.SubscribeToChannel(strict, "strict-channel"); !errors.Is(err, ErrClientNotRegistered) {
