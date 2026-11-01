@@ -1176,249 +1176,32 @@ func (m *mockQuicBaaSService) ObjectStorageService() service.ObjectStorageServic
 // Additional Coverage Tests
 // =============================================================================
 
-func TestHandleObjectAction_Get(t *testing.T) {
-	mockObjService := &mockObjectStorageService{}
-	s := newTestObjectStorageServer(mockObjService)
-
-	r := chi.NewRouter()
-	r.HandleFunc("/api/v1/objects/*", s.handleObjectAction)
-
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/objects/test.txt", nil)
-	w := httptest.NewRecorder()
-
-	r.ServeHTTP(w, req)
-
-	if w.Code != http.StatusOK {
-		t.Errorf("expected status %d, got %d", http.StatusOK, w.Code)
+// TestHandleObjectAction checks that the wildcard object route dispatches
+// each method and action suffix to its handler, and rejects the rest.
+func TestHandleObjectAction(t *testing.T) {
+	action := func(name, method, target, body string, want int) objectHandlerCase {
+		return objectHandlerCase{name: name, mock: &mockObjectStorageService{}, handler: (*Server).handleObjectAction,
+			method: method, route: "/api/v1/objects/*", target: target, body: body, wantStatus: want}
 	}
-}
 
-func TestHandleObjectAction_GetPolicy(t *testing.T) {
-	mockObjService := &mockObjectStorageService{}
-	s := newTestObjectStorageServer(mockObjService)
-
-	r := chi.NewRouter()
-	r.HandleFunc("/api/v1/objects/*", s.handleObjectAction)
-
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/objects/test.txt/policy", nil)
-	w := httptest.NewRecorder()
-
-	r.ServeHTTP(w, req)
-
-	if w.Code != http.StatusOK {
-		t.Errorf("expected status %d, got %d", http.StatusOK, w.Code)
+	tests := []objectHandlerCase{
+		action("Get", http.MethodGet, "/api/v1/objects/test.txt", "", http.StatusOK),
+		action("GetPolicy", http.MethodGet, "/api/v1/objects/test.txt/policy", "", http.StatusOK),
+		action("Put", http.MethodPut, "/api/v1/objects/test.txt", "data", http.StatusCreated),
+		action("PutPolicy", http.MethodPut, "/api/v1/objects/test.txt/policy", `{"replication_policy":{"enabled":true}}`, http.StatusOK),
+		action("Delete", http.MethodDelete, "/api/v1/objects/test.txt", "", http.StatusOK),
+		action("Head", http.MethodHead, "/api/v1/objects/test.txt", "", http.StatusOK),
+		action("PostCopy", http.MethodPost, "/api/v1/objects/test.txt/copy", `{"destination_key":"backup/test.txt"}`, http.StatusCreated),
+		action("PostReplicate", http.MethodPost, "/api/v1/objects/test.txt/replicate", `{"targets":["replica1"]}`, http.StatusOK),
+		action("PostMigrate", http.MethodPost, "/api/v1/objects/test.txt/migrate", `{"target_backend":"archive"}`, http.StatusOK),
+		action("PostArchive", http.MethodPost, "/api/v1/objects/test.txt/archive", `{}`, http.StatusOK),
+		action("PostRestore", http.MethodPost, "/api/v1/objects/test.txt/restore", `{}`, http.StatusOK),
+		action("PostVerify", http.MethodPost, "/api/v1/objects/test.txt/verify", `{}`, http.StatusOK),
+		action("PostUnknown", http.MethodPost, "/api/v1/objects/test.txt/unknown", "", http.StatusBadRequest),
+		action("MethodNotAllowed", http.MethodPatch, "/api/v1/objects/test.txt", "", http.StatusMethodNotAllowed),
 	}
-}
 
-func TestHandleObjectAction_Put(t *testing.T) {
-	mockObjService := &mockObjectStorageService{}
-	s := newTestObjectStorageServer(mockObjService)
-
-	r := chi.NewRouter()
-	r.HandleFunc("/api/v1/objects/*", s.handleObjectAction)
-
-	req := httptest.NewRequest(http.MethodPut, "/api/v1/objects/test.txt", bytes.NewReader([]byte("data")))
-	w := httptest.NewRecorder()
-
-	r.ServeHTTP(w, req)
-
-	if w.Code != http.StatusCreated {
-		t.Errorf("expected status %d, got %d", http.StatusCreated, w.Code)
-	}
-}
-
-func TestHandleObjectAction_PutPolicy(t *testing.T) {
-	mockObjService := &mockObjectStorageService{}
-	s := newTestObjectStorageServer(mockObjService)
-
-	r := chi.NewRouter()
-	r.HandleFunc("/api/v1/objects/*", s.handleObjectAction)
-
-	body := `{"replication_policy":{"enabled":true}}`
-	req := httptest.NewRequest(http.MethodPut, "/api/v1/objects/test.txt/policy", strings.NewReader(body))
-	w := httptest.NewRecorder()
-
-	r.ServeHTTP(w, req)
-
-	if w.Code != http.StatusOK {
-		t.Errorf("expected status %d, got %d", http.StatusOK, w.Code)
-	}
-}
-
-func TestHandleObjectAction_Delete(t *testing.T) {
-	mockObjService := &mockObjectStorageService{}
-	s := newTestObjectStorageServer(mockObjService)
-
-	r := chi.NewRouter()
-	r.HandleFunc("/api/v1/objects/*", s.handleObjectAction)
-
-	req := httptest.NewRequest(http.MethodDelete, "/api/v1/objects/test.txt", nil)
-	w := httptest.NewRecorder()
-
-	r.ServeHTTP(w, req)
-
-	if w.Code != http.StatusOK {
-		t.Errorf("expected status %d, got %d", http.StatusOK, w.Code)
-	}
-}
-
-func TestHandleObjectAction_Head(t *testing.T) {
-	mockObjService := &mockObjectStorageService{}
-	s := newTestObjectStorageServer(mockObjService)
-
-	r := chi.NewRouter()
-	r.HandleFunc("/api/v1/objects/*", s.handleObjectAction)
-
-	req := httptest.NewRequest(http.MethodHead, "/api/v1/objects/test.txt", nil)
-	w := httptest.NewRecorder()
-
-	r.ServeHTTP(w, req)
-
-	if w.Code != http.StatusOK {
-		t.Errorf("expected status %d, got %d", http.StatusOK, w.Code)
-	}
-}
-
-func TestHandleObjectAction_PostCopy(t *testing.T) {
-	mockObjService := &mockObjectStorageService{}
-	s := newTestObjectStorageServer(mockObjService)
-
-	r := chi.NewRouter()
-	r.HandleFunc("/api/v1/objects/*", s.handleObjectAction)
-
-	body := `{"destination_key":"backup/test.txt"}`
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/objects/test.txt/copy", strings.NewReader(body))
-	w := httptest.NewRecorder()
-
-	r.ServeHTTP(w, req)
-
-	if w.Code != http.StatusCreated {
-		t.Errorf("expected status %d, got %d: %s", http.StatusCreated, w.Code, w.Body.String())
-	}
-}
-
-func TestHandleObjectAction_PostReplicate(t *testing.T) {
-	mockObjService := &mockObjectStorageService{}
-	s := newTestObjectStorageServer(mockObjService)
-
-	r := chi.NewRouter()
-	r.HandleFunc("/api/v1/objects/*", s.handleObjectAction)
-
-	body := `{"targets":["replica1"]}`
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/objects/test.txt/replicate", strings.NewReader(body))
-	w := httptest.NewRecorder()
-
-	r.ServeHTTP(w, req)
-
-	if w.Code != http.StatusOK {
-		t.Errorf("expected status %d, got %d: %s", http.StatusOK, w.Code, w.Body.String())
-	}
-}
-
-func TestHandleObjectAction_PostMigrate(t *testing.T) {
-	mockObjService := &mockObjectStorageService{}
-	s := newTestObjectStorageServer(mockObjService)
-
-	r := chi.NewRouter()
-	r.HandleFunc("/api/v1/objects/*", s.handleObjectAction)
-
-	body := `{"target_backend":"archive"}`
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/objects/test.txt/migrate", strings.NewReader(body))
-	w := httptest.NewRecorder()
-
-	r.ServeHTTP(w, req)
-
-	if w.Code != http.StatusOK {
-		t.Errorf("expected status %d, got %d: %s", http.StatusOK, w.Code, w.Body.String())
-	}
-}
-
-func TestHandleObjectAction_PostArchive(t *testing.T) {
-	mockObjService := &mockObjectStorageService{}
-	s := newTestObjectStorageServer(mockObjService)
-
-	r := chi.NewRouter()
-	r.HandleFunc("/api/v1/objects/*", s.handleObjectAction)
-
-	body := `{}`
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/objects/test.txt/archive", strings.NewReader(body))
-	w := httptest.NewRecorder()
-
-	r.ServeHTTP(w, req)
-
-	if w.Code != http.StatusOK {
-		t.Errorf("expected status %d, got %d: %s", http.StatusOK, w.Code, w.Body.String())
-	}
-}
-
-func TestHandleObjectAction_PostRestore(t *testing.T) {
-	mockObjService := &mockObjectStorageService{}
-	s := newTestObjectStorageServer(mockObjService)
-
-	r := chi.NewRouter()
-	r.HandleFunc("/api/v1/objects/*", s.handleObjectAction)
-
-	body := `{}`
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/objects/test.txt/restore", strings.NewReader(body))
-	w := httptest.NewRecorder()
-
-	r.ServeHTTP(w, req)
-
-	if w.Code != http.StatusOK {
-		t.Errorf("expected status %d, got %d: %s", http.StatusOK, w.Code, w.Body.String())
-	}
-}
-
-func TestHandleObjectAction_PostVerify(t *testing.T) {
-	mockObjService := &mockObjectStorageService{}
-	s := newTestObjectStorageServer(mockObjService)
-
-	r := chi.NewRouter()
-	r.HandleFunc("/api/v1/objects/*", s.handleObjectAction)
-
-	body := `{}`
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/objects/test.txt/verify", strings.NewReader(body))
-	w := httptest.NewRecorder()
-
-	r.ServeHTTP(w, req)
-
-	if w.Code != http.StatusOK {
-		t.Errorf("expected status %d, got %d: %s", http.StatusOK, w.Code, w.Body.String())
-	}
-}
-
-func TestHandleObjectAction_PostUnknown(t *testing.T) {
-	mockObjService := &mockObjectStorageService{}
-	s := newTestObjectStorageServer(mockObjService)
-
-	r := chi.NewRouter()
-	r.HandleFunc("/api/v1/objects/*", s.handleObjectAction)
-
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/objects/test.txt/unknown", nil)
-	w := httptest.NewRecorder()
-
-	r.ServeHTTP(w, req)
-
-	if w.Code != http.StatusBadRequest {
-		t.Errorf("expected status %d, got %d", http.StatusBadRequest, w.Code)
-	}
-}
-
-func TestHandleObjectAction_MethodNotAllowed(t *testing.T) {
-	mockObjService := &mockObjectStorageService{}
-	s := newTestObjectStorageServer(mockObjService)
-
-	r := chi.NewRouter()
-	r.HandleFunc("/api/v1/objects/*", s.handleObjectAction)
-
-	req := httptest.NewRequest(http.MethodPatch, "/api/v1/objects/test.txt", nil)
-	w := httptest.NewRecorder()
-
-	r.ServeHTTP(w, req)
-
-	if w.Code != http.StatusMethodNotAllowed {
-		t.Errorf("expected status %d, got %d", http.StatusMethodNotAllowed, w.Code)
-	}
+	runObjectHandlerCases(t, tests)
 }
 
 // objectHandlerCase is one request to one object storage handler, mounted on
