@@ -460,134 +460,33 @@ func TestHandler_cleanupLoop_WithoutCache(t *testing.T) {
 	assert.NoError(t, err)
 }
 
-// TestParser_detectLanguage_CSharp tests C language detection.
-func TestParser_detectLanguage_CSharp(t *testing.T) {
+func TestParser_detectLanguage(t *testing.T) {
 	tests := []struct {
 		name  string
 		query string
 		want  string
 	}{
-		{
-			name:  "c language standalone",
-			query: "show me c code",
-			want:  "c",
-		},
-		{
-			name:  "c in middle",
-			query: "implement in c language",
-			want:  "c",
-		},
-		{
-			name:  "c at end",
-			query: "how to use c",
-			want:  "c",
-		},
-		{
-			name:  "c in code - should not match",
-			query: "show me code example",
-			want:  "",
-		},
-		{
-			name:  "authentication - should not match c",
-			query: "authentication function",
-			want:  "",
-		},
-		{
-			name:  "cpp variant",
-			query: "show me cpp code",
-			want:  "c++",
-		},
+		{name: "c as a word", query: "show me c code", want: "c"},
+		{name: "c at end", query: "how to use c", want: "c"},
+		{name: "c inside code does not match", query: "show me code example", want: ""},
+		{name: "c inside authentication does not match", query: "authentication function", want: ""},
+		{name: "cpp variant", query: "show me cpp code", want: "c++"},
+		{name: "javascript", query: "javascript function", want: "javascript"},
+		{name: "java not javascript", query: "show me java class", want: "java"},
+		{name: "javascript wins over java", query: "javascript java interop", want: "javascript"},
+		{name: "js shorthand", query: "show me js code", want: "javascript"},
+		{name: "node means javascript", query: "show me node server code", want: "javascript"},
+		{name: "python", query: "python implementation", want: "python"},
+		{name: "py shorthand", query: "show me py code", want: "python"},
+		{name: "py inside copy does not match", query: "copy the file", want: ""},
+		{name: "rust", query: "show me rust implementation", want: "rust"},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := detectLanguage(tt.query)
-			assert.Equal(t, tt.want, got)
+			assert.Equal(t, tt.want, detectLanguage(tt.query))
 		})
 	}
-}
-
-// TestParser_detectLanguage_JavaScriptEdgeCase tests JavaScript vs Java detection.
-func TestParser_detectLanguage_JavaScriptEdgeCase(t *testing.T) {
-	tests := []struct {
-		name  string
-		query string
-		want  string
-	}{
-		{
-			name:  "javascript",
-			query: "javascript function",
-			want:  "javascript",
-		},
-		{
-			name:  "java not javascript",
-			query: "show me java class",
-			want:  "java",
-		},
-		{
-			name:  "java in javascript - should detect javascript",
-			query: "javascript java interop",
-			want:  "javascript",
-		},
-		{
-			name:  "js shorthand",
-			query: "show me js code",
-			want:  "javascript",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := detectLanguage(tt.query)
-			assert.Equal(t, tt.want, got)
-		})
-	}
-}
-
-// TestParser_detectLanguage_Python tests Python detection with py shorthand.
-func TestParser_detectLanguage_Python(t *testing.T) {
-	tests := []struct {
-		name  string
-		query string
-		want  string
-	}{
-		{
-			name:  "python full",
-			query: "python implementation",
-			want:  "python",
-		},
-		{
-			name:  "py shorthand",
-			query: "show me py code",
-			want:  "python",
-		},
-		{
-			name:  "py in word should not match",
-			query: "copy the file",
-			want:  "",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := detectLanguage(tt.query)
-			assert.Equal(t, tt.want, got)
-		})
-	}
-}
-
-// TestParser_detectLanguage_Node tests Node.js detection.
-func TestParser_detectLanguage_Node(t *testing.T) {
-	query := "show me node server code"
-	got := detectLanguage(query)
-	assert.Equal(t, "javascript", got)
-}
-
-// TestParser_detectLanguage_Rust tests Rust detection.
-func TestParser_detectLanguage_Rust(t *testing.T) {
-	query := "show me rust implementation"
-	got := detectLanguage(query)
-	assert.Equal(t, "rust", got)
 }
 
 func TestHandler_Query(t *testing.T) {
