@@ -490,7 +490,13 @@ func (h *IAMHandler) RegisterSelfBegin(w http.ResponseWriter, r *http.Request) {
 	// the broker's derived handle exist before the ceremony opens, and the
 	// ceremony is the invite path, which enrols only an existing pending
 	// account. Every failure from here on removes both again.
-	if err := h.provisionRegistration(ctx, tenantMgr, identityStore, sess); err != nil {
+	if err := h.provisionRegistration(ctx, tenantMgr, identityStore, sess, cfg.DefaultRole); err != nil {
+		var grantErr *SelfRegistrationRoleGrantError
+		if errors.As(err, &grantErr) {
+			RespondIAMError(w, r, http.StatusInternalServerError,
+				NewIAMAPIError(ErrInternalError, "registration could not grant the tenant's built-in roles"))
+			return
+		}
 		h.server.handleServiceError(w, r, err)
 		return
 	}
@@ -619,18 +625,8 @@ func (h *IAMHandler) RegisterSelfFinish(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	// Grant roles: Admin@<their-tenant> always, plus the configured default_role.
-	// It FAILS CLOSED. A creator without the Admin role owns a tenant nobody can
-	// administer, so a failed grant leaves no account and no tenant behind and
-	// mints nothing.
-	if err := grantSelfRegistrationRoles(ctx, identityStore, sess.tenantID, sess.userID, cfg.DefaultRole); err != nil {
-		h.discardRegistration(ctx, sess)
-		h.server.logger.WithError(err).Error("iam.self_registration: role grant failed, registration refused")
-		RespondIAMError(w, r, http.StatusInternalServerError,
-			NewIAMAPIError(ErrInternalError, "registration could not grant the tenant's built-in roles"))
-		return
-	}
-
+	// The roles were granted at begin, before the ceremony opened, so the
+	// ceremony's attestation gate held this administrator to the hardware bar.
 	if cfg.RequireAdminApproval {
 		RespondJSON(w, r, http.StatusOK, &SelfRegisterFinishResponse{
 			Status:   "pending",
@@ -907,7 +903,7 @@ const selfRegistrationSessionTTL = 5 * time.Minute
 // enrols only a pending account, and finish activates it when no gate holds
 // it. The handle is DERIVED, not the email address — a username may not
 // contain "@" (iam.validateUsername). A failure leaves nothing behind.
-func (h *IAMHandler) provisionRegistration(ctx context.Context, tenants iam.TenantManager, store *iam.IdentityStore, sess *registrationSession) error {
+func (h *IAMHandler) provisionRegistration(ctx context.Context, tenants iam.TenantManager, store *iam.IdentityStore, sess *registrationSession, defaultRole string) error {
 	// The isolation mode is recorded in the attributes; qrdb's per-tenant
 	// barrier path is assigned internally by Phase 2.5b.
 	if _, err := tenants.CreateTenant(ctx, iam.CreateTenantOptions{
@@ -937,6 +933,21 @@ func (h *IAMHandler) provisionRegistration(ctx context.Context, tenants iam.Tena
 		return err
 	}
 	sess.userID = user.ID
+
+	// Grant roles: Admin@<their-tenant> always, plus the configured
+	// default_role. They are granted HERE, before the ceremony opens, because
+	// the ceremony's attestation gate asks whether the account is
+	// administrative: an account with no roles yet reads as a regular user, so
+	// under a permissive tenant assurance a software authenticator would enrol
+	// and only then be made Admin. The account is still PENDING, so the roles
+	// grant nothing until finish activates it. It FAILS CLOSED: a creator
+	// without the Admin role owns a tenant nobody can administer, so a failed
+	// grant leaves no account and no tenant behind.
+	if err := grantSelfRegistrationRoles(ctx, store, sess.tenantID, sess.userID, defaultRole); err != nil {
+		h.discardRegistration(ctx, sess)
+		h.server.logger.WithError(err).Error("iam.self_registration: role grant failed, registration refused")
+		return err
+	}
 	return nil
 }
 
