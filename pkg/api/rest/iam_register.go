@@ -18,7 +18,6 @@ package rest
 import (
 	"context"
 	"errors"
-	"time"
 
 	"github.com/go-chi/chi/v5"
 )
@@ -32,9 +31,10 @@ func (s *Server) registerIAMRoutes(r chi.Router) {
 	// Store so lifecycle_iam_mtls.go can wire mTLS authenticators after startup.
 	s.iamHandler = h
 
-	// Discard the self-registrations a restart left unfinished, by the expiry
-	// recorded on each account. Sessions begun by this process are reaped by
-	// their own timer, so this runs once, detached from any request. The
+	// Discard the self-registrations a restart left unfinished, by the record
+	// each one keeps on its tenant. Sessions begun by this process are reaped
+	// by their own timer; the sweeper discards the expired ones now and arms a
+	// timer for each still inside its expiry, and Shutdown stops it. The
 	// stores are resolved here so the detached sweep reads nothing shared.
 	ctx := context.Background()
 	tenants, tenantErr := h.getTenantManager(ctx)
@@ -42,9 +42,11 @@ func (s *Server) registerIAMRoutes(r chi.Router) {
 	if err := errors.Join(tenantErr, storeErr); err != nil {
 		s.logger.WithError(err).Error("iam.self_registration: sweeping unfinished registrations failed")
 	} else {
+		sweeper := newRegistrationSweeper(tenants, store, s.logger)
+		s.registrationSweeper = sweeper
 		logger := s.logger
 		go func() {
-			if err := sweepRegistrations(ctx, tenants, store, time.Now()); err != nil {
+			if err := sweeper.sweep(ctx); err != nil {
 				logger.WithError(err).Error("iam.self_registration: sweeping unfinished registrations failed")
 			}
 		}()

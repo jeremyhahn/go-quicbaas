@@ -88,6 +88,23 @@ type Tenant struct {
 
 	// Updated is the last modification timestamp
 	Updated time.Time `json:"updated" yaml:"updated"`
+
+	// SelfRegistration, when set, records that self-service registration
+	// created this tenant and its registrant has not finished the ceremony.
+	// Only the broker writes it — CreateTenantOptions.SelfRegistration and
+	// UpdateTenantOptions.FinishSelfRegistration, which no transport maps — so
+	// it is the record a cleanup may trust to say the tenant is the
+	// registration's own. User attributes cannot serve: any caller who may
+	// update a user may set them.
+	SelfRegistration *TenantSelfRegistration `json:"self_registration,omitempty" yaml:"-"`
+}
+
+// TenantSelfRegistration is the broker's record of an unfinished
+// self-service registration on the tenant it created.
+type TenantSelfRegistration struct {
+	// Expires is when the unfinished registration is abandoned, and its
+	// tenant and account discarded.
+	Expires time.Time `json:"expires"`
 }
 
 // TenantSettings contains tenant-specific configuration options.
