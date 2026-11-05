@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- **The authorization endpoint, the code exchange and the refresh grant refuse a client from another tenant (go-quicbaas#1918).**
+
 ## [0.16.0-alpha] - 2026-10-18
 
 ### Fixed
