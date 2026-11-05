@@ -291,11 +291,12 @@ func (t *Transport) doRequest(ctx context.Context, service, method string, reqBo
 		}
 	}
 
-	// KV Put/Get/Delete are served by go-qrdb's native string-keyed tools;
-	// a request that is not the typed SDK struct keeps the generic path.
+	// Typed KV Put/Get/Delete go to quicbaas's service-backed batch tools,
+	// which build the canonical key (kv_handler.go); a request that is not
+	// the typed SDK struct keeps the generic path to the qrdb_* raw-key tools.
 	if verb, ok := kvVerbs[method]; ok && isMCPKVService(service) {
 		if args, typed := verb.args(reqBody); typed {
-			return t.requestKV(ctx, toolName, verb, args, reqBody)
+			return t.requestKV(ctx, verb, args)
 		}
 	}
 

@@ -16,7 +16,7 @@ package mcp
 import (
 	"context"
 	"encoding/base64"
-	"strconv"
+	"encoding/json"
 	"strings"
 
 	"github.com/mark3labs/mcp-go/mcp"
@@ -25,23 +25,26 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/service"
 )
 
-// The unified server serves KV over go-qrdb's native qrdb_put, qrdb_get and
-// qrdb_delete tools. They take a string "key", carry the value as standard
-// base64 in "value", and answer with plain text: "ok" for a write and the
-// base64 value for a read. The SDK's entity-typed requests are mapped onto
-// that schema here.
+// In a composed deployment the qrdb_put, qrdb_get and qrdb_delete names are
+// served by go-qrdb's native tools, which take a raw string "key": quicbaas's
+// keyspace never sees the entity type and ID, so no canonical key is built.
+// The SDK's typed KV Put, Get and Delete therefore call quicbaas's
+// service-backed batch tools with a single operation. The service builds the
+// canonical key from entityType and id, the same path REST and gRPC take, and
+// the tool answers with the service's JSON batch response.
 
-// kvVerb maps one KV method onto its qrdb tool's arguments and answer. args
+// kvVerb maps one KV method onto its batch tool, arguments and answer. args
 // reports false when req is not the method's typed SDK request.
 type kvVerb struct {
+	tool   string
 	args   func(req interface{}) (map[string]interface{}, bool)
-	result func(req interface{}, text string) (interface{}, error)
+	result func(text string) (interface{}, error)
 }
 
 var kvVerbs = map[string]kvVerb{
-	"Put":    {args: kvPutArgs, result: kvPutResult},
-	"Get":    {args: kvGetArgs, result: kvGetResult},
-	"Delete": {args: kvDeleteArgs, result: kvDeleteResult},
+	"Put":    {tool: "quicbaas_batch_put", args: kvPutArgs, result: kvPutResult},
+	"Get":    {tool: "quicbaas_batch_get", args: kvGetArgs, result: kvGetResult},
+	"Delete": {tool: "quicbaas_batch_delete", args: kvDeleteArgs, result: kvDeleteResult},
 }
 
 // isMCPKVService reports whether service names the KV service.
@@ -52,18 +55,39 @@ func isMCPKVService(service string) bool {
 	return service == "KV"
 }
 
-// requestKV calls a qrdb KV tool and decodes its text answer.
-func (t *Transport) requestKV(ctx context.Context, tool string, verb kvVerb, args map[string]interface{}, req interface{}) (interface{}, error) {
-	result, err := t.callToolResult(ctx, tool, args)
+// requestKV calls a KV batch tool and decodes its JSON answer.
+func (t *Transport) requestKV(ctx context.Context, verb kvVerb, args map[string]interface{}) (interface{}, error) {
+	result, err := t.callToolResult(ctx, verb.tool, args)
 	if err != nil {
 		return nil, err
 	}
-	return verb.result(req, firstText(result.Content))
+	return verb.result(firstText(result.Content))
 }
 
-// kvKey is the qrdb key an entity type and ID are stored under.
-func kvKey(entityType string, id uint64) string {
-	return entityType + "/" + strconv.FormatUint(id, 10)
+// kvOperation is one batch operation addressing an entity by type and ID.
+func kvOperation(entityType string, id uint64) map[string]interface{} {
+	return map[string]interface{}{"entityType": entityType, "id": id}
+}
+
+// kvBatchArgs wraps a single operation in the batch tools' arguments.
+func kvBatchArgs(op map[string]interface{}) map[string]interface{} {
+	return map[string]interface{}{"operations": []interface{}{op}}
+}
+
+// decodeKVAnswer decodes a batch tool's JSON answer into resp.
+func decodeKVAnswer(text, op string, resp interface{}) error {
+	if err := json.Unmarshal([]byte(text), resp); err != nil {
+		return errors.Wrap(err, errors.CodeInternal, op, "KV tool answered a result that is not the service batch response")
+	}
+	return nil
+}
+
+// singleKVResponse returns the one response a single-operation batch answers.
+func singleKVResponse[T any](op string, responses []*T) (*T, error) {
+	if len(responses) != 1 || responses[0] == nil {
+		return nil, errors.New(errors.CodeInternal, op, "KV tool answered a batch that does not hold exactly one response")
+	}
+	return responses[0], nil
 }
 
 func kvPutArgs(req interface{}) (map[string]interface{}, bool) {
@@ -71,14 +95,17 @@ func kvPutArgs(req interface{}) (map[string]interface{}, bool) {
 	if !ok || r == nil {
 		return nil, false
 	}
-	return map[string]interface{}{
-		"key":   kvKey(r.EntityType, r.ID),
-		"value": base64.StdEncoding.EncodeToString(r.Data),
-	}, true
+	op := kvOperation(r.EntityType, r.ID)
+	op["data"] = base64.StdEncoding.EncodeToString(r.Data)
+	return kvBatchArgs(op), true
 }
 
-func kvPutResult(req interface{}, _ string) (interface{}, error) {
-	return &service.PutResponse{ID: req.(*service.PutRequest).ID}, nil
+func kvPutResult(text string) (interface{}, error) {
+	var batch service.BatchPutResponse
+	if err := decodeKVAnswer(text, "mcp.kv.Put", &batch); err != nil {
+		return nil, err
+	}
+	return singleKVResponse("mcp.kv.Put", batch.Responses)
 }
 
 func kvGetArgs(req interface{}) (map[string]interface{}, bool) {
@@ -86,15 +113,15 @@ func kvGetArgs(req interface{}) (map[string]interface{}, bool) {
 	if !ok || r == nil {
 		return nil, false
 	}
-	return map[string]interface{}{"key": kvKey(r.EntityType, r.ID)}, true
+	return kvBatchArgs(kvOperation(r.EntityType, r.ID)), true
 }
 
-func kvGetResult(req interface{}, text string) (interface{}, error) {
-	data, err := base64.StdEncoding.DecodeString(text)
-	if err != nil {
-		return nil, errors.Wrap(err, errors.CodeInternal, "mcp.kv.Get", "qrdb_get answered a value that is not base64")
+func kvGetResult(text string) (interface{}, error) {
+	var batch service.BatchGetResponse
+	if err := decodeKVAnswer(text, "mcp.kv.Get", &batch); err != nil {
+		return nil, err
 	}
-	return &service.GetResponse{ID: req.(*service.GetRequest).ID, Data: data, Found: true}, nil
+	return singleKVResponse("mcp.kv.Get", batch.Responses)
 }
 
 func kvDeleteArgs(req interface{}) (map[string]interface{}, bool) {
@@ -102,11 +129,15 @@ func kvDeleteArgs(req interface{}) (map[string]interface{}, bool) {
 	if !ok || r == nil {
 		return nil, false
 	}
-	return map[string]interface{}{"key": kvKey(r.EntityType, r.ID)}, true
+	return kvBatchArgs(kvOperation(r.EntityType, r.ID)), true
 }
 
-func kvDeleteResult(interface{}, string) (interface{}, error) {
-	return &service.DeleteResponse{Deleted: true}, nil
+func kvDeleteResult(text string) (interface{}, error) {
+	var batch service.BatchDeleteResponse
+	if err := decodeKVAnswer(text, "mcp.kv.Delete", &batch); err != nil {
+		return nil, err
+	}
+	return singleKVResponse("mcp.kv.Delete", batch.Responses)
 }
 
 // firstText returns the first non-empty text content of a tool result.
