@@ -38,6 +38,15 @@
 //   - "quicbaas.Health/Check" -> "qrdb_health"
 //   - "quicbaas.KMS/GenerateKey" -> "quicbaas_kms_generate_key"
 //
+// The typed KV requests (*service.PutRequest, GetRequest, DeleteRequest) are
+// the exception. In a composed deployment the qrdb_put, qrdb_get and
+// qrdb_delete names are served by go-qrdb's native tools, which take a raw
+// string key, so the SDK sends typed KV calls as one-operation batches to
+// quicbaas's service-backed tools, where the service builds the canonical key:
+//   - typed "quicbaas.KV/Put" -> "quicbaas_batch_put"
+//   - typed "quicbaas.KV/Get" -> "quicbaas_batch_get"
+//   - typed "quicbaas.KV/Delete" -> "quicbaas_batch_delete"
+//
 // Usage:
 //
 //	cfg := &transport.Config{
