@@ -16,6 +16,7 @@ import (
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/config"
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
+	"github.com/jeremyhahn/go-quicbaas/pkg/iam/qrdbadapter"
 )
 
 // ceremonyRefusedError is the double's stand-in for go-xkms's
@@ -42,6 +43,12 @@ type xkmsCeremony struct {
 	raw         *iam.MemoryStorage
 	allowPublic bool
 	failFinish  bool
+
+	// gate, when set, is the real attestation gate the ceremony runs at
+	// finish against an authenticator of attestationType, as go-xkms's
+	// credential write-through does.
+	gate            *iam.WebAuthnAttestationGate
+	attestationType string
 
 	mu      sync.Mutex
 	invited map[string]bool // tenant|email -> ceremony opened by the invite path
@@ -106,6 +113,11 @@ func (c *xkmsCeremony) FinishRegistration(ctx context.Context, tenantID, email s
 func (c *xkmsCeremony) FinishInviteRegistration(ctx context.Context, tenantID, email string, _ map[string]interface{}) (*iam.AttestationResult, error) {
 	if c.failFinish {
 		return nil, &ceremonyRefusedError{reason: "attestation rejected"}
+	}
+	if c.gate != nil {
+		if _, err := c.gate.Evaluate(ctx, tenantID, email, c.attestationType, nil); err != nil {
+			return nil, err
+		}
 	}
 	user, err := c.store.GetUserByEmail(ctx, tenantID, email)
 	if err != nil || user.Lifecycle != iam.LifecyclePending {
@@ -290,4 +302,167 @@ func TestRegisterSelf_CeremonyNeverCreatesTheAccount(t *testing.T) {
 	w := selfRegFinish(t, handler, sessionID)
 	require.Equal(t, http.StatusOK, w.Code, "finish body: %s", w.Body.String())
 	require.Len(t, usersIn(t, handler, "acme-inc"), 1)
+}
+
+// adminResolver is the resolver go-xkms's credential write-through asks
+// whether an account is administrative, over the broker's own store.
+func adminResolver(t *testing.T, handler *IAMHandler) iam.WebAuthnAdminResolver {
+	t.Helper()
+	store, err := handler.getIdentityStore(context.Background())
+	require.NoError(t, err)
+	return iam.NewWebAuthnAdminResolver(store, qrdbadapter.WrapRole(store))
+}
+
+func holdsAdmin(t *testing.T, handler *IAMHandler, tenantID, email string) bool {
+	t.Helper()
+	isAdmin, err := adminResolver(t, handler).IsAdministrativeAccount(context.Background(), tenantID, email)
+	require.NoError(t, err)
+	return isAdmin
+}
+
+// The registrant is made Admin of the new tenant, so the ceremony must hold
+// them to the administrator hardware bar even where the tenant accepts any
+// authenticator. The gate asks the account's roles; they were granted after
+// the ceremony, so a software authenticator enrolled and then became Admin.
+func TestRegisterSelf_SoftwareAuthenticatorRefusedForAdmin(t *testing.T) {
+	handler := setupSelfRegHandler(t, brokerSelfRegConfig())
+	ceremony := newXKMSCeremony(handler.server.service.(*selfRegService), true)
+	ceremony.gate = iam.NewWebAuthnAttestationGate(iam.WebAuthnAssuranceAny, nil, adminResolver(t, handler))
+	ceremony.attestationType = "none"
+
+	sessionID := selfRegBegin(t, handler, "Acme Inc", "jane@acme.example")
+	require.True(t, holdsAdmin(t, handler, "acme-inc", "jane@acme.example"),
+		"the account holds Admin before the ceremony opens")
+
+	w := selfRegFinish(t, handler, sessionID)
+	require.NotEqual(t, http.StatusOK, w.Code, "a software authenticator must not enrol an administrator: %s", w.Body.String())
+	assert.Empty(t, tenantIDs(t, handler), "a refused administrator leaves no tenant")
+	assert.Empty(t, usersIn(t, handler, "acme-inc"), "a refused administrator leaves no account")
+}
+
+// A hardware authenticator passes the gate (the double stands in for a
+// vouched attestation chain by not refusing) and the registrant holds Admin.
+func TestRegisterSelf_HardwareAuthenticatorCompletesAsAdmin(t *testing.T) {
+	handler := setupSelfRegHandler(t, brokerSelfRegConfig())
+	newXKMSCeremony(handler.server.service.(*selfRegService), true)
+
+	sessionID := selfRegBegin(t, handler, "Acme Inc", "jane@acme.example")
+	w := selfRegFinish(t, handler, sessionID)
+	require.Equal(t, http.StatusOK, w.Code, "finish body: %s", w.Body.String())
+
+	assert.True(t, holdsAdmin(t, handler, "acme-inc", "jane@acme.example"))
+	users := usersIn(t, handler, "acme-inc")
+	require.Len(t, users, 1)
+	assert.Equal(t, iam.LifecycleActive, users[0].Lifecycle)
+}
+
+// afterExpiry is a sweep time past the expiry of a begin made now.
+func afterExpiry() time.Time { return time.Now().Add(selfRegistrationSessionTTL + time.Minute) }
+
+// A restart loses the in-process session and its timer; the account still
+// records that its ceremony is unfinished and when it expires.
+func TestSweepExpiredRegistrations_DiscardsAnExpiredCeremony(t *testing.T) {
+	handler := setupSelfRegHandler(t, brokerSelfRegConfig())
+	newXKMSCeremony(handler.server.service.(*selfRegService), true)
+	selfRegBegin(t, handler, "Acme Inc", "jane@acme.example")
+
+	require.NoError(t, handler.sweepExpiredRegistrations(context.Background(), afterExpiry()))
+
+	assert.Empty(t, tenantIDs(t, handler), "the sweep removes the tenant")
+	assert.Empty(t, usersIn(t, handler, "acme-inc"), "the sweep removes the account")
+}
+
+func TestSweepExpiredRegistrations_KeepsAnUnexpiredCeremony(t *testing.T) {
+	handler := setupSelfRegHandler(t, brokerSelfRegConfig())
+	newXKMSCeremony(handler.server.service.(*selfRegService), true)
+	sessionID := selfRegBegin(t, handler, "Acme Inc", "jane@acme.example")
+
+	require.NoError(t, handler.sweepExpiredRegistrations(context.Background(), time.Now()))
+
+	assert.Equal(t, []string{"acme-inc"}, tenantIDs(t, handler))
+	w := selfRegFinish(t, handler, sessionID)
+	assert.Equal(t, http.StatusOK, w.Code, "a ceremony inside its expiry still finishes: %s", w.Body.String())
+}
+
+// An account held for admin approval finished its ceremony: it is enrolled,
+// not abandoned, however long the approval takes.
+func TestSweepExpiredRegistrations_KeepsAnEnrolledPendingAccount(t *testing.T) {
+	cfg := brokerSelfRegConfig()
+	cfg.RequireAdminApproval = true
+	handler := setupSelfRegHandler(t, cfg)
+	newXKMSCeremony(handler.server.service.(*selfRegService), true)
+	sessionID := selfRegBegin(t, handler, "Acme Inc", "jane@acme.example")
+	w := selfRegFinish(t, handler, sessionID)
+	require.Equal(t, http.StatusOK, w.Code, "finish body: %s", w.Body.String())
+
+	require.NoError(t, handler.sweepExpiredRegistrations(context.Background(), afterExpiry()))
+
+	users := usersIn(t, handler, "acme-inc")
+	require.Len(t, users, 1, "an enrolled account awaiting approval is kept")
+	assert.Equal(t, iam.LifecyclePending, users[0].Lifecycle)
+	assert.Equal(t, registrationStateEnrolled, users[0].Attributes[registrationStateAttr])
+}
+
+func TestSweepExpiredRegistrations_KeepsAnAccountNotSelfRegistered(t *testing.T) {
+	handler := setupSelfRegHandler(t, brokerSelfRegConfig())
+	svc := handler.server.service.(*selfRegService)
+	ctx := context.Background()
+	_, err := svc.tenants.CreateTenant(ctx, iam.CreateTenantOptions{ID: "invited-co", Name: "Invited Co"})
+	require.NoError(t, err)
+	_, err = svc.store.CreateUser(ctx, "invited-co", iam.CreateUserOptions{
+		Email:     "bob@invited.example",
+		Username:  "bob",
+		Name:      "Bob",
+		Lifecycle: iam.LifecyclePending,
+		Attributes: map[string]string{
+			registrationStateAttr:   registrationStateCeremony,
+			registrationExpiresAttr: "not-a-time",
+		},
+	})
+	require.NoError(t, err)
+
+	require.NoError(t, handler.sweepExpiredRegistrations(ctx, afterExpiry()))
+
+	assert.Equal(t, []string{"invited-co"}, tenantIDs(t, handler))
+	assert.Len(t, usersIn(t, handler, "invited-co"), 1, "an invited pending account is not the sweep's")
+}
+
+// A tenant whose users cannot be listed is reported, and the sweep still
+// discards the expired registrations of the other tenants.
+func TestSweepExpiredRegistrations_ReturnsAListFailure(t *testing.T) {
+	handler := setupSelfRegHandler(t, brokerSelfRegConfig())
+	svc := handler.server.service.(*selfRegService)
+	newXKMSCeremony(svc, true)
+	selfRegBegin(t, handler, "Acme Inc", "jane@acme.example")
+	ctx := context.Background()
+	// A tenant record with no id: the store refuses to list its users.
+	require.NoError(t, svc.tenants.storage.CreateTenant(ctx, &iam.Tenant{Name: "Broken"}))
+
+	err := handler.sweepExpiredRegistrations(ctx, afterExpiry())
+
+	require.Error(t, err, "a tenant whose users cannot be listed is reported")
+	assert.Empty(t, usersIn(t, handler, "acme-inc"), "the other tenant's expired registration is still discarded")
+}
+
+// failingTenantList is a tenant manager whose tenants cannot be listed.
+type failingTenantList struct{ *testTenantManager }
+
+func (failingTenantList) ListTenants(context.Context, iam.ListOptions) ([]*iam.Tenant, error) {
+	return nil, &ceremonyRefusedError{reason: "tenant list unavailable"}
+}
+
+type failingTenantListService struct{ *selfRegService }
+
+func (s failingTenantListService) GetTenantManager(context.Context) (TenantManager, error) {
+	return failingTenantList{s.tenants}, nil
+}
+
+func TestSweepExpiredRegistrations_ReturnsATenantListFailure(t *testing.T) {
+	handler := setupSelfRegHandler(t, brokerSelfRegConfig())
+	handler.server.service = failingTenantListService{handler.server.service.(*selfRegService)}
+
+	err := handler.sweepExpiredRegistrations(context.Background(), afterExpiry())
+
+	var listErr *ceremonyRefusedError
+	assert.ErrorAs(t, err, &listErr, "the tenant list failure is returned, not dropped")
 }

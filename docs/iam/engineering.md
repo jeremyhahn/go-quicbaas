@@ -1745,8 +1745,13 @@ registration must prove.
 **`any` never applies to an administrative account.** An account holding `Admin`
 or `SO` is always required to prove hardware, so loosening the tenant policy
 cannot loosen the control that guards the platform. A registrant the server
-cannot identify — including one whose account does not exist yet, which is the
-case during self-service registration — is held to the administrator bar.
+cannot identify is held to the administrator bar.
+
+Self-service registration grants the registrant's roles, `Admin` included, to
+the pending account before the ceremony opens, so the ceremony holds the
+registrant to the administrator bar. Each unfinished registration records its
+state and expiry on the account, and the server sweeps the ones past their
+expiry, with their tenant, at startup.
 
 `insecure-allow-software-administrators` is the one policy that lets a software
 authenticator become an administrator credential. It exists because our own
