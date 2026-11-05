@@ -17,6 +17,8 @@ import (
 	"bytes"
 	"context"
 	"encoding/base64"
+	"encoding/json"
+	"strconv"
 	"sync"
 	"testing"
 	"time"
@@ -28,9 +30,10 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/transport"
 )
 
-// qrdbKVServer mirrors go-qrdb's native qrdb_put, qrdb_get and qrdb_delete
-// tools (go-qrdb pkg/api/mcp tools_kv.go): a required string "key", a
-// required base64 "value" on put, and plain-text answers.
+// qrdbKVServer mirrors the quicbaas server's qrdb_put, qrdb_get and
+// qrdb_delete tools (pkg/api/mcp tools.go executePut, executeGet,
+// executeDelete): an "entity_type" and numeric "id", base64 "data" on put,
+// and the service response marshalled as JSON text.
 type qrdbKVServer struct {
 	mu    sync.Mutex
 	store map[string][]byte
@@ -45,54 +48,54 @@ func (s *qrdbKVServer) record(tool string, req mcp.CallToolRequest) {
 	s.args[tool] = req.GetArguments()
 }
 
+// entity reads the entity type and ID a request addresses, and the canonical
+// key the service would build for them.
+func entity(req mcp.CallToolRequest) (uint64, string) {
+	id := uint64(mcp.ParseFloat64(req, "id", 0))
+	return id, mcp.ParseString(req, "entity_type", "") + ":" + strconv.FormatUint(id, 10)
+}
+
+func jsonAnswer(v interface{}) (*mcp.CallToolResult, error) {
+	out, err := json.Marshal(v)
+	if err != nil {
+		return nil, err
+	}
+	return mcp.NewToolResultText(string(out)), nil
+}
+
 func (s *qrdbKVServer) put(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	s.record("qrdb_put", req)
-	key := mcp.ParseString(req, "key", "")
-	if key == "" {
-		return mcp.NewToolResultError("key is required"), nil
-	}
-	valueArg := mcp.ParseString(req, "value", "")
-	if valueArg == "" {
-		return mcp.NewToolResultError("value is required"), nil
-	}
-	value, err := base64.StdEncoding.DecodeString(valueArg)
+	id, key := entity(req)
+	value, err := base64.StdEncoding.DecodeString(mcp.ParseString(req, "data", ""))
 	if err != nil {
-		return mcp.NewToolResultError("value is not base64"), nil
+		return mcp.NewToolResultError("data is not base64"), nil
 	}
 	s.mu.Lock()
 	s.store[key] = value
 	s.mu.Unlock()
-	return mcp.NewToolResultText("ok"), nil
+	return jsonAnswer(&service.PutResponse{ID: id, Version: 1, Timestamp: 42})
 }
 
 func (s *qrdbKVServer) get(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	s.record("qrdb_get", req)
-	key := mcp.ParseString(req, "key", "")
-	if key == "" {
-		return mcp.NewToolResultError("key is required"), nil
-	}
+	id, key := entity(req)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.getAnswer != "" {
 		return mcp.NewToolResultText(s.getAnswer), nil
 	}
 	value, ok := s.store[key]
-	if !ok {
-		return mcp.NewToolResultError("key not found"), nil
-	}
-	return mcp.NewToolResultText(base64.StdEncoding.EncodeToString(value)), nil
+	return jsonAnswer(&service.GetResponse{ID: id, Data: value, Version: 1, Found: ok})
 }
 
 func (s *qrdbKVServer) delete(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	s.record("qrdb_delete", req)
-	key := mcp.ParseString(req, "key", "")
-	if key == "" {
-		return mcp.NewToolResultError("key is required"), nil
-	}
+	_, key := entity(req)
 	s.mu.Lock()
+	_, ok := s.store[key]
 	delete(s.store, key)
 	s.mu.Unlock()
-	return mcp.NewToolResultText("ok"), nil
+	return jsonAnswer(&service.DeleteResponse{Deleted: ok, Timestamp: 43})
 }
 
 func newQRDBKVTransport(t *testing.T) (*Transport, *qrdbKVServer) {
@@ -118,6 +121,26 @@ func newQRDBKVTransport(t *testing.T) (*Transport, *qrdbKVServer) {
 	return tr, kv
 }
 
+// assertEntityArgs checks a tool received exactly the entity type, the
+// numeric ID and the extra arguments, and no "key".
+func assertEntityArgs(t *testing.T, tool string, got map[string]interface{}, extra map[string]interface{}) {
+	t.Helper()
+	if _, ok := got["key"]; ok {
+		t.Errorf("%s args carry a key: %v", tool, got)
+	}
+	if got["entity_type"] != "users" || got["id"] != float64(7) {
+		t.Errorf("%s args = %v, want entity_type users and numeric id 7", tool, got)
+	}
+	if len(got) != 2+len(extra) {
+		t.Errorf("%s args = %v, want only entity_type, id and %v", tool, got, extra)
+	}
+	for name, want := range extra {
+		if got[name] != want {
+			t.Errorf("%s arg %s = %v, want %v", tool, name, got[name], want)
+		}
+	}
+}
+
 func TestKV_PutGetDelete_RoundTripOverQRDBTools(t *testing.T) {
 	tr, kv := newQRDBKVTransport(t)
 	ctx := context.Background()
@@ -128,14 +151,12 @@ func TestKV_PutGetDelete_RoundTripOverQRDBTools(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Put: %v", err)
 	}
-	if got := putResp.(*service.PutResponse).ID; got != 7 {
-		t.Errorf("Put ID = %d, want 7", got)
+	put := putResp.(*service.PutResponse)
+	if put.ID != 7 || put.Version != 1 || put.Timestamp != 42 {
+		t.Errorf("Put = %+v, want the server's ID 7 version 1 timestamp 42", put)
 	}
-	wantPut := map[string]interface{}{"key": "users/7", "value": base64.StdEncoding.EncodeToString(data)}
-	if len(kv.args["qrdb_put"]) != len(wantPut) ||
-		kv.args["qrdb_put"]["key"] != wantPut["key"] || kv.args["qrdb_put"]["value"] != wantPut["value"] {
-		t.Errorf("qrdb_put args = %v, want %v", kv.args["qrdb_put"], wantPut)
-	}
+	assertEntityArgs(t, "qrdb_put", kv.args["qrdb_put"],
+		map[string]interface{}{"data": base64.StdEncoding.EncodeToString(data)})
 
 	getResp, err := tr.Request(ctx, "quicbaas.KV", "Get", &service.GetRequest{EntityType: "users", ID: 7})
 	if err != nil {
@@ -145,22 +166,31 @@ func TestKV_PutGetDelete_RoundTripOverQRDBTools(t *testing.T) {
 	if !got.Found || got.ID != 7 || !bytes.Equal(got.Data, data) {
 		t.Errorf("Get = %+v, want found ID 7 data %q", got, data)
 	}
-	if len(kv.args["qrdb_get"]) != 1 || kv.args["qrdb_get"]["key"] != "users/7" {
-		t.Errorf("qrdb_get args = %v, want only key users/7", kv.args["qrdb_get"])
-	}
+	assertEntityArgs(t, "qrdb_get", kv.args["qrdb_get"], nil)
 
 	delResp, err := tr.Request(ctx, "quicbaas.KV", "Delete", &service.DeleteRequest{EntityType: "users", ID: 7})
 	if err != nil {
 		t.Fatalf("Delete: %v", err)
 	}
-	if !delResp.(*service.DeleteResponse).Deleted {
-		t.Error("Delete reported not deleted")
+	if del := delResp.(*service.DeleteResponse); !del.Deleted || del.Timestamp != 43 {
+		t.Errorf("Delete = %+v, want deleted at timestamp 43", del)
 	}
-	if len(kv.args["qrdb_delete"]) != 1 || kv.args["qrdb_delete"]["key"] != "users/7" {
-		t.Errorf("qrdb_delete args = %v, want only key users/7", kv.args["qrdb_delete"])
+	assertEntityArgs(t, "qrdb_delete", kv.args["qrdb_delete"], nil)
+
+	// The server reports absence; the SDK keeps Found and Deleted as sent.
+	getResp, err = tr.Request(ctx, "quicbaas.KV", "Get", &service.GetRequest{EntityType: "users", ID: 7})
+	if err != nil {
+		t.Fatalf("Get after Delete: %v", err)
 	}
-	if _, err := tr.Request(ctx, "quicbaas.KV", "Get", &service.GetRequest{EntityType: "users", ID: 7}); err == nil {
-		t.Error("Get after Delete succeeded, want the tool's not-found error")
+	if getResp.(*service.GetResponse).Found {
+		t.Error("Get after Delete reported found")
+	}
+	delResp, err = tr.Request(ctx, "quicbaas.KV", "Delete", &service.DeleteRequest{EntityType: "users", ID: 7})
+	if err != nil {
+		t.Fatalf("second Delete: %v", err)
+	}
+	if delResp.(*service.DeleteResponse).Deleted {
+		t.Error("second Delete reported deleted")
 	}
 }
 
@@ -169,15 +199,26 @@ func TestKV_Errors(t *testing.T) {
 	ctx := context.Background()
 
 	// A request that is not the typed SDK struct passes through unchanged.
-	if _, err := tr.Request(ctx, "quicbaas.KV", "Put", map[string]interface{}{"key": "raw"}); err == nil {
-		t.Error("raw Put without a value succeeded, want the tool's value-required error")
+	if _, err := tr.Request(ctx, "quicbaas.KV", "Put", map[string]interface{}{"data": "not base64!"}); err == nil {
+		t.Error("raw Put with non-base64 data succeeded, want the tool's error")
 	}
-	if kv.args["qrdb_put"]["key"] != "raw" {
-		t.Errorf("raw Put args = %v, want key raw passed through", kv.args["qrdb_put"])
+	if kv.args["qrdb_put"]["data"] != "not base64!" {
+		t.Errorf("raw Put args = %v, want data passed through", kv.args["qrdb_put"])
 	}
 
-	kv.getAnswer = "not base64!"
+	kv.getAnswer = "not json"
 	if _, err := tr.Request(ctx, "quicbaas.KV", "Get", &service.GetRequest{EntityType: "users", ID: 1}); err == nil {
-		t.Error("Get with a non-base64 answer succeeded, want an error")
+		t.Error("Get with an undecodable answer succeeded, want an error")
+	}
+}
+
+func TestKVResult_UndecodableAnswer(t *testing.T) {
+	decoders := map[string]func(interface{}, string) (interface{}, error){
+		"Put": kvPutResult, "Get": kvGetResult, "Delete": kvDeleteResult,
+	}
+	for name, decode := range decoders {
+		if _, err := decode(nil, "ok"); err == nil {
+			t.Errorf("%s decoded the answer %q, want an error", name, "ok")
+		}
 	}
 }
