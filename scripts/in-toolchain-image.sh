@@ -47,6 +47,10 @@
 # scripts/reap-stale-ci-stacks.sh reaps (default <checkout dir>-ci-, which in CI
 # is <repo>-ci-), and is removed on every exit. IN_IMAGE_UID is the non-root
 # uid the command runs as (default 10001; devcontainer.md §5: any non-root uid).
+#
+# IN_IMAGE_MEMORY caps the container's memory and swap (bytes, or a size with m
+# or g, e.g. 16g; default the caller's cgroup memory.max, or 8g when unbounded).
+# CI_CGROUP_PARENT, when set, is the container's --cgroup-parent.
 set -euo pipefail
 
 if [ "$#" -lt 2 ]; then
@@ -77,12 +81,27 @@ case $class in
   pr | main) ;;
   *) echo "CI_CACHE_CLASS must be pr or main: $class" >&2; exit 2 ;;
 esac
+memory=${IN_IMAGE_MEMORY:-}
+if [ -z "$memory" ]; then
+  limit=max
+  if [ -r /sys/fs/cgroup/memory.max ]; then read -r limit < /sys/fs/cgroup/memory.max; fi
+  case $limit in
+    max | "" | *[!0-9]*) memory=8g ;;
+    *) memory=$limit ;;
+  esac
+fi
+if ! [[ $memory =~ ^[1-9][0-9]*[mg]?$ ]]; then
+  echo "IN_IMAGE_MEMORY must be a size in bytes, m or g, e.g. 16g: $memory" >&2
+  exit 2
+fi
 args=(
   --name "$name"
   --init
   --cap-drop ALL
   --security-opt no-new-privileges:true
   --pids-limit 4096
+  --memory "$memory"
+  --memory-swap "$memory"
   --ulimit memlock=67108864:67108864
   --ulimit core=1048576:1048576
   --ulimit nofile=65536:65536
@@ -97,6 +116,8 @@ args=(
   --env GOTMPDIR=/var/tmp
   --env CI="${CI:-}"
 )
+# The sidecar is then charged to the runner's slice, not the daemon root.
+if [ -n "${CI_CGROUP_PARENT:-}" ]; then args+=(--cgroup-parent "$CI_CGROUP_PARENT"); fi
 modcache=/tmp/gomodcache
 if [ "$cache" = on ]; then
   vols="${prefix}cache-${class}"
