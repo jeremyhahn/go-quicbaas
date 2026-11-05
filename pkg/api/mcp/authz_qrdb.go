@@ -89,6 +89,9 @@ var qrdbToolExactMapping = map[string]qrdbToolResource{
 	"qrdb_list":             {"kv", "list"},
 	"qrdb_put":              {"kv", "put"},
 	"qrdb_delete":           {"kv", "delete"},
+	"quicbaas_kv_get":       {"kv", "get"},
+	"quicbaas_kv_put":       {"kv", "put"},
+	"quicbaas_kv_delete":    {"kv", "delete"},
 
 	// Transaction
 	"quicbaas_transaction": {"transaction", "execute"},

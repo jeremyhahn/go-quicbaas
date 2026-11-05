@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"strconv"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -14,119 +15,100 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 )
 
-// Delete removes an entity from the shared in-memory map, so a record the
-// quicbaas_batch_delete tool removes is gone for the service's own Get.
-func (s *kvStoreService) Delete(_ context.Context, req *service.DeleteRequest) (*service.DeleteResponse, error) {
-	key := kvStoreKey(req.EntityType, req.ID)
-	_, found := s.entries[key]
-	delete(s.entries, key)
-	return &service.DeleteResponse{Deleted: found}, nil
-}
+// These tests drive the quicbaas_kv_* tools with the exact arguments the Go
+// SDK's MCP transport sends (sdk/go/transport/mcp kv_handler.go kvArgs) and
+// decode the answer text the way the SDK does, so a drift between the two
+// sides of the wire fails here. The root module cannot import sdk/go, so the
+// SDK's shapes are restated below.
 
-// BatchGet answers each get from the shared map, as the service's batch
-// layer does: one GetResponse per request, Found=false when it is missing.
-func (s *kvStoreService) BatchGet(ctx context.Context, req *service.BatchGetRequest) (*service.BatchGetResponse, error) {
-	resp := &service.BatchGetResponse{}
-	for _, get := range req.Requests {
-		getResp, err := s.Get(ctx, get)
-		if err != nil {
-			return nil, err
-		}
-		resp.Responses = append(resp.Responses, getResp)
+// sdkKVArgs is the argument map kv_handler.go's kvArgs builds.
+func sdkKVArgs(entityType string, id, shardID uint64, consistency service.ConsistencyLevel) map[string]interface{} {
+	return map[string]interface{}{
+		"entity_type": entityType,
+		"id":          strconv.FormatUint(id, 10),
+		"shard_id":    strconv.FormatUint(shardID, 10),
+		"consistency": strconv.Itoa(int(consistency)),
 	}
-	return resp, nil
 }
 
-// BatchDelete removes each entity from the shared map.
-func (s *kvStoreService) BatchDelete(ctx context.Context, req *service.BatchDeleteRequest) (*service.BatchDeleteResponse, error) {
-	resp := &service.BatchDeleteResponse{}
-	for _, del := range req.Requests {
-		delResp, err := s.Delete(ctx, del)
-		if err != nil {
-			return nil, err
-		}
-		resp.Responses = append(resp.Responses, delResp)
-	}
-	return resp, nil
+// sdkPutAnswer, sdkGetAnswer and sdkDeleteAnswer are the shapes the SDK
+// decodes the tools' answers into.
+type sdkPutAnswer struct {
+	ID        uint64 `json:"id,string"`
+	Version   uint64 `json:"version,string"`
+	Timestamp int64  `json:"timestamp"`
+	LeaderID  uint64 `json:"leader_id,string"`
 }
 
-// sdkBatchArgs builds the arguments the Go SDK's MCP transport sends for a
-// typed KV call (sdk/go/transport/mcp kv_handler.go kvPutArgs, kvGetArgs and
-// kvDeleteArgs, which the root module cannot import) and passes them through
-// JSON, as they cross the wire.
-func sdkBatchArgs(t *testing.T, entityType string, id uint64, data []byte) map[string]interface{} {
+type sdkGetAnswer struct {
+	ID        uint64 `json:"id,string"`
+	Found     bool   `json:"found"`
+	Data      []byte `json:"data"`
+	Version   uint64 `json:"version,string"`
+	Timestamp int64  `json:"timestamp"`
+}
+
+type sdkDeleteAnswer struct {
+	Deleted   bool  `json:"deleted"`
+	Timestamp int64 `json:"timestamp"`
+}
+
+// sdkKVCall runs a tool with SDK arguments, renders the result as the server's
+// text content (pkg/apimodule module_mcp.go json.Marshal) and decodes it into
+// the SDK's shape.
+func sdkKVCall(t *testing.T, registry *ToolRegistry, tool string, args map[string]interface{}, out interface{}) {
 	t.Helper()
-	op := map[string]interface{}{"entityType": entityType, "id": id}
-	if data != nil {
-		op["data"] = base64.StdEncoding.EncodeToString(data)
-	}
-	raw, err := json.Marshal(map[string]interface{}{"operations": []interface{}{op}})
+	result, err := registry.ExecuteTool(context.Background(), tool, args)
 	require.NoError(t, err)
-	var wire map[string]interface{}
-	require.NoError(t, json.Unmarshal(raw, &wire))
-	return wire
+	text, err := json.Marshal(result)
+	require.NoError(t, err)
+	require.NoError(t, json.Unmarshal(text, out), "answer %s is not the SDK's shape", text)
 }
 
-// decodeToolAnswer decodes a tool result the way the SDK does: from the JSON
-// the server sends into the service batch response type.
-func decodeToolAnswer(t *testing.T, result interface{}, resp interface{}) {
-	t.Helper()
-	raw, err := json.Marshal(result)
-	require.NoError(t, err)
-	require.NoError(t, json.Unmarshal(raw, resp))
-}
+func TestKVSDKRoundTrip_PutGetDeleteGet(t *testing.T) {
+	registry, svc := newKVRecordingRegistry(t)
+	const id = uint64(18446744073709551557)
+	data := []byte{0x00, 0xff, 'v'}
 
-func TestKVSDKRoundTrip_PutAndDeleteReachServiceGet(t *testing.T) {
-	registry, store := newKVStoreRegistry(t)
-	ctx := context.Background()
-	data := []byte{0x00, 0x01, 0xfe}
+	putArgs := sdkKVArgs("users", id, 3, service.ConsistencyLevelStrong)
+	putArgs["data"] = base64.StdEncoding.EncodeToString(data)
+	var put sdkPutAnswer
+	sdkKVCall(t, registry, "quicbaas_kv_put", putArgs, &put)
+	assert.Equal(t, id, put.ID)
+	assert.Equal(t, uint64(1<<60+1), put.Version)
+	assert.Equal(t, uint64(1<<63+5), put.LeaderID)
 
-	result, err := registry.ExecuteTool(ctx, "quicbaas_batch_put", sdkBatchArgs(t, "users", 7, data))
-	require.NoError(t, err)
-	var put service.BatchPutResponse
-	decodeToolAnswer(t, result, &put)
-	require.Len(t, put.Responses, 1)
-	assert.Equal(t, uint64(7), put.Responses[0].ID)
-
-	got, err := store.Get(ctx, &service.GetRequest{EntityType: "users", ID: 7})
-	require.NoError(t, err)
-	assert.True(t, got.Found, "service Get must find the record the SDK put")
+	var got sdkGetAnswer
+	sdkKVCall(t, registry, "quicbaas_kv_get", sdkKVArgs("users", id, 3, service.ConsistencyLevelStrong), &got)
+	assert.True(t, got.Found)
+	assert.Equal(t, id, got.ID)
 	assert.Equal(t, data, got.Data)
 
-	result, err = registry.ExecuteTool(ctx, "quicbaas_batch_get", sdkBatchArgs(t, "users", 7, nil))
-	require.NoError(t, err)
-	var read service.BatchGetResponse
-	decodeToolAnswer(t, result, &read)
-	require.Len(t, read.Responses, 1)
-	assert.True(t, read.Responses[0].Found)
-	assert.Equal(t, data, read.Responses[0].Data)
+	var del sdkDeleteAnswer
+	sdkKVCall(t, registry, "quicbaas_kv_delete", sdkKVArgs("users", id, 3, service.ConsistencyLevelStrong), &del)
+	assert.True(t, del.Deleted)
 
-	result, err = registry.ExecuteTool(ctx, "quicbaas_batch_delete", sdkBatchArgs(t, "users", 7, nil))
-	require.NoError(t, err)
-	var del service.BatchDeleteResponse
-	decodeToolAnswer(t, result, &del)
-	require.Len(t, del.Responses, 1)
-	assert.True(t, del.Responses[0].Deleted)
+	var miss sdkGetAnswer
+	sdkKVCall(t, registry, "quicbaas_kv_get", sdkKVArgs("users", id, 3, service.ConsistencyLevelStrong), &miss)
+	assert.False(t, miss.Found, "a deleted entity reads as a miss")
+	assert.Nil(t, miss.Data)
 
-	got, err = store.Get(ctx, &service.GetRequest{EntityType: "users", ID: 7})
-	require.NoError(t, err)
-	assert.False(t, got.Found, "service Get must not find the record the SDK deleted")
-
-	result, err = registry.ExecuteTool(ctx, "quicbaas_batch_get", sdkBatchArgs(t, "users", 7, nil))
-	require.NoError(t, err)
-	read = service.BatchGetResponse{}
-	decodeToolAnswer(t, result, &read)
-	require.Len(t, read.Responses, 1)
-	assert.False(t, read.Responses[0].Found, "a deleted entity reads back as Found=false")
+	require.Len(t, svc.puts, 1)
+	assert.Equal(t, id, svc.puts[0].ID)
+	assert.Equal(t, uint64(3), svc.puts[0].ShardID)
+	assert.Equal(t, service.ConsistencyLevelStrong, svc.puts[0].Consistency)
+	for _, req := range svc.gets {
+		assert.Equal(t, uint64(3), req.ShardID)
+	}
+	require.Len(t, svc.deletes, 1)
+	assert.Equal(t, uint64(3), svc.deletes[0].ShardID)
 }
 
-func TestKVSDKRoundTrip_MissingIDIsRejected(t *testing.T) {
-	registry, _ := newKVStoreRegistry(t)
+func TestKVSDKRoundTrip_ServiceErrorIsNotAMiss(t *testing.T) {
+	registry, svc := newKVRecordingRegistry(t)
+	svc.getErr = kvServiceTestError{}
 
-	args := sdkBatchArgs(t, "users", 7, []byte("v"))
-	delete(args["operations"].([]interface{})[0].(map[string]interface{}), "id")
-	_, err := registry.ExecuteTool(context.Background(), "quicbaas_batch_put", args)
-	var parseErr *BatchOperationParseError
-	require.ErrorAs(t, err, &parseErr)
-	assert.Equal(t, "id", parseErr.Field)
+	_, err := registry.ExecuteTool(context.Background(), "quicbaas_kv_get",
+		sdkKVArgs("users", 7, 0, service.ConsistencyLevelUnspecified))
+	require.ErrorIs(t, err, kvServiceTestError{}, "the SDK must see a tool error, never found:false")
 }

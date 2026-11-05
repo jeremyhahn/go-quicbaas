@@ -18,7 +18,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
-	"fmt"
+	"strconv"
 	"sync"
 	"testing"
 	"time"
@@ -30,114 +30,92 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/transport"
 )
 
-// batchKVServer mirrors quicbaas's service-backed quicbaas_batch_put,
-// quicbaas_batch_get and quicbaas_batch_delete tools (pkg/api/mcp tools.go
-// executeBatch*): an "operations" array of {entityType, id, data} objects in,
-// and the service's batch response as JSON text out. It also serves qrdb_put,
-// so a request that is not the typed SDK struct can be seen to keep the
-// generic path.
-type batchKVServer struct {
+// quicbaasKVServer mirrors quicbaas's quicbaas_kv_put, quicbaas_kv_get and
+// quicbaas_kv_delete tools (pkg/api/mcp kv_tools.go): entity_type plus
+// decimal-string id, shard_id and consistency, base64 data on put, and JSON
+// answers whose uint64 fields are decimal strings.
+type quicbaasKVServer struct {
 	mu    sync.Mutex
 	store map[string][]byte
 	args  map[string]map[string]interface{}
-	// answer, when set, replaces every batch tool's answer text.
-	answer string
+	// getAnswer, when set, replaces quicbaas_kv_get's answer text.
+	getAnswer string
+	// getError, when set, makes quicbaas_kv_get answer a tool error.
+	getError string
 }
 
-func (s *batchKVServer) record(tool string, req mcp.CallToolRequest) {
+func (s *quicbaasKVServer) record(tool string, req mcp.CallToolRequest) string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.args[tool] = req.GetArguments()
+	return mcp.ParseString(req, "entity_type", "") + ":" + mcp.ParseString(req, "id", "")
 }
 
-// operation returns the store key and data of the request's single operation.
-func (s *batchKVServer) operation(req mcp.CallToolRequest) (string, string, error) {
-	ops, ok := req.GetArguments()["operations"].([]interface{})
-	if !ok || len(ops) != 1 {
-		return "", "", fmt.Errorf("operations must hold one operation, got %v", req.GetArguments()["operations"])
-	}
-	op, ok := ops[0].(map[string]interface{})
-	if !ok {
-		return "", "", fmt.Errorf("operation must be an object, got %T", ops[0])
-	}
-	entityType, _ := op["entityType"].(string)
-	id, ok := op["id"].(float64)
-	if entityType == "" || !ok {
-		return "", "", fmt.Errorf("operation needs entityType and a numeric id, got %v", op)
-	}
-	data, _ := op["data"].(string)
-	return fmt.Sprintf("%s:%d", entityType, uint64(id)), data, nil
-}
-
-// answerJSON answers v as the tool's JSON text, or the scripted answer.
-func (s *batchKVServer) answerJSON(v interface{}) (*mcp.CallToolResult, error) {
-	s.mu.Lock()
-	answer := s.answer
-	s.mu.Unlock()
-	if answer != "" {
-		return mcp.NewToolResultText(answer), nil
-	}
-	raw, err := json.Marshal(v)
+func jsonAnswer(answer map[string]interface{}) (*mcp.CallToolResult, error) {
+	text, err := json.Marshal(answer)
 	if err != nil {
 		return nil, err
 	}
-	return mcp.NewToolResultText(string(raw)), nil
+	return mcp.NewToolResultText(string(text)), nil
 }
 
-func (s *batchKVServer) put(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	s.record("quicbaas_batch_put", req)
-	key, dataArg, err := s.operation(req)
+func (s *quicbaasKVServer) put(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	key := s.record("quicbaas_kv_put", req)
+	value, err := base64.StdEncoding.DecodeString(mcp.ParseString(req, "data", ""))
 	if err != nil {
-		return mcp.NewToolResultError(err.Error()), nil
-	}
-	data, err := base64.StdEncoding.DecodeString(dataArg)
-	if err != nil || dataArg == "" {
-		return mcp.NewToolResultError("data must be base64-encoded"), nil
+		return mcp.NewToolResultError("data is not base64"), nil
 	}
 	s.mu.Lock()
-	s.store[key] = data
+	s.store[key] = value
 	s.mu.Unlock()
-	return s.answerJSON(&service.BatchPutResponse{Responses: []*service.PutResponse{{ID: 7, Version: 1}}})
+	return jsonAnswer(map[string]interface{}{
+		"id":        mcp.ParseString(req, "id", ""),
+		"version":   "18446744073709551615",
+		"timestamp": 1700000000,
+		"leader_id": "9223372036854775813",
+	})
 }
 
-func (s *batchKVServer) get(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	s.record("quicbaas_batch_get", req)
-	key, _, err := s.operation(req)
-	if err != nil {
-		return mcp.NewToolResultError(err.Error()), nil
-	}
+func (s *quicbaasKVServer) get(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	key := s.record("quicbaas_kv_get", req)
 	s.mu.Lock()
-	data, found := s.store[key]
-	s.mu.Unlock()
-	return s.answerJSON(&service.BatchGetResponse{Responses: []*service.GetResponse{{ID: 7, Data: data, Found: found}}})
+	defer s.mu.Unlock()
+	if s.getError != "" {
+		return mcp.NewToolResultError(s.getError), nil
+	}
+	if s.getAnswer != "" {
+		return mcp.NewToolResultText(s.getAnswer), nil
+	}
+	id := mcp.ParseString(req, "id", "")
+	value, ok := s.store[key]
+	if !ok {
+		return jsonAnswer(map[string]interface{}{"id": id, "found": false, "version": "0", "timestamp": 0})
+	}
+	return jsonAnswer(map[string]interface{}{
+		"id":        id,
+		"found":     true,
+		"data":      base64.StdEncoding.EncodeToString(value),
+		"version":   "3",
+		"timestamp": 1700000000,
+	})
 }
 
-func (s *batchKVServer) delete(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	s.record("quicbaas_batch_delete", req)
-	key, _, err := s.operation(req)
-	if err != nil {
-		return mcp.NewToolResultError(err.Error()), nil
-	}
+func (s *quicbaasKVServer) delete(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	key := s.record("quicbaas_kv_delete", req)
 	s.mu.Lock()
 	_, found := s.store[key]
 	delete(s.store, key)
 	s.mu.Unlock()
-	return s.answerJSON(&service.BatchDeleteResponse{Responses: []*service.DeleteResponse{{Deleted: found}}})
+	return jsonAnswer(map[string]interface{}{"deleted": found, "timestamp": 1700000000})
 }
 
-func (s *batchKVServer) rawPut(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	s.record("qrdb_put", req)
-	return mcp.NewToolResultError("value is required"), nil
-}
-
-func newBatchKVTransport(t *testing.T) (*Transport, *batchKVServer) {
+func newQuicbaasKVTransport(t *testing.T) (*Transport, *quicbaasKVServer) {
 	t.Helper()
-	kv := &batchKVServer{store: map[string][]byte{}, args: map[string]map[string]interface{}{}}
+	kv := &quicbaasKVServer{store: map[string][]byte{}, args: map[string]map[string]interface{}{}}
 	srv := mcpserver.NewMCPServer("TestServer", "1.0.0")
-	srv.AddTool(mcp.NewTool("quicbaas_batch_put"), kv.put)
-	srv.AddTool(mcp.NewTool("quicbaas_batch_get"), kv.get)
-	srv.AddTool(mcp.NewTool("quicbaas_batch_delete"), kv.delete)
-	srv.AddTool(mcp.NewTool("qrdb_put"), kv.rawPut)
+	srv.AddTool(mcp.NewTool("quicbaas_kv_put"), kv.put)
+	srv.AddTool(mcp.NewTool("quicbaas_kv_get"), kv.get)
+	srv.AddTool(mcp.NewTool("quicbaas_kv_delete"), kv.delete)
 	httpSrv := mcpserver.NewTestStreamableHTTPServer(srv)
 
 	tr, err := New(&transport.Config{Address: httpSrv.URL, Timeout: 5 * time.Second})
@@ -154,59 +132,44 @@ func newBatchKVTransport(t *testing.T) (*Transport, *batchKVServer) {
 	return tr, kv
 }
 
-// assertOperation checks that a batch tool got exactly one operation holding
-// entityType users, the numeric id 7 and, when data is set, that data.
-func assertOperation(t *testing.T, tool string, args map[string]interface{}, data []byte) {
-	t.Helper()
-	if len(args) != 1 {
-		t.Errorf("%s args = %v, want only operations", tool, args)
-	}
-	ops, ok := args["operations"].([]interface{})
-	if !ok || len(ops) != 1 {
-		t.Fatalf("%s operations = %v, want one operation", tool, args["operations"])
-	}
-	op, ok := ops[0].(map[string]interface{})
-	if !ok {
-		t.Fatalf("%s operation = %T, want an object", tool, ops[0])
-	}
-	want := map[string]interface{}{"entityType": "users", "id": float64(7)}
-	if data != nil {
-		want["data"] = base64.StdEncoding.EncodeToString(data)
-	}
-	if len(op) != len(want) {
-		t.Errorf("%s operation = %v, want %v", tool, op, want)
-	}
-	for k, v := range want {
-		if op[k] != v {
-			t.Errorf("%s operation[%q] = %v (%T), want %v (%T)", tool, k, op[k], op[k], v, v)
-		}
-	}
-}
-
-func TestKV_PutGetDelete_RoundTripOverBatchTools(t *testing.T) {
-	tr, kv := newBatchKVTransport(t)
+func TestKV_PutGetDelete_RoundTripOverQuicbaasKVTools(t *testing.T) {
+	tr, kv := newQuicbaasKVTransport(t)
 	ctx := context.Background()
-	data := []byte{0x00, 0x01, 0xfe}
+	data := []byte("hello quicbaas")
 
 	putResp, err := tr.Request(ctx, "quicbaas.KV", "Put",
 		&service.PutRequest{EntityType: "users", ID: 7, Data: data})
 	if err != nil {
 		t.Fatalf("Put: %v", err)
 	}
-	if got := putResp.(*service.PutResponse); got.ID != 7 || got.Version != 1 {
-		t.Errorf("Put = %+v, want ID 7 version 1", got)
+	put := putResp.(*service.PutResponse)
+	if put.ID != 7 || put.Version != 18446744073709551615 || put.LeaderID != 9223372036854775813 {
+		t.Errorf("Put = %+v, want ID 7 with the exact version and leader_id", put)
 	}
-	assertOperation(t, "quicbaas_batch_put", kv.args["quicbaas_batch_put"], data)
+	wantPut := map[string]interface{}{
+		"entity_type": "users",
+		"id":          "7",
+		"shard_id":    "0",
+		"consistency": "0",
+		"data":        base64.StdEncoding.EncodeToString(data),
+	}
+	if len(kv.args["quicbaas_kv_put"]) != len(wantPut) {
+		t.Errorf("quicbaas_kv_put args = %v, want %v", kv.args["quicbaas_kv_put"], wantPut)
+	}
+	for key, want := range wantPut {
+		if kv.args["quicbaas_kv_put"][key] != want {
+			t.Errorf("quicbaas_kv_put %s = %v, want %v", key, kv.args["quicbaas_kv_put"][key], want)
+		}
+	}
 
 	getResp, err := tr.Request(ctx, "quicbaas.KV", "Get", &service.GetRequest{EntityType: "users", ID: 7})
 	if err != nil {
 		t.Fatalf("Get: %v", err)
 	}
 	got := getResp.(*service.GetResponse)
-	if !got.Found || got.ID != 7 || !bytes.Equal(got.Data, data) {
-		t.Errorf("Get = %+v, want found ID 7 data %v", got, data)
+	if !got.Found || got.ID != 7 || got.Version != 3 || !bytes.Equal(got.Data, data) {
+		t.Errorf("Get = %+v, want found ID 7 version 3 data %q", got, data)
 	}
-	assertOperation(t, "quicbaas_batch_get", kv.args["quicbaas_batch_get"], nil)
 
 	delResp, err := tr.Request(ctx, "quicbaas.KV", "Delete", &service.DeleteRequest{EntityType: "users", ID: 7})
 	if err != nil {
@@ -215,57 +178,91 @@ func TestKV_PutGetDelete_RoundTripOverBatchTools(t *testing.T) {
 	if !delResp.(*service.DeleteResponse).Deleted {
 		t.Error("Delete reported not deleted")
 	}
-	assertOperation(t, "quicbaas_batch_delete", kv.args["quicbaas_batch_delete"], nil)
+}
 
-	// A missing entity is Found=false, as the service reports it, not an error.
-	getResp, err = tr.Request(ctx, "quicbaas.KV", "Get", &service.GetRequest{EntityType: "users", ID: 7})
+func TestKV_ShardAndConsistencyForwarded(t *testing.T) {
+	tr, kv := newQuicbaasKVTransport(t)
+	ctx := context.Background()
+
+	if _, err := tr.Request(ctx, "quicbaas.KV", "Put", &service.PutRequest{
+		EntityType: "users", ID: 7, Data: []byte("v"), ShardID: 3, Consistency: service.ConsistencyLevelLinearizable,
+	}); err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+	if _, err := tr.Request(ctx, "quicbaas.KV", "Get", &service.GetRequest{
+		EntityType: "users", ID: 7, ShardID: 3, Consistency: service.ConsistencyLevelLinearizable,
+	}); err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if _, err := tr.Request(ctx, "quicbaas.KV", "Delete", &service.DeleteRequest{
+		EntityType: "users", ID: 7, ShardID: 3, Consistency: service.ConsistencyLevelLinearizable,
+	}); err != nil {
+		t.Fatalf("Delete: %v", err)
+	}
+	for _, tool := range []string{"quicbaas_kv_put", "quicbaas_kv_get", "quicbaas_kv_delete"} {
+		if kv.args[tool]["shard_id"] != "3" {
+			t.Errorf("%s shard_id = %v, want \"3\"", tool, kv.args[tool]["shard_id"])
+		}
+		if kv.args[tool]["consistency"] != strconv.Itoa(int(service.ConsistencyLevelLinearizable)) {
+			t.Errorf("%s consistency = %v, want linearizable", tool, kv.args[tool]["consistency"])
+		}
+	}
+}
+
+func TestKV_IDAbove2To53IsExact(t *testing.T) {
+	tr, kv := newQuicbaasKVTransport(t)
+	ctx := context.Background()
+	const id = uint64(18446744073709551557)
+
+	putResp, err := tr.Request(ctx, "quicbaas.KV", "Put", &service.PutRequest{EntityType: "users", ID: id, Data: []byte("v")})
 	if err != nil {
-		t.Fatalf("Get after Delete: %v", err)
+		t.Fatalf("Put: %v", err)
 	}
-	if getResp.(*service.GetResponse).Found {
-		t.Error("Get after Delete found the entity")
+	if kv.args["quicbaas_kv_put"]["id"] != "18446744073709551557" {
+		t.Errorf("quicbaas_kv_put id = %v, want the exact decimal string", kv.args["quicbaas_kv_put"]["id"])
 	}
-	delResp, err = tr.Request(ctx, "quicbaas.KV", "Delete", &service.DeleteRequest{EntityType: "users", ID: 7})
+	if got := putResp.(*service.PutResponse).ID; got != id {
+		t.Errorf("Put ID = %d, want %d", got, id)
+	}
+
+	getResp, err := tr.Request(ctx, "quicbaas.KV", "Get", &service.GetRequest{EntityType: "users", ID: id})
 	if err != nil {
-		t.Fatalf("second Delete: %v", err)
+		t.Fatalf("Get: %v", err)
 	}
-	if delResp.(*service.DeleteResponse).Deleted {
-		t.Error("second Delete reported deleted")
+	if got := getResp.(*service.GetResponse); !got.Found || got.ID != id {
+		t.Errorf("Get = %+v, want found ID %d", got, id)
+	}
+}
+
+func TestKV_FoundFalseIsAMiss(t *testing.T) {
+	tr, _ := newQuicbaasKVTransport(t)
+	resp, err := tr.Request(context.Background(), "quicbaas.KV", "Get", &service.GetRequest{EntityType: "users", ID: 9})
+	if err != nil {
+		t.Fatalf("Get of a missing entity: %v, want a miss", err)
+	}
+	if got := resp.(*service.GetResponse); got.Found || got.Data != nil {
+		t.Errorf("Get = %+v, want found false and no data", got)
 	}
 }
 
 func TestKV_Errors(t *testing.T) {
-	tr, kv := newBatchKVTransport(t)
+	tr, kv := newQuicbaasKVTransport(t)
 	ctx := context.Background()
 
-	// A request that is not the typed SDK struct keeps the generic path.
-	if _, err := tr.Request(ctx, "quicbaas.KV", "Put", map[string]interface{}{"key": "raw"}); err == nil {
-		t.Error("raw Put succeeded, want the qrdb_put tool's error")
-	}
-	if kv.args["qrdb_put"]["key"] != "raw" {
-		t.Errorf("raw Put args = %v, want key raw passed through to qrdb_put", kv.args["qrdb_put"])
-	}
-	if _, called := kv.args["quicbaas_batch_put"]; called {
-		t.Error("raw Put reached quicbaas_batch_put")
+	kv.getError = "kv service unavailable"
+	resp, err := tr.Request(ctx, "quicbaas.KV", "Get", &service.GetRequest{EntityType: "users", ID: 1})
+	if err == nil {
+		t.Errorf("Get with a tool error = %+v, want the error, never a miss", resp)
 	}
 
-	kv.answer = "not json"
+	kv.getError = ""
+	kv.getAnswer = "not json"
 	if _, err := tr.Request(ctx, "quicbaas.KV", "Get", &service.GetRequest{EntityType: "users", ID: 1}); err == nil {
-		t.Error("Get with an undecodable answer succeeded, want an error")
+		t.Error("Get with a non-JSON answer succeeded, want an error")
 	}
-}
 
-func TestKVResult_UndecodableAnswer(t *testing.T) {
-	decoders := map[string]func(string) (interface{}, error){
-		"Put":    kvPutResult,
-		"Get":    kvGetResult,
-		"Delete": kvDeleteResult,
-	}
-	for name, decode := range decoders {
-		for _, answer := range []string{"", "not json", `{"Responses":[]}`, `{"Responses":[{},{}]}`, `{"Responses":[null]}`} {
-			if resp, err := decode(answer); err == nil {
-				t.Errorf("%s(%q) = %+v, want an error", name, answer, resp)
-			}
-		}
+	kv.getAnswer = `{"id":7,"found":true}`
+	if _, err := tr.Request(ctx, "quicbaas.KV", "Get", &service.GetRequest{EntityType: "users", ID: 1}); err == nil {
+		t.Error("Get with a numeric id succeeded, want an error: ids are decimal strings")
 	}
 }

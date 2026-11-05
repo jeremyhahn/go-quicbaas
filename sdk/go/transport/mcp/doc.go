@@ -25,27 +25,22 @@
 // Tool Name Mapping:
 //
 // The transport maps SDK service/method names to MCP tool names. qrdb-mirror
-// services (KV, Vector, Timeseries, Health.Check, RBAC user/role lifecycle,
+// services (Vector, Timeseries, Health.Check, RBAC user/role lifecycle,
 // Barrier, Ceremony) are routed to canonical qrdb_* tools; quicbaas-specific
 // surfaces (KMS, Crypto, Orchestrator, Scheduler, Agent, etc.) keep the
-// quicbaas_ prefix.
+// quicbaas_ prefix. KV Put/Get/Delete call quicbaas_kv_put/get/delete, which
+// reach quicbaas's KV service: the service builds the canonical key from the
+// caller's tenant and routes to the request's shard. Every uint64 (id,
+// shard_id, version, leader_id) crosses the wire as a decimal string so
+// values above 2^53 stay exact.
 //
 // Examples:
-//   - "quicbaas.KV/Put" -> "qrdb_put"
-//   - "quicbaas.KV/Get" -> "qrdb_get"
-//   - "quicbaas.KV/Delete" -> "qrdb_delete"
+//   - "quicbaas.KV/Put" -> "quicbaas_kv_put"
+//   - "quicbaas.KV/Get" -> "quicbaas_kv_get"
+//   - "quicbaas.KV/Delete" -> "quicbaas_kv_delete"
 //   - "quicbaas.Cluster/Status" -> "quicbaas_cluster_status"
 //   - "quicbaas.Health/Check" -> "qrdb_health"
 //   - "quicbaas.KMS/GenerateKey" -> "quicbaas_kms_generate_key"
-//
-// The typed KV requests (*service.PutRequest, GetRequest, DeleteRequest) are
-// the exception. In a composed deployment the qrdb_put, qrdb_get and
-// qrdb_delete names are served by go-qrdb's native tools, which take a raw
-// string key, so the SDK sends typed KV calls as one-operation batches to
-// quicbaas's service-backed tools, where the service builds the canonical key:
-//   - typed "quicbaas.KV/Put" -> "quicbaas_batch_put"
-//   - typed "quicbaas.KV/Get" -> "quicbaas_batch_get"
-//   - typed "quicbaas.KV/Delete" -> "quicbaas_batch_delete"
 //
 // Usage:
 //
