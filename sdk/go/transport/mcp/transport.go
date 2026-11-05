@@ -295,7 +295,7 @@ func (t *Transport) doRequest(ctx context.Context, service, method string, reqBo
 	// a request that is not the typed SDK struct keeps the generic path.
 	if verb, ok := kvVerbs[method]; ok && isMCPKVService(service) {
 		if args, typed := verb.args(reqBody); typed {
-			return t.requestKV(ctx, toolName, verb, args, reqBody)
+			return t.requestKV(ctx, verb, args)
 		}
 	}
 

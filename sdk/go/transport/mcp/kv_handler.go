@@ -16,6 +16,7 @@ package mcp
 import (
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"strconv"
 	"strings"
 
@@ -25,23 +26,24 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/service"
 )
 
-// The unified server serves KV over go-qrdb's native qrdb_put, qrdb_get and
-// qrdb_delete tools. They take a string "key", carry the value as standard
-// base64 in "value", and answer with plain text: "ok" for a write and the
-// base64 value for a read. The SDK's entity-typed requests are mapped onto
-// that schema here.
+// The SDK's typed KV requests go to quicbaas's quicbaas_kv_put, quicbaas_kv_get
+// and quicbaas_kv_delete tools, which call the same KV service REST and gRPC
+// call: the service builds the canonical key from the caller's tenant and
+// routes to the requested shard. Every uint64 crosses the wire as a decimal
+// string so IDs above 2^53 stay exact.
 
-// kvVerb maps one KV method onto its qrdb tool's arguments and answer. args
-// reports false when req is not the method's typed SDK request.
+// kvVerb maps one KV method onto its tool, arguments and answer. args reports
+// false when req is not the method's typed SDK request.
 type kvVerb struct {
+	tool   string
 	args   func(req interface{}) (map[string]interface{}, bool)
-	result func(req interface{}, text string) (interface{}, error)
+	result func(text string) (interface{}, error)
 }
 
 var kvVerbs = map[string]kvVerb{
-	"Put":    {args: kvPutArgs, result: kvPutResult},
-	"Get":    {args: kvGetArgs, result: kvGetResult},
-	"Delete": {args: kvDeleteArgs, result: kvDeleteResult},
+	"Put":    {tool: "quicbaas_kv_put", args: kvPutArgs, result: kvPutResult},
+	"Get":    {tool: "quicbaas_kv_get", args: kvGetArgs, result: kvGetResult},
+	"Delete": {tool: "quicbaas_kv_delete", args: kvDeleteArgs, result: kvDeleteResult},
 }
 
 // isMCPKVService reports whether service names the KV service.
@@ -52,18 +54,32 @@ func isMCPKVService(service string) bool {
 	return service == "KV"
 }
 
-// requestKV calls a qrdb KV tool and decodes its text answer.
-func (t *Transport) requestKV(ctx context.Context, tool string, verb kvVerb, args map[string]interface{}, req interface{}) (interface{}, error) {
-	result, err := t.callToolResult(ctx, tool, args)
+// requestKV calls a KV tool and decodes its JSON answer. A tool error comes
+// back as an error, never as a miss.
+func (t *Transport) requestKV(ctx context.Context, verb kvVerb, args map[string]interface{}) (interface{}, error) {
+	result, err := t.callToolResult(ctx, verb.tool, args)
 	if err != nil {
 		return nil, err
 	}
-	return verb.result(req, firstText(result.Content))
+	return verb.result(firstText(result.Content))
 }
 
-// kvKey is the qrdb key an entity type and ID are stored under.
-func kvKey(entityType string, id uint64) string {
-	return entityType + "/" + strconv.FormatUint(id, 10)
+// kvArgs is the arguments every KV tool takes.
+func kvArgs(entityType string, id, shardID uint64, consistency service.ConsistencyLevel) map[string]interface{} {
+	return map[string]interface{}{
+		"entity_type": entityType,
+		"id":          strconv.FormatUint(id, 10),
+		"shard_id":    strconv.FormatUint(shardID, 10),
+		"consistency": strconv.Itoa(int(consistency)),
+	}
+}
+
+// decodeKVAnswer decodes a KV tool's JSON answer into out.
+func decodeKVAnswer(tool, text string, out interface{}) error {
+	if err := json.Unmarshal([]byte(text), out); err != nil {
+		return errors.Wrap(err, errors.CodeInternal, "mcp.kv", tool+" answered a result that is not its JSON shape")
+	}
+	return nil
 }
 
 func kvPutArgs(req interface{}) (map[string]interface{}, bool) {
@@ -71,14 +87,27 @@ func kvPutArgs(req interface{}) (map[string]interface{}, bool) {
 	if !ok || r == nil {
 		return nil, false
 	}
-	return map[string]interface{}{
-		"key":   kvKey(r.EntityType, r.ID),
-		"value": base64.StdEncoding.EncodeToString(r.Data),
-	}, true
+	args := kvArgs(r.EntityType, r.ID, r.ShardID, r.Consistency)
+	args["data"] = base64.StdEncoding.EncodeToString(r.Data)
+	return args, true
 }
 
-func kvPutResult(req interface{}, _ string) (interface{}, error) {
-	return &service.PutResponse{ID: req.(*service.PutRequest).ID}, nil
+func kvPutResult(text string) (interface{}, error) {
+	var answer struct {
+		ID        uint64 `json:"id,string"`
+		Version   uint64 `json:"version,string"`
+		Timestamp int64  `json:"timestamp"`
+		LeaderID  uint64 `json:"leader_id,string"`
+	}
+	if err := decodeKVAnswer("quicbaas_kv_put", text, &answer); err != nil {
+		return nil, err
+	}
+	return &service.PutResponse{
+		ID:        answer.ID,
+		Version:   answer.Version,
+		Timestamp: answer.Timestamp,
+		LeaderID:  answer.LeaderID,
+	}, nil
 }
 
 func kvGetArgs(req interface{}) (map[string]interface{}, bool) {
@@ -86,15 +115,27 @@ func kvGetArgs(req interface{}) (map[string]interface{}, bool) {
 	if !ok || r == nil {
 		return nil, false
 	}
-	return map[string]interface{}{"key": kvKey(r.EntityType, r.ID)}, true
+	return kvArgs(r.EntityType, r.ID, r.ShardID, r.Consistency), true
 }
 
-func kvGetResult(req interface{}, text string) (interface{}, error) {
-	data, err := base64.StdEncoding.DecodeString(text)
-	if err != nil {
-		return nil, errors.Wrap(err, errors.CodeInternal, "mcp.kv.Get", "qrdb_get answered a value that is not base64")
+func kvGetResult(text string) (interface{}, error) {
+	var answer struct {
+		ID        uint64 `json:"id,string"`
+		Found     bool   `json:"found"`
+		Data      []byte `json:"data"`
+		Version   uint64 `json:"version,string"`
+		Timestamp int64  `json:"timestamp"`
 	}
-	return &service.GetResponse{ID: req.(*service.GetRequest).ID, Data: data, Found: true}, nil
+	if err := decodeKVAnswer("quicbaas_kv_get", text, &answer); err != nil {
+		return nil, err
+	}
+	return &service.GetResponse{
+		ID:        answer.ID,
+		Data:      answer.Data,
+		Version:   answer.Version,
+		Timestamp: answer.Timestamp,
+		Found:     answer.Found,
+	}, nil
 }
 
 func kvDeleteArgs(req interface{}) (map[string]interface{}, bool) {
@@ -102,11 +143,15 @@ func kvDeleteArgs(req interface{}) (map[string]interface{}, bool) {
 	if !ok || r == nil {
 		return nil, false
 	}
-	return map[string]interface{}{"key": kvKey(r.EntityType, r.ID)}, true
+	return kvArgs(r.EntityType, r.ID, r.ShardID, r.Consistency), true
 }
 
-func kvDeleteResult(interface{}, string) (interface{}, error) {
-	return &service.DeleteResponse{Deleted: true}, nil
+func kvDeleteResult(text string) (interface{}, error) {
+	var answer service.DeleteResponse
+	if err := decodeKVAnswer("quicbaas_kv_delete", text, &answer); err != nil {
+		return nil, err
+	}
+	return &answer, nil
 }
 
 // firstText returns the first non-empty text content of a tool result.
