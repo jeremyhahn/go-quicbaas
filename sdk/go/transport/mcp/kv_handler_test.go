@@ -17,6 +17,8 @@ import (
 	"bytes"
 	"context"
 	"encoding/base64"
+	"encoding/json"
+	"strconv"
 	"sync"
 	"testing"
 	"time"
@@ -28,80 +30,92 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/transport"
 )
 
-// qrdbKVServer mirrors go-qrdb's native qrdb_put, qrdb_get and qrdb_delete
-// tools (go-qrdb pkg/api/mcp tools_kv.go): a required string "key", a
-// required base64 "value" on put, and plain-text answers.
-type qrdbKVServer struct {
+// quicbaasKVServer mirrors quicbaas's quicbaas_kv_put, quicbaas_kv_get and
+// quicbaas_kv_delete tools (pkg/api/mcp kv_tools.go): entity_type plus
+// decimal-string id, shard_id and consistency, base64 data on put, and JSON
+// answers whose uint64 fields are decimal strings.
+type quicbaasKVServer struct {
 	mu    sync.Mutex
 	store map[string][]byte
 	args  map[string]map[string]interface{}
-	// getAnswer, when set, replaces qrdb_get's answer text.
+	// getAnswer, when set, replaces quicbaas_kv_get's answer text.
 	getAnswer string
+	// getError, when set, makes quicbaas_kv_get answer a tool error.
+	getError string
 }
 
-func (s *qrdbKVServer) record(tool string, req mcp.CallToolRequest) {
+func (s *quicbaasKVServer) record(tool string, req mcp.CallToolRequest) string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.args[tool] = req.GetArguments()
+	return mcp.ParseString(req, "entity_type", "") + ":" + mcp.ParseString(req, "id", "")
 }
 
-func (s *qrdbKVServer) put(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	s.record("qrdb_put", req)
-	key := mcp.ParseString(req, "key", "")
-	if key == "" {
-		return mcp.NewToolResultError("key is required"), nil
-	}
-	valueArg := mcp.ParseString(req, "value", "")
-	if valueArg == "" {
-		return mcp.NewToolResultError("value is required"), nil
-	}
-	value, err := base64.StdEncoding.DecodeString(valueArg)
+func jsonAnswer(answer map[string]interface{}) (*mcp.CallToolResult, error) {
+	text, err := json.Marshal(answer)
 	if err != nil {
-		return mcp.NewToolResultError("value is not base64"), nil
+		return nil, err
+	}
+	return mcp.NewToolResultText(string(text)), nil
+}
+
+func (s *quicbaasKVServer) put(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	key := s.record("quicbaas_kv_put", req)
+	value, err := base64.StdEncoding.DecodeString(mcp.ParseString(req, "data", ""))
+	if err != nil {
+		return mcp.NewToolResultError("data is not base64"), nil
 	}
 	s.mu.Lock()
 	s.store[key] = value
 	s.mu.Unlock()
-	return mcp.NewToolResultText("ok"), nil
+	return jsonAnswer(map[string]interface{}{
+		"id":        mcp.ParseString(req, "id", ""),
+		"version":   "18446744073709551615",
+		"timestamp": 1700000000,
+		"leader_id": "9223372036854775813",
+	})
 }
 
-func (s *qrdbKVServer) get(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	s.record("qrdb_get", req)
-	key := mcp.ParseString(req, "key", "")
-	if key == "" {
-		return mcp.NewToolResultError("key is required"), nil
-	}
+func (s *quicbaasKVServer) get(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	key := s.record("quicbaas_kv_get", req)
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.getError != "" {
+		return mcp.NewToolResultError(s.getError), nil
+	}
 	if s.getAnswer != "" {
 		return mcp.NewToolResultText(s.getAnswer), nil
 	}
+	id := mcp.ParseString(req, "id", "")
 	value, ok := s.store[key]
 	if !ok {
-		return mcp.NewToolResultError("key not found"), nil
+		return jsonAnswer(map[string]interface{}{"id": id, "found": false, "version": "0", "timestamp": 0})
 	}
-	return mcp.NewToolResultText(base64.StdEncoding.EncodeToString(value)), nil
+	return jsonAnswer(map[string]interface{}{
+		"id":        id,
+		"found":     true,
+		"data":      base64.StdEncoding.EncodeToString(value),
+		"version":   "3",
+		"timestamp": 1700000000,
+	})
 }
 
-func (s *qrdbKVServer) delete(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	s.record("qrdb_delete", req)
-	key := mcp.ParseString(req, "key", "")
-	if key == "" {
-		return mcp.NewToolResultError("key is required"), nil
-	}
+func (s *quicbaasKVServer) delete(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	key := s.record("quicbaas_kv_delete", req)
 	s.mu.Lock()
+	_, found := s.store[key]
 	delete(s.store, key)
 	s.mu.Unlock()
-	return mcp.NewToolResultText("ok"), nil
+	return jsonAnswer(map[string]interface{}{"deleted": found, "timestamp": 1700000000})
 }
 
-func newQRDBKVTransport(t *testing.T) (*Transport, *qrdbKVServer) {
+func newQuicbaasKVTransport(t *testing.T) (*Transport, *quicbaasKVServer) {
 	t.Helper()
-	kv := &qrdbKVServer{store: map[string][]byte{}, args: map[string]map[string]interface{}{}}
+	kv := &quicbaasKVServer{store: map[string][]byte{}, args: map[string]map[string]interface{}{}}
 	srv := mcpserver.NewMCPServer("TestServer", "1.0.0")
-	srv.AddTool(mcp.NewTool("qrdb_put"), kv.put)
-	srv.AddTool(mcp.NewTool("qrdb_get"), kv.get)
-	srv.AddTool(mcp.NewTool("qrdb_delete"), kv.delete)
+	srv.AddTool(mcp.NewTool("quicbaas_kv_put"), kv.put)
+	srv.AddTool(mcp.NewTool("quicbaas_kv_get"), kv.get)
+	srv.AddTool(mcp.NewTool("quicbaas_kv_delete"), kv.delete)
 	httpSrv := mcpserver.NewTestStreamableHTTPServer(srv)
 
 	tr, err := New(&transport.Config{Address: httpSrv.URL, Timeout: 5 * time.Second})
@@ -118,23 +132,34 @@ func newQRDBKVTransport(t *testing.T) (*Transport, *qrdbKVServer) {
 	return tr, kv
 }
 
-func TestKV_PutGetDelete_RoundTripOverQRDBTools(t *testing.T) {
-	tr, kv := newQRDBKVTransport(t)
+func TestKV_PutGetDelete_RoundTripOverQuicbaasKVTools(t *testing.T) {
+	tr, kv := newQuicbaasKVTransport(t)
 	ctx := context.Background()
-	data := []byte("hello qrdb")
+	data := []byte("hello quicbaas")
 
 	putResp, err := tr.Request(ctx, "quicbaas.KV", "Put",
 		&service.PutRequest{EntityType: "users", ID: 7, Data: data})
 	if err != nil {
 		t.Fatalf("Put: %v", err)
 	}
-	if got := putResp.(*service.PutResponse).ID; got != 7 {
-		t.Errorf("Put ID = %d, want 7", got)
+	put := putResp.(*service.PutResponse)
+	if put.ID != 7 || put.Version != 18446744073709551615 || put.LeaderID != 9223372036854775813 {
+		t.Errorf("Put = %+v, want ID 7 with the exact version and leader_id", put)
 	}
-	wantPut := map[string]interface{}{"key": "users/7", "value": base64.StdEncoding.EncodeToString(data)}
-	if len(kv.args["qrdb_put"]) != len(wantPut) ||
-		kv.args["qrdb_put"]["key"] != wantPut["key"] || kv.args["qrdb_put"]["value"] != wantPut["value"] {
-		t.Errorf("qrdb_put args = %v, want %v", kv.args["qrdb_put"], wantPut)
+	wantPut := map[string]interface{}{
+		"entity_type": "users",
+		"id":          "7",
+		"shard_id":    "0",
+		"consistency": "0",
+		"data":        base64.StdEncoding.EncodeToString(data),
+	}
+	if len(kv.args["quicbaas_kv_put"]) != len(wantPut) {
+		t.Errorf("quicbaas_kv_put args = %v, want %v", kv.args["quicbaas_kv_put"], wantPut)
+	}
+	for key, want := range wantPut {
+		if kv.args["quicbaas_kv_put"][key] != want {
+			t.Errorf("quicbaas_kv_put %s = %v, want %v", key, kv.args["quicbaas_kv_put"][key], want)
+		}
 	}
 
 	getResp, err := tr.Request(ctx, "quicbaas.KV", "Get", &service.GetRequest{EntityType: "users", ID: 7})
@@ -142,11 +167,8 @@ func TestKV_PutGetDelete_RoundTripOverQRDBTools(t *testing.T) {
 		t.Fatalf("Get: %v", err)
 	}
 	got := getResp.(*service.GetResponse)
-	if !got.Found || got.ID != 7 || !bytes.Equal(got.Data, data) {
-		t.Errorf("Get = %+v, want found ID 7 data %q", got, data)
-	}
-	if len(kv.args["qrdb_get"]) != 1 || kv.args["qrdb_get"]["key"] != "users/7" {
-		t.Errorf("qrdb_get args = %v, want only key users/7", kv.args["qrdb_get"])
+	if !got.Found || got.ID != 7 || got.Version != 3 || !bytes.Equal(got.Data, data) {
+		t.Errorf("Get = %+v, want found ID 7 version 3 data %q", got, data)
 	}
 
 	delResp, err := tr.Request(ctx, "quicbaas.KV", "Delete", &service.DeleteRequest{EntityType: "users", ID: 7})
@@ -156,28 +178,91 @@ func TestKV_PutGetDelete_RoundTripOverQRDBTools(t *testing.T) {
 	if !delResp.(*service.DeleteResponse).Deleted {
 		t.Error("Delete reported not deleted")
 	}
-	if len(kv.args["qrdb_delete"]) != 1 || kv.args["qrdb_delete"]["key"] != "users/7" {
-		t.Errorf("qrdb_delete args = %v, want only key users/7", kv.args["qrdb_delete"])
+}
+
+func TestKV_ShardAndConsistencyForwarded(t *testing.T) {
+	tr, kv := newQuicbaasKVTransport(t)
+	ctx := context.Background()
+
+	if _, err := tr.Request(ctx, "quicbaas.KV", "Put", &service.PutRequest{
+		EntityType: "users", ID: 7, Data: []byte("v"), ShardID: 3, Consistency: service.ConsistencyLevelLinearizable,
+	}); err != nil {
+		t.Fatalf("Put: %v", err)
 	}
-	if _, err := tr.Request(ctx, "quicbaas.KV", "Get", &service.GetRequest{EntityType: "users", ID: 7}); err == nil {
-		t.Error("Get after Delete succeeded, want the tool's not-found error")
+	if _, err := tr.Request(ctx, "quicbaas.KV", "Get", &service.GetRequest{
+		EntityType: "users", ID: 7, ShardID: 3, Consistency: service.ConsistencyLevelLinearizable,
+	}); err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if _, err := tr.Request(ctx, "quicbaas.KV", "Delete", &service.DeleteRequest{
+		EntityType: "users", ID: 7, ShardID: 3, Consistency: service.ConsistencyLevelLinearizable,
+	}); err != nil {
+		t.Fatalf("Delete: %v", err)
+	}
+	for _, tool := range []string{"quicbaas_kv_put", "quicbaas_kv_get", "quicbaas_kv_delete"} {
+		if kv.args[tool]["shard_id"] != "3" {
+			t.Errorf("%s shard_id = %v, want \"3\"", tool, kv.args[tool]["shard_id"])
+		}
+		if kv.args[tool]["consistency"] != strconv.Itoa(int(service.ConsistencyLevelLinearizable)) {
+			t.Errorf("%s consistency = %v, want linearizable", tool, kv.args[tool]["consistency"])
+		}
+	}
+}
+
+func TestKV_IDAbove2To53IsExact(t *testing.T) {
+	tr, kv := newQuicbaasKVTransport(t)
+	ctx := context.Background()
+	const id = uint64(18446744073709551557)
+
+	putResp, err := tr.Request(ctx, "quicbaas.KV", "Put", &service.PutRequest{EntityType: "users", ID: id, Data: []byte("v")})
+	if err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+	if kv.args["quicbaas_kv_put"]["id"] != "18446744073709551557" {
+		t.Errorf("quicbaas_kv_put id = %v, want the exact decimal string", kv.args["quicbaas_kv_put"]["id"])
+	}
+	if got := putResp.(*service.PutResponse).ID; got != id {
+		t.Errorf("Put ID = %d, want %d", got, id)
+	}
+
+	getResp, err := tr.Request(ctx, "quicbaas.KV", "Get", &service.GetRequest{EntityType: "users", ID: id})
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if got := getResp.(*service.GetResponse); !got.Found || got.ID != id {
+		t.Errorf("Get = %+v, want found ID %d", got, id)
+	}
+}
+
+func TestKV_FoundFalseIsAMiss(t *testing.T) {
+	tr, _ := newQuicbaasKVTransport(t)
+	resp, err := tr.Request(context.Background(), "quicbaas.KV", "Get", &service.GetRequest{EntityType: "users", ID: 9})
+	if err != nil {
+		t.Fatalf("Get of a missing entity: %v, want a miss", err)
+	}
+	if got := resp.(*service.GetResponse); got.Found || got.Data != nil {
+		t.Errorf("Get = %+v, want found false and no data", got)
 	}
 }
 
 func TestKV_Errors(t *testing.T) {
-	tr, kv := newQRDBKVTransport(t)
+	tr, kv := newQuicbaasKVTransport(t)
 	ctx := context.Background()
 
-	// A request that is not the typed SDK struct passes through unchanged.
-	if _, err := tr.Request(ctx, "quicbaas.KV", "Put", map[string]interface{}{"key": "raw"}); err == nil {
-		t.Error("raw Put without a value succeeded, want the tool's value-required error")
-	}
-	if kv.args["qrdb_put"]["key"] != "raw" {
-		t.Errorf("raw Put args = %v, want key raw passed through", kv.args["qrdb_put"])
+	kv.getError = "kv service unavailable"
+	resp, err := tr.Request(ctx, "quicbaas.KV", "Get", &service.GetRequest{EntityType: "users", ID: 1})
+	if err == nil {
+		t.Errorf("Get with a tool error = %+v, want the error, never a miss", resp)
 	}
 
-	kv.getAnswer = "not base64!"
+	kv.getError = ""
+	kv.getAnswer = "not json"
 	if _, err := tr.Request(ctx, "quicbaas.KV", "Get", &service.GetRequest{EntityType: "users", ID: 1}); err == nil {
-		t.Error("Get with a non-base64 answer succeeded, want an error")
+		t.Error("Get with a non-JSON answer succeeded, want an error")
+	}
+
+	kv.getAnswer = `{"id":7,"found":true}`
+	if _, err := tr.Request(ctx, "quicbaas.KV", "Get", &service.GetRequest{EntityType: "users", ID: 1}); err == nil {
+		t.Error("Get with a numeric id succeeded, want an error: ids are decimal strings")
 	}
 }
