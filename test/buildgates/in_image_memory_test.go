@@ -14,7 +14,10 @@ import (
 var inToolchainImageScript = filepath.Join(repoRoot, "scripts", "in-toolchain-image.sh")
 
 // fakeDocker logs each invocation as one line of tab-terminated arguments and
-// drains stdin for `docker cp`, so the script's tar pipe never breaks.
+// drains stdin for `docker cp`, so the script's tar pipe never breaks. The Go
+// raw string hands the shell one backslash before t, the escape printf expands
+// into a real tab, which is the separator runInToolchainImage splits
+// each line on.
 const fakeDocker = `#!/bin/sh
 printf '%s\t' "$@" >> "$FAKE_DOCKER_LOG"; echo >> "$FAKE_DOCKER_LOG"
 if [ "$1" = cp ]; then cat > /dev/null; fi
