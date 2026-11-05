@@ -90,7 +90,7 @@
   "clients": [
     {
       "file": "admin",
-      "common_name": "admin@integration.test",
+      "common_name": "admin",
       "email": "admin@integration.test",
       "tenant_id": "system"
     }

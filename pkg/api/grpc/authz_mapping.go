@@ -534,8 +534,8 @@ var grpcMethodPermissions = map[string]methodPermission{
 
 	// ---- quicbaas.certificate.v1.TrustService ----
 	"/quicbaas.certificate.v1.TrustService/CrossSignedRootPool": {"certs", "read"},
-	"/quicbaas.certificate.v1.TrustService/AutoImportAIA":       {"certs", "generate"},
-	"/quicbaas.certificate.v1.TrustService/PublishDANE":         {"certs", "generate"},
+	"/quicbaas.certificate.v1.TrustService/AutoImportAIA":       {"trust", "write"},
+	"/quicbaas.certificate.v1.TrustService/PublishDANE":         {"trust", "write"},
 
 	// ---- quicbaas.fido2.v1.FIDO2Service (registration pair) ----
 	//

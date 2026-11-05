@@ -708,9 +708,9 @@ func (s *Server) unifiedModuleServerOptions(serverOpts []qrdbsdk.ServerOption) (
 	// plane. go-xkms no longer registers /api/v1/barrier/* in a host
 	// composition, so quicbaas's barrier surface (go-quicbaas#405) needs no
 	// exclusion.
-	hostedXKMSModule, err := apimodule.NewRouteExcludingModule(xkmsModule, apimodule.XKMSRouteExclusions)
+	hostedXKMSModule, err := s.hostXKMSModule(xkmsModule)
 	if err != nil {
-		return nil, &QRDBNodeError{Stage: "compose xkms module route precedence", Cause: err}
+		return nil, err
 	}
 	serverOpts = append(serverOpts, qrdbsdk.WithModule(hostedXKMSModule))
 
@@ -1377,6 +1377,24 @@ func (s *Server) pivLoginModuleOptions() *xkmssdk.ServiceModulePIVLoginOptions {
 		TrustedIssuers:  s.config.IAM.PIVLogin.TrustedIssuers,
 		AllowUnattested: s.config.IAM.PIVLogin.AllowUnattested,
 	}
+}
+
+// hostXKMSModule composes the xkms module as this node hosts it: quicbaas's
+// route precedence (apimodule.XKMSRouteExclusions), then the tenant binding of
+// xkms's certificate login (apimodule.XKMSCertLoginRoutes), so a tenant
+// admin's certificate is looked up in the tenant its SPIFFE SAN names rather
+// than in the system tenant.
+func (s *Server) hostXKMSModule(xkmsModule qrdbsdk.ServiceModule) (qrdbsdk.ServiceModule, error) {
+	hosted, err := apimodule.NewRouteExcludingModule(xkmsModule, apimodule.XKMSRouteExclusions)
+	if err != nil {
+		return nil, &QRDBNodeError{Stage: "compose xkms module route precedence", Cause: err}
+	}
+	hosted, err = apimodule.NewCertLoginTenantModule(hosted, s.config.IAM.SPIFFETrustDomain,
+		apimodule.XKMSCertLoginRoutes, &caRevocationChecker{server: s})
+	if err != nil {
+		return nil, &QRDBNodeError{Stage: "bind xkms certificate login tenant", Cause: err}
+	}
+	return hosted, nil
 }
 
 // pivLoginModuleEnabled reports whether the xkms module's own PIV login surface

@@ -38,6 +38,10 @@ var (
 
 	// ErrPeerCredUnsupported indicates SO_PEERCRED is not supported on this platform.
 	ErrPeerCredUnsupported = stderrors.New("SO_PEERCRED is only supported on Linux")
+
+	// ErrKMSServiceRequired refuses a KMS verb that has no tenant-scoped
+	// service layer: calling the manager directly would bypass tenant scoping.
+	ErrKMSServiceRequired = stderrors.New("kms: tenant-scoped service layer is required")
 )
 
 // FromGRPCError converts a gRPC status code to a QuicBaaS error code.
@@ -136,6 +140,22 @@ func (e *PolicySpecYAMLError) Unwrap() error { return e.Err }
 // GRPCStatus maps the error to InvalidArgument for gRPC callers.
 func (e *PolicySpecYAMLError) GRPCStatus() *status.Status {
 	return status.New(codes.InvalidArgument, e.Error())
+}
+
+// NamespaceUpdateUnsupportedError refuses UpdateNamespace. The qrdb SDK
+// re-exports no in-place namespace update, and deleting and recreating the
+// namespace would permanently destroy every vector it holds.
+type NamespaceUpdateUnsupportedError struct {
+	Namespace string
+}
+
+func (e *NamespaceUpdateUnsupportedError) Error() string {
+	return fmt.Sprintf("vector namespace %q cannot be updated: the qrdb SDK has no in-place namespace update", e.Namespace)
+}
+
+// GRPCStatus maps the error to Unimplemented for gRPC callers.
+func (e *NamespaceUpdateUnsupportedError) GRPCStatus() *status.Status {
+	return status.New(codes.Unimplemented, e.Error())
 }
 
 // parseUserID converts a wire user id into the iam uint64 id. Zero is
