@@ -40,6 +40,7 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam/iamtest"
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam/qrdbadapter"
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
+	"github.com/jeremyhahn/go-quicbaas/pkg/kvstore"
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
 	"github.com/jeremyhahn/go-quicbaas/pkg/secrets"
@@ -344,6 +345,11 @@ func newEnrollmentFixture(t *testing.T) *enrollmentFixture {
 	require.True(t, ok, "the account service must accept a token manager, as server lifecycle wires it")
 	accountWirer.SetTokenManager(
 		orchestration.NewAccountTokenManager(accountSecrets, accountStore, 0))
+	usageWirer, ok := accountSvc.(interface {
+		SetUsageTracker(orchestration.CostTracker)
+	})
+	require.True(t, ok, "the account service must accept a usage tracker, as server lifecycle wires it")
+	usageWirer.SetUsageTracker(orchestration.NewCostTracker(kvstore.NewMemory(), logger.NewAdapter(log)))
 
 	svc := &enrollmentService{
 		MockQuicBaaS:   testutil.NewMockQuicBaaS(),

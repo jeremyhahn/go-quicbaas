@@ -291,6 +291,14 @@ func (t *Transport) doRequest(ctx context.Context, service, method string, reqBo
 		}
 	}
 
+	// KV Put/Get/Delete are served by go-qrdb's native string-keyed tools;
+	// a request that is not the typed SDK struct keeps the generic path.
+	if verb, ok := kvVerbs[method]; ok && isMCPKVService(service) {
+		if args, typed := verb.args(reqBody); typed {
+			return t.requestKV(ctx, toolName, verb, args, reqBody)
+		}
+	}
+
 	// The Agents catalog is a closed set of tools with typed answers.
 	if isMCPAgentsService(service) {
 		return t.requestAgents(ctx, method, reqBody)
@@ -915,6 +923,16 @@ func (t *Transport) ensureRawTransport(ctx context.Context) (mcptransport.Interf
 
 // callTool invokes an MCP tool via the negotiated mcpClient session.
 func (t *Transport) callTool(ctx context.Context, name string, arguments map[string]interface{}) (interface{}, error) {
+	result, err := t.callToolResult(ctx, name, arguments)
+	if err != nil {
+		return nil, err
+	}
+	return t.extractContent(result.Content)
+}
+
+// callToolResult calls a tool and returns its raw result, converting a
+// transport failure or a tool error into an SDK error.
+func (t *Transport) callToolResult(ctx context.Context, name string, arguments map[string]interface{}) (*mcp.CallToolResult, error) {
 	result, err := t.mcpClient.CallTool(ctx, mcp.CallToolRequest{
 		Params: mcp.CallToolParams{
 			Name:      name,
@@ -931,9 +949,7 @@ func (t *Transport) callTool(ctx context.Context, name string, arguments map[str
 	}
 
 	t.lastHealth.Store(time.Now().UnixNano())
-
-	// Extract result from content
-	return t.extractContent(result.Content)
+	return result, nil
 }
 
 // sendRPC forwards a caller-owned JSON-RPC 2.0 request verbatim over the
