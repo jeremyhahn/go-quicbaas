@@ -50,6 +50,7 @@
 #
 # IN_IMAGE_MEMORY caps the container's memory and swap (bytes, or a size with m
 # or g, e.g. 16g; default the caller's cgroup memory.max, or 8g when unbounded).
+# IN_IMAGE_CGROUP_MEMORY_MAX names the cgroup memory.max file the default reads (tests only).
 # CI_CGROUP_PARENT, when set, is the container's --cgroup-parent.
 set -euo pipefail
 
@@ -84,7 +85,8 @@ esac
 memory=${IN_IMAGE_MEMORY:-}
 if [ -z "$memory" ]; then
   limit=max
-  if [ -r /sys/fs/cgroup/memory.max ]; then read -r limit < /sys/fs/cgroup/memory.max; fi
+  cgroup_memory_max=${IN_IMAGE_CGROUP_MEMORY_MAX:-/sys/fs/cgroup/memory.max}
+  if [ -r "$cgroup_memory_max" ]; then read -r limit < "$cgroup_memory_max"; fi
   case $limit in
     max | "" | *[!0-9]*) memory=8g ;;
     *) memory=$limit ;;
