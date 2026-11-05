@@ -584,8 +584,23 @@ func (h *iamHandler) handleRotateAppSecret(ctx context.Context, client iampb.IAM
 // used to extract rules from the SpecYaml field in the proto response.
 type policySpecYAML struct {
 	Spec struct {
-		Rules []specRuleYAML `yaml:"rules"`
+		Rules   []specRuleYAML `yaml:"rules"`
+		Enabled *bool          `yaml:"enabled"`
 	} `yaml:"spec"`
+}
+
+// parseEnabledFromSpecYAML reports whether a YAML policy specification is
+// enabled. An absent spec.enabled means enabled; only an explicit false
+// disables the policy.
+func parseEnabledFromSpecYAML(specYAML []byte) bool {
+	var spec policySpecYAML
+	if err := yaml.Unmarshal(specYAML, &spec); err != nil {
+		return true
+	}
+	if spec.Spec.Enabled == nil {
+		return true
+	}
+	return *spec.Spec.Enabled
 }
 
 // specRuleYAML represents a single rule in the YAML policy spec.
@@ -643,6 +658,7 @@ func convertProtoPolicyToSDK(p *iampb.Policy) *iam.Policy {
 		Priority:    int(p.Priority),
 		Labels:      p.Labels,
 		SpecYAML:    p.SpecYaml,
+		Enabled:     parseEnabledFromSpecYAML(p.SpecYaml),
 	}
 
 	if p.CreatedAt != nil {
