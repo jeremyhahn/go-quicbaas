@@ -1425,7 +1425,7 @@ func awaitJob(t *testing.T, srv *server.Server, want orchestration.JobState) *or
 			return false
 		}
 		for _, job := range jobs {
-			if job.State == want {
+			if job.State == want && job.Runner == sdlc.JobRunnerName {
 				found = job
 				return true
 			}
