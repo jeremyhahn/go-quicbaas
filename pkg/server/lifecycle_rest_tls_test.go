@@ -65,8 +65,8 @@ func newTLSTestCert(t *testing.T, name string) (tls.Certificate, []byte, *x509.C
 
 // TestCloneTLSConfig_ConcurrentTLSRequestsWhileAnotherListenerIsBuilt serves
 // HTTPS from one listener's clone while further listeners are built from the
-// same shared config and append their own client CAs, as buildRESTServer
-// does. Every request must succeed, and under -race no listener may write
+// same shared config and append client CAs to their clones. Every request
+// must succeed, and under -race no listener may write
 // the pool another one is handshaking with.
 func TestCloneTLSConfig_ConcurrentTLSRequestsWhileAnotherListenerIsBuilt(t *testing.T) {
 	serverCert, _, serverLeaf := newTLSTestCert(t, "server")
