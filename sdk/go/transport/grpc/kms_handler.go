@@ -151,6 +151,9 @@ func (h *kmsHandler) handleGenerateKey(ctx context.Context, req interface{}) (in
 		KeyAttributes:      sdkAlgToKeyAttributes(sdkReq.Algorithm),
 		Exportable:         sdkReq.Exportable,
 		DeletionProtection: sdkReq.DeletionProtection,
+		Description:        sdkReq.Description,
+		Tags:               sdkReq.Tags,
+		Owner:              sdkReq.Owner,
 	})
 }
 
