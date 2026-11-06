@@ -40,10 +40,12 @@ import (
 // listener's base URL. The port is drawn, never 0: qrdb_node.go copies it
 // into the node's AdminPort, where 0 becomes a fixed shared port (see
 // NewSealedBootTestConfig).
-func newOperatorTLSServingNode(t *testing.T) (*Server, service.IAMComponents, *x509.Certificate, string) {
+func newOperatorTLSServingNode(t *testing.T, requireAuthz bool) (*Server, service.IAMComponents, *x509.Certificate, string) {
 	t.Helper()
 	setupOIDCTestXKMS(t)
 	srv := withTempServer(t)
+	// withTempServer turns authz off; the caller picks the node's posture.
+	srv.config.Security.RequireAuthz = requireAuthz
 	certFile, keyFile := writeOperatorPair(t, t.TempDir())
 	srv.config.Security.TLSEnabled = true
 	srv.config.Security.TLSClientAuth = false
@@ -120,7 +122,7 @@ func newOperatorTLSServingNode(t *testing.T) (*Server, service.IAMComponents, *x
 // listener, then creates a role with the bearer alone, as the integration
 // suite's tenant admin does.
 func TestTenantAdminBearer_NodeListenerBindsTenant(t *testing.T) {
-	_, components, root, baseURL := newOperatorTLSServingNode(t)
+	_, components, root, baseURL := newOperatorTLSServingNode(t, false)
 	adminCert := provisionCertModeTenant(t, components, "acme")
 
 	roots := x509.NewCertPool()
@@ -186,4 +188,77 @@ func TestTenantAdminBearer_NodeListenerBindsTenant(t *testing.T) {
 
 	assert.Contains(t, []int{http.StatusCreated, http.StatusOK}, roleResp.StatusCode,
 		"role create with the bearer alone: %s", roleBody)
+}
+
+// TestTenantAdminBearer_RequireAuthzBindsTenant runs the same PIV login and
+// bearer-only role create on a node with RequireAuthz on, and asserts that
+// the tenant is bound to the request. The status is only logged: with authz
+// on, a permission refusal for the tenant admin is a valid result.
+func TestTenantAdminBearer_RequireAuthzBindsTenant(t *testing.T) {
+	_, components, root, baseURL := newOperatorTLSServingNode(t, true)
+	adminCert := provisionCertModeTenant(t, components, "acme")
+
+	roots := x509.NewCertPool()
+	roots.AddCert(root)
+	loginClient := &http.Client{
+		Timeout: 30 * time.Second,
+		Transport: &http.Transport{TLSClientConfig: &tls.Config{
+			Certificates: []tls.Certificate{adminCert},
+			RootCAs:      roots,
+			ServerName:   "localhost",
+			MinVersion:   tls.VersionTLS13,
+		}},
+	}
+	t.Cleanup(loginClient.CloseIdleConnections)
+
+	loginReq, err := http.NewRequestWithContext(context.Background(), http.MethodPost, baseURL+xkmsPIVLoginPath, nil)
+	require.NoError(t, err)
+	loginResp, err := loginClient.Do(loginReq)
+	require.NoError(t, err)
+	defer loginResp.Body.Close()
+	loginBody, err := io.ReadAll(loginResp.Body)
+	require.NoError(t, err)
+
+	var login map[string]any
+	accessToken := ""
+	if json.Unmarshal(loginBody, &login) == nil {
+		if token, ok := login["access_token"].(string); ok {
+			accessToken = token
+			login["access_token"] = "<redacted>"
+		}
+		if _, ok := login["refresh_token"]; ok {
+			login["refresh_token"] = "<redacted>"
+		}
+		t.Logf("PIV login status %d, body %v", loginResp.StatusCode, login)
+	} else {
+		t.Logf("PIV login status %d, body %s", loginResp.StatusCode, loginBody)
+	}
+	require.Equal(t, http.StatusOK, loginResp.StatusCode, "PIV login")
+	require.NotEmpty(t, accessToken, "PIV login returned no access_token")
+
+	bearerClient := &http.Client{
+		Timeout: 30 * time.Second,
+		Transport: &http.Transport{TLSClientConfig: &tls.Config{
+			RootCAs:    roots,
+			ServerName: "localhost",
+			MinVersion: tls.VersionTLS13,
+		}},
+	}
+	t.Cleanup(bearerClient.CloseIdleConnections)
+
+	roleReq, err := http.NewRequestWithContext(context.Background(), http.MethodPost,
+		baseURL+"/api/v1/tenants/acme/roles",
+		strings.NewReader(`{"id":"repro","name":"repro","permissions":["kv:read"]}`))
+	require.NoError(t, err)
+	roleReq.Header.Set("Authorization", "Bearer "+accessToken)
+	roleReq.Header.Set("Content-Type", "application/json")
+	roleResp, err := bearerClient.Do(roleReq)
+	require.NoError(t, err)
+	defer roleResp.Body.Close()
+	roleBody, err := io.ReadAll(roleResp.Body)
+	require.NoError(t, err)
+	t.Logf("role create status %d, body %s", roleResp.StatusCode, roleBody)
+
+	assert.NotContains(t, string(roleBody), "no tenant is bound",
+		"role create with the bearer alone under RequireAuthz: %s", roleBody)
 }
