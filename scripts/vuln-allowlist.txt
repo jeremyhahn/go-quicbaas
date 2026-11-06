@@ -1,0 +1,6 @@
+# Reachable govulncheck advisories that `make vuln` allows (go-quicbaas#2211).
+# One entry per line: `<GO-ID> <reason>`. Every entry needs a reason, and an
+# entry is only for an advisory with no fixed release; bump the module instead
+# when one exists. `make vuln` fails an entry that matches no reachable finding
+# as stale, so remove it once the fix lands.
+GO-2026-6911 mcp-go v0.45.0 SSRF and credential leak via an unvalidated Location header; no fixed version exists (Fixed in: N/A); allowed by the CA (DS-6762, 2026-11-06) until mcp-go ships a fix, then bump and remove this line (go-quicbaas#2211)
