@@ -23,17 +23,20 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
-// urlTenant resolves the tenant a request names in its URL parameter param.
-// The parameter is caller-supplied, so it is honoured only as
-// tenantctx.Target allows: a caller names its own tenant, the system tenant
-// gets no cross-tenant lift, and a request with no tenant bound is refused
-// (go-quicbaas#1150). On refusal it answers 403 through handleServiceError
-// and returns ok=false.
+// urlTenant resolves the tenant a request names in its URL parameter param,
+// for the REST IAM routes. The parameter is caller-supplied, so it is
+// honoured only as tenantctx.AdminTarget allows: a tenant caller names its
+// own tenant, the system admin acts in the tenant the URL names
+// (go-quicbaas#2212), and a request with no tenant bound is refused
+// (go-quicbaas#1150). On success it binds the resolved tenant into r's
+// context, so the handler's later r.Context() carries it. On refusal it
+// answers 403 through handleServiceError and returns ok=false.
 func (s *Server) urlTenant(w http.ResponseWriter, r *http.Request, op, param string) (string, bool) {
-	tenantID, err := tenantctx.Target(r.Context(), op, chi.URLParam(r, param))
+	ctx, tenantID, err := tenantctx.AdminTarget(r.Context(), op, chi.URLParam(r, param))
 	if err != nil {
 		s.handleServiceError(w, r, err)
 		return "", false
 	}
+	*r = *r.WithContext(ctx)
 	return tenantID, true
 }

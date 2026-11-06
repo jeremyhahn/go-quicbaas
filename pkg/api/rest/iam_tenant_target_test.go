@@ -30,12 +30,13 @@ func callerRouteContext(ctx context.Context, rctx *chi.Context) context.Context 
 // IAM data by naming it in the URL (go-quicbaas#1150): a tenant naming a
 // different tenant, the system tenant (which gets no cross-tenant lift), and a
 // request with no tenant bound at all.
+// The system tenant is not among them: the system admin acts in the tenant
+// the URL names (go-quicbaas#2212).
 var tenantTargetRefusals = []struct {
 	name   string
 	caller func(context.Context) context.Context
 }{
 	{"other tenant", func(ctx context.Context) context.Context { return tenantctx.WithTenant(ctx, "tenant-a") }},
-	{"system tenant", tenantctx.WithSystem},
 	{"no tenant", func(ctx context.Context) context.Context { return ctx }},
 }
 
@@ -126,6 +127,46 @@ func TestIAMHandlers_CallerNamingItsOwnTenantSucceeds(t *testing.T) {
 	assert.Equal(t, http.StatusOK, w.Code, "body: %s", w.Body.String())
 }
 
+func TestURLTenant_SystemCallerActsInTheNamedTenant(t *testing.T) {
+	_, _, memStorage, handler, cleanup := setupIAMTestServer(t)
+	defer cleanup()
+	require.NoError(t, memStorage.CreateTenant(context.Background(), &iam.Tenant{ID: "acme", Name: "Acme"}))
+
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("tenant_id", "acme")
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/tenants/acme/roles", nil)
+	req = req.WithContext(context.WithValue(tenantctx.WithSystem(req.Context()), chi.RouteCtxKey, rctx))
+	w := httptest.NewRecorder()
+
+	handler.ListRoles(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code, "body: %s", w.Body.String())
+
+	var s Server
+	tenantID, ok := s.urlTenant(w, req, "rest.IAM", "tenant_id")
+	require.True(t, ok)
+	assert.Equal(t, "acme", tenantID)
+	bound, err := tenantctx.FromContext(req.Context(), "rest.IAM")
+	require.NoError(t, err)
+	assert.Equal(t, "acme", bound, "urlTenant did not bind the URL's tenant into the request")
+}
+
+func TestURLTenant_RefusesAnUnboundRequest(t *testing.T) {
+	_, _, _, handler, cleanup := setupIAMTestServer(t)
+	defer cleanup()
+
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("tenant_id", "acme")
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/tenants/acme/roles", nil)
+	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	w := httptest.NewRecorder()
+
+	handler.ListRoles(w, req)
+
+	assert.Equal(t, http.StatusForbidden, w.Code, "body: %s", w.Body.String())
+	assert.Contains(t, w.Body.String(), "no tenant is bound")
+}
+
 // TestWebAuthnCredentials_RefuseANamedTenantThatIsNotTheCaller covers the
 // credential routes, which resolve the tenant through their own subject helper.
 func TestWebAuthnCredentials_RefuseANamedTenantThatIsNotTheCaller(t *testing.T) {
@@ -137,8 +178,8 @@ func TestWebAuthnCredentials_RefuseANamedTenantThatIsNotTheCaller(t *testing.T) 
 			req := httptest.NewRequest(http.MethodDelete, credentialPath(""), nil)
 			rec := httptest.NewRecorder()
 
-			// credentialPath names tenant acme; tenant-a, system and tenantless
-			// callers all differ from it.
+			// credentialPath names tenant acme; tenant-a and tenantless
+			// callers both differ from it.
 			h.ServeHTTP(rec, req.WithContext(refusal.caller(req.Context())))
 
 			assert.Equal(t, http.StatusForbidden, rec.Code, "body: %s", rec.Body.String())
