@@ -3556,22 +3556,29 @@ gosec: ## Run gosec security scanner
 		exit $$rc; \
 	fi
 
+VULN_ALLOWLIST := scripts/vuln-allowlist.txt
 .PHONY: vuln
-vuln: ## Run govulncheck to scan for known vulnerabilities
+vuln: ## Run govulncheck; fail on a reachable advisory not on scripts/vuln-allowlist.txt, or a stale entry
 	@echo "$(BLUE)Running vulnerability scan with govulncheck...$(NC)"
 	@GOVULNCHECK_BIN=$$(command -v govulncheck 2>/dev/null || echo "$$HOME/go/bin/govulncheck"); \
 	if [ -x "$$GOVULNCHECK_BIN" ]; then \
-		$$GOVULNCHECK_BIN ./...; rc=$$?; \
-		if [ $$rc -eq 0 ]; then \
-			echo "$(GREEN)Vulnerability scan complete$(NC)"; \
-		elif [ $$rc -gt 128 ]; then \
+		out=$$(mktemp); trap 'rm -f "$$out"' EXIT; \
+		$$GOVULNCHECK_BIN -format json ./... > "$$out"; rc=$$?; \
+		if [ $$rc -gt 128 ]; then \
 			echo "$(RED)govulncheck was KILLED by signal $$(($$rc - 128)) (exit $$rc) -- it did NOT report a vulnerability.$(NC)"; \
 			echo "$(RED)On a 16 GB job container this is the memory cap: govulncheck holds the whole$(NC)"; \
 			echo "$(RED)package graph and its SSA live, which GOMEMLIMIT cannot collect. Re-run when$(NC)"; \
 			echo "$(RED)the host is quieter, or raise the cap -- do not read this as a finding.$(NC)"; \
 			exit $$rc; \
+		elif [ $$rc -ne 0 ]; then \
+			echo "$(RED)govulncheck failed (exit $$rc)$(NC)"; \
+			exit $$rc; \
+		fi; \
+		$(GOCMD) run ./scripts/vulnallow $(VULN_ALLOWLIST) < "$$out"; rc=$$?; \
+		if [ $$rc -eq 0 ]; then \
+			echo "$(GREEN)Vulnerability scan complete$(NC)"; \
 		else \
-			echo "$(RED)govulncheck found reachable vulnerabilities$(NC)"; \
+			echo "$(RED)govulncheck found reachable vulnerabilities not on $(VULN_ALLOWLIST)$(NC)"; \
 			exit $$rc; \
 		fi; \
 	else \
