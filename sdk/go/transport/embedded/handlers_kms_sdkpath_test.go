@@ -74,20 +74,20 @@ func TestHandleKMSGenerateKey_SDKClientType(t *testing.T) {
 	}
 }
 
-// recordingKMSService keeps the GenerateKey request the handler built so a
+// generateRecordingKMSService keeps the GenerateKey request the handler built so a
 // test can assert which SDK fields reached the service layer.
-type recordingKMSService struct {
+type generateRecordingKMSService struct {
 	mockKMSService
 	generated *service.GenerateKeyRequest
 }
 
-func (r *recordingKMSService) GenerateKey(_ context.Context, req *service.GenerateKeyRequest) (*service.GenerateKeyResponse, error) {
+func (r *generateRecordingKMSService) GenerateKey(_ context.Context, req *service.GenerateKeyRequest) (*service.GenerateKeyResponse, error) {
 	r.generated = req
 	return &service.GenerateKeyResponse{}, nil
 }
 
 func TestHandleKMSGenerateKey_CarriesDescriptionTagsOwner(t *testing.T) {
-	kmsSvc := &recordingKMSService{}
+	kmsSvc := &generateRecordingKMSService{}
 	tr, err := New(&mockQuicBaaS{kmsService: kmsSvc})
 	require.NoError(t, err)
 
