@@ -52,12 +52,9 @@ var (
 // nonGatingJobs are the ci.yml jobs that run but deliberately do not gate
 // CI Gate: they are in neither its needs nor a check line.
 //
-// Integration still runs on every PR but does not gate until row #1700
-// closes (CA m787). Remove it from this set when the row closes, and restore
-// it in ci-gate's needs and as a pr check line.
-var nonGatingJobs = map[string]bool{
-	"integration": true,
-}
+// Every ci.yml job gates CI Gate (ruling 297, #2206). A job is added here
+// only on a CA ruling.
+var nonGatingJobs = map[string]bool{}
 
 // gateNeeds returns the jobs listed in the gate job's `needs: [...]` line.
 func gateNeeds(t *testing.T, gate string) []string {

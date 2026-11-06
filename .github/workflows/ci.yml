@@ -490,8 +490,8 @@ jobs:
     # with CI Gate's FULL_TIER expression as `if:`, and marks it full there.
     timeout-minutes: 120      # CUSTOMIZE
     needs: [changes]
-    if: ${{ needs.changes.outputs.docs_only != 'true' }}
     env:
+      DOCS_ONLY: ${{ needs.changes.outputs.docs_only }}
       CI_STACK_PREFIX: ${{ github.event.repository.name }}-ci-
       IT_PROJECT: ${{ github.event.repository.name }}-ci-${{ github.run_id }}-${{ github.run_attempt }}
       IT_IMAGE: ${{ github.event.repository.name }}-ci-it:${{ github.run_id }}-${{ github.run_attempt }}
@@ -513,15 +513,18 @@ jobs:
           done
 
       - name: Reap stale CI stacks
+        if: ${{ env.DOCS_ONLY != 'true' }}
         run: scripts/reap-stale-ci-stacks.sh "$CI_STACK_PREFIX"
 
       # CUSTOMIZE: host tuning the suite needs goes here, as in the test job.
       # go-quicbaas: the merge result, against the same pinned base as the
       # image job (#436).
       - name: Validate the merge result, not the head alone
+        if: ${{ env.DOCS_ONLY != 'true' }}
         run: .github/scripts/ci-merge-base.sh "${{ github.event_name }}" "${{ github.base_ref }}" "${{ github.event.pull_request.base.sha }}"
 
       - name: Write the module credential file
+        if: ${{ env.DOCS_ONLY != 'true' }}
         run: |
           umask 077
           : > "$RUNNER_TEMP/gomodauth.env"
@@ -530,6 +533,7 @@ jobs:
           done
 
       - name: make integration-test (integration image)
+        if: ${{ env.DOCS_ONLY != 'true' }}
         run: make integration-test MODULE_ENV_FILE="$RUNNER_TEMP/gomodauth.env" IT_PROJECT="$IT_PROJECT" IT_IMAGE="$IT_IMAGE" GO_BUILD_TAGS="$GO_BUILD_TAGS"
 
       # go-quicbaas (#2034): a server-side failure reaches the suite only as an
@@ -601,10 +605,8 @@ jobs:
     if: always()
     # CUSTOMIZE: the repo's job list. Add every CUSTOMIZE job here AND as a
     # check line below; remove none of the template's jobs.
-    # Integration still runs on every PR but does not gate until row #1700
-    # closes (CA m787). Restore it then in needs and as a pr check line, and
-    # drop it from nonGatingJobs in test/buildgates/ci_gate_test.go.
-    needs: [changes, image, arch-gates]
+    # Integration gates (ruling 297, #2206).
+    needs: [changes, image, integration, arch-gates]
     steps:
       - name: Fail closed on any non-success
         env:
@@ -631,5 +633,6 @@ jobs:
           # full tier by its `if:` is marked full; every other job is pr.
           check changes     "${{ needs.changes.result }}" pr
           check image       "${{ needs.image.result }}" pr
+          check integration "${{ needs.integration.result }}" pr
           check arch-gates  "${{ needs.arch-gates.result }}" pr
           exit $BAD
