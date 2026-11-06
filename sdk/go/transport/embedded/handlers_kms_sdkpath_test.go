@@ -74,6 +74,38 @@ func TestHandleKMSGenerateKey_SDKClientType(t *testing.T) {
 	}
 }
 
+// recordingKMSService keeps the GenerateKey request the handler built so a
+// test can assert which SDK fields reached the service layer.
+type recordingKMSService struct {
+	mockKMSService
+	generated *service.GenerateKeyRequest
+}
+
+func (r *recordingKMSService) GenerateKey(_ context.Context, req *service.GenerateKeyRequest) (*service.GenerateKeyResponse, error) {
+	r.generated = req
+	return &service.GenerateKeyResponse{}, nil
+}
+
+func TestHandleKMSGenerateKey_CarriesDescriptionTagsOwner(t *testing.T) {
+	kmsSvc := &recordingKMSService{}
+	tr, err := New(&mockQuicBaaS{kmsService: kmsSvc})
+	require.NoError(t, err)
+
+	_, err = tr.Request(context.Background(), "quicbaas.KMS", "GenerateKey", &kmsclient.GenerateKeyRequest{
+		Name:        "k",
+		Algorithm:   kmsclient.AlgorithmAES256GCM,
+		Description: "d",
+		Tags:        map[string]string{"env": "prod"},
+		Owner:       "svc-a",
+	})
+	require.NoError(t, err)
+
+	require.NotNil(t, kmsSvc.generated)
+	assert.Equal(t, "d", kmsSvc.generated.Description)
+	assert.Equal(t, map[string]string{"env": "prod"}, kmsSvc.generated.Tags)
+	assert.Equal(t, "svc-a", kmsSvc.generated.Owner)
+}
+
 func TestHandleKMSGenerateKey_WrongType(t *testing.T) {
 	tr := newKMSTransport(t)
 	resp, err := tr.Request(context.Background(), "quicbaas.KMS", "GenerateKey", &service.PutRequest{})
