@@ -638,6 +638,12 @@ make docker-run CMD='make deps-check'   # latest-version check
 make toolchain-image                    # print the toolchain image tag
 ```
 
+`make vuln` fails on a reachable advisory unless `scripts/vuln-allowlist.txt`
+lists its ID with a reason, and prints each allowed advisory with that reason.
+An entry is only for an advisory with no fixed release, and an entry that
+matches no reachable finding fails as stale, so it is removed once the fix
+ships.
+
 `make toolchain-image` prints a tag hashed from the Dockerfile, the pin file and
 both modules' `go.mod`/`go.sum`. The integration image, which holds the source,
 is tagged `integration-<commit>`, plus `-dirty-<hash>` of the uncommitted
