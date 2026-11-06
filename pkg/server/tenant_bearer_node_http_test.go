@@ -51,8 +51,6 @@ func newOperatorTLSServingNode(t *testing.T) (*Server, service.IAMComponents, *x
 	srv.config.Security.TLSKeyFile = keyFile
 	srv.config.Security.TLSCAFile = certFile
 	srv.config.CA.KeysDir = filepath.Join(t.TempDir(), "ca-keys")
-	require.NoError(t, srv.initializeCA(), "initializeCA")
-	wireCAAdapter(t, srv)
 
 	port := getFreePort(t)
 	srv.config.Server.REST.Enabled = true
@@ -68,14 +66,53 @@ func newOperatorTLSServingNode(t *testing.T) (*Server, service.IAMComponents, *x
 	adminCertPath, _ := writeBootstrapPIVCert(t)
 	srv.config.Auth.BootstrapAdminPIVCertPath = adminCertPath
 
-	require.NoError(t, srv.initStandaloneQRDBNode(), "qrdb node init")
-	t.Cleanup(func() { assert.NoError(t, srv.stopQRDBNode(), "stopping the qrdb node") })
-	srv.qrdbClient = newNodeBackedShardedClient(srv.qrdbNode)
+	// Boot the way the daemon does: Start initializes the CA, the qrdb node
+	// and IAM, then composes the quicbaas REST surface on the node listener.
+	startErr := make(chan error, 1)
+	go func() { startErr <- srv.Start() }()
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		assert.NoError(t, srv.Shutdown(ctx), "shutting the server down")
+	})
 
-	components, err := srv.initializeIAMComponents()
-	require.NoError(t, err, "first boot")
+	root := diskLeaf(t, certFile)
+	roots := x509.NewCertPool()
+	roots.AddCert(root)
+	probe := &http.Client{
+		Timeout: 5 * time.Second,
+		Transport: &http.Transport{TLSClientConfig: &tls.Config{
+			RootCAs:    roots,
+			ServerName: "localhost",
+			MinVersion: tls.VersionTLS13,
+		}},
+	}
+	t.Cleanup(probe.CloseIdleConnections)
+	baseURL := fmt.Sprintf("https://127.0.0.1:%d", port)
 
-	return srv, components, diskLeaf(t, certFile), fmt.Sprintf("https://127.0.0.1:%d", port)
+	// A bound listener answers 503 until the REST surface has composed, so
+	// wait for IAM and for an answer other than 503, not just for the bind.
+	awaitCond(t, "the quicbaas REST surface to compose on the node listener", func() bool {
+		select {
+		case err := <-startErr:
+			t.Fatalf("Start returned before the REST surface composed: %v", err)
+		default:
+		}
+		if srv.iamComponents == nil {
+			return false
+		}
+		resp, err := probe.Get(baseURL + "/api/v1/tenants/acme/roles")
+		if err != nil {
+			return false
+		}
+		defer resp.Body.Close()
+		if _, err := io.Copy(io.Discard, resp.Body); err != nil {
+			return false
+		}
+		return resp.StatusCode != http.StatusServiceUnavailable
+	})
+
+	return srv, srv.iamComponents, root, baseURL
 }
 
 // TestTenantAdminBearer_NodeListenerBindsTenant reproduces #2212 in the unit
