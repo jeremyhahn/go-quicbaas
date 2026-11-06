@@ -35,6 +35,20 @@ import (
 // data-plane principal.
 const TenantPrefix = "itest-dp"
 
+// Permissions is the permission set the data-plane principal needs: the
+// entity CRUD, list and range verbs and the batch verb. The tenant's built-in
+// Operator role grants all of them. It is what the server's authorization
+// mapping requires for Get, Put, Delete, List, Query, the Batch* RPCs,
+// StreamBatchPut and the REST entity and batch routes.
+var Permissions = []string{
+	"kv:get",
+	"kv:put",
+	"kv:delete",
+	"kv:list",
+	"kv:range",
+	"batch:execute",
+}
+
 // ErrNoTokenSource is returned when bearer credentials are built without a
 // token source.
 var ErrNoTokenSource = errors.New("dataplane: token source is required")
