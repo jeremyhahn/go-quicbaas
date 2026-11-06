@@ -324,10 +324,22 @@ func TestDocsOnlyBuildsTheToolchainImageAlone(t *testing.T) {
 
 func TestIntegrationSkipsOnlyForADocsOnlyPullRequest(t *testing.T) {
 	_, jobs := ciJobs(t, readFile(t, ciWorkflowPath))
-	const cond = "if: ${{ needs.changes.outputs.docs_only != 'true' }}"
-	if !strings.Contains(jobs["integration"], "\n    "+cond+"\n") {
-		t.Errorf("integration job lacks %q. It must skip for a docs-only pull "+
-			"request and run for every other change.", cond)
+	integration := jobs["integration"]
+	if jobIfRe.MatchString(integration) {
+		t.Errorf("integration job carries a job-level `if:`. It is a PR-tier job, " +
+			"and CI Gate fails it when skipped (ruling 297); its docs-only skip " +
+			"belongs in its steps.")
+	}
+	const env = "\n      DOCS_ONLY: ${{ needs.changes.outputs.docs_only }}\n"
+	if !strings.Contains(integration, env) {
+		t.Errorf("integration job lacks %q; every step guard would compare an "+
+			"empty value and never skip", env)
+	}
+	const suite = "\n      - name: make integration-test (integration image)\n" +
+		"        if: ${{ env.DOCS_ONLY != 'true' }}\n"
+	if !strings.Contains(integration, suite) {
+		t.Errorf("integration job lacks %q. The suite step must skip for a "+
+			"docs-only pull request and run for every other change.", suite)
 	}
 	needs := gateNeeds(t, jobs[gateJobName])
 	if missing([]string{"changes"}, needs) != nil {
