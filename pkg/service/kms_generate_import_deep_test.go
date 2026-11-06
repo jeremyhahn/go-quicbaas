@@ -15,6 +15,7 @@ package service
 
 import (
 	"context"
+	stderrors "errors"
 	"testing"
 	"time"
 
@@ -85,6 +86,117 @@ func TestKMSService_GenerateKey_WithRotationPolicyPersists(t *testing.T) {
 	// Policy is persisted to the KVStore.
 	_, ok := store.data[kmsRotationPolicyKey("rot-key")]
 	assert.True(t, ok)
+}
+
+var (
+	errMetadataStoreDown   = stderrors.New("metadata store down")
+	errMetadataDeleteDown  = stderrors.New("key delete down")
+	errMetadataKeyNotFound = stderrors.New("key not found")
+)
+
+// metadataStoreKMSManager is a mockKMSManager whose keys and stored metadata
+// live in one map, so a test can see whether a key outlived a failed
+// metadata store.
+type metadataStoreKMSManager struct {
+	*mockKMSManager
+	live      map[string]*kms.KeyMetadata
+	storeErr  error
+	deleteErr error
+}
+
+func newMetadataStoreKMSManager() *metadataStoreKMSManager {
+	m := &metadataStoreKMSManager{mockKMSManager: newMockKMSManager(), live: make(map[string]*kms.KeyMetadata)}
+	m.generateKeyFn = func(_ context.Context, attrs *xkmssdk.KeyAttributes) (interface{}, error) {
+		m.live[attrs.CN] = &kms.KeyMetadata{KeyID: attrs.CN, Name: attrs.CN, Algorithm: "AES-256-GCM", Version: 1}
+		return &kms.KeyMetadata{KeyID: attrs.CN, Name: attrs.CN, Algorithm: "AES-256-GCM", Version: 1}, nil
+	}
+	m.getKeyFn = func(_ context.Context, keyID string) (interface{}, error) {
+		meta, ok := m.live[keyID]
+		if !ok {
+			return nil, errMetadataKeyNotFound
+		}
+		return meta, nil
+	}
+	m.deleteKeyFn = func(_ context.Context, keyID string) error {
+		if m.deleteErr != nil {
+			return m.deleteErr
+		}
+		delete(m.live, keyID)
+		return nil
+	}
+	return m
+}
+
+func (m *metadataStoreKMSManager) UpdateStoredMetadata(metadata interface{}) error {
+	if m.storeErr != nil {
+		return m.storeErr
+	}
+	meta, ok := metadata.(*kms.KeyMetadata)
+	if !ok {
+		return errMetadataKeyNotFound
+	}
+	stored := *meta
+	m.live[meta.KeyID] = &stored
+	return nil
+}
+
+func newMetadataGenerateRequest(name string) *GenerateKeyRequest {
+	return &GenerateKeyRequest{
+		Name:          name,
+		KeyAttributes: &xkmssdk.KeyAttributes{SymmetricAlgorithm: xkmssdk.SymmetricAES256GCM},
+		Usage:         []KeyUsage{KeyUsageEncrypt, KeyUsageDecrypt},
+		Description:   "d",
+		Tags:          map[string]string{"env": "prod"},
+		Owner:         "svc-a",
+	}
+}
+
+func TestKMSService_GenerateKey_MetadataStoreFailureDeletesKey(t *testing.T) {
+	mgr := newMetadataStoreKMSManager()
+	mgr.storeErr = errMetadataStoreDown
+	svc := newKMSService(mgr, newMockLogger())
+	ctx := systemTenantCtx()
+
+	resp, err := svc.GenerateKey(ctx, newMetadataGenerateRequest("meta-key"))
+	require.Error(t, err)
+	assert.Nil(t, resp)
+	assert.ErrorIs(t, err, errMetadataStoreDown)
+	assert.Empty(t, mgr.live, "the key outlived its failed metadata store")
+
+	_, err = svc.GetKeyMetadata(ctx, &GetKeyMetadataRequest{KeyID: "meta-key"})
+	assert.ErrorIs(t, err, errMetadataKeyNotFound)
+
+	// The name was never recorded, so the same name succeeds once the store recovers.
+	mgr.storeErr = nil
+	_, err = svc.GenerateKey(ctx, newMetadataGenerateRequest("meta-key"))
+	require.NoError(t, err)
+}
+
+func TestKMSService_GenerateKey_MetadataStoreAndDeleteFailureCarriesBoth(t *testing.T) {
+	mgr := newMetadataStoreKMSManager()
+	mgr.storeErr = errMetadataStoreDown
+	mgr.deleteErr = errMetadataDeleteDown
+	svc := newKMSService(mgr, newMockLogger())
+
+	_, err := svc.GenerateKey(systemTenantCtx(), newMetadataGenerateRequest("meta-key"))
+	require.Error(t, err)
+	assert.ErrorIs(t, err, errMetadataStoreDown)
+	assert.ErrorIs(t, err, errMetadataDeleteDown)
+}
+
+func TestKMSService_GenerateKey_StoresDescriptionTagsOwner(t *testing.T) {
+	mgr := newMetadataStoreKMSManager()
+	svc := newKMSService(mgr, newMockLogger())
+	ctx := systemTenantCtx()
+
+	_, err := svc.GenerateKey(ctx, newMetadataGenerateRequest("meta-key"))
+	require.NoError(t, err)
+
+	got, err := svc.GetKeyMetadata(ctx, &GetKeyMetadataRequest{KeyID: "meta-key"})
+	require.NoError(t, err)
+	assert.Equal(t, "d", got.Metadata.Description)
+	assert.Equal(t, map[string]string{"env": "prod"}, got.Metadata.Tags)
+	assert.Equal(t, "svc-a", got.Metadata.Owner)
 }
 
 func TestKMSService_ImportKey_TypedMetadataPersists(t *testing.T) {
