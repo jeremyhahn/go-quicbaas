@@ -255,12 +255,13 @@ const WebhookPathPrefix = "/api/v1/sdlc/webhook/"
 
 // NewOnboarder wires the onboarder.
 //
-// hookBase is this NODE's externally reachable base URL, and it is required
-// for a reason worth stating: "the webhook points at this node" is a property
-// of the node, not of the project, and a per-project URL would let 28 bindings
-// disagree about where a delivery goes. An empty one is refused rather than
-// defaulted — guessing a public address would provision deliveries into the
-// void and report them provisioned.
+// hookBase is this NODE's externally reachable base URL: "the webhook points
+// at this node" is a property of the node, not of the project, and a
+// per-project URL would let 28 bindings disagree about where a delivery goes.
+// An empty one is allowed and never defaulted: the node takes no webhook
+// deliveries, only poll-only bindings onboard, and a binding that names a
+// webhook secret is refused (go-quicbaas#2225). Guessing a public address
+// would provision deliveries into the void and report them provisioned.
 func NewOnboarder(forges ForgeResolver, secrets WebhookSecretResolver, hookBase string) (*Onboarder, error) {
 	if forges == nil {
 		return nil, &InvalidInputError{Field: "forges", Message: "onboarding writes to the forge"}
@@ -301,10 +302,9 @@ func NewOnboarder(forges ForgeResolver, secrets WebhookSecretResolver, hookBase 
 func NormalizeWebhookPublicURL(raw string) (string, error) {
 	trimmed := strings.TrimRight(strings.TrimSpace(raw), "/")
 	if trimmed == "" {
-		return "", &InvalidInputError{
-			Field:   "webhook_public_url",
-			Message: "required; without this node's public base URL a provisioned delivery has nowhere to go",
-		}
+		// No public URL: this node takes no webhook deliveries, and only
+		// poll-only bindings onboard on it (go-quicbaas#2225).
+		return "", nil
 	}
 	parsed, err := url.Parse(trimmed)
 	if err != nil {
@@ -548,6 +548,11 @@ func (o *Onboarder) ensureWebhook(
 	if ref == "" {
 		return false, "", nil
 	}
+	if o.hookBase == "" {
+		// The binding asks for deliveries this node cannot take. Refused
+		// rather than provisioned into the void and reported provisioned.
+		return false, "", &WebhookPublicURLMissingError{ProjectID: binding.ProjectID}
+	}
 	secret, err := o.secrets.WebhookSecret(ctx, tenantID, ref)
 	if err != nil {
 		return false, "", err
@@ -583,6 +588,18 @@ func (o *Onboarder) checkWebhook(ctx context.Context, forge ForgeBackend, bindin
 	if strings.TrimSpace(binding.Forge.WebhookSecretRef) == "" {
 		// Poll-only by declaration. Not a finding: see ensureWebhook.
 		report.add(CheckWebhook, StatusNotApplicable)
+		return
+	}
+	if o.hookBase == "" {
+		// The binding asks for deliveries a node with no public URL cannot
+		// take, so nothing can be conformant: see ensureWebhook.
+		report.add(CheckWebhook, StatusFail, ConformanceFinding{
+			Class:   ConformanceWebhookMissing,
+			Check:   CheckWebhook,
+			Subject: "sdlc.webhook.public_url",
+			Detail:  "the binding names a webhook secret, but this node has no sdlc.webhook.public_url and takes no deliveries",
+			Remedy:  "set sdlc.webhook.public_url, or drop the binding's webhook secret to make it poll-only",
+		})
 		return
 	}
 	hooks, err := forge.Webhooks(ctx, binding.Repo())
