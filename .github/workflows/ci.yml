@@ -293,6 +293,11 @@ env:
   # The per-package -timeout of the -race run. The Makefile default (30m) is
   # sized for a workstation; a 4-core runner is slower, so CI doubles it.
   RACE_TIMEOUT: 60m
+  # Hosted runners inject no GOPRIVATE, so first-party modules would resolve
+  # through the public proxy and checksum database. Those cached some tags
+  # before the history rewrite moved them, and go.sum records what the origin
+  # serves now, so first-party modules are fetched from their origin.
+  GOPRIVATE: github.com/jeremyhahn/*
   # CUSTOMIZE (v1.9.2): the repo's full build-tag set, SPACE separated — the go
   # tool's own form. Leave EMPTY if no package is tag-gated. Every analysis step
   # below derives its own form from this ONE value; never write the tag list
