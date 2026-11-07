@@ -20,11 +20,13 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -380,4 +382,387 @@ func ghClosePullOnCleanup(t *testing.T, s ghSuite, number int) {
 			ghCleanupCall(t, s.cfg, http.MethodPatch, path, map[string]string{"state": "closed"})
 		}
 	})
+}
+
+// ghPull is one test's open pull request: a work branch off the per-run
+// base, one commit on it, and the pull request between them.
+type ghPull struct {
+	base   string
+	work   string
+	head   string
+	number int
+}
+
+// ghOpenPull cuts the base and work branches, commits one file on the work
+// branch, and opens the pull request, closing it on cleanup.
+func ghOpenPull(t *testing.T, s ghSuite, ns, title string) ghPull {
+	t.Helper()
+
+	base := ghBaseBranch(t, s, ns)
+	work := ghBranch(t, s, ns+"-work", base)
+	head := ghCommitFile(t, s.cfg, work, ns+"-first.txt", "first\n", "first change")
+
+	pull, err := s.author.CreatePullRequest(context.Background(), s.cfg.repo, PullRequestSpec{
+		Title:   ns + " " + title,
+		Body:    "live GitHub suite",
+		HeadRef: work,
+		BaseRef: base,
+	})
+	if err != nil {
+		t.Fatalf("opening the pull request: %v", err)
+	}
+	ghClosePullOnCleanup(t, s, pull.Number)
+	if pull.HeadSHA != head {
+		t.Fatalf("the pull request opened at %s, not the commit just pushed (%s)", pull.HeadSHA, head)
+	}
+	return ghPull{base: base, work: work, head: head, number: pull.Number}
+}
+
+// ghAwaitHead waits until GitHub reports the pull request's head at sha:
+// a push reaches the pull request asynchronously.
+func ghAwaitHead(t *testing.T, s ghSuite, number int, sha string) {
+	t.Helper()
+
+	ghEventually(t, 30*time.Second, 500*time.Millisecond, "the pull request head to reach "+sha, func() bool {
+		pull, err := s.author.GetPullRequest(context.Background(), s.cfg.repo, number)
+		if err != nil {
+			t.Fatalf("reading the pull request: %v", err)
+		}
+		return pull.HeadSHA == sha
+	})
+}
+
+// ghApprove submits the reviewer's approval at head.
+func ghApprove(t *testing.T, s ghSuite, number int, head string) {
+	t.Helper()
+
+	if _, err := s.reviewer.SubmitReview(context.Background(), s.cfg.repo, number, ReviewSubmission{
+		Verdict: VerdictApprove,
+		Body:    "approved by the live GitHub suite",
+		HeadSHA: head,
+	}); err != nil {
+		t.Fatalf("the reviewer approving at %s: %v", head, err)
+	}
+}
+
+// TestLiveGitHub_PullRequestHeadFollowsAPush opens a pull request, pushes a
+// second commit, and reads the new head back from the open listing.
+func TestLiveGitHub_PullRequestHeadFollowsAPush(t *testing.T) {
+	s := ghLiveBackend(t)
+	ns := namespace(t)
+	pull := ghOpenPull(t, s, ns, "head follows push")
+
+	moved := ghCommitFile(t, s.cfg, pull.work, ns+"-second.txt", "second\n", "second change")
+	if moved == pull.head {
+		t.Fatal("the second commit did not move the branch; the test would prove nothing")
+	}
+	ghAwaitHead(t, s, pull.number, moved)
+
+	open, err := s.author.ListOpenPullRequests(context.Background(), s.cfg.repo)
+	if err != nil {
+		t.Fatalf("listing open pull requests: %v", err)
+	}
+	for _, listed := range open {
+		if listed.Number != pull.number {
+			continue
+		}
+		if listed.HeadSHA != moved {
+			t.Fatalf("the listing reports head %s, want the pushed commit %s", listed.HeadSHA, moved)
+		}
+		if listed.HeadRef != pull.work || listed.BaseRef != pull.base {
+			t.Fatalf("the listing reports %s -> %s, want %s -> %s",
+				listed.HeadRef, listed.BaseRef, pull.work, pull.base)
+		}
+		return
+	}
+	t.Fatalf("pull request #%d is missing from the open listing", pull.number)
+}
+
+// TestLiveGitHub_StaleApprovalIsRefusedThenTheApprovedHeadSquashes approves
+// head A, pushes head B, and checks a merge expecting A is refused and
+// merges nothing; then approves B and squash-merges at B, deleting the branch.
+func TestLiveGitHub_StaleApprovalIsRefusedThenTheApprovedHeadSquashes(t *testing.T) {
+	s := ghLiveBackend(t)
+	ctx := context.Background()
+	ns := namespace(t)
+	pull := ghOpenPull(t, s, ns, "stale approval")
+
+	ghApprove(t, s, pull.number, pull.head)
+	moved := ghCommitFile(t, s.cfg, pull.work, ns+"-second.txt", "second\n", "second change")
+	ghAwaitHead(t, s, pull.number, moved)
+
+	err := s.author.MergePullRequest(ctx, s.cfg.repo, pull.number,
+		MergeSpec{Method: "squash", CommitTitle: ns + " stale"}, pull.head)
+	if !errors.Is(err, ErrHeadMoved) {
+		t.Fatalf("merging at the stale approved head: error = %v, want the moved-head refusal", err)
+	}
+	after, err := s.author.GetPullRequest(ctx, s.cfg.repo, pull.number)
+	if err != nil {
+		t.Fatalf("re-reading the pull request: %v", err)
+	}
+	if after.Merged || after.State != "open" {
+		t.Fatalf("after the refusal the pull request is state %q merged %v, want open and unmerged",
+			after.State, after.Merged)
+	}
+
+	ghApprove(t, s, pull.number, moved)
+	spec := MergeSpec{
+		Method:              "squash",
+		CommitTitle:         ns + " squashed",
+		CommitMessage:       "landed by the live GitHub suite",
+		ExpectSourceDeleted: true,
+	}
+	ghEventually(t, 60*time.Second, time.Second, "GitHub to accept the merge", func() bool {
+		err := s.author.MergePullRequest(ctx, s.cfg.repo, pull.number, spec, moved)
+		if errors.Is(err, ErrForgeNotReady) {
+			return false
+		}
+		if err != nil {
+			t.Fatalf("merging at the approved head: %v", err)
+		}
+		return true
+	})
+
+	merged, err := s.author.GetPullRequest(ctx, s.cfg.repo, pull.number)
+	if err != nil {
+		t.Fatalf("re-reading the merged pull request: %v", err)
+	}
+	if !merged.Merged || merged.MergeSHA == "" {
+		t.Fatalf("merged = %v, merge sha %q; want a merged pull request with its commit", merged.Merged, merged.MergeSHA)
+	}
+	var commit struct {
+		Parents []struct {
+			SHA string `json:"sha"`
+		} `json:"parents"`
+	}
+	ghRequest(t, s.cfg, s.cfg.token, http.MethodGet, repoPath(s.cfg.repo)+"/commits/"+merged.MergeSHA, nil, &commit)
+	if len(commit.Parents) != 1 {
+		t.Fatalf("the merge commit has %d parents; a squash has exactly 1", len(commit.Parents))
+	}
+	if _, err := s.author.GetBranch(ctx, s.cfg.repo, pull.work); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("reading the merged source branch: error = %v, want it deleted (ErrNotFound)", err)
+	}
+}
+
+// TestLiveGitHub_SelfApprovalIsRefused checks GitHub refuses the author's
+// own approval and the adapter reports it as a typed API refusal: a
+// *BackendError wrapping a *ForgeAPIError with status 422.
+func TestLiveGitHub_SelfApprovalIsRefused(t *testing.T) {
+	s := ghLiveBackend(t)
+	ns := namespace(t)
+	pull := ghOpenPull(t, s, ns, "self approval")
+
+	_, err := s.author.SubmitReview(context.Background(), s.cfg.repo, pull.number, ReviewSubmission{
+		Verdict: VerdictApprove,
+		Body:    "the author approving their own work",
+		HeadSHA: pull.head,
+	})
+	if err == nil {
+		t.Fatal("GitHub accepted the author's approval of their own pull request")
+	}
+	var apiErr *ForgeAPIError
+	if !errors.As(err, &apiErr) || !errors.Is(err, ErrBackend) {
+		t.Fatalf("error = %v (%T), want a *BackendError wrapping a *ForgeAPIError", err, err)
+	}
+	if apiErr.Status != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, want %d for a self-approval", apiErr.Status, http.StatusUnprocessableEntity)
+	}
+}
+
+// TestLiveGitHub_CommitStatusReadsBackAsACheckRun publishes a commit status
+// on the head and reads it back through ListCheckRuns by its context.
+func TestLiveGitHub_CommitStatusReadsBackAsACheckRun(t *testing.T) {
+	s := ghLiveBackend(t)
+	ctx := context.Background()
+	ns := namespace(t)
+	pull := ghOpenPull(t, s, ns, "commit status")
+
+	statusContext := ns + "/live"
+	if err := s.author.SetCommitStatus(ctx, s.cfg.repo, pull.head, CommitStatus{
+		Context:     statusContext,
+		Status:      CheckSuccess,
+		Description: "published by the live GitHub suite",
+	}); err != nil {
+		t.Fatalf("publishing the commit status: %v", err)
+	}
+
+	runs, err := s.author.ListCheckRuns(ctx, s.cfg.repo, pull.head)
+	if err != nil {
+		t.Fatalf("listing check runs: %v", err)
+	}
+	for _, run := range runs {
+		if run.Name != statusContext {
+			continue
+		}
+		if run.Status != "completed" || run.Conclusion != "success" {
+			t.Fatalf("the status reads back as %s/%s, want completed/success", run.Status, run.Conclusion)
+		}
+		if run.HeadSHA != pull.head {
+			t.Fatalf("the status reads back on %s, want %s", run.HeadSHA, pull.head)
+		}
+		return
+	}
+	t.Fatalf("no check run named %s on %s among %d runs", statusContext, pull.head, len(runs))
+}
+
+// TestLiveGitHub_LabelsRoundTripOnAPullRequest adds two provisioned labels
+// to a pull request, removes one, and reads each state back.
+func TestLiveGitHub_LabelsRoundTripOnAPullRequest(t *testing.T) {
+	s := ghLiveBackend(t)
+	ctx := context.Background()
+	ns := namespace(t)
+	pull := ghOpenPull(t, s, ns, "labels")
+	kept := ghCreateLabel(t, s.cfg, ns+"-kept")
+	dropped := ghCreateLabel(t, s.cfg, ns+"-dropped")
+
+	if err := s.author.AddIssueLabels(ctx, s.cfg.repo, pull.number, []string{kept, dropped}); err != nil {
+		t.Fatalf("adding the labels: %v", err)
+	}
+	ghWantLabels(t, s, pull.number, kept, dropped)
+
+	if err := s.author.RemoveIssueLabel(ctx, s.cfg.repo, pull.number, dropped); err != nil {
+		t.Fatalf("removing a label: %v", err)
+	}
+	ghWantLabels(t, s, pull.number, kept)
+}
+
+// ghWantLabels fails unless the pull request carries exactly want.
+func ghWantLabels(t *testing.T, s ghSuite, number int, want ...string) {
+	t.Helper()
+
+	pull, err := s.author.GetPullRequest(context.Background(), s.cfg.repo, number)
+	if err != nil {
+		t.Fatalf("reading the pull request's labels: %v", err)
+	}
+	if len(pull.Labels) != len(want) {
+		t.Fatalf("labels = %v, want %v", pull.Labels, want)
+	}
+	held := make(map[string]bool, len(pull.Labels))
+	for _, label := range pull.Labels {
+		held[label] = true
+	}
+	for _, label := range want {
+		if !held[label] {
+			t.Fatalf("labels = %v, missing %s", pull.Labels, label)
+		}
+	}
+}
+
+// TestLiveGitHub_AnUndefinedLabelIsRefused checks a label the repo does not
+// define is refused before any write, as on Gitea.
+func TestLiveGitHub_AnUndefinedLabelIsRefused(t *testing.T) {
+	s := ghLiveBackend(t)
+	ns := namespace(t)
+	pull := ghOpenPull(t, s, ns, "undefined label")
+
+	err := s.author.AddIssueLabels(context.Background(), s.cfg.repo, pull.number, []string{ns + "-never-defined"})
+	if !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("error = %v, want ErrInvalidInput", err)
+	}
+}
+
+// TestLiveGitHub_WebhookIsSignedAndUpdatedInPlace provisions a hook with a
+// secret, ensures it again with more events, and checks there is one hook.
+// It then reads GitHub's ping delivery back and verifies its signature, and
+// checks a one-byte change to the payload is refused.
+func TestLiveGitHub_WebhookIsSignedAndUpdatedInPlace(t *testing.T) {
+	s := ghLiveBackend(t)
+	ctx := context.Background()
+	ns := namespace(t)
+
+	hookURL := "https://module.invalid/hook/" + ns
+	secret := []byte("live-suite-secret-" + ns)
+	t.Cleanup(func() {
+		if err := s.author.DeleteWebhook(context.Background(), s.cfg.repo, hookURL); err != nil {
+			t.Errorf("cleanup deleting the webhook: %v", err)
+		}
+	})
+
+	if err := s.author.EnsureWebhook(ctx, s.cfg.repo, WebhookSpec{
+		URL: hookURL, Events: []string{"issues"},
+	}, secret); err != nil {
+		t.Fatalf("creating the webhook: %v", err)
+	}
+	if err := s.author.EnsureWebhook(ctx, s.cfg.repo, WebhookSpec{
+		URL: hookURL, Events: []string{"issues", "pull_request"},
+	}, secret); err != nil {
+		t.Fatalf("updating the webhook: %v", err)
+	}
+
+	hooks, err := s.author.Webhooks(ctx, s.cfg.repo)
+	if err != nil {
+		t.Fatalf("listing webhooks: %v", err)
+	}
+	var hookID int64
+	matching := 0
+	for _, hook := range hooks {
+		if hook.URL != hookURL {
+			continue
+		}
+		matching++
+		id, err := strconv.ParseInt(hook.ID, 10, 64)
+		if err != nil {
+			t.Fatalf("hook id %q is not numeric: %v", hook.ID, err)
+		}
+		hookID = id
+	}
+	if matching != 1 {
+		t.Fatalf("%d hooks point at %s, want exactly 1", matching, hookURL)
+	}
+
+	var ping ghDelivery
+	ghEventually(t, 60*time.Second, 2*time.Second, "GitHub to record the ping delivery", func() bool {
+		for _, delivery := range ghHookDeliveries(t, s.cfg, hookID) {
+			if delivery.Event == "ping" {
+				ping = delivery
+				return true
+			}
+		}
+		return false
+	})
+
+	headers, payload := ghHookDelivery(t, s.cfg, hookID, ping.ID)
+	signature := headers.Get(GitHubSignatureHeader)
+	if signature == "" {
+		t.Fatalf("the ping delivery carries no %s header", GitHubSignatureHeader)
+	}
+	if err := s.author.VerifyWebhook(payload, signature, secret); err != nil {
+		t.Fatalf("verifying the ping delivery: %v", err)
+	}
+
+	if len(payload) == 0 {
+		t.Fatal("the ping delivery's payload is empty; there is nothing to alter")
+	}
+	altered := bytes.Clone(payload)
+	altered[len(altered)/2] ^= 0x01
+	var unverified *WebhookUnverifiedError
+	if err := s.author.VerifyWebhook(altered, signature, secret); !errors.As(err, &unverified) {
+		t.Fatalf("verifying an altered payload: error = %v, want a *WebhookUnverifiedError", err)
+	}
+}
+
+// TestLiveGitHub_BranchProtectionReadIsAProtectionOrATypedRefusal reads the
+// default branch's protection. It returns a rule, nil for an unprotected
+// branch, or — on a GitHub Free private repo, which answers 403 "Upgrade to
+// GitHub Pro" — a *BackendError wrapping a *ForgeAPIError with status 403,
+// which a caller can tell apart from "unprotected". Anything else fails.
+func TestLiveGitHub_BranchProtectionReadIsAProtectionOrATypedRefusal(t *testing.T) {
+	s := ghLiveBackend(t)
+	branch := ghDefaultBranch(t, s.cfg)
+
+	protection, err := s.author.BranchProtection(context.Background(), s.cfg.repo, branch)
+	if err == nil {
+		if protection != nil && protection.Branch != branch {
+			t.Fatalf("protection names branch %q, want %q", protection.Branch, branch)
+		}
+		return
+	}
+	var apiErr *ForgeAPIError
+	if !errors.As(err, &apiErr) || !errors.Is(err, ErrBackend) {
+		t.Fatalf("error = %v (%T), want a *BackendError wrapping a *ForgeAPIError", err, err)
+	}
+	if apiErr.Status != http.StatusForbidden {
+		t.Fatalf("status = %d (%s), want %d for a plan that cannot read protection",
+			apiErr.Status, apiErr.Message, http.StatusForbidden)
+	}
 }
