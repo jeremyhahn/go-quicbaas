@@ -674,6 +674,14 @@ and `make cluster-down-integration` export the tag too. What runs where:
 - The other compose files (`cluster`, `seal`, `kms-*`, `test`) still build
   `test/integration/Dockerfile.node`.
 
+`make integration-test-forge-gitea` and `make integration-test-forge-github`
+run the live forge suites against a scratch repository, outside the
+`integration-test` aggregate. The GitHub suite needs `GITHUB_ITEST_TOKEN`,
+`GITHUB_ITEST_OWNER`, `GITHUB_ITEST_REPO` and `GITHUB_ITEST_REVIEWER_TOKEN` (a
+second account, since GitHub refuses self-approval), plus an optional
+`GITHUB_ITEST_BASE_URL`. Each suite fails, naming every unset variable, rather
+than skipping.
+
 `make deps-check` fails when a direct requirement of `go.mod` or
 `sdk/go/go.mod` is behind its latest release and has no comment on its
 `require` or `replace` line giving the reason (handbook `devops.md` §9). It is

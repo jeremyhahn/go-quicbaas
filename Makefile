@@ -1851,6 +1851,13 @@ integration-test-forge-gitea: ## Run the live Gitea forge suite (needs GITEA_ITE
 	$(GOTEST) -tags integration -count=1 -v -timeout=10m -run 'TestLive_' ./pkg/sdlc/
 	@echo "$(GREEN)✓ Live Gitea forge tests passed$(NC)"
 
+.PHONY: integration-test-forge-github
+integration-test-forge-github: ## Run the live GitHub forge suite (needs GITHUB_ITEST_* env)
+	@echo "$(BLUE)Running live GitHub forge integration tests...$(NC)"
+	@echo "$(YELLOW)Requires GITHUB_ITEST_TOKEN, _OWNER, _REPO, _REVIEWER_TOKEN against a SCRATCH repo$(NC)"
+	$(GOTEST) -tags integration -count=1 -v -timeout=15m -run 'TestLiveGitHub_' ./pkg/sdlc/
+	@echo "$(GREEN)✓ Live GitHub forge tests passed$(NC)"
+
 # The merge-result snapshot suite. It measures what the tree a verification
 # judges actually HOLDS, which needs real git against a real working tree:
 # `git add --all` into an index that starts empty silently drops every file
