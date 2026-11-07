@@ -92,3 +92,49 @@ func (e *ReportError) Error() string {
 }
 
 func (e *ReportError) Unwrap() error { return e.Err }
+
+// PatternError is returned when a pattern cannot become a rule: its class is
+// not one of the four, its expression does not compile, or the expression has
+// no literal the sieve can search for.
+type PatternError struct {
+	// Class is the class the pattern declared.
+	Class Class
+
+	// Expr is the expression as written.
+	Expr string
+
+	// Problem says what is wrong with the pattern.
+	Problem string
+
+	// Err is the regexp compiler's error, nil for the other problems.
+	Err error
+}
+
+func (e *PatternError) Error() string {
+	msg := "labstrings: pattern " + strconv.Quote(e.Expr) + " (" + string(e.Class) + "): " + e.Problem
+	if e.Err != nil {
+		msg += ": " + e.Err.Error()
+	}
+	return msg
+}
+
+func (e *PatternError) Unwrap() error { return e.Err }
+
+// PatternFileError is returned when the private pattern file named by
+// PatternsEnv cannot be used: it is missing or unreadable, it is not a JSON
+// list of {class, expr} entries, or one entry is a PatternError. Configured
+// but unusable fails the gate: a private value the gate was told to look for
+// and silently did not is exactly the leak it exists to stop.
+type PatternFileError struct {
+	// Path is the file, after resolution against the repository root.
+	Path string
+
+	// Err is the I/O, decoding or *PatternError failure.
+	Err error
+}
+
+func (e *PatternFileError) Error() string {
+	return "labstrings: cannot load patterns from " + e.Path + ": " + e.Err.Error()
+}
+
+func (e *PatternFileError) Unwrap() error { return e.Err }

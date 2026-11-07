@@ -50,7 +50,7 @@ func TestRaftConfigListenAddr(t *testing.T) {
 		},
 		{
 			name: "explicit listen address wins over listen host",
-			cfg:  RaftConfig{ListenAddress: "10.0.0.5:7000", ListenHost: "192.168.1.1", RaftAddress: "node1:63001"},
+			cfg:  RaftConfig{ListenAddress: "10.0.0.5:7000", ListenHost: "192.0.2.1", RaftAddress: "node1:63001"},
 			want: "10.0.0.5:7000",
 		},
 		{

@@ -4399,53 +4399,53 @@ func TestGetClientIPFunction_EdgeCases(t *testing.T) {
 		{
 			name: "XForwardedFor_Single",
 			setupReq: func(r *http.Request) {
-				r.Header.Set("X-Forwarded-For", "192.168.1.100")
+				r.Header.Set("X-Forwarded-For", "192.0.2.100")
 			},
-			expectedIP: "192.168.1.100",
+			expectedIP: "192.0.2.100",
 		},
 		{
 			name: "XForwardedFor_Multiple",
 			setupReq: func(r *http.Request) {
-				r.Header.Set("X-Forwarded-For", "192.168.1.100, 10.0.0.1, 172.16.0.1")
+				r.Header.Set("X-Forwarded-For", "192.0.2.100, 10.0.0.1, 172.16.0.1")
 			},
-			expectedIP: "192.168.1.100", // Should take first IP
+			expectedIP: "192.0.2.100", // Should take first IP
 		},
 		{
 			name: "XRealIP",
 			setupReq: func(r *http.Request) {
-				r.Header.Set("X-Real-IP", "192.168.1.200")
+				r.Header.Set("X-Real-IP", "192.0.2.200")
 			},
-			expectedIP: "192.168.1.200",
+			expectedIP: "192.0.2.200",
 		},
 		{
 			name: "RemoteAddr_WithPort",
 			setupReq: func(r *http.Request) {
-				r.RemoteAddr = "192.168.1.50:12345"
+				r.RemoteAddr = "192.0.2.50:12345"
 			},
-			expectedIP: "192.168.1.50",
+			expectedIP: "192.0.2.50",
 		},
 		{
 			name: "RemoteAddr_NoPort",
 			setupReq: func(r *http.Request) {
-				r.RemoteAddr = "192.168.1.75"
+				r.RemoteAddr = "192.0.2.75"
 			},
-			expectedIP: "192.168.1.75",
+			expectedIP: "192.0.2.75",
 		},
 		{
 			name: "PreferXForwardedForOverXRealIP",
 			setupReq: func(r *http.Request) {
-				r.Header.Set("X-Forwarded-For", "192.168.1.10")
-				r.Header.Set("X-Real-IP", "192.168.1.20")
+				r.Header.Set("X-Forwarded-For", "192.0.2.10")
+				r.Header.Set("X-Real-IP", "192.0.2.20")
 			},
-			expectedIP: "192.168.1.10",
+			expectedIP: "192.0.2.10",
 		},
 		{
 			name: "PreferXRealIPOverRemoteAddr",
 			setupReq: func(r *http.Request) {
-				r.Header.Set("X-Real-IP", "192.168.1.30")
-				r.RemoteAddr = "192.168.1.40:8080"
+				r.Header.Set("X-Real-IP", "192.0.2.30")
+				r.RemoteAddr = "192.0.2.40:8080"
 			},
-			expectedIP: "192.168.1.30",
+			expectedIP: "192.0.2.30",
 		},
 	}
 

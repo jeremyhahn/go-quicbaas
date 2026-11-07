@@ -27,7 +27,7 @@ func TestSessionManager_Create(t *testing.T) {
 			UserID:    10001,
 			TenantID:  "tenant-1",
 			TokenHash: hashToken("token-123"),
-			IPAddress: "192.168.1.1",
+			IPAddress: "192.0.2.1",
 			UserAgent: "Mozilla/5.0",
 		}
 
@@ -2351,14 +2351,14 @@ func TestMemorySessionExtStorage_Update_SuccessFinal(t *testing.T) {
 
 	// Update session
 	session.LastActive = time.Now().Add(1 * time.Hour)
-	session.IPAddress = "192.168.1.100"
+	session.IPAddress = "192.0.2.100"
 	err = storage.Update(ctx, session)
 	require.NoError(t, err)
 
 	// Verify update
 	retrieved, err := storage.Get(ctx, session.ID)
 	require.NoError(t, err)
-	assert.Equal(t, "192.168.1.100", retrieved.IPAddress)
+	assert.Equal(t, "192.0.2.100", retrieved.IPAddress)
 }
 
 func TestMemorySessionExtStorage_CleanupExpired_WithExpiredSessionsFinal(t *testing.T) {

@@ -14,6 +14,7 @@
 package labstrings
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -62,22 +63,28 @@ func TestTheTrackedTreeIsPubliclyReleasable(t *testing.T) {
 
 // TestThePlantedViolationIsCaught proves the gate above can fail. A gate nobody
 // has seen fail is indistinguishable from a gate that does not run: this writes
-// one of each class into a copy of the tree's own layout and asserts all three
-// come back, then asserts the same values pass once waived.
+// one of each class into a copy of the tree's own layout, half of them public
+// leaks and half values only the private pattern file knows, and asserts every
+// one comes back, then asserts the same values pass once waived.
 func TestThePlantedViolationIsCaught(t *testing.T) {
 	planted := map[string]string{
-		"cmd/quicbaas/help.go": "const help = \"--server https://198.51.100.51:8443\"\n",
-		"docs/guide.md":        "Deploy it on gpu-host, then check " + ownerPathFixture + "/sources.\n",
-		"pkg/api/rest/ui/dist/assets/index-DEADBEEF.js": "const p=\"agent on vm-host-4\";\n",
+		"cmd/quicbaas/help.go": "const help = \"--server https://203.0.113.51:8443\"\n",
+		"docs/guide.md":        "Deploy it on core-01, then check /home/carol/sources.\n",
+		"pkg/api/rest/ui/dist/assets/index-DEADBEEF.js": "const p=\"agent on nas.lan\";\n",
 		// The Makefile once carried a whole-file allowance, which let a
 		// private forge default land unreported (go-quicbaas#1130). It is
 		// scanned like any other file now; this keeps it that way.
-		"Makefile":  "GITEA_HTTP_ORIGIN ?= http://git.example.internal\n",
-		"README.md": "Questions go to jhahn.\n",
+		"Makefile":  "GITEA_HTTP_ORIGIN ?= http://192.168.7.91:3000\n",
+		"README.md": "Questions go to jdoe.\n",
 	}
 	root, files := writeTree(t, planted)
+	t.Setenv(PatternsEnv, writePatternFile(t, privateFixture))
+	set, err := ConfiguredPatterns(root)
+	if err != nil {
+		t.Fatalf("ConfiguredPatterns: %v", err)
+	}
 
-	findings, err := Scan(root, files, DefaultAllowList)
+	findings, err := Scan(root, files, set, DefaultAllowList)
 	if err != nil {
 		t.Fatalf("Scan: %v", err)
 	}
@@ -98,7 +105,7 @@ func TestThePlantedViolationIsCaught(t *testing.T) {
 		t.Fatalf("Report: %v", err)
 	}
 	if !dirty {
-		t.Fatal("Report says a tree with three planted violations is clean")
+		t.Fatal("Report says a tree with planted violations is clean")
 	}
 	for name := range planted {
 		if !strings.Contains(report.String(), name) {
@@ -109,10 +116,10 @@ func TestThePlantedViolationIsCaught(t *testing.T) {
 	// The same values, waived in place, are accepted -- which is what makes
 	// the gate usable for the cases where the value is the point.
 	waived := map[string]string{
-		"docs/guide.md": "Deploy it on gpu-host <!-- lab-string-ok: measurement provenance -->\n",
+		"docs/guide.md": "Deploy it on core-01 <!-- lab-string-ok: measurement provenance -->\n",
 	}
 	waivedRoot, waivedFiles := writeTree(t, waived)
-	rest, err := Scan(waivedRoot, waivedFiles, DefaultAllowList)
+	rest, err := Scan(waivedRoot, waivedFiles, set, DefaultAllowList)
 	if err != nil {
 		t.Fatalf("Scan: %v", err)
 	}
@@ -121,11 +128,22 @@ func TestThePlantedViolationIsCaught(t *testing.T) {
 	}
 }
 
-// TestTheGateWouldHaveCaughtIssue944 pins the specific values go-quicbaas#944
-// found, in the kind of file each was found in. It is the regression test for
-// the audit: if a future change to the patterns stops matching any of these, the
-// gate has stopped doing the job it was written for.
-func TestTheGateWouldHaveCaughtIssue944(t *testing.T) {
+// TestScanRepo_AnUnusablePatternFileFailsTheGate pins that a configured but
+// broken private file is an error, never a quietly narrower scan.
+func TestScanRepo_AnUnusablePatternFileFailsTheGate(t *testing.T) {
+	t.Setenv(PatternsEnv, filepath.Join(t.TempDir(), "absent.json"))
+	_, err := ScanRepo(repoRoot(t))
+	var fileErr *PatternFileError
+	if !errors.As(err, &fileErr) {
+		t.Fatalf("ScanRepo with a missing pattern file = %v, want *PatternFileError", err)
+	}
+}
+
+// TestTheGateCatchesWhatTheAuditFound pins the kinds of leak go-quicbaas#944
+// found, each in the kind of file it was found in, with the private values
+// stood in for by the fixture network. If a change to the scanner stops
+// matching any of these, the gate has stopped doing the job it was written for.
+func TestTheGateCatchesWhatTheAuditFound(t *testing.T) {
 	cases := []struct {
 		name    string
 		file    string
@@ -133,59 +151,66 @@ func TestTheGateWouldHaveCaughtIssue944(t *testing.T) {
 		want    Class
 	}{
 		{
-			name:    "the repo-root symlink into the lab NFS mount",
+			name:    "a repo-root symlink target into a private mount",
 			file:    "note.txt",
-			content: "/mnt/" + "vstation" + "-01/go-quicbaas/\n", // lab-string-ok: the value the audit found
+			content: "/mnt/lab-share/go-quicbaas/\n",
 			want:    ClassOwnerPath,
 		},
 		{
-			name:    "the private registry in the release workflow",
+			name:    "a private registry in a release workflow",
 			file:    ".github/workflows/release.yml",
-			content: "  REGISTRY: 198.51.100.91:3001\n",
+			content: "  REGISTRY: 203.0.113.91:3001\n",
 			want:    ClassLabAddress,
 		},
 		{
 			name:    "a forge issue link in a shipped doc",
 			file:    "docs/barrier/cli.md",
-			content: "([#491](http://198.51.100.91:3001/jeremyhahn/go-quicbaas/issues/491))\n",
+			content: "([#491](http://203.0.113.91:3001/example/go-quicbaas/issues/491))\n",
 			want:    ClassLabAddress,
 		},
 		{
-			name:    "the fleet host in --help text",
+			name:    "a private host in --help text",
 			file:    "cmd/quicbaas/orchestrator.go",
-			content: "\t\t\"Pin the session by Name or Host (e.g. 'gpu-host')\")\n",
+			content: "\t\t\"Pin the session by Name or Host (e.g. 'core-01')\")\n",
 			want:    ClassLabHost,
 		},
 		{
-			name:    "the fleet address in exported godoc",
+			name:    "a home-network address in exported godoc",
 			file:    "pkg/fleet/config.go",
-			content: "\t// (e.g., \"https://198.51.100.51:8443\"). Required.\n",
+			content: "\t// (e.g., \"https://192.168.7.51:8443\"). Required.\n",
 			want:    ClassLabAddress,
 		},
 		{
 			name:    "a copy-pasteable endpoint in a doc",
 			file:    "docs/embeddings/npu.md",
-			content: "cfg.BaseURL = \"http://gpu-host.internal:8077\"\n",
+			content: "cfg.BaseURL = \"http://core-02.example:8077\"\n",
 			want:    ClassLabHost,
 		},
 		{
-			name:    "the private registry in a captured runner log",
+			name:    "a private registry in a captured runner log",
 			file:    "pkg/cifault/testdata/registry-unreachable.log",
-			content: "image: git.example.internal/jeremyhahn/ci-runner:latest\n",
+			content: "image: 203.0.113.91:3001/example/ci-runner:latest\n",
 			want:    ClassLabAddress,
 		},
 		{
-			name:    "a session note full of owner paths",
+			name:    "a personal account baked into a shipped bundle",
+			file:    "pkg/api/rest/ui/dist/assets/index-DEADBEEF.js",
+			content: "const owner=\"jdoe\";\n",
+			want:    ClassOwnerAccount,
+		},
+		{
+			name:    "a session note full of home paths",
 			file:    "SESSION_RESUME.md",
-			content: "- `" + ownerPathFixture + "/sources/...`\n",
+			content: "- `/home/carol/sources/...`\n",
 			want:    ClassOwnerPath,
 		},
 	}
 
+	set := configured(t)
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			root, files := writeTree(t, map[string]string{tc.file: tc.content})
-			findings, err := Scan(root, files, DefaultAllowList)
+			findings, err := Scan(root, files, set, DefaultAllowList)
 			if err != nil {
 				t.Fatalf("Scan: %v", err)
 			}

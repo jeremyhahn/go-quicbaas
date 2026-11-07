@@ -177,3 +177,7 @@ __pycache__/
 # binary was tracked at the repository root from 47f0b37b until go-quicbaas#943;
 # an unverifiable executable in a public repository is a supply-chain smell.
 /gen-certs
+
+# The release gate's private patterns (pkg/labstrings): the values this file
+# names are exactly what must never be published.
+.labstrings-patterns.json

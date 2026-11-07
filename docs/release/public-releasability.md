@@ -1,6 +1,6 @@
 # Public releasability
 
-> **Status: REFERENCE** · Last verified: 2026-10-15
+> **Status: REFERENCE** · Last verified: 2026-11-07
 > What the public release of this repository ships.
 
 This repository ships publicly: a module zip, a release tarball, two container
@@ -11,37 +11,69 @@ and the gates that enforce it.
 
 ## The rule
 
-No published file names the private development fleet or its owner. Concretely,
-four classes:
+No published file names a private network, a machine on it, or a person's
+account. Concretely, four classes:
 
 | Class | What it covers | Use instead |
 |---|---|---|
-| `lab-address` | An address on the fleet subnet | RFC 5737 documentation addresses — `192.0.2.0/24`, `198.51.100.0/24`, `203.0.113.0/24` |
-| `lab-host` | A fleet hostname: the build and runner servers, the GPU and NPU workstations, the remote fleet node host | The role, not the machine: `quicbaas.example.com:8443`, `agent-01`, `gpu-host.internal`, `npu-host.internal` |
-| `owner-path` | A path under the owner's home directory, the lab's shared network mount, or the burn-in node's deployment directory | A repository-relative path, or `/var/lib`, `/srv`, `/home/agent` |
-| `owner-account` | The owner's account name on its own | A role: `operator`, `agent`, or the module path |
+| `lab-address` | An address on a private network | RFC 5737 documentation addresses — `192.0.2.0/24`, `198.51.100.0/24`, `203.0.113.0/24` |
+| `lab-host` | A private host name: build and runner servers, workstations, fleet nodes | The role, not the machine: `quicbaas.example.com:8443`, `agent-01`, `gpu-host.internal`, `npu-host.internal` |
+| `owner-path` | A path under a person's home directory, or a private mount or deployment directory | A repository-relative path, or `/var/lib`, `/srv`, `/home/agent` |
+| `owner-account` | A person's account name on its own | A role: `operator`, `agent`, or the module path |
 
-The fleet's own subnet, hostnames and path prefixes are written down in exactly
-one place: the `patterns` list in `pkg/labstrings/labstrings.go`. Read it there
-rather than repeating it here.
-
-Local configuration — the burn-in node's node config, its project bindings, its
-deployment tooling — belongs in the private `automatethethings` infra
-repository, not here.
+Local configuration — a node's config, its project bindings, its deployment
+tooling — belongs in private infrastructure configuration, not here.
 
 Benchmark provenance names the hardware class, not the machine: "measured on
-an Intel Arrow Lake workstation", never the fleet hostname.
-
-One thing is explicitly *not* a violation:
-
-- **RFC 1918 literals that are not the fleet subnet.** Tests across this tree
-  use `192.168.1.x` as an opaque address that is never dialed. The gate does not
-  look at `192.168.0.0/16` at large, only at the fleet's own /24.
+an Intel Arrow Lake workstation", never the host name.
 
 Test files are published and scanned like everything else; they use neutral
-fixtures (`agent-NN`, `gpu-host`, `198.51.100.x`, `/home/agent`). Only the
-gate's own tests (`pkg/labstrings/*_test.go`) carry fleet values, because they
-are what the rules exist to find.
+fixtures (`agent-NN`, `gpu-host`, `*.example`, `192.0.2.x`, `/home/agent`).
+The gate's own tests (`pkg/labstrings/*_test.go`) carry made-up values from
+the same reference ranges, plus generic samples of what the public defaults
+catch.
+
+## Two pattern sets
+
+A published list of private values would itself be the leak, so the rules come
+in two parts.
+
+**The public defaults** (`DefaultPatterns`, `pkg/labstrings/patterns.go`) name
+nothing about any one network. They catch leaks that look the same in every
+fork:
+
+| Class | Pattern | Why |
+|---|---|---|
+| `owner-path` | a `/home/<name>` path | Only a developer's checkout puts one in a tracked file, and it names the account. The service and fixture accounts this tree creates on purpose (`agent`, `node`, `user`, ...) are excepted. |
+| `owner-path` | a `/Users/<name>/` path | A macOS home; nothing this server-side tree ships runs from one. |
+| `lab-address` | an address in `192.168/16` | The range home and lab networks default to. `10/8` and `172.16/12` are not covered: container, cluster and cloud defaults use them throughout as addresses no reader dials. |
+| `lab-host` | a host under `.lan` or `.home.arpa` | Home-router and RFC 8375 home-network names; neither resolves for a public reader. |
+
+**The private patterns** are a JSON file named by the environment variable
+`QUICBAAS_LABSTRINGS_PATTERNS`. It holds a deployment's own subnet, host names,
+accounts and mount points, and is added to the defaults, never in place of them:
+
+```json
+[
+  {"class": "lab-address", "expr": "\\b203\\.0\\.113\\.\\d{1,3}\\b"},
+  {"class": "lab-host",    "expr": "(?i)\\bcore-\\d{2}\\b"}
+]
+```
+
+`class` is one of the four classes above; `expr` is a Go regexp. A relative
+path resolves against the repository root. Every make target exports the
+variable on its own when `.labstrings-patterns.json` exists at the root; that
+file is in `.gitignore` and `.dockerignore`, so it is never committed and never
+enters an image build context. In CI, a step writes it from a secret before the
+test stage. With the variable unset, the defaults apply alone.
+
+A file that cannot be read, is not a JSON list of `{class, expr}`, names an
+unknown class or holds a regexp that does not compile fails the gate
+(`PatternFileError`) rather than leaving a value unguarded. So does a regexp
+with no literal text every match must contain: the gate searches for that
+literal first (the regexps alone run at a few MB/s, the literal search at memory
+bandwidth), derives it from the regexp itself, and a pattern with none could not
+rule a single file out. Split an alternation into one entry per branch.
 
 ## Development tooling stays private
 
@@ -81,6 +113,7 @@ shell, Python and minified JavaScript as readily as Go.
 
 ```
 go test ./pkg/labstrings/          # the gate, ~1s over 30 MB of tracked content
+QUICBAAS_LABSTRINGS_PATTERNS=/path/to/private.json go test ./pkg/labstrings/
 ```
 
 A failure names the file, the line, the class, the matched text, and what to use
@@ -89,13 +122,13 @@ instead.
 ### Accepting a line
 
 A waiver is for a line whose purpose is the value itself, such as the gate's
-own patterns. A line that merely mentions a fleet value is rewritten instead.
+own fixtures. A line that merely mentions a private value is rewritten instead.
 
 Preferred — an **inline waiver**, in the file's own comment syntax, on the
 offending line or the line immediately above it:
 
-```go
-Expr: regexp.MustCompile(`...`), // lab-string-ok: the pattern this gate matches on
+```make
+GITEA_HTTP_ORIGIN ?= http://203.0.113.7:3000 # lab-string-ok: the captured value is the point
 ```
 
 The reason is what makes it a waiver; `lab-string-ok:` with nothing after it is
@@ -106,18 +139,8 @@ next to the value it explains.
 Second — an entry in `DefaultAllowList` (`pkg/labstrings/allowlist.go`), for a
 whole tree or for a file that cannot carry a comment (minified bundle, captured
 log, JSON). Each entry names the classes it accepts and why; an entry with no
-reason fails the gate rather than widening it. The list is meant to shrink: what
-is in it today is the gate's own fixtures, the frontend test fixtures, or a file
-another change owns.
-
-### Adding a fleet value to the rule set
-
-One entry in `patterns` (`pkg/labstrings/labstrings.go`): the regexp, a
-lowercase `Needle` literal every match must contain (the sieve searches for
-needles first — the regexps alone run at a few MB/s, the needles at memory
-bandwidth), and the guidance a tripping engineer reads. Add a sample to
-`TestPatterns_EveryNeedleIsImpliedByItsExpr`, which is what stops a needle from
-silently blinding its own pattern.
+reason fails the gate rather than widening it. The list is meant to stay short:
+today it holds only the gate's own fixtures.
 
 ## Before tagging: assemble the changelog
 

@@ -83,7 +83,7 @@ func TestRateLimiter_Allow(t *testing.T) {
 	limiter := newRateLimiter(10)
 	defer limiter.cleanup.Stop()
 
-	clientIP := "192.168.1.1"
+	clientIP := "192.0.2.1"
 
 	// First request should be allowed
 	assert.True(t, limiter.Allow(clientIP))
@@ -99,8 +99,8 @@ func TestRateLimiter_MultipleClients(t *testing.T) {
 	limiter := newRateLimiter(5)
 	defer limiter.cleanup.Stop()
 
-	client1 := "192.168.1.1"
-	client2 := "192.168.1.2"
+	client1 := "192.0.2.1"
+	client2 := "192.0.2.2"
 
 	// Both clients should be allowed
 	assert.True(t, limiter.Allow(client1))
@@ -142,7 +142,7 @@ func TestRateLimitMiddleware_RateLimited(t *testing.T) {
 	wrapped := middleware(handler)
 
 	req := httptest.NewRequest(http.MethodGet, "/test", nil)
-	req.RemoteAddr = "192.168.1.1:12345"
+	req.RemoteAddr = "192.0.2.1:12345"
 
 	// First request should succeed
 	w1 := httptest.NewRecorder()

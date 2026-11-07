@@ -33,7 +33,7 @@ type AllowRule struct {
 
 	// Classes are the classes this rule accepts in those files. Naming them
 	// keeps the rule narrow: a tree allowed to mention a fleet hostname is
-	// not thereby allowed to hardcode the owner's home directory.
+	// not thereby allowed to hardcode a person's home directory.
 	Classes []Class
 
 	// Reason says why publishing this value is acceptable, or who owns
@@ -46,37 +46,21 @@ type AllowRule struct {
 //
 // It is short on purpose. go-quicbaas#944 removed the values themselves
 // everywhere they were removable rather than listing them here; what remains is
-// either legitimately provenance, or sits in a tree another change owns.
+// the gate's own fixtures.
 var DefaultAllowList = []AllowRule{
 	{
 		Path:    "pkg/labstrings/*_test.go",
 		Classes: []Class{ClassLabAddress, ClassLabHost, ClassOwnerPath, ClassOwnerAccount},
 		Reason: "The gate's own fixtures: a planted violation and a sample per " +
-			"rule are the values the rules exist to find. Every other test file " +
-			"is scanned and uses neutral fixtures.",
-	},
-	{
-		Path:    "scripts/e2e-remote-agent.sh",
-		Classes: []Class{ClassLabAddress},
-		Reason: "Default REMOTE_HOST for the remote-agent e2e. scripts/*.sh is being " +
-			"converted to Go under a separate change; the default becomes a " +
-			"required flag there.",
-	},
-	{
-		Path:    "scripts/verify-api-shapes.sh",
-		Classes: []Class{ClassLabHost, ClassOwnerPath},
-		Reason: "Default paths to a sibling checkout on the lab's NFS mount. Same " +
-			"owner as the entry above.",
+			"rule are the values the rules exist to find. They are reference " +
+			"values (RFC 5737, RFC 2606), never a real network's. Every other " +
+			"test file is scanned and uses neutral fixtures.",
 	},
 }
 
 // ValidateAllowList reports the first unusable entry. Called by Scan, so a
 // malformed rule fails the gate instead of quietly widening it.
 func ValidateAllowList(rules []AllowRule) error {
-	known := map[Class]bool{}
-	for _, p := range patterns {
-		known[p.Class] = true
-	}
 	for i, r := range rules {
 		switch {
 		case r.Path == "":
@@ -87,7 +71,7 @@ func ValidateAllowList(rules []AllowRule) error {
 			return &AllowRuleError{Index: i, Path: r.Path, Problem: "no classes listed"}
 		}
 		for _, c := range r.Classes {
-			if !known[c] {
+			if _, known := classGuidance[c]; !known {
 				return &AllowRuleError{Index: i, Path: r.Path, Problem: "unknown class " + string(c)}
 			}
 		}
@@ -107,7 +91,7 @@ func ValidateAllowList(rules []AllowRule) error {
 // Patterns are already validated by the time this runs, so a malformed pattern
 // cannot silently match nothing.
 func acceptedClasses(rules []AllowRule, name string) map[Class]bool {
-	accepted := make(map[Class]bool, len(patterns))
+	accepted := make(map[Class]bool, len(classGuidance))
 	for _, r := range rules {
 		ok, err := matchSegments(strings.Split(r.Path, "/"), strings.Split(name, "/"))
 		if err != nil || !ok {

@@ -22,9 +22,38 @@ import (
 	"testing"
 )
 
-// ownerPathFixture is the owner home prefix this gate bans, assembled at runtime
-// so the fixture does not itself have to be waived on every line that uses it.
-var ownerPathFixture = "/home/" + "jhahn" // lab-string-ok: fixture for the owner-path rule
+// privateFixture is a private pattern file as a deployment would write one. It
+// names a network that does not exist: an RFC 5737 subnet, RFC 2606 hosts, a
+// placeholder account and mount.
+const privateFixture = `[
+  {"class": "lab-address",   "expr": "\\b203\\.0\\.113\\.\\d{1,3}\\b"},
+  {"class": "lab-host",      "expr": "(?i)\\bcore-\\d{2}(\\.example)?\\b"},
+  {"class": "owner-path",    "expr": "/mnt/lab-share\\b"},
+  {"class": "owner-account", "expr": "(?i)\\bjdoe\\b"}
+]`
+
+// writePatternFile writes content to a pattern file in a temporary directory
+// and returns its path.
+func writePatternFile(t *testing.T, content string) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "patterns.json")
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatalf("write pattern file: %v", err)
+	}
+	return path
+}
+
+// configured returns the rule set a deployment carrying privateFixture runs
+// with, loaded the way the gate loads it: through PatternsEnv.
+func configured(t *testing.T) []Pattern {
+	t.Helper()
+	t.Setenv(PatternsEnv, writePatternFile(t, privateFixture))
+	set, err := ConfiguredPatterns(t.TempDir())
+	if err != nil {
+		t.Fatalf("ConfiguredPatterns: %v", err)
+	}
+	return set
+}
 
 // writeTree writes files into a temporary directory and returns the root plus
 // the file list in the form Scan takes.
@@ -46,6 +75,7 @@ func writeTree(t *testing.T, files map[string]string) (string, []string) {
 }
 
 func TestScan_ReportsEveryClassWithItsLineAndMatch(t *testing.T) {
+	set := configured(t)
 	cases := []struct {
 		name      string
 		content   string
@@ -54,60 +84,74 @@ func TestScan_ReportsEveryClassWithItsLineAndMatch(t *testing.T) {
 		wantLine  int
 	}{
 		{
-			name:      "fleet address in help text",
-			content:   "package main\n\nconst help = \"dial 198.51.100.51:8443\"\n",
+			name:      "home-network address in help text",
+			content:   "package main\n\nconst help = \"dial 192.168.7.51:8443\"\n",
 			wantClass: ClassLabAddress,
-			wantMatch: "198.51.100.51",
+			wantMatch: "192.168.7.51",
 			wantLine:  3,
 		},
 		{
-			name:      "fleet hostname in a doc",
-			content:   "# Runbook\n\nRun it on gpu-host first.\n",
+			name:      "private subnet address from the pattern file",
+			content:   "  REGISTRY: 203.0.113.91:3001\n",
+			wantClass: ClassLabAddress,
+			wantMatch: "203.0.113.91",
+			wantLine:  1,
+		},
+		{
+			name:      "home-network hostname in a doc",
+			content:   "# Runbook\n\nRun it on nas.lan first.\n",
 			wantClass: ClassLabHost,
-			wantMatch: "gpu-host",
+			wantMatch: "nas.lan",
 			wantLine:  3,
 		},
 		{
-			name:      "runner hostname in a captured log",
-			content:   "2026-09-12T00:00:00Z ci-node-2(version:v3.1.0)\n",
+			name:      "RFC 8375 home hostname in a config",
+			content:   "server: printer.home.arpa\n",
 			wantClass: ClassLabHost,
-			wantMatch: "ci-node-2",
+			wantMatch: "printer.home.arpa",
 			wantLine:  1,
 		},
 		{
-			name:      "agent hostname in a comment",
-			content:   "// observed on vm-host-4\n",
+			name:      "private hostname from the pattern file, shouted in a log",
+			content:   "2026-09-12T00:00:00Z CORE-02 reported online\n",
 			wantClass: ClassLabHost,
-			wantMatch: "vm-host-4",
+			wantMatch: "CORE-02",
 			wantLine:  1,
 		},
 		{
-			name:      "owner home path in a doc",
-			content:   "See " + ownerPathFixture + "/sources for the checkout.\n",
+			name:      "personal home path in a doc",
+			content:   "See /home/carol/src for the checkout.\n",
 			wantClass: ClassOwnerPath,
-			wantMatch: ownerPathFixture,
+			wantMatch: "/home/carol",
 			wantLine:  1,
 		},
 		{
-			name:      "owner account name in a comment",
-			content:   "package x\n\n// TODO(jhahn): drop after the migration\n",
+			name:      "macOS home path in a script",
+			content:   "cd /Users/carol/src/go-quicbaas\n",
+			wantClass: ClassOwnerPath,
+			wantMatch: "/Users/carol/",
+			wantLine:  1,
+		},
+		{
+			name:      "private mount from the pattern file in a script default",
+			content:   "QRDB=${QRDB:-/mnt/lab-share/go-qrdb}\n",
+			wantClass: ClassOwnerPath,
+			wantMatch: "/mnt/lab-share",
+			wantLine:  1,
+		},
+		{
+			name:      "account name from the pattern file in a comment",
+			content:   "package x\n\n// TODO(jdoe): drop after the migration\n",
 			wantClass: ClassOwnerAccount,
-			wantMatch: "jhahn",
+			wantMatch: "jdoe",
 			wantLine:  3,
-		},
-		{
-			name:      "lab NFS mount in a script default",
-			content:   "QRDB=${QRDB:-/mnt/" + "vstation" + "-01/go-qrdb}\n", // lab-string-ok: fixture for the owner-path rule
-			wantClass: ClassOwnerPath,
-			wantMatch: "/mnt/" + "vstation",
-			wantLine:  1,
 		},
 	}
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			root, files := writeTree(t, map[string]string{"shipping/file.txt": tc.content})
-			findings, err := Scan(root, files, nil)
+			findings, err := Scan(root, files, set, nil)
 			if err != nil {
 				t.Fatalf("Scan: %v", err)
 			}
@@ -141,44 +185,61 @@ func TestScan_ReportsEveryClassWithItsLineAndMatch(t *testing.T) {
 }
 
 func TestScan_AcceptsWhatItShould(t *testing.T) {
+	set := configured(t)
 	cases := []struct {
 		name    string
 		content string
 	}{
 		{
-			name:    "documentation addresses",
-			content: "dial 198.51.100.7:8443 or 192.0.2.10 or 203.0.113.4\n",
+			name:    "documentation addresses outside the private subnet",
+			content: "dial 198.51.100.7:8443 or 192.0.2.10\n",
 		},
 		{
-			name:    "RFC 1918 literals that are not the fleet subnet",
-			content: "peers: 192.168.1.10, 192.168.100.4, 10.0.0.1\n",
+			name:    "RFC 1918 literals outside the home-network range",
+			content: "peers: 10.0.0.1, 172.16.0.4\n",
 		},
 		{
 			name:    "the repository's own example names",
 			content: "--server https://quicbaas.example.com:8443 --host-affinity agent-01\n",
 		},
 		{
+			name:    "the home of a placeholder or service account",
+			content: "HOME=/home/agent WORKDIR /home/softhsm cp x /home/u/.quicbaas/\n",
+		},
+		{
+			name:    "a home segment inside a longer path",
+			content: "http://www.example.org/iso/home/store/catalogue.htm\n",
+		},
+		{
+			name:    "a Users segment that is not a macOS home",
+			content: "getByRole('tab', { name: /Users/i }) // Roles/Users/Tenants/x\n",
+		},
+		{
+			name:    "a word that merely contains a lan suffix",
+			content: "the plan.language field, and cluster.local\n",
+		},
+		{
+			name:    "a hostname that merely contains a private name as a substring",
+			content: "hardcore-01 is not a host, and core-0 has no second digit\n",
+		},
+		{
 			name:    "a waiver on the offending line",
-			content: "Measured on gpu-host. <!-- lab-string-ok: measurement provenance -->\n",
+			content: "Measured on core-01. <!-- lab-string-ok: measurement provenance -->\n",
 		},
 		{
 			name:    "a waiver on the line above",
-			content: "# lab-string-ok: measurement provenance\nMeasured on gpu-host.\n",
+			content: "# lab-string-ok: measurement provenance\nMeasured on core-01.\n",
 		},
 		{
 			name:    "a waiver whose reason ends at a comment closer",
-			content: "x := 1 /* lab-string-ok: provenance */ // gpu-host\n",
-		},
-		{
-			name:    "a hostname that merely contains a fleet name as a substring",
-			content: "ungodlikeness is not a host, and vstation-0 has no second digit\n",
+			content: "x := 1 /* lab-string-ok: provenance */ // core-01\n",
 		},
 	}
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			root, files := writeTree(t, map[string]string{"clean.txt": tc.content})
-			findings, err := Scan(root, files, nil)
+			findings, err := Scan(root, files, set, nil)
 			if err != nil {
 				t.Fatalf("Scan: %v", err)
 			}
@@ -189,12 +250,26 @@ func TestScan_AcceptsWhatItShould(t *testing.T) {
 	}
 }
 
+// TestScan_ThePublicDefaultsAloneDoNotKnowThePrivateValues pins the split: a
+// fork without the private file is not told what the private values are, and
+// does not find them either.
+func TestScan_ThePublicDefaultsAloneDoNotKnowThePrivateValues(t *testing.T) {
+	root, files := writeTree(t, map[string]string{"notes.md": "core-01 at 203.0.113.9, ask jdoe\n"})
+	findings, err := Scan(root, files, DefaultPatterns, nil)
+	if err != nil {
+		t.Fatalf("Scan: %v", err)
+	}
+	if len(findings) != 0 {
+		t.Fatalf("the public defaults reported private values: %v", findings)
+	}
+}
+
 func TestScan_AWaiverWithNoReasonIsNotAWaiver(t *testing.T) {
 	root, files := writeTree(t, map[string]string{
-		"bare.md":       "Measured on gpu-host. <!-- lab-string-ok: -->\n",
-		"whitespace.md": "Measured on gpu-host. # lab-string-ok:    \n",
+		"bare.md":       "Measured on nas.lan. <!-- lab-string-ok: -->\n",
+		"whitespace.md": "Measured on nas.lan. # lab-string-ok:    \n",
 	})
-	findings, err := Scan(root, files, nil)
+	findings, err := Scan(root, files, DefaultPatterns, nil)
 	if err != nil {
 		t.Fatalf("Scan: %v", err)
 	}
@@ -204,15 +279,15 @@ func TestScan_AWaiverWithNoReasonIsNotAWaiver(t *testing.T) {
 }
 
 func TestScan_AnAllowRuleAcceptsOnlyTheClassesItNames(t *testing.T) {
-	content := "host vm-host-4 under " + ownerPathFixture + "/sources\n"
+	content := "host nas.lan under /home/carol/sources\n"
 	root, files := writeTree(t, map[string]string{"pkg/thing_test.go": content})
 
 	rules := []AllowRule{{
 		Path:    "**/*_test.go",
 		Classes: []Class{ClassLabHost},
-		Reason:  "test fixtures may name a fleet host",
+		Reason:  "test fixtures may name a lab host",
 	}}
-	findings, err := Scan(root, files, rules)
+	findings, err := Scan(root, files, DefaultPatterns, rules)
 	if err != nil {
 		t.Fatalf("Scan: %v", err)
 	}
@@ -228,7 +303,7 @@ func TestScan_RejectsAnUnusableAllowList(t *testing.T) {
 	root, files := writeTree(t, map[string]string{"clean.txt": "nothing here\n"})
 	rules := []AllowRule{{Path: "**/*.go", Classes: []Class{ClassLabHost}}}
 
-	_, err := Scan(root, files, rules)
+	_, err := Scan(root, files, DefaultPatterns, rules)
 	var ruleErr *AllowRuleError
 	if !errors.As(err, &ruleErr) {
 		t.Fatalf("err = %v, want *AllowRuleError", err)
@@ -240,12 +315,12 @@ func TestScan_RejectsAnUnusableAllowList(t *testing.T) {
 
 func TestScan_SkipsWhatCannotLeakText(t *testing.T) {
 	root, files := writeTree(t, map[string]string{
-		"binary.bin":  "gpu-host\x00more bytes\n",
+		"binary.bin":  "nas.lan\x00more bytes\n",
 		"present.txt": "clean\n",
 	})
 	files = append(files, "deleted-from-the-working-tree.txt")
 
-	findings, err := Scan(root, files, nil)
+	findings, err := Scan(root, files, DefaultPatterns, nil)
 	if err != nil {
 		t.Fatalf("Scan: %v", err)
 	}
@@ -254,14 +329,26 @@ func TestScan_SkipsWhatCannotLeakText(t *testing.T) {
 	}
 }
 
+func TestScan_AnUnreadableFileIsATypedError(t *testing.T) {
+	root, _ := writeTree(t, map[string]string{"blocker": "a regular file\n"})
+
+	// "blocker" is a file, so a path beneath it fails with ENOTDIR: a real
+	// I/O failure, not the absent file Scan skips.
+	_, err := Scan(root, []string{"blocker/inner.txt"}, DefaultPatterns, nil)
+	var readErr *ReadError
+	if !errors.As(err, &readErr) {
+		t.Fatalf("err = %v, want *ReadError", err)
+	}
+}
+
 func TestScan_ReadsASymlinkTarget(t *testing.T) {
 	root := t.TempDir()
 	link := filepath.Join(root, "go-quicbaas")
-	if err := os.Symlink("/mnt/"+"vstation"+"-01/go-quicbaas/", link); err != nil { // lab-string-ok: fixture for the owner-path rule
+	if err := os.Symlink("/home/carol/src/go-quicbaas/", link); err != nil {
 		t.Fatalf("symlink: %v", err)
 	}
 
-	findings, err := Scan(root, []string{"go-quicbaas"}, nil)
+	findings, err := Scan(root, []string{"go-quicbaas"}, DefaultPatterns, nil)
 	if err != nil {
 		t.Fatalf("Scan: %v", err)
 	}
@@ -287,12 +374,12 @@ func TestScan_AFileTooLargeToBeSourceIsSkipped(t *testing.T) {
 	for i := range body {
 		body[i] = 'a'
 	}
-	copy(body, []byte("gpu-host"))
+	copy(body, []byte(" nas.lan"))
 	if err := os.WriteFile(full, body, 0o644); err != nil {
 		t.Fatalf("write: %v", err)
 	}
 
-	findings, err := Scan(root, []string{name}, nil)
+	findings, err := Scan(root, []string{name}, DefaultPatterns, nil)
 	if err != nil {
 		t.Fatalf("Scan: %v", err)
 	}
@@ -331,6 +418,18 @@ func TestErrors_NameTheirSubjectAndUnwrap(t *testing.T) {
 			contains: []string{"cannot write report"},
 			wrapped:  os.ErrClosed,
 		},
+		{
+			name:     "pattern failure names the expression, the class and the defect",
+			err:      &PatternError{Class: ClassLabHost, Expr: `core-(`, Problem: "invalid regexp", Err: os.ErrInvalid},
+			contains: []string{`"core-("`, "lab-host", "invalid regexp"},
+			wrapped:  os.ErrInvalid,
+		},
+		{
+			name:     "pattern-file failure names the file",
+			err:      &PatternFileError{Path: "/etc/labstrings.json", Err: os.ErrNotExist},
+			contains: []string{"/etc/labstrings.json"},
+			wrapped:  os.ErrNotExist,
+		},
 	}
 
 	for _, tc := range cases {
@@ -365,8 +464,8 @@ func TestReport_SaysWhatToDoAndOnlyWhenDirty(t *testing.T) {
 		Path:     "cmd/quicbaas/thing.go",
 		Line:     7,
 		Class:    ClassLabHost,
-		Match:    "vm-host-4",
-		Excerpt:  "// observed on vm-host-4",
+		Match:    "core-04",
+		Excerpt:  "// observed on core-04",
 		Guidance: "name the role",
 	}})
 	if err != nil {
@@ -375,7 +474,7 @@ func TestReport_SaysWhatToDoAndOnlyWhenDirty(t *testing.T) {
 	if !dirty {
 		t.Error("dirty = false with a finding")
 	}
-	for _, want := range []string{"cmd/quicbaas/thing.go:7", "vm-host-4", "name the role", waiverPrefix} {
+	for _, want := range []string{"cmd/quicbaas/thing.go:7", "core-04", "name the role", waiverPrefix} {
 		if !strings.Contains(out.String(), want) {
 			t.Errorf("report omits %q:\n%s", want, out.String())
 		}
@@ -439,26 +538,21 @@ func TestTrackedFiles_ListsTheIndexAndRefusesADirectoryWithNoIndex(t *testing.T)
 	}
 }
 
-// TestPatterns_EveryNeedleIsImpliedByItsExpr pins the sieve's invariant: a
-// pattern whose Needle its own matches do not contain would be skipped for every
-// file in the tree, and the gate would pass while seeing nothing.
-func TestPatterns_EveryNeedleIsImpliedByItsExpr(t *testing.T) {
-	// One string per pattern that the pattern is known to match. They are the
-	// values the audit actually found, so this doubles as the record of what
-	// each rule was written for.
+// TestDefaultPatterns_EveryNeedleIsImpliedByItsExpr pins the sieve's invariant
+// for the public set: a pattern whose Needle its own matches do not contain
+// would be skipped for every file in the tree, and the gate would pass while
+// seeing nothing.
+func TestDefaultPatterns_EveryNeedleIsImpliedByItsExpr(t *testing.T) {
+	// One or more strings per pattern that the pattern is known to match.
 	samples := map[string][]string{
-		`\b192\.168\.101\.\d{1,3}\b`:   {"198.51.100.91:3001", "at 198.51.100.51:8443"},
-		`(?i)\bvstation-\d{2}\b`:       {"agent-vm-host-4", "vm-host-1 rebooted"},
-		`(?i)\bdellemc-\d{2}\b`:        {"runner ci-node-2", "ci-node-1"},
-		`(?i)\bgodlike(\.internal)?\b`: {"on gpu-host", "http://gpu-host.internal:8077"},
-		`(?i)\bomega\b`:                {"ssh user@omega:22", "OMEGA reported Online"},
-		`/home/jhahn\b`:                {ownerPathFixture + "/sources"},                                  // lab-string-ok: sample for the owner-path rule
-		`/mnt/vstation`:                {"/mnt/" + "vstation" + "-01/go-qrdb"},                           // lab-string-ok: sample for the owner-path rule
-		`quicbaas-burnin`:              {"/var/lib/quicbaas-burnin/data", "~/quicbaas-burnin/node.yaml"}, // lab-string-ok: sample for the owner-path rule
-		`(?i)\bjhahn\b`:                {"jhahn@example.com", "signed off by JHAHN"},
+		`\B/home/[a-z_][a-z0-9_-]*`:      {"/home/carol/src", "HOME=/home/carol"},
+		`\B/Users/[A-Za-z0-9_.-]+/`:      {"/Users/Carol/src", "'/Users/carol/'"},
+		`\b192\.168\.\d{1,3}\.\d{1,3}\b`: {"at 192.168.7.51:8443", "192.168.0.1"},
+		`(?i)\b[a-z0-9-]+\.lan\b`:        {"nas.lan", "http://NAS.LAN:8080"},
+		`(?i)\b[a-z0-9-]+\.home\.arpa\b`: {"printer.home.arpa", "NAS.HOME.ARPA"},
 	}
 
-	for _, p := range patterns {
+	for _, p := range DefaultPatterns {
 		t.Run(p.Expr.String(), func(t *testing.T) {
 			if p.Needle == "" {
 				t.Fatal("pattern has no sieve needle")
@@ -483,10 +577,10 @@ func TestPatterns_EveryNeedleIsImpliedByItsExpr(t *testing.T) {
 }
 
 func TestScan_AMinifiedLineIsQuotedBounded(t *testing.T) {
-	long := "const x=\"" + strings.Repeat("padding;", 200) + "gpu-host\";"
+	long := "const x=\"" + strings.Repeat("padding;", 200) + " nas.lan\";"
 	root, files := writeTree(t, map[string]string{"dist/bundle.js": long + "\n"})
 
-	findings, err := Scan(root, files, nil)
+	findings, err := Scan(root, files, DefaultPatterns, nil)
 	if err != nil {
 		t.Fatalf("Scan: %v", err)
 	}
@@ -503,45 +597,55 @@ func TestScan_AMinifiedLineIsQuotedBounded(t *testing.T) {
 }
 
 func TestScan_AFileWhoseEveryClassIsAllowedIsNeverRead(t *testing.T) {
-	every := make([]Class, 0, len(patterns))
-	seen := map[Class]bool{}
-	for _, p := range patterns {
-		if !seen[p.Class] {
-			seen[p.Class] = true
-			every = append(every, p.Class)
-		}
-	}
+	set := configured(t)
 	rules := []AllowRule{{
 		Path:    "vendored/**",
-		Classes: every,
+		Classes: []Class{ClassLabAddress, ClassLabHost, ClassOwnerPath, ClassOwnerAccount},
 		Reason:  "a tree this repository does not author and does not publish edits to",
 	}}
 
-	// The file does not exist: reaching the filesystem at all would be a
-	// ReadError, so a clean result proves the shortcut skipped it.
-	findings, err := Scan(t.TempDir(), []string{"vendored/thing.js"}, rules)
+	// "vendored" is a regular file, so reading anything beneath it is a
+	// ReadError: a clean result proves the shortcut never reached the disk.
+	root, _ := writeTree(t, map[string]string{"vendored": "a regular file\n"})
+	findings, err := Scan(root, []string{"vendored/thing.js"}, set, rules)
 	if err != nil {
-		t.Fatalf("Scan: %v", err)
+		t.Fatalf("Scan read a file every class of which is allowed: %v", err)
 	}
 	if len(findings) != 0 {
 		t.Fatalf("expected no findings, got %v", findings)
 	}
+
+	// One class short of every class the set reports, the file is read.
+	rules[0].Classes = rules[0].Classes[:3]
+	if _, err := Scan(root, []string{"vendored/thing.js"}, set, rules); err == nil {
+		t.Fatal("Scan skipped a file whose owner-account class is not allowed")
+	}
 }
 
-// TestScan_ReportsAValueOnceByItsMostSpecificRule pins the span dedupe: the
-// account name inside an owner path is one leak, reported as the path.
-func TestScan_ReportsAValueOnceByItsMostSpecificRule(t *testing.T) {
-	root, files := writeTree(t, map[string]string{"docs/a.md": "cd " + ownerPathFixture + "/sources, ask jhahn\n"})
-	findings, err := Scan(root, files, nil)
-	if err != nil {
-		t.Fatalf("Scan: %v", err)
+// TestScan_ReportsAValueOnceByItsLongestMatch pins the span dedupe: the account
+// name inside a home path is one leak, reported as the path, whichever order
+// the patterns come in.
+func TestScan_ReportsAValueOnceByItsLongestMatch(t *testing.T) {
+	set := configured(t)
+	reversed := make([]Pattern, len(set))
+	for i, p := range set {
+		reversed[len(set)-1-i] = p
 	}
-	var classes []Class
-	for _, f := range findings {
-		classes = append(classes, f.Class)
-	}
-	want := []Class{ClassOwnerPath, ClassOwnerAccount}
-	if len(classes) != len(want) || classes[0] != want[0] || classes[1] != want[1] {
-		t.Fatalf("classes = %v, want %v (the path once, the bare name once)", classes, want)
+	root, files := writeTree(t, map[string]string{"docs/a.md": "cd /home/jdoe/sources, ask jdoe\n"})
+
+	for name, patterns := range map[string][]Pattern{"defaults first": set, "private first": reversed} {
+		t.Run(name, func(t *testing.T) {
+			findings, err := Scan(root, files, patterns, nil)
+			if err != nil {
+				t.Fatalf("Scan: %v", err)
+			}
+			got := map[Class]string{}
+			for _, f := range findings {
+				got[f.Class] = f.Match
+			}
+			if len(findings) != 2 || got[ClassOwnerPath] != "/home/jdoe" || got[ClassOwnerAccount] != "jdoe" {
+				t.Fatalf("findings = %v, want the path once and the bare name once", findings)
+			}
+		})
 	}
 }
