@@ -188,6 +188,18 @@ type Scratch struct {
 	mu       sync.Mutex
 	branches []string
 	pulls    []int
+	issues   []int
+}
+
+// CloneURL is the HTTPS clone URL of the scratch repository: github.com for
+// the public API root, and the API host itself for a GitHub Enterprise root
+// of the form https://host/api/v3.
+func (e Env) CloneURL() string {
+	host := strings.TrimSuffix(e.BaseURL, "/api/v3")
+	if e.BaseURL == "" || e.BaseURL == DefaultBaseURL {
+		host = "https://github.com"
+	}
+	return host + "/" + e.Owner + "/" + e.Repo + ".git"
 }
 
 // New returns a Scratch over env. A nil client gets a default with a
@@ -314,6 +326,40 @@ func (s *Scratch) OpenPR(ctx context.Context, head, base, title string) (int, er
 	return answer.Number, nil
 }
 
+// OpenIssue opens an issue carrying labels and returns its number. Cleanup
+// closes it.
+func (s *Scratch) OpenIssue(ctx context.Context, title, body string, labels ...string) (int, error) {
+	request := struct {
+		Title  string   `json:"title"`
+		Body   string   `json:"body"`
+		Labels []string `json:"labels,omitempty"`
+	}{Title: title, Body: body, Labels: labels}
+	var answer struct {
+		Number int `json:"number"`
+	}
+	if err := s.do(ctx, s.env.Token, http.MethodPost, s.repoPath("/issues"), request, &answer); err != nil {
+		return 0, err
+	}
+	s.mu.Lock()
+	s.issues = append(s.issues, answer.Number)
+	s.mu.Unlock()
+	return answer.Number, nil
+}
+
+// FileExists reports whether path is in the tree at ref.
+func (s *Scratch) FileExists(ctx context.Context, ref, path string) (bool, error) {
+	query := url.Values{"ref": {ref}}
+	err := s.do(ctx, s.env.Token, http.MethodGet, s.repoPath("/contents/"+escapePath(path)+"?"+query.Encode()), nil, nil)
+	if err == nil {
+		return true, nil
+	}
+	var apiErr *APIError
+	if errors.As(err, &apiErr) && apiErr.Status == http.StatusNotFound {
+		return false, nil
+	}
+	return false, err
+}
+
 // Approve submits an approving review of number at sha as the reviewer.
 func (s *Scratch) Approve(ctx context.Context, number int, sha string) error {
 	body := map[string]string{"commit_id": sha, "event": "APPROVE"}
@@ -384,18 +430,26 @@ func (s *Scratch) CommitParents(ctx context.Context, sha string) ([]string, erro
 	return parents, nil
 }
 
-// Cleanup closes every tracked pull request still open and deletes every
+// Cleanup closes every tracked pull request still open and every issue it
+// opened, and deletes every
 // tracked branch still present. It attempts all of them and returns every
 // failure joined into one error.
 func (s *Scratch) Cleanup(ctx context.Context) error {
 	s.mu.Lock()
 	pulls := append([]int(nil), s.pulls...)
 	branches := append([]string(nil), s.branches...)
+	issues := append([]int(nil), s.issues...)
 	s.mu.Unlock()
 
 	var failures []error
 	for _, number := range pulls {
 		if err := s.closePullRequest(ctx, number); err != nil {
+			failures = append(failures, err)
+		}
+	}
+	for _, number := range issues {
+		body := map[string]string{"state": "closed"}
+		if err := s.do(ctx, s.env.Token, http.MethodPatch, s.repoPath("/issues/"+strconv.Itoa(number)), body, nil); err != nil {
 			failures = append(failures, err)
 		}
 	}

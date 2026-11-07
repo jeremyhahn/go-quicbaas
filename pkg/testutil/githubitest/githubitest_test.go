@@ -445,3 +445,63 @@ func TestDo_AnUnparsableAnswerIsADecodeError(t *testing.T) {
 		t.Fatalf("error = %v, want *DecodeError", err)
 	}
 }
+
+func TestCloneURL_FollowsTheAPIRoot(t *testing.T) {
+	cases := map[string]string{
+		DefaultBaseURL:               "https://github.com/acme/scratch.git",
+		"https://ghe.example/api/v3": "https://ghe.example/acme/scratch.git",
+	}
+	for base, want := range cases {
+		env := Env{Owner: "acme", Repo: "scratch", BaseURL: base}
+		if got := env.CloneURL(); got != want {
+			t.Errorf("CloneURL(%s) = %q, want %q", base, got, want)
+		}
+	}
+}
+
+func TestOpenIssue_PostsLabelsAndCleanupClosesIt(t *testing.T) {
+	fake, s := newFakeGitHub(t)
+	fake.answer("POST /repos/acme/scratch/issues", http.StatusCreated, `{"number":5}`)
+	fake.answer("PATCH /repos/acme/scratch/issues/5", http.StatusOK, `{}`)
+
+	number, err := s.OpenIssue(context.Background(), "Fix it", "body", "task:ready")
+	if err != nil || number != 5 {
+		t.Fatalf("OpenIssue = %d, %v", number, err)
+	}
+	labels, ok := fake.seen[0].Body["labels"].([]any)
+	if !ok || len(labels) != 1 || labels[0] != "task:ready" {
+		t.Fatalf("labels = %v", fake.seen[0].Body["labels"])
+	}
+	if err := s.Cleanup(context.Background()); err != nil {
+		t.Fatalf("Cleanup: %v", err)
+	}
+	last := fake.seen[len(fake.seen)-1]
+	if last.Method != http.MethodPatch || last.Body["state"] != "closed" {
+		t.Fatalf("cleanup sent %+v, want the issue closed", last)
+	}
+}
+
+func TestOpenIssue_ARefusalIsTyped(t *testing.T) {
+	_, s := newFakeGitHub(t)
+	_, err := s.OpenIssue(context.Background(), "Fix it", "body")
+	var apiErr *APIError
+	if !errors.As(err, &apiErr) || apiErr.Path != "/repos/acme/scratch/issues" {
+		t.Fatalf("error = %v, want *APIError on the issues path", err)
+	}
+}
+
+func TestFileExists_ReadsTheTreeAtARef(t *testing.T) {
+	fake, s := newFakeGitHub(t)
+	fake.answer("GET /repos/acme/scratch/contents/a.txt", http.StatusOK, `{"sha":"x"}`)
+	fake.answer("GET /repos/acme/scratch/contents/broken.txt", http.StatusInternalServerError, `{}`)
+
+	if ok, err := s.FileExists(context.Background(), "base", "a.txt"); err != nil || !ok {
+		t.Fatalf("FileExists(a.txt) = %v, %v", ok, err)
+	}
+	if ok, err := s.FileExists(context.Background(), "base", "b.txt"); err != nil || ok {
+		t.Fatalf("FileExists(b.txt) = %v, %v", ok, err)
+	}
+	if _, err := s.FileExists(context.Background(), "base", "broken.txt"); err == nil {
+		t.Fatalf("FileExists(broken.txt) succeeded, want the 500")
+	}
+}
