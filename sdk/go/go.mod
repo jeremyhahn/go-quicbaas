@@ -152,9 +152,9 @@ require (
 	github.com/jackc/pgx/v5 v5.11.0 // indirect
 	github.com/jeremyhahn/arduino-generic/sdk/go v0.3.0-alpha // indirect
 	github.com/jeremyhahn/go-auth v0.4.0-alpha // indirect
-	github.com/jeremyhahn/go-codec v1.4.0 // indirect
+	github.com/jeremyhahn/go-codec v1.5.1-alpha // indirect
 	github.com/jeremyhahn/go-enclave v0.6.1-alpha // indirect
-	github.com/jeremyhahn/go-frost v0.3.0-alpha // indirect
+	github.com/jeremyhahn/go-frost v0.3.1-alpha // indirect
 	github.com/jeremyhahn/go-luks2 v0.2.0-alpha // indirect
 	github.com/jeremyhahn/go-objstore v0.3.0-alpha // indirect
 	github.com/jeremyhahn/go-quicraft v0.15.0-alpha // indirect; hold lifted: go-qrdb v0.25.1-alpha declares the at-rest choice for in-process nodes (database.NewRaftWAL: barrier, or WithoutEncryption when seal is off), go-qrdb#566 — the real-node tests in pkg/scheduler/placement start a clustered in-process node on quicraft v0.15.0-alpha.
