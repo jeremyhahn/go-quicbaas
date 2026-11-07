@@ -29,6 +29,7 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/pkg/cli"
 	"github.com/jeremyhahn/go-quicbaas/pkg/fleet/deploy"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 // =============================================================================
@@ -283,6 +284,18 @@ const deployLocalExample = `
 
 // runFleetDeploy orchestrates flag parsing → service invocation →
 // output formatting.
+// deployContext binds the operator's deploy tenant to parent: the spec's
+// tenant when it names one, otherwise the system tenant. The deploy service
+// runs in this process and its tenantctx.Target check refuses a context
+// with no bound caller; the remote calls it makes (cert minting through the
+// server) are authorised by the server over mTLS (go-quicbaas#2229).
+func deployContext(parent context.Context, spec *deploy.Spec) context.Context {
+	if spec.Tenant != "" {
+		return tenantctx.WithTenant(parent, spec.Tenant)
+	}
+	return tenantctx.WithSystem(parent)
+}
+
 func runFleetDeploy(cmd *cobra.Command, args []string) error {
 	spec, err := resolveDeploySpec(commandFlags(cmd))
 	if err != nil {
@@ -298,7 +311,7 @@ func runFleetDeploy(cmd *cobra.Command, args []string) error {
 	// The deploy service talks to the remote host over SSH and may
 	// also poll the server registry. Use the global timeout so long
 	// deploys share the same budget as other CLI commands.
-	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout+spec.WaitOnline)
+	ctx, cancel := context.WithTimeout(deployContext(context.Background(), spec), globalTimeout+spec.WaitOnline)
 	defer cancel()
 
 	if deployPreflightOnly {

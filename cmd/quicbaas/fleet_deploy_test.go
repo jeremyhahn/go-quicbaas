@@ -24,6 +24,7 @@ import (
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/fleet/deploy"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 // stubDeployService lets tests substitute each service method. A method a
@@ -266,6 +267,120 @@ func TestRunAgentDeploy_PropagatesError(t *testing.T) {
 	err := runFleetDeploy(nil, nil)
 	if err == nil {
 		t.Fatal("expected error")
+	}
+}
+
+// setDeployTenant sets the global tenant flag the spec is built from and
+// restores it when the test ends.
+func setDeployTenant(t *testing.T, tenant string) {
+	t.Helper()
+	orig := globalTenantID
+	globalTenantID = tenant
+	t.Cleanup(func() { globalTenantID = orig })
+}
+
+// boundTenant returns the tenant tenantctx reads from ctx, failing the test
+// when none is bound.
+func boundTenant(t *testing.T, ctx context.Context) string {
+	t.Helper()
+	tenant, err := tenantctx.FromContext(ctx, "fleet deploy test")
+	if err != nil {
+		t.Errorf("no tenant bound: %v", err)
+	}
+	return tenant
+}
+
+func TestRunFleetDeploy_BindsTheSpecTenant(t *testing.T) {
+	resetDeployFlags(t)
+	deploySSH = "a@b"
+	deployServer = "c"
+	deployWaitOnline = 0
+	setDeployTenant(t, "acme")
+
+	var seen string
+	installStubService(t, func(ctx context.Context, spec *deploy.Spec) (*deploy.Result, error) {
+		seen = boundTenant(t, ctx)
+		return &deploy.Result{Host: spec.Host}, nil
+	})
+	if err := runFleetDeploy(nil, nil); err != nil {
+		t.Fatalf("runFleetDeploy: %v", err)
+	}
+	if seen != "acme" {
+		t.Fatalf("Deploy saw tenant %q, want acme", seen)
+	}
+}
+
+func TestRunFleetDeploy_BindsTheSystemTenantWhenTheSpecNamesNone(t *testing.T) {
+	resetDeployFlags(t)
+	deploySSH = "a@b"
+	deployServer = "c"
+	deployWaitOnline = 0
+	setDeployTenant(t, "")
+
+	var seen string
+	installStubService(t, func(ctx context.Context, spec *deploy.Spec) (*deploy.Result, error) {
+		seen = boundTenant(t, ctx)
+		return &deploy.Result{Host: spec.Host}, nil
+	})
+	if err := runFleetDeploy(nil, nil); err != nil {
+		t.Fatalf("runFleetDeploy: %v", err)
+	}
+	if !tenantctx.IsSystem(seen) {
+		t.Fatalf("Deploy saw tenant %q, want the system tenant", seen)
+	}
+}
+
+func TestRunFleetDeploy_PreflightOnlyBindsTheSpecTenant(t *testing.T) {
+	resetDeployFlags(t)
+	deploySSH = "a@b"
+	deployServer = "c"
+	deployWaitOnline = 0
+	deployPreflightOnly = true
+	fleetOutputFmt = "json"
+	setDeployTenant(t, "acme")
+
+	var seen string
+	orig := fleetDeployServiceFactory
+	fleetDeployServiceFactory = func() (service.FleetDeployService, error) {
+		return &stubDeployService{preflight: func(ctx context.Context, spec *deploy.Spec) (*deploy.PreflightReport, error) {
+			seen = boundTenant(t, ctx)
+			return nil, nil
+		}}, nil
+	}
+	t.Cleanup(func() { fleetDeployServiceFactory = orig })
+
+	if err := runFleetDeploy(nil, nil); err != nil {
+		t.Fatalf("runFleetDeploy: %v", err)
+	}
+	if seen != "acme" {
+		t.Fatalf("Preflight saw tenant %q, want acme", seen)
+	}
+}
+
+func TestDeployContext_BindsTheSpecTenant(t *testing.T) {
+	ctx := deployContext(context.Background(), &deploy.Spec{Tenant: "acme"})
+	if got := boundTenant(t, ctx); got != "acme" {
+		t.Fatalf("tenant = %q, want acme", got)
+	}
+}
+
+func TestDeployContext_FallsBackToTheSystemTenant(t *testing.T) {
+	ctx := deployContext(context.Background(), &deploy.Spec{})
+	if got := boundTenant(t, ctx); !tenantctx.IsSystem(got) {
+		t.Fatalf("tenant = %q, want the system tenant", got)
+	}
+}
+
+func TestDeployContext_KeepsTheParentDeadline(t *testing.T) {
+	want := time.Now().Add(time.Hour)
+	parent, cancel := context.WithDeadline(context.Background(), want)
+	defer cancel()
+
+	for _, spec := range []*deploy.Spec{{Tenant: "acme"}, {}} {
+		got, ok := deployContext(parent, spec).Deadline()
+		if !ok || !got.Equal(want) {
+			t.Fatalf("tenant %q: deadline = (%v, %v), want %v", spec.Tenant, got, ok, want)
+		}
 	}
 }
 
