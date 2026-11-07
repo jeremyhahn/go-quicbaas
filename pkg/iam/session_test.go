@@ -94,7 +94,7 @@ func TestSessionManager_Create(t *testing.T) {
 		session := &SessionExt{
 			UserID:    10001,
 			TenantID:  "tenant-1",
-			TokenHash: hashToken("<account>"),
+			TokenHash: hashToken("token-overflow"),
 		}
 		err = mgr.Create(ctx, session)
 		assert.Error(t, err)
@@ -687,7 +687,7 @@ func TestSessionTenantIsolation(t *testing.T) {
 	session1 := &SessionExt{
 		UserID:    10001,
 		TenantID:  "tenant-1",
-		TokenHash: hashToken("<account>"),
+		TokenHash: hashToken("token-a"),
 	}
 	err = mgr.Create(ctx, session1)
 	require.NoError(t, err)
@@ -695,7 +695,7 @@ func TestSessionTenantIsolation(t *testing.T) {
 	session2 := &SessionExt{
 		UserID:    10001,
 		TenantID:  "tenant-2",
-		TokenHash: hashToken("<account>"),
+		TokenHash: hashToken("token-b"),
 	}
 	err = mgr.Create(ctx, session2)
 	require.NoError(t, err)
@@ -2131,7 +2131,7 @@ func TestBackendStorage_GetTokenByValueFinal(t *testing.T) {
 		JTI:       jti,
 		TokenType: TokenTypeRefresh,
 		Subject:   "user-token-value-123",
-		TenantID:  "tenant-<account>",
+		TenantID:  "tenant-a",
 		Expires:   time.Now().Add(24 * time.Hour),
 		ValueHash: HashTokenValue(secret),
 	}

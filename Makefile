@@ -1604,7 +1604,7 @@ test-verbose: ## Run tests with verbose output
 # GNU make never matches `test-api/grpc` against test-% (it strips the
 # directory part first), so nested packages are named with dashes:
 # api-grpc reaches pkg/api/grpc, while a real hyphenated directory such as
-# server-tpm2-keys still reaches pkg/server/tpm2-keys. scripts/resolve-package.sh
+# quicbaas-git-sign still reaches cmd/quicbaas-git-sign. scripts/resolve-package.sh
 # documents the search. Resolving at expansion time puts the real path and tag
 # set in `make -n`, which scripts/resolve-package_test.sh relies on.
 PKG_ROOTS := pkg cmd
@@ -1642,7 +1642,7 @@ pkg_tags = $(if $(filter pkg/iam pkg/iam/%,$(call pkg_dir,$(PKG_ROOTS))),$(IAM_T
 # Dynamic package test targets - use: make test-<package>
 # Examples: make test-xkms, make test-kms, make test-iam
 # Nested packages use dashes: make test-api-grpc (pkg/api/grpc),
-# make test-iam-dpop (pkg/iam/dpop), make test-server-tpm2-keys
+# make test-iam-dpop (pkg/iam/dpop), make test-quicbaas-git-sign
 test-%: ## Run unit tests for a specific package (e.g., make test-xkms, make test-api-grpc)
 	@$(call pkg_resolve,$(PKG_ROOTS)); \
 	TAGS='$(pkg_tags)'; \
@@ -2782,7 +2782,7 @@ integration-test-ollama-cpu: ## Run the full integration suite INCLUDING Ollama 
 .PHONY: integration-test-ollama-gpu
 integration-test-ollama-gpu: ## Run the full integration suite INCLUDING Ollama + GPU tests against a remote GPU host (requires GPU_HOST=<host>)
 	@if [ -z "$(strip $(GPU_HOST))" ]; then \
-		echo "$(RED)Error: integration-test-ollama-gpu requires GPU_HOST=<host> (e.g. make integration-test-ollama-gpu GPU_HOST=gpu01.lan)$(NC)"; \
+		echo "$(RED)Error: integration-test-ollama-gpu requires GPU_HOST=<host> (e.g. make integration-test-ollama-gpu GPU_HOST=core-01.example)$(NC)"; \
 		exit 1; \
 	fi
 	@echo "$(BLUE)Running integration tests with remote GPU Ollama host: $(GPU_HOST)$(NC)"

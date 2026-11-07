@@ -163,7 +163,7 @@ func TestAccountResolver_MintsFreshTokenFromProviderDefaults(t *testing.T) {
 	if calls.Load() != 1 {
 		t.Fatalf("token endpoint called %d times, want 1", calls.Load())
 	}
-	if got := resolved.Env["CLAUDE_CODE_OAUTH_TOKEN"]; got != "minted-<account>" {
+	if got := resolved.Env["CLAUDE_CODE_OAUTH_TOKEN"]; got != "minted-token-1" {
 		t.Fatalf("Env[CLAUDE_CODE_OAUTH_TOKEN] = %q, want the freshly minted token", got)
 	}
 	form, _ := lastForm.Load().(string)
@@ -178,7 +178,7 @@ func TestAccountResolver_MintsFreshTokenFromProviderDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Get() error = %v", err)
 	}
-	if stored.AccessToken != "minted-<account>" || stored.RefreshToken != "rotated-refresh" {
+	if stored.AccessToken != "minted-token-1" || stored.RefreshToken != "rotated-refresh" {
 		t.Fatalf("stored credential = %+v, want the rotated pair persisted", stored)
 	}
 	if stored.TokenEndpoint != "" || stored.ClientID != "" || stored.AccessTokenEnvKey != "" {

@@ -42,6 +42,11 @@ SESSION_RESUME.md
 .claude/settings.local.json
 .claude/.fuse_hidden*
 .opencode/*.db*
+# Agent tool state: Serena project memories, Playwright CLI config, and
+# agent run records. None of it is source.
+.serena/
+.playwright/
+*.jsonl
 
 # Data directories
 /data/
@@ -119,6 +124,9 @@ LOCK
 /pkg/server/data/
 /pkg/server/vector/
 /pkg/server/timeseries/
+**/data/vector/
+# TPM key blobs written by tests that run with the default key directory.
+tpm2-keys/
 
 # Shared object binaries
 *.so.*
