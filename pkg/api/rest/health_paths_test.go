@@ -4,21 +4,38 @@ package rest
 
 import (
 	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
 )
 
-// composeHealthFiles are the compose files whose healthchecks probe the
-// daemon's REST listener on localhost:8080 (go-quicbaas#2228). Paths are
-// relative to this package directory.
-var composeHealthFiles = []string{
-	"../../../docker-compose.yml",
-	"../../../deployments/agents/docker-compose.yml",
-	"../../../test/integration/docker-compose.kms-test.yml",
-	"../../../test/integration/docker-compose.perf.yml",
-	"../../../test/integration/docker-compose.cluster.yml",
-	"../../../test/integration/docker-compose.integration.yml",
+// composeHealthGlobs match every compose file in the repository; each one's
+// healthchecks probe the daemon's REST listener on localhost:8080
+// (go-quicbaas#2228). Patterns are relative to this package directory.
+var composeHealthGlobs = []string{
+	"../../../docker-compose*.yml",
+	"../../../deployments/*/docker-compose*.yml",
+	"../../../test/integration/docker-compose*.yml",
+	"../../../test/integration/*/docker-compose*.yml",
+}
+
+// composeHealthFiles expands composeHealthGlobs. A malformed pattern, or a
+// pattern that matches no file, fails the test.
+func composeHealthFiles(t *testing.T) []string {
+	t.Helper()
+	var files []string
+	for _, pattern := range composeHealthGlobs {
+		matches, err := filepath.Glob(pattern)
+		if err != nil {
+			t.Fatalf("glob %s: %v", pattern, err)
+		}
+		if len(matches) == 0 {
+			t.Fatalf("glob %s matched no compose file", pattern)
+		}
+		files = append(files, matches...)
+	}
+	return files
 }
 
 // healthCheckURL matches the path of a URL that targets the daemon's REST
@@ -51,19 +68,21 @@ func unservedHealthPaths(compose []byte, served map[string]struct{}) []string {
 
 func TestHealthPath_ComposeHealthchecksHitServedRoutes(t *testing.T) {
 	served := servedGETPaths()
-	for _, file := range composeHealthFiles {
+	probes := 0
+	for _, file := range composeHealthFiles(t) {
+		compose, err := os.ReadFile(file)
+		if err != nil {
+			t.Fatalf("read %s: %v", file, err)
+		}
+		probes += len(healthCheckURL.FindAll(compose, -1))
 		t.Run(strings.TrimPrefix(file, "../../../"), func(t *testing.T) {
-			compose, err := os.ReadFile(file)
-			if err != nil {
-				t.Fatalf("read %s: %v", file, err)
-			}
-			if len(healthCheckURL.FindAll(compose, -1)) == 0 {
-				t.Fatalf("%s has no localhost:8080 healthcheck", file)
-			}
 			for _, path := range unservedHealthPaths(compose, served) {
 				t.Errorf("%s: healthcheck path %q is not a REST route", file, path)
 			}
 		})
+	}
+	if probes == 0 {
+		t.Fatal("no compose file has a localhost:8080 healthcheck")
 	}
 }
 
