@@ -2487,6 +2487,14 @@ GOMODAUTH_ENV := $(MODULE_ENV_FILE)
 endif
 export GOMODAUTH_ENV
 
+# Every compose file that builds an image passes GOMODAUTH_ENV as a build
+# secret. compose hands builds to buildx bake, and bake refuses to read a file
+# outside the build context unless the caller grants it, which compose has no
+# flag for, so a non-interactive build fails. A build secret is mounted for one
+# RUN step and never lands in a layer, so the filesystem entitlement check is
+# turned off for the builds make drives.
+export BUILDX_BAKE_ENTITLEMENTS_FS := 0
+
 # Where integration-test backs go.mod up while the stack runs, restored after.
 # Overridable so a gate that drives the recipe never touches a real run's copy.
 GOMOD_BACKUP ?= /tmp/quicbaas-$(RUN_ID_SLUG)-gomod-backup
