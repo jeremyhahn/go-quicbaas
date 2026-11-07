@@ -100,7 +100,6 @@ func TestNewOnboarder_RefusesAnUnusableConfiguration(t *testing.T) {
 	}{
 		"no forges":        {nil, secrets, onboardingHookBase},
 		"no secrets":       {forges, nil, onboardingHookBase},
-		"no public url":    {forges, secrets, "  "},
 		"relative url":     {forges, secrets, "/api"},
 		"scheme only":      {forges, secrets, "https://"},
 		"not a url at all": {forges, secrets, "node.test"},
@@ -374,6 +373,104 @@ func TestOnboard_RefusesAnEmptyWebhookSecret(t *testing.T) {
 	}
 	if got := gitea.HookURLs(); len(got) != 0 {
 		t.Errorf("hooks = %v, want none", got)
+	}
+}
+
+// newPollOnlyOnboarder is an onboarder on a node with no webhook public URL,
+// which takes no webhook deliveries (go-quicbaas#2225).
+func newPollOnlyOnboarder(t *testing.T, secrets WebhookSecretResolver) (*Onboarder, *fakeForge) {
+	t.Helper()
+	forge := newFakeForge()
+	onboarder, err := NewOnboarder(&fakeForges{forge: forge}, secrets, "")
+	if err != nil {
+		t.Fatalf("NewOnboarder with no public URL: %v", err)
+	}
+	return onboarder, forge
+}
+
+// TestNewOnboarder_AcceptsNoPublicURL proves a node with no public URL can
+// onboard at all: empty means poll-only, not misconfigured.
+func TestNewOnboarder_AcceptsNoPublicURL(t *testing.T) {
+	for name, base := range map[string]string{"absent": "", "blank": "  "} {
+		t.Run(name, func(t *testing.T) {
+			onboarder, err := NewOnboarder(&giteaForges{}, onboardingSecrets(), base)
+			if err != nil {
+				t.Fatalf("NewOnboarder(%q): %v", base, err)
+			}
+			if onboarder == nil {
+				t.Fatal("NewOnboarder returned no onboarder")
+			}
+		})
+	}
+}
+
+// TestOnboard_APollOnlyBindingNeedsNoPublicURL proves a binding that names no
+// webhook secret onboards on a node with no public URL and provisions nothing.
+func TestOnboard_APollOnlyBindingNeedsNoPublicURL(t *testing.T) {
+	onboarder, forge := newPollOnlyOnboarder(t, onboardingSecrets())
+	binding := testBinding()
+	binding.Forge.WebhookSecretRef = ""
+
+	if _, err := onboarder.Onboard(context.Background(), testTenant, binding); err != nil {
+		t.Fatalf("Onboard: %v", err)
+	}
+	if forge.ensureWebhookSeen != 0 || len(forge.webhooks) != 0 {
+		t.Errorf("EnsureWebhook calls = %d, hooks = %+v, want none", forge.ensureWebhookSeen, forge.webhooks)
+	}
+	report := onboarder.Check(context.Background(), testTenant, binding)
+	if got := statusOf(report, CheckWebhook); got != StatusNotApplicable {
+		t.Errorf("webhook check = %q, want not applicable", got)
+	}
+}
+
+// TestOnboard_AWebhookBindingIsRefusedWithNoPublicURL proves a binding that
+// asks for deliveries is refused on a node that takes none, before its secret
+// is resolved and without touching the forge's webhooks: nothing is
+// provisioned into the void and reported provisioned.
+func TestOnboard_AWebhookBindingIsRefusedWithNoPublicURL(t *testing.T) {
+	// No secrets at all: reaching the resolver would answer
+	// ErrWebhookSecretMissing instead.
+	onboarder, forge := newPollOnlyOnboarder(t, &staticSecrets{})
+	binding := testBinding()
+
+	_, err := onboarder.Onboard(context.Background(), testTenant, binding)
+	var missing *WebhookPublicURLMissingError
+	if !errors.As(err, &missing) {
+		t.Fatalf("error = %v, want WebhookPublicURLMissingError", err)
+	}
+	if missing.ProjectID != binding.ProjectID {
+		t.Errorf("ProjectID = %q, want %q", missing.ProjectID, binding.ProjectID)
+	}
+	if !errors.Is(err, ErrWebhookPublicURLMissing) {
+		t.Errorf("error = %v, want ErrWebhookPublicURLMissing", err)
+	}
+	if !strings.Contains(err.Error(), "sdlc.webhook.public_url") {
+		t.Errorf("error %q does not name the setting", err)
+	}
+	if forge.ensureWebhookSeen != 0 {
+		t.Errorf("EnsureWebhook calls = %d, want none", forge.ensureWebhookSeen)
+	}
+}
+
+// TestCheck_AWebhookBindingWithNoPublicURLIsAFinding proves conformance does
+// not call a binding healthy when it asks for deliveries this node cannot take.
+func TestCheck_AWebhookBindingWithNoPublicURLIsAFinding(t *testing.T) {
+	onboarder, forge := newPollOnlyOnboarder(t, onboardingSecrets())
+	forge.caps = ForgeCapabilities{BranchProtectionContexts: true}
+
+	report := onboarder.Check(context.Background(), testTenant, testBinding())
+	if got := statusOf(report, CheckWebhook); got != StatusFail {
+		t.Fatalf("webhook check = %q, want fail", got)
+	}
+	if report.Conformant {
+		t.Error("the project was reported conformant")
+	}
+	findings := report.FindingsOfClass(ConformanceWebhookMissing)
+	if len(findings) != 1 {
+		t.Fatalf("findings = %+v, want one webhook_missing", report.Findings)
+	}
+	if !strings.Contains(findings[0].Remedy, "sdlc.webhook.public_url") {
+		t.Errorf("remedy %q does not name the setting", findings[0].Remedy)
 	}
 }
 

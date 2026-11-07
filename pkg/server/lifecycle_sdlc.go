@@ -613,9 +613,9 @@ func (s *Server) startSDLC() error {
 		Agents:  agentCatalog,
 		SSHKeys: sshKeys,
 		// The node's public origin, which onboarding provisions forge
-		// webhooks to point at. Validated at load; refused here too, because
-		// a module that reached this line without one would bind projects
-		// nothing ever delivers to.
+		// webhooks to point at. Optional and validated at load: empty means
+		// the node takes no deliveries, so only poll-only bindings onboard
+		// and a binding naming a webhook secret is refused (go-quicbaas#2225).
 		WebhookPublicURL: cfg.Webhook.PublicURL,
 		ForgeTransport: sdlc.ForgeTransport{
 			ReadTimeout:       cfg.Forge.ReadTimeout,
