@@ -887,9 +887,10 @@ func Validate(cfg *Config) error {
 // validateSDLCPublicURL refuses a node that could onboard a project into the
 // void.
 //
-// Onboarding provisions a forge webhook pointing at this node's public
-// origin. An absent or malformed one is refused AT LOAD rather than at the
-// first onboarding, because the alternative is twenty-eight repositories
+// The value is OPTIONAL: an empty one means this node takes no webhook
+// deliveries, and only poll-only bindings onboard on it (go-quicbaas#2225).
+// A non-empty but malformed one is refused AT LOAD rather than at the first
+// onboarding, because the alternative is twenty-eight repositories
 // configured to deliver somewhere that does not answer, each reported
 // provisioned.
 func (v *Validator) validateSDLCPublicURL(public string) {
@@ -904,12 +905,13 @@ func (v *Validator) validateSDLCPublicURL(public string) {
 // drift test pin it against the module's own refusal
 // (sdlc.NormalizeWebhookPublicURL). pkg/config cannot import pkg/sdlc, so the
 // rule is stated twice and the drift test is what keeps the two the same.
+//
+// An empty (all-space) value is valid: it means the node takes no webhook
+// deliveries, so only poll-only bindings onboard (go-quicbaas#2225).
 func ValidateSDLCWebhookPublicURL(public string) error {
 	trimmed := strings.TrimSpace(public)
 	if trimmed == "" {
-		return &SDLCWebhookPublicURLError{
-			Reason: "required when the module is enabled; onboarding provisions forge webhooks pointing at this node, and it cannot guess the node's public origin",
-		}
+		return nil
 	}
 	parsed, err := url.Parse(trimmed)
 	switch {
