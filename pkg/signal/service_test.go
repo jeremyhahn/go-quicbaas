@@ -122,24 +122,6 @@ func tenantCtx(tenantID string) context.Context {
 	return tenantctx.WithTenant(context.Background(), tenantID)
 }
 
-func TestNewSignalService(t *testing.T) {
-	kv := newServiceTestKVClient()
-	log := newTestLogger(t)
-	svc := NewSignalService(kv, log, &SignalConfig{Enabled: true})
-	if svc == nil {
-		t.Fatal("expected non-nil service")
-	}
-}
-
-func TestNewSignalService_Disabled(t *testing.T) {
-	kv := newServiceTestKVClient()
-	log := newTestLogger(t)
-	svc := NewSignalService(kv, log, &SignalConfig{Enabled: false})
-	if svc == nil {
-		t.Fatal("expected non-nil service even when disabled")
-	}
-}
-
 func TestSignalService_Start_Disabled(t *testing.T) {
 	kv := newServiceTestKVClient()
 	log := newTestLogger(t)
@@ -183,7 +165,7 @@ func TestSignalService_Start_Enabled(t *testing.T) {
 }
 
 func TestSignalService_ProvisionTenant(t *testing.T) {
-	svc, _ := newEnabledService(t)
+	svc, kv := newEnabledService(t)
 	ctx := context.Background()
 
 	cfg := &SignalTenantConfig{Enabled: true}
@@ -197,6 +179,19 @@ func TestSignalService_ProvisionTenant(t *testing.T) {
 	}
 	if got.MaxAccounts != defaultMaxAccounts {
 		t.Fatalf("expected defaults applied, got MaxAccounts %d", got.MaxAccounts)
+	}
+
+	// The config is persisted in the KV store as well as cached.
+	data, ok := kv.data[tenantConfigKeyPrefix+"new-tenant"+tenantConfigKeySuffix]
+	if !ok {
+		t.Fatal("expected tenant config to be persisted in KV store")
+	}
+	var persisted SignalTenantConfig
+	if err := json.Unmarshal(data, &persisted); err != nil {
+		t.Fatalf("failed to unmarshal persisted config: %v", err)
+	}
+	if persisted.MaxAccounts != got.MaxAccounts {
+		t.Fatalf("expected persisted MaxAccounts %d, got %d", got.MaxAccounts, persisted.MaxAccounts)
 	}
 }
 
@@ -228,16 +223,35 @@ func TestSignalService_ProvisionTenant_InvalidConfig(t *testing.T) {
 	}
 }
 
-func TestSignalService_ProvisionTenant_EmptyTenantID(t *testing.T) {
+// TestSignalService_EmptyTenantID checks that every tenant-administration
+// method rejects an empty tenant ID with an InvalidConfigError.
+func TestSignalService_EmptyTenantID(t *testing.T) {
 	svc, _ := newEnabledService(t)
+	ctx := context.Background()
 
-	err := svc.ProvisionTenant(context.Background(), "", &SignalTenantConfig{Enabled: true})
-	if err == nil {
-		t.Fatal("expected error for empty tenant ID")
+	tests := []struct {
+		name string
+		call func() error
+	}{
+		{"ProvisionTenant", func() error {
+			return svc.ProvisionTenant(ctx, "", &SignalTenantConfig{Enabled: true})
+		}},
+		{"GetTenantConfig", func() error {
+			_, err := svc.GetTenantConfig(ctx, "")
+			return err
+		}},
+		{"DeprovisionTenant", func() error {
+			return svc.DeprovisionTenant(ctx, "")
+		}},
 	}
-	var target *InvalidConfigError
-	if !errors.As(err, &target) {
-		t.Fatalf("expected InvalidConfigError, got %T: %v", err, err)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := tt.call()
+			var target *InvalidConfigError
+			if !errors.As(err, &target) {
+				t.Fatalf("expected InvalidConfigError, got %T: %v", err, err)
+			}
+		})
 	}
 }
 
@@ -287,19 +301,6 @@ func TestSignalService_DeprovisionTenant_NotFound(t *testing.T) {
 	}
 }
 
-func TestSignalService_GetTenantConfig(t *testing.T) {
-	svc, _ := newEnabledService(t)
-	provisionTestTenant(t, svc, "get-tenant")
-
-	cfg, err := svc.GetTenantConfig(context.Background(), "get-tenant")
-	if err != nil {
-		t.Fatalf("GetTenantConfig failed: %v", err)
-	}
-	if !cfg.Enabled {
-		t.Fatal("expected tenant config to be enabled")
-	}
-}
-
 func TestSignalService_GetTenantConfig_NotFound(t *testing.T) {
 	svc, _ := newEnabledService(t)
 
@@ -313,7 +314,9 @@ func TestSignalService_GetTenantConfig_NotFound(t *testing.T) {
 	}
 }
 
-func TestSignalService_RegisterAccount(t *testing.T) {
+// TestSignalService_RegisterAndGetAccount registers an account and reads it
+// back through GetAccount.
+func TestSignalService_RegisterAndGetAccount(t *testing.T) {
 	svc, _ := newEnabledService(t)
 	provisionTestTenant(t, svc, "reg-tenant")
 	ctx := tenantCtx("reg-tenant")
@@ -334,6 +337,17 @@ func TestSignalService_RegisterAccount(t *testing.T) {
 	}
 	if resp.DeviceID != 1 {
 		t.Fatalf("expected device ID 1, got %d", resp.DeviceID)
+	}
+
+	account, err := svc.GetAccount(ctx, resp.UUID)
+	if err != nil {
+		t.Fatalf("GetAccount failed: %v", err)
+	}
+	if account.UUID != resp.UUID {
+		t.Fatalf("expected UUID %s, got %s", resp.UUID, account.UUID)
+	}
+	if account.Number != "+15551234567" {
+		t.Fatalf("expected number +15551234567, got %s", account.Number)
 	}
 }
 
@@ -378,32 +392,6 @@ func TestSignalService_RegisterAccount_QuotaExceeded(t *testing.T) {
 	}
 }
 
-func TestSignalService_GetAccount(t *testing.T) {
-	svc, _ := newEnabledService(t)
-	provisionTestTenant(t, svc, "getacc-tenant")
-	ctx := tenantCtx("getacc-tenant")
-
-	resp, err := svc.RegisterAccount(ctx, &RegisterRequest{
-		Number:     "+15553334444",
-		Password:   "pw",
-		DeviceName: "dev",
-	})
-	if err != nil {
-		t.Fatalf("RegisterAccount failed: %v", err)
-	}
-
-	account, err := svc.GetAccount(ctx, resp.UUID)
-	if err != nil {
-		t.Fatalf("GetAccount failed: %v", err)
-	}
-	if account.UUID != resp.UUID {
-		t.Fatalf("expected UUID %s, got %s", resp.UUID, account.UUID)
-	}
-	if account.Number != "+15553334444" {
-		t.Fatalf("expected number +15553334444, got %s", account.Number)
-	}
-}
-
 func TestSignalService_DeleteAccount(t *testing.T) {
 	svc, _ := newEnabledService(t)
 	provisionTestTenant(t, svc, "delacc-tenant")
@@ -428,33 +416,9 @@ func TestSignalService_DeleteAccount(t *testing.T) {
 	}
 }
 
-func TestSignalService_SendMessage(t *testing.T) {
-	svc, _ := newEnabledService(t)
-	provisionTestTenant(t, svc, "msg-tenant")
-	ctx := tenantCtx("msg-tenant")
-
-	resp, err := svc.RegisterAccount(ctx, &RegisterRequest{
-		Number:     "+15557778888",
-		Password:   "pw",
-		DeviceName: "dev",
-	})
-	if err != nil {
-		t.Fatalf("RegisterAccount failed: %v", err)
-	}
-
-	err = svc.SendMessage(ctx, &SendMessageRequest{
-		DestinationUUID: resp.UUID,
-		DeviceID:        1,
-		Content:         []byte("hello"),
-		Type:            int(messages.EnvelopeTypeCiphertext),
-		Timestamp:       12345,
-	})
-	if err != nil {
-		t.Fatalf("SendMessage failed: %v", err)
-	}
-}
-
-func TestSignalService_GetMessages(t *testing.T) {
+// TestSignalService_SendAndGetMessages sends a message and reads it back
+// through GetMessages.
+func TestSignalService_SendAndGetMessages(t *testing.T) {
 	svc, _ := newEnabledService(t)
 	provisionTestTenant(t, svc, "getmsg-tenant")
 	ctx := tenantCtx("getmsg-tenant")
@@ -514,38 +478,9 @@ func TestSignalService_GetMessages_Empty(t *testing.T) {
 	}
 }
 
-func TestSignalService_StorePreKeys(t *testing.T) {
-	svc, _ := newEnabledService(t)
-	provisionTestTenant(t, svc, "keys-tenant")
-	ctx := tenantCtx("keys-tenant")
-
-	resp, err := svc.RegisterAccount(ctx, &RegisterRequest{
-		Number:     "+15553330000",
-		Password:   "pw",
-		DeviceName: "dev",
-	})
-	if err != nil {
-		t.Fatalf("RegisterAccount failed: %v", err)
-	}
-
-	bundle := &keys.SetKeysRequest{
-		SignedPreKey: &keys.SignedPreKey{
-			KeyID:     1,
-			PublicKey: []byte("signed-pub-key"),
-			Signature: []byte("signed-sig"),
-		},
-		PreKeys: []*keys.PreKey{
-			{KeyID: 1, PublicKey: []byte("prekey-1")},
-			{KeyID: 2, PublicKey: []byte("prekey-2")},
-		},
-	}
-
-	if err := svc.StorePreKeys(ctx, resp.UUID, 1, bundle); err != nil {
-		t.Fatalf("StorePreKeys failed: %v", err)
-	}
-}
-
-func TestSignalService_GetPreKeys(t *testing.T) {
+// TestSignalService_StoreAndGetPreKeys stores a signed pre-key and one-time
+// pre-keys, then reads a bundle back through GetPreKeys.
+func TestSignalService_StoreAndGetPreKeys(t *testing.T) {
 	svc, _ := newEnabledService(t)
 	provisionTestTenant(t, svc, "getkeys-tenant")
 	ctx := tenantCtx("getkeys-tenant")
@@ -565,6 +500,10 @@ func TestSignalService_GetPreKeys(t *testing.T) {
 			PublicKey: []byte("signed-pub"),
 			Signature: []byte("signed-sig"),
 		},
+		PreKeys: []*keys.PreKey{
+			{KeyID: 1, PublicKey: []byte("prekey-1")},
+			{KeyID: 2, PublicKey: []byte("prekey-2")},
+		},
 	}
 	if err := svc.StorePreKeys(ctx, resp.UUID, 1, bundle); err != nil {
 		t.Fatalf("StorePreKeys failed: %v", err)
@@ -583,36 +522,72 @@ func TestSignalService_GetPreKeys(t *testing.T) {
 	if item.SignedPreKey.KeyID != 10 {
 		t.Fatalf("expected SignedPreKey KeyID 10, got %d", item.SignedPreKey.KeyID)
 	}
+	if item.PreKey == nil {
+		t.Fatal("expected a one-time PreKey in response")
+	}
 }
 
+// TestSignalService_NoTenantContext checks that every per-tenant method
+// rejects a context that carries no tenant with a TenantNotFoundError.
 func TestSignalService_NoTenantContext(t *testing.T) {
 	svc, _ := newEnabledService(t)
 	provisionTestTenant(t, svc, "ctx-tenant")
-
-	// Use context without tenant.
 	ctx := context.Background()
 
-	_, err := svc.RegisterAccount(ctx, &RegisterRequest{
-		Number:     "+15550000000",
-		Password:   "pw",
-		DeviceName: "dev",
-	})
-	if err == nil {
-		t.Fatal("expected error when no tenant in context")
+	tests := []struct {
+		name string
+		call func() error
+	}{
+		{"RegisterAccount", func() error {
+			_, err := svc.RegisterAccount(ctx, &RegisterRequest{
+				Number:     "+15550000000",
+				Password:   "pw",
+				DeviceName: "dev",
+			})
+			return err
+		}},
+		{"GetAccount", func() error {
+			_, err := svc.GetAccount(ctx, "some-uuid")
+			return err
+		}},
+		{"DeleteAccount", func() error {
+			return svc.DeleteAccount(ctx, "some-uuid")
+		}},
+		{"SendMessage", func() error {
+			return svc.SendMessage(ctx, &SendMessageRequest{
+				DestinationUUID: "uuid",
+				DeviceID:        1,
+				Content:         []byte("data"),
+				Type:            1,
+				Timestamp:       1,
+			})
+		}},
+		{"GetMessages", func() error {
+			_, err := svc.GetMessages(ctx, "uuid", 1)
+			return err
+		}},
+		{"StorePreKeys", func() error {
+			return svc.StorePreKeys(ctx, "uuid", 1, &keys.SetKeysRequest{
+				SignedPreKey: &keys.SignedPreKey{
+					KeyID:     1,
+					PublicKey: []byte("key"),
+					Signature: []byte("sig"),
+				},
+			})
+		}},
+		{"GetPreKeys", func() error {
+			_, err := svc.GetPreKeys(ctx, "uuid", 1)
+			return err
+		}},
 	}
-	var target *TenantNotFoundError
-	if !errors.As(err, &target) {
-		t.Fatalf("expected TenantNotFoundError, got %T: %v", err, err)
-	}
-}
-
-func TestSignalService_NoTenantContext_GetAccount(t *testing.T) {
-	svc, _ := newEnabledService(t)
-	provisionTestTenant(t, svc, "ctx2-tenant")
-
-	_, err := svc.GetAccount(context.Background(), "some-uuid")
-	if err == nil {
-		t.Fatal("expected error when no tenant in context")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := tt.call()
+			var target *TenantNotFoundError
+			if !errors.As(err, &target) {
+				t.Fatalf("expected TenantNotFoundError, got %T: %v", err, err)
+			}
+		})
 	}
 }
 
@@ -626,6 +601,11 @@ func TestExtractTenantID(t *testing.T) {
 			name:     "valid key",
 			key:      "signal/tenants/my-tenant/config",
 			expected: "my-tenant",
+		},
+		{
+			name:     "minimal valid key",
+			key:      "signal/tenants/x/config",
+			expected: "x",
 		},
 		{
 			name:     "valid key with dashes",
@@ -659,43 +639,10 @@ func TestExtractTenantID(t *testing.T) {
 	}
 }
 
-func TestExtractTenantID_MinimalValid(t *testing.T) {
-	got := extractTenantID("signal/tenants/x/config")
-	if got != "x" {
-		t.Fatalf("expected x, got %q", got)
-	}
-}
-
 func TestSignalService_Stop(t *testing.T) {
 	svc, _ := newEnabledService(t)
 	if err := svc.Stop(context.Background()); err != nil {
 		t.Fatalf("Stop failed: %v", err)
-	}
-}
-
-func TestSignalService_GetTenantConfig_EmptyID(t *testing.T) {
-	svc, _ := newEnabledService(t)
-
-	_, err := svc.GetTenantConfig(context.Background(), "")
-	if err == nil {
-		t.Fatal("expected error for empty tenant ID")
-	}
-	var target *InvalidConfigError
-	if !errors.As(err, &target) {
-		t.Fatalf("expected InvalidConfigError, got %T: %v", err, err)
-	}
-}
-
-func TestSignalService_DeprovisionTenant_EmptyID(t *testing.T) {
-	svc, _ := newEnabledService(t)
-
-	err := svc.DeprovisionTenant(context.Background(), "")
-	if err == nil {
-		t.Fatal("expected error for empty tenant ID")
-	}
-	var target *InvalidConfigError
-	if !errors.As(err, &target) {
-		t.Fatalf("expected InvalidConfigError, got %T: %v", err, err)
 	}
 }
 
@@ -738,66 +685,6 @@ func TestSignalService_GetTenantStores_DisabledTenant(t *testing.T) {
 	}
 }
 
-func TestSignalService_DeleteAccount_NoTenant(t *testing.T) {
-	svc, _ := newEnabledService(t)
-	provisionTestTenant(t, svc, "delacc2-tenant")
-
-	err := svc.DeleteAccount(context.Background(), "some-uuid")
-	if err == nil {
-		t.Fatal("expected error when no tenant in context")
-	}
-}
-
-func TestSignalService_SendMessage_NoTenant(t *testing.T) {
-	svc, _ := newEnabledService(t)
-	provisionTestTenant(t, svc, "msg2-tenant")
-
-	err := svc.SendMessage(context.Background(), &SendMessageRequest{
-		DestinationUUID: "uuid",
-		DeviceID:        1,
-		Content:         []byte("data"),
-		Type:            1,
-		Timestamp:       1,
-	})
-	if err == nil {
-		t.Fatal("expected error when no tenant in context")
-	}
-}
-
-func TestSignalService_GetMessages_NoTenant(t *testing.T) {
-	svc, _ := newEnabledService(t)
-
-	_, err := svc.GetMessages(context.Background(), "uuid", 1)
-	if err == nil {
-		t.Fatal("expected error when no tenant in context")
-	}
-}
-
-func TestSignalService_StorePreKeys_NoTenant(t *testing.T) {
-	svc, _ := newEnabledService(t)
-
-	bundle := &keys.SetKeysRequest{
-		SignedPreKey: &keys.SignedPreKey{
-			KeyID:     1,
-			PublicKey: []byte("key"),
-			Signature: []byte("sig"),
-		},
-	}
-	err := svc.StorePreKeys(context.Background(), "uuid", 1, bundle)
-	if err == nil {
-		t.Fatal("expected error when no tenant in context")
-	}
-}
-
-func TestSignalService_GetPreKeys_NoTenant(t *testing.T) {
-	svc, _ := newEnabledService(t)
-
-	_, err := svc.GetPreKeys(context.Background(), "uuid", 1)
-	if err == nil {
-		t.Fatal("expected error when no tenant in context")
-	}
-}
-
 func TestSignalService_Start_LoadsInvalidConfig(t *testing.T) {
 	kv := newServiceTestKVClient()
 	log := newTestLogger(t)
@@ -816,38 +703,6 @@ func TestSignalService_Start_LoadsInvalidConfig(t *testing.T) {
 	_, err := svc.GetTenantConfig(context.Background(), "bad-config-tenant")
 	if err == nil {
 		t.Fatal("expected error for bad config tenant")
-	}
-}
-
-func TestSignalService_ProvisionTenant_MarshalSuccess(t *testing.T) {
-	svc, kv := newEnabledService(t)
-	ctx := context.Background()
-
-	cfg := &SignalTenantConfig{
-		Enabled:          true,
-		MaxAccounts:      200,
-		MaxDevices:       4,
-		MessageRetention: "14d",
-		FIDO2Enabled:     true,
-		AllowFIDO2Only:   true,
-	}
-	if err := svc.ProvisionTenant(ctx, "full-tenant", cfg); err != nil {
-		t.Fatalf("ProvisionTenant failed: %v", err)
-	}
-
-	// Verify persisted in KV store.
-	key := tenantConfigKeyPrefix + "full-tenant" + tenantConfigKeySuffix
-	data, ok := kv.data[key]
-	if !ok {
-		t.Fatal("expected tenant config to be persisted in KV store")
-	}
-
-	var loaded SignalTenantConfig
-	if err := json.Unmarshal(data, &loaded); err != nil {
-		t.Fatalf("failed to unmarshal persisted config: %v", err)
-	}
-	if loaded.MaxAccounts != 200 {
-		t.Fatalf("expected persisted MaxAccounts 200, got %d", loaded.MaxAccounts)
 	}
 }
 
