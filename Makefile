@@ -405,6 +405,31 @@ go_packages = pkgs=$$(go list $(1)) || { echo "$(RED)$@: go list failed, so ther
 	pkgs=$$(printf '%s\n' "$$pkgs" | grep -v -e '$(2)'); \
 	if [ -z "$$pkgs" ]; then echo "$(RED)$@: go list found no packages outside '$(2)'$(NC)"; exit 1; fi
 
+# SHARD and SHARDS pick one slice of a package list: `make coverage-shard
+# SHARD=1 SHARDS=4` runs the second of four. The defaults are the whole list.
+SHARD ?= 0
+SHARDS ?= 1
+
+# check_shard is a recipe fragment for $(call check_shard,SHARD,SHARDS): it
+# exits 1, naming the target, unless both are numbers and SHARD < SHARDS.
+check_shard = case "$(1):$(2)" in *[!0-9:]* | :* | *:) echo "$(RED)$@: SHARD and SHARDS must be numbers, got SHARD=$(1) SHARDS=$(2)$(NC)"; exit 1 ;; esac; \
+	if [ "$(1)" -ge "$(2)" ]; then echo "$(RED)$@: SHARD=$(1) must be below SHARDS=$(2)$(NC)"; exit 1; fi
+
+# shard_packages is a recipe fragment for $(call shard_packages,LIST ARGS), run
+# after go_packages with the same go list flags (build tags): it narrows the
+# shell variable pkgs to shard SHARD of SHARDS. A package weighs the bytes of
+# its _test.go files. Heaviest first (ties by import path), each package goes
+# to the lightest shard so far (ties to the lowest index). The deal depends
+# only on the tree, so every shard computes the same split: the shards are
+# disjoint and together hold every package, untested ones included.
+shard_packages = $(call check_shard,$(SHARD),$(SHARDS)); \
+	dirs=$$(go list $(1) -f '{{.ImportPath}} {{.Dir}}' $$pkgs) || { echo "$(RED)$@: go list failed, so there is nothing to shard$(NC)"; exit 1; }; \
+	pkgs=$$(printf '%s\n' "$$dirs" | \
+		while read -r p d; do printf '%s %s\n' "$$(cat "$$d"/*_test.go 2>/dev/null | wc -c)" "$$p"; done | \
+		LC_ALL=C sort -k1,1nr -k2,2 | \
+		awk -v s=$(SHARD) -v n=$(SHARDS) 'BEGIN { for (i = 0; i < n; i++) w[i] = 0 } { b = 0; for (i = 1; i < n; i++) if (w[i] < w[b]) b = i; w[b] += $$1; if (b == s) print $$2 }'); \
+	if [ -z "$$pkgs" ]; then echo "$(RED)$@: shard $(SHARD) of $(SHARDS) holds no package$(NC)"; exit 1; fi
+
 ##@ General
 
 .PHONY: help
@@ -1590,6 +1615,19 @@ test-fips-conformance: ## Run the FIPS conformance pass (GODEBUG=fips140=only)
 	@echo "$(YELLOW)  fips140=only. The fix is upstream; adding the package here would$(NC)"
 	@echo "$(YELLOW)  report a go-xkms defect as a quicbaas one.$(NC)"
 
+# FIPS_PKGS is the scope of the full fips140=only unit run (nightly.yml): the
+# whole root module, untagged. It is not test-fips-conformance's curated
+# subset: packages that reach an unapproved algorithm fail here.
+FIPS_PKGS ?= ./...
+FIPS_TIMEOUT := 15m
+
+.PHONY: test-fips-shard
+test-fips-shard: ## Run shard SHARD of SHARDS of the full unit suite under GODEBUG=fips140=only
+	@$(call go_packages,$(FIPS_PKGS),/proto$$); \
+	$(call shard_packages,); \
+	printf "$(BLUE)FIPS shard $(SHARD) of $(SHARDS): %s packages$(NC)\n" "$$(printf '%s\n' "$$pkgs" | wc -l)"; \
+	$(FIPS_ONLY_ENV) $(GOTEST) -count=1 -timeout=$(FIPS_TIMEOUT) $$pkgs
+
 .PHONY: test-unit
 test-unit: test ## Alias for test (unit tests only)
 	@# This is now an alias for the test target which already excludes integration tests
@@ -1845,9 +1883,9 @@ integration-test-sdk: integration-test-sdk-go integration-test-sdk-js ## Run ALL
 # exactly this way -- snake_case merge fields, drafts having no API field, and
 # webhook event expansion -- each of which a mock reproduced happily.
 .PHONY: integration-test-forge-gitea
-integration-test-forge-gitea: ## Run the live Gitea forge suite (needs GITEA_ITEST_* env)
+integration-test-forge-gitea: ## Run the live Gitea forge suite (needs FORGE_ITEST_* env)
 	@echo "$(BLUE)Running live Gitea forge integration tests...$(NC)"
-	@echo "$(YELLOW)Requires GITEA_ITEST_BASE_URL, _TOKEN, _OWNER, _REPO against a SCRATCH repo$(NC)"
+	@echo "$(YELLOW)Requires FORGE_ITEST_BASE_URL, _TOKEN, _OWNER, _REPO against a SCRATCH repo$(NC)"
 	$(GOTEST) -tags integration -count=1 -v -timeout=10m -run 'TestLive_' ./pkg/sdlc/
 	@echo "$(GREEN)✓ Live Gitea forge tests passed$(NC)"
 
@@ -2449,6 +2487,14 @@ GOMODAUTH_ENV := $(MODULE_ENV_FILE)
 endif
 export GOMODAUTH_ENV
 
+# Every compose file that builds an image passes GOMODAUTH_ENV as a build
+# secret. compose hands builds to buildx bake, and bake refuses to read a file
+# outside the build context unless the caller grants it, which compose has no
+# flag for, so a non-interactive build fails. A build secret is mounted for one
+# RUN step and never lands in a layer, so the filesystem entitlement check is
+# turned off for the builds make drives.
+export BUILDX_BAKE_ENTITLEMENTS_FS := 0
+
 # Where integration-test backs go.mod up while the stack runs, restored after.
 # Overridable so a gate that drives the recipe never touches a real run's copy.
 GOMOD_BACKUP ?= /tmp/quicbaas-$(RUN_ID_SLUG)-gomod-backup
@@ -2458,7 +2504,7 @@ SDK_GOMOD_BACKUP ?= /tmp/quicbaas-$(RUN_ID_SLUG)-sdk-gomod-backup
 # runner (#1031). A runner injects the dependency-resolution.md section-6
 # variables itself; a developer or agent host resolves the private modules
 # through a ~/.gitconfig rewrite a container cannot see, so the variables are
-# built here from a read token instead. The token comes from GITEA_READ_TOKEN
+# built here from a read token instead. The token comes from FORGE_READ_TOKEN
 # in the environment, else from the GOMODAUTH_TOKEN_KEY line of the agent
 # tokens file. It is only ever read inside the recipe's shell -- never into a
 # make variable, a command line, a build arg or the log.
@@ -2469,7 +2515,7 @@ SDK_GOMOD_BACKUP ?= /tmp/quicbaas-$(RUN_ID_SLUG)-sdk-gomod-backup
 # token, which is where a private deployment keeps it. A token with no origin
 # is refused rather than staged against a guess.
 GOMODAUTH_TOKENS_FILE ?= $(HOME)/.agent-identity/tokens.env
-GOMODAUTH_TOKEN_KEY ?= AGENT_TOKEN_GO_QUICBAAS
+GOMODAUTH_TOKEN_KEY ?= FORGE_READ_TOKEN
 GITEA_HTTP_ORIGIN ?=
 GOMODAUTH_OWNER ?= jeremyhahn
 
@@ -2503,13 +2549,13 @@ else
 		} > "$(GOMODAUTH_ENV)"; \
 		exit 0; \
 	fi; \
-	token="$${GITEA_READ_TOKEN:-}"; source=GITEA_READ_TOKEN; \
+	token="$${FORGE_READ_TOKEN:-}"; source=FORGE_READ_TOKEN; \
 	if [ -z "$$token" ] && [ -r "$(GOMODAUTH_TOKENS_FILE)" ]; then \
 		token=$$(sed -n 's/^[[:space:]]*\(export[[:space:]]\{1,\}\)\{0,1\}$(GOMODAUTH_TOKEN_KEY)=//p' "$(GOMODAUTH_TOKENS_FILE)" | tail -n 1 | tr -d "\"' \r"); \
 		source="$(GOMODAUTH_TOKEN_KEY) in $(GOMODAUTH_TOKENS_FILE)"; \
 	fi; \
 	if [ -z "$$token" ]; then \
-		echo "$(YELLOW)No Gitea module credentials: no GIT_CONFIG_KEY_0 (Gitea runner), no GITEA_READ_TOKEN,$(NC)"; \
+		echo "$(YELLOW)No Gitea module credentials: no GIT_CONFIG_KEY_0 (Gitea runner), no FORGE_READ_TOKEN,$(NC)"; \
 		echo "$(YELLOW)  and no $(GOMODAUTH_TOKEN_KEY) in the agent tokens file.$(NC)"; \
 		echo "$(YELLOW)  Image builds resolve modules from the public proxy, where private first-party$(NC)"; \
 		echo "$(YELLOW)  modules not yet mirrored fail with 'unknown revision' (docs/testing/private-modules.md)$(NC)"; \
@@ -3406,17 +3452,51 @@ COVER_PKGS ?= ./pkg/... ./cmd/...
 # default; see the note in the `race` recipe for the measurements.
 RACE_TIMEOUT := 30m
 
-# ci-template's test stage runs `make coverage COVERAGE_THRESHOLD=<n>` as the
-# one unit-test pass (m601 (c)): it runs with -race and fails below the
-# threshold (see the Coverage Gate below). It runs the same TEST_CHECKS
-# validations as `make test` first, so replacing `make test` with it in CI
-# keeps every check.
+# The test stage is three pieces, so CI can run the slow -race pass as
+# parallel shards and a developer runs the same targets in one go:
+#   coverage-shard   one shard of the -race unit run, writing its profile
+#   coverage-merge   joins the SHARDS profiles and gates the total (COVER_MIN)
+#   coverage-passes  the TEST_CHECKS validations and COVERAGE_PASSES
+# `make coverage` runs all three with a single shard. It runs the same
+# TEST_CHECKS validations as `make test` first, so replacing `make test` with
+# it keeps every check.
+COVERAGE_PASSES := test-sdk-go test-minimal test-standard test-lean test-tooling
+
+# coverage_shard_profile is shard $(1)'s profile in a run of SHARDS shards.
+coverage_shard_profile = $(COVERAGE_DIR)/coverage-shard-$(1)-of-$(SHARDS).out
+
 .PHONY: coverage
 coverage: $(TEST_CHECKS) ## The CI test stage: unit tests with -race and coverage (fail below COVER_MIN, generated code excluded), then the Go SDK, the minimal/standard/lean tag passes and the tooling tests
-	@printf "$(BLUE)Generating coverage report...$(NC)\n"
+	@$(MAKE) --no-print-directory coverage-shard SHARD=0 SHARDS=1
+	@$(MAKE) --no-print-directory coverage-merge SHARDS=1
+	@$(MAKE) --no-print-directory $(COVERAGE_PASSES)
+
+.PHONY: coverage-shard
+coverage-shard: ## Run shard SHARD of SHARDS of the -race unit run, writing coverage/coverage-shard-SHARD-of-SHARDS.out
 	@mkdir -p $(COVERAGE_DIR)
 	@$(call go_packages,-tags '$(TEST_TAGS)' $(COVER_PKGS),/proto$$); \
-	GOTOOLCHAIN=go$(GO_VERSION) GONOSUMCHECK='*' CGO_ENABLED=1 $(GOTEST) -race -p 2 -timeout=$(RACE_TIMEOUT) -tags '$(TEST_TAGS)' -coverprofile=$(COVERAGE_DIR)/coverage-raw.out $$pkgs
+	$(call shard_packages,-tags '$(TEST_TAGS)'); \
+	printf "$(BLUE)Coverage shard $(SHARD) of $(SHARDS): %s packages$(NC)\n" "$$(printf '%s\n' "$$pkgs" | wc -l)"; \
+	GOTOOLCHAIN=go$(GO_VERSION) GONOSUMCHECK='*' CGO_ENABLED=1 $(GOTEST) -race -p 2 -timeout=$(RACE_TIMEOUT) -tags '$(TEST_TAGS)' -coverprofile=$(call coverage_shard_profile,$(SHARD)) $$pkgs
+
+# The shards hold disjoint packages, so their profiles join by concatenation:
+# one mode line, then every shard's blocks. Every one of the SHARDS profiles
+# must be present and share the mode line, or the total would be wrong.
+.PHONY: coverage-merge
+coverage-merge: ## Join the SHARDS coverage-shard profiles and fail below COVER_MIN (generated code excluded)
+	@$(call check_shard,0,$(SHARDS)); \
+	printf "$(BLUE)Merging $(SHARDS) coverage shard profiles...$(NC)\n"; \
+	mode=""; i=0; \
+	while [ $$i -lt $(SHARDS) ]; do \
+		f=$(call coverage_shard_profile,$$i); \
+		[ -s "$$f" ] || { echo "$(RED)$@: $$f is missing or empty (make coverage-shard SHARD=$$i SHARDS=$(SHARDS))$(NC)"; exit 1; }; \
+		m=$$(head -1 "$$f"); \
+		case "$$m" in mode:*) ;; *) echo "$(RED)$@: $$f does not start with a mode line$(NC)"; exit 1 ;; esac; \
+		if [ -z "$$mode" ]; then mode=$$m; printf '%s\n' "$$mode" > $(COVERAGE_DIR)/coverage-raw.out; \
+		elif [ "$$m" != "$$mode" ]; then echo "$(RED)$@: $$f has '$$m', shard 0 has '$$mode'$(NC)"; exit 1; fi; \
+		tail -n +2 "$$f" >> $(COVERAGE_DIR)/coverage-raw.out; \
+		i=$$((i + 1)); \
+	done
 	@printf "$(BLUE)Filtering out non-production code (generated, mocks, stubs, test helpers)...$(NC)\n"
 	@head -1 $(COVERAGE_DIR)/coverage-raw.out > $(COVERAGE_DIR)/coverage.out
 	@grep -v '\.pb\.go:' $(COVERAGE_DIR)/coverage-raw.out | \
@@ -3446,7 +3526,22 @@ coverage: $(TEST_CHECKS) ## The CI test stage: unit tests with -race and coverag
 		exit 1; \
 	fi; \
 	printf "$(GREEN)Coverage gate passed (%s%% >= %s%%)$(NC)\n" "$$TOTAL" "$(COVER_MIN)"
-	@$(MAKE) --no-print-directory test-sdk-go test-minimal test-standard test-lean test-tooling
+
+.PHONY: coverage-passes
+coverage-passes: $(TEST_CHECKS) ## The test stage beside the coverage shards: the TEST_CHECKS validations, the Go SDK, the minimal/standard/lean tag passes and the tooling tests
+	@$(MAKE) --no-print-directory $(COVERAGE_PASSES)
+
+# shard-packages prints shard SHARD of SHARDS of SHARD_PKGS under the tags
+# SHARD_TAGS, one import path per line, for a workflow that runs go test
+# itself (batch.yml's race-full). It deals packages as coverage-shard does.
+SHARD_PKGS ?= $(COVER_PKGS)
+SHARD_TAGS ?= $(TEST_TAGS)
+
+.PHONY: shard-packages
+shard-packages: ## Print shard SHARD of SHARDS of SHARD_PKGS (tags SHARD_TAGS), one package per line
+	@$(call go_packages,-tags '$(SHARD_TAGS)' $(SHARD_PKGS),/proto$$); \
+	$(call shard_packages,-tags '$(SHARD_TAGS)'); \
+	printf '%s\n' "$$pkgs"
 
 # ==============================================================================
 # Coverage Gate (hard threshold — mirrors go-qrdb's COVER_MIN / check-coverage)
@@ -3556,22 +3651,29 @@ gosec: ## Run gosec security scanner
 		exit $$rc; \
 	fi
 
+VULN_ALLOWLIST := scripts/vuln-allowlist.txt
 .PHONY: vuln
-vuln: ## Run govulncheck to scan for known vulnerabilities
+vuln: ## Run govulncheck; fail on a reachable advisory not on scripts/vuln-allowlist.txt, or a stale entry
 	@echo "$(BLUE)Running vulnerability scan with govulncheck...$(NC)"
 	@GOVULNCHECK_BIN=$$(command -v govulncheck 2>/dev/null || echo "$$HOME/go/bin/govulncheck"); \
 	if [ -x "$$GOVULNCHECK_BIN" ]; then \
-		$$GOVULNCHECK_BIN ./...; rc=$$?; \
-		if [ $$rc -eq 0 ]; then \
-			echo "$(GREEN)Vulnerability scan complete$(NC)"; \
-		elif [ $$rc -gt 128 ]; then \
+		out=$$(mktemp); trap 'rm -f "$$out"' EXIT; \
+		$$GOVULNCHECK_BIN -format json ./... > "$$out"; rc=$$?; \
+		if [ $$rc -gt 128 ]; then \
 			echo "$(RED)govulncheck was KILLED by signal $$(($$rc - 128)) (exit $$rc) -- it did NOT report a vulnerability.$(NC)"; \
 			echo "$(RED)On a 16 GB job container this is the memory cap: govulncheck holds the whole$(NC)"; \
 			echo "$(RED)package graph and its SSA live, which GOMEMLIMIT cannot collect. Re-run when$(NC)"; \
 			echo "$(RED)the host is quieter, or raise the cap -- do not read this as a finding.$(NC)"; \
 			exit $$rc; \
+		elif [ $$rc -ne 0 ]; then \
+			echo "$(RED)govulncheck failed (exit $$rc)$(NC)"; \
+			exit $$rc; \
+		fi; \
+		$(GOCMD) run ./scripts/vulnallow $(VULN_ALLOWLIST) < "$$out"; rc=$$?; \
+		if [ $$rc -eq 0 ]; then \
+			echo "$(GREEN)Vulnerability scan complete$(NC)"; \
 		else \
-			echo "$(RED)govulncheck found reachable vulnerabilities$(NC)"; \
+			echo "$(RED)govulncheck found reachable vulnerabilities not on $(VULN_ALLOWLIST)$(NC)"; \
 			exit $$rc; \
 		fi; \
 	else \
@@ -5559,8 +5661,9 @@ DEPS_CHECK_MODULES := . sdk/go
 # The JSON fields scripts/depscheck reads, written by a template rather than
 # `-json`: `-json` also resolves each module's retractions and deprecation,
 # which fetches go.mod files into the module cache and stalls on the toolchain
-# image's read-only cache.
-DEPS_CHECK_TEMPLATE := {"Path":"{{.Path}}","Version":"{{.Version}}","Main":{{.Main}}{{with .Update}},"Update":{"Version":"{{.Version}}"}{{end}}{{with .Replace}},"Replace":{"Path":"{{.Path}}"}{{end}}{{with .Error}},"Error":{"Err":{{printf "%q" .Err}}}{{end}}}
+# image's read-only cache. Update carries the latest release's time: depscheck
+# reports a release younger than 7 days and fails one with no time (#1704).
+DEPS_CHECK_TEMPLATE := {"Path":"{{.Path}}","Version":"{{.Version}}","Main":{{.Main}}{{with .Update}},"Update":{"Version":"{{.Version}}"{{with .Time}},"Time":"{{.UTC.Format "2006-01-02T15:04:05Z07:00"}}"{{end}}}{{end}}{{with .Replace}},"Replace":{"Path":"{{.Path}}"}{{end}}{{with .Error}},"Error":{"Err":{{printf "%q" .Err}}}{{end}}}
 
 # The go command keeps the checksum database's state in $GOPATH/pkg/sumdb, and
 # the toolchain image's GOPATH is read-only, so deps-check points GOPATH at a

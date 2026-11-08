@@ -51,8 +51,8 @@ func signingTestProject() *orchestration.Project {
 			RepoURL:       "https://forge.test/acme/api.git",
 			DefaultBranch: "main",
 			Author: orchestration.GitAuthor{
-				Name:  "agent-go-quicbaas",
-				Email: "agent-go-quicbaas@example.internal",
+				Name:  "agent-quicbaas",
+				Email: "agent-quicbaas@example.com",
 			},
 			Signing: orchestration.CommitSigning{
 				Enabled: true,
