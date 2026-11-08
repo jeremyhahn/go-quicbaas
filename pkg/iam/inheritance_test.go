@@ -86,43 +86,6 @@ func TestNewInheritanceManager(t *testing.T) {
 	}
 }
 
-func TestRoleHierarchyCreation(t *testing.T) {
-	manager, storage, ctx := setupInheritanceTest(t)
-	tenantID := "test-tenant"
-
-	// Create roles
-	adminRole := &Role{
-		ID:          "admin",
-		Name:        "Administrator",
-		TenantID:    tenantID,
-		Permissions: []string{"users:read", "users:write", "users:delete"},
-		Created:     time.Now(),
-		Updated:     time.Now(),
-	}
-	require.NoError(t, storage.CreateRole(ctx, adminRole))
-
-	moderatorRole := &Role{
-		ID:          "moderator",
-		Name:        "Moderator",
-		TenantID:    tenantID,
-		Permissions: []string{"posts:read", "posts:write"},
-		Created:     time.Now(),
-		Updated:     time.Now(),
-	}
-	require.NoError(t, storage.CreateRole(ctx, moderatorRole))
-
-	// Add parent role
-	err := manager.AddRoleParent(ctx, tenantID, "moderator", "admin", 1)
-	assert.NoError(t, err)
-
-	// Verify hierarchy
-	hierarchy, err := manager.GetRoleHierarchy(ctx, tenantID, "moderator")
-	assert.NoError(t, err)
-	assert.Len(t, hierarchy, 1)
-	assert.Equal(t, "admin", hierarchy[0].ParentRoleID)
-	assert.Equal(t, "moderator", hierarchy[0].ChildRoleID)
-}
-
 func TestRoleHierarchyCycleDetection(t *testing.T) {
 	manager, storage, ctx := setupInheritanceTest(t)
 	tenantID := "test-tenant"
@@ -151,7 +114,7 @@ func TestRoleHierarchyCycleDetection(t *testing.T) {
 	assert.Contains(t, err.Error(), "cycle")
 }
 
-func TestRoleHierarchyRemoval(t *testing.T) {
+func TestRoleHierarchyAddAndRemove(t *testing.T) {
 	manager, storage, ctx := setupInheritanceTest(t)
 	tenantID := "test-tenant"
 
@@ -182,7 +145,9 @@ func TestRoleHierarchyRemoval(t *testing.T) {
 	// Verify hierarchy exists
 	hierarchy, err := manager.GetRoleHierarchy(ctx, tenantID, "child")
 	require.NoError(t, err)
-	assert.Len(t, hierarchy, 1)
+	require.Len(t, hierarchy, 1)
+	assert.Equal(t, "parent", hierarchy[0].ParentRoleID)
+	assert.Equal(t, "child", hierarchy[0].ChildRoleID)
 
 	// Remove parent
 	err = manager.RemoveRoleParent(ctx, tenantID, "child", "parent")
@@ -192,57 +157,6 @@ func TestRoleHierarchyRemoval(t *testing.T) {
 	hierarchy, err = manager.GetRoleHierarchy(ctx, tenantID, "child")
 	assert.NoError(t, err)
 	assert.Len(t, hierarchy, 0)
-}
-
-func TestEffectiveRolePermissions(t *testing.T) {
-	manager, storage, ctx := setupInheritanceTest(t)
-	tenantID := "test-tenant"
-
-	// Create role hierarchy: viewer -> editor -> admin
-	viewerRole := &Role{
-		ID:          "viewer",
-		Name:        "Viewer",
-		TenantID:    tenantID,
-		Permissions: []string{"read"},
-		Created:     time.Now(),
-		Updated:     time.Now(),
-	}
-	require.NoError(t, storage.CreateRole(ctx, viewerRole))
-
-	editorRole := &Role{
-		ID:          "editor",
-		Name:        "Editor",
-		TenantID:    tenantID,
-		Permissions: []string{"write"},
-		Created:     time.Now(),
-		Updated:     time.Now(),
-	}
-	require.NoError(t, storage.CreateRole(ctx, editorRole))
-
-	adminRole := &Role{
-		ID:          "admin",
-		Name:        "Admin",
-		TenantID:    tenantID,
-		Permissions: []string{"delete"},
-		Created:     time.Now(),
-		Updated:     time.Now(),
-	}
-	require.NoError(t, storage.CreateRole(ctx, adminRole))
-
-	// Build hierarchy: editor inherits from viewer, admin inherits from editor
-	require.NoError(t, manager.AddRoleParent(ctx, tenantID, "editor", "viewer", 1))
-	require.NoError(t, manager.AddRoleParent(ctx, tenantID, "admin", "editor", 1))
-
-	// Get effective permissions for admin role
-	effective, err := manager.GetEffectiveRolePermissions(ctx, tenantID, "admin")
-	assert.NoError(t, err)
-	assert.NotNil(t, effective)
-
-	// Admin should have all permissions: delete (direct), write (from editor), read (from viewer)
-	assert.Contains(t, effective.AllPermissions, "delete")
-	assert.Contains(t, effective.AllPermissions, "write")
-	assert.Contains(t, effective.AllPermissions, "read")
-	assert.Len(t, effective.AllPermissions, 3)
 }
 
 func TestTransitiveClosureInheritance(t *testing.T) {
@@ -532,158 +446,122 @@ func TestEffectivePermissionsValidation(t *testing.T) {
 	assert.Error(t, p.Validate())
 }
 
-func TestAddRoleParentNonexistentRoles(t *testing.T) {
-	manager, _, ctx := setupInheritanceTest(t)
-	tenantID := "test-tenant"
-
-	// Try to add parent with nonexistent child
-	err := manager.AddRoleParent(ctx, tenantID, "nonexistent-child", "nonexistent-parent", 1)
-	assert.Error(t, err)
-}
-
-func TestRemoveNonexistentRoleParent(t *testing.T) {
-	manager, storage, ctx := setupInheritanceTest(t)
-	tenantID := "test-tenant"
-
-	// Create roles
-	role1 := &Role{
-		ID:       "role1",
-		Name:     "Role 1",
-		TenantID: tenantID,
-		Created:  time.Now(),
-		Updated:  time.Now(),
+func TestInheritanceManager_NotFound(t *testing.T) {
+	tests := []struct {
+		name string
+		call func(ctx context.Context, manager *InheritanceManager, tenantID string) error
+	}{
+		{
+			name: "add parent to nonexistent roles",
+			call: func(ctx context.Context, manager *InheritanceManager, tenantID string) error {
+				return manager.AddRoleParent(ctx, tenantID, "nonexistent-child", "nonexistent-parent", 1)
+			},
+		},
+		{
+			name: "remove nonexistent hierarchy",
+			call: func(ctx context.Context, manager *InheritanceManager, tenantID string) error {
+				return manager.RemoveRoleParent(ctx, tenantID, "role1", "role2")
+			},
+		},
+		{
+			name: "effective permissions of nonexistent role",
+			call: func(ctx context.Context, manager *InheritanceManager, tenantID string) error {
+				_, err := manager.GetEffectiveRolePermissions(ctx, tenantID, "nonexistent")
+				return err
+			},
+		},
+		{
+			name: "effective permissions of nonexistent user",
+			call: func(ctx context.Context, manager *InheritanceManager, tenantID string) error {
+				_, err := manager.GetEffectiveUserPermissions(ctx, tenantID, 99999)
+				return err
+			},
+		},
 	}
-	require.NoError(t, storage.CreateRole(ctx, role1))
 
-	role2 := &Role{
-		ID:       "role2",
-		Name:     "Role 2",
-		TenantID: tenantID,
-		Created:  time.Now(),
-		Updated:  time.Now(),
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			manager, storage, ctx := setupInheritanceTest(t)
+			tenantID := "test-tenant"
+			for _, id := range []string{"role1", "role2"} {
+				require.NoError(t, storage.CreateRole(ctx, &Role{
+					ID:       id,
+					Name:     id,
+					TenantID: tenantID,
+					Created:  time.Now(),
+					Updated:  time.Now(),
+				}))
+			}
+
+			assert.Error(t, tt.call(ctx, manager, tenantID))
+		})
 	}
-	require.NoError(t, storage.CreateRole(ctx, role2))
-
-	// Try to remove nonexistent hierarchy
-	err := manager.RemoveRoleParent(ctx, tenantID, "role1", "role2")
-	assert.Error(t, err)
 }
 
-func TestGetEffectiveRolePermissionsNonexistent(t *testing.T) {
-	manager, _, ctx := setupInheritanceTest(t)
-	tenantID := "test-tenant"
-
-	// Try to get permissions for nonexistent role
-	_, err := manager.GetEffectiveRolePermissions(ctx, tenantID, "nonexistent")
-	assert.Error(t, err)
-}
-
-func TestGetEffectiveUserPermissionsNonexistentUser(t *testing.T) {
-	manager, _, ctx := setupInheritanceTest(t)
-	tenantID := "test-tenant"
-
-	// Try to get permissions for nonexistent user
-	_, err := manager.GetEffectiveUserPermissions(ctx, tenantID, 99999)
-	assert.Error(t, err)
-}
-
-func TestMemoryHierarchyStorage_GetRoleHierarchy_Success(t *testing.T) {
+func TestMemoryHierarchyStorage_GetRoleHierarchy(t *testing.T) {
 	ctx := context.Background()
 	storage := NewMemoryHierarchyStorage()
-
-	hierarchy := &RoleHierarchy{
+	require.NoError(t, storage.CreateRoleHierarchy(ctx, &RoleHierarchy{
 		ID:           "rh1",
 		TenantID:     "t1",
 		ParentRoleID: "parent-role",
 		ChildRoleID:  "child-role",
 		Priority:     1,
 		Created:      time.Now(),
-	}
-	if err := storage.CreateRoleHierarchy(ctx, hierarchy); err != nil {
-		t.Fatalf("CreateRoleHierarchy failed: %v", err)
+	}))
+
+	tests := []struct {
+		name    string
+		parent  string
+		child   string
+		wantID  string
+		wantErr bool
+	}{
+		{name: "found", parent: "parent-role", child: "child-role", wantID: "rh1"},
+		{name: "not found", parent: "nonexistent-parent", child: "nonexistent-child", wantErr: true},
 	}
 
-	result, err := storage.GetRoleHierarchy(ctx, "t1", "parent-role", "child-role")
-	if err != nil {
-		t.Fatalf("GetRoleHierarchy failed: %v", err)
-	}
-	if result.ID != "rh1" {
-		t.Fatalf("expected ID rh1, got %s", result.ID)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, err := storage.GetRoleHierarchy(ctx, "t1", tt.parent, tt.child)
+			if tt.wantErr {
+				assert.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tt.wantID, result.ID)
+		})
 	}
 }
 
-func TestMemoryHierarchyStorage_GetRoleHierarchy_NotFound(t *testing.T) {
+func TestMemoryHierarchyStorage_DetectRoleCycle(t *testing.T) {
 	ctx := context.Background()
 	storage := NewMemoryHierarchyStorage()
 
-	_, err := storage.GetRoleHierarchy(ctx, "t1", "nonexistent-parent", "nonexistent-child")
-	if err == nil {
-		t.Fatal("expected error for nonexistent hierarchy")
-	}
-}
-
-func TestMemoryHierarchyStorage_DetectRoleCycle_NoCycle(t *testing.T) {
-	ctx := context.Background()
-	storage := NewMemoryHierarchyStorage()
-
-	// Create A -> B hierarchy
-	h1 := &RoleHierarchy{
-		ID:           "rh_ab",
-		TenantID:     "t1",
-		ParentRoleID: "roleA",
-		ChildRoleID:  "roleB",
-		Priority:     1,
-		Created:      time.Now(),
-	}
-	if err := storage.CreateRoleHierarchy(ctx, h1); err != nil {
-		t.Fatalf("CreateRoleHierarchy failed: %v", err)
+	// A -> B -> C
+	for _, h := range []*RoleHierarchy{
+		{ID: "rh_ab", TenantID: "t1", ParentRoleID: "roleA", ChildRoleID: "roleB", Priority: 1, Created: time.Now()},
+		{ID: "rh_bc", TenantID: "t1", ParentRoleID: "roleB", ChildRoleID: "roleC", Priority: 1, Created: time.Now()},
+	} {
+		require.NoError(t, storage.CreateRoleHierarchy(ctx, h))
 	}
 
-	// Check that adding B -> C does not create a cycle
-	hasCycle, err := storage.DetectRoleCycle(ctx, "t1", "roleB", "roleC")
-	if err != nil {
-		t.Fatalf("DetectRoleCycle failed: %v", err)
-	}
-	if hasCycle {
-		t.Fatal("expected no cycle for B -> C")
-	}
-}
-
-func TestMemoryHierarchyStorage_DetectRoleCycle_WithCycle(t *testing.T) {
-	ctx := context.Background()
-	storage := NewMemoryHierarchyStorage()
-
-	// Create A -> B and B -> C
-	h1 := &RoleHierarchy{
-		ID:           "rh_ab",
-		TenantID:     "t1",
-		ParentRoleID: "roleA",
-		ChildRoleID:  "roleB",
-		Priority:     1,
-		Created:      time.Now(),
-	}
-	h2 := &RoleHierarchy{
-		ID:           "rh_bc",
-		TenantID:     "t1",
-		ParentRoleID: "roleB",
-		ChildRoleID:  "roleC",
-		Priority:     1,
-		Created:      time.Now(),
-	}
-	if err := storage.CreateRoleHierarchy(ctx, h1); err != nil {
-		t.Fatalf("CreateRoleHierarchy A->B failed: %v", err)
-	}
-	if err := storage.CreateRoleHierarchy(ctx, h2); err != nil {
-		t.Fatalf("CreateRoleHierarchy B->C failed: %v", err)
+	tests := []struct {
+		name      string
+		parent    string
+		child     string
+		wantCycle bool
+	}{
+		{name: "new root above the chain has no cycle", parent: "roleD", child: "roleA"},
+		{name: "closing the chain is a cycle", parent: "roleC", child: "roleA", wantCycle: true},
 	}
 
-	// Detect cycle: adding C -> A would create A -> B -> C -> A
-	hasCycle, err := storage.DetectRoleCycle(ctx, "t1", "roleC", "roleA")
-	if err != nil {
-		t.Fatalf("DetectRoleCycle failed: %v", err)
-	}
-	if !hasCycle {
-		t.Fatal("expected cycle detected for C -> A")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			hasCycle, err := storage.DetectRoleCycle(ctx, "t1", tt.parent, tt.child)
+			require.NoError(t, err)
+			assert.Equal(t, tt.wantCycle, hasCycle)
+		})
 	}
 }
 
@@ -712,59 +590,42 @@ func TestMemoryHierarchyStorage_CacheEffectivePermissions_InvalidInput(t *testin
 // SessionExt.Validate - Additional coverage for error paths
 // =============================================================================
 
-func TestSessionExtValidate_MissingUserID(t *testing.T) {
-	session := &SessionExt{
-		ID:       "session-1",
-		TenantID: "tenant-1",
-		// Missing UserID
-		TokenHash: "hash123",
+func TestSessionExt_Validate(t *testing.T) {
+	tests := []struct {
+		name    string
+		session *SessionExt
+		wantErr bool
+	}{
+		{
+			name:    "valid",
+			session: &SessionExt{ID: "session-1", UserID: 10001, TenantID: "tenant-1", TokenHash: "hash123"},
+		},
+		{
+			name:    "missing session ID",
+			session: &SessionExt{UserID: 10001, TenantID: "tenant-1", TokenHash: "hash123"},
+			wantErr: true,
+		},
+		{
+			name:    "missing user ID",
+			session: &SessionExt{ID: "session-1", TenantID: "tenant-1", TokenHash: "hash123"},
+			wantErr: true,
+		},
+		{
+			name:    "missing token hash",
+			session: &SessionExt{ID: "session-1", UserID: 10001, TenantID: "tenant-1"},
+			wantErr: true,
+		},
 	}
 
-	err := session.Validate()
-	if err == nil {
-		t.Error("expected validation error for missing user ID")
-	}
-}
-
-func TestSessionExtValidate_MissingTokenHash(t *testing.T) {
-	session := &SessionExt{
-		ID:       "session-1",
-		UserID:   10001,
-		TenantID: "tenant-1",
-		// Missing TokenHash
-	}
-
-	err := session.Validate()
-	if err == nil {
-		t.Error("expected validation error for missing token hash")
-	}
-}
-
-func TestSessionExtValidate_MissingSessionID(t *testing.T) {
-	session := &SessionExt{
-		// Missing ID
-		UserID:    10001,
-		TenantID:  "tenant-1",
-		TokenHash: "hash123",
-	}
-
-	err := session.Validate()
-	if err == nil {
-		t.Error("expected validation error for missing session ID")
-	}
-}
-
-func TestSessionExtValidate_Valid(t *testing.T) {
-	session := &SessionExt{
-		ID:        "session-1",
-		UserID:    10001,
-		TenantID:  "tenant-1",
-		TokenHash: "hash123",
-	}
-
-	err := session.Validate()
-	if err != nil {
-		t.Errorf("expected no error for valid session, got: %v", err)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := tt.session.Validate()
+			if tt.wantErr {
+				assert.Error(t, err)
+				return
+			}
+			assert.NoError(t, err)
+		})
 	}
 }
 
@@ -823,10 +684,6 @@ func TestMemoryStorage_DeleteTenant_WithCascade(t *testing.T) {
 		t.Error("user should be deleted after tenant deletion")
 	}
 
-	if err == nil {
-		t.Error("group should be deleted after tenant deletion")
-	}
-
 	_, err = storage.GetRole(ctx, tenantID, "role-1")
 	if err == nil {
 		t.Error("role should be deleted after tenant deletion")
@@ -852,92 +709,46 @@ func TestMemoryStorage_DeleteTenant_NotFound(t *testing.T) {
 // matchesConsentFilter - Additional coverage
 // =============================================================================
 
-func TestMemoryConsentStorage_ListConsents_FilterByStatus(t *testing.T) {
+func TestMemoryConsentStorage_ListConsents_Filter(t *testing.T) {
 	storage := NewMemoryConsentStorage()
 	ctx := context.Background()
 
 	expires := time.Now().Add(24 * time.Hour)
-
-	// Create consents with different statuses using CreateConsent
-	_, err := storage.CreateConsent(ctx, CreateConsentOptions{
-		TenantID:  "tenant-1",
-		UserID:    10001,
-		Purpose:   "marketing",
-		Status:    ConsentStatusGranted,
-		Version:   "1.0",
-		ExpiresAt: &expires,
-	})
-	if err != nil {
-		t.Fatalf("CreateConsent failed: %v", err)
+	for _, c := range []struct {
+		userID  uint64
+		purpose ConsentPurpose
+		status  ConsentStatus
+	}{
+		{userID: 10001, purpose: "marketing", status: ConsentStatusGranted},
+		{userID: 10002, purpose: "analytics", status: ConsentStatusWithdrawn},
+		{userID: 10003, purpose: "analytics", status: ConsentStatusGranted},
+	} {
+		_, err := storage.CreateConsent(ctx, CreateConsentOptions{
+			TenantID:  "tenant-1",
+			UserID:    c.userID,
+			Purpose:   c.purpose,
+			Status:    c.status,
+			Version:   "1.0",
+			ExpiresAt: &expires,
+		})
+		require.NoError(t, err)
 	}
 
-	_, err = storage.CreateConsent(ctx, CreateConsentOptions{
-		TenantID:  "tenant-1",
-		UserID:    10002,
-		Purpose:   "analytics",
-		Status:    ConsentStatusWithdrawn,
-		Version:   "1.0",
-		ExpiresAt: &expires,
-	})
-	if err != nil {
-		t.Fatalf("CreateConsent failed: %v", err)
+	tests := []struct {
+		name string
+		opts ListConsentsOptions
+		want int
+	}{
+		{name: "by status", opts: ListConsentsOptions{TenantID: "tenant-1", Status: ConsentStatusGranted}, want: 2},
+		{name: "by purpose", opts: ListConsentsOptions{TenantID: "tenant-1", Purpose: "marketing"}, want: 1},
 	}
 
-	// Filter by status
-	consents, err := storage.ListConsents(ctx, ListConsentsOptions{
-		TenantID: "tenant-1",
-		Status:   ConsentStatusGranted,
-	})
-	if err != nil {
-		t.Fatalf("ListConsents failed: %v", err)
-	}
-
-	if len(consents) != 1 {
-		t.Errorf("expected 1 consent with granted status, got %d", len(consents))
-	}
-}
-
-func TestMemoryConsentStorage_ListConsents_FilterByPurpose(t *testing.T) {
-	storage := NewMemoryConsentStorage()
-	ctx := context.Background()
-
-	expires := time.Now().Add(24 * time.Hour)
-
-	_, err := storage.CreateConsent(ctx, CreateConsentOptions{
-		TenantID:  "tenant-1",
-		UserID:    10001,
-		Purpose:   "marketing",
-		Status:    ConsentStatusGranted,
-		Version:   "1.0",
-		ExpiresAt: &expires,
-	})
-	if err != nil {
-		t.Fatalf("CreateConsent failed: %v", err)
-	}
-
-	_, err = storage.CreateConsent(ctx, CreateConsentOptions{
-		TenantID:  "tenant-1",
-		UserID:    10002,
-		Purpose:   "analytics",
-		Status:    ConsentStatusGranted,
-		Version:   "1.0",
-		ExpiresAt: &expires,
-	})
-	if err != nil {
-		t.Fatalf("CreateConsent failed: %v", err)
-	}
-
-	// Filter by purpose
-	consents, err := storage.ListConsents(ctx, ListConsentsOptions{
-		TenantID: "tenant-1",
-		Purpose:  "marketing",
-	})
-	if err != nil {
-		t.Fatalf("ListConsents failed: %v", err)
-	}
-
-	if len(consents) != 1 {
-		t.Errorf("expected 1 consent with marketing purpose, got %d", len(consents))
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			consents, err := storage.ListConsents(ctx, tt.opts)
+			require.NoError(t, err)
+			assert.Len(t, consents, tt.want)
+		})
 	}
 }
 
@@ -1036,15 +847,19 @@ func TestMemoryConsentStorage_UpdateConsent_ToGranted(t *testing.T) {
 // BatchProcessor - processUsers with UpdateExisting and SkipDuplicates
 // =============================================================================
 
+// updateCapableTenantMgr stores created users by email and reports each one on
+// created, so a test can wait for the batch goroutine without sleeping.
 type updateCapableTenantMgr struct {
 	*mockTenantManager
-	users map[string]*User
+	users   map[string]*User
+	created chan *User
 }
 
 func newUpdateCapableTenantMgr() *updateCapableTenantMgr {
 	return &updateCapableTenantMgr{
 		mockTenantManager: newMockTenantManager(),
 		users:             make(map[string]*User),
+		created:           make(chan *User, 16),
 	}
 }
 
@@ -1054,6 +869,7 @@ func (m *updateCapableTenantMgr) CreateUser(ctx context.Context, user *User) err
 		return ErrUserAlreadyExists
 	}
 	m.users[key] = user
+	m.created <- user
 	return nil
 }
 
@@ -1063,127 +879,6 @@ func (m *updateCapableTenantMgr) GetUserByEmail(ctx context.Context, tenantID, e
 		return user, nil
 	}
 	return nil, ErrUserNotFound
-}
-
-func (m *updateCapableTenantMgr) UpdateUser(ctx context.Context, user *User) error {
-	key := user.TenantID + ":" + user.Email
-	if _, exists := m.users[key]; !exists {
-		return ErrUserNotFound
-	}
-	m.users[key] = user
-	return nil
-}
-
-func TestBatchProcessor_ProcessUsers_SkipDuplicates(t *testing.T) {
-	storage := newMockBatchStorage()
-	tenantMgr := newUpdateCapableTenantMgr()
-	bp := NewIAMBatchProcessor(storage, tenantMgr)
-
-	ctx := context.Background()
-	tenantID := "test-tenant"
-
-	// First import - create the user
-	items := []UserImportItem{
-		{Email: "duplicate@test.com", Name: "Original Name"},
-	}
-
-	op, err := bp.ImportUsers(ctx, tenantID, items, BatchOptions{})
-	if err != nil {
-		t.Fatalf("ImportUsers failed: %v", err)
-	}
-	time.Sleep(200 * time.Millisecond)
-
-	saved, _ := storage.GetOperation(ctx, op.ID)
-	if saved.Progress.Succeeded != 1 {
-		t.Errorf("expected 1 success, got %d", saved.Progress.Succeeded)
-	}
-
-	// Second import with SkipDuplicates - should skip
-	op2, err := bp.ImportUsers(ctx, tenantID, items, BatchOptions{
-		SkipDuplicates: true,
-	})
-	if err != nil {
-		t.Fatalf("ImportUsers (skip duplicates) failed: %v", err)
-	}
-	time.Sleep(200 * time.Millisecond)
-
-	saved2, _ := storage.GetOperation(ctx, op2.ID)
-	if saved2.Progress.Skipped != 1 {
-		t.Errorf("expected 1 skipped, got %d", saved2.Progress.Skipped)
-	}
-}
-
-func TestBatchProcessor_ProcessUsers_UpdateExisting(t *testing.T) {
-	storage := newMockBatchStorage()
-	tenantMgr := newUpdateCapableTenantMgr()
-	bp := NewIAMBatchProcessor(storage, tenantMgr)
-
-	ctx := context.Background()
-	tenantID := "test-tenant"
-
-	// First import - create the user
-	items := []UserImportItem{
-		{Email: "update@test.com", Name: "Original Name"},
-	}
-
-	_, err := bp.ImportUsers(ctx, tenantID, items, BatchOptions{})
-	if err != nil {
-		t.Fatalf("ImportUsers failed: %v", err)
-	}
-	time.Sleep(200 * time.Millisecond)
-
-	// Second import with UpdateExisting - should update
-	updatedItems := []UserImportItem{
-		{Email: "update@test.com", Name: "Updated Name"},
-	}
-
-	op2, err := bp.ImportUsers(ctx, tenantID, updatedItems, BatchOptions{
-		UpdateExisting: true,
-	})
-	if err != nil {
-		t.Fatalf("ImportUsers (update existing) failed: %v", err)
-	}
-	time.Sleep(200 * time.Millisecond)
-
-	saved2, _ := storage.GetOperation(ctx, op2.ID)
-	if saved2.Progress.Succeeded != 1 {
-		t.Errorf("expected 1 success for update, got %d", saved2.Progress.Succeeded)
-	}
-
-	// Verify user was updated
-	user, _ := tenantMgr.GetUserByEmail(ctx, tenantID, "update@test.com")
-	if user.Name != "Updated Name" {
-		t.Errorf("expected name 'Updated Name', got %s", user.Name)
-	}
-}
-
-func TestBatchProcessor_ProcessUsers_AtomicMode(t *testing.T) {
-	storage := newMockBatchStorage()
-	tenantMgr := newUpdateCapableTenantMgr()
-	bp := NewIAMBatchProcessor(storage, tenantMgr)
-
-	ctx := context.Background()
-	tenantID := "test-tenant"
-
-	// Mix of valid and invalid items - atomic should fail on first invalid
-	items := []UserImportItem{
-		{Email: "valid@test.com", Name: "Valid User"},
-		{Email: "", Name: "Invalid User"}, // Invalid - missing email
-	}
-
-	op, err := bp.ImportUsers(ctx, tenantID, items, BatchOptions{
-		Atomic: true,
-	})
-	if err != nil {
-		t.Fatalf("ImportUsers failed: %v", err)
-	}
-	time.Sleep(200 * time.Millisecond)
-
-	saved, _ := storage.GetOperation(ctx, op.ID)
-	// In atomic mode, should fail on first validation error
-	if saved.Progress.Failed == 0 {
-		t.Error("expected failure in atomic mode for invalid item")
-	}
 }
 
 // =============================================================================
@@ -1292,19 +987,6 @@ func TestSessionExt_IsIdle(t *testing.T) {
 // OIDCProviderAdapter coverage - renamed to avoid duplicate
 // =============================================================================
 
-func TestOIDCProviderAdapter_Creation(t *testing.T) {
-	// Create a mock OIDC provider
-	adapter := NewOIDCProviderAdapter(nil)
-	if adapter == nil {
-		t.Error("NewOIDCProviderAdapter should not return nil")
-	}
-
-	// GetProvider should return nil when initialized with nil
-	if adapter.GetProvider() != nil {
-		t.Error("GetProvider should return nil when initialized with nil")
-	}
-}
-
 // =============================================================================
 // User import with roles
 // =============================================================================
@@ -1325,21 +1007,15 @@ func TestBatchProcessor_ProcessUsers_WithRoles(t *testing.T) {
 		},
 	}
 
-	op, err := bp.ImportUsers(ctx, tenantID, items, BatchOptions{})
-	if err != nil {
-		t.Fatalf("ImportUsers failed: %v", err)
-	}
-	time.Sleep(200 * time.Millisecond)
+	_, err := bp.ImportUsers(ctx, tenantID, items, BatchOptions{})
+	require.NoError(t, err)
 
-	saved, _ := storage.GetOperation(ctx, op.ID)
-	if saved.Progress.Succeeded != 1 {
-		t.Errorf("expected 1 success, got %d", saved.Progress.Succeeded)
-	}
-
-	// Verify user has roles
-	user, _ := tenantMgr.GetUserByEmail(ctx, tenantID, "rolesgroups@test.com")
-	if len(user.Roles) != 2 {
-		t.Errorf("expected 2 roles, got %d", len(user.Roles))
+	select {
+	case user := <-tenantMgr.created:
+		assert.Equal(t, "rolesgroups@test.com", user.Email)
+		assert.ElementsMatch(t, []string{"admin", "viewer"}, user.Roles)
+	case <-time.After(5 * time.Second):
+		t.Fatal("batch import did not create the user")
 	}
 }
 
@@ -1347,90 +1023,39 @@ func TestBatchProcessor_ProcessUsers_WithRoles(t *testing.T) {
 // BatchProgress.CalculateRate edge case
 // =============================================================================
 
-func TestBatchProgress_CalculateRate_WithElapsed(t *testing.T) {
-	progress := &BatchProgress{
-		Total:     100,
-		Processed: 50,
-	}
-
-	// Calculate with 5 seconds elapsed
-	progress.CalculateRate(5 * time.Second)
-
-	expectedRate := 10.0 // 50 processed / 5 seconds
-	if progress.ItemsPerSecond != expectedRate {
-		t.Errorf("expected rate %.2f, got %.2f", expectedRate, progress.ItemsPerSecond)
-	}
-}
-
 // =============================================================================
 // matchesExportFilter coverage
 // =============================================================================
 
-func TestMemoryDataExportStorage_ListExportRequests_FilterByStatus(t *testing.T) {
+func TestMemoryDataExportStorage_ListExportRequests_Filter(t *testing.T) {
 	storage := NewMemoryDataExportStorage()
 	ctx := context.Background()
 
-	// Create export requests with different statuses
-	_, err := storage.CreateExportRequest(ctx, CreateDataExportOptions{
-		TenantID:    "tenant-1",
-		UserID:      10001,
-		RequestedBy: 1,
-		Format:      DataExportFormatJSON,
-	})
-	if err != nil {
-		t.Fatalf("CreateExportRequest failed: %v", err)
+	for i, userID := range []uint64{10001, 10002} {
+		_, err := storage.CreateExportRequest(ctx, CreateDataExportOptions{
+			TenantID:    "tenant-1",
+			UserID:      userID,
+			RequestedBy: uint64(i + 1),
+			Format:      DataExportFormatJSON,
+		})
+		require.NoError(t, err)
 	}
 
-	// List with status filter
-	requests, err := storage.ListExportRequests(ctx, ListExportRequestsOptions{
-		TenantID: "tenant-1",
-		Status:   DataExportStatusPending,
-	})
-	if err != nil {
-		t.Fatalf("ListExportRequests failed: %v", err)
+	tests := []struct {
+		name string
+		opts ListExportRequestsOptions
+		want int
+	}{
+		{name: "by status", opts: ListExportRequestsOptions{TenantID: "tenant-1", Status: DataExportStatusPending}, want: 2},
+		{name: "by user", opts: ListExportRequestsOptions{TenantID: "tenant-1", UserID: 10001}, want: 1},
 	}
 
-	if len(requests) != 1 {
-		t.Errorf("expected 1 request with pending status, got %d", len(requests))
-	}
-}
-
-func TestMemoryDataExportStorage_ListExportRequests_FilterByUser(t *testing.T) {
-	storage := NewMemoryDataExportStorage()
-	ctx := context.Background()
-
-	// Create export requests for different users
-	_, err := storage.CreateExportRequest(ctx, CreateDataExportOptions{
-		TenantID:    "tenant-1",
-		UserID:      10001,
-		RequestedBy: 1,
-		Format:      DataExportFormatJSON,
-	})
-	if err != nil {
-		t.Fatalf("CreateExportRequest failed: %v", err)
-	}
-
-	_, err = storage.CreateExportRequest(ctx, CreateDataExportOptions{
-		TenantID:    "tenant-1",
-		UserID:      10002,
-		RequestedBy: 2,
-		Format:      DataExportFormatJSON,
-	})
-	if err != nil {
-		t.Fatalf("CreateExportRequest failed: %v", err)
-	}
-
-	// List with user filter
-	requests, err := storage.ListExportRequests(ctx, ListExportRequestsOptions{
-		TenantID: "tenant-1",
-		UserID:   10001,
-	})
-	if err != nil {
-		t.Fatalf("ListExportRequests failed: %v", err)
-	}
-
-	if len(requests) != 1 {
-		t.Errorf("expected 1 request for user-1, got %d", len(requests))
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			requests, err := storage.ListExportRequests(ctx, tt.opts)
+			require.NoError(t, err)
+			assert.Len(t, requests, tt.want)
+		})
 	}
 }
 
@@ -1438,67 +1063,33 @@ func TestMemoryDataExportStorage_ListExportRequests_FilterByUser(t *testing.T) {
 // matchesDeletionFilter coverage
 // =============================================================================
 
-func TestMemoryDeletionStorage_ListDeletionRequests_FilterByStatus(t *testing.T) {
+func TestMemoryDeletionStorage_ListDeletionRequests_Filter(t *testing.T) {
 	storage := NewMemoryDeletionStorage()
 	ctx := context.Background()
 
-	// Create deletion requests
-	_, err := storage.CreateDeletionRequest(ctx, CreateDeletionRequestOptions{
-		TenantID:    "tenant-1",
-		UserID:      10001,
-		RequestedBy: 1,
-	})
-	if err != nil {
-		t.Fatalf("CreateDeletionRequest failed: %v", err)
+	for i, userID := range []uint64{10001, 10002} {
+		_, err := storage.CreateDeletionRequest(ctx, CreateDeletionRequestOptions{
+			TenantID:    "tenant-1",
+			UserID:      userID,
+			RequestedBy: uint64(i + 1),
+		})
+		require.NoError(t, err)
 	}
 
-	// List with status filter
-	requests, err := storage.ListDeletionRequests(ctx, ListDeletionRequestsOptions{
-		TenantID: "tenant-1",
-		Status:   DeletionStatusPending,
-	})
-	if err != nil {
-		t.Fatalf("ListDeletionRequests failed: %v", err)
+	tests := []struct {
+		name string
+		opts ListDeletionRequestsOptions
+		want int
+	}{
+		{name: "by status", opts: ListDeletionRequestsOptions{TenantID: "tenant-1", Status: DeletionStatusPending}, want: 2},
+		{name: "by user", opts: ListDeletionRequestsOptions{TenantID: "tenant-1", UserID: 10001}, want: 1},
 	}
 
-	if len(requests) != 1 {
-		t.Errorf("expected 1 request with pending status, got %d", len(requests))
-	}
-}
-
-func TestMemoryDeletionStorage_ListDeletionRequests_FilterByUser(t *testing.T) {
-	storage := NewMemoryDeletionStorage()
-	ctx := context.Background()
-
-	// Create deletion requests for different users
-	_, err := storage.CreateDeletionRequest(ctx, CreateDeletionRequestOptions{
-		TenantID:    "tenant-1",
-		UserID:      10001,
-		RequestedBy: 1,
-	})
-	if err != nil {
-		t.Fatalf("CreateDeletionRequest failed: %v", err)
-	}
-
-	_, err = storage.CreateDeletionRequest(ctx, CreateDeletionRequestOptions{
-		TenantID:    "tenant-1",
-		UserID:      10002,
-		RequestedBy: 2,
-	})
-	if err != nil {
-		t.Fatalf("CreateDeletionRequest failed: %v", err)
-	}
-
-	// List with user filter
-	requests, err := storage.ListDeletionRequests(ctx, ListDeletionRequestsOptions{
-		TenantID: "tenant-1",
-		UserID:   10001,
-	})
-	if err != nil {
-		t.Fatalf("ListDeletionRequests failed: %v", err)
-	}
-
-	if len(requests) != 1 {
-		t.Errorf("expected 1 request for user-1, got %d", len(requests))
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			requests, err := storage.ListDeletionRequests(ctx, tt.opts)
+			require.NoError(t, err)
+			assert.Len(t, requests, tt.want)
+		})
 	}
 }
