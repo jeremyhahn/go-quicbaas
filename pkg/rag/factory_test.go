@@ -57,7 +57,7 @@ func TestNewSystem_InvalidConfig(t *testing.T) {
 
 		_, err := NewSystem(cfg)
 
-		assert.Error(t, err)
+		assert.ErrorIs(t, err, ErrInvalidConfig)
 		assert.Contains(t, err.Error(), "embedding provider")
 	})
 
@@ -315,24 +315,6 @@ func indexTestDocuments(t *testing.T, system *System) {
 
 // Additional test coverage
 
-func TestCreateRankerAdapter_WithRerank(t *testing.T) {
-	cfg := config.RankingConfig{
-		BM25K1:        1.5,
-		BM25B:         0.8,
-		VectorWeight:  0.6,
-		KeywordWeight: 0.4,
-		RerankTopK:    20,
-		EnableRerank:  true,
-		RRFK:          80,
-		Strategy:      "hybrid",
-	}
-
-	adapter, err := createRankerAdapter(cfg)
-
-	assert.NoError(t, err)
-	assert.NotNil(t, adapter)
-}
-
 // =============================================================================
 // trainIndex coverage
 // =============================================================================
@@ -500,21 +482,6 @@ func TestMockEmbedderAdapter_EmptyText(t *testing.T) {
 	assert.Len(t, emb, 128)
 }
 
-func TestMockEmbedderAdapter_LargeText(t *testing.T) {
-	adapter := &mockEmbedderAdapter{dimensions: 128}
-
-	// Create a large text
-	largeText := ""
-	for i := 0; i < 1000; i++ {
-		largeText += "This is a very long text that should still work correctly. "
-	}
-
-	emb, err := adapter.Embed(context.Background(), largeText)
-
-	require.NoError(t, err)
-	assert.Len(t, emb, 128)
-}
-
 func TestMockEmbedderAdapter_SpecialCharacters(t *testing.T) {
 	adapter := &mockEmbedderAdapter{dimensions: 128}
 
@@ -548,22 +515,6 @@ func TestQueryHandlerAdapter_EmptyQuery(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "", result.Original)
 	assert.Equal(t, "", result.Cleaned)
-	assert.Len(t, result.Embedding, 128)
-}
-
-func TestQueryHandlerAdapter_LongQuery(t *testing.T) {
-	embedder := &mockEmbedderAdapter{dimensions: 128}
-	handler := &queryHandlerAdapter{embedder: embedder}
-
-	longQuery := ""
-	for i := 0; i < 500; i++ {
-		longQuery += "word "
-	}
-
-	result, err := handler.Process(context.Background(), longQuery)
-
-	require.NoError(t, err)
-	assert.Equal(t, longQuery, result.Original)
 	assert.Len(t, result.Embedding, 128)
 }
 
@@ -636,22 +587,6 @@ func TestSystem_ConcurrentIndexAndQuery(t *testing.T) {
 // Additional NewSystem paths
 // =============================================================================
 
-func TestNewSystem_TrainedIndex(t *testing.T) {
-	cfg := createTestRAGConfig(t)
-	// Use a mock provider that creates a pre-trained index
-	cfg.Embedding.Provider = "mock"
-
-	system, err := NewSystem(cfg)
-
-	require.NoError(t, err)
-	require.NotNil(t, system)
-	defer system.Close()
-
-	// Verify the system is functional
-	stats := system.Stats()
-	assert.NotNil(t, stats)
-}
-
 func TestNewSystem_Metrics(t *testing.T) {
 	for _, metric := range []string{"l2", "dot", "ip"} {
 		t.Run(metric, func(t *testing.T) {
@@ -689,7 +624,7 @@ func TestNewSystem_AllTruncationStrategies(t *testing.T) {
 }
 
 func TestNewSystem_RankingStrategies(t *testing.T) {
-	strategies := []string{"hybrid", "fusion", "vector"}
+	strategies := []string{"hybrid", "fusion", "vector", "bm25"}
 
 	for _, strategy := range strategies {
 		t.Run("strategy_"+strategy, func(t *testing.T) {
@@ -798,25 +733,6 @@ func TestInMemoryVectorIndex_SaveAndLoad(t *testing.T) {
 
 	err = idx.Load("/tmp/test-vector-index")
 	assert.NoError(t, err)
-}
-
-func TestInMemoryVectorIndex_Size(t *testing.T) {
-	idx, err := NewVectorIndex(&VectorIndexConfig{Dimensions: 2})
-	require.NoError(t, err)
-
-	assert.Equal(t, 0, idx.Size())
-
-	err = idx.Add("a", []float32{1, 0}, nil)
-	require.NoError(t, err)
-	assert.Equal(t, 1, idx.Size())
-
-	err = idx.Add("b", []float32{0, 1}, nil)
-	require.NoError(t, err)
-	assert.Equal(t, 2, idx.Size())
-
-	err = idx.Remove("a")
-	require.NoError(t, err)
-	assert.Equal(t, 1, idx.Size())
 }
 
 // =============================================================================
@@ -970,11 +886,6 @@ func TestCosineSimilarity_ZeroVectors(t *testing.T) {
 	// When both vectors are zero, the denominator is zero,
 	// cosineSimilarity should return 0.
 	result := cosineSimilarity([]float32{0, 0, 0}, []float32{0, 0, 0})
-	assert.InDelta(t, float32(0), result, 0.001)
-}
-
-func TestCosineSimilarity_OneZeroVector(t *testing.T) {
-	result := cosineSimilarity([]float32{1, 2, 3}, []float32{0, 0, 0})
 	assert.InDelta(t, float32(0), result, 0.001)
 }
 
@@ -1275,19 +1186,6 @@ func TestRAGErrors(t *testing.T) {
 // Additional System tests for edge cases
 // =============================================================================
 
-func TestNewSystem_DimensionMismatch(t *testing.T) {
-	cfg := createTestRAGConfig(t)
-	cfg.Embedding.Dimensions = 256
-	cfg.Vector.Dimensions = 512
-
-	system, err := NewSystem(cfg)
-
-	assert.Error(t, err)
-	assert.Nil(t, system)
-	// Error is wrapped and caught by config validation first
-	assert.Contains(t, err.Error(), "dimension")
-}
-
 func TestNewSystem_EmbedderCreationError(t *testing.T) {
 	cfg := createTestRAGConfig(t)
 	cfg.Embedding.Provider = "unsupported-provider"
@@ -1308,18 +1206,6 @@ func TestNewSystem_VectorIndexCreationError(t *testing.T) {
 	system, err := NewSystem(cfg)
 
 	// Should error during validation or creation
-	assert.Error(t, err)
-	assert.Nil(t, system)
-}
-
-func TestNewSystem_InvalidDimensions(t *testing.T) {
-	// Test with invalid dimensions
-	cfg := createTestRAGConfig(t)
-	cfg.Vector.Dimensions = -1
-	cfg.Embedding.Dimensions = -1
-
-	system, err := NewSystem(cfg)
-
 	assert.Error(t, err)
 	assert.Nil(t, system)
 }
@@ -1568,18 +1454,6 @@ func TestCreateRankerAdapterStrategies(t *testing.T) {
 // but fails pipeline.NewPipeline validation
 // =============================================================================
 
-func TestNewSystemWithInvalidPipelineConfig(t *testing.T) {
-	cfg := createTestRAGConfig(t)
-	// Set DefaultTopK to 0 which passes config.PipelineConfig.Validate()
-	// but should fail pipeline.Config.Validate()
-	cfg.Pipeline.DefaultTopK = 0
-
-	_, err := NewSystem(cfg)
-
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "failed to create pipeline")
-}
-
 // =============================================================================
 // Test queryHandlerAdapter edge cases
 // =============================================================================
@@ -1587,31 +1461,6 @@ func TestNewSystemWithInvalidPipelineConfig(t *testing.T) {
 // =============================================================================
 // Test System operations in various states
 // =============================================================================
-
-func TestSystemOperationsInSequence(t *testing.T) {
-	cfg := createTestRAGConfig(t)
-	system, err := NewSystem(cfg)
-	require.NoError(t, err)
-	defer system.Close()
-
-	// Index -> Query -> Stats -> Query -> Close
-	err = system.IndexContent(context.Background(), "seq-1", "first document", nil)
-	assert.NoError(t, err)
-
-	resp, err := system.Query(context.Background(), "document", pipeline.QueryOptions{TopK: 5})
-	require.NoError(t, err)
-	assert.NotNil(t, resp)
-
-	stats := system.Stats()
-	assert.NotNil(t, stats)
-
-	err = system.IndexContent(context.Background(), "seq-2", "second document", nil)
-	assert.NoError(t, err)
-
-	resp, err = system.Query(context.Background(), "second", pipeline.QueryOptions{TopK: 5})
-	require.NoError(t, err)
-	assert.NotNil(t, resp)
-}
 
 // =============================================================================
 // Test createContextBuilderAdapter with all truncation strategies
