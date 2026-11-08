@@ -7,16 +7,25 @@ import (
 	"io"
 	"sort"
 	"strings"
+	"time"
 
 	"golang.org/x/mod/modfile"
 )
+
+// RecentReleaseWindow is how long after its release a newer version is only
+// reported, not failed: a requirement behind a release younger than this has
+// not yet had time to be adopted (#1704). A release exactly this old fails.
+const RecentReleaseWindow = 7 * 24 * time.Hour
 
 // listedModule is the subset of `go list -m -u -json` output the check reads.
 type listedModule struct {
 	Path    string
 	Version string
 	Main    bool
-	Update  *struct{ Version string }
+	Update  *struct {
+		Version string
+		Time    time.Time
+	}
 	Replace *struct{ Path string }
 	Error   *struct{ Err string }
 }
@@ -35,15 +44,25 @@ func (e *UnresolvedError) Error() string {
 }
 
 // Behind is a direct requirement held below its latest release with no
-// reason written beside it in go.mod.
+// reason written beside it in go.mod. Released is the latest release's time,
+// zero when the go command did not give one.
 type Behind struct {
-	Path    string
-	Current string
-	Latest  string
+	Path     string
+	Current  string
+	Latest   string
+	Released time.Time
 }
 
 func (b Behind) String() string {
 	return b.Path + " " + b.Current + " -> " + b.Latest
+}
+
+// ReportedLine is the line `make deps-check` prints for a requirement behind
+// a recent release: its versions, the release time and its age at now.
+func (b Behind) ReportedLine(now time.Time) string {
+	age := now.Sub(b.Released).Round(time.Minute)
+	return "depscheck: " + b.String() + " released " + b.Released.UTC().Format(time.RFC3339) +
+		" (" + age.String() + " ago), reported: under 7 days old"
 }
 
 // ModFileError reports a go.mod that cannot be parsed.
@@ -91,17 +110,21 @@ func (e *BehindError) Error() string {
 // require or replace line carries a comment, which is where devops.md §9
 // puts the reason for a held version. Modules replaced by a local directory
 // are the repository's own and are skipped.
-func Check(modPath string, modData []byte, listing io.Reader) error {
+//
+// A requirement whose latest release is younger than RecentReleaseWindow at
+// now does not fail: it is returned in the reported slice, sorted by path. A
+// latest release with no time is treated as old, so missing data fails.
+func Check(modPath string, modData []byte, listing io.Reader, now time.Time) ([]Behind, error) {
 	mf, err := modfile.Parse(modPath, modData, nil)
 	if err != nil {
-		return &ModFileError{Path: modPath, Err: err}
+		return nil, &ModFileError{Path: modPath, Err: err}
 	}
 	listed, err := decodeListing(listing)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	documented := replaceComments(mf)
-	var behind []Behind
+	var behind, reported []Behind
 	var unresolved []string
 	for _, req := range mf.Require {
 		if req.Indirect {
@@ -121,18 +144,35 @@ func Check(modPath string, modData []byte, listing io.Reader) error {
 		if hasComment(req.Syntax) || documented[req.Mod.Path] {
 			continue
 		}
-		behind = append(behind, Behind{Path: req.Mod.Path, Current: m.Version, Latest: m.Update.Version})
+		b := Behind{Path: req.Mod.Path, Current: m.Version, Latest: m.Update.Version, Released: m.Update.Time}
+		if isRecent(b.Released, now) {
+			reported = append(reported, b)
+			continue
+		}
+		behind = append(behind, b)
 	}
+	sortByPath(reported)
 	var errs []error
 	if len(behind) > 0 {
-		sort.Slice(behind, func(i, j int) bool { return behind[i].Path < behind[j].Path })
+		sortByPath(behind)
 		errs = append(errs, &BehindError{ModFile: modPath, Behind: behind})
 	}
 	if len(unresolved) > 0 {
 		sort.Strings(unresolved)
 		errs = append(errs, &UnresolvedError{ModFile: modPath, Modules: unresolved})
 	}
-	return errors.Join(errs...)
+	return reported, errors.Join(errs...)
+}
+
+// isRecent reports whether a release at released is younger than
+// RecentReleaseWindow at now. A zero time is never recent, so a release the
+// go command gave no time for fails.
+func isRecent(released, now time.Time) bool {
+	return !released.IsZero() && now.Sub(released) < RecentReleaseWindow
+}
+
+func sortByPath(behind []Behind) {
+	sort.Slice(behind, func(i, j int) bool { return behind[i].Path < behind[j].Path })
 }
 
 func decodeListing(r io.Reader) (map[string]listedModule, error) {

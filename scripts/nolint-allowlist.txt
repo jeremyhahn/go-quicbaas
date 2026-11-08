@@ -9,5 +9,4 @@ pkg/service/project_git.go:gosec
 pkg/signalbridge/http_transport.go:bodyclose
 scripts/verifycliflags/main.go:gosec
 scripts/verifygomodauth/main.go:gosec
-scripts/verifygomodauth/main.go:gosec
 test/integration/certfixture/set.go:gosec
