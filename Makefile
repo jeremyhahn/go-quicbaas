@@ -1883,9 +1883,9 @@ integration-test-sdk: integration-test-sdk-go integration-test-sdk-js ## Run ALL
 # exactly this way -- snake_case merge fields, drafts having no API field, and
 # webhook event expansion -- each of which a mock reproduced happily.
 .PHONY: integration-test-forge-gitea
-integration-test-forge-gitea: ## Run the live Gitea forge suite (needs GITEA_ITEST_* env)
+integration-test-forge-gitea: ## Run the live Gitea forge suite (needs FORGE_ITEST_* env)
 	@echo "$(BLUE)Running live Gitea forge integration tests...$(NC)"
-	@echo "$(YELLOW)Requires GITEA_ITEST_BASE_URL, _TOKEN, _OWNER, _REPO against a SCRATCH repo$(NC)"
+	@echo "$(YELLOW)Requires FORGE_ITEST_BASE_URL, _TOKEN, _OWNER, _REPO against a SCRATCH repo$(NC)"
 	$(GOTEST) -tags integration -count=1 -v -timeout=10m -run 'TestLive_' ./pkg/sdlc/
 	@echo "$(GREEN)✓ Live Gitea forge tests passed$(NC)"
 
@@ -2504,7 +2504,7 @@ SDK_GOMOD_BACKUP ?= /tmp/quicbaas-$(RUN_ID_SLUG)-sdk-gomod-backup
 # runner (#1031). A runner injects the dependency-resolution.md section-6
 # variables itself; a developer or agent host resolves the private modules
 # through a ~/.gitconfig rewrite a container cannot see, so the variables are
-# built here from a read token instead. The token comes from GITEA_READ_TOKEN
+# built here from a read token instead. The token comes from FORGE_READ_TOKEN
 # in the environment, else from the GOMODAUTH_TOKEN_KEY line of the agent
 # tokens file. It is only ever read inside the recipe's shell -- never into a
 # make variable, a command line, a build arg or the log.
@@ -2515,7 +2515,7 @@ SDK_GOMOD_BACKUP ?= /tmp/quicbaas-$(RUN_ID_SLUG)-sdk-gomod-backup
 # token, which is where a private deployment keeps it. A token with no origin
 # is refused rather than staged against a guess.
 GOMODAUTH_TOKENS_FILE ?= $(HOME)/.agent-identity/tokens.env
-GOMODAUTH_TOKEN_KEY ?= AGENT_TOKEN_GO_QUICBAAS
+GOMODAUTH_TOKEN_KEY ?= FORGE_READ_TOKEN
 GITEA_HTTP_ORIGIN ?=
 GOMODAUTH_OWNER ?= jeremyhahn
 
@@ -2549,13 +2549,13 @@ else
 		} > "$(GOMODAUTH_ENV)"; \
 		exit 0; \
 	fi; \
-	token="$${GITEA_READ_TOKEN:-}"; source=GITEA_READ_TOKEN; \
+	token="$${FORGE_READ_TOKEN:-}"; source=FORGE_READ_TOKEN; \
 	if [ -z "$$token" ] && [ -r "$(GOMODAUTH_TOKENS_FILE)" ]; then \
 		token=$$(sed -n 's/^[[:space:]]*\(export[[:space:]]\{1,\}\)\{0,1\}$(GOMODAUTH_TOKEN_KEY)=//p' "$(GOMODAUTH_TOKENS_FILE)" | tail -n 1 | tr -d "\"' \r"); \
 		source="$(GOMODAUTH_TOKEN_KEY) in $(GOMODAUTH_TOKENS_FILE)"; \
 	fi; \
 	if [ -z "$$token" ]; then \
-		echo "$(YELLOW)No Gitea module credentials: no GIT_CONFIG_KEY_0 (Gitea runner), no GITEA_READ_TOKEN,$(NC)"; \
+		echo "$(YELLOW)No Gitea module credentials: no GIT_CONFIG_KEY_0 (Gitea runner), no FORGE_READ_TOKEN,$(NC)"; \
 		echo "$(YELLOW)  and no $(GOMODAUTH_TOKEN_KEY) in the agent tokens file.$(NC)"; \
 		echo "$(YELLOW)  Image builds resolve modules from the public proxy, where private first-party$(NC)"; \
 		echo "$(YELLOW)  modules not yet mirrored fail with 'unknown revision' (docs/testing/private-modules.md)$(NC)"; \

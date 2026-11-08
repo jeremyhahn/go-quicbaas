@@ -49,6 +49,12 @@
 //     mount. Meaningless off that one machine, and it leaks the account name.
 //   - ClassOwnerAccount — the owner's account name on its own. It identifies a
 //     person, and it is how the paths above get rebuilt by hand.
+//   - ClassCoordHost — a name from the fleet's coordination services: the
+//     forge and registry endpoints, the agent accounts that use them, and the
+//     variables that carry those accounts' credentials. It maps the build
+//     infrastructure and names the accounts worth phishing.
+//   - ClassInternalEmail — a mail address on an internal domain. It names an
+//     account and a domain nobody outside the fleet can reach.
 //
 // WHAT TO DO WITH A FINDING. In order of preference:
 //
@@ -117,6 +123,13 @@ const (
 
 	// ClassOwnerAccount is the owner's account name outside a path.
 	ClassOwnerAccount Class = "owner-account"
+
+	// ClassCoordHost is a name from the fleet's coordination services: a forge
+	// or registry endpoint, an agent account, or a credential variable.
+	ClassCoordHost Class = "coord-host"
+
+	// ClassInternalEmail is a mail address on an internal domain.
+	ClassInternalEmail Class = "internal-email"
 )
 
 // classGuidance is every class the gate knows, with what to do instead of the
@@ -125,10 +138,12 @@ const (
 // unknown in the other. The advice is per class because the rules are private
 // and a rule's own advice could not be written down next to it.
 var classGuidance = map[Class]string{
-	ClassLabAddress:   "use an RFC 5737 documentation address (198.51.100.0/24) or a name under .example.com",
-	ClassLabHost:      "name the role, not the machine: agent-01, ci-runner-01, gpu-host.internal, quicbaas.example.com",
-	ClassOwnerPath:    "make the path relative to the repository root, or use /var/lib/quicbaas, /srv, /home/agent",
-	ClassOwnerAccount: "name a role, not a person: operator, agent, or the project's own module path",
+	ClassLabAddress:    "use an RFC 5737 documentation address (198.51.100.0/24) or a name under .example.com",
+	ClassLabHost:       "name the role, not the machine: agent-01, ci-runner-01, gpu-host.internal, quicbaas.example.com",
+	ClassOwnerPath:     "make the path relative to the repository root, or use /var/lib/quicbaas, /srv, /home/agent",
+	ClassOwnerAccount:  "name a role, not a person: operator, agent, or the project's own module path",
+	ClassCoordHost:     "use a reference endpoint (forge.example.com, registry.example:5000) and a role account (company-agent); name a credential variable for what it holds (FORGE_READ_TOKEN)",
+	ClassInternalEmail: "use an RFC 2606 address: agent@example.com",
 }
 
 // waiverPrefix marks a line whose lab value is the point of the line. The text

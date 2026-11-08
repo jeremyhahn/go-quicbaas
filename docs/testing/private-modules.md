@@ -26,8 +26,8 @@ The first source that has a value wins:
 | Source | Where it applies |
 |---|---|
 | `GIT_CONFIG_KEY_0` / `GOPRIVATE` / `GIT_CONFIG_*` in the environment | Gitea Actions runners inject these; staged as-is. |
-| `GITEA_READ_TOKEN` in the environment | Any host. A `read:repository` token. |
-| `$(GOMODAUTH_TOKEN_KEY)` in `$(GOMODAUTH_TOKENS_FILE)` | Agent hosts: `AGENT_TOKEN_GO_QUICBAAS` in `~/.agent-identity/tokens.env`. |
+| `FORGE_READ_TOKEN` in the environment | Any host. A `read:repository` token. |
+| `$(GOMODAUTH_TOKEN_KEY)` in `$(GOMODAUTH_TOKENS_FILE)` | Agent hosts. The key defaults to `FORGE_READ_TOKEN`; a tokens file that keeps the read token under another name sets `GOMODAUTH_TOKEN_KEY` to that name. |
 | none | The file is empty; modules resolve from the public proxy (GitHub CI). |
 
 A developer host that resolves modules through an SSH `insteadOf` in
@@ -43,7 +43,7 @@ the token:
 
 ```sh
 # ~/.agent-identity/tokens.env
-AGENT_TOKEN_GO_QUICBAAS=<read token>
+FORGE_READ_TOKEN=<read token>
 GITEA_HTTP_ORIGIN=https://gitea.example.com:3000
 ```
 

@@ -269,7 +269,7 @@ environment, and nothing anywhere else:
 | --- | --- | --- |
 | `GOPRIVATE` | `github.com/example/*` | the proxy and the checksum database are bypassed for the owner's modules |
 | `GIT_CONFIG_COUNT` | `1` | git reads the rewrite below without a config file being written |
-| `GIT_CONFIG_KEY_0` | `url.ssh://git@forge.example.com:2222/example/.insteadOf` | the rewrite target: the project's own `git.repo_url` with the repository dropped — same scheme, user, host, port and owner |
+| `GIT_CONFIG_KEY_0` | `url.ssh://git@forge.example.com:2022/example/.insteadOf` | the rewrite target: the project's own `git.repo_url` with the repository dropped — same scheme, user, host, port and owner |
 | `GIT_CONFIG_VALUE_0` | `https://github.com/example/` | the prefix being rewritten |
 
 This is the mechanism the handbook's dependency-resolution convention
@@ -312,13 +312,13 @@ sdlc:
   checkout_root: /workspace
   # Who, beyond each repository's owner and its binding's `rulers`, may rule
   # on a parked task by commenting on its issue. File-only. A tenant entry
-  # replaces `default` for that tenant; unset `default` takes agent-company;
+  # replaces `default` for that tenant; unset `default` takes company-agent;
   # `default: []` names nobody. A malformed login refuses startup. Tenant IDs
   # are map keys, so viper lowercases them.
   rulers:
-    default: [agent-company]
+    default: [company-agent]
     tenants:
-      example-tenant: [agent-company, lead-agent]
+      example-tenant: [company-agent, lead-agent]
   # The node's default triage Agent or pool, per tenant that defines it.
   # Empty falls back to each project's worker. See triage.md.
   triage_agent: {agent_id: triage-reader}

@@ -148,7 +148,7 @@ func TestBuildImage_WithholdsEngineOutputFromTheError(t *testing.T) {
 }
 
 func TestInspectImage_ParsesIDLabelsAndDigests(t *testing.T) {
-	doc := `[{"Id":"sha256:1111","RepoDigests":["reg:3001/o/w@sha256:2222"],"Config":{"Labels":{"a":"b"}}}]`
+	doc := `[{"Id":"sha256:1111","RepoDigests":["reg:3000/o/w@sha256:2222"],"Config":{"Labels":{"a":"b"}}}]`
 	engine := &fakeImageEngine{answer: func([]string) (imageCommandResult, error) {
 		return imageCommandResult{Stdout: doc}, nil
 	}}
@@ -249,7 +249,7 @@ func TestPushImage_DockerLogsInPrivatelyAndParsesTheDigest(t *testing.T) {
 	}}
 	rt := newImageTestRuntime(t, RuntimeDocker, engine)
 
-	digest, err := rt.PushImage(t.Context(), "reg.example:3001/o/w:1-cc2-cx3",
+	digest, err := rt.PushImage(t.Context(), "reg.example:3000/o/w:1-cc2-cx3",
 		&RegistryAuth{Username: "agent", Secret: []byte("s3cret")})
 	if err != nil {
 		t.Fatalf("PushImage: %v", err)
@@ -271,7 +271,7 @@ func TestPushImage_DockerLogsInPrivatelyAndParsesTheDigest(t *testing.T) {
 	if _, statErr := os.Stat(config); !os.IsNotExist(statErr) {
 		t.Fatalf("the private configuration %s must be removed after the push", config)
 	}
-	if login.Args[len(login.Args)-1] != "reg.example:3001" {
+	if login.Args[len(login.Args)-1] != "reg.example:3000" {
 		t.Fatalf("login must name the image's registry, argv %v", login.Args)
 	}
 }
@@ -287,7 +287,7 @@ func TestPushImage_PodmanUsesAnAuthfileAndADigestFile(t *testing.T) {
 	}}
 	rt := newImageTestRuntime(t, RuntimePodman, engine)
 
-	digest, err := rt.PushImage(t.Context(), "reg.example:3001/o/w:1", &RegistryAuth{Username: "u", Secret: []byte("p")})
+	digest, err := rt.PushImage(t.Context(), "reg.example:3000/o/w:1", &RegistryAuth{Username: "u", Secret: []byte("p")})
 	if err != nil {
 		t.Fatalf("PushImage: %v", err)
 	}
@@ -355,12 +355,12 @@ func TestParsePushDigest_TakesTheLastDigestPrinted(t *testing.T) {
 
 func TestRegistryHost(t *testing.T) {
 	cases := map[string]string{
-		"198.51.100.50:3001/jeremyhahn/w:1":            "198.51.100.50:3001",
+		"198.51.100.50:3000/jeremyhahn/w:1":            "198.51.100.50:3000",
 		"registry.example.com/o/w:1":                   "registry.example.com",
 		"localhost/w:1":                                "localhost",
 		"quicbaas-software-factory-worker:0.11.0":      "docker.io",
 		"library/alpine:3":                             "docker.io",
-		"reg.example:3001/o/w:1@" + pushTestDigest:     "reg.example:3001",
+		"reg.example:3000/o/w:1@" + pushTestDigest:     "reg.example:3000",
 		"quicbaas-software-factory-worker@" + testHash: "docker.io",
 	}
 	for image, want := range cases {

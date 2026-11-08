@@ -50,7 +50,7 @@ type AllowRule struct {
 var DefaultAllowList = []AllowRule{
 	{
 		Path:    "pkg/labstrings/*_test.go",
-		Classes: []Class{ClassLabAddress, ClassLabHost, ClassOwnerPath, ClassOwnerAccount},
+		Classes: []Class{ClassLabAddress, ClassLabHost, ClassOwnerPath, ClassOwnerAccount, ClassCoordHost, ClassInternalEmail},
 		Reason: "The gate's own tests plant reference values (RFC 5737 addresses, " +
 			"names nobody owns) for every class, so a pattern file written to " +
 			"exercise the gate matches them. They carry no lab value; every other " +

@@ -151,13 +151,13 @@ func TestTheGateCatchesWhatTheFirstAuditFound(t *testing.T) {
 		{
 			name:    "the private registry in the release workflow",
 			file:    ".github/workflows/release.yml",
-			content: "  REGISTRY: 203.0.113.91:3001\n",
+			content: "  REGISTRY: 203.0.113.91:3000\n",
 			want:    ClassLabAddress,
 		},
 		{
 			name:    "a forge issue link in a shipped doc",
 			file:    "docs/barrier/cli.md",
-			content: "([#491](http://203.0.113.91:3001/example/go-quicbaas/issues/491))\n",
+			content: "([#491](http://203.0.113.91:3000/example/go-quicbaas/issues/491))\n",
 			want:    ClassLabAddress,
 		},
 		{
@@ -181,7 +181,7 @@ func TestTheGateCatchesWhatTheFirstAuditFound(t *testing.T) {
 		{
 			name:    "the private registry in a captured runner log",
 			file:    "pkg/cifault/testdata/registry-unreachable.log",
-			content: "image: 203.0.113.91:3001/example/ci-runner:latest\n",
+			content: "image: 203.0.113.91:3000/example/ci-runner:latest\n",
 			want:    ClassLabAddress,
 		},
 		{

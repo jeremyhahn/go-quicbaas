@@ -35,6 +35,8 @@ func TestParsePatterns_ReadsEveryClass(t *testing.T) {
 	patterns := mustParse(t, "lab-address\t"+`\b203\.0\.113\.\d{1,3}\b`+"\n"+
 		"lab-host\t"+`\bfleet-node-\d{2}\b`+"\n"+
 		"owner-path\t"+`/home/example-owner\b`+"\n"+
+		"coord-host\t"+`\bforge-node-\d{2}:\d+/`+"\n"+
+		"internal-email\t"+`@example-corp\.invalid\b`+"\n"+
 		"owner-account\t"+`\bexample-owner\b`+"\n")
 
 	want := []struct {
@@ -44,6 +46,8 @@ func TestParsePatterns_ReadsEveryClass(t *testing.T) {
 		{ClassLabAddress, "dial 203.0.113.7:8443"},
 		{ClassLabHost, "on fleet-node-07"},
 		{ClassOwnerPath, "/home/example-owner/sources"},
+		{ClassCoordHost, "http://forge-node-01:8080/api"},
+		{ClassInternalEmail, "ops@example-corp.invalid"},
 		{ClassOwnerAccount, "ask example-owner"},
 	}
 	if len(patterns) != len(want) {

@@ -12,7 +12,7 @@ and the gates that enforce it.
 ## The rule
 
 No published file names the private development fleet or its owner. Concretely,
-four classes:
+six classes:
 
 | Class | What it covers | Use instead |
 |---|---|---|
@@ -20,6 +20,8 @@ four classes:
 | `lab-host` | A fleet hostname: the build and runner servers, the GPU and NPU workstations, the remote fleet node host | The role, not the machine: `quicbaas.example.com:8443`, `agent-01`, `gpu-host.internal`, `npu-host.internal` |
 | `owner-path` | A path under the owner's home directory, the lab's shared network mount, or the burn-in node's deployment directory | A repository-relative path, or `/var/lib`, `/srv`, `/home/agent` |
 | `owner-account` | The owner's account name on its own | A role: `operator`, `agent`, or the module path |
+| `coord-host` | The fleet's coordination services: forge and registry endpoints, the agent accounts that use them, and the variables that carry their credentials | `forge.example.com`, `registry.example:5000`, a role account such as `company-agent`, and a variable named for what it holds, such as `FORGE_READ_TOKEN` |
+| `internal-email` | A mail address on an internal domain | An RFC 2606 address: `agent@example.com` |
 
 The fleet's own subnet, hostnames and path prefixes are never written down in
 this repository, not even as rules. They live in a private pattern file that CI
