@@ -288,7 +288,7 @@ func TestSectionSixBuildsTheRewriteFromTheOrigin(t *testing.T) {
 
 func TestStripEnvDropsTheCallersCredentials(t *testing.T) {
 	got := stripEnv([]string{
-		"PATH=/bin", "GIT_CONFIG_KEY_0=secret", "GITEA_READ_TOKEN=secret",
+		"PATH=/bin", "GIT_CONFIG_KEY_0=secret", "FORGE_READ_TOKEN=secret",
 		"HOME=/root", "GOPRIVATE=x", "GIT_CONFIG_KEY_00=kept",
 	})
 	want := []string{"PATH=/bin", "GIT_CONFIG_KEY_00=kept"}
