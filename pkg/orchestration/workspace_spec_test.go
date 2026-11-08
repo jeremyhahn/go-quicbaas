@@ -305,7 +305,7 @@ func TestWorkspaceSpecFiles_NoTokenWritesNoTokenFile(t *testing.T) {
 // container has to be told about a host key for.
 func sshWorkspaceProject() *Project {
 	p := workspaceProject()
-	p.Git.RepoURL = "ssh://git@forge.invalid:2222/o/go-truststrap.git"
+	p.Git.RepoURL = "ssh://git@forge.invalid:2022/o/go-truststrap.git"
 	return p
 }
 
@@ -336,7 +336,7 @@ func TestWorkspaceSpecFiles_SSHWritesTheKnownHosts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := "[forge.invalid]:2222 " + hostKey + "\n"; string(content) != want {
+	if want := "[forge.invalid]:2022 " + hostKey + "\n"; string(content) != want {
 		t.Fatalf("known_hosts = %q, want %q", content, want)
 	}
 
