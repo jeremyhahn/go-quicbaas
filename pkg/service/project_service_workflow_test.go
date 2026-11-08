@@ -268,7 +268,7 @@ func TestProjectService_UpdateProject_GitIdentity(t *testing.T) {
 	t.Run("fields update independently", func(t *testing.T) {
 		resp, err := svc.UpdateProject(ctx, &UpdateProjectRequest{
 			TenantID: "tenant-1", ProjectID: id,
-			GitAuthorEmail:      "agent@example.internal",
+			GitAuthorEmail:      "agent@example.com",
 			GitSigningAlgorithm: orchestration.SigningAlgorithmECDSAP256,
 			GitSigningKeyScope:  "tenant",
 			GitSigningKeyOwner:  "tenant-1",
@@ -280,7 +280,7 @@ func TestProjectService_UpdateProject_GitIdentity(t *testing.T) {
 			t.Fatalf("UpdateProject: %v", err)
 		}
 		git := resp.Project.Git
-		if git.Author != (orchestration.GitAuthor{Name: "agent", Email: "agent@example.internal"}) {
+		if git.Author != (orchestration.GitAuthor{Name: "agent", Email: "agent@example.com"}) {
 			t.Errorf("author = %+v", git.Author)
 		}
 		if !git.Signing.Enabled || git.Signing.Algorithm != orchestration.SigningAlgorithmECDSAP256 ||

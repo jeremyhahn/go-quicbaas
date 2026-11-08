@@ -313,7 +313,7 @@ make push-worker-image WORKER_IMAGE_REGISTRY=<host>/<owner>/software-factory-wor
 
 This repository's own factory images (the worker and its go-xkms variant) are
 published by `.github/workflows/worker-image.yml` under
-`<registry>/agent-go-quicbaas/<image>`, the namespace of the repository's agent
+`<registry>/<agent>/<image>`, the namespace of the repository's agent
 identity, and pushed with that identity's token, never the owner's account.
 
 `push-worker-image` runs `trivy image --severity CRITICAL,HIGH --ignore-unfixed
