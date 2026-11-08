@@ -240,13 +240,14 @@ func TestSessionManager_GetByToken(t *testing.T) {
 
 	t.Run("get_by_token_idle_session", func(t *testing.T) {
 		policy := &SessionPolicy{
-			IdleTimeout:     time.Minute,
+			IdleTimeout:     1 * time.Millisecond,
 			AbsoluteTimeout: 24 * time.Hour,
 		}
-		mgr, err := NewSessionManager(WithSessionPolicy(policy))
+		storage := NewMemorySessionExtStorage()
+		mgr, err := NewSessionManager(WithSessionPolicy(policy), WithSessionStorage(storage))
 		require.NoError(t, err)
 
-		tokenHash := hashToken("idle-token")
+		tokenHash := hashToken("idle-token-123")
 		session := &SessionExt{
 			ID:         uuid.New().String(),
 			UserID:     40041,
@@ -256,20 +257,21 @@ func TestSessionManager_GetByToken(t *testing.T) {
 			LastActive: time.Now().Add(-2 * time.Minute),
 			ExpiresAt:  time.Now().Add(24 * time.Hour),
 		}
-		require.NoError(t, mgr.storage.Create(ctx, session))
+		require.NoError(t, storage.Create(ctx, session))
 
 		_, err = mgr.GetByToken(ctx, tokenHash)
 		assert.ErrorIs(t, err, ErrSessionExpired)
 	})
 
 	t.Run("get_by_token_cancelled_context", func(t *testing.T) {
+		cancelled, cancel := context.WithCancel(context.Background())
+		cancel()
+
 		mgr, err := NewSessionManager()
 		require.NoError(t, err)
 
-		cancelled, cancel := context.WithCancel(ctx)
-		cancel()
 		_, err = mgr.GetByToken(cancelled, "some-token-hash")
-		assert.Equal(t, context.Canceled, err)
+		assert.ErrorIs(t, err, context.Canceled)
 	})
 }
 
@@ -351,21 +353,29 @@ func TestSessionManager_List(t *testing.T) {
 		assert.Equal(t, activeSession.ID, sessions[0].ID)
 	})
 
-	t.Run("list_sessions_invalid_input", func(t *testing.T) {
-		mgr, err := NewSessionManager()
-		require.NoError(t, err)
+	cancelled, cancel := context.WithCancel(context.Background())
+	cancel()
 
-		cancelled, cancel := context.WithCancel(ctx)
-		cancel()
-		_, err = mgr.List(cancelled, 10001, "tenant-1")
-		assert.Equal(t, context.Canceled, err)
+	errorCases := []struct {
+		name     string
+		ctx      context.Context
+		userID   uint64
+		tenantID string
+		wantErr  error
+	}{
+		{"empty_user_id", ctx, 0, "tenant-1", ErrSessionInvalid},
+		{"empty_tenant_id", ctx, 10001, "", ErrSessionInvalid},
+		{"cancelled_context", cancelled, 10001, "tenant-1", context.Canceled},
+	}
+	for _, tc := range errorCases {
+		t.Run(tc.name, func(t *testing.T) {
+			mgr, err := NewSessionManager()
+			require.NoError(t, err)
 
-		_, err = mgr.List(ctx, 0, "tenant-1")
-		assert.Error(t, err, "empty user ID")
-
-		_, err = mgr.List(ctx, 10001, "")
-		assert.Error(t, err, "empty tenant ID")
-	})
+			_, err = mgr.List(tc.ctx, tc.userID, tc.tenantID)
+			assert.ErrorIs(t, err, tc.wantErr)
+		})
+	}
 }
 
 func TestSessionManager_UpdateActivity(t *testing.T) {
@@ -395,17 +405,9 @@ func TestSessionManager_UpdateActivity(t *testing.T) {
 		assert.True(t, retrieved.LastActive.After(originalActivity))
 	})
 
-	t.Run("update_activity_not_found", func(t *testing.T) {
-		mgr, err := NewSessionManager()
-		require.NoError(t, err)
-
-		err = mgr.UpdateActivity(ctx, "non-existent")
-		assert.Error(t, err)
-		assert.ErrorIs(t, err, ErrSessionNotFound)
-	})
-
 	t.Run("update_activity_expired_session", func(t *testing.T) {
-		mgr, err := NewSessionManager()
+		storage := NewMemorySessionExtStorage()
+		mgr, err := NewSessionManager(WithSessionStorage(storage))
 		require.NoError(t, err)
 
 		session := &SessionExt{
@@ -417,24 +419,34 @@ func TestSessionManager_UpdateActivity(t *testing.T) {
 			Created:    time.Now().Add(-2 * time.Hour),
 			LastActive: time.Now().Add(-2 * time.Hour),
 		}
-		require.NoError(t, mgr.storage.Create(ctx, session))
+		require.NoError(t, storage.Create(ctx, session))
 
 		err = mgr.UpdateActivity(ctx, session.ID)
 		assert.ErrorIs(t, err, ErrSessionExpired)
 	})
 
-	t.Run("update_activity_invalid_input", func(t *testing.T) {
-		mgr, err := NewSessionManager()
-		require.NoError(t, err)
+	cancelled, cancel := context.WithCancel(context.Background())
+	cancel()
 
-		cancelled, cancel := context.WithCancel(ctx)
-		cancel()
-		err = mgr.UpdateActivity(cancelled, "session-123")
-		assert.Equal(t, context.Canceled, err)
+	errorCases := []struct {
+		name      string
+		ctx       context.Context
+		sessionID string
+		wantErr   error
+	}{
+		{"not_found", ctx, "non-existent", ErrSessionNotFound},
+		{"empty_session_id", ctx, "", ErrSessionInvalid},
+		{"cancelled_context", cancelled, "session-123", context.Canceled},
+	}
+	for _, tc := range errorCases {
+		t.Run(tc.name, func(t *testing.T) {
+			mgr, err := NewSessionManager()
+			require.NoError(t, err)
 
-		err = mgr.UpdateActivity(ctx, "")
-		assert.Error(t, err, "empty session ID")
-	})
+			err = mgr.UpdateActivity(tc.ctx, tc.sessionID)
+			assert.ErrorIs(t, err, tc.wantErr)
+		})
+	}
 }
 
 func TestSessionManager_Revoke(t *testing.T) {
@@ -469,18 +481,27 @@ func TestSessionManager_Revoke(t *testing.T) {
 		assert.NoError(t, err) // Should not error
 	})
 
-	t.Run("revoke_session_invalid_input", func(t *testing.T) {
-		mgr, err := NewSessionManager()
-		require.NoError(t, err)
+	cancelled, cancel := context.WithCancel(context.Background())
+	cancel()
 
-		cancelled, cancel := context.WithCancel(ctx)
-		cancel()
-		err = mgr.Revoke(cancelled, "session-123")
-		assert.Equal(t, context.Canceled, err)
+	errorCases := []struct {
+		name      string
+		ctx       context.Context
+		sessionID string
+		wantErr   error
+	}{
+		{"empty_session_id", ctx, "", ErrSessionInvalid},
+		{"cancelled_context", cancelled, "session-123", context.Canceled},
+	}
+	for _, tc := range errorCases {
+		t.Run(tc.name, func(t *testing.T) {
+			mgr, err := NewSessionManager()
+			require.NoError(t, err)
 
-		err = mgr.Revoke(ctx, "")
-		assert.Error(t, err, "empty session ID")
-	})
+			err = mgr.Revoke(tc.ctx, tc.sessionID)
+			assert.ErrorIs(t, err, tc.wantErr)
+		})
+	}
 }
 
 func TestSessionManager_RevokeAllForUser(t *testing.T) {
@@ -509,21 +530,29 @@ func TestSessionManager_RevokeAllForUser(t *testing.T) {
 		assert.Empty(t, sessions)
 	})
 
-	t.Run("revoke_all_invalid_input", func(t *testing.T) {
-		mgr, err := NewSessionManager()
-		require.NoError(t, err)
+	cancelled, cancel := context.WithCancel(context.Background())
+	cancel()
 
-		cancelled, cancel := context.WithCancel(ctx)
-		cancel()
-		err = mgr.RevokeAllForUser(cancelled, 10001, "tenant-1")
-		assert.Equal(t, context.Canceled, err)
+	errorCases := []struct {
+		name     string
+		ctx      context.Context
+		userID   uint64
+		tenantID string
+		wantErr  error
+	}{
+		{"empty_user_id", ctx, 0, "tenant-1", ErrSessionInvalid},
+		{"empty_tenant_id", ctx, 10001, "", ErrSessionInvalid},
+		{"cancelled_context", cancelled, 10001, "tenant-1", context.Canceled},
+	}
+	for _, tc := range errorCases {
+		t.Run(tc.name, func(t *testing.T) {
+			mgr, err := NewSessionManager()
+			require.NoError(t, err)
 
-		err = mgr.RevokeAllForUser(ctx, 0, "tenant-1")
-		assert.Error(t, err, "empty user ID")
-
-		err = mgr.RevokeAllForUser(ctx, 10001, "")
-		assert.Error(t, err, "empty tenant ID")
-	})
+			err = mgr.RevokeAllForUser(tc.ctx, tc.userID, tc.tenantID)
+			assert.ErrorIs(t, err, tc.wantErr)
+		})
+	}
 }
 
 func TestSessionManager_RevokeAllExcept(t *testing.T) {
@@ -559,24 +588,31 @@ func TestSessionManager_RevokeAllExcept(t *testing.T) {
 		assert.Equal(t, keepSessionID, sessions[0].ID)
 	})
 
-	t.Run("revoke_all_except_invalid_input", func(t *testing.T) {
-		mgr, err := NewSessionManager()
-		require.NoError(t, err)
+	cancelled, cancel := context.WithCancel(context.Background())
+	cancel()
 
-		cancelled, cancel := context.WithCancel(ctx)
-		cancel()
-		err = mgr.RevokeAllExcept(cancelled, 10001, "tenant-1", "session-1")
-		assert.Equal(t, context.Canceled, err)
+	errorCases := []struct {
+		name            string
+		ctx             context.Context
+		userID          uint64
+		tenantID        string
+		exceptSessionID string
+		wantErr         error
+	}{
+		{"empty_user_id", ctx, 0, "tenant-1", "session-1", ErrSessionInvalid},
+		{"empty_tenant_id", ctx, 10001, "", "session-1", ErrSessionInvalid},
+		{"empty_except_session_id", ctx, 10001, "tenant-1", "", ErrSessionInvalid},
+		{"cancelled_context", cancelled, 10001, "tenant-1", "session-1", context.Canceled},
+	}
+	for _, tc := range errorCases {
+		t.Run(tc.name, func(t *testing.T) {
+			mgr, err := NewSessionManager()
+			require.NoError(t, err)
 
-		err = mgr.RevokeAllExcept(ctx, 0, "tenant-1", "session-1")
-		assert.Error(t, err, "empty user ID")
-
-		err = mgr.RevokeAllExcept(ctx, 10001, "", "session-1")
-		assert.Error(t, err, "empty tenant ID")
-
-		err = mgr.RevokeAllExcept(ctx, 10001, "tenant-1", "")
-		assert.Error(t, err, "empty except session ID")
-	})
+			err = mgr.RevokeAllExcept(tc.ctx, tc.userID, tc.tenantID, tc.exceptSessionID)
+			assert.ErrorIs(t, err, tc.wantErr)
+		})
+	}
 }
 
 func TestSessionManager_CleanupExpired(t *testing.T) {
@@ -624,13 +660,14 @@ func TestSessionManager_CleanupExpired(t *testing.T) {
 	})
 
 	t.Run("cleanup_cancelled_context", func(t *testing.T) {
+		cancelled, cancel := context.WithCancel(context.Background())
+		cancel()
+
 		mgr, err := NewSessionManager()
 		require.NoError(t, err)
 
-		cancelled, cancel := context.WithCancel(ctx)
-		cancel()
 		_, err = mgr.CleanupExpired(cancelled)
-		assert.Equal(t, context.Canceled, err)
+		assert.ErrorIs(t, err, context.Canceled)
 	})
 }
 
@@ -678,10 +715,11 @@ func TestSessionManager_ValidateSession(t *testing.T) {
 
 	t.Run("validate_idle_session", func(t *testing.T) {
 		policy := &SessionPolicy{
-			IdleTimeout:     time.Minute,
+			IdleTimeout:     1 * time.Millisecond,
 			AbsoluteTimeout: 24 * time.Hour,
 		}
-		mgr, err := NewSessionManager(WithSessionPolicy(policy))
+		storage := NewMemorySessionExtStorage()
+		mgr, err := NewSessionManager(WithSessionPolicy(policy), WithSessionStorage(storage))
 		require.NoError(t, err)
 
 		session := &SessionExt{
@@ -693,20 +731,21 @@ func TestSessionManager_ValidateSession(t *testing.T) {
 			LastActive: time.Now().Add(-1 * time.Hour),
 			ExpiresAt:  time.Now().Add(1 * time.Hour),
 		}
-		require.NoError(t, mgr.storage.Create(ctx, session))
+		require.NoError(t, storage.Create(ctx, session))
 
 		err = mgr.ValidateSession(ctx, session.ID)
 		assert.ErrorIs(t, err, ErrSessionExpired)
 	})
 
 	t.Run("validate_cancelled_context", func(t *testing.T) {
+		cancelled, cancel := context.WithCancel(context.Background())
+		cancel()
+
 		mgr, err := NewSessionManager()
 		require.NoError(t, err)
 
-		cancelled, cancel := context.WithCancel(ctx)
-		cancel()
 		err = mgr.ValidateSession(cancelled, "session-123")
-		assert.Equal(t, context.Canceled, err)
+		assert.ErrorIs(t, err, context.Canceled)
 	})
 }
 
@@ -992,6 +1031,9 @@ func TestMemorySessionExtStorage_Delete_WithRefreshHash(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error after delete")
 	}
+	if _, err := storage.GetByToken(ctx, "refresh1"); err == nil {
+		t.Fatal("expected refresh hash index to be removed after delete")
+	}
 }
 
 func TestMemorySessionExtStorage_DeleteByUser_Success(t *testing.T) {
@@ -1192,10 +1234,6 @@ func TestSessionExt_Validate_MissingTenantID(t *testing.T) {
 
 // =============================================================================
 // Session Manager - RevokeAllForUser, RevokeAllExcept tests
-// =============================================================================
-
-// =============================================================================
-// OIDC Provider - handleClientCredentialsGrant tests
 // =============================================================================
 
 func TestOIDCProvider_Token_ClientCredentialsGrantFinal(t *testing.T) {
@@ -1515,42 +1553,8 @@ func TestPolicyEngine_SimulatePolicy_SuccessFinal(t *testing.T) {
 	assert.NotEmpty(t, result.EvaluationSteps)
 }
 
-func TestPolicyEngine_SimulatePolicy_NilRequestFinal(t *testing.T) {
+func TestPolicyEngine_SimulatePolicy_InvalidRequestFinal(t *testing.T) {
 	ctx := context.Background()
-
-	storage := newMockPolicyStorage()
-	engine := NewPolicyEngine(PolicyEngineOptions{
-		Storage: storage,
-	})
-
-	_, err := engine.SimulatePolicy(ctx, nil)
-	assert.Error(t, err)
-}
-
-func TestPolicyEngine_SimulatePolicy_NilPolicyFinal(t *testing.T) {
-	ctx := context.Background()
-
-	storage := newMockPolicyStorage()
-	engine := NewPolicyEngine(PolicyEngineOptions{
-		Storage: storage,
-	})
-
-	req := &PolicySimulationRequest{
-		Policy:       nil,
-		CheckRequest: &CheckRequest{},
-	}
-
-	_, err := engine.SimulatePolicy(ctx, req)
-	assert.Error(t, err)
-}
-
-func TestPolicyEngine_SimulatePolicy_NilCheckRequestFinal(t *testing.T) {
-	ctx := context.Background()
-
-	storage := newMockPolicyStorage()
-	engine := NewPolicyEngine(PolicyEngineOptions{
-		Storage: storage,
-	})
 
 	policy := &Policy{
 		APIVersion: "iam.quicbaas.io/v1",
@@ -1561,13 +1565,24 @@ func TestPolicyEngine_SimulatePolicy_NilCheckRequestFinal(t *testing.T) {
 		},
 	}
 
-	req := &PolicySimulationRequest{
-		Policy:       policy,
-		CheckRequest: nil,
+	tests := []struct {
+		name string
+		req  *PolicySimulationRequest
+	}{
+		{"nil_request", nil},
+		{"nil_policy", &PolicySimulationRequest{Policy: nil, CheckRequest: &CheckRequest{}}},
+		{"nil_check_request", &PolicySimulationRequest{Policy: policy, CheckRequest: nil}},
 	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			engine := NewPolicyEngine(PolicyEngineOptions{
+				Storage: newMockPolicyStorage(),
+			})
 
-	_, err := engine.SimulatePolicy(ctx, req)
-	assert.Error(t, err)
+			_, err := engine.SimulatePolicy(ctx, tt.req)
+			assert.Error(t, err)
+		})
+	}
 }
 
 func TestPolicyEngine_SimulatePolicy_DenyEffectFinal(t *testing.T) {
@@ -1672,50 +1687,27 @@ func TestPolicyEngine_GetEffectivePermissions_SuccessFinal(t *testing.T) {
 	assert.NotNil(t, result.Permissions)
 }
 
-func TestPolicyEngine_GetEffectivePermissions_NilRequestFinal(t *testing.T) {
+func TestPolicyEngine_GetEffectivePermissions_InvalidRequestFinal(t *testing.T) {
 	ctx := context.Background()
 
-	storage := newMockPolicyStorage()
-	engine := NewPolicyEngine(PolicyEngineOptions{
-		Storage: storage,
-	})
-
-	_, err := engine.GetEffectivePermissions(ctx, "tenant-1", nil)
-	assert.Error(t, err)
-}
-
-func TestPolicyEngine_GetEffectivePermissions_NilSubjectFinal(t *testing.T) {
-	ctx := context.Background()
-
-	storage := newMockPolicyStorage()
-	engine := NewPolicyEngine(PolicyEngineOptions{
-		Storage: storage,
-	})
-
-	req := &EffectivePermissionsRequest{
-		Subject:          nil,
-		ResourcePatterns: []string{"/test/*"},
+	tests := []struct {
+		name string
+		req  *EffectivePermissionsRequest
+	}{
+		{"nil_request", nil},
+		{"nil_subject", &EffectivePermissionsRequest{Subject: nil, ResourcePatterns: []string{"/test/*"}}},
+		{"empty_resource_patterns", &EffectivePermissionsRequest{Subject: &Subject{ID: "user-1"}, ResourcePatterns: []string{}}},
 	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			engine := NewPolicyEngine(PolicyEngineOptions{
+				Storage: newMockPolicyStorage(),
+			})
 
-	_, err := engine.GetEffectivePermissions(ctx, "tenant-1", req)
-	assert.Error(t, err)
-}
-
-func TestPolicyEngine_GetEffectivePermissions_EmptyResourcePatternsFinal(t *testing.T) {
-	ctx := context.Background()
-
-	storage := newMockPolicyStorage()
-	engine := NewPolicyEngine(PolicyEngineOptions{
-		Storage: storage,
-	})
-
-	req := &EffectivePermissionsRequest{
-		Subject:          &Subject{ID: "user-1"},
-		ResourcePatterns: []string{},
+			_, err := engine.GetEffectivePermissions(ctx, "tenant-1", tt.req)
+			assert.Error(t, err)
+		})
 	}
-
-	_, err := engine.GetEffectivePermissions(ctx, "tenant-1", req)
-	assert.Error(t, err)
 }
 
 // =============================================================================
@@ -2088,54 +2080,25 @@ func TestBackendStorage_ListPoliciesFinal(t *testing.T) {
 // Session Storage Coverage Improvement Tests
 // =============================================================================
 
-func TestMemorySessionExtStorage_Update_SuccessFinal(t *testing.T) {
-	ctx := context.Background()
-	storage := NewMemorySessionExtStorage()
-
-	session := &SessionExt{
-		ID:         uuid.New().String(),
-		UserID:     40045,
-		TenantID:   "tenant-update-1",
-		TokenHash:  hashTokenForTestFinal("update-token-final"),
-		Created:    time.Now(),
-		LastActive: time.Now(),
-		ExpiresAt:  time.Now().Add(24 * time.Hour),
-	}
-	err := storage.Create(ctx, session)
-	require.NoError(t, err)
-
-	// Update session
-	session.LastActive = time.Now().Add(1 * time.Hour)
-	session.IPAddress = "192.168.1.100"
-	err = storage.Update(ctx, session)
-	require.NoError(t, err)
-
-	// Verify update
-	retrieved, err := storage.Get(ctx, session.ID)
-	require.NoError(t, err)
-	assert.Equal(t, "192.168.1.100", retrieved.IPAddress)
-}
-
 // =============================================================================
 // SessionExt - IsIdle tests
 // =============================================================================
 
-func TestSessionExt_IsIdleTimeout(t *testing.T) {
+func TestSessionExt_IsIdle_Policies(t *testing.T) {
 	tests := []struct {
 		name       string
 		policy     *SessionPolicy
 		lastActive time.Duration
 		want       bool
 	}{
-		{"within_timeout", &SessionPolicy{IdleTimeout: 30 * time.Minute}, 10 * time.Minute, false},
-		{"beyond_timeout", &SessionPolicy{IdleTimeout: 30 * time.Minute}, 45 * time.Minute, true},
-		{"nil_policy", nil, 2 * time.Hour, false},
-		{"zero_timeout", &SessionPolicy{IdleTimeout: 0}, 24 * time.Hour, false},
+		{"within_timeout", &SessionPolicy{IdleTimeout: 30 * time.Minute}, -10 * time.Minute, false},
+		{"beyond_timeout", &SessionPolicy{IdleTimeout: 30 * time.Minute}, -45 * time.Minute, true},
+		{"nil_policy", nil, -2 * time.Hour, false},
+		{"zero_timeout", &SessionPolicy{IdleTimeout: 0}, -24 * time.Hour, false},
 	}
-
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			session := &SessionExt{LastActive: time.Now().Add(-tt.lastActive)}
+			session := &SessionExt{LastActive: time.Now().Add(tt.lastActive)}
 			assert.Equal(t, tt.want, session.IsIdle(tt.policy))
 		})
 	}
@@ -2161,33 +2124,6 @@ func hashClientSecretFinal(t *testing.T, secret string) string {
 // =============================================================================
 // Tests for session.go - WithSessionStorage option
 // =============================================================================
-
-func TestWithSessionStorageCoverage(t *testing.T) {
-	storage := NewMemorySessionExtStorage()
-
-	manager, err := NewSessionManager(WithSessionStorage(storage))
-	require.NoError(t, err)
-	require.NotNil(t, manager)
-
-	// Verify the storage is being used by creating a session
-	ctx := context.Background()
-	session := &SessionExt{
-		ID:        uuid.New().String(),
-		TenantID:  "tenant-1",
-		UserID:    10001,
-		TokenHash: "test-token-hash-12345678901234567890",
-		UserAgent: "test-agent",
-		IPAddress: "127.0.0.1",
-	}
-
-	err = manager.Create(ctx, session)
-	require.NoError(t, err)
-
-	// Verify we can retrieve it
-	retrieved, err := manager.Get(ctx, session.ID)
-	require.NoError(t, err)
-	assert.Equal(t, session.ID, retrieved.ID)
-}
 
 // =============================================================================
 // Tests for session_types.go - SessionPolicy.Validate
