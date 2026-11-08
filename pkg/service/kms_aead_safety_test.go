@@ -931,7 +931,7 @@ func TestKMSService_SafetyCheck_Integration(t *testing.T) {
 
 		// Get the tracker and set per-key config with smaller limits for testing
 		tracker := svc.GetSafetyTracker()
-		ctx := context.Background()
+		ctx := systemTenantCtx()
 
 		// Set per-key config with max 100 operations
 		tracker.SetKeyConfig("high-usage-key", AEADSafetyConfig{
@@ -971,7 +971,7 @@ func TestKMSService_SafetyCheck_Integration(t *testing.T) {
 		logger := newMockLogger()
 		svc := newKMSService(mockMgr, logger)
 
-		ctx := context.Background()
+		ctx := systemTenantCtx()
 		resp, err := svc.SafetyCheck(ctx, &SafetyCheckRequest{
 			ThresholdPercent: 0, // Should default to 80
 		})
@@ -986,7 +986,7 @@ func TestKMSService_SafetyCheck_Integration(t *testing.T) {
 		logger := newMockLogger()
 		svc := newKMSService(mockMgr, logger)
 
-		ctx := context.Background()
+		ctx := systemTenantCtx()
 		resp, err := svc.SafetyCheck(ctx, &SafetyCheckRequest{
 			ThresholdPercent: -10,
 		})
@@ -1003,7 +1003,7 @@ func TestKMSService_SafetyReport_Integration(t *testing.T) {
 		logger := newMockLogger()
 		svc := newKMSService(mockMgr, logger)
 
-		ctx := context.Background()
+		ctx := systemTenantCtx()
 		resp, err := svc.SafetyReport(ctx, &SafetyReportRequest{})
 
 		require.NoError(t, err)
@@ -1022,7 +1022,7 @@ func TestKMSService_SafetyReport_Integration(t *testing.T) {
 		svc := newKMSService(mockMgr, logger)
 
 		tracker := svc.GetSafetyTracker()
-		ctx := context.Background()
+		ctx := systemTenantCtx()
 
 		_ = tracker.RecordKeyEncrypt(ctx, "key1", 100)
 		_ = tracker.RecordKeyEncrypt(ctx, "key1", 200)

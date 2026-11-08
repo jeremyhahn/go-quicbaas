@@ -37,9 +37,9 @@ const lastPass: WorkerImageStatus = {
     latest: { claude_code: '2.1.280', codex: '0.156.0' },
     bound: [
       { image: 'quicbaas-software-factory-worker:0.10.0-alpha', agents: { claude_code: '2.1.278', codex: '0.150.0' }, uses: 2, stale: true },
-      { image: 'reg:3001/o/w:0.11.0-alpha-cc2.1.280-cx0.156.0@sha256:abc', agents: { claude_code: '2.1.280', codex: '0.156.0' }, uses: 1, stale: false },
+      { image: 'reg:3000/o/w:0.11.0-alpha-cc2.1.280-cx0.156.0@sha256:abc', agents: { claude_code: '2.1.280', codex: '0.156.0' }, uses: 1, stale: false },
     ],
-    reference: 'reg:3001/o/w:0.11.0-alpha-cc2.1.280-cx0.156.0@sha256:abc',
+    reference: 'reg:3000/o/w:0.11.0-alpha-cc2.1.280-cx0.156.0@sha256:abc',
     error: '1 of 2 bindings could not be rebound',
   },
 };

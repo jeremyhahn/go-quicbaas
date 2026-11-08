@@ -50,7 +50,7 @@ func secretsHolding(data string) *fakeSecrets {
 
 func TestSecretCredential_ReadsTheTokenFromTheTenantSecret(t *testing.T) {
 	secrets := secretsHolding("s3cret\n")
-	credential, err := NewSecretCredential(secrets, testSecretTenant, testSecretRef, "agent-company")
+	credential, err := NewSecretCredential(secrets, testSecretTenant, testSecretRef, "company-agent")
 	if err != nil {
 		t.Fatalf("NewSecretCredential: %v", err)
 	}
@@ -62,7 +62,7 @@ func TestSecretCredential_ReadsTheTokenFromTheTenantSecret(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Credential: %v", err)
 	}
-	if auth.Username != "agent-company" || string(auth.Secret) != "s3cret" {
+	if auth.Username != "company-agent" || string(auth.Secret) != "s3cret" {
 		t.Fatalf("auth = %q/%q, want the account and the trimmed token", auth.Username, auth.Secret)
 	}
 	if len(secrets.reads) != 1 || secrets.reads[0] != testSecretTenant+":"+testSecretRef {
@@ -72,7 +72,7 @@ func TestSecretCredential_ReadsTheTokenFromTheTenantSecret(t *testing.T) {
 
 func TestSecretCredential_ARotatedSecretIsReadAtTheNextPush(t *testing.T) {
 	secrets := secretsHolding("first")
-	credential, err := NewSecretCredential(secrets, testSecretTenant, testSecretRef, "agent-company")
+	credential, err := NewSecretCredential(secrets, testSecretTenant, testSecretRef, "company-agent")
 	if err != nil {
 		t.Fatalf("NewSecretCredential: %v", err)
 	}
@@ -95,7 +95,7 @@ func TestSecretCredential_Refuses(t *testing.T) {
 	}
 	for name, secrets := range cases {
 		t.Run(name, func(t *testing.T) {
-			credential, err := NewSecretCredential(secrets, testSecretTenant, testSecretRef, "agent-company")
+			credential, err := NewSecretCredential(secrets, testSecretTenant, testSecretRef, "company-agent")
 			if err != nil {
 				t.Fatalf("NewSecretCredential: %v", err)
 			}
