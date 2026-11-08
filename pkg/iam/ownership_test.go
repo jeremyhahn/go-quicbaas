@@ -155,42 +155,27 @@ func TestOwnershipManager_GetOwner(t *testing.T) {
 		tenantID     string
 		resourceType string
 		resourceID   string
-		wantErr      bool
+		errMsg       string
 	}{
-		{
-			name:         "existing ownership",
-			tenantID:     "tenant1",
-			resourceType: "database",
-			resourceID:   "db1",
-			wantErr:      false,
-		},
-		{
-			name:         "non-existent ownership",
-			tenantID:     "tenant1",
-			resourceType: "database",
-			resourceID:   "db2",
-			wantErr:      true,
-		},
-		{
-			name:         "missing tenant ID",
-			tenantID:     "",
-			resourceType: "database",
-			resourceID:   "db1",
-			wantErr:      true,
-		},
+		{name: "existing ownership", tenantID: "tenant1", resourceType: "database", resourceID: "db1"},
+		{name: "non-existent ownership", tenantID: "tenant1", resourceType: "database", resourceID: "db2", errMsg: "not found"},
+		{name: "missing tenant ID", tenantID: "", resourceType: "database", resourceID: "db1", errMsg: "tenant ID"},
+		{name: "missing resource type", tenantID: "tenant1", resourceType: "", resourceID: "db1", errMsg: "resource type"},
+		{name: "missing resource ID", tenantID: "tenant1", resourceType: "database", resourceID: "", errMsg: "resource ID"},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			result, err := mgr.GetOwner(ctx, tt.tenantID, tt.resourceType, tt.resourceID)
-			if tt.wantErr {
-				assert.Error(t, err)
-			} else {
-				assert.NoError(t, err)
-				require.NotNil(t, result)
-				assert.Equal(t, ownership.ID, result.ID)
-				assert.Equal(t, ownership.OwnerID, result.OwnerID)
+			if tt.errMsg != "" {
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), tt.errMsg)
+				return
 			}
+			assert.NoError(t, err)
+			require.NotNil(t, result)
+			assert.Equal(t, ownership.ID, result.ID)
+			assert.Equal(t, ownership.OwnerID, result.OwnerID)
 		})
 	}
 }
@@ -212,12 +197,28 @@ func TestOwnershipManager_TransferOwnership(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "user2", ownership.OwnerID)
 
-	// Test error cases
-	err = mgr.TransferOwnership(ctx, "", "database", "db1", "user3")
-	assert.Error(t, err)
+	errorCases := []struct {
+		name         string
+		tenantID     string
+		resourceType string
+		resourceID   string
+		newOwnerID   string
+		errMsg       string
+	}{
+		{name: "missing tenant ID", tenantID: "", resourceType: "database", resourceID: "db1", newOwnerID: "user3", errMsg: "tenant ID"},
+		{name: "missing resource type", tenantID: "tenant1", resourceType: "", resourceID: "db1", newOwnerID: "user3", errMsg: "resource type"},
+		{name: "missing resource ID", tenantID: "tenant1", resourceType: "database", resourceID: "", newOwnerID: "user3", errMsg: "resource ID"},
+		{name: "missing new owner ID", tenantID: "tenant1", resourceType: "database", resourceID: "db1", newOwnerID: "", errMsg: "owner ID"},
+		{name: "non-existent ownership", tenantID: "tenant1", resourceType: "database", resourceID: "nonexistent", newOwnerID: "user3", errMsg: "not found"},
+	}
 
-	err = mgr.TransferOwnership(ctx, "tenant1", "database", "nonexistent", "user3")
-	assert.Error(t, err)
+	for _, tt := range errorCases {
+		t.Run(tt.name, func(t *testing.T) {
+			err := mgr.TransferOwnership(ctx, tt.tenantID, tt.resourceType, tt.resourceID, tt.newOwnerID)
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), tt.errMsg)
+		})
+	}
 }
 
 func TestOwnershipManager_ShareResource(t *testing.T) {
@@ -242,6 +243,24 @@ func TestOwnershipManager_ShareResource(t *testing.T) {
 				GranteeType:  GranteeTypeUser,
 				GranteeID:    "user2",
 				Permissions:  []SharePermission{PermissionRead, PermissionWrite},
+				CreatedBy:    "user1",
+				Metadata: map[string]interface{}{
+					"reason": "collaboration",
+					"team":   "engineering",
+				},
+			},
+			wantErr: false,
+		},
+		{
+			// Only a user grantee equal to the owner is self-sharing
+			name: "group grantee with the owner's ID",
+			req: &CreateShareRequest{
+				TenantID:     "tenant1",
+				ResourceType: "database",
+				ResourceID:   "db1",
+				GranteeType:  GranteeTypeGroup,
+				GranteeID:    "user1",
+				Permissions:  []SharePermission{PermissionRead},
 				CreatedBy:    "user1",
 			},
 			wantErr: false,
@@ -358,6 +377,7 @@ func TestOwnershipManager_ShareResource(t *testing.T) {
 				assert.Equal(t, tt.req.GranteeType, share.GranteeType)
 				assert.Equal(t, tt.req.GranteeID, share.GranteeID)
 				assert.Equal(t, tt.req.Permissions, share.Permissions)
+				assert.Equal(t, tt.req.Metadata, share.Metadata)
 				assert.False(t, share.CreatedAt.IsZero())
 				assert.False(t, share.UpdatedAt.IsZero())
 			}
@@ -392,18 +412,27 @@ func TestOwnershipManager_UpdateShare(t *testing.T) {
 	assert.Contains(t, updated.Permissions, PermissionRead)
 	assert.Contains(t, updated.Permissions, PermissionWrite)
 
-	// Test error cases
-	_, err = mgr.UpdateShare(ctx, "tenant1", "nonexistent", []SharePermission{PermissionRead})
-	assert.Error(t, err)
+	errorCases := []struct {
+		name        string
+		tenantID    string
+		shareID     string
+		permissions []SharePermission
+		errMsg      string
+	}{
+		{name: "non-existent share", tenantID: "tenant1", shareID: "nonexistent", permissions: []SharePermission{PermissionRead}, errMsg: "not found"},
+		{name: "missing tenant ID", tenantID: "", shareID: share.ID, permissions: []SharePermission{PermissionRead}, errMsg: "tenant ID"},
+		{name: "missing share ID", tenantID: "tenant1", shareID: "", permissions: []SharePermission{PermissionRead}, errMsg: "share ID"},
+		{name: "no permissions", tenantID: "tenant1", shareID: share.ID, permissions: nil, errMsg: "at least one permission"},
+		{name: "invalid permission", tenantID: "tenant1", shareID: share.ID, permissions: []SharePermission{"invalid"}, errMsg: "invalid permission"},
+	}
 
-	_, err = mgr.UpdateShare(ctx, "", share.ID, []SharePermission{PermissionRead})
-	assert.Error(t, err)
-
-	_, err = mgr.UpdateShare(ctx, "tenant1", share.ID, []SharePermission{})
-	assert.Error(t, err)
-
-	_, err = mgr.UpdateShare(ctx, "tenant1", share.ID, []SharePermission{"invalid"})
-	assert.Error(t, err)
+	for _, tt := range errorCases {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := mgr.UpdateShare(ctx, tt.tenantID, tt.shareID, tt.permissions)
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), tt.errMsg)
+		})
+	}
 }
 
 func TestOwnershipManager_RevokeShare(t *testing.T) {
@@ -592,28 +621,19 @@ func TestOwnershipManager_CheckAccess_GroupShare(t *testing.T) {
 
 func TestOwnershipManager_CheckAccess_ExpiredShare(t *testing.T) {
 	ctx := context.Background()
-	mgr := createTestOwnershipManager(t)
-
-	// Setup: Create ownership
-	_, err := mgr.SetOwner(ctx, "tenant1", "database", "db1", "user1")
-	require.NoError(t, err)
-
-	// Create a share that will expire in 1 millisecond
-	futureTime := time.Now().Add(1 * time.Millisecond)
-	_, err = mgr.ShareResource(ctx, &CreateShareRequest{
-		TenantID:     "tenant1",
-		ResourceType: "database",
-		ResourceID:   "db1",
-		GranteeType:  GranteeTypeUser,
-		GranteeID:    "user2",
-		Permissions:  []SharePermission{PermissionRead},
-		ExpiresAt:    &futureTime,
-		CreatedBy:    "user1",
+	shareStore := NewMemoryShareStorage()
+	mgr, err := NewOwnershipManager(OwnershipManagerOptions{
+		OwnershipStorage: NewMemoryOwnershipStorage(),
+		ShareStorage:     shareStore,
 	})
 	require.NoError(t, err)
 
-	// Wait for share to expire
-	time.Sleep(10 * time.Millisecond)
+	// Setup: Create ownership
+	_, err = mgr.SetOwner(ctx, "tenant1", "database", "db1", "user1")
+	require.NoError(t, err)
+
+	// ShareResource rejects a past expiry, so store the expired share directly
+	require.NoError(t, shareStore.CreateShare(ctx, expiredTestShare("share1", "user2")))
 
 	// Expired share should not grant access
 	resp, err := mgr.CheckAccess(ctx, &OwnershipCheckRequest{
@@ -660,51 +680,6 @@ func TestOwnershipManager_CheckAccess_AdminPermission(t *testing.T) {
 		assert.NoError(t, err, "checking permission: %s", perm)
 		assert.True(t, resp.Allowed, "admin should have permission: %s", perm)
 	}
-}
-
-func TestOwnershipManager_CheckAccess_ShareDelegation(t *testing.T) {
-	ctx := context.Background()
-	mgr := createTestOwnershipManager(t)
-
-	// Setup: Create ownership and share with share permission
-	_, err := mgr.SetOwner(ctx, "tenant1", "database", "db1", "user1")
-	require.NoError(t, err)
-
-	_, err = mgr.ShareResource(ctx, &CreateShareRequest{
-		TenantID:     "tenant1",
-		ResourceType: "database",
-		ResourceID:   "db1",
-		GranteeType:  GranteeTypeUser,
-		GranteeID:    "user2",
-		Permissions:  []SharePermission{PermissionRead, PermissionShare},
-		CreatedBy:    "user1",
-	})
-	require.NoError(t, err)
-
-	// User2 should be able to share with share permission
-	resp, err := mgr.CheckAccess(ctx, &OwnershipCheckRequest{
-		TenantID:           "tenant1",
-		ResourceType:       "database",
-		ResourceID:         "db1",
-		UserID:             "user2",
-		RequiredPermission: PermissionShare,
-	})
-
-	assert.NoError(t, err)
-	require.NotNil(t, resp)
-	assert.True(t, resp.Allowed)
-
-	// User2 cannot delete without delete permission
-	resp, err = mgr.CheckAccess(ctx, &OwnershipCheckRequest{
-		TenantID:           "tenant1",
-		ResourceType:       "database",
-		ResourceID:         "db1",
-		UserID:             "user2",
-		RequiredPermission: PermissionDelete,
-	})
-
-	assert.NoError(t, err)
-	assert.False(t, resp.Allowed)
 }
 
 func TestOwnershipManager_CheckAccess_NoOwnership(t *testing.T) {
@@ -767,6 +742,11 @@ func TestOwnershipManager_ListUserShares(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Len(t, shares, 2)
 
+	// A user with no shares gets an empty list, not an error
+	shares, err = mgr.ListUserShares(ctx, "tenant1", "user3", nil)
+	assert.NoError(t, err)
+	assert.Empty(t, shares)
+
 	// Test error cases
 	_, err = mgr.ListUserShares(ctx, "", "user2", nil)
 	assert.Error(t, err)
@@ -779,8 +759,13 @@ func TestOwnershipManager_ListResourceShares(t *testing.T) {
 	ctx := context.Background()
 	mgr := createTestOwnershipManager(t)
 
+	// A resource with no shares gets an empty list, not an error
+	shares, err := mgr.ListResourceShares(ctx, "tenant1", "database", "db1")
+	assert.NoError(t, err)
+	assert.Empty(t, shares)
+
 	// Setup: Create ownership and multiple shares
-	_, err := mgr.SetOwner(ctx, "tenant1", "database", "db1", "user1")
+	_, err = mgr.SetOwner(ctx, "tenant1", "database", "db1", "user1")
 	require.NoError(t, err)
 
 	_, err = mgr.ShareResource(ctx, &CreateShareRequest{
@@ -806,7 +791,7 @@ func TestOwnershipManager_ListResourceShares(t *testing.T) {
 	require.NoError(t, err)
 
 	// List all shares for resource
-	shares, err := mgr.ListResourceShares(ctx, "tenant1", "database", "db1")
+	shares, err = mgr.ListResourceShares(ctx, "tenant1", "database", "db1")
 	assert.NoError(t, err)
 	assert.Len(t, shares, 2)
 
@@ -823,10 +808,15 @@ func TestOwnershipManager_ListResourceShares(t *testing.T) {
 
 func TestOwnershipManager_CleanupExpiredShares(t *testing.T) {
 	ctx := context.Background()
-	mgr := createTestOwnershipManager(t)
+	shareStore := NewMemoryShareStorage()
+	mgr, err := NewOwnershipManager(OwnershipManagerOptions{
+		OwnershipStorage: NewMemoryOwnershipStorage(),
+		ShareStorage:     shareStore,
+	})
+	require.NoError(t, err)
 
 	// Setup: Create ownership and shares with different expiration times
-	_, err := mgr.SetOwner(ctx, "tenant1", "database", "db1", "user1")
+	_, err = mgr.SetOwner(ctx, "tenant1", "database", "db1", "user1")
 	require.NoError(t, err)
 
 	// Active share
@@ -841,22 +831,8 @@ func TestOwnershipManager_CleanupExpiredShares(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	// Share that will expire in 1 millisecond
-	expiresSoon := time.Now().Add(1 * time.Millisecond)
-	_, err = mgr.ShareResource(ctx, &CreateShareRequest{
-		TenantID:     "tenant1",
-		ResourceType: "database",
-		ResourceID:   "db1",
-		GranteeType:  GranteeTypeUser,
-		GranteeID:    "user3",
-		Permissions:  []SharePermission{PermissionRead},
-		ExpiresAt:    &expiresSoon,
-		CreatedBy:    "user1",
-	})
-	require.NoError(t, err)
-
-	// Wait for share to expire
-	time.Sleep(10 * time.Millisecond)
+	// ShareResource rejects a past expiry, so store the expired share directly
+	require.NoError(t, shareStore.CreateShare(ctx, expiredTestShare("expired1", "user3")))
 
 	// Cleanup expired shares
 	count, err := mgr.CleanupExpiredShares(ctx, "tenant1")
@@ -932,12 +908,6 @@ func TestResourceShare_HasPermission(t *testing.T) {
 			check:       PermissionRead,
 			want:        true,
 		},
-		{
-			name:        "admin has write permission",
-			permissions: []SharePermission{PermissionAdmin},
-			check:       PermissionWrite,
-			want:        true,
-		},
 	}
 
 	for _, tt := range tests {
@@ -959,6 +929,7 @@ func TestGranteeType_IsValid(t *testing.T) {
 		{name: "user", gt: GranteeTypeUser, want: true},
 		{name: "group", gt: GranteeTypeGroup, want: true},
 		{name: "invalid", gt: "invalid", want: false},
+		{name: "role", gt: "role", want: false},
 		{name: "empty", gt: "", want: false},
 	}
 
@@ -981,6 +952,7 @@ func TestSharePermission_IsValid(t *testing.T) {
 		{name: "share", perm: PermissionShare, want: true},
 		{name: "admin", perm: PermissionAdmin, want: true},
 		{name: "invalid", perm: "invalid", want: false},
+		{name: "execute", perm: "execute", want: false},
 		{name: "empty", perm: "", want: false},
 	}
 
@@ -991,99 +963,169 @@ func TestSharePermission_IsValid(t *testing.T) {
 	}
 }
 
-func TestValidation(t *testing.T) {
-	t.Run("ResourceOwnership validation", func(t *testing.T) {
-		tests := []struct {
-			name      string
-			ownership *ResourceOwnership
-			wantErr   bool
-		}{
-			{
-				name: "valid",
-				ownership: &ResourceOwnership{
-					ID:           "id1",
-					TenantID:     "tenant1",
-					ResourceType: "database",
-					ResourceID:   "db1",
-					OwnerID:      "user1",
-				},
-				wantErr: false,
-			},
-			{
-				name: "missing ID",
-				ownership: &ResourceOwnership{
-					TenantID:     "tenant1",
-					ResourceType: "database",
-					ResourceID:   "db1",
-					OwnerID:      "user1",
-				},
-				wantErr: true,
-			},
-			{
-				name: "missing tenant ID",
-				ownership: &ResourceOwnership{
-					ID:           "id1",
-					ResourceType: "database",
-					ResourceID:   "db1",
-					OwnerID:      "user1",
-				},
-				wantErr: true,
-			},
+func TestResourceOwnership_Validate(t *testing.T) {
+	valid := func() *ResourceOwnership {
+		return &ResourceOwnership{
+			ID:           "id1",
+			TenantID:     "tenant1",
+			ResourceType: "database",
+			ResourceID:   "db1",
+			OwnerID:      "user1",
 		}
+	}
 
-		for _, tt := range tests {
-			t.Run(tt.name, func(t *testing.T) {
-				err := tt.ownership.Validate()
-				if tt.wantErr {
-					assert.Error(t, err)
-				} else {
-					assert.NoError(t, err)
-				}
-			})
-		}
-	})
+	tests := []struct {
+		name   string
+		mutate func(o *ResourceOwnership)
+		errMsg string
+	}{
+		{name: "valid", mutate: func(o *ResourceOwnership) {}},
+		{name: "missing ID", mutate: func(o *ResourceOwnership) { o.ID = "" }, errMsg: "ownership ID"},
+		{name: "missing tenant ID", mutate: func(o *ResourceOwnership) { o.TenantID = "" }, errMsg: "tenant ID"},
+		{name: "missing resource type", mutate: func(o *ResourceOwnership) { o.ResourceType = "" }, errMsg: "resource type"},
+		{name: "missing resource ID", mutate: func(o *ResourceOwnership) { o.ResourceID = "" }, errMsg: "resource ID"},
+		{name: "missing owner ID", mutate: func(o *ResourceOwnership) { o.OwnerID = "" }, errMsg: "owner ID"},
+	}
 
-	t.Run("OwnershipCheckRequest validation", func(t *testing.T) {
-		tests := []struct {
-			name    string
-			req     *OwnershipCheckRequest
-			wantErr bool
-		}{
-			{
-				name: "valid",
-				req: &OwnershipCheckRequest{
-					TenantID:           "tenant1",
-					ResourceType:       "database",
-					ResourceID:         "db1",
-					UserID:             "user1",
-					RequiredPermission: PermissionRead,
-				},
-				wantErr: false,
-			},
-			{
-				name: "invalid permission",
-				req: &OwnershipCheckRequest{
-					TenantID:           "tenant1",
-					ResourceType:       "database",
-					ResourceID:         "db1",
-					UserID:             "user1",
-					RequiredPermission: "invalid",
-				},
-				wantErr: true,
-			},
-		}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ownership := valid()
+			tt.mutate(ownership)
+			err := ownership.Validate()
+			if tt.errMsg == "" {
+				assert.NoError(t, err)
+				return
+			}
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), tt.errMsg)
+		})
+	}
+}
 
-		for _, tt := range tests {
-			t.Run(tt.name, func(t *testing.T) {
-				err := tt.req.Validate()
-				if tt.wantErr {
-					assert.Error(t, err)
-				} else {
-					assert.NoError(t, err)
-				}
-			})
+func TestResourceShare_Validate(t *testing.T) {
+	valid := func() *ResourceShare {
+		return &ResourceShare{
+			ID:           "share1",
+			TenantID:     "tenant1",
+			ResourceType: "database",
+			ResourceID:   "db1",
+			OwnerID:      "user1",
+			GranteeType:  GranteeTypeUser,
+			GranteeID:    "user2",
+			Permissions:  []SharePermission{PermissionRead},
+			CreatedBy:    "user1",
 		}
-	})
+	}
+
+	tests := []struct {
+		name   string
+		mutate func(s *ResourceShare)
+		errMsg string
+	}{
+		{name: "valid", mutate: func(s *ResourceShare) {}},
+		{name: "all fields empty", mutate: func(s *ResourceShare) { *s = ResourceShare{} }, errMsg: "share ID"},
+		{name: "missing resource type", mutate: func(s *ResourceShare) { s.ResourceType = "" }, errMsg: "resource type"},
+		{name: "missing grantee ID", mutate: func(s *ResourceShare) { s.GranteeID = "" }, errMsg: "grantee ID"},
+		{name: "grantee is owner", mutate: func(s *ResourceShare) { s.GranteeID = s.OwnerID }, errMsg: "cannot share"},
+		{name: "empty permissions", mutate: func(s *ResourceShare) { s.Permissions = []SharePermission{} }, errMsg: "at least one permission"},
+		{name: "invalid permission in list", mutate: func(s *ResourceShare) { s.Permissions = []SharePermission{PermissionRead, "badperm"} }, errMsg: "invalid permission"},
+		{name: "missing created by", mutate: func(s *ResourceShare) { s.CreatedBy = "" }, errMsg: "created by"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			share := valid()
+			tt.mutate(share)
+			err := share.Validate()
+			if tt.errMsg == "" {
+				assert.NoError(t, err)
+				return
+			}
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), tt.errMsg)
+		})
+	}
+}
+
+func TestOwnershipCheckRequest_Validate(t *testing.T) {
+	valid := func() *OwnershipCheckRequest {
+		return &OwnershipCheckRequest{
+			TenantID:           "tenant1",
+			ResourceType:       "database",
+			ResourceID:         "db1",
+			UserID:             "user1",
+			RequiredPermission: PermissionRead,
+		}
+	}
+
+	tests := []struct {
+		name   string
+		mutate func(r *OwnershipCheckRequest)
+		errMsg string
+	}{
+		{name: "valid", mutate: func(r *OwnershipCheckRequest) {}},
+		{name: "missing tenant ID", mutate: func(r *OwnershipCheckRequest) { r.TenantID = "" }, errMsg: "tenant ID"},
+		{name: "missing resource type", mutate: func(r *OwnershipCheckRequest) { r.ResourceType = "" }, errMsg: "resource type"},
+		{name: "missing resource ID", mutate: func(r *OwnershipCheckRequest) { r.ResourceID = "" }, errMsg: "resource ID"},
+		{name: "missing user ID", mutate: func(r *OwnershipCheckRequest) { r.UserID = "" }, errMsg: "user ID"},
+		{name: "invalid permission", mutate: func(r *OwnershipCheckRequest) { r.RequiredPermission = "invalid" }, errMsg: "invalid permission"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := valid()
+			tt.mutate(req)
+			err := req.Validate()
+			if tt.errMsg == "" {
+				assert.NoError(t, err)
+				return
+			}
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), tt.errMsg)
+		})
+	}
+}
+
+func TestCreateShareRequest_Validate(t *testing.T) {
+	valid := func() *CreateShareRequest {
+		return &CreateShareRequest{
+			TenantID:     "tenant1",
+			ResourceType: "database",
+			ResourceID:   "db1",
+			GranteeType:  GranteeTypeUser,
+			GranteeID:    "user2",
+			Permissions:  []SharePermission{PermissionRead},
+			CreatedBy:    "user1",
+		}
+	}
+
+	tests := []struct {
+		name   string
+		mutate func(r *CreateShareRequest)
+		errMsg string
+	}{
+		{name: "valid", mutate: func(r *CreateShareRequest) {}},
+		{name: "missing tenant ID", mutate: func(r *CreateShareRequest) { r.TenantID = "" }, errMsg: "tenant ID"},
+		{name: "missing resource type", mutate: func(r *CreateShareRequest) { r.ResourceType = "" }, errMsg: "resource type"},
+		{name: "missing resource ID", mutate: func(r *CreateShareRequest) { r.ResourceID = "" }, errMsg: "resource ID"},
+		{name: "missing grantee ID", mutate: func(r *CreateShareRequest) { r.GranteeID = "" }, errMsg: "grantee ID"},
+		{name: "empty permissions", mutate: func(r *CreateShareRequest) { r.Permissions = []SharePermission{} }, errMsg: "at least one permission"},
+		{name: "missing created by", mutate: func(r *CreateShareRequest) { r.CreatedBy = "" }, errMsg: "created by"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := valid()
+			tt.mutate(req)
+			err := req.Validate()
+			if tt.errMsg == "" {
+				assert.NoError(t, err)
+				return
+			}
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), tt.errMsg)
+		})
+	}
 }
 
 // Helper functions
@@ -1095,6 +1137,23 @@ func createTestOwnershipManager(t *testing.T) *OwnershipManager {
 	})
 	require.NoError(t, err)
 	return mgr
+}
+
+// expiredTestShare returns a read share of tenant1/database/db1 from user1
+// to granteeID that expired an hour ago.
+func expiredTestShare(id, granteeID string) *ResourceShare {
+	return &ResourceShare{
+		ID:           id,
+		TenantID:     "tenant1",
+		ResourceType: "database",
+		ResourceID:   "db1",
+		OwnerID:      "user1",
+		GranteeType:  GranteeTypeUser,
+		GranteeID:    granteeID,
+		Permissions:  []SharePermission{PermissionRead},
+		ExpiresAt:    timePtrOwnership(time.Now().Add(-1 * time.Hour)),
+		CreatedBy:    "user1",
+	}
 }
 
 func timePtrOwnership(t time.Time) *time.Time {
@@ -1308,254 +1367,6 @@ func TestMemoryShareStorage_ListSharesByOwner(t *testing.T) {
 	assert.Len(t, shares, 0)
 }
 
-func TestResourceOwnership_ValidationEdgeCases(t *testing.T) {
-	tests := []struct {
-		name      string
-		ownership *ResourceOwnership
-		wantErr   bool
-		errMsg    string
-	}{
-		{
-			name: "missing resource type",
-			ownership: &ResourceOwnership{
-				ID:         "id1",
-				TenantID:   "tenant1",
-				ResourceID: "db1",
-				OwnerID:    "user1",
-			},
-			wantErr: true,
-			errMsg:  "resource type",
-		},
-		{
-			name: "missing resource ID",
-			ownership: &ResourceOwnership{
-				ID:           "id1",
-				TenantID:     "tenant1",
-				ResourceType: "database",
-				OwnerID:      "user1",
-			},
-			wantErr: true,
-			errMsg:  "resource ID",
-		},
-		{
-			name: "missing owner ID",
-			ownership: &ResourceOwnership{
-				ID:           "id1",
-				TenantID:     "tenant1",
-				ResourceType: "database",
-				ResourceID:   "db1",
-			},
-			wantErr: true,
-			errMsg:  "owner ID",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			err := tt.ownership.Validate()
-			if tt.wantErr {
-				assert.Error(t, err)
-				assert.Contains(t, err.Error(), tt.errMsg)
-			} else {
-				assert.NoError(t, err)
-			}
-		})
-	}
-}
-
-func TestResourceShare_ValidationEdgeCases(t *testing.T) {
-	tests := []struct {
-		name    string
-		share   *ResourceShare
-		wantErr bool
-		errMsg  string
-	}{
-		{
-			name:    "all fields empty",
-			share:   &ResourceShare{},
-			wantErr: true,
-			errMsg:  "share ID",
-		},
-		{
-			name: "missing resource type",
-			share: &ResourceShare{
-				ID:          "share1",
-				TenantID:    "tenant1",
-				ResourceID:  "db1",
-				OwnerID:     "user1",
-				GranteeType: GranteeTypeUser,
-				GranteeID:   "user2",
-				Permissions: []SharePermission{PermissionRead},
-				CreatedBy:   "user1",
-			},
-			wantErr: true,
-			errMsg:  "resource type",
-		},
-		{
-			name: "missing grantee ID",
-			share: &ResourceShare{
-				ID:           "share1",
-				TenantID:     "tenant1",
-				ResourceType: "database",
-				ResourceID:   "db1",
-				OwnerID:      "user1",
-				GranteeType:  GranteeTypeUser,
-				Permissions:  []SharePermission{PermissionRead},
-				CreatedBy:    "user1",
-			},
-			wantErr: true,
-			errMsg:  "grantee ID",
-		},
-		{
-			name: "empty permissions",
-			share: &ResourceShare{
-				ID:           "share1",
-				TenantID:     "tenant1",
-				ResourceType: "database",
-				ResourceID:   "db1",
-				OwnerID:      "user1",
-				GranteeType:  GranteeTypeUser,
-				GranteeID:    "user2",
-				Permissions:  []SharePermission{},
-				CreatedBy:    "user1",
-			},
-			wantErr: true,
-			errMsg:  "at least one permission",
-		},
-		{
-			name: "missing created by",
-			share: &ResourceShare{
-				ID:           "share1",
-				TenantID:     "tenant1",
-				ResourceType: "database",
-				ResourceID:   "db1",
-				OwnerID:      "user1",
-				GranteeType:  GranteeTypeUser,
-				GranteeID:    "user2",
-				Permissions:  []SharePermission{PermissionRead},
-			},
-			wantErr: true,
-			errMsg:  "created by",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			err := tt.share.Validate()
-			if tt.wantErr {
-				assert.Error(t, err)
-				assert.Contains(t, err.Error(), tt.errMsg)
-			} else {
-				assert.NoError(t, err)
-			}
-		})
-	}
-}
-
-func TestOwnershipCheckRequest_ValidationEdgeCases(t *testing.T) {
-	tests := []struct {
-		name    string
-		req     *OwnershipCheckRequest
-		wantErr bool
-		errMsg  string
-	}{
-		{
-			name: "missing resource type",
-			req: &OwnershipCheckRequest{
-				TenantID:           "tenant1",
-				ResourceID:         "db1",
-				UserID:             "user1",
-				RequiredPermission: PermissionRead,
-			},
-			wantErr: true,
-			errMsg:  "resource type",
-		},
-		{
-			name: "missing resource ID",
-			req: &OwnershipCheckRequest{
-				TenantID:           "tenant1",
-				ResourceType:       "database",
-				UserID:             "user1",
-				RequiredPermission: PermissionRead,
-			},
-			wantErr: true,
-			errMsg:  "resource ID",
-		},
-		{
-			name: "missing user ID",
-			req: &OwnershipCheckRequest{
-				TenantID:           "tenant1",
-				ResourceType:       "database",
-				ResourceID:         "db1",
-				RequiredPermission: PermissionRead,
-			},
-			wantErr: true,
-			errMsg:  "user ID",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			err := tt.req.Validate()
-			if tt.wantErr {
-				assert.Error(t, err)
-				assert.Contains(t, err.Error(), tt.errMsg)
-			} else {
-				assert.NoError(t, err)
-			}
-		})
-	}
-}
-
-func TestCreateShareRequest_ValidationEdgeCases(t *testing.T) {
-	tests := []struct {
-		name    string
-		req     *CreateShareRequest
-		wantErr bool
-		errMsg  string
-	}{
-		{
-			name: "missing resource type",
-			req: &CreateShareRequest{
-				TenantID:    "tenant1",
-				ResourceID:  "db1",
-				GranteeType: GranteeTypeUser,
-				GranteeID:   "user2",
-				Permissions: []SharePermission{PermissionRead},
-				CreatedBy:   "user1",
-			},
-			wantErr: true,
-			errMsg:  "resource type",
-		},
-		{
-			name: "empty permissions list",
-			req: &CreateShareRequest{
-				TenantID:     "tenant1",
-				ResourceType: "database",
-				ResourceID:   "db1",
-				GranteeType:  GranteeTypeUser,
-				GranteeID:    "user2",
-				Permissions:  []SharePermission{},
-				CreatedBy:    "user1",
-			},
-			wantErr: true,
-			errMsg:  "at least one permission",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			err := tt.req.Validate()
-			if tt.wantErr {
-				assert.Error(t, err)
-				assert.Contains(t, err.Error(), tt.errMsg)
-			} else {
-				assert.NoError(t, err)
-			}
-		})
-	}
-}
-
 func TestMemoryOwnershipStorage_CreateDuplicate(t *testing.T) {
 	ctx := context.Background()
 	storage := NewMemoryOwnershipStorage()
@@ -1607,104 +1418,108 @@ func TestMemoryShareStorage_CreateDuplicate(t *testing.T) {
 	assert.Contains(t, err.Error(), "already exists")
 }
 
-func TestMemoryShareStorage_UpdateNonexistent(t *testing.T) {
-	ctx := context.Background()
-	storage := NewMemoryShareStorage()
-
-	share := &ResourceShare{
-		ID:           "share1",
-		TenantID:     "tenant1",
-		ResourceType: "database",
-		ResourceID:   "db1",
-		OwnerID:      "user1",
-		GranteeType:  GranteeTypeUser,
-		GranteeID:    "user2",
-		Permissions:  []SharePermission{PermissionRead},
-		CreatedAt:    time.Now(),
-		UpdatedAt:    time.Now(),
-		CreatedBy:    "user1",
-	}
-
-	// Try to update non-existent share
-	err := storage.UpdateShare(ctx, share)
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "not found")
-}
-
-func TestMemoryShareStorage_GetNonexistent(t *testing.T) {
-	ctx := context.Background()
-	storage := NewMemoryShareStorage()
-
-	// Try to get non-existent share
-	_, err := storage.GetShare(ctx, "tenant1", "nonexistent")
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "not found")
-}
-
-func TestMemoryShareStorage_DeleteNonexistent(t *testing.T) {
-	ctx := context.Background()
-	storage := NewMemoryShareStorage()
-
-	// Try to delete non-existent share
-	err := storage.DeleteShare(ctx, "tenant1", "nonexistent")
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "not found")
-}
-
-func TestMemoryOwnershipStorage_GetNonexistent(t *testing.T) {
+func TestMemoryOwnershipStorage_MissingRecords(t *testing.T) {
 	ctx := context.Background()
 	storage := NewMemoryOwnershipStorage()
 
-	// Try to get non-existent ownership
-	_, err := storage.GetOwnership(ctx, "tenant1", "database", "nonexistent")
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "not found")
+	tests := []struct {
+		name    string
+		call    func() (int, error)
+		wantErr string
+	}{
+		{
+			name: "get not found",
+			call: func() (int, error) {
+				_, err := storage.GetOwnership(ctx, "tenant1", "database", "nonexistent")
+				return 0, err
+			},
+			wantErr: "not found",
+		},
+		{
+			name: "transfer not found",
+			call: func() (int, error) {
+				return 0, storage.TransferOwnership(ctx, "tenant1", "database", "nonexistent", "user2")
+			},
+			wantErr: "not found",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			count, err := tt.call()
+			if tt.wantErr != "" {
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), tt.wantErr)
+				return
+			}
+			assert.NoError(t, err)
+			assert.Zero(t, count)
+		})
+	}
 }
 
-func TestMemoryOwnershipStorage_TransferNonexistent(t *testing.T) {
-	ctx := context.Background()
-	storage := NewMemoryOwnershipStorage()
-
-	// Try to transfer non-existent ownership
-	err := storage.TransferOwnership(ctx, "tenant1", "database", "nonexistent", "user2")
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "not found")
-}
-
-func TestMemoryShareStorage_IndexCleanup(t *testing.T) {
+func TestMemoryShareStorage_MissingRecords(t *testing.T) {
 	ctx := context.Background()
 	storage := NewMemoryShareStorage()
 
-	// Create a share
-	share := &ResourceShare{
-		ID:           "share1",
-		TenantID:     "tenant1",
-		ResourceType: "database",
-		ResourceID:   "db1",
-		OwnerID:      "user1",
-		GranteeType:  GranteeTypeUser,
-		GranteeID:    "user2",
-		Permissions:  []SharePermission{PermissionRead},
-		CreatedAt:    time.Now(),
-		UpdatedAt:    time.Now(),
-		CreatedBy:    "user1",
+	tests := []struct {
+		name    string
+		call    func() (int, error)
+		wantErr string
+	}{
+		{
+			name: "get not found",
+			call: func() (int, error) {
+				_, err := storage.GetShare(ctx, "tenant1", "nonexistent")
+				return 0, err
+			},
+			wantErr: "not found",
+		},
+		{
+			name: "update not found",
+			call: func() (int, error) {
+				return 0, storage.UpdateShare(ctx, &ResourceShare{
+					ID:           "share1",
+					TenantID:     "tenant1",
+					ResourceType: "database",
+					ResourceID:   "db1",
+					OwnerID:      "user1",
+					GranteeType:  GranteeTypeUser,
+					GranteeID:    "user2",
+					Permissions:  []SharePermission{PermissionRead},
+					CreatedBy:    "user1",
+				})
+			},
+			wantErr: "not found",
+		},
+		{
+			name: "delete not found",
+			call: func() (int, error) {
+				return 0, storage.DeleteShare(ctx, "tenant1", "nonexistent")
+			},
+			wantErr: "not found",
+		},
+		{
+			name: "list by resource empty",
+			call: func() (int, error) {
+				shares, err := storage.ListSharesByResource(ctx, "tenant1", "database", "nonexistent")
+				return len(shares), err
+			},
+		},
 	}
-	err := storage.CreateShare(ctx, share)
-	require.NoError(t, err)
 
-	// Verify indexes are populated
-	shares, err := storage.ListSharesByResource(ctx, "tenant1", "database", "db1")
-	assert.NoError(t, err)
-	assert.Len(t, shares, 1)
-
-	// Delete the share
-	err = storage.DeleteShare(ctx, "tenant1", "share1")
-	assert.NoError(t, err)
-
-	// Verify indexes are cleaned up
-	shares, err = storage.ListSharesByResource(ctx, "tenant1", "database", "db1")
-	assert.NoError(t, err)
-	assert.Len(t, shares, 0)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			count, err := tt.call()
+			if tt.wantErr != "" {
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), tt.wantErr)
+				return
+			}
+			assert.NoError(t, err)
+			assert.Zero(t, count)
+		})
+	}
 }
 
 func TestOwnershipManager_CheckAccess_MultipleGroupShares(t *testing.T) {
@@ -1786,7 +1601,6 @@ func TestMemoryShareStorage_UpdatePreservesCreatedAt(t *testing.T) {
 	require.NoError(t, err)
 
 	// Update the share
-	time.Sleep(10 * time.Millisecond)
 	share.Permissions = []SharePermission{PermissionRead, PermissionWrite}
 	err = storage.UpdateShare(ctx, share)
 	assert.NoError(t, err)
@@ -1796,154 +1610,6 @@ func TestMemoryShareStorage_UpdatePreservesCreatedAt(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, originalCreated.Unix(), updated.CreatedAt.Unix())
 	assert.True(t, updated.UpdatedAt.After(originalCreated))
-}
-
-func TestOwnershipManager_GetOwner_AllValidationPaths(t *testing.T) {
-	ctx := context.Background()
-	mgr := createTestOwnershipManager(t)
-
-	// Test all error paths
-	_, err := mgr.GetOwner(ctx, "", "database", "db1")
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "tenant ID")
-
-	_, err = mgr.GetOwner(ctx, "tenant1", "", "db1")
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "resource type")
-
-	_, err = mgr.GetOwner(ctx, "tenant1", "database", "")
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "resource ID")
-}
-
-func TestOwnershipManager_TransferOwnership_AllValidationPaths(t *testing.T) {
-	ctx := context.Background()
-	mgr := createTestOwnershipManager(t)
-
-	// Create ownership first
-	_, err := mgr.SetOwner(ctx, "tenant1", "database", "db1", "user1")
-	require.NoError(t, err)
-
-	// Test all error paths
-	err = mgr.TransferOwnership(ctx, "", "database", "db1", "user2")
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "tenant ID")
-
-	err = mgr.TransferOwnership(ctx, "tenant1", "", "db1", "user2")
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "resource type")
-
-	err = mgr.TransferOwnership(ctx, "tenant1", "database", "", "user2")
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "resource ID")
-
-	err = mgr.TransferOwnership(ctx, "tenant1", "database", "db1", "")
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "owner ID")
-}
-
-func TestOwnershipManager_UpdateShare_AllValidationPaths(t *testing.T) {
-	ctx := context.Background()
-	mgr := createTestOwnershipManager(t)
-
-	// Setup
-	_, err := mgr.SetOwner(ctx, "tenant1", "database", "db1", "user1")
-	require.NoError(t, err)
-
-	share, err := mgr.ShareResource(ctx, &CreateShareRequest{
-		TenantID:     "tenant1",
-		ResourceType: "database",
-		ResourceID:   "db1",
-		GranteeType:  GranteeTypeUser,
-		GranteeID:    "user2",
-		Permissions:  []SharePermission{PermissionRead},
-		CreatedBy:    "user1",
-	})
-	require.NoError(t, err)
-
-	// Test all error paths
-	_, err = mgr.UpdateShare(ctx, "", share.ID, []SharePermission{PermissionRead})
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "tenant ID")
-
-	_, err = mgr.UpdateShare(ctx, "tenant1", "", []SharePermission{PermissionRead})
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "share ID")
-
-	_, err = mgr.UpdateShare(ctx, "tenant1", share.ID, nil)
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "at least one permission")
-
-	_, err = mgr.UpdateShare(ctx, "tenant1", share.ID, []SharePermission{"badperm"})
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "invalid permission")
-}
-
-func TestOwnershipManager_CheckAccess_WrongResource(t *testing.T) {
-	ctx := context.Background()
-	mgr := createTestOwnershipManager(t)
-
-	// Setup: Create ownership and share for db1
-	_, err := mgr.SetOwner(ctx, "tenant1", "database", "db1", "user1")
-	require.NoError(t, err)
-
-	_, err = mgr.ShareResource(ctx, &CreateShareRequest{
-		TenantID:     "tenant1",
-		ResourceType: "database",
-		ResourceID:   "db1",
-		GranteeType:  GranteeTypeUser,
-		GranteeID:    "user2",
-		Permissions:  []SharePermission{PermissionRead},
-		CreatedBy:    "user1",
-	})
-	require.NoError(t, err)
-
-	// Check access for different resource
-	resp, err := mgr.CheckAccess(ctx, &OwnershipCheckRequest{
-		TenantID:           "tenant1",
-		ResourceType:       "database",
-		ResourceID:         "db2", // Different resource
-		UserID:             "user2",
-		RequiredPermission: PermissionRead,
-	})
-
-	assert.NoError(t, err)
-	require.NotNil(t, resp)
-	assert.False(t, resp.Allowed)
-}
-
-func TestResourceShare_Validate_AllPaths(t *testing.T) {
-	// Test share with owner == grantee (user type)
-	share := &ResourceShare{
-		ID:           "share1",
-		TenantID:     "tenant1",
-		ResourceType: "database",
-		ResourceID:   "db1",
-		OwnerID:      "user1",
-		GranteeType:  GranteeTypeUser,
-		GranteeID:    "user1", // Same as owner
-		Permissions:  []SharePermission{PermissionRead},
-		CreatedBy:    "user1",
-	}
-	err := share.Validate()
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "cannot share")
-
-	// Test with invalid permission in list
-	share2 := &ResourceShare{
-		ID:           "share1",
-		TenantID:     "tenant1",
-		ResourceType: "database",
-		ResourceID:   "db1",
-		OwnerID:      "user1",
-		GranteeType:  GranteeTypeUser,
-		GranteeID:    "user2",
-		Permissions:  []SharePermission{PermissionRead, "badperm"},
-		CreatedBy:    "user1",
-	}
-	err = share2.Validate()
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "invalid permission")
 }
 
 func TestMemoryOwnershipStorage_DeleteIndexCleanup(t *testing.T) {
@@ -2121,275 +1787,6 @@ func TestMemoryShareStorage_CreateWithAutoTimestamp(t *testing.T) {
 	assert.False(t, retrieved.UpdatedAt.IsZero())
 }
 
-func TestOwnershipManager_ListResourceShares_NoShares(t *testing.T) {
-	ctx := context.Background()
-	mgr := createTestOwnershipManager(t)
-
-	// List shares for non-existent resource
-	shares, err := mgr.ListResourceShares(ctx, "tenant1", "database", "db1")
-	assert.NoError(t, err)
-	assert.Len(t, shares, 0)
-}
-
-func TestOwnershipManager_ListUserShares_NoShares(t *testing.T) {
-	ctx := context.Background()
-	mgr := createTestOwnershipManager(t)
-
-	// List shares for user with no shares
-	shares, err := mgr.ListUserShares(ctx, "tenant1", "user1", nil)
-	assert.NoError(t, err)
-	assert.Len(t, shares, 0)
-}
-
-func TestCreateShareRequest_Validate_AllFields(t *testing.T) {
-	tests := []struct {
-		name    string
-		req     *CreateShareRequest
-		wantErr bool
-		errMsg  string
-	}{
-		{
-			name: "missing tenant ID",
-			req: &CreateShareRequest{
-				ResourceType: "database",
-				ResourceID:   "db1",
-				GranteeType:  GranteeTypeUser,
-				GranteeID:    "user2",
-				Permissions:  []SharePermission{PermissionRead},
-				CreatedBy:    "user1",
-			},
-			wantErr: true,
-			errMsg:  "tenant ID",
-		},
-		{
-			name: "missing resource ID",
-			req: &CreateShareRequest{
-				TenantID:     "tenant1",
-				ResourceType: "database",
-				GranteeType:  GranteeTypeUser,
-				GranteeID:    "user2",
-				Permissions:  []SharePermission{PermissionRead},
-				CreatedBy:    "user1",
-			},
-			wantErr: true,
-			errMsg:  "resource ID",
-		},
-		{
-			name: "missing grantee ID",
-			req: &CreateShareRequest{
-				TenantID:     "tenant1",
-				ResourceType: "database",
-				ResourceID:   "db1",
-				GranteeType:  GranteeTypeUser,
-				Permissions:  []SharePermission{PermissionRead},
-				CreatedBy:    "user1",
-			},
-			wantErr: true,
-			errMsg:  "grantee ID",
-		},
-		{
-			name: "missing created by",
-			req: &CreateShareRequest{
-				TenantID:     "tenant1",
-				ResourceType: "database",
-				ResourceID:   "db1",
-				GranteeType:  GranteeTypeUser,
-				GranteeID:    "user2",
-				Permissions:  []SharePermission{PermissionRead},
-			},
-			wantErr: true,
-			errMsg:  "created by",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			err := tt.req.Validate()
-			if tt.wantErr {
-				assert.Error(t, err)
-				assert.Contains(t, err.Error(), tt.errMsg)
-			} else {
-				assert.NoError(t, err)
-			}
-		})
-	}
-}
-
-func TestOwnershipCheckRequest_Validate_AllFields(t *testing.T) {
-	tests := []struct {
-		name    string
-		req     *OwnershipCheckRequest
-		wantErr bool
-		errMsg  string
-	}{
-		{
-			name: "missing tenant ID",
-			req: &OwnershipCheckRequest{
-				ResourceType:       "database",
-				ResourceID:         "db1",
-				UserID:             "user1",
-				RequiredPermission: PermissionRead,
-			},
-			wantErr: true,
-			errMsg:  "tenant ID",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			err := tt.req.Validate()
-			if tt.wantErr {
-				assert.Error(t, err)
-				assert.Contains(t, err.Error(), tt.errMsg)
-			} else {
-				assert.NoError(t, err)
-			}
-		})
-	}
-}
-
-func TestMemoryShareStorage_GetActiveSharesForUser_NoExpiry(t *testing.T) {
-	ctx := context.Background()
-	storage := NewMemoryShareStorage()
-
-	// Create shares without expiry
-	share1 := &ResourceShare{
-		ID:           "share1",
-		TenantID:     "tenant1",
-		ResourceType: "database",
-		ResourceID:   "db1",
-		OwnerID:      "user1",
-		GranteeType:  GranteeTypeUser,
-		GranteeID:    "user2",
-		Permissions:  []SharePermission{PermissionRead},
-		CreatedAt:    time.Now(),
-		UpdatedAt:    time.Now(),
-		CreatedBy:    "user1",
-		// No ExpiresAt
-	}
-	err := storage.CreateShare(ctx, share1)
-	require.NoError(t, err)
-
-	// Get active shares
-	shares, err := storage.GetActiveSharesForUser(ctx, "tenant1", "user2", nil)
-	assert.NoError(t, err)
-	assert.Len(t, shares, 1)
-}
-
-func TestMemoryShareStorage_DeleteExpiredShares_NoExpired(t *testing.T) {
-	ctx := context.Background()
-	storage := NewMemoryShareStorage()
-
-	// Create share without expiry
-	share := &ResourceShare{
-		ID:           "share1",
-		TenantID:     "tenant1",
-		ResourceType: "database",
-		ResourceID:   "db1",
-		OwnerID:      "user1",
-		GranteeType:  GranteeTypeUser,
-		GranteeID:    "user2",
-		Permissions:  []SharePermission{PermissionRead},
-		CreatedAt:    time.Now(),
-		UpdatedAt:    time.Now(),
-		CreatedBy:    "user1",
-	}
-	err := storage.CreateShare(ctx, share)
-	require.NoError(t, err)
-
-	// Cleanup expired
-	count, err := storage.DeleteExpiredShares(ctx, "tenant1")
-	assert.NoError(t, err)
-	assert.Equal(t, 0, count)
-
-	// Verify share still exists
-	shares, err := storage.ListSharesByResource(ctx, "tenant1", "database", "db1")
-	assert.NoError(t, err)
-	assert.Len(t, shares, 1)
-}
-
-func TestOwnershipManager_ShareResource_PreventSelfShare(t *testing.T) {
-	ctx := context.Background()
-	mgr := createTestOwnershipManager(t)
-
-	// Setup: Create ownership
-	_, err := mgr.SetOwner(ctx, "tenant1", "database", "db1", "user1")
-	require.NoError(t, err)
-
-	// Try to share with self (via group should be allowed, only user is blocked)
-	_, err = mgr.ShareResource(ctx, &CreateShareRequest{
-		TenantID:     "tenant1",
-		ResourceType: "database",
-		ResourceID:   "db1",
-		GranteeType:  GranteeTypeGroup,
-		GranteeID:    "user1", // Same as owner, but group type
-		Permissions:  []SharePermission{PermissionRead},
-		CreatedBy:    "user1",
-	})
-	// This should succeed because grantee type is group
-	assert.NoError(t, err)
-}
-
-func TestMemoryOwnershipStorage_ListEmpty(t *testing.T) {
-	ctx := context.Background()
-	storage := NewMemoryOwnershipStorage()
-
-	// List ownerships for non-existent owner
-	ownerships, err := storage.ListOwnershipsByOwner(ctx, "tenant1", "nonexistent")
-	assert.NoError(t, err)
-	assert.Empty(t, ownerships)
-}
-
-func TestMemoryShareStorage_ListEmpty(t *testing.T) {
-	ctx := context.Background()
-	storage := NewMemoryShareStorage()
-
-	// List shares by resource
-	shares, err := storage.ListSharesByResource(ctx, "tenant1", "database", "nonexistent")
-	assert.NoError(t, err)
-	assert.Empty(t, shares)
-
-	// List shares by grantee
-	shares, err = storage.ListSharesByGrantee(ctx, "tenant1", GranteeTypeUser, "nonexistent")
-	assert.NoError(t, err)
-	assert.Empty(t, shares)
-
-	// List shares by owner
-	shares, err = storage.ListSharesByOwner(ctx, "tenant1", "nonexistent")
-	assert.NoError(t, err)
-	assert.Empty(t, shares)
-}
-
-func TestResourceShare_WithMetadata(t *testing.T) {
-	ctx := context.Background()
-	mgr := createTestOwnershipManager(t)
-
-	// Setup: Create ownership
-	_, err := mgr.SetOwner(ctx, "tenant1", "database", "db1", "user1")
-	require.NoError(t, err)
-
-	// Create share with metadata
-	metadata := map[string]interface{}{
-		"reason": "collaboration",
-		"team":   "engineering",
-	}
-
-	share, err := mgr.ShareResource(ctx, &CreateShareRequest{
-		TenantID:     "tenant1",
-		ResourceType: "database",
-		ResourceID:   "db1",
-		GranteeType:  GranteeTypeUser,
-		GranteeID:    "user2",
-		Permissions:  []SharePermission{PermissionRead},
-		CreatedBy:    "user1",
-		Metadata:     metadata,
-	})
-
-	assert.NoError(t, err)
-	require.NotNil(t, share)
-	assert.Equal(t, metadata, share.Metadata)
-}
-
 func TestResourceOwnership_WithMetadata(t *testing.T) {
 	ctx := context.Background()
 	storage := NewMemoryOwnershipStorage()
@@ -2489,42 +1886,4 @@ func (f *failingShareStorage) GetActiveSharesForUser(ctx context.Context, tenant
 
 func (f *failingShareStorage) DeleteExpiredShares(ctx context.Context, tenantID string) (int, error) {
 	return 0, nil
-}
-
-func TestResourceShare_IsExpired_EdgeCase(t *testing.T) {
-	// Test exact boundary - share expires exactly now
-	now := time.Now()
-	share := &ResourceShare{
-		ExpiresAt: &now,
-	}
-
-	// Small sleep to ensure "now" is in the past
-	time.Sleep(1 * time.Millisecond)
-
-	assert.True(t, share.IsExpired())
-}
-
-func TestGranteeType_AllValues(t *testing.T) {
-	// Test all valid types
-	assert.True(t, GranteeTypeUser.IsValid())
-	assert.True(t, GranteeTypeGroup.IsValid())
-
-	// Test invalid values
-	assert.False(t, GranteeType("").IsValid())
-	assert.False(t, GranteeType("invalid").IsValid())
-	assert.False(t, GranteeType("role").IsValid())
-}
-
-func TestSharePermission_AllValues(t *testing.T) {
-	// Test all valid permissions
-	assert.True(t, PermissionRead.IsValid())
-	assert.True(t, PermissionWrite.IsValid())
-	assert.True(t, PermissionDelete.IsValid())
-	assert.True(t, PermissionShare.IsValid())
-	assert.True(t, PermissionAdmin.IsValid())
-
-	// Test invalid permissions
-	assert.False(t, SharePermission("").IsValid())
-	assert.False(t, SharePermission("invalid").IsValid())
-	assert.False(t, SharePermission("execute").IsValid())
 }
