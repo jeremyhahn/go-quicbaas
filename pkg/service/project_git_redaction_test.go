@@ -30,7 +30,7 @@ import (
 // TestGitCloneError_RedactsCredentialsInTheURL is the regression.
 func TestGitCloneError_RedactsCredentialsInTheURL(t *testing.T) {
 	err := &GitCloneError{
-		RepoURL: "https://agent-go-quicbaas:gto_LIVE_TOKEN_VALUE@gitea.internal/x/y.git",
+		RepoURL: "https://agent-quicbaas:gto_LIVE_TOKEN_VALUE@forge.example.com/x/y.git",
 		Stage:   "clone",
 		Err:     errors.New("exit status 128"),
 	}
@@ -39,7 +39,7 @@ func TestGitCloneError_RedactsCredentialsInTheURL(t *testing.T) {
 	if strings.Contains(rendered, "gto_LIVE_TOKEN_VALUE") {
 		t.Fatalf("the token survived into an error that is logged and stored: %s", rendered)
 	}
-	if !strings.Contains(rendered, "gitea.internal") {
+	if !strings.Contains(rendered, "forge.example.com") {
 		t.Errorf("redaction removed the host too, leaving nothing diagnosable: %s", rendered)
 	}
 }
@@ -51,9 +51,9 @@ func TestGitCloneError_RedactsCredentialsInTheURL(t *testing.T) {
 // set would leave the credential in the output we merely relay.
 func TestGitCloneError_RedactsCredentialsGitEchoedBack(t *testing.T) {
 	err := &GitCloneError{
-		RepoURL: "https://gitea.internal/x/y.git",
+		RepoURL: "https://forge.example.com/x/y.git",
 		Stage:   "push",
-		Output:  "fatal: could not read from 'https://agent:gto_LIVE_TOKEN_VALUE@gitea.internal/x/y.git'",
+		Output:  "fatal: could not read from 'https://agent:gto_LIVE_TOKEN_VALUE@forge.example.com/x/y.git'",
 		Err:     errors.New("exit status 128"),
 	}
 
@@ -66,12 +66,12 @@ func TestGitCloneError_RedactsCredentialsGitEchoedBack(t *testing.T) {
 // ordinary case, which is most of them.
 func TestGitCloneError_LeavesACleanURLAlone(t *testing.T) {
 	err := &GitCloneError{
-		RepoURL: "https://gitea.internal/x/y.git",
+		RepoURL: "https://forge.example.com/x/y.git",
 		Stage:   "clone",
 		Err:     errors.New("exit status 128"),
 	}
 
-	if !strings.Contains(err.Error(), "https://gitea.internal/x/y.git") {
+	if !strings.Contains(err.Error(), "https://forge.example.com/x/y.git") {
 		t.Errorf("a URL with no credential must render unchanged: %s", err.Error())
 	}
 }

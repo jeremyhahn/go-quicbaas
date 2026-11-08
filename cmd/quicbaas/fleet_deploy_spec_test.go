@@ -94,7 +94,7 @@ func TestResolveDeploySpec_SpecOverridesFlagDefaults(t *testing.T) {
 func TestResolveDeploySpec_ExplicitFlagsOverrideSpec(t *testing.T) {
 	cmd := underRoot(t, newFleetDeployCommand(),
 		"--spec", writeNodeSpec(t, nodeSpecBody),
-		"--ssh", "root@agent-02.internal:2222",
+		"--ssh", "root@agent-02.example.com:2222",
 		"--tenant", "flag-tenant",
 		"--max-concurrent-jobs", "2",
 		"--backend", "acp",
@@ -106,7 +106,7 @@ func TestResolveDeploySpec_ExplicitFlagsOverrideSpec(t *testing.T) {
 
 	spec, err := resolveDeploySpec(cmd.Flags())
 	require.NoError(t, err)
-	assert.Equal(t, "agent-02.internal:2222", spec.Host)
+	assert.Equal(t, "agent-02.example.com:2222", spec.Host)
 	assert.Equal(t, "root", spec.SSHUser)
 	assert.Equal(t, "flag-tenant", spec.Tenant)
 	assert.Equal(t, 2, spec.Node.MaxConcurrentJobs)

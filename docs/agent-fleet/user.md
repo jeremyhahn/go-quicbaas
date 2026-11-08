@@ -230,8 +230,8 @@ Two checks are worth knowing in detail:
 
 ```
 $ quicbaas fleet deploy --spec agent-01.yaml --preflight
-Preflight:  agent-01.internal
-  ok        ssh connection                     agent@agent-01.internal
+Preflight:  agent-01.example.com
+  ok        ssh connection                     agent@agent-01.example.com
   ok        pinned host key                    verified against its pin in the ssh known-hosts store
   ...
   FAIL      linger                             deploy: systemd --user lingering is not enabled for agent; ...
