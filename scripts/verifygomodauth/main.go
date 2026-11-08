@@ -511,7 +511,6 @@ func check(root, work string, stdout, stderr io.Writer) (int, error) {
 
 	fmt.Fprintln(stdout, "case: a Gitea runner's own variables are staged as injected")
 	runnerKey := "url.http://x:" + fakeToken + "@gitea.invalid/jeremyhahn/.insteadOf"
-	//nolint:gosec // G101: fixture values the runner case stages, not credentials
 	out, err = invoke(root, work, "runner", invocation{
 		targets:    []string{"stage-gomodauth"},
 		tokensFile: "FORGE_READ_TOKEN=ignored0token\n",
