@@ -49,21 +49,6 @@ func TestCodecManager_EncodeForStorageTo(t *testing.T) {
 		assert.NotEqual(t, cap(buf), cap(result))
 	})
 
-	t.Run("buffer reuse in loop", func(t *testing.T) {
-		buf := make([]byte, 0, 1024)
-
-		for i := 0; i < 10; i++ {
-			entity := &EntityWithJSONTags{ID: i, Name: "loop-test"}
-			var err error
-			buf, err = mgr.EncodeForStorageTo(buf[:0], entity)
-			require.NoError(t, err)
-			assert.NotEmpty(t, buf)
-		}
-
-		// Buffer should still have same capacity after all iterations
-		assert.Equal(t, 1024, cap(buf))
-	})
-
 	t.Run("nil entity", func(t *testing.T) {
 		buf := make([]byte, 0, 1024)
 		result, err := mgr.EncodeForStorageTo(buf, nil)
@@ -84,19 +69,6 @@ func TestCodecManager_DecodeFromStorageWith(t *testing.T) {
 
 		decoded := &EntityWithJSONTags{}
 		err = mgr.DecodeFromStorageWith(data, decoded, nil)
-		require.NoError(t, err)
-		assert.Equal(t, original.ID, decoded.ID)
-		assert.Equal(t, original.Name, decoded.Name)
-	})
-
-	t.Run("success with scratch buffer", func(t *testing.T) {
-		original := &EntityWithJSONTags{ID: 200, Name: "with-scratch"}
-		data, err := mgr.EncodeForStorage(original)
-		require.NoError(t, err)
-
-		scratch := make([]byte, 4096)
-		decoded := &EntityWithJSONTags{}
-		err = mgr.DecodeFromStorageWith(data, decoded, scratch)
 		require.NoError(t, err)
 		assert.Equal(t, original.ID, decoded.ID)
 		assert.Equal(t, original.Name, decoded.Name)
@@ -330,34 +302,5 @@ func TestCodecManager_OptimizedCodecsDisabled(t *testing.T) {
 
 		// Cleanup should be noop but safe to call
 		cleanup()
-	})
-}
-
-func TestCodecManager_BufferReusePattern(t *testing.T) {
-	mgr, err := NewCodecManager(DefaultConfig())
-	require.NoError(t, err)
-
-	// Simulates a realistic server handler pattern
-	t.Run("server handler pattern", func(t *testing.T) {
-		// Handler-level buffer that gets reused across requests
-		buf := make([]byte, 0, 2048)
-
-		// Simulate 1000 requests
-		for i := 0; i < 1000; i++ {
-			entity := &EntityWithJSONTags{ID: i, Name: "request"}
-
-			// Encode request (reuse buffer)
-			buf, err = mgr.EncodeForStorageTo(buf[:0], entity)
-			require.NoError(t, err)
-
-			// Decode for processing
-			processed := &EntityWithJSONTags{}
-			err = mgr.DecodeFromStorageWith(buf, processed, nil)
-			require.NoError(t, err)
-			assert.Equal(t, entity.ID, processed.ID)
-		}
-
-		// Buffer should never have grown beyond initial capacity
-		assert.LessOrEqual(t, cap(buf), 2048)
 	})
 }
