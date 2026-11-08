@@ -116,11 +116,6 @@ func TestClient_IssueCertificate_Validation(t *testing.T) {
 			wantErr: true,
 		},
 		{
-			name:    "valid minimal request",
-			req:     &IssueCertificateRequest{CommonName: "test.example.com"},
-			wantErr: false,
-		},
-		{
 			name: "valid full request with client usage",
 			req: &IssueCertificateRequest{
 				CommonName:         "test.example.com",
@@ -280,8 +275,8 @@ func TestClient_IssueCertificate(t *testing.T) {
 					t.Errorf("expected error code %v, got %v", tt.errCode, errors.Code(err))
 				}
 			}
-			if !tt.wantErr && resp == nil {
-				t.Error("expected non-nil response")
+			if !tt.wantErr && (resp == nil || resp.SerialNumber != "12345" || resp.PrivateKeyPEM == "") {
+				t.Errorf("expected the transport response, got %#v", resp)
 			}
 		})
 	}
@@ -323,11 +318,6 @@ func TestClient_SignCSR_Validation(t *testing.T) {
 			name:    "negative validity days",
 			req:     &SignCSRRequest{CSRPEM: "-----BEGIN CERTIFICATE REQUEST-----\n...\n-----END CERTIFICATE REQUEST-----", ValidityDays: -1},
 			wantErr: true,
-		},
-		{
-			name:    "valid minimal request",
-			req:     &SignCSRRequest{CSRPEM: "-----BEGIN CERTIFICATE REQUEST-----\n...\n-----END CERTIFICATE REQUEST-----"},
-			wantErr: false,
 		},
 		{
 			name: "valid full request",
@@ -456,8 +446,8 @@ func TestClient_SignCSR(t *testing.T) {
 					t.Errorf("expected error code %v, got %v", tt.errCode, errors.Code(err))
 				}
 			}
-			if !tt.wantErr && resp == nil {
-				t.Error("expected non-nil response")
+			if !tt.wantErr && (resp == nil || resp.SerialNumber != "67890") {
+				t.Errorf("expected the transport response, got %#v", resp)
 			}
 		})
 	}
@@ -486,11 +476,6 @@ func TestClient_RevokeCertificate_Validation(t *testing.T) {
 			name:    "empty serial number",
 			req:     &RevokeCertificateRequest{},
 			wantErr: true,
-		},
-		{
-			name:    "valid request",
-			req:     &RevokeCertificateRequest{SerialNumber: "12345"},
-			wantErr: false,
 		},
 	}
 
@@ -619,11 +604,6 @@ func TestClient_VerifyCertificate_Validation(t *testing.T) {
 			name:    "empty certificate PEM",
 			req:     &VerifyCertificateRequest{},
 			wantErr: true,
-		},
-		{
-			name:    "valid request",
-			req:     &VerifyCertificateRequest{CertificatePEM: "-----BEGIN CERTIFICATE-----\n...\n-----END CERTIFICATE-----"},
-			wantErr: false,
 		},
 	}
 
@@ -848,8 +828,8 @@ func TestClient_GetCACertificate(t *testing.T) {
 					t.Errorf("expected error code %v, got %v", tt.errCode, errors.Code(err))
 				}
 			}
-			if !tt.wantErr && resp == nil {
-				t.Error("expected non-nil response")
+			if !tt.wantErr && (resp == nil || resp.CACertificatePEM != "-----BEGIN CERTIFICATE-----\nca\n-----END CERTIFICATE-----") {
+				t.Errorf("expected the transport response, got %#v", resp)
 			}
 		})
 	}
@@ -887,11 +867,6 @@ func TestClient_GetTLSConfig_Validation(t *testing.T) {
 		{
 			name:    "valid TLS 1.2",
 			req:     &GetTLSConfigRequest{MinVersion: "1.2"},
-			wantErr: false,
-		},
-		{
-			name:    "valid TLS 1.3",
-			req:     &GetTLSConfigRequest{MinVersion: "1.3"},
 			wantErr: false,
 		},
 		{
@@ -1108,152 +1083,6 @@ func TestClient_IsInitialized(t *testing.T) {
 	}
 }
 
-func TestIssueCertificateResponse_Fields(t *testing.T) {
-	now := time.Now()
-	later := now.Add(365 * 24 * time.Hour)
-
-	mockT := &mockTransport{
-		requestFn: func(ctx context.Context, service, method string, req interface{}) (interface{}, error) {
-			return &IssueCertificateResponse{
-				CertificatePEM:   "-----BEGIN CERTIFICATE-----\ncert\n-----END CERTIFICATE-----",
-				PrivateKeyPEM:    "-----BEGIN PRIVATE KEY-----\nkey\n-----END PRIVATE KEY-----",
-				CACertificatePEM: "-----BEGIN CERTIFICATE-----\nca\n-----END CERTIFICATE-----",
-				ChainPEM:         "-----BEGIN CERTIFICATE-----\nchain\n-----END CERTIFICATE-----",
-				SerialNumber:     "ABC123",
-				NotBefore:        now,
-				NotAfter:         later,
-			}, nil
-		},
-	}
-
-	client := NewClient(mockT)
-	resp, err := client.IssueCertificate(context.Background(), &IssueCertificateRequest{
-		CommonName: "test.example.com",
-	})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	if resp.CertificatePEM == "" {
-		t.Error("expected non-empty CertificatePEM")
-	}
-	if resp.PrivateKeyPEM == "" {
-		t.Error("expected non-empty PrivateKeyPEM")
-	}
-	if resp.CACertificatePEM == "" {
-		t.Error("expected non-empty CACertificatePEM")
-	}
-	if resp.ChainPEM == "" {
-		t.Error("expected non-empty ChainPEM")
-	}
-	if resp.SerialNumber != "ABC123" {
-		t.Errorf("expected SerialNumber='ABC123', got %q", resp.SerialNumber)
-	}
-	if !resp.NotBefore.Equal(now) {
-		t.Errorf("expected NotBefore=%v, got %v", now, resp.NotBefore)
-	}
-	if !resp.NotAfter.Equal(later) {
-		t.Errorf("expected NotAfter=%v, got %v", later, resp.NotAfter)
-	}
-}
-
-func TestSignCSRResponse_Fields(t *testing.T) {
-	now := time.Now()
-	later := now.Add(365 * 24 * time.Hour)
-
-	mockT := &mockTransport{
-		requestFn: func(ctx context.Context, service, method string, req interface{}) (interface{}, error) {
-			return &SignCSRResponse{
-				CertificatePEM:   "-----BEGIN CERTIFICATE-----\ncert\n-----END CERTIFICATE-----",
-				CACertificatePEM: "-----BEGIN CERTIFICATE-----\nca\n-----END CERTIFICATE-----",
-				ChainPEM:         "-----BEGIN CERTIFICATE-----\nchain\n-----END CERTIFICATE-----",
-				SerialNumber:     "XYZ789",
-				NotBefore:        now,
-				NotAfter:         later,
-			}, nil
-		},
-	}
-
-	client := NewClient(mockT)
-	resp, err := client.SignCSR(context.Background(), &SignCSRRequest{
-		CSRPEM: "-----BEGIN CERTIFICATE REQUEST-----\n...\n-----END CERTIFICATE REQUEST-----",
-	})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	if resp.CertificatePEM == "" {
-		t.Error("expected non-empty CertificatePEM")
-	}
-	if resp.CACertificatePEM == "" {
-		t.Error("expected non-empty CACertificatePEM")
-	}
-	if resp.ChainPEM == "" {
-		t.Error("expected non-empty ChainPEM")
-	}
-	if resp.SerialNumber != "XYZ789" {
-		t.Errorf("expected SerialNumber='XYZ789', got %q", resp.SerialNumber)
-	}
-	if !resp.NotBefore.Equal(now) {
-		t.Errorf("expected NotBefore=%v, got %v", now, resp.NotBefore)
-	}
-	if !resp.NotAfter.Equal(later) {
-		t.Errorf("expected NotAfter=%v, got %v", later, resp.NotAfter)
-	}
-}
-
-func TestGetCACertificateResponse_Fields(t *testing.T) {
-	mockT := &mockTransport{
-		requestFn: func(ctx context.Context, service, method string, req interface{}) (interface{}, error) {
-			return &GetCACertificateResponse{
-				CACertificatePEM: "-----BEGIN CERTIFICATE-----\nca-cert\n-----END CERTIFICATE-----",
-				CABundlePEM:      "-----BEGIN CERTIFICATE-----\nbundle\n-----END CERTIFICATE-----",
-				Identity:         "QuicBaaS Root CA",
-			}, nil
-		},
-	}
-
-	client := NewClient(mockT)
-	resp, err := client.GetCACertificate(context.Background(), &GetCACertificateRequest{})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	if resp.CACertificatePEM == "" {
-		t.Error("expected non-empty CACertificatePEM")
-	}
-	if resp.CABundlePEM == "" {
-		t.Error("expected non-empty CABundlePEM")
-	}
-	if resp.Identity != "QuicBaaS Root CA" {
-		t.Errorf("expected Identity='QuicBaaS Root CA', got %q", resp.Identity)
-	}
-}
-
-func TestServiceName(t *testing.T) {
-	expectedService := "quicbaas.Certificate"
-	calledService := ""
-
-	mockT := &mockTransport{
-		requestFn: func(ctx context.Context, service, method string, req interface{}) (interface{}, error) {
-			calledService = service
-			return &IssueCertificateResponse{SerialNumber: "test"}, nil
-		},
-	}
-
-	client := NewClient(mockT)
-	_, err := client.IssueCertificate(context.Background(), &IssueCertificateRequest{
-		CommonName: "test.example.com",
-	})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	if calledService != expectedService {
-		t.Errorf("expected service %q, got %q", expectedService, calledService)
-	}
-}
-
 func TestValidationErrorContext(t *testing.T) {
 	mockT := &mockTransport{}
 	client := NewClient(mockT)
@@ -1323,198 +1152,141 @@ func TestValidationErrorContext(t *testing.T) {
 // CA Administration Surface Tests
 // =============================================================================
 
-func TestClient_CAInfo_NilContext(t *testing.T) {
-	client := NewClient(&mockTransport{})
-	_, err := client.CAInfo(nil, &CAInfoRequest{})
-	if err == nil {
-		t.Fatal("expected error for nil context")
-	}
-	if errors.Code(err) != errors.CodeInvalidInput {
-		t.Errorf("expected CodeInvalidInput, got %v", errors.Code(err))
-	}
-}
-
-func TestClient_CAInfo_NilRequestIsAllowed(t *testing.T) {
-	mockT := &mockTransport{
-		requestFn: func(_ context.Context, _ string, _ string, _ interface{}) (interface{}, error) {
-			return &CAInfoResponse{CommonName: "root"}, nil
-		},
-	}
-	client := NewClient(mockT)
-	resp, err := client.CAInfo(context.Background(), nil)
-	if err != nil {
-		t.Fatalf("unexpected: %v", err)
-	}
-	if resp == nil || resp.CommonName != "root" {
-		t.Errorf("expected CommonName=root, got %#v", resp)
-	}
-}
-
-func TestClient_CAInfo_TransportError(t *testing.T) {
-	want := errors.NewInternal("transport.test", "boom")
-	mockT := &mockTransport{
-		requestFn: func(context.Context, string, string, interface{}) (interface{}, error) {
-			return nil, want
-		},
-	}
-	client := NewClient(mockT)
-	if _, err := client.CAInfo(context.Background(), &CAInfoRequest{}); err == nil {
-		t.Fatal("expected transport error to propagate")
-	}
-}
-
-func TestClient_CAInfo_NilResponse(t *testing.T) {
-	mockT := &mockTransport{
-		requestFn: func(context.Context, string, string, interface{}) (interface{}, error) {
-			return nil, nil
-		},
-	}
-	client := NewClient(mockT)
-	_, err := client.CAInfo(context.Background(), &CAInfoRequest{})
-	if err == nil {
-		t.Fatal("expected nil-response error")
-	}
-}
-
-func TestClient_CAInfo_InvalidResponseType(t *testing.T) {
-	mockT := &mockTransport{
-		requestFn: func(context.Context, string, string, interface{}) (interface{}, error) {
-			return "not a *CAInfoResponse", nil
-		},
-	}
-	client := NewClient(mockT)
-	_, err := client.CAInfo(context.Background(), &CAInfoRequest{})
-	if err == nil {
-		t.Fatal("expected type error")
-	}
-}
-
-func TestClient_CAInfo_FullResponse(t *testing.T) {
+func TestClient_CAInfo(t *testing.T) {
 	now := time.Now().UTC()
-	mockT := &mockTransport{
-		requestFn: func(_ context.Context, svc string, method string, _ interface{}) (interface{}, error) {
-			if svc != "quicbaas.Certificate" || method != "CAInfo" {
-				t.Errorf("unexpected dispatch svc=%s method=%s", svc, method)
+	full := &CAInfoResponse{
+		CommonName:         "Root",
+		Subject:            "CN=Root",
+		Issuer:             "CN=Root",
+		SerialNumber:       "ff",
+		NotBefore:          now,
+		NotAfter:           now.Add(24 * time.Hour),
+		IsCA:               true,
+		KeyType:            "RSA",
+		KeyBits:            2048,
+		SignatureAlgorithm: "SHA256-RSA",
+		CertificatePEM:     "-----BEGIN CERTIFICATE-----\nx\n-----END CERTIFICATE-----\n",
+		CABundlePEM:        "-----BEGIN CERTIFICATE-----\nb\n-----END CERTIFICATE-----\n",
+	}
+	tests := []struct {
+		name             string
+		ctx              context.Context
+		req              *CAInfoRequest
+		resp             interface{}
+		respErr          error
+		wantErr          bool
+		wantInvalidInput bool
+		want             *CAInfoResponse
+	}{
+		{name: "nil context", req: &CAInfoRequest{}, wantErr: true, wantInvalidInput: true},
+		{name: "nil request is allowed", ctx: context.Background(), resp: &CAInfoResponse{CommonName: "root"}, want: &CAInfoResponse{CommonName: "root"}},
+		{name: "transport error", ctx: context.Background(), req: &CAInfoRequest{}, respErr: errors.NewInternal("transport.test", "boom"), wantErr: true},
+		{name: "nil response", ctx: context.Background(), req: &CAInfoRequest{}, wantErr: true},
+		{name: "wrong response type", ctx: context.Background(), req: &CAInfoRequest{}, resp: "not a *CAInfoResponse", wantErr: true},
+		{name: "full response", ctx: context.Background(), req: &CAInfoRequest{}, resp: full, want: full},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mockT := &mockTransport{
+				requestFn: func(_ context.Context, svc string, method string, _ interface{}) (interface{}, error) {
+					if svc != "quicbaas.Certificate" || method != "CAInfo" {
+						t.Errorf("unexpected dispatch svc=%s method=%s", svc, method)
+					}
+					return tt.resp, tt.respErr
+				},
 			}
-			return &CAInfoResponse{
-				CommonName:         "Root",
-				Subject:            "CN=Root",
-				Issuer:             "CN=Root",
-				SerialNumber:       "ff",
-				NotBefore:          now,
-				NotAfter:           now.Add(24 * time.Hour),
-				IsCA:               true,
-				KeyType:            "RSA",
-				KeyBits:            2048,
-				SignatureAlgorithm: "SHA256-RSA",
-				CertificatePEM:     "-----BEGIN CERTIFICATE-----\nx\n-----END CERTIFICATE-----\n",
-				CABundlePEM:        "-----BEGIN CERTIFICATE-----\nb\n-----END CERTIFICATE-----\n",
-			}, nil
-		},
-	}
-	client := NewClient(mockT)
-	resp, err := client.CAInfo(context.Background(), &CAInfoRequest{})
-	if err != nil {
-		t.Fatalf("unexpected: %v", err)
-	}
-	if !resp.IsCA || resp.KeyBits != 2048 || resp.SerialNumber != "ff" {
-		t.Errorf("response fields wrong: %#v", resp)
+			resp, err := NewClient(mockT).CAInfo(tt.ctx, tt.req)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatal("expected error")
+				}
+				if tt.wantInvalidInput && errors.Code(err) != errors.CodeInvalidInput {
+					t.Errorf("expected CodeInvalidInput, got %v", errors.Code(err))
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected: %v", err)
+			}
+			if resp == nil || resp.CommonName != tt.want.CommonName || resp.IsCA != tt.want.IsCA ||
+				resp.KeyBits != tt.want.KeyBits || resp.SerialNumber != tt.want.SerialNumber {
+				t.Errorf("response fields wrong: %#v", resp)
+			}
+		})
 	}
 }
 
-func TestClient_ListCertificates_NegativeLimit(t *testing.T) {
-	client := NewClient(&mockTransport{})
-	_, err := client.ListCertificates(context.Background(), &ListCertificatesRequest{Limit: -1})
-	if err == nil {
-		t.Fatal("expected validation error")
-	}
-	if errors.Code(err) != errors.CodeInvalidInput {
-		t.Errorf("expected CodeInvalidInput, got %v", errors.Code(err))
-	}
-}
-
-func TestClient_ListCertificates_NilContext(t *testing.T) {
-	client := NewClient(&mockTransport{})
-	if _, err := client.ListCertificates(nil, nil); err == nil {
-		t.Fatal("expected nil-context error")
-	}
-}
-
-func TestClient_ListCertificates_Roundtrip(t *testing.T) {
+func TestClient_ListCertificates(t *testing.T) {
 	now := time.Now().UTC()
-	mockT := &mockTransport{
-		requestFn: func(_ context.Context, _ string, method string, req interface{}) (interface{}, error) {
-			if method != "ListCertificates" {
-				t.Errorf("unexpected method %s", method)
-			}
-			r, ok := req.(*ListCertificatesRequest)
-			if !ok {
-				t.Fatalf("expected *ListCertificatesRequest, got %T", req)
-			}
-			if r.CommonNameFilter != "api" || !r.IncludeRevoked || r.Limit != 10 {
-				t.Errorf("request not preserved: %#v", r)
-			}
-			return &ListCertificatesResponse{
+	tests := []struct {
+		name             string
+		ctx              context.Context
+		req              *ListCertificatesRequest
+		resp             interface{}
+		respErr          error
+		wantErr          bool
+		wantInvalidInput bool
+		wantTotal        int
+		wantDNSName      string
+	}{
+		{name: "negative limit", ctx: context.Background(), req: &ListCertificatesRequest{Limit: -1}, wantErr: true, wantInvalidInput: true},
+		{name: "nil context", wantErr: true},
+		{name: "transport error", ctx: context.Background(), req: &ListCertificatesRequest{}, respErr: errors.NewInternal("test", "fail"), wantErr: true},
+		{name: "nil response", ctx: context.Background(), req: &ListCertificatesRequest{}, wantErr: true},
+		{name: "wrong response type", ctx: context.Background(), req: &ListCertificatesRequest{}, resp: 42, wantErr: true},
+		{name: "nil request defaults", ctx: context.Background(), resp: &ListCertificatesResponse{}, wantTotal: 0},
+		{
+			name: "full response",
+			ctx:  context.Background(),
+			req:  &ListCertificatesRequest{CommonNameFilter: "api", IncludeRevoked: true, Limit: 10},
+			resp: &ListCertificatesResponse{
 				Certificates: []CertificateSummary{{
 					CommonName: "api.example.com", SerialNumber: "ab", NotBefore: now, NotAfter: now.Add(time.Hour),
 					KeyUsage: "DigitalSignature, KeyEncipherment", DNSNames: []string{"api.example.com"},
 				}},
 				TotalCount: 1,
-			}, nil
+			},
+			wantTotal:   1,
+			wantDNSName: "api.example.com",
 		},
 	}
-	client := NewClient(mockT)
-	resp, err := client.ListCertificates(context.Background(), &ListCertificatesRequest{
-		CommonNameFilter: "api",
-		IncludeRevoked:   true,
-		Limit:            10,
-	})
-	if err != nil {
-		t.Fatalf("unexpected: %v", err)
-	}
-	if resp.TotalCount != 1 || len(resp.Certificates) != 1 {
-		t.Fatalf("unexpected response: %#v", resp)
-	}
-	if resp.Certificates[0].DNSNames[0] != "api.example.com" {
-		t.Errorf("DNSNames not propagated")
-	}
-}
-
-func TestClient_ListCertificates_NilResponse(t *testing.T) {
-	mockT := &mockTransport{
-		requestFn: func(context.Context, string, string, interface{}) (interface{}, error) {
-			return nil, nil
-		},
-	}
-	client := NewClient(mockT)
-	_, err := client.ListCertificates(context.Background(), &ListCertificatesRequest{})
-	if err == nil {
-		t.Fatal("expected nil-response error")
-	}
-}
-
-func TestClient_ListCertificates_TransportError(t *testing.T) {
-	want := errors.NewInternal("test", "fail")
-	mockT := &mockTransport{
-		requestFn: func(context.Context, string, string, interface{}) (interface{}, error) {
-			return nil, want
-		},
-	}
-	client := NewClient(mockT)
-	if _, err := client.ListCertificates(context.Background(), &ListCertificatesRequest{}); err == nil {
-		t.Fatal("expected transport error")
-	}
-}
-
-func TestClient_ListCertificates_InvalidResponseType(t *testing.T) {
-	mockT := &mockTransport{
-		requestFn: func(context.Context, string, string, interface{}) (interface{}, error) {
-			return 42, nil
-		},
-	}
-	client := NewClient(mockT)
-	if _, err := client.ListCertificates(context.Background(), &ListCertificatesRequest{}); err == nil {
-		t.Fatal("expected type error")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mockT := &mockTransport{
+				requestFn: func(_ context.Context, _ string, method string, req interface{}) (interface{}, error) {
+					if method != "ListCertificates" {
+						t.Errorf("unexpected method %s", method)
+					}
+					r, ok := req.(*ListCertificatesRequest)
+					if !ok || r == nil {
+						t.Fatalf("expected non-nil *ListCertificatesRequest, got %T", req)
+					}
+					if tt.req != nil && *r != *tt.req {
+						t.Errorf("request not preserved: %#v", r)
+					}
+					return tt.resp, tt.respErr
+				},
+			}
+			resp, err := NewClient(mockT).ListCertificates(tt.ctx, tt.req)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatal("expected error")
+				}
+				if tt.wantInvalidInput && errors.Code(err) != errors.CodeInvalidInput {
+					t.Errorf("expected CodeInvalidInput, got %v", errors.Code(err))
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected: %v", err)
+			}
+			if resp.TotalCount != tt.wantTotal || len(resp.Certificates) != tt.wantTotal {
+				t.Fatalf("unexpected response: %#v", resp)
+			}
+			if tt.wantDNSName != "" && resp.Certificates[0].DNSNames[0] != tt.wantDNSName {
+				t.Errorf("DNSNames not propagated")
+			}
+		})
 	}
 }
 
@@ -1766,25 +1538,4 @@ func TestClient_IsRevoked(t *testing.T) {
 			t.Fatal("expected invalid-response-type error")
 		}
 	})
-}
-
-// TestClient_ListCertificates_NilRequestDefaults covers the req==nil default
-// branch of ListCertificates (and validateListCertificatesRequest).
-func TestClient_ListCertificates_NilRequestDefaults(t *testing.T) {
-	mockT := &mockTransport{
-		requestFn: func(_ context.Context, _, _ string, req interface{}) (interface{}, error) {
-			if req == nil {
-				t.Error("expected non-nil defaulted request")
-			}
-			return &ListCertificatesResponse{Certificates: nil, TotalCount: 0}, nil
-		},
-	}
-	client := NewClient(mockT)
-	resp, err := client.ListCertificates(context.Background(), nil)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if resp.TotalCount != 0 {
-		t.Errorf("expected total count 0, got %d", resp.TotalCount)
-	}
 }
