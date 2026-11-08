@@ -32,7 +32,7 @@ func TestGiteaCreateIssue_FilesWithResolvedLabelIDs(t *testing.T) {
 	fixture.respondJSON("POST "+giteaIssuesPath, http.StatusCreated, map[string]any{
 		"number": 88, "title": "Follow-up", "body": "b\n\nParent: #12", "state": "open",
 		"labels": []map[string]any{{"id": 4, "name": "task:ready"}},
-		"user":   map[string]any{"login": "agent-go-quicbaas"},
+		"user":   map[string]any{"login": "agent-quicbaas"},
 	})
 
 	issue, err := backend.CreateIssue(context.Background(), testRepo, IssueSpec{
@@ -41,7 +41,7 @@ func TestGiteaCreateIssue_FilesWithResolvedLabelIDs(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateIssue: %v", err)
 	}
-	if issue.Number != 88 || issue.Author != "agent-go-quicbaas" {
+	if issue.Number != 88 || issue.Author != "agent-quicbaas" {
 		t.Fatalf("issue = %+v, want #88 by the project's account", issue)
 	}
 	var sent giteaCreateIssueBody

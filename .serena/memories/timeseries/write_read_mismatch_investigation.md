@@ -95,15 +95,15 @@ func (t *timeSeriesService) TSQuery(...) {
 
 ### Related Code Locations
 
-- **Service Write Logic**: /home/jhahn/sources/go-quicbaas/pkg/service/quicbaas.go (lines 3815-3974)
-- **Service Query Logic**: /home/jhahn/sources/go-quicbaas/pkg/service/quicbaas.go (lines 3995-4055)
-- **Transport Write**: /home/jhahn/sources/go-quicbaas/pkg/server/baas_transport_timeseries.go (lines 50-360)
-- **Storage Adapter**: /home/jhahn/sources/go-quicbaas/pkg/server/lifecycle_timeseries.go (lines 99-248)
-- **REST Handlers**: /home/jhahn/sources/go-quicbaas/pkg/api/rest/timeseries_handlers.go (lines 36-534)
+- **Service Write Logic**: pkg/service/quicbaas.go (lines 3815-3974)
+- **Service Query Logic**: pkg/service/quicbaas.go (lines 3995-4055)
+- **Transport Write**: pkg/server/baas_transport_timeseries.go (lines 50-360)
+- **Storage Adapter**: pkg/server/lifecycle_timeseries.go (lines 99-248)
+- **REST Handlers**: pkg/api/rest/timeseries_handlers.go (lines 36-534)
 
 ### Integration Test Evidence
 
-**Test File**: /home/jhahn/sources/go-quicbaas/test/integration/timeseries/multiprotocol_test.go
+**Test File**: test/integration/timeseries/multiprotocol_test.go
 
 **Tests Affected**:
 - TestMultiprotocol_WriteAndQueryPoint (line 85) - Writes succeed, queries return 0

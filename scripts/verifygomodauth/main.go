@@ -21,7 +21,7 @@
 // so on any other host it was written empty, `go mod download` inside the image
 // asked the public proxy for a tag that is not mirrored, and the build failed
 // with "unknown revision". The target now also builds it from a Gitea read
-// token -- GITEA_READ_TOKEN, else the agent tokens file -- and every target
+// token -- FORGE_READ_TOKEN, else the agent tokens file -- and every target
 // whose compose file mounts the secret stages it before its build and empties
 // it once the build is done, on the failure path too.
 //
@@ -30,7 +30,7 @@
 // size at every call, so "it held the credentials during the build and nothing
 // after" is observed rather than inferred. The token is a fixed, obviously fake
 // string; the gate strips the caller's own GIT_CONFIG_*, GOPRIVATE and
-// GITEA_READ_TOKEN from the environment so a real credential is never read.
+// FORGE_READ_TOKEN from the environment so a real credential is never read.
 //
 // Interruption is exercised too: the fake holds the build call open, the gate
 // sends SIGINT to make's process group as a Ctrl-C would, and the file must
@@ -83,7 +83,7 @@ var gateOriginEnv = []string{"GITEA_HTTP_ORIGIN=" + gateOrigin}
 // credentials, and the knobs each case sets for itself.
 var strippedEnv = []string{
 	"GIT_CONFIG_COUNT", "GIT_CONFIG_KEY_0", "GIT_CONFIG_VALUE_0", "GOPRIVATE",
-	"GITEA_READ_TOKEN", "GITEA_HTTP_ORIGIN", "GOMODAUTH_ENV",
+	"FORGE_READ_TOKEN", "GITEA_HTTP_ORIGIN", "GOMODAUTH_ENV",
 	"GOMODAUTH_TOKENS_FILE", "GOMODAUTH_TOKEN_KEY", "GOMODAUTH_OWNER", "HOME",
 	"GOMOD_BACKUP", "SDK_GOMOD_BACKUP",
 }
@@ -394,7 +394,7 @@ func check(root, work string, stdout, stderr io.Writer) (int, error) {
 			fail("%s: the token reached a docker command line", what)
 		}
 	}
-	tokensFile := "AGENT_TOKEN_COMPANY=someone0elses0token\nexport AGENT_TOKEN_GO_QUICBAAS=\"" + fakeToken + "\"\n"
+	tokensFile := "OTHER_READ_TOKEN=someone0elses0token\nexport FORGE_READ_TOKEN=\"" + fakeToken + "\"\n"
 
 	fmt.Fprintln(stdout, "case: a token in the agent tokens file is staged as the section-6 variables")
 	out, err := invoke(root, work, "tokens-file", invocation{targets: []string{"stage-gomodauth"}, tokensFile: tokensFile, env: gateOriginEnv})
@@ -461,12 +461,12 @@ func check(root, work string, stdout, stderr io.Writer) (int, error) {
 		fail("clear-gomodauth created the file with mode %v, want 0600", out.stagedMode)
 	}
 
-	fmt.Fprintln(stdout, "case: GITEA_READ_TOKEN wins over the tokens file and the origin is overridable")
+	fmt.Fprintln(stdout, "case: FORGE_READ_TOKEN wins over the tokens file and the origin is overridable")
 	envToken := fakeToken + "0env"
 	out, err = invoke(root, work, "env-token", invocation{
 		targets:    []string{"stage-gomodauth"},
 		tokensFile: tokensFile,
-		env:        []string{"GITEA_READ_TOKEN=" + envToken, "GITEA_HTTP_ORIGIN=https://gitea.invalid:8443/"},
+		env:        []string{"FORGE_READ_TOKEN=" + envToken, "GITEA_HTTP_ORIGIN=https://gitea.invalid:8443/"},
 	})
 	if err != nil {
 		return 0, err
@@ -475,7 +475,7 @@ func check(root, work string, stdout, stderr io.Writer) (int, error) {
 		fail("stage-gomodauth exited %d:\n%s", out.status, out.output)
 	}
 	if out.staged != sectionSix(envToken, "https://gitea.invalid:8443") {
-		fail("the staged file was not built from GITEA_READ_TOKEN against the overridden origin")
+		fail("the staged file was not built from FORGE_READ_TOKEN against the overridden origin")
 	}
 	noLeak("environment token", out)
 
@@ -511,10 +511,9 @@ func check(root, work string, stdout, stderr io.Writer) (int, error) {
 
 	fmt.Fprintln(stdout, "case: a Gitea runner's own variables are staged as injected")
 	runnerKey := "url.http://x:" + fakeToken + "@gitea.invalid/jeremyhahn/.insteadOf"
-	//nolint:gosec // G101: fixture values the runner case stages, not credentials
 	out, err = invoke(root, work, "runner", invocation{
 		targets:    []string{"stage-gomodauth"},
-		tokensFile: "AGENT_TOKEN_GO_QUICBAAS=ignored0token\n",
+		tokensFile: "FORGE_READ_TOKEN=ignored0token\n",
 		env: []string{
 			"GOPRIVATE=github.com/jeremyhahn/*", "GIT_CONFIG_COUNT=1",
 			"GIT_CONFIG_KEY_0=" + runnerKey, "GIT_CONFIG_VALUE_0=https://github.com/jeremyhahn/",
@@ -544,7 +543,7 @@ func check(root, work string, stdout, stderr io.Writer) (int, error) {
 
 	fmt.Fprintln(stdout, "case: a value that is not token-shaped is refused without being echoed")
 	bad := fakeToken + "'$(id)"
-	out, err = invoke(root, work, "bad-token", invocation{targets: []string{"stage-gomodauth"}, env: []string{"GITEA_READ_TOKEN=" + bad}})
+	out, err = invoke(root, work, "bad-token", invocation{targets: []string{"stage-gomodauth"}, env: []string{"FORGE_READ_TOKEN=" + bad}})
 	if err != nil {
 		return 0, err
 	}

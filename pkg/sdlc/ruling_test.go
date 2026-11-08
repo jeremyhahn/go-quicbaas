@@ -72,8 +72,8 @@ func TestSweep_AnAuthorizedRulerReadmitsAParkedTask(t *testing.T) {
 		author string
 	}{
 		"the repository owner answers a question":      {orchestration.TaskBlockKindNeedsInfo, fixtureOwner},
-		"the company agent rules on an escalation":     {orchestration.TaskBlockKindEscalated, "agent-company"},
-		"a login is matched regardless of letter case": {orchestration.TaskBlockKindNeedsInfo, "Agent-Company"},
+		"the company agent rules on an escalation":     {orchestration.TaskBlockKindEscalated, "company-agent"},
+		"a login is matched regardless of letter case": {orchestration.TaskBlockKindNeedsInfo, "Company-Agent"},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -147,7 +147,7 @@ func TestSweep_OneRulingReadmitsOnce(t *testing.T) {
 	task := f.parkedForRuling(orchestration.TaskBlockKindNeedsInfo)
 	number := issueNumber(t, task)
 	f.forge.comment(number, 601, fixtureOwner, "Keep the v1 order.", parkedAt.Add(time.Minute))
-	f.forge.comment(number, 602, "agent-company", "Relaying: keep the v1 order.", parkedAt.Add(2*time.Minute))
+	f.forge.comment(number, 602, "company-agent", "Relaying: keep the v1 order.", parkedAt.Add(2*time.Minute))
 
 	onlyFinding(t, f.sweep(t))
 	if got := f.tasks.readmitted(); len(got) != 1 {
@@ -248,7 +248,7 @@ func TestNewUnblockSweeper_ConfiguredRulersReplaceTheDefault(t *testing.T) {
 	}
 	f.sweeper = sweeper
 	task := f.parkedForRuling(orchestration.TaskBlockKindNeedsInfo)
-	f.forge.comment(issueNumber(t, task), 901, "agent-company", "Yes.", parkedAt.Add(time.Minute))
+	f.forge.comment(issueNumber(t, task), 901, "company-agent", "Yes.", parkedAt.Add(time.Minute))
 
 	if finding := onlyFinding(t, f.sweep(t)); finding.Verdict == UnblockReleased {
 		t.Fatalf("finding = %+v: a login outside the configured rulers readmitted the task", finding)

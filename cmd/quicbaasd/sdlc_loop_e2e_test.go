@@ -1347,7 +1347,7 @@ func registerFactoryProject(t *testing.T, srv *server.Server, backend *e2eAgentB
 			TenantID: loopE2ETenant, Name: loopE2EProject,
 			WorkspacePath: factoryProjectWorkspace(t),
 			GitRepoURL:    "file://" + repo, GitDefaultBranch: "main",
-			GitAuthorName: "agent-" + loopE2EProject, GitAuthorEmail: "agent-" + loopE2EProject + "@example.internal",
+			GitAuthorName: "agent-" + loopE2EProject, GitAuthorEmail: "agent-" + loopE2EProject + "@example.com",
 			GitSigningEnabled: true, GitSigningKeyName: loopE2EKeyName, GitSigningKeyScope: loopE2EKeyScope, GitSigningKeyOwner: loopE2EKeyOwner,
 		})
 		require.NoError(t, createErr)
@@ -1772,11 +1772,11 @@ func TestSDLCRunner_TheContainerCommitsSignsAndPushes(t *testing.T) {
 	raw := gitOut(t, rig.repo, "cat-file", "commit", delivery.HeadSHA)
 	require.Contains(t, raw, "BEGIN SSH SIGNATURE",
 		"the head the container published carries no signature:\n%s", raw)
-	require.Contains(t, raw, "agent-"+loopE2EProject+"@example.internal",
+	require.Contains(t, raw, "agent-"+loopE2EProject+"@example.com",
 		"the commit was not authored as the project's agent identity:\n%s", raw)
 
 	allowed := filepath.Join(t.TempDir(), "allowed_signers")
-	entry := "agent-" + loopE2EProject + "@example.internal " + tenantSigningPublicKey(t, rig.srv)
+	entry := "agent-" + loopE2EProject + "@example.com " + tenantSigningPublicKey(t, rig.srv)
 	require.NoError(t, os.WriteFile(allowed, []byte(entry+"\n"), 0o600))
 	verified := gitOut(t, rig.repo, "-c", "gpg.ssh.allowedSignersFile="+allowed, "verify-commit", delivery.HeadSHA)
 	require.Contains(t, verified, "Good",
