@@ -802,9 +802,6 @@ func TestDedupStore_Cleanup(t *testing.T) {
 		}
 		ds.StoreEntry(ctx, "cleanup-channel", "old-key", entry)
 
-		// Wait a bit to ensure window passes
-		time.Sleep(10 * time.Millisecond)
-
 		// Run cleanup
 		err := ds.Cleanup(ctx)
 		if err != nil {
