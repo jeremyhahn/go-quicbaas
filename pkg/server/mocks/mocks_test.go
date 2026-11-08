@@ -22,13 +22,6 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-func TestNewMockStorage(t *testing.T) {
-	m := NewMockStorage()
-	assert.NotNil(t, m)
-	assert.NotNil(t, m.MetricsFunc)
-	assert.NotNil(t, m.CloseFunc)
-}
-
 func TestMockStorage_Metrics(t *testing.T) {
 	t.Run("default function", func(t *testing.T) {
 		m := NewMockStorage()
@@ -61,12 +54,6 @@ func TestMockStorage_Close(t *testing.T) {
 	})
 }
 
-func TestNewMockIndexManager(t *testing.T) {
-	m := NewMockIndexManager()
-	assert.NotNil(t, m)
-	assert.NotNil(t, m.CloseFunc)
-}
-
 func TestMockIndexManager_Close(t *testing.T) {
 	t.Run("default function", func(t *testing.T) {
 		m := NewMockIndexManager()
@@ -81,13 +68,6 @@ func TestMockIndexManager_Close(t *testing.T) {
 		assert.NoError(t, err)
 		assert.True(t, m.CloseCalled)
 	})
-}
-
-func TestNewMockDiscoveryManager(t *testing.T) {
-	m := NewMockDiscoveryManager()
-	assert.NotNil(t, m)
-	assert.NotNil(t, m.GetPeersFunc)
-	assert.NotNil(t, m.CloseFunc)
 }
 
 func TestMockDiscoveryManager_GetPeers(t *testing.T) {
@@ -124,12 +104,6 @@ func TestMockDiscoveryManager_Close(t *testing.T) {
 	})
 }
 
-func TestNewMockBootstrapper(t *testing.T) {
-	m := NewMockBootstrapper()
-	assert.NotNil(t, m)
-	assert.NotNil(t, m.BootstrapFunc)
-}
-
 func TestMockBootstrapper_Bootstrap(t *testing.T) {
 	ctx := context.Background()
 
@@ -146,14 +120,6 @@ func TestMockBootstrapper_Bootstrap(t *testing.T) {
 		assert.NoError(t, err)
 		assert.True(t, m.BootstrapCalled)
 	})
-}
-
-func TestNewMockGRPCServer(t *testing.T) {
-	m := NewMockGRPCServer()
-	assert.NotNil(t, m)
-	assert.NotNil(t, m.ServeFunc)
-	assert.NotNil(t, m.GracefulStopFunc)
-	assert.NotNil(t, m.StopFunc)
 }
 
 func TestMockGRPCServer_Serve(t *testing.T) {
@@ -200,12 +166,6 @@ func TestMockGRPCServer_Stop(t *testing.T) {
 	})
 }
 
-func TestNewMockGRPCAPI(t *testing.T) {
-	m := NewMockGRPCAPI()
-	assert.NotNil(t, m)
-	assert.NotNil(t, m.SetShardRouterFunc)
-}
-
 func TestMockGRPCAPI_SetShardRouter(t *testing.T) {
 	t.Run("default function", func(t *testing.T) {
 		m := NewMockGRPCAPI()
@@ -218,16 +178,6 @@ func TestMockGRPCAPI_SetShardRouter(t *testing.T) {
 		m.SetShardRouter(nil)
 		assert.True(t, m.SetShardRouterCalled)
 	})
-}
-
-func TestNewMockRESTServer(t *testing.T) {
-	m := NewMockRESTServer()
-	assert.NotNil(t, m)
-	assert.NotNil(t, m.StartFunc)
-	assert.NotNil(t, m.ShutdownFunc)
-	assert.NotNil(t, m.IsStartedFunc)
-	assert.NotNil(t, m.IsClosedFunc)
-	assert.NotNil(t, m.SetShardRouterFunc)
 }
 
 func TestMockRESTServer_Start(t *testing.T) {
@@ -304,16 +254,6 @@ func TestMockRESTServer_SetShardRouter(t *testing.T) {
 	})
 }
 
-func TestNewMockHealthChecker(t *testing.T) {
-	m := NewMockHealthChecker()
-	assert.NotNil(t, m)
-	assert.NotNil(t, m.CheckGRPCFunc)
-	assert.NotNil(t, m.CheckRESTFunc)
-	assert.NotNil(t, m.GetOverallHealthFunc)
-	assert.NotNil(t, m.IsHealthyFunc)
-	assert.NotNil(t, m.IsReadyFunc)
-}
-
 func TestMockHealthChecker_CheckGRPC(t *testing.T) {
 	t.Run("default function", func(t *testing.T) {
 		m := NewMockHealthChecker()
@@ -380,17 +320,6 @@ func TestMockHealthChecker_IsReady(t *testing.T) {
 	})
 }
 
-func TestNewMockShardRouter(t *testing.T) {
-	m := NewMockShardRouter()
-	assert.NotNil(t, m)
-	assert.NotNil(t, m.EntityShards)
-	assert.NotNil(t, m.Shards)
-	assert.NotNil(t, m.SetEntityShardFunc)
-	assert.NotNil(t, m.GetShardForKeyFunc)
-	assert.NotNil(t, m.GetShardForEntityFunc)
-	assert.NotNil(t, m.ListShardsFunc)
-}
-
 func TestMockShardRouter_SetEntityShard(t *testing.T) {
 	t.Run("default function", func(t *testing.T) {
 		m := NewMockShardRouter()
@@ -454,62 +383,40 @@ func TestMockShardRouter_ListShards(t *testing.T) {
 	})
 }
 
-func TestNewMockLogger(t *testing.T) {
-	m := NewMockLogger()
-	assert.NotNil(t, m)
-	assert.NotNil(t, m.DebugLogs)
-	assert.NotNil(t, m.InfoLogs)
-	assert.NotNil(t, m.WarnLogs)
-	assert.NotNil(t, m.ErrorLogs)
-	assert.NotNil(t, m.Fields)
-}
-
-func TestMockLogger_Debug(t *testing.T) {
-	m := NewMockLogger()
-	m.Debug("test debug")
-	assert.Contains(t, m.DebugLogs, "test debug")
-}
-
-func TestMockLogger_Debugf(t *testing.T) {
-	m := NewMockLogger()
-	m.Debugf("test %s", "debug")
-	assert.Len(t, m.DebugLogs, 1)
-}
-
-func TestMockLogger_Info(t *testing.T) {
-	m := NewMockLogger()
-	m.Info("test info")
-	assert.Contains(t, m.InfoLogs, "test info")
-}
-
-func TestMockLogger_Infof(t *testing.T) {
-	m := NewMockLogger()
-	m.Infof("test %s", "info")
-	assert.Len(t, m.InfoLogs, 1)
-}
-
-func TestMockLogger_Warn(t *testing.T) {
-	m := NewMockLogger()
-	m.Warn("test warn")
-	assert.Contains(t, m.WarnLogs, "test warn")
-}
-
-func TestMockLogger_Warnf(t *testing.T) {
-	m := NewMockLogger()
-	m.Warnf("test %s", "warn")
-	assert.Len(t, m.WarnLogs, 1)
-}
-
-func TestMockLogger_Error(t *testing.T) {
-	m := NewMockLogger()
-	m.Error("test error")
-	assert.Contains(t, m.ErrorLogs, "test error")
-}
-
-func TestMockLogger_Errorf(t *testing.T) {
-	m := NewMockLogger()
-	m.Errorf("test %s", "error")
-	assert.Len(t, m.ErrorLogs, 1)
+func TestMockLogger_RecordsEachLevel(t *testing.T) {
+	tests := []struct {
+		name string
+		log  func(m *MockLogger)
+		logs func(m *MockLogger) []string
+	}{
+		{
+			name: "debug",
+			log:  func(m *MockLogger) { m.Debug("plain"); m.Debugf("format %s", "arg") },
+			logs: func(m *MockLogger) []string { return m.DebugLogs },
+		},
+		{
+			name: "info",
+			log:  func(m *MockLogger) { m.Info("plain"); m.Infof("format %s", "arg") },
+			logs: func(m *MockLogger) []string { return m.InfoLogs },
+		},
+		{
+			name: "warn",
+			log:  func(m *MockLogger) { m.Warn("plain"); m.Warnf("format %s", "arg") },
+			logs: func(m *MockLogger) []string { return m.WarnLogs },
+		},
+		{
+			name: "error",
+			log:  func(m *MockLogger) { m.Error("plain"); m.Errorf("format %s", "arg") },
+			logs: func(m *MockLogger) []string { return m.ErrorLogs },
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m := NewMockLogger()
+			tt.log(m)
+			assert.Equal(t, []string{"plain", "format %s"}, tt.logs(m))
+		})
+	}
 }
 
 func TestMockLogger_WithError(t *testing.T) {
@@ -525,14 +432,6 @@ func TestMockLogger_WithField(t *testing.T) {
 	result := m.WithField("key", "value")
 	assert.Equal(t, m, result)
 	assert.Equal(t, "value", m.Fields["key"])
-}
-
-func TestNewMockListener(t *testing.T) {
-	m := NewMockListener()
-	assert.NotNil(t, m)
-	assert.NotNil(t, m.AcceptFunc)
-	assert.NotNil(t, m.CloseFunc)
-	assert.NotNil(t, m.AddrFunc)
 }
 
 func TestMockListener_Close(t *testing.T) {
