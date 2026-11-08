@@ -18,13 +18,25 @@
 // WHY THIS IS A GATE AND NOT A CONVENTION. go-quicbaas ships publicly — a
 // module zip, a release tarball, two container images and an embedded web UI
 // built from the tree. Anything committed here is published unless
-// .gitattributes marks it export-ignore (see PublishedFiles). go-quicbaas#944
-// audited the tree and found a symlink into the lab's NFS mount at the repo
-// root, the private forge in the release workflow's REGISTRY, the private forge
-// in seven documentation links, the private registry in captured CI logs, the
-// owner's Gitea principal baked into both shipped UI bundles, and lab hosts in
-// `--help` text and exported godoc. None of it was load-bearing and nothing
-// prevented any of it. This is what prevents the repeat.
+// .gitattributes marks it export-ignore (see PublishedFiles). The first audit
+// of the tree found a symlink into the lab's NFS mount at the repo root, the
+// private forge in the release workflow's REGISTRY, the private forge in seven
+// documentation links, the private registry in captured CI logs, the owner's
+// forge principal baked into both shipped UI bundles, and lab hosts in `--help`
+// text and exported godoc. None of it was load-bearing and nothing prevented
+// any of it. This is what prevents the repeat.
+//
+// WHERE THE RULES LIVE. Not here. A public repository cannot carry the values it
+// refuses to publish, not even as the patterns that refuse them, so this
+// package holds the machinery and no rule. The rules are a private pattern file
+// handed to the gate at run time in PatternsEnv, one `class<TAB>regex` line per
+// rule (see ParsePatterns). The CI step "Releasability (private patterns)"
+// reads the same text and greps the whole tracked tree with it; this package
+// is the same check with line-level reporting, waivers and an allow list, for
+// running locally against a working tree. Without the variable there is
+// nothing to look for, and the gate says so (NoPatternsError) rather than
+// reporting a clean tree. The package's own tests use reference values only:
+// RFC 5737 addresses and names nobody owns.
 //
 // WHAT IS REPORTED, and why each class is a leak rather than a style problem:
 //
@@ -48,7 +60,10 @@
 //   - Move the value out of the tree: a forge address belongs in a CI
 //     repository variable, a fleet address in the private infra repository.
 //   - If the value IS the point — provenance for a benchmark, the host a
-//     captured log came from — waive the line in place (below).
+//     captured log came from — waive the line in place (below). Note that the
+//     CI step greps the whole tracked tree and honours neither waivers nor the
+//     allow list, so a value one of its patterns covers fails there whatever
+//     this package accepts.
 //
 // TWO WAYS TO ACCEPT A LINE, both explicit:
 //
@@ -63,9 +78,9 @@
 //
 // WHERE THIS LIVES. The sibling gates are commands under scripts/. This one is
 // a package under pkg/ because that is the tree `make test` walks
-// (`./pkg/... ./cmd/... ./scripts/...`), so the gate runs on every unit-test
-// pass with no Makefile target to remember and no target list to fall off. The
-// scan is exported, so a command wrapper is a thin main whenever one is wanted.
+// (`./pkg/... ./cmd/... ./scripts/...`), so with PatternsEnv set the gate runs
+// on every unit-test pass with no Makefile target to remember. The scan is
+// exported, so a command wrapper is a thin main whenever one is wanted.
 //
 // RESOLUTION is textual, deliberately: it needs no build tags, no module
 // loading and no parser, so it runs on every tree state including one that does
@@ -80,13 +95,13 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"regexp"
 	"sort"
 	"strings"
 )
 
 // Class groups the findings by what the matched text leaks. It is a string so a
-// report, an allow-list entry and a test name all spell it the same way.
+// report, an allow-list entry, a pattern file and a test name all spell it the
+// same way.
 type Class string
 
 const (
@@ -104,123 +119,21 @@ const (
 	ClassOwnerAccount Class = "owner-account"
 )
 
+// classGuidance is every class the gate knows, with what to do instead of the
+// value. It is the one list of classes: the pattern parser and the allow-list
+// validator both look a class up here, so a class cannot be valid in one and
+// unknown in the other. The advice is per class because the rules are private
+// and a rule's own advice could not be written down next to it.
+var classGuidance = map[Class]string{
+	ClassLabAddress:   "use an RFC 5737 documentation address (198.51.100.0/24) or a name under .example.com",
+	ClassLabHost:      "name the role, not the machine: agent-01, ci-runner-01, gpu-host.internal, quicbaas.example.com",
+	ClassOwnerPath:    "make the path relative to the repository root, or use /var/lib/quicbaas, /srv, /home/agent",
+	ClassOwnerAccount: "name a role, not a person: operator, agent, or the project's own module path",
+}
+
 // waiverPrefix marks a line whose lab value is the point of the line. The text
 // after it is the reason and must not be empty.
 const waiverPrefix = "lab-string-ok:"
-
-// Pattern is one rule the scanner applies to every line.
-type Pattern struct {
-	// Class says what a match leaks.
-	Class Class
-
-	// Expr matches the offending text. It matches the value, not the whole
-	// line, so the report can quote exactly what has to change.
-	Expr *regexp.Regexp
-
-	// Needle is a lowercase literal that every string Expr can match must
-	// contain. It is the cheap precondition the sieve uses: a substring
-	// search runs at memory bandwidth where this regexp runs at a few
-	// megabytes a second, and the whole tree has to be read on every unit
-	// test pass. A Needle that is not implied by Expr would make the gate
-	// silently blind, so TestPatterns_EveryNeedleIsImpliedByItsExpr pins it.
-	Needle string
-
-	// Guidance is what the engineer who tripped this rule should do instead.
-	Guidance string
-}
-
-// patterns is the rule set. It is a package-level var rather than a constant
-// list so a new fleet subnet or hostname is one line, and so the lab's own
-// values are written down in exactly one place in this repository.
-//
-// Note what is NOT here: 192.168.0.0/16 at large. Tests across this tree use
-// RFC 1918 literals as opaque addresses that are never dialed, and banning the
-// whole space would bury the real findings under hundreds of them. The fleet
-// subnet is named precisely instead.
-var patterns = []Pattern{
-	{
-		Class:    ClassLabAddress,
-		Expr:     regexp.MustCompile(`\b192\.168\.101\.\d{1,3}\b`),
-		Needle:   "192.168.101.",
-		Guidance: "use an RFC 5737 documentation address (198.51.100.0/24) or a name under .example.com",
-	},
-	{
-		Class:    ClassLabHost,
-		Expr:     regexp.MustCompile(`(?i)\bvstation-\d{2}\b`),
-		Needle:   "vstation-",
-		Guidance: "name the role, not the machine: agent-01, gpu-host.internal, quicbaas.example.com",
-	},
-	{
-		Class:    ClassLabHost,
-		Expr:     regexp.MustCompile(`(?i)\bdellemc-\d{2}\b`),
-		Needle:   "dellemc-",
-		Guidance: "a CI runner's own hostname is never load-bearing: ci-runner-01 reads the same",
-	},
-	{
-		Class:    ClassLabHost,
-		Expr:     regexp.MustCompile(`(?i)\bgodlike(\.internal)?\b`), // lab-string-ok: the hostname this rule exists to find
-		Needle:   "gpu-host",
-		Guidance: "name the role, not the machine: gpu-host.internal, npu-host.internal",
-	},
-	{
-		Class:    ClassLabHost,
-		Expr:     regexp.MustCompile(`(?i)\bomega\b`), // lab-string-ok: the hostname this rule exists to find
-		Needle:   "omega",
-		Guidance: "name the role, not the machine: agent-01, remote-agent.internal",
-	},
-	{
-		Class:    ClassOwnerPath,
-		Expr:     regexp.MustCompile(`/home/jhahn\b`), // lab-string-ok: the path prefix this rule exists to find
-		Needle:   "/home/jhahn",
-		Guidance: "make the path relative to the repository root, or use /var/lib, /srv, /home/agent",
-	},
-	{
-		Class:    ClassOwnerPath,
-		Expr:     regexp.MustCompile(`/mnt/vstation`), // lab-string-ok: the mount prefix this rule exists to find
-		Needle:   "/mnt/vstation",
-		Guidance: "the lab's NFS mount does not exist anywhere else; use a repository-relative path",
-	},
-	{
-		Class:    ClassOwnerPath,
-		Expr:     regexp.MustCompile(`quicbaas-burnin`), // lab-string-ok: the deployment directory this rule exists to find
-		Needle:   "quicbaas-burnin",
-		Guidance: "the burn-in node's deployment directory is private; use /var/lib/quicbaas or a repository-relative path",
-	},
-	{
-		// Last on purpose: a match inside a span an earlier rule already
-		// reported (the account inside an owner path) is not reported twice.
-		Class:    ClassOwnerAccount,
-		Expr:     regexp.MustCompile(`(?i)\bjhahn\b`), // lab-string-ok: the account name this rule exists to find
-		Needle:   "jhahn",
-		Guidance: "name a role, not a person: operator, agent, or the project's own module path",
-	},
-}
-
-// sieveNeedles is every pattern's Needle, in the form the sieve wants them.
-// Almost no file in this tree contains a lab value, and 30 MB of tracked
-// content is read on every unit-test pass: settling "there is nothing here" has
-// to be cheap, and a substring search is two orders of magnitude cheaper than
-// the patterns themselves.
-var sieveNeedles = func() [][]byte {
-	needles := make([][]byte, 0, len(patterns))
-	for _, p := range patterns {
-		needles = append(needles, []byte(p.Needle))
-	}
-	return needles
-}()
-
-// mayContainLabValue reports whether any pattern could possibly match inside
-// content. Case is folded because a hostname is as likely to appear shouted in a
-// log line as lowercased in a config file.
-func mayContainLabValue(content []byte) bool {
-	folded := bytes.ToLower(content)
-	for _, needle := range sieveNeedles {
-		if bytes.Contains(folded, needle) {
-			return true
-		}
-	}
-	return false
-}
 
 // Finding is one line that must change before this tree can be published.
 type Finding struct {
@@ -263,15 +176,21 @@ const maxFileSize = 32 << 20
 // it is binary. It matches what git itself uses.
 const binarySniff = 8000
 
-// ScanRepo is the gate: it enumerates the published files under root (see
-// PublishedFiles) and reports every one that names a lab value and is neither
-// waived in place nor covered by DefaultAllowList.
+// ScanRepo is the gate: it reads the rules from PatternsEnv, enumerates the
+// published files under root (see PublishedFiles) and reports every one that
+// names a lab value and is neither waived in place nor covered by
+// DefaultAllowList. The rules are read first, so a gate with nothing to look
+// for fails before it lists anything.
 func ScanRepo(root string) ([]Finding, error) {
+	patterns, err := PatternsFromEnv()
+	if err != nil {
+		return nil, err
+	}
 	files, err := PublishedFiles(root)
 	if err != nil {
 		return nil, err
 	}
-	return Scan(root, files, DefaultAllowList)
+	return ScanWith(root, files, DefaultAllowList, patterns)
 }
 
 // TrackedFiles lists the files git has in the index at root, slash-separated and
@@ -296,23 +215,40 @@ func TrackedFiles(root string) ([]string, error) {
 	return files, nil
 }
 
-// Scan reports the lab values in the named files, which are interpreted relative
-// to root. Rules are validated first: an allow-list that does not say why it
-// allows something is a defect in the gate, not a pass.
+// Scan is ScanWith using the rules in PatternsEnv.
+func Scan(root string, files []string, rules []AllowRule) ([]Finding, error) {
+	patterns, err := PatternsFromEnv()
+	if err != nil {
+		return nil, err
+	}
+	return ScanWith(root, files, rules, patterns)
+}
+
+// ScanWith reports the matches of patterns in the named files, which are
+// interpreted relative to root. The allow list is validated first: an
+// allow-list that does not say why it allows something is a defect in the
+// gate, not a pass. An empty pattern set is a *NoPatternsError, because a scan
+// that looks for nothing finds nothing and that is not a clean tree.
 //
 // A file listed in the index but absent from the working tree is skipped — a
 // deletion in progress has no content to scan — as is a file that is binary or
-// larger than maxFileSize.
-func Scan(root string, files []string, rules []AllowRule) ([]Finding, error) {
+// larger than maxFileSize. A file whose allow-list entries accept every class
+// the patterns can report is not read at all.
+func ScanWith(root string, files []string, rules []AllowRule, patterns []Pattern) ([]Finding, error) {
 	if err := ValidateAllowList(rules); err != nil {
 		return nil, err
+	}
+	if len(patterns) == 0 {
+		return nil, &NoPatternsError{}
+	}
+	reportable := make(map[Class]bool, len(classGuidance))
+	for _, p := range patterns {
+		reportable[p.Class] = true
 	}
 	var findings []Finding
 	for _, name := range files {
 		accepted := acceptedClasses(rules, name)
-		if len(accepted) == len(patterns) {
-			// Every class this gate knows about is allowed here;
-			// reading the file cannot produce a finding.
+		if acceptsAll(accepted, reportable) {
 			continue
 		}
 		content, ok, err := readCandidate(filepath.Join(root, filepath.FromSlash(name)))
@@ -322,9 +258,19 @@ func Scan(root string, files []string, rules []AllowRule) ([]Finding, error) {
 		if !ok {
 			continue
 		}
-		findings = append(findings, scanContent(name, content, accepted)...)
+		findings = append(findings, scanContent(name, content, accepted, patterns)...)
 	}
 	return findings, nil
+}
+
+// acceptsAll reports whether every class in reportable is accepted.
+func acceptsAll(accepted, reportable map[Class]bool) bool {
+	for c := range reportable {
+		if !accepted[c] {
+			return false
+		}
+	}
+	return true
 }
 
 // readCandidate reads a file the scanner may have to look at. The bool reports
@@ -375,10 +321,14 @@ func isBinary(content []byte) bool {
 	return bytes.IndexByte(head, 0) >= 0
 }
 
-// scanContent applies every pattern whose class is not accepted for this file to
-// every line of it.
-func scanContent(name string, content []byte, accepted map[Class]bool) []Finding {
-	if !mayContainLabValue(content) {
+// scanContent applies every pattern whose class is not accepted for this file,
+// and whose sieve the content passes, to every line of it. Patterns are tried
+// in order and a span inside one already reported on the line is skipped, which
+// is what makes the order of the rules matter (see ParsePatterns). A zero-width
+// match quotes nothing and is not a finding.
+func scanContent(name string, content []byte, accepted map[Class]bool, patterns []Pattern) []Finding {
+	live := candidates(content, patterns, accepted)
+	if len(live) == 0 {
 		return nil
 	}
 	lines := strings.Split(string(content), "\n")
@@ -388,12 +338,9 @@ func scanContent(name string, content []byte, accepted map[Class]bool) []Finding
 			continue
 		}
 		var reported [][]int
-		for _, p := range patterns {
-			if accepted[p.Class] {
-				continue
-			}
+		for _, p := range live {
 			for _, span := range p.Expr.FindAllStringIndex(line, -1) {
-				if within(span, reported) {
+				if span[0] == span[1] || within(span, reported) {
 					continue
 				}
 				reported = append(reported, span)
@@ -463,7 +410,7 @@ func Report(w io.Writer, findings []Finding) (bool, error) {
 	}
 	b.WriteString("Replace the value, move it to CI/infra configuration, or -- if the value\n")
 	b.WriteString("is the point (benchmark provenance, a captured log) -- waive the line with\n")
-	b.WriteString("a `" + waiverPrefix + " <reason>` comment. See pkg/labstrings for the full list.\n")
+	b.WriteString("a `" + waiverPrefix + " <reason>` comment. See pkg/labstrings for what each class means.\n")
 	if _, err := io.WriteString(w, b.String()); err != nil {
 		return true, &ReportError{Err: err}
 	}

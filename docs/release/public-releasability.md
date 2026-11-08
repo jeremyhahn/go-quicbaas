@@ -21,9 +21,13 @@ four classes:
 | `owner-path` | A path under the owner's home directory, the lab's shared network mount, or the burn-in node's deployment directory | A repository-relative path, or `/var/lib`, `/srv`, `/home/agent` |
 | `owner-account` | The owner's account name on its own | A role: `operator`, `agent`, or the module path |
 
-The fleet's own subnet, hostnames and path prefixes are written down in exactly
-one place: the `patterns` list in `pkg/labstrings/labstrings.go`. Read it there
-rather than repeating it here.
+The fleet's own subnet, hostnames and path prefixes are never written down in
+this repository, not even as rules. They live in a private pattern file that CI
+receives as the `RELEASABILITY_PATTERNS` secret: one `class<TAB>regex` line per
+rule, with an optional `/i` suffix on the class for a case-insensitive rule.
+The CI step "Releasability (private patterns)" greps the tracked tree with it,
+and `pkg/labstrings` reads the same variable when it is set. Without it,
+`TestTheTrackedTreeIsPubliclyReleasable` skips and says so.
 
 Local configuration — the burn-in node's node config, its project bindings, its
 deployment tooling — belongs in the private `automatethethings` infra
@@ -39,9 +43,10 @@ One thing is explicitly *not* a violation:
   look at `192.168.0.0/16` at large, only at the fleet's own /24.
 
 Test files are published and scanned like everything else; they use neutral
-fixtures (`agent-NN`, `gpu-host`, `198.51.100.x`, `/home/agent`). Only the
-gate's own tests (`pkg/labstrings/*_test.go`) carry fleet values, because they
-are what the rules exist to find.
+fixtures (`agent-NN`, `gpu-host`, `198.51.100.x`, `/home/agent`). The gate's
+own tests (`pkg/labstrings/*_test.go`) carry no fleet values either: they build
+their rules from reference values (`203.0.113.x`, `fleet-node-NN`,
+`/home/example-owner`).
 
 ## Development tooling stays private
 
@@ -74,13 +79,15 @@ release commit) for the exclusion to hold there.
 
 `pkg/labstrings` scans every published file (`PublishedFiles`) and reports each line
 carrying a value in one of those classes. It runs as
-`TestTheTrackedTreeIsPubliclyReleasable`, so `make test` runs it — there is no
-target to remember and no target list it can fall off. Resolution is textual, so
+`TestTheTrackedTreeIsPubliclyReleasable`, so `make test` runs it whenever
+`RELEASABILITY_PATTERNS` is set — there is no target to remember and no target
+list it can fall off. Without the variable the test skips, and the CI step
+"Releasability (private patterns)" is the gate. Resolution is textual, so
 it works on a tree that does not compile and covers Markdown, YAML, Dockerfiles,
 shell, Python and minified JavaScript as readily as Go.
 
 ```
-go test ./pkg/labstrings/          # the gate, ~1s over 30 MB of tracked content
+RELEASABILITY_PATTERNS="$(cat <private pattern file>)" go test ./pkg/labstrings/   # the gate, ~1s
 ```
 
 A failure names the file, the line, the class, the matched text, and what to use
@@ -112,12 +119,11 @@ another change owns.
 
 ### Adding a fleet value to the rule set
 
-One entry in `patterns` (`pkg/labstrings/labstrings.go`): the regexp, a
-lowercase `Needle` literal every match must contain (the sieve searches for
-needles first — the regexps alone run at a few MB/s, the needles at memory
-bandwidth), and the guidance a tripping engineer reads. Add a sample to
-`TestPatterns_EveryNeedleIsImpliedByItsExpr`, which is what stops a needle from
-silently blinding its own pattern.
+One line in the private pattern file, `class<TAB>regex`, and an update of the
+`RELEASABILITY_PATTERNS` secret. Nothing in this repository changes. The
+package works out each rule's sieve literal from the regexp itself, and a rule
+with no literal every match must contain is run against every file, so a new
+rule never blinds itself.
 
 ## Before tagging: assemble the changelog
 
