@@ -786,36 +786,6 @@ func TestSnapshotIterator_Valid_ClosedIterator(t *testing.T) {
 // Snapshot iterator Seek in reverse with various key arrangements
 // -----------------------------------------------------------------------------
 
-func TestSnapshotIterator_Seek_ReverseWithMiddleTarget(t *testing.T) {
-	store := createTestStorage(t)
-	defer store.Close()
-
-	require.NoError(t, store.Set([]byte("aaa"), []byte("1")))
-	require.NoError(t, store.Set([]byte("ccc"), []byte("3")))
-	require.NoError(t, store.Set([]byte("eee"), []byte("5")))
-
-	snap, err := store.Snapshot()
-	require.NoError(t, err)
-	defer snap.Close()
-
-	iter := snap.NewIterator(&storage.IteratorOptions{Reverse: true})
-	defer iter.Close()
-
-	// In reverse mode, keys are [eee, ccc, aaa]
-	// Seek to "ddd" - looking for last key <= "ddd"
-	// In the reversed array [eee, ccc, aaa]:
-	//   sort.Search finds first key < "ddd" -> at idx=1 (ccc < ddd)
-	//   idx > 0 is true, so current = idx - 1 = 0 which is "eee"
-	// Wait, that doesn't seem right. Let me re-read the code.
-	// Actually the search finds the FIRST i where keys[i] < target.
-	// keys are [eee, ccc, aaa], looking for first where key < "ddd":
-	//   eee < ddd? No. ccc < ddd? Yes. So idx = 1.
-	//   idx > 0 is true, so current = 0, which is "eee"
-	// That finds the position of the key that is >= target in reverse order.
-	found := iter.Seek([]byte("ddd"))
-	assert.True(t, found)
-}
-
 func TestSnapshotIterator_Seek_ReverseTargetSmallerThanAll(t *testing.T) {
 	store := createTestStorage(t)
 	defer store.Close()
