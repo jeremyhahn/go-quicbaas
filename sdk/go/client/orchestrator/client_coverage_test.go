@@ -63,6 +63,173 @@ func mismatchTransport() *mockTransport {
 	}
 }
 
+// clientCall is one row of the shared failure tables: a client method name
+// and a closure that calls it with a valid request.
+type clientCall struct {
+	name string
+	call func(c Client, ctx context.Context) error
+}
+
+// failureCalls lists every method whose nil-context, transport-error and
+// type-mismatch paths share the same shape.
+func failureCalls() []clientCall {
+	history := clientCall{"GetSessionHistory", func(c Client, ctx context.Context) error {
+		_, err := c.GetSessionHistory(ctx, &GetSessionHistoryRequest{SessionID: "s1"})
+		return err
+	}}
+	return append(append(unaryCalls(), listCalls()...), history)
+}
+
+// listCalls lists the methods that turn a nil response into an empty result;
+// each has its own _NilResponseReturnsEmpty test.
+func listCalls() []clientCall {
+	return []clientCall{
+		{"ListSessions", func(c Client, ctx context.Context) error {
+			_, err := c.ListSessions(ctx, &ListSessionsRequest{})
+			return err
+		}},
+		{"ListTasks", func(c Client, ctx context.Context) error {
+			_, err := c.ListTasks(ctx, &ListTasksRequest{TenantID: "t1"})
+			return err
+		}},
+		{"ListBackends", func(c Client, ctx context.Context) error {
+			_, err := c.ListBackends(ctx)
+			return err
+		}},
+		{"ListRunners", func(c Client, ctx context.Context) error {
+			_, err := c.ListRunners(ctx)
+			return err
+		}},
+		{"ListFleetNodes", func(c Client, ctx context.Context) error {
+			_, err := c.ListFleetNodes(ctx, &ListFleetNodesRequest{TenantID: "t1"})
+			return err
+		}},
+	}
+}
+
+// unaryCalls lists the methods that reject a nil response with an error.
+func unaryCalls() []clientCall {
+	return []clientCall{
+		{"Inference", func(c Client, ctx context.Context) error {
+			_, err := c.Inference(ctx, &InferenceRequest{Backend: "ollama", Prompt: "hi"})
+			return err
+		}},
+		{"DecomposeTask", func(c Client, ctx context.Context) error {
+			_, err := c.DecomposeTask(ctx, &DecomposeTaskRequest{Task: "x"})
+			return err
+		}},
+		{"SpawnChildJob", func(c Client, ctx context.Context) error {
+			_, err := c.SpawnChildJob(ctx, &SpawnChildJobRequest{ParentJobID: "j1"})
+			return err
+		}},
+		{"StartJob", func(c Client, ctx context.Context) error {
+			_, err := c.StartJob(ctx, &StartJobRequest{Description: "do work"})
+			return err
+		}},
+		{"GetJobStatus", func(c Client, ctx context.Context) error {
+			_, err := c.GetJobStatus(ctx, &GetJobStatusRequest{TenantID: "t1", JobID: "j1"})
+			return err
+		}},
+		{"ListJobs", func(c Client, ctx context.Context) error {
+			_, err := c.ListJobs(ctx, &ListJobsRequest{TenantID: "t1"})
+			return err
+		}},
+		{"CancelJob", func(c Client, ctx context.Context) error {
+			_, err := c.CancelJob(ctx, &CancelJobRequest{TenantID: "t1", JobID: "j1"})
+			return err
+		}},
+		{"RegisterFleetNode", func(c Client, ctx context.Context) error {
+			_, err := c.RegisterFleetNode(ctx, validRegisterFleetNodeRequest())
+			return err
+		}},
+		{"GetFleetNode", func(c Client, ctx context.Context) error {
+			_, err := c.GetFleetNode(ctx, &GetFleetNodeRequest{TenantID: "t1", NodeID: "a1"})
+			return err
+		}},
+		{"RemoveFleetNode", func(c Client, ctx context.Context) error {
+			_, err := c.RemoveFleetNode(ctx, &RemoveFleetNodeRequest{TenantID: "t1", NodeID: "a1"})
+			return err
+		}},
+		{"FleetNodeHeartbeat", func(c Client, ctx context.Context) error {
+			_, err := c.FleetNodeHeartbeat(ctx, &FleetNodeHeartbeatRequest{TenantID: "t1", NodeID: "a1"})
+			return err
+		}},
+		{"Health", func(c Client, ctx context.Context) error {
+			_, err := c.Health(ctx)
+			return err
+		}},
+		{"GetTask", func(c Client, ctx context.Context) error {
+			_, err := c.GetTask(ctx, &GetTaskRequest{TenantID: "t1", TaskID: "tk1"})
+			return err
+		}},
+		{"ClaimTask", func(c Client, ctx context.Context) error {
+			_, err := c.ClaimTask(ctx, &ClaimTaskRequest{TenantID: "t1", TaskID: "tk1", AgentID: "a1"})
+			return err
+		}},
+		{"CompleteTask", func(c Client, ctx context.Context) error {
+			_, err := c.CompleteTask(ctx, &CompleteTaskRequest{TenantID: "t1", TaskID: "tk1"})
+			return err
+		}},
+		{"SpawnSession", func(c Client, ctx context.Context) error {
+			_, err := c.SpawnSession(ctx, &SpawnSessionRequest{Backend: "ollama"})
+			return err
+		}},
+		{"PromptSession", func(c Client, ctx context.Context) error {
+			_, err := c.PromptSession(ctx, &PromptSessionRequest{SessionID: "s1", Prompt: "hi"})
+			return err
+		}},
+		{"SessionStatus", func(c Client, ctx context.Context) error {
+			_, err := c.SessionStatus(ctx, &SessionStatusRequest{SessionID: "s1"})
+			return err
+		}},
+		{"CloseSession", func(c Client, ctx context.Context) error {
+			_, err := c.CloseSession(ctx, &CloseSessionRequest{SessionID: "s1"})
+			return err
+		}},
+	}
+}
+
+func TestClient_NilContext(t *testing.T) {
+	for _, tc := range failureCalls() {
+		t.Run(tc.name, func(t *testing.T) {
+			var nilCtx context.Context
+			err := tc.call(NewClient(failTransport()), nilCtx)
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "context is required")
+		})
+	}
+}
+
+func TestClient_TransportError(t *testing.T) {
+	for _, tc := range failureCalls() {
+		t.Run(tc.name, func(t *testing.T) {
+			err := tc.call(NewClient(failTransport()), context.Background())
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "transport boom")
+		})
+	}
+}
+
+func TestClient_NilResponse(t *testing.T) {
+	for _, tc := range unaryCalls() {
+		t.Run(tc.name, func(t *testing.T) {
+			err := tc.call(NewClient(nilTransport()), context.Background())
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "nil response")
+		})
+	}
+}
+
+func TestClient_TypeMismatch(t *testing.T) {
+	for _, tc := range failureCalls() {
+		t.Run(tc.name, func(t *testing.T) {
+			err := tc.call(NewClient(mismatchTransport()), context.Background())
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "invalid response type")
+		})
+	}
+}
+
 // =============================================================================
 // SpawnSession
 // =============================================================================
@@ -95,34 +262,6 @@ func TestSpawnSession_ByAgentOrPoolNeedsNoBackend(t *testing.T) {
 	}
 }
 
-func TestSpawnSession_NilContext(t *testing.T) {
-	c := NewClient(okTransport(t, "SpawnSession", &SpawnSessionResponse{}))
-	var nilCtx context.Context
-	_, err := c.SpawnSession(nilCtx, &SpawnSessionRequest{Backend: "ollama"})
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "context is required")
-}
-
-func TestSpawnSession_TransportError(t *testing.T) {
-	c := NewClient(failTransport())
-	_, err := c.SpawnSession(context.Background(), &SpawnSessionRequest{Backend: "ollama"})
-	require.Error(t, err)
-}
-
-func TestSpawnSession_NilResponse(t *testing.T) {
-	c := NewClient(nilTransport())
-	_, err := c.SpawnSession(context.Background(), &SpawnSessionRequest{Backend: "ollama"})
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "nil response")
-}
-
-func TestSpawnSession_TypeMismatch(t *testing.T) {
-	c := NewClient(mismatchTransport())
-	_, err := c.SpawnSession(context.Background(), &SpawnSessionRequest{Backend: "ollama"})
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "invalid response type")
-}
-
 // =============================================================================
 // PromptSession
 // =============================================================================
@@ -146,31 +285,6 @@ func TestPromptSession_Validation(t *testing.T) {
 	assert.Contains(t, err.Error(), "prompt is required")
 }
 
-func TestPromptSession_NilContext(t *testing.T) {
-	c := NewClient(okTransport(t, "PromptSession", &PromptSessionResponse{}))
-	var nilCtx context.Context
-	_, err := c.PromptSession(nilCtx, &PromptSessionRequest{SessionID: "s1", Prompt: "hi"})
-	require.Error(t, err)
-}
-
-func TestPromptSession_TransportError(t *testing.T) {
-	c := NewClient(failTransport())
-	_, err := c.PromptSession(context.Background(), &PromptSessionRequest{SessionID: "s1", Prompt: "hi"})
-	require.Error(t, err)
-}
-
-func TestPromptSession_NilResponse(t *testing.T) {
-	c := NewClient(nilTransport())
-	_, err := c.PromptSession(context.Background(), &PromptSessionRequest{SessionID: "s1", Prompt: "hi"})
-	require.Error(t, err)
-}
-
-func TestPromptSession_TypeMismatch(t *testing.T) {
-	c := NewClient(mismatchTransport())
-	_, err := c.PromptSession(context.Background(), &PromptSessionRequest{SessionID: "s1", Prompt: "hi"})
-	require.Error(t, err)
-}
-
 // =============================================================================
 // SessionStatus
 // =============================================================================
@@ -187,31 +301,6 @@ func TestSessionStatus_Validation(t *testing.T) {
 	_, err := c.SessionStatus(context.Background(), nil)
 	require.Error(t, err)
 	_, err = c.SessionStatus(context.Background(), &SessionStatusRequest{})
-	require.Error(t, err)
-}
-
-func TestSessionStatus_NilContext(t *testing.T) {
-	c := NewClient(okTransport(t, "SessionStatus", &SessionStatusResponse{}))
-	var nilCtx context.Context
-	_, err := c.SessionStatus(nilCtx, &SessionStatusRequest{SessionID: "s1"})
-	require.Error(t, err)
-}
-
-func TestSessionStatus_TransportError(t *testing.T) {
-	c := NewClient(failTransport())
-	_, err := c.SessionStatus(context.Background(), &SessionStatusRequest{SessionID: "s1"})
-	require.Error(t, err)
-}
-
-func TestSessionStatus_NilResponse(t *testing.T) {
-	c := NewClient(nilTransport())
-	_, err := c.SessionStatus(context.Background(), &SessionStatusRequest{SessionID: "s1"})
-	require.Error(t, err)
-}
-
-func TestSessionStatus_TypeMismatch(t *testing.T) {
-	c := NewClient(mismatchTransport())
-	_, err := c.SessionStatus(context.Background(), &SessionStatusRequest{SessionID: "s1"})
 	require.Error(t, err)
 }
 
@@ -234,31 +323,6 @@ func TestCloseSession_Validation(t *testing.T) {
 	require.Error(t, err)
 }
 
-func TestCloseSession_NilContext(t *testing.T) {
-	c := NewClient(okTransport(t, "CloseSession", &CloseSessionResponse{}))
-	var nilCtx context.Context
-	_, err := c.CloseSession(nilCtx, &CloseSessionRequest{SessionID: "s1"})
-	require.Error(t, err)
-}
-
-func TestCloseSession_TransportError(t *testing.T) {
-	c := NewClient(failTransport())
-	_, err := c.CloseSession(context.Background(), &CloseSessionRequest{SessionID: "s1"})
-	require.Error(t, err)
-}
-
-func TestCloseSession_NilResponse(t *testing.T) {
-	c := NewClient(nilTransport())
-	_, err := c.CloseSession(context.Background(), &CloseSessionRequest{SessionID: "s1"})
-	require.Error(t, err)
-}
-
-func TestCloseSession_TypeMismatch(t *testing.T) {
-	c := NewClient(mismatchTransport())
-	_, err := c.CloseSession(context.Background(), &CloseSessionRequest{SessionID: "s1"})
-	require.Error(t, err)
-}
-
 // =============================================================================
 // ListSessions
 // =============================================================================
@@ -278,19 +342,6 @@ func TestListSessions_NilRequest(t *testing.T) {
 	assert.Contains(t, err.Error(), "request is required")
 }
 
-func TestListSessions_NilContext(t *testing.T) {
-	c := NewClient(okTransport(t, "ListSessions", &ListSessionsResponse{}))
-	var nilCtx context.Context
-	_, err := c.ListSessions(nilCtx, &ListSessionsRequest{})
-	require.Error(t, err)
-}
-
-func TestListSessions_TransportError(t *testing.T) {
-	c := NewClient(failTransport())
-	_, err := c.ListSessions(context.Background(), &ListSessionsRequest{})
-	require.Error(t, err)
-}
-
 func TestListSessions_NilResponseReturnsEmpty(t *testing.T) {
 	c := NewClient(nilTransport())
 	resp, err := c.ListSessions(context.Background(), &ListSessionsRequest{})
@@ -298,12 +349,6 @@ func TestListSessions_NilResponseReturnsEmpty(t *testing.T) {
 	require.NotNil(t, resp)
 	assert.Equal(t, 0, resp.Count)
 	assert.NotNil(t, resp.Sessions)
-}
-
-func TestListSessions_TypeMismatch(t *testing.T) {
-	c := NewClient(mismatchTransport())
-	_, err := c.ListSessions(context.Background(), &ListSessionsRequest{})
-	require.Error(t, err)
 }
 
 // =============================================================================
@@ -329,31 +374,6 @@ func TestGetTask_Validation(t *testing.T) {
 	assert.Contains(t, err.Error(), "task ID is required")
 }
 
-func TestGetTask_NilContext(t *testing.T) {
-	c := NewClient(okTransport(t, "GetTask", &Task{}))
-	var nilCtx context.Context
-	_, err := c.GetTask(nilCtx, &GetTaskRequest{TenantID: "t1", TaskID: "tk1"})
-	require.Error(t, err)
-}
-
-func TestGetTask_TransportError(t *testing.T) {
-	c := NewClient(failTransport())
-	_, err := c.GetTask(context.Background(), &GetTaskRequest{TenantID: "t1", TaskID: "tk1"})
-	require.Error(t, err)
-}
-
-func TestGetTask_NilResponse(t *testing.T) {
-	c := NewClient(nilTransport())
-	_, err := c.GetTask(context.Background(), &GetTaskRequest{TenantID: "t1", TaskID: "tk1"})
-	require.Error(t, err)
-}
-
-func TestGetTask_TypeMismatch(t *testing.T) {
-	c := NewClient(mismatchTransport())
-	_, err := c.GetTask(context.Background(), &GetTaskRequest{TenantID: "t1", TaskID: "tk1"})
-	require.Error(t, err)
-}
-
 // =============================================================================
 // ListTasks
 // =============================================================================
@@ -373,31 +393,12 @@ func TestListTasks_Validation(t *testing.T) {
 	require.Error(t, err)
 }
 
-func TestListTasks_NilContext(t *testing.T) {
-	c := NewClient(okTransport(t, "ListTasks", &ListTasksResponse{}))
-	var nilCtx context.Context
-	_, err := c.ListTasks(nilCtx, &ListTasksRequest{TenantID: "t1"})
-	require.Error(t, err)
-}
-
-func TestListTasks_TransportError(t *testing.T) {
-	c := NewClient(failTransport())
-	_, err := c.ListTasks(context.Background(), &ListTasksRequest{TenantID: "t1"})
-	require.Error(t, err)
-}
-
 func TestListTasks_NilResponseReturnsEmpty(t *testing.T) {
 	c := NewClient(nilTransport())
 	resp, err := c.ListTasks(context.Background(), &ListTasksRequest{TenantID: "t1"})
 	require.NoError(t, err)
 	assert.Equal(t, 0, resp.Count)
 	assert.NotNil(t, resp.Tasks)
-}
-
-func TestListTasks_TypeMismatch(t *testing.T) {
-	c := NewClient(mismatchTransport())
-	_, err := c.ListTasks(context.Background(), &ListTasksRequest{TenantID: "t1"})
-	require.Error(t, err)
 }
 
 // =============================================================================
@@ -426,31 +427,6 @@ func TestClaimTask_Validation(t *testing.T) {
 	assert.Contains(t, err.Error(), "agent ID is required")
 }
 
-func TestClaimTask_NilContext(t *testing.T) {
-	c := NewClient(okTransport(t, "ClaimTask", &ClaimTaskResponse{}))
-	var nilCtx context.Context
-	_, err := c.ClaimTask(nilCtx, &ClaimTaskRequest{TenantID: "t1", TaskID: "tk1", AgentID: "a1"})
-	require.Error(t, err)
-}
-
-func TestClaimTask_TransportError(t *testing.T) {
-	c := NewClient(failTransport())
-	_, err := c.ClaimTask(context.Background(), &ClaimTaskRequest{TenantID: "t1", TaskID: "tk1", AgentID: "a1"})
-	require.Error(t, err)
-}
-
-func TestClaimTask_NilResponse(t *testing.T) {
-	c := NewClient(nilTransport())
-	_, err := c.ClaimTask(context.Background(), &ClaimTaskRequest{TenantID: "t1", TaskID: "tk1", AgentID: "a1"})
-	require.Error(t, err)
-}
-
-func TestClaimTask_TypeMismatch(t *testing.T) {
-	c := NewClient(mismatchTransport())
-	_, err := c.ClaimTask(context.Background(), &ClaimTaskRequest{TenantID: "t1", TaskID: "tk1", AgentID: "a1"})
-	require.Error(t, err)
-}
-
 // =============================================================================
 // CompleteTask
 // =============================================================================
@@ -472,31 +448,6 @@ func TestCompleteTask_Validation(t *testing.T) {
 	require.Error(t, err)
 }
 
-func TestCompleteTask_NilContext(t *testing.T) {
-	c := NewClient(okTransport(t, "CompleteTask", &CompleteTaskResponse{}))
-	var nilCtx context.Context
-	_, err := c.CompleteTask(nilCtx, &CompleteTaskRequest{TenantID: "t1", TaskID: "tk1"})
-	require.Error(t, err)
-}
-
-func TestCompleteTask_TransportError(t *testing.T) {
-	c := NewClient(failTransport())
-	_, err := c.CompleteTask(context.Background(), &CompleteTaskRequest{TenantID: "t1", TaskID: "tk1"})
-	require.Error(t, err)
-}
-
-func TestCompleteTask_NilResponse(t *testing.T) {
-	c := NewClient(nilTransport())
-	_, err := c.CompleteTask(context.Background(), &CompleteTaskRequest{TenantID: "t1", TaskID: "tk1"})
-	require.Error(t, err)
-}
-
-func TestCompleteTask_TypeMismatch(t *testing.T) {
-	c := NewClient(mismatchTransport())
-	_, err := c.CompleteTask(context.Background(), &CompleteTaskRequest{TenantID: "t1", TaskID: "tk1"})
-	require.Error(t, err)
-}
-
 // =============================================================================
 // ListBackends
 // =============================================================================
@@ -508,31 +459,12 @@ func TestListBackends_HappyPath(t *testing.T) {
 	assert.Equal(t, 1, resp.Count)
 }
 
-func TestListBackends_NilContext(t *testing.T) {
-	c := NewClient(okTransport(t, "ListBackends", &ListBackendsResponse{}))
-	var nilCtx context.Context
-	_, err := c.ListBackends(nilCtx)
-	require.Error(t, err)
-}
-
-func TestListBackends_TransportError(t *testing.T) {
-	c := NewClient(failTransport())
-	_, err := c.ListBackends(context.Background())
-	require.Error(t, err)
-}
-
 func TestListBackends_NilResponseReturnsEmpty(t *testing.T) {
 	c := NewClient(nilTransport())
 	resp, err := c.ListBackends(context.Background())
 	require.NoError(t, err)
 	assert.Equal(t, 0, resp.Count)
 	assert.NotNil(t, resp.Backends)
-}
-
-func TestListBackends_TypeMismatch(t *testing.T) {
-	c := NewClient(mismatchTransport())
-	_, err := c.ListBackends(context.Background())
-	require.Error(t, err)
 }
 
 // =============================================================================
@@ -560,31 +492,12 @@ func TestListRunners_HappyPath(t *testing.T) {
 	assert.Equal(t, 1, resp.Count)
 }
 
-func TestListRunners_NilContext(t *testing.T) {
-	c := NewClient(okTransport(t, "ListRunners", &ListJobRunnersResponse{}))
-	var nilCtx context.Context
-	_, err := c.ListRunners(nilCtx)
-	require.Error(t, err)
-}
-
-func TestListRunners_TransportError(t *testing.T) {
-	c := NewClient(failTransport())
-	_, err := c.ListRunners(context.Background())
-	require.Error(t, err)
-}
-
 func TestListRunners_NilResponseReturnsEmpty(t *testing.T) {
 	c := NewClient(nilTransport())
 	resp, err := c.ListRunners(context.Background())
 	require.NoError(t, err)
 	assert.Equal(t, 0, resp.Count)
 	assert.NotNil(t, resp.Runners)
-}
-
-func TestListRunners_TypeMismatch(t *testing.T) {
-	c := NewClient(mismatchTransport())
-	_, err := c.ListRunners(context.Background())
-	require.Error(t, err)
 }
 
 // =============================================================================
@@ -596,31 +509,6 @@ func TestHealth_HappyPath(t *testing.T) {
 	resp, err := c.Health(context.Background())
 	require.NoError(t, err)
 	require.NotNil(t, resp)
-}
-
-func TestHealth_NilContext(t *testing.T) {
-	c := NewClient(okTransport(t, "Health", &HealthCheckReport{}))
-	var nilCtx context.Context
-	_, err := c.Health(nilCtx)
-	require.Error(t, err)
-}
-
-func TestHealth_TransportError(t *testing.T) {
-	c := NewClient(failTransport())
-	_, err := c.Health(context.Background())
-	require.Error(t, err)
-}
-
-func TestHealth_NilResponse(t *testing.T) {
-	c := NewClient(nilTransport())
-	_, err := c.Health(context.Background())
-	require.Error(t, err)
-}
-
-func TestHealth_TypeMismatch(t *testing.T) {
-	c := NewClient(mismatchTransport())
-	_, err := c.Health(context.Background())
-	require.Error(t, err)
 }
 
 // =============================================================================
@@ -656,31 +544,6 @@ func TestRegisterAgent_Validation(t *testing.T) {
 	assert.Contains(t, err.Error(), "agent type is required")
 }
 
-func TestRegisterAgent_NilContext(t *testing.T) {
-	c := NewClient(okTransport(t, "RegisterFleetNode", &RegisterFleetNodeResponse{}))
-	var nilCtx context.Context
-	_, err := c.RegisterFleetNode(nilCtx, validRegisterFleetNodeRequest())
-	require.Error(t, err)
-}
-
-func TestRegisterAgent_TransportError(t *testing.T) {
-	c := NewClient(failTransport())
-	_, err := c.RegisterFleetNode(context.Background(), validRegisterFleetNodeRequest())
-	require.Error(t, err)
-}
-
-func TestRegisterAgent_NilResponse(t *testing.T) {
-	c := NewClient(nilTransport())
-	_, err := c.RegisterFleetNode(context.Background(), validRegisterFleetNodeRequest())
-	require.Error(t, err)
-}
-
-func TestRegisterAgent_TypeMismatch(t *testing.T) {
-	c := NewClient(mismatchTransport())
-	_, err := c.RegisterFleetNode(context.Background(), validRegisterFleetNodeRequest())
-	require.Error(t, err)
-}
-
 // =============================================================================
 // GetFleetNode
 // =============================================================================
@@ -699,31 +562,6 @@ func TestGetAgent_Validation(t *testing.T) {
 	_, err = c.GetFleetNode(context.Background(), &GetFleetNodeRequest{NodeID: "a1"})
 	require.Error(t, err)
 	_, err = c.GetFleetNode(context.Background(), &GetFleetNodeRequest{TenantID: "t1"})
-	require.Error(t, err)
-}
-
-func TestGetAgent_NilContext(t *testing.T) {
-	c := NewClient(okTransport(t, "GetFleetNode", &FleetNode{}))
-	var nilCtx context.Context
-	_, err := c.GetFleetNode(nilCtx, &GetFleetNodeRequest{TenantID: "t1", NodeID: "a1"})
-	require.Error(t, err)
-}
-
-func TestGetAgent_TransportError(t *testing.T) {
-	c := NewClient(failTransport())
-	_, err := c.GetFleetNode(context.Background(), &GetFleetNodeRequest{TenantID: "t1", NodeID: "a1"})
-	require.Error(t, err)
-}
-
-func TestGetAgent_NilResponse(t *testing.T) {
-	c := NewClient(nilTransport())
-	_, err := c.GetFleetNode(context.Background(), &GetFleetNodeRequest{TenantID: "t1", NodeID: "a1"})
-	require.Error(t, err)
-}
-
-func TestGetAgent_TypeMismatch(t *testing.T) {
-	c := NewClient(mismatchTransport())
-	_, err := c.GetFleetNode(context.Background(), &GetFleetNodeRequest{TenantID: "t1", NodeID: "a1"})
 	require.Error(t, err)
 }
 
@@ -746,31 +584,12 @@ func TestListAgents_Validation(t *testing.T) {
 	require.Error(t, err)
 }
 
-func TestListAgents_NilContext(t *testing.T) {
-	c := NewClient(okTransport(t, "ListFleetNodes", &ListFleetNodesResponse{}))
-	var nilCtx context.Context
-	_, err := c.ListFleetNodes(nilCtx, &ListFleetNodesRequest{TenantID: "t1"})
-	require.Error(t, err)
-}
-
-func TestListAgents_TransportError(t *testing.T) {
-	c := NewClient(failTransport())
-	_, err := c.ListFleetNodes(context.Background(), &ListFleetNodesRequest{TenantID: "t1"})
-	require.Error(t, err)
-}
-
 func TestListAgents_NilResponseReturnsEmpty(t *testing.T) {
 	c := NewClient(nilTransport())
 	resp, err := c.ListFleetNodes(context.Background(), &ListFleetNodesRequest{TenantID: "t1"})
 	require.NoError(t, err)
 	assert.Equal(t, 0, resp.Count)
 	assert.NotNil(t, resp.Nodes)
-}
-
-func TestListAgents_TypeMismatch(t *testing.T) {
-	c := NewClient(mismatchTransport())
-	_, err := c.ListFleetNodes(context.Background(), &ListFleetNodesRequest{TenantID: "t1"})
-	require.Error(t, err)
 }
 
 // =============================================================================
@@ -791,31 +610,6 @@ func TestRemoveAgent_Validation(t *testing.T) {
 	_, err = c.RemoveFleetNode(context.Background(), &RemoveFleetNodeRequest{NodeID: "a1"})
 	require.Error(t, err)
 	_, err = c.RemoveFleetNode(context.Background(), &RemoveFleetNodeRequest{TenantID: "t1"})
-	require.Error(t, err)
-}
-
-func TestRemoveAgent_NilContext(t *testing.T) {
-	c := NewClient(okTransport(t, "RemoveFleetNode", &RemoveFleetNodeResponse{}))
-	var nilCtx context.Context
-	_, err := c.RemoveFleetNode(nilCtx, &RemoveFleetNodeRequest{TenantID: "t1", NodeID: "a1"})
-	require.Error(t, err)
-}
-
-func TestRemoveAgent_TransportError(t *testing.T) {
-	c := NewClient(failTransport())
-	_, err := c.RemoveFleetNode(context.Background(), &RemoveFleetNodeRequest{TenantID: "t1", NodeID: "a1"})
-	require.Error(t, err)
-}
-
-func TestRemoveAgent_NilResponse(t *testing.T) {
-	c := NewClient(nilTransport())
-	_, err := c.RemoveFleetNode(context.Background(), &RemoveFleetNodeRequest{TenantID: "t1", NodeID: "a1"})
-	require.Error(t, err)
-}
-
-func TestRemoveAgent_TypeMismatch(t *testing.T) {
-	c := NewClient(mismatchTransport())
-	_, err := c.RemoveFleetNode(context.Background(), &RemoveFleetNodeRequest{TenantID: "t1", NodeID: "a1"})
 	require.Error(t, err)
 }
 
@@ -840,31 +634,6 @@ func TestAgentHeartbeat_Validation(t *testing.T) {
 	require.Error(t, err)
 }
 
-func TestAgentHeartbeat_NilContext(t *testing.T) {
-	c := NewClient(okTransport(t, "FleetNodeHeartbeat", &FleetNodeHeartbeatResponse{}))
-	var nilCtx context.Context
-	_, err := c.FleetNodeHeartbeat(nilCtx, &FleetNodeHeartbeatRequest{TenantID: "t1", NodeID: "a1"})
-	require.Error(t, err)
-}
-
-func TestAgentHeartbeat_TransportError(t *testing.T) {
-	c := NewClient(failTransport())
-	_, err := c.FleetNodeHeartbeat(context.Background(), &FleetNodeHeartbeatRequest{TenantID: "t1", NodeID: "a1"})
-	require.Error(t, err)
-}
-
-func TestAgentHeartbeat_NilResponse(t *testing.T) {
-	c := NewClient(nilTransport())
-	_, err := c.FleetNodeHeartbeat(context.Background(), &FleetNodeHeartbeatRequest{TenantID: "t1", NodeID: "a1"})
-	require.Error(t, err)
-}
-
-func TestAgentHeartbeat_TypeMismatch(t *testing.T) {
-	c := NewClient(mismatchTransport())
-	_, err := c.FleetNodeHeartbeat(context.Background(), &FleetNodeHeartbeatRequest{TenantID: "t1", NodeID: "a1"})
-	require.Error(t, err)
-}
-
 // =============================================================================
 // DecomposeTask
 // =============================================================================
@@ -883,31 +652,6 @@ func TestDecomposeTask_Validation(t *testing.T) {
 	_, err = c.DecomposeTask(context.Background(), &DecomposeTaskRequest{})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "task is required")
-}
-
-func TestDecomposeTask_NilContext(t *testing.T) {
-	c := NewClient(okTransport(t, "DecomposeTask", &DecomposeTaskResponse{}))
-	var nilCtx context.Context
-	_, err := c.DecomposeTask(nilCtx, &DecomposeTaskRequest{Task: "x"})
-	require.Error(t, err)
-}
-
-func TestDecomposeTask_TransportError(t *testing.T) {
-	c := NewClient(failTransport())
-	_, err := c.DecomposeTask(context.Background(), &DecomposeTaskRequest{Task: "x"})
-	require.Error(t, err)
-}
-
-func TestDecomposeTask_NilResponse(t *testing.T) {
-	c := NewClient(nilTransport())
-	_, err := c.DecomposeTask(context.Background(), &DecomposeTaskRequest{Task: "x"})
-	require.Error(t, err)
-}
-
-func TestDecomposeTask_TypeMismatch(t *testing.T) {
-	c := NewClient(mismatchTransport())
-	_, err := c.DecomposeTask(context.Background(), &DecomposeTaskRequest{Task: "x"})
-	require.Error(t, err)
 }
 
 // =============================================================================
@@ -930,33 +674,8 @@ func TestSpawnChildJob_Validation(t *testing.T) {
 	assert.Contains(t, err.Error(), "parent_job_id is required")
 }
 
-func TestSpawnChildJob_NilContext(t *testing.T) {
-	c := NewClient(okTransport(t, "SpawnChildJob", &SpawnChildJobResponse{}))
-	var nilCtx context.Context
-	_, err := c.SpawnChildJob(nilCtx, &SpawnChildJobRequest{ParentJobID: "j1"})
-	require.Error(t, err)
-}
-
-func TestSpawnChildJob_TransportError(t *testing.T) {
-	c := NewClient(failTransport())
-	_, err := c.SpawnChildJob(context.Background(), &SpawnChildJobRequest{ParentJobID: "j1"})
-	require.Error(t, err)
-}
-
-func TestSpawnChildJob_NilResponse(t *testing.T) {
-	c := NewClient(nilTransport())
-	_, err := c.SpawnChildJob(context.Background(), &SpawnChildJobRequest{ParentJobID: "j1"})
-	require.Error(t, err)
-}
-
-func TestSpawnChildJob_TypeMismatch(t *testing.T) {
-	c := NewClient(mismatchTransport())
-	_, err := c.SpawnChildJob(context.Background(), &SpawnChildJobRequest{ParentJobID: "j1"})
-	require.Error(t, err)
-}
-
 // =============================================================================
-// StartJob (extend existing coverage: happy/nilctx/transport/nil/mismatch)
+// StartJob
 // =============================================================================
 
 func TestStartJob_HappyPath(t *testing.T) {
@@ -964,31 +683,6 @@ func TestStartJob_HappyPath(t *testing.T) {
 	resp, err := c.StartJob(context.Background(), &StartJobRequest{Description: "do work"})
 	require.NoError(t, err)
 	require.NotNil(t, resp)
-}
-
-func TestStartJob_NilContext(t *testing.T) {
-	c := NewClient(okTransport(t, "StartJob", &StartJobResponse{}))
-	var nilCtx context.Context
-	_, err := c.StartJob(nilCtx, &StartJobRequest{Description: "do work"})
-	require.Error(t, err)
-}
-
-func TestStartJob_TransportError(t *testing.T) {
-	c := NewClient(failTransport())
-	_, err := c.StartJob(context.Background(), &StartJobRequest{Description: "do work"})
-	require.Error(t, err)
-}
-
-func TestStartJob_NilResponse(t *testing.T) {
-	c := NewClient(nilTransport())
-	_, err := c.StartJob(context.Background(), &StartJobRequest{Description: "do work"})
-	require.Error(t, err)
-}
-
-func TestStartJob_TypeMismatch(t *testing.T) {
-	c := NewClient(mismatchTransport())
-	_, err := c.StartJob(context.Background(), &StartJobRequest{Description: "do work"})
-	require.Error(t, err)
 }
 
 // =============================================================================
@@ -1000,31 +694,6 @@ func TestGetJobStatus_HappyPath(t *testing.T) {
 	resp, err := c.GetJobStatus(context.Background(), &GetJobStatusRequest{TenantID: "t1", JobID: "j1"})
 	require.NoError(t, err)
 	require.NotNil(t, resp)
-}
-
-func TestGetJobStatus_NilContext(t *testing.T) {
-	c := NewClient(okTransport(t, "GetJobStatus", &JobStatus{}))
-	var nilCtx context.Context
-	_, err := c.GetJobStatus(nilCtx, &GetJobStatusRequest{TenantID: "t1", JobID: "j1"})
-	require.Error(t, err)
-}
-
-func TestGetJobStatus_TransportError(t *testing.T) {
-	c := NewClient(failTransport())
-	_, err := c.GetJobStatus(context.Background(), &GetJobStatusRequest{TenantID: "t1", JobID: "j1"})
-	require.Error(t, err)
-}
-
-func TestGetJobStatus_NilResponse(t *testing.T) {
-	c := NewClient(nilTransport())
-	_, err := c.GetJobStatus(context.Background(), &GetJobStatusRequest{TenantID: "t1", JobID: "j1"})
-	require.Error(t, err)
-}
-
-func TestGetJobStatus_TypeMismatch(t *testing.T) {
-	c := NewClient(mismatchTransport())
-	_, err := c.GetJobStatus(context.Background(), &GetJobStatusRequest{TenantID: "t1", JobID: "j1"})
-	require.Error(t, err)
 }
 
 // =============================================================================
@@ -1047,31 +716,6 @@ func TestListJobs_Validation(t *testing.T) {
 	assert.Contains(t, err.Error(), "tenant ID is required")
 }
 
-func TestListJobs_NilContext(t *testing.T) {
-	c := NewClient(okTransport(t, "ListJobs", &ListJobsResponse{}))
-	var nilCtx context.Context
-	_, err := c.ListJobs(nilCtx, &ListJobsRequest{TenantID: "t1"})
-	require.Error(t, err)
-}
-
-func TestListJobs_TransportError(t *testing.T) {
-	c := NewClient(failTransport())
-	_, err := c.ListJobs(context.Background(), &ListJobsRequest{TenantID: "t1"})
-	require.Error(t, err)
-}
-
-func TestListJobs_NilResponse(t *testing.T) {
-	c := NewClient(nilTransport())
-	_, err := c.ListJobs(context.Background(), &ListJobsRequest{TenantID: "t1"})
-	require.Error(t, err)
-}
-
-func TestListJobs_TypeMismatch(t *testing.T) {
-	c := NewClient(mismatchTransport())
-	_, err := c.ListJobs(context.Background(), &ListJobsRequest{TenantID: "t1"})
-	require.Error(t, err)
-}
-
 // =============================================================================
 // CancelJob
 // =============================================================================
@@ -1081,31 +725,6 @@ func TestCancelJob_HappyPath(t *testing.T) {
 	resp, err := c.CancelJob(context.Background(), &CancelJobRequest{TenantID: "t1", JobID: "j1"})
 	require.NoError(t, err)
 	require.NotNil(t, resp)
-}
-
-func TestCancelJob_NilContext(t *testing.T) {
-	c := NewClient(okTransport(t, "CancelJob", &CancelJobResponse{}))
-	var nilCtx context.Context
-	_, err := c.CancelJob(nilCtx, &CancelJobRequest{TenantID: "t1", JobID: "j1"})
-	require.Error(t, err)
-}
-
-func TestCancelJob_TransportError(t *testing.T) {
-	c := NewClient(failTransport())
-	_, err := c.CancelJob(context.Background(), &CancelJobRequest{TenantID: "t1", JobID: "j1"})
-	require.Error(t, err)
-}
-
-func TestCancelJob_NilResponse(t *testing.T) {
-	c := NewClient(nilTransport())
-	_, err := c.CancelJob(context.Background(), &CancelJobRequest{TenantID: "t1", JobID: "j1"})
-	require.Error(t, err)
-}
-
-func TestCancelJob_TypeMismatch(t *testing.T) {
-	c := NewClient(mismatchTransport())
-	_, err := c.CancelJob(context.Background(), &CancelJobRequest{TenantID: "t1", JobID: "j1"})
-	require.Error(t, err)
 }
 
 // =============================================================================
@@ -1121,28 +740,11 @@ func TestGetSessionHistory_HappyPath(t *testing.T) {
 
 func TestGetSessionHistory_Validation(t *testing.T) {
 	c := NewClient(failTransport())
-	var nilCtx context.Context
-	_, err := c.GetSessionHistory(nilCtx, &GetSessionHistoryRequest{SessionID: "s1"})
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "context is required")
-	_, err = c.GetSessionHistory(context.Background(), nil)
+	_, err := c.GetSessionHistory(context.Background(), nil)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "session_id is required")
 	_, err = c.GetSessionHistory(context.Background(), &GetSessionHistoryRequest{})
 	require.Error(t, err)
-}
-
-func TestGetSessionHistory_TransportError(t *testing.T) {
-	c := NewClient(failTransport())
-	_, err := c.GetSessionHistory(context.Background(), &GetSessionHistoryRequest{SessionID: "s1"})
-	require.Error(t, err)
-}
-
-func TestGetSessionHistory_TypeMismatch(t *testing.T) {
-	c := NewClient(mismatchTransport())
-	_, err := c.GetSessionHistory(context.Background(), &GetSessionHistoryRequest{SessionID: "s1"})
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "invalid response type")
 }
 
 // =============================================================================
@@ -1338,16 +940,8 @@ func TestSubscribeJobEvents_WrongMessageTypeSkipped(t *testing.T) {
 }
 
 // =============================================================================
-// Inference / InferenceStream nil-context guards.
+// InferenceStream nil-context guard.
 // =============================================================================
-
-func TestInference_NilContext(t *testing.T) {
-	c := NewClient(okTransport(t, "Inference", &InferenceResponse{}))
-	var nilCtx context.Context
-	_, err := c.Inference(nilCtx, &InferenceRequest{Backend: "ollama", Prompt: "hi"})
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "context is required")
-}
 
 func TestInferenceStream_NilContext(t *testing.T) {
 	c := NewClient(&mockTransport{})
