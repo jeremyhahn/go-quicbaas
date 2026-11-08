@@ -1472,199 +1472,140 @@ func refreshedOnce(call int) *orchestration.SessionAccountFreshness {
 	return nil
 }
 
-// TestRunner_AnAccountRotationResumesTheConversationByDefault: on a project
-// that never chose a session rotation policy, a session whose pooled account
-// rotated under it is replaced BEFORE its next prompt, and the replacement
-// CONTINUES its conversation: the transcript is read before the old session is
-// closed and carried into the new session's first prompt. Neither a round nor
-// an attempt is spent (go-quicbaas#997, owner ruling 2026-09-24).
-func TestRunner_AnAccountRotationResumesTheConversationByDefault(t *testing.T) {
-	rig := newRunnerRig(t)
-	rig.rebindVerification(t, "true")
-	rig.workerWrote()
-	rig.verdictOnPublish("APPROVED", "lgtm")
-	rig.agents.freshnessFn = refreshedOnce
-	rig.agents.transcriptFn = func(sessionID string) (*orchestration.ReplayTranscript, error) {
+// TestRunner_AnAccountRotationReplacesTheSessionAsTheProjectAsks: a session
+// whose pooled account rotated under it is closed and replaced by one session
+// in the same workspace, at no cost of a round. A project that never chose a
+// session rotation policy resumes the conversation, read before the old
+// session is closed; a project that says fresh, or a resume whose
+// conversation cannot be read, starts a fresh session and says why.
+func TestRunner_AnAccountRotationReplacesTheSessionAsTheProjectAsks(t *testing.T) {
+	conversation := func(sessionID string) (*orchestration.ReplayTranscript, error) {
 		return workerTranscript(sessionID), nil
 	}
-	rig.agents.onPrompt = func(*orchestration.PromptSessionRequest) { rig.workerWrote() }
+	cases := map[string]struct {
+		policy      orchestration.SessionRotationPolicy
+		transcript  func(sessionID string) (*orchestration.ReplayTranscript, error)
+		promptHas   []string
+		promptLacks []string
+		// resumed and rolled are what the one session_resumed or
+		// session_rolled audit records; nil means that audit is absent.
+		resumed []string
+		rolled  []string
+	}{
+		"by default the conversation is resumed": {
+			transcript: conversation,
+			promptHas: []string{"continues on a refreshed provider credential", "This is the same conversation, continued.",
+				"the handler table lives in pkg/router/table.go", "1 earlier turn(s) omitted"},
+			resumed: []string{"reason=account_rotated", "account=acct-1", "round=0", "session=session-1",
+				"rotated_at=", "replayed_turns=2", "omitted_turns=1"},
+		},
+		"a resume of an unprompted session carries no conversation": {
+			promptHas:   []string{"continues on a refreshed provider credential"},
+			promptLacks: []string{"same conversation, continued"},
+			resumed:     []string{"replayed_turns=0"},
+		},
+		"a project that says fresh starts fresh": {
+			policy:      orchestration.SessionRotationFresh,
+			transcript:  conversation,
+			promptHas:   []string{"provider account was refreshed"},
+			promptLacks: []string{"pkg/router/table.go"},
+			rolled:      []string{"reason=account_rotated", "account=acct-1", "round=0", "rotated_at="},
+		},
+		"a resume with no readable conversation starts fresh": {
+			transcript: func(sessionID string) (*orchestration.ReplayTranscript, error) {
+				return nil, &orchestration.SessionTranscriptUnavailableError{SessionID: sessionID, Reason: "no session event log is configured"}
+			},
+			promptHas: []string{"provider account was refreshed"},
+			rolled:    []string{`resume_unavailable="no session event log is configured"`},
+		},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			rig := newRunnerRig(t)
+			if tc.policy != "" {
+				rig.sessionRotation = tc.policy
+			}
+			rig.rebindVerification(t, "true")
+			rig.workerWrote()
+			rig.verdictOnPublish("APPROVED", "lgtm")
+			rig.agents.freshnessFn = refreshedOnce
+			rig.agents.transcriptFn = tc.transcript
+			rig.agents.onPrompt = func(*orchestration.PromptSessionRequest) { rig.workerWrote() }
 
-	job := rig.job(t)
-	if err := rig.runner.Run(context.Background(), job); err != nil {
-		t.Fatalf("Run: %v", err)
-	}
+			job := rig.job(t)
+			if err := rig.runner.Run(context.Background(), job); err != nil {
+				t.Fatalf("Run: %v", err)
+			}
 
-	if len(rig.agents.spawns) != 2 {
-		t.Fatalf("spawns = %d, want the left-behind session replaced by one resumed one", len(rig.agents.spawns))
-	}
-	if first, second := rig.agents.spawns[0].WorkDir, rig.agents.spawns[1].WorkDir; first != second {
-		t.Errorf("the resumed session was spawned in %q, want the same workspace %q", second, first)
-	}
-	if !slices.Contains(rig.agents.closed, "session-1") {
-		t.Errorf("the session holding the retired credential was not closed: %v", rig.agents.closed)
-	}
-	// THE CONVERSATION IS READ BEFORE THE SESSION IS CLOSED: a backend that
-	// keeps it in the process would otherwise lose it. The resumed session's
-	// own conversation is read again when it is released for the review.
-	if len(rig.agents.transcriptReads) == 0 || rig.agents.transcriptReads[0] != "session-1" ||
-		slices.Index(rig.agents.transcriptReads[1:], "session-1") >= 0 {
-		t.Fatalf("transcript reads = %v, want one of session-1, first", rig.agents.transcriptReads)
-	}
-	if rig.agents.closedAtRead[0] != 0 {
-		t.Errorf("the transcript was read after %d close(s), want before any", rig.agents.closedAtRead[0])
-	}
-	if len(rig.agents.prompts) == 0 {
-		t.Fatal("the resumed session was never prompted")
-	}
-	first := rig.agents.prompts[0]
-	if first.SessionID == "session-1" {
-		t.Errorf("the session holding the retired credential was prompted anyway")
-	}
-	for _, want := range []string{
-		"continues on a refreshed provider credential",
-		"This is the same conversation, continued.",
-		"the handler table lives in pkg/router/table.go",
-		"1 earlier turn(s) omitted",
-	} {
-		if !strings.Contains(first.Prompt, want) {
-			t.Errorf("the resumed session's first prompt does not carry %q:\n%s", want, first.Prompt)
-		}
-	}
+			if len(rig.agents.spawns) != 2 {
+				t.Fatalf("spawns = %d, want the left-behind session replaced by one", len(rig.agents.spawns))
+			}
+			if first, second := rig.agents.spawns[0].WorkDir, rig.agents.spawns[1].WorkDir; first != second {
+				t.Errorf("the replacement was spawned in %q, want the same workspace %q", second, first)
+			}
+			if !slices.Contains(rig.agents.closed, "session-1") {
+				t.Errorf("the session holding the retired credential was not closed: %v", rig.agents.closed)
+			}
+			if job.Iteration() != 0 {
+				t.Errorf("iteration = %d, want the replacement to spend no round", job.Iteration())
+			}
+			if len(rig.agents.prompts) == 0 {
+				t.Fatal("the replacement was never prompted")
+			}
+			first := rig.agents.prompts[0]
+			if first.SessionID == "session-1" {
+				t.Errorf("the session holding the retired credential was prompted anyway")
+			}
+			for _, want := range tc.promptHas {
+				if !strings.Contains(first.Prompt, want) {
+					t.Errorf("the replacement's first prompt does not carry %q:\n%s", want, first.Prompt)
+				}
+			}
+			for _, unwanted := range tc.promptLacks {
+				if strings.Contains(first.Prompt, unwanted) {
+					t.Errorf("the replacement's first prompt carries %q:\n%s", unwanted, first.Prompt)
+				}
+			}
+			for _, audit := range []struct {
+				event string
+				want  []string
+			}{{auditSessionResumed, tc.resumed}, {auditSessionRolled, tc.rolled}} {
+				details := rig.auditDetails(audit.event)
+				if audit.want == nil {
+					if len(details) != 0 {
+						t.Errorf("%s audits = %v, want none", audit.event, details)
+					}
+					continue
+				}
+				if len(details) != 1 {
+					t.Errorf("%s audits = %v, want one", audit.event, details)
+					continue
+				}
+				for _, want := range audit.want {
+					if !strings.Contains(details[0], want) {
+						t.Errorf("%s audit %q does not record %q", audit.event, details[0], want)
+					}
+				}
+			}
 
-	resumed := rig.auditDetails(auditSessionResumed)
-	if len(resumed) != 1 {
-		t.Fatalf("session_resumed audits = %v, want one", resumed)
-	}
-	for _, want := range []string{"reason=account_rotated", "account=acct-1", "round=0", "session=session-1",
-		"rotated_at=", "replayed_turns=2", "omitted_turns=1"} {
-		if !strings.Contains(resumed[0], want) {
-			t.Errorf("session_resumed audit %q does not record %q", resumed[0], want)
-		}
-	}
-	if rolled := rig.auditDetails(auditSessionRolled); len(rolled) != 0 {
-		t.Errorf("session_rolled audits = %v, want none on a resume", rolled)
-	}
-	if job.Iteration() != 0 {
-		t.Errorf("iteration = %d, want the resume to spend no round", job.Iteration())
-	}
-}
-
-// TestRunner_AResumeOfAnUnpromptedSessionCarriesNoConversation: a session
-// whose account rotated before it was ever prompted has no conversation. It is
-// still resumed — told why it is in a new container — but handed no empty
-// transcript to "continue".
-func TestRunner_AResumeOfAnUnpromptedSessionCarriesNoConversation(t *testing.T) {
-	rig := newRunnerRig(t)
-	rig.rebindVerification(t, "true")
-	rig.workerWrote()
-	rig.verdictOnPublish("APPROVED", "lgtm")
-	rig.agents.freshnessFn = refreshedOnce
-	rig.agents.onPrompt = func(*orchestration.PromptSessionRequest) { rig.workerWrote() }
-
-	if err := rig.runner.Run(context.Background(), rig.job(t)); err != nil {
-		t.Fatalf("Run: %v", err)
-	}
-	if len(rig.agents.prompts) == 0 {
-		t.Fatal("the resumed session was never prompted")
-	}
-	prompt := rig.agents.prompts[0].Prompt
-	if !strings.Contains(prompt, "continues on a refreshed provider credential") {
-		t.Errorf("the resumed session was not told why it is in a new container:\n%s", prompt)
-	}
-	if strings.Contains(prompt, "same conversation, continued") {
-		t.Errorf("an empty conversation was handed over as one to continue:\n%s", prompt)
-	}
-	if resumed := rig.auditDetails(auditSessionResumed); len(resumed) != 1 || !strings.Contains(resumed[0], "replayed_turns=0") {
-		t.Errorf("session_resumed audits = %v, want one recording replayed_turns=0", resumed)
-	}
-}
-
-// TestRunner_AnAccountRotationStartsFreshWhenTheProjectSaysSo: a project whose
-// session_rotation is fresh gets go-quicbaas#997's first behaviour: the
-// replacement starts a new conversation, told only why it is new. No
-// conversation is read at all.
-func TestRunner_AnAccountRotationStartsFreshWhenTheProjectSaysSo(t *testing.T) {
-	rig := newRunnerRig(t)
-	rig.sessionRotation = orchestration.SessionRotationFresh
-	rig.rebindVerification(t, "true")
-	rig.workerWrote()
-	rig.verdictOnPublish("APPROVED", "lgtm")
-	rig.agents.freshnessFn = refreshedOnce
-	rig.agents.transcriptFn = func(sessionID string) (*orchestration.ReplayTranscript, error) {
-		return workerTranscript(sessionID), nil
-	}
-	rig.agents.onPrompt = func(*orchestration.PromptSessionRequest) { rig.workerWrote() }
-
-	job := rig.job(t)
-	if err := rig.runner.Run(context.Background(), job); err != nil {
-		t.Fatalf("Run: %v", err)
-	}
-
-	if len(rig.agents.spawns) != 2 {
-		t.Fatalf("spawns = %d, want the left-behind session replaced by one fresh one", len(rig.agents.spawns))
-	}
-	if len(rig.agents.transcriptReads) != 0 {
-		t.Errorf("transcript reads = %v, want none on a fresh project", rig.agents.transcriptReads)
-	}
-	if len(rig.agents.prompts) == 0 {
-		t.Fatal("the fresh session was never prompted")
-	}
-	prompt := rig.agents.prompts[0].Prompt
-	if !strings.Contains(prompt, "provider account was refreshed") {
-		t.Errorf("the fresh session was not told why it is fresh:\n%s", prompt)
-	}
-	if strings.Contains(prompt, "pkg/router/table.go") {
-		t.Errorf("a fresh session was handed the old conversation:\n%s", prompt)
-	}
-
-	rolled := rig.auditDetails(auditSessionRolled)
-	if len(rolled) != 1 {
-		t.Fatalf("session_rolled audits = %v, want one", rolled)
-	}
-	for _, want := range []string{"reason=account_rotated", "account=acct-1", "round=0", "rotated_at="} {
-		if !strings.Contains(rolled[0], want) {
-			t.Errorf("session_rolled audit %q does not record %q", rolled[0], want)
-		}
-	}
-	if resumed := rig.auditDetails(auditSessionResumed); len(resumed) != 0 {
-		t.Errorf("session_resumed audits = %v, want none on a fresh project", resumed)
-	}
-	if job.Iteration() != 0 {
-		t.Errorf("iteration = %d, want the roll to spend no round", job.Iteration())
-	}
-}
-
-// TestRunner_AResumeWithNoReadableConversationStartsFresh: a project that
-// resumes, on a service whose session log will not answer, still gets its
-// session off the retired credential — fresh, and the audit record says the
-// resume was unavailable and why. Prompting the old session instead would lose
-// the round to the provider's refusal.
-func TestRunner_AResumeWithNoReadableConversationStartsFresh(t *testing.T) {
-	rig := newRunnerRig(t)
-	rig.rebindVerification(t, "true")
-	rig.workerWrote()
-	rig.verdictOnPublish("APPROVED", "lgtm")
-	rig.agents.freshnessFn = refreshedOnce
-	rig.agents.transcriptFn = func(sessionID string) (*orchestration.ReplayTranscript, error) {
-		return nil, &orchestration.SessionTranscriptUnavailableError{SessionID: sessionID, Reason: "no session event log is configured"}
-	}
-	rig.agents.onPrompt = func(*orchestration.PromptSessionRequest) { rig.workerWrote() }
-
-	if err := rig.runner.Run(context.Background(), rig.job(t)); err != nil {
-		t.Fatalf("Run: %v", err)
-	}
-	if len(rig.agents.spawns) != 2 {
-		t.Fatalf("spawns = %d, want one replacement", len(rig.agents.spawns))
-	}
-	rolled := rig.auditDetails(auditSessionRolled)
-	if len(rolled) != 1 || !strings.Contains(rolled[0], `resume_unavailable="no session event log is configured"`) {
-		t.Fatalf("session_rolled audits = %v, want one naming why the resume was unavailable", rolled)
-	}
-	if resumed := rig.auditDetails(auditSessionResumed); len(resumed) != 0 {
-		t.Errorf("session_resumed audits = %v, want none", resumed)
-	}
-	if prompt := rig.agents.prompts[0].Prompt; !strings.Contains(prompt, "provider account was refreshed") {
-		t.Errorf("the fresh session was not told why it is fresh:\n%s", prompt)
+			reads := rig.agents.transcriptReads
+			if tc.policy == orchestration.SessionRotationFresh {
+				if len(reads) != 0 {
+					t.Errorf("transcript reads = %v, want none on a fresh project", reads)
+				}
+				return
+			}
+			// THE CONVERSATION IS READ BEFORE THE SESSION IS CLOSED: a backend
+			// that keeps it in the process would otherwise lose it. The
+			// replacement's own conversation is read again when it is released
+			// for the review.
+			if len(reads) == 0 || reads[0] != "session-1" || slices.Index(reads[1:], "session-1") >= 0 {
+				t.Fatalf("transcript reads = %v, want one of session-1, first", reads)
+			}
+			if rig.agents.closedAtRead[0] != 0 {
+				t.Errorf("the transcript was read after %d close(s), want before any", rig.agents.closedAtRead[0])
+			}
+		})
 	}
 }
 
@@ -1853,7 +1794,11 @@ func TestRunner_AWorkerPoolIsSpawnedByReference(t *testing.T) {
 
 // TestRunner_VerificationFailureGoesBackToTheWorkerWithTheOutput: a failed
 // verification is a round, and what the command said is what the worker is
-// told.
+// told. When the rounds are spent the park states what would clear it in a
+// form the sweep can read (#759), and the comment a person reads is derived
+// from that: review that did not converge is a call reserved for the owner,
+// so the condition says owner_ruling rather than leaving prose the sweep
+// would have to report as undiagnosed.
 func TestRunner_VerificationFailureGoesBackToTheWorkerWithTheOutput(t *testing.T) {
 	rig := newRunnerRig(t)
 	rig.rebindVerification(t, "false")
@@ -1871,8 +1816,15 @@ func TestRunner_VerificationFailureGoesBackToTheWorkerWithTheOutput(t *testing.T
 	if !errors.As(err, &escalated) {
 		t.Fatalf("Run err = %v, want an escalation", err)
 	}
-	if !strings.Contains(escalated.Reason, "verification failed") {
-		t.Errorf("escalation reason = %q", escalated.Reason)
+	condition, detail, parseErr := ParseBlockedReason(escalated.Reason)
+	if parseErr != nil {
+		t.Fatalf("the park reason carries no typed condition (%v): %q", parseErr, escalated.Reason)
+	}
+	if condition.Kind != UnblockOwnerRuling {
+		t.Fatalf("the park condition is %s, want owner_ruling", condition.Kind)
+	}
+	if !strings.Contains(detail, "verification failed") {
+		t.Fatalf("the detail lost what actually happened: %q", detail)
 	}
 	prompts := rig.agents.promptTexts()
 	if len(prompts) != 2 {
@@ -1887,8 +1839,16 @@ func TestRunner_VerificationFailureGoesBackToTheWorkerWithTheOutput(t *testing.T
 	if rig.agents.sessionCount() != WorkerSessionCount {
 		t.Fatalf("a round spawned a second session: %d", rig.agents.sessionCount())
 	}
-	if comments := rig.forge.commentsOn(25); len(comments) == 0 {
-		t.Error("the escalation was not posted to the issue")
+	comments := rig.forge.commentsOn(25)
+	if len(comments) == 0 {
+		t.Fatal("the escalation was not posted to the issue")
+	}
+	body := comments[len(comments)-1].Body
+	if !strings.Contains(body, "**Cleared by:** the owner") {
+		t.Errorf("the comment does not name who clears the park:\n%s", body)
+	}
+	if strings.Contains(body, unblockMarkerOpen) {
+		t.Errorf("the machine marker reached the issue:\n%s", body)
 	}
 	if labels := rig.forge.issueLabels(25); !containsLabel(labels, "factory:escalated") && !containsLabel(labels, "factory:blocked") {
 		t.Errorf("issue labels = %v, want the park shown", labels)
@@ -2029,54 +1989,6 @@ func TestRunner_ThePostedEscalationKeepsTheFailureWithinThePublicationBudget(t *
 	}
 	if strings.Contains(body, noise) {
 		t.Errorf("the posted escalation names the harmless first line:\n%s", body)
-	}
-}
-
-// TestRunner_TheParkCarriesATypedUnblockCondition is the producer half of
-// #759: the escalation states what would clear it in a form the sweep can
-// read, and the comment a person reads is derived from that.
-//
-// Review that did not converge is a call reserved for the owner, so the
-// condition says owner_ruling rather than leaving prose the sweep would have
-// to report as undiagnosed.
-func TestRunner_TheParkCarriesATypedUnblockCondition(t *testing.T) {
-	rig := newRunnerRig(t)
-	rig.rebindVerification(t, "false")
-	if err := rig.rebind(context.Background(), func(b *ProjectBinding) {
-		b.Verification = []string{"false"}
-		b.MaxReviewRounds = 1
-		b.Forge.Labels[LabelEscalated] = "factory:escalated"
-	}); err != nil {
-		t.Fatal(err)
-	}
-	rig.workerWrote()
-
-	err := rig.runner.Run(context.Background(), rig.job(t, "false"))
-	var escalated *EscalatedError
-	if !errors.As(err, &escalated) {
-		t.Fatalf("Run err = %v, want an escalation", err)
-	}
-	condition, detail, parseErr := ParseBlockedReason(escalated.Reason)
-	if parseErr != nil {
-		t.Fatalf("the park reason carries no typed condition (%v): %q", parseErr, escalated.Reason)
-	}
-	if condition.Kind != UnblockOwnerRuling {
-		t.Fatalf("the park condition is %s, want owner_ruling", condition.Kind)
-	}
-	if !strings.Contains(detail, "verification failed") {
-		t.Fatalf("the detail lost what actually happened: %q", detail)
-	}
-
-	comments := rig.forge.commentsOn(25)
-	if len(comments) == 0 {
-		t.Fatal("the escalation was not posted to the issue")
-	}
-	body := comments[len(comments)-1].Body
-	if !strings.Contains(body, "**Cleared by:** the owner") {
-		t.Fatalf("the comment does not name who clears the park:\n%s", body)
-	}
-	if strings.Contains(body, unblockMarkerOpen) {
-		t.Fatalf("the machine marker reached the issue:\n%s", body)
 	}
 }
 
@@ -2294,43 +2206,81 @@ func TestRunner_AnUnknownPostMergeStepIsRefused(t *testing.T) {
 // Refusals and recovery
 // =============================================================================
 
-// TestRunner_AProjectWithNoWorkspaceIsParkedForAnOperatorAndNotCharged: the
-// worker has nowhere to work, and guessing a directory would put a tenant's
-// checkout somewhere the operator's mount policy never admitted.
+// TestRunner_AnUnfitWorkspaceIsParkedForAnOperatorAndNotCharged: a workspace
+// the daemon can tell is unfit before any container starts is the operator's
+// fault and is attributed as one. Each case below once ran a worker, or failed
+// the job and charged the task an attempt for a fault it did not commit
+// (go-quicbaas#908, #929, #770): re-running it would refuse identically. The
+// park carries the workspace fault class, so the engine refunds the attempt,
+// and its message names what to fix and that no tokens were spent.
 //
-// IT IS THE OPERATOR'S FAULT AND IS ATTRIBUTED AS ONE. Measured on the burn-in
-// node: this exact refusal was raised three times in one minute and charged
-// against the task each time (go-quicbaas#908). The park carries the workspace
-// fault class, so the engine refunds the attempt and the issue tells whoever
-// runs the fleet what to fix.
-func TestRunner_AProjectWithNoWorkspaceIsParkedForAnOperatorAndNotCharged(t *testing.T) {
-	rig := newRunnerRig(t)
-	rig.rebindVerification(t, "true")
-	job := rig.job(t)
-	rig.agents.host.root = ""
-	err := rig.runner.Run(context.Background(), job)
-	if !errors.Is(err, ErrWorkspaceUnfit) && !errors.Is(err, ErrRunner) {
-		t.Fatalf("err = %v, want the run to end on the workspace fault", err)
+//   - no workspace root: guessing a directory would put a tenant's checkout
+//     somewhere the operator's mount policy never admitted.
+//   - no project record: the workspace spec is described from the project.
+//     This case once asserted the defect, ErrInvalidInput, which is not
+//     ErrWorkspaceUnfit, so prepareWorkspace never parked.
+//   - no forge credential: a credential the remote would not accept is
+//     decidable from the spec on the daemon, so it costs no container.
+//   - a context repository the allowlist refuses at workspace time.
+func TestRunner_AnUnfitWorkspaceIsParkedForAnOperatorAndNotCharged(t *testing.T) {
+	cases := map[string]struct {
+		arrange func(rig *runnerRig, job *orchestration.JobRun)
+		names   []string
+	}{
+		"the project has no workspace root": {
+			arrange: func(rig *runnerRig, _ *orchestration.JobRun) { rig.agents.host.root = "" },
+		},
+		"the job has no project record": {
+			arrange: func(_ *runnerRig, job *orchestration.JobRun) { job.Project = nil },
+			names:   []string{"no project record"},
+		},
+		"the spawn holds no forge credential": {
+			arrange: func(rig *runnerRig, _ *orchestration.JobRun) { rig.tokens.token = nil },
+			names:   []string{"no credential", "https://forge.test/acme/api.git", "forge token"},
+		},
+		"a context repository was edited on after bind": {
+			arrange: func(_ *runnerRig, job *orchestration.JobRun) {
+				job.Project.ContextRepos = []orchestration.ContextRepo{{Name: "handbook", RepoURL: "http://forge.test/acme/handbook.git", Ref: "main"}}
+			},
+			names: []string{"handbook"},
+		},
 	}
-	if rig.agents.sessionCount() != 0 {
-		t.Fatal("a worker was spawned for a project with nowhere to work")
-	}
-	parked := job.Parked()
-	if parked == nil {
-		t.Fatal("a project with nowhere to work was not parked for anybody")
-	}
-	if parked.FaultClass != orchestration.FaultWorkspaceUnfit {
-		t.Fatalf("park fault class = %q, want %q", parked.FaultClass, orchestration.FaultWorkspaceUnfit)
-	}
-	if parked.Kind != orchestration.TaskBlockKindBlocked {
-		t.Fatalf("park kind = %q, want blocked", parked.Kind)
-	}
-	if !strings.Contains(parked.Message, "no tokens were spent") {
-		t.Fatalf("the park does not say the fault cost nothing: %q", parked.Message)
-	}
-	condition, err := ParseUnblockCondition(parked.Message)
-	if err != nil || condition.Kind != UnblockOperatorRepair {
-		t.Fatalf("condition = %+v, err = %v, want operator_repair", condition, err)
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			rig := newRunnerRig(t)
+			rig.rebindVerification(t, "true")
+			job := rig.job(t)
+			tc.arrange(rig, job)
+
+			err := rig.runner.Run(context.Background(), job)
+			// The run ends on the PARK, which is the runner's answer to an
+			// unfit workspace; the fault itself is on the task.
+			if !errors.Is(err, ErrRunner) {
+				t.Fatalf("err = %v, want the run to end on the park", err)
+			}
+			if rig.agents.sessionCount() != 0 {
+				t.Fatal("a worker was spawned over an unfit workspace")
+			}
+			parked := job.Parked()
+			if parked == nil {
+				t.Fatal("an unfit workspace was not parked for anybody")
+			}
+			if parked.FaultClass != orchestration.FaultWorkspaceUnfit {
+				t.Fatalf("park fault class = %q, want %q; without it the attempt is charged", parked.FaultClass, orchestration.FaultWorkspaceUnfit)
+			}
+			if parked.Kind != orchestration.TaskBlockKindBlocked {
+				t.Fatalf("park kind = %q, want blocked", parked.Kind)
+			}
+			condition, err := ParseUnblockCondition(parked.Message)
+			if err != nil || condition.Kind != UnblockOperatorRepair {
+				t.Fatalf("condition = %+v, err = %v, want operator_repair", condition, err)
+			}
+			for _, want := range append(tc.names, "no tokens were spent") {
+				if !strings.Contains(parked.Message, want) {
+					t.Errorf("the park does not name %q: %q", want, parked.Message)
+				}
+			}
+		})
 	}
 }
 
@@ -2392,56 +2342,6 @@ func TestRunner_AWorkspaceHostThatCannotTakeTheSpawnIsParkedNotRehomed(t *testin
 				t.Errorf("the park does not name the refusal %q: %q", tc.names, parked.Message)
 			}
 		})
-	}
-}
-
-// TestRunner_AJobWithNoProjectRecordIsParkedForAnOperatorAndNotCharged: the
-// workspace spec is described from the project, so a job that carries none
-// cannot describe one — and that is the FACTORY's fault, not the work's.
-//
-// THIS TEST USED TO ASSERT THE DEFECT. It required ErrInvalidInput, which is
-// what requireProject returned, and ErrInvalidInput is not ErrWorkspaceUnfit —
-// so prepareWorkspace never parked, the error left Run as a plain terminal
-// failure, classifyJobFailure did not recognise it, and the task was charged an
-// attempt for a fault it did not commit. Measured on the burn-in node: two jobs
-// resumed after a daemon restart, both reported as "charged as a failure of the
-// work" for a project record the resume path had failed to read.
-//
-// The assertion is now the same one its sibling above makes, because the two
-// faults are the same fault: a workspace nothing could work in, provable before
-// a container existed, refunded and parked naming the repair.
-func TestRunner_AJobWithNoProjectRecordIsParkedForAnOperatorAndNotCharged(t *testing.T) {
-	rig := newRunnerRig(t)
-	job := rig.job(t)
-	job.Project = nil
-	err := rig.runner.Run(context.Background(), job)
-	if !errors.Is(err, ErrRunner) {
-		t.Fatalf("err = %v, want a runner refusal", err)
-	}
-	if rig.agents.sessionCount() != 0 {
-		t.Fatal("a worker was spawned for a job with no project to describe its checkout")
-	}
-	parked := job.Parked()
-	if parked == nil {
-		t.Fatal("a job with no project record was not parked for anybody")
-	}
-	if parked.FaultClass != orchestration.FaultWorkspaceUnfit {
-		t.Fatalf("park fault class = %q, want %q; without it the attempt is charged", parked.FaultClass, orchestration.FaultWorkspaceUnfit)
-	}
-	if parked.Kind != orchestration.TaskBlockKindBlocked {
-		t.Fatalf("park kind = %q, want blocked", parked.Kind)
-	}
-	condition, err := ParseUnblockCondition(parked.Message)
-	if err != nil || condition.Kind != UnblockOperatorRepair {
-		t.Fatalf("condition = %+v, err = %v, want operator_repair", condition, err)
-	}
-	// The park is what an operator reads, so it has to name the project that was
-	// absent — "the workspace is unfit" alone would send them to the checkout.
-	if !strings.Contains(parked.Message, "no project record") {
-		t.Fatalf("the park does not say what was missing: %q", parked.Message)
-	}
-	if !strings.Contains(parked.Message, "no tokens were spent") {
-		t.Fatalf("the park does not say the fault cost nothing: %q", parked.Message)
 	}
 }
 
@@ -2860,9 +2760,6 @@ func TestRunner_ARefusalFromAnyCollaboratorFailsTheJob(t *testing.T) {
 		},
 		"the signing agent cannot start": func(rig *runnerRig) {
 			rig.signing.err = cause
-		},
-		"the worker session runs no container": func(rig *runnerRig) {
-			rig.agents.noContainer = true
 		},
 	}
 	for name, arrange := range cases {
@@ -3670,48 +3567,6 @@ func TestRunnerRun_AGenuineRedStillGoesBackToTheWorker(t *testing.T) {
 	}
 }
 
-// TestRunner_AForgeCredentialTheSpawnDoesNotHoldIsParkedNotCharged: the
-// delivery half of go-quicbaas#929.
-//
-// A credential the remote would not accept is decidable from the spec on the
-// daemon, so it costs no container — and it is a CONFIGURATION, so failing the
-// job would retry the identical refusal for the whole attempt budget. It parks,
-// attributed to the factory, with the repository and the missing credential in
-// the reason.
-func TestRunner_AForgeCredentialTheSpawnDoesNotHoldIsParkedNotCharged(t *testing.T) {
-	rig := newRunnerRig(t)
-	rig.rebindVerification(t, "true")
-	rig.tokens.token = nil
-
-	job := rig.job(t)
-	err := rig.runner.Run(context.Background(), job)
-	// The run ends on the PARK, which is the runner's answer to an unfit
-	// workspace; the fault itself is on the task, where an operator reads it.
-	if !errors.Is(err, ErrRunner) {
-		t.Fatalf("err = %v, want the run to end on the park", err)
-	}
-	if got := rig.agents.sessionCount(); got != 0 {
-		t.Fatalf("sessions = %d, want the attempt refused before any container started", got)
-	}
-	parked := job.Parked()
-	if parked == nil {
-		t.Fatal("a spawn that could not have cloned was not parked for anybody")
-	}
-	if parked.FaultClass != orchestration.FaultWorkspaceUnfit {
-		t.Fatalf("park fault class = %q, want %q", parked.FaultClass, orchestration.FaultWorkspaceUnfit)
-	}
-	if parked.Kind != orchestration.TaskBlockKindBlocked {
-		t.Fatalf("park kind = %q, want blocked", parked.Kind)
-	}
-	// The reason names the repository, the remote and the credential, which is
-	// what the operator has to act on — and says the fault cost nothing.
-	for _, want := range []string{"no credential", "https://forge.test/acme/api.git", "forge token", "no tokens were spent"} {
-		if !strings.Contains(parked.Message, want) {
-			t.Errorf("the park does not name %q: %q", want, parked.Message)
-		}
-	}
-}
-
 // TestDeliveryHeadRefused_IsTheDurableFormOfARequestedRound covers the three
 // answers the resume depends on: a refusal at the current head, a refusal that
 // binds to an older head, and a later approval that overrides an earlier
@@ -3918,36 +3773,5 @@ func TestAccountRotationEvidence_NamesTheTwoCopiesThatDisagreed(t *testing.T) {
 	}
 	if got := accountRotationEvidence(halfKnown); !strings.Contains(got, "rotated_at=") {
 		t.Errorf("accountRotationEvidence = %q, want the fallback when only one generation is known", got)
-	}
-}
-
-// TestRunner_AContextRepositoryEditedOnAfterBindIsParked: the delivery
-// runner's answer to a repository the allowlist refuses at workspace time is
-// the one it gives every unfit workspace -- park the task for an operator,
-// attributed to the factory, and spawn nothing -- because re-running it would
-// refuse identically (go-quicbaas#770).
-func TestRunner_AContextRepositoryEditedOnAfterBindIsParked(t *testing.T) {
-	rig := newRunnerRig(t)
-	rig.rebindVerification(t, "true")
-	job := rig.job(t)
-	job.Project.ContextRepos = []orchestration.ContextRepo{{Name: "handbook", RepoURL: "http://forge.test/acme/handbook.git", Ref: "main"}}
-
-	err := rig.runner.Run(context.Background(), job)
-
-	if !errors.Is(err, ErrRunner) {
-		t.Fatalf("err = %v, want the run to end on the workspace fault", err)
-	}
-	if rig.agents.sessionCount() != 0 {
-		t.Fatal("a worker was spawned over a refused context repository")
-	}
-	parked := job.Parked()
-	if parked == nil {
-		t.Fatal("a refused context repository was not parked for anybody")
-	}
-	if parked.FaultClass != orchestration.FaultWorkspaceUnfit {
-		t.Fatalf("park fault class = %q, want %q", parked.FaultClass, orchestration.FaultWorkspaceUnfit)
-	}
-	if !strings.Contains(parked.Message, "handbook") {
-		t.Fatalf("park message %q does not name the refused repository", parked.Message)
 	}
 }
