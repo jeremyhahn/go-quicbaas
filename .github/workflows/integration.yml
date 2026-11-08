@@ -68,6 +68,11 @@ concurrency:
 
 env:
   GO_VERSION: '1.27.3'
+  # Hosted runners inject no GOPRIVATE, so first-party modules would resolve
+  # through the public proxy and checksum database. Those cached some tags
+  # before the history rewrite moved them, and go.sum records what the origin
+  # serves now, so first-party modules are fetched from their origin.
+  GOPRIVATE: github.com/jeremyhahn/*
 
 jobs:
   integration-test:
@@ -117,14 +122,22 @@ jobs:
       - name: Download dependencies
         run: go mod download
 
+      - name: Write the module credential file
+        run: |
+          umask 077
+          : > "$RUNNER_TEMP/gomodauth.env"
+          for v in GOPRIVATE GIT_CONFIG_COUNT GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0; do
+            if [ -n "${!v:-}" ]; then printf '%s=%s\n' "$v" "${!v}" >> "$RUNNER_TEMP/gomodauth.env"; fi
+          done
+
       # Every service runs in a container with its binary baked in, and the
       # per-run certificates are produced by an init service into a named
       # volume, so this step needs nothing from the host but a Docker daemon
-      # (devops.md §4). `make integration-test` stages the module-fetch
-      # credentials for the image builds itself.
+      # (devops.md §4). The image builds take their module-fetch credentials
+      # from the file the step above writes.
       - name: Run integration tests
         timeout-minutes: 90
-        run: make integration-test
+        run: make integration-test MODULE_ENV_FILE="$RUNNER_TEMP/gomodauth.env"
 
       # The service logs are the only evidence of WHY a run failed, and they
       # used to be unobtainable: the compose stack runs the servers in
