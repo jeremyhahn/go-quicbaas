@@ -61,68 +61,63 @@ func postJSON(t *testing.T, handler http.HandlerFunc, body interface{}) *httptes
 // slugify
 // --------------------------------------------------------------------------
 
-func TestSlugify_BasicConversion(t *testing.T) {
-	assert.Equal(t, "acme-corp", slugify("Acme Corp"))
-	assert.Equal(t, "my-org", slugify("My Org"))
+func TestSlugify(t *testing.T) {
+	tests := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{name: "basic conversion", in: "Acme Corp", want: "acme-corp"},
+		{name: "second basic conversion", in: "My Org", want: "my-org"},
+		// Exclamation mark is not alphanumeric/hyphen; replaced by hyphen.
+		{name: "special chars stripped", in: "Acme!Corp", want: "acme-corp"},
+		// Empty name → no useful slug; deriveTenantID falls back to UUID.
+		{name: "empty input", in: "", want: ""},
+		// Multiple spaces collapse to a single hyphen.
+		{name: "multiple spaces", in: "  Hello   World  ", want: "hello-world"},
+		// Ampersand is stripped; surrounding spaces become hyphens that collapse.
+		{name: "special and spaces", in: "Acme & Corp", want: "acme-corp"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, slugify(tt.in))
+		})
+	}
 }
 
-func TestSlugify_SpecialCharsStripped(t *testing.T) {
-	// Exclamation mark is not alphanumeric/hyphen; replaced by hyphen then
-	// collapsed into the surrounding context.
-	result := slugify("Acme!Corp")
-	assert.Equal(t, "acme-corp", result)
-}
-
-func TestSlugify_TooShortPadded(t *testing.T) {
+func TestSlugify_LengthBounds(t *testing.T) {
 	// A single-char name produces a slug shorter than 3; "org" is appended.
-	result := slugify("a")
-	assert.True(t, len(result) >= 3, "slug should be at least 3 chars, got %q", result)
-}
+	short := slugify("a")
+	assert.GreaterOrEqual(t, len(short), 3, "slug should be at least 3 chars, got %q", short)
 
-func TestSlugify_TruncatedAt50(t *testing.T) {
-	long := strings.Repeat("a", 60)
-	result := slugify(long)
-	assert.LessOrEqual(t, len(result), 50)
-}
-
-func TestSlugify_EmptyInput(t *testing.T) {
-	// Empty name → no useful slug; deriveTenantID falls back to UUID.
-	assert.Equal(t, "", slugify(""))
-}
-
-func TestSlugify_MultipleSpaces(t *testing.T) {
-	// Multiple spaces collapse to a single hyphen.
-	assert.Equal(t, "hello-world", slugify("  Hello   World  "))
-}
-
-func TestSlugify_SpecialAndSpaces(t *testing.T) {
-	// Ampersand is stripped; surrounding spaces become hyphens that collapse.
-	assert.Equal(t, "acme-corp", slugify("Acme & Corp"))
+	long := slugify(strings.Repeat("a", 60))
+	assert.LessOrEqual(t, len(long), 50)
 }
 
 // --------------------------------------------------------------------------
 // isReservedTenantID
 // --------------------------------------------------------------------------
 
-func TestIsReservedTenantID_SystemAndDefault(t *testing.T) {
-	assert.True(t, isReservedTenantID("system"))
-	assert.True(t, isReservedTenantID("default"))
-}
-
-func TestIsReservedTenantID_UnderscorePrefix(t *testing.T) {
-	assert.True(t, isReservedTenantID("_internal"))
-	assert.True(t, isReservedTenantID("_"))
-}
-
-func TestIsReservedTenantID_ColonPattern(t *testing.T) {
-	assert.True(t, isReservedTenantID("ns:tenant"))
-	assert.True(t, isReservedTenantID("a:b"))
-}
-
-func TestIsReservedTenantID_ValidIDs(t *testing.T) {
-	assert.False(t, isReservedTenantID("acme"))
-	assert.False(t, isReservedTenantID("my-org-42"))
-	assert.False(t, isReservedTenantID("xyz"))
+func TestIsReservedTenantID(t *testing.T) {
+	tests := []struct {
+		id   string
+		want bool
+	}{
+		{id: "system", want: true},
+		{id: "default", want: true},
+		{id: "_internal", want: true},
+		{id: "_", want: true},
+		{id: "ns:tenant", want: true},
+		{id: "a:b", want: true},
+		{id: "acme", want: false},
+		{id: "my-org-42", want: false},
+		{id: "xyz", want: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.id, func(t *testing.T) {
+			assert.Equal(t, tt.want, isReservedTenantID(tt.id))
+		})
+	}
 }
 
 // --------------------------------------------------------------------------
@@ -159,12 +154,6 @@ func TestRegistrationSessionStore_Delete(t *testing.T) {
 	assert.False(t, ok, "deleted session should not be retrievable")
 }
 
-func TestRegistrationSessionStore_GetMissing(t *testing.T) {
-	store := &registrationSessionStore{}
-	_, ok := store.get("nonexistent")
-	assert.False(t, ok)
-}
-
 // newRegSession is a constructor helper for tests.
 func newRegSession(tenantID, tenantName, email, isolationMode string, ttlSeconds int) *registrationSession {
 	return &registrationSession{
@@ -198,63 +187,57 @@ func TestRegisterSelfBegin_DisabledReturns403(t *testing.T) {
 	assert.Equal(t, ErrSelfRegistrationDisabled, body["error"])
 }
 
-func TestRegisterSelfBegin_MissingTenantName(t *testing.T) {
-	handler, cleanup := buildHandlerWithRegEnabled(t, config.IAMSelfServiceRegistrationConfig{
-		Enabled: true,
-	})
-	defer cleanup()
-
-	w := postJSON(t, handler.RegisterSelfBegin, SelfRegisterBeginRequest{
-		Email:       "user@acme.com",
-		DisplayName: "Alice",
-	})
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestRegisterSelfBegin_MissingEmail(t *testing.T) {
-	handler, cleanup := buildHandlerWithRegEnabled(t, config.IAMSelfServiceRegistrationConfig{
-		Enabled: true,
-	})
-	defer cleanup()
-
-	w := postJSON(t, handler.RegisterSelfBegin, SelfRegisterBeginRequest{
-		TenantName:  "Acme",
-		DisplayName: "Alice",
-	})
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestRegisterSelfBegin_MissingDisplayName(t *testing.T) {
-	handler, cleanup := buildHandlerWithRegEnabled(t, config.IAMSelfServiceRegistrationConfig{
-		Enabled: true,
-	})
-	defer cleanup()
-
-	w := postJSON(t, handler.RegisterSelfBegin, SelfRegisterBeginRequest{
-		TenantName: "Acme",
-		Email:      "user@acme.com",
-	})
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestRegisterSelfBegin_InvalidIsolationModeRejected(t *testing.T) {
-	handler, cleanup := buildHandlerWithRegEnabled(t, config.IAMSelfServiceRegistrationConfig{
+func TestRegisterSelfBegin_InvalidRequestReturns400(t *testing.T) {
+	keyspaceOnly := config.IAMSelfServiceRegistrationConfig{
 		Enabled:               true,
 		AllowedIsolationModes: []string{"keyspace"},
 		DefaultIsolationMode:  "keyspace",
-	})
-	defer cleanup()
+	}
+	tests := []struct {
+		name    string
+		body    string
+		wantErr string
+	}{
+		{
+			name: "missing tenant name",
+			body: `{"email":"user@acme.com","display_name":"Alice"}`,
+		},
+		{
+			name: "missing email",
+			body: `{"tenant_name":"Acme","display_name":"Alice"}`,
+		},
+		{
+			name: "missing display name",
+			body: `{"tenant_name":"Acme","email":"user@acme.com"}`,
+		},
+		{
+			name:    "isolation mode not allowed",
+			body:    `{"tenant_name":"Acme","email":"user@acme.com","display_name":"Alice","isolation_mode":"barrier"}`,
+			wantErr: ErrIsolationModeNotAllowed,
+		},
+		{
+			name: "invalid JSON",
+			body: "{not json",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			handler, cleanup := buildHandlerWithRegEnabled(t, keyspaceOnly)
+			defer cleanup()
 
-	w := postJSON(t, handler.RegisterSelfBegin, SelfRegisterBeginRequest{
-		TenantName:    "Acme",
-		Email:         "user@acme.com",
-		DisplayName:   "Alice",
-		IsolationMode: "barrier",
-	})
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-	var body map[string]interface{}
-	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body))
-	assert.Equal(t, ErrIsolationModeNotAllowed, body["error"])
+			req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(tt.body))
+			req.Header.Set("Content-Type", "application/json")
+			w := httptest.NewRecorder()
+			handler.RegisterSelfBegin(w, req)
+
+			assert.Equal(t, http.StatusBadRequest, w.Code)
+			if tt.wantErr != "" {
+				var body map[string]interface{}
+				require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body))
+				assert.Equal(t, tt.wantErr, body["error"])
+			}
+		})
+	}
 }
 
 func TestRegisterSelfBegin_DefaultIsolationModeApplied(t *testing.T) {
@@ -282,19 +265,6 @@ func TestRegisterSelfBegin_DefaultIsolationModeApplied(t *testing.T) {
 	assert.NotEqual(t, http.StatusBadRequest, w.Code)
 }
 
-func TestRegisterSelfBegin_InvalidJSON(t *testing.T) {
-	handler, cleanup := buildHandlerWithRegEnabled(t, config.IAMSelfServiceRegistrationConfig{
-		Enabled: true,
-	})
-	defer cleanup()
-
-	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader("{not json"))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-	handler.RegisterSelfBegin(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
 // --------------------------------------------------------------------------
 // RegisterSelfFinish — gate + session checks
 // --------------------------------------------------------------------------
@@ -316,58 +286,51 @@ func TestRegisterSelfFinish_DisabledReturns403(t *testing.T) {
 	assert.Equal(t, ErrSelfRegistrationDisabled, body["error"])
 }
 
-func TestRegisterSelfFinish_MissingSessionID(t *testing.T) {
-	handler, cleanup := buildHandlerWithRegEnabled(t, config.IAMSelfServiceRegistrationConfig{
-		Enabled: true,
-	})
-	defer cleanup()
+func TestRegisterSelfFinish_InvalidRequestReturns400(t *testing.T) {
+	tests := []struct {
+		name    string
+		body    string
+		wantErr string
+	}{
+		{
+			name: "missing session ID",
+			body: `{"credential":{"id":"abc"}}`,
+		},
+		{
+			name: "missing credential",
+			body: `{"session_id":"some-session"}`,
+		},
+		{
+			// No session was stored → get returns not-ok.
+			name:    "expired session",
+			body:    `{"session_id":"nonexistent-session-id","credential":{"id":"abc"}}`,
+			wantErr: ErrRegistrationSessionExpired,
+		},
+		{
+			name: "invalid JSON",
+			body: "not-json",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			handler, cleanup := buildHandlerWithRegEnabled(t, config.IAMSelfServiceRegistrationConfig{
+				Enabled: true,
+			})
+			defer cleanup()
 
-	w := postJSON(t, handler.RegisterSelfFinish, SelfRegisterFinishRequest{
-		Credential: map[string]interface{}{"id": "abc"},
-	})
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
+			req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(tt.body))
+			req.Header.Set("Content-Type", "application/json")
+			w := httptest.NewRecorder()
+			handler.RegisterSelfFinish(w, req)
 
-func TestRegisterSelfFinish_MissingCredential(t *testing.T) {
-	handler, cleanup := buildHandlerWithRegEnabled(t, config.IAMSelfServiceRegistrationConfig{
-		Enabled: true,
-	})
-	defer cleanup()
-
-	w := postJSON(t, handler.RegisterSelfFinish, SelfRegisterFinishRequest{
-		SessionID: "some-session",
-	})
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestRegisterSelfFinish_ExpiredSession(t *testing.T) {
-	handler, cleanup := buildHandlerWithRegEnabled(t, config.IAMSelfServiceRegistrationConfig{
-		Enabled: true,
-	})
-	defer cleanup()
-
-	// No session was stored → get returns not-ok.
-	w := postJSON(t, handler.RegisterSelfFinish, SelfRegisterFinishRequest{
-		SessionID:  "nonexistent-session-id",
-		Credential: map[string]interface{}{"id": "abc"},
-	})
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-	var body map[string]interface{}
-	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body))
-	assert.Equal(t, ErrRegistrationSessionExpired, body["error"])
-}
-
-func TestRegisterSelfFinish_InvalidJSON(t *testing.T) {
-	handler, cleanup := buildHandlerWithRegEnabled(t, config.IAMSelfServiceRegistrationConfig{
-		Enabled: true,
-	})
-	defer cleanup()
-
-	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader("not-json"))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-	handler.RegisterSelfFinish(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
+			assert.Equal(t, http.StatusBadRequest, w.Code)
+			if tt.wantErr != "" {
+				var body map[string]interface{}
+				require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body))
+				assert.Equal(t, tt.wantErr, body["error"])
+			}
+		})
+	}
 }
 
 // --------------------------------------------------------------------------
@@ -449,16 +412,22 @@ func TestRejectUser_UnknownUserReturnsError(t *testing.T) {
 // stringInSlice
 // --------------------------------------------------------------------------
 
-func TestStringInSlice_Found(t *testing.T) {
-	assert.True(t, stringInSlice("keyspace", []string{"keyspace", "barrier"}))
-}
-
-func TestStringInSlice_NotFound(t *testing.T) {
-	assert.False(t, stringInSlice("other", []string{"keyspace", "barrier"}))
-}
-
-func TestStringInSlice_EmptyList(t *testing.T) {
-	assert.False(t, stringInSlice("keyspace", []string{}))
+func TestStringInSlice(t *testing.T) {
+	tests := []struct {
+		name  string
+		value string
+		list  []string
+		want  bool
+	}{
+		{name: "found", value: "keyspace", list: []string{"keyspace", "barrier"}, want: true},
+		{name: "not found", value: "other", list: []string{"keyspace", "barrier"}, want: false},
+		{name: "empty list", value: "keyspace", list: []string{}, want: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, stringInSlice(tt.value, tt.list))
+		})
+	}
 }
 
 // --------------------------------------------------------------------------
