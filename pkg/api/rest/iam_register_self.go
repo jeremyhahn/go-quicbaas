@@ -21,7 +21,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"maps"
 	"net/http"
 	"regexp"
 	"strings"
@@ -247,6 +246,21 @@ func (s *registrationSessionStore) take(sessionID string) (*registrationSession,
 
 func (s *registrationSessionStore) delete(sessionID string) {
 	s.sessions.Delete(sessionID)
+}
+
+// holdsTenant reports whether a session begun by this process registers the
+// tenant. That session's own reaper discards it, so the restart sweeper leaves
+// it alone.
+func (s *registrationSessionStore) holdsTenant(tenantID string) bool {
+	held := false
+	s.sessions.Range(func(_, value any) bool {
+		if sess, ok := value.(*registrationSession); ok && sess.tenantID == tenantID {
+			held = true
+			return false
+		}
+		return true
+	})
+	return held
 }
 
 // --------------------------------------------------------------------------
@@ -625,12 +639,21 @@ func (h *IAMHandler) RegisterSelfFinish(w http.ResponseWriter, r *http.Request) 
 			NewIAMAPIError(ErrInternalError, "identity store not available"))
 		return
 	}
+	tenantMgr, err := h.getTenantManager(ctx)
+	if err != nil || tenantMgr == nil {
+		h.discardRegistration(ctx, sess)
+		RespondIAMError(w, r, http.StatusInternalServerError,
+			NewIAMAPIError(ErrInternalError, "tenant manager not available"))
+		return
+	}
 
 	// The roles were granted at begin, before the ceremony opened, so the
 	// ceremony's attestation gate held this administrator to the hardware bar.
-	// The account is recorded as enrolled, so the startup sweep never removes
-	// one that is held for admin approval or email verification.
-	if err := markRegistrationEnrolled(ctx, identityStore, sess); err != nil {
+	// The tenant's registration record is removed, so the sweep never discards
+	// an account that is held for admin approval or email verification.
+	if _, err := tenantMgr.UpdateTenant(ctx, sess.tenantID, iam.UpdateTenantOptions{
+		FinishSelfRegistration: true,
+	}); err != nil {
 		h.discardRegistration(ctx, sess)
 		h.server.logger.WithError(err).Error("iam.self_registration: recording the enrolment failed, registration refused")
 		RespondIAMError(w, r, http.StatusInternalServerError,
@@ -903,7 +926,6 @@ func grantBuiltInRole(
 	return nil
 }
 
-// getTenantManager retrieves the TenantManager from the service layer.
 // selfRegistrationSessionTTL bounds a begin→finish ceremony. A begin that is
 // not finished within it is discarded.
 const selfRegistrationSessionTTL = 5 * time.Minute
@@ -916,13 +938,16 @@ const selfRegistrationSessionTTL = 5 * time.Minute
 // contain "@" (iam.validateUsername). A failure leaves nothing behind.
 func (h *IAMHandler) provisionRegistration(ctx context.Context, tenants iam.TenantManager, store *iam.IdentityStore, sess *registrationSession, defaultRole string) error {
 	// The isolation mode is recorded in the attributes; qrdb's per-tenant
-	// barrier path is assigned internally by Phase 2.5b.
+	// barrier path is assigned internally by Phase 2.5b. The tenant carries
+	// the broker's record of the unfinished registration, so a restart that
+	// loses the session still finds the tenant to discard at its expiry.
 	if _, err := tenants.CreateTenant(ctx, iam.CreateTenantOptions{
 		ID:   sess.tenantID,
 		Name: sess.tenantName,
 		Settings: &iam.TenantSettings{
 			DisplayName: sess.tenantName,
 		},
+		SelfRegistration: &iam.TenantSelfRegistration{Expires: sess.expiresAt},
 	}); err != nil {
 		return err
 	}
@@ -934,11 +959,9 @@ func (h *IAMHandler) provisionRegistration(ctx context.Context, tenants iam.Tena
 		AuthMethods: []string{"webauthn"},
 		Lifecycle:   iam.LifecyclePending,
 		Attributes: map[string]string{
-			"isolation_mode":        sess.isolationMode,
-			"self_registered":       "true",
-			"registration_time":     time.Now().UTC().Format(time.RFC3339),
-			registrationStateAttr:   registrationStateCeremony,
-			registrationExpiresAttr: sess.expiresAt.UTC().Format(time.RFC3339),
+			"isolation_mode":    sess.isolationMode,
+			"self_registered":   "true",
+			"registration_time": time.Now().UTC().Format(time.RFC3339),
 		},
 	})
 	if err != nil {
@@ -1004,93 +1027,7 @@ func (h *IAMHandler) reapRegistration(ctx context.Context, sessionID string) {
 	h.discardRegistration(ctx, sess)
 }
 
-// The account attributes that record a self-registration's progress, so an
-// unfinished one outlives the process-local session and is still swept.
-const (
-	registrationStateAttr     = "registration_state"
-	registrationExpiresAttr   = "registration_expires"
-	registrationStateCeremony = "ceremony"
-	registrationStateEnrolled = "enrolled"
-)
-
-// markRegistrationEnrolled records that the ceremony bound a credential to
-// the account, so the account is no longer an unfinished registration.
-func markRegistrationEnrolled(ctx context.Context, store *iam.IdentityStore, sess *registrationSession) error {
-	user, err := store.GetUser(ctx, sess.tenantID, sess.userID)
-	if err != nil {
-		return err
-	}
-	attributes := make(map[string]string, len(user.Attributes)+1)
-	maps.Copy(attributes, user.Attributes)
-	attributes[registrationStateAttr] = registrationStateEnrolled
-	_, err = store.UpdateUser(ctx, sess.tenantID, sess.userID, iam.UpdateUserOptions{
-		Attributes: &attributes,
-	})
-	return err
-}
-
-// registrationExpired reports whether the account is a self-registration
-// whose ceremony was never finished and whose recorded expiry is before now.
-// An expiry that cannot be parsed is treated as expired.
-func registrationExpired(user *iam.User, now time.Time) bool {
-	if user.Attributes["self_registered"] != "true" ||
-		user.Attributes[registrationStateAttr] != registrationStateCeremony {
-		return false
-	}
-	expires, err := time.Parse(time.RFC3339, user.Attributes[registrationExpiresAttr])
-	if err != nil {
-		return true
-	}
-	return expires.Before(now)
-}
-
-// sweepExpiredRegistrations discards every self-registration whose ceremony
-// expired unfinished, with its tenant. The in-process timer covers sessions
-// begun by this process; the sweep covers those a restart orphaned. A failure
-// in one tenant does not stop the rest, and every failure is returned.
-func (h *IAMHandler) sweepExpiredRegistrations(ctx context.Context, now time.Time) error {
-	tenants, err := h.getTenantManager(ctx)
-	if err != nil {
-		return err
-	}
-	store, err := h.getIdentityStore(ctx)
-	if err != nil {
-		return err
-	}
-	return sweepRegistrations(ctx, tenants, store, now)
-}
-
-// sweepRegistrations is the sweep over stores already resolved, so it can run
-// detached without reading the server's service.
-func sweepRegistrations(ctx context.Context, tenants iam.TenantManager, store *iam.IdentityStore, now time.Time) error {
-	if tenants == nil || store == nil {
-		// A server without them provisioned no registration to sweep.
-		return nil
-	}
-	list, err := tenants.ListTenants(ctx, iam.ListOptions{})
-	if err != nil {
-		return err
-	}
-	var errs []error
-	for _, tenant := range list {
-		users, err := store.ListUsers(ctx, tenant.ID, iam.ListOptions{})
-		if err != nil {
-			errs = append(errs, err)
-			continue
-		}
-		for _, user := range users {
-			if !registrationExpired(user, now) {
-				continue
-			}
-			sess := &registrationSession{tenantID: tenant.ID, userID: user.ID}
-			if err := removeRegistration(ctx, tenants, store, sess); err != nil {
-				errs = append(errs, err)
-			}
-		}
-	}
-	return errors.Join(errs...)
-}
-
+// getTenantManager retrieves the TenantManager from the service layer.
 func (h *IAMHandler) getTenantManager(ctx context.Context) (iam.TenantManager, error) {
 	svc, ok := h.server.service.(interface {
 		GetTenantManager(ctx context.Context) (iam.TenantManager, error)

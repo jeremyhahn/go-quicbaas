@@ -1749,9 +1749,19 @@ cannot identify is held to the administrator bar.
 
 Self-service registration grants the registrant's roles, `Admin` included, to
 the pending account before the ceremony opens, so the ceremony holds the
-registrant to the administrator bar. Each unfinished registration records its
-state and expiry on the account, and the server sweeps the ones past their
-expiry, with their tenant, at startup.
+registrant to the administrator bar.
+
+An unfinished registration records its expiry on its tenant
+(`iam.Tenant.SelfRegistration`), not on the account. Only the broker writes
+that record: begin sets it, and finish removes it. No transport maps it, so a
+caller who may update a user or a tenant cannot forge one. A session's own timer
+discards it when the session expires unfinished. A restart loses that timer, so
+at startup the server discards every recorded registration already past its
+expiry. It arms a timer for each one that has not expired yet, and that timer
+discards the registration when it expires. Shutdown cancels the armed timers.
+A tenant is discarded only while it holds nothing but the registrant's pending
+account. A tenant holding more is reported and kept
+(`SelfRegistrationTenantInUseError`).
 
 `insecure-allow-software-administrators` is the one policy that lets a software
 authenticator become an administrator credential. It exists because our own

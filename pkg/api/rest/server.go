@@ -408,6 +408,11 @@ type Server struct {
 	// Nil until route registration wires it.
 	iamHandler interface{}
 
+	// registrationSweeper discards the self-registrations a restart left
+	// unfinished, and holds the timers armed for those not yet expired.
+	// Shutdown stops it. Nil until route registration wires it.
+	registrationSweeper *registrationSweeper
+
 	// barrierSvc serves /api/v1/barrier endpoints. Wired by lifecycle via
 	// SetBarrierService once the qrdb SDK BarrierClient is available. Nil
 	// before wiring; the handlers report 503 Service Unavailable.
@@ -1114,6 +1119,12 @@ func (s *Server) Shutdown(ctx context.Context) error {
 	s.logger.Info("Shutting down REST API server")
 
 	s.closed = true
+
+	// Cancel the timers armed for unfinished self-registrations, so none fires
+	// against a store this server no longer serves.
+	if s.registrationSweeper != nil {
+		s.registrationSweeper.stop()
+	}
 
 	// Commit any deferred operator departures before the listener goes away,
 	// so an operator who was attached at shutdown is recorded as having left
