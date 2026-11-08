@@ -279,6 +279,12 @@ func TestTriageRunner_NeedsInfoLabelsAndNamesWhatIsMissing(t *testing.T) {
 	if !strings.Contains(comments[0], "which of the three Encode overloads") {
 		t.Fatalf("the comment must name what is missing, got:\n%s", comments[0])
 	}
+	if !strings.Contains(comments[0], "1. Which of the three Encode overloads is affected?") {
+		t.Fatalf("the comment must list the question, got:\n%s", comments[0])
+	}
+	if strings.Contains(comments[0], TriageQuestionMarker) {
+		t.Fatalf("the marker itself means nothing to a reader, got:\n%s", comments[0])
+	}
 }
 
 // TestTriageRunner_NotActionableCommentsAndLeavesItAlone proves the third
@@ -451,11 +457,16 @@ func TestTriageRunner_NeverClosesAnIssue(t *testing.T) {
 
 // TestTriageRunner_AnUnreadableReplyIsNeverReady proves the safe direction:
 // every way of failing to understand the agent leaves the issue for a person,
-// and none of them applies the trigger label.
+// and none of them applies the trigger label. It also proves the charter's
+// demand for evidence is enforced: a declaration with no prose, a duplicate
+// of the issue itself, and a duplicate of an issue the pass never listed are
+// all set aside unposted. Each of those is a shape the NPU model produced on
+// go-luks2 on 2026-09-21 and a person then had to undo.
 func TestTriageRunner_AnUnreadableReplyIsNeverReady(t *testing.T) {
 	tests := []struct {
-		name  string
-		reply string
+		name   string
+		reply  string
+		reason string
 	}{
 		{
 			name:  "prose that sounds approving but declares nothing",
@@ -473,6 +484,27 @@ func TestTriageRunner_AnUnreadableReplyIsNeverReady(t *testing.T) {
 			name:  "an empty reply",
 			reply: "",
 		},
+		{
+			name:  "a bare not-actionable",
+			reply: "SDLC-TRIAGE: not-actionable",
+		},
+		{
+			name:  "a bare needs-info",
+			reply: "SDLC-TRIAGE: needs-info",
+		},
+		{
+			name:  "a duplicate of itself",
+			reply: "Same thing.\n\nSDLC-TRIAGE-DUPLICATE: #301\nSDLC-TRIAGE: duplicate",
+		},
+		{
+			name:  "a duplicate of an unlisted issue",
+			reply: "Same thing.\n\nSDLC-TRIAGE-DUPLICATE: #999\nSDLC-TRIAGE: duplicate",
+		},
+		{
+			name:   "a needs-info with evidence that asks nothing",
+			reply:  triageSummaryReply + "SDLC-TRIAGE: needs-info",
+			reason: "asks no question",
+		},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -483,89 +515,77 @@ func TestTriageRunner_AnUnreadableReplyIsNeverReady(t *testing.T) {
 			if err := rig.run(); err != nil {
 				t.Fatalf("run: %v", err)
 			}
-			if rig.hasLabel(301, rig.binding.Forge.TriggerLabel) {
-				t.Fatalf("an unreadable verdict must never be read as ready, got %v", rig.labels(301))
-			}
 			if got := rig.comments(301); len(got) != 0 {
 				t.Fatalf("a reply that is not a verdict writes nothing to the issue, got %v", got)
 			}
 			if got := rig.labels(301); len(got) != 0 {
-				t.Fatalf("a reply that is not a verdict labels nothing, got %v", got)
-			}
-			if !rig.audited("sdlc:triage_unusable") {
-				t.Fatal("setting a reply aside is recorded on the audit trail")
-			}
-		})
-	}
-}
-
-// TestTriageRunner_AVerdictWithoutEvidenceIsNotAVerdict proves the charter's
-// demand for evidence is enforced: a declaration with no prose, a duplicate
-// of the issue itself, and a duplicate of an issue the pass never listed are
-// all set aside unposted. Each is a shape the NPU model produced on go-luks2
-// on 2026-09-21 and a person then had to undo.
-func TestTriageRunner_AVerdictWithoutEvidenceIsNotAVerdict(t *testing.T) {
-	tests := map[string]string{
-		"a bare not-actionable":            "SDLC-TRIAGE: not-actionable",
-		"a bare needs-info":                "SDLC-TRIAGE: needs-info",
-		"a duplicate of itself":            "Same thing.\n\nSDLC-TRIAGE-DUPLICATE: #301\nSDLC-TRIAGE: duplicate",
-		"a duplicate of an unlisted issue": "Same thing.\n\nSDLC-TRIAGE-DUPLICATE: #999\nSDLC-TRIAGE: duplicate",
-	}
-	for name, reply := range tests {
-		t.Run(name, func(t *testing.T) {
-			rig := newTriageRig(t)
-			rig.forge.putIssue(301, "some issue")
-			rig.answers(reply)
-			if err := rig.run(); err != nil {
-				t.Fatalf("run: %v", err)
-			}
-			if got := rig.comments(301); len(got) != 0 {
-				t.Fatalf("nothing is posted for a reply without evidence, got %v", got)
-			}
-			if got := rig.labels(301); len(got) != 0 {
-				t.Fatalf("nothing is labelled for a reply without evidence, got %v", got)
+				t.Fatalf("a reply that is not a verdict labels nothing, not even the trigger label, got %v", got)
 			}
 			details, ok := rig.auditDetails("sdlc:triage_unusable")
-			if !ok || !strings.Contains(details, "issue=301") {
-				t.Fatalf("the audit trail names the issue set aside, got %q", details)
+			if !ok || !strings.Contains(details, "issue=301") || !strings.Contains(details, tc.reason) {
+				t.Fatalf("setting a reply aside is audited with the issue and the reason %q, got %q", tc.reason, details)
 			}
 		})
 	}
 }
 
-// TestTriageRunner_StopsAskingAfterTwoUnusableRepliesAtOneHead proves the
-// bound: the same runner sets an issue aside twice at one head and then skips
-// it, audited, until the head moves or somebody speaks.
-func TestTriageRunner_StopsAskingAfterTwoUnusableRepliesAtOneHead(t *testing.T) {
-	first := newTriageRig(t)
-	first.forge.putIssue(303, "some issue")
-	first.answers("SDLC-TRIAGE: not-actionable")
-	if err := first.run(); err != nil {
-		t.Fatalf("first run: %v", err)
+// TestTriageRunner_UnusableRepliesAtOneHead proves the point of not posting
+// and its bound: one reply set aside leaves the issue for the next pass, where
+// a usable reply lands normally; the same runner sets an issue aside twice at
+// one head and then skips it, audited, until the head moves or somebody speaks.
+func TestTriageRunner_UnusableRepliesAtOneHead(t *testing.T) {
+	const unusable = "SDLC-TRIAGE: not-actionable"
+	const verdict = "The change is out of scope for this repository.\n\nSDLC-TRIAGE: not-actionable"
+	tests := []struct {
+		name       string
+		replies    []string
+		wantPosted bool
+	}{
+		{name: "one unusable reply leaves the issue for the next pass", replies: []string{unusable, verdict}, wantPosted: true},
+		{name: "two unusable replies stop the asking at one head", replies: []string{unusable, unusable, verdict}, wantPosted: false},
 	}
-	second := newTriageRigOver(t, first)
-	second.runner = first.runner
-	second.answers("SDLC-TRIAGE: not-actionable")
-	if err := second.run(); err != nil {
-		t.Fatalf("second run: %v", err)
-	}
-	if !second.audited("sdlc:triage_unusable") {
-		t.Fatal("the second pass still asks, and sets the reply aside")
-	}
-	third := newTriageRigOver(t, first)
-	third.runner = first.runner
-	third.answers("This would have been a fine verdict.\n\nSDLC-TRIAGE: not-actionable")
-	if err := third.run(); err != nil {
-		t.Fatalf("third run: %v", err)
-	}
-	if third.audited("sdlc:triage_verdict") {
-		t.Fatal("the third pass must not ask again at the same head")
-	}
-	if details, ok := third.auditDetails("sdlc:triage_skipped"); !ok || !strings.Contains(details, "issue=303") {
-		t.Fatalf("the skip is audited with the issue, got %q", details)
-	}
-	if got := third.comments(303); len(got) != 0 {
-		t.Fatalf("a skipped issue is not written to, got %v", got)
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			first := newTriageRig(t)
+			first.forge.putIssue(302, "some issue")
+			last := len(tc.replies) - 1
+			for i, reply := range tc.replies {
+				rig := first
+				if i > 0 {
+					rig = newTriageRigOver(t, first)
+					rig.runner = first.runner
+				}
+				rig.answers(reply)
+				if err := rig.run(); err != nil {
+					t.Fatalf("pass %d: %v", i+1, err)
+				}
+				if i < last {
+					if !rig.audited("sdlc:triage_unusable") {
+						t.Fatalf("pass %d asks, and sets the reply aside", i+1)
+					}
+					if got := rig.comments(302); len(got) != 0 {
+						t.Fatalf("pass %d must post nothing, got %v", i+1, got)
+					}
+					continue
+				}
+				got := rig.comments(302)
+				if tc.wantPosted {
+					if len(got) != 1 || !strings.Contains(got[0], "out of scope") {
+						t.Fatalf("the last pass judges the issue again and posts its verdict, got %v", got)
+					}
+					continue
+				}
+				if rig.audited("sdlc:triage_verdict") {
+					t.Fatal("the last pass must not ask again at the same head")
+				}
+				if details, ok := rig.auditDetails("sdlc:triage_skipped"); !ok || !strings.Contains(details, "issue=302") {
+					t.Fatalf("the skip is audited with the issue, got %q", details)
+				}
+				if len(got) != 0 {
+					t.Fatalf("a skipped issue is not written to, got %v", got)
+				}
+			}
+		})
 	}
 }
 
@@ -628,37 +648,14 @@ func TestTriageRunner_AFailedMeasurementIsAuditedNotFatal(t *testing.T) {
 	}
 }
 
-// TestTriageRunner_AnUnusableReplyLeavesTheIssueForTheNextPass proves the
-// point of not posting: the issue carries no word from triage, so the next
-// pass judges it again -- and a usable reply then lands normally.
-func TestTriageRunner_AnUnusableReplyLeavesTheIssueForTheNextPass(t *testing.T) {
-	first := newTriageRig(t)
-	first.forge.putIssue(302, "some issue")
-	first.answers("SDLC-TRIAGE: not-actionable")
-	if err := first.run(); err != nil {
-		t.Fatalf("first run: %v", err)
-	}
-	if got := first.comments(302); len(got) != 0 {
-		t.Fatalf("the first pass must post nothing, got %v", got)
-	}
-
-	second := newTriageRigOver(t, first)
-	second.answers("The change is out of scope for this repository.\n\nSDLC-TRIAGE: not-actionable")
-	if err := second.run(); err != nil {
-		t.Fatalf("second run: %v", err)
-	}
-	if got := second.comments(302); len(got) != 1 || !strings.Contains(got[0], "out of scope") {
-		t.Fatalf("the second pass judges the issue again and posts its verdict, got %v", got)
-	}
-}
-
 // =============================================================================
 // Which issues are candidates
 // =============================================================================
 
 // TestTriageRunner_SkipsIssuesAlreadyInTheFactory proves triage does not
 // re-judge work that is already moving: an issue carrying the trigger label,
-// or any of the module's own progress labels, is left alone.
+// or any of the module's own progress labels, is left alone. Nor is a closed
+// issue: there is no work to admit and no person waiting on a verdict.
 func TestTriageRunner_SkipsIssuesAlreadyInTheFactory(t *testing.T) {
 	rig := newTriageRig(t)
 	binding := rig.binding
@@ -666,32 +663,18 @@ func TestTriageRunner_SkipsIssuesAlreadyInTheFactory(t *testing.T) {
 	rig.forge.putIssue(402, "already being worked", binding.Forge.Label(LabelInProgress))
 	rig.forge.putIssue(403, "already in review", binding.Forge.Label(LabelInReview))
 	rig.forge.putIssue(404, "fresh and untriaged")
+	closed := rig.forge.putIssue(405, "closed already")
+	closed.State = "closed"
 	rig.answers("SDLC-TRIAGE: ready")
 
 	if err := rig.run(); err != nil {
 		t.Fatalf("run: %v", err)
 	}
 	if prompts := rig.agents.promptTexts(); len(prompts) != 1 {
-		t.Fatalf("only the untriaged issue is judged, got %d prompts", len(prompts))
+		t.Fatalf("only the open, untriaged issue is judged, got %d prompts", len(prompts))
 	}
 	if !rig.hasLabel(404, binding.Forge.TriggerLabel) {
 		t.Fatalf("the fresh issue is the one triaged, got %v", rig.labels(404))
-	}
-}
-
-// TestTriageRunner_SkipsClosedIssues proves a closed issue is not triaged:
-// there is no work to admit and no person waiting on a verdict.
-func TestTriageRunner_SkipsClosedIssues(t *testing.T) {
-	rig := newTriageRig(t)
-	issue := rig.forge.putIssue(405, "closed already")
-	issue.State = "closed"
-	rig.answers("SDLC-TRIAGE: ready")
-
-	if err := rig.run(); err != nil {
-		t.Fatalf("run: %v", err)
-	}
-	if prompts := rig.agents.promptTexts(); len(prompts) != 0 {
-		t.Fatalf("a closed issue is not triaged, got %d prompts", len(prompts))
 	}
 }
 
@@ -1565,6 +1548,7 @@ func triageRunFor(forge ForgeBackend, binding *ProjectBinding) *triageRun {
 // that are out of scope or waiting on a person, which are exactly the ones a
 // person still needs to see open.
 func TestApplyNotActionable_ClosesOnlyWhenBothConditionsHold(t *testing.T) {
+	const escalated = "factory:escalated"
 	cases := []struct {
 		name      string
 		mayClose  bool
@@ -1580,6 +1564,7 @@ func TestApplyNotActionable_ClosesOnlyWhenBothConditionsHold(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			forge := newFakeForge()
 			binding := testBinding()
+			binding.Forge.Labels[LabelEscalated] = escalated
 			binding.TriageMayClose = c.mayClose
 			issue := ForgeIssue{Number: 42, Title: "stale report"}
 			forge.issues[42] = &issue
@@ -1602,6 +1587,17 @@ func TestApplyNotActionable_ClosesOnlyWhenBothConditionsHold(t *testing.T) {
 			// never landed tells a person nothing about why.
 			if len(forge.comments[42]) != 1 {
 				t.Fatalf("the evidence comment must be posted in every case, got %d", len(forge.comments[42]))
+			}
+			// A closed issue is not also escalated; an open one never leaves
+			// without the one label that says a person is the next step.
+			if c.wantClose {
+				if len(forge.labelAdds) != 0 {
+					t.Fatalf("labels added = %v, want none on a closed issue", forge.labelAdds)
+				}
+				return
+			}
+			if len(forge.labelAdds) != 1 || forge.labelAdds[0] != escalated {
+				t.Fatalf("labels added = %v, want exactly [%s] so a person can find it", forge.labelAdds, escalated)
 			}
 		})
 	}
@@ -1646,60 +1642,62 @@ func triageRunWith(policy TriageAgentPolicy, binding *ProjectBinding) *triageRun
 	}
 }
 
-// TestTriageAgent_TheNodeDefaultOutranksTheWorker is the regression that cost
-// real money: with no node default, every project fell straight through to its
-// worker, so a fleet writing code with a frontier model also re-read its whole
-// backlog with that model on every sweep.
-func TestTriageAgent_TheNodeDefaultOutranksTheWorker(t *testing.T) {
-	run := triageRunWith(
-		TriageAgentPolicy{Default: orchestration.AgentRefTo(testTriageAgent), Agents: testAgentCatalog()},
-		&ProjectBinding{Worker: orchestration.AgentRefTo(testCoderAgent)},
-	)
-	agent, err := run.triageAgent(context.Background())
-	if err != nil || agent.AgentID != testTriageAgent {
-		t.Fatalf("triage took the worker over the node default: %+v, %v", agent, err)
+// TestTriageAgent_ChoosesBindingThenNodeDefaultThenWorker pins the order the
+// triage agent is chosen in. The node default outranking the worker is the
+// regression that cost real money: with no node default, every project fell
+// straight through to its worker, so a fleet writing code with a frontier
+// model also re-read its whole backlog with that model on every sweep. The
+// node default stays a DEFAULT: a project naming its own triage agent still
+// gets it. The default is the node's and names one tenant's Agent, so a tenant
+// without it, or whose Agent of that name is not a triage agent, triages with
+// its worker rather than failing every sweep; and an install with no locally
+// served model, with empty config, changes nothing.
+func TestTriageAgent_ChoosesBindingThenNodeDefaultThenWorker(t *testing.T) {
+	worker := orchestration.AgentRefTo(testCoderAgent)
+	cases := []struct {
+		name    string
+		policy  TriageAgentPolicy
+		binding *ProjectBinding
+		want    string
+	}{
+		{
+			name:    "the node default outranks the worker",
+			policy:  TriageAgentPolicy{Default: orchestration.AgentRefTo(testTriageAgent), Agents: testAgentCatalog()},
+			binding: &ProjectBinding{Worker: worker},
+			want:    testTriageAgent,
+		},
+		{
+			name:    "the binding outranks the node default",
+			policy:  TriageAgentPolicy{Default: orchestration.AgentRefTo(testTriageAgent), Agents: testAgentCatalog()},
+			binding: &ProjectBinding{Triage: orchestration.AgentRefTo(testReviewerAgent), Worker: worker},
+			want:    testReviewerAgent,
+		},
+		{
+			name:    "no default still falls back to the worker",
+			policy:  TriageAgentPolicy{},
+			binding: &ProjectBinding{Worker: worker},
+			want:    testCoderAgent,
+		},
+		{
+			name:    "a default the tenant does not define is passed over",
+			policy:  TriageAgentPolicy{Default: orchestration.AgentRefTo("elsewhere"), Agents: testAgentCatalog()},
+			binding: &ProjectBinding{Worker: worker},
+			want:    testCoderAgent,
+		},
+		{
+			name:    "a default that is not a triage agent is passed over",
+			policy:  TriageAgentPolicy{Default: orchestration.AgentRefTo(testQwenAgent), Agents: testAgentCatalog()},
+			binding: &ProjectBinding{Worker: worker},
+			want:    testCoderAgent,
+		},
 	}
-}
-
-// TestTriageAgent_TheBindingOutranksTheNodeDefault keeps the node default a
-// DEFAULT: a project that names its own triage agent still gets it.
-func TestTriageAgent_TheBindingOutranksTheNodeDefault(t *testing.T) {
-	run := triageRunWith(
-		TriageAgentPolicy{Default: orchestration.AgentRefTo(testTriageAgent), Agents: testAgentCatalog()},
-		&ProjectBinding{Triage: orchestration.AgentRefTo(testReviewerAgent), Worker: orchestration.AgentRefTo(testCoderAgent)},
-	)
-	if agent, err := run.triageAgent(context.Background()); err != nil || agent.AgentID != testReviewerAgent {
-		t.Fatalf("the binding's own triage agent was ignored: %+v, %v", agent, err)
-	}
-}
-
-// TestTriageAgent_NoDefaultStillFallsBackToTheWorker pins the behaviour an
-// install with no locally served model keeps: empty config changes nothing.
-func TestTriageAgent_NoDefaultStillFallsBackToTheWorker(t *testing.T) {
-	run := triageRunWith(TriageAgentPolicy{}, &ProjectBinding{Worker: orchestration.AgentRefTo(testCoderAgent)})
-	if agent, err := run.triageAgent(context.Background()); err != nil || agent.AgentID != testCoderAgent {
-		t.Fatalf("an unset node default broke the worker fallback: %+v, %v", agent, err)
-	}
-}
-
-// TestTriageAgent_ADefaultTheTenantDoesNotDefineIsPassedOver: the default is
-// the node's and names one tenant's Agent; a tenant without it triages with
-// its worker rather than failing every sweep.
-func TestTriageAgent_ADefaultTheTenantDoesNotDefineIsPassedOver(t *testing.T) {
-	run := triageRunWith(
-		TriageAgentPolicy{Default: orchestration.AgentRefTo("elsewhere"), Agents: testAgentCatalog()},
-		&ProjectBinding{Worker: orchestration.AgentRefTo(testCoderAgent)},
-	)
-	if agent, err := run.triageAgent(context.Background()); err != nil || agent.AgentID != testCoderAgent {
-		t.Fatalf("an undefined default must fall through to the worker: %+v, %v", agent, err)
-	}
-	// A default that exists but is not a triage agent is passed over too.
-	run = triageRunWith(
-		TriageAgentPolicy{Default: orchestration.AgentRefTo(testQwenAgent), Agents: testAgentCatalog()},
-		&ProjectBinding{Worker: orchestration.AgentRefTo(testCoderAgent)},
-	)
-	if agent, _ := run.triageAgent(context.Background()); agent.AgentID != testCoderAgent {
-		t.Fatalf("a non-triage default must not be taken: %+v", agent)
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			agent, err := triageRunWith(c.policy, c.binding).triageAgent(context.Background())
+			if err != nil || agent.AgentID != c.want {
+				t.Fatalf("triage agent = %+v, %v; want %s", agent, err, c.want)
+			}
+		})
 	}
 }
 
@@ -1713,71 +1711,6 @@ func TestTriageAgent_AnUnreadableCatalogIsAnError(t *testing.T) {
 	)
 	if _, err := run.triageAgent(context.Background()); !errors.Is(err, boom) {
 		t.Fatalf("an unreadable catalog = %v", err)
-	}
-}
-
-// TestApplyNotActionable_AnOpenIssueNeverLeavesWithoutAState is the regression
-// that idled the fleet.
-//
-// A not-actionable verdict used to comment and stop, leaving the issue open
-// carrying NO factory label. Because the newest comment was then triage's own,
-// spokenToSinceTriage ruled it not a candidate on every later pass: invisible
-// to the factory and unmarked for a person. Measured on go-luks2 2026-09-16 —
-// five issues in that state and 34 hours of a fleet triaging nothing.
-func TestApplyNotActionable_AnOpenIssueNeverLeavesWithoutAState(t *testing.T) {
-	forge := newFakeForge()
-	binding := testBinding()
-	binding.Forge.Labels[LabelEscalated] = "factory:escalated"
-	binding.TriageMayClose = true
-	issue := ForgeIssue{Number: 42, Title: "needs a ruling before a worker touches it"}
-	forge.issues[42] = &issue
-
-	run := triageRunFor(forge, binding)
-	// Not closable: the verdict did not say the work is already done.
-	verdict := TriageVerdict{
-		Outcome:  TriageOutcomeNotActionable,
-		Comments: true,
-		Headline: "No worker will be spawned for this issue.",
-	}
-	if err := run.applyNotActionable(context.Background(), issue, verdict, "ext2 support is an owner call"); err != nil {
-		t.Fatalf("applyNotActionable: %v", err)
-	}
-	if len(forge.closed) != 0 {
-		t.Fatalf("closed %v, want the issue left open", forge.closed)
-	}
-	want := binding.Forge.Label(LabelEscalated)
-	if want == "" {
-		t.Fatal("the test binding displays no escalated label; the fixture no longer exercises this")
-	}
-	if len(forge.labelAdds) != 1 || forge.labelAdds[0] != want {
-		t.Fatalf("labels added = %v, want exactly [%s] so a person can find it", forge.labelAdds, want)
-	}
-}
-
-// TestApplyNotActionable_AClosedIssueIsNotAlsoEscalated keeps the two
-// terminal states from both being applied: a closed issue carrying "a person
-// must look" is a contradiction that puts it back in somebody's queue.
-func TestApplyNotActionable_AClosedIssueIsNotAlsoEscalated(t *testing.T) {
-	forge := newFakeForge()
-	binding := testBinding()
-	binding.TriageMayClose = true
-	issue := ForgeIssue{Number: 7, Title: "already fixed on main"}
-	forge.issues[7] = &issue
-
-	run := triageRunFor(forge, binding)
-	verdict := TriageVerdict{
-		Outcome: TriageOutcomeNotActionable, Comments: true,
-		Headline:            "No worker will be spawned for this issue.",
-		ClosesAsAlreadyDone: true,
-	}
-	if err := run.applyNotActionable(context.Background(), issue, verdict, "fixed at foo.go:12"); err != nil {
-		t.Fatalf("applyNotActionable: %v", err)
-	}
-	if len(forge.closed) != 1 || forge.closed[0] != 7 {
-		t.Fatalf("closed = %v, want [7]", forge.closed)
-	}
-	if len(forge.labelAdds) != 0 {
-		t.Fatalf("labels added = %v, want none on a closed issue", forge.labelAdds)
 	}
 }
 
@@ -2029,57 +1962,6 @@ func TestTriageRunner_AVerdictReplacesThePreviousDisposition(t *testing.T) {
 	}
 }
 
-// TestTriageRunner_AnIdenticalVerdictIsNotPostedAgain is go-quicbaas#1013's
-// thread: every merge reopened the parked issue, triage reached the same
-// "duplicate of #981" each time, and posted it again — sixteen identical
-// comments. A merge still reopens the issue; a re-judgement that reaches the
-// verdict triage already gave says nothing new and posts nothing. A different
-// verdict — another duplicate target — is news, and is posted.
-func TestTriageRunner_AnIdenticalVerdictIsNotPostedAgain(t *testing.T) {
-	rig := newTriageRig(t)
-	trigger := rig.binding.Forge.TriggerLabel
-	rig.forge.putIssue(981, "agent-side workspaces in pkg/sdlc/agent.go", trigger)
-	rig.forge.putIssue(982, "agent-side sockets in pkg/sdlc/agent.go", trigger)
-	rig.forge.putIssue(1013, "relay the signing agent from pkg/sdlc/agent.go")
-	duplicateOf := func(number string) string {
-		return "The same work as " + number + ".\n\nSDLC-TRIAGE-DUPLICATE: " + number + "\nSDLC-TRIAGE: duplicate"
-	}
-	merge := func(sha string) {
-		rig.forge.mu.Lock()
-		rig.forge.branchSHA = sha
-		rig.forge.mu.Unlock()
-	}
-
-	rig.answers(duplicateOf("#981"))
-	if err := rig.run(); err != nil {
-		t.Fatalf("first pass: %v", err)
-	}
-	if got := rig.comments(1013); len(got) != 1 || !strings.Contains(got[0], "#981") {
-		t.Fatalf("first pass posted %v, want the one duplicate verdict", got)
-	}
-
-	merge("1111222233334444555566667777888899990000")
-	rig.answers(duplicateOf("#981"))
-	if err := rig.run(); err != nil {
-		t.Fatalf("second pass: %v", err)
-	}
-	if prompts := rig.agents.promptTexts(); len(prompts) == 0 {
-		t.Fatal("the merge did not reopen the issue at all")
-	}
-	if got := rig.comments(1013); len(got) != 1 {
-		t.Fatalf("an identical verdict was posted again: %d comments", len(got))
-	}
-
-	merge("aaaabbbbccccddddeeeeffff0000111122223333")
-	rig.answers(duplicateOf("#982"))
-	if err := rig.run(); err != nil {
-		t.Fatalf("third pass: %v", err)
-	}
-	if got := rig.comments(1013); len(got) != 2 || !strings.Contains(got[1], "#982") {
-		t.Fatalf("a changed verdict was not posted: %v", got)
-	}
-}
-
 // TestSameTriageVerdict_ComparesOutcomeAndHeadline covers the comparison on its
 // own: the agent's prose around a verdict differs every time and does not make
 // it a new one; the outcome or the headline does.
@@ -2128,15 +2010,20 @@ func TestSameTriageVerdict_ComparesOutcomeAndHeadline(t *testing.T) {
 	}
 }
 
-// TestTriageRunner_ASuppressedVerdictRecordsTheHeadItJudged: a merge reopens the
-// issue and triage reaches the verdict it already posted, so nothing is posted
-// — and the head it judged is remembered, so the next sweep at that same head
-// spends no model turn re-reaching it.
+// TestTriageRunner_ASuppressedVerdictRecordsTheHeadItJudged is go-quicbaas#1013's
+// thread: every merge reopened the parked issue, triage reached the same
+// "duplicate of #981" each time, and posted it again — sixteen identical
+// comments. A merge still reopens the issue; triage reaching the verdict it
+// already posted posts nothing — and the head it judged is remembered, so the
+// next sweep at that same head spends no model turn re-reaching it. A
+// different verdict — another duplicate target — is news, and is posted.
 func TestTriageRunner_ASuppressedVerdictRecordsTheHeadItJudged(t *testing.T) {
 	rig := newTriageRig(t)
 	rig.forge.putIssue(981, "agent-side workspaces in pkg/sdlc/agent.go", rig.binding.Forge.TriggerLabel)
+	rig.forge.putIssue(982, "agent-side sockets in pkg/sdlc/agent.go", rig.binding.Forge.TriggerLabel)
 	rig.forge.putIssue(1013, "relay the signing agent from pkg/sdlc/agent.go")
 	duplicate := "The same work as #981.\n\nSDLC-TRIAGE-DUPLICATE: #981\nSDLC-TRIAGE: duplicate"
+	changed := "The same work as #982.\n\nSDLC-TRIAGE-DUPLICATE: #982\nSDLC-TRIAGE: duplicate"
 
 	rig.answers(duplicate)
 	if err := rig.run(); err != nil {
@@ -2165,9 +2052,22 @@ func TestTriageRunner_ASuppressedVerdictRecordsTheHeadItJudged(t *testing.T) {
 		t.Fatalf("a sweep at the head already judged spent %d more turn(s)", got-turns)
 	}
 
+	// A changed verdict at a new head is posted.
+	rig.forge.mu.Lock()
+	rig.forge.branchSHA = "aaaabbbbccccddddeeeeffff0000111122223333"
+	rig.forge.mu.Unlock()
+	rig.answers(changed)
+	if err := rig.run(); err != nil {
+		t.Fatalf("pass with a changed verdict: %v", err)
+	}
+	if got := rig.comments(1013); len(got) != 2 || !strings.Contains(got[1], "#982") {
+		t.Fatalf("a changed verdict was not posted: %v", got)
+	}
+
 	// A person speaking is still new information at that head.
-	rig.forge.putComment(1013, "It is not a duplicate: #981 never touched the socket.", time.Now().Add(time.Hour))
-	rig.answers(duplicate)
+	turns = len(rig.agents.promptTexts())
+	rig.forge.putComment(1013, "It is not a duplicate: #982 never touched the socket.", time.Now().Add(time.Hour))
+	rig.answers(changed)
 	if err := rig.run(); err != nil {
 		t.Fatalf("pass after a comment: %v", err)
 	}
@@ -2212,51 +2112,6 @@ func TestTriageRunner_TwoDifferentQuestionsAreBothPosted(t *testing.T) {
 const triageSummaryReply = "## Review of Issue #826\n\n### Issue Summary\n\n" +
 	"The issue asks for the scheduler to coalesce leases in pkg/scheduler/lease.go.\n\n" +
 	"### What is missing:\n\nThe issue describes lease coalescing for the scheduler.\n\n"
-
-func TestTriageRunner_ANeedsInfoThatAsksNothingIsNotAVerdict(t *testing.T) {
-	rig := newTriageRig(t)
-	rig.forge.putIssue(826, "Coalesce scheduler leases")
-	rig.answers(triageSummaryReply + "SDLC-TRIAGE: needs-info")
-
-	if err := rig.run(); err != nil {
-		t.Fatalf("run: %v", err)
-	}
-	if got := rig.comments(826); len(got) != 0 {
-		t.Fatalf("a needs-info that asks nothing is not posted, got %v", got)
-	}
-	if got := rig.labels(826); len(got) != 0 {
-		t.Fatalf("a needs-info that asks nothing parks nothing, got %v", got)
-	}
-	details, ok := rig.auditDetails("sdlc:triage_unusable")
-	if !ok || !strings.Contains(details, "issue=826") || !strings.Contains(details, "asks no question") {
-		t.Fatalf("the audit trail names the issue and the reason, got %q", details)
-	}
-}
-
-func TestTriageRunner_ANeedsInfoListsTheQuestionsItAsks(t *testing.T) {
-	rig := newTriageRig(t)
-	rig.forge.putIssue(851, "Coalesce scheduler leases")
-	rig.answers(triageSummaryReply +
-		"SDLC-TRIAGE-QUESTION: Should a coalesced lease keep the earliest or the latest deadline?\n" +
-		"SDLC-TRIAGE: needs-info")
-
-	if err := rig.run(); err != nil {
-		t.Fatalf("run: %v", err)
-	}
-	if !rig.hasLabel(851, rig.binding.Forge.Label(LabelNeedsInfo)) {
-		t.Fatalf("a needs-info that asks a question is parked, got %v", rig.labels(851))
-	}
-	comments := rig.comments(851)
-	if len(comments) != 1 {
-		t.Fatalf("needs-info comments exactly once, got %d", len(comments))
-	}
-	if !strings.Contains(comments[0], "1. Should a coalesced lease keep the earliest or the latest deadline?") {
-		t.Fatalf("the comment must list the question, got:\n%s", comments[0])
-	}
-	if strings.Contains(comments[0], TriageQuestionMarker) {
-		t.Fatalf("the marker itself means nothing to a reader, got:\n%s", comments[0])
-	}
-}
 
 func TestTriageRunner_ADuplicateMustShareAPathOrIdentifier(t *testing.T) {
 	const dice = "Add `dice.Attestation` to sdk/go/xkms/dice/dice.go."
