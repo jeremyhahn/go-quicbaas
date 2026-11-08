@@ -214,6 +214,11 @@ func TestLRUCache_Peek(t *testing.T) {
 	// key-1 should be evicted
 	_, exists = cache.Get("key-1")
 	assert.False(t, exists)
+
+	// Peek at a missing key
+	entry, exists = cache.Peek("missing")
+	assert.False(t, exists)
+	assert.Nil(t, entry)
 }
 
 func TestLRUCache_Contains(t *testing.T) {
@@ -249,8 +254,10 @@ func TestLRUCache_GetOldest(t *testing.T) {
 	cache := NewLRUCache(10)
 
 	t.Run("empty cache", func(t *testing.T) {
-		_, _, exists := cache.GetOldest()
+		key, entry, exists := cache.GetOldest()
 		assert.False(t, exists)
+		assert.Empty(t, key)
+		assert.Nil(t, entry)
 	})
 
 	t.Run("with entries", func(t *testing.T) {

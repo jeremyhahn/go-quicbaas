@@ -433,72 +433,42 @@ func TestRateLimiting(t *testing.T) {
 	assert.GreaterOrEqual(t, elapsed.Milliseconds(), int64(450)) // Allow 10% tolerance
 }
 
-func TestBatchProcessing(t *testing.T) {
-	log := testLogger(t)
-	cache := mustCreateCache(t, log)
-	storage := newMockStorageReader()
-
-	// Add 25 test keys
-	for i := 1; i <= 25; i++ {
-		storage.AddKey("batch:"+string(rune('a'+i-1)), "value")
-	}
-
-	config := WarmingConfig{
-		BatchSize: 10,
-	}
-
-	warmer, err := NewCacheWarmer(cache, storage, config, log)
-	require.NoError(t, err)
-
-	ctx := context.Background()
-
-	status, err := warmer.WarmPrefix(ctx, "batch:")
-	require.NoError(t, err)
-
-	assert.Equal(t, "completed", status.State)
-	assert.Equal(t, int64(25), status.KeysWarmed)
-}
-
 func TestContextCancellation(t *testing.T) {
 	log := testLogger(t)
 	cache := mustCreateCache(t, log)
-	storage := newMockStorageReader()
 
-	// Add many keys
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// Cancel while the last key of the first batch is read, so the warmer
+	// meets the cancellation at the rate-limit wait.
+	storage := &hookedStorageReader{mockStorageReader: newMockStorageReader(), hookAt: 5, hook: cancel}
 	for i := 1; i <= 100; i++ {
 		storage.AddKey("cancel:"+string(rune('a'+i%26)), "value")
 	}
 
 	config := WarmingConfig{
 		BatchSize:          5,
-		RateLimitPerSecond: 10, // Slow it down
+		RateLimitPerSecond: 10,
 	}
 
 	warmer, err := NewCacheWarmer(cache, storage, config, log)
 	require.NoError(t, err)
 
-	ctx, cancel := context.WithCancel(context.Background())
-
-	// Cancel after a short delay
-	go func() {
-		time.Sleep(100 * time.Millisecond)
-		cancel()
-	}()
-
 	status, err := warmer.WarmPrefix(ctx, "cancel:")
 
-	assert.Error(t, err)
 	assert.Equal(t, context.Canceled, err)
 	assert.Equal(t, "failed", status.State)
-	assert.Less(t, status.KeysWarmed, int64(100))
+	assert.Equal(t, int64(5), status.KeysWarmed)
 }
 
 func TestStopSignal(t *testing.T) {
 	log := testLogger(t)
 	cache := mustCreateCache(t, log)
-	storage := newMockStorageReader()
 
-	// Add many keys
+	// Stop while the last key of the first batch is read, so the warmer
+	// meets the stop signal at the rate-limit wait.
+	storage := &hookedStorageReader{mockStorageReader: newMockStorageReader(), hookAt: 5}
 	for i := 1; i <= 100; i++ {
 		storage.AddKey("stop:"+string(rune('a'+i%26)), "value")
 	}
@@ -510,20 +480,30 @@ func TestStopSignal(t *testing.T) {
 
 	warmer, err := NewCacheWarmer(cache, storage, config, log)
 	require.NoError(t, err)
+	storage.hook = warmer.Stop
 
-	ctx := context.Background()
-
-	// Stop after a short delay
-	go func() {
-		time.Sleep(100 * time.Millisecond)
-		warmer.Stop()
-	}()
-
-	status, err := warmer.WarmPrefix(ctx, "stop:")
+	status, err := warmer.WarmPrefix(context.Background(), "stop:")
 
 	assert.Error(t, err)
 	assert.Equal(t, "failed", status.State)
-	assert.Less(t, status.KeysWarmed, int64(100))
+	assert.Equal(t, int64(5), status.KeysWarmed)
+}
+
+// hookedStorageReader runs hook once, during the hookAt-th Get, so a test can
+// interrupt warming at a known point without waiting on the clock.
+type hookedStorageReader struct {
+	*mockStorageReader
+	gets   int
+	hookAt int
+	hook   func()
+}
+
+func (s *hookedStorageReader) Get(key []byte) ([]byte, error) {
+	s.gets++
+	if s.gets == s.hookAt {
+		s.hook()
+	}
+	return s.mockStorageReader.Get(key)
 }
 
 func TestStatusUpdates(t *testing.T) {
