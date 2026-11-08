@@ -35,6 +35,16 @@ case "\$1 \${2:-}" in
 		exit 1
 		;;
 	*)
+		# A -f listing names its packages, as shard_packages' does: answer
+		# for those alone, each in a directory holding no test files.
+		case " \$* " in
+		*' -f '*)
+			for arg; do
+				case \$arg in example.com/*) echo "\$arg $tmp" ;; esac
+			done
+			exit 0
+			;;
+		esac
 		for pkg in \${FAKE_GO_LIST#pkgs:}; do
 			echo "\$pkg"
 		done
@@ -124,8 +134,9 @@ done
 reports coverage-api-grpc
 reports coverage-sdk-go-transport-grpc
 
-# refuses TARGET LIST checks TARGET exits non-zero, names itself and never
-# runs `go test` when `go list` answers LIST. `go test` with no package
+# refuses TARGET LIST [NAME] checks TARGET exits non-zero, names NAME (itself
+# by default; coverage refuses through coverage-shard) and never runs
+# `go test` when `go list` answers LIST. `go test` with no package
 # arguments tests the current directory's package and can pass, so a failed
 # or empty package list must stop the target, not shrink its run.
 refuses() {
@@ -136,8 +147,8 @@ refuses() {
 		fail "make $1 exited 0 with go list '$2': $(tail -n 5 "$tmp/out")"
 	elif [ -f "$tmp/go-test-args" ]; then
 		fail "make $1 ran go test with go list '$2'"
-	elif ! grep -q "$1:" "$tmp/out"; then
-		fail "make $1 did not name itself when refusing go list '$2': $(tail -n 5 "$tmp/out")"
+	elif ! grep -q "${3:-$1}:" "$tmp/out"; then
+		fail "make $1 did not name ${3:-$1} when refusing go list '$2': $(tail -n 5 "$tmp/out")"
 	fi
 }
 
@@ -156,13 +167,15 @@ tests() {
 	fi
 }
 
-for target in test-sdk-go test-sdk-go-coverage coverage; do
+for target in test-sdk-go test-sdk-go-coverage; do
 	refuses "$target" fail
 	refuses "$target" pkgs:
 done
+refuses coverage fail coverage-shard
+refuses coverage pkgs: coverage-shard
 refuses test-sdk-go pkgs:example.com/m/test/integration
 refuses test-sdk-go-coverage pkgs:example.com/m/test/integration
-refuses coverage pkgs:example.com/m/pkg/x/proto
+refuses coverage pkgs:example.com/m/pkg/x/proto coverage-shard
 # test-sdk-go-coverage is not run on a good list: its profile path is fixed
 # inside sdk/go, outside the temporary directory.
 tests test-sdk-go example.com/m/test/integration

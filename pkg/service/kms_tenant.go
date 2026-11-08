@@ -68,6 +68,24 @@ func tenantKeyBelongsTo(tenantID, keyID string) bool {
 	return strings.HasPrefix(keyID, prefix)
 }
 
+// safetyResultsForTenant keeps the shared safety tracker's results that
+// belong to tenantID, each ID returned in the tenant's own namespace. The
+// system caller keeps every tenant's results.
+func safetyResultsForTenant(tenantID string, results []SafetyCheckResult) []SafetyCheckResult {
+	if qrdbsdk.IsSystemTenant(tenantID) {
+		return results
+	}
+	owned := make([]SafetyCheckResult, 0, len(results))
+	for _, r := range results {
+		if !tenantKeyBelongsTo(tenantID, r.ID) {
+			continue
+		}
+		r.ID = tenantStripKeyID(tenantID, r.ID)
+		owned = append(owned, r)
+	}
+	return owned
+}
+
 // tenantListPrefix returns the prefix to use when listing keys for a tenant.
 // For single-tenant mode or the system tenant, returns empty string (list all).
 // For multi-tenant mode, returns "tenant/{tenantID}/".

@@ -99,7 +99,7 @@ func ParseSSHHostKey(line string) (ssh.PublicKey, error) {
 // would connect to, or the empty string when repoURL names no ssh transport.
 //
 // Both spellings git accepts are recognised: the URL form
-// "ssh://git@host:2222/owner/repo.git" and the scp form
+// "ssh://git@host:2022/owner/repo.git" and the scp form
 // "git@host:owner/repo.git". A non-default port is bracketed, which is the
 // form ssh looks entries up under.
 func SSHRepoHost(repoURL string) string {

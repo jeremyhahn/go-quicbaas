@@ -193,7 +193,7 @@
             id="{idPrefix}-git-author-email"
             type="text"
             class="input input-bordered input-sm w-full"
-            placeholder="agent@example.internal"
+            placeholder="agent@example.com"
             bind:value={form.gitAuthorEmail}
           />
         </div>

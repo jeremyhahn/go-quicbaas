@@ -266,6 +266,11 @@ type Server struct {
 	// at startService() time. Keeping a reference allows UpdateCA() to swap
 	// the backing CA post-start without rebuilding the service.
 	caAdapter *caServiceAdapter
+	// caWired is set once startService passes caAdapter to the service
+	// builder with WithCAService. UpdateCA reads it: an adapter that was
+	// never wired serves no certificate operation, so swapping its CA would
+	// report a success that changes nothing.
+	caWired atomic.Bool
 
 	// xkmsKeyStorage is the file-backed XKMS key store created by
 	// initializeCA. startKMS reuses this same storage root so that the CA
@@ -801,6 +806,9 @@ func NewServer(cfg *config.Config, opts ...ServerOption) (*Server, error) {
 		shutdownChan: make(chan struct{}),
 		startTime:    time.Now(),
 		ceremonyCA:   &lateBoundCeremonyCA{},
+		// caAdapter is written once, here, before any listener starts;
+		// the CA inside it changes only under the adapter's lock.
+		caAdapter: newPendingCAServiceAdapter(),
 	}
 
 	// Create health checker
@@ -1859,17 +1867,17 @@ func (s *Server) GetCertificateAuthority() xkmssdk.TrustedCA {
 // UpdateCA replaces the Certificate Authority used by the QuicBaaS
 // CertificateService with the supplied ca. The swap is atomic: in-flight
 // certificate operations complete against the previous CA before the new one
-// takes effect. Returns an error when the server has not yet been started or
-// when the CA adapter was not wired (TLS disabled). Passing nil is a no-op.
+// takes effect. Returns UpdateCANotReadyError until startService has wired the
+// CA adapter into the certificate service, which it never does for a server
+// with TLS disabled and no external CA. Passing nil is a no-op.
 func (s *Server) UpdateCA(ca xkmssdk.TrustedCA) error {
 	if ca == nil {
 		return nil
 	}
-	if s.caAdapter == nil {
+	if s.caAdapter == nil || !s.caWired.Load() {
 		return UpdateCANotReadyError{}
 	}
-	s.xkmsCA = ca
-	s.caAdapter.SetCA(ca)
+	s.adoptCA(ca)
 	return nil
 }
 

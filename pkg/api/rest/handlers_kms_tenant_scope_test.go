@@ -79,7 +79,7 @@ func kmsTenantRouter(s *Server, tenant string) http.Handler {
 	r := chi.NewRouter()
 	r.Use(func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-			ctx := injectPrincipal(req.Context(), interfaces.Subject{ID: "caller", TenantID: tenant}, nil)
+			ctx := injectPrincipal(req.Context(), interfaces.Subject{ID: "caller", TenantID: tenant, Authenticated: true}, nil)
 			next.ServeHTTP(w, req.WithContext(ctx))
 		})
 	})

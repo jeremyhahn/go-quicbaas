@@ -42,7 +42,7 @@ const (
 	// none.
 	fakePushDigestEnv = "QUICBAAS_TEST_FAKE_PUSH_DIGEST"
 
-	testPushRegistry = "registry.example:3001/owner/software-factory-worker"
+	testPushRegistry = "registry.example:3000/owner/software-factory-worker"
 	testPushDigest   = "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
 )
 
