@@ -269,8 +269,8 @@ func signOver(t *testing.T, path string, data []byte) (*ssh.Signature, error) {
 
 // deliveryCommit is a commit object as git hands it to its signer.
 var deliveryCommit = []byte("tree 4b825dc642cb6eb9a060e54bf8d69288fbee4904\n" +
-	"author agent-go-quicbaas <agent-go-quicbaas@example.internal> 1790000000 +0000\n" +
-	"committer agent-go-quicbaas <agent-go-quicbaas@example.internal> 1790000000 +0000\n\n" +
+	"author agent-quicbaas <agent-quicbaas@example.com> 1790000000 +0000\n" +
+	"committer agent-quicbaas <agent-quicbaas@example.com> 1790000000 +0000\n\n" +
 	"delivery: relay the signing agent (#1013)\n")
 
 // =============================================================================

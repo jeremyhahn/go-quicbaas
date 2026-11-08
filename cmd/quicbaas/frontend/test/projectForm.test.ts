@@ -44,10 +44,10 @@ const REST_PROJECT_BODY = `{
   "context_repos": [
     { "name": "handbook", "repo_url": "https://git.example/org/handbook", "ref": "main" }
   ],
-  "git_repo_url": "ssh://git@forge.example:2222/jeremyhahn/go-truststrap.git",
+  "git_repo_url": "ssh://git@forge.example:2022/jeremyhahn/go-truststrap.git",
   "git_default_branch": "main",
-  "git_author_name": "agent-go-truststrap",
-  "git_author_email": "agent@example.internal",
+  "git_author_name": "agent-truststrap",
+  "git_author_email": "agent@example.com",
   "git_signing_enabled": true,
   "git_signing_algorithm": "ED25519",
   "git_signing_key_name": "commit-signing",
@@ -73,8 +73,8 @@ describe('projectFormFrom', () => {
   it('reads every git identity, autonomy and quota field off the record', () => {
     const form = projectFormFrom(fullProject());
     expect(form.name).toBe('go-truststrap');
-    expect(form.gitAuthorName).toBe('agent-go-truststrap');
-    expect(form.gitAuthorEmail).toBe('agent@example.internal');
+    expect(form.gitAuthorName).toBe('agent-truststrap');
+    expect(form.gitAuthorEmail).toBe('agent@example.com');
     expect(form.gitSigningEnabled).toBe(true);
     expect(form.gitSigningAlgorithm).toBe('ED25519');
     expect(form.gitSigningKeyName).toBe('commit-signing');
@@ -98,10 +98,10 @@ describe('projectFormFrom', () => {
     // wire bytes, so a re-nesting of the type fails this test rather than the
     // operator's next edit.
     const form = projectFormFrom(fullProject());
-    expect(form.gitRepoUrl).toBe('ssh://git@forge.example:2222/jeremyhahn/go-truststrap.git');
+    expect(form.gitRepoUrl).toBe('ssh://git@forge.example:2022/jeremyhahn/go-truststrap.git');
     expect(form.gitBranch).toBe('main');
-    expect(form.gitAuthorName).toBe('agent-go-truststrap');
-    expect(form.gitAuthorEmail).toBe('agent@example.internal');
+    expect(form.gitAuthorName).toBe('agent-truststrap');
+    expect(form.gitAuthorEmail).toBe('agent@example.com');
     expect(form.gitSigningEnabled).toBe(true);
     expect(form.gitSigningAlgorithm).toBe('ED25519');
     expect(form.gitSigningKeyName).toBe('commit-signing');
@@ -187,8 +187,8 @@ describe('createProjectRequestFrom', () => {
     const req = createProjectRequestFrom('default', projectFormFrom(fullProject()));
     expect(req.tenant_id).toBe('default');
     expect(req.name).toBe('go-truststrap');
-    expect(req.git_author_name).toBe('agent-go-truststrap');
-    expect(req.git_author_email).toBe('agent@example.internal');
+    expect(req.git_author_name).toBe('agent-truststrap');
+    expect(req.git_author_email).toBe('agent@example.com');
     expect(req.git_signing_enabled).toBe(true);
     expect(req.git_signing_algorithm).toBe('ED25519');
     expect(req.git_signing_key_name).toBe('commit-signing');
@@ -254,9 +254,9 @@ describe('updateProjectRequestFrom', () => {
   it('sends only the git identity field that changed', () => {
     const project = fullProject();
     const form = projectFormFrom(project);
-    form.gitAuthorEmail = 'other@example.internal';
+    form.gitAuthorEmail = 'other@example.com';
     const req = updateProjectRequestFrom('default', project, form);
-    expect(req.git_author_email).toBe('other@example.internal');
+    expect(req.git_author_email).toBe('other@example.com');
     expect(req.git_author_name).toBeUndefined();
     expect(req.git_signing_key_name).toBeUndefined();
   });
