@@ -98,209 +98,6 @@ func statusServer(t *testing.T, status int, body string) *httptest.Server {
 	return srv
 }
 
-// =============================================================================
-// OpenAIProvider
-// =============================================================================
-
-func TestNewOpenAIProvider_Success(t *testing.T) {
-	srv := openAIEmbeddingHandler(t, 4, nil)
-	p, err := NewOpenAIProvider(Config{
-		APIURL:     srv.URL,
-		Model:      ModelTextEmbedding3Small,
-		MaxRetries: 0,
-	})
-	require.NoError(t, err)
-	require.NotNil(t, p)
-	t.Cleanup(func() { _ = p.Close() })
-
-	assert.Equal(t, "openai", p.Name())
-	assert.Equal(t, 8191, p.MaxTokens())
-	// text-embedding-3-small has a known dimension of 1536 pre-seeded.
-	assert.Equal(t, 1536, p.Dimensions())
-}
-
-func TestOpenAIProvider_Embed_Success(t *testing.T) {
-	var gotAuth string
-	var gotBody openAIRequestBody
-	srv := openAIEmbeddingHandler(t, 4, func(req openAIRequestBody, auth string) {
-		gotBody = req
-		gotAuth = auth
-	})
-	p, err := NewOpenAIProvider(Config{APIURL: srv.URL, APIKey: "sk-test", Model: "custom-model", MaxRetries: 0})
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = p.Close() })
-
-	vec, err := p.Embed(context.Background(), "hello")
-	require.NoError(t, err)
-	require.Len(t, vec, 4)
-	assert.Equal(t, []string{"hello"}, gotBody.Input)
-	assert.Equal(t, "custom-model", gotBody.Model)
-	assert.Equal(t, "Bearer sk-test", gotAuth)
-}
-
-func TestOpenAIProvider_EmbedBatch_Success(t *testing.T) {
-	srv := openAIEmbeddingHandler(t, 3, nil)
-	p, err := NewOpenAIProvider(Config{APIURL: srv.URL, Model: "custom-model", MaxRetries: 0})
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = p.Close() })
-
-	out, err := p.EmbedBatch(context.Background(), []string{"a", "b"})
-	require.NoError(t, err)
-	require.Len(t, out, 2)
-	assert.Len(t, out[0], 3)
-	assert.Len(t, out[1], 3)
-}
-
-func TestOpenAIProvider_Embed_HTTPError(t *testing.T) {
-	// 400 is a permanent client error so the client does not retry (fast path).
-	srv := statusServer(t, http.StatusBadRequest, "boom")
-	p, err := NewOpenAIProvider(Config{APIURL: srv.URL, Model: "custom-model", MaxRetries: 0})
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = p.Close() })
-
-	_, err = p.Embed(context.Background(), "hello")
-	require.Error(t, err)
-	var httpErr *qrdbsdk.EmbeddingHTTPError
-	require.True(t, errors.As(err, &httpErr), "expected EmbeddingHTTPError, got %T", err)
-	assert.Equal(t, http.StatusBadRequest, httpErr.StatusCode)
-}
-
-func TestOpenAIProvider_EmbedBatch_HTTPError(t *testing.T) {
-	srv := statusServer(t, http.StatusUnauthorized, "nope")
-	p, err := NewOpenAIProvider(Config{APIURL: srv.URL, Model: "custom-model", MaxRetries: 0})
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = p.Close() })
-
-	_, err = p.EmbedBatch(context.Background(), []string{"a", "b"})
-	require.Error(t, err)
-	var httpErr *qrdbsdk.EmbeddingHTTPError
-	require.True(t, errors.As(err, &httpErr))
-	assert.Equal(t, http.StatusUnauthorized, httpErr.StatusCode)
-}
-
-// =============================================================================
-// OllamaProvider
-// =============================================================================
-
-func TestNewOllamaProvider_Defaults(t *testing.T) {
-	p, err := NewOllamaProvider(DefaultOllamaConfig())
-	require.NoError(t, err)
-	require.NotNil(t, p)
-	t.Cleanup(func() { _ = p.Close() })
-
-	assert.Equal(t, "ollama", p.Name())
-	assert.Equal(t, 8192, p.MaxTokens())
-	// nomic-embed-text is a known model pre-seeded to 768 dimensions.
-	assert.Equal(t, 768, p.Dimensions())
-}
-
-func TestOllamaProvider_Embed_Success(t *testing.T) {
-	srv := openAIEmbeddingHandler(t, 5, nil)
-	cfg := DefaultOllamaConfig()
-	cfg.BaseURL = srv.URL
-	cfg.MaxRetries = 0
-	p, err := NewOllamaProvider(cfg)
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = p.Close() })
-
-	vec, err := p.Embed(context.Background(), "hi")
-	require.NoError(t, err)
-	assert.Len(t, vec, 5)
-}
-
-func TestOllamaProvider_EmbedBatch_Success(t *testing.T) {
-	srv := openAIEmbeddingHandler(t, 2, nil)
-	cfg := DefaultOllamaConfig()
-	cfg.BaseURL = srv.URL
-	cfg.MaxRetries = 0
-	p, err := NewOllamaProvider(cfg)
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = p.Close() })
-
-	out, err := p.EmbedBatch(context.Background(), []string{"x", "y", "z"})
-	require.NoError(t, err)
-	assert.Len(t, out, 3)
-}
-
-func TestOllamaProvider_Embed_HTTPError(t *testing.T) {
-	srv := statusServer(t, http.StatusForbidden, "denied")
-	cfg := DefaultOllamaConfig()
-	cfg.BaseURL = srv.URL
-	cfg.MaxRetries = 0
-	p, err := NewOllamaProvider(cfg)
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = p.Close() })
-
-	_, err = p.Embed(context.Background(), "hi")
-	require.Error(t, err)
-	var httpErr *qrdbsdk.EmbeddingHTTPError
-	require.True(t, errors.As(err, &httpErr))
-	assert.Equal(t, http.StatusForbidden, httpErr.StatusCode)
-}
-
-// =============================================================================
-// LMStudioProvider
-// =============================================================================
-
-func TestNewLMStudioProvider_Defaults(t *testing.T) {
-	p, err := NewLMStudioProvider(DefaultLMStudioConfig())
-	require.NoError(t, err)
-	require.NotNil(t, p)
-	t.Cleanup(func() { _ = p.Close() })
-
-	assert.Equal(t, "lmstudio", p.Name())
-	assert.Equal(t, 8192, p.MaxTokens())
-	// nomic-ai/nomic-embed-text-v1.5-GGUF is pre-seeded to 768 dimensions.
-	assert.Equal(t, 768, p.Dimensions())
-}
-
-func TestLMStudioProvider_Embed_Success(t *testing.T) {
-	srv := openAIEmbeddingHandler(t, 6, nil)
-	cfg := DefaultLMStudioConfig()
-	cfg.BaseURL = srv.URL
-	cfg.MaxRetries = 0
-	p, err := NewLMStudioProvider(cfg)
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = p.Close() })
-
-	vec, err := p.Embed(context.Background(), "lmstudio")
-	require.NoError(t, err)
-	assert.Len(t, vec, 6)
-}
-
-func TestLMStudioProvider_EmbedBatch_Success(t *testing.T) {
-	srv := openAIEmbeddingHandler(t, 2, nil)
-	cfg := DefaultLMStudioConfig()
-	cfg.BaseURL = srv.URL
-	cfg.MaxRetries = 0
-	p, err := NewLMStudioProvider(cfg)
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = p.Close() })
-
-	out, err := p.EmbedBatch(context.Background(), []string{"p", "q"})
-	require.NoError(t, err)
-	assert.Len(t, out, 2)
-}
-
-func TestLMStudioProvider_Embed_HTTPError(t *testing.T) {
-	srv := statusServer(t, http.StatusBadRequest, "bad")
-	cfg := DefaultLMStudioConfig()
-	cfg.BaseURL = srv.URL
-	cfg.MaxRetries = 0
-	p, err := NewLMStudioProvider(cfg)
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = p.Close() })
-
-	_, err = p.Embed(context.Background(), "bad")
-	require.Error(t, err)
-	var httpErr *qrdbsdk.EmbeddingHTTPError
-	require.True(t, errors.As(err, &httpErr))
-}
-
-// =============================================================================
-// VoyageProvider
-// =============================================================================
-
 // voyageHandler builds an httptest server speaking the Voyage AI protocol.
 func voyageHandler(t *testing.T, dims int, capture func(auth string)) *httptest.Server {
 	t.Helper()
@@ -335,6 +132,103 @@ func voyageHandler(t *testing.T, dims int, capture func(auth string)) *httptest.
 	return srv
 }
 
+// The constructors below point each provider at url with retries off, so an
+// error status from the test server fails on the first request.
+
+func newOpenAITestProvider(t *testing.T, url string) Provider {
+	t.Helper()
+	p, err := NewOpenAIProvider(Config{APIURL: url, APIKey: "sk-test", Model: "custom-model", MaxRetries: 0})
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = p.Close() })
+	return p
+}
+
+func newOllamaTestProvider(t *testing.T, url string) Provider {
+	t.Helper()
+	cfg := DefaultOllamaConfig()
+	cfg.BaseURL = url
+	cfg.MaxRetries = 0
+	p, err := NewOllamaProvider(cfg)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = p.Close() })
+	return p
+}
+
+func newLMStudioTestProvider(t *testing.T, url string) Provider {
+	t.Helper()
+	cfg := DefaultLMStudioConfig()
+	cfg.BaseURL = url
+	cfg.MaxRetries = 0
+	p, err := NewLMStudioProvider(cfg)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = p.Close() })
+	return p
+}
+
+func newVoyageTestProvider(t *testing.T, url string) Provider {
+	t.Helper()
+	p, err := NewVoyageProvider(Config{APIKey: "voyage-key", APIURL: url, Model: "voyage-code-2", MaxRetries: 0})
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = p.Close() })
+	return p
+}
+
+// =============================================================================
+// Construction and metadata
+// =============================================================================
+
+func TestProviders_Metadata(t *testing.T) {
+	tests := []struct {
+		name          string
+		newProvider   func() (Provider, error)
+		wantMaxTokens int
+		wantDims      int
+	}{
+		{
+			// text-embedding-3-small has a known dimension of 1536 pre-seeded.
+			name: "openai",
+			newProvider: func() (Provider, error) {
+				return NewOpenAIProvider(Config{Model: ModelTextEmbedding3Small, MaxRetries: 0})
+			},
+			wantMaxTokens: 8191,
+			wantDims:      1536,
+		},
+		{
+			// nomic-embed-text is a known model pre-seeded to 768 dimensions.
+			name:          "ollama",
+			newProvider:   func() (Provider, error) { return NewOllamaProvider(DefaultOllamaConfig()) },
+			wantMaxTokens: 8192,
+			wantDims:      768,
+		},
+		{
+			// nomic-ai/nomic-embed-text-v1.5-GGUF is pre-seeded to 768 dimensions.
+			name:          "lmstudio",
+			newProvider:   func() (Provider, error) { return NewLMStudioProvider(DefaultLMStudioConfig()) },
+			wantMaxTokens: 8192,
+			wantDims:      768,
+		},
+		{
+			name: "voyage",
+			newProvider: func() (Provider, error) {
+				return NewVoyageProvider(Config{APIKey: "k", Model: "voyage-code-2", MaxRetries: 0})
+			},
+			wantMaxTokens: 32000,
+			wantDims:      1536,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			p, err := tc.newProvider()
+			require.NoError(t, err)
+			t.Cleanup(func() { _ = p.Close() })
+
+			assert.Equal(t, tc.name, p.Name())
+			assert.Equal(t, tc.wantMaxTokens, p.MaxTokens())
+			assert.Equal(t, tc.wantDims, p.Dimensions())
+		})
+	}
+}
+
 func TestNewVoyageProvider_MissingAPIKey(t *testing.T) {
 	_, err := NewVoyageProvider(Config{Model: "voyage-code-2"})
 	require.Error(t, err)
@@ -348,96 +242,102 @@ func TestNewVoyageProvider_UnknownModel(t *testing.T) {
 	require.True(t, errors.As(err, &mnf), "expected ModelNotFoundError, got %T", err)
 }
 
-func TestVoyageProvider_Embed_Success(t *testing.T) {
+// =============================================================================
+// Embed and EmbedBatch
+// =============================================================================
+
+// TestOpenAICompatibleProviders_Embed checks that each provider speaking the
+// OpenAI-compatible protocol sends the input texts, model and credentials, and
+// returns one vector per text from both Embed and EmbedBatch.
+func TestOpenAICompatibleProviders_Embed(t *testing.T) {
+	tests := []struct {
+		name        string
+		newProvider func(t *testing.T, url string) Provider
+		wantModel   string
+		wantAuth    string
+	}{
+		{name: "openai", newProvider: newOpenAITestProvider, wantModel: "custom-model", wantAuth: "Bearer sk-test"},
+		{name: "ollama", newProvider: newOllamaTestProvider, wantModel: DefaultOllamaConfig().Model},
+		{name: "lmstudio", newProvider: newLMStudioTestProvider, wantModel: DefaultLMStudioConfig().Model},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			var gotAuth string
+			var gotBody openAIRequestBody
+			srv := openAIEmbeddingHandler(t, 4, func(req openAIRequestBody, auth string) {
+				gotBody = req
+				gotAuth = auth
+			})
+			p := tc.newProvider(t, srv.URL)
+
+			vec, err := p.Embed(context.Background(), "hello")
+			require.NoError(t, err)
+			assert.Len(t, vec, 4)
+			assert.Equal(t, []string{"hello"}, gotBody.Input)
+			assert.Equal(t, tc.wantModel, gotBody.Model)
+			assert.Equal(t, tc.wantAuth, gotAuth)
+
+			out, err := p.EmbedBatch(context.Background(), []string{"a", "b", "c"})
+			require.NoError(t, err)
+			require.Len(t, out, 3)
+			assert.Len(t, out[2], 4)
+			assert.Equal(t, []string{"a", "b", "c"}, gotBody.Input)
+		})
+	}
+}
+
+func TestVoyageProvider_Embed(t *testing.T) {
 	var gotAuth string
 	srv := voyageHandler(t, 8, func(auth string) { gotAuth = auth })
-	p, err := NewVoyageProvider(Config{
-		APIKey:     "voyage-key",
-		APIURL:     srv.URL,
-		Model:      "voyage-code-2",
-		MaxRetries: 0,
-	})
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = p.Close() })
-
-	assert.Equal(t, "voyage", p.Name())
-	assert.Equal(t, 32000, p.MaxTokens())
-	assert.Equal(t, 1536, p.Dimensions())
+	p := newVoyageTestProvider(t, srv.URL)
 
 	vec, err := p.Embed(context.Background(), "voyage text")
 	require.NoError(t, err)
 	assert.Len(t, vec, 8)
 	assert.Equal(t, "Bearer voyage-key", gotAuth)
-}
-
-func TestVoyageProvider_EmbedBatch_Success(t *testing.T) {
-	srv := voyageHandler(t, 4, nil)
-	p, err := NewVoyageProvider(Config{APIKey: "k", APIURL: srv.URL, Model: "voyage-2", MaxRetries: 0})
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = p.Close() })
 
 	out, err := p.EmbedBatch(context.Background(), []string{"a", "b"})
 	require.NoError(t, err)
 	require.Len(t, out, 2)
-	assert.Len(t, out[0], 4)
+	assert.Len(t, out[1], 8)
 }
 
-func TestVoyageProvider_Embed_HTTPError(t *testing.T) {
-	// 400 is permanent for Voyage so no retry/backoff is performed.
-	srv := statusServer(t, http.StatusBadRequest, `{"error":{"message":"nope"}}`)
-	p, err := NewVoyageProvider(Config{APIKey: "k", APIURL: srv.URL, Model: "voyage-code-2", MaxRetries: 0})
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = p.Close() })
+// TestProviders_HTTPError checks that an error status from the embedding
+// server reaches the caller of Embed and EmbedBatch as an EmbeddingHTTPError
+// carrying that status. A 4xx status is permanent, so nothing is retried.
+func TestProviders_HTTPError(t *testing.T) {
+	const voyageBody = `{"error":{"message":"nope"}}`
+	tests := []struct {
+		name        string
+		newProvider func(t *testing.T, url string) Provider
+		batch       bool
+		status      int
+		body        string
+	}{
+		{name: "openai/Embed", newProvider: newOpenAITestProvider, status: http.StatusBadRequest, body: "boom"},
+		{name: "openai/EmbedBatch", newProvider: newOpenAITestProvider, batch: true, status: http.StatusUnauthorized, body: "nope"},
+		{name: "ollama/Embed", newProvider: newOllamaTestProvider, status: http.StatusForbidden, body: "denied"},
+		{name: "ollama/EmbedBatch", newProvider: newOllamaTestProvider, batch: true, status: http.StatusBadRequest, body: "bad"},
+		{name: "lmstudio/Embed", newProvider: newLMStudioTestProvider, status: http.StatusBadRequest, body: "bad"},
+		{name: "lmstudio/EmbedBatch", newProvider: newLMStudioTestProvider, batch: true, status: http.StatusBadRequest, body: "bad"},
+		{name: "voyage/Embed", newProvider: newVoyageTestProvider, status: http.StatusBadRequest, body: voyageBody},
+		{name: "voyage/EmbedBatch", newProvider: newVoyageTestProvider, batch: true, status: http.StatusBadRequest, body: voyageBody},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := statusServer(t, tc.status, tc.body)
+			p := tc.newProvider(t, srv.URL)
 
-	_, err = p.Embed(context.Background(), "x")
-	require.Error(t, err)
-	var httpErr *qrdbsdk.EmbeddingHTTPError
-	require.True(t, errors.As(err, &httpErr))
-	assert.Equal(t, http.StatusBadRequest, httpErr.StatusCode)
-}
-
-// =============================================================================
-// EmbedBatch HTTP error paths (exercise the batch error branch in each wrapper)
-// =============================================================================
-
-func TestOllamaProvider_EmbedBatch_HTTPError(t *testing.T) {
-	srv := statusServer(t, http.StatusBadRequest, "bad")
-	cfg := DefaultOllamaConfig()
-	cfg.BaseURL = srv.URL
-	cfg.MaxRetries = 0
-	p, err := NewOllamaProvider(cfg)
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = p.Close() })
-
-	_, err = p.EmbedBatch(context.Background(), []string{"a", "b"})
-	require.Error(t, err)
-	var httpErr *qrdbsdk.EmbeddingHTTPError
-	require.True(t, errors.As(err, &httpErr))
-}
-
-func TestLMStudioProvider_EmbedBatch_HTTPError(t *testing.T) {
-	srv := statusServer(t, http.StatusBadRequest, "bad")
-	cfg := DefaultLMStudioConfig()
-	cfg.BaseURL = srv.URL
-	cfg.MaxRetries = 0
-	p, err := NewLMStudioProvider(cfg)
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = p.Close() })
-
-	_, err = p.EmbedBatch(context.Background(), []string{"a", "b"})
-	require.Error(t, err)
-	var httpErr *qrdbsdk.EmbeddingHTTPError
-	require.True(t, errors.As(err, &httpErr))
-}
-
-func TestVoyageProvider_EmbedBatch_HTTPError(t *testing.T) {
-	srv := statusServer(t, http.StatusBadRequest, `{"error":{"message":"nope"}}`)
-	p, err := NewVoyageProvider(Config{APIKey: "k", APIURL: srv.URL, Model: "voyage-code-2", MaxRetries: 0})
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = p.Close() })
-
-	_, err = p.EmbedBatch(context.Background(), []string{"a", "b"})
-	require.Error(t, err)
-	var httpErr *qrdbsdk.EmbeddingHTTPError
-	require.True(t, errors.As(err, &httpErr))
+			var err error
+			if tc.batch {
+				_, err = p.EmbedBatch(context.Background(), []string{"a", "b"})
+			} else {
+				_, err = p.Embed(context.Background(), "hello")
+			}
+			require.Error(t, err)
+			var httpErr *qrdbsdk.EmbeddingHTTPError
+			require.True(t, errors.As(err, &httpErr), "expected EmbeddingHTTPError, got %T", err)
+			assert.Equal(t, tc.status, httpErr.StatusCode)
+		})
+	}
 }
