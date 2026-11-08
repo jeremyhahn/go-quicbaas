@@ -84,8 +84,8 @@ func (p ModulePolicy) GoPrivate() string {
 //
 // The rewrite target is derived from the project's own repository URL — the
 // same scheme, host, port and owner, with the repository name removed — so a
-// project reached over ssh://git@forge:2222/owner/repo.git has its siblings
-// reached at ssh://git@forge:2222/owner/. A repository URL the derivation
+// project reached over ssh://git@forge:2022/owner/repo.git has its siblings
+// reached at ssh://git@forge:2022/owner/. A repository URL the derivation
 // cannot read is an error, not a silent no-op: a worker that then fails
 // verification would be charged for a misconfiguration.
 func ModuleEnv(policy ModulePolicy, repoURL string) (map[string]string, error) {
