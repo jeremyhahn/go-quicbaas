@@ -81,7 +81,7 @@ func TestValidateSDLCWorkerImage_Refuses(t *testing.T) {
 // withSecretCredential names a registry and the full secret-backed credential.
 func withSecretCredential(w *SDLCWorkerImage) {
 	w.Registry = "r.x/o/w"
-	w.RegistryUsername = "agent-company"
+	w.RegistryUsername = "company-agent"
 	w.RegistryTokenSecret = "sdlc/registry/worker-image/token"
 	w.RegistryTokenTenant = "automatethethings"
 }

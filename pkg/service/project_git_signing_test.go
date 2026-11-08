@@ -95,11 +95,11 @@ func TestCommit_SignsAndTheSignatureVerifies(t *testing.T) {
 		t.Fatalf("writing: %v", err)
 	}
 
-	const author = "agent-go-quicbaas@example.internal"
+	const author = "agent-quicbaas@example.com"
 	_, err := provisioner.Commit(context.Background(), &GitCommitRequest{
 		Dir:        dir,
 		Message:    "signed by the module",
-		Author:     orchestration.GitAuthor{Name: "agent-go-quicbaas", Email: author},
+		Author:     orchestration.GitAuthor{Name: "agent-quicbaas", Email: author},
 		AllChanges: true,
 		Signing: orchestration.CommitSigning{
 			Enabled: true,
@@ -260,7 +260,7 @@ func TestCommitForProject_ReadsAuthorAndSigningFromTheProject(t *testing.T) {
 		TenantID: "tenant-1",
 		Name:     "workspace",
 		Git: orchestration.ProjectGit{
-			Author: orchestration.GitAuthor{Name: "agent-go-quicbaas", Email: "agent-go-quicbaas@example.internal"},
+			Author: orchestration.GitAuthor{Name: "agent-quicbaas", Email: "agent-quicbaas@example.com"},
 			Signing: orchestration.CommitSigning{
 				Enabled: true,
 				Key:     orchestration.KMSKeyRef{Name: "workspace-signing", Scope: "tenant", Owner: "tenant-1"},
@@ -283,7 +283,7 @@ func TestCommitForProject_ReadsAuthorAndSigningFromTheProject(t *testing.T) {
 	}
 
 	raw := runTestGit(t, dir, "cat-file", "commit", "HEAD")
-	if !strings.Contains(raw, "author agent-go-quicbaas <agent-go-quicbaas@example.internal>") {
+	if !strings.Contains(raw, "author agent-quicbaas <agent-quicbaas@example.com>") {
 		t.Fatalf("the commit is not attributed to the project's author:\n%s", raw)
 	}
 	if strings.Contains(raw, "impostor") {
