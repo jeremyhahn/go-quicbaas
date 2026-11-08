@@ -180,18 +180,7 @@ func newTestIdentity() *orchestration.AgentIdentity {
 // Constructor guard tests
 // =============================================================================
 
-func TestNewGRPCSpawnServer_RequiresRuntime(t *testing.T) {
-	t.Parallel()
-	_, err := NewGRPCSpawnServer(GRPCSpawnServerDeps{
-		BindAddr: "127.0.0.1:0",
-		Logger:   &testLogger{t: t},
-	})
-	if !errors.Is(err, ErrSpawnServerNoRuntime) {
-		t.Fatalf("expected ErrSpawnServerNoRuntime, got %v", err)
-	}
-}
-
-func TestNewGRPCSpawnServer_RequiresLogger(t *testing.T) {
+func TestNewGRPCSpawnServer_RefusesAnIncompleteConfiguration(t *testing.T) {
 	t.Parallel()
 	rt, err := NewRuntime(RuntimeConfig{
 		Backends: map[string]orchestration.AgentBackend{"acp": &spawnBackend{}},
@@ -200,30 +189,33 @@ func TestNewGRPCSpawnServer_RequiresLogger(t *testing.T) {
 	if err != nil {
 		t.Fatalf("runtime: %v", err)
 	}
-	_, err = NewGRPCSpawnServer(GRPCSpawnServerDeps{
-		Runtime:  rt,
-		BindAddr: "127.0.0.1:0",
-	})
-	if !errors.Is(err, ErrSpawnServerNoLogger) {
-		t.Fatalf("expected ErrSpawnServerNoLogger, got %v", err)
+	tests := []struct {
+		name string
+		deps GRPCSpawnServerDeps
+		want error
+	}{
+		{
+			name: "no runtime",
+			deps: GRPCSpawnServerDeps{BindAddr: "127.0.0.1:0", Logger: &testLogger{t: t}},
+			want: ErrSpawnServerNoRuntime,
+		},
+		{
+			name: "no logger",
+			deps: GRPCSpawnServerDeps{Runtime: rt, BindAddr: "127.0.0.1:0"},
+			want: ErrSpawnServerNoLogger,
+		},
+		{
+			name: "no bind address or listener",
+			deps: GRPCSpawnServerDeps{Runtime: rt, Logger: &testLogger{t: t}},
+			want: ErrSpawnServerNoBindAddr,
+		},
 	}
-}
-
-func TestNewGRPCSpawnServer_RequiresBindAddrOrListener(t *testing.T) {
-	t.Parallel()
-	rt, err := NewRuntime(RuntimeConfig{
-		Backends: map[string]orchestration.AgentBackend{"acp": &spawnBackend{}},
-		Logger:   &testLogger{t: t},
-	})
-	if err != nil {
-		t.Fatalf("runtime: %v", err)
-	}
-	_, err = NewGRPCSpawnServer(GRPCSpawnServerDeps{
-		Runtime: rt,
-		Logger:  &testLogger{t: t},
-	})
-	if !errors.Is(err, ErrSpawnServerNoBindAddr) {
-		t.Fatalf("expected ErrSpawnServerNoBindAddr, got %v", err)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if _, err := NewGRPCSpawnServer(tt.deps); !errors.Is(err, tt.want) {
+				t.Fatalf("NewGRPCSpawnServer() error = %v, want %v", err, tt.want)
+			}
+		})
 	}
 }
 
@@ -231,61 +223,44 @@ func TestNewGRPCSpawnServer_RequiresBindAddrOrListener(t *testing.T) {
 // Authz boundary tests — enrollment, tenant, scope
 // =============================================================================
 
-func TestGRPCSpawnServer_RejectsRPCsBeforeEnrollment(t *testing.T) {
+// TestGRPCSpawnServer_SpawnRefusalMapsToAStatusCode proves each reason the
+// daemon refuses a spawn before the backend runs reaches the caller as its own
+// gRPC status code.
+func TestGRPCSpawnServer_SpawnRefusalMapsToAStatusCode(t *testing.T) {
 	t.Parallel()
-	_, client, cleanup := buildSpawnServer(t, &spawnBackend{}, nil)
-	defer cleanup()
+	// Identity missing the spawn scope.
+	noSpawnScope := newTestIdentity()
+	noSpawnScope.Scopes = []string{orchestration.AgentScopeRuntimePrompt, orchestration.AgentScopeRuntimeStatus}
 
-	_, err := client.Spawn(context.Background(), &proto.SpawnSessionRequest{
-		Backend:  "acp",
-		TenantId: "tenant-a",
-	})
-	if err == nil {
-		t.Fatal("expected error before enrollment")
+	tests := []struct {
+		name     string
+		identity *orchestration.AgentIdentity
+		backend  string
+		tenantID string
+		want     codes.Code
+	}{
+		{name: "before enrollment", backend: "acp", tenantID: "tenant-a", want: codes.Unauthenticated},
+		{name: "tenant mismatch", identity: newTestIdentity(), backend: "acp", tenantID: "wrong-tenant", want: codes.PermissionDenied},
+		{name: "missing scope", identity: noSpawnScope, backend: "acp", tenantID: "tenant-a", want: codes.PermissionDenied},
+		{name: "unknown backend", identity: newTestIdentity(), backend: "does-not-exist", tenantID: "tenant-a", want: codes.NotFound},
 	}
-	st, ok := status.FromError(err)
-	if !ok || st.Code() != codes.Unauthenticated {
-		t.Fatalf("expected Unauthenticated, got %v", err)
-	}
-}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, client, cleanup := buildSpawnServer(t, &spawnBackend{}, tt.identity)
+			defer cleanup()
 
-func TestGRPCSpawnServer_RejectsTenantMismatch(t *testing.T) {
-	t.Parallel()
-	_, client, cleanup := buildSpawnServer(t, &spawnBackend{}, newTestIdentity())
-	defer cleanup()
-
-	_, err := client.Spawn(context.Background(), &proto.SpawnSessionRequest{
-		Backend:  "acp",
-		TenantId: "wrong-tenant",
-	})
-	if err == nil {
-		t.Fatal("expected tenant mismatch error")
-	}
-	st, _ := status.FromError(err)
-	if st.Code() != codes.PermissionDenied {
-		t.Fatalf("expected PermissionDenied, got %v", st.Code())
-	}
-}
-
-func TestGRPCSpawnServer_RejectsMissingScope(t *testing.T) {
-	t.Parallel()
-	// Identity is missing the spawn scope.
-	id := newTestIdentity()
-	id.Scopes = []string{orchestration.AgentScopeRuntimePrompt, orchestration.AgentScopeRuntimeStatus}
-
-	_, client, cleanup := buildSpawnServer(t, &spawnBackend{}, id)
-	defer cleanup()
-
-	_, err := client.Spawn(context.Background(), &proto.SpawnSessionRequest{
-		Backend:  "acp",
-		TenantId: "tenant-a",
-	})
-	if err == nil {
-		t.Fatal("expected missing-scope error")
-	}
-	st, _ := status.FromError(err)
-	if st.Code() != codes.PermissionDenied {
-		t.Fatalf("expected PermissionDenied, got %v (%s)", st.Code(), st.Message())
+			_, err := client.Spawn(context.Background(), &proto.SpawnSessionRequest{
+				Backend:  tt.backend,
+				TenantId: tt.tenantID,
+			})
+			if err == nil {
+				t.Fatal("a refused spawn was reported as successful")
+			}
+			st, ok := status.FromError(err)
+			if !ok || st.Code() != tt.want {
+				t.Fatalf("expected %v, got %v", tt.want, err)
+			}
+		})
 	}
 }
 
@@ -316,122 +291,97 @@ func TestGRPCSpawnServer_SpawnRoundTrip(t *testing.T) {
 	}
 }
 
-// TestGRPCSpawnServer_SpawnCarriesExtraArgsToTheBackend closes the remote half
-// of go-quicbaas#218.
-//
-// The SDLC module states its worker's permission grant on the spawn. The wire
-// message had no field for it, so the control plane's grant was dropped at the
-// daemon boundary: a LOCAL worker got it and a REMOTE one was spawned exactly
-// the way the fault was measured, with nothing to indicate the difference.
-func TestGRPCSpawnServer_SpawnCarriesExtraArgsToTheBackend(t *testing.T) {
+// TestGRPCSpawnServer_SpawnCarriesTheRequestToTheBackend proves the daemon
+// rebuilds the SpawnRequest without dropping what the caller stated. Each row
+// is a field the boundary once dropped silently:
+//   - ExtraArgs closes the remote half of go-quicbaas#218. The SDLC module
+//     states its worker's permission grant on the spawn; the wire message had
+//     no field for it, so a LOCAL worker got it and a REMOTE one was spawned
+//     exactly the way the fault was measured.
+//   - The account selection closes the remote half of go-quicbaas#235. The
+//     credential a worker runs on cannot cross the wire — it lives in this
+//     daemon's own secret store — so what crosses is the REQUEST, and this
+//     daemon resolves it. Dropping the fields does not fail: the backend only
+//     consults its AccountResolver when AccountID or AccountAuto is set, so a
+//     remote worker started with whatever ambient identity the daemon had.
+//   - A pinned account is the counterpart: a caller that named one account
+//     must not have it silently replaced by whatever the daemon would
+//     otherwise have used.
+func TestGRPCSpawnServer_SpawnCarriesTheRequestToTheBackend(t *testing.T) {
 	t.Parallel()
-	var got []string
-	backend := &spawnBackend{
-		spawnFn: func(_ context.Context, req *orchestration.SpawnRequest) (*orchestration.Session, error) {
-			got = append([]string(nil), req.ExtraArgs...)
-			return &orchestration.Session{ID: "sess-1", Backend: "acp", Status: orchestration.SessionStateActive}, nil
+	tests := []struct {
+		name  string
+		req   *proto.SpawnSessionRequest
+		check func(t *testing.T, got *orchestration.SpawnRequest)
+	}{
+		{
+			name: "extra args",
+			req: &proto.SpawnSessionRequest{
+				Backend: "acp", TenantId: "tenant-a", ProjectId: "proj-1",
+				ExtraArgs: []string{"--permission-mode", "acceptEdits"},
+			},
+			check: func(t *testing.T, got *orchestration.SpawnRequest) {
+				if len(got.ExtraArgs) != 2 || got.ExtraArgs[0] != "--permission-mode" || got.ExtraArgs[1] != "acceptEdits" {
+					t.Fatalf("backend received ExtraArgs %v, want the permission grant the caller stated", got.ExtraArgs)
+				}
+			},
+		},
+		{
+			name: "the account selection",
+			req: &proto.SpawnSessionRequest{
+				Backend: "acp", TenantId: "tenant-a", ProjectId: "proj-1",
+				AccountAuto: true, AccountStrategy: "least_usage", AccountAllow: []string{"acct-1", "acct-2"},
+			},
+			check: func(t *testing.T, got *orchestration.SpawnRequest) {
+				if !got.AccountAuto {
+					t.Error("the daemon dropped AccountAuto; the backend never consults the pool " +
+						"unless it is set, so the worker runs on whatever identity the daemon has")
+				}
+				if got.AccountStrategy != "least_usage" {
+					t.Errorf("backend received AccountStrategy %q, want least_usage", got.AccountStrategy)
+				}
+				if len(got.AccountAllow) != 2 {
+					t.Errorf("backend received AccountAllow %v, want the caller's rotation pool", got.AccountAllow)
+				}
+			},
+		},
+		{
+			name: "a pinned account",
+			req: &proto.SpawnSessionRequest{
+				Backend: "acp", TenantId: "tenant-a", ProjectId: "proj-1", AccountId: "acct-pinned",
+			},
+			check: func(t *testing.T, got *orchestration.SpawnRequest) {
+				if got.AccountID != "acct-pinned" {
+					t.Errorf("backend received AccountID %q, want acct-pinned", got.AccountID)
+				}
+				if got.AccountAuto {
+					t.Error("a pinned spawn must not arrive asking for strategy-based selection")
+				}
+			},
 		},
 	}
-	_, client, cleanup := buildSpawnServer(t, backend, newTestIdentity())
-	defer cleanup()
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var got *orchestration.SpawnRequest
+			backend := &spawnBackend{
+				spawnFn: func(_ context.Context, req *orchestration.SpawnRequest) (*orchestration.Session, error) {
+					copied := *req
+					copied.ExtraArgs = append([]string(nil), req.ExtraArgs...)
+					got = &copied
+					return &orchestration.Session{ID: "sess-1", Backend: "acp", Status: orchestration.SessionStateActive}, nil
+				},
+			}
+			_, client, cleanup := buildSpawnServer(t, backend, newTestIdentity())
+			defer cleanup()
 
-	if _, err := client.Spawn(context.Background(), &proto.SpawnSessionRequest{
-		Backend:   "acp",
-		TenantId:  "tenant-a",
-		ProjectId: "proj-1",
-		ExtraArgs: []string{"--permission-mode", "acceptEdits"},
-	}); err != nil {
-		t.Fatalf("Spawn: %v", err)
-	}
-
-	if len(got) != 2 || got[0] != "--permission-mode" || got[1] != "acceptEdits" {
-		t.Fatalf("backend received ExtraArgs %v, want the permission grant the caller stated", got)
-	}
-}
-
-// TestGRPCSpawnServer_SpawnCarriesTheAccountSelectionToTheBackend closes the
-// remote half of go-quicbaas#235, and it is the same failure shape as the one
-// above.
-//
-// The credential a worker runs on cannot cross the wire — it lives in this
-// daemon's own secret store — so what crosses is the REQUEST, and this daemon
-// resolves it. The wire message carried the fields and the daemon dropped them
-// when it rebuilt the SpawnRequest, which does not fail: the backend only
-// consults its AccountResolver when AccountID or AccountAuto is set, so a
-// remote worker started with whatever ambient identity the daemon had and
-// nothing said the caller's choice had been discarded.
-func TestGRPCSpawnServer_SpawnCarriesTheAccountSelectionToTheBackend(t *testing.T) {
-	t.Parallel()
-	var got *orchestration.SpawnRequest
-	backend := &spawnBackend{
-		spawnFn: func(_ context.Context, req *orchestration.SpawnRequest) (*orchestration.Session, error) {
-			copied := *req
-			got = &copied
-			return &orchestration.Session{ID: "sess-1", Backend: "acp", Status: orchestration.SessionStateActive}, nil
-		},
-	}
-	_, client, cleanup := buildSpawnServer(t, backend, newTestIdentity())
-	defer cleanup()
-
-	if _, err := client.Spawn(context.Background(), &proto.SpawnSessionRequest{
-		Backend:         "acp",
-		TenantId:        "tenant-a",
-		ProjectId:       "proj-1",
-		AccountAuto:     true,
-		AccountStrategy: "least_usage",
-		AccountAllow:    []string{"acct-1", "acct-2"},
-	}); err != nil {
-		t.Fatalf("Spawn: %v", err)
-	}
-
-	if got == nil {
-		t.Fatal("the backend was never spawned")
-	}
-	if !got.AccountAuto {
-		t.Error("the daemon dropped AccountAuto; the backend never consults the pool " +
-			"unless it is set, so the worker runs on whatever identity the daemon has")
-	}
-	if got.AccountStrategy != "least_usage" {
-		t.Errorf("backend received AccountStrategy %q, want least_usage", got.AccountStrategy)
-	}
-	if len(got.AccountAllow) != 2 {
-		t.Errorf("backend received AccountAllow %v, want the caller's rotation pool", got.AccountAllow)
-	}
-}
-
-// TestGRPCSpawnServer_SpawnCarriesAPinnedAccountToTheBackend is the pinned
-// counterpart: a caller that named one account must not have it silently
-// replaced by whatever the daemon would otherwise have used.
-func TestGRPCSpawnServer_SpawnCarriesAPinnedAccountToTheBackend(t *testing.T) {
-	t.Parallel()
-	var got *orchestration.SpawnRequest
-	backend := &spawnBackend{
-		spawnFn: func(_ context.Context, req *orchestration.SpawnRequest) (*orchestration.Session, error) {
-			copied := *req
-			got = &copied
-			return &orchestration.Session{ID: "sess-1", Backend: "acp", Status: orchestration.SessionStateActive}, nil
-		},
-	}
-	_, client, cleanup := buildSpawnServer(t, backend, newTestIdentity())
-	defer cleanup()
-
-	if _, err := client.Spawn(context.Background(), &proto.SpawnSessionRequest{
-		Backend:   "acp",
-		TenantId:  "tenant-a",
-		ProjectId: "proj-1",
-		AccountId: "acct-pinned",
-	}); err != nil {
-		t.Fatalf("Spawn: %v", err)
-	}
-
-	if got == nil {
-		t.Fatal("the backend was never spawned")
-	}
-	if got.AccountID != "acct-pinned" {
-		t.Errorf("backend received AccountID %q, want acct-pinned", got.AccountID)
-	}
-	if got.AccountAuto {
-		t.Error("a pinned spawn must not arrive asking for strategy-based selection")
+			if _, err := client.Spawn(context.Background(), tt.req); err != nil {
+				t.Fatalf("Spawn: %v", err)
+			}
+			if got == nil {
+				t.Fatal("the backend was never spawned")
+			}
+			tt.check(t, got)
+		})
 	}
 }
 
@@ -581,24 +531,6 @@ func TestGRPCSpawnServer_SandboxViolationMapsToFailedPrecondition(t *testing.T) 
 	st, _ := status.FromError(err)
 	if st.Code() != codes.FailedPrecondition {
 		t.Fatalf("expected FailedPrecondition, got %v (%s)", st.Code(), st.Message())
-	}
-}
-
-func TestGRPCSpawnServer_UnknownBackendMapsToNotFound(t *testing.T) {
-	t.Parallel()
-	_, client, cleanup := buildSpawnServer(t, &spawnBackend{}, newTestIdentity())
-	defer cleanup()
-
-	_, err := client.Spawn(context.Background(), &proto.SpawnSessionRequest{
-		Backend:  "does-not-exist",
-		TenantId: "tenant-a",
-	})
-	if err == nil {
-		t.Fatal("expected unknown-backend error")
-	}
-	st, _ := status.FromError(err)
-	if st.Code() != codes.NotFound {
-		t.Fatalf("expected NotFound, got %v (%s)", st.Code(), st.Message())
 	}
 }
 
@@ -776,11 +708,17 @@ func TestGRPCSpawnServer_PromptWithoutEvidenceAttachesNoDetail(t *testing.T) {
 // error, which does not survive a gRPC status — so a remote daemon's "no
 // account for this tenant" arrived as a generic transport failure and the item
 // was charged for a worker that never existed.
+//
+// The ordinary failure row is the asymmetric counterpart: a real spawn
+// failure must stay a real spawn failure, or every failed dispatch would stop
+// being charged.
 func TestGRPCSpawnServer_SpawnCarriesTheConfigurationFaultClass(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
 		name string
 		err  error
+		// want is the sentinel the reconstructed error must match; nil means
+		// it must match neither configuration fault.
 		want error
 	}{
 		{
@@ -796,6 +734,10 @@ func TestGRPCSpawnServer_SpawnCarriesTheConfigurationFaultClass(t *testing.T) {
 			err:  &orchestration.AccountResolverNotConfiguredError{Backend: "acp"},
 			want: orchestration.ErrAccountResolverNotConfigured,
 		},
+		{
+			name: "an ordinary failure carries no fault class",
+			err:  errors.New("exec: \"claude\": executable file not found in $PATH"),
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			backend := &spawnBackend{
@@ -810,7 +752,7 @@ func TestGRPCSpawnServer_SpawnCarriesTheConfigurationFaultClass(t *testing.T) {
 				Backend: "acp", TenantId: "tenant-a", ProjectId: "proj-1", AccountAuto: true,
 			})
 			if err == nil {
-				t.Fatal("a spawn with no resolvable account was reported as successful")
+				t.Fatal("a failed spawn was reported as successful")
 			}
 
 			// The control plane's own reconstruction, exercised as the client
@@ -818,37 +760,18 @@ func TestGRPCSpawnServer_SpawnCarriesTheConfigurationFaultClass(t *testing.T) {
 			// about, so this is the property that matters rather than the
 			// wire encoding.
 			wrapped := orchestration.WrapRemoteSpawnFaultForTest("Spawn", err)
+			if tc.want == nil {
+				if errors.Is(wrapped, orchestration.ErrNoAccountAvailable) ||
+					errors.Is(wrapped, orchestration.ErrAccountResolverNotConfigured) {
+					t.Errorf("an ordinary spawn failure was reconstructed as a configuration fault: %v", wrapped)
+				}
+				return
+			}
 			if !errors.Is(wrapped, tc.want) {
 				t.Errorf("the reconstructed error does not match %v; a remote dispatch "+
 					"with no account is charged for a worker that never existed (got %v)",
 					tc.want, wrapped)
 			}
 		})
-	}
-}
-
-// TestGRPCSpawnServer_SpawnWithAnOrdinaryFailureCarriesNoFaultClass is the
-// asymmetric counterpart: a real spawn failure must stay a real spawn failure,
-// or every failed dispatch would stop being charged.
-func TestGRPCSpawnServer_SpawnWithAnOrdinaryFailureCarriesNoFaultClass(t *testing.T) {
-	t.Parallel()
-	backend := &spawnBackend{
-		spawnFn: func(context.Context, *orchestration.SpawnRequest) (*orchestration.Session, error) {
-			return nil, errors.New("exec: \"claude\": executable file not found in $PATH")
-		},
-	}
-	_, client, cleanup := buildSpawnServer(t, backend, newTestIdentity())
-	defer cleanup()
-
-	_, err := client.Spawn(context.Background(), &proto.SpawnSessionRequest{
-		Backend: "acp", TenantId: "tenant-a", ProjectId: "proj-1", AccountAuto: true,
-	})
-	if err == nil {
-		t.Fatal("a failed spawn was reported as successful")
-	}
-	wrapped := orchestration.WrapRemoteSpawnFaultForTest("Spawn", err)
-	if errors.Is(wrapped, orchestration.ErrNoAccountAvailable) ||
-		errors.Is(wrapped, orchestration.ErrAccountResolverNotConfigured) {
-		t.Errorf("an ordinary spawn failure was reconstructed as a configuration fault: %v", wrapped)
 	}
 }
