@@ -233,11 +233,13 @@ type Finding struct {
 	// Class says what the matched text leaks.
 	Class Class
 
-	// Match is the offending text exactly as it appears.
+	// Match is the offending text exactly as it appears. It is for callers
+	// and tests; String never prints it, because the value a private pattern
+	// matched is as private as the pattern.
 	Match string
 
-	// Excerpt is the whole line, trimmed and truncated: a finding with no
-	// context around it costs the reader a second trip to the file.
+	// Excerpt is the whole line, trimmed and truncated. String never prints
+	// it, for the same reason as Match.
 	Excerpt string
 
 	// Guidance is the pattern's remediation advice.
@@ -245,13 +247,15 @@ type Finding struct {
 }
 
 // String renders a finding in the file:line:message form every editor and every
-// CI log viewer already knows how to jump to.
+// CI log viewer already knows how to jump to. It names the place, the class and
+// the remedy, never the matched text: a CI log is public, and printing the
+// value would publish the thing the gate exists to keep out.
 func (f Finding) String() string {
-	return fmt.Sprintf("%s:%d: [%s] %q -- %s\n\t%s", f.Path, f.Line, f.Class, f.Match, f.Guidance, f.Excerpt)
+	return fmt.Sprintf("%s:%d: [%s] -- %s", f.Path, f.Line, f.Class, f.Guidance)
 }
 
-// excerptLimit bounds the quoted line. Minified bundles are single lines of
-// more than a megabyte; a report is useless if one finding fills the screen.
+// excerptLimit bounds Finding.Excerpt. Minified bundles are single lines of
+// more than a megabyte; a finding must not carry one.
 const excerptLimit = 160
 
 // maxFileSize bounds what the scanner will read into memory. Nothing shipped in
