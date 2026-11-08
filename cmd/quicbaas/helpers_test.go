@@ -26,187 +26,45 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/vector"
 )
 
-func TestLoggerAdapterWithError(t *testing.T) {
-	cfg := logger.LogConfig{
+func TestLoggerAdapter(t *testing.T) {
+	baseLogger, err := logger.New(logger.LogConfig{
 		Level:  "info",
 		Format: "json",
 		Output: "stdout",
-	}
-	baseLogger, err := logger.New(cfg)
+	})
 	require.NoError(t, err)
 
-	adapter := &loggerAdapter{Logger: baseLogger}
-	testErr := errors.New("test error")
-	result := adapter.WithError(testErr)
-
-	assert.NotNil(t, result)
-	_, ok := result.(interfaces.Logger)
-	assert.True(t, ok, "WithError should return interfaces.Logger")
-
-	resultAdapter, ok := result.(*loggerAdapter)
-	assert.True(t, ok, "WithError should return *loggerAdapter")
-	assert.NotNil(t, resultAdapter.Logger)
-}
-
-// TestLoggerAdapterWithField tests the WithField method.
-func TestLoggerAdapterWithField(t *testing.T) {
-	cfg := logger.LogConfig{
-		Level:  "info",
-		Format: "json",
-		Output: "stdout",
-	}
-	baseLogger, err := logger.New(cfg)
-	require.NoError(t, err)
-
-	adapter := &loggerAdapter{Logger: baseLogger}
-	result := adapter.WithField("key", "value")
-
-	assert.NotNil(t, result)
-	_, ok := result.(interfaces.Logger)
-	assert.True(t, ok, "WithField should return interfaces.Logger")
-
-	resultAdapter, ok := result.(*loggerAdapter)
-	assert.True(t, ok, "WithField should return *loggerAdapter")
-	assert.NotNil(t, resultAdapter.Logger)
-}
-
-// TestLoggerAdapterWithFields tests the WithFields method.
-func TestLoggerAdapterWithFields(t *testing.T) {
-	cfg := logger.LogConfig{
-		Level:  "info",
-		Format: "json",
-		Output: "stdout",
-	}
-	baseLogger, err := logger.New(cfg)
-	require.NoError(t, err)
-
-	adapter := &loggerAdapter{Logger: baseLogger}
-	fields := map[string]interface{}{
-		"key1": "value1",
-		"key2": 123,
-		"key3": true,
-	}
-	result := adapter.WithFields(fields)
-
-	assert.NotNil(t, result)
-	_, ok := result.(interfaces.Logger)
-	assert.True(t, ok, "WithFields should return interfaces.Logger")
-
-	resultAdapter, ok := result.(*loggerAdapter)
-	assert.True(t, ok, "WithFields should return *loggerAdapter")
-	assert.NotNil(t, resultAdapter.Logger)
-}
-
-// TestAsInterfaceLogger tests the conversion function.
-func TestAsInterfaceLogger(t *testing.T) {
-	cfg := logger.LogConfig{
-		Level:  "info",
-		Format: "json",
-		Output: "stdout",
-	}
-	baseLogger, err := logger.New(cfg)
-	require.NoError(t, err)
-
-	interfaceLogger := asInterfaceLogger(baseLogger)
-
-	assert.NotNil(t, interfaceLogger)
-	_, ok := interfaceLogger.(interfaces.Logger)
-	assert.True(t, ok, "asInterfaceLogger should return interfaces.Logger")
-
-	adapter, ok := interfaceLogger.(*loggerAdapter)
-	assert.True(t, ok, "asInterfaceLogger should return *loggerAdapter")
-	assert.Equal(t, baseLogger, adapter.Logger)
-}
-
-// TestLoggerAdapterChaining tests method chaining.
-func TestLoggerAdapterChaining(t *testing.T) {
-	cfg := logger.LogConfig{
-		Level:  "debug",
-		Format: "console",
-		Output: "stdout",
-	}
-	baseLogger, err := logger.New(cfg)
-	require.NoError(t, err)
-
-	adapter := asInterfaceLogger(baseLogger)
-	result := adapter.
-		WithField("request_id", "123").
-		WithField("user_id", "456").
-		WithError(errors.New("test error"))
-
-	assert.NotNil(t, result)
-	_, ok := result.(interfaces.Logger)
-	assert.True(t, ok, "Chained operations should return interfaces.Logger")
-}
-
-// TestLoggerAdapterWithEmptyFields tests edge case of empty fields map.
-func TestLoggerAdapterWithEmptyFields(t *testing.T) {
-	cfg := logger.LogConfig{
-		Level:  "info",
-		Format: "json",
-		Output: "stdout",
-	}
-	baseLogger, err := logger.New(cfg)
-	require.NoError(t, err)
-
-	adapter := &loggerAdapter{Logger: baseLogger}
-	result := adapter.WithFields(map[string]interface{}{})
-
-	assert.NotNil(t, result)
-	_, ok := result.(interfaces.Logger)
-	assert.True(t, ok)
-}
-
-// TestLoggerAdapterWithNilError tests edge case of nil error.
-func TestLoggerAdapterWithNilError(t *testing.T) {
-	cfg := logger.LogConfig{
-		Level:  "info",
-		Format: "json",
-		Output: "stdout",
-	}
-	baseLogger, err := logger.New(cfg)
-	require.NoError(t, err)
-
-	adapter := &loggerAdapter{Logger: baseLogger}
-	result := adapter.WithError(nil)
-
-	assert.NotNil(t, result)
-	_, ok := result.(interfaces.Logger)
-	assert.True(t, ok)
-}
-
-// TestLoggerAdapterMultipleFieldTypes tests various data types as field values.
-func TestLoggerAdapterMultipleFieldTypes(t *testing.T) {
-	cfg := logger.LogConfig{
-		Level:  "info",
-		Format: "json",
-		Output: "stdout",
-	}
-	baseLogger, err := logger.New(cfg)
-	require.NoError(t, err)
-
-	adapter := asInterfaceLogger(baseLogger)
+	base := asInterfaceLogger(baseLogger)
+	baseAdapter, ok := base.(*loggerAdapter)
+	require.True(t, ok, "asInterfaceLogger should return *loggerAdapter")
+	assert.Equal(t, baseLogger, baseAdapter.Logger)
 
 	tests := []struct {
-		name  string
-		key   string
-		value interface{}
+		name string
+		call func(l interfaces.Logger) interfaces.Logger
 	}{
-		{"string", "str_field", "test"},
-		{"int", "int_field", 42},
-		{"float", "float_field", 3.14},
-		{"bool", "bool_field", true},
-		{"nil", "nil_field", nil},
-		{"slice", "slice_field", []string{"a", "b"}},
-		{"map", "map_field", map[string]string{"k": "v"}},
+		{"with error", func(l interfaces.Logger) interfaces.Logger {
+			return l.WithError(errors.New("test error"))
+		}},
+		{"with nil error", func(l interfaces.Logger) interfaces.Logger {
+			return l.WithError(nil)
+		}},
+		{"with field", func(l interfaces.Logger) interfaces.Logger {
+			return l.WithField("key", "value")
+		}},
+		{"with fields", func(l interfaces.Logger) interfaces.Logger {
+			return l.WithFields(map[string]interface{}{"key1": "value1", "key2": 123, "key3": true})
+		}},
+		{"with empty fields", func(l interfaces.Logger) interfaces.Logger {
+			return l.WithFields(map[string]interface{}{})
+		}},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := adapter.WithField(tt.key, tt.value)
-			assert.NotNil(t, result)
-			_, ok := result.(interfaces.Logger)
-			assert.True(t, ok)
+			resultAdapter, ok := tt.call(base).(*loggerAdapter)
+			require.True(t, ok, "adapter methods should return *loggerAdapter")
+			assert.NotNil(t, resultAdapter.Logger)
 		})
 	}
 }
@@ -266,17 +124,6 @@ func TestFormatVectorUpsertResponse(t *testing.T) {
 	}
 }
 
-func TestFormatVectorUpsertResponseInvalidFormat(t *testing.T) {
-	outputFormat = "invalid-format"
-	resp := &vector.UpsertResponse{
-		ID:        "vec-123",
-		Success:   true,
-		Timestamp: time.Now(),
-	}
-	err := formatVectorUpsertResponse(resp)
-	assert.Error(t, err)
-}
-
 func TestFormatVectorBatchUpsertResponse(t *testing.T) {
 	tests := []struct {
 		name         string
@@ -327,17 +174,6 @@ func TestFormatVectorBatchUpsertResponse(t *testing.T) {
 			}
 		})
 	}
-}
-
-func TestFormatVectorBatchUpsertResponseInvalidFormat(t *testing.T) {
-	outputFormat = "invalid-format"
-	resp := &vector.BatchUpsertResponse{
-		VectorsSucceeded: 10,
-		VectorsFailed:    0,
-		Timestamp:        time.Now(),
-	}
-	err := formatVectorBatchUpsertResponse(resp)
-	assert.Error(t, err)
 }
 
 func TestFormatVectorGetResponse(t *testing.T) {
@@ -418,19 +254,6 @@ func TestFormatVectorGetResponse(t *testing.T) {
 	}
 }
 
-func TestFormatVectorGetResponseInvalidFormat(t *testing.T) {
-	outputFormat = "invalid-format"
-	resp := &vector.GetResponse{
-		Vector: &vector.VectorEntity{
-			ID: "vec-123",
-		},
-		Found:     true,
-		Timestamp: time.Now(),
-	}
-	err := formatVectorGetResponse(resp)
-	assert.Error(t, err)
-}
-
 func TestFormatVectorDeleteResponse(t *testing.T) {
 	tests := []struct {
 		name         string
@@ -478,16 +301,6 @@ func TestFormatVectorDeleteResponse(t *testing.T) {
 			}
 		})
 	}
-}
-
-func TestFormatVectorDeleteResponseInvalidFormat(t *testing.T) {
-	outputFormat = "invalid-format"
-	resp := &vector.DeleteResponse{
-		Deleted:   true,
-		Timestamp: time.Now(),
-	}
-	err := formatVectorDeleteResponse(resp)
-	assert.Error(t, err)
 }
 
 func TestFormatVectorBatchDeleteResponse(t *testing.T) {
@@ -540,16 +353,6 @@ func TestFormatVectorBatchDeleteResponse(t *testing.T) {
 			}
 		})
 	}
-}
-
-func TestFormatVectorBatchDeleteResponseInvalidFormat(t *testing.T) {
-	outputFormat = "invalid-format"
-	resp := &vector.BatchDeleteResponse{
-		DeletedCount: 10,
-		Timestamp:    time.Now(),
-	}
-	err := formatVectorBatchDeleteResponse(resp)
-	assert.Error(t, err)
 }
 
 func TestFormatVectorListResponse(t *testing.T) {
@@ -611,17 +414,6 @@ func TestFormatVectorListResponse(t *testing.T) {
 			}
 		})
 	}
-}
-
-func TestFormatVectorListResponseInvalidFormat(t *testing.T) {
-	outputFormat = "invalid-format"
-	resp := &vector.ListVectorsResponse{
-		Vectors:    []*vector.VectorEntity{},
-		TotalCount: 0,
-		Timestamp:  time.Now(),
-	}
-	err := formatVectorListResponse(resp)
-	assert.Error(t, err)
 }
 
 func TestFormatVectorSearchSimilarResponse(t *testing.T) {
@@ -703,17 +495,6 @@ func TestFormatVectorSearchSimilarResponse(t *testing.T) {
 	}
 }
 
-func TestFormatVectorSearchSimilarResponseInvalidFormat(t *testing.T) {
-	outputFormat = "invalid-format"
-	resp := &vector.SearchSimilarResponse{
-		Results:      []*vector.SearchResult{},
-		SearchTimeMs: 10,
-		Timestamp:    time.Now(),
-	}
-	err := formatVectorSearchSimilarResponse(resp)
-	assert.Error(t, err)
-}
-
 func TestFormatVectorSearchByIDResponse(t *testing.T) {
 	tests := []struct {
 		name         string
@@ -775,17 +556,6 @@ func TestFormatVectorSearchByIDResponse(t *testing.T) {
 	}
 }
 
-func TestFormatVectorSearchByIDResponseInvalidFormat(t *testing.T) {
-	outputFormat = "invalid-format"
-	resp := &vector.SearchByIDResponse{
-		Results:      []*vector.SearchResult{},
-		SearchTimeMs: 10,
-		Timestamp:    time.Now(),
-	}
-	err := formatVectorSearchByIDResponse(resp)
-	assert.Error(t, err)
-}
-
 func TestFormatVectorIndexRebuildResponse(t *testing.T) {
 	tests := []struct {
 		name         string
@@ -840,17 +610,6 @@ func TestFormatVectorIndexRebuildResponse(t *testing.T) {
 			}
 		})
 	}
-}
-
-func TestFormatVectorIndexRebuildResponseInvalidFormat(t *testing.T) {
-	outputFormat = "invalid-format"
-	resp := &vector.RebuildIndexResponse{
-		OperationID: "op-123",
-		Status:      "started",
-		Timestamp:   time.Now(),
-	}
-	err := formatVectorIndexRebuildResponse(resp)
-	assert.Error(t, err)
 }
 
 func TestFormatVectorIndexProgressResponse(t *testing.T) {
@@ -920,18 +679,6 @@ func TestFormatVectorIndexProgressResponse(t *testing.T) {
 	}
 }
 
-func TestFormatVectorIndexProgressResponseInvalidFormat(t *testing.T) {
-	outputFormat = "invalid-format"
-	resp := &vector.GetIndexProgressResponse{
-		OperationID: "op-123",
-		Namespace:   "test-ns",
-		Status:      "in_progress",
-		Timestamp:   time.Now(),
-	}
-	err := formatVectorIndexProgressResponse(resp)
-	assert.Error(t, err)
-}
-
 func TestFormatVectorIndexStatsResponse(t *testing.T) {
 	tests := []struct {
 		name         string
@@ -976,244 +723,162 @@ func TestFormatVectorIndexStatsResponse(t *testing.T) {
 	}
 }
 
-func TestFormatVectorIndexStatsResponseInvalidFormat(t *testing.T) {
-	outputFormat = "invalid-format"
-	resp := &vector.GetStatsResponse{
-		Namespace:   "test-ns",
-		VectorCount: 10000,
-	}
-	err := formatVectorIndexStatsResponse(resp)
-	assert.Error(t, err)
-}
-
+// The UpdateMetadata, HybridSearch and SearchByMetadata formatters print
+// plain text and do not read outputFormat.
 func TestFormatVectorUpdateMetadataResponse(t *testing.T) {
 	tests := []struct {
-		name         string
-		response     *vector.UpdateMetadataResponse
-		outputFormat string
-		expectError  bool
+		name     string
+		response *vector.UpdateMetadataResponse
 	}{
-		{
-			name: "success table format",
-			response: &vector.UpdateMetadataResponse{
-				Success:   true,
-				Version:   1,
-				Timestamp: time.Now(),
-			},
-			outputFormat: "table",
-			expectError:  false,
-		},
-		{
-			name: "failure table format",
-			response: &vector.UpdateMetadataResponse{
-				Success:   false,
-				Version:   0,
-				Timestamp: time.Now(),
-			},
-			outputFormat: "table",
-			expectError:  false,
-		},
-		{
-			name: "json format",
-			response: &vector.UpdateMetadataResponse{
-				Success:   true,
-				Version:   2,
-				Timestamp: time.Now(),
-			},
-			outputFormat: "json",
-			expectError:  false,
-		},
+		{"success", &vector.UpdateMetadataResponse{Success: true, Version: 1, Timestamp: time.Now()}},
+		{"failure", &vector.UpdateMetadataResponse{Success: false}},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			outputFormat = tt.outputFormat
-			err := formatVectorUpdateMetadataResponse(tt.response)
-			if tt.expectError {
-				assert.Error(t, err)
-			} else {
-				assert.NoError(t, err)
-			}
+			assert.NoError(t, formatVectorUpdateMetadataResponse(tt.response))
 		})
 	}
 }
 
-func TestFormatVectorUpdateMetadataResponseFallback(t *testing.T) {
-	outputFormat = "invalid-format"
-	resp := &vector.UpdateMetadataResponse{
-		Success:   true,
-		Version:   1,
-		Timestamp: time.Now(),
-	}
-	err := formatVectorUpdateMetadataResponse(resp)
-	assert.NoError(t, err)
-}
-
 func TestFormatVectorHybridSearchResponse(t *testing.T) {
 	tests := []struct {
-		name         string
-		response     *vector.HybridSearchResponse
-		outputFormat string
-		expectError  bool
+		name     string
+		response *vector.HybridSearchResponse
 	}{
 		{
-			name: "with results table format",
+			name: "with results",
 			response: &vector.HybridSearchResponse{
 				Results: []*vector.SearchResult{
 					{
-						Vector:   &vector.VectorEntity{ID: "vec-1", Metadata: map[string]string{"key": "value"}},
-						Score:    0.95,
-						Distance: 0.05,
-						Rank:     1,
+						Vector: &vector.VectorEntity{
+							ID:       "vec-1",
+							Vector:   []float32{0.1, 0.2},
+							Metadata: map[string]string{"key": "val"},
+						},
+						Score: 0.95,
+						Rank:  1,
 					},
 				},
-				SearchTimeMs: 25,
-				Timestamp:    time.Now(),
+				TotalCandidates:  10,
+				TotalFiltered:    5,
+				RerankingApplied: true,
+				SearchTimeMs:     15,
+				Timestamp:        time.Now(),
 			},
-			outputFormat: "table",
-			expectError:  false,
 		},
 		{
-			name: "json format",
+			name: "result without vector",
+			response: &vector.HybridSearchResponse{
+				Results:         []*vector.SearchResult{{Score: 0.5, Rank: 1}},
+				TotalCandidates: 5,
+				TotalFiltered:   1,
+				SearchTimeMs:    10,
+				Timestamp:       time.Now(),
+			},
+		},
+		{
+			name: "no results",
 			response: &vector.HybridSearchResponse{
 				Results:      []*vector.SearchResult{},
 				SearchTimeMs: 10,
 				Timestamp:    time.Now(),
 			},
-			outputFormat: "json",
-			expectError:  false,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			outputFormat = tt.outputFormat
-			err := formatVectorHybridSearchResponse(tt.response)
-			if tt.expectError {
-				assert.Error(t, err)
-			} else {
-				assert.NoError(t, err)
-			}
+			assert.NoError(t, formatVectorHybridSearchResponse(tt.response))
 		})
 	}
 }
 
-func TestFormatVectorHybridSearchResponseFallback(t *testing.T) {
-	outputFormat = "invalid-format"
-	resp := &vector.HybridSearchResponse{
-		Results:      []*vector.SearchResult{},
-		SearchTimeMs: 10,
-		Timestamp:    time.Now(),
-	}
-	err := formatVectorHybridSearchResponse(resp)
-	assert.NoError(t, err)
-}
-
 func TestFormatVectorSearchByMetadataResponse(t *testing.T) {
 	tests := []struct {
-		name         string
-		response     *vector.SearchByMetadataResponse
-		outputFormat string
-		expectError  bool
+		name     string
+		response *vector.SearchByMetadataResponse
 	}{
 		{
-			name: "with results table format",
+			name: "with results",
 			response: &vector.SearchByMetadataResponse{
 				Results: []*vector.VectorEntity{
-					{ID: "vec-1", Metadata: map[string]string{"key": "value"}, Version: 1, CreatedAt: time.Now()},
+					{
+						ID:        "vec-1",
+						Vector:    []float32{0.1, 0.2, 0.3},
+						Metadata:  map[string]string{"key": "value"},
+						Version:   1,
+						CreatedAt: time.Now(),
+					},
 				},
 				TotalCount:   1,
 				SearchTimeMs: 25,
 				Timestamp:    time.Now(),
 			},
-			outputFormat: "table",
-			expectError:  false,
 		},
 		{
-			name: "json format",
+			name: "no results",
 			response: &vector.SearchByMetadataResponse{
 				Results:      []*vector.VectorEntity{},
-				TotalCount:   0,
 				SearchTimeMs: 10,
 				Timestamp:    time.Now(),
 			},
-			outputFormat: "json",
-			expectError:  false,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			outputFormat = tt.outputFormat
-			err := formatVectorSearchByMetadataResponse(tt.response)
-			if tt.expectError {
-				assert.Error(t, err)
-			} else {
-				assert.NoError(t, err)
-			}
+			assert.NoError(t, formatVectorSearchByMetadataResponse(tt.response))
 		})
 	}
-}
-
-func TestFormatVectorSearchByMetadataResponseFallback(t *testing.T) {
-	outputFormat = "invalid-format"
-	resp := &vector.SearchByMetadataResponse{
-		Results:    []*vector.VectorEntity{},
-		TotalCount: 0,
-		Timestamp:  time.Now(),
-	}
-	err := formatVectorSearchByMetadataResponse(resp)
-	assert.NoError(t, err)
 }
 
 // =============================================================================
 // MCP KMS Parsing Function Tests
 // =============================================================================
 
-func TestParseKMSImportKeyResponse(t *testing.T) {
-	result := map[string]interface{}{
-		"key_id":    "imported-key-123",
-		"algorithm": "AES-256-GCM",
-		"status":    "active",
-	}
-
-	resp, err := parseKMSImportKeyResponse(result)
-	require.NoError(t, err)
-	assert.Equal(t, "imported-key-123", resp.Key.KeyID)
-	assert.Equal(t, "AES-256-GCM", string(resp.Key.Algorithm))
-	assert.Equal(t, "active", string(resp.Key.Status))
-}
-
-func TestParseKMSImportKeyResponseInvalidData(t *testing.T) {
-	// Test with nil
-	resp, err := parseKMSImportKeyResponse(nil)
-	require.NoError(t, err)
-	assert.Equal(t, "", resp.Key.KeyID)
-
-	// Test with empty map
-	resp, err = parseKMSImportKeyResponse(map[string]interface{}{})
-	require.NoError(t, err)
-	assert.Equal(t, "", resp.Key.KeyID)
-}
-
-func TestParseKMSGetKeyResponse(t *testing.T) {
+// TestParseKMSResponses covers each MCP KMS parser with a populated result
+// and with nil or empty input, which yields a zero-valued response.
+func TestParseKMSResponses(t *testing.T) {
 	tests := []struct {
-		name   string
-		result map[string]interface{}
+		name  string
+		check func(t *testing.T)
 	}{
-		{
-			name: "flat structure",
-			result: map[string]interface{}{
+		{"import key", func(t *testing.T) {
+			resp, err := parseKMSImportKeyResponse(map[string]interface{}{
+				"key_id":    "imported-key-123",
+				"algorithm": "AES-256-GCM",
+				"status":    "active",
+			})
+			require.NoError(t, err)
+			assert.Equal(t, "imported-key-123", resp.Key.KeyID)
+			assert.Equal(t, "AES-256-GCM", string(resp.Key.Algorithm))
+			assert.Equal(t, "active", string(resp.Key.Status))
+		}},
+		{"import key nil", func(t *testing.T) {
+			resp, err := parseKMSImportKeyResponse(nil)
+			require.NoError(t, err)
+			assert.Equal(t, "", resp.Key.KeyID)
+		}},
+		{"import key empty map", func(t *testing.T) {
+			resp, err := parseKMSImportKeyResponse(map[string]interface{}{})
+			require.NoError(t, err)
+			assert.Equal(t, "", resp.Key.KeyID)
+		}},
+		{"get key flat structure", func(t *testing.T) {
+			resp, err := parseKMSGetKeyResponse(map[string]interface{}{
 				"key_id":     "key-123",
 				"algorithm":  "AES-256-GCM",
 				"status":     "active",
 				"version":    float64(1),
 				"created_at": float64(time.Now().Unix()),
-			},
-		},
-		{
-			name: "nested metadata",
-			result: map[string]interface{}{
+			})
+			require.NoError(t, err)
+			assert.NotNil(t, resp.Key)
+			assert.NotNil(t, resp.Metadata)
+		}},
+		{"get key nested metadata", func(t *testing.T) {
+			resp, err := parseKMSGetKeyResponse(map[string]interface{}{
 				"metadata": map[string]interface{}{
 					"key_id":     "key-456",
 					"algorithm":  "CHACHA20-POLY1305",
@@ -1221,250 +886,198 @@ func TestParseKMSGetKeyResponse(t *testing.T) {
 					"version":    float64(2),
 					"created_at": float64(time.Now().Unix()),
 				},
-			},
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			resp, err := parseKMSGetKeyResponse(tt.result)
+			})
 			require.NoError(t, err)
 			assert.NotNil(t, resp.Key)
 			assert.NotNil(t, resp.Metadata)
-		})
-	}
-}
-
-func TestParseKMSGetKeyResponseInvalidData(t *testing.T) {
-	resp, err := parseKMSGetKeyResponse(nil)
-	require.NoError(t, err)
-	assert.Equal(t, "", resp.Key.KeyID)
-}
-
-func TestParseKMSRotateKeyResponse(t *testing.T) {
-	result := map[string]interface{}{
-		"key_id":      "key-123",
-		"old_version": float64(1),
-		"new_version": float64(2),
-	}
-
-	resp, err := parseKMSRotateKeyResponse(result)
-	require.NoError(t, err)
-	assert.Equal(t, "key-123", resp.KeyID)
-	assert.Equal(t, uint64(1), resp.OldVersion)
-	assert.Equal(t, uint64(2), resp.NewVersion)
-}
-
-func TestParseKMSRotateKeyResponseInvalidData(t *testing.T) {
-	resp, err := parseKMSRotateKeyResponse(nil)
-	require.NoError(t, err)
-	assert.Equal(t, "", resp.KeyID)
-}
-
-func TestParseKMSDeleteKeyResponse(t *testing.T) {
-	result := map[string]interface{}{
-		"key_id": "key-123",
-		"status": "deleted",
-	}
-
-	resp, err := parseKMSDeleteKeyResponse(result)
-	require.NoError(t, err)
-	assert.Equal(t, "key-123", resp.KeyID)
-	assert.Equal(t, "deleted", string(resp.Status))
-}
-
-func TestParseKMSDeleteKeyResponseInvalidData(t *testing.T) {
-	resp, err := parseKMSDeleteKeyResponse(nil)
-	require.NoError(t, err)
-	assert.Equal(t, "", resp.KeyID)
-}
-
-func TestParseKMSUpdateKeyStatusResponse(t *testing.T) {
-	result := map[string]interface{}{
-		"key_id":     "key-123",
-		"old_status": "active",
-		"new_status": "disabled",
-	}
-
-	resp, err := parseKMSUpdateKeyStatusResponse(result)
-	require.NoError(t, err)
-	assert.Equal(t, "key-123", resp.KeyID)
-	assert.Equal(t, "active", string(resp.OldStatus))
-	assert.Equal(t, "disabled", string(resp.NewStatus))
-}
-
-func TestParseKMSUpdateKeyStatusResponseInvalidData(t *testing.T) {
-	resp, err := parseKMSUpdateKeyStatusResponse(nil)
-	require.NoError(t, err)
-	assert.Equal(t, "", resp.KeyID)
-}
-
-func TestParseKMSListKeyVersionsResponse(t *testing.T) {
-	result := map[string]interface{}{
-		"versions": []interface{}{
-			map[string]interface{}{
-				"version":    float64(1),
-				"status":     "active",
-				"algorithm":  "AES-256-GCM",
-				"created_at": float64(time.Now().Unix()),
-			},
-			map[string]interface{}{
-				"version":    float64(2),
-				"status":     "active",
-				"algorithm":  "AES-256-GCM",
-				"created_at": float64(time.Now().Unix()),
-			},
-		},
-	}
-
-	resp, err := parseKMSListKeyVersionsResponse(result)
-	require.NoError(t, err)
-	assert.Len(t, resp.Versions, 2)
-	assert.Equal(t, uint64(1), resp.Versions[0].Version)
-	assert.Equal(t, uint64(2), resp.Versions[1].Version)
-}
-
-func TestParseKMSListKeyVersionsResponseInvalidData(t *testing.T) {
-	// Test with nil
-	resp, err := parseKMSListKeyVersionsResponse(nil)
-	require.NoError(t, err)
-	assert.Len(t, resp.Versions, 0)
-
-	// Test with empty versions
-	result := map[string]interface{}{"versions": []interface{}{}}
-	resp, err = parseKMSListKeyVersionsResponse(result)
-	require.NoError(t, err)
-	assert.Len(t, resp.Versions, 0)
-
-	// Test with invalid version entry type
-	result = map[string]interface{}{"versions": []interface{}{"invalid"}}
-	resp, err = parseKMSListKeyVersionsResponse(result)
-	require.NoError(t, err)
-	assert.Len(t, resp.Versions, 0)
-}
-
-func TestParseKMSExportKeyResponse(t *testing.T) {
-	result := map[string]interface{}{
-		"key_id":      "key-123",
-		"wrapped_key": "base64-wrapped-key-data",
-	}
-
-	resp, err := parseKMSExportKeyResponse(result)
-	require.NoError(t, err)
-	assert.Equal(t, "key-123", resp.KeyID)
-	assert.Equal(t, []byte("base64-wrapped-key-data"), resp.WrappedKey)
-}
-
-func TestParseKMSExportKeyResponseInvalidData(t *testing.T) {
-	resp, err := parseKMSExportKeyResponse(nil)
-	require.NoError(t, err)
-	assert.Equal(t, "", resp.KeyID)
-	assert.Nil(t, resp.WrappedKey)
-}
-
-func TestParseKMSUnwrapKeyResponse(t *testing.T) {
-	result := map[string]interface{}{
-		"key_id":    "key-123",
-		"algorithm": "AES-256-GCM",
-		"status":    "active",
-	}
-
-	resp, err := parseKMSUnwrapKeyResponse(result)
-	require.NoError(t, err)
-	assert.Equal(t, "key-123", resp.KeyID)
-	assert.Equal(t, "AES-256-GCM", string(resp.Algorithm))
-	assert.Equal(t, "active", string(resp.Status))
-}
-
-func TestParseKMSUnwrapKeyResponseInvalidData(t *testing.T) {
-	resp, err := parseKMSUnwrapKeyResponse(nil)
-	require.NoError(t, err)
-	assert.Equal(t, "", resp.KeyID)
-}
-
-func TestParseKMSSetKeySafetyResponse(t *testing.T) {
-	result := map[string]interface{}{
-		"key_id": "key-123",
-		"config": map[string]interface{}{
-			"max_operations":  float64(1000000),
-			"max_bytes":       float64(1073741824),
-			"warning_percent": float64(80),
-		},
-	}
-
-	resp, err := parseKMSSetKeySafetyResponse(result)
-	require.NoError(t, err)
-	assert.Equal(t, "key-123", resp.KeyID)
-	assert.Equal(t, uint64(1000000), resp.Config.MaxOperations)
-	assert.Equal(t, uint64(1073741824), resp.Config.MaxBytes)
-	assert.Equal(t, 80, resp.Config.WarningPercent)
-}
-
-func TestParseKMSSetKeySafetyResponseInvalidData(t *testing.T) {
-	resp, err := parseKMSSetKeySafetyResponse(nil)
-	require.NoError(t, err)
-	assert.Equal(t, "", resp.KeyID)
-}
-
-func TestParseKMSClearKeySafetyResponse(t *testing.T) {
-	result := map[string]interface{}{
-		"key_id": "key-123",
-	}
-
-	resp, err := parseKMSClearKeySafetyResponse(result)
-	require.NoError(t, err)
-	assert.Equal(t, "key-123", resp.KeyID)
-}
-
-func TestParseKMSClearKeySafetyResponseInvalidData(t *testing.T) {
-	resp, err := parseKMSClearKeySafetyResponse(nil)
-	require.NoError(t, err)
-	assert.Equal(t, "", resp.KeyID)
-}
-
-func TestParseKMSEncryptResponse(t *testing.T) {
-	result := map[string]interface{}{
-		"key_id":      "key-123",
-		"key_version": float64(1),
-		"ciphertext":  "encrypted-data",
+		}},
+		{"get key nil", func(t *testing.T) {
+			resp, err := parseKMSGetKeyResponse(nil)
+			require.NoError(t, err)
+			assert.Equal(t, "", resp.Key.KeyID)
+		}},
+		{"rotate key", func(t *testing.T) {
+			resp, err := parseKMSRotateKeyResponse(map[string]interface{}{
+				"key_id":      "key-123",
+				"old_version": float64(1),
+				"new_version": float64(2),
+			})
+			require.NoError(t, err)
+			assert.Equal(t, "key-123", resp.KeyID)
+			assert.Equal(t, uint64(1), resp.OldVersion)
+			assert.Equal(t, uint64(2), resp.NewVersion)
+		}},
+		{"rotate key nil", func(t *testing.T) {
+			resp, err := parseKMSRotateKeyResponse(nil)
+			require.NoError(t, err)
+			assert.Equal(t, "", resp.KeyID)
+		}},
+		{"delete key", func(t *testing.T) {
+			resp, err := parseKMSDeleteKeyResponse(map[string]interface{}{
+				"key_id": "key-123",
+				"status": "deleted",
+			})
+			require.NoError(t, err)
+			assert.Equal(t, "key-123", resp.KeyID)
+			assert.Equal(t, "deleted", string(resp.Status))
+		}},
+		{"delete key nil", func(t *testing.T) {
+			resp, err := parseKMSDeleteKeyResponse(nil)
+			require.NoError(t, err)
+			assert.Equal(t, "", resp.KeyID)
+		}},
+		{"update key status", func(t *testing.T) {
+			resp, err := parseKMSUpdateKeyStatusResponse(map[string]interface{}{
+				"key_id":     "key-123",
+				"old_status": "active",
+				"new_status": "disabled",
+			})
+			require.NoError(t, err)
+			assert.Equal(t, "key-123", resp.KeyID)
+			assert.Equal(t, "active", string(resp.OldStatus))
+			assert.Equal(t, "disabled", string(resp.NewStatus))
+		}},
+		{"update key status nil", func(t *testing.T) {
+			resp, err := parseKMSUpdateKeyStatusResponse(nil)
+			require.NoError(t, err)
+			assert.Equal(t, "", resp.KeyID)
+		}},
+		{"list key versions", func(t *testing.T) {
+			resp, err := parseKMSListKeyVersionsResponse(map[string]interface{}{
+				"versions": []interface{}{
+					map[string]interface{}{
+						"version":    float64(1),
+						"status":     "active",
+						"algorithm":  "AES-256-GCM",
+						"created_at": float64(time.Now().Unix()),
+					},
+					map[string]interface{}{
+						"version":    float64(2),
+						"status":     "active",
+						"algorithm":  "AES-256-GCM",
+						"created_at": float64(time.Now().Unix()),
+					},
+				},
+			})
+			require.NoError(t, err)
+			assert.Len(t, resp.Versions, 2)
+			assert.Equal(t, uint64(1), resp.Versions[0].Version)
+			assert.Equal(t, uint64(2), resp.Versions[1].Version)
+		}},
+		{"list key versions nil", func(t *testing.T) {
+			resp, err := parseKMSListKeyVersionsResponse(nil)
+			require.NoError(t, err)
+			assert.Len(t, resp.Versions, 0)
+		}},
+		{"list key versions empty", func(t *testing.T) {
+			resp, err := parseKMSListKeyVersionsResponse(map[string]interface{}{"versions": []interface{}{}})
+			require.NoError(t, err)
+			assert.Len(t, resp.Versions, 0)
+		}},
+		{"list key versions invalid entry type", func(t *testing.T) {
+			resp, err := parseKMSListKeyVersionsResponse(map[string]interface{}{"versions": []interface{}{"invalid"}})
+			require.NoError(t, err)
+			assert.Len(t, resp.Versions, 0)
+		}},
+		{"export key", func(t *testing.T) {
+			resp, err := parseKMSExportKeyResponse(map[string]interface{}{
+				"key_id":      "key-123",
+				"wrapped_key": "base64-wrapped-key-data",
+			})
+			require.NoError(t, err)
+			assert.Equal(t, "key-123", resp.KeyID)
+			assert.Equal(t, []byte("base64-wrapped-key-data"), resp.WrappedKey)
+		}},
+		{"export key nil", func(t *testing.T) {
+			resp, err := parseKMSExportKeyResponse(nil)
+			require.NoError(t, err)
+			assert.Equal(t, "", resp.KeyID)
+			assert.Nil(t, resp.WrappedKey)
+		}},
+		{"unwrap key", func(t *testing.T) {
+			resp, err := parseKMSUnwrapKeyResponse(map[string]interface{}{
+				"key_id":    "key-123",
+				"algorithm": "AES-256-GCM",
+				"status":    "active",
+			})
+			require.NoError(t, err)
+			assert.Equal(t, "key-123", resp.KeyID)
+			assert.Equal(t, "AES-256-GCM", string(resp.Algorithm))
+			assert.Equal(t, "active", string(resp.Status))
+		}},
+		{"unwrap key nil", func(t *testing.T) {
+			resp, err := parseKMSUnwrapKeyResponse(nil)
+			require.NoError(t, err)
+			assert.Equal(t, "", resp.KeyID)
+		}},
+		{"set key safety", func(t *testing.T) {
+			resp, err := parseKMSSetKeySafetyResponse(map[string]interface{}{
+				"key_id": "key-123",
+				"config": map[string]interface{}{
+					"max_operations":  float64(1000000),
+					"max_bytes":       float64(1073741824),
+					"warning_percent": float64(80),
+				},
+			})
+			require.NoError(t, err)
+			assert.Equal(t, "key-123", resp.KeyID)
+			assert.Equal(t, uint64(1000000), resp.Config.MaxOperations)
+			assert.Equal(t, uint64(1073741824), resp.Config.MaxBytes)
+			assert.Equal(t, 80, resp.Config.WarningPercent)
+		}},
+		{"set key safety nil", func(t *testing.T) {
+			resp, err := parseKMSSetKeySafetyResponse(nil)
+			require.NoError(t, err)
+			assert.Equal(t, "", resp.KeyID)
+		}},
+		{"clear key safety", func(t *testing.T) {
+			resp, err := parseKMSClearKeySafetyResponse(map[string]interface{}{"key_id": "key-123"})
+			require.NoError(t, err)
+			assert.Equal(t, "key-123", resp.KeyID)
+		}},
+		{"clear key safety nil", func(t *testing.T) {
+			resp, err := parseKMSClearKeySafetyResponse(nil)
+			require.NoError(t, err)
+			assert.Equal(t, "", resp.KeyID)
+		}},
+		{"encrypt", func(t *testing.T) {
+			resp, err := parseKMSEncryptResponse(map[string]interface{}{
+				"key_id":      "key-123",
+				"key_version": float64(1),
+				"ciphertext":  "encrypted-data",
+			})
+			require.NoError(t, err)
+			assert.Equal(t, "key-123", resp.KeyID)
+			assert.Equal(t, uint64(1), resp.KeyVersion)
+			assert.Equal(t, []byte("encrypted-data"), resp.Ciphertext)
+		}},
+		{"encrypt nil", func(t *testing.T) {
+			resp, err := parseKMSEncryptResponse(nil)
+			require.NoError(t, err)
+			assert.Equal(t, "", resp.KeyID)
+		}},
+		{"decrypt", func(t *testing.T) {
+			resp, err := parseKMSDecryptResponse(map[string]interface{}{
+				"key_id":      "key-123",
+				"key_version": float64(1),
+				"plaintext":   "decrypted-data",
+			})
+			require.NoError(t, err)
+			assert.Equal(t, "key-123", resp.KeyID)
+			assert.Equal(t, uint64(1), resp.KeyVersion)
+			assert.Equal(t, []byte("decrypted-data"), resp.Plaintext)
+		}},
+		{"decrypt nil", func(t *testing.T) {
+			resp, err := parseKMSDecryptResponse(nil)
+			require.NoError(t, err)
+			assert.Equal(t, "", resp.KeyID)
+		}},
 	}
 
-	resp, err := parseKMSEncryptResponse(result)
-	require.NoError(t, err)
-	assert.Equal(t, "key-123", resp.KeyID)
-	assert.Equal(t, uint64(1), resp.KeyVersion)
-	assert.Equal(t, []byte("encrypted-data"), resp.Ciphertext)
-}
-
-func TestParseKMSEncryptResponseInvalidData(t *testing.T) {
-	resp, err := parseKMSEncryptResponse(nil)
-	require.NoError(t, err)
-	assert.Equal(t, "", resp.KeyID)
-}
-
-func TestParseKMSDecryptResponse(t *testing.T) {
-	result := map[string]interface{}{
-		"key_id":      "key-123",
-		"key_version": float64(1),
-		"plaintext":   "decrypted-data",
+	for _, tt := range tests {
+		t.Run(tt.name, tt.check)
 	}
-
-	resp, err := parseKMSDecryptResponse(result)
-	require.NoError(t, err)
-	assert.Equal(t, "key-123", resp.KeyID)
-	assert.Equal(t, uint64(1), resp.KeyVersion)
-	assert.Equal(t, []byte("decrypted-data"), resp.Plaintext)
 }
-
-func TestParseKMSDecryptResponseInvalidData(t *testing.T) {
-	resp, err := parseKMSDecryptResponse(nil)
-	require.NoError(t, err)
-	assert.Equal(t, "", resp.KeyID)
-}
-
-// =============================================================================
-// DEK Parsing Function Tests
-// =============================================================================
 
 // =============================================================================
 // Backend and Safety Response Parsing Tests
@@ -1559,190 +1172,92 @@ func testWithInvalidOutputFormat(t *testing.T, fn func() error) {
 	assert.Contains(t, err.Error(), "unknown output format")
 }
 
-func TestFormatVectorNamespaceCreateResponse_InvalidFormat(t *testing.T) {
-	testWithInvalidOutputFormat(t, func() error {
-		return formatVectorNamespaceCreateResponse(&vector.CreateNamespaceResponse{
-			Success: true, Namespace: "ns", Timestamp: time.Now(),
-		})
-	})
-}
-
-func TestFormatVectorNamespaceDeleteResponse_InvalidFormat(t *testing.T) {
-	testWithInvalidOutputFormat(t, func() error {
-		return formatVectorNamespaceDeleteResponse(&vector.DeleteNamespaceResponse{
-			Deleted: true, Timestamp: time.Now(),
-		})
-	})
-}
-
-func TestFormatVectorNamespaceListResponse_InvalidFormat(t *testing.T) {
-	testWithInvalidOutputFormat(t, func() error {
-		return formatVectorNamespaceListResponse(&vector.ListNamespacesResponse{
-			Namespaces: []*vector.NamespaceInfo{}, Timestamp: time.Now(),
-		})
-	})
-}
-
-func TestFormatVectorNamespaceInfoResponse_InvalidFormat(t *testing.T) {
-	testWithInvalidOutputFormat(t, func() error {
-		return formatVectorNamespaceInfoResponse(&vector.GetNamespaceInfoResponse{
-			Info: &vector.NamespaceInfo{}, Timestamp: time.Now(),
-		})
-	})
-}
-
-func TestFormatVectorUpsertResponse_InvalidFormat(t *testing.T) {
-	testWithInvalidOutputFormat(t, func() error {
-		return formatVectorUpsertResponse(&vector.UpsertResponse{
-			ID: "vec-1", Success: true, Timestamp: time.Now(),
-		})
-	})
-}
-
-func TestFormatVectorBatchUpsertResponse_InvalidFormat(t *testing.T) {
-	testWithInvalidOutputFormat(t, func() error {
-		return formatVectorBatchUpsertResponse(&vector.BatchUpsertResponse{
-			VectorsSucceeded: 5, Timestamp: time.Now(),
-		})
-	})
-}
-
-func TestFormatVectorGetResponse_InvalidFormat(t *testing.T) {
-	testWithInvalidOutputFormat(t, func() error {
-		return formatVectorGetResponse(&vector.GetResponse{
-			Vector: &vector.VectorEntity{ID: "v1", Vector: []float32{0.1}},
-			Found:  true, Timestamp: time.Now(),
-		})
-	})
-}
-
-func TestFormatVectorDeleteResponse_InvalidFormat(t *testing.T) {
-	testWithInvalidOutputFormat(t, func() error {
-		return formatVectorDeleteResponse(&vector.DeleteResponse{
-			Deleted: true, Timestamp: time.Now(),
-		})
-	})
-}
-
-func TestFormatVectorBatchDeleteResponse_InvalidFormat(t *testing.T) {
-	testWithInvalidOutputFormat(t, func() error {
-		return formatVectorBatchDeleteResponse(&vector.BatchDeleteResponse{
-			DeletedCount: 3, Timestamp: time.Now(),
-		})
-	})
-}
-
-func TestFormatVectorListResponse_InvalidFormat(t *testing.T) {
-	testWithInvalidOutputFormat(t, func() error {
-		return formatVectorListResponse(&vector.ListVectorsResponse{
-			Vectors: []*vector.VectorEntity{}, Timestamp: time.Now(),
-		})
-	})
-}
-
-func TestFormatVectorSearchSimilarResponse_InvalidFormat(t *testing.T) {
-	testWithInvalidOutputFormat(t, func() error {
-		return formatVectorSearchSimilarResponse(&vector.SearchSimilarResponse{
-			Results: []*vector.SearchResult{}, Timestamp: time.Now(),
-		})
-	})
-}
-
-func TestFormatVectorSearchByIDResponse_InvalidFormat(t *testing.T) {
-	testWithInvalidOutputFormat(t, func() error {
-		return formatVectorSearchByIDResponse(&vector.SearchByIDResponse{
-			Results: []*vector.SearchResult{}, Timestamp: time.Now(),
-		})
-	})
-}
-
-func TestFormatVectorIndexRebuildResponse_InvalidFormat(t *testing.T) {
-	testWithInvalidOutputFormat(t, func() error {
-		return formatVectorIndexRebuildResponse(&vector.RebuildIndexResponse{
-			OperationID: "op-1", Status: "running",
-		})
-	})
-}
-
-func TestFormatVectorIndexProgressResponse_InvalidFormat(t *testing.T) {
-	testWithInvalidOutputFormat(t, func() error {
-		return formatVectorIndexProgressResponse(&vector.GetIndexProgressResponse{
-			Namespace: "ns", PercentComplete: 50.0,
-		})
-	})
-}
-
-func TestFormatVectorIndexStatsResponse_InvalidFormat(t *testing.T) {
-	testWithInvalidOutputFormat(t, func() error {
-		return formatVectorIndexStatsResponse(&vector.GetStatsResponse{
-			Namespace: "ns", VectorCount: 100,
-		})
-	})
-}
-
-// =============================================================================
-// Vector Format Functions - UpdateMetadata, HybridSearch, SearchByMetadata
-// These format functions do not use ParseOutputFormat but have uncovered paths
-// =============================================================================
-
-func TestFormatVectorUpdateMetadataResponse_FailedPath(t *testing.T) {
-	resp := &vector.UpdateMetadataResponse{
-		Success: false,
+func TestFormatVectorResponses_InvalidFormat(t *testing.T) {
+	tests := []struct {
+		name   string
+		format func() error
+	}{
+		{"namespace create", func() error {
+			return formatVectorNamespaceCreateResponse(&vector.CreateNamespaceResponse{
+				Success: true, Namespace: "ns", Timestamp: time.Now(),
+			})
+		}},
+		{"namespace delete", func() error {
+			return formatVectorNamespaceDeleteResponse(&vector.DeleteNamespaceResponse{
+				Deleted: true, Timestamp: time.Now(),
+			})
+		}},
+		{"namespace list", func() error {
+			return formatVectorNamespaceListResponse(&vector.ListNamespacesResponse{
+				Namespaces: []*vector.NamespaceInfo{}, Timestamp: time.Now(),
+			})
+		}},
+		{"namespace info", func() error {
+			return formatVectorNamespaceInfoResponse(&vector.GetNamespaceInfoResponse{
+				Info: &vector.NamespaceInfo{}, Timestamp: time.Now(),
+			})
+		}},
+		{"upsert", func() error {
+			return formatVectorUpsertResponse(&vector.UpsertResponse{
+				ID: "vec-1", Success: true, Timestamp: time.Now(),
+			})
+		}},
+		{"batch upsert", func() error {
+			return formatVectorBatchUpsertResponse(&vector.BatchUpsertResponse{
+				VectorsSucceeded: 5, Timestamp: time.Now(),
+			})
+		}},
+		{"get", func() error {
+			return formatVectorGetResponse(&vector.GetResponse{
+				Vector: &vector.VectorEntity{ID: "v1", Vector: []float32{0.1}},
+				Found:  true, Timestamp: time.Now(),
+			})
+		}},
+		{"delete", func() error {
+			return formatVectorDeleteResponse(&vector.DeleteResponse{
+				Deleted: true, Timestamp: time.Now(),
+			})
+		}},
+		{"batch delete", func() error {
+			return formatVectorBatchDeleteResponse(&vector.BatchDeleteResponse{
+				DeletedCount: 3, Timestamp: time.Now(),
+			})
+		}},
+		{"list", func() error {
+			return formatVectorListResponse(&vector.ListVectorsResponse{
+				Vectors: []*vector.VectorEntity{}, Timestamp: time.Now(),
+			})
+		}},
+		{"search similar", func() error {
+			return formatVectorSearchSimilarResponse(&vector.SearchSimilarResponse{
+				Results: []*vector.SearchResult{}, Timestamp: time.Now(),
+			})
+		}},
+		{"search by id", func() error {
+			return formatVectorSearchByIDResponse(&vector.SearchByIDResponse{
+				Results: []*vector.SearchResult{}, Timestamp: time.Now(),
+			})
+		}},
+		{"index rebuild", func() error {
+			return formatVectorIndexRebuildResponse(&vector.RebuildIndexResponse{
+				OperationID: "op-1", Status: "running",
+			})
+		}},
+		{"index progress", func() error {
+			return formatVectorIndexProgressResponse(&vector.GetIndexProgressResponse{
+				Namespace: "ns", PercentComplete: 50.0,
+			})
+		}},
+		{"index stats", func() error {
+			return formatVectorIndexStatsResponse(&vector.GetStatsResponse{
+				Namespace: "ns", VectorCount: 100,
+			})
+		}},
 	}
-	err := formatVectorUpdateMetadataResponse(resp)
-	assert.NoError(t, err)
-}
 
-func TestFormatVectorHybridSearchResponse_WithResults(t *testing.T) {
-	resp := &vector.HybridSearchResponse{
-		Results: []*vector.SearchResult{
-			{
-				Vector: &vector.VectorEntity{
-					ID:       "vec-1",
-					Vector:   []float32{0.1, 0.2},
-					Metadata: map[string]string{"key": "val"},
-				},
-				Score: 0.95,
-				Rank:  1,
-			},
-		},
-		TotalCandidates:  10,
-		TotalFiltered:    5,
-		RerankingApplied: true,
-		SearchTimeMs:     15,
-		Timestamp:        time.Now(),
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			testWithInvalidOutputFormat(t, tt.format)
+		})
 	}
-	err := formatVectorHybridSearchResponse(resp)
-	assert.NoError(t, err)
-}
-
-func TestFormatVectorHybridSearchResponse_NilVector(t *testing.T) {
-	resp := &vector.HybridSearchResponse{
-		Results: []*vector.SearchResult{
-			{Score: 0.5, Rank: 1},
-		},
-		TotalCandidates: 5,
-		TotalFiltered:   1,
-		SearchTimeMs:    10,
-		Timestamp:       time.Now(),
-	}
-	err := formatVectorHybridSearchResponse(resp)
-	assert.NoError(t, err)
-}
-
-func TestFormatVectorSearchByMetadataResponse_WithResults(t *testing.T) {
-	resp := &vector.SearchByMetadataResponse{
-		Results: []*vector.VectorEntity{
-			{
-				ID:       "vec-1",
-				Vector:   []float32{0.1, 0.2, 0.3},
-				Metadata: map[string]string{"type": "test"},
-			},
-		},
-		TotalCount:   1,
-		SearchTimeMs: 5,
-		Timestamp:    time.Now(),
-	}
-	err := formatVectorSearchByMetadataResponse(resp)
-	assert.NoError(t, err)
 }
