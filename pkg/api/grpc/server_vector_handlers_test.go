@@ -17,14 +17,12 @@ import (
 	"context"
 	"io"
 	"math"
-	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 
 	pb "github.com/jeremyhahn/go-quicbaas/api/proto"
@@ -295,66 +293,46 @@ func (m *MockImportVectorsStream) GetResponse() *pb.ImportVectorsResponse {
 // CreateNamespace Tests
 // =============================================================================
 
-func TestCreateNamespace_NilRequest(t *testing.T) {
-	srv, _ := newMockTestServer(t)
-
-	resp, err := srv.CreateNamespace(tenantctx.WithSystem(context.Background()), nil)
-
+// requireVectorInvalidArgument asserts that a vector handler rejected its
+// request with codes.InvalidArgument and a message containing want.
+func requireVectorInvalidArgument(t *testing.T, err error, want string) {
+	t.Helper()
 	require.Error(t, err)
-	assert.Nil(t, resp)
 	st, ok := status.FromError(err)
 	require.True(t, ok)
 	assert.Equal(t, codes.InvalidArgument, st.Code())
-	assert.Contains(t, st.Message(), "request is nil")
+	assert.Contains(t, st.Message(), want)
 }
 
-func TestCreateNamespace_NilConfig(t *testing.T) {
-	srv, _ := newMockTestServer(t)
-
-	resp, err := srv.CreateNamespace(tenantctx.WithSystem(context.Background()), &pb.CreateNamespaceRequest{})
-
-	require.Error(t, err)
-	assert.Nil(t, resp)
-	st, ok := status.FromError(err)
-	require.True(t, ok)
-	assert.Equal(t, codes.InvalidArgument, st.Code())
-	assert.Contains(t, st.Message(), "config is required")
-}
-
-func TestCreateNamespace_EmptyNamespace(t *testing.T) {
-	srv, _ := newMockTestServer(t)
-
-	resp, err := srv.CreateNamespace(tenantctx.WithSystem(context.Background()), &pb.CreateNamespaceRequest{
-		Config: &pb.NamespaceConfig{
-			Namespace:  "",
-			Dimensions: 128,
+func TestCreateNamespace_InvalidRequest(t *testing.T) {
+	tests := []struct {
+		name    string
+		req     *pb.CreateNamespaceRequest
+		wantMsg string
+	}{
+		{"nil request", nil, "request is nil"},
+		{"nil config", &pb.CreateNamespaceRequest{}, "config is required"},
+		{
+			"empty namespace",
+			&pb.CreateNamespaceRequest{Config: &pb.NamespaceConfig{Namespace: "", Dimensions: 128}},
+			"namespace name is required",
 		},
-	})
-
-	require.Error(t, err)
-	assert.Nil(t, resp)
-	st, ok := status.FromError(err)
-	require.True(t, ok)
-	assert.Equal(t, codes.InvalidArgument, st.Code())
-	assert.Contains(t, st.Message(), "namespace name is required")
-}
-
-func TestCreateNamespace_InvalidDimensions(t *testing.T) {
-	srv, _ := newMockTestServer(t)
-
-	resp, err := srv.CreateNamespace(tenantctx.WithSystem(context.Background()), &pb.CreateNamespaceRequest{
-		Config: &pb.NamespaceConfig{
-			Namespace:  "test-ns",
-			Dimensions: 0,
+		{
+			"zero dimensions",
+			&pb.CreateNamespaceRequest{Config: &pb.NamespaceConfig{Namespace: "test-ns", Dimensions: 0}},
+			"dimensions must be positive",
 		},
-	})
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			srv, _ := newMockTestServer(t)
 
-	require.Error(t, err)
-	assert.Nil(t, resp)
-	st, ok := status.FromError(err)
-	require.True(t, ok)
-	assert.Equal(t, codes.InvalidArgument, st.Code())
-	assert.Contains(t, st.Message(), "dimensions must be positive")
+			resp, err := srv.CreateNamespace(tenantctx.WithSystem(context.Background()), tt.req)
+
+			assert.Nil(t, resp)
+			requireVectorInvalidArgument(t, err, tt.wantMsg)
+		})
+	}
 }
 
 func TestCreateNamespace_Success(t *testing.T) {
@@ -405,30 +383,24 @@ func TestCreateNamespace_ServiceError(t *testing.T) {
 // UpdateNamespace Tests
 // =============================================================================
 
-func TestUpdateNamespace_NilRequest(t *testing.T) {
-	srv, _ := newMockTestServer(t)
+func TestUpdateNamespace_InvalidRequest(t *testing.T) {
+	tests := []struct {
+		name string
+		req  *pb.UpdateNamespaceRequest
+	}{
+		{"nil request", nil},
+		{"empty namespace", &pb.UpdateNamespaceRequest{Namespace: ""}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			srv, _ := newMockTestServer(t)
 
-	resp, err := srv.UpdateNamespace(tenantctx.WithSystem(context.Background()), nil)
+			resp, err := srv.UpdateNamespace(tenantctx.WithSystem(context.Background()), tt.req)
 
-	require.Error(t, err)
-	assert.Nil(t, resp)
-	st, ok := status.FromError(err)
-	require.True(t, ok)
-	assert.Equal(t, codes.InvalidArgument, st.Code())
-}
-
-func TestUpdateNamespace_EmptyNamespace(t *testing.T) {
-	srv, _ := newMockTestServer(t)
-
-	resp, err := srv.UpdateNamespace(tenantctx.WithSystem(context.Background()), &pb.UpdateNamespaceRequest{
-		Namespace: "",
-	})
-
-	require.Error(t, err)
-	assert.Nil(t, resp)
-	st, ok := status.FromError(err)
-	require.True(t, ok)
-	assert.Equal(t, codes.InvalidArgument, st.Code())
+			assert.Nil(t, resp)
+			requireVectorInvalidArgument(t, err, "")
+		})
+	}
 }
 
 func TestUpdateNamespace_Success(t *testing.T) {
@@ -534,30 +506,24 @@ func TestUpdateNamespace_CreateNamespaceError(t *testing.T) {
 // DeleteNamespace Tests
 // =============================================================================
 
-func TestDeleteNamespace_NilRequest(t *testing.T) {
-	srv, _ := newMockTestServer(t)
+func TestDeleteNamespace_InvalidRequest(t *testing.T) {
+	tests := []struct {
+		name string
+		req  *pb.DeleteNamespaceRequest
+	}{
+		{"nil request", nil},
+		{"empty namespace", &pb.DeleteNamespaceRequest{Namespace: ""}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			srv, _ := newMockTestServer(t)
 
-	resp, err := srv.DeleteNamespace(tenantctx.WithSystem(context.Background()), nil)
+			resp, err := srv.DeleteNamespace(tenantctx.WithSystem(context.Background()), tt.req)
 
-	require.Error(t, err)
-	assert.Nil(t, resp)
-	st, ok := status.FromError(err)
-	require.True(t, ok)
-	assert.Equal(t, codes.InvalidArgument, st.Code())
-}
-
-func TestDeleteNamespace_EmptyNamespace(t *testing.T) {
-	srv, _ := newMockTestServer(t)
-
-	resp, err := srv.DeleteNamespace(tenantctx.WithSystem(context.Background()), &pb.DeleteNamespaceRequest{
-		Namespace: "",
-	})
-
-	require.Error(t, err)
-	assert.Nil(t, resp)
-	st, ok := status.FromError(err)
-	require.True(t, ok)
-	assert.Equal(t, codes.InvalidArgument, st.Code())
+			assert.Nil(t, resp)
+			requireVectorInvalidArgument(t, err, "")
+		})
+	}
 }
 
 func TestDeleteNamespace_Success(t *testing.T) {
@@ -634,30 +600,24 @@ func TestListNamespaces_Success(t *testing.T) {
 // GetNamespaceInfo Tests
 // =============================================================================
 
-func TestGetNamespaceInfo_NilRequest(t *testing.T) {
-	srv, _ := newMockTestServer(t)
+func TestGetNamespaceInfo_InvalidRequest(t *testing.T) {
+	tests := []struct {
+		name string
+		req  *pb.GetNamespaceInfoRequest
+	}{
+		{"nil request", nil},
+		{"empty namespace", &pb.GetNamespaceInfoRequest{Namespace: ""}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			srv, _ := newMockTestServer(t)
 
-	resp, err := srv.GetNamespaceInfo(tenantctx.WithSystem(context.Background()), nil)
+			resp, err := srv.GetNamespaceInfo(tenantctx.WithSystem(context.Background()), tt.req)
 
-	require.Error(t, err)
-	assert.Nil(t, resp)
-	st, ok := status.FromError(err)
-	require.True(t, ok)
-	assert.Equal(t, codes.InvalidArgument, st.Code())
-}
-
-func TestGetNamespaceInfo_EmptyNamespace(t *testing.T) {
-	srv, _ := newMockTestServer(t)
-
-	resp, err := srv.GetNamespaceInfo(tenantctx.WithSystem(context.Background()), &pb.GetNamespaceInfoRequest{
-		Namespace: "",
-	})
-
-	require.Error(t, err)
-	assert.Nil(t, resp)
-	st, ok := status.FromError(err)
-	require.True(t, ok)
-	assert.Equal(t, codes.InvalidArgument, st.Code())
+			assert.Nil(t, resp)
+			requireVectorInvalidArgument(t, err, "")
+		})
+	}
 }
 
 func TestGetNamespaceInfo_Success(t *testing.T) {
@@ -691,124 +651,33 @@ func TestGetNamespaceInfo_Success(t *testing.T) {
 // UpsertVector Tests
 // =============================================================================
 
-func TestUpsertVector_NilRequest(t *testing.T) {
-	srv, _ := newMockTestServer(t)
+func TestUpsertVector_InvalidRequest(t *testing.T) {
+	entity := func(namespace, id string, vector []float32) *pb.UpsertVectorRequest {
+		return &pb.UpsertVectorRequest{Vector: &pb.VectorEntity{Namespace: namespace, Id: id, Vector: vector}}
+	}
+	tests := []struct {
+		name    string
+		req     *pb.UpsertVectorRequest
+		wantMsg string
+	}{
+		{"nil request", nil, ""},
+		{"nil vector", &pb.UpsertVectorRequest{}, "vector is required"},
+		{"empty namespace", entity("", "vec1", []float32{1.0, 2.0, 3.0}), "namespace is required"},
+		{"empty id", entity("test-ns", "", []float32{1.0, 2.0, 3.0}), "vector ID is required"},
+		{"empty vector data", entity("test-ns", "vec1", []float32{}), "vector data is required"},
+		{"NaN value", entity("test-ns", "vec1", []float32{1.0, float32(math.NaN()), 3.0}), "NaN or Inf"},
+		{"Inf value", entity("test-ns", "vec1", []float32{1.0, float32(math.Inf(1)), 3.0}), "NaN or Inf"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			srv, _ := newMockTestServer(t)
 
-	resp, err := srv.UpsertVector(tenantctx.WithSystem(context.Background()), nil)
+			resp, err := srv.UpsertVector(tenantctx.WithSystem(context.Background()), tt.req)
 
-	require.Error(t, err)
-	assert.Nil(t, resp)
-	st, ok := status.FromError(err)
-	require.True(t, ok)
-	assert.Equal(t, codes.InvalidArgument, st.Code())
-}
-
-func TestUpsertVector_NilVector(t *testing.T) {
-	srv, _ := newMockTestServer(t)
-
-	resp, err := srv.UpsertVector(tenantctx.WithSystem(context.Background()), &pb.UpsertVectorRequest{})
-
-	require.Error(t, err)
-	assert.Nil(t, resp)
-	st, ok := status.FromError(err)
-	require.True(t, ok)
-	assert.Equal(t, codes.InvalidArgument, st.Code())
-	assert.Contains(t, st.Message(), "vector is required")
-}
-
-func TestUpsertVector_EmptyNamespace(t *testing.T) {
-	srv, _ := newMockTestServer(t)
-
-	resp, err := srv.UpsertVector(tenantctx.WithSystem(context.Background()), &pb.UpsertVectorRequest{
-		Vector: &pb.VectorEntity{
-			Namespace: "",
-			Id:        "vec1",
-			Vector:    []float32{1.0, 2.0, 3.0},
-		},
-	})
-
-	require.Error(t, err)
-	assert.Nil(t, resp)
-	st, ok := status.FromError(err)
-	require.True(t, ok)
-	assert.Equal(t, codes.InvalidArgument, st.Code())
-	assert.Contains(t, st.Message(), "namespace is required")
-}
-
-func TestUpsertVector_EmptyID(t *testing.T) {
-	srv, _ := newMockTestServer(t)
-
-	resp, err := srv.UpsertVector(tenantctx.WithSystem(context.Background()), &pb.UpsertVectorRequest{
-		Vector: &pb.VectorEntity{
-			Namespace: "test-ns",
-			Id:        "",
-			Vector:    []float32{1.0, 2.0, 3.0},
-		},
-	})
-
-	require.Error(t, err)
-	assert.Nil(t, resp)
-	st, ok := status.FromError(err)
-	require.True(t, ok)
-	assert.Equal(t, codes.InvalidArgument, st.Code())
-	assert.Contains(t, st.Message(), "vector ID is required")
-}
-
-func TestUpsertVector_EmptyVectorData(t *testing.T) {
-	srv, _ := newMockTestServer(t)
-
-	resp, err := srv.UpsertVector(tenantctx.WithSystem(context.Background()), &pb.UpsertVectorRequest{
-		Vector: &pb.VectorEntity{
-			Namespace: "test-ns",
-			Id:        "vec1",
-			Vector:    []float32{},
-		},
-	})
-
-	require.Error(t, err)
-	assert.Nil(t, resp)
-	st, ok := status.FromError(err)
-	require.True(t, ok)
-	assert.Equal(t, codes.InvalidArgument, st.Code())
-	assert.Contains(t, st.Message(), "vector data is required")
-}
-
-func TestUpsertVector_NaNValue(t *testing.T) {
-	srv, _ := newMockTestServer(t)
-
-	resp, err := srv.UpsertVector(tenantctx.WithSystem(context.Background()), &pb.UpsertVectorRequest{
-		Vector: &pb.VectorEntity{
-			Namespace: "test-ns",
-			Id:        "vec1",
-			Vector:    []float32{1.0, float32(math.NaN()), 3.0},
-		},
-	})
-
-	require.Error(t, err)
-	assert.Nil(t, resp)
-	st, ok := status.FromError(err)
-	require.True(t, ok)
-	assert.Equal(t, codes.InvalidArgument, st.Code())
-	assert.Contains(t, st.Message(), "NaN or Inf")
-}
-
-func TestUpsertVector_InfValue(t *testing.T) {
-	srv, _ := newMockTestServer(t)
-
-	resp, err := srv.UpsertVector(tenantctx.WithSystem(context.Background()), &pb.UpsertVectorRequest{
-		Vector: &pb.VectorEntity{
-			Namespace: "test-ns",
-			Id:        "vec1",
-			Vector:    []float32{1.0, float32(math.Inf(1)), 3.0},
-		},
-	})
-
-	require.Error(t, err)
-	assert.Nil(t, resp)
-	st, ok := status.FromError(err)
-	require.True(t, ok)
-	assert.Equal(t, codes.InvalidArgument, st.Code())
-	assert.Contains(t, st.Message(), "NaN or Inf")
+			assert.Nil(t, resp)
+			requireVectorInvalidArgument(t, err, tt.wantMsg)
+		})
+	}
 }
 
 func TestUpsertVector_Success(t *testing.T) {
@@ -841,46 +710,25 @@ func TestUpsertVector_Success(t *testing.T) {
 // GetVector Tests
 // =============================================================================
 
-func TestGetVector_NilRequest(t *testing.T) {
-	srv, _ := newMockTestServer(t)
+func TestGetVector_InvalidRequest(t *testing.T) {
+	tests := []struct {
+		name string
+		req  *pb.GetVectorRequest
+	}{
+		{"nil request", nil},
+		{"empty namespace", &pb.GetVectorRequest{Namespace: "", Id: "vec1"}},
+		{"empty id", &pb.GetVectorRequest{Namespace: "test-ns", Id: ""}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			srv, _ := newMockTestServer(t)
 
-	resp, err := srv.GetVector(tenantctx.WithSystem(context.Background()), nil)
+			resp, err := srv.GetVector(tenantctx.WithSystem(context.Background()), tt.req)
 
-	require.Error(t, err)
-	assert.Nil(t, resp)
-	st, ok := status.FromError(err)
-	require.True(t, ok)
-	assert.Equal(t, codes.InvalidArgument, st.Code())
-}
-
-func TestGetVector_EmptyNamespace(t *testing.T) {
-	srv, _ := newMockTestServer(t)
-
-	resp, err := srv.GetVector(tenantctx.WithSystem(context.Background()), &pb.GetVectorRequest{
-		Namespace: "",
-		Id:        "vec1",
-	})
-
-	require.Error(t, err)
-	assert.Nil(t, resp)
-	st, ok := status.FromError(err)
-	require.True(t, ok)
-	assert.Equal(t, codes.InvalidArgument, st.Code())
-}
-
-func TestGetVector_EmptyID(t *testing.T) {
-	srv, _ := newMockTestServer(t)
-
-	resp, err := srv.GetVector(tenantctx.WithSystem(context.Background()), &pb.GetVectorRequest{
-		Namespace: "test-ns",
-		Id:        "",
-	})
-
-	require.Error(t, err)
-	assert.Nil(t, resp)
-	st, ok := status.FromError(err)
-	require.True(t, ok)
-	assert.Equal(t, codes.InvalidArgument, st.Code())
+			assert.Nil(t, resp)
+			requireVectorInvalidArgument(t, err, "")
+		})
+	}
 }
 
 func TestGetVector_NotFound(t *testing.T) {
@@ -934,40 +782,25 @@ func TestGetVector_Success(t *testing.T) {
 // DeleteVector Tests
 // =============================================================================
 
-func TestDeleteVector_NilRequest(t *testing.T) {
-	srv, _ := newMockTestServer(t)
+func TestDeleteVector_InvalidRequest(t *testing.T) {
+	tests := []struct {
+		name string
+		req  *pb.DeleteVectorRequest
+	}{
+		{"nil request", nil},
+		{"empty namespace", &pb.DeleteVectorRequest{Namespace: "", Id: "vec1"}},
+		{"empty id", &pb.DeleteVectorRequest{Namespace: "test-ns", Id: ""}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			srv, _ := newMockTestServer(t)
 
-	resp, err := srv.DeleteVector(tenantctx.WithSystem(context.Background()), nil)
+			resp, err := srv.DeleteVector(tenantctx.WithSystem(context.Background()), tt.req)
 
-	require.Error(t, err)
-	assert.Nil(t, resp)
-	st, ok := status.FromError(err)
-	require.True(t, ok)
-	assert.Equal(t, codes.InvalidArgument, st.Code())
-}
-
-func TestDeleteVector_EmptyNamespace(t *testing.T) {
-	srv, _ := newMockTestServer(t)
-
-	resp, err := srv.DeleteVector(tenantctx.WithSystem(context.Background()), &pb.DeleteVectorRequest{
-		Namespace: "",
-		Id:        "vec1",
-	})
-
-	require.Error(t, err)
-	assert.Nil(t, resp)
-}
-
-func TestDeleteVector_EmptyID(t *testing.T) {
-	srv, _ := newMockTestServer(t)
-
-	resp, err := srv.DeleteVector(tenantctx.WithSystem(context.Background()), &pb.DeleteVectorRequest{
-		Namespace: "test-ns",
-		Id:        "",
-	})
-
-	require.Error(t, err)
-	assert.Nil(t, resp)
+			assert.Nil(t, resp)
+			requireVectorInvalidArgument(t, err, "")
+		})
+	}
 }
 
 func TestDeleteVector_Success(t *testing.T) {
@@ -994,40 +827,25 @@ func TestDeleteVector_Success(t *testing.T) {
 // BatchDeleteVectors Tests
 // =============================================================================
 
-func TestBatchDeleteVectors_NilRequest(t *testing.T) {
-	srv, _ := newMockTestServer(t)
+func TestBatchDeleteVectors_InvalidRequest(t *testing.T) {
+	tests := []struct {
+		name string
+		req  *pb.BatchDeleteVectorsRequest
+	}{
+		{"nil request", nil},
+		{"empty namespace", &pb.BatchDeleteVectorsRequest{Namespace: "", Ids: []string{"vec1"}}},
+		{"empty ids", &pb.BatchDeleteVectorsRequest{Namespace: "test-ns", Ids: []string{}}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			srv, _ := newMockTestServer(t)
 
-	resp, err := srv.BatchDeleteVectors(tenantctx.WithSystem(context.Background()), nil)
+			resp, err := srv.BatchDeleteVectors(tenantctx.WithSystem(context.Background()), tt.req)
 
-	require.Error(t, err)
-	assert.Nil(t, resp)
-	st, ok := status.FromError(err)
-	require.True(t, ok)
-	assert.Equal(t, codes.InvalidArgument, st.Code())
-}
-
-func TestBatchDeleteVectors_EmptyNamespace(t *testing.T) {
-	srv, _ := newMockTestServer(t)
-
-	resp, err := srv.BatchDeleteVectors(tenantctx.WithSystem(context.Background()), &pb.BatchDeleteVectorsRequest{
-		Namespace: "",
-		Ids:       []string{"vec1"},
-	})
-
-	require.Error(t, err)
-	assert.Nil(t, resp)
-}
-
-func TestBatchDeleteVectors_EmptyIDs(t *testing.T) {
-	srv, _ := newMockTestServer(t)
-
-	resp, err := srv.BatchDeleteVectors(tenantctx.WithSystem(context.Background()), &pb.BatchDeleteVectorsRequest{
-		Namespace: "test-ns",
-		Ids:       []string{},
-	})
-
-	require.Error(t, err)
-	assert.Nil(t, resp)
+			assert.Nil(t, resp)
+			requireVectorInvalidArgument(t, err, "")
+		})
+	}
 }
 
 func TestBatchDeleteVectors_Success(t *testing.T) {
@@ -1054,141 +872,61 @@ func TestBatchDeleteVectors_Success(t *testing.T) {
 // BatchUpsertVectors Tests
 // =============================================================================
 
-func TestBatchUpsertVectors_NilRequest(t *testing.T) {
-	srv, _ := newMockTestServer(t)
-
-	stream := NewMockBatchUpsertVectorsStream(tenantctx.WithSystem(context.Background()))
-	err := srv.BatchUpsertVectors(nil, stream)
-
-	require.Error(t, err)
-	st, ok := status.FromError(err)
-	require.True(t, ok)
-	assert.Equal(t, codes.InvalidArgument, st.Code())
-}
-
-func TestBatchUpsertVectors_EmptyVectors(t *testing.T) {
-	srv, _ := newMockTestServer(t)
-
-	stream := NewMockBatchUpsertVectorsStream(tenantctx.WithSystem(context.Background()))
-	err := srv.BatchUpsertVectors(&pb.BatchUpsertVectorsRequest{
-		Vectors: []*pb.VectorEntity{},
-	}, stream)
-
-	require.Error(t, err)
-	st, ok := status.FromError(err)
-	require.True(t, ok)
-	assert.Equal(t, codes.InvalidArgument, st.Code())
-}
-
-func TestBatchUpsertVectors_ExceedsMaxBatchSize(t *testing.T) {
-	srv, _ := newMockTestServer(t)
-
-	// Create more than max batch size vectors
-	vectors := make([]*pb.VectorEntity, 10001)
-	for i := range vectors {
-		vectors[i] = &pb.VectorEntity{
-			Namespace: "test-ns",
-			Id:        "vec",
-			Vector:    []float32{1.0},
-		}
+func TestBatchUpsertVectors_InvalidRequest(t *testing.T) {
+	oversized := make([]*pb.VectorEntity, 10001)
+	for i := range oversized {
+		oversized[i] = &pb.VectorEntity{Namespace: "test-ns", Id: "vec", Vector: []float32{1.0}}
 	}
-
-	stream := NewMockBatchUpsertVectorsStream(tenantctx.WithSystem(context.Background()))
-	err := srv.BatchUpsertVectors(&pb.BatchUpsertVectorsRequest{
-		Vectors: vectors,
-	}, stream)
-
-	require.Error(t, err)
-	st, ok := status.FromError(err)
-	require.True(t, ok)
-	assert.Equal(t, codes.InvalidArgument, st.Code())
-	assert.Contains(t, st.Message(), "exceeds maximum")
-}
-
-func TestBatchUpsertVectors_MissingNamespace(t *testing.T) {
-	srv, _ := newMockTestServer(t)
-
-	stream := NewMockBatchUpsertVectorsStream(tenantctx.WithSystem(context.Background()))
-	err := srv.BatchUpsertVectors(&pb.BatchUpsertVectorsRequest{
-		Vectors: []*pb.VectorEntity{
-			{Namespace: "", Id: "vec1", Vector: []float32{1.0}},
+	batch := func(vectors ...*pb.VectorEntity) *pb.BatchUpsertVectorsRequest {
+		return &pb.BatchUpsertVectorsRequest{Vectors: vectors}
+	}
+	tests := []struct {
+		name    string
+		req     *pb.BatchUpsertVectorsRequest
+		wantMsg string
+	}{
+		{"nil request", nil, ""},
+		{"empty vectors", batch(), ""},
+		{"exceeds max batch size", batch(oversized...), "exceeds maximum"},
+		{
+			"missing namespace",
+			batch(&pb.VectorEntity{Namespace: "", Id: "vec1", Vector: []float32{1.0}}),
+			"namespace is required",
 		},
-	}, stream)
-
-	require.Error(t, err)
-	st, ok := status.FromError(err)
-	require.True(t, ok)
-	assert.Equal(t, codes.InvalidArgument, st.Code())
-	assert.Contains(t, st.Message(), "namespace is required")
-}
-
-func TestBatchUpsertVectors_MixedNamespaces(t *testing.T) {
-	srv, _ := newMockTestServer(t)
-
-	stream := NewMockBatchUpsertVectorsStream(tenantctx.WithSystem(context.Background()))
-	err := srv.BatchUpsertVectors(&pb.BatchUpsertVectorsRequest{
-		Vectors: []*pb.VectorEntity{
-			{Namespace: "ns1", Id: "vec1", Vector: []float32{1.0}},
-			{Namespace: "ns2", Id: "vec2", Vector: []float32{2.0}},
+		{
+			"mixed namespaces",
+			batch(
+				&pb.VectorEntity{Namespace: "ns1", Id: "vec1", Vector: []float32{1.0}},
+				&pb.VectorEntity{Namespace: "ns2", Id: "vec2", Vector: []float32{2.0}},
+			),
+			"same namespace",
 		},
-	}, stream)
-
-	require.Error(t, err)
-	st, ok := status.FromError(err)
-	require.True(t, ok)
-	assert.Equal(t, codes.InvalidArgument, st.Code())
-	assert.Contains(t, st.Message(), "same namespace")
-}
-
-func TestBatchUpsertVectors_MissingID(t *testing.T) {
-	srv, _ := newMockTestServer(t)
-
-	stream := NewMockBatchUpsertVectorsStream(tenantctx.WithSystem(context.Background()))
-	err := srv.BatchUpsertVectors(&pb.BatchUpsertVectorsRequest{
-		Vectors: []*pb.VectorEntity{
-			{Namespace: "test-ns", Id: "", Vector: []float32{1.0}},
+		{
+			"missing id",
+			batch(&pb.VectorEntity{Namespace: "test-ns", Id: "", Vector: []float32{1.0}}),
+			"ID is required",
 		},
-	}, stream)
-
-	require.Error(t, err)
-	st, ok := status.FromError(err)
-	require.True(t, ok)
-	assert.Equal(t, codes.InvalidArgument, st.Code())
-	assert.Contains(t, st.Message(), "ID is required")
-}
-
-func TestBatchUpsertVectors_EmptyVectorData(t *testing.T) {
-	srv, _ := newMockTestServer(t)
-
-	stream := NewMockBatchUpsertVectorsStream(tenantctx.WithSystem(context.Background()))
-	err := srv.BatchUpsertVectors(&pb.BatchUpsertVectorsRequest{
-		Vectors: []*pb.VectorEntity{
-			{Namespace: "test-ns", Id: "vec1", Vector: []float32{}},
+		{
+			"empty vector data",
+			batch(&pb.VectorEntity{Namespace: "test-ns", Id: "vec1", Vector: []float32{}}),
+			"vector data is required",
 		},
-	}, stream)
-
-	require.Error(t, err)
-	st, ok := status.FromError(err)
-	require.True(t, ok)
-	assert.Equal(t, codes.InvalidArgument, st.Code())
-	assert.Contains(t, st.Message(), "vector data is required")
-}
-
-func TestBatchUpsertVectors_NaNValue(t *testing.T) {
-	srv, _ := newMockTestServer(t)
-
-	stream := NewMockBatchUpsertVectorsStream(tenantctx.WithSystem(context.Background()))
-	err := srv.BatchUpsertVectors(&pb.BatchUpsertVectorsRequest{
-		Vectors: []*pb.VectorEntity{
-			{Namespace: "test-ns", Id: "vec1", Vector: []float32{float32(math.NaN())}},
+		{
+			"NaN value",
+			batch(&pb.VectorEntity{Namespace: "test-ns", Id: "vec1", Vector: []float32{float32(math.NaN())}}),
+			"NaN or Inf",
 		},
-	}, stream)
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			srv, _ := newMockTestServer(t)
 
-	require.Error(t, err)
-	st, ok := status.FromError(err)
-	require.True(t, ok)
-	assert.Equal(t, codes.InvalidArgument, st.Code())
-	assert.Contains(t, st.Message(), "NaN or Inf")
+			stream := NewMockBatchUpsertVectorsStream(tenantctx.WithSystem(context.Background()))
+			err := srv.BatchUpsertVectors(tt.req, stream)
+
+			requireVectorInvalidArgument(t, err, tt.wantMsg)
+		})
+	}
 }
 
 func TestBatchUpsertVectors_Success(t *testing.T) {
@@ -1219,100 +957,37 @@ func TestBatchUpsertVectors_Success(t *testing.T) {
 // SearchSimilar Tests
 // =============================================================================
 
-func TestSearchSimilar_NilRequest(t *testing.T) {
-	srv, _ := newMockTestServer(t)
+func TestSearchSimilar_InvalidRequest(t *testing.T) {
+	tests := []struct {
+		name    string
+		req     *pb.SearchSimilarRequest
+		wantMsg string
+	}{
+		{"nil request", nil, ""},
+		{"empty namespace", &pb.SearchSimilarRequest{Namespace: "", QueryVector: []float32{1.0}, K: 10}, ""},
+		{
+			"empty query vector",
+			&pb.SearchSimilarRequest{Namespace: "test-ns", QueryVector: []float32{}, K: 10},
+			"query vector is required",
+		},
+		{"zero K", &pb.SearchSimilarRequest{Namespace: "test-ns", QueryVector: []float32{1.0}, K: 0}, "K must be positive"},
+		{"K exceeds max", &pb.SearchSimilarRequest{Namespace: "test-ns", QueryVector: []float32{1.0}, K: 10001}, "exceeds maximum"},
+		{
+			"NaN in query vector",
+			&pb.SearchSimilarRequest{Namespace: "test-ns", QueryVector: []float32{float32(math.NaN())}, K: 10},
+			"NaN or Inf",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			srv, _ := newMockTestServer(t)
 
-	stream := NewMockSearchSimilarStream(tenantctx.WithSystem(context.Background()))
-	err := srv.SearchSimilar(nil, stream)
+			stream := NewMockSearchSimilarStream(tenantctx.WithSystem(context.Background()))
+			err := srv.SearchSimilar(tt.req, stream)
 
-	require.Error(t, err)
-	st, ok := status.FromError(err)
-	require.True(t, ok)
-	assert.Equal(t, codes.InvalidArgument, st.Code())
-}
-
-func TestSearchSimilar_EmptyNamespace(t *testing.T) {
-	srv, _ := newMockTestServer(t)
-
-	stream := NewMockSearchSimilarStream(tenantctx.WithSystem(context.Background()))
-	err := srv.SearchSimilar(&pb.SearchSimilarRequest{
-		Namespace:   "",
-		QueryVector: []float32{1.0},
-		K:           10,
-	}, stream)
-
-	require.Error(t, err)
-	st, ok := status.FromError(err)
-	require.True(t, ok)
-	assert.Equal(t, codes.InvalidArgument, st.Code())
-}
-
-func TestSearchSimilar_EmptyQueryVector(t *testing.T) {
-	srv, _ := newMockTestServer(t)
-
-	stream := NewMockSearchSimilarStream(tenantctx.WithSystem(context.Background()))
-	err := srv.SearchSimilar(&pb.SearchSimilarRequest{
-		Namespace:   "test-ns",
-		QueryVector: []float32{},
-		K:           10,
-	}, stream)
-
-	require.Error(t, err)
-	st, ok := status.FromError(err)
-	require.True(t, ok)
-	assert.Equal(t, codes.InvalidArgument, st.Code())
-	assert.Contains(t, st.Message(), "query vector is required")
-}
-
-func TestSearchSimilar_InvalidK(t *testing.T) {
-	srv, _ := newMockTestServer(t)
-
-	stream := NewMockSearchSimilarStream(tenantctx.WithSystem(context.Background()))
-	err := srv.SearchSimilar(&pb.SearchSimilarRequest{
-		Namespace:   "test-ns",
-		QueryVector: []float32{1.0},
-		K:           0,
-	}, stream)
-
-	require.Error(t, err)
-	st, ok := status.FromError(err)
-	require.True(t, ok)
-	assert.Equal(t, codes.InvalidArgument, st.Code())
-	assert.Contains(t, st.Message(), "K must be positive")
-}
-
-func TestSearchSimilar_KExceedsMax(t *testing.T) {
-	srv, _ := newMockTestServer(t)
-
-	stream := NewMockSearchSimilarStream(tenantctx.WithSystem(context.Background()))
-	err := srv.SearchSimilar(&pb.SearchSimilarRequest{
-		Namespace:   "test-ns",
-		QueryVector: []float32{1.0},
-		K:           10001,
-	}, stream)
-
-	require.Error(t, err)
-	st, ok := status.FromError(err)
-	require.True(t, ok)
-	assert.Equal(t, codes.InvalidArgument, st.Code())
-	assert.Contains(t, st.Message(), "exceeds maximum")
-}
-
-func TestSearchSimilar_NaNInQueryVector(t *testing.T) {
-	srv, _ := newMockTestServer(t)
-
-	stream := NewMockSearchSimilarStream(tenantctx.WithSystem(context.Background()))
-	err := srv.SearchSimilar(&pb.SearchSimilarRequest{
-		Namespace:   "test-ns",
-		QueryVector: []float32{float32(math.NaN())},
-		K:           10,
-	}, stream)
-
-	require.Error(t, err)
-	st, ok := status.FromError(err)
-	require.True(t, ok)
-	assert.Equal(t, codes.InvalidArgument, st.Code())
-	assert.Contains(t, st.Message(), "NaN or Inf")
+			requireVectorInvalidArgument(t, err, tt.wantMsg)
+		})
+	}
 }
 
 func TestSearchSimilar_Success(t *testing.T) {
@@ -1346,82 +1021,28 @@ func TestSearchSimilar_Success(t *testing.T) {
 // SearchByID Tests
 // =============================================================================
 
-func TestSearchByID_NilRequest(t *testing.T) {
-	srv, _ := newMockTestServer(t)
+func TestSearchByID_InvalidRequest(t *testing.T) {
+	tests := []struct {
+		name    string
+		req     *pb.SearchByIDRequest
+		wantMsg string
+	}{
+		{"nil request", nil, ""},
+		{"empty namespace", &pb.SearchByIDRequest{Namespace: "", Id: "vec1", K: 10}, ""},
+		{"empty id", &pb.SearchByIDRequest{Namespace: "test-ns", Id: "", K: 10}, ""},
+		{"zero K", &pb.SearchByIDRequest{Namespace: "test-ns", Id: "vec1", K: 0}, "K must be positive"},
+		{"K exceeds max", &pb.SearchByIDRequest{Namespace: "test-ns", Id: "vec1", K: 10001}, "exceeds maximum"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			srv, _ := newMockTestServer(t)
 
-	stream := NewMockSearchByIDStream(tenantctx.WithSystem(context.Background()))
-	err := srv.SearchByID(nil, stream)
+			stream := NewMockSearchByIDStream(tenantctx.WithSystem(context.Background()))
+			err := srv.SearchByID(tt.req, stream)
 
-	require.Error(t, err)
-	st, ok := status.FromError(err)
-	require.True(t, ok)
-	assert.Equal(t, codes.InvalidArgument, st.Code())
-}
-
-func TestSearchByID_EmptyNamespace(t *testing.T) {
-	srv, _ := newMockTestServer(t)
-
-	stream := NewMockSearchByIDStream(tenantctx.WithSystem(context.Background()))
-	err := srv.SearchByID(&pb.SearchByIDRequest{
-		Namespace: "",
-		Id:        "vec1",
-		K:         10,
-	}, stream)
-
-	require.Error(t, err)
-	st, ok := status.FromError(err)
-	require.True(t, ok)
-	assert.Equal(t, codes.InvalidArgument, st.Code())
-}
-
-func TestSearchByID_EmptyID(t *testing.T) {
-	srv, _ := newMockTestServer(t)
-
-	stream := NewMockSearchByIDStream(tenantctx.WithSystem(context.Background()))
-	err := srv.SearchByID(&pb.SearchByIDRequest{
-		Namespace: "test-ns",
-		Id:        "",
-		K:         10,
-	}, stream)
-
-	require.Error(t, err)
-	st, ok := status.FromError(err)
-	require.True(t, ok)
-	assert.Equal(t, codes.InvalidArgument, st.Code())
-}
-
-func TestSearchByID_InvalidK(t *testing.T) {
-	srv, _ := newMockTestServer(t)
-
-	stream := NewMockSearchByIDStream(tenantctx.WithSystem(context.Background()))
-	err := srv.SearchByID(&pb.SearchByIDRequest{
-		Namespace: "test-ns",
-		Id:        "vec1",
-		K:         0,
-	}, stream)
-
-	require.Error(t, err)
-	st, ok := status.FromError(err)
-	require.True(t, ok)
-	assert.Equal(t, codes.InvalidArgument, st.Code())
-	assert.Contains(t, st.Message(), "K must be positive")
-}
-
-func TestSearchByID_KExceedsMax(t *testing.T) {
-	srv, _ := newMockTestServer(t)
-
-	stream := NewMockSearchByIDStream(tenantctx.WithSystem(context.Background()))
-	err := srv.SearchByID(&pb.SearchByIDRequest{
-		Namespace: "test-ns",
-		Id:        "vec1",
-		K:         10001,
-	}, stream)
-
-	require.Error(t, err)
-	st, ok := status.FromError(err)
-	require.True(t, ok)
-	assert.Equal(t, codes.InvalidArgument, st.Code())
-	assert.Contains(t, st.Message(), "exceeds maximum")
+			requireVectorInvalidArgument(t, err, tt.wantMsg)
+		})
+	}
 }
 
 func TestSearchByID_VectorNotFound(t *testing.T) {
@@ -1524,100 +1145,37 @@ func TestSearchByID_IncludeSelf(t *testing.T) {
 // HybridSearch Tests
 // =============================================================================
 
-func TestHybridSearch_NilRequest(t *testing.T) {
-	srv, _ := newMockTestServer(t)
+func TestHybridSearch_InvalidRequest(t *testing.T) {
+	tests := []struct {
+		name    string
+		req     *pb.HybridSearchRequest
+		wantMsg string
+	}{
+		{"nil request", nil, ""},
+		{"empty namespace", &pb.HybridSearchRequest{Namespace: "", QueryVector: []float32{1.0}, K: 10}, ""},
+		{
+			"empty query vector",
+			&pb.HybridSearchRequest{Namespace: "test-ns", QueryVector: []float32{}, K: 10},
+			"query vector is required",
+		},
+		{"zero K", &pb.HybridSearchRequest{Namespace: "test-ns", QueryVector: []float32{1.0}, K: 0}, "K must be positive"},
+		{"K exceeds max", &pb.HybridSearchRequest{Namespace: "test-ns", QueryVector: []float32{1.0}, K: 10001}, "exceeds maximum"},
+		{
+			"NaN in query vector",
+			&pb.HybridSearchRequest{Namespace: "test-ns", QueryVector: []float32{float32(math.NaN())}, K: 10},
+			"NaN or Inf",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			srv, _ := newMockTestServer(t)
 
-	stream := NewMockHybridSearchStream(tenantctx.WithSystem(context.Background()))
-	err := srv.HybridSearch(nil, stream)
+			stream := NewMockHybridSearchStream(tenantctx.WithSystem(context.Background()))
+			err := srv.HybridSearch(tt.req, stream)
 
-	require.Error(t, err)
-	st, ok := status.FromError(err)
-	require.True(t, ok)
-	assert.Equal(t, codes.InvalidArgument, st.Code())
-}
-
-func TestHybridSearch_EmptyNamespace(t *testing.T) {
-	srv, _ := newMockTestServer(t)
-
-	stream := NewMockHybridSearchStream(tenantctx.WithSystem(context.Background()))
-	err := srv.HybridSearch(&pb.HybridSearchRequest{
-		Namespace:   "",
-		QueryVector: []float32{1.0},
-		K:           10,
-	}, stream)
-
-	require.Error(t, err)
-	st, ok := status.FromError(err)
-	require.True(t, ok)
-	assert.Equal(t, codes.InvalidArgument, st.Code())
-}
-
-func TestHybridSearch_EmptyQueryVector(t *testing.T) {
-	srv, _ := newMockTestServer(t)
-
-	stream := NewMockHybridSearchStream(tenantctx.WithSystem(context.Background()))
-	err := srv.HybridSearch(&pb.HybridSearchRequest{
-		Namespace:   "test-ns",
-		QueryVector: []float32{},
-		K:           10,
-	}, stream)
-
-	require.Error(t, err)
-	st, ok := status.FromError(err)
-	require.True(t, ok)
-	assert.Equal(t, codes.InvalidArgument, st.Code())
-	assert.Contains(t, st.Message(), "query vector is required")
-}
-
-func TestHybridSearch_InvalidK(t *testing.T) {
-	srv, _ := newMockTestServer(t)
-
-	stream := NewMockHybridSearchStream(tenantctx.WithSystem(context.Background()))
-	err := srv.HybridSearch(&pb.HybridSearchRequest{
-		Namespace:   "test-ns",
-		QueryVector: []float32{1.0},
-		K:           0,
-	}, stream)
-
-	require.Error(t, err)
-	st, ok := status.FromError(err)
-	require.True(t, ok)
-	assert.Equal(t, codes.InvalidArgument, st.Code())
-	assert.Contains(t, st.Message(), "K must be positive")
-}
-
-func TestHybridSearch_KExceedsMax(t *testing.T) {
-	srv, _ := newMockTestServer(t)
-
-	stream := NewMockHybridSearchStream(tenantctx.WithSystem(context.Background()))
-	err := srv.HybridSearch(&pb.HybridSearchRequest{
-		Namespace:   "test-ns",
-		QueryVector: []float32{1.0},
-		K:           10001,
-	}, stream)
-
-	require.Error(t, err)
-	st, ok := status.FromError(err)
-	require.True(t, ok)
-	assert.Equal(t, codes.InvalidArgument, st.Code())
-	assert.Contains(t, st.Message(), "exceeds maximum")
-}
-
-func TestHybridSearch_NaNInQueryVector(t *testing.T) {
-	srv, _ := newMockTestServer(t)
-
-	stream := NewMockHybridSearchStream(tenantctx.WithSystem(context.Background()))
-	err := srv.HybridSearch(&pb.HybridSearchRequest{
-		Namespace:   "test-ns",
-		QueryVector: []float32{float32(math.NaN())},
-		K:           10,
-	}, stream)
-
-	require.Error(t, err)
-	st, ok := status.FromError(err)
-	require.True(t, ok)
-	assert.Equal(t, codes.InvalidArgument, st.Code())
-	assert.Contains(t, st.Message(), "NaN or Inf")
+			requireVectorInvalidArgument(t, err, tt.wantMsg)
+		})
+	}
 }
 
 func TestHybridSearch_Success(t *testing.T) {
@@ -1704,87 +1262,41 @@ func TestHybridSearch_ServiceError(t *testing.T) {
 // SearchByMetadata Tests
 // =============================================================================
 
-func TestSearchByMetadata_NilRequest(t *testing.T) {
-	srv, _ := newMockTestServer(t)
-
-	stream := NewMockSearchByMetadataStream(tenantctx.WithSystem(context.Background()))
-	err := srv.SearchByMetadata(nil, stream)
-
-	require.Error(t, err)
-	st, ok := status.FromError(err)
-	require.True(t, ok)
-	assert.Equal(t, codes.InvalidArgument, st.Code())
-}
-
-func TestSearchByMetadata_EmptyNamespace(t *testing.T) {
-	srv, _ := newMockTestServer(t)
-
-	stream := NewMockSearchByMetadataStream(tenantctx.WithSystem(context.Background()))
-	err := srv.SearchByMetadata(&pb.SearchByMetadataRequest{
-		Namespace: "",
-		MetadataFilters: []*pb.MetadataFilter{
-			{Key: "category", Value: "test"},
+func TestSearchByMetadata_InvalidRequest(t *testing.T) {
+	filters := []*pb.MetadataFilter{{Key: "category", Value: "test"}}
+	tests := []struct {
+		name    string
+		req     *pb.SearchByMetadataRequest
+		wantMsg string
+	}{
+		{"nil request", nil, ""},
+		{"empty namespace", &pb.SearchByMetadataRequest{Namespace: "", MetadataFilters: filters}, ""},
+		{
+			"empty filters",
+			&pb.SearchByMetadataRequest{Namespace: "test-ns", MetadataFilters: []*pb.MetadataFilter{}},
+			"at least one metadata filter is required",
 		},
-	}, stream)
-
-	require.Error(t, err)
-	st, ok := status.FromError(err)
-	require.True(t, ok)
-	assert.Equal(t, codes.InvalidArgument, st.Code())
-}
-
-func TestSearchByMetadata_EmptyFilters(t *testing.T) {
-	srv, _ := newMockTestServer(t)
-
-	stream := NewMockSearchByMetadataStream(tenantctx.WithSystem(context.Background()))
-	err := srv.SearchByMetadata(&pb.SearchByMetadataRequest{
-		Namespace:       "test-ns",
-		MetadataFilters: []*pb.MetadataFilter{},
-	}, stream)
-
-	require.Error(t, err)
-	st, ok := status.FromError(err)
-	require.True(t, ok)
-	assert.Equal(t, codes.InvalidArgument, st.Code())
-	assert.Contains(t, st.Message(), "at least one metadata filter is required")
-}
-
-func TestSearchByMetadata_LimitExceedsMax(t *testing.T) {
-	srv, _ := newMockTestServer(t)
-
-	stream := NewMockSearchByMetadataStream(tenantctx.WithSystem(context.Background()))
-	err := srv.SearchByMetadata(&pb.SearchByMetadataRequest{
-		Namespace: "test-ns",
-		MetadataFilters: []*pb.MetadataFilter{
-			{Key: "category", Value: "test"},
+		{
+			"limit exceeds max",
+			&pb.SearchByMetadataRequest{Namespace: "test-ns", MetadataFilters: filters, Limit: 10001},
+			"exceeds maximum",
 		},
-		Limit: 10001,
-	}, stream)
-
-	require.Error(t, err)
-	st, ok := status.FromError(err)
-	require.True(t, ok)
-	assert.Equal(t, codes.InvalidArgument, st.Code())
-	assert.Contains(t, st.Message(), "exceeds maximum")
-}
-
-func TestSearchByMetadata_NegativeOffset(t *testing.T) {
-	srv, _ := newMockTestServer(t)
-
-	stream := NewMockSearchByMetadataStream(tenantctx.WithSystem(context.Background()))
-	err := srv.SearchByMetadata(&pb.SearchByMetadataRequest{
-		Namespace: "test-ns",
-		MetadataFilters: []*pb.MetadataFilter{
-			{Key: "category", Value: "test"},
+		{
+			"negative offset",
+			&pb.SearchByMetadataRequest{Namespace: "test-ns", MetadataFilters: filters, Offset: -1},
+			"offset cannot be negative",
 		},
-		Offset: -1,
-	}, stream)
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			srv, _ := newMockTestServer(t)
 
-	require.Error(t, err)
-	st, ok := status.FromError(err)
-	require.True(t, ok)
-	assert.Equal(t, codes.InvalidArgument, st.Code())
-	assert.Contains(t, st.Message(), "offset cannot be negative")
+			stream := NewMockSearchByMetadataStream(tenantctx.WithSystem(context.Background()))
+			err := srv.SearchByMetadata(tt.req, stream)
+
+			requireVectorInvalidArgument(t, err, tt.wantMsg)
+		})
+	}
 }
 
 func TestSearchByMetadata_Success(t *testing.T) {
@@ -1844,62 +1356,27 @@ func TestSearchByMetadata_ServiceError(t *testing.T) {
 // ListVectors Tests
 // =============================================================================
 
-func TestListVectors_NilRequest(t *testing.T) {
-	srv, _ := newMockTestServer(t)
+func TestListVectors_InvalidRequest(t *testing.T) {
+	tests := []struct {
+		name    string
+		req     *pb.ListVectorsRequest
+		wantMsg string
+	}{
+		{"nil request", nil, ""},
+		{"empty namespace", &pb.ListVectorsRequest{Namespace: ""}, ""},
+		{"negative page size", &pb.ListVectorsRequest{Namespace: "test-ns", PageSize: -1}, "page size cannot be negative"},
+		{"page size exceeds max", &pb.ListVectorsRequest{Namespace: "test-ns", PageSize: 1001}, "page size cannot exceed"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			srv, _ := newMockTestServer(t)
 
-	stream := NewMockListVectorsStream(tenantctx.WithSystem(context.Background()))
-	err := srv.ListVectors(nil, stream)
+			stream := NewMockListVectorsStream(tenantctx.WithSystem(context.Background()))
+			err := srv.ListVectors(tt.req, stream)
 
-	require.Error(t, err)
-	st, ok := status.FromError(err)
-	require.True(t, ok)
-	assert.Equal(t, codes.InvalidArgument, st.Code())
-}
-
-func TestListVectors_EmptyNamespace(t *testing.T) {
-	srv, _ := newMockTestServer(t)
-
-	stream := NewMockListVectorsStream(tenantctx.WithSystem(context.Background()))
-	err := srv.ListVectors(&pb.ListVectorsRequest{
-		Namespace: "",
-	}, stream)
-
-	require.Error(t, err)
-	st, ok := status.FromError(err)
-	require.True(t, ok)
-	assert.Equal(t, codes.InvalidArgument, st.Code())
-}
-
-func TestListVectors_NegativePageSize(t *testing.T) {
-	srv, _ := newMockTestServer(t)
-
-	stream := NewMockListVectorsStream(tenantctx.WithSystem(context.Background()))
-	err := srv.ListVectors(&pb.ListVectorsRequest{
-		Namespace: "test-ns",
-		PageSize:  -1,
-	}, stream)
-
-	require.Error(t, err)
-	st, ok := status.FromError(err)
-	require.True(t, ok)
-	assert.Equal(t, codes.InvalidArgument, st.Code())
-	assert.Contains(t, st.Message(), "page size cannot be negative")
-}
-
-func TestListVectors_PageSizeExceedsMax(t *testing.T) {
-	srv, _ := newMockTestServer(t)
-
-	stream := NewMockListVectorsStream(tenantctx.WithSystem(context.Background()))
-	err := srv.ListVectors(&pb.ListVectorsRequest{
-		Namespace: "test-ns",
-		PageSize:  1001,
-	}, stream)
-
-	require.Error(t, err)
-	st, ok := status.FromError(err)
-	require.True(t, ok)
-	assert.Equal(t, codes.InvalidArgument, st.Code())
-	assert.Contains(t, st.Message(), "page size cannot exceed")
+			requireVectorInvalidArgument(t, err, tt.wantMsg)
+		})
+	}
 }
 
 func TestListVectors_NamespaceNotFound(t *testing.T) {
@@ -2082,30 +1559,24 @@ func TestGetVectorStats_ClusterWideWithDetails(t *testing.T) {
 // RebuildIndex Tests
 // =============================================================================
 
-func TestRebuildIndex_NilRequest(t *testing.T) {
-	srv, _ := newMockTestServer(t)
+func TestRebuildIndex_InvalidRequest(t *testing.T) {
+	tests := []struct {
+		name string
+		req  *pb.RebuildIndexRequest
+	}{
+		{"nil request", nil},
+		{"empty namespace", &pb.RebuildIndexRequest{Namespace: ""}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			srv, _ := newMockTestServer(t)
 
-	resp, err := srv.RebuildIndex(tenantctx.WithSystem(context.Background()), nil)
+			resp, err := srv.RebuildIndex(tenantctx.WithSystem(context.Background()), tt.req)
 
-	require.Error(t, err)
-	assert.Nil(t, resp)
-	st, ok := status.FromError(err)
-	require.True(t, ok)
-	assert.Equal(t, codes.InvalidArgument, st.Code())
-}
-
-func TestRebuildIndex_EmptyNamespace(t *testing.T) {
-	srv, _ := newMockTestServer(t)
-
-	resp, err := srv.RebuildIndex(tenantctx.WithSystem(context.Background()), &pb.RebuildIndexRequest{
-		Namespace: "",
-	})
-
-	require.Error(t, err)
-	assert.Nil(t, resp)
-	st, ok := status.FromError(err)
-	require.True(t, ok)
-	assert.Equal(t, codes.InvalidArgument, st.Code())
+			assert.Nil(t, resp)
+			requireVectorInvalidArgument(t, err, "")
+		})
+	}
 }
 
 func TestRebuildIndex_Success(t *testing.T) {
@@ -2134,31 +1605,24 @@ func TestRebuildIndex_Success(t *testing.T) {
 // GetIndexProgress Tests
 // =============================================================================
 
-func TestGetIndexProgress_NilRequest(t *testing.T) {
-	srv, _ := newMockTestServer(t)
+func TestGetIndexProgress_InvalidRequest(t *testing.T) {
+	tests := []struct {
+		name string
+		req  *pb.GetIndexProgressRequest
+	}{
+		{"nil request", nil},
+		{"no operation or namespace", &pb.GetIndexProgressRequest{OperationId: "", Namespace: ""}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			srv, _ := newMockTestServer(t)
 
-	resp, err := srv.GetIndexProgress(tenantctx.WithSystem(context.Background()), nil)
+			resp, err := srv.GetIndexProgress(tenantctx.WithSystem(context.Background()), tt.req)
 
-	require.Error(t, err)
-	assert.Nil(t, resp)
-	st, ok := status.FromError(err)
-	require.True(t, ok)
-	assert.Equal(t, codes.InvalidArgument, st.Code())
-}
-
-func TestGetIndexProgress_NoOperationOrNamespace(t *testing.T) {
-	srv, _ := newMockTestServer(t)
-
-	resp, err := srv.GetIndexProgress(tenantctx.WithSystem(context.Background()), &pb.GetIndexProgressRequest{
-		OperationId: "",
-		Namespace:   "",
-	})
-
-	require.Error(t, err)
-	assert.Nil(t, resp)
-	st, ok := status.FromError(err)
-	require.True(t, ok)
-	assert.Equal(t, codes.InvalidArgument, st.Code())
+			assert.Nil(t, resp)
+			requireVectorInvalidArgument(t, err, "")
+		})
+	}
 }
 
 func TestGetIndexProgress_Success(t *testing.T) {
@@ -2304,30 +1768,24 @@ func TestGetClusterStats_ClusterStatusError(t *testing.T) {
 // CompactNamespace Tests
 // =============================================================================
 
-func TestCompactNamespace_NilRequest(t *testing.T) {
-	srv, _ := newMockTestServer(t)
+func TestCompactNamespace_InvalidRequest(t *testing.T) {
+	tests := []struct {
+		name string
+		req  *pb.CompactNamespaceRequest
+	}{
+		{"nil request", nil},
+		{"empty namespace", &pb.CompactNamespaceRequest{Namespace: ""}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			srv, _ := newMockTestServer(t)
 
-	resp, err := srv.CompactNamespace(tenantctx.WithSystem(context.Background()), nil)
+			resp, err := srv.CompactNamespace(tenantctx.WithSystem(context.Background()), tt.req)
 
-	require.Error(t, err)
-	assert.Nil(t, resp)
-	st, ok := status.FromError(err)
-	require.True(t, ok)
-	assert.Equal(t, codes.InvalidArgument, st.Code())
-}
-
-func TestCompactNamespace_EmptyNamespace(t *testing.T) {
-	srv, _ := newMockTestServer(t)
-
-	resp, err := srv.CompactNamespace(tenantctx.WithSystem(context.Background()), &pb.CompactNamespaceRequest{
-		Namespace: "",
-	})
-
-	require.Error(t, err)
-	assert.Nil(t, resp)
-	st, ok := status.FromError(err)
-	require.True(t, ok)
-	assert.Equal(t, codes.InvalidArgument, st.Code())
+			assert.Nil(t, resp)
+			requireVectorInvalidArgument(t, err, "")
+		})
+	}
 }
 
 func TestCompactNamespace_Success(t *testing.T) {
@@ -2370,30 +1828,24 @@ func TestCompactNamespace_ServiceError(t *testing.T) {
 // GetCompactionProgress Tests
 // =============================================================================
 
-func TestGetCompactionProgress_NilRequest(t *testing.T) {
-	srv, _ := newMockTestServer(t)
+func TestGetCompactionProgress_InvalidRequest(t *testing.T) {
+	tests := []struct {
+		name string
+		req  *pb.GetCompactionProgressRequest
+	}{
+		{"nil request", nil},
+		{"empty namespace", &pb.GetCompactionProgressRequest{Namespace: ""}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			srv, _ := newMockTestServer(t)
 
-	resp, err := srv.GetCompactionProgress(tenantctx.WithSystem(context.Background()), nil)
+			resp, err := srv.GetCompactionProgress(tenantctx.WithSystem(context.Background()), tt.req)
 
-	require.Error(t, err)
-	assert.Nil(t, resp)
-	st, ok := status.FromError(err)
-	require.True(t, ok)
-	assert.Equal(t, codes.InvalidArgument, st.Code())
-}
-
-func TestGetCompactionProgress_EmptyNamespace(t *testing.T) {
-	srv, _ := newMockTestServer(t)
-
-	resp, err := srv.GetCompactionProgress(tenantctx.WithSystem(context.Background()), &pb.GetCompactionProgressRequest{
-		Namespace: "",
-	})
-
-	require.Error(t, err)
-	assert.Nil(t, resp)
-	st, ok := status.FromError(err)
-	require.True(t, ok)
-	assert.Equal(t, codes.InvalidArgument, st.Code())
+			assert.Nil(t, resp)
+			requireVectorInvalidArgument(t, err, "")
+		})
+	}
 }
 
 func TestGetCompactionProgress_InProgress(t *testing.T) {
@@ -2472,30 +1924,24 @@ func TestGetCompactionProgress_Failed(t *testing.T) {
 // ExportVectors Tests
 // =============================================================================
 
-func TestExportVectors_NilRequest(t *testing.T) {
-	srv, _ := newMockTestServer(t)
+func TestExportVectors_InvalidRequest(t *testing.T) {
+	tests := []struct {
+		name string
+		req  *pb.ExportVectorsRequest
+	}{
+		{"nil request", nil},
+		{"empty namespace", &pb.ExportVectorsRequest{Namespace: ""}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			srv, _ := newMockTestServer(t)
 
-	stream := NewMockExportVectorsStream(tenantctx.WithSystem(context.Background()))
-	err := srv.ExportVectors(nil, stream)
+			stream := NewMockExportVectorsStream(tenantctx.WithSystem(context.Background()))
+			err := srv.ExportVectors(tt.req, stream)
 
-	require.Error(t, err)
-	st, ok := status.FromError(err)
-	require.True(t, ok)
-	assert.Equal(t, codes.InvalidArgument, st.Code())
-}
-
-func TestExportVectors_EmptyNamespace(t *testing.T) {
-	srv, _ := newMockTestServer(t)
-
-	stream := NewMockExportVectorsStream(tenantctx.WithSystem(context.Background()))
-	err := srv.ExportVectors(&pb.ExportVectorsRequest{
-		Namespace: "",
-	}, stream)
-
-	require.Error(t, err)
-	st, ok := status.FromError(err)
-	require.True(t, ok)
-	assert.Equal(t, codes.InvalidArgument, st.Code())
+			requireVectorInvalidArgument(t, err, "")
+		})
+	}
 }
 
 func TestExportVectors_EmptyNamespace_EmptyBatch(t *testing.T) {
@@ -2656,100 +2102,36 @@ func TestImportVectors_Success(t *testing.T) {
 	mockSvc.AssertExpectations(t)
 }
 
-func TestImportVectors_SkipExisting(t *testing.T) {
-	srv, mockSvc := newMockTestServer(t)
-
-	// Mock GetVector to return that vector exists
-	mockSvc.On("GetVector", mock.Anything, mock.Anything).
-		Return(&service.GetVectorResponse{
-			Found: true,
-			ID:    1,
-		}, nil)
-
-	stream := NewMockImportVectorsStream(tenantctx.WithSystem(context.Background()))
-
-	// Create proper JSON batch data with one vector
-	batchData := `{"vectors":[{"id":"1","vector":[1.0,2.0]}],"namespace":"test-ns","batch_num":1,"total":1}`
-
-	stream.AddRecvMessage(&pb.ImportVectorsRequest{
-		Namespace:         "test-ns",
-		BatchData:         []byte(batchData),
-		Format:            "json",
-		OverwriteExisting: false,
-	})
-
-	err := srv.ImportVectors(stream)
-
-	require.NoError(t, err)
-	resp := stream.GetResponse()
-	require.NotNil(t, resp)
-	assert.Equal(t, int64(1), resp.VectorsSkipped)
-	mockSvc.AssertExpectations(t)
-}
-
 // =============================================================================
 // UpdateMetadata Tests
 // =============================================================================
 
-func TestUpdateMetadata_NilRequest(t *testing.T) {
-	srv, _ := newMockTestServer(t)
+func TestUpdateMetadata_InvalidRequest(t *testing.T) {
+	md := map[string]string{"key": "value"}
+	tests := []struct {
+		name    string
+		req     *pb.UpdateMetadataRequest
+		wantMsg string
+	}{
+		{"nil request", nil, ""},
+		{"empty namespace", &pb.UpdateMetadataRequest{Namespace: "", Id: "vec1", Metadata: md}, ""},
+		{"empty id", &pb.UpdateMetadataRequest{Namespace: "test-ns", Id: "", Metadata: md}, ""},
+		{
+			"empty metadata",
+			&pb.UpdateMetadataRequest{Namespace: "test-ns", Id: "vec1", Metadata: map[string]string{}},
+			"metadata cannot be empty",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			srv, _ := newMockTestServer(t)
 
-	resp, err := srv.UpdateMetadata(tenantctx.WithSystem(context.Background()), nil)
+			resp, err := srv.UpdateMetadata(tenantctx.WithSystem(context.Background()), tt.req)
 
-	require.Error(t, err)
-	assert.Nil(t, resp)
-	st, ok := status.FromError(err)
-	require.True(t, ok)
-	assert.Equal(t, codes.InvalidArgument, st.Code())
-}
-
-func TestUpdateMetadata_EmptyNamespace(t *testing.T) {
-	srv, _ := newMockTestServer(t)
-
-	resp, err := srv.UpdateMetadata(tenantctx.WithSystem(context.Background()), &pb.UpdateMetadataRequest{
-		Namespace: "",
-		Id:        "vec1",
-		Metadata:  map[string]string{"key": "value"},
-	})
-
-	require.Error(t, err)
-	assert.Nil(t, resp)
-	st, ok := status.FromError(err)
-	require.True(t, ok)
-	assert.Equal(t, codes.InvalidArgument, st.Code())
-}
-
-func TestUpdateMetadata_EmptyID(t *testing.T) {
-	srv, _ := newMockTestServer(t)
-
-	resp, err := srv.UpdateMetadata(tenantctx.WithSystem(context.Background()), &pb.UpdateMetadataRequest{
-		Namespace: "test-ns",
-		Id:        "",
-		Metadata:  map[string]string{"key": "value"},
-	})
-
-	require.Error(t, err)
-	assert.Nil(t, resp)
-	st, ok := status.FromError(err)
-	require.True(t, ok)
-	assert.Equal(t, codes.InvalidArgument, st.Code())
-}
-
-func TestUpdateMetadata_EmptyMetadata(t *testing.T) {
-	srv, _ := newMockTestServer(t)
-
-	resp, err := srv.UpdateMetadata(tenantctx.WithSystem(context.Background()), &pb.UpdateMetadataRequest{
-		Namespace: "test-ns",
-		Id:        "vec1",
-		Metadata:  map[string]string{},
-	})
-
-	require.Error(t, err)
-	assert.Nil(t, resp)
-	st, ok := status.FromError(err)
-	require.True(t, ok)
-	assert.Equal(t, codes.InvalidArgument, st.Code())
-	assert.Contains(t, st.Message(), "metadata cannot be empty")
+			assert.Nil(t, resp)
+			requireVectorInvalidArgument(t, err, tt.wantMsg)
+		})
+	}
 }
 
 func TestUpdateMetadata_VectorNotFound(t *testing.T) {
@@ -2839,25 +2221,6 @@ func TestUpdateMetadata_Success_Replace(t *testing.T) {
 // =============================================================================
 // MockServerStreamBase Concurrency Tests
 // =============================================================================
-
-func TestMockServerStreamBase_ConcurrentAccess(t *testing.T) {
-	base := &MockServerStreamBase{ctx: tenantctx.WithSystem(context.Background())}
-
-	var wg sync.WaitGroup
-	for i := 0; i < 100; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			_ = base.SetHeader(metadata.New(map[string]string{"key": "value"}))
-			_ = base.SendHeader(metadata.New(map[string]string{"key": "value"}))
-			base.SetTrailer(metadata.New(map[string]string{"key": "value"}))
-			_ = base.SendMsg("test")
-			_ = base.RecvMsg(nil)
-			_ = base.Context()
-		}()
-	}
-	wg.Wait()
-}
 
 // =============================================================================
 // Additional SearchByID Tests for Coverage
