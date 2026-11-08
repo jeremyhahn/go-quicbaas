@@ -15,192 +15,294 @@ package labstrings
 
 import (
 	"bytes"
-	"encoding/json"
+	"errors"
 	"os"
-	"path/filepath"
 	"regexp"
 	"regexp/syntax"
-	"slices"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 )
 
-// PatternsEnv names the environment variable that points at the private
-// pattern file. Unset or empty, the gate applies DefaultPatterns alone. A
-// relative path is resolved against the repository root being scanned, so
-// the same value works from the Makefile, from `go test` in any package
-// directory and inside the CI toolchain container.
-const PatternsEnv = "QUICBAAS_LABSTRINGS_PATTERNS"
+// PatternsEnv is the environment variable the gate reads its rules from. It
+// holds the same text the CI step "Releasability (private patterns)" reads, so
+// one private file drives both.
+const PatternsEnv = "RELEASABILITY_PATTERNS"
 
-// PatternFile is one entry of the private pattern file, which is a JSON list:
+// foldSuffix on a class name asks for a case-insensitive rule.
+const foldSuffix = "/i"
+
+// foldFlag is the regexp prefix a foldSuffix rule is compiled with.
+const foldFlag = "(?i)"
+
+// Pattern is one rule the scanner applies to every line.
+type Pattern struct {
+	// Class says what a match leaks.
+	Class Class
+
+	// Expr matches the offending text. It matches the value, not the whole
+	// line, so the report can quote exactly what has to change.
+	Expr *regexp.Regexp
+
+	// Guidance is what the engineer who tripped this rule should do instead.
+	Guidance string
+
+	// sieve is the set of literals at least one of which every match of
+	// Expr contains; see requiredLiterals. Nil means no such set could be
+	// derived, and the rule is applied to every file.
+	sieve []needle
+}
+
+// ParsePatterns reads rules in the pattern-file format the CI step uses:
 //
-//	[
-//	  {"class": "lab-address", "expr": "\\b203\\.0\\.113\\.\\d{1,3}\\b"},
-//	  {"class": "lab-host",    "expr": "(?i)\\bcore-\\d{2}\\b"}
-//	]
-type PatternFile struct {
-	// Class is one of the four Class values.
-	Class Class `json:"class"`
-
-	// Expr is a Go regexp (RE2 syntax) matching the private value.
-	Expr string `json:"expr"`
-}
-
-// classGuidance is what an engineer who tripped a rule of each class should do
-// instead. Its keys are also the set of classes the gate knows.
-var classGuidance = map[Class]string{
-	ClassLabAddress:   "use an RFC 5737 documentation address (192.0.2.0/24, 198.51.100.0/24, 203.0.113.0/24)",
-	ClassLabHost:      "name the role, not the machine: agent-01, gpu-host.internal, quicbaas.example.com",
-	ClassOwnerPath:    "make the path relative to the repository root, or use /var/lib, /srv, /home/agent",
-	ClassOwnerAccount: "name a role, not a person: operator, agent, or the project's own module path",
-}
-
-// placeholderHomes are the home directories this tree names on purpose: the
-// service accounts its container images create and the neutral accounts its
-// fixtures use. None of them identifies a person or a machine.
-var placeholderHomes = []string{
-	"/home/agent", "/home/app", "/home/deploy", "/home/dev", "/home/git",
-	"/home/node", "/home/operator", "/home/quicbaas", "/home/softhsm",
-	"/home/u", "/home/user",
-}
-
-// DefaultPatterns is the public rule set: leaks that look the same in every
-// fork, so it names nothing about any one network. A deployment's own subnet,
-// hostnames, account and mount points go in the private pattern file named by
-// PatternsEnv, never here: a published list of private values is itself the
-// leak.
-var DefaultPatterns = []Pattern{
-	// A home directory under /home. Only a developer's checkout puts one in
-	// a tracked file, and it names the account. \B keeps a URL segment such
-	// as `example.org/iso/home/store` out; the service and fixture accounts
-	// in placeholderHomes are excepted.
-	mustPattern(ClassOwnerPath, `\B/home/[a-z_][a-z0-9_-]*`, placeholderHomes...),
-
-	// A macOS home directory. Nothing this server-side tree ships runs from
-	// one, so any /Users/<name>/ path came from a workstation. The trailing
-	// slash keeps a `/Users/i` regexp literal out.
-	mustPattern(ClassOwnerPath, `\B/Users/[A-Za-z0-9_.-]+/`),
-
-	// An address in 192.168/16, the range home and lab networks default
-	// to. Fixtures use RFC 5737 addresses instead, so a hit here is a real
-	// network. 10/8 and 172.16/12 are not covered: container, cluster and
-	// cloud defaults use them throughout the tree as addresses no reader
-	// ever dials.
-	mustPattern(ClassLabAddress, `\b192\.168\.\d{1,3}\.\d{1,3}\b`),
-
-	// A host under .lan, the suffix home routers hand out, or under
-	// home.arpa, the RFC 8375 home-network domain. Neither resolves for a
-	// public reader.
-	mustPattern(ClassLabHost, `(?i)\b[a-z0-9-]+\.lan\b`),
-	mustPattern(ClassLabHost, `(?i)\b[a-z0-9-]+\.home\.arpa\b`),
-}
-
-// mustPattern builds a built-in pattern. A built-in that does not compile is a
-// programming error in this file, so it panics at package initialisation, where
-// every test run sees it.
-func mustPattern(class Class, expr string, except ...string) Pattern {
-	p, err := NewPattern(class, expr)
-	if err != nil {
-		panic(err)
-	}
-	p.Except = except
-	return p
-}
-
-// NewPattern compiles expr into a rule of class. The sieve needle is derived
-// from the expression itself, so it is implied by every match by construction:
-// the longest literal the expression's top-level sequence requires. An
-// expression with no such literal — a bare alternation, a pure character class
-// — is refused, because the sieve could not rule a single file out with it.
-// Split an alternation into one pattern per branch.
-func NewPattern(class Class, expr string) (Pattern, error) {
-	guidance, known := classGuidance[class]
-	if !known {
-		return Pattern{}, &PatternError{Class: class, Expr: expr, Problem: "unknown class"}
-	}
-	compiled, err := regexp.Compile(expr)
-	if err != nil {
-		return Pattern{}, &PatternError{Class: class, Expr: expr, Problem: "invalid regexp", Err: err}
-	}
-	needle, err := sieveNeedle(expr)
-	if err != nil {
-		return Pattern{}, &PatternError{Class: class, Expr: expr, Problem: "invalid regexp", Err: err}
-	}
-	if needle == "" {
-		return Pattern{}, &PatternError{Class: class, Expr: expr, Problem: "no literal text that every match contains"}
-	}
-	return Pattern{Class: class, Expr: compiled, Needle: needle, Guidance: guidance}, nil
-}
-
-// sieveNeedle returns the longest literal in expr's top-level sequence,
-// lowercased, or "" if there is none. Every match of expr contains that
-// literal, because a top-level sequence matches only when each of its parts
-// does.
-func sieveNeedle(expr string) (string, error) {
-	re, err := syntax.Parse(expr, syntax.Perl)
-	if err != nil {
-		return "", err
-	}
-	re = unwrapCapture(re.Simplify())
-	parts := []*syntax.Regexp{re}
-	if re.Op == syntax.OpConcat {
-		parts = re.Sub
-	}
-	var longest []rune
-	for _, part := range parts {
-		part = unwrapCapture(part)
-		if part.Op == syntax.OpLiteral && len(part.Rune) > len(longest) {
-			longest = part.Rune
-		}
-	}
-	return strings.ToLower(string(longest)), nil
-}
-
-// unwrapCapture strips capturing groups, which match exactly what they wrap.
-func unwrapCapture(re *syntax.Regexp) *syntax.Regexp {
-	for re.Op == syntax.OpCapture {
-		re = re.Sub[0]
-	}
-	return re
-}
-
-// LoadPatterns reads a private pattern file (see PatternFile) and compiles every
-// entry. Unknown fields are refused, so a misspelt key fails the gate instead of
-// leaving a value unguarded.
-func LoadPatterns(path string) ([]Pattern, error) {
-	raw, err := os.ReadFile(path)
-	if err != nil {
-		return nil, &PatternFileError{Path: path, Err: err}
-	}
-	decoder := json.NewDecoder(bytes.NewReader(raw))
-	decoder.DisallowUnknownFields()
-	var entries []PatternFile
-	if err := decoder.Decode(&entries); err != nil {
-		return nil, &PatternFileError{Path: path, Err: err}
-	}
-	patterns := make([]Pattern, 0, len(entries))
-	for _, entry := range entries {
-		p, err := NewPattern(entry.Class, entry.Expr)
+//   - one rule per line, `class<TAB>regex`, split at the first tab;
+//   - a blank line, or one whose first non-space character is `#`, is skipped;
+//   - a trailing carriage return is stripped, so a file saved on Windows reads
+//     the same;
+//   - class is lab-address, lab-host, owner-path or owner-account, optionally
+//     followed by `/i` to make the rule case-insensitive;
+//   - regex is Go regexp syntax, which for the expressions this file holds
+//     reads the same as the `grep -E` the CI step uses.
+//
+// A line that cannot be used fails the whole parse with a *PatternError naming
+// the line by number. The error never quotes the line: the text is private, and
+// an error message ends up in a CI log.
+//
+// Rules keep the order they have in the text, except that every owner-account
+// rule moves after all the others. The scanner reports a value once, by the
+// first rule that covers it, and an account name is the least specific thing a
+// rule can find: the account inside an owner path is reported as the path.
+func ParsePatterns(text string) ([]Pattern, error) {
+	var specific, accounts []Pattern
+	for i, line := range strings.Split(text, "\n") {
+		p, ok, err := parsePatternLine(i+1, strings.TrimSuffix(line, "\r"))
 		if err != nil {
-			return nil, &PatternFileError{Path: path, Err: err}
+			return nil, err
 		}
-		patterns = append(patterns, p)
+		if !ok {
+			continue
+		}
+		if p.Class == ClassOwnerAccount {
+			accounts = append(accounts, p)
+			continue
+		}
+		specific = append(specific, p)
+	}
+	return append(specific, accounts...), nil
+}
+
+// PatternsFromEnv parses PatternsEnv. An unset or empty variable, or one that
+// holds only comments, is a *NoPatternsError: the gate has nothing to look for,
+// and that is not the same as finding nothing.
+func PatternsFromEnv() ([]Pattern, error) {
+	patterns, err := ParsePatterns(os.Getenv(PatternsEnv))
+	if err != nil {
+		return nil, err
+	}
+	if len(patterns) == 0 {
+		return nil, &NoPatternsError{Variable: PatternsEnv}
 	}
 	return patterns, nil
 }
 
-// ConfiguredPatterns is the rule set the gate applies to the repository at root:
-// DefaultPatterns, plus the private file PatternsEnv names when it is set.
-func ConfiguredPatterns(root string) ([]Pattern, error) {
-	path := os.Getenv(PatternsEnv)
-	if path == "" {
-		return DefaultPatterns, nil
+// parsePatternLine parses one line. The bool is false for a line that is
+// skipped rather than parsed.
+func parsePatternLine(number int, line string) (Pattern, bool, error) {
+	trimmed := strings.TrimLeftFunc(line, unicode.IsSpace)
+	if trimmed == "" || strings.HasPrefix(trimmed, "#") {
+		return Pattern{}, false, nil
 	}
-	if !filepath.IsAbs(path) {
-		path = filepath.Join(root, path)
+	field, expr, ok := strings.Cut(line, "\t")
+	if !ok {
+		return Pattern{}, false, &PatternError{Line: number, Problem: PatternNotClassTabRegex}
 	}
-	private, err := LoadPatterns(path)
+	name, fold := strings.CutSuffix(field, foldSuffix)
+	class := Class(name)
+	guidance, known := classGuidance[class]
+	if !known {
+		return Pattern{}, false, &PatternError{Line: number, Problem: PatternUnknownClass}
+	}
+	if expr == "" {
+		return Pattern{}, false, &PatternError{Line: number, Problem: PatternEmptyRegex}
+	}
+	if fold {
+		expr = foldFlag + expr
+	}
+	re, err := regexp.Compile(expr)
 	if err != nil {
-		return nil, err
+		return Pattern{}, false, &PatternError{Line: number, Problem: PatternBadRegex, Code: syntaxCode(err)}
 	}
-	return append(slices.Clip(DefaultPatterns), private...), nil
+	return Pattern{Class: class, Expr: re, Guidance: guidance, sieve: deriveSieve(expr)}, true, nil
+}
+
+// syntaxCode is the regexp/syntax error code behind a compile failure. The code
+// is a fixed description such as "missing closing )"; the error's other field
+// quotes the expression, which is exactly what must not be printed.
+func syntaxCode(err error) string {
+	var syntaxErr *syntax.Error
+	if errors.As(err, &syntaxErr) {
+		return string(syntaxErr.Code)
+	}
+	return ""
+}
+
+// needle is one literal the sieve searches for.
+type needle struct {
+	// text is the literal; lowercase when folded is set.
+	text []byte
+
+	// folded says text is to be found in lowercased content, because the
+	// rule it came from ignores case.
+	folded bool
+}
+
+// deriveSieve computes a pattern's sieve from its expression. The sieve exists
+// because almost no file in this tree contains a lab value, and 30 MB of
+// tracked content is read on every scan: settling "there is nothing here" with
+// a substring search runs at memory bandwidth, where the expressions run at a
+// few megabytes a second.
+//
+// The rules are no longer written down here, so their sieve cannot be either.
+// It is derived instead, and conservatively: a sieve that is wrong would make
+// the gate silently blind, so where no literal is provably required the rule
+// gets no sieve and is applied to every file. Slow is acceptable; blind is not.
+func deriveSieve(expr string) []needle {
+	re, err := syntax.Parse(expr, syntax.Perl)
+	if err != nil {
+		return nil
+	}
+	return requiredLiterals(re)
+}
+
+// requiredLiterals returns literals at least one of which every match of re
+// contains, or nil when it cannot prove any. The cases are the regexp syntax
+// tree's own fixed set of operators, so this is a switch rather than a table:
+// a literal is required; a concatenation requires whatever any one part
+// requires (the most selective part is kept); an alternation requires one of
+// its branches' sets, and only when every branch has one; a capture, a `+` and
+// a repeat of at least one require what their operand does. Everything else
+// (classes, `*`, `?`, assertions) requires nothing.
+func requiredLiterals(re *syntax.Regexp) []needle {
+	switch re.Op {
+	case syntax.OpLiteral:
+		n, ok := literalNeedle(re.Rune, re.Flags&syntax.FoldCase != 0)
+		if !ok {
+			return nil
+		}
+		return []needle{n}
+	case syntax.OpCapture, syntax.OpPlus:
+		return requiredLiterals(re.Sub[0])
+	case syntax.OpRepeat:
+		if re.Min < 1 {
+			return nil
+		}
+		return requiredLiterals(re.Sub[0])
+	case syntax.OpConcat:
+		var best []needle
+		for _, sub := range re.Sub {
+			candidate := requiredLiterals(sub)
+			if candidate != nil && (best == nil || shortestNeedle(candidate) > shortestNeedle(best)) {
+				best = candidate
+			}
+		}
+		return best
+	case syntax.OpAlternate:
+		var oneOf []needle
+		for _, sub := range re.Sub {
+			branch := requiredLiterals(sub)
+			if branch == nil {
+				return nil
+			}
+			oneOf = append(oneOf, branch...)
+		}
+		return oneOf
+	}
+	return nil
+}
+
+// shortestNeedle is the length of the least selective literal in a set: a set
+// is only as cheap to rule out as its shortest member.
+func shortestNeedle(set []needle) int {
+	shortest := len(set[0].text)
+	for _, n := range set[1:] {
+		shortest = min(shortest, len(n.text))
+	}
+	return shortest
+}
+
+// literalNeedle turns a literal node into a needle. A case-sensitive literal is
+// searched for as written. A case-insensitive one is searched for lowercased in
+// lowercased content, which is exact only for letters whose every case variant
+// is ASCII: Go's case folding also equates some ASCII letters with non-ASCII
+// ones (a Kelvin sign with k, a long s with s), and lowercasing would not bring
+// those together. So the needle is the longest run of the literal that folds
+// within ASCII; a substring of a required literal is itself required.
+func literalNeedle(runes []rune, fold bool) (needle, bool) {
+	if !fold {
+		text := string(runes)
+		return needle{text: []byte(text)}, text != ""
+	}
+	var run strings.Builder
+	best := ""
+	flush := func() {
+		if run.Len() > len(best) {
+			best = run.String()
+		}
+		run.Reset()
+	}
+	for _, r := range runes {
+		if !foldsWithinASCII(r) {
+			flush()
+			continue
+		}
+		run.WriteRune(unicode.ToLower(r))
+	}
+	flush()
+	return needle{text: []byte(best), folded: true}, best != ""
+}
+
+// foldsWithinASCII reports whether r and every rune case folding equates it
+// with are ASCII.
+func foldsWithinASCII(r rune) bool {
+	if r >= utf8.RuneSelf {
+		return false
+	}
+	for f := unicode.SimpleFold(r); f != r; f = unicode.SimpleFold(f) {
+		if f >= utf8.RuneSelf {
+			return false
+		}
+	}
+	return true
+}
+
+// candidates is the patterns that could match somewhere in content and whose
+// class the file does not accept. Content is lowercased at most once, and only
+// if a case-insensitive needle needs it.
+func candidates(content []byte, patterns []Pattern, accepted map[Class]bool) []Pattern {
+	var live []Pattern
+	var folded []byte
+	haveFolded := false
+	for _, p := range patterns {
+		if accepted[p.Class] {
+			continue
+		}
+		if p.sieve == nil {
+			live = append(live, p)
+			continue
+		}
+		for _, n := range p.sieve {
+			haystack := content
+			if n.folded {
+				if !haveFolded {
+					folded, haveFolded = bytes.ToLower(content), true
+				}
+				haystack = folded
+			}
+			if bytes.Contains(haystack, n.text) {
+				live = append(live, p)
+				break
+			}
+		}
+	}
+	return live
 }

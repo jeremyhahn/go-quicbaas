@@ -179,8 +179,8 @@ func TestNewSDLCWorkerImageRefresher(t *testing.T) {
 // withWorkerImageSecretCredential names a registry and a full secret-backed
 // push credential.
 func withWorkerImageSecretCredential(c *config.SDLCWorkerImage) {
-	c.Registry = "reg.example:3001/o/worker"
-	c.RegistryUsername = "agent-company"
+	c.Registry = "reg.example:3000/o/worker"
+	c.RegistryUsername = "company-agent"
 	c.RegistryTokenSecret = "sdlc/registry/worker-image/token"
 	c.RegistryTokenTenant = "automatethethings"
 }

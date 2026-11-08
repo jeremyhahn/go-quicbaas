@@ -1,4 +1,13 @@
 # ci-template: v1.22.1 (customized)
+# go-quicbaas, GitHub-hosted: every job runs on ubuntu-latest (4 vCPU, 16 GB
+# RAM, about 14 GB free disk, a 6 h job limit). The race and FIPS unit runs
+# are sharded to fit that limit on 4 cores with headroom. The test stage is
+# three jobs: `unit` deals the -race unit run over UNIT_SHARDS shards (`make
+# coverage-shard`), `coverage` joins their profiles and gates the total
+# (`make coverage-merge`), and `unit-passes` runs the tag passes, the Go SDK
+# and the tooling tests (`make coverage-passes`). `make coverage` runs the
+# same three targets in one go locally. Every job that builds an image frees
+# runner disk first.
 # go-quicbaas (DS-3161, CA m967 (2), 2026-10-21; CI demand is the fleet
 # bottleneck): Gitea does not evaluate a ${{ }} expression in
 # cancel-in-progress, so the canonical v1.22.1 block below is replaced by a
@@ -277,6 +286,18 @@ permissions:
 
 env:
   COVERAGE_THRESHOLD: 90      # CUSTOMIZE: per testing-guidelines.md
+  # CUSTOMIZE: the number of `unit` shards; the unit job's matrix lists
+  # 0..UNIT_SHARDS-1. Four shards of the -race run at -p 2 each fit a 4-core
+  # runner with headroom; `make coverage-shard` balances them by test-file size.
+  UNIT_SHARDS: 4
+  # The per-package -timeout of the -race run. The Makefile default (30m) is
+  # sized for a workstation; a 4-core runner is slower, so CI doubles it.
+  RACE_TIMEOUT: 60m
+  # Hosted runners inject no GOPRIVATE, so first-party modules would resolve
+  # through the public proxy and checksum database. Those cached some tags
+  # before the history rewrite moved them, and go.sum records what the origin
+  # serves now, so first-party modules are fetched from their origin.
+  GOPRIVATE: github.com/jeremyhahn/*
   # CUSTOMIZE (v1.9.2): the repo's full build-tag set, SPACE separated — the go
   # tool's own form. Leave EMPTY if no package is tag-gated. Every analysis step
   # below derives its own form from this ONE value; never write the tag list
@@ -338,13 +359,15 @@ jobs:
   # file writes run silent, and lint steps and `make check-public-literals`
   # report path and line only (ci-standard.md §5, Company Agent m605 item 8).
   #
-  # Runners: the image and integration jobs run on bigdisk (Docker and the disk
-  # for the image builds) and CI Gate on ci-gate; on the github.com mirror all
-  # are ubuntu-latest, which has Docker (devops.md §1: host-specific choices
-  # are guarded on github.server_url).
+  # Runners: every job runs on ubuntu-latest, which has Docker. A hosted runner
+  # starts with about 14 GB free, less than the two image builds and the
+  # stages' caches need, so each job that builds an image frees disk first.
+  #
+  # The unit-test stage is not a step here: it runs as the unit, unit-passes
+  # and coverage jobs below, so no single job holds the whole -race run.
   image:
-    name: Devcontainer image [lint, build, test, security, deps-check, trivy image]
-    runs-on: ${{ github.server_url == 'https://github.com' && 'ubuntu-latest' || 'bigdisk' }}
+    name: Devcontainer image [lint, build, security, deps-check, trivy image]
+    runs-on: ubuntu-latest
     timeout-minutes: 180      # CUSTOMIZE: give the stages honest headroom
     needs: [changes]
     env:
@@ -374,6 +397,16 @@ jobs:
 
       - name: Reap stale CI stacks
         run: scripts/reap-stale-ci-stacks.sh "$CI_STACK_PREFIX"
+
+      # A hosted runner is a fresh VM per job, so nothing removed here is
+      # shared: the .NET, Android and GHC toolchains and the preloaded images
+      # free well over 20 GB for the image builds.
+      - name: Free runner disk
+        if: ${{ runner.environment == 'github-hosted' }}
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc
+          docker image prune --all --force
+          df -h /
 
       # CUSTOMIZE: host tuning a test needs (e.g. QUIC UDP buffers:
       # sudo sysctl -w net.core.rmem_max=7340032 net.core.wmem_max=7340032)
@@ -424,15 +457,6 @@ jobs:
         if: ${{ !cancelled() && env.TOOLCHAIN_IMAGE != '' && env.DOCS_ONLY != 'true' }}
         run: scripts/in-toolchain-image.sh "$TOOLCHAIN_IMAGE" "make build GO_BUILD_TAGS='$GO_BUILD_TAGS'"
 
-      # The test stage (m601 (c)): make coverage runs the whole unit suite with
-      # -race (make test's flags) and fails when total coverage is below
-      # COVERAGE_THRESHOLD (testing-guidelines.md), so the suite runs once.
-      # Tags matter here too: without them tag-gated packages are neither
-      # tested nor counted. The integration stage is its own job below.
-      - name: make coverage (unit tests and the threshold)
-        if: ${{ !cancelled() && env.TOOLCHAIN_IMAGE != '' && env.DOCS_ONLY != 'true' }}
-        run: scripts/in-toolchain-image.sh "$TOOLCHAIN_IMAGE" "make coverage GO_BUILD_TAGS='$GO_BUILD_TAGS' COVERAGE_THRESHOLD=$COVERAGE_THRESHOLD"
-
       # CUSTOMIZE: the TypeScript SDK, frontend and JavaScript SDK unit tests
       # (make test-sdk-ts, test-frontend, test-sdk-js) are a gate: make build
       # only compiles them, and the web job that ran them is gone (Codex
@@ -479,13 +503,294 @@ jobs:
           rm -f "$RUNNER_TEMP/gomodauth.env" it-image.tar
           docker image rm "$IT_IMAGE" || true
 
+      # v1.32 (2026-11-08, Company Agent m2098 item 2, InfoSec finding): the
+      # internal-name gate. Its patterns are internal values, so they never
+      # live in this repository: the Actions secret RELEASABILITY_PATTERNS
+      # carries the private pattern file (source in platform-configs). Blank
+      # and `#` lines are skipped; every other line is `class<TAB>regex`, a
+      # class of coord-host, internal-email, lab-address, lab-host or
+      # owner-path (v1.33; an `/i` suffix is allowed) and a POSIX extended regex. A malformed line, an unknown
+      # class or a regex grep -E refuses fails the step, which prints the line
+      # number only. v1.31 grepped whole lines with -F, so no line matched and
+      # the gate was green for a false reason. The step prints path and line
+      # of a match, never the value. A run without the secret (a fork PR)
+      # skips with a notice; a push to main without it fails.
+      - name: Releasability (private patterns)
+        if: ${{ !cancelled() }}
+        env:
+          RELEASABILITY_PATTERNS: ${{ secrets.RELEASABILITY_PATTERNS }}
+          EVENT: ${{ github.event_name }}
+        run: |
+          if [ -z "$RELEASABILITY_PATTERNS" ]; then
+            if [ "$EVENT" = push ]; then
+              echo "::error::RELEASABILITY_PATTERNS is not set; the gate needs the private pattern file (public-hygiene.md)"
+              exit 1
+            fi
+            echo "::notice::RELEASABILITY_PATTERNS is not available to this run; pushes to main run the gate"
+            exit 0
+          fi
+          pf=$(mktemp)
+          chmod 600 "$pf"
+          trap 'rm -f "$pf"' EXIT
+          tab=$(printf '\t')
+          n=0 bad=0 count=0
+          while IFS= read -r line || [ -n "$line" ]; do
+            n=$((n + 1))
+            line=${line%$'\r'}
+            trimmed=${line#"${line%%[![:space:]]*}"}
+            case $trimmed in ''|'#'*) continue ;; esac
+            case $line in
+              *"$tab"*) ;;
+              *) echo "::error::pattern line $n is not class<TAB>regex"; bad=1; continue ;;
+            esac
+            class=${line%%"$tab"*}
+            re=${line#*"$tab"}
+            case $class in
+              coord-host|internal-email|lab-address|lab-host|owner-path) ;;
+              coord-host/i|internal-email/i|lab-address/i|lab-host/i|owner-path/i) ;;
+              *) echo "::error::pattern line $n has an unknown class"; bad=1; continue ;;
+            esac
+            if [ -z "$re" ]; then
+              echo "::error::pattern line $n has an empty regex"; bad=1; continue
+            fi
+            rc=0
+            grep -E -e "$re" /dev/null > /dev/null 2>&1 || rc=$?
+            if [ "$rc" -ge 2 ]; then
+              echo "::error::pattern line $n has a regex grep -E refuses"; bad=1; continue
+            fi
+            printf '%s\n' "$re" >> "$pf"
+            count=$((count + 1))
+          done <<< "$RELEASABILITY_PATTERNS"
+          if [ "$bad" != 0 ]; then
+            echo "::error::the private pattern file is malformed (line numbers above; the values are not shown)"
+            exit 1
+          fi
+          if [ "$count" = 0 ]; then
+            echo "::error::RELEASABILITY_PATTERNS holds no class<TAB>regex line"
+            exit 1
+          fi
+          rc=0
+          hits=$(git grep -n -I -i -E -f "$pf" -- . | cut -d: -f1,2; exit "${PIPESTATUS[0]}") || rc=$?
+          case $rc in
+            0)
+              echo "::error::internal names in the tracked tree (path:line; the values are not shown):"
+              printf '%s\n' "$hits"
+              exit 1 ;;
+            1) ;;
+            *)
+              echo "::error::git grep failed (rc $rc)"
+              exit 1 ;;
+          esac
+          echo "releasability: $count private patterns, 0 matches"
+
+  # The -race unit run with coverage, dealt over UNIT_SHARDS shards. `make
+  # coverage-shard` weighs each package by its test files and deals them the
+  # same way on every shard, so the shards are disjoint and cover every
+  # package. Basis for four: the unsharded run took about an hour on a larger
+  # runner; a 4-core runner is up to 2.5 times slower, so a quarter of it is
+  # 30 to 40 minutes, plus about 20 to build the toolchain image. Tags matter
+  # here too: without them tag-gated packages are neither tested nor counted.
+  #
+  # in-toolchain-image.sh runs the stage in a copy of the checkout, so the
+  # shard's profile comes back on stdout: make writes its own output to
+  # stderr, then the profile is printed. The coverage job checks every
+  # profile's mode line, so a stray line on stdout fails the gate.
+  #
+  # No job-level if: a pr-tier job must always run. Every step is guarded on
+  # DOCS_ONLY instead, so a docs-only pull request passes the job empty.
+  unit:
+    name: Unit tests -race (shard ${{ matrix.shard }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 150      # CUSTOMIZE: a shard is expected to take about an hour
+    needs: [changes]
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2, 3]   # CUSTOMIZE: 0..UNIT_SHARDS-1
+    env:
+      DOCS_ONLY: ${{ needs.changes.outputs.docs_only }}
+      CI_STACK_PREFIX: ${{ github.event.repository.name }}-ci-
+      CI_CACHE_CLASS: ${{ github.event_name == 'push' && 'main' || 'pr' }}
+      SHARD: ${{ matrix.shard }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+
+      - name: Mask the forge credentials
+        run: |
+          for v in GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0; do
+            val=${!v:-}
+            [ -n "$val" ] || continue
+            echo "::add-mask::$val"
+            case $val in *://*:*@*) t=${val#*://}; t=${t%%@*}; echo "::add-mask::${t#*:}" ;; esac
+          done
+
+      - name: Validate the merge result, not the head alone
+        run: .github/scripts/ci-merge-base.sh "${{ github.event_name }}" "${{ github.base_ref }}" "${{ github.event.pull_request.base.sha }}"
+
+      - name: Free runner disk
+        if: ${{ runner.environment == 'github-hosted' && env.DOCS_ONLY != 'true' }}
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc
+          docker image prune --all --force
+          df -h /
+
+      - name: Build the toolchain image
+        if: ${{ env.DOCS_ONLY != 'true' }}
+        run: |
+          ( umask 077; : > "$RUNNER_TEMP/gomodauth.env"
+            for v in GOPRIVATE GIT_CONFIG_COUNT GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0; do
+              if [ -n "${!v:-}" ]; then printf '%s=%s\n' "$v" "${!v}" >> "$RUNNER_TEMP/gomodauth.env"; fi
+            done )
+          make docker-build-toolchain-image MODULE_ENV_FILE="$RUNNER_TEMP/gomodauth.env"
+          rm -f "$RUNNER_TEMP/gomodauth.env"
+          echo "TOOLCHAIN_IMAGE=$(make -s toolchain-image)" >> "$GITHUB_ENV"
+
+      - name: make coverage-shard
+        if: ${{ !cancelled() && env.TOOLCHAIN_IMAGE != '' && env.DOCS_ONLY != 'true' }}
+        run: |
+          profile="coverage-shard-$SHARD-of-$UNIT_SHARDS.out"
+          scripts/in-toolchain-image.sh "$TOOLCHAIN_IMAGE" \
+            "make coverage-shard SHARD=$SHARD SHARDS=$UNIT_SHARDS RACE_TIMEOUT=$RACE_TIMEOUT GO_BUILD_TAGS='$GO_BUILD_TAGS' 1>&2 && cat coverage/$profile" \
+            > "$profile"
+
+      - name: Upload the shard's coverage profile
+        if: ${{ !cancelled() && env.TOOLCHAIN_IMAGE != '' && env.DOCS_ONLY != 'true' }}
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: coverage-shard-${{ matrix.shard }}
+          path: coverage-shard-${{ matrix.shard }}-of-${{ env.UNIT_SHARDS }}.out
+          if-no-files-found: error
+          retention-days: 1
+
+      - name: Tear down
+        if: always()
+        run: rm -f "$RUNNER_TEMP/gomodauth.env"
+
+  # Joins the unit shards' profiles and fails when total coverage is below
+  # COVERAGE_THRESHOLD (testing-guidelines.md), with the same generated-code
+  # exclusions as `make coverage`. It runs only when every shard passed: a
+  # missing shard would make the total wrong, so a failed or skipped shard
+  # leaves this job skipped and CI Gate fails on it.
+  coverage:
+    name: Coverage gate [merged unit shards]
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    needs: [changes, unit]
+    env:
+      DOCS_ONLY: ${{ needs.changes.outputs.docs_only }}
+      CI_STACK_PREFIX: ${{ github.event.repository.name }}-ci-
+      CI_CACHE_CLASS: ${{ github.event_name == 'push' && 'main' || 'pr' }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+
+      - name: Mask the forge credentials
+        run: |
+          for v in GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0; do
+            val=${!v:-}
+            [ -n "$val" ] || continue
+            echo "::add-mask::$val"
+            case $val in *://*:*@*) t=${val#*://}; t=${t%%@*}; echo "::add-mask::${t#*:}" ;; esac
+          done
+
+      # The report reads the source the shards tested: the same merge result.
+      - name: Validate the merge result, not the head alone
+        run: .github/scripts/ci-merge-base.sh "${{ github.event_name }}" "${{ github.base_ref }}" "${{ github.event.pull_request.base.sha }}"
+
+      - name: Free runner disk
+        if: ${{ runner.environment == 'github-hosted' && env.DOCS_ONLY != 'true' }}
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc
+          docker image prune --all --force
+          df -h /
+
+      - name: Build the toolchain image
+        if: ${{ env.DOCS_ONLY != 'true' }}
+        run: |
+          ( umask 077; : > "$RUNNER_TEMP/gomodauth.env"
+            for v in GOPRIVATE GIT_CONFIG_COUNT GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0; do
+              if [ -n "${!v:-}" ]; then printf '%s=%s\n' "$v" "${!v}" >> "$RUNNER_TEMP/gomodauth.env"; fi
+            done )
+          make docker-build-toolchain-image MODULE_ENV_FILE="$RUNNER_TEMP/gomodauth.env"
+          rm -f "$RUNNER_TEMP/gomodauth.env"
+          echo "TOOLCHAIN_IMAGE=$(make -s toolchain-image)" >> "$GITHUB_ENV"
+
+      - name: Download the shards' coverage profiles
+        if: ${{ env.DOCS_ONLY != 'true' }}
+        uses: actions/download-artifact@v6
+        with:
+          pattern: coverage-shard-*
+          path: coverage
+          merge-multiple: true
+
+      - name: make coverage-merge (the threshold)
+        if: ${{ !cancelled() && env.TOOLCHAIN_IMAGE != '' && env.DOCS_ONLY != 'true' }}
+        run: scripts/in-toolchain-image.sh "$TOOLCHAIN_IMAGE" "make coverage-merge SHARDS=$UNIT_SHARDS COVERAGE_THRESHOLD=$COVERAGE_THRESHOLD"
+
+      - name: Tear down
+        if: always()
+        run: rm -f "$RUNNER_TEMP/gomodauth.env"
+
+  # The rest of the test stage: the TEST_CHECKS validations, the Go SDK
+  # (-race), the minimal, standard and lean tag passes and the tooling tests,
+  # through `make coverage-passes`. None is under -race in the root module, so
+  # one job holds them; they used to share the unsharded run's hour with it.
+  unit-passes:
+    name: Unit tests [checks, Go SDK, tag passes, tooling]
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    needs: [changes]
+    env:
+      DOCS_ONLY: ${{ needs.changes.outputs.docs_only }}
+      CI_STACK_PREFIX: ${{ github.event.repository.name }}-ci-
+      CI_CACHE_CLASS: ${{ github.event_name == 'push' && 'main' || 'pr' }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+
+      - name: Mask the forge credentials
+        run: |
+          for v in GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0; do
+            val=${!v:-}
+            [ -n "$val" ] || continue
+            echo "::add-mask::$val"
+            case $val in *://*:*@*) t=${val#*://}; t=${t%%@*}; echo "::add-mask::${t#*:}" ;; esac
+          done
+
+      - name: Validate the merge result, not the head alone
+        run: .github/scripts/ci-merge-base.sh "${{ github.event_name }}" "${{ github.base_ref }}" "${{ github.event.pull_request.base.sha }}"
+
+      - name: Free runner disk
+        if: ${{ runner.environment == 'github-hosted' && env.DOCS_ONLY != 'true' }}
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc
+          docker image prune --all --force
+          df -h /
+
+      - name: Build the toolchain image
+        if: ${{ env.DOCS_ONLY != 'true' }}
+        run: |
+          ( umask 077; : > "$RUNNER_TEMP/gomodauth.env"
+            for v in GOPRIVATE GIT_CONFIG_COUNT GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0; do
+              if [ -n "${!v:-}" ]; then printf '%s=%s\n' "$v" "${!v}" >> "$RUNNER_TEMP/gomodauth.env"; fi
+            done )
+          make docker-build-toolchain-image MODULE_ENV_FILE="$RUNNER_TEMP/gomodauth.env"
+          rm -f "$RUNNER_TEMP/gomodauth.env"
+          echo "TOOLCHAIN_IMAGE=$(make -s toolchain-image)" >> "$GITHUB_ENV"
+
+      - name: make coverage-passes
+        if: ${{ !cancelled() && env.TOOLCHAIN_IMAGE != '' && env.DOCS_ONLY != 'true' }}
+        run: scripts/in-toolchain-image.sh "$TOOLCHAIN_IMAGE" "make coverage-passes GO_BUILD_TAGS='$GO_BUILD_TAGS'"
+
+      - name: Tear down
+        if: always()
+        run: rm -f "$RUNNER_TEMP/gomodauth.env"
+
   # Integration tests run in the integration image (ci-standard.md §2), as a
   # compose stack on the runner host started by `make integration-test`. The
   # stack is named per run under the repo's prefix, the job reaps stale stacks
   # first (v1.18) and keeps its own teardown last under `if: always()`.
   integration:
     name: Integration [integration image]
-    runs-on: ${{ github.server_url == 'https://github.com' && 'ubuntu-latest' || 'bigdisk' }}
+    runs-on: ubuntu-latest
     # CUSTOMIZE: a repo whose suite runs only on the full tier gates it here
     # with CI Gate's FULL_TIER expression as `if:`, and marks it full there.
     timeout-minutes: 120      # CUSTOMIZE
@@ -514,6 +819,13 @@ jobs:
 
       - name: Reap stale CI stacks
         run: scripts/reap-stale-ci-stacks.sh "$CI_STACK_PREFIX"
+
+      - name: Free runner disk
+        if: ${{ runner.environment == 'github-hosted' }}
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc
+          docker image prune --all --force
+          df -h /
 
       # CUSTOMIZE: host tuning the suite needs goes here, as in the test job.
       # go-quicbaas: the merge result, against the same pinned base as the
@@ -592,19 +904,19 @@ jobs:
   # BOTH the needs list and the results check — a gate that can pass vacuously
   # is worse than no gate. Do not use join(needs.*.result); it evaluates empty
   # on Gitea and reports success while jobs fail.
-  # v1.21: on the ci-gate runners (Company Agent m386: only CI Gate runs there;
-  # a 1-CPU gate runner cannot hold a stage). trivy and fips are in nightly.yml
+  # The unit matrix is one needs entry and one check line: its result is
+  # success only when every shard succeeded. trivy and fips are in nightly.yml
   # (v1.9, devops.md §8a: the alpha regime).
   ci-gate:
     name: CI Gate
-    runs-on: ${{ github.server_url == 'https://github.com' && 'ubuntu-latest' || 'ci-gate' }}
+    runs-on: ubuntu-latest
     if: always()
     # CUSTOMIZE: the repo's job list. Add every CUSTOMIZE job here AND as a
     # check line below; remove none of the template's jobs.
     # Integration still runs on every PR but does not gate until row #1700
     # closes (CA m787). Restore it then in needs and as a pr check line, and
     # drop it from nonGatingJobs in test/buildgates/ci_gate_test.go.
-    needs: [changes, image, arch-gates]
+    needs: [changes, image, unit, coverage, unit-passes, arch-gates]
     steps:
       - name: Fail closed on any non-success
         env:
@@ -631,5 +943,8 @@ jobs:
           # full tier by its `if:` is marked full; every other job is pr.
           check changes     "${{ needs.changes.result }}" pr
           check image       "${{ needs.image.result }}" pr
+          check unit        "${{ needs.unit.result }}" pr
+          check coverage    "${{ needs.coverage.result }}" pr
+          check unit-passes "${{ needs.unit-passes.result }}" pr
           check arch-gates  "${{ needs.arch-gates.result }}" pr
           exit $BAD
