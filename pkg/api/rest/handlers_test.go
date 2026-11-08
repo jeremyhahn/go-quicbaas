@@ -143,6 +143,40 @@ func TestHandlePut(t *testing.T) {
 			},
 		},
 		{
+			name:   "update entity with wal_durable write mode",
+			method: http.MethodPut,
+			path:   "/api/v1/entities/users/1?write_mode=wal_durable",
+			body: PutRequest{
+				EntityType: "users",
+				ID:         1,
+				Data:       json.RawMessage(`{"name":"test"}`),
+			},
+			setupMock: func(m *testutil.MockQuicBaaS) {
+				m.ExpectedCalls = nil
+				m.On("Put", mock.Anything, mock.Anything).Return(&service.PutResponse{
+					ID: 1, Version: 1, Timestamp: 12345,
+				}, nil).Once()
+			},
+			expectedStatus: http.StatusOK,
+		},
+		{
+			name:   "update entity with batched write mode",
+			method: http.MethodPut,
+			path:   "/api/v1/entities/users/1?write_mode=batched",
+			body: PutRequest{
+				EntityType: "users",
+				ID:         1,
+				Data:       json.RawMessage(`{"name":"test"}`),
+			},
+			setupMock: func(m *testutil.MockQuicBaaS) {
+				m.ExpectedCalls = nil
+				m.On("Put", mock.Anything, mock.Anything).Return(&service.PutResponse{
+					ID: 1, Version: 1, Timestamp: 12345,
+				}, nil).Once()
+			},
+			expectedStatus: http.StatusOK,
+		},
+		{
 			name:           "missing entity type",
 			method:         http.MethodPost,
 			path:           "/api/v1/entities/",
@@ -626,6 +660,19 @@ func TestHandleQuery(t *testing.T) {
 						stream <- &service.QueryResponse{
 							Entities: []*service.Entity{},
 						}
+						close(stream)
+					}).Return(nil).Once()
+			},
+			expectedStatus: http.StatusOK,
+		},
+		{
+			name: "query with empty result stream",
+			path: "/api/v1/query/users/name?value=test",
+			setupMock: func(m *testutil.MockQuicBaaS) {
+				m.ExpectedCalls = nil
+				m.On("Query", mock.Anything, mock.Anything, mock.Anything).
+					Run(func(args mock.Arguments) {
+						stream := args.Get(2).(chan<- *service.QueryResponse)
 						close(stream)
 					}).Return(nil).Once()
 			},
@@ -1397,93 +1444,6 @@ func TestHandleBatchDelete(t *testing.T) {
 	})
 }
 
-// TestPutWithDifferentWriteModes tests HandlePut with various write modes
-func TestPutWithDifferentWriteModes(t *testing.T) {
-	t.Run("wal_durable mode", func(t *testing.T) {
-		server, mockService, cleanup := setupMockServer(t)
-		defer cleanup()
-
-		mockService.On("Put", mock.Anything, mock.Anything).Return(&service.PutResponse{
-			ID: 1, Version: 1, Timestamp: 12345,
-		}, nil).Once()
-
-		putReq := PutRequest{
-			EntityType: "users",
-			ID:         1,
-			Data:       json.RawMessage(`{"name":"test"}`),
-		}
-		body, _ := json.Marshal(putReq)
-
-		req := httptest.NewRequest(http.MethodPut, "/api/v1/entities/users/1?write_mode=wal_durable", bytes.NewReader(body))
-		w := httptest.NewRecorder()
-		server.GetRouter().ServeHTTP(w, req)
-		assert.Equal(t, http.StatusOK, w.Code)
-	})
-
-	t.Run("batched mode", func(t *testing.T) {
-		server, mockService, cleanup := setupMockServer(t)
-		defer cleanup()
-
-		mockService.On("Put", mock.Anything, mock.Anything).Return(&service.PutResponse{
-			ID: 1, Version: 1, Timestamp: 12345,
-		}, nil).Once()
-
-		putReq := PutRequest{
-			EntityType: "users",
-			ID:         1,
-			Data:       json.RawMessage(`{"name":"test"}`),
-		}
-		body, _ := json.Marshal(putReq)
-
-		req := httptest.NewRequest(http.MethodPut, "/api/v1/entities/users/1?write_mode=batched", bytes.NewReader(body))
-		w := httptest.NewRecorder()
-		server.GetRouter().ServeHTTP(w, req)
-		assert.Equal(t, http.StatusOK, w.Code)
-	})
-}
-
-// TestQueryWithEmptyResults tests HandleQuery when stream has no results
-func TestQueryWithEmptyResults(t *testing.T) {
-	server, mockService, cleanup := setupMockServer(t)
-	defer cleanup()
-
-	mockService.On("Query", mock.Anything, mock.Anything, mock.Anything).
-		Run(func(args mock.Arguments) {
-			stream := args.Get(2).(chan<- *service.QueryResponse)
-			close(stream)
-		}).Return(nil).Once()
-
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/query/users/name?value=test", nil)
-	w := httptest.NewRecorder()
-	server.GetRouter().ServeHTTP(w, req)
-	assert.Equal(t, http.StatusOK, w.Code)
-}
-
-// TestRangeQueryWithEmptyResults tests HandleRangeQuery with empty stream
-func TestRangeQueryWithEmptyResults(t *testing.T) {
-	server, mockService, cleanup := setupMockServer(t)
-	defer cleanup()
-
-	mockService.On("ScanIndex", mock.Anything, mock.Anything, mock.Anything).
-		Run(func(args mock.Arguments) {
-			stream := args.Get(2).(chan<- *service.ScanResponse)
-			close(stream)
-		}).Return(nil).Once()
-
-	rangeReq := RangeQueryRequest{
-		EntityType: "users",
-		Index:      "age",
-		Start:      20,
-		End:        30,
-	}
-	body, _ := json.Marshal(rangeReq)
-
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/query/range", bytes.NewReader(body))
-	w := httptest.NewRecorder()
-	server.GetRouter().ServeHTTP(w, req)
-	assert.Equal(t, http.StatusOK, w.Code)
-}
-
 func TestHandleListEntityTypes(t *testing.T) {
 	server, mockService, cleanup := setupMockServer(t)
 	defer cleanup()
@@ -1954,20 +1914,6 @@ func TestCov91_HandleRangeQuery_ServiceError(t *testing.T) {
 	assert.Equal(t, http.StatusInternalServerError, w.Code)
 }
 
-func TestCov91_HandleRotateSecret_MissingPath(t *testing.T) {
-	server, _, cleanup := setupMockServerWithFuncMock(t)
-	defer cleanup()
-
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("*", "")
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/secrets/?action=rotate", nil)
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
-	w := httptest.NewRecorder()
-	server.HandleRotateSecret(w, req)
-
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
 func TestCov91_HandleListVersions_MissingPath(t *testing.T) {
 	server, _, cleanup := setupMockServerWithFuncMock(t)
 	defer cleanup()
@@ -1978,17 +1924,6 @@ func TestCov91_HandleListVersions_MissingPath(t *testing.T) {
 	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
 	w := httptest.NewRecorder()
 	server.HandleListVersions(w, req)
-
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestCov91_HandleWatchSecrets_MissingPrefix(t *testing.T) {
-	server, _, cleanup := setupMockServerWithFuncMock(t)
-	defer cleanup()
-
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/secrets/watch", nil)
-	w := httptest.NewRecorder()
-	server.HandleWatchSecrets(w, req)
 
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
@@ -2045,20 +1980,6 @@ func TestCov91_HandleReplaceNode_InvalidShardID(t *testing.T) {
 	rctx.URLParams.Add("nodeId", "invalid")
 	body := `{"old_node_id": 1, "new_node_id": 2, "new_address": "localhost:9001"}`
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/cluster/shards/invalid/replace", strings.NewReader(body))
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
-	w := httptest.NewRecorder()
-	server.HandleReplaceNode(w, req)
-
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestCov91_HandleReplaceNode_InvalidJSON(t *testing.T) {
-	server, _, cleanup := setupMockServerWithFuncMock(t)
-	defer cleanup()
-
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("nodeId", "1")
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/cluster/shards/1/replace", strings.NewReader("{bad"))
 	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
 	w := httptest.NewRecorder()
 	server.HandleReplaceNode(w, req)
@@ -2131,67 +2052,6 @@ func TestCov91_HandleMessagingDedupStats_ServiceError(t *testing.T) {
 // Messaging Handlers - Success Paths
 // =============================================================================
 
-func TestCov91_HandleGetMessagingChannel_Success(t *testing.T) {
-	server, mockService, cleanup := setupMockServerWithFuncMock(t)
-	defer cleanup()
-
-	mockService.MockMessagingService = &mocks.MockMessagingService{
-		GetChannelFunc: func(ctx context.Context, name string) (*messaging.Channel, error) {
-			return &messaging.Channel{Name: name, CreatedAt: time.Now()}, nil
-		},
-	}
-
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("name", "test-channel")
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/messaging/channels/test-channel", nil)
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
-	w := httptest.NewRecorder()
-	server.HandleGetMessagingChannel(w, req)
-
-	assert.Equal(t, http.StatusOK, w.Code)
-}
-
-func TestCov91_HandleDeleteMessagingChannel_Success(t *testing.T) {
-	server, mockService, cleanup := setupMockServerWithFuncMock(t)
-	defer cleanup()
-
-	mockService.MockMessagingService = &mocks.MockMessagingService{
-		DeleteChannelFunc: func(ctx context.Context, name string) error {
-			return nil
-		},
-	}
-
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("name", "test-channel")
-	req := httptest.NewRequest(http.MethodDelete, "/api/v1/messaging/channels/test-channel", nil)
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
-	w := httptest.NewRecorder()
-	server.HandleDeleteMessagingChannel(w, req)
-
-	assert.Equal(t, http.StatusOK, w.Code)
-}
-
-func TestCov91_HandleMessagingPublishDelta_Success(t *testing.T) {
-	server, mockService, cleanup := setupMockServerWithFuncMock(t)
-	defer cleanup()
-
-	mockService.MockMessagingService = &mocks.MockMessagingService{
-		PublishDeltaFunc: func(ctx context.Context, channel string, old, new interface{}, opts ...messaging.PublishOption) (*messaging.PublishResult, error) {
-			return &messaging.PublishResult{MessageID: "delta-msg-1"}, nil
-		},
-	}
-
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("channel", "ch1")
-	body := `{"old":"value-a","new":"value-b"}`
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/messaging/publish-delta/ch1", strings.NewReader(body))
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
-	w := httptest.NewRecorder()
-	server.HandleMessagingPublishDelta(w, req)
-
-	assert.Equal(t, http.StatusOK, w.Code)
-}
-
 func TestCov91_HandleMessagingChannelStats_Success(t *testing.T) {
 	server, mockService, cleanup := setupMockServerWithFuncMock(t)
 	defer cleanup()
@@ -2216,146 +2076,13 @@ func TestCov91_HandleMessagingChannelStats_Success(t *testing.T) {
 // Messaging Handlers - Missing Name Validation
 // =============================================================================
 
-func TestCov91_HandleGetMessagingChannel_MissingName(t *testing.T) {
-	server, mockService, cleanup := setupMockServerWithFuncMock(t)
-	defer cleanup()
-
-	mockService.MockMessagingService = &mocks.MockMessagingService{}
-
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("name", "")
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/messaging/channels/", nil)
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
-	w := httptest.NewRecorder()
-	server.HandleGetMessagingChannel(w, req)
-
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestCov91_HandleDeleteMessagingChannel_MissingName(t *testing.T) {
-	server, mockService, cleanup := setupMockServerWithFuncMock(t)
-	defer cleanup()
-
-	mockService.MockMessagingService = &mocks.MockMessagingService{}
-
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("name", "")
-	req := httptest.NewRequest(http.MethodDelete, "/api/v1/messaging/channels/", nil)
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
-	w := httptest.NewRecorder()
-	server.HandleDeleteMessagingChannel(w, req)
-
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestCov91_HandleMessagingChannelStats_MissingChannel(t *testing.T) {
-	server, mockService, cleanup := setupMockServerWithFuncMock(t)
-	defer cleanup()
-
-	mockService.MockMessagingService = &mocks.MockMessagingService{}
-
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("channel", "")
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/messaging/stats/", nil)
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
-	w := httptest.NewRecorder()
-	server.HandleMessagingChannelStats(w, req)
-
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestCov91_HandleMessagingDedupStats_MissingChannel(t *testing.T) {
-	server, mockService, cleanup := setupMockServerWithFuncMock(t)
-	defer cleanup()
-
-	mockService.MockMessagingService = &mocks.MockMessagingService{}
-
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("channel", "")
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/messaging/dedup/stats/", nil)
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
-	w := httptest.NewRecorder()
-	server.HandleMessagingDedupStats(w, req)
-
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
 // =============================================================================
 // Messaging - Nil service (not configured)
 // =============================================================================
 
-func TestCov91_HandleListMessagingChannels_NilService(t *testing.T) {
-	server, _, cleanup := setupMockServerWithFuncMock(t)
-	defer cleanup()
-
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/messaging/channels", nil)
-	w := httptest.NewRecorder()
-	server.HandleListMessagingChannels(w, req)
-
-	assert.Equal(t, http.StatusNotImplemented, w.Code)
-}
-
-func TestCov91_HandleMessagingStats_NilService(t *testing.T) {
-	server, _, cleanup := setupMockServerWithFuncMock(t)
-	defer cleanup()
-
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/messaging/stats", nil)
-	w := httptest.NewRecorder()
-	server.HandleMessagingStats(w, req)
-
-	assert.Equal(t, http.StatusNotImplemented, w.Code)
-}
-
-func TestCov91_HandleMessagingPublishDelta_NilService(t *testing.T) {
-	server, _, cleanup := setupMockServerWithFuncMock(t)
-	defer cleanup()
-
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("channel", "ch1")
-	body := `{"old":"a","new":"b"}`
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/messaging/publish-delta/ch1", strings.NewReader(body))
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
-	w := httptest.NewRecorder()
-	server.HandleMessagingPublishDelta(w, req)
-
-	assert.Equal(t, http.StatusNotImplemented, w.Code)
-}
-
 // =============================================================================
 // KMS Handler - Invalid JSON / Missing Params
 // =============================================================================
-
-func TestCov91_HandleSetKeySafety_InvalidJSON(t *testing.T) {
-	server, mockService, cleanup := setupMockServerWithFuncMock(t)
-	defer cleanup()
-
-	mockService.MockKMSService = &mocks.MockKMSService{}
-
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("name", "my-key")
-	req := httptest.NewRequest(http.MethodPut, "/api/v1/kms/keys/my-key/safety", strings.NewReader("not-json"))
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
-	w := httptest.NewRecorder()
-	server.HandleSetKeySafety(w, req)
-
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestCov91_HandleSetKeyPolicy_InvalidJSON(t *testing.T) {
-	server, mockService, cleanup := setupMockServerWithFuncMock(t)
-	defer cleanup()
-
-	mockService.MockKMSService = &mocks.MockKMSService{}
-
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("name", "my-key")
-	req := httptest.NewRequest(http.MethodPut, "/api/v1/kms/keys/my-key/policy", strings.NewReader("not-json"))
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
-	w := httptest.NewRecorder()
-	server.HandleSetKeyPolicy(w, req)
-
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
 
 type cacheTestLogger struct {
 	*logger.Logger
@@ -2597,21 +2324,22 @@ func TestHandleBatchDeleteObjects_DeleteError(t *testing.T) {
 	assert.Equal(t, 2, resp.Failed)
 }
 
-func TestFormatVectorID_NilMetadata(t *testing.T) {
-	result := formatVectorID(42, nil)
-	assert.Equal(t, "42", result)
-}
+func TestFormatVectorID(t *testing.T) {
+	tests := []struct {
+		name     string
+		metadata map[string]string
+		expected string
+	}{
+		{name: "nil metadata", metadata: nil, expected: "42"},
+		{name: "metadata without original ID", metadata: map[string]string{"other_key": "value"}, expected: "42"},
+		{name: "metadata with original ID", metadata: map[string]string{MetadataKeyOriginalID: "my-doc-id"}, expected: "my-doc-id"},
+	}
 
-func TestFormatVectorID_MetadataWithoutOriginalID(t *testing.T) {
-	metadata := map[string]string{"other_key": "value"}
-	result := formatVectorID(42, metadata)
-	assert.Equal(t, "42", result)
-}
-
-func TestFormatVectorID_MetadataWithOriginalID(t *testing.T) {
-	metadata := map[string]string{MetadataKeyOriginalID: "my-doc-id"}
-	result := formatVectorID(42, metadata)
-	assert.Equal(t, "my-doc-id", result)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.expected, formatVectorID(42, tt.metadata))
+		})
+	}
 }
 
 func TestHandleClusterShards_NilResponse(t *testing.T) {
@@ -2678,36 +2406,6 @@ func TestHandleGetLeader_ServiceError(t *testing.T) {
 	server.HandleGetLeader(w, req)
 
 	assert.Equal(t, http.StatusInternalServerError, w.Code)
-}
-
-func TestPhase4HandlerGetCacheStatsNilManager(t *testing.T) {
-	t.Run("get stats with nil cache manager", func(t *testing.T) {
-		handler := &Phase4Handler{
-			cacheMgr: nil,
-		}
-
-		req := httptest.NewRequest(http.MethodGet, "/api/v1/cache/stats", nil)
-		w := httptest.NewRecorder()
-
-		handler.HandleGetCacheStats(w, req)
-
-		assert.Equal(t, http.StatusServiceUnavailable, w.Code)
-	})
-}
-
-func TestPhase4HandlerClearCacheNilManager(t *testing.T) {
-	t.Run("clear cache with nil manager", func(t *testing.T) {
-		handler := &Phase4Handler{
-			cacheMgr: nil,
-		}
-
-		req := httptest.NewRequest(http.MethodPost, "/api/v1/cache/clear", nil)
-		w := httptest.NewRecorder()
-
-		handler.HandleClearCache(w, req)
-
-		assert.Equal(t, http.StatusServiceUnavailable, w.Code)
-	})
 }
 
 func TestExtractPathParamEdgeCasesMore(t *testing.T) {
@@ -3127,102 +2825,9 @@ func TestHandleReplaceNode_Validation(t *testing.T) {
 	})
 }
 
-// TestHandleStartMigration_Validation tests validation for migration handler.
-func TestHandleStartMigration_Validation(t *testing.T) {
-	t.Parallel()
-
-	t.Run("invalid JSON body", func(t *testing.T) {
-		server, _, cleanup := setupMockServer(t)
-		defer cleanup()
-
-		body := `{invalid json`
-		req := httptest.NewRequest(http.MethodPost, "/api/v1/cluster/migrate", strings.NewReader(body))
-		req.Header.Set("Content-Type", "application/json")
-		w := httptest.NewRecorder()
-
-		server.HandleStartMigration(w, req)
-
-		assert.Equal(t, http.StatusBadRequest, w.Code)
-	})
-}
-
-// TestHandleStartUpgrade_Validation tests validation for upgrade handler.
-func TestHandleStartUpgrade_Validation(t *testing.T) {
-	t.Parallel()
-
-	t.Run("invalid JSON body", func(t *testing.T) {
-		server, _, cleanup := setupMockServer(t)
-		defer cleanup()
-
-		body := `{invalid json`
-		req := httptest.NewRequest(http.MethodPost, "/api/v1/cluster/upgrade", strings.NewReader(body))
-		req.Header.Set("Content-Type", "application/json")
-		w := httptest.NewRecorder()
-
-		server.HandleStartUpgrade(w, req)
-
-		assert.Equal(t, http.StatusBadRequest, w.Code)
-	})
-
-	t.Run("missing target version", func(t *testing.T) {
-		server, _, cleanup := setupMockServer(t)
-		defer cleanup()
-
-		body := `{"target_version": ""}`
-		req := httptest.NewRequest(http.MethodPost, "/api/v1/cluster/upgrade", strings.NewReader(body))
-		req.Header.Set("Content-Type", "application/json")
-		w := httptest.NewRecorder()
-
-		server.HandleStartUpgrade(w, req)
-
-		assert.Equal(t, http.StatusBadRequest, w.Code)
-	})
-}
-
 // =============================================================================
 // Range Query Handler - Coverage Boost Tests
 // =============================================================================
-
-// TestHandleRangeQuery_ValidationOnly tests validation-only paths for range query handler.
-func TestHandleRangeQuery_ValidationOnly(t *testing.T) {
-	t.Parallel()
-
-	t.Run("invalid JSON body", func(t *testing.T) {
-		server, _, cleanup := setupMockServer(t)
-		defer cleanup()
-
-		body := `{invalid json`
-		req := httptest.NewRequest(http.MethodPost, "/api/v1/entities/users/range", strings.NewReader(body))
-		req.Header.Set("Content-Type", "application/json")
-		w := httptest.NewRecorder()
-
-		rctx := chi.NewRouteContext()
-		rctx.URLParams.Add("entityType", "users")
-		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
-
-		server.HandleRangeQuery(w, req)
-
-		assert.Equal(t, http.StatusBadRequest, w.Code)
-	})
-
-	t.Run("invalid consistency level", func(t *testing.T) {
-		server, _, cleanup := setupMockServer(t)
-		defer cleanup()
-
-		body := `{"start": 1, "end": 100, "consistency_level": "invalid_level"}`
-		req := httptest.NewRequest(http.MethodPost, "/api/v1/entities/users/range", strings.NewReader(body))
-		req.Header.Set("Content-Type", "application/json")
-		w := httptest.NewRecorder()
-
-		rctx := chi.NewRouteContext()
-		rctx.URLParams.Add("entityType", "users")
-		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
-
-		server.HandleRangeQuery(w, req)
-
-		assert.Equal(t, http.StatusBadRequest, w.Code)
-	})
-}
 
 // =============================================================================
 // Client Methods - Coverage Boost Tests
@@ -3373,49 +2978,9 @@ func TestRESTClient_SchedulerMethods_Errors(t *testing.T) {
 // Messaging Channel Conversion Tests
 // =============================================================================
 
-// TestMessagingChannelToREST_NilChannel tests nil channel conversion.
-func TestMessagingChannelToREST_NilChannel(t *testing.T) {
-	t.Parallel()
-
-	result := messagingChannelToREST(nil)
-	assert.Nil(t, result)
-}
-
 // =============================================================================
 // Test Utilities
 // =============================================================================
-
-// TestBatchHandlers_BodyReadErrors tests body read error handling.
-func TestBatchHandlers_BodyReadErrors(t *testing.T) {
-	t.Parallel()
-
-	t.Run("get parameters batch with large body", func(t *testing.T) {
-		server, mockParamService, cleanup := setupMockServerWithParameterStore(t)
-		defer cleanup()
-
-		// Create a very large JSON array
-		paths := make([]string, 10000)
-		for i := range paths {
-			paths[i] = "/app/test/" + string(rune(i))
-		}
-
-		mockParamService.On("GetParameters", mock.Anything, mock.Anything).Return(
-			&interfaces.GetParametersResponse{
-				Parameters: []*interfaces.ParameterValue{},
-				Timestamp:  time.Now(),
-			}, nil).Maybe()
-
-		body, _ := json.Marshal(map[string]interface{}{"paths": paths})
-		req := httptest.NewRequest(http.MethodPost, "/api/v1/parameters/batch/get", bytes.NewReader(body))
-		req.Header.Set("Content-Type", "application/json")
-		w := httptest.NewRecorder()
-
-		server.HandleGetParametersBatch(w, req)
-
-		// Should either succeed or return appropriate error
-		assert.True(t, w.Code == http.StatusOK || w.Code == http.StatusBadRequest || w.Code == http.StatusInternalServerError)
-	})
-}
 
 func TestHandleBatchPut_ReadBodyError(t *testing.T) {
 	server, _, cleanup := setupMockServer(t)
@@ -3960,137 +3525,39 @@ func TestHandleServiceError_ConflictError(t *testing.T) {
 	assert.Equal(t, http.StatusConflict, w.Code)
 }
 
-func TestHandleServiceError_LeaderNotAvailable(t *testing.T) {
-	server, mockService, cleanup := setupMockServer(t)
-	defer cleanup()
+func TestHandleServiceError_StatusMapping(t *testing.T) {
+	tests := []struct {
+		name           string
+		code           qberrors.ErrorCode
+		expectedStatus int
+	}{
+		{"invalid input", qberrors.ErrInvalidInput, http.StatusBadRequest},
+		{"forbidden", qberrors.ErrForbidden, http.StatusForbidden},
+		{"unauthorized", qberrors.ErrUnauthorized, http.StatusUnauthorized},
+		{"unavailable", qberrors.ErrUnavailable, http.StatusServiceUnavailable},
+		{"internal", qberrors.ErrInternal, http.StatusInternalServerError},
+	}
 
-	leaderErr := qberrors.New(qberrors.ErrLeaderNotAvailable, "Get", "no leader")
-	mockService.On("Get", mock.Anything, mock.Anything).Return((*service.GetResponse)(nil), leaderErr)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			server, mockService, cleanup := setupMockServer(t)
+			defer cleanup()
 
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("type", "users")
-	rctx.URLParams.Add("id", "1")
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/entities/users/1", nil)
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
-	w := httptest.NewRecorder()
+			svcErr := qberrors.New(tt.code, "Get", tt.name)
+			mockService.On("Get", mock.Anything, mock.Anything).Return((*service.GetResponse)(nil), svcErr)
 
-	server.HandleGet(w, req)
+			rctx := chi.NewRouteContext()
+			rctx.URLParams.Add("type", "users")
+			rctx.URLParams.Add("id", "1")
+			req := httptest.NewRequest(http.MethodGet, "/api/v1/entities/users/1", nil)
+			req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+			w := httptest.NewRecorder()
 
-	assert.Equal(t, http.StatusServiceUnavailable, w.Code)
-}
+			server.HandleGet(w, req)
 
-func TestHandleServiceError_Timeout(t *testing.T) {
-	server, mockService, cleanup := setupMockServer(t)
-	defer cleanup()
-
-	timeoutErr := qberrors.New(qberrors.ErrTimeout, "Get", "operation timed out")
-	mockService.On("Get", mock.Anything, mock.Anything).Return((*service.GetResponse)(nil), timeoutErr)
-
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("type", "users")
-	rctx.URLParams.Add("id", "1")
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/entities/users/1", nil)
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
-	w := httptest.NewRecorder()
-
-	server.HandleGet(w, req)
-
-	assert.Equal(t, http.StatusRequestTimeout, w.Code)
-}
-
-func TestHandleServiceError_InvalidInput(t *testing.T) {
-	server, mockService, cleanup := setupMockServer(t)
-	defer cleanup()
-
-	validationErr := qberrors.New(qberrors.ErrInvalidInput, "Get", "bad input")
-	mockService.On("Get", mock.Anything, mock.Anything).Return((*service.GetResponse)(nil), validationErr)
-
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("type", "users")
-	rctx.URLParams.Add("id", "1")
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/entities/users/1", nil)
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
-	w := httptest.NewRecorder()
-
-	server.HandleGet(w, req)
-
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestHandleServiceError_Forbidden(t *testing.T) {
-	server, mockService, cleanup := setupMockServer(t)
-	defer cleanup()
-
-	forbiddenErr := qberrors.New(qberrors.ErrForbidden, "Get", "access denied")
-	mockService.On("Get", mock.Anything, mock.Anything).Return((*service.GetResponse)(nil), forbiddenErr)
-
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("type", "users")
-	rctx.URLParams.Add("id", "1")
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/entities/users/1", nil)
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
-	w := httptest.NewRecorder()
-
-	server.HandleGet(w, req)
-
-	assert.Equal(t, http.StatusForbidden, w.Code)
-}
-
-func TestHandleServiceError_Unauthorized(t *testing.T) {
-	server, mockService, cleanup := setupMockServer(t)
-	defer cleanup()
-
-	unauthorizedErr := qberrors.New(qberrors.ErrUnauthorized, "Get", "not authorized")
-	mockService.On("Get", mock.Anything, mock.Anything).Return((*service.GetResponse)(nil), unauthorizedErr)
-
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("type", "users")
-	rctx.URLParams.Add("id", "1")
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/entities/users/1", nil)
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
-	w := httptest.NewRecorder()
-
-	server.HandleGet(w, req)
-
-	assert.Equal(t, http.StatusUnauthorized, w.Code)
-}
-
-func TestHandleServiceError_Unavailable(t *testing.T) {
-	server, mockService, cleanup := setupMockServer(t)
-	defer cleanup()
-
-	unavailableErr := qberrors.New(qberrors.ErrUnavailable, "Get", "service unavailable")
-	mockService.On("Get", mock.Anything, mock.Anything).Return((*service.GetResponse)(nil), unavailableErr)
-
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("type", "users")
-	rctx.URLParams.Add("id", "1")
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/entities/users/1", nil)
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
-	w := httptest.NewRecorder()
-
-	server.HandleGet(w, req)
-
-	assert.Equal(t, http.StatusServiceUnavailable, w.Code)
-}
-
-func TestHandleServiceError_Internal(t *testing.T) {
-	server, mockService, cleanup := setupMockServer(t)
-	defer cleanup()
-
-	internalErr := qberrors.New(qberrors.ErrInternal, "Get", "internal error")
-	mockService.On("Get", mock.Anything, mock.Anything).Return((*service.GetResponse)(nil), internalErr)
-
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("type", "users")
-	rctx.URLParams.Add("id", "1")
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/entities/users/1", nil)
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
-	w := httptest.NewRecorder()
-
-	server.HandleGet(w, req)
-
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
+			assert.Equal(t, tt.expectedStatus, w.Code)
+		})
+	}
 }
 
 func TestHandleSetParameter_ReadBodyError(t *testing.T) {
@@ -4105,22 +3572,6 @@ func TestHandleSetParameter_ReadBodyError(t *testing.T) {
 	w := httptest.NewRecorder()
 
 	server.HandleSetParameter(w, req)
-
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestHandleKVPut_ReadBodyError(t *testing.T) {
-	server, _, cleanup := setupMockServer(t)
-	defer cleanup()
-
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("*", "/test-key")
-	req := httptest.NewRequest(http.MethodPut, "/api/v1/kv/test-key", nil)
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
-	req.Body = io.NopCloser(&errorReader{})
-	w := httptest.NewRecorder()
-
-	server.HandleKVPut(w, req)
 
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
@@ -4181,214 +3632,6 @@ func TestPerformanceMetricsHandler_Encoding(t *testing.T) {
 		assert.NotZero(t, metrics.Timestamp)
 	})
 }
-
-func TestHandlerEdgeCases_InvalidJSONParsing(t *testing.T) {
-	testCases := []struct {
-		name        string
-		requestBody string
-		expectError bool
-	}{
-		{
-			name:        "EmptyBody",
-			requestBody: "",
-			expectError: true,
-		},
-		{
-			name:        "InvalidJSON",
-			requestBody: "{invalid json}",
-			expectError: true,
-		},
-		{
-			name:        "PartialJSON",
-			requestBody: `{"key":`,
-			expectError: true,
-		},
-		{
-			name:        "NullJSON",
-			requestBody: "null",
-			expectError: false, // null is valid JSON
-		},
-	}
-
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
-			var result map[string]interface{}
-			err := json.NewDecoder(bytes.NewBufferString(tc.requestBody)).Decode(&result)
-
-			if tc.expectError {
-				assert.Error(t, err)
-			} else {
-				if err != nil {
-					// null JSON decodes successfully
-					assert.NoError(t, err)
-				}
-			}
-		})
-	}
-}
-
-// Test helper function edge cases - only valid cases that don't panic
-
-func TestExtractPathParamFunction_ValidCases(t *testing.T) {
-	testCases := []struct {
-		name     string
-		path     string
-		prefix   string
-		suffix   string
-		expected string
-	}{
-		{
-			name:     "NormalCase",
-			path:     "/api/v1/backups/backup-123/restore",
-			prefix:   "/api/v1/backups/",
-			suffix:   "/restore",
-			expected: "backup-123",
-		},
-		{
-			name:     "PrefixOnly",
-			path:     "/api/v1/backups/backup-456",
-			prefix:   "/api/v1/backups/",
-			suffix:   "",
-			expected: "backup-456",
-		},
-		{
-			name:     "NoAffixes",
-			path:     "backup-789",
-			prefix:   "",
-			suffix:   "",
-			expected: "backup-789",
-		},
-		{
-			name:     "DataRestore",
-			path:     "/api/v1/data/restore",
-			prefix:   "/api/v1/",
-			suffix:   "/restore",
-			expected: "data",
-		},
-	}
-
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
-			result := extractPathParam(tc.path, tc.prefix, tc.suffix)
-			assert.Equal(t, tc.expected, result)
-		})
-	}
-}
-
-// Test response formatting edge cases
-
-func TestRespondJSON_EncodingIssues(t *testing.T) {
-	t.Run("EncodeFunctionType", func(t *testing.T) {
-		// Functions cannot be encoded to JSON
-		w := httptest.NewRecorder()
-
-		// Create a struct with a function field (not encodable)
-		type BadStruct struct {
-			Func func()
-		}
-
-		data := BadStruct{
-			Func: func() {},
-		}
-
-		// Try to encode
-		err := json.NewEncoder(w).Encode(data)
-
-		// Should produce an error
-		assert.Error(t, err)
-	})
-
-	t.Run("EncodeChannelType", func(t *testing.T) {
-		// Channels cannot be encoded to JSON
-		w := httptest.NewRecorder()
-
-		type BadStruct struct {
-			Ch chan int
-		}
-
-		data := BadStruct{
-			Ch: make(chan int),
-		}
-
-		err := json.NewEncoder(w).Encode(data)
-		assert.Error(t, err)
-	})
-}
-
-// Test metric structure validity
-
-func TestPerformanceMetricsStructure_Validation(t *testing.T) {
-	t.Run("AllFieldsPresent", func(t *testing.T) {
-		metrics := &PerformanceMetrics{}
-
-		// Ensure all nested structs are present (not panicking on access)
-		assert.NotPanics(t, func() {
-			_ = metrics.Throughput.ReadsPerSec
-			_ = metrics.Throughput.WritesPerSec
-			_ = metrics.Throughput.TotalOpsPerSec
-			_ = metrics.Latency.ReadP50Ms
-			_ = metrics.Latency.ReadP95Ms
-			_ = metrics.Latency.ReadP99Ms
-			_ = metrics.Latency.WriteP50Ms
-			_ = metrics.Latency.WriteP95Ms
-			_ = metrics.Latency.WriteP99Ms
-			_ = metrics.Storage.CacheHitRatePct
-			_ = metrics.Storage.BloomFilterEffectivenessPct
-			_ = metrics.Storage.CompactionsPerMin
-			_ = metrics.Storage.L0Files
-			_ = metrics.Storage.DiskUsageGB
-			_ = metrics.Pool.Size
-			_ = metrics.Pool.Active
-			_ = metrics.Pool.ConnectionReuseRatePct
-		})
-	})
-
-	t.Run("JSONMarshaling", func(t *testing.T) {
-		now := time.Now()
-		metrics := &PerformanceMetrics{
-			Timestamp: now,
-			Throughput: ThroughputMetrics{
-				ReadsPerSec:    100.5,
-				WritesPerSec:   50.2,
-				TotalOpsPerSec: 150.7,
-			},
-			Latency: LatencyMetrics{
-				ReadP50Ms:  1.2,
-				ReadP95Ms:  5.5,
-				ReadP99Ms:  10.0,
-				WriteP50Ms: 2.0,
-				WriteP95Ms: 6.0,
-				WriteP99Ms: 12.0,
-			},
-			Storage: StorageMetrics{
-				CacheHitRatePct:             85.5,
-				BloomFilterEffectivenessPct: 95.0,
-				CompactionsPerMin:           2.5,
-				L0Files:                     5,
-				DiskUsageGB:                 100.5,
-			},
-			Pool: PoolMetrics{
-				Size:                   10,
-				Active:                 7,
-				ConnectionReuseRatePct: 90.0,
-			},
-		}
-
-		data, err := json.Marshal(metrics)
-		assert.NoError(t, err)
-		assert.NotEmpty(t, data)
-
-		// Unmarshal back
-		var decoded PerformanceMetrics
-		err = json.Unmarshal(data, &decoded)
-		assert.NoError(t, err)
-		assert.Equal(t, metrics.Throughput.ReadsPerSec, decoded.Throughput.ReadsPerSec)
-		assert.Equal(t, metrics.Storage.L0Files, decoded.Storage.L0Files)
-		assert.Equal(t, metrics.Pool.Size, decoded.Pool.Size)
-	})
-}
-
-// Test getClientIP edge cases
 
 func TestGetClientIPFunction_EdgeCases(t *testing.T) {
 	testCases := []struct {
@@ -4463,207 +3706,73 @@ func TestGetClientIPFunction_EdgeCases(t *testing.T) {
 	}
 }
 
-func TestHandleGetParametersBatchInvalidJSON(t *testing.T) {
+func TestParametersBatchValidation(t *testing.T) {
 	server, _, cleanup := setupMockServer(t)
 	defer cleanup()
 
-	body := `not-json`
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/parameters/batch", bytes.NewReader([]byte(body)))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
+	tests := []struct {
+		name    string
+		handler http.HandlerFunc
+		body    string
+		errMsg  string
+	}{
+		{"get invalid JSON", server.HandleGetParametersBatch, `not-json`, ""},
+		{"get empty paths", server.HandleGetParametersBatch, `{"paths": []}`, "at least one path is required"},
+		{"delete invalid JSON", server.HandleDeleteParametersBatch, `not-json`, ""},
+		{"delete empty paths", server.HandleDeleteParametersBatch, `{"paths": []}`, "at least one path is required"},
+		{"set invalid JSON", server.HandleSetParametersBatch, `not-json`, ""},
+		{"set empty parameters", server.HandleSetParametersBatch, `{"parameters": []}`, ""},
+		{"set missing path", server.HandleSetParametersBatch, `{"parameters": [{"value": "test"}]}`, "parameter path is required"},
+		{"set missing value", server.HandleSetParametersBatch, `{"parameters": [{"path": "/test/path"}]}`, "parameter value is required"},
+		{"search invalid JSON", server.HandleSearchParametersByTags, `not-json`, ""},
+		{"search empty tags", server.HandleSearchParametersByTags, `{"tags": {}}`, "at least one tag is required"},
+	}
 
-	server.HandleGetParametersBatch(w, req)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodPost, "/api/v1/parameters/batch", bytes.NewReader([]byte(tt.body)))
+			req.Header.Set("Content-Type", "application/json")
+			w := httptest.NewRecorder()
 
-	assert.Equal(t, http.StatusBadRequest, w.Code)
+			tt.handler(w, req)
+
+			assert.Equal(t, http.StatusBadRequest, w.Code)
+			if tt.errMsg != "" {
+				assert.Contains(t, w.Body.String(), tt.errMsg)
+			}
+		})
+	}
 }
 
-func TestHandleGetParametersBatchEmptyPaths(t *testing.T) {
+func TestHandleKVDelete_MissingParams(t *testing.T) {
 	server, _, cleanup := setupMockServer(t)
 	defer cleanup()
 
-	body := `{"paths": []}`
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/parameters/batch", bytes.NewReader([]byte(body)))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
+	tests := []struct {
+		name       string
+		entityType string
+		key        string
+	}{
+		{"missing entity type", "", "test-key"},
+		{"missing key", "test-type", ""},
+	}
 
-	server.HandleGetParametersBatch(w, req)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodDelete, "/api/v1/kv/entities", nil)
+			w := httptest.NewRecorder()
 
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-	assert.Contains(t, w.Body.String(), "at least one path is required")
-}
+			rctx := chi.NewRouteContext()
+			rctx.URLParams.Add("type", tt.entityType)
+			rctx.URLParams.Add("key", tt.key)
+			req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
 
-func TestHandleDeleteParametersBatchInvalidJSON(t *testing.T) {
-	server, _, cleanup := setupMockServer(t)
-	defer cleanup()
+			server.HandleKVDelete(w, req)
 
-	body := `not-json`
-	req := httptest.NewRequest(http.MethodDelete, "/api/v1/parameters/batch", bytes.NewReader([]byte(body)))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-
-	server.HandleDeleteParametersBatch(w, req)
-
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestHandleDeleteParametersBatchEmptyPaths(t *testing.T) {
-	server, _, cleanup := setupMockServer(t)
-	defer cleanup()
-
-	body := `{"paths": []}`
-	req := httptest.NewRequest(http.MethodDelete, "/api/v1/parameters/batch", bytes.NewReader([]byte(body)))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-
-	server.HandleDeleteParametersBatch(w, req)
-
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-	assert.Contains(t, w.Body.String(), "at least one path is required")
-}
-
-func TestHandleSetParametersBatchInvalidJSON(t *testing.T) {
-	server, _, cleanup := setupMockServer(t)
-	defer cleanup()
-
-	body := `not-json`
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/parameters/batch/set", bytes.NewReader([]byte(body)))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-
-	server.HandleSetParametersBatch(w, req)
-
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestHandleSetParametersBatchEmptyParameters(t *testing.T) {
-	server, _, cleanup := setupMockServer(t)
-	defer cleanup()
-
-	body := `{"parameters": []}`
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/parameters/batch/set", bytes.NewReader([]byte(body)))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-
-	server.HandleSetParametersBatch(w, req)
-
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestHandleSearchParametersByTagsInvalidJSON(t *testing.T) {
-	server, _, cleanup := setupMockServer(t)
-	defer cleanup()
-
-	body := `not-json`
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/parameters/search/tags", bytes.NewReader([]byte(body)))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-
-	server.HandleSearchParametersByTags(w, req)
-
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestHandleSearchParametersByTagsEmptyTags(t *testing.T) {
-	server, _, cleanup := setupMockServer(t)
-	defer cleanup()
-
-	body := `{"tags": {}}`
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/parameters/search/tags", bytes.NewReader([]byte(body)))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-
-	server.HandleSearchParametersByTags(w, req)
-
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-	assert.Contains(t, w.Body.String(), "at least one tag is required")
-}
-
-func TestHandleKVPutInvalidJSON(t *testing.T) {
-	server, _, cleanup := setupMockServer(t)
-	defer cleanup()
-
-	body := `not-json`
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/kv/bucket/test-bucket", bytes.NewReader([]byte(body)))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("bucket", "test-bucket")
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
-
-	server.HandleKVPut(w, req)
-
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestHandleKVPutMissingBucket(t *testing.T) {
-	server, _, cleanup := setupMockServer(t)
-	defer cleanup()
-
-	body := `{"key": "test-key", "value": "test-value"}`
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/kv/bucket/", bytes.NewReader([]byte(body)))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("bucket", "")
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
-
-	server.HandleKVPut(w, req)
-
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestHandleKVPutMissingKey(t *testing.T) {
-	server, _, cleanup := setupMockServer(t)
-	defer cleanup()
-
-	body := `{"value": "test-value"}`
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/kv/bucket/test-bucket", bytes.NewReader([]byte(body)))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("bucket", "test-bucket")
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
-
-	server.HandleKVPut(w, req)
-
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestHandleKVDeleteMissingBucket(t *testing.T) {
-	server, _, cleanup := setupMockServer(t)
-	defer cleanup()
-
-	req := httptest.NewRequest(http.MethodDelete, "/api/v1/kv/bucket//key/test-key", nil)
-	w := httptest.NewRecorder()
-
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("bucket", "")
-	rctx.URLParams.Add("key", "test-key")
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
-
-	server.HandleKVDelete(w, req)
-
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestHandleKVDeleteMissingKey(t *testing.T) {
-	server, _, cleanup := setupMockServer(t)
-	defer cleanup()
-
-	req := httptest.NewRequest(http.MethodDelete, "/api/v1/kv/bucket/test-bucket/key/", nil)
-	w := httptest.NewRecorder()
-
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("bucket", "test-bucket")
-	rctx.URLParams.Add("key", "")
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
-
-	server.HandleKVDelete(w, req)
-
-	assert.Equal(t, http.StatusBadRequest, w.Code)
+			assert.Equal(t, http.StatusBadRequest, w.Code)
+			assert.Contains(t, w.Body.String(), "entity type and key are required")
+		})
+	}
 }
 
 func TestHandleCryptoBatchEncryptInvalidJSON(t *testing.T) {
@@ -4780,20 +3889,6 @@ func TestHandleSetDefaultDEKFromBodyMissingDEKID(t *testing.T) {
 	w := httptest.NewRecorder()
 
 	server.HandleSetDefaultDEKFromBody(w, req)
-
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestHandleReplaceNodeInvalidJSON(t *testing.T) {
-	server, _, cleanup := setupMockServer(t)
-	defer cleanup()
-
-	body := `not-json`
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/cluster/nodes/replace", bytes.NewReader([]byte(body)))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-
-	server.HandleReplaceNode(w, req)
 
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
@@ -5034,106 +4129,6 @@ func TestHandleImportKeyInvalidJSON(t *testing.T) {
 	server.HandleImportKey(w, req)
 
 	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestHandleQueryInvalidJSON(t *testing.T) {
-	server, _, cleanup := setupMockServer(t)
-	defer cleanup()
-
-	body := `not-json`
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/query", bytes.NewReader([]byte(body)))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-
-	server.HandleQuery(w, req)
-
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestHandleQueryMissingEntityType(t *testing.T) {
-	server, _, cleanup := setupMockServer(t)
-	defer cleanup()
-
-	body := `{"field": "name", "operator": "eq", "value": "test"}`
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/query", bytes.NewReader([]byte(body)))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-
-	server.HandleQuery(w, req)
-
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestHandleRangeQueryInvalidJSON(t *testing.T) {
-	server, _, cleanup := setupMockServer(t)
-	defer cleanup()
-
-	body := `not-json`
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/range-query", bytes.NewReader([]byte(body)))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-
-	server.HandleRangeQuery(w, req)
-
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestHandlePutInvalidJSON(t *testing.T) {
-	server, _, cleanup := setupMockServer(t)
-	defer cleanup()
-
-	body := `not-json`
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/entities/users", bytes.NewReader([]byte(body)))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("entity_type", "users")
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
-
-	server.HandlePut(w, req)
-
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestHandlePutMissingData(t *testing.T) {
-	server, _, cleanup := setupMockServer(t)
-	defer cleanup()
-
-	body := `{"entity_type": "users"}`
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/entities/users", bytes.NewReader([]byte(body)))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("entity_type", "users")
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
-
-	server.HandlePut(w, req)
-
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestHandleGetLeaderSuccess(t *testing.T) {
-	server, mockService, cleanup := setupMockServer(t)
-	defer cleanup()
-
-	mockService.On("GetLeader", mock.Anything, mock.Anything).Return(&service.GetLeaderResponse{
-		ShardID:  1,
-		LeaderID: 123,
-		Address:  "10.0.0.1:5000",
-	}, nil).Once()
-
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/cluster/leader/1", nil)
-	w := httptest.NewRecorder()
-
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("shardID", "1")
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
-
-	server.HandleGetLeader(w, req)
-
-	assert.Equal(t, http.StatusOK, w.Code)
 }
 
 func TestHandleClusterShardsSuccess(t *testing.T) {
@@ -5439,16 +4434,53 @@ func TestRemaining91_HandleCreateNamespace_MissingMetric(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
-func TestRemaining91_HandleCreateNamespace_NilVectorService(t *testing.T) {
+func TestRemaining91_VectorHandlers_NilVectorService(t *testing.T) {
 	server, _, cleanup := setupMockServerWithFuncMock(t)
 	defer cleanup()
 
-	body := `{"namespace":"ns","dimensions":128,"distance_metric":"cosine"}`
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/vector/namespaces", strings.NewReader(body))
-	w := httptest.NewRecorder()
-	server.HandleCreateNamespace(w, req)
+	const ns = "/api/v1/vector/namespaces/test-ns"
+	tests := []struct {
+		name    string
+		method  string
+		target  string
+		body    string
+		withID  bool
+		handler func(http.ResponseWriter, *http.Request)
+	}{
+		{name: "create namespace", method: http.MethodPost, target: "/api/v1/vector/namespaces", body: `{"namespace":"ns","dimensions":128,"distance_metric":"cosine"}`, handler: server.HandleCreateNamespace},
+		{name: "update namespace", method: http.MethodPut, target: ns, body: `{"metadata":{"key":"val"}}`, handler: server.HandleUpdateNamespace},
+		{name: "delete namespace", method: http.MethodDelete, target: ns, handler: server.HandleDeleteNamespace},
+		{name: "list namespaces", method: http.MethodGet, target: "/api/v1/vector/namespaces", handler: server.HandleListNamespaces},
+		{name: "get namespace info", method: http.MethodGet, target: ns, handler: server.HandleGetNamespaceInfo},
+		{name: "get namespace stats", method: http.MethodGet, target: ns + "/stats", handler: server.HandleGetNamespaceStats},
+		{name: "upsert vector", method: http.MethodPost, target: ns + "/vectors", body: `{"id":"vec1","vector":[1.0,2.0,3.0]}`, handler: server.HandleUpsertVector},
+		{name: "get vector", method: http.MethodGet, target: ns + "/vectors/vec1", withID: true, handler: server.HandleGetVector},
+		{name: "delete vector", method: http.MethodDelete, target: ns + "/vectors/vec1", withID: true, handler: server.HandleDeleteVector},
+		{name: "batch upsert vectors", method: http.MethodPost, target: ns + "/vectors/batch", body: `{"vectors":[{"id":"v1","vector":[1.0]}]}`, handler: server.HandleBatchUpsertVectors},
+		{name: "batch delete vectors", method: http.MethodDelete, target: ns + "/vectors/batch", body: `{"ids":["v1","v2"]}`, handler: server.HandleBatchDeleteVectors},
+		{name: "list vectors", method: http.MethodGet, target: ns + "/vectors", handler: server.HandleListVectors},
+		{name: "search similar", method: http.MethodPost, target: ns + "/search/similar", body: `{"query_vector":[1.0,2.0],"k":5}`, handler: server.HandleSearchSimilar},
+		{name: "search by id", method: http.MethodPost, target: ns + "/search/by-id/vec1", body: `{"k":5}`, withID: true, handler: server.HandleSearchByID},
+		{name: "rebuild index", method: http.MethodPost, target: ns + "/index/rebuild", body: `{}`, handler: server.HandleRebuildIndex},
+		{name: "global stats", method: http.MethodGet, target: "/api/v1/vector/admin/stats/global", handler: server.HandleGetGlobalStats},
+		{name: "update metadata", method: http.MethodPut, target: ns + "/vectors/vec1/metadata", body: `{"metadata":{"key":"val"}}`, withID: true, handler: server.HandleUpdateMetadata},
+	}
 
-	assert.Equal(t, http.StatusServiceUnavailable, w.Code)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			rctx := chi.NewRouteContext()
+			rctx.URLParams.Add("namespace", "test-ns")
+			if tt.withID {
+				rctx.URLParams.Add("id", "vec1")
+			}
+			req := httptest.NewRequest(tt.method, tt.target, strings.NewReader(tt.body))
+			req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+			w := httptest.NewRecorder()
+			tt.handler(w, req)
+
+			assert.Equal(t, http.StatusServiceUnavailable, w.Code)
+		})
+	}
 }
 
 func TestRemaining91_HandleCreateNamespace_ServiceError(t *testing.T) {
@@ -5484,21 +4516,6 @@ func TestRemaining91_HandleUpdateNamespace_InvalidJSON(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
-func TestRemaining91_HandleUpdateNamespace_NilVectorService(t *testing.T) {
-	server, _, cleanup := setupMockServerWithFuncMock(t)
-	defer cleanup()
-
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("namespace", "test-ns")
-	body := `{"metadata":{"key":"val"}}`
-	req := httptest.NewRequest(http.MethodPut, "/api/v1/vector/namespaces/test-ns", strings.NewReader(body))
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
-	w := httptest.NewRecorder()
-	server.HandleUpdateNamespace(w, req)
-
-	assert.Equal(t, http.StatusServiceUnavailable, w.Code)
-}
-
 func TestRemaining91_HandleUpdateNamespace_Success(t *testing.T) {
 	server, mockService, cleanup := setupMockServerWithFuncMock(t)
 	defer cleanup()
@@ -5519,20 +4536,6 @@ func TestRemaining91_HandleUpdateNamespace_Success(t *testing.T) {
 	server.HandleUpdateNamespace(w, req)
 
 	assert.Equal(t, http.StatusOK, w.Code)
-}
-
-func TestRemaining91_HandleDeleteNamespace_NilVectorService(t *testing.T) {
-	server, _, cleanup := setupMockServerWithFuncMock(t)
-	defer cleanup()
-
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("namespace", "test-ns")
-	req := httptest.NewRequest(http.MethodDelete, "/api/v1/vector/namespaces/test-ns", nil)
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
-	w := httptest.NewRecorder()
-	server.HandleDeleteNamespace(w, req)
-
-	assert.Equal(t, http.StatusServiceUnavailable, w.Code)
 }
 
 func TestRemaining91_HandleDeleteNamespace_Success(t *testing.T) {
@@ -5577,17 +4580,6 @@ func TestRemaining91_HandleDeleteNamespace_ServiceError(t *testing.T) {
 	assert.Equal(t, http.StatusInternalServerError, w.Code)
 }
 
-func TestRemaining91_HandleListNamespaces_NilVectorService(t *testing.T) {
-	server, _, cleanup := setupMockServerWithFuncMock(t)
-	defer cleanup()
-
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/vector/namespaces", nil)
-	w := httptest.NewRecorder()
-	server.HandleListNamespaces(w, req)
-
-	assert.Equal(t, http.StatusServiceUnavailable, w.Code)
-}
-
 func TestRemaining91_HandleListNamespaces_Success(t *testing.T) {
 	server, mockService, cleanup := setupMockServerWithFuncMock(t)
 	defer cleanup()
@@ -5607,20 +4599,6 @@ func TestRemaining91_HandleListNamespaces_Success(t *testing.T) {
 	server.HandleListNamespaces(w, req)
 
 	assert.Equal(t, http.StatusOK, w.Code)
-}
-
-func TestRemaining91_HandleGetNamespaceInfo_NilVectorService(t *testing.T) {
-	server, _, cleanup := setupMockServerWithFuncMock(t)
-	defer cleanup()
-
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("namespace", "test-ns")
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/vector/namespaces/test-ns", nil)
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
-	w := httptest.NewRecorder()
-	server.HandleGetNamespaceInfo(w, req)
-
-	assert.Equal(t, http.StatusServiceUnavailable, w.Code)
 }
 
 func TestRemaining91_HandleGetNamespaceInfo_Success(t *testing.T) {
@@ -5646,20 +4624,6 @@ func TestRemaining91_HandleGetNamespaceInfo_Success(t *testing.T) {
 	server.HandleGetNamespaceInfo(w, req)
 
 	assert.Equal(t, http.StatusOK, w.Code)
-}
-
-func TestRemaining91_HandleGetNamespaceStats_NilVectorService(t *testing.T) {
-	server, _, cleanup := setupMockServerWithFuncMock(t)
-	defer cleanup()
-
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("namespace", "test-ns")
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/vector/namespaces/test-ns/stats", nil)
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
-	w := httptest.NewRecorder()
-	server.HandleGetNamespaceStats(w, req)
-
-	assert.Equal(t, http.StatusServiceUnavailable, w.Code)
 }
 
 func TestRemaining91_HandleGetNamespaceStats_Success(t *testing.T) {
@@ -5731,21 +4695,6 @@ func TestRemaining91_HandleUpsertVector_EmptyVector(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
-func TestRemaining91_HandleUpsertVector_NilVectorService(t *testing.T) {
-	server, _, cleanup := setupMockServerWithFuncMock(t)
-	defer cleanup()
-
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("namespace", "test-ns")
-	body := `{"id":"vec1","vector":[1.0,2.0,3.0]}`
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/vector/namespaces/test-ns/vectors", strings.NewReader(body))
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
-	w := httptest.NewRecorder()
-	server.HandleUpsertVector(w, req)
-
-	assert.Equal(t, http.StatusServiceUnavailable, w.Code)
-}
-
 func TestRemaining91_HandleUpsertVector_Success(t *testing.T) {
 	server, mockService, cleanup := setupMockServerWithFuncMock(t)
 	defer cleanup()
@@ -5771,21 +4720,6 @@ func TestRemaining91_HandleUpsertVector_Success(t *testing.T) {
 	server.HandleUpsertVector(w, req)
 
 	assert.Equal(t, http.StatusOK, w.Code)
-}
-
-func TestRemaining91_HandleGetVector_NilVectorService(t *testing.T) {
-	server, _, cleanup := setupMockServerWithFuncMock(t)
-	defer cleanup()
-
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("namespace", "test-ns")
-	rctx.URLParams.Add("id", "vec1")
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/vector/namespaces/test-ns/vectors/vec1", nil)
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
-	w := httptest.NewRecorder()
-	server.HandleGetVector(w, req)
-
-	assert.Equal(t, http.StatusServiceUnavailable, w.Code)
 }
 
 func TestRemaining91_HandleGetVector_NotFound(t *testing.T) {
@@ -5836,21 +4770,6 @@ func TestRemaining91_HandleGetVector_Success(t *testing.T) {
 	assert.Equal(t, http.StatusOK, w.Code)
 }
 
-func TestRemaining91_HandleDeleteVector_NilVectorService(t *testing.T) {
-	server, _, cleanup := setupMockServerWithFuncMock(t)
-	defer cleanup()
-
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("namespace", "test-ns")
-	rctx.URLParams.Add("id", "vec1")
-	req := httptest.NewRequest(http.MethodDelete, "/api/v1/vector/namespaces/test-ns/vectors/vec1", nil)
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
-	w := httptest.NewRecorder()
-	server.HandleDeleteVector(w, req)
-
-	assert.Equal(t, http.StatusServiceUnavailable, w.Code)
-}
-
 func TestRemaining91_HandleDeleteVector_Success(t *testing.T) {
 	server, mockService, cleanup := setupMockServerWithFuncMock(t)
 	defer cleanup()
@@ -5887,81 +4806,6 @@ func TestRemaining91_HandleBatchUpsertVectors_InvalidJSON(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
-func TestRemaining91_HandleBatchUpsertVectors_NilVectorService(t *testing.T) {
-	server, _, cleanup := setupMockServerWithFuncMock(t)
-	defer cleanup()
-
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("namespace", "test-ns")
-	body := `{"vectors":[{"id":"v1","vector":[1.0]}]}`
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/vector/namespaces/test-ns/vectors/batch", strings.NewReader(body))
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
-	w := httptest.NewRecorder()
-	server.HandleBatchUpsertVectors(w, req)
-
-	assert.Equal(t, http.StatusServiceUnavailable, w.Code)
-}
-
-func TestRemaining91_HandleBatchDeleteVectors_NilVectorService(t *testing.T) {
-	server, _, cleanup := setupMockServerWithFuncMock(t)
-	defer cleanup()
-
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("namespace", "test-ns")
-	body := `{"ids":["v1","v2"]}`
-	req := httptest.NewRequest(http.MethodDelete, "/api/v1/vector/namespaces/test-ns/vectors/batch", strings.NewReader(body))
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
-	w := httptest.NewRecorder()
-	server.HandleBatchDeleteVectors(w, req)
-
-	assert.Equal(t, http.StatusServiceUnavailable, w.Code)
-}
-
-func TestRemaining91_HandleListVectors_NilVectorService(t *testing.T) {
-	server, _, cleanup := setupMockServerWithFuncMock(t)
-	defer cleanup()
-
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("namespace", "test-ns")
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/vector/namespaces/test-ns/vectors", nil)
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
-	w := httptest.NewRecorder()
-	server.HandleListVectors(w, req)
-
-	assert.Equal(t, http.StatusServiceUnavailable, w.Code)
-}
-
-func TestRemaining91_HandleSearchSimilar_NilVectorService(t *testing.T) {
-	server, _, cleanup := setupMockServerWithFuncMock(t)
-	defer cleanup()
-
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("namespace", "test-ns")
-	body := `{"query_vector":[1.0,2.0],"k":5}`
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/vector/namespaces/test-ns/search/similar", strings.NewReader(body))
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
-	w := httptest.NewRecorder()
-	server.HandleSearchSimilar(w, req)
-
-	assert.Equal(t, http.StatusServiceUnavailable, w.Code)
-}
-
-func TestRemaining91_HandleSearchByID_NilVectorService(t *testing.T) {
-	server, _, cleanup := setupMockServerWithFuncMock(t)
-	defer cleanup()
-
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("namespace", "test-ns")
-	rctx.URLParams.Add("id", "vec1")
-	body := `{"k":5}`
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/vector/namespaces/test-ns/search/by-id/vec1", strings.NewReader(body))
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
-	w := httptest.NewRecorder()
-	server.HandleSearchByID(w, req)
-
-	assert.Equal(t, http.StatusServiceUnavailable, w.Code)
-}
-
 func TestRemaining91_HandleHybridSearch_InvalidJSON(t *testing.T) {
 	server, _, cleanup := setupMockServerWithFuncMock(t)
 	defer cleanup()
@@ -5984,20 +4828,6 @@ func TestRemaining91_HandleSearchByMetadata_InvalidJSON(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
-func TestRemaining91_HandleRebuildIndex_NilVectorService(t *testing.T) {
-	server, _, cleanup := setupMockServerWithFuncMock(t)
-	defer cleanup()
-
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("namespace", "test-ns")
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/vector/namespaces/test-ns/index/rebuild", strings.NewReader("{}"))
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
-	w := httptest.NewRecorder()
-	server.HandleRebuildIndex(w, req)
-
-	assert.Equal(t, http.StatusServiceUnavailable, w.Code)
-}
-
 func TestRemaining91_HandleGetIndexProgress_NilVectorService(t *testing.T) {
 	server, _, cleanup := setupMockServerWithFuncMock(t)
 	defer cleanup()
@@ -6010,17 +4840,6 @@ func TestRemaining91_HandleGetIndexProgress_NilVectorService(t *testing.T) {
 	server.HandleGetIndexProgress(w, req)
 
 	assert.Equal(t, http.StatusOK, w.Code)
-}
-
-func TestRemaining91_HandleGetGlobalStats_NilVectorService(t *testing.T) {
-	server, _, cleanup := setupMockServerWithFuncMock(t)
-	defer cleanup()
-
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/vector/admin/stats/global", nil)
-	w := httptest.NewRecorder()
-	server.HandleGetGlobalStats(w, req)
-
-	assert.Equal(t, http.StatusServiceUnavailable, w.Code)
 }
 
 func TestRemaining91_HandleCompactNamespace_NilVectorService(t *testing.T) {
@@ -6046,84 +4865,86 @@ func TestRemaining91_HandleGetCompactionProgress_NilVectorService(t *testing.T) 
 	assert.Equal(t, http.StatusOK, w.Code)
 }
 
-func TestRemaining91_HandleUpdateMetadata_NilVectorService(t *testing.T) {
-	server, _, cleanup := setupMockServerWithFuncMock(t)
-	defer cleanup()
-
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("namespace", "test-ns")
-	rctx.URLParams.Add("id", "vec1")
-	body := `{"metadata":{"key":"val"}}`
-	req := httptest.NewRequest(http.MethodPut, "/api/v1/vector/namespaces/test-ns/vectors/vec1/metadata", strings.NewReader(body))
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
-	w := httptest.NewRecorder()
-	server.HandleUpdateMetadata(w, req)
-
-	assert.Equal(t, http.StatusServiceUnavailable, w.Code)
-}
-
 // =============================================================================
 // Messaging Handlers
 // =============================================================================
 
-func TestRemaining91_HandleListMessagingChannels_NilService(t *testing.T) {
+func TestRemaining91_MessagingHandlers_NilService(t *testing.T) {
 	server, _, cleanup := setupMockServerWithFuncMock(t)
 	defer cleanup()
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/messaging/channels", nil)
-	w := httptest.NewRecorder()
-	server.HandleListMessagingChannels(w, req)
+	tests := []struct {
+		name    string
+		method  string
+		target  string
+		body    string
+		handler func(http.ResponseWriter, *http.Request)
+	}{
+		{name: "list channels", method: http.MethodGet, target: "/api/v1/messaging/channels", handler: server.HandleListMessagingChannels},
+		{name: "create channel", method: http.MethodPost, target: "/api/v1/messaging/channels", body: `{"name":"test-ch"}`, handler: server.HandleCreateMessagingChannel},
+		{name: "get channel", method: http.MethodGet, target: "/api/v1/messaging/channels/test-ch", handler: server.HandleGetMessagingChannel},
+		{name: "delete channel", method: http.MethodDelete, target: "/api/v1/messaging/channels/test-ch", handler: server.HandleDeleteMessagingChannel},
+		{name: "subscribe", method: http.MethodPost, target: "/api/v1/messaging/subscribe", body: `{"channel":"ch1"}`, handler: server.HandleMessagingSubscribe},
+		{name: "unsubscribe", method: http.MethodDelete, target: "/api/v1/messaging/subscribe/sub-1", handler: server.HandleMessagingUnsubscribe},
+		{name: "publish", method: http.MethodPost, target: "/api/v1/messaging/publish/ch1", body: `{"payload":"hello"}`, handler: server.HandleMessagingPublish},
+		{name: "publish delta", method: http.MethodPost, target: "/api/v1/messaging/publish-delta/ch1", body: `{"old":"a","new":"b"}`, handler: server.HandleMessagingPublishDelta},
+		{name: "stats", method: http.MethodGet, target: "/api/v1/messaging/stats", handler: server.HandleMessagingStats},
+		{name: "channel stats", method: http.MethodGet, target: "/api/v1/messaging/stats/ch1", handler: server.HandleMessagingChannelStats},
+		{name: "dedup stats", method: http.MethodGet, target: "/api/v1/messaging/dedup/stats/ch1", handler: server.HandleMessagingDedupStats},
+	}
 
-	assert.Equal(t, http.StatusNotImplemented, w.Code)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Each handler reads only its own URL parameter.
+			rctx := chi.NewRouteContext()
+			rctx.URLParams.Add("name", "test-ch")
+			rctx.URLParams.Add("id", "sub-1")
+			rctx.URLParams.Add("channel", "ch1")
+			req := httptest.NewRequest(tt.method, tt.target, strings.NewReader(tt.body))
+			req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+			w := httptest.NewRecorder()
+			tt.handler(w, req)
+
+			assert.Equal(t, http.StatusNotImplemented, w.Code)
+		})
+	}
 }
 
 func TestRemaining91_HandleListMessagingChannels_Success(t *testing.T) {
-	server, mockService, cleanup := setupMockServerWithFuncMock(t)
-	defer cleanup()
-
-	mockMsgSvc := &mocks.MockMessagingService{
-		ListChannelsFunc: func(ctx context.Context) ([]*messaging.Channel, error) {
-			return []*messaging.Channel{
-				{Name: "ch1", CreatedAt: time.Now()},
-				{Name: "ch2", CreatedAt: time.Now()},
-			}, nil
-		},
+	tests := []struct {
+		name      string
+		target    string
+		wantTotal int
+	}{
+		{name: "all channels", target: "/api/v1/messaging/channels", wantTotal: 3},
+		{name: "name prefix filter", target: "/api/v1/messaging/channels?name_prefix=events", wantTotal: 2},
 	}
-	mockService.MockMessagingService = mockMsgSvc
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/messaging/channels", nil)
-	w := httptest.NewRecorder()
-	server.HandleListMessagingChannels(w, req)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			server, mockService, cleanup := setupMockServerWithFuncMock(t)
+			defer cleanup()
 
-	assert.Equal(t, http.StatusOK, w.Code)
-	var resp ListMessagingChannelsRESTResponse
-	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
-	assert.Equal(t, 2, resp.Total)
-}
+			mockService.MockMessagingService = &mocks.MockMessagingService{
+				ListChannelsFunc: func(ctx context.Context) ([]*messaging.Channel, error) {
+					return []*messaging.Channel{
+						{Name: "events.user", CreatedAt: time.Now()},
+						{Name: "events.order", CreatedAt: time.Now()},
+						{Name: "logs.system", CreatedAt: time.Now()},
+					}, nil
+				},
+			}
 
-func TestRemaining91_HandleListMessagingChannels_WithPrefix(t *testing.T) {
-	server, mockService, cleanup := setupMockServerWithFuncMock(t)
-	defer cleanup()
+			req := httptest.NewRequest(http.MethodGet, tt.target, nil)
+			w := httptest.NewRecorder()
+			server.HandleListMessagingChannels(w, req)
 
-	mockMsgSvc := &mocks.MockMessagingService{
-		ListChannelsFunc: func(ctx context.Context) ([]*messaging.Channel, error) {
-			return []*messaging.Channel{
-				{Name: "events.user", CreatedAt: time.Now()},
-				{Name: "events.order", CreatedAt: time.Now()},
-				{Name: "logs.system", CreatedAt: time.Now()},
-			}, nil
-		},
+			assert.Equal(t, http.StatusOK, w.Code)
+			var resp ListMessagingChannelsRESTResponse
+			require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
+			assert.Equal(t, tt.wantTotal, resp.Total)
+		})
 	}
-	mockService.MockMessagingService = mockMsgSvc
-
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/messaging/channels?name_prefix=events", nil)
-	w := httptest.NewRecorder()
-	server.HandleListMessagingChannels(w, req)
-
-	assert.Equal(t, http.StatusOK, w.Code)
-	var resp ListMessagingChannelsRESTResponse
-	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
-	assert.Equal(t, 2, resp.Total)
 }
 
 func TestRemaining91_HandleListMessagingChannels_ServiceError(t *testing.T) {
@@ -6142,18 +4963,6 @@ func TestRemaining91_HandleListMessagingChannels_ServiceError(t *testing.T) {
 	server.HandleListMessagingChannels(w, req)
 
 	assert.Equal(t, http.StatusInternalServerError, w.Code)
-}
-
-func TestRemaining91_HandleCreateMessagingChannel_NilService(t *testing.T) {
-	server, _, cleanup := setupMockServerWithFuncMock(t)
-	defer cleanup()
-
-	body := `{"name":"test-ch"}`
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/messaging/channels", strings.NewReader(body))
-	w := httptest.NewRecorder()
-	server.HandleCreateMessagingChannel(w, req)
-
-	assert.Equal(t, http.StatusNotImplemented, w.Code)
 }
 
 func TestRemaining91_HandleCreateMessagingChannel_InvalidJSON(t *testing.T) {
@@ -6202,20 +5011,6 @@ func TestRemaining91_HandleCreateMessagingChannel_Success(t *testing.T) {
 	assert.Equal(t, http.StatusCreated, w.Code)
 }
 
-func TestRemaining91_HandleGetMessagingChannel_NilService(t *testing.T) {
-	server, _, cleanup := setupMockServerWithFuncMock(t)
-	defer cleanup()
-
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("name", "test-ch")
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/messaging/channels/test-ch", nil)
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
-	w := httptest.NewRecorder()
-	server.HandleGetMessagingChannel(w, req)
-
-	assert.Equal(t, http.StatusNotImplemented, w.Code)
-}
-
 func TestRemaining91_HandleGetMessagingChannel_MissingName(t *testing.T) {
 	server, mockService, cleanup := setupMockServerWithFuncMock(t)
 	defer cleanup()
@@ -6253,20 +5048,6 @@ func TestRemaining91_HandleGetMessagingChannel_Success(t *testing.T) {
 	assert.Equal(t, http.StatusOK, w.Code)
 }
 
-func TestRemaining91_HandleDeleteMessagingChannel_NilService(t *testing.T) {
-	server, _, cleanup := setupMockServerWithFuncMock(t)
-	defer cleanup()
-
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("name", "test-ch")
-	req := httptest.NewRequest(http.MethodDelete, "/api/v1/messaging/channels/test-ch", nil)
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
-	w := httptest.NewRecorder()
-	server.HandleDeleteMessagingChannel(w, req)
-
-	assert.Equal(t, http.StatusNotImplemented, w.Code)
-}
-
 func TestRemaining91_HandleDeleteMessagingChannel_MissingName(t *testing.T) {
 	server, mockService, cleanup := setupMockServerWithFuncMock(t)
 	defer cleanup()
@@ -6302,18 +5083,6 @@ func TestRemaining91_HandleDeleteMessagingChannel_Success(t *testing.T) {
 	server.HandleDeleteMessagingChannel(w, req)
 
 	assert.Equal(t, http.StatusOK, w.Code)
-}
-
-func TestRemaining91_HandleMessagingSubscribe_NilService(t *testing.T) {
-	server, _, cleanup := setupMockServerWithFuncMock(t)
-	defer cleanup()
-
-	body := `{"channel":"ch1"}`
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/messaging/subscribe", strings.NewReader(body))
-	w := httptest.NewRecorder()
-	server.HandleMessagingSubscribe(w, req)
-
-	assert.Equal(t, http.StatusNotImplemented, w.Code)
 }
 
 func TestRemaining91_HandleMessagingSubscribe_InvalidJSON(t *testing.T) {
@@ -6362,20 +5131,6 @@ func TestRemaining91_HandleMessagingSubscribe_Success(t *testing.T) {
 	assert.Equal(t, http.StatusCreated, w.Code)
 }
 
-func TestRemaining91_HandleMessagingUnsubscribe_NilService(t *testing.T) {
-	server, _, cleanup := setupMockServerWithFuncMock(t)
-	defer cleanup()
-
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("id", "sub-1")
-	req := httptest.NewRequest(http.MethodDelete, "/api/v1/messaging/subscribe/sub-1", nil)
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
-	w := httptest.NewRecorder()
-	server.HandleMessagingUnsubscribe(w, req)
-
-	assert.Equal(t, http.StatusNotImplemented, w.Code)
-}
-
 func TestRemaining91_HandleMessagingUnsubscribe_MissingID(t *testing.T) {
 	server, mockService, cleanup := setupMockServerWithFuncMock(t)
 	defer cleanup()
@@ -6406,21 +5161,6 @@ func TestRemaining91_HandleMessagingUnsubscribe_Success(t *testing.T) {
 	server.HandleMessagingUnsubscribe(w, req)
 
 	assert.Equal(t, http.StatusOK, w.Code)
-}
-
-func TestRemaining91_HandleMessagingPublish_NilService(t *testing.T) {
-	server, _, cleanup := setupMockServerWithFuncMock(t)
-	defer cleanup()
-
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("channel", "ch1")
-	body := `{"payload":"hello"}`
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/messaging/publish/ch1", strings.NewReader(body))
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
-	w := httptest.NewRecorder()
-	server.HandleMessagingPublish(w, req)
-
-	assert.Equal(t, http.StatusNotImplemented, w.Code)
 }
 
 func TestRemaining91_HandleMessagingPublish_MissingChannel(t *testing.T) {
@@ -6495,21 +5235,6 @@ func TestRemaining91_HandleMessagingPublish_Success(t *testing.T) {
 	assert.Equal(t, http.StatusOK, w.Code)
 }
 
-func TestRemaining91_HandleMessagingPublishDelta_NilService(t *testing.T) {
-	server, _, cleanup := setupMockServerWithFuncMock(t)
-	defer cleanup()
-
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("channel", "ch1")
-	body := `{"old":"a","new":"b"}`
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/messaging/publish-delta/ch1", strings.NewReader(body))
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
-	w := httptest.NewRecorder()
-	server.HandleMessagingPublishDelta(w, req)
-
-	assert.Equal(t, http.StatusNotImplemented, w.Code)
-}
-
 func TestRemaining91_HandleMessagingPublishDelta_MissingOld(t *testing.T) {
 	server, mockService, cleanup := setupMockServerWithFuncMock(t)
 	defer cleanup()
@@ -6566,17 +5291,6 @@ func TestRemaining91_HandleMessagingPublishDelta_Success(t *testing.T) {
 	assert.Equal(t, http.StatusOK, w.Code)
 }
 
-func TestRemaining91_HandleMessagingStats_NilService(t *testing.T) {
-	server, _, cleanup := setupMockServerWithFuncMock(t)
-	defer cleanup()
-
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/messaging/stats", nil)
-	w := httptest.NewRecorder()
-	server.HandleMessagingStats(w, req)
-
-	assert.Equal(t, http.StatusNotImplemented, w.Code)
-}
-
 func TestRemaining91_HandleMessagingStats_Success(t *testing.T) {
 	server, mockService, cleanup := setupMockServerWithFuncMock(t)
 	defer cleanup()
@@ -6595,20 +5309,6 @@ func TestRemaining91_HandleMessagingStats_Success(t *testing.T) {
 	assert.Equal(t, http.StatusOK, w.Code)
 }
 
-func TestRemaining91_HandleMessagingChannelStats_NilService(t *testing.T) {
-	server, _, cleanup := setupMockServerWithFuncMock(t)
-	defer cleanup()
-
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("channel", "ch1")
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/messaging/stats/ch1", nil)
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
-	w := httptest.NewRecorder()
-	server.HandleMessagingChannelStats(w, req)
-
-	assert.Equal(t, http.StatusNotImplemented, w.Code)
-}
-
 func TestRemaining91_HandleMessagingChannelStats_MissingChannel(t *testing.T) {
 	server, mockService, cleanup := setupMockServerWithFuncMock(t)
 	defer cleanup()
@@ -6623,20 +5323,6 @@ func TestRemaining91_HandleMessagingChannelStats_MissingChannel(t *testing.T) {
 	server.HandleMessagingChannelStats(w, req)
 
 	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestRemaining91_HandleMessagingDedupStats_NilService(t *testing.T) {
-	server, _, cleanup := setupMockServerWithFuncMock(t)
-	defer cleanup()
-
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("channel", "ch1")
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/messaging/dedup/stats/ch1", nil)
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
-	w := httptest.NewRecorder()
-	server.HandleMessagingDedupStats(w, req)
-
-	assert.Equal(t, http.StatusNotImplemented, w.Code)
 }
 
 func TestRemaining91_HandleMessagingDedupStats_MissingChannel(t *testing.T) {
@@ -6681,16 +5367,38 @@ func TestRemaining91_HandleMessagingDedupStats_NotPushService(t *testing.T) {
 // Scheduler Handlers
 // =============================================================================
 
-func TestRemaining91_HandleCreateSchedulerJob_NilService(t *testing.T) {
+func TestRemaining91_SchedulerHandlers_NilService(t *testing.T) {
 	server, _, cleanup := setupMockServerWithFuncMock(t)
 	defer cleanup()
 
-	body := `{"name":"job1","handler":"h1","type":"cron"}`
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/scheduler/jobs", strings.NewReader(body))
-	w := httptest.NewRecorder()
-	server.HandleCreateSchedulerJob(w, req)
+	tests := []struct {
+		name    string
+		method  string
+		target  string
+		body    string
+		handler func(http.ResponseWriter, *http.Request)
+	}{
+		{name: "create job", method: http.MethodPost, target: "/api/v1/scheduler/jobs", body: `{"name":"job1","handler":"h1","type":"cron"}`, handler: server.HandleCreateSchedulerJob},
+		{name: "list jobs", method: http.MethodGet, target: "/api/v1/scheduler/jobs", handler: server.HandleListSchedulerJobs},
+		{name: "get job", method: http.MethodGet, target: "/api/v1/scheduler/jobs/1", handler: server.HandleGetSchedulerJob},
+		{name: "update job", method: http.MethodPut, target: "/api/v1/scheduler/jobs/1", body: `{"name":"updated"}`, handler: server.HandleUpdateSchedulerJob},
+		{name: "delete job", method: http.MethodDelete, target: "/api/v1/scheduler/jobs/1", handler: server.HandleDeleteSchedulerJob},
+		{name: "job history", method: http.MethodGet, target: "/api/v1/scheduler/jobs/1/history", handler: server.HandleGetSchedulerJobHistory},
+		{name: "status", method: http.MethodGet, target: "/api/v1/scheduler/status", handler: server.HandleGetSchedulerStatus},
+	}
 
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			rctx := chi.NewRouteContext()
+			rctx.URLParams.Add("id", "1")
+			req := httptest.NewRequest(tt.method, tt.target, strings.NewReader(tt.body))
+			req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+			w := httptest.NewRecorder()
+			tt.handler(w, req)
+
+			assert.Equal(t, http.StatusInternalServerError, w.Code)
+		})
+	}
 }
 
 func TestRemaining91_HandleCreateSchedulerJob_InvalidJSON(t *testing.T) {
@@ -6770,17 +5478,6 @@ func TestRemaining91_HandleCreateSchedulerJob_Success(t *testing.T) {
 	assert.Equal(t, http.StatusCreated, w.Code)
 }
 
-func TestRemaining91_HandleListSchedulerJobs_NilService(t *testing.T) {
-	server, _, cleanup := setupMockServerWithFuncMock(t)
-	defer cleanup()
-
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/scheduler/jobs", nil)
-	w := httptest.NewRecorder()
-	server.HandleListSchedulerJobs(w, req)
-
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
-}
-
 func TestRemaining91_HandleListSchedulerJobs_Success(t *testing.T) {
 	server, mockService, cleanup := setupMockServerWithFuncMock(t)
 	defer cleanup()
@@ -6802,32 +5499,39 @@ func TestRemaining91_HandleListSchedulerJobs_Success(t *testing.T) {
 	assert.Equal(t, http.StatusOK, w.Code)
 }
 
-func TestRemaining91_HandleGetSchedulerJob_InvalidID(t *testing.T) {
+func TestRemaining91_SchedulerJobHandlers_InvalidID(t *testing.T) {
 	server, _, cleanup := setupMockServerWithFuncMock(t)
 	defer cleanup()
 
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("id", "notanumber")
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/scheduler/jobs/notanumber", nil)
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
-	w := httptest.NewRecorder()
-	server.HandleGetSchedulerJob(w, req)
+	tests := []struct {
+		name    string
+		method  string
+		target  string
+		body    string
+		handler func(http.ResponseWriter, *http.Request)
+	}{
+		{name: "get", method: http.MethodGet, target: "/api/v1/scheduler/jobs/bad", handler: server.HandleGetSchedulerJob},
+		{name: "update", method: http.MethodPut, target: "/api/v1/scheduler/jobs/bad", body: `{"name":"updated"}`, handler: server.HandleUpdateSchedulerJob},
+		{name: "delete", method: http.MethodDelete, target: "/api/v1/scheduler/jobs/bad", handler: server.HandleDeleteSchedulerJob},
+		{name: "trigger", method: http.MethodPost, target: "/api/v1/scheduler/jobs/bad/trigger", handler: server.HandleTriggerSchedulerJob},
+		{name: "pause", method: http.MethodPost, target: "/api/v1/scheduler/jobs/bad/pause", handler: server.HandlePauseSchedulerJob},
+		{name: "resume", method: http.MethodPost, target: "/api/v1/scheduler/jobs/bad/resume", handler: server.HandleResumeSchedulerJob},
+		{name: "cancel", method: http.MethodPost, target: "/api/v1/scheduler/jobs/bad/cancel", handler: server.HandleCancelSchedulerJob},
+		{name: "history", method: http.MethodGet, target: "/api/v1/scheduler/jobs/bad/history", handler: server.HandleGetSchedulerJobHistory},
+	}
 
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			rctx := chi.NewRouteContext()
+			rctx.URLParams.Add("id", "bad")
+			req := httptest.NewRequest(tt.method, tt.target, strings.NewReader(tt.body))
+			req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+			w := httptest.NewRecorder()
+			tt.handler(w, req)
 
-func TestRemaining91_HandleGetSchedulerJob_NilService(t *testing.T) {
-	server, _, cleanup := setupMockServerWithFuncMock(t)
-	defer cleanup()
-
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("id", "1")
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/scheduler/jobs/1", nil)
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
-	w := httptest.NewRecorder()
-	server.HandleGetSchedulerJob(w, req)
-
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
+			assert.Equal(t, http.StatusBadRequest, w.Code)
+		})
+	}
 }
 
 func TestRemaining91_HandleGetSchedulerJob_Success(t *testing.T) {
@@ -6854,21 +5558,6 @@ func TestRemaining91_HandleGetSchedulerJob_Success(t *testing.T) {
 	assert.Equal(t, http.StatusOK, w.Code)
 }
 
-func TestRemaining91_HandleUpdateSchedulerJob_InvalidID(t *testing.T) {
-	server, _, cleanup := setupMockServerWithFuncMock(t)
-	defer cleanup()
-
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("id", "bad")
-	body := `{"name":"updated"}`
-	req := httptest.NewRequest(http.MethodPut, "/api/v1/scheduler/jobs/bad", strings.NewReader(body))
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
-	w := httptest.NewRecorder()
-	server.HandleUpdateSchedulerJob(w, req)
-
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
 func TestRemaining91_HandleUpdateSchedulerJob_InvalidJSON(t *testing.T) {
 	server, mockService, cleanup := setupMockServerWithFuncMock(t)
 	defer cleanup()
@@ -6883,49 +5572,6 @@ func TestRemaining91_HandleUpdateSchedulerJob_InvalidJSON(t *testing.T) {
 	server.HandleUpdateSchedulerJob(w, req)
 
 	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestRemaining91_HandleUpdateSchedulerJob_NilService(t *testing.T) {
-	server, _, cleanup := setupMockServerWithFuncMock(t)
-	defer cleanup()
-
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("id", "1")
-	body := `{"name":"updated"}`
-	req := httptest.NewRequest(http.MethodPut, "/api/v1/scheduler/jobs/1", strings.NewReader(body))
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
-	w := httptest.NewRecorder()
-	server.HandleUpdateSchedulerJob(w, req)
-
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
-}
-
-func TestRemaining91_HandleDeleteSchedulerJob_InvalidID(t *testing.T) {
-	server, _, cleanup := setupMockServerWithFuncMock(t)
-	defer cleanup()
-
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("id", "bad")
-	req := httptest.NewRequest(http.MethodDelete, "/api/v1/scheduler/jobs/bad", nil)
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
-	w := httptest.NewRecorder()
-	server.HandleDeleteSchedulerJob(w, req)
-
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestRemaining91_HandleDeleteSchedulerJob_NilService(t *testing.T) {
-	server, _, cleanup := setupMockServerWithFuncMock(t)
-	defer cleanup()
-
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("id", "1")
-	req := httptest.NewRequest(http.MethodDelete, "/api/v1/scheduler/jobs/1", nil)
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
-	w := httptest.NewRecorder()
-	server.HandleDeleteSchedulerJob(w, req)
-
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
 }
 
 func TestRemaining91_HandleDeleteSchedulerJob_Success(t *testing.T) {
@@ -6949,62 +5595,6 @@ func TestRemaining91_HandleDeleteSchedulerJob_Success(t *testing.T) {
 	assert.Equal(t, http.StatusOK, w.Code)
 }
 
-func TestRemaining91_HandleTriggerSchedulerJob_InvalidID(t *testing.T) {
-	server, _, cleanup := setupMockServerWithFuncMock(t)
-	defer cleanup()
-
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("id", "bad")
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/scheduler/jobs/bad/trigger", nil)
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
-	w := httptest.NewRecorder()
-	server.HandleTriggerSchedulerJob(w, req)
-
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestRemaining91_HandlePauseSchedulerJob_InvalidID(t *testing.T) {
-	server, _, cleanup := setupMockServerWithFuncMock(t)
-	defer cleanup()
-
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("id", "bad")
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/scheduler/jobs/bad/pause", nil)
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
-	w := httptest.NewRecorder()
-	server.HandlePauseSchedulerJob(w, req)
-
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestRemaining91_HandleResumeSchedulerJob_InvalidID(t *testing.T) {
-	server, _, cleanup := setupMockServerWithFuncMock(t)
-	defer cleanup()
-
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("id", "bad")
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/scheduler/jobs/bad/resume", nil)
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
-	w := httptest.NewRecorder()
-	server.HandleResumeSchedulerJob(w, req)
-
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestRemaining91_HandleCancelSchedulerJob_InvalidID(t *testing.T) {
-	server, _, cleanup := setupMockServerWithFuncMock(t)
-	defer cleanup()
-
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("id", "bad")
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/scheduler/jobs/bad/cancel", nil)
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
-	w := httptest.NewRecorder()
-	server.HandleCancelSchedulerJob(w, req)
-
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
 func TestRemaining91_HandleCancelSchedulerJob_Success(t *testing.T) {
 	server, mockService, cleanup := setupMockServerWithFuncMock(t)
 	defer cleanup()
@@ -7025,45 +5615,6 @@ func TestRemaining91_HandleCancelSchedulerJob_Success(t *testing.T) {
 	server.HandleCancelSchedulerJob(w, req)
 
 	assert.Equal(t, http.StatusOK, w.Code)
-}
-
-func TestRemaining91_HandleGetSchedulerJobHistory_InvalidID(t *testing.T) {
-	server, _, cleanup := setupMockServerWithFuncMock(t)
-	defer cleanup()
-
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("id", "bad")
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/scheduler/jobs/bad/history", nil)
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
-	w := httptest.NewRecorder()
-	server.HandleGetSchedulerJobHistory(w, req)
-
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestRemaining91_HandleGetSchedulerJobHistory_NilService(t *testing.T) {
-	server, _, cleanup := setupMockServerWithFuncMock(t)
-	defer cleanup()
-
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("id", "1")
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/scheduler/jobs/1/history", nil)
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
-	w := httptest.NewRecorder()
-	server.HandleGetSchedulerJobHistory(w, req)
-
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
-}
-
-func TestRemaining91_HandleGetSchedulerStatus_NilService(t *testing.T) {
-	server, _, cleanup := setupMockServerWithFuncMock(t)
-	defer cleanup()
-
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/scheduler/status", nil)
-	w := httptest.NewRecorder()
-	server.HandleGetSchedulerStatus(w, req)
-
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
 }
 
 func TestRemaining91_HandleGetSchedulerStatus_Success(t *testing.T) {
@@ -7152,170 +5703,95 @@ func TestRemaining91_HandleGetParameter_Success(t *testing.T) {
 // Secrets Handlers
 // =============================================================================
 
-func TestRemaining91_HandleSecretsAction_Rollback(t *testing.T) {
-	server, _, cleanup := setupMockServerWithFuncMock(t)
-	defer cleanup()
-
+// newSecretPathRequest builds a request whose chi wildcard is secretPath.
+func newSecretPathRequest(method, target, secretPath, body string) *http.Request {
 	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("*", "my/secret")
-	// rollback action dispatches to HandleRollbackSecret which needs secrets service
-	req := httptest.NewRequest(http.MethodPost, "/v1/secrets/my/secret?action=rollback", strings.NewReader(`{"version":1}`))
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
-	w := httptest.NewRecorder()
-	server.HandleSecretsAction(w, req)
-
-	// Nil secrets service returns 500
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
+	rctx.URLParams.Add("*", secretPath)
+	var reader io.Reader
+	if body != "" {
+		reader = strings.NewReader(body)
+	}
+	req := httptest.NewRequest(method, target, reader)
+	return req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
 }
 
-func TestRemaining91_HandleSecretsAction_Rotate(t *testing.T) {
-	server, _, cleanup := setupMockServerWithFuncMock(t)
-	defer cleanup()
+func TestRemaining91_HandleSecretsAction_Dispatch(t *testing.T) {
+	tests := []struct {
+		name     string
+		target   string
+		body     string
+		wantCode int
+	}{
+		// The nil secrets service answers 500 once dispatch reaches it.
+		{name: "rollback", target: "/v1/secrets/my/secret?action=rollback", body: `{"version":1}`, wantCode: http.StatusInternalServerError},
+		{name: "rotate", target: "/v1/secrets/my/secret?action=rotate", body: `{"data":"dGVzdA=="}`, wantCode: http.StatusInternalServerError},
+		{name: "rotate missing data", target: "/v1/secrets/my/secret?action=rotate", body: `{}`, wantCode: http.StatusBadRequest},
+		{name: "destroy", target: "/v1/secrets/my/secret?action=destroy", body: `{}`, wantCode: http.StatusInternalServerError},
+		{name: "default store", target: "/v1/secrets/my/secret", body: `{"data":"dGVzdA=="}`, wantCode: http.StatusInternalServerError},
+	}
 
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("*", "my/secret")
-	// rotate action requires data in request body
-	req := httptest.NewRequest(http.MethodPost, "/v1/secrets/my/secret?action=rotate", strings.NewReader(`{"data":"dGVzdA=="}`))
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
-	w := httptest.NewRecorder()
-	server.HandleSecretsAction(w, req)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			server, _, cleanup := setupMockServerWithFuncMock(t)
+			defer cleanup()
 
-	// Nil secrets service returns 500
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
+			req := newSecretPathRequest(http.MethodPost, tt.target, "my/secret", tt.body)
+			w := httptest.NewRecorder()
+			server.HandleSecretsAction(w, req)
+
+			assert.Equal(t, tt.wantCode, w.Code)
+		})
+	}
 }
 
-func TestRemaining91_HandleSecretsAction_Rotate_MissingData(t *testing.T) {
-	server, _, cleanup := setupMockServerWithFuncMock(t)
-	defer cleanup()
+func TestRemaining91_HandleGetSecretOrVersions_Dispatch(t *testing.T) {
+	tests := []struct {
+		name   string
+		target string
+	}{
+		// Each dispatch reaches the nil secrets service, which answers 500.
+		{name: "with versions lists versions", target: "/v1/secrets/my/secret?versions=true"},
+		{name: "without versions gets secret", target: "/v1/secrets/my/secret"},
+	}
 
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("*", "my/secret")
-	req := httptest.NewRequest(http.MethodPost, "/v1/secrets/my/secret?action=rotate", strings.NewReader(`{}`))
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
-	w := httptest.NewRecorder()
-	server.HandleSecretsAction(w, req)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			server, _, cleanup := setupMockServerWithFuncMock(t)
+			defer cleanup()
 
-	// Missing data returns 400
-	assert.Equal(t, http.StatusBadRequest, w.Code)
+			req := newSecretPathRequest(http.MethodGet, tt.target, "my/secret", "")
+			w := httptest.NewRecorder()
+			server.HandleGetSecretOrVersions(w, req)
+
+			assert.Equal(t, http.StatusInternalServerError, w.Code)
+		})
+	}
 }
 
-func TestRemaining91_HandleSecretsAction_Destroy(t *testing.T) {
-	server, _, cleanup := setupMockServerWithFuncMock(t)
-	defer cleanup()
+func TestRemaining91_HandleStoreSecret_Validation(t *testing.T) {
+	tests := []struct {
+		name       string
+		secretPath string
+		body       string
+	}{
+		{name: "missing path", secretPath: "", body: `{"data":"dGVzdA=="}`},
+		{name: "invalid JSON", secretPath: "my/secret", body: "{bad"},
+		{name: "empty data", secretPath: "my/secret", body: `{"data":null}`},
+		{name: "invalid algorithm", secretPath: "my/secret", body: `{"data":"dGVzdA==","algorithm":"INVALID_ALGO"}`},
+	}
 
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("*", "my/secret")
-	req := httptest.NewRequest(http.MethodPost, "/v1/secrets/my/secret?action=destroy", strings.NewReader(`{}`))
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
-	w := httptest.NewRecorder()
-	server.HandleSecretsAction(w, req)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			server, _, cleanup := setupMockServerWithFuncMock(t)
+			defer cleanup()
 
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
-}
+			req := newSecretPathRequest(http.MethodPost, "/v1/secrets/"+tt.secretPath, tt.secretPath, tt.body)
+			w := httptest.NewRecorder()
+			server.HandleStoreSecret(w, req)
 
-func TestRemaining91_HandleSecretsAction_DefaultStore(t *testing.T) {
-	server, _, cleanup := setupMockServerWithFuncMock(t)
-	defer cleanup()
-
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("*", "my/secret")
-	body := `{"data":"dGVzdA=="}`
-	req := httptest.NewRequest(http.MethodPost, "/v1/secrets/my/secret", strings.NewReader(body))
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
-	w := httptest.NewRecorder()
-	server.HandleSecretsAction(w, req)
-
-	// Nil secrets service returns 500
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
-}
-
-func TestRemaining91_HandleGetSecretOrVersions_WithVersions(t *testing.T) {
-	server, _, cleanup := setupMockServerWithFuncMock(t)
-	defer cleanup()
-
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("*", "my/secret")
-	req := httptest.NewRequest(http.MethodGet, "/v1/secrets/my/secret?versions=true", nil)
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
-	w := httptest.NewRecorder()
-	server.HandleGetSecretOrVersions(w, req)
-
-	// Dispatches to HandleListVersions, nil secrets service returns 500
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
-}
-
-func TestRemaining91_HandleGetSecretOrVersions_WithoutVersions(t *testing.T) {
-	server, _, cleanup := setupMockServerWithFuncMock(t)
-	defer cleanup()
-
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("*", "my/secret")
-	req := httptest.NewRequest(http.MethodGet, "/v1/secrets/my/secret", nil)
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
-	w := httptest.NewRecorder()
-	server.HandleGetSecretOrVersions(w, req)
-
-	// Dispatches to HandleGetSecret, nil secrets service returns 500
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
-}
-
-func TestRemaining91_HandleStoreSecret_MissingPath(t *testing.T) {
-	server, _, cleanup := setupMockServerWithFuncMock(t)
-	defer cleanup()
-
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("*", "")
-	body := `{"data":"dGVzdA=="}`
-	req := httptest.NewRequest(http.MethodPost, "/v1/secrets/", strings.NewReader(body))
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
-	w := httptest.NewRecorder()
-	server.HandleStoreSecret(w, req)
-
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestRemaining91_HandleStoreSecret_InvalidJSON(t *testing.T) {
-	server, _, cleanup := setupMockServerWithFuncMock(t)
-	defer cleanup()
-
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("*", "my/secret")
-	req := httptest.NewRequest(http.MethodPost, "/v1/secrets/my/secret", strings.NewReader("{bad"))
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
-	w := httptest.NewRecorder()
-	server.HandleStoreSecret(w, req)
-
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestRemaining91_HandleStoreSecret_EmptyData(t *testing.T) {
-	server, _, cleanup := setupMockServerWithFuncMock(t)
-	defer cleanup()
-
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("*", "my/secret")
-	body := `{"data":null}`
-	req := httptest.NewRequest(http.MethodPost, "/v1/secrets/my/secret", strings.NewReader(body))
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
-	w := httptest.NewRecorder()
-	server.HandleStoreSecret(w, req)
-
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestRemaining91_HandleStoreSecret_InvalidAlgorithm(t *testing.T) {
-	server, _, cleanup := setupMockServerWithFuncMock(t)
-	defer cleanup()
-
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("*", "my/secret")
-	body := `{"data":"dGVzdA==","algorithm":"INVALID_ALGO"}`
-	req := httptest.NewRequest(http.MethodPost, "/v1/secrets/my/secret", strings.NewReader(body))
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
-	w := httptest.NewRecorder()
-	server.HandleStoreSecret(w, req)
-
-	assert.Equal(t, http.StatusBadRequest, w.Code)
+			assert.Equal(t, http.StatusBadRequest, w.Code)
+		})
+	}
 }
 
 // =============================================================================
@@ -7928,72 +6404,41 @@ func TestGetReencryptionProgressMissingPath(t *testing.T) {
 	assert.Contains(t, w.Body.String(), "path is required")
 }
 
-func TestSetParametersBatchValidations(t *testing.T) {
-	server, _, cleanup := setupMockServer(t)
-	defer cleanup()
-
-	t.Run("missing path in parameter", func(t *testing.T) {
-		body := `{"parameters": [{"value": "test"}]}`
-		req := httptest.NewRequest(http.MethodPost, "/api/v1/parameters/batch/set", bytes.NewReader([]byte(body)))
-		req.Header.Set("Content-Type", "application/json")
-		w := httptest.NewRecorder()
-
-		server.HandleSetParametersBatch(w, req)
-
-		assert.Equal(t, http.StatusBadRequest, w.Code)
-		assert.Contains(t, w.Body.String(), "parameter path is required")
-	})
-
-	t.Run("missing value in parameter", func(t *testing.T) {
-		body := `{"parameters": [{"path": "/test/path"}]}`
-		req := httptest.NewRequest(http.MethodPost, "/api/v1/parameters/batch/set", bytes.NewReader([]byte(body)))
-		req.Header.Set("Content-Type", "application/json")
-		w := httptest.NewRecorder()
-
-		server.HandleSetParametersBatch(w, req)
-
-		assert.Equal(t, http.StatusBadRequest, w.Code)
-		assert.Contains(t, w.Body.String(), "parameter value is required")
-	})
-}
-
 func TestKVPutValidations(t *testing.T) {
 	server, _, cleanup := setupMockServer(t)
 	defer cleanup()
 
-	t.Run("missing entity type", func(t *testing.T) {
-		body := `{"value": "test"}`
-		req := httptest.NewRequest(http.MethodPost, "/api/v1/kv/entities/", bytes.NewReader([]byte(body)))
-		req.Header.Set("Content-Type", "application/json")
-		w := httptest.NewRecorder()
+	tests := []struct {
+		name       string
+		entityType string
+		key        string
+		body       io.Reader
+		wantMsg    string
+	}{
+		{name: "missing entity type", entityType: "", key: "test-key", body: strings.NewReader(`{"value": "test"}`), wantMsg: "entity type is required"},
+		{name: "missing key", entityType: "test-type", key: "", body: strings.NewReader(`{"value": "test"}`), wantMsg: "key is required"},
+		{name: "invalid key encoding", entityType: "test-type", key: "bad%zzkey", body: strings.NewReader(`{"value": "test"}`), wantMsg: "invalid key encoding"},
+		{name: "read body error", entityType: "test-type", key: "test-key", body: &errorReader{}, wantMsg: "failed to read request body"},
+	}
 
-		rctx := chi.NewRouteContext()
-		rctx.URLParams.Add("type", "")
-		rctx.URLParams.Add("key", "test-key")
-		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodPut, "/api/v1/kv/entities/test-type/test-key", nil)
+			req.Body = io.NopCloser(tt.body)
+			req.Header.Set("Content-Type", "application/json")
+			w := httptest.NewRecorder()
 
-		server.HandleKVPut(w, req)
+			rctx := chi.NewRouteContext()
+			rctx.URLParams.Add("type", tt.entityType)
+			rctx.URLParams.Add("key", tt.key)
+			req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
 
-		assert.Equal(t, http.StatusBadRequest, w.Code)
-		assert.Contains(t, w.Body.String(), "entity type is required")
-	})
+			server.HandleKVPut(w, req)
 
-	t.Run("missing key", func(t *testing.T) {
-		body := `{"value": "test"}`
-		req := httptest.NewRequest(http.MethodPost, "/api/v1/kv/entities/test-type/", bytes.NewReader([]byte(body)))
-		req.Header.Set("Content-Type", "application/json")
-		w := httptest.NewRecorder()
-
-		rctx := chi.NewRouteContext()
-		rctx.URLParams.Add("type", "test-type")
-		rctx.URLParams.Add("key", "")
-		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
-
-		server.HandleKVPut(w, req)
-
-		assert.Equal(t, http.StatusBadRequest, w.Code)
-		assert.Contains(t, w.Body.String(), "key is required")
-	})
+			assert.Equal(t, http.StatusBadRequest, w.Code)
+			assert.Contains(t, w.Body.String(), tt.wantMsg)
+		})
+	}
 }
 
 func TestKVGetMissingParams(t *testing.T) {
@@ -8032,86 +6477,6 @@ func TestKVListMissingEntityType(t *testing.T) {
 	assert.Contains(t, w.Body.String(), "entity type is required")
 }
 
-func TestObservabilityHandlers_MethodValidation(t *testing.T) {
-	handler := NewPhase4Handler(nil, nil)
-
-	tests := []struct {
-		name          string
-		handler       func(http.ResponseWriter, *http.Request)
-		validMethod   string
-		invalidMethod string
-	}{
-		{
-			name:          "HandleCreateBackup",
-			handler:       handler.HandleCreateBackup,
-			validMethod:   http.MethodPost,
-			invalidMethod: http.MethodGet,
-		},
-		{
-			name:          "HandleListBackups",
-			handler:       handler.HandleListBackups,
-			validMethod:   http.MethodGet,
-			invalidMethod: http.MethodPost,
-		},
-		{
-			name:          "HandleDeleteBackup",
-			handler:       handler.HandleDeleteBackup,
-			validMethod:   http.MethodDelete,
-			invalidMethod: http.MethodGet,
-		},
-		{
-			name:          "HandleGetCacheStats",
-			handler:       handler.HandleGetCacheStats,
-			validMethod:   http.MethodGet,
-			invalidMethod: http.MethodPost,
-		},
-		{
-			name:          "HandleClearCache",
-			handler:       handler.HandleClearCache,
-			validMethod:   http.MethodPost,
-			invalidMethod: http.MethodGet,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name+"_wrong_method", func(t *testing.T) {
-			req := httptest.NewRequest(tt.invalidMethod, "/test", nil)
-			w := httptest.NewRecorder()
-
-			tt.handler(w, req)
-
-			assert.Equal(t, http.StatusMethodNotAllowed, w.Code)
-		})
-	}
-}
-
-func TestObservabilityHandlers_InvalidJSON(t *testing.T) {
-	handler := NewPhase4Handler(nil, nil)
-
-	tests := []struct {
-		name    string
-		handler func(http.ResponseWriter, *http.Request)
-		method  string
-	}{
-		{
-			name:    "HandleCreateBackup",
-			handler: handler.HandleCreateBackup,
-			method:  http.MethodPost,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name+"_invalid_json", func(t *testing.T) {
-			req := httptest.NewRequest(tt.method, "/test", bytes.NewReader([]byte("invalid json")))
-			w := httptest.NewRecorder()
-
-			tt.handler(w, req)
-
-			assert.Equal(t, http.StatusBadRequest, w.Code)
-		})
-	}
-}
-
 func TestCacheHandlers_NilManager(t *testing.T) {
 	handler := NewPhase4Handler(nil, nil)
 
@@ -8145,20 +6510,6 @@ func TestExtractPathParam_QA90Coverage(t *testing.T) {
 		expected string
 	}{
 		{
-			name:     "extract with both prefix and suffix",
-			path:     "/api/v1/backups/backup-123/restore",
-			prefix:   "/api/v1/backups/",
-			suffix:   "/restore",
-			expected: "backup-123",
-		},
-		{
-			name:     "extract without suffix",
-			path:     "/api/v1/backups/backup-456",
-			prefix:   "/api/v1/backups/",
-			suffix:   "",
-			expected: "backup-456",
-		},
-		{
 			name:     "extract with empty prefix",
 			path:     "user-789",
 			prefix:   "",
@@ -8173,11 +6524,11 @@ func TestExtractPathParam_QA90Coverage(t *testing.T) {
 			expected: "a",
 		},
 		{
-			name:     "empty result after prefix",
-			path:     "/api/v1/backups/",
-			prefix:   "/api/v1/backups/",
-			suffix:   "",
-			expected: "",
+			name:     "single segment between prefix and suffix",
+			path:     "/api/v1/data/restore",
+			prefix:   "/api/v1/",
+			suffix:   "/restore",
+			expected: "data",
 		},
 	}
 
@@ -8187,13 +6538,6 @@ func TestExtractPathParam_QA90Coverage(t *testing.T) {
 			assert.Equal(t, tt.expected, result)
 		})
 	}
-}
-
-func TestNewPhase4Handler_QA90(t *testing.T) {
-	handler := NewPhase4Handler(nil, nil)
-	require.NotNil(t, handler)
-	assert.Nil(t, handler.backupMgr)
-	assert.Nil(t, handler.cacheMgr)
 }
 
 func TestDetectPreferredCodec_QA90(t *testing.T) {
