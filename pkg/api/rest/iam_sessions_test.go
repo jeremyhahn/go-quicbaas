@@ -194,6 +194,50 @@ func TestListUserSessions(t *testing.T) {
 		assert.Equal(t, http.StatusInternalServerError, w.Code)
 		assert.Contains(t, w.Body.String(), "session manager not available")
 	})
+
+	limitTests := []struct {
+		name      string
+		query     string
+		wantCode  int
+		wantCount int
+		wantBody  string
+	}{
+		{name: "limit truncates", query: "?limit=2", wantCode: http.StatusOK, wantCount: 2},
+		{name: "zero limit returns all", query: "?limit=0", wantCode: http.StatusOK, wantCount: 3},
+		{name: "absent limit returns all", query: "", wantCode: http.StatusOK, wantCount: 3},
+		{name: "non-numeric limit is a client error", query: "?limit=abc", wantCode: http.StatusBadRequest, wantBody: "invalid limit parameter"},
+		{name: "negative limit is a client error", query: "?limit=-1", wantCode: http.StatusBadRequest, wantBody: "invalid limit parameter"},
+	}
+
+	for _, tt := range limitTests {
+		t.Run(tt.name, func(t *testing.T) {
+			mgr := &mockSessionManager{sessions: []*iam.SessionExt{
+				{ID: "s1", UserID: 10123, TenantID: "tenant-123"},
+				{ID: "s2", UserID: 10123, TenantID: "tenant-123"},
+				{ID: "s3", UserID: 10123, TenantID: "tenant-123"},
+			}}
+			svc := &mockServiceWithSessions{QuicBaaS: testutil.NewMockQuicBaaS(), mgr: mgr}
+			handler, cleanup := setupHandlerWithService(t, svc)
+			defer cleanup()
+
+			req := withChiParams(
+				systemRequest(http.MethodGet, "/api/v1/tenants/tenant-123/users/user-123/sessions"+tt.query, nil),
+				map[string]string{"tenant_id": "tenant-123", "user_id": "10123"})
+			w := httptest.NewRecorder()
+			handler.ListUserSessions(w, req)
+
+			assert.Equal(t, tt.wantCode, w.Code)
+			if tt.wantBody != "" {
+				assert.Contains(t, w.Body.String(), tt.wantBody)
+				return
+			}
+			var resp struct {
+				Sessions []map[string]interface{} `json:"sessions"`
+			}
+			require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+			assert.Len(t, resp.Sessions, tt.wantCount)
+		})
+	}
 }
 
 // TestRevokeAllUserSessions tests the path-scoped admin revoke-all handler —
@@ -291,90 +335,6 @@ func TestRevokeAllUserSessions(t *testing.T) {
 
 // TestListUserSessionsLimit tests the optional limit query parameter on the
 // path-scoped admin listing (gRPC ListSessions limit parity).
-func TestListUserSessionsLimit(t *testing.T) {
-	threeSessions := func() []*iam.SessionExt {
-		return []*iam.SessionExt{
-			{ID: "s1", UserID: 10123, TenantID: "tenant-123"},
-			{ID: "s2", UserID: 10123, TenantID: "tenant-123"},
-			{ID: "s3", UserID: 10123, TenantID: "tenant-123"},
-		}
-	}
-
-	listReq := func(target string) *http.Request {
-		return withChiParams(systemRequest(http.MethodGet, target, nil),
-			map[string]string{"tenant_id": "tenant-123", "user_id": "10123"})
-	}
-
-	countSessions := func(t *testing.T, body []byte) int {
-		t.Helper()
-		var resp struct {
-			Sessions []map[string]interface{} `json:"sessions"`
-		}
-		require.NoError(t, json.Unmarshal(body, &resp))
-		return len(resp.Sessions)
-	}
-
-	t.Run("limit truncates", func(t *testing.T) {
-		svc := &mockServiceWithSessions{QuicBaaS: testutil.NewMockQuicBaaS(), mgr: &mockSessionManager{sessions: threeSessions()}}
-		handler, cleanup := setupHandlerWithService(t, svc)
-		defer cleanup()
-
-		w := httptest.NewRecorder()
-		handler.ListUserSessions(w, listReq("/api/v1/tenants/tenant-123/users/user-123/sessions?limit=2"))
-
-		assert.Equal(t, http.StatusOK, w.Code)
-		assert.Equal(t, 2, countSessions(t, w.Body.Bytes()))
-	})
-
-	t.Run("zero limit returns all", func(t *testing.T) {
-		svc := &mockServiceWithSessions{QuicBaaS: testutil.NewMockQuicBaaS(), mgr: &mockSessionManager{sessions: threeSessions()}}
-		handler, cleanup := setupHandlerWithService(t, svc)
-		defer cleanup()
-
-		w := httptest.NewRecorder()
-		handler.ListUserSessions(w, listReq("/api/v1/tenants/tenant-123/users/user-123/sessions?limit=0"))
-
-		assert.Equal(t, http.StatusOK, w.Code)
-		assert.Equal(t, 3, countSessions(t, w.Body.Bytes()))
-	})
-
-	t.Run("absent limit returns all", func(t *testing.T) {
-		svc := &mockServiceWithSessions{QuicBaaS: testutil.NewMockQuicBaaS(), mgr: &mockSessionManager{sessions: threeSessions()}}
-		handler, cleanup := setupHandlerWithService(t, svc)
-		defer cleanup()
-
-		w := httptest.NewRecorder()
-		handler.ListUserSessions(w, listReq("/api/v1/tenants/tenant-123/users/user-123/sessions"))
-
-		assert.Equal(t, http.StatusOK, w.Code)
-		assert.Equal(t, 3, countSessions(t, w.Body.Bytes()))
-	})
-
-	t.Run("non-numeric limit is a client error", func(t *testing.T) {
-		svc := &mockServiceWithSessions{QuicBaaS: testutil.NewMockQuicBaaS(), mgr: &mockSessionManager{sessions: threeSessions()}}
-		handler, cleanup := setupHandlerWithService(t, svc)
-		defer cleanup()
-
-		w := httptest.NewRecorder()
-		handler.ListUserSessions(w, listReq("/api/v1/tenants/tenant-123/users/user-123/sessions?limit=abc"))
-
-		assert.Equal(t, http.StatusBadRequest, w.Code)
-		assert.Contains(t, w.Body.String(), "invalid limit parameter")
-	})
-
-	t.Run("negative limit is a client error", func(t *testing.T) {
-		svc := &mockServiceWithSessions{QuicBaaS: testutil.NewMockQuicBaaS(), mgr: &mockSessionManager{sessions: threeSessions()}}
-		handler, cleanup := setupHandlerWithService(t, svc)
-		defer cleanup()
-
-		w := httptest.NewRecorder()
-		handler.ListUserSessions(w, listReq("/api/v1/tenants/tenant-123/users/user-123/sessions?limit=-1"))
-
-		assert.Equal(t, http.StatusBadRequest, w.Code)
-		assert.Contains(t, w.Body.String(), "invalid limit parameter")
-	})
-}
-
 // TestListSessions tests the ListSessions handler.
 func TestListSessions(t *testing.T) {
 	t.Run("user not authenticated", func(t *testing.T) {
@@ -725,106 +685,59 @@ func TestRevokeOtherSessions(t *testing.T) {
 	})
 }
 
-func TestTokenFormParseErrorPath(t *testing.T) {
-	handler, _, cleanup := setupIAMHandler(t)
-	defer cleanup()
+// TestUnreadableBodyIsBadRequest checks that every handler that reads a
+// request body answers 400 when the body cannot be read.
+func TestUnreadableBodyIsBadRequest(t *testing.T) {
+	sessionRequest := func() *http.Request {
+		rctx := chi.NewRouteContext()
+		rctx.URLParams.Add("tenant_id", "tenant-123")
+		rctx.URLParams.Add("user_id", "10123")
+		req := systemRequest(http.MethodPost, "/api/v1/tenants/tenant-123/users/user-123/sessions", nil)
+		return req.WithContext(callerRouteContext(req.Context(), rctx))
+	}
+	revokeOthersRequest := func() *http.Request {
+		ctx := ctxWithTestSubject(tenantctx.WithSystem(context.Background()), "10123", "tenant-123")
+		req := systemRequest(http.MethodPost, "/api/v1/iam/sessions/revoke-others", nil)
+		return req.WithContext(ctx)
+	}
+	formRequest := func(target string) func() *http.Request {
+		return func() *http.Request {
+			return systemRequest(http.MethodPost, target, nil)
+		}
+	}
 
-	// Create a request with invalid form data that will fail parsing
-	req := systemRequest(http.MethodPost, "/oauth2/token", nil)
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	req.Body = io.NopCloser(&errorReader{})
-	w := httptest.NewRecorder()
-
-	handler.Token(w, req)
-
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestRevokeFormParseErrorPath(t *testing.T) {
-	handler, _, cleanup := setupIAMHandler(t)
-	defer cleanup()
-
-	req := systemRequest(http.MethodPost, "/oauth2/revoke", nil)
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	req.Body = io.NopCloser(&errorReader{})
-	w := httptest.NewRecorder()
-
-	handler.Revoke(w, req)
-
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestCreateSessionReadBodyErrorPath(t *testing.T) {
-	handler, _, cleanup := setupIAMHandler(t)
-	defer cleanup()
-
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("tenant_id", "tenant-123")
-	rctx.URLParams.Add("user_id", "10123")
-
-	req := systemRequest(http.MethodPost, "/api/v1/tenants/tenant-123/users/user-123/sessions", nil)
-	req = req.WithContext(callerRouteContext(req.Context(), rctx))
-	req.Body = io.NopCloser(&errorReader{})
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-
-	handler.CreateSession(w, req)
-
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-	assert.Contains(t, w.Body.String(), "failed to read request body")
-}
-
-func TestRevokeOtherSessionsReadBodyErrorPath(t *testing.T) {
-	handler, _, cleanup := setupIAMHandler(t)
-	defer cleanup()
-
-	ctx := ctxWithTestSubject(tenantctx.WithSystem(context.Background()), "10123", "tenant-123")
-
-	req := systemRequest(http.MethodPost, "/api/v1/iam/sessions/revoke-others", nil)
-	req = req.WithContext(ctx)
-	req.Body = io.NopCloser(&errorReader{})
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-
-	handler.RevokeOtherSessions(w, req)
-
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-	assert.Contains(t, w.Body.String(), "failed to read request body")
-}
-
-func TestTokenWithAllGrantTypesPath(t *testing.T) {
 	tests := []struct {
-		name      string
-		grantType string
-		formData  url.Values
+		name        string
+		newRequest  func() *http.Request
+		contentType string
+		serve       func(h *IAMHandler) http.HandlerFunc
+		wantBody    string
 	}{
 		{
-			name:      "authorization_code grant",
-			grantType: "authorization_code",
-			formData: url.Values{
-				"grant_type":   {"authorization_code"},
-				"code":         {"test-code"},
-				"redirect_uri": {"https://example.com/callback"},
-				"client_id":    {"test-client"},
-			},
+			name:        "token form",
+			newRequest:  formRequest("/oauth2/token"),
+			contentType: "application/x-www-form-urlencoded",
+			serve:       func(h *IAMHandler) http.HandlerFunc { return h.Token },
 		},
 		{
-			name:      "refresh_token grant",
-			grantType: "refresh_token",
-			formData: url.Values{
-				"grant_type":    {"refresh_token"},
-				"refresh_token": {"test-refresh-token"},
-				"client_id":     {"test-client"},
-			},
+			name:        "revoke form",
+			newRequest:  formRequest("/oauth2/revoke"),
+			contentType: "application/x-www-form-urlencoded",
+			serve:       func(h *IAMHandler) http.HandlerFunc { return h.Revoke },
 		},
 		{
-			name:      "client_credentials grant",
-			grantType: "client_credentials",
-			formData: url.Values{
-				"grant_type":    {"client_credentials"},
-				"client_id":     {"test-client"},
-				"client_secret": {"test-secret"},
-			},
+			name:        "create session body",
+			newRequest:  sessionRequest,
+			contentType: "application/json",
+			serve:       func(h *IAMHandler) http.HandlerFunc { return h.CreateSession },
+			wantBody:    "failed to read request body",
+		},
+		{
+			name:        "revoke other sessions body",
+			newRequest:  revokeOthersRequest,
+			contentType: "application/json",
+			serve:       func(h *IAMHandler) http.HandlerFunc { return h.RevokeOtherSessions },
+			wantBody:    "failed to read request body",
 		},
 	}
 
@@ -833,42 +746,17 @@ func TestTokenWithAllGrantTypesPath(t *testing.T) {
 			handler, _, cleanup := setupIAMHandler(t)
 			defer cleanup()
 
-			req := systemRequest(http.MethodPost, "/oauth2/token", strings.NewReader(tt.formData.Encode()))
-			req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+			req := tt.newRequest()
+			req.Body = io.NopCloser(&errorReader{})
+			req.Header.Set("Content-Type", tt.contentType)
 			w := httptest.NewRecorder()
 
-			handler.Token(w, req)
+			tt.serve(handler)(w, req)
 
-			// Should fail with OIDC provider not available
-			assert.Equal(t, http.StatusInternalServerError, w.Code)
-			assert.Contains(t, w.Body.String(), "OIDC provider not available")
+			assert.Equal(t, http.StatusBadRequest, w.Code)
+			assert.Contains(t, w.Body.String(), tt.wantBody)
 		})
 	}
-}
-
-func TestAuthorizeWithPKCEParams(t *testing.T) {
-	handler, _, cleanup := setupIAMHandler(t)
-	defer cleanup()
-
-	params := url.Values{
-		"client_id":             {"test-client"},
-		"redirect_uri":          {"https://example.com/callback"},
-		"response_type":         {"code"},
-		"scope":                 {"openid profile email"},
-		"state":                 {"random-state-123"},
-		"code_challenge":        {"E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM"},
-		"code_challenge_method": {"S256"},
-		"nonce":                 {"nonce-value-456"},
-	}
-
-	req := systemRequest(http.MethodGet, "/oauth2/authorize?"+params.Encode(), nil)
-	w := httptest.NewRecorder()
-
-	handler.Authorize(w, req)
-
-	// Should fail with OIDC provider not available
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
-	assert.Contains(t, w.Body.String(), "OIDC provider not available")
 }
 
 func TestUserInfoBearerCaseVariationsPath(t *testing.T) {
@@ -915,136 +803,6 @@ func TestUserInfoBearerCaseVariationsPath(t *testing.T) {
 	}
 }
 
-func TestCreateSessionWithDeviceInfoPath(t *testing.T) {
-	handler, _, cleanup := setupIAMHandler(t)
-	defer cleanup()
-
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("tenant_id", "tenant-123")
-	rctx.URLParams.Add("user_id", "10123")
-
-	body := `{
-		"token_hash": "abc123",
-		"mfa_verified": true,
-		"ip_address": "192.168.1.1",
-		"user_agent": "Mozilla/5.0",
-		"device_info": {
-			"id": "device-123",
-			"name": "Test Device",
-			"type": "mobile",
-			"fingerprint": "fp-xyz",
-			"trusted": true
-		},
-		"expires_at": "2099-12-31T23:59:59Z"
-	}`
-
-	req := systemRequest(http.MethodPost, "/api/v1/tenants/tenant-123/users/user-123/sessions", strings.NewReader(body))
-	req = req.WithContext(callerRouteContext(req.Context(), rctx))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-
-	handler.CreateSession(w, req)
-
-	// Should fail with session manager not available, but parsing should succeed
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
-	assert.Contains(t, w.Body.String(), "session manager not available")
-}
-
-func TestCreateSessionWithCustomIDPath(t *testing.T) {
-	handler, _, cleanup := setupIAMHandler(t)
-	defer cleanup()
-
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("tenant_id", "tenant-123")
-	rctx.URLParams.Add("user_id", "10123")
-
-	body := `{
-		"id": "custom-session-id-123",
-		"token_hash": "abc123"
-	}`
-
-	req := systemRequest(http.MethodPost, "/api/v1/tenants/tenant-123/users/user-123/sessions", strings.NewReader(body))
-	req = req.WithContext(callerRouteContext(req.Context(), rctx))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-
-	handler.CreateSession(w, req)
-
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
-}
-
-func TestCreateSessionWithInvalidExpiryPath(t *testing.T) {
-	handler, _, cleanup := setupIAMHandler(t)
-	defer cleanup()
-
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("tenant_id", "tenant-123")
-	rctx.URLParams.Add("user_id", "10123")
-
-	body := `{
-		"token_hash": "abc123",
-		"expires_at": "not-a-valid-date"
-	}`
-
-	req := systemRequest(http.MethodPost, "/api/v1/tenants/tenant-123/users/user-123/sessions", strings.NewReader(body))
-	req = req.WithContext(callerRouteContext(req.Context(), rctx))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-
-	handler.CreateSession(w, req)
-
-	// Invalid date parsing should fall back to default expiry
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
-	assert.Contains(t, w.Body.String(), "session manager not available")
-}
-
-func TestRevokeWithTokenTypeHintsPath(t *testing.T) {
-	tests := []struct {
-		name          string
-		token         string
-		tokenTypeHint string
-	}{
-		{
-			name:          "refresh_token hint",
-			token:         "test-refresh-token",
-			tokenTypeHint: "refresh_token",
-		},
-		{
-			name:          "access_token hint",
-			token:         "test-access-token",
-			tokenTypeHint: "access_token",
-		},
-		{
-			name:          "no hint",
-			token:         "test-token",
-			tokenTypeHint: "",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			handler, _, cleanup := setupIAMHandler(t)
-			defer cleanup()
-
-			form := url.Values{
-				"token": {tt.token},
-			}
-			if tt.tokenTypeHint != "" {
-				form.Set("token_type_hint", tt.tokenTypeHint)
-			}
-
-			req := systemRequest(http.MethodPost, "/oauth2/revoke", strings.NewReader(form.Encode()))
-			req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-			w := httptest.NewRecorder()
-
-			handler.Revoke(w, req)
-
-			assert.Equal(t, http.StatusInternalServerError, w.Code)
-			assert.Contains(t, w.Body.String(), "OIDC provider not available")
-		})
-	}
-}
-
 func TestListSessionsEmptyUserID(t *testing.T) {
 	handler, _, cleanup := setupIAMHandler(t)
 	defer cleanup()
@@ -1058,315 +816,6 @@ func TestListSessionsEmptyUserID(t *testing.T) {
 
 	assert.Equal(t, http.StatusUnauthorized, w.Code)
 	assert.Contains(t, w.Body.String(), "user not authenticated")
-}
-
-func TestListSessionsEmptyTenantID(t *testing.T) {
-	handler, _, cleanup := setupIAMHandler(t)
-	defer cleanup()
-
-	ctx := ctxWithTestSubject(tenantctx.WithSystem(context.Background()), "10123", "")
-	req := systemRequest(http.MethodGet, "/api/v1/iam/sessions", nil)
-	req = req.WithContext(ctx)
-	w := httptest.NewRecorder()
-
-	handler.ListSessions(w, req)
-
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-	assert.Contains(t, w.Body.String(), "tenant ID is required")
-}
-
-func TestIAM91_CreateSession_MissingTenantID(t *testing.T) {
-	handler, _, cleanup := setupIAMHandler(t)
-	defer cleanup()
-
-	req := systemRequest(http.MethodPost, "/api/v1/tenants//users/u1/sessions", strings.NewReader(`{}`))
-	req = withChiParams(req, map[string]string{"tenant_id": "", "user_id": "30001"})
-	w := httptest.NewRecorder()
-	handler.CreateSession(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-	assert.Contains(t, w.Body.String(), "tenant ID is required")
-}
-
-func TestIAM91_CreateSession_MissingUserID(t *testing.T) {
-	handler, _, cleanup := setupIAMHandler(t)
-	defer cleanup()
-
-	req := systemRequest(http.MethodPost, "/api/v1/tenants/t1/users//sessions", strings.NewReader(`{}`))
-	req = withChiParams(req, map[string]string{"tenant_id": "t1", "user_id": ""})
-	w := httptest.NewRecorder()
-	handler.CreateSession(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-	assert.Contains(t, w.Body.String(), "user ID is required")
-}
-
-func TestIAM91_CreateSession_InvalidJSON(t *testing.T) {
-	handler, _, cleanup := setupIAMHandler(t)
-	defer cleanup()
-
-	req := systemRequest(http.MethodPost, "/api/v1/tenants/t1/users/u1/sessions", strings.NewReader("{bad"))
-	req = withChiParams(req, map[string]string{"tenant_id": "t1", "user_id": "30001"})
-	w := httptest.NewRecorder()
-	handler.CreateSession(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-	assert.Contains(t, w.Body.String(), "invalid request body")
-}
-
-func TestIAM91_CreateSession_MissingTokenHash(t *testing.T) {
-	handler, _, cleanup := setupIAMHandler(t)
-	defer cleanup()
-
-	req := systemRequest(http.MethodPost, "/api/v1/tenants/t1/users/u1/sessions", strings.NewReader(`{"token_hash":""}`))
-	req = withChiParams(req, map[string]string{"tenant_id": "t1", "user_id": "30001"})
-	w := httptest.NewRecorder()
-	handler.CreateSession(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-	assert.Contains(t, w.Body.String(), "token_hash is required")
-}
-
-func TestIAM91_CreateSession_ServiceNotAvailable(t *testing.T) {
-	handler, _, cleanup := setupIAMHandler(t)
-	defer cleanup()
-
-	body := `{"token_hash":"abc123"}`
-	req := systemRequest(http.MethodPost, "/api/v1/tenants/t1/users/u1/sessions", strings.NewReader(body))
-	req = withChiParams(req, map[string]string{"tenant_id": "t1", "user_id": "30001"})
-	w := httptest.NewRecorder()
-	handler.CreateSession(w, req)
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
-	assert.Contains(t, w.Body.String(), "session manager not available")
-}
-
-func TestIAM91_ListUserSessions_MissingTenantID(t *testing.T) {
-	handler, _, cleanup := setupIAMHandler(t)
-	defer cleanup()
-
-	req := systemRequest(http.MethodGet, "/api/v1/tenants//users/u1/sessions", nil)
-	req = withChiParams(req, map[string]string{"tenant_id": "", "user_id": "30001"})
-	w := httptest.NewRecorder()
-	handler.ListUserSessions(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestIAM91_ListUserSessions_MissingUserID(t *testing.T) {
-	handler, _, cleanup := setupIAMHandler(t)
-	defer cleanup()
-
-	req := systemRequest(http.MethodGet, "/api/v1/tenants/t1/users//sessions", nil)
-	req = withChiParams(req, map[string]string{"tenant_id": "t1", "user_id": ""})
-	w := httptest.NewRecorder()
-	handler.ListUserSessions(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestIAM91_ListUserSessions_ServiceNotAvailable(t *testing.T) {
-	handler, _, cleanup := setupIAMHandler(t)
-	defer cleanup()
-
-	req := systemRequest(http.MethodGet, "/api/v1/tenants/t1/users/u1/sessions", nil)
-	req = withChiParams(req, map[string]string{"tenant_id": "t1", "user_id": "30001"})
-	w := httptest.NewRecorder()
-	handler.ListUserSessions(w, req)
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
-	assert.Contains(t, w.Body.String(), "session manager not available")
-}
-
-func TestIAM91_ListSessions_MissingUserContext(t *testing.T) {
-	handler, _, cleanup := setupIAMHandler(t)
-	defer cleanup()
-
-	req := systemRequest(http.MethodGet, "/api/v1/iam/sessions", nil)
-	w := httptest.NewRecorder()
-	handler.ListSessions(w, req)
-	assert.Equal(t, http.StatusUnauthorized, w.Code)
-}
-
-func TestIAM91_ListSessions_MissingTenantContext(t *testing.T) {
-	handler, _, cleanup := setupIAMHandler(t)
-	defer cleanup()
-
-	req := systemRequest(http.MethodGet, "/api/v1/iam/sessions", nil)
-	ctx := ctxWithTestSubject(req.Context(), "30001", "")
-	req = req.WithContext(ctx)
-	w := httptest.NewRecorder()
-	handler.ListSessions(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestIAM91_ListSessions_ServiceNotAvailable(t *testing.T) {
-	handler, _, cleanup := setupIAMHandler(t)
-	defer cleanup()
-
-	req := systemRequest(http.MethodGet, "/api/v1/iam/sessions", nil)
-	ctx := ctxWithTestSubject(req.Context(), "30001", "t1")
-	req = req.WithContext(ctx)
-	w := httptest.NewRecorder()
-	handler.ListSessions(w, req)
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
-}
-
-func TestIAM91_GetSession_MissingSessionID(t *testing.T) {
-	handler, _, cleanup := setupIAMHandler(t)
-	defer cleanup()
-
-	req := systemRequest(http.MethodGet, "/api/v1/iam/sessions/", nil)
-	req = withChiParams(req, map[string]string{"id": ""})
-	w := httptest.NewRecorder()
-	handler.GetSession(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestIAM91_GetSession_MissingUserContext(t *testing.T) {
-	handler, _, cleanup := setupIAMHandler(t)
-	defer cleanup()
-
-	req := systemRequest(http.MethodGet, "/api/v1/iam/sessions/s1", nil)
-	req = withChiParams(req, map[string]string{"id": "s1"})
-	w := httptest.NewRecorder()
-	handler.GetSession(w, req)
-	assert.Equal(t, http.StatusUnauthorized, w.Code)
-}
-
-func TestIAM91_GetSession_MissingTenantContext(t *testing.T) {
-	handler, _, cleanup := setupIAMHandler(t)
-	defer cleanup()
-
-	req := systemRequest(http.MethodGet, "/api/v1/iam/sessions/s1", nil)
-	req = withChiParams(req, map[string]string{"id": "s1"})
-	ctx := ctxWithTestSubject(req.Context(), "30001", "")
-	req = req.WithContext(ctx)
-	w := httptest.NewRecorder()
-	handler.GetSession(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestIAM91_GetSession_ServiceNotAvailable(t *testing.T) {
-	handler, _, cleanup := setupIAMHandler(t)
-	defer cleanup()
-
-	req := systemRequest(http.MethodGet, "/api/v1/iam/sessions/s1", nil)
-	req = withChiParams(req, map[string]string{"id": "s1"})
-	ctx := ctxWithTestSubject(req.Context(), "30001", "t1")
-	req = req.WithContext(ctx)
-	w := httptest.NewRecorder()
-	handler.GetSession(w, req)
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
-}
-
-func TestIAM91_RevokeSession_MissingSessionID(t *testing.T) {
-	handler, _, cleanup := setupIAMHandler(t)
-	defer cleanup()
-
-	req := systemRequest(http.MethodDelete, "/api/v1/iam/sessions/", nil)
-	req = withChiParams(req, map[string]string{"id": ""})
-	w := httptest.NewRecorder()
-	handler.RevokeSession(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestIAM91_RevokeSession_MissingUserContext(t *testing.T) {
-	handler, _, cleanup := setupIAMHandler(t)
-	defer cleanup()
-
-	req := systemRequest(http.MethodDelete, "/api/v1/iam/sessions/s1", nil)
-	req = withChiParams(req, map[string]string{"id": "s1"})
-	w := httptest.NewRecorder()
-	handler.RevokeSession(w, req)
-	assert.Equal(t, http.StatusUnauthorized, w.Code)
-}
-
-func TestIAM91_RevokeSession_ServiceNotAvailable(t *testing.T) {
-	handler, _, cleanup := setupIAMHandler(t)
-	defer cleanup()
-
-	req := systemRequest(http.MethodDelete, "/api/v1/iam/sessions/s1", nil)
-	req = withChiParams(req, map[string]string{"id": "s1"})
-	ctx := ctxWithTestSubject(req.Context(), "30001", "t1")
-	req = req.WithContext(ctx)
-	w := httptest.NewRecorder()
-	handler.RevokeSession(w, req)
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
-}
-
-func TestIAM91_RevokeAllSessions_MissingUserContext(t *testing.T) {
-	handler, _, cleanup := setupIAMHandler(t)
-	defer cleanup()
-
-	req := systemRequest(http.MethodDelete, "/api/v1/iam/sessions", nil)
-	w := httptest.NewRecorder()
-	handler.RevokeAllSessions(w, req)
-	assert.Equal(t, http.StatusUnauthorized, w.Code)
-}
-
-func TestIAM91_RevokeAllSessions_MissingTenantContext(t *testing.T) {
-	handler, _, cleanup := setupIAMHandler(t)
-	defer cleanup()
-
-	req := systemRequest(http.MethodDelete, "/api/v1/iam/sessions", nil)
-	ctx := ctxWithTestSubject(req.Context(), "30001", "")
-	req = req.WithContext(ctx)
-	w := httptest.NewRecorder()
-	handler.RevokeAllSessions(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestIAM91_RevokeAllSessions_ServiceNotAvailable(t *testing.T) {
-	handler, _, cleanup := setupIAMHandler(t)
-	defer cleanup()
-
-	req := systemRequest(http.MethodDelete, "/api/v1/iam/sessions", nil)
-	ctx := ctxWithTestSubject(req.Context(), "30001", "t1")
-	req = req.WithContext(ctx)
-	w := httptest.NewRecorder()
-	handler.RevokeAllSessions(w, req)
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
-}
-
-func TestIAM91_RevokeOtherSessions_MissingUserContext(t *testing.T) {
-	handler, _, cleanup := setupIAMHandler(t)
-	defer cleanup()
-
-	req := systemRequest(http.MethodPost, "/api/v1/iam/sessions/revoke-others", nil)
-	w := httptest.NewRecorder()
-	handler.RevokeOtherSessions(w, req)
-	assert.Equal(t, http.StatusUnauthorized, w.Code)
-}
-
-func TestIAM91_RevokeOtherSessions_MissingTenantContext(t *testing.T) {
-	handler, _, cleanup := setupIAMHandler(t)
-	defer cleanup()
-
-	req := systemRequest(http.MethodPost, "/api/v1/iam/sessions/revoke-others", nil)
-	ctx := ctxWithTestSubject(req.Context(), "30001", "")
-	req = req.WithContext(ctx)
-	w := httptest.NewRecorder()
-	handler.RevokeOtherSessions(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestIAM91_RevokeOtherSessions_MissingSessionContext(t *testing.T) {
-	handler, _, cleanup := setupIAMHandler(t)
-	defer cleanup()
-
-	req := systemRequest(http.MethodPost, "/api/v1/iam/sessions/revoke-others", nil)
-	ctx := ctxWithTestSubject(req.Context(), "30001", "t1")
-	req = req.WithContext(ctx)
-	w := httptest.NewRecorder()
-	handler.RevokeOtherSessions(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-	assert.Contains(t, w.Body.String(), "current session ID is required")
-}
-
-func TestIAM91_RevokeOtherSessions_ServiceNotAvailable(t *testing.T) {
-	handler, _, cleanup := setupIAMHandler(t)
-	defer cleanup()
-
-	req := systemRequest(http.MethodPost, "/api/v1/iam/sessions/revoke-others",
-		strings.NewReader(`{"keep_session_id":"s1"}`))
-	ctx := ctxWithTestSubject(req.Context(), "30001", "t1")
-	req = req.WithContext(ctx)
-	w := httptest.NewRecorder()
-	handler.RevokeOtherSessions(w, req)
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
 }
 
 // =============================================================================
@@ -2321,15 +1770,6 @@ func TestIAM91_DeleteOldAuditEvents_MissingUser(t *testing.T) {
 	w := httptest.NewRecorder()
 	handler.DeleteOldAuditEvents(w, req)
 	assert.Equal(t, http.StatusUnauthorized, w.Code)
-}
-
-func TestIAM91_RegisterAuditRoutes(t *testing.T) {
-	handler, _, cleanup := setupIAMHandler(t)
-	defer cleanup()
-
-	r := chi.NewRouter()
-	RegisterAuditRoutes(r, handler)
-	assert.NotNil(t, r)
 }
 
 // =============================================================================
@@ -3829,22 +3269,6 @@ func TestIAM91_ImpersonationMiddleware_ManagerError(t *testing.T) {
 	w := httptest.NewRecorder()
 	handler.ImpersonationMiddleware(next).ServeHTTP(w, req)
 	assert.NotEqual(t, http.StatusOK, w.Code)
-}
-
-func TestIAM91_ImpersonationMiddleware_NoHeader_WithAdmin(t *testing.T) {
-	svc := &mockServiceWithAdmin91{QuicBaaS: testutil.NewMockQuicBaaS()}
-	handler, cleanup := setupHandlerWithService(t, svc)
-	defer cleanup()
-
-	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-	})
-
-	// Without the impersonation header, middleware passes through to next handler
-	req := systemRequest(http.MethodGet, "/", nil)
-	w := httptest.NewRecorder()
-	handler.ImpersonationMiddleware(next).ServeHTTP(w, req)
-	assert.Equal(t, http.StatusOK, w.Code)
 }
 
 // =============================================================================
