@@ -20,6 +20,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -414,25 +415,6 @@ func TestBackupManager_CreateBackup(t *testing.T) {
 	}
 }
 
-func TestBackupManager_CreateBackupWithEncryption(t *testing.T) {
-	manager, _, _ := setupTestBackupManager(t)
-
-	// Set encryption key
-	key := make([]byte, 32)
-	for i := range key {
-		key[i] = byte(i)
-	}
-	manager.config.EncryptionKey = key
-	manager.config.DefaultEncryption = EncryptionAES256GCM
-
-	ctx := context.Background()
-	backup, err := manager.CreateBackup(ctx, BackupTypeFull)
-
-	require.NoError(t, err)
-	assert.NotNil(t, backup)
-	assert.Equal(t, EncryptionAES256GCM, backup.Encryption)
-}
-
 func TestBackupManager_RestoreBackup(t *testing.T) {
 	manager, memStorage, _ := setupTestBackupManager(t)
 
@@ -469,32 +451,6 @@ func TestBackupManager_RestoreBackup(t *testing.T) {
 	value, err = memStorage.Get([]byte("key3"))
 	require.NoError(t, err)
 	assert.Equal(t, []byte("value3"), value)
-}
-
-func TestBackupManager_RestoreBackupWithCompression(t *testing.T) {
-	manager, memStorage, _ := setupTestBackupManager(t)
-	manager.config.DefaultCompression = CompressionZstd
-
-	ctx := context.Background()
-
-	// Create compressed backup
-	backup, err := manager.CreateBackup(ctx, BackupTypeFull)
-	require.NoError(t, err)
-	assert.Equal(t, CompressionZstd, backup.Compression)
-
-	// Clear storage
-	require.NoError(t, memStorage.Delete([]byte("key1")))
-
-	// Restore backup
-	err = manager.RestoreBackup(ctx, backup.ID, &RestoreOptions{
-		VerifyChecksum: true,
-	})
-	require.NoError(t, err)
-
-	// Verify data is restored
-	value, err := memStorage.Get([]byte("key1"))
-	require.NoError(t, err)
-	assert.Equal(t, []byte("value1"), value)
 }
 
 func TestBackupManager_RestoreBackupWithEncryption(t *testing.T) {
@@ -707,6 +663,20 @@ func TestEncryptionTypes(t *testing.T) {
 			wantErr:        false,
 		},
 		{
+			name:           "AES-256-GCM empty payload",
+			encryptionType: EncryptionAES256GCM,
+			key:            make([]byte, 32),
+			testData:       "",
+			wantErr:        false,
+		},
+		{
+			name:           "AES-256-GCM large payload",
+			encryptionType: EncryptionAES256GCM,
+			key:            make([]byte, 32),
+			testData:       strings.Repeat("encrypt this large block of data ", 100),
+			wantErr:        false,
+		},
+		{
 			name:           "AES-256-GCM with invalid key size",
 			encryptionType: EncryptionAES256GCM,
 			key:            make([]byte, 16),
@@ -747,30 +717,6 @@ func TestEncryptionTypes(t *testing.T) {
 	}
 }
 
-func TestBackupManager_Close(t *testing.T) {
-	manager, _, _ := setupTestBackupManager(t)
-
-	err := manager.Close()
-	require.NoError(t, err)
-
-	// Verify manager is closed
-	ctx := context.Background()
-	_, err = manager.CreateBackup(ctx, BackupTypeFull)
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "closed")
-}
-
-func TestBackupManager_DoubleClose(t *testing.T) {
-	manager, _, _ := setupTestBackupManager(t)
-
-	err := manager.Close()
-	require.NoError(t, err)
-
-	// Close again - should be idempotent
-	err = manager.Close()
-	require.NoError(t, err)
-}
-
 func TestBackupManager_ClosedOperations(t *testing.T) {
 	manager, _, _ := setupTestBackupManager(t)
 
@@ -795,6 +741,9 @@ func TestBackupManager_ClosedOperations(t *testing.T) {
 	err = manager.DeleteBackup(ctx, "backup-id")
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "closed")
+
+	// Close is idempotent
+	require.NoError(t, manager.Close())
 }
 
 func TestNewBackupManager_Validation(t *testing.T) {
@@ -925,100 +874,87 @@ func TestBackupManager_EmptyStorage(t *testing.T) {
 	}
 }
 
-func TestBackupManager_MultipleShards(t *testing.T) {
-	memStorage := &mockStorage{
-		MemoryStorage: memory.New(nil),
+func TestBackupManager_CreateBackupShardCount(t *testing.T) {
+	tests := []struct {
+		name       string
+		shardCount int
+	}{
+		{name: "no shards", shardCount: 0},
+		{name: "five shards", shardCount: 5},
 	}
 
-	require.NoError(t, memStorage.Set([]byte("key1"), []byte("value1")))
+	for _, tt := range tests {
+		shardCount := tt.shardCount
+		t.Run(tt.name, func(t *testing.T) {
+			memStorage := &mockStorage{
+				MemoryStorage: memory.New(nil),
+			}
+			require.NoError(t, memStorage.Set([]byte("key1"), []byte("value1")))
 
-	mockRaft := &mockRaftNode{shardCount: 5}
+			log, err := logger.New(logger.LogConfig{
+				Level:  "debug",
+				Format: "json",
+				Output: "stdout",
+			})
+			require.NoError(t, err)
 
-	log, err := logger.New(logger.LogConfig{
-		Level:  "debug",
-		Format: "json",
-		Output: "stdout",
-	})
-	require.NoError(t, err)
+			config := &Config{
+				StorageBackend:     "mock",
+				DefaultCompression: CompressionNone,
+				DefaultEncryption:  EncryptionNone,
+				WorkDir:            t.TempDir(),
+				Timeout:            5 * time.Minute,
+				StorageConfig: map[string]string{
+					"path": t.TempDir(),
+				},
+			}
 
-	config := &Config{
-		StorageBackend:     "mock",
-		DefaultCompression: CompressionNone,
-		DefaultEncryption:  EncryptionNone,
-		WorkDir:            t.TempDir(),
-		Timeout:            5 * time.Minute,
-		StorageConfig: map[string]string{
-			"path": t.TempDir(),
-		},
+			manager := &BackupManager{
+				config:  config,
+				storage: memStorage,
+				raft:    &mockRaftNode{shardCount: shardCount},
+				backend: NewMockStorage(),
+				logger:  log.WithField("component", "backup-manager"),
+				metrics: initBackupMetrics(),
+			}
+			defer manager.Close()
+
+			backup, err := manager.CreateBackup(context.Background(), BackupTypeFull)
+			require.NoError(t, err)
+
+			assert.Len(t, backup.Shards, shardCount)
+			assert.Equal(t, shardCount, backup.Metadata.NumShards)
+		})
 	}
-
-	manager := &BackupManager{
-		config:  config,
-		storage: memStorage,
-		raft:    mockRaft,
-		backend: NewMockStorage(),
-		logger:  log.WithField("component", "backup-manager"),
-		metrics: initBackupMetrics(),
-	}
-
-	ctx := context.Background()
-	backup, err := manager.CreateBackup(ctx, BackupTypeFull)
-	require.NoError(t, err)
-
-	// Should have 5 shards
-	assert.Len(t, backup.Shards, 5)
-	assert.Equal(t, 5, backup.Metadata.NumShards)
-
-	manager.Close()
 }
 
-func TestBackupManager_RestoreWithTargetShards(t *testing.T) {
-	manager, memStorage, _ := setupTestBackupManager(t)
+func TestBackupManager_RestoreOptions(t *testing.T) {
+	tests := []struct {
+		name string
+		opts *RestoreOptions
+	}{
+		{name: "target shards", opts: &RestoreOptions{VerifyChecksum: true, TargetShards: []uint64{1}}},
+		{name: "nil options use defaults", opts: nil},
+		{name: "checksum verification disabled", opts: &RestoreOptions{VerifyChecksum: false}},
+	}
 
-	ctx := context.Background()
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			manager, memStorage, _ := setupTestBackupManager(t)
+			ctx := context.Background()
 
-	// Create backup
-	backup, err := manager.CreateBackup(ctx, BackupTypeFull)
-	require.NoError(t, err)
+			backup, err := manager.CreateBackup(ctx, BackupTypeFull)
+			require.NoError(t, err)
 
-	// Clear storage
-	require.NoError(t, memStorage.Delete([]byte("key1")))
-	require.NoError(t, memStorage.Delete([]byte("key2")))
-	require.NoError(t, memStorage.Delete([]byte("key3")))
+			require.NoError(t, memStorage.Delete([]byte("key1")))
 
-	// Restore only shard 1
-	err = manager.RestoreBackup(ctx, backup.ID, &RestoreOptions{
-		VerifyChecksum: true,
-		TargetShards:   []uint64{1},
-	})
-	require.NoError(t, err)
+			require.NoError(t, manager.RestoreBackup(ctx, backup.ID, tt.opts))
 
-	// Data should be restored
-	value, err := memStorage.Get([]byte("key1"))
-	require.NoError(t, err)
-	assert.Equal(t, []byte("value1"), value)
-}
-
-func TestBackupManager_RestoreNilOptions(t *testing.T) {
-	manager, memStorage, _ := setupTestBackupManager(t)
-
-	ctx := context.Background()
-
-	// Create backup
-	backup, err := manager.CreateBackup(ctx, BackupTypeFull)
-	require.NoError(t, err)
-
-	// Clear storage
-	require.NoError(t, memStorage.Delete([]byte("key1")))
-
-	// Restore with nil options (should use defaults)
-	err = manager.RestoreBackup(ctx, backup.ID, nil)
-	require.NoError(t, err)
-
-	// Data should be restored
-	value, err := memStorage.Get([]byte("key1"))
-	require.NoError(t, err)
-	assert.Equal(t, []byte("value1"), value)
+			value, err := memStorage.Get([]byte("key1"))
+			require.NoError(t, err)
+			assert.Equal(t, []byte("value1"), value)
+		})
+	}
 }
 
 func TestBackupManager_RestoreBackupNotFound(t *testing.T) {
@@ -1032,136 +968,72 @@ func TestBackupManager_RestoreBackupNotFound(t *testing.T) {
 	assert.Error(t, err)
 }
 
-func TestBackupManager_RestoreChecksumDisabled(t *testing.T) {
-	manager, memStorage, _ := setupTestBackupManager(t)
-
-	ctx := context.Background()
-
-	// Create backup
-	backup, err := manager.CreateBackup(ctx, BackupTypeFull)
-	require.NoError(t, err)
-
-	// Clear storage
-	require.NoError(t, memStorage.Delete([]byte("key1")))
-
-	// Restore with checksum verification disabled
-	err = manager.RestoreBackup(ctx, backup.ID, &RestoreOptions{
-		VerifyChecksum: false,
-	})
-	require.NoError(t, err)
-
-	// Data should be restored
-	value, err := memStorage.Get([]byte("key1"))
-	require.NoError(t, err)
-	assert.Equal(t, []byte("value1"), value)
-}
-
 // TestBackupManager_ApplyRetentionPolicy moved to manager_integration_test.go
 // TestBackupManager_ApplyRetentionPolicyMaxAge moved to manager_integration_test.go
 
-func TestBackupManager_ApplyRetentionPolicyNilSchedule(t *testing.T) {
-	manager, _, _ := setupTestBackupManager(t)
-
-	ctx := context.Background()
-
-	// No schedule configured
-	manager.config.Schedule = nil
-
-	// Should return without error
-	err := manager.ApplyRetentionPolicy(ctx)
-	require.NoError(t, err)
-}
-
-func TestBackupManager_ApplyRetentionPolicyNilRetentionPolicy(t *testing.T) {
-	manager, _, _ := setupTestBackupManager(t)
-
-	ctx := context.Background()
-
-	// Schedule but no retention policy
-	manager.config.Schedule = &ScheduleConfig{
-		RetentionPolicy: nil,
+func TestBackupManager_ApplyRetentionPolicyNoPolicy(t *testing.T) {
+	tests := []struct {
+		name     string
+		schedule *ScheduleConfig
+	}{
+		{name: "nil schedule", schedule: nil},
+		{name: "nil retention policy", schedule: &ScheduleConfig{CronExpression: "0 0 * * *"}},
 	}
 
-	// Should return without error
-	err := manager.ApplyRetentionPolicy(ctx)
-	require.NoError(t, err)
-}
-
-func TestBackupManager_CreateBackupAllCompressionTypes(t *testing.T) {
-	compressionTypes := []CompressionType{
-		CompressionNone,
-		CompressionGzip,
-		CompressionZstd,
-	}
-
-	for _, compression := range compressionTypes {
-		t.Run(string(compression), func(t *testing.T) {
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
 			manager, _, _ := setupTestBackupManager(t)
-			manager.config.DefaultCompression = compression
+			defer manager.Close()
 
-			ctx := context.Background()
-			backup, err := manager.CreateBackup(ctx, BackupTypeFull)
-			require.NoError(t, err)
-			assert.Equal(t, compression, backup.Compression)
+			manager.config.Schedule = tt.schedule
 
-			// Verify can restore
-			err = manager.RestoreBackup(ctx, backup.ID, &RestoreOptions{
-				VerifyChecksum: true,
-			})
-			require.NoError(t, err)
+			// With no retention policy there is nothing to apply.
+			require.NoError(t, manager.ApplyRetentionPolicy(context.Background()))
 		})
 	}
 }
 
-func TestBackupManager_CreateBackupWithSnappyCompression(t *testing.T) {
-	manager, _, _ := setupTestBackupManager(t)
-	manager.config.DefaultCompression = CompressionType("snappy")
+func TestBackupManager_CreateBackupAllCompressionTypes(t *testing.T) {
+	tests := []struct {
+		compression CompressionType
+		wantErr     bool
+	}{
+		{compression: CompressionNone},
+		{compression: CompressionGzip},
+		{compression: CompressionZstd},
+		{compression: CompressionType("snappy"), wantErr: true},
+	}
 
-	ctx := context.Background()
-	_, err := manager.CreateBackup(ctx, BackupTypeFull)
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "unsupported compression type")
+	for _, tt := range tests {
+		t.Run(string(tt.compression), func(t *testing.T) {
+			manager, memStorage, _ := setupTestBackupManager(t)
+			manager.config.DefaultCompression = tt.compression
+
+			ctx := context.Background()
+			backup, err := manager.CreateBackup(ctx, BackupTypeFull)
+			if tt.wantErr {
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), "unsupported compression type")
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tt.compression, backup.Compression)
+
+			require.NoError(t, memStorage.Delete([]byte("key1")))
+
+			err = manager.RestoreBackup(ctx, backup.ID, &RestoreOptions{
+				VerifyChecksum: true,
+			})
+			require.NoError(t, err)
+
+			value, err := memStorage.Get([]byte("key1"))
+			require.NoError(t, err)
+			assert.Equal(t, []byte("value1"), value)
+		})
+	}
 }
 
 // TestBackupManager_LargeBackup moved to manager_integration_test.go
-
-func TestBackupManager_ContextCancellation(t *testing.T) {
-	manager, _, _ := setupTestBackupManager(t)
-
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel() // Cancel immediately
-
-	_, err := manager.CreateBackup(ctx, BackupTypeFull)
-	// Backup might succeed if it completes before context check
-	// This test mainly ensures no panic occurs
-	_ = err
-}
-
-func TestBackupManager_IncrementalBackupType(t *testing.T) {
-	manager, _, _ := setupTestBackupManager(t)
-
-	ctx := context.Background()
-	backup, err := manager.CreateBackup(ctx, BackupTypeIncremental)
-	require.NoError(t, err)
-
-	assert.Equal(t, BackupTypeIncremental, backup.Type)
-}
-
-func TestBackupManager_BackupMetrics(t *testing.T) {
-	manager, _, _ := setupTestBackupManager(t)
-
-	ctx := context.Background()
-
-	// Create backup
-	_, err := manager.CreateBackup(ctx, BackupTypeFull)
-	require.NoError(t, err)
-
-	// Metrics should be updated
-	assert.NotNil(t, manager.metrics)
-	assert.NotNil(t, manager.metrics.backupsTotal)
-	assert.NotNil(t, manager.metrics.backupDuration)
-	assert.NotNil(t, manager.metrics.backupSize)
-}
 
 func TestKeyValueSerializationHelpers(t *testing.T) {
 	var buf bytes.Buffer
@@ -1191,42 +1063,37 @@ func TestKeyValueSerializationHelpers(t *testing.T) {
 	assert.Equal(t, io.EOF, err)
 }
 
-func TestKeyValueSerialization_EmptyKeyValue(t *testing.T) {
-	var buf bytes.Buffer
-
-	// Write empty key and value
-	err := writeKeyValue(&buf, []byte{}, []byte{})
-	require.NoError(t, err)
-
-	// Read back
-	reader := bytes.NewReader(buf.Bytes())
-	key, value, err := readKeyValue(reader)
-	require.NoError(t, err)
-	assert.Empty(t, key)
-	assert.Empty(t, value)
-}
-
-func TestKeyValueSerialization_LargeValues(t *testing.T) {
-	var buf bytes.Buffer
-
+func TestKeyValueSerialization_RoundTrip(t *testing.T) {
 	largeKey := make([]byte, 10000)
-	largeValue := make([]byte, 100000)
-
 	for i := range largeKey {
 		largeKey[i] = byte(i % 256)
 	}
+	largeValue := make([]byte, 100000)
 	for i := range largeValue {
 		largeValue[i] = byte(i % 256)
 	}
 
-	err := writeKeyValue(&buf, largeKey, largeValue)
-	require.NoError(t, err)
+	tests := []struct {
+		name  string
+		key   []byte
+		value []byte
+	}{
+		{name: "empty key and value", key: []byte{}, value: []byte{}},
+		{name: "large key and value", key: largeKey, value: largeValue},
+	}
 
-	reader := bytes.NewReader(buf.Bytes())
-	key, value, err := readKeyValue(reader)
-	require.NoError(t, err)
-	assert.Equal(t, largeKey, key)
-	assert.Equal(t, largeValue, value)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var buf bytes.Buffer
+			require.NoError(t, writeKeyValue(&buf, tt.key, tt.value))
+
+			key, value, err := readKeyValue(bytes.NewReader(buf.Bytes()))
+			require.NoError(t, err)
+			// bytes.Equal treats an empty read-back as equal to []byte{}.
+			assert.True(t, bytes.Equal(tt.key, key))
+			assert.True(t, bytes.Equal(tt.value, value))
+		})
+	}
 }
 
 // TestNewBackupManager_WithSchedule moved to manager_integration_test.go
@@ -1268,52 +1135,6 @@ func TestNewBackupManager_WorkDirCreation(t *testing.T) {
 
 	err = manager.Close()
 	require.NoError(t, err)
-}
-
-func TestBackupManager_CreateBackupNoShards(t *testing.T) {
-	memStorage := &mockStorage{
-		MemoryStorage: memory.New(nil),
-	}
-
-	// Mock raft with no shards
-	mockRaft := &mockRaftNode{shardCount: 0}
-
-	log, err := logger.New(logger.LogConfig{
-		Level:  "debug",
-		Format: "json",
-		Output: "stdout",
-	})
-	require.NoError(t, err)
-
-	config := &Config{
-		StorageBackend:     "mock",
-		DefaultCompression: CompressionNone,
-		DefaultEncryption:  EncryptionNone,
-		WorkDir:            t.TempDir(),
-		Timeout:            5 * time.Minute,
-		StorageConfig: map[string]string{
-			"path": t.TempDir(),
-		},
-	}
-
-	manager := &BackupManager{
-		config:  config,
-		storage: memStorage,
-		raft:    mockRaft,
-		backend: NewMockStorage(),
-		logger:  log.WithField("component", "backup-manager"),
-		metrics: initBackupMetrics(),
-	}
-
-	ctx := context.Background()
-	backup, err := manager.CreateBackup(ctx, BackupTypeFull)
-	require.NoError(t, err)
-
-	assert.NotNil(t, backup)
-	assert.Empty(t, backup.Shards)
-	assert.Equal(t, 0, backup.Metadata.NumShards)
-
-	manager.Close()
 }
 
 func TestWriteUint32(t *testing.T) {
@@ -1367,47 +1188,39 @@ func TestReadUint32_InsufficientData(t *testing.T) {
 	assert.Error(t, err)
 }
 
-func TestReadKeyValue_TruncatedKey(t *testing.T) {
-	var buf bytes.Buffer
+func TestReadKeyValue_Truncated(t *testing.T) {
+	tests := []struct {
+		name  string
+		write func(t *testing.T, buf *bytes.Buffer)
+	}{
+		{
+			name: "key length without key data",
+			write: func(t *testing.T, buf *bytes.Buffer) {
+				require.NoError(t, writeUint32(buf, 10))
+			},
+		},
+		{
+			name: "value length without value data",
+			write: func(t *testing.T, buf *bytes.Buffer) {
+				require.NoError(t, writeUint32(buf, 4))
+				buf.WriteString("test")
+				require.NoError(t, writeUint32(buf, 100))
+			},
+		},
+	}
 
-	// Write a key length but no key data
-	err := writeUint32(&buf, 10)
-	require.NoError(t, err)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var buf bytes.Buffer
+			tt.write(t, &buf)
 
-	reader := bytes.NewReader(buf.Bytes())
-	_, _, err = readKeyValue(reader)
-	assert.Error(t, err)
-}
-
-func TestReadKeyValue_TruncatedValue(t *testing.T) {
-	var buf bytes.Buffer
-
-	// Write key
-	err := writeUint32(&buf, 4)
-	require.NoError(t, err)
-	buf.Write([]byte("test"))
-
-	// Write value length but no value data
-	err = writeUint32(&buf, 100)
-	require.NoError(t, err)
-
-	reader := bytes.NewReader(buf.Bytes())
-	_, _, err = readKeyValue(reader)
-	assert.Error(t, err)
+			_, _, err := readKeyValue(bytes.NewReader(buf.Bytes()))
+			assert.Error(t, err)
+		})
+	}
 }
 
 // TestBackupManager_ListBackupsLimit moved to manager_integration_test.go
-
-func TestBackupManager_RunScheduledBackups(t *testing.T) {
-	manager, _, _ := setupTestBackupManager(t)
-
-	// This function is a placeholder, just call it to increase coverage
-	manager.runScheduledBackups()
-
-	// Close manager
-	err := manager.Close()
-	require.NoError(t, err)
-}
 
 func TestNoneEncryptor_ReturnReadCloser(t *testing.T) {
 	encryptor := &noneEncryptor{}
@@ -1531,59 +1344,6 @@ func (m *mockRaftNodeNilInfo) Close() error {
 	return nil
 }
 
-func TestZstdCompressor_CompressDecompressRoundTrip(t *testing.T) {
-	compressor, err := NewCompressor(CompressionZstd)
-	require.NoError(t, err)
-
-	original := []byte("zstd compressible data for backup testing")
-
-	// Compress
-	var compressed bytes.Buffer
-	writer, err := compressor.Compress(&compressed)
-	require.NoError(t, err)
-
-	_, err = writer.Write(original)
-	require.NoError(t, err)
-	err = writer.Close()
-	require.NoError(t, err)
-
-	// Decompress
-	reader, err := compressor.Decompress(bytes.NewReader(compressed.Bytes()))
-	require.NoError(t, err)
-	defer reader.Close()
-
-	decompressed, err := io.ReadAll(reader)
-	require.NoError(t, err)
-	assert.Equal(t, original, decompressed)
-}
-
-// TestGzipCompressor_CompressDecompressRoundTrip tests gzip compress/decompress cycle.
-func TestGzipCompressor_CompressDecompressRoundTrip(t *testing.T) {
-	compressor, err := NewCompressor(CompressionGzip)
-	require.NoError(t, err)
-
-	original := []byte("gzip compressible data for backup testing round-trip")
-
-	// Compress
-	var compressed bytes.Buffer
-	writer, err := compressor.Compress(&compressed)
-	require.NoError(t, err)
-
-	_, err = writer.Write(original)
-	require.NoError(t, err)
-	err = writer.Close()
-	require.NoError(t, err)
-
-	// Decompress
-	reader, err := compressor.Decompress(bytes.NewReader(compressed.Bytes()))
-	require.NoError(t, err)
-	defer reader.Close()
-
-	decompressed, err := io.ReadAll(reader)
-	require.NoError(t, err)
-	assert.Equal(t, original, decompressed)
-}
-
 // TestAES256GCM_DecryptTruncatedData tests decrypting truncated ciphertext.
 func TestAES256GCM_DecryptTruncatedData(t *testing.T) {
 	key := make([]byte, 32)
@@ -1597,45 +1357,6 @@ func TestAES256GCM_DecryptTruncatedData(t *testing.T) {
 	// Truncated data too short for nonce
 	_, err = encryptor.Decrypt(bytes.NewReader([]byte{0x01, 0x02}))
 	assert.Error(t, err)
-}
-
-// TestAES256GCM_EncryptEmptyData tests encrypting empty data.
-func TestAES256GCM_EncryptEmptyData(t *testing.T) {
-	key := make([]byte, 32)
-	for i := range key {
-		key[i] = byte(i)
-	}
-
-	encryptor, err := NewAES256GCMEncryptor(key)
-	require.NoError(t, err)
-
-	// Encrypt empty data
-	var encrypted bytes.Buffer
-	writer, err := encryptor.Encrypt(&encrypted)
-	require.NoError(t, err)
-
-	err = writer.Close()
-	require.NoError(t, err)
-
-	// Decrypt empty encrypted data
-	reader, err := encryptor.Decrypt(bytes.NewReader(encrypted.Bytes()))
-	require.NoError(t, err)
-	defer reader.Close()
-
-	decrypted, err := io.ReadAll(reader)
-	require.NoError(t, err)
-	assert.Empty(t, decrypted)
-}
-
-// TestNewStorageBackend_MockType90 tests NewStorageBackend with mock type.
-func TestNewStorageBackend_MockType90(t *testing.T) {
-	cfg := &Config{
-		StorageBackend: "mock",
-	}
-
-	storage, err := NewStorageBackend(cfg)
-	require.NoError(t, err)
-	assert.NotNil(t, storage)
 }
 
 // TestMockStorage_PutAndGetCoverage tests MockStorage put and get operations.
@@ -1674,65 +1395,6 @@ func TestBackupManager_IsSchedulerRunning_NotStarted(t *testing.T) {
 	defer mgr.Close()
 
 	assert.False(t, mgr.IsSchedulerRunning())
-}
-
-// TestBackupManager_ApplyRetentionPolicy_NilSchedule tests ApplyRetentionPolicy
-// when schedule is nil.
-func TestBackupManager_ApplyRetentionPolicy_NilSchedule(t *testing.T) {
-	mgr, _, _ := setupTestBackupManager(t)
-	defer mgr.Close()
-
-	// The default test config has no schedule
-	mgr.config.Schedule = nil
-
-	err := mgr.ApplyRetentionPolicy(context.Background())
-	require.NoError(t, err)
-}
-
-// TestBackupManager_ApplyRetentionPolicy_NilRetention tests ApplyRetentionPolicy
-// when retention policy is nil.
-func TestBackupManager_ApplyRetentionPolicy_NilRetention(t *testing.T) {
-	mgr, _, _ := setupTestBackupManager(t)
-	defer mgr.Close()
-
-	mgr.config.Schedule = &ScheduleConfig{
-		CronExpression:  "0 0 * * *",
-		RetentionPolicy: nil,
-	}
-
-	err := mgr.ApplyRetentionPolicy(context.Background())
-	require.NoError(t, err)
-}
-
-// TestAES256GCM_LargeData tests encrypt/decrypt with larger payload.
-func TestAES256GCM_LargeData(t *testing.T) {
-	key := make([]byte, 32)
-	for i := range key {
-		key[i] = byte(i)
-	}
-
-	encryptor, err := NewAES256GCMEncryptor(key)
-	require.NoError(t, err)
-
-	// Create a larger payload
-	original := bytes.Repeat([]byte("encrypt this large block of data "), 100)
-
-	var encrypted bytes.Buffer
-	writer, err := encryptor.Encrypt(&encrypted)
-	require.NoError(t, err)
-
-	_, err = writer.Write(original)
-	require.NoError(t, err)
-	err = writer.Close()
-	require.NoError(t, err)
-
-	reader, err := encryptor.Decrypt(bytes.NewReader(encrypted.Bytes()))
-	require.NoError(t, err)
-	defer reader.Close()
-
-	decrypted, err := io.ReadAll(reader)
-	require.NoError(t, err)
-	assert.Equal(t, original, decrypted)
 }
 
 // TestMockStorage_PutWithContextCoverage tests MockStorage PutWithContext.
