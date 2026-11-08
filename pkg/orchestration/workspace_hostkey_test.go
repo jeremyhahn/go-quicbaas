@@ -116,14 +116,14 @@ func TestParseSSHHostKey_RefusesAnythingElse(t *testing.T) {
 func TestSSHRepoHost_DerivesThePatternSSHLooksUp(t *testing.T) {
 	t.Parallel()
 	for name, tc := range map[string]struct{ url, want string }{
-		"url with port":     {"ssh://git@forge.invalid:2222/o/r.git", "[forge.invalid]:2222"},
+		"url with port":     {"ssh://git@forge.invalid:2022/o/r.git", "[forge.invalid]:2022"},
 		"url default port":  {"ssh://git@forge.invalid/o/r.git", "forge.invalid"},
 		"url explicit 22":   {"ssh://git@forge.invalid:22/o/r.git", "forge.invalid"},
 		"url no user":       {"ssh://forge.invalid/o/r.git", "forge.invalid"},
 		"url mixed case":    {"ssh://git@Forge.INVALID/o/r.git", "forge.invalid"},
 		"scp form":          {"git@forge.invalid:o/r.git", "forge.invalid"},
 		"scp mixed case":    {"git@Forge.Invalid:o/r.git", "forge.invalid"},
-		"ipv6 with port":    {"ssh://git@[fd00::1]:2222/o/r.git", "[fd00::1]:2222"},
+		"ipv6 with port":    {"ssh://git@[fd00::1]:2022/o/r.git", "[fd00::1]:2022"},
 		"https":             {"https://forge.invalid/o/r.git", ""},
 		"file":              {"file:///srv/r.git", ""},
 		"bare path":         {"/srv/r.git", ""},
@@ -150,7 +150,7 @@ func TestSSHRepoHost_DerivesThePatternSSHLooksUp(t *testing.T) {
 func TestKnownHostsFor_PinsOneHostToOneKey(t *testing.T) {
 	t.Parallel()
 	line := testHostKeyLine(t)
-	got, err := KnownHostsFor("ssh://git@forge.invalid:2222/o/r.git", line+" pasted-comment")
+	got, err := KnownHostsFor("ssh://git@forge.invalid:2022/o/r.git", line+" pasted-comment")
 	if err != nil {
 		t.Fatalf("KnownHostsFor: %v", err)
 	}
@@ -161,7 +161,7 @@ func TestKnownHostsFor_PinsOneHostToOneKey(t *testing.T) {
 	if len(lines) != 1 {
 		t.Fatalf("known_hosts must hold exactly one entry: %q", got)
 	}
-	if want := "[forge.invalid]:2222 " + line; lines[0] != want {
+	if want := "[forge.invalid]:2022 " + line; lines[0] != want {
 		t.Fatalf("known_hosts = %q, want %q", lines[0], want)
 	}
 	if strings.Contains(got, "pasted-comment") {
