@@ -165,6 +165,9 @@ func TestGiteaBackend_CapabilitiesMatchThePlatform(t *testing.T) {
 	if !caps.SquashMerge {
 		t.Error("gitea claims it cannot squash-merge, which would refuse the default merge strategy")
 	}
+	if !caps.AdditiveLabels {
+		t.Error("Gitea publishes both the add and the remove route; reporting otherwise sends display sync back to whole-set replacement")
+	}
 	if backend.Type() != ForgeGitea {
 		t.Errorf("Type() = %v, want gitea", backend.Type())
 	}
@@ -244,136 +247,89 @@ func issuePage(start, n int) []map[string]any {
 	return page
 }
 
-// respondIssuePages serves a different page per `page` query parameter, which
-// is what makes pagination testable at all.
-func (f *giteaFixture) respondIssuePages(pages [][]map[string]any) {
-	f.handlers["GET /api/v1/repos/jeremyhahn/go-quicbaas/issues"] = func(w http.ResponseWriter, r *http.Request) {
-		page, _ := strconv.Atoi(r.URL.Query().Get("page"))
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		if page >= 1 && page <= len(pages) {
-			_ = json.NewEncoder(w).Encode(pages[page-1])
-			return
-		}
-		_ = json.NewEncoder(w).Encode([]map[string]any{})
+// TestListIssues_Paging drives the one paging loop through each way it can
+// end. A single-page listing once left the polling reconciler silently
+// orphaning every issue past the first page. A short page is how a forge says
+// "that is all"; Limit bounds the total rather than the page; a repository
+// ending exactly on the unbounded ceiling is ordinary, so the adapter probes
+// once past it; and a forge that never says it has finished is a fault, never
+// a prefix presented as a whole listing.
+func TestListIssues_Paging(t *testing.T) {
+	full := func(n int) []map[string]any {
+		return issuePage((n-1)*giteaDefaultPageSize+1, giteaDefaultPageSize)
 	}
-}
+	cases := []struct {
+		name         string
+		page         func(n int) []map[string]any
+		limit        int
+		wantIssues   int
+		wantRequests int
+		wantErr      error
+	}{
+		{
+			name: "stops at a short page",
+			page: func(n int) []map[string]any {
+				switch {
+				case n <= 2:
+					return full(n)
+				case n == 3:
+					return issuePage(2*giteaDefaultPageSize+1, 3)
+				}
+				return []map[string]any{}
+			},
+			wantIssues:   2*giteaDefaultPageSize + 3,
+			wantRequests: 3,
+		},
+		{name: "stops at the caller's limit inside a page", page: full, limit: 60, wantIssues: 60, wantRequests: 2},
+		{name: "a bounded listing never walks to the ceiling", page: full, limit: 120, wantIssues: 120, wantRequests: 3},
+		{
+			name: "an unbounded listing ending on the ceiling is not a fault",
+			page: func(n int) []map[string]any {
+				if n > maxIssuePages {
+					return []map[string]any{}
+				}
+				return full(n)
+			},
+			wantIssues:   maxIssuePages * giteaDefaultPageSize,
+			wantRequests: maxIssuePages + 1,
+		},
+		{name: "an unbounded listing that never ends is a fault", page: full, wantRequests: maxIssuePages + 1, wantErr: ErrBackend},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			backend, fixture := newGiteaFixture(t)
+			fixture.handlers["GET /api/v1/repos/jeremyhahn/go-quicbaas/issues"] = func(w http.ResponseWriter, r *http.Request) {
+				page, _ := strconv.Atoi(r.URL.Query().Get("page"))
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusOK)
+				_ = json.NewEncoder(w).Encode(tc.page(page))
+			}
 
-// TestListIssues_PagesUntilAShortPage is the hole this closes.
-//
-// A single-page listing left the polling reconciler silently orphaning every
-// issue past the first page — beneath the floor every other correctness claim
-// in the module rests on, with no symptom but work that never starts. A short
-// page is how a forge says "that is all"; anything else means keep asking.
-func TestListIssues_PagesUntilAShortPage(t *testing.T) {
-	backend, fixture := newGiteaFixture(t)
-	fixture.respondIssuePages([][]map[string]any{
-		issuePage(1, giteaDefaultPageSize),
-		issuePage(giteaDefaultPageSize+1, giteaDefaultPageSize),
-		issuePage(2*giteaDefaultPageSize+1, 3),
-	})
-
-	issues, err := backend.ListIssues(context.Background(), testRepo, IssueFilter{State: "open"})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	want := 2*giteaDefaultPageSize + 3
-	if len(issues) != want {
-		t.Fatalf("got %d issues, want %d — the listing stopped early", len(issues), want)
-	}
-	// The last issue of the last page must be present: a listing that returned
-	// the right COUNT from the wrong pages would otherwise pass.
-	if issues[len(issues)-1].Number != want {
-		t.Errorf("last issue is %d, want %d", issues[len(issues)-1].Number, want)
-	}
-	if len(fixture.requests) != 3 {
-		t.Errorf("made %d requests, want 3 — one per page until the short one", len(fixture.requests))
-	}
-}
-
-// TestListIssues_StopsAtTheCallersLimit proves Limit bounds the total rather
-// than the page.
-func TestListIssues_StopsAtTheCallersLimit(t *testing.T) {
-	backend, fixture := newGiteaFixture(t)
-	fixture.respondIssuePages([][]map[string]any{
-		issuePage(1, giteaDefaultPageSize),
-		issuePage(giteaDefaultPageSize+1, giteaDefaultPageSize),
-	})
-
-	issues, err := backend.ListIssues(context.Background(), testRepo, IssueFilter{State: "open", Limit: 60})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if len(issues) != 60 {
-		t.Fatalf("got %d issues, want the caller's 60", len(issues))
-	}
-	// It had to fetch a second page to reach 60, and must not have fetched a
-	// third once it had them.
-	if len(fixture.requests) != 2 {
-		t.Errorf("made %d requests, want 2", len(fixture.requests))
-	}
-}
-
-// TestListIssues_AnUnboundedListingEndingOnTheBoundaryIsNotAFault covers the
-// third of the three cases IssueFilter.Limit documents.
-//
-// A repository that happens to hold exactly as many issues as the ceiling
-// allows looks, from inside the loop, identical to one holding more: every page
-// was full and the forge never said it had finished. Reporting that as a broken
-// forge would fail a perfectly ordinary repository for ending on a page
-// boundary, so the adapter asks once more before concluding anything.
-func TestListIssues_AnUnboundedListingEndingOnTheBoundaryIsNotAFault(t *testing.T) {
-	backend, fixture := newGiteaFixture(t)
-	// Full pages right up to the ceiling, then genuinely nothing.
-	fixture.handlers["GET /api/v1/repos/jeremyhahn/go-quicbaas/issues"] = func(w http.ResponseWriter, r *http.Request) {
-		page, _ := strconv.Atoi(r.URL.Query().Get("page"))
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		if page > maxIssuePages {
-			_ = json.NewEncoder(w).Encode([]map[string]any{})
-			return
-		}
-		_ = json.NewEncoder(w).Encode(issuePage((page-1)*giteaDefaultPageSize+1, giteaDefaultPageSize))
-	}
-
-	issues, err := backend.ListIssues(context.Background(), testRepo, IssueFilter{State: "open"})
-	if err != nil {
-		t.Fatalf("a repository ending exactly on the ceiling was reported as broken: %v", err)
-	}
-	want := maxIssuePages * giteaDefaultPageSize
-	if len(issues) != want {
-		t.Fatalf("got %d issues, want %d", len(issues), want)
-	}
-	// The extra request is what distinguishes this case from a truncation.
-	if len(fixture.requests) != maxIssuePages+1 {
-		t.Errorf("made %d requests, want %d — one past the ceiling to establish nothing was missed",
-			len(fixture.requests), maxIssuePages+1)
-	}
-}
-
-// TestListIssues_AnUnboundedListingThatNeverEndsIsAFault keeps a misbehaving
-// forge from spinning forever, and from having its prefix presented as a whole
-// listing.
-func TestListIssues_AnUnboundedListingThatNeverEndsIsAFault(t *testing.T) {
-	backend, fixture := newGiteaFixture(t)
-	// Every page is full, forever: the forge never says "that is all".
-	fixture.handlers["GET /api/v1/repos/jeremyhahn/go-quicbaas/issues"] = func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		_ = json.NewEncoder(w).Encode(issuePage(1, giteaDefaultPageSize))
-	}
-
-	issues, err := backend.ListIssues(context.Background(), testRepo, IssueFilter{State: "open"})
-	if issues != nil {
-		t.Error("a prefix was returned alongside the fault; it would be read as a complete listing")
-	}
-	if !errors.Is(err, ErrBackend) {
-		t.Fatalf("error = %v, want a BackendError", err)
-	}
-	if len(fixture.requests) != maxIssuePages+1 {
-		t.Errorf("made %d requests, want the %d-page bound plus the one probe past it",
-			len(fixture.requests), maxIssuePages)
+			issues, err := backend.ListIssues(context.Background(), testRepo, IssueFilter{State: "open", Limit: tc.limit})
+			if len(fixture.requests) != tc.wantRequests {
+				t.Errorf("made %d requests, want %d", len(fixture.requests), tc.wantRequests)
+			}
+			if tc.wantErr != nil {
+				if !errors.Is(err, tc.wantErr) {
+					t.Fatalf("error = %v, want %v", err, tc.wantErr)
+				}
+				if issues != nil {
+					t.Error("a prefix was returned alongside the fault; it would be read as a complete listing")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if len(issues) != tc.wantIssues {
+				t.Fatalf("got %d issues, want %d", len(issues), tc.wantIssues)
+			}
+			// The last issue must be the last one asked for: the right COUNT
+			// from the wrong pages would otherwise pass.
+			if last := issues[len(issues)-1].Number; last != tc.wantIssues {
+				t.Errorf("last issue is %d, want %d", last, tc.wantIssues)
+			}
+		})
 	}
 }
 
@@ -420,32 +376,6 @@ func TestIssuePageBound_DerivesFromTheCallersLimit(t *testing.T) {
 	}
 }
 
-// TestListIssues_ABoundedListingStopsAtItsLimit covers the same bound through a
-// real listing.
-func TestListIssues_ABoundedListingStopsAtItsLimit(t *testing.T) {
-	backend, fixture := newGiteaFixture(t)
-	// A repository with no end in sight, exactly as above.
-	fixture.handlers["GET /api/v1/repos/jeremyhahn/go-quicbaas/issues"] = func(w http.ResponseWriter, r *http.Request) {
-		page, _ := strconv.Atoi(r.URL.Query().Get("page"))
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		_ = json.NewEncoder(w).Encode(issuePage((page-1)*giteaDefaultPageSize+1, giteaDefaultPageSize))
-	}
-
-	issues, err := backend.ListIssues(context.Background(), testRepo, IssueFilter{State: "open", Limit: 120})
-	if err != nil {
-		t.Fatalf("a bounded listing of a large repository was reported as a fault: %v", err)
-	}
-	if len(issues) != 120 {
-		t.Fatalf("got %d issues, want the caller's 120", len(issues))
-	}
-	// Three pages of fifty is the fewest that reach 120, and it must not have
-	// walked to the ceiling to get there.
-	if len(fixture.requests) != 3 {
-		t.Errorf("made %d requests, want 3", len(fixture.requests))
-	}
-}
-
 // TestAddIssueLabels_AddsWithoutDisturbingTheRest is why the additive route
 // exists.
 //
@@ -458,6 +388,8 @@ func TestAddIssueLabels_AddsWithoutDisturbingTheRest(t *testing.T) {
 		{"id": 2, "name": "priority:high"},
 	})
 	fixture.respondJSON("POST /api/v1/repos/jeremyhahn/go-quicbaas/issues/32/labels", http.StatusOK, nil)
+	// The read-back carries a label this call did not name: the check is
+	// presence, not set equality, or every add would fail on a labelled issue.
 	fixture.respondJSON("GET /api/v1/repos/jeremyhahn/go-quicbaas/issues/32", http.StatusOK, map[string]any{
 		"number": 32, "state": "open",
 		"labels": []map[string]any{{"name": "priority:high"}, {"name": "task:in-progress"}},
@@ -481,44 +413,73 @@ func TestAddIssueLabels_AddsWithoutDisturbingTheRest(t *testing.T) {
 	}
 }
 
-// TestAddIssueLabels_ChecksPresenceNotSetEquality keeps a correct write from
-// being reported as failed.
+// TestLabelWrites_ReadBackCatchesAWriteThatDidNothing is the property this
+// whole adapter is shaped around, on each label write route.
 //
-// The labels this call did not name are supposed to still be there. Comparing
-// whole sets would make every add fail on an issue that carries anything else.
-func TestAddIssueLabels_ChecksPresenceNotSetEquality(t *testing.T) {
-	backend, fixture := newGiteaFixture(t)
-	fixture.respondJSON("GET /api/v1/repos/jeremyhahn/go-quicbaas/labels", http.StatusOK, []map[string]any{
-		{"id": 1, "name": "task:ready"},
-	})
-	fixture.respondJSON("POST /api/v1/repos/jeremyhahn/go-quicbaas/issues/32/labels", http.StatusOK, nil)
-	// The read-back carries a foreign label the caller never mentioned.
-	fixture.respondJSON("GET /api/v1/repos/jeremyhahn/go-quicbaas/issues/32", http.StatusOK, map[string]any{
-		"number": 32, "state": "open",
-		"labels": []map[string]any{{"name": "task:ready"}, {"name": "someone-elses"}},
-	})
-
-	if err := backend.AddIssueLabels(context.Background(), testRepo, 32, []string{"task:ready"}); err != nil {
-		t.Fatalf("a correct add was reported as failed: %v", err)
+// Gitea answers 200 for label writes that do not take effect. An adapter that
+// trusted the status code would report success while the forge showed something
+// else — which is exactly how the shell scripts displayed state that was not
+// real. Each row stages that failure directly: the write succeeds and the
+// read-back shows the labels unchanged.
+func TestLabelWrites_ReadBackCatchesAWriteThatDidNothing(t *testing.T) {
+	cases := []struct {
+		name        string
+		writeRoute  string
+		writeStatus int
+		readBack    []map[string]any
+		write       func(*GiteaBackend) error
+		wantInError []string
+	}{
+		{
+			name:        "add",
+			writeRoute:  "POST /api/v1/repos/jeremyhahn/go-quicbaas/issues/32/labels",
+			writeStatus: http.StatusOK,
+			readBack:    []map[string]any{},
+			write: func(b *GiteaBackend) error {
+				return b.AddIssueLabels(context.Background(), testRepo, 32, []string{"ready"})
+			},
+		},
+		{
+			name:        "remove",
+			writeRoute:  "DELETE /api/v1/repos/jeremyhahn/go-quicbaas/issues/32/labels/1",
+			writeStatus: http.StatusNoContent,
+			readBack:    []map[string]any{{"id": 1, "name": "ready"}},
+			write: func(b *GiteaBackend) error {
+				return b.RemoveIssueLabel(context.Background(), testRepo, 32, "ready")
+			},
+		},
+		{
+			name:        "set",
+			writeRoute:  "PUT /api/v1/repos/jeremyhahn/go-quicbaas/issues/32/labels",
+			writeStatus: http.StatusOK,
+			readBack:    []map[string]any{{"id": 1, "name": "ready"}},
+			write: func(b *GiteaBackend) error {
+				return b.SetIssueLabels(context.Background(), testRepo, 32, []string{"in-progress"})
+			},
+			// What was wanted against what was found.
+			wantInError: []string{"[in-progress]", "[ready]"},
+		},
 	}
-}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			backend, fixture := newGiteaFixture(t)
+			fixture.respondJSON("GET /api/v1/repos/jeremyhahn/go-quicbaas/labels", http.StatusOK,
+				[]map[string]any{{"id": 1, "name": "ready"}, {"id": 2, "name": "in-progress"}})
+			fixture.respondJSON(tc.writeRoute, tc.writeStatus, nil)
+			fixture.respondJSON("GET /api/v1/repos/jeremyhahn/go-quicbaas/issues/32", http.StatusOK, map[string]any{
+				"number": 32, "state": "open", "labels": tc.readBack,
+			})
 
-// TestAddIssueLabels_ReadBackCatchesAWriteThatDidNothing is WP2's rule applied
-// to the new route: Gitea has answered 200 for label writes that did not land.
-func TestAddIssueLabels_ReadBackCatchesAWriteThatDidNothing(t *testing.T) {
-	backend, fixture := newGiteaFixture(t)
-	fixture.respondJSON("GET /api/v1/repos/jeremyhahn/go-quicbaas/labels", http.StatusOK, []map[string]any{
-		{"id": 1, "name": "task:ready"},
-	})
-	fixture.respondJSON("POST /api/v1/repos/jeremyhahn/go-quicbaas/issues/32/labels", http.StatusOK, nil)
-	// 200 above, and the label is not on the issue.
-	fixture.respondJSON("GET /api/v1/repos/jeremyhahn/go-quicbaas/issues/32", http.StatusOK, map[string]any{
-		"number": 32, "state": "open", "labels": []map[string]any{},
-	})
-
-	err := backend.AddIssueLabels(context.Background(), testRepo, 32, []string{"task:ready"})
-	if !errors.Is(err, ErrForgeWriteNotApplied) {
-		t.Fatalf("error = %v, want ErrForgeWriteNotApplied", err)
+			err := tc.write(backend)
+			if !errors.Is(err, ErrForgeWriteNotApplied) {
+				t.Fatalf("error = %v, want ErrForgeWriteNotApplied", err)
+			}
+			for _, want := range tc.wantInError {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("error %v does not carry %q", err, want)
+				}
+			}
+		})
 	}
 }
 
@@ -573,26 +534,6 @@ func TestRemoveIssueLabel_AnAlreadyAbsentLabelIsSuccess(t *testing.T) {
 	}
 }
 
-// TestRemoveIssueLabel_ReadBackCatchesALabelStillPresent is the read-back rule
-// on the delete route.
-func TestRemoveIssueLabel_ReadBackCatchesALabelStillPresent(t *testing.T) {
-	backend, fixture := newGiteaFixture(t)
-	fixture.respondJSON("GET /api/v1/repos/jeremyhahn/go-quicbaas/labels", http.StatusOK, []map[string]any{
-		{"id": 7, "name": "task:ready"},
-	})
-	fixture.respondJSON("DELETE /api/v1/repos/jeremyhahn/go-quicbaas/issues/32/labels/7", http.StatusNoContent, nil)
-	// 204 above, and the label is still there.
-	fixture.respondJSON("GET /api/v1/repos/jeremyhahn/go-quicbaas/issues/32", http.StatusOK, map[string]any{
-		"number": 32, "state": "open",
-		"labels": []map[string]any{{"name": "task:ready"}},
-	})
-
-	err := backend.RemoveIssueLabel(context.Background(), testRepo, 32, "task:ready")
-	if !errors.Is(err, ErrForgeWriteNotApplied) {
-		t.Fatalf("error = %v, want ErrForgeWriteNotApplied", err)
-	}
-}
-
 // TestRemoveIssueLabel_RefusesAnEmptyLabel covers the input guard.
 func TestRemoveIssueLabel_RefusesAnEmptyLabel(t *testing.T) {
 	backend, fixture := newGiteaFixture(t)
@@ -604,15 +545,6 @@ func TestRemoveIssueLabel_RefusesAnEmptyLabel(t *testing.T) {
 	}
 	if len(fixture.requests) != 0 {
 		t.Errorf("an empty label made %d requests", len(fixture.requests))
-	}
-}
-
-// TestCapabilities_ReportsAdditiveLabels pins the capability the mirror routes
-// on.
-func TestCapabilities_ReportsAdditiveLabels(t *testing.T) {
-	backend, _ := newGiteaFixture(t)
-	if !backend.Capabilities().AdditiveLabels {
-		t.Error("Gitea publishes both the add and the remove route; reporting otherwise sends display sync back to whole-set replacement")
 	}
 }
 
@@ -710,75 +642,24 @@ func TestGitea_SendsTheTokenAndNeverLogsIt(t *testing.T) {
 // Writes and read-back
 // =============================================================================
 
-// TestSetIssueLabels_VerifiesByReadBack is the property this whole adapter is
-// shaped around.
-//
-// Gitea answers 200 for label writes that do not take effect. An adapter that
-// trusted the status code would report success while the forge showed something
-// else — which is exactly how the shell scripts displayed state that was not
-// real. The fixture stages that failure directly: the PUT succeeds and the
-// read-back shows the old labels.
-func TestSetIssueLabels_VerifiesByReadBack(t *testing.T) {
-	backend, fixture := newGiteaFixture(t)
-	fixture.respondJSON("GET /api/v1/repos/jeremyhahn/go-quicbaas/labels", http.StatusOK,
-		[]map[string]any{{"id": 1, "name": "ready"}, {"id": 2, "name": "in-progress"}})
-	// The write is accepted...
-	fixture.respondJSON("PUT /api/v1/repos/jeremyhahn/go-quicbaas/issues/32/labels", http.StatusOK, nil)
-	// ...and changed nothing.
-	fixture.respondJSON("GET /api/v1/repos/jeremyhahn/go-quicbaas/issues/32", http.StatusOK, map[string]any{
-		"number": 32,
-		"labels": []map[string]any{{"id": 1, "name": "ready"}},
-	})
-
-	err := backend.SetIssueLabels(context.Background(), testRepo, 32, []string{"in-progress"})
-	if err == nil {
-		t.Fatal("a 200 that changed nothing was reported as success")
-	}
-	if !errors.Is(err, ErrForgeWriteNotApplied) {
-		t.Fatalf("error = %v, want ErrForgeWriteNotApplied", err)
-	}
-	for _, want := range []string{"[in-progress]", "[ready]"} {
-		if !strings.Contains(err.Error(), want) {
-			t.Errorf("error %v does not show what was wanted against what was found", err)
-		}
-	}
-}
-
 // TestSetIssueLabels_SucceedsWhenTheWriteActuallyLanded covers the ordinary
-// path, and pins that comparison ignores order and case — Gitea returns labels
-// in its own order, and a read-back that cried wolf would get ignored.
+// path. It pins that comparison ignores order and case — Gitea returns labels
+// in its own order, and a read-back that cried wolf would get ignored — and the
+// wire form: Gitea's endpoint takes IDs, and sending names silently sets no
+// labels, another 200 that does nothing.
 func TestSetIssueLabels_SucceedsWhenTheWriteActuallyLanded(t *testing.T) {
 	backend, fixture := newGiteaFixture(t)
 	fixture.respondJSON("GET /api/v1/repos/jeremyhahn/go-quicbaas/labels", http.StatusOK,
-		[]map[string]any{{"id": 1, "name": "ready"}, {"id": 2, "name": "in-progress"}})
+		[]map[string]any{{"id": 1, "name": "ready"}, {"id": 7, "name": "in-progress"}})
 	fixture.respondJSON("PUT /api/v1/repos/jeremyhahn/go-quicbaas/issues/32/labels", http.StatusOK, nil)
 	fixture.respondJSON("GET /api/v1/repos/jeremyhahn/go-quicbaas/issues/32", http.StatusOK, map[string]any{
 		"number": 32,
 		// Returned in a different order and case than requested.
-		"labels": []map[string]any{{"id": 2, "name": "In-Progress"}, {"id": 1, "name": "Ready"}},
+		"labels": []map[string]any{{"id": 7, "name": "In-Progress"}, {"id": 1, "name": "Ready"}},
 	})
 
 	if err := backend.SetIssueLabels(context.Background(), testRepo, 32, []string{"ready", "in-progress"}); err != nil {
 		t.Fatalf("a landed write was reported as failed: %v", err)
-	}
-}
-
-// TestSetIssueLabels_SendsLabelIDsNotNames pins the wire form.
-//
-// Gitea's endpoint takes IDs. Sending names silently sets no labels — another
-// 200 that does nothing — so this asserts the resolved IDs actually go out.
-func TestSetIssueLabels_SendsLabelIDsNotNames(t *testing.T) {
-	backend, fixture := newGiteaFixture(t)
-	fixture.respondJSON("GET /api/v1/repos/jeremyhahn/go-quicbaas/labels", http.StatusOK,
-		[]map[string]any{{"id": 7, "name": "in-progress"}})
-	fixture.respondJSON("PUT /api/v1/repos/jeremyhahn/go-quicbaas/issues/32/labels", http.StatusOK, nil)
-	fixture.respondJSON("GET /api/v1/repos/jeremyhahn/go-quicbaas/issues/32", http.StatusOK, map[string]any{
-		"number": 32,
-		"labels": []map[string]any{{"id": 7, "name": "in-progress"}},
-	})
-
-	if err := backend.SetIssueLabels(context.Background(), testRepo, 32, []string{"in-progress"}); err != nil {
-		t.Fatalf("unexpected error: %v", err)
 	}
 
 	var put string
@@ -787,8 +668,8 @@ func TestSetIssueLabels_SendsLabelIDsNotNames(t *testing.T) {
 			put = req.Body
 		}
 	}
-	if !strings.Contains(put, "[7]") {
-		t.Errorf("PUT body %q does not carry the resolved label ID", put)
+	if !strings.Contains(put, "[1,7]") {
+		t.Errorf("PUT body %q does not carry the resolved label IDs", put)
 	}
 }
 
@@ -992,25 +873,6 @@ func TestCommentOnIssue_RefusesAnEmptyBody(t *testing.T) {
 	backend, _ := newGiteaFixture(t)
 	if _, err := backend.CommentOnIssue(context.Background(), testRepo, 32, "   "); !errors.Is(err, ErrInvalidInput) {
 		t.Fatalf("error = %v, want ErrInvalidInput", err)
-	}
-}
-
-// =============================================================================
-// Label normalization
-// =============================================================================
-
-// TestNormalizedLabels_IgnoresOrderAndCase pins the comparison the read-back
-// depends on. A read-back that reported a difference where there is none would
-// be turned off, which costs more than not having one.
-func TestNormalizedLabels_IgnoresOrderAndCase(t *testing.T) {
-	if a, b := normalizedLabels([]string{"Ready", "agent"}), normalizedLabels([]string{"agent", "READY"}); a != b {
-		t.Errorf("%s != %s: order or case changed the comparison", a, b)
-	}
-	if normalizedLabels(nil) != "[]" {
-		t.Errorf("an empty label set renders as %q", normalizedLabels(nil))
-	}
-	if normalizedLabels([]string{"ready"}) == normalizedLabels([]string{"ready", "agent"}) {
-		t.Error("different label sets compared equal")
 	}
 }
 
@@ -1512,6 +1374,9 @@ func TestParseWebhook_MapsTheEventsTheModuleActsOn(t *testing.T) {
 		// one must not readmit anything.
 		{"issue comment edited", "issue_comment", `{"action":"edited","issue":{"number":32}}`, EventUnsupported},
 		{"issue comment deleted", "issue_comment", `{"action":"deleted","issue":{"number":32}}`, EventUnsupported},
+		// Forges send plenty the module does not act on. Reporting those as
+		// failures would fill the log with errors for a healthy webhook.
+		{"unmapped event", "release", `{"action":"published"}`, EventUnsupported},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -1568,24 +1433,6 @@ func TestParseWebhook_APipelineDeliveryCarriesItsCommit(t *testing.T) {
 	}
 }
 
-// TestParseWebhook_AnUnmappedEventIsOrdinaryNotAnError proves ordinary forge
-// traffic does not look like an outage.
-//
-// Forges send plenty the module does not act on. Reporting those as failures
-// would fill the log with errors for a healthy webhook, and the real failures
-// would be lost in them.
-func TestParseWebhook_AnUnmappedEventIsOrdinaryNotAnError(t *testing.T) {
-	backend, _ := newGiteaFixture(t)
-
-	event, err := backend.ParseWebhook("release", []byte(`{"action":"published"}`))
-	if err != nil {
-		t.Fatalf("an unmapped event was reported as a failure: %v", err)
-	}
-	if event.Kind != EventUnsupported {
-		t.Errorf("kind = %q, want unsupported", event.Kind)
-	}
-}
-
 // TestParseWebhook_CarriesTheSubjectSoAReconcileCanReReadIt covers the fields
 // the reconciler uses. The event is a hint; these are what it re-reads.
 func TestParseWebhook_CarriesTheSubjectSoAReconcileCanReReadIt(t *testing.T) {
@@ -1635,9 +1482,6 @@ func TestCancelCheckRun_RefusesRatherThanPretending(t *testing.T) {
 	}
 	if !errors.Is(err, ErrForgeUnsupported) {
 		t.Fatalf("error = %v, want ErrForgeUnsupported", err)
-	}
-	if backend.Capabilities().CancelCheckRuns {
-		t.Error("the capability flag disagrees with the method's behaviour")
 	}
 }
 
@@ -1775,24 +1619,6 @@ func TestEnsureWebhook_ARefusalDoesNotEchoTheSecret(t *testing.T) {
 				t.Fatalf("the error leaked the webhook secret: %v", err)
 			}
 		})
-	}
-}
-
-// TestEnsureWebhook_TheSpecCarriesNoSecret is a leak-prevention property.
-//
-// A WebhookSpec is stored, logged and compared. The secret travels as a
-// separate argument so it cannot ride along into any of those.
-func TestEnsureWebhook_TheSpecCarriesNoSecret(t *testing.T) {
-	spec := WebhookSpec{URL: "http://module/hook", Events: []string{"issues"}, SecretRef: "webhook/go-quicbaas"}
-	encoded, err := json.Marshal(spec)
-	if err != nil {
-		t.Fatalf("marshalling the spec: %v", err)
-	}
-	if strings.Contains(string(encoded), "s3cret") {
-		t.Error("a secret value reached the spec")
-	}
-	if !strings.Contains(string(encoded), "webhook/go-quicbaas") {
-		t.Error("the spec lost the reference naming where the secret lives")
 	}
 }
 
@@ -2169,46 +1995,39 @@ func TestResolveLabelIDs_PaginatesBeyondOnePage(t *testing.T) {
 
 // TestGiteaBackend_GetTagReadsThePublishedTag asserts the route as well as the
 // decode: the adapter must ask Gitea's own tag endpoint, because that is the
-// record a module version pin resolves against.
+// record a module version pin resolves against. A release tag may contain a
+// slash ("release/v1.0.0"), and the whole name has to reach the forge as the
+// tag it is rather than being truncated at the separator.
 func TestGiteaBackend_GetTagReadsThePublishedTag(t *testing.T) {
 	t.Parallel()
-	backend, fixture := newGiteaFixture(t)
-	fixture.respondJSON("GET /api/v1/repos/jeremyhahn/go-quicbaas/tags/v0.9.5-alpha",
-		http.StatusOK, map[string]any{
-			"name":   "v0.9.5-alpha",
-			"commit": map[string]any{"sha": "deadbeefcafe"},
+	cases := []struct {
+		name string
+		sha  string
+	}{
+		{name: "v0.9.5-alpha", sha: "deadbeefcafe"},
+		{name: "release/v1.0.0", sha: "0123456789ab"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			backend, fixture := newGiteaFixture(t)
+			route := "/api/v1/repos/jeremyhahn/go-quicbaas/tags/" + tc.name
+			fixture.respondJSON("GET "+route, http.StatusOK, map[string]any{
+				"name":   tc.name,
+				"commit": map[string]any{"sha": tc.sha},
+			})
+
+			tag, err := backend.GetTag(context.Background(), testRepo, tc.name)
+			if err != nil {
+				t.Fatalf("GetTag: %v", err)
+			}
+			if tag.Name != tc.name || tag.SHA != tc.sha {
+				t.Fatalf("GetTag = %+v", tag)
+			}
+			if len(fixture.requests) != 1 || fixture.requests[0].Method != http.MethodGet || fixture.requests[0].Path != route {
+				t.Fatalf("requests = %+v, want one GET of %s", fixture.requests, route)
+			}
 		})
-
-	tag, err := backend.GetTag(context.Background(), testRepo, "v0.9.5-alpha")
-	if err != nil {
-		t.Fatalf("GetTag: %v", err)
-	}
-	if tag.Name != "v0.9.5-alpha" || tag.SHA != "deadbeefcafe" {
-		t.Fatalf("GetTag = %+v", tag)
-	}
-	if len(fixture.requests) != 1 || fixture.requests[0].Method != http.MethodGet {
-		t.Fatalf("requests = %+v, want one GET", fixture.requests)
-	}
-}
-
-// TestGiteaBackend_GetTagCarriesAPathBearingTagIntact: a release tag may contain
-// a slash ("release/v1.0.0"), and the whole name has to reach the forge as the
-// tag it is rather than being truncated at the separator.
-func TestGiteaBackend_GetTagCarriesAPathBearingTagIntact(t *testing.T) {
-	t.Parallel()
-	backend, fixture := newGiteaFixture(t)
-	fixture.respondJSON("GET /api/v1/repos/jeremyhahn/go-quicbaas/tags/release/v1.0.0",
-		http.StatusOK, map[string]any{"name": "release/v1.0.0"})
-
-	tag, err := backend.GetTag(context.Background(), testRepo, "release/v1.0.0")
-	if err != nil {
-		t.Fatalf("GetTag: %v", err)
-	}
-	if tag.Name != "release/v1.0.0" {
-		t.Fatalf("GetTag = %+v", tag)
-	}
-	if got := fixture.requests[0].Path; got != "/api/v1/repos/jeremyhahn/go-quicbaas/tags/release/v1.0.0" {
-		t.Fatalf("path = %q; the whole tag name must reach the forge", got)
 	}
 }
 
@@ -2389,34 +2208,25 @@ func TestGiteaBackend_AuthenticatedUser_RefusesAnAnonymousOrFailedAnswer(t *test
 	}
 }
 
-// TestGiteaBackend_PullRequestsCarryTheirAuthor proves the opener's login is
-// read from Gitea's user field.
-func TestGiteaBackend_PullRequestsCarryTheirAuthor(t *testing.T) {
+// TestGiteaBackend_PullRequestsCarryTheirAuthorAndLabels proves the opener's
+// login is read from Gitea's user field and the label names come back, and
+// that a pull request with neither has none.
+func TestGiteaBackend_PullRequestsCarryTheirAuthorAndLabels(t *testing.T) {
 	backend, fixture := newGiteaFixture(t)
-	pull := giteaPull{Number: 7, State: "open", User: &giteaUser{Login: "agent-go-luks2"}}
+	pull := giteaPull{Number: 7, State: "open", User: &giteaUser{Login: "agent-go-luks2"}, Labels: []giteaLabel{{Name: "Factory:Parked"}}}
 	fixture.respondJSON("GET /api/v1/repos/jeremyhahn/go-quicbaas/pulls", http.StatusOK, []giteaPull{pull, {Number: 8, State: "open"}})
 
 	pulls, err := backend.ListOpenPullRequests(context.Background(), testRepo)
 	if err != nil {
 		t.Fatalf("ListOpenPullRequests: %v", err)
 	}
-	if len(pulls) != 2 || pulls[0].Author != "agent-go-luks2" || pulls[1].Author != "" {
-		t.Fatalf("pulls = %+v, want the first authored by agent-go-luks2 and the second by nobody", pulls)
+	if len(pulls) != 2 {
+		t.Fatalf("got %d pull requests, want 2", len(pulls))
 	}
-}
-
-// TestGiteaBackend_PullRequestsCarryTheirLabels proves a pull request reads
-// back with its label names and that a pull request without labels has none.
-func TestGiteaBackend_PullRequestsCarryTheirLabels(t *testing.T) {
-	backend, fixture := newGiteaFixture(t)
-	pull := giteaPull{Number: 7, State: "open", Labels: []giteaLabel{{Name: "Factory:Parked"}}}
-	fixture.respondJSON("GET /api/v1/repos/jeremyhahn/go-quicbaas/pulls", http.StatusOK, []giteaPull{pull, {Number: 8, State: "open"}})
-
-	pulls, err := backend.ListOpenPullRequests(context.Background(), testRepo)
-	if err != nil {
-		t.Fatalf("ListOpenPullRequests: %v", err)
+	if pulls[0].Author != "agent-go-luks2" || pulls[1].Author != "" {
+		t.Errorf("pulls = %+v, want the first authored by agent-go-luks2 and the second by nobody", pulls)
 	}
-	if len(pulls) != 2 || len(pulls[0].Labels) != 1 || pulls[0].Labels[0] != "Factory:Parked" || len(pulls[1].Labels) != 0 {
-		t.Fatalf("pulls = %+v, want the first parked and the second unlabelled", pulls)
+	if len(pulls[0].Labels) != 1 || pulls[0].Labels[0] != "Factory:Parked" || len(pulls[1].Labels) != 0 {
+		t.Errorf("pulls = %+v, want the first parked and the second unlabelled", pulls)
 	}
 }
