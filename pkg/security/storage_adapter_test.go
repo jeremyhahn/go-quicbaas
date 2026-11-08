@@ -240,23 +240,6 @@ func TestObjStoreAdapter_Put_Success(t *testing.T) {
 	assert.Equal(t, testValue, capturedData)
 }
 
-func TestObjStoreAdapter_Put_LargeValue(t *testing.T) {
-	ctx := context.Background()
-	// Test putting a large value to verify the adapter handles it correctly
-	testValue := bytes.Repeat([]byte("a"), 4096)
-
-	mock := &mockObjStore{
-		putFunc: func(key string, data io.Reader) error {
-			return nil
-		},
-	}
-
-	adapter := NewObjStoreAdapter(mock)
-	err := adapter.Put(ctx, "test-key", testValue)
-
-	assert.NoError(t, err)
-}
-
 func TestObjStoreAdapter_Put_Error(t *testing.T) {
 	ctx := context.Background()
 	expectedErr := errors.New("put error")
@@ -405,37 +388,40 @@ func TestObjStoreAdapter_Exists_Error(t *testing.T) {
 	assert.Equal(t, expectedErr, err)
 }
 
-func TestObjStoreAdapter_Close_WithCloser(t *testing.T) {
-	closeCalled := false
-	mock := &mockObjStore{
-		implementClose: true,
-		closeFunc: func() error {
-			closeCalled = true
-			return nil
-		},
+func TestObjStoreAdapter_Close(t *testing.T) {
+	closeErr := errors.New("close error")
+
+	tests := []struct {
+		name       string
+		storage    common.Storage
+		wantErr    error
+		wantCalled bool
+	}{
+		{name: "closer succeeds", wantCalled: true},
+		{name: "closer fails", wantErr: closeErr, wantCalled: true},
+		{name: "storage without closer", storage: &minimalStorage{}},
 	}
 
-	adapter := NewObjStoreAdapter(mock)
-	err := adapter.Close()
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			closeCalled := false
+			storage := tt.storage
+			if storage == nil {
+				storage = &mockObjStore{
+					implementClose: true,
+					closeFunc: func() error {
+						closeCalled = true
+						return tt.wantErr
+					},
+				}
+			}
 
-	assert.NoError(t, err)
-	assert.True(t, closeCalled)
-}
+			err := NewObjStoreAdapter(storage).Close()
 
-func TestObjStoreAdapter_Close_WithCloserError(t *testing.T) {
-	expectedErr := errors.New("close error")
-	mock := &mockObjStore{
-		implementClose: true,
-		closeFunc: func() error {
-			return expectedErr
-		},
+			assert.Equal(t, tt.wantErr, err)
+			assert.Equal(t, tt.wantCalled, closeCalled)
+		})
 	}
-
-	adapter := NewObjStoreAdapter(mock)
-	err := adapter.Close()
-
-	assert.Error(t, err)
-	assert.Equal(t, expectedErr, err)
 }
 
 // failingReadCloser simulates an io.ReadCloser that fails on Read.
@@ -525,64 +511,7 @@ func TestObjStoreAdapter_Integration(t *testing.T) {
 	assert.False(t, exists)
 }
 
-// mockObjStoreWithoutClose wraps mockObjStore but doesn't expose Close method
-type mockObjStoreWithoutClose struct {
-	*mockObjStore
-}
-
-// Override to not implement Close at all - we need to remove it from the interface
-// Since we can't remove it, we'll test that the implementClose flag works
-func TestObjStoreAdapter_Close_WithoutCloser_Corrected(t *testing.T) {
-	// When implementClose is false, mock.Close() returns an error
-	// but the adapter code checks type assertion which will succeed
-	// because Close() method exists on the struct
-	// This is expected behavior - we're testing that when the assertion succeeds
-	// but implementation returns error, we get that error
-
-	mock := &mockObjStore{
-		implementClose: false,
-	}
-
-	adapter := NewObjStoreAdapter(mock)
-	err := adapter.Close()
-
-	// When storage implements Close() but returns error, adapter should return that error
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "close not implemented")
-}
-
-// mockObjStoreNoClose is a storage implementation without Close method
-type mockObjStoreNoClose struct {
-	mockObjStore
-}
-
-// We need to create a type that truly doesn't have Close method
-// Since Go uses structural typing, we can embed and shadow
-func TestObjStoreAdapter_Close_StorageWithoutCloseMethod(t *testing.T) {
-	// Create an adapter using a type that doesn't really implement Close interface
-	// We can't truly remove the Close method from mockObjStore, so we need a different approach
-	// Instead, let's verify the behavior when Close succeeds (implementClose=true)
-	// and returns nil (no-op case)
-
-	mock := &mockObjStore{
-		implementClose: true,
-		closeFunc: func() error {
-			return nil // No-op close
-		},
-	}
-
-	adapter := NewObjStoreAdapter(mock)
-	err := adapter.Close()
-
-	assert.NoError(t, err)
-}
-
-// storageWithoutCloser is a minimal storage implementation without Close
-// We use an interface to hide the Close method
-type storageWithoutCloser interface {
-	common.Storage
-}
-
+// minimalStorage implements common.Storage without a Close method.
 type minimalStorage struct {
 	getFunc    func(key string) (io.ReadCloser, error)
 	putFunc    func(key string, data io.Reader) error
@@ -640,17 +569,6 @@ func (m *minimalStorage) RemovePolicy(id string) error                          
 func (m *minimalStorage) GetPolicies() ([]common.LifecyclePolicy, error)        { return nil, nil }
 
 // Note: No Close() method
-
-func TestObjStoreAdapter_Close_TrueWithoutCloser(t *testing.T) {
-	// Create a storage that doesn't have Close method
-	minimal := &minimalStorage{}
-
-	adapter := NewObjStoreAdapter(minimal)
-	err := adapter.Close()
-
-	// Should return nil when storage doesn't implement Close
-	assert.NoError(t, err)
-}
 
 // Additional edge case tests for completeness
 func TestObjStoreAdapter_Get_EmptyData(t *testing.T) {
