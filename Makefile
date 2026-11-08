@@ -2449,14 +2449,6 @@ GOMODAUTH_ENV := $(MODULE_ENV_FILE)
 endif
 export GOMODAUTH_ENV
 
-# Every compose file that builds an image passes GOMODAUTH_ENV as a build
-# secret. compose hands builds to buildx bake, and bake refuses to read a file
-# outside the build context unless the caller grants it, which compose has no
-# flag for, so a non-interactive build fails. A build secret is mounted for one
-# RUN step and never lands in a layer, so the filesystem entitlement check is
-# turned off for the builds make drives.
-export BUILDX_BAKE_ENTITLEMENTS_FS := 0
-
 # Where integration-test backs go.mod up while the stack runs, restored after.
 # Overridable so a gate that drives the recipe never touches a real run's copy.
 GOMOD_BACKUP ?= /tmp/quicbaas-$(RUN_ID_SLUG)-gomod-backup
@@ -5627,10 +5619,15 @@ DEVCONTAINER_COMPOSE = TOOLCHAIN_IMAGE='$(TOOLCHAIN_IMAGE)' \
 	GOMODAUTH_ENV='$(GOMODAUTH_ENV)' RUN_UID="$$(id -u)" RUN_GID="$$(id -g)" \
 	$(DOCKER) compose -f $(DEVCONTAINER_DIR)/compose.yaml
 # Builds the named compose services with the module credentials staged for the
-# build only, unless CI handed them over in MODULE_ENV_FILE.
+# build only, unless CI handed them over in MODULE_ENV_FILE. compose hands the
+# build to buildx bake, which refuses to read the GOMODAUTH_ENV secret file
+# outside the build context unless the caller grants it, and compose has no
+# flag for that. BUILDX_BAKE_ENTITLEMENTS_FS=0 turns the check off for this
+# one compose build alone: the file is a build secret, mounted for one RUN
+# step, and never lands in a layer.
 DEVCONTAINER_BUILD = $(if $(strip $(MODULE_ENV_FILE)),,trap '$(GOMODAUTH_CLEAR)' EXIT; \
 	$(MAKE) --no-print-directory stage-gomodauth;) \
-	$(DEVCONTAINER_COMPOSE) build
+	BUILDX_BAKE_ENTITLEMENTS_FS=0 $(DEVCONTAINER_COMPOSE) build
 
 .PHONY: toolchain-image
 toolchain-image: ## Print the toolchain image tag, hashed from the files it is built from
