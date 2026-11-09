@@ -433,7 +433,7 @@ func TestReport_SaysWhatToDoAndOnlyWhenDirty(t *testing.T) {
 			t.Errorf("report omits %q:\n%s", want, out.String())
 		}
 	}
-	for _, leak := range []string{"vm-host-4", "observed on"} {
+	for _, leak := range []string{"fleet-node-04", "observed on"} {
 		if strings.Contains(out.String(), leak) {
 			t.Errorf("report prints %q; a finding names the place, never the value:\n%s", leak, out.String())
 		}
