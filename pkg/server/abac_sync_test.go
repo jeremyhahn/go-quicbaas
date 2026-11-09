@@ -17,6 +17,7 @@ package server
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"sort"
 	"testing"
@@ -1134,6 +1135,30 @@ func TestLegacyCleanupPolicyStorage_UnboundContextRefused(t *testing.T) {
 	assert.True(t, dberrors.Is(err, dberrors.ErrNotFound), "tenant copy: err = %v", err)
 	_, err = bs.GetPolicy(tenantctx.WithSystem(context.Background()), "acme", "p")
 	assert.True(t, dberrors.Is(err, dberrors.ErrNotFound), "legacy copy: err = %v", err)
+}
+
+func TestQRDBABACSync_InvalidTenantPolicyFailsInitialLoad(t *testing.T) {
+	s, _ := newABACTestServer(t, true)
+	_, tm, bs := newABACTenantRoutedStorage(t)
+	abacSync := newQRDBABACSync(s, tm, bs)
+	pe := iam.NewPolicyEngine(iam.PolicyEngineOptions{Storage: newLegacyCleanupPolicyStorage(bs), ABACSync: abacSync})
+	require.NoError(t, initialABACLoad(context.Background(), pe.SyncABACAfter, abacSync.migrateLegacyPolicies),
+		"the valid system deny and tenant allow load")
+
+	invalid := abacTestPolicy("empty-when", "acme", "alice", "kv/**", iam.EffectAllow)
+	invalid.Spec.Rules[0].When = []iam.Condition{{}}
+	data, err := json.Marshal(invalid)
+	require.NoError(t, err)
+	acmeCtx := tenantctx.WithTenant(context.Background(), "acme")
+	require.NoError(t, bs.PutPolicyRecord(acmeCtx, "acme", "empty-when", data))
+	stored, err := bs.GetPolicy(acmeCtx, "acme", "empty-when")
+	require.NoError(t, err, "the stored record decodes")
+	require.Nil(t, stored.LoadError)
+
+	err = initialABACLoad(context.Background(), pe.SyncABACAfter, abacSync.migrateLegacyPolicies)
+	var initErr *IAMComponentInitError
+	require.True(t, errors.As(err, &initErr), "err = %v", err)
+	assert.Equal(t, "initial ABAC policy load", initErr.Component)
 }
 
 func TestPolicyToABAC(t *testing.T) {
