@@ -388,6 +388,28 @@ func TestTenantBarrierService_HoldLifecycle(t *testing.T) {
 	}
 }
 
+func TestTenantBarrierService_UnsealShareRetryOfAnOpenBarrierReportsUnsealed(t *testing.T) {
+	hooks := &TenantUnsealHooks{}
+	hooks.hold("acme")
+	svc := NewTenantBarrierService(&mockTenantClient{
+		shareErr:   errors.New("already unsealed"),
+		statusResp: &qrdbtransport.TenantBarrierStatusResponse{Sealed: false},
+	}, WithTenantUnsealHooks(hooks))
+	progress, err := svc.TenantBarrierUnsealShare(tenantCtx("acme"), "acme", "share-1")
+	if err != nil {
+		t.Fatalf("a retry of an open barrier must succeed, got %v", err)
+	}
+	if progress == nil {
+		t.Fatal("a retry of an open barrier must report progress, got nil")
+	}
+	if !progress.Complete || progress.Sealed || progress.TenantID != "acme" {
+		t.Fatalf("want complete, unsealed progress for acme, got %+v", progress)
+	}
+	if err := hooks.Admit("acme"); err != nil {
+		t.Fatalf("a recovered retry must release its hold, got %v", err)
+	}
+}
+
 // blockingShareClient blocks its first share submission inside qrdb and
 // returns an incomplete quorum for it; later submissions complete it.
 type blockingShareClient struct {

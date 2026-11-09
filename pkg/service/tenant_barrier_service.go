@@ -210,7 +210,8 @@ func (s *tenantBarrierService) TenantBarrierUnseal(ctx context.Context, tenantID
 		TenantID: tenantID,
 		Key:      key,
 	}); err != nil {
-		return s.unsealFailed(ctx, tenantID, wasHeld, err)
+		_, err = s.unsealFailed(ctx, tenantID, wasHeld, err)
+		return err
 	}
 	return s.admitUnsealed(ctx, tenantID)
 }
@@ -219,16 +220,19 @@ func (s *tenantBarrierService) TenantBarrierUnseal(ctx context.Context, tenantID
 // tenant that was already held and whose barrier is open failed an earlier
 // admission: its gates run again, so a retry can open it. Otherwise a hold
 // this unseal took is released and qrdb's error returned.
-func (s *tenantBarrierService) unsealFailed(ctx context.Context, tenantID string, wasHeld bool, err error) error {
+func (s *tenantBarrierService) unsealFailed(ctx context.Context, tenantID string, wasHeld bool, err error) (bool, error) {
 	if wasHeld {
 		status, statusErr := s.qrdb.TenantBarrierStatus(ctx, &qrdbtransport.TenantBarrierStatusRequest{TenantID: tenantID})
 		if statusErr == nil && status != nil && !status.Sealed {
-			return s.admitUnsealed(ctx, tenantID)
+			if admitErr := s.admitUnsealed(ctx, tenantID); admitErr != nil {
+				return false, admitErr
+			}
+			return true, nil
 		}
-		return err
+		return false, err
 	}
 	s.unsealed.release(tenantID)
-	return err
+	return false, err
 }
 
 // admitUnsealed runs the unseal gates for a held tenant whose barrier has
@@ -259,7 +263,12 @@ func (s *tenantBarrierService) TenantBarrierUnsealShare(ctx context.Context, ten
 		Share:    share,
 	})
 	if err != nil {
-		return nil, s.unsealFailed(ctx, tenantID, wasHeld, err)
+		recovered, err := s.unsealFailed(ctx, tenantID, wasHeld, err)
+		if recovered {
+			// A retry that finds the barrier already open reports it unsealed instead of an empty answer.
+			return &qrdbtransport.TenantBarrierUnsealProgress{TenantID: tenantID, Complete: true, Sealed: false}, nil
+		}
+		return nil, err
 	}
 	if progress == nil || !progress.Complete {
 		if !wasHeld {
