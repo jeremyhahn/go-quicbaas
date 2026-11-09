@@ -30,6 +30,7 @@ import (
 	qrdbnode "github.com/jeremyhahn/go-qrdb/sdk/go/node"
 	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 
+	dberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 	"github.com/jeremyhahn/go-quicbaas/pkg/kvstore"
@@ -655,6 +656,61 @@ func TestQRDBABACSync_resyncOnUnseal_GateReadsThroughAdmittedStore(t *testing.T)
 		t.Fatal("the second unseal never returned")
 	}
 	require.NoError(t, s.tenantUnsealHooks.Admit("acme"))
+}
+
+func TestLegacyCleanupPolicyStorage_DeleteRemovesTheLegacyCopy(t *testing.T) {
+	_, tm, bs := newABACTenantRoutedStorage(t)
+	acmeCtx := tenantctx.WithTenant(context.Background(), "acme")
+	seedLegacyABACPolicy(t, bs, "acme", abacTestPolicy("acme-allow", "acme", "alice", "kv/**", iam.EffectDeny))
+
+	require.NoError(t, newLegacyCleanupPolicyStorage(bs).DeletePolicy(acmeCtx, "acme", "acme-allow"))
+
+	_, err := bs.GetPolicy(acmeCtx, "acme", "acme-allow")
+	assert.True(t, dberrors.Is(err, dberrors.ErrNotFound), "tenant copy: err = %v", err)
+	_, err = bs.GetPolicy(tenantctx.WithSystem(context.Background()), "acme", "acme-allow")
+	assert.True(t, dberrors.Is(err, dberrors.ErrNotFound), "legacy copy: err = %v", err)
+	got, err := newQRDBABACSync(&Server{}, tm, bs).allPolicies(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, []string{"sys-deny"}, abacPolicyNames(got))
+}
+
+func TestLegacyCleanupPolicyStorage_SharedStoreDeletesOnce(t *testing.T) {
+	_, tm, bs := newABACTenantRoutedStorage(t)
+	_, err := tm.CreateTenant(tenantctx.WithSystem(context.Background()), iam.CreateTenantOptions{ID: "beta", Name: "Beta"})
+	require.NoError(t, err)
+	betaCtx := tenantctx.WithTenant(context.Background(), "beta")
+	require.NoError(t, bs.CreatePolicy(betaCtx, "beta",
+		abacTestPolicy("beta-allow", "beta", "alice", "kv/**", iam.EffectAllow)))
+
+	require.NoError(t, newLegacyCleanupPolicyStorage(bs).DeletePolicy(betaCtx, "beta", "beta-allow"))
+
+	_, err = bs.GetPolicy(betaCtx, "beta", "beta-allow")
+	assert.True(t, dberrors.Is(err, dberrors.ErrNotFound), "err = %v", err)
+}
+
+// legacyDeleteFailingStorage fails every DeletePolicy made with the system
+// context and passes the rest to the wrapped storage.
+type legacyDeleteFailingStorage struct {
+	iam.PolicyStorage
+}
+
+func (s legacyDeleteFailingStorage) DeletePolicy(ctx context.Context, tenantID, name string) error {
+	if bound, ok := tenantctx.Lookup(ctx); ok && tenantctx.IsSystem(bound) {
+		return abacTestStorageError{}
+	}
+	return s.PolicyStorage.DeletePolicy(ctx, tenantID, name)
+}
+
+func TestLegacyCleanupPolicyStorage_LegacyDeleteFailureKeepsTheTenantCopy(t *testing.T) {
+	_, _, bs := newABACTenantRoutedStorage(t)
+	acmeCtx := tenantctx.WithTenant(context.Background(), "acme")
+
+	err := newLegacyCleanupPolicyStorage(legacyDeleteFailingStorage{bs}).DeletePolicy(acmeCtx, "acme", "acme-allow")
+	assert.ErrorIs(t, err, abacTestStorageError{})
+
+	p, err := bs.GetPolicy(acmeCtx, "acme", "acme-allow")
+	require.NoError(t, err)
+	assert.Equal(t, "acme-allow", p.Metadata.Name)
 }
 
 func TestPolicyToABAC(t *testing.T) {

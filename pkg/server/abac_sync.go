@@ -22,6 +22,7 @@ import (
 	qrdbtenant "github.com/jeremyhahn/go-qrdb/pkg/tenant"
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
+	dberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
@@ -294,6 +295,41 @@ func (a *qrdbABACSync) resyncOnUnseal(hooks *service.TenantUnsealHooks, resync f
 		}
 		return nil
 	}))
+}
+
+// legacyCleanupPolicyStorage deletes a tenant policy together with the legacy
+// copy an earlier release kept in the system namespace, or the next sync
+// would merge that copy back in. The legacy copy goes first, so a failure
+// leaves the tenant copy in place; in the shared-store case, where both names
+// are the one record, that record is deleted once.
+type legacyCleanupPolicyStorage struct {
+	iam.PolicyStorage
+}
+
+// newLegacyCleanupPolicyStorage wraps inner so DeletePolicy also removes a
+// tenant policy's legacy system-namespace copy.
+func newLegacyCleanupPolicyStorage(inner iam.PolicyStorage) iam.PolicyStorage {
+	return &legacyCleanupPolicyStorage{PolicyStorage: inner}
+}
+
+// DeletePolicy deletes the legacy system-namespace copy of a tenant policy
+// and then the tenant copy. The system tenant's policies have no legacy copy.
+func (s *legacyCleanupPolicyStorage) DeletePolicy(ctx context.Context, tenantID, name string) error {
+	if tenantID == qrdbsdk.SystemTenantID {
+		return s.PolicyStorage.DeletePolicy(ctx, tenantID, name)
+	}
+	legacyDeleted := true
+	if err := s.PolicyStorage.DeletePolicy(tenantctx.WithSystem(ctx), tenantID, name); err != nil {
+		if !dberrors.Is(err, dberrors.ErrNotFound) {
+			return err
+		}
+		legacyDeleted = false
+	}
+	err := s.PolicyStorage.DeletePolicy(ctx, tenantID, name)
+	if err != nil && legacyDeleted && dberrors.Is(err, dberrors.ErrNotFound) {
+		return nil
+	}
+	return err
 }
 
 // policyToABAC converts an iam.Policy to qrdb's abac.Policy wire shape

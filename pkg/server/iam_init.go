@@ -375,7 +375,7 @@ func (s *Server) initializeIAMComponents() (service.IAMComponents, error) {
 	// and back SimulatePolicy's isolated draft-policy dry run, respectively.
 	abacSync := newQRDBABACSync(s, tenantManager, backendStorage)
 	policyEngine := iam.NewPolicyEngine(iam.PolicyEngineOptions{
-		Storage:        backendStorage,
+		Storage:        newLegacyCleanupPolicyStorage(backendStorage),
 		Cache:          policyCache,
 		RBACAuthorizer: newQRDBPEPRBACAuthorizer(s),
 		ABACSync:       abacSync,
