@@ -199,10 +199,15 @@ func Check(entries []Entry, stream io.Reader) (Result, error) {
 		if f == nil || len(f.Trace) == 0 || f.Trace[0].Function == "" {
 			continue
 		}
-		if _, seen := reachable[f.OSV]; seen {
+		nf := newFinding(f)
+		if prev, seen := reachable[f.OSV]; seen {
+			// A later finding that names a fixed release replaces one that names none, so an advisory is fixable whenever any of its findings is.
+			if prev.FixedVersion == noFixedVersion && nf.FixedVersion != noFixedVersion {
+				reachable[f.OSV] = nf
+			}
 			continue
 		}
-		reachable[f.OSV] = newFinding(f)
+		reachable[f.OSV] = nf
 		order = append(order, f.OSV)
 	}
 
