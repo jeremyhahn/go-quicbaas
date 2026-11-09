@@ -36,11 +36,9 @@ COPY sdk/go/go.mod sdk/go/go.sum ./sdk/go/
 # needs rewriting. The COPY of a directory that no longer exists failed the
 # build outright.
 #
-# go.mod pins first-party modules published to the internal Gitea, which this
-# download cannot reach on its own: the runner injects GOPRIVATE and the
-# tokenised insteadOf rewrite into the *job* environment
-# (dependency-resolution.md §6), and a docker build does not inherit it. They
-# arrive as a BuildKit secret, never a build arg, mounted on tmpfs for this
+# go.mod pins first-party modules, which this download resolves through the
+# module proxy and the checksum database like any other module. Any fetch
+# credentials arrive as a BuildKit secret, never a build arg, mounted on tmpfs for this
 # RUN alone and never becoming a layer. The mount is optional by design: on
 # GitHub Actions no secret is supplied and these modules resolve from the
 # public proxy once tags are mirrored (§7), so the same Dockerfile builds on
