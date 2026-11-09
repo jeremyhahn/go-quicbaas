@@ -25,6 +25,7 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 // ListRoles handles GET /api/v1/tenants/{tenant_id}/roles - List roles in a tenant.
@@ -77,7 +78,7 @@ func (h *IAMHandler) ListRoles(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Validate tenant exists
-	_, err = store.GetTenant(ctx, tenantID)
+	_, err = store.GetTenant(tenantctx.WithSystem(ctx), tenantID) // the tenant catalog lives in the system namespace
 	if err != nil {
 		RespondIAMError(w, r, http.StatusNotFound,
 			NewIAMAPIError(ErrNotFound, "tenant not found"))
@@ -434,7 +435,7 @@ func (h *IAMHandler) ReconcileRoles(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Validate tenant exists
-	if _, err := store.GetTenant(ctx, tenantID); err != nil {
+	if _, err := store.GetTenant(tenantctx.WithSystem(ctx), tenantID); err != nil { // the tenant catalog lives in the system namespace
 		RespondIAMError(w, r, http.StatusNotFound,
 			NewIAMAPIError(ErrNotFound, "tenant not found"))
 		return

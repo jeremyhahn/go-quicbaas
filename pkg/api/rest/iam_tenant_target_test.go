@@ -291,3 +291,61 @@ func TestUpdateRole_SystemAdminCannotReachAnotherTenantsRole(t *testing.T) {
 		assert.Equal(t, "renamed", role.Name)
 	})
 }
+
+// systemOnlyTenantManager answers GetTenant the way production storage does:
+// the tenant catalog lives in the system namespace, so a read under any other
+// tenant binding misses.
+type systemOnlyTenantManager struct {
+	*testTenantManager
+}
+
+func (m *systemOnlyTenantManager) GetTenant(ctx context.Context, id string) (*iam.Tenant, error) {
+	if tenantID, err := tenantctx.FromContext(ctx, "test"); err == nil && !tenantctx.IsSystem(tenantID) {
+		return nil, iam.NewTenantNotFoundError(id)
+	}
+	return m.testTenantManager.GetTenant(ctx, id)
+}
+
+func TestIAMHandlers_TenantCatalogReadsUseTheSystemNamespace(t *testing.T) {
+	_, mockService, memStorage, handler, cleanup := setupIAMTestServer(t)
+	defer cleanup()
+	require.NoError(t, memStorage.CreateTenant(tenantctx.WithSystem(context.Background()),
+		&iam.Tenant{ID: "acme", Name: "Acme"}))
+	mockService.identityStore = iam.NewIdentityStore(iam.IdentityStoreOptions{
+		UserStorage: memStorage,
+		RoleStorage: &reconcilingRoleStorage{MemoryStorage: memStorage, report: &iam.RoleReconcileReport{}},
+		Tenants:     &systemOnlyTenantManager{testTenantManager: mockService.tenantManager},
+	})
+
+	handlers := []struct {
+		name   string
+		method string
+		path   string
+		serve  http.HandlerFunc
+	}{
+		{"ListRoles", http.MethodGet, "/api/v1/tenants/acme/roles", handler.ListRoles},
+		{"ListUsers", http.MethodGet, "/api/v1/tenants/acme/users", handler.ListUsers},
+		{"ReconcileRoles", http.MethodPost, "/api/v1/tenants/acme/roles/reconcile", handler.ReconcileRoles},
+	}
+	callers := []struct {
+		name string
+		bind func(context.Context) context.Context
+	}{
+		{"system caller", tenantctx.WithSystem},
+		{"acme caller", func(ctx context.Context) context.Context { return tenantctx.WithTenant(ctx, "acme") }},
+	}
+	for _, h := range handlers {
+		for _, c := range callers {
+			t.Run(h.name+"/"+c.name, func(t *testing.T) {
+				rctx := chi.NewRouteContext()
+				rctx.URLParams.Add("tenant_id", "acme")
+				req := httptest.NewRequest(h.method, h.path, nil)
+				req = req.WithContext(context.WithValue(c.bind(req.Context()), chi.RouteCtxKey, rctx))
+				w := httptest.NewRecorder()
+				h.serve(w, req)
+
+				assert.Equal(t, http.StatusOK, w.Code, "body: %s", w.Body.String())
+			})
+		}
+	}
+}

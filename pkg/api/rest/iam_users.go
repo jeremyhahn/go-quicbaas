@@ -27,6 +27,7 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 // ListUsers handles GET /api/v1/tenants/{tenant_id}/users - List users in a tenant.
@@ -79,7 +80,7 @@ func (h *IAMHandler) ListUsers(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Validate tenant exists
-	_, err = store.GetTenant(ctx, tenantID)
+	_, err = store.GetTenant(tenantctx.WithSystem(ctx), tenantID) // the tenant catalog lives in the system namespace
 	if err != nil {
 		RespondIAMError(w, r, http.StatusNotFound,
 			NewIAMAPIError(ErrNotFound, "tenant not found"))
