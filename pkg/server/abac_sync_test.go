@@ -872,6 +872,114 @@ func TestPaginatePolicies_NegativeBoundsNeverPanic(t *testing.T) {
 	}
 }
 
+// rejectingABACSync is an ABACSync whose reload always fails, so every
+// engine write through it is rejected.
+type rejectingABACSync struct{}
+
+func (rejectingABACSync) Sync(context.Context) error { return errors.New("abac reload rejected") }
+
+// abacPolicyRecords returns the raw tenant and legacy records of acme's policy name.
+func abacPolicyRecords(t *testing.T, bs *iam.BackendStorage, name string) (tenant, legacy []byte) {
+	t.Helper()
+	tenant, err := bs.GetPolicyRecord(tenantctx.WithTenant(context.Background(), "acme"), "acme", name)
+	require.NoError(t, err)
+	legacy, err = bs.GetPolicyRecord(tenantctx.WithSystem(context.Background()), "acme", name)
+	require.NoError(t, err)
+	return tenant, legacy
+}
+
+// seedABACConflict stores a tenant allow and a conflicting legacy deny "dup" for acme.
+func seedABACConflict(t *testing.T, bs *iam.BackendStorage) {
+	t.Helper()
+	seedLegacyABACPolicy(t, bs, "acme", abacTestPolicy("dup", "acme", "alice", "kv/**", iam.EffectDeny))
+	require.NoError(t, bs.CreatePolicy(tenantctx.WithTenant(context.Background(), "acme"), "acme",
+		abacTestPolicy("dup", "acme", "alice", "kv/**", iam.EffectAllow)))
+}
+
+func TestLegacyCleanupPolicyStorage_RejectedUpdateKeepsBothCopies(t *testing.T) {
+	_, tm, bs := newABACTenantRoutedStorage(t)
+	seedABACConflict(t, bs)
+	tenantBefore, legacyBefore := abacPolicyRecords(t, bs, "dup")
+	pe := iam.NewPolicyEngine(iam.PolicyEngineOptions{Storage: newLegacyCleanupPolicyStorage(bs), ABACSync: rejectingABACSync{}})
+
+	err := pe.UpdatePolicy(tenantctx.WithTenant(context.Background(), "acme"), "acme",
+		abacTestPolicy("dup", "acme", "alice", "kv/**", iam.EffectAllow))
+	require.Error(t, err)
+
+	tenantAfter, legacyAfter := abacPolicyRecords(t, bs, "dup")
+	assert.Equal(t, tenantBefore, tenantAfter)
+	assert.Equal(t, legacyBefore, legacyAfter)
+	got, err := newQRDBABACSync(&Server{}, tm, bs).allPolicies(context.Background())
+	require.NoError(t, err)
+	assert.NotNil(t, abacPolicyEntry(t, got, "dup").LoadError, "the conflict stays flagged")
+}
+
+func TestLegacyCleanupPolicyStorage_RejectedDeleteKeepsBothCopies(t *testing.T) {
+	_, tm, bs := newABACTenantRoutedStorage(t)
+	seedABACConflict(t, bs)
+	tenantBefore, legacyBefore := abacPolicyRecords(t, bs, "dup")
+	pe := iam.NewPolicyEngine(iam.PolicyEngineOptions{Storage: newLegacyCleanupPolicyStorage(bs), ABACSync: rejectingABACSync{}})
+
+	require.Error(t, pe.DeletePolicy(tenantctx.WithTenant(context.Background(), "acme"), "acme", "dup"))
+
+	tenantAfter, legacyAfter := abacPolicyRecords(t, bs, "dup")
+	assert.Equal(t, tenantBefore, tenantAfter)
+	assert.Equal(t, legacyBefore, legacyAfter)
+	got, err := newQRDBABACSync(&Server{}, tm, bs).allPolicies(context.Background())
+	require.NoError(t, err)
+	assert.NotNil(t, abacPolicyEntry(t, got, "dup").LoadError, "the conflict stays flagged")
+}
+
+func TestLegacyCleanupPolicyStorage_SnapshotRestoresAFlaggedLegacyRecord(t *testing.T) {
+	r, _, bs := newABACTenantRoutedStorage(t)
+	key := iam.KeyPrefixTenant + "acme" + iam.KeyPrefixPolicy + "bad"
+	require.NoError(t, r.shared.Put(context.Background(), key, []byte("{not json")))
+	storage := newLegacyCleanupPolicyStorage(bs)
+	acmeCtx := tenantctx.WithTenant(context.Background(), "acme")
+
+	restore, err := storage.(iam.PolicyWriteSnapshotter).SnapshotPolicy(acmeCtx, "acme", "bad")
+	require.NoError(t, err)
+	require.NoError(t, storage.DeletePolicy(acmeCtx, "acme", "bad"))
+	_, err = r.shared.Get(context.Background(), key)
+	require.True(t, dberrors.Is(err, dberrors.ErrNotFound), "legacy record deleted: err = %v", err)
+
+	require.NoError(t, restore(acmeCtx))
+	got, err := r.shared.Get(context.Background(), key)
+	require.NoError(t, err)
+	assert.Equal(t, []byte("{not json"), got)
+	_, err = bs.GetPolicyRecord(acmeCtx, "acme", "bad")
+	assert.True(t, dberrors.Is(err, dberrors.ErrNotFound), "no tenant copy appears: err = %v", err)
+
+	pe := iam.NewPolicyEngine(iam.PolicyEngineOptions{Storage: storage, ABACSync: rejectingABACSync{}})
+	require.Error(t, pe.DeletePolicy(acmeCtx, "acme", "bad"))
+	got, err = r.shared.Get(context.Background(), key)
+	require.NoError(t, err)
+	assert.Equal(t, []byte("{not json"), got, "a rejected delete keeps the flagged record")
+}
+
+func TestLegacyCleanupPolicyStorage_UpdateRollsBackWhenLegacyDeleteFails(t *testing.T) {
+	_, _, bs := newABACTenantRoutedStorage(t)
+	seedABACConflict(t, bs)
+	tenantBefore, _ := abacPolicyRecords(t, bs, "dup")
+	storage := newLegacyCleanupPolicyStorage(&rawDeleteFailingStorage{BackendStorage: bs})
+
+	err := storage.UpdatePolicy(tenantctx.WithTenant(context.Background(), "acme"), "acme",
+		abacTestPolicy("dup", "acme", "bob", "kv/**", iam.EffectAllow))
+	require.Error(t, err)
+	tenantAfter, _ := abacPolicyRecords(t, bs, "dup")
+	assert.Equal(t, tenantBefore, tenantAfter)
+}
+
+// rawDeleteFailingStorage keeps BackendStorage's raw record access and fails
+// every delete; an update's only delete is of the legacy copy.
+type rawDeleteFailingStorage struct {
+	*iam.BackendStorage
+}
+
+func (s *rawDeleteFailingStorage) DeletePolicy(context.Context, string, string) error {
+	return errors.New("legacy delete failed")
+}
+
 func TestLegacyCleanupPolicyStorage_ListPaginatesTheMergedSet(t *testing.T) {
 	_, _, bs := newABACTenantRoutedStorage(t)
 	acmeCtx := tenantctx.WithTenant(context.Background(), "acme")
