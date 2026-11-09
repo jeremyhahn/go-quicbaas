@@ -18,6 +18,8 @@ import (
 	"errors"
 	"sync"
 	"time"
+
+	dberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 )
 
 // RBACAuthorizer is the SINGLE decision point PolicyEngine.Evaluate
@@ -107,9 +109,9 @@ func NewPolicyEngine(opts PolicyEngineOptions) *PolicyEngine {
 
 // CreatePolicy creates a new policy, then synchronizes qrdb's live ABAC
 // decorator with the full current policy store. A failed sync rejects the
-// write: the just-created policy is deleted from storage (best-effort
-// compensation) and the sync error is returned, leaving both storage and
-// live enforcement in their pre-call state.
+// write: the storage's write snapshot is restored (without one, the
+// just-created policy is deleted) and the sync error is returned. A name held
+// by any record, even one that does not decode, refuses the create.
 func (e *PolicyEngine) CreatePolicy(ctx context.Context, tenantID string, policy *Policy) error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -133,25 +135,49 @@ func (e *PolicyEngine) CreatePolicy(ctx context.Context, tenantID string, policy
 
 	// Check if policy already exists
 	existing, err := e.storage.GetPolicy(ctx, tenantID, policy.Metadata.Name)
-	if err == nil && existing != nil {
+	var loadErr *StoredPolicyDecodeError
+	if (err == nil && existing != nil) || errors.As(err, &loadErr) {
 		return &PolicyExistsError{
 			TenantID: tenantID,
 			Name:     policy.Metadata.Name,
 		}
 	}
-
-	// Store policy
-	if err := e.storage.CreatePolicy(ctx, tenantID, policy); err != nil {
+	if err != nil && !dberrors.Is(err, dberrors.ErrNotFound) {
 		return err
 	}
 
-	if err := e.syncABAC(ctx); err != nil {
-		// Reject the write: compensate by deleting what was just created.
-		_ = e.storage.DeletePolicy(ctx, tenantID, policy.Metadata.Name)
+	// Snapshot every record the write may touch; a failed snapshot writes nothing.
+	var restore func(context.Context) error
+	if s, ok := e.storage.(PolicyWriteSnapshotter); ok {
+		if restore, err = s.SnapshotPolicy(ctx, tenantID, policy.Metadata.Name); err != nil {
+			return err
+		}
+	}
+	reject := func(err error) error {
+		if restore != nil {
+			if rerr := restore(ctx); rerr != nil {
+				err = errors.Join(err, rerr)
+			}
+		} else {
+			// Reject the write: compensate by deleting what was just created.
+			_ = e.storage.DeletePolicy(ctx, tenantID, policy.Metadata.Name)
+		}
 		if e.cache != nil {
 			e.cache.InvalidateAll(tenantID)
 		}
 		return err
+	}
+
+	// Store policy
+	if err := e.storage.CreatePolicy(ctx, tenantID, policy); err != nil {
+		if restore == nil {
+			return err
+		}
+		return reject(err)
+	}
+
+	if err := e.syncABAC(ctx); err != nil {
+		return reject(err)
 	}
 
 	// Invalidate cache

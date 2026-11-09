@@ -958,6 +958,69 @@ func TestLegacyCleanupPolicyStorage_SnapshotRestoresAFlaggedLegacyRecord(t *test
 	assert.Equal(t, []byte("{not json"), got, "a rejected delete keeps the flagged record")
 }
 
+func TestLegacyCleanupPolicyStorage_CreateRefusedOverMalformedLegacyRecord(t *testing.T) {
+	r, _, bs := newABACTenantRoutedStorage(t)
+	key := iam.KeyPrefixTenant + "acme" + iam.KeyPrefixPolicy + "dup"
+	require.NoError(t, r.shared.Put(context.Background(), key, []byte("{not json")))
+	acmeCtx := tenantctx.WithTenant(context.Background(), "acme")
+
+	err := newLegacyCleanupPolicyStorage(bs).CreatePolicy(acmeCtx, "acme",
+		abacTestPolicy("dup", "acme", "alice", "kv/**", iam.EffectAllow))
+	var exists *iam.PolicyExistsError
+	require.ErrorAs(t, err, &exists)
+
+	_, err = bs.GetPolicyRecord(acmeCtx, "acme", "dup")
+	assert.True(t, dberrors.Is(err, dberrors.ErrNotFound), "no tenant copy appears: err = %v", err)
+	got, err := r.shared.Get(context.Background(), key)
+	require.NoError(t, err)
+	assert.Equal(t, []byte("{not json"), got)
+}
+
+func TestLegacyCleanupPolicyStorage_CreateRefusedOverLegacyRecord(t *testing.T) {
+	_, _, bs := newABACTenantRoutedStorage(t)
+	acmeCtx := tenantctx.WithTenant(context.Background(), "acme")
+	sysCtx := tenantctx.WithSystem(context.Background())
+	seedLegacyABACPolicy(t, bs, "acme", abacTestPolicy("dup", "acme", "alice", "kv/**", iam.EffectDeny))
+	before, err := bs.GetPolicyRecord(sysCtx, "acme", "dup")
+	require.NoError(t, err)
+
+	err = newLegacyCleanupPolicyStorage(bs).CreatePolicy(acmeCtx, "acme",
+		abacTestPolicy("dup", "acme", "alice", "kv/**", iam.EffectAllow))
+	var exists *iam.PolicyExistsError
+	require.ErrorAs(t, err, &exists)
+
+	_, err = bs.GetPolicyRecord(acmeCtx, "acme", "dup")
+	assert.True(t, dberrors.Is(err, dberrors.ErrNotFound), "no tenant copy appears: err = %v", err)
+	after, err := bs.GetPolicyRecord(sysCtx, "acme", "dup")
+	require.NoError(t, err)
+	assert.Equal(t, before, after)
+}
+
+func TestLegacyCleanupPolicyStorage_RejectedCreateKeepsLegacyRecord(t *testing.T) {
+	r, _, bs := newABACTenantRoutedStorage(t)
+	acmeCtx := tenantctx.WithTenant(context.Background(), "acme")
+	sysCtx := tenantctx.WithSystem(context.Background())
+	pe := iam.NewPolicyEngine(iam.PolicyEngineOptions{Storage: newLegacyCleanupPolicyStorage(bs), ABACSync: rejectingABACSync{}})
+
+	err := pe.CreatePolicy(acmeCtx, "acme", abacTestPolicy("fresh", "acme", "alice", "kv/**", iam.EffectAllow))
+	require.EqualError(t, err, "abac reload rejected")
+	_, err = bs.GetPolicyRecord(acmeCtx, "acme", "fresh")
+	assert.True(t, dberrors.Is(err, dberrors.ErrNotFound), "tenant copy: err = %v", err)
+	_, err = bs.GetPolicyRecord(sysCtx, "acme", "fresh")
+	assert.True(t, dberrors.Is(err, dberrors.ErrNotFound), "legacy copy: err = %v", err)
+
+	key := iam.KeyPrefixTenant + "acme" + iam.KeyPrefixPolicy + "dup"
+	require.NoError(t, r.shared.Put(context.Background(), key, []byte("{not json")))
+	err = pe.CreatePolicy(acmeCtx, "acme", abacTestPolicy("dup", "acme", "alice", "kv/**", iam.EffectAllow))
+	var exists *iam.PolicyExistsError
+	require.ErrorAs(t, err, &exists, "refused before any sync")
+	got, err := r.shared.Get(context.Background(), key)
+	require.NoError(t, err)
+	assert.Equal(t, []byte("{not json"), got)
+	_, err = bs.GetPolicyRecord(acmeCtx, "acme", "dup")
+	assert.True(t, dberrors.Is(err, dberrors.ErrNotFound), "no tenant copy appears: err = %v", err)
+}
+
 func TestLegacyCleanupPolicyStorage_UpdateRollsBackWhenLegacyDeleteFails(t *testing.T) {
 	_, _, bs := newABACTenantRoutedStorage(t)
 	seedABACConflict(t, bs)

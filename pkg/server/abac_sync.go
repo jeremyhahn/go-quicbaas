@@ -382,9 +382,28 @@ func (s *legacyCleanupPolicyStorage) CreatePolicy(ctx context.Context, tenantID 
 	if tenantID == qrdbsdk.SystemTenantID {
 		return s.PolicyStorage.CreatePolicy(ctx, tenantID, policy)
 	}
-	tenantCtx, _, err := s.tenantContexts(ctx, "iam.policy.create", tenantID)
+	tenantCtx, legacyCtx, err := s.tenantContexts(ctx, "iam.policy.create", tenantID)
 	if err != nil {
 		return err
+	}
+	// A record in either namespace, even one that does not decode, holds the name.
+	for _, c := range []context.Context{tenantCtx, legacyCtx} {
+		var held bool
+		if raw, ok := s.PolicyStorage.(policyRecordStore); ok {
+			_, err = raw.GetPolicyRecord(c, tenantID, policy.Metadata.Name)
+			held = err == nil
+		} else {
+			var existing *iam.Policy
+			existing, err = s.PolicyStorage.GetPolicy(c, tenantID, policy.Metadata.Name)
+			var de *iam.StoredPolicyDecodeError
+			held = (err == nil && existing != nil) || errors.As(err, &de)
+		}
+		if held {
+			return &iam.PolicyExistsError{TenantID: tenantID, Name: policy.Metadata.Name}
+		}
+		if err != nil && !dberrors.Is(err, dberrors.ErrNotFound) {
+			return err
+		}
 	}
 	return s.PolicyStorage.CreatePolicy(tenantCtx, tenantID, policy)
 }
