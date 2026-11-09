@@ -1129,10 +1129,9 @@ repo for the portfolio-wide rules; the short version is below.
 ### How resolution works
 
 Every sibling module keeps the module path `github.com/jeremyhahn/<repo>`, and
-`GOPRIVATE=github.com/jeremyhahn/*` plus a git url-rewrite points fetches at
-Gitea. `GOPRIVATE` is the only mechanism in play — it exempts those paths from
-both the module proxy and the checksum database, which is what lets the
-rewrite fire. Do not set `GOPROXY`, `GOSUMDB`, `GONOSUMDB`, `GOINSECURE` or
+resolves through the module proxy and the checksum database like any
+third-party module; `GOPRIVATE`, `GONOPROXY` and `GONOSUMDB` are never set.
+Do not set `GOPROXY`, `GOSUMDB`, `GOINSECURE` or
 `GOFLAGS` to work around a fetch problem: doing so also routes every
 *third-party* module around proxy.golang.org and disables sumdb verification
 for all of them. That is not hypothetical — it broke this repo on 2026-08-14
