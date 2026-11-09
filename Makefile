@@ -2542,7 +2542,6 @@ else
 	@if [ -n "$${GIT_CONFIG_KEY_0:-}" ]; then \
 		umask 077; \
 		{ \
-			printf 'export GOPRIVATE=%s\n' "$${GOPRIVATE:-}"; \
 			printf 'export GIT_CONFIG_COUNT=%s\n' "$${GIT_CONFIG_COUNT:-}"; \
 			printf 'export GIT_CONFIG_KEY_0=%s\n' "$${GIT_CONFIG_KEY_0}"; \
 			printf 'export GIT_CONFIG_VALUE_0=%s\n' "$${GIT_CONFIG_VALUE_0:-}"; \
@@ -2583,7 +2582,6 @@ else
 	scheme="$${origin%%://*}"; hostport="$${origin#*://}"; \
 	umask 077; \
 	{ \
-		printf 'export GOPRIVATE=%s\n' "$${GOPRIVATE:-github.com/$(GOMODAUTH_OWNER)/*}"; \
 		printf 'export GIT_CONFIG_COUNT=1\n'; \
 		printf 'export GIT_CONFIG_KEY_0=url.%s://x:%s@%s/%s/.insteadOf\n' "$$scheme" "$$token" "$$hostport" "$(GOMODAUTH_OWNER)"; \
 		printf 'export GIT_CONFIG_VALUE_0=https://github.com/%s/\n' "$(GOMODAUTH_OWNER)"; \
