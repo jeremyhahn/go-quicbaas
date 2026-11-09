@@ -1829,7 +1829,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   or `ENV`s; unset, or with a cache unreachable, the build is byte-for-byte
   what it always was. The toolchain stage's `go install` / `go get` / `go
   build` feed `DEVCACHE_GOPROXY` through Go's `|` fallback chain; the
-  agent-CLI `npm install -g` evaluates `devcache-env` first. The image now carries `devcache-env` itself at
+  agent-CLI `npm install -g` evaluates `devcache-env` first. The image now
+  carries `devcache-env` itself at
   `/usr/local/bin/devcache-env`, embedded byte-for-byte from dev-cache
   v0.1.0 via a BuildKit heredoc and checked against its pinned SHA-256 at
   build time, so the Dockerfile keeps building from the empty context the
