@@ -182,12 +182,12 @@ listening (and writes it to `--env-file`, mode 0600), then runs until
 interrupted, removing the socket on exit.
 
 ```sh
-quicbaas ssh agent --scope service --owner agent-go-codec \
-  --name agent-go-codec-signing --env-file /run/user/$UID/codec-agent.env &
+quicbaas ssh agent --scope service --owner agent-codec \
+  --name agent-codec-signing --env-file /run/user/$UID/codec-agent.env &
 . /run/user/$UID/codec-agent.env; export SSH_AUTH_SOCK
 
 # Push over SSH and sign commits with the same KMS key:
-PUB=$(quicbaas ssh keys export --scope service --owner agent-go-codec --name agent-go-codec-signing)
+PUB=$(quicbaas ssh keys export --scope service --owner agent-codec --name agent-codec-signing)
 git -c gpg.format=ssh -c user.signingkey="key::$PUB" commit -S -m "..."
 git push
 ```
