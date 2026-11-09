@@ -174,6 +174,26 @@ func TestInImageMemoryOverrideSetsEqualMemoryAndSwap(t *testing.T) {
 	}
 }
 
+// IN_IMAGE_MEMORY=none sets no cap at all, even under a bounded cgroup: a
+// GitHub-hosted runner's job owns the VM.
+func TestInImageMemoryNoneSetsNoCap(t *testing.T) {
+	cases := map[string]*cgroupFixture{
+		"no cgroup": nil,
+		"bounded":   {proc: "0::/\n", memoryMax: map[string]string{"": "4294967296\n"}},
+	}
+	for name, cg := range cases {
+		t.Run(name, func(t *testing.T) {
+			run := runInToolchainImage(t, map[string]string{"IN_IMAGE_MEMORY": "none"}, cg)
+			args := run.containerArgs(t)
+			for _, flag := range []string{"--memory", "--memory-swap"} {
+				if got, ok := flagValue(args, flag); ok {
+					t.Errorf("%s = %q, want no %s", flag, got, flag)
+				}
+			}
+		})
+	}
+}
+
 func TestInImageMemoryDefaultsToTheCgroupLimit(t *testing.T) {
 	run := runInToolchainImage(t, nil, &cgroupFixture{proc: "0::/\n", memoryMax: map[string]string{"": "4294967296\n"}})
 	assertMemoryAndSwap(t, run.containerArgs(t), "4294967296")
@@ -211,6 +231,7 @@ func TestInImageMemoryTakesTheTightestAncestor(t *testing.T) {
 	}{
 		"parent below unbounded leaf": {memoryMax: map[string]string{"a": "2147483648\n", "a/b": "max\n"}, want: "2147483648"},
 		"leaf below looser parent":    {memoryMax: map[string]string{"a": "8589934592\n", "a/b": "4294967296\n"}, want: "4294967296"},
+		"parent below finite leaf":    {memoryMax: map[string]string{"a": "2147483648\n", "a/b": "4294967296\n"}, want: "2147483648"},
 		"root below unbounded path":   {memoryMax: map[string]string{"": "1073741824\n", "a": "max\n", "a/b": "max\n"}, want: "1073741824"},
 	}
 	for name, tc := range cases {

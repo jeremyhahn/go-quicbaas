@@ -50,7 +50,8 @@
 #
 # IN_IMAGE_MEMORY caps the container's memory and swap (bytes, or a size with m
 # or g, e.g. 16g; default the tightest memory.max from the caller's cgroup up to
-# the cgroup root, or 8g when unbounded).
+# the cgroup root, or 8g when unbounded; none sets no cap, for GitHub-hosted
+# runners, where the job owns the VM).
 # IN_IMAGE_CGROUP_ROOT and IN_IMAGE_PROC_CGROUP name the cgroup v2 mount and the /proc/self/cgroup file the default reads (tests only).
 # CI_CGROUP_PARENT, when set, is the container's --cgroup-parent.
 set -euo pipefail
@@ -115,7 +116,7 @@ if [ -z "$memory" ]; then
   memory=$(cgroup_memory_limit)
   [ -n "$memory" ] || memory=8g
 fi
-if ! [[ $memory =~ ^[1-9][0-9]*[mg]?$ ]]; then
+if [ "$memory" != none ] && ! [[ $memory =~ ^[1-9][0-9]*[mg]?$ ]]; then
   echo "IN_IMAGE_MEMORY must be a size in bytes, m or g, e.g. 16g: $memory" >&2
   exit 2
 fi
@@ -125,8 +126,6 @@ args=(
   --cap-drop ALL
   --security-opt no-new-privileges:true
   --pids-limit 4096
-  --memory "$memory"
-  --memory-swap "$memory"
   --ulimit memlock=67108864:67108864
   --ulimit core=1048576:1048576
   --ulimit nofile=65536:65536
@@ -141,6 +140,7 @@ args=(
   --env GOTMPDIR=/var/tmp
   --env CI="${CI:-}"
 )
+if [ "$memory" != none ]; then args+=(--memory "$memory" --memory-swap "$memory"); fi
 # The sidecar is then charged to the runner's slice, not the daemon root.
 if [ -n "${CI_CGROUP_PARENT:-}" ]; then args+=(--cgroup-parent "$CI_CGROUP_PARENT"); fi
 modcache=/tmp/gomodcache
