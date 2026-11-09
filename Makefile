@@ -1350,16 +1350,6 @@ IAM_TEST_TAGS := $(TEST_TAGS)
 # CI cannot drop a check that `make test` runs.
 TEST_CHECKS := check-insecure-tls check-build-tags check-coded-sentinels check-local-keygen check-case-collisions check-library-pins check-workspace-script check-package-targets
 
-# The release gate (pkg/labstrings) runs inside the unit tests with its public
-# default patterns. A deployment's private values -- its subnet, host names,
-# accounts -- live in an untracked JSON file at the repository root; when that
-# file is present, every make target hands it to the gate. An explicit
-# QUICBAAS_LABSTRINGS_PATTERNS in the environment wins.
-LABSTRINGS_PATTERNS_FILE := .labstrings-patterns.json
-ifneq ($(wildcard $(LABSTRINGS_PATTERNS_FILE)),)
-export QUICBAAS_LABSTRINGS_PATTERNS ?= $(LABSTRINGS_PATTERNS_FILE)
-endif
-
 .PHONY: test
 test: $(TEST_CHECKS) ## Run unit tests (excludes integration tests)
 	@echo "$(BLUE)Running unit tests (excludes integration tests)...$(NC)"
