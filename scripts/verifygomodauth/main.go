@@ -11,32 +11,30 @@
 // 2. Commercial License
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
-// Command verifygomodauth proves that the Docker test targets can fetch the
-// private first-party modules on a developer or agent host, and that the Gitea
-// token they need never outlives the image build (#1031).
+// Command verifygomodauth proves that no module credential reaches a Docker
+// test build (#1031).
 //
-// The image builds read a `gomodauth` BuildKit secret: a file of the
-// dependency-resolution.md section-6 variables that `make stage-gomodauth`
-// writes. It used to be built only from the variables a Gitea runner injects,
-// so on any other host it was written empty, `go mod download` inside the image
-// asked the public proxy for a tag that is not mirrored, and the build failed
-// with "unknown revision". The target now also builds it from a Gitea read
-// token -- FORGE_READ_TOKEN, else the agent tokens file -- and every target
-// whose compose file mounts the secret stages it before its build and empties
-// it once the build is done, on the failure path too.
+// The image builds resolve every module through the module proxy and the
+// checksum database. They still mount a `gomodauth` BuildKit secret, so
+// `make stage-gomodauth` stages that file for them, and the file is always
+// empty and 0600: whatever credential the host holds -- a FORGE_READ_TOKEN,
+// an agent tokens file, a runner's GIT_CONFIG_* variables -- none is written
+// into it, printed, or put on a docker command line. Every target whose
+// compose file mounts the secret stages the file before its build, so its
+// path exists, and leaves it empty afterwards, on the failure path too.
 //
 // Each case runs the real Makefile. Docker is faked through PATH (see
 // scripts/internal/gate/fakedocker.go), and the fake records the staged file's
-// size at every call, so "it held the credentials during the build and nothing
-// after" is observed rather than inferred. The token is a fixed, obviously fake
-// string; the gate strips the caller's own GIT_CONFIG_*, GOPRIVATE and
-// FORGE_READ_TOKEN from the environment so a real credential is never read.
+// size at every call, so "the build saw an empty file" is observed rather than
+// inferred. The token is a fixed, obviously fake string; the gate strips the
+// caller's own GIT_CONFIG_* and FORGE_READ_TOKEN from the environment so a
+// real credential is never read.
 //
 // Interruption is exercised too: the fake holds the build call open, the gate
 // sends SIGINT to make's process group as a Ctrl-C would, and the file must
-// still come out empty. Staging the host file proves nothing unless the image
-// reads it, so the gate also checks that every service the staged compose
-// files build is handed the secret and that its Dockerfile mounts it.
+// still come out empty. The gate also checks that every service the staged
+// compose files build is handed the secret and that its Dockerfile mounts it,
+// so each keeps a path to the file.
 //
 // Not run end to end: integration-test-tenantbarrier (it issues certificates
 // into the working tree before its build), and integration-bench past its
@@ -61,19 +59,12 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/scripts/internal/gate"
 )
 
-// fakeToken is what every case stages. Token-shaped, and distinctive enough
+// fakeToken is the credential every case offers the Makefile. Token-shaped, and distinctive enough
 // that finding it anywhere in the output is unambiguous.
 const fakeToken = "gate0verifygomodauth0not0a0credential" //nolint:gosec // G101: a fixed fixture string the gate searches for, not a credential
 
-// stagedSize is the size of the section-6 file stage-gomodauth writes for the
-// target cases' token and origin. stage-gomodauth runs silent (DS-2534), so a
-// target proves it staged by the staged file holding exactly that many bytes
-// at its image build, as the fake docker records.
-var stagedSize = int64(len(sectionSix(fakeToken, gateOrigin)))
-
-// gateOrigin is the forge every staging case names. The Makefile carries no
-// default origin, so each case passes one explicitly, as a real host does from
-// its environment or its tokens file.
+// gateOrigin is the forge origin the cases set beside the token, as a host
+// with a read token does in its environment or its tokens file.
 const gateOrigin = "http://gitea.invalid:3001"
 
 // gateOriginEnv is gateOrigin in the form a case's environment takes it.
@@ -82,7 +73,7 @@ var gateOriginEnv = []string{"GITEA_HTTP_ORIGIN=" + gateOrigin}
 // strippedEnv are the variables a case must not inherit: the caller's own
 // credentials, and the knobs each case sets for itself.
 var strippedEnv = []string{
-	"GIT_CONFIG_COUNT", "GIT_CONFIG_KEY_0", "GIT_CONFIG_VALUE_0", "GOPRIVATE",
+	"GIT_CONFIG_COUNT", "GIT_CONFIG_KEY_0", "GIT_CONFIG_VALUE_0",
 	"FORGE_READ_TOKEN", "GITEA_HTTP_ORIGIN", "GOMODAUTH_ENV",
 	"GOMODAUTH_TOKENS_FILE", "GOMODAUTH_TOKEN_KEY", "GOMODAUTH_OWNER", "HOME",
 	"GOMOD_BACKUP", "SDK_GOMOD_BACKUP",
@@ -347,16 +338,6 @@ func stripEnv(environ []string) []string {
 	return kept
 }
 
-// sectionSix is the staged file stage-gomodauth must write for a token and an
-// origin: exactly the three dependency-resolution.md section-6 variables.
-func sectionSix(token, origin string) string {
-	origin = strings.TrimSuffix(origin, "/")
-	scheme, hostport, _ := strings.Cut(origin, "://")
-	return "export GIT_CONFIG_COUNT=1\n" +
-		"export GIT_CONFIG_KEY_0=url." + scheme + "://x:" + token + "@" + hostport + "/jeremyhahn/.insteadOf\n" +
-		"export GIT_CONFIG_VALUE_0=https://github.com/jeremyhahn/\n"
-}
-
 // targetCase is a Docker target whose compose file mounts the secret.
 type targetCase struct {
 	target   string
@@ -393,53 +374,61 @@ func check(root, work string, stdout, stderr io.Writer) (int, error) {
 			fail("%s: the token reached a docker command line", what)
 		}
 	}
-	tokensFile := "OTHER_READ_TOKEN=someone0elses0token\nexport FORGE_READ_TOKEN=\"" + fakeToken + "\"\n"
+	tokensFile := "OTHER_READ_TOKEN=someone0elses0token\nexport FORGE_READ_TOKEN=\"" + fakeToken + "\"\nGITEA_HTTP_ORIGIN=" + gateOrigin + "\n"
+	envToken := append([]string{"FORGE_READ_TOKEN=" + fakeToken}, gateOriginEnv...)
+	runnerEnv := []string{
+		"GIT_CONFIG_COUNT=1",
+		"GIT_CONFIG_KEY_0=url.http://x:" + fakeToken + "@gitea.invalid/jeremyhahn/.insteadOf",
+		"GIT_CONFIG_VALUE_0=https://github.com/jeremyhahn/",
+	}
 
-	fmt.Fprintln(stdout, "case: a token in the agent tokens file is staged as the section-6 variables")
-	out, err := invoke(root, work, "tokens-file", invocation{targets: []string{"stage-gomodauth"}, tokensFile: tokensFile, env: gateOriginEnv})
-	if err != nil {
-		return 0, err
+	// Whatever credential the host holds, stage-gomodauth stages an empty 0600
+	// file, exits 0 and puts the token nowhere.
+	stagingCases := []struct {
+		slug string
+		what string
+		inv  invocation
+	}{
+		{slug: "env-token", what: "a FORGE_READ_TOKEN", inv: invocation{env: envToken}},
+		{slug: "tokens-file", what: "a tokens file with FORGE_READ_TOKEN and GITEA_HTTP_ORIGIN", inv: invocation{tokensFile: tokensFile}},
+		{slug: "runner", what: "a runner's GIT_CONFIG_* variables", inv: invocation{env: runnerEnv}},
+		{slug: "bad-token", what: "a value that is not token-shaped", inv: invocation{env: []string{"FORGE_READ_TOKEN=" + fakeToken + "'$(id)"}}},
+		{slug: "none", what: "no credential at all", inv: invocation{}},
+		{slug: "stale-0644", what: "an existing 0644 file that holds text", inv: invocation{tokensFile: tokensFile, preStagedMode: 0o644}},
 	}
-	if out.status != 0 {
-		fail("stage-gomodauth exited %d:\n%s", out.status, out.output)
-	}
-	if want := sectionSix(fakeToken, gateOrigin); out.staged != want {
-		fail("the staged file is not the section-6 variables built from the tokens file (%d bytes, want %d)", len(out.staged), len(want))
-	}
-	if out.stagedMode != 0o600 {
-		fail("the staged file has mode %v, want 0600", out.stagedMode)
-	}
-	noLeak("tokens file", out)
-
-	fmt.Fprintln(stdout, "case: an existing world-readable file is made 0600 before the token goes in")
-	out, err = invoke(root, work, "stale-0644", invocation{
-		targets:       []string{"stage-gomodauth"},
-		tokensFile:    tokensFile,
-		env:           gateOriginEnv,
-		preStagedMode: 0o644,
-	})
-	if err != nil {
-		return 0, err
-	}
-	if out.status != 0 || out.staged != sectionSix(fakeToken, gateOrigin) {
-		fail("staging over an existing file did not write the section-6 variables (exit %d)", out.status)
-	}
-	if out.stagedMode != 0o600 {
-		fail("staging over an existing 0644 file left mode %v, want 0600", out.stagedMode)
+	for _, sc := range stagingCases {
+		fmt.Fprintf(stdout, "case: with %s, stage-gomodauth stages an empty 0600 file\n", sc.what)
+		sc.inv.targets = []string{"stage-gomodauth"}
+		out, err := invoke(root, work, sc.slug, sc.inv)
+		if err != nil {
+			return 0, err
+		}
+		if out.status != 0 {
+			fail("%s: stage-gomodauth exited %d:\n%s", sc.what, out.status, out.output)
+		}
+		if !out.stagedExists || out.staged != "" {
+			fail("%s: the staged file is missing or not empty (%d bytes)", sc.what, len(out.staged))
+		}
+		if strings.Contains(out.staged, fakeToken) {
+			fail("%s: the token reached the staged file", sc.what)
+		}
+		if out.stagedExists && out.stagedMode != 0o600 {
+			fail("%s: the staged file was left with mode %v, want 0600", sc.what, out.stagedMode)
+		}
+		noLeak(sc.what, out)
 	}
 
 	fmt.Fprintln(stdout, "case: clear-gomodauth then stage-gomodauth under umask 022 stages 0600")
-	out, err = invoke(root, work, "clear-then-stage", invocation{
+	out, err := invoke(root, work, "clear-then-stage", invocation{
 		targets:         []string{"clear-gomodauth", "stage-gomodauth"},
 		tokensFile:      tokensFile,
-		env:             gateOriginEnv,
 		permissiveUmask: true,
 	})
 	if err != nil {
 		return 0, err
 	}
-	if out.status != 0 || out.staged != sectionSix(fakeToken, gateOrigin) {
-		fail("clear then stage did not write the section-6 variables (exit %d)", out.status)
+	if out.status != 0 || !out.stagedExists || out.staged != "" {
+		fail("clear then stage did not leave an empty file (exit %d)", out.status)
 	}
 	if out.stagedMode != 0o600 {
 		fail("clear then stage left mode %v, want 0600", out.stagedMode)
@@ -460,107 +449,13 @@ func check(root, work string, stdout, stderr io.Writer) (int, error) {
 		fail("clear-gomodauth created the file with mode %v, want 0600", out.stagedMode)
 	}
 
-	fmt.Fprintln(stdout, "case: FORGE_READ_TOKEN wins over the tokens file and the origin is overridable")
-	envToken := fakeToken + "0env"
-	out, err = invoke(root, work, "env-token", invocation{
-		targets:    []string{"stage-gomodauth"},
-		tokensFile: tokensFile,
-		env:        []string{"FORGE_READ_TOKEN=" + envToken, "GITEA_HTTP_ORIGIN=https://gitea.invalid:8443/"},
-	})
-	if err != nil {
-		return 0, err
-	}
-	if out.status != 0 {
-		fail("stage-gomodauth exited %d:\n%s", out.status, out.output)
-	}
-	if out.staged != sectionSix(envToken, "https://gitea.invalid:8443") {
-		fail("the staged file was not built from FORGE_READ_TOKEN against the overridden origin")
-	}
-	noLeak("environment token", out)
-
-	fmt.Fprintln(stdout, "case: a token with no origin anywhere is refused and nothing is staged")
-	out, err = invoke(root, work, "no-origin", invocation{targets: []string{"stage-gomodauth"}, tokensFile: tokensFile})
-	if err != nil {
-		return 0, err
-	}
-	if out.status == 0 {
-		fail("a token with no origin was staged against a default forge — the Makefile must name none")
-	}
-	if !strings.Contains(out.output, "no Gitea origin is set") {
-		fail("refusing a token with no origin did not say why:\n%s", out.output)
-	}
-	if out.staged != "" {
-		fail("a token with no origin left something in the staged file")
-	}
-	noLeak("no origin", out)
-
-	fmt.Fprintln(stdout, "case: the origin in the tokens file is used when the environment sets none")
-	fileOrigin := "https://forge.invalid:8443"
-	out, err = invoke(root, work, "file-origin", invocation{
-		targets:    []string{"stage-gomodauth"},
-		tokensFile: tokensFile + "export GITEA_HTTP_ORIGIN=\"" + fileOrigin + "/\"\n",
-	})
-	if err != nil {
-		return 0, err
-	}
-	if out.status != 0 || out.staged != sectionSix(fakeToken, fileOrigin) {
-		fail("the tokens file's GITEA_HTTP_ORIGIN was not used (exit %d):\n%s", out.status, out.output)
-	}
-	noLeak("tokens-file origin", out)
-
-	fmt.Fprintln(stdout, "case: a Gitea runner's own variables are staged as injected")
-	runnerKey := "url.http://x:" + fakeToken + "@gitea.invalid/jeremyhahn/.insteadOf"
-	out, err = invoke(root, work, "runner", invocation{
-		targets:    []string{"stage-gomodauth"},
-		tokensFile: "FORGE_READ_TOKEN=ignored0token\n",
-		env: []string{
-			"GIT_CONFIG_COUNT=1",
-			"GIT_CONFIG_KEY_0=" + runnerKey, "GIT_CONFIG_VALUE_0=https://github.com/jeremyhahn/",
-		},
-	})
-	if err != nil {
-		return 0, err
-	}
-	want := "export GIT_CONFIG_COUNT=1\n" +
-		"export GIT_CONFIG_KEY_0=" + runnerKey + "\nexport GIT_CONFIG_VALUE_0=https://github.com/jeremyhahn/\n"
-	if out.status != 0 || out.staged != want {
-		fail("the runner's variables were not staged as injected (exit %d)", out.status)
-	}
-	noLeak("runner", out)
-
-	fmt.Fprintln(stdout, "case: with no credentials anywhere the file is empty and the build still proceeds")
-	out, err = invoke(root, work, "none", invocation{targets: []string{"stage-gomodauth"}})
-	if err != nil {
-		return 0, err
-	}
-	if out.status != 0 {
-		fail("stage-gomodauth without credentials exited %d — GitHub builds rely on the public proxy:\n%s", out.status, out.output)
-	}
-	if !out.stagedExists || out.staged != "" {
-		fail("without credentials the staged file must exist and be empty")
-	}
-
-	fmt.Fprintln(stdout, "case: a value that is not token-shaped is refused without being echoed")
-	bad := fakeToken + "'$(id)"
-	out, err = invoke(root, work, "bad-token", invocation{targets: []string{"stage-gomodauth"}, env: []string{"FORGE_READ_TOKEN=" + bad}})
-	if err != nil {
-		return 0, err
-	}
-	if out.status == 0 {
-		fail("a token that would break the sourced file was staged")
-	}
-	if out.staged != "" {
-		fail("a refused token left something in the staged file")
-	}
-	noLeak("malformed token", out)
-
 	for _, tc := range targetCases {
-		fmt.Fprintf(stdout, "case: %s stages the credentials for its build and clears them after\n", tc.target)
+		fmt.Fprintf(stdout, "case: %s stages an empty secret file for its image build\n", tc.target)
 		out, err := invoke(root, work, tc.target, invocation{
 			targets:    []string{tc.target},
 			makeVars:   tc.makeVars,
 			tokensFile: tokensFile,
-			env:        gateOriginEnv,
+			env:        append(append([]string{}, envToken...), runnerEnv...),
 			failMatch:  tc.failMatch,
 		})
 		if err != nil {
@@ -571,7 +466,7 @@ func check(root, work string, stdout, stderr io.Writer) (int, error) {
 	}
 
 	for _, ic := range interruptCases {
-		fmt.Fprintf(stdout, "case: interrupting %s during its build still clears the credentials\n", ic.target)
+		fmt.Fprintf(stdout, "case: interrupting %s during its build leaves the secret file empty\n", ic.target)
 		out, reached, err := interrupt(root, work, ic, tokensFile)
 		if err != nil {
 			return 0, err
@@ -585,11 +480,13 @@ func check(root, work string, stdout, stderr io.Writer) (int, error) {
 		switch {
 		case !reached:
 			fail("%s never reached %q — this case no longer exercises the interrupt:\n%s", ic.target, ic.hang, out.output)
-		case hangSize <= 0:
-			fail("%s was interrupted in %q without the credentials staged", ic.target, ic.hang)
+		case hangSize < 0:
+			fail("%s was interrupted in %q without the secret file staged", ic.target, ic.hang)
+		case hangSize > 0:
+			fail("%s's build saw %d bytes of credentials when interrupted in %q", ic.target, hangSize, ic.hang)
 		}
 		if !out.stagedExists || out.staged != "" {
-			fail("%s left the credentials in the staged file when interrupted", ic.target)
+			fail("%s left the staged file missing or not empty when interrupted", ic.target)
 		}
 		noLeak(ic.target+" (interrupted)", out)
 	}
@@ -622,11 +519,11 @@ func checkTarget(tc targetCase, out outcome, fail func(string, ...any)) {
 	switch {
 	case buildAt < 0:
 		fail("%s never reached its image build (%q) — this case no longer exercises it", tc.target, tc.build)
-	case out.watch[buildAt].size <= 0:
-		fail("%s never staged the credentials: its image build saw an empty credentials file", tc.target)
-	case out.watch[buildAt].size != stagedSize:
-		fail("%s built its image with %d bytes of credentials, not the %d-byte section-6 file stage-gomodauth writes",
-			tc.target, out.watch[buildAt].size, stagedSize)
+	case out.watch[buildAt].size < 0:
+		fail("%s never staged the secret file: it was missing at its image build", tc.target)
+	case out.watch[buildAt].size > 0:
+		fail("%s built its image with %d bytes in the secret file; the build must see an empty file",
+			tc.target, out.watch[buildAt].size)
 	}
 	if tc.after != "" && buildAt >= 0 {
 		seen := false
@@ -634,7 +531,7 @@ func checkTarget(tc targetCase, out outcome, fail func(string, ...any)) {
 			if strings.Contains(c.call, tc.after) {
 				seen = true
 				if c.size != 0 {
-					fail("%s still held the credentials at %q, after its build", tc.target, tc.after)
+					fail("%s's secret file was not empty at %q, after its build", tc.target, tc.after)
 				}
 				break
 			}
@@ -644,6 +541,6 @@ func checkTarget(tc targetCase, out outcome, fail func(string, ...any)) {
 		}
 	}
 	if !out.stagedExists || out.staged != "" {
-		fail("%s left the credentials in the staged file", tc.target)
+		fail("%s left the staged file missing or not empty", tc.target)
 	}
 }
