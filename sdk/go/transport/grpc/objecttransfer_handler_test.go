@@ -413,9 +413,8 @@ func TestObjectTransferHandler_StreamCloseCancelsTheRPC(t *testing.T) {
 
 	// A second Close is a no-op: it must not give back a connection another
 	// caller now holds.
-	if _, err := tr.pool.Get(); err != nil {
-		t.Fatalf("pool.Get: %v", err)
-	}
+	// The test marks it taken itself: Pool.Get refuses a still-connecting one.
+	pc.inUse.Store(true)
 	if err := stream.Close(); err != nil {
 		t.Fatalf("second Close = %v", err)
 	}
