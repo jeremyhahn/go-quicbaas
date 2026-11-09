@@ -169,15 +169,99 @@ func (a *qrdbABACSync) allPolicies(ctx context.Context) ([]*iam.Policy, error) {
 	for tenantID := range tenantIDs {
 		policies, err := a.storage.ListPolicies(tenantctx.WithTenant(ctx, tenantID), tenantID, iam.ListOptions{})
 		if err != nil {
-			if tenantID != qrdbsdk.SystemTenantID && errors.Is(err, qrdbtenant.ErrTenantSealed) {
-				a.warnf("abac sync: tenant %q is sealed; its policies load when it is unsealed", tenantID)
-				continue
+			if tenantID == qrdbsdk.SystemTenantID || !errors.Is(err, qrdbtenant.ErrTenantSealed) {
+				return nil, err
 			}
-			return nil, err
+			a.warnf("abac sync: tenant %q is sealed; its policies load when it is unsealed", tenantID)
+			policies = nil
+		}
+		if tenantID != qrdbsdk.SystemTenantID {
+			legacy, err := a.storage.ListPolicies(sysCtx, tenantID, iam.ListOptions{})
+			if err != nil {
+				return nil, err
+			}
+			policies = mergeLegacyPolicies(policies, legacy)
 		}
 		all = append(all, policies...)
 	}
 	return all, nil
+}
+
+// policyRecordName returns the stored record name of p, flagged or not.
+func policyRecordName(p *iam.Policy) string {
+	if p.LoadError != nil {
+		return p.LoadError.Name
+	}
+	return p.Metadata.Name
+}
+
+// mergeLegacyPolicies keeps all of own and appends each legacy record whose name own lacks.
+func mergeLegacyPolicies(own, legacy []*iam.Policy) []*iam.Policy {
+	names := make(map[string]struct{}, len(own))
+	for _, p := range own {
+		names[policyRecordName(p)] = struct{}{}
+	}
+	for _, p := range legacy {
+		if _, ok := names[policyRecordName(p)]; !ok {
+			own = append(own, p)
+		}
+	}
+	return own
+}
+
+// migrateLegacyPolicies moves tenant policies out of the system namespace:
+// an earlier release stored a system admin's tenant policies there, under
+// the tenant's key. A sealed tenant is migrated by the unseal hook.
+func (a *qrdbABACSync) migrateLegacyPolicies(ctx context.Context) {
+	if a.tenantManager == nil {
+		return
+	}
+	tenants, err := a.tenantManager.ListTenants(tenantctx.WithSystem(ctx), iam.ListOptions{})
+	if err != nil {
+		a.warnf("abac sync: listing tenants to migrate legacy policies failed: %v", err)
+		return
+	}
+	for _, t := range tenants {
+		if t.ID != qrdbsdk.SystemTenantID {
+			a.migrateTenantLegacyPolicies(ctx, t.ID)
+		}
+	}
+}
+
+// migrateTenantLegacyPolicies copies tenantID's legacy policies from the
+// system namespace into the tenant's own, and deletes each legacy copy only
+// after its tenant copy was written. A prefix tenant shares the system store,
+// so nothing is written for it.
+func (a *qrdbABACSync) migrateTenantLegacyPolicies(ctx context.Context, tenantID string) {
+	if tenantID == qrdbsdk.SystemTenantID {
+		return
+	}
+	sysCtx := tenantctx.WithSystem(ctx)
+	legacy, err := a.storage.ListPolicies(sysCtx, tenantID, iam.ListOptions{})
+	if err != nil {
+		a.warnf("abac sync: listing legacy policies of tenant %q failed: %v", tenantID, err)
+		return
+	}
+	tenantCtx := tenantctx.WithTenant(ctx, tenantID)
+	for _, p := range legacy {
+		if p.LoadError != nil {
+			continue
+		}
+		name := p.Metadata.Name
+		if err := a.storage.CreatePolicy(tenantCtx, tenantID, p); err != nil {
+			if errors.Is(err, iam.ErrAlreadyExists) {
+				continue
+			}
+			if errors.Is(err, qrdbtenant.ErrTenantSealed) {
+				return
+			}
+			a.warnf("abac sync: migrating legacy policy %q of tenant %q failed: %v", name, tenantID, err)
+			continue
+		}
+		if err := a.storage.DeletePolicy(sysCtx, tenantID, name); err != nil {
+			a.warnf("abac sync: deleting migrated legacy policy %q of tenant %q failed: %v", name, tenantID, err)
+		}
+	}
 }
 
 // warnf logs a warning through the server's logger, when there is one.
@@ -188,11 +272,12 @@ func (a *qrdbABACSync) warnf(format string, args ...interface{}) {
 	a.server.logger.Warnf(format, args...)
 }
 
-// resyncOnUnseal reloads the live ABAC set each time a tenant barrier is
-// unsealed: allPolicies skips a sealed tenant, so its policies take effect
-// only then.
+// resyncOnUnseal migrates the unsealed tenant's legacy policies and reloads
+// the live ABAC set each time a tenant barrier is unsealed: allPolicies
+// skips a sealed tenant, so its policies take effect only then.
 func (a *qrdbABACSync) resyncOnUnseal(hooks *service.TenantUnsealHooks, sync func(context.Context) error) {
 	hooks.Register(tenantUnsealFunc(func(ctx context.Context, tenantID string) {
+		a.migrateTenantLegacyPolicies(ctx, tenantID)
 		if err := sync(ctx); err != nil {
 			a.warnf("abac sync after unsealing tenant %q failed: %v", tenantID, err)
 		}

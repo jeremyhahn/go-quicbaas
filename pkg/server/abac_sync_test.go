@@ -215,11 +215,11 @@ func TestQRDBABACSync_allPolicies(t *testing.T) {
 			wantNames:  []string{"sys"},
 		},
 		{
-			name: "listed tenants are read once each, system included",
+			name: "listed tenants are read once each, system included, plus each non-system tenant's legacy records",
 			tenants: &abacTestTenants{tenants: []*iam.Tenant{
 				{ID: "acme"}, {ID: "globex"}, {ID: qrdbsdk.SystemTenantID}, {ID: "acme"},
 			}},
-			wantListed: []string{"acme", "globex", qrdbsdk.SystemTenantID},
+			wantListed: []string{"acme", "acme", "globex", "globex", qrdbsdk.SystemTenantID},
 			wantNames:  []string{"acme", "globex", "sys"},
 		},
 	}
@@ -370,6 +370,139 @@ func TestQRDBABACSync_resyncOnUnseal(t *testing.T) {
 
 	assert.Equal(t, 1, calls)
 	assert.NotNil(t, syncCtx)
+}
+
+// seedLegacyABACPolicy stores p for tenantID the way an earlier release wrote
+// a system admin's tenant policy: with the system context, so it lands in
+// the shared store under the tenant's key.
+func seedLegacyABACPolicy(t *testing.T, bs *iam.BackendStorage, tenantID string, p *iam.Policy) {
+	t.Helper()
+	require.NoError(t, bs.CreatePolicy(tenantctx.WithSystem(context.Background()), tenantID, p))
+}
+
+// abacPolicyEffect returns the effect of the first rule of the policy named
+// name in policies.
+func abacPolicyEffect(t *testing.T, policies []*iam.Policy, name string) iam.Effect {
+	t.Helper()
+	for _, p := range policies {
+		if p.LoadError == nil && p.Metadata.Name == name {
+			require.NotEmpty(t, p.Spec.Rules)
+			return p.Spec.Rules[0].Effect
+		}
+	}
+	t.Fatalf("policy %q not listed", name)
+	return ""
+}
+
+func TestQRDBABACSync_allPolicies_ReadsLegacyTenantPolicies(t *testing.T) {
+	r, tm, bs := newABACTenantRoutedStorage(t)
+	acmeCtx := tenantctx.WithTenant(context.Background(), "acme")
+	seedLegacyABACPolicy(t, bs, "acme", abacTestPolicy("legacy-deny", "acme", "alice", "kv/**", iam.EffectDeny))
+	seedLegacyABACPolicy(t, bs, "acme", abacTestPolicy("dup", "acme", "alice", "kv/**", iam.EffectDeny))
+	require.NoError(t, bs.CreatePolicy(acmeCtx, "acme", abacTestPolicy("dup", "acme", "alice", "kv/**", iam.EffectAllow)))
+
+	a := newQRDBABACSync(&Server{}, tm, bs)
+	got, err := a.allPolicies(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, []string{"acme-allow", "dup", "legacy-deny", "sys-deny"}, abacPolicyNames(got))
+	assert.Equal(t, iam.EffectAllow, abacPolicyEffect(t, got, "dup"))
+
+	r.sealTenant("acme")
+	got, err = a.allPolicies(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, []string{"dup", "legacy-deny", "sys-deny"}, abacPolicyNames(got))
+	assert.Equal(t, iam.EffectDeny, abacPolicyEffect(t, got, "dup"))
+}
+
+func TestQRDBABACSync_migrateLegacyPolicies(t *testing.T) {
+	sysCtx := tenantctx.WithSystem(context.Background())
+	acmeCtx := tenantctx.WithTenant(context.Background(), "acme")
+	list := func(t *testing.T, bs *iam.BackendStorage, ctx context.Context, tenantID string) []*iam.Policy {
+		t.Helper()
+		got, err := bs.ListPolicies(ctx, tenantID, iam.ListOptions{})
+		require.NoError(t, err)
+		return got
+	}
+
+	t.Run("barrier tenant moved", func(t *testing.T) {
+		_, tm, bs := newABACTenantRoutedStorage(t)
+		seedLegacyABACPolicy(t, bs, "acme", abacTestPolicy("legacy-deny", "acme", "alice", "kv/**", iam.EffectDeny))
+
+		newQRDBABACSync(&Server{}, tm, bs).migrateLegacyPolicies(context.Background())
+
+		assert.Equal(t, []string{"acme-allow", "legacy-deny"}, abacPolicyNames(list(t, bs, acmeCtx, "acme")))
+		assert.Empty(t, list(t, bs, sysCtx, "acme"))
+	})
+
+	t.Run("tenant copy kept", func(t *testing.T) {
+		_, tm, bs := newABACTenantRoutedStorage(t)
+		require.NoError(t, bs.CreatePolicy(acmeCtx, "acme", abacTestPolicy("dup", "acme", "alice", "kv/**", iam.EffectAllow)))
+		seedLegacyABACPolicy(t, bs, "acme", abacTestPolicy("dup", "acme", "alice", "kv/**", iam.EffectDeny))
+
+		newQRDBABACSync(&Server{}, tm, bs).migrateLegacyPolicies(context.Background())
+
+		assert.Equal(t, iam.EffectAllow, abacPolicyEffect(t, list(t, bs, acmeCtx, "acme"), "dup"))
+		assert.Equal(t, iam.EffectDeny, abacPolicyEffect(t, list(t, bs, sysCtx, "acme"), "dup"))
+	})
+
+	t.Run("prefix tenant untouched", func(t *testing.T) {
+		_, tm, bs := newABACTenantRoutedStorage(t)
+		_, err := tm.CreateTenant(sysCtx, iam.CreateTenantOptions{ID: "beta", Name: "Beta"})
+		require.NoError(t, err)
+		require.NoError(t, bs.CreatePolicy(tenantctx.WithTenant(context.Background(), "beta"), "beta",
+			abacTestPolicy("beta-allow", "beta", "alice", "kv/**", iam.EffectAllow)))
+
+		newQRDBABACSync(&Server{}, tm, bs).migrateLegacyPolicies(context.Background())
+
+		assert.Equal(t, []string{"beta-allow"}, abacPolicyNames(list(t, bs, sysCtx, "beta")))
+	})
+
+	t.Run("undecodable record left", func(t *testing.T) {
+		r, tm, bs := newABACTenantRoutedStorage(t)
+		require.NoError(t, r.shared.Put(context.Background(),
+			iam.KeyPrefixTenant+"acme"+iam.KeyPrefixPolicy+"bad", []byte("{not json")))
+
+		a := newQRDBABACSync(&Server{}, tm, bs)
+		a.migrateLegacyPolicies(context.Background())
+
+		legacy := list(t, bs, sysCtx, "acme")
+		require.Len(t, legacy, 1)
+		require.NotNil(t, legacy[0].LoadError)
+		assert.Equal(t, "bad", legacy[0].LoadError.Name)
+
+		got, err := a.allPolicies(context.Background())
+		require.NoError(t, err)
+		flagged := false
+		for _, p := range got {
+			if p.LoadError != nil && p.LoadError.Name == "bad" {
+				flagged = true
+			}
+		}
+		assert.True(t, flagged, "the undecodable legacy record is listed with LoadError set")
+	})
+
+	t.Run("sealed, then unsealed", func(t *testing.T) {
+		r, tm, bs := newABACTenantRoutedStorage(t)
+		seedLegacyABACPolicy(t, bs, "acme", abacTestPolicy("legacy-deny", "acme", "alice", "kv/**", iam.EffectDeny))
+		r.sealTenant("acme")
+
+		a := newQRDBABACSync(&Server{}, tm, bs)
+		a.migrateLegacyPolicies(context.Background())
+		assert.Equal(t, []string{"legacy-deny"}, abacPolicyNames(list(t, bs, sysCtx, "acme")))
+
+		delete(r.sealed, "acme")
+		hooks := &service.TenantUnsealHooks{}
+		calls := 0
+		a.resyncOnUnseal(hooks, func(context.Context) error {
+			calls++
+			assert.Equal(t, []string{"acme-allow", "legacy-deny"}, abacPolicyNames(list(t, bs, acmeCtx, "acme")))
+			assert.Empty(t, list(t, bs, sysCtx, "acme"))
+			return nil
+		})
+		fireABACTestUnseal(t, hooks)
+
+		assert.Equal(t, 1, calls)
+	})
 }
 
 func TestPolicyToABAC(t *testing.T) {

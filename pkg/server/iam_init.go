@@ -381,6 +381,8 @@ func (s *Server) initializeIAMComponents() (service.IAMComponents, error) {
 		ABACSync:       abacSync,
 		Simulator:      newQRDBPolicySimulator(),
 	})
+	// Move tenant policies an earlier release kept in the system namespace.
+	abacSync.migrateLegacyPolicies(context.Background())
 	// Initial ABAC load: post-unseal, now that the IAM policy store is
 	// readable and the qrdb node is already live (initializeIAMComponents
 	// runs after node construction, see lifecycle.go), push every
