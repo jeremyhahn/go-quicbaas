@@ -368,8 +368,8 @@ make build-worker-image DEVCACHE_GOPROXY=http://athens.example:3000 \
   DEVCACHE_NPM_REGISTRY=http://cache.example:4873
 ```
 
-The vendored `devcache-env` script still reads `DEVCACHE_GOPRIVATE` at run
-time, but no make target or build arg passes it.
+The vendored `devcache-env` script still reads a private-module setting of its
+own at run time, but no make target or build arg passes one.
 
 Unset, or with a cache unreachable, the build is exactly what it always was:
 Go's own default proxy chain, npm's own default registry. The image also
