@@ -104,6 +104,9 @@ func (s *Server) projectQRDBIdentity(next http.Handler) http.Handler {
 		// user ID or a username, which an mTLS caller and a bearer caller
 		// cannot otherwise be told apart by.
 		subject := auth.SubjectFromIdentity(identity)
+		if !s.admitTenant(w, r, subject.TenantID) {
+			return
+		}
 		next.ServeHTTP(w, r.WithContext(injectPrincipal(r.Context(), subject, nil)))
 	})
 }

@@ -1,0 +1,77 @@
+//go:build rest
+
+package rest
+
+import (
+	"context"
+	"errors"
+	"net/http"
+	"net/http/httptest"
+	"sync/atomic"
+	"testing"
+
+	"github.com/go-chi/chi/v5"
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+// TestTenantAdmission_HeldTenantIsRefused503 pins #2212: while the server's
+// unseal admission holds a tenant, a request bound to it and a request naming
+// it in its URL are both answered 503, and once the hold is released (or no
+// admission is configured) they pass through.
+func TestTenantAdmission_HeldTenantIsRefused503(t *testing.T) {
+	var held atomic.Bool
+	held.Store(true)
+	admit := func(tenantID string) error {
+		if tenantID == "acme" && held.Load() {
+			return errors.New("tenant \"acme\" is still running its unseal checks")
+		}
+		return nil
+	}
+
+	bound := func(s *Server) (int, bool) {
+		var called bool
+		h := s.projectQRDBIdentity(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			called = true
+			w.WriteHeader(http.StatusOK)
+		}))
+		req := asTenantCaller(httptest.NewRequest(http.MethodGet, "/api/v1/things", nil), "acme")
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		return rec.Code, called
+	}
+	routed := func(s *Server) (int, bool) {
+		rctx := chi.NewRouteContext()
+		rctx.URLParams.Add("tenant", "acme")
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/tenants/acme/things", nil)
+		req = asTenantCaller(req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx)), qrdbsdk.SystemTenantID)
+		rec := httptest.NewRecorder()
+		_, tenantID, ok := s.urlTenant(rec, req, "list users", "tenant")
+		if ok {
+			assert.Equal(t, "acme", tenantID)
+		}
+		return rec.Code, ok
+	}
+
+	s := &Server{config: &Config{TenantAdmission: admit}}
+
+	code, called := bound(s)
+	assert.Equal(t, http.StatusServiceUnavailable, code, "a request bound to a held tenant is refused")
+	assert.False(t, called, "a held tenant's request never reaches the handler")
+
+	code, ok := routed(s)
+	assert.Equal(t, http.StatusServiceUnavailable, code, "a URL naming a held tenant is refused")
+	assert.False(t, ok)
+
+	held.Store(false)
+	_, called = bound(s)
+	assert.True(t, called, "a released tenant's request reaches the handler")
+	_, ok = routed(s)
+	assert.True(t, ok, "a URL naming a released tenant resolves")
+
+	unrestricted := &Server{config: &Config{}}
+	held.Store(true)
+	_, called = bound(unrestricted)
+	require.True(t, called, "a nil TenantAdmission admits every tenant")
+}

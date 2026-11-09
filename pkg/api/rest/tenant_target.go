@@ -40,6 +40,23 @@ func (s *Server) urlTenant(w http.ResponseWriter, r *http.Request, op, param str
 		s.handleServiceError(w, r, err)
 		return nil, "", false
 	}
+	if !s.admitTenant(w, r, tenantID) {
+		return nil, "", false
+	}
 	*r = *r.WithContext(ctx)
 	return ctx, tenantID, true
+}
+
+// admitTenant answers 503 and returns false when Config.TenantAdmission
+// refuses tenantID: the tenant is still running its unseal checks, so no
+// request may reach its data yet. A nil TenantAdmission admits every tenant.
+func (s *Server) admitTenant(w http.ResponseWriter, r *http.Request, tenantID string) bool {
+	if s.config == nil || s.config.TenantAdmission == nil {
+		return true
+	}
+	if err := s.config.TenantAdmission(tenantID); err != nil {
+		RespondServiceUnavailable(w, r, err.Error())
+		return false
+	}
+	return true
 }
