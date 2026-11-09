@@ -16,6 +16,9 @@ const (
 	findingMCPReachable = `{"finding": {"osv": "GO-2026-6911", "trace": [
 		{"module": "github.com/mark3labs/mcp-go", "version": "v0.45.0", "package": "github.com/mark3labs/mcp-go/client/transport", "function": "NewStreamableHTTP", "position": {"filename": "client/transport/streamable_http.go", "line": 120}},
 		{"module": "github.com/jeremyhahn/go-quicbaas", "package": "github.com/jeremyhahn/go-quicbaas/pkg/server", "function": "Start", "receiver": "*Server", "position": {"filename": "pkg/server/server.go", "line": 1689}}]}}`
+	findingMCPFixed = `{"finding": {"osv": "GO-2026-6911", "fixed_version": "v0.46.0", "trace": [
+		{"module": "github.com/mark3labs/mcp-go", "version": "v0.45.0", "package": "github.com/mark3labs/mcp-go/client/transport", "function": "NewStreamableHTTP", "position": {"filename": "client/transport/streamable_http.go", "line": 120}},
+		{"module": "github.com/jeremyhahn/go-quicbaas", "package": "github.com/jeremyhahn/go-quicbaas/pkg/server", "function": "Start", "receiver": "*Server", "position": {"filename": "pkg/server/server.go", "line": 1689}}]}}`
 
 	osvOther = `{"osv": {"id": "GO-2026-0001", "summary": "Denial of service in example.com/lib"}}`
 
@@ -53,6 +56,21 @@ func TestRunListedReachableAdvisoryIsAllowed(t *testing.T) {
 	want := "vulnallow: GO-2026-6911 is allowed: mcp-go has no fixed release (go-quicbaas#2211)\n"
 	if stdout != want {
 		t.Errorf("stdout = %q, want %q", stdout, want)
+	}
+}
+
+func TestRunListedAdvisoryWithAFixedReleaseFails(t *testing.T) {
+	code, stdout, stderr := runWith(t, allowMCP, osvMCP+"\n"+findingMCPFixed)
+	if code != 1 {
+		t.Fatalf("exit = %d, want 1; stdout=%q stderr=%q", code, stdout, stderr)
+	}
+	for _, want := range []string{"GO-2026-6911", "has a fixed release (v0.46.0)", "remove the entry"} {
+		if !strings.Contains(stdout, want) {
+			t.Errorf("stdout = %q, want it to contain %q", stdout, want)
+		}
+	}
+	if strings.Contains(stdout, "is allowed") {
+		t.Errorf("stdout = %q, want no allowed line", stdout)
 	}
 }
 
