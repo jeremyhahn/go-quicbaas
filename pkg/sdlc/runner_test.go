@@ -1345,7 +1345,7 @@ func TestRunner_TheBindingsModulePolicyReachesTheWorkersGo(t *testing.T) {
 	if got := spawn.Env["GOPRIVATE"]; got != "github.com/acme/*" {
 		t.Errorf("GOPRIVATE = %q", got)
 	}
-	if got := spawn.Env["GIT_CONFIG_KEY_0"]; got != "url.ssh://git@forge.test:2222/acme/.insteadOf" {
+	if got := spawn.Env["GIT_CONFIG_KEY_0"]; got != "url.ssh://git@forge.test:2022/acme/.insteadOf" {
 		t.Errorf("GIT_CONFIG_KEY_0 = %q", got)
 	}
 	if got := spawn.Env["GIT_CONFIG_VALUE_0"]; got != "https://github.com/acme/" {
@@ -3551,7 +3551,7 @@ func TestRunner_AFailedVerificationSendsTheContainersOutputBackAsARound(t *testi
 // sshForgeRepoURL is the shape the Software Factory actually clones: an ssh
 // remote on a non-default port. The host is a reserved test name, not any
 // deployment's address.
-const sshForgeRepoURL = "ssh://git@forge.test:2222/acme/api.git"
+const sshForgeRepoURL = "ssh://git@forge.test:2022/acme/api.git"
 
 // TestRunner_SSHCheckoutPinsTheForgeHostKey proves the whole ssh path of one
 // attempt: the key the operator pinned on the binding becomes a known_hosts

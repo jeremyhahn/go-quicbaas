@@ -173,39 +173,36 @@ func (s *KMSServer) ImportKey(ctx context.Context, req *pb.ImportKeyRequest) (*p
 		return nil, status.Error(codes.InvalidArgument, "key_spec is required")
 	}
 
-	// Use user-provided name as key ID
-	keyID := req.Name
+	// The service layer scopes the key name to the caller's tenant. The
+	// manager takes the name verbatim, so it is never called from here.
+	if s.kmsSvc == nil {
+		return nil, status.Error(codes.FailedPrecondition, ErrKMSServiceRequired.Error())
+	}
 
-	// Get algorithm string from proto
-	algorithm := protoKeyAlgorithmToString(req.KeySpec.Algorithm)
+	attrs, err := protoToKeyAttributes(req.Name, &pb.GenerateKeyRequest{KeySpec: req.KeySpec})
+	if err != nil {
+		return nil, status.Error(codes.InvalidArgument, err.Error())
+	}
 
-	// Call KMS manager to import key
-	result, err := s.kmsMgr.ImportKey(ctx, keyID, req.KeyMaterial, algorithm)
+	svcResp, err := s.kmsSvc.ImportKey(ctx, &service.ImportKeyRequest{
+		KeyMaterial:        req.KeyMaterial,
+		WrappingKeyID:      req.WrappingKeyId,
+		KeyAttributes:      attrs,
+		Name:               req.Name,
+		Description:        req.Description,
+		Usage:              convertProtoKeyUsageList(req.KeySpec.Usage),
+		DeletionProtection: req.KeySpec.DeletionProtection,
+		Tags:               req.Tags,
+	})
 	if err != nil {
 		return nil, convertKMSError(err)
 	}
 
-	// Type assert to *kms.KeyMetadata
-	metadata, ok := result.(*kms.KeyMetadata)
-	if !ok {
-		return nil, status.Error(codes.Internal, "unexpected response type from KMS manager")
-	}
-
-	// Update metadata with application-level fields and persist
-	metadata.Name = req.Name
-	metadata.Description = req.Description
-	metadata.Tags = req.Tags
-	if err := s.kmsMgr.UpdateStoredMetadata(metadata); err != nil {
-		s.logger.WithError(err).Warn("Failed to persist key metadata")
-	}
-
-	now := time.Now()
-
 	var n responseNarrower
 	resp := &pb.ImportKeyResponse{
-		Key:       convertKMSKeyHandle(&n, keyID, metadata, req.KeySpec),
-		Metadata:  convertKMSKeyMetadataFull(&n, metadata),
-		Timestamp: now.Unix(),
+		Key:       convertKeyHandle(&n, svcResp.Key),
+		Metadata:  convertKeyMetadata(&n, svcResp.Metadata),
+		Timestamp: svcResp.Timestamp.Unix(),
 	}
 	if err := n.err(); err != nil {
 		return nil, err
