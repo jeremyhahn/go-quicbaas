@@ -798,6 +798,23 @@ func TestLegacyCleanupPolicyStorage_UpdateMovesALegacyRecord(t *testing.T) {
 	assert.True(t, dberrors.Is(err, dberrors.ErrNotFound), "legacy copy: err = %v", err)
 }
 
+func TestLegacyCleanupPolicyStorage_UpdateResolvesAConflict(t *testing.T) {
+	_, tm, bs := newABACTenantRoutedStorage(t)
+	acmeCtx := tenantctx.WithTenant(context.Background(), "acme")
+	seedLegacyABACPolicy(t, bs, "acme", abacTestPolicy("dup", "acme", "alice", "kv/**", iam.EffectDeny))
+	require.NoError(t, bs.CreatePolicy(acmeCtx, "acme", abacTestPolicy("dup", "acme", "alice", "kv/**", iam.EffectAllow)))
+
+	require.NoError(t, newLegacyCleanupPolicyStorage(bs).UpdatePolicy(acmeCtx, "acme",
+		abacTestPolicy("dup", "acme", "alice", "kv/**", iam.EffectAllow)))
+
+	_, err := bs.GetPolicy(tenantctx.WithSystem(context.Background()), "acme", "dup")
+	assert.True(t, dberrors.Is(err, dberrors.ErrNotFound), "legacy copy: err = %v", err)
+	got, err := newQRDBABACSync(&Server{}, tm, bs).allPolicies(context.Background())
+	require.NoError(t, err)
+	assert.Nil(t, abacPolicyEntry(t, got, "dup").LoadError)
+	assert.Equal(t, iam.EffectAllow, abacPolicyEffect(t, got, "dup"))
+}
+
 func TestLegacyCleanupPolicyStorage_ListPaginatesTheMergedSet(t *testing.T) {
 	_, _, bs := newABACTenantRoutedStorage(t)
 	acmeCtx := tenantctx.WithTenant(context.Background(), "acme")

@@ -424,9 +424,16 @@ func paginatePolicies(policies []*iam.Policy, opts iam.ListOptions) []*iam.Polic
 
 // UpdatePolicy replaces a tenant policy. A policy held only as a legacy
 // system-namespace record, flagged or not, is written to the tenant namespace
-// and its legacy copy deleted.
+// and its legacy copy deleted. A successful tenant update deletes any legacy
+// copy too, resolving a conflict between the two.
 func (s *legacyCleanupPolicyStorage) UpdatePolicy(ctx context.Context, tenantID string, policy *iam.Policy) error {
 	err := s.PolicyStorage.UpdatePolicy(ctx, tenantID, policy)
+	if err == nil && tenantID != qrdbsdk.SystemTenantID {
+		if err := s.PolicyStorage.DeletePolicy(tenantctx.WithSystem(ctx), tenantID, policy.Metadata.Name); err != nil && !dberrors.Is(err, dberrors.ErrNotFound) {
+			return err
+		}
+		return nil
+	}
 	if tenantID == qrdbsdk.SystemTenantID || err == nil || !dberrors.Is(err, dberrors.ErrNotFound) {
 		return err
 	}
