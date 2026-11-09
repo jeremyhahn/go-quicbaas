@@ -377,34 +377,65 @@ func TestQRDBABACSync_resyncOnUnseal(t *testing.T) {
 
 // resealingTenantClient unseals every tenant and records the tenant whose
 // barrier is sealed again.
-type resealingTenantClient struct {
+type sealRecordingTenantClient struct {
 	unsealingTenantClient
 	sealed []string
 }
 
-func (c *resealingTenantClient) TenantBarrierSeal(_ context.Context, req *qrdbtransport.TenantBarrierSealRequest) error {
+// TenantBarrierSeal records the seal and refuses it as a Shamir barrier does
+// without a quorum.
+func (c *sealRecordingTenantClient) TenantBarrierSeal(_ context.Context, req *qrdbtransport.TenantBarrierSealRequest) error {
 	c.sealed = append(c.sealed, req.TenantID)
-	return nil
+	return errors.New("shamir barrier requires quorum")
 }
 
-func TestQRDBABACSync_resyncOnUnseal_FailedReloadSealsAgain(t *testing.T) {
-	_, tm, bs := newABACTenantRoutedStorage(t)
-	hooks := &service.TenantUnsealHooks{}
-
+// TestQRDBABACSync_resyncOnUnseal_TenantStaysClosedUntilReload drives an
+// unseal whose ABAC reload blocks: while it is blocked the tenant's routed
+// stores refuse it as sealed, and they open only when the reload succeeds. A
+// failed reload keeps the tenant closed and never seals the barrier.
+func TestQRDBABACSync_resyncOnUnseal_TenantStaysClosedUntilReload(t *testing.T) {
 	reloadErr := errors.New("catalog read failed")
-	newQRDBABACSync(&Server{}, tm, bs).resyncOnUnseal(hooks, func(ctx context.Context, prepare func(context.Context)) error {
-		if prepare != nil {
-			prepare(ctx)
-		}
-		return reloadErr
-	})
-	client := &resealingTenantClient{}
-	barrier := service.NewTenantBarrierService(client, service.WithTenantUnsealHooks(hooks))
+	for name, result := range map[string]error{"reload succeeds": nil, "reload fails": reloadErr} {
+		t.Run(name, func(t *testing.T) {
+			_, tm, bs := newABACTenantRoutedStorage(t)
+			s := &Server{}
+			entered := make(chan struct{}, 1)
+			proceed := make(chan error)
+			newQRDBABACSync(s, tm, bs).resyncOnUnseal(&s.tenantUnsealHooks, func(ctx context.Context, prepare func(context.Context)) error {
+				if prepare != nil {
+					prepare(ctx)
+				}
+				entered <- struct{}{}
+				return <-proceed
+			})
+			client := &sealRecordingTenantClient{}
+			barrier := service.NewTenantBarrierService(client, service.WithTenantUnsealHooks(&s.tenantUnsealHooks))
+			resolver := s.admittedStoreResolver(fakeQRDBResolver{store: fakeQRDBStore{}})
 
-	err := barrier.TenantBarrierUnseal(tenantAdminCtx("acme"), "acme", []byte("key"))
-	require.Error(t, err)
-	assert.ErrorIs(t, err, reloadErr)
-	assert.Equal(t, []string{"acme"}, client.sealed)
+			done := make(chan error, 1)
+			go func() { done <- barrier.TenantBarrierUnseal(tenantAdminCtx("acme"), "acme", []byte("key")) }()
+			select {
+			case <-entered:
+			case <-time.After(10 * time.Second):
+				t.Fatal("the unseal never reached its ABAC reload")
+			}
+			_, err := resolver.Resolve(context.Background(), "acme")
+			require.ErrorIs(t, err, qrdbsdk.ErrTenantStoreSealed, "a tenant must stay closed while its reload runs")
+
+			proceed <- result
+			err = <-done
+			_, resolveErr := resolver.Resolve(context.Background(), "acme")
+			if result == nil {
+				require.NoError(t, err)
+				require.NoError(t, resolveErr)
+			} else {
+				require.ErrorIs(t, err, reloadErr)
+				assert.Contains(t, err.Error(), "stays closed")
+				assert.ErrorIs(t, resolveErr, qrdbsdk.ErrTenantStoreSealed)
+			}
+			assert.Empty(t, client.sealed, "nothing may seal the barrier as a rollback")
+		})
+	}
 }
 
 // seedLegacyABACPolicy stores p for tenantID the way an earlier release wrote

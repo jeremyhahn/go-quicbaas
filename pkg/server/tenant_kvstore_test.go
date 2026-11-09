@@ -18,6 +18,7 @@ package server
 import (
 	"context"
 	"errors"
+	"sync/atomic"
 	"testing"
 
 	qrdbkvstore "github.com/jeremyhahn/go-qrdb/pkg/kvstore"
@@ -28,6 +29,7 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 	"github.com/jeremyhahn/go-quicbaas/pkg/kvstore"
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
+	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
@@ -444,6 +446,58 @@ func TestResolverAdapter_ResolveError(t *testing.T) {
 	}
 	if store != nil {
 		t.Fatalf("Resolve returned non-nil store on error: %v", store)
+	}
+}
+
+// countingQRDBResolver resolves every tenant to an empty store and counts
+// the resolves.
+type countingQRDBResolver struct {
+	calls atomic.Int32
+}
+
+func (r *countingQRDBResolver) Resolve(context.Context, string) (qrdbkvstore.KVStore, error) {
+	r.calls.Add(1)
+	return fakeQRDBStore{}, nil
+}
+
+// TestAdmittedStoreResolver_HeldTenantStaysClosed pins the store barrier: a
+// tenant whose unseal gate refused it resolves to ErrTenantStoreSealed
+// without reaching the inner resolver, and resolves once a later unseal's
+// gates pass.
+func TestAdmittedStoreResolver_HeldTenantStaysClosed(t *testing.T) {
+	s := &Server{}
+	gateErr := errors.New("policy reload failed")
+	var gateFails atomic.Bool
+	gateFails.Store(true)
+	s.tenantUnsealHooks.RegisterGate(service.TenantUnsealGateFunc(func(context.Context, string) error {
+		if gateFails.Load() {
+			return gateErr
+		}
+		return nil
+	}))
+	barrier := service.NewTenantBarrierService(unsealingTenantClient{}, service.WithTenantUnsealHooks(&s.tenantUnsealHooks))
+	inner := &countingQRDBResolver{}
+	resolver := s.admittedStoreResolver(inner)
+
+	if err := barrier.TenantBarrierUnseal(tenantAdminCtx("acme"), "acme", []byte("key")); !errors.Is(err, gateErr) {
+		t.Fatalf("the gate's failure must fail the unseal, got %v", err)
+	}
+	if _, err := resolver.Resolve(context.Background(), "acme"); !errors.Is(err, qrdbsdk.ErrTenantStoreSealed) {
+		t.Fatalf("a held tenant must resolve as sealed, got %v", err)
+	}
+	if n := inner.calls.Load(); n != 0 {
+		t.Fatalf("a held tenant reached the inner resolver %d times", n)
+	}
+	if _, err := resolver.Resolve(context.Background(), "beta"); err != nil {
+		t.Fatalf("the hold covers only its own tenant, got %v", err)
+	}
+
+	gateFails.Store(false)
+	if err := barrier.TenantBarrierUnseal(tenantAdminCtx("acme"), "acme", []byte("key")); err != nil {
+		t.Fatalf("an unseal whose gates pass must open the tenant, got %v", err)
+	}
+	if _, err := resolver.Resolve(context.Background(), "acme"); err != nil {
+		t.Fatalf("a released tenant must resolve, got %v", err)
 	}
 }
 
