@@ -15,7 +15,11 @@ package service
 
 import (
 	"context"
+	"fmt"
+	"sync"
 	"sync/atomic"
+
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 )
 
 // =============================================================================
@@ -28,14 +32,17 @@ import (
 // moment the barrier opens instead: every per-tenant barrier facade tells the
 // registered observers after an unseal succeeds, before the unseal call
 // returns, so the tenant's first request after the unseal already reads
-// migrated records. Gates run before the observers and can refuse the unseal:
-// a refused tenant's barrier is sealed again and the unseal call fails.
+// migrated records. Gates run before the observers and can refuse the unseal.
+// From the moment an unseal is asked for until its gates pass, the tenant is
+// held: Admit refuses it, and the request and store paths that call Admit keep
+// it closed. A refused tenant stays held, and the unseal call fails, until a
+// later unseal runs its gates again and they pass.
 
 // TenantUnsealGate decides whether a tenant whose barrier has just opened may
 // serve requests. A gate runs after the barrier opens and before any
-// observer; if it fails, the facade seals the barrier again and the unseal
-// returns the error, so a tenant never serves requests in a state the gate
-// refused.
+// observer; if it fails, the tenant stays held (closed to every request and
+// routed store) and the unseal returns the error, so a tenant never serves
+// requests in a state the gate refused.
 type TenantUnsealGate interface {
 	AdmitUnsealedTenant(ctx context.Context, tenantID string) error
 }
@@ -57,10 +64,59 @@ type TenantUnsealObserver interface {
 
 // TenantUnsealHooks is the set of observers the per-tenant barrier facades
 // tell. The zero value holds none and is ready to use; observers may be
-// registered after a facade was built with the hooks.
+// registered after a facade was built with the hooks. The hooks also hold the
+// tenants whose unseal has not yet passed its gates; see Admit.
 type TenantUnsealHooks struct {
 	observers atomic.Pointer[[]TenantUnsealObserver]
 	gates     atomic.Pointer[[]TenantUnsealGate]
+
+	mu   sync.Mutex
+	held map[string]struct{}
+}
+
+// Admit reports whether tenantID may serve requests: it returns nil unless
+// the tenant is held because its unseal has not yet passed its gates, and an
+// error wrapping qrdbsdk.ErrTenantStoreSealed if it is. A nil receiver and an
+// empty tenantID admit.
+func (h *TenantUnsealHooks) Admit(tenantID string) error {
+	if h == nil || tenantID == "" {
+		return nil
+	}
+	h.mu.Lock()
+	_, held := h.held[tenantID]
+	h.mu.Unlock()
+	if held {
+		return fmt.Errorf("%w: tenant %q is still running its unseal checks", qrdbsdk.ErrTenantStoreSealed, tenantID)
+	}
+	return nil
+}
+
+// hold closes tenantID to Admit and reports whether it was already held. A
+// nil receiver holds nothing.
+func (h *TenantUnsealHooks) hold(tenantID string) (wasHeld bool) {
+	if h == nil {
+		return false
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if _, wasHeld = h.held[tenantID]; wasHeld {
+		return true
+	}
+	if h.held == nil {
+		h.held = make(map[string]struct{})
+	}
+	h.held[tenantID] = struct{}{}
+	return false
+}
+
+// release opens tenantID to Admit again.
+func (h *TenantUnsealHooks) release(tenantID string) {
+	if h == nil {
+		return
+	}
+	h.mu.Lock()
+	delete(h.held, tenantID)
+	h.mu.Unlock()
 }
 
 // RegisterGate adds a gate. A nil gate is ignored.

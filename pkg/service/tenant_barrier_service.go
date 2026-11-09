@@ -15,7 +15,6 @@ package service
 
 import (
 	"context"
-	stderrors "errors"
 	"fmt"
 
 	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
@@ -198,59 +197,91 @@ func (s *tenantBarrierService) TenantBarrierInit(ctx context.Context, tenantID s
 	})
 }
 
-// TenantBarrierUnseal delegates a single-key unseal to qrdb.
+// TenantBarrierUnseal delegates a single-key unseal to qrdb. The tenant is
+// held closed to requests before qrdb opens its barrier, and stays held until
+// its unseal gates pass.
 func (s *tenantBarrierService) TenantBarrierUnseal(ctx context.Context, tenantID string, key []byte) error {
 	if err := enforceTenantBinding(ctx, "tenant_barrier.unseal", tenantID); err != nil {
 		return err
 	}
+	wasHeld := s.unsealed.hold(tenantID)
 	if err := s.qrdb.TenantBarrierUnseal(ctx, &qrdbtransport.TenantBarrierUnsealRequest{
 		TenantID: tenantID,
 		Key:      key,
 	}); err != nil {
-		return err
+		return s.unsealFailed(ctx, tenantID, wasHeld, err)
 	}
 	return s.admitUnsealed(ctx, tenantID)
 }
 
-// admitUnsealed runs the unseal gates for a tenant whose barrier has just
-// opened. If one fails, the barrier is sealed again and the error returned;
-// otherwise the observers are told.
+// unsealFailed handles a qrdb unseal error for a tenant this unseal held. A
+// tenant that was already held and whose barrier is open failed an earlier
+// admission: its gates run again, so a retry can open it. Otherwise a hold
+// this unseal took is released and qrdb's error returned.
+func (s *tenantBarrierService) unsealFailed(ctx context.Context, tenantID string, wasHeld bool, err error) error {
+	if wasHeld {
+		status, statusErr := s.qrdb.TenantBarrierStatus(ctx, &qrdbtransport.TenantBarrierStatusRequest{TenantID: tenantID})
+		if statusErr == nil && status != nil && !status.Sealed {
+			return s.admitUnsealed(ctx, tenantID)
+		}
+		return err
+	}
+	s.unsealed.release(tenantID)
+	return err
+}
+
+// admitUnsealed runs the unseal gates for a held tenant whose barrier has
+// opened. If one fails, the tenant stays held, closed to every request and
+// routed store, and the error is returned; the barrier is not sealed again.
+// Otherwise the hold is released and the observers are told.
 func (s *tenantBarrierService) admitUnsealed(ctx context.Context, tenantID string) error {
 	if err := s.unsealed.admit(ctx, tenantID); err != nil {
-		sealErr := s.qrdb.TenantBarrierSeal(context.WithoutCancel(ctx), &qrdbtransport.TenantBarrierSealRequest{TenantID: tenantID})
-		return fmt.Errorf("tenant %q was sealed again: its unseal checks failed: %w", tenantID, stderrors.Join(err, sealErr))
+		return fmt.Errorf("tenant %q stays closed until its unseal checks pass: %w", tenantID, err)
 	}
+	s.unsealed.release(tenantID)
 	s.unsealed.notify(ctx, tenantID)
 	return nil
 }
 
 // TenantBarrierUnsealShare delegates a single Shamir share to qrdb and returns
-// the quorum progress.
+// the quorum progress. Like TenantBarrierUnseal, it holds the tenant closed
+// from before the share reaches qrdb until the gates of a completed quorum
+// pass.
 func (s *tenantBarrierService) TenantBarrierUnsealShare(ctx context.Context, tenantID, share string) (*qrdbtransport.TenantBarrierUnsealProgress, error) {
 	if err := enforceTenantBinding(ctx, "tenant_barrier.unseal_share", tenantID); err != nil {
 		return nil, err
 	}
+	wasHeld := s.unsealed.hold(tenantID)
 	progress, err := s.qrdb.TenantBarrierUnsealShare(ctx, &qrdbtransport.TenantBarrierUnsealShareRequest{
 		TenantID: tenantID,
 		Share:    share,
 	})
 	if err != nil {
-		return nil, err
+		return nil, s.unsealFailed(ctx, tenantID, wasHeld, err)
 	}
-	if progress != nil && progress.Complete {
-		if err := s.admitUnsealed(ctx, tenantID); err != nil {
-			return nil, err
+	if progress == nil || !progress.Complete {
+		if !wasHeld {
+			s.unsealed.release(tenantID)
 		}
+		return progress, nil
+	}
+	if err := s.admitUnsealed(ctx, tenantID); err != nil {
+		return nil, err
 	}
 	return progress, nil
 }
 
-// TenantBarrierSeal delegates a seal to qrdb.
+// TenantBarrierSeal delegates a seal to qrdb. A sealed tenant is closed by
+// its barrier, so a successful seal releases any unseal hold on it.
 func (s *tenantBarrierService) TenantBarrierSeal(ctx context.Context, tenantID string) error {
 	if err := enforceTenantBinding(ctx, "tenant_barrier.seal", tenantID); err != nil {
 		return err
 	}
-	return s.qrdb.TenantBarrierSeal(ctx, &qrdbtransport.TenantBarrierSealRequest{TenantID: tenantID})
+	if err := s.qrdb.TenantBarrierSeal(ctx, &qrdbtransport.TenantBarrierSealRequest{TenantID: tenantID}); err != nil {
+		return err
+	}
+	s.unsealed.release(tenantID)
+	return nil
 }
 
 // TenantBarrierStatus delegates a status query to qrdb. Status is the

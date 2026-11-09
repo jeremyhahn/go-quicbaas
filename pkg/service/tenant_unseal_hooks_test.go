@@ -20,6 +20,7 @@ import (
 	"sync"
 	"testing"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 )
 
@@ -125,7 +126,7 @@ func TestTenantUnsealHooks_RegisterIsSafeConcurrently(t *testing.T) {
 	}
 }
 
-func TestTenantUnsealHooks_AFailedGateSealsTheBarrierAgain(t *testing.T) {
+func TestTenantUnsealHooks_AFailedGateKeepsTheTenantClosed(t *testing.T) {
 	gateErr := errors.New("policy reload failed")
 	hooks := &TenantUnsealHooks{}
 	hooks.RegisterGate(TenantUnsealGateFunc(func(context.Context, string) error { return gateErr }))
@@ -138,27 +139,11 @@ func TestTenantUnsealHooks_AFailedGateSealsTheBarrierAgain(t *testing.T) {
 	if !errors.Is(err, gateErr) {
 		t.Fatalf("the gate's failure must fail the unseal, got %v", err)
 	}
-	if client.sealReq == nil || client.sealReq.TenantID != "acme" {
-		t.Fatalf("the barrier must be sealed again, got %+v", client.sealReq)
+	if client.sealReq != nil {
+		t.Fatalf("a refused tenant is kept closed, not sealed again, got %+v", client.sealReq)
 	}
-
-	shareClient := &mockTenantClient{shareResp: &qrdbtransport.TenantBarrierUnsealProgress{
-		TenantID: "acme", Required: 2, Submitted: 2, Complete: true,
-	}}
-	progress, err := NewTenantBarrierService(shareClient, WithTenantUnsealHooks(hooks)).
-		TenantBarrierUnsealShare(tenantCtx("acme"), "acme", "share-2")
-	if progress != nil || !errors.Is(err, gateErr) {
-		t.Fatalf("the quorum's last share must fail with the gate, got %+v, %v", progress, err)
-	}
-	if shareClient.sealReq == nil {
-		t.Fatal("the barrier opened by the quorum must be sealed again")
-	}
-
-	sealErr := errors.New("seal failed")
-	err = NewTenantBarrierService(&mockTenantClient{sealErr: sealErr}, WithTenantUnsealHooks(hooks)).
-		TenantBarrierUnseal(tenantCtx("acme"), "acme", []byte("key"))
-	if !errors.Is(err, gateErr) || !errors.Is(err, sealErr) {
-		t.Fatalf("both the gate's and the reseal's failure must surface, got %v", err)
+	if err := hooks.Admit("acme"); !errors.Is(err, qrdbsdk.ErrTenantStoreSealed) {
+		t.Fatalf("a refused tenant must stay closed, got %v", err)
 	}
 	if len(observer.tenants) != 0 {
 		t.Fatalf("observer told %v for a tenant the gate refused", observer.tenants)
@@ -172,10 +157,64 @@ func TestTenantUnsealHooks_AFailedGateSealsTheBarrierAgain(t *testing.T) {
 		TenantBarrierUnseal(tenantCtx("acme"), "acme", []byte("key")); err != nil {
 		t.Fatal(err)
 	}
-	if client.sealReq != nil {
-		t.Fatalf("an admitted tenant must stay unsealed, got %+v", client.sealReq)
+	if err := admitting.Admit("acme"); err != nil {
+		t.Fatalf("an admitted tenant must be open, got %v", err)
 	}
 	if !slices.Equal(observer.tenants, []string{"acme"}) {
 		t.Fatalf("an admitted unseal must tell the observers, got %v", observer.tenants)
+	}
+}
+
+func TestTenantUnsealHooks_HoldAndAdmit(t *testing.T) {
+	var nilHooks *TenantUnsealHooks
+	if nilHooks.hold("acme") || nilHooks.Admit("acme") != nil {
+		t.Fatal("nil hooks hold nothing and admit every tenant")
+	}
+	nilHooks.release("acme")
+
+	hooks := &TenantUnsealHooks{}
+	if err := hooks.Admit("acme"); err != nil {
+		t.Fatalf("an unheld tenant is admitted, got %v", err)
+	}
+	if hooks.hold("acme") {
+		t.Fatal("the first hold reports the tenant was not held")
+	}
+	if !hooks.hold("acme") {
+		t.Fatal("a second hold reports the tenant was held")
+	}
+	err := hooks.Admit("acme")
+	if !errors.Is(err, qrdbsdk.ErrTenantStoreSealed) {
+		t.Fatalf("a held tenant is refused as sealed, got %v", err)
+	}
+	if hooks.Admit("other") != nil || hooks.Admit("") != nil {
+		t.Fatal("the hold covers only its own tenant")
+	}
+	hooks.release("acme")
+	if err := hooks.Admit("acme"); err != nil {
+		t.Fatalf("a released tenant is admitted, got %v", err)
+	}
+}
+
+func TestTenantUnsealHooks_HoldIsSafeConcurrently(t *testing.T) {
+	hooks := &TenantUnsealHooks{}
+	var wg sync.WaitGroup
+	for i := 0; i < 16; i++ {
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			hooks.hold("acme")
+			hooks.release("acme")
+		}()
+		go func() {
+			defer wg.Done()
+			err := hooks.Admit("acme")
+			if err != nil && !errors.Is(err, qrdbsdk.ErrTenantStoreSealed) {
+				t.Errorf("Admit: %v", err)
+			}
+		}()
+	}
+	wg.Wait()
+	if err := hooks.Admit("acme"); err != nil {
+		t.Fatalf("every hold was released, got %v", err)
 	}
 }

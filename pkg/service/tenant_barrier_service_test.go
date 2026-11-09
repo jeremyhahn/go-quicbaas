@@ -16,6 +16,9 @@ package service
 import (
 	"context"
 	"errors"
+	"fmt"
+	"strings"
+	"sync/atomic"
 	"testing"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
@@ -284,6 +287,103 @@ func TestTenantBarrierService_Seal_Delegates(t *testing.T) {
 	}
 	if mock.sealReq == nil || mock.sealReq.TenantID != "acme" {
 		t.Fatalf("unexpected seal request: %+v", mock.sealReq)
+	}
+}
+
+// TestTenantBarrierService_FailedGateStaysClosedWithoutSeal pins that a
+// failed unseal gate never rolls back with TenantBarrierSeal, which a Shamir
+// barrier refuses without a quorum: the tenant stays held instead, on both
+// the key path and the final-share path, and a retry whose gates pass opens
+// it even though qrdb reports the barrier already unsealed.
+func TestTenantBarrierService_FailedGateStaysClosedWithoutSeal(t *testing.T) {
+	errShamirQuorum := errors.New("shamir barrier requires quorum")
+	gateErr := errors.New("policy reload failed")
+	for _, path := range []string{"key", "share"} {
+		t.Run(path, func(t *testing.T) {
+			var gateFails atomic.Bool
+			gateFails.Store(true)
+			hooks := &TenantUnsealHooks{}
+			hooks.RegisterGate(TenantUnsealGateFunc(func(context.Context, string) error {
+				if gateFails.Load() {
+					return gateErr
+				}
+				return nil
+			}))
+			client := &mockTenantClient{
+				sealErr: fmt.Errorf("tenant seal: %w", errShamirQuorum),
+				shareResp: &qrdbtransport.TenantBarrierUnsealProgress{
+					TenantID: "acme", Required: 2, Submitted: 2, Complete: true,
+				},
+			}
+			svc := NewTenantBarrierService(client, WithTenantUnsealHooks(hooks))
+			unseal := func() error {
+				if path == "key" {
+					return svc.TenantBarrierUnseal(tenantCtx("acme"), "acme", []byte("key"))
+				}
+				_, err := svc.TenantBarrierUnsealShare(tenantCtx("acme"), "acme", "share-2")
+				return err
+			}
+
+			err := unseal()
+			if !errors.Is(err, gateErr) || !strings.Contains(err.Error(), "stays closed") {
+				t.Fatalf("the gate's failure must keep the tenant closed, got %v", err)
+			}
+			if client.sealReq != nil {
+				t.Fatalf("a failed gate must never seal the barrier, got %+v", client.sealReq)
+			}
+			if err := hooks.Admit("acme"); !errors.Is(err, qrdbsdk.ErrTenantStoreSealed) {
+				t.Fatalf("a refused tenant must stay closed, got %v", err)
+			}
+
+			// Retry: qrdb refuses the already-open barrier, its status shows
+			// it unsealed, so the gates run again and now pass.
+			gateFails.Store(false)
+			client.unsealErr = errors.New("barrier already unsealed")
+			client.shareErr = client.unsealErr
+			client.statusResp = &qrdbtransport.TenantBarrierStatusResponse{TenantID: "acme", Sealed: false}
+			if err := unseal(); err != nil {
+				t.Fatalf("a retry whose gates pass must open the tenant, got %v", err)
+			}
+			if err := hooks.Admit("acme"); err != nil {
+				t.Fatalf("an admitted tenant must be open, got %v", err)
+			}
+			if client.sealReq != nil {
+				t.Fatalf("seal was called: %+v", client.sealReq)
+			}
+		})
+	}
+}
+
+// TestTenantBarrierService_HoldLifecycle pins when a hold taken by an unseal
+// is released: a qrdb error and an incomplete quorum release it, and a
+// successful seal releases a hold a failed gate kept.
+func TestTenantBarrierService_HoldLifecycle(t *testing.T) {
+	hooks := &TenantUnsealHooks{}
+	svc := NewTenantBarrierService(&mockTenantClient{unsealErr: errors.New("wrong key")}, WithTenantUnsealHooks(hooks))
+	if err := svc.TenantBarrierUnseal(tenantCtx("acme"), "acme", []byte("k")); err == nil {
+		t.Fatal("qrdb's error must surface")
+	}
+	if err := hooks.Admit("acme"); err != nil {
+		t.Fatalf("a failed qrdb unseal must release its hold, got %v", err)
+	}
+
+	svc = NewTenantBarrierService(&mockTenantClient{shareResp: &qrdbtransport.TenantBarrierUnsealProgress{
+		TenantID: "acme", Required: 2, Submitted: 1,
+	}}, WithTenantUnsealHooks(hooks))
+	if _, err := svc.TenantBarrierUnsealShare(tenantCtx("acme"), "acme", "share-1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := hooks.Admit("acme"); err != nil {
+		t.Fatalf("an incomplete quorum must release its hold, got %v", err)
+	}
+
+	hooks.hold("acme")
+	if err := NewTenantBarrierService(&mockTenantClient{}, WithTenantUnsealHooks(hooks)).
+		TenantBarrierSeal(tenantCtx("acme"), "acme"); err != nil {
+		t.Fatal(err)
+	}
+	if err := hooks.Admit("acme"); err != nil {
+		t.Fatalf("a sealed tenant is no longer held, got %v", err)
 	}
 }
 
