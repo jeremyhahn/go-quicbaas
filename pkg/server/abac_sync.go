@@ -278,11 +278,14 @@ func (a *qrdbABACSync) warnf(format string, args ...interface{}) {
 
 // resyncOnUnseal migrates the unsealed tenant's legacy policies and reloads
 // the live ABAC set each time a tenant barrier is unsealed: allPolicies
-// skips a sealed tenant, so its policies take effect only then.
-func (a *qrdbABACSync) resyncOnUnseal(hooks *service.TenantUnsealHooks, sync func(context.Context) error) {
+// skips a sealed tenant, so its policies take effect only then. resync runs
+// the migration and the reload under the policy engine's write lock, so
+// neither interleaves with a policy mutation or another reload.
+func (a *qrdbABACSync) resyncOnUnseal(hooks *service.TenantUnsealHooks, resync func(context.Context, func(context.Context)) error) {
 	hooks.Register(tenantUnsealFunc(func(ctx context.Context, tenantID string) {
-		a.migrateTenantLegacyPolicies(ctx, tenantID)
-		if err := sync(ctx); err != nil {
+		if err := resync(ctx, func(ctx context.Context) {
+			a.migrateTenantLegacyPolicies(ctx, tenantID)
+		}); err != nil {
 			a.warnf("abac sync after unsealing tenant %q failed: %v", tenantID, err)
 		}
 	}))

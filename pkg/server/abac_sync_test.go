@@ -361,7 +361,10 @@ func TestQRDBABACSync_resyncOnUnseal(t *testing.T) {
 
 	calls := 0
 	var syncCtx context.Context
-	newQRDBABACSync(&Server{}, tm, bs).resyncOnUnseal(hooks, func(ctx context.Context) error {
+	newQRDBABACSync(&Server{}, tm, bs).resyncOnUnseal(hooks, func(ctx context.Context, prepare func(context.Context)) error {
+		if prepare != nil {
+			prepare(ctx)
+		}
 		calls++
 		syncCtx = ctx
 		return nil
@@ -493,7 +496,10 @@ func TestQRDBABACSync_migrateLegacyPolicies(t *testing.T) {
 		delete(r.sealed, "acme")
 		hooks := &service.TenantUnsealHooks{}
 		calls := 0
-		a.resyncOnUnseal(hooks, func(context.Context) error {
+		a.resyncOnUnseal(hooks, func(ctx context.Context, prepare func(context.Context)) error {
+			if prepare != nil {
+				prepare(ctx)
+			}
 			calls++
 			assert.Equal(t, []string{"acme-allow", "legacy-deny"}, abacPolicyNames(list(t, bs, acmeCtx, "acme")))
 			assert.Empty(t, list(t, bs, sysCtx, "acme"))

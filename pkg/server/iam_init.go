@@ -382,17 +382,16 @@ func (s *Server) initializeIAMComponents() (service.IAMComponents, error) {
 		Simulator:      newQRDBPolicySimulator(),
 	})
 	// Move tenant policies an earlier release kept in the system namespace.
-	abacSync.migrateLegacyPolicies(context.Background())
 	// Initial ABAC load: post-unseal, now that the IAM policy store is
 	// readable and the qrdb node is already live (initializeIAMComponents
 	// runs after node construction, see lifecycle.go), push every
 	// previously stored policy into the node's live ABAC decorator before
 	// the first request is evaluated.
-	if syncErr := policyEngine.SyncABAC(context.Background()); syncErr != nil {
+	if syncErr := policyEngine.SyncABACAfter(context.Background(), abacSync.migrateLegacyPolicies); syncErr != nil {
 		s.logger.WithError(syncErr).Warn("Initial ABAC policy sync failed; live enforcement may not reflect previously stored policies")
 	}
 	// A sealed tenant's policies are skipped above; reload them on its unseal.
-	abacSync.resyncOnUnseal(&s.tenantUnsealHooks, policyEngine.SyncABAC)
+	abacSync.resyncOnUnseal(&s.tenantUnsealHooks, policyEngine.SyncABACAfter)
 
 	// Create app manager
 	// The grantor gate on application updates reads the caller's qrdb
