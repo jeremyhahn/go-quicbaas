@@ -1471,6 +1471,20 @@ func (s *BackendStorage) GetPolicy(ctx context.Context, tenantID, name string) (
 	return policy, nil
 }
 
+// GetPolicyRecord reads a policy's stored bytes as they are, undecodable ones included, for write snapshots.
+func (s *BackendStorage) GetPolicyRecord(ctx context.Context, tenantID, name string) ([]byte, error) {
+	data, err := s.get(ctx, policyKey(tenantID, name))
+	if err != nil {
+		return nil, err
+	}
+	return append([]byte(nil), data...), nil
+}
+
+// PutPolicyRecord writes a policy's stored bytes as they are, undecodable ones included, for write snapshots.
+func (s *BackendStorage) PutPolicyRecord(ctx context.Context, tenantID, name string, data []byte) error {
+	return s.put(ctx, policyKey(tenantID, name), data)
+}
+
 // UpdatePolicy updates an existing policy.
 func (s *BackendStorage) UpdatePolicy(ctx context.Context, tenantID string, policy *Policy) error {
 	key := policyKey(tenantID, policy.Metadata.Name)

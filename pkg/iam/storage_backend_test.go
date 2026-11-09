@@ -3311,6 +3311,27 @@ func TestBackendStorage_GetPolicy_NotFound(t *testing.T) {
 	}
 }
 
+func TestBackendStorage_PolicyRecord_RoundTripsUndecodableBytes(t *testing.T) {
+	ctx := context.Background()
+	storage := NewBackendStorage(newMockKVStore91())
+
+	raw := []byte("{not json")
+	require.NoError(t, storage.PutPolicyRecord(ctx, "tenant", "bad", raw))
+	_, err := storage.GetPolicy(ctx, "tenant", "bad")
+	require.Error(t, err, "the record must not decode")
+
+	got, err := storage.GetPolicyRecord(ctx, "tenant", "bad")
+	require.NoError(t, err)
+	assert.Equal(t, raw, got)
+	got[0] = 'X'
+	again, err := storage.GetPolicyRecord(ctx, "tenant", "bad")
+	require.NoError(t, err)
+	assert.Equal(t, raw, again, "GetPolicyRecord returns a copy")
+
+	_, err = storage.GetPolicyRecord(ctx, "tenant", "missing")
+	assert.True(t, dberrors.Is(err, dberrors.ErrNotFound), "err = %v", err)
+}
+
 // Test GetRole not found
 func TestBackendStorage_GetRole_NotFound(t *testing.T) {
 	ctx := context.Background()
