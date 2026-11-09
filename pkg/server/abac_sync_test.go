@@ -798,6 +798,32 @@ func TestLegacyCleanupPolicyStorage_UpdateMovesALegacyRecord(t *testing.T) {
 	assert.True(t, dberrors.Is(err, dberrors.ErrNotFound), "legacy copy: err = %v", err)
 }
 
+func TestLegacyCleanupPolicyStorage_ListPaginatesTheMergedSet(t *testing.T) {
+	_, _, bs := newABACTenantRoutedStorage(t)
+	acmeCtx := tenantctx.WithTenant(context.Background(), "acme")
+	require.NoError(t, bs.DeletePolicy(acmeCtx, "acme", "acme-allow"))
+	require.NoError(t, bs.CreatePolicy(acmeCtx, "acme", abacTestPolicy("a", "acme", "alice", "kv/**", iam.EffectAllow)))
+	require.NoError(t, bs.CreatePolicy(acmeCtx, "acme", abacTestPolicy("c", "acme", "alice", "kv/**", iam.EffectAllow)))
+	seedLegacyABACPolicy(t, bs, "acme", abacTestPolicy("b", "acme", "alice", "kv/**", iam.EffectDeny))
+	seedLegacyABACPolicy(t, bs, "acme", abacTestPolicy("c", "acme", "alice", "kv/**", iam.EffectAllow))
+	storage := newLegacyCleanupPolicyStorage(bs)
+
+	want := [][]string{{"a"}, {"b"}, {"c"}, {}}
+	for offset, names := range want {
+		page, err := storage.ListPolicies(acmeCtx, "acme", iam.ListOptions{Offset: offset, Limit: 1})
+		require.NoError(t, err)
+		require.NotNil(t, page)
+		assert.Equal(t, names, abacPolicyNames(page), "offset %d", offset)
+		if offset == 2 {
+			assert.Nil(t, page[0].LoadError, "the c page is the tenant copy")
+		}
+	}
+
+	page, err := storage.ListPolicies(acmeCtx, "acme", iam.ListOptions{Limit: 2})
+	require.NoError(t, err)
+	assert.Equal(t, []string{"a", "b"}, abacPolicyNames(page))
+}
+
 func TestLegacyCleanupPolicyStorage_SharedStoreDeletesOnce(t *testing.T) {
 	_, tm, bs := newABACTenantRoutedStorage(t)
 	_, err := tm.CreateTenant(tenantctx.WithSystem(context.Background()), iam.CreateTenantOptions{ID: "beta", Name: "Beta"})

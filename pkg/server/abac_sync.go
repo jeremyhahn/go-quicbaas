@@ -18,6 +18,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"sort"
 	"strings"
 
 	qrdbtenant "github.com/jeremyhahn/go-qrdb/pkg/tenant"
@@ -389,20 +390,36 @@ func (s *legacyCleanupPolicyStorage) GetPolicy(ctx context.Context, tenantID, na
 }
 
 // ListPolicies lists a tenant's policies together with its legacy
-// system-namespace records, flagged ones included.
+// system-namespace records, flagged ones included, paginated once over the
+// merged set in name order.
 func (s *legacyCleanupPolicyStorage) ListPolicies(ctx context.Context, tenantID string, opts iam.ListOptions) ([]*iam.Policy, error) {
 	if tenantID == qrdbsdk.SystemTenantID {
 		return s.PolicyStorage.ListPolicies(ctx, tenantID, opts)
 	}
-	own, err := s.PolicyStorage.ListPolicies(ctx, tenantID, opts)
+	all := iam.ListOptions{Filter: opts.Filter}
+	own, err := s.PolicyStorage.ListPolicies(ctx, tenantID, all)
 	if err != nil {
 		return nil, err
 	}
-	legacy, err := s.PolicyStorage.ListPolicies(tenantctx.WithSystem(ctx), tenantID, opts)
+	legacy, err := s.PolicyStorage.ListPolicies(tenantctx.WithSystem(ctx), tenantID, all)
 	if err != nil {
 		return nil, err
 	}
-	return mergeLegacyPolicies(tenantID, own, legacy), nil
+	merged := mergeLegacyPolicies(tenantID, own, legacy)
+	sort.SliceStable(merged, func(i, j int) bool { return policyRecordName(merged[i]) < policyRecordName(merged[j]) })
+	return paginatePolicies(merged, opts), nil
+}
+
+// paginatePolicies applies opts.Offset and opts.Limit as BackendStorage.ListPolicies does.
+func paginatePolicies(policies []*iam.Policy, opts iam.ListOptions) []*iam.Policy {
+	if opts.Offset >= len(policies) {
+		return []*iam.Policy{}
+	}
+	policies = policies[opts.Offset:]
+	if opts.Limit > 0 && opts.Limit < len(policies) {
+		policies = policies[:opts.Limit]
+	}
+	return policies
 }
 
 // UpdatePolicy replaces a tenant policy. A policy held only as a legacy
