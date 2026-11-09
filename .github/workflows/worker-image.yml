@@ -7,8 +7,8 @@
 # published today, before the nightly build lands. The push credential exists
 # only as this repository's Actions secrets REGISTRY_TOKEN (write:package) and
 # REGISTRY_USER, so the push runs here. Both belong to the repository's own
-# agent identity, agent-go-quicbaas: images are published under
-# <registry>/agent-go-quicbaas/<image> and pushed with that identity's token,
+# agent identity: images are published under
+# <registry>/<agent>/<image> and pushed with that identity's token,
 # never with the owner's account or credentials (owner ruling, 2026-10-17).
 # The nightly schedule, the in-job build and the Trivy gate arrive with the
 # rest of #1381; the schedule stays off until Infra has verified the first

@@ -22,9 +22,40 @@ import (
 	"testing"
 )
 
-// ownerPathFixture is the owner home prefix this gate bans, assembled at runtime
-// so the fixture does not itself have to be waived on every line that uses it.
-var ownerPathFixture = "/home/" + "jhahn" // lab-string-ok: fixture for the owner-path rule
+// fixtureRules is a pattern file built from reference values only: an RFC 5737
+// subnet, and host, path and account names nobody owns. It has the shapes the
+// real rules have -- a numbered host series, a bare hostname with an optional
+// domain, a home directory, a mount, a deployment directory, an account name --
+// so every behaviour of the gate is exercised without the tests depending on
+// the private rules or on the environment. The account rule comes first on
+// purpose: ParsePatterns has to move it after the paths.
+var fixtureRules = []string{
+	"# reference values only",
+	"owner-account/i\t" + `\bexample-owner\b`,
+	"lab-address\t" + `\b203\.0\.113\.\d{1,3}\b`,
+	"lab-host/i\t" + `\bfleet-node-\d{2}\b`,
+	"lab-host/i\t" + `\bbuild-box-\d{2}\b`,
+	"lab-host/i\t" + `\bfleethost(\.test)?\b`,
+	"owner-path\t" + `/home/example-owner\b`,
+	"owner-path\t" + `/mnt/example-share`,
+	"owner-path\t" + `example-soak-dir`,
+}
+
+// fixturePatternText is fixtureRules as the environment variable would carry it.
+var fixturePatternText = strings.Join(fixtureRules, "\n") + "\n"
+
+// ownerPathFixture is the home directory the owner-path fixture rule finds.
+const ownerPathFixture = "/home/example-owner"
+
+// fixturePatterns parses fixturePatternText, failing the test if it does not.
+func fixturePatterns(t testing.TB) []Pattern {
+	t.Helper()
+	patterns, err := ParsePatterns(fixturePatternText)
+	if err != nil {
+		t.Fatalf("the fixture pattern text does not parse: %v", err)
+	}
+	return patterns
+}
 
 // writeTree writes files into a temporary directory and returns the root plus
 // the file list in the form Scan takes.
@@ -55,30 +86,30 @@ func TestScan_ReportsEveryClassWithItsLineAndMatch(t *testing.T) {
 	}{
 		{
 			name:      "fleet address in help text",
-			content:   "package main\n\nconst help = \"dial 198.51.100.51:8443\"\n",
+			content:   "package main\n\nconst help = \"dial 203.0.113.51:8443\"\n",
 			wantClass: ClassLabAddress,
-			wantMatch: "198.51.100.51",
+			wantMatch: "203.0.113.51",
 			wantLine:  3,
 		},
 		{
 			name:      "fleet hostname in a doc",
-			content:   "# Runbook\n\nRun it on gpu-host first.\n",
+			content:   "# Runbook\n\nRun it on fleethost first.\n",
 			wantClass: ClassLabHost,
-			wantMatch: "gpu-host",
+			wantMatch: "fleethost",
 			wantLine:  3,
 		},
 		{
 			name:      "runner hostname in a captured log",
-			content:   "2026-09-12T00:00:00Z ci-node-2(version:v3.1.0)\n",
+			content:   "2026-09-12T00:00:00Z build-box-02(version:v3.1.0)\n",
 			wantClass: ClassLabHost,
-			wantMatch: "ci-node-2",
+			wantMatch: "build-box-02",
 			wantLine:  1,
 		},
 		{
 			name:      "agent hostname in a comment",
-			content:   "// observed on vm-host-4\n",
+			content:   "// observed on FLEET-NODE-04\n",
 			wantClass: ClassLabHost,
-			wantMatch: "vm-host-4",
+			wantMatch: "FLEET-NODE-04",
 			wantLine:  1,
 		},
 		{
@@ -90,16 +121,16 @@ func TestScan_ReportsEveryClassWithItsLineAndMatch(t *testing.T) {
 		},
 		{
 			name:      "owner account name in a comment",
-			content:   "package x\n\n// TODO(jhahn): drop after the migration\n",
+			content:   "package x\n\n// TODO(example-owner): drop after the migration\n",
 			wantClass: ClassOwnerAccount,
-			wantMatch: "jhahn",
+			wantMatch: "example-owner",
 			wantLine:  3,
 		},
 		{
 			name:      "lab NFS mount in a script default",
-			content:   "QRDB=${QRDB:-/mnt/" + "vstation" + "-01/go-qrdb}\n", // lab-string-ok: fixture for the owner-path rule
+			content:   "QRDB=${QRDB:-/mnt/example-share/go-qrdb}\n",
 			wantClass: ClassOwnerPath,
-			wantMatch: "/mnt/" + "vstation",
+			wantMatch: "/mnt/example-share",
 			wantLine:  1,
 		},
 	}
@@ -107,7 +138,7 @@ func TestScan_ReportsEveryClassWithItsLineAndMatch(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			root, files := writeTree(t, map[string]string{"shipping/file.txt": tc.content})
-			findings, err := Scan(root, files, nil)
+			findings, err := ScanWith(root, files, nil, fixturePatterns(t))
 			if err != nil {
 				t.Fatalf("Scan: %v", err)
 			}
@@ -136,6 +167,9 @@ func TestScan_ReportsEveryClassWithItsLineAndMatch(t *testing.T) {
 			if !strings.Contains(got.String(), "shipping/file.txt:"+strconv.Itoa(tc.wantLine)) {
 				t.Errorf("String() is not file:line clickable: %s", got.String())
 			}
+			if got.Guidance != classGuidance[tc.wantClass] {
+				t.Errorf("guidance = %q, want the %s class advice", got.Guidance, tc.wantClass)
+			}
 		})
 	}
 }
@@ -146,12 +180,16 @@ func TestScan_AcceptsWhatItShould(t *testing.T) {
 		content string
 	}{
 		{
-			name:    "documentation addresses",
-			content: "dial 198.51.100.7:8443 or 192.0.2.10 or 203.0.113.4\n",
+			name:    "documentation addresses outside the rule's subnet",
+			content: "dial 198.51.100.7:8443 or 192.0.2.10\n",
 		},
 		{
-			name:    "RFC 1918 literals that are not the fleet subnet",
-			content: "peers: 192.168.1.10, 192.168.100.4, 10.0.0.1\n",
+			name:    "addresses that share only part of the subnet",
+			content: "peers: 203.0.1.4, 203.0.114.4, 10.0.0.1\n",
+		},
+		{
+			name:    "the owner-path rules' neighbours",
+			content: "/home/agent/sources and /home/example-owners-guide and /mnt/data\n",
 		},
 		{
 			name:    "the repository's own example names",
@@ -159,26 +197,26 @@ func TestScan_AcceptsWhatItShould(t *testing.T) {
 		},
 		{
 			name:    "a waiver on the offending line",
-			content: "Measured on gpu-host. <!-- lab-string-ok: measurement provenance -->\n",
+			content: "Measured on fleethost. <!-- lab-string-ok: measurement provenance -->\n",
 		},
 		{
 			name:    "a waiver on the line above",
-			content: "# lab-string-ok: measurement provenance\nMeasured on gpu-host.\n",
+			content: "# lab-string-ok: measurement provenance\nMeasured on fleethost.\n",
 		},
 		{
 			name:    "a waiver whose reason ends at a comment closer",
-			content: "x := 1 /* lab-string-ok: provenance */ // gpu-host\n",
+			content: "x := 1 /* lab-string-ok: provenance */ // fleethost\n",
 		},
 		{
 			name:    "a hostname that merely contains a fleet name as a substring",
-			content: "ungodlikeness is not a host, and vstation-0 has no second digit\n",
+			content: "unfleethostness is not a host, and fleet-node-0 has no second digit\n",
 		},
 	}
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			root, files := writeTree(t, map[string]string{"clean.txt": tc.content})
-			findings, err := Scan(root, files, nil)
+			findings, err := ScanWith(root, files, nil, fixturePatterns(t))
 			if err != nil {
 				t.Fatalf("Scan: %v", err)
 			}
@@ -191,10 +229,10 @@ func TestScan_AcceptsWhatItShould(t *testing.T) {
 
 func TestScan_AWaiverWithNoReasonIsNotAWaiver(t *testing.T) {
 	root, files := writeTree(t, map[string]string{
-		"bare.md":       "Measured on gpu-host. <!-- lab-string-ok: -->\n",
-		"whitespace.md": "Measured on gpu-host. # lab-string-ok:    \n",
+		"bare.md":       "Measured on fleethost. <!-- lab-string-ok: -->\n",
+		"whitespace.md": "Measured on fleethost. # lab-string-ok:    \n",
 	})
-	findings, err := Scan(root, files, nil)
+	findings, err := ScanWith(root, files, nil, fixturePatterns(t))
 	if err != nil {
 		t.Fatalf("Scan: %v", err)
 	}
@@ -204,7 +242,7 @@ func TestScan_AWaiverWithNoReasonIsNotAWaiver(t *testing.T) {
 }
 
 func TestScan_AnAllowRuleAcceptsOnlyTheClassesItNames(t *testing.T) {
-	content := "host vm-host-4 under " + ownerPathFixture + "/sources\n"
+	content := "host fleet-node-04 under " + ownerPathFixture + "/sources\n"
 	root, files := writeTree(t, map[string]string{"pkg/thing_test.go": content})
 
 	rules := []AllowRule{{
@@ -212,7 +250,7 @@ func TestScan_AnAllowRuleAcceptsOnlyTheClassesItNames(t *testing.T) {
 		Classes: []Class{ClassLabHost},
 		Reason:  "test fixtures may name a fleet host",
 	}}
-	findings, err := Scan(root, files, rules)
+	findings, err := ScanWith(root, files, rules, fixturePatterns(t))
 	if err != nil {
 		t.Fatalf("Scan: %v", err)
 	}
@@ -228,7 +266,7 @@ func TestScan_RejectsAnUnusableAllowList(t *testing.T) {
 	root, files := writeTree(t, map[string]string{"clean.txt": "nothing here\n"})
 	rules := []AllowRule{{Path: "**/*.go", Classes: []Class{ClassLabHost}}}
 
-	_, err := Scan(root, files, rules)
+	_, err := ScanWith(root, files, rules, fixturePatterns(t))
 	var ruleErr *AllowRuleError
 	if !errors.As(err, &ruleErr) {
 		t.Fatalf("err = %v, want *AllowRuleError", err)
@@ -240,12 +278,12 @@ func TestScan_RejectsAnUnusableAllowList(t *testing.T) {
 
 func TestScan_SkipsWhatCannotLeakText(t *testing.T) {
 	root, files := writeTree(t, map[string]string{
-		"binary.bin":  "gpu-host\x00more bytes\n",
+		"binary.bin":  "fleethost\x00more bytes\n",
 		"present.txt": "clean\n",
 	})
 	files = append(files, "deleted-from-the-working-tree.txt")
 
-	findings, err := Scan(root, files, nil)
+	findings, err := ScanWith(root, files, nil, fixturePatterns(t))
 	if err != nil {
 		t.Fatalf("Scan: %v", err)
 	}
@@ -257,11 +295,11 @@ func TestScan_SkipsWhatCannotLeakText(t *testing.T) {
 func TestScan_ReadsASymlinkTarget(t *testing.T) {
 	root := t.TempDir()
 	link := filepath.Join(root, "go-quicbaas")
-	if err := os.Symlink("/mnt/"+"vstation"+"-01/go-quicbaas/", link); err != nil { // lab-string-ok: fixture for the owner-path rule
+	if err := os.Symlink("/mnt/example-share/go-quicbaas/", link); err != nil {
 		t.Fatalf("symlink: %v", err)
 	}
 
-	findings, err := Scan(root, []string{"go-quicbaas"}, nil)
+	findings, err := ScanWith(root, []string{"go-quicbaas"}, nil, fixturePatterns(t))
 	if err != nil {
 		t.Fatalf("Scan: %v", err)
 	}
@@ -287,12 +325,12 @@ func TestScan_AFileTooLargeToBeSourceIsSkipped(t *testing.T) {
 	for i := range body {
 		body[i] = 'a'
 	}
-	copy(body, []byte("gpu-host"))
+	copy(body, []byte("fleethost"))
 	if err := os.WriteFile(full, body, 0o644); err != nil {
 		t.Fatalf("write: %v", err)
 	}
 
-	findings, err := Scan(root, []string{name}, nil)
+	findings, err := ScanWith(root, []string{name}, nil, fixturePatterns(t))
 	if err != nil {
 		t.Fatalf("Scan: %v", err)
 	}
@@ -324,6 +362,21 @@ func TestErrors_NameTheirSubjectAndUnwrap(t *testing.T) {
 			name:     "allow-rule failure names the entry and the defect",
 			err:      &AllowRuleError{Index: 3, Path: "pkg/**", Problem: "no reason given"},
 			contains: []string{"entry 3", "pkg/**", "no reason given"},
+		},
+		{
+			name:     "pattern failure names the line and the defect",
+			err:      &PatternError{Line: 12, Problem: PatternBadRegex, Code: "missing closing )"},
+			contains: []string{"pattern line 12", string(PatternBadRegex), "missing closing )"},
+		},
+		{
+			name:     "no patterns names the variable",
+			err:      &NoPatternsError{Variable: PatternsEnv},
+			contains: []string{PatternsEnv, "no patterns"},
+		},
+		{
+			name:     "no patterns passed by the caller",
+			err:      &NoPatternsError{},
+			contains: []string{"no patterns"},
 		},
 		{
 			name:     "report failure names the cause",
@@ -365,8 +418,8 @@ func TestReport_SaysWhatToDoAndOnlyWhenDirty(t *testing.T) {
 		Path:     "cmd/quicbaas/thing.go",
 		Line:     7,
 		Class:    ClassLabHost,
-		Match:    "vm-host-4",
-		Excerpt:  "// observed on vm-host-4",
+		Match:    "fleet-node-04",
+		Excerpt:  "// observed on fleet-node-04",
 		Guidance: "name the role",
 	}})
 	if err != nil {
@@ -444,54 +497,11 @@ func TestTrackedFiles_ListsTheIndexAndRefusesADirectoryWithNoIndex(t *testing.T)
 	}
 }
 
-// TestPatterns_EveryNeedleIsImpliedByItsExpr pins the sieve's invariant: a
-// pattern whose Needle its own matches do not contain would be skipped for every
-// file in the tree, and the gate would pass while seeing nothing.
-func TestPatterns_EveryNeedleIsImpliedByItsExpr(t *testing.T) {
-	// One string per pattern that the pattern is known to match. They are the
-	// values the audit actually found, so this doubles as the record of what
-	// each rule was written for.
-	samples := map[string][]string{
-		`\b192\.168\.101\.\d{1,3}\b`:   {"198.51.100.91:3001", "at 198.51.100.51:8443"},
-		`(?i)\bvstation-\d{2}\b`:       {"agent-vm-host-4", "vm-host-1 rebooted"},
-		`(?i)\bdellemc-\d{2}\b`:        {"runner ci-node-2", "ci-node-1"},
-		`(?i)\bgodlike(\.internal)?\b`: {"on gpu-host", "http://gpu-host.internal:8077"},
-		`(?i)\bomega\b`:                {"ssh user@omega:22", "OMEGA reported Online"},
-		`/home/jhahn\b`:                {ownerPathFixture + "/sources"},                                  // lab-string-ok: sample for the owner-path rule
-		`/mnt/vstation`:                {"/mnt/" + "vstation" + "-01/go-qrdb"},                           // lab-string-ok: sample for the owner-path rule
-		`quicbaas-burnin`:              {"/var/lib/quicbaas-burnin/data", "~/quicbaas-burnin/node.yaml"}, // lab-string-ok: sample for the owner-path rule
-		`(?i)\bjhahn\b`:                {"jhahn@example.com", "signed off by JHAHN"},
-	}
-
-	for _, p := range patterns {
-		t.Run(p.Expr.String(), func(t *testing.T) {
-			if p.Needle == "" {
-				t.Fatal("pattern has no sieve needle")
-			}
-			if p.Needle != strings.ToLower(p.Needle) {
-				t.Errorf("needle %q is not lowercase; the sieve folds case before searching", p.Needle)
-			}
-			got, ok := samples[p.Expr.String()]
-			if !ok {
-				t.Fatalf("no sample for this pattern: add one so its needle stays honest")
-			}
-			for _, sample := range got {
-				if !p.Expr.MatchString(sample) {
-					t.Errorf("%q does not match its own sample %q", p.Expr, sample)
-				}
-				if !strings.Contains(strings.ToLower(sample), p.Needle) {
-					t.Errorf("sample %q matches but does not contain needle %q: the sieve would skip it", sample, p.Needle)
-				}
-			}
-		})
-	}
-}
-
 func TestScan_AMinifiedLineIsQuotedBounded(t *testing.T) {
-	long := "const x=\"" + strings.Repeat("padding;", 200) + "gpu-host\";"
+	long := "const x=\"" + strings.Repeat("padding;", 200) + "fleethost\";"
 	root, files := writeTree(t, map[string]string{"dist/bundle.js": long + "\n"})
 
-	findings, err := Scan(root, files, nil)
+	findings, err := ScanWith(root, files, nil, fixturePatterns(t))
 	if err != nil {
 		t.Fatalf("Scan: %v", err)
 	}
@@ -507,37 +517,64 @@ func TestScan_AMinifiedLineIsQuotedBounded(t *testing.T) {
 	}
 }
 
+// TestScan_AFileWhoseEveryClassIsAllowedIsNeverRead pins the shortcut for a
+// file whose allow-list entries accept every class the patterns can report. The
+// probe path runs through a regular file, so reaching the filesystem for it is a
+// ReadError (not a directory) rather than a skipped absent file: a clean result
+// proves the file was not read, and the control proves the probe would fail.
 func TestScan_AFileWhoseEveryClassIsAllowedIsNeverRead(t *testing.T) {
-	every := make([]Class, 0, len(patterns))
-	seen := map[Class]bool{}
-	for _, p := range patterns {
-		if !seen[p.Class] {
-			seen[p.Class] = true
-			every = append(every, p.Class)
-		}
+	every := make([]Class, 0, len(classGuidance))
+	for c := range classGuidance {
+		every = append(every, c)
 	}
-	rules := []AllowRule{{
-		Path:    "vendored/**",
-		Classes: every,
-		Reason:  "a tree this repository does not author and does not publish edits to",
-	}}
-
-	// The file does not exist: reaching the filesystem at all would be a
-	// ReadError, so a clean result proves the shortcut skipped it.
-	findings, err := Scan(t.TempDir(), []string{"vendored/thing.js"}, rules)
+	hostsOnly, err := ParsePatterns("lab-host\t" + `\bfleethost\b`)
 	if err != nil {
-		t.Fatalf("Scan: %v", err)
+		t.Fatalf("ParsePatterns: %v", err)
 	}
-	if len(findings) != 0 {
-		t.Fatalf("expected no findings, got %v", findings)
+
+	cases := []struct {
+		name     string
+		accepts  []Class
+		patterns []Pattern
+		wantRead bool
+	}{
+		{name: "every class accepted", accepts: every, patterns: fixturePatterns(t)},
+		{name: "every class the patterns report accepted", accepts: []Class{ClassLabHost}, patterns: hostsOnly},
+		{name: "control: one reportable class not accepted", accepts: []Class{ClassLabHost}, patterns: fixturePatterns(t), wantRead: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			root, _ := writeTree(t, map[string]string{"vendored": "a regular file, not a directory\n"})
+			rules := []AllowRule{{
+				Path:    "vendored/**",
+				Classes: tc.accepts,
+				Reason:  "a tree this repository does not author and does not publish edits to",
+			}}
+			findings, err := ScanWith(root, []string{"vendored/thing.js"}, rules, tc.patterns)
+			if tc.wantRead {
+				var readErr *ReadError
+				if !errors.As(err, &readErr) {
+					t.Fatalf("err = %v, want the *ReadError that proves the probe reads", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("ScanWith read a file it had no reason to: %v", err)
+			}
+			if len(findings) != 0 {
+				t.Fatalf("expected no findings, got %v", findings)
+			}
+		})
 	}
 }
 
 // TestScan_ReportsAValueOnceByItsMostSpecificRule pins the span dedupe: the
-// account name inside an owner path is one leak, reported as the path.
+// account name inside an owner path is one leak, reported as the path. The
+// fixture lists the account rule first, so this also pins ParsePatterns moving
+// it last.
 func TestScan_ReportsAValueOnceByItsMostSpecificRule(t *testing.T) {
-	root, files := writeTree(t, map[string]string{"docs/a.md": "cd " + ownerPathFixture + "/sources, ask jhahn\n"})
-	findings, err := Scan(root, files, nil)
+	root, files := writeTree(t, map[string]string{"docs/a.md": "cd " + ownerPathFixture + "/sources, ask example-owner\n"})
+	findings, err := ScanWith(root, files, nil, fixturePatterns(t))
 	if err != nil {
 		t.Fatalf("Scan: %v", err)
 	}
