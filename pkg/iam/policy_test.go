@@ -15,9 +15,13 @@ package iam
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	dberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 )
@@ -620,6 +624,78 @@ func TestPolicyEngine_DeletePolicy(t *testing.T) {
 					t.Error("policy was not deleted from storage")
 				}
 			}
+		})
+	}
+}
+
+// snapshotPolicyStorage is a mockPolicyStorage that implements
+// PolicyWriteSnapshotter and counts its snapshots and restores.
+type snapshotPolicyStorage struct {
+	*mockPolicyStorage
+	snapshotErr error
+	snapshots   int
+	restores    int
+}
+
+func (s *snapshotPolicyStorage) SnapshotPolicy(_ context.Context, _, _ string) (func(context.Context) error, error) {
+	if s.snapshotErr != nil {
+		return nil, s.snapshotErr
+	}
+	s.snapshots++
+	return func(context.Context) error {
+		s.restores++
+		return nil
+	}, nil
+}
+
+// snapshotTestABACSync is an ABACSync that returns err.
+type snapshotTestABACSync struct{ err error }
+
+func (s snapshotTestABACSync) Sync(context.Context) error { return s.err }
+
+func TestPolicyEngine_WriteSnapshotter(t *testing.T) {
+	ctx := context.Background()
+	syncErr := errors.New("sync failed")
+	writeErr := errors.New("write failed")
+	snapErr := errors.New("snapshot failed")
+
+	setup := func(t *testing.T, syncResult error) (*snapshotPolicyStorage, *PolicyEngine) {
+		t.Helper()
+		storage := &snapshotPolicyStorage{mockPolicyStorage: newMockPolicyStorage()}
+		require.NoError(t, storage.CreatePolicy(ctx, "tenant1", createTestPolicy("tenant1", "p")))
+		engine := NewPolicyEngine(PolicyEngineOptions{Storage: storage, ABACSync: snapshotTestABACSync{err: syncResult}})
+		return storage, engine
+	}
+	update := func(e *PolicyEngine) error {
+		return e.UpdatePolicy(ctx, "tenant1", createTestPolicy("tenant1", "p"))
+	}
+	del := func(e *PolicyEngine) error { return e.DeletePolicy(ctx, "tenant1", "p") }
+
+	for name, write := range map[string]func(*PolicyEngine) error{"update": update, "delete": del} {
+		t.Run(name+" sync failure restores once", func(t *testing.T) {
+			storage, engine := setup(t, syncErr)
+			err := write(engine)
+			assert.ErrorIs(t, err, syncErr)
+			assert.Equal(t, 1, storage.snapshots)
+			assert.Equal(t, 1, storage.restores)
+		})
+		t.Run(name+" storage write error restores once", func(t *testing.T) {
+			storage, engine := setup(t, nil)
+			storage.updateError = writeErr
+			storage.deleteError = writeErr
+			err := write(engine)
+			assert.ErrorIs(t, err, writeErr)
+			assert.Equal(t, 1, storage.restores)
+		})
+		t.Run(name+" snapshot error writes nothing", func(t *testing.T) {
+			storage, engine := setup(t, nil)
+			storage.snapshotErr = snapErr
+			err := write(engine)
+			assert.ErrorIs(t, err, snapErr)
+			assert.Equal(t, 0, storage.restores)
+			got, err := storage.GetPolicy(ctx, "tenant1", "p")
+			require.NoError(t, err)
+			assert.NotNil(t, got)
 		})
 	}
 }

@@ -529,3 +529,11 @@ type PolicyStorage interface {
 	// ListPolicies lists policies for a tenant.
 	ListPolicies(ctx context.Context, tenantID string, opts ListOptions) ([]*Policy, error)
 }
+
+// PolicyWriteSnapshotter is a PolicyStorage whose one policy write can
+// touch more than one stored record. SnapshotPolicy captures every record a
+// write of tenantID's policy name may change; restore puts them all back
+// as they were, deleting any that did not exist.
+type PolicyWriteSnapshotter interface {
+	SnapshotPolicy(ctx context.Context, tenantID, name string) (restore func(context.Context) error, err error)
+}

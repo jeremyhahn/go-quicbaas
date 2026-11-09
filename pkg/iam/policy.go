@@ -187,7 +187,8 @@ func (e *PolicyEngine) GetPolicy(ctx context.Context, tenantID, name string) (*P
 // UpdatePolicy updates an existing policy, then synchronizes qrdb's live
 // ABAC decorator with the full current policy store. A failed sync rejects
 // the write: the previous policy value is restored in storage (best-effort
-// compensation) and the sync error is returned.
+// compensation) and the sync error is returned. A PolicyWriteSnapshotter
+// storage restores its snapshot instead, after a failed storage write too.
 func (e *PolicyEngine) UpdatePolicy(ctx context.Context, tenantID string, policy *Policy) error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -222,18 +223,38 @@ func (e *PolicyEngine) UpdatePolicy(ctx context.Context, tenantID string, policy
 		}
 	}
 
-	// Update policy
-	if err := e.storage.UpdatePolicy(ctx, tenantID, policy); err != nil {
-		return err
+	// Snapshot every record the write may touch; a failed snapshot writes nothing.
+	var restore func(context.Context) error
+	if s, ok := e.storage.(PolicyWriteSnapshotter); ok {
+		if restore, err = s.SnapshotPolicy(ctx, tenantID, policy.Metadata.Name); err != nil {
+			return err
+		}
 	}
-
-	if err := e.syncABAC(ctx); err != nil {
-		// Reject the write: compensate by restoring the previous value.
-		_ = e.storage.UpdatePolicy(ctx, tenantID, existing)
+	reject := func(err error) error {
+		if restore != nil {
+			if rerr := restore(ctx); rerr != nil {
+				err = errors.Join(err, rerr)
+			}
+		} else {
+			// Reject the write: compensate by restoring the previous value.
+			_ = e.storage.UpdatePolicy(ctx, tenantID, existing)
+		}
 		if e.cache != nil {
 			e.cache.InvalidateAll(tenantID)
 		}
 		return err
+	}
+
+	// Update policy
+	if err := e.storage.UpdatePolicy(ctx, tenantID, policy); err != nil {
+		if restore == nil {
+			return err
+		}
+		return reject(err)
+	}
+
+	if err := e.syncABAC(ctx); err != nil {
+		return reject(err)
 	}
 
 	// Invalidate cache
@@ -247,7 +268,8 @@ func (e *PolicyEngine) UpdatePolicy(ctx context.Context, tenantID string, policy
 // DeletePolicy deletes a policy by name, then synchronizes qrdb's live ABAC
 // decorator with the full current policy store. A failed sync rejects the
 // write: the deleted policy is re-created in storage (best-effort
-// compensation) and the sync error is returned.
+// compensation) and the sync error is returned. A PolicyWriteSnapshotter
+// storage restores its snapshot instead, after a failed storage delete too.
 func (e *PolicyEngine) DeletePolicy(ctx context.Context, tenantID, name string) error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -265,18 +287,38 @@ func (e *PolicyEngine) DeletePolicy(ctx context.Context, tenantID, name string) 
 		}
 	}
 
-	// Delete policy
-	if err := e.storage.DeletePolicy(ctx, tenantID, name); err != nil {
-		return err
+	// Snapshot every record the delete may touch; a failed snapshot deletes nothing.
+	var restore func(context.Context) error
+	if s, ok := e.storage.(PolicyWriteSnapshotter); ok {
+		if restore, err = s.SnapshotPolicy(ctx, tenantID, name); err != nil {
+			return err
+		}
 	}
-
-	if err := e.syncABAC(ctx); err != nil {
-		// Reject the write: compensate by re-creating the deleted policy.
-		_ = e.storage.CreatePolicy(ctx, tenantID, existing)
+	reject := func(err error) error {
+		if restore != nil {
+			if rerr := restore(ctx); rerr != nil {
+				err = errors.Join(err, rerr)
+			}
+		} else {
+			// Reject the write: compensate by re-creating the deleted policy.
+			_ = e.storage.CreatePolicy(ctx, tenantID, existing)
+		}
 		if e.cache != nil {
 			e.cache.InvalidateAll(tenantID)
 		}
 		return err
+	}
+
+	// Delete policy
+	if err := e.storage.DeletePolicy(ctx, tenantID, name); err != nil {
+		if restore == nil {
+			return err
+		}
+		return reject(err)
+	}
+
+	if err := e.syncABAC(ctx); err != nil {
+		return reject(err)
 	}
 
 	// Invalidate cache
