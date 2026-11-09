@@ -35,7 +35,7 @@ func TestTenantAdmission_HeldTenantIsRefused503(t *testing.T) {
 		h := s.projectQRDBIdentity(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			called = true
 			w.WriteHeader(http.StatusOK)
-		}))
+		}), true)
 		req := asTenantCaller(httptest.NewRequest(http.MethodGet, "/api/v1/things", nil), "acme")
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, req)
@@ -74,4 +74,54 @@ func TestTenantAdmission_HeldTenantIsRefused503(t *testing.T) {
 	held.Store(true)
 	_, called = bound(unrestricted)
 	require.True(t, called, "a nil TenantAdmission admits every tenant")
+}
+
+func TestTenantAdmission_RecoveryRoutesPassAHeldTenant(t *testing.T) {
+	admit := func(tenantID string) error {
+		if tenantID == "acme" {
+			return errors.New("tenant \"acme\" is still running its unseal checks")
+		}
+		return nil
+	}
+	s := &Server{config: &Config{TenantAdmission: admit}}
+
+	serve := func(recovery bool) (int, bool) {
+		var called bool
+		spec := RouteSpec{
+			Method:         http.MethodPost,
+			Pattern:        "/api/v1/tenants/{tenant_id}/barrier/unseal",
+			Group:          GroupIAM,
+			TenantRecovery: recovery,
+			Handler: func(*Server) http.HandlerFunc {
+				return func(w http.ResponseWriter, _ *http.Request) {
+					called = true
+					w.WriteHeader(http.StatusOK)
+				}
+			},
+		}
+		req := asTenantCaller(httptest.NewRequest(http.MethodPost, "/api/v1/tenants/acme/barrier/unseal", nil), "acme")
+		rec := httptest.NewRecorder()
+		s.BindRoute(spec).ServeHTTP(rec, req)
+		return rec.Code, called
+	}
+
+	code, called := serve(true)
+	assert.Equal(t, http.StatusOK, code)
+	assert.True(t, called, "a held tenant can retry a barrier recovery route")
+
+	code, called = serve(false)
+	assert.Equal(t, http.StatusServiceUnavailable, code, "a held tenant's other routes stay refused")
+	assert.False(t, called)
+
+	recovery := map[string]bool{}
+	for _, spec := range iamManagedRouteSpecs() {
+		if spec.TenantRecovery {
+			recovery[spec.Method+" "+spec.Pattern] = true
+		}
+	}
+	assert.Equal(t, map[string]bool{
+		"POST /api/v1/tenants/{tenant_id}/barrier/unseal":       true,
+		"POST /api/v1/tenants/{tenant_id}/barrier/unseal-share": true,
+		"POST /api/v1/tenants/{tenant_id}/barrier/seal":         true,
+	}, recovery, "only unseal, unseal share and seal skip the unseal admission")
 }

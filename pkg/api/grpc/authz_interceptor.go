@@ -22,6 +22,7 @@ import (
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 
+	pb "github.com/jeremyhahn/go-quicbaas/api/proto"
 	"github.com/jeremyhahn/go-quicbaas/pkg/api/sealedwindow"
 	"github.com/jeremyhahn/go-quicbaas/pkg/auth"
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
@@ -222,7 +223,7 @@ func UnaryTenantAdmission(next grpc.UnaryServerInterceptor, admit func(tenantID 
 	}
 	return func(ctx context.Context, req interface{}, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (interface{}, error) {
 		return next(ctx, req, info, func(ctx context.Context, req interface{}) (interface{}, error) {
-			if err := admitBoundTenant(ctx, admit); err != nil {
+			if err := admitBoundTenant(ctx, info.FullMethod, admit); err != nil {
 				return nil, err
 			}
 			return handler(ctx, req)
@@ -237,7 +238,7 @@ func StreamTenantAdmission(next grpc.StreamServerInterceptor, admit func(tenantI
 	}
 	return func(srv interface{}, ss grpc.ServerStream, info *grpc.StreamServerInfo, handler grpc.StreamHandler) error {
 		return next(srv, ss, info, func(srv interface{}, ss grpc.ServerStream) error {
-			if err := admitBoundTenant(ss.Context(), admit); err != nil {
+			if err := admitBoundTenant(ss.Context(), info.FullMethod, admit); err != nil {
 				return err
 			}
 			return handler(srv, ss)
@@ -248,7 +249,10 @@ func StreamTenantAdmission(next grpc.StreamServerInterceptor, admit func(tenantI
 // admitBoundTenant checks the tenant the authorization interceptor bound to
 // ctx. A request with no bound subject (a public method) has no tenant to
 // check.
-func admitBoundTenant(ctx context.Context, admit func(tenantID string) error) error {
+func admitBoundTenant(ctx context.Context, fullMethod string, admit func(tenantID string) error) error {
+	if _, ok := tenantRecoveryMethods[fullMethod]; ok {
+		return nil
+	}
 	subject, ok := auth.SubjectFromContext(ctx)
 	if !ok {
 		return nil
@@ -257,4 +261,14 @@ func admitBoundTenant(ctx context.Context, admit func(tenantID string) error) er
 		return status.Error(codes.Unavailable, err.Error())
 	}
 	return nil
+}
+
+// tenantRecoveryMethods are the tenant barrier recovery operations (unseal,
+// unseal share, seal), which a tenant still held by its unseal checks must be
+// able to retry. They skip the unseal admission only, never authentication or
+// authorization.
+var tenantRecoveryMethods = map[string]struct{}{
+	pb.TenantBarrier_Unseal_FullMethodName:      {},
+	pb.TenantBarrier_UnsealShare_FullMethodName: {},
+	pb.TenantBarrier_Seal_FullMethodName:        {},
 }
