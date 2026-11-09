@@ -375,6 +375,23 @@ jobs:
       CI_CACHE_CLASS: ${{ github.event_name == 'push' && 'main' || 'pr' }}
       IT_IMAGE: ${{ github.event.repository.name }}-ci-it:${{ github.run_id }}-${{ github.run_attempt }}-image
     steps:
+      # No credential reaches a job. A runner that injects a git credential
+      # through GIT_CONFIG_* stops the job here, before any later step can
+      # print it; only the variable names are logged.
+      - name: Refuse injected forge credentials
+        shell: bash
+        run: |
+          found=0
+          for v in $(compgen -e); do
+            case "$v" in
+              GIT_CONFIG_COUNT|GIT_CONFIG_KEY_*|GIT_CONFIG_VALUE_*)
+                echo "::error::the job environment carries $v; no credential may reach this job"
+                found=1
+                ;;
+            esac
+          done
+          exit "$found"
+
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
 
       - name: Reap stale CI stacks
@@ -592,6 +609,23 @@ jobs:
       CI_CACHE_CLASS: ${{ github.event_name == 'push' && 'main' || 'pr' }}
       SHARD: ${{ matrix.shard }}
     steps:
+      # No credential reaches a job. A runner that injects a git credential
+      # through GIT_CONFIG_* stops the job here, before any later step can
+      # print it; only the variable names are logged.
+      - name: Refuse injected forge credentials
+        shell: bash
+        run: |
+          found=0
+          for v in $(compgen -e); do
+            case "$v" in
+              GIT_CONFIG_COUNT|GIT_CONFIG_KEY_*|GIT_CONFIG_VALUE_*)
+                echo "::error::the job environment carries $v; no credential may reach this job"
+                found=1
+                ;;
+            esac
+          done
+          exit "$found"
+
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
 
       - name: Validate the merge result, not the head alone
@@ -648,6 +682,23 @@ jobs:
       CI_STACK_PREFIX: ${{ github.event.repository.name }}-ci-
       CI_CACHE_CLASS: ${{ github.event_name == 'push' && 'main' || 'pr' }}
     steps:
+      # No credential reaches a job. A runner that injects a git credential
+      # through GIT_CONFIG_* stops the job here, before any later step can
+      # print it; only the variable names are logged.
+      - name: Refuse injected forge credentials
+        shell: bash
+        run: |
+          found=0
+          for v in $(compgen -e); do
+            case "$v" in
+              GIT_CONFIG_COUNT|GIT_CONFIG_KEY_*|GIT_CONFIG_VALUE_*)
+                echo "::error::the job environment carries $v; no credential may reach this job"
+                found=1
+                ;;
+            esac
+          done
+          exit "$found"
+
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
 
       # The report reads the source the shards tested: the same merge result.
@@ -699,6 +750,23 @@ jobs:
       CI_STACK_PREFIX: ${{ github.event.repository.name }}-ci-
       CI_CACHE_CLASS: ${{ github.event_name == 'push' && 'main' || 'pr' }}
     steps:
+      # No credential reaches a job. A runner that injects a git credential
+      # through GIT_CONFIG_* stops the job here, before any later step can
+      # print it; only the variable names are logged.
+      - name: Refuse injected forge credentials
+        shell: bash
+        run: |
+          found=0
+          for v in $(compgen -e); do
+            case "$v" in
+              GIT_CONFIG_COUNT|GIT_CONFIG_KEY_*|GIT_CONFIG_VALUE_*)
+                echo "::error::the job environment carries $v; no credential may reach this job"
+                found=1
+                ;;
+            esac
+          done
+          exit "$found"
+
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
 
       - name: Validate the merge result, not the head alone
@@ -744,6 +812,23 @@ jobs:
       IT_PROJECT: ${{ github.event.repository.name }}-ci-${{ github.run_id }}-${{ github.run_attempt }}
       IT_IMAGE: ${{ github.event.repository.name }}-ci-it:${{ github.run_id }}-${{ github.run_attempt }}
     steps:
+      # No credential reaches a job. A runner that injects a git credential
+      # through GIT_CONFIG_* stops the job here, before any later step can
+      # print it; only the variable names are logged.
+      - name: Refuse injected forge credentials
+        shell: bash
+        run: |
+          found=0
+          for v in $(compgen -e); do
+            case "$v" in
+              GIT_CONFIG_COUNT|GIT_CONFIG_KEY_*|GIT_CONFIG_VALUE_*)
+                echo "::error::the job environment carries $v; no credential may reach this job"
+                found=1
+                ;;
+            esac
+          done
+          exit "$found"
+
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
 
       - name: Reap stale CI stacks
