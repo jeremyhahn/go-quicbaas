@@ -30,6 +30,8 @@ import (
 	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
+	"github.com/jeremyhahn/go-quicbaas/pkg/kvstore"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 // abacTestStorageError is the failure the storage and tenant doubles inject.
@@ -235,6 +237,45 @@ func TestQRDBABACSync_allPolicies(t *testing.T) {
 			sort.Strings(want)
 			assert.Equal(t, tt.wantNames, names)
 			assert.Equal(t, want, storage.listed)
+		})
+	}
+}
+
+// TestQRDBABACSync_allPolicies_TenantRoutedStorage drives allPolicies over
+// storage that routes by the context's tenant, as production does. A reload
+// triggered from a tenant-bound context must still read the tenant catalog
+// and the system policies in the system namespace, and each tenant's
+// policies in that tenant's own namespace.
+func TestQRDBABACSync_allPolicies_TenantRoutedStorage(t *testing.T) {
+	r := newFakeStoreResolver(kvstore.NewMemory())
+	r.barrierTenant("acme")
+	bs := iam.NewBackendStorage(newTenantRoutingKVStore(r))
+	tm := iam.NewDefaultTenantManager(bs)
+
+	sys := tenantctx.WithSystem(context.Background())
+	_, err := tm.CreateTenant(sys, iam.CreateTenantOptions{ID: "acme", Name: "Acme"})
+	require.NoError(t, err)
+	require.NoError(t, bs.CreatePolicy(sys, qrdbsdk.SystemTenantID,
+		abacTestPolicy("sys-deny", qrdbsdk.SystemTenantID, "alice", "kv/**", iam.EffectDeny)))
+
+	acmeCtx := tenantctx.WithTenant(context.Background(), "acme")
+	require.NoError(t, bs.CreatePolicy(acmeCtx, "acme",
+		abacTestPolicy("acme-allow", "acme", "alice", "kv/**", iam.EffectAllow)))
+
+	for name, ctx := range map[string]context.Context{
+		"acme-bound context": acmeCtx,
+		"unbound context":    context.Background(),
+	} {
+		t.Run(name, func(t *testing.T) {
+			got, err := newQRDBABACSync(&Server{}, tm, bs).allPolicies(ctx)
+			require.NoError(t, err)
+
+			names := make([]string, 0, len(got))
+			for _, p := range got {
+				names = append(names, p.Metadata.Name)
+			}
+			sort.Strings(names)
+			assert.Equal(t, []string{"acme-allow", "sys-deny"}, names)
 		})
 	}
 }

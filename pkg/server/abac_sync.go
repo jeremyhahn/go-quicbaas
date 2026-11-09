@@ -20,6 +20,7 @@ import (
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 // qrdbABACSync implements iam.ABACSync (P6.1 end-state of the unified
@@ -142,12 +143,15 @@ func flaggedRecordDenyPolicy(p *iam.Policy) *qrdbsdk.ABACPolicy {
 // tenant and lists each one's stored policies. PolicyStorage only supports
 // per-tenant listing, so a global scan is composed here rather than in
 // pkg/iam, which must not depend on qrdb's cross-tenant tenant.SystemTenantID
-// concept.
+// concept. Storage routes by the context's tenant, so the catalog is read in
+// the system namespace and each tenant's policies under that tenant's own
+// context, whatever tenant the triggering request was bound to.
 func (a *qrdbABACSync) allPolicies(ctx context.Context) ([]*iam.Policy, error) {
 	tenantIDs := map[string]struct{}{qrdbsdk.SystemTenantID: {}}
 
+	sysCtx := tenantctx.WithSystem(ctx)
 	if a.tenantManager != nil {
-		tenants, err := a.tenantManager.ListTenants(ctx, iam.ListOptions{})
+		tenants, err := a.tenantManager.ListTenants(sysCtx, iam.ListOptions{})
 		if err != nil {
 			return nil, err
 		}
@@ -158,7 +162,7 @@ func (a *qrdbABACSync) allPolicies(ctx context.Context) ([]*iam.Policy, error) {
 
 	var all []*iam.Policy
 	for tenantID := range tenantIDs {
-		policies, err := a.storage.ListPolicies(ctx, tenantID, iam.ListOptions{})
+		policies, err := a.storage.ListPolicies(tenantctx.WithTenant(ctx, tenantID), tenantID, iam.ListOptions{})
 		if err != nil {
 			return nil, err
 		}
