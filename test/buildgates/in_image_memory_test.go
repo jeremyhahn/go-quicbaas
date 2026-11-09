@@ -31,21 +31,41 @@ type inImageRun struct {
 	invocations [][]string
 }
 
+// cgroupFixture is a fake cgroup v2 tree: proc is /proc/self/cgroup's
+// content ("" leaves the file missing), and memoryMax maps a cgroup
+// directory relative to the root ("" is the root) to its memory.max.
+type cgroupFixture struct {
+	proc      string
+	memoryMax map[string]string
+}
+
 // runInToolchainImage runs the script with the fake docker first on PATH.
-// env holds the case's IN_IMAGE_MEMORY and CI_CGROUP_PARENT; cgroupMemoryMax,
-// when non-nil, is written as the cgroup memory.max file, and when nil the
-// file is missing.
-func runInToolchainImage(t *testing.T, env map[string]string, cgroupMemoryMax *string) inImageRun {
+// env holds the case's IN_IMAGE_MEMORY and CI_CGROUP_PARENT; cg, when non-nil,
+// is written as a fake /proc/self/cgroup and cgroup v2 tree, and when nil
+// neither exists.
+func runInToolchainImage(t *testing.T, env map[string]string, cg *cgroupFixture) inImageRun {
 	t.Helper()
 	binDir, stateDir, workDir := t.TempDir(), t.TempDir(), t.TempDir()
 	if err := os.WriteFile(filepath.Join(binDir, "docker"), []byte(fakeDocker), 0o755); err != nil {
 		t.Fatalf("write fake docker: %v", err)
 	}
 	logPath := filepath.Join(stateDir, "docker.log")
-	memoryMax := filepath.Join(stateDir, "memory.max")
-	if cgroupMemoryMax != nil {
-		if err := os.WriteFile(memoryMax, []byte(*cgroupMemoryMax), 0o644); err != nil {
-			t.Fatalf("write cgroup memory.max: %v", err)
+	cgroupRoot := filepath.Join(stateDir, "cgroup")
+	procCgroup := filepath.Join(stateDir, "proc-cgroup")
+	if cg != nil {
+		if cg.proc != "" {
+			if err := os.WriteFile(procCgroup, []byte(cg.proc), 0o644); err != nil {
+				t.Fatalf("write /proc/self/cgroup: %v", err)
+			}
+		}
+		for dir, value := range cg.memoryMax {
+			path := filepath.Join(cgroupRoot, dir)
+			if err := os.MkdirAll(path, 0o755); err != nil {
+				t.Fatalf("create cgroup %q: %v", dir, err)
+			}
+			if err := os.WriteFile(filepath.Join(path, "memory.max"), []byte(value), 0o644); err != nil {
+				t.Fatalf("write cgroup %q memory.max: %v", dir, err)
+			}
 		}
 	}
 	script, err := filepath.Abs(inToolchainImageScript)
@@ -59,7 +79,8 @@ func runInToolchainImage(t *testing.T, env map[string]string, cgroupMemoryMax *s
 		"PATH=" + binDir + string(os.PathListSeparator) + os.Getenv("PATH"),
 		"HOME=" + stateDir,
 		"FAKE_DOCKER_LOG=" + logPath,
-		"IN_IMAGE_CGROUP_MEMORY_MAX=" + memoryMax,
+		"IN_IMAGE_CGROUP_ROOT=" + cgroupRoot,
+		"IN_IMAGE_PROC_CGROUP=" + procCgroup,
 		"IN_IMAGE_NETWORK=none",
 		"IN_IMAGE_UID=10001",
 		"CI_STACK_PREFIX=buildgates-ci-",
@@ -154,23 +175,55 @@ func TestInImageMemoryOverrideSetsEqualMemoryAndSwap(t *testing.T) {
 }
 
 func TestInImageMemoryDefaultsToTheCgroupLimit(t *testing.T) {
-	limit := "4294967296\n"
-	run := runInToolchainImage(t, nil, &limit)
+	run := runInToolchainImage(t, nil, &cgroupFixture{proc: "0::/\n", memoryMax: map[string]string{"": "4294967296\n"}})
 	assertMemoryAndSwap(t, run.containerArgs(t), "4294967296")
 }
 
 func TestInImageMemoryFallsBackTo8gWhenUnbounded(t *testing.T) {
-	unbounded := "max\n"
-	cases := map[string]*string{
-		"max":     &unbounded,
+	cases := map[string]*cgroupFixture{
+		"max":     {proc: "0::/\n", memoryMax: map[string]string{"": "max\n"}},
 		"missing": nil,
+		"v1 only": {proc: "4:memory:/runner\n", memoryMax: map[string]string{}},
 	}
-	for name, cgroupMemoryMax := range cases {
+	for name, cg := range cases {
 		t.Run(name, func(t *testing.T) {
-			run := runInToolchainImage(t, nil, cgroupMemoryMax)
+			run := runInToolchainImage(t, nil, cg)
 			assertMemoryAndSwap(t, run.containerArgs(t), "8g")
 		})
 	}
+}
+
+func TestInImageMemoryReadsTheCallersNestedCgroup(t *testing.T) {
+	run := runInToolchainImage(t, nil, &cgroupFixture{
+		proc: "0::/system.slice/runner.service\n",
+		memoryMax: map[string]string{
+			"system.slice":                "max\n",
+			"system.slice/runner.service": "4294967296\n",
+		},
+	})
+	assertMemoryAndSwap(t, run.containerArgs(t), "4294967296")
+}
+
+func TestInImageMemoryTakesTheTightestAncestor(t *testing.T) {
+	cases := map[string]struct {
+		memoryMax map[string]string
+		want      string
+	}{
+		"parent below unbounded leaf": {memoryMax: map[string]string{"a": "2147483648\n", "a/b": "max\n"}, want: "2147483648"},
+		"leaf below looser parent":    {memoryMax: map[string]string{"a": "8589934592\n", "a/b": "4294967296\n"}, want: "4294967296"},
+		"root below unbounded path":   {memoryMax: map[string]string{"": "1073741824\n", "a": "max\n", "a/b": "max\n"}, want: "1073741824"},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			run := runInToolchainImage(t, nil, &cgroupFixture{proc: "0::/a/b\n", memoryMax: tc.memoryMax})
+			assertMemoryAndSwap(t, run.containerArgs(t), tc.want)
+		})
+	}
+}
+
+func TestInImageMemoryReadsOnlyTheRootForAPathOutsideTheNamespace(t *testing.T) {
+	run := runInToolchainImage(t, nil, &cgroupFixture{proc: "0::/../other\n", memoryMax: map[string]string{"": "4294967296\n"}})
+	assertMemoryAndSwap(t, run.containerArgs(t), "4294967296")
 }
 
 func TestInImageMemoryCgroupParentOnlyWhenSet(t *testing.T) {
