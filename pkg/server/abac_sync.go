@@ -505,13 +505,14 @@ type policyRecordStore interface {
 // the record back as it was, or deletes it when it was absent. Without raw access to the inner
 // storage, a record that does not decode cannot be restored, so the snapshot fails.
 func (s *legacyCleanupPolicyStorage) snapshotRecord(ctx context.Context, tenantID, name string) (func(context.Context) error, error) {
+	inner := s.PolicyStorage
 	removeIfPresent := func(ctx context.Context) error {
-		if err := s.PolicyStorage.DeletePolicy(ctx, tenantID, name); err != nil && !dberrors.Is(err, dberrors.ErrNotFound) {
+		if err := inner.DeletePolicy(ctx, tenantID, name); err != nil && !dberrors.Is(err, dberrors.ErrNotFound) {
 			return err
 		}
 		return nil
 	}
-	if raw, ok := s.PolicyStorage.(policyRecordStore); ok {
+	if raw, ok := inner.(policyRecordStore); ok {
 		data, err := raw.GetPolicyRecord(ctx, tenantID, name)
 		if err != nil {
 			if dberrors.Is(err, dberrors.ErrNotFound) {
@@ -521,7 +522,7 @@ func (s *legacyCleanupPolicyStorage) snapshotRecord(ctx context.Context, tenantI
 		}
 		return func(ctx context.Context) error { return raw.PutPolicyRecord(ctx, tenantID, name, data) }, nil
 	}
-	policy, err := s.PolicyStorage.GetPolicy(ctx, tenantID, name)
+	policy, err := inner.GetPolicy(ctx, tenantID, name)
 	if err != nil {
 		if dberrors.Is(err, dberrors.ErrNotFound) {
 			return removeIfPresent, nil
@@ -532,9 +533,9 @@ func (s *legacyCleanupPolicyStorage) snapshotRecord(ctx context.Context, tenantI
 		return removeIfPresent, nil
 	}
 	return func(ctx context.Context) error {
-		err := s.PolicyStorage.UpdatePolicy(ctx, tenantID, policy)
+		err := inner.UpdatePolicy(ctx, tenantID, policy)
 		if dberrors.Is(err, dberrors.ErrNotFound) {
-			err = s.PolicyStorage.CreatePolicy(ctx, tenantID, policy)
+			err = inner.CreatePolicy(ctx, tenantID, policy)
 		}
 		return err
 	}, nil
