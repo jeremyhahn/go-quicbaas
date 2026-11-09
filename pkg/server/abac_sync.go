@@ -382,7 +382,7 @@ func (s *legacyCleanupPolicyStorage) UpdatePolicy(ctx context.Context, tenantID 
 	default:
 		return readErr
 	}
-	if err := s.PolicyStorage.CreatePolicy(ctx, tenantID, policy); err != nil {
+	if err := s.CreatePolicy(ctx, tenantID, policy); err != nil {
 		return err
 	}
 	if err := s.PolicyStorage.DeletePolicy(sysCtx, tenantID, policy.Metadata.Name); err != nil && !dberrors.Is(err, dberrors.ErrNotFound) {

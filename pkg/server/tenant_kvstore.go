@@ -162,7 +162,7 @@ type admittingStoreResolver struct {
 // (tenantctx.InPolicySyncRead) reach it too, so a reload for another tenant
 // keeps its deny rules.
 func (a *admittingStoreResolver) Resolve(ctx context.Context, tenantID string) (qrdbsdk.KVStore, error) {
-	if !(service.InUnsealGate(ctx, tenantID) || tenantctx.InAuthRecordRead(ctx, tenantID) || tenantctx.InPolicySyncRead(ctx, tenantID)) {
+	if !service.InUnsealGate(ctx, tenantID) && !tenantctx.InAuthRecordRead(ctx, tenantID) && !tenantctx.InPolicySyncRead(ctx, tenantID) {
 		if err := a.hooks.Admit(tenantID); err != nil {
 			return nil, err
 		}
