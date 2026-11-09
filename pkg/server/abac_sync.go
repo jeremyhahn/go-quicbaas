@@ -152,7 +152,9 @@ func flaggedRecordDenyPolicy(p *iam.Policy) *qrdbsdk.ABACPolicy {
 // the system namespace and each tenant's policies under that tenant's own
 // context, whatever tenant the triggering request was bound to. A sealed
 // non-system tenant is skipped with a warning; its policies load when it is
-// unsealed.
+// unsealed. A tenant held by its unseal checks is read too (its hold refuses
+// requests, not the reload), so a reload for one tenant never drops another's
+// deny rules; only a sealed tenant is skipped.
 func (a *qrdbABACSync) allPolicies(ctx context.Context) ([]*iam.Policy, error) {
 	tenantIDs := map[string]struct{}{qrdbsdk.SystemTenantID: {}}
 
@@ -169,7 +171,7 @@ func (a *qrdbABACSync) allPolicies(ctx context.Context) ([]*iam.Policy, error) {
 
 	var all []*iam.Policy
 	for tenantID := range tenantIDs {
-		policies, err := a.storage.ListPolicies(tenantctx.WithTenant(ctx, tenantID), tenantID, iam.ListOptions{})
+		policies, err := a.storage.ListPolicies(tenantctx.WithPolicySyncRead(tenantctx.WithTenant(ctx, tenantID), tenantID), tenantID, iam.ListOptions{})
 		if err != nil {
 			if tenantID == qrdbsdk.SystemTenantID || !errors.Is(err, qrdbtenant.ErrTenantSealed) {
 				return nil, err

@@ -104,6 +104,30 @@ func InAuthRecordRead(ctx context.Context, tenantID string) bool {
 	return marked == tenantID
 }
 
+// policySyncReadKey marks a context as the ABAC policy sync's read.
+type policySyncReadKey struct{}
+
+// WithPolicySyncRead marks ctx as the ABAC policy sync's read of tenantID's
+// policies. Only the ABAC sync sets it, and the store's unseal hold honours it
+// for that one tenant, so a reload never drops the policies of a tenant whose
+// barrier is open. An empty tenantID returns ctx unchanged.
+func WithPolicySyncRead(ctx context.Context, tenantID string) context.Context {
+	if tenantID == "" {
+		return ctx
+	}
+	return context.WithValue(ctx, policySyncReadKey{}, tenantID)
+}
+
+// InPolicySyncRead reports whether ctx is marked as the ABAC policy sync's
+// read for exactly tenantID.
+func InPolicySyncRead(ctx context.Context, tenantID string) bool {
+	if tenantID == "" {
+		return false
+	}
+	marked, _ := ctx.Value(policySyncReadKey{}).(string)
+	return marked == tenantID
+}
+
 // WithSystem binds the system tenant. It is for in-process callers that act
 // for the platform itself (boot, background jobs, the embedded transport),
 // never for a request whose caller's tenant is unknown.

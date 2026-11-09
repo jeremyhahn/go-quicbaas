@@ -658,6 +658,39 @@ func TestQRDBABACSync_resyncOnUnseal_GateReadsThroughAdmittedStore(t *testing.T)
 	require.NoError(t, s.tenantUnsealHooks.Admit("acme"))
 }
 
+func TestQRDBABACSync_allPolicies_KeepsAHeldTenantsPolicies(t *testing.T) {
+	s, _ := newABACTestServer(t, true)
+	r := newFakeStoreResolver(kvstore.NewMemory())
+	r.barrierTenant("acme")
+	resolver := admittedFakeResolver{admit: s.admittedStoreResolver(fakeQRDBResolver{store: fakeQRDBStore{}}), stores: r}
+	bs := iam.NewBackendStorage(newTenantRoutingKVStore(resolver))
+	tm := iam.NewDefaultTenantManager(bs)
+
+	sysCtx := tenantctx.WithSystem(context.Background())
+	acmeCtx := tenantctx.WithTenant(context.Background(), "acme")
+	for _, id := range []string{"acme", "beta"} {
+		_, err := tm.CreateTenant(sysCtx, iam.CreateTenantOptions{ID: id, Name: id})
+		require.NoError(t, err)
+	}
+	require.NoError(t, bs.CreatePolicy(acmeCtx, "acme",
+		abacTestPolicy("acme-deny", "acme", "alice", "kv/**", iam.EffectDeny)))
+
+	// Hold acme: its barrier opens but a failing gate keeps it from admission.
+	gateErr := errors.New("policy reload failed")
+	s.tenantUnsealHooks.RegisterGate(service.TenantUnsealGateFunc(func(context.Context, string) error {
+		return gateErr
+	}))
+	barrier := service.NewTenantBarrierService(unsealingTenantClient{}, service.WithTenantUnsealHooks(&s.tenantUnsealHooks))
+	require.ErrorIs(t, barrier.TenantBarrierUnseal(tenantAdminCtx("acme"), "acme", []byte("key")), gateErr)
+
+	_, err := s.admittedStoreResolver(fakeQRDBResolver{store: fakeQRDBStore{}}).Resolve(acmeCtx, "acme")
+	assert.ErrorIs(t, err, qrdbsdk.ErrTenantStoreSealed, "a request to a held tenant must stay refused")
+
+	all, err := newQRDBABACSync(s, tm, bs).allPolicies(tenantctx.WithTenant(context.Background(), "beta"))
+	require.NoError(t, err)
+	assert.Contains(t, abacPolicyNames(all), "acme-deny", "a reload for beta must keep held acme's deny rules")
+}
+
 func TestLegacyCleanupPolicyStorage_DeleteRemovesTheLegacyCopy(t *testing.T) {
 	_, tm, bs := newABACTenantRoutedStorage(t)
 	acmeCtx := tenantctx.WithTenant(context.Background(), "acme")

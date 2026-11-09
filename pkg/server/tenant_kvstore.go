@@ -158,9 +158,11 @@ type admittingStoreResolver struct {
 // admitting (service.InUnsealGate) reaches the inner resolver. The token-liveness
 // reads of a held tenant (tenantctx.InAuthRecordRead) reach it too, so its admin
 // can authenticate the retry or the seal that clears the hold, and every other
-// read stays refused.
+// read stays refused. The ABAC sync's reads of a held tenant's policies
+// (tenantctx.InPolicySyncRead) reach it too, so a reload for another tenant
+// keeps its deny rules.
 func (a *admittingStoreResolver) Resolve(ctx context.Context, tenantID string) (qrdbsdk.KVStore, error) {
-	if !service.InUnsealGate(ctx, tenantID) && !tenantctx.InAuthRecordRead(ctx, tenantID) {
+	if !(service.InUnsealGate(ctx, tenantID) || tenantctx.InAuthRecordRead(ctx, tenantID) || tenantctx.InPolicySyncRead(ctx, tenantID)) {
 		if err := a.hooks.Admit(tenantID); err != nil {
 			return nil, err
 		}
