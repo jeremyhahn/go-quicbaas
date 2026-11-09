@@ -6,14 +6,15 @@
 The integration, seal and e2e images run `go mod download` during their build.
 Private first-party modules -- today `github.com/jeremyhahn/go-auth` -- are
 served by the Gitea origin, not by `proxy.golang.org` or GitHub, so the build
-needs the dependency-resolution.md section-6 variables (`GOPRIVATE` and a
-`GIT_CONFIG_*` `insteadOf` rewrite carrying a read token). Without them the
+needs the dependency-resolution.md section-6 variables: a `GIT_CONFIG_*`
+`insteadOf` rewrite carrying a read token, and no `GOPRIVATE`. Without them the
 build asks the public proxy, then GitHub, and fails with
 `unknown revision v0.2.0-alpha`.
 
 ## How the credentials reach the build
 
-`make stage-gomodauth` writes the four variables to `$(GOMODAUTH_ENV)`
+`make stage-gomodauth` writes the three `GIT_CONFIG_*` variables, and no
+`GOPRIVATE`, to `$(GOMODAUTH_ENV)`
 (default `/tmp/quicbaas-gomodauth.env`, outside the build context). The file
 is chmodded to 0600 before a token goes in, so an existing file created
 world-readable is tightened rather than reused as it was.
@@ -25,7 +26,7 @@ The first source that has a value wins:
 
 | Source | Where it applies |
 |---|---|
-| `GIT_CONFIG_KEY_0` / `GOPRIVATE` / `GIT_CONFIG_*` in the environment | Gitea Actions runners inject these; staged as-is. |
+| `GIT_CONFIG_KEY_0` / `GIT_CONFIG_*` in the environment | Gitea Actions runners inject these; staged as-is. |
 | `FORGE_READ_TOKEN` in the environment | Any host. A `read:repository` token. |
 | `$(GOMODAUTH_TOKEN_KEY)` in `$(GOMODAUTH_TOKENS_FILE)` | Agent hosts. The key defaults to `FORGE_READ_TOKEN`; a tokens file that keeps the read token under another name sets `GOMODAUTH_TOKEN_KEY` to that name. |
 | none | The file is empty; modules resolve from the public proxy (GitHub CI). |

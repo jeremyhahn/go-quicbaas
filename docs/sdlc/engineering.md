@@ -656,7 +656,7 @@ targets are `make image-build`, `image-build-dev`, `image-build-fips`,
 
 The build fetches private modules through the `gomodauth` secret (see
 [private-modules.md](../testing/private-modules.md)) and uses
-`DEVCACHE_GOPROXY` / `DEVCACHE_GOPRIVATE` when the caller sets them. Both images
+`DEVCACHE_GOPROXY` when the caller sets it. Both images
 run with `GOPROXY=off`.
 
 `make integration-test` runs the integration stack

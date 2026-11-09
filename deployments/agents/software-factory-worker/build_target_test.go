@@ -24,7 +24,7 @@ import (
 // These tests run the repository Makefile's build-worker-image target with
 // DOCKER pointed at this test binary (TestMain, push_target_test.go), which
 // records what it was asked and, for a "docker build" call, the value of each
-// of the three DEVCACHE_* variables in ITS OWN process environment -- the
+// of the two DEVCACHE_* variables in ITS OWN process environment -- the
 // only way a bare `--build-arg NAME` (no "=value") reaches docker, and so the
 // only way to prove the Makefile's `export` actually carries a value through
 // rather than merely naming the flag (go-quicbaas#1159).
@@ -58,7 +58,7 @@ func runBuildTarget(t *testing.T, env ...string) pushRun {
 
 // devcacheEnvValue finds the fake docker's "ENV NAME=value" line for name and
 // returns its value; a variable make never exported at all (impossible today,
-// since the Makefile unconditionally `export`s all three) and one exported
+// since the Makefile unconditionally `export`s both) and one exported
 // empty are indistinguishable here on purpose -- GNU Make's bare `export VAR`
 // always places VAR in the recipe's environment, empty when VAR has no
 // value, and Docker's bare `--build-arg NAME` treats an empty and an absent
