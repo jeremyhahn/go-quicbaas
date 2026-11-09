@@ -5654,8 +5654,8 @@ release-alpha:
 # reason (devops.md section 9). It is the one stage that needs a module proxy at
 # run time, so it does not inherit GOPROXY=off from the toolchain image:
 # DEPS_CHECK_GOPROXY defaults to the fleet cache when DEVCACHE_GOPROXY is set,
-# then the public proxy. First-party modules resolve as GOPRIVATE through
-# whatever git credentials the environment carries (docs/testing/private-modules.md).
+# then the public proxy. First-party modules resolve through the proxy and the
+# checksum database like any other.
 DEPS_CHECK_GOPROXY ?= $(if $(DEVCACHE_GOPROXY),$(DEVCACHE_GOPROXY)|)https://proxy.golang.org|direct
 DEPS_CHECK_MODULES := . sdk/go
 # The JSON fields scripts/depscheck reads, written by a template rather than
@@ -5673,8 +5673,6 @@ DEPS_CHECK_TEMPLATE := {"Path":"{{.Path}}","Version":"{{.Version}}","Main":{{.Ma
 deps-check: ## Fail when a direct dependency is behind its latest release without a reason in go.mod
 	@set -e; \
 	export GOWORK=off GOPROXY='$(DEPS_CHECK_GOPROXY)' GOFLAGS=-mod=readonly GIT_TERMINAL_PROMPT=0; \
-	export GOPRIVATE="$${GOPRIVATE:-github.com/jeremyhahn/*}"; \
-	export GONOPROXY="$$GOPRIVATE" GONOSUMDB="$$GOPRIVATE"; \
 	export GOMODCACHE="$$($(GOCMD) env GOMODCACHE)"; \
 	sumdb_gopath="$$(mktemp -d -t quicbaas-$(RUN_ID_SLUG)-gopath.XXXXXX)"; \
 	trap 'rm -rf "$$sumdb_gopath"' EXIT; \
@@ -5699,8 +5697,7 @@ deps-check: ## Fail when a direct dependency is behind its latest release withou
 # gives a new tag and never reuses a stale image. GO_VERSION and GO_IMAGE_DIGEST reach
 # the compose file from pkg/version/toolchain.mk; private modules reach the
 # build through the gomodauth secret (docs/testing/private-modules.md), and the
-# fleet's module cache through DEVCACHE_GOPROXY / DEVCACHE_GOPRIVATE
-# (devops.md section 2a).
+# fleet's module cache through DEVCACHE_GOPROXY (devops.md section 2a).
 DEVCONTAINER_DIR := build/docker/devcontainer
 DEVCONTAINER_REPO := $(APP_NAME)-devcontainer
 DEVCONTAINER_INPUTS := $(DEVCONTAINER_DIR)/Dockerfile pkg/version/toolchain.mk go.mod go.sum sdk/go/go.mod sdk/go/go.sum \
@@ -5717,7 +5714,7 @@ DEVCONTAINER_COMPOSE = TOOLCHAIN_IMAGE='$(TOOLCHAIN_IMAGE)' \
 	INTEGRATION_IMAGE='$(INTEGRATION_IMAGE)' QUICBAAS_INTEGRATION_IMAGE='$(INTEGRATION_IMAGE)' \
 	INTEGRATION_BUILD_TAGS='$(strip $(INTEGRATION_BUILD_TAGS))' \
 	GO_VERSION='$(GO_VERSION)' GO_IMAGE_DIGEST='$(GO_IMAGE_DIGEST)' \
-	GO_BUILD_PROXY="$${DEVCACHE_GOPROXY:-}" GO_BUILD_PRIVATE="$${DEVCACHE_GOPRIVATE:-}" \
+	GO_BUILD_PROXY="$${DEVCACHE_GOPROXY:-}" \
 	GOMODAUTH_ENV='$(GOMODAUTH_ENV)' RUN_UID="$$(id -u)" RUN_GID="$$(id -g)" \
 	$(DOCKER) compose -f $(DEVCONTAINER_DIR)/compose.yaml
 # Builds the named compose services with the module credentials staged for the
@@ -5758,7 +5755,7 @@ docker-run: ## Run CMD in the toolchain compose service (e.g. CMD='make test'), 
 	@if ! $(DOCKER) image inspect '$(TOOLCHAIN_IMAGE)' >/dev/null 2>&1; then \
 		$(DEVCONTAINER_BUILD) toolchain; \
 	fi
-	@$(DEVCONTAINER_COMPOSE) run --rm --no-deps -e DEVCACHE_GOPROXY -e DEVCACHE_GOPRIVATE toolchain $(CMD)
+	@$(DEVCONTAINER_COMPOSE) run --rm --no-deps -e DEVCACHE_GOPROXY toolchain $(CMD)
 
 deps-latest:
 	@GOWORK=off sh -c ' \

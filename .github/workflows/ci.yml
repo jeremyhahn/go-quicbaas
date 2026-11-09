@@ -244,8 +244,8 @@
 # v1.1 (2026-08-14): gosec findings now also print to the job log (the SARIF
 # upload only exists on github.com, so on Gitea the findings were invisible).
 # Also NEVER add `GOPROXY: direct` / `GOSUMDB: off` to a repo's env block:
-# GOPRIVATE (injected by the runners, dependency-resolution.md §6) already
-# exempts first-party modules from proxy and sumdb; the blanket override
+# first-party modules resolve through the proxy and checksum database like
+# any other; the blanket override
 # disables checksum-database verification for every third-party dependency
 # and breaks the build when an upstream re-points a tag (go-tpm-tools v0.4.8,
 # 2026-08-14). `ghcr.io` likewise does not exist on Gitea — use the Gitea
@@ -413,10 +413,7 @@ jobs:
 
       - name: Build the devcontainer images
         run: |
-          ( umask 077; : > "$RUNNER_TEMP/gomodauth.env"
-            for v in GOPRIVATE GIT_CONFIG_COUNT GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0; do
-              if [ -n "${!v:-}" ]; then printf '%s=%s\n' "$v" "${!v}" >> "$RUNNER_TEMP/gomodauth.env"; fi
-            done )
+          ( umask 077; : > "$RUNNER_TEMP/gomodauth.env" )
           # A docs-only pull request runs lint alone, which needs only the
           # toolchain image (DS-3161).
           target=docker-build
@@ -632,10 +629,7 @@ jobs:
       - name: Build the toolchain image
         if: ${{ env.DOCS_ONLY != 'true' }}
         run: |
-          ( umask 077; : > "$RUNNER_TEMP/gomodauth.env"
-            for v in GOPRIVATE GIT_CONFIG_COUNT GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0; do
-              if [ -n "${!v:-}" ]; then printf '%s=%s\n' "$v" "${!v}" >> "$RUNNER_TEMP/gomodauth.env"; fi
-            done )
+          ( umask 077; : > "$RUNNER_TEMP/gomodauth.env" )
           make docker-build-toolchain-image MODULE_ENV_FILE="$RUNNER_TEMP/gomodauth.env"
           rm -f "$RUNNER_TEMP/gomodauth.env"
           echo "TOOLCHAIN_IMAGE=$(make -s toolchain-image)" >> "$GITHUB_ENV"
@@ -701,10 +695,7 @@ jobs:
       - name: Build the toolchain image
         if: ${{ env.DOCS_ONLY != 'true' }}
         run: |
-          ( umask 077; : > "$RUNNER_TEMP/gomodauth.env"
-            for v in GOPRIVATE GIT_CONFIG_COUNT GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0; do
-              if [ -n "${!v:-}" ]; then printf '%s=%s\n' "$v" "${!v}" >> "$RUNNER_TEMP/gomodauth.env"; fi
-            done )
+          ( umask 077; : > "$RUNNER_TEMP/gomodauth.env" )
           make docker-build-toolchain-image MODULE_ENV_FILE="$RUNNER_TEMP/gomodauth.env"
           rm -f "$RUNNER_TEMP/gomodauth.env"
           echo "TOOLCHAIN_IMAGE=$(make -s toolchain-image)" >> "$GITHUB_ENV"
@@ -763,10 +754,7 @@ jobs:
       - name: Build the toolchain image
         if: ${{ env.DOCS_ONLY != 'true' }}
         run: |
-          ( umask 077; : > "$RUNNER_TEMP/gomodauth.env"
-            for v in GOPRIVATE GIT_CONFIG_COUNT GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0; do
-              if [ -n "${!v:-}" ]; then printf '%s=%s\n' "$v" "${!v}" >> "$RUNNER_TEMP/gomodauth.env"; fi
-            done )
+          ( umask 077; : > "$RUNNER_TEMP/gomodauth.env" )
           make docker-build-toolchain-image MODULE_ENV_FILE="$RUNNER_TEMP/gomodauth.env"
           rm -f "$RUNNER_TEMP/gomodauth.env"
           echo "TOOLCHAIN_IMAGE=$(make -s toolchain-image)" >> "$GITHUB_ENV"
@@ -832,9 +820,6 @@ jobs:
         run: |
           umask 077
           : > "$RUNNER_TEMP/gomodauth.env"
-          for v in GOPRIVATE GIT_CONFIG_COUNT GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0; do
-            if [ -n "${!v:-}" ]; then printf '%s=%s\n' "$v" "${!v}" >> "$RUNNER_TEMP/gomodauth.env"; fi
-          done
 
       - name: make integration-test (integration image)
         run: make integration-test MODULE_ENV_FILE="$RUNNER_TEMP/gomodauth.env" IT_PROJECT="$IT_PROJECT" IT_IMAGE="$IT_IMAGE" GO_BUILD_TAGS="$GO_BUILD_TAGS"

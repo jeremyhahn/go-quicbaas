@@ -31,11 +31,9 @@ ARG GO_IMAGE_DIGEST
 
 FROM golang:${GO_VERSION}-trixie@${GO_IMAGE_DIGEST} AS base
 
-# GO_BUILD_PROXY / GO_BUILD_PRIVATE: the caller's module cache and private
-# module paths (devops.md section 2a). No default and never an ENV: unset
-# builds straight from the public proxy.
+# GO_BUILD_PROXY: the caller's module cache (devops.md section 2a). No
+# default and never an ENV: unset builds straight from the public proxy.
 ARG GO_BUILD_PROXY
-ARG GO_BUILD_PRIVATE
 
 ENV GOTOOLCHAIN=local \
     GOPATH=/opt/go \
@@ -65,8 +63,6 @@ RUN --mount=type=secret,id=gomodauth \
     set -eu; \
     if [ -f /run/secrets/gomodauth ]; then set -a; . /run/secrets/gomodauth; set +a; fi; \
     GOPROXY="${GO_BUILD_PROXY:+${GO_BUILD_PROXY%/}|}https://proxy.golang.org|direct"; export GOPROXY; \
-    if [ -z "${GOPRIVATE:-}" ] && [ -n "${GO_BUILD_PRIVATE:-}" ]; then export GOPRIVATE="${GO_BUILD_PRIVATE}"; fi; \
-    if [ -n "${GOPRIVATE:-}" ]; then export GONOPROXY="${GOPRIVATE}" GONOSUMDB="${GOPRIVATE}"; fi; \
     go mod download; \
     (cd sdk/go && go mod download); \
     chmod -R a+rX /opt/go
