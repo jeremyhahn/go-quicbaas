@@ -355,9 +355,8 @@ func TestObjectTransferHandler_StreamSendAndClose(t *testing.T) {
 
 	// Another caller takes the connection; a second Close must not give it
 	// back from under them.
-	if _, err := tr.pool.Get(); err != nil {
-		t.Fatalf("pool.Get: %v", err)
-	}
+	// The test marks it taken itself: Pool.Get refuses a still-connecting one.
+	pc.inUse.Store(true)
 	if err := stream.Close(); err != nil {
 		t.Fatalf("second Close = %v", err)
 	}
