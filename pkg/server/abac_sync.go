@@ -249,6 +249,10 @@ func (a *qrdbABACSync) migrateTenantLegacyPolicies(ctx context.Context, tenantID
 		}
 		name := p.Metadata.Name
 		if err := a.storage.CreatePolicy(tenantCtx, tenantID, p); err != nil {
+			// coded-sentinel-ok: the whole already-exists class is the intent, and
+			// it fails safe. Whichever layer raised it, the tenant already holds a
+			// policy of this name, so the legacy copy is kept (not deleted, nothing
+			// written) and the next load still merges it from the legacy namespace.
 			if errors.Is(err, iam.ErrAlreadyExists) {
 				continue
 			}
