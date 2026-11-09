@@ -391,8 +391,15 @@ func (s *legacyCleanupPolicyStorage) GetPolicy(ctx context.Context, tenantID, na
 
 // ListPolicies lists a tenant's policies together with its legacy
 // system-namespace records, flagged ones included, paginated once over the
-// merged set in name order.
+// merged set in name order. A negative offset is refused for every tenant.
 func (s *legacyCleanupPolicyStorage) ListPolicies(ctx context.Context, tenantID string, opts iam.ListOptions) ([]*iam.Policy, error) {
+	if opts.Offset < 0 {
+		return nil, &dberrors.QBError{
+			Code: dberrors.ErrInvalidInput,
+			Op:   "iam.policy.list",
+			Err:  &iam.IAMMessageError{Message: "negative policy list offset"},
+		}
+	}
 	if tenantID == qrdbsdk.SystemTenantID {
 		return s.PolicyStorage.ListPolicies(ctx, tenantID, opts)
 	}
@@ -410,12 +417,14 @@ func (s *legacyCleanupPolicyStorage) ListPolicies(ctx context.Context, tenantID 
 	return paginatePolicies(merged, opts), nil
 }
 
-// paginatePolicies applies opts.Offset and opts.Limit as BackendStorage.ListPolicies does.
+// paginatePolicies applies opts.Offset and opts.Limit as BackendStorage.ListPolicies does;
+// a negative offset counts as 0 and a negative limit as no limit, so it never panics.
 func paginatePolicies(policies []*iam.Policy, opts iam.ListOptions) []*iam.Policy {
-	if opts.Offset >= len(policies) {
+	offset := max(opts.Offset, 0)
+	if offset >= len(policies) {
 		return []*iam.Policy{}
 	}
-	policies = policies[opts.Offset:]
+	policies = policies[offset:]
 	if opts.Limit > 0 && opts.Limit < len(policies) {
 		policies = policies[:opts.Limit]
 	}

@@ -815,6 +815,63 @@ func TestLegacyCleanupPolicyStorage_UpdateResolvesAConflict(t *testing.T) {
 	assert.Equal(t, iam.EffectAllow, abacPolicyEffect(t, got, "dup"))
 }
 
+func TestLegacyCleanupPolicyStorage_ListRejectsNegativeOffset(t *testing.T) {
+	_, _, bs := newABACTenantRoutedStorage(t)
+	storage := newLegacyCleanupPolicyStorage(bs)
+	tests := []struct {
+		name   string
+		tenant string
+	}{
+		{"non-empty tenant", "acme"},
+		{"empty tenant", "empty"},
+		{"system tenant", qrdbsdk.SystemTenantID},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx := tenantctx.WithTenant(context.Background(), tt.tenant)
+			if tt.tenant == qrdbsdk.SystemTenantID {
+				ctx = tenantctx.WithSystem(context.Background())
+			}
+			var (
+				got []*iam.Policy
+				err error
+			)
+			require.NotPanics(t, func() {
+				got, err = storage.ListPolicies(ctx, tt.tenant, iam.ListOptions{Offset: -1})
+			})
+			require.Error(t, err)
+			assert.True(t, dberrors.Is(err, dberrors.ErrInvalidInput), "err = %v", err)
+			assert.Nil(t, got)
+		})
+	}
+}
+
+func TestPaginatePolicies_NegativeBoundsNeverPanic(t *testing.T) {
+	policies := []*iam.Policy{
+		abacTestPolicy("a", "acme", "alice", "kv/**", iam.EffectAllow),
+		abacTestPolicy("b", "acme", "alice", "kv/**", iam.EffectAllow),
+	}
+	tests := []struct {
+		name string
+		in   []*iam.Policy
+		opts iam.ListOptions
+		want []string
+	}{
+		{"negative offset", policies, iam.ListOptions{Offset: -1}, []string{"a", "b"}},
+		{"negative limit", policies, iam.ListOptions{Limit: -1}, []string{"a", "b"}},
+		{"both negative", policies, iam.ListOptions{Offset: -5, Limit: -5}, []string{"a", "b"}},
+		{"negative offset with limit", policies, iam.ListOptions{Offset: -1, Limit: 1}, []string{"a"}},
+		{"negative offset on empty", nil, iam.ListOptions{Offset: -1}, []string{}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var got []*iam.Policy
+			require.NotPanics(t, func() { got = paginatePolicies(tt.in, tt.opts) })
+			assert.Equal(t, tt.want, abacPolicyNames(got))
+		})
+	}
+}
+
 func TestLegacyCleanupPolicyStorage_ListPaginatesTheMergedSet(t *testing.T) {
 	_, _, bs := newABACTenantRoutedStorage(t)
 	acmeCtx := tenantctx.WithTenant(context.Background(), "acme")
