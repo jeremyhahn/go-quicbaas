@@ -348,6 +348,7 @@ func (a *qrdbABACSync) resyncOnUnseal(hooks *service.TenantUnsealHooks, resync f
 // are the one record, that record is deleted once. A tenant's legacy records,
 // flagged ones included, are also read, listed and replaced through it, so a
 // record the migration left can be repaired or deleted.
+// A tenant copy is always reached in the tenant's own namespace, whatever tenant ctx is bound to.
 type legacyCleanupPolicyStorage struct {
 	iam.PolicyStorage
 }
@@ -358,20 +359,55 @@ func newLegacyCleanupPolicyStorage(inner iam.PolicyStorage) iam.PolicyStorage {
 	return &legacyCleanupPolicyStorage{PolicyStorage: inner}
 }
 
+// tenantContexts resolves the contexts of a non-system tenant's own copy and its legacy
+// system-namespace copy. ctx must be allowed to act in tenantID (tenantctx.AdminTarget), and the
+// two never name the same namespace, so legacy cleanup cannot delete the record just written.
+func (s *legacyCleanupPolicyStorage) tenantContexts(ctx context.Context, op, tenantID string) (tenantCtx, legacyCtx context.Context, err error) {
+	tenantCtx, resolved, err := tenantctx.AdminTarget(ctx, op, tenantID)
+	if err != nil {
+		return nil, nil, err
+	}
+	if resolved == qrdbsdk.SystemTenantID {
+		return nil, nil, &dberrors.QBError{
+			Code: dberrors.ErrInternal,
+			Op:   op,
+			Err:  &iam.IAMMessageError{Message: "tenant policy copy resolved to the system namespace"},
+		}
+	}
+	return tenantCtx, tenantctx.WithSystem(ctx), nil
+}
+
+// CreatePolicy creates a tenant policy in the tenant's namespace, whatever tenant ctx is bound to.
+func (s *legacyCleanupPolicyStorage) CreatePolicy(ctx context.Context, tenantID string, policy *iam.Policy) error {
+	if tenantID == qrdbsdk.SystemTenantID {
+		return s.PolicyStorage.CreatePolicy(ctx, tenantID, policy)
+	}
+	tenantCtx, _, err := s.tenantContexts(ctx, "iam.policy.create", tenantID)
+	if err != nil {
+		return err
+	}
+	return s.PolicyStorage.CreatePolicy(tenantCtx, tenantID, policy)
+}
+
 // DeletePolicy deletes the legacy system-namespace copy of a tenant policy
 // and then the tenant copy. The system tenant's policies have no legacy copy.
+// A context that may not act in tenantID is refused before anything is deleted.
 func (s *legacyCleanupPolicyStorage) DeletePolicy(ctx context.Context, tenantID, name string) error {
 	if tenantID == qrdbsdk.SystemTenantID {
 		return s.PolicyStorage.DeletePolicy(ctx, tenantID, name)
 	}
+	tenantCtx, legacyCtx, err := s.tenantContexts(ctx, "iam.policy.delete", tenantID)
+	if err != nil {
+		return err
+	}
 	legacyDeleted := true
-	if err := s.PolicyStorage.DeletePolicy(tenantctx.WithSystem(ctx), tenantID, name); err != nil {
+	if err := s.PolicyStorage.DeletePolicy(legacyCtx, tenantID, name); err != nil {
 		if !dberrors.Is(err, dberrors.ErrNotFound) {
 			return err
 		}
 		legacyDeleted = false
 	}
-	err := s.PolicyStorage.DeletePolicy(ctx, tenantID, name)
+	err = s.PolicyStorage.DeletePolicy(tenantCtx, tenantID, name)
 	if err != nil && legacyDeleted && dberrors.Is(err, dberrors.ErrNotFound) {
 		return nil
 	}
@@ -381,17 +417,26 @@ func (s *legacyCleanupPolicyStorage) DeletePolicy(ctx context.Context, tenantID,
 // GetPolicy reads a tenant policy, falling back to its legacy
 // system-namespace copy when the tenant has none. A legacy record that does
 // not decode returns its decode error, so the engine flags it.
+// A context that may not act in tenantID is refused.
 func (s *legacyCleanupPolicyStorage) GetPolicy(ctx context.Context, tenantID, name string) (*iam.Policy, error) {
-	policy, err := s.PolicyStorage.GetPolicy(ctx, tenantID, name)
-	if tenantID == qrdbsdk.SystemTenantID || err == nil || !dberrors.Is(err, dberrors.ErrNotFound) {
+	if tenantID == qrdbsdk.SystemTenantID {
+		return s.PolicyStorage.GetPolicy(ctx, tenantID, name)
+	}
+	tenantCtx, legacyCtx, err := s.tenantContexts(ctx, "iam.policy.get", tenantID)
+	if err != nil {
+		return nil, err
+	}
+	policy, err := s.PolicyStorage.GetPolicy(tenantCtx, tenantID, name)
+	if err == nil || !dberrors.Is(err, dberrors.ErrNotFound) {
 		return policy, err
 	}
-	return s.PolicyStorage.GetPolicy(tenantctx.WithSystem(ctx), tenantID, name)
+	return s.PolicyStorage.GetPolicy(legacyCtx, tenantID, name)
 }
 
 // ListPolicies lists a tenant's policies together with its legacy
 // system-namespace records, flagged ones included, paginated once over the
 // merged set in name order. A negative offset is refused for every tenant.
+// A context that may not act in tenantID is refused.
 func (s *legacyCleanupPolicyStorage) ListPolicies(ctx context.Context, tenantID string, opts iam.ListOptions) ([]*iam.Policy, error) {
 	if opts.Offset < 0 {
 		return nil, &dberrors.QBError{
@@ -403,12 +448,16 @@ func (s *legacyCleanupPolicyStorage) ListPolicies(ctx context.Context, tenantID 
 	if tenantID == qrdbsdk.SystemTenantID {
 		return s.PolicyStorage.ListPolicies(ctx, tenantID, opts)
 	}
-	all := iam.ListOptions{Filter: opts.Filter}
-	own, err := s.PolicyStorage.ListPolicies(ctx, tenantID, all)
+	tenantCtx, legacyCtx, err := s.tenantContexts(ctx, "iam.policy.list", tenantID)
 	if err != nil {
 		return nil, err
 	}
-	legacy, err := s.PolicyStorage.ListPolicies(tenantctx.WithSystem(ctx), tenantID, all)
+	all := iam.ListOptions{Filter: opts.Filter}
+	own, err := s.PolicyStorage.ListPolicies(tenantCtx, tenantID, all)
+	if err != nil {
+		return nil, err
+	}
+	legacy, err := s.PolicyStorage.ListPolicies(legacyCtx, tenantID, all)
 	if err != nil {
 		return nil, err
 	}
@@ -436,33 +485,37 @@ func paginatePolicies(policies []*iam.Policy, opts iam.ListOptions) []*iam.Polic
 // and its legacy copy deleted. A successful tenant update deletes any legacy
 // copy too, resolving a conflict between the two. When that legacy delete
 // fails, the tenant copy is put back as it was read before the write.
+// A context that may not act in tenantID is refused before anything is written.
 func (s *legacyCleanupPolicyStorage) UpdatePolicy(ctx context.Context, tenantID string, policy *iam.Policy) error {
-	var restoreTenant func(context.Context) error
-	if tenantID != qrdbsdk.SystemTenantID {
-		var err error
-		if restoreTenant, err = s.snapshotRecord(ctx, tenantID, policy.Metadata.Name); err != nil {
-			return err
-		}
+	if tenantID == qrdbsdk.SystemTenantID {
+		return s.PolicyStorage.UpdatePolicy(ctx, tenantID, policy)
+	}
+	tenantCtx, legacyCtx, err := s.tenantContexts(ctx, "iam.policy.update", tenantID)
+	if err != nil {
+		return err
+	}
+	restoreTenant, err := s.snapshotRecord(tenantCtx, tenantID, policy.Metadata.Name)
+	if err != nil {
+		return err
 	}
 	deleteLegacy := func() error {
-		err := s.PolicyStorage.DeletePolicy(tenantctx.WithSystem(ctx), tenantID, policy.Metadata.Name)
+		err := s.PolicyStorage.DeletePolicy(legacyCtx, tenantID, policy.Metadata.Name)
 		if err == nil || dberrors.Is(err, dberrors.ErrNotFound) {
 			return nil
 		}
-		if rerr := restoreTenant(ctx); rerr != nil {
+		if rerr := restoreTenant(tenantCtx); rerr != nil {
 			return errors.Join(err, rerr)
 		}
 		return err
 	}
-	err := s.PolicyStorage.UpdatePolicy(ctx, tenantID, policy)
-	if err == nil && tenantID != qrdbsdk.SystemTenantID {
+	err = s.PolicyStorage.UpdatePolicy(tenantCtx, tenantID, policy)
+	if err == nil {
 		return deleteLegacy()
 	}
-	if tenantID == qrdbsdk.SystemTenantID || err == nil || !dberrors.Is(err, dberrors.ErrNotFound) {
+	if !dberrors.Is(err, dberrors.ErrNotFound) {
 		return err
 	}
-	sysCtx := tenantctx.WithSystem(ctx)
-	_, readErr := s.PolicyStorage.GetPolicy(sysCtx, tenantID, policy.Metadata.Name)
+	_, readErr := s.PolicyStorage.GetPolicy(legacyCtx, tenantID, policy.Metadata.Name)
 	var de *iam.StoredPolicyDecodeError
 	switch {
 	case readErr == nil || errors.As(readErr, &de):
@@ -471,7 +524,7 @@ func (s *legacyCleanupPolicyStorage) UpdatePolicy(ctx context.Context, tenantID 
 	default:
 		return readErr
 	}
-	if err := s.CreatePolicy(ctx, tenantID, policy); err != nil {
+	if err := s.PolicyStorage.CreatePolicy(tenantCtx, tenantID, policy); err != nil {
 		return err
 	}
 	return deleteLegacy()
@@ -481,17 +534,30 @@ var _ iam.PolicyWriteSnapshotter = (*legacyCleanupPolicyStorage)(nil)
 
 // SnapshotPolicy captures a policy's tenant copy and its legacy system-namespace copy (the system
 // tenant's one record), as raw bytes when the inner storage allows, so flagged records come back too.
+// Both the snapshot and its restore reach the tenant copy in the tenant's namespace.
 func (s *legacyCleanupPolicyStorage) SnapshotPolicy(ctx context.Context, tenantID, name string) (func(context.Context) error, error) {
-	restoreTenant, err := s.snapshotRecord(ctx, tenantID, name)
-	if err != nil || tenantID == qrdbsdk.SystemTenantID {
-		return restoreTenant, err
+	if tenantID == qrdbsdk.SystemTenantID {
+		return s.snapshotRecord(ctx, tenantID, name)
 	}
-	restoreLegacy, err := s.snapshotRecord(tenantctx.WithSystem(ctx), tenantID, name)
+	const op = "iam.policy.update"
+	tenantCtx, legacyCtx, err := s.tenantContexts(ctx, op, tenantID)
+	if err != nil {
+		return nil, err
+	}
+	restoreTenant, err := s.snapshotRecord(tenantCtx, tenantID, name)
+	if err != nil {
+		return nil, err
+	}
+	restoreLegacy, err := s.snapshotRecord(legacyCtx, tenantID, name)
 	if err != nil {
 		return nil, err
 	}
 	return func(ctx context.Context) error {
-		return errors.Join(restoreTenant(ctx), restoreLegacy(tenantctx.WithSystem(ctx)))
+		tenantCtx, legacyCtx, err := s.tenantContexts(ctx, op, tenantID)
+		if err != nil {
+			return err
+		}
+		return errors.Join(restoreTenant(tenantCtx), restoreLegacy(legacyCtx))
 	}, nil
 }
 

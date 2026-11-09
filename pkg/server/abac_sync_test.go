@@ -1045,6 +1045,97 @@ func TestLegacyCleanupPolicyStorage_LegacyDeleteFailureKeepsTheTenantCopy(t *tes
 	assert.Equal(t, "acme-allow", p.Metadata.Name)
 }
 
+// recordingABACSync counts the engine's ABAC syncs and accepts every one.
+type recordingABACSync struct{ calls int }
+
+func (r *recordingABACSync) Sync(context.Context) error {
+	r.calls++
+	return nil
+}
+
+// requireSystemBoundPolicyKept checks that acme's policy "p" holds effect in
+// acme's own namespace, has no legacy system-namespace copy, and is listed.
+func requireSystemBoundPolicyKept(t *testing.T, bs *iam.BackendStorage, listed []*iam.Policy, effect iam.Effect) {
+	t.Helper()
+	got, err := bs.GetPolicy(tenantctx.WithTenant(context.Background(), "acme"), "acme", "p")
+	require.NoError(t, err)
+	require.Len(t, got.Spec.Rules, 1)
+	assert.Equal(t, effect, got.Spec.Rules[0].Effect)
+	_, err = bs.GetPolicy(tenantctx.WithSystem(context.Background()), "acme", "p")
+	assert.True(t, dberrors.Is(err, dberrors.ErrNotFound), "legacy copy: err = %v", err)
+	assert.Equal(t, []string{"acme-allow", "p"}, abacPolicyNames(listed))
+}
+
+func TestLegacyCleanupPolicyStorage_SystemBoundCreateThenUpdateKeepsThePolicy(t *testing.T) {
+	_, _, bs := newABACTenantRoutedStorage(t)
+	ctx := tenantctx.WithSystem(context.Background())
+	w := newLegacyCleanupPolicyStorage(bs)
+
+	require.NoError(t, w.CreatePolicy(ctx, "acme", abacTestPolicy("p", "acme", "alice", "kv/**", iam.EffectAllow)))
+	require.NoError(t, w.UpdatePolicy(ctx, "acme", abacTestPolicy("p", "acme", "alice", "kv/**", iam.EffectDeny)))
+
+	listed, err := w.ListPolicies(ctx, "acme", iam.ListOptions{})
+	require.NoError(t, err)
+	requireSystemBoundPolicyKept(t, bs, listed, iam.EffectDeny)
+}
+
+func TestLegacyCleanupPolicyStorage_SystemBoundEngineCreateThenUpdateKeepsThePolicy(t *testing.T) {
+	_, _, bs := newABACTenantRoutedStorage(t)
+	ctx := tenantctx.WithSystem(context.Background())
+	sync := &recordingABACSync{}
+	pe := iam.NewPolicyEngine(iam.PolicyEngineOptions{Storage: newLegacyCleanupPolicyStorage(bs), ABACSync: sync})
+
+	require.NoError(t, pe.CreatePolicy(ctx, "acme", abacTestPolicy("p", "acme", "alice", "kv/**", iam.EffectAllow)))
+	require.NoError(t, pe.UpdatePolicy(ctx, "acme", abacTestPolicy("p", "acme", "alice", "kv/**", iam.EffectDeny)))
+	assert.Equal(t, 2, sync.calls)
+
+	listed, err := pe.ListPolicies(ctx, "acme", iam.ListOptions{})
+	require.NoError(t, err)
+	requireSystemBoundPolicyKept(t, bs, listed, iam.EffectDeny)
+}
+
+func TestLegacyCleanupPolicyStorage_TenantCallerCannotNameAnotherTenant(t *testing.T) {
+	_, _, bs := newABACTenantRoutedStorage(t)
+	seedABACConflict(t, bs)
+	tenantBefore, legacyBefore := abacPolicyRecords(t, bs, "dup")
+	betaCtx := tenantctx.WithTenant(context.Background(), "beta")
+	w := newLegacyCleanupPolicyStorage(bs)
+	requireForbidden := func(t *testing.T, err error) {
+		t.Helper()
+		assert.True(t, dberrors.Is(err, dberrors.ErrForbidden), "err = %v", err)
+	}
+
+	requireForbidden(t, w.CreatePolicy(betaCtx, "acme", abacTestPolicy("p", "acme", "alice", "kv/**", iam.EffectAllow)))
+	requireForbidden(t, w.UpdatePolicy(betaCtx, "acme", abacTestPolicy("dup", "acme", "alice", "kv/**", iam.EffectAllow)))
+	_, err := w.GetPolicy(betaCtx, "acme", "dup")
+	requireForbidden(t, err)
+	_, err = w.ListPolicies(betaCtx, "acme", iam.ListOptions{})
+	requireForbidden(t, err)
+	requireForbidden(t, w.DeletePolicy(betaCtx, "acme", "dup"))
+
+	tenantAfter, legacyAfter := abacPolicyRecords(t, bs, "dup")
+	assert.Equal(t, tenantBefore, tenantAfter)
+	assert.Equal(t, legacyBefore, legacyAfter)
+	got, err := bs.ListPolicies(tenantctx.WithTenant(context.Background(), "acme"), "acme", iam.ListOptions{})
+	require.NoError(t, err)
+	assert.Equal(t, []string{"acme-allow", "dup"}, abacPolicyNames(got))
+}
+
+func TestLegacyCleanupPolicyStorage_UnboundContextRefused(t *testing.T) {
+	_, _, bs := newABACTenantRoutedStorage(t)
+	w := newLegacyCleanupPolicyStorage(bs)
+
+	err := w.CreatePolicy(context.Background(), "acme", abacTestPolicy("p", "acme", "alice", "kv/**", iam.EffectAllow))
+	assert.True(t, dberrors.Is(err, dberrors.ErrForbidden), "create: err = %v", err)
+	err = w.UpdatePolicy(context.Background(), "acme", abacTestPolicy("p", "acme", "alice", "kv/**", iam.EffectAllow))
+	assert.True(t, dberrors.Is(err, dberrors.ErrForbidden), "update: err = %v", err)
+
+	_, err = bs.GetPolicy(tenantctx.WithTenant(context.Background(), "acme"), "acme", "p")
+	assert.True(t, dberrors.Is(err, dberrors.ErrNotFound), "tenant copy: err = %v", err)
+	_, err = bs.GetPolicy(tenantctx.WithSystem(context.Background()), "acme", "p")
+	assert.True(t, dberrors.Is(err, dberrors.ErrNotFound), "legacy copy: err = %v", err)
+}
+
 func TestPolicyToABAC(t *testing.T) {
 	created := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
 	updated := created.Add(time.Hour)
