@@ -28,7 +28,25 @@ import (
 // moment the barrier opens instead: every per-tenant barrier facade tells the
 // registered observers after an unseal succeeds, before the unseal call
 // returns, so the tenant's first request after the unseal already reads
-// migrated records.
+// migrated records. Gates run before the observers and can refuse the unseal:
+// a refused tenant's barrier is sealed again and the unseal call fails.
+
+// TenantUnsealGate decides whether a tenant whose barrier has just opened may
+// serve requests. A gate runs after the barrier opens and before any
+// observer; if it fails, the facade seals the barrier again and the unseal
+// returns the error, so a tenant never serves requests in a state the gate
+// refused.
+type TenantUnsealGate interface {
+	AdmitUnsealedTenant(ctx context.Context, tenantID string) error
+}
+
+// TenantUnsealGateFunc adapts a function to a TenantUnsealGate.
+type TenantUnsealGateFunc func(ctx context.Context, tenantID string) error
+
+// AdmitUnsealedTenant calls f.
+func (f TenantUnsealGateFunc) AdmitUnsealedTenant(ctx context.Context, tenantID string) error {
+	return f(ctx, tenantID)
+}
 
 // TenantUnsealObserver is told that a tenant's barrier has just been
 // unsealed. It runs on the unsealing request's goroutine and must be
@@ -42,6 +60,44 @@ type TenantUnsealObserver interface {
 // registered after a facade was built with the hooks.
 type TenantUnsealHooks struct {
 	observers atomic.Pointer[[]TenantUnsealObserver]
+	gates     atomic.Pointer[[]TenantUnsealGate]
+}
+
+// RegisterGate adds a gate. A nil gate is ignored.
+func (h *TenantUnsealHooks) RegisterGate(gate TenantUnsealGate) {
+	if gate == nil {
+		return
+	}
+	for {
+		current := h.gates.Load()
+		var next []TenantUnsealGate
+		if current != nil {
+			next = append(next, *current...)
+		}
+		next = append(next, gate)
+		if h.gates.CompareAndSwap(current, &next) {
+			return
+		}
+	}
+}
+
+// admit runs every gate, in order, for tenantID and returns the first
+// failure. Like notify, it is not cut short by the request's cancellation.
+func (h *TenantUnsealHooks) admit(ctx context.Context, tenantID string) error {
+	if h == nil {
+		return nil
+	}
+	gates := h.gates.Load()
+	if gates == nil {
+		return nil
+	}
+	ctx = context.WithoutCancel(ctx)
+	for _, gate := range *gates {
+		if err := gate.AdmitUnsealedTenant(ctx, tenantID); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // Register adds an observer. A nil observer is ignored.

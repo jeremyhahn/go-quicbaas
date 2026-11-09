@@ -124,3 +124,58 @@ func TestTenantUnsealHooks_RegisterIsSafeConcurrently(t *testing.T) {
 		t.Fatalf("registered %d observers, want 16", got)
 	}
 }
+
+func TestTenantUnsealHooks_AFailedGateSealsTheBarrierAgain(t *testing.T) {
+	gateErr := errors.New("policy reload failed")
+	hooks := &TenantUnsealHooks{}
+	hooks.RegisterGate(TenantUnsealGateFunc(func(context.Context, string) error { return gateErr }))
+	observer := &recordingObserver{}
+	hooks.Register(observer)
+
+	client := &mockTenantClient{}
+	err := NewTenantBarrierService(client, WithTenantUnsealHooks(hooks)).
+		TenantBarrierUnseal(tenantCtx("acme"), "acme", []byte("key"))
+	if !errors.Is(err, gateErr) {
+		t.Fatalf("the gate's failure must fail the unseal, got %v", err)
+	}
+	if client.sealReq == nil || client.sealReq.TenantID != "acme" {
+		t.Fatalf("the barrier must be sealed again, got %+v", client.sealReq)
+	}
+
+	shareClient := &mockTenantClient{shareResp: &qrdbtransport.TenantBarrierUnsealProgress{
+		TenantID: "acme", Required: 2, Submitted: 2, Complete: true,
+	}}
+	progress, err := NewTenantBarrierService(shareClient, WithTenantUnsealHooks(hooks)).
+		TenantBarrierUnsealShare(tenantCtx("acme"), "acme", "share-2")
+	if progress != nil || !errors.Is(err, gateErr) {
+		t.Fatalf("the quorum's last share must fail with the gate, got %+v, %v", progress, err)
+	}
+	if shareClient.sealReq == nil {
+		t.Fatal("the barrier opened by the quorum must be sealed again")
+	}
+
+	sealErr := errors.New("seal failed")
+	err = NewTenantBarrierService(&mockTenantClient{sealErr: sealErr}, WithTenantUnsealHooks(hooks)).
+		TenantBarrierUnseal(tenantCtx("acme"), "acme", []byte("key"))
+	if !errors.Is(err, gateErr) || !errors.Is(err, sealErr) {
+		t.Fatalf("both the gate's and the reseal's failure must surface, got %v", err)
+	}
+	if len(observer.tenants) != 0 {
+		t.Fatalf("observer told %v for a tenant the gate refused", observer.tenants)
+	}
+
+	admitting := &TenantUnsealHooks{}
+	admitting.RegisterGate(TenantUnsealGateFunc(func(context.Context, string) error { return nil }))
+	admitting.Register(observer)
+	client = &mockTenantClient{}
+	if err := NewTenantBarrierService(client, WithTenantUnsealHooks(admitting)).
+		TenantBarrierUnseal(tenantCtx("acme"), "acme", []byte("key")); err != nil {
+		t.Fatal(err)
+	}
+	if client.sealReq != nil {
+		t.Fatalf("an admitted tenant must stay unsealed, got %+v", client.sealReq)
+	}
+	if !slices.Equal(observer.tenants, []string{"acme"}) {
+		t.Fatalf("an admitted unseal must tell the observers, got %v", observer.tenants)
+	}
+}

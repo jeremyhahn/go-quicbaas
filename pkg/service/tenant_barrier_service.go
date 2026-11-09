@@ -15,6 +15,8 @@ package service
 
 import (
 	"context"
+	stderrors "errors"
+	"fmt"
 
 	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 
@@ -207,6 +209,17 @@ func (s *tenantBarrierService) TenantBarrierUnseal(ctx context.Context, tenantID
 	}); err != nil {
 		return err
 	}
+	return s.admitUnsealed(ctx, tenantID)
+}
+
+// admitUnsealed runs the unseal gates for a tenant whose barrier has just
+// opened. If one fails, the barrier is sealed again and the error returned;
+// otherwise the observers are told.
+func (s *tenantBarrierService) admitUnsealed(ctx context.Context, tenantID string) error {
+	if err := s.unsealed.admit(ctx, tenantID); err != nil {
+		sealErr := s.qrdb.TenantBarrierSeal(context.WithoutCancel(ctx), &qrdbtransport.TenantBarrierSealRequest{TenantID: tenantID})
+		return fmt.Errorf("tenant %q was sealed again: its unseal checks failed: %w", tenantID, stderrors.Join(err, sealErr))
+	}
 	s.unsealed.notify(ctx, tenantID)
 	return nil
 }
@@ -225,7 +238,9 @@ func (s *tenantBarrierService) TenantBarrierUnsealShare(ctx context.Context, ten
 		return nil, err
 	}
 	if progress != nil && progress.Complete {
-		s.unsealed.notify(ctx, tenantID)
+		if err := s.admitUnsealed(ctx, tenantID); err != nil {
+			return nil, err
+		}
 	}
 	return progress, nil
 }

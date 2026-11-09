@@ -375,6 +375,38 @@ func TestQRDBABACSync_resyncOnUnseal(t *testing.T) {
 	assert.NotNil(t, syncCtx)
 }
 
+// resealingTenantClient unseals every tenant and records the tenant whose
+// barrier is sealed again.
+type resealingTenantClient struct {
+	unsealingTenantClient
+	sealed []string
+}
+
+func (c *resealingTenantClient) TenantBarrierSeal(_ context.Context, req *qrdbtransport.TenantBarrierSealRequest) error {
+	c.sealed = append(c.sealed, req.TenantID)
+	return nil
+}
+
+func TestQRDBABACSync_resyncOnUnseal_FailedReloadSealsAgain(t *testing.T) {
+	_, tm, bs := newABACTenantRoutedStorage(t)
+	hooks := &service.TenantUnsealHooks{}
+
+	reloadErr := errors.New("catalog read failed")
+	newQRDBABACSync(&Server{}, tm, bs).resyncOnUnseal(hooks, func(ctx context.Context, prepare func(context.Context)) error {
+		if prepare != nil {
+			prepare(ctx)
+		}
+		return reloadErr
+	})
+	client := &resealingTenantClient{}
+	barrier := service.NewTenantBarrierService(client, service.WithTenantUnsealHooks(hooks))
+
+	err := barrier.TenantBarrierUnseal(tenantAdminCtx("acme"), "acme", []byte("key"))
+	require.Error(t, err)
+	assert.ErrorIs(t, err, reloadErr)
+	assert.Equal(t, []string{"acme"}, client.sealed)
+}
+
 // seedLegacyABACPolicy stores p for tenantID the way an earlier release wrote
 // a system admin's tenant policy: with the system context, so it lands in
 // the shared store under the tenant's key.
