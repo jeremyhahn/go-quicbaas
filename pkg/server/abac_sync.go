@@ -17,6 +17,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"reflect"
 	"strings"
 
 	qrdbtenant "github.com/jeremyhahn/go-qrdb/pkg/tenant"
@@ -184,7 +185,7 @@ func (a *qrdbABACSync) allPolicies(ctx context.Context) ([]*iam.Policy, error) {
 			if err != nil {
 				return nil, err
 			}
-			policies = mergeLegacyPolicies(policies, legacy)
+			policies = mergeLegacyPolicies(tenantID, policies, legacy)
 		}
 		all = append(all, policies...)
 	}
@@ -199,18 +200,58 @@ func policyRecordName(p *iam.Policy) string {
 	return p.Metadata.Name
 }
 
-// mergeLegacyPolicies keeps all of own and appends each legacy record whose name own lacks.
-func mergeLegacyPolicies(own, legacy []*iam.Policy) []*iam.Policy {
-	names := make(map[string]struct{}, len(own))
-	for _, p := range own {
-		names[policyRecordName(p)] = struct{}{}
+// mergeLegacyPolicies keeps all of own and appends each legacy record whose name own lacks. An own record
+// whose legacy copy is enforced differently is replaced by a flagged entry, denying the tenant until resolved.
+func mergeLegacyPolicies(tenantID string, own, legacy []*iam.Policy) []*iam.Policy {
+	index := make(map[string]int, len(own))
+	for i, p := range own {
+		index[policyRecordName(p)] = i
 	}
 	for _, p := range legacy {
-		if _, ok := names[policyRecordName(p)]; !ok {
+		name := policyRecordName(p)
+		i, ok := index[name]
+		if !ok {
 			own = append(own, p)
+			continue
 		}
+		if samePolicyEnforcement(own[i], p) {
+			continue
+		}
+		tenant := own[i].Metadata.Tenant
+		if own[i].LoadError != nil {
+			tenant = own[i].LoadError.TenantID
+		}
+		if tenant == "" {
+			tenant = tenantID
+		}
+		flagged := &iam.Policy{LoadError: &iam.StoredPolicyDecodeError{
+			TenantID: tenant,
+			Name:     name,
+			Reason:   "the tenant's copy and the legacy system-namespace copy of this policy differ; delete or update the policy to resolve the conflict",
+		}}
+		flagged.Metadata.Name = name
+		own[i] = flagged
 	}
 	return own
+}
+
+// samePolicyEnforcement reports whether own (a) and its legacy copy (b) are enforced alike.
+func samePolicyEnforcement(a, b *iam.Policy) bool {
+	if a.LoadError != nil {
+		return true
+	}
+	if b.LoadError != nil {
+		return false
+	}
+	pa, err := policyToABAC(a)
+	if err != nil {
+		return false
+	}
+	pb, err := policyToABAC(b)
+	if err != nil {
+		return false
+	}
+	return reflect.DeepEqual(pa, pb)
 }
 
 // migrateLegacyPolicies moves tenant policies out of the system namespace:
@@ -361,7 +402,7 @@ func (s *legacyCleanupPolicyStorage) ListPolicies(ctx context.Context, tenantID 
 	if err != nil {
 		return nil, err
 	}
-	return mergeLegacyPolicies(own, legacy), nil
+	return mergeLegacyPolicies(tenantID, own, legacy), nil
 }
 
 // UpdatePolicy replaces a tenant policy. A policy held only as a legacy

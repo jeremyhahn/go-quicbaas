@@ -473,13 +473,55 @@ func TestQRDBABACSync_allPolicies_ReadsLegacyTenantPolicies(t *testing.T) {
 	got, err := a.allPolicies(context.Background())
 	require.NoError(t, err)
 	assert.Equal(t, []string{"acme-allow", "dup", "legacy-deny", "sys-deny"}, abacPolicyNames(got))
-	assert.Equal(t, iam.EffectAllow, abacPolicyEffect(t, got, "dup"))
+	dup := abacPolicyEntry(t, got, "dup")
+	require.NotNil(t, dup.LoadError, "a differing legacy copy fails closed")
+	assert.Equal(t, "acme", dup.LoadError.TenantID)
 
 	r.sealTenant("acme")
 	got, err = a.allPolicies(context.Background())
 	require.NoError(t, err)
 	assert.Equal(t, []string{"dup", "legacy-deny", "sys-deny"}, abacPolicyNames(got))
 	assert.Equal(t, iam.EffectDeny, abacPolicyEffect(t, got, "dup"))
+}
+
+// abacPolicyEntry returns the one listed entry named name, flagged or not.
+func abacPolicyEntry(t *testing.T, policies []*iam.Policy, name string) *iam.Policy {
+	t.Helper()
+	var found *iam.Policy
+	for _, p := range policies {
+		if policyRecordName(p) == name {
+			require.Nil(t, found, "policy %q listed twice", name)
+			found = p
+		}
+	}
+	require.NotNil(t, found, "policy %q not listed", name)
+	return found
+}
+
+func TestQRDBABACSync_allPolicies_IdenticalLegacyCopyMerges(t *testing.T) {
+	_, tm, bs := newABACTenantRoutedStorage(t)
+	acmeCtx := tenantctx.WithTenant(context.Background(), "acme")
+	seedLegacyABACPolicy(t, bs, "acme", abacTestPolicy("dup", "acme", "alice", "kv/**", iam.EffectDeny))
+	require.NoError(t, bs.CreatePolicy(acmeCtx, "acme", abacTestPolicy("dup", "acme", "alice", "kv/**", iam.EffectDeny)))
+
+	got, err := newQRDBABACSync(&Server{}, tm, bs).allPolicies(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, []string{"acme-allow", "dup", "sys-deny"}, abacPolicyNames(got))
+	assert.Nil(t, abacPolicyEntry(t, got, "dup").LoadError)
+	assert.Equal(t, iam.EffectDeny, abacPolicyEffect(t, got, "dup"))
+}
+
+func TestQRDBABACSync_allPolicies_FlaggedLegacyCopyFailsClosed(t *testing.T) {
+	r, tm, bs := newABACTenantRoutedStorage(t)
+	require.NoError(t, r.shared.Put(context.Background(),
+		iam.KeyPrefixTenant+"acme"+iam.KeyPrefixPolicy+"dup", []byte("{not json")))
+	acmeCtx := tenantctx.WithTenant(context.Background(), "acme")
+	require.NoError(t, bs.CreatePolicy(acmeCtx, "acme", abacTestPolicy("dup", "acme", "alice", "kv/**", iam.EffectAllow)))
+
+	got, err := newQRDBABACSync(&Server{}, tm, bs).allPolicies(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, []string{"acme-allow", "dup", "sys-deny"}, abacPolicyNames(got))
+	assert.NotNil(t, abacPolicyEntry(t, got, "dup").LoadError, "a flagged legacy copy fails closed")
 }
 
 func TestQRDBABACSync_migrateLegacyPolicies(t *testing.T) {
