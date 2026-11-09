@@ -204,6 +204,7 @@ func (s *tenantBarrierService) TenantBarrierUnseal(ctx context.Context, tenantID
 	if err := enforceTenantBinding(ctx, "tenant_barrier.unseal", tenantID); err != nil {
 		return err
 	}
+	defer s.unsealed.lockTransition(tenantID)()
 	wasHeld := s.unsealed.hold(tenantID)
 	if err := s.qrdb.TenantBarrierUnseal(ctx, &qrdbtransport.TenantBarrierUnsealRequest{
 		TenantID: tenantID,
@@ -251,6 +252,7 @@ func (s *tenantBarrierService) TenantBarrierUnsealShare(ctx context.Context, ten
 	if err := enforceTenantBinding(ctx, "tenant_barrier.unseal_share", tenantID); err != nil {
 		return nil, err
 	}
+	defer s.unsealed.lockTransition(tenantID)()
 	wasHeld := s.unsealed.hold(tenantID)
 	progress, err := s.qrdb.TenantBarrierUnsealShare(ctx, &qrdbtransport.TenantBarrierUnsealShareRequest{
 		TenantID: tenantID,
@@ -277,6 +279,7 @@ func (s *tenantBarrierService) TenantBarrierSeal(ctx context.Context, tenantID s
 	if err := enforceTenantBinding(ctx, "tenant_barrier.seal", tenantID); err != nil {
 		return err
 	}
+	defer s.unsealed.lockTransition(tenantID)()
 	if err := s.qrdb.TenantBarrierSeal(ctx, &qrdbtransport.TenantBarrierSealRequest{TenantID: tenantID}); err != nil {
 		return err
 	}

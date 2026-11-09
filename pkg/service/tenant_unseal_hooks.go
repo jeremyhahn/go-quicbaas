@@ -65,13 +65,15 @@ type TenantUnsealObserver interface {
 // TenantUnsealHooks is the set of observers the per-tenant barrier facades
 // tell. The zero value holds none and is ready to use; observers may be
 // registered after a facade was built with the hooks. The hooks also hold the
-// tenants whose unseal has not yet passed its gates; see Admit.
+// tenants whose unseal has not yet passed its gates; see Admit. Every facade
+// built with the same hooks runs a tenant's barrier transitions one at a time.
 type TenantUnsealHooks struct {
 	observers atomic.Pointer[[]TenantUnsealObserver]
 	gates     atomic.Pointer[[]TenantUnsealGate]
 
-	mu   sync.Mutex
-	held map[string]struct{}
+	mu          sync.Mutex
+	held        map[string]struct{}
+	transitions map[string]*sync.Mutex
 }
 
 // Admit reports whether tenantID may serve requests: it returns nil unless
@@ -117,6 +119,27 @@ func (h *TenantUnsealHooks) release(tenantID string) {
 	h.mu.Lock()
 	delete(h.held, tenantID)
 	h.mu.Unlock()
+}
+
+// lockTransition locks the tenant's barrier transition and returns its
+// unlock. A tenant's barrier transitions run one at a time, so a hold one
+// call took is never released while another call's gates run.
+func (h *TenantUnsealHooks) lockTransition(tenantID string) (unlock func()) {
+	if h == nil || tenantID == "" {
+		return func() {}
+	}
+	h.mu.Lock()
+	m, ok := h.transitions[tenantID]
+	if !ok {
+		if h.transitions == nil {
+			h.transitions = make(map[string]*sync.Mutex)
+		}
+		m = &sync.Mutex{}
+		h.transitions[tenantID] = m
+	}
+	h.mu.Unlock()
+	m.Lock()
+	return m.Unlock
 }
 
 // RegisterGate adds a gate. A nil gate is ignored.

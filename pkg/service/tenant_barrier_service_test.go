@@ -20,6 +20,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
@@ -384,6 +385,96 @@ func TestTenantBarrierService_HoldLifecycle(t *testing.T) {
 	}
 	if err := hooks.Admit("acme"); err != nil {
 		t.Fatalf("a sealed tenant is no longer held, got %v", err)
+	}
+}
+
+// blockingShareClient blocks its first share submission inside qrdb and
+// returns an incomplete quorum for it; later submissions complete it.
+type blockingShareClient struct {
+	*mockTenantClient
+	calls   atomic.Int32
+	entered chan struct{}
+	proceed chan struct{}
+}
+
+func (c *blockingShareClient) TenantBarrierUnsealShare(_ context.Context, req *qrdbtransport.TenantBarrierUnsealShareRequest) (*qrdbtransport.TenantBarrierUnsealProgress, error) {
+	if c.calls.Add(1) == 1 {
+		close(c.entered)
+		<-c.proceed
+		return &qrdbtransport.TenantBarrierUnsealProgress{TenantID: req.TenantID, Required: 2, Submitted: 1}, nil
+	}
+	return &qrdbtransport.TenantBarrierUnsealProgress{TenantID: req.TenantID, Required: 2, Submitted: 2, Complete: true}, nil
+}
+
+// TestTenantBarrierService_ConcurrentSharesKeepHoldUntilGatesPass interleaves
+// two share submissions on two facades: the incomplete one must not release
+// the hold the completing one's gates still need.
+func TestTenantBarrierService_ConcurrentSharesKeepHoldUntilGatesPass(t *testing.T) {
+	wait := func(ch <-chan struct{}, what string) {
+		t.Helper()
+		select {
+		case <-ch:
+		case <-time.After(5 * time.Second):
+			t.Fatalf("timed out waiting for %s", what)
+		}
+	}
+	waitErr := func(ch <-chan error, what string) error {
+		t.Helper()
+		select {
+		case err := <-ch:
+			return err
+		case <-time.After(5 * time.Second):
+			t.Fatalf("timed out waiting for %s", what)
+			return nil
+		}
+	}
+
+	hooks := &TenantUnsealHooks{}
+	gateEntered := make(chan struct{})
+	gateProceed := make(chan struct{})
+	hooks.RegisterGate(TenantUnsealGateFunc(func(context.Context, string) error {
+		close(gateEntered)
+		<-gateProceed
+		return nil
+	}))
+	client := &blockingShareClient{
+		mockTenantClient: &mockTenantClient{},
+		entered:          make(chan struct{}),
+		proceed:          make(chan struct{}),
+	}
+	svc1 := NewTenantBarrierService(client, WithTenantUnsealHooks(hooks))
+	svc2 := NewTenantBarrierService(client, WithTenantUnsealHooks(hooks))
+
+	doneA := make(chan error, 1)
+	go func() {
+		_, err := svc1.TenantBarrierUnsealShare(tenantCtx("acme"), "acme", "share-1")
+		doneA <- err
+	}()
+	wait(client.entered, "call A inside qrdb")
+
+	doneB := make(chan error, 1)
+	go func() {
+		_, err := svc2.TenantBarrierUnsealShare(tenantCtx("acme"), "acme", "share-2")
+		doneB <- err
+	}()
+	time.Sleep(100 * time.Millisecond)
+
+	close(client.proceed)
+	if err := waitErr(doneA, "call A"); err != nil {
+		t.Fatalf("an incomplete quorum must not fail, got %v", err)
+	}
+
+	wait(gateEntered, "call B's gate")
+	if err := hooks.Admit("acme"); !errors.Is(err, qrdbsdk.ErrTenantStoreSealed) {
+		t.Fatalf("a tenant whose gates still run must stay closed, got %v", err)
+	}
+
+	close(gateProceed)
+	if err := waitErr(doneB, "call B"); err != nil {
+		t.Fatalf("a completed quorum whose gates pass must open the tenant, got %v", err)
+	}
+	if err := hooks.Admit("acme"); err != nil {
+		t.Fatalf("an admitted tenant must be open, got %v", err)
 	}
 }
 
