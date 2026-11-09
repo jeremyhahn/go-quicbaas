@@ -221,7 +221,7 @@ func TestRunReportsTheVerdictAndTheStatus(t *testing.T) {
 		if status := run([]string{"-root", repoRoot}, &stdout, &stderr); status != gate.ExitClean {
 			t.Fatalf("run exited %d, want %d\nstderr: %s", status, gate.ExitClean, stderr.String())
 		}
-		if !strings.Contains(stdout.String(), "cleared after every build") {
+		if !strings.Contains(stdout.String(), "no credential reaches an image build") {
 			t.Fatalf("the pass was not reported: %q", stdout.String())
 		}
 	})

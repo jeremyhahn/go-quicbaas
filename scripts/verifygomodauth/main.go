@@ -127,7 +127,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "verify-gomodauth: %d check(s) failed\n", failures)
 		return gate.ExitFindings
 	}
-	fmt.Fprintln(stdout, "verify-gomodauth: module credentials are staged on any host and cleared after every build")
+	fmt.Fprintln(stdout, "verify-gomodauth: no credential reaches an image build, and the staged secret file is empty and 0600")
 	return gate.ExitClean
 }
 
