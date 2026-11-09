@@ -2510,7 +2510,7 @@ SDK_GOMOD_BACKUP ?= /tmp/quicbaas-$(RUN_ID_SLUG)-sdk-gomod-backup
 # clears it too. The file is emptied rather than removed: a later compose
 # invocation against the same project still resolves the secret's path.
 # umask applies only to a file this creates; stage-gomodauth chmods an existing
-# one to 0600 before it writes a token into it.
+# one to 0600 when it empties it.
 GOMODAUTH_CLEAR = { umask 077; : > "$(GOMODAUTH_ENV)"; } 2>/dev/null || true
 # A file CI supplied in MODULE_ENV_FILE belongs to the caller: no target stages
 # into it or clears it, so every recipe that arms GOMODAUTH_CLEAR or calls
