@@ -26,6 +26,7 @@ import (
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
 	dberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
+	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 	"github.com/jeremyhahn/go-quicbaas/pkg/kvstore"
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
@@ -498,6 +499,33 @@ func TestAdmittedStoreResolver_HeldTenantStaysClosed(t *testing.T) {
 	}
 	if _, err := resolver.Resolve(context.Background(), "acme"); err != nil {
 		t.Fatalf("a released tenant must resolve, got %v", err)
+	}
+}
+
+func TestAdmittedStoreResolver_HeldTenantServesOnlyItsAuthRecordReads(t *testing.T) {
+	s := &Server{}
+	gateErr := errors.New("policy reload failed")
+	s.tenantUnsealHooks.RegisterGate(service.TenantUnsealGateFunc(func(context.Context, string) error {
+		return gateErr
+	}))
+	barrier := service.NewTenantBarrierService(unsealingTenantClient{}, service.WithTenantUnsealHooks(&s.tenantUnsealHooks))
+	if err := barrier.TenantBarrierUnseal(tenantAdminCtx("acme"), "acme", []byte("key")); !errors.Is(err, gateErr) {
+		t.Fatalf("the gate's failure must fail the unseal, got %v", err)
+	}
+	storage := iam.NewBackendStorage(newTenantRoutingKVStore(&resolverAdapter{
+		inner: s.admittedStoreResolver(fakeQRDBResolver{store: qrdbsdk.NewMemoryKVStore()}),
+	}))
+
+	ctx := tenantctx.WithTenant(context.Background(), "acme")
+	if _, err := storage.IsTokenRevoked(ctx, "jti-1"); !errors.Is(err, qrdbsdk.ErrTenantStoreSealed) {
+		t.Fatalf("an unmarked read of a held tenant must stay sealed, got %v", err)
+	}
+	revoked, err := storage.IsTokenRevoked(tenantctx.WithAuthRecordRead(ctx, "acme"), "jti-1")
+	if err != nil || revoked {
+		t.Fatalf("a held tenant's auth-record read must reach its store, got revoked=%v err=%v", revoked, err)
+	}
+	if _, err := storage.IsTokenRevoked(tenantctx.WithAuthRecordRead(ctx, "beta"), "jti-1"); !errors.Is(err, qrdbsdk.ErrTenantStoreSealed) {
+		t.Fatalf("a marker naming another tenant must not open acme, got %v", err)
 	}
 }
 

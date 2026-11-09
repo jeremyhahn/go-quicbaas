@@ -201,3 +201,22 @@ func TestErrorMessages_NameTheOperationAndTenants(t *testing.T) {
 	assert.Contains(t, msg, "acme")
 	assert.Contains(t, msg, "globex")
 }
+
+func TestAuthRecordRead_NamesOneTenant(t *testing.T) {
+	ctx := WithAuthRecordRead(context.Background(), "acme")
+	if !InAuthRecordRead(ctx, "acme") {
+		t.Fatal("a context marked for acme must report acme")
+	}
+	if InAuthRecordRead(ctx, "beta") {
+		t.Fatal("a context marked for acme must not report beta")
+	}
+	if InAuthRecordRead(ctx, "") {
+		t.Fatal("an empty tenant must never report marked")
+	}
+	if InAuthRecordRead(context.Background(), "acme") {
+		t.Fatal("an unmarked context must not report marked")
+	}
+	if InAuthRecordRead(WithAuthRecordRead(context.Background(), ""), "") {
+		t.Fatal("an empty tenant must leave the context unmarked")
+	}
+}

@@ -80,6 +80,30 @@ func WithTenant(ctx context.Context, tenantID string) context.Context {
 	return qrdbsdk.ContextWithTenant(ctx, tenantID)
 }
 
+// authRecordReadKey marks a context as an authentication-record read.
+type authRecordReadKey struct{}
+
+// WithAuthRecordRead marks ctx as an authentication-record read (token
+// revocation and principal lifecycle) for tenantID. Only token liveness sets
+// it, and the store's unseal hold honours it for that one tenant. An empty
+// tenantID returns ctx unchanged.
+func WithAuthRecordRead(ctx context.Context, tenantID string) context.Context {
+	if tenantID == "" {
+		return ctx
+	}
+	return context.WithValue(ctx, authRecordReadKey{}, tenantID)
+}
+
+// InAuthRecordRead reports whether ctx is marked as an authentication-record
+// read for exactly tenantID.
+func InAuthRecordRead(ctx context.Context, tenantID string) bool {
+	if tenantID == "" {
+		return false
+	}
+	marked, _ := ctx.Value(authRecordReadKey{}).(string)
+	return marked == tenantID
+}
+
 // WithSystem binds the system tenant. It is for in-process callers that act
 // for the platform itself (boot, background jobs, the embedded transport),
 // never for a request whose caller's tenant is unknown.

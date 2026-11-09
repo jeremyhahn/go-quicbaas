@@ -634,7 +634,7 @@ func (p *OIDCProvider) Introspect(ctx context.Context, req *IntrospectRequest) (
 // the account made the subject miss again and restored the bypass.
 func (p *OIDCProvider) TokenLiveness(ctx context.Context, tenantID, subject string, userID uint64, principalType, jti string) (bool, error) {
 	if tenantID != "" {
-		ctx = tenantctx.WithTenant(ctx, tenantID)
+		ctx = tenantctx.WithAuthRecordRead(tenantctx.WithTenant(ctx, tenantID), tenantID)
 	}
 
 	revoked, err := p.tokenService.storage.IsTokenRevoked(ctx, jti)
