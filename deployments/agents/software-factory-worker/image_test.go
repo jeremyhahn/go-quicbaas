@@ -32,6 +32,11 @@ import (
 // never varies without an edit to the Dockerfile itself.
 var dockerfileArgPattern = regexp.MustCompile(`(?m)^ARG\s+([A-Za-z_][A-Za-z0-9_]*)\s*$`)
 
+// privateModuleVarPattern matches an ARG or ENV instruction line that names
+// GOPRIVATE, GONOPROXY or GONOSUMDB: every module resolves through the proxy
+// and the checksum database, so the image declares none of them.
+var privateModuleVarPattern = regexp.MustCompile(`(?m)^\s*(ARG|ENV)\s.*\b(GOPRIVATE|GONOPROXY|GONOSUMDB)\b.*$`)
+
 // dockerfileCopyPattern matches a COPY instruction's own line (not the
 // heredoc body that may follow it).
 var dockerfileCopyPattern = regexp.MustCompile(`(?m)^COPY\s+\S.*$`)
@@ -190,10 +195,13 @@ func TestDockerfile_DeclaresEveryBuildArgAndLabel(t *testing.T) {
 			t.Errorf("ARG %s must never become an ENV: it would outlive the RUN that needs it", arg)
 		}
 	}
-	for _, name := range []string{"GOPROXY", "GOPRIVATE", "GONOPROXY", "GONOSUMDB", "npm_config_registry"} {
+	for _, name := range []string{"GOPROXY", "npm_config_registry"} {
 		if strings.Contains(dockerfile, "ENV "+name) {
 			t.Errorf("the Dockerfile must never ENV %s: an empty/unset cache must build exactly as it did before the caches existed", name)
 		}
+	}
+	for _, line := range privateModuleVarPattern.FindAllString(dockerfile, -1) {
+		t.Errorf("the image must never ARG or ENV a private-module variable: %q", strings.TrimSpace(line))
 	}
 
 	// The Dockerfile builds from an EMPTY context (pkg/orchestration/
