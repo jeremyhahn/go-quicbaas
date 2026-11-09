@@ -157,7 +157,7 @@ iam:
   spiffe_trust_domain: quicbaas.integration
 
   # PIV (mTLS client cert) login is the integration-test authentication path.
-  # Tests acquire a bearer via POST /api/v1/auth/login/piv presenting the admin
+  # Tests acquire a bearer via POST /api/v1/iam/login/piv presenting the admin
   # client cert the QuicBaaS CA issued into test/integration/certs.
   piv_login:
     enabled: true

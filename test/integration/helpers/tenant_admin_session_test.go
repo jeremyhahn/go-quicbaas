@@ -100,3 +100,10 @@ func TestTenantAdminSession_RenewalFailureIsTyped(t *testing.T) {
 	require.Equal(t, "acme", provisionErr.TenantID)
 	require.ErrorIs(t, err, errLoginRefused)
 }
+
+// The harness's bearers must come from quicbaas's own OIDC-session PIV
+// login: go-xkms's /api/v1/auth/login/piv mints a token the platform
+// validator rejects under require_authz.
+func TestPIVLoginPathIsQuicbaasOIDCLogin(t *testing.T) {
+	require.Equal(t, "/api/v1/iam/login/piv", pivLoginPath)
+}
