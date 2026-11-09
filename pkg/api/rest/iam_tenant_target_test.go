@@ -6,6 +6,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/go-chi/chi/v5"
@@ -143,9 +144,12 @@ func TestURLTenant_SystemCallerActsInTheNamedTenant(t *testing.T) {
 	assert.Equal(t, http.StatusOK, w.Code, "body: %s", w.Body.String())
 
 	var s Server
-	tenantID, ok := s.urlTenant(w, req, "rest.IAM", "tenant_id")
+	ctx, tenantID, ok := s.urlTenant(w, req, "rest.IAM", "tenant_id")
 	require.True(t, ok)
 	assert.Equal(t, "acme", tenantID)
+	resolved, err := tenantctx.FromContext(ctx, "rest.IAM")
+	require.NoError(t, err)
+	assert.Equal(t, "acme", resolved, "urlTenant did not return the URL's tenant in its context")
 	bound, err := tenantctx.FromContext(req.Context(), "rest.IAM")
 	require.NoError(t, err)
 	assert.Equal(t, "acme", bound, "urlTenant did not bind the URL's tenant into the request")
@@ -186,4 +190,104 @@ func TestWebAuthnCredentials_RefuseANamedTenantThatIsNotTheCaller(t *testing.T) 
 			assert.Len(t, store.credentials, 2, "a refused request deleted credentials")
 		})
 	}
+}
+
+// ownerFollowingRoleStorage stands in for QRDBRoleStorage on the role update
+// path: it ignores the tenantID argument and finds a role by its globally
+// unique ID, then admits the read only when the context's tenant owns the role
+// or is the system tenant, as go-qrdb's OwningTenant does. It records the
+// tenant of every context it receives.
+type ownerFollowingRoleStorage struct {
+	*iam.MemoryStorage
+	owners map[string]string
+	seen   []string
+}
+
+func (s *ownerFollowingRoleStorage) contextTenant(ctx context.Context) string {
+	tenantID, err := tenantctx.FromContext(ctx, "test")
+	if err != nil {
+		return ""
+	}
+	s.seen = append(s.seen, tenantID)
+	return tenantID
+}
+
+func (s *ownerFollowingRoleStorage) GetRole(ctx context.Context, _, roleID string) (*iam.Role, error) {
+	caller := s.contextTenant(ctx)
+	owner, ok := s.owners[roleID]
+	if !ok || (caller != owner && !tenantctx.IsSystem(caller)) {
+		return nil, iam.ErrRoleNotFound
+	}
+	return s.MemoryStorage.GetRole(ctx, owner, roleID)
+}
+
+func (s *ownerFollowingRoleStorage) UpdateRole(ctx context.Context, role *iam.Role) error {
+	s.contextTenant(ctx)
+	return s.MemoryStorage.UpdateRole(ctx, role)
+}
+
+// TestUpdateRole_SystemAdminCannotReachAnotherTenantsRole pins the handler
+// passing urlTenant's resolved context to the store: a system-admin PUT to
+// /tenants/acme/roles/<id> reaches storage bound to acme, so a role Globex
+// owns is refused and left unchanged, while an Acme role updates
+// (go-quicbaas#2212).
+func TestUpdateRole_SystemAdminCannotReachAnotherTenantsRole(t *testing.T) {
+	_, mockService, memStorage, handler, cleanup := setupIAMTestServer(t)
+	defer cleanup()
+	ctx := context.Background()
+	for _, tenant := range []*iam.Tenant{{ID: "acme", Name: "Acme"}, {ID: "globex", Name: "Globex"}} {
+		require.NoError(t, memStorage.CreateTenant(ctx, tenant))
+	}
+	require.NoError(t, memStorage.CreateRole(ctx, &iam.Role{ID: "role-globex", Name: "globex-ops", TenantID: "globex"}))
+	require.NoError(t, memStorage.CreateRole(ctx, &iam.Role{ID: "role-acme", Name: "acme-ops", TenantID: "acme"}))
+
+	roles := &ownerFollowingRoleStorage{
+		MemoryStorage: memStorage,
+		owners:        map[string]string{"role-globex": "globex", "role-acme": "acme"},
+	}
+	mockService.identityStore = iam.NewIdentityStore(iam.IdentityStoreOptions{
+		UserStorage: memStorage,
+		RoleStorage: roles,
+		Tenants:     mockService.tenantManager,
+	})
+
+	update := func(roleID string) *httptest.ResponseRecorder {
+		rctx := chi.NewRouteContext()
+		rctx.URLParams.Add("tenant_id", "acme")
+		rctx.URLParams.Add("role_id", roleID)
+		req := httptest.NewRequest(http.MethodPut, "/api/v1/tenants/acme/roles/"+roleID,
+			strings.NewReader(`{"name":"renamed"}`))
+		req = req.WithContext(context.WithValue(tenantctx.WithSystem(req.Context()), chi.RouteCtxKey, rctx))
+		w := httptest.NewRecorder()
+		handler.UpdateRole(w, req)
+		return w
+	}
+
+	t.Run("another tenant's role is refused", func(t *testing.T) {
+		roles.seen = nil
+		w := update("role-globex")
+
+		assert.False(t, w.Code >= 200 && w.Code < 300, "status %d, body: %s", w.Code, w.Body.String())
+		require.NotEmpty(t, roles.seen, "the store was never called")
+		for _, tenantID := range roles.seen {
+			assert.Equal(t, "acme", tenantID, "the store received a context not bound to the URL's tenant")
+		}
+		role, err := memStorage.GetRole(ctx, "globex", "role-globex")
+		require.NoError(t, err)
+		assert.Equal(t, "globex-ops", role.Name, "Globex's role was modified")
+	})
+
+	t.Run("the named tenant's role updates", func(t *testing.T) {
+		roles.seen = nil
+		w := update("role-acme")
+
+		assert.Equal(t, http.StatusOK, w.Code, "body: %s", w.Body.String())
+		require.NotEmpty(t, roles.seen, "the store was never called")
+		for _, tenantID := range roles.seen {
+			assert.Equal(t, "acme", tenantID, "the store received a context not bound to the URL's tenant")
+		}
+		role, err := memStorage.GetRole(ctx, "acme", "role-acme")
+		require.NoError(t, err)
+		assert.Equal(t, "renamed", role.Name)
+	})
 }
