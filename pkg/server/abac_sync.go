@@ -303,7 +303,9 @@ func (a *qrdbABACSync) resyncOnUnseal(hooks *service.TenantUnsealHooks, resync f
 // copy an earlier release kept in the system namespace, or the next sync
 // would merge that copy back in. The legacy copy goes first, so a failure
 // leaves the tenant copy in place; in the shared-store case, where both names
-// are the one record, that record is deleted once.
+// are the one record, that record is deleted once. A tenant's legacy records,
+// flagged ones included, are also read, listed and replaced through it, so a
+// record the migration left can be repaired or deleted.
 type legacyCleanupPolicyStorage struct {
 	iam.PolicyStorage
 }
@@ -332,6 +334,61 @@ func (s *legacyCleanupPolicyStorage) DeletePolicy(ctx context.Context, tenantID,
 		return nil
 	}
 	return err
+}
+
+// GetPolicy reads a tenant policy, falling back to its legacy
+// system-namespace copy when the tenant has none. A legacy record that does
+// not decode returns its decode error, so the engine flags it.
+func (s *legacyCleanupPolicyStorage) GetPolicy(ctx context.Context, tenantID, name string) (*iam.Policy, error) {
+	policy, err := s.PolicyStorage.GetPolicy(ctx, tenantID, name)
+	if tenantID == qrdbsdk.SystemTenantID || err == nil || !dberrors.Is(err, dberrors.ErrNotFound) {
+		return policy, err
+	}
+	return s.PolicyStorage.GetPolicy(tenantctx.WithSystem(ctx), tenantID, name)
+}
+
+// ListPolicies lists a tenant's policies together with its legacy
+// system-namespace records, flagged ones included.
+func (s *legacyCleanupPolicyStorage) ListPolicies(ctx context.Context, tenantID string, opts iam.ListOptions) ([]*iam.Policy, error) {
+	if tenantID == qrdbsdk.SystemTenantID {
+		return s.PolicyStorage.ListPolicies(ctx, tenantID, opts)
+	}
+	own, err := s.PolicyStorage.ListPolicies(ctx, tenantID, opts)
+	if err != nil {
+		return nil, err
+	}
+	legacy, err := s.PolicyStorage.ListPolicies(tenantctx.WithSystem(ctx), tenantID, opts)
+	if err != nil {
+		return nil, err
+	}
+	return mergeLegacyPolicies(own, legacy), nil
+}
+
+// UpdatePolicy replaces a tenant policy. A policy held only as a legacy
+// system-namespace record, flagged or not, is written to the tenant namespace
+// and its legacy copy deleted.
+func (s *legacyCleanupPolicyStorage) UpdatePolicy(ctx context.Context, tenantID string, policy *iam.Policy) error {
+	err := s.PolicyStorage.UpdatePolicy(ctx, tenantID, policy)
+	if tenantID == qrdbsdk.SystemTenantID || err == nil || !dberrors.Is(err, dberrors.ErrNotFound) {
+		return err
+	}
+	sysCtx := tenantctx.WithSystem(ctx)
+	_, readErr := s.PolicyStorage.GetPolicy(sysCtx, tenantID, policy.Metadata.Name)
+	var de *iam.StoredPolicyDecodeError
+	switch {
+	case readErr == nil || errors.As(readErr, &de):
+	case dberrors.Is(readErr, dberrors.ErrNotFound):
+		return err
+	default:
+		return readErr
+	}
+	if err := s.PolicyStorage.CreatePolicy(ctx, tenantID, policy); err != nil {
+		return err
+	}
+	if err := s.PolicyStorage.DeletePolicy(sysCtx, tenantID, policy.Metadata.Name); err != nil && !dberrors.Is(err, dberrors.ErrNotFound) {
+		return err
+	}
+	return nil
 }
 
 // policyToABAC converts an iam.Policy to qrdb's abac.Policy wire shape

@@ -707,6 +707,55 @@ func TestLegacyCleanupPolicyStorage_DeleteRemovesTheLegacyCopy(t *testing.T) {
 	assert.Equal(t, []string{"sys-deny"}, abacPolicyNames(got))
 }
 
+func TestLegacyCleanupPolicyStorage_ListsAndGetsAFlaggedLegacyRecord(t *testing.T) {
+	r, _, bs := newABACTenantRoutedStorage(t)
+	require.NoError(t, r.shared.Put(context.Background(),
+		iam.KeyPrefixTenant+"acme"+iam.KeyPrefixPolicy+"bad", []byte("{not json")))
+	acmeCtx := tenantctx.WithTenant(context.Background(), "acme")
+	storage := newLegacyCleanupPolicyStorage(bs)
+
+	listed, err := storage.ListPolicies(acmeCtx, "acme", iam.ListOptions{})
+	require.NoError(t, err)
+	flagged := false
+	for _, p := range listed {
+		if p.LoadError != nil && p.LoadError.Name == "bad" {
+			flagged = true
+		}
+	}
+	assert.True(t, flagged, "the flagged legacy record is listed")
+
+	_, err = storage.GetPolicy(acmeCtx, "acme", "bad")
+	var de *iam.StoredPolicyDecodeError
+	assert.True(t, errors.As(err, &de), "a flagged legacy record reads as its decode error, got %v", err)
+}
+
+func TestLegacyCleanupPolicyStorage_EngineDeletesAFlaggedLegacyRecord(t *testing.T) {
+	r, _, bs := newABACTenantRoutedStorage(t)
+	require.NoError(t, r.shared.Put(context.Background(),
+		iam.KeyPrefixTenant+"acme"+iam.KeyPrefixPolicy+"bad", []byte("{not json")))
+	pe := iam.NewPolicyEngine(iam.PolicyEngineOptions{Storage: newLegacyCleanupPolicyStorage(bs)})
+
+	require.NoError(t, pe.DeletePolicy(tenantctx.WithTenant(context.Background(), "acme"), "acme", "bad"))
+
+	_, err := bs.GetPolicy(tenantctx.WithSystem(context.Background()), "acme", "bad")
+	assert.True(t, dberrors.Is(err, dberrors.ErrNotFound), "legacy copy: err = %v", err)
+}
+
+func TestLegacyCleanupPolicyStorage_UpdateMovesALegacyRecord(t *testing.T) {
+	_, _, bs := newABACTenantRoutedStorage(t)
+	acmeCtx := tenantctx.WithTenant(context.Background(), "acme")
+	seedLegacyABACPolicy(t, bs, "acme", abacTestPolicy("legacy-deny", "acme", "alice", "kv/**", iam.EffectDeny))
+
+	require.NoError(t, newLegacyCleanupPolicyStorage(bs).UpdatePolicy(acmeCtx, "acme",
+		abacTestPolicy("legacy-deny", "acme", "alice", "kv/**", iam.EffectAllow)))
+
+	got, err := bs.GetPolicy(acmeCtx, "acme", "legacy-deny")
+	require.NoError(t, err)
+	assert.Equal(t, "legacy-deny", got.Metadata.Name)
+	_, err = bs.GetPolicy(tenantctx.WithSystem(context.Background()), "acme", "legacy-deny")
+	assert.True(t, dberrors.Is(err, dberrors.ErrNotFound), "legacy copy: err = %v", err)
+}
+
 func TestLegacyCleanupPolicyStorage_SharedStoreDeletesOnce(t *testing.T) {
 	_, tm, bs := newABACTenantRoutedStorage(t)
 	_, err := tm.CreateTenant(tenantctx.WithSystem(context.Background()), iam.CreateTenantOptions{ID: "beta", Name: "Beta"})
