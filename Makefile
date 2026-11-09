@@ -2500,24 +2500,10 @@ export BUILDX_BAKE_ENTITLEMENTS_FS := 0
 GOMOD_BACKUP ?= /tmp/quicbaas-$(RUN_ID_SLUG)-gomod-backup
 SDK_GOMOD_BACKUP ?= /tmp/quicbaas-$(RUN_ID_SLUG)-sdk-gomod-backup
 
-# Where stage-gomodauth finds a Gitea read token on a host that is not a Gitea
-# runner (#1031). A runner injects the dependency-resolution.md section-6
-# variables itself; a developer or agent host resolves the private modules
-# through a ~/.gitconfig rewrite a container cannot see, so the variables are
-# built here from a read token instead. The token comes from FORGE_READ_TOKEN
-# in the environment, else from the GOMODAUTH_TOKEN_KEY line of the agent
-# tokens file. It is only ever read inside the recipe's shell -- never into a
-# make variable, a command line, a build arg or the log.
-#
-# GITEA_HTTP_ORIGIN is the forge the token is good for (http:// or https://,
-# host and port). It has no default: the tree names no forge. Set it in the
-# environment, or put a GITEA_HTTP_ORIGIN= line in the tokens file beside the
-# token, which is where a private deployment keeps it. A token with no origin
-# is refused rather than staged against a guess.
-GOMODAUTH_TOKENS_FILE ?= $(HOME)/.agent-identity/tokens.env
-GOMODAUTH_TOKEN_KEY ?= FORGE_READ_TOKEN
-GITEA_HTTP_ORIGIN ?=
-GOMODAUTH_OWNER ?= jeremyhahn
+# The image builds resolve every module through the module proxy and the
+# checksum database, so no credential is staged. stage-gomodauth only creates
+# the gomodauth secret file, empty and 0600, so the compose files and
+# Dockerfiles that mount it keep a path to it.
 
 # Empties the staged file. Every target that stages it runs this once its
 # images are built, and arms it in an EXIT trap so a failed or cancelled build
@@ -2534,58 +2520,11 @@ GOMODAUTH_CLEAR = true
 endif
 
 .PHONY: stage-gomodauth
-stage-gomodauth: ## Stage Gitea module-fetch credentials for the image builds
+stage-gomodauth: ## Stage the empty gomodauth secret file for the image builds
 ifneq ($(strip $(MODULE_ENV_FILE)),)
 	@true
 else
 	@umask 077; : > "$(GOMODAUTH_ENV)" && chmod 600 "$(GOMODAUTH_ENV)"
-	@if [ -n "$${GIT_CONFIG_KEY_0:-}" ]; then \
-		umask 077; \
-		{ \
-			printf 'export GIT_CONFIG_COUNT=%s\n' "$${GIT_CONFIG_COUNT:-}"; \
-			printf 'export GIT_CONFIG_KEY_0=%s\n' "$${GIT_CONFIG_KEY_0}"; \
-			printf 'export GIT_CONFIG_VALUE_0=%s\n' "$${GIT_CONFIG_VALUE_0:-}"; \
-		} > "$(GOMODAUTH_ENV)"; \
-		exit 0; \
-	fi; \
-	token="$${FORGE_READ_TOKEN:-}"; source=FORGE_READ_TOKEN; \
-	if [ -z "$$token" ] && [ -r "$(GOMODAUTH_TOKENS_FILE)" ]; then \
-		token=$$(sed -n 's/^[[:space:]]*\(export[[:space:]]\{1,\}\)\{0,1\}$(GOMODAUTH_TOKEN_KEY)=//p' "$(GOMODAUTH_TOKENS_FILE)" | tail -n 1 | tr -d "\"' \r"); \
-		source="$(GOMODAUTH_TOKEN_KEY) in $(GOMODAUTH_TOKENS_FILE)"; \
-	fi; \
-	if [ -z "$$token" ]; then \
-		echo "$(YELLOW)No Gitea module credentials: no GIT_CONFIG_KEY_0 (Gitea runner), no FORGE_READ_TOKEN,$(NC)"; \
-		echo "$(YELLOW)  and no $(GOMODAUTH_TOKEN_KEY) in the agent tokens file.$(NC)"; \
-		echo "$(YELLOW)  Image builds resolve modules from the public proxy, where private first-party$(NC)"; \
-		echo "$(YELLOW)  modules not yet mirrored fail with 'unknown revision' (docs/testing/private-modules.md)$(NC)"; \
-		exit 0; \
-	fi; \
-	case "$$token" in \
-		*[!A-Za-z0-9_-]*) \
-			echo "$(RED)Error: the Gitea read token from $$source is not token-shaped (expected [A-Za-z0-9_-]); nothing staged$(NC)"; \
-			exit 1 ;; \
-	esac; \
-	origin="$(GITEA_HTTP_ORIGIN)"; \
-	if [ -z "$$origin" ] && [ -r "$(GOMODAUTH_TOKENS_FILE)" ]; then \
-		origin=$$(sed -n 's/^[[:space:]]*\(export[[:space:]]\{1,\}\)\{0,1\}GITEA_HTTP_ORIGIN=//p' "$(GOMODAUTH_TOKENS_FILE)" | tail -n 1 | tr -d "\"' \r"); \
-	fi; \
-	if [ -z "$$origin" ]; then \
-		echo "$(RED)Error: a Gitea read token was found ($$source) but no Gitea origin is set; nothing staged$(NC)"; \
-		echo "$(RED)  Set GITEA_HTTP_ORIGIN (e.g. https://gitea.example.com:3000) in the environment or in the agent tokens file$(NC)"; \
-		exit 1; \
-	fi; \
-	origin="$${origin%/}"; \
-	case "$$origin" in \
-		http://*|https://*) ;; \
-		*) echo "$(RED)Error: GITEA_HTTP_ORIGIN must be an http:// or https:// origin; nothing staged$(NC)"; exit 1 ;; \
-	esac; \
-	scheme="$${origin%%://*}"; hostport="$${origin#*://}"; \
-	umask 077; \
-	{ \
-		printf 'export GIT_CONFIG_COUNT=1\n'; \
-		printf 'export GIT_CONFIG_KEY_0=url.%s://x:%s@%s/%s/.insteadOf\n' "$$scheme" "$$token" "$$hostport" "$(GOMODAUTH_OWNER)"; \
-		printf 'export GIT_CONFIG_VALUE_0=https://github.com/%s/\n' "$(GOMODAUTH_OWNER)"; \
-	} > "$(GOMODAUTH_ENV)"
 endif
 
 .PHONY: clear-gomodauth
@@ -5540,7 +5479,7 @@ verify-integration-teardown: ## Fail if the integration stack can outlive a run 
 	@$(GOCMD) run ./scripts/verifyteardown
 
 .PHONY: verify-gomodauth
-verify-gomodauth: ## Fail if the Docker test builds cannot fetch private modules off a runner, or keep the token after the build
+verify-gomodauth: ## Fail if a Docker test build receives module credentials, or the staged secret file is not empty and 0600
 	@echo "$(BLUE)verify-gomodauth: checking module credentials are staged on any host and cleared after the build...$(NC)"
 	@$(GOCMD) run ./scripts/verifygomodauth
 
