@@ -142,20 +142,46 @@ func (b *retryBackoff) wait() {
 // waitForIAMReady waits for the IAM shard (shard 1) to be ready.
 // It does this by attempting multiple ListTenants operations which require
 // the IAM shard to be available for reads. We require multiple consecutive
-// successful responses to ensure the shard is stable.
+// successful responses to ensure the shard is stable. The probe reads as the
+// system admin, because the integration node runs with require_authz and
+// ListTenants needs a bearer.
 func waitForIAMReady(ctx context.Context, client *http.Client, endpoint string) bool {
 	fmt.Println("Waiting for IAM shard to be ready...")
 
 	// Require 10 consecutive successes, 3 seconds apart, for 30 seconds of stability
 	const requiredSuccesses = 10
 	consecutiveSuccesses := 0
+	var bearer string
 
 	for {
 		interval := 2 * time.Second
-		resp, err := client.Get(endpoint + "/api/v1/tenants")
+		var resp *http.Response
+		var err error
+		if bearer == "" {
+			var token string
+			token, _, err = helpers.AuthPIVSession(ctx, endpoint, "", "", "")
+			if err != nil {
+				fmt.Printf("IAM readiness login failed: %v\n", err)
+				bearer = ""
+			} else {
+				bearer = token
+			}
+		}
+		if err == nil {
+			var req *http.Request
+			req, err = http.NewRequestWithContext(ctx, http.MethodGet, endpoint+"/api/v1/tenants", nil)
+			if err == nil {
+				req.Header.Set("Authorization", "Bearer "+bearer)
+				resp, err = client.Do(req)
+			}
+		}
 		if err == nil {
 			body, _ := io.ReadAll(resp.Body)
 			resp.Body.Close()
+			if resp.StatusCode == http.StatusUnauthorized {
+				// The bearer expired or was refused: log in again on the next pass.
+				bearer = ""
+			}
 
 			switch {
 			case resp.StatusCode == http.StatusOK:
