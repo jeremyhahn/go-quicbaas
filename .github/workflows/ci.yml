@@ -244,8 +244,8 @@
 # v1.1 (2026-08-14): gosec findings now also print to the job log (the SARIF
 # upload only exists on github.com, so on Gitea the findings were invisible).
 # Also NEVER add `GOPROXY: direct` / `GOSUMDB: off` to a repo's env block:
-# GOPRIVATE (injected by the runners, dependency-resolution.md §6) already
-# exempts first-party modules from proxy and sumdb; the blanket override
+# first-party modules resolve through the proxy and checksum database like
+# any other; the blanket override
 # disables checksum-database verification for every third-party dependency
 # and breaks the build when an upstream re-points a tag (go-tpm-tools v0.4.8,
 # 2026-08-14). `ghcr.io` likewise does not exist on Gitea — use the Gitea
@@ -293,11 +293,6 @@ env:
   # The per-package -timeout of the -race run. The Makefile default (30m) is
   # sized for a workstation; a 4-core runner is slower, so CI doubles it.
   RACE_TIMEOUT: 60m
-  # Hosted runners inject no GOPRIVATE, so first-party modules would resolve
-  # through the public proxy and checksum database. Those cached some tags
-  # before the history rewrite moved them, and go.sum records what the origin
-  # serves now, so first-party modules are fetched from their origin.
-  GOPRIVATE: github.com/jeremyhahn/*
   # CUSTOMIZE (v1.9.2): the repo's full build-tag set, SPACE separated — the go
   # tool's own form. Leave EMPTY if no package is tag-gated. Every analysis step
   # below derives its own form from this ONE value; never write the tag list
@@ -352,8 +347,9 @@ jobs:
   # (in-toolchain-image.sh v2, ci-standard.md §6), so a stage writes its
   # caches there and not into its container's layer.
   #
-  # The forge credentials reach the image build only as the gomodauth BuildKit
-  # secret, from a file outside the context that the job removes.
+  # The gomodauth BuildKit secret the image builds mount is an empty file from
+  # outside the context, which the job removes; no credential reaches an image
+  # build.
   # No step and no make target prints that file, the job environment (`env`,
   # `printenv`, `set -x`) or a matched line: `make stage-gomodauth` and the
   # file writes run silent, and lint steps and `make check-public-literals`
@@ -379,21 +375,24 @@ jobs:
       CI_CACHE_CLASS: ${{ github.event_name == 'push' && 'main' || 'pr' }}
       IT_IMAGE: ${{ github.event.repository.name }}-ci-it:${{ github.run_id }}-${{ github.run_attempt }}-image
     steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
-
-      # v1.21.1 (Company Agent m605 item 8): mask the forge credentials before
-      # any other step. The runner injects them as plain environment
-      # (dependency-resolution.md §6), which the log does not mask by itself,
-      # and the token sits inside GIT_CONFIG_KEY_0's URL, so it is masked alone
-      # as well.
-      - name: Mask the forge credentials
+      # No credential reaches a job. A runner that injects a git credential
+      # through GIT_CONFIG_* stops the job here, before any later step can
+      # print it; only the variable names are logged.
+      - name: Refuse injected forge credentials
+        shell: bash
         run: |
-          for v in GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0; do
-            val=${!v:-}
-            [ -n "$val" ] || continue
-            echo "::add-mask::$val"
-            case $val in *://*:*@*) t=${val#*://}; t=${t%%@*}; echo "::add-mask::${t#*:}" ;; esac
+          found=0
+          for v in $(compgen -e); do
+            case "$v" in
+              GIT_CONFIG_COUNT|GIT_CONFIG_KEY_*|GIT_CONFIG_VALUE_*)
+                echo "::error::the job environment carries $v; no credential may reach this job"
+                found=1
+                ;;
+            esac
           done
+          exit "$found"
+
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
 
       - name: Reap stale CI stacks
         run: scripts/reap-stale-ci-stacks.sh "$CI_STACK_PREFIX"
@@ -418,10 +417,7 @@ jobs:
 
       - name: Build the devcontainer images
         run: |
-          ( umask 077; : > "$RUNNER_TEMP/gomodauth.env"
-            for v in GOPRIVATE GIT_CONFIG_COUNT GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0; do
-              if [ -n "${!v:-}" ]; then printf '%s=%s\n' "$v" "${!v}" >> "$RUNNER_TEMP/gomodauth.env"; fi
-            done )
+          ( umask 077; : > "$RUNNER_TEMP/gomodauth.env" )
           # A docs-only pull request runs lint alone, which needs only the
           # toolchain image (DS-3161).
           target=docker-build
@@ -613,16 +609,24 @@ jobs:
       CI_CACHE_CLASS: ${{ github.event_name == 'push' && 'main' || 'pr' }}
       SHARD: ${{ matrix.shard }}
     steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
-
-      - name: Mask the forge credentials
+      # No credential reaches a job. A runner that injects a git credential
+      # through GIT_CONFIG_* stops the job here, before any later step can
+      # print it; only the variable names are logged.
+      - name: Refuse injected forge credentials
+        shell: bash
         run: |
-          for v in GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0; do
-            val=${!v:-}
-            [ -n "$val" ] || continue
-            echo "::add-mask::$val"
-            case $val in *://*:*@*) t=${val#*://}; t=${t%%@*}; echo "::add-mask::${t#*:}" ;; esac
+          found=0
+          for v in $(compgen -e); do
+            case "$v" in
+              GIT_CONFIG_COUNT|GIT_CONFIG_KEY_*|GIT_CONFIG_VALUE_*)
+                echo "::error::the job environment carries $v; no credential may reach this job"
+                found=1
+                ;;
+            esac
           done
+          exit "$found"
+
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
 
       - name: Validate the merge result, not the head alone
         run: .github/scripts/ci-merge-base.sh "${{ github.event_name }}" "${{ github.base_ref }}" "${{ github.event.pull_request.base.sha }}"
@@ -637,10 +641,7 @@ jobs:
       - name: Build the toolchain image
         if: ${{ env.DOCS_ONLY != 'true' }}
         run: |
-          ( umask 077; : > "$RUNNER_TEMP/gomodauth.env"
-            for v in GOPRIVATE GIT_CONFIG_COUNT GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0; do
-              if [ -n "${!v:-}" ]; then printf '%s=%s\n' "$v" "${!v}" >> "$RUNNER_TEMP/gomodauth.env"; fi
-            done )
+          ( umask 077; : > "$RUNNER_TEMP/gomodauth.env" )
           make docker-build-toolchain-image MODULE_ENV_FILE="$RUNNER_TEMP/gomodauth.env"
           rm -f "$RUNNER_TEMP/gomodauth.env"
           echo "TOOLCHAIN_IMAGE=$(make -s toolchain-image)" >> "$GITHUB_ENV"
@@ -681,16 +682,24 @@ jobs:
       CI_STACK_PREFIX: ${{ github.event.repository.name }}-ci-
       CI_CACHE_CLASS: ${{ github.event_name == 'push' && 'main' || 'pr' }}
     steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
-
-      - name: Mask the forge credentials
+      # No credential reaches a job. A runner that injects a git credential
+      # through GIT_CONFIG_* stops the job here, before any later step can
+      # print it; only the variable names are logged.
+      - name: Refuse injected forge credentials
+        shell: bash
         run: |
-          for v in GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0; do
-            val=${!v:-}
-            [ -n "$val" ] || continue
-            echo "::add-mask::$val"
-            case $val in *://*:*@*) t=${val#*://}; t=${t%%@*}; echo "::add-mask::${t#*:}" ;; esac
+          found=0
+          for v in $(compgen -e); do
+            case "$v" in
+              GIT_CONFIG_COUNT|GIT_CONFIG_KEY_*|GIT_CONFIG_VALUE_*)
+                echo "::error::the job environment carries $v; no credential may reach this job"
+                found=1
+                ;;
+            esac
           done
+          exit "$found"
+
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
 
       # The report reads the source the shards tested: the same merge result.
       - name: Validate the merge result, not the head alone
@@ -706,10 +715,7 @@ jobs:
       - name: Build the toolchain image
         if: ${{ env.DOCS_ONLY != 'true' }}
         run: |
-          ( umask 077; : > "$RUNNER_TEMP/gomodauth.env"
-            for v in GOPRIVATE GIT_CONFIG_COUNT GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0; do
-              if [ -n "${!v:-}" ]; then printf '%s=%s\n' "$v" "${!v}" >> "$RUNNER_TEMP/gomodauth.env"; fi
-            done )
+          ( umask 077; : > "$RUNNER_TEMP/gomodauth.env" )
           make docker-build-toolchain-image MODULE_ENV_FILE="$RUNNER_TEMP/gomodauth.env"
           rm -f "$RUNNER_TEMP/gomodauth.env"
           echo "TOOLCHAIN_IMAGE=$(make -s toolchain-image)" >> "$GITHUB_ENV"
@@ -744,16 +750,24 @@ jobs:
       CI_STACK_PREFIX: ${{ github.event.repository.name }}-ci-
       CI_CACHE_CLASS: ${{ github.event_name == 'push' && 'main' || 'pr' }}
     steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
-
-      - name: Mask the forge credentials
+      # No credential reaches a job. A runner that injects a git credential
+      # through GIT_CONFIG_* stops the job here, before any later step can
+      # print it; only the variable names are logged.
+      - name: Refuse injected forge credentials
+        shell: bash
         run: |
-          for v in GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0; do
-            val=${!v:-}
-            [ -n "$val" ] || continue
-            echo "::add-mask::$val"
-            case $val in *://*:*@*) t=${val#*://}; t=${t%%@*}; echo "::add-mask::${t#*:}" ;; esac
+          found=0
+          for v in $(compgen -e); do
+            case "$v" in
+              GIT_CONFIG_COUNT|GIT_CONFIG_KEY_*|GIT_CONFIG_VALUE_*)
+                echo "::error::the job environment carries $v; no credential may reach this job"
+                found=1
+                ;;
+            esac
           done
+          exit "$found"
+
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
 
       - name: Validate the merge result, not the head alone
         run: .github/scripts/ci-merge-base.sh "${{ github.event_name }}" "${{ github.base_ref }}" "${{ github.event.pull_request.base.sha }}"
@@ -768,10 +782,7 @@ jobs:
       - name: Build the toolchain image
         if: ${{ env.DOCS_ONLY != 'true' }}
         run: |
-          ( umask 077; : > "$RUNNER_TEMP/gomodauth.env"
-            for v in GOPRIVATE GIT_CONFIG_COUNT GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0; do
-              if [ -n "${!v:-}" ]; then printf '%s=%s\n' "$v" "${!v}" >> "$RUNNER_TEMP/gomodauth.env"; fi
-            done )
+          ( umask 077; : > "$RUNNER_TEMP/gomodauth.env" )
           make docker-build-toolchain-image MODULE_ENV_FILE="$RUNNER_TEMP/gomodauth.env"
           rm -f "$RUNNER_TEMP/gomodauth.env"
           echo "TOOLCHAIN_IMAGE=$(make -s toolchain-image)" >> "$GITHUB_ENV"
@@ -801,21 +812,24 @@ jobs:
       IT_PROJECT: ${{ github.event.repository.name }}-ci-${{ github.run_id }}-${{ github.run_attempt }}
       IT_IMAGE: ${{ github.event.repository.name }}-ci-it:${{ github.run_id }}-${{ github.run_attempt }}
     steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
-
-      # v1.21.1 (Company Agent m605 item 8): mask the forge credentials before
-      # any other step. The runner injects them as plain environment
-      # (dependency-resolution.md §6), which the log does not mask by itself,
-      # and the token sits inside GIT_CONFIG_KEY_0's URL, so it is masked alone
-      # as well.
-      - name: Mask the forge credentials
+      # No credential reaches a job. A runner that injects a git credential
+      # through GIT_CONFIG_* stops the job here, before any later step can
+      # print it; only the variable names are logged.
+      - name: Refuse injected forge credentials
+        shell: bash
         run: |
-          for v in GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0; do
-            val=${!v:-}
-            [ -n "$val" ] || continue
-            echo "::add-mask::$val"
-            case $val in *://*:*@*) t=${val#*://}; t=${t%%@*}; echo "::add-mask::${t#*:}" ;; esac
+          found=0
+          for v in $(compgen -e); do
+            case "$v" in
+              GIT_CONFIG_COUNT|GIT_CONFIG_KEY_*|GIT_CONFIG_VALUE_*)
+                echo "::error::the job environment carries $v; no credential may reach this job"
+                found=1
+                ;;
+            esac
           done
+          exit "$found"
+
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
 
       - name: Reap stale CI stacks
         run: scripts/reap-stale-ci-stacks.sh "$CI_STACK_PREFIX"
@@ -837,9 +851,6 @@ jobs:
         run: |
           umask 077
           : > "$RUNNER_TEMP/gomodauth.env"
-          for v in GOPRIVATE GIT_CONFIG_COUNT GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0; do
-            if [ -n "${!v:-}" ]; then printf '%s=%s\n' "$v" "${!v}" >> "$RUNNER_TEMP/gomodauth.env"; fi
-          done
 
       - name: make integration-test (integration image)
         run: make integration-test MODULE_ENV_FILE="$RUNNER_TEMP/gomodauth.env" IT_PROJECT="$IT_PROJECT" IT_IMAGE="$IT_IMAGE" GO_BUILD_TAGS="$GO_BUILD_TAGS"

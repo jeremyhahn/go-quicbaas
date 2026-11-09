@@ -2510,31 +2510,17 @@ export BUILDX_BAKE_ENTITLEMENTS_FS := 0
 GOMOD_BACKUP ?= /tmp/quicbaas-$(RUN_ID_SLUG)-gomod-backup
 SDK_GOMOD_BACKUP ?= /tmp/quicbaas-$(RUN_ID_SLUG)-sdk-gomod-backup
 
-# Where stage-gomodauth finds a Gitea read token on a host that is not a Gitea
-# runner (#1031). A runner injects the dependency-resolution.md section-6
-# variables itself; a developer or agent host resolves the private modules
-# through a ~/.gitconfig rewrite a container cannot see, so the variables are
-# built here from a read token instead. The token comes from FORGE_READ_TOKEN
-# in the environment, else from the GOMODAUTH_TOKEN_KEY line of the agent
-# tokens file. It is only ever read inside the recipe's shell -- never into a
-# make variable, a command line, a build arg or the log.
-#
-# GITEA_HTTP_ORIGIN is the forge the token is good for (http:// or https://,
-# host and port). It has no default: the tree names no forge. Set it in the
-# environment, or put a GITEA_HTTP_ORIGIN= line in the tokens file beside the
-# token, which is where a private deployment keeps it. A token with no origin
-# is refused rather than staged against a guess.
-GOMODAUTH_TOKENS_FILE ?= $(HOME)/.agent-identity/tokens.env
-GOMODAUTH_TOKEN_KEY ?= FORGE_READ_TOKEN
-GITEA_HTTP_ORIGIN ?=
-GOMODAUTH_OWNER ?= jeremyhahn
+# The image builds resolve every module through the module proxy and the
+# checksum database, so no credential is staged. stage-gomodauth only creates
+# the gomodauth secret file, empty and 0600, so the compose files and
+# Dockerfiles that mount it keep a path to it.
 
 # Empties the staged file. Every target that stages it runs this once its
 # images are built, and arms it in an EXIT trap so a failed or cancelled build
 # clears it too. The file is emptied rather than removed: a later compose
 # invocation against the same project still resolves the secret's path.
 # umask applies only to a file this creates; stage-gomodauth chmods an existing
-# one to 0600 before it writes a token into it.
+# one to 0600 when it empties it.
 GOMODAUTH_CLEAR = { umask 077; : > "$(GOMODAUTH_ENV)"; } 2>/dev/null || true
 # A file CI supplied in MODULE_ENV_FILE belongs to the caller: no target stages
 # into it or clears it, so every recipe that arms GOMODAUTH_CLEAR or calls
@@ -2544,60 +2530,11 @@ GOMODAUTH_CLEAR = true
 endif
 
 .PHONY: stage-gomodauth
-stage-gomodauth: ## Stage Gitea module-fetch credentials for the image builds
+stage-gomodauth: ## Stage the empty gomodauth secret file for the image builds
 ifneq ($(strip $(MODULE_ENV_FILE)),)
 	@true
 else
 	@umask 077; : > "$(GOMODAUTH_ENV)" && chmod 600 "$(GOMODAUTH_ENV)"
-	@if [ -n "$${GIT_CONFIG_KEY_0:-}" ]; then \
-		umask 077; \
-		{ \
-			printf 'export GOPRIVATE=%s\n' "$${GOPRIVATE:-}"; \
-			printf 'export GIT_CONFIG_COUNT=%s\n' "$${GIT_CONFIG_COUNT:-}"; \
-			printf 'export GIT_CONFIG_KEY_0=%s\n' "$${GIT_CONFIG_KEY_0}"; \
-			printf 'export GIT_CONFIG_VALUE_0=%s\n' "$${GIT_CONFIG_VALUE_0:-}"; \
-		} > "$(GOMODAUTH_ENV)"; \
-		exit 0; \
-	fi; \
-	token="$${FORGE_READ_TOKEN:-}"; source=FORGE_READ_TOKEN; \
-	if [ -z "$$token" ] && [ -r "$(GOMODAUTH_TOKENS_FILE)" ]; then \
-		token=$$(sed -n 's/^[[:space:]]*\(export[[:space:]]\{1,\}\)\{0,1\}$(GOMODAUTH_TOKEN_KEY)=//p' "$(GOMODAUTH_TOKENS_FILE)" | tail -n 1 | tr -d "\"' \r"); \
-		source="$(GOMODAUTH_TOKEN_KEY) in $(GOMODAUTH_TOKENS_FILE)"; \
-	fi; \
-	if [ -z "$$token" ]; then \
-		echo "$(YELLOW)No Gitea module credentials: no GIT_CONFIG_KEY_0 (Gitea runner), no FORGE_READ_TOKEN,$(NC)"; \
-		echo "$(YELLOW)  and no $(GOMODAUTH_TOKEN_KEY) in the agent tokens file.$(NC)"; \
-		echo "$(YELLOW)  Image builds resolve modules from the public proxy, where private first-party$(NC)"; \
-		echo "$(YELLOW)  modules not yet mirrored fail with 'unknown revision' (docs/testing/private-modules.md)$(NC)"; \
-		exit 0; \
-	fi; \
-	case "$$token" in \
-		*[!A-Za-z0-9_-]*) \
-			echo "$(RED)Error: the Gitea read token from $$source is not token-shaped (expected [A-Za-z0-9_-]); nothing staged$(NC)"; \
-			exit 1 ;; \
-	esac; \
-	origin="$(GITEA_HTTP_ORIGIN)"; \
-	if [ -z "$$origin" ] && [ -r "$(GOMODAUTH_TOKENS_FILE)" ]; then \
-		origin=$$(sed -n 's/^[[:space:]]*\(export[[:space:]]\{1,\}\)\{0,1\}GITEA_HTTP_ORIGIN=//p' "$(GOMODAUTH_TOKENS_FILE)" | tail -n 1 | tr -d "\"' \r"); \
-	fi; \
-	if [ -z "$$origin" ]; then \
-		echo "$(RED)Error: a Gitea read token was found ($$source) but no Gitea origin is set; nothing staged$(NC)"; \
-		echo "$(RED)  Set GITEA_HTTP_ORIGIN (e.g. https://gitea.example.com:3000) in the environment or in the agent tokens file$(NC)"; \
-		exit 1; \
-	fi; \
-	origin="$${origin%/}"; \
-	case "$$origin" in \
-		http://*|https://*) ;; \
-		*) echo "$(RED)Error: GITEA_HTTP_ORIGIN must be an http:// or https:// origin; nothing staged$(NC)"; exit 1 ;; \
-	esac; \
-	scheme="$${origin%%://*}"; hostport="$${origin#*://}"; \
-	umask 077; \
-	{ \
-		printf 'export GOPRIVATE=%s\n' "$${GOPRIVATE:-github.com/$(GOMODAUTH_OWNER)/*}"; \
-		printf 'export GIT_CONFIG_COUNT=1\n'; \
-		printf 'export GIT_CONFIG_KEY_0=url.%s://x:%s@%s/%s/.insteadOf\n' "$$scheme" "$$token" "$$hostport" "$(GOMODAUTH_OWNER)"; \
-		printf 'export GIT_CONFIG_VALUE_0=https://github.com/%s/\n' "$(GOMODAUTH_OWNER)"; \
-	} > "$(GOMODAUTH_ENV)"
 endif
 
 .PHONY: clear-gomodauth
@@ -3923,7 +3860,7 @@ WORKER_IMAGE_TAG := $(DOCKER_TAG)-cc$(CLAUDE_CODE_VERSION)-cx$(CODEX_VERSION)
 # host[:port]/owner/name. It has no default: the registry is the operator's.
 WORKER_IMAGE_REGISTRY ?=
 
-# DEVCACHE_GOPROXY / DEVCACHE_GOPRIVATE / DEVCACHE_NPM_REGISTRY: the fleet's
+# DEVCACHE_GOPROXY / DEVCACHE_NPM_REGISTRY: the fleet's
 # dev caches (../handbook/software/conventions/devops.md section 2a). NEVER
 # given a value here -- an operator off the fleet leaves them unset and the
 # build behaves exactly as it always has. `export` with no value passes
@@ -3931,7 +3868,6 @@ WORKER_IMAGE_REGISTRY ?=
 # (`make build-worker-image DEVCACHE_GOPROXY=http://...`), without writing a
 # host, port or path into this file.
 export DEVCACHE_GOPROXY
-export DEVCACHE_GOPRIVATE
 export DEVCACHE_NPM_REGISTRY
 
 .PHONY: build-worker-image
@@ -3991,7 +3927,6 @@ build-worker-image: ## Build the Software Factory worker image (quicbaas-softwar
 		--build-arg AGENT_UID=$(WORKER_IMAGE_UID) \
 		--build-arg AGENT_GID=$(WORKER_IMAGE_GID) \
 		--build-arg DEVCACHE_GOPROXY \
-		--build-arg DEVCACHE_GOPRIVATE \
 		--build-arg DEVCACHE_NPM_REGISTRY \
 		-f $(WORKER_IMAGE_DIR)/Dockerfile \
 		--label $(DOCKER_RUN_LABEL) \
@@ -5554,7 +5489,7 @@ verify-integration-teardown: ## Fail if the integration stack can outlive a run 
 	@$(GOCMD) run ./scripts/verifyteardown
 
 .PHONY: verify-gomodauth
-verify-gomodauth: ## Fail if the Docker test builds cannot fetch private modules off a runner, or keep the token after the build
+verify-gomodauth: ## Fail if a Docker test build receives module credentials, or the staged secret file is not empty and 0600
 	@echo "$(BLUE)verify-gomodauth: checking module credentials are staged on any host and cleared after the build...$(NC)"
 	@$(GOCMD) run ./scripts/verifygomodauth
 
@@ -5664,8 +5599,8 @@ release-alpha:
 # reason (devops.md section 9). It is the one stage that needs a module proxy at
 # run time, so it does not inherit GOPROXY=off from the toolchain image:
 # DEPS_CHECK_GOPROXY defaults to the fleet cache when DEVCACHE_GOPROXY is set,
-# then the public proxy. First-party modules resolve as GOPRIVATE through
-# whatever git credentials the environment carries (docs/testing/private-modules.md).
+# then the public proxy. First-party modules resolve through the proxy and the
+# checksum database like any other.
 DEPS_CHECK_GOPROXY ?= $(if $(DEVCACHE_GOPROXY),$(DEVCACHE_GOPROXY)|)https://proxy.golang.org|direct
 DEPS_CHECK_MODULES := . sdk/go
 # The JSON fields scripts/depscheck reads, written by a template rather than
@@ -5683,8 +5618,6 @@ DEPS_CHECK_TEMPLATE := {"Path":"{{.Path}}","Version":"{{.Version}}","Main":{{.Ma
 deps-check: ## Fail when a direct dependency is behind its latest release without a reason in go.mod
 	@set -e; \
 	export GOWORK=off GOPROXY='$(DEPS_CHECK_GOPROXY)' GOFLAGS=-mod=readonly GIT_TERMINAL_PROMPT=0; \
-	export GOPRIVATE="$${GOPRIVATE:-github.com/jeremyhahn/*}"; \
-	export GONOPROXY="$$GOPRIVATE" GONOSUMDB="$$GOPRIVATE"; \
 	export GOMODCACHE="$$($(GOCMD) env GOMODCACHE)"; \
 	sumdb_gopath="$$(mktemp -d -t quicbaas-$(RUN_ID_SLUG)-gopath.XXXXXX)"; \
 	trap 'rm -rf "$$sumdb_gopath"' EXIT; \
@@ -5709,8 +5642,7 @@ deps-check: ## Fail when a direct dependency is behind its latest release withou
 # gives a new tag and never reuses a stale image. GO_VERSION and GO_IMAGE_DIGEST reach
 # the compose file from pkg/version/toolchain.mk; private modules reach the
 # build through the gomodauth secret (docs/testing/private-modules.md), and the
-# fleet's module cache through DEVCACHE_GOPROXY / DEVCACHE_GOPRIVATE
-# (devops.md section 2a).
+# fleet's module cache through DEVCACHE_GOPROXY (devops.md section 2a).
 DEVCONTAINER_DIR := build/docker/devcontainer
 DEVCONTAINER_REPO := $(APP_NAME)-devcontainer
 DEVCONTAINER_INPUTS := $(DEVCONTAINER_DIR)/Dockerfile pkg/version/toolchain.mk go.mod go.sum sdk/go/go.mod sdk/go/go.sum \
@@ -5727,7 +5659,7 @@ DEVCONTAINER_COMPOSE = TOOLCHAIN_IMAGE='$(TOOLCHAIN_IMAGE)' \
 	INTEGRATION_IMAGE='$(INTEGRATION_IMAGE)' QUICBAAS_INTEGRATION_IMAGE='$(INTEGRATION_IMAGE)' \
 	INTEGRATION_BUILD_TAGS='$(strip $(INTEGRATION_BUILD_TAGS))' \
 	GO_VERSION='$(GO_VERSION)' GO_IMAGE_DIGEST='$(GO_IMAGE_DIGEST)' \
-	GO_BUILD_PROXY="$${DEVCACHE_GOPROXY:-}" GO_BUILD_PRIVATE="$${DEVCACHE_GOPRIVATE:-}" \
+	GO_BUILD_PROXY="$${DEVCACHE_GOPROXY:-}" \
 	GOMODAUTH_ENV='$(GOMODAUTH_ENV)' RUN_UID="$$(id -u)" RUN_GID="$$(id -g)" \
 	$(DOCKER) compose -f $(DEVCONTAINER_DIR)/compose.yaml
 # Builds the named compose services with the module credentials staged for the
@@ -5768,7 +5700,7 @@ docker-run: ## Run CMD in the toolchain compose service (e.g. CMD='make test'), 
 	@if ! $(DOCKER) image inspect '$(TOOLCHAIN_IMAGE)' >/dev/null 2>&1; then \
 		$(DEVCONTAINER_BUILD) toolchain; \
 	fi
-	@$(DEVCONTAINER_COMPOSE) run --rm --no-deps -e DEVCACHE_GOPROXY -e DEVCACHE_GOPRIVATE toolchain $(CMD)
+	@$(DEVCONTAINER_COMPOSE) run --rm --no-deps -e DEVCACHE_GOPROXY toolchain $(CMD)
 
 deps-latest:
 	@GOWORK=off sh -c ' \
