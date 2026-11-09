@@ -119,12 +119,12 @@ RUN set -eu; \
     esac; \
     trivy_version="$(pin TRIVY_VERSION)"; \
     trivy_tarball="trivy_${trivy_version#v}_${trivy_asset}.tar.gz"; \
-    curl -fsSL -o "/tmp/${trivy_tarball}" "https://github.com/aquasecurity/trivy/releases/download/${trivy_version}/${trivy_tarball}"; \
+    curl -fsSL --retry 5 --retry-delay 5 --retry-all-errors -o "/tmp/${trivy_tarball}" "https://github.com/aquasecurity/trivy/releases/download/${trivy_version}/${trivy_tarball}"; \
     echo "$(pin TRIVY_SHA256_${arch})  /tmp/${trivy_tarball}" | sha256sum -c -; \
     tar -xzf "/tmp/${trivy_tarball}" -C "${GOBIN}" trivy; \
     shellcheck_version="$(pin SHELLCHECK_VERSION)"; \
     shellcheck_tarball="shellcheck-${shellcheck_version}.linux.${shellcheck_arch}.tar.xz"; \
-    curl -fsSL -o "/tmp/${shellcheck_tarball}" "https://github.com/koalaman/shellcheck/releases/download/${shellcheck_version}/${shellcheck_tarball}"; \
+    curl -fsSL --retry 5 --retry-delay 5 --retry-all-errors -o "/tmp/${shellcheck_tarball}" "https://github.com/koalaman/shellcheck/releases/download/${shellcheck_version}/${shellcheck_tarball}"; \
     echo "$(pin SHELLCHECK_SHA256_${arch})  /tmp/${shellcheck_tarball}" | sha256sum -c -; \
     tar -xJf "/tmp/${shellcheck_tarball}" -C /tmp; \
     install -m 0755 "/tmp/shellcheck-${shellcheck_version}/shellcheck" "${GOBIN}/shellcheck"; \
