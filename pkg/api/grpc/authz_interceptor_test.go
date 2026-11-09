@@ -15,6 +15,7 @@ package grpc
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -393,6 +394,53 @@ func TestStreamAuthorizationInterceptor_AllowAndDeny(t *testing.T) {
 	require.Error(t, err)
 	assert.Equal(t, codes.PermissionDenied, status.Code(err))
 	assert.False(t, served)
+}
+
+// TestTenantAdmission_RefusesAHeldTenant pins the gRPC request barrier: a
+// caller whose bound tenant is refused admission (it is still running its
+// unseal checks) is answered with codes.Unavailable on both interceptors and
+// the handler never runs; an admitted tenant is served.
+func TestTenantAdmission_RefusesAHeldTenant(t *testing.T) {
+	authorizer := &fakeValidatorAuthorizer{
+		token:       "good",
+		grantedPerm: "kv:put",
+		authzCtx:    &platformtoken.AuthorizedContext{Subject: "u1", TenantID: "acme", Roles: []string{"admin"}, Scopes: []string{"kv:put"}},
+	}
+	held := map[string]bool{"acme": true}
+	var admitted []string
+	admit := func(tenantID string) error {
+		admitted = append(admitted, tenantID)
+		if held[tenantID] {
+			return errors.New("tenant is still running its unseal checks")
+		}
+		return nil
+	}
+
+	unary := UnaryTenantAdmission(UnaryAuthorizationInterceptor(authorizer), admit)
+	served := false
+	handler := func(context.Context, interface{}) (interface{}, error) { served = true; return "ok", nil }
+	_, err := unary(ctxWithBearer("good"), nil, &grpc.UnaryServerInfo{FullMethod: "/quicbaas.v1.QuicBaaS/Put"}, handler)
+	require.Error(t, err)
+	assert.Equal(t, codes.Unavailable, status.Code(err))
+	assert.False(t, served, "a held tenant's request must never reach the handler")
+	assert.Equal(t, []string{"acme"}, admitted, "admission checks the tenant the token binds")
+
+	authorizer.grantedPerm = "watch:watch"
+	stream := StreamTenantAdmission(StreamAuthorizationInterceptor(authorizer), admit)
+	streamHandler := func(interface{}, grpc.ServerStream) error { served = true; return nil }
+	err = stream(nil, &dummyStream{ctx: ctxWithBearer("good")},
+		&grpc.StreamServerInfo{FullMethod: "/quicbaas.v1.QuicBaaS/Watch"}, streamHandler)
+	require.Error(t, err)
+	assert.Equal(t, codes.Unavailable, status.Code(err))
+	assert.False(t, served)
+
+	delete(held, "acme")
+	err = stream(nil, &dummyStream{ctx: ctxWithBearer("good")},
+		&grpc.StreamServerInfo{FullMethod: "/quicbaas.v1.QuicBaaS/Watch"}, streamHandler)
+	require.NoError(t, err)
+	assert.True(t, served, "an admitted tenant is served")
+
+	assert.Nil(t, UnaryTenantAdmission(nil, nil), "a nil admit leaves the interceptor unchanged")
 }
 
 // scopeSetAuthorizer grants a token exactly the permissions in its scp set,
