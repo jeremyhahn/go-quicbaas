@@ -373,11 +373,12 @@ func (s *Server) initializeIAMComponents() (service.IAMComponents, error) {
 	// (GetQRDBNodeClient().RBAC()). ABACSync/Simulator keep that live
 	// decorator synchronized with the policy store on every CRUD mutation
 	// and back SimulatePolicy's isolated draft-policy dry run, respectively.
+	abacSync := newQRDBABACSync(s, tenantManager, backendStorage)
 	policyEngine := iam.NewPolicyEngine(iam.PolicyEngineOptions{
 		Storage:        backendStorage,
 		Cache:          policyCache,
 		RBACAuthorizer: newQRDBPEPRBACAuthorizer(s),
-		ABACSync:       newQRDBABACSync(s, tenantManager, backendStorage),
+		ABACSync:       abacSync,
 		Simulator:      newQRDBPolicySimulator(),
 	})
 	// Initial ABAC load: post-unseal, now that the IAM policy store is
@@ -388,6 +389,8 @@ func (s *Server) initializeIAMComponents() (service.IAMComponents, error) {
 	if syncErr := policyEngine.SyncABAC(context.Background()); syncErr != nil {
 		s.logger.WithError(syncErr).Warn("Initial ABAC policy sync failed; live enforcement may not reflect previously stored policies")
 	}
+	// A sealed tenant's policies are skipped above; reload them on its unseal.
+	abacSync.resyncOnUnseal(&s.tenantUnsealHooks, policyEngine.SyncABAC)
 
 	// Create app manager
 	// The grantor gate on application updates reads the caller's qrdb

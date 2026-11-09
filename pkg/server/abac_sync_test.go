@@ -25,12 +25,14 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	qrdbtenant "github.com/jeremyhahn/go-qrdb/pkg/tenant"
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	qrdbnode "github.com/jeremyhahn/go-qrdb/sdk/go/node"
 	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 	"github.com/jeremyhahn/go-quicbaas/pkg/kvstore"
+	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
@@ -296,6 +298,78 @@ func TestQRDBABACSync_allPolicies_Errors(t *testing.T) {
 			assert.Nil(t, got)
 		})
 	}
+}
+
+// abacPolicyNames returns the sorted record names of policies.
+func abacPolicyNames(policies []*iam.Policy) []string {
+	names := make([]string, 0, len(policies))
+	for _, p := range policies {
+		if p.LoadError != nil {
+			names = append(names, p.LoadError.Name)
+			continue
+		}
+		names = append(names, p.Metadata.Name)
+	}
+	sort.Strings(names)
+	return names
+}
+
+// newABACTenantRoutedStorage builds tenant-routed IAM storage with a barrier
+// tenant acme, sys-deny in the system tenant and acme-allow in acme.
+func newABACTenantRoutedStorage(t *testing.T) (*fakeStoreResolver, iam.TenantManager, *iam.BackendStorage) {
+	t.Helper()
+	r := newFakeStoreResolver(kvstore.NewMemory())
+	r.barrierTenant("acme")
+	bs := iam.NewBackendStorage(newTenantRoutingKVStore(r))
+	tm := iam.NewDefaultTenantManager(bs)
+
+	sys := tenantctx.WithSystem(context.Background())
+	_, err := tm.CreateTenant(sys, iam.CreateTenantOptions{ID: "acme", Name: "Acme"})
+	require.NoError(t, err)
+	require.NoError(t, bs.CreatePolicy(sys, qrdbsdk.SystemTenantID,
+		abacTestPolicy("sys-deny", qrdbsdk.SystemTenantID, "alice", "kv/**", iam.EffectDeny)))
+	require.NoError(t, bs.CreatePolicy(tenantctx.WithTenant(context.Background(), "acme"), "acme",
+		abacTestPolicy("acme-allow", "acme", "alice", "kv/**", iam.EffectAllow)))
+	return r, tm, bs
+}
+
+func TestQRDBABACSync_allPolicies_SkipsASealedTenant(t *testing.T) {
+	r, tm, bs := newABACTenantRoutedStorage(t)
+	r.sealTenant("acme")
+
+	got, err := newQRDBABACSync(&Server{}, tm, bs).allPolicies(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, []string{"sys-deny"}, abacPolicyNames(got))
+}
+
+func TestQRDBABACSync_allPolicies_SealedSystemTenantAborts(t *testing.T) {
+	got, err := newQRDBABACSync(&Server{}, nil, &abacTestPolicies{err: qrdbtenant.ErrTenantSealed}).allPolicies(context.Background())
+	assert.True(t, errors.Is(err, qrdbtenant.ErrTenantSealed), "err = %v", err)
+	assert.Nil(t, got)
+}
+
+// fireABACTestUnseal unseals acme through a barrier service that fires hooks.
+func fireABACTestUnseal(t *testing.T, hooks *service.TenantUnsealHooks) {
+	t.Helper()
+	barrier := service.NewTenantBarrierService(unsealingTenantClient{}, service.WithTenantUnsealHooks(hooks))
+	require.NoError(t, barrier.TenantBarrierUnseal(tenantAdminCtx("acme"), "acme", []byte("key")))
+}
+
+func TestQRDBABACSync_resyncOnUnseal(t *testing.T) {
+	_, tm, bs := newABACTenantRoutedStorage(t)
+	hooks := &service.TenantUnsealHooks{}
+
+	calls := 0
+	var syncCtx context.Context
+	newQRDBABACSync(&Server{}, tm, bs).resyncOnUnseal(hooks, func(ctx context.Context) error {
+		calls++
+		syncCtx = ctx
+		return nil
+	})
+	fireABACTestUnseal(t, hooks)
+
+	assert.Equal(t, 1, calls)
+	assert.NotNil(t, syncCtx)
 }
 
 func TestPolicyToABAC(t *testing.T) {

@@ -15,11 +15,14 @@ package server
 
 import (
 	"context"
+	"errors"
 	"strings"
 
+	qrdbtenant "github.com/jeremyhahn/go-qrdb/pkg/tenant"
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
+	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
@@ -145,7 +148,9 @@ func flaggedRecordDenyPolicy(p *iam.Policy) *qrdbsdk.ABACPolicy {
 // pkg/iam, which must not depend on qrdb's cross-tenant tenant.SystemTenantID
 // concept. Storage routes by the context's tenant, so the catalog is read in
 // the system namespace and each tenant's policies under that tenant's own
-// context, whatever tenant the triggering request was bound to.
+// context, whatever tenant the triggering request was bound to. A sealed
+// non-system tenant is skipped with a warning; its policies load when it is
+// unsealed.
 func (a *qrdbABACSync) allPolicies(ctx context.Context) ([]*iam.Policy, error) {
 	tenantIDs := map[string]struct{}{qrdbsdk.SystemTenantID: {}}
 
@@ -164,11 +169,34 @@ func (a *qrdbABACSync) allPolicies(ctx context.Context) ([]*iam.Policy, error) {
 	for tenantID := range tenantIDs {
 		policies, err := a.storage.ListPolicies(tenantctx.WithTenant(ctx, tenantID), tenantID, iam.ListOptions{})
 		if err != nil {
+			if tenantID != qrdbsdk.SystemTenantID && errors.Is(err, qrdbtenant.ErrTenantSealed) {
+				a.warnf("abac sync: tenant %q is sealed; its policies load when it is unsealed", tenantID)
+				continue
+			}
 			return nil, err
 		}
 		all = append(all, policies...)
 	}
 	return all, nil
+}
+
+// warnf logs a warning through the server's logger, when there is one.
+func (a *qrdbABACSync) warnf(format string, args ...interface{}) {
+	if a.server == nil || a.server.logger == nil {
+		return
+	}
+	a.server.logger.Warnf(format, args...)
+}
+
+// resyncOnUnseal reloads the live ABAC set each time a tenant barrier is
+// unsealed: allPolicies skips a sealed tenant, so its policies take effect
+// only then.
+func (a *qrdbABACSync) resyncOnUnseal(hooks *service.TenantUnsealHooks, sync func(context.Context) error) {
+	hooks.Register(tenantUnsealFunc(func(ctx context.Context, tenantID string) {
+		if err := sync(ctx); err != nil {
+			a.warnf("abac sync after unsealing tenant %q failed: %v", tenantID, err)
+		}
+	}))
 }
 
 // policyToABAC converts an iam.Policy to qrdb's abac.Policy wire shape
