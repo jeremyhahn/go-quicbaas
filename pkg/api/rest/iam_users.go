@@ -39,7 +39,7 @@ func (h *IAMHandler) ListUsers(w http.ResponseWriter, r *http.Request) {
 			NewIAMAPIError(ErrBadRequest, "tenant ID is required"))
 		return
 	}
-	tenantID, ok := h.server.urlTenant(w, r, "rest.IAM", "tenant_id")
+	ctx, tenantID, ok := h.server.urlTenant(w, r, "rest.IAM", "tenant_id")
 	if !ok {
 		return
 	}
@@ -120,7 +120,7 @@ func (h *IAMHandler) CreateUser(w http.ResponseWriter, r *http.Request) {
 			NewIAMAPIError(ErrBadRequest, "tenant ID is required"))
 		return
 	}
-	tenantID, ok := h.server.urlTenant(w, r, "rest.IAM", "tenant_id")
+	ctx, tenantID, ok := h.server.urlTenant(w, r, "rest.IAM", "tenant_id")
 	if !ok {
 		return
 	}
@@ -309,7 +309,7 @@ func (h *IAMHandler) GetUser(w http.ResponseWriter, r *http.Request) {
 			NewIAMAPIError(ErrBadRequest, "tenant ID is required"))
 		return
 	}
-	tenantID, ok := h.server.urlTenant(w, r, "rest.IAM", "tenant_id")
+	ctx, tenantID, ok := h.server.urlTenant(w, r, "rest.IAM", "tenant_id")
 	if !ok {
 		return
 	}
@@ -360,7 +360,7 @@ func (h *IAMHandler) UpdateUser(w http.ResponseWriter, r *http.Request) {
 			NewIAMAPIError(ErrBadRequest, "tenant ID is required"))
 		return
 	}
-	tenantID, ok := h.server.urlTenant(w, r, "rest.IAM", "tenant_id")
+	ctx, tenantID, ok := h.server.urlTenant(w, r, "rest.IAM", "tenant_id")
 	if !ok {
 		return
 	}
@@ -456,7 +456,7 @@ func (h *IAMHandler) DeleteUser(w http.ResponseWriter, r *http.Request) {
 			NewIAMAPIError(ErrBadRequest, "tenant ID is required"))
 		return
 	}
-	tenantID, ok := h.server.urlTenant(w, r, "rest.IAM", "tenant_id")
+	ctx, tenantID, ok := h.server.urlTenant(w, r, "rest.IAM", "tenant_id")
 	if !ok {
 		return
 	}
@@ -506,7 +506,7 @@ func (h *IAMHandler) AssignRole(w http.ResponseWriter, r *http.Request) {
 			NewIAMAPIError(ErrBadRequest, "tenant ID is required"))
 		return
 	}
-	tenantID, ok := h.server.urlTenant(w, r, "rest.IAM", "tenant_id")
+	ctx, tenantID, ok := h.server.urlTenant(w, r, "rest.IAM", "tenant_id")
 	if !ok {
 		return
 	}
@@ -582,7 +582,7 @@ func (h *IAMHandler) RevokeRole(w http.ResponseWriter, r *http.Request) {
 			NewIAMAPIError(ErrBadRequest, "tenant ID is required"))
 		return
 	}
-	tenantID, ok := h.server.urlTenant(w, r, "rest.IAM", "tenant_id")
+	ctx, tenantID, ok := h.server.urlTenant(w, r, "rest.IAM", "tenant_id")
 	if !ok {
 		return
 	}

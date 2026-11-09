@@ -16,6 +16,7 @@
 package rest
 
 import (
+	"context"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
@@ -28,15 +29,17 @@ import (
 // honoured only as tenantctx.AdminTarget allows: a tenant caller names its
 // own tenant, the system admin acts in the tenant the URL names
 // (go-quicbaas#2212), and a request with no tenant bound is refused
-// (go-quicbaas#1150). On success it binds the resolved tenant into r's
-// context, so the handler's later r.Context() carries it. On refusal it
+// (go-quicbaas#1150). On success it returns the context with the resolved
+// tenant bound, and also binds it into r. The caller must use the returned
+// context for every downstream call: a ctx it captured from r.Context()
+// before this call still carries the unresolved caller. On refusal it
 // answers 403 through handleServiceError and returns ok=false.
-func (s *Server) urlTenant(w http.ResponseWriter, r *http.Request, op, param string) (string, bool) {
+func (s *Server) urlTenant(w http.ResponseWriter, r *http.Request, op, param string) (context.Context, string, bool) {
 	ctx, tenantID, err := tenantctx.AdminTarget(r.Context(), op, chi.URLParam(r, param))
 	if err != nil {
 		s.handleServiceError(w, r, err)
-		return "", false
+		return nil, "", false
 	}
 	*r = *r.WithContext(ctx)
-	return tenantID, true
+	return ctx, tenantID, true
 }

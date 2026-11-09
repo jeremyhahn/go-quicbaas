@@ -229,7 +229,7 @@ func (h *IAMHandler) RegisterProvider(w http.ResponseWriter, r *http.Request) {
 			NewIAMAPIError(ErrBadRequest, "tenant ID is required"))
 		return
 	}
-	tenantID, ok := h.server.urlTenant(w, r, "rest.IAM", "tenant_id")
+	ctx, tenantID, ok := h.server.urlTenant(w, r, "rest.IAM", "tenant_id")
 	if !ok {
 		return
 	}
@@ -327,7 +327,7 @@ func (h *IAMHandler) ListProviders(w http.ResponseWriter, r *http.Request) {
 			NewIAMAPIError(ErrBadRequest, "tenant ID is required"))
 		return
 	}
-	tenantID, ok := h.server.urlTenant(w, r, "rest.IAM", "tenant_id")
+	ctx, tenantID, ok := h.server.urlTenant(w, r, "rest.IAM", "tenant_id")
 	if !ok {
 		return
 	}
@@ -392,7 +392,7 @@ func (h *IAMHandler) GetProvider(w http.ResponseWriter, r *http.Request) {
 			NewIAMAPIError(ErrBadRequest, "tenant ID is required"))
 		return
 	}
-	tenantID, ok := h.server.urlTenant(w, r, "rest.IAM", "tenant_id")
+	ctx, tenantID, ok := h.server.urlTenant(w, r, "rest.IAM", "tenant_id")
 	if !ok {
 		return
 	}
@@ -431,7 +431,7 @@ func (h *IAMHandler) UpdateProvider(w http.ResponseWriter, r *http.Request) {
 			NewIAMAPIError(ErrBadRequest, "tenant ID is required"))
 		return
 	}
-	tenantID, ok := h.server.urlTenant(w, r, "rest.IAM", "tenant_id")
+	ctx, tenantID, ok := h.server.urlTenant(w, r, "rest.IAM", "tenant_id")
 	if !ok {
 		return
 	}
@@ -533,7 +533,7 @@ func (h *IAMHandler) DeleteProvider(w http.ResponseWriter, r *http.Request) {
 			NewIAMAPIError(ErrBadRequest, "tenant ID is required"))
 		return
 	}
-	tenantID, ok := h.server.urlTenant(w, r, "rest.IAM", "tenant_id")
+	ctx, tenantID, ok := h.server.urlTenant(w, r, "rest.IAM", "tenant_id")
 	if !ok {
 		return
 	}
@@ -728,7 +728,7 @@ func (h *IAMHandler) LinkAccount(w http.ResponseWriter, r *http.Request) {
 			NewIAMAPIError(ErrBadRequest, "tenant ID is required"))
 		return
 	}
-	tenantID, ok := h.server.urlTenant(w, r, "rest.IAM", "tenant_id")
+	ctx, tenantID, ok := h.server.urlTenant(w, r, "rest.IAM", "tenant_id")
 	if !ok {
 		return
 	}
@@ -815,7 +815,7 @@ func (h *IAMHandler) UnlinkAccount(w http.ResponseWriter, r *http.Request) {
 			NewIAMAPIError(ErrBadRequest, "tenant ID is required"))
 		return
 	}
-	tenantID, ok := h.server.urlTenant(w, r, "rest.IAM", "tenant_id")
+	ctx, tenantID, ok := h.server.urlTenant(w, r, "rest.IAM", "tenant_id")
 	if !ok {
 		return
 	}
@@ -868,7 +868,7 @@ func (h *IAMHandler) GetUserLinks(w http.ResponseWriter, r *http.Request) {
 			NewIAMAPIError(ErrBadRequest, "tenant ID is required"))
 		return
 	}
-	tenantID, ok := h.server.urlTenant(w, r, "rest.IAM", "tenant_id")
+	ctx, tenantID, ok := h.server.urlTenant(w, r, "rest.IAM", "tenant_id")
 	if !ok {
 		return
 	}
