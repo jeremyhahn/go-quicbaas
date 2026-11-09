@@ -348,12 +348,11 @@ func stripEnv(environ []string) []string {
 }
 
 // sectionSix is the staged file stage-gomodauth must write for a token and an
-// origin: exactly the four dependency-resolution.md section-6 variables.
+// origin: exactly the three dependency-resolution.md section-6 variables.
 func sectionSix(token, origin string) string {
 	origin = strings.TrimSuffix(origin, "/")
 	scheme, hostport, _ := strings.Cut(origin, "://")
-	return "export GOPRIVATE=github.com/jeremyhahn/*\n" +
-		"export GIT_CONFIG_COUNT=1\n" +
+	return "export GIT_CONFIG_COUNT=1\n" +
 		"export GIT_CONFIG_KEY_0=url." + scheme + "://x:" + token + "@" + hostport + "/jeremyhahn/.insteadOf\n" +
 		"export GIT_CONFIG_VALUE_0=https://github.com/jeremyhahn/\n"
 }
@@ -515,14 +514,14 @@ func check(root, work string, stdout, stderr io.Writer) (int, error) {
 		targets:    []string{"stage-gomodauth"},
 		tokensFile: "FORGE_READ_TOKEN=ignored0token\n",
 		env: []string{
-			"GOPRIVATE=github.com/jeremyhahn/*", "GIT_CONFIG_COUNT=1",
+			"GIT_CONFIG_COUNT=1",
 			"GIT_CONFIG_KEY_0=" + runnerKey, "GIT_CONFIG_VALUE_0=https://github.com/jeremyhahn/",
 		},
 	})
 	if err != nil {
 		return 0, err
 	}
-	want := "export GOPRIVATE=github.com/jeremyhahn/*\nexport GIT_CONFIG_COUNT=1\n" +
+	want := "export GIT_CONFIG_COUNT=1\n" +
 		"export GIT_CONFIG_KEY_0=" + runnerKey + "\nexport GIT_CONFIG_VALUE_0=https://github.com/jeremyhahn/\n"
 	if out.status != 0 || out.staged != want {
 		fail("the runner's variables were not staged as injected (exit %d)", out.status)

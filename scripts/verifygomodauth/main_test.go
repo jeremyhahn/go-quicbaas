@@ -172,8 +172,8 @@ func TestCheckFailsOnEachWayTheContractCanBreak(t *testing.T) {
 		{
 			name:        "staging world-readable",
 			file:        "Makefile",
-			old:         "\tumask 077; \\\n\t{ \\\n\t\tprintf 'export GOPRIVATE=%s\\n' \"$${GOPRIVATE:-github.com/$(GOMODAUTH_OWNER)/*}\"",
-			replacement: "\tchmod 644 \"$(GOMODAUTH_ENV)\"; \\\n\t{ \\\n\t\tprintf 'export GOPRIVATE=%s\\n' \"$${GOPRIVATE:-github.com/$(GOMODAUTH_OWNER)/*}\"",
+			old:         "\tumask 077; \\\n\t{ \\\n\t\tprintf 'export GIT_CONFIG_COUNT=1\\n'",
+			replacement: "\tchmod 644 \"$(GOMODAUTH_ENV)\"; \\\n\t{ \\\n\t\tprintf 'export GIT_CONFIG_COUNT=1\\n'",
 			want:        "want 0600",
 		},
 		{
@@ -277,8 +277,7 @@ func TestRunReportsTheVerdictAndTheStatus(t *testing.T) {
 
 func TestSectionSixBuildsTheRewriteFromTheOrigin(t *testing.T) {
 	got := sectionSix("tok", "https://gitea.invalid:8443/")
-	want := "export GOPRIVATE=github.com/jeremyhahn/*\n" +
-		"export GIT_CONFIG_COUNT=1\n" +
+	want := "export GIT_CONFIG_COUNT=1\n" +
 		"export GIT_CONFIG_KEY_0=url.https://x:tok@gitea.invalid:8443/jeremyhahn/.insteadOf\n" +
 		"export GIT_CONFIG_VALUE_0=https://github.com/jeremyhahn/\n"
 	if got != want {
