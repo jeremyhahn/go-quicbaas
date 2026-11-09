@@ -46,7 +46,7 @@ func runBuildTarget(t *testing.T, env ...string) pushRun {
 	logPath := filepath.Join(t.TempDir(), "calls")
 	cmd := exec.CommandContext(t.Context(), "make", "--no-print-directory", "-C", root, "build-worker-image",
 		"DOCKER="+self+" docker")
-	base := environWithoutAny("DEVCACHE_GOPROXY", "DEVCACHE_GOPRIVATE", "DEVCACHE_NPM_REGISTRY")
+	base := environWithoutAny("DEVCACHE_GOPROXY", "DEVCACHE_NPM_REGISTRY")
 	cmd.Env = append(base, append([]string{fakeToolEnv + "=1", fakeLogEnv + "=" + logPath}, env...)...)
 	out, err := cmd.CombinedOutput()
 	run := pushRun{output: string(out), err: err}
@@ -79,9 +79,10 @@ func devcacheEnvValue(t *testing.T, log, name string) string {
 // Makefile's `--build-arg DEVCACHE_GOPROXY` (no "=value") is backed by a real
 // `export`: a value given on the make command line reaches the DOCKER
 // process's own environment, which is where real docker reads a bare
-// --build-arg from. GOPRIVATE is left unset to prove the converse: a
-// variable nobody set reaches that environment empty, which is "no cache"
-// for both docker's own resolution and the Dockerfile's `:+` guard.
+// --build-arg from. TestBuildWorkerImage_BuildsWithNoDevcacheVariablesSet
+// leaves DEVCACHE_GOPROXY unset to prove the converse: a variable nobody set
+// reaches that environment empty, which is "no cache" for both docker's own
+// resolution and the Dockerfile's `:+` guard.
 func TestBuildWorkerImage_PassesDevcacheArgsThroughByNameOnly(t *testing.T) {
 	run := runBuildTarget(t,
 		"DEVCACHE_GOPROXY=http://cache.example:3000",
@@ -91,7 +92,7 @@ func TestBuildWorkerImage_PassesDevcacheArgsThroughByNameOnly(t *testing.T) {
 		t.Fatalf("make build-worker-image: %v\n%s", run.err, run.output)
 	}
 	log := strings.Join(run.calls, "\n")
-	for _, name := range []string{"DEVCACHE_GOPROXY", "DEVCACHE_GOPRIVATE", "DEVCACHE_NPM_REGISTRY"} {
+	for _, name := range []string{"DEVCACHE_GOPROXY", "DEVCACHE_NPM_REGISTRY"} {
 		if !strings.Contains(log, "--build-arg "+name+" ") && !strings.HasSuffix(strings.TrimSpace(log), "--build-arg "+name) {
 			t.Errorf("docker build was not passed --build-arg %s by name: %s", name, log)
 		}
@@ -105,9 +106,6 @@ func TestBuildWorkerImage_PassesDevcacheArgsThroughByNameOnly(t *testing.T) {
 	if v := devcacheEnvValue(t, log, "DEVCACHE_NPM_REGISTRY"); v != "http://cache.example:4873" {
 		t.Errorf("DEVCACHE_NPM_REGISTRY reached docker's environment as %q, want the value make was given", v)
 	}
-	if v := devcacheEnvValue(t, log, "DEVCACHE_GOPRIVATE"); v != "" {
-		t.Errorf("DEVCACHE_GOPRIVATE reached docker's environment as %q, want empty: nobody set it", v)
-	}
 }
 
 // TestBuildWorkerImage_BuildsWithNoDevcacheVariablesSet proves the target
@@ -119,7 +117,7 @@ func TestBuildWorkerImage_BuildsWithNoDevcacheVariablesSet(t *testing.T) {
 		t.Fatalf("make build-worker-image: %v\n%s", run.err, run.output)
 	}
 	log := strings.Join(run.calls, "\n")
-	for _, name := range []string{"DEVCACHE_GOPROXY", "DEVCACHE_GOPRIVATE", "DEVCACHE_NPM_REGISTRY"} {
+	for _, name := range []string{"DEVCACHE_GOPROXY", "DEVCACHE_NPM_REGISTRY"} {
 		if v := devcacheEnvValue(t, log, name); v != "" {
 			t.Errorf("%s reached docker's environment as %q, want empty: nothing set it", name, v)
 		}

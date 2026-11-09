@@ -158,15 +158,13 @@ ARG GOPLS_VERSION
 # module@version pairs; no default, for the same reason as the pins above.
 ARG GO_TOOL_DEPENDENCY_FLOORS
 
-# DEVCACHE_GOPROXY and DEVCACHE_GOPRIVATE are the fleet's dev caches
+# DEVCACHE_GOPROXY is the fleet's Go module cache
 # (../handbook/software/conventions/devops.md section 2a). NO DEFAULT, and
 # NEVER an ENV: unset (the common case away from the fleet) must build exactly
-# as it did before the caches existed, and a value here would outlive the RUN
-# that needs it. They are turned into GOPROXY / GOPRIVATE / GONOPROXY /
-# GONOSUMDB for the one RUN below that runs `go install` / `go get` / `go
-# build`, and nowhere else.
+# as it did before the cache existed, and a value here would outlive the RUN
+# that needs it. It is turned into GOPROXY for the one RUN below that runs
+# `go install` / `go get` / `go build`, and nowhere else.
 ARG DEVCACHE_GOPROXY
-ARG DEVCACHE_GOPRIVATE
 
 ENV CGO_ENABLED=0 GOBIN=/toolchain/bin
 
@@ -178,9 +176,6 @@ RUN set -eux; \
     fi; \
     GOPROXY="${DEVCACHE_GOPROXY:+${DEVCACHE_GOPROXY%/}|https://proxy.golang.org|direct}"; \
     [ -z "${GOPROXY}" ] || export GOPROXY; \
-    if [ -n "${DEVCACHE_GOPRIVATE:-}" ]; then \
-        export GOPRIVATE="${DEVCACHE_GOPRIVATE}" GONOPROXY="${DEVCACHE_GOPRIVATE}" GONOSUMDB="${DEVCACHE_GOPRIVATE}"; \
-    fi; \
     go install "github.com/golangci/golangci-lint/v2/cmd/golangci-lint@${GOLANGCI_VERSION}"; \
     go install "golang.org/x/vuln/cmd/govulncheck@${GOVULNCHECK_VERSION}"; \
     go install "github.com/rhysd/actionlint/cmd/actionlint@${ACTIONLINT_VERSION}"; \
@@ -310,8 +305,6 @@ COPY --chmod=0755 <<'DEVCACHE_ENV_SCRIPT' /usr/local/bin/devcache-env
 # keeps its default behaviour (no proxy). Nothing is ever forced.
 #
 #   DEVCACHE_GOPROXY          Go module proxy URL          -> GOPROXY="<url>|https://proxy.golang.org|direct"
-#   DEVCACHE_GOPRIVATE        private module patterns      -> GOPRIVATE, GONOPROXY, GONOSUMDB (always, merged
-#                                                             with any already set; never sent to a proxy)
 #   DEVCACHE_NPM_REGISTRY     npm registry cache URL       -> npm_config_registry
 #   DEVCACHE_APT_PROXY        apt cache URL                -> apt-conf / apt-detect output
 #   DEVCACHE_DOCKER_MIRROR    Docker Hub pull-through URL  -> DEVCACHE_DOCKERHUB_REGISTRY, daemon-json registry-mirrors
@@ -334,7 +327,7 @@ COPY --chmod=0755 <<'DEVCACHE_ENV_SCRIPT' /usr/local/bin/devcache-env
 #   report       one line per cache: configured value and whether it answers
 set -u
 
-VARS="DEVCACHE_GOPROXY DEVCACHE_GOPRIVATE DEVCACHE_NPM_REGISTRY DEVCACHE_APT_PROXY DEVCACHE_DOCKER_MIRROR DEVCACHE_MCR_MIRROR DEVCACHE_GHCR_MIRROR DEVCACHE_PLAYWRIGHT_HOST DEVCACHE_PROBE_TIMEOUT"
+VARS="DEVCACHE_GOPROXY DEVCACHE_NPM_REGISTRY DEVCACHE_APT_PROXY DEVCACHE_DOCKER_MIRROR DEVCACHE_MCR_MIRROR DEVCACHE_GHCR_MIRROR DEVCACHE_PLAYWRIGHT_HOST DEVCACHE_PROBE_TIMEOUT"
 
 die() { echo "devcache-env: $*" >&2; exit 2; }
 
@@ -404,12 +397,6 @@ use() {
 	reachable "$u"
 }
 
-# merge_patterns A B: comma-separated union, order kept, duplicates dropped.
-merge_patterns() {
-	printf '%s,%s\n' "$1" "$2" | tr ',' '\n' | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' |
-		awk 'length($0) && !seen[$0]++' | paste -sd, -
-}
-
 OUT=""
 add() { OUT="$OUT$1=$2
 "; }
@@ -420,15 +407,6 @@ settings() {
 		eval "val=\${$v:-}"
 		[ -z "$val" ] || add "$v" "$val"
 	done
-	priv="$(merge_patterns "${GOPRIVATE:-}" "${DEVCACHE_GOPRIVATE:-}")"
-	if [ -n "$priv" ]; then
-		# GOPRIVATE implies GONOPROXY and GONOSUMDB only while those are
-		# unset, so all three are set: private module paths never reach a
-		# proxy or the checksum database, even on a cache miss.
-		add GOPRIVATE "$priv"
-		add GONOPROXY "$(merge_patterns "${GONOPROXY:-}" "$priv")"
-		add GONOSUMDB "$(merge_patterns "${GONOSUMDB:-}" "$priv")"
-	fi
 	if use DEVCACHE_GOPROXY; then
 		add GOPROXY "${DEVCACHE_GOPROXY%/}|https://proxy.golang.org|direct"
 	fi
@@ -490,7 +468,6 @@ report() {
 		else s="UNREACHABLE (no proxy)"; fi
 		printf '%-26s %-40s %s\n' "$v" "${u:--}" "$s"
 	done
-	printf '%-26s %s\n' DEVCACHE_GOPRIVATE "${DEVCACHE_GOPRIVATE:--}"
 }
 
 load_config

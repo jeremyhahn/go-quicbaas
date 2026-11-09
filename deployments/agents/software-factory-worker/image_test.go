@@ -172,7 +172,6 @@ func TestDockerfile_DeclaresEveryBuildArgAndLabel(t *testing.T) {
 	// whether it belongs on the tag.
 	optionalBuildEnvArgs := map[string]bool{
 		"DEVCACHE_GOPROXY":      true,
-		"DEVCACHE_GOPRIVATE":    true,
 		"DEVCACHE_NPM_REGISTRY": true,
 	}
 	for _, arg := range dockerfileArgNames(dockerfile) {
@@ -254,16 +253,19 @@ func TestDockerfile_EmbedsDevcacheEnvAtThePinnedDigest(t *testing.T) {
 // TestDockerfile_GoInstallUsesDevcacheProxyChain proves the toolchain stage's
 // `go install` / `go get` / `go build` RUN feeds DEVCACHE_GOPROXY through
 // Go's `|` fallback chain -- never `,`, which fails a build outright on a
-// cache outage -- and sets GOPRIVATE/GONOPROXY/GONOSUMDB from
-// DEVCACHE_GOPRIVATE, so a private module path never reaches a public proxy
-// on a cache miss (../handbook/software/conventions/devops.md section 2a).
+// cache outage -- and sets none of GOPRIVATE, GONOPROXY or GONOSUMDB, so
+// every module, first-party included, resolves through the proxy and is
+// checked against the checksum database
+// (../handbook/software/conventions/devops.md section 2a).
 func TestDockerfile_GoInstallUsesDevcacheProxyChain(t *testing.T) {
 	dockerfile := string(Dockerfile)
 	if !strings.Contains(dockerfile, `GOPROXY="${DEVCACHE_GOPROXY:+${DEVCACHE_GOPROXY%/}|https://proxy.golang.org|direct}"`) {
 		t.Error("the Go install RUN does not build GOPROXY from DEVCACHE_GOPROXY with the | fallback chain")
 	}
-	if !strings.Contains(dockerfile, `export GOPRIVATE="${DEVCACHE_GOPRIVATE}" GONOPROXY="${DEVCACHE_GOPRIVATE}" GONOSUMDB="${DEVCACHE_GOPRIVATE}"`) {
-		t.Error("the Go install RUN does not set GOPRIVATE, GONOPROXY and GONOSUMDB from DEVCACHE_GOPRIVATE")
+	for _, name := range []string{"GOPRIVATE=", "GONOPROXY=", "GONOSUMDB="} {
+		if strings.Contains(dockerfile, name) {
+			t.Errorf("the Dockerfile sets %s: modules must resolve through the proxy and the checksum database", name)
+		}
 	}
 }
 
