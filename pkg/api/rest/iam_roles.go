@@ -29,7 +29,6 @@ import (
 
 // ListRoles handles GET /api/v1/tenants/{tenant_id}/roles - List roles in a tenant.
 func (h *IAMHandler) ListRoles(w http.ResponseWriter, r *http.Request) {
-
 	tenantID := chi.URLParam(r, "tenant_id")
 	if tenantID == "" {
 		RespondIAMError(w, r, http.StatusBadRequest,
@@ -109,7 +108,6 @@ func (h *IAMHandler) ListRoles(w http.ResponseWriter, r *http.Request) {
 
 // CreateRole handles POST /api/v1/tenants/{tenant_id}/roles - Create a new role.
 func (h *IAMHandler) CreateRole(w http.ResponseWriter, r *http.Request) {
-
 	tenantID := chi.URLParam(r, "tenant_id")
 	if tenantID == "" {
 		RespondIAMError(w, r, http.StatusBadRequest,
@@ -203,7 +201,6 @@ func (h *IAMHandler) CreateRole(w http.ResponseWriter, r *http.Request) {
 
 // GetRole handles GET /api/v1/tenants/{tenant_id}/roles/{role_id} - Get a specific role.
 func (h *IAMHandler) GetRole(w http.ResponseWriter, r *http.Request) {
-
 	tenantID := chi.URLParam(r, "tenant_id")
 	if tenantID == "" {
 		RespondIAMError(w, r, http.StatusBadRequest,
@@ -255,7 +252,6 @@ func (h *IAMHandler) GetRole(w http.ResponseWriter, r *http.Request) {
 
 // UpdateRole handles PUT /api/v1/tenants/{tenant_id}/roles/{role_id} - Update a role.
 func (h *IAMHandler) UpdateRole(w http.ResponseWriter, r *http.Request) {
-
 	tenantID := chi.URLParam(r, "tenant_id")
 	if tenantID == "" {
 		RespondIAMError(w, r, http.StatusBadRequest,
@@ -337,7 +333,6 @@ func (h *IAMHandler) UpdateRole(w http.ResponseWriter, r *http.Request) {
 
 // DeleteRole handles DELETE /api/v1/tenants/{tenant_id}/roles/{role_id} - Delete a role.
 func (h *IAMHandler) DeleteRole(w http.ResponseWriter, r *http.Request) {
-
 	tenantID := chi.URLParam(r, "tenant_id")
 	if tenantID == "" {
 		RespondIAMError(w, r, http.StatusBadRequest,
@@ -406,7 +401,6 @@ func (h *IAMHandler) DeleteRole(w http.ResponseWriter, r *http.Request) {
 // from every role seeded before that verb existed, so nobody would hold the
 // grant needed to repair exactly that absence.
 func (h *IAMHandler) ReconcileRoles(w http.ResponseWriter, r *http.Request) {
-
 	tenantID := chi.URLParam(r, "tenant_id")
 	if tenantID == "" {
 		RespondIAMError(w, r, http.StatusBadRequest,

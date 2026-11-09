@@ -50,7 +50,6 @@ type CreateSessionRequest struct {
 
 // CreateSession handles POST /api/v1/tenants/{tenant_id}/users/{user_id}/sessions - Create a new session.
 func (h *IAMHandler) CreateSession(w http.ResponseWriter, r *http.Request) {
-
 	tenantID := chi.URLParam(r, "tenant_id")
 	if tenantID == "" {
 		RespondIAMError(w, r, http.StatusBadRequest,
@@ -199,7 +198,6 @@ func (h *IAMHandler) CreateSession(w http.ResponseWriter, r *http.Request) {
 
 // ListUserSessions handles GET /api/v1/tenants/{tenant_id}/users/{user_id}/sessions - List sessions for a user.
 func (h *IAMHandler) ListUserSessions(w http.ResponseWriter, r *http.Request) {
-
 	tenantID := chi.URLParam(r, "tenant_id")
 	if tenantID == "" {
 		RespondIAMError(w, r, http.StatusBadRequest,
@@ -302,7 +300,6 @@ func (h *IAMHandler) ListUserSessions(w http.ResponseWriter, r *http.Request) {
 // authorization are enforced by the authz middleware chain on the
 // /api/v1/tenants surface (PEP-mapped to users:update).
 func (h *IAMHandler) RevokeAllUserSessions(w http.ResponseWriter, r *http.Request) {
-
 	tenantID := chi.URLParam(r, "tenant_id")
 	if tenantID == "" {
 		RespondIAMError(w, r, http.StatusBadRequest,

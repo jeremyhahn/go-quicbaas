@@ -29,7 +29,6 @@ import (
 
 // ListPolicies handles GET /api/v1/tenants/{tenant_id}/policies - List policies in a tenant.
 func (h *IAMHandler) ListPolicies(w http.ResponseWriter, r *http.Request) {
-
 	tenantID := chi.URLParam(r, "tenant_id")
 	if tenantID == "" {
 		RespondIAMError(w, r, http.StatusBadRequest,
@@ -189,7 +188,6 @@ func checkBodyPolicyName(body []byte, policy *iam.Policy, requested string) erro
 
 // CreatePolicy handles POST /api/v1/tenants/{tenant_id}/policies - Create a new policy.
 func (h *IAMHandler) CreatePolicy(w http.ResponseWriter, r *http.Request) {
-
 	tenantID := chi.URLParam(r, "tenant_id")
 	if tenantID == "" {
 		RespondIAMError(w, r, http.StatusBadRequest,
@@ -271,7 +269,6 @@ func (h *IAMHandler) CreatePolicy(w http.ResponseWriter, r *http.Request) {
 
 // GetPolicy handles GET /api/v1/tenants/{tenant_id}/policies/{policy_name} - Get a specific policy.
 func (h *IAMHandler) GetPolicy(w http.ResponseWriter, r *http.Request) {
-
 	tenantID := chi.URLParam(r, "tenant_id")
 	if tenantID == "" {
 		RespondIAMError(w, r, http.StatusBadRequest,
@@ -323,7 +320,6 @@ func (h *IAMHandler) GetPolicy(w http.ResponseWriter, r *http.Request) {
 
 // UpdatePolicy handles PUT /api/v1/tenants/{tenant_id}/policies/{policy_name} - Update a policy.
 func (h *IAMHandler) UpdatePolicy(w http.ResponseWriter, r *http.Request) {
-
 	tenantID := chi.URLParam(r, "tenant_id")
 	if tenantID == "" {
 		RespondIAMError(w, r, http.StatusBadRequest,
@@ -412,7 +408,6 @@ func (h *IAMHandler) UpdatePolicy(w http.ResponseWriter, r *http.Request) {
 
 // DeletePolicy handles DELETE /api/v1/tenants/{tenant_id}/policies/{policy_name} - Delete a policy.
 func (h *IAMHandler) DeletePolicy(w http.ResponseWriter, r *http.Request) {
-
 	tenantID := chi.URLParam(r, "tenant_id")
 	if tenantID == "" {
 		RespondIAMError(w, r, http.StatusBadRequest,
@@ -465,7 +460,6 @@ func (h *IAMHandler) DeletePolicy(w http.ResponseWriter, r *http.Request) {
 // The optional name query parameter is the name the policy will be stored
 // under; a document declaring a different metadata.name is invalid.
 func (h *IAMHandler) ValidatePolicy(w http.ResponseWriter, r *http.Request) {
-
 	tenantID := chi.URLParam(r, "tenant_id")
 	if tenantID == "" {
 		RespondIAMError(w, r, http.StatusBadRequest,
@@ -541,7 +535,6 @@ func (h *IAMHandler) ValidatePolicy(w http.ResponseWriter, r *http.Request) {
 
 // TestPolicy handles POST /api/v1/tenants/{tenant_id}/policies/test - Test policy evaluation.
 func (h *IAMHandler) TestPolicy(w http.ResponseWriter, r *http.Request) {
-
 	tenantID := chi.URLParam(r, "tenant_id")
 	if tenantID == "" {
 		RespondIAMError(w, r, http.StatusBadRequest,
@@ -726,7 +719,6 @@ func (h *IAMHandler) BatchCheckAccess(w http.ResponseWriter, r *http.Request) {
 
 // SimulatePolicy handles POST /api/v1/tenants/{tenant_id}/policies/simulate - Policy simulation/dry-run.
 func (h *IAMHandler) SimulatePolicy(w http.ResponseWriter, r *http.Request) {
-
 	tenantID := chi.URLParam(r, "tenant_id")
 	if tenantID == "" {
 		RespondIAMError(w, r, http.StatusBadRequest,
@@ -803,7 +795,6 @@ func (h *IAMHandler) SimulatePolicy(w http.ResponseWriter, r *http.Request) {
 
 // GetEffectivePermissions handles POST /api/v1/tenants/{tenant_id}/policies/effective-permissions - Calculate effective permissions.
 func (h *IAMHandler) GetEffectivePermissions(w http.ResponseWriter, r *http.Request) {
-
 	tenantID := chi.URLParam(r, "tenant_id")
 	if tenantID == "" {
 		RespondIAMError(w, r, http.StatusBadRequest,
