@@ -62,31 +62,50 @@ func sessionSubject(ctx context.Context, op string) (interfaces.Subject, error) 
 	return subject, nil
 }
 
-// sessionOwner resolves the user and tenant a list or revoke-all call acts
-// on: always the caller (ruling 207). A user_id or tenant_id naming anyone
-// else is refused, never honoured.
-func sessionOwner(ctx context.Context, args map[string]interface{}, op string) (uint64, string, error) {
+// callerAccount returns the caller's resolved account ID and tenant. The
+// account is resolved through service.CallerAccountResolver, never read from
+// subject.ID: that is the login name, and a username may be all digits.
+func (r *ToolRegistry) callerAccount(ctx context.Context, op string) (uint64, string, error) {
 	subject, err := sessionSubject(ctx, op)
 	if err != nil {
 		return 0, "", err
 	}
-	if _, named := args["user_id"]; named && getString(args, "user_id") != subject.ID {
-		return 0, "", api.NewInsufficientPermissionsError(op)
+	resolver, ok := r.service.(service.CallerAccountResolver)
+	if !ok {
+		return 0, "", api.NewServiceUnavailableError("session")
 	}
-	if tenantID := getString(args, "tenant_id"); tenantID != "" && tenantID != subject.TenantID {
-		return 0, "", api.NewInsufficientPermissionsError(op)
-	}
-	userID, err := strconv.ParseUint(subject.ID, 10, 64)
+	userID, err := resolver.ResolveCallerAccount(ctx, subject)
 	if err != nil {
-		return 0, "", api.NewInsufficientPermissionsError(op)
+		if service.IsCallerAccountRefused(err) {
+			return 0, "", api.NewInsufficientPermissionsError(op)
+		}
+		return 0, "", err
 	}
 	return userID, subject.TenantID, nil
 }
 
-// callerSession loads sessionID and refuses it unless the caller owns it, as
+// sessionOwner resolves the user and tenant a list or revoke-all call acts
+// on: always the caller's resolved account (ruling 207). A user_id or
+// tenant_id naming anyone else is refused, never honoured.
+func (r *ToolRegistry) sessionOwner(ctx context.Context, args map[string]interface{}, op string) (uint64, string, error) {
+	userID, tenantID, err := r.callerAccount(ctx, op)
+	if err != nil {
+		return 0, "", err
+	}
+	if _, named := args["user_id"]; named && getString(args, "user_id") != strconv.FormatUint(userID, 10) {
+		return 0, "", api.NewInsufficientPermissionsError(op)
+	}
+	if argTenant := getString(args, "tenant_id"); argTenant != "" && argTenant != tenantID {
+		return 0, "", api.NewInsufficientPermissionsError(op)
+	}
+	return userID, tenantID, nil
+}
+
+// callerSession loads sessionID and refuses it unless the caller's resolved
+// account owns it, as
 // the embedded transport's requireSessionOwner does.
-func callerSession(ctx context.Context, sessionMgr service.SessionManager, sessionID, op string) (*iam.SessionExt, error) {
-	subject, err := sessionSubject(ctx, op)
+func (r *ToolRegistry) callerSession(ctx context.Context, sessionMgr service.SessionManager, sessionID, op string) (*iam.SessionExt, error) {
+	userID, tenantID, err := r.callerAccount(ctx, op)
 	if err != nil {
 		return nil, err
 	}
@@ -94,7 +113,7 @@ func callerSession(ctx context.Context, sessionMgr service.SessionManager, sessi
 	if err != nil {
 		return nil, err
 	}
-	if !session.OwnedBy(subject.ID, subject.TenantID) {
+	if !session.OwnedBy(strconv.FormatUint(userID, 10), tenantID) {
 		return nil, api.NewInsufficientPermissionsError(op)
 	}
 	return session, nil
@@ -220,7 +239,7 @@ func (r *ToolRegistry) executeIAMSessionGet(ctx context.Context, args map[string
 		return nil, err
 	}
 
-	session, err := callerSession(ctx, sessionMgr, getString(args, "session_id"), "mcp.iam.session.get")
+	session, err := r.callerSession(ctx, sessionMgr, getString(args, "session_id"), "mcp.iam.session.get")
 	if err != nil {
 		return nil, err
 	}
@@ -228,7 +247,7 @@ func (r *ToolRegistry) executeIAMSessionGet(ctx context.Context, args map[string
 }
 
 func (r *ToolRegistry) executeIAMSessionList(ctx context.Context, args map[string]interface{}) (interface{}, error) {
-	userID, tenantID, err := sessionOwner(ctx, args, "mcp.iam.session.list")
+	userID, tenantID, err := r.sessionOwner(ctx, args, "mcp.iam.session.list")
 	if err != nil {
 		return nil, err
 	}
@@ -261,7 +280,7 @@ func (r *ToolRegistry) executeIAMSessionRevoke(ctx context.Context, args map[str
 
 	// Ownership is checked before the revoke: a refused caller must not be
 	// able to destroy a session it was never allowed to see.
-	session, err := callerSession(ctx, sessionMgr, getString(args, "session_id"), "mcp.iam.session.revoke")
+	session, err := r.callerSession(ctx, sessionMgr, getString(args, "session_id"), "mcp.iam.session.revoke")
 	if err != nil {
 		return nil, err
 	}
@@ -276,7 +295,7 @@ func (r *ToolRegistry) executeIAMSessionRevoke(ctx context.Context, args map[str
 }
 
 func (r *ToolRegistry) executeIAMSessionRevokeAll(ctx context.Context, args map[string]interface{}) (interface{}, error) {
-	userID, tenantID, err := sessionOwner(ctx, args, "mcp.iam.session.revoke_all")
+	userID, tenantID, err := r.sessionOwner(ctx, args, "mcp.iam.session.revoke_all")
 	if err != nil {
 		return nil, err
 	}
