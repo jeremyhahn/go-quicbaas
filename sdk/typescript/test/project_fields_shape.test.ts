@@ -157,7 +157,7 @@ describe('RestProjectsClient — the tenant is on the URL, not only in the body'
     const req: UpdateProjectRequest = {
       tenant_id: 'tenant-a',
       project_id: 'proj-1',
-      git_repo_url: 'ssh://git@forge.example:2222/org/api.git',
+      git_repo_url: 'ssh://git@forge.example:2022/org/api.git',
     };
     await client.projects.updateProject(req);
 

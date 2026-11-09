@@ -23,7 +23,7 @@ import (
 )
 
 func TestRepoHostGuard_AllowsListedHostsOnly(t *testing.T) {
-	g, err := NewRepoHostGuard([]string{"Forge.Example.Test", "gitea.internal:3001"}, false)
+	g, err := NewRepoHostGuard([]string{"Forge.Example.Test", "gitea.internal:3000"}, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -31,7 +31,7 @@ func TestRepoHostGuard_AllowsListedHostsOnly(t *testing.T) {
 		"https://forge.example.test/acme/api.git",
 		"ssh://git@forge.example.test/acme/api.git",
 		"git@forge.example.test:acme/api.git",
-		"https://gitea.internal:3001/acme/api.git",
+		"https://gitea.internal:3000/acme/api.git",
 	} {
 		if err := g.CheckRepoURL(ok); err != nil {
 			t.Fatalf("%s refused: %v", ok, err)
@@ -93,7 +93,7 @@ func TestRepoHostGuard_CheckContextRepos(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	const sshProject = "ssh://git@forge.example.test:2222/acme/api.git"
+	const sshProject = "ssh://git@forge.example.test:2022/acme/api.git"
 	const httpsProject = "https://forge.example.test/acme/api.git"
 	repo := func(url string) []orchestration.ContextRepo {
 		return []orchestration.ContextRepo{{Name: "handbook", RepoURL: url, Ref: "main"}}
@@ -102,7 +102,7 @@ func TestRepoHostGuard_CheckContextRepos(t *testing.T) {
 	t.Run("accepted", func(t *testing.T) {
 		for name, tc := range map[string]struct{ project, context string }{
 			"https beside an ssh project":   {sshProject, "https://forge.example.test/acme/handbook.git"},
-			"ssh on the project's ssh host": {sshProject, "ssh://git@forge.example.test:2222/acme/handbook.git"},
+			"ssh on the project's ssh host": {sshProject, "ssh://git@forge.example.test:2022/acme/handbook.git"},
 			"https beside an https project": {httpsProject, "https://other.example.test/acme/handbook.git"},
 		} {
 			if err := g.CheckContextRepos(tc.project, repo(tc.context)); err != nil {
@@ -245,7 +245,7 @@ func TestRepoHostGuard_CheckProject(t *testing.T) {
 		return p
 	}
 
-	if err := g.CheckProject(project("ssh://git@forge.example.test:2222/acme/api.git", "https://forge.example.test/acme/handbook.git")); err != nil {
+	if err := g.CheckProject(project("ssh://git@forge.example.test:2022/acme/api.git", "https://forge.example.test/acme/handbook.git")); err != nil {
 		t.Fatalf("an admissible project was refused: %v", err)
 	}
 

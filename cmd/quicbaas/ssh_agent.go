@@ -66,7 +66,7 @@ so the private key never leaves the server. The socket path is printed as
 SSH_AUTH_SOCK=<path> (and written to --env-file when given) once the agent
 is listening. The agent runs until interrupted.
 
-  eval "$(quicbaas ssh agent --scope service --owner agent-go-codec --name agent-go-codec-signing &)"
+  eval "$(quicbaas ssh agent --scope service --owner agent-codec --name agent-codec-signing &)"
   git -c gpg.format=ssh -c user.signingkey="key::$(quicbaas ssh keys export ...)" commit -S`,
 		RunE: runSSHAgent,
 	}

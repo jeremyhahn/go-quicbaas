@@ -269,7 +269,7 @@ environment, and nothing anywhere else:
 | --- | --- | --- |
 | `GOPRIVATE` | `github.com/example/*` | the proxy and the checksum database are bypassed for the owner's modules |
 | `GIT_CONFIG_COUNT` | `1` | git reads the rewrite below without a config file being written |
-| `GIT_CONFIG_KEY_0` | `url.ssh://git@forge.example.com:2222/example/.insteadOf` | the rewrite target: the project's own `git.repo_url` with the repository dropped — same scheme, user, host, port and owner |
+| `GIT_CONFIG_KEY_0` | `url.ssh://git@forge.example.com:2022/example/.insteadOf` | the rewrite target: the project's own `git.repo_url` with the repository dropped — same scheme, user, host, port and owner |
 | `GIT_CONFIG_VALUE_0` | `https://github.com/example/` | the prefix being rewritten |
 
 This is the mechanism the handbook's dependency-resolution convention
@@ -312,13 +312,13 @@ sdlc:
   checkout_root: /workspace
   # Who, beyond each repository's owner and its binding's `rulers`, may rule
   # on a parked task by commenting on its issue. File-only. A tenant entry
-  # replaces `default` for that tenant; unset `default` takes agent-company;
+  # replaces `default` for that tenant; unset `default` takes company-agent;
   # `default: []` names nobody. A malformed login refuses startup. Tenant IDs
   # are map keys, so viper lowercases them.
   rulers:
-    default: [agent-company]
+    default: [company-agent]
     tenants:
-      example-tenant: [agent-company, lead-agent]
+      example-tenant: [company-agent, lead-agent]
   # The node's default triage Agent or pool, per tenant that defines it.
   # Empty falls back to each project's worker. See triage.md.
   triage_agent: {agent_id: triage-reader}
@@ -638,6 +638,12 @@ make docker-run CMD='make deps-check'   # latest-version check
 make toolchain-image                    # print the toolchain image tag
 ```
 
+`make vuln` fails on a reachable advisory unless `scripts/vuln-allowlist.txt`
+lists its ID with a reason, and prints each allowed advisory with that reason.
+An entry is only for an advisory with no fixed release, and an entry that
+matches no reachable finding fails as stale, so it is removed once the fix
+ships.
+
 `make toolchain-image` prints a tag hashed from the Dockerfile, the pin file and
 both modules' `go.mod`/`go.sum`. The integration image, which holds the source,
 is tagged `integration-<commit>`, plus `-dirty-<hash>` of the uncommitted
@@ -648,9 +654,9 @@ the calling uid, with the source mounted at `/src`. The product image's own
 targets are `make image-build`, `image-build-dev`, `image-build-fips`,
 `image-run`, `image-run-fips`, `image-stop` and `image-push`.
 
-The build fetches private modules through the `gomodauth` secret (see
+The build mounts the empty `gomodauth` secret (see
 [private-modules.md](../testing/private-modules.md)) and uses
-`DEVCACHE_GOPROXY` / `DEVCACHE_GOPRIVATE` when the caller sets them. Both images
+`DEVCACHE_GOPROXY` when the caller sets it. Both images
 run with `GOPROXY=off`.
 
 `make integration-test` runs the integration stack
