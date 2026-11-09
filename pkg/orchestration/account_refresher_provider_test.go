@@ -19,6 +19,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"reflect"
+	"strconv"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -85,9 +86,14 @@ func TestAccountTokenManager_RegisterOAuthRefreshers_NilRefresher(t *testing.T) 
 	}
 }
 
+// mintedToken is the access token newTestTokenEndpoint issues on its nth call.
+func mintedToken(n int64) string {
+	return "minted-token-" + strconv.FormatInt(n, 10)
+}
+
 // newTestTokenEndpoint returns an httptest RFC 6749 token endpoint that issues
-// a numbered access token per call, plus a counter of the requests it saw and
-// the last form values it was presented with.
+// a numbered access token per call (mintedToken), plus a counter of the
+// requests it saw and the last form values it was presented with.
 func newTestTokenEndpoint(t *testing.T) (*httptest.Server, *atomic.Int64, *atomic.Value) {
 	t.Helper()
 	calls := &atomic.Int64{}
@@ -102,7 +108,7 @@ func newTestTokenEndpoint(t *testing.T) (*httptest.Server, *atomic.Int64, *atomi
 		n := calls.Add(1)
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{
-			"access_token":  "minted-token-" + string(rune('0'+n)),
+			"access_token":  mintedToken(n),
 			"refresh_token": "rotated-refresh",
 			"expires_in":    3600,
 			"token_type":    "Bearer",
@@ -163,7 +169,7 @@ func TestAccountResolver_MintsFreshTokenFromProviderDefaults(t *testing.T) {
 	if calls.Load() != 1 {
 		t.Fatalf("token endpoint called %d times, want 1", calls.Load())
 	}
-	if got := resolved.Env["CLAUDE_CODE_OAUTH_TOKEN"]; got != "minted-<account>" {
+	if got := resolved.Env["CLAUDE_CODE_OAUTH_TOKEN"]; got != mintedToken(1) {
 		t.Fatalf("Env[CLAUDE_CODE_OAUTH_TOKEN] = %q, want the freshly minted token", got)
 	}
 	form, _ := lastForm.Load().(string)
@@ -178,7 +184,7 @@ func TestAccountResolver_MintsFreshTokenFromProviderDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Get() error = %v", err)
 	}
-	if stored.AccessToken != "minted-<account>" || stored.RefreshToken != "rotated-refresh" {
+	if stored.AccessToken != mintedToken(1) || stored.RefreshToken != "rotated-refresh" {
 		t.Fatalf("stored credential = %+v, want the rotated pair persisted", stored)
 	}
 	if stored.TokenEndpoint != "" || stored.ClientID != "" || stored.AccessTokenEnvKey != "" {

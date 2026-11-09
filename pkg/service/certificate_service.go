@@ -330,8 +330,14 @@ func (s *certificateService) RevokeCertificate(ctx context.Context, req *RevokeC
 
 	resp, err := s.caService.RevokeCertificate(ctx, xkmsReq)
 	if err != nil {
+		// A certificate issued for another tenant is refused as a missing
+		// tenant; it must reach the transports as not-found, not internal.
+		code := errors.ErrInternal
+		if stderrors.Is(err, qrdbsdk.ErrTenantMissing) {
+			code = errors.ErrNotFound
+		}
 		return nil, &errors.QBError{
-			Code: errors.ErrInternal,
+			Code: code,
 			Op:   "CertificateService.RevokeCertificate",
 			Err:  err,
 		}
@@ -368,7 +374,7 @@ func (s *certificateService) VerifyCertificate(ctx context.Context, req *VerifyC
 	}
 
 	isRevokedResp, err := s.caService.IsRevoked(ctx, &xkmstransport.IsRevokedRequest{
-		SerialNumber: cert.SerialNumber.String(),
+		SerialNumber: cert.SerialNumber.Text(16),
 	})
 	if err != nil {
 		return &VerifyCertificateResponse{
@@ -769,7 +775,8 @@ func (s *certificateService) ListCertificates(ctx context.Context, req *ListCert
 			Err:  errCertNegativeLimit,
 		}
 	}
-	if _, err := prepareTenantContext(ctx); err != nil {
+	tenantID, err := prepareTenantContext(ctx)
+	if err != nil {
 		return nil, err
 	}
 
@@ -787,6 +794,13 @@ func (s *certificateService) ListCertificates(ctx context.Context, req *ListCert
 		}
 	}
 
+	if tenantID != "" {
+		certs, err = s.certificatesIssuedForCaller(ctx, tenantID, certs)
+		if err != nil {
+			return nil, err
+		}
+	}
+
 	now := time.Now()
 	filter := strings.ToLower(strings.TrimSpace(req.CommonNameFilter))
 	out := make([]CertificateSummary, 0, len(certs))
@@ -801,9 +815,16 @@ func (s *certificateService) ListCertificates(ctx context.Context, req *ListCert
 			continue
 		}
 		if !req.IncludeRevoked {
-			revoked, _ := s.caService.IsRevoked(ctx, &xkmstransport.IsRevokedRequest{
+			revoked, err := s.caService.IsRevoked(ctx, &xkmstransport.IsRevokedRequest{
 				SerialNumber: cert.SerialNumber.Text(16),
 			})
+			if err != nil {
+				return nil, &errors.QBError{
+					Code: errors.ErrInternal,
+					Op:   "CertificateService.ListCertificates",
+					Err:  err,
+				}
+			}
 			if revoked != nil && revoked.Revoked {
 				continue
 			}
@@ -818,6 +839,26 @@ func (s *certificateService) ListCertificates(ctx context.Context, req *ListCert
 		Certificates: out,
 		TotalCount:   len(certs),
 	}, nil
+}
+
+// certificatesIssuedForCaller keeps only the certificates issued for the
+// caller's tenant, so a tenant neither sees nor counts another tenant's
+// certificates. A failure to read the CA's ownership records stops the listing.
+func (s *certificateService) certificatesIssuedForCaller(ctx context.Context, tenantID string, certs []*x509.Certificate) ([]*x509.Certificate, error) {
+	own := make([]*x509.Certificate, 0, len(certs))
+	for _, cert := range certs {
+		if cert == nil {
+			continue
+		}
+		issued, err := issuedForTenant(ctx, s.caService, tenantID, cert.SerialNumber, "CertificateService.ListCertificates")
+		if err != nil {
+			return nil, err
+		}
+		if issued {
+			own = append(own, cert)
+		}
+	}
+	return own, nil
 }
 
 // summariseCertificate projects an x509.Certificate into the compact
