@@ -67,7 +67,6 @@ type webAuthnCredentialsDeletedResponse struct {
 // GET /api/v1/tenants/{tenant_id}/users/{user_id}/webauthn/credentials —
 // list the WebAuthn credentials registered to a user.
 func (h *IAMHandler) ListUserWebAuthnCredentials(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
 
 	ctx, tenantID, userID, svc, ok := h.resolveWebAuthnCredentialSubject(w, r)
 	if !ok {
@@ -91,7 +90,6 @@ func (h *IAMHandler) ListUserWebAuthnCredentials(w http.ResponseWriter, r *http.
 // remove one of a user's registered authenticators. The credential id is the
 // base64url value the list verb returns.
 func (h *IAMHandler) DeleteUserWebAuthnCredential(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
 
 	credentialID := chi.URLParam(r, "credential_id")
 	if credentialID == "" {
@@ -119,7 +117,6 @@ func (h *IAMHandler) DeleteUserWebAuthnCredential(w http.ResponseWriter, r *http
 // recovery verb for an account whose registration ceremony is being refused by
 // the authenticator, and the same operation user deletion cascades through.
 func (h *IAMHandler) DeleteUserWebAuthnCredentials(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
 
 	ctx, tenantID, userID, svc, ok := h.resolveWebAuthnCredentialSubject(w, r)
 	if !ok {
