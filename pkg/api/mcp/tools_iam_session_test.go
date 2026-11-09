@@ -25,6 +25,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/jeremyhahn/go-quicbaas/pkg/auth"
 	qberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
@@ -112,6 +113,33 @@ var _ service.SessionManager = (*mockSessionManager)(nil)
 type sessionMockService struct {
 	mockService
 	sessionMgr service.SessionManager
+	accounts   sessionCallerAccounts
+}
+
+// ResolveCallerAccount makes sessionMockService a service.CallerAccountResolver.
+func (m *sessionMockService) ResolveCallerAccount(ctx context.Context, subject interfaces.Subject) (uint64, error) {
+	return m.accounts.ResolveCallerAccount(ctx, subject)
+}
+
+// sessionCallerAccounts resolves a caller in the real resolver's order: a
+// verified UserID wins, otherwise "tenant/subject" names the account, and a
+// subject it cannot place is refused.
+type sessionCallerAccounts map[string]uint64
+
+func (f sessionCallerAccounts) ResolveCallerAccount(_ context.Context, subject interfaces.Subject) (uint64, error) {
+	if subject.UserID != 0 {
+		return subject.UserID, nil
+	}
+	if subject.IDKind != interfaces.SubjectIDUnresolved {
+		if userID, ok := f[subject.TenantID+"/"+subject.ID]; ok {
+			return userID, nil
+		}
+	}
+	return 0, &qberrors.QBError{
+		Code: qberrors.ErrForbidden,
+		Op:   "fake.ResolveCallerAccount",
+		Err:  &service.CallerAccountRefusedError{Reason: "the authenticated caller does not name a user account"},
+	}
 }
 
 func (m *sessionMockService) GetSessionManager(_ context.Context) (service.SessionManager, error) {
@@ -121,7 +149,10 @@ func (m *sessionMockService) GetSessionManager(_ context.Context) (service.Sessi
 func newSessionRegistry(t *testing.T, mgr service.SessionManager) *ToolRegistry {
 	t.Helper()
 	log := newTestLogger(t)
-	svc := &sessionMockService{sessionMgr: mgr}
+	svc := &sessionMockService{sessionMgr: mgr, accounts: sessionCallerAccounts{
+		"tenant-1/alice":             10001,
+		"tenant-1/alice@example.com": 10001,
+	}}
 	return &ToolRegistry{service: svc, logger: log}
 }
 
@@ -399,7 +430,7 @@ func TestExecuteIAMSessionList_RefusesNoCaller(t *testing.T) {
 	}
 }
 
-func TestExecuteIAMSessionList_RefusesNonNumericSubject(t *testing.T) {
+func TestExecuteIAMSessionList_RefusesUnresolvedSubject(t *testing.T) {
 	reg := newSessionRegistry(t, &mockSessionManager{})
 	ctx := auth.SubjectIntoContext(context.Background(), interfaces.Subject{
 		ID: "alice", TenantID: sessionCallerTenant, Authenticated: true,
@@ -697,4 +728,120 @@ func TestExecuteIAMSessionTouch_UpdateActivityError(t *testing.T) {
 		"session_id": "sess-123",
 	})
 	assert.ErrorIs(t, err, iam.ErrSessionExpired)
+}
+
+// sessionCalls records what the session manager was asked to do.
+type sessionCalls struct {
+	listed     []uint64
+	revoked    []string
+	revokedAll []uint64
+}
+
+// recordingSessionManager serves session "s-1", owned by 10001 in tenant-1,
+// and records every list, revoke and revoke-all call.
+func recordingSessionManager(t *testing.T, calls *sessionCalls) *mockSessionManager {
+	return &mockSessionManager{
+		listFn: func(_ context.Context, userID uint64, tenantID string) ([]*iam.SessionExt, error) {
+			assert.Equal(t, sessionCallerTenant, tenantID)
+			calls.listed = append(calls.listed, userID)
+			return nil, nil
+		},
+		getFn: func(_ context.Context, sessionID string) (*iam.SessionExt, error) {
+			return hashedSession(sessionID, 10001, sessionCallerTenant), nil
+		},
+		revokeFn: func(_ context.Context, sessionID string) error {
+			calls.revoked = append(calls.revoked, sessionID)
+			return nil
+		},
+		revokeAllFn: func(_ context.Context, userID uint64, tenantID string) error {
+			assert.Equal(t, sessionCallerTenant, tenantID)
+			calls.revokedAll = append(calls.revokedAll, userID)
+			return nil
+		},
+	}
+}
+
+// TestSessionTools_ResolveVerifiedAccount drives callers built the way
+// upstreamToolContext builds them, where Subject.ID is the login name, and
+// checks every tool acts on the resolved account, never on that name.
+func TestSessionTools_ResolveVerifiedAccount(t *testing.T) {
+	callerCtx := func(name string, marked bool, uid uint64) context.Context {
+		identity := &qrdbsdk.Identity{Subject: name, TenantID: sessionCallerTenant}
+		if marked {
+			identity = auth.MarkTokenSubject(identity, uid)
+		}
+		return upstreamToolContext(qrdbsdk.WithIdentity(context.Background(), identity))
+	}
+	session := map[string]interface{}{"session_id": "s-1"}
+	ownAccount := map[string]interface{}{"user_id": "10001"}
+
+	allowed := map[string]context.Context{
+		"alice":                   callerCtx("alice", false, 0),
+		"alice token":             callerCtx("alice", true, 10001),
+		"alice@example.com":       callerCtx("alice@example.com", false, 0),
+		"alice@example.com token": callerCtx("alice@example.com", true, 10001),
+	}
+	for name, ctx := range allowed {
+		t.Run("allowed "+name, func(t *testing.T) {
+			calls := &sessionCalls{}
+			reg := newSessionRegistry(t, recordingSessionManager(t, calls))
+
+			_, err := reg.executeIAMSessionList(ctx, map[string]interface{}{})
+			require.NoError(t, err)
+			_, err = reg.executeIAMSessionList(ctx, ownAccount)
+			require.NoError(t, err)
+			_, err = reg.executeIAMSessionGet(ctx, session)
+			require.NoError(t, err)
+			_, err = reg.executeIAMSessionRevoke(ctx, session)
+			require.NoError(t, err)
+			_, err = reg.executeIAMSessionRevokeAll(ctx, map[string]interface{}{})
+			require.NoError(t, err)
+			_, err = reg.executeIAMSessionRevokeAll(ctx, ownAccount)
+			require.NoError(t, err)
+
+			assert.Equal(t, []uint64{10001, 10001}, calls.listed)
+			assert.Equal(t, []string{"s-1"}, calls.revoked)
+			assert.Equal(t, []uint64{10001, 10001}, calls.revokedAll)
+		})
+	}
+
+	t.Run("denied numeric name of another account", func(t *testing.T) {
+		ctx := callerCtx("10001", true, 20002)
+		calls := &sessionCalls{}
+		reg := newSessionRegistry(t, recordingSessionManager(t, calls))
+
+		_, err := reg.executeIAMSessionList(ctx, map[string]interface{}{})
+		require.NoError(t, err)
+		_, err = reg.executeIAMSessionList(ctx, ownAccount)
+		requireForbidden(t, err)
+		_, err = reg.executeIAMSessionRevokeAll(ctx, ownAccount)
+		requireForbidden(t, err)
+		_, err = reg.executeIAMSessionGet(ctx, session)
+		requireForbidden(t, err)
+		_, err = reg.executeIAMSessionRevoke(ctx, session)
+		requireForbidden(t, err)
+
+		assert.Equal(t, []uint64{20002}, calls.listed)
+		assert.Empty(t, calls.revoked)
+		assert.Empty(t, calls.revokedAll)
+	})
+
+	t.Run("denied unmapped numeric name", func(t *testing.T) {
+		ctx := callerCtx("10001", false, 0)
+		calls := &sessionCalls{}
+		reg := newSessionRegistry(t, recordingSessionManager(t, calls))
+
+		_, err := reg.executeIAMSessionList(ctx, map[string]interface{}{})
+		requireForbidden(t, err)
+		_, err = reg.executeIAMSessionGet(ctx, session)
+		requireForbidden(t, err)
+		_, err = reg.executeIAMSessionRevoke(ctx, session)
+		requireForbidden(t, err)
+		_, err = reg.executeIAMSessionRevokeAll(ctx, map[string]interface{}{})
+		requireForbidden(t, err)
+
+		assert.Empty(t, calls.listed)
+		assert.Empty(t, calls.revoked)
+		assert.Empty(t, calls.revokedAll)
+	})
 }
