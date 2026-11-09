@@ -31,6 +31,7 @@ import (
 	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
+	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 	"github.com/jeremyhahn/go-quicbaas/pkg/kvstore"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
@@ -572,6 +573,88 @@ func TestQRDBABACSync_migrateLegacyPolicies(t *testing.T) {
 
 		assert.Equal(t, 1, calls)
 	})
+}
+
+// admittedFakeResolver resolves through the real admittingStoreResolver's
+// admission check, then serves the fake resolver's per-tenant store.
+type admittedFakeResolver struct {
+	admit  qrdbsdk.TenantStoreResolver
+	stores *fakeStoreResolver
+}
+
+func (r admittedFakeResolver) Resolve(ctx context.Context, tenantID string) (interfaces.KVStore, error) {
+	if _, err := r.admit.Resolve(ctx, tenantID); err != nil {
+		return nil, err
+	}
+	return r.stores.Resolve(ctx, tenantID)
+}
+
+func TestQRDBABACSync_resyncOnUnseal_GateReadsThroughAdmittedStore(t *testing.T) {
+	s, _ := newABACTestServer(t, true)
+	r := newFakeStoreResolver(kvstore.NewMemory())
+	r.barrierTenant("acme")
+	resolver := admittedFakeResolver{admit: s.admittedStoreResolver(fakeQRDBResolver{store: fakeQRDBStore{}}), stores: r}
+	bs := iam.NewBackendStorage(newTenantRoutingKVStore(resolver))
+	tm := iam.NewDefaultTenantManager(bs)
+
+	sysCtx := tenantctx.WithSystem(context.Background())
+	acmeCtx := tenantctx.WithTenant(context.Background(), "acme")
+	_, err := tm.CreateTenant(sysCtx, iam.CreateTenantOptions{ID: "acme", Name: "Acme"})
+	require.NoError(t, err)
+	require.NoError(t, bs.CreatePolicy(sysCtx, qrdbsdk.SystemTenantID,
+		abacTestPolicy("sys-deny", qrdbsdk.SystemTenantID, "alice", "kv/**", iam.EffectDeny)))
+	require.NoError(t, bs.CreatePolicy(acmeCtx, "acme",
+		abacTestPolicy("acme-allow", "acme", "alice", "kv/**", iam.EffectAllow)))
+	seedLegacyABACPolicy(t, bs, "acme", abacTestPolicy("legacy-deny", "acme", "alice", "kv/**", iam.EffectDeny))
+
+	abacSync := newQRDBABACSync(s, tm, bs)
+	pe := iam.NewPolicyEngine(iam.PolicyEngineOptions{Storage: bs, ABACSync: abacSync})
+	abacSync.resyncOnUnseal(&s.tenantUnsealHooks, pe.SyncABACAfter)
+
+	fireABACTestUnseal(t, &s.tenantUnsealHooks)
+	require.NoError(t, s.tenantUnsealHooks.Admit("acme"))
+	moved, err := bs.ListPolicies(acmeCtx, "acme", iam.ListOptions{})
+	require.NoError(t, err)
+	assert.Equal(t, []string{"acme-allow", "legacy-deny"}, abacPolicyNames(moved))
+	legacy, err := bs.ListPolicies(sysCtx, "acme", iam.ListOptions{})
+	require.NoError(t, err)
+	assert.Empty(t, legacy)
+
+	// Outside the gate, a read of the tenant being admitted stays refused.
+	entered := make(chan context.Context, 1)
+	release := make(chan struct{})
+	s.tenantUnsealHooks.RegisterGate(service.TenantUnsealGateFunc(func(ctx context.Context, tenantID string) error {
+		entered <- ctx
+		<-release
+		return nil
+	}))
+	done := make(chan error, 1)
+	go func() {
+		barrier := service.NewTenantBarrierService(unsealingTenantClient{}, service.WithTenantUnsealHooks(&s.tenantUnsealHooks))
+		done <- barrier.TenantBarrierUnseal(tenantAdminCtx("acme"), "acme", []byte("key"))
+	}()
+
+	var gateCtx context.Context
+	select {
+	case gateCtx = <-entered:
+	case <-time.After(5 * time.Second):
+		close(release)
+		t.Fatal("the second unseal never reached its gate")
+	}
+	outside := s.admittedStoreResolver(fakeQRDBResolver{store: fakeQRDBStore{}})
+	_, err = outside.Resolve(context.Background(), "acme")
+	assert.ErrorIs(t, err, qrdbsdk.ErrTenantStoreSealed)
+	_, err = outside.Resolve(gateCtx, "acme")
+	assert.NoError(t, err)
+	close(release)
+
+	select {
+	case err := <-done:
+		require.NoError(t, err)
+	case <-time.After(5 * time.Second):
+		t.Fatal("the second unseal never returned")
+	}
+	require.NoError(t, s.tenantUnsealHooks.Admit("acme"))
 }
 
 func TestPolicyToABAC(t *testing.T) {

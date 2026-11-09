@@ -64,6 +64,41 @@ func TestTenantUnsealHooks_TellEveryObserverAfterAnUnseal(t *testing.T) {
 	}
 }
 
+func TestTenantUnsealHooks_InUnsealGate(t *testing.T) {
+	if InUnsealGate(context.Background(), "acme") {
+		t.Fatal("an unmarked context is not in an unseal gate")
+	}
+
+	hooks := &TenantUnsealHooks{}
+	var got context.Context
+	hooks.RegisterGate(TenantUnsealGateFunc(func(ctx context.Context, tenantID string) error {
+		got = ctx
+		return nil
+	}))
+	if err := hooks.admit(context.Background(), "acme"); err != nil {
+		t.Fatalf("admit: %v", err)
+	}
+	if got == nil {
+		t.Fatal("the gate was not run")
+	}
+	if !InUnsealGate(got, "acme") {
+		t.Fatal("the gate's context is marked for the tenant it admits")
+	}
+	if InUnsealGate(got, "beta") {
+		t.Fatal("the gate's context is not marked for another tenant")
+	}
+	if InUnsealGate(got, "") {
+		t.Fatal("no context is in an unseal gate for the empty tenant")
+	}
+
+	if err := hooks.admit(context.Background(), ""); err != nil {
+		t.Fatalf("admit: %v", err)
+	}
+	if InUnsealGate(got, "") {
+		t.Fatal("a context marked for the empty tenant is not in an unseal gate")
+	}
+}
+
 func TestTenantUnsealHooks_TellNoOneWhenTheBarrierStaysSealed(t *testing.T) {
 	hooks := &TenantUnsealHooks{}
 	observer := &recordingObserver{}

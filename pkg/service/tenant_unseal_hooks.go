@@ -171,12 +171,33 @@ func (h *TenantUnsealHooks) admit(ctx context.Context, tenantID string) error {
 		return nil
 	}
 	ctx = context.WithoutCancel(ctx)
+	ctx = withUnsealGate(ctx, tenantID)
 	for _, gate := range *gates {
 		if err := gate.AdmitUnsealedTenant(ctx, tenantID); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+// unsealGateKey marks a context admit hands to its gates.
+type unsealGateKey struct{}
+
+// withUnsealGate marks ctx as an unseal gate's context for tenantID.
+func withUnsealGate(ctx context.Context, tenantID string) context.Context {
+	return context.WithValue(ctx, unsealGateKey{}, tenantID)
+}
+
+// InUnsealGate reports whether ctx is an unseal gate's context for tenantID.
+// A gate's own reads of the tenant it is admitting must reach that tenant's
+// store while every outside request stays refused; only admit marks a
+// context, and the marker names one tenant.
+func InUnsealGate(ctx context.Context, tenantID string) bool {
+	if tenantID == "" {
+		return false
+	}
+	marked, ok := ctx.Value(unsealGateKey{}).(string)
+	return ok && marked == tenantID
 }
 
 // Register adds an observer. A nil observer is ignored.

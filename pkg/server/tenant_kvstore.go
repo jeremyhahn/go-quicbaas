@@ -154,10 +154,13 @@ type admittingStoreResolver struct {
 }
 
 // Resolve returns the hooks' admission error for a held tenant, and the inner
-// resolver's store otherwise.
+// resolver's store otherwise. An unseal gate's own read of the tenant it is
+// admitting (service.InUnsealGate) reaches the inner resolver.
 func (a *admittingStoreResolver) Resolve(ctx context.Context, tenantID string) (qrdbsdk.KVStore, error) {
-	if err := a.hooks.Admit(tenantID); err != nil {
-		return nil, err
+	if !service.InUnsealGate(ctx, tenantID) {
+		if err := a.hooks.Admit(tenantID); err != nil {
+			return nil, err
+		}
 	}
 	return a.inner.Resolve(ctx, tenantID)
 }
