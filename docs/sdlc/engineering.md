@@ -654,7 +654,7 @@ the calling uid, with the source mounted at `/src`. The product image's own
 targets are `make image-build`, `image-build-dev`, `image-build-fips`,
 `image-run`, `image-run-fips`, `image-stop` and `image-push`.
 
-The build fetches private modules through the `gomodauth` secret (see
+The build mounts the empty `gomodauth` secret (see
 [private-modules.md](../testing/private-modules.md)) and uses
 `DEVCACHE_GOPROXY` when the caller sets it. Both images
 run with `GOPROXY=off`.

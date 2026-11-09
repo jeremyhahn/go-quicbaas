@@ -1184,12 +1184,10 @@ RUN --mount=type=secret,id=gomodauth \
     go mod download
 ```
 
-`make stage-gomodauth` writes that secret file with `umask 077` -- from the
-`GIT_CONFIG_*` variables the runners inject, or on a developer or agent host
-from a Gitea read token -- and every target whose compose file mounts it stages
-it before its build and empties it afterwards. See
-[private-modules.md](../testing/private-modules.md). The secret is sourced,
-never echoed; verify a token by its shape, never by printing it.
+`make stage-gomodauth` creates that secret file empty with `umask 077`, and
+every target whose compose file mounts it stages it before its build and
+empties it afterwards; no credential reaches an image build. See
+[private-modules.md](../testing/private-modules.md).
 
 Two rules the harness depends on, both learned the hard way:
 
