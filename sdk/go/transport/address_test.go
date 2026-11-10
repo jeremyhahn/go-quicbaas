@@ -21,9 +21,9 @@ func TestParseAddress(t *testing.T) {
 		},
 		{
 			name:         "TCP with host",
-			input:        "192.168.1.1:8080",
+			input:        "192.0.2.1:8080",
 			expectedType: AddressTypeTCP,
-			expectedAddr: "192.168.1.1:8080",
+			expectedAddr: "192.0.2.1:8080",
 		},
 		{
 			name:         "Unix socket auto-detected",

@@ -8,8 +8,8 @@
 # GNU make strips the directory part of a target that contains a slash before
 # it matches a slash-free pattern such as test-%, so `make test-api/grpc` never
 # reaches the rule: nested packages are named with dashes instead. A dash can
-# also be part of a real directory name (cmd/quicbaas-git-sign,
-# pkg/server/tpm2-keys), so the search is:
+# also be part of a real directory name (cmd/quicbaas-git-sign), so the search
+# is:
 #
 #   1. NAME as given, under each ROOT in order;
 #   2. NAME with every dash either kept or read as a slash, under each ROOT in

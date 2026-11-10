@@ -47,6 +47,13 @@
 # scripts/reap-stale-ci-stacks.sh reaps (default <checkout dir>-ci-, which in CI
 # is <repo>-ci-), and is removed on every exit. IN_IMAGE_UID is the non-root
 # uid the command runs as (default 10001; devcontainer.md §5: any non-root uid).
+#
+# IN_IMAGE_MEMORY caps the container's memory and swap (bytes, or a size with m
+# or g, e.g. 16g; default the tightest memory.max from the caller's cgroup up to
+# the cgroup root, or 8g when unbounded; none sets no cap, for GitHub-hosted
+# runners, where the job owns the VM).
+# IN_IMAGE_CGROUP_ROOT and IN_IMAGE_PROC_CGROUP name the cgroup v2 mount and the /proc/self/cgroup file the default reads (tests only).
+# CI_CGROUP_PARENT, when set, is the container's --cgroup-parent.
 set -euo pipefail
 
 if [ "$#" -lt 2 ]; then
@@ -77,6 +84,42 @@ case $class in
   pr | main) ;;
   *) echo "CI_CACHE_CLASS must be pr or main: $class" >&2; exit 2 ;;
 esac
+# cgroup_memory_limit prints the tightest numeric memory.max from the
+# caller's cgroup v2 path (/proc/self/cgroup's 0:: line) up to the cgroup
+# root, or nothing when every level is unbounded or unreadable. A path that
+# leaves the cgroup namespace (/..) reads the root only.
+cgroup_memory_limit() {
+  local root=${IN_IMAGE_CGROUP_ROOT:-/sys/fs/cgroup} self=${IN_IMAGE_PROC_CGROUP:-/proc/self/cgroup}
+  local path="" line dir value best=""
+  if [ -r "$self" ]; then
+    while IFS= read -r line || [ -n "$line" ]; do
+      case $line in 0::*) path=${line#0::} ;; esac
+    done < "$self"
+  fi
+  case $path in /*) ;; *) path=/ ;; esac
+  case $path in */.. | */../*) path=/ ;; esac
+  dir=${path%/}
+  while :; do
+    value=""
+    if [ -r "$root$dir/memory.max" ]; then read -r value < "$root$dir/memory.max" || true; fi
+    case $value in
+      "" | max | *[!0-9]*) ;;
+      *) if [ -z "$best" ] || [ "$value" -lt "$best" ]; then best=$value; fi ;;
+    esac
+    [ -n "$dir" ] || break
+    dir=${dir%/*}
+  done
+  printf '%s' "$best"
+}
+memory=${IN_IMAGE_MEMORY:-}
+if [ -z "$memory" ]; then
+  memory=$(cgroup_memory_limit)
+  [ -n "$memory" ] || memory=8g
+fi
+if [ "$memory" != none ] && ! [[ $memory =~ ^[1-9][0-9]*[mg]?$ ]]; then
+  echo "IN_IMAGE_MEMORY must be a size in bytes, m or g, e.g. 16g: $memory" >&2
+  exit 2
+fi
 args=(
   --name "$name"
   --init
@@ -97,6 +140,9 @@ args=(
   --env GOTMPDIR=/var/tmp
   --env CI="${CI:-}"
 )
+if [ "$memory" != none ]; then args+=(--memory "$memory" --memory-swap "$memory"); fi
+# The sidecar is then charged to the runner's slice, not the daemon root.
+if [ -n "${CI_CGROUP_PARENT:-}" ]; then args+=(--cgroup-parent "$CI_CGROUP_PARENT"); fi
 modcache=/tmp/gomodcache
 if [ "$cache" = on ]; then
   vols="${prefix}cache-${class}"

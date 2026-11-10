@@ -22,41 +22,6 @@ import (
 // ValidateMemberTransition - Valid Transitions
 // =============================================================================
 
-func TestValidateMemberTransition_ReadyToBusy(t *testing.T) {
-	err := ValidateMemberTransition(MemberStatusReady, MemberStatusBusy, TransitionOption{})
-	if err != nil {
-		t.Errorf("expected ready->busy to be valid, got: %v", err)
-	}
-}
-
-func TestValidateMemberTransition_BusyToReady(t *testing.T) {
-	err := ValidateMemberTransition(MemberStatusBusy, MemberStatusReady, TransitionOption{})
-	if err != nil {
-		t.Errorf("expected busy->ready to be valid, got: %v", err)
-	}
-}
-
-func TestValidateMemberTransition_ReadyToShutdownRequested(t *testing.T) {
-	err := ValidateMemberTransition(MemberStatusReady, MemberStatusShutdownRequested, TransitionOption{})
-	if err != nil {
-		t.Errorf("expected ready->shutdown_requested to be valid, got: %v", err)
-	}
-}
-
-func TestValidateMemberTransition_ShutdownRequestedToShutdown(t *testing.T) {
-	err := ValidateMemberTransition(MemberStatusShutdownRequested, MemberStatusShutdown, TransitionOption{})
-	if err != nil {
-		t.Errorf("expected shutdown_requested->shutdown to be valid, got: %v", err)
-	}
-}
-
-func TestValidateMemberTransition_ErrorToReady(t *testing.T) {
-	err := ValidateMemberTransition(MemberStatusError, MemberStatusReady, TransitionOption{})
-	if err != nil {
-		t.Errorf("expected error->ready to be valid, got: %v", err)
-	}
-}
-
 func TestValidateMemberTransition_AllValidPaths(t *testing.T) {
 	tests := []struct {
 		name string
@@ -84,146 +49,53 @@ func TestValidateMemberTransition_AllValidPaths(t *testing.T) {
 }
 
 // =============================================================================
-// ValidateMemberTransition - Invalid Transitions
+// ValidateMemberTransition - Invalid Transitions, Guard and Force Options
 // =============================================================================
 
-func TestValidateMemberTransition_ShutdownToReady(t *testing.T) {
-	err := ValidateMemberTransition(MemberStatusShutdown, MemberStatusReady, TransitionOption{})
-	if err == nil {
-		t.Fatal("expected shutdown->ready to be invalid")
+func TestValidateMemberTransition_InvalidPairsGuardAndForce(t *testing.T) {
+	tests := []struct {
+		name    string
+		from    MemberStatus
+		to      MemberStatus
+		opts    TransitionOption
+		wantErr bool
+	}{
+		{"shutdown->ready is invalid", MemberStatusShutdown, MemberStatusReady, TransitionOption{}, true},
+		{"ready->shutdown must go through shutdown_requested", MemberStatusReady, MemberStatusShutdown, TransitionOption{}, true},
+		{"shutdown->busy is invalid", MemberStatusShutdown, MemberStatusBusy, TransitionOption{}, true},
+		{"unknown from state is invalid", "unknown", MemberStatusReady, TransitionOption{}, true},
+		{"guard allows same state", MemberStatusReady, MemberStatusReady, TransitionOption{Guard: true}, false},
+		{"guard allows shutdown->shutdown", MemberStatusShutdown, MemberStatusShutdown, TransitionOption{Guard: true}, false},
+		{"guard does not bypass an invalid pair", MemberStatusShutdown, MemberStatusBusy, TransitionOption{Guard: true}, true},
+		{"force bypasses an invalid pair", MemberStatusShutdown, MemberStatusBusy, TransitionOption{Force: true}, false},
+		{"force allows unknown states", "unknown", "also_unknown", TransitionOption{Force: true}, false},
 	}
-	if !errors.Is(err, ErrInvalidMemberTransition) {
-		t.Errorf("expected ErrInvalidMemberTransition, got: %v", err)
-	}
-	var mtErr *MemberTransitionError
-	if !errors.As(err, &mtErr) {
-		t.Fatalf("expected *MemberTransitionError, got %T", err)
-	}
-	if mtErr.From != MemberStatusShutdown {
-		t.Errorf("expected From=shutdown, got %s", mtErr.From)
-	}
-	if mtErr.To != MemberStatusReady {
-		t.Errorf("expected To=ready, got %s", mtErr.To)
-	}
-}
-
-func TestValidateMemberTransition_ReadyToShutdown(t *testing.T) {
-	err := ValidateMemberTransition(MemberStatusReady, MemberStatusShutdown, TransitionOption{})
-	if err == nil {
-		t.Fatal("expected ready->shutdown to be invalid (must go through shutdown_requested)")
-	}
-	if !errors.Is(err, ErrInvalidMemberTransition) {
-		t.Errorf("expected ErrInvalidMemberTransition, got: %v", err)
-	}
-}
-
-func TestValidateMemberTransition_ShutdownToBusy(t *testing.T) {
-	err := ValidateMemberTransition(MemberStatusShutdown, MemberStatusBusy, TransitionOption{})
-	if err == nil {
-		t.Fatal("expected shutdown->busy to be invalid")
-	}
-}
-
-func TestValidateMemberTransition_InvalidFromUnknownState(t *testing.T) {
-	err := ValidateMemberTransition("unknown", MemberStatusReady, TransitionOption{})
-	if err == nil {
-		t.Fatal("expected unknown state to be invalid")
-	}
-	if !errors.Is(err, ErrInvalidMemberTransition) {
-		t.Errorf("expected ErrInvalidMemberTransition, got: %v", err)
-	}
-}
-
-// =============================================================================
-// ValidateMemberTransition - Guard Option
-// =============================================================================
-
-func TestValidateMemberTransition_GuardSameState(t *testing.T) {
-	err := ValidateMemberTransition(MemberStatusReady, MemberStatusReady, TransitionOption{Guard: true})
-	if err != nil {
-		t.Errorf("expected guard to allow same-state transition, got: %v", err)
-	}
-}
-
-func TestValidateMemberTransition_GuardDifferentState(t *testing.T) {
-	// Guard does not make invalid transitions valid
-	err := ValidateMemberTransition(MemberStatusShutdown, MemberStatusBusy, TransitionOption{Guard: true})
-	if err == nil {
-		t.Fatal("expected guard to not bypass invalid transition")
-	}
-}
-
-func TestValidateMemberTransition_GuardSameStateShutdown(t *testing.T) {
-	err := ValidateMemberTransition(MemberStatusShutdown, MemberStatusShutdown, TransitionOption{Guard: true})
-	if err != nil {
-		t.Errorf("expected guard to allow shutdown->shutdown, got: %v", err)
-	}
-}
-
-// =============================================================================
-// ValidateMemberTransition - Force Option
-// =============================================================================
-
-func TestValidateMemberTransition_ForceBypassesValidation(t *testing.T) {
-	// shutdown->busy is normally invalid
-	err := ValidateMemberTransition(MemberStatusShutdown, MemberStatusBusy, TransitionOption{Force: true})
-	if err != nil {
-		t.Errorf("expected force to bypass validation, got: %v", err)
-	}
-}
-
-func TestValidateMemberTransition_ForceAllowsUnknownState(t *testing.T) {
-	err := ValidateMemberTransition("unknown", "also_unknown", TransitionOption{Force: true})
-	if err != nil {
-		t.Errorf("expected force to allow unknown states, got: %v", err)
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			err := ValidateMemberTransition(tc.from, tc.to, tc.opts)
+			if !tc.wantErr {
+				if err != nil {
+					t.Errorf("expected %s->%s to be allowed, got: %v", tc.from, tc.to, err)
+				}
+				return
+			}
+			if !errors.Is(err, ErrInvalidMemberTransition) {
+				t.Fatalf("expected ErrInvalidMemberTransition, got: %v", err)
+			}
+			var mtErr *MemberTransitionError
+			if !errors.As(err, &mtErr) {
+				t.Fatalf("expected *MemberTransitionError, got %T", err)
+			}
+			if mtErr.From != tc.from || mtErr.To != tc.to {
+				t.Errorf("expected %s->%s in error, got %s->%s", tc.from, tc.to, mtErr.From, mtErr.To)
+			}
+		})
 	}
 }
 
 // =============================================================================
 // ValidateExecTransition - Valid Transitions
 // =============================================================================
-
-func TestValidateExecTransition_IdleToProcessing(t *testing.T) {
-	err := ValidateExecTransition(ExecStatusIdle, ExecStatusProcessing, TransitionOption{})
-	if err != nil {
-		t.Errorf("expected idle->processing to be valid, got: %v", err)
-	}
-}
-
-func TestValidateExecTransition_ProcessingToCallingTool(t *testing.T) {
-	err := ValidateExecTransition(ExecStatusProcessing, ExecStatusCallingTool, TransitionOption{})
-	if err != nil {
-		t.Errorf("expected processing->calling_tool to be valid, got: %v", err)
-	}
-}
-
-func TestValidateExecTransition_CallingToolToProcessing(t *testing.T) {
-	err := ValidateExecTransition(ExecStatusCallingTool, ExecStatusProcessing, TransitionOption{})
-	if err != nil {
-		t.Errorf("expected calling_tool->processing to be valid, got: %v", err)
-	}
-}
-
-func TestValidateExecTransition_ProcessingToCompleted(t *testing.T) {
-	err := ValidateExecTransition(ExecStatusProcessing, ExecStatusCompleted, TransitionOption{})
-	if err != nil {
-		t.Errorf("expected processing->completed to be valid, got: %v", err)
-	}
-}
-
-func TestValidateExecTransition_CompletedToIdle(t *testing.T) {
-	err := ValidateExecTransition(ExecStatusCompleted, ExecStatusIdle, TransitionOption{})
-	if err != nil {
-		t.Errorf("expected completed->idle to be valid, got: %v", err)
-	}
-}
-
-func TestValidateExecTransition_CancellingToCancelled(t *testing.T) {
-	err := ValidateExecTransition(ExecStatusCancelling, ExecStatusCancelled, TransitionOption{})
-	if err != nil {
-		t.Errorf("expected cancelling->cancelled to be valid, got: %v", err)
-	}
-}
 
 func TestValidateExecTransition_AllValidPaths(t *testing.T) {
 	tests := []struct {
@@ -270,94 +142,47 @@ func TestValidateExecTransition_AllValidPaths(t *testing.T) {
 }
 
 // =============================================================================
-// ValidateExecTransition - Invalid Transitions
+// ValidateExecTransition - Invalid Transitions, Guard and Force Options
 // =============================================================================
 
-func TestValidateExecTransition_IdleToCompleted(t *testing.T) {
-	err := ValidateExecTransition(ExecStatusIdle, ExecStatusCompleted, TransitionOption{})
-	if err == nil {
-		t.Fatal("expected idle->completed to be invalid")
+func TestValidateExecTransition_InvalidPairsGuardAndForce(t *testing.T) {
+	tests := []struct {
+		name    string
+		from    ExecutionStatus
+		to      ExecutionStatus
+		opts    TransitionOption
+		wantErr bool
+	}{
+		{"idle->completed is invalid", ExecStatusIdle, ExecStatusCompleted, TransitionOption{}, true},
+		{"completed->processing is invalid", ExecStatusCompleted, ExecStatusProcessing, TransitionOption{}, true},
+		{"cancelled->completed is invalid", ExecStatusCancelled, ExecStatusCompleted, TransitionOption{}, true},
+		{"unknown from state is invalid", "unknown", ExecStatusIdle, TransitionOption{}, true},
+		{"guard allows same state", ExecStatusProcessing, ExecStatusProcessing, TransitionOption{Guard: true}, false},
+		{"guard allows idle->idle", ExecStatusIdle, ExecStatusIdle, TransitionOption{Guard: true}, false},
+		{"guard does not bypass an invalid pair", ExecStatusIdle, ExecStatusCompleted, TransitionOption{Guard: true}, true},
+		{"force bypasses an invalid pair", ExecStatusIdle, ExecStatusCompleted, TransitionOption{Force: true}, false},
+		{"force allows unknown states", "unknown", "also_unknown", TransitionOption{Force: true}, false},
 	}
-	if !errors.Is(err, ErrInvalidExecTransition) {
-		t.Errorf("expected ErrInvalidExecTransition, got: %v", err)
-	}
-	var etErr *ExecTransitionError
-	if !errors.As(err, &etErr) {
-		t.Fatalf("expected *ExecTransitionError, got %T", err)
-	}
-	if etErr.From != ExecStatusIdle {
-		t.Errorf("expected From=idle, got %s", etErr.From)
-	}
-	if etErr.To != ExecStatusCompleted {
-		t.Errorf("expected To=completed, got %s", etErr.To)
-	}
-}
-
-func TestValidateExecTransition_CompletedToProcessing(t *testing.T) {
-	err := ValidateExecTransition(ExecStatusCompleted, ExecStatusProcessing, TransitionOption{})
-	if err == nil {
-		t.Fatal("expected completed->processing to be invalid")
-	}
-}
-
-func TestValidateExecTransition_CancelledToCompleted(t *testing.T) {
-	err := ValidateExecTransition(ExecStatusCancelled, ExecStatusCompleted, TransitionOption{})
-	if err == nil {
-		t.Fatal("expected cancelled->completed to be invalid")
-	}
-}
-
-func TestValidateExecTransition_InvalidFromUnknownState(t *testing.T) {
-	err := ValidateExecTransition("unknown", ExecStatusIdle, TransitionOption{})
-	if err == nil {
-		t.Fatal("expected unknown state to be invalid")
-	}
-	if !errors.Is(err, ErrInvalidExecTransition) {
-		t.Errorf("expected ErrInvalidExecTransition, got: %v", err)
-	}
-}
-
-// =============================================================================
-// ValidateExecTransition - Guard Option
-// =============================================================================
-
-func TestValidateExecTransition_GuardSameState(t *testing.T) {
-	err := ValidateExecTransition(ExecStatusProcessing, ExecStatusProcessing, TransitionOption{Guard: true})
-	if err != nil {
-		t.Errorf("expected guard to allow same-state transition, got: %v", err)
-	}
-}
-
-func TestValidateExecTransition_GuardDifferentInvalid(t *testing.T) {
-	err := ValidateExecTransition(ExecStatusIdle, ExecStatusCompleted, TransitionOption{Guard: true})
-	if err == nil {
-		t.Fatal("expected guard to not bypass invalid transition")
-	}
-}
-
-func TestValidateExecTransition_GuardSameStateIdle(t *testing.T) {
-	err := ValidateExecTransition(ExecStatusIdle, ExecStatusIdle, TransitionOption{Guard: true})
-	if err != nil {
-		t.Errorf("expected guard to allow idle->idle, got: %v", err)
-	}
-}
-
-// =============================================================================
-// ValidateExecTransition - Force Option
-// =============================================================================
-
-func TestValidateExecTransition_ForceBypassesValidation(t *testing.T) {
-	// idle->completed is normally invalid
-	err := ValidateExecTransition(ExecStatusIdle, ExecStatusCompleted, TransitionOption{Force: true})
-	if err != nil {
-		t.Errorf("expected force to bypass validation, got: %v", err)
-	}
-}
-
-func TestValidateExecTransition_ForceAllowsUnknownState(t *testing.T) {
-	err := ValidateExecTransition("unknown", "also_unknown", TransitionOption{Force: true})
-	if err != nil {
-		t.Errorf("expected force to allow unknown states, got: %v", err)
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			err := ValidateExecTransition(tc.from, tc.to, tc.opts)
+			if !tc.wantErr {
+				if err != nil {
+					t.Errorf("expected %s->%s to be allowed, got: %v", tc.from, tc.to, err)
+				}
+				return
+			}
+			if !errors.Is(err, ErrInvalidExecTransition) {
+				t.Fatalf("expected ErrInvalidExecTransition, got: %v", err)
+			}
+			var etErr *ExecTransitionError
+			if !errors.As(err, &etErr) {
+				t.Fatalf("expected *ExecTransitionError, got %T", err)
+			}
+			if etErr.From != tc.from || etErr.To != tc.to {
+				t.Errorf("expected %s->%s in error, got %s->%s", tc.from, tc.to, etErr.From, etErr.To)
+			}
+		})
 	}
 }
 
@@ -373,24 +198,10 @@ func TestMemberTransitionError_ErrorMessage(t *testing.T) {
 	}
 }
 
-func TestMemberTransitionError_Unwrap(t *testing.T) {
-	err := &MemberTransitionError{From: MemberStatusReady, To: MemberStatusShutdown}
-	if !errors.Is(err, ErrInvalidMemberTransition) {
-		t.Error("expected Unwrap to return ErrInvalidMemberTransition")
-	}
-}
-
 func TestExecTransitionError_ErrorMessage(t *testing.T) {
 	err := &ExecTransitionError{From: ExecStatusIdle, To: ExecStatusCompleted}
 	expected := "state: invalid execution transition: idle -> completed"
 	if err.Error() != expected {
 		t.Errorf("expected %q, got %q", expected, err.Error())
-	}
-}
-
-func TestExecTransitionError_Unwrap(t *testing.T) {
-	err := &ExecTransitionError{From: ExecStatusIdle, To: ExecStatusCompleted}
-	if !errors.Is(err, ErrInvalidExecTransition) {
-		t.Error("expected Unwrap to return ErrInvalidExecTransition")
 	}
 }

@@ -740,7 +740,7 @@ func TestGetSession(t *testing.T) {
 			UserID:      "user-456",
 			TenantID:    "tenant-1",
 			MFAVerified: true,
-			IPAddress:   "192.168.1.1",
+			IPAddress:   "192.0.2.1",
 			UserAgent:   "Mozilla/5.0",
 		})
 
@@ -801,7 +801,7 @@ func TestListSessions(t *testing.T) {
 		mockT := newMockTransport()
 		mockT.SetResponse(serviceName, "ListSessions", &service.AuthListSessionsResponse{
 			Sessions: []service.AuthSession{
-				{ID: "session-1", IPAddress: "192.168.1.1"},
+				{ID: "session-1", IPAddress: "192.0.2.1"},
 				{ID: "session-2", IPAddress: "10.0.0.1"},
 			},
 		})
