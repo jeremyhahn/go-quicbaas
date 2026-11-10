@@ -28,3 +28,7 @@
   migration, IAM and the other tenant stores read the node's current storage,
   so a tenant unseal reloads that tenant's stored policies, denies included
   (#2212).
+- A tenant unseal through the node's own endpoints is answered as
+  unavailable (HTTP 503, gRPC `Unavailable`) while the node is stopping,
+  and as permission denied (HTTP 403) for a caller that is not bound to
+  that tenant, not as an internal error (#2212).

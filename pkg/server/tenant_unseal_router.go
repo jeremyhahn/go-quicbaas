@@ -18,6 +18,7 @@ import (
 	"errors"
 	"sync"
 
+	"github.com/jeremyhahn/go-qrdb/pkg/api/errclass"
 	"github.com/jeremyhahn/go-qrdb/pkg/ceremony"
 	"github.com/jeremyhahn/go-qrdb/pkg/quota"
 	"github.com/jeremyhahn/go-qrdb/pkg/seal"
@@ -25,15 +26,77 @@ import (
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/auth"
+	qberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
+// tenantServiceUnavailableError is the type of errTenantServiceUnavailable. It
+// carries go-qrdb's Unavailable error class, so the node's native transports
+// answer it as a retryable outage (HTTP 503, gRPC Unavailable) and not as an
+// internal error.
+type tenantServiceUnavailableError struct{}
+
+// Error implements the error interface.
+func (tenantServiceUnavailableError) Error() string {
+	return "tenant service unavailable: the embedded qrdb node is not running"
+}
+
+// ErrorClass implements errclass.Classed.
+func (tenantServiceUnavailableError) ErrorClass() errclass.Class {
+	return errclass.Unavailable
+}
+
 // errTenantServiceUnavailable is returned by every tenantUnsealRouter call
 // while the embedded qrdb node, or the per-tenant barrier facade over it, is
 // not running.
-var errTenantServiceUnavailable = errors.New("tenant service unavailable: the embedded qrdb node is not running")
+var errTenantServiceUnavailable error = tenantServiceUnavailableError{}
+
+// tenantBarrierErrorClasses maps the error codes the per-tenant barrier facade
+// refuses an unseal with onto go-qrdb's error classes: a caller the tenant
+// binding refuses, and a node that stopped after the facade was built.
+var tenantBarrierErrorClasses = map[qberrors.ErrorCode]errclass.Class{
+	qberrors.ErrForbidden:   errclass.PermissionDenied,
+	qberrors.ErrUnavailable: errclass.Unavailable,
+}
+
+// classedTenantBarrierError is a facade error with the go-qrdb error class its
+// code maps to. It unwraps to the facade's error, so the code and the message
+// are unchanged.
+type classedTenantBarrierError struct {
+	cause error
+	class errclass.Class
+}
+
+// Error implements the error interface.
+func (e *classedTenantBarrierError) Error() string { return e.cause.Error() }
+
+// Unwrap returns the facade's error for errors.Is/As traversal.
+func (e *classedTenantBarrierError) Unwrap() error { return e.cause }
+
+// ErrorClass implements errclass.Classed.
+func (e *classedTenantBarrierError) ErrorClass() errclass.Class { return e.class }
+
+// classTenantBarrierError gives a facade error the go-qrdb error class its
+// code maps to, so the node's native transports answer a refused caller as
+// permission denied and a stopped node as unavailable, not as an internal
+// error. An error go-qrdb already classifies (the node's own errors pass
+// through the facade) and an error with no mapped code are returned unchanged.
+func classTenantBarrierError(err error) error {
+	if err == nil || errclass.Classify(err) != errclass.Unclassified {
+		return err
+	}
+	var qe *qberrors.QBError
+	if !errors.As(err, &qe) {
+		return err
+	}
+	class, ok := tenantBarrierErrorClasses[qe.Code]
+	if !ok {
+		return err
+	}
+	return &classedTenantBarrierError{cause: err, class: class}
+}
 
 // tenantUnsealRouter is the tenant servicer the embedded qrdb node's native
 // transports (REST, gRPC, QUIC, Unix and MCP) call: it replaces the node's own
@@ -43,7 +106,9 @@ var errTenantServiceUnavailable = errors.New("tenant service unavailable: the em
 // the quicbaas Subject (go-quicbaas 2212). Every other call
 // reaches the node's own servicer unchanged. While the node, or the facade, is
 // not running the router fails closed with errTenantServiceUnavailable; an
-// unseal never falls back to the node's servicer.
+// unseal never falls back to the node's servicer. That error, and the
+// facade's refusal of an unseal, carry a go-qrdb error class, which is what
+// the native transports map to their status.
 //
 // The facade's SDK client is built over the node's own servicer
 // (qrdbTenantClient), never over this router, so the facade never calls back
@@ -61,6 +126,8 @@ type tenantUnsealRouter struct {
 var (
 	_ qrdbsdk.ServiceTenantServicer    = (*tenantUnsealRouter)(nil)
 	_ qrdbtenant.IsolationChangeWiring = (*tenantUnsealRouter)(nil)
+	_ errclass.Classed                 = tenantServiceUnavailableError{}
+	_ errclass.Classed                 = (*classedTenantBarrierError)(nil)
 )
 
 // newTenantUnsealRouter returns a router over the node's own tenant servicer
@@ -176,7 +243,7 @@ func (r *tenantUnsealRouter) TenantBarrierUnseal(ctx context.Context, tenantID s
 	if b == nil {
 		return errTenantServiceUnavailable
 	}
-	return b.TenantBarrierUnseal(auth.ContextWithIdentitySubject(ctx), tenantID, key)
+	return classTenantBarrierError(b.TenantBarrierUnseal(auth.ContextWithIdentitySubject(ctx), tenantID, key))
 }
 
 // TenantBarrierUnsealShare runs the hooked per-tenant barrier facade, never
@@ -188,7 +255,7 @@ func (r *tenantUnsealRouter) TenantBarrierUnsealShare(ctx context.Context, tenan
 	}
 	progress, err := b.TenantBarrierUnsealShare(auth.ContextWithIdentitySubject(ctx), tenantID, share)
 	if err != nil {
-		return nil, err
+		return nil, classTenantBarrierError(err)
 	}
 	if progress == nil {
 		return nil, nil
