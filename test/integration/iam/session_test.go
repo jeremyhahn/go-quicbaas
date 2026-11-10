@@ -49,14 +49,18 @@ type SessionListResponse struct {
 }
 
 // setupUserForSessionTests creates a test tenant and user for session tests.
+// Both calls go as the system admin: the tenant create is a system-tenant
+// route and the user create reaches the new tenant by the tenant lift.
 func setupUserForSessionTests(t *testing.T, cluster *testCluster) (string, string) {
+	admin := cluster.asSystemAdmin()
+
 	// Create tenant
 	tenantID := generateUniqueTenantID()
 	createTenantReq := map[string]interface{}{
 		"id":   tenantID,
 		"name": "Session Test Tenant",
 	}
-	require.NoError(t, cluster.postJSON("/api/v1/tenants", createTenantReq, nil))
+	require.NoError(t, admin.postJSON("/api/v1/tenants", createTenantReq, nil))
 
 	// Create user
 	email := generateUniqueEmail()
@@ -69,15 +73,15 @@ func setupUserForSessionTests(t *testing.T, cluster *testCluster) (string, strin
 	var user struct {
 		ID string `json:"id"`
 	}
-	err := cluster.postJSON(fmt.Sprintf("/api/v1/tenants/%s/users", tenantID), createUserReq, &user)
+	err := admin.postJSON(fmt.Sprintf("/api/v1/tenants/%s/users", tenantID), createUserReq, &user)
 	require.NoError(t, err)
 
 	return tenantID, user.ID
 }
 
-// cleanupSessionTests cleans up test resources.
+// cleanupSessionTests deletes the test tenant as the system admin.
 func cleanupSessionTests(cluster *testCluster, tenantID string) {
-	cluster.deleteJSON(fmt.Sprintf("/api/v1/tenants/%s", tenantID))
+	cluster.asSystemAdmin().deleteJSON(fmt.Sprintf("/api/v1/tenants/%s", tenantID))
 }
 
 // createMockSession creates a mock session for testing purposes.
@@ -109,9 +113,10 @@ func createMockSession(t *testing.T, cluster *testCluster, tenantID, userID stri
 	}
 
 	// Try to create session via REST API (if endpoint exists)
-	// Otherwise, return a mock session for testing purposes
+	// Otherwise, return a mock session for testing purposes. The create needs
+	// tenants:create: the system admin, by the tenant lift.
 	var session SessionResponse
-	err := cluster.postJSON(fmt.Sprintf("/api/v1/tenants/%s/users/%s/sessions", tenantID, userID), sessionReq, &session)
+	err := cluster.asSystemAdmin().postJSON(fmt.Sprintf("/api/v1/tenants/%s/users/%s/sessions", tenantID, userID), sessionReq, &session)
 
 	if err != nil {
 		// If session creation endpoint doesn't exist, return mock data
@@ -156,7 +161,7 @@ func TestSessionListEmpty(t *testing.T) {
 
 	// Mock authentication context by using tenant/user-specific endpoint
 	var sessions SessionListResponse
-	err := cluster.getJSON(fmt.Sprintf("/api/v1/tenants/%s/users/%s/sessions", tenantID, userID), &sessions)
+	err := cluster.asSystemAdmin().getJSON(fmt.Sprintf("/api/v1/tenants/%s/users/%s/sessions", tenantID, userID), &sessions)
 
 	// Should succeed with empty list or not found
 	if err == nil {
@@ -199,7 +204,7 @@ func TestSessionListAfterCreate(t *testing.T) {
 
 	// List sessions
 	var sessions SessionListResponse
-	err := cluster.getJSON(fmt.Sprintf("/api/v1/tenants/%s/users/%s/sessions", tenantID, userID), &sessions)
+	err := cluster.asSystemAdmin().getJSON(fmt.Sprintf("/api/v1/tenants/%s/users/%s/sessions", tenantID, userID), &sessions)
 
 	if err == nil {
 		assert.NotNil(t, sessions.Sessions, "Sessions list should not be nil")
@@ -316,7 +321,7 @@ func TestSessionRevokeAll(t *testing.T) {
 	if err == nil {
 		// Verify all sessions are revoked
 		var sessions SessionListResponse
-		listErr := cluster.getJSON(fmt.Sprintf("/api/v1/tenants/%s/users/%s/sessions", tenantID, userID), &sessions)
+		listErr := cluster.asSystemAdmin().getJSON(fmt.Sprintf("/api/v1/tenants/%s/users/%s/sessions", tenantID, userID), &sessions)
 		if listErr == nil {
 			assert.Equal(t, 0, len(sessions.Sessions), "Should have no active sessions")
 		}
@@ -417,7 +422,7 @@ func TestSessionExpiration(t *testing.T) {
 	}
 
 	var session SessionResponse
-	err := cluster.postJSON(fmt.Sprintf("/api/v1/tenants/%s/users/%s/sessions", tenantID, userID), sessionReq, &session)
+	err := cluster.asSystemAdmin().postJSON(fmt.Sprintf("/api/v1/tenants/%s/users/%s/sessions", tenantID, userID), sessionReq, &session)
 
 	if err != nil {
 		t.Logf("Session creation with expiration not supported: %v", err)
@@ -455,7 +460,7 @@ func TestSessionTenantIsolation(t *testing.T) {
 	// Try to access tenant1's session from tenant2's user context
 	// This should fail due to tenant isolation
 	var retrievedSession SessionResponse
-	err := cluster.getJSON(fmt.Sprintf("/api/v1/tenants/%s/users/%s/sessions/%s", tenant2ID, user2ID, session1.ID), &retrievedSession)
+	err := cluster.asSystemAdmin().getJSON(fmt.Sprintf("/api/v1/tenants/%s/users/%s/sessions/%s", tenant2ID, user2ID, session1.ID), &retrievedSession)
 
 	// Should fail with forbidden or not found
 	assert.Error(t, err, "Should not be able to access session from different tenant")
@@ -481,7 +486,7 @@ func TestSessionMultipleConcurrent(t *testing.T) {
 
 	// List all sessions
 	var sessionList SessionListResponse
-	err := cluster.getJSON(fmt.Sprintf("/api/v1/tenants/%s/users/%s/sessions", tenantID, userID), &sessionList)
+	err := cluster.asSystemAdmin().getJSON(fmt.Sprintf("/api/v1/tenants/%s/users/%s/sessions", tenantID, userID), &sessionList)
 
 	if err == nil {
 		assert.GreaterOrEqual(t, len(sessionList.Sessions), numSessions, "Should have at least the created sessions")
@@ -523,7 +528,7 @@ func TestSessionDeviceInfo(t *testing.T) {
 	}
 
 	var session SessionResponse
-	err := cluster.postJSON(fmt.Sprintf("/api/v1/tenants/%s/users/%s/sessions", tenantID, userID), sessionReq, &session)
+	err := cluster.asSystemAdmin().postJSON(fmt.Sprintf("/api/v1/tenants/%s/users/%s/sessions", tenantID, userID), sessionReq, &session)
 
 	if err != nil {
 		t.Logf("Session creation with device info not supported: %v", err)
@@ -567,7 +572,7 @@ func TestSessionMFAStatus(t *testing.T) {
 	}
 
 	var sessionMFA SessionResponse
-	err := cluster.postJSON(fmt.Sprintf("/api/v1/tenants/%s/users/%s/sessions", tenantID, userID), sessionReq, &sessionMFA)
+	err := cluster.asSystemAdmin().postJSON(fmt.Sprintf("/api/v1/tenants/%s/users/%s/sessions", tenantID, userID), sessionReq, &sessionMFA)
 
 	if err == nil {
 		assert.True(t, sessionMFA.MFAVerified, "Session should have MFA verified")
@@ -651,7 +656,7 @@ func TestSessionListTenantEndpoint(t *testing.T) {
 
 	// List sessions via tenant-specific endpoint
 	var sessions SessionListResponse
-	err := cluster.getJSON(fmt.Sprintf("/api/v1/tenants/%s/users/%s/sessions", tenantID, userID), &sessions)
+	err := cluster.asSystemAdmin().getJSON(fmt.Sprintf("/api/v1/tenants/%s/users/%s/sessions", tenantID, userID), &sessions)
 
 	if err == nil {
 		assert.NotNil(t, sessions.Sessions, "Sessions list should not be nil")
