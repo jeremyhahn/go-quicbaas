@@ -481,6 +481,65 @@ func TestStartImpersonation_ActorIsAuthenticatedCaller(t *testing.T) {
 	assert.Equal(t, uint64(50100), session.AdminUserID)
 }
 
+// TestStartImpersonation_ResponseCarriesStartedAt pins go-quicbaas#2131: the
+// REST response a client decodes carries started_at, inside the request's
+// window, with expires_at after it.
+func TestStartImpersonation_ResponseCarriesStartedAt(t *testing.T) {
+	handler, mockSvc := newTestIAMHandler(t)
+
+	_, err := mockSvc.adminManager.CreateAssignment(context.Background(), iam.CreateAdminAssignmentOptions{
+		UserID:      50100,
+		AdminRole:   iam.AdminRoleSuperAdmin,
+		TenantIDs:   []string{"tenant_1"},
+		Permissions: []iam.AdminPermission{iam.PermUserImpersonate},
+		GrantedBy:   "system",
+	})
+	require.NoError(t, err)
+
+	body := []byte(`{"target_user_id":"50001","tenant_id":"tenant_1","reason":"support ticket","duration":"1h"}`)
+	req := httptest.NewRequest("POST", "/api/v1/admin/impersonation/start", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req = req.WithContext(ctxWithTestUser(req.Context(), 50100, "tenant_1"))
+	rr := httptest.NewRecorder()
+
+	before := time.Now().UTC().Truncate(time.Second)
+	handler.StartImpersonation(rr, req)
+	after := time.Now().UTC()
+	require.Equal(t, http.StatusOK, rr.Code, "body: %s", rr.Body.String())
+
+	var wire struct {
+		StartedAt string `json:"started_at"`
+		ExpiresAt string `json:"expires_at"`
+	}
+	require.NoError(t, json.Unmarshal(rr.Body.Bytes(), &wire))
+	require.NotEmpty(t, wire.StartedAt, "body: %s", rr.Body.String())
+
+	startedAt, err := time.Parse(time.RFC3339Nano, wire.StartedAt)
+	require.NoError(t, err)
+	expiresAt, err := time.Parse(time.RFC3339Nano, wire.ExpiresAt)
+	require.NoError(t, err)
+	assert.False(t, startedAt.Before(before), "started_at is before the request")
+	assert.False(t, startedAt.After(after), "started_at is after the request")
+	assert.Equal(t, time.Hour, expiresAt.Sub(startedAt))
+}
+
+// TestStartImpersonation_MissingReasonHasNoStartedAt pins the error path: a
+// request without a reason is a 400 and carries no session.
+func TestStartImpersonation_MissingReasonHasNoStartedAt(t *testing.T) {
+	handler, _ := newTestIAMHandler(t)
+
+	body := []byte(`{"target_user_id":"50001","tenant_id":"tenant_1","duration":"1h"}`)
+	req := httptest.NewRequest("POST", "/api/v1/admin/impersonation/start", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req = req.WithContext(ctxWithTestUser(req.Context(), 50100, "tenant_1"))
+	rr := httptest.NewRecorder()
+
+	handler.StartImpersonation(rr, req)
+
+	assert.Equal(t, http.StatusBadRequest, rr.Code, "body: %s", rr.Body.String())
+	assert.NotContains(t, rr.Body.String(), "started_at")
+}
+
 // TestEndImpersonation tests the EndImpersonation handler.
 func TestEndImpersonation(t *testing.T) {
 	handler, mockSvc := newTestIAMHandler(t)

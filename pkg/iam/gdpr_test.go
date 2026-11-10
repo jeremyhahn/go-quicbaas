@@ -112,7 +112,7 @@ func createTestSession(t *testing.T, sessionStorage SessionStorage, tenantID str
 		Created:      time.Now(),
 		Expires:      time.Now().Add(24 * time.Hour),
 		LastActivity: time.Now(),
-		IPAddress:    "192.168.1.1",
+		IPAddress:    "192.0.2.1",
 		UserAgent:    "Mozilla/5.0",
 		AuthMethod:   "password",
 	}
@@ -203,7 +203,7 @@ func TestGDPRManager_GrantConsent_Success(t *testing.T) {
 	purpose := ConsentPurposeMarketing
 	version := "1.0"
 	expiresAt := time.Now().Add(365 * 24 * time.Hour)
-	ipAddress := "192.168.1.1"
+	ipAddress := "192.0.2.1"
 	userAgent := "Mozilla/5.0"
 
 	consent, err := manager.GrantConsent(ctx, tenantID, userID, purpose, version, &expiresAt, ipAddress, userAgent)
@@ -271,7 +271,7 @@ func TestGDPRManager_WithdrawConsent_Success(t *testing.T) {
 	purpose := ConsentPurposeMarketing
 
 	// Grant consent first
-	consent, err := manager.GrantConsent(ctx, tenantID, userID, purpose, "1.0", nil, "192.168.1.1", "Mozilla")
+	consent, err := manager.GrantConsent(ctx, tenantID, userID, purpose, "1.0", nil, "192.0.2.1", "Mozilla")
 	require.NoError(t, err)
 	require.NotNil(t, consent.GrantedAt)
 	assert.Nil(t, consent.WithdrawnAt)
@@ -279,7 +279,7 @@ func TestGDPRManager_WithdrawConsent_Success(t *testing.T) {
 	auditLogger.Clear()
 
 	// Withdraw consent
-	err = manager.WithdrawConsent(ctx, tenantID, userID, purpose, "192.168.1.2", "Chrome")
+	err = manager.WithdrawConsent(ctx, tenantID, userID, purpose, "192.0.2.2", "Chrome")
 	require.NoError(t, err)
 
 	// Verify withdrawal
@@ -1011,7 +1011,7 @@ func TestMemoryConsentStorage_CreateConsent_Success(t *testing.T) {
 		Purpose:   ConsentPurposeMarketing,
 		Status:    ConsentStatusGranted,
 		Version:   "1.0",
-		IPAddress: "192.168.1.1",
+		IPAddress: "192.0.2.1",
 		UserAgent: "Mozilla/5.0",
 		Metadata:  map[string]string{"key": "value"},
 	}

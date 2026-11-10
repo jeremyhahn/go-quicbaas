@@ -13,6 +13,7 @@
 #                  claude-code installs it.
 #   opencode       the ACP agent a fleet node drives against a local model
 #                  server (the review model on ollama); pinned release binary.
+#   gh             the GitHub CLI; pinned release binary, digest checked.
 #   git            the runner's checkout and publish steps are git commands
 #                  exec'd into this container (pkg/sdlc/checkout.go,
 #                  pkg/sdlc/publish.go).
@@ -909,6 +910,36 @@ RUN set -eux; \
     rm -rf "/tmp/$tarball" /tmp/opencode; \
     test "$(opencode --version)" = "${OPENCODE_VERSION#v}"
 
+# GH, the GitHub CLI, for the GitHub mirror and release work an agent does in
+# this image. FROM THE RELEASE TARBALL, as opencode above: the version and each
+# architecture's SHA-256 are the repository's pins (pkg/version/toolchain.mk:
+# GH_VERSION, GH_SHA256_*), taken from the release's gh_<version>_checksums.txt
+# and passed in with no default here. The digest is CHECKED. No credential is
+# baked in: gh reads GH_TOKEN from the job that runs it.
+ARG GH_VERSION
+ARG GH_SHA256_X86_64
+ARG GH_SHA256_AARCH64
+RUN set -eux; \
+    if [ -z "${GH_VERSION:-}" ] || [ -z "${GH_SHA256_X86_64:-}" ] || [ -z "${GH_SHA256_AARCH64:-}" ]; then \
+        echo "GH_VERSION, GH_SHA256_X86_64 and GH_SHA256_AARCH64 are required build arguments." >&2; \
+        echo "Build with 'make build-worker-image', which passes the repository's pins." >&2; \
+        exit 1; \
+    fi; \
+    arch="$(uname -m)"; \
+    case "$arch" in \
+        x86_64) platform="linux_amd64"; sum="$GH_SHA256_X86_64" ;; \
+        aarch64) platform="linux_arm64"; sum="$GH_SHA256_AARCH64" ;; \
+        *) echo "no pinned gh release for $arch" >&2; exit 1 ;; \
+    esac; \
+    dir="gh_${GH_VERSION#v}_${platform}"; \
+    tarball="${dir}.tar.gz"; \
+    curl -fsSL -o "/tmp/$tarball" "https://github.com/cli/cli/releases/download/${GH_VERSION}/$tarball"; \
+    echo "$sum  /tmp/$tarball" | sha256sum -c -; \
+    tar -xzf "/tmp/$tarball" -C /tmp; \
+    install -m 0755 "/tmp/$dir/bin/gh" /usr/local/bin/gh; \
+    rm -rf "/tmp/$tarball" "/tmp/$dir"; \
+    gh --version | head -n 1 | grep -qF "gh version ${GH_VERSION#v} "
+
 # RUBY-LSP, Ruby's language server: a gem, installed against Debian's ruby at
 # its pin (toolchain.mk RUBY_LSP_VERSION), into /usr/local/bin where serena
 # finds it on the PATH. Offline and with an empty HOME it cannot compose a
@@ -1347,12 +1378,13 @@ ARG GOVULNCHECK_VERSION
 ARG GOPLS_VERSION
 ARG ACTIONLINT_VERSION
 ARG OPENCODE_VERSION
+ARG GH_VERSION
 ARG PROTOC_VERSION
 ARG PROTOC_GEN_GO_VERSION
 ARG PROTOC_GEN_GO_GRPC_VERSION
 ARG QUICBAAS_VERSION
 LABEL org.opencontainers.image.title="QuicBaaS Software Factory Worker" \
-      org.opencontainers.image.description="Worker container for the sdlc runner: claude-code, codex, gemini, opencode, serena and its language servers, git, ssh, ssh-keygen, make, the Go toolchain, node, python, a JDK, protoc and the golangci-lint/gosec/govulncheck/actionlint/shellcheck verification tools" \
+      org.opencontainers.image.description="Worker container for the sdlc runner: claude-code, codex, gemini, opencode, gh, serena and its language servers, git, ssh, ssh-keygen, make, the Go toolchain, node, python, a JDK, protoc and the golangci-lint/gosec/govulncheck/actionlint/shellcheck verification tools" \
       org.opencontainers.image.vendor="QuicBaaS" \
       org.opencontainers.image.licenses="AGPL-3.0-or-later" \
       org.opencontainers.image.version="${QUICBAAS_VERSION}" \
@@ -1370,6 +1402,7 @@ LABEL org.opencontainers.image.title="QuicBaaS Software Factory Worker" \
       io.quicbaas.worker.actionlint.version="${ACTIONLINT_VERSION}" \
       io.quicbaas.worker.shellcheck.version="${SHELLCHECK_VERSION}" \
       io.quicbaas.worker.opencode.version="${OPENCODE_VERSION}" \
+      io.quicbaas.worker.gh.version="${GH_VERSION}" \
       io.quicbaas.worker.protoc.version="${PROTOC_VERSION}" \
       io.quicbaas.worker.protoc-gen-go.version="${PROTOC_GEN_GO_VERSION}" \
       io.quicbaas.worker.protoc-gen-go-grpc.version="${PROTOC_GEN_GO_GRPC_VERSION}" \

@@ -87,6 +87,14 @@ SHELLCHECK_SHA256_AARCH64 := 12b331c1d2db6b9eb13cfca64306b1b157a86eb69db83023e26
 OPENCODE_VERSION := v1.18.35
 OPENCODE_SHA256_X86_64 := c8f888b451f5494a18f858fffb0e0b68f4e4baa9c241761c5f206884f0fa640d
 OPENCODE_SHA256_AARCH64 := f7f2ba59ee8aa94d388f9696575a32d20e71c2ee48def9f80fc693a60fec6c72
+# gh, the GitHub CLI the worker image carries for the GitHub mirror work. It is
+# installed from its release tarball, and the SHA-256 of each architecture's
+# tarball is pinned beside the version, taken from the release's own
+# gh_<version>_checksums.txt
+# (github.com/cli/cli/releases/tag/v2.103.3): change all three together.
+GH_VERSION := v2.103.3
+GH_SHA256_X86_64 := 4c806978ffce1cec70853302a56d70ac6da4f19bae7adca4e1a8ab00633dd91d
+GH_SHA256_AARCH64 := ee32df2323c8847f5fac6cb6b4b69ca75828e9329a8f22f677021f7b3306ce63
 # protoc, so a Go project with .proto files regenerates code inside the worker
 # image instead of host-mounting protoc (the container-only tooling rule).
 # `protoc --version` prints `libprotoc <PROTOC_VERSION>`, and generated .pb.go

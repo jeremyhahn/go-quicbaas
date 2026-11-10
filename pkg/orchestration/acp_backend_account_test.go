@@ -110,7 +110,7 @@ func TestACPBackend_Spawn_PinnedAccount_InjectsEnv(t *testing.T) {
 		t.Fatalf("Create() error = %v", err)
 	}
 	if err := secretStore.Put(ctx, "system", "acct-1", &AccountCredential{
-		AccessTokenEnvKey: "CLAUDE_CODE_OAUTH_TOKEN", AccessToken: "secret-<account>",
+		AccessTokenEnvKey: "CLAUDE_CODE_OAUTH_TOKEN", AccessToken: "secret-token-a",
 	}); err != nil {
 		t.Fatalf("Put() error = %v", err)
 	}
@@ -126,8 +126,8 @@ func TestACPBackend_Spawn_PinnedAccount_InjectsEnv(t *testing.T) {
 	if sess.AccountID != "acct-1" || sess.AccountStrategy != "pinned" {
 		t.Fatalf("Session = {AccountID:%s Strategy:%s}, want acct-1/pinned", sess.AccountID, sess.AccountStrategy)
 	}
-	if !envContains(lastEnv(), "CLAUDE_CODE_OAUTH_TOKEN=secret-<account>") {
-		t.Fatalf("subprocess env = %v, want CLAUDE_CODE_OAUTH_TOKEN=secret-<account>", lastEnv())
+	if !envContains(lastEnv(), "CLAUDE_CODE_OAUTH_TOKEN=secret-token-a") {
+		t.Fatalf("subprocess env = %v, want CLAUDE_CODE_OAUTH_TOKEN=secret-token-a", lastEnv())
 	}
 }
 
