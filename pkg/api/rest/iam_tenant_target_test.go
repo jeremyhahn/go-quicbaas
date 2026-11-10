@@ -129,14 +129,16 @@ func TestIAMHandlers_CallerNamingItsOwnTenantSucceeds(t *testing.T) {
 }
 
 func TestURLTenant_SystemCallerActsInTheNamedTenant(t *testing.T) {
-	_, _, memStorage, handler, cleanup := setupIAMTestServer(t)
+	server, _, memStorage, handler, cleanup := setupIAMTestServer(t)
 	defer cleanup()
+	server.SetBarrierScopeAuthorizer(&scopeAuthorizerStub{})
 	require.NoError(t, memStorage.CreateTenant(context.Background(), &iam.Tenant{ID: "acme", Name: "Acme"}))
 
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("tenant_id", "acme")
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/tenants/acme/roles", nil)
 	req = req.WithContext(context.WithValue(tenantctx.WithSystem(req.Context()), chi.RouteCtxKey, rctx))
+	req = systemAdminLiftRequest(t, req, "tenants", "read")
 	w := httptest.NewRecorder()
 
 	handler.ListRoles(w, req)
@@ -144,6 +146,7 @@ func TestURLTenant_SystemCallerActsInTheNamedTenant(t *testing.T) {
 	assert.Equal(t, http.StatusOK, w.Code, "body: %s", w.Body.String())
 
 	var s Server
+	s.SetBarrierScopeAuthorizer(&scopeAuthorizerStub{})
 	ctx, tenantID, ok := s.urlTenant(w, req, "rest.IAM", "tenant_id")
 	require.True(t, ok)
 	assert.Equal(t, "acme", tenantID)
@@ -232,8 +235,9 @@ func (s *ownerFollowingRoleStorage) UpdateRole(ctx context.Context, role *iam.Ro
 // owns is refused and left unchanged, while an Acme role updates
 // (go-quicbaas#2212).
 func TestUpdateRole_SystemAdminCannotReachAnotherTenantsRole(t *testing.T) {
-	_, mockService, memStorage, handler, cleanup := setupIAMTestServer(t)
+	server, mockService, memStorage, handler, cleanup := setupIAMTestServer(t)
 	defer cleanup()
+	server.SetBarrierScopeAuthorizer(&scopeAuthorizerStub{})
 	ctx := context.Background()
 	for _, tenant := range []*iam.Tenant{{ID: "acme", Name: "Acme"}, {ID: "globex", Name: "Globex"}} {
 		require.NoError(t, memStorage.CreateTenant(ctx, tenant))
@@ -258,6 +262,7 @@ func TestUpdateRole_SystemAdminCannotReachAnotherTenantsRole(t *testing.T) {
 		req := httptest.NewRequest(http.MethodPut, "/api/v1/tenants/acme/roles/"+roleID,
 			strings.NewReader(`{"name":"renamed"}`))
 		req = req.WithContext(context.WithValue(tenantctx.WithSystem(req.Context()), chi.RouteCtxKey, rctx))
+		req = systemAdminLiftRequest(t, req, "tenants", "create")
 		w := httptest.NewRecorder()
 		handler.UpdateRole(w, req)
 		return w
@@ -307,8 +312,9 @@ func (m *systemOnlyTenantManager) GetTenant(ctx context.Context, id string) (*ia
 }
 
 func TestIAMHandlers_TenantCatalogReadsUseTheSystemNamespace(t *testing.T) {
-	_, mockService, memStorage, handler, cleanup := setupIAMTestServer(t)
+	server, mockService, memStorage, handler, cleanup := setupIAMTestServer(t)
 	defer cleanup()
+	server.SetBarrierScopeAuthorizer(&scopeAuthorizerStub{})
 	require.NoError(t, memStorage.CreateTenant(tenantctx.WithSystem(context.Background()),
 		&iam.Tenant{ID: "acme", Name: "Acme"}))
 	mockService.identityStore = iam.NewIdentityStore(iam.IdentityStoreOptions{
@@ -322,17 +328,22 @@ func TestIAMHandlers_TenantCatalogReadsUseTheSystemNamespace(t *testing.T) {
 		method string
 		path   string
 		serve  http.HandlerFunc
+		// action is the route's registration-site action on tenants.
+		action string
 	}{
-		{"ListRoles", http.MethodGet, "/api/v1/tenants/acme/roles", handler.ListRoles},
-		{"ListUsers", http.MethodGet, "/api/v1/tenants/acme/users", handler.ListUsers},
-		{"ReconcileRoles", http.MethodPost, "/api/v1/tenants/acme/roles/reconcile", handler.ReconcileRoles},
+		{"ListRoles", http.MethodGet, "/api/v1/tenants/acme/roles", handler.ListRoles, "read"},
+		{"ListUsers", http.MethodGet, "/api/v1/tenants/acme/users", handler.ListUsers, "read"},
+		{"ReconcileRoles", http.MethodPost, "/api/v1/tenants/acme/roles/reconcile", handler.ReconcileRoles, "create"},
 	}
 	callers := []struct {
 		name string
 		bind func(context.Context) context.Context
+		// system marks the caller that names another tenant: its request
+		// carries what the unified server gives it (systemAdminLiftRequest).
+		system bool
 	}{
-		{"system caller", tenantctx.WithSystem},
-		{"acme caller", func(ctx context.Context) context.Context { return tenantctx.WithTenant(ctx, "acme") }},
+		{"system caller", tenantctx.WithSystem, true},
+		{"acme caller", func(ctx context.Context) context.Context { return tenantctx.WithTenant(ctx, "acme") }, false},
 	}
 	for _, h := range handlers {
 		for _, c := range callers {
@@ -341,6 +352,9 @@ func TestIAMHandlers_TenantCatalogReadsUseTheSystemNamespace(t *testing.T) {
 				rctx.URLParams.Add("tenant_id", "acme")
 				req := httptest.NewRequest(h.method, h.path, nil)
 				req = req.WithContext(context.WithValue(c.bind(req.Context()), chi.RouteCtxKey, rctx))
+				if c.system {
+					req = systemAdminLiftRequest(t, req, "tenants", h.action)
+				}
 				w := httptest.NewRecorder()
 				h.serve(w, req)
 
