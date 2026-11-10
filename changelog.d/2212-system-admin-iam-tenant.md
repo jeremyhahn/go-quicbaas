@@ -6,3 +6,6 @@
   every downstream call, so a role ID owned by another tenant is refused.
 - A tenant whose barrier is being unsealed stays closed to requests until its
   unseal checks pass, and a failed check keeps it closed instead of resealing.
+- A tenant unseal on the embedded transport now goes through the same hold
+  and unseal checks as one over REST, gRPC or QUIC, and is refused for a
+  caller that is not bound to that tenant.

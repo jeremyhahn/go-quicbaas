@@ -285,3 +285,49 @@ func TestTenantUnsealRouter_ProbeReachesTheNodeServicer(t *testing.T) {
 	router.SetTenantDataProbe(second)
 	require.Same(t, second, inner.currentProbe())
 }
+
+// The embedded tenant servicer is the hooked router, and only once the node's
+// own servicer exists.
+func TestHookedTenantServicer_IsTheRouterOnceTheNodeServicerExists(t *testing.T) {
+	router, _ := hookedUnsealRouter(t)
+	raw := &fakeNodeTenantServicer{t: t}
+
+	require.Same(t, router, hookedTenantServicer(raw, router))
+	require.Nil(t, hookedTenantServicer(nil, router))
+	require.Nil(t, hookedTenantServicer(raw, nil))
+}
+
+// An unseal on the embedded tenant servicer runs the hooked facade and never
+// reaches the node's own servicer; a caller with no tenant identity is
+// refused.
+func TestHookedTenantServicer_EmbeddedUnsealRunsTheHookedFacade(t *testing.T) {
+	router, seen := hookedUnsealRouter(t)
+	raw := &fakeNodeTenantServicer{t: t}
+	embedded := hookedTenantServicer(raw, router)
+	require.NotNil(t, embedded)
+
+	require.Error(t, embedded.TenantBarrierUnseal(context.Background(), "acme", []byte("key")))
+	other := qrdbsdk.WithIdentity(context.Background(), &qrdbsdk.Identity{Subject: "admin", TenantID: "other"})
+	err := embedded.TenantBarrierUnseal(other, "acme", []byte("key"))
+	var qe *pkgerrors.QBError
+	require.True(t, errors.As(err, &qe) && qe.Code == pkgerrors.ErrForbidden, "cross-tenant embedded unseal: expected ErrForbidden, got %v", err)
+	require.Empty(t, seen())
+
+	ctx := qrdbsdk.WithIdentity(context.Background(), &qrdbsdk.Identity{Subject: "admin", TenantID: "acme"})
+	require.NoError(t, embedded.TenantBarrierUnseal(ctx, "acme", []byte("key")))
+	require.Equal(t, []string{"acme"}, seen())
+	require.Empty(t, raw.recorded())
+}
+
+// With no node the embedded tenant servicer is nil, and the router's inner
+// servicer is the node's own service: a forwarded call fails closed instead
+// of calling the router again.
+func TestServer_GetQRDBTenantServicer_NoNodeIsNilAndTheRouterDoesNotCallItself(t *testing.T) {
+	s := &Server{}
+	s.tenantUnsealRouter = newTenantUnsealRouter(s.rawQRDBTenantServicer, func() service.TenantBarrierServicer { return nil })
+
+	require.Nil(t, s.GetQRDBTenantServicer())
+	info, err := s.tenantUnsealRouter.GetTenant(context.Background(), "acme")
+	require.ErrorIs(t, err, errTenantServiceUnavailable)
+	require.Nil(t, info)
+}
