@@ -1352,6 +1352,10 @@ func (s *Server) enrollFirstBootAdminCert(
 	if err := enrollAdminCertLoginFactor(ctx, c, tenantID, userID, cert, adminCertBindingSourceFirstBoot); err != nil {
 		return &FirstBootBootstrapError{Op: "enroll admin mtls login factor", Cause: err}
 	}
+	// go-quicbaas#2132: the issued cert logs in only if mtls is a permitted method.
+	if _, err := c.identityStore.PermitCertificateLogin(ctx, tenantID, userID); err != nil {
+		return &FirstBootBootstrapError{Op: "permit admin certificate login", Cause: err}
+	}
 	s.logger.Infof("Bootstrap admin %d enrolled with mTLS certificate (SPKI thumbprint %s)",
 		userID, result.AdminCertThumbprint)
 	return nil

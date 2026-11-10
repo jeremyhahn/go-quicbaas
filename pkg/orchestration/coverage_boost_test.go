@@ -35,419 +35,223 @@ import (
 )
 
 // =============================================================================
-// Tier 1: Error type methods — errors.go
+// Tier 1: Error type methods
 // =============================================================================
 
-func TestMaxIterationsError(t *testing.T) {
+// TestTypedErrors covers Error() and Unwrap() of the package's typed errors:
+// each message must carry its identifying fields, and errors.Is must reach
+// the sentinel and any wrapped cause.
+func TestTypedErrors(t *testing.T) {
 	t.Parallel()
 
-	t.Run("Error", func(t *testing.T) {
-		err := &MaxIterationsError{JobID: "job-42", Iterations: 100}
-		got := err.Error()
-		if got == "" {
-			t.Fatal("expected non-empty error string")
-		}
-		if !containsStr(got, "job-42") {
-			t.Errorf("expected job ID in error, got %q", got)
-		}
-	})
+	reviewCause := errors.New("unexpected token")
+	dialCause := errors.New("connection refused")
+	rpcCause := errors.New("grpc: status unavailable")
+	bootstrapCause := errors.New("db connection failed")
+	peerCause := errors.New("channel closed")
+	reindexCause := errors.New("index unavailable")
 
-	t.Run("UnwrapSentinel", func(t *testing.T) {
-		err := &MaxIterationsError{JobID: "job-1", Iterations: 5}
-		if !errors.Is(err, ErrMaxIterationsExceeded) {
-			t.Error("errors.Is(err, ErrMaxIterationsExceeded) = false, want true")
-		}
-	})
+	tests := []struct {
+		name        string
+		err         error
+		wantSubstrs []string
+		wantIs      []error
+	}{
+		{
+			name:        "MaxIterations",
+			err:         &MaxIterationsError{JobID: "job-42", Iterations: 100},
+			wantSubstrs: []string{"job-42"},
+			wantIs:      []error{ErrMaxIterationsExceeded},
+		},
+		{
+			name: "NoFleetNodesAvailable/WithCapabilities",
+			err: &NoFleetNodesAvailableError{
+				TaskTitle:            "build api",
+				RequiredCapabilities: []string{"go", "docker"},
+			},
+			wantSubstrs: []string{"build api", "go", "docker"},
+			wantIs:      []error{ErrNoFleetNodesAvailable},
+		},
+		{
+			name:        "NoFleetNodesAvailable/WithoutCapabilities",
+			err:         &NoFleetNodesAvailableError{TaskTitle: "simple task"},
+			wantSubstrs: []string{"simple task"},
+			wantIs:      []error{ErrNoFleetNodesAvailable},
+		},
+		{
+			name:        "ReviewParse/WithCause",
+			err:         &ReviewParseError{RawResponse: `{bad}`, Cause: reviewCause},
+			wantSubstrs: []string{"unexpected token"},
+			wantIs:      []error{ErrReviewParseFailed, reviewCause},
+		},
+		{
+			name:   "ReviewParse/WithoutCause",
+			err:    &ReviewParseError{RawResponse: ""},
+			wantIs: []error{ErrReviewParseFailed},
+		},
+		{
+			name:        "JobNotFound",
+			err:         &JobNotFoundError{JobID: "job-abc"},
+			wantSubstrs: []string{"job-abc"},
+			wantIs:      []error{ErrJobNotFound},
+		},
+		{
+			name:        "EmptyDecomposition",
+			err:         &EmptyDecompositionError{Description: "no work items returned"},
+			wantSubstrs: []string{"no work items returned"},
+			wantIs:      []error{ErrEmptyDecomposition},
+		},
+		{
+			name:        "ControlLoop/WithMessage",
+			err:         &ControlLoopError{Sentinel: ErrMaxIterationsExceeded, Message: "hit limit on wave 3"},
+			wantSubstrs: []string{"hit limit on wave 3"},
+			wantIs:      []error{ErrMaxIterationsExceeded},
+		},
+		{
+			name:   "ControlLoop/WithoutMessage",
+			err:    &ControlLoopError{Sentinel: ErrMaxIterationsExceeded},
+			wantIs: []error{ErrMaxIterationsExceeded},
+		},
+		{
+			name:        "FleetNodeNotFound",
+			err:         &FleetNodeNotFoundError{TenantID: "tenant-x", NodeID: "agent-y"},
+			wantSubstrs: []string{"tenant-x", "agent-y"},
+			wantIs:      []error{ErrFleetNodeNotFound},
+		},
+		{
+			name:        "FleetNodeAlreadyExists",
+			err:         &FleetNodeAlreadyExistsError{NodeID: "agent-dup"},
+			wantSubstrs: []string{"agent-dup"},
+			wantIs:      []error{ErrFleetNodeAlreadyExists},
+		},
+		{
+			name:        "FleetRegistry/WithMessage",
+			err:         &FleetRegistryError{Sentinel: ErrFleetNodeNotFound, Message: "extra detail"},
+			wantSubstrs: []string{"extra detail"},
+			wantIs:      []error{ErrFleetNodeNotFound},
+		},
+		{
+			name:   "FleetRegistry/WithoutMessage",
+			err:    &FleetRegistryError{Sentinel: ErrFleetNodeNotFound},
+			wantIs: []error{ErrFleetNodeNotFound},
+		},
+		{
+			name:        "ProjectNotFound",
+			err:         &ProjectNotFoundError{ProjectID: "proj-xyz"},
+			wantSubstrs: []string{"proj-xyz"},
+			wantIs:      []error{ErrProjectNotFound},
+		},
+		{
+			name:        "AgentStore/WithMessage",
+			err:         &AgentStoreError{Sentinel: ErrFleetNodeNotFound, Message: "store detail"},
+			wantSubstrs: []string{"store detail"},
+			wantIs:      []error{ErrFleetNodeNotFound},
+		},
+		{
+			name:   "AgentStore/WithoutMessage",
+			err:    &AgentStoreError{Sentinel: ErrFleetNodeNotFound},
+			wantIs: []error{ErrFleetNodeNotFound},
+		},
+		{
+			name:        "RemoteBackendDial",
+			err:         &RemoteBackendDialError{Host: "daemon.host:9091", Err: dialCause},
+			wantSubstrs: []string{"daemon.host:9091", "connection refused"},
+			wantIs:      []error{dialCause},
+		},
+		{
+			name:        "RemoteBackendRPC",
+			err:         &RemoteBackendRPCError{Op: "Spawn", Err: rpcCause},
+			wantSubstrs: []string{"Spawn", "grpc: status unavailable"},
+			wantIs:      []error{rpcCause},
+		},
+		{
+			name:        "TaskAlreadyExists",
+			err:         &TaskAlreadyExistsError{TaskID: "task-dup-42"},
+			wantSubstrs: []string{"task-dup-42"},
+		},
+		{
+			name:        "TaskVersionConflict",
+			err:         &TaskVersionConflictError{TaskID: "task-v-99", ExpectedVersion: 3, ActualVersion: 7},
+			wantSubstrs: []string{"task-v-99"},
+		},
+		{
+			name:        "TaskDependencyBlocked",
+			err:         &TaskDependencyBlockedError{TaskID: "task-dep-8", UnresolvedDependency: "dep-prereq"},
+			wantSubstrs: []string{"task-dep-8", "dep-prereq"},
+		},
+		{
+			name:        "HookRecoveryBootstrap/WithCause",
+			err:         &HookRecoveryBootstrapError{Step: "load_state", Cause: bootstrapCause},
+			wantSubstrs: []string{"load_state", "db connection failed"},
+			wantIs:      []error{ErrHookRecoveryBootstrap},
+		},
+		{
+			name:        "HookRecoveryBootstrap/WithoutCause",
+			err:         &HookRecoveryBootstrapError{Step: "init"},
+			wantSubstrs: []string{"init"},
+		},
+		{
+			name:        "HookPeerDelivery/WithCause",
+			err:         &HookPeerDeliveryError{AgentID: "agent-peer-1", Cause: peerCause},
+			wantSubstrs: []string{"agent-peer-1", "channel closed"},
+			wantIs:      []error{ErrHookPeerDelivery},
+		},
+		{
+			name:        "HookPeerDelivery/WithoutCause",
+			err:         &HookPeerDeliveryError{AgentID: "agent-x"},
+			wantSubstrs: []string{"agent-x"},
+		},
+		{
+			name:        "HookReindex/WithCause",
+			err:         &HookReindexError{Cause: reindexCause},
+			wantSubstrs: []string{"index unavailable"},
+			wantIs:      []error{ErrHookReindex},
+		},
+		{
+			name:   "HookReindex/WithoutCause",
+			err:    &HookReindexError{},
+			wantIs: []error{ErrHookReindex},
+		},
+		{
+			name:        "AgentService/WithMessage",
+			err:         &AgentServiceError{Sentinel: ErrAgentServiceUnavailable, Message: "down for maintenance"},
+			wantSubstrs: []string{"down for maintenance"},
+			wantIs:      []error{ErrAgentServiceUnavailable},
+		},
+		{
+			name: "AgentService/WithoutMessage",
+			err:  &AgentServiceError{Sentinel: ErrAgentServiceUnavailable},
+		},
+		{
+			name:   "UsageRecord/NilCause",
+			err:    &UsageRecordError{TenantID: "t1", JobID: "j1", AgentID: "a1"},
+			wantIs: []error{ErrUsageRecord},
+		},
+		{
+			name:   "UsageRetrieval/NilCause",
+			err:    &UsageRetrievalError{TenantID: "t1", JobID: "j1"},
+			wantIs: []error{ErrUsageRetrieval},
+		},
+	}
 
-	t.Run("As", func(t *testing.T) {
-		var target *MaxIterationsError
-		err := error(&MaxIterationsError{JobID: "job-99", Iterations: 10})
-		if !errors.As(err, &target) {
-			t.Fatal("errors.As failed")
-		}
-		if target.JobID != "job-99" {
-			t.Errorf("JobID = %q, want job-99", target.JobID)
-		}
-		if target.Iterations != 10 {
-			t.Errorf("Iterations = %d, want 10", target.Iterations)
-		}
-	})
-}
-
-func TestNoAgentsAvailableError(t *testing.T) {
-	t.Parallel()
-
-	t.Run("ErrorWithCapabilities", func(t *testing.T) {
-		err := &NoFleetNodesAvailableError{
-			TaskTitle:            "build api",
-			RequiredCapabilities: []string{"go", "docker"},
-		}
-		got := err.Error()
-		if !containsStr(got, "build api") {
-			t.Errorf("expected task title in error, got %q", got)
-		}
-		if !containsStr(got, "go") || !containsStr(got, "docker") {
-			t.Errorf("expected capabilities in error, got %q", got)
-		}
-	})
-
-	t.Run("ErrorWithoutCapabilities", func(t *testing.T) {
-		err := &NoFleetNodesAvailableError{TaskTitle: "simple task"}
-		got := err.Error()
-		if !containsStr(got, "simple task") {
-			t.Errorf("expected task title in error, got %q", got)
-		}
-	})
-
-	t.Run("UnwrapSentinel", func(t *testing.T) {
-		err := &NoFleetNodesAvailableError{TaskTitle: "t"}
-		if !errors.Is(err, ErrNoFleetNodesAvailable) {
-			t.Error("errors.Is(err, ErrNoFleetNodesAvailable) = false, want true")
-		}
-	})
-
-	t.Run("As", func(t *testing.T) {
-		var target *NoFleetNodesAvailableError
-		err := error(&NoFleetNodesAvailableError{TaskTitle: "task-x", RequiredCapabilities: []string{"rust"}})
-		if !errors.As(err, &target) {
-			t.Fatal("errors.As failed")
-		}
-		if target.TaskTitle != "task-x" {
-			t.Errorf("TaskTitle = %q, want task-x", target.TaskTitle)
-		}
-	})
-}
-
-func TestReviewParseError(t *testing.T) {
-	t.Parallel()
-
-	t.Run("ErrorWithCause", func(t *testing.T) {
-		cause := errors.New("unexpected token")
-		err := &ReviewParseError{RawResponse: `{bad}`, Cause: cause}
-		got := err.Error()
-		if !containsStr(got, "unexpected token") {
-			t.Errorf("expected cause in error, got %q", got)
-		}
-		if !errors.Is(err, ErrReviewParseFailed) {
-			t.Error("errors.Is(err, ErrReviewParseFailed) = false")
-		}
-		if !errors.Is(err, cause) {
-			t.Error("errors.Is(err, cause) = false")
-		}
-	})
-
-	t.Run("ErrorWithoutCause", func(t *testing.T) {
-		err := &ReviewParseError{RawResponse: ""}
-		got := err.Error()
-		if got == "" {
-			t.Fatal("expected non-empty error string")
-		}
-		if !errors.Is(err, ErrReviewParseFailed) {
-			t.Error("errors.Is(err, ErrReviewParseFailed) = false")
-		}
-	})
-}
-
-func TestJobNotFoundError(t *testing.T) {
-	t.Parallel()
-
-	t.Run("Error", func(t *testing.T) {
-		err := &JobNotFoundError{JobID: "job-abc"}
-		got := err.Error()
-		if !containsStr(got, "job-abc") {
-			t.Errorf("expected job ID in error, got %q", got)
-		}
-	})
-
-	t.Run("UnwrapSentinel", func(t *testing.T) {
-		err := &JobNotFoundError{JobID: "job-abc"}
-		if !errors.Is(err, ErrJobNotFound) {
-			t.Error("errors.Is(err, ErrJobNotFound) = false, want true")
-		}
-	})
-
-	t.Run("As", func(t *testing.T) {
-		var target *JobNotFoundError
-		err := error(&JobNotFoundError{JobID: "job-xyz"})
-		if !errors.As(err, &target) {
-			t.Fatal("errors.As failed")
-		}
-		if target.JobID != "job-xyz" {
-			t.Errorf("JobID = %q, want job-xyz", target.JobID)
-		}
-	})
-}
-
-func TestEmptyDecompositionError(t *testing.T) {
-	t.Parallel()
-
-	t.Run("Error", func(t *testing.T) {
-		err := &EmptyDecompositionError{Description: "no work items returned"}
-		got := err.Error()
-		if !containsStr(got, "no work items returned") {
-			t.Errorf("expected description in error, got %q", got)
-		}
-	})
-
-	t.Run("UnwrapSentinel", func(t *testing.T) {
-		err := &EmptyDecompositionError{Description: "d"}
-		if !errors.Is(err, ErrEmptyDecomposition) {
-			t.Error("errors.Is(err, ErrEmptyDecomposition) = false, want true")
-		}
-	})
-}
-
-func TestControlLoopError(t *testing.T) {
-	t.Parallel()
-
-	t.Run("ErrorWithMessage", func(t *testing.T) {
-		err := &ControlLoopError{Sentinel: ErrMaxIterationsExceeded, Message: "hit limit on wave 3"}
-		got := err.Error()
-		if !containsStr(got, "hit limit on wave 3") {
-			t.Errorf("expected message in error, got %q", got)
-		}
-	})
-
-	t.Run("ErrorWithoutMessage", func(t *testing.T) {
-		err := &ControlLoopError{Sentinel: ErrMaxIterationsExceeded}
-		got := err.Error()
-		if got == "" {
-			t.Fatal("expected non-empty error string")
-		}
-	})
-
-	t.Run("UnwrapSentinel", func(t *testing.T) {
-		err := &ControlLoopError{Sentinel: ErrMaxIterationsExceeded, Message: "x"}
-		if !errors.Is(err, ErrMaxIterationsExceeded) {
-			t.Error("errors.Is(err, ErrMaxIterationsExceeded) = false, want true")
-		}
-	})
-
-	t.Run("As", func(t *testing.T) {
-		var target *ControlLoopError
-		err := error(&ControlLoopError{Sentinel: ErrJobNotFound, Message: "missing"})
-		if !errors.As(err, &target) {
-			t.Fatal("errors.As failed")
-		}
-		if target.Message != "missing" {
-			t.Errorf("Message = %q, want missing", target.Message)
-		}
-	})
-}
-
-// =============================================================================
-// Tier 1: Error type methods — fleet_registry_types.go
-// =============================================================================
-
-func TestAgentNotFoundError(t *testing.T) {
-	t.Parallel()
-
-	t.Run("Error", func(t *testing.T) {
-		err := &FleetNodeNotFoundError{TenantID: "tenant-x", NodeID: "agent-y"}
-		got := err.Error()
-		if !containsStr(got, "tenant-x") || !containsStr(got, "agent-y") {
-			t.Errorf("expected tenant and agent in error, got %q", got)
-		}
-	})
-
-	t.Run("UnwrapSentinel", func(t *testing.T) {
-		err := &FleetNodeNotFoundError{TenantID: "t", NodeID: "a"}
-		if !errors.Is(err, ErrFleetNodeNotFound) {
-			t.Error("errors.Is(err, ErrFleetNodeNotFound) = false, want true")
-		}
-	})
-
-	t.Run("As", func(t *testing.T) {
-		var target *FleetNodeNotFoundError
-		err := error(&FleetNodeNotFoundError{TenantID: "t1", NodeID: "a1"})
-		if !errors.As(err, &target) {
-			t.Fatal("errors.As failed")
-		}
-		if target.TenantID != "t1" || target.NodeID != "a1" {
-			t.Errorf("got TenantID=%q AgentID=%q", target.TenantID, target.NodeID)
-		}
-	})
-}
-
-func TestAgentAlreadyExistsError(t *testing.T) {
-	t.Parallel()
-
-	t.Run("Error", func(t *testing.T) {
-		err := &FleetNodeAlreadyExistsError{NodeID: "agent-dup"}
-		got := err.Error()
-		if !containsStr(got, "agent-dup") {
-			t.Errorf("expected agent ID in error, got %q", got)
-		}
-	})
-
-	t.Run("UnwrapSentinel", func(t *testing.T) {
-		err := &FleetNodeAlreadyExistsError{NodeID: "a"}
-		if !errors.Is(err, ErrFleetNodeAlreadyExists) {
-			t.Error("errors.Is(err, ErrFleetNodeAlreadyExists) = false, want true")
-		}
-	})
-}
-
-func TestAgentRegistryError(t *testing.T) {
-	t.Parallel()
-
-	t.Run("ErrorWithMessage", func(t *testing.T) {
-		err := &FleetRegistryError{Sentinel: ErrFleetNodeNotFound, Message: "extra detail"}
-		got := err.Error()
-		if !containsStr(got, "extra detail") {
-			t.Errorf("expected message in error, got %q", got)
-		}
-	})
-
-	t.Run("ErrorWithoutMessage", func(t *testing.T) {
-		err := &FleetRegistryError{Sentinel: ErrFleetNodeNotFound}
-		got := err.Error()
-		if got == "" {
-			t.Fatal("expected non-empty error string")
-		}
-	})
-
-	t.Run("UnwrapSentinel", func(t *testing.T) {
-		err := &FleetRegistryError{Sentinel: ErrFleetNodeNotFound, Message: "x"}
-		if !errors.Is(err, ErrFleetNodeNotFound) {
-			t.Error("errors.Is(err, ErrFleetNodeNotFound) = false, want true")
-		}
-	})
-}
-
-// =============================================================================
-// Tier 1: Error type methods — orchestrator_types.go
-// =============================================================================
-
-func TestProjectNotFoundError(t *testing.T) {
-	t.Parallel()
-
-	t.Run("Error", func(t *testing.T) {
-		err := &ProjectNotFoundError{ProjectID: "proj-xyz"}
-		got := err.Error()
-		if !containsStr(got, "proj-xyz") {
-			t.Errorf("expected project ID in error, got %q", got)
-		}
-	})
-
-	t.Run("UnwrapSentinel", func(t *testing.T) {
-		err := &ProjectNotFoundError{ProjectID: "p"}
-		if !errors.Is(err, ErrProjectNotFound) {
-			t.Error("errors.Is(err, ErrProjectNotFound) = false, want true")
-		}
-	})
-
-	t.Run("As", func(t *testing.T) {
-		var target *ProjectNotFoundError
-		err := error(&ProjectNotFoundError{ProjectID: "proj-1"})
-		if !errors.As(err, &target) {
-			t.Fatal("errors.As failed")
-		}
-		if target.ProjectID != "proj-1" {
-			t.Errorf("ProjectID = %q, want proj-1", target.ProjectID)
-		}
-	})
-}
-
-func TestAgentStoreError(t *testing.T) {
-	t.Parallel()
-
-	t.Run("ErrorWithMessage", func(t *testing.T) {
-		err := &AgentStoreError{Sentinel: ErrFleetNodeNotFound, Message: "store detail"}
-		got := err.Error()
-		if !containsStr(got, "store detail") {
-			t.Errorf("expected message in error, got %q", got)
-		}
-	})
-
-	t.Run("ErrorWithoutMessage", func(t *testing.T) {
-		err := &AgentStoreError{Sentinel: ErrFleetNodeNotFound}
-		got := err.Error()
-		if got == "" {
-			t.Fatal("expected non-empty error string")
-		}
-	})
-
-	t.Run("UnwrapSentinel", func(t *testing.T) {
-		err := &AgentStoreError{Sentinel: ErrFleetNodeNotFound, Message: "x"}
-		if !errors.Is(err, ErrFleetNodeNotFound) {
-			t.Error("errors.Is(err, ErrFleetNodeNotFound) = false, want true")
-		}
-	})
-}
-
-// =============================================================================
-// Tier 1: Error type methods — remote_acp_backend.go
-// =============================================================================
-
-func TestRemoteBackendDialError(t *testing.T) {
-	t.Parallel()
-
-	cause := errors.New("connection refused")
-
-	t.Run("Error", func(t *testing.T) {
-		err := &RemoteBackendDialError{Host: "daemon.host:9091", Err: cause}
-		got := err.Error()
-		if !containsStr(got, "daemon.host:9091") {
-			t.Errorf("expected host in error, got %q", got)
-		}
-		if !containsStr(got, "connection refused") {
-			t.Errorf("expected cause in error, got %q", got)
-		}
-	})
-
-	t.Run("Unwrap", func(t *testing.T) {
-		err := &RemoteBackendDialError{Host: "h", Err: cause}
-		if !errors.Is(err, cause) {
-			t.Error("errors.Is(err, cause) = false, want true")
-		}
-	})
-
-	t.Run("As", func(t *testing.T) {
-		var target *RemoteBackendDialError
-		err := error(&RemoteBackendDialError{Host: "host-1", Err: cause})
-		if !errors.As(err, &target) {
-			t.Fatal("errors.As failed")
-		}
-		if target.Host != "host-1" {
-			t.Errorf("Host = %q, want host-1", target.Host)
-		}
-	})
-}
-
-func TestRemoteBackendRPCError(t *testing.T) {
-	t.Parallel()
-
-	cause := errors.New("grpc: status unavailable")
-
-	t.Run("Error", func(t *testing.T) {
-		err := &RemoteBackendRPCError{Op: "Spawn", Err: cause}
-		got := err.Error()
-		if !containsStr(got, "Spawn") {
-			t.Errorf("expected Op in error, got %q", got)
-		}
-		if !containsStr(got, "grpc: status unavailable") {
-			t.Errorf("expected cause in error, got %q", got)
-		}
-	})
-
-	t.Run("Unwrap", func(t *testing.T) {
-		err := &RemoteBackendRPCError{Op: "Prompt", Err: cause}
-		if !errors.Is(err, cause) {
-			t.Error("errors.Is(err, cause) = false, want true")
-		}
-	})
-
-	t.Run("As", func(t *testing.T) {
-		var target *RemoteBackendRPCError
-		err := error(&RemoteBackendRPCError{Op: "Close", Err: cause})
-		if !errors.As(err, &target) {
-			t.Fatal("errors.As failed")
-		}
-		if target.Op != "Close" {
-			t.Errorf("Op = %q, want Close", target.Op)
-		}
-	})
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := tt.err.Error()
+			if got == "" {
+				t.Fatal("expected non-empty error string")
+			}
+			for _, want := range tt.wantSubstrs {
+				if !containsStr(got, want) {
+					t.Errorf("Error() = %q, want it to contain %q", got, want)
+				}
+			}
+			for _, target := range tt.wantIs {
+				if !errors.Is(tt.err, target) {
+					t.Errorf("errors.Is(err, %v) = false, want true", target)
+				}
+			}
+		})
+	}
 }
 
 // =============================================================================
@@ -461,88 +265,6 @@ func newTestService(t *testing.T) *agentServiceImpl {
 		t.Fatalf("NewAgentService: %v", err)
 	}
 	return svc.(*agentServiceImpl)
-}
-
-func TestOrchestrator_SetTenantGuard(t *testing.T) {
-	t.Parallel()
-
-	impl := newTestService(t)
-	if impl.tenantGuard != nil {
-		t.Fatal("expected tenantGuard to be nil initially")
-	}
-
-	guard := NewTenantGuard(&agentTestLogger{})
-	impl.SetTenantGuard(guard)
-
-	if impl.tenantGuard != guard {
-		t.Fatal("expected tenantGuard to be set")
-	}
-}
-
-func TestOrchestrator_SetLeadSessionID(t *testing.T) {
-	t.Parallel()
-
-	impl := newTestService(t)
-	if impl.leadSessionID != "" {
-		t.Fatal("expected leadSessionID to be empty initially")
-	}
-
-	impl.SetLeadSessionID("session-lead-001")
-
-	if impl.leadSessionID != "session-lead-001" {
-		t.Errorf("leadSessionID = %q, want session-lead-001", impl.leadSessionID)
-	}
-}
-
-func TestOrchestrator_SetAgentRegistry(t *testing.T) {
-	t.Parallel()
-
-	impl := newTestService(t)
-	if impl.fleetRegistry != nil {
-		t.Fatal("expected fleetRegistry to be nil initially")
-	}
-
-	registry := NewInMemoryFleetRegistry()
-	impl.SetFleetRegistry(registry)
-
-	if impl.fleetRegistry == nil {
-		t.Fatal("expected fleetRegistry to be set")
-	}
-}
-
-func TestOrchestrator_SetKVStore(t *testing.T) {
-	t.Parallel()
-
-	impl := newTestService(t)
-	if impl.kvStore != nil {
-		t.Fatal("expected kvStore to be nil initially")
-	}
-
-	// Use a nil KVStore just to confirm the setter assigns it.
-	impl.SetKVStore(nil)
-	// Setting nil is valid; no panic expected.
-}
-
-func TestOrchestrator_SetTenantPolicyProvider(t *testing.T) {
-	t.Parallel()
-
-	impl := newTestService(t)
-	if impl.tenantPolicies != nil {
-		t.Fatal("expected tenantPolicies to be nil initially")
-	}
-
-	var provider mockTenantPolicyProvider
-	impl.SetTenantPolicyProvider(&provider)
-
-	if impl.tenantPolicies == nil {
-		t.Fatal("expected tenantPolicies to be set")
-	}
-
-	// Setting nil removes provider.
-	impl.SetTenantPolicyProvider(nil)
-	if impl.tenantPolicies != nil {
-		t.Fatal("expected tenantPolicies to be nil after clearing")
-	}
 }
 
 // mockTenantPolicyProvider implements TenantPolicyProvider for tests.
@@ -686,74 +408,103 @@ func TestOrchestrator_ListProjects_Paginated(t *testing.T) {
 // Tier 2: RegisterFleetNode / GetFleetNode / ListFleetNodes / RemoveFleetNode / FleetNodeHeartbeat
 // =============================================================================
 
-func TestOrchestrator_RegisterAgent_NoRegistry(t *testing.T) {
+// TestOrchestrator_FleetNode_NoRegistry checks that every fleet-node verb
+// fails with ErrFleetRegistryRequired when no registry is configured.
+func TestOrchestrator_FleetNode_NoRegistry(t *testing.T) {
 	t.Parallel()
 
-	impl := newTestService(t)
-	_, err := impl.RegisterFleetNode(context.Background(), &RegisterFleetNodeRequest{
-		Name:     "agent-1",
-		Host:     "localhost:9090",
-		NodeType: "claude-code",
-	})
-	if err == nil {
-		t.Fatal("expected error when agent registry not configured")
+	tests := []struct {
+		name string
+		call func(ctx context.Context, impl *agentServiceImpl) error
+	}{
+		{
+			name: "RegisterFleetNode",
+			call: func(ctx context.Context, impl *agentServiceImpl) error {
+				_, err := impl.RegisterFleetNode(ctx, &RegisterFleetNodeRequest{
+					Name:     "agent-1",
+					Host:     "localhost:9090",
+					NodeType: "claude-code",
+				})
+				return err
+			},
+		},
+		{
+			name: "GetFleetNode",
+			call: func(ctx context.Context, impl *agentServiceImpl) error {
+				_, err := impl.GetFleetNode(ctx, "t", "a")
+				return err
+			},
+		},
+		{
+			name: "ListFleetNodes",
+			call: func(ctx context.Context, impl *agentServiceImpl) error {
+				_, err := impl.ListFleetNodes(ctx, "t", nil)
+				return err
+			},
+		},
+		{
+			name: "RemoveFleetNode",
+			call: func(ctx context.Context, impl *agentServiceImpl) error {
+				return impl.RemoveFleetNode(ctx, "t", "a")
+			},
+		},
+		{
+			name: "FleetNodeHeartbeat",
+			call: func(ctx context.Context, impl *agentServiceImpl) error {
+				return impl.FleetNodeHeartbeat(ctx, "t", "a", nil)
+			},
+		},
 	}
-	if !errors.Is(err, ErrFleetRegistryRequired) {
-		t.Fatalf("expected ErrFleetRegistryRequired, got %v", err)
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			err := tt.call(context.Background(), newTestService(t))
+			if !errors.Is(err, ErrFleetRegistryRequired) {
+				t.Fatalf("expected ErrFleetRegistryRequired, got %v", err)
+			}
+		})
 	}
 }
 
-func TestOrchestrator_RegisterAgent_MissingName(t *testing.T) {
+// TestOrchestrator_RegisterAgent_MissingField checks that RegisterFleetNode
+// rejects a request missing any required field with that field's sentinel.
+func TestOrchestrator_RegisterAgent_MissingField(t *testing.T) {
 	t.Parallel()
 
-	impl := newTestService(t)
-	impl.SetFleetRegistry(NewInMemoryFleetRegistry())
-
-	_, err := impl.RegisterFleetNode(context.Background(), &RegisterFleetNodeRequest{
-		Host:     "localhost:9090",
-		NodeType: "claude-code",
-	})
-	if err == nil {
-		t.Fatal("expected error for empty name")
+	tests := []struct {
+		name    string
+		req     *RegisterFleetNodeRequest
+		wantErr error
+	}{
+		{
+			name:    "Name",
+			req:     &RegisterFleetNodeRequest{Host: "localhost:9090", NodeType: "claude-code"},
+			wantErr: ErrFleetNodeNameRequired,
+		},
+		{
+			name:    "Host",
+			req:     &RegisterFleetNodeRequest{Name: "agent-1", NodeType: "claude-code"},
+			wantErr: ErrFleetNodeHostRequired,
+		},
+		{
+			name:    "Type",
+			req:     &RegisterFleetNodeRequest{Name: "agent-1", Host: "localhost:9090"},
+			wantErr: ErrFleetNodeTypeRequired,
+		},
 	}
-	if !errors.Is(err, ErrFleetNodeNameRequired) {
-		t.Fatalf("expected ErrFleetNodeNameRequired, got %v", err)
-	}
-}
 
-func TestOrchestrator_RegisterAgent_MissingHost(t *testing.T) {
-	t.Parallel()
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			impl := newTestService(t)
+			impl.SetFleetRegistry(NewInMemoryFleetRegistry())
 
-	impl := newTestService(t)
-	impl.SetFleetRegistry(NewInMemoryFleetRegistry())
-
-	_, err := impl.RegisterFleetNode(context.Background(), &RegisterFleetNodeRequest{
-		Name:     "agent-1",
-		NodeType: "claude-code",
-	})
-	if err == nil {
-		t.Fatal("expected error for empty host")
-	}
-	if !errors.Is(err, ErrFleetNodeHostRequired) {
-		t.Fatalf("expected ErrFleetNodeHostRequired, got %v", err)
-	}
-}
-
-func TestOrchestrator_RegisterAgent_MissingType(t *testing.T) {
-	t.Parallel()
-
-	impl := newTestService(t)
-	impl.SetFleetRegistry(NewInMemoryFleetRegistry())
-
-	_, err := impl.RegisterFleetNode(context.Background(), &RegisterFleetNodeRequest{
-		Name: "agent-1",
-		Host: "localhost:9090",
-	})
-	if err == nil {
-		t.Fatal("expected error for empty agent type")
-	}
-	if !errors.Is(err, ErrFleetNodeTypeRequired) {
-		t.Fatalf("expected ErrFleetNodeTypeRequired, got %v", err)
+			_, err := impl.RegisterFleetNode(context.Background(), tt.req)
+			if !errors.Is(err, tt.wantErr) {
+				t.Fatalf("expected %v, got %v", tt.wantErr, err)
+			}
+		})
 	}
 }
 
@@ -788,19 +539,6 @@ func TestOrchestrator_RegisterAndGetAgent(t *testing.T) {
 	}
 }
 
-func TestOrchestrator_GetAgent_NoRegistry(t *testing.T) {
-	t.Parallel()
-
-	impl := newTestService(t)
-	_, err := impl.GetFleetNode(context.Background(), "t", "a")
-	if err == nil {
-		t.Fatal("expected error when agent registry not configured")
-	}
-	if !errors.Is(err, ErrFleetRegistryRequired) {
-		t.Fatalf("expected ErrFleetRegistryRequired, got %v", err)
-	}
-}
-
 func TestOrchestrator_ListAgents(t *testing.T) {
 	t.Parallel()
 
@@ -827,19 +565,6 @@ func TestOrchestrator_ListAgents(t *testing.T) {
 	}
 	if len(agents) != 3 {
 		t.Fatalf("expected 3 agents, got %d", len(agents))
-	}
-}
-
-func TestOrchestrator_ListAgents_NoRegistry(t *testing.T) {
-	t.Parallel()
-
-	impl := newTestService(t)
-	_, err := impl.ListFleetNodes(context.Background(), "t", nil)
-	if err == nil {
-		t.Fatal("expected error when agent registry not configured")
-	}
-	if !errors.Is(err, ErrFleetRegistryRequired) {
-		t.Fatalf("expected ErrFleetRegistryRequired, got %v", err)
 	}
 }
 
@@ -871,19 +596,6 @@ func TestOrchestrator_RemoveAgent(t *testing.T) {
 	}
 }
 
-func TestOrchestrator_RemoveAgent_NoRegistry(t *testing.T) {
-	t.Parallel()
-
-	impl := newTestService(t)
-	err := impl.RemoveFleetNode(context.Background(), "t", "a")
-	if err == nil {
-		t.Fatal("expected error when agent registry not configured")
-	}
-	if !errors.Is(err, ErrFleetRegistryRequired) {
-		t.Fatalf("expected ErrFleetRegistryRequired, got %v", err)
-	}
-}
-
 func TestOrchestrator_AgentHeartbeat(t *testing.T) {
 	t.Parallel()
 
@@ -903,43 +615,6 @@ func TestOrchestrator_AgentHeartbeat(t *testing.T) {
 
 	if err := impl.FleetNodeHeartbeat(ctx, "tenant-1", resp.Node.ID, nil); err != nil {
 		t.Fatalf("FleetNodeHeartbeat: %v", err)
-	}
-}
-
-func TestOrchestrator_AgentHeartbeat_NoRegistry(t *testing.T) {
-	t.Parallel()
-
-	impl := newTestService(t)
-	err := impl.FleetNodeHeartbeat(context.Background(), "t", "a", nil)
-	if err == nil {
-		t.Fatal("expected error when agent registry not configured")
-	}
-	if !errors.Is(err, ErrFleetRegistryRequired) {
-		t.Fatalf("expected ErrFleetRegistryRequired, got %v", err)
-	}
-}
-
-// =============================================================================
-// Tier 2: ACPBackend.SetContainerRuntime — acp_backend.go line 80
-// =============================================================================
-
-func TestACPBackend_SetContainerRuntime(t *testing.T) {
-	t.Parallel()
-
-	backend := NewACPBackend(ACPBackendConfig{
-		Command:      "claude",
-		DefaultModel: "claude-3-5",
-	})
-
-	if backend.containerRuntime != nil {
-		t.Fatal("expected nil containerRuntime initially")
-	}
-
-	rt := &mockContainerRuntime{available: true}
-	backend.SetContainerRuntime(rt)
-
-	if backend.containerRuntime != rt {
-		t.Fatal("expected containerRuntime to be set")
 	}
 }
 
@@ -1050,74 +725,6 @@ func TestTimestampAsUnixNano(t *testing.T) {
 			t.Errorf("expected 0 for zero time, got %d", got)
 		}
 	})
-}
-
-// =============================================================================
-// Tier 3: RemoteACPBackend — Close after CloseAll
-// =============================================================================
-
-func TestRemoteACPBackend_CloseAfterCloseAll(t *testing.T) {
-	t.Parallel()
-
-	daemon := startBufconnDaemon(t, nil)
-	backend, err := NewRemoteACPBackend(RemoteACPBackendDeps{
-		Registration: newDaemonRegistration(),
-		Backend:      "acp",
-		Logger:       &agentTestLogger{},
-		ConnDialer:   daemon.dialer(),
-	})
-	if err != nil {
-		t.Fatalf("NewRemoteACPBackend: %v", err)
-	}
-
-	// Prime the pool with a connection.
-	if _, err := backend.Spawn(context.Background(), &SpawnRequest{}); err != nil {
-		t.Fatalf("Spawn: %v", err)
-	}
-
-	// Close the pool.
-	if err := backend.CloseAll(); err != nil {
-		t.Fatalf("CloseAll: %v", err)
-	}
-
-	// Stop the daemon to force dial failure on next call.
-	daemon.server.Stop()
-
-	// Close after pool teardown — expect an error (RPC fails to reconnect).
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
-	_ = backend.Close(ctx, "sess-orphan")
-	// We only assert no panic; the specific error depends on timing.
-}
-
-// =============================================================================
-// Tier 3: ControlLoop.SetPeerDeliverFn — control_loop_hooks.go line 368
-// =============================================================================
-
-func TestControlLoop_SetPeerDeliverFn(t *testing.T) {
-	t.Parallel()
-
-	cl := newMinimalControlLoop(t)
-
-	if cl.peerDeliverFn != nil {
-		t.Fatal("expected peerDeliverFn to be nil initially")
-	}
-
-	var called bool
-	fn := func(_ context.Context, _ string, _ *PeerMessage) {
-		called = true
-	}
-	cl.SetPeerDeliverFn(fn)
-
-	if cl.peerDeliverFn == nil {
-		t.Fatal("expected peerDeliverFn to be set")
-	}
-
-	// Invoke it to ensure the assignment is correct.
-	cl.peerDeliverFn(context.Background(), "agent-1", &PeerMessage{})
-	if !called {
-		t.Error("expected peerDeliverFn to be called")
-	}
 }
 
 // newMinimalControlLoop creates a ControlLoop with the minimum fields required
@@ -1313,207 +920,6 @@ func TestControlLoop_CheckBudget_WithTracker(t *testing.T) {
 }
 
 // =============================================================================
-// Tier 5: ControlLoop.startPeerDelivery edge cases
-// =============================================================================
-
-func TestControlLoop_StartPeerDelivery_NoPeerMessaging(t *testing.T) {
-	t.Parallel()
-
-	cl := newMinimalControlLoop(t)
-
-	// Should return immediately without panic when no peer messaging.
-	cl.startPeerDelivery(context.Background(), []*WorkItem{{Title: "task-1", RequiredRole: "worker"}})
-}
-
-func TestControlLoop_StartPeerDelivery_NoPeerDeliverFn(t *testing.T) {
-	t.Parallel()
-
-	cl := newMinimalControlLoop(t)
-	cl.peerMessaging = &hookMockPeerMessaging{}
-	cl.workflow = &WorkflowDefinition{
-		Settings: WorkflowSettings{
-			Topology: TopologyPeerToPeer,
-		},
-	}
-	// peerDeliverFn is nil — should log a warning and return cleanly.
-	cl.startPeerDelivery(context.Background(), []*WorkItem{{Title: "task-1", RequiredRole: "worker"}})
-}
-
-func TestControlLoop_StartPeerDelivery_HubAndSpoke_Skips(t *testing.T) {
-	t.Parallel()
-
-	cl := newMinimalControlLoop(t)
-	cl.peerMessaging = &hookMockPeerMessaging{}
-	cl.workflow = &WorkflowDefinition{
-		Settings: WorkflowSettings{
-			Topology: TopologyHubAndSpoke,
-		},
-	}
-	var fn func(context.Context, string, *PeerMessage)
-	cl.SetPeerDeliverFn(fn)
-
-	// Should return without calling subscribe since topology is hub-and-spoke.
-	cl.startPeerDelivery(context.Background(), []*WorkItem{{Title: "task-1", RequiredRole: "worker"}})
-}
-
-// =============================================================================
-// Tier 1: Error() methods for task types not tested by task_store_test.go
-// (the existing tests use errors.Is but don't call .Error() directly)
-// =============================================================================
-
-func TestTaskAlreadyExistsError_Error(t *testing.T) {
-	t.Parallel()
-
-	err := &TaskAlreadyExistsError{TaskID: "task-dup-42"}
-	got := err.Error()
-	if !containsStr(got, "task-dup-42") {
-		t.Errorf("expected task ID in error string, got %q", got)
-	}
-}
-
-func TestTaskVersionConflictError_Error(t *testing.T) {
-	t.Parallel()
-
-	err := &TaskVersionConflictError{
-		TaskID:          "task-v-99",
-		ExpectedVersion: 3,
-		ActualVersion:   7,
-	}
-	got := err.Error()
-	if !containsStr(got, "task-v-99") {
-		t.Errorf("expected task ID in error string, got %q", got)
-	}
-}
-
-func TestTaskDependencyBlockedError_Error(t *testing.T) {
-	t.Parallel()
-
-	err := &TaskDependencyBlockedError{
-		TaskID:               "task-dep-8",
-		UnresolvedDependency: "dep-prereq",
-	}
-	got := err.Error()
-	if !containsStr(got, "task-dep-8") {
-		t.Errorf("expected task ID in error string, got %q", got)
-	}
-	if !containsStr(got, "dep-prereq") {
-		t.Errorf("expected dependency ID in error string, got %q", got)
-	}
-}
-
-// =============================================================================
-// Tier 1: Error types from control_loop_hooks.go at 66-75%
-// =============================================================================
-
-func TestHookRecoveryBootstrapError(t *testing.T) {
-	t.Parallel()
-
-	t.Run("ErrorWithCause", func(t *testing.T) {
-		cause := errors.New("db connection failed")
-		err := &HookRecoveryBootstrapError{Step: "load_state", Cause: cause}
-		got := err.Error()
-		if !containsStr(got, "load_state") {
-			t.Errorf("expected step in error, got %q", got)
-		}
-		if !containsStr(got, "db connection failed") {
-			t.Errorf("expected cause in error, got %q", got)
-		}
-		if !errors.Is(err, ErrHookRecoveryBootstrap) {
-			t.Error("errors.Is(err, ErrHookRecoveryBootstrap) = false")
-		}
-	})
-
-	t.Run("ErrorWithoutCause", func(t *testing.T) {
-		err := &HookRecoveryBootstrapError{Step: "init"}
-		got := err.Error()
-		if !containsStr(got, "init") {
-			t.Errorf("expected step in error, got %q", got)
-		}
-	})
-}
-
-func TestHookPeerDeliveryError(t *testing.T) {
-	t.Parallel()
-
-	t.Run("ErrorWithCause", func(t *testing.T) {
-		cause := errors.New("channel closed")
-		err := &HookPeerDeliveryError{AgentID: "agent-peer-1", Cause: cause}
-		got := err.Error()
-		if !containsStr(got, "agent-peer-1") {
-			t.Errorf("expected agent ID in error, got %q", got)
-		}
-		if !containsStr(got, "channel closed") {
-			t.Errorf("expected cause in error, got %q", got)
-		}
-		if !errors.Is(err, ErrHookPeerDelivery) {
-			t.Error("errors.Is(err, ErrHookPeerDelivery) = false")
-		}
-	})
-
-	t.Run("ErrorWithoutCause", func(t *testing.T) {
-		err := &HookPeerDeliveryError{AgentID: "agent-x"}
-		got := err.Error()
-		if !containsStr(got, "agent-x") {
-			t.Errorf("expected agent ID in error, got %q", got)
-		}
-	})
-}
-
-func TestHookReindexError(t *testing.T) {
-	t.Parallel()
-
-	t.Run("ErrorWithCause", func(t *testing.T) {
-		cause := errors.New("index unavailable")
-		err := &HookReindexError{Cause: cause}
-		got := err.Error()
-		if !containsStr(got, "index unavailable") {
-			t.Errorf("expected cause in error, got %q", got)
-		}
-		if !errors.Is(err, ErrHookReindex) {
-			t.Error("errors.Is(err, ErrHookReindex) = false")
-		}
-	})
-
-	t.Run("ErrorWithoutCause", func(t *testing.T) {
-		err := &HookReindexError{}
-		got := err.Error()
-		if got == "" {
-			t.Fatal("expected non-empty error string")
-		}
-		if !errors.Is(err, ErrHookReindex) {
-			t.Error("errors.Is(err, ErrHookReindex) = false")
-		}
-	})
-}
-
-// =============================================================================
-// Tier 1: AgentServiceError.Error method — orchestrator_types.go line 369
-// =============================================================================
-
-func TestAgentServiceError(t *testing.T) {
-	t.Parallel()
-
-	t.Run("ErrorWithMessage", func(t *testing.T) {
-		err := &AgentServiceError{Sentinel: ErrAgentServiceUnavailable, Message: "down for maintenance"}
-		got := err.Error()
-		if !containsStr(got, "down for maintenance") {
-			t.Errorf("expected message in error, got %q", got)
-		}
-		if !errors.Is(err, ErrAgentServiceUnavailable) {
-			t.Error("errors.Is failed")
-		}
-	})
-
-	t.Run("ErrorWithoutMessage", func(t *testing.T) {
-		err := &AgentServiceError{Sentinel: ErrAgentServiceUnavailable}
-		got := err.Error()
-		if got == "" {
-			t.Fatal("expected non-empty error string")
-		}
-	})
-}
-
-// =============================================================================
 // Tier 2: EffectiveKind — fleet_registry_types.go line 66
 // =============================================================================
 
@@ -1616,159 +1022,76 @@ func TestOrchestrator_ListJobs_WithRunningJob(t *testing.T) {
 // (exercises the token fetch failure branch in authCtx)
 // =============================================================================
 
-func TestRemoteACPBackend_PromptRPCError(t *testing.T) {
+// TestRemoteACPBackend_RPCError checks that a daemon RPC failure surfaces as a
+// *RemoteBackendRPCError naming the failed operation.
+func TestRemoteACPBackend_RPCError(t *testing.T) {
 	t.Parallel()
 
-	daemon := startBufconnDaemon(t, &fakeDaemonServer{
-		promptErr: errors.New("internal server error"),
-	})
-	backend, err := NewRemoteACPBackend(RemoteACPBackendDeps{
-		Registration: newDaemonRegistration(),
-		Backend:      "acp",
-		Logger:       &agentTestLogger{},
-		ConnDialer:   daemon.dialer(),
-	})
-	if err != nil {
-		t.Fatalf("NewRemoteACPBackend: %v", err)
-	}
-	t.Cleanup(func() { _ = backend.CloseAll() })
-
-	_, err = backend.Prompt(context.Background(), &PromptRequest{Prompt: "hi"})
-	if err == nil {
-		t.Fatal("expected error on RPC failure")
-	}
-	var rpcErr *RemoteBackendRPCError
-	if !errors.As(err, &rpcErr) {
-		t.Fatalf("expected *RemoteBackendRPCError, got %T: %v", err, err)
-	}
-}
-
-func TestRemoteACPBackend_StatusRPCError(t *testing.T) {
-	t.Parallel()
-
-	daemon := startBufconnDaemon(t, &fakeDaemonServer{
-		statusErr: errors.New("not available"),
-	})
-	backend, err := NewRemoteACPBackend(RemoteACPBackendDeps{
-		Registration: newDaemonRegistration(),
-		Backend:      "acp",
-		Logger:       &agentTestLogger{},
-		ConnDialer:   daemon.dialer(),
-	})
-	if err != nil {
-		t.Fatalf("NewRemoteACPBackend: %v", err)
-	}
-	t.Cleanup(func() { _ = backend.CloseAll() })
-
-	_, err = backend.Status(context.Background(), "sess-fail")
-	if err == nil {
-		t.Fatal("expected error on RPC failure")
-	}
-	var rpcErr *RemoteBackendRPCError
-	if !errors.As(err, &rpcErr) {
-		t.Fatalf("expected *RemoteBackendRPCError, got %T: %v", err, err)
-	}
-}
-
-func TestRemoteACPBackend_SpawnRPCError(t *testing.T) {
-	t.Parallel()
-
-	daemon := startBufconnDaemon(t, &fakeDaemonServer{
-		spawnErr: errors.New("spawn rejected"),
-	})
-	backend, err := NewRemoteACPBackend(RemoteACPBackendDeps{
-		Registration: newDaemonRegistration(),
-		Backend:      "acp",
-		Logger:       &agentTestLogger{},
-		ConnDialer:   daemon.dialer(),
-	})
-	if err != nil {
-		t.Fatalf("NewRemoteACPBackend: %v", err)
-	}
-	t.Cleanup(func() { _ = backend.CloseAll() })
-
-	_, err = backend.Spawn(context.Background(), &SpawnRequest{})
-	if err == nil {
-		t.Fatal("expected error on RPC failure")
-	}
-	var rpcErr *RemoteBackendRPCError
-	if !errors.As(err, &rpcErr) {
-		t.Fatalf("expected *RemoteBackendRPCError, got %T: %v", err, err)
-	}
-	if rpcErr.Op != "Spawn" {
-		t.Errorf("Op = %q, want Spawn", rpcErr.Op)
-	}
-}
-
-func TestRemoteACPBackend_CloseRPCError(t *testing.T) {
-	t.Parallel()
-
-	daemon := startBufconnDaemon(t, &fakeDaemonServer{
-		closeErr: errors.New("close rejected"),
-	})
-	backend, err := NewRemoteACPBackend(RemoteACPBackendDeps{
-		Registration: newDaemonRegistration(),
-		Backend:      "acp",
-		Logger:       &agentTestLogger{},
-		ConnDialer:   daemon.dialer(),
-	})
-	if err != nil {
-		t.Fatalf("NewRemoteACPBackend: %v", err)
-	}
-	t.Cleanup(func() { _ = backend.CloseAll() })
-
-	err = backend.Close(context.Background(), "sess-close-fail")
-	if err == nil {
-		t.Fatal("expected error on Close RPC failure")
-	}
-	var rpcErr *RemoteBackendRPCError
-	if !errors.As(err, &rpcErr) {
-		t.Fatalf("expected *RemoteBackendRPCError, got %T: %v", err, err)
-	}
-	if rpcErr.Op != "Close" {
-		t.Errorf("Op = %q, want Close", rpcErr.Op)
-	}
-}
-
-// =============================================================================
-// Tier 3: Container runtime error on missing docker — container_runtime.go
-// (tests error path when no container runtime is available)
-// =============================================================================
-
-func TestExecContainerRuntime_Pull_NoBinary(t *testing.T) {
-	t.Parallel()
-
-	// Use a definitely-not-present binary to force exec errors.
-	rt, err := NewExecContainerRuntimeWithCommand("/bin/not-a-real-container-runtime", newContainerTestLogger(t))
-	if err != nil {
-		// Error creating with bad path is acceptable — just verify type.
-		var inputErr *InputValidationError
-		if errors.As(err, &inputErr) {
-			return
-		}
-		// Some systems may return a different error for a path that doesn't exist.
-		return
+	tests := []struct {
+		name   string
+		server *fakeDaemonServer
+		call   func(ctx context.Context, backend *RemoteACPBackend) error
+		wantOp string
+	}{
+		{
+			name:   "Prompt",
+			server: &fakeDaemonServer{promptErr: errors.New("internal server error")},
+			call: func(ctx context.Context, backend *RemoteACPBackend) error {
+				_, err := backend.Prompt(ctx, &PromptRequest{Prompt: "hi"})
+				return err
+			},
+		},
+		{
+			name:   "Status",
+			server: &fakeDaemonServer{statusErr: errors.New("not available")},
+			call: func(ctx context.Context, backend *RemoteACPBackend) error {
+				_, err := backend.Status(ctx, "sess-fail")
+				return err
+			},
+		},
+		{
+			name:   "Spawn",
+			server: &fakeDaemonServer{spawnErr: errors.New("spawn rejected")},
+			call: func(ctx context.Context, backend *RemoteACPBackend) error {
+				_, err := backend.Spawn(ctx, &SpawnRequest{})
+				return err
+			},
+			wantOp: "Spawn",
+		},
+		{
+			name:   "Close",
+			server: &fakeDaemonServer{closeErr: errors.New("close rejected")},
+			call: func(ctx context.Context, backend *RemoteACPBackend) error {
+				return backend.Close(ctx, "sess-close-fail")
+			},
+			wantOp: "Close",
+		},
 	}
 
-	ctx := context.Background()
-	pullErr := rt.Pull(ctx, "alpine:latest")
-	if pullErr == nil {
-		t.Fatal("expected error pulling image with fake runtime")
-	}
-	// The error can be wrapped in various ways; just verify it's not nil.
-}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			daemon := startBufconnDaemon(t, tt.server)
+			backend, err := NewRemoteACPBackend(RemoteACPBackendDeps{
+				Registration: newDaemonRegistration(),
+				Backend:      "acp",
+				Logger:       &agentTestLogger{},
+				ConnDialer:   daemon.dialer(),
+			})
+			if err != nil {
+				t.Fatalf("NewRemoteACPBackend: %v", err)
+			}
+			t.Cleanup(func() { _ = backend.CloseAll() })
 
-func TestExecContainerRuntime_Logs_NoBinary(t *testing.T) {
-	t.Parallel()
-
-	rt, err := NewExecContainerRuntimeWithCommand("/bin/not-a-real-container-runtime", newContainerTestLogger(t))
-	if err != nil {
-		return // creation failure is acceptable
-	}
-
-	_, logErr := rt.Logs(context.Background(), "container-id-x")
-	if logErr == nil {
-		t.Fatal("expected error getting logs with fake runtime")
+			err = tt.call(context.Background(), backend)
+			var rpcErr *RemoteBackendRPCError
+			if !errors.As(err, &rpcErr) {
+				t.Fatalf("expected *RemoteBackendRPCError, got %T: %v", err, err)
+			}
+			if tt.wantOp != "" && rpcErr.Op != tt.wantOp {
+				t.Errorf("Op = %q, want %q", rpcErr.Op, tt.wantOp)
+			}
+		})
 	}
 }
 
@@ -1928,63 +1251,50 @@ func TestControlLoop_EmitEvent(t *testing.T) {
 // Tier 4: StartJob — error paths (orchestrator.go line 1998)
 // =============================================================================
 
-func TestOrchestrator_StartJob_NilRequest(t *testing.T) {
+// TestOrchestrator_StartJob_InvalidRequest checks that StartJob rejects each
+// malformed request with the matching sentinel before any job is created.
+func TestOrchestrator_StartJob_InvalidRequest(t *testing.T) {
 	t.Parallel()
 
-	impl := newTestService(t)
-	_, err := impl.StartJob(context.Background(), nil)
-	if err == nil {
-		t.Fatal("expected error for nil request")
+	tests := []struct {
+		name    string
+		req     *StartJobRequest
+		wantErr error
+	}{
+		{
+			name:    "NilRequest",
+			req:     nil,
+			wantErr: ErrAgentServiceUnavailable,
+		},
+		{
+			name:    "EmptyDescription",
+			req:     &StartJobRequest{TenantID: "tenant-1"},
+			wantErr: ErrTaskRequired,
+		},
+		{
+			name:    "EmptyTenantID",
+			req:     &StartJobRequest{Description: "do something"},
+			wantErr: ErrTenantIDRequired,
+		},
+		{
+			name: "InvalidPollInterval",
+			req: &StartJobRequest{
+				TenantID:     "tenant-1",
+				Description:  "do something",
+				PollInterval: "not-a-duration",
+			},
+			wantErr: ErrInvalidInput,
+		},
 	}
-	if !errors.Is(err, ErrAgentServiceUnavailable) {
-		t.Fatalf("expected ErrAgentServiceUnavailable, got %v", err)
-	}
-}
 
-func TestOrchestrator_StartJob_EmptyDescription(t *testing.T) {
-	t.Parallel()
-
-	impl := newTestService(t)
-	_, err := impl.StartJob(context.Background(), &StartJobRequest{
-		TenantID: "tenant-1",
-	})
-	if err == nil {
-		t.Fatal("expected error for empty description")
-	}
-	if !errors.Is(err, ErrTaskRequired) {
-		t.Fatalf("expected ErrTaskRequired, got %v", err)
-	}
-}
-
-func TestOrchestrator_StartJob_EmptyTenantID(t *testing.T) {
-	t.Parallel()
-
-	impl := newTestService(t)
-	_, err := impl.StartJob(context.Background(), &StartJobRequest{
-		Description: "do something",
-	})
-	if err == nil {
-		t.Fatal("expected error for empty tenant ID")
-	}
-	if !errors.Is(err, ErrTenantIDRequired) {
-		t.Fatalf("expected ErrTenantIDRequired, got %v", err)
-	}
-}
-
-func TestOrchestrator_StartJob_InvalidPollInterval(t *testing.T) {
-	t.Parallel()
-
-	impl := newTestService(t)
-	_, err := impl.StartJob(context.Background(), &StartJobRequest{
-		TenantID:     "tenant-1",
-		Description:  "do something",
-		PollInterval: "not-a-duration",
-	})
-	if err == nil {
-		t.Fatal("expected error for invalid poll interval")
-	}
-	if !errors.Is(err, ErrInvalidInput) {
-		t.Fatalf("expected ErrInvalidInput, got %v", err)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			_, err := newTestService(t).StartJob(context.Background(), tt.req)
+			if !errors.Is(err, tt.wantErr) {
+				t.Fatalf("expected %v, got %v", tt.wantErr, err)
+			}
+		})
 	}
 }
 
@@ -2056,57 +1366,6 @@ func TestOrchestrator_CloseSession_NotFound(t *testing.T) {
 }
 
 // =============================================================================
-// Tier 4: remote_acp_backend.go — dial default path (no custom dialer)
-// The existing test fixture already tests the bufconn path (Dialer set).
-// This test forces the default grpc.NewClient path with a bad address.
-// =============================================================================
-
-func TestRemoteACPBackend_DefaultDialPath(t *testing.T) {
-	t.Parallel()
-
-	// No ConnDialer — forces the default grpc.NewClient path.
-	backend, err := NewRemoteACPBackend(RemoteACPBackendDeps{
-		Registration: newDaemonRegistration(),
-		Backend:      "acp",
-		Logger:       &agentTestLogger{},
-		ConnDialer:   nil, // intentionally nil
-	})
-	if err != nil {
-		t.Fatalf("NewRemoteACPBackend: %v", err)
-	}
-	t.Cleanup(func() { _ = backend.CloseAll() })
-
-	// The address is "daemon.test:9091" which won't resolve; the gRPC lazy
-	// dial may succeed at creation but fail at the first RPC.
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
-
-	_, err = backend.Spawn(ctx, &SpawnRequest{})
-	// We expect an error (either dial or RPC) — just verify no panic.
-	_ = err
-}
-
-// =============================================================================
-// Tier 5: startPeerDelivery — peer delivery with no agents in wave
-// =============================================================================
-
-func TestControlLoop_StartPeerDelivery_EmptyWaveItems(t *testing.T) {
-	t.Parallel()
-
-	cl := newMinimalControlLoop(t)
-	cl.peerMessaging = &hookMockPeerMessaging{}
-	cl.workflow = &WorkflowDefinition{
-		Settings: WorkflowSettings{
-			Topology: TopologyPeerToPeer,
-		},
-	}
-	cl.SetPeerDeliverFn(func(_ context.Context, _ string, _ *PeerMessage) {})
-
-	// Empty wave: no agents to deliver to — should return cleanly.
-	cl.startPeerDelivery(context.Background(), []*WorkItem{})
-}
-
-// =============================================================================
 // Tier 6: Container runtime input validation (no docker needed)
 // =============================================================================
 
@@ -2121,87 +1380,65 @@ func newFakeContainerRuntime(t *testing.T) *ExecContainerRuntime {
 	}
 }
 
-func TestExecContainerRuntime_Stop_EmptyContainerID(t *testing.T) {
+// TestExecContainerRuntime_EmptyInput checks that every runtime verb rejects
+// an empty container ID or image with *InputValidationError before it execs.
+func TestExecContainerRuntime_EmptyInput(t *testing.T) {
 	t.Parallel()
 
-	rt := newFakeContainerRuntime(t)
-	err := rt.Stop(context.Background(), "")
-	if err == nil {
-		t.Fatal("expected error for empty containerID")
+	tests := []struct {
+		name string
+		call func(ctx context.Context, rt *ExecContainerRuntime) error
+	}{
+		{
+			name: "Stop",
+			call: func(ctx context.Context, rt *ExecContainerRuntime) error {
+				return rt.Stop(ctx, "")
+			},
+		},
+		{
+			name: "Remove",
+			call: func(ctx context.Context, rt *ExecContainerRuntime) error {
+				return rt.Remove(ctx, "")
+			},
+		},
+		{
+			name: "IsRunning",
+			call: func(ctx context.Context, rt *ExecContainerRuntime) error {
+				_, err := rt.IsRunning(ctx, "")
+				return err
+			},
+		},
+		{
+			name: "Pull",
+			call: func(ctx context.Context, rt *ExecContainerRuntime) error {
+				return rt.Pull(ctx, "")
+			},
+		},
+		{
+			name: "Logs",
+			call: func(ctx context.Context, rt *ExecContainerRuntime) error {
+				_, err := rt.Logs(ctx, "")
+				return err
+			},
+		},
+		{
+			name: "Run",
+			call: func(ctx context.Context, rt *ExecContainerRuntime) error {
+				_, err := rt.Run(ctx, &ContainerSpec{Image: ""})
+				return err
+			},
+		},
 	}
-	var validErr *InputValidationError
-	if !errors.As(err, &validErr) {
-		t.Fatalf("expected *InputValidationError, got %T: %v", err, err)
-	}
-}
 
-func TestExecContainerRuntime_Remove_EmptyContainerID(t *testing.T) {
-	t.Parallel()
-
-	rt := newFakeContainerRuntime(t)
-	err := rt.Remove(context.Background(), "")
-	if err == nil {
-		t.Fatal("expected error for empty containerID")
-	}
-	var validErr *InputValidationError
-	if !errors.As(err, &validErr) {
-		t.Fatalf("expected *InputValidationError, got %T: %v", err, err)
-	}
-}
-
-func TestExecContainerRuntime_IsRunning_EmptyContainerID(t *testing.T) {
-	t.Parallel()
-
-	rt := newFakeContainerRuntime(t)
-	_, err := rt.IsRunning(context.Background(), "")
-	if err == nil {
-		t.Fatal("expected error for empty containerID")
-	}
-	var validErr *InputValidationError
-	if !errors.As(err, &validErr) {
-		t.Fatalf("expected *InputValidationError, got %T: %v", err, err)
-	}
-}
-
-func TestExecContainerRuntime_Pull_EmptyImage(t *testing.T) {
-	t.Parallel()
-
-	rt := newFakeContainerRuntime(t)
-	err := rt.Pull(context.Background(), "")
-	if err == nil {
-		t.Fatal("expected error for empty image")
-	}
-	var validErr *InputValidationError
-	if !errors.As(err, &validErr) {
-		t.Fatalf("expected *InputValidationError, got %T: %v", err, err)
-	}
-}
-
-func TestExecContainerRuntime_Logs_EmptyContainerID(t *testing.T) {
-	t.Parallel()
-
-	rt := newFakeContainerRuntime(t)
-	_, err := rt.Logs(context.Background(), "")
-	if err == nil {
-		t.Fatal("expected error for empty containerID")
-	}
-	var validErr *InputValidationError
-	if !errors.As(err, &validErr) {
-		t.Fatalf("expected *InputValidationError, got %T: %v", err, err)
-	}
-}
-
-func TestExecContainerRuntime_Run_EmptyImage(t *testing.T) {
-	t.Parallel()
-
-	rt := newFakeContainerRuntime(t)
-	_, err := rt.Run(context.Background(), &ContainerSpec{Image: ""})
-	if err == nil {
-		t.Fatal("expected error for empty image")
-	}
-	var validErr *InputValidationError
-	if !errors.As(err, &validErr) {
-		t.Fatalf("expected *InputValidationError, got %T: %v", err, err)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			err := tt.call(context.Background(), newFakeContainerRuntime(t))
+			var validErr *InputValidationError
+			if !errors.As(err, &validErr) {
+				t.Fatalf("expected *InputValidationError, got %T: %v", err, err)
+			}
+		})
 	}
 }
 
@@ -2370,25 +1607,6 @@ func TestACPBackend_PromptJSONRPC_WithEventCallback(t *testing.T) {
 	}
 	if resp == nil {
 		t.Fatal("expected non-nil response")
-	}
-}
-
-// =============================================================================
-// Tier 5: ListJobs with KV store (exercises the kvStore merge branch)
-// =============================================================================
-
-func TestOrchestrator_ListJobs_WithKVStore(t *testing.T) {
-	t.Parallel()
-
-	impl := newTestService(t)
-
-	// No KV store set: only in-memory path executes.
-	jobs, err := impl.ListJobs(context.Background(), "tenant-kv", nil)
-	if err != nil {
-		t.Fatalf("ListJobs without KV: %v", err)
-	}
-	if len(jobs) != 0 {
-		t.Fatalf("expected 0 jobs, got %d", len(jobs))
 	}
 }
 
@@ -2806,60 +2024,6 @@ func TestAgentRegistry_UpdateAgent_NotFound(t *testing.T) {
 // =============================================================================
 // Agent Registry: ListFleetNodes — with filter
 // =============================================================================
-
-func TestAgentRegistry_ListAgents_WithFilter(t *testing.T) {
-	t.Parallel()
-
-	reg := NewInMemoryFleetRegistry()
-	ctx := context.Background()
-
-	agents := []*FleetNode{
-		{ID: "la-1", TenantID: "tenant-la", Name: "agent-a", Host: "h1", Backend: "acp", NodeType: "worker", Status: FleetNodeStatusIdle},
-		{ID: "la-2", TenantID: "tenant-la", Name: "agent-b", Host: "h2", Backend: "ollama", NodeType: "worker", Status: FleetNodeStatusRunning},
-		{ID: "la-3", TenantID: "tenant-la", Name: "agent-c", Host: "h1", Backend: "acp", NodeType: "reviewer", Status: FleetNodeStatusIdle},
-	}
-	for _, a := range agents {
-		if err := reg.RegisterFleetNode(ctx, a); err != nil {
-			t.Fatalf("RegisterFleetNode %s: %v", a.ID, err)
-		}
-	}
-
-	// Filter by backend.
-	list, err := reg.ListFleetNodes(ctx, "tenant-la", &FleetNodeFilter{Backend: "acp"})
-	if err != nil {
-		t.Fatalf("ListFleetNodes: %v", err)
-	}
-	if len(list) != 2 {
-		t.Errorf("expected 2 acp agents, got %d", len(list))
-	}
-
-	// Filter by host.
-	list, err = reg.ListFleetNodes(ctx, "tenant-la", &FleetNodeFilter{Host: "h1"})
-	if err != nil {
-		t.Fatalf("ListFleetNodes by host: %v", err)
-	}
-	if len(list) != 2 {
-		t.Errorf("expected 2 agents on h1, got %d", len(list))
-	}
-
-	// Filter by status.
-	list, err = reg.ListFleetNodes(ctx, "tenant-la", &FleetNodeFilter{Status: FleetNodeStatusRunning})
-	if err != nil {
-		t.Fatalf("ListFleetNodes by status: %v", err)
-	}
-	if len(list) != 1 {
-		t.Errorf("expected 1 running agent, got %d", len(list))
-	}
-
-	// Filter with limit.
-	list, err = reg.ListFleetNodes(ctx, "tenant-la", &FleetNodeFilter{Limit: 1})
-	if err != nil {
-		t.Fatalf("ListFleetNodes with limit: %v", err)
-	}
-	if len(list) != 1 {
-		t.Errorf("expected 1 agent with limit=1, got %d", len(list))
-	}
-}
 
 func TestAgentRegistry_ListAgents_EmptyTenantID(t *testing.T) {
 	t.Parallel()
@@ -3466,66 +2630,6 @@ func TestOrchestrator_ListBackends_NoBackends(t *testing.T) {
 }
 
 // =============================================================================
-// Orchestrator: fleet management via registry
-// =============================================================================
-
-func TestOrchestrator_RegisterAgent_WithRegistry(t *testing.T) {
-	t.Parallel()
-
-	impl := newTestService(t)
-	reg := NewInMemoryFleetRegistry()
-	impl.SetFleetRegistry(reg)
-
-	resp, err := impl.RegisterFleetNode(context.Background(), &RegisterFleetNodeRequest{
-		TenantID: "tenant-svc",
-		Name:     "svc-agent",
-		Host:     "localhost",
-		Backend:  "acp",
-		NodeType: "worker",
-	})
-	if err != nil {
-		t.Fatalf("RegisterFleetNode: %v", err)
-	}
-	if resp == nil || resp.Node == nil {
-		t.Fatal("expected non-nil response")
-	}
-	if resp.Node.Name != "svc-agent" {
-		t.Errorf("name = %q, want svc-agent", resp.Node.Name)
-	}
-}
-
-func TestOrchestrator_ListAgents_WithRegistry(t *testing.T) {
-	t.Parallel()
-
-	impl := newTestService(t)
-	reg := NewInMemoryFleetRegistry()
-	impl.SetFleetRegistry(reg)
-
-	ctx := context.Background()
-	for i := 0; i < 2; i++ {
-		if err := reg.RegisterFleetNode(ctx, &FleetNode{
-			ID:       "la-svc-" + itoa(i),
-			TenantID: "tenant-la-svc",
-			Name:     "agent-" + itoa(i),
-			Host:     "h",
-			Backend:  "acp",
-			NodeType: "worker",
-			Status:   FleetNodeStatusIdle,
-		}); err != nil {
-			t.Fatalf("RegisterFleetNode: %v", err)
-		}
-	}
-
-	agents, err := impl.ListFleetNodes(ctx, "tenant-la-svc", nil)
-	if err != nil {
-		t.Fatalf("ListFleetNodes: %v", err)
-	}
-	if len(agents) != 2 {
-		t.Errorf("expected 2 agents, got %d", len(agents))
-	}
-}
-
-// =============================================================================
 // Orchestrator: FleetNodeHeartbeat — with registry, not found
 // =============================================================================
 
@@ -3549,67 +2653,43 @@ func TestOrchestrator_AgentHeartbeat_NotFound(t *testing.T) {
 // ControlLoop: defaultWorkerRole
 // =============================================================================
 
-func TestControlLoop_DefaultWorkerRole_NoWorkflow(t *testing.T) {
+func TestControlLoop_DefaultWorkerRole(t *testing.T) {
 	t.Parallel()
 
-	cl := newMinimalControlLoop(t)
-	// No workflow set — should return empty string.
-	role := cl.defaultWorkerRole()
-	if role != "" {
-		t.Errorf("expected empty role without workflow, got %q", role)
-	}
-}
-
-func TestControlLoop_DefaultWorkerRole_OnlyLead(t *testing.T) {
-	t.Parallel()
-
-	cl := newMinimalControlLoop(t)
-	cl.workflow = &WorkflowDefinition{
-		Name: "lead-only",
-		Agents: []AgentRoleSpec{
-			{Role: "lead", Backend: "acp"},
+	tests := []struct {
+		name     string
+		workflow *WorkflowDefinition
+		want     string
+	}{
+		{name: "NoWorkflow"},
+		{
+			name: "OnlyLead",
+			workflow: &WorkflowDefinition{
+				Name:   "lead-only",
+				Agents: []AgentRoleSpec{{Role: "lead", Backend: "acp"}},
+			},
+		},
+		{
+			name: "WithWorker",
+			workflow: &WorkflowDefinition{
+				Name: "with-worker",
+				Agents: []AgentRoleSpec{
+					{Role: "lead", Backend: "acp"},
+					{Role: "worker", Backend: "acp"},
+				},
+			},
+			want: "worker",
 		},
 	}
-	// No non-lead role — should return empty string.
-	role := cl.defaultWorkerRole()
-	if role != "" {
-		t.Errorf("expected empty role with only lead, got %q", role)
-	}
-}
 
-func TestControlLoop_DefaultWorkerRole_WithWorker(t *testing.T) {
-	t.Parallel()
-
-	cl := newMinimalControlLoop(t)
-	cl.workflow = &WorkflowDefinition{
-		Name: "with-worker",
-		Agents: []AgentRoleSpec{
-			{Role: "lead", Backend: "acp"},
-			{Role: "worker", Backend: "acp"},
-		},
-	}
-	role := cl.defaultWorkerRole()
-	if role != "worker" {
-		t.Errorf("expected 'worker', got %q", role)
-	}
-}
-
-// =============================================================================
-// ControlLoop: roleHasCapability — with matching capability
-// =============================================================================
-
-func TestControlLoop_RoleHasCapability_Matching(t *testing.T) {
-	t.Parallel()
-
-	cl := newMinimalControlLoop(t)
-	cl.workflow = &WorkflowDefinition{
-		Name: "cap-test",
-		Agents: []AgentRoleSpec{
-			{Role: "lead", Backend: "acp", Capabilities: []string{"persistent_sessions", "tool_use"}},
-		},
-	}
-	if !cl.roleHasCapability("lead", "persistent_sessions") {
-		t.Error("expected lead to have persistent_sessions capability")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cl := newMinimalControlLoop(t)
+			cl.workflow = tt.workflow
+			if got := cl.defaultWorkerRole(); got != tt.want {
+				t.Errorf("defaultWorkerRole() = %q, want %q", got, tt.want)
+			}
+		})
 	}
 }
 
@@ -3653,102 +2733,42 @@ func TestControlLoop_ResolveAgentSpec_NotFound(t *testing.T) {
 }
 
 // =============================================================================
-// ControlLoop: generateJobID and generateCorrelationID — already tested but cover error branch
-// =============================================================================
-
-func TestControlLoop_GenerateJobID_UniqueIDs(t *testing.T) {
-	t.Parallel()
-
-	id1, err := generateJobID()
-	if err != nil {
-		t.Fatalf("generateJobID: %v", err)
-	}
-	id2, err := generateJobID()
-	if err != nil {
-		t.Fatalf("generateJobID second: %v", err)
-	}
-	if id1 == id2 {
-		t.Error("expected unique IDs")
-	}
-}
-
-// =============================================================================
 // ControlLoop: parseReviewResponse
 // =============================================================================
 
-func TestControlLoop_ParseReviewResponse_Approved(t *testing.T) {
+func TestControlLoop_ParseReviewResponse(t *testing.T) {
 	t.Parallel()
 
-	// parseReviewResponse is a package-level function taking a string.
-	// Supply valid JSON with approved=true.
-	text := `{"approved": true, "feedback": "looks good"}`
-	result, err := parseReviewResponse(text)
-	if err != nil {
-		t.Fatalf("parseReviewResponse: %v", err)
+	tests := []struct {
+		name         string
+		text         string
+		wantApproved bool
+		wantErr      bool
+	}{
+		{name: "Approved", text: `{"approved": true, "feedback": "looks good"}`, wantApproved: true},
+		{name: "Rejected", text: `{"approved": false, "feedback": "needs more work"}`},
+		{name: "InvalidJSON", text: "not json at all", wantErr: true},
 	}
-	if result == nil {
-		t.Fatal("expected non-nil result")
-	}
-	if !result.Approved {
-		t.Errorf("expected Approved=true, got false")
-	}
-}
 
-func TestControlLoop_ParseReviewResponse_Rejected(t *testing.T) {
-	t.Parallel()
-
-	text := `{"approved": false, "feedback": "needs more work"}`
-	result, err := parseReviewResponse(text)
-	if err != nil {
-		t.Fatalf("parseReviewResponse rejected: %v", err)
-	}
-	if result == nil {
-		t.Fatal("expected non-nil result")
-	}
-	if result.Approved {
-		t.Errorf("expected Approved=false")
-	}
-}
-
-func TestControlLoop_ParseReviewResponse_InvalidJSON(t *testing.T) {
-	t.Parallel()
-
-	_, err := parseReviewResponse("not json at all")
-	if err == nil {
-		t.Fatal("expected error for invalid input")
-	}
-}
-
-// =============================================================================
-// ControlLoop: checkBudget with nil tracker (no budget)
-// =============================================================================
-
-func TestControlLoop_CheckBudget_NilTracker(t *testing.T) {
-	t.Parallel()
-
-	cl := newMinimalControlLoop(t)
-	// costTracker is nil by default — checkBudget returns (nil, nil).
-	result, err := cl.checkBudget(context.Background())
-	if err != nil {
-		t.Fatalf("checkBudget with nil tracker: %v", err)
-	}
-	// nil result means no budget enforcement (no tracker configured).
-	if result != nil {
-		t.Errorf("expected nil result without tracker, got %v", result)
-	}
-}
-
-// =============================================================================
-// ControlLoop: defaultBackendName helper via orchestrator
-// =============================================================================
-
-func TestOrchestrator_DefaultBackendName_NoBackends(t *testing.T) {
-	t.Parallel()
-
-	impl := newTestService(t)
-	name := impl.defaultBackendName()
-	if name != "" {
-		t.Errorf("expected empty string without backends, got %q", name)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, err := parseReviewResponse(tt.text)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatal("expected error for invalid input")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("parseReviewResponse: %v", err)
+			}
+			if result == nil {
+				t.Fatal("expected non-nil result")
+			}
+			if result.Approved != tt.wantApproved {
+				t.Errorf("Approved = %v, want %v", result.Approved, tt.wantApproved)
+			}
+		})
 	}
 }
 
@@ -3788,20 +2808,6 @@ func TestExecContainerRuntime_Remove_CommandFails(t *testing.T) {
 	}
 }
 
-func TestExecContainerRuntime_IsRunning_CommandFails(t *testing.T) {
-	t.Parallel()
-
-	rt := newFalseBinaryRuntime(t)
-	running, err := rt.IsRunning(context.Background(), "some-container-id")
-	if err != nil {
-		// IsRunning returns (false, nil) when container not found, but our
-		// fake binary stderr won't match "not found" — it returns false+error.
-		t.Logf("IsRunning error (expected): %v", err)
-	}
-	// Either path is valid — the function was exercised.
-	_ = running
-}
-
 func TestExecContainerRuntime_Pull_CommandFails(t *testing.T) {
 	t.Parallel()
 
@@ -3809,18 +2815,6 @@ func TestExecContainerRuntime_Pull_CommandFails(t *testing.T) {
 	err := rt.Pull(context.Background(), "my-image:latest")
 	if err == nil {
 		t.Fatal("expected error from failing binary")
-	}
-}
-
-func TestExecContainerRuntime_Logs_CommandFails(t *testing.T) {
-	t.Parallel()
-
-	rt := newFalseBinaryRuntime(t)
-	// Logs runs StdoutPipe then Start. With /bin/false the Start will fail.
-	_, err := rt.Logs(context.Background(), "some-container-id")
-	// This may succeed in returning a ReadCloser before start, or fail on Start.
-	if err != nil {
-		t.Logf("Logs error (expected): %v", err)
 	}
 }
 
@@ -4269,36 +3263,6 @@ func TestACPBackend_GenerateSessionID_Unique(t *testing.T) {
 }
 
 // =============================================================================
-// Cost Tracker: Error() methods — nil Cause branch
-// =============================================================================
-
-func TestUsageRecordError_NilCause(t *testing.T) {
-	t.Parallel()
-
-	err := &UsageRecordError{TenantID: "t1", JobID: "j1", AgentID: "a1"}
-	msg := err.Error()
-	if msg == "" {
-		t.Error("Error() returned empty string")
-	}
-	if !errors.Is(err, ErrUsageRecord) {
-		t.Error("expected ErrUsageRecord via Unwrap")
-	}
-}
-
-func TestUsageRetrievalError_NilCause(t *testing.T) {
-	t.Parallel()
-
-	err := &UsageRetrievalError{TenantID: "t1", JobID: "j1"}
-	msg := err.Error()
-	if msg == "" {
-		t.Error("Error() returned empty string")
-	}
-	if !errors.Is(err, ErrUsageRetrieval) {
-		t.Error("expected ErrUsageRetrieval via Unwrap")
-	}
-}
-
-// =============================================================================
 // Cost Tracker Store: GetAgentUsage and collectAgentUsage
 // =============================================================================
 
@@ -4474,19 +3438,6 @@ func TestOrchestrator_CompleteTask_Success(t *testing.T) {
 	if err = impl.CompleteTask(ctx, "tenant-comp", taskID, &TaskResult{Output: "done"}); err != nil {
 		t.Fatalf("CompleteTask: %v", err)
 	}
-}
-
-// =============================================================================
-// Orchestrator: BackendToolGuidance
-// =============================================================================
-
-func TestOrchestrator_BackendToolGuidance_NoBackend(t *testing.T) {
-	t.Parallel()
-
-	impl := newTestService(t)
-	guidance := impl.BackendToolGuidance("nonexistent")
-	// No backend — should return empty string without panic.
-	_ = guidance
 }
 
 // =============================================================================
@@ -4760,33 +3711,6 @@ func TestPeerMessagingStore_Send_MaxMessageSize(t *testing.T) {
 	}
 }
 
-func TestPeerMessagingStore_NotifySubscriber_BufferFull(t *testing.T) {
-	t.Parallel()
-
-	svc := NewPeerMessagingService(newPeerTestKVStore(), InboxPolicy{}, &peerTestLogger{})
-	ctx := context.Background()
-
-	// Subscribe then drain nothing — buffer fills up.
-	ch, err := svc.Subscribe(ctx, "t-notify", "sub-agent")
-	if err != nil {
-		t.Fatalf("Subscribe: %v", err)
-	}
-
-	// Send enough messages to fill the channel buffer.
-	for i := 0; i <= subscriberBufferSize; i++ {
-		_ = svc.Send(ctx, &PeerMessage{
-			ID:        "notify-" + itoa(i),
-			From:      "src",
-			To:        "sub-agent",
-			Action:    "task",
-			Timestamp: int64(i + 1),
-			Metadata:  map[string]string{"tenant_id": "t-notify"},
-		})
-	}
-	// Ensure the channel is not blocked and didn't panic.
-	_ = ch
-}
-
 // =============================================================================
 // agent_registry — ListFleetNodes with filters, UpdateFleetNode version conflict
 // =============================================================================
@@ -4881,152 +3805,127 @@ func TestAgentRegistry_ListAgents_WithFilters(t *testing.T) {
 	})
 }
 
-func TestAgentRegistry_RemoveAgent_EmptyID(t *testing.T) {
+func TestAgentRegistry_EmptyArgument(t *testing.T) {
 	t.Parallel()
 
-	reg := NewInMemoryFleetRegistry()
-	err := reg.RemoveFleetNode(context.Background(), "t-rem", "")
-	if err == nil {
-		t.Fatal("expected error for empty agentID")
+	tests := []struct {
+		name string
+		call func(ctx context.Context, reg FleetRegistry) error
+	}{
+		{
+			name: "RemoveFleetNode empty agentID",
+			call: func(ctx context.Context, reg FleetRegistry) error {
+				return reg.RemoveFleetNode(ctx, "t-rem", "")
+			},
+		},
+		{
+			name: "Heartbeat empty tenantID",
+			call: func(ctx context.Context, reg FleetRegistry) error {
+				return reg.Heartbeat(ctx, "", "agent-x", nil)
+			},
+		},
+		{
+			name: "Heartbeat empty agentID",
+			call: func(ctx context.Context, reg FleetRegistry) error {
+				return reg.Heartbeat(ctx, "t-hb", "", nil)
+			},
+		},
+		{
+			name: "UpdateFleetNode empty ID",
+			call: func(ctx context.Context, reg FleetRegistry) error {
+				return reg.UpdateFleetNode(ctx, &FleetNode{ID: "", TenantID: "t1"})
+			},
+		},
+		{
+			name: "UpdateFleetNode empty tenantID",
+			call: func(ctx context.Context, reg FleetRegistry) error {
+				return reg.UpdateFleetNode(ctx, &FleetNode{ID: "agent-1", TenantID: ""})
+			},
+		},
 	}
-}
 
-func TestAgentRegistry_Heartbeat_EmptyTenant(t *testing.T) {
-	t.Parallel()
-
-	reg := NewInMemoryFleetRegistry()
-	err := reg.Heartbeat(context.Background(), "", "agent-x", nil)
-	if err == nil {
-		t.Fatal("expected error for empty tenantID")
-	}
-}
-
-func TestAgentRegistry_Heartbeat_EmptyAgent(t *testing.T) {
-	t.Parallel()
-
-	reg := NewInMemoryFleetRegistry()
-	err := reg.Heartbeat(context.Background(), "t-hb", "", nil)
-	if err == nil {
-		t.Fatal("expected error for empty agentID")
-	}
-}
-
-func TestAgentRegistry_DeleteTenantAgents_EmptyTenant(t *testing.T) {
-	t.Parallel()
-
-	reg := NewInMemoryFleetRegistry()
-	err := reg.DeleteTenantFleetNodes(context.Background(), "")
-	if err == nil {
-		t.Fatal("expected error for empty tenantID")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			err := tt.call(context.Background(), NewInMemoryFleetRegistry())
+			if !errors.Is(err, ErrFleetRegistryInvalidInput) {
+				t.Fatalf("expected ErrFleetRegistryInvalidInput, got %v", err)
+			}
+		})
 	}
 }
 
 // =============================================================================
-// task_store — FailTask invalid state, UpdateTask version conflict + nil checks
+// task_store — FailTask / UpdateTask error paths, empty-ID guards
 // =============================================================================
 
-func TestTaskStore_FailTask_InvalidState(t *testing.T) {
-	t.Parallel()
-
+// newTaskStoreWithPending returns a task store holding one pending task.
+func newTaskStoreWithPending(t *testing.T, tenantID, taskID string) TaskStore {
+	t.Helper()
 	store := NewInMemoryTaskStore()
-	ctx := context.Background()
-
-	task := &Task{
-		ID:       "task-fail-state",
-		TenantID: "tenant-tfs",
-		Subject:  "can't fail from pending",
+	if err := store.CreateTask(context.Background(), &Task{
+		ID:       taskID,
+		TenantID: tenantID,
+		Subject:  "pending task",
 		Status:   TaskStatusPending,
-	}
-	if err := store.CreateTask(ctx, task); err != nil {
+	}); err != nil {
 		t.Fatalf("CreateTask: %v", err)
 	}
+	return store
+}
 
-	// Fail directly from pending (not claimed) → invalid state.
-	err := store.FailTask(ctx, "tenant-tfs", "task-fail-state", "broke")
-	if err == nil {
-		t.Fatal("expected error for failing a pending task")
+func TestTaskStore_FailTask_Errors(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		tenantID string
+		taskID   string
+		reason   string
+		want     error
+	}{
+		{"pending task cannot fail", "tenant-tfs", "task-fail-state", "broke", ErrTaskInvalidState},
+		{"not found", "tenant-tfs", "nonexistent", "broken", ErrTaskNotFound},
+		{"empty reason", "tenant-tfs", "task-fail-state", "", ErrTaskStoreInvalidInput},
+		{"empty tenantID", "", "task-fail-state", "reason", ErrTaskStoreInvalidInput},
+		{"empty taskID", "tenant-tfs", "", "reason", ErrTaskStoreInvalidInput},
 	}
-	if !errors.Is(err, ErrTaskInvalidState) {
-		t.Errorf("expected ErrTaskInvalidState, got %v", err)
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			store := newTaskStoreWithPending(t, "tenant-tfs", "task-fail-state")
+			err := store.FailTask(context.Background(), tt.tenantID, tt.taskID, tt.reason)
+			if !errors.Is(err, tt.want) {
+				t.Fatalf("expected %v, got %v", tt.want, err)
+			}
+		})
 	}
 }
 
-func TestTaskStore_FailTask_NotFound(t *testing.T) {
+func TestTaskStore_UpdateTask_Errors(t *testing.T) {
 	t.Parallel()
 
-	store := NewInMemoryTaskStore()
-	err := store.FailTask(context.Background(), "t-fn", "nonexistent", "broken")
-	if err == nil {
-		t.Fatal("expected not-found error")
-	}
-	if !errors.Is(err, ErrTaskNotFound) {
-		t.Errorf("expected ErrTaskNotFound, got %v", err)
-	}
-}
-
-func TestTaskStore_FailTask_EmptyReason(t *testing.T) {
-	t.Parallel()
-
-	store := NewInMemoryTaskStore()
-	err := store.FailTask(context.Background(), "t-fn", "task-x", "")
-	if err == nil {
-		t.Fatal("expected error for empty reason")
-	}
-}
-
-func TestTaskStore_UpdateTask_VersionConflict(t *testing.T) {
-	t.Parallel()
-
-	store := NewInMemoryTaskStore()
-	ctx := context.Background()
-
-	task := &Task{
-		ID:       "task-vc",
-		TenantID: "tenant-vc",
-		Subject:  "version conflict",
-		Status:   TaskStatusPending,
-		Version:  0,
-	}
-	if err := store.CreateTask(ctx, task); err != nil {
-		t.Fatalf("CreateTask: %v", err)
+	tests := []struct {
+		name string
+		task *Task
+		want error
+	}{
+		{"version conflict", &Task{ID: "task-vc", TenantID: "tenant-vc", Subject: "x", Status: TaskStatusPending, Version: 999}, ErrTaskVersionConflict},
+		{"nil task", nil, ErrTaskStoreInvalidInput},
+		{"not found", &Task{ID: "ghost-task", TenantID: "tenant-vc", Subject: "x"}, ErrTaskNotFound},
+		{"empty tenantID", &Task{ID: "task-vc", Subject: "x"}, ErrTaskStoreInvalidInput},
 	}
 
-	// Wrong version.
-	bad := *task
-	bad.Version = 999
-	err := store.UpdateTask(ctx, &bad)
-	if err == nil {
-		t.Fatal("expected version conflict error")
-	}
-	if !errors.Is(err, ErrTaskVersionConflict) {
-		t.Errorf("expected ErrTaskVersionConflict, got %v", err)
-	}
-}
-
-func TestTaskStore_UpdateTask_NilTask(t *testing.T) {
-	t.Parallel()
-
-	store := NewInMemoryTaskStore()
-	err := store.UpdateTask(context.Background(), nil)
-	if err == nil {
-		t.Fatal("expected error for nil task")
-	}
-}
-
-func TestTaskStore_UpdateTask_NotFound(t *testing.T) {
-	t.Parallel()
-
-	store := NewInMemoryTaskStore()
-	err := store.UpdateTask(context.Background(), &Task{
-		ID:       "ghost-task",
-		TenantID: "t-ghost",
-		Version:  0,
-	})
-	if err == nil {
-		t.Fatal("expected not-found error")
-	}
-	if !errors.Is(err, ErrTaskNotFound) {
-		t.Errorf("expected ErrTaskNotFound, got %v", err)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			store := newTaskStoreWithPending(t, "tenant-vc", "task-vc")
+			err := store.UpdateTask(context.Background(), tt.task)
+			if !errors.Is(err, tt.want) {
+				t.Fatalf("expected %v, got %v", tt.want, err)
+			}
+		})
 	}
 }
 
@@ -5065,23 +3964,59 @@ func TestTaskStore_ListTasks_WithFilter(t *testing.T) {
 	}
 }
 
-func TestTaskStore_ClaimTask_EmptyTenantID(t *testing.T) {
+func TestTaskStore_EmptyID(t *testing.T) {
 	t.Parallel()
 
-	store := NewInMemoryTaskStore()
-	err := store.ClaimTask(context.Background(), "", "task-x", "agent-a")
-	if err == nil {
-		t.Fatal("expected error for empty tenantID")
+	tests := []struct {
+		name string
+		call func(ctx context.Context, store TaskStore) error
+	}{
+		{
+			name: "ClaimTask empty tenantID",
+			call: func(ctx context.Context, store TaskStore) error {
+				return store.ClaimTask(ctx, "", "task-x", "agent-a")
+			},
+		},
+		{
+			name: "ClaimTask empty taskID",
+			call: func(ctx context.Context, store TaskStore) error {
+				return store.ClaimTask(ctx, "tenant-a", "", "agent-a")
+			},
+		},
+		{
+			name: "CompleteTask empty tenantID",
+			call: func(ctx context.Context, store TaskStore) error {
+				return store.CompleteTask(ctx, "", "task-x", &TaskResult{Output: "done"})
+			},
+		},
+		{
+			name: "CompleteTask empty taskID",
+			call: func(ctx context.Context, store TaskStore) error {
+				return store.CompleteTask(ctx, "tenant-a", "", &TaskResult{Output: "done"})
+			},
+		},
+		{
+			name: "DeleteTask empty taskID",
+			call: func(ctx context.Context, store TaskStore) error {
+				return store.DeleteTask(ctx, "tenant-a", "")
+			},
+		},
+		{
+			name: "DeleteTenantTasks empty tenantID",
+			call: func(ctx context.Context, store TaskStore) error {
+				return store.DeleteTenantTasks(ctx, "")
+			},
+		},
 	}
-}
 
-func TestTaskStore_CompleteTask_EmptyTaskID(t *testing.T) {
-	t.Parallel()
-
-	store := NewInMemoryTaskStore()
-	err := store.CompleteTask(context.Background(), "t-ct", "", &TaskResult{Output: "done"})
-	if err == nil {
-		t.Fatal("expected error for empty taskID")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			err := tt.call(context.Background(), NewInMemoryTaskStore())
+			if !errors.Is(err, ErrTaskStoreInvalidInput) {
+				t.Fatalf("expected ErrTaskStoreInvalidInput, got %v", err)
+			}
+		})
 	}
 }
 
@@ -5106,54 +4041,6 @@ func TestSessionStore_UpdateSessionActivity_NotFound(t *testing.T) {
 	err := store.UpdateSessionActivity(context.Background(), "", "nonexistent-session")
 	if err == nil {
 		t.Fatal("expected not-found error")
-	}
-}
-
-func TestSessionStore_UpdateSessionActivity_Success(t *testing.T) {
-	t.Parallel()
-
-	store := NewInMemoryAgentStore()
-	ctx := context.Background()
-
-	rec := &SessionRecord{
-		SessionID: "sess-act-1",
-		Backend:   "acp",
-		Status:    SessionStateActive,
-	}
-	if err := store.PutSession(ctx, rec); err != nil {
-		t.Fatalf("PutSession: %v", err)
-	}
-
-	if err := store.UpdateSessionActivity(ctx, "", "sess-act-1"); err != nil {
-		t.Fatalf("UpdateSessionActivity: %v", err)
-	}
-}
-
-// =============================================================================
-// container_runtime — cmdReadCloser Read/Close, Run error path
-// =============================================================================
-
-func TestContainerRuntime_Run_CommandFails_Coverage(t *testing.T) {
-	t.Parallel()
-
-	rt := newFalseBinaryRuntime(t)
-	cid, _ := generateContainerID()
-	_, err := rt.Run(context.Background(), &ContainerSpec{
-		Image: "test-image",
-		Name:  cid,
-	})
-	if err == nil {
-		t.Fatal("expected error from /bin/false")
-	}
-}
-
-func TestContainerRuntime_Logs_EmptyContainerID(t *testing.T) {
-	t.Parallel()
-
-	rt := newFalseBinaryRuntime(t)
-	_, err := rt.Logs(context.Background(), "")
-	if err == nil {
-		t.Fatal("expected error for empty container ID")
 	}
 }
 
@@ -5183,36 +4070,6 @@ func TestProtoContentBlocksToRuntime_Empty(t *testing.T) {
 // =============================================================================
 // orchestrator — StartJob missing tenant ID
 // =============================================================================
-
-func TestOrchestrator_StartJob_MissingTenantID(t *testing.T) {
-	t.Parallel()
-
-	impl := newTestService(t)
-	_, err := impl.StartJob(context.Background(), &StartJobRequest{
-		Description: "do something",
-	})
-	if err == nil {
-		t.Fatal("expected error for missing tenant ID")
-	}
-}
-
-// =============================================================================
-// orchestrator — validateTenant with guard and empty tenant
-// =============================================================================
-
-func TestOrchestrator_ValidateTenant_WithGuard_EmptyTenant(t *testing.T) {
-	t.Parallel()
-
-	impl := newTestService(t)
-	guard := NewTenantGuard(&peerTestLogger{})
-	impl.SetTenantGuard(guard)
-
-	// Context without tenant ID → validateTenant returns TenantRequiredError.
-	err := impl.validateTenant(context.Background())
-	if err == nil {
-		t.Fatal("expected error for empty tenant in context")
-	}
-}
 
 func TestOrchestrator_ValidateTenant_WithGuard_ValidTenant(t *testing.T) {
 	t.Parallel()
@@ -5271,77 +4128,73 @@ func TestControlLoop_GenerateCorrelationID_Unique(t *testing.T) {
 }
 
 // =============================================================================
-// workflow_loader — Register and Get roundtrip, ListDefinitions
+// orchestrator — GetJobStatus / CancelJob / SubscribeJobEvents empty IDs
 // =============================================================================
 
-func TestWorkflowLoader_Register_And_Get(t *testing.T) {
+func TestOrchestrator_JobEmptyID(t *testing.T) {
 	t.Parallel()
 
-	loader := NewWorkflowLoader()
-	def := &WorkflowDefinition{
-		Name: "test-wf",
-		Mode: WorkflowModeAutonomous,
-		Agents: []AgentRoleSpec{
-			{Role: "lead", Backend: "acp"},
+	tests := []struct {
+		name string
+		call func(ctx context.Context, svc *agentServiceImpl) error
+		want error
+	}{
+		{
+			name: "GetJobStatus empty tenantID",
+			call: func(ctx context.Context, svc *agentServiceImpl) error {
+				_, err := svc.GetJobStatus(ctx, "", "job-x")
+				return err
+			},
+			want: ErrTenantIDRequired,
+		},
+		{
+			name: "GetJobStatus empty jobID",
+			call: func(ctx context.Context, svc *agentServiceImpl) error {
+				_, err := svc.GetJobStatus(ctx, "t-gjs", "")
+				return err
+			},
+			want: ErrTaskIDRequired,
+		},
+		{
+			name: "CancelJob empty tenantID",
+			call: func(ctx context.Context, svc *agentServiceImpl) error {
+				return svc.CancelJob(ctx, "", "job-1")
+			},
+			want: ErrTenantIDRequired,
+		},
+		{
+			name: "CancelJob empty jobID",
+			call: func(ctx context.Context, svc *agentServiceImpl) error {
+				return svc.CancelJob(ctx, "tenant-1", "")
+			},
+			want: ErrTaskIDRequired,
+		},
+		{
+			name: "SubscribeJobEvents empty tenantID",
+			call: func(ctx context.Context, svc *agentServiceImpl) error {
+				_, err := svc.SubscribeJobEvents(ctx, "", "job-x")
+				return err
+			},
+			want: ErrTenantIDRequired,
+		},
+		{
+			name: "SubscribeJobEvents empty jobID",
+			call: func(ctx context.Context, svc *agentServiceImpl) error {
+				_, err := svc.SubscribeJobEvents(ctx, "t-sje", "")
+				return err
+			},
+			want: ErrJobNotFound,
 		},
 	}
-	if err := loader.Register(SystemTenantID, def); err != nil {
-		t.Fatalf("Register: %v", err)
-	}
 
-	got, err := loader.Get(SystemTenantID, "test-wf")
-	if err != nil {
-		t.Fatalf("Get: %v", err)
-	}
-	if got.Name != "test-wf" {
-		t.Errorf("expected test-wf, got %s", got.Name)
-	}
-
-	names := loader.List(SystemTenantID)
-	if len(names) != 1 || names[0] != "test-wf" {
-		t.Errorf("expected [test-wf], got %v", names)
-	}
-}
-
-func TestWorkflowLoader_ListDefinitions(t *testing.T) {
-	t.Parallel()
-
-	loader := NewWorkflowLoader()
-	if err := loader.Register(SystemTenantID, &WorkflowDefinition{
-		Name:   "wf-def-1",
-		Mode:   WorkflowModeAutonomous,
-		Agents: []AgentRoleSpec{{Role: "lead", Backend: "acp"}},
-	}); err != nil {
-		t.Fatalf("Register: %v", err)
-	}
-
-	defs := loader.ListDefinitions(SystemTenantID)
-	if len(defs) != 1 {
-		t.Errorf("expected 1 definition, got %d", len(defs))
-	}
-}
-
-// =============================================================================
-// orchestrator — GetJobStatus and CancelJob error paths
-// =============================================================================
-
-func TestOrchestrator_GetJobStatus_EmptyTenantID(t *testing.T) {
-	t.Parallel()
-
-	impl := newTestService(t)
-	_, err := impl.GetJobStatus(context.Background(), "", "job-x")
-	if err == nil {
-		t.Fatal("expected error for empty tenantID")
-	}
-}
-
-func TestOrchestrator_GetJobStatus_EmptyJobID(t *testing.T) {
-	t.Parallel()
-
-	impl := newTestService(t)
-	_, err := impl.GetJobStatus(context.Background(), "t-gjs", "")
-	if err == nil {
-		t.Fatal("expected error for empty jobID")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			err := tt.call(context.Background(), newTestService(t))
+			if !errors.Is(err, tt.want) {
+				t.Fatalf("expected %v, got %v", tt.want, err)
+			}
+		})
 	}
 }
 
@@ -5386,10 +4239,16 @@ func TestOrchestrator_ResolveSandboxMode_WithTenantPolicy(t *testing.T) {
 		Backend:   "acp",
 	}
 
-	// resolveSandboxMode exercises the tenantPolicies branch.
-	// The error (no runtime) is acceptable — we just want to cover the branch.
-	mode, _ := impl.resolveSandboxMode(ctx, req, false)
-	_ = mode
+	// The tenant override raises the policy to Required; with no container
+	// runtime a default-mode spawn must be refused.
+	_, err := impl.resolveSandboxMode(ctx, req, false)
+	var violation *SandboxModeViolationError
+	if !errors.As(err, &violation) {
+		t.Fatalf("expected *SandboxModeViolationError, got %T: %v", err, err)
+	}
+	if violation.Policy != SandboxPolicyRequired {
+		t.Errorf("Policy = %v, want SandboxPolicyRequired", violation.Policy)
+	}
 }
 
 // =============================================================================
@@ -5429,63 +4288,48 @@ func TestControlLoop_CollectTaskResults_WithResult(t *testing.T) {
 // control_loop — pollTaskCompletion
 // =============================================================================
 
-func TestControlLoop_PollTaskCompletion_Done(t *testing.T) {
+func TestControlLoop_PollTaskCompletion(t *testing.T) {
 	t.Parallel()
 
-	cl := newMinimalControlLoop(t)
-	cl.job.Config = &JobConfig{TenantID: "t-ptc", Description: "poll completion"}
-
-	ts := NewInMemoryTaskStore()
-	cl.job.Agents.(*agentServiceImpl).SetTaskStore(ts)
-
-	ctx := context.Background()
-	taskID := "ptc-task-1"
-	if err := ts.CreateTask(ctx, &Task{
-		ID:       taskID,
-		TenantID: "t-ptc",
-		Subject:  "complete me",
-		Status:   TaskStatusCompleted,
-	}); err != nil {
-		t.Fatalf("CreateTask: %v", err)
+	tests := []struct {
+		name     string
+		status   TaskStatus
+		wantDone bool
+	}{
+		{"completed task is done", TaskStatusCompleted, true},
+		{"claimed task is not done", TaskStatusClaimed, false},
 	}
-	cl.taskIDs = []string{taskID}
 
-	done, err := cl.pollTaskCompletion(ctx)
-	if err != nil {
-		t.Fatalf("pollTaskCompletion: %v", err)
-	}
-	if !done {
-		t.Error("expected done=true with 1 completed task")
-	}
-}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 
-func TestControlLoop_PollTaskCompletion_NotDone(t *testing.T) {
-	t.Parallel()
+			cl := newMinimalControlLoop(t)
+			cl.job.Config = &JobConfig{TenantID: "t-ptc", Description: "poll completion"}
 
-	cl := newMinimalControlLoop(t)
-	cl.job.Config = &JobConfig{TenantID: "t-ptc2", Description: "poll not done"}
+			ts := NewInMemoryTaskStore()
+			cl.job.Agents.(*agentServiceImpl).SetTaskStore(ts)
 
-	ts := NewInMemoryTaskStore()
-	cl.job.Agents.(*agentServiceImpl).SetTaskStore(ts)
+			ctx := context.Background()
+			taskID := "ptc-task-1"
+			if err := ts.CreateTask(ctx, &Task{
+				ID:       taskID,
+				TenantID: "t-ptc",
+				Subject:  "poll me",
+				Status:   tt.status,
+			}); err != nil {
+				t.Fatalf("CreateTask: %v", err)
+			}
+			cl.taskIDs = []string{taskID}
 
-	ctx := context.Background()
-	taskID := "ptc-task-2"
-	if err := ts.CreateTask(ctx, &Task{
-		ID:       taskID,
-		TenantID: "t-ptc2",
-		Subject:  "still running",
-		Status:   TaskStatusClaimed,
-	}); err != nil {
-		t.Fatalf("CreateTask: %v", err)
-	}
-	cl.taskIDs = []string{taskID}
-
-	done, err := cl.pollTaskCompletion(ctx)
-	if err != nil {
-		t.Fatalf("pollTaskCompletion: %v", err)
-	}
-	if done {
-		t.Error("expected done=false with in-progress task")
+			done, err := cl.pollTaskCompletion(ctx)
+			if err != nil {
+				t.Fatalf("pollTaskCompletion: %v", err)
+			}
+			if done != tt.wantDone {
+				t.Errorf("done = %v, want %v", done, tt.wantDone)
+			}
+		})
 	}
 }
 
@@ -5538,86 +4382,14 @@ func TestCmdReadCloser_Close_Error(t *testing.T) {
 
 	rc := &cmdReadCloser{cmd: cmd, reader: stdout}
 
-	// Read will return EOF quickly.
-	_, _ = io.ReadAll(rc)
-
-	// Close will get a wait error from /bin/false.
-	closeErr := rc.Close()
-	// closeErr may be nil if reader already closed; what matters is we exercised the code.
-	_ = closeErr
-}
-
-// =============================================================================
-// agent_registry — Heartbeat success path (status transition)
-// =============================================================================
-
-func TestAgentRegistry_Heartbeat_StatusTransition(t *testing.T) {
-	t.Parallel()
-
-	reg := NewInMemoryFleetRegistry()
-	ctx := context.Background()
-
-	a := &FleetNode{
-		ID:       "hb-trans-1",
-		TenantID: "t-hb-trans",
-		Name:     "hb-agent",
-		Host:     "host-hb",
-		NodeType: "worker",
-		Backend:  "acp",
-		Status:   FleetNodeStatusRegistered,
-	}
-	if err := reg.RegisterFleetNode(ctx, a); err != nil {
-		t.Fatalf("RegisterFleetNode: %v", err)
+	if _, err := io.ReadAll(rc); err != nil {
+		t.Fatalf("ReadAll: %v", err)
 	}
 
-	if err := reg.Heartbeat(ctx, "t-hb-trans", "hb-trans-1", nil); err != nil {
-		t.Fatalf("Heartbeat: %v", err)
-	}
-
-	got, err := reg.GetFleetNode(ctx, "t-hb-trans", "hb-trans-1")
-	if err != nil {
-		t.Fatalf("GetFleetNode: %v", err)
-	}
-	// Status should transition from registered → running on heartbeat.
-	if got.Status == FleetNodeStatusRegistered {
-		t.Error("expected status to transition away from registered after heartbeat")
-	}
-}
-
-// =============================================================================
-// agent_registry — DeleteTenantFleetNodes success path
-// =============================================================================
-
-func TestAgentRegistry_DeleteTenantAgents_Success(t *testing.T) {
-	t.Parallel()
-
-	reg := NewInMemoryFleetRegistry()
-	ctx := context.Background()
-
-	for i := 0; i < 3; i++ {
-		if err := reg.RegisterFleetNode(ctx, &FleetNode{
-			ID:       "dta-" + itoa(i),
-			TenantID: "t-dta",
-			Name:     "agent-" + itoa(i),
-			Host:     "host-x",
-			NodeType: "worker",
-			Backend:  "acp",
-			Status:   FleetNodeStatusRegistered,
-		}); err != nil {
-			t.Fatalf("RegisterFleetNode %d: %v", i, err)
-		}
-	}
-
-	if err := reg.DeleteTenantFleetNodes(ctx, "t-dta"); err != nil {
-		t.Fatalf("DeleteTenantFleetNodes: %v", err)
-	}
-
-	results, err := reg.ListFleetNodes(ctx, "t-dta", nil)
-	if err != nil {
-		t.Fatalf("ListFleetNodes: %v", err)
-	}
-	if len(results) != 0 {
-		t.Errorf("expected 0 agents after delete, got %d", len(results))
+	// The pipe closes cleanly, so Close surfaces the non-zero exit from Wait.
+	var exitErr *exec.ExitError
+	if err := rc.Close(); !errors.As(err, &exitErr) {
+		t.Fatalf("expected *exec.ExitError from Close, got %T: %v", err, err)
 	}
 }
 
@@ -5647,10 +4419,6 @@ func TestItoa_NegativeAndZero(t *testing.T) {
 }
 
 // =============================================================================
-// remote_acp_backend — authCtx with tokenSource
-// =============================================================================
-
-// =============================================================================
 // orchestrator — StartJob with workflow name not found
 // =============================================================================
 
@@ -5669,18 +4437,6 @@ func TestOrchestrator_StartJob_WorkflowNotFound(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for nonexistent workflow name")
 	}
-}
-
-func TestOrchestrator_StartJob_WorkflowName_NoLoader(t *testing.T) {
-	t.Parallel()
-
-	// When workflowLoader is nil but WorkflowName is set, StartJob logs a warning
-	// but does NOT fail — it continues without workflow. The job still starts
-	// (but may fail waiting for job ID if no backend). Since we don't have a backend,
-	// it times out waiting for job ID.
-	// Just test that the warning path is entered; actual timeout is 2s.
-	// Skip this to avoid 2s delay.
-	t.Skip("StartJob with missing loader and WorkflowName takes 2s timeout")
 }
 
 // =============================================================================
@@ -5706,17 +4462,17 @@ func TestOrchestrator_DecomposeTask_WithLeadSession(t *testing.T) {
 		t.Fatalf("RegisterBackend: %v", err)
 	}
 
-	// Set leadSessionID to trigger the PromptSession path.
-	// This will fail because the session doesn't exist in the in-memory store,
-	// but it exercises the branch.
+	// With a lead session set, DecomposeTask prompts that session instead of
+	// the registered backend. The session does not exist, so the call fails;
+	// the direct backend path would have succeeded.
 	impl.leadSessionID = "lead-session-x"
 
 	_, err := impl.DecomposeTask(context.Background(), &DecomposeTaskRequest{
 		Task: "build a feature",
 	})
-	// The call may fail because the lead session doesn't exist in-memory.
-	// What matters is coverage of the leadSessionID branch.
-	_ = err
+	if err == nil {
+		t.Fatal("expected error from the missing lead session")
+	}
 }
 
 // =============================================================================
@@ -5736,46 +4492,20 @@ func TestPeerMessagingStore_ExtractTimestamp_ShortKey(t *testing.T) {
 	}
 }
 
-func TestPeerMessagingStore_ExtractMsgID_NoColon(t *testing.T) {
+func TestPeerMessagingStore_ExtractMsgID(t *testing.T) {
 	t.Parallel()
 
 	svc := NewPeerMessagingService(newPeerTestKVStore(), InboxPolicy{}, &peerTestLogger{})
 	kvSvc := svc.(*kvPeerMessagingService)
 
-	// A key with no colon returns empty string.
-	id := kvSvc.extractMsgID("nokeyparts")
-	_ = id // exercises the function
-}
-
-// =============================================================================
-// session_store — UpdateSessionStatus success path
-// =============================================================================
-
-func TestSessionStore_UpdateSessionStatus_Success(t *testing.T) {
-	t.Parallel()
-
-	store := NewInMemoryAgentStore()
-	ctx := context.Background()
-
-	rec := &SessionRecord{
-		SessionID: "sess-status-2",
-		Backend:   "acp",
-		Status:    SessionStateActive,
+	tests := map[string]string{
+		"inbox:t1:a1:0000000001:msg-1": "msg-1",
+		"nokeyparts":                   "",
 	}
-	if err := store.PutSession(ctx, rec); err != nil {
-		t.Fatalf("PutSession: %v", err)
-	}
-
-	if err := store.UpdateSessionStatus(ctx, "", "sess-status-2", SessionStateIdle); err != nil {
-		t.Fatalf("UpdateSessionStatus: %v", err)
-	}
-
-	got, err := store.GetSession(ctx, "", "sess-status-2")
-	if err != nil {
-		t.Fatalf("GetSession: %v", err)
-	}
-	if got.Status != SessionStateIdle {
-		t.Errorf("expected Idle, got %s", got.Status)
+	for key, want := range tests {
+		if got := kvSvc.extractMsgID(key); got != want {
+			t.Errorf("extractMsgID(%q) = %q, want %q", key, got, want)
+		}
 	}
 }
 
@@ -5793,53 +4523,6 @@ func TestOrchestrator_RemoveAgent_NotFound(t *testing.T) {
 	err := impl.RemoveFleetNode(context.Background(), "tenant-rna", "ghost-agent")
 	if err == nil {
 		t.Fatal("expected error for removing nonexistent agent")
-	}
-}
-
-// =============================================================================
-// orchestrator — FleetNodeHeartbeat success path
-// =============================================================================
-
-func TestOrchestrator_AgentHeartbeat_Success(t *testing.T) {
-	t.Parallel()
-
-	impl := newTestService(t)
-	impl.SetFleetRegistry(NewInMemoryFleetRegistry())
-	ctx := context.Background()
-
-	resp, err := impl.RegisterFleetNode(ctx, &RegisterFleetNodeRequest{
-		TenantID: "tenant-hbs",
-		Name:     "hb-agent-s",
-		Host:     "host:8080",
-		NodeType: "worker",
-	})
-	if err != nil {
-		t.Fatalf("RegisterFleetNode: %v", err)
-	}
-
-	if err := impl.FleetNodeHeartbeat(ctx, "tenant-hbs", resp.Node.ID, nil); err != nil {
-		t.Fatalf("FleetNodeHeartbeat: %v", err)
-	}
-}
-
-// =============================================================================
-// orchestrator — defaultBackendName with registered backend
-// =============================================================================
-
-func TestOrchestrator_DefaultBackendName_WithBackend(t *testing.T) {
-	t.Parallel()
-
-	impl := newTestService(t)
-	if err := impl.RegisterBackend(context.Background(), &RegisterBackendRequest{
-		Name:    "default-b",
-		Backend: &mockAgentBackend{caps: BackendCapabilities{Kind: BackendKindAgent}},
-	}); err != nil {
-		t.Fatalf("RegisterBackend: %v", err)
-	}
-
-	name := impl.defaultBackendName()
-	if name == "" {
-		t.Error("expected non-empty default backend name after registration")
 	}
 }
 
@@ -5870,21 +4553,20 @@ func TestOrchestrator_GenerateID_Unique(t *testing.T) {
 func TestContainerRuntime_Logs_WithProcess(t *testing.T) {
 	t.Parallel()
 
-	// Use a real command (/bin/ls) to exercise the Logs success path.
-	// /bin/ls will start and the StdoutPipe + cmdReadCloser will be returned.
-	// We get the read closer and immediately close it.
+	// "ls logs fake-container-id" starts fine, so Logs hands back the stream;
+	// ls then exits non-zero because neither path exists, which Close reports.
 	rt := &ExecContainerRuntime{command: "ls", logger: newContainerTestLogger(t)}
 
-	// "ls" with a container ID arg will fail (not a docker command) but the
-	// cmd.Start() will run briefly — enough to exercise the pipe setup.
 	rc, err := rt.Logs(context.Background(), "fake-container-id")
 	if err != nil {
-		// Error is expected since 'ls fake-container-id' fails.
-		// What matters is we exercised the non-empty containerID branch.
-		return
+		t.Fatalf("Logs: %v", err)
 	}
-	if rc != nil {
-		_ = rc.Close()
+	if _, err := io.ReadAll(rc); err != nil {
+		t.Fatalf("ReadAll: %v", err)
+	}
+	var exitErr *exec.ExitError
+	if err := rc.Close(); !errors.As(err, &exitErr) {
+		t.Fatalf("expected *exec.ExitError from Close, got %T: %v", err, err)
 	}
 }
 
@@ -5929,81 +4611,34 @@ func TestPeerMessagingStore_DropOldest_NoMessages(t *testing.T) {
 }
 
 // =============================================================================
-// control_loop — cleanupAllSessions with no sessions
-// =============================================================================
-
-func TestControlLoop_CleanupAllSessions_NoSessions(t *testing.T) {
-	t.Parallel()
-
-	cl := newMinimalControlLoop(t)
-	cl.job.Config = &JobConfig{TenantID: "t-cas", Description: "cleanup sessions test"}
-
-	// cleanupAllSessions with no worker sessions should succeed silently.
-	cl.cleanupAllSessions(context.Background())
-}
-
-// =============================================================================
-// workflow_loader — Get after Register
-// =============================================================================
-
-func TestWorkflowLoader_ListDefinitions_AfterRegister(t *testing.T) {
-	t.Parallel()
-
-	loader := NewWorkflowLoader()
-
-	defs := loader.ListDefinitions(SystemTenantID)
-	if len(defs) != 0 {
-		t.Errorf("expected empty definitions, got %d", len(defs))
-	}
-
-	if err := loader.Register(SystemTenantID, &WorkflowDefinition{
-		Name:   "wfl-def-2",
-		Mode:   WorkflowModeCanned,
-		Agents: []AgentRoleSpec{{Role: "lead", Backend: "acp"}},
-	}); err != nil {
-		t.Fatalf("Register: %v", err)
-	}
-
-	defs = loader.ListDefinitions(SystemTenantID)
-	if len(defs) != 1 {
-		t.Errorf("expected 1 definition, got %d", len(defs))
-	}
-}
-
-// =============================================================================
 // orchestrator — ClaimTask validation error paths
 // =============================================================================
 
-func TestOrchestrator_ClaimTask_EmptyTenantID(t *testing.T) {
+func TestOrchestrator_ClaimTask_EmptyArgument(t *testing.T) {
 	t.Parallel()
 
-	impl := newTestService(t)
-	impl.SetTaskStore(NewInMemoryTaskStore())
-	err := impl.ClaimTask(context.Background(), "", "task-x", "agent-a")
-	if err == nil {
-		t.Fatal("expected error for empty tenantID")
+	tests := []struct {
+		name     string
+		tenantID string
+		taskID   string
+		agentID  string
+		want     error
+	}{
+		{"empty tenantID", "", "task-x", "agent-a", ErrTenantIDRequired},
+		{"empty taskID", "t-ct", "", "agent-a", ErrTaskIDRequired},
+		{"empty agentID", "t-ct", "task-x", "", ErrAgentIDRequired},
 	}
-}
 
-func TestOrchestrator_ClaimTask_EmptyTaskID(t *testing.T) {
-	t.Parallel()
-
-	impl := newTestService(t)
-	impl.SetTaskStore(NewInMemoryTaskStore())
-	err := impl.ClaimTask(context.Background(), "t-ct", "", "agent-a")
-	if err == nil {
-		t.Fatal("expected error for empty taskID")
-	}
-}
-
-func TestOrchestrator_ClaimTask_EmptyAgentID(t *testing.T) {
-	t.Parallel()
-
-	impl := newTestService(t)
-	impl.SetTaskStore(NewInMemoryTaskStore())
-	err := impl.ClaimTask(context.Background(), "t-ct", "task-x", "")
-	if err == nil {
-		t.Fatal("expected error for empty agentID")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			impl := newTestService(t)
+			impl.SetTaskStore(NewInMemoryTaskStore())
+			err := impl.ClaimTask(context.Background(), tt.tenantID, tt.taskID, tt.agentID)
+			if !errors.Is(err, tt.want) {
+				t.Fatalf("expected %v, got %v", tt.want, err)
+			}
+		})
 	}
 }
 
@@ -6031,92 +4666,6 @@ func TestOrchestrator_GetAgent_NotFound(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for nonexistent agent")
 	}
-}
-
-// =============================================================================
-// orchestrator — ListFleetNodes with filter
-// =============================================================================
-
-func TestOrchestrator_ListAgents_WithFilter(t *testing.T) {
-	t.Parallel()
-
-	impl := newTestService(t)
-	impl.SetFleetRegistry(NewInMemoryFleetRegistry())
-	ctx := context.Background()
-
-	for i := 0; i < 2; i++ {
-		if _, err := impl.RegisterFleetNode(ctx, &RegisterFleetNodeRequest{
-			TenantID: "t-lag",
-			Name:     "agent-" + itoa(i),
-			Host:     "host:9090",
-			NodeType: "worker",
-		}); err != nil {
-			t.Fatalf("RegisterFleetNode %d: %v", i, err)
-		}
-	}
-
-	results, err := impl.ListFleetNodes(ctx, "t-lag", &FleetNodeFilter{NodeType: "worker"})
-	if err != nil {
-		t.Fatalf("ListFleetNodes: %v", err)
-	}
-	if len(results) < 2 {
-		t.Errorf("expected at least 2 agents, got %d", len(results))
-	}
-}
-
-func TestOrchestrator_BackendToolGuidance_WithBackend(t *testing.T) {
-	t.Parallel()
-
-	impl := newTestService(t)
-	if err := impl.RegisterBackend(context.Background(), &RegisterBackendRequest{
-		Name:    "guidance-b",
-		Backend: &mockAgentBackend{},
-	}); err != nil {
-		t.Fatalf("RegisterBackend: %v", err)
-	}
-
-	guidance := impl.BackendToolGuidance("guidance-b")
-	_ = guidance // exercise the function
-}
-
-// =============================================================================
-// orchestrator — ListBackends with registered backends
-// =============================================================================
-
-func TestOrchestrator_ListBackends_Multiple(t *testing.T) {
-	t.Parallel()
-
-	impl := newTestService(t)
-	ctx := context.Background()
-
-	for _, name := range []string{"b1", "b2", "b3"} {
-		if err := impl.RegisterBackend(ctx, &RegisterBackendRequest{
-			Name:    name,
-			Backend: &mockAgentBackend{},
-		}); err != nil {
-			t.Fatalf("RegisterBackend %s: %v", name, err)
-		}
-	}
-
-	backends, err := impl.ListBackends(ctx)
-	if err != nil {
-		t.Fatalf("ListBackends: %v", err)
-	}
-	if len(backends) < 3 {
-		t.Errorf("expected at least 3 backends, got %d", len(backends))
-	}
-}
-
-// =============================================================================
-// orchestrator — publishEvent with nil metadata
-// =============================================================================
-
-func TestOrchestrator_PublishEvent_NilMetadata(t *testing.T) {
-	t.Parallel()
-
-	impl := newTestService(t)
-	// publishEvent should handle nil metadata gracefully.
-	impl.publishEvent(context.Background(), "t-pe", "test_event", nil)
 }
 
 // =============================================================================
@@ -6194,20 +4743,6 @@ func TestTaskStore_ListTasks_WithLimit(t *testing.T) {
 }
 
 // =============================================================================
-// task_store — DeleteTenantTasks not-found (empty tenant)
-// =============================================================================
-
-func TestTaskStore_DeleteTenantTasks_EmptyTenantID(t *testing.T) {
-	t.Parallel()
-
-	store := NewInMemoryTaskStore()
-	err := store.DeleteTenantTasks(context.Background(), "")
-	if err == nil {
-		t.Fatal("expected error for empty tenantID")
-	}
-}
-
-// =============================================================================
 // task_store — ClaimTask not-found
 // =============================================================================
 
@@ -6271,20 +4806,8 @@ func TestOrchestrator_ListTasks_EmptyTenantIDV2(t *testing.T) {
 }
 
 // =============================================================================
-// orchestrator — DiscoverProjects non-existent path
+// orchestrator — DiscoverProjects root path is a file
 // =============================================================================
-
-func TestOrchestrator_DiscoverProjects_NonExistentPath(t *testing.T) {
-	t.Parallel()
-
-	impl := newTestService(t)
-	_, err := impl.DiscoverProjects(context.Background(), &DiscoverProjectsRequest{
-		RootPath: "/nonexistent/path/xyz123",
-	})
-	if err == nil {
-		t.Fatal("expected error for nonexistent root path")
-	}
-}
 
 func TestOrchestrator_DiscoverProjects_FilePath(t *testing.T) {
 	t.Parallel()
@@ -6303,291 +4826,6 @@ func TestOrchestrator_DiscoverProjects_FilePath(t *testing.T) {
 	})
 	if discErr == nil {
 		t.Fatal("expected error when RootPath is a file, not directory")
-	}
-}
-
-// =============================================================================
-// orchestrator — persistJobStatus (via kvStore)
-// =============================================================================
-
-func TestOrchestrator_PersistJobStatus_WithKVStore(t *testing.T) {
-	t.Parallel()
-
-	impl := newTestService(t)
-	impl.kvStore = newPeerTestKVStore()
-
-	// persistJobStatus should succeed with a valid KV store.
-	impl.persistJobStatus("t-pjs", &JobStatus{
-		JobID:       "job-persist-1",
-		TenantID:    "t-pjs",
-		State:       JobStateCompleted,
-		Description: "test job",
-	})
-}
-
-// =============================================================================
-// agent_registry — ListFleetNodes with limit filter
-// =============================================================================
-
-func TestAgentRegistry_ListAgents_WithLimit(t *testing.T) {
-	t.Parallel()
-
-	reg := NewInMemoryFleetRegistry()
-	ctx := context.Background()
-
-	for i := 0; i < 5; i++ {
-		if err := reg.RegisterFleetNode(ctx, &FleetNode{
-			ID:       "lim-" + itoa(i),
-			TenantID: "t-lim",
-			Name:     "agent-lim-" + itoa(i),
-			Host:     "host-lim:9090",
-			NodeType: "worker",
-			Backend:  "acp",
-			Status:   FleetNodeStatusRegistered,
-		}); err != nil {
-			t.Fatalf("RegisterFleetNode %d: %v", i, err)
-		}
-	}
-
-	agents, err := reg.ListFleetNodes(ctx, "t-lim", &FleetNodeFilter{Limit: 2})
-	if err != nil {
-		t.Fatalf("ListFleetNodes: %v", err)
-	}
-	if len(agents) > 2 {
-		t.Errorf("expected at most 2 agents, got %d", len(agents))
-	}
-}
-
-// =============================================================================
-// task_store — FailTask empty tenantID / taskID
-// =============================================================================
-
-func TestTaskStore_FailTask_EmptyTenantID(t *testing.T) {
-	t.Parallel()
-
-	ts := NewInMemoryTaskStore()
-	err := ts.FailTask(context.Background(), "", "task-x", "reason")
-	if err == nil {
-		t.Fatal("expected error for empty tenantID")
-	}
-}
-
-func TestTaskStore_FailTask_EmptyTaskID(t *testing.T) {
-	t.Parallel()
-
-	ts := NewInMemoryTaskStore()
-	err := ts.FailTask(context.Background(), "t-ft", "", "reason")
-	if err == nil {
-		t.Fatal("expected error for empty taskID")
-	}
-}
-
-func TestTaskStore_FailTask_WrongState(t *testing.T) {
-	t.Parallel()
-
-	ts := NewInMemoryTaskStore()
-	ctx := context.Background()
-
-	task := &Task{
-		ID:       "fail-ws-1",
-		TenantID: "t-fail-ws",
-		Subject:  "should not be failed",
-		Status:   TaskStatusPending,
-	}
-	if err := ts.CreateTask(ctx, task); err != nil {
-		t.Fatalf("CreateTask: %v", err)
-	}
-	// Fail without claiming first — should return invalid state error.
-	err := ts.FailTask(ctx, "t-fail-ws", "fail-ws-1", "reason")
-	if err == nil {
-		t.Fatal("expected error for wrong state")
-	}
-	if !errors.Is(err, ErrTaskInvalidState) {
-		t.Errorf("expected ErrTaskInvalidState, got %v", err)
-	}
-}
-
-// =============================================================================
-// task_store — UpdateTask empty tenantID
-// =============================================================================
-
-func TestTaskStore_UpdateTask_EmptyTenantID(t *testing.T) {
-	t.Parallel()
-
-	ts := NewInMemoryTaskStore()
-	err := ts.UpdateTask(context.Background(), &Task{ID: "t1", TenantID: "", Subject: "x"})
-	if err == nil {
-		t.Fatal("expected error for empty tenantID")
-	}
-}
-
-// =============================================================================
-// task_store — ListTasks with filter
-// =============================================================================
-
-func TestTaskStore_ListTasks_WithStatusFilter(t *testing.T) {
-	t.Parallel()
-
-	ts := NewInMemoryTaskStore()
-	ctx := context.Background()
-
-	for i := 0; i < 3; i++ {
-		task := &Task{
-			ID:       "filt-" + itoa(i),
-			TenantID: "t-filt",
-			Subject:  "task " + itoa(i),
-			Status:   TaskStatusPending,
-		}
-		if err := ts.CreateTask(ctx, task); err != nil {
-			t.Fatalf("CreateTask %d: %v", i, err)
-		}
-	}
-
-	// Claim one task.
-	if err := ts.ClaimTask(ctx, "t-filt", "filt-0", "agent-x"); err != nil {
-		t.Fatalf("ClaimTask: %v", err)
-	}
-
-	// Filter by claimed status — should return only 1.
-	claimed, err := ts.ListTasks(ctx, "t-filt", &TaskFilter{Status: TaskStatusClaimed})
-	if err != nil {
-		t.Fatalf("ListTasks: %v", err)
-	}
-	if len(claimed) != 1 {
-		t.Errorf("expected 1 claimed task, got %d", len(claimed))
-	}
-}
-
-// =============================================================================
-// session_store — ListSessions with cancelled context
-// =============================================================================
-
-func TestSessionStore_ListSessions_CancelledContext(t *testing.T) {
-	t.Parallel()
-
-	store := NewInMemoryAgentStore()
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel() // cancel immediately
-
-	// Cancelled context should return an error.
-	_, err := store.ListSessions(ctx, "")
-	if err == nil {
-		t.Fatal("expected error for cancelled context")
-	}
-}
-
-// =============================================================================
-// file_lock_store — Release success and not-found paths
-// =============================================================================
-
-func TestFileLockStore_Release_Success(t *testing.T) {
-	t.Parallel()
-
-	svc, _, _ := newTestFileLockSvc(nil)
-	ctx := context.Background()
-
-	_, err := svc.Acquire(ctx, "t-rel", "proj-rel", "/rel/file.go", "agent-rel")
-	if err != nil {
-		t.Fatalf("Acquire: %v", err)
-	}
-
-	if err := svc.Release(ctx, "t-rel", buildLockKey("t-rel", "proj-rel", "/rel/file.go")); err != nil {
-		t.Fatalf("Release: %v", err)
-	}
-
-	_, isLocked, err := svc.IsLocked(ctx, "t-rel", "proj-rel", "/rel/file.go")
-	if err != nil {
-		t.Fatalf("IsLocked: %v", err)
-	}
-	if isLocked {
-		t.Error("expected file to be unlocked after release")
-	}
-}
-
-func TestFileLockStore_Release_NotFound(t *testing.T) {
-	t.Parallel()
-
-	svc, _, _ := newTestFileLockSvc(nil)
-	ctx := context.Background()
-
-	err := svc.Release(ctx, "t-relnf", "ghost-lock-key")
-	if err == nil {
-		t.Fatal("expected error for missing lock")
-	}
-	if !errors.Is(err, ErrLockNotFound) {
-		t.Errorf("expected ErrLockNotFound, got %v", err)
-	}
-}
-
-// =============================================================================
-// file_lock_store — WaitForRelease when lock not found
-// =============================================================================
-
-func TestFileLockStore_WaitForRelease_NotFound(t *testing.T) {
-	t.Parallel()
-
-	svc, _, _ := newTestFileLockSvc(nil)
-	ctx := context.Background()
-
-	// Lock doesn't exist — WaitForRelease should return nil immediately.
-	err := svc.WaitForRelease(ctx, "t-wnf", "ghost-lock-key")
-	if err != nil {
-		t.Fatalf("WaitForRelease for non-existent lock: %v", err)
-	}
-}
-
-// =============================================================================
-// file_lock_store — ListLocks with empty tenant
-// =============================================================================
-
-func TestFileLockStore_ListLocks_EmptyTenant(t *testing.T) {
-	t.Parallel()
-
-	svc, _, _ := newTestFileLockSvc(nil)
-	ctx := context.Background()
-
-	locks, err := svc.ListLocks(ctx, "t-empty", "proj-empty")
-	if err != nil {
-		t.Fatalf("ListLocks: %v", err)
-	}
-	if len(locks) != 0 {
-		t.Errorf("expected 0 locks, got %d", len(locks))
-	}
-}
-
-// =============================================================================
-// orchestrator — DiscoverProjects success with real temp dir
-// =============================================================================
-
-func TestOrchestrator_DiscoverProjects_Success(t *testing.T) {
-	t.Parallel()
-
-	tmpDir, err := os.MkdirTemp("", "disc-success-*")
-	if err != nil {
-		t.Fatalf("MkdirTemp: %v", err)
-	}
-	defer os.RemoveAll(tmpDir)
-
-	subDir := tmpDir + "/myproject"
-	if err := os.Mkdir(subDir, 0755); err != nil {
-		t.Fatalf("Mkdir: %v", err)
-	}
-	if err := os.WriteFile(subDir+"/CLAUDE.md", []byte("# Test"), 0644); err != nil {
-		t.Fatalf("WriteFile: %v", err)
-	}
-
-	impl := newTestService(t)
-	resp, err := impl.DiscoverProjects(context.Background(), &DiscoverProjectsRequest{
-		RootPath: tmpDir,
-	})
-	if err != nil {
-		t.Fatalf("DiscoverProjects: %v", err)
-	}
-	if resp == nil {
-		t.Fatal("expected non-nil response")
-	}
-	if len(resp.Projects) == 0 {
-		t.Error("expected at least one discovered project")
 	}
 }
 
@@ -6637,88 +4875,6 @@ func TestOrchestrator_SessionStatus_FromStore(t *testing.T) {
 }
 
 // =============================================================================
-// agent_registry — RemoveFleetNode empty agentID
-// =============================================================================
-
-func TestAgentRegistry_RemoveAgent_EmptyAgentID(t *testing.T) {
-	t.Parallel()
-
-	reg := NewInMemoryFleetRegistry()
-	err := reg.RemoveFleetNode(context.Background(), "t-rem", "")
-	if err == nil {
-		t.Fatal("expected error for empty agentID")
-	}
-}
-
-// =============================================================================
-// peer_messaging_store — InboxSize with messages
-// =============================================================================
-
-func TestPeerMessagingStore_InboxSize_WithMessages(t *testing.T) {
-	t.Parallel()
-
-	svc := NewPeerMessagingService(newPeerTestKVStore(), InboxPolicy{MaxMessages: 10}, &peerTestLogger{})
-	ctx := context.Background()
-
-	for i := 0; i < 3; i++ {
-		msg := &PeerMessage{
-			ID:        "inboxsz-" + itoa(i),
-			From:      "src",
-			To:        "dst",
-			Action:    "task",
-			Metadata:  map[string]string{"tenant_id": "t-isz"},
-			Timestamp: int64(i + 1),
-		}
-		if err := svc.Send(ctx, msg); err != nil {
-			t.Fatalf("Send %d: %v", i, err)
-		}
-	}
-
-	size, err := svc.InboxSize(ctx, "t-isz", "dst")
-	if err != nil {
-		t.Fatalf("InboxSize: %v", err)
-	}
-	if size != 3 {
-		t.Errorf("expected inbox size 3, got %d", size)
-	}
-}
-
-// =============================================================================
-// peer_messaging_store — Acknowledge removes message
-// =============================================================================
-
-func TestPeerMessagingStore_Acknowledge_Success(t *testing.T) {
-	t.Parallel()
-
-	svc := NewPeerMessagingService(newPeerTestKVStore(), InboxPolicy{MaxMessages: 10}, &peerTestLogger{})
-	ctx := context.Background()
-
-	msg := &PeerMessage{
-		ID:        "ack-msg-1",
-		From:      "src",
-		To:        "dst",
-		Action:    "task",
-		Metadata:  map[string]string{"tenant_id": "t-ack"},
-		Timestamp: 1000,
-	}
-	if err := svc.Send(ctx, msg); err != nil {
-		t.Fatalf("Send: %v", err)
-	}
-
-	if err := svc.Acknowledge(ctx, "t-ack", "dst", "ack-msg-1"); err != nil {
-		t.Fatalf("Acknowledge: %v", err)
-	}
-
-	size, err := svc.InboxSize(ctx, "t-ack", "dst")
-	if err != nil {
-		t.Fatalf("InboxSize: %v", err)
-	}
-	if size != 0 {
-		t.Errorf("expected inbox size 0 after ack, got %d", size)
-	}
-}
-
-// =============================================================================
 // orchestrator — FleetNodeHeartbeat via orchestrator layer — empty tenantID
 // =============================================================================
 
@@ -6730,40 +4886,6 @@ func TestOrchestrator_AgentHeartbeat_EmptyTenantID(t *testing.T) {
 	err := impl.FleetNodeHeartbeat(context.Background(), "", "agent-x", nil)
 	if err == nil {
 		t.Fatal("expected error for empty tenantID")
-	}
-}
-
-// =============================================================================
-// control_loop — generateJobID uniqueness
-// =============================================================================
-
-func TestControlLoop_GenerateJobID_Unique(t *testing.T) {
-	t.Parallel()
-
-	id1, err1 := generateJobID()
-	id2, err2 := generateJobID()
-	if err1 != nil || err2 != nil {
-		t.Fatalf("generateJobID errors: %v, %v", err1, err2)
-	}
-	if id1 == id2 {
-		t.Error("expected unique job IDs")
-	}
-}
-
-// =============================================================================
-// container_runtime — generateContainerID uniqueness
-// =============================================================================
-
-func TestContainerRuntime_GenerateContainerID_Unique(t *testing.T) {
-	t.Parallel()
-
-	id1, err1 := generateContainerID()
-	id2, err2 := generateContainerID()
-	if err1 != nil || err2 != nil {
-		t.Fatalf("generateContainerID errors: %v, %v", err1, err2)
-	}
-	if id1 == id2 {
-		t.Error("expected unique container IDs")
 	}
 }
 
@@ -6789,277 +4911,15 @@ func TestNewExecContainerRuntime_Default(t *testing.T) {
 }
 
 // =============================================================================
-// container_runtime — Logs with non-existent container
+// FleetNode — EffectiveKind on a nil receiver
 // =============================================================================
 
-func TestContainerRuntime_Logs_NotFound(t *testing.T) {
-	t.Parallel()
-
-	rt := newFakeContainerRuntime(t)
-	ctx := context.Background()
-
-	_, err := rt.Logs(ctx, "nonexistent-container-xyz")
-	_ = err // error is acceptable; goal is to hit the code path
-}
-
-// =============================================================================
-// orchestrator — SpawnSession with missing backend
-// =============================================================================
-
-func TestOrchestrator_SpawnSession_MissingBackend(t *testing.T) {
-	t.Parallel()
-
-	impl := newTestService(t)
-	ctx := ContextWithTenant(context.Background(), "t-ssb")
-
-	_, err := impl.SpawnSession(ctx, &SpawnSessionRequest{
-		Backend:   "missing-backend",
-		ProjectID: "proj-x",
-	})
-	if err == nil {
-		t.Fatal("expected error for missing backend")
-	}
-}
-
-// =============================================================================
-// orchestrator — StartJob: WorkflowName specified but no loader
-// =============================================================================
-
-func TestOrchestrator_StartJob_WorkflowNameNoLoader(t *testing.T) {
-	t.Parallel()
-
-	impl := newTestService(t)
-	impl.workflowLoader = nil
-
-	backend := &mockAgentBackend{
-		backendType: "acp",
-		promptFn: func(ctx context.Context, req *PromptRequest) (*PromptResponse, error) {
-			return &PromptResponse{Content: []ContentBlock{{Type: "text", Text: "done"}}}, nil
-		},
-		spawnFn: func(ctx context.Context, req *SpawnRequest) (*Session, error) {
-			return &Session{ID: "ses-wnnl-1", Status: SessionStateIdle}, nil
-		},
-	}
-	if err := impl.RegisterBackend(context.Background(), &RegisterBackendRequest{
-		Name:    "acp",
-		Backend: backend,
-	}); err != nil {
-		t.Fatalf("RegisterBackend: %v", err)
-	}
-
-	ctx := ContextWithTenant(context.Background(), "t-wnnl")
-	resp, err := impl.StartJob(ctx, &StartJobRequest{
-		TenantID:      "t-wnnl",
-		Description:   "test job without loader",
-		WorkflowName:  "nonexistent-workflow",
-		routedBackend: "acp",
-	})
-	_ = resp
-	_ = err
-}
-
-// =============================================================================
-// container_types — ContainerSpec.Validate and ContainerMount.Format
-// =============================================================================
-
-func TestContainerSpec_Validate_EmptyImage(t *testing.T) {
-	t.Parallel()
-
-	spec := &ContainerSpec{Image: ""}
-	err := spec.Validate()
-	if err == nil {
-		t.Fatal("expected error for empty image")
-	}
-}
-
-func TestContainerSpec_Validate_InvalidMount(t *testing.T) {
-	t.Parallel()
-
-	spec := &ContainerSpec{
-		Image: "my-image",
-		Mounts: []ContainerMount{
-			{Source: "", Target: "/app"},
-		},
-	}
-	err := spec.Validate()
-	if err == nil {
-		t.Fatal("expected error for invalid mount source")
-	}
-}
-
-func TestContainerMount_Format_ReadOnly(t *testing.T) {
-	t.Parallel()
-
-	m := &ContainerMount{Source: "/host", Target: "/container", ReadOnly: true}
-	got := m.Format()
-	want := "/host:/container:ro"
-	if got != want {
-		t.Errorf("Format() = %q, want %q", got, want)
-	}
-}
-
-func TestContainerMount_Format_ReadWrite(t *testing.T) {
-	t.Parallel()
-
-	m := &ContainerMount{Source: "/host", Target: "/container", ReadOnly: false}
-	got := m.Format()
-	want := "/host:/container"
-	if got != want {
-		t.Errorf("Format() = %q, want %q", got, want)
-	}
-}
-
-// =============================================================================
-// remote_acp_backend — timestampAsUnix
-// =============================================================================
-
-func TestRemoteACPBackend_TimestampAsUnixNano(t *testing.T) {
-	t.Parallel()
-
-	now := time.Now()
-	result := timestampAsUnixNano(fakeTimestamper{t: now})
-	if result != now.UnixNano() {
-		t.Errorf("expected %d, got %d", now.UnixNano(), result)
-	}
-}
-
-// fakeTimestamper wraps a time.Time to implement the timestampAsUnix interface.
-type fakeTimestamper struct {
-	t time.Time
-}
-
-func (f fakeTimestamper) AsTime() time.Time {
-	return f.t
-}
-
-// =============================================================================
-// SpawnRequest — EffectiveSandboxMode
-// =============================================================================
-
-func TestSpawnRequest_EffectiveSandboxMode_LegacySandboxed(t *testing.T) {
-	t.Parallel()
-
-	req := &SpawnRequest{
-		Sandboxed:   true,
-		SandboxMode: SandboxModeDefault,
-	}
-	mode := req.EffectiveSandboxMode()
-	if mode != SandboxModeRequired {
-		t.Errorf("expected SandboxModeRequired, got %v", mode)
-	}
-}
-
-func TestSpawnRequest_EffectiveSandboxMode_ExplicitSandboxMode(t *testing.T) {
-	t.Parallel()
-
-	req := &SpawnRequest{
-		SandboxMode: SandboxModeNone,
-	}
-	mode := req.EffectiveSandboxMode()
-	if mode != SandboxModeNone {
-		t.Errorf("expected SandboxModeNone, got %v", mode)
-	}
-}
-
-// =============================================================================
-// FleetNode — EffectiveKind
-// =============================================================================
-
-func TestAgentRegistration_EffectiveKind_Default(t *testing.T) {
+func TestAgentRegistration_EffectiveKind_NilReceiver(t *testing.T) {
 	t.Parallel()
 
 	var a *FleetNode
 	if kind := a.EffectiveKind(); kind != FleetNodeKindExternal {
 		t.Errorf("expected FleetNodeKindExternal for nil, got %s", kind)
-	}
-
-	a = &FleetNode{Kind: ""}
-	if kind := a.EffectiveKind(); kind != FleetNodeKindExternal {
-		t.Errorf("expected FleetNodeKindExternal for empty kind, got %s", kind)
-	}
-}
-
-func TestAgentRegistration_EffectiveKind_Daemon(t *testing.T) {
-	t.Parallel()
-
-	a := &FleetNode{Kind: FleetNodeKindDaemon}
-	if kind := a.EffectiveKind(); kind != FleetNodeKindDaemon {
-		t.Errorf("expected FleetNodeKindDaemon, got %s", kind)
-	}
-}
-
-// =============================================================================
-// Typed errors — Error() and Unwrap() for agent registry errors
-// =============================================================================
-
-func TestAgentNotFoundError_Error(t *testing.T) {
-	t.Parallel()
-
-	err := &FleetNodeNotFoundError{TenantID: "t1", NodeID: "a1"}
-	if err.Error() == "" {
-		t.Error("expected non-empty error string")
-	}
-	if !errors.Is(err, ErrFleetNodeNotFound) {
-		t.Error("expected to unwrap to ErrFleetNodeNotFound")
-	}
-}
-
-func TestAgentAlreadyExistsError_Error(t *testing.T) {
-	t.Parallel()
-
-	err := &FleetNodeAlreadyExistsError{NodeID: "a1"}
-	if err.Error() == "" {
-		t.Error("expected non-empty error string")
-	}
-	if !errors.Is(err, ErrFleetNodeAlreadyExists) {
-		t.Error("expected to unwrap to ErrFleetNodeAlreadyExists")
-	}
-}
-
-func TestAgentRegistryError_Error(t *testing.T) {
-	t.Parallel()
-
-	err := &FleetRegistryError{Sentinel: ErrFleetRegistryInvalidInput, Message: "bad input"}
-	if err.Error() == "" {
-		t.Error("expected non-empty error string")
-	}
-	if !errors.Is(err, ErrFleetRegistryInvalidInput) {
-		t.Error("expected to unwrap to ErrFleetRegistryInvalidInput")
-	}
-}
-
-func TestAgentRegistryError_Error_NoMessage(t *testing.T) {
-	t.Parallel()
-
-	err := &FleetRegistryError{Sentinel: ErrFleetRegistryInvalidInput}
-	if err.Error() != ErrFleetRegistryInvalidInput.Error() {
-		t.Errorf("expected sentinel error string, got %q", err.Error())
-	}
-}
-
-// =============================================================================
-// container_types — intToStr edge cases
-// =============================================================================
-
-func TestIntToStr_EdgeCases(t *testing.T) {
-	t.Parallel()
-
-	tests := []struct {
-		input int
-		want  string
-	}{
-		{0, "0"},
-		{1, "1"},
-		{-1, "-1"},
-		{-42, "-42"},
-		{999, "999"},
-	}
-
-	for _, tc := range tests {
-		got := intToStr(tc.input)
-		if got != tc.want {
-			t.Errorf("intToStr(%d) = %q, want %q", tc.input, got, tc.want)
-		}
 	}
 }
 
@@ -7067,38 +4927,43 @@ func TestIntToStr_EdgeCases(t *testing.T) {
 // control_loop — trySpawnLeadSession coverage
 // =============================================================================
 
-// TestControlLoop_TrySpawnLeadSession_NoWorkflow verifies that trySpawnLeadSession
-// returns nil immediately when no workflow is set (no persistent_sessions capability).
-func TestControlLoop_TrySpawnLeadSession_NoWorkflow(t *testing.T) {
+// TestControlLoop_TrySpawnLeadSession_NoLeadSession verifies that
+// trySpawnLeadSession spawns nothing and returns nil when there is no workflow
+// or the lead role lacks persistent_sessions.
+func TestControlLoop_TrySpawnLeadSession_NoLeadSession(t *testing.T) {
 	t.Parallel()
 
-	impl := newTestService(t)
-	cl := NewControlLoop(impl, &peerTestLogger{})
-	// No workflow set — roleHasCapability returns false, function returns nil.
-	err := cl.trySpawnLeadSession(context.Background())
-	if err != nil {
-		t.Fatalf("expected nil error, got %v", err)
-	}
-}
-
-// TestControlLoop_TrySpawnLeadSession_NoPersistentSessions verifies that
-// trySpawnLeadSession returns nil when the lead role lacks persistent_sessions.
-func TestControlLoop_TrySpawnLeadSession_NoPersistentSessions(t *testing.T) {
-	t.Parallel()
-
-	impl := newTestService(t)
-	cl := NewControlLoop(impl, &peerTestLogger{})
-	cl.SetWorkflow(&WorkflowDefinition{
-		Name: "no-ps",
-		Mode: WorkflowModeAutonomous,
-		Agents: []AgentRoleSpec{
-			{Role: "lead", Backend: "acp", Capabilities: []string{"tool_use"}},
+	tests := []struct {
+		name     string
+		workflow *WorkflowDefinition
+	}{
+		{name: "no workflow"},
+		{
+			name: "lead without persistent_sessions",
+			workflow: &WorkflowDefinition{
+				Name: "no-ps",
+				Mode: WorkflowModeAutonomous,
+				Agents: []AgentRoleSpec{
+					{Role: "lead", Backend: "acp", Capabilities: []string{"tool_use"}},
+				},
+			},
 		},
-	})
-	// Lead role exists but no persistent_sessions — should return nil.
-	err := cl.trySpawnLeadSession(context.Background())
-	if err != nil {
-		t.Fatalf("expected nil error, got %v", err)
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			cl := NewControlLoop(newTestService(t), &peerTestLogger{})
+			if tt.workflow != nil {
+				cl.SetWorkflow(tt.workflow)
+			}
+			if err := cl.trySpawnLeadSession(context.Background()); err != nil {
+				t.Fatalf("expected nil error, got %v", err)
+			}
+			if cl.leadSessionID != "" {
+				t.Errorf("expected no lead session, got %q", cl.leadSessionID)
+			}
+		})
 	}
 }
 
@@ -7225,9 +5090,6 @@ func TestControlLoop_TrySpawnLeadSession_AgentSpecFields(t *testing.T) {
 	}
 	if capturedReq.WorkDir != "/workspace" {
 		t.Errorf("expected WorkDir=/workspace, got %q", capturedReq.WorkDir)
-	}
-	if capturedReq.WorkDir != "/workspace" {
-		t.Errorf("expected WorkDir=/workspace (dup check), got %q", capturedReq.WorkDir)
 	}
 	// Sandboxed is false so ContainerImage should not be set on request.
 	if capturedReq.Sandboxed {
@@ -7472,320 +5334,35 @@ func TestOrchestrator_SpawnSession_WithProjectModel(t *testing.T) {
 }
 
 // =============================================================================
-// agent_registry — UpdateFleetNode validation errors
+// Stores — cancelled context paths the store test files do not cover
 // =============================================================================
 
-func TestAgentRegistry_UpdateAgent_EmptyID(t *testing.T) {
+func TestAgentRegistry_GetFleetNode_CancelledContext(t *testing.T) {
 	t.Parallel()
 
-	reg := NewInMemoryFleetRegistry()
-	err := reg.UpdateFleetNode(context.Background(), &FleetNode{
-		ID:       "",
-		TenantID: "t1",
-	})
-	if err == nil {
-		t.Fatal("expected error for empty agent ID")
-	}
-}
-
-func TestAgentRegistry_UpdateAgent_EmptyTenantID(t *testing.T) {
-	t.Parallel()
-
-	reg := NewInMemoryFleetRegistry()
-	err := reg.UpdateFleetNode(context.Background(), &FleetNode{
-		ID:       "agent-1",
-		TenantID: "",
-	})
-	if err == nil {
-		t.Fatal("expected error for empty tenant ID")
-	}
-}
-
-// =============================================================================
-// agent_registry — GetFleetNode with cancelled context
-// =============================================================================
-
-func TestAgentRegistry_GetAgent_CancelledContext(t *testing.T) {
-	t.Parallel()
-
-	reg := NewInMemoryFleetRegistry()
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	_, err := reg.GetFleetNode(ctx, "t1", "agent-1")
-	if err == nil {
-		t.Fatal("expected error for cancelled context")
+	_, err := NewInMemoryFleetRegistry().GetFleetNode(ctx, "t1", "agent-1")
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("expected context.Canceled, got %v", err)
 	}
 }
 
-// =============================================================================
-// agent_registry — Heartbeat with cancelled context
-// =============================================================================
-
-func TestAgentRegistry_Heartbeat_CancelledContext(t *testing.T) {
+func TestSessionStore_UpdateSessionStatus_CancelledContext(t *testing.T) {
 	t.Parallel()
 
-	reg := NewInMemoryFleetRegistry()
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	err := reg.Heartbeat(ctx, "t1", "agent-1", nil)
-	if err == nil {
-		t.Fatal("expected error for cancelled context")
+	err := NewInMemoryAgentStore().UpdateSessionStatus(ctx, "", "sess-1", SessionStateClosed)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("expected context.Canceled, got %v", err)
 	}
 }
 
 // =============================================================================
-// task_store — GetTask with cancelled context
-// =============================================================================
-
-func TestTaskStore_GetTask_CancelledContext(t *testing.T) {
-	t.Parallel()
-
-	ts := NewInMemoryTaskStore()
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-
-	_, err := ts.GetTask(ctx, "t1", "task-1")
-	if err == nil {
-		t.Fatal("expected error for cancelled context")
-	}
-}
-
-// =============================================================================
-// task_store — CompleteTask with cancelled context
-// =============================================================================
-
-func TestTaskStore_CompleteTask_CancelledContext(t *testing.T) {
-	t.Parallel()
-
-	ts := NewInMemoryTaskStore()
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-
-	err := ts.CompleteTask(ctx, "t1", "task-1", &TaskResult{Output: "done"})
-	if err == nil {
-		t.Fatal("expected error for cancelled context")
-	}
-}
-
-// =============================================================================
-// task_store — FailTask with cancelled context
-// =============================================================================
-
-func TestTaskStore_FailTask_CancelledContext(t *testing.T) {
-	t.Parallel()
-
-	ts := NewInMemoryTaskStore()
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-
-	err := ts.FailTask(ctx, "t1", "task-1", "reason")
-	if err == nil {
-		t.Fatal("expected error for cancelled context")
-	}
-}
-
-// =============================================================================
-// task_store — ClaimTask with cancelled context
-// =============================================================================
-
-func TestTaskStore_ClaimTask_CancelledContext(t *testing.T) {
-	t.Parallel()
-
-	ts := NewInMemoryTaskStore()
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-
-	err := ts.ClaimTask(ctx, "t1", "task-1", "agent-x")
-	if err == nil {
-		t.Fatal("expected error for cancelled context")
-	}
-}
-
-// =============================================================================
-// task_store — UpdateTask with cancelled context
-// =============================================================================
-
-func TestTaskStore_UpdateTask_CancelledContext(t *testing.T) {
-	t.Parallel()
-
-	ts := NewInMemoryTaskStore()
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-
-	err := ts.UpdateTask(ctx, &Task{ID: "task-1", TenantID: "t1", Subject: "x"})
-	if err == nil {
-		t.Fatal("expected error for cancelled context")
-	}
-}
-
-// =============================================================================
-// task_store — ListTasks with cancelled context
-// =============================================================================
-
-func TestTaskStore_ListTasks_CancelledContext(t *testing.T) {
-	t.Parallel()
-
-	ts := NewInMemoryTaskStore()
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-
-	_, err := ts.ListTasks(ctx, "t1", nil)
-	if err == nil {
-		t.Fatal("expected error for cancelled context")
-	}
-}
-
-// =============================================================================
-// task_store — DeleteTask with cancelled context
-// =============================================================================
-
-func TestTaskStore_DeleteTask_CancelledContext(t *testing.T) {
-	t.Parallel()
-
-	ts := NewInMemoryTaskStore()
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-
-	err := ts.DeleteTask(ctx, "t1", "task-1")
-	if err == nil {
-		t.Fatal("expected error for cancelled context")
-	}
-}
-
-// =============================================================================
-// agent_registry — ListFleetNodes with cancelled context
-// =============================================================================
-
-func TestAgentRegistry_ListAgents_CancelledContext(t *testing.T) {
-	t.Parallel()
-
-	reg := NewInMemoryFleetRegistry()
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-
-	_, err := reg.ListFleetNodes(ctx, "t1", nil)
-	if err == nil {
-		t.Fatal("expected error for cancelled context")
-	}
-}
-
-// =============================================================================
-// agent_registry — DeleteTenantFleetNodes with cancelled context
-// =============================================================================
-
-func TestAgentRegistry_DeleteTenantAgents_CancelledContext(t *testing.T) {
-	t.Parallel()
-
-	reg := NewInMemoryFleetRegistry()
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-
-	err := reg.DeleteTenantFleetNodes(ctx, "t1")
-	if err == nil {
-		t.Fatal("expected error for cancelled context")
-	}
-}
-
-// =============================================================================
-// container_runtime — Logs with empty containerID
-// =============================================================================
-
-func TestContainerRuntime_Logs_EmptyContainerIDV2(t *testing.T) {
-	t.Parallel()
-
-	rt := newFakeContainerRuntime(t)
-	_, err := rt.Logs(context.Background(), "")
-	if err == nil {
-		t.Fatal("expected error for empty containerID")
-	}
-}
-
-// =============================================================================
-// orchestrator.go — defaultBackendName uncovered path
-// =============================================================================
-
-func TestOrchestrator_DefaultBackendName_MultipleBackends(t *testing.T) {
-	t.Parallel()
-
-	impl := newTestService(t)
-
-	for _, name := range []string{"acp", "ollama", "codex"} {
-		if err := impl.RegisterBackend(context.Background(), &RegisterBackendRequest{
-			Name:    name,
-			Backend: &mockAgentBackend{backendType: name},
-		}); err != nil {
-			t.Fatalf("RegisterBackend %s: %v", name, err)
-		}
-	}
-
-	name := impl.defaultBackendName()
-	if name == "" {
-		t.Error("expected a non-empty default backend name")
-	}
-}
-
-// =============================================================================
-// orchestrator — ListFleetNodes success path (orchestrator wrapper)
-// =============================================================================
-
-func TestOrchestrator_ListAgents_SuccessPath(t *testing.T) {
-	t.Parallel()
-
-	impl := newTestService(t)
-	impl.SetFleetRegistry(NewInMemoryFleetRegistry())
-	ctx := context.Background()
-
-	// Register some agents.
-	for i := 0; i < 2; i++ {
-		if _, err := impl.RegisterFleetNode(ctx, &RegisterFleetNodeRequest{
-			TenantID: "t-la-s",
-			Name:     "agent-las-" + itoa(i),
-			Host:     "host-las:9090",
-			NodeType: "worker",
-		}); err != nil {
-			t.Fatalf("RegisterFleetNode %d: %v", i, err)
-		}
-	}
-
-	agents, err := impl.ListFleetNodes(ctx, "t-la-s", nil)
-	if err != nil {
-		t.Fatalf("ListFleetNodes: %v", err)
-	}
-	if len(agents) < 2 {
-		t.Errorf("expected at least 2 agents, got %d", len(agents))
-	}
-}
-
-// =============================================================================
-// orchestrator — FleetNodeHeartbeat success path
-// =============================================================================
-
-func TestOrchestrator_AgentHeartbeat_SuccessPath(t *testing.T) {
-	t.Parallel()
-
-	impl := newTestService(t)
-	impl.SetFleetRegistry(NewInMemoryFleetRegistry())
-	ctx := context.Background()
-
-	resp, err := impl.RegisterFleetNode(ctx, &RegisterFleetNodeRequest{
-		TenantID: "t-hb-s",
-		Name:     "agent-hbs",
-		Host:     "host-hbs:9090",
-		NodeType: "worker",
-	})
-	if err != nil {
-		t.Fatalf("RegisterFleetNode: %v", err)
-	}
-
-	if err := impl.FleetNodeHeartbeat(ctx, "t-hb-s", resp.Node.ID, nil); err != nil {
-		t.Fatalf("FleetNodeHeartbeat: %v", err)
-	}
-}
-
-// =============================================================================
-// orchestrator — CancelJob success path (job found and cancelled)
+// orchestrator — CancelJob on a job that is only persisted
 // =============================================================================
 
 func TestOrchestrator_CancelJob_KVFallback(t *testing.T) {
@@ -7801,55 +5378,13 @@ func TestOrchestrator_CancelJob_KVFallback(t *testing.T) {
 		State:    JobStateCompleted,
 	})
 
+	// Only a running job can be cancelled; a persisted one is not found.
 	ctx := ContextWithTenant(context.Background(), "t-cj-kv")
-	// CancelJob on a non-running (KV-only) job should return not-found error.
 	err := impl.CancelJob(ctx, "t-cj-kv", "job-cj-1")
-	// Expected: not found since job isn't in memory.
-	if err == nil {
-		t.Log("CancelJob on KV-only job returned nil (job might be gone)")
+	var notFound *JobNotFoundError
+	if !errors.As(err, &notFound) {
+		t.Fatalf("expected *JobNotFoundError, got %T: %v", err, err)
 	}
-}
-
-// =============================================================================
-// orchestrator — SubscribeJobEvents coverage
-// =============================================================================
-
-func TestOrchestrator_SubscribeJobEvents_EmptyJobID(t *testing.T) {
-	t.Parallel()
-
-	impl := newTestService(t)
-	ctx := ContextWithTenant(context.Background(), "t-sje")
-	_, err := impl.SubscribeJobEvents(ctx, "t-sje", "")
-	if err == nil {
-		t.Fatal("expected error for empty jobID")
-	}
-}
-
-func TestOrchestrator_SubscribeJobEvents_EmptyTenantID(t *testing.T) {
-	t.Parallel()
-
-	impl := newTestService(t)
-	ctx := ContextWithTenant(context.Background(), "t-sje2")
-	_, err := impl.SubscribeJobEvents(ctx, "", "job-x")
-	if err == nil {
-		t.Fatal("expected error for empty tenantID")
-	}
-}
-
-// =============================================================================
-// orchestrator — publishEvent with valid event type
-// =============================================================================
-
-func TestOrchestrator_PublishEvent_ValidEvent(t *testing.T) {
-	t.Parallel()
-
-	impl := newTestService(t)
-	ctx := ContextWithTenant(context.Background(), "t-pub")
-
-	// publishEvent should not panic and should handle nil/empty gracefully.
-	impl.publishEvent(ctx, "t-pub", "test_event", map[string]string{
-		"key": "value",
-	})
 }
 
 // =============================================================================
@@ -7939,36 +5474,6 @@ func TestOrchestrator_LookupProject_Found(t *testing.T) {
 // session_store — GetSession not found
 // =============================================================================
 
-func TestSessionStore_GetSession_Cancelled(t *testing.T) {
-	t.Parallel()
-
-	store := NewInMemoryAgentStore()
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-
-	_, err := store.GetSession(ctx, "", "sess-1")
-	if err == nil {
-		t.Fatal("expected error for cancelled context")
-	}
-}
-
-// =============================================================================
-// session_store — UpdateSessionStatus with cancelled context
-// =============================================================================
-
-func TestSessionStore_UpdateSessionStatus_Cancelled(t *testing.T) {
-	t.Parallel()
-
-	store := NewInMemoryAgentStore()
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-
-	err := store.UpdateSessionStatus(ctx, "", "sess-1", SessionStateClosed)
-	if err == nil {
-		t.Fatal("expected error for cancelled context")
-	}
-}
-
 // =============================================================================
 // session_store — UpdateSessionActivity with empty sessionID
 // =============================================================================
@@ -8055,26 +5560,6 @@ func TestParseWorkItems_BadJSON(t *testing.T) {
 // =============================================================================
 // orchestrator — CancelJob empty field paths (lines 2345-2356)
 // =============================================================================
-
-func TestOrchestrator_CancelJob_EmptyTenantID(t *testing.T) {
-	t.Parallel()
-
-	impl := newTestService(t)
-	err := impl.CancelJob(context.Background(), "", "job-1")
-	if err == nil {
-		t.Fatal("expected error for empty tenantID")
-	}
-}
-
-func TestOrchestrator_CancelJob_EmptyJobID(t *testing.T) {
-	t.Parallel()
-
-	impl := newTestService(t)
-	err := impl.CancelJob(context.Background(), "tenant-1", "")
-	if err == nil {
-		t.Fatal("expected error for empty jobID")
-	}
-}
 
 // =============================================================================
 // orchestrator — DiscoverProjects where root dir itself has CLAUDE.md (line 312)
@@ -8299,115 +5784,6 @@ func TestOrchestrator_ListProjects_PaginationClamping(t *testing.T) {
 			t.Fatalf("ListProjects second page: %v", err)
 		}
 		_ = second
-	}
-}
-
-// =============================================================================
-// agent_registry — cancelled context paths
-// =============================================================================
-
-func TestAgentRegistry_UpdateAgent_CancelledCtx(t *testing.T) {
-	t.Parallel()
-
-	registry := NewInMemoryFleetRegistry()
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel() // cancel immediately
-
-	agent := &FleetNode{
-		ID:       "agent-update-ctx",
-		TenantID: "t-upd",
-		Name:     "update-agent",
-	}
-	err := registry.UpdateFleetNode(ctx, agent)
-	if err == nil {
-		t.Fatal("expected error for cancelled context")
-	}
-}
-
-func TestAgentRegistry_RemoveAgent_CancelledCtx(t *testing.T) {
-	t.Parallel()
-
-	registry := NewInMemoryFleetRegistry()
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel() // cancel immediately
-
-	err := registry.RemoveFleetNode(ctx, "t-rm", "agent-rm-ctx")
-	if err == nil {
-		t.Fatal("expected error for cancelled context")
-	}
-}
-
-// =============================================================================
-// task_store — uncovered validation paths
-// =============================================================================
-
-func TestTaskStore_ClaimTask_EmptyTaskID(t *testing.T) {
-	t.Parallel()
-
-	store := NewInMemoryTaskStore()
-	err := store.ClaimTask(context.Background(), "tenant-a", "", "agent-a")
-	if err == nil {
-		t.Fatal("expected error for empty taskID")
-	}
-}
-
-func TestTaskStore_CompleteTask_EmptyTenantID(t *testing.T) {
-	t.Parallel()
-
-	store := NewInMemoryTaskStore()
-	err := store.CompleteTask(context.Background(), "", "task-x", &TaskResult{Output: "done"})
-	if err == nil {
-		t.Fatal("expected error for empty tenantID")
-	}
-}
-
-func TestTaskStore_DeleteTask_EmptyTaskID(t *testing.T) {
-	t.Parallel()
-
-	store := NewInMemoryTaskStore()
-	err := store.DeleteTask(context.Background(), "tenant-a", "")
-	if err == nil {
-		t.Fatal("expected error for empty taskID")
-	}
-}
-
-func TestTaskStore_DeleteTenantTasks_CancelledCtx(t *testing.T) {
-	t.Parallel()
-
-	store := NewInMemoryTaskStore()
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-
-	err := store.DeleteTenantTasks(ctx, "tenant-a")
-	if err == nil {
-		t.Fatal("expected error for cancelled context")
-	}
-}
-
-// =============================================================================
-// session_store — ListSessions with cancelled ctx (triggers store error path)
-// =============================================================================
-
-func TestSessionStore_ListSessions_StoreError(t *testing.T) {
-	t.Parallel()
-
-	store := NewInMemoryAgentStore()
-
-	// Store valid data then cancel context during call.
-	if err := store.PutSession(context.Background(), &SessionRecord{
-		SessionID: "sess-store-err",
-		Backend:   "acp",
-		Status:    SessionStateIdle,
-	}); err != nil {
-		t.Fatalf("PutSession: %v", err)
-	}
-
-	// Now use a cancelled context so ListSessions returns ctx error.
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-	_, err := store.ListSessions(ctx, "")
-	if err == nil {
-		t.Fatal("expected error for cancelled context")
 	}
 }
 
@@ -8952,63 +6328,42 @@ func TestOrchestrator_DefaultBackendName_OllamaFallback(t *testing.T) {
 	}
 }
 
-func TestOrchestrator_DefaultBackendName_FirstBackend(t *testing.T) {
+// =============================================================================
+// lookupProject / lookupBackend / BackendToolGuidance / findSessionBackend —
+// a value of the wrong type in the sync.Map is treated as missing.
+// =============================================================================
+
+func TestOrchestrator_LookupTypeMismatch(t *testing.T) {
 	t.Parallel()
-	impl := newTestService(t)
-	if err := impl.RegisterBackend(context.Background(), &RegisterBackendRequest{
-		Name:    "custom-backend",
-		Backend: &mockAgentBackend{backendType: "custom"},
-	}); err != nil {
-		t.Fatalf("RegisterBackend: %v", err)
-	}
-	// No lead agent, no ollama — should return first backend.
-	name := impl.defaultBackendName()
-	if name == "" {
-		t.Error("expected non-empty backend name")
-	}
-}
-
-// =============================================================================
-// lookupProject — type assertion failure path
-// =============================================================================
-
-func TestOrchestrator_LookupProject_TypeMismatch(t *testing.T) {
-	t.Parallel()
-	impl := newTestService(t)
-	// Store a non-*RegisteredProject value.
-	impl.projects.Store("bad-proj", "not-a-project")
-	proj, ok := impl.lookupProject("bad-proj")
-	if ok || proj != nil {
-		t.Error("expected lookupProject to return nil,false for bad type")
-	}
-}
-
-// =============================================================================
-// lookupBackend — type assertion failure path
-// =============================================================================
-
-func TestOrchestrator_LookupBackend_TypeMismatch(t *testing.T) {
-	t.Parallel()
-	impl := newTestService(t)
-	// Store a non-AgentBackend value.
-	impl.backends.Store("bad-backend", "not-a-backend")
-	_, err := impl.lookupBackend("bad-backend")
-	if err == nil {
-		t.Error("expected error for type mismatch in backends store")
-	}
-}
-
-// =============================================================================
-// BackendToolGuidance — backend type assertion failure
-// =============================================================================
-
-func TestOrchestrator_BackendToolGuidance_TypeMismatch(t *testing.T) {
-	t.Parallel()
-	impl := newTestService(t)
-	impl.backends.Store("bad-bg", "not-a-backend")
-	result := impl.BackendToolGuidance("bad-bg")
-	if result != "" {
-		t.Errorf("expected empty string for bad type, got %q", result)
+	for name, check := range map[string]func(t *testing.T, impl *agentServiceImpl){
+		"lookupProject": func(t *testing.T, impl *agentServiceImpl) {
+			impl.projects.Store("bad", "not-a-project")
+			if proj, ok := impl.lookupProject("bad"); ok || proj != nil {
+				t.Error("expected lookupProject to return nil,false for bad type")
+			}
+		},
+		"lookupBackend": func(t *testing.T, impl *agentServiceImpl) {
+			impl.backends.Store("bad", "not-a-backend")
+			if _, err := impl.lookupBackend("bad"); err == nil {
+				t.Error("expected error for type mismatch in backends store")
+			}
+		},
+		"BackendToolGuidance": func(t *testing.T, impl *agentServiceImpl) {
+			impl.backends.Store("bad", "not-a-backend")
+			if result := impl.BackendToolGuidance("bad"); result != "" {
+				t.Errorf("expected empty string for bad type, got %q", result)
+			}
+		},
+		"findSessionBackend": func(t *testing.T, impl *agentServiceImpl) {
+			impl.sessions.Store("bad", "not-a-record")
+			if _, err := impl.findSessionBackend("bad"); err == nil {
+				t.Error("expected error for type mismatch in sessions store")
+			}
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			check(t, newTestService(t))
+		})
 	}
 }
 
@@ -9034,40 +6389,26 @@ func TestOrchestrator_ListBackends_InvalidEntries(t *testing.T) {
 	}
 }
 
-// =============================================================================
-// findSessionBackend — type assertion failure path (non-*sessionRecord value)
+// ClaimTask / CompleteTask — taskStore == nil paths
 // =============================================================================
 
-func TestOrchestrator_FindSessionBackend_TypeMismatch(t *testing.T) {
+func TestOrchestrator_TaskVerbs_NoTaskStore(t *testing.T) {
 	t.Parallel()
-	impl := newTestService(t)
-	impl.sessions.Store("bad-sess", "not-a-record")
-	_, err := impl.findSessionBackend("bad-sess")
-	if err == nil {
-		t.Error("expected error for type mismatch in sessions store")
-	}
-}
-
-// =============================================================================
-// ClaimTask / CompleteTask — taskStore == nil paths (lines 1270-1272, 1304-1306)
-// =============================================================================
-
-func TestOrchestrator_ClaimTask_NoTaskStore(t *testing.T) {
-	t.Parallel()
-	impl := newTestService(t)
-	// taskStore is nil by default in newTestService (no SetTaskStore call)
-	err := impl.ClaimTask(context.Background(), "t-ctn", "task-x", "agent-a")
-	if err == nil {
-		t.Fatal("expected error when taskStore is nil")
-	}
-}
-
-func TestOrchestrator_CompleteTask_NoTaskStore(t *testing.T) {
-	t.Parallel()
-	impl := newTestService(t)
-	err := impl.CompleteTask(context.Background(), "t-cmptn", "task-x", &TaskResult{Output: "done"})
-	if err == nil {
-		t.Fatal("expected error when taskStore is nil")
+	ctx := context.Background()
+	for name, call := range map[string]func(impl *agentServiceImpl) error{
+		"ClaimTask": func(impl *agentServiceImpl) error {
+			return impl.ClaimTask(ctx, "t-ctn", "task-x", "agent-a")
+		},
+		"CompleteTask": func(impl *agentServiceImpl) error {
+			return impl.CompleteTask(ctx, "t-cmptn", "task-x", &TaskResult{Output: "done"})
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			// taskStore is nil by default in newTestService (no SetTaskStore call)
+			if err := call(newTestService(t)); err == nil {
+				t.Fatal("expected error when taskStore is nil")
+			}
+		})
 	}
 }
 
@@ -9230,33 +6571,6 @@ func TestOrchestrator_DefaultBackendName_LeadAgent(t *testing.T) {
 	name := impl.defaultBackendName()
 	if name != "my-lead-backend" {
 		t.Errorf("expected my-lead-backend, got %q", name)
-	}
-}
-
-// =============================================================================
-// DiscoverProjects — filepath.Abs error is unreachable, but os.ReadDir failure
-// and cancelled context are reachable. Test with bad path string.
-// =============================================================================
-
-func TestOrchestrator_DiscoverProjects_ContextCancelledBeforeRead(t *testing.T) {
-	t.Parallel()
-
-	impl := newTestService(t)
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-
-	// Using a valid path so os.ReadDir might succeed but ctx is already cancelled.
-	// DiscoverProjects checks ctx.Err() inside the entry loop, not before ReadDir.
-	// If the directory is empty, no entries to iterate — no error from ctx.
-	// Use a dir with an entry to ensure the ctx.Err() check at line 295 fires.
-	root := t.TempDir()
-	if err := os.WriteFile(root+"/file.txt", []byte("hello"), 0o644); err != nil {
-		t.Fatalf("WriteFile: %v", err)
-	}
-
-	_, err := impl.DiscoverProjects(ctx, &DiscoverProjectsRequest{RootPath: root})
-	if err == nil {
-		t.Fatal("expected error for cancelled context during DiscoverProjects")
 	}
 }
 

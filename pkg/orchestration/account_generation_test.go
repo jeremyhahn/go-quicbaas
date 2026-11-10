@@ -39,7 +39,7 @@ func TestAccountSecretStore_EveryReplacementIsANewGeneration(t *testing.T) {
 	store := newTestAccountSecretStore(t)
 	ctx := context.Background()
 
-	cred := &AccountCredential{AccessToken: "<account>"}
+	cred := &AccountCredential{AccessToken: "token-a"}
 	first, err := store.Replace(ctx, "tenant-a", "acct-1", cred)
 	if err != nil {
 		t.Fatalf("Replace: %v", err)
@@ -59,7 +59,7 @@ func TestAccountSecretStore_EveryReplacementIsANewGeneration(t *testing.T) {
 		t.Errorf("stored generation = %d, want the stamp the write reported (%d)", stored.Generation, first)
 	}
 
-	second, err := store.Replace(ctx, "tenant-a", "acct-1", &AccountCredential{AccessToken: "<account>"})
+	second, err := store.Replace(ctx, "tenant-a", "acct-1", &AccountCredential{AccessToken: "token-b"})
 	if err != nil {
 		t.Fatalf("Replace(second): %v", err)
 	}
@@ -158,7 +158,7 @@ func TestAccountResolver_ReportsAndReconcilesTheGenerationItMaterialized(t *test
 		t.Fatalf("Create: %v", err)
 	}
 	generation, err := secretStore.Replace(ctx, "tenant-a", "acct-1",
-		&AccountCredential{AccessToken: "<account>", AccessTokenEnvKey: "CLAUDE_CODE_OAUTH_TOKEN"})
+		&AccountCredential{AccessToken: "token-a", AccessTokenEnvKey: "CLAUDE_CODE_OAUTH_TOKEN"})
 	if err != nil {
 		t.Fatalf("Replace: %v", err)
 	}
@@ -598,13 +598,13 @@ func TestAccountTokenManager_CredentialGenerationReadsTheAuthority(t *testing.T)
 
 	t.Run("secret reference", func(t *testing.T) {
 		resolver := newMemorySecretResolver()
-		resolver.put("tenant-a", "agents/claude/claude1/oauth_token", "<account>")
+		resolver.put("tenant-a", "agents/claude/claude1/oauth_token", "token-a")
 		tokens, _, account := refAccountFixture(t, resolver, AccountProviderClaude, "agents/claude/claude1/oauth_token", "")
 		first, err := tokens.CredentialGeneration(ctx, account)
 		if err != nil || first == 0 {
 			t.Fatalf("CredentialGeneration = %d, %v; want the secret's version", first, err)
 		}
-		resolver.put("tenant-a", "agents/claude/claude1/oauth_token", "<account>")
+		resolver.put("tenant-a", "agents/claude/claude1/oauth_token", "token-b")
 		second, err := tokens.CredentialGeneration(ctx, account)
 		if err != nil || second <= first {
 			t.Fatalf("CredentialGeneration after the secret was rewritten = %d, %v; want past %d", second, err, first)
