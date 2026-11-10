@@ -2,8 +2,8 @@ Removing SSH command configuration
 [command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
 [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
 Removing HTTP extra header
-[command]/usr/bin/git config --local --name-only --get-regexp http\.http\:\/\/198\.51\.100\.50\:3001\/\.extraheader
-[command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.http\:\/\/198\.51\.100\.50\:3001\/\.extraheader' && git config --local --unset-all 'http.http://198.51.100.50:3001/.extraheader' || :"
+[command]/usr/bin/git config --local --name-only --get-regexp http\.http\:\/\/198\.51\.100\.50\:3000\/\.extraheader
+[command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.http\:\/\/198\.51\.100\.50\:3000\/\.extraheader' && git config --local --unset-all 'http.http://198.51.100.50:3000/.extraheader' || :"
 Removing includeIf entries pointing to credentials config files
 [command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
 includeif.gitdir:/workspace/jeremyhahn/go-quicbaas/.git.path

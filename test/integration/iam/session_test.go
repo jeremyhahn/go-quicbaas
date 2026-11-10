@@ -99,7 +99,7 @@ func createMockSession(t *testing.T, cluster *testCluster, tenantID, userID stri
 		"tenant_id":    tenantID,
 		"token_hash":   tokenHash,
 		"mfa_verified": false,
-		"ip_address":   "192.168.1.100",
+		"ip_address":   "192.0.2.100",
 		"user_agent":   "Mozilla/5.0 (Test)",
 		"device_info": map[string]interface{}{
 			"id":   uuid.New().String(),
@@ -122,7 +122,7 @@ func createMockSession(t *testing.T, cluster *testCluster, tenantID, userID stri
 			UserID:      userID,
 			TenantID:    tenantID,
 			MFAVerified: false,
-			IPAddress:   "192.168.1.100",
+			IPAddress:   "192.0.2.100",
 			UserAgent:   "Mozilla/5.0 (Test)",
 			Created:     time.Now().Format(time.RFC3339),
 			LastActive:  time.Now().Format(time.RFC3339),
@@ -411,7 +411,7 @@ func TestSessionExpiration(t *testing.T) {
 		"tenant_id":    tenantID,
 		"token_hash":   tokenHash,
 		"expires_at":   time.Now().Add(-1 * time.Hour).Format(time.RFC3339), // Already expired
-		"ip_address":   "192.168.1.100",
+		"ip_address":   "192.0.2.100",
 		"user_agent":   "Mozilla/5.0 (Test)",
 		"mfa_verified": false,
 	}
@@ -562,7 +562,7 @@ func TestSessionMFAStatus(t *testing.T) {
 		"tenant_id":    tenantID,
 		"token_hash":   tokenHash,
 		"mfa_verified": true, // MFA verified
-		"ip_address":   "192.168.1.100",
+		"ip_address":   "192.0.2.100",
 		"user_agent":   "Mozilla/5.0 (Test)",
 	}
 

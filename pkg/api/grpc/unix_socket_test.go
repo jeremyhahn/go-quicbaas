@@ -54,7 +54,7 @@ func TestIsUnixSocketAddress(t *testing.T) {
 		},
 		{
 			name:     "tcp ip",
-			address:  "192.168.1.1:9090",
+			address:  "192.0.2.1:9090",
 			expected: false,
 		},
 		{
@@ -130,8 +130,8 @@ func TestNormalizeUnixSocketAddress(t *testing.T) {
 		},
 		{
 			name:     "tcp ip unchanged",
-			input:    "192.168.1.1:9090",
-			expected: "192.168.1.1:9090",
+			input:    "192.0.2.1:9090",
+			expected: "192.0.2.1:9090",
 		},
 		{
 			name:     "tcp hostname unchanged",

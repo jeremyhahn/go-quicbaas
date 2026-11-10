@@ -234,7 +234,7 @@ type SyslogExporter struct {
 type SyslogExporterConfig struct {
 	// Address is the syslog server address.
 	// For local syslog, this can be empty or a Unix socket path (e.g., "/dev/log").
-	// For remote syslog, this should be "host:port" (e.g., "192.168.1.100:514").
+	// For remote syslog, this should be "host:port" (e.g., "192.0.2.100:514").
 	Address string
 
 	// Network specifies the network type: "udp", "tcp", "unix", or "" for local.
@@ -1386,7 +1386,7 @@ type AuditConfig struct {
 
 	// Syslog configuration (new, comprehensive)
 	SyslogEnabled  bool           `json:"syslog_enabled"`  // Enable syslog output
-	SyslogAddress  string         `json:"syslog_address"`  // Address for remote syslog (e.g., "192.168.1.100:514" or "/dev/log")
+	SyslogAddress  string         `json:"syslog_address"`  // Address for remote syslog (e.g., "192.0.2.100:514" or "/dev/log")
 	SyslogNetwork  string         `json:"syslog_network"`  // Network type: "udp", "tcp", "unix", or "" for local
 	SyslogFacility SyslogFacility `json:"syslog_facility"` // Syslog facility (e.g., LOG_LOCAL0)
 	SyslogTag      string         `json:"syslog_tag"`      // Syslog tag/app name (default: "quicbaas")
