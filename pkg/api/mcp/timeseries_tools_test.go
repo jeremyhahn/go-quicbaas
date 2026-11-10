@@ -547,6 +547,55 @@ func TestTimeSeriesListMetrics_Success(t *testing.T) {
 	}
 }
 
+// listMetricsSpy counts the ListMetrics calls that reach the service, on top
+// of the package mock.
+type listMetricsSpy struct {
+	*mockService
+	calls int
+}
+
+func (s *listMetricsSpy) ListMetrics(ctx context.Context, req *service.TSListMetricsRequest) (*service.TSListMetricsResponse, error) {
+	s.calls++
+	return s.mockService.ListMetrics(ctx, req)
+}
+
+// TestTimeSeriesListMetrics_WithInvalidTags pins the rejection of malformed
+// tags: the tool answers an error and no result, and the request never
+// reaches the service. The well-formed case proves the spy counts a call that
+// does reach it.
+func TestTimeSeriesListMetrics_WithInvalidTags(t *testing.T) {
+	newSpyRegistry := func(t *testing.T) (*ToolRegistry, *listMetricsSpy) {
+		t.Helper()
+		spy := &listMetricsSpy{mockService: &mockService{}}
+		log, err := logger.New(logger.LogConfig{Level: "error", Output: "stdout"})
+		require.NoError(t, err)
+		return NewToolRegistry(spy, log), spy
+	}
+
+	t.Run("malformed tags are refused before the service", func(t *testing.T) {
+		registry, spy := newSpyRegistry(t)
+
+		result, err := registry.ExecuteTool(context.Background(), "qrdb_ts_list_metrics", map[string]interface{}{
+			"tags": "{not-valid-json",
+		})
+		require.Error(t, err)
+		assert.Nil(t, result)
+		assert.Contains(t, err.Error(), "invalid JSON")
+		assert.Zero(t, spy.calls, "ListMetrics must not be called for malformed tags")
+	})
+
+	t.Run("well-formed tags reach the service once", func(t *testing.T) {
+		registry, spy := newSpyRegistry(t)
+
+		result, err := registry.ExecuteTool(context.Background(), "qrdb_ts_list_metrics", map[string]interface{}{
+			"tags": `{"host":"server-1"}`,
+		})
+		require.NoError(t, err)
+		require.NotNil(t, result)
+		assert.Equal(t, 1, spy.calls)
+	})
+}
+
 func TestIsTimeSeriesTool(t *testing.T) {
 	tsTools := []string{
 		"qrdb_ts_write_point", "qrdb_ts_write_batch",
