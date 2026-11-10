@@ -334,3 +334,347 @@ func TestWorkflowBuildPublish_OnlyNotFoundCountsAsUnpublished(t *testing.T) {
 		})
 	}
 }
+
+// stepRun returns the run: script of build-publish's step with the given id.
+func stepRun(t *testing.T, id string) string {
+	t.Helper()
+	_, wf := loadWorkflow(t)
+	job, ok := wf.Jobs["build-publish"]
+	if !ok {
+		t.Fatalf("%s has no build-publish job", workflowPath)
+	}
+	for _, step := range job.Steps {
+		if step.ID != id {
+			continue
+		}
+		if strings.TrimSpace(step.Run) == "" {
+			t.Fatalf("build-publish step id: %s has no run: script", id)
+		}
+		return step.Run
+	}
+	t.Fatalf("build-publish has no step with id: %s", id)
+	return ""
+}
+
+// The image secret scan also covers the image config, and the layer scan
+// adds the config JSON to the tree it scans.
+func TestWorkflowBuildPublish_SecretScanCoversImageConfig(t *testing.T) {
+	if run := stepRun(t, "secret-scan"); !strings.Contains(run, "--image-config-scanners secret") {
+		t.Errorf("step secret-scan run: lacks %q", "--image-config-scanners secret")
+	}
+	run := stepRun(t, "layer-scan")
+	for _, s := range []string{".[0].Config", "config.json"} {
+		if !strings.Contains(run, s) {
+			t.Errorf("step layer-scan run: lacks %q", s)
+		}
+	}
+}
+
+const fakeNpmScript = `#!/bin/sh
+case "$*" in
+  *dist.integrity*) printf '%s\n' "$FAKE_INTEGRITY" ;;
+  *) echo 1.2.3 ;;
+esac
+`
+
+// The resolve step records the Gemini CLI pin and the npm sha512 integrity of
+// each CLI package, and fails on a missing or non-sha512 integrity.
+func TestWorkflowBuildPublish_ResolveRecordsIntegrity(t *testing.T) {
+	bash, err := exec.LookPath("bash")
+	if err != nil {
+		t.Skip("bash is not on PATH")
+	}
+	script := stepRun(t, "resolve")
+	const valid = "sha512-AbCd0123+/xyz=="
+
+	cases := []struct {
+		name      string
+		integrity string
+		wantOK    bool
+	}{
+		{name: "sha512", integrity: valid, wantOK: true},
+		{name: "sha1", integrity: "sha1-abc"},
+		{name: "empty", integrity: ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			binDir := filepath.Join(dir, "bin")
+			if err := os.Mkdir(binDir, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(binDir, "npm"), []byte(fakeNpmScript), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(dir, "VERSION"), []byte("1.0.0\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(dir, "Makefile"), []byte("GEMINI_CLI_VERSION ?= 0.64.0\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			output := filepath.Join(dir, "github_output")
+			if err := os.WriteFile(output, nil, 0o644); err != nil {
+				t.Fatal(err)
+			}
+
+			cmd := exec.Command(bash, "-c", script)
+			cmd.Dir = dir
+			cmd.Env = append(os.Environ(),
+				"PATH="+binDir+string(os.PathListSeparator)+os.Getenv("PATH"),
+				"IMAGE=quicbaas-software-factory-worker",
+				"GITHUB_REPOSITORY_OWNER=Example",
+				"GITHUB_OUTPUT="+output,
+				"CC_INPUT=",
+				"CX_INPUT=",
+				"FAKE_INTEGRITY="+tc.integrity,
+			)
+			combined, runErr := cmd.CombinedOutput()
+			got, err := os.ReadFile(output)
+			if err != nil {
+				t.Fatal(err)
+			}
+			lines := strings.Split(strings.TrimSpace(string(got)), "\n")
+
+			if !tc.wantOK {
+				if runErr == nil {
+					t.Fatalf("step exited 0 with integrity %q:\n%s", tc.integrity, combined)
+				}
+				for _, line := range lines {
+					if strings.HasPrefix(line, "cc_int=") {
+						t.Errorf("GITHUB_OUTPUT has %q after a bad integrity:\n%s", line, got)
+					}
+				}
+				return
+			}
+			if runErr != nil {
+				t.Fatalf("step failed: %v\n%s", runErr, combined)
+			}
+			want := []string{"gm=0.64.0"}
+			for _, k := range []string{"cc_int", "cc_x64_int", "cx_int", "cx_x64_int", "gm_int"} {
+				want = append(want, k+"="+valid)
+			}
+			for _, w := range want {
+				found := false
+				for _, line := range lines {
+					if line == w {
+						found = true
+					}
+				}
+				if !found {
+					t.Errorf("GITHUB_OUTPUT has no %q line:\n%s", w, got)
+				}
+			}
+		})
+	}
+}
+
+// The digest record carries each CLI's version and npm integrity.
+func TestWorkflowBuildPublish_RecordCarriesIntegrity(t *testing.T) {
+	bash, err := exec.LookPath("bash")
+	if err != nil {
+		t.Skip("bash is not on PATH")
+	}
+	script := stepRun(t, "record")
+	const (
+		repo   = "ghcr.io/example/img"
+		tag    = "1.0.0-cc1.2.3-cx4.5.6"
+		digest = "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+	)
+	dir := t.TempDir()
+	summary := filepath.Join(dir, "summary")
+	output := filepath.Join(dir, "github_output")
+	cmd := exec.Command(bash, "-c", script)
+	cmd.Env = append(os.Environ(),
+		"REPO="+repo,
+		"TAG="+tag,
+		"CC=1.2.3",
+		"CX=4.5.6",
+		"GM=0.64.0",
+		"CC_INT=sha512-cc==",
+		"CC_X64_INT=sha512-ccx64==",
+		"CX_INT=sha512-cx==",
+		"CX_X64_INT=sha512-cxx64==",
+		"GM_INT=sha512-gm==",
+		"EXISTING_DIGEST=",
+		"PUSHED_DIGEST="+digest,
+		"RUNNER_TEMP="+dir,
+		"GITHUB_STEP_SUMMARY="+summary,
+		"GITHUB_OUTPUT="+output,
+	)
+	if combined, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("step failed: %v\n%s", err, combined)
+	}
+	got, err := os.ReadFile(filepath.Join(dir, "worker-image-digest.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(strings.TrimSpace(string(got)), "\n")
+	want := []string{
+		"WORKER-IMAGE-DIGEST " + repo + ":" + tag + "@" + digest + " published=true",
+		"claude-code=1.2.3 integrity=sha512-cc==",
+		"claude-code-linux-x64=1.2.3 integrity=sha512-ccx64==",
+		"codex=4.5.6 integrity=sha512-cx==",
+		"codex-linux-x64=4.5.6 integrity=sha512-cxx64==",
+		"gemini-cli=0.64.0 integrity=sha512-gm==",
+	}
+	if len(lines) != len(want) {
+		t.Fatalf("worker-image-digest.txt =\n%s\nwant %d lines", got, len(want))
+	}
+	for i, w := range want {
+		if lines[i] != w {
+			t.Errorf("worker-image-digest.txt line %d = %q, want %q", i+1, lines[i], w)
+		}
+	}
+}
+
+// The job fails before the build if any DEVCACHE_* variable is set, and both
+// make calls pass the dev-cache args empty.
+func TestWorkflowBuildPublish_DevcacheArgsMustBeEmpty(t *testing.T) {
+	_, wf := loadWorkflow(t)
+	job := wf.Jobs["build-publish"]
+	check, build, push := -1, -1, -1
+	for i, step := range job.Steps {
+		if step.ID == "devcache-empty" {
+			check = i
+		}
+		if build < 0 && strings.Contains(step.Run, "make build-worker-image") {
+			build = i
+		}
+		if push < 0 && strings.Contains(step.Run, "make push-worker-image") {
+			push = i
+		}
+	}
+	if check < 0 || build < 0 || push < 0 {
+		t.Fatalf("build-publish steps: devcache-empty #%d, build #%d, push #%d; want all three", check, build, push)
+	}
+	if check >= build {
+		t.Errorf("step devcache-empty (#%d) does not come before the build step (#%d)", check, build)
+	}
+	if job.Steps[check].If != job.Steps[build].If {
+		t.Errorf("step devcache-empty if = %q, want the build step's %q", job.Steps[check].If, job.Steps[build].If)
+	}
+	for _, i := range []int{build, push} {
+		if !strings.Contains(job.Steps[i].Run, "DEVCACHE_GOPROXY= DEVCACHE_NPM_REGISTRY=") {
+			t.Errorf("step %q run: does not pass DEVCACHE_GOPROXY= DEVCACHE_NPM_REGISTRY=", job.Steps[i].Name)
+		}
+	}
+
+	bash, err := exec.LookPath("bash")
+	if err != nil {
+		t.Skip("bash is not on PATH")
+	}
+	script := job.Steps[check].Run
+	var base []string
+	for _, kv := range os.Environ() {
+		if !strings.HasPrefix(kv, "DEVCACHE_") {
+			base = append(base, kv)
+		}
+	}
+	cases := []struct {
+		name   string
+		extra  []string
+		wantOK bool
+	}{
+		{name: "none set", wantOK: true},
+		{name: "goproxy set", extra: []string{"DEVCACHE_GOPROXY=http://cache.invalid:3000"}},
+		{name: "npm registry set", extra: []string{"DEVCACHE_NPM_REGISTRY=http://cache.invalid:4873"}},
+		{name: "goproxy empty", extra: []string{"DEVCACHE_GOPROXY="}, wantOK: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cmd := exec.Command(bash, "-c", script)
+			cmd.Env = append(append([]string{}, base...), tc.extra...)
+			combined, runErr := cmd.CombinedOutput()
+			if tc.wantOK && runErr != nil {
+				t.Fatalf("step failed: %v\n%s", runErr, combined)
+			}
+			if !tc.wantOK && runErr == nil {
+				t.Fatalf("step exited 0 with %v set:\n%s", tc.extra, combined)
+			}
+		})
+	}
+}
+
+const fakeAnonDockerScript = `#!/bin/sh
+if [ -e "$DOCKER_CONFIG/config.json" ]; then exit 9; fi
+printf '%s' "$FAKE_DOCKER_STDOUT"
+printf '%s' "$FAKE_DOCKER_STDERR" >&2
+exit "$FAKE_DOCKER_EXIT"
+`
+
+// After the digest is recorded, an anonymous lookup of it must be refused:
+// a public package fails the job, and so does an answer that is not a refusal.
+func TestWorkflowBuildPublish_PackageMustBePrivate(t *testing.T) {
+	_, wf := loadWorkflow(t)
+	job := wf.Jobs["build-publish"]
+	priv, record, upload := -1, -1, -1
+	for i, step := range job.Steps {
+		switch {
+		case step.ID == "private":
+			priv = i
+		case step.ID == "record":
+			record = i
+		case step.Name == "Upload the digest":
+			upload = i
+		}
+	}
+	if priv < 0 || record < 0 || upload < 0 {
+		t.Fatalf("build-publish steps: private #%d, record #%d, upload #%d; want all three", priv, record, upload)
+	}
+	if priv <= record || priv >= upload {
+		t.Errorf("step private (#%d) is not between record (#%d) and the upload (#%d)", priv, record, upload)
+	}
+
+	bash, err := exec.LookPath("bash")
+	if err != nil {
+		t.Skip("bash is not on PATH")
+	}
+	script := stepRun(t, "private")
+	cases := []struct {
+		name   string
+		stderr string
+		exit   string
+		wantOK bool
+	}{
+		{name: "public", exit: "0"},
+		{name: "denied", stderr: "denied: denied\n", exit: "1", wantOK: true},
+		{name: "unauthorized", stderr: "unauthorized: authentication required\n", exit: "1", wantOK: true},
+		{name: "server error", stderr: "503 Service Unavailable\n", exit: "1"},
+		{name: "empty stderr", exit: "1"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			binDir := filepath.Join(dir, "bin")
+			if err := os.Mkdir(binDir, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(binDir, "docker"), []byte(fakeAnonDockerScript), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			cfg := filepath.Join(dir, "docker-config")
+			if err := os.Mkdir(cfg, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(cfg, "config.json"), []byte(`{"auths":{}}`), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			cmd := exec.Command(bash, "-c", script)
+			cmd.Env = append(os.Environ(),
+				"PATH="+binDir+string(os.PathListSeparator)+os.Getenv("PATH"),
+				"DOCKER_CONFIG="+cfg,
+				"REPO=ghcr.io/example/img",
+				"DIGEST=sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+				"FAKE_DOCKER_STDERR="+tc.stderr,
+				"FAKE_DOCKER_EXIT="+tc.exit,
+			)
+			combined, runErr := cmd.CombinedOutput()
+			if tc.wantOK && runErr != nil {
+				t.Fatalf("step failed: %v\n%s", runErr, combined)
+			}
+			if !tc.wantOK && runErr == nil {
+				t.Fatalf("step exited 0:\n%s", combined)
+			}
+		})
+	}
+}

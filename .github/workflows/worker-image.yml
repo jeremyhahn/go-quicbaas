@@ -7,10 +7,16 @@
 # ghcr.io with GITHUB_TOKEN via `make push-worker-image`, whose Trivy gate
 # blocks the push; a published tag is never pushed again. Before the push, two
 # Trivy secret scans, one of the built image and one of each of its layer
-# tarballs, fail the job on a secret of any severity. The digest goes to a
+# tarballs, fail the job on a secret of any severity; the image scan also
+# covers the image config, and the config JSON is scanned with the layers. The
+# job fails before the build if any DEVCACHE_* variable is set, and both make
+# calls pass the dev-cache args empty. The digest goes to a
 # `WORKER-IMAGE-DIGEST` log line, the job summary and the `worker-image-digest`
-# artifact; this workflow does not move `current`. The nightly schedule is an
-# owner exception to the no-`schedule:` workflow rule.
+# artifact, each with the resolved CLI versions and their npm integrity sums;
+# this workflow does not move `current`. Once the digest is known, an anonymous
+# lookup of it must be refused, or the job fails: the package stays private.
+# The nightly schedule is an owner exception to the no-`schedule:` workflow
+# rule.
 name: worker-image
 
 on:
@@ -73,10 +79,20 @@ jobs:
           semver() { [[ "$2" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error::the $1 version must be <major>.<minor>.<patch>"; exit 1; }; }
           semver "Claude Code (claude_code_version)" "$cc"
           semver "Codex (codex_version)" "$cx"
+          gm="$(sed -n 's/^GEMINI_CLI_VERSION ?= //p' Makefile)"
+          semver "Gemini CLI (Makefile GEMINI_CLI_VERSION)" "$gm"
+          integrity() { local v; v="$(npm view "$1" dist.integrity)"; [[ "$v" =~ ^sha512-[A-Za-z0-9+/]+={0,2}$ ]] || { echo "::error::$1 has no sha512 integrity on npm"; return 1; }; printf '%s' "$v"; }
+          cc_int="$(integrity "@anthropic-ai/claude-code@${cc}")"
+          cc_x64_int="$(integrity "@anthropic-ai/claude-code-linux-x64@${cc}")"
+          cx_int="$(integrity "@openai/codex@${cx}")"
+          cx_x64_int="$(integrity "@openai/codex@${cx}-linux-x64")"
+          gm_int="$(integrity "@google/gemini-cli@${gm}")"
           # The Makefile's WORKER_IMAGE_TAG: <VERSION>-cc<claude-code>-cx<codex>.
           tag="$(tr -d '\n' < VERSION)-cc${cc}-cx${cx}"
           repo="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/${IMAGE}"
           printf 'cc=%s\ncx=%s\ntag=%s\nrepo=%s\n' "$cc" "$cx" "$tag" "$repo" >> "$GITHUB_OUTPUT"
+          printf 'gm=%s\ncc_int=%s\ncc_x64_int=%s\ncx_int=%s\ncx_x64_int=%s\ngm_int=%s\n' \
+            "$gm" "$cc_int" "$cc_x64_int" "$cx_int" "$cx_x64_int" "$gm_int" >> "$GITHUB_OUTPUT"
 
       - name: Log in to ghcr.io
         env:
@@ -111,6 +127,21 @@ jobs:
             exit 1
           fi
 
+      - name: No dev-cache build args
+        id: devcache-empty
+        if: ${{ steps.existing.outputs.exists != 'true' }}
+        run: |
+          set -euo pipefail
+          bad=""
+          for v in $(compgen -e); do
+            case "$v" in DEVCACHE_*) if [ -n "${!v}" ]; then bad="$bad $v"; fi ;; esac
+          done
+          if [ -n "$bad" ]; then
+            echo "::error::a published image is never built through the dev caches; set:$bad"
+            exit 1
+          fi
+          echo "no DEVCACHE_* build arg is set"
+
       - name: Build the worker image
         if: ${{ steps.existing.outputs.exists != 'true' }}
         env:
@@ -118,7 +149,7 @@ jobs:
           CX: ${{ steps.resolve.outputs.cx }}
         run: |
           set -euo pipefail
-          make build-worker-image CLAUDE_CODE_VERSION="$CC" CODEX_VERSION="$CX" WORKER_IMAGE_UID=1000 WORKER_IMAGE_GID=1000
+          make build-worker-image CLAUDE_CODE_VERSION="$CC" CODEX_VERSION="$CX" WORKER_IMAGE_UID=1000 WORKER_IMAGE_GID=1000 DEVCACHE_GOPROXY= DEVCACHE_NPM_REGISTRY=
 
       - name: Install Trivy
         if: ${{ steps.existing.outputs.exists != 'true' }}
@@ -134,7 +165,7 @@ jobs:
           TAG: ${{ steps.resolve.outputs.tag }}
         run: |
           set -euo pipefail
-          trivy image --scanners secret --exit-code 1 --no-progress "${IMAGE}:${TAG}"
+          trivy image --scanners secret --image-config-scanners secret --exit-code 1 --no-progress "${IMAGE}:${TAG}"
 
       - name: Scan every layer tarball for secrets
         id: layer-scan
@@ -159,6 +190,13 @@ jobs:
             mkdir -p "$work/layers/$i"
             tar -xf "$work/image/$layer" -C "$work/layers/$i" --no-same-owner --no-same-permissions
           done <<< "$layers"
+          config="$(jq -r '.[0].Config' "$work/image/manifest.json")"
+          if [ -z "$config" ] || [ "$config" = "null" ]; then
+            echo "::error::${IMAGE}:${TAG} names no image config in manifest.json"
+            exit 1
+          fi
+          mkdir -p "$work/layers/config"
+          cp "$work/image/$config" "$work/layers/config/config.json"
           trivy fs --scanners secret --exit-code 1 --no-progress "$work/layers"
           echo "scanned ${i} layer tarballs of ${IMAGE}:${TAG} for secrets"
 
@@ -173,7 +211,7 @@ jobs:
           set -euo pipefail
           log="$RUNNER_TEMP/push-worker-image.log"
           make push-worker-image CLAUDE_CODE_VERSION="$CC" CODEX_VERSION="$CX" \
-            WORKER_IMAGE_UID=1000 WORKER_IMAGE_GID=1000 \
+            WORKER_IMAGE_UID=1000 WORKER_IMAGE_GID=1000 DEVCACHE_GOPROXY= DEVCACHE_NPM_REGISTRY= \
             WORKER_IMAGE_REGISTRY="$REPO" TRIVY="$RUNNER_TEMP/bin/trivy" 2>&1 | tee "$log"
           ref_line="$(grep '^WORKER_IMAGE_REF=' "$log" | tail -n 1 || true)"
           digest="${ref_line##*@}"
@@ -188,6 +226,12 @@ jobs:
           TAG: ${{ steps.resolve.outputs.tag }}
           CC: ${{ steps.resolve.outputs.cc }}
           CX: ${{ steps.resolve.outputs.cx }}
+          GM: ${{ steps.resolve.outputs.gm }}
+          CC_INT: ${{ steps.resolve.outputs.cc_int }}
+          CC_X64_INT: ${{ steps.resolve.outputs.cc_x64_int }}
+          CX_INT: ${{ steps.resolve.outputs.cx_int }}
+          CX_X64_INT: ${{ steps.resolve.outputs.cx_x64_int }}
+          GM_INT: ${{ steps.resolve.outputs.gm_int }}
           EXISTING_DIGEST: ${{ steps.existing.outputs.digest }}
           PUSHED_DIGEST: ${{ steps.push.outputs.digest }}
         run: |
@@ -202,10 +246,35 @@ jobs:
           fi
           ref="${REPO}:${TAG}@${digest}"
           line="WORKER-IMAGE-DIGEST ${ref} published=${published}"
+          versions="$(printf 'claude-code=%s integrity=%s\nclaude-code-linux-x64=%s integrity=%s\ncodex=%s integrity=%s\ncodex-linux-x64=%s integrity=%s\ngemini-cli=%s integrity=%s' \
+            "$CC" "$CC_INT" "$CC" "$CC_X64_INT" "$CX" "$CX_INT" "$CX" "$CX_X64_INT" "$GM" "$GM_INT")"
           echo "$line"
-          printf '%s\n\nClaude Code %s, Codex %s\n' "$line" "$CC" "$CX" >> "$GITHUB_STEP_SUMMARY"
-          printf '%s\nclaude-code=%s\ncodex=%s\n' "$line" "$CC" "$CX" > "$RUNNER_TEMP/worker-image-digest.txt"
+          echo "$versions"
+          printf '%s\n\n```\n%s\n```\n' "$line" "$versions" >> "$GITHUB_STEP_SUMMARY"
+          printf '%s\n%s\n' "$line" "$versions" > "$RUNNER_TEMP/worker-image-digest.txt"
           { echo "ref=$ref"; echo "digest=$digest"; echo "published=$published"; } >> "$GITHUB_OUTPUT"
+
+      - name: The package stays private
+        id: private
+        if: ${{ steps.record.outcome == 'success' }}
+        env:
+          REPO: ${{ steps.resolve.outputs.repo }}
+          DIGEST: ${{ steps.record.outputs.digest }}
+        run: |
+          set -euo pipefail
+          anon="$(mktemp -d)"; err="$(mktemp)"
+          trap 'rm -rf "$anon" "$err"' EXIT
+          if DOCKER_CONFIG="$anon" docker buildx imagetools inspect "${REPO}@${DIGEST}" >/dev/null 2>"$err"; then
+            echo "::error::${REPO}@${DIGEST} can be pulled without credentials; the package must be private"
+            exit 1
+          elif grep -qiE 'denied|unauthorized|forbidden|401|403|not found|name unknown|manifest unknown' "$err"; then
+            cat "$err" >&2
+            echo "${REPO} is private: an anonymous lookup of ${DIGEST} was refused"
+          else
+            cat "$err" >&2
+            echo "::error::could not tell whether ${REPO} is private"
+            exit 1
+          fi
 
       - name: Upload the digest
         if: ${{ always() && steps.record.outcome == 'success' }}

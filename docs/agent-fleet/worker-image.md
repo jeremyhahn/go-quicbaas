@@ -182,14 +182,27 @@ releases from npm; the dispatch inputs `claude_code_version` and
   pushed.
 - **Scan.** Two Trivy secret scans run first, one of the built image and one
   of each of its layer tarballs (`docker save`, every layer extracted on its
-  own); a secret of any severity fails the job. Then `make push-worker-image`'s
-  own vulnerability gate runs: a fixable CRITICAL or HIGH finding fails the
-  job. All three run before anything is tagged or pushed.
+  own); a secret of any severity fails the job. The image scan also covers the
+  image config, and the config JSON is scanned with the layers. Then
+  `make push-worker-image`'s own vulnerability gate runs: a fixable CRITICAL
+  or HIGH finding fails the job. All three run before anything is tagged or
+  pushed.
+- **Dev caches.** A published image never goes through the dev caches. The job
+  fails before the build if any `DEVCACHE_*` variable is set, and passes both
+  `DEVCACHE_GOPROXY` and `DEVCACHE_NPM_REGISTRY` empty.
 - **Credentials.** The workflow's `GITHUB_TOKEN` with `packages: write` only;
   no personal token and no repository secret.
 - **Digest.** Every run records it three ways: a `WORKER-IMAGE-DIGEST
   <repo>:<tag>@<digest> published=<true|false>` log line, the run's job
-  summary, and the `worker-image-digest` artifact (kept 90 days).
+  summary, and the `worker-image-digest` artifact (kept 90 days). Each also
+  carries five `name=<version> integrity=<sha512>` lines, for `claude-code`,
+  `claude-code-linux-x64`, `codex`, `codex-linux-x64` and `gemini-cli`. These
+  are the registry's `dist.integrity` values when the versions are resolved;
+  the build does not yet check what it installs against them.
+- **Visibility.** The `quicbaas-software-factory-worker` package is private (a
+  first container publish is private by default), and it must stay private.
+  Every run checks with an anonymous lookup of the digest and fails if that
+  lookup succeeds.
 - **`current`.** This workflow does not move it.
 
 ## Local mode and the fleet
@@ -337,10 +350,10 @@ make test-worker-image                                # the gate's probes, via .
 make push-worker-image WORKER_IMAGE_REGISTRY=<host>/<owner>/software-factory-worker   # scan, push, print the reference
 ```
 
-This repository's own factory images (the worker and its go-xkms variant) are
-published by `.github/workflows/worker-image.yml` to
-`ghcr.io/<owner>/quicbaas-software-factory-worker` with the workflow's
-`GITHUB_TOKEN`.
+This repository's own worker image is published by
+`.github/workflows/worker-image.yml` to
+`ghcr.io/<owner>/quicbaas-software-factory-worker` to a private package with
+the workflow's `GITHUB_TOKEN`.
 
 `push-worker-image` runs `trivy image --severity CRITICAL,HIGH --ignore-unfixed
 --exit-code 1 <image>` first, blocking (devops.md §8): a fixable CRITICAL or HIGH
