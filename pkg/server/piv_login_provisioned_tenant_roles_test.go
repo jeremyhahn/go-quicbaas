@@ -29,6 +29,8 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
+
+	dbxkms "github.com/jeremyhahn/go-quicbaas/pkg/xkms"
 )
 
 // roleTestTenant is the cert-mode tenant the test provisions.
@@ -90,7 +92,21 @@ func TestPIVLogin_CertProvisionedTenantAdminCreatesRoleOverUnifiedREST(t *testin
 	adminCertPath, _ := writeBootstrapPIVCert(t)
 	cfg.Auth.BootstrapAdminPIVCertPath = adminCertPath
 
-	srv := bootProductionPostureServer(t, cfg)
+	// Non-embedded Start blocks on the shutdown channel (server.go:882), so
+	// close it first: Start then returns once every listener is up, as in
+	// TestServer_Start_Local_NonEmbeddedBlocksUntilShutdown.
+	dbxkms.Reset()
+	t.Cleanup(dbxkms.Reset)
+	srv, err := NewServer(cfg)
+	require.NoError(t, err)
+	srv.TriggerShutdown()
+	startErr := srv.Start()
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		_ = srv.Shutdown(ctx)
+	})
+	require.NoError(t, startErr, "non-embedded unified boot must start")
 	require.NotNil(t, srv.iamComponents, "IAM components composed at boot")
 	adminCert := provisionCertModeTenant(t, srv.iamComponents, roleTestTenant)
 
