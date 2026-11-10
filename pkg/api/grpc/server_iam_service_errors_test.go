@@ -27,466 +27,498 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 )
 
-// =============================================================================
-// Tenant Operation Service Error Tests
-// =============================================================================
-
-func TestIAMServer_GetTenant_ServiceError(t *testing.T) {
-	srv, svc := newTestIAMServer(t)
-	svc.On("GetTenant", mock.Anything, "t-1").Return(nil, &dberrors.QBError{Code: dberrors.ErrNotFound, Op: "test"})
-
-	_, err := srv.GetTenant(callerContext("t-1"), &iampb.GetTenantRequest{Id: "t-1"})
-	require.Error(t, err)
-	assert.Equal(t, codes.NotFound, status.Code(err))
-}
-
-func TestIAMServer_UpdateTenant_ServiceError(t *testing.T) {
-	srv, svc := newTestIAMServer(t)
-	svc.On("GetTenant", mock.Anything, mock.Anything).Return(&iam.Tenant{ID: "t1"}, nil)
-	svc.On("UpdateTenant", mock.Anything, mock.Anything).Return(nil, &dberrors.QBError{Code: dberrors.ErrInternal, Op: "test"})
-
-	_, err := srv.UpdateTenant(callerContext("t-1"), &iampb.UpdateTenantRequest{Id: "t-1", Name: "n"})
-	require.Error(t, err)
-	assert.Equal(t, codes.Internal, status.Code(err))
-}
-
-func TestIAMServer_DeleteTenant_ServiceError(t *testing.T) {
-	srv, svc := newTestIAMServer(t)
-	svc.On("DeleteTenant", mock.Anything, "t-1").Return(&dberrors.QBError{Code: dberrors.ErrNotFound, Op: "test"})
-
-	_, err := srv.DeleteTenant(callerContext("t-1"), &iampb.DeleteTenantRequest{Id: "t-1"})
-	require.Error(t, err)
-	assert.Equal(t, codes.NotFound, status.Code(err))
-}
-
-// =============================================================================
-// User Operation Service Error Tests
-// =============================================================================
-
-func TestIAMServer_GetUser_ServiceError(t *testing.T) {
-	srv, svc := newTestIAMServer(t)
-	svc.On("GetUser", mock.Anything, "t-1", "u-1").Return(nil, &dberrors.QBError{Code: dberrors.ErrNotFound, Op: "test"})
-
-	_, err := srv.GetUser(callerContext("t-1"), &iampb.GetUserRequest{TenantId: "t-1", UserId: "u-1"})
-	require.Error(t, err)
-	assert.Equal(t, codes.NotFound, status.Code(err))
-}
-
-func TestIAMServer_CreateUser_ServiceError(t *testing.T) {
-	srv, svc := newTestIAMServer(t)
-	svc.On("CreateUser", mock.Anything, mock.Anything).Return(nil, &dberrors.QBError{Code: dberrors.ErrAlreadyExists, Op: "test"})
-
-	_, err := srv.CreateUser(callerContext("t-1"), &iampb.CreateUserRequest{
-		TenantId: "t-1", Email: "a@b.c", Name: "user",
-	})
-	require.Error(t, err)
-	assert.Equal(t, codes.AlreadyExists, status.Code(err))
-}
-
-func TestIAMServer_UpdateUser_ServiceError(t *testing.T) {
-	srv, svc := newTestIAMServer(t)
-	svc.On("UpdateUser", mock.Anything, mock.Anything).Return(nil, &dberrors.QBError{Code: dberrors.ErrInternal, Op: "test"})
-
-	_, err := srv.UpdateUser(callerContext("t-1"), &iampb.UpdateUserRequest{
-		TenantId: "t-1", UserId: "10001", Email: "a@b.c",
-	})
-	require.Error(t, err)
-	assert.Equal(t, codes.Internal, status.Code(err))
-}
-
-func TestIAMServer_DeleteUser_ServiceError(t *testing.T) {
-	srv, svc := newTestIAMServer(t)
-	svc.On("DeleteUser", mock.Anything, "t-1", "u-1").Return(&dberrors.QBError{Code: dberrors.ErrForbidden, Op: "test"})
-
-	_, err := srv.DeleteUser(callerContext("t-1"), &iampb.DeleteUserRequest{TenantId: "t-1", UserId: "u-1"})
-	require.Error(t, err)
-	assert.Equal(t, codes.PermissionDenied, status.Code(err))
-}
-
-func TestIAMServer_ListUsers_ServiceError(t *testing.T) {
-	srv, svc := newTestIAMServer(t)
-	svc.On("ListUsers", mock.Anything, "t-1", 10, 0, mock.Anything).Return(nil, 0, &dberrors.QBError{Code: dberrors.ErrInternal, Op: "test"})
-
-	_, err := srv.ListUsers(callerContext("t-1"), &iampb.ListUsersRequest{TenantId: "t-1", Limit: 10})
-	require.Error(t, err)
-	assert.Equal(t, codes.Internal, status.Code(err))
-}
-
-// =============================================================================
-// Role Operation Service Error Tests
-// =============================================================================
-
-func TestIAMServer_CreateRole_ServiceError(t *testing.T) {
-	srv, svc := newTestIAMServer(t)
-	svc.On("CreateRole", mock.Anything, mock.Anything).Return(nil, &dberrors.QBError{Code: dberrors.ErrAlreadyExists, Op: "test"})
-
-	_, err := srv.CreateRole(callerContext("t-1"), &iampb.CreateRoleRequest{
-		TenantId: "t-1", Id: "r-1", Name: "role",
-	})
-	require.Error(t, err)
-	assert.Equal(t, codes.AlreadyExists, status.Code(err))
-}
-
-func TestIAMServer_GetRole_ServiceError(t *testing.T) {
-	srv, svc := newTestIAMServer(t)
-	svc.On("GetRole", mock.Anything, "t-1", "r-1").Return(nil, &dberrors.QBError{Code: dberrors.ErrNotFound, Op: "test"})
-
-	_, err := srv.GetRole(callerContext("t-1"), &iampb.GetRoleRequest{TenantId: "t-1", RoleId: "r-1"})
-	require.Error(t, err)
-	assert.Equal(t, codes.NotFound, status.Code(err))
-}
-
-func TestIAMServer_UpdateRole_ServiceError(t *testing.T) {
-	srv, svc := newTestIAMServer(t)
-	svc.On("UpdateRole", mock.Anything, mock.Anything).Return(nil, &dberrors.QBError{Code: dberrors.ErrInternal, Op: "test"})
-
-	_, err := srv.UpdateRole(callerContext("t-1"), &iampb.UpdateRoleRequest{
-		TenantId: "t-1", RoleId: "r-1", Name: "role",
-	})
-	require.Error(t, err)
-	assert.Equal(t, codes.Internal, status.Code(err))
-}
-
-func TestIAMServer_DeleteRole_ServiceError(t *testing.T) {
-	srv, svc := newTestIAMServer(t)
-	svc.On("DeleteRole", mock.Anything, "t-1", "r-1").Return(&dberrors.QBError{Code: dberrors.ErrNotFound, Op: "test"})
-
-	_, err := srv.DeleteRole(callerContext("t-1"), &iampb.DeleteRoleRequest{TenantId: "t-1", RoleId: "r-1"})
-	require.Error(t, err)
-	assert.Equal(t, codes.NotFound, status.Code(err))
-}
-
-func TestIAMServer_ListRoles_ServiceError(t *testing.T) {
-	srv, svc := newTestIAMServer(t)
-	svc.On("ListRoles", mock.Anything, "t-1", 10, 0).Return(nil, 0, &dberrors.QBError{Code: dberrors.ErrInternal, Op: "test"})
-
-	_, err := srv.ListRoles(callerContext("t-1"), &iampb.ListRolesRequest{TenantId: "t-1", Limit: 10})
-	require.Error(t, err)
-	assert.Equal(t, codes.Internal, status.Code(err))
-}
-
-func TestIAMServer_AssignRole_ServiceError(t *testing.T) {
-	srv, svc := newTestIAMServer(t)
-	svc.On("AssignRole", mock.Anything, "t-1", uint64(1), "r-1").Return(&dberrors.QBError{Code: dberrors.ErrNotFound, Op: "test"})
-
-	_, err := srv.AssignRole(callerContext("t-1"), &iampb.AssignRoleRequest{
-		TenantId: "t-1", UserId: "1", Role: "r-1",
-	})
-	require.Error(t, err)
-	assert.Equal(t, codes.NotFound, status.Code(err))
-}
-
-func TestIAMServer_RevokeRole_ServiceError(t *testing.T) {
-	srv, svc := newTestIAMServer(t)
-	svc.On("RevokeRole", mock.Anything, "t-1", uint64(1), "r-1").Return(&dberrors.QBError{Code: dberrors.ErrNotFound, Op: "test"})
-
-	_, err := srv.RevokeRole(callerContext("t-1"), &iampb.RevokeRoleRequest{
-		TenantId: "t-1", UserId: "1", Role: "r-1",
-	})
-	require.Error(t, err)
-	assert.Equal(t, codes.NotFound, status.Code(err))
-}
-
-// =============================================================================
-// Application Operation Service Error Tests
-// =============================================================================
-
-func TestIAMServer_RegisterApp_ServiceError(t *testing.T) {
-	srv, svc := newTestIAMServer(t)
-	svc.On("RegisterApp", mock.Anything, mock.Anything).Return(nil, &dberrors.QBError{Code: dberrors.ErrAlreadyExists, Op: "test"})
-
-	_, err := srv.RegisterApp(callerContext("t-1"), &iampb.RegisterAppRequest{
-		TenantId: "t-1", Name: "app",
-	})
-	require.Error(t, err)
-	assert.Equal(t, codes.AlreadyExists, status.Code(err))
-}
-
-func TestIAMServer_GetApp_ServiceError(t *testing.T) {
-	srv, svc := newTestIAMServer(t)
-	svc.On("GetApp", mock.Anything, "t-1", "c-1").Return(nil, &dberrors.QBError{Code: dberrors.ErrNotFound, Op: "test"})
-
-	_, err := srv.GetApp(callerContext("t-1"), &iampb.GetAppRequest{TenantId: "t-1", ClientId: "c-1"})
-	require.Error(t, err)
-	assert.Equal(t, codes.NotFound, status.Code(err))
-}
-
-func TestIAMServer_UpdateApp_ServiceError(t *testing.T) {
-	srv, svc := newTestIAMServer(t)
-	svc.On("UpdateApp", mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil, &dberrors.QBError{Code: dberrors.ErrInternal, Op: "test"})
-
-	_, err := srv.UpdateApp(callerContext("t-1"), &iampb.UpdateAppRequest{
-		TenantId: "t-1", ClientId: "c-1", Name: "app",
-	})
-	require.Error(t, err)
-	assert.Equal(t, codes.Internal, status.Code(err))
-}
-
-func TestIAMServer_DeleteApp_ServiceError(t *testing.T) {
-	srv, svc := newTestIAMServer(t)
-	svc.On("DeleteApp", mock.Anything, "t-1", "c-1").Return(&dberrors.QBError{Code: dberrors.ErrNotFound, Op: "test"})
-
-	_, err := srv.DeleteApp(callerContext("t-1"), &iampb.DeleteAppRequest{TenantId: "t-1", ClientId: "c-1"})
-	require.Error(t, err)
-	assert.Equal(t, codes.NotFound, status.Code(err))
-}
-
-func TestIAMServer_ListApps_ServiceError(t *testing.T) {
-	srv, svc := newTestIAMServer(t)
-	svc.On("ListApps", mock.Anything, "t-1", 10, 0).Return(nil, 0, &dberrors.QBError{Code: dberrors.ErrInternal, Op: "test"})
-
-	_, err := srv.ListApps(callerContext("t-1"), &iampb.ListAppsRequest{TenantId: "t-1", Limit: 10})
-	require.Error(t, err)
-	assert.Equal(t, codes.Internal, status.Code(err))
-}
-
-func TestIAMServer_RotateAppSecret_ServiceError(t *testing.T) {
-	srv, svc := newTestIAMServer(t)
-	svc.On("RotateAppSecret", mock.Anything, "t-1", "c-1").Return(nil, &dberrors.QBError{Code: dberrors.ErrNotFound, Op: "test"})
-
-	_, err := srv.RotateAppSecret(callerContext("t-1"), &iampb.RotateAppSecretRequest{TenantId: "t-1", ClientId: "c-1"})
-	require.Error(t, err)
-	assert.Equal(t, codes.NotFound, status.Code(err))
-}
-
-// =============================================================================
-// Policy Operation Service Error Tests
-// =============================================================================
-
-func TestIAMServer_CreatePolicy_ServiceError(t *testing.T) {
-	srv, svc := newTestIAMServer(t)
-	svc.On("CreatePolicy", mock.Anything, mock.Anything).Return(nil, &dberrors.QBError{Code: dberrors.ErrAlreadyExists, Op: "test"})
-
-	_, err := srv.CreatePolicy(callerContext("t-1"), &iampb.CreatePolicyRequest{
-		TenantId: "t-1", Name: "pol", SpecYaml: []byte("rules: []"),
-	})
-	require.Error(t, err)
-	assert.Equal(t, codes.AlreadyExists, status.Code(err))
-}
-
-func TestIAMServer_GetPolicy_ServiceError(t *testing.T) {
-	srv, svc := newTestIAMServer(t)
-	svc.On("GetPolicy", mock.Anything, "t-1", "pol").Return(nil, &dberrors.QBError{Code: dberrors.ErrNotFound, Op: "test"})
-
-	_, err := srv.GetPolicy(callerContext("t-1"), &iampb.GetPolicyRequest{TenantId: "t-1", PolicyName: "pol"})
-	require.Error(t, err)
-	assert.Equal(t, codes.NotFound, status.Code(err))
-}
-
-func TestIAMServer_UpdatePolicy_ServiceError(t *testing.T) {
-	srv, svc := newTestIAMServer(t)
-	svc.On("GetPolicy", mock.Anything, "t-1", "pol").
-		Return(&iam.Policy{Metadata: iam.PolicyMetadata{Name: "pol", Tenant: "t-1"}}, nil)
-	svc.On("UpdatePolicy", mock.Anything, mock.Anything).Return(nil, &dberrors.QBError{Code: dberrors.ErrInternal, Op: "test"})
-
-	_, err := srv.UpdatePolicy(callerContext("t-1"), &iampb.UpdatePolicyRequest{
-		TenantId: "t-1", PolicyName: "pol", SpecYaml: []byte("rules: []"),
-	})
-	require.Error(t, err)
-	assert.Equal(t, codes.Internal, status.Code(err))
-}
-
-func TestIAMServer_UpdatePolicy_ReadError(t *testing.T) {
-	srv, svc := newTestIAMServer(t)
-	svc.On("GetPolicy", mock.Anything, "t-1", "pol").Return(nil, &dberrors.QBError{Code: dberrors.ErrInternal, Op: "test"})
-
-	_, err := srv.UpdatePolicy(callerContext("t-1"), &iampb.UpdatePolicyRequest{
-		TenantId: "t-1", PolicyName: "pol", Description: "never written",
-	})
-	require.Error(t, err)
-	assert.Equal(t, codes.Internal, status.Code(err))
-	svc.AssertNotCalled(t, "UpdatePolicy", mock.Anything, mock.Anything)
-}
-
-func TestIAMServer_DeletePolicy_ServiceError(t *testing.T) {
-	srv, svc := newTestIAMServer(t)
-	svc.On("DeletePolicy", mock.Anything, "t-1", "pol").Return(&dberrors.QBError{Code: dberrors.ErrNotFound, Op: "test"})
-
-	_, err := srv.DeletePolicy(callerContext("t-1"), &iampb.DeletePolicyRequest{TenantId: "t-1", PolicyName: "pol"})
-	require.Error(t, err)
-	assert.Equal(t, codes.NotFound, status.Code(err))
-}
-
-func TestIAMServer_ListPolicies_ServiceError(t *testing.T) {
-	srv, svc := newTestIAMServer(t)
-	svc.On("ListPolicies", mock.Anything, "t-1", 10, 0).Return(nil, 0, &dberrors.QBError{Code: dberrors.ErrInternal, Op: "test"})
-
-	_, err := srv.ListPolicies(callerContext("t-1"), &iampb.ListPoliciesRequest{TenantId: "t-1", Limit: 10})
-	require.Error(t, err)
-	assert.Equal(t, codes.Internal, status.Code(err))
-}
-
-func TestIAMServer_ValidatePolicy_ServiceError(t *testing.T) {
-	srv, svc := newTestIAMServer(t)
-	svc.On("ValidatePolicy", mock.Anything, "t-1", "", []byte("spec")).Return(false, []string(nil), &dberrors.QBError{Code: dberrors.ErrInternal, Op: "test"})
-
-	_, err := srv.ValidatePolicy(callerContext("t-1"), &iampb.ValidatePolicyRequest{TenantId: "t-1", SpecYaml: []byte("spec")})
-	require.Error(t, err)
-	assert.Equal(t, codes.Internal, status.Code(err))
-}
-
-func TestIAMServer_TestPolicy_ServiceError(t *testing.T) {
-	srv, svc := newTestIAMServer(t)
-	svc.On("TestPolicy", mock.Anything, "t-1", mock.Anything).Return(nil, &dberrors.QBError{Code: dberrors.ErrInternal, Op: "test"})
-
-	_, err := srv.TestPolicy(callerContext("t-1"), &iampb.TestPolicyRequest{
-		TenantId: "t-1",
-		Subject:  &iampb.Subject{Id: "u-1", TenantId: "t-1"},
-		Action:   "read",
-		Resource: "doc:1",
-	})
-	require.Error(t, err)
-	assert.Equal(t, codes.Internal, status.Code(err))
-}
-
-// =============================================================================
-// Delegated Admin Service Error Tests
-// =============================================================================
-
-func TestIAMServer_GetAdminAssignment_ServiceError(t *testing.T) {
-	srv, svc := newTestIAMServer(t)
-	svc.On("GetAdminAssignment", mock.Anything, "a-1").Return(nil, &dberrors.QBError{Code: dberrors.ErrNotFound, Op: "test"})
-
-	_, err := srv.GetAdminAssignment(callerContext("t-1"), &iampb.GetAdminAssignmentRequest{Id: "a-1"})
-	require.Error(t, err)
-	assert.Equal(t, codes.NotFound, status.Code(err))
-}
-
-func TestIAMServer_DeleteAdminAssignment_ServiceError(t *testing.T) {
-	srv, svc := newTestIAMServer(t)
-	svc.On("DeleteAdminAssignment", mock.Anything, "a-1").Return(&dberrors.QBError{Code: dberrors.ErrNotFound, Op: "test"})
-
-	_, err := srv.DeleteAdminAssignment(callerContext("t-1"), &iampb.DeleteAdminAssignmentRequest{Id: "a-1"})
-	require.Error(t, err)
-	assert.Equal(t, codes.NotFound, status.Code(err))
-}
-
-func TestIAMServer_ListAdminAssignments_ServiceError(t *testing.T) {
-	srv, svc := newTestIAMServer(t)
-	svc.On("ListAdminAssignments", mock.Anything, mock.Anything).Return(nil, &dberrors.QBError{Code: dberrors.ErrInternal, Op: "test"})
-
-	_, err := srv.ListAdminAssignments(callerContext("t-1"), &iampb.ListAdminAssignmentsRequest{TenantId: "t-1"})
-	require.Error(t, err)
-	assert.Equal(t, codes.Internal, status.Code(err))
-}
-
-func TestIAMServer_CheckAdminPermission_ServiceError(t *testing.T) {
-	srv, svc := newTestIAMServer(t)
-	svc.On("CheckAdminPermission", mock.Anything, mock.Anything).Return(nil, &dberrors.QBError{Code: dberrors.ErrForbidden, Op: "test"})
-
-	_, err := srv.CheckAdminPermission(callerContext("t-1"), &iampb.CheckAdminPermissionRequest{
-		UserId: "30021", TenantId: "t-1", Permission: "manage_users",
-	})
-	require.Error(t, err)
-	assert.Equal(t, codes.PermissionDenied, status.Code(err))
-}
-
-func TestIAMServer_EndImpersonation_ServiceError(t *testing.T) {
-	srv, svc := newTestIAMServer(t)
-	svc.On("EndImpersonation", mock.Anything, "sess-1").Return(&dberrors.QBError{Code: dberrors.ErrNotFound, Op: "test"})
-
-	_, err := srv.EndImpersonation(callerContext("t-1"), &iampb.EndImpersonationRequest{SessionId: "sess-1"})
-	require.Error(t, err)
-	assert.Equal(t, codes.NotFound, status.Code(err))
-}
-
-func TestIAMServer_GetActiveImpersonations_ServiceError(t *testing.T) {
-	srv, svc := newTestIAMServer(t)
-	svc.On("GetActiveImpersonations", mock.Anything, uint64(30021)).Return(nil, &dberrors.QBError{Code: dberrors.ErrInternal, Op: "test"})
-
-	_, err := srv.GetActiveImpersonations(callerContext("t-1"), &iampb.GetActiveImpersonationsRequest{AdminUserId: "30021"})
-	require.Error(t, err)
-	assert.Equal(t, codes.Internal, status.Code(err))
-}
-
-// =============================================================================
-// GDPR Consent Service Error Tests
-// =============================================================================
-
-func TestIAMServer_WithdrawConsent_ServiceError(t *testing.T) {
-	srv, svc := newTestIAMServer(t)
-	svc.On("WithdrawConsent", mock.Anything, "t-1", uint64(1), mock.Anything, "", "").Return(&dberrors.QBError{Code: dberrors.ErrNotFound, Op: "test"})
-
-	_, err := srv.WithdrawConsent(callerContext("t-1"), &iampb.WithdrawConsentRequest{
-		TenantId: "t-1", UserId: "1", Purpose: iampb.ConsentPurpose_CONSENT_PURPOSE_ANALYTICS,
-	})
-	require.Error(t, err)
-	assert.Equal(t, codes.NotFound, status.Code(err))
-}
-
-func TestIAMServer_GetConsent_ServiceError(t *testing.T) {
-	srv, svc := newTestIAMServer(t)
-	svc.On("GetConsent", mock.Anything, "t-1", uint64(1), mock.Anything).Return(nil, &dberrors.QBError{Code: dberrors.ErrNotFound, Op: "test"})
-
-	_, err := srv.GetConsent(callerContext("t-1"), &iampb.GetConsentRequest{
-		TenantId: "t-1", UserId: "1", Purpose: iampb.ConsentPurpose_CONSENT_PURPOSE_ANALYTICS,
-	})
-	require.Error(t, err)
-	assert.Equal(t, codes.NotFound, status.Code(err))
-}
-
-func TestIAMServer_ListUserConsents_ServiceError(t *testing.T) {
-	srv, svc := newTestIAMServer(t)
-	svc.On("ListUserConsents", mock.Anything, "t-1", uint64(1)).Return(nil, &dberrors.QBError{Code: dberrors.ErrInternal, Op: "test"})
-
-	_, err := srv.ListUserConsents(callerContext("t-1"), &iampb.ListUserConsentsRequest{
-		TenantId: "t-1", UserId: "1",
-	})
-	require.Error(t, err)
-	assert.Equal(t, codes.Internal, status.Code(err))
-}
-
-// =============================================================================
-// GDPR Data Export Service Error Tests
-// =============================================================================
-
-func TestIAMServer_GetExportStatus_ServiceError(t *testing.T) {
-	srv, svc := newTestIAMServer(t)
-	svc.On("GetExportStatus", mock.Anything, "exp-1").Return(nil, &dberrors.QBError{Code: dberrors.ErrNotFound, Op: "test"})
-
-	_, err := srv.GetExportStatus(callerContext("t-1"), &iampb.GetExportStatusRequest{ExportId: "exp-1"})
-	require.Error(t, err)
-	assert.Equal(t, codes.NotFound, status.Code(err))
-}
-
-func TestIAMServer_GenerateExport_ServiceError(t *testing.T) {
-	srv, svc := newTestIAMServer(t)
-	svc.On("GenerateExport", mock.Anything, "exp-1").Return(nil, &dberrors.QBError{Code: dberrors.ErrNotFound, Op: "test"})
-
-	_, err := srv.GenerateExport(callerContext("t-1"), &iampb.GenerateExportRequest{ExportId: "exp-1"})
-	require.Error(t, err)
-	assert.Equal(t, codes.NotFound, status.Code(err))
-}
-
-// =============================================================================
-// GDPR Data Deletion Service Error Tests
-// =============================================================================
-
-func TestIAMServer_CancelDeletion_ServiceError(t *testing.T) {
-	srv, svc := newTestIAMServer(t)
-	svc.On("CancelDeletion", mock.Anything, "del-1", "admin-1").Return(&dberrors.QBError{Code: dberrors.ErrNotFound, Op: "test"})
-
-	_, err := srv.CancelDeletion(callerContext("t-1"), &iampb.CancelDeletionRequest{
-		DeletionId: "del-1", CancelledBy: "admin-1",
-	})
-	require.Error(t, err)
-	assert.Equal(t, codes.NotFound, status.Code(err))
-}
-
-func TestIAMServer_ProcessDeletion_ServiceError(t *testing.T) {
-	srv, svc := newTestIAMServer(t)
-	svc.On("ProcessDeletion", mock.Anything, "del-1").Return(nil, &dberrors.QBError{Code: dberrors.ErrNotFound, Op: "test"})
-
-	_, err := srv.ProcessDeletion(callerContext("t-1"), &iampb.ProcessDeletionRequest{DeletionId: "del-1"})
-	require.Error(t, err)
-	assert.Equal(t, codes.NotFound, status.Code(err))
-}
-
-func TestIAMServer_GetDeletionStatus_ServiceError(t *testing.T) {
-	srv, svc := newTestIAMServer(t)
-	svc.On("GetDeletionStatus", mock.Anything, "del-1").Return(nil, &dberrors.QBError{Code: dberrors.ErrNotFound, Op: "test"})
-
-	_, err := srv.GetDeletionStatus(callerContext("t-1"), &iampb.GetDeletionStatusRequest{DeletionId: "del-1"})
-	require.Error(t, err)
-	assert.Equal(t, codes.NotFound, status.Code(err))
+// TestIAMServer_ServiceError checks that every IAMServer RPC maps the error
+// its IAM service call returns onto the matching gRPC status code.
+func TestIAMServer_ServiceError(t *testing.T) {
+	ctx := callerContext("t-1")
+	notFound := &dberrors.QBError{Code: dberrors.ErrNotFound, Op: "test"}
+	internal := &dberrors.QBError{Code: dberrors.ErrInternal, Op: "test"}
+	exists := &dberrors.QBError{Code: dberrors.ErrAlreadyExists, Op: "test"}
+	forbidden := &dberrors.QBError{Code: dberrors.ErrForbidden, Op: "test"}
+
+	tests := []struct {
+		name  string
+		setup func(svc *mockIAMService)
+		call  func(srv *IAMServer) error
+		want  codes.Code
+		// after holds extra assertions on the service mock, when a row needs them.
+		after func(t *testing.T, svc *mockIAMService)
+	}{
+		// Tenant operations.
+		{
+			name:  "GetTenant",
+			setup: func(svc *mockIAMService) { svc.On("GetTenant", mock.Anything, "t-1").Return(nil, notFound) },
+			call: func(srv *IAMServer) error {
+				_, err := srv.GetTenant(ctx, &iampb.GetTenantRequest{Id: "t-1"})
+				return err
+			},
+			want: codes.NotFound,
+		},
+		{
+			name: "UpdateTenant",
+			setup: func(svc *mockIAMService) {
+				svc.On("GetTenant", mock.Anything, mock.Anything).Return(&iam.Tenant{ID: "t1"}, nil)
+				svc.On("UpdateTenant", mock.Anything, mock.Anything).Return(nil, internal)
+			},
+			call: func(srv *IAMServer) error {
+				_, err := srv.UpdateTenant(ctx, &iampb.UpdateTenantRequest{Id: "t-1", Name: "n"})
+				return err
+			},
+			want: codes.Internal,
+		},
+		{
+			name:  "DeleteTenant",
+			setup: func(svc *mockIAMService) { svc.On("DeleteTenant", mock.Anything, "t-1").Return(notFound) },
+			call: func(srv *IAMServer) error {
+				_, err := srv.DeleteTenant(ctx, &iampb.DeleteTenantRequest{Id: "t-1"})
+				return err
+			},
+			want: codes.NotFound,
+		},
+
+		// User operations.
+		{
+			name:  "GetUser",
+			setup: func(svc *mockIAMService) { svc.On("GetUser", mock.Anything, "t-1", "u-1").Return(nil, notFound) },
+			call: func(srv *IAMServer) error {
+				_, err := srv.GetUser(ctx, &iampb.GetUserRequest{TenantId: "t-1", UserId: "u-1"})
+				return err
+			},
+			want: codes.NotFound,
+		},
+		{
+			name:  "CreateUser",
+			setup: func(svc *mockIAMService) { svc.On("CreateUser", mock.Anything, mock.Anything).Return(nil, exists) },
+			call: func(srv *IAMServer) error {
+				_, err := srv.CreateUser(ctx, &iampb.CreateUserRequest{TenantId: "t-1", Email: "a@b.c", Name: "user"})
+				return err
+			},
+			want: codes.AlreadyExists,
+		},
+		{
+			name:  "UpdateUser",
+			setup: func(svc *mockIAMService) { svc.On("UpdateUser", mock.Anything, mock.Anything).Return(nil, internal) },
+			call: func(srv *IAMServer) error {
+				_, err := srv.UpdateUser(ctx, &iampb.UpdateUserRequest{TenantId: "t-1", UserId: "10001", Email: "a@b.c"})
+				return err
+			},
+			want: codes.Internal,
+		},
+		{
+			name:  "DeleteUser",
+			setup: func(svc *mockIAMService) { svc.On("DeleteUser", mock.Anything, "t-1", "u-1").Return(forbidden) },
+			call: func(srv *IAMServer) error {
+				_, err := srv.DeleteUser(ctx, &iampb.DeleteUserRequest{TenantId: "t-1", UserId: "u-1"})
+				return err
+			},
+			want: codes.PermissionDenied,
+		},
+		{
+			name: "ListUsers",
+			setup: func(svc *mockIAMService) {
+				svc.On("ListUsers", mock.Anything, "t-1", 10, 0, mock.Anything).Return(nil, 0, internal)
+			},
+			call: func(srv *IAMServer) error {
+				_, err := srv.ListUsers(ctx, &iampb.ListUsersRequest{TenantId: "t-1", Limit: 10})
+				return err
+			},
+			want: codes.Internal,
+		},
+
+		// Role operations.
+		{
+			name:  "CreateRole",
+			setup: func(svc *mockIAMService) { svc.On("CreateRole", mock.Anything, mock.Anything).Return(nil, exists) },
+			call: func(srv *IAMServer) error {
+				_, err := srv.CreateRole(ctx, &iampb.CreateRoleRequest{TenantId: "t-1", Id: "r-1", Name: "role"})
+				return err
+			},
+			want: codes.AlreadyExists,
+		},
+		{
+			name:  "GetRole",
+			setup: func(svc *mockIAMService) { svc.On("GetRole", mock.Anything, "t-1", "r-1").Return(nil, notFound) },
+			call: func(srv *IAMServer) error {
+				_, err := srv.GetRole(ctx, &iampb.GetRoleRequest{TenantId: "t-1", RoleId: "r-1"})
+				return err
+			},
+			want: codes.NotFound,
+		},
+		{
+			name:  "UpdateRole",
+			setup: func(svc *mockIAMService) { svc.On("UpdateRole", mock.Anything, mock.Anything).Return(nil, internal) },
+			call: func(srv *IAMServer) error {
+				_, err := srv.UpdateRole(ctx, &iampb.UpdateRoleRequest{TenantId: "t-1", RoleId: "r-1", Name: "role"})
+				return err
+			},
+			want: codes.Internal,
+		},
+		{
+			name:  "DeleteRole",
+			setup: func(svc *mockIAMService) { svc.On("DeleteRole", mock.Anything, "t-1", "r-1").Return(notFound) },
+			call: func(srv *IAMServer) error {
+				_, err := srv.DeleteRole(ctx, &iampb.DeleteRoleRequest{TenantId: "t-1", RoleId: "r-1"})
+				return err
+			},
+			want: codes.NotFound,
+		},
+		{
+			name:  "ListRoles",
+			setup: func(svc *mockIAMService) { svc.On("ListRoles", mock.Anything, "t-1", 10, 0).Return(nil, 0, internal) },
+			call: func(srv *IAMServer) error {
+				_, err := srv.ListRoles(ctx, &iampb.ListRolesRequest{TenantId: "t-1", Limit: 10})
+				return err
+			},
+			want: codes.Internal,
+		},
+		{
+			name: "AssignRole",
+			setup: func(svc *mockIAMService) {
+				svc.On("AssignRole", mock.Anything, "t-1", uint64(1), "r-1").Return(notFound)
+			},
+			call: func(srv *IAMServer) error {
+				_, err := srv.AssignRole(ctx, &iampb.AssignRoleRequest{TenantId: "t-1", UserId: "1", Role: "r-1"})
+				return err
+			},
+			want: codes.NotFound,
+		},
+		{
+			name: "RevokeRole",
+			setup: func(svc *mockIAMService) {
+				svc.On("RevokeRole", mock.Anything, "t-1", uint64(1), "r-1").Return(notFound)
+			},
+			call: func(srv *IAMServer) error {
+				_, err := srv.RevokeRole(ctx, &iampb.RevokeRoleRequest{TenantId: "t-1", UserId: "1", Role: "r-1"})
+				return err
+			},
+			want: codes.NotFound,
+		},
+
+		// Application operations.
+		{
+			name:  "RegisterApp",
+			setup: func(svc *mockIAMService) { svc.On("RegisterApp", mock.Anything, mock.Anything).Return(nil, exists) },
+			call: func(srv *IAMServer) error {
+				_, err := srv.RegisterApp(ctx, &iampb.RegisterAppRequest{TenantId: "t-1", Name: "app"})
+				return err
+			},
+			want: codes.AlreadyExists,
+		},
+		{
+			name:  "GetApp",
+			setup: func(svc *mockIAMService) { svc.On("GetApp", mock.Anything, "t-1", "c-1").Return(nil, notFound) },
+			call: func(srv *IAMServer) error {
+				_, err := srv.GetApp(ctx, &iampb.GetAppRequest{TenantId: "t-1", ClientId: "c-1"})
+				return err
+			},
+			want: codes.NotFound,
+		},
+		{
+			name: "UpdateApp",
+			setup: func(svc *mockIAMService) {
+				svc.On("UpdateApp", mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil, internal)
+			},
+			call: func(srv *IAMServer) error {
+				_, err := srv.UpdateApp(ctx, &iampb.UpdateAppRequest{TenantId: "t-1", ClientId: "c-1", Name: "app"})
+				return err
+			},
+			want: codes.Internal,
+		},
+		{
+			name:  "DeleteApp",
+			setup: func(svc *mockIAMService) { svc.On("DeleteApp", mock.Anything, "t-1", "c-1").Return(notFound) },
+			call: func(srv *IAMServer) error {
+				_, err := srv.DeleteApp(ctx, &iampb.DeleteAppRequest{TenantId: "t-1", ClientId: "c-1"})
+				return err
+			},
+			want: codes.NotFound,
+		},
+		{
+			name:  "ListApps",
+			setup: func(svc *mockIAMService) { svc.On("ListApps", mock.Anything, "t-1", 10, 0).Return(nil, 0, internal) },
+			call: func(srv *IAMServer) error {
+				_, err := srv.ListApps(ctx, &iampb.ListAppsRequest{TenantId: "t-1", Limit: 10})
+				return err
+			},
+			want: codes.Internal,
+		},
+		{
+			name: "RotateAppSecret",
+			setup: func(svc *mockIAMService) {
+				svc.On("RotateAppSecret", mock.Anything, "t-1", "c-1").Return(nil, notFound)
+			},
+			call: func(srv *IAMServer) error {
+				_, err := srv.RotateAppSecret(ctx, &iampb.RotateAppSecretRequest{TenantId: "t-1", ClientId: "c-1"})
+				return err
+			},
+			want: codes.NotFound,
+		},
+
+		// Policy operations.
+		{
+			name:  "CreatePolicy",
+			setup: func(svc *mockIAMService) { svc.On("CreatePolicy", mock.Anything, mock.Anything).Return(nil, exists) },
+			call: func(srv *IAMServer) error {
+				_, err := srv.CreatePolicy(ctx, &iampb.CreatePolicyRequest{
+					TenantId: "t-1", Name: "pol", SpecYaml: []byte("rules: []"),
+				})
+				return err
+			},
+			want: codes.AlreadyExists,
+		},
+		{
+			name:  "GetPolicy",
+			setup: func(svc *mockIAMService) { svc.On("GetPolicy", mock.Anything, "t-1", "pol").Return(nil, notFound) },
+			call: func(srv *IAMServer) error {
+				_, err := srv.GetPolicy(ctx, &iampb.GetPolicyRequest{TenantId: "t-1", PolicyName: "pol"})
+				return err
+			},
+			want: codes.NotFound,
+		},
+		{
+			name: "UpdatePolicy",
+			setup: func(svc *mockIAMService) {
+				svc.On("GetPolicy", mock.Anything, "t-1", "pol").
+					Return(&iam.Policy{Metadata: iam.PolicyMetadata{Name: "pol", Tenant: "t-1"}}, nil)
+				svc.On("UpdatePolicy", mock.Anything, mock.Anything).Return(nil, internal)
+			},
+			call: func(srv *IAMServer) error {
+				_, err := srv.UpdatePolicy(ctx, &iampb.UpdatePolicyRequest{
+					TenantId: "t-1", PolicyName: "pol", SpecYaml: []byte("rules: []"),
+				})
+				return err
+			},
+			want: codes.Internal,
+		},
+		{
+			// A failed read of the stored policy aborts the update before any write.
+			name:  "UpdatePolicy read error",
+			setup: func(svc *mockIAMService) { svc.On("GetPolicy", mock.Anything, "t-1", "pol").Return(nil, internal) },
+			call: func(srv *IAMServer) error {
+				_, err := srv.UpdatePolicy(ctx, &iampb.UpdatePolicyRequest{
+					TenantId: "t-1", PolicyName: "pol", Description: "never written",
+				})
+				return err
+			},
+			want: codes.Internal,
+			after: func(t *testing.T, svc *mockIAMService) {
+				svc.AssertNotCalled(t, "UpdatePolicy", mock.Anything, mock.Anything)
+			},
+		},
+		{
+			name:  "DeletePolicy",
+			setup: func(svc *mockIAMService) { svc.On("DeletePolicy", mock.Anything, "t-1", "pol").Return(notFound) },
+			call: func(srv *IAMServer) error {
+				_, err := srv.DeletePolicy(ctx, &iampb.DeletePolicyRequest{TenantId: "t-1", PolicyName: "pol"})
+				return err
+			},
+			want: codes.NotFound,
+		},
+		{
+			name: "ListPolicies",
+			setup: func(svc *mockIAMService) {
+				svc.On("ListPolicies", mock.Anything, "t-1", 10, 0).Return(nil, 0, internal)
+			},
+			call: func(srv *IAMServer) error {
+				_, err := srv.ListPolicies(ctx, &iampb.ListPoliciesRequest{TenantId: "t-1", Limit: 10})
+				return err
+			},
+			want: codes.Internal,
+		},
+		{
+			name: "ValidatePolicy",
+			setup: func(svc *mockIAMService) {
+				svc.On("ValidatePolicy", mock.Anything, "t-1", "", []byte("spec")).Return(false, []string(nil), internal)
+			},
+			call: func(srv *IAMServer) error {
+				_, err := srv.ValidatePolicy(ctx, &iampb.ValidatePolicyRequest{TenantId: "t-1", SpecYaml: []byte("spec")})
+				return err
+			},
+			want: codes.Internal,
+		},
+		{
+			name: "TestPolicy",
+			setup: func(svc *mockIAMService) {
+				svc.On("TestPolicy", mock.Anything, "t-1", mock.Anything).Return(nil, internal)
+			},
+			call: func(srv *IAMServer) error {
+				_, err := srv.TestPolicy(ctx, &iampb.TestPolicyRequest{
+					TenantId: "t-1",
+					Subject:  &iampb.Subject{Id: "u-1", TenantId: "t-1"},
+					Action:   "read",
+					Resource: "doc:1",
+				})
+				return err
+			},
+			want: codes.Internal,
+		},
+
+		// Delegated admin operations.
+		{
+			name:  "GetAdminAssignment",
+			setup: func(svc *mockIAMService) { svc.On("GetAdminAssignment", mock.Anything, "a-1").Return(nil, notFound) },
+			call: func(srv *IAMServer) error {
+				_, err := srv.GetAdminAssignment(ctx, &iampb.GetAdminAssignmentRequest{Id: "a-1"})
+				return err
+			},
+			want: codes.NotFound,
+		},
+		{
+			name:  "DeleteAdminAssignment",
+			setup: func(svc *mockIAMService) { svc.On("DeleteAdminAssignment", mock.Anything, "a-1").Return(notFound) },
+			call: func(srv *IAMServer) error {
+				_, err := srv.DeleteAdminAssignment(ctx, &iampb.DeleteAdminAssignmentRequest{Id: "a-1"})
+				return err
+			},
+			want: codes.NotFound,
+		},
+		{
+			name: "ListAdminAssignments",
+			setup: func(svc *mockIAMService) {
+				svc.On("ListAdminAssignments", mock.Anything, mock.Anything).Return(nil, internal)
+			},
+			call: func(srv *IAMServer) error {
+				_, err := srv.ListAdminAssignments(ctx, &iampb.ListAdminAssignmentsRequest{TenantId: "t-1"})
+				return err
+			},
+			want: codes.Internal,
+		},
+		{
+			name: "CheckAdminPermission",
+			setup: func(svc *mockIAMService) {
+				svc.On("CheckAdminPermission", mock.Anything, mock.Anything).Return(nil, forbidden)
+			},
+			call: func(srv *IAMServer) error {
+				_, err := srv.CheckAdminPermission(ctx, &iampb.CheckAdminPermissionRequest{
+					UserId: "30021", TenantId: "t-1", Permission: "manage_users",
+				})
+				return err
+			},
+			want: codes.PermissionDenied,
+		},
+		{
+			name:  "EndImpersonation",
+			setup: func(svc *mockIAMService) { svc.On("EndImpersonation", mock.Anything, "sess-1").Return(notFound) },
+			call: func(srv *IAMServer) error {
+				_, err := srv.EndImpersonation(ctx, &iampb.EndImpersonationRequest{SessionId: "sess-1"})
+				return err
+			},
+			want: codes.NotFound,
+		},
+		{
+			name: "GetActiveImpersonations",
+			setup: func(svc *mockIAMService) {
+				svc.On("GetActiveImpersonations", mock.Anything, uint64(30021)).Return(nil, internal)
+			},
+			call: func(srv *IAMServer) error {
+				_, err := srv.GetActiveImpersonations(ctx, &iampb.GetActiveImpersonationsRequest{AdminUserId: "30021"})
+				return err
+			},
+			want: codes.Internal,
+		},
+
+		// GDPR consent operations.
+		{
+			name: "WithdrawConsent",
+			setup: func(svc *mockIAMService) {
+				svc.On("WithdrawConsent", mock.Anything, "t-1", uint64(1), mock.Anything, "", "").Return(notFound)
+			},
+			call: func(srv *IAMServer) error {
+				_, err := srv.WithdrawConsent(ctx, &iampb.WithdrawConsentRequest{
+					TenantId: "t-1", UserId: "1", Purpose: iampb.ConsentPurpose_CONSENT_PURPOSE_ANALYTICS,
+				})
+				return err
+			},
+			want: codes.NotFound,
+		},
+		{
+			name: "GetConsent",
+			setup: func(svc *mockIAMService) {
+				svc.On("GetConsent", mock.Anything, "t-1", uint64(1), mock.Anything).Return(nil, notFound)
+			},
+			call: func(srv *IAMServer) error {
+				_, err := srv.GetConsent(ctx, &iampb.GetConsentRequest{
+					TenantId: "t-1", UserId: "1", Purpose: iampb.ConsentPurpose_CONSENT_PURPOSE_ANALYTICS,
+				})
+				return err
+			},
+			want: codes.NotFound,
+		},
+		{
+			name: "ListUserConsents",
+			setup: func(svc *mockIAMService) {
+				svc.On("ListUserConsents", mock.Anything, "t-1", uint64(1)).Return(nil, internal)
+			},
+			call: func(srv *IAMServer) error {
+				_, err := srv.ListUserConsents(ctx, &iampb.ListUserConsentsRequest{TenantId: "t-1", UserId: "1"})
+				return err
+			},
+			want: codes.Internal,
+		},
+
+		// GDPR data export operations.
+		{
+			name:  "GetExportStatus",
+			setup: func(svc *mockIAMService) { svc.On("GetExportStatus", mock.Anything, "exp-1").Return(nil, notFound) },
+			call: func(srv *IAMServer) error {
+				_, err := srv.GetExportStatus(ctx, &iampb.GetExportStatusRequest{ExportId: "exp-1"})
+				return err
+			},
+			want: codes.NotFound,
+		},
+		{
+			name:  "GenerateExport",
+			setup: func(svc *mockIAMService) { svc.On("GenerateExport", mock.Anything, "exp-1").Return(nil, notFound) },
+			call: func(srv *IAMServer) error {
+				_, err := srv.GenerateExport(ctx, &iampb.GenerateExportRequest{ExportId: "exp-1"})
+				return err
+			},
+			want: codes.NotFound,
+		},
+
+		// GDPR data deletion operations.
+		{
+			name: "CancelDeletion",
+			setup: func(svc *mockIAMService) {
+				svc.On("CancelDeletion", mock.Anything, "del-1", "admin-1").Return(notFound)
+			},
+			call: func(srv *IAMServer) error {
+				_, err := srv.CancelDeletion(ctx, &iampb.CancelDeletionRequest{DeletionId: "del-1", CancelledBy: "admin-1"})
+				return err
+			},
+			want: codes.NotFound,
+		},
+		{
+			name:  "ProcessDeletion",
+			setup: func(svc *mockIAMService) { svc.On("ProcessDeletion", mock.Anything, "del-1").Return(nil, notFound) },
+			call: func(srv *IAMServer) error {
+				_, err := srv.ProcessDeletion(ctx, &iampb.ProcessDeletionRequest{DeletionId: "del-1"})
+				return err
+			},
+			want: codes.NotFound,
+		},
+		{
+			name:  "GetDeletionStatus",
+			setup: func(svc *mockIAMService) { svc.On("GetDeletionStatus", mock.Anything, "del-1").Return(nil, notFound) },
+			call: func(srv *IAMServer) error {
+				_, err := srv.GetDeletionStatus(ctx, &iampb.GetDeletionStatusRequest{DeletionId: "del-1"})
+				return err
+			},
+			want: codes.NotFound,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			srv, svc := newTestIAMServer(t)
+			tt.setup(svc)
+
+			err := tt.call(srv)
+			require.Error(t, err)
+			assert.Equal(t, tt.want, status.Code(err))
+			if tt.after != nil {
+				tt.after(t, svc)
+			}
+		})
+	}
 }

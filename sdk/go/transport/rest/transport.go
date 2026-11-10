@@ -28,6 +28,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/query"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/errors"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/transport"
 )
@@ -387,6 +388,10 @@ func (t *Transport) Request(ctx context.Context, service, method string, req int
 	// storage and object-repair routes with typed replies.
 	if isObjectStorageAdminService(service) {
 		return t.handleObjectStorageAdminRequest(ctx, method, req)
+	}
+
+	if err := refuseQueryPaging(service, method, req); err != nil {
+		return nil, err
 	}
 
 	return t.requestWithRetry(ctx, service, method, req)
@@ -750,6 +755,21 @@ func (t *Transport) mapQueryMethod(method string) (string, string) {
 	default:
 		return "/api/v1/query/" + strings.ToLower(method), http.MethodPost
 	}
+}
+
+// refuseQueryPaging refuses a Query Execute that asks for a page. The REST
+// server's query routes serve no page size or continuation token, so sending
+// Limit or Cursor would drop them and report a single page as complete.
+func refuseQueryPaging(service, method string, req interface{}) error {
+	r, ok := req.(*query.QueryRequest)
+	if !ok || service != "quicbaas.Query" || method != "Execute" {
+		return nil
+	}
+	if r.Limit != 0 || r.Cursor != "" {
+		return errors.NewUnimplemented("rest.Query.Execute",
+			"the REST query routes serve no paging: Limit and Cursor are not supported")
+	}
+	return nil
 }
 
 // mapClusterMethod maps Cluster service methods to REST endpoints.

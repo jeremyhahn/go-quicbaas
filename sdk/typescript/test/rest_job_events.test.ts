@@ -149,7 +149,7 @@ describe('RestOrchestratorClient.subscribeJobEvents', () => {
       .mockResolvedValueOnce({ ok: true, body: first.stream })
       .mockResolvedValueOnce({ ok: true, body: makeSseStream('') });
 
-    const token = vi.fn().mockResolvedValue('<account>');
+    const token = vi.fn().mockResolvedValue('token-a');
     const client = new RestClient(BASE, { token });
     const onError = vi.fn();
     const stop = client.orchestrator.subscribeJobEvents('acme', 'job-1', vi.fn(), onError);

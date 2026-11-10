@@ -181,11 +181,11 @@ func (a *xkmsCAServicer) SignCSR(ctx context.Context, req *xkmstransport.SignCSR
 // spiffe.BuildURI synthesis site SignCSR uses. When the trust domain or tenant
 // is empty no SPIFFE SAN is requested (single-domain / pre-broker mode).
 func (a *xkmsCAServicer) applyKeypairSPIFFE(certReq *xkmssdk.TrustedCACertificateRequest, profile, tenantID string) {
+	certReq.TenantID = tenantID
 	if a.spiffeTrustDomain == "" || tenantID == "" {
 		return
 	}
 	certReq.SPIFFETrustDomain = a.spiffeTrustDomain
-	certReq.TenantID = tenantID
 	certReq.SPIFFEKind = service.SPIFFEKindForProfile(profile)
 }
 
@@ -198,10 +198,10 @@ func (a *xkmsCAServicer) signOptionsWithSPIFFE(profile string, validityDays int,
 	opts := &xkmssdk.TrustedCASignOptions{
 		Profile:      profile,
 		ValidityDays: validityDays,
+		TenantID:     tenantID,
 	}
 	if a.spiffeTrustDomain != "" && tenantID != "" {
 		opts.SPIFFETrustDomain = a.spiffeTrustDomain
-		opts.TenantID = tenantID
 		opts.SPIFFEKind = service.SPIFFEKindForProfile(profile)
 	}
 	return opts
@@ -215,6 +215,12 @@ func (a *xkmsCAServicer) signOptionsWithSPIFFE(profile string, validityDays int,
 // nothing is stamped.
 func (a *xkmsCAServicer) resolveTenant(ctx context.Context, op, requested string) (string, error) {
 	if requested == "" && a.spiffeTrustDomain == "" {
+		// Nothing to stamp and no tenant named, so no tenant is required. A
+		// tenant that is bound is still recorded as the issuing tenant, so
+		// the revoke binding lets that tenant revoke the certificate later.
+		if tenantID, err := tenantctx.FromContext(ctx, op); err == nil {
+			return tenantID, nil
+		}
 		return "", nil
 	}
 	tenantID, err := tenantctx.Target(ctx, op, requested)
@@ -304,6 +310,10 @@ func (a *xkmsCAServicer) RevokeCertificate(ctx context.Context, req *xkmstranspo
 
 	serial, err := parseHexSerial(req.SerialNumber)
 	if err != nil {
+		return nil, err
+	}
+
+	if err := service.BindToIssuingTenant(ctx, a.ca, serial); err != nil {
 		return nil, err
 	}
 
