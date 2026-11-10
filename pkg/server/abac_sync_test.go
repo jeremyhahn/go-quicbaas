@@ -18,6 +18,7 @@ package server
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sort"
 	"testing"
 	"time"
@@ -31,6 +32,7 @@ import (
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 	"github.com/jeremyhahn/go-quicbaas/pkg/kvstore"
+	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
@@ -56,15 +58,19 @@ func (m *abacTestTenants) ListTenants(context.Context, iam.ListOptions) ([]*iam.
 // recording which tenants were listed.
 type abacTestPolicies struct {
 	iam.PolicyStorage
-	byTenant map[string][]*iam.Policy
-	err      error
-	listed   []string
+	byTenant    map[string][]*iam.Policy
+	err         error
+	errByTenant map[string]error
+	listed      []string
 }
 
 func (s *abacTestPolicies) ListPolicies(_ context.Context, tenantID string, _ iam.ListOptions) ([]*iam.Policy, error) {
 	s.listed = append(s.listed, tenantID)
 	if s.err != nil {
 		return nil, s.err
+	}
+	if err := s.errByTenant[tenantID]; err != nil {
+		return nil, err
 	}
 	return s.byTenant[tenantID], nil
 }
@@ -224,7 +230,7 @@ func TestQRDBABACSync_allPolicies(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			storage := &abacTestPolicies{byTenant: byTenant}
-			got, err := newQRDBABACSync(&Server{}, tt.tenants, storage).allPolicies(context.Background())
+			got, _, err := newQRDBABACSync(&Server{}, tt.tenants, storage).allPolicies(context.Background())
 			require.NoError(t, err)
 
 			names := make([]string, 0, len(got))
@@ -267,7 +273,7 @@ func TestQRDBABACSync_allPolicies_TenantRoutedStorage(t *testing.T) {
 		"unbound context":    context.Background(),
 	} {
 		t.Run(name, func(t *testing.T) {
-			got, err := newQRDBABACSync(&Server{}, tm, bs).allPolicies(ctx)
+			got, _, err := newQRDBABACSync(&Server{}, tm, bs).allPolicies(ctx)
 			require.NoError(t, err)
 
 			names := make([]string, 0, len(got))
@@ -291,9 +297,144 @@ func TestQRDBABACSync_allPolicies_Errors(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := newQRDBABACSync(&Server{}, tt.tenants, tt.storage).allPolicies(context.Background())
+			got, _, err := newQRDBABACSync(&Server{}, tt.tenants, tt.storage).allPolicies(context.Background())
 			assert.ErrorIs(t, err, abacTestStorageError{})
 			assert.Nil(t, got)
+		})
+	}
+}
+
+// newSealedTenantABACSync returns a sync over tenants acme and globex whose
+// acme listing fails with sealedErr, the storage behind it, and a func that
+// authorizes alice in a tenant on the node. The system tenant grants alice
+// everything, so only the sealed stand-in can deny her.
+func newSealedTenantABACSync(t *testing.T, sealedErr error) (*qrdbABACSync, *abacTestPolicies, func(tenant, resource, action string) error) {
+	t.Helper()
+	s, node := newABACTestServer(t, true)
+	storage := &abacTestPolicies{
+		byTenant: map[string][]*iam.Policy{
+			qrdbsdk.SystemTenantID: {abacTestPolicy("grant-alice", qrdbsdk.SystemTenantID, "alice", "**", iam.EffectAllow)},
+		},
+		errByTenant: map[string]error{"acme": sealedErr},
+	}
+	tenants := &abacTestTenants{tenants: []*iam.Tenant{{ID: "acme"}, {ID: "globex"}}}
+	authorize := func(tenant, resource, action string) error {
+		ctx := qrdbsdk.ContextWithTenant(context.Background(), tenant)
+		identity := &qrdbtransport.Identity{Subject: "alice", TenantID: tenant}
+		return node.Client().RBAC().Authorize(ctx, identity, resource, action)
+	}
+	return newQRDBABACSync(s, tenants, storage), storage, authorize
+}
+
+func TestQRDBABACSync_Sync_SealedTenantDoesNotStopTheReload(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+	}{
+		{"tenant store sealed", qrdbsdk.ErrTenantStoreSealed},
+		{"tenant sealed", qrdbsdk.ErrTenantSealed},
+		{"wrapped", fmt.Errorf("list: %w", qrdbsdk.ErrTenantStoreSealed)},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			sync, _, authorize := newSealedTenantABACSync(t, tt.err)
+
+			require.NoError(t, sync.Sync(context.Background()),
+				"one sealed tenant must not fail the reload")
+
+			assert.NoError(t, authorize("globex", "kv/orders", "read"),
+				"the readable tenant must get the platform-wide allow")
+			err := authorize("acme", "kv/orders", "read")
+			require.Error(t, err, "the sealed tenant's requests must be denied")
+			require.ErrorContains(t, err, sealedTenantDenyPolicyName)
+			assert.NoError(t, authorize("acme", "tenant_barrier", "unseal"),
+				"the stand-in must not deny the unseal")
+			assert.NoError(t, authorize("acme", "tenant_barrier", "status"),
+				"the stand-in must not deny the barrier status")
+		})
+	}
+}
+
+func TestQRDBABACSync_Sync_UnsealedTenantLoadsItsPoliciesAgain(t *testing.T) {
+	sync, storage, authorize := newSealedTenantABACSync(t, qrdbsdk.ErrTenantStoreSealed)
+	require.NoError(t, sync.Sync(context.Background()))
+	require.Error(t, authorize("acme", "kv/orders", "read"),
+		"the sealed tenant's requests must be denied")
+
+	delete(storage.errByTenant, "acme")
+	require.NoError(t, sync.Sync(context.Background()))
+
+	assert.NoError(t, authorize("acme", "kv/orders", "read"),
+		"the stand-in must be gone once the tenant's policies can be read")
+}
+
+func TestQRDBABACSync_allPolicies_SealedSystemTenantIsAnError(t *testing.T) {
+	storage := &abacTestPolicies{
+		byTenant: map[string][]*iam.Policy{
+			"globex": {abacTestPolicy("globex-kv", "globex", "alice", "kv/**", iam.EffectAllow)},
+		},
+		errByTenant: map[string]error{
+			qrdbsdk.SystemTenantID: qrdbsdk.ErrTenantStoreSealed,
+			"acme":                 qrdbsdk.ErrTenantStoreSealed,
+		},
+	}
+	tenants := &abacTestTenants{tenants: []*iam.Tenant{{ID: "acme"}, {ID: "globex"}}}
+
+	got, sealed, err := newQRDBABACSync(nil, tenants, storage).allPolicies(context.Background())
+
+	require.ErrorIs(t, err, qrdbsdk.ErrTenantStoreSealed)
+	assert.Nil(t, got)
+	assert.Nil(t, sealed)
+}
+
+func TestQRDBABACSync_allPolicies_ReportsSealedTenantsSorted(t *testing.T) {
+	storage := &abacTestPolicies{
+		byTenant: map[string][]*iam.Policy{
+			qrdbsdk.SystemTenantID: {abacTestPolicy("platform", qrdbsdk.SystemTenantID, "alice", "**", iam.EffectAllow)},
+			"globex":               {abacTestPolicy("globex-kv", "globex", "alice", "kv/**", iam.EffectAllow)},
+			"acme":                 {abacTestPolicy("acme-kv", "acme", "alice", "kv/**", iam.EffectAllow)},
+		},
+		errByTenant: map[string]error{
+			"zeta": qrdbsdk.ErrTenantStoreSealed,
+			"acme": qrdbsdk.ErrTenantSealed,
+		},
+	}
+	tenants := &abacTestTenants{tenants: []*iam.Tenant{{ID: "zeta"}, {ID: "globex"}, {ID: "acme"}}}
+
+	got, sealed, err := newQRDBABACSync(nil, tenants, storage).allPolicies(context.Background())
+
+	require.NoError(t, err)
+	names := make([]string, 0, len(got))
+	for _, p := range got {
+		names = append(names, p.Metadata.Name)
+	}
+	sort.Strings(names)
+	assert.Equal(t, []string{"globex-kv", "platform"}, names)
+	assert.Equal(t, []string{"acme", "zeta"}, sealed)
+}
+
+func TestServer_ABACResyncsWhenATenantIsUnsealed(t *testing.T) {
+	tests := []struct {
+		name    string
+		syncErr error
+	}{
+		{"sync succeeds", nil},
+		{"sync fails", errors.New("reload refused")},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s := &Server{}
+			calls := 0
+			s.resyncABACOnTenantUnseal(func(context.Context) error {
+				calls++
+				return tt.syncErr
+			})
+
+			barrier := service.NewTenantBarrierService(unsealingTenantClient{}, service.WithTenantUnsealHooks(&s.tenantUnsealHooks))
+			require.NoError(t, barrier.TenantBarrierUnseal(tenantAdminCtx("acme"), "acme", []byte("key")),
+				"a failed policy sync must not fail the unseal")
+
+			assert.Equal(t, 1, calls)
 		})
 	}
 }

@@ -15,6 +15,8 @@ package server
 
 import (
 	"context"
+	"errors"
+	"sort"
 	"strings"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
@@ -49,7 +51,9 @@ var _ iam.ABACSync = (*qrdbABACSync)(nil)
 // platform-wide policies), converts them to qrdb's abac.Policy wire shape,
 // and atomically reloads the node's live ABAC decorator. Reload is
 // all-or-nothing on the qrdb side: an invalid policy set is rejected and
-// leaves the previously active set fully in force.
+// leaves the previously active set fully in force. A tenant whose barrier is
+// sealed does not fail the reload: its unreadable policies are replaced by
+// sealedTenantDenyPolicy until it is unsealed.
 func (a *qrdbABACSync) Sync(ctx context.Context) error {
 	node := a.server.getQRDBNode()
 	if node == nil {
@@ -63,7 +67,7 @@ func (a *qrdbABACSync) Sync(ctx context.Context) error {
 		return nil
 	}
 
-	policies, err := a.allPolicies(ctx)
+	policies, sealed, err := a.allPolicies(ctx)
 	if err != nil {
 		return err
 	}
@@ -75,6 +79,12 @@ func (a *qrdbABACSync) Sync(ctx context.Context) error {
 	converted, err := policiesToABAC(policies, logger)
 	if err != nil {
 		return err
+	}
+	for _, tenantID := range sealed {
+		if logger != nil {
+			logger.Warnf("abac sync: tenant %q is sealed, its stored policies are not loaded: every request in it except its barrier's is denied until it is unsealed", tenantID)
+		}
+		converted = append(converted, sealedTenantDenyPolicy(tenantID))
 	}
 
 	return reloader.Reload(converted)
@@ -146,29 +156,95 @@ func flaggedRecordDenyPolicy(p *iam.Policy) *qrdbsdk.ABACPolicy {
 // concept. Storage routes by the context's tenant, so the catalog is read in
 // the system namespace and each tenant's policies under that tenant's own
 // context, whatever tenant the triggering request was bound to.
-func (a *qrdbABACSync) allPolicies(ctx context.Context) ([]*iam.Policy, error) {
+//
+// A tenant whose barrier is sealed cannot be listed; it is returned in sealed
+// instead of failing the scan, so one sealed tenant does not stop every other
+// tenant's reload. The system tenant is never skipped: its policies apply to
+// every tenant, so a failure to read them still fails the scan.
+func (a *qrdbABACSync) allPolicies(ctx context.Context) (all []*iam.Policy, sealed []string, err error) {
 	tenantIDs := map[string]struct{}{qrdbsdk.SystemTenantID: {}}
 
 	sysCtx := tenantctx.WithSystem(ctx)
 	if a.tenantManager != nil {
 		tenants, err := a.tenantManager.ListTenants(sysCtx, iam.ListOptions{})
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		for _, t := range tenants {
 			tenantIDs[t.ID] = struct{}{}
 		}
 	}
 
-	var all []*iam.Policy
 	for tenantID := range tenantIDs {
 		policies, err := a.storage.ListPolicies(tenantctx.WithTenant(ctx, tenantID), tenantID, iam.ListOptions{})
 		if err != nil {
-			return nil, err
+			if tenantID != qrdbsdk.SystemTenantID && abacTenantSealed(err) {
+				sealed = append(sealed, tenantID)
+				continue
+			}
+			return nil, nil, err
 		}
 		all = append(all, policies...)
 	}
-	return all, nil
+	sort.Strings(sealed)
+	return all, sealed, nil
+}
+
+// abacTenantSealed reports whether err says a tenant's own store cannot be
+// opened because its barrier is sealed (or not open on this node).
+func abacTenantSealed(err error) bool {
+	return errors.Is(err, qrdbsdk.ErrTenantStoreSealed) || errors.Is(err, qrdbsdk.ErrTenantSealed)
+}
+
+const (
+	// sealedTenantDenyPolicyName names the policy that stands in for a
+	// sealed tenant's unreadable policies.
+	sealedTenantDenyPolicyName = "tenant-sealed"
+	// sealedTenantDenyRule names its one rule.
+	sealedTenantDenyRule = "tenant-sealed-policies-not-loaded"
+	// sealedTenantBarrierResource is the permission resource of the tenant
+	// barrier routes (status, unseal), the one thing a sealed tenant must
+	// still be able to reach.
+	sealedTenantBarrierResource = "tenant_barrier"
+)
+
+// sealedTenantDenyPolicy returns the policy that stands in for a sealed
+// tenant's stored policies. They cannot be read, so they may hold denies:
+// leaving the tenant with no policy could let the RBAC fallback or a
+// platform-wide allow admit a request one of them blocked. It therefore
+// denies every request in that tenant except those on the tenant's barrier,
+// which stay decided by the platform-wide policies and RBAC so the tenant
+// can still be unsealed. The next reload after the unseal replaces it with
+// the tenant's stored policies.
+func sealedTenantDenyPolicy(tenantID string) *qrdbsdk.ABACPolicy {
+	return &qrdbsdk.ABACPolicy{
+		APIVersion: iam.PolicyYAMLAPIVersion,
+		Kind:       "Policy",
+		Metadata: qrdbsdk.ABACPolicyMetadata{
+			Name:   sealedTenantDenyPolicyName,
+			Tenant: tenantID,
+		},
+		Spec: qrdbsdk.ABACPolicySpec{
+			Subjects: qrdbsdk.ABACSubjectSelector{Any: true},
+			Rules: []qrdbsdk.ABACRule{{
+				Name:      sealedTenantDenyRule,
+				Effect:    qrdbsdk.ABACEffectDeny,
+				Actions:   []string{"*"},
+				Resources: []string{"**"},
+				Unless:    []qrdbsdk.ABACCondition{{Expression: "resource == '" + sealedTenantBarrierResource + "'"}},
+			}},
+		},
+	}
+}
+
+// resyncABACOnTenantUnseal reloads the live policy set each time a tenant's
+// barrier opens, so the tenant's stored policies replace its sealed stand-in.
+func (s *Server) resyncABACOnTenantUnseal(sync func(context.Context) error) {
+	s.tenantUnsealHooks.Register(tenantUnsealFunc(func(ctx context.Context, tenantID string) {
+		if err := sync(ctx); err != nil && s.logger != nil {
+			s.logger.WithError(err).Warnf("ABAC policy sync after tenant %s was unsealed failed; its stored policies are not enforced yet", tenantID)
+		}
+	}))
 }
 
 // policyToABAC converts an iam.Policy to qrdb's abac.Policy wire shape
