@@ -1,35 +1,36 @@
 # worker-image — build, scan and publish the software-factory worker image to
-# ghcr.io.
+# ghcr.io, nightly at 03:00 UTC and on any dispatch.
 #
-# On the nightly schedule, or on any dispatch, build-publish builds the image
-# on a GitHub-hosted runner with the latest Claude Code and Codex from npm
-# (claude_code_version and codex_version override them) and pushes it to
-# ghcr.io with GITHUB_TOKEN via `make push-worker-image`, whose Trivy gate
-# blocks the push; a published tag is never pushed again. Before the push, two
-# Trivy secret scans, one of the built image and one of each of its layer
+# build-publish builds the image with exactly the versions the repository
+# locks (G3): Claude Code, Codex and the Gemini CLI from
+# deployments/agents/software-factory-worker/versions.lock, and Go, gh and the
+# rest of the toolchain from pkg/version/toolchain.mk, both read by `make
+# build-worker-image`; nothing is taken from "latest". The Debian base packages
+# are upgraded in the Dockerfile on every build. The tag is the content tag plus
+# the UTC build date, <version>-cc<claude-code>-cx<codex>-n<YYYYMMDD>, so each
+# night publishes a fresh image and a rerun the same day pushes nothing: a
+# published tag is never pushed again. The push goes to ghcr.io with the job's
+# own GITHUB_TOKEN under `packages: write` (G1: no PAT, no other secret) via
+# `make push-worker-image`, whose Trivy gate blocks the push. Before the push,
+# two Trivy secret scans, one of the built image and one of each of its layer
 # tarballs, fail the job on a secret of any severity; the image scan also
 # covers the image config, and the config JSON is scanned with the layers. The
 # job fails before the build if any DEVCACHE_* variable is set, and both make
-# calls pass the dev-cache args empty. The digest goes to a
-# `WORKER-IMAGE-DIGEST` log line, the job summary and the `worker-image-digest`
-# artifact, each with the resolved CLI versions and their npm integrity sums;
-# this workflow does not move `current`. Once the digest is known, an anonymous
-# lookup of it must be refused, or the job fails: the package stays private.
-# The nightly schedule is an owner exception to the no-`schedule:` workflow
-# rule.
+# calls pass the dev-cache args empty. The image is published BY DIGEST: the
+# digest push-worker-image prints is the job's output, the `WORKER-IMAGE-DIGEST`
+# log line and the `worker-image-digest` artifact, each with the locked
+# versions and the CLIs' npm integrity sums. post-digest then posts that digest
+# to the run summary and as its own output. This workflow does not move
+# `current`. Once the digest is known, an anonymous lookup of it must be
+# refused, or the job fails: the package stays private. The nightly schedule is
+# an owner exception to the no-`schedule:` workflow rule.
 name: worker-image
 
 on:
   schedule:
-    - cron: '23 4 * * *'
+    - cron: '0 3 * * *'
+  # A dispatch builds the same locked versions; change versions.lock by PR.
   workflow_dispatch:
-    inputs:
-      claude_code_version:
-        description: "Nightly build: Claude Code version (x.y.z); empty takes the latest on npm"
-        default: ""
-      codex_version:
-        description: "Nightly build: Codex version (x.y.z); empty takes the latest on npm"
-        default: ""
 
 permissions:
   contents: read
@@ -38,6 +39,7 @@ jobs:
   build-publish:
     name: Build, scan and publish the worker image (ghcr.io)
     if: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' }}
+    # When the bigdisk-docker pool is live, switch to: runs-on: [self-hosted, linux, x64, bigdisk-docker]
     runs-on: ubuntu-latest
     timeout-minutes: 150
     permissions:
@@ -50,6 +52,8 @@ jobs:
       published: ${{ steps.record.outputs.published }}
       cc: ${{ steps.resolve.outputs.cc }}
       cx: ${{ steps.resolve.outputs.cx }}
+      go: ${{ steps.resolve.outputs.go }}
+      gh: ${{ steps.resolve.outputs.gh }}
       tag: ${{ steps.resolve.outputs.tag }}
     env:
       IMAGE: quicbaas-software-factory-worker
@@ -65,32 +69,31 @@ jobs:
           docker image prune --all --force
           df -h /
 
-      - name: Resolve the CLI versions and the content tag
+      - name: Read the locked versions and the nightly tag
         id: resolve
-        env:
-          CC_INPUT: ${{ inputs.claude_code_version }}
-          CX_INPUT: ${{ inputs.codex_version }}
         run: |
           set -euo pipefail
-          cc="$CC_INPUT"
-          if [ -z "$cc" ]; then cc="$(npm view @anthropic-ai/claude-code version)"; fi
-          cx="$CX_INPUT"
-          if [ -z "$cx" ]; then cx="$(npm view @openai/codex version)"; fi
-          semver() { [[ "$2" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error::the $1 version must be <major>.<minor>.<patch>"; exit 1; }; }
-          semver "Claude Code (claude_code_version)" "$cc"
-          semver "Codex (codex_version)" "$cx"
-          gm="$(sed -n 's/^GEMINI_CLI_VERSION ?= //p' Makefile)"
-          semver "Gemini CLI (Makefile GEMINI_CLI_VERSION)" "$gm"
+          lock=deployments/agents/software-factory-worker/versions.lock
+          toolchain=pkg/version/toolchain.mk
+          pin() { local v; v="$(sed -n "s/^$2$3//p" "$1" | tail -n 1)"; [[ "$v" =~ $4 ]] || { echo "::error::$1 has no valid $2 (got '${v}')" >&2; return 1; }; printf '%s' "$v"; }
+          semver='^[0-9]+\.[0-9]+\.[0-9]+$'
+          cc="$(pin "$lock" CLAUDE_CODE_VERSION = "$semver")"
+          cx="$(pin "$lock" CODEX_VERSION = "$semver")"
+          gm="$(pin "$lock" GEMINI_CLI_VERSION = "$semver")"
+          go="$(pin "$toolchain" GO_VERSION ' := ' "$semver")"
+          gh="$(pin "$toolchain" GH_VERSION ' := ' '^v[0-9]+\.[0-9]+\.[0-9]+$')"
           integrity() { local v; v="$(npm view "$1" dist.integrity)"; [[ "$v" =~ ^sha512-[A-Za-z0-9+/]+={0,2}$ ]] || { echo "::error::$1 has no sha512 integrity on npm" >&2; return 1; }; printf '%s' "$v"; }
           cc_int="$(integrity "@anthropic-ai/claude-code@${cc}")"
           cc_x64_int="$(integrity "@anthropic-ai/claude-code-linux-x64@${cc}")"
           cx_int="$(integrity "@openai/codex@${cx}")"
           cx_x64_int="$(integrity "@openai/codex@${cx}-linux-x64")"
           gm_int="$(integrity "@google/gemini-cli@${gm}")"
-          # The Makefile's WORKER_IMAGE_TAG: <VERSION>-cc<claude-code>-cx<codex>.
-          tag="$(tr -d '\n' < VERSION)-cc${cc}-cx${cx}"
+          # The Makefile's content tag, <VERSION>-cc<claude-code>-cx<codex>, plus
+          # the UTC build date, so each night's rebuild (fresh base packages)
+          # is a new tag and a same-day rerun finds its tag published.
+          tag="$(tr -d '\n' < VERSION)-cc${cc}-cx${cx}-n$(date -u +%Y%m%d)"
           repo="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/${IMAGE}"
-          printf 'cc=%s\ncx=%s\ntag=%s\nrepo=%s\n' "$cc" "$cx" "$tag" "$repo" >> "$GITHUB_OUTPUT"
+          printf 'cc=%s\ncx=%s\ngo=%s\ngh=%s\ntag=%s\nrepo=%s\n' "$cc" "$cx" "$go" "$gh" "$tag" "$repo" >> "$GITHUB_OUTPUT"
           printf 'gm=%s\ncc_int=%s\ncc_x64_int=%s\ncx_int=%s\ncx_x64_int=%s\ngm_int=%s\n' \
             "$gm" "$cc_int" "$cc_x64_int" "$cx_int" "$cx_x64_int" "$gm_int" >> "$GITHUB_OUTPUT"
 
@@ -147,9 +150,10 @@ jobs:
         env:
           CC: ${{ steps.resolve.outputs.cc }}
           CX: ${{ steps.resolve.outputs.cx }}
+          TAG: ${{ steps.resolve.outputs.tag }}
         run: |
           set -euo pipefail
-          make build-worker-image CLAUDE_CODE_VERSION="$CC" CODEX_VERSION="$CX" WORKER_IMAGE_UID=1000 WORKER_IMAGE_GID=1000 DEVCACHE_GOPROXY= DEVCACHE_NPM_REGISTRY=
+          make build-worker-image CLAUDE_CODE_VERSION="$CC" CODEX_VERSION="$CX" WORKER_IMAGE_TAG="$TAG" WORKER_IMAGE_UID=1000 WORKER_IMAGE_GID=1000 DEVCACHE_GOPROXY= DEVCACHE_NPM_REGISTRY=
 
       - name: Install Trivy
         if: ${{ steps.existing.outputs.exists != 'true' }}
@@ -259,11 +263,12 @@ jobs:
         env:
           CC: ${{ steps.resolve.outputs.cc }}
           CX: ${{ steps.resolve.outputs.cx }}
+          TAG: ${{ steps.resolve.outputs.tag }}
           REPO: ${{ steps.resolve.outputs.repo }}
         run: |
           set -euo pipefail
           log="$RUNNER_TEMP/push-worker-image.log"
-          make push-worker-image CLAUDE_CODE_VERSION="$CC" CODEX_VERSION="$CX" \
+          make push-worker-image CLAUDE_CODE_VERSION="$CC" CODEX_VERSION="$CX" WORKER_IMAGE_TAG="$TAG" \
             WORKER_IMAGE_UID=1000 WORKER_IMAGE_GID=1000 DEVCACHE_GOPROXY= DEVCACHE_NPM_REGISTRY= \
             WORKER_IMAGE_REGISTRY="$REPO" TRIVY="$RUNNER_TEMP/bin/trivy" 2>&1 | tee "$log"
           ref_line="$(grep '^WORKER_IMAGE_REF=' "$log" | tail -n 1 || true)"
@@ -280,6 +285,8 @@ jobs:
           CC: ${{ steps.resolve.outputs.cc }}
           CX: ${{ steps.resolve.outputs.cx }}
           GM: ${{ steps.resolve.outputs.gm }}
+          GO: ${{ steps.resolve.outputs.go }}
+          GH: ${{ steps.resolve.outputs.gh }}
           CC_INT: ${{ steps.resolve.outputs.cc_int }}
           CC_X64_INT: ${{ steps.resolve.outputs.cc_x64_int }}
           CX_INT: ${{ steps.resolve.outputs.cx_int }}
@@ -299,8 +306,8 @@ jobs:
           fi
           ref="${REPO}:${TAG}@${digest}"
           line="WORKER-IMAGE-DIGEST ${ref} published=${published}"
-          versions="$(printf 'claude-code=%s integrity=%s\nclaude-code-linux-x64=%s integrity=%s\ncodex=%s integrity=%s\ncodex-linux-x64=%s integrity=%s\ngemini-cli=%s integrity=%s' \
-            "$CC" "$CC_INT" "$CC" "$CC_X64_INT" "$CX" "$CX_INT" "$CX" "$CX_X64_INT" "$GM" "$GM_INT")"
+          versions="$(printf 'claude-code=%s integrity=%s\nclaude-code-linux-x64=%s integrity=%s\ncodex=%s integrity=%s\ncodex-linux-x64=%s integrity=%s\ngemini-cli=%s integrity=%s\ngo=%s\ngh=%s' \
+            "$CC" "$CC_INT" "$CC" "$CC_X64_INT" "$CX" "$CX_INT" "$CX" "$CX_X64_INT" "$GM" "$GM_INT" "$GO" "$GH")"
           echo "$line"
           echo "$versions"
           printf '%s\n\n```\n%s\n```\n' "$line" "$versions" >> "$GITHUB_STEP_SUMMARY"
@@ -344,3 +351,39 @@ jobs:
           set -euo pipefail
           docker logout ghcr.io || true
           rm -rf "$RUNNER_TEMP/docker-config"
+
+  # The second job posts the digest build-publish published (or found already
+  # published under the same tag): a run summary and the job's outputs, for a
+  # caller of this workflow to pin the image by digest. It holds no token.
+  post-digest:
+    name: Post the worker image digest
+    needs: build-publish
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions: {}
+    outputs:
+      ref: ${{ steps.post.outputs.ref }}
+      digest: ${{ steps.post.outputs.digest }}
+    steps:
+      - name: Post the digest
+        id: post
+        env:
+          REF: ${{ needs.build-publish.outputs.ref }}
+          DIGEST: ${{ needs.build-publish.outputs.digest }}
+          PUBLISHED: ${{ needs.build-publish.outputs.published }}
+          TAG: ${{ needs.build-publish.outputs.tag }}
+          CC: ${{ needs.build-publish.outputs.cc }}
+          CX: ${{ needs.build-publish.outputs.cx }}
+          GO: ${{ needs.build-publish.outputs.go }}
+          GH: ${{ needs.build-publish.outputs.gh }}
+        run: |
+          set -euo pipefail
+          [[ "$DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "::error::build-publish output no sha256 digest (got '${DIGEST}')"; exit 1; }
+          [[ "$REF" == *":${TAG}@${DIGEST}" ]] || { echo "::error::build-publish ref '${REF}' does not name ${TAG}@${DIGEST}"; exit 1; }
+          line="WORKER-IMAGE-DIGEST ${REF} published=${PUBLISHED}"
+          echo "$line"
+          {
+            printf '### Worker image\n\n'
+            printf '```\n%s\ndigest=%s\nclaude-code=%s codex=%s go=%s gh=%s\n```\n' "$line" "$DIGEST" "$CC" "$CX" "$GO" "$GH"
+          } >> "$GITHUB_STEP_SUMMARY"
+          { echo "ref=$REF"; echo "digest=$DIGEST"; } >> "$GITHUB_OUTPUT"

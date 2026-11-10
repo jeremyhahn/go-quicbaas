@@ -84,6 +84,12 @@ type Pins struct {
 	OpencodeSHA256X86_64  string
 	OpencodeSHA256Aarch64 string
 
+	// Gh is the GitHub CLI, installed from its release tarball with the
+	// release's published SHA-256 per architecture beside the version.
+	Gh              string
+	GhSHA256X86_64  string
+	GhSHA256Aarch64 string
+
 	// Protoc is the protobuf compiler a Go project's .proto files regenerate
 	// code with inside this image, rather than a host-mounted protoc (the
 	// container-only tooling rule). Installed from its release zip, whose
@@ -173,6 +179,10 @@ func ToolchainPins() (Pins, error) {
 		OpencodeSHA256X86_64:  toolchain["OPENCODE_SHA256_X86_64"],
 		OpencodeSHA256Aarch64: toolchain["OPENCODE_SHA256_AARCH64"],
 
+		Gh:              toolchain["GH_VERSION"],
+		GhSHA256X86_64:  toolchain["GH_SHA256_X86_64"],
+		GhSHA256Aarch64: toolchain["GH_SHA256_AARCH64"],
+
 		Protoc:              toolchain["PROTOC_VERSION"],
 		ProtocSHA256X86_64:  toolchain["PROTOC_SHA256_X86_64"],
 		ProtocSHA256Aarch64: toolchain["PROTOC_SHA256_AARCH64"],
@@ -254,6 +264,9 @@ func (p Pins) named() []namedPin {
 		{buildArg: "OPENCODE_VERSION", label: LabelOpencodeVersion, value: p.Opencode},
 		{buildArg: "OPENCODE_SHA256_X86_64", value: p.OpencodeSHA256X86_64},
 		{buildArg: "OPENCODE_SHA256_AARCH64", value: p.OpencodeSHA256Aarch64},
+		{buildArg: "GH_VERSION", label: LabelGhVersion, value: p.Gh},
+		{buildArg: "GH_SHA256_X86_64", value: p.GhSHA256X86_64},
+		{buildArg: "GH_SHA256_AARCH64", value: p.GhSHA256Aarch64},
 		{buildArg: "PROTOC_VERSION", label: LabelProtocVersion, value: p.Protoc},
 		{buildArg: "PROTOC_SHA256_X86_64", value: p.ProtocSHA256X86_64},
 		{buildArg: "PROTOC_SHA256_AARCH64", value: p.ProtocSHA256Aarch64},
@@ -308,6 +321,7 @@ const (
 	LabelActionlintVersion      = "io.quicbaas.worker.actionlint.version"
 	LabelShellcheckVersion      = "io.quicbaas.worker.shellcheck.version"
 	LabelOpencodeVersion        = "io.quicbaas.worker.opencode.version"
+	LabelGhVersion              = "io.quicbaas.worker.gh.version"
 	LabelProtocVersion          = "io.quicbaas.worker.protoc.version"
 	LabelProtocGenGoVersion     = "io.quicbaas.worker.protoc-gen-go.version"
 	LabelProtocGenGoGRPCVersion = "io.quicbaas.worker.protoc-gen-go-grpc.version"

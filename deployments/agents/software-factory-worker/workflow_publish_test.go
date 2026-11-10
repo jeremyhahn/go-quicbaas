@@ -45,6 +45,8 @@ type workflowFile struct {
 	Jobs map[string]struct {
 		Name        string            `yaml:"name"`
 		If          string            `yaml:"if"`
+		Needs       any               `yaml:"needs"`
+		RunsOn      any               `yaml:"runs-on"`
 		Permissions map[string]string `yaml:"permissions"`
 		Steps       []struct {
 			ID   string `yaml:"id"`
@@ -69,16 +71,18 @@ func loadWorkflow(t *testing.T) (string, workflowFile) {
 	return string(raw), wf
 }
 
-// The workflow is one job that holds only GITHUB_TOKEN with contents: read and
-// packages: write: no registry secret, and no job may write issues.
-func TestWorkflowBuildPublish_OnlyJob(t *testing.T) {
+// The workflow is two jobs. build-publish holds only GITHUB_TOKEN with
+// contents: read and packages: write (G1): no registry secret, no PAT, and no
+// job may write issues. post-digest needs it and holds no permission at all.
+func TestWorkflowBuildPublish_Jobs(t *testing.T) {
 	raw, wf := loadWorkflow(t)
-	if len(wf.Jobs) != 1 {
+	if len(wf.Jobs) != 2 {
 		names := make([]string, 0, len(wf.Jobs))
 		for name := range wf.Jobs {
 			names = append(names, name)
 		}
-		t.Fatalf("jobs = %v, want exactly [build-publish]", names)
+		sort.Strings(names)
+		t.Fatalf("jobs = %v, want exactly [build-publish post-digest]", names)
 	}
 	job, ok := wf.Jobs["build-publish"]
 	if !ok {
@@ -98,9 +102,33 @@ func TestWorkflowBuildPublish_OnlyJob(t *testing.T) {
 			break
 		}
 	}
-	inputs := wf.On.WorkflowDispatch.Inputs
-	if len(inputs) != 2 || inputs["claude_code_version"] == nil || inputs["codex_version"] == nil {
-		t.Errorf("workflow_dispatch inputs = %v, want only claude_code_version and codex_version", inputs)
+	if job.RunsOn != "ubuntu-latest" {
+		t.Errorf("build-publish runs-on = %v, want ubuntu-latest until the bigdisk-docker pool is live", job.RunsOn)
+	}
+	if !strings.Contains(raw, "# When the bigdisk-docker pool is live, switch to: runs-on: [self-hosted, linux, x64, bigdisk-docker]\n    runs-on: ubuntu-latest\n") {
+		t.Errorf("%s does not carry the bigdisk-docker runs-on switch line above build-publish's runs-on", workflowPath)
+	}
+	if !strings.Contains(raw, "    - cron: '0 3 * * *'\n") {
+		t.Errorf("%s does not run nightly at 03:00 UTC", workflowPath)
+	}
+	// A version input would build something other than the lock (G3).
+	if inputs := wf.On.WorkflowDispatch.Inputs; len(inputs) != 0 {
+		t.Errorf("workflow_dispatch inputs = %v, want none: the build takes its versions from the lock", inputs)
+	}
+	post, ok := wf.Jobs["post-digest"]
+	if !ok {
+		t.Fatalf("%s has no post-digest job", workflowPath)
+	}
+	if post.Needs != "build-publish" {
+		t.Errorf("post-digest needs = %v, want build-publish", post.Needs)
+	}
+	if len(post.Permissions) != 0 || !strings.Contains(raw, "    permissions: {}\n") {
+		t.Errorf("post-digest permissions = %v, want permissions: {}", post.Permissions)
+	}
+	for _, step := range post.Steps {
+		if strings.Contains(step.Run, "GITHUB_TOKEN") || strings.Contains(step.Run, "docker") {
+			t.Errorf("post-digest step %q touches a token or the registry; it only posts", step.Name)
+		}
 	}
 	for _, s := range []string{"REGISTRY_TOKEN", "REGISTRY_USER", "secrets["} {
 		if strings.Contains(raw, s) {
@@ -342,21 +370,28 @@ func TestWorkflowBuildPublish_OnlyNotFoundCountsAsUnpublished(t *testing.T) {
 // stepRun returns the run: script of build-publish's step with the given id.
 func stepRun(t *testing.T, id string) string {
 	t.Helper()
+	return jobStepRun(t, "build-publish", id)
+}
+
+// jobStepRun returns the run: script of the step with the given id in the
+// named job, failing when there is none.
+func jobStepRun(t *testing.T, name, id string) string {
+	t.Helper()
 	_, wf := loadWorkflow(t)
-	job, ok := wf.Jobs["build-publish"]
+	job, ok := wf.Jobs[name]
 	if !ok {
-		t.Fatalf("%s has no build-publish job", workflowPath)
+		t.Fatalf("%s has no %s job", workflowPath, name)
 	}
 	for _, step := range job.Steps {
 		if step.ID != id {
 			continue
 		}
 		if strings.TrimSpace(step.Run) == "" {
-			t.Fatalf("build-publish step id: %s has no run: script", id)
+			t.Fatalf("%s step id: %s has no run: script", name, id)
 		}
 		return step.Run
 	}
-	t.Fatalf("build-publish has no step with id: %s", id)
+	t.Fatalf("%s has no step with id: %s", name, id)
 	return ""
 }
 
@@ -638,15 +673,24 @@ func TestWorkflowBuildPublish_ImageSecretScanFailureFailsTheStep(t *testing.T) {
 	}
 }
 
+// fakeNpmScript answers only integrity lookups: any other npm call, such as a
+// `npm view <pkg> version` for the latest release, fails, so the resolve step
+// is proven to take its versions from the lock (G3).
 const fakeNpmScript = `#!/bin/sh
 case "$*" in
   *dist.integrity*) printf '%s\n' "$FAKE_INTEGRITY" ;;
-  *) echo 1.2.3 ;;
+  *) echo "unexpected npm call: $*" >&2; exit 1 ;;
 esac
 `
 
-// The resolve step records the Gemini CLI pin and the npm sha512 integrity of
-// each CLI package, and fails on a missing or non-sha512 integrity.
+const (
+	testVersionsLock = "CLAUDE_CODE_VERSION=1.2.3\nCODEX_VERSION=4.5.6\nGEMINI_CLI_VERSION=0.64.0\n"
+	testToolchainMk  = "GO_VERSION := 1.27.3\nGH_VERSION := v2.103.3\n"
+)
+
+// The resolve step reads every version from versions.lock and toolchain.mk,
+// records the npm sha512 integrity of each CLI package, and fails on a missing
+// or non-sha512 integrity or a lock line that is missing.
 func TestWorkflowBuildPublish_ResolveRecordsIntegrity(t *testing.T) {
 	bash, err := exec.LookPath("bash")
 	if err != nil {
@@ -658,11 +702,14 @@ func TestWorkflowBuildPublish_ResolveRecordsIntegrity(t *testing.T) {
 	cases := []struct {
 		name      string
 		integrity string
+		lock      string
+		wantErr   string
 		wantOK    bool
 	}{
-		{name: "sha512", integrity: valid, wantOK: true},
-		{name: "sha1", integrity: "sha1-abc"},
-		{name: "empty", integrity: ""},
+		{name: "sha512", integrity: valid, lock: testVersionsLock, wantOK: true},
+		{name: "sha1", integrity: "sha1-abc", lock: testVersionsLock, wantErr: "has no sha512 integrity on npm"},
+		{name: "empty", integrity: "", lock: testVersionsLock, wantErr: "has no sha512 integrity on npm"},
+		{name: "no codex pin", integrity: valid, lock: "CLAUDE_CODE_VERSION=1.2.3\nGEMINI_CLI_VERSION=0.64.0\n", wantErr: "has no valid CODEX_VERSION"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -677,8 +724,17 @@ func TestWorkflowBuildPublish_ResolveRecordsIntegrity(t *testing.T) {
 			if err := os.WriteFile(filepath.Join(dir, "VERSION"), []byte("1.0.0\n"), 0o644); err != nil {
 				t.Fatal(err)
 			}
-			if err := os.WriteFile(filepath.Join(dir, "Makefile"), []byte("GEMINI_CLI_VERSION ?= 0.64.0\n"), 0o644); err != nil {
-				t.Fatal(err)
+			for rel, body := range map[string]string{
+				"deployments/agents/software-factory-worker/versions.lock": tc.lock,
+				"pkg/version/toolchain.mk":                                 testToolchainMk,
+			} {
+				full := filepath.Join(dir, filepath.FromSlash(rel))
+				if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(full, []byte(body), 0o644); err != nil {
+					t.Fatal(err)
+				}
 			}
 			output := filepath.Join(dir, "github_output")
 			if err := os.WriteFile(output, nil, 0o644); err != nil {
@@ -692,8 +748,6 @@ func TestWorkflowBuildPublish_ResolveRecordsIntegrity(t *testing.T) {
 				"IMAGE=quicbaas-software-factory-worker",
 				"GITHUB_REPOSITORY_OWNER=Example",
 				"GITHUB_OUTPUT="+output,
-				"CC_INPUT=",
-				"CX_INPUT=",
 				"FAKE_INTEGRITY="+tc.integrity,
 			)
 			combined, runErr := cmd.CombinedOutput()
@@ -707,8 +761,8 @@ func TestWorkflowBuildPublish_ResolveRecordsIntegrity(t *testing.T) {
 				if runErr == nil {
 					t.Fatalf("step exited 0 with integrity %q:\n%s", tc.integrity, combined)
 				}
-				if !strings.Contains(string(combined), "has no sha512 integrity on npm") {
-					t.Errorf("output does not show the integrity error:\n%s", combined)
+				if !strings.Contains(string(combined), tc.wantErr) {
+					t.Errorf("output does not show %q:\n%s", tc.wantErr, combined)
 				}
 				for _, line := range lines {
 					if strings.HasPrefix(line, "cc_int=") {
@@ -720,7 +774,7 @@ func TestWorkflowBuildPublish_ResolveRecordsIntegrity(t *testing.T) {
 			if runErr != nil {
 				t.Fatalf("step failed: %v\n%s", runErr, combined)
 			}
-			want := []string{"gm=0.64.0"}
+			want := []string{"cc=1.2.3", "cx=4.5.6", "gm=0.64.0", "go=1.27.3", "gh=v2.103.3"}
 			for _, k := range []string{"cc_int", "cc_x64_int", "cx_int", "cx_x64_int", "gm_int"} {
 				want = append(want, k+"="+valid)
 			}
@@ -734,6 +788,10 @@ func TestWorkflowBuildPublish_ResolveRecordsIntegrity(t *testing.T) {
 				if !found {
 					t.Errorf("GITHUB_OUTPUT has no %q line:\n%s", w, got)
 				}
+			}
+			tagRe := regexp.MustCompile(`(?m)^tag=1\.0\.0-cc1\.2\.3-cx4\.5\.6-n[0-9]{8}$`)
+			if !tagRe.Match(got) {
+				t.Errorf("GITHUB_OUTPUT has no tag=<VERSION>-cc<cc>-cx<cx>-n<YYYYMMDD> line:\n%s", got)
 			}
 		})
 	}
@@ -766,6 +824,8 @@ func TestWorkflowBuildPublish_RecordCarriesIntegrity(t *testing.T) {
 		"CX_INT=sha512-cx==",
 		"CX_X64_INT=sha512-cxx64==",
 		"GM_INT=sha512-gm==",
+		"GO=1.27.3",
+		"GH=v2.103.3",
 		"EXISTING_DIGEST=",
 		"PUSHED_DIGEST="+digest,
 		"RUNNER_TEMP="+dir,
@@ -787,6 +847,8 @@ func TestWorkflowBuildPublish_RecordCarriesIntegrity(t *testing.T) {
 		"codex=4.5.6 integrity=sha512-cx==",
 		"codex-linux-x64=4.5.6 integrity=sha512-cxx64==",
 		"gemini-cli=0.64.0 integrity=sha512-gm==",
+		"go=1.27.3",
+		"gh=v2.103.3",
 	}
 	if len(lines) != len(want) {
 		t.Fatalf("worker-image-digest.txt =\n%s\nwant %d lines", got, len(want))
@@ -795,6 +857,71 @@ func TestWorkflowBuildPublish_RecordCarriesIntegrity(t *testing.T) {
 		if lines[i] != w {
 			t.Errorf("worker-image-digest.txt line %d = %q, want %q", i+1, lines[i], w)
 		}
+	}
+}
+
+// post-digest posts the published digest to the run summary and its outputs,
+// and fails when build-publish handed it no sha256 digest or a ref that does
+// not end in that tag and digest.
+func TestWorkflowPostDigest_PostsTheDigest(t *testing.T) {
+	bash, err := exec.LookPath("bash")
+	if err != nil {
+		t.Skip("bash is not on PATH")
+	}
+	script := jobStepRun(t, "post-digest", "post")
+	const (
+		tag    = "1.0.0-cc1.2.3-cx4.5.6-n20261110"
+		digest = "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+		ref    = "ghcr.io/example/img:" + tag + "@" + digest
+	)
+	cases := []struct {
+		name, ref, digest string
+		wantOK            bool
+	}{
+		{name: "digest", ref: ref, digest: digest, wantOK: true},
+		{name: "no digest", ref: "ghcr.io/example/img:" + tag + "@", digest: ""},
+		{name: "not sha256", ref: ref, digest: "latest"},
+		{name: "ref names another digest", ref: "ghcr.io/example/img:" + tag + "@sha256:" + strings.Repeat("f", 64), digest: digest},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			summary := filepath.Join(dir, "summary")
+			output := filepath.Join(dir, "github_output")
+			cmd := exec.Command(bash, "-c", script)
+			cmd.Env = append(os.Environ(),
+				"REF="+tc.ref, "DIGEST="+tc.digest, "PUBLISHED=true", "TAG="+tag,
+				"CC=1.2.3", "CX=4.5.6", "GO=1.27.3", "GH=v2.103.3",
+				"GITHUB_STEP_SUMMARY="+summary, "GITHUB_OUTPUT="+output,
+			)
+			combined, runErr := cmd.CombinedOutput()
+			if !tc.wantOK {
+				if runErr == nil {
+					t.Fatalf("step exited 0 with ref %q digest %q:\n%s", tc.ref, tc.digest, combined)
+				}
+				if out, _ := os.ReadFile(output); strings.Contains(string(out), "digest=") {
+					t.Errorf("GITHUB_OUTPUT has a digest after a refusal:\n%s", out)
+				}
+				return
+			}
+			if runErr != nil {
+				t.Fatalf("step failed: %v\n%s", runErr, combined)
+			}
+			sum, err := os.ReadFile(summary)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(string(sum), "WORKER-IMAGE-DIGEST "+ref+" published=true") {
+				t.Errorf("summary does not carry the digest line:\n%s", sum)
+			}
+			out, err := os.ReadFile(output)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(string(out), "digest="+digest+"\n") || !strings.Contains(string(out), "ref="+ref+"\n") {
+				t.Errorf("GITHUB_OUTPUT =\n%s\nwant digest=%s and ref=%s", out, digest, ref)
+			}
+		})
 	}
 }
 

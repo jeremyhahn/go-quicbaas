@@ -51,6 +51,7 @@ func testPins() Pins {
 	return Pins{Go: "1.27.1", Golangci: "v2.14.0", Gosec: "v2.29.0", Govulncheck: "v1.8.0", Gopls: "v0.23.0", Serena: "v1.7.0",
 		Actionlint: "v1.7.12", Shellcheck: "v0.11.0", ShellcheckSHA256X86_64: "8c3b", ShellcheckSHA256Aarch64: "12b3",
 		Opencode: "v1.18.35", OpencodeSHA256X86_64: "1ce4", OpencodeSHA256Aarch64: "abf3",
+		Gh: "v2.103.3", GhSHA256X86_64: "b8b8", GhSHA256Aarch64: "c9c9",
 		Protoc: "36.2", ProtocSHA256X86_64: "aaaa", ProtocSHA256Aarch64: "bbbb",
 		ProtocGenGo: "v1.36.12", ProtocGenGoGRPC: "v1.6.2",
 		ToolDependencyFloors: "golang.org/x/mod@v0.41.0", SerenaDependencyFloors: "urllib3>=2.8.0",
@@ -122,6 +123,7 @@ func TestBuild_BuildArgsCarryEveryInput(t *testing.T) {
 		"ACTIONLINT_VERSION":        "v1.7.12", "SHELLCHECK_VERSION": "v0.11.0",
 		"SHELLCHECK_SHA256_X86_64": "8c3b", "SHELLCHECK_SHA256_AARCH64": "12b3",
 		"OPENCODE_VERSION": "v1.18.35", "OPENCODE_SHA256_X86_64": "1ce4", "OPENCODE_SHA256_AARCH64": "abf3",
+		"GH_VERSION": "v2.103.3", "GH_SHA256_X86_64": "b8b8", "GH_SHA256_AARCH64": "c9c9",
 		"PROTOC_VERSION": "36.2", "PROTOC_SHA256_X86_64": "aaaa", "PROTOC_SHA256_AARCH64": "bbbb",
 		"PROTOC_GEN_GO_VERSION": "v1.36.12", "PROTOC_GEN_GO_GRPC_VERSION": "v1.6.2",
 		"NODE_VERSION": "v26.10.0", "NODE_SHA256_X86_64": "cccc", "NODE_SHA256_AARCH64": "dddd", "NPM_VERSION": "12.2.0",
@@ -331,7 +333,7 @@ func TestToolchainPins_AreTheRepositorysPins(t *testing.T) {
 func TestPins_ValidateNamesWhatIsMissing(t *testing.T) {
 	var missing *PinsMissingError
 	err := Pins{}.Validate()
-	if !errors.As(err, &missing) || len(missing.Missing) != 46 ||
+	if !errors.As(err, &missing) || len(missing.Missing) != 49 ||
 		!strings.Contains(err.Error(), "GOPLS_VERSION") || !strings.Contains(err.Error(), "SHELLCHECK_SHA256_AARCH64") ||
 		!strings.Contains(err.Error(), "OPENCODE_SHA256_AARCH64") || !strings.Contains(err.Error(), "GO_TOOL_DEPENDENCY_FLOORS") ||
 		!strings.Contains(err.Error(), "SERENA_DEPENDENCY_FLOORS") || !strings.Contains(err.Error(), "PROTOC_VERSION") ||
@@ -339,16 +341,17 @@ func TestPins_ValidateNamesWhatIsMissing(t *testing.T) {
 		!strings.Contains(err.Error(), "NODE_SHA256_AARCH64") || !strings.Contains(err.Error(), "UV_VERSION") ||
 		!strings.Contains(err.Error(), "TYPESCRIPT_LANGUAGE_SERVER_VERSION") || !strings.Contains(err.Error(), "CLANGD_SHA256_X86_64") ||
 		!strings.Contains(err.Error(), "MARKSMAN_SHA256_AARCH64") || !strings.Contains(err.Error(), "NPM_BUNDLED_DEPENDENCY_FLOORS") ||
-		!strings.Contains(err.Error(), "OPENJDK_MAJOR") || !strings.Contains(err.Error(), "KOTLIN_LSP_SHA256_AARCH64") {
-		t.Fatalf("Validate() = %v, want all forty-six pins named", err)
+		!strings.Contains(err.Error(), "OPENJDK_MAJOR") || !strings.Contains(err.Error(), "KOTLIN_LSP_SHA256_AARCH64") ||
+		!strings.Contains(err.Error(), "GH_VERSION") || !strings.Contains(err.Error(), "GH_SHA256_AARCH64") {
+		t.Fatalf("Validate() = %v, want all forty-nine pins named", err)
 	}
 }
 
 func TestBuild_LabelsRecordToolVersionsNotTarballDigests(t *testing.T) {
 	labels := testBuild().Labels()
 	if labels[LabelActionlintVersion] != "v1.7.12" || labels[LabelShellcheckVersion] != "v0.11.0" ||
-		labels[LabelOpencodeVersion] != "v1.18.35" {
-		t.Fatalf("labels = %v, want actionlint, shellcheck and opencode versions recorded", labels)
+		labels[LabelOpencodeVersion] != "v1.18.35" || labels[LabelGhVersion] != "v2.103.3" {
+		t.Fatalf("labels = %v, want actionlint, shellcheck, opencode and gh versions recorded", labels)
 	}
 	if labels[LabelProtocVersion] != "36.2" || labels[LabelProtocGenGoVersion] != "v1.36.12" ||
 		labels[LabelProtocGenGoGRPCVersion] != "v1.6.2" {
@@ -365,7 +368,7 @@ func TestBuild_LabelsRecordToolVersionsNotTarballDigests(t *testing.T) {
 	for key, value := range labels {
 		switch value {
 		case "8c3b", "12b3", "1ce4", "abf3", "aaaa", "bbbb", "cccc", "dddd", "eeee", "ffff",
-			"a1a1", "b2b2", "c3c3", "d4d4", "e5e5", "f6f6", "a7a7", "golang.org/x/mod@v0.41.0", "urllib3>=2.8.0":
+			"a1a1", "b2b2", "c3c3", "d4d4", "e5e5", "f6f6", "a7a7", "b8b8", "c9c9", "golang.org/x/mod@v0.41.0", "urllib3>=2.8.0":
 			t.Fatalf("label %q=%q: a tarball digest or dependency floor is a build input, not a label", key, value)
 		}
 	}
