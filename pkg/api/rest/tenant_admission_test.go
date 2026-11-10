@@ -12,6 +12,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -74,6 +75,54 @@ func TestTenantAdmission_HeldTenantIsRefused503(t *testing.T) {
 	held.Store(true)
 	_, called = bound(unrestricted)
 	require.True(t, called, "a nil TenantAdmission admits every tenant")
+}
+
+// TestTenantAdmission_SystemAdminRepairsAHeldTenantsPolicies: only the system
+// admin's policy route resolves a held tenant, marked for repair of that
+// tenant alone; the tenant's own caller and every other route stay refused.
+func TestTenantAdmission_SystemAdminRepairsAHeldTenantsPolicies(t *testing.T) {
+	admit := func(tenantID string) error {
+		if tenantID == "acme" {
+			return errors.New("tenant \"acme\" is still running its unseal checks")
+		}
+		return nil
+	}
+	request := func(tenant, caller string) *http.Request {
+		rctx := chi.NewRouteContext()
+		rctx.URLParams.Add("tenant", tenant)
+		req := httptest.NewRequest(http.MethodPut, "/api/v1/tenants/"+tenant+"/policies/fix", nil)
+		return asTenantCaller(req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx)), caller)
+	}
+
+	s := &Server{config: &Config{TenantAdmission: admit}}
+
+	rec := httptest.NewRecorder()
+	ctx, tenantID, repair, ok := s.policyRepairTenant(rec, request("acme", qrdbsdk.SystemTenantID), "update policy", "tenant")
+	require.True(t, ok, "the system admin's policy route resolves a held tenant")
+	assert.True(t, repair)
+	assert.Equal(t, "acme", tenantID)
+	require.NotNil(t, ctx)
+	assert.True(t, tenantctx.InPolicyRepair(ctx, "acme"), "the ctx is marked for acme's repair")
+	assert.Equal(t, http.StatusOK, rec.Code, "the repair path writes no response")
+	assert.Empty(t, rec.Body.String())
+
+	rec = httptest.NewRecorder()
+	_, _, repair, ok = s.policyRepairTenant(rec, request("acme", "acme"), "update policy", "tenant")
+	assert.Equal(t, http.StatusServiceUnavailable, rec.Code, "the held tenant's own caller is refused")
+	assert.False(t, ok)
+	assert.False(t, repair)
+
+	rec = httptest.NewRecorder()
+	ctx, tenantID, repair, ok = s.policyRepairTenant(rec, request("beta", qrdbsdk.SystemTenantID), "update policy", "tenant")
+	require.True(t, ok, "a released tenant resolves")
+	assert.False(t, repair, "a released tenant is not a repair")
+	assert.Equal(t, "beta", tenantID)
+	assert.False(t, tenantctx.InPolicyRepair(ctx, "beta"))
+
+	rec = httptest.NewRecorder()
+	_, _, ok = s.urlTenant(rec, request("acme", qrdbsdk.SystemTenantID), "list users", "tenant")
+	assert.False(t, ok)
+	assert.Equal(t, http.StatusServiceUnavailable, rec.Code, "every other route still refuses the held tenant")
 }
 
 func TestTenantAdmission_RecoveryRoutesPassAHeldTenant(t *testing.T) {

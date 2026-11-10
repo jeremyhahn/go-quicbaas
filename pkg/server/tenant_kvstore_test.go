@@ -558,6 +558,44 @@ func TestAdmittedStoreResolver_HeldTenantServesOnlyItsAuthRecordReads(t *testing
 	}
 }
 
+// TestAdmittedStoreResolver_HeldTenantServesItsPolicyRepair: a held tenant's
+// store stays sealed to an unmarked policy read, and opens to the system
+// admin's policy repair only when the marker names that tenant.
+func TestAdmittedStoreResolver_HeldTenantServesItsPolicyRepair(t *testing.T) {
+	s := &Server{}
+	gateErr := errors.New("policy reload failed")
+	s.tenantUnsealHooks.RegisterGate(service.TenantUnsealGateFunc(func(context.Context, string) error {
+		return gateErr
+	}))
+	barrier := service.NewTenantBarrierService(unsealingTenantClient{}, service.WithTenantUnsealHooks(&s.tenantUnsealHooks))
+	if err := barrier.TenantBarrierUnseal(tenantAdminCtx("acme"), "acme", []byte("key")); !errors.Is(err, gateErr) {
+		t.Fatalf("the gate's failure must fail the unseal, got %v", err)
+	}
+	storage := iam.NewBackendStorage(newTenantRoutingKVStore(&resolverAdapter{
+		inner: s.admittedStoreResolver(fakeQRDBResolver{store: qrdbsdk.NewMemoryKVStore()}),
+	}))
+
+	ctx := tenantctx.WithTenant(context.Background(), "acme")
+	if _, err := storage.ListPolicies(ctx, "acme", iam.ListOptions{}); !errors.Is(err, qrdbsdk.ErrTenantStoreSealed) {
+		t.Fatalf("an unmarked policy read of a held tenant must stay sealed, got %v", err)
+	}
+	repair := tenantctx.WithPolicyRepair(ctx, "acme")
+	policy := &iam.Policy{Metadata: iam.PolicyMetadata{Name: "fix", Tenant: "acme"}}
+	if err := storage.CreatePolicy(repair, "acme", policy); err != nil {
+		t.Fatalf("the system admin's repair must write a held tenant's policy, got %v", err)
+	}
+	if err := storage.DeletePolicy(repair, "acme", "fix"); err != nil {
+		t.Fatalf("the system admin's repair must delete a held tenant's policy, got %v", err)
+	}
+	other := tenantctx.WithPolicyRepair(ctx, "beta")
+	if _, err := storage.ListPolicies(other, "acme", iam.ListOptions{}); !errors.Is(err, qrdbsdk.ErrTenantStoreSealed) {
+		t.Fatalf("a repair marker naming another tenant must not open acme, got %v", err)
+	}
+	if err := storage.CreatePolicy(other, "acme", policy); !errors.Is(err, qrdbsdk.ErrTenantStoreSealed) {
+		t.Fatalf("a repair marker naming another tenant must not write acme, got %v", err)
+	}
+}
+
 // An orchestration request must resolve to its tenant's barrier just like an
 // IAM request does.
 //
