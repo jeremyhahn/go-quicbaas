@@ -16,3 +16,6 @@
   refused for a caller that is not bound to that tenant (#2212).
 - ABAC policy reloads now run one at a time, so an older, slower reload can
   no longer replace the set a newer one loaded (#2212).
+- A tenant unseal through the node's own endpoints keeps working after the
+  node rebuilds its services, for example after a system encryption
+  migration, and is answered as unavailable once shutdown has begun (#2212).

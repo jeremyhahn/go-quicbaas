@@ -531,10 +531,19 @@ type Server struct {
 	// transport carries the node's TenantServicer. It backs the per-tenant
 	// barrier facade shared by every transport (see tenant_barrier_wiring.go).
 	// The node's own SDK client does not register a tenant servicer on its
-	// embedded transport, so quicbaas composes this dedicated client, built
-	// lazily on first use during the single-threaded boot and closed during
-	// Shutdown.
-	tenantSDKClient *qrdbsdk.Client
+	// embedded transport, so quicbaas composes this dedicated client. It is
+	// built on first use and built again when the node replaces its service
+	// graph; tenantSDKGraph is the graph the client was built over. Tenant
+	// unseals reach it at any time, so tenantSDKMu guards these fields. A
+	// replaced client moves to tenantSDKRetired and stays open for the calls
+	// that already hold it. Shutdown sets tenantSDKStopped, after which no
+	// client is built or returned, and closes them all once the node has
+	// stopped its transports.
+	tenantSDKMu      sync.Mutex
+	tenantSDKClient  *qrdbsdk.Client
+	tenantSDKGraph   any
+	tenantSDKRetired []*qrdbsdk.Client
+	tenantSDKStopped bool
 
 	// sealedWindowClient is the in-process qrdb SDK client composed over the
 	// sealed node's OWN Barrier/Ceremony/Credential servicers during the
@@ -1526,19 +1535,12 @@ func (s *Server) Shutdown(ctx context.Context) error {
 			}
 		}
 
-		// Close the tenant-barrier SDK client (in-process qrdb SDK client
-		// over the node's TenantServicer). Closed before the node because
-		// its embedded transport references the node's KV/Admin servicers.
-		if s.tenantSDKClient != nil {
-			s.logger.Info("Closing tenant barrier client...")
-			if err := s.tenantSDKClient.Close(); err != nil {
-				errs = append(errs, err)
-				s.logger.WithError(err).Error("Failed to close tenant barrier client")
-			} else {
-				s.logger.Info("Tenant barrier client closed")
-			}
-			s.tenantSDKClient = nil
-		}
+		// Stop the tenant-barrier SDK client (in-process qrdb SDK client
+		// over the node's TenantServicer): from here none is built or
+		// returned, so a tenant unseal that arrives during shutdown is
+		// answered as unavailable. The clients are closed after the node
+		// has stopped its transports, below.
+		s.stopTenantBarrierClient()
 
 		// Shutdown sharded qrdb client
 		if s.qrdbClient != nil {
@@ -1575,6 +1577,13 @@ func (s *Server) Shutdown(ctx context.Context) error {
 		if err := s.stopQRDBNode(); err != nil {
 			errs = append(errs, err)
 			s.logger.WithError(err).Error("Failed to shutdown embedded qrdb node")
+		}
+
+		// Close the tenant-barrier SDK clients now that the node has
+		// stopped its transports: no native handler is still inside one.
+		if err := s.closeTenantBarrierClients(); err != nil {
+			errs = append(errs, err)
+			s.logger.WithError(err).Error("Failed to close tenant barrier client")
 		}
 
 		// Close the data-plane barrier: its PebbleDB seal sub-store AND the
