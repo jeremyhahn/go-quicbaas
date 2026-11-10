@@ -202,7 +202,9 @@ releases from npm; the dispatch inputs `claude_code_version` and
 - **Visibility.** The `quicbaas-software-factory-worker` package is private (a
   first container publish is private by default), and it must stay private.
   Every run checks with an anonymous lookup of the digest and fails if that
-  lookup succeeds.
+  lookup succeeds. Before the push, an anonymous token and tag lookup refuses
+  to publish when the package can be read without credentials; after the
+  push, the anonymous digest lookup checks it again.
 - **`current`.** This workflow does not move it.
 
 ## Local mode and the fleet

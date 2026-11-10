@@ -3397,13 +3397,13 @@ RACE_TIMEOUT := 30m
 # `make coverage` runs all three with a single shard. It runs the same
 # TEST_CHECKS validations as `make test` first, so replacing `make test` with
 # it keeps every check.
-COVERAGE_PASSES := test-sdk-go test-minimal test-standard test-lean test-tooling
+COVERAGE_PASSES := test-sdk-go test-minimal test-standard test-lean test-tooling test-software-factory-worker
 
 # coverage_shard_profile is shard $(1)'s profile in a run of SHARDS shards.
 coverage_shard_profile = $(COVERAGE_DIR)/coverage-shard-$(1)-of-$(SHARDS).out
 
 .PHONY: coverage
-coverage: $(TEST_CHECKS) ## The CI test stage: unit tests with -race and coverage (fail below COVER_MIN, generated code excluded), then the Go SDK, the minimal/standard/lean tag passes and the tooling tests
+coverage: $(TEST_CHECKS) ## The CI test stage: unit tests with -race and coverage (fail below COVER_MIN, generated code excluded), then the Go SDK, the minimal/standard/lean tag passes, the tooling tests and the worker image package tests
 	@$(MAKE) --no-print-directory coverage-shard SHARD=0 SHARDS=1
 	@$(MAKE) --no-print-directory coverage-merge SHARDS=1
 	@$(MAKE) --no-print-directory $(COVERAGE_PASSES)
@@ -3465,7 +3465,7 @@ coverage-merge: ## Join the SHARDS coverage-shard profiles and fail below COVER_
 	printf "$(GREEN)Coverage gate passed (%s%% >= %s%%)$(NC)\n" "$$TOTAL" "$(COVER_MIN)"
 
 .PHONY: coverage-passes
-coverage-passes: $(TEST_CHECKS) ## The test stage beside the coverage shards: the TEST_CHECKS validations, the Go SDK, the minimal/standard/lean tag passes and the tooling tests
+coverage-passes: $(TEST_CHECKS) ## The test stage beside the coverage shards: the TEST_CHECKS validations, the Go SDK, the minimal/standard/lean tag passes, the tooling tests and the worker image package tests
 	@$(MAKE) --no-print-directory $(COVERAGE_PASSES)
 
 # shard-packages prints shard SHARD of SHARDS of SHARD_PKGS under the tags
@@ -3949,6 +3949,7 @@ test-worker-image: build-worker-image ## Build the worker image and run its prob
 
 # The worker image's Go package -- its Dockerfile, pins, labels, probes and
 # fixtures -- unit-tested without an engine. test-% reaches only pkg/ and cmd/.
+# CI runs it through COVERAGE_PASSES.
 .PHONY: test-software-factory-worker
 test-software-factory-worker: ## Run the worker image package's unit tests (no container engine)
 	$(GOTEST) -v -timeout=5m ./$(WORKER_IMAGE_DIR)/...

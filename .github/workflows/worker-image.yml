@@ -200,6 +200,59 @@ jobs:
           trivy fs --scanners secret --exit-code 1 --no-progress "$work/layers"
           echo "scanned ${i} layer tarballs of ${IMAGE}:${TAG} for secrets"
 
+      - name: The package is not public before the push
+        id: private-before
+        if: ${{ steps.existing.outputs.exists != 'true' }}
+        env:
+          REPO: ${{ steps.resolve.outputs.repo }}
+        run: |
+          set -euo pipefail
+          if ! [[ "$REPO" =~ ^ghcr\.io/[a-z0-9._/-]+$ ]]; then
+            echo "::error::REPO is not a ghcr.io repository: ${REPO}"
+            exit 1
+          fi
+          path="${REPO#ghcr.io/}"
+          work="$(mktemp -d)"
+          trap 'rm -rf "$work"' EXIT
+          if ! code="$(curl -sS -o "$work/token.json" -w '%{http_code}' "https://ghcr.io/token?service=ghcr.io&scope=repository:${path}:pull")"; then
+            echo "::error::could not ask ghcr.io for an anonymous pull token for ${REPO}; pushing nothing"
+            exit 1
+          fi
+          case "$code" in
+            401|403)
+              echo "${REPO} is not public: ghcr.io refused an anonymous pull token (HTTP ${code})"
+              exit 0
+              ;;
+            200) ;;
+            *)
+              echo "::error::could not tell whether ${REPO} is public (token HTTP ${code}); pushing nothing"
+              exit 1
+              ;;
+          esac
+          anon="$(jq -r '.token // empty' "$work/token.json")"
+          if [ -z "$anon" ]; then
+            echo "::error::ghcr.io answered HTTP 200 without an anonymous pull token for ${REPO}; pushing nothing"
+            exit 1
+          fi
+          ( umask 077; printf 'Authorization: Bearer %s\n' "$anon" > "$work/hdr" )
+          if ! code="$(curl -sS -o /dev/null -w '%{http_code}' -H @"$work/hdr" "https://ghcr.io/v2/${path}/tags/list")"; then
+            echo "::error::could not list the tags of ${REPO} anonymously; pushing nothing"
+            exit 1
+          fi
+          case "$code" in
+            200)
+              echo "::error::${REPO} can be read without credentials; the package must be private, and nothing is pushed"
+              exit 1
+              ;;
+            401|403|404)
+              echo "${REPO} is not public: an anonymous tag listing got HTTP ${code}"
+              ;;
+            *)
+              echo "::error::could not tell whether ${REPO} is public (tags HTTP ${code}); pushing nothing"
+              exit 1
+              ;;
+          esac
+
       - name: Scan, then push
         id: push
         if: ${{ steps.existing.outputs.exists != 'true' }}

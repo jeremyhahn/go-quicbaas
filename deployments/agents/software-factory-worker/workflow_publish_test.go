@@ -684,3 +684,139 @@ func TestWorkflowBuildPublish_PackageMustBePrivate(t *testing.T) {
 		})
 	}
 }
+
+// fakeAnonCurlScript stands in for curl in the private-before step. It
+// refuses credentials and a bearer token on argv, logs each URL to
+// $FAKE_CURL_LOG, writes the case's body to the -o file and prints the
+// case's -w code. The tags lookup must send "Authorization: Bearer anon"
+// from a header file.
+const fakeAnonCurlScript = `#!/bin/sh
+for a in "$@"; do
+  case "$a" in -u|--user|*Bearer*|*anon*) exit 9 ;; esac
+done
+out=""; url=""; hdr=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -o|-w|-H) [ "$1" = -o ] && out="$2"; [ "$1" = -H ] && hdr="$2"; shift 2 ;;
+    -*) shift ;;
+    *) url="$1"; shift ;;
+  esac
+done
+printf '%s\n' "$url" >> "$FAKE_CURL_LOG"
+case "$url" in
+  "https://ghcr.io/token?service=ghcr.io&scope=repository:example/img:pull")
+    printf '%s' "$FAKE_TOKEN_BODY" > "$out"
+    printf '%s' "$FAKE_TOKEN_CODE" ;;
+  "https://ghcr.io/v2/example/img/tags/list")
+    case "$hdr" in @*) ;; *) exit 8 ;; esac
+    [ "$(cat "${hdr#@}")" = "Authorization: Bearer anon" ] || exit 8
+    : > "$out"
+    printf '%s' "$FAKE_TAGS_CODE" ;;
+  *) exit 7 ;;
+esac
+`
+
+func TestWorkflowBuildPublish_PrivateBeforePush(t *testing.T) {
+	_, wf := loadWorkflow(t)
+	job := wf.Jobs["build-publish"]
+	before, layer, push := -1, -1, -1
+	for i, step := range job.Steps {
+		switch {
+		case step.ID == "private-before":
+			before = i
+		case step.ID == "layer-scan":
+			layer = i
+		case push < 0 && strings.Contains(step.Run, "make push-worker-image"):
+			push = i
+		}
+	}
+	if before < 0 || layer < 0 || push < 0 {
+		t.Fatalf("build-publish steps: private-before #%d, layer-scan #%d, push #%d; want all three", before, layer, push)
+	}
+	if before <= layer || before >= push {
+		t.Errorf("step private-before (#%d) is not between layer-scan (#%d) and the push (#%d)", before, layer, push)
+	}
+	if got, want := job.Steps[before].If, job.Steps[push].If; got != want {
+		t.Errorf("step private-before if = %q, want the push step's %q", got, want)
+	}
+	for _, s := range []string{"GITHUB_TOKEN", "secrets.", " -u "} {
+		if strings.Contains(job.Steps[before].Run, s) {
+			t.Errorf("step private-before run: contains %q", s)
+		}
+	}
+
+	bash, err := exec.LookPath("bash")
+	if err != nil {
+		t.Skip("bash is not on PATH")
+	}
+	if _, err := exec.LookPath("jq"); err != nil {
+		t.Skip("jq is not on PATH")
+	}
+	script := stepRun(t, "private-before")
+	const tagsURL = "https://ghcr.io/v2/example/img/tags/list"
+	cases := []struct {
+		name      string
+		tokenCode string
+		tokenBody string
+		tagsCode  string
+		wantOK    bool
+		want      string
+		noTags    bool
+	}{
+		{name: "public", tokenCode: "200", tagsCode: "200", want: "must be private"},
+		{name: "tags 401", tokenCode: "200", tagsCode: "401", wantOK: true},
+		{name: "tags 403", tokenCode: "200", tagsCode: "403", wantOK: true},
+		{name: "tags 404", tokenCode: "200", tagsCode: "404", wantOK: true},
+		{name: "tags 500", tokenCode: "200", tagsCode: "500"},
+		{name: "token 403", tokenCode: "403", wantOK: true, noTags: true},
+		{name: "token 401", tokenCode: "401", wantOK: true, noTags: true},
+		{name: "token 502", tokenCode: "502", noTags: true},
+		{name: "token body without a token", tokenCode: "200", tokenBody: "{}", noTags: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			binDir := filepath.Join(dir, "bin")
+			if err := os.Mkdir(binDir, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(binDir, "curl"), []byte(fakeAnonCurlScript), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			body := tc.tokenBody
+			if body == "" {
+				body = `{"token":"anon"}`
+			}
+			curlLog := filepath.Join(dir, "curl.log")
+			cmd := exec.Command(bash, "-c", script)
+			cmd.Env = append(os.Environ(),
+				"PATH="+binDir+string(os.PathListSeparator)+os.Getenv("PATH"),
+				"REPO=ghcr.io/example/img",
+				"FAKE_CURL_LOG="+curlLog,
+				"FAKE_TOKEN_CODE="+tc.tokenCode,
+				"FAKE_TOKEN_BODY="+body,
+				"FAKE_TAGS_CODE="+tc.tagsCode,
+			)
+			combined, runErr := cmd.CombinedOutput()
+			if tc.wantOK && runErr != nil {
+				t.Fatalf("step failed: %v\n%s", runErr, combined)
+			}
+			if !tc.wantOK && runErr == nil {
+				t.Fatalf("step exited 0:\n%s", combined)
+			}
+			if tc.want != "" && !strings.Contains(string(combined), tc.want) {
+				t.Errorf("output lacks %q:\n%s", tc.want, combined)
+			}
+			if strings.Contains(string(combined), "Bearer anon") {
+				t.Errorf("output carries the bearer token:\n%s", combined)
+			}
+			calls, err := os.ReadFile(curlLog)
+			if err != nil {
+				t.Fatalf("curl was never called: %v\n%s", err, combined)
+			}
+			if called := strings.Contains(string(calls), tagsURL); called == tc.noTags {
+				t.Errorf("tags URL called = %v, want %v; curl calls:\n%s", called, !tc.noTags, calls)
+			}
+		})
+	}
+}
