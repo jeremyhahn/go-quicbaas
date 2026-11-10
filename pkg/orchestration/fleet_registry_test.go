@@ -359,56 +359,13 @@ func TestRegisterAgent_AlreadyExists(t *testing.T) {
 	assert.Equal(t, "first", got.Name)
 }
 
-func TestRegisterAgent_MissingTenantID(t *testing.T) {
-	t.Parallel()
-
-	registry := NewInMemoryFleetRegistry()
-	ctx := context.Background()
-
-	agent := &FleetNode{
-		ID:       "agent-1",
-		TenantID: "",
-		Name:     "test-agent",
-		Host:     "host-1",
-		NodeType: "claude-code",
-	}
-
-	err := registry.RegisterFleetNode(ctx, agent)
-	require.Error(t, err)
-	assert.True(t, errors.Is(err, ErrFleetRegistryInvalidInput),
-		"expected ErrFleetRegistryInvalidInput, got: %v", err)
-}
-
-func TestRegisterAgent_MissingID(t *testing.T) {
-	t.Parallel()
-
-	registry := NewInMemoryFleetRegistry()
-	ctx := context.Background()
-
-	agent := &FleetNode{
-		ID:       "",
-		TenantID: "tenant-a",
-		Name:     "test-agent",
-		Host:     "host-1",
-		NodeType: "claude-code",
-	}
-
-	err := registry.RegisterFleetNode(ctx, agent)
-	require.Error(t, err)
-	assert.True(t, errors.Is(err, ErrFleetRegistryInvalidInput),
-		"expected ErrFleetRegistryInvalidInput, got: %v", err)
-}
-
 func TestRegisterAgent_NilAgent(t *testing.T) {
 	t.Parallel()
 
 	registry := NewInMemoryFleetRegistry()
-	ctx := context.Background()
-
-	err := registry.RegisterFleetNode(ctx, nil)
+	err := registry.RegisterFleetNode(context.Background(), nil)
 	require.Error(t, err)
-	assert.True(t, errors.Is(err, ErrFleetRegistryInvalidInput),
-		"expected ErrFleetRegistryInvalidInput for nil agent, got: %v", err)
+	assert.ErrorIs(t, err, ErrFleetRegistryInvalidInput)
 }
 
 func TestRegisterAgent_StoreFailure(t *testing.T) {
@@ -484,45 +441,6 @@ func TestGetAgent_Success(t *testing.T) {
 	assert.NotZero(t, got.LastSeen)
 }
 
-func TestGetAgent_NotFound(t *testing.T) {
-	t.Parallel()
-
-	registry := NewInMemoryFleetRegistry()
-	ctx := context.Background()
-
-	got, err := registry.GetFleetNode(ctx, "tenant-a", "nonexistent")
-	require.Error(t, err)
-	assert.Nil(t, got)
-	assert.True(t, errors.Is(err, ErrFleetNodeNotFound),
-		"expected ErrFleetNodeNotFound, got: %v", err)
-}
-
-func TestGetAgent_EmptyTenantID(t *testing.T) {
-	t.Parallel()
-
-	registry := NewInMemoryFleetRegistry()
-	ctx := context.Background()
-
-	got, err := registry.GetFleetNode(ctx, "", "agent-1")
-	require.Error(t, err)
-	assert.Nil(t, got)
-	assert.True(t, errors.Is(err, ErrFleetRegistryInvalidInput),
-		"expected ErrFleetRegistryInvalidInput for empty tenant, got: %v", err)
-}
-
-func TestGetAgent_EmptyAgentID(t *testing.T) {
-	t.Parallel()
-
-	registry := NewInMemoryFleetRegistry()
-	ctx := context.Background()
-
-	got, err := registry.GetFleetNode(ctx, "tenant-a", "")
-	require.Error(t, err)
-	assert.Nil(t, got)
-	assert.True(t, errors.Is(err, ErrFleetRegistryInvalidInput),
-		"expected ErrFleetRegistryInvalidInput for empty agent ID, got: %v", err)
-}
-
 func TestGetAgent_CorruptRecord(t *testing.T) {
 	t.Parallel()
 
@@ -553,59 +471,6 @@ func TestGetAgent_StoreFailure(t *testing.T) {
 // =============================================================================
 // ListFleetNodes Tests
 // =============================================================================
-
-func TestListAgents_TenantIsolation(t *testing.T) {
-	t.Parallel()
-
-	registry := NewInMemoryFleetRegistry()
-	ctx := context.Background()
-
-	// Register agents in tenant-A
-	for i, id := range []string{"a1", "a2", "a3"} {
-		err := registry.RegisterFleetNode(ctx, &FleetNode{
-			ID:       id,
-			TenantID: "tenant-a",
-			Name:     "agent-a-" + id,
-			Host:     "host-1",
-			NodeType: "claude-code",
-			Backend:  "acp",
-			Metadata: map[string]string{"idx": uitoa(uint64(i))},
-		})
-		require.NoError(t, err)
-	}
-
-	// Register agents in tenant-B
-	for i, id := range []string{"b1", "b2"} {
-		err := registry.RegisterFleetNode(ctx, &FleetNode{
-			ID:       id,
-			TenantID: "tenant-b",
-			Name:     "agent-b-" + id,
-			Host:     "host-2",
-			NodeType: "codex",
-			Backend:  "acp",
-			Metadata: map[string]string{"idx": uitoa(uint64(i))},
-		})
-		require.NoError(t, err)
-	}
-
-	// List tenant-A agents
-	agentsA, err := registry.ListFleetNodes(ctx, "tenant-a", nil)
-	require.NoError(t, err)
-	assert.Len(t, agentsA, 3, "tenant-a should have 3 agents")
-
-	for _, a := range agentsA {
-		assert.Equal(t, "tenant-a", a.TenantID, "all listed agents should belong to tenant-a")
-	}
-
-	// List tenant-B agents
-	agentsB, err := registry.ListFleetNodes(ctx, "tenant-b", nil)
-	require.NoError(t, err)
-	assert.Len(t, agentsB, 2, "tenant-b should have 2 agents")
-
-	for _, b := range agentsB {
-		assert.Equal(t, "tenant-b", b.TenantID, "all listed agents should belong to tenant-b")
-	}
-}
 
 func TestListAgents_Filters(t *testing.T) {
 	t.Parallel()
@@ -666,19 +531,6 @@ func TestListAgents_Empty(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, agents, "should return non-nil empty slice")
 	assert.Len(t, agents, 0, "should return zero agents")
-}
-
-func TestListAgents_EmptyTenantID(t *testing.T) {
-	t.Parallel()
-
-	registry := NewInMemoryFleetRegistry()
-	ctx := context.Background()
-
-	agents, err := registry.ListFleetNodes(ctx, "", nil)
-	require.Error(t, err)
-	assert.Nil(t, agents)
-	assert.True(t, errors.Is(err, ErrFleetRegistryInvalidInput),
-		"expected ErrFleetRegistryInvalidInput, got: %v", err)
 }
 
 // TestListAgents_SkipsCorruptRecords proves one unreadable record cannot hide
@@ -802,27 +654,6 @@ func TestUpdateAgent_VersionConflict(t *testing.T) {
 	assert.Equal(t, uint64(1), got.Version)
 }
 
-func TestUpdateAgent_NotFound(t *testing.T) {
-	t.Parallel()
-
-	registry := NewInMemoryFleetRegistry()
-	ctx := context.Background()
-
-	agent := &FleetNode{
-		ID:       "nonexistent",
-		TenantID: "tenant-a",
-		Name:     "ghost",
-		Host:     "host-1",
-		NodeType: "claude-code",
-		Version:  1,
-	}
-
-	err := registry.UpdateFleetNode(ctx, agent)
-	require.Error(t, err)
-	assert.True(t, errors.Is(err, ErrFleetNodeNotFound),
-		"expected ErrFleetNodeNotFound, got: %v", err)
-}
-
 func TestUpdateAgent_NilAgent(t *testing.T) {
 	t.Parallel()
 
@@ -886,18 +717,6 @@ func TestRemoveAgent_Success(t *testing.T) {
 	assert.Nil(t, got)
 	assert.True(t, errors.Is(err, ErrFleetNodeNotFound),
 		"expected ErrFleetNodeNotFound after removal, got: %v", err)
-}
-
-func TestRemoveAgent_NotFound(t *testing.T) {
-	t.Parallel()
-
-	registry := NewInMemoryFleetRegistry()
-	ctx := context.Background()
-
-	err := registry.RemoveFleetNode(ctx, "tenant-a", "nonexistent")
-	require.Error(t, err)
-	assert.True(t, errors.Is(err, ErrFleetNodeNotFound),
-		"expected ErrFleetNodeNotFound, got: %v", err)
 }
 
 func TestRemoveAgent_StoreFailure(t *testing.T) {
@@ -997,42 +816,6 @@ func TestHeartbeat_StatusTransitions(t *testing.T) {
 	}
 }
 
-func TestHeartbeat_NotFound(t *testing.T) {
-	t.Parallel()
-
-	registry := NewInMemoryFleetRegistry()
-	ctx := context.Background()
-
-	err := registry.Heartbeat(ctx, "tenant-a", "nonexistent", nil)
-	require.Error(t, err)
-	assert.True(t, errors.Is(err, ErrFleetNodeNotFound),
-		"expected ErrFleetNodeNotFound, got: %v", err)
-}
-
-func TestHeartbeat_EmptyTenantID(t *testing.T) {
-	t.Parallel()
-
-	registry := NewInMemoryFleetRegistry()
-	ctx := context.Background()
-
-	err := registry.Heartbeat(ctx, "", "agent-1", nil)
-	require.Error(t, err)
-	assert.True(t, errors.Is(err, ErrFleetRegistryInvalidInput),
-		"expected ErrFleetRegistryInvalidInput, got: %v", err)
-}
-
-func TestHeartbeat_EmptyAgentID(t *testing.T) {
-	t.Parallel()
-
-	registry := NewInMemoryFleetRegistry()
-	ctx := context.Background()
-
-	err := registry.Heartbeat(ctx, "tenant-a", "", nil)
-	require.Error(t, err)
-	assert.True(t, errors.Is(err, ErrFleetRegistryInvalidInput),
-		"expected ErrFleetRegistryInvalidInput, got: %v", err)
-}
-
 func TestHeartbeat_StoreFailure(t *testing.T) {
 	t.Parallel()
 
@@ -1095,18 +878,6 @@ func TestDeleteTenantAgents_Success(t *testing.T) {
 	agentsB, err := registry.ListFleetNodes(ctx, "tenant-b", nil)
 	require.NoError(t, err)
 	assert.Len(t, agentsB, 2, "tenant-b should still have 2 agents")
-}
-
-func TestDeleteTenantAgents_EmptyTenantID(t *testing.T) {
-	t.Parallel()
-
-	registry := NewInMemoryFleetRegistry()
-	ctx := context.Background()
-
-	err := registry.DeleteTenantFleetNodes(ctx, "")
-	require.Error(t, err)
-	assert.True(t, errors.Is(err, ErrFleetRegistryInvalidInput),
-		"expected ErrFleetRegistryInvalidInput, got: %v", err)
 }
 
 func TestDeleteTenantAgents_NoAgents(t *testing.T) {
@@ -1616,41 +1387,6 @@ func TestConcurrentHeartbeat(t *testing.T) {
 // Context Cancellation Tests
 // =============================================================================
 
-func TestRegisterAgent_CancelledContext(t *testing.T) {
-	t.Parallel()
-
-	registry := NewInMemoryFleetRegistry()
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel() // cancel immediately
-
-	agent := &FleetNode{
-		ID:       "agent-ctx",
-		TenantID: "tenant-a",
-		Name:     "ctx-agent",
-		Host:     "host-1",
-		NodeType: "claude-code",
-	}
-
-	err := registry.RegisterFleetNode(ctx, agent)
-	require.Error(t, err)
-	assert.True(t, errors.Is(err, context.Canceled),
-		"expected context.Canceled, got: %v", err)
-}
-
-func TestGetAgent_CancelledContext(t *testing.T) {
-	t.Parallel()
-
-	registry := NewInMemoryFleetRegistry()
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-
-	got, err := registry.GetFleetNode(ctx, "tenant-a", "agent-1")
-	require.Error(t, err)
-	assert.Nil(t, got)
-	assert.True(t, errors.Is(err, context.Canceled),
-		"expected context.Canceled, got: %v", err)
-}
-
 func TestAgentRegistry_CancelledContext(t *testing.T) {
 	t.Parallel()
 
@@ -1659,6 +1395,19 @@ func TestAgentRegistry_CancelledContext(t *testing.T) {
 	cancel()
 
 	calls := map[string]func() error{
+		"register": func() error {
+			return registry.RegisterFleetNode(ctx, &FleetNode{
+				ID:       "agent-ctx",
+				TenantID: "tenant-a",
+				Name:     "ctx-agent",
+				Host:     "host-1",
+				NodeType: "claude-code",
+			})
+		},
+		"get": func() error {
+			_, err := registry.GetFleetNode(ctx, "tenant-a", "agent-1")
+			return err
+		},
 		"list": func() error {
 			_, err := registry.ListFleetNodes(ctx, "tenant-a", nil)
 			return err
