@@ -378,7 +378,7 @@ func TestQRDBABACSync_resyncOnUnseal(t *testing.T) {
 
 	calls := 0
 	var syncCtx context.Context
-	newQRDBABACSync(&Server{}, tm, bs).resyncOnUnseal(hooks, func(ctx context.Context, prepare func(context.Context)) error {
+	newQRDBABACSync(&Server{}, tm, bs).resyncOnUnseal(hooks, func(ctx context.Context, _ string, prepare func(context.Context)) error {
 		if prepare != nil {
 			prepare(ctx)
 		}
@@ -418,7 +418,7 @@ func TestQRDBABACSync_resyncOnUnseal_TenantStaysClosedUntilReload(t *testing.T) 
 			s := &Server{}
 			entered := make(chan struct{}, 1)
 			proceed := make(chan error)
-			newQRDBABACSync(s, tm, bs).resyncOnUnseal(&s.tenantUnsealHooks, func(ctx context.Context, prepare func(context.Context)) error {
+			newQRDBABACSync(s, tm, bs).resyncOnUnseal(&s.tenantUnsealHooks, func(ctx context.Context, _ string, prepare func(context.Context)) error {
 				if prepare != nil {
 					prepare(ctx)
 				}
@@ -618,7 +618,7 @@ func TestQRDBABACSync_migrateLegacyPolicies(t *testing.T) {
 		delete(r.sealed, "acme")
 		hooks := &service.TenantUnsealHooks{}
 		calls := 0
-		a.resyncOnUnseal(hooks, func(ctx context.Context, prepare func(context.Context)) error {
+		a.resyncOnUnseal(hooks, func(ctx context.Context, _ string, prepare func(context.Context)) error {
 			if prepare != nil {
 				prepare(ctx)
 			}
@@ -703,7 +703,7 @@ func TestQRDBABACSync_resyncOnUnseal_GateReadsThroughAdmittedStore(t *testing.T)
 
 	abacSync := newQRDBABACSync(s, tm, bs)
 	pe := iam.NewPolicyEngine(iam.PolicyEngineOptions{Storage: bs, ABACSync: abacSync})
-	abacSync.resyncOnUnseal(&s.tenantUnsealHooks, pe.SyncABACAfter)
+	abacSync.resyncOnUnseal(&s.tenantUnsealHooks, pe.SyncABACAtUnseal)
 
 	fireABACTestUnseal(t, &s.tenantUnsealHooks)
 	require.NoError(t, s.tenantUnsealHooks.Admit("acme"))
@@ -1686,7 +1686,7 @@ func TestQRDBABACSync_HeldTenantPoliciesAreRepairedOneAtATime(t *testing.T) {
 		ABACSync: abacSync,
 		Repair:   newHeldTenantPolicyRepair(s.tenantUnsealHooks.Admit),
 	})
-	abacSync.resyncOnUnseal(&s.tenantUnsealHooks, pe.SyncABACAfter)
+	abacSync.resyncOnUnseal(&s.tenantUnsealHooks, pe.SyncABACAtUnseal)
 	barrier := service.NewTenantBarrierService(unsealingTenantClient{}, service.WithTenantUnsealHooks(&s.tenantUnsealHooks))
 
 	require.Error(t, barrier.TenantBarrierUnseal(tenantAdminCtx("acme"), "acme", []byte("key")),
@@ -1723,4 +1723,67 @@ func TestQRDBABACSync_HeldTenantPoliciesAreRepairedOneAtATime(t *testing.T) {
 	require.NoError(t, pe.UpdatePolicy(repairCtx, "acme", fixed("bad-c")))
 	require.NoError(t, barrier.TenantBarrierUnseal(tenantAdminCtx("acme"), "acme", []byte("key")))
 	require.NoError(t, s.tenantUnsealHooks.Admit("acme"))
+}
+
+// A repair that arrives after the tenant's unseal reload has passed, but
+// before the unseal releases the hold, is a strict write: when its sync
+// fails it is rolled back, so the tenant never serves with an acknowledged
+// policy change the live authorizer has not loaded.
+func TestQRDBABACSync_RepairAfterUnsealReloadIsStrict(t *testing.T) {
+	s, _ := newABACTestServer(t, true)
+	r := newFakeStoreResolver(qrdbsdk.NewMemoryKVStore())
+	r.barrierTenantStore("acme", qrdbsdk.NewMemoryKVStore())
+	resolver := admittedFakeResolver{admit: s.admittedStoreResolver(fakeQRDBResolver{store: fakeQRDBStore{}}), stores: r}
+	bs := iam.NewBackendStorage(newTenantRoutingKVStore(resolver))
+	tm := iam.NewDefaultTenantManager(bs)
+
+	sysCtx := tenantctx.WithSystem(context.Background())
+	acmeCtx := tenantctx.WithTenant(context.Background(), "acme")
+	repairCtx := tenantctx.WithPolicyRepair(acmeCtx, "acme")
+	_, err := tm.CreateTenant(sysCtx, iam.CreateTenantOptions{ID: "acme", Name: "Acme"})
+	require.NoError(t, err)
+	good, err := json.Marshal(abacTestPolicy("good", "acme", "alice", "kv/**", iam.EffectAllow))
+	require.NoError(t, err)
+	require.NoError(t, bs.PutPolicyRecord(acmeCtx, "acme", "good", good))
+
+	abacSync := newQRDBABACSync(s, tm, bs)
+	pe := iam.NewPolicyEngine(iam.PolicyEngineOptions{
+		Storage:  bs,
+		ABACSync: abacSync,
+		Repair:   newHeldTenantPolicyRepair(s.tenantUnsealHooks.Admit),
+	})
+	abacSync.resyncOnUnseal(&s.tenantUnsealHooks, pe.SyncABACAtUnseal)
+
+	// This gate runs after the reload gate has passed and before the hold is
+	// released. It stores a policy that does not compile, so the sync after
+	// the repair below fails, and then repairs "good" as the system admin.
+	ran := false
+	var heldInWindow, putErr, repairErr error
+	s.tenantUnsealHooks.RegisterGate(service.TenantUnsealGateFunc(func(context.Context, string) error {
+		ran = true
+		heldInWindow = s.tenantUnsealHooks.Admit("acme")
+		bad := abacTestPolicy("bad", "acme", "alice", "kv/**", iam.EffectAllow)
+		bad.Spec.Rules[0].When = []iam.Condition{{}}
+		data, err := json.Marshal(bad)
+		if err != nil {
+			putErr = err
+			return nil
+		}
+		putErr = bs.PutPolicyRecord(repairCtx, "acme", "bad", data)
+		repairErr = pe.UpdatePolicy(repairCtx, "acme", abacTestPolicy("good", "acme", "alice", "kv/**", iam.EffectDeny))
+		return nil
+	}))
+	barrier := service.NewTenantBarrierService(unsealingTenantClient{}, service.WithTenantUnsealHooks(&s.tenantUnsealHooks))
+
+	require.NoError(t, barrier.TenantBarrierUnseal(tenantAdminCtx("acme"), "acme", []byte("key")))
+	require.True(t, ran, "the second gate ran")
+	require.Error(t, heldInWindow, "the tenant is still held between the reload and the release")
+	require.NoError(t, putErr)
+	require.Error(t, repairErr, "a repair after the reload is rejected when its sync fails")
+	require.NoError(t, s.tenantUnsealHooks.Admit("acme"), "the unseal released the hold")
+
+	got, err := bs.GetPolicy(acmeCtx, "acme", "good")
+	require.NoError(t, err)
+	require.NotEmpty(t, got.Spec.Rules)
+	assert.Equal(t, iam.EffectAllow, got.Spec.Rules[0].Effect, "the rejected repair was rolled back")
 }

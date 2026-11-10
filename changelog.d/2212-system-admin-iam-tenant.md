@@ -16,3 +16,6 @@
   repaired one policy at a time: the system admin's update or delete of each
   policy is kept, an update that does not compile is refused, and the tenant
   stays closed until its unseal checks pass.
+- A policy repair that arrives after a held tenant's unseal checks have loaded
+  its policies, but before the tenant opens, is rejected when its reload
+  fails, like any other policy write.

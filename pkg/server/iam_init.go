@@ -393,7 +393,7 @@ func (s *Server) initializeIAMComponents() (service.IAMComponents, error) {
 		return nil, err
 	}
 	// A sealed tenant's policies are skipped above; reload them on its unseal.
-	abacSync.resyncOnUnseal(&s.tenantUnsealHooks, policyEngine.SyncABACAfter)
+	abacSync.resyncOnUnseal(&s.tenantUnsealHooks, policyEngine.SyncABACAtUnseal)
 
 	// Create app manager
 	// The grantor gate on application updates reads the caller's qrdb

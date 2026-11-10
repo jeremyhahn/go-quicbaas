@@ -326,12 +326,15 @@ func (a *qrdbABACSync) warnf(format string, args ...interface{}) {
 // the live ABAC set each time a tenant barrier is unsealed: allPolicies
 // skips a sealed tenant, so its policies take effect only then. resync runs
 // the migration and the reload under the policy engine's write lock, so
-// neither interleaves with a policy mutation or another reload. It is an
-// unseal gate: a failed reload fails the unseal and the tenant's barrier is
-// sealed again, so the tenant is never open without its deny rules.
-func (a *qrdbABACSync) resyncOnUnseal(hooks *service.TenantUnsealHooks, resync func(context.Context, func(context.Context)) error) {
+// neither interleaves with a policy mutation or another reload, and a
+// reload that succeeds ends the tenant's policy-repair exception under that
+// lock (iam.PolicyEngine.SyncABACAtUnseal), before the hold is released. It
+// is an unseal gate: a failed reload fails the unseal and the tenant's
+// barrier is sealed again, so the tenant is never open without its deny
+// rules.
+func (a *qrdbABACSync) resyncOnUnseal(hooks *service.TenantUnsealHooks, resync func(context.Context, string, func(context.Context)) error) {
 	hooks.RegisterGate(service.TenantUnsealGateFunc(func(ctx context.Context, tenantID string) error {
-		if err := resync(ctx, func(ctx context.Context) {
+		if err := resync(ctx, tenantID, func(ctx context.Context) {
 			a.migrateTenantLegacyPolicies(ctx, tenantID)
 		}); err != nil {
 			a.warnf("abac sync after unsealing tenant %q failed: %v", tenantID, err)
