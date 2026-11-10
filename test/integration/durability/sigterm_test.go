@@ -148,6 +148,28 @@ func waitForREST(t *testing.T, port int, exited <-chan struct{}) error {
 	}
 }
 
+// daemonLogTailBytes bounds how much of the daemon log a failed run prints.
+const daemonLogTailBytes = 8 << 10
+
+// logDaemonTailOnFailure prints the end of the daemon's own log when the test
+// has failed: an exit status says that the daemon stopped, only its log says
+// why.
+func logDaemonTailOnFailure(t *testing.T, logPath string) {
+	t.Helper()
+	if !t.Failed() {
+		return
+	}
+	logBytes, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Logf("daemon log unreadable: %v", err)
+		return
+	}
+	if len(logBytes) > daemonLogTailBytes {
+		logBytes = logBytes[len(logBytes)-daemonLogTailBytes:]
+	}
+	t.Logf("daemon log tail:\n%s", logBytes)
+}
+
 // TestDaemonSIGTERMRunsGracefulShutdown is the end-to-end regression test for
 // the reported data loss. It spawns the real quicbaasd binary, sends SIGTERM,
 // and asserts the daemon shut down gracefully.
@@ -170,6 +192,7 @@ func TestDaemonSIGTERMRunsGracefulShutdown(t *testing.T) {
 	logFile, err := os.Create(logPath)
 	require.NoError(t, err, "create daemon log file")
 	defer logFile.Close()
+	defer logDaemonTailOnFailure(t, logPath)
 
 	cmd := exec.Command(binary,
 		"start",
@@ -251,6 +274,7 @@ func TestDaemonSIGINTRunsGracefulShutdown(t *testing.T) {
 	logFile, err := os.Create(logPath)
 	require.NoError(t, err, "create daemon log file")
 	defer logFile.Close()
+	defer logDaemonTailOnFailure(t, logPath)
 
 	cmd := exec.Command(binary,
 		"start",
