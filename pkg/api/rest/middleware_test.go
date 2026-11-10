@@ -827,18 +827,18 @@ func TestGetClientIPWithVariousHeaders(t *testing.T) {
 		{
 			name: "X-Forwarded-For with multiple IPs",
 			headers: map[string]string{
-				"X-Forwarded-For": "192.168.1.1, 10.0.0.1, 172.16.0.1",
+				"X-Forwarded-For": "192.0.2.1, 10.0.0.1, 172.16.0.1",
 			},
 			remoteAddr: "127.0.0.1:8080",
-			expected:   "192.168.1.1",
+			expected:   "192.0.2.1",
 		},
 		{
 			name: "X-Forwarded-For single IP",
 			headers: map[string]string{
-				"X-Forwarded-For": "192.168.1.100",
+				"X-Forwarded-For": "192.0.2.100",
 			},
 			remoteAddr: "127.0.0.1:8080",
-			expected:   "192.168.1.100",
+			expected:   "192.0.2.100",
 		},
 		{
 			name: "X-Real-IP header",
@@ -851,14 +851,14 @@ func TestGetClientIPWithVariousHeaders(t *testing.T) {
 		{
 			name:       "RemoteAddr with port",
 			headers:    map[string]string{},
-			remoteAddr: "192.168.2.1:54321",
-			expected:   "192.168.2.1",
+			remoteAddr: "198.51.100.1:54321",
+			expected:   "198.51.100.1",
 		},
 		{
 			name:       "RemoteAddr without port",
 			headers:    map[string]string{},
-			remoteAddr: "192.168.3.1",
-			expected:   "192.168.3.1",
+			remoteAddr: "203.0.113.1",
+			expected:   "203.0.113.1",
 		},
 		{
 			name:       "IPv6 address",
@@ -1145,7 +1145,7 @@ func TestRateLimiterAllowNewClient(t *testing.T) {
 		rl := newRateLimiter(10)
 		defer rl.cleanup.Stop()
 
-		allowed := rl.Allow("192.168.1.1")
+		allowed := rl.Allow("192.0.2.1")
 		assert.True(t, allowed)
 	})
 
@@ -1155,12 +1155,12 @@ func TestRateLimiterAllowNewClient(t *testing.T) {
 
 		// First 5 requests should be allowed
 		for i := 0; i < 5; i++ {
-			allowed := rl.Allow("192.168.1.2")
+			allowed := rl.Allow("192.0.2.2")
 			assert.True(t, allowed, "request %d should be allowed", i+1)
 		}
 
 		// 6th request should be denied (no time to refill)
-		allowed := rl.Allow("192.168.1.2")
+		allowed := rl.Allow("192.0.2.2")
 		assert.False(t, allowed)
 	})
 
@@ -1247,9 +1247,9 @@ func TestGetClientIP(t *testing.T) {
 	t.Run("extracts from X-Real-IP", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/test", nil)
 		req.RemoteAddr = trustedPeer
-		req.Header.Set("X-Real-IP", "192.168.1.100")
+		req.Header.Set("X-Real-IP", "192.0.2.100")
 
-		assert.Equal(t, "192.168.1.100", resolvedVia(t, []string{trustedProxyCIDR}, req))
+		assert.Equal(t, "192.0.2.100", resolvedVia(t, []string{trustedProxyCIDR}, req))
 	})
 
 	t.Run("prefers X-Forwarded-For over X-Real-IP", func(t *testing.T) {
@@ -1288,9 +1288,9 @@ func TestGetClientIP(t *testing.T) {
 	t.Run("trims whitespace from X-Real-IP", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/test", nil)
 		req.RemoteAddr = trustedPeer
-		req.Header.Set("X-Real-IP", "  192.168.1.1  ")
+		req.Header.Set("X-Real-IP", "  192.0.2.1  ")
 
-		assert.Equal(t, "192.168.1.1", resolvedVia(t, []string{trustedProxyCIDR}, req))
+		assert.Equal(t, "192.0.2.1", resolvedVia(t, []string{trustedProxyCIDR}, req))
 	})
 }
 
@@ -1472,33 +1472,33 @@ func TestGetClientIP_XForwardedFor(t *testing.T) {
 	// Test X-Forwarded-For with single IP
 	r := httptest.NewRequest(http.MethodGet, "/test", nil)
 	r.RemoteAddr = trustedPeer
-	r.Header.Set("X-Forwarded-For", "192.168.1.1")
-	assert.Equal(t, "192.168.1.1", resolvedVia(t, []string{trustedProxyCIDR}, r))
+	r.Header.Set("X-Forwarded-For", "192.0.2.1")
+	assert.Equal(t, "192.0.2.1", resolvedVia(t, []string{trustedProxyCIDR}, r))
 
 	// Test X-Forwarded-For with multiple IPs
 	r = httptest.NewRequest(http.MethodGet, "/test", nil)
 	r.RemoteAddr = trustedPeer
-	r.Header.Set("X-Forwarded-For", "192.168.1.1, 10.0.0.1, 172.16.0.1")
-	assert.Equal(t, "192.168.1.1", resolvedVia(t, []string{trustedProxyCIDR}, r))
+	r.Header.Set("X-Forwarded-For", "192.0.2.1, 10.0.0.1, 172.16.0.1")
+	assert.Equal(t, "192.0.2.1", resolvedVia(t, []string{trustedProxyCIDR}, r))
 }
 
 func TestGetClientIP_XRealIP(t *testing.T) {
 	r := httptest.NewRequest(http.MethodGet, "/test", nil)
 	r.RemoteAddr = trustedPeer
-	r.Header.Set("X-Real-IP", "192.168.1.2")
-	assert.Equal(t, "192.168.1.2", resolvedVia(t, []string{trustedProxyCIDR}, r))
+	r.Header.Set("X-Real-IP", "192.0.2.2")
+	assert.Equal(t, "192.0.2.2", resolvedVia(t, []string{trustedProxyCIDR}, r))
 }
 
 func TestGetClientIP_RemoteAddr(t *testing.T) {
 	r := httptest.NewRequest(http.MethodGet, "/test", nil)
-	r.RemoteAddr = "192.168.1.3:54321"
+	r.RemoteAddr = "192.0.2.3:54321"
 	ip := getClientIP(r)
-	assert.Equal(t, "192.168.1.3", ip)
+	assert.Equal(t, "192.0.2.3", ip)
 }
 
 func TestGetClientIP_RemoteAddrNoPort(t *testing.T) {
 	r := httptest.NewRequest(http.MethodGet, "/test", nil)
-	r.RemoteAddr = "192.168.1.4"
+	r.RemoteAddr = "192.0.2.4"
 	ip := getClientIP(r)
-	assert.Equal(t, "192.168.1.4", ip)
+	assert.Equal(t, "192.0.2.4", ip)
 }
