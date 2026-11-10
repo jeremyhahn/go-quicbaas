@@ -624,7 +624,7 @@ func TestSessionEndpointAvailability(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			resp, err := cluster.doHTTPRequest(tt.method, tt.path, nil)
+			resp, err := cluster.doAnonHTTPRequest(tt.method, tt.path, nil)
 			require.NoError(t, err)
 			defer resp.Body.Close()
 

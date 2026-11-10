@@ -27,6 +27,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -59,6 +60,18 @@ type testCluster struct {
 	unixSocket   string
 	client       *http.Client
 	grpcConn     *grpc.ClientConn
+
+	// t is the test that set the cluster up.
+	t *testing.T
+
+	// mu guards systemBearer, tenantAdmins and current.
+	mu sync.Mutex
+	// systemBearer is the system admin's bearer, fetched once.
+	systemBearer string
+	// tenantAdmins holds each provisioned tenant's admin session, by tenant ID.
+	tenantAdmins map[string]*helpers.TenantAdminSession
+	// current is the tenant the test last provisioned.
+	current string
 }
 
 // TestMain sets up and tears down the test environment.
@@ -283,6 +296,8 @@ func setupTestCluster(t *testing.T) *testCluster {
 		unixSocket:   unixSocket,
 		client:       httpClient,
 		grpcConn:     grpcConn,
+		t:            t,
+		tenantAdmins: make(map[string]*helpers.TenantAdminSession),
 	}
 }
 
@@ -340,6 +355,35 @@ func isRetryableError(statusCode int, body string) bool {
 
 // doHTTPRequest performs an HTTP request and returns the response.
 func (tc *testCluster) doHTTPRequest(method, path string, body interface{}) (*http.Response, error) {
+	req, err := tc.newHTTPRequest(method, path, body)
+	if err != nil {
+		return nil, err
+	}
+
+	bearer, err := tc.bearerFor(path)
+	if err != nil {
+		return nil, err
+	}
+	if bearer != "" {
+		req.Header.Set("Authorization", "Bearer "+bearer)
+	}
+
+	return tc.client.Do(req)
+}
+
+// doAnonHTTPRequest sends the request with no bearer, for tests that check
+// unauthenticated access.
+func (tc *testCluster) doAnonHTTPRequest(method, path string, body interface{}) (*http.Response, error) {
+	req, err := tc.newHTTPRequest(method, path, body)
+	if err != nil {
+		return nil, err
+	}
+	return tc.client.Do(req)
+}
+
+// newHTTPRequest builds a request to the cluster's REST endpoint, with body
+// encoded as JSON when it is not nil.
+func (tc *testCluster) newHTTPRequest(method, path string, body interface{}) (*http.Request, error) {
 	var reqBody io.Reader
 	if body != nil {
 		data, err := json.Marshal(body)
@@ -357,8 +401,104 @@ func (tc *testCluster) doHTTPRequest(method, path string, body interface{}) (*ht
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
+	return req, nil
+}
 
-	return tc.client.Do(req)
+// provisionTenant is how a test gets a tenant it then works inside: the system
+// admin provisions tenantID through helpers.TenantAdmin, whose own cleanup
+// deletes it, and tenant-scoped calls through the helpers (getJSON, postJSON,
+// putJSON, deleteJSON, ...) then carry that tenant admin's bearer.
+func (tc *testCluster) provisionTenant(t *testing.T, tenantID string) string {
+	t.Helper()
+	session := helpers.TenantAdmin(t, tc.httpEndpoint, tenantID)
+
+	tc.mu.Lock()
+	tc.tenantAdmins[tenantID] = session
+	tc.current = tenantID
+	tc.mu.Unlock()
+
+	t.Cleanup(func() {
+		tc.mu.Lock()
+		delete(tc.tenantAdmins, tenantID)
+		if tc.current == tenantID {
+			tc.current = ""
+		}
+		tc.mu.Unlock()
+	})
+	return tenantID
+}
+
+// bearerFor returns the bearer a request to path carries: the system admin's
+// for the tenant control plane (/api/v1/tenants and a tenant's record), the
+// tenant's own admin's for a path inside a tenant, the current tenant's admin's
+// (else the system admin's) for other /api/v1/iam/ paths, and none for public
+// endpoints. The system bearer never goes to a path inside a tenant that has a
+// recorded admin, because the tenant routes refuse it.
+func (tc *testCluster) bearerFor(path string) (string, error) {
+	if i := strings.IndexByte(path, '?'); i >= 0 {
+		path = path[:i]
+	}
+
+	const tenantsPath = "/api/v1/tenants"
+	switch {
+	case path == tenantsPath:
+		return tc.systemAdminBearer()
+
+	case strings.HasPrefix(path, tenantsPath+"/"):
+		tenantID, sub, _ := strings.Cut(strings.TrimPrefix(path, tenantsPath+"/"), "/")
+		if sub == "" {
+			// The tenant record itself.
+			return tc.systemAdminBearer()
+		}
+		tc.mu.Lock()
+		session := tc.tenantAdmins[tenantID]
+		tc.mu.Unlock()
+		if session == nil {
+			return tc.systemAdminBearer()
+		}
+		return tenantAdminBearer(session, tenantID)
+
+	case strings.HasPrefix(path, "/api/v1/iam/"):
+		tc.mu.Lock()
+		tenantID := tc.current
+		session := tc.tenantAdmins[tenantID]
+		tc.mu.Unlock()
+		if session == nil {
+			return tc.systemAdminBearer()
+		}
+		return tenantAdminBearer(session, tenantID)
+
+	default:
+		return "", nil
+	}
+}
+
+// systemAdminBearer logs in as the system admin once per testCluster and
+// caches the bearer.
+func (tc *testCluster) systemAdminBearer() (string, error) {
+	tc.mu.Lock()
+	defer tc.mu.Unlock()
+	if tc.systemBearer != "" {
+		return tc.systemBearer, nil
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	bearer, err := helpers.AuthSystemAdminContext(ctx, tc.httpEndpoint)
+	if err != nil {
+		return "", fmt.Errorf("system admin login: %w", err)
+	}
+	tc.systemBearer = bearer
+	return bearer, nil
+}
+
+// tenantAdminBearer returns the bearer of tenantID's admin session.
+func tenantAdminBearer(session *helpers.TenantAdminSession, tenantID string) (string, error) {
+	bearer, err := session.Bearer(context.Background())
+	if err != nil {
+		return "", fmt.Errorf("tenant %q admin login: %w", tenantID, err)
+	}
+	return bearer, nil
 }
 
 // getJSON performs a GET request and unmarshals the JSON response.

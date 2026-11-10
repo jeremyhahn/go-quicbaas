@@ -26,16 +26,10 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 )
 
-// setupTenantForTests creates a test tenant and returns its ID.
+// setupTenantForTests creates a test tenant and returns its ID. The system
+// admin provisions the tenant, and the cluster's helpers then act as its admin.
 func setupTenantForTests(t *testing.T, cluster *testCluster) string {
-	tenantID := generateUniqueTenantID()
-	createReq := map[string]interface{}{
-		"id":   tenantID,
-		"name": "Test Tenant for Identity",
-	}
-	var tenant iam.Tenant
-	require.NoError(t, cluster.postJSON("/api/v1/tenants", createReq, &tenant))
-	return tenantID
+	return cluster.provisionTenant(t, generateUniqueTenantID())
 }
 
 // TestUserCRUD tests complete user lifecycle.
