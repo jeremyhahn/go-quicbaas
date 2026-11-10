@@ -328,6 +328,8 @@ type Server struct {
 	// tenant's barrier is unsealed; the boot migrations register here to
 	// reach the tenants that were sealed at boot.
 	tenantUnsealHooks service.TenantUnsealHooks
+	// tenantUnsealRouter is the tenant servicer the embedded node's native transports call, built in unifiedModuleServerOptions.
+	tenantUnsealRouter *tenantUnsealRouter
 
 	// orchFleetCapacity answers admission's fleet axis: how many worker slots
 	// the deployment has. Built once in startOrchestration and shared by BOTH
