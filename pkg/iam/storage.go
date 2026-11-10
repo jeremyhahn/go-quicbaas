@@ -537,3 +537,11 @@ type PolicyStorage interface {
 type PolicyWriteSnapshotter interface {
 	SnapshotPolicy(ctx context.Context, tenantID, name string) (restore func(context.Context) error, err error)
 }
+
+// PolicyCreateReverter is a PolicyStorage that can undo one create.
+// RevertCreatedPolicy removes policy's record only while it still holds
+// exactly the bytes a create of policy wrote; an absent or different record
+// is left alone and is not an error.
+type PolicyCreateReverter interface {
+	RevertCreatedPolicy(ctx context.Context, tenantID string, policy *Policy) error
+}

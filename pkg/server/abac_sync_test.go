@@ -619,6 +619,42 @@ func TestQRDBABACSync_migrateLegacyPolicies(t *testing.T) {
 	})
 }
 
+// policyGetFailingKVStore is a KVStore whose Get of failKey fails.
+type policyGetFailingKVStore struct {
+	interfaces.KVStore
+	failKey string
+}
+
+func (s *policyGetFailingKVStore) Get(ctx context.Context, key string) ([]byte, error) {
+	if key == s.failKey {
+		return nil, errors.New("transient read failure")
+	}
+	return s.KVStore.Get(ctx, key)
+}
+
+func TestQRDBABACSync_MigrationKeepsBothRecordsOnReadFailure(t *testing.T) {
+	ctx := context.Background()
+	r, tm, bs := newABACTenantRoutedStorage(t)
+	require.NoError(t, bs.CreatePolicy(tenantctx.WithTenant(ctx, "acme"), "acme", abacTestPolicy("dup", "acme", "alice", "kv/**", iam.EffectDeny)))
+	seedLegacyABACPolicy(t, bs, "acme", abacTestPolicy("dup", "acme", "alice", "kv/**", iam.EffectAllow))
+	key := iam.KeyPrefixTenant + "acme" + iam.KeyPrefixPolicy + "dup"
+	acme := r.stores["acme"]
+	tenantBefore, err := acme.Get(ctx, key)
+	require.NoError(t, err)
+	legacyBefore, err := r.shared.Get(ctx, key)
+	require.NoError(t, err)
+	r.stores["acme"] = &policyGetFailingKVStore{KVStore: acme, failKey: key}
+
+	newQRDBABACSync(&Server{}, tm, bs).migrateLegacyPolicies(ctx)
+
+	tenantAfter, err := acme.Get(ctx, key)
+	require.NoError(t, err)
+	assert.Equal(t, tenantBefore, tenantAfter, "the tenant's deny must not be replaced")
+	legacyAfter, err := r.shared.Get(ctx, key)
+	require.NoError(t, err)
+	assert.Equal(t, legacyBefore, legacyAfter, "the legacy record must not be deleted")
+}
+
 // admittedFakeResolver resolves through the real admittingStoreResolver's
 // admission check, then serves the fake resolver's per-tenant store.
 type admittedFakeResolver struct {

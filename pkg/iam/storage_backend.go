@@ -15,12 +15,15 @@
 package iam
 
 import (
+	"bytes"
 	"context"
 	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"strings"
 	"time"
+
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
 	dberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
@@ -1438,18 +1441,34 @@ func (s *BackendStorage) RevokeUserTokens(ctx context.Context, userID string) er
 // PolicyStorage implementation
 // -----------------------------------------------------------------------------
 
-// CreatePolicy creates a new policy.
+// CreatePolicy creates a new policy only when its name is absent, with
+// PutIfAbsent where the store is atomic; any lookup failure but not-found
+// is returned before anything is written.
 func (s *BackendStorage) CreatePolicy(ctx context.Context, tenantID string, policy *Policy) error {
 	key := policyKey(tenantID, policy.Metadata.Name)
-
-	_, err := s.get(ctx, key)
-	if err == nil {
-		return ErrAlreadyExists
-	}
 
 	data, err := encodeStoredPolicy(policy)
 	if err != nil {
 		return &dberrors.QBError{Code: dberrors.ErrInternal, Op: "iam.policy.create", Err: err}
+	}
+
+	if atomic, ok := s.kv.(qrdbsdk.AtomicKVStore); ok {
+		stored, err := atomic.PutIfAbsent(ctx, key, data)
+		if err != nil {
+			return err
+		}
+		if !stored {
+			return ErrAlreadyExists
+		}
+		return nil
+	}
+
+	_, err = s.get(ctx, key)
+	if err == nil {
+		return ErrAlreadyExists
+	}
+	if !dberrors.Is(err, dberrors.ErrNotFound) {
+		return err
 	}
 
 	return s.put(ctx, key, data)
@@ -1509,6 +1528,34 @@ func (s *BackendStorage) DeletePolicy(ctx context.Context, tenantID, name string
 		return err
 	}
 	return s.delete(ctx, policyKey(tenantID, name))
+}
+
+// RevertCreatedPolicy removes policy's record only while it still holds the
+// bytes a create of policy wrote. Only the atomic (CompareAndDelete) path is
+// race-free; the fallback read-then-delete can still race another writer.
+func (s *BackendStorage) RevertCreatedPolicy(ctx context.Context, tenantID string, policy *Policy) error {
+	key := policyKey(tenantID, policy.Metadata.Name)
+	data, err := encodeStoredPolicy(policy)
+	if err != nil {
+		return &dberrors.QBError{Code: dberrors.ErrInternal, Op: "iam.policy.revert", Err: err}
+	}
+
+	if atomic, ok := s.kv.(qrdbsdk.AtomicKVStore); ok {
+		_, err := atomic.CompareAndDelete(ctx, key, data)
+		return err
+	}
+
+	current, err := s.get(ctx, key)
+	if dberrors.Is(err, dberrors.ErrNotFound) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if !bytes.Equal(current, data) {
+		return nil
+	}
+	return s.delete(ctx, key)
 }
 
 // ListPolicies lists policies for a tenant.

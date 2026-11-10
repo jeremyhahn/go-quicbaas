@@ -408,6 +408,25 @@ func (s *legacyCleanupPolicyStorage) CreatePolicy(ctx context.Context, tenantID 
 	return s.PolicyStorage.CreatePolicy(tenantCtx, tenantID, policy)
 }
 
+// RevertCreatedPolicy undoes a CreatePolicy in the tenant's namespace only:
+// create never writes the legacy namespace, so it is never touched.
+func (s *legacyCleanupPolicyStorage) RevertCreatedPolicy(ctx context.Context, tenantID string, policy *iam.Policy) error {
+	tenantCtx := ctx
+	if tenantID != qrdbsdk.SystemTenantID {
+		var err error
+		if tenantCtx, _, err = s.tenantContexts(ctx, "iam.policy.create", tenantID); err != nil {
+			return err
+		}
+	}
+	if r, ok := s.PolicyStorage.(iam.PolicyCreateReverter); ok {
+		return r.RevertCreatedPolicy(tenantCtx, tenantID, policy)
+	}
+	if err := s.PolicyStorage.DeletePolicy(tenantCtx, tenantID, policy.Metadata.Name); err != nil && !dberrors.Is(err, dberrors.ErrNotFound) {
+		return err
+	}
+	return nil
+}
+
 // DeletePolicy deletes the legacy system-namespace copy of a tenant policy
 // and then the tenant copy. The system tenant's policies have no legacy copy.
 // A context that may not act in tenantID is refused before anything is deleted.
