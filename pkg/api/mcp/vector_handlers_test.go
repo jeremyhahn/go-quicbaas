@@ -9,6 +9,9 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 
 	pb "github.com/jeremyhahn/go-quicbaas/api/proto"
 )
@@ -262,9 +265,11 @@ func TestHandleListVectors(t *testing.T) {
 	assert.NotNil(t, result["vectors"])
 }
 
-// TestHandleUpdateNamespace tests namespace update operation
-func TestHandleUpdateNamespace(t *testing.T) {
+// TestHandleUpdateNamespace_RefusedNotImplemented checks that the server's
+// Unimplemented answer reaches the caller as the typed refusal.
+func TestHandleUpdateNamespace_RefusedNotImplemented(t *testing.T) {
 	server := newTestVectorServer(t)
+	server.vectorClient = &unimplementedUpdateVectorClient{}
 	ctx := context.Background()
 
 	params := map[string]interface{}{
@@ -274,15 +279,26 @@ func TestHandleUpdateNamespace(t *testing.T) {
 	}
 
 	resp, err := server.handleUpdateNamespace(ctx, params)
-	require.NoError(t, err)
-	require.NotNil(t, resp)
-	assert.False(t, resp.IsError)
+	require.Error(t, err)
+	assert.Nil(t, resp)
+	var unsupported *VectorNamespaceUpdateUnsupportedError
+	require.ErrorAs(t, err, &unsupported)
+	assert.Equal(t, "test-namespace", unsupported.Namespace)
+}
 
-	var result map[string]interface{}
-	err = json.Unmarshal([]byte(resp.Content[0].Text), &result)
-	require.NoError(t, err)
-	assert.Equal(t, "test-namespace", result["namespace"])
-	assert.Equal(t, float64(5), result["replication_factor"])
+// unimplementedUpdateVectorClient answers UpdateNamespace the way the gRPC
+// server does: codes.Unimplemented, because no namespace update exists.
+type unimplementedUpdateVectorClient struct {
+	mockVectorDBClient
+}
+
+func (c *unimplementedUpdateVectorClient) UpdateNamespace(ctx context.Context, in *pb.UpdateNamespaceRequest, opts ...grpc.CallOption) (*pb.UpdateNamespaceResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "namespace update not supported")
+}
+
+func TestVectorNamespaceUpdateUnsupportedError_Error(t *testing.T) {
+	err := &VectorNamespaceUpdateUnsupportedError{Namespace: "docs"}
+	assert.Equal(t, "vector namespace docs cannot be updated: the qrdb SDK has no in-place namespace update", err.Error())
 }
 
 // TestHandleDeleteNamespace tests namespace deletion

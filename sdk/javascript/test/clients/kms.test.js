@@ -883,7 +883,7 @@ describe('KMSClient', () => {
             effect: 'DENY',
             principals: ['user:*'],
             actions: ['kms:delete'],
-            conditions: { ip: { eq: '192.168.1.1' } },
+            conditions: { ip: { eq: '192.0.2.1' } },
           },
         ],
       });
@@ -893,7 +893,7 @@ describe('KMSClient', () => {
         expect.objectContaining({
           statements: expect.arrayContaining([
             expect.objectContaining({
-              conditions: { ip: { eq: '192.168.1.1' } },
+              conditions: { ip: { eq: '192.0.2.1' } },
             }),
           ]),
         }),

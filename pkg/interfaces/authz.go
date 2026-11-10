@@ -94,7 +94,7 @@ type AuthorizationRequest struct {
 	Action string
 
 	// Context contains additional contextual information for policy evaluation.
-	// Example: {"ip_address": "192.168.1.100", "time": "2025-01-15T10:30:00Z"}
+	// Example: {"ip_address": "192.0.2.100", "time": "2025-01-15T10:30:00Z"}
 	Context map[string]interface{}
 }
 

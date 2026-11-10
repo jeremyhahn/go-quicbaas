@@ -274,7 +274,7 @@ func TestAuditLogger_SIEMExporter(t *testing.T) {
 		Resource:  "test",
 		Result:    ResultSuccess,
 		Timestamp: time.Now(),
-		IPAddress: "192.168.1.1",
+		IPAddress: "192.0.2.1",
 	}
 
 	// Send event to SIEM

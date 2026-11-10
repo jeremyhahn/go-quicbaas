@@ -26,7 +26,7 @@ import (
 
 // promotedImage is a digest-pinned registry reference, the shape the worker
 // image refresh rebinds projects to.
-const promotedImage = "reg.example:3001/o/software-factory-worker:0.11.0-alpha-cc2.1.280-cx0.156.0@sha256:" +
+const promotedImage = "reg.example:3000/o/software-factory-worker:0.11.0-alpha-cc2.1.280-cx0.156.0@sha256:" +
 	"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
 
 // pullingContainer is a sandbox engine that knows which images it holds.

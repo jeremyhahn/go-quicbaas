@@ -56,7 +56,7 @@ func TestHandleAddNode(t *testing.T) {
 			body: AddNodeRequest{
 				ShardID: 1,
 				NodeID:  2,
-				Address: "192.168.1.2:5001",
+				Address: "192.0.2.2:5001",
 			},
 			setupMock: func(m *testutil.MockQuicBaaS) {
 				m.On("AddNode", mock.Anything, mock.Anything).Return(&service.AddNodeResponse{
@@ -78,7 +78,7 @@ func TestHandleAddNode(t *testing.T) {
 			name: "missing shard_id",
 			body: AddNodeRequest{
 				NodeID:  2,
-				Address: "192.168.1.2:5001",
+				Address: "192.0.2.2:5001",
 			},
 			setupMock:      func(m *testutil.MockQuicBaaS) {},
 			expectedStatus: http.StatusBadRequest,
@@ -94,7 +94,7 @@ func TestHandleAddNode(t *testing.T) {
 			body: AddNodeRequest{
 				ShardID:  1,
 				NodeID:   3,
-				Address:  "192.168.1.3:5001",
+				Address:  "192.0.2.3:5001",
 				Identity: "spki:0123abcd",
 			},
 			setupMock: func(m *testutil.MockQuicBaaS) {
@@ -108,7 +108,7 @@ func TestHandleAddNode(t *testing.T) {
 			name: "missing node_id",
 			body: AddNodeRequest{
 				ShardID: 1,
-				Address: "192.168.1.2:5001",
+				Address: "192.0.2.2:5001",
 			},
 			setupMock:      func(m *testutil.MockQuicBaaS) {},
 			expectedStatus: http.StatusBadRequest,
@@ -139,7 +139,7 @@ func TestHandleAddNode(t *testing.T) {
 			body: AddNodeRequest{
 				ShardID: 1,
 				NodeID:  2,
-				Address: "192.168.1.2:5001",
+				Address: "192.0.2.2:5001",
 			},
 			setupMock: func(m *testutil.MockQuicBaaS) {
 				m.On("AddNode", mock.Anything, mock.Anything).Return(nil, &errors.QBError{
@@ -264,13 +264,13 @@ func TestHandleReplaceNode(t *testing.T) {
 			failedNodeID: "2",
 			body: ReplaceNodeRequest{
 				ReplacementNodeID:  3,
-				ReplacementAddress: "192.168.1.3:5001",
+				ReplacementAddress: "192.0.2.3:5001",
 			},
 			setupMock: func(m *testutil.MockQuicBaaS) {
 				m.On("ClusterStatus", mock.Anything, mock.Anything).Return(&service.ClusterStatusResponse{
 					Nodes: []*service.NodeInfo{
-						{NodeID: 1, Address: "192.168.1.1:5001"},
-						{NodeID: 2, Address: "192.168.1.2:5001"},
+						{NodeID: 1, Address: "192.0.2.1:5001"},
+						{NodeID: 2, Address: "192.0.2.2:5001"},
 					},
 					Shards: []*service.ShardInfo{
 						{ShardID: 1, Replicas: []uint64{1, 2}},
@@ -298,12 +298,12 @@ func TestHandleReplaceNode(t *testing.T) {
 			failedNodeID: "99",
 			body: ReplaceNodeRequest{
 				ReplacementNodeID:  3,
-				ReplacementAddress: "192.168.1.3:5001",
+				ReplacementAddress: "192.0.2.3:5001",
 			},
 			setupMock: func(m *testutil.MockQuicBaaS) {
 				m.On("ClusterStatus", mock.Anything, mock.Anything).Return(&service.ClusterStatusResponse{
 					Nodes: []*service.NodeInfo{
-						{NodeID: 1, Address: "192.168.1.1:5001"},
+						{NodeID: 1, Address: "192.0.2.1:5001"},
 					},
 					Shards: []*service.ShardInfo{
 						{ShardID: 1, Replicas: []uint64{1}},
@@ -355,7 +355,7 @@ func TestHandleListNodes(t *testing.T) {
 					Nodes: []*service.NodeInfo{
 						{
 							NodeID:        1,
-							Address:       "192.168.1.1:5001",
+							Address:       "192.0.2.1:5001",
 							IsLeader:      true,
 							HealthStatus:  service.HealthStatusHealthy,
 							Version:       "1.0.0",
@@ -363,7 +363,7 @@ func TestHandleListNodes(t *testing.T) {
 						},
 						{
 							NodeID:        2,
-							Address:       "192.168.1.2:5001",
+							Address:       "192.0.2.2:5001",
 							IsLeader:      false,
 							HealthStatus:  service.HealthStatusHealthy,
 							Version:       "1.0.0",
@@ -438,7 +438,7 @@ func TestHandleListNonLeaderNodes(t *testing.T) {
 					Nodes: []*service.NodeInfo{
 						{
 							NodeID:        1,
-							Address:       "192.168.1.1:5001",
+							Address:       "192.0.2.1:5001",
 							IsLeader:      true,
 							HealthStatus:  service.HealthStatusHealthy,
 							Version:       "1.0.0",
@@ -446,7 +446,7 @@ func TestHandleListNonLeaderNodes(t *testing.T) {
 						},
 						{
 							NodeID:        2,
-							Address:       "192.168.1.2:5001",
+							Address:       "192.0.2.2:5001",
 							IsLeader:      false,
 							HealthStatus:  service.HealthStatusHealthy,
 							Version:       "1.0.0",
@@ -454,7 +454,7 @@ func TestHandleListNonLeaderNodes(t *testing.T) {
 						},
 						{
 							NodeID:        3,
-							Address:       "192.168.1.3:5001",
+							Address:       "192.0.2.3:5001",
 							IsLeader:      false,
 							HealthStatus:  service.HealthStatusHealthy,
 							Version:       "1.0.0",
@@ -488,7 +488,7 @@ func TestHandleListNonLeaderNodes(t *testing.T) {
 					Nodes: []*service.NodeInfo{
 						{
 							NodeID:        1,
-							Address:       "192.168.1.1:5001",
+							Address:       "192.0.2.1:5001",
 							IsLeader:      true,
 							HealthStatus:  service.HealthStatusHealthy,
 							Version:       "1.0.0",
@@ -496,7 +496,7 @@ func TestHandleListNonLeaderNodes(t *testing.T) {
 						},
 						{
 							NodeID:        2,
-							Address:       "192.168.1.2:5001",
+							Address:       "192.0.2.2:5001",
 							IsLeader:      false,
 							HealthStatus:  service.HealthStatusUnhealthy, // Should be filtered out
 							Version:       "1.0.0",
@@ -504,7 +504,7 @@ func TestHandleListNonLeaderNodes(t *testing.T) {
 						},
 						{
 							NodeID:        3,
-							Address:       "192.168.1.3:5001",
+							Address:       "192.0.2.3:5001",
 							IsLeader:      false,
 							HealthStatus:  service.HealthStatusHealthy,
 							Version:       "1.0.0",
@@ -532,7 +532,7 @@ func TestHandleListNonLeaderNodes(t *testing.T) {
 					Nodes: []*service.NodeInfo{
 						{
 							NodeID:        1,
-							Address:       "192.168.1.1:5001",
+							Address:       "192.0.2.1:5001",
 							IsLeader:      true,
 							HealthStatus:  service.HealthStatusHealthy,
 							Version:       "1.0.0",
@@ -605,7 +605,7 @@ func TestHandleGetClusterLeader(t *testing.T) {
 					Nodes: []*service.NodeInfo{
 						{
 							NodeID:        1,
-							Address:       "192.168.1.1:5001",
+							Address:       "192.0.2.1:5001",
 							IsLeader:      true,
 							HealthStatus:  service.HealthStatusHealthy,
 							Version:       "1.0.0",
@@ -613,7 +613,7 @@ func TestHandleGetClusterLeader(t *testing.T) {
 						},
 						{
 							NodeID:        2,
-							Address:       "192.168.1.2:5001",
+							Address:       "192.0.2.2:5001",
 							IsLeader:      false,
 							HealthStatus:  service.HealthStatusHealthy,
 							Version:       "1.0.0",
@@ -630,7 +630,7 @@ func TestHandleGetClusterLeader(t *testing.T) {
 				require.NoError(t, err)
 				assert.Equal(t, uint64(1), resp.Leader.NodeID)
 				assert.True(t, resp.Leader.IsLeader)
-				assert.Equal(t, "192.168.1.1:5001", resp.Leader.Address)
+				assert.Equal(t, "192.0.2.1:5001", resp.Leader.Address)
 				assert.Equal(t, "healthy", resp.Leader.HealthStatus)
 				assert.Equal(t, "1.0.0", resp.Leader.Version)
 				assert.Equal(t, uint64(3600), resp.Leader.UptimeSeconds)
@@ -643,7 +643,7 @@ func TestHandleGetClusterLeader(t *testing.T) {
 					Nodes: []*service.NodeInfo{
 						{
 							NodeID:        1,
-							Address:       "192.168.1.1:5001",
+							Address:       "192.0.2.1:5001",
 							IsLeader:      false,
 							HealthStatus:  service.HealthStatusHealthy,
 							Version:       "1.0.0",
@@ -651,7 +651,7 @@ func TestHandleGetClusterLeader(t *testing.T) {
 						},
 						{
 							NodeID:        2,
-							Address:       "192.168.1.2:5001",
+							Address:       "192.0.2.2:5001",
 							IsLeader:      false,
 							HealthStatus:  service.HealthStatusHealthy,
 							Version:       "1.0.0",
@@ -727,7 +727,7 @@ func TestHandleGetClusterLeaderDirect(t *testing.T) {
 		Nodes: []*service.NodeInfo{
 			{
 				NodeID:       1,
-				Address:      "192.168.1.1:5001",
+				Address:      "192.0.2.1:5001",
 				IsLeader:     false,
 				HealthStatus: service.HealthStatusHealthy,
 			},
@@ -1112,7 +1112,7 @@ func TestClusterOperationsIntegration(t *testing.T) {
 		addBody, _ := json.Marshal(AddNodeRequest{
 			ShardID: 1,
 			NodeID:  3,
-			Address: "192.168.1.3:5001",
+			Address: "192.0.2.3:5001",
 		})
 
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/cluster/nodes", bytes.NewReader(addBody))
@@ -1124,9 +1124,9 @@ func TestClusterOperationsIntegration(t *testing.T) {
 		// Step 2: List nodes
 		mockService.On("ClusterStatus", mock.Anything, mock.Anything).Return(&service.ClusterStatusResponse{
 			Nodes: []*service.NodeInfo{
-				{NodeID: 1, Address: "192.168.1.1:5001"},
-				{NodeID: 2, Address: "192.168.1.2:5001"},
-				{NodeID: 3, Address: "192.168.1.3:5001"},
+				{NodeID: 1, Address: "192.0.2.1:5001"},
+				{NodeID: 2, Address: "192.0.2.2:5001"},
+				{NodeID: 3, Address: "192.0.2.3:5001"},
 			},
 			Timestamp: 12345,
 		}, nil).Once()
@@ -1283,19 +1283,19 @@ func TestHandleListNonLeaderNodesSuccessTarget(t *testing.T) {
 			Nodes: []*service.NodeInfo{
 				{
 					NodeID:       1,
-					Address:      "192.168.1.1:5000",
+					Address:      "192.0.2.1:5000",
 					IsLeader:     true,
 					HealthStatus: service.HealthStatusHealthy,
 				},
 				{
 					NodeID:       2,
-					Address:      "192.168.1.2:5000",
+					Address:      "192.0.2.2:5000",
 					IsLeader:     false,
 					HealthStatus: service.HealthStatusHealthy,
 				},
 				{
 					NodeID:       3,
-					Address:      "192.168.1.3:5000",
+					Address:      "192.0.2.3:5000",
 					IsLeader:     false,
 					HealthStatus: service.HealthStatusUnhealthy, // Should be filtered out
 				},
@@ -1310,9 +1310,9 @@ func TestHandleListNonLeaderNodesSuccessTarget(t *testing.T) {
 
 	assert.Equal(t, http.StatusOK, w.Code)
 	// Should only have node 2 (non-leader, healthy)
-	assert.Contains(t, w.Body.String(), "192.168.1.2:5000")
-	assert.NotContains(t, w.Body.String(), "192.168.1.1:5000") // Leader
-	assert.NotContains(t, w.Body.String(), "192.168.1.3:5000") // Unhealthy
+	assert.Contains(t, w.Body.String(), "192.0.2.2:5000")
+	assert.NotContains(t, w.Body.String(), "192.0.2.1:5000") // Leader
+	assert.NotContains(t, w.Body.String(), "192.0.2.3:5000") // Unhealthy
 }
 
 // TestHandleReplaceNodeEmptyNodeIDTarget tests node replacement with empty node ID.
@@ -1324,7 +1324,7 @@ func TestHandleReplaceNodeEmptyNodeIDTarget(t *testing.T) {
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("node_id", "")
 
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/cluster/nodes//replace", strings.NewReader(`{"new_address": "192.168.1.100:5000"}`))
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/cluster/nodes//replace", strings.NewReader(`{"new_address": "192.0.2.100:5000"}`))
 	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
@@ -1367,14 +1367,14 @@ func TestHandleListNodesSuccessTarget(t *testing.T) {
 			Nodes: []*service.NodeInfo{
 				{
 					NodeID:       1,
-					Address:      "192.168.1.1:5000",
+					Address:      "192.0.2.1:5000",
 					IsLeader:     true,
 					HealthStatus: service.HealthStatusHealthy,
 					Version:      "1.0.0",
 				},
 				{
 					NodeID:       2,
-					Address:      "192.168.1.2:5000",
+					Address:      "192.0.2.2:5000",
 					IsLeader:     false,
 					HealthStatus: service.HealthStatusHealthy,
 					Version:      "1.0.0",
@@ -1389,8 +1389,8 @@ func TestHandleListNodesSuccessTarget(t *testing.T) {
 	server.HandleListNodes(w, req)
 
 	assert.Equal(t, http.StatusOK, w.Code)
-	assert.Contains(t, w.Body.String(), "192.168.1.1:5000")
-	assert.Contains(t, w.Body.String(), "192.168.1.2:5000")
+	assert.Contains(t, w.Body.String(), "192.0.2.1:5000")
+	assert.Contains(t, w.Body.String(), "192.0.2.2:5000")
 }
 
 func TestHandleReplaceNode_FullCoverage(t *testing.T) {
@@ -1406,7 +1406,7 @@ func TestHandleReplaceNode_FullCoverage(t *testing.T) {
 			path: "/api/v1/cluster/nodes/1/replace",
 			body: ReplaceNodeRequest{
 				ReplacementNodeID:  2,
-				ReplacementAddress: "192.168.1.100:9001",
+				ReplacementAddress: "192.0.2.100:9001",
 			},
 			setupMock: func(m *testutil.MockQuicBaaS) {
 				m.ExpectedCalls = nil
@@ -1435,7 +1435,7 @@ func TestHandleReplaceNode_FullCoverage(t *testing.T) {
 			path: "/api/v1/cluster/nodes/invalid/replace",
 			body: ReplaceNodeRequest{
 				ReplacementNodeID:  2,
-				ReplacementAddress: "192.168.1.100:9001",
+				ReplacementAddress: "192.0.2.100:9001",
 			},
 			setupMock:      func(m *testutil.MockQuicBaaS) {},
 			expectedStatus: http.StatusBadRequest,
@@ -1444,7 +1444,7 @@ func TestHandleReplaceNode_FullCoverage(t *testing.T) {
 			name: "replace node - missing replacement_node_id",
 			path: "/api/v1/cluster/nodes/1/replace",
 			body: ReplaceNodeRequest{
-				ReplacementAddress: "192.168.1.100:9001",
+				ReplacementAddress: "192.0.2.100:9001",
 			},
 			setupMock:      func(m *testutil.MockQuicBaaS) {},
 			expectedStatus: http.StatusBadRequest,
@@ -1470,7 +1470,7 @@ func TestHandleReplaceNode_FullCoverage(t *testing.T) {
 			path: "/api/v1/cluster/nodes/1/replace",
 			body: ReplaceNodeRequest{
 				ReplacementNodeID:  2,
-				ReplacementAddress: "192.168.1.100:9001",
+				ReplacementAddress: "192.0.2.100:9001",
 			},
 			setupMock: func(m *testutil.MockQuicBaaS) {
 				m.ExpectedCalls = nil
@@ -1487,7 +1487,7 @@ func TestHandleReplaceNode_FullCoverage(t *testing.T) {
 			path: "/api/v1/cluster/nodes/999/replace",
 			body: ReplaceNodeRequest{
 				ReplacementNodeID:  2,
-				ReplacementAddress: "192.168.1.100:9001",
+				ReplacementAddress: "192.0.2.100:9001",
 			},
 			setupMock: func(m *testutil.MockQuicBaaS) {
 				m.ExpectedCalls = nil
@@ -1682,7 +1682,7 @@ func TestHandleAddNode_FullCoverage(t *testing.T) {
 			body: AddNodeRequest{
 				ShardID: 1,
 				NodeID:  5,
-				Address: "192.168.1.100:9000",
+				Address: "192.0.2.100:9000",
 			},
 			setupMock: func(m *testutil.MockQuicBaaS) {
 				m.ExpectedCalls = nil
@@ -1697,7 +1697,7 @@ func TestHandleAddNode_FullCoverage(t *testing.T) {
 			name: "add node - missing shard_id",
 			body: AddNodeRequest{
 				NodeID:  5,
-				Address: "192.168.1.100:9000",
+				Address: "192.0.2.100:9000",
 			},
 			setupMock:      func(m *testutil.MockQuicBaaS) {},
 			expectedStatus: http.StatusBadRequest,
@@ -1706,7 +1706,7 @@ func TestHandleAddNode_FullCoverage(t *testing.T) {
 			name: "add node - missing node_id",
 			body: AddNodeRequest{
 				ShardID: 1,
-				Address: "192.168.1.100:9000",
+				Address: "192.0.2.100:9000",
 			},
 			setupMock:      func(m *testutil.MockQuicBaaS) {},
 			expectedStatus: http.StatusBadRequest,
@@ -1731,7 +1731,7 @@ func TestHandleAddNode_FullCoverage(t *testing.T) {
 			body: AddNodeRequest{
 				ShardID: 1,
 				NodeID:  5,
-				Address: "192.168.1.100:9000",
+				Address: "192.0.2.100:9000",
 			},
 			setupMock: func(m *testutil.MockQuicBaaS) {
 				m.ExpectedCalls = nil
