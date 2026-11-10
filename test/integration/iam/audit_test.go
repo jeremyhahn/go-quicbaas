@@ -100,6 +100,17 @@ func waitForAuditEvents(t *testing.T, cluster *testCluster, path string, min int
 	return resp
 }
 
+// auditEventsNameResource reports whether any of events names the resource
+// of the given type and id.
+func auditEventsNameResource(events []AuditEventResponse, resourceType, id string) bool {
+	for _, event := range events {
+		if event.Resource != nil && event.Resource.Type == resourceType && event.Resource.ID == id {
+			return true
+		}
+	}
+	return false
+}
+
 // TestAuditEventQuery tests querying audit events for a tenant.
 func TestAuditEventQuery(t *testing.T) {
 	cluster := setupTestCluster(t)
@@ -416,31 +427,41 @@ func TestAuditEventTenantIsolation(t *testing.T) {
 	}
 	err := cluster.postJSON(fmt.Sprintf("/api/v1/tenants/%s/users", tenant1ID), createUserReq, &user1)
 	require.NoError(t, err)
+	require.NotEmpty(t, user1.ID, "The created user should carry an id")
 
-	// Wait for the tenant1 user creation and the tenant2 creation events to become queryable
-	waitForAuditEvents(t, cluster,
-		fmt.Sprintf("/api/v1/iam/audit?tenant_id=%s&event_type=user_management", tenant1ID), 1)
+	// Wait for tenant1's user creation event and for tenant2's own events to
+	// become queryable. Provisioning a tenant also logs its admin in, so a
+	// tenant's log holds more than its creation event and its size depends on
+	// how many asynchronous writes have landed: the test asserts on the event
+	// that names tenant1's user, never on a count.
+	userEventsPath := fmt.Sprintf("/api/v1/iam/audit?tenant_id=%s&event_type=user_management", tenant1ID)
+	require.Eventually(t, func() bool {
+		var attempt AuditQueryResponse
+		if err := cluster.getJSON(userEventsPath, &attempt); err != nil {
+			t.Logf("audit query not ready: %v", err)
+			return false
+		}
+		return auditEventsNameResource(attempt.Events, "user", user1.ID)
+	}, 15*time.Second, 200*time.Millisecond,
+		"tenant1's audit log should carry the creation of user %s", user1.ID)
 	waitForAuditEvents(t, cluster, fmt.Sprintf("/api/v1/iam/audit?tenant_id=%s", tenant2ID), 1)
 
 	// Query audit events for tenant1
 	var tenant1Resp AuditQueryResponse
 	err = cluster.getJSON(fmt.Sprintf("/api/v1/iam/audit?tenant_id=%s", tenant1ID), &tenant1Resp)
 	require.NoError(t, err, "Should query tenant1 events")
-	tenant1EventCount := tenant1Resp.Total
 
 	// Query audit events for tenant2
 	var tenant2Resp AuditQueryResponse
 	err = cluster.getJSON(fmt.Sprintf("/api/v1/iam/audit?tenant_id=%s", tenant2ID), &tenant2Resp)
 	require.NoError(t, err, "Should query tenant2 events")
-	tenant2EventCount := tenant2Resp.Total
 
-	// Tenant1 should have more events (tenant creation + user creation)
-	assert.Greater(t, tenant1EventCount, tenant2EventCount,
-		"Tenant1 should have more events than tenant2")
-
-	// Tenant2 should only have its own tenant creation event
-	assert.Equal(t, 1, tenant2EventCount,
-		"Tenant2 should only have tenant creation event")
+	// Each tenant has events of its own, and tenant2's log never carries the
+	// creation of tenant1's user.
+	assert.NotEmpty(t, tenant1Resp.Events, "Tenant1 should have audit events")
+	assert.NotEmpty(t, tenant2Resp.Events, "Tenant2 should have audit events")
+	assert.False(t, auditEventsNameResource(tenant2Resp.Events, "user", user1.ID),
+		"Tenant2's audit log must not carry tenant1's user creation event")
 
 	// Verify all tenant1 events belong to tenant1
 	for _, event := range tenant1Resp.Events {
