@@ -14,10 +14,14 @@
 package softwarefactoryworker
 
 import (
+	"archive/tar"
+	"bytes"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 	"testing"
 
@@ -367,6 +371,270 @@ func TestWorkflowBuildPublish_SecretScanCoversImageConfig(t *testing.T) {
 		if !strings.Contains(run, s) {
 			t.Errorf("step layer-scan run: lacks %q", s)
 		}
+	}
+}
+
+// fakeSaveDockerScript stands in for docker in the layer-scan step: only
+// `docker save <ref> -o <file>` works; it records <ref> and copies
+// $FAKE_IMAGE_TAR to <file>.
+const fakeSaveDockerScript = `#!/bin/sh
+if [ "$#" -ne 4 ] || [ "$1" != save ] || [ "$3" != -o ]; then exit 9; fi
+printf '%s\n' "$2" >> "$FAKE_DOCKER_LOG"
+cp "$FAKE_IMAGE_TAR" "$4"
+`
+
+// fakeSecretTrivyScript records its argv and, when the last argument is a
+// directory, the files under it (the step's EXIT trap removes them once the
+// step ends), then exits $FAKE_TRIVY_EXIT.
+const fakeSecretTrivyScript = `#!/bin/sh
+printf '%s\n' "$*" >> "$FAKE_TRIVY_LOG"
+last=
+for arg in "$@"; do last="$arg"; done
+if [ -n "$last" ] && [ -d "$last" ]; then
+  (cd "$last" && find . -type f | sort) >> "$FAKE_TRIVY_LOG"
+fi
+exit "${FAKE_TRIVY_EXIT:-0}"
+`
+
+// layerTar builds one layer tarball in memory: regular files with mode 0644
+// and an entry for each parent directory.
+func layerTar(t *testing.T, files map[string]string) []byte {
+	t.Helper()
+	names := make([]string, 0, len(files))
+	for name := range files {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	var buf bytes.Buffer
+	tw := tar.NewWriter(&buf)
+	dirs := map[string]bool{}
+	for _, name := range names {
+		var parents []string
+		for d := path.Dir(name); d != "." && d != "/"; d = path.Dir(d) {
+			parents = append([]string{d}, parents...)
+		}
+		for _, d := range parents {
+			if dirs[d] {
+				continue
+			}
+			dirs[d] = true
+			if err := tw.WriteHeader(&tar.Header{Typeflag: tar.TypeDir, Name: d + "/", Mode: 0o755}); err != nil {
+				t.Fatal(err)
+			}
+		}
+		body := files[name]
+		if err := tw.WriteHeader(&tar.Header{Typeflag: tar.TypeReg, Name: name, Mode: 0o644, Size: int64(len(body))}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := tw.Write([]byte(body)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := tw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return buf.Bytes()
+}
+
+// writeDockerSaveArchive writes a docker-save style tar at path: manifest.json
+// holds manifest, and each files entry is written at its name.
+func writeDockerSaveArchive(t *testing.T, path string, manifest string, files map[string][]byte) {
+	t.Helper()
+	names := make([]string, 0, len(files))
+	for name := range files {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	var buf bytes.Buffer
+	tw := tar.NewWriter(&buf)
+	add := func(name string, body []byte) {
+		if err := tw.WriteHeader(&tar.Header{Typeflag: tar.TypeReg, Name: name, Mode: 0o644, Size: int64(len(body))}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := tw.Write(body); err != nil {
+			t.Fatal(err)
+		}
+	}
+	add("manifest.json", []byte(manifest))
+	for _, name := range names {
+		add(name, files[name])
+	}
+	if err := tw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, buf.Bytes(), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// writeFakes puts the given fake scripts, by name, in a new directory and
+// returns it.
+func writeFakes(t *testing.T, dir string, fakes map[string]string) string {
+	t.Helper()
+	binDir := filepath.Join(dir, "bin")
+	if err := os.Mkdir(binDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for name, script := range fakes {
+		if err := os.WriteFile(filepath.Join(binDir, name), []byte(script), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return binDir
+}
+
+// TestWorkflowBuildPublish_LayerScanScansEveryLayer runs the layer-scan step
+// with a fake docker and trivy: every layer's files and the image config reach
+// the scanner, a scanner failure fails the step, and so does a manifest with
+// no layers or no config.
+func TestWorkflowBuildPublish_LayerScanScansEveryLayer(t *testing.T) {
+	bash, err := exec.LookPath("bash")
+	if err != nil {
+		t.Skip("bash is not on PATH")
+	}
+	for _, tool := range []string{"tar", "jq"} {
+		if _, err := exec.LookPath(tool); err != nil {
+			t.Skipf("%s is not on PATH", tool)
+		}
+	}
+	script := stepRun(t, "layer-scan")
+	files := map[string][]byte{
+		"l1/layer.tar": layerTar(t, map[string]string{"etc/one": "one\n"}),
+		"l2/layer.tar": layerTar(t, map[string]string{"opt/two": "two\n"}),
+		"cfg.json":     []byte(`{"config":{}}`),
+	}
+	const twoLayers = `[{"Config":"cfg.json","Layers":["l1/layer.tar","l2/layer.tar"]}]`
+	const ref = "quicbaas-software-factory-worker:t1"
+	cases := []struct {
+		name      string
+		manifest  string
+		trivyExit string
+		wantOK    bool
+		wantTrivy bool
+		wantOut   string
+	}{
+		{name: "two layers", manifest: twoLayers, trivyExit: "0", wantOK: true, wantTrivy: true, wantOut: "scanned 2 layer tarballs of " + ref},
+		{name: "scanner finds a secret", manifest: twoLayers, trivyExit: "1", wantTrivy: true},
+		{name: "no layers", manifest: `[{"Config":"cfg.json","Layers":[]}]`, trivyExit: "0", wantOut: "lists no layer tarballs"},
+		{name: "no config", manifest: `[{"Layers":["l1/layer.tar"]}]`, trivyExit: "0", wantOut: "names no image config"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			binDir := writeFakes(t, dir, map[string]string{"docker": fakeSaveDockerScript, "trivy": fakeSecretTrivyScript})
+			imageTar := filepath.Join(dir, "image.tar")
+			writeDockerSaveArchive(t, imageTar, tc.manifest, files)
+			runnerTemp := t.TempDir()
+			dockerLog := filepath.Join(dir, "docker.log")
+			trivyLog := filepath.Join(dir, "trivy.log")
+			cmd := exec.Command(bash, "-c", script)
+			cmd.Env = append(os.Environ(),
+				"PATH="+binDir+string(os.PathListSeparator)+os.Getenv("PATH"),
+				"RUNNER_TEMP="+runnerTemp,
+				"IMAGE=quicbaas-software-factory-worker",
+				"TAG=t1",
+				"FAKE_DOCKER_LOG="+dockerLog,
+				"FAKE_IMAGE_TAR="+imageTar,
+				"FAKE_TRIVY_LOG="+trivyLog,
+				"FAKE_TRIVY_EXIT="+tc.trivyExit,
+			)
+			combined, runErr := cmd.CombinedOutput()
+			if tc.wantOK && runErr != nil {
+				t.Fatalf("step failed: %v\n%s", runErr, combined)
+			}
+			if !tc.wantOK && runErr == nil {
+				t.Fatalf("step exited 0:\n%s", combined)
+			}
+			if !strings.Contains(string(combined), tc.wantOut) {
+				t.Errorf("step output lacks %q:\n%s", tc.wantOut, combined)
+			}
+			if _, err := os.Stat(filepath.Join(runnerTemp, "image-layers")); !os.IsNotExist(err) {
+				t.Errorf("$RUNNER_TEMP/image-layers is still there after the step (stat: %v)", err)
+			}
+			if got, err := os.ReadFile(dockerLog); err != nil || string(got) != ref+"\n" {
+				t.Errorf("docker log = %q (%v), want %q", got, err, ref+"\n")
+			}
+			got, err := os.ReadFile(trivyLog)
+			if !tc.wantTrivy {
+				if err == nil {
+					t.Errorf("trivy was called:\n%s", got)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("trivy was never called: %v\n%s", err, combined)
+			}
+			lines := strings.Split(strings.TrimRight(string(got), "\n"), "\n")
+			argv := " " + lines[0] + " "
+			for _, want := range []string{" fs ", " --scanners secret ", " --exit-code 1 "} {
+				if !strings.Contains(argv, want) {
+					t.Errorf("trivy argv %q lacks %q", lines[0], strings.TrimSpace(want))
+				}
+			}
+			listed := map[string]bool{}
+			for _, l := range lines[1:] {
+				listed[l] = true
+			}
+			for _, want := range []string{"./1/etc/one", "./2/opt/two", "./config/config.json"} {
+				if !listed[want] {
+					t.Errorf("trivy was not given %s; it saw:\n%s", want, strings.Join(lines[1:], "\n"))
+				}
+			}
+		})
+	}
+}
+
+// TestWorkflowBuildPublish_ImageSecretScanFailureFailsTheStep runs the
+// secret-scan step with a fake trivy: it scans the image and its config for
+// secrets, and a scanner failure fails the step.
+func TestWorkflowBuildPublish_ImageSecretScanFailureFailsTheStep(t *testing.T) {
+	bash, err := exec.LookPath("bash")
+	if err != nil {
+		t.Skip("bash is not on PATH")
+	}
+	script := stepRun(t, "secret-scan")
+	cases := []struct {
+		name   string
+		exit   string
+		wantOK bool
+	}{
+		{name: "clean", exit: "0", wantOK: true},
+		{name: "secret found", exit: "1"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			binDir := writeFakes(t, dir, map[string]string{"trivy": fakeSecretTrivyScript})
+			trivyLog := filepath.Join(dir, "trivy.log")
+			cmd := exec.Command(bash, "-c", script)
+			cmd.Env = append(os.Environ(),
+				"PATH="+binDir+string(os.PathListSeparator)+os.Getenv("PATH"),
+				"IMAGE=quicbaas-software-factory-worker",
+				"TAG=t1",
+				"FAKE_TRIVY_LOG="+trivyLog,
+				"FAKE_TRIVY_EXIT="+tc.exit,
+			)
+			combined, runErr := cmd.CombinedOutput()
+			if tc.wantOK && runErr != nil {
+				t.Fatalf("step failed: %v\n%s", runErr, combined)
+			}
+			if !tc.wantOK && runErr == nil {
+				t.Fatalf("step exited 0:\n%s", combined)
+			}
+			got, err := os.ReadFile(trivyLog)
+			if err != nil {
+				t.Fatalf("trivy was never called: %v\n%s", err, combined)
+			}
+			argv := strings.TrimRight(string(got), "\n")
+			for _, want := range []string{" image ", " --scanners secret ", " --image-config-scanners secret ", " --exit-code 1 "} {
+				if !strings.Contains(" "+argv+" ", want) {
+					t.Errorf("trivy argv %q lacks %q", argv, strings.TrimSpace(want))
+				}
+			}
+			if !strings.HasSuffix(argv, " quicbaas-software-factory-worker:t1") {
+				t.Errorf("trivy argv %q does not end with the image ref", argv)
+			}
+		})
 	}
 }
 
