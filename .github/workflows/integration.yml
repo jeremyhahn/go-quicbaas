@@ -94,7 +94,10 @@ jobs:
       # codex-review job image on two of the shared runners and failed 16 review runs
       # portfolio-wide (#3). Space beyond this job's own stack is host
       # maintenance, not this workflow's to reclaim.
+      # Hosted runners only: the pool guest (bigdisk-docker, ruling 442) is a
+      # throwaway VM with its own large disk and no passwordless sudo promise.
       - name: Free up disk space
+        if: runner.environment == 'github-hosted'
         run: |
           echo "=== Disk space before cleanup ==="
           df -h
