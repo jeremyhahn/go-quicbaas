@@ -32,3 +32,6 @@
   unavailable (HTTP 503, gRPC `Unavailable`) while the node is stopping,
   and as permission denied (HTTP 403) for a caller that is not bound to
   that tenant, not as an internal error (#2212).
+- Fleet node registration no longer reports an existing tenant as absent
+  when the caller acts inside that tenant: the tenant check reads the
+  catalog in the system namespace (#2212).
