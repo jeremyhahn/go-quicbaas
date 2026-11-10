@@ -368,16 +368,24 @@ jobs:
       # never the pull request's code. Every later step requires skip != true.
       # A failed or partial listing, an empty list, 3000 or more entries, or a
       # run that is not on GitHub leaves skip unset, so the review runs as usual.
+      # InfoSec Y-1: the skip applies only when the head repository is this
+      # repository; a fork's pull request is always reviewed.
       - name: Skip the review of a CI/SDLC-only change (owner ruling 443)
         id: scope
         env:
           GH_TOKEN: ${{ github.token }}
           SERVER_URL: ${{ github.server_url }}
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          BASE_REPO: ${{ github.repository }}
         run: |
           set -u
           # gh reaches only GitHub; never hand another forge's token to it.
           if [ "$SERVER_URL" != "https://github.com" ]; then
             echo "Not on GitHub: no file-list check; reviewing as usual."
+            exit 0
+          fi
+          if [ -z "$HEAD_REPO" ] || [ "$HEAD_REPO" != "$BASE_REPO" ]; then
+            echo "Head repository is not this repository: reviewing as usual."
             exit 0
           fi
           if ! files=$(gh api --paginate repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/files --jq '.[] | .filename, (.previous_filename // empty)'); then
@@ -1484,16 +1492,24 @@ jobs:
       # never the pull request's code. Every later step requires skip != true.
       # A failed or partial listing, an empty list, 3000 or more entries, or a
       # run that is not on GitHub leaves skip unset, so the review runs as usual.
+      # InfoSec Y-1: the skip applies only when the head repository is this
+      # repository; a fork's pull request is always reviewed.
       - name: Skip the review of a CI/SDLC-only change (owner ruling 443)
         id: scope
         env:
           GH_TOKEN: ${{ github.token }}
           SERVER_URL: ${{ github.server_url }}
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          BASE_REPO: ${{ github.repository }}
         run: |
           set -u
           # gh reaches only GitHub; never hand another forge's token to it.
           if [ "$SERVER_URL" != "https://github.com" ]; then
             echo "Not on GitHub: no file-list check; reviewing as usual."
+            exit 0
+          fi
+          if [ -z "$HEAD_REPO" ] || [ "$HEAD_REPO" != "$BASE_REPO" ]; then
+            echo "Head repository is not this repository: reviewing as usual."
             exit 0
           fi
           if ! files=$(gh api --paginate repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/files --jq '.[] | .filename, (.previous_filename // empty)'); then
