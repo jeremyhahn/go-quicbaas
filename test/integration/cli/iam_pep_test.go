@@ -168,7 +168,7 @@ func TestIAMPEPCheckWithContext(t *testing.T) {
 				"--subject", `{"id":"user1","roles":["admin"]}`,
 				"--action", "read",
 				"--resource", "keys/test-key",
-				"--context", `{"ip":"192.168.1.1","time":"2025-01-01T12:00:00Z"}`,
+				"--context", `{"ip":"192.0.2.1","time":"2025-01-01T12:00:00Z"}`,
 				"--output", "json",
 			},
 			ExpectSuccess:  true,
