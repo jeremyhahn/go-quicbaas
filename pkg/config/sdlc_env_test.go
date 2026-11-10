@@ -165,7 +165,7 @@ func TestValidateSDLC_RefusesANodeThatCannotSayWhereItLives(t *testing.T) {
 		"wrong scheme":   {"ftp://factory.example.com", true},
 		"bare hostname":  {"factory.example.com", true},
 		"https":          {"https://factory.example.com", false},
-		"http with port": {"http://192.168.1.10:8443", false},
+		"http with port": {"http://192.0.2.10:8443", false},
 
 		// AN ORIGIN, NOT MERELY A URL. The webhook route is appended to this
 		// value textually, so each of these parses, carries a scheme and a

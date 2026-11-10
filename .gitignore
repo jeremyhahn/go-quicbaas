@@ -42,6 +42,11 @@ SESSION_RESUME.md
 .claude/settings.local.json
 .claude/.fuse_hidden*
 .opencode/*.db*
+# Agent tool state: Serena project memories, Playwright CLI config, and
+# agent run records. None of it is source.
+.serena/
+.playwright/
+*.jsonl
 
 # Data directories
 /data/
@@ -119,6 +124,9 @@ LOCK
 /pkg/server/data/
 /pkg/server/vector/
 /pkg/server/timeseries/
+**/data/vector/
+# TPM key blobs written by tests that run with the default key directory.
+tpm2-keys/
 
 # Shared object binaries
 *.so.*
@@ -169,3 +177,7 @@ __pycache__/
 # binary was tracked at the repository root from 47f0b37b until go-quicbaas#943;
 # an unverifiable executable in a public repository is a supply-chain smell.
 /gen-certs
+
+# The release gate's private patterns (pkg/labstrings): the values this file
+# names are exactly what must never be published.
+.labstrings-patterns.json

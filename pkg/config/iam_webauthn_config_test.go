@@ -163,7 +163,7 @@ func TestIAMWebAuthnConfig_Validate_RPIDShape(t *testing.T) {
 		"localhost",
 		"app.example.co.uk",
 		"xn--80ak6aa92e.com",
-		"192.168.1.10",
+		"192.0.2.10",
 		"::1",
 	}
 	for _, rpID := range valid {

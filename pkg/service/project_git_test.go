@@ -330,7 +330,7 @@ func TestParseGitSSHEndpoint(t *testing.T) {
 		{"scp-like", "git@github.com:org/repo.git", "git", "github.com", 0, false},
 		{"scp-like no user", "github.com:org/repo.git", "", "github.com", 0, false},
 		{"ssh scheme", "ssh://git@git.example.com/org/repo.git", "git", "git.example.com", 0, false},
-		{"ssh scheme with port", "ssh://git@git.example.com:2222/org/repo.git", "git", "git.example.com", 2222, false},
+		{"ssh scheme with port", "ssh://git@git.example.com:2022/org/repo.git", "git", "git.example.com", 2022, false},
 		{"https rejected", "https://example.com/r.git", "", "", 0, true},
 		{"local path rejected", "/srv/git/repo.git", "", "", 0, true},
 		{"relative path rejected", "repo/path", "", "", 0, true},
@@ -523,13 +523,13 @@ func TestCommit_RecordsTheIdentityItWasGiven(t *testing.T) {
 	if _, err := p.Commit(context.Background(), &GitCommitRequest{
 		Dir:     dir,
 		Message: "attributed",
-		Author:  orchestration.GitAuthor{Name: "agent-go-quicbaas", Email: "agent@example.internal"},
+		Author:  orchestration.GitAuthor{Name: "agent-quicbaas", Email: "agent@example.com"},
 		Paths:   []string{"f.txt"},
 	}); err != nil {
 		t.Fatalf("Commit: %v", err)
 	}
 
-	if got := runTestGit(t, dir, "log", "-1", "--format=%an <%ae>"); got != "agent-go-quicbaas <agent@example.internal>" {
+	if got := runTestGit(t, dir, "log", "-1", "--format=%an <%ae>"); got != "agent-quicbaas <agent@example.com>" {
 		t.Errorf("author = %q, want the identity passed to Commit", got)
 	}
 	// The workspace's own config must be untouched, so concurrent workers in

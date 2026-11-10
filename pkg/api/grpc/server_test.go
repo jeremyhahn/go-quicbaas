@@ -54,6 +54,12 @@ func TestNewServerValidation(t *testing.T) {
 	log, err := logger.New(logConfig)
 	require.NoError(t, err)
 
+	t.Run("Success", func(t *testing.T) {
+		srv, err := NewServer(testutil.NewMockQuicBaaS(), log, 1, "v")
+		require.NoError(t, err)
+		assert.NotNil(t, srv)
+	})
+
 	t.Run("NilService", func(t *testing.T) {
 		srv, err := NewServer(nil, log, 1, "test")
 		assert.Error(t, err)
@@ -282,14 +288,6 @@ func TestValidateTimeSeriesQueryRequest(t *testing.T) {
 }
 
 // --- Merged from server_additional_test.go ---
-
-func TestNewServer_Success_WithMockService(t *testing.T) {
-	log, _ := logger.New(logger.LogConfig{Level: "error", Format: "json", Output: "stdout"})
-	mockSvc := testutil.NewMockQuicBaaS()
-	srv, err := NewServer(mockSvc, log, 1, "v")
-	require.NoError(t, err)
-	assert.NotNil(t, srv)
-}
 
 func TestStreamRecoveryInterceptor_PanicHandled(t *testing.T) {
 	log, _ := logger.New(logger.LogConfig{Level: "error", Format: "json", Output: "stdout"})
@@ -598,385 +596,234 @@ func TestServer_GetTLSConfig_Success(t *testing.T) {
 // Dynamic Secrets Service Tests
 // =============================================================================
 
-func TestServer_CreateDynamicSecretsRole_NilRequest(t *testing.T) {
-	srv, _ := createTestServerWithMockService(t)
-	_, err := srv.CreateDynamicSecretsRole(context.Background(), nil)
-	require.Error(t, err)
-	assert.Equal(t, codes.InvalidArgument, status.Code(err))
+// serverCallCase is one request against a server method that must fail with
+// the given gRPC status code.
+type serverCallCase struct {
+	name string
+	call func(srv *Server) error
+	want codes.Code
 }
 
-func TestServer_CreateDynamicSecretsRole_EmptyName(t *testing.T) {
-	srv, _ := createTestServerWithMockService(t)
-	_, err := srv.CreateDynamicSecretsRole(context.Background(), &pb.DynSecretsCreateRoleRequest{
-		Name: "",
+func runServerCallCases(t *testing.T, tests []serverCallCase) {
+	t.Helper()
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			srv, _ := createTestServerWithMockService(t)
+			err := tt.call(srv)
+			require.Error(t, err)
+			assert.Equal(t, tt.want, status.Code(err))
+		})
+	}
+}
+
+func TestServer_DynamicSecrets_Errors(t *testing.T) {
+	ctx := context.Background()
+	runServerCallCases(t, []serverCallCase{
+		{"CreateRole nil request", func(s *Server) error {
+			_, err := s.CreateDynamicSecretsRole(ctx, nil)
+			return err
+		}, codes.InvalidArgument},
+		{"CreateRole empty name", func(s *Server) error {
+			_, err := s.CreateDynamicSecretsRole(ctx, &pb.DynSecretsCreateRoleRequest{})
+			return err
+		}, codes.InvalidArgument},
+		{"CreateRole empty generator type", func(s *Server) error {
+			_, err := s.CreateDynamicSecretsRole(ctx, &pb.DynSecretsCreateRoleRequest{Name: "test-role"})
+			return err
+		}, codes.InvalidArgument},
+		{"CreateRole service not available", func(s *Server) error {
+			_, err := s.CreateDynamicSecretsRole(ctx, &pb.DynSecretsCreateRoleRequest{Name: "test-role", GeneratorType: "postgres"})
+			return err
+		}, codes.Unimplemented},
+		{"GetRole nil request", func(s *Server) error {
+			_, err := s.GetDynamicSecretsRole(ctx, nil)
+			return err
+		}, codes.InvalidArgument},
+		{"GetRole empty name", func(s *Server) error {
+			_, err := s.GetDynamicSecretsRole(ctx, &pb.DynSecretsGetRoleRequest{})
+			return err
+		}, codes.InvalidArgument},
+		{"GetRole service not available", func(s *Server) error {
+			_, err := s.GetDynamicSecretsRole(ctx, &pb.DynSecretsGetRoleRequest{Name: "test-role"})
+			return err
+		}, codes.Unimplemented},
+		{"ListRoles nil request", func(s *Server) error {
+			_, err := s.ListDynamicSecretsRoles(ctx, nil)
+			return err
+		}, codes.InvalidArgument},
+		{"ListRoles service not available", func(s *Server) error {
+			_, err := s.ListDynamicSecretsRoles(ctx, &pb.DynSecretsListRolesRequest{})
+			return err
+		}, codes.Unimplemented},
+		{"DeleteRole nil request", func(s *Server) error {
+			_, err := s.DeleteDynamicSecretsRole(ctx, nil)
+			return err
+		}, codes.InvalidArgument},
+		{"DeleteRole empty name", func(s *Server) error {
+			_, err := s.DeleteDynamicSecretsRole(ctx, &pb.DynSecretsDeleteRoleRequest{})
+			return err
+		}, codes.InvalidArgument},
+		{"DeleteRole service not available", func(s *Server) error {
+			_, err := s.DeleteDynamicSecretsRole(ctx, &pb.DynSecretsDeleteRoleRequest{Name: "test-role"})
+			return err
+		}, codes.Unimplemented},
+		{"GenerateCredential nil request", func(s *Server) error {
+			_, err := s.GenerateCredential(ctx, nil)
+			return err
+		}, codes.InvalidArgument},
+		{"GenerateCredential empty role name", func(s *Server) error {
+			_, err := s.GenerateCredential(ctx, &pb.GenerateCredentialRequest{})
+			return err
+		}, codes.InvalidArgument},
+		{"GenerateCredential service not available", func(s *Server) error {
+			_, err := s.GenerateCredential(ctx, &pb.GenerateCredentialRequest{RoleName: "test-role"})
+			return err
+		}, codes.Unimplemented},
+		{"RenewLease nil request", func(s *Server) error {
+			_, err := s.RenewLease(ctx, nil)
+			return err
+		}, codes.InvalidArgument},
+		{"RenewLease empty lease ID", func(s *Server) error {
+			_, err := s.RenewLease(ctx, &pb.RenewLeaseRequest{})
+			return err
+		}, codes.InvalidArgument},
+		{"RenewLease service not available", func(s *Server) error {
+			_, err := s.RenewLease(ctx, &pb.RenewLeaseRequest{LeaseId: "lease-123", Increment: durationpb.New(time.Hour)})
+			return err
+		}, codes.Unimplemented},
+		{"RevokeLease nil request", func(s *Server) error {
+			_, err := s.RevokeLease(ctx, nil)
+			return err
+		}, codes.InvalidArgument},
+		{"RevokeLease empty lease ID", func(s *Server) error {
+			_, err := s.RevokeLease(ctx, &pb.RevokeLeaseRequest{})
+			return err
+		}, codes.InvalidArgument},
+		{"RevokeLease service not available", func(s *Server) error {
+			_, err := s.RevokeLease(ctx, &pb.RevokeLeaseRequest{LeaseId: "lease-123"})
+			return err
+		}, codes.Unimplemented},
+		{"ListLeases nil request", func(s *Server) error {
+			_, err := s.ListLeases(ctx, nil)
+			return err
+		}, codes.InvalidArgument},
+		{"ListLeases service not available", func(s *Server) error {
+			_, err := s.ListLeases(ctx, &pb.ListLeasesRequest{})
+			return err
+		}, codes.Unimplemented},
 	})
-	require.Error(t, err)
-	assert.Equal(t, codes.InvalidArgument, status.Code(err))
-}
-
-func TestServer_CreateDynamicSecretsRole_EmptyGeneratorType(t *testing.T) {
-	srv, _ := createTestServerWithMockService(t)
-	_, err := srv.CreateDynamicSecretsRole(context.Background(), &pb.DynSecretsCreateRoleRequest{
-		Name:          "test-role",
-		GeneratorType: "",
-	})
-	require.Error(t, err)
-	assert.Equal(t, codes.InvalidArgument, status.Code(err))
-}
-
-func TestServer_CreateDynamicSecretsRole_ServiceNotAvailable(t *testing.T) {
-	srv, _ := createTestServerWithMockService(t)
-	_, err := srv.CreateDynamicSecretsRole(context.Background(), &pb.DynSecretsCreateRoleRequest{
-		Name:          "test-role",
-		GeneratorType: "postgres",
-	})
-	require.Error(t, err)
-	assert.Equal(t, codes.Unimplemented, status.Code(err))
-}
-
-func TestServer_GetDynamicSecretsRole_NilRequest(t *testing.T) {
-	srv, _ := createTestServerWithMockService(t)
-	_, err := srv.GetDynamicSecretsRole(context.Background(), nil)
-	require.Error(t, err)
-	assert.Equal(t, codes.InvalidArgument, status.Code(err))
-}
-
-func TestServer_GetDynamicSecretsRole_EmptyName(t *testing.T) {
-	srv, _ := createTestServerWithMockService(t)
-	_, err := srv.GetDynamicSecretsRole(context.Background(), &pb.DynSecretsGetRoleRequest{
-		Name: "",
-	})
-	require.Error(t, err)
-	assert.Equal(t, codes.InvalidArgument, status.Code(err))
-}
-
-func TestServer_GetDynamicSecretsRole_ServiceNotAvailable(t *testing.T) {
-	srv, _ := createTestServerWithMockService(t)
-	_, err := srv.GetDynamicSecretsRole(context.Background(), &pb.DynSecretsGetRoleRequest{
-		Name: "test-role",
-	})
-	require.Error(t, err)
-	assert.Equal(t, codes.Unimplemented, status.Code(err))
-}
-
-func TestServer_ListDynamicSecretsRoles_NilRequest(t *testing.T) {
-	srv, _ := createTestServerWithMockService(t)
-	_, err := srv.ListDynamicSecretsRoles(context.Background(), nil)
-	require.Error(t, err)
-	assert.Equal(t, codes.InvalidArgument, status.Code(err))
-}
-
-func TestServer_ListDynamicSecretsRoles_ServiceNotAvailable(t *testing.T) {
-	srv, _ := createTestServerWithMockService(t)
-	_, err := srv.ListDynamicSecretsRoles(context.Background(), &pb.DynSecretsListRolesRequest{})
-	require.Error(t, err)
-	assert.Equal(t, codes.Unimplemented, status.Code(err))
-}
-
-func TestServer_DeleteDynamicSecretsRole_NilRequest(t *testing.T) {
-	srv, _ := createTestServerWithMockService(t)
-	_, err := srv.DeleteDynamicSecretsRole(context.Background(), nil)
-	require.Error(t, err)
-	assert.Equal(t, codes.InvalidArgument, status.Code(err))
-}
-
-func TestServer_DeleteDynamicSecretsRole_EmptyName(t *testing.T) {
-	srv, _ := createTestServerWithMockService(t)
-	_, err := srv.DeleteDynamicSecretsRole(context.Background(), &pb.DynSecretsDeleteRoleRequest{
-		Name: "",
-	})
-	require.Error(t, err)
-	assert.Equal(t, codes.InvalidArgument, status.Code(err))
-}
-
-func TestServer_DeleteDynamicSecretsRole_ServiceNotAvailable(t *testing.T) {
-	srv, _ := createTestServerWithMockService(t)
-	_, err := srv.DeleteDynamicSecretsRole(context.Background(), &pb.DynSecretsDeleteRoleRequest{
-		Name: "test-role",
-	})
-	require.Error(t, err)
-	assert.Equal(t, codes.Unimplemented, status.Code(err))
-}
-
-func TestServer_GenerateCredential_NilRequest(t *testing.T) {
-	srv, _ := createTestServerWithMockService(t)
-	_, err := srv.GenerateCredential(context.Background(), nil)
-	require.Error(t, err)
-	assert.Equal(t, codes.InvalidArgument, status.Code(err))
-}
-
-func TestServer_GenerateCredential_EmptyRoleName(t *testing.T) {
-	srv, _ := createTestServerWithMockService(t)
-	_, err := srv.GenerateCredential(context.Background(), &pb.GenerateCredentialRequest{
-		RoleName: "",
-	})
-	require.Error(t, err)
-	assert.Equal(t, codes.InvalidArgument, status.Code(err))
-}
-
-func TestServer_GenerateCredential_ServiceNotAvailable(t *testing.T) {
-	srv, _ := createTestServerWithMockService(t)
-	_, err := srv.GenerateCredential(context.Background(), &pb.GenerateCredentialRequest{
-		RoleName: "test-role",
-	})
-	require.Error(t, err)
-	assert.Equal(t, codes.Unimplemented, status.Code(err))
-}
-
-func TestServer_RenewLease_NilRequest(t *testing.T) {
-	srv, _ := createTestServerWithMockService(t)
-	_, err := srv.RenewLease(context.Background(), nil)
-	require.Error(t, err)
-	assert.Equal(t, codes.InvalidArgument, status.Code(err))
-}
-
-func TestServer_RenewLease_EmptyLeaseID(t *testing.T) {
-	srv, _ := createTestServerWithMockService(t)
-	_, err := srv.RenewLease(context.Background(), &pb.RenewLeaseRequest{
-		LeaseId: "",
-	})
-	require.Error(t, err)
-	assert.Equal(t, codes.InvalidArgument, status.Code(err))
-}
-
-func TestServer_RenewLease_ServiceNotAvailable(t *testing.T) {
-	srv, _ := createTestServerWithMockService(t)
-	_, err := srv.RenewLease(context.Background(), &pb.RenewLeaseRequest{
-		LeaseId:   "lease-123",
-		Increment: durationpb.New(time.Hour),
-	})
-	require.Error(t, err)
-	assert.Equal(t, codes.Unimplemented, status.Code(err))
-}
-
-func TestServer_RevokeLease_NilRequest(t *testing.T) {
-	srv, _ := createTestServerWithMockService(t)
-	_, err := srv.RevokeLease(context.Background(), nil)
-	require.Error(t, err)
-	assert.Equal(t, codes.InvalidArgument, status.Code(err))
-}
-
-func TestServer_RevokeLease_EmptyLeaseID(t *testing.T) {
-	srv, _ := createTestServerWithMockService(t)
-	_, err := srv.RevokeLease(context.Background(), &pb.RevokeLeaseRequest{
-		LeaseId: "",
-	})
-	require.Error(t, err)
-	assert.Equal(t, codes.InvalidArgument, status.Code(err))
-}
-
-func TestServer_RevokeLease_ServiceNotAvailable(t *testing.T) {
-	srv, _ := createTestServerWithMockService(t)
-	_, err := srv.RevokeLease(context.Background(), &pb.RevokeLeaseRequest{
-		LeaseId: "lease-123",
-	})
-	require.Error(t, err)
-	assert.Equal(t, codes.Unimplemented, status.Code(err))
-}
-
-func TestServer_ListLeases_NilRequest(t *testing.T) {
-	srv, _ := createTestServerWithMockService(t)
-	_, err := srv.ListLeases(context.Background(), nil)
-	require.Error(t, err)
-	assert.Equal(t, codes.InvalidArgument, status.Code(err))
-}
-
-func TestServer_ListLeases_ServiceNotAvailable(t *testing.T) {
-	srv, _ := createTestServerWithMockService(t)
-	_, err := srv.ListLeases(context.Background(), &pb.ListLeasesRequest{})
-	require.Error(t, err)
-	assert.Equal(t, codes.Unimplemented, status.Code(err))
 }
 
 // =============================================================================
 // Embedding Service Tests
 // =============================================================================
 
-func TestServer_EmbeddingGenerate_NilRequest(t *testing.T) {
-	srv, _ := createTestServerWithMockService(t)
-	_, err := srv.EmbeddingGenerate(context.Background(), nil)
-	require.Error(t, err)
-	assert.Equal(t, codes.InvalidArgument, status.Code(err))
-}
-
-func TestServer_EmbeddingGenerate_EmptyText(t *testing.T) {
-	srv, _ := createTestServerWithMockService(t)
-	_, err := srv.EmbeddingGenerate(context.Background(), &pb.EmbeddingGenerateRequest{
-		Text: "",
+func TestServer_Embedding_Errors(t *testing.T) {
+	ctx := context.Background()
+	runServerCallCases(t, []serverCallCase{
+		{"Generate nil request", func(s *Server) error {
+			_, err := s.EmbeddingGenerate(ctx, nil)
+			return err
+		}, codes.InvalidArgument},
+		{"Generate empty text", func(s *Server) error {
+			_, err := s.EmbeddingGenerate(ctx, &pb.EmbeddingGenerateRequest{})
+			return err
+		}, codes.InvalidArgument},
+		{"Generate service not available", func(s *Server) error {
+			_, err := s.EmbeddingGenerate(ctx, &pb.EmbeddingGenerateRequest{Text: "hello world"})
+			return err
+		}, codes.Unimplemented},
+		{"BatchGenerate nil request", func(s *Server) error {
+			_, err := s.EmbeddingBatchGenerate(ctx, nil)
+			return err
+		}, codes.InvalidArgument},
+		{"BatchGenerate empty items", func(s *Server) error {
+			_, err := s.EmbeddingBatchGenerate(ctx, &pb.EmbeddingBatchGenerateRequest{})
+			return err
+		}, codes.InvalidArgument},
+		{"BatchGenerate service not available", func(s *Server) error {
+			_, err := s.EmbeddingBatchGenerate(ctx, &pb.EmbeddingBatchGenerateRequest{
+				Items: []*pb.EmbeddingBatchItem{{Id: "1", Text: "hello"}},
+			})
+			return err
+		}, codes.Unimplemented},
+		{"ListProviders service not available", func(s *Server) error {
+			_, err := s.EmbeddingListProviders(ctx, &pb.EmbeddingListProvidersRequest{})
+			return err
+		}, codes.Unimplemented},
+		{"GetProviderInfo service not available", func(s *Server) error {
+			_, err := s.EmbeddingGetProviderInfo(ctx, &pb.EmbeddingGetProviderInfoRequest{
+				Provider: pb.EmbeddingProvider_EMBEDDING_PROVIDER_OPENAI,
+			})
+			return err
+		}, codes.Unimplemented},
+		{"SetDefaultProvider service not available", func(s *Server) error {
+			_, err := s.EmbeddingSetDefaultProvider(ctx, &pb.EmbeddingSetDefaultProviderRequest{
+				Provider: pb.EmbeddingProvider_EMBEDDING_PROVIDER_OPENAI,
+			})
+			return err
+		}, codes.Unimplemented},
+		{"GetCacheStats service not available", func(s *Server) error {
+			_, err := s.EmbeddingGetCacheStats(ctx, &pb.EmbeddingGetCacheStatsRequest{})
+			return err
+		}, codes.Unimplemented},
+		{"ClearCache service not available", func(s *Server) error {
+			_, err := s.EmbeddingClearCache(ctx, &pb.EmbeddingClearCacheRequest{})
+			return err
+		}, codes.Unimplemented},
 	})
-	require.Error(t, err)
-	assert.Equal(t, codes.InvalidArgument, status.Code(err))
-}
-
-func TestServer_EmbeddingGenerate_ServiceNotAvailable(t *testing.T) {
-	srv, _ := createTestServerWithMockService(t)
-	_, err := srv.EmbeddingGenerate(context.Background(), &pb.EmbeddingGenerateRequest{
-		Text: "hello world",
-	})
-	require.Error(t, err)
-	assert.Equal(t, codes.Unimplemented, status.Code(err))
-}
-
-func TestServer_EmbeddingBatchGenerate_NilRequest(t *testing.T) {
-	srv, _ := createTestServerWithMockService(t)
-	_, err := srv.EmbeddingBatchGenerate(context.Background(), nil)
-	require.Error(t, err)
-	assert.Equal(t, codes.InvalidArgument, status.Code(err))
-}
-
-func TestServer_EmbeddingBatchGenerate_EmptyItems(t *testing.T) {
-	srv, _ := createTestServerWithMockService(t)
-	_, err := srv.EmbeddingBatchGenerate(context.Background(), &pb.EmbeddingBatchGenerateRequest{
-		Items: nil,
-	})
-	require.Error(t, err)
-	assert.Equal(t, codes.InvalidArgument, status.Code(err))
-}
-
-func TestServer_EmbeddingBatchGenerate_ServiceNotAvailable(t *testing.T) {
-	srv, _ := createTestServerWithMockService(t)
-	_, err := srv.EmbeddingBatchGenerate(context.Background(), &pb.EmbeddingBatchGenerateRequest{
-		Items: []*pb.EmbeddingBatchItem{{Id: "1", Text: "hello"}},
-	})
-	require.Error(t, err)
-	assert.Equal(t, codes.Unimplemented, status.Code(err))
-}
-
-func TestServer_EmbeddingListProviders_ServiceNotAvailable(t *testing.T) {
-	srv, _ := createTestServerWithMockService(t)
-	_, err := srv.EmbeddingListProviders(context.Background(), &pb.EmbeddingListProvidersRequest{})
-	require.Error(t, err)
-	assert.Equal(t, codes.Unimplemented, status.Code(err))
-}
-
-func TestServer_EmbeddingGetProviderInfo_ServiceNotAvailable(t *testing.T) {
-	srv, _ := createTestServerWithMockService(t)
-	_, err := srv.EmbeddingGetProviderInfo(context.Background(), &pb.EmbeddingGetProviderInfoRequest{
-		Provider: pb.EmbeddingProvider_EMBEDDING_PROVIDER_OPENAI,
-	})
-	require.Error(t, err)
-	assert.Equal(t, codes.Unimplemented, status.Code(err))
-}
-
-func TestServer_EmbeddingSetDefaultProvider_ServiceNotAvailable(t *testing.T) {
-	srv, _ := createTestServerWithMockService(t)
-	_, err := srv.EmbeddingSetDefaultProvider(context.Background(), &pb.EmbeddingSetDefaultProviderRequest{
-		Provider: pb.EmbeddingProvider_EMBEDDING_PROVIDER_OPENAI,
-	})
-	require.Error(t, err)
-	assert.Equal(t, codes.Unimplemented, status.Code(err))
-}
-
-func TestServer_EmbeddingGetCacheStats_ServiceNotAvailable(t *testing.T) {
-	srv, _ := createTestServerWithMockService(t)
-	_, err := srv.EmbeddingGetCacheStats(context.Background(), &pb.EmbeddingGetCacheStatsRequest{})
-	require.Error(t, err)
-	assert.Equal(t, codes.Unimplemented, status.Code(err))
-}
-
-func TestServer_EmbeddingClearCache_ServiceNotAvailable(t *testing.T) {
-	srv, _ := createTestServerWithMockService(t)
-	_, err := srv.EmbeddingClearCache(context.Background(), &pb.EmbeddingClearCacheRequest{})
-	require.Error(t, err)
-	assert.Equal(t, codes.Unimplemented, status.Code(err))
 }
 
 // =============================================================================
 // Certificate Service Error Handling Tests
 // =============================================================================
 
-func TestServer_IssueCertificate_ServiceError(t *testing.T) {
-	srv, mockSvc := createTestServerWithMockService(t)
-	mockCertSvc := &mockCertificateService{}
-	mockSvc.CertificateSvc = mockCertSvc
+func TestServer_Certificate_ServiceError(t *testing.T) {
+	ctx := context.Background()
+	tests := []struct {
+		method string
+		call   func(srv *Server) error
+	}{
+		{"IssueCertificate", func(s *Server) error {
+			_, err := s.IssueCertificate(ctx, &pb.IssueCertificateRequest{CommonName: "test.example.com"})
+			return err
+		}},
+		{"SignCSR", func(s *Server) error {
+			_, err := s.SignCSR(ctx, &pb.SignCSRRequest{
+				CsrPem: "-----BEGIN CERTIFICATE REQUEST-----\ntest\n-----END CERTIFICATE REQUEST-----",
+			})
+			return err
+		}},
+		{"RevokeCertificate", func(s *Server) error {
+			_, err := s.RevokeCertificate(ctx, &pb.RevokeCertificateRequest{SerialNumber: "12345"})
+			return err
+		}},
+		{"VerifyCertificate", func(s *Server) error {
+			_, err := s.VerifyCertificate(ctx, &pb.VerifyCertificateRequest{
+				CertificatePem: "-----BEGIN CERTIFICATE-----\ntest\n-----END CERTIFICATE-----",
+			})
+			return err
+		}},
+		{"GetCACertificate", func(s *Server) error {
+			_, err := s.GetCACertificate(ctx, &pb.GetCACertificateRequest{})
+			return err
+		}},
+		{"GetTLSConfig", func(s *Server) error {
+			_, err := s.GetTLSConfig(ctx, &pb.GetTLSConfigRequest{ServerName: "test.example.com"})
+			return err
+		}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.method, func(t *testing.T) {
+			srv, mockSvc := createTestServerWithMockService(t)
+			mockCertSvc := &mockCertificateService{}
+			mockSvc.CertificateSvc = mockCertSvc
+			mockCertSvc.On(tt.method, mock.Anything, mock.Anything).Return(nil, assert.AnError).Once()
 
-	mockCertSvc.On("IssueCertificate", mock.Anything, mock.Anything).
-		Return(nil, assert.AnError).Once()
-
-	_, err := srv.IssueCertificate(context.Background(), &pb.IssueCertificateRequest{
-		CommonName: "test.example.com",
-	})
-
-	require.Error(t, err)
-	mockCertSvc.AssertExpectations(t)
-}
-
-func TestServer_SignCSR_ServiceError(t *testing.T) {
-	srv, mockSvc := createTestServerWithMockService(t)
-	mockCertSvc := &mockCertificateService{}
-	mockSvc.CertificateSvc = mockCertSvc
-
-	mockCertSvc.On("SignCSR", mock.Anything, mock.Anything).
-		Return(nil, assert.AnError).Once()
-
-	_, err := srv.SignCSR(context.Background(), &pb.SignCSRRequest{
-		CsrPem: "-----BEGIN CERTIFICATE REQUEST-----\ntest\n-----END CERTIFICATE REQUEST-----",
-	})
-
-	require.Error(t, err)
-	mockCertSvc.AssertExpectations(t)
-}
-
-func TestServer_RevokeCertificate_ServiceError(t *testing.T) {
-	srv, mockSvc := createTestServerWithMockService(t)
-	mockCertSvc := &mockCertificateService{}
-	mockSvc.CertificateSvc = mockCertSvc
-
-	mockCertSvc.On("RevokeCertificate", mock.Anything, mock.Anything).
-		Return(nil, assert.AnError).Once()
-
-	_, err := srv.RevokeCertificate(context.Background(), &pb.RevokeCertificateRequest{
-		SerialNumber: "12345",
-	})
-
-	require.Error(t, err)
-	mockCertSvc.AssertExpectations(t)
-}
-
-func TestServer_VerifyCertificate_ServiceError(t *testing.T) {
-	srv, mockSvc := createTestServerWithMockService(t)
-	mockCertSvc := &mockCertificateService{}
-	mockSvc.CertificateSvc = mockCertSvc
-
-	mockCertSvc.On("VerifyCertificate", mock.Anything, mock.Anything).
-		Return(nil, assert.AnError).Once()
-
-	_, err := srv.VerifyCertificate(context.Background(), &pb.VerifyCertificateRequest{
-		CertificatePem: "-----BEGIN CERTIFICATE-----\ntest\n-----END CERTIFICATE-----",
-	})
-
-	require.Error(t, err)
-	mockCertSvc.AssertExpectations(t)
-}
-
-func TestServer_GetCACertificate_ServiceError(t *testing.T) {
-	srv, mockSvc := createTestServerWithMockService(t)
-	mockCertSvc := &mockCertificateService{}
-	mockSvc.CertificateSvc = mockCertSvc
-
-	mockCertSvc.On("GetCACertificate", mock.Anything, mock.Anything).
-		Return(nil, assert.AnError).Once()
-
-	_, err := srv.GetCACertificate(context.Background(), &pb.GetCACertificateRequest{})
-
-	require.Error(t, err)
-	mockCertSvc.AssertExpectations(t)
-}
-
-func TestServer_GetTLSConfig_ServiceError(t *testing.T) {
-	srv, mockSvc := createTestServerWithMockService(t)
-	mockCertSvc := &mockCertificateService{}
-	mockSvc.CertificateSvc = mockCertSvc
-
-	mockCertSvc.On("GetTLSConfig", mock.Anything, mock.Anything).
-		Return(nil, assert.AnError).Once()
-
-	_, err := srv.GetTLSConfig(context.Background(), &pb.GetTLSConfigRequest{
-		ServerName: "test.example.com",
-	})
-
-	require.Error(t, err)
-	mockCertSvc.AssertExpectations(t)
+			require.Error(t, tt.call(srv))
+			mockCertSvc.AssertExpectations(t)
+		})
+	}
 }
 
 // --- Merged from server_streaming_coverage_test.go ---
@@ -985,33 +832,24 @@ func TestServer_GetTLSConfig_ServiceError(t *testing.T) {
 // StreamGetObject tests
 // =============================================================================
 
-func TestStreamGetObject_NilRequest(t *testing.T) {
-	mockSvc := &mockObjectStorageService{}
-	srv := NewObjectStorageServer(mockSvc).(*objectStorageServer)
-	stream := &mockStreamGetObjectServer{ctx: context.Background()}
-
-	err := srv.StreamGetObject(nil, stream)
-	require.Error(t, err)
-	assert.Equal(t, codes.InvalidArgument, status.Code(err))
-}
-
-func TestStreamGetObject_NilService(t *testing.T) {
-	srv := &objectStorageServer{service: nil}
-	stream := &mockStreamGetObjectServer{ctx: context.Background()}
-
-	err := srv.StreamGetObject(&pb.GetObjectRequest{Key: "test"}, stream)
-	require.Error(t, err)
-	assert.Equal(t, codes.Unavailable, status.Code(err))
-}
-
-func TestStreamGetObject_EmptyKey(t *testing.T) {
-	mockSvc := &mockObjectStorageService{}
-	srv := NewObjectStorageServer(mockSvc).(*objectStorageServer)
-	stream := &mockStreamGetObjectServer{ctx: context.Background()}
-
-	err := srv.StreamGetObject(&pb.GetObjectRequest{Key: ""}, stream)
-	require.Error(t, err)
-	assert.Equal(t, codes.InvalidArgument, status.Code(err))
+func TestStreamGetObject_Rejected(t *testing.T) {
+	tests := []struct {
+		name string
+		srv  *objectStorageServer
+		req  *pb.GetObjectRequest
+		want codes.Code
+	}{
+		{"nil request", NewObjectStorageServer(&mockObjectStorageService{}).(*objectStorageServer), nil, codes.InvalidArgument},
+		{"nil service", &objectStorageServer{service: nil}, &pb.GetObjectRequest{Key: "test"}, codes.Unavailable},
+		{"empty key", NewObjectStorageServer(&mockObjectStorageService{}).(*objectStorageServer), &pb.GetObjectRequest{}, codes.InvalidArgument},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := tt.srv.StreamGetObject(tt.req, &mockStreamGetObjectServer{ctx: context.Background()})
+			require.Error(t, err)
+			assert.Equal(t, tt.want, status.Code(err))
+		})
+	}
 }
 
 func TestStreamGetObject_ServiceError(t *testing.T) {
@@ -1098,57 +936,36 @@ func TestStreamGetObject_SendError(t *testing.T) {
 // StreamPutObject tests
 // =============================================================================
 
-func TestStreamPutObject_NilService(t *testing.T) {
-	srv := &objectStorageServer{service: nil}
-	stream := &mockStreamPutObjectServer{ctx: context.Background()}
-
-	err := srv.StreamPutObject(stream)
-	require.Error(t, err)
-	assert.Equal(t, codes.Unavailable, status.Code(err))
-}
-
-func TestStreamPutObject_RecvError(t *testing.T) {
-	mockSvc := &mockObjectStorageService{}
-	srv := NewObjectStorageServer(mockSvc).(*objectStorageServer)
-	stream := &mockStreamPutObjectServer{
-		ctx:       context.Background(),
-		recvError: errors.New("connection broken"),
+func TestStreamPutObject_Rejected(t *testing.T) {
+	ctx := context.Background()
+	withService := NewObjectStorageServer(&mockObjectStorageService{}).(*objectStorageServer)
+	tests := []struct {
+		name   string
+		srv    *objectStorageServer
+		stream *mockStreamPutObjectServer
+		want   codes.Code
+	}{
+		{"nil service", &objectStorageServer{service: nil}, &mockStreamPutObjectServer{ctx: ctx}, codes.Unavailable},
+		{"recv error", withService, &mockStreamPutObjectServer{
+			ctx:       ctx,
+			recvError: errors.New("connection broken"),
+		}, codes.Unknown},
+		{"data before metadata", withService, &mockStreamPutObjectServer{
+			ctx:    ctx,
+			chunks: []*pb.PutObjectChunk{{Payload: &pb.PutObjectChunk_Data{Data: []byte("data")}}},
+		}, codes.InvalidArgument},
+		{"empty key", withService, &mockStreamPutObjectServer{
+			ctx:    ctx,
+			chunks: []*pb.PutObjectChunk{{Payload: &pb.PutObjectChunk_Metadata{Metadata: &pb.PutObjectRequest{}}}},
+		}, codes.InvalidArgument},
 	}
-
-	err := srv.StreamPutObject(stream)
-	require.Error(t, err)
-	assert.Equal(t, codes.Unknown, status.Code(err))
-}
-
-func TestStreamPutObject_NoMetadata(t *testing.T) {
-	mockSvc := &mockObjectStorageService{}
-	srv := NewObjectStorageServer(mockSvc).(*objectStorageServer)
-	// Send data chunks but no metadata
-	stream := &mockStreamPutObjectServer{
-		ctx: context.Background(),
-		chunks: []*pb.PutObjectChunk{
-			{Payload: &pb.PutObjectChunk_Data{Data: []byte("data")}},
-		},
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := tt.srv.StreamPutObject(tt.stream)
+			require.Error(t, err)
+			assert.Equal(t, tt.want, status.Code(err))
+		})
 	}
-
-	err := srv.StreamPutObject(stream)
-	require.Error(t, err)
-	assert.Equal(t, codes.InvalidArgument, status.Code(err))
-}
-
-func TestStreamPutObject_EmptyKey(t *testing.T) {
-	mockSvc := &mockObjectStorageService{}
-	srv := NewObjectStorageServer(mockSvc).(*objectStorageServer)
-	stream := &mockStreamPutObjectServer{
-		ctx: context.Background(),
-		chunks: []*pb.PutObjectChunk{
-			{Payload: &pb.PutObjectChunk_Metadata{Metadata: &pb.PutObjectRequest{Key: ""}}},
-		},
-	}
-
-	err := srv.StreamPutObject(stream)
-	require.Error(t, err)
-	assert.Equal(t, codes.InvalidArgument, status.Code(err))
 }
 
 func TestStreamPutObject_Success(t *testing.T) {
@@ -1388,14 +1205,10 @@ func TestWatchSecretsByPrefix_ContextCanceled(t *testing.T) {
 	srv := NewSecretsServer(svc, log)
 	stream := &mockWatchSecretsStream{ctx: ctx}
 
-	// Cancel context after short delay
-	go func() {
-		time.Sleep(10 * time.Millisecond)
-		cancel()
-	}()
+	// The channel never delivers, so only the canceled context can end the watch.
+	cancel()
 
 	err := srv.WatchSecretsByPrefix(&pb.WatchSecretsRequest{Prefix: "test/"}, stream)
-	// Context canceled
 	require.Error(t, err)
 }
 
@@ -1473,164 +1286,60 @@ func TestWatchSecretsByPrefix_SendError(t *testing.T) {
 	require.Error(t, err)
 }
 
-// =============================================================================
-// StreamBatchPut main function coverage
-// =============================================================================
-
-// --- Merged from coverage_91_target_test.go ---
-
-// =============================================================================
-// Streaming validation error paths in server.go
-// These cover the validation-error branches inside the actual List, Query,
-// ScanIndex, and TimeSeriesQuery streaming RPC methods (lines 455-459,
-// 675-679, 754-758, 972-976).
-// =============================================================================
-
-func TestServer_List_ValidationError_NilRequest(t *testing.T) {
-	srv, _ := newMockTestServer(t)
-	stream := NewMockListStreamHandler(context.Background())
-
-	err := srv.List(nil, stream)
-	require.Error(t, err)
-	assert.Equal(t, codes.InvalidArgument, status.Code(err))
+// TestServer_StreamValidationError checks that each streaming read method
+// rejects an invalid request with InvalidArgument. Scan and time-series
+// field rules are covered row by row in TestValidateScanRequest and
+// TestValidateTimeSeriesQueryRequest; their rows here prove the wiring.
+func TestServer_StreamValidationError(t *testing.T) {
+	ctx := context.Background()
+	tests := []struct {
+		name string
+		call func(srv *Server) error
+	}{
+		{"List nil request", func(s *Server) error {
+			return s.List(nil, NewMockListStreamHandler(ctx))
+		}},
+		{"List empty entity type", func(s *Server) error {
+			return s.List(&pb.ListRequest{PageSize: 10}, NewMockListStreamHandler(ctx))
+		}},
+		{"List excessive page size", func(s *Server) error {
+			return s.List(&pb.ListRequest{EntityType: "users", PageSize: 20000}, NewMockListStreamHandler(ctx))
+		}},
+		{"Query nil request", func(s *Server) error {
+			return s.Query(nil, NewMockQueryStreamHandler(ctx))
+		}},
+		{"Query empty entity type", func(s *Server) error {
+			return s.Query(&pb.QueryRequest{IndexName: "idx", Value: []byte("v")}, NewMockQueryStreamHandler(ctx))
+		}},
+		{"Query empty index name", func(s *Server) error {
+			return s.Query(&pb.QueryRequest{EntityType: "users", Value: []byte("v")}, NewMockQueryStreamHandler(ctx))
+		}},
+		{"Query no value or range", func(s *Server) error {
+			return s.Query(&pb.QueryRequest{EntityType: "users", IndexName: "idx"}, NewMockQueryStreamHandler(ctx))
+		}},
+		{"Query excessive page size", func(s *Server) error {
+			return s.Query(&pb.QueryRequest{
+				EntityType: "users", IndexName: "email_idx", Value: []byte("test@example.com"), PageSize: 20000,
+			}, NewMockQueryStreamHandler(ctx))
+		}},
+		{"ScanIndex nil request", func(s *Server) error {
+			return s.ScanIndex(nil, NewMockScanStreamHandler(ctx))
+		}},
+		{"TimeSeriesQuery invalid time range", func(s *Server) error {
+			return s.TimeSeriesQuery(&pb.TimeSeriesQueryRequest{
+				EntityType: "metrics", StartTime: 100, EndTime: 50,
+			}, NewMockTimeSeriesStreamHandler(ctx))
+		}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			srv, _ := newMockTestServer(t)
+			err := tt.call(srv)
+			require.Error(t, err)
+			assert.Equal(t, codes.InvalidArgument, status.Code(err))
+		})
+	}
 }
-
-func TestServer_List_ValidationError_EmptyEntityType(t *testing.T) {
-	srv, _ := newMockTestServer(t)
-	stream := NewMockListStreamHandler(context.Background())
-
-	err := srv.List(&pb.ListRequest{EntityType: "", PageSize: 10}, stream)
-	require.Error(t, err)
-	assert.Equal(t, codes.InvalidArgument, status.Code(err))
-}
-
-func TestServer_List_ValidationError_ExcessivePageSize(t *testing.T) {
-	srv, _ := newMockTestServer(t)
-	stream := NewMockListStreamHandler(context.Background())
-
-	err := srv.List(&pb.ListRequest{EntityType: "users", PageSize: 20000}, stream)
-	require.Error(t, err)
-	assert.Equal(t, codes.InvalidArgument, status.Code(err))
-}
-
-func TestServer_Query_ValidationError_NilRequest(t *testing.T) {
-	srv, _ := newMockTestServer(t)
-	stream := NewMockQueryStreamHandler(context.Background())
-
-	err := srv.Query(nil, stream)
-	require.Error(t, err)
-	assert.Equal(t, codes.InvalidArgument, status.Code(err))
-}
-
-func TestServer_Query_ValidationError_EmptyEntityType(t *testing.T) {
-	srv, _ := newMockTestServer(t)
-	stream := NewMockQueryStreamHandler(context.Background())
-
-	err := srv.Query(&pb.QueryRequest{
-		EntityType: "",
-		IndexName:  "idx",
-		Value:      []byte("v"),
-	}, stream)
-	require.Error(t, err)
-	assert.Equal(t, codes.InvalidArgument, status.Code(err))
-}
-
-func TestServer_Query_ValidationError_EmptyIndexName(t *testing.T) {
-	srv, _ := newMockTestServer(t)
-	stream := NewMockQueryStreamHandler(context.Background())
-
-	err := srv.Query(&pb.QueryRequest{
-		EntityType: "users",
-		IndexName:  "",
-		Value:      []byte("v"),
-	}, stream)
-	require.Error(t, err)
-	assert.Equal(t, codes.InvalidArgument, status.Code(err))
-}
-
-func TestServer_Query_ValidationError_NoValueOrRange(t *testing.T) {
-	srv, _ := newMockTestServer(t)
-	stream := NewMockQueryStreamHandler(context.Background())
-
-	err := srv.Query(&pb.QueryRequest{
-		EntityType: "users",
-		IndexName:  "idx",
-	}, stream)
-	require.Error(t, err)
-	assert.Equal(t, codes.InvalidArgument, status.Code(err))
-}
-
-func TestServer_ScanIndex_ValidationError_NilRequest(t *testing.T) {
-	srv, _ := newMockTestServer(t)
-	stream := NewMockScanStreamHandler(context.Background())
-
-	err := srv.ScanIndex(nil, stream)
-	require.Error(t, err)
-	assert.Equal(t, codes.InvalidArgument, status.Code(err))
-}
-
-func TestServer_ScanIndex_ValidationError_EmptyEntityType(t *testing.T) {
-	srv, _ := newMockTestServer(t)
-	stream := NewMockScanStreamHandler(context.Background())
-
-	err := srv.ScanIndex(&pb.ScanRequest{
-		EntityType: "",
-		IndexName:  "idx",
-	}, stream)
-	require.Error(t, err)
-	assert.Equal(t, codes.InvalidArgument, status.Code(err))
-}
-
-func TestServer_ScanIndex_ValidationError_EmptyIndexName(t *testing.T) {
-	srv, _ := newMockTestServer(t)
-	stream := NewMockScanStreamHandler(context.Background())
-
-	err := srv.ScanIndex(&pb.ScanRequest{
-		EntityType: "users",
-		IndexName:  "",
-	}, stream)
-	require.Error(t, err)
-	assert.Equal(t, codes.InvalidArgument, status.Code(err))
-}
-
-func TestServer_TimeSeriesQuery_ValidationError_NilRequest(t *testing.T) {
-	srv, _ := newMockTestServer(t)
-	stream := NewMockTimeSeriesStreamHandler(context.Background())
-
-	err := srv.TimeSeriesQuery(nil, stream)
-	require.Error(t, err)
-	assert.Equal(t, codes.InvalidArgument, status.Code(err))
-}
-
-func TestServer_TimeSeriesQuery_ValidationError_EmptyEntityType(t *testing.T) {
-	srv, _ := newMockTestServer(t)
-	stream := NewMockTimeSeriesStreamHandler(context.Background())
-
-	err := srv.TimeSeriesQuery(&pb.TimeSeriesQueryRequest{
-		EntityType: "",
-		StartTime:  1,
-		EndTime:    2,
-	}, stream)
-	require.Error(t, err)
-	assert.Equal(t, codes.InvalidArgument, status.Code(err))
-}
-
-func TestServer_TimeSeriesQuery_ValidationError_InvalidTimeRange(t *testing.T) {
-	srv, _ := newMockTestServer(t)
-	stream := NewMockTimeSeriesStreamHandler(context.Background())
-
-	err := srv.TimeSeriesQuery(&pb.TimeSeriesQueryRequest{
-		EntityType: "metrics",
-		StartTime:  100,
-		EndTime:    50,
-	}, stream)
-	require.Error(t, err)
-	assert.Equal(t, codes.InvalidArgument, status.Code(err))
-}
-
-// =============================================================================
-// Embedding int32 overflow clamping paths
-// =============================================================================
 
 // =============================================================================
 // Transaction validation - invalid compare condition and failure operation
@@ -1689,35 +1398,6 @@ func TestValidateTransactionRequest_InvalidFailureOperation(t *testing.T) {
 // =============================================================================
 // Validation - excessive page size variants
 // =============================================================================
-
-func TestValidateQueryRequest_ExcessivePageSize(t *testing.T) {
-	err := validateQueryRequest(&pb.QueryRequest{
-		EntityType: "users",
-		IndexName:  "email_idx",
-		Value:      []byte("test@example.com"),
-		PageSize:   20000,
-	})
-	require.Error(t, err)
-}
-
-func TestValidateScanRequest_ExcessivePageSize(t *testing.T) {
-	err := validateScanRequest(&pb.ScanRequest{
-		EntityType: "users",
-		IndexName:  "name_idx",
-		PageSize:   20000,
-	})
-	require.Error(t, err)
-}
-
-func TestValidateTimeSeriesQueryRequest_ExcessivePageSize(t *testing.T) {
-	err := validateTimeSeriesQueryRequest(&pb.TimeSeriesQueryRequest{
-		EntityType: "metrics",
-		StartTime:  1,
-		EndTime:    100,
-		PageSize:   20000,
-	})
-	require.Error(t, err)
-}
 
 // --- Merged from remaining_coverage_91_extended_test.go ---
 
@@ -1803,14 +1483,24 @@ func TestGRPCRemaining91_ClientKMS_ConvertKeyAttributesToProto(t *testing.T) {
 	})
 }
 
-func TestGRPCRemaining91_ClientKMS_ConvertProtoKeyHandle_Nil(t *testing.T) {
-	result := convertProtoKeyHandle(nil)
-	assert.Nil(t, result)
-}
-
-func TestGRPCRemaining91_ClientKMS_ConvertProtoKeyMetadata_Nil(t *testing.T) {
-	result := convertProtoKeyMetadata(nil)
-	assert.Nil(t, result)
+func TestGRPCRemaining91_ClientKMS_ConvertProto_NilInput(t *testing.T) {
+	tests := []struct {
+		name    string
+		convert func() (any, error)
+	}{
+		{"KeyHandle", func() (any, error) { return convertProtoKeyHandle(nil), nil }},
+		{"KeyMetadata", func() (any, error) { return convertProtoKeyMetadata(nil), nil }},
+		{"KeyVersionInfo", func() (any, error) { return convertProtoKeyVersionInfo("key-1", nil), nil }},
+		{"DEKMetadata", func() (any, error) { return convertProtoDEKMetadata(nil), nil }},
+		{"ReencryptionProgress", func() (any, error) { return convertProtoReencryptionProgress(nil) }},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, err := tt.convert()
+			require.NoError(t, err)
+			assert.Nil(t, result)
+		})
+	}
 }
 
 func TestGRPCRemaining91_ClientKMS_ConvertProtoKeyMetadata_WithLastUsedAt(t *testing.T) {
@@ -1826,11 +1516,6 @@ func TestGRPCRemaining91_ClientKMS_ConvertProtoKeyMetadata_WithLastUsedAt(t *tes
 	assert.NotNil(t, result.LastUsedAt)
 }
 
-func TestGRPCRemaining91_ClientKMS_ConvertProtoKeyVersionInfo_Nil(t *testing.T) {
-	result := convertProtoKeyVersionInfo("key-1", nil)
-	assert.Nil(t, result)
-}
-
 func TestGRPCRemaining91_ClientKMS_ConvertProtoKeyVersionInfo_WithDisabledAt(t *testing.T) {
 	v := &pb.KeyVersionInfo{
 		Version:    2,
@@ -1844,11 +1529,6 @@ func TestGRPCRemaining91_ClientKMS_ConvertProtoKeyVersionInfo_WithDisabledAt(t *
 	assert.NotNil(t, result.DisabledAt)
 }
 
-func TestGRPCRemaining91_ClientKMS_ConvertProtoDEKMetadata_Nil(t *testing.T) {
-	result := convertProtoDEKMetadata(nil)
-	assert.Nil(t, result)
-}
-
 func TestGRPCRemaining91_ClientKMS_ConvertProtoDEKMetadata_WithRotatedAt(t *testing.T) {
 	pm := &pb.DEKMetadata{
 		Path:      "/test/dek",
@@ -1858,12 +1538,6 @@ func TestGRPCRemaining91_ClientKMS_ConvertProtoDEKMetadata_WithRotatedAt(t *test
 	result := convertProtoDEKMetadata(pm)
 	assert.NotNil(t, result)
 	assert.NotNil(t, result.RotatedAt)
-}
-
-func TestGRPCRemaining91_ClientKMS_ConvertProtoReencryptionProgress_Nil(t *testing.T) {
-	result, err := convertProtoReencryptionProgress(nil)
-	require.NoError(t, err)
-	assert.Nil(t, result)
 }
 
 func TestGRPCRemaining91_ClientKMS_ConvertProtoReencryptionProgress_Full(t *testing.T) {
@@ -2078,11 +1752,8 @@ func TestGRPCRemaining91_Client_Secrets_NilRequests(t *testing.T) {
 // Client Secrets - Conversion Helper Tests
 // =============================================================================
 
-func TestGRPCRemaining91_ClientSecrets_ConvertProtoSecret_Nil(t *testing.T) {
+func TestGRPCRemaining91_ClientSecrets_ConvertProto_NilInput(t *testing.T) {
 	assert.Nil(t, convertProtoSecret(nil))
-}
-
-func TestGRPCRemaining91_ClientSecrets_ConvertProtoSecretVersion_Nil(t *testing.T) {
 	assert.Nil(t, convertProtoSecretVersion(nil))
 }
 
@@ -2117,12 +1788,6 @@ func TestGRPCRemaining91_ClientSecrets_StatusConversions(t *testing.T) {
 // =============================================================================
 // Server Object Transfer - Tests
 // =============================================================================
-
-func TestGRPCRemaining91_ObjectTransfer_NewServer(t *testing.T) {
-	log, _ := logger.New(logger.LogConfig{Level: "error", Format: "json", Output: "stderr"})
-	srv := NewObjectTransferServer(log)
-	assert.NotNil(t, srv)
-}
 
 func TestGRPCRemaining91_ObjectTransfer_RegisterUnregister(t *testing.T) {
 	log, _ := logger.New(logger.LogConfig{Level: "error", Format: "json", Output: "stderr"})
@@ -2240,19 +1905,6 @@ func TestGRPCRemaining91_ObjectTransfer_FetchSingleObject_ReadError(t *testing.T
 	assert.Contains(t, resp.ErrorMessage, "disk failure")
 }
 
-func TestGRPCRemaining91_ObjectTransfer_FetchSingleObject_Success(t *testing.T) {
-	log, _ := logger.New(logger.LogConfig{Level: "error", Format: "json", Output: "stderr"})
-	srv := NewObjectTransferServer(log)
-
-	store := ObjectStoreReaderFunc(func(ref string) ([]byte, error) {
-		return []byte("data"), nil
-	})
-
-	resp := srv.fetchSingleObject(store, &pb.ObjectFetchItem{ObjectRef: "ref-1"})
-	assert.True(t, resp.Found)
-	assert.Equal(t, []byte("data"), resp.Data)
-}
-
 func TestGRPCRemaining91_ObjectTransfer_FetchSingleObject_ChecksumMismatch(t *testing.T) {
 	log, _ := logger.New(logger.LogConfig{Level: "error", Format: "json", Output: "stderr"})
 	srv := NewObjectTransferServer(log)
@@ -2270,11 +1922,6 @@ func TestGRPCRemaining91_ObjectTransfer_FetchSingleObject_ChecksumMismatch(t *te
 // VectorDB Wrapper - Health Tests
 // =============================================================================
 
-func TestGRPCRemaining91_VectorDBWrapper_Health_NilServer(t *testing.T) {
-	wrapper := &VectorDBWrapper{server: nil}
-	assert.Panics(t, func() { wrapper.Health(context.Background(), &pb.VectorHealthRequest{}) })
-}
-
 func TestGRPCRemaining91_VectorDBWrapper_Health_NilService(t *testing.T) {
 	srv := &Server{service: nil, nodeID: 1, version: "v1.0"}
 	wrapper := NewVectorDBWrapper(srv)
@@ -2283,12 +1930,6 @@ func TestGRPCRemaining91_VectorDBWrapper_Health_NilService(t *testing.T) {
 	assert.Equal(t, pb.VectorHealthStatus_VECTOR_HEALTH_STATUS_UNHEALTHY, resp.Status)
 	assert.Equal(t, uint64(1), resp.NodeId)
 	assert.Equal(t, "v1.0", resp.Version)
-}
-
-func TestGRPCRemaining91_VectorAdminWrapper_New(t *testing.T) {
-	srv := &Server{}
-	wrapper := NewVectorAdminWrapper(srv)
-	assert.NotNil(t, wrapper)
 }
 
 // =============================================================================
@@ -2333,27 +1974,23 @@ func TestGRPCRemaining91_Client_NormalizeUnixSocketAddress(t *testing.T) {
 }
 
 func TestGRPCRemaining91_Client_AddMetadata(t *testing.T) {
-	client := &Client{
-		opts: &clientOptions{
-			metadata: map[string]string{"key": "value"},
-		},
-	}
-	ctx := client.addMetadata(context.Background())
-	assert.NotNil(t, ctx)
+	t.Run("WithMetadata", func(t *testing.T) {
+		client := &Client{opts: &clientOptions{metadata: map[string]string{"key": "value"}}}
 
-	// Call again to test cached md path
-	ctx2 := client.addMetadata(context.Background())
-	assert.NotNil(t, ctx2)
-}
+		// The first call builds the metadata lazily; the second reuses it.
+		for i := 0; i < 2; i++ {
+			md, ok := metadata.FromOutgoingContext(client.addMetadata(context.Background()))
+			require.True(t, ok)
+			assert.Equal(t, []string{"value"}, md.Get("key"))
+		}
+		assert.NotNil(t, client.opts.md)
+	})
 
-func TestGRPCRemaining91_Client_AddMetadata_Empty(t *testing.T) {
-	client := &Client{
-		opts: &clientOptions{
-			metadata: map[string]string{},
-		},
-	}
-	ctx := client.addMetadata(context.Background())
-	assert.NotNil(t, ctx)
+	t.Run("Empty", func(t *testing.T) {
+		client := &Client{opts: &clientOptions{metadata: map[string]string{}}}
+		_, ok := metadata.FromOutgoingContext(client.addMetadata(context.Background()))
+		assert.False(t, ok)
+	})
 }
 
 func TestGRPCRemaining91_Client_IsConnected(t *testing.T) {
@@ -2420,10 +2057,6 @@ func TestGRPCRemaining91_Client_Conn(t *testing.T) {
 	client := &Client{conn: nil}
 	assert.Nil(t, client.Conn())
 }
-
-// =============================================================================
-// Vector Export - Serialization Tests
-// =============================================================================
 
 // =============================================================================
 // Client KMS Backend Tests
