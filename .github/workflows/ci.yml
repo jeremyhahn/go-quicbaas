@@ -369,6 +369,8 @@ jobs:
     env:
       DOCS_ONLY: ${{ needs.changes.outputs.docs_only }}
       CI_STACK_PREFIX: ${{ github.event.repository.name }}-ci-
+      # gpu-host's 8g sidecar cap (#2200, ruling 289); no cap on GitHub-hosted runners.
+      IN_IMAGE_MEMORY: ${{ github.server_url != 'https://github.com' && '8g' || 'none' }}
       # v1.22: the cache volumes' trust class. Only a push to main writes the
       # caches main's build reads; every other event, pull requests included,
       # gets the `pr` set (ci-standard.md §6).
@@ -809,6 +811,8 @@ jobs:
     if: ${{ needs.changes.outputs.docs_only != 'true' }}
     env:
       CI_STACK_PREFIX: ${{ github.event.repository.name }}-ci-
+      # gpu-host's 8g sidecar cap (#2200, ruling 289); no cap on GitHub-hosted runners.
+      IN_IMAGE_MEMORY: ${{ github.server_url != 'https://github.com' && '8g' || 'none' }}
       IT_PROJECT: ${{ github.event.repository.name }}-ci-${{ github.run_id }}-${{ github.run_attempt }}
       IT_IMAGE: ${{ github.event.repository.name }}-ci-it:${{ github.run_id }}-${{ github.run_attempt }}
     steps:

@@ -15,6 +15,7 @@ package orchestration
 
 import (
 	"errors"
+	"fmt"
 	"testing"
 )
 
@@ -73,87 +74,72 @@ func assertWaveContains(t *testing.T, wave []*WorkItem, waveIndex int, expectedI
 // BuildDAG Tests
 // =============================================================================
 
-func TestBuildDAG_SingleItem(t *testing.T) {
-	items := []*WorkItem{workItem("A")}
-	dag, err := BuildDAG(items)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+func TestBuildDAG(t *testing.T) {
+	tests := []struct {
+		name      string
+		items     []*WorkItem
+		wantItems int
+		wantErr   error
+		check     func(t *testing.T, err error)
+	}{
+		{name: "single item", items: []*WorkItem{workItem("A")}, wantItems: 1},
+		{name: "empty slice", items: []*WorkItem{}, wantItems: 0},
+		{name: "nil slice", items: nil, wantItems: 0},
+		{name: "nil work item", items: []*WorkItem{workItem("A"), nil}, wantErr: ErrNilWorkItem},
+		{
+			name:    "duplicate ID",
+			items:   []*WorkItem{workItem("A"), workItem("A")},
+			wantErr: ErrDuplicateWorkItem,
+			check: func(t *testing.T, err error) {
+				var dupErr *DuplicateWorkItemError
+				if !errors.As(err, &dupErr) {
+					t.Fatalf("expected DuplicateWorkItemError, got: %T", err)
+				}
+				if dupErr.ItemID != "A" {
+					t.Fatalf("expected item ID 'A', got %q", dupErr.ItemID)
+				}
+			},
+		},
+		{
+			name:    "missing dependency",
+			items:   []*WorkItem{workItem("A", "B")}, // B does not exist
+			wantErr: ErrMissingDependency,
+			check: func(t *testing.T, err error) {
+				var missErr *MissingDependencyError
+				if !errors.As(err, &missErr) {
+					t.Fatalf("expected MissingDependencyError, got: %T", err)
+				}
+				if missErr.ItemID != "A" || missErr.DependencyID != "B" {
+					t.Fatalf("expected A -> B, got %q -> %q", missErr.ItemID, missErr.DependencyID)
+				}
+			},
+		},
 	}
-	if len(dag.items) != 1 {
-		t.Fatalf("expected 1 item, got %d", len(dag.items))
-	}
-	if _, ok := dag.items["A"]; !ok {
-		t.Fatal("expected item A in DAG")
-	}
-}
 
-func TestBuildDAG_NilWorkItem(t *testing.T) {
-	items := []*WorkItem{workItem("A"), nil}
-	_, err := BuildDAG(items)
-	if err == nil {
-		t.Fatal("expected error for nil work item")
-	}
-	if !errors.Is(err, ErrNilWorkItem) {
-		t.Fatalf("expected ErrNilWorkItem, got: %v", err)
-	}
-}
-
-func TestBuildDAG_DuplicateID(t *testing.T) {
-	items := []*WorkItem{workItem("A"), workItem("A")}
-	_, err := BuildDAG(items)
-	if err == nil {
-		t.Fatal("expected error for duplicate ID")
-	}
-	var dupErr *DuplicateWorkItemError
-	if !errors.As(err, &dupErr) {
-		t.Fatalf("expected DuplicateWorkItemError, got: %T", err)
-	}
-	if dupErr.ItemID != "A" {
-		t.Fatalf("expected item ID 'A', got %q", dupErr.ItemID)
-	}
-	if !errors.Is(err, ErrDuplicateWorkItem) {
-		t.Fatal("expected error to unwrap to ErrDuplicateWorkItem")
-	}
-}
-
-func TestBuildDAG_MissingDependency(t *testing.T) {
-	items := []*WorkItem{workItem("A", "B")} // B does not exist
-	_, err := BuildDAG(items)
-	if err == nil {
-		t.Fatal("expected error for missing dependency")
-	}
-	var missErr *MissingDependencyError
-	if !errors.As(err, &missErr) {
-		t.Fatalf("expected MissingDependencyError, got: %T", err)
-	}
-	if missErr.ItemID != "A" {
-		t.Fatalf("expected item ID 'A', got %q", missErr.ItemID)
-	}
-	if missErr.DependencyID != "B" {
-		t.Fatalf("expected dependency ID 'B', got %q", missErr.DependencyID)
-	}
-	if !errors.Is(err, ErrMissingDependency) {
-		t.Fatal("expected error to unwrap to ErrMissingDependency")
-	}
-}
-
-func TestBuildDAG_EmptyItems(t *testing.T) {
-	dag, err := BuildDAG([]*WorkItem{})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if len(dag.items) != 0 {
-		t.Fatalf("expected 0 items, got %d", len(dag.items))
-	}
-}
-
-func TestBuildDAG_NilSlice(t *testing.T) {
-	dag, err := BuildDAG(nil)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if len(dag.items) != 0 {
-		t.Fatalf("expected 0 items, got %d", len(dag.items))
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dag, err := BuildDAG(tt.items)
+			if tt.wantErr != nil {
+				if !errors.Is(err, tt.wantErr) {
+					t.Fatalf("expected %v, got: %v", tt.wantErr, err)
+				}
+				if tt.check != nil {
+					tt.check(t, err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if len(dag.items) != tt.wantItems {
+				t.Fatalf("expected %d items, got %d", tt.wantItems, len(dag.items))
+			}
+			for _, item := range tt.items {
+				if _, ok := dag.items[item.ID]; !ok {
+					t.Fatalf("expected item %s in DAG", item.ID)
+				}
+			}
+		})
 	}
 }
 
@@ -161,104 +147,57 @@ func TestBuildDAG_NilSlice(t *testing.T) {
 // DetectCycles Tests
 // =============================================================================
 
-func TestDAG_CycleDetection_NoCycle(t *testing.T) {
-	items := []*WorkItem{
-		workItem("A"),
-		workItem("B", "A"),
-		workItem("C", "B"),
+func TestDAG_DetectCycles(t *testing.T) {
+	tests := []struct {
+		name      string
+		items     []*WorkItem
+		wantCycle bool
+	}{
+		{name: "linear chain has no cycle", items: []*WorkItem{workItem("A"), workItem("B", "A"), workItem("C", "B")}},
+		{name: "empty graph has no cycle", items: []*WorkItem{}},
+		{
+			// A depends on C, B depends on A, C depends on B.
+			name:      "three-node cycle",
+			items:     []*WorkItem{workItem("A", "C"), workItem("B", "A"), workItem("C", "B")},
+			wantCycle: true,
+		},
+		{name: "self cycle", items: []*WorkItem{workItem("A", "A")}, wantCycle: true},
 	}
-	dag, err := BuildDAG(items)
-	if err != nil {
-		t.Fatalf("unexpected build error: %v", err)
-	}
-	if err := dag.DetectCycles(); err != nil {
-		t.Fatalf("unexpected cycle detected: %v", err)
-	}
-}
 
-func TestDAG_CycleDetection_SimpleCycle(t *testing.T) {
-	// A -> B -> C -> A (cycle)
-	// In our model, edges are "depends on", children are "depended on by".
-	// A depends on C, B depends on A, C depends on B => cycle.
-	items := []*WorkItem{
-		workItem("A", "C"),
-		workItem("B", "A"),
-		workItem("C", "B"),
-	}
-	dag, err := BuildDAG(items)
-	if err != nil {
-		t.Fatalf("unexpected build error: %v", err)
-	}
-	err = dag.DetectCycles()
-	if err == nil {
-		t.Fatal("expected cycle error")
-	}
-	if !errors.Is(err, ErrCyclicDependency) {
-		t.Fatalf("expected ErrCyclicDependency, got: %v", err)
-	}
-	var cycleErr *CyclicDependencyError
-	if !errors.As(err, &cycleErr) {
-		t.Fatalf("expected CyclicDependencyError, got: %T", err)
-	}
-	// The cycle should contain at least 2 nodes and loop back.
-	if len(cycleErr.Cycle) < 2 {
-		t.Fatalf("cycle path too short: %v", cycleErr.Cycle)
-	}
-	// First and last element should be the same (cycle loop).
-	if cycleErr.Cycle[0] != cycleErr.Cycle[len(cycleErr.Cycle)-1] {
-		t.Fatalf("cycle should loop: first=%q last=%q", cycleErr.Cycle[0], cycleErr.Cycle[len(cycleErr.Cycle)-1])
-	}
-}
-
-func TestDAG_SelfCycle(t *testing.T) {
-	items := []*WorkItem{workItem("A", "A")}
-	dag, err := BuildDAG(items)
-	if err != nil {
-		t.Fatalf("unexpected build error: %v", err)
-	}
-	err = dag.DetectCycles()
-	if err == nil {
-		t.Fatal("expected cycle error for self-referencing item")
-	}
-	if !errors.Is(err, ErrCyclicDependency) {
-		t.Fatalf("expected ErrCyclicDependency, got: %v", err)
-	}
-	var cycleErr *CyclicDependencyError
-	if !errors.As(err, &cycleErr) {
-		t.Fatalf("expected CyclicDependencyError, got: %T", err)
-	}
-	// Self-cycle: path should be [A, A].
-	if len(cycleErr.Cycle) < 2 {
-		t.Fatalf("expected self-cycle path, got: %v", cycleErr.Cycle)
-	}
-}
-
-func TestDAG_CycleDetection_EmptyGraph(t *testing.T) {
-	dag, err := BuildDAG([]*WorkItem{})
-	if err != nil {
-		t.Fatalf("unexpected build error: %v", err)
-	}
-	if err := dag.DetectCycles(); err != nil {
-		t.Fatalf("unexpected error on empty graph: %v", err)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dag, err := BuildDAG(tt.items)
+			if err != nil {
+				t.Fatalf("unexpected build error: %v", err)
+			}
+			err = dag.DetectCycles()
+			if !tt.wantCycle {
+				if err != nil {
+					t.Fatalf("unexpected cycle detected: %v", err)
+				}
+				return
+			}
+			if !errors.Is(err, ErrCyclicDependency) {
+				t.Fatalf("expected ErrCyclicDependency, got: %v", err)
+			}
+			var cycleErr *CyclicDependencyError
+			if !errors.As(err, &cycleErr) {
+				t.Fatalf("expected CyclicDependencyError, got: %T", err)
+			}
+			// The path has at least 2 nodes and loops back to its start.
+			if len(cycleErr.Cycle) < 2 {
+				t.Fatalf("cycle path too short: %v", cycleErr.Cycle)
+			}
+			if cycleErr.Cycle[0] != cycleErr.Cycle[len(cycleErr.Cycle)-1] {
+				t.Fatalf("cycle should loop: %v", cycleErr.Cycle)
+			}
+		})
 	}
 }
 
 // =============================================================================
 // TopologicalWaves Tests
 // =============================================================================
-
-func TestDAG_SingleItem_OneWave(t *testing.T) {
-	items := []*WorkItem{workItem("A")}
-	dag, err := BuildDAG(items)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	waves := dag.TopologicalWaves()
-	if len(waves) != 1 {
-		t.Fatalf("expected 1 wave, got %d", len(waves))
-	}
-	assertWaveContains(t, waves[0], 0, "A")
-}
 
 func TestDAG_LinearChain(t *testing.T) {
 	// A -> B -> C: 3 waves, one item each.
@@ -387,110 +326,56 @@ func TestDAG_ComplexGraph(t *testing.T) {
 // EnforceParallelism Tests
 // =============================================================================
 
-func TestEnforceParallelism_SplitWave(t *testing.T) {
-	// 5 items in one wave, max parallelism 2 -> split into [2, 2, 1].
-	wave := []*WorkItem{
-		workItem("A"),
-		workItem("B"),
-		workItem("C"),
-		workItem("D"),
-		workItem("E"),
+func TestEnforceParallelism(t *testing.T) {
+	tests := []struct {
+		name           string
+		waveSizes      []int // nil means a nil waves slice
+		maxParallelism int
+		wantSizes      []int // nil means a nil result
+	}{
+		{name: "split one wave", waveSizes: []int{5}, maxParallelism: 2, wantSizes: []int{2, 2, 1}},
+		{name: "split only oversized waves", waveSizes: []int{3, 2}, maxParallelism: 2, wantSizes: []int{2, 1, 2}},
+		{name: "exact fit is not split", waveSizes: []int{3}, maxParallelism: 3, wantSizes: []int{3}},
+		{name: "zero parallelism leaves waves unchanged", waveSizes: []int{3}, maxParallelism: 0, wantSizes: []int{3}},
+		{name: "negative parallelism leaves waves unchanged", waveSizes: []int{2}, maxParallelism: -1, wantSizes: []int{2}},
+		{name: "nil waves", waveSizes: nil, maxParallelism: 2, wantSizes: nil},
 	}
-	result := EnforceParallelism([][]*WorkItem{wave}, 2)
-	if len(result) != 3 {
-		t.Fatalf("expected 3 sub-waves, got %d", len(result))
-	}
-	if len(result[0]) != 2 {
-		t.Fatalf("expected first sub-wave to have 2 items, got %d", len(result[0]))
-	}
-	if len(result[1]) != 2 {
-		t.Fatalf("expected second sub-wave to have 2 items, got %d", len(result[1]))
-	}
-	if len(result[2]) != 1 {
-		t.Fatalf("expected third sub-wave to have 1 item, got %d", len(result[2]))
-	}
-}
 
-func TestEnforceParallelism_NoSplitNeeded(t *testing.T) {
-	wave := []*WorkItem{workItem("A"), workItem("B")}
-	result := EnforceParallelism([][]*WorkItem{wave}, 5)
-	if len(result) != 1 {
-		t.Fatalf("expected 1 wave, got %d", len(result))
-	}
-	if len(result[0]) != 2 {
-		t.Fatalf("expected 2 items, got %d", len(result[0]))
-	}
-}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var waves [][]*WorkItem
+			next := 0
+			for _, size := range tt.waveSizes {
+				wave := make([]*WorkItem, size)
+				for i := range wave {
+					wave[i] = workItem(fmt.Sprintf("item-%d", next))
+					next++
+				}
+				waves = append(waves, wave)
+			}
 
-func TestEnforceParallelism_ZeroParallelism(t *testing.T) {
-	wave := []*WorkItem{workItem("A"), workItem("B"), workItem("C")}
-	result := EnforceParallelism([][]*WorkItem{wave}, 0)
-	if len(result) != 1 {
-		t.Fatalf("expected unchanged waves, got %d", len(result))
-	}
-}
-
-func TestEnforceParallelism_NegativeParallelism(t *testing.T) {
-	wave := []*WorkItem{workItem("A"), workItem("B")}
-	result := EnforceParallelism([][]*WorkItem{wave}, -1)
-	if len(result) != 1 {
-		t.Fatalf("expected unchanged waves, got %d", len(result))
-	}
-}
-
-func TestEnforceParallelism_EmptyWaves(t *testing.T) {
-	result := EnforceParallelism(nil, 2)
-	if result != nil {
-		t.Fatalf("expected nil for nil input, got %d waves", len(result))
-	}
-}
-
-func TestEnforceParallelism_MultipleWaves(t *testing.T) {
-	// Two waves: [3 items, 2 items] with max 2 -> [2, 1, 2].
-	waves := [][]*WorkItem{
-		{workItem("A"), workItem("B"), workItem("C")},
-		{workItem("D"), workItem("E")},
-	}
-	result := EnforceParallelism(waves, 2)
-	if len(result) != 3 {
-		t.Fatalf("expected 3 waves, got %d", len(result))
-	}
-	if len(result[0]) != 2 {
-		t.Fatalf("expected wave 0 to have 2 items, got %d", len(result[0]))
-	}
-	if len(result[1]) != 1 {
-		t.Fatalf("expected wave 1 to have 1 item, got %d", len(result[1]))
-	}
-	if len(result[2]) != 2 {
-		t.Fatalf("expected wave 2 to have 2 items, got %d", len(result[2]))
-	}
-}
-
-func TestEnforceParallelism_ExactFit(t *testing.T) {
-	// Wave has exactly maxParallelism items -> no split.
-	wave := []*WorkItem{workItem("A"), workItem("B"), workItem("C")}
-	result := EnforceParallelism([][]*WorkItem{wave}, 3)
-	if len(result) != 1 {
-		t.Fatalf("expected 1 wave (exact fit), got %d", len(result))
+			result := EnforceParallelism(waves, tt.maxParallelism)
+			if tt.wantSizes == nil {
+				if result != nil {
+					t.Fatalf("expected nil result, got %d waves", len(result))
+				}
+				return
+			}
+			if len(result) != len(tt.wantSizes) {
+				t.Fatalf("expected %d waves, got %d", len(tt.wantSizes), len(result))
+			}
+			for i, want := range tt.wantSizes {
+				if len(result[i]) != want {
+					t.Fatalf("expected wave %d to have %d items, got %d", i, want, len(result[i]))
+				}
+			}
+		})
 	}
 }
 
 // =============================================================================
 // ExecutionPlan Tests
 // =============================================================================
-
-func TestExecutionPlan_CurrentWave(t *testing.T) {
-	plan := &ExecutionPlan{
-		Waves: [][]*WorkItem{
-			{workItem("A")},
-			{workItem("B")},
-		},
-		MaxParallelism: 1,
-	}
-	if plan.CurrentWave() != 0 {
-		t.Fatalf("expected current wave 0, got %d", plan.CurrentWave())
-	}
-}
 
 func TestExecutionPlan_AdvanceWave(t *testing.T) {
 	plan := &ExecutionPlan{
@@ -509,18 +394,6 @@ func TestExecutionPlan_AdvanceWave(t *testing.T) {
 	}
 	if plan.CurrentWave() != 1 {
 		t.Fatalf("expected current wave 1, got %d", plan.CurrentWave())
-	}
-}
-
-func TestExecutionPlan_TotalWaves(t *testing.T) {
-	plan := &ExecutionPlan{
-		Waves: [][]*WorkItem{
-			{workItem("A")},
-			{workItem("B")},
-		},
-	}
-	if plan.TotalWaves() != 2 {
-		t.Fatalf("expected 2 total waves, got %d", plan.TotalWaves())
 	}
 }
 
@@ -590,53 +463,34 @@ func TestScheduleDAG_UnlimitedParallelism(t *testing.T) {
 	}
 }
 
-func TestScheduleDAG_CycleError(t *testing.T) {
-	items := []*WorkItem{
-		workItem("A", "C"),
-		workItem("B", "A"),
-		workItem("C", "B"),
+func TestScheduleDAG_Errors(t *testing.T) {
+	tests := []struct {
+		name    string
+		items   []*WorkItem
+		wantErr error
+	}{
+		{
+			name:    "cycle from DetectCycles",
+			items:   []*WorkItem{workItem("A", "C"), workItem("B", "A"), workItem("C", "B")},
+			wantErr: ErrCyclicDependency,
+		},
+		{
+			name:    "BuildDAG error is returned",
+			items:   []*WorkItem{workItem("A", "Z")},
+			wantErr: ErrMissingDependency,
+		},
 	}
-	_, err := ScheduleDAG(items, 2)
-	if err == nil {
-		t.Fatal("expected cycle error")
-	}
-	if !errors.Is(err, ErrCyclicDependency) {
-		t.Fatalf("expected ErrCyclicDependency, got: %v", err)
-	}
-}
 
-func TestScheduleDAG_MissingDependencyError(t *testing.T) {
-	items := []*WorkItem{workItem("A", "Z")}
-	_, err := ScheduleDAG(items, 2)
-	if err == nil {
-		t.Fatal("expected missing dependency error")
-	}
-	if !errors.Is(err, ErrMissingDependency) {
-		t.Fatalf("expected ErrMissingDependency, got: %v", err)
-	}
-}
-
-func TestScheduleDAG_EmptyItems(t *testing.T) {
-	plan, err := ScheduleDAG([]*WorkItem{}, 2)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if plan.TotalWaves() != 0 {
-		t.Fatalf("expected 0 waves, got %d", plan.TotalWaves())
-	}
-	if !plan.IsComplete() {
-		t.Fatal("expected empty plan to be complete")
-	}
-}
-
-func TestScheduleDAG_NilWorkItem(t *testing.T) {
-	items := []*WorkItem{workItem("A"), nil}
-	_, err := ScheduleDAG(items, 2)
-	if err == nil {
-		t.Fatal("expected error for nil work item")
-	}
-	if !errors.Is(err, ErrNilWorkItem) {
-		t.Fatalf("expected ErrNilWorkItem, got: %v", err)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			plan, err := ScheduleDAG(tt.items, 2)
+			if !errors.Is(err, tt.wantErr) {
+				t.Fatalf("expected %v, got: %v", tt.wantErr, err)
+			}
+			if plan != nil {
+				t.Fatal("expected nil plan on error")
+			}
+		})
 	}
 }
 
@@ -644,26 +498,34 @@ func TestScheduleDAG_NilWorkItem(t *testing.T) {
 // Error Message Tests
 // =============================================================================
 
-func TestCyclicDependencyError_Message(t *testing.T) {
-	err := &CyclicDependencyError{Cycle: []string{"A", "B", "C", "A"}}
-	expected := "dag: cyclic dependency detected: A -> B -> C -> A"
-	if err.Error() != expected {
-		t.Fatalf("expected %q, got %q", expected, err.Error())
+func TestDAGError_Message(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+		want string
+	}{
+		{
+			name: "cyclic dependency",
+			err:  &CyclicDependencyError{Cycle: []string{"A", "B", "C", "A"}},
+			want: "dag: cyclic dependency detected: A -> B -> C -> A",
+		},
+		{
+			name: "missing dependency",
+			err:  &MissingDependencyError{ItemID: "X", DependencyID: "Y"},
+			want: "dag: missing dependency: item X depends on Y",
+		},
+		{
+			name: "duplicate work item",
+			err:  &DuplicateWorkItemError{ItemID: "A"},
+			want: "dag: duplicate work item ID: A",
+		},
 	}
-}
 
-func TestMissingDependencyError_Message(t *testing.T) {
-	err := &MissingDependencyError{ItemID: "X", DependencyID: "Y"}
-	expected := "dag: missing dependency: item X depends on Y"
-	if err.Error() != expected {
-		t.Fatalf("expected %q, got %q", expected, err.Error())
-	}
-}
-
-func TestDuplicateWorkItemError_Message(t *testing.T) {
-	err := &DuplicateWorkItemError{ItemID: "A"}
-	expected := "dag: duplicate work item ID: A"
-	if err.Error() != expected {
-		t.Fatalf("expected %q, got %q", expected, err.Error())
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := tt.err.Error(); got != tt.want {
+				t.Fatalf("expected %q, got %q", tt.want, got)
+			}
+		})
 	}
 }

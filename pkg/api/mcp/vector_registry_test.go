@@ -537,15 +537,34 @@ func TestVectorGetNamespaceInfo_MissingNamespace(t *testing.T) {
 	assert.Contains(t, err.Error(), "namespace")
 }
 
-func TestVectorUpdateNamespace_Success(t *testing.T) {
+func TestVectorUpdateNamespace_RefusedNotImplemented(t *testing.T) {
 	registry := newVectorRegistry(t)
 	ctx := context.Background()
 
 	result, err := registry.ExecuteTool(ctx, "quicbaas_vector_update_namespace", map[string]interface{}{
 		"namespace": "test-ns",
 	})
-	require.NoError(t, err)
-	require.NotNil(t, result)
+	require.Error(t, err)
+	assert.Nil(t, result)
+	var unsupported *VectorNamespaceUpdateUnsupportedError
+	require.ErrorAs(t, err, &unsupported)
+	assert.Equal(t, "test-ns", unsupported.Namespace)
+}
+
+func TestVectorUpdateNamespace_UnknownNamespaceIsNotFound(t *testing.T) {
+	notFound := &errors.QBError{Code: errors.ErrNotFound, Op: "get", Err: &errors.MessageError{Message: "not found"}}
+	registry := newVectorRegistryWithMock(t, &mockVectorService{
+		getNamespaceInfoFunc: func(ctx context.Context, req *service.GetNamespaceInfoRequest) (*service.GetNamespaceInfoResponse, error) {
+			return nil, notFound
+		},
+	})
+
+	result, err := registry.ExecuteTool(context.Background(), "quicbaas_vector_update_namespace", map[string]interface{}{
+		"namespace": "missing-ns",
+	})
+	require.Error(t, err)
+	assert.Nil(t, result)
+	assert.ErrorIs(t, err, notFound)
 }
 
 func TestVectorUpdateNamespace_MissingNamespace(t *testing.T) {
