@@ -170,8 +170,7 @@ rollback. `make build-worker-image` uses the same scheme.
 
 The `worker-image` workflow (`.github/workflows/worker-image.yml`) builds and
 publishes the image itself in its `build-publish` job. It runs on a nightly
-schedule (`23 4 * * *`) and on a dispatch that gives neither `tag` nor
-`current`. It takes the latest `@anthropic-ai/claude-code` and `@openai/codex`
+schedule (`23 4 * * *`) and on any dispatch. It takes the latest `@anthropic-ai/claude-code` and `@openai/codex`
 releases from npm; the dispatch inputs `claude_code_version` and
 `codex_version` (each `x.y.z`) pin either instead.
 
@@ -181,17 +180,17 @@ releases from npm; the dispatch inputs `claude_code_version` and
   existing digest: a tag is never overwritten. A lookup that fails for any
   reason other than "not found" stops the job before the build, so nothing is
   pushed.
-- **Scan.** The Trivy gate is `make push-worker-image`'s own: a fixable
-  CRITICAL or HIGH finding fails the job before anything is tagged or pushed.
-- **Credentials.** `GITHUB_TOKEN` only (`packages: write` to push,
-  `issues: write` to comment); no personal token and no repository secret.
-- **Digest.** Every run records it four ways: a `WORKER-IMAGE-DIGEST
+- **Scan.** Two Trivy secret scans run first, one of the built image and one
+  of each of its layer tarballs (`docker save`, every layer extracted on its
+  own); a secret of any severity fails the job. Then `make push-worker-image`'s
+  own vulnerability gate runs: a fixable CRITICAL or HIGH finding fails the
+  job. All three run before anything is tagged or pushed.
+- **Credentials.** The workflow's `GITHUB_TOKEN` with `packages: write` only;
+  no personal token and no repository secret.
+- **Digest.** Every run records it three ways: a `WORKER-IMAGE-DIGEST
   <repo>:<tag>@<digest> published=<true|false>` log line, the run's job
-  summary, the `worker-image-digest` artifact (kept 90 days), and, for an
-  image the run pushed, a comment on go-quicbaas#2320 from the
-  `record-digest` job.
-- **`current`.** The nightly job never moves it. `current` still moves only
-  on the `current` dispatch.
+  summary, and the `worker-image-digest` artifact (kept 90 days).
+- **`current`.** This workflow does not move it.
 
 ## Local mode and the fleet
 
@@ -339,9 +338,9 @@ make push-worker-image WORKER_IMAGE_REGISTRY=<host>/<owner>/software-factory-wor
 ```
 
 This repository's own factory images (the worker and its go-xkms variant) are
-published by `.github/workflows/worker-image.yml` under
-`<registry>/<agent>/<image>`, the namespace of the repository's agent
-identity, and pushed with that identity's token, never the owner's account.
+published by `.github/workflows/worker-image.yml` to
+`ghcr.io/<owner>/quicbaas-software-factory-worker` with the workflow's
+`GITHUB_TOKEN`.
 
 `push-worker-image` runs `trivy image --severity CRITICAL,HIGH --ignore-unfixed
 --exit-code 1 <image>` first, blocking (devops.md §8): a fixable CRITICAL or HIGH

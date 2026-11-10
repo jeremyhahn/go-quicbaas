@@ -17,6 +17,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -32,12 +33,138 @@ import (
 const workflowPath = "../../../.github/workflows/worker-image.yml"
 
 type workflowFile struct {
+	On struct {
+		WorkflowDispatch struct {
+			Inputs map[string]any `yaml:"inputs"`
+		} `yaml:"workflow_dispatch"`
+	} `yaml:"on"`
 	Jobs map[string]struct {
-		Steps []struct {
-			ID  string `yaml:"id"`
-			Run string `yaml:"run"`
+		Name        string            `yaml:"name"`
+		If          string            `yaml:"if"`
+		Permissions map[string]string `yaml:"permissions"`
+		Steps       []struct {
+			ID   string `yaml:"id"`
+			Name string `yaml:"name"`
+			If   string `yaml:"if"`
+			Run  string `yaml:"run"`
 		} `yaml:"steps"`
 	} `yaml:"jobs"`
+}
+
+// loadWorkflow returns the raw worker-image workflow and its parse.
+func loadWorkflow(t *testing.T) (string, workflowFile) {
+	t.Helper()
+	raw, err := os.ReadFile(workflowPath)
+	if err != nil {
+		t.Fatalf("read %s: %v", workflowPath, err)
+	}
+	var wf workflowFile
+	if err := yaml.Unmarshal(raw, &wf); err != nil {
+		t.Fatalf("parse %s: %v", workflowPath, err)
+	}
+	return string(raw), wf
+}
+
+// The workflow is one job that holds only GITHUB_TOKEN with contents: read and
+// packages: write: no registry secret, and no job may write issues.
+func TestWorkflowBuildPublish_OnlyJob(t *testing.T) {
+	raw, wf := loadWorkflow(t)
+	if len(wf.Jobs) != 1 {
+		names := make([]string, 0, len(wf.Jobs))
+		for name := range wf.Jobs {
+			names = append(names, name)
+		}
+		t.Fatalf("jobs = %v, want exactly [build-publish]", names)
+	}
+	job, ok := wf.Jobs["build-publish"]
+	if !ok {
+		t.Fatalf("%s has no build-publish job", workflowPath)
+	}
+	wantIf := "${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' }}"
+	if job.If != wantIf {
+		t.Errorf("build-publish if = %q, want %q", job.If, wantIf)
+	}
+	wantPerms := map[string]string{"contents": "read", "packages": "write"}
+	if len(job.Permissions) != len(wantPerms) {
+		t.Errorf("build-publish permissions = %v, want %v", job.Permissions, wantPerms)
+	}
+	for k, v := range wantPerms {
+		if job.Permissions[k] != v {
+			t.Errorf("build-publish permissions = %v, want %v", job.Permissions, wantPerms)
+			break
+		}
+	}
+	inputs := wf.On.WorkflowDispatch.Inputs
+	if len(inputs) != 2 || inputs["claude_code_version"] == nil || inputs["codex_version"] == nil {
+		t.Errorf("workflow_dispatch inputs = %v, want only claude_code_version and codex_version", inputs)
+	}
+	for _, s := range []string{"REGISTRY_TOKEN", "REGISTRY_USER", "secrets["} {
+		if strings.Contains(raw, s) {
+			t.Errorf("%s contains %q", workflowPath, s)
+		}
+	}
+	if regexp.MustCompile(`(?m)^\s*issues:`).MatchString(raw) {
+		t.Errorf("%s has an issues: permission key", workflowPath)
+	}
+	for _, ref := range regexp.MustCompile(`secrets\.[A-Za-z0-9_]*`).FindAllString(raw, -1) {
+		if ref != "secrets.GITHUB_TOKEN" {
+			t.Errorf("%s references %s; only secrets.GITHUB_TOKEN is allowed", workflowPath, ref)
+		}
+	}
+}
+
+// Both secret scans run before the push, under the push's own condition, fail
+// on any finding, and carry no severity filter, skip or ignore file.
+func TestWorkflowBuildPublish_SecretScansGateThePush(t *testing.T) {
+	_, wf := loadWorkflow(t)
+	job, ok := wf.Jobs["build-publish"]
+	if !ok {
+		t.Fatalf("%s has no build-publish job", workflowPath)
+	}
+	idx := map[string]int{}
+	push := -1
+	for i, step := range job.Steps {
+		if step.ID == "secret-scan" || step.ID == "layer-scan" {
+			idx[step.ID] = i
+		}
+		if push < 0 && strings.Contains(step.Run, "make push-worker-image") {
+			push = i
+		}
+	}
+	if push < 0 {
+		t.Fatalf("build-publish has no step that runs make push-worker-image")
+	}
+	for _, id := range []string{"secret-scan", "layer-scan"} {
+		i, ok := idx[id]
+		if !ok {
+			t.Errorf("build-publish has no step with id: %s", id)
+			continue
+		}
+		step := job.Steps[i]
+		if i >= push {
+			t.Errorf("step %s (#%d) does not come before the push step (#%d)", id, i, push)
+		}
+		if step.If != job.Steps[push].If {
+			t.Errorf("step %s if = %q, want the push step's %q", id, step.If, job.Steps[push].If)
+		}
+		for _, s := range []string{"--scanners secret", "--exit-code 1"} {
+			if !strings.Contains(step.Run, s) {
+				t.Errorf("step %s run: lacks %q", id, s)
+			}
+		}
+		for _, s := range []string{"--severity", "--skip-dirs", "--skip-files", "--secret-config", "--ignorefile"} {
+			if strings.Contains(step.Run, s) {
+				t.Errorf("step %s run: contains %q", id, s)
+			}
+		}
+	}
+	if i, ok := idx["layer-scan"]; ok {
+		for _, s := range []string{"docker save", ".Layers[]"} {
+			if !strings.Contains(job.Steps[i].Run, s) {
+				t.Errorf("step layer-scan run: lacks %q", s)
+			}
+		}
+	}
 }
 
 // existingStepScript returns the run: script of build-publish's step with
