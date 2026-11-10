@@ -1,5 +1,5 @@
 # worker-image — publish the software-factory worker image to this
-# instance's container registry. Dispatch only.
+# instance's container registry.
 #
 # go-quicbaas#1381, first step. The owner's ruling (2026-10-15, relayed by the
 # Company Agent) is that the worker image is published to the registry and the
@@ -10,9 +10,6 @@
 # agent identity: images are published under
 # <registry>/<agent>/<image> and pushed with that identity's token,
 # never with the owner's account or credentials (owner ruling, 2026-10-17).
-# The nightly schedule, the in-job build and the Trivy gate arrive with the
-# rest of #1381; the schedule stays off until Infra has verified the first
-# dispatch publish made with the agent identity's credential.
 #
 # WHAT IT DOES. It pushes an image that is already loaded on the runner's host
 # (`make build-worker-image`, then docker save | load onto the hosts) as
@@ -51,9 +48,19 @@
 # checks that each host holds TAG@digest. To move `current`, once per image:
 #        {"ref":"main","inputs":{"image":"<image>","current":"sha256:<hex>"}}
 # and Infra verifies that every host pulls :current at that digest.
+#
+# THE NIGHTLY BUILD. On the nightly schedule, or a dispatch with neither `tag`
+# nor `current`, build-publish builds the image on a GitHub-hosted runner with
+# the latest Claude Code and Codex from npm (claude_code_version and
+# codex_version override them) and pushes it to ghcr.io with GITHUB_TOKEN via
+# `make push-worker-image`, whose Trivy gate blocks the push; a published tag is
+# never pushed again. record-digest posts the digest on the tracking issue. The
+# nightly schedule is an owner exception to the no-`schedule:` workflow rule.
 name: worker-image
 
 on:
+  schedule:
+    - cron: '23 4 * * *'
   workflow_dispatch:
     inputs:
       image:
@@ -72,6 +79,12 @@ on:
         description: "Runner label of the host that holds the image; empty runs on ubuntu-latest"
         required: false
         default: ""
+      claude_code_version:
+        description: "Nightly build: Claude Code version (x.y.z); empty takes the latest on npm"
+        default: ""
+      codex_version:
+        description: "Nightly build: Codex version (x.y.z); empty takes the latest on npm"
+        default: ""
 
 permissions:
   contents: read
@@ -79,7 +92,7 @@ permissions:
 jobs:
   publish:
     name: Publish worker image
-    if: ${{ inputs.current == '' }}
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.tag != '' && inputs.current == '' }}
     runs-on: ${{ github.event.inputs.runner || 'ubuntu-latest' }}
     timeout-minutes: 60
     steps:
@@ -136,7 +149,7 @@ jobs:
 
   move-current:
     name: Move the current tag
-    if: ${{ inputs.current != '' }}
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.current != '' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -228,3 +241,183 @@ jobs:
             exit 1
           fi
           echo "WORKER-IMAGE-CURRENT ${IMAGE}:current ${DIGEST}"
+
+  build-publish:
+    name: Build, scan and publish the worker image (ghcr.io)
+    if: ${{ github.event_name == 'schedule' || (inputs.tag == '' && inputs.current == '') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    permissions:
+      contents: read
+      packages: write
+    concurrency: { group: worker-image-build-publish, cancel-in-progress: false }
+    outputs:
+      ref: ${{ steps.record.outputs.ref }}
+      digest: ${{ steps.record.outputs.digest }}
+      published: ${{ steps.record.outputs.published }}
+      cc: ${{ steps.resolve.outputs.cc }}
+      cx: ${{ steps.resolve.outputs.cx }}
+      tag: ${{ steps.resolve.outputs.tag }}
+    env:
+      IMAGE: quicbaas-software-factory-worker
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+
+      - name: Free runner disk
+        if: ${{ runner.environment == 'github-hosted' }}
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc
+          docker image prune --all --force
+          df -h /
+
+      - name: Resolve the CLI versions and the content tag
+        id: resolve
+        env:
+          CC_INPUT: ${{ inputs.claude_code_version }}
+          CX_INPUT: ${{ inputs.codex_version }}
+        run: |
+          set -euo pipefail
+          cc="$CC_INPUT"
+          if [ -z "$cc" ]; then cc="$(npm view @anthropic-ai/claude-code version)"; fi
+          cx="$CX_INPUT"
+          if [ -z "$cx" ]; then cx="$(npm view @openai/codex version)"; fi
+          semver() { [[ "$2" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error::the $1 version must be <major>.<minor>.<patch>"; exit 1; }; }
+          semver "Claude Code (claude_code_version)" "$cc"
+          semver "Codex (codex_version)" "$cx"
+          # The Makefile's WORKER_IMAGE_TAG: <VERSION>-cc<claude-code>-cx<codex>.
+          tag="$(tr -d '\n' < VERSION)-cc${cc}-cx${cx}"
+          repo="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/${IMAGE}"
+          printf 'cc=%s\ncx=%s\ntag=%s\nrepo=%s\n' "$cc" "$cx" "$tag" "$repo" >> "$GITHUB_OUTPUT"
+
+      - name: Log in to ghcr.io
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          export DOCKER_CONFIG="$RUNNER_TEMP/docker-config"
+          ( umask 077; mkdir -p "$DOCKER_CONFIG" )
+          echo "DOCKER_CONFIG=$DOCKER_CONFIG" >> "$GITHUB_ENV"
+          printf '%s' "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+
+      - name: Is the content tag already published?
+        id: existing
+        env:
+          REPO: ${{ steps.resolve.outputs.repo }}
+          TAG: ${{ steps.resolve.outputs.tag }}
+        run: |
+          set -euo pipefail
+          if manifest="$(docker buildx imagetools inspect "${REPO}:${TAG}" --format '{{json .Manifest}}')"; then
+            digest="$(printf '%s' "$manifest" | jq -r .digest)"
+            [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "::error::${REPO}:${TAG} exists but names no sha256 digest"; exit 1; }
+            echo "${REPO}:${TAG} is already published at ${digest}; pushing nothing"
+            { echo "exists=true"; echo "digest=$digest"; } >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build the worker image
+        if: ${{ steps.existing.outputs.exists != 'true' }}
+        env:
+          CC: ${{ steps.resolve.outputs.cc }}
+          CX: ${{ steps.resolve.outputs.cx }}
+        run: |
+          set -euo pipefail
+          make build-worker-image CLAUDE_CODE_VERSION="$CC" CODEX_VERSION="$CX" WORKER_IMAGE_UID=1000 WORKER_IMAGE_GID=1000
+
+      - name: Install Trivy
+        if: ${{ steps.existing.outputs.exists != 'true' }}
+        run: |
+          set -euo pipefail
+          GOBIN="$RUNNER_TEMP/bin" make install-trivy
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+
+      - name: Scan, then push
+        id: push
+        if: ${{ steps.existing.outputs.exists != 'true' }}
+        env:
+          CC: ${{ steps.resolve.outputs.cc }}
+          CX: ${{ steps.resolve.outputs.cx }}
+          REPO: ${{ steps.resolve.outputs.repo }}
+        run: |
+          set -euo pipefail
+          log="$RUNNER_TEMP/push-worker-image.log"
+          make push-worker-image CLAUDE_CODE_VERSION="$CC" CODEX_VERSION="$CX" \
+            WORKER_IMAGE_UID=1000 WORKER_IMAGE_GID=1000 \
+            WORKER_IMAGE_REGISTRY="$REPO" TRIVY="$RUNNER_TEMP/bin/trivy" 2>&1 | tee "$log"
+          ref_line="$(grep '^WORKER_IMAGE_REF=' "$log" | tail -n 1 || true)"
+          digest="${ref_line##*@}"
+          [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "::error::push-worker-image printed no WORKER_IMAGE_REF=...@sha256:<hex> line"; exit 1; }
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+
+      - name: Record the digest
+        id: record
+        if: ${{ always() && steps.resolve.outcome == 'success' }}
+        env:
+          REPO: ${{ steps.resolve.outputs.repo }}
+          TAG: ${{ steps.resolve.outputs.tag }}
+          CC: ${{ steps.resolve.outputs.cc }}
+          CX: ${{ steps.resolve.outputs.cx }}
+          EXISTING_DIGEST: ${{ steps.existing.outputs.digest }}
+          PUSHED_DIGEST: ${{ steps.push.outputs.digest }}
+        run: |
+          set -euo pipefail
+          if [ -n "$PUSHED_DIGEST" ]; then
+            digest="$PUSHED_DIGEST"; published=true
+          elif [ -n "$EXISTING_DIGEST" ]; then
+            digest="$EXISTING_DIGEST"; published=false
+          else
+            echo "::error::no digest: the tag was not found published and nothing was pushed"
+            exit 1
+          fi
+          ref="${REPO}:${TAG}@${digest}"
+          line="WORKER-IMAGE-DIGEST ${ref} published=${published}"
+          echo "$line"
+          printf '%s\n\nClaude Code %s, Codex %s\n' "$line" "$CC" "$CX" >> "$GITHUB_STEP_SUMMARY"
+          printf '%s\nclaude-code=%s\ncodex=%s\n' "$line" "$CC" "$CX" > "$RUNNER_TEMP/worker-image-digest.txt"
+          { echo "ref=$ref"; echo "digest=$digest"; echo "published=$published"; } >> "$GITHUB_OUTPUT"
+
+      - name: Upload the digest
+        if: ${{ always() && steps.record.outcome == 'success' }}
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: worker-image-digest
+          path: ${{ runner.temp }}/worker-image-digest.txt
+          retention-days: 90
+          if-no-files-found: error
+
+      - name: Log out of ghcr.io
+        if: ${{ always() }}
+        run: |
+          set -euo pipefail
+          docker logout ghcr.io || true
+          rm -rf "$RUNNER_TEMP/docker-config"
+
+  record-digest:
+    name: Record the digest on the tracking issue
+    needs: build-publish
+    if: ${{ needs.build-publish.outputs.published == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      issues: write
+    env:
+      DIGEST_ISSUE: "2320"
+    steps:
+      - name: Comment the digest on the tracking issue
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REF: ${{ needs.build-publish.outputs.ref }}
+          DIGEST: ${{ needs.build-publish.outputs.digest }}
+          CC: ${{ needs.build-publish.outputs.cc }}
+          CX: ${{ needs.build-publish.outputs.cx }}
+        run: |
+          set -euo pipefail
+          [[ "$DIGEST" =~ ^sha256:[0-9a-f]{64}$ && "${REF##*@}" == "$DIGEST" ]] || { echo "::error::build-publish gave no image reference with a sha256 digest"; exit 1; }
+          body="$RUNNER_TEMP/worker-image-digest-comment.md"
+          printf '%s\n\n- Image: `%s`\n- Claude Code: `%s`, Codex: `%s`\n- Trivy: %s\n- Run: %s\n' \
+            "Worker image published by the worker-image workflow's build-publish job:" "$REF" "$CC" "$CX" \
+            "the push-worker-image gate passed (no fixable CRITICAL or HIGH finding) before the push" \
+            "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" > "$body"
+          gh issue comment "$DIGEST_ISSUE" --repo "$GITHUB_REPOSITORY" --body-file "$body"

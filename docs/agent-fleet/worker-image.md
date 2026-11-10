@@ -166,6 +166,31 @@ always produce the same name, a newer CLI always a new one, and **a previous
 tag is never overwritten** — it stays on the host (and in the registry) for
 rollback. `make build-worker-image` uses the same scheme.
 
+## Nightly publish to ghcr.io
+
+The `worker-image` workflow (`.github/workflows/worker-image.yml`) builds and
+publishes the image itself in its `build-publish` job. It runs on a nightly
+schedule (`23 4 * * *`) and on a dispatch that gives neither `tag` nor
+`current`. It takes the latest `@anthropic-ai/claude-code` and `@openai/codex`
+releases from npm; the dispatch inputs `claude_code_version` and
+`codex_version` (each `x.y.z`) pin either instead.
+
+- **Tag.** The content tag above, `<VERSION>-cc<claude-code>-cx<codex>`,
+  pushed to `ghcr.io/<owner>/quicbaas-software-factory-worker`. When that tag
+  is already published the job builds and pushes nothing and reports the
+  existing digest: a tag is never overwritten.
+- **Scan.** The Trivy gate is `make push-worker-image`'s own: a fixable
+  CRITICAL or HIGH finding fails the job before anything is tagged or pushed.
+- **Credentials.** `GITHUB_TOKEN` only (`packages: write` to push,
+  `issues: write` to comment); no personal token and no repository secret.
+- **Digest.** Every run records it four ways: a `WORKER-IMAGE-DIGEST
+  <repo>:<tag>@<digest> published=<true|false>` log line, the run's job
+  summary, the `worker-image-digest` artifact (kept 90 days), and, for an
+  image the run pushed, a comment on go-quicbaas#2320 from the
+  `record-digest` job.
+- **`current`.** The nightly job never moves it. `current` still moves only
+  on the `current` dispatch.
+
 ## Local mode and the fleet
 
 Local mode promotes a tag **only this host's engine holds**. That is right for

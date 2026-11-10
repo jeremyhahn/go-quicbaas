@@ -3842,8 +3842,8 @@ WORKER_IMAGE_DIR := deployments/agents/software-factory-worker
 WORKER_IMAGE_REPO := $(DOCKER_IMAGE)-software-factory-worker
 WORKER_IMAGE_UID ?= $(shell id -u)
 WORKER_IMAGE_GID ?= $(shell id -g)
-CLAUDE_CODE_VERSION ?= 2.1.296
-CODEX_VERSION ?= 0.162.1
+CLAUDE_CODE_VERSION ?= 2.1.322
+CODEX_VERSION ?= 0.167.0
 GEMINI_CLI_VERSION ?= 0.64.0
 WORKER_IMAGE_TAG := $(DOCKER_TAG)-cc$(CLAUDE_CODE_VERSION)-cx$(CODEX_VERSION)
 # WORKER_IMAGE_REGISTRY is where `make push-worker-image` publishes, as
