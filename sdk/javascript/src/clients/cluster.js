@@ -262,7 +262,7 @@ class ClusterClient {
    * @throws {ValidationError} If parameters are invalid
    *
    * @example
-   * await clusterClient.addNode(1, 4, '192.168.1.104:6001');
+   * await clusterClient.addNode(1, 4, '192.0.2.104:6001');
    * console.log('Node added to shard 1');
    */
   async addNode(shardId, nodeId, address) {
@@ -317,9 +317,9 @@ class ClusterClient {
    *
    * @example
    * const result = await clusterClient.createShard(2, [
-   *   { nodeId: 1, address: '192.168.1.101:6001' },
-   *   { nodeId: 2, address: '192.168.1.102:6001' },
-   *   { nodeId: 3, address: '192.168.1.103:6001' }
+   *   { nodeId: 1, address: '192.0.2.101:6001' },
+   *   { nodeId: 2, address: '192.0.2.102:6001' },
+   *   { nodeId: 3, address: '192.0.2.103:6001' }
    * ]);
    * console.log('Shard created:', result.created);
    */
