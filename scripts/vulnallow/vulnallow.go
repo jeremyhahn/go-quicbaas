@@ -41,11 +41,14 @@ type Result struct {
 	Allowed  []Allowed
 	Unlisted []Finding
 	Stale    []Entry
+	// Fixable holds listed advisories govulncheck now reports a fixed release
+	// for; the entry no longer qualifies.
+	Fixable []Finding
 }
 
 // Failed reports whether any reachable advisory is unlisted or any entry is stale.
 func (r Result) Failed() bool {
-	return len(r.Unlisted) > 0 || len(r.Stale) > 0
+	return len(r.Unlisted) > 0 || len(r.Stale) > 0 || len(r.Fixable) > 0
 }
 
 // MissingReasonError is an allowlist entry with an ID and no reason.
@@ -196,10 +199,15 @@ func Check(entries []Entry, stream io.Reader) (Result, error) {
 		if f == nil || len(f.Trace) == 0 || f.Trace[0].Function == "" {
 			continue
 		}
-		if _, seen := reachable[f.OSV]; seen {
+		nf := newFinding(f)
+		if prev, seen := reachable[f.OSV]; seen {
+			// A later finding that names a fixed release replaces one that names none, so an advisory is fixable whenever any of its findings is.
+			if prev.FixedVersion == noFixedVersion && nf.FixedVersion != noFixedVersion {
+				reachable[f.OSV] = nf
+			}
 			continue
 		}
-		reachable[f.OSV] = newFinding(f)
+		reachable[f.OSV] = nf
 		order = append(order, f.OSV)
 	}
 
@@ -210,6 +218,12 @@ func Check(entries []Entry, stream io.Reader) (Result, error) {
 	var result Result
 	for _, id := range order {
 		if e, ok := listed[id]; ok {
+			// An exception covers only an advisory with no fixed release.
+			if fd := reachable[id]; fd.FixedVersion != noFixedVersion {
+				fd.Summary = summaries[id]
+				result.Fixable = append(result.Fixable, fd)
+				continue
+			}
 			result.Allowed = append(result.Allowed, Allowed{ID: id, Reason: e.Reason})
 			continue
 		}
@@ -225,11 +239,15 @@ func Check(entries []Entry, stream io.Reader) (Result, error) {
 	return result, nil
 }
 
+// noFixedVersion is the FixedVersion of a finding govulncheck reports no
+// fixed release for.
+const noFixedVersion = "N/A"
+
 func newFinding(f *finding) Finding {
 	top := f.Trace[0]
 	fixed := f.FixedVersion
 	if fixed == "" {
-		fixed = "N/A"
+		fixed = noFixedVersion
 	}
 	pos := "unknown position"
 	if top.Position != nil && top.Position.Filename != "" {

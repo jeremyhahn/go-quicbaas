@@ -305,7 +305,7 @@ func TestPEPClient_Check(t *testing.T) {
 					"department": "engineering",
 					"level":      3,
 				},
-				ClientIP:  "192.168.1.100",
+				ClientIP:  "192.0.2.100",
 				UserAgent: "QuicBaaS-SDK/1.0",
 			},
 			Action:   "data:read",

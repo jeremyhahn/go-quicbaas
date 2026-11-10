@@ -219,7 +219,7 @@ func TestSIEMExporter_JSONFormat(t *testing.T) {
 		Action:    ActionAuthenticate,
 		Resource:  "auth",
 		Result:    ResultSuccess,
-		IPAddress: "192.168.1.100",
+		IPAddress: "192.0.2.100",
 		NodeID:    "node-1",
 		ShardID:   42,
 		Details:   map[string]string{"method": "jwt"},
@@ -282,7 +282,7 @@ func TestSIEMExporter_CEFFormat(t *testing.T) {
 		Action:    ActionAuthenticate,
 		Resource:  "auth",
 		Result:    ResultSuccess,
-		IPAddress: "192.168.1.100",
+		IPAddress: "192.0.2.100",
 	}
 
 	err = exporter.Send(event)
@@ -339,7 +339,7 @@ func TestSIEMExporter_LEEFFormat(t *testing.T) {
 		Action:    ActionRead,
 		Resource:  "keys",
 		Result:    ResultDenied,
-		IPAddress: "192.168.1.100",
+		IPAddress: "192.0.2.100",
 		ErrorMsg:  "Access denied",
 	}
 
@@ -1454,7 +1454,7 @@ func TestSIEMExporter_FormatBatch_LEEF(t *testing.T) {
 			Resource:  "key",
 			Result:    ResultFailure,
 			UserID:    "user2",
-			IPAddress: "192.168.1.1",
+			IPAddress: "192.0.2.1",
 		},
 	}
 
@@ -1893,7 +1893,7 @@ func TestSIEMExporter_BuildLEEFExtensionAllFields(t *testing.T) {
 		Action:    ActionDelete,
 		Resource:  "secrets",
 		Result:    ResultDenied,
-		IPAddress: "192.168.1.10",
+		IPAddress: "192.0.2.10",
 		NodeID:    "node-2",
 		ShardID:   7,
 		ErrorMsg:  "permission denied",
@@ -1903,7 +1903,7 @@ func TestSIEMExporter_BuildLEEFExtensionAllFields(t *testing.T) {
 	ext := exporter.buildLEEFExtension(event)
 
 	assert.Contains(t, ext, "devTime=")
-	assert.Contains(t, ext, "src=192.168.1.10")
+	assert.Contains(t, ext, "src=192.0.2.10")
 	assert.Contains(t, ext, "usrName=bob")
 	assert.Contains(t, ext, "identSrc=uid-2")
 	assert.Contains(t, ext, "action=")
@@ -2286,7 +2286,7 @@ func TestSIEMExporter_BuildCEFExtension_AllFieldsPopulated(t *testing.T) {
 		Action:    ActionRead,
 		Resource:  "keys/test",
 		Result:    ResultSuccess,
-		IPAddress: "192.168.1.100",
+		IPAddress: "192.0.2.100",
 		NodeID:    "node-1",
 		ShardID:   42,
 		ErrorMsg:  "some error",
@@ -2301,7 +2301,7 @@ func TestSIEMExporter_BuildCEFExtension_AllFieldsPopulated(t *testing.T) {
 	extension := exporter.buildCEFExtension(event)
 
 	assert.Contains(t, extension, "rt=")
-	assert.Contains(t, extension, "src=192.168.1.100")
+	assert.Contains(t, extension, "src=192.0.2.100")
 	assert.Contains(t, extension, "suser=alice")
 	assert.Contains(t, extension, "suid=user-001")
 	assert.Contains(t, extension, "act=read")
@@ -2368,7 +2368,7 @@ func TestSIEMExporter_BuildLEEFExtension_AllFieldsPopulated(t *testing.T) {
 		Action:    ActionWrite,
 		Resource:  "keys/test",
 		Result:    ResultFailure,
-		IPAddress: "192.168.1.100",
+		IPAddress: "192.0.2.100",
 		NodeID:    "node-1",
 		ShardID:   42,
 		ErrorMsg:  "permission denied",
@@ -2380,7 +2380,7 @@ func TestSIEMExporter_BuildLEEFExtension_AllFieldsPopulated(t *testing.T) {
 	extension := exporter.buildLEEFExtension(event)
 
 	assert.Contains(t, extension, "devTime=")
-	assert.Contains(t, extension, "src=192.168.1.100")
+	assert.Contains(t, extension, "src=192.0.2.100")
 	assert.Contains(t, extension, "usrName=alice")
 	assert.Contains(t, extension, "identSrc=user-001")
 	assert.Contains(t, extension, "action=write")

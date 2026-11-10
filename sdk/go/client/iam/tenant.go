@@ -537,9 +537,10 @@ func parseListTenantsResponse(resp interface{}) (*ListTenantsResponse, error) {
 			for _, t := range tenants {
 				if tenantMap, ok := t.(map[string]interface{}); ok {
 					tenant, err := parseTenantResponse(tenantMap)
-					if err == nil && tenant != nil {
-						listResp.Tenants = append(listResp.Tenants, *tenant)
+					if err != nil {
+						return nil, err
 					}
+					listResp.Tenants = append(listResp.Tenants, *tenant)
 				}
 			}
 		case []*Tenant:
@@ -616,8 +617,18 @@ func parseTenantResponse(resp interface{}) (*Tenant, error) {
 	if v, ok := respMap["description"].(string); ok {
 		tenant.Description = v
 	}
-	if v, ok := respMap["status"].(string); ok {
-		tenant.Status = parseTenantStatus(v)
+	// A status the SDK does not recognize fails the read closed: it is never
+	// read back as active (#1518).
+	if raw, ok := respMap["status"]; ok && raw != nil {
+		v, isString := raw.(string)
+		if !isString {
+			return nil, &UnknownEnumValueError{Enum: "tenant status", Value: fmt.Sprint(raw)}
+		}
+		status, err := parseTenantStatus(v)
+		if err != nil {
+			return nil, err
+		}
+		tenant.Status = status
 	}
 	if v, ok := respMap["settings"].(map[string]string); ok {
 		tenant.Settings = v
@@ -678,20 +689,24 @@ func parseTenantResponse(resp interface{}) (*Tenant, error) {
 	return tenant, nil
 }
 
-// parseTenantStatus parses a tenant status string.
-func parseTenantStatus(s string) TenantStatus {
-	switch s {
-	case "active":
-		return TenantStatusActive
-	case "suspended":
-		return TenantStatusSuspended
-	case "pending":
-		return TenantStatusUnspecified
-	case "deleted":
-		return TenantStatusDeleted
-	default:
-		return TenantStatusActive
+// tenantStatusByName maps every tenant status name the SDK recognizes. An
+// empty status is absent, not unknown.
+var tenantStatusByName = map[string]TenantStatus{
+	"":          TenantStatusUnspecified,
+	"active":    TenantStatusActive,
+	"suspended": TenantStatusSuspended,
+	"pending":   TenantStatusUnspecified,
+	"deleted":   TenantStatusDeleted,
+}
+
+// parseTenantStatus parses a tenant status string. A name it does not
+// recognize returns UnknownEnumValueError, so a caller fails closed (#1518).
+func parseTenantStatus(s string) (TenantStatus, error) {
+	status, ok := tenantStatusByName[s]
+	if !ok {
+		return TenantStatusUnspecified, &UnknownEnumValueError{Enum: "tenant status", Value: s}
 	}
+	return status, nil
 }
 
 // parseTime parses a time string.

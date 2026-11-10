@@ -1549,13 +1549,13 @@ func TestWithKMSAuditLogger(t *testing.T) {
 func TestWithAuditContext(t *testing.T) {
 	ctx := systemTenantCtx()
 
-	ctx = WithAuditContext(ctx, "testuser", "user-123", "192.168.1.1")
+	ctx = WithAuditContext(ctx, "testuser", "user-123", "192.0.2.1")
 
 	// Verify the context values
 	username, userID, ipAddr := extractAuditContext(ctx)
 	assert.Equal(t, "testuser", username)
 	assert.Equal(t, "user-123", userID)
-	assert.Equal(t, "192.168.1.1", ipAddr)
+	assert.Equal(t, "192.0.2.1", ipAddr)
 }
 
 func TestExtractAuditContext_Empty(t *testing.T) {

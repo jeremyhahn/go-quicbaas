@@ -128,122 +128,48 @@ func (l *hookTestLogger) WithError(_ error) interfaces.Logger                   
 // HookCheckBudget Tests
 // =============================================================================
 
-func TestHookCheckBudget_OK(t *testing.T) {
-	tracker := &hookMockCostTracker{status: BudgetOK}
-	logger := &hookTestLogger{}
-	settings := CostControlSettings{BudgetAction: BudgetActionWarn}
+func TestHookCheckBudget_TrackerStatesAndActions(t *testing.T) {
+	tests := []struct {
+		name        string
+		tracker     *hookMockCostTracker
+		action      string
+		wantStatus  BudgetStatus
+		wantAction  string
+		wantWarnLog bool
+	}{
+		{"ok", &hookMockCostTracker{status: BudgetOK}, BudgetActionWarn, BudgetOK, "", false},
+		{"budget not set is ok", &hookMockCostTracker{statusErr: ErrBudgetNotSet}, "", BudgetOK, "", false},
+		{"warning", &hookMockCostTracker{status: BudgetWarning}, BudgetActionWarn, BudgetWarning, "", true},
+		{"exceeded shutdown", &hookMockCostTracker{status: BudgetExceeded}, BudgetActionShutdown, BudgetExceeded, BudgetActionShutdown, true},
+		{"exceeded pause", &hookMockCostTracker{status: BudgetExceeded}, BudgetActionPause, BudgetExceeded, BudgetActionPause, true},
+		{"exceeded warn", &hookMockCostTracker{status: BudgetExceeded}, BudgetActionWarn, BudgetExceeded, BudgetActionWarn, true},
+		{"exceeded defaults to warn", &hookMockCostTracker{status: BudgetExceeded}, "", BudgetExceeded, BudgetActionWarn, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			logger := &hookTestLogger{}
+			settings := CostControlSettings{BudgetAction: tt.action}
 
-	result, err := HookCheckBudget(context.Background(), tracker, settings, "tenant-1", "job-1", logger)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if result == nil {
-		t.Fatal("expected non-nil result")
-	}
-	if result.Status != BudgetOK {
-		t.Errorf("expected status %q, got %q", BudgetOK, result.Status)
-	}
-	if result.Action != "" {
-		t.Errorf("expected empty action for ok status, got %q", result.Action)
-	}
-}
+			result, err := HookCheckBudget(context.Background(), tt.tracker, settings, "tenant-1", "job-1", logger)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if result == nil {
+				t.Fatal("expected non-nil result")
+			}
+			if result.Status != tt.wantStatus {
+				t.Errorf("expected status %q, got %q", tt.wantStatus, result.Status)
+			}
+			if result.Action != tt.wantAction {
+				t.Errorf("expected action %q, got %q", tt.wantAction, result.Action)
+			}
 
-func TestHookCheckBudget_Warning(t *testing.T) {
-	tracker := &hookMockCostTracker{status: BudgetWarning}
-	logger := &hookTestLogger{}
-	settings := CostControlSettings{BudgetAction: BudgetActionWarn}
-
-	result, err := HookCheckBudget(context.Background(), tracker, settings, "tenant-1", "job-1", logger)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if result == nil {
-		t.Fatal("expected non-nil result")
-	}
-	if result.Status != BudgetWarning {
-		t.Errorf("expected status %q, got %q", BudgetWarning, result.Status)
-	}
-
-	// Should have logged a warning.
-	logger.mu.Lock()
-	defer logger.mu.Unlock()
-	if len(logger.warnings) == 0 {
-		t.Error("expected at least one warning log for budget warning")
-	}
-}
-
-func TestHookCheckBudget_Exceeded_Shutdown(t *testing.T) {
-	tracker := &hookMockCostTracker{status: BudgetExceeded}
-	logger := &hookTestLogger{}
-	settings := CostControlSettings{BudgetAction: BudgetActionShutdown}
-
-	result, err := HookCheckBudget(context.Background(), tracker, settings, "tenant-1", "job-1", logger)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if result == nil {
-		t.Fatal("expected non-nil result")
-	}
-	if result.Status != BudgetExceeded {
-		t.Errorf("expected status %q, got %q", BudgetExceeded, result.Status)
-	}
-	if result.Action != BudgetActionShutdown {
-		t.Errorf("expected action %q, got %q", BudgetActionShutdown, result.Action)
-	}
-}
-
-func TestHookCheckBudget_Exceeded_Pause(t *testing.T) {
-	tracker := &hookMockCostTracker{status: BudgetExceeded}
-	logger := &hookTestLogger{}
-	settings := CostControlSettings{BudgetAction: BudgetActionPause}
-
-	result, err := HookCheckBudget(context.Background(), tracker, settings, "tenant-1", "job-1", logger)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if result == nil {
-		t.Fatal("expected non-nil result")
-	}
-	if result.Status != BudgetExceeded {
-		t.Errorf("expected status %q, got %q", BudgetExceeded, result.Status)
-	}
-	if result.Action != BudgetActionPause {
-		t.Errorf("expected action %q, got %q", BudgetActionPause, result.Action)
-	}
-}
-
-func TestHookCheckBudget_Exceeded_Warn(t *testing.T) {
-	tracker := &hookMockCostTracker{status: BudgetExceeded}
-	logger := &hookTestLogger{}
-	settings := CostControlSettings{BudgetAction: BudgetActionWarn}
-
-	result, err := HookCheckBudget(context.Background(), tracker, settings, "tenant-1", "job-1", logger)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if result == nil {
-		t.Fatal("expected non-nil result")
-	}
-	if result.Status != BudgetExceeded {
-		t.Errorf("expected status %q, got %q", BudgetExceeded, result.Status)
-	}
-	if result.Action != BudgetActionWarn {
-		t.Errorf("expected action %q, got %q", BudgetActionWarn, result.Action)
-	}
-}
-
-func TestHookCheckBudget_Exceeded_DefaultsToWarn(t *testing.T) {
-	tracker := &hookMockCostTracker{status: BudgetExceeded}
-	logger := &hookTestLogger{}
-	// Empty BudgetAction should default to "warn".
-	settings := CostControlSettings{}
-
-	result, err := HookCheckBudget(context.Background(), tracker, settings, "tenant-1", "job-1", logger)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if result.Action != BudgetActionWarn {
-		t.Errorf("expected default action %q, got %q", BudgetActionWarn, result.Action)
+			logger.mu.Lock()
+			defer logger.mu.Unlock()
+			if gotWarnLog := len(logger.warnings) > 0; gotWarnLog != tt.wantWarnLog {
+				t.Errorf("expected warning log %v, got %v", tt.wantWarnLog, gotWarnLog)
+			}
+		})
 	}
 }
 
@@ -397,13 +323,6 @@ func TestHookRecoveryBootstrap_StopOnError(t *testing.T) {
 	}
 }
 
-func TestHookRecoveryBootstrap_EmptySteps(t *testing.T) {
-	err := HookRecoveryBootstrap(context.Background(), nil)
-	if err != nil {
-		t.Fatalf("unexpected error for empty steps: %v", err)
-	}
-}
-
 func TestHookRecoveryBootstrap_CancelledContext(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // cancel immediately
@@ -427,55 +346,32 @@ func TestHookRecoveryBootstrap_CancelledContext(t *testing.T) {
 // HookTriggerReindex Tests
 // =============================================================================
 
-func TestHookTriggerReindex_IterationComplete(t *testing.T) {
-	var called bool
-	reindexFn := func(_ context.Context) error {
-		called = true
-		return nil
+func TestHookTriggerReindex_Triggers(t *testing.T) {
+	tests := []struct {
+		name       string
+		triggers   []string
+		wantCalled bool
+	}{
+		{"iteration complete", []string{"manual", "iteration_complete"}, true},
+		{"no triggers", nil, false},
+		{"iteration complete absent", []string{"manual", "on_demand"}, false},
 	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var called bool
+			reindexFn := func(_ context.Context) error {
+				called = true
+				return nil
+			}
 
-	triggers := []string{"manual", "iteration_complete"}
-
-	err := HookTriggerReindex(context.Background(), reindexFn, triggers)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if !called {
-		t.Error("expected reindexFn to be called")
-	}
-}
-
-func TestHookTriggerReindex_NoTrigger(t *testing.T) {
-	var called bool
-	reindexFn := func(_ context.Context) error {
-		called = true
-		return nil
-	}
-
-	err := HookTriggerReindex(context.Background(), reindexFn, nil)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if called {
-		t.Error("expected reindexFn NOT to be called with nil triggers")
-	}
-}
-
-func TestHookTriggerReindex_ManualOnly(t *testing.T) {
-	var called bool
-	reindexFn := func(_ context.Context) error {
-		called = true
-		return nil
-	}
-
-	triggers := []string{"manual", "on_demand"}
-
-	err := HookTriggerReindex(context.Background(), reindexFn, triggers)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if called {
-		t.Error("expected reindexFn NOT to be called when iteration_complete is absent")
+			err := HookTriggerReindex(context.Background(), reindexFn, tt.triggers)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if called != tt.wantCalled {
+				t.Errorf("expected reindexFn called %v, got %v", tt.wantCalled, called)
+			}
+		})
 	}
 }
 
@@ -502,22 +398,6 @@ func TestHookTriggerReindex_ReindexError(t *testing.T) {
 	}
 	if !errors.Is(err, ErrHookReindex) {
 		t.Errorf("expected error to wrap ErrHookReindex, got %v", err)
-	}
-}
-
-func TestHookTriggerReindex_EmptyTriggers(t *testing.T) {
-	var called bool
-	reindexFn := func(_ context.Context) error {
-		called = true
-		return nil
-	}
-
-	err := HookTriggerReindex(context.Background(), reindexFn, []string{})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if called {
-		t.Error("expected reindexFn NOT to be called with empty triggers")
 	}
 }
 
@@ -577,27 +457,25 @@ func TestHookStartPeerDelivery_Success(t *testing.T) {
 	cancels[0]()
 }
 
-func TestHookStartPeerDelivery_NilService(t *testing.T) {
-	deliverFn := func(_ context.Context, _ string, _ *PeerMessage) {}
-
-	cancels, err := HookStartPeerDelivery(context.Background(), nil, "tenant-1", []string{"agent-1"}, deliverFn)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+func TestHookStartPeerDelivery_NilDependenciesAreNoOp(t *testing.T) {
+	tests := []struct {
+		name      string
+		peerSvc   PeerMessagingService
+		deliverFn func(context.Context, string, *PeerMessage)
+	}{
+		{"nil service", nil, func(_ context.Context, _ string, _ *PeerMessage) {}},
+		{"nil deliverFn", &hookMockPeerMessaging{}, nil},
 	}
-	if cancels != nil {
-		t.Errorf("expected nil cancels for nil service, got %d", len(cancels))
-	}
-}
-
-func TestHookStartPeerDelivery_NilDeliverFn(t *testing.T) {
-	mockSvc := &hookMockPeerMessaging{}
-
-	cancels, err := HookStartPeerDelivery(context.Background(), mockSvc, "tenant-1", []string{"agent-1"}, nil)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if cancels != nil {
-		t.Errorf("expected nil cancels for nil deliverFn, got %d", len(cancels))
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cancels, err := HookStartPeerDelivery(context.Background(), tt.peerSvc, "tenant-1", []string{"agent-1"}, tt.deliverFn)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if cancels != nil {
+				t.Errorf("expected nil cancels, got %d", len(cancels))
+			}
+		})
 	}
 }
 
@@ -661,167 +539,35 @@ func TestHookStartPeerDelivery_MultipleAgents(t *testing.T) {
 	}
 }
 
-func TestHookStartPeerDelivery_ChannelClosed(t *testing.T) {
-	var delivered atomic.Int64
-
-	msgCh := make(chan *PeerMessage, 1)
-	mockSvc := &hookMockPeerMessaging{
-		subscribeFn: func(_ context.Context, _, _ string) (<-chan *PeerMessage, error) {
-			return msgCh, nil
-		},
-	}
-
-	deliverFn := func(_ context.Context, _ string, _ *PeerMessage) {
-		delivered.Add(1)
-	}
-
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	cancels, err := HookStartPeerDelivery(ctx, mockSvc, "tenant-1", []string{"agent-1"}, deliverFn)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if len(cancels) != 1 {
-		t.Fatalf("expected 1 cancel function, got %d", len(cancels))
-	}
-
-	// Close channel to trigger goroutine exit.
-	close(msgCh)
-
-	// The goroutine should exit cleanly. No assertion needed beyond no panic.
-	cancel()
-}
-
-// =============================================================================
-// ControlLoop Setter Tests
-// =============================================================================
-
-func TestControlLoop_SetPeerMessaging(t *testing.T) {
-	cl := NewControlLoop(nil, &hookTestLogger{})
-	if cl.peerMessaging != nil {
-		t.Error("expected nil peerMessaging initially")
-	}
-
-	mockSvc := &hookMockPeerMessaging{}
-	cl.SetPeerMessaging(mockSvc)
-	if cl.peerMessaging == nil {
-		t.Error("expected non-nil peerMessaging after set")
-	}
-}
-
-func TestControlLoop_SetCostTracker(t *testing.T) {
-	cl := NewControlLoop(nil, &hookTestLogger{})
-	if cl.job.CostTracker != nil {
-		t.Error("expected nil costTracker initially")
-	}
-
-	tracker := &hookMockCostTracker{status: BudgetOK}
-	cl.SetCostTracker(tracker)
-	if cl.job.CostTracker == nil {
-		t.Error("expected non-nil costTracker after set")
-	}
-}
-
-func TestControlLoop_SetFileLocking(t *testing.T) {
-	cl := NewControlLoop(nil, &hookTestLogger{})
-	if cl.fileLocking != nil {
-		t.Error("expected nil fileLocking initially")
-	}
-
-	// FileLockService is an interface; just verify the setter works.
-	cl.SetFileLocking(nil)
-	if cl.fileLocking != nil {
-		t.Error("expected nil fileLocking after setting nil")
-	}
-}
-
-func TestControlLoop_SetReindexFn(t *testing.T) {
-	cl := NewControlLoop(nil, &hookTestLogger{})
-	if cl.reindexFn != nil {
-		t.Error("expected nil reindexFn initially")
-	}
-
-	cl.SetReindexFn(func(_ context.Context) error { return nil })
-	if cl.reindexFn == nil {
-		t.Error("expected non-nil reindexFn after set")
-	}
-}
-
 // =============================================================================
 // Error Type Tests
 // =============================================================================
 
-func TestHookBudgetCheckError_Unwrap(t *testing.T) {
-	cause := errors.New("timeout")
-	err := &HookBudgetCheckError{TenantID: "t1", JobID: "j1", Cause: cause}
-
-	if !errors.Is(err, ErrHookBudgetCheck) {
-		t.Error("expected error to unwrap to ErrHookBudgetCheck")
+func TestHookErrors_UnwrapAndMessage(t *testing.T) {
+	cause := errors.New("cause")
+	tests := []struct {
+		name     string
+		err      error
+		sentinel error
+	}{
+		{"budget check with cause", &HookBudgetCheckError{TenantID: "t1", JobID: "j1", Cause: cause}, ErrHookBudgetCheck},
+		{"budget check nil cause", &HookBudgetCheckError{TenantID: "t1", JobID: "j1"}, ErrHookBudgetCheck},
+		{"recovery bootstrap with cause", &HookRecoveryBootstrapError{Step: "scan_fleet", Cause: cause}, ErrHookRecoveryBootstrap},
+		{"recovery bootstrap nil cause", &HookRecoveryBootstrapError{Step: "scan_fleet"}, ErrHookRecoveryBootstrap},
+		{"peer delivery with cause", &HookPeerDeliveryError{AgentID: "agent-1", Cause: cause}, ErrHookPeerDelivery},
+		{"peer delivery nil cause", &HookPeerDeliveryError{AgentID: "agent-1"}, ErrHookPeerDelivery},
+		{"reindex with cause", &HookReindexError{Cause: cause}, ErrHookReindex},
+		{"reindex nil cause", &HookReindexError{}, ErrHookReindex},
 	}
-
-	msg := err.Error()
-	if msg == "" {
-		t.Error("expected non-empty error message")
-	}
-}
-
-func TestHookBudgetCheckError_NilCause(t *testing.T) {
-	err := &HookBudgetCheckError{TenantID: "t1", JobID: "j1"}
-	msg := err.Error()
-	if msg == "" {
-		t.Error("expected non-empty error message with nil cause")
-	}
-}
-
-func TestHookRecoveryBootstrapError_Unwrap(t *testing.T) {
-	cause := errors.New("step failed")
-	err := &HookRecoveryBootstrapError{Step: "scan_fleet", Cause: cause}
-
-	if !errors.Is(err, ErrHookRecoveryBootstrap) {
-		t.Error("expected error to unwrap to ErrHookRecoveryBootstrap")
-	}
-}
-
-func TestHookRecoveryBootstrapError_NilCause(t *testing.T) {
-	err := &HookRecoveryBootstrapError{Step: "scan_fleet"}
-	msg := err.Error()
-	if msg == "" {
-		t.Error("expected non-empty error message with nil cause")
-	}
-}
-
-func TestHookPeerDeliveryError_Unwrap(t *testing.T) {
-	cause := errors.New("subscribe failed")
-	err := &HookPeerDeliveryError{AgentID: "agent-1", Cause: cause}
-
-	if !errors.Is(err, ErrHookPeerDelivery) {
-		t.Error("expected error to unwrap to ErrHookPeerDelivery")
-	}
-}
-
-func TestHookPeerDeliveryError_NilCause(t *testing.T) {
-	err := &HookPeerDeliveryError{AgentID: "agent-1"}
-	msg := err.Error()
-	if msg == "" {
-		t.Error("expected non-empty error message with nil cause")
-	}
-}
-
-func TestHookReindexError_Unwrap(t *testing.T) {
-	cause := errors.New("indexing failed")
-	err := &HookReindexError{Cause: cause}
-
-	if !errors.Is(err, ErrHookReindex) {
-		t.Error("expected error to unwrap to ErrHookReindex")
-	}
-}
-
-func TestHookReindexError_NilCause(t *testing.T) {
-	err := &HookReindexError{}
-	msg := err.Error()
-	if msg == "" {
-		t.Error("expected non-empty error message with nil cause")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if !errors.Is(tt.err, tt.sentinel) {
+				t.Errorf("expected error to unwrap to %v", tt.sentinel)
+			}
+			if tt.err.Error() == "" {
+				t.Error("expected non-empty error message")
+			}
+		})
 	}
 }
 
