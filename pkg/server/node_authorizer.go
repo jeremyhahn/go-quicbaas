@@ -16,6 +16,7 @@ package server
 import (
 	"context"
 
+	authmw "github.com/jeremyhahn/go-qrdb/pkg/auth/middleware"
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	qrdbnode "github.com/jeremyhahn/go-qrdb/sdk/go/node"
 
@@ -62,15 +63,18 @@ type admittingAuthorizer struct {
 	hooks *service.TenantUnsealHooks
 }
 
-// Authorize returns the hooks' admission error for a held target tenant
-// without calling the inner authorizer, and the inner authorizer's decision
-// otherwise. The target is the tenant bound to ctx, else the identity's
-// tenant. The tenant_barrier resource (seal, unseal, status and votes) clears
-// the hold and always reaches the inner authorizer. An unseal gate's own
-// requests for the tenant it is admitting (service.InUnsealGate), the
-// token-liveness reads of a held tenant (tenantctx.InAuthRecordRead) and the
-// ABAC sync's reads of its policies (tenantctx.InPolicySyncRead) reach it
-// too, as they do in admittingStoreResolver.Resolve.
+// Authorize refuses a held target tenant without calling the inner
+// authorizer, and returns the inner authorizer's decision otherwise. The
+// refusal is the hooks' admission error wrapped in the middleware's
+// StoreUnavailableError, so every native transport answers it as unavailable
+// (503, UNAVAILABLE) and not as a failed credential. The target is the tenant
+// bound to ctx, else the identity's tenant. The tenant_barrier resource
+// (seal, unseal, status and votes) clears the hold and always reaches the
+// inner authorizer. An unseal gate's own requests for the tenant it is
+// admitting (service.InUnsealGate), the token-liveness reads of a held tenant
+// (tenantctx.InAuthRecordRead) and the ABAC sync's reads of its policies
+// (tenantctx.InPolicySyncRead) reach it too, as they do in
+// admittingStoreResolver.Resolve.
 func (a *admittingAuthorizer) Authorize(ctx context.Context, identity *qrdbsdk.Identity, resource, action string) error {
 	target, ok := qrdbsdk.TenantFromContext(ctx)
 	if !ok && identity != nil {
@@ -79,7 +83,7 @@ func (a *admittingAuthorizer) Authorize(ctx context.Context, identity *qrdbsdk.I
 	if target != "" && resource != "tenant_barrier" &&
 		!service.InUnsealGate(ctx, target) && !tenantctx.InAuthRecordRead(ctx, target) && !tenantctx.InPolicySyncRead(ctx, target) {
 		if err := a.hooks.Admit(target); err != nil {
-			return err
+			return &authmw.StoreUnavailableError{Err: err}
 		}
 	}
 	return a.inner.Authorize(ctx, identity, resource, action)

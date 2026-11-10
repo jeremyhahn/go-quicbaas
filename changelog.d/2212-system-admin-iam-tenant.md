@@ -9,3 +9,6 @@
 - A tenant unseal on the embedded transport now goes through the same hold
   and unseal checks as one over REST, gRPC or QUIC, and is refused for a
   caller that is not bound to that tenant.
+- Requests to a tenant that is still running its unseal checks now answer
+  503 (gRPC `UNAVAILABLE`) on the native REST and gRPC transports instead of
+  401 (`UNAUTHENTICATED`).
