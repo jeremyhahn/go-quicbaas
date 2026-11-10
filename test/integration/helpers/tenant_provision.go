@@ -63,6 +63,10 @@ type ProvisionedTenant struct {
 	// TenantID is the provisioned tenant.
 	TenantID string
 
+	// AdminUserID is the id of the admin user the server created, as the
+	// provision response reports it. Empty when the response has none.
+	AdminUserID string
+
 	// AdminCertPEM is the admin certificate the server signed; its subject
 	// names the tenant.
 	AdminCertPEM []byte
@@ -104,6 +108,7 @@ func ProvisionTenant(ctx context.Context, baseURL, tenantID, systemBearer string
 
 	var resp struct {
 		AdminCertPEM string `json:"admin_cert_pem"`
+		AdminUserID  string `json:"admin_user_id"`
 	}
 	if err := json.Unmarshal(body, &resp); err != nil {
 		return nil, &TenantProvisionError{Step: "decode provision response", TenantID: tenantID, Cause: err}
@@ -121,6 +126,7 @@ func ProvisionTenant(ctx context.Context, baseURL, tenantID, systemBearer string
 
 	return &ProvisionedTenant{
 		TenantID:     tenantID,
+		AdminUserID:  resp.AdminUserID,
 		AdminCertPEM: certPEM,
 		AdminKeyPEM:  keyPEM,
 		AdminBearer:  bearer,

@@ -42,6 +42,10 @@ func TestUserCRUD(t *testing.T) {
 
 	email := generateUniqueEmail()
 
+	// userID is the user Create made. The tenant also holds its provisioned
+	// admin, so the later steps address this user by id.
+	var userID uint64
+
 	// Create user
 	t.Run("Create", func(t *testing.T) {
 		createReq := map[string]interface{}{
@@ -64,10 +68,12 @@ func TestUserCRUD(t *testing.T) {
 		assert.NotEmpty(t, user.ID)
 		assert.NotZero(t, user.Created)
 		assert.Equal(t, "engineering", user.Attributes["department"])
+		userID = user.ID
 	})
 
 	// Get user
 	t.Run("Get", func(t *testing.T) {
+		require.NotZero(t, userID, "Create must have run")
 		var resp struct {
 			Users  []iam.User `json:"users"`
 			Cursor string     `json:"cursor"`
@@ -76,21 +82,21 @@ func TestUserCRUD(t *testing.T) {
 		require.NoError(t, err)
 		require.NotEmpty(t, resp.Users)
 
-		user := resp.Users[0]
-		assert.Equal(t, email, user.Email)
-		assert.Equal(t, tenantID, user.TenantID)
+		var found *iam.User
+		for i := range resp.Users {
+			if resp.Users[i].ID == userID {
+				found = &resp.Users[i]
+				break
+			}
+		}
+		require.NotNil(t, found, "The created user should be listed")
+		assert.Equal(t, email, found.Email)
+		assert.Equal(t, tenantID, found.TenantID)
 	})
 
 	// Update user
 	t.Run("Update", func(t *testing.T) {
-		var resp struct {
-			Users []iam.User `json:"users"`
-		}
-		err := cluster.getJSON(fmt.Sprintf("/api/v1/tenants/%s/users", tenantID), &resp)
-		require.NoError(t, err)
-		require.NotEmpty(t, resp.Users)
-
-		userID := resp.Users[0].ID
+		require.NotZero(t, userID, "Create must have run")
 		updateReq := map[string]interface{}{
 			"name": "Updated User Name",
 			"attributes": map[string]interface{}{
@@ -100,7 +106,7 @@ func TestUserCRUD(t *testing.T) {
 		}
 
 		var updated iam.User
-		err = cluster.putJSON(fmt.Sprintf("/api/v1/tenants/%s/users/%d", tenantID, userID), updateReq, &updated)
+		err := cluster.putJSON(fmt.Sprintf("/api/v1/tenants/%s/users/%d", tenantID, userID), updateReq, &updated)
 		require.NoError(t, err)
 
 		assert.Equal(t, "Updated User Name", updated.Name)
@@ -109,15 +115,8 @@ func TestUserCRUD(t *testing.T) {
 
 	// Delete user
 	t.Run("Delete", func(t *testing.T) {
-		var resp struct {
-			Users []iam.User `json:"users"`
-		}
-		err := cluster.getJSON(fmt.Sprintf("/api/v1/tenants/%s/users", tenantID), &resp)
-		require.NoError(t, err)
-		require.NotEmpty(t, resp.Users)
-
-		userID := resp.Users[0].ID
-		err = cluster.deleteJSON(fmt.Sprintf("/api/v1/tenants/%s/users/%d", tenantID, userID))
+		require.NotZero(t, userID, "Create must have run")
+		err := cluster.deleteJSON(fmt.Sprintf("/api/v1/tenants/%s/users/%d", tenantID, userID))
 		require.NoError(t, err)
 
 		// Verify deletion - use expectNotFound which handles eventual consistency

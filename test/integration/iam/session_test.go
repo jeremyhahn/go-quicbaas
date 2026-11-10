@@ -71,6 +71,16 @@ func setupUserForSessionTests(t *testing.T, cluster *testCluster) (string, strin
 	return tenantID, user.ID
 }
 
+// setupCallerForSessionTests provisions a test tenant and returns it with
+// the user id of its admin. The helpers call /api/v1/iam/sessions as that
+// admin, and those routes act only on the caller's own sessions, so a test
+// of those routes creates its sessions for this user.
+func setupCallerForSessionTests(t *testing.T, cluster *testCluster) (string, string) {
+	tenantID := generateUniqueTenantID()
+	cluster.provisionTenant(t, tenantID)
+	return tenantID, cluster.callerUserID(t, tenantID)
+}
+
 // cleanupSessionTests cleans up test resources.
 func cleanupSessionTests(cluster *testCluster, tenantID string) {
 	cluster.deleteJSON(fmt.Sprintf("/api/v1/tenants/%s", tenantID))
@@ -135,11 +145,13 @@ func TestSessionListUnauthorized(t *testing.T) {
 	defer cluster.Close()
 
 	// Attempt to list sessions without authentication context
-	var sessions SessionListResponse
-	err := cluster.getJSON("/api/v1/iam/sessions", &sessions)
+	// List sessions with no bearer.
+	resp, err := cluster.doAnonHTTPRequest(http.MethodGet, "/api/v1/iam/sessions", nil)
+	require.NoError(t, err)
+	defer resp.Body.Close()
 
-	// Should fail with unauthorized error
-	assert.Error(t, err, "Should return error when not authenticated")
+	// Should be refused as unauthenticated
+	assert.Equal(t, http.StatusUnauthorized, resp.StatusCode, "Listing sessions with no bearer should be refused")
 }
 
 // TestSessionListEmpty tests listing sessions when user has no active sessions.
@@ -212,7 +224,7 @@ func TestSessionGet(t *testing.T) {
 	cluster := setupTestCluster(t)
 	defer cluster.Close()
 
-	tenantID, userID := setupUserForSessionTests(t, cluster)
+	tenantID, userID := setupCallerForSessionTests(t, cluster)
 	defer cleanupSessionTests(cluster, tenantID)
 
 	// Create a mock session
@@ -254,7 +266,7 @@ func TestSessionRevoke(t *testing.T) {
 	cluster := setupTestCluster(t)
 	defer cluster.Close()
 
-	tenantID, userID := setupUserForSessionTests(t, cluster)
+	tenantID, userID := setupCallerForSessionTests(t, cluster)
 	defer cleanupSessionTests(cluster, tenantID)
 
 	// Create a mock session
@@ -297,7 +309,7 @@ func TestSessionRevokeAll(t *testing.T) {
 	cluster := setupTestCluster(t)
 	defer cluster.Close()
 
-	tenantID, userID := setupUserForSessionTests(t, cluster)
+	tenantID, userID := setupCallerForSessionTests(t, cluster)
 	defer cleanupSessionTests(cluster, tenantID)
 
 	// Create multiple mock sessions
@@ -326,7 +338,7 @@ func TestSessionRevokeAllExceptCurrent(t *testing.T) {
 	cluster := setupTestCluster(t)
 	defer cluster.Close()
 
-	tenantID, userID := setupUserForSessionTests(t, cluster)
+	tenantID, userID := setupCallerForSessionTests(t, cluster)
 	defer cleanupSessionTests(cluster, tenantID)
 
 	// Create multiple mock sessions
@@ -360,7 +372,7 @@ func TestSessionRevokeOtherSessions(t *testing.T) {
 	cluster := setupTestCluster(t)
 	defer cluster.Close()
 
-	tenantID, userID := setupUserForSessionTests(t, cluster)
+	tenantID, userID := setupCallerForSessionTests(t, cluster)
 	defer cleanupSessionTests(cluster, tenantID)
 
 	// Create multiple mock sessions
@@ -392,7 +404,7 @@ func TestSessionExpiration(t *testing.T) {
 	cluster := setupTestCluster(t)
 	defer cluster.Close()
 
-	tenantID, userID := setupUserForSessionTests(t, cluster)
+	tenantID, userID := setupCallerForSessionTests(t, cluster)
 	defer cleanupSessionTests(cluster, tenantID)
 
 	// Create a session with short expiration

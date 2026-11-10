@@ -25,6 +25,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 	"sync"
@@ -428,14 +429,35 @@ func (tc *testCluster) provisionTenant(t *testing.T, tenantID string) string {
 	return tenantID
 }
 
+// callerUserID returns the user id of tenantID's provisioned admin: the user
+// the helpers authenticate as on /api/v1/iam/ paths while tenantID is the
+// current tenant.
+func (tc *testCluster) callerUserID(t *testing.T, tenantID string) string {
+	t.Helper()
+	tc.mu.Lock()
+	session := tc.tenantAdmins[tenantID]
+	tc.mu.Unlock()
+	require.NotNil(t, session, "tenant %q has no provisioned admin", tenantID)
+
+	userID := session.Tenant().AdminUserID
+	require.NotEmpty(t, userID, "the provision response for tenant %q named no admin user", tenantID)
+	return userID
+}
+
 // bearerFor returns the bearer a request to path carries: the system admin's
 // for the tenant control plane (/api/v1/tenants and a tenant's record), the
-// tenant's own admin's for a path inside a tenant, the current tenant's admin's
-// (else the system admin's) for other /api/v1/iam/ paths, and none for public
-// endpoints. The system bearer never goes to a path inside a tenant that has a
-// recorded admin, because the tenant routes refuse it.
+// tenant's own admin's for a path inside a tenant, for other /api/v1/iam/ paths
+// the admin's of the tenant the tenant_id query parameter names when that
+// tenant was provisioned here, else the current tenant's admin's (else the
+// system admin's), and none for public endpoints. The system bearer never goes
+// to a path inside a tenant that has a recorded admin, because the tenant
+// routes refuse it.
 func (tc *testCluster) bearerFor(path string) (string, error) {
+	queryTenant := ""
 	if i := strings.IndexByte(path, '?'); i >= 0 {
+		if values, err := url.ParseQuery(path[i+1:]); err == nil {
+			queryTenant = values.Get("tenant_id")
+		}
 		path = path[:i]
 	}
 
@@ -461,6 +483,9 @@ func (tc *testCluster) bearerFor(path string) (string, error) {
 	case strings.HasPrefix(path, "/api/v1/iam/"):
 		tc.mu.Lock()
 		tenantID := tc.current
+		if queryTenant != "" && tc.tenantAdmins[queryTenant] != nil {
+			tenantID = queryTenant
+		}
 		session := tc.tenantAdmins[tenantID]
 		tc.mu.Unlock()
 		if session == nil {
