@@ -245,3 +245,25 @@ func TestPolicySyncRead_NamesOneTenant(t *testing.T) {
 		t.Fatal("a policy sync read must not report an authentication-record read")
 	}
 }
+
+func TestPolicyRepair_MarksOnlyItsTenant(t *testing.T) {
+	ctx := WithPolicyRepair(context.Background(), "acme")
+	if !InPolicyRepair(ctx, "acme") {
+		t.Fatal("a context marked for acme must report acme")
+	}
+	if InPolicyRepair(ctx, "beta") {
+		t.Fatal("a context marked for acme must not report beta")
+	}
+	if InPolicyRepair(ctx, "") {
+		t.Fatal("an empty tenant must never report marked")
+	}
+	if InPolicyRepair(context.Background(), "acme") {
+		t.Fatal("an unmarked context must not report marked")
+	}
+	if InPolicyRepair(WithPolicyRepair(context.Background(), ""), "") {
+		t.Fatal("an empty tenant must leave the context unmarked")
+	}
+	if InPolicyRepair(WithPolicySyncRead(context.Background(), "acme"), "acme") {
+		t.Fatal("a policy sync read must not report a policy repair")
+	}
+}

@@ -128,6 +128,32 @@ func InPolicySyncRead(ctx context.Context, tenantID string) bool {
 	return marked == tenantID
 }
 
+// policyRepairKey marks a context as the system admin's repair of a held
+// tenant's ABAC policies.
+type policyRepairKey struct{}
+
+// WithPolicyRepair marks ctx as the system admin's repair of tenantID's ABAC
+// policies. Only the REST policy routes set it, for a system-admin caller, and
+// the store's unseal hold honours it for that one tenant, so a tenant held by a
+// policy that cannot load can have that policy fixed (go-quicbaas#2212). An
+// empty tenantID returns ctx unchanged.
+func WithPolicyRepair(ctx context.Context, tenantID string) context.Context {
+	if tenantID == "" {
+		return ctx
+	}
+	return context.WithValue(ctx, policyRepairKey{}, tenantID)
+}
+
+// InPolicyRepair reports whether ctx is marked as the system admin's policy
+// repair for exactly tenantID.
+func InPolicyRepair(ctx context.Context, tenantID string) bool {
+	if tenantID == "" {
+		return false
+	}
+	marked, _ := ctx.Value(policyRepairKey{}).(string)
+	return marked == tenantID
+}
+
 // WithSystem binds the system tenant. It is for in-process callers that act
 // for the platform itself (boot, background jobs, the embedded transport),
 // never for a request whose caller's tenant is unknown.

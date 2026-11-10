@@ -47,6 +47,35 @@ func (s *Server) urlTenant(w http.ResponseWriter, r *http.Request, op, param str
 	return ctx, tenantID, true
 }
 
+// policyRepairTenant resolves the URL's tenant like urlTenant, and is the one
+// path to a held tenant's data: for its ABAC policies only, for the system
+// admin only (go-quicbaas#2212). A tenant whose stored policy cannot load is
+// held at unseal until that policy is fixed, so when admission would refuse the
+// tenant and the caller is bound to the system tenant, the returned ctx is
+// marked tenantctx.WithPolicyRepair for that tenant, bound into r, and repair is
+// true. Every other caller of a held tenant is answered 503 as urlTenant
+// answers it, and an admitted tenant resolves exactly as urlTenant resolves it.
+func (s *Server) policyRepairTenant(w http.ResponseWriter, r *http.Request, op, param string) (ctx context.Context, tenantID string, repair bool, ok bool) {
+	ctx, tenantID, err := tenantctx.AdminTarget(r.Context(), op, chi.URLParam(r, param))
+	if err != nil {
+		s.handleServiceError(w, r, err)
+		return nil, "", false, false
+	}
+	if s.config != nil && s.config.TenantAdmission != nil && s.config.TenantAdmission(tenantID) != nil {
+		caller, callerErr := tenantctx.FromContext(r.Context(), op)
+		if callerErr == nil && tenantctx.IsSystem(caller) && !tenantctx.IsSystem(tenantID) {
+			ctx = tenantctx.WithPolicyRepair(ctx, tenantID)
+			*r = *r.WithContext(ctx)
+			return ctx, tenantID, true, true
+		}
+	}
+	if !s.admitTenant(w, r, tenantID) {
+		return nil, "", false, false
+	}
+	*r = *r.WithContext(ctx)
+	return ctx, tenantID, false, true
+}
+
 // admitTenant answers 503 and returns false when Config.TenantAdmission
 // refuses tenantID: the tenant is still running its unseal checks, so no
 // request may reach its data yet. A nil TenantAdmission admits every tenant.
