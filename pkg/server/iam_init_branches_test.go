@@ -212,6 +212,63 @@ func TestBindAdminPIVCert_HappyPathUpdatesUser(t *testing.T) {
 	assertCertLoginFactorEnrolled(t, certFactors, cert)
 }
 
+// TestEnrollFirstBootAdminCert_PermitsMTLS guards go-quicbaas#2132: the
+// certificate first boot issues is only usable if the admin's permitted
+// AuthMethods include mtls, which qrdb's mTLS authenticator checks.
+func TestEnrollFirstBootAdminCert_PermitsMTLS(t *testing.T) {
+	ctx := context.Background()
+	c, certFactors := buildTestIAMComponentsWithFactors(t)
+	adminID := createBootstrapAdmin(t, c)
+
+	priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+	tmpl := &x509.Certificate{
+		SerialNumber:          big.NewInt(1),
+		Subject:               pkix.Name{CommonName: "admin"},
+		NotBefore:             time.Now().Add(-time.Hour),
+		NotAfter:              time.Now().Add(24 * time.Hour),
+		KeyUsage:              x509.KeyUsageDigitalSignature,
+		BasicConstraintsValid: true,
+	}
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &priv.PublicKey, priv)
+	require.NoError(t, err)
+
+	s := &Server{logger: buildTestLogger(t)}
+	err = s.enrollFirstBootAdminCert(ctx, c, "default", adminID,
+		&qrdbsdk.FirstBootResult{AdminCertPEM: pemFromDER(der)})
+	require.NoError(t, err)
+
+	user, err := c.identityStore.GetUser(ctx, "default", adminID)
+	require.NoError(t, err)
+	assert.Contains(t, user.AuthMethods, iam.AuthMethodMTLS)
+	assert.Contains(t, user.AuthMethods, iam.AuthMethodWebAuthn)
+
+	cert, err := x509.ParseCertificate(der)
+	require.NoError(t, err)
+	assertCertLoginFactorEnrolled(t, certFactors, cert)
+}
+
+// TestEnrollFirstBootAdminCert_MalformedPEMLeavesMethods asserts a malformed
+// issued certificate fails typed and does not widen the admin's AuthMethods.
+func TestEnrollFirstBootAdminCert_MalformedPEMLeavesMethods(t *testing.T) {
+	ctx := context.Background()
+	c, _ := buildTestIAMComponentsWithFactors(t)
+	adminID := createBootstrapAdmin(t, c)
+	before, err := c.identityStore.GetUser(ctx, "default", adminID)
+	require.NoError(t, err)
+
+	s := &Server{logger: buildTestLogger(t)}
+	err = s.enrollFirstBootAdminCert(ctx, c, "default", adminID,
+		&qrdbsdk.FirstBootResult{AdminCertPEM: []byte("not a certificate")})
+	var fbErr *FirstBootBootstrapError
+	require.ErrorAs(t, err, &fbErr)
+
+	after, err := c.identityStore.GetUser(ctx, "default", adminID)
+	require.NoError(t, err)
+	assert.Equal(t, before.AuthMethods, after.AuthMethods)
+	assert.NotContains(t, after.AuthMethods, iam.AuthMethodMTLS)
+}
+
 // assertCertLoginFactorEnrolled asserts the certificate resolves to an mtls
 // factor under the renewal-stable SPKI key AND the legacy cert-DER key — the two
 // lookup keys the login facade sends in one FinishLogin call.

@@ -123,7 +123,7 @@ func TestConvertTenantToProto(t *testing.T) {
 					MaxUsers:  100,
 					MFAPolicy: &iam.MFAPolicy{Required: true},
 					NamedNetworks: map[string][]string{
-						"office": {"10.0.0.0/8", "192.168.0.0/16"},
+						"office": {"10.0.0.0/8", "198.51.100.0/24"},
 					},
 				},
 				Created: time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC),
@@ -826,151 +826,13 @@ func TestConvertAdminRoleToProto(t *testing.T) {
 // Tenant Conversions
 // =============================================================================
 
-func TestConvertProtoToTenant_Nil(t *testing.T) {
-	assert.Nil(t, convertProtoToTenant(nil))
-}
-
-func TestConvertProtoToTenant_Full(t *testing.T) {
-	now := time.Now()
-	pb := &iampb.Tenant{
-		Id:   "tenant-1",
-		Name: "Test Tenant",
-		Settings: &iampb.TenantSettings{
-			MaxUsers:      proto.Int32(100),
-			MfaRequired:   proto.Bool(true),
-			NamedNetworks: map[string]string{"office": "10.0.0.0/8"},
-		},
-		CreatedAt: timestamppb.New(now),
-		UpdatedAt: timestamppb.New(now),
-	}
-
-	result := convertProtoToTenant(pb)
-	assert.Equal(t, "tenant-1", result.ID)
-	assert.Equal(t, "Test Tenant", result.Name)
-	assert.Equal(t, 100, result.Settings.MaxUsers)
-	require.NotNil(t, result.Settings.MFAPolicy)
-	assert.True(t, result.Settings.MFAPolicy.Required)
-	assert.Contains(t, result.Settings.NamedNetworks, "office")
-}
-
-func TestConvertTenantToProto_Nil(t *testing.T) {
-	result, err := convertTenantToProto(nil)
-	require.NoError(t, err)
-	assert.Nil(t, result)
-}
-
-func TestConvertTenantToProto_Full(t *testing.T) {
-	tenant := &iam.Tenant{
-		ID:   "tenant-1",
-		Name: "Test Tenant",
-		Settings: iam.TenantSettings{
-			MaxUsers:      50,
-			MFAPolicy:     &iam.MFAPolicy{Required: true},
-			NamedNetworks: map[string][]string{"office": {"10.0.0.0/8"}},
-		},
-		Created: time.Now(),
-		Updated: time.Now(),
-	}
-
-	result, err := convertTenantToProto(tenant)
-	require.NoError(t, err)
-	assert.Equal(t, "tenant-1", result.Id)
-	assert.Equal(t, "Test Tenant", result.Name)
-	assert.Equal(t, int32(50), result.Settings.GetMaxUsers())
-	assert.True(t, result.Settings.GetMfaRequired())
-	assert.Equal(t, "10.0.0.0/8", result.Settings.NamedNetworks["office"])
-}
-
 // =============================================================================
 // User Conversions
 // =============================================================================
 
-func TestConvertProtoToUser_Nil(t *testing.T) {
-	got, err := convertProtoToUser(nil)
-	require.NoError(t, err)
-	assert.Nil(t, got)
-}
-
-func TestConvertProtoToUser_Full(t *testing.T) {
-	now := time.Now()
-	pb := &iampb.User{
-		Id:         "10001",
-		TenantId:   "tenant-1",
-		Email:      "test@example.com",
-		Name:       "Test User",
-		Roles:      []string{"admin"},
-		Attributes: map[string]string{"key": "value"},
-		CreatedAt:  timestamppb.New(now),
-		UpdatedAt:  timestamppb.New(now),
-		LastAuth:   timestamppb.New(now),
-	}
-
-	result, err := convertProtoToUser(pb)
-	require.NoError(t, err)
-	assert.Equal(t, uint64(10001), result.ID)
-	assert.Equal(t, "test@example.com", result.Email)
-	assert.Equal(t, "value", result.Attributes["key"])
-	assert.NotNil(t, result.LastAuth)
-}
-
-func TestConvertUserToProto_Nil(t *testing.T) {
-	assert.Nil(t, convertUserToProto(nil))
-}
-
-func TestConvertUserToProto_Full(t *testing.T) {
-	now := time.Now()
-	user := &iam.User{
-		ID:         10001,
-		TenantID:   "tenant-1",
-		Email:      "test@example.com",
-		Name:       "Test User",
-		Roles:      []string{"admin"},
-		Attributes: map[string]string{"key": "value", "num": "42"},
-		Created:    now,
-		Updated:    now,
-		LastAuth:   &now,
-	}
-
-	result := convertUserToProto(user)
-	assert.Equal(t, "10001", result.Id)
-	assert.Equal(t, "value", result.Attributes["key"])
-	assert.Equal(t, "42", result.Attributes["num"])
-	assert.NotNil(t, result.LastAuth)
-}
-
 // =============================================================================
 // Role Conversions
 // =============================================================================
-
-func TestConvertProtoToRole_Nil(t *testing.T) {
-	assert.Nil(t, convertProtoToRole(nil))
-}
-
-func TestConvertProtoToRole_Full(t *testing.T) {
-	now := time.Now()
-	pb := &iampb.Role{
-		Id: "role-1", TenantId: "t1", Name: "Admin",
-		Description: "Admin role", Permissions: []string{"read", "write"},
-		CreatedAt: timestamppb.New(now), UpdatedAt: timestamppb.New(now),
-	}
-	result := convertProtoToRole(pb)
-	assert.Equal(t, "role-1", result.ID)
-	assert.Equal(t, "Admin", result.Name)
-	assert.Len(t, result.Permissions, 2)
-}
-
-func TestConvertRoleToProto_Nil(t *testing.T) {
-	assert.Nil(t, convertRoleToProto(nil))
-}
-
-func TestConvertRoleToProto_Full(t *testing.T) {
-	role := &iam.Role{
-		ID: "role-1", TenantID: "t1", Name: "Admin",
-		Permissions: []string{"read"}, Created: time.Now(), Updated: time.Now(),
-	}
-	result := convertRoleToProto(role)
-	assert.Equal(t, "role-1", result.Id)
-}
 
 // TestConvertRoleToProto_RetiredPermissions pins that the drift a role carries
 // survives the hop to the wire: retired permissions are derived on read, so a
@@ -1069,77 +931,9 @@ func TestConvertRoleReconcileResultToProto_Nil(t *testing.T) {
 // Application Conversions
 // =============================================================================
 
-func TestConvertProtoToApplication_Nil(t *testing.T) {
-	assert.Nil(t, convertProtoToApplication(nil))
-}
-
-func TestConvertProtoToApplication_Full(t *testing.T) {
-	now := time.Now()
-	pb := &iampb.Application{
-		ClientId: "app-1", ClientSecret: "secret", TenantId: "t1",
-		Name: "MyApp", RedirectUris: []string{"http://localhost"},
-		ResourcePrefix: "myapp", GrantTypes: []string{"authorization_code"},
-		ResponseTypes: []string{"code"},
-		CreatedAt:     timestamppb.New(now), UpdatedAt: timestamppb.New(now),
-	}
-	result := convertProtoToApplication(pb)
-	assert.Equal(t, "app-1", result.ClientID)
-	assert.Equal(t, "MyApp", result.Name)
-}
-
-func TestConvertApplicationToProto_Nil(t *testing.T) {
-	assert.Nil(t, convertApplicationToProto(nil))
-}
-
-func TestConvertApplicationToProto_Full(t *testing.T) {
-	app := &iam.Application{
-		ClientID: "app-1", TenantID: "t1", Name: "MyApp",
-		RedirectURIs: []string{"http://localhost"},
-		Created:      time.Now(), Updated: time.Now(),
-	}
-	result := convertApplicationToProto(app)
-	assert.Equal(t, "app-1", result.ClientId)
-}
-
 // =============================================================================
 // Policy Conversions
 // =============================================================================
-
-func TestConvertProtoToPolicy_Nil(t *testing.T) {
-	assert.Nil(t, convertProtoToPolicy(nil))
-}
-
-func TestConvertProtoToPolicy_Full(t *testing.T) {
-	now := time.Now()
-	pb := &iampb.Policy{
-		Name: "policy-1", TenantId: "t1", Description: "Test policy",
-		Labels: map[string]string{"env": "test"}, Priority: 10,
-		CreatedAt: timestamppb.New(now), UpdatedAt: timestamppb.New(now),
-	}
-	result := convertProtoToPolicy(pb)
-	assert.Equal(t, "policy-1", result.Metadata.Name)
-	assert.Equal(t, 10, result.Metadata.Priority)
-}
-
-func TestConvertPolicyToProto_Nil(t *testing.T) {
-	result, err := convertPolicyToProto(nil)
-	require.NoError(t, err)
-	assert.Nil(t, result)
-}
-
-func TestConvertPolicyToProto_Full(t *testing.T) {
-	policy := &iam.Policy{
-		Metadata: iam.PolicyMetadata{
-			Name: "p1", Tenant: "t1", Description: "desc",
-			Labels: map[string]string{"a": "b"}, Priority: 5,
-			Created: time.Now(), Updated: time.Now(),
-		},
-	}
-	result, err := convertPolicyToProto(policy)
-	require.NoError(t, err)
-	assert.Equal(t, "p1", result.Name)
-	assert.Equal(t, int32(5), result.Priority)
-}
 
 // failingYAMLValue makes yaml.Marshal fail when it reaches the value.
 type failingYAMLValue struct{}
@@ -1170,441 +964,49 @@ func TestConvertPolicyToProto_SpecYAMLError(t *testing.T) {
 // Subject Conversions
 // =============================================================================
 
-func TestConvertProtoToSubject_Nil(t *testing.T) {
-	assert.Nil(t, convertProtoToSubject(nil))
-}
-
-func TestConvertProtoToSubject_Full(t *testing.T) {
-	pb := &iampb.Subject{
-		Id: "sub-1", TenantId: "t1", Roles: []string{"admin"},
-		Groups: []string{"devs"}, MfaVerified: true,
-		Attributes: map[string]string{"ip": "1.2.3.4"},
-	}
-	result := convertProtoToSubject(pb)
-	assert.Equal(t, "sub-1", result.ID)
-	assert.Equal(t, "1.2.3.4", result.Attributes["ip"])
-}
-
-func TestConvertSubjectToProto_Nil(t *testing.T) {
-	assert.Nil(t, convertSubjectToProto(nil))
-}
-
-func TestConvertSubjectToProto_Full(t *testing.T) {
-	subject := &iam.Subject{
-		ID: "sub-1", TenantID: "t1", Roles: []string{"admin"},
-		Groups: []string{"devs"}, MFAVerified: true,
-		Attributes: map[string]interface{}{"ip": "1.2.3.4", "num": 42},
-	}
-	result := convertSubjectToProto(subject)
-	assert.Equal(t, "sub-1", result.Id)
-	assert.Equal(t, "1.2.3.4", result.Attributes["ip"])
-	// Non-string attribute skipped
-	_, exists := result.Attributes["num"]
-	assert.False(t, exists)
-}
-
 // =============================================================================
 // Admin Role Conversions
 // =============================================================================
-
-func TestConvertProtoAdminRole_AllTypes(t *testing.T) {
-	tests := []struct {
-		proto    iampb.AdminRole
-		expected iam.AdminRole
-	}{
-		{iampb.AdminRole_ADMIN_ROLE_SUPER_ADMIN, iam.AdminRoleSuperAdmin},
-		{iampb.AdminRole_ADMIN_ROLE_TENANT_ADMIN, iam.AdminRoleTenantAdmin},
-		{iampb.AdminRole_ADMIN_ROLE_USER_ADMIN, iam.AdminRoleUserAdmin},
-		{iampb.AdminRole_ADMIN_ROLE_POLICY_ADMIN, iam.AdminRolePolicyAdmin},
-		{iampb.AdminRole_ADMIN_ROLE_AUDIT_ADMIN, iam.AdminRoleAuditAdmin},
-		{iampb.AdminRole_ADMIN_ROLE_READ_ONLY, iam.AdminRoleReadOnly},
-		{iampb.AdminRole_ADMIN_ROLE_UNSPECIFIED, ""},
-	}
-	for _, tc := range tests {
-		assert.Equal(t, tc.expected, convertProtoAdminRole(tc.proto))
-	}
-}
-
-func TestConvertAdminRoleToProto_AllTypes(t *testing.T) {
-	tests := []struct {
-		domain   iam.AdminRole
-		expected iampb.AdminRole
-	}{
-		{iam.AdminRoleSuperAdmin, iampb.AdminRole_ADMIN_ROLE_SUPER_ADMIN},
-		{iam.AdminRoleTenantAdmin, iampb.AdminRole_ADMIN_ROLE_TENANT_ADMIN},
-		{iam.AdminRoleUserAdmin, iampb.AdminRole_ADMIN_ROLE_USER_ADMIN},
-		{iam.AdminRolePolicyAdmin, iampb.AdminRole_ADMIN_ROLE_POLICY_ADMIN},
-		{iam.AdminRoleAuditAdmin, iampb.AdminRole_ADMIN_ROLE_AUDIT_ADMIN},
-		{iam.AdminRoleReadOnly, iampb.AdminRole_ADMIN_ROLE_READ_ONLY},
-		{"unknown", iampb.AdminRole_ADMIN_ROLE_UNSPECIFIED},
-	}
-	for _, tc := range tests {
-		assert.Equal(t, tc.expected, convertAdminRoleToProto(tc.domain))
-	}
-}
 
 // =============================================================================
 // Admin Assignment Conversions
 // =============================================================================
 
-func TestConvertAdminAssignmentToProto_Nil(t *testing.T) {
-	assert.Nil(t, convertAdminAssignmentToProto(nil))
-}
-
-func TestConvertAdminAssignmentToProto_Full(t *testing.T) {
-	now := time.Now()
-	expires := now.Add(24 * time.Hour)
-	a := &iam.AdminAssignment{
-		ID: "aa-1", UserID: 1, AdminRole: iam.AdminRoleSuperAdmin,
-		TenantIDs: []string{"t1"}, GrantedBy: "admin",
-		GrantedAt: now, Active: true,
-		Permissions:       []iam.AdminPermission{"read", "write"},
-		DeniedPermissions: []iam.AdminPermission{"delete"},
-		ResourceScopes: []iam.ResourceScope{
-			{ResourceType: "kv", ResourcePattern: "*"},
-		},
-		ExpiresAt:  &expires,
-		LastUsedAt: &now,
-		Metadata:   map[string]string{"reason": "test"},
-	}
-	result := convertAdminAssignmentToProto(a)
-	assert.Equal(t, "aa-1", result.Id)
-	assert.Len(t, result.Permissions, 2)
-	assert.Len(t, result.DeniedPermissions, 1)
-	assert.Len(t, result.ResourceScopes, 1)
-	assert.NotNil(t, result.ExpiresAt)
-	assert.NotNil(t, result.LastUsedAt)
-}
-
 // =============================================================================
 // Impersonation Session Conversions
 // =============================================================================
-
-func TestConvertImpersonationSessionToProto_Nil(t *testing.T) {
-	assert.Nil(t, convertImpersonationSessionToProto(nil))
-}
-
-func TestConvertImpersonationSessionToProto_Full(t *testing.T) {
-	now := time.Now()
-	ended := now.Add(time.Hour)
-	s := &iam.ImpersonationSession{
-		ID: "imp-1", AdminUserID: 30021, TargetUserID: 1,
-		TenantID: "t1", Reason: "support ticket",
-		StartedAt: now, ExpiresAt: now.Add(2 * time.Hour),
-		EndedAt: &ended, AuditLogID: "audit-1",
-	}
-	result := convertImpersonationSessionToProto(s)
-	assert.Equal(t, "imp-1", result.Id)
-	assert.Equal(t, "30021", result.AdminUserId)
-	assert.NotNil(t, result.EndedAt)
-}
 
 // =============================================================================
 // Consent Purpose Conversions
 // =============================================================================
 
-func TestConvertProtoConsentPurpose_AllTypes(t *testing.T) {
-	tests := []struct {
-		proto    iampb.ConsentPurpose
-		expected iam.ConsentPurpose
-	}{
-		{iampb.ConsentPurpose_CONSENT_PURPOSE_MARKETING, iam.ConsentPurposeMarketing},
-		{iampb.ConsentPurpose_CONSENT_PURPOSE_ANALYTICS, iam.ConsentPurposeAnalytics},
-		{iampb.ConsentPurpose_CONSENT_PURPOSE_PERSONALIZATION, iam.ConsentPurposePersonalization},
-		{iampb.ConsentPurpose_CONSENT_PURPOSE_THIRD_PARTY, iam.ConsentPurposeThirdParty},
-		{iampb.ConsentPurpose_CONSENT_PURPOSE_DATA_PROCESSING, iam.ConsentPurposeDataProcessing},
-		{iampb.ConsentPurpose_CONSENT_PURPOSE_DATA_RETENTION, iam.ConsentPurposeDataRetention},
-		{iampb.ConsentPurpose_CONSENT_PURPOSE_FUNCTIONAL, iam.ConsentPurposeFunctional},
-		{iampb.ConsentPurpose_CONSENT_PURPOSE_UNSPECIFIED, ""},
-	}
-	for _, tc := range tests {
-		assert.Equal(t, tc.expected, convertProtoConsentPurpose(tc.proto))
-	}
-}
-
-func TestConvertConsentPurposeToProto_AllTypes(t *testing.T) {
-	tests := []struct {
-		domain   iam.ConsentPurpose
-		expected iampb.ConsentPurpose
-	}{
-		{iam.ConsentPurposeMarketing, iampb.ConsentPurpose_CONSENT_PURPOSE_MARKETING},
-		{iam.ConsentPurposeAnalytics, iampb.ConsentPurpose_CONSENT_PURPOSE_ANALYTICS},
-		{iam.ConsentPurposePersonalization, iampb.ConsentPurpose_CONSENT_PURPOSE_PERSONALIZATION},
-		{iam.ConsentPurposeThirdParty, iampb.ConsentPurpose_CONSENT_PURPOSE_THIRD_PARTY},
-		{iam.ConsentPurposeDataProcessing, iampb.ConsentPurpose_CONSENT_PURPOSE_DATA_PROCESSING},
-		{iam.ConsentPurposeDataRetention, iampb.ConsentPurpose_CONSENT_PURPOSE_DATA_RETENTION},
-		{iam.ConsentPurposeFunctional, iampb.ConsentPurpose_CONSENT_PURPOSE_FUNCTIONAL},
-		{"unknown", iampb.ConsentPurpose_CONSENT_PURPOSE_UNSPECIFIED},
-	}
-	for _, tc := range tests {
-		assert.Equal(t, tc.expected, convertConsentPurposeToProto(tc.domain))
-	}
-}
-
 // =============================================================================
 // Consent Status Conversions
 // =============================================================================
-
-func TestConvertProtoConsentStatus_AllTypes(t *testing.T) {
-	tests := []struct {
-		proto    iampb.ConsentStatus
-		expected iam.ConsentStatus
-	}{
-		{iampb.ConsentStatus_CONSENT_STATUS_GRANTED, iam.ConsentStatusGranted},
-		{iampb.ConsentStatus_CONSENT_STATUS_DENIED, iam.ConsentStatusDenied},
-		{iampb.ConsentStatus_CONSENT_STATUS_WITHDRAWN, iam.ConsentStatusWithdrawn},
-		{iampb.ConsentStatus_CONSENT_STATUS_PENDING, iam.ConsentStatusPending},
-		{iampb.ConsentStatus_CONSENT_STATUS_UNSPECIFIED, ""},
-	}
-	for _, tc := range tests {
-		assert.Equal(t, tc.expected, convertProtoConsentStatus(tc.proto))
-	}
-}
-
-func TestConvertConsentStatusToProto_AllTypes(t *testing.T) {
-	tests := []struct {
-		domain   iam.ConsentStatus
-		expected iampb.ConsentStatus
-	}{
-		{iam.ConsentStatusGranted, iampb.ConsentStatus_CONSENT_STATUS_GRANTED},
-		{iam.ConsentStatusDenied, iampb.ConsentStatus_CONSENT_STATUS_DENIED},
-		{iam.ConsentStatusWithdrawn, iampb.ConsentStatus_CONSENT_STATUS_WITHDRAWN},
-		{iam.ConsentStatusPending, iampb.ConsentStatus_CONSENT_STATUS_PENDING},
-		{"unknown", iampb.ConsentStatus_CONSENT_STATUS_UNSPECIFIED},
-	}
-	for _, tc := range tests {
-		assert.Equal(t, tc.expected, convertConsentStatusToProto(tc.domain))
-	}
-}
 
 // =============================================================================
 // Consent Conversions
 // =============================================================================
 
-func TestConvertConsentToProto_Nil(t *testing.T) {
-	assert.Nil(t, convertConsentToProto(nil))
-}
-
-func TestConvertConsentToProto_Full(t *testing.T) {
-	now := time.Now()
-	granted := now
-	withdrawn := now.Add(time.Hour)
-	expires := now.Add(24 * time.Hour)
-	c := &iam.Consent{
-		ID: "consent-1", UserID: 30001, TenantID: "t1",
-		Purpose: iam.ConsentPurposeMarketing, Status: iam.ConsentStatusGranted,
-		Version: "v1", IPAddress: "127.0.0.1", UserAgent: "test",
-		Metadata: map[string]string{"k": "v"},
-		Created:  now, Updated: now,
-		GrantedAt: &granted, WithdrawnAt: &withdrawn, ExpiresAt: &expires,
-	}
-	result := convertConsentToProto(c)
-	assert.Equal(t, "consent-1", result.Id)
-	assert.NotNil(t, result.GrantedAt)
-	assert.NotNil(t, result.WithdrawnAt)
-	assert.NotNil(t, result.ExpiresAt)
-}
-
-func TestConvertProtoToConsent_Nil(t *testing.T) {
-	got, err := convertProtoToConsent(nil)
-	require.NoError(t, err)
-	assert.Nil(t, got)
-}
-
-func TestConvertProtoToConsent_Full(t *testing.T) {
-	now := time.Now()
-	pb := &iampb.Consent{
-		Id: "consent-1", UserId: "30001", TenantId: "t1",
-		Purpose: iampb.ConsentPurpose_CONSENT_PURPOSE_MARKETING,
-		Status:  iampb.ConsentStatus_CONSENT_STATUS_GRANTED,
-		Version: "v1", IpAddress: "127.0.0.1", UserAgent: "test",
-		Metadata:  map[string]string{"k": "v"},
-		CreatedAt: timestamppb.New(now), UpdatedAt: timestamppb.New(now),
-		GrantedAt: timestamppb.New(now), WithdrawnAt: timestamppb.New(now),
-		ExpiresAt: timestamppb.New(now.Add(time.Hour)),
-	}
-	result, err := convertProtoToConsent(pb)
-	require.NoError(t, err)
-	assert.Equal(t, "consent-1", result.ID)
-	assert.NotNil(t, result.GrantedAt)
-	assert.NotNil(t, result.WithdrawnAt)
-	assert.NotNil(t, result.ExpiresAt)
-}
-
 // =============================================================================
 // Data Export Format Conversions
 // =============================================================================
-
-func TestConvertProtoDataExportFormat_AllTypes(t *testing.T) {
-	tests := []struct {
-		proto    iampb.DataExportFormat
-		expected iam.DataExportFormat
-	}{
-		{iampb.DataExportFormat_DATA_EXPORT_FORMAT_JSON, iam.DataExportFormatJSON},
-		{iampb.DataExportFormat_DATA_EXPORT_FORMAT_CSV, iam.DataExportFormatCSV},
-		{iampb.DataExportFormat_DATA_EXPORT_FORMAT_XML, iam.DataExportFormatXML},
-		{iampb.DataExportFormat_DATA_EXPORT_FORMAT_UNSPECIFIED, iam.DataExportFormatJSON},
-	}
-	for _, tc := range tests {
-		assert.Equal(t, tc.expected, convertProtoDataExportFormat(tc.proto))
-	}
-}
-
-func TestConvertDataExportFormatToProto_AllTypes(t *testing.T) {
-	tests := []struct {
-		domain   iam.DataExportFormat
-		expected iampb.DataExportFormat
-	}{
-		{iam.DataExportFormatJSON, iampb.DataExportFormat_DATA_EXPORT_FORMAT_JSON},
-		{iam.DataExportFormatCSV, iampb.DataExportFormat_DATA_EXPORT_FORMAT_CSV},
-		{iam.DataExportFormatXML, iampb.DataExportFormat_DATA_EXPORT_FORMAT_XML},
-		{"unknown", iampb.DataExportFormat_DATA_EXPORT_FORMAT_UNSPECIFIED},
-	}
-	for _, tc := range tests {
-		assert.Equal(t, tc.expected, convertDataExportFormatToProto(tc.domain))
-	}
-}
 
 // =============================================================================
 // Data Export Status Conversions
 // =============================================================================
 
-func TestConvertProtoDataExportStatus_AllTypes(t *testing.T) {
-	tests := []struct {
-		proto    iampb.DataExportStatus
-		expected iam.DataExportStatus
-	}{
-		{iampb.DataExportStatus_DATA_EXPORT_STATUS_PENDING, iam.DataExportStatusPending},
-		{iampb.DataExportStatus_DATA_EXPORT_STATUS_PROCESSING, iam.DataExportStatusProcessing},
-		{iampb.DataExportStatus_DATA_EXPORT_STATUS_COMPLETED, iam.DataExportStatusCompleted},
-		{iampb.DataExportStatus_DATA_EXPORT_STATUS_FAILED, iam.DataExportStatusFailed},
-		{iampb.DataExportStatus_DATA_EXPORT_STATUS_EXPIRED, iam.DataExportStatusExpired},
-		{iampb.DataExportStatus_DATA_EXPORT_STATUS_UNSPECIFIED, ""},
-	}
-	for _, tc := range tests {
-		assert.Equal(t, tc.expected, convertProtoDataExportStatus(tc.proto))
-	}
-}
-
-func TestConvertDataExportStatusToProto_AllTypes(t *testing.T) {
-	tests := []struct {
-		domain   iam.DataExportStatus
-		expected iampb.DataExportStatus
-	}{
-		{iam.DataExportStatusPending, iampb.DataExportStatus_DATA_EXPORT_STATUS_PENDING},
-		{iam.DataExportStatusProcessing, iampb.DataExportStatus_DATA_EXPORT_STATUS_PROCESSING},
-		{iam.DataExportStatusCompleted, iampb.DataExportStatus_DATA_EXPORT_STATUS_COMPLETED},
-		{iam.DataExportStatusFailed, iampb.DataExportStatus_DATA_EXPORT_STATUS_FAILED},
-		{iam.DataExportStatusExpired, iampb.DataExportStatus_DATA_EXPORT_STATUS_EXPIRED},
-		{"unknown", iampb.DataExportStatus_DATA_EXPORT_STATUS_UNSPECIFIED},
-	}
-	for _, tc := range tests {
-		assert.Equal(t, tc.expected, convertDataExportStatusToProto(tc.domain))
-	}
-}
-
 // =============================================================================
 // Data Export Request Conversions
 // =============================================================================
-
-func TestConvertDataExportRequestToProto_Nil(t *testing.T) {
-	assert.Nil(t, convertDataExportRequestToProto(nil))
-}
-
-func TestConvertDataExportRequestToProto_Full(t *testing.T) {
-	now := time.Now()
-	started := now
-	completed := now.Add(time.Hour)
-	expires := now.Add(24 * time.Hour)
-	r := &iam.DataExportRequest{
-		ID: "exp-1", UserID: 30001, TenantID: "t1",
-		RequestedBy: 30040, Format: iam.DataExportFormatJSON,
-		Status:            iam.DataExportStatusCompleted,
-		IncludeCategories: []string{"profile"}, ExcludeCategories: []string{"audit"},
-		RequestedAt: now, DownloadURL: "https://example.com/download",
-		FileSizeBytes: 1024, ErrorMessage: "",
-		Metadata:  map[string]string{"k": "v"},
-		StartedAt: &started, CompletedAt: &completed, ExpiresAt: &expires,
-	}
-	result := convertDataExportRequestToProto(r)
-	assert.Equal(t, "exp-1", result.Id)
-	assert.NotNil(t, result.StartedAt)
-	assert.NotNil(t, result.CompletedAt)
-	assert.NotNil(t, result.ExpiresAt)
-}
-
-func TestConvertProtoToDataExportRequest_Nil(t *testing.T) {
-	got, err := convertProtoToDataExportRequest(nil)
-	require.NoError(t, err)
-	assert.Nil(t, got)
-}
-
-func TestConvertProtoToDataExportRequest_Full(t *testing.T) {
-	now := time.Now()
-	pb := &iampb.DataExportRequest{
-		Id: "exp-1", UserId: "30001", TenantId: "t1",
-		RequestedBy: "30040",
-		Format:      iampb.DataExportFormat_DATA_EXPORT_FORMAT_JSON,
-		Status:      iampb.DataExportStatus_DATA_EXPORT_STATUS_COMPLETED,
-		RequestedAt: timestamppb.New(now),
-		StartedAt:   timestamppb.New(now), CompletedAt: timestamppb.New(now),
-		ExpiresAt: timestamppb.New(now.Add(time.Hour)),
-	}
-	result, err := convertProtoToDataExportRequest(pb)
-	require.NoError(t, err)
-	assert.Equal(t, "exp-1", result.ID)
-	assert.NotNil(t, result.StartedAt)
-	assert.NotNil(t, result.CompletedAt)
-	assert.NotNil(t, result.ExpiresAt)
-}
 
 // =============================================================================
 // Deletion Status Conversions
 // =============================================================================
 
-func TestConvertProtoDeletionStatus_AllTypes(t *testing.T) {
-	tests := []struct {
-		proto    iampb.DeletionStatus
-		expected iam.DeletionStatus
-	}{
-		{iampb.DeletionStatus_DELETION_STATUS_PENDING, iam.DeletionStatusPending},
-		{iampb.DeletionStatus_DELETION_STATUS_PROCESSING, iam.DeletionStatusProcessing},
-		{iampb.DeletionStatus_DELETION_STATUS_COMPLETED, iam.DeletionStatusCompleted},
-		{iampb.DeletionStatus_DELETION_STATUS_FAILED, iam.DeletionStatusFailed},
-		{iampb.DeletionStatus_DELETION_STATUS_CANCELLED, iam.DeletionStatusCancelled},
-		{iampb.DeletionStatus_DELETION_STATUS_UNSPECIFIED, ""},
-	}
-	for _, tc := range tests {
-		assert.Equal(t, tc.expected, convertProtoDeletionStatus(tc.proto))
-	}
-}
-
-func TestConvertDeletionStatusToProto_AllTypes(t *testing.T) {
-	tests := []struct {
-		domain   iam.DeletionStatus
-		expected iampb.DeletionStatus
-	}{
-		{iam.DeletionStatusPending, iampb.DeletionStatus_DELETION_STATUS_PENDING},
-		{iam.DeletionStatusProcessing, iampb.DeletionStatus_DELETION_STATUS_PROCESSING},
-		{iam.DeletionStatusCompleted, iampb.DeletionStatus_DELETION_STATUS_COMPLETED},
-		{iam.DeletionStatusFailed, iampb.DeletionStatus_DELETION_STATUS_FAILED},
-		{iam.DeletionStatusCancelled, iampb.DeletionStatus_DELETION_STATUS_CANCELLED},
-		{"unknown", iampb.DeletionStatus_DELETION_STATUS_UNSPECIFIED},
-	}
-	for _, tc := range tests {
-		assert.Equal(t, tc.expected, convertDeletionStatusToProto(tc.domain))
-	}
-}
-
 // =============================================================================
 // Data Deletion Request Conversions
 // =============================================================================
-
-func TestConvertDataDeletionRequestToProto_Nil(t *testing.T) {
-	result, err := convertDataDeletionRequestToProto(nil)
-	require.NoError(t, err)
-	assert.Nil(t, result)
-}
 
 func TestConvertDataDeletionRequestToProto_Full(t *testing.T) {
 	now := time.Now()
@@ -1629,18 +1031,13 @@ func TestConvertDataDeletionRequestToProto_Full(t *testing.T) {
 	result, err := convertDataDeletionRequestToProto(r)
 	require.NoError(t, err)
 	assert.Equal(t, "del-1", result.Id)
+	assert.Equal(t, iampb.DeletionStatus_DELETION_STATUS_COMPLETED, result.Status)
 	assert.NotNil(t, result.GracePeriodEndsAt)
 	assert.NotNil(t, result.StartedAt)
 	assert.NotNil(t, result.CompletedAt)
 	assert.NotNil(t, result.CancelledAt)
 	assert.NotNil(t, result.DeletedDataSummary)
 	assert.True(t, result.DeletedDataSummary.ProfileDeleted)
-}
-
-func TestConvertProtoToDataDeletionRequest_Nil(t *testing.T) {
-	got, err := convertProtoToDataDeletionRequest(nil)
-	require.NoError(t, err)
-	assert.Nil(t, got)
 }
 
 func TestConvertProtoToDataDeletionRequest_Full(t *testing.T) {
@@ -1664,6 +1061,7 @@ func TestConvertProtoToDataDeletionRequest_Full(t *testing.T) {
 	result, err := convertProtoToDataDeletionRequest(pb)
 	require.NoError(t, err)
 	assert.Equal(t, "del-1", result.ID)
+	assert.Equal(t, iam.DeletionStatusCompleted, result.Status)
 	assert.NotNil(t, result.GracePeriodEndsAt)
 	assert.NotNil(t, result.StartedAt)
 	assert.NotNil(t, result.CompletedAt)
@@ -1676,16 +1074,6 @@ func TestConvertProtoToDataDeletionRequest_Full(t *testing.T) {
 // =============================================================================
 // Deletion Summary Conversions
 // =============================================================================
-
-func TestConvertDeletionSummaryToProto_Nil(t *testing.T) {
-	result, err := convertDeletionSummaryToProto(nil)
-	require.NoError(t, err)
-	assert.Nil(t, result)
-}
-
-func TestConvertProtoToDeletionSummary_Nil(t *testing.T) {
-	assert.Nil(t, convertProtoToDeletionSummary(nil))
-}
 
 // =============================================================================
 // User Data Export Conversions
@@ -1765,29 +1153,6 @@ func TestConvertUserDataExportToProto_Full(t *testing.T) {
 // =============================================================================
 // Helper Function Tests
 // =============================================================================
-
-func TestConvertProtoTimestamp_Nil(t *testing.T) {
-	result := convertProtoTimestamp(nil)
-	assert.True(t, result.IsZero())
-}
-
-func TestConvertProtoTimestamp_Valid(t *testing.T) {
-	now := time.Now()
-	ts := timestamppb.New(now)
-	result := convertProtoTimestamp(ts)
-	assert.False(t, result.IsZero())
-}
-
-func TestConvertTimeToProto_Zero(t *testing.T) {
-	result := convertTimeToProto(time.Time{})
-	assert.Nil(t, result)
-}
-
-func TestConvertTimeToProto_Valid(t *testing.T) {
-	now := time.Now()
-	result := convertTimeToProto(now)
-	assert.NotNil(t, result)
-}
 
 // =============================================================================
 // PEP convertPolicyUpdateType Tests
@@ -2137,7 +1502,7 @@ func TestConvertConsentToProto(t *testing.T) {
 				Purpose:     iam.ConsentPurposeMarketing,
 				Status:      iam.ConsentStatusGranted,
 				Version:     "1.0",
-				IPAddress:   "192.168.1.1",
+				IPAddress:   "192.0.2.1",
 				UserAgent:   "browser/1.0",
 				Metadata:    map[string]string{"source": "web"},
 				Created:     now,
@@ -2214,7 +1579,7 @@ func TestConvertProtoToConsent(t *testing.T) {
 				Purpose:     iampb.ConsentPurpose_CONSENT_PURPOSE_MARKETING,
 				Status:      iampb.ConsentStatus_CONSENT_STATUS_GRANTED,
 				Version:     "1.0",
-				IpAddress:   "192.168.1.1",
+				IpAddress:   "192.0.2.1",
 				UserAgent:   "browser/1.0",
 				Metadata:    map[string]string{"source": "web"},
 				CreatedAt:   timestamppb.New(now),
@@ -2976,110 +2341,6 @@ func TestConvertProtoToDataExportRequestComplete(t *testing.T) {
 	assert.NotNil(t, result.ExpiresAt)
 }
 
-func TestConvertUserDataExportToProtoNilInput(t *testing.T) {
-	result, err := convertUserDataExportToProto(nil)
-	require.NoError(t, err)
-	assert.Nil(t, result)
-}
-
-func TestConvertUserDataExportToProtoComplete(t *testing.T) {
-	now := time.Now()
-	lastAuth := now.Add(-1 * time.Hour)
-	endedAt := now.Add(-30 * time.Minute)
-	grantedAt := now.Add(-24 * time.Hour)
-	withdrawnAt := now.Add(-12 * time.Hour)
-	enrolledAt := now.Add(-7 * 24 * time.Hour)
-
-	export := &iam.UserDataExport{
-		ExportMetadata: iam.ExportMetadata{
-			ExportID:      "export-1",
-			UserID:        10001,
-			TenantID:      "tenant-1",
-			ExportedAt:    now,
-			Format:        iam.DataExportFormatJSON,
-			Categories:    []string{"profile", "sessions"},
-			SchemaVersion: "1.0",
-		},
-		Profile: &iam.UserProfileExport{
-			ID:       10001,
-			Email:    "test@example.com",
-			Name:     "Test User",
-			Created:  now.Add(-30 * 24 * time.Hour),
-			Updated:  now,
-			LastAuth: &lastAuth,
-			Attributes: map[string]string{
-				"department": "Engineering",
-				"level":      "Senior",
-			},
-		},
-		Sessions: []*iam.SessionExport{
-			{
-				ID:         "session-1",
-				StartedAt:  now.Add(-2 * time.Hour),
-				ExpiresAt:  now.Add(22 * time.Hour),
-				LastActive: now,
-				EndedAt:    &endedAt,
-				IPAddress:  "192.168.1.1",
-				UserAgent:  "Mozilla/5.0",
-				AuthMethod: "password",
-			},
-		},
-		Consents: []*iam.ConsentExport{
-			{
-				Purpose:     iam.ConsentPurposeMarketing,
-				Status:      iam.ConsentStatusGranted,
-				Version:     "1.0",
-				GrantedAt:   &grantedAt,
-				WithdrawnAt: &withdrawnAt,
-			},
-		},
-		Roles: []*iam.RoleAssignmentExport{
-			{
-				RoleID:     "role-1",
-				RoleName:   "Developer",
-				AssignedAt: now.Add(-10 * 24 * time.Hour),
-			},
-		},
-		AuditLogs: []*iam.AuditLogExport{
-			{
-				Timestamp: now.Add(-1 * time.Hour),
-				Action:    "login",
-				Resource:  "auth",
-				IPAddress: "192.168.1.1",
-				Success:   true,
-			},
-		},
-		Credentials: []*iam.CredentialExport{
-			{
-				ID:         "cred-1",
-				Type:       "password",
-				Name:       "Primary",
-				CreatedAt:  now.Add(-30 * 24 * time.Hour),
-				LastUsedAt: now.Add(-5 * 24 * time.Hour),
-			},
-		},
-		MFAInfo: &iam.MFAInfoExport{
-			Enabled:     true,
-			Method:      "totp",
-			EnrolledAt:  &enrolledAt,
-			BackupCodes: 5,
-		},
-	}
-
-	result, err := convertUserDataExportToProto(export)
-	require.NoError(t, err)
-
-	assert.NotNil(t, result)
-	assert.NotNil(t, result.ExportMetadata)
-	assert.NotNil(t, result.Profile)
-	assert.Len(t, result.Sessions, 1)
-	assert.Len(t, result.Consents, 1)
-	assert.Len(t, result.Roles, 1)
-	assert.Len(t, result.AuditLogs, 1)
-	assert.Len(t, result.Credentials, 1)
-	assert.NotNil(t, result.MfaInfo)
-}
-
 func TestConvertExportMetadataToProtoNilInput(t *testing.T) {
 	result := convertExportMetadataToProto(nil)
 	assert.Nil(t, result)
@@ -3175,82 +2436,10 @@ func TestConvertDataDeletionRequestToProtoNilInput(t *testing.T) {
 	assert.Nil(t, result)
 }
 
-func TestConvertDataDeletionRequestToProtoComplete(t *testing.T) {
-	now := time.Now()
-	gracePeriodEndsAt := now.Add(7 * 24 * time.Hour)
-	startedAt := now.Add(8 * 24 * time.Hour)
-	completedAt := now.Add(9 * 24 * time.Hour)
-	cancelledAt := now.Add(10 * 24 * time.Hour)
-
-	req := &iam.DataDeletionRequest{
-		ID:                 "deletion-1",
-		UserID:             10001,
-		TenantID:           "tenant-1",
-		RequestedBy:        1,
-		Status:             iam.DeletionStatusPending,
-		Reason:             "User requested deletion",
-		RequestedAt:        now,
-		GracePeriodEndsAt:  &gracePeriodEndsAt,
-		StartedAt:          &startedAt,
-		CompletedAt:        &completedAt,
-		CancelledAt:        &cancelledAt,
-		CancelledBy:        "admin",
-		DeleteCategories:   []string{"all"},
-		PreserveCategories: []string{"audit"},
-		ErrorMessage:       "",
-		Metadata:           map[string]string{"source": "web"},
-	}
-
-	result, err := convertDataDeletionRequestToProto(req)
-	require.NoError(t, err)
-
-	assert.NotNil(t, result)
-	assert.Equal(t, "deletion-1", result.Id)
-	assert.Equal(t, iampb.DeletionStatus_DELETION_STATUS_PENDING, result.Status)
-	assert.NotNil(t, result.GracePeriodEndsAt)
-	assert.NotNil(t, result.StartedAt)
-	assert.NotNil(t, result.CompletedAt)
-	assert.NotNil(t, result.CancelledAt)
-}
-
 func TestConvertProtoToDataDeletionRequestNilInput(t *testing.T) {
 	result, err := convertProtoToDataDeletionRequest(nil)
 	require.NoError(t, err)
 	assert.Nil(t, result)
-}
-
-func TestConvertProtoToDataDeletionRequestComplete(t *testing.T) {
-	now := time.Now()
-
-	pb := &iampb.DataDeletionRequest{
-		Id:                 "deletion-1",
-		UserId:             "10001",
-		TenantId:           "tenant-1",
-		RequestedBy:        "30040",
-		Status:             iampb.DeletionStatus_DELETION_STATUS_COMPLETED,
-		Reason:             "GDPR request",
-		RequestedAt:        timestamppb.New(now),
-		GracePeriodEndsAt:  timestamppb.New(now.Add(7 * 24 * time.Hour)),
-		StartedAt:          timestamppb.New(now.Add(8 * 24 * time.Hour)),
-		CompletedAt:        timestamppb.New(now.Add(9 * 24 * time.Hour)),
-		CancelledAt:        timestamppb.New(now.Add(10 * 24 * time.Hour)),
-		CancelledBy:        "admin",
-		DeleteCategories:   []string{"profile"},
-		PreserveCategories: []string{"audit"},
-		ErrorMessage:       "",
-		Metadata:           map[string]string{"approved_by": "admin"},
-	}
-
-	result, err := convertProtoToDataDeletionRequest(pb)
-	require.NoError(t, err)
-
-	assert.NotNil(t, result)
-	assert.Equal(t, "deletion-1", result.ID)
-	assert.Equal(t, iam.DeletionStatusCompleted, result.Status)
-	assert.NotNil(t, result.GracePeriodEndsAt)
-	assert.NotNil(t, result.StartedAt)
-	assert.NotNil(t, result.CompletedAt)
-	assert.NotNil(t, result.CancelledAt)
 }
 
 func TestConvertDeletionSummaryToProtoNilInput(t *testing.T) {
@@ -3386,32 +2575,6 @@ func TestPoolHealthCheckLoopStopsGracefully(t *testing.T) {
 }
 
 // =============================================================================
-// Pool Update Metrics Tests
-// =============================================================================
-
-func TestPoolUpdateMetricsWithConnections(t *testing.T) {
-	pool := &ConnectionPool{
-		conns: []*pooledConn{
-			{created: time.Now()},
-			{created: time.Now()},
-			{created: time.Now()},
-		},
-		metrics:         newPoolMetrics("localhost:50051"),
-		stopHealthCheck: make(chan struct{}),
-	}
-
-	// Set various states
-	pool.conns[0].inUse.Store(true)
-	pool.conns[1].inUse.Store(false)
-	pool.conns[2].inUse.Store(true)
-
-	pool.updateMetrics()
-
-	// Metrics should be updated without error
-	// The actual values are verified by the metrics package
-}
-
-// =============================================================================
 // Proto Secret Converter Tests
 // =============================================================================
 
@@ -3525,94 +2688,6 @@ func TestWrapServerStreamContext(t *testing.T) {
 
 	// Wrapped stream should return new context
 	assert.NotEqual(t, originalCtx, wrapped.Context())
-}
-
-// =============================================================================
-// Data Export Format Converter Tests
-// =============================================================================
-
-func TestConvertProtoDataExportFormatAllValues(t *testing.T) {
-	tests := []struct {
-		name     string
-		input    iampb.DataExportFormat
-		expected iam.DataExportFormat
-	}{
-		{"json", iampb.DataExportFormat_DATA_EXPORT_FORMAT_JSON, iam.DataExportFormatJSON},
-		{"csv", iampb.DataExportFormat_DATA_EXPORT_FORMAT_CSV, iam.DataExportFormatCSV},
-		{"xml", iampb.DataExportFormat_DATA_EXPORT_FORMAT_XML, iam.DataExportFormatXML},
-		{"unspecified", iampb.DataExportFormat_DATA_EXPORT_FORMAT_UNSPECIFIED, iam.DataExportFormatJSON},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := convertProtoDataExportFormat(tt.input)
-			assert.Equal(t, tt.expected, result)
-		})
-	}
-}
-
-func TestConvertDataExportFormatToProtoAllValues(t *testing.T) {
-	tests := []struct {
-		name     string
-		input    iam.DataExportFormat
-		expected iampb.DataExportFormat
-	}{
-		{"json", iam.DataExportFormatJSON, iampb.DataExportFormat_DATA_EXPORT_FORMAT_JSON},
-		{"csv", iam.DataExportFormatCSV, iampb.DataExportFormat_DATA_EXPORT_FORMAT_CSV},
-		{"xml", iam.DataExportFormatXML, iampb.DataExportFormat_DATA_EXPORT_FORMAT_XML},
-		{"unknown", iam.DataExportFormat("unknown"), iampb.DataExportFormat_DATA_EXPORT_FORMAT_UNSPECIFIED},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := convertDataExportFormatToProto(tt.input)
-			assert.Equal(t, tt.expected, result)
-		})
-	}
-}
-
-func TestConvertProtoDataExportStatusAllValues(t *testing.T) {
-	tests := []struct {
-		name     string
-		input    iampb.DataExportStatus
-		expected iam.DataExportStatus
-	}{
-		{"pending", iampb.DataExportStatus_DATA_EXPORT_STATUS_PENDING, iam.DataExportStatusPending},
-		{"processing", iampb.DataExportStatus_DATA_EXPORT_STATUS_PROCESSING, iam.DataExportStatusProcessing},
-		{"completed", iampb.DataExportStatus_DATA_EXPORT_STATUS_COMPLETED, iam.DataExportStatusCompleted},
-		{"failed", iampb.DataExportStatus_DATA_EXPORT_STATUS_FAILED, iam.DataExportStatusFailed},
-		{"expired", iampb.DataExportStatus_DATA_EXPORT_STATUS_EXPIRED, iam.DataExportStatusExpired},
-		{"unspecified", iampb.DataExportStatus_DATA_EXPORT_STATUS_UNSPECIFIED, ""},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := convertProtoDataExportStatus(tt.input)
-			assert.Equal(t, tt.expected, result)
-		})
-	}
-}
-
-func TestConvertDataExportStatusToProtoAllValues(t *testing.T) {
-	tests := []struct {
-		name     string
-		input    iam.DataExportStatus
-		expected iampb.DataExportStatus
-	}{
-		{"pending", iam.DataExportStatusPending, iampb.DataExportStatus_DATA_EXPORT_STATUS_PENDING},
-		{"processing", iam.DataExportStatusProcessing, iampb.DataExportStatus_DATA_EXPORT_STATUS_PROCESSING},
-		{"completed", iam.DataExportStatusCompleted, iampb.DataExportStatus_DATA_EXPORT_STATUS_COMPLETED},
-		{"failed", iam.DataExportStatusFailed, iampb.DataExportStatus_DATA_EXPORT_STATUS_FAILED},
-		{"expired", iam.DataExportStatusExpired, iampb.DataExportStatus_DATA_EXPORT_STATUS_EXPIRED},
-		{"unknown", iam.DataExportStatus("unknown"), iampb.DataExportStatus_DATA_EXPORT_STATUS_UNSPECIFIED},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := convertDataExportStatusToProto(tt.input)
-			assert.Equal(t, tt.expected, result)
-		})
-	}
 }
 
 // =============================================================================

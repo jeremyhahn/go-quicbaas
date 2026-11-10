@@ -313,7 +313,7 @@ func TestTenantSettings(t *testing.T) {
 			"settings": map[string]interface{}{
 				"named_networks": map[string]interface{}{
 					"office":     []string{"10.0.0.0/8", "172.16.0.0/12"},
-					"vpn":        []string{"192.168.100.0/24"},
+					"vpn":        []string{"198.51.100.0/24"},
 					"datacenter": []string{"10.10.0.0/16"},
 				},
 			},
@@ -332,7 +332,7 @@ func TestTenantSettings(t *testing.T) {
 		assert.Contains(t, tenant.Settings.NamedNetworks, "vpn", "Should have vpn network")
 		assert.Contains(t, tenant.Settings.NamedNetworks, "datacenter", "Should have datacenter network")
 		assert.Equal(t, []string{"10.0.0.0/8", "172.16.0.0/12"}, tenant.Settings.NamedNetworks["office"])
-		assert.Equal(t, []string{"192.168.100.0/24"}, tenant.Settings.NamedNetworks["vpn"])
+		assert.Equal(t, []string{"198.51.100.0/24"}, tenant.Settings.NamedNetworks["vpn"])
 
 		// Verify persistence
 		var fetched iam.Tenant

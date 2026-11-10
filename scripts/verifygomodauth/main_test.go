@@ -126,77 +126,54 @@ func TestCheckFailsOnEachWayTheContractCanBreak(t *testing.T) {
 		want        string
 	}{
 		{
-			// #1031 itself: a host with only a tokens file stages nothing.
-			name:        "ignoring the agent tokens file",
+			name:        "staging the forge token",
 			file:        "Makefile",
-			old:         "GOMODAUTH_TOKENS_FILE ?= $(HOME)/.agent-identity/tokens.env",
-			replacement: "GOMODAUTH_TOKENS_FILE ?= /nonexistent/tokens.env",
-			want:        "not the section-6 variables built from the tokens file",
+			old:         `@umask 077; : > "$(GOMODAUTH_ENV)" && chmod 600 "$(GOMODAUTH_ENV)"`,
+			replacement: `@umask 077; printf '%s' "$${FORGE_READ_TOKEN}" > "$(GOMODAUTH_ENV)" && chmod 600 "$(GOMODAUTH_ENV)"`,
+			want:        "a FORGE_READ_TOKEN: the staged file is missing or not empty",
 		},
 		{
-			// go-quicbaas#1130: the tree must name no forge.
-			name:        "a default forge origin",
+			name:        "a build that receives the forge token",
 			file:        "Makefile",
-			old:         "GITEA_HTTP_ORIGIN ?=\n",
-			replacement: "GITEA_HTTP_ORIGIN ?= http://forge.invalid:3001\n",
-			want:        "a token with no origin was staged against a default forge",
+			old:         `@umask 077; : > "$(GOMODAUTH_ENV)" && chmod 600 "$(GOMODAUTH_ENV)"`,
+			replacement: `@umask 077; printf '%s' "$${FORGE_READ_TOKEN}" > "$(GOMODAUTH_ENV)" && chmod 600 "$(GOMODAUTH_ENV)"`,
+			want:        "bytes in the secret file; the build must see an empty file",
 		},
 		{
-			name:        "ignoring the tokens file's origin",
+			name:        "staging a runner's GIT_CONFIG variables",
 			file:        "Makefile",
-			old:         `if [ -z "$$origin" ] && [ -r "$(GOMODAUTH_TOKENS_FILE)" ]; then \`,
-			replacement: `if false; then \`,
-			want:        "the tokens file's GITEA_HTTP_ORIGIN was not used",
-		},
-		{
-			name:        "never clearing the staged file",
-			file:        "Makefile",
-			old:         `GOMODAUTH_CLEAR = { umask 077; : > "$(GOMODAUTH_ENV)"; } 2>/dev/null || true`,
-			replacement: "GOMODAUTH_CLEAR = true",
-			want:        "left the credentials in the staged file",
+			old:         `@umask 077; : > "$(GOMODAUTH_ENV)" && chmod 600 "$(GOMODAUTH_ENV)"`,
+			replacement: `@umask 077; printf '%s\n' "$${GIT_CONFIG_KEY_0:-}" > "$(GOMODAUTH_ENV)" && chmod 600 "$(GOMODAUTH_ENV)"`,
+			want:        "a runner's GIT_CONFIG_* variables: the staged file is missing or not empty",
 		},
 		{
 			name:        "printing the token",
 			file:        "Makefile",
-			old:         `origin="$(GITEA_HTTP_ORIGIN)"; \`,
-			replacement: `echo "$$token"; origin="$(GITEA_HTTP_ORIGIN)"; \`,
+			old:         `@umask 077; : > "$(GOMODAUTH_ENV)" && chmod 600 "$(GOMODAUTH_ENV)"`,
+			replacement: `@echo "$${FORGE_READ_TOKEN:-}"; umask 077; : > "$(GOMODAUTH_ENV)" && chmod 600 "$(GOMODAUTH_ENV)"`,
 			want:        "the token reached the log",
+		},
+		{
+			// The review finding: truncating keeps an existing file's mode.
+			name:        "staging into an existing file without fixing its mode",
+			file:        "Makefile",
+			old:         `@umask 077; : > "$(GOMODAUTH_ENV)" && chmod 600 "$(GOMODAUTH_ENV)"`,
+			replacement: `@umask 077; : > "$(GOMODAUTH_ENV)"`,
+			want:        "an existing 0644 file that holds text: the staged file was left with mode",
 		},
 		{
 			name:        "a target that never stages",
 			file:        "Makefile",
 			old:         "\t@$(MAKE) --no-print-directory stage-gomodauth\n\t@COMPOSE_FILE=\"test/e2e/docker-compose.e2e.yml\"; \\",
 			replacement: "\t@COMPOSE_FILE=\"test/e2e/docker-compose.e2e.yml\"; \\",
-			want:        "test-e2e-docker never staged the credentials",
+			want:        "test-e2e-docker never staged the secret file",
 		},
 		{
-			name:        "staging world-readable",
+			name:        "never clearing the staged file",
 			file:        "Makefile",
-			old:         "\tumask 077; \\\n\t{ \\\n\t\tprintf 'export GOPRIVATE=%s\\n' \"$${GOPRIVATE:-github.com/$(GOMODAUTH_OWNER)/*}\"",
-			replacement: "\tchmod 644 \"$(GOMODAUTH_ENV)\"; \\\n\t{ \\\n\t\tprintf 'export GOPRIVATE=%s\\n' \"$${GOPRIVATE:-github.com/$(GOMODAUTH_OWNER)/*}\"",
-			want:        "want 0600",
-		},
-		{
-			// The review finding: truncating keeps an existing file's mode.
-			name:        "writing the token into an existing file without fixing its mode",
-			file:        "Makefile",
-			old:         `@umask 077; : > "$(GOMODAUTH_ENV)" && chmod 600 "$(GOMODAUTH_ENV)"`,
-			replacement: `@umask 077; : > "$(GOMODAUTH_ENV)"`,
-			want:        "staging over an existing 0644 file left mode",
-		},
-		{
-			name:        "clearing under the caller's umask",
-			file:        "Makefile",
-			old:         `GOMODAUTH_CLEAR = { umask 077; : > "$(GOMODAUTH_ENV)"; }`,
-			replacement: `GOMODAUTH_CLEAR = { : > "$(GOMODAUTH_ENV)"; }`,
-			want:        "clear-gomodauth created the file with mode",
-		},
-		{
-			name:        "integration-bench clearing only on the normal path",
-			file:        "Makefile",
-			old:         "\ttrap '$(GOMODAUTH_CLEAR); $(DOCKER_COMPOSE) -p $$COMPOSE_PROJECT_NAME -f $$COMPOSE_FILE down --volumes --remove-orphans --rmi local >/dev/null 2>&1 || true' EXIT; \\",
-			replacement: "\ttrap '$(DOCKER_COMPOSE) -p $$COMPOSE_PROJECT_NAME -f $$COMPOSE_FILE down --volumes --remove-orphans --rmi local >/dev/null 2>&1 || true' EXIT; \\",
-			want:        "integration-bench left the credentials in the staged file when interrupted",
+			old:         `GOMODAUTH_CLEAR = { umask 077; : > "$(GOMODAUTH_ENV)"; } 2>/dev/null || true`,
+			replacement: "GOMODAUTH_CLEAR = true",
+			want:        "clear-gomodauth did not leave an empty file",
 		},
 		{
 			name:        "a built service Compose never hands the secret",
@@ -244,7 +221,7 @@ func TestRunReportsTheVerdictAndTheStatus(t *testing.T) {
 		if status := run([]string{"-root", repoRoot}, &stdout, &stderr); status != gate.ExitClean {
 			t.Fatalf("run exited %d, want %d\nstderr: %s", status, gate.ExitClean, stderr.String())
 		}
-		if !strings.Contains(stdout.String(), "cleared after every build") {
+		if !strings.Contains(stdout.String(), "no credential reaches an image build") {
 			t.Fatalf("the pass was not reported: %q", stdout.String())
 		}
 	})
@@ -275,21 +252,10 @@ func TestRunReportsTheVerdictAndTheStatus(t *testing.T) {
 	})
 }
 
-func TestSectionSixBuildsTheRewriteFromTheOrigin(t *testing.T) {
-	got := sectionSix("tok", "https://gitea.invalid:8443/")
-	want := "export GOPRIVATE=github.com/jeremyhahn/*\n" +
-		"export GIT_CONFIG_COUNT=1\n" +
-		"export GIT_CONFIG_KEY_0=url.https://x:tok@gitea.invalid:8443/jeremyhahn/.insteadOf\n" +
-		"export GIT_CONFIG_VALUE_0=https://github.com/jeremyhahn/\n"
-	if got != want {
-		t.Fatalf("sectionSix = %q, want %q", got, want)
-	}
-}
-
 func TestStripEnvDropsTheCallersCredentials(t *testing.T) {
 	got := stripEnv([]string{
-		"PATH=/bin", "GIT_CONFIG_KEY_0=secret", "GITEA_READ_TOKEN=secret",
-		"HOME=/root", "GOPRIVATE=x", "GIT_CONFIG_KEY_00=kept",
+		"PATH=/bin", "GIT_CONFIG_KEY_0=secret", "FORGE_READ_TOKEN=secret",
+		"HOME=/root", "GIT_CONFIG_KEY_00=kept",
 	})
 	want := []string{"PATH=/bin", "GIT_CONFIG_KEY_00=kept"}
 	if strings.Join(got, "|") != strings.Join(want, "|") {
@@ -328,25 +294,25 @@ func TestCheckTargetReportsCredentialsStillPresentAfterTheBuild(t *testing.T) {
 	fail := func(format string, args ...any) { reported = append(reported, format) }
 	checkTarget(targetCase{target: "t", build: "build x", after: "run x"}, outcome{
 		stagedExists: true,
-		watch:        []watchedCall{{call: "compose build x", size: stagedSize}, {call: "compose run x", size: stagedSize}},
+		watch:        []watchedCall{{call: "compose build x", size: 0}, {call: "compose run x", size: 12}},
 	}, fail)
-	if len(reported) != 1 || !strings.Contains(reported[0], "still held the credentials") {
-		t.Fatalf("reported %q, want one still-held finding", reported)
+	if len(reported) != 1 || !strings.Contains(reported[0], "was not empty at %q, after its build") {
+		t.Fatalf("reported %q, want one not-empty-after finding", reported)
 	}
 }
 
-// stage-gomodauth is silent, so staging is judged by what the image build saw:
-// an empty file means the target never staged, and a file of any other size is
-// not the section-6 file stage-gomodauth writes. A target that stages passes.
+// Staging is judged by what the image build saw: a missing file means the
+// target never staged, and a file with any bytes in it means a credential
+// reached the build. A target whose build sees an empty file passes.
 func TestCheckTargetJudgesStagingByTheFileItsBuildSaw(t *testing.T) {
 	cases := []struct {
 		name      string
 		buildSize int64
 		want      string
 	}{
-		{name: "staged", buildSize: stagedSize},
-		{name: "never staged", buildSize: 0, want: "never staged the credentials"},
-		{name: "not the section-6 file", buildSize: stagedSize + 1, want: "not the %d-byte section-6 file"},
+		{name: "staged empty", buildSize: 0},
+		{name: "never staged", buildSize: -1, want: "never staged the secret file"},
+		{name: "a credential reached the build", buildSize: 12, want: "the build must see an empty file"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -404,7 +370,7 @@ func TestRunLeavesTheHostsGomodBackupsUntouched(t *testing.T) {
 	before := snapshot()
 
 	var stdout, stderr strings.Builder
-	failures, err := check(mutatedRepo(t, "Makefile", "GOMODAUTH_OWNER ?= jeremyhahn", "GOMODAUTH_OWNER ?= jeremyhahn"), workspace(t), &stdout, &stderr)
+	failures, err := check(mutatedRepo(t, "Makefile", ".PHONY: stage-gomodauth", ".PHONY: stage-gomodauth"), workspace(t), &stdout, &stderr)
 	if err != nil {
 		t.Fatalf("check: %v", err)
 	}
