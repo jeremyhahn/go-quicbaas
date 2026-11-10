@@ -374,7 +374,7 @@ jobs:
   # and coverage jobs below, so no single job holds the whole -race run.
   image:
     name: Devcontainer image [lint, build, security, deps-check, trivy image]
-    runs-on: ubuntu-latest
+    runs-on: ${{ ((github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)) && fromJSON('["self-hosted","linux","x64","bigdisk-docker"]') || 'ubuntu-latest' }}
     timeout-minutes: 180      # CUSTOMIZE: give the stages honest headroom
     needs: [changes]
     env:
@@ -915,7 +915,7 @@ jobs:
   # first (v1.18) and keeps its own teardown last under `if: always()`.
   integration:
     name: Integration [integration image]
-    runs-on: ubuntu-latest
+    runs-on: ${{ ((github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)) && fromJSON('["self-hosted","linux","x64","bigdisk-docker"]') || 'ubuntu-latest' }}
     # CUSTOMIZE: a repo whose suite runs only on the full tier gates it here
     # with CI Gate's FULL_TIER expression as `if:`, and marks it full there.
     timeout-minutes: 120      # CUSTOMIZE
