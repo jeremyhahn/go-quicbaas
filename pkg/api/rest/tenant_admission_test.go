@@ -12,9 +12,10 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
-	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 // TestTenantAdmission_HeldTenantIsRefused503 pins #2212: while the server's
