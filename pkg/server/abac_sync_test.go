@@ -1648,3 +1648,79 @@ func TestQRDBPolicySimulator_EmptyWhenCondition(t *testing.T) {
 		t.Fatalf("Simulate() = %+v, %v; want go-qrdb to refuse the empty expression", resp, err)
 	}
 }
+
+// A tenant held by several stored policies that do not compile is repaired
+// one policy at a time through the real engine and sync: each repair stays
+// stored although the sync still fails on the policies not yet repaired, a
+// repair that does not compile is refused, and the next unseal admits the
+// tenant.
+func TestQRDBABACSync_HeldTenantPoliciesAreRepairedOneAtATime(t *testing.T) {
+	s, _ := newABACTestServer(t, true)
+	r := newFakeStoreResolver(qrdbsdk.NewMemoryKVStore())
+	r.barrierTenantStore("acme", qrdbsdk.NewMemoryKVStore())
+	resolver := admittedFakeResolver{admit: s.admittedStoreResolver(fakeQRDBResolver{store: fakeQRDBStore{}}), stores: r}
+	bs := iam.NewBackendStorage(newTenantRoutingKVStore(resolver))
+	tm := iam.NewDefaultTenantManager(bs)
+
+	sysCtx := tenantctx.WithSystem(context.Background())
+	acmeCtx := tenantctx.WithTenant(context.Background(), "acme")
+	_, err := tm.CreateTenant(sysCtx, iam.CreateTenantOptions{ID: "acme", Name: "Acme"})
+	require.NoError(t, err)
+	fixed := func(name string) *iam.Policy {
+		return abacTestPolicy(name, "acme", "alice", "kv/**", iam.EffectAllow)
+	}
+	broken := func(name string) *iam.Policy {
+		p := fixed(name)
+		p.Spec.Rules[0].When = []iam.Condition{{}}
+		return p
+	}
+	for _, name := range []string{"bad-a", "bad-b", "bad-c"} {
+		data, err := json.Marshal(broken(name))
+		require.NoError(t, err)
+		require.NoError(t, bs.PutPolicyRecord(acmeCtx, "acme", name, data))
+	}
+
+	abacSync := newQRDBABACSync(s, tm, bs)
+	pe := iam.NewPolicyEngine(iam.PolicyEngineOptions{
+		Storage:  bs,
+		ABACSync: abacSync,
+		Repair:   newHeldTenantPolicyRepair(s.tenantUnsealHooks.Admit),
+	})
+	abacSync.resyncOnUnseal(&s.tenantUnsealHooks, pe.SyncABACAfter)
+	barrier := service.NewTenantBarrierService(unsealingTenantClient{}, service.WithTenantUnsealHooks(&s.tenantUnsealHooks))
+
+	require.Error(t, barrier.TenantBarrierUnseal(tenantAdminCtx("acme"), "acme", []byte("key")),
+		"three policies that do not compile fail the unseal checks")
+	require.Error(t, s.tenantUnsealHooks.Admit("acme"), "the tenant is held")
+
+	repairCtx := tenantctx.WithPolicyRepair(acmeCtx, "acme")
+
+	// First repair: stored although bad-b and bad-c still fail the sync.
+	require.NoError(t, pe.UpdatePolicy(repairCtx, "acme", fixed("bad-a")))
+	got, err := bs.GetPolicy(repairCtx, "acme", "bad-a")
+	require.NoError(t, err)
+	require.NotEmpty(t, got.Spec.Rules)
+	assert.Empty(t, got.Spec.Rules[0].When, "the repaired bad-a is stored")
+	require.Error(t, s.tenantUnsealHooks.Admit("acme"), "one repair does not admit the tenant")
+
+	// A repair that does not compile is refused and changes nothing.
+	err = pe.UpdatePolicy(repairCtx, "acme", broken("bad-a"))
+	var invalid *iam.InvalidPolicyError
+	require.True(t, errors.As(err, &invalid), "err = %v", err)
+	got, err = bs.GetPolicy(repairCtx, "acme", "bad-a")
+	require.NoError(t, err)
+	require.NotEmpty(t, got.Spec.Rules)
+	assert.Empty(t, got.Spec.Rules[0].When, "the refused repair left bad-a as it was")
+
+	// Second repair removes a broken policy; bad-c still fails the sync.
+	require.NoError(t, pe.DeletePolicy(repairCtx, "acme", "bad-b"))
+	left, err := bs.ListPolicies(repairCtx, "acme", iam.ListOptions{})
+	require.NoError(t, err)
+	assert.Equal(t, []string{"bad-a", "bad-c"}, abacPolicyNames(left))
+	require.Error(t, s.tenantUnsealHooks.Admit("acme"), "two repairs do not admit the tenant")
+
+	// Last repair: the whole set compiles, and the next unseal admits the tenant.
+	require.NoError(t, pe.UpdatePolicy(repairCtx, "acme", fixed("bad-c")))
+	require.NoError(t, barrier.TenantBarrierUnseal(tenantAdminCtx("acme"), "acme", []byte("key")))
+	require.NoError(t, s.tenantUnsealHooks.Admit("acme"))
+}

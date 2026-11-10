@@ -380,6 +380,7 @@ func (s *Server) initializeIAMComponents() (service.IAMComponents, error) {
 		RBACAuthorizer: newQRDBPEPRBACAuthorizer(s),
 		ABACSync:       abacSync,
 		Simulator:      newQRDBPolicySimulator(),
+		Repair:         newHeldTenantPolicyRepair(s.tenantUnsealHooks.Admit),
 	})
 	// Move tenant policies an earlier release kept in the system namespace.
 	// Initial ABAC load: post-unseal, now that the IAM policy store is

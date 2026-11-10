@@ -12,3 +12,7 @@
 - Requests to a tenant that is still running its unseal checks now answer
   503 (gRPC `UNAVAILABLE`) on the native REST and gRPC transports instead of
   401 (`UNAUTHENTICATED`).
+- A tenant held because several of its stored policies cannot load can now be
+  repaired one policy at a time: the system admin's update or delete of each
+  policy is kept, an update that does not compile is refused, and the tenant
+  stays closed until its unseal checks pass.
