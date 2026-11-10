@@ -205,7 +205,7 @@ func TestHandleUpdateNamespace(t *testing.T) {
 		checkResponse  func(*testing.T, *httptest.ResponseRecorder)
 	}{
 		{
-			name:      "successful namespace update",
+			name:      "existing namespace is refused as not implemented",
 			namespace: "test-ns",
 			body: UpdateNamespaceRequest{
 				IndexParams: map[string]string{"m": "16"},
@@ -216,13 +216,10 @@ func TestHandleUpdateNamespace(t *testing.T) {
 					Dimension: 128,
 				}, nil).Once()
 			},
-			expectedStatus: http.StatusOK,
+			expectedStatus: http.StatusNotImplemented,
 			checkResponse: func(t *testing.T, w *httptest.ResponseRecorder) {
-				var resp UpdateNamespaceResponse
-				err := json.NewDecoder(w.Body).Decode(&resp)
-				require.NoError(t, err)
-				assert.Equal(t, "test-ns", resp.Namespace)
-				assert.True(t, resp.RequiresRebuild)
+				want := (&NamespaceUpdateUnsupportedError{Namespace: "test-ns"}).Error()
+				assert.Contains(t, w.Body.String(), want)
 			},
 		},
 		{
@@ -274,6 +271,11 @@ func TestHandleUpdateNamespace(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestNamespaceUpdateUnsupportedError_Error(t *testing.T) {
+	err := &NamespaceUpdateUnsupportedError{Namespace: "docs"}
+	assert.Equal(t, "vector namespace docs cannot be updated: the qrdb SDK has no in-place namespace update", err.Error())
 }
 
 func TestHandleDeleteNamespace(t *testing.T) {

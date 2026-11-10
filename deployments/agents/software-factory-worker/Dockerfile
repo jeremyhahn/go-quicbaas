@@ -158,15 +158,13 @@ ARG GOPLS_VERSION
 # module@version pairs; no default, for the same reason as the pins above.
 ARG GO_TOOL_DEPENDENCY_FLOORS
 
-# DEVCACHE_GOPROXY and DEVCACHE_GOPRIVATE are the fleet's dev caches
+# DEVCACHE_GOPROXY is the fleet's Go module cache
 # (../handbook/software/conventions/devops.md section 2a). NO DEFAULT, and
 # NEVER an ENV: unset (the common case away from the fleet) must build exactly
-# as it did before the caches existed, and a value here would outlive the RUN
-# that needs it. They are turned into GOPROXY / GOPRIVATE / GONOPROXY /
-# GONOSUMDB for the one RUN below that runs `go install` / `go get` / `go
-# build`, and nowhere else.
+# as it did before the cache existed, and a value here would outlive the RUN
+# that needs it. It is turned into GOPROXY for the one RUN below that runs
+# `go install` / `go get` / `go build`, and nowhere else.
 ARG DEVCACHE_GOPROXY
-ARG DEVCACHE_GOPRIVATE
 
 ENV CGO_ENABLED=0 GOBIN=/toolchain/bin
 
@@ -178,9 +176,6 @@ RUN set -eux; \
     fi; \
     GOPROXY="${DEVCACHE_GOPROXY:+${DEVCACHE_GOPROXY%/}|https://proxy.golang.org|direct}"; \
     [ -z "${GOPROXY}" ] || export GOPROXY; \
-    if [ -n "${DEVCACHE_GOPRIVATE:-}" ]; then \
-        export GOPRIVATE="${DEVCACHE_GOPRIVATE}" GONOPROXY="${DEVCACHE_GOPRIVATE}" GONOSUMDB="${DEVCACHE_GOPRIVATE}"; \
-    fi; \
     go install "github.com/golangci/golangci-lint/v2/cmd/golangci-lint@${GOLANGCI_VERSION}"; \
     go install "golang.org/x/vuln/cmd/govulncheck@${GOVULNCHECK_VERSION}"; \
     go install "github.com/rhysd/actionlint/cmd/actionlint@${ACTIONLINT_VERSION}"; \

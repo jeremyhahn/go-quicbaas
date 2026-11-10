@@ -4516,7 +4516,22 @@ func TestRemaining91_HandleUpdateNamespace_InvalidJSON(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
-func TestRemaining91_HandleUpdateNamespace_Success(t *testing.T) {
+func TestRemaining91_HandleUpdateNamespace_NilVectorService(t *testing.T) {
+	server, _, cleanup := setupMockServerWithFuncMock(t)
+	defer cleanup()
+
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("namespace", "test-ns")
+	body := `{"metadata":{"key":"val"}}`
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/vector/namespaces/test-ns", strings.NewReader(body))
+	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	w := httptest.NewRecorder()
+	server.HandleUpdateNamespace(w, req)
+
+	assert.Equal(t, http.StatusServiceUnavailable, w.Code)
+}
+
+func TestRemaining91_HandleUpdateNamespace_RefusedNotImplemented(t *testing.T) {
 	server, mockService, cleanup := setupMockServerWithFuncMock(t)
 	defer cleanup()
 
@@ -4535,7 +4550,7 @@ func TestRemaining91_HandleUpdateNamespace_Success(t *testing.T) {
 	w := httptest.NewRecorder()
 	server.HandleUpdateNamespace(w, req)
 
-	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, http.StatusNotImplemented, w.Code)
 }
 
 func TestRemaining91_HandleDeleteNamespace_Success(t *testing.T) {
