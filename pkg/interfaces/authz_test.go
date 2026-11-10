@@ -126,7 +126,7 @@ func TestAuthorizationRequestStruct(t *testing.T) {
 			Resource: ResourceSecrets,
 			Action:   ActionWrite,
 			Context: map[string]interface{}{
-				"ip_address": "192.168.1.100",
+				"ip_address": "192.0.2.100",
 				"user_agent": "quicbaas-cli/1.0",
 				"method":     "POST",
 				"path":       "/api/v1/secrets/db-password",
@@ -136,7 +136,7 @@ func TestAuthorizationRequestStruct(t *testing.T) {
 		assert.Equal(t, "alice", req.Subject.Username)
 		assert.Equal(t, ResourceSecrets, req.Resource)
 		assert.Equal(t, ActionWrite, req.Action)
-		assert.Equal(t, "192.168.1.100", req.Context["ip_address"])
+		assert.Equal(t, "192.0.2.100", req.Context["ip_address"])
 	})
 }
 

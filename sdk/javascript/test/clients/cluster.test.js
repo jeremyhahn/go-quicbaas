@@ -46,9 +46,9 @@ describe('ClusterClient', () => {
         clusterId: 'cluster-1',
         leaderId: 'node-1',
         members: [
-          { id: 'node-1', name: 'Node 1', address: '192.168.1.1:5000', isLeader: true, healthy: true },
-          { id: 'node-2', name: 'Node 2', address: '192.168.1.2:5000', isLeader: false, healthy: true },
-          { id: 'node-3', name: 'Node 3', address: '192.168.1.3:5000', isLeader: false, healthy: true },
+          { id: 'node-1', name: 'Node 1', address: '192.0.2.1:5000', isLeader: true, healthy: true },
+          { id: 'node-2', name: 'Node 2', address: '192.0.2.2:5000', isLeader: false, healthy: true },
+          { id: 'node-3', name: 'Node 3', address: '192.0.2.3:5000', isLeader: false, healthy: true },
         ],
         healthy: true,
       };
@@ -127,7 +127,7 @@ describe('ClusterClient', () => {
       const mockResponse = {
         shardId: 1,
         leaderId: 'node-1',
-        leaderAddress: '192.168.1.1:5000',
+        leaderAddress: '192.0.2.1:5000',
       };
       mockTransport.get.mockResolvedValueOnce(mockResponse);
 
@@ -136,7 +136,7 @@ describe('ClusterClient', () => {
       expect(mockTransport.get).toHaveBeenCalledWith('/api/v1/cluster/shards/1/leader');
       expect(result.shardId).toBe(1);
       expect(result.leaderId).toBe('node-1');
-      expect(result.leaderAddress).toBe('192.168.1.1:5000');
+      expect(result.leaderAddress).toBe('192.0.2.1:5000');
     });
 
     it('should throw ValidationError when shardId is missing', async () => {
@@ -177,29 +177,29 @@ describe('ClusterClient', () => {
     it('should add node to shard successfully', async () => {
       mockTransport.post.mockResolvedValueOnce({});
 
-      await client.addNode(1, 4, '192.168.1.4:5000');
+      await client.addNode(1, 4, '192.0.2.4:5000');
 
       expect(mockTransport.post).toHaveBeenCalledWith(
         '/api/v1/cluster/shards/1/nodes',
-        { nodeId: 4, address: '192.168.1.4:5000' },
+        { nodeId: 4, address: '192.0.2.4:5000' },
       );
     });
 
     it('should throw ValidationError when shardId is missing', async () => {
-      await expect(client.addNode(undefined, 4, '192.168.1.4:5000')).rejects.toThrow(ValidationError);
+      await expect(client.addNode(undefined, 4, '192.0.2.4:5000')).rejects.toThrow(ValidationError);
     });
 
     it('should throw ValidationError when shardId is negative', async () => {
-      await expect(client.addNode(-1, 4, '192.168.1.4:5000')).rejects.toThrow(ValidationError);
+      await expect(client.addNode(-1, 4, '192.0.2.4:5000')).rejects.toThrow(ValidationError);
     });
 
     it('should throw ValidationError when nodeId is missing', async () => {
-      await expect(client.addNode(1, undefined, '192.168.1.4:5000')).rejects.toThrow(ValidationError);
+      await expect(client.addNode(1, undefined, '192.0.2.4:5000')).rejects.toThrow(ValidationError);
     });
 
     it('should throw ValidationError when nodeId is not positive', async () => {
-      await expect(client.addNode(1, 0, '192.168.1.4:5000')).rejects.toThrow(ValidationError);
-      await expect(client.addNode(1, -1, '192.168.1.4:5000')).rejects.toThrow(ValidationError);
+      await expect(client.addNode(1, 0, '192.0.2.4:5000')).rejects.toThrow(ValidationError);
+      await expect(client.addNode(1, -1, '192.0.2.4:5000')).rejects.toThrow(ValidationError);
     });
 
     it('should throw ValidationError when address is missing', async () => {
@@ -210,7 +210,7 @@ describe('ClusterClient', () => {
 
     it('should throw ValidationError when address is not in host:port format', async () => {
       await expect(client.addNode(1, 4, 'invalid')).rejects.toThrow(ValidationError);
-      await expect(client.addNode(1, 4, '192.168.1.4')).rejects.toThrow(ValidationError);
+      await expect(client.addNode(1, 4, '192.0.2.4')).rejects.toThrow(ValidationError);
     });
 
     it('should throw ValidationError when address has empty host', async () => {
@@ -218,13 +218,13 @@ describe('ClusterClient', () => {
     });
 
     it('should throw ValidationError when address port is invalid', async () => {
-      await expect(client.addNode(1, 4, '192.168.1.4:0')).rejects.toThrow(ValidationError);
-      await expect(client.addNode(1, 4, '192.168.1.4:70000')).rejects.toThrow(ValidationError);
-      await expect(client.addNode(1, 4, '192.168.1.4:abc')).rejects.toThrow(ValidationError);
+      await expect(client.addNode(1, 4, '192.0.2.4:0')).rejects.toThrow(ValidationError);
+      await expect(client.addNode(1, 4, '192.0.2.4:70000')).rejects.toThrow(ValidationError);
+      await expect(client.addNode(1, 4, '192.0.2.4:abc')).rejects.toThrow(ValidationError);
     });
 
     it('should throw ValidationError when address has multiple colons', async () => {
-      await expect(client.addNode(1, 4, '192.168.1.4:5000:extra')).rejects.toThrow(ValidationError);
+      await expect(client.addNode(1, 4, '192.0.2.4:5000:extra')).rejects.toThrow(ValidationError);
     });
   });
 
@@ -258,9 +258,9 @@ describe('ClusterClient', () => {
   describe('createShard', () => {
     it('should create shard with valid replicas', async () => {
       const replicas = [
-        { nodeId: 1, address: '192.168.1.1:5000' },
-        { nodeId: 2, address: '192.168.1.2:5000' },
-        { nodeId: 3, address: '192.168.1.3:5000' },
+        { nodeId: 1, address: '192.0.2.1:5000' },
+        { nodeId: 2, address: '192.0.2.2:5000' },
+        { nodeId: 3, address: '192.0.2.3:5000' },
       ];
       mockTransport.post.mockResolvedValueOnce({ shardId: 2, created: true });
 
@@ -269,9 +269,9 @@ describe('ClusterClient', () => {
       expect(mockTransport.post).toHaveBeenCalledWith('/api/v1/cluster/shards', {
         shardId: 2,
         replicas: [
-          { nodeId: 1, address: '192.168.1.1:5000' },
-          { nodeId: 2, address: '192.168.1.2:5000' },
-          { nodeId: 3, address: '192.168.1.3:5000' },
+          { nodeId: 1, address: '192.0.2.1:5000' },
+          { nodeId: 2, address: '192.0.2.2:5000' },
+          { nodeId: 3, address: '192.0.2.3:5000' },
         ],
       });
       expect(result.shardId).toBe(2);
@@ -279,12 +279,12 @@ describe('ClusterClient', () => {
     });
 
     it('should throw ValidationError when shardId is missing', async () => {
-      const replicas = [{ nodeId: 1, address: '192.168.1.1:5000' }];
+      const replicas = [{ nodeId: 1, address: '192.0.2.1:5000' }];
       await expect(client.createShard(undefined, replicas)).rejects.toThrow(ValidationError);
     });
 
     it('should throw ValidationError when shardId is negative', async () => {
-      const replicas = [{ nodeId: 1, address: '192.168.1.1:5000' }];
+      const replicas = [{ nodeId: 1, address: '192.0.2.1:5000' }];
       await expect(client.createShard(-1, replicas)).rejects.toThrow(ValidationError);
     });
 
@@ -304,9 +304,9 @@ describe('ClusterClient', () => {
     });
 
     it('should throw ValidationError when replica nodeId is invalid', async () => {
-      await expect(client.createShard(1, [{ nodeId: 0, address: '192.168.1.1:5000' }])).rejects.toThrow(ValidationError);
-      await expect(client.createShard(1, [{ nodeId: -1, address: '192.168.1.1:5000' }])).rejects.toThrow(ValidationError);
-      await expect(client.createShard(1, [{ address: '192.168.1.1:5000' }])).rejects.toThrow(ValidationError);
+      await expect(client.createShard(1, [{ nodeId: 0, address: '192.0.2.1:5000' }])).rejects.toThrow(ValidationError);
+      await expect(client.createShard(1, [{ nodeId: -1, address: '192.0.2.1:5000' }])).rejects.toThrow(ValidationError);
+      await expect(client.createShard(1, [{ address: '192.0.2.1:5000' }])).rejects.toThrow(ValidationError);
     });
 
     it('should throw ValidationError when replica address is missing', async () => {
@@ -320,22 +320,22 @@ describe('ClusterClient', () => {
 
     it('should throw ValidationError when duplicate nodeId in replicas', async () => {
       const replicas = [
-        { nodeId: 1, address: '192.168.1.1:5000' },
-        { nodeId: 1, address: '192.168.1.2:5000' },
+        { nodeId: 1, address: '192.0.2.1:5000' },
+        { nodeId: 1, address: '192.0.2.2:5000' },
       ];
       await expect(client.createShard(1, replicas)).rejects.toThrow(ValidationError);
     });
 
     it('should throw ValidationError when duplicate address in replicas', async () => {
       const replicas = [
-        { nodeId: 1, address: '192.168.1.1:5000' },
-        { nodeId: 2, address: '192.168.1.1:5000' },
+        { nodeId: 1, address: '192.0.2.1:5000' },
+        { nodeId: 2, address: '192.0.2.1:5000' },
       ];
       await expect(client.createShard(1, replicas)).rejects.toThrow(ValidationError);
     });
 
     it('should handle null response with defaults', async () => {
-      const replicas = [{ nodeId: 1, address: '192.168.1.1:5000' }];
+      const replicas = [{ nodeId: 1, address: '192.0.2.1:5000' }];
       mockTransport.post.mockResolvedValueOnce(null);
 
       const result = await client.createShard(1, replicas);
@@ -549,9 +549,9 @@ describe('ClusterClient', () => {
     it('should return list of nodes', async () => {
       const mockResponse = {
         nodes: [
-          { id: 'node-1', name: 'Node 1', address: '192.168.1.1:5000', state: 'HEALTHY' },
-          { id: 'node-2', name: 'Node 2', address: '192.168.1.2:5000', state: 'HEALTHY' },
-          { id: 'node-3', name: 'Node 3', address: '192.168.1.3:5000', state: 'UNHEALTHY' },
+          { id: 'node-1', name: 'Node 1', address: '192.0.2.1:5000', state: 'HEALTHY' },
+          { id: 'node-2', name: 'Node 2', address: '192.0.2.2:5000', state: 'HEALTHY' },
+          { id: 'node-3', name: 'Node 3', address: '192.0.2.3:5000', state: 'UNHEALTHY' },
         ],
       };
       mockTransport.get.mockResolvedValueOnce(mockResponse);

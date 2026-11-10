@@ -27,7 +27,7 @@ func TestSessionManager_Create(t *testing.T) {
 			UserID:    10001,
 			TenantID:  "tenant-1",
 			TokenHash: hashToken("token-123"),
-			IPAddress: "192.168.1.1",
+			IPAddress: "192.0.2.1",
 			UserAgent: "Mozilla/5.0",
 		}
 
@@ -94,7 +94,7 @@ func TestSessionManager_Create(t *testing.T) {
 		session := &SessionExt{
 			UserID:    10001,
 			TenantID:  "tenant-1",
-			TokenHash: hashToken("<account>"),
+			TokenHash: hashToken("token-overflow"),
 		}
 		err = mgr.Create(ctx, session)
 		assert.Error(t, err)
@@ -687,7 +687,7 @@ func TestSessionTenantIsolation(t *testing.T) {
 	session1 := &SessionExt{
 		UserID:    10001,
 		TenantID:  "tenant-1",
-		TokenHash: hashToken("<account>"),
+		TokenHash: hashToken("token-a"),
 	}
 	err = mgr.Create(ctx, session1)
 	require.NoError(t, err)
@@ -695,7 +695,7 @@ func TestSessionTenantIsolation(t *testing.T) {
 	session2 := &SessionExt{
 		UserID:    10001,
 		TenantID:  "tenant-2",
-		TokenHash: hashToken("<account>"),
+		TokenHash: hashToken("token-b"),
 	}
 	err = mgr.Create(ctx, session2)
 	require.NoError(t, err)
@@ -2131,7 +2131,7 @@ func TestBackendStorage_GetTokenByValueFinal(t *testing.T) {
 		JTI:       jti,
 		TokenType: TokenTypeRefresh,
 		Subject:   "user-token-value-123",
-		TenantID:  "tenant-<account>",
+		TenantID:  "tenant-a",
 		Expires:   time.Now().Add(24 * time.Hour),
 		ValueHash: HashTokenValue(secret),
 	}
@@ -2351,14 +2351,14 @@ func TestMemorySessionExtStorage_Update_SuccessFinal(t *testing.T) {
 
 	// Update session
 	session.LastActive = time.Now().Add(1 * time.Hour)
-	session.IPAddress = "192.168.1.100"
+	session.IPAddress = "192.0.2.100"
 	err = storage.Update(ctx, session)
 	require.NoError(t, err)
 
 	// Verify update
 	retrieved, err := storage.Get(ctx, session.ID)
 	require.NoError(t, err)
-	assert.Equal(t, "192.168.1.100", retrieved.IPAddress)
+	assert.Equal(t, "192.0.2.100", retrieved.IPAddress)
 }
 
 func TestMemorySessionExtStorage_CleanupExpired_WithExpiredSessionsFinal(t *testing.T) {

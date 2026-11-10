@@ -26,6 +26,9 @@ import (
 	"strings"
 	"time"
 
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+
 	pb "github.com/jeremyhahn/go-quicbaas/api/proto"
 	api "github.com/jeremyhahn/go-quicbaas/pkg/api"
 	"github.com/jeremyhahn/go-quicbaas/pkg/util/conv"
@@ -991,6 +994,9 @@ func (s *MCPServer) handleUpdateNamespace(ctx context.Context, params map[string
 		Metadata:          metadata,
 		TimeoutMs:         int64(timeoutMs),
 	})
+	if status.Code(err) == codes.Unimplemented {
+		return nil, &VectorNamespaceUpdateUnsupportedError{Namespace: namespace}
+	}
 	if err != nil {
 		return nil, api.NewOperationFailedError("update namespace", err)
 	}

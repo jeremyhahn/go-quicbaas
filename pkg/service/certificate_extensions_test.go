@@ -249,9 +249,20 @@ func TestCertificateService_IssueDeviceIdentity_IsConfinedToTheCallerTenant(t *t
 	stub := &extCAStub{issued: &IssuedDeviceIdentity{CertificatePEM: []byte("cert")}}
 	svc := newExtService(t, stub)
 	_, err := svc.IssueDeviceIdentity(tenantctx.WithTenant(context.Background(), "tenant-a"), req())
-	require.NoError(t, err, "the caller's own tenant is accepted")
-	require.NotNil(t, stub.issuedReq)
-	assert.Equal(t, "tenant-a", stub.issuedReq.TenantID)
+	var unsupported *errors.QBError
+	require.True(t, stderrors.As(err, &unsupported), "tenant-a issuing in tenant-a = %v, want *errors.QBError", err)
+	assert.Equal(t, errors.ErrUnimplemented, unsupported.Code)
+	assert.ErrorIs(t, err, ErrCertExtDeviceIdentityTenantUnsupported,
+		"a tenant may not be issued a device identity it could never revoke (go-xkms #1764)")
+	assert.Nil(t, stub.issuedReq, "a refused tenant issuance must not reach the CA")
+
+	systemReq := req()
+	systemReq.TenantID = ""
+	systemStub := &extCAStub{issued: &IssuedDeviceIdentity{CertificatePEM: []byte("cert")}}
+	_, err = newExtService(t, systemStub).IssueDeviceIdentity(systemTenantCtx(), systemReq)
+	require.NoError(t, err, "the system tenant still issues device identities")
+	require.NotNil(t, systemStub.issuedReq)
+	assert.Empty(t, systemStub.issuedReq.TenantID)
 
 	for name, ctx := range map[string]context.Context{
 		"system caller":  systemTenantCtx(),
