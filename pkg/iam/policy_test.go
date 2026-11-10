@@ -1547,3 +1547,103 @@ func TestPolicyEngine_HeldTenantRepair(t *testing.T) {
 		})
 	}
 }
+
+// switchABACSync is an ABACSync whose result the test sets between calls.
+type switchABACSync struct{ err error }
+
+func (s *switchABACSync) Sync(context.Context) error { return s.err }
+
+// restoringPolicyStorage is a snapshotPolicyStorage whose restore also puts
+// the snapshotted record back, so a test can read what a rejected write left
+// stored.
+type restoringPolicyStorage struct{ *snapshotPolicyStorage }
+
+func (s *restoringPolicyStorage) SnapshotPolicy(ctx context.Context, tenantID, name string, next *Policy) (func(context.Context) error, error) {
+	counted, err := s.snapshotPolicyStorage.SnapshotPolicy(ctx, tenantID, name, next)
+	if err != nil {
+		return nil, err
+	}
+	s.mu.RLock()
+	prev, had := s.policies[tenantID][name]
+	s.mu.RUnlock()
+	return func(ctx context.Context) error {
+		s.mu.Lock()
+		if had {
+			s.policies[tenantID][name] = prev
+		} else {
+			delete(s.policies[tenantID], name)
+		}
+		s.mu.Unlock()
+		return counted(ctx)
+	}, nil
+}
+
+// A repair that starts after the tenant's unseal check has loaded its whole
+// policy set is a strict write, although the tenant is still held until the
+// unseal releases it: a failed sync rejects it, so no policy change is
+// acknowledged that the live authorizer never loaded.
+func TestPolicyEngine_RepairAfterUnsealCheckLoadedIsStrict(t *testing.T) {
+	ctx := context.Background()
+	syncErr := errors.New("sync failed")
+	repairCtx := tenantctx.WithPolicyRepair(ctx, "tenant1")
+
+	setup := func(t *testing.T) (*snapshotPolicyStorage, *switchABACSync, *PolicyEngine) {
+		t.Helper()
+		storage := &snapshotPolicyStorage{mockPolicyStorage: newMockPolicyStorage()}
+		require.NoError(t, storage.CreatePolicy(ctx, "tenant1", createTestPolicy("tenant1", "p")))
+		sync := &switchABACSync{}
+		engine := NewPolicyEngine(PolicyEngineOptions{Storage: &restoringPolicyStorage{storage}, ABACSync: sync, Repair: &testPolicyRepair{held: true}})
+		return storage, sync, engine
+	}
+	repaired := func() *Policy {
+		p := createTestPolicy("tenant1", "p")
+		p.Metadata.Description = "repaired"
+		return p
+	}
+
+	t.Run("an update between the check and the release is rejected by a failed sync", func(t *testing.T) {
+		storage, sync, engine := setup(t)
+		prepared := false
+		require.NoError(t, engine.SyncABACAtUnseal(ctx, "tenant1", func(context.Context) { prepared = true }))
+		assert.True(t, prepared, "prepare runs before the reload")
+		sync.err = syncErr
+		err := engine.UpdatePolicy(repairCtx, "tenant1", repaired())
+		assert.ErrorIs(t, err, syncErr)
+		assert.Equal(t, 1, storage.restores)
+		got, err := storage.GetPolicy(ctx, "tenant1", "p")
+		require.NoError(t, err)
+		require.NotNil(t, got)
+		assert.NotEqual(t, "repaired", got.Metadata.Description)
+	})
+
+	t.Run("a delete between the check and the release is rejected by a failed sync", func(t *testing.T) {
+		storage, sync, engine := setup(t)
+		require.NoError(t, engine.SyncABACAtUnseal(ctx, "tenant1", nil))
+		sync.err = syncErr
+		assert.ErrorIs(t, engine.DeletePolicy(repairCtx, "tenant1", "p"), syncErr)
+		assert.Equal(t, 1, storage.restores)
+		_, stored := storage.policies["tenant1"]["p"]
+		assert.True(t, stored, "the deleted policy is put back")
+	})
+
+	t.Run("another tenant's check does not end the exception", func(t *testing.T) {
+		storage, sync, engine := setup(t)
+		require.NoError(t, engine.SyncABACAtUnseal(ctx, "tenant2", nil))
+		sync.err = syncErr
+		require.NoError(t, engine.UpdatePolicy(repairCtx, "tenant1", repaired()))
+		assert.Equal(t, 0, storage.restores)
+	})
+
+	t.Run("a failed check opens the exception again", func(t *testing.T) {
+		storage, sync, engine := setup(t)
+		require.NoError(t, engine.SyncABACAtUnseal(ctx, "tenant1", nil))
+		sync.err = syncErr
+		assert.ErrorIs(t, engine.SyncABACAtUnseal(ctx, "tenant1", nil), syncErr)
+		require.NoError(t, engine.UpdatePolicy(repairCtx, "tenant1", repaired()))
+		assert.Equal(t, 0, storage.restores)
+		got, err := storage.GetPolicy(ctx, "tenant1", "p")
+		require.NoError(t, err)
+		require.NotNil(t, got)
+		assert.Equal(t, "repaired", got.Metadata.Description)
+	})
+}

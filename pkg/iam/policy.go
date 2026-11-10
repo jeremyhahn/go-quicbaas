@@ -113,6 +113,10 @@ type PolicyEngine struct {
 	cache   *PolicyCache
 	opts    PolicyEngineOptions
 	mu      sync.RWMutex
+
+	// unsealLoaded holds the tenants whose stored policy set loaded at their
+	// latest unseal check (see SyncABACAtUnseal). Guarded by mu.
+	unsealLoaded map[string]struct{}
 }
 
 // NewPolicyEngine creates a new policy engine. opts.RBACAuthorizer becomes
@@ -423,10 +427,16 @@ func (e *PolicyEngine) ValidatePolicy(policy *Policy) error {
 
 // repairing reports whether a write to tenantID is the system admin's repair
 // of a held tenant's policy: a PolicyRepair is wired, ctx carries the repair
-// mark for exactly that tenant, and the tenant is still held. Only such a
-// write may outlive a failed sync. Callers already hold e.mu.
+// mark for exactly that tenant, the tenant is still held, and its policy set
+// has not loaded at an unseal check since it was held (see
+// SyncABACAtUnseal). Only such a write may outlive a failed sync. Callers
+// already hold e.mu.
 func (e *PolicyEngine) repairing(ctx context.Context, tenantID string) bool {
-	return e.opts.Repair != nil && tenantctx.InPolicyRepair(ctx, tenantID) && e.opts.Repair.TenantHeld(tenantID)
+	if e.opts.Repair == nil || !tenantctx.InPolicyRepair(ctx, tenantID) || !e.opts.Repair.TenantHeld(tenantID) {
+		return false
+	}
+	_, loaded := e.unsealLoaded[tenantID]
+	return !loaded
 }
 
 // syncABAC drives opts.ABACSync (when configured) to recompute the full
@@ -462,6 +472,30 @@ func (e *PolicyEngine) SyncABACAfter(ctx context.Context, prepare func(context.C
 		prepare(ctx)
 	}
 	return e.syncABAC(ctx)
+}
+
+// SyncABACAtUnseal is SyncABACAfter for tenantID's unseal check. A reload
+// that succeeds also ends the tenant's repair exception under the same write
+// lock: its whole stored set has loaded, so from here on a failed sync
+// rejects every write to it, although the tenant stays held until the rest
+// of its unseal checks pass and the hold is released outside this lock. A
+// repair can therefore never be kept after the reload that admits the
+// tenant. A reload that fails opens the exception again.
+func (e *PolicyEngine) SyncABACAtUnseal(ctx context.Context, tenantID string, prepare func(context.Context)) error {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	delete(e.unsealLoaded, tenantID)
+	if prepare != nil {
+		prepare(ctx)
+	}
+	if err := e.syncABAC(ctx); err != nil {
+		return err
+	}
+	if e.unsealLoaded == nil {
+		e.unsealLoaded = make(map[string]struct{})
+	}
+	e.unsealLoaded[tenantID] = struct{}{}
+	return nil
 }
 
 // TestPolicy evaluates a check request against the CURRENT active policies
