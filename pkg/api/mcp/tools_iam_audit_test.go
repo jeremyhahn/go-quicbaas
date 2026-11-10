@@ -599,7 +599,7 @@ func TestExecutePEPCheck_SuccessWithContext(t *testing.T) {
 		"principal": "user-1",
 		"action":    "read",
 		"resource":  "documents",
-		"context":   map[string]interface{}{"ip": "192.168.1.1"},
+		"context":   map[string]interface{}{"ip": "192.0.2.1"},
 	})
 	require.NoError(t, err)
 	require.NotNil(t, result)

@@ -218,7 +218,7 @@ func TestExecuteAgentList_Success(t *testing.T) {
 
 	result, err := reg.executeAgentTool(tenantctx.WithTenant(context.Background(), "t1"), "quicbaas_orchestrator_list", map[string]interface{}{
 		"page_size":  float64(10),
-		"page_token": "<account>",
+		"page_token": "token-a",
 	})
 	require.NoError(t, err)
 	require.NotNil(t, result)

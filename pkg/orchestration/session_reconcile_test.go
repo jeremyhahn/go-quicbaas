@@ -105,25 +105,28 @@ func storedStatus(t *testing.T, store AgentStore, tenantID, sessionID string) (S
 // =============================================================================
 
 func TestSessionConclusionReason_Valid(t *testing.T) {
-	for _, reason := range []SessionConclusionReason{
-		ConcludedByOperator, ConcludedByProcessExit, ConcludedByReconcile,
-		ConcludedByNodeRestart, ConcludedByJobConcluded, ConcludedByFleetNodeGone,
+	for _, tc := range []struct {
+		reason SessionConclusionReason
+		valid  bool
+	}{
+		{ConcludedByOperator, true},
+		{ConcludedByProcessExit, true},
+		{ConcludedByReconcile, true},
+		{ConcludedByNodeRestart, true},
+		{ConcludedByJobConcluded, true},
+		{ConcludedByFleetNodeGone, true},
+		// A conclusion that names no known cause is the unattributed state
+		// the reason exists to remove.
+		{"", false},
+		{"closed", false},
+		{"because", false},
 	} {
-		if !reason.Valid() {
-			t.Errorf("reason %q reports invalid; every reason the daemon writes must be recognisable "+
-				"when it is read back off a durable record", reason)
+		if got := tc.reason.Valid(); got != tc.valid {
+			t.Errorf("reason %q Valid() = %v, want %v; every reason the daemon writes must be "+
+				"recognisable when it is read back off a durable record", tc.reason, got, tc.valid)
 		}
-		if reason.String() != string(reason) {
-			t.Errorf("String() = %q, want %q", reason.String(), string(reason))
-		}
-	}
-}
-
-func TestSessionConclusionReason_ValidRejectsUnknown(t *testing.T) {
-	for _, reason := range []SessionConclusionReason{"", "closed", "because"} {
-		if reason.Valid() {
-			t.Errorf("reason %q reports valid; a conclusion that names no known cause is the "+
-				"unattributed state the reason exists to remove", reason)
+		if tc.valid && tc.reason.String() != string(tc.reason) {
+			t.Errorf("String() = %q, want %q", tc.reason.String(), string(tc.reason))
 		}
 	}
 }
@@ -628,39 +631,36 @@ func TestListSessions_ALiveRecordWithNoSpawnTimeFallsBackToTheStore(t *testing.T
 	}
 }
 
-func TestPutSession_StampsASpawnTimeWhenTheCallerSuppliesNone(t *testing.T) {
-	store := NewInMemoryAgentStore()
-	before := time.Now().UnixNano()
-	if err := store.PutSession(context.Background(), &SessionRecord{
-		SessionID: "s-unstamped", TenantID: "t1", Backend: "mock", Status: SessionStateActive,
-	}); err != nil {
-		t.Fatalf("PutSession: %v", err)
-	}
-	record, err := store.GetSession(context.Background(), "t1", "s-unstamped")
-	if err != nil {
-		t.Fatalf("GetSession: %v", err)
-	}
-	if record.CreatedAt < before {
-		t.Fatalf("created_at = %d, want it stamped at write time (>= %d); a record that exists "+
-			"was created at some point and must say so", record.CreatedAt, before)
-	}
-}
-
-func TestPutSession_KeepsTheCallersSpawnTime(t *testing.T) {
-	store := NewInMemoryAgentStore()
-	created := time.Now().Add(-time.Hour).UnixNano()
-	if err := store.PutSession(context.Background(), &SessionRecord{
-		SessionID: "s-stamped", TenantID: "t1", Backend: "mock",
-		Status: SessionStateActive, CreatedAt: created,
-	}); err != nil {
-		t.Fatalf("PutSession: %v", err)
-	}
-	record, err := store.GetSession(context.Background(), "t1", "s-stamped")
-	if err != nil {
-		t.Fatalf("GetSession: %v", err)
-	}
-	if record.CreatedAt != created {
-		t.Errorf("created_at = %d, want the caller's %d", record.CreatedAt, created)
+func TestPutSession_SpawnTime(t *testing.T) {
+	callers := time.Now().Add(-time.Hour).UnixNano()
+	for _, tc := range []struct {
+		name      string
+		createdAt int64
+	}{
+		// A record that exists was created at some point and must say so.
+		{"stamped at write time when the caller supplies none", 0},
+		{"the caller's spawn time is kept", callers},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			store := NewInMemoryAgentStore()
+			before := time.Now().UnixNano()
+			if err := store.PutSession(context.Background(), &SessionRecord{
+				SessionID: "s1", TenantID: "t1", Backend: "mock",
+				Status: SessionStateActive, CreatedAt: tc.createdAt,
+			}); err != nil {
+				t.Fatalf("PutSession: %v", err)
+			}
+			record, err := store.GetSession(context.Background(), "t1", "s1")
+			if err != nil {
+				t.Fatalf("GetSession: %v", err)
+			}
+			if tc.createdAt != 0 && record.CreatedAt != tc.createdAt {
+				t.Errorf("created_at = %d, want the caller's %d", record.CreatedAt, tc.createdAt)
+			}
+			if tc.createdAt == 0 && record.CreatedAt < before {
+				t.Errorf("created_at = %d, want it stamped at write time (>= %d)", record.CreatedAt, before)
+			}
+		})
 	}
 }
 

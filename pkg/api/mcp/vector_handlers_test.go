@@ -9,6 +9,9 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 
 	pb "github.com/jeremyhahn/go-quicbaas/api/proto"
 )
@@ -252,48 +255,40 @@ func TestHandleListVectors(t *testing.T) {
 	})
 }
 
-// TestHandleUpdateNamespace tests namespace update results and validation
-func TestHandleUpdateNamespace(t *testing.T) {
+// TestHandleUpdateNamespace_RefusedNotImplemented checks that the server's
+// Unimplemented answer reaches the caller as the typed refusal.
+func TestHandleUpdateNamespace_RefusedNotImplemented(t *testing.T) {
 	server := newTestVectorServer(t)
-	runToolCases(t, server.handleUpdateNamespace, []toolCase{
-		{
-			name: "ReplicationAndMetadata",
-			params: map[string]interface{}{
-				"namespace":          "test-namespace",
-				"replication_factor": float64(5),
-				"metadata":           `{"env":"production"}`,
-			},
-			want: map[string]interface{}{"namespace": "test-namespace", "replication_factor": float64(5)},
-		},
-		{
-			name: "WithIndexParams",
-			params: map[string]interface{}{
-				"namespace":    "test-ns",
-				"index_params": `{"ef_construction":"200","enable_prefetch":true,"m":"16","max_connections":32}`,
-			},
-			present: []string{"index_params"},
-		},
-		{
-			name:    "MissingNamespace",
-			params:  map[string]interface{}{"replication_factor": float64(3)},
-			wantErr: "namespace is required",
-		},
-		{
-			name:    "EmptyNamespace",
-			params:  map[string]interface{}{"namespace": "", "replication_factor": float64(3)},
-			wantErr: "namespace is required",
-		},
-		{
-			name:    "InvalidMetadataJSON",
-			params:  map[string]interface{}{"namespace": "test-ns", "metadata": "not-valid-json{"},
-			wantErr: "invalid metadata format",
-		},
-		{
-			name:    "InvalidIndexParamsJSON",
-			params:  map[string]interface{}{"namespace": "test-ns", "index_params": "invalid-json"},
-			wantErr: "invalid index_params format",
-		},
-	})
+	server.vectorClient = &unimplementedUpdateVectorClient{}
+	ctx := context.Background()
+
+	params := map[string]interface{}{
+		"namespace":          "test-namespace",
+		"replication_factor": float64(5),
+		"metadata":           `{"env":"production"}`,
+	}
+
+	resp, err := server.handleUpdateNamespace(ctx, params)
+	require.Error(t, err)
+	assert.Nil(t, resp)
+	var unsupported *VectorNamespaceUpdateUnsupportedError
+	require.ErrorAs(t, err, &unsupported)
+	assert.Equal(t, "test-namespace", unsupported.Namespace)
+}
+
+// unimplementedUpdateVectorClient answers UpdateNamespace the way the gRPC
+// server does: codes.Unimplemented, because no namespace update exists.
+type unimplementedUpdateVectorClient struct {
+	mockVectorDBClient
+}
+
+func (c *unimplementedUpdateVectorClient) UpdateNamespace(ctx context.Context, in *pb.UpdateNamespaceRequest, opts ...grpc.CallOption) (*pb.UpdateNamespaceResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "namespace update not supported")
+}
+
+func TestVectorNamespaceUpdateUnsupportedError_Error(t *testing.T) {
+	err := &VectorNamespaceUpdateUnsupportedError{Namespace: "docs"}
+	assert.Equal(t, "vector namespace docs cannot be updated: the qrdb SDK has no in-place namespace update", err.Error())
 }
 
 // TestHandleDeleteNamespace tests namespace deletion with and without force
