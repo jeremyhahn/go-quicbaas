@@ -1,0 +1,1217 @@
+// Copyright (c) 2026 Jeremy Hahn
+// Copyright (c) 2026 Automate The Things, LLC
+//
+// This file is part of go-quicbaas.
+//
+// go-quicbaas is dual-licensed:
+//
+// 1. GNU Affero General Public License v3.0 (AGPL-3.0)
+//    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
+//
+// 2. Commercial License
+//    Contact licensing@automatethethings.com for commercial licensing options.
+
+package softwarefactoryworker
+
+import (
+	"archive/tar"
+	"bytes"
+	"os"
+	"os/exec"
+	"path"
+	"path/filepath"
+	"regexp"
+	"sort"
+	"strings"
+	"testing"
+
+	"gopkg.in/yaml.v3"
+)
+
+// These tests run the worker-image workflow's "already published?" step
+// (build-publish, id: existing) with a fake docker on PATH. Only a registry
+// answer of "not found" may count as unpublished: any other lookup failure
+// must fail the step, so the build and push steps never run and a published
+// tag is never overwritten. No network, registry or engine is touched.
+
+const workflowPath = "../../../.github/workflows/worker-image.yml"
+
+type workflowFile struct {
+	On struct {
+		WorkflowDispatch struct {
+			Inputs map[string]any `yaml:"inputs"`
+		} `yaml:"workflow_dispatch"`
+	} `yaml:"on"`
+	Jobs map[string]struct {
+		Name        string            `yaml:"name"`
+		If          string            `yaml:"if"`
+		Needs       any               `yaml:"needs"`
+		RunsOn      any               `yaml:"runs-on"`
+		Permissions map[string]string `yaml:"permissions"`
+		Steps       []struct {
+			ID   string `yaml:"id"`
+			Name string `yaml:"name"`
+			If   string `yaml:"if"`
+			Run  string `yaml:"run"`
+		} `yaml:"steps"`
+	} `yaml:"jobs"`
+}
+
+// loadWorkflow returns the raw worker-image workflow and its parse.
+func loadWorkflow(t *testing.T) (string, workflowFile) {
+	t.Helper()
+	raw, err := os.ReadFile(workflowPath)
+	if err != nil {
+		t.Fatalf("read %s: %v", workflowPath, err)
+	}
+	var wf workflowFile
+	if err := yaml.Unmarshal(raw, &wf); err != nil {
+		t.Fatalf("parse %s: %v", workflowPath, err)
+	}
+	return string(raw), wf
+}
+
+// The workflow is two jobs. build-publish holds only GITHUB_TOKEN with
+// contents: read and packages: write (G1): no registry secret, no PAT, and no
+// job may write issues. post-digest needs it and holds no permission at all.
+func TestWorkflowBuildPublish_Jobs(t *testing.T) {
+	raw, wf := loadWorkflow(t)
+	if len(wf.Jobs) != 2 {
+		names := make([]string, 0, len(wf.Jobs))
+		for name := range wf.Jobs {
+			names = append(names, name)
+		}
+		sort.Strings(names)
+		t.Fatalf("jobs = %v, want exactly [build-publish post-digest]", names)
+	}
+	job, ok := wf.Jobs["build-publish"]
+	if !ok {
+		t.Fatalf("%s has no build-publish job", workflowPath)
+	}
+	wantIf := "${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' }}"
+	if job.If != wantIf {
+		t.Errorf("build-publish if = %q, want %q", job.If, wantIf)
+	}
+	wantPerms := map[string]string{"contents": "read", "packages": "write"}
+	if len(job.Permissions) != len(wantPerms) {
+		t.Errorf("build-publish permissions = %v, want %v", job.Permissions, wantPerms)
+	}
+	for k, v := range wantPerms {
+		if job.Permissions[k] != v {
+			t.Errorf("build-publish permissions = %v, want %v", job.Permissions, wantPerms)
+			break
+		}
+	}
+	if job.RunsOn != "ubuntu-latest" {
+		t.Errorf("build-publish runs-on = %v, want ubuntu-latest until the bigdisk-docker pool is live", job.RunsOn)
+	}
+	if !strings.Contains(raw, "# When the bigdisk-docker pool is live, switch to: runs-on: [self-hosted, linux, x64, bigdisk-docker]\n    runs-on: ubuntu-latest\n") {
+		t.Errorf("%s does not carry the bigdisk-docker runs-on switch line above build-publish's runs-on", workflowPath)
+	}
+	if !strings.Contains(raw, "    - cron: '0 3 * * *'\n") {
+		t.Errorf("%s does not run nightly at 03:00 UTC", workflowPath)
+	}
+	// A version input would build something other than the lock (G3).
+	if inputs := wf.On.WorkflowDispatch.Inputs; len(inputs) != 0 {
+		t.Errorf("workflow_dispatch inputs = %v, want none: the build takes its versions from the lock", inputs)
+	}
+	post, ok := wf.Jobs["post-digest"]
+	if !ok {
+		t.Fatalf("%s has no post-digest job", workflowPath)
+	}
+	if post.Needs != "build-publish" {
+		t.Errorf("post-digest needs = %v, want build-publish", post.Needs)
+	}
+	if len(post.Permissions) != 0 || !strings.Contains(raw, "    permissions: {}\n") {
+		t.Errorf("post-digest permissions = %v, want permissions: {}", post.Permissions)
+	}
+	for _, step := range post.Steps {
+		if strings.Contains(step.Run, "GITHUB_TOKEN") || strings.Contains(step.Run, "docker") {
+			t.Errorf("post-digest step %q touches a token or the registry; it only posts", step.Name)
+		}
+	}
+	for _, s := range []string{"REGISTRY_TOKEN", "REGISTRY_USER", "secrets["} {
+		if strings.Contains(raw, s) {
+			t.Errorf("%s contains %q", workflowPath, s)
+		}
+	}
+	if regexp.MustCompile(`(?m)^\s*issues:`).MatchString(raw) {
+		t.Errorf("%s has an issues: permission key", workflowPath)
+	}
+	for _, ref := range regexp.MustCompile(`secrets\.[A-Za-z0-9_]*`).FindAllString(raw, -1) {
+		if ref != "secrets.GITHUB_TOKEN" {
+			t.Errorf("%s references %s; only secrets.GITHUB_TOKEN is allowed", workflowPath, ref)
+		}
+	}
+}
+
+// Both secret scans run before the push, under the push's own condition, fail
+// on any finding, and carry no severity filter, skip or ignore file.
+func TestWorkflowBuildPublish_SecretScansGateThePush(t *testing.T) {
+	_, wf := loadWorkflow(t)
+	job, ok := wf.Jobs["build-publish"]
+	if !ok {
+		t.Fatalf("%s has no build-publish job", workflowPath)
+	}
+	idx := map[string]int{}
+	push := -1
+	for i, step := range job.Steps {
+		if step.ID == "secret-scan" || step.ID == "layer-scan" {
+			idx[step.ID] = i
+		}
+		if push < 0 && strings.Contains(step.Run, "make push-worker-image") {
+			push = i
+		}
+	}
+	if push < 0 {
+		t.Fatalf("build-publish has no step that runs make push-worker-image")
+	}
+	for _, id := range []string{"secret-scan", "layer-scan"} {
+		i, ok := idx[id]
+		if !ok {
+			t.Errorf("build-publish has no step with id: %s", id)
+			continue
+		}
+		step := job.Steps[i]
+		if i >= push {
+			t.Errorf("step %s (#%d) does not come before the push step (#%d)", id, i, push)
+		}
+		if step.If != job.Steps[push].If {
+			t.Errorf("step %s if = %q, want the push step's %q", id, step.If, job.Steps[push].If)
+		}
+		for _, s := range []string{"--scanners secret", "--exit-code 1"} {
+			if !strings.Contains(step.Run, s) {
+				t.Errorf("step %s run: lacks %q", id, s)
+			}
+		}
+		for _, s := range []string{"--severity", "--skip-dirs", "--skip-files", "--secret-config", "--ignorefile"} {
+			if strings.Contains(step.Run, s) {
+				t.Errorf("step %s run: contains %q", id, s)
+			}
+		}
+	}
+	if i, ok := idx["layer-scan"]; ok {
+		for _, s := range []string{"docker save", ".Layers[]"} {
+			if !strings.Contains(job.Steps[i].Run, s) {
+				t.Errorf("step layer-scan run: lacks %q", s)
+			}
+		}
+	}
+}
+
+// existingStepScript returns the run: script of build-publish's step with
+// id: existing.
+func existingStepScript(t *testing.T) string {
+	t.Helper()
+	raw, err := os.ReadFile(workflowPath)
+	if err != nil {
+		t.Fatalf("read %s: %v", workflowPath, err)
+	}
+	var wf workflowFile
+	if err := yaml.Unmarshal(raw, &wf); err != nil {
+		t.Fatalf("parse %s: %v", workflowPath, err)
+	}
+	job, ok := wf.Jobs["build-publish"]
+	if !ok {
+		t.Fatalf("%s has no build-publish job", workflowPath)
+	}
+	for _, step := range job.Steps {
+		if step.ID != "existing" {
+			continue
+		}
+		if strings.TrimSpace(step.Run) == "" {
+			t.Fatalf("build-publish step id: existing has no run: script")
+		}
+		return step.Run
+	}
+	t.Fatalf("build-publish has no step with id: existing")
+	return ""
+}
+
+const fakeDockerScript = `#!/bin/sh
+printf '%s' "$FAKE_DOCKER_STDOUT"
+printf '%s' "$FAKE_DOCKER_STDERR" >&2
+exit "$FAKE_DOCKER_EXIT"
+`
+
+func TestWorkflowBuildPublish_OnlyNotFoundCountsAsUnpublished(t *testing.T) {
+	bash, err := exec.LookPath("bash")
+	if err != nil {
+		t.Skip("bash is not on PATH")
+	}
+	script := existingStepScript(t)
+
+	const (
+		repo   = "ghcr.io/example/img"
+		tag    = "1.0.0-cc1.2.3-cx4.5.6"
+		digest = "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+	)
+
+	cases := []struct {
+		name      string
+		stdout    string
+		stderr    string
+		exit      string
+		needJQ    bool
+		wantOK    bool
+		wantLines []string
+	}{
+		{
+			name:      "not found",
+			stderr:    "ERROR: " + repo + ":" + tag + ": not found\n",
+			exit:      "1",
+			wantOK:    true,
+			wantLines: []string{"exists=false"},
+		},
+		{
+			name:      "manifest unknown",
+			stderr:    "MANIFEST_UNKNOWN: manifest unknown\n",
+			exit:      "1",
+			wantOK:    true,
+			wantLines: []string{"exists=false"},
+		},
+		{
+			name:   "server error",
+			stderr: "unexpected status from HEAD request: 503 Service Unavailable\n",
+			exit:   "1",
+		},
+		{
+			name:   "timeout",
+			stderr: "failed to do request: context deadline exceeded\n",
+			exit:   "1",
+		},
+		{
+			name:   "denied",
+			stderr: "denied: denied\n",
+			exit:   "1",
+		},
+		{
+			name: "empty stderr",
+			exit: "1",
+		},
+		{
+			name:      "published",
+			stdout:    `{"digest":"` + digest + `"}`,
+			exit:      "0",
+			needJQ:    true,
+			wantOK:    true,
+			wantLines: []string{"exists=true", "digest=" + digest},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if tc.needJQ {
+				if _, err := exec.LookPath("jq"); err != nil {
+					t.Skip("jq is not on PATH")
+				}
+			}
+			dir := t.TempDir()
+			binDir := filepath.Join(dir, "bin")
+			if err := os.Mkdir(binDir, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(binDir, "docker"), []byte(fakeDockerScript), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			output := filepath.Join(dir, "github_output")
+			if err := os.WriteFile(output, nil, 0o644); err != nil {
+				t.Fatal(err)
+			}
+
+			cmd := exec.Command(bash, "-c", script)
+			cmd.Env = append(os.Environ(),
+				"PATH="+binDir+string(os.PathListSeparator)+os.Getenv("PATH"),
+				"REPO="+repo,
+				"TAG="+tag,
+				"GITHUB_OUTPUT="+output,
+				"FAKE_DOCKER_STDOUT="+tc.stdout,
+				"FAKE_DOCKER_STDERR="+tc.stderr,
+				"FAKE_DOCKER_EXIT="+tc.exit,
+			)
+			combined, runErr := cmd.CombinedOutput()
+
+			got, err := os.ReadFile(output)
+			if err != nil {
+				t.Fatal(err)
+			}
+			lines := strings.Split(strings.TrimSpace(string(got)), "\n")
+
+			if tc.wantOK {
+				if runErr != nil {
+					t.Fatalf("step failed: %v\n%s", runErr, combined)
+				}
+				for _, want := range tc.wantLines {
+					found := false
+					for _, line := range lines {
+						if line == want {
+							found = true
+						}
+					}
+					if !found {
+						t.Errorf("GITHUB_OUTPUT has no %q line:\n%s", want, got)
+					}
+				}
+				return
+			}
+
+			if runErr == nil {
+				t.Fatalf("step exited 0 on a lookup error, so the build and push would run:\n%s", combined)
+			}
+			for _, line := range lines {
+				if strings.HasPrefix(line, "exists=") {
+					t.Errorf("GITHUB_OUTPUT has %q after a lookup error:\n%s", line, got)
+				}
+			}
+		})
+	}
+}
+
+// stepRun returns the run: script of build-publish's step with the given id.
+func stepRun(t *testing.T, id string) string {
+	t.Helper()
+	return jobStepRun(t, "build-publish", id)
+}
+
+// jobStepRun returns the run: script of the step with the given id in the
+// named job, failing when there is none.
+func jobStepRun(t *testing.T, name, id string) string {
+	t.Helper()
+	_, wf := loadWorkflow(t)
+	job, ok := wf.Jobs[name]
+	if !ok {
+		t.Fatalf("%s has no %s job", workflowPath, name)
+	}
+	for _, step := range job.Steps {
+		if step.ID != id {
+			continue
+		}
+		if strings.TrimSpace(step.Run) == "" {
+			t.Fatalf("%s step id: %s has no run: script", name, id)
+		}
+		return step.Run
+	}
+	t.Fatalf("%s has no step with id: %s", name, id)
+	return ""
+}
+
+// The image secret scan also covers the image config, and the layer scan
+// adds the config JSON to the tree it scans.
+func TestWorkflowBuildPublish_SecretScanCoversImageConfig(t *testing.T) {
+	if run := stepRun(t, "secret-scan"); !strings.Contains(run, "--image-config-scanners secret") {
+		t.Errorf("step secret-scan run: lacks %q", "--image-config-scanners secret")
+	}
+	run := stepRun(t, "layer-scan")
+	for _, s := range []string{".[0].Config", "config.json"} {
+		if !strings.Contains(run, s) {
+			t.Errorf("step layer-scan run: lacks %q", s)
+		}
+	}
+}
+
+// fakeSaveDockerScript stands in for docker in the layer-scan step: only
+// `docker save <ref> -o <file>` works; it records <ref> and copies
+// $FAKE_IMAGE_TAR to <file>.
+const fakeSaveDockerScript = `#!/bin/sh
+if [ "$#" -ne 4 ] || [ "$1" != save ] || [ "$3" != -o ]; then exit 9; fi
+printf '%s\n' "$2" >> "$FAKE_DOCKER_LOG"
+cp "$FAKE_IMAGE_TAR" "$4"
+`
+
+// fakeSecretTrivyScript records its argv and, when the last argument is a
+// directory, the files under it (the step's EXIT trap removes them once the
+// step ends), then exits $FAKE_TRIVY_EXIT.
+const fakeSecretTrivyScript = `#!/bin/sh
+printf '%s\n' "$*" >> "$FAKE_TRIVY_LOG"
+last=
+for arg in "$@"; do last="$arg"; done
+if [ -n "$last" ] && [ -d "$last" ]; then
+  (cd "$last" && find . -type f | sort) >> "$FAKE_TRIVY_LOG"
+fi
+exit "${FAKE_TRIVY_EXIT:-0}"
+`
+
+// layerTar builds one layer tarball in memory: regular files with mode 0644
+// and an entry for each parent directory.
+func layerTar(t *testing.T, files map[string]string) []byte {
+	t.Helper()
+	names := make([]string, 0, len(files))
+	for name := range files {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	var buf bytes.Buffer
+	tw := tar.NewWriter(&buf)
+	dirs := map[string]bool{}
+	for _, name := range names {
+		var parents []string
+		for d := path.Dir(name); d != "." && d != "/"; d = path.Dir(d) {
+			parents = append([]string{d}, parents...)
+		}
+		for _, d := range parents {
+			if dirs[d] {
+				continue
+			}
+			dirs[d] = true
+			if err := tw.WriteHeader(&tar.Header{Typeflag: tar.TypeDir, Name: d + "/", Mode: 0o755}); err != nil {
+				t.Fatal(err)
+			}
+		}
+		body := files[name]
+		if err := tw.WriteHeader(&tar.Header{Typeflag: tar.TypeReg, Name: name, Mode: 0o644, Size: int64(len(body))}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := tw.Write([]byte(body)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := tw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return buf.Bytes()
+}
+
+// writeDockerSaveArchive writes a docker-save style tar at path: manifest.json
+// holds manifest, and each files entry is written at its name.
+func writeDockerSaveArchive(t *testing.T, path string, manifest string, files map[string][]byte) {
+	t.Helper()
+	names := make([]string, 0, len(files))
+	for name := range files {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	var buf bytes.Buffer
+	tw := tar.NewWriter(&buf)
+	add := func(name string, body []byte) {
+		if err := tw.WriteHeader(&tar.Header{Typeflag: tar.TypeReg, Name: name, Mode: 0o644, Size: int64(len(body))}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := tw.Write(body); err != nil {
+			t.Fatal(err)
+		}
+	}
+	add("manifest.json", []byte(manifest))
+	for _, name := range names {
+		add(name, files[name])
+	}
+	if err := tw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, buf.Bytes(), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// writeFakes puts the given fake scripts, by name, in a new directory and
+// returns it.
+func writeFakes(t *testing.T, dir string, fakes map[string]string) string {
+	t.Helper()
+	binDir := filepath.Join(dir, "bin")
+	if err := os.Mkdir(binDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for name, script := range fakes {
+		if err := os.WriteFile(filepath.Join(binDir, name), []byte(script), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return binDir
+}
+
+// TestWorkflowBuildPublish_LayerScanScansEveryLayer runs the layer-scan step
+// with a fake docker and trivy: every layer's files and the image config reach
+// the scanner, a scanner failure fails the step, and so does a manifest with
+// no layers or no config.
+func TestWorkflowBuildPublish_LayerScanScansEveryLayer(t *testing.T) {
+	bash, err := exec.LookPath("bash")
+	if err != nil {
+		t.Skip("bash is not on PATH")
+	}
+	for _, tool := range []string{"tar", "jq"} {
+		if _, err := exec.LookPath(tool); err != nil {
+			t.Skipf("%s is not on PATH", tool)
+		}
+	}
+	script := stepRun(t, "layer-scan")
+	files := map[string][]byte{
+		"l1/layer.tar": layerTar(t, map[string]string{"etc/one": "one\n"}),
+		"l2/layer.tar": layerTar(t, map[string]string{"opt/two": "two\n"}),
+		"cfg.json":     []byte(`{"config":{}}`),
+	}
+	const twoLayers = `[{"Config":"cfg.json","Layers":["l1/layer.tar","l2/layer.tar"]}]`
+	const ref = "quicbaas-software-factory-worker:t1"
+	cases := []struct {
+		name      string
+		manifest  string
+		trivyExit string
+		wantOK    bool
+		wantTrivy bool
+		wantOut   string
+	}{
+		{name: "two layers", manifest: twoLayers, trivyExit: "0", wantOK: true, wantTrivy: true, wantOut: "scanned 2 layer tarballs of " + ref},
+		{name: "scanner finds a secret", manifest: twoLayers, trivyExit: "1", wantTrivy: true},
+		{name: "no layers", manifest: `[{"Config":"cfg.json","Layers":[]}]`, trivyExit: "0", wantOut: "lists no layer tarballs"},
+		{name: "no config", manifest: `[{"Layers":["l1/layer.tar"]}]`, trivyExit: "0", wantOut: "names no image config"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			binDir := writeFakes(t, dir, map[string]string{"docker": fakeSaveDockerScript, "trivy": fakeSecretTrivyScript})
+			imageTar := filepath.Join(dir, "image.tar")
+			writeDockerSaveArchive(t, imageTar, tc.manifest, files)
+			runnerTemp := t.TempDir()
+			dockerLog := filepath.Join(dir, "docker.log")
+			trivyLog := filepath.Join(dir, "trivy.log")
+			cmd := exec.Command(bash, "-c", script)
+			cmd.Env = append(os.Environ(),
+				"PATH="+binDir+string(os.PathListSeparator)+os.Getenv("PATH"),
+				"RUNNER_TEMP="+runnerTemp,
+				"IMAGE=quicbaas-software-factory-worker",
+				"TAG=t1",
+				"FAKE_DOCKER_LOG="+dockerLog,
+				"FAKE_IMAGE_TAR="+imageTar,
+				"FAKE_TRIVY_LOG="+trivyLog,
+				"FAKE_TRIVY_EXIT="+tc.trivyExit,
+			)
+			combined, runErr := cmd.CombinedOutput()
+			if tc.wantOK && runErr != nil {
+				t.Fatalf("step failed: %v\n%s", runErr, combined)
+			}
+			if !tc.wantOK && runErr == nil {
+				t.Fatalf("step exited 0:\n%s", combined)
+			}
+			if !strings.Contains(string(combined), tc.wantOut) {
+				t.Errorf("step output lacks %q:\n%s", tc.wantOut, combined)
+			}
+			if _, err := os.Stat(filepath.Join(runnerTemp, "image-layers")); !os.IsNotExist(err) {
+				t.Errorf("$RUNNER_TEMP/image-layers is still there after the step (stat: %v)", err)
+			}
+			if got, err := os.ReadFile(dockerLog); err != nil || string(got) != ref+"\n" {
+				t.Errorf("docker log = %q (%v), want %q", got, err, ref+"\n")
+			}
+			got, err := os.ReadFile(trivyLog)
+			if !tc.wantTrivy {
+				if err == nil {
+					t.Errorf("trivy was called:\n%s", got)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("trivy was never called: %v\n%s", err, combined)
+			}
+			lines := strings.Split(strings.TrimRight(string(got), "\n"), "\n")
+			argv := " " + lines[0] + " "
+			for _, want := range []string{" fs ", " --scanners secret ", " --exit-code 1 "} {
+				if !strings.Contains(argv, want) {
+					t.Errorf("trivy argv %q lacks %q", lines[0], strings.TrimSpace(want))
+				}
+			}
+			listed := map[string]bool{}
+			for _, l := range lines[1:] {
+				listed[l] = true
+			}
+			for _, want := range []string{"./1/etc/one", "./2/opt/two", "./config/config.json"} {
+				if !listed[want] {
+					t.Errorf("trivy was not given %s; it saw:\n%s", want, strings.Join(lines[1:], "\n"))
+				}
+			}
+		})
+	}
+}
+
+// TestWorkflowBuildPublish_ImageSecretScanFailureFailsTheStep runs the
+// secret-scan step with a fake trivy: it scans the image and its config for
+// secrets, and a scanner failure fails the step.
+func TestWorkflowBuildPublish_ImageSecretScanFailureFailsTheStep(t *testing.T) {
+	bash, err := exec.LookPath("bash")
+	if err != nil {
+		t.Skip("bash is not on PATH")
+	}
+	script := stepRun(t, "secret-scan")
+	cases := []struct {
+		name   string
+		exit   string
+		wantOK bool
+	}{
+		{name: "clean", exit: "0", wantOK: true},
+		{name: "secret found", exit: "1"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			binDir := writeFakes(t, dir, map[string]string{"trivy": fakeSecretTrivyScript})
+			trivyLog := filepath.Join(dir, "trivy.log")
+			cmd := exec.Command(bash, "-c", script)
+			cmd.Env = append(os.Environ(),
+				"PATH="+binDir+string(os.PathListSeparator)+os.Getenv("PATH"),
+				"IMAGE=quicbaas-software-factory-worker",
+				"TAG=t1",
+				"FAKE_TRIVY_LOG="+trivyLog,
+				"FAKE_TRIVY_EXIT="+tc.exit,
+			)
+			combined, runErr := cmd.CombinedOutput()
+			if tc.wantOK && runErr != nil {
+				t.Fatalf("step failed: %v\n%s", runErr, combined)
+			}
+			if !tc.wantOK && runErr == nil {
+				t.Fatalf("step exited 0:\n%s", combined)
+			}
+			got, err := os.ReadFile(trivyLog)
+			if err != nil {
+				t.Fatalf("trivy was never called: %v\n%s", err, combined)
+			}
+			argv := strings.TrimRight(string(got), "\n")
+			for _, want := range []string{" image ", " --scanners secret ", " --image-config-scanners secret ", " --exit-code 1 "} {
+				if !strings.Contains(" "+argv+" ", want) {
+					t.Errorf("trivy argv %q lacks %q", argv, strings.TrimSpace(want))
+				}
+			}
+			if !strings.HasSuffix(argv, " quicbaas-software-factory-worker:t1") {
+				t.Errorf("trivy argv %q does not end with the image ref", argv)
+			}
+		})
+	}
+}
+
+// fakeNpmScript answers only integrity lookups: any other npm call, such as a
+// `npm view <pkg> version` for the latest release, fails, so the resolve step
+// is proven to take its versions from the lock (G3).
+const fakeNpmScript = `#!/bin/sh
+case "$*" in
+  *dist.integrity*) printf '%s\n' "$FAKE_INTEGRITY" ;;
+  *) echo "unexpected npm call: $*" >&2; exit 1 ;;
+esac
+`
+
+const (
+	testVersionsLock = "CLAUDE_CODE_VERSION=1.2.3\nCODEX_VERSION=4.5.6\nGEMINI_CLI_VERSION=0.64.0\n"
+	testToolchainMk  = "GO_VERSION := 1.27.3\nGH_VERSION := v2.103.3\n"
+)
+
+// The resolve step reads every version from versions.lock and toolchain.mk,
+// records the npm sha512 integrity of each CLI package, and fails on a missing
+// or non-sha512 integrity or a lock line that is missing.
+func TestWorkflowBuildPublish_ResolveRecordsIntegrity(t *testing.T) {
+	bash, err := exec.LookPath("bash")
+	if err != nil {
+		t.Skip("bash is not on PATH")
+	}
+	script := stepRun(t, "resolve")
+	const valid = "sha512-AbCd0123+/xyz=="
+
+	cases := []struct {
+		name      string
+		integrity string
+		lock      string
+		wantErr   string
+		wantOK    bool
+	}{
+		{name: "sha512", integrity: valid, lock: testVersionsLock, wantOK: true},
+		{name: "sha1", integrity: "sha1-abc", lock: testVersionsLock, wantErr: "has no sha512 integrity on npm"},
+		{name: "empty", integrity: "", lock: testVersionsLock, wantErr: "has no sha512 integrity on npm"},
+		{name: "no codex pin", integrity: valid, lock: "CLAUDE_CODE_VERSION=1.2.3\nGEMINI_CLI_VERSION=0.64.0\n", wantErr: "has no valid CODEX_VERSION"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			binDir := filepath.Join(dir, "bin")
+			if err := os.Mkdir(binDir, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(binDir, "npm"), []byte(fakeNpmScript), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(dir, "VERSION"), []byte("1.0.0\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			for rel, body := range map[string]string{
+				"deployments/agents/software-factory-worker/versions.lock": tc.lock,
+				"pkg/version/toolchain.mk":                                 testToolchainMk,
+			} {
+				full := filepath.Join(dir, filepath.FromSlash(rel))
+				if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(full, []byte(body), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			output := filepath.Join(dir, "github_output")
+			if err := os.WriteFile(output, nil, 0o644); err != nil {
+				t.Fatal(err)
+			}
+
+			cmd := exec.Command(bash, "-c", script)
+			cmd.Dir = dir
+			cmd.Env = append(os.Environ(),
+				"PATH="+binDir+string(os.PathListSeparator)+os.Getenv("PATH"),
+				"IMAGE=quicbaas-software-factory-worker",
+				"GITHUB_REPOSITORY_OWNER=Example",
+				"GITHUB_OUTPUT="+output,
+				"FAKE_INTEGRITY="+tc.integrity,
+			)
+			combined, runErr := cmd.CombinedOutput()
+			got, err := os.ReadFile(output)
+			if err != nil {
+				t.Fatal(err)
+			}
+			lines := strings.Split(strings.TrimSpace(string(got)), "\n")
+
+			if !tc.wantOK {
+				if runErr == nil {
+					t.Fatalf("step exited 0 with integrity %q:\n%s", tc.integrity, combined)
+				}
+				if !strings.Contains(string(combined), tc.wantErr) {
+					t.Errorf("output does not show %q:\n%s", tc.wantErr, combined)
+				}
+				for _, line := range lines {
+					if strings.HasPrefix(line, "cc_int=") {
+						t.Errorf("GITHUB_OUTPUT has %q after a bad integrity:\n%s", line, got)
+					}
+				}
+				return
+			}
+			if runErr != nil {
+				t.Fatalf("step failed: %v\n%s", runErr, combined)
+			}
+			want := []string{"cc=1.2.3", "cx=4.5.6", "gm=0.64.0", "go=1.27.3", "gh=v2.103.3"}
+			for _, k := range []string{"cc_int", "cc_x64_int", "cx_int", "cx_x64_int", "gm_int"} {
+				want = append(want, k+"="+valid)
+			}
+			for _, w := range want {
+				found := false
+				for _, line := range lines {
+					if line == w {
+						found = true
+					}
+				}
+				if !found {
+					t.Errorf("GITHUB_OUTPUT has no %q line:\n%s", w, got)
+				}
+			}
+			tagRe := regexp.MustCompile(`(?m)^tag=1\.0\.0-cc1\.2\.3-cx4\.5\.6-n[0-9]{8}$`)
+			if !tagRe.Match(got) {
+				t.Errorf("GITHUB_OUTPUT has no tag=<VERSION>-cc<cc>-cx<cx>-n<YYYYMMDD> line:\n%s", got)
+			}
+		})
+	}
+}
+
+// The digest record carries each CLI's version and npm integrity.
+func TestWorkflowBuildPublish_RecordCarriesIntegrity(t *testing.T) {
+	bash, err := exec.LookPath("bash")
+	if err != nil {
+		t.Skip("bash is not on PATH")
+	}
+	script := stepRun(t, "record")
+	const (
+		repo   = "ghcr.io/example/img"
+		tag    = "1.0.0-cc1.2.3-cx4.5.6"
+		digest = "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+	)
+	dir := t.TempDir()
+	summary := filepath.Join(dir, "summary")
+	output := filepath.Join(dir, "github_output")
+	cmd := exec.Command(bash, "-c", script)
+	cmd.Env = append(os.Environ(),
+		"REPO="+repo,
+		"TAG="+tag,
+		"CC=1.2.3",
+		"CX=4.5.6",
+		"GM=0.64.0",
+		"CC_INT=sha512-cc==",
+		"CC_X64_INT=sha512-ccx64==",
+		"CX_INT=sha512-cx==",
+		"CX_X64_INT=sha512-cxx64==",
+		"GM_INT=sha512-gm==",
+		"GO=1.27.3",
+		"GH=v2.103.3",
+		"EXISTING_DIGEST=",
+		"PUSHED_DIGEST="+digest,
+		"RUNNER_TEMP="+dir,
+		"GITHUB_STEP_SUMMARY="+summary,
+		"GITHUB_OUTPUT="+output,
+	)
+	if combined, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("step failed: %v\n%s", err, combined)
+	}
+	got, err := os.ReadFile(filepath.Join(dir, "worker-image-digest.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(strings.TrimSpace(string(got)), "\n")
+	want := []string{
+		"WORKER-IMAGE-DIGEST " + repo + ":" + tag + "@" + digest + " published=true",
+		"claude-code=1.2.3 integrity=sha512-cc==",
+		"claude-code-linux-x64=1.2.3 integrity=sha512-ccx64==",
+		"codex=4.5.6 integrity=sha512-cx==",
+		"codex-linux-x64=4.5.6 integrity=sha512-cxx64==",
+		"gemini-cli=0.64.0 integrity=sha512-gm==",
+		"go=1.27.3",
+		"gh=v2.103.3",
+	}
+	if len(lines) != len(want) {
+		t.Fatalf("worker-image-digest.txt =\n%s\nwant %d lines", got, len(want))
+	}
+	for i, w := range want {
+		if lines[i] != w {
+			t.Errorf("worker-image-digest.txt line %d = %q, want %q", i+1, lines[i], w)
+		}
+	}
+}
+
+// post-digest posts the published digest to the run summary and its outputs,
+// and fails when build-publish handed it no sha256 digest or a ref that does
+// not end in that tag and digest.
+func TestWorkflowPostDigest_PostsTheDigest(t *testing.T) {
+	bash, err := exec.LookPath("bash")
+	if err != nil {
+		t.Skip("bash is not on PATH")
+	}
+	script := jobStepRun(t, "post-digest", "post")
+	const (
+		tag    = "1.0.0-cc1.2.3-cx4.5.6-n20261110"
+		digest = "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+		ref    = "ghcr.io/example/img:" + tag + "@" + digest
+	)
+	cases := []struct {
+		name, ref, digest string
+		wantOK            bool
+	}{
+		{name: "digest", ref: ref, digest: digest, wantOK: true},
+		{name: "no digest", ref: "ghcr.io/example/img:" + tag + "@", digest: ""},
+		{name: "not sha256", ref: ref, digest: "latest"},
+		{name: "ref names another digest", ref: "ghcr.io/example/img:" + tag + "@sha256:" + strings.Repeat("f", 64), digest: digest},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			summary := filepath.Join(dir, "summary")
+			output := filepath.Join(dir, "github_output")
+			cmd := exec.Command(bash, "-c", script)
+			cmd.Env = append(os.Environ(),
+				"REF="+tc.ref, "DIGEST="+tc.digest, "PUBLISHED=true", "TAG="+tag,
+				"CC=1.2.3", "CX=4.5.6", "GO=1.27.3", "GH=v2.103.3",
+				"GITHUB_STEP_SUMMARY="+summary, "GITHUB_OUTPUT="+output,
+			)
+			combined, runErr := cmd.CombinedOutput()
+			if !tc.wantOK {
+				if runErr == nil {
+					t.Fatalf("step exited 0 with ref %q digest %q:\n%s", tc.ref, tc.digest, combined)
+				}
+				if out, _ := os.ReadFile(output); strings.Contains(string(out), "digest=") {
+					t.Errorf("GITHUB_OUTPUT has a digest after a refusal:\n%s", out)
+				}
+				return
+			}
+			if runErr != nil {
+				t.Fatalf("step failed: %v\n%s", runErr, combined)
+			}
+			sum, err := os.ReadFile(summary)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(string(sum), "WORKER-IMAGE-DIGEST "+ref+" published=true") {
+				t.Errorf("summary does not carry the digest line:\n%s", sum)
+			}
+			out, err := os.ReadFile(output)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(string(out), "digest="+digest+"\n") || !strings.Contains(string(out), "ref="+ref+"\n") {
+				t.Errorf("GITHUB_OUTPUT =\n%s\nwant digest=%s and ref=%s", out, digest, ref)
+			}
+		})
+	}
+}
+
+// The job fails before the build if any DEVCACHE_* variable is set, and both
+// make calls pass the dev-cache args empty.
+func TestWorkflowBuildPublish_DevcacheArgsMustBeEmpty(t *testing.T) {
+	_, wf := loadWorkflow(t)
+	job := wf.Jobs["build-publish"]
+	check, build, push := -1, -1, -1
+	for i, step := range job.Steps {
+		if step.ID == "devcache-empty" {
+			check = i
+		}
+		if build < 0 && strings.Contains(step.Run, "make build-worker-image") {
+			build = i
+		}
+		if push < 0 && strings.Contains(step.Run, "make push-worker-image") {
+			push = i
+		}
+	}
+	if check < 0 || build < 0 || push < 0 {
+		t.Fatalf("build-publish steps: devcache-empty #%d, build #%d, push #%d; want all three", check, build, push)
+	}
+	if check >= build {
+		t.Errorf("step devcache-empty (#%d) does not come before the build step (#%d)", check, build)
+	}
+	if job.Steps[check].If != job.Steps[build].If {
+		t.Errorf("step devcache-empty if = %q, want the build step's %q", job.Steps[check].If, job.Steps[build].If)
+	}
+	for _, i := range []int{build, push} {
+		if !strings.Contains(job.Steps[i].Run, "DEVCACHE_GOPROXY= DEVCACHE_NPM_REGISTRY=") {
+			t.Errorf("step %q run: does not pass DEVCACHE_GOPROXY= DEVCACHE_NPM_REGISTRY=", job.Steps[i].Name)
+		}
+	}
+
+	bash, err := exec.LookPath("bash")
+	if err != nil {
+		t.Skip("bash is not on PATH")
+	}
+	script := job.Steps[check].Run
+	var base []string
+	for _, kv := range os.Environ() {
+		if !strings.HasPrefix(kv, "DEVCACHE_") {
+			base = append(base, kv)
+		}
+	}
+	cases := []struct {
+		name   string
+		extra  []string
+		wantOK bool
+	}{
+		{name: "none set", wantOK: true},
+		{name: "goproxy set", extra: []string{"DEVCACHE_GOPROXY=http://cache.invalid:3000"}},
+		{name: "npm registry set", extra: []string{"DEVCACHE_NPM_REGISTRY=http://cache.invalid:4873"}},
+		{name: "goproxy empty", extra: []string{"DEVCACHE_GOPROXY="}, wantOK: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cmd := exec.Command(bash, "-c", script)
+			cmd.Env = append(append([]string{}, base...), tc.extra...)
+			combined, runErr := cmd.CombinedOutput()
+			if tc.wantOK && runErr != nil {
+				t.Fatalf("step failed: %v\n%s", runErr, combined)
+			}
+			if !tc.wantOK && runErr == nil {
+				t.Fatalf("step exited 0 with %v set:\n%s", tc.extra, combined)
+			}
+		})
+	}
+}
+
+const fakeAnonDockerScript = `#!/bin/sh
+if [ -e "$DOCKER_CONFIG/config.json" ]; then exit 9; fi
+printf '%s' "$FAKE_DOCKER_STDOUT"
+printf '%s' "$FAKE_DOCKER_STDERR" >&2
+exit "$FAKE_DOCKER_EXIT"
+`
+
+// After the digest is recorded, an anonymous lookup of it must be refused:
+// a public package fails the job, and so does an answer that is not a refusal.
+func TestWorkflowBuildPublish_PackageMustBePrivate(t *testing.T) {
+	_, wf := loadWorkflow(t)
+	job := wf.Jobs["build-publish"]
+	priv, record, upload := -1, -1, -1
+	for i, step := range job.Steps {
+		switch {
+		case step.ID == "private":
+			priv = i
+		case step.ID == "record":
+			record = i
+		case step.Name == "Upload the digest":
+			upload = i
+		}
+	}
+	if priv < 0 || record < 0 || upload < 0 {
+		t.Fatalf("build-publish steps: private #%d, record #%d, upload #%d; want all three", priv, record, upload)
+	}
+	if priv <= record || priv >= upload {
+		t.Errorf("step private (#%d) is not between record (#%d) and the upload (#%d)", priv, record, upload)
+	}
+
+	bash, err := exec.LookPath("bash")
+	if err != nil {
+		t.Skip("bash is not on PATH")
+	}
+	script := stepRun(t, "private")
+	cases := []struct {
+		name   string
+		stderr string
+		exit   string
+		wantOK bool
+	}{
+		{name: "public", exit: "0"},
+		{name: "denied", stderr: "denied: denied\n", exit: "1", wantOK: true},
+		{name: "unauthorized", stderr: "unauthorized: authentication required\n", exit: "1", wantOK: true},
+		{name: "server error", stderr: "503 Service Unavailable\n", exit: "1"},
+		{name: "server error naming a digest", stderr: "failed to fetch ghcr.io/example/img@sha256:ab401cd403ef0123456789abcdef0123456789abcdef0123456789abcdef0123: 503 Service Unavailable\n", exit: "1"},
+		{name: "403", stderr: "unexpected status: 403 Forbidden\n", exit: "1", wantOK: true},
+		{name: "401", stderr: "unexpected status: 401 Unauthorized\n", exit: "1", wantOK: true},
+		{name: "empty stderr", exit: "1"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			binDir := filepath.Join(dir, "bin")
+			if err := os.Mkdir(binDir, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(binDir, "docker"), []byte(fakeAnonDockerScript), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			cfg := filepath.Join(dir, "docker-config")
+			if err := os.Mkdir(cfg, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(cfg, "config.json"), []byte(`{"auths":{}}`), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			cmd := exec.Command(bash, "-c", script)
+			cmd.Env = append(os.Environ(),
+				"PATH="+binDir+string(os.PathListSeparator)+os.Getenv("PATH"),
+				"DOCKER_CONFIG="+cfg,
+				"REPO=ghcr.io/example/img",
+				"DIGEST=sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+				"FAKE_DOCKER_STDERR="+tc.stderr,
+				"FAKE_DOCKER_EXIT="+tc.exit,
+			)
+			combined, runErr := cmd.CombinedOutput()
+			if tc.wantOK && runErr != nil {
+				t.Fatalf("step failed: %v\n%s", runErr, combined)
+			}
+			if !tc.wantOK && runErr == nil {
+				t.Fatalf("step exited 0:\n%s", combined)
+			}
+		})
+	}
+}
+
+// fakeAnonCurlScript stands in for curl in the private-before step. It
+// refuses credentials and a bearer token on argv, logs each URL to
+// $FAKE_CURL_LOG, writes the case's body to the -o file and prints the
+// case's -w code. The tags lookup must send "Authorization: Bearer anon"
+// from a header file.
+const fakeAnonCurlScript = `#!/bin/sh
+for a in "$@"; do
+  case "$a" in -u|--user|*Bearer*|*anon*) exit 9 ;; esac
+done
+out=""; url=""; hdr=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -o|-w|-H) [ "$1" = -o ] && out="$2"; [ "$1" = -H ] && hdr="$2"; shift 2 ;;
+    -*) shift ;;
+    *) url="$1"; shift ;;
+  esac
+done
+printf '%s\n' "$url" >> "$FAKE_CURL_LOG"
+case "$url" in
+  "https://ghcr.io/token?service=ghcr.io&scope=repository:example/img:pull")
+    printf '%s' "$FAKE_TOKEN_BODY" > "$out"
+    printf '%s' "$FAKE_TOKEN_CODE" ;;
+  "https://ghcr.io/v2/example/img/tags/list")
+    case "$hdr" in @*) ;; *) exit 8 ;; esac
+    [ "$(cat "${hdr#@}")" = "Authorization: Bearer anon" ] || exit 8
+    : > "$out"
+    printf '%s' "$FAKE_TAGS_CODE" ;;
+  *) exit 7 ;;
+esac
+`
+
+func TestWorkflowBuildPublish_PrivateBeforePush(t *testing.T) {
+	_, wf := loadWorkflow(t)
+	job := wf.Jobs["build-publish"]
+	before, layer, push := -1, -1, -1
+	for i, step := range job.Steps {
+		switch {
+		case step.ID == "private-before":
+			before = i
+		case step.ID == "layer-scan":
+			layer = i
+		case push < 0 && strings.Contains(step.Run, "make push-worker-image"):
+			push = i
+		}
+	}
+	if before < 0 || layer < 0 || push < 0 {
+		t.Fatalf("build-publish steps: private-before #%d, layer-scan #%d, push #%d; want all three", before, layer, push)
+	}
+	if before <= layer || before >= push {
+		t.Errorf("step private-before (#%d) is not between layer-scan (#%d) and the push (#%d)", before, layer, push)
+	}
+	if got, want := job.Steps[before].If, job.Steps[push].If; got != want {
+		t.Errorf("step private-before if = %q, want the push step's %q", got, want)
+	}
+	for _, s := range []string{"GITHUB_TOKEN", "secrets.", " -u "} {
+		if strings.Contains(job.Steps[before].Run, s) {
+			t.Errorf("step private-before run: contains %q", s)
+		}
+	}
+
+	bash, err := exec.LookPath("bash")
+	if err != nil {
+		t.Skip("bash is not on PATH")
+	}
+	if _, err := exec.LookPath("jq"); err != nil {
+		t.Skip("jq is not on PATH")
+	}
+	script := stepRun(t, "private-before")
+	const tagsURL = "https://ghcr.io/v2/example/img/tags/list"
+	cases := []struct {
+		name      string
+		tokenCode string
+		tokenBody string
+		tagsCode  string
+		wantOK    bool
+		want      string
+		noTags    bool
+	}{
+		{name: "public", tokenCode: "200", tagsCode: "200", want: "must be private"},
+		{name: "tags 401", tokenCode: "200", tagsCode: "401", wantOK: true},
+		{name: "tags 403", tokenCode: "200", tagsCode: "403", wantOK: true},
+		{name: "tags 404", tokenCode: "200", tagsCode: "404", wantOK: true},
+		{name: "tags 500", tokenCode: "200", tagsCode: "500"},
+		{name: "token 403", tokenCode: "403", wantOK: true, noTags: true},
+		{name: "token 401", tokenCode: "401", wantOK: true, noTags: true},
+		{name: "token 502", tokenCode: "502", noTags: true},
+		{name: "token body without a token", tokenCode: "200", tokenBody: "{}", noTags: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			binDir := filepath.Join(dir, "bin")
+			if err := os.Mkdir(binDir, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(binDir, "curl"), []byte(fakeAnonCurlScript), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			body := tc.tokenBody
+			if body == "" {
+				body = `{"token":"anon"}`
+			}
+			curlLog := filepath.Join(dir, "curl.log")
+			cmd := exec.Command(bash, "-c", script)
+			cmd.Env = append(os.Environ(),
+				"PATH="+binDir+string(os.PathListSeparator)+os.Getenv("PATH"),
+				"REPO=ghcr.io/example/img",
+				"FAKE_CURL_LOG="+curlLog,
+				"FAKE_TOKEN_CODE="+tc.tokenCode,
+				"FAKE_TOKEN_BODY="+body,
+				"FAKE_TAGS_CODE="+tc.tagsCode,
+			)
+			combined, runErr := cmd.CombinedOutput()
+			if tc.wantOK && runErr != nil {
+				t.Fatalf("step failed: %v\n%s", runErr, combined)
+			}
+			if !tc.wantOK && runErr == nil {
+				t.Fatalf("step exited 0:\n%s", combined)
+			}
+			if tc.want != "" && !strings.Contains(string(combined), tc.want) {
+				t.Errorf("output lacks %q:\n%s", tc.want, combined)
+			}
+			if strings.Contains(string(combined), "Bearer anon") {
+				t.Errorf("output carries the bearer token:\n%s", combined)
+			}
+			calls, err := os.ReadFile(curlLog)
+			if err != nil {
+				t.Fatalf("curl was never called: %v\n%s", err, combined)
+			}
+			if called := strings.Contains(string(calls), tagsURL); called == tc.noTags {
+				t.Errorf("tags URL called = %v, want %v; curl calls:\n%s", called, !tc.noTags, calls)
+			}
+		})
+	}
+}

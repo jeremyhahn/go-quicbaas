@@ -43,6 +43,7 @@ func testPins() softwarefactoryworker.Pins {
 		SerenaDependencyFloors: "urllib3>=2.8.0",
 		Actionlint:             "v1.7.12", Shellcheck: "v0.11.0", ShellcheckSHA256X86_64: "8c3b", ShellcheckSHA256Aarch64: "12b3",
 		Opencode: "v1.18.32", OpencodeSHA256X86_64: "1ce4", OpencodeSHA256Aarch64: "abf3",
+		Gh: "v2.103.3", GhSHA256X86_64: "b8b8", GhSHA256Aarch64: "c9c9",
 		Protoc: "21.12", ProtocSHA256X86_64: "aaaa", ProtocSHA256Aarch64: "bbbb",
 		ProtocGenGo: "v1.36.12", ProtocGenGoGRPC: "v1.6.1",
 		Node: "v26.10.0", NodeSHA256X86_64: "cccc", NodeSHA256Aarch64: "dddd", Npm: "12.2.0",
