@@ -5073,7 +5073,7 @@ bench-kvstore: ## Run kvstore package benchmarks
 test-sdk-go: ## Run Go SDK unit tests (excludes integration tests)
 	@echo "$(BLUE)Running Go SDK unit tests...$(NC)"
 	@cd sdk/go || exit 1; $(call go_packages,./...,/test/); \
-	go test -v -race -count=1 $$pkgs
+	CGO_ENABLED=1 go test -v -race -count=1 $$pkgs
 	@echo "$(GREEN)✓ Go SDK unit tests passed$(NC)"
 
 .PHONY: test-sdk-go-coverage
