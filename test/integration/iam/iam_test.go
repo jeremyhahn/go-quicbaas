@@ -59,6 +59,12 @@ type testCluster struct {
 	unixSocket   string
 	client       *http.Client
 	grpcConn     *grpc.ClientConn
+
+	// bearer, when set, supplies the bearer doHTTPRequest sends. It is nil on
+	// the cluster setupTestCluster returns, which stays unauthenticated for
+	// the login, registration and OIDC ceremonies and the negative paths; the
+	// asSystemAdmin and asTenantAdmin views set it.
+	bearer func(ctx context.Context) (string, error)
 }
 
 // TestMain sets up and tears down the test environment.
@@ -348,6 +354,16 @@ func (tc *testCluster) doHTTPRequest(method, path string, body interface{}) (*ht
 
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
+	}
+
+	if tc.bearer != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), defaultTimeout)
+		defer cancel()
+		token, err := tc.bearer(ctx)
+		if err != nil {
+			return nil, err
+		}
+		req.Header.Set("Authorization", "Bearer "+token)
 	}
 
 	return tc.client.Do(req)
