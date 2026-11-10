@@ -126,11 +126,11 @@ func TestGitea_TokenCapabilities_SelfServiceMintIsFalse(t *testing.T) {
 func TestGitea_MintToken_UsesTheCustodyCredential(t *testing.T) {
 	backend, fixture := newCustodyFixture(t)
 
-	fixture.respondJSON("POST /api/v1/users/agent-go-quicbaas/tokens", http.StatusCreated,
+	fixture.respondJSON("POST /api/v1/users/agent-quicbaas/tokens", http.StatusCreated,
 		map[string]any{"id": 7, "name": "rotating", "sha1": "the-new-secret"})
 
 	minted, err := backend.MintToken(context.Background(), TokenSpec{
-		Username: "agent-go-quicbaas",
+		Username: "agent-quicbaas",
 		Name:     "rotating",
 		Scopes:   []string{"read:user"},
 	})
@@ -146,7 +146,7 @@ func TestGitea_MintToken_UsesTheCustodyCredential(t *testing.T) {
 		t.Errorf("minted = %+v, want id 7 named rotating", minted)
 	}
 
-	sent := lastRequestTo(t, fixture, "POST", "/api/v1/users/agent-go-quicbaas/tokens")
+	sent := lastRequestTo(t, fixture, "POST", "/api/v1/users/agent-quicbaas/tokens")
 	if want := basicAuthHeader(custodyUser, custodyPassword); sent.Auth != want {
 		t.Errorf("mint authenticated with %q, want the custody credential; "+
 			"minting with the adapter token is what Gitea refuses", firstWord(sent.Auth))
@@ -166,7 +166,7 @@ func TestGitea_MintToken_WithoutCustodyRefusesLoudly(t *testing.T) {
 	backend, _ := newGiteaFixture(t) // no custody credential
 
 	_, err := backend.MintToken(context.Background(), TokenSpec{
-		Username: "agent-go-quicbaas",
+		Username: "agent-quicbaas",
 		Name:     "rotating",
 	})
 	if !errors.Is(err, ErrCustodyCredentialAbsent) {
@@ -183,11 +183,11 @@ func TestGitea_MintToken_WithoutCustodyRefusesLoudly(t *testing.T) {
 func TestGitea_MintToken_RejectsAResponseWithNoSecret(t *testing.T) {
 	backend, fixture := newCustodyFixture(t)
 
-	fixture.respondJSON("POST /api/v1/users/agent-go-quicbaas/tokens", http.StatusCreated,
+	fixture.respondJSON("POST /api/v1/users/agent-quicbaas/tokens", http.StatusCreated,
 		map[string]any{"id": 7, "name": "rotating"})
 
 	_, err := backend.MintToken(context.Background(), TokenSpec{
-		Username: "agent-go-quicbaas",
+		Username: "agent-quicbaas",
 		Name:     "rotating",
 	})
 	if !errors.Is(err, ErrForgeWriteNotApplied) {
@@ -200,7 +200,7 @@ func TestGitea_MintToken_RejectsAResponseWithNoSecret(t *testing.T) {
 func TestGitea_MintToken_RequiresAName(t *testing.T) {
 	backend, _ := newCustodyFixture(t)
 
-	_, err := backend.MintToken(context.Background(), TokenSpec{Username: "agent-go-quicbaas"})
+	_, err := backend.MintToken(context.Background(), TokenSpec{Username: "agent-quicbaas"})
 	if err == nil {
 		t.Fatal("an unnamed token cannot be found again to revoke; it must be refused")
 	}
@@ -217,13 +217,13 @@ func TestGitea_VerifyToken_AuthenticatesAsTheTokenUnderTest(t *testing.T) {
 	backend, fixture := newCustodyFixture(t)
 
 	fixture.respondJSON("GET /api/v1/user", http.StatusOK,
-		map[string]any{"login": "agent-go-quicbaas"})
+		map[string]any{"login": "agent-quicbaas"})
 
 	identity, err := backend.VerifyToken(context.Background(), []byte("the-new-secret"))
 	if err != nil {
 		t.Fatalf("VerifyToken: %v", err)
 	}
-	if identity.Username != "agent-go-quicbaas" {
+	if identity.Username != "agent-quicbaas" {
 		t.Errorf("username = %q", identity.Username)
 	}
 
@@ -244,12 +244,12 @@ func TestGitea_VerifyToken_AuthenticatesAsTheTokenUnderTest(t *testing.T) {
 func TestGitea_RevokeToken_ReadsBackAndCatchesASilentFailure(t *testing.T) {
 	backend, fixture := newCustodyFixture(t)
 
-	fixture.respondJSON("DELETE /api/v1/users/agent-go-quicbaas/tokens/stale", http.StatusNoContent, nil)
+	fixture.respondJSON("DELETE /api/v1/users/agent-quicbaas/tokens/stale", http.StatusNoContent, nil)
 	// The server claims success and still lists the token.
-	fixture.respondJSON("GET /api/v1/users/agent-go-quicbaas/tokens", http.StatusOK,
+	fixture.respondJSON("GET /api/v1/users/agent-quicbaas/tokens", http.StatusOK,
 		[]map[string]any{{"id": 3, "name": "stale"}})
 
-	err := backend.RevokeToken(context.Background(), "agent-go-quicbaas", "stale")
+	err := backend.RevokeToken(context.Background(), "agent-quicbaas", "stale")
 	if !errors.Is(err, ErrForgeWriteNotApplied) {
 		t.Fatalf("err = %v, want ErrForgeWriteNotApplied: a token still listed "+
 			"after a successful delete is still live", err)
@@ -261,15 +261,15 @@ func TestGitea_RevokeToken_ReadsBackAndCatchesASilentFailure(t *testing.T) {
 func TestGitea_RevokeToken_SucceedsWhenTheTokenIsGone(t *testing.T) {
 	backend, fixture := newCustodyFixture(t)
 
-	fixture.respondJSON("DELETE /api/v1/users/agent-go-quicbaas/tokens/stale", http.StatusNoContent, nil)
-	fixture.respondJSON("GET /api/v1/users/agent-go-quicbaas/tokens", http.StatusOK,
+	fixture.respondJSON("DELETE /api/v1/users/agent-quicbaas/tokens/stale", http.StatusNoContent, nil)
+	fixture.respondJSON("GET /api/v1/users/agent-quicbaas/tokens", http.StatusOK,
 		[]map[string]any{{"id": 9, "name": "current"}})
 
-	if err := backend.RevokeToken(context.Background(), "agent-go-quicbaas", "stale"); err != nil {
+	if err := backend.RevokeToken(context.Background(), "agent-quicbaas", "stale"); err != nil {
 		t.Fatalf("RevokeToken: %v", err)
 	}
 
-	sent := lastRequestTo(t, fixture, "DELETE", "/api/v1/users/agent-go-quicbaas/tokens/stale")
+	sent := lastRequestTo(t, fixture, "DELETE", "/api/v1/users/agent-quicbaas/tokens/stale")
 	if want := basicAuthHeader(custodyUser, custodyPassword); sent.Auth != want {
 		t.Errorf("revoke authenticated with %q, want the custody credential", firstWord(sent.Auth))
 	}
@@ -374,10 +374,10 @@ func TestGitea_ResponseBodyIsWipedOnEveryExit(t *testing.T) {
 	backend.bodySeam = func(body []byte) { observed = append(observed, body) }
 
 	// Success exit: the mint response held the secret.
-	fixture.respondJSON("POST /api/v1/users/agent-go-quicbaas/tokens", http.StatusCreated,
+	fixture.respondJSON("POST /api/v1/users/agent-quicbaas/tokens", http.StatusCreated,
 		map[string]any{"id": 7, "name": "rotating", "sha1": "the-new-secret"})
 	minted, err := backend.MintToken(context.Background(), TokenSpec{
-		Username: "agent-go-quicbaas", Name: "rotating", Scopes: []string{"read:user"},
+		Username: "agent-quicbaas", Name: "rotating", Scopes: []string{"read:user"},
 	})
 	if err != nil {
 		t.Fatalf("MintToken: %v", err)

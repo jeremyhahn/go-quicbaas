@@ -627,7 +627,7 @@ func TestPolicyNetworkConditions(t *testing.T) {
 	tenantUpdate := map[string]interface{}{
 		"settings": map[string]interface{}{
 			"named_networks": map[string][]string{
-				"office": {"192.168.1.0/24", "10.0.0.0/8"},
+				"office": {"192.0.2.0/24", "10.0.0.0/8"},
 			},
 		},
 	}

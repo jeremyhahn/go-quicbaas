@@ -87,7 +87,7 @@ Examples:
     --subject '{"id":"user1","roles":["developer"]}' \
     --action write \
     --resource "orders://orders/123" \
-    --context '{"ip":"192.168.1.1","time":"2025-01-01T12:00:00Z"}'
+    --context '{"ip":"192.0.2.1","time":"2025-01-01T12:00:00Z"}'
 
   # Check with JSON output
   quicbaas iam pep check --tenant acme-corp \
