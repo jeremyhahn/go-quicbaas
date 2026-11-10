@@ -32,7 +32,6 @@ import (
 	xkmslib "github.com/jeremyhahn/go-xkms/pkg/xkms"
 	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
 
-	"github.com/jeremyhahn/go-quicbaas/pkg/apimodule"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 )
 
@@ -58,6 +57,7 @@ func newIntegrationLikeNode(t *testing.T, configure ...func(*Server)) (*Server, 
 	for _, fn := range configure {
 		fn(srv)
 	}
+	wireCAAdapter(t, srv)
 
 	components, err := srv.initializeIAMComponents()
 	require.NoError(t, err, "first boot")
@@ -76,6 +76,15 @@ func newIntegrationLikeNode(t *testing.T, configure ...func(*Server)) (*Server, 
 // the composer's route exclusions.
 func xkmsPIVLoginRouter(t *testing.T, srv *Server) http.Handler {
 	t.Helper()
+	hosted, err := srv.hostXKMSModule(newXKMSPIVLoginModule(t, srv))
+	require.NoError(t, err)
+	return moduleRouter(hosted)
+}
+
+// newXKMSPIVLoginModule builds the go-xkms service module with the PIV login
+// options srv derives from its configuration, as the qrdb node builds it.
+func newXKMSPIVLoginModule(t *testing.T, srv *Server) qrdbsdk.ServiceModule {
+	t.Helper()
 	module, err := xkmssdk.NewServiceModule(
 		func() *xkmslib.XKMSService {
 			svc, getErr := xkmssdk.Get()
@@ -89,11 +98,14 @@ func xkmsPIVLoginRouter(t *testing.T, srv *Server) http.Handler {
 		xkmssdk.WithServiceModulePIVLogin(srv.pivLoginModuleOptions()),
 	)
 	require.NoError(t, err)
-	hosted, err := apimodule.NewRouteExcludingModule(module, apimodule.XKMSRouteExclusions)
-	require.NoError(t, err)
+	return module
+}
 
+// moduleRouter mounts every HTTP route module registers, guarded and public,
+// on a bare router.
+func moduleRouter(module qrdbsdk.ServiceModule) http.Handler {
 	router := chi.NewRouter()
-	hosted.RegisterHTTP(qrdbsdk.NewModuleHTTPRegistrar(router,
+	module.RegisterHTTP(qrdbsdk.NewModuleHTTPRegistrar(router,
 		func(method, pattern string, _ qrdbsdk.Permission, h http.HandlerFunc) {
 			router.MethodFunc(method, pattern, h)
 		},

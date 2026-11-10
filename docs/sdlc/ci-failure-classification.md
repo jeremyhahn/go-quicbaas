@@ -15,7 +15,7 @@ review gate returned every settled red as decisive, the job went to
 `re-delegating`, and a coding agent was paid to author another attempt at a
 change whose tests had never run. Measured on 2026-09-12: one CI host had been
 provisioned without `CONFIG_FILE=/data/config.yaml`, so `act_runner` ignored
-its entire mounted config — no `GOPRIVATE`, capacity stuck at 1 — and
+its entire mounted config — no module settings, capacity stuck at 1 — and
 separately had no `insecure-registries` entry and no lxcfs installed. Three
 lanes spent roughly 1.5M tokens independently re-deriving the symptom, and the
 issue they filed named three candidate causes, none of them correct.
