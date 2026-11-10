@@ -183,6 +183,12 @@ func (f *enrollmentFixture) adminEdge(t *testing.T) *httptest.Server {
 		return f.admin
 	}
 
+	// The built-in role's grants are read from qrdb's registry below, so the
+	// go-quicbaas permissions must be in it first — the same call
+	// server.NewServer makes. accountEdge registers them too, but only after
+	// this check has run.
+	quicbaaspermission.Register()
+
 	// The tenant admin holds go-qrdb's built-in admin role. The harness role
 	// store carries that role's grants for these routes, and only the grants
 	// the built-in role really holds: a route whose permission it does not
