@@ -61,6 +61,12 @@ func (f *fakeStoreResolver) barrierTenant(tenantID string) interfaces.KVStore {
 	return st
 }
 
+// barrierTenantStore registers st as tenantID's own barrier store.
+func (f *fakeStoreResolver) barrierTenantStore(tenantID string, st interfaces.KVStore) interfaces.KVStore {
+	f.stores[tenantID] = st
+	return st
+}
+
 // sealTenant marks a barrier tenant as sealed so Resolve fails closed.
 func (f *fakeStoreResolver) sealTenant(tenantID string) {
 	f.sealed[tenantID] = true
@@ -163,6 +169,29 @@ func TestTenantRoutingKVStore_PrefixTenantSharedStore(t *testing.T) {
 	// The unrelated barrier tenant's store stays empty.
 	if _, err := resolver.stores["acme"].Get(context.Background(), "__iam:tenant:prefixco:app:c1"); err == nil {
 		t.Fatal("prefix tenant data leaked into a barrier tenant store")
+	}
+}
+
+func TestTenantRoutingKVStore_SharesStore(t *testing.T) {
+	resolver := newFakeStoreResolver(kvstore.NewMemory())
+	resolver.barrierTenant("acme")
+	resolver.sealTenant("sealedco")
+	kv := newTenantRoutingKVStore(resolver)
+	sys := tenantctx.WithSystem(context.Background())
+
+	shares, err := kv.SharesStore(sys, tenantctx.WithTenant(context.Background(), "prefixco"))
+	if err != nil || !shares {
+		t.Fatalf("SharesStore(system, prefix tenant) = %v, %v; want true, nil", shares, err)
+	}
+	shares, err = kv.SharesStore(sys, tenantctx.WithTenant(context.Background(), "acme"))
+	if err != nil || shares {
+		t.Fatalf("SharesStore(system, barrier tenant) = %v, %v; want false, nil", shares, err)
+	}
+	if _, err := kv.SharesStore(tenantctx.WithTenant(context.Background(), "sealedco"), sys); !errors.Is(err, qrdbtenant.ErrTenantSealed) {
+		t.Fatalf("SharesStore(sealed tenant) err = %v, want ErrTenantSealed", err)
+	}
+	if _, err := kv.SharesStore(sys, tenantctx.WithTenant(context.Background(), "sealedco")); !errors.Is(err, qrdbtenant.ErrTenantSealed) {
+		t.Fatalf("SharesStore(system, sealed tenant) err = %v, want ErrTenantSealed", err)
 	}
 }
 

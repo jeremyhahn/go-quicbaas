@@ -23,8 +23,6 @@ import (
 	"strings"
 	"time"
 
-	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
-
 	dberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
@@ -1441,8 +1439,31 @@ func (s *BackendStorage) RevokeUserTokens(ctx context.Context, userID string) er
 // PolicyStorage implementation
 // -----------------------------------------------------------------------------
 
+// guardedPolicyStore is the guarded-write capability a policy create and its
+// revert use; the tenant routing store implements it without the rest of
+// qrdbsdk.AtomicKVStore.
+type guardedPolicyStore interface {
+	PutIfAbsent(ctx context.Context, key string, value []byte) (stored bool, err error)
+	CompareAndDelete(ctx context.Context, key string, expected []byte) (deleted bool, err error)
+}
+
+// storeSharer reports whether two contexts resolve to the one physical store.
+type storeSharer interface {
+	SharesStore(a, b context.Context) (bool, error)
+}
+
+// SharesPolicyRecord reports whether one policy key names the same physical
+// record under contexts a and b. A store that cannot tell routes every
+// context to itself, so the answer is then true.
+func (s *BackendStorage) SharesPolicyRecord(a, b context.Context) (bool, error) {
+	if sharer, ok := s.kv.(storeSharer); ok {
+		return sharer.SharesStore(a, b)
+	}
+	return true, nil
+}
+
 // CreatePolicy creates a new policy only when its name is absent, with
-// PutIfAbsent where the store is atomic; any lookup failure but not-found
+// PutIfAbsent where the store has guarded writes (guardedPolicyStore); any lookup failure but not-found
 // is returned before anything is written.
 func (s *BackendStorage) CreatePolicy(ctx context.Context, tenantID string, policy *Policy) error {
 	key := policyKey(tenantID, policy.Metadata.Name)
@@ -1452,7 +1473,7 @@ func (s *BackendStorage) CreatePolicy(ctx context.Context, tenantID string, poli
 		return &dberrors.QBError{Code: dberrors.ErrInternal, Op: "iam.policy.create", Err: err}
 	}
 
-	if atomic, ok := s.kv.(qrdbsdk.AtomicKVStore); ok {
+	if atomic, ok := s.kv.(guardedPolicyStore); ok {
 		stored, err := atomic.PutIfAbsent(ctx, key, data)
 		if err != nil {
 			return err
@@ -1531,7 +1552,7 @@ func (s *BackendStorage) DeletePolicy(ctx context.Context, tenantID, name string
 }
 
 // RevertCreatedPolicy removes policy's record only while it still holds the
-// bytes a create of policy wrote. Only the atomic (CompareAndDelete) path is
+// bytes a create of policy wrote. Only the guarded (guardedPolicyStore CompareAndDelete) path is
 // race-free; the fallback read-then-delete can still race another writer.
 func (s *BackendStorage) RevertCreatedPolicy(ctx context.Context, tenantID string, policy *Policy) error {
 	key := policyKey(tenantID, policy.Metadata.Name)
@@ -1540,7 +1561,7 @@ func (s *BackendStorage) RevertCreatedPolicy(ctx context.Context, tenantID strin
 		return &dberrors.QBError{Code: dberrors.ErrInternal, Op: "iam.policy.revert", Err: err}
 	}
 
-	if atomic, ok := s.kv.(qrdbsdk.AtomicKVStore); ok {
+	if atomic, ok := s.kv.(guardedPolicyStore); ok {
 		_, err := atomic.CompareAndDelete(ctx, key, data)
 		return err
 	}

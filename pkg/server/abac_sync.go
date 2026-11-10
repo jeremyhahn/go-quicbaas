@@ -344,8 +344,9 @@ func (a *qrdbABACSync) resyncOnUnseal(hooks *service.TenantUnsealHooks, resync f
 // legacyCleanupPolicyStorage deletes a tenant policy together with the legacy
 // copy an earlier release kept in the system namespace, or the next sync
 // would merge that copy back in. The legacy copy goes first, so a failure
-// leaves the tenant copy in place; in the shared-store case, where both names
-// are the one record, that record is deleted once. A tenant's legacy records,
+// leaves the tenant copy in place; where both contexts reach the same store
+// (sharesRecord), both names are the one record, which is written or deleted
+// once and never through a legacy step. A tenant's legacy records,
 // flagged ones included, are also read, listed and replaced through it, so a
 // record the migration left can be repaired or deleted.
 // A tenant copy is always reached in the tenant's own namespace, whatever tenant ctx is bound to.
@@ -360,8 +361,8 @@ func newLegacyCleanupPolicyStorage(inner iam.PolicyStorage) iam.PolicyStorage {
 }
 
 // tenantContexts resolves the contexts of a non-system tenant's own copy and its legacy
-// system-namespace copy. ctx must be allowed to act in tenantID (tenantctx.AdminTarget), and the
-// two never name the same namespace, so legacy cleanup cannot delete the record just written.
+// system-namespace copy. ctx must be allowed to act in tenantID (tenantctx.AdminTarget). Where
+// both contexts reach the same store they name one record, which the callers check with sharesRecord.
 func (s *legacyCleanupPolicyStorage) tenantContexts(ctx context.Context, op, tenantID string) (tenantCtx, legacyCtx context.Context, err error) {
 	tenantCtx, resolved, err := tenantctx.AdminTarget(ctx, op, tenantID)
 	if err != nil {
@@ -375,6 +376,21 @@ func (s *legacyCleanupPolicyStorage) tenantContexts(ctx context.Context, op, ten
 		}
 	}
 	return tenantCtx, tenantctx.WithSystem(ctx), nil
+}
+
+// policyRecordSharer reports whether one policy key names the same physical
+// record under two contexts.
+type policyRecordSharer interface {
+	SharesPolicyRecord(a, b context.Context) (bool, error)
+}
+
+// sharesRecord reports whether the tenant copy and the legacy copy are one
+// physical record; an inner storage that cannot tell keeps them apart.
+func (s *legacyCleanupPolicyStorage) sharesRecord(tenantCtx, legacyCtx context.Context) (bool, error) {
+	if sharer, ok := s.PolicyStorage.(policyRecordSharer); ok {
+		return sharer.SharesPolicyRecord(tenantCtx, legacyCtx)
+	}
+	return false, nil
 }
 
 // CreatePolicy creates a tenant policy in the tenant's namespace, whatever tenant ctx is bound to.
@@ -437,6 +453,13 @@ func (s *legacyCleanupPolicyStorage) DeletePolicy(ctx context.Context, tenantID,
 	tenantCtx, legacyCtx, err := s.tenantContexts(ctx, "iam.policy.delete", tenantID)
 	if err != nil {
 		return err
+	}
+	shared, err := s.sharesRecord(tenantCtx, legacyCtx)
+	if err != nil {
+		return err
+	}
+	if shared {
+		return s.PolicyStorage.DeletePolicy(tenantCtx, tenantID, name)
 	}
 	legacyDeleted := true
 	if err := s.PolicyStorage.DeletePolicy(legacyCtx, tenantID, name); err != nil {
@@ -532,6 +555,13 @@ func (s *legacyCleanupPolicyStorage) UpdatePolicy(ctx context.Context, tenantID 
 	if err != nil {
 		return err
 	}
+	shared, err := s.sharesRecord(tenantCtx, legacyCtx)
+	if err != nil {
+		return err
+	}
+	if shared {
+		return s.PolicyStorage.UpdatePolicy(tenantCtx, tenantID, policy)
+	}
 	restoreTenant, err := s.snapshotRecord(tenantCtx, tenantID, policy.Metadata.Name)
 	if err != nil {
 		return err
@@ -582,9 +612,22 @@ func (s *legacyCleanupPolicyStorage) SnapshotPolicy(ctx context.Context, tenantI
 	if err != nil {
 		return nil, err
 	}
+	shared, err := s.sharesRecord(tenantCtx, legacyCtx)
+	if err != nil {
+		return nil, err
+	}
 	restoreTenant, err := s.snapshotRecord(tenantCtx, tenantID, name)
 	if err != nil {
 		return nil, err
+	}
+	if shared {
+		return func(ctx context.Context) error {
+			tenantCtx, _, err := s.tenantContexts(ctx, op, tenantID)
+			if err != nil {
+				return err
+			}
+			return restoreTenant(tenantCtx)
+		}, nil
 	}
 	restoreLegacy, err := s.snapshotRecord(legacyCtx, tenantID, name)
 	if err != nil {

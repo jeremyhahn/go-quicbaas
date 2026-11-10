@@ -227,6 +227,21 @@ func (s *tenantRoutingKVStore) resolve(ctx context.Context) (interfaces.KVStore,
 	return store, nil
 }
 
+// SharesStore reports whether contexts a and b resolve to the same store. One
+// key names one physical record under both contexts exactly when they do; the
+// resolvers cache one store per tenant namespace, so the comparison is identity.
+func (s *tenantRoutingKVStore) SharesStore(a, b context.Context) (bool, error) {
+	storeA, err := s.resolve(a)
+	if err != nil {
+		return false, err
+	}
+	storeB, err := s.resolve(b)
+	if err != nil {
+		return false, err
+	}
+	return storeA == storeB, nil
+}
+
 // tenantFromAnyContext reads the request tenant from whichever context key the
 // calling subsystem stamped.
 //

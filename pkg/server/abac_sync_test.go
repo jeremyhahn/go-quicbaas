@@ -252,8 +252,8 @@ func TestQRDBABACSync_allPolicies(t *testing.T) {
 // and the system policies in the system namespace, and each tenant's
 // policies in that tenant's own namespace.
 func TestQRDBABACSync_allPolicies_TenantRoutedStorage(t *testing.T) {
-	r := newFakeStoreResolver(kvstore.NewMemory())
-	r.barrierTenant("acme")
+	r := newFakeStoreResolver(qrdbsdk.NewMemoryKVStore())
+	r.barrierTenantStore("acme", qrdbsdk.NewMemoryKVStore())
 	bs := iam.NewBackendStorage(newTenantRoutingKVStore(r))
 	tm := iam.NewDefaultTenantManager(bs)
 
@@ -319,10 +319,24 @@ func abacPolicyNames(policies []*iam.Policy) []string {
 
 // newABACTenantRoutedStorage builds tenant-routed IAM storage with a barrier
 // tenant acme, sys-deny in the system tenant and acme-allow in acme.
+// notFoundAtomicStore is qrdb's atomic in-memory store with the KVStore
+// contract's not-found error for an absent key (qrdb returns nil, nil).
+type notFoundAtomicStore struct {
+	qrdbsdk.AtomicKVStore
+}
+
+func (s *notFoundAtomicStore) Get(ctx context.Context, key string) ([]byte, error) {
+	value, err := s.AtomicKVStore.Get(ctx, key)
+	if err == nil && value == nil {
+		return nil, &dberrors.QBError{Code: dberrors.ErrNotFound, Op: "test.get"}
+	}
+	return value, err
+}
+
 func newABACTenantRoutedStorage(t *testing.T) (*fakeStoreResolver, iam.TenantManager, *iam.BackendStorage) {
 	t.Helper()
-	r := newFakeStoreResolver(kvstore.NewMemory())
-	r.barrierTenant("acme")
+	r := newFakeStoreResolver(&notFoundAtomicStore{AtomicKVStore: qrdbsdk.NewMemoryKVStore()})
+	r.barrierTenantStore("acme", qrdbsdk.NewMemoryKVStore())
 	bs := iam.NewBackendStorage(newTenantRoutingKVStore(r))
 	tm := iam.NewDefaultTenantManager(bs)
 
@@ -671,8 +685,8 @@ func (r admittedFakeResolver) Resolve(ctx context.Context, tenantID string) (int
 
 func TestQRDBABACSync_resyncOnUnseal_GateReadsThroughAdmittedStore(t *testing.T) {
 	s, _ := newABACTestServer(t, true)
-	r := newFakeStoreResolver(kvstore.NewMemory())
-	r.barrierTenant("acme")
+	r := newFakeStoreResolver(qrdbsdk.NewMemoryKVStore())
+	r.barrierTenantStore("acme", qrdbsdk.NewMemoryKVStore())
 	resolver := admittedFakeResolver{admit: s.admittedStoreResolver(fakeQRDBResolver{store: fakeQRDBStore{}}), stores: r}
 	bs := iam.NewBackendStorage(newTenantRoutingKVStore(resolver))
 	tm := iam.NewDefaultTenantManager(bs)
@@ -739,8 +753,8 @@ func TestQRDBABACSync_resyncOnUnseal_GateReadsThroughAdmittedStore(t *testing.T)
 
 func TestQRDBABACSync_allPolicies_KeepsAHeldTenantsPolicies(t *testing.T) {
 	s, _ := newABACTestServer(t, true)
-	r := newFakeStoreResolver(kvstore.NewMemory())
-	r.barrierTenant("acme")
+	r := newFakeStoreResolver(qrdbsdk.NewMemoryKVStore())
+	r.barrierTenantStore("acme", qrdbsdk.NewMemoryKVStore())
 	resolver := admittedFakeResolver{admit: s.admittedStoreResolver(fakeQRDBResolver{store: fakeQRDBStore{}}), stores: r}
 	bs := iam.NewBackendStorage(newTenantRoutingKVStore(resolver))
 	tm := iam.NewDefaultTenantManager(bs)
@@ -1118,6 +1132,113 @@ func TestLegacyCleanupPolicyStorage_SharedStoreDeletesOnce(t *testing.T) {
 
 	_, err = bs.GetPolicy(betaCtx, "beta", "beta-allow")
 	assert.True(t, dberrors.Is(err, dberrors.ErrNotFound), "err = %v", err)
+}
+
+func TestLegacyCleanupPolicyStorage_PrefixTenantCreateUpdateGet(t *testing.T) {
+	shared := qrdbsdk.NewMemoryKVStore()
+	ps := newLegacyCleanupPolicyStorage(iam.NewBackendStorage(newTenantRoutingKVStore(newFakeStoreResolver(shared))))
+	betaCtx := tenantctx.WithTenant(context.Background(), "beta")
+	key := iam.KeyPrefixTenant + "beta" + iam.KeyPrefixPolicy + "beta-p"
+
+	require.NoError(t, ps.CreatePolicy(betaCtx, "beta", abacTestPolicy("beta-p", "beta", "alice", "kv/**", iam.EffectAllow)))
+	require.NoError(t, ps.UpdatePolicy(betaCtx, "beta", abacTestPolicy("beta-p", "beta", "alice", "kv/**", iam.EffectDeny)))
+	got, err := ps.GetPolicy(betaCtx, "beta", "beta-p")
+	require.NoError(t, err)
+	require.Len(t, got.Spec.Rules, 1)
+	assert.Equal(t, iam.EffectDeny, got.Spec.Rules[0].Effect)
+	present, err := shared.Exists(context.Background(), key)
+	require.NoError(t, err)
+	assert.True(t, present, "an update must not delete the prefix tenant's one record")
+
+	pe := iam.NewPolicyEngine(iam.PolicyEngineOptions{Storage: ps, ABACSync: &recordingABACSync{}})
+	require.NoError(t, pe.UpdatePolicy(betaCtx, "beta", abacTestPolicy("beta-p", "beta", "bob", "kv/**", iam.EffectDeny)))
+	got, err = pe.GetPolicy(betaCtx, "beta", "beta-p")
+	require.NoError(t, err)
+	require.Len(t, got.Spec.Rules, 1)
+	assert.Equal(t, iam.EffectDeny, got.Spec.Rules[0].Effect)
+	assert.Equal(t, []string{"bob"}, got.Spec.Subjects.Users)
+	present, err = shared.Exists(context.Background(), key)
+	require.NoError(t, err)
+	assert.True(t, present, "an engine update must not delete the prefix tenant's one record")
+
+	require.NoError(t, ps.DeletePolicy(betaCtx, "beta", "beta-p"))
+	_, err = ps.GetPolicy(betaCtx, "beta", "beta-p")
+	assert.True(t, dberrors.Is(err, dberrors.ErrNotFound), "err = %v", err)
+}
+
+func TestLegacyCleanupPolicyStorage_BarrierTenantUpdateDeletesLegacy(t *testing.T) {
+	_, _, bs := newABACTenantRoutedStorage(t)
+	ps := newLegacyCleanupPolicyStorage(bs)
+	acmeCtx := tenantctx.WithTenant(context.Background(), "acme")
+	sys := tenantctx.WithSystem(context.Background())
+	seedLegacyABACPolicy(t, bs, "acme", abacTestPolicy("acme-p", "acme", "alice", "kv/**", iam.EffectAllow))
+
+	require.NoError(t, ps.UpdatePolicy(acmeCtx, "acme", abacTestPolicy("acme-p", "acme", "alice", "kv/**", iam.EffectDeny)))
+	got, err := bs.GetPolicy(acmeCtx, "acme", "acme-p")
+	require.NoError(t, err)
+	require.Len(t, got.Spec.Rules, 1)
+	assert.Equal(t, iam.EffectDeny, got.Spec.Rules[0].Effect)
+	_, err = bs.GetPolicy(sys, "acme", "acme-p")
+	assert.True(t, dberrors.Is(err, dberrors.ErrNotFound), "legacy copy: err = %v", err)
+
+	require.NoError(t, ps.CreatePolicy(acmeCtx, "acme", abacTestPolicy("acme-new", "acme", "alice", "kv/**", iam.EffectDeny)))
+	got, err = ps.GetPolicy(acmeCtx, "acme", "acme-new")
+	require.NoError(t, err)
+	assert.Equal(t, "acme-new", got.Metadata.Name)
+	_, err = bs.GetPolicy(sys, "acme", "acme-new")
+	assert.True(t, dberrors.Is(err, dberrors.ErrNotFound), "a create writes no legacy copy: err = %v", err)
+}
+
+// putRefusingAtomicStore is an atomic store whose plain Put and Delete fail
+// the test, so only the guarded writes may change it.
+type putRefusingAtomicStore struct {
+	interfaces.KVStore
+	atomicStore
+	t *testing.T
+}
+
+func newPutRefusingAtomicStore(t *testing.T) *putRefusingAtomicStore {
+	st := qrdbsdk.NewMemoryKVStore()
+	return &putRefusingAtomicStore{KVStore: st, atomicStore: st, t: t}
+}
+
+func (s *putRefusingAtomicStore) Put(_ context.Context, key string, _ []byte) error {
+	s.t.Errorf("Put(%q) called; the guarded PutIfAbsent must be used", key)
+	return errors.New("put not allowed")
+}
+
+func (s *putRefusingAtomicStore) Delete(_ context.Context, key string) error {
+	s.t.Errorf("Delete(%q) called; the guarded CompareAndDelete must be used", key)
+	return errors.New("delete not allowed")
+}
+
+func TestLegacyCleanupPolicyStorage_CreateThroughRouterIsGuarded(t *testing.T) {
+	ctx := context.Background()
+	acmeCtx := tenantctx.WithTenant(ctx, "acme")
+	key := iam.KeyPrefixTenant + "acme" + iam.KeyPrefixPolicy + "acme-p"
+	p := abacTestPolicy("acme-p", "acme", "alice", "kv/**", iam.EffectDeny)
+
+	r := newFakeStoreResolver(qrdbsdk.NewMemoryKVStore())
+	guarded := r.barrierTenantStore("acme", newPutRefusingAtomicStore(t))
+	ps := newLegacyCleanupPolicyStorage(iam.NewBackendStorage(newTenantRoutingKVStore(r)))
+	require.NoError(t, ps.CreatePolicy(acmeCtx, "acme", p))
+	present, err := guarded.Exists(ctx, key)
+	require.NoError(t, err)
+	assert.True(t, present, "the create must store through PutIfAbsent")
+	reverter, ok := ps.(iam.PolicyCreateReverter)
+	require.True(t, ok, "the wrapper must revert a create")
+	require.NoError(t, reverter.RevertCreatedPolicy(acmeCtx, "acme", p))
+	present, err = guarded.Exists(ctx, key)
+	require.NoError(t, err)
+	assert.False(t, present, "the revert must remove through CompareAndDelete")
+
+	r = newFakeStoreResolver(qrdbsdk.NewMemoryKVStore())
+	plain := r.barrierTenantStore("acme", kvstore.NewMemory())
+	ps = newLegacyCleanupPolicyStorage(iam.NewBackendStorage(newTenantRoutingKVStore(r)))
+	assert.ErrorIs(t, ps.CreatePolicy(acmeCtx, "acme", p), ErrTenantStoreNotAtomic)
+	present, err = plain.Exists(ctx, key)
+	require.NoError(t, err)
+	assert.False(t, present, "a store without guarded writes must not be written")
 }
 
 // legacyDeleteFailingStorage fails every DeletePolicy made with the system
