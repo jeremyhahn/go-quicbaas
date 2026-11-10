@@ -94,7 +94,7 @@ var credentialSource = regexp.MustCompile(`(?:^|[\s;])(?:\.|source)\s+/run/secre
 // unexportedCredentialSources returns the 1-based lines of a Dockerfile that
 // source the module credential file without `set -a` earlier on that line.
 // ci.yml writes the file as plain assignments (the ci-template's form), so a
-// source without `set -a` never hands GOPRIVATE or the git credential rewrite
+// source without `set -a` never hands the git credential rewrite
 // to the go subprocess.
 func unexportedCredentialSources(dockerfile string) []int {
 	var lines []int

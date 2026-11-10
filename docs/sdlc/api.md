@@ -367,7 +367,7 @@ the request rather than being reported in an unknown state. An unbound
 project is a `404`: it has no forge to read.
 
 ```json
-{"project_id": "go-luks2", "repo": "example/go-luks2", "agent": "agent-go-luks2",
+{"project_id": "go-luks2", "repo": "example/go-luks2", "agent": "agent-luks2",
  "pull_requests": [{"number": 210, "title": "…", "head_ref": "issue/209-…", "head_sha": "6a0be839…",
                     "ci_state": "success", "review_state": "approved",
                     "created": "2026-09-22T22:10:00Z", "age_seconds": 259200}],

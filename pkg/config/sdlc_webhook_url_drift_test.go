@@ -54,7 +54,7 @@ func TestSDLCWebhookPublicURL_TheLoaderAndTheModuleAgree(t *testing.T) {
 		"fragment":        {"https://factory.example.com#frag", true},
 		"userinfo":        {"https://user:pass@factory.example.com", true},
 		"https":           {"https://factory.example.com", false},
-		"http with port":  {"http://192.168.1.10:8443", false},
+		"http with port":  {"http://192.0.2.10:8443", false},
 		"path is allowed": {"https://factory.example.com/quicbaas", false},
 		"trailing slash":  {"https://factory.example.com/", false},
 	} {

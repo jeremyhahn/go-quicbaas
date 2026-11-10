@@ -31,7 +31,7 @@ func TestCheckoutCredentialFor_ReadsTheCredentialOffTheTransport(t *testing.T) {
 		url  string
 		want CheckoutCredential
 	}{
-		"ssh url":                {url: "ssh://git@forge.test:2222/acme/api.git", want: CheckoutCredentialSSHAgent},
+		"ssh url":                {url: "ssh://git@forge.test:2022/acme/api.git", want: CheckoutCredentialSSHAgent},
 		"ssh url, default port":  {url: "ssh://git@forge.test/acme/api.git", want: CheckoutCredentialSSHAgent},
 		"scp form":               {url: "git@forge.test:acme/api.git", want: CheckoutCredentialSSHAgent},
 		"https":                  {url: "https://forge.test/acme/api.git", want: CheckoutCredentialForgeToken},
@@ -124,7 +124,7 @@ func TestWorkspaceSpec_NeedsSSHAgent_CountsEveryRepositoryTheContainerClones(t *
 // remote with a token, and a public http remote with neither.
 func TestRequireCheckoutCredentials_AcceptsASpawnThatHoldsWhatEveryRemoteNeeds(t *testing.T) {
 	spec := WorkspaceSpec{
-		Project: WorkspaceRepoSpec{Name: "api", RepoURL: "ssh://git@forge.test:2222/acme/api.git"},
+		Project: WorkspaceRepoSpec{Name: "api", RepoURL: "ssh://git@forge.test:2022/acme/api.git"},
 		ContextRepos: []WorkspaceRepoSpec{
 			{Name: "handbook", RepoURL: "https://forge.test/acme/handbook.git"},
 			{Name: "public", RepoURL: "http://forge.test/acme/public.git"},
@@ -142,7 +142,7 @@ func TestRequireCheckoutCredentials_AcceptsASpawnThatHoldsWhatEveryRemoteNeeds(t
 // carried a forge token and no agent socket while the project's remote was
 // ssh, and it spent one container per sweep finding that out.
 func TestRequireCheckoutCredentials_RefusesAnSSHRemoteWithNoAgent(t *testing.T) {
-	spec := WorkspaceSpec{Project: WorkspaceRepoSpec{Name: "api", RepoURL: "ssh://git@forge.test:2222/acme/api.git"}}
+	spec := WorkspaceSpec{Project: WorkspaceRepoSpec{Name: "api", RepoURL: "ssh://git@forge.test:2022/acme/api.git"}}
 	err := RequireCheckoutCredentials(spec, WorkspaceCredentials{ForgeToken: true})
 	if !errors.Is(err, ErrCheckoutCredentialMissing) {
 		t.Fatalf("err = %v, want ErrCheckoutCredentialMissing", err)
@@ -156,7 +156,7 @@ func TestRequireCheckoutCredentials_RefusesAnSSHRemoteWithNoAgent(t *testing.T) 
 	}
 	// The message has to name the repository and the remote: an operator
 	// reading the job is fixing a configuration, not a stack trace.
-	for _, want := range []string{"api", "ssh://git@forge.test:2222/acme/api.git", "ssh agent"} {
+	for _, want := range []string{"api", "ssh://git@forge.test:2022/acme/api.git", "ssh agent"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("message %q does not name %q", err.Error(), want)
 		}

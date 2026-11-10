@@ -27,16 +27,16 @@ require (
 	github.com/hashicorp/go-msgpack/v2 v2.1.5
 	github.com/hashicorp/vault/api v1.23.0
 	github.com/jeremyhahn/go-auth v0.4.0-alpha // held: #1389, the go-qrdb/go-xkms stack pin bump
-	github.com/jeremyhahn/go-codec v1.4.0
+	github.com/jeremyhahn/go-codec v1.5.1-alpha
 	github.com/jeremyhahn/go-enclave v0.6.1-alpha // held: #1389, the go-qrdb/go-xkms stack pin bump
-	github.com/jeremyhahn/go-libsignal v0.2.0-alpha // held: #1389, the go-qrdb/go-xkms stack pin bump
+	github.com/jeremyhahn/go-libsignal v0.3.1-alpha // held: #1389, the go-qrdb/go-xkms stack pin bump
 	github.com/jeremyhahn/go-objstore v0.3.0-alpha // held: #1389, the go-qrdb/go-xkms stack pin bump
 	github.com/jeremyhahn/go-qrdb v0.30.1-alpha // held: #1389, the go-qrdb/go-xkms stack pin bump
 	github.com/jeremyhahn/go-qrdb/sdk/go v0.30.1-alpha // held: #1389, the go-qrdb/go-xkms stack pin bump
 	github.com/jeremyhahn/go-quicbaas/sdk/go v0.16.0-alpha
 	github.com/jeremyhahn/go-signal v0.2.0-alpha // held: #1389, the go-qrdb/go-xkms stack pin bump
-	github.com/jeremyhahn/go-xkms v0.49.0-alpha // held: #1389, the go-qrdb/go-xkms stack pin bump
-	github.com/jeremyhahn/go-xkms/sdk/go v0.49.0-alpha // held: #1389, the go-qrdb/go-xkms stack pin bump
+	github.com/jeremyhahn/go-xkms v0.49.1-alpha // held: #1389, the go-qrdb/go-xkms stack pin bump
+	github.com/jeremyhahn/go-xkms/sdk/go v0.49.1-alpha // held: #1389, the go-qrdb/go-xkms stack pin bump
 	github.com/klauspost/compress v1.20.3
 	github.com/lestrrat-go/jwx/v2 v2.1.7
 	github.com/mark3labs/mcp-go v0.45.0 // held: v1.3.0 released 2026-10-14, under 7 days old (#1704)
@@ -56,7 +56,7 @@ require (
 	github.com/redis/go-redis/v9 v9.23.0
 	github.com/robfig/cron/v3 v3.0.1
 	github.com/spf13/cobra v1.10.2
-	github.com/spf13/pflag v1.0.10
+	github.com/spf13/pflag v1.1.0
 	github.com/spf13/viper v1.21.0
 	github.com/stretchr/testify v1.12.1
 	github.com/veraison/corim v1.1.2
@@ -221,11 +221,11 @@ require (
 	github.com/invopop/jsonschema v0.13.0 // indirect
 	github.com/jackc/pgx/v5 v5.11.0 // indirect
 	github.com/jchv/go-winloader v0.0.0-20250406163304-c1995be93bd1 // indirect
-	github.com/jeremyhahn/arduino-generic/sdk/go v0.3.0-alpha // indirect
-	github.com/jeremyhahn/go-frost v0.3.0-alpha // indirect
+	github.com/jeremyhahn/go-frost v0.3.1-alpha // indirect
 	github.com/jeremyhahn/go-quicraft v0.15.0-alpha // indirect; hold lifted: go-qrdb v0.25.1-alpha declares the at-rest choice for in-process nodes (database.NewRaftWAL: barrier, or WithoutEncryption when seal is off), go-qrdb#566 — the real-node tests in pkg/scheduler/placement start a clustered in-process node on quicraft v0.15.0-alpha.
 	github.com/jeremyhahn/go-truststrap v0.4.0-alpha // indirect
-	github.com/jeremyhahn/go-xkms/xkey v0.49.0-alpha // indirect
+	github.com/jeremyhahn/go-xkms/xkey v0.49.1-alpha // indirect
+	github.com/jeremyhahn/trusted-firmware/sdk/go v0.3.0-alpha // indirect
 	github.com/jeroenrinzema/psql-wire v0.18.0 // indirect
 	github.com/jmespath/go-jmespath v0.4.0 // indirect
 	github.com/json-iterator/go v1.1.12 // indirect
