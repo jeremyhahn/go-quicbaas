@@ -67,3 +67,7 @@ gomodauth*
 **/AGENTS.md
 **/.claude
 **/.serena
+
+# The release gate's private patterns (pkg/labstrings) name private values,
+# so they never enter an image build context.
+.labstrings-patterns.json
