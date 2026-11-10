@@ -81,7 +81,7 @@ jobs:
           semver "Codex (codex_version)" "$cx"
           gm="$(sed -n 's/^GEMINI_CLI_VERSION ?= //p' Makefile)"
           semver "Gemini CLI (Makefile GEMINI_CLI_VERSION)" "$gm"
-          integrity() { local v; v="$(npm view "$1" dist.integrity)"; [[ "$v" =~ ^sha512-[A-Za-z0-9+/]+={0,2}$ ]] || { echo "::error::$1 has no sha512 integrity on npm"; return 1; }; printf '%s' "$v"; }
+          integrity() { local v; v="$(npm view "$1" dist.integrity)"; [[ "$v" =~ ^sha512-[A-Za-z0-9+/]+={0,2}$ ]] || { echo "::error::$1 has no sha512 integrity on npm" >&2; return 1; }; printf '%s' "$v"; }
           cc_int="$(integrity "@anthropic-ai/claude-code@${cc}")"
           cc_x64_int="$(integrity "@anthropic-ai/claude-code-linux-x64@${cc}")"
           cx_int="$(integrity "@openai/codex@${cx}")"
@@ -267,7 +267,7 @@ jobs:
           if DOCKER_CONFIG="$anon" docker buildx imagetools inspect "${REPO}@${DIGEST}" >/dev/null 2>"$err"; then
             echo "::error::${REPO}@${DIGEST} can be pulled without credentials; the package must be private"
             exit 1
-          elif grep -qiE 'denied|unauthorized|forbidden|401|403|not found|name unknown|manifest unknown' "$err"; then
+          elif grep -qiE '\b(denied|unauthorized|forbidden|401|403)\b|not found|name unknown|manifest unknown' "$err"; then
             cat "$err" >&2
             echo "${REPO} is private: an anonymous lookup of ${DIGEST} was refused"
           else

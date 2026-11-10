@@ -439,6 +439,9 @@ func TestWorkflowBuildPublish_ResolveRecordsIntegrity(t *testing.T) {
 				if runErr == nil {
 					t.Fatalf("step exited 0 with integrity %q:\n%s", tc.integrity, combined)
 				}
+				if !strings.Contains(string(combined), "has no sha512 integrity on npm") {
+					t.Errorf("output does not show the integrity error:\n%s", combined)
+				}
 				for _, line := range lines {
 					if strings.HasPrefix(line, "cc_int=") {
 						t.Errorf("GITHUB_OUTPUT has %q after a bad integrity:\n%s", line, got)
@@ -640,6 +643,9 @@ func TestWorkflowBuildPublish_PackageMustBePrivate(t *testing.T) {
 		{name: "denied", stderr: "denied: denied\n", exit: "1", wantOK: true},
 		{name: "unauthorized", stderr: "unauthorized: authentication required\n", exit: "1", wantOK: true},
 		{name: "server error", stderr: "503 Service Unavailable\n", exit: "1"},
+		{name: "server error naming a digest", stderr: "failed to fetch ghcr.io/example/img@sha256:ab401cd403ef0123456789abcdef0123456789abcdef0123456789abcdef0123: 503 Service Unavailable\n", exit: "1"},
+		{name: "403", stderr: "unexpected status: 403 Forbidden\n", exit: "1", wantOK: true},
+		{name: "401", stderr: "unexpected status: 401 Unauthorized\n", exit: "1", wantOK: true},
 		{name: "empty stderr", exit: "1"},
 	}
 	for _, tc := range cases {
