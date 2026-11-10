@@ -139,6 +139,14 @@ func TestPIVLogin_CertProvisionedTenantAdminCreatesRoleOverUnifiedREST(t *testin
 	require.NoError(t, err)
 	url := base + "/api/v1/tenants/" + roleTestTenant + "/roles"
 
+	// No credentials at all must be refused by authentication (401) and never
+	// reach the tenant handler, whose refusal is 403 "no tenant is bound".
+	t.Run("no-credentials", func(t *testing.T) {
+		status, body := doUnified(t, unifiedTLSClient(t, root, nil), http.MethodPost, url, "", role)
+		require.Equalf(t, http.StatusUnauthorized, status,
+			"POST %s with no credentials: body %s", url, body)
+	})
+
 	// Two client shapes: bearer over a connection that also presents the admin
 	// certificate (qrdb mTLS decides first; platform_validator.go:121 declines
 	// the bearer when a peer cert is present), and bearer alone (module
