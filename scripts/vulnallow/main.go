@@ -22,7 +22,8 @@ func main() {
 
 // run is main with its inputs and outputs injected; it returns the exit code:
 // 0 when no reachable advisory is unlisted and no entry is stale, 1 when one
-// is, or on a read or parse error, 2 on bad usage.
+// is, when a listed advisory has a fixed release, or on a read or parse error,
+// 2 on bad usage.
 func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	if len(args) != 2 {
 		fmt.Fprintln(stderr, "usage: govulncheck -format json ./... | vulnallow <allowlist>")
@@ -52,6 +53,11 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stdout, "  summary:  %s\n", f.Summary)
 		fmt.Fprintf(stdout, "  found in: %s@%s\n", f.Module, f.Version)
 		fmt.Fprintf(stdout, "  fixed in: %s\n", f.FixedVersion)
+		fmt.Fprintf(stdout, "  trace:    %s\n", f.Position)
+	}
+	for _, f := range result.Fixable {
+		fmt.Fprintf(stdout, "vulnallow: %s on %s has a fixed release (%s); bump %s and remove the entry\n", f.ID, listPath, f.FixedVersion, f.Module)
+		fmt.Fprintf(stdout, "  found in: %s@%s\n", f.Module, f.Version)
 		fmt.Fprintf(stdout, "  trace:    %s\n", f.Position)
 	}
 	for _, e := range result.Stale {

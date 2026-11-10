@@ -516,62 +516,6 @@ func TestPutObject_Success(t *testing.T) {
 	assert.NotEmpty(t, resp.Checksum)
 }
 
-func TestPutObject_NilRequest(t *testing.T) {
-	mockSvc := &mockObjectStorageService{}
-	server := NewObjectStorageServer(mockSvc).(*objectStorageServer)
-
-	resp, err := server.PutObject(tenantctx.WithSystem(context.Background()), nil)
-	assert.Nil(t, resp)
-	assert.Error(t, err)
-	assert.Equal(t, codes.InvalidArgument, status.Code(err))
-}
-
-func TestPutObject_EmptyKey(t *testing.T) {
-	mockSvc := &mockObjectStorageService{}
-	server := NewObjectStorageServer(mockSvc).(*objectStorageServer)
-
-	req := &pb.PutObjectRequest{
-		Value: []byte("test data"),
-	}
-
-	resp, err := server.PutObject(tenantctx.WithSystem(context.Background()), req)
-	assert.Nil(t, resp)
-	assert.Error(t, err)
-	assert.Equal(t, codes.InvalidArgument, status.Code(err))
-}
-
-func TestPutObject_NilService(t *testing.T) {
-	server := &objectStorageServer{service: nil}
-
-	req := &pb.PutObjectRequest{
-		Key:   "test/object1",
-		Value: []byte("test data"),
-	}
-
-	resp, err := server.PutObject(tenantctx.WithSystem(context.Background()), req)
-	assert.Nil(t, resp)
-	assert.Error(t, err)
-	assert.Equal(t, codes.Unavailable, status.Code(err))
-}
-
-func TestPutObject_ServiceError(t *testing.T) {
-	mockSvc := &mockObjectStorageService{
-		putObjectFunc: func(ctx context.Context, req *service.PutObjectRequest) (*service.PutObjectResponse, error) {
-			return nil, dberrors.New(dberrors.ErrStorage, "test", "storage error")
-		},
-	}
-	server := NewObjectStorageServer(mockSvc).(*objectStorageServer)
-
-	req := &pb.PutObjectRequest{
-		Key:   "test/object1",
-		Value: []byte("test data"),
-	}
-
-	resp, err := server.PutObject(tenantctx.WithSystem(context.Background()), req)
-	assert.Nil(t, resp)
-	assert.Error(t, err)
-}
-
 // =============================================================================
 // Test Cases - GetObject
 // =============================================================================
@@ -589,41 +533,6 @@ func TestGetObject_Success(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, req.Key, resp.Key)
 	assert.NotEmpty(t, resp.Value)
-}
-
-func TestGetObject_NilRequest(t *testing.T) {
-	mockSvc := &mockObjectStorageService{}
-	server := NewObjectStorageServer(mockSvc).(*objectStorageServer)
-
-	resp, err := server.GetObject(tenantctx.WithSystem(context.Background()), nil)
-	assert.Nil(t, resp)
-	assert.Error(t, err)
-	assert.Equal(t, codes.InvalidArgument, status.Code(err))
-}
-
-func TestGetObject_EmptyKey(t *testing.T) {
-	mockSvc := &mockObjectStorageService{}
-	server := NewObjectStorageServer(mockSvc).(*objectStorageServer)
-
-	req := &pb.GetObjectRequest{}
-
-	resp, err := server.GetObject(tenantctx.WithSystem(context.Background()), req)
-	assert.Nil(t, resp)
-	assert.Error(t, err)
-	assert.Equal(t, codes.InvalidArgument, status.Code(err))
-}
-
-func TestGetObject_NilService(t *testing.T) {
-	server := &objectStorageServer{service: nil}
-
-	req := &pb.GetObjectRequest{
-		Key: "test/object1",
-	}
-
-	resp, err := server.GetObject(tenantctx.WithSystem(context.Background()), req)
-	assert.Nil(t, resp)
-	assert.Error(t, err)
-	assert.Equal(t, codes.Unavailable, status.Code(err))
 }
 
 // =============================================================================
@@ -645,41 +554,6 @@ func TestDeleteObject_Success(t *testing.T) {
 	assert.True(t, resp.Deleted)
 }
 
-func TestDeleteObject_NilRequest(t *testing.T) {
-	mockSvc := &mockObjectStorageService{}
-	server := NewObjectStorageServer(mockSvc).(*objectStorageServer)
-
-	resp, err := server.DeleteObject(tenantctx.WithSystem(context.Background()), nil)
-	assert.Nil(t, resp)
-	assert.Error(t, err)
-	assert.Equal(t, codes.InvalidArgument, status.Code(err))
-}
-
-func TestDeleteObject_EmptyKey(t *testing.T) {
-	mockSvc := &mockObjectStorageService{}
-	server := NewObjectStorageServer(mockSvc).(*objectStorageServer)
-
-	req := &pb.DeleteObjectRequest{}
-
-	resp, err := server.DeleteObject(tenantctx.WithSystem(context.Background()), req)
-	assert.Nil(t, resp)
-	assert.Error(t, err)
-	assert.Equal(t, codes.InvalidArgument, status.Code(err))
-}
-
-func TestDeleteObject_NilService(t *testing.T) {
-	server := &objectStorageServer{service: nil}
-
-	req := &pb.DeleteObjectRequest{
-		Key: "test/object1",
-	}
-
-	resp, err := server.DeleteObject(tenantctx.WithSystem(context.Background()), req)
-	assert.Nil(t, resp)
-	assert.Error(t, err)
-	assert.Equal(t, codes.Unavailable, status.Code(err))
-}
-
 // =============================================================================
 // Test Cases - HeadObject
 // =============================================================================
@@ -697,41 +571,6 @@ func TestHeadObject_Success(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, req.Key, resp.Key)
 	assert.True(t, resp.Exists)
-}
-
-func TestHeadObject_NilRequest(t *testing.T) {
-	mockSvc := &mockObjectStorageService{}
-	server := NewObjectStorageServer(mockSvc).(*objectStorageServer)
-
-	resp, err := server.HeadObject(tenantctx.WithSystem(context.Background()), nil)
-	assert.Nil(t, resp)
-	assert.Error(t, err)
-	assert.Equal(t, codes.InvalidArgument, status.Code(err))
-}
-
-func TestHeadObject_EmptyKey(t *testing.T) {
-	mockSvc := &mockObjectStorageService{}
-	server := NewObjectStorageServer(mockSvc).(*objectStorageServer)
-
-	req := &pb.HeadObjectRequest{}
-
-	resp, err := server.HeadObject(tenantctx.WithSystem(context.Background()), req)
-	assert.Nil(t, resp)
-	assert.Error(t, err)
-	assert.Equal(t, codes.InvalidArgument, status.Code(err))
-}
-
-func TestHeadObject_NilService(t *testing.T) {
-	server := &objectStorageServer{service: nil}
-
-	req := &pb.HeadObjectRequest{
-		Key: "test/object1",
-	}
-
-	resp, err := server.HeadObject(tenantctx.WithSystem(context.Background()), req)
-	assert.Nil(t, resp)
-	assert.Error(t, err)
-	assert.Equal(t, codes.Unavailable, status.Code(err))
 }
 
 // =============================================================================
@@ -752,183 +591,17 @@ func TestListObjects_Success(t *testing.T) {
 	assert.NotNil(t, resp.Objects)
 }
 
-func TestListObjects_NilRequest(t *testing.T) {
-	mockSvc := &mockObjectStorageService{}
-	server := NewObjectStorageServer(mockSvc).(*objectStorageServer)
-
-	resp, err := server.ListObjects(tenantctx.WithSystem(context.Background()), nil)
-	assert.Nil(t, resp)
-	assert.Error(t, err)
-	assert.Equal(t, codes.InvalidArgument, status.Code(err))
-}
-
-func TestListObjects_NilService(t *testing.T) {
-	server := &objectStorageServer{service: nil}
-
-	req := &pb.ListObjectsRequest{
-		Prefix: "test/",
-	}
-
-	resp, err := server.ListObjects(tenantctx.WithSystem(context.Background()), req)
-	assert.Nil(t, resp)
-	assert.Error(t, err)
-	assert.Equal(t, codes.Unavailable, status.Code(err))
-}
-
 // =============================================================================
 // Test Cases - BatchPutObjects
 // =============================================================================
-
-func TestBatchPutObjects_Success(t *testing.T) {
-	mockSvc := &mockObjectStorageService{}
-	server := NewObjectStorageServer(mockSvc).(*objectStorageServer)
-
-	req := &pb.BatchPutObjectsRequest{
-		Objects: []*pb.PutObjectRequest{
-			{Key: "test/obj1", Value: []byte("data1")},
-			{Key: "test/obj2", Value: []byte("data2")},
-		},
-	}
-
-	resp, err := server.BatchPutObjects(tenantctx.WithSystem(context.Background()), req)
-	require.NoError(t, err)
-	assert.NotNil(t, resp)
-}
-
-func TestBatchPutObjects_NilRequest(t *testing.T) {
-	mockSvc := &mockObjectStorageService{}
-	server := NewObjectStorageServer(mockSvc).(*objectStorageServer)
-
-	resp, err := server.BatchPutObjects(tenantctx.WithSystem(context.Background()), nil)
-	assert.Nil(t, resp)
-	assert.Error(t, err)
-	assert.Equal(t, codes.InvalidArgument, status.Code(err))
-}
-
-func TestBatchPutObjects_Empty(t *testing.T) {
-	mockSvc := &mockObjectStorageService{}
-	server := NewObjectStorageServer(mockSvc).(*objectStorageServer)
-
-	req := &pb.BatchPutObjectsRequest{Objects: []*pb.PutObjectRequest{}}
-
-	resp, err := server.BatchPutObjects(tenantctx.WithSystem(context.Background()), req)
-	assert.Nil(t, resp)
-	assert.Error(t, err)
-	assert.Equal(t, codes.InvalidArgument, status.Code(err))
-}
-
-func TestBatchPutObjects_NilService(t *testing.T) {
-	server := &objectStorageServer{service: nil}
-
-	req := &pb.BatchPutObjectsRequest{
-		Objects: []*pb.PutObjectRequest{{Key: "test/obj1", Value: []byte("data")}},
-	}
-
-	resp, err := server.BatchPutObjects(tenantctx.WithSystem(context.Background()), req)
-	assert.Nil(t, resp)
-	assert.Error(t, err)
-	assert.Equal(t, codes.Unavailable, status.Code(err))
-}
 
 // =============================================================================
 // Test Cases - BatchGetObjects
 // =============================================================================
 
-func TestBatchGetObjects_Success(t *testing.T) {
-	mockSvc := &mockObjectStorageService{}
-	server := NewObjectStorageServer(mockSvc).(*objectStorageServer)
-
-	req := &pb.BatchGetObjectsRequest{Keys: []string{"key1", "key2"}}
-
-	resp, err := server.BatchGetObjects(tenantctx.WithSystem(context.Background()), req)
-	require.NoError(t, err)
-	assert.NotNil(t, resp)
-}
-
-func TestBatchGetObjects_NilRequest(t *testing.T) {
-	mockSvc := &mockObjectStorageService{}
-	server := NewObjectStorageServer(mockSvc).(*objectStorageServer)
-
-	resp, err := server.BatchGetObjects(tenantctx.WithSystem(context.Background()), nil)
-	assert.Nil(t, resp)
-	assert.Error(t, err)
-	assert.Equal(t, codes.InvalidArgument, status.Code(err))
-}
-
-func TestBatchGetObjects_Empty(t *testing.T) {
-	mockSvc := &mockObjectStorageService{}
-	server := NewObjectStorageServer(mockSvc).(*objectStorageServer)
-
-	req := &pb.BatchGetObjectsRequest{Keys: []string{}}
-
-	resp, err := server.BatchGetObjects(tenantctx.WithSystem(context.Background()), req)
-	assert.Nil(t, resp)
-	assert.Error(t, err)
-	assert.Equal(t, codes.InvalidArgument, status.Code(err))
-}
-
-func TestBatchGetObjects_NilService(t *testing.T) {
-	server := &objectStorageServer{service: nil}
-
-	req := &pb.BatchGetObjectsRequest{
-		Keys: []string{"key1"},
-	}
-
-	resp, err := server.BatchGetObjects(tenantctx.WithSystem(context.Background()), req)
-	assert.Nil(t, resp)
-	assert.Error(t, err)
-	assert.Equal(t, codes.Unavailable, status.Code(err))
-}
-
 // =============================================================================
 // Test Cases - BatchDeleteObjects
 // =============================================================================
-
-func TestBatchDeleteObjects_Success(t *testing.T) {
-	mockSvc := &mockObjectStorageService{}
-	server := NewObjectStorageServer(mockSvc).(*objectStorageServer)
-
-	req := &pb.BatchDeleteObjectsRequest{Keys: []string{"key1", "key2"}}
-
-	resp, err := server.BatchDeleteObjects(tenantctx.WithSystem(context.Background()), req)
-	require.NoError(t, err)
-	assert.NotNil(t, resp)
-}
-
-func TestBatchDeleteObjects_NilRequest(t *testing.T) {
-	mockSvc := &mockObjectStorageService{}
-	server := NewObjectStorageServer(mockSvc).(*objectStorageServer)
-
-	resp, err := server.BatchDeleteObjects(tenantctx.WithSystem(context.Background()), nil)
-	assert.Nil(t, resp)
-	assert.Error(t, err)
-	assert.Equal(t, codes.InvalidArgument, status.Code(err))
-}
-
-func TestBatchDeleteObjects_Empty(t *testing.T) {
-	mockSvc := &mockObjectStorageService{}
-	server := NewObjectStorageServer(mockSvc).(*objectStorageServer)
-
-	req := &pb.BatchDeleteObjectsRequest{Keys: []string{}}
-
-	resp, err := server.BatchDeleteObjects(tenantctx.WithSystem(context.Background()), req)
-	assert.Nil(t, resp)
-	assert.Error(t, err)
-	assert.Equal(t, codes.InvalidArgument, status.Code(err))
-}
-
-func TestBatchDeleteObjects_NilService(t *testing.T) {
-	server := &objectStorageServer{service: nil}
-
-	req := &pb.BatchDeleteObjectsRequest{
-		Keys: []string{"key1"},
-	}
-
-	resp, err := server.BatchDeleteObjects(tenantctx.WithSystem(context.Background()), req)
-	assert.Nil(t, resp)
-	assert.Error(t, err)
-	assert.Equal(t, codes.Unavailable, status.Code(err))
-}
 
 // Silence unused imports
 var (
@@ -942,7 +615,7 @@ var (
 // Server ObjectStorage - Nil Request and Nil Service Tests
 // =============================================================================
 
-func TestGRPCRemaining91_ObjectStorageServer_NilRequest(t *testing.T) {
+func TestObjectStorageServer_NilRequest(t *testing.T) {
 	srv := &objectStorageServer{service: &mockObjectStorageService{}}
 	ctx := tenantctx.WithSystem(context.Background())
 
@@ -984,7 +657,7 @@ func TestGRPCRemaining91_ObjectStorageServer_NilRequest(t *testing.T) {
 	}
 }
 
-func TestGRPCRemaining91_ObjectStorageServer_NilService(t *testing.T) {
+func TestObjectStorageServer_NilService(t *testing.T) {
 	srv := &objectStorageServer{service: nil}
 	ctx := tenantctx.WithSystem(context.Background())
 
@@ -1058,7 +731,7 @@ func TestGRPCRemaining91_ObjectStorageServer_NilService(t *testing.T) {
 	}
 }
 
-func TestGRPCRemaining91_ObjectStorageServer_ValidationErrors(t *testing.T) {
+func TestObjectStorageServer_ValidationErrors(t *testing.T) {
 	srv := &objectStorageServer{service: &mockObjectStorageService{}}
 	ctx := tenantctx.WithSystem(context.Background())
 
@@ -1149,7 +822,7 @@ func TestGRPCRemaining91_ObjectStorageServer_ValidationErrors(t *testing.T) {
 	}
 }
 
-func TestGRPCRemaining91_ObjectStorageServer_ServiceErrors(t *testing.T) {
+func TestObjectStorageServer_ServiceErrors(t *testing.T) {
 	svcErr := &dberrors.QBError{Code: dberrors.ErrNotFound, Op: "test", Err: dberrors.New(dberrors.ErrNotFound, "ObjectStorage", "not found")}
 
 	mockSvc := &mockObjectStorageService{
@@ -1654,27 +1327,6 @@ func TestGRPCRemaining91_ObjectStorageServer_BatchDeleteObjects_ServiceError(t *
 
 	require.NoError(t, err)
 	assert.Len(t, resp.FailedKeys, 1)
-}
-
-func TestGRPCRemaining91_ObjectStorageServer_BatchPutObjects_ServiceError(t *testing.T) {
-	mockSvc := &mockObjectStorageService{
-		batchPutObjectsFunc: func(ctx context.Context, req *service.BatchPutObjectsRequest) (*service.BatchPutObjectsResponse, error) {
-			return &service.BatchPutObjectsResponse{
-				Results:      []*service.BatchPutResult{},
-				SuccessCount: 0,
-				FailureCount: 1,
-			}, nil
-		},
-	}
-	srv := &objectStorageServer{service: mockSvc}
-
-	resp, err := srv.BatchPutObjects(tenantctx.WithSystem(context.Background()), &pb.BatchPutObjectsRequest{
-		Objects: []*pb.PutObjectRequest{{Key: "key1", Value: []byte("data")}},
-	})
-
-	require.NoError(t, err)
-	assert.Equal(t, int32(1), resp.Failed)
-	assert.Equal(t, int32(0), resp.Succeeded)
 }
 
 // =============================================================================

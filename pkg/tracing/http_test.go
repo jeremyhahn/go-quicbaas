@@ -250,7 +250,7 @@ func TestGetClientIP(t *testing.T) {
 		{
 			name: "X-Forwarded-For is not believed here",
 			headers: map[string]string{
-				"X-Forwarded-For": "192.168.1.100",
+				"X-Forwarded-For": "192.0.2.100",
 			},
 			remoteAddr: "10.0.0.1:12345",
 			wantIP:     "10.0.0.1",
@@ -258,7 +258,7 @@ func TestGetClientIP(t *testing.T) {
 		{
 			name: "X-Forwarded-For chain is not believed here",
 			headers: map[string]string{
-				"X-Forwarded-For": "192.168.1.100, 10.0.0.1, 172.16.0.1",
+				"X-Forwarded-For": "192.0.2.100, 10.0.0.1, 172.16.0.1",
 			},
 			remoteAddr: "10.0.0.1:12345",
 			wantIP:     "10.0.0.1",
@@ -266,7 +266,7 @@ func TestGetClientIP(t *testing.T) {
 		{
 			name: "X-Real-IP is not believed here",
 			headers: map[string]string{
-				"X-Real-IP": "192.168.1.100",
+				"X-Real-IP": "192.0.2.100",
 			},
 			remoteAddr: "10.0.0.1:12345",
 			wantIP:     "10.0.0.1",
@@ -274,14 +274,14 @@ func TestGetClientIP(t *testing.T) {
 		{
 			name:       "RemoteAddr only",
 			headers:    map[string]string{},
-			remoteAddr: "192.168.1.100:12345",
-			wantIP:     "192.168.1.100",
+			remoteAddr: "192.0.2.100:12345",
+			wantIP:     "192.0.2.100",
 		},
 		{
 			name:       "RemoteAddr without port",
 			headers:    map[string]string{},
-			remoteAddr: "192.168.1.100",
-			wantIP:     "192.168.1.100",
+			remoteAddr: "192.0.2.100",
+			wantIP:     "192.0.2.100",
 		},
 	}
 
@@ -307,11 +307,11 @@ func TestGetClientIP(t *testing.T) {
 func TestGetClientIP_UsesTheResolvedAddress(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	req.RemoteAddr = "10.0.0.1:12345"
-	req.Header.Set("X-Forwarded-For", "192.168.1.100")
+	req.Header.Set("X-Forwarded-For", "192.0.2.100")
 
-	req = req.WithContext(clientip.NewContext(req.Context(), "192.168.1.100"))
+	req = req.WithContext(clientip.NewContext(req.Context(), "192.0.2.100"))
 
-	assert.Equal(t, "192.168.1.100", clientip.FromRequest(req))
+	assert.Equal(t, "192.0.2.100", clientip.FromRequest(req))
 }
 
 func TestHTTPMiddleware_ContextPropagation(t *testing.T) {
