@@ -22,6 +22,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -130,9 +132,22 @@ type ListImpersonationsResponse struct {
 	Total    int                            `json:"total,omitempty"`
 }
 
-// generateUniqueUserID generates a unique user ID for testing.
+// uniqueUserIDSeq keeps two ids taken in the same nanosecond apart.
+var uniqueUserIDSeq atomic.Uint64
+
+// generateUniqueUserID returns a user id no other call in this process
+// returns, in the decimal form the admin API reads a user id in.
 func generateUniqueUserID() string {
-	return fmt.Sprintf("user-%s", uuid.New().String()[:8])
+	return strconv.FormatUint(uint64(time.Now().UnixNano())+uniqueUserIDSeq.Add(1), 10)
+}
+
+// uniqueUserIDs returns n ids from generateUniqueUserID.
+func uniqueUserIDs(n int) []string {
+	ids := make([]string, n)
+	for i := range ids {
+		ids[i] = generateUniqueUserID()
+	}
+	return ids
 }
 
 // createTestAssignment is a helper to create a test admin assignment.
@@ -529,7 +544,7 @@ func TestAdmin_ListAssignments_Empty(t *testing.T) {
 	defer cluster.Close()
 
 	// Use a unique filter to ensure empty results
-	uniqueFilter := uuid.New().String()
+	uniqueFilter := generateUniqueUserID()
 
 	resp, err := cluster.client.Get(cluster.httpEndpoint + "/api/v1/admin/assignments?user_id=" + uniqueFilter)
 	require.NoError(t, err)
@@ -552,28 +567,28 @@ func TestAdmin_ListAssignments_WithFiltering(t *testing.T) {
 	defer cluster.Close()
 
 	// Create multiple assignments with different roles and tenants
-	testPrefix := uuid.New().String()[:8]
+	userIDs := uniqueUserIDs(5)
 
 	assignments := []AdminAssignmentRequest{
 		{
-			UserID:    fmt.Sprintf("%s-user-1", testPrefix),
+			UserID:    userIDs[0],
 			AdminRole: "super_admin",
 			GrantedBy: "system",
 		},
 		{
-			UserID:    fmt.Sprintf("%s-user-2", testPrefix),
+			UserID:    userIDs[1],
 			AdminRole: "tenant_admin",
 			TenantIDs: []string{"tenant-alpha"},
 			GrantedBy: "system",
 		},
 		{
-			UserID:    fmt.Sprintf("%s-user-3", testPrefix),
+			UserID:    userIDs[2],
 			AdminRole: "tenant_admin",
 			TenantIDs: []string{"tenant-beta"},
 			GrantedBy: "system",
 		},
 		{
-			UserID:    fmt.Sprintf("%s-user-4", testPrefix),
+			UserID:    userIDs[3],
 			AdminRole: "user_admin",
 			TenantIDs: []string{"tenant-alpha"},
 			GrantedBy: "system",
@@ -633,7 +648,7 @@ func TestAdmin_ListAssignments_WithFiltering(t *testing.T) {
 
 	// Test: Filter by user_id
 	t.Run("FilterByUserID", func(t *testing.T) {
-		userID := fmt.Sprintf("%s-user-2", testPrefix)
+		userID := userIDs[1]
 		resp, err := cluster.client.Get(cluster.httpEndpoint + "/api/v1/admin/assignments?user_id=" + userID)
 		require.NoError(t, err)
 		defer resp.Body.Close()
@@ -769,7 +784,7 @@ func TestAdmin_CheckPermission_NoAssignment(t *testing.T) {
 	defer cluster.Close()
 
 	// Use a user ID that doesn't have any assignment
-	nonExistentUser := uuid.New().String()
+	nonExistentUser := generateUniqueUserID()
 
 	checkReq := AdminCheckRequest{
 		UserID:     nonExistentUser,
@@ -1753,12 +1768,12 @@ func TestAdmin_Pagination(t *testing.T) {
 	defer cluster.Close()
 
 	// Create multiple assignments
-	testPrefix := uuid.New().String()[:8]
+	userIDs := uniqueUserIDs(5)
 	var createdIDs []string
 
 	for i := 0; i < 5; i++ {
 		createReq := AdminAssignmentRequest{
-			UserID:    fmt.Sprintf("%s-paginate-user-%d", testPrefix, i),
+			UserID:    userIDs[i],
 			AdminRole: "read_only",
 			GrantedBy: "system",
 		}
