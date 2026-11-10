@@ -29,53 +29,62 @@ import (
 // project_store: context cancellation and input-validation branches
 // -----------------------------------------------------------------------------
 
-// TestProjectStore_GetByName_CancelledContext covers the ctx.Err() early-return.
-func TestProjectStore_GetByName_CancelledContext(t *testing.T) {
-	store := NewInMemoryProjectStore()
-	ctx, cancel := context.WithCancel(context.Background())
+// TestProjectStore_BadInput covers each method's cancelled-context guard and
+// its empty-ID and empty-tenant validation, one row per method and bad input.
+func TestProjectStore_BadInput(t *testing.T) {
+	cancelled, cancel := context.WithCancel(context.Background())
 	cancel()
-	if _, err := store.GetByName(ctx, "tenant-1", "name"); !errors.Is(err, context.Canceled) {
-		t.Fatalf("want context.Canceled, got %v", err)
-	}
-}
+	bg := context.Background()
 
-// TestProjectStore_GetByName_EmptyTenantID covers the empty-tenant guard.
-func TestProjectStore_GetByName_EmptyTenantID(t *testing.T) {
-	store := NewInMemoryProjectStore()
-	_, err := store.GetByName(context.Background(), "", "name")
-	var inv *ProjectInvalidError
-	if !errors.As(err, &inv) || inv.Field != "tenant_id" {
-		t.Fatalf("want ProjectInvalidError(tenant_id), got %v", err)
+	tests := []struct {
+		name      string
+		call      func(ProjectStore) error
+		wantField string // empty means the error must be context.Canceled
+	}{
+		{"Get/cancelled", func(s ProjectStore) error {
+			_, err := s.Get(cancelled, "tenant-1", "p1")
+			return err
+		}, ""},
+		{"Get/empty id", func(s ProjectStore) error {
+			_, err := s.Get(bg, "tenant-1", "")
+			return err
+		}, "id"},
+		{"GetByName/cancelled", func(s ProjectStore) error {
+			_, err := s.GetByName(cancelled, "tenant-1", "name")
+			return err
+		}, ""},
+		{"GetByName/empty tenant", func(s ProjectStore) error {
+			_, err := s.GetByName(bg, "", "name")
+			return err
+		}, "tenant_id"},
+		{"Update/cancelled", func(s ProjectStore) error {
+			return s.Update(cancelled, newTestProject("p1", "tenant-1", "n"))
+		}, ""},
+		{"Update/empty id", func(s ProjectStore) error {
+			return s.Update(bg, &Project{TenantID: "tenant-1"})
+		}, "id"},
+		{"Update/empty tenant", func(s ProjectStore) error {
+			return s.Update(bg, &Project{ID: "p1"})
+		}, "tenant_id"},
+		{"ListByTenant/cancelled", func(s ProjectStore) error {
+			_, err := s.ListByTenant(cancelled, "tenant-1")
+			return err
+		}, ""},
 	}
-}
-
-// TestProjectStore_Update_CancelledContext covers Update's ctx.Err() guard.
-func TestProjectStore_Update_CancelledContext(t *testing.T) {
-	store := NewInMemoryProjectStore()
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-	if err := store.Update(ctx, newTestProject("p1", "tenant-1", "n")); !errors.Is(err, context.Canceled) {
-		t.Fatalf("want context.Canceled, got %v", err)
-	}
-}
-
-// TestProjectStore_Update_EmptyID covers Update's empty-ID validation.
-func TestProjectStore_Update_EmptyID(t *testing.T) {
-	store := NewInMemoryProjectStore()
-	err := store.Update(context.Background(), &Project{TenantID: "tenant-1"})
-	var inv *ProjectInvalidError
-	if !errors.As(err, &inv) || inv.Field != "id" {
-		t.Fatalf("want ProjectInvalidError(id), got %v", err)
-	}
-}
-
-// TestProjectStore_Update_EmptyTenantID covers Update's empty-tenant validation.
-func TestProjectStore_Update_EmptyTenantID(t *testing.T) {
-	store := NewInMemoryProjectStore()
-	err := store.Update(context.Background(), &Project{ID: "p1"})
-	var inv *ProjectInvalidError
-	if !errors.As(err, &inv) || inv.Field != "tenant_id" {
-		t.Fatalf("want ProjectInvalidError(tenant_id), got %v", err)
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			err := tc.call(NewInMemoryProjectStore())
+			if tc.wantField == "" {
+				if !errors.Is(err, context.Canceled) {
+					t.Fatalf("want context.Canceled, got %v", err)
+				}
+				return
+			}
+			var inv *ProjectInvalidError
+			if !errors.As(err, &inv) || inv.Field != tc.wantField {
+				t.Fatalf("want ProjectInvalidError(%s), got %v", tc.wantField, err)
+			}
+		})
 	}
 }
 
@@ -102,16 +111,6 @@ func TestProjectStore_Update_NameConflict(t *testing.T) {
 	// p2 must still be reachable under its original name "beta".
 	if _, gErr := store.GetByName(ctx, "tenant-1", "beta"); gErr != nil {
 		t.Fatalf("p2 should still resolve under original name beta: %v", gErr)
-	}
-}
-
-// TestProjectStore_ListByTenant_CancelledContext covers ListByTenant's guard.
-func TestProjectStore_ListByTenant_CancelledContext(t *testing.T) {
-	store := NewInMemoryProjectStore()
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-	if _, err := store.ListByTenant(ctx, "tenant-1"); !errors.Is(err, context.Canceled) {
-		t.Fatalf("want context.Canceled, got %v", err)
 	}
 }
 
@@ -153,36 +152,6 @@ func TestMatchesFilter(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			if got := matchesFilter(meta, tc.filter); got != tc.want {
 				t.Fatalf("matchesFilter()=%v, want %v", got, tc.want)
-			}
-		})
-	}
-}
-
-// -----------------------------------------------------------------------------
-// session_log_kv: PutMeta input validation
-// -----------------------------------------------------------------------------
-
-// TestKVSessionEventLog_PutMeta_Validation covers the nil / missing-field guard
-// at the top of PutMeta.
-func TestKVSessionEventLog_PutMeta_Validation(t *testing.T) {
-	log, err := NewKVSessionEventLog(KVSessionEventLogConfig{KVStore: newMemKVStore()})
-	if err != nil {
-		t.Fatalf("NewKVSessionEventLog: %v", err)
-	}
-	ctx := context.Background()
-
-	cases := []struct {
-		name string
-		meta *SessionMeta
-	}{
-		{"nil meta", nil},
-		{"missing session id", &SessionMeta{TenantID: "t"}},
-		{"missing tenant id", &SessionMeta{SessionID: "s"}},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			if err := log.PutMeta(ctx, tc.meta); err == nil {
-				t.Fatal("expected validation error from PutMeta")
 			}
 		})
 	}
@@ -239,8 +208,9 @@ func TestPeerMessaging_Poll_SkipsMalformedEntries(t *testing.T) {
 // -----------------------------------------------------------------------------
 
 // TestCostTracker_CollectAgentUsage_SkipsCorrupt covers collectAgentUsage's
-// corrupt-entry skip branch: a well-formed 8-byte counter is summed while a
-// short (corrupt) counter under the same job is skipped without failing.
+// skip branches: a well-formed 8-byte counter is summed, while a short
+// (corrupt) counter and a key with no agent segment under the same job are
+// skipped without failing.
 func TestCostTracker_CollectAgentUsage_SkipsCorrupt(t *testing.T) {
 	store := newPeerTestKVStore()
 	tracker := NewCostTracker(store, &peerTestLogger{}).(*kvCostTracker)
@@ -255,16 +225,17 @@ func TestCostTracker_CollectAgentUsage_SkipsCorrupt(t *testing.T) {
 	if err := store.Put(ctx, prefix+"agent-corrupt", []byte{0x01, 0x02}); err != nil {
 		t.Fatalf("put corrupt: %v", err)
 	}
+	// Key exactly equal to the prefix -> agentID == "" -> skipped.
+	if err := store.Put(ctx, prefix, int64ToBytes(7)); err != nil {
+		t.Fatalf("put empty-agent key: %v", err)
+	}
 
 	usage, err := tracker.collectAgentUsage(ctx, "t1", "job1")
 	if err != nil {
 		t.Fatalf("collectAgentUsage: %v", err)
 	}
-	if usage["agent-good"] != 42 {
-		t.Fatalf("want agent-good=42, got %d", usage["agent-good"])
-	}
-	if _, ok := usage["agent-corrupt"]; ok {
-		t.Fatal("corrupt entry must be skipped, not included")
+	if len(usage) != 1 || usage["agent-good"] != 42 {
+		t.Fatalf("expected only {agent-good:42}, got %+v", usage)
 	}
 }
 
@@ -377,30 +348,6 @@ func TestNewInMemoryTaskStoreWithKV_DefaultLimit(t *testing.T) {
 	}
 	if int64(len(payload)) != InlineLimit+1 {
 		t.Fatalf("offloaded payload = %d bytes, want %d", len(payload), InlineLimit+1)
-	}
-}
-
-// -----------------------------------------------------------------------------
-// project_store: Get validation branches
-// -----------------------------------------------------------------------------
-
-// TestProjectStore_Get_EmptyProjectID covers Get's empty-projectID guard.
-func TestProjectStore_Get_EmptyProjectID(t *testing.T) {
-	store := NewInMemoryProjectStore()
-	_, err := store.Get(context.Background(), "tenant-1", "")
-	var inv *ProjectInvalidError
-	if !errors.As(err, &inv) || inv.Field != "id" {
-		t.Fatalf("want ProjectInvalidError(id), got %v", err)
-	}
-}
-
-// TestProjectStore_Get_CancelledContext covers Get's ctx.Err() guard.
-func TestProjectStore_Get_CancelledContext(t *testing.T) {
-	store := NewInMemoryProjectStore()
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-	if _, err := store.Get(ctx, "tenant-1", "p1"); !errors.Is(err, context.Canceled) {
-		t.Fatalf("want context.Canceled, got %v", err)
 	}
 }
 
@@ -575,100 +522,53 @@ func (s *faultKVStore) Exists(ctx context.Context, key string) (bool, error) {
 	return s.memKVStore.Exists(ctx, key)
 }
 
-// TestPeerMessaging_InboxSize_ListError covers InboxSize's List-error branch.
-func TestPeerMessaging_InboxSize_ListError(t *testing.T) {
-	kv := newFaultKVStore()
-	kv.listErr = errors.New("kv down")
-	svc := NewPeerMessagingService(kv, defaultPolicy(), &peerTestLogger{})
+// TestPeerMessaging_StoreErrors covers each store failure the service reports
+// as a PeerInboxError, one row per method and failing store verb.
+func TestPeerMessaging_StoreErrors(t *testing.T) {
+	kvDown := errors.New("kv down")
+	ctx := context.Background()
 
-	_, err := svc.InboxSize(context.Background(), "t", "agent-a")
-	var ie *PeerInboxError
-	if !errors.As(err, &ie) || ie.Op != "inbox_size" {
-		t.Fatalf("want PeerInboxError(inbox_size), got %v", err)
+	tests := []struct {
+		name   string
+		fault  func(*faultKVStore)
+		call   func(PeerMessagingService) error
+		wantOp string
+	}{
+		{"InboxSize/list error",
+			func(kv *faultKVStore) { kv.listErr = kvDown },
+			func(svc PeerMessagingService) error {
+				_, err := svc.InboxSize(ctx, "t", "agent-a")
+				return err
+			}, "inbox_size"},
+		{"Poll/scan error",
+			func(kv *faultKVStore) { kv.scanErr = kvDown },
+			func(svc PeerMessagingService) error {
+				_, err := svc.Poll(ctx, "t", "agent-a", 0)
+				return err
+			}, "poll_scan"},
+		{"Send/dedup check error",
+			func(kv *faultKVStore) { kv.existsErr = kvDown },
+			func(svc PeerMessagingService) error {
+				return svc.Send(ctx, testMessage("m1", "a", "b", "advisory", 1000))
+			}, "dedup_check"},
+		{"Send/put message error",
+			// Exists and InboxSize succeed first; the inbox write fails.
+			func(kv *faultKVStore) { kv.putErr = kvDown },
+			func(svc PeerMessagingService) error {
+				return svc.Send(ctx, testMessage("m1", "a", "b", "advisory", 1000))
+			}, "put_message"},
 	}
-}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			kv := newFaultKVStore()
+			tc.fault(kv)
+			svc := NewPeerMessagingService(kv, defaultPolicy(), &peerTestLogger{})
 
-// TestPeerMessaging_Poll_ScanError covers Poll's Scan-error branch.
-func TestPeerMessaging_Poll_ScanError(t *testing.T) {
-	kv := newFaultKVStore()
-	kv.scanErr = errors.New("scan failed")
-	svc := NewPeerMessagingService(kv, defaultPolicy(), &peerTestLogger{})
-
-	_, err := svc.Poll(context.Background(), "t", "agent-a", 0)
-	var ie *PeerInboxError
-	if !errors.As(err, &ie) || ie.Op != "poll_scan" {
-		t.Fatalf("want PeerInboxError(poll_scan), got %v", err)
-	}
-}
-
-// TestPeerMessaging_Send_DedupCheckError covers Send's Exists-error branch.
-func TestPeerMessaging_Send_DedupCheckError(t *testing.T) {
-	kv := newFaultKVStore()
-	kv.existsErr = errors.New("exists failed")
-	svc := NewPeerMessagingService(kv, defaultPolicy(), &peerTestLogger{})
-
-	err := svc.Send(context.Background(), testMessage("m1", "a", "b", "advisory", 1000))
-	var ie *PeerInboxError
-	if !errors.As(err, &ie) || ie.Op != "dedup_check" {
-		t.Fatalf("want PeerInboxError(dedup_check), got %v", err)
-	}
-}
-
-// TestPeerMessaging_Send_PutMessageError covers Send's put_message branch where
-// the inbox write fails (Exists/InboxSize succeed first).
-func TestPeerMessaging_Send_PutMessageError(t *testing.T) {
-	kv := newFaultKVStore()
-	kv.putErr = errors.New("put failed")
-	svc := NewPeerMessagingService(kv, defaultPolicy(), &peerTestLogger{})
-
-	err := svc.Send(context.Background(), testMessage("m1", "a", "b", "advisory", 1000))
-	var ie *PeerInboxError
-	if !errors.As(err, &ie) || ie.Op != "put_message" {
-		t.Fatalf("want PeerInboxError(put_message), got %v", err)
-	}
-}
-
-// -----------------------------------------------------------------------------
-// session_log_kv: Append validation + Put-error branches
-// -----------------------------------------------------------------------------
-
-// TestKVSessionEventLog_Append_NilEvent covers Append's nil-event guard.
-func TestKVSessionEventLog_Append_NilEvent(t *testing.T) {
-	log, err := NewKVSessionEventLog(KVSessionEventLogConfig{KVStore: newMemKVStore()})
-	if err != nil {
-		t.Fatalf("NewKVSessionEventLog: %v", err)
-	}
-	var ae *SessionLogAppendError
-	if err := log.Append(context.Background(), nil); !errors.As(err, &ae) {
-		t.Fatalf("want *SessionLogAppendError for nil event, got %v", err)
-	}
-}
-
-// TestKVSessionEventLog_Append_MissingFields covers Append's required-field guard.
-func TestKVSessionEventLog_Append_MissingFields(t *testing.T) {
-	log, err := NewKVSessionEventLog(KVSessionEventLogConfig{KVStore: newMemKVStore()})
-	if err != nil {
-		t.Fatalf("NewKVSessionEventLog: %v", err)
-	}
-	var ae *SessionLogAppendError
-	if err := log.Append(context.Background(), newPromptEvent("", "s", 1, "x")); !errors.As(err, &ae) {
-		t.Fatalf("want *SessionLogAppendError for missing tenant, got %v", err)
-	}
-}
-
-// TestKVSessionEventLog_Append_PutError covers Append's kv.Put failure branch:
-// sequence validation passes (empty session -> latest=0, seq=1) but the event
-// write fails, surfacing a SessionLogAppendError that wraps the store error.
-func TestKVSessionEventLog_Append_PutError(t *testing.T) {
-	kv := newFaultKVStore()
-	kv.putErr = errors.New("kv put down")
-	log, err := NewKVSessionEventLog(KVSessionEventLogConfig{KVStore: kv})
-	if err != nil {
-		t.Fatalf("NewKVSessionEventLog: %v", err)
-	}
-	var ae *SessionLogAppendError
-	if err := log.Append(context.Background(), newPromptEvent("t", "s", 1, "x")); !errors.As(err, &ae) {
-		t.Fatalf("want *SessionLogAppendError wrapping put error, got %v", err)
+			var ie *PeerInboxError
+			if err := tc.call(svc); !errors.As(err, &ie) || ie.Op != tc.wantOp {
+				t.Fatalf("want PeerInboxError(%s), got %v", tc.wantOp, err)
+			}
+		})
 	}
 }
 
@@ -687,31 +587,6 @@ func TestCostTracker_GetJobUsage_ReadCounterError(t *testing.T) {
 	var ure *UsageRetrievalError
 	if !errors.As(err, &ure) {
 		t.Fatalf("want *UsageRetrievalError, got %T: %v", err, err)
-	}
-}
-
-// TestCostTracker_CollectAgentUsage_SkipsEmptyAgentID covers the empty-agent-ID
-// skip branch: a key equal to the prefix (no agent segment) is ignored.
-func TestCostTracker_CollectAgentUsage_SkipsEmptyAgentID(t *testing.T) {
-	store := newPeerTestKVStore()
-	tracker := NewCostTracker(store, &peerTestLogger{}).(*kvCostTracker)
-	ctx := context.Background()
-
-	prefix := costKeyPrefix + "t1" + jobSegment + "job1" + agentSegment
-	// Key exactly equal to the prefix -> agentID == "" -> skipped.
-	if err := store.Put(ctx, prefix, int64ToBytes(7)); err != nil {
-		t.Fatalf("put empty-agent key: %v", err)
-	}
-	if err := store.Put(ctx, prefix+"real", int64ToBytes(9)); err != nil {
-		t.Fatalf("put real agent: %v", err)
-	}
-
-	usage, err := tracker.collectAgentUsage(ctx, "t1", "job1")
-	if err != nil {
-		t.Fatalf("collectAgentUsage: %v", err)
-	}
-	if len(usage) != 1 || usage["real"] != 9 {
-		t.Fatalf("expected only {real:9}, got %+v", usage)
 	}
 }
 
@@ -758,81 +633,104 @@ func TestFileLock_ValidateFencingToken_RaftError(t *testing.T) {
 }
 
 // -----------------------------------------------------------------------------
-// session_log_kv: GetMeta / LatestSequence / Range store-error branches
+// session_log_kv: input validation and store-error branches
 // -----------------------------------------------------------------------------
 
-// TestKVSessionEventLog_GetMeta_GenericError covers GetMeta's non-not-found
-// store error branch (returned verbatim, not translated to the sentinel).
-func TestKVSessionEventLog_GetMeta_GenericError(t *testing.T) {
-	kv := newFaultKVStore()
-	kv.getErr = errors.New("kv get down") // not a not-found error
-	log, err := NewKVSessionEventLog(KVSessionEventLogConfig{KVStore: kv})
-	if err != nil {
-		t.Fatalf("NewKVSessionEventLog: %v", err)
-	}
-	_, gErr := log.GetMeta(context.Background(), "t", "s")
-	if gErr == nil || errors.Is(gErr, ErrSessionLogNotFound) {
-		t.Fatalf("want raw store error, got %v", gErr)
-	}
-}
-
-// TestKVSessionEventLog_GetMeta_CorruptValue covers GetMeta's unmarshal-error
-// branch when the stored meta value is not valid JSON.
-func TestKVSessionEventLog_GetMeta_CorruptValue(t *testing.T) {
-	kv := newMemKVStore()
-	log, err := NewKVSessionEventLog(KVSessionEventLogConfig{KVStore: kv})
-	if err != nil {
-		t.Fatalf("NewKVSessionEventLog: %v", err)
-	}
+// TestKVSessionEventLog_Errors covers each method's input validation and its
+// store-failure branches, one row per method and failure.
+func TestKVSessionEventLog_Errors(t *testing.T) {
+	kvDown := errors.New("kv down")
 	ctx := context.Background()
-	if err := kv.Put(ctx, log.metaKey("t", "s"), []byte("{not json")); err != nil {
-		t.Fatalf("seed corrupt meta: %v", err)
-	}
-	if _, gErr := log.GetMeta(ctx, "t", "s"); gErr == nil {
-		t.Fatal("expected unmarshal error from corrupt meta")
-	}
-}
 
-// TestKVSessionEventLog_LatestSequence_GetMetaError covers LatestSequence's
-// branch where GetMeta returns a non-not-found error (propagated, not swallowed).
-func TestKVSessionEventLog_LatestSequence_GetMetaError(t *testing.T) {
-	kv := newFaultKVStore()
-	kv.getErr = errors.New("kv get down")
-	log, err := NewKVSessionEventLog(KVSessionEventLogConfig{KVStore: kv})
-	if err != nil {
-		t.Fatalf("NewKVSessionEventLog: %v", err)
+	tests := []struct {
+		name string
+		// fault configures the store before the call; nil leaves it healthy.
+		fault func(*faultKVStore)
+		// seedCorruptMeta stores a non-JSON meta value for session t/s.
+		seedCorruptMeta bool
+		call            func(*KVSessionEventLog) error
+		// wantAppendErr requires a *SessionLogAppendError.
+		wantAppendErr bool
+		// wantNotSentinel requires the error not to read as not-found.
+		wantNotSentinel bool
+	}{
+		{name: "Append/nil event",
+			call:          func(l *KVSessionEventLog) error { return l.Append(ctx, nil) },
+			wantAppendErr: true},
+		{name: "Append/missing tenant",
+			call:          func(l *KVSessionEventLog) error { return l.Append(ctx, newPromptEvent("", "s", 1, "x")) },
+			wantAppendErr: true},
+		{name: "Append/put error",
+			fault:         func(kv *faultKVStore) { kv.putErr = kvDown },
+			call:          func(l *KVSessionEventLog) error { return l.Append(ctx, newPromptEvent("t", "s", 1, "x")) },
+			wantAppendErr: true},
+		{name: "PutMeta/nil meta",
+			call: func(l *KVSessionEventLog) error { return l.PutMeta(ctx, nil) }},
+		{name: "PutMeta/missing session id",
+			call: func(l *KVSessionEventLog) error { return l.PutMeta(ctx, &SessionMeta{TenantID: "t"}) }},
+		{name: "PutMeta/missing tenant id",
+			call: func(l *KVSessionEventLog) error { return l.PutMeta(ctx, &SessionMeta{SessionID: "s"}) }},
+		{name: "GetMeta/store error",
+			fault: func(kv *faultKVStore) { kv.getErr = kvDown },
+			call: func(l *KVSessionEventLog) error {
+				_, err := l.GetMeta(ctx, "t", "s")
+				return err
+			},
+			wantNotSentinel: true},
+		{name: "GetMeta/corrupt value",
+			seedCorruptMeta: true,
+			call: func(l *KVSessionEventLog) error {
+				_, err := l.GetMeta(ctx, "t", "s")
+				return err
+			}},
+		{name: "LatestSequence/meta read error",
+			fault: func(kv *faultKVStore) { kv.getErr = kvDown },
+			call: func(l *KVSessionEventLog) error {
+				_, err := l.LatestSequence(ctx, "t", "s")
+				return err
+			}},
+		{name: "LatestSequence/scan error",
+			// No meta is stored, so LatestSequence falls through to the scan.
+			fault: func(kv *faultKVStore) { kv.scanErr = kvDown },
+			call: func(l *KVSessionEventLog) error {
+				_, err := l.LatestSequence(ctx, "t", "s")
+				return err
+			}},
+		{name: "Range/scan error",
+			fault: func(kv *faultKVStore) { kv.scanErr = kvDown },
+			call: func(l *KVSessionEventLog) error {
+				_, _, err := l.Range(ctx, "t", "s", 1, 10)
+				return err
+			}},
 	}
-	if _, lErr := log.LatestSequence(context.Background(), "t", "s"); lErr == nil {
-		t.Fatal("expected LatestSequence to propagate the store error")
-	}
-}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			kv := newFaultKVStore()
+			log, err := NewKVSessionEventLog(KVSessionEventLogConfig{KVStore: kv})
+			if err != nil {
+				t.Fatalf("NewKVSessionEventLog: %v", err)
+			}
+			if tc.seedCorruptMeta {
+				if err := kv.Put(ctx, log.metaKey("t", "s"), []byte("{not json")); err != nil {
+					t.Fatalf("seed corrupt meta: %v", err)
+				}
+			}
+			if tc.fault != nil {
+				tc.fault(kv)
+			}
 
-// TestKVSessionEventLog_LatestSequence_ScanError covers LatestSequence's
-// events-scan error branch: GetMeta reports not-found (so it falls through to
-// the scan), and the scan itself fails.
-func TestKVSessionEventLog_LatestSequence_ScanError(t *testing.T) {
-	kv := newFaultKVStore()
-	// Get returns (nil,nil) -> GetMeta treats it as not-found and falls through.
-	kv.scanErr = errors.New("scan down")
-	log, err := NewKVSessionEventLog(KVSessionEventLogConfig{KVStore: kv})
-	if err != nil {
-		t.Fatalf("NewKVSessionEventLog: %v", err)
-	}
-	if _, lErr := log.LatestSequence(context.Background(), "t", "s"); lErr == nil {
-		t.Fatal("expected LatestSequence to surface the scan error")
-	}
-}
-
-// TestKVSessionEventLog_Range_ScanError covers Range's scan-error branch.
-func TestKVSessionEventLog_Range_ScanError(t *testing.T) {
-	kv := newFaultKVStore()
-	kv.scanErr = errors.New("scan down")
-	log, err := NewKVSessionEventLog(KVSessionEventLogConfig{KVStore: kv})
-	if err != nil {
-		t.Fatalf("NewKVSessionEventLog: %v", err)
-	}
-	if _, _, rErr := log.Range(context.Background(), "t", "s", 1, 10); rErr == nil {
-		t.Fatal("expected Range to surface the scan error")
+			err = tc.call(log)
+			if err == nil {
+				t.Fatal("expected an error")
+			}
+			var ae *SessionLogAppendError
+			if tc.wantAppendErr && !errors.As(err, &ae) {
+				t.Fatalf("want *SessionLogAppendError, got %v", err)
+			}
+			if tc.wantNotSentinel && errors.Is(err, ErrSessionLogNotFound) {
+				t.Fatalf("want the raw store error, got the not-found sentinel: %v", err)
+			}
+		})
 	}
 }
 
@@ -904,40 +802,46 @@ func TestAgentRegistry_CorruptRecord(t *testing.T) {
 }
 
 // -----------------------------------------------------------------------------
-// session_store: GetSession corrupt-entry branches
+// session_store: corrupt-record branches
 // -----------------------------------------------------------------------------
 
-// TestAgentStore_GetSession_CorruptJSON covers GetSession's unmarshal-error
-// branch: a record whose stored bytes are not a decodable session record is
-// reported as a marshal error rather than surfacing as an empty session.
-func TestAgentStore_GetSession_CorruptJSON(t *testing.T) {
-	kv := kvstore.NewMemory()
-	if err := kv.Put(context.Background(), "orch/session/system/sess-1", []byte("{not json")); err != nil {
-		t.Fatalf("seed corrupt record: %v", err)
+// TestAgentStore_CorruptRecord covers the decode-failure branch of the single
+// read and of the scan: a corrupt record is reported under the marshal
+// sentinel rather than surfacing as an empty session or a shortened listing.
+func TestAgentStore_CorruptRecord(t *testing.T) {
+	cases := []struct {
+		name   string
+		invoke func(context.Context, AgentStore) error
+	}{
+		{
+			name: "GetSession",
+			invoke: func(ctx context.Context, store AgentStore) error {
+				_, err := store.GetSession(ctx, "", "sess-1")
+				return err
+			},
+		},
+		{
+			name: "ListSessions",
+			invoke: func(ctx context.Context, store AgentStore) error {
+				_, err := store.ListSessions(ctx, "system")
+				return err
+			},
+		},
 	}
-	store := NewAgentStore(kv)
 
-	_, err := store.GetSession(context.Background(), "", "sess-1")
-	var se *AgentStoreError
-	if !errors.As(err, &se) || !errors.Is(se, ErrAgentStoreMarshal) {
-		t.Fatalf("want AgentStoreError(marshal), got %v", err)
-	}
-}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			kv := kvstore.NewMemory()
+			if err := kv.Put(context.Background(), "orch/session/system/sess-1", []byte("{not json")); err != nil {
+				t.Fatalf("seed corrupt record: %v", err)
+			}
 
-// TestAgentStore_ListSessions_CorruptJSON covers the scan path's decode-error
-// branch: a corrupt record aborts the listing with a typed error rather than
-// silently shortening the result.
-func TestAgentStore_ListSessions_CorruptJSON(t *testing.T) {
-	kv := kvstore.NewMemory()
-	if err := kv.Put(context.Background(), "orch/session/system/sess-1", []byte("{not json")); err != nil {
-		t.Fatalf("seed corrupt record: %v", err)
-	}
-	store := NewAgentStore(kv)
-
-	_, err := store.ListSessions(context.Background(), "system")
-	var se *AgentStoreError
-	if !errors.As(err, &se) || !errors.Is(se, ErrAgentStoreMarshal) {
-		t.Fatalf("want AgentStoreError(marshal), got %v", err)
+			err := tc.invoke(context.Background(), NewAgentStore(kv))
+			var se *AgentStoreError
+			if !errors.As(err, &se) || !errors.Is(se, ErrAgentStoreMarshal) {
+				t.Fatalf("want AgentStoreError(marshal), got %v", err)
+			}
+		})
 	}
 }
 
@@ -1045,38 +949,34 @@ func newFaultFileLockSvc(t *testing.T, kv *faultKVStore) *fileLockStore {
 	return svc.(*fileLockStore)
 }
 
-// TestFileLock_Release_LoadLockError covers Release's branch where loadLock
-// fails with a non-not-found store error.
-func TestFileLock_Release_LoadLockError(t *testing.T) {
-	kv := newFaultKVStore()
-	kv.getErr = errors.New("kv get down")
-	svc := newFaultFileLockSvc(t, kv)
-
-	if err := svc.Release(context.Background(), "t", "lock-key"); err == nil {
-		t.Fatal("expected Release to surface the loadLock error")
+// TestFileLock_LoadLockError covers the branch of each method that loads the
+// lock first, where loadLock fails with a non-not-found store error.
+func TestFileLock_LoadLockError(t *testing.T) {
+	cases := []struct {
+		name   string
+		invoke func(context.Context, *fileLockStore) error
+	}{
+		{"Release", func(ctx context.Context, svc *fileLockStore) error {
+			return svc.Release(ctx, "t", "lock-key")
+		}},
+		{"Renew", func(ctx context.Context, svc *fileLockStore) error {
+			return svc.Renew(ctx, "t", "lock-key")
+		}},
+		{"WaitForRelease", func(ctx context.Context, svc *fileLockStore) error {
+			return svc.WaitForRelease(ctx, "t", "lock-key")
+		}},
 	}
-}
 
-// TestFileLock_Renew_LoadLockError covers Renew's loadLock-error branch.
-func TestFileLock_Renew_LoadLockError(t *testing.T) {
-	kv := newFaultKVStore()
-	kv.getErr = errors.New("kv get down")
-	svc := newFaultFileLockSvc(t, kv)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			kv := newFaultKVStore()
+			kv.getErr = errors.New("kv get down")
+			svc := newFaultFileLockSvc(t, kv)
 
-	if err := svc.Renew(context.Background(), "t", "lock-key"); err == nil {
-		t.Fatal("expected Renew to surface the loadLock error")
-	}
-}
-
-// TestFileLock_WaitForRelease_LoadLockError covers WaitForRelease's branch where
-// the initial loadLock fails with a store error.
-func TestFileLock_WaitForRelease_LoadLockError(t *testing.T) {
-	kv := newFaultKVStore()
-	kv.getErr = errors.New("kv get down")
-	svc := newFaultFileLockSvc(t, kv)
-
-	if err := svc.WaitForRelease(context.Background(), "t", "lock-key"); err == nil {
-		t.Fatal("expected WaitForRelease to surface the loadLock error")
+			if err := tc.invoke(context.Background(), svc); err == nil {
+				t.Fatalf("expected %s to surface the loadLock error", tc.name)
+			}
+		})
 	}
 }
 
