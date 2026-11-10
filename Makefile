@@ -2365,7 +2365,7 @@ coverage-%: ## Generate coverage report for a specific package (e.g., make cover
 	TAGS='$(pkg_tags)'; \
 	echo "$(BLUE)Generating coverage for $${PKG_PATH}...$(NC)"; \
 	mkdir -p $(COVERAGE_DIR); \
-	GOTOOLCHAIN=go$(GO_VERSION) GONOSUMCHECK='*' $(GOTEST) -tags "$${TAGS}" -coverprofile=$${PROFILE}.out $${PKG_PATH} || exit $$?; \
+	GOTOOLCHAIN=go$(GO_VERSION) $(GOTEST) -tags "$${TAGS}" -coverprofile=$${PROFILE}.out $${PKG_PATH} || exit $$?; \
 	$(pkg_cover_report)
 
 # Dynamic benchmark targets - use: make bench-<package>
@@ -3414,7 +3414,7 @@ coverage-shard: ## Run shard SHARD of SHARDS of the -race unit run, writing cove
 	@$(call go_packages,-tags '$(TEST_TAGS)' $(COVER_PKGS),/proto$$); \
 	$(call shard_packages,-tags '$(TEST_TAGS)'); \
 	printf "$(BLUE)Coverage shard $(SHARD) of $(SHARDS): %s packages$(NC)\n" "$$(printf '%s\n' "$$pkgs" | wc -l)"; \
-	GOTOOLCHAIN=go$(GO_VERSION) GONOSUMCHECK='*' CGO_ENABLED=1 $(GOTEST) -race -p 2 -timeout=$(RACE_TIMEOUT) -tags '$(TEST_TAGS)' -coverprofile=$(call coverage_shard_profile,$(SHARD)) $$pkgs
+	GOTOOLCHAIN=go$(GO_VERSION) CGO_ENABLED=1 $(GOTEST) -race -p 2 -timeout=$(RACE_TIMEOUT) -tags '$(TEST_TAGS)' -coverprofile=$(call coverage_shard_profile,$(SHARD)) $$pkgs
 
 # The shards hold disjoint packages, so their profiles join by concatenation:
 # one mode line, then every shard's blocks. Every one of the SHARDS profiles
@@ -3503,7 +3503,7 @@ coverage-fips: ## Generate coverage report for FIPS mode
 	@echo "$(BLUE)Generating FIPS coverage report...$(NC)"
 	@echo "$(YELLOW)Using GOFIPS140=latest (Go 1.24+)$(NC)"
 	@mkdir -p $(COVERAGE_DIR)
-	GOTOOLCHAIN=go$(GO_VERSION) GONOSUMCHECK='*' GOFIPS140=latest $(GOTEST) -coverprofile=$(COVERAGE_DIR)/coverage-fips.out -tags fips ./pkg/fips/...
+	GOTOOLCHAIN=go$(GO_VERSION) GOFIPS140=latest $(GOTEST) -coverprofile=$(COVERAGE_DIR)/coverage-fips.out -tags fips ./pkg/fips/...
 	$(GOCMD) tool cover -html=$(COVERAGE_DIR)/coverage-fips.out -o $(COVERAGE_DIR)/coverage-fips.html
 	@echo "$(GREEN)FIPS coverage report: $(COVERAGE_DIR)/coverage-fips.html$(NC)"
 	@echo "$(BLUE)Total FIPS coverage:$(NC)"
@@ -4617,33 +4617,33 @@ test-rag-coverage: ## Run RAG tests with coverage report
 .PHONY: test-acp
 test-acp: ## Run ACP/agent backend unit tests
 	@echo "$(BLUE)Running ACP tests...$(NC)"
-	GOTOOLCHAIN=go$(GO_VERSION) GONOSUMCHECK='*' $(GOTEST) -v -race -tags 'rag $(BUILD_TAGS)' ./pkg/acp/...
+	GOTOOLCHAIN=go$(GO_VERSION) $(GOTEST) -v -race -tags 'rag $(BUILD_TAGS)' ./pkg/acp/...
 	@echo "$(GREEN)ACP unit tests passed$(NC)"
 
 .PHONY: test-fleet
 test-fleet: ## Run fleet node daemon unit tests (pkg/fleet/*)
 	@echo "$(BLUE)Running fleet node daemon tests...$(NC)"
-	GOTOOLCHAIN=go$(GO_VERSION) GONOSUMCHECK='*' $(GOTEST) -v -race -count=1 -tags 'rag mcp $(BUILD_TAGS)' ./pkg/fleet/...
+	GOTOOLCHAIN=go$(GO_VERSION) $(GOTEST) -v -race -count=1 -tags 'rag mcp $(BUILD_TAGS)' ./pkg/fleet/...
 	@echo "$(GREEN)Fleet node daemon tests passed$(NC)"
 
 .PHONY: coverage-acp
 coverage-acp: ## Generate coverage report for ACP package
 	@mkdir -p $(COVERAGE_DIR)
-	GOTOOLCHAIN=go$(GO_VERSION) GONOSUMCHECK='*' $(GOTEST) -v -race -tags 'rag $(BUILD_TAGS)' -coverprofile=$(COVERAGE_DIR)/coverage-acp.out -covermode=atomic ./pkg/acp/...
+	GOTOOLCHAIN=go$(GO_VERSION) $(GOTEST) -v -race -tags 'rag $(BUILD_TAGS)' -coverprofile=$(COVERAGE_DIR)/coverage-acp.out -covermode=atomic ./pkg/acp/...
 	$(GOCMD) tool cover -html=$(COVERAGE_DIR)/coverage-acp.out -o $(COVERAGE_DIR)/coverage-acp.html
 	$(GOCMD) tool cover -func=$(COVERAGE_DIR)/coverage-acp.out | grep total
 
 .PHONY: bench-fleet
 bench-fleet: ## Run fleet node daemon benchmarks
 	@echo "$(BLUE)Running fleet node daemon benchmarks...$(NC)"
-	GOTOOLCHAIN=go$(GO_VERSION) GONOSUMCHECK='*' $(GOTEST) -bench=. -benchmem -benchtime=$(BENCHTIME) -run=^$$ -tags 'rag mcp $(BUILD_TAGS)' ./pkg/fleet/...
+	GOTOOLCHAIN=go$(GO_VERSION) $(GOTEST) -bench=. -benchmem -benchtime=$(BENCHTIME) -run=^$$ -tags 'rag mcp $(BUILD_TAGS)' ./pkg/fleet/...
 	@echo "$(GREEN)Fleet node daemon benchmarks completed$(NC)"
 
 .PHONY: coverage-fleet
 coverage-fleet: ## Generate coverage report for the fleet node daemon package
 	@echo "$(BLUE)Generating fleet node daemon coverage report...$(NC)"
 	@mkdir -p $(COVERAGE_DIR)
-	GOTOOLCHAIN=go$(GO_VERSION) GONOSUMCHECK='*' $(GOTEST) -v -race -count=1 -tags 'rag mcp $(BUILD_TAGS)' -coverprofile=$(COVERAGE_DIR)/coverage-fleet.out -covermode=atomic ./pkg/fleet/...
+	GOTOOLCHAIN=go$(GO_VERSION) $(GOTEST) -v -race -count=1 -tags 'rag mcp $(BUILD_TAGS)' -coverprofile=$(COVERAGE_DIR)/coverage-fleet.out -covermode=atomic ./pkg/fleet/...
 	$(GOCMD) tool cover -html=$(COVERAGE_DIR)/coverage-fleet.out -o $(COVERAGE_DIR)/coverage-fleet.html
 	@echo "$(YELLOW)Coverage report: file://$(COVERAGE_DIR)/coverage-fleet.html$(NC)"
 	$(GOCMD) tool cover -func=$(COVERAGE_DIR)/coverage-fleet.out | grep total
@@ -4747,7 +4747,7 @@ integration-test-agent: ## Run agent orchestration integration tests (requires D
 	echo "$(GREEN)Ollama is ready with tinyllama model on localhost:$$OLLAMA_PORT$(NC)"; \
 	echo "$(BLUE)Running agent orchestration integration tests...$(NC)"; \
 	OLLAMA_URL=http://localhost:$$OLLAMA_PORT OLLAMA_MODEL=tinyllama \
-		GOTOOLCHAIN=go$(GO_VERSION) GONOSUMCHECK='*' \
+		GOTOOLCHAIN=go$(GO_VERSION) \
 		$(GOTEST) -v -race -tags 'integration rag' -timeout 300s ./test/integration/agent/...; \
 	echo "$(GREEN)Agent integration tests passed$(NC)"
 
@@ -4926,7 +4926,7 @@ integration-test-agents: ## Run full E2E agent orchestration tests with real age
 	echo "$(BLUE)Running E2E agent orchestration tests...$(NC)"; \
 	QUICBAAS_URL=http://localhost:$$QUICBAAS_PORT \
 		OLLAMA_URL=http://localhost:$$OLLAMA_PORT \
-		GOTOOLCHAIN=go$(GO_VERSION) GONOSUMCHECK='*' \
+		GOTOOLCHAIN=go$(GO_VERSION) \
 		$(GOTEST) -v -tags 'integration agents' -timeout 600s \
 		./test/integration/agents/... 2>&1 | tee integration-test-agents.log; \
 	TEST_EXIT=$${PIPESTATUS[0]}; \
@@ -4962,14 +4962,14 @@ coverage-uicontract: ## Generate coverage report for the uicontract package
 .PHONY: coverage-orchestration
 coverage-orchestration: ## Generate coverage report for orchestration package
 	@mkdir -p $(COVERAGE_DIR)
-	GOTOOLCHAIN=go$(GO_VERSION) GONOSUMCHECK='*' $(GOTEST) -v -race -tags 'rag mcp $(BUILD_TAGS)' -coverprofile=$(COVERAGE_DIR)/coverage-orchestration.out -covermode=atomic ./pkg/orchestration/...
+	GOTOOLCHAIN=go$(GO_VERSION) $(GOTEST) -v -race -tags 'rag mcp $(BUILD_TAGS)' -coverprofile=$(COVERAGE_DIR)/coverage-orchestration.out -covermode=atomic ./pkg/orchestration/...
 	$(GOCMD) tool cover -html=$(COVERAGE_DIR)/coverage-orchestration.out -o $(COVERAGE_DIR)/coverage-orchestration.html
 	$(GOCMD) tool cover -func=$(COVERAGE_DIR)/coverage-orchestration.out | grep total
 
 .PHONY: bench-orchestration
 bench-orchestration: ## Run orchestration package benchmarks
 	@echo "$(BLUE)Running orchestration benchmarks...$(NC)"
-	GOTOOLCHAIN=go$(GO_VERSION) GONOSUMCHECK='*' $(GOTEST) -v -race -tags 'rag mcp $(BUILD_TAGS)' -bench=. -benchmem -run=^$$ ./pkg/orchestration/...
+	GOTOOLCHAIN=go$(GO_VERSION) $(GOTEST) -v -race -tags 'rag mcp $(BUILD_TAGS)' -bench=. -benchmem -run=^$$ ./pkg/orchestration/...
 
 # =============================================================================
 # Pooled Provider Account Tests (the `quicbaas account` surface)
@@ -4984,40 +4984,40 @@ ACCOUNT_PKGS := ./pkg/service/... ./pkg/api/rest/... ./pkg/api/grpc/... ./pkg/ap
 .PHONY: test-account
 test-account: ## Run pooled provider account unit tests (service + all transports + CLI)
 	@echo "$(BLUE)Running pooled provider account tests...$(NC)"
-	GOTOOLCHAIN=go$(GO_VERSION) GONOSUMCHECK='*' $(GOTEST) -v -count=1 -tags '$(BUILD_TAGS)' -run 'Account' $(ACCOUNT_PKGS)
+	GOTOOLCHAIN=go$(GO_VERSION) $(GOTEST) -v -count=1 -tags '$(BUILD_TAGS)' -run 'Account' $(ACCOUNT_PKGS)
 	@echo "$(BLUE)Running SDK account client + transport tests...$(NC)"
-	cd sdk/go && GOTOOLCHAIN=go$(GO_VERSION) GONOSUMCHECK='*' $(GOTEST) -v -count=1 -run 'Account' ./client/account/... ./transport/...
+	cd sdk/go && GOTOOLCHAIN=go$(GO_VERSION) $(GOTEST) -v -count=1 -run 'Account' ./client/account/... ./transport/...
 
 .PHONY: coverage-account
 coverage-account: ## Generate coverage report for the pooled provider account surface
 	@mkdir -p $(COVERAGE_DIR)
-	cd sdk/go && GOTOOLCHAIN=go$(GO_VERSION) GONOSUMCHECK='*' $(GOTEST) -coverprofile=../../$(COVERAGE_DIR)/coverage-account.out -covermode=atomic ./client/account/...
+	cd sdk/go && GOTOOLCHAIN=go$(GO_VERSION) $(GOTEST) -coverprofile=../../$(COVERAGE_DIR)/coverage-account.out -covermode=atomic ./client/account/...
 	$(GOCMD) tool cover -html=$(COVERAGE_DIR)/coverage-account.out -o $(COVERAGE_DIR)/coverage-account.html
 	$(GOCMD) tool cover -func=$(COVERAGE_DIR)/coverage-account.out | grep total
 
 .PHONY: bench-account
 bench-account: ## Run pooled provider account benchmarks
 	@echo "$(BLUE)Running pooled provider account benchmarks...$(NC)"
-	cd sdk/go && GOTOOLCHAIN=go$(GO_VERSION) GONOSUMCHECK='*' $(GOTEST) -bench=. -benchmem -run=^$$ ./client/account/...
+	cd sdk/go && GOTOOLCHAIN=go$(GO_VERSION) $(GOTEST) -bench=. -benchmem -run=^$$ ./client/account/...
 
 .PHONY: test-registry
 test-registry: ## Run service registry unit tests (storage, service, every transport, SDK client, CLI)
 	@echo "$(BLUE)Running service registry unit tests...$(NC)"
-	GOTOOLCHAIN=go$(GO_VERSION) GONOSUMCHECK='*' $(GOTEST) -count=1 -race -tags '$(TEST_TAGS)' ./pkg/registry/...
-	GOTOOLCHAIN=go$(GO_VERSION) GONOSUMCHECK='*' $(GOTEST) -count=1 -race -tags '$(TEST_TAGS)' -run 'Registry' ./pkg/service/ ./pkg/api/grpc/ ./pkg/api/rest/ ./pkg/api/mcp/ ./cmd/quicbaas/
-	cd sdk/go && GOTOOLCHAIN=go$(GO_VERSION) GONOSUMCHECK='*' $(GOTEST) -count=1 -race ./client/registry/... && \
-		GOTOOLCHAIN=go$(GO_VERSION) GONOSUMCHECK='*' $(GOTEST) -count=1 -race -run 'Registry' ./transport/...
+	GOTOOLCHAIN=go$(GO_VERSION) $(GOTEST) -count=1 -race -tags '$(TEST_TAGS)' ./pkg/registry/...
+	GOTOOLCHAIN=go$(GO_VERSION) $(GOTEST) -count=1 -race -tags '$(TEST_TAGS)' -run 'Registry' ./pkg/service/ ./pkg/api/grpc/ ./pkg/api/rest/ ./pkg/api/mcp/ ./cmd/quicbaas/
+	cd sdk/go && GOTOOLCHAIN=go$(GO_VERSION) $(GOTEST) -count=1 -race ./client/registry/... && \
+		GOTOOLCHAIN=go$(GO_VERSION) $(GOTEST) -count=1 -race -run 'Registry' ./transport/...
 
 .PHONY: coverage-registry
 coverage-registry: ## Generate coverage report for the service registry packages
 	@mkdir -p $(COVERAGE_DIR)
-	GOTOOLCHAIN=go$(GO_VERSION) GONOSUMCHECK='*' $(GOTEST) -tags '$(TEST_TAGS)' -coverprofile=$(COVERAGE_DIR)/coverage-registry.out -covermode=atomic ./pkg/registry/...
+	GOTOOLCHAIN=go$(GO_VERSION) $(GOTEST) -tags '$(TEST_TAGS)' -coverprofile=$(COVERAGE_DIR)/coverage-registry.out -covermode=atomic ./pkg/registry/...
 	$(GOCMD) tool cover -func=$(COVERAGE_DIR)/coverage-registry.out | grep total
-	cd sdk/go && GOTOOLCHAIN=go$(GO_VERSION) GONOSUMCHECK='*' $(GOTEST) -cover ./client/registry/...
+	cd sdk/go && GOTOOLCHAIN=go$(GO_VERSION) $(GOTEST) -cover ./client/registry/...
 
 .PHONY: bench-registry
 bench-registry: ## Run service registry benchmarks
-	GOTOOLCHAIN=go$(GO_VERSION) GONOSUMCHECK='*' $(GOTEST) -bench=. -benchmem -run=^$$ ./pkg/registry/...
+	GOTOOLCHAIN=go$(GO_VERSION) $(GOTEST) -bench=. -benchmem -run=^$$ ./pkg/registry/...
 
 .PHONY: integration-test-registry
 integration-test-registry: ## Run service registry CLI integration tests (all transports, in the devcontainer)
@@ -5026,18 +5026,18 @@ integration-test-registry: ## Run service registry CLI integration tests (all tr
 .PHONY: test-attestation
 test-attestation: ## Run attestation Verifier unit tests (service, every transport, SDK, CLI)
 	@echo "$(BLUE)Running attestation unit tests...$(NC)"
-	GOTOOLCHAIN=go$(GO_VERSION) GONOSUMCHECK='*' $(GOTEST) -count=1 -race -tags '$(TEST_TAGS)' -run 'Attestation|Verifier|ComparePCRBaseline' ./pkg/service/... ./pkg/api/grpc/ ./pkg/api/rest/ ./pkg/api/mcp/ ./cmd/quicbaas/
-	cd sdk/go && GOTOOLCHAIN=go$(GO_VERSION) GONOSUMCHECK='*' $(GOTEST) -count=1 -race -run 'Attestation' . ./transport/...
+	GOTOOLCHAIN=go$(GO_VERSION) $(GOTEST) -count=1 -race -tags '$(TEST_TAGS)' -run 'Attestation|Verifier|ComparePCRBaseline' ./pkg/service/... ./pkg/api/grpc/ ./pkg/api/rest/ ./pkg/api/mcp/ ./cmd/quicbaas/
+	cd sdk/go && GOTOOLCHAIN=go$(GO_VERSION) $(GOTEST) -count=1 -race -run 'Attestation' . ./transport/...
 
 .PHONY: coverage-attestation
 coverage-attestation: ## Generate coverage report for the attestation Verifier
 	@mkdir -p $(COVERAGE_DIR)
-	GOTOOLCHAIN=go$(GO_VERSION) GONOSUMCHECK='*' $(GOTEST) -tags '$(TEST_TAGS)' -run 'Verifier|ComparePCRBaseline|Attestation' -coverprofile=$(COVERAGE_DIR)/coverage-attestation.out -covermode=atomic ./pkg/service/
+	GOTOOLCHAIN=go$(GO_VERSION) $(GOTEST) -tags '$(TEST_TAGS)' -run 'Verifier|ComparePCRBaseline|Attestation' -coverprofile=$(COVERAGE_DIR)/coverage-attestation.out -covermode=atomic ./pkg/service/
 	$(GOCMD) tool cover -func=$(COVERAGE_DIR)/coverage-attestation.out | grep -E 'attestation_verifier.go|total'
 
 .PHONY: bench-attestation
 bench-attestation: ## Run attestation Verifier benchmarks
-	GOTOOLCHAIN=go$(GO_VERSION) GONOSUMCHECK='*' $(GOTEST) -tags '$(TEST_TAGS)' -bench='Appraise' -benchmem -run=^$$ ./pkg/service/
+	GOTOOLCHAIN=go$(GO_VERSION) $(GOTEST) -tags '$(TEST_TAGS)' -bench='Appraise' -benchmem -run=^$$ ./pkg/service/
 
 .PHONY: integration-test-attestation
 integration-test-attestation: ## Run attestation Verifier CLI integration tests (all transports, in the devcontainer)
@@ -5054,19 +5054,19 @@ integration-test-account: ## Run pooled provider account CLI integration tests (
 .PHONY: test-kvstore
 test-kvstore: ## Run kvstore package unit tests
 	@echo "$(BLUE)Running kvstore tests...$(NC)"
-	GOTOOLCHAIN=go$(GO_VERSION) GONOSUMCHECK='*' $(GOTEST) -v -race -count=1 -tags '$(BUILD_TAGS)' ./pkg/kvstore/...
+	GOTOOLCHAIN=go$(GO_VERSION) $(GOTEST) -v -race -count=1 -tags '$(BUILD_TAGS)' ./pkg/kvstore/...
 
 .PHONY: coverage-kvstore
 coverage-kvstore: ## Generate coverage report for kvstore package
 	@mkdir -p $(COVERAGE_DIR)
-	GOTOOLCHAIN=go$(GO_VERSION) GONOSUMCHECK='*' $(GOTEST) -v -race -tags '$(BUILD_TAGS)' -coverprofile=$(COVERAGE_DIR)/coverage-kvstore.out -covermode=atomic ./pkg/kvstore/...
+	GOTOOLCHAIN=go$(GO_VERSION) $(GOTEST) -v -race -tags '$(BUILD_TAGS)' -coverprofile=$(COVERAGE_DIR)/coverage-kvstore.out -covermode=atomic ./pkg/kvstore/...
 	$(GOCMD) tool cover -html=$(COVERAGE_DIR)/coverage-kvstore.out -o $(COVERAGE_DIR)/coverage-kvstore.html
 	$(GOCMD) tool cover -func=$(COVERAGE_DIR)/coverage-kvstore.out | grep total
 
 .PHONY: bench-kvstore
 bench-kvstore: ## Run kvstore package benchmarks
 	@echo "$(BLUE)Running kvstore benchmarks...$(NC)"
-	GOTOOLCHAIN=go$(GO_VERSION) GONOSUMCHECK='*' $(GOTEST) -v -race -tags '$(BUILD_TAGS)' -bench=. -benchmem -run=^$$ ./pkg/kvstore/...
+	GOTOOLCHAIN=go$(GO_VERSION) $(GOTEST) -v -race -tags '$(BUILD_TAGS)' -bench=. -benchmem -run=^$$ ./pkg/kvstore/...
 
 # =============================================================================
 # Go SDK Tests
@@ -5725,24 +5725,24 @@ deps-latest:
 .PHONY: test-sdlc
 test-sdlc: ## Run SDLC module unit tests (bindings, delivery, runner, triage)
 	@echo "$(BLUE)Running SDLC module tests...$(NC)"
-	GOTOOLCHAIN=go$(GO_VERSION) GONOSUMCHECK='*' $(GOTEST) -race -count=1 -tags '$(TEST_TAGS)' ./pkg/sdlc/...
+	GOTOOLCHAIN=go$(GO_VERSION) $(GOTEST) -race -count=1 -tags '$(TEST_TAGS)' ./pkg/sdlc/...
 	@echo "$(GREEN)SDLC module unit tests passed$(NC)"
 
 .PHONY: test-triage
 test-triage: ## Run issue-triage unit tests (verdict, prompt, runner, scheduler)
 	@echo "$(BLUE)Running issue triage tests...$(NC)"
-	GOTOOLCHAIN=go$(GO_VERSION) GONOSUMCHECK='*' $(GOTEST) -race -count=1 -tags '$(TEST_TAGS)' \
+	GOTOOLCHAIN=go$(GO_VERSION) $(GOTEST) -race -count=1 -tags '$(TEST_TAGS)' \
 		-run 'Triage|TriageRunner|TriageScheduler|TriageSweep|WebhookIngest_Wakes' ./pkg/sdlc/...
-	GOTOOLCHAIN=go$(GO_VERSION) GONOSUMCHECK='*' $(GOTEST) -race -count=1 -tags '$(TEST_TAGS)' \
+	GOTOOLCHAIN=go$(GO_VERSION) $(GOTEST) -race -count=1 -tags '$(TEST_TAGS)' \
 		-run 'Triage' ./pkg/server/...
-	GOTOOLCHAIN=go$(GO_VERSION) GONOSUMCHECK='*' $(GOTEST) -race -count=1 -tags '$(TEST_TAGS)' \
+	GOTOOLCHAIN=go$(GO_VERSION) $(GOTEST) -race -count=1 -tags '$(TEST_TAGS)' \
 		-run 'ProjectCapacity|CountLiveJobLeases|JobLeasePolicy' ./pkg/orchestration/...
 	@echo "$(GREEN)Issue triage unit tests passed$(NC)"
 
 .PHONY: coverage-sdlc
 coverage-sdlc: ## Generate coverage report for the SDLC module
 	@mkdir -p $(COVERAGE_DIR)
-	GOTOOLCHAIN=go$(GO_VERSION) GONOSUMCHECK='*' $(GOTEST) -count=1 -tags '$(TEST_TAGS)' \
+	GOTOOLCHAIN=go$(GO_VERSION) $(GOTEST) -count=1 -tags '$(TEST_TAGS)' \
 		-coverprofile=$(COVERAGE_DIR)/coverage-sdlc.out -covermode=atomic ./pkg/sdlc/...
 	$(GOCMD) tool cover -html=$(COVERAGE_DIR)/coverage-sdlc.out -o $(COVERAGE_DIR)/coverage-sdlc.html
 	$(GOCMD) tool cover -func=$(COVERAGE_DIR)/coverage-sdlc.out | grep total
@@ -5750,13 +5750,13 @@ coverage-sdlc: ## Generate coverage report for the SDLC module
 .PHONY: test-prompts
 test-prompts: ## Run prompt-set unit tests (registry, store, resolver, seeder)
 	@echo "$(BLUE)Running prompt-set tests...$(NC)"
-	GOTOOLCHAIN=go$(GO_VERSION) GONOSUMCHECK='*' $(GOTEST) -race -count=1 -tags '$(TEST_TAGS)' ./pkg/orchestration/prompts/...
+	GOTOOLCHAIN=go$(GO_VERSION) $(GOTEST) -race -count=1 -tags '$(TEST_TAGS)' ./pkg/orchestration/prompts/...
 	@echo "$(GREEN)Prompt-set unit tests passed$(NC)"
 
 .PHONY: coverage-prompts
 coverage-prompts: ## Generate coverage report for the prompt-set package
 	@mkdir -p $(COVERAGE_DIR)
-	GOTOOLCHAIN=go$(GO_VERSION) GONOSUMCHECK='*' $(GOTEST) -count=1 -tags '$(TEST_TAGS)' \
+	GOTOOLCHAIN=go$(GO_VERSION) $(GOTEST) -count=1 -tags '$(TEST_TAGS)' \
 		-coverprofile=$(COVERAGE_DIR)/coverage-prompts.out -covermode=atomic ./pkg/orchestration/prompts/...
 	$(GOCMD) tool cover -func=$(COVERAGE_DIR)/coverage-prompts.out | grep total
 
@@ -5765,20 +5765,20 @@ coverage-prompts: ## Generate coverage report for the prompt-set package
 .PHONY: test-containerruntime
 test-containerruntime: ## Run in-process container runtime unit tests (cgo)
 	@echo "$(BLUE)Running container runtime tests...$(NC)"
-	CGO_ENABLED=1 GOTOOLCHAIN=go$(GO_VERSION) GONOSUMCHECK='*' $(GOTEST) -race -count=1 -tags '$(TEST_TAGS)' ./pkg/containerruntime/...
+	CGO_ENABLED=1 GOTOOLCHAIN=go$(GO_VERSION) $(GOTEST) -race -count=1 -tags '$(TEST_TAGS)' ./pkg/containerruntime/...
 	@echo "$(GREEN)Container runtime unit tests passed$(NC)"
 
 .PHONY: coverage-containerruntime
 coverage-containerruntime: ## Generate coverage report for the in-process container runtime (cgo)
 	@mkdir -p $(COVERAGE_DIR)
-	CGO_ENABLED=1 GOTOOLCHAIN=go$(GO_VERSION) GONOSUMCHECK='*' $(GOTEST) -count=1 -tags '$(TEST_TAGS)' \
+	CGO_ENABLED=1 GOTOOLCHAIN=go$(GO_VERSION) $(GOTEST) -count=1 -tags '$(TEST_TAGS)' \
 		-coverprofile=$(COVERAGE_DIR)/coverage-containerruntime.out -covermode=atomic ./pkg/containerruntime/...
 	$(GOCMD) tool cover -func=$(COVERAGE_DIR)/coverage-containerruntime.out | grep total
 
 .PHONY: bench-containerruntime
 bench-containerruntime: ## Run in-process container runtime benchmarks (cgo)
 	@echo "$(BLUE)Running container runtime benchmarks...$(NC)"
-	CGO_ENABLED=1 GOTOOLCHAIN=go$(GO_VERSION) GONOSUMCHECK='*' $(GOTEST) -race -count=1 -tags '$(TEST_TAGS)' -bench=. -benchmem -run=^$$ ./pkg/containerruntime/...
+	CGO_ENABLED=1 GOTOOLCHAIN=go$(GO_VERSION) $(GOTEST) -race -count=1 -tags '$(TEST_TAGS)' -bench=. -benchmem -run=^$$ ./pkg/containerruntime/...
 
 # Runs pkg/containerruntime end to end in a privileged container against a
 # local registry: real pulls, storage-unpacked root filesystems and
@@ -5804,13 +5804,13 @@ integration-test-containerruntime: ## Run in-process container runtime integrati
 .PHONY: coverage-triage
 coverage-triage: ## Report coverage of the issue-triage sources specifically
 	@mkdir -p $(COVERAGE_DIR)
-	GOTOOLCHAIN=go$(GO_VERSION) GONOSUMCHECK='*' $(GOTEST) -count=1 -tags '$(TEST_TAGS)' \
+	GOTOOLCHAIN=go$(GO_VERSION) $(GOTEST) -count=1 -tags '$(TEST_TAGS)' \
 		-coverprofile=$(COVERAGE_DIR)/coverage-triage.out -covermode=atomic ./pkg/sdlc/...
 	$(GOCMD) tool cover -func=$(COVERAGE_DIR)/coverage-triage.out | grep -E 'triage_|^total'
 
 .PHONY: bench-sdlc
 bench-sdlc: ## Run SDLC module benchmarks
 	@echo "$(BLUE)Running SDLC module benchmarks...$(NC)"
-	GOTOOLCHAIN=go$(GO_VERSION) GONOSUMCHECK='*' $(GOTEST) -bench=. -benchmem -benchtime=$(BENCHTIME) \
+	GOTOOLCHAIN=go$(GO_VERSION) $(GOTEST) -bench=. -benchmem -benchtime=$(BENCHTIME) \
 		-run=^$$ -tags '$(TEST_TAGS)' ./pkg/sdlc/...
 	@echo "$(GREEN)SDLC module benchmarks completed$(NC)"
