@@ -221,7 +221,7 @@ func TestSessionGet(t *testing.T) {
 	cluster := setupTestCluster(t)
 	defer cluster.Close()
 
-	tenantID, userID := setupUserForSessionTests(t, cluster)
+	tenantID, userID, self := setupSessionSelf(t, cluster)
 	defer cleanupSessionTests(cluster, tenantID)
 
 	// Create a mock session
@@ -230,7 +230,7 @@ func TestSessionGet(t *testing.T) {
 
 	// Get session by ID
 	var retrievedSession SessionResponse
-	err := cluster.getJSON(fmt.Sprintf("/api/v1/iam/sessions/%s", session.ID), &retrievedSession)
+	err := self.getJSON(fmt.Sprintf("/api/v1/iam/sessions/%s", session.ID), &retrievedSession)
 
 	if err == nil {
 		assert.Equal(t, session.ID, retrievedSession.ID, "Session ID should match")
@@ -246,13 +246,13 @@ func TestSessionGetNonExistent(t *testing.T) {
 	cluster := setupTestCluster(t)
 	defer cluster.Close()
 
-	tenantID, _ := setupUserForSessionTests(t, cluster)
+	tenantID, _, self := setupSessionSelf(t, cluster)
 	defer cleanupSessionTests(cluster, tenantID)
 
 	nonExistentID := uuid.New().String()
 
 	var session SessionResponse
-	err := cluster.getJSON(fmt.Sprintf("/api/v1/iam/sessions/%s", nonExistentID), &session)
+	err := self.getJSON(fmt.Sprintf("/api/v1/iam/sessions/%s", nonExistentID), &session)
 
 	// Should return error for non-existent session
 	assert.Error(t, err, "Should return error for non-existent session")
@@ -263,7 +263,7 @@ func TestSessionRevoke(t *testing.T) {
 	cluster := setupTestCluster(t)
 	defer cluster.Close()
 
-	tenantID, userID := setupUserForSessionTests(t, cluster)
+	tenantID, userID, self := setupSessionSelf(t, cluster)
 	defer cleanupSessionTests(cluster, tenantID)
 
 	// Create a mock session
@@ -271,12 +271,12 @@ func TestSessionRevoke(t *testing.T) {
 	require.NotNil(t, session)
 
 	// Revoke the session
-	err := cluster.deleteJSON(fmt.Sprintf("/api/v1/iam/sessions/%s", session.ID))
+	err := self.deleteJSON(fmt.Sprintf("/api/v1/iam/sessions/%s", session.ID))
 
 	if err == nil {
 		// Verify session is revoked by trying to get it
 		var retrievedSession SessionResponse
-		getErr := cluster.getJSON(fmt.Sprintf("/api/v1/iam/sessions/%s", session.ID), &retrievedSession)
+		getErr := self.getJSON(fmt.Sprintf("/api/v1/iam/sessions/%s", session.ID), &retrievedSession)
 		assert.Error(t, getErr, "Should not be able to retrieve revoked session")
 	} else {
 		t.Logf("Session revoke endpoint not fully implemented: %v", err)
@@ -288,12 +288,12 @@ func TestSessionRevokeNonExistent(t *testing.T) {
 	cluster := setupTestCluster(t)
 	defer cluster.Close()
 
-	tenantID, _ := setupUserForSessionTests(t, cluster)
+	tenantID, _, self := setupSessionSelf(t, cluster)
 	defer cleanupSessionTests(cluster, tenantID)
 
 	nonExistentID := uuid.New().String()
 
-	err := cluster.deleteJSON(fmt.Sprintf("/api/v1/iam/sessions/%s", nonExistentID))
+	err := self.deleteJSON(fmt.Sprintf("/api/v1/iam/sessions/%s", nonExistentID))
 
 	// Should return error or succeed (implementation dependent)
 	if err != nil {
@@ -306,7 +306,7 @@ func TestSessionRevokeAll(t *testing.T) {
 	cluster := setupTestCluster(t)
 	defer cluster.Close()
 
-	tenantID, userID := setupUserForSessionTests(t, cluster)
+	tenantID, userID, self := setupSessionSelf(t, cluster)
 	defer cleanupSessionTests(cluster, tenantID)
 
 	// Create multiple mock sessions
@@ -316,7 +316,7 @@ func TestSessionRevokeAll(t *testing.T) {
 	require.NotNil(t, session2)
 
 	// Revoke all sessions
-	err := cluster.deleteJSON("/api/v1/iam/sessions")
+	err := self.deleteJSON("/api/v1/iam/sessions")
 
 	if err == nil {
 		// Verify all sessions are revoked
@@ -335,7 +335,7 @@ func TestSessionRevokeAllExceptCurrent(t *testing.T) {
 	cluster := setupTestCluster(t)
 	defer cluster.Close()
 
-	tenantID, userID := setupUserForSessionTests(t, cluster)
+	tenantID, userID, self := setupSessionSelf(t, cluster)
 	defer cleanupSessionTests(cluster, tenantID)
 
 	// Create multiple mock sessions
@@ -347,17 +347,17 @@ func TestSessionRevokeAllExceptCurrent(t *testing.T) {
 	require.NotNil(t, currentSession)
 
 	// Revoke all sessions except current
-	err := cluster.deleteJSON(fmt.Sprintf("/api/v1/iam/sessions?except=%s", currentSession.ID))
+	err := self.deleteJSON(fmt.Sprintf("/api/v1/iam/sessions?except=%s", currentSession.ID))
 
 	if err == nil {
 		// Verify only current session remains
 		var retrievedSession SessionResponse
-		getErr := cluster.getJSON(fmt.Sprintf("/api/v1/iam/sessions/%s", currentSession.ID), &retrievedSession)
+		getErr := self.getJSON(fmt.Sprintf("/api/v1/iam/sessions/%s", currentSession.ID), &retrievedSession)
 		assert.NoError(t, getErr, "Current session should still exist")
 
 		// Verify other sessions are revoked
 		var session1Retrieved SessionResponse
-		err1 := cluster.getJSON(fmt.Sprintf("/api/v1/iam/sessions/%s", session1.ID), &session1Retrieved)
+		err1 := self.getJSON(fmt.Sprintf("/api/v1/iam/sessions/%s", session1.ID), &session1Retrieved)
 		assert.Error(t, err1, "Other sessions should be revoked")
 	} else {
 		t.Logf("Revoke all except current endpoint not fully implemented: %v", err)
@@ -369,7 +369,7 @@ func TestSessionRevokeOtherSessions(t *testing.T) {
 	cluster := setupTestCluster(t)
 	defer cluster.Close()
 
-	tenantID, userID := setupUserForSessionTests(t, cluster)
+	tenantID, userID, self := setupSessionSelf(t, cluster)
 	defer cleanupSessionTests(cluster, tenantID)
 
 	// Create multiple mock sessions
@@ -386,7 +386,7 @@ func TestSessionRevokeOtherSessions(t *testing.T) {
 	}
 
 	var response map[string]interface{}
-	err := cluster.postJSON("/api/v1/iam/sessions/revoke-others", revokeReq, &response)
+	err := self.postJSON("/api/v1/iam/sessions/revoke-others", revokeReq, &response)
 
 	if err == nil {
 		assert.NotNil(t, response, "Response should not be nil")
@@ -401,7 +401,7 @@ func TestSessionExpiration(t *testing.T) {
 	cluster := setupTestCluster(t)
 	defer cluster.Close()
 
-	tenantID, userID := setupUserForSessionTests(t, cluster)
+	tenantID, userID, self := setupSessionSelf(t, cluster)
 	defer cleanupSessionTests(cluster, tenantID)
 
 	// Create a session with short expiration
@@ -431,7 +431,7 @@ func TestSessionExpiration(t *testing.T) {
 
 	// Try to get expired session
 	var retrievedSession SessionResponse
-	getErr := cluster.getJSON(fmt.Sprintf("/api/v1/iam/sessions/%s", sessionID), &retrievedSession)
+	getErr := self.getJSON(fmt.Sprintf("/api/v1/iam/sessions/%s", sessionID), &retrievedSession)
 
 	// Should fail because session is expired
 	assert.Error(t, getErr, "Should not be able to retrieve expired session")
