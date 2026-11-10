@@ -532,10 +532,13 @@ type PolicyStorage interface {
 
 // PolicyWriteSnapshotter is a PolicyStorage whose one policy write can
 // touch more than one stored record. SnapshotPolicy captures every record a
-// write of tenantID's policy name may change; restore puts them all back
-// as they were, deleting any that did not exist.
+// write of tenantID's policy name may change. written is the policy the
+// write stores, nil for a delete. restore puts each record back only while
+// it still holds exactly what this write left there: written's stored bytes
+// after an update or create, and no record after a delete. A record holding
+// anything else is another writer's and is left alone; that is not an error.
 type PolicyWriteSnapshotter interface {
-	SnapshotPolicy(ctx context.Context, tenantID, name string) (restore func(context.Context) error, err error)
+	SnapshotPolicy(ctx context.Context, tenantID, name string, written *Policy) (restore func(context.Context) error, err error)
 }
 
 // PolicyCreateReverter is a PolicyStorage that can undo one create.

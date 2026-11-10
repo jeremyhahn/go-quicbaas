@@ -637,7 +637,7 @@ type snapshotPolicyStorage struct {
 	restores    int
 }
 
-func (s *snapshotPolicyStorage) SnapshotPolicy(_ context.Context, _, _ string) (func(context.Context) error, error) {
+func (s *snapshotPolicyStorage) SnapshotPolicy(_ context.Context, _, _ string, _ *Policy) (func(context.Context) error, error) {
 	if s.snapshotErr != nil {
 		return nil, s.snapshotErr
 	}

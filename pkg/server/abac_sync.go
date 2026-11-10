@@ -562,7 +562,7 @@ func (s *legacyCleanupPolicyStorage) UpdatePolicy(ctx context.Context, tenantID 
 	if shared {
 		return s.PolicyStorage.UpdatePolicy(tenantCtx, tenantID, policy)
 	}
-	restoreTenant, err := s.snapshotRecord(tenantCtx, tenantID, policy.Metadata.Name)
+	restoreTenant, err := s.snapshotRecord(tenantCtx, tenantID, policy.Metadata.Name, policy)
 	if err != nil {
 		return err
 	}
@@ -603,9 +603,9 @@ var _ iam.PolicyWriteSnapshotter = (*legacyCleanupPolicyStorage)(nil)
 // SnapshotPolicy captures a policy's tenant copy and its legacy system-namespace copy (the system
 // tenant's one record), as raw bytes when the inner storage allows, so flagged records come back too.
 // Both the snapshot and its restore reach the tenant copy in the tenant's namespace.
-func (s *legacyCleanupPolicyStorage) SnapshotPolicy(ctx context.Context, tenantID, name string) (func(context.Context) error, error) {
+func (s *legacyCleanupPolicyStorage) SnapshotPolicy(ctx context.Context, tenantID, name string, written *iam.Policy) (func(context.Context) error, error) {
 	if tenantID == qrdbsdk.SystemTenantID {
-		return s.snapshotRecord(ctx, tenantID, name)
+		return s.snapshotRecord(ctx, tenantID, name, written)
 	}
 	const op = "iam.policy.update"
 	tenantCtx, legacyCtx, err := s.tenantContexts(ctx, op, tenantID)
@@ -616,7 +616,7 @@ func (s *legacyCleanupPolicyStorage) SnapshotPolicy(ctx context.Context, tenantI
 	if err != nil {
 		return nil, err
 	}
-	restoreTenant, err := s.snapshotRecord(tenantCtx, tenantID, name)
+	restoreTenant, err := s.snapshotRecord(tenantCtx, tenantID, name, written)
 	if err != nil {
 		return nil, err
 	}
@@ -629,7 +629,8 @@ func (s *legacyCleanupPolicyStorage) SnapshotPolicy(ctx context.Context, tenantI
 			return restoreTenant(tenantCtx)
 		}, nil
 	}
-	restoreLegacy, err := s.snapshotRecord(legacyCtx, tenantID, name)
+	// A write only ever deletes the legacy copy.
+	restoreLegacy, err := s.snapshotRecord(legacyCtx, tenantID, name, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -642,16 +643,20 @@ func (s *legacyCleanupPolicyStorage) SnapshotPolicy(ctx context.Context, tenantI
 	}, nil
 }
 
-// policyRecordStore reads and writes a policy's stored bytes as they are.
+// policyRecordStore reads a policy's stored bytes as they are, and restores a write snapshot of
+// them, guarded by what the write left there.
 type policyRecordStore interface {
 	GetPolicyRecord(ctx context.Context, tenantID, name string) ([]byte, error)
-	PutPolicyRecord(ctx context.Context, tenantID, name string, data []byte) error
+	RestorePolicyRecord(ctx context.Context, tenantID, name string, written *iam.Policy, snapshot []byte, present bool) error
 }
 
-// snapshotRecord captures the one record ctx routes tenantID's policy name to. Its restore puts
-// the record back as it was, or deletes it when it was absent. Without raw access to the inner
-// storage, a record that does not decode cannot be restored, so the snapshot fails.
-func (s *legacyCleanupPolicyStorage) snapshotRecord(ctx context.Context, tenantID, name string) (func(context.Context) error, error) {
+// snapshotRecord captures the one record ctx routes tenantID's policy name to; written is the
+// policy the write stores, nil for a delete. With raw access to the inner storage, its restore
+// puts the record back as it was, or deletes it when it was absent, only while the record still
+// holds what the write left there (iam.BackendStorage.RestorePolicyRecord). Without raw access to
+// the inner storage, a record that does not decode cannot be restored, so the snapshot fails.
+// The non-raw fallback restore is unguarded: it can overwrite another writer's record.
+func (s *legacyCleanupPolicyStorage) snapshotRecord(ctx context.Context, tenantID, name string, written *iam.Policy) (func(context.Context) error, error) {
 	inner := s.PolicyStorage
 	removeIfPresent := func(ctx context.Context) error {
 		if err := inner.DeletePolicy(ctx, tenantID, name); err != nil && !dberrors.Is(err, dberrors.ErrNotFound) {
@@ -661,13 +666,13 @@ func (s *legacyCleanupPolicyStorage) snapshotRecord(ctx context.Context, tenantI
 	}
 	if raw, ok := inner.(policyRecordStore); ok {
 		data, err := raw.GetPolicyRecord(ctx, tenantID, name)
-		if err != nil {
-			if dberrors.Is(err, dberrors.ErrNotFound) {
-				return removeIfPresent, nil
-			}
+		found := err == nil
+		if err != nil && !dberrors.Is(err, dberrors.ErrNotFound) {
 			return nil, err
 		}
-		return func(ctx context.Context) error { return raw.PutPolicyRecord(ctx, tenantID, name, data) }, nil
+		return func(ctx context.Context) error {
+			return raw.RestorePolicyRecord(ctx, tenantID, name, written, data, found)
+		}, nil
 	}
 	policy, err := inner.GetPolicy(ctx, tenantID, name)
 	if err != nil {

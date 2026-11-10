@@ -201,7 +201,8 @@ func (e *PolicyEngine) GetPolicy(ctx context.Context, tenantID, name string) (*P
 // ABAC decorator with the full current policy store. A failed sync rejects
 // the write: the previous policy value is restored in storage (best-effort
 // compensation) and the sync error is returned. A PolicyWriteSnapshotter
-// storage restores its snapshot instead, after a failed storage write too.
+// storage restores its snapshot instead, after a failed storage write too,
+// guarded: only a record still holding what this write stored is put back.
 func (e *PolicyEngine) UpdatePolicy(ctx context.Context, tenantID string, policy *Policy) error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -239,7 +240,7 @@ func (e *PolicyEngine) UpdatePolicy(ctx context.Context, tenantID string, policy
 	// Snapshot every record the write may touch; a failed snapshot writes nothing.
 	var restore func(context.Context) error
 	if s, ok := e.storage.(PolicyWriteSnapshotter); ok {
-		if restore, err = s.SnapshotPolicy(ctx, tenantID, policy.Metadata.Name); err != nil {
+		if restore, err = s.SnapshotPolicy(ctx, tenantID, policy.Metadata.Name, policy); err != nil {
 			return err
 		}
 	}
@@ -282,7 +283,8 @@ func (e *PolicyEngine) UpdatePolicy(ctx context.Context, tenantID string, policy
 // decorator with the full current policy store. A failed sync rejects the
 // write: the deleted policy is re-created in storage (best-effort
 // compensation) and the sync error is returned. A PolicyWriteSnapshotter
-// storage restores its snapshot instead, after a failed storage delete too.
+// storage restores its snapshot instead, after a failed storage delete too,
+// guarded: only a record this delete left absent is put back.
 func (e *PolicyEngine) DeletePolicy(ctx context.Context, tenantID, name string) error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -303,7 +305,7 @@ func (e *PolicyEngine) DeletePolicy(ctx context.Context, tenantID, name string) 
 	// Snapshot every record the delete may touch; a failed snapshot deletes nothing.
 	var restore func(context.Context) error
 	if s, ok := e.storage.(PolicyWriteSnapshotter); ok {
-		if restore, err = s.SnapshotPolicy(ctx, tenantID, name); err != nil {
+		if restore, err = s.SnapshotPolicy(ctx, tenantID, name, nil); err != nil {
 			return err
 		}
 	}

@@ -988,7 +988,7 @@ func TestLegacyCleanupPolicyStorage_SnapshotRestoresAFlaggedLegacyRecord(t *test
 	storage := newLegacyCleanupPolicyStorage(bs)
 	acmeCtx := tenantctx.WithTenant(context.Background(), "acme")
 
-	restore, err := storage.(iam.PolicyWriteSnapshotter).SnapshotPolicy(acmeCtx, "acme", "bad")
+	restore, err := storage.(iam.PolicyWriteSnapshotter).SnapshotPolicy(acmeCtx, "acme", "bad", nil)
 	require.NoError(t, err)
 	require.NoError(t, storage.DeletePolicy(acmeCtx, "acme", "bad"))
 	_, err = r.shared.Get(context.Background(), key)
@@ -1239,6 +1239,51 @@ func TestLegacyCleanupPolicyStorage_CreateThroughRouterIsGuarded(t *testing.T) {
 	present, err = plain.Exists(ctx, key)
 	require.NoError(t, err)
 	assert.False(t, present, "a store without guarded writes must not be written")
+}
+
+func TestLegacyCleanupPolicyStorage_RestoreKeepsACompetingWrite(t *testing.T) {
+	ctx := context.Background()
+	acmeCtx := tenantctx.WithTenant(ctx, "acme")
+	const name = "acme-p"
+	allow := abacTestPolicy(name, "acme", "alice", "kv/**", iam.EffectAllow)
+	denyA := abacTestPolicy(name, "acme", "alice", "kv/**", iam.EffectDeny)
+	denyB := abacTestPolicy(name, "acme", "bob", "kv/**", iam.EffectDeny)
+	recreated := abacTestPolicy(name, "acme", "carol", "kv/**", iam.EffectAllow)
+
+	r := newFakeStoreResolver(qrdbsdk.NewMemoryKVStore())
+	guarded := newPutRefusingAtomicStore(t)
+	r.barrierTenantStore("acme", guarded)
+	nodeA := newLegacyCleanupPolicyStorage(iam.NewBackendStorage(newTenantRoutingKVStore(r)))
+	// Node B shares the tenant's records through its own router.
+	rB := newFakeStoreResolver(qrdbsdk.NewMemoryKVStore())
+	rB.barrierTenantStore("acme", guarded.KVStore)
+	nodeB := newLegacyCleanupPolicyStorage(iam.NewBackendStorage(newTenantRoutingKVStore(rB)))
+	snapshotter, ok := nodeA.(iam.PolicyWriteSnapshotter)
+	require.True(t, ok, "the wrapper must snapshot a write")
+
+	// Update: A snapshots its allow, B replaces it with a deny before A writes.
+	require.NoError(t, nodeA.CreatePolicy(acmeCtx, "acme", allow))
+	restore, err := snapshotter.SnapshotPolicy(acmeCtx, "acme", name, denyA)
+	require.NoError(t, err)
+	require.NoError(t, nodeB.UpdatePolicy(acmeCtx, "acme", denyB))
+	want, err := nodeB.GetPolicy(acmeCtx, "acme", name)
+	require.NoError(t, err)
+	require.NoError(t, restore(acmeCtx))
+	got, err := nodeA.GetPolicy(acmeCtx, "acme", name)
+	require.NoError(t, err)
+	assert.Equal(t, want, got, "the restore must keep B's deny")
+
+	// Delete: A snapshots for a delete; the record goes, and B re-creates it.
+	restore, err = snapshotter.SnapshotPolicy(acmeCtx, "acme", name, nil)
+	require.NoError(t, err)
+	require.NoError(t, nodeB.DeletePolicy(acmeCtx, "acme", name))
+	require.NoError(t, nodeB.CreatePolicy(acmeCtx, "acme", recreated))
+	want, err = nodeB.GetPolicy(acmeCtx, "acme", name)
+	require.NoError(t, err)
+	require.NoError(t, restore(acmeCtx))
+	got, err = nodeA.GetPolicy(acmeCtx, "acme", name)
+	require.NoError(t, err)
+	assert.Equal(t, want, got, "the restore must keep B's re-created policy")
 }
 
 // legacyDeleteFailingStorage fails every DeletePolicy made with the system

@@ -1447,6 +1447,12 @@ type guardedPolicyStore interface {
 	CompareAndDelete(ctx context.Context, key string, expected []byte) (deleted bool, err error)
 }
 
+// guardedPolicySwapper is a KV store that replaces a value only while it
+// still holds the expected bytes.
+type guardedPolicySwapper interface {
+	CompareAndSwap(ctx context.Context, key string, expected, next []byte) (swapped bool, err error)
+}
+
 // storeSharer reports whether two contexts resolve to the one physical store.
 type storeSharer interface {
 	SharesStore(a, b context.Context) (bool, error)
@@ -1575,6 +1581,66 @@ func (s *BackendStorage) RevertCreatedPolicy(ctx context.Context, tenantID strin
 	}
 	if !bytes.Equal(current, data) {
 		return nil
+	}
+	return s.delete(ctx, key)
+}
+
+// RestorePolicyRecord puts a write snapshot of tenantID's policy name back,
+// only while the record still holds exactly what the write left there:
+// written's stored bytes, or no record when written is nil (a delete).
+// snapshot and present are the record the snapshot found. A record holding
+// anything else is another writer's and is left alone; that is not an error.
+// Only the guarded (guardedPolicySwapper CompareAndSwap, guardedPolicyStore
+// CompareAndDelete and PutIfAbsent) path is race-free; the fallback
+// read-then-write can still race another writer.
+func (s *BackendStorage) RestorePolicyRecord(ctx context.Context, tenantID, name string, written *Policy, snapshot []byte, present bool) error {
+	if written == nil && !present {
+		return nil
+	}
+	key := policyKey(tenantID, name)
+	var writtenBytes []byte
+	if written != nil {
+		data, err := encodeStoredPolicy(written)
+		if err != nil {
+			return &dberrors.QBError{Code: dberrors.ErrInternal, Op: "iam.policy.restore", Err: err}
+		}
+		writtenBytes = data
+	}
+
+	switch {
+	case written != nil && present:
+		if atomic, ok := s.kv.(guardedPolicySwapper); ok {
+			_, err := atomic.CompareAndSwap(ctx, key, writtenBytes, snapshot)
+			return err
+		}
+	case written != nil:
+		if atomic, ok := s.kv.(guardedPolicyStore); ok {
+			_, err := atomic.CompareAndDelete(ctx, key, writtenBytes)
+			return err
+		}
+	default:
+		if atomic, ok := s.kv.(guardedPolicyStore); ok {
+			_, err := atomic.PutIfAbsent(ctx, key, snapshot)
+			return err
+		}
+	}
+
+	current, err := s.get(ctx, key)
+	found := err == nil
+	if err != nil && !dberrors.Is(err, dberrors.ErrNotFound) {
+		return err
+	}
+	if written == nil {
+		if found {
+			return nil
+		}
+		return s.put(ctx, key, snapshot)
+	}
+	if !found || !bytes.Equal(current, writtenBytes) {
+		return nil
+	}
+	if present {
+		return s.put(ctx, key, snapshot)
 	}
 	return s.delete(ctx, key)
 }
