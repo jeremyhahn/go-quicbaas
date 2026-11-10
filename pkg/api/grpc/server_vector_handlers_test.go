@@ -383,123 +383,91 @@ func TestCreateNamespace_ServiceError(t *testing.T) {
 // UpdateNamespace Tests
 // =============================================================================
 
-func TestUpdateNamespace_InvalidRequest(t *testing.T) {
+func TestUpdateNamespace_InvalidRequestBeforeRefusal(t *testing.T) {
 	tests := []struct {
-		name string
-		req  *pb.UpdateNamespaceRequest
+		name     string
+		req      *pb.UpdateNamespaceRequest
+		infoErr  error
+		wantCode codes.Code
 	}{
-		{"nil request", nil},
-		{"empty namespace", &pb.UpdateNamespaceRequest{Namespace: ""}},
+		{
+			name:     "nil request",
+			req:      nil,
+			wantCode: codes.InvalidArgument,
+		},
+		{
+			name:     "empty namespace",
+			req:      &pb.UpdateNamespaceRequest{Namespace: ""},
+			wantCode: codes.InvalidArgument,
+		},
+		{
+			name:     "namespace lookup fails",
+			req:      &pb.UpdateNamespaceRequest{Namespace: "nonexistent-ns"},
+			infoErr:  &errors.QBError{Code: errors.ErrNotFound, Op: "GetNamespaceInfo"},
+			wantCode: codes.NotFound,
+		},
 	}
+
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			srv, _ := newMockTestServer(t)
+			srv, mockSvc := newMockTestServer(t)
+			if tt.infoErr != nil {
+				mockSvc.On("GetNamespaceInfo", mock.Anything, mock.Anything).
+					Return(nil, tt.infoErr)
+			}
 
 			resp, err := srv.UpdateNamespace(tenantctx.WithSystem(context.Background()), tt.req)
 
+			require.Error(t, err)
 			assert.Nil(t, resp)
-			requireVectorInvalidArgument(t, err, "")
+			assert.Equal(t, tt.wantCode, status.Code(err))
+			mockSvc.AssertNotCalled(t, "DeleteNamespace", mock.Anything, mock.Anything)
+			mockSvc.AssertNotCalled(t, "CreateNamespace", mock.Anything, mock.Anything)
+			mockSvc.AssertExpectations(t)
 		})
 	}
 }
 
-func TestUpdateNamespace_Success(t *testing.T) {
+func TestUpdateNamespace_PopulatedNamespaceRefusedUnimplemented(t *testing.T) {
 	srv, mockSvc := newMockTestServer(t)
+	ctx := tenantctx.WithSystem(context.Background())
 
-	// Mock GetNamespaceInfo to return existing namespace
 	mockSvc.On("GetNamespaceInfo", mock.Anything, mock.Anything).
 		Return(&service.GetNamespaceInfoResponse{
 			Namespace:   "test-ns",
-			Dimension:   128,
+			Dimension:   3,
+			VectorCount: 1,
 			IndexConfig: map[string]string{"M": "16"},
 			Metadata:    map[string]interface{}{"owner": "test"},
 		}, nil)
-
-	// Mock DeleteNamespace
-	mockSvc.On("DeleteNamespace", mock.Anything, mock.Anything).
-		Return(&service.DeleteNamespaceResponse{
-			Success:   true,
-			Timestamp: 1234567890,
+	mockSvc.On("GetVector", mock.Anything, mock.Anything).
+		Return(&service.GetVectorResponse{
+			Found:  true,
+			ID:     123,
+			Vector: []float32{1.0, 2.0, 3.0},
 		}, nil)
 
-	// Mock CreateNamespace for recreation
-	mockSvc.On("CreateNamespace", mock.Anything, mock.Anything).
-		Return(&service.CreateNamespaceResponse{
-			Namespace: "test-ns",
-			Timestamp: 1234567891,
-		}, nil)
-
-	resp, err := srv.UpdateNamespace(tenantctx.WithSystem(context.Background()), &pb.UpdateNamespaceRequest{
+	resp, err := srv.UpdateNamespace(ctx, &pb.UpdateNamespaceRequest{
 		Namespace:   "test-ns",
 		IndexParams: map[string]string{"M": "32"},
 		Metadata:    map[string]string{"env": "prod"},
 	})
 
+	require.Error(t, err)
+	assert.Nil(t, resp)
+	assert.Equal(t, codes.Unimplemented, status.Code(err))
+	assert.Contains(t, status.Convert(err).Message(), `"test-ns"`)
+	mockSvc.AssertNotCalled(t, "DeleteNamespace", mock.Anything, mock.Anything)
+	mockSvc.AssertNotCalled(t, "CreateNamespace", mock.Anything, mock.Anything)
+
+	got, err := srv.GetVector(ctx, &pb.GetVectorRequest{
+		Namespace:     "test-ns",
+		Id:            "123",
+		IncludeVector: true,
+	})
 	require.NoError(t, err)
-	require.NotNil(t, resp)
-	assert.Equal(t, "test-ns", resp.Namespace)
-	assert.True(t, resp.RequiresRebuild)
-	mockSvc.AssertExpectations(t)
-}
-
-func TestUpdateNamespace_GetNamespaceInfoError(t *testing.T) {
-	srv, mockSvc := newMockTestServer(t)
-
-	mockSvc.On("GetNamespaceInfo", mock.Anything, mock.Anything).
-		Return(nil, &errors.QBError{Code: errors.ErrNotFound, Op: "GetNamespaceInfo"})
-
-	resp, err := srv.UpdateNamespace(tenantctx.WithSystem(context.Background()), &pb.UpdateNamespaceRequest{
-		Namespace: "nonexistent-ns",
-	})
-
-	require.Error(t, err)
-	assert.Nil(t, resp)
-	mockSvc.AssertExpectations(t)
-}
-
-func TestUpdateNamespace_DeleteNamespaceError(t *testing.T) {
-	srv, mockSvc := newMockTestServer(t)
-
-	mockSvc.On("GetNamespaceInfo", mock.Anything, mock.Anything).
-		Return(&service.GetNamespaceInfoResponse{
-			Namespace: "test-ns",
-			Dimension: 128,
-		}, nil)
-
-	mockSvc.On("DeleteNamespace", mock.Anything, mock.Anything).
-		Return(nil, &errors.QBError{Code: errors.ErrInternal, Op: "DeleteNamespace"})
-
-	resp, err := srv.UpdateNamespace(tenantctx.WithSystem(context.Background()), &pb.UpdateNamespaceRequest{
-		Namespace: "test-ns",
-	})
-
-	require.Error(t, err)
-	assert.Nil(t, resp)
-	mockSvc.AssertExpectations(t)
-}
-
-func TestUpdateNamespace_CreateNamespaceError(t *testing.T) {
-	srv, mockSvc := newMockTestServer(t)
-
-	mockSvc.On("GetNamespaceInfo", mock.Anything, mock.Anything).
-		Return(&service.GetNamespaceInfoResponse{
-			Namespace: "test-ns",
-			Dimension: 128,
-		}, nil)
-
-	mockSvc.On("DeleteNamespace", mock.Anything, mock.Anything).
-		Return(&service.DeleteNamespaceResponse{Success: true, Timestamp: 1234567890}, nil)
-
-	mockSvc.On("CreateNamespace", mock.Anything, mock.Anything).
-		Return(nil, &errors.QBError{Code: errors.ErrInternal, Op: "CreateNamespace"})
-
-	resp, err := srv.UpdateNamespace(tenantctx.WithSystem(context.Background()), &pb.UpdateNamespaceRequest{
-		Namespace: "test-ns",
-	})
-
-	require.Error(t, err)
-	assert.Nil(t, resp)
-	mockSvc.AssertExpectations(t)
+	assert.True(t, got.Found)
+	assert.NotNil(t, got.Vector)
 }
 
 // =============================================================================
