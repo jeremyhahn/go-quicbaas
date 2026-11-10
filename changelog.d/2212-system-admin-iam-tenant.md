@@ -22,3 +22,5 @@
 - On the embedded transport, `quicbaas iam tenant barrier unseal` and
   `unseal-share` act for the tenant `--tenant` names; an unseal for any
   other tenant is refused (#2212).
+- WebAuthn credential administration inside a tenant uses that tenant's
+  relying-party override, not the global relying party (#2212).
