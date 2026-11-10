@@ -69,11 +69,7 @@ type AuditQueryResponse struct {
 // setupTenantForAuditTests creates a test tenant.
 func setupTenantForAuditTests(t *testing.T, cluster *testCluster) string {
 	tenantID := generateUniqueTenantID()
-	createTenantReq := map[string]interface{}{
-		"id":   tenantID,
-		"name": "Audit Test Tenant",
-	}
-	require.NoError(t, cluster.postJSON("/api/v1/tenants", createTenantReq, nil))
+	cluster.provisionTenant(t, tenantID)
 	return tenantID
 }
 
@@ -405,11 +401,7 @@ func TestAuditEventTenantIsolation(t *testing.T) {
 	defer cleanupAuditTests(cluster, tenant1ID)
 
 	tenant2ID := generateUniqueTenantID()
-	createTenant2Req := map[string]interface{}{
-		"id":   tenant2ID,
-		"name": "Isolation Test Tenant 2",
-	}
-	require.NoError(t, cluster.postJSON("/api/v1/tenants", createTenant2Req, nil))
+	cluster.provisionTenant(t, tenant2ID)
 	defer cleanupAuditTests(cluster, tenant2ID)
 
 	// Create a user in tenant1

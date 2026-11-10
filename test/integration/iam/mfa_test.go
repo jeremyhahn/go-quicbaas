@@ -56,11 +56,7 @@ type BackupCodesResponse struct {
 // setupUserForMFATests creates a test user and returns tenant ID and user ID.
 func setupUserForMFATests(t *testing.T, cluster *testCluster) (string, string) {
 	tenantID := generateUniqueTenantID()
-	createTenantReq := map[string]interface{}{
-		"id":   tenantID,
-		"name": "MFA Test Tenant",
-	}
-	require.NoError(t, cluster.postJSON("/api/v1/tenants", createTenantReq, nil))
+	cluster.provisionTenant(t, tenantID)
 
 	email := generateUniqueEmail()
 	createUserReq := map[string]interface{}{
@@ -213,11 +209,7 @@ func TestMFAStatusNonExistentUser(t *testing.T) {
 	defer cluster.Close()
 
 	tenantID := generateUniqueTenantID()
-	createTenantReq := map[string]interface{}{
-		"id":   tenantID,
-		"name": "MFA Test Tenant",
-	}
-	require.NoError(t, cluster.postJSON("/api/v1/tenants", createTenantReq, nil))
+	cluster.provisionTenant(t, tenantID)
 	defer cleanupMFATests(cluster, tenantID)
 
 	var status MFAStatusResponse

@@ -142,17 +142,8 @@ func TestTenantIsolation(t *testing.T) {
 	tenantA := generateUniqueTenantID()
 	tenantB := generateUniqueTenantID()
 
-	createReqA := map[string]interface{}{
-		"id":   tenantA,
-		"name": "Isolation Tenant A",
-	}
-	createReqB := map[string]interface{}{
-		"id":   tenantB,
-		"name": "Isolation Tenant B",
-	}
-
-	require.NoError(t, cluster.postJSON("/api/v1/tenants", createReqA, nil))
-	require.NoError(t, cluster.postJSON("/api/v1/tenants", createReqB, nil))
+	cluster.provisionTenant(t, tenantA)
+	cluster.provisionTenant(t, tenantB)
 
 	defer func() {
 		cluster.deleteJSON(fmt.Sprintf("/api/v1/tenants/%s", tenantA))
@@ -424,11 +415,7 @@ func TestTenantDeletionCascade(t *testing.T) {
 	tenantID := generateUniqueTenantID()
 
 	// Create tenant
-	createReq := map[string]interface{}{
-		"id":   tenantID,
-		"name": "Cascade Delete Test Tenant",
-	}
-	require.NoError(t, cluster.postJSON("/api/v1/tenants", createReq, nil))
+	cluster.provisionTenant(t, tenantID)
 
 	// Create users in the tenant
 	userReq := map[string]interface{}{

@@ -466,12 +466,8 @@ func TestAppTenantIsolation(t *testing.T) {
 	tenant2ID := generateUniqueTenantID()
 
 	// Create two tenants
-	t1 := map[string]interface{}{"id": tenant1ID, "name": "Tenant 1"}
-	t2 := map[string]interface{}{"id": tenant2ID, "name": "Tenant 2"}
-
-	var tenant1, tenant2 iam.Tenant
-	require.NoError(t, cluster.postJSON("/api/v1/tenants", t1, &tenant1))
-	require.NoError(t, cluster.postJSON("/api/v1/tenants", t2, &tenant2))
+	cluster.provisionTenant(t, tenant1ID)
+	cluster.provisionTenant(t, tenant2ID)
 
 	defer cluster.deleteJSON(fmt.Sprintf("/api/v1/tenants/%s", tenant1ID))
 	defer cluster.deleteJSON(fmt.Sprintf("/api/v1/tenants/%s", tenant2ID))

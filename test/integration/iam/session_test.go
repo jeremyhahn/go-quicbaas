@@ -52,11 +52,7 @@ type SessionListResponse struct {
 func setupUserForSessionTests(t *testing.T, cluster *testCluster) (string, string) {
 	// Create tenant
 	tenantID := generateUniqueTenantID()
-	createTenantReq := map[string]interface{}{
-		"id":   tenantID,
-		"name": "Session Test Tenant",
-	}
-	require.NoError(t, cluster.postJSON("/api/v1/tenants", createTenantReq, nil))
+	cluster.provisionTenant(t, tenantID)
 
 	// Create user
 	email := generateUniqueEmail()
