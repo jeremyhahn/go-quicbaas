@@ -300,6 +300,12 @@ env:
   # while the gate still reports green (automatethethings#7: go-signal had eight
   # such packages, including its whole WebAuthn implementation).
   GO_BUILD_TAGS: ""
+  # The Go toolchain of the jobs that run on the self-hosted bigdisk pool,
+  # where setup-go installs it natively. It is the toolchain image's Go:
+  # pkg/version/toolchain.mk `GO_VERSION := 1.27.3`, which
+  # build/docker/devcontainer/Dockerfile's `FROM golang:${GO_VERSION}-trixie`
+  # builds from. Bump both together.
+  GO_VERSION: '1.27.3'
 
 jobs:
   # DS-3161: a pull request whose every changed file is documentation runs
@@ -309,13 +315,18 @@ jobs:
   # a pull request with any other file run every stage.
   changes:
     name: Changed files
-    runs-on: ubuntu-latest
+    # Same-repo pull requests and pushes to main run on the self-hosted
+    # bigdisk pool; a fork pull request stays on ubuntu-latest. The job needs
+    # only git and grep, and scripts/docs-only.sh diffs the local history, so
+    # the checkout keeps no credentials.
+    runs-on: ${{ ((github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)) && fromJSON('["self-hosted","linux","x64","bigdisk"]') || 'ubuntu-latest' }}
     outputs:
       docs_only: ${{ steps.filter.outputs.docs_only }}
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           fetch-depth: 0
+          persist-credentials: false
 
       - name: Docs-only filter
         id: filter
@@ -598,7 +609,13 @@ jobs:
   # DOCS_ONLY instead, so a docs-only pull request passes the job empty.
   unit:
     name: Unit tests -race (shard ${{ matrix.shard }})
-    runs-on: ubuntu-latest
+    # Same-repo pull requests and pushes to main run on the self-hosted
+    # bigdisk pool; a fork pull request stays on ubuntu-latest. The pool is
+    # a single-use container with no Docker, no sudo and no apt, so there the
+    # job runs its make target natively under setup-go (the steps guarded
+    # `runner.environment == 'self-hosted'`); on a GitHub-hosted runner it
+    # builds the toolchain image and runs the target in it, as before.
+    runs-on: ${{ ((github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)) && fromJSON('["self-hosted","linux","x64","bigdisk"]') || 'ubuntu-latest' }}
     timeout-minutes: 150      # CUSTOMIZE: a shard is expected to take about an hour
     needs: [changes]
     strategy:
@@ -629,6 +646,13 @@ jobs:
           exit "$found"
 
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        if: runner.environment == 'github-hosted'
+
+      - name: Check out (bigdisk pool)
+        if: runner.environment == 'self-hosted'
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
 
       - name: Validate the merge result, not the head alone
         run: .github/scripts/ci-merge-base.sh "${{ github.event_name }}" "${{ github.base_ref }}" "${{ github.event.pull_request.base.sha }}"
@@ -641,7 +665,7 @@ jobs:
           df -h /
 
       - name: Build the toolchain image
-        if: ${{ env.DOCS_ONLY != 'true' }}
+        if: ${{ runner.environment == 'github-hosted' && env.DOCS_ONLY != 'true' }}
         run: |
           ( umask 077; : > "$RUNNER_TEMP/gomodauth.env" )
           make docker-build-toolchain-image MODULE_ENV_FILE="$RUNNER_TEMP/gomodauth.env"
@@ -649,15 +673,39 @@ jobs:
           echo "TOOLCHAIN_IMAGE=$(make -s toolchain-image)" >> "$GITHUB_ENV"
 
       - name: make coverage-shard
-        if: ${{ !cancelled() && env.TOOLCHAIN_IMAGE != '' && env.DOCS_ONLY != 'true' }}
+        if: ${{ !cancelled() && runner.environment == 'github-hosted' && env.TOOLCHAIN_IMAGE != '' && env.DOCS_ONLY != 'true' }}
         run: |
           profile="coverage-shard-$SHARD-of-$UNIT_SHARDS.out"
           scripts/in-toolchain-image.sh "$TOOLCHAIN_IMAGE" \
             "make coverage-shard SHARD=$SHARD SHARDS=$UNIT_SHARDS RACE_TIMEOUT=$RACE_TIMEOUT GO_BUILD_TAGS='$GO_BUILD_TAGS' 1>&2 && cat coverage/$profile" \
             > "$profile"
 
+      # The pool has no toolchain image, so Go comes from setup-go, at the
+      # image's version (GO_VERSION above). No other tool is installed: every
+      # target this job runs needs only go, git, make and a POSIX shell.
+      - name: Set up Go (bigdisk pool)
+        if: ${{ runner.environment == 'self-hosted' && env.DOCS_ONLY != 'true' }}
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      # The same target natively. It writes coverage/<profile>; the upload
+      # below reads the profile at the top level, where the hosted step puts it.
+      - name: make coverage-shard (bigdisk pool, native)
+        if: ${{ !cancelled() && runner.environment == 'self-hosted' && env.DOCS_ONLY != 'true' }}
+        # The toolchain image's module settings (Dockerfile ENV), except that
+        # modules come from proxy.golang.org instead of the image's offline cache.
+        env:
+          GOFLAGS: -mod=readonly
+          GOWORK: 'off'
+          GOPROXY: https://proxy.golang.org
+        run: |
+          profile="coverage-shard-$SHARD-of-$UNIT_SHARDS.out"
+          make coverage-shard SHARD="$SHARD" SHARDS="$UNIT_SHARDS" RACE_TIMEOUT="$RACE_TIMEOUT" GO_BUILD_TAGS="$GO_BUILD_TAGS"
+          cp "coverage/$profile" "$profile"
+
       - name: Upload the shard's coverage profile
-        if: ${{ !cancelled() && env.TOOLCHAIN_IMAGE != '' && env.DOCS_ONLY != 'true' }}
+        if: ${{ !cancelled() && (env.TOOLCHAIN_IMAGE != '' || runner.environment == 'self-hosted') && env.DOCS_ONLY != 'true' }}
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
           name: coverage-shard-${{ matrix.shard }}
@@ -676,7 +724,13 @@ jobs:
   # leaves this job skipped and CI Gate fails on it.
   coverage:
     name: Coverage gate [merged unit shards]
-    runs-on: ubuntu-latest
+    # Same-repo pull requests and pushes to main run on the self-hosted
+    # bigdisk pool; a fork pull request stays on ubuntu-latest. The pool is
+    # a single-use container with no Docker, no sudo and no apt, so there the
+    # job runs its make target natively under setup-go (the steps guarded
+    # `runner.environment == 'self-hosted'`); on a GitHub-hosted runner it
+    # builds the toolchain image and runs the target in it, as before.
+    runs-on: ${{ ((github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)) && fromJSON('["self-hosted","linux","x64","bigdisk"]') || 'ubuntu-latest' }}
     timeout-minutes: 60
     needs: [changes, unit]
     env:
@@ -702,6 +756,13 @@ jobs:
           exit "$found"
 
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        if: runner.environment == 'github-hosted'
+
+      - name: Check out (bigdisk pool)
+        if: runner.environment == 'self-hosted'
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
 
       # The report reads the source the shards tested: the same merge result.
       - name: Validate the merge result, not the head alone
@@ -715,7 +776,7 @@ jobs:
           df -h /
 
       - name: Build the toolchain image
-        if: ${{ env.DOCS_ONLY != 'true' }}
+        if: ${{ runner.environment == 'github-hosted' && env.DOCS_ONLY != 'true' }}
         run: |
           ( umask 077; : > "$RUNNER_TEMP/gomodauth.env" )
           make docker-build-toolchain-image MODULE_ENV_FILE="$RUNNER_TEMP/gomodauth.env"
@@ -731,8 +792,27 @@ jobs:
           merge-multiple: true
 
       - name: make coverage-merge (the threshold)
-        if: ${{ !cancelled() && env.TOOLCHAIN_IMAGE != '' && env.DOCS_ONLY != 'true' }}
+        if: ${{ !cancelled() && runner.environment == 'github-hosted' && env.TOOLCHAIN_IMAGE != '' && env.DOCS_ONLY != 'true' }}
         run: scripts/in-toolchain-image.sh "$TOOLCHAIN_IMAGE" "make coverage-merge SHARDS=$UNIT_SHARDS COVERAGE_THRESHOLD=$COVERAGE_THRESHOLD"
+
+      # The pool has no toolchain image, so Go comes from setup-go, at the
+      # image's version (GO_VERSION above). No other tool is installed: every
+      # target this job runs needs only go, git, make and a POSIX shell.
+      - name: Set up Go (bigdisk pool)
+        if: ${{ runner.environment == 'self-hosted' && env.DOCS_ONLY != 'true' }}
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: make coverage-merge (the threshold; bigdisk pool, native)
+        if: ${{ !cancelled() && runner.environment == 'self-hosted' && env.DOCS_ONLY != 'true' }}
+        # The toolchain image's module settings (Dockerfile ENV), except that
+        # modules come from proxy.golang.org instead of the image's offline cache.
+        env:
+          GOFLAGS: -mod=readonly
+          GOWORK: 'off'
+          GOPROXY: https://proxy.golang.org
+        run: make coverage-merge SHARDS="$UNIT_SHARDS" COVERAGE_THRESHOLD="$COVERAGE_THRESHOLD"
 
       - name: Tear down
         if: always()
@@ -744,7 +824,13 @@ jobs:
   # one job holds them; they used to share the unsharded run's hour with it.
   unit-passes:
     name: Unit tests [checks, Go SDK, tag passes, tooling]
-    runs-on: ubuntu-latest
+    # Same-repo pull requests and pushes to main run on the self-hosted
+    # bigdisk pool; a fork pull request stays on ubuntu-latest. The pool is
+    # a single-use container with no Docker, no sudo and no apt, so there the
+    # job runs its make target natively under setup-go (the steps guarded
+    # `runner.environment == 'self-hosted'`); on a GitHub-hosted runner it
+    # builds the toolchain image and runs the target in it, as before.
+    runs-on: ${{ ((github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)) && fromJSON('["self-hosted","linux","x64","bigdisk"]') || 'ubuntu-latest' }}
     timeout-minutes: 180
     needs: [changes]
     env:
@@ -770,6 +856,13 @@ jobs:
           exit "$found"
 
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        if: runner.environment == 'github-hosted'
+
+      - name: Check out (bigdisk pool)
+        if: runner.environment == 'self-hosted'
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
 
       - name: Validate the merge result, not the head alone
         run: .github/scripts/ci-merge-base.sh "${{ github.event_name }}" "${{ github.base_ref }}" "${{ github.event.pull_request.base.sha }}"
@@ -782,7 +875,7 @@ jobs:
           df -h /
 
       - name: Build the toolchain image
-        if: ${{ env.DOCS_ONLY != 'true' }}
+        if: ${{ runner.environment == 'github-hosted' && env.DOCS_ONLY != 'true' }}
         run: |
           ( umask 077; : > "$RUNNER_TEMP/gomodauth.env" )
           make docker-build-toolchain-image MODULE_ENV_FILE="$RUNNER_TEMP/gomodauth.env"
@@ -790,8 +883,27 @@ jobs:
           echo "TOOLCHAIN_IMAGE=$(make -s toolchain-image)" >> "$GITHUB_ENV"
 
       - name: make coverage-passes
-        if: ${{ !cancelled() && env.TOOLCHAIN_IMAGE != '' && env.DOCS_ONLY != 'true' }}
+        if: ${{ !cancelled() && runner.environment == 'github-hosted' && env.TOOLCHAIN_IMAGE != '' && env.DOCS_ONLY != 'true' }}
         run: scripts/in-toolchain-image.sh "$TOOLCHAIN_IMAGE" "make coverage-passes GO_BUILD_TAGS='$GO_BUILD_TAGS'"
+
+      # The pool has no toolchain image, so Go comes from setup-go, at the
+      # image's version (GO_VERSION above). No other tool is installed: every
+      # target this job runs needs only go, git, make and a POSIX shell.
+      - name: Set up Go (bigdisk pool)
+        if: ${{ runner.environment == 'self-hosted' && env.DOCS_ONLY != 'true' }}
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: make coverage-passes (bigdisk pool, native)
+        if: ${{ !cancelled() && runner.environment == 'self-hosted' && env.DOCS_ONLY != 'true' }}
+        # The toolchain image's module settings (Dockerfile ENV), except that
+        # modules come from proxy.golang.org instead of the image's offline cache.
+        env:
+          GOFLAGS: -mod=readonly
+          GOWORK: 'off'
+          GOPROXY: https://proxy.golang.org
+        run: make coverage-passes GO_BUILD_TAGS="$GO_BUILD_TAGS"
 
       - name: Tear down
         if: always()
@@ -895,11 +1007,21 @@ jobs:
   # A source check with grep, not a stage: it runs on the runner's shell.
   arch-gates:
     name: Architecture Gates
-    runs-on: ubuntu-latest
+    # Same-repo pull requests and pushes to main run on the self-hosted
+    # bigdisk pool; a fork pull request stays on ubuntu-latest. The check is
+    # grep and sed only, so it needs no toolchain on either runner.
+    runs-on: ${{ ((github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)) && fromJSON('["self-hosted","linux","x64","bigdisk"]') || 'ubuntu-latest' }}
     env:
       OBJSTORE_SEAMS: 'pkg/backup/|pkg/catalog/backend_manager\.go|pkg/config/storage\.go|pkg/security/storage_adapter\.go'      # CUSTOMIZE
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        if: runner.environment == 'github-hosted'
+
+      - name: Check out (bigdisk pool)
+        if: runner.environment == 'self-hosted'
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
 
       - name: No direct go-objstore import outside the storage seam
         run: |
@@ -924,7 +1046,10 @@ jobs:
   # (v1.9, devops.md §8a: the alpha regime).
   ci-gate:
     name: CI Gate
-    runs-on: ubuntu-latest
+    # CA m2475 (2h): the gate runs on the self-hosted bigdisk pool (main pushes
+    # and same-repo PRs), so it never waits in the hosted queue and always
+    # reports; it needs no Docker. Fork PRs stay on ubuntu-latest.
+    runs-on: ${{ ((github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)) && fromJSON('["self-hosted","linux","x64","bigdisk"]') || 'ubuntu-latest' }}
     if: always()
     # CUSTOMIZE: the repo's job list. Add every CUSTOMIZE job here AND as a
     # check line below; remove none of the template's jobs.

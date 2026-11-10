@@ -1,230 +1,389 @@
-# worker-image — publish the software-factory worker image to this
-# instance's container registry. Dispatch only.
+# worker-image — build, scan and publish the software-factory worker image to
+# ghcr.io, nightly at 03:00 UTC and on any dispatch.
 #
-# go-quicbaas#1381, first step. The owner's ruling (2026-10-15, relayed by the
-# Company Agent) is that the worker image is published to the registry and the
-# factory launches from the registry. The by-hand rebuild at v0.15.0-alpha is
-# published today, before the nightly build lands. The push credential exists
-# only as this repository's Actions secrets REGISTRY_TOKEN (write:package) and
-# REGISTRY_USER, so the push runs here. Both belong to the repository's own
-# agent identity: images are published under
-# <registry>/<agent>/<image> and pushed with that identity's token,
-# never with the owner's account or credentials (owner ruling, 2026-10-17).
-# The nightly schedule, the in-job build and the Trivy gate arrive with the
-# rest of #1381; the schedule stays off until Infra has verified the first
-# dispatch publish made with the agent identity's credential.
-#
-# WHAT IT DOES. It pushes an image that is already loaded on the runner's host
-# (`make build-worker-image`, then docker save | load onto the hosts) as
-# <registry>/<REGISTRY_USER>/<image>:<tag>, and prints the registry manifest
-# digest from RepoDigests on a line that starts with `WORKER-IMAGE-DIGEST`.
-# A content tag is never overwritten: when <tag> is already in the registry the
-# job pushes nothing and prints the existing digest. A host that does not hold
-# the image fails the job before anything is pushed.
-#
-# WHERE IT RUNS (go-quicbaas#1750). The image is only on the host that built or
-# loaded it, and `ubuntu-latest` hands the job to any general runner, so a
-# publish could land on a host without the image and fail. The `runner` input
-# names a runner label carried only by the build host's runner; the publish job
-# runs there. Left empty, the job runs on `ubuntu-latest` as before.
-#
-# The job reaches the host's Docker daemon through the socket the runner mounts
-# into every job container (go-quicbaas#1168 tracks that exposure). Login uses a
-# throwaway DOCKER_CONFIG that is removed when the step ends, so the credential
-# is never written to the host's docker config.
-#
-# MOVING `current`. With the `current` input set to a digest, the job publishes
-# nothing and moves <registry>/<REGISTRY_USER>/<image>:current to that digest.
-# It fetches the manifest by digest, refuses a digest the registry does not
-# hold or a manifest whose bytes do not hash to it, and PUTs those same bytes
-# under `current`, so the tag can only ever name an image that was already
-# published. It needs no Docker daemon: it talks to the registry's v2 API with
-# a bearer token issued for REGISTRY_TOKEN, passed to curl on stdin so neither
-# credential is in a process's argv. It prints the digest `current` named
-# before the move (the rollback target) and, once the registry reports the new
-# one, a line that starts with `WORKER-IMAGE-CURRENT`.
-#
-# WHO RUNS IT. The coordinator, once per image:
-#   POST /repos/{owner}/{repo}/actions/workflows/worker-image.yml/dispatches
-#        {"ref":"main","inputs":{"image":"<image>","tag":"<tag>","runner":"<build host label>"}}
-# then pulls <registry>/<REGISTRY_USER>/<image>@<digest> on every node and
-# checks that each host holds TAG@digest. To move `current`, once per image:
-#        {"ref":"main","inputs":{"image":"<image>","current":"sha256:<hex>"}}
-# and Infra verifies that every host pulls :current at that digest.
+# build-publish builds the image with exactly the versions the repository
+# locks (G3): Claude Code, Codex and the Gemini CLI from
+# deployments/agents/software-factory-worker/versions.lock, and Go, gh and the
+# rest of the toolchain from pkg/version/toolchain.mk, both read by `make
+# build-worker-image`; nothing is taken from "latest". The Debian base packages
+# are upgraded in the Dockerfile on every build. The tag is the content tag plus
+# the UTC build date, <version>-cc<claude-code>-cx<codex>-n<YYYYMMDD>, so each
+# night publishes a fresh image and a rerun the same day pushes nothing: a
+# published tag is never pushed again. The push goes to ghcr.io with the job's
+# own GITHUB_TOKEN under `packages: write` (G1: no PAT, no other secret) via
+# `make push-worker-image`, whose Trivy gate blocks the push. Before the push,
+# two Trivy secret scans, one of the built image and one of each of its layer
+# tarballs, fail the job on a secret of any severity; the image scan also
+# covers the image config, and the config JSON is scanned with the layers. The
+# job fails before the build if any DEVCACHE_* variable is set, and both make
+# calls pass the dev-cache args empty. The image is published BY DIGEST: the
+# digest push-worker-image prints is the job's output, the `WORKER-IMAGE-DIGEST`
+# log line and the `worker-image-digest` artifact, each with the locked
+# versions and the CLIs' npm integrity sums. post-digest then posts that digest
+# to the run summary and as its own output. This workflow does not move
+# `current`. Once the digest is known, an anonymous lookup of it must be
+# refused, or the job fails: the package stays private. The nightly schedule is
+# an owner exception to the no-`schedule:` workflow rule.
 name: worker-image
 
 on:
+  schedule:
+    - cron: '0 3 * * *'
+  # A dispatch builds the same locked versions; change versions.lock by PR.
   workflow_dispatch:
-    inputs:
-      image:
-        description: "Image repository name, as built locally (e.g. quicbaas-software-factory-worker)"
-        required: true
-        default: quicbaas-software-factory-worker
-      tag:
-        description: "Content tag (<ver>-cc<cc>-cx<cx>-go<go>-xt<xt>); leave empty when moving current"
-        required: false
-        default: ""
-      current:
-        description: "Move the current tag to this already published digest (sha256:<64 hex>) instead of publishing"
-        required: false
-        default: ""
-      runner:
-        description: "Runner label of the host that holds the image; empty runs on ubuntu-latest"
-        required: false
-        default: ""
 
 permissions:
   contents: read
 
 jobs:
-  publish:
-    name: Publish worker image
-    if: ${{ inputs.current == '' }}
-    runs-on: ${{ github.event.inputs.runner || 'ubuntu-latest' }}
-    timeout-minutes: 60
-    steps:
-      - name: Push and report the digest
-        env:
-          REGISTRY_TOKEN: ${{ secrets.REGISTRY_TOKEN }}
-          REGISTRY_USER: ${{ secrets.REGISTRY_USER }}
-          SERVER_URL: ${{ github.server_url }}
-          IMAGE: ${{ inputs.image }}
-          TAG: ${{ inputs.tag }}
-        run: |
-          set -euo pipefail
-          if [ -z "$IMAGE" ] || [ -z "$TAG" ]; then
-            echo "::error::publishing needs both image and tag"
-            exit 1
-          fi
-          case "$IMAGE$TAG" in
-            *[!A-Za-z0-9._-]*) echo "::error::image and tag take [A-Za-z0-9._-] only"; exit 1 ;;
-          esac
-          if [ -z "$REGISTRY_TOKEN" ] || [ -z "$REGISTRY_USER" ]; then
-            echo "::error::REGISTRY_TOKEN or REGISTRY_USER is not set on this repository"
-            exit 1
-          fi
-          registry="${SERVER_URL#*://}"
-          registry="${registry%/}"
-          repo="${registry}/${REGISTRY_USER}/${IMAGE}"
-          src="${IMAGE}:${TAG}"
-          dst="${repo}:${TAG}"
-
-          if ! docker image inspect "$src" >/dev/null 2>&1; then
-            echo "::error::this runner's host does not hold ${src}; dispatch again"
-            exit 1
-          fi
-
-          DOCKER_CONFIG="$(mktemp -d)"
-          export DOCKER_CONFIG
-          trap 'rm -rf "$DOCKER_CONFIG"; docker image rm "$dst" >/dev/null 2>&1 || true' EXIT
-          printf '%s' "$REGISTRY_TOKEN" | docker login "$registry" -u "$REGISTRY_USER" --password-stdin
-
-          if docker pull "$dst" >/dev/null 2>&1; then
-            echo "${dst} is already in the registry; pushing nothing"
-          else
-            docker tag "$src" "$dst"
-            docker push "$dst"
-          fi
-
-          digest="$(docker image inspect --format '{{range .RepoDigests}}{{println .}}{{end}}' "$dst" \
-            | grep -F "${repo}@" | head -n 1 | cut -d@ -f2)"
-          if [ -z "$digest" ]; then
-            echo "::error::no registry digest for ${dst}"
-            exit 1
-          fi
-          echo "WORKER-IMAGE-DIGEST ${IMAGE}:${TAG} ${digest}"
-
-  move-current:
-    name: Move the current tag
-    if: ${{ inputs.current != '' }}
+  build-publish:
+    name: Build, scan and publish the worker image (ghcr.io)
+    if: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' }}
+    # When the bigdisk-docker pool is live, switch to: runs-on: [self-hosted, linux, x64, bigdisk-docker]
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 150
+    permissions:
+      contents: read
+      packages: write
+    concurrency: { group: worker-image-build-publish, cancel-in-progress: false }
+    outputs:
+      ref: ${{ steps.record.outputs.ref }}
+      digest: ${{ steps.record.outputs.digest }}
+      published: ${{ steps.record.outputs.published }}
+      cc: ${{ steps.resolve.outputs.cc }}
+      cx: ${{ steps.resolve.outputs.cx }}
+      go: ${{ steps.resolve.outputs.go }}
+      gh: ${{ steps.resolve.outputs.gh }}
+      tag: ${{ steps.resolve.outputs.tag }}
+    env:
+      IMAGE: quicbaas-software-factory-worker
     steps:
-      - name: Point current at a published digest
-        env:
-          REGISTRY_TOKEN: ${{ secrets.REGISTRY_TOKEN }}
-          REGISTRY_USER: ${{ secrets.REGISTRY_USER }}
-          SERVER_URL: ${{ github.server_url }}
-          IMAGE: ${{ inputs.image }}
-          TAG: ${{ inputs.tag }}
-          DIGEST: ${{ inputs.current }}
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+
+      - name: Free runner disk
+        if: ${{ runner.environment == 'github-hosted' }}
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc
+          docker image prune --all --force
+          df -h /
+
+      - name: Read the locked versions and the nightly tag
+        id: resolve
         run: |
           set -euo pipefail
-          if [ -n "$TAG" ]; then
-            echo "::error::give either tag (publish) or current (move), not both"
+          lock=deployments/agents/software-factory-worker/versions.lock
+          toolchain=pkg/version/toolchain.mk
+          pin() { local v; v="$(sed -n "s/^$2$3//p" "$1" | tail -n 1)"; [[ "$v" =~ $4 ]] || { echo "::error::$1 has no valid $2 (got '${v}')" >&2; return 1; }; printf '%s' "$v"; }
+          semver='^[0-9]+\.[0-9]+\.[0-9]+$'
+          cc="$(pin "$lock" CLAUDE_CODE_VERSION = "$semver")"
+          cx="$(pin "$lock" CODEX_VERSION = "$semver")"
+          gm="$(pin "$lock" GEMINI_CLI_VERSION = "$semver")"
+          go="$(pin "$toolchain" GO_VERSION ' := ' "$semver")"
+          gh="$(pin "$toolchain" GH_VERSION ' := ' '^v[0-9]+\.[0-9]+\.[0-9]+$')"
+          integrity() { local v; v="$(npm view "$1" dist.integrity)"; [[ "$v" =~ ^sha512-[A-Za-z0-9+/]+={0,2}$ ]] || { echo "::error::$1 has no sha512 integrity on npm" >&2; return 1; }; printf '%s' "$v"; }
+          cc_int="$(integrity "@anthropic-ai/claude-code@${cc}")"
+          cc_x64_int="$(integrity "@anthropic-ai/claude-code-linux-x64@${cc}")"
+          cx_int="$(integrity "@openai/codex@${cx}")"
+          cx_x64_int="$(integrity "@openai/codex@${cx}-linux-x64")"
+          gm_int="$(integrity "@google/gemini-cli@${gm}")"
+          # The Makefile's content tag, <VERSION>-cc<claude-code>-cx<codex>, plus
+          # the UTC build date, so each night's rebuild (fresh base packages)
+          # is a new tag and a same-day rerun finds its tag published.
+          tag="$(tr -d '\n' < VERSION)-cc${cc}-cx${cx}-n$(date -u +%Y%m%d)"
+          repo="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/${IMAGE}"
+          printf 'cc=%s\ncx=%s\ngo=%s\ngh=%s\ntag=%s\nrepo=%s\n' "$cc" "$cx" "$go" "$gh" "$tag" "$repo" >> "$GITHUB_OUTPUT"
+          printf 'gm=%s\ncc_int=%s\ncc_x64_int=%s\ncx_int=%s\ncx_x64_int=%s\ngm_int=%s\n' \
+            "$gm" "$cc_int" "$cc_x64_int" "$cx_int" "$cx_x64_int" "$gm_int" >> "$GITHUB_OUTPUT"
+
+      - name: Log in to ghcr.io
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          export DOCKER_CONFIG="$RUNNER_TEMP/docker-config"
+          ( umask 077; mkdir -p "$DOCKER_CONFIG" )
+          echo "DOCKER_CONFIG=$DOCKER_CONFIG" >> "$GITHUB_ENV"
+          printf '%s' "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+
+      - name: Is the content tag already published?
+        id: existing
+        env:
+          REPO: ${{ steps.resolve.outputs.repo }}
+          TAG: ${{ steps.resolve.outputs.tag }}
+        run: |
+          set -euo pipefail
+          err="$(mktemp)"
+          if manifest="$(docker buildx imagetools inspect "${REPO}:${TAG}" --format '{{json .Manifest}}' 2>"$err")"; then
+            digest="$(printf '%s' "$manifest" | jq -r .digest)"
+            [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "::error::${REPO}:${TAG} exists but names no sha256 digest"; exit 1; }
+            echo "${REPO}:${TAG} is already published at ${digest}; pushing nothing"
+            { echo "exists=true"; echo "digest=$digest"; } >> "$GITHUB_OUTPUT"
+          elif grep -qiE 'not found|manifest unknown|name unknown' "$err"; then
+            cat "$err" >&2
+            echo "${REPO}:${TAG} is not published yet"
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          else
+            cat "$err" >&2
+            echo "::error::could not tell whether ${REPO}:${TAG} is already published; pushing nothing"
             exit 1
           fi
-          case "$IMAGE" in
-            '' | *[!A-Za-z0-9._-]*) echo "::error::image takes [A-Za-z0-9._-] only"; exit 1 ;;
-          esac
-          hex="${DIGEST#sha256:}"
-          if [ "$hex" = "$DIGEST" ] || [ "${#hex}" -ne 64 ]; then
-            echo "::error::current must be sha256:<64 lowercase hex>"
+
+      - name: No dev-cache build args
+        id: devcache-empty
+        if: ${{ steps.existing.outputs.exists != 'true' }}
+        run: |
+          set -euo pipefail
+          bad=""
+          for v in $(compgen -e); do
+            case "$v" in DEVCACHE_*) if [ -n "${!v}" ]; then bad="$bad $v"; fi ;; esac
+          done
+          if [ -n "$bad" ]; then
+            echo "::error::a published image is never built through the dev caches; set:$bad"
             exit 1
           fi
-          case "$hex" in
-            *[!0-9a-f]*) echo "::error::current must be sha256:<64 lowercase hex>"; exit 1 ;;
-          esac
-          if [ -z "$REGISTRY_TOKEN" ] || [ -z "$REGISTRY_USER" ]; then
-            echo "::error::REGISTRY_TOKEN or REGISTRY_USER is not set on this repository"
+          echo "no DEVCACHE_* build arg is set"
+
+      - name: Build the worker image
+        if: ${{ steps.existing.outputs.exists != 'true' }}
+        env:
+          CC: ${{ steps.resolve.outputs.cc }}
+          CX: ${{ steps.resolve.outputs.cx }}
+          TAG: ${{ steps.resolve.outputs.tag }}
+        run: |
+          set -euo pipefail
+          make build-worker-image CLAUDE_CODE_VERSION="$CC" CODEX_VERSION="$CX" WORKER_IMAGE_TAG="$TAG" WORKER_IMAGE_UID=1000 WORKER_IMAGE_GID=1000 DEVCACHE_GOPROXY= DEVCACHE_NPM_REGISTRY=
+
+      - name: Install Trivy
+        if: ${{ steps.existing.outputs.exists != 'true' }}
+        run: |
+          set -euo pipefail
+          GOBIN="$RUNNER_TEMP/bin" make install-trivy
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+
+      - name: Scan the image for secrets
+        id: secret-scan
+        if: ${{ steps.existing.outputs.exists != 'true' }}
+        env:
+          TAG: ${{ steps.resolve.outputs.tag }}
+        run: |
+          set -euo pipefail
+          trivy image --scanners secret --image-config-scanners secret --exit-code 1 --no-progress "${IMAGE}:${TAG}"
+
+      - name: Scan every layer tarball for secrets
+        id: layer-scan
+        if: ${{ steps.existing.outputs.exists != 'true' }}
+        env:
+          TAG: ${{ steps.resolve.outputs.tag }}
+        run: |
+          set -euo pipefail
+          work="$RUNNER_TEMP/image-layers"
+          rm -rf "$work"; mkdir -p "$work/image" "$work/layers"
+          trap 'rm -rf "$work"' EXIT
+          docker save "${IMAGE}:${TAG}" -o "$work/image.tar"
+          tar -xf "$work/image.tar" -C "$work/image"
+          layers="$(jq -r '.[0].Layers[]' "$work/image/manifest.json")"
+          if [ -z "$layers" ]; then
+            echo "::error::${IMAGE}:${TAG} lists no layer tarballs in manifest.json"
             exit 1
           fi
-          base="${SERVER_URL%/}"
-          repo="${REGISTRY_USER}/${IMAGE}"
-          manifests="${base}/v2/${repo}/manifests"
-          accept='application/vnd.oci.image.index.v1+json, application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.list.v2+json, application/vnd.docker.distribution.manifest.v2+json'
+          i=0
+          while IFS= read -r layer; do
+            i=$((i + 1))
+            mkdir -p "$work/layers/$i"
+            tar -xf "$work/image/$layer" -C "$work/layers/$i" --no-same-owner --no-same-permissions
+          done <<< "$layers"
+          config="$(jq -r '.[0].Config' "$work/image/manifest.json")"
+          if [ -z "$config" ] || [ "$config" = "null" ]; then
+            echo "::error::${IMAGE}:${TAG} names no image config in manifest.json"
+            exit 1
+          fi
+          mkdir -p "$work/layers/config"
+          cp "$work/image/$config" "$work/layers/config/config.json"
+          trivy fs --scanners secret --exit-code 1 --no-progress "$work/layers"
+          echo "scanned ${i} layer tarballs of ${IMAGE}:${TAG} for secrets"
+
+      - name: The package is not public before the push
+        id: private-before
+        if: ${{ steps.existing.outputs.exists != 'true' }}
+        env:
+          REPO: ${{ steps.resolve.outputs.repo }}
+        run: |
+          set -euo pipefail
+          if ! [[ "$REPO" =~ ^ghcr\.io/[a-z0-9._/-]+$ ]]; then
+            echo "::error::REPO is not a ghcr.io repository: ${REPO}"
+            exit 1
+          fi
+          path="${REPO#ghcr.io/}"
           work="$(mktemp -d)"
           trap 'rm -rf "$work"' EXIT
+          if ! code="$(curl -sS -o "$work/token.json" -w '%{http_code}' "https://ghcr.io/token?service=ghcr.io&scope=repository:${path}:pull")"; then
+            echo "::error::could not ask ghcr.io for an anonymous pull token for ${REPO}; pushing nothing"
+            exit 1
+          fi
+          case "$code" in
+            401|403)
+              echo "${REPO} is not public: ghcr.io refused an anonymous pull token (HTTP ${code})"
+              exit 0
+              ;;
+            200) ;;
+            *)
+              echo "::error::could not tell whether ${REPO} is public (token HTTP ${code}); pushing nothing"
+              exit 1
+              ;;
+          esac
+          anon="$(jq -r '.token // empty' "$work/token.json")"
+          if [ -z "$anon" ]; then
+            echo "::error::ghcr.io answered HTTP 200 without an anonymous pull token for ${REPO}; pushing nothing"
+            exit 1
+          fi
+          ( umask 077; printf 'Authorization: Bearer %s\n' "$anon" > "$work/hdr" )
+          if ! code="$(curl -sS -o /dev/null -w '%{http_code}' -H @"$work/hdr" "https://ghcr.io/v2/${path}/tags/list")"; then
+            echo "::error::could not list the tags of ${REPO} anonymously; pushing nothing"
+            exit 1
+          fi
+          case "$code" in
+            200)
+              echo "::error::${REPO} can be read without credentials; the package must be private, and nothing is pushed"
+              exit 1
+              ;;
+            401|403|404)
+              echo "${REPO} is not public: an anonymous tag listing got HTTP ${code}"
+              ;;
+            *)
+              echo "::error::could not tell whether ${REPO} is public (tags HTTP ${code}); pushing nothing"
+              exit 1
+              ;;
+          esac
 
-          # The credentials reach curl as config on stdin, never as arguments.
-          printf 'user = "%s:%s"\n' "$REGISTRY_USER" "$REGISTRY_TOKEN" \
-            | curl -K - -fsS -o "$work/token.json" "${base}/v2/token?scope=repository:${repo}:pull,push"
-          bearer="$(sed -n 's/.*"token": *"\([^"]*\)".*/\1/p' "$work/token.json")"
-          rm -f "$work/token.json"
-          if [ -z "$bearer" ]; then
-            echo "::error::the registry issued no token for ${repo}"
-            exit 1
-          fi
-          registry() {
-            printf 'header = "Authorization: Bearer %s"\n' "$bearer" | curl -K - -sS "$@"
-          }
-          header() {
-            sed -n "s/^$1: *//Ip" "$2" | tr -d '\r' | tail -n 1
-          }
+      - name: Scan, then push
+        id: push
+        if: ${{ steps.existing.outputs.exists != 'true' }}
+        env:
+          CC: ${{ steps.resolve.outputs.cc }}
+          CX: ${{ steps.resolve.outputs.cx }}
+          TAG: ${{ steps.resolve.outputs.tag }}
+          REPO: ${{ steps.resolve.outputs.repo }}
+        run: |
+          set -euo pipefail
+          log="$RUNNER_TEMP/push-worker-image.log"
+          make push-worker-image CLAUDE_CODE_VERSION="$CC" CODEX_VERSION="$CX" WORKER_IMAGE_TAG="$TAG" \
+            WORKER_IMAGE_UID=1000 WORKER_IMAGE_GID=1000 DEVCACHE_GOPROXY= DEVCACHE_NPM_REGISTRY= \
+            WORKER_IMAGE_REGISTRY="$REPO" TRIVY="$RUNNER_TEMP/bin/trivy" 2>&1 | tee "$log"
+          ref_line="$(grep '^WORKER_IMAGE_REF=' "$log" | tail -n 1 || true)"
+          digest="${ref_line##*@}"
+          [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "::error::push-worker-image printed no WORKER_IMAGE_REF=...@sha256:<hex> line"; exit 1; }
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
 
-          code="$(registry -o "$work/manifest" -D "$work/headers" -w '%{http_code}' \
-            -H "Accept: ${accept}" "${manifests}/${DIGEST}")"
-          if [ "$code" != 200 ]; then
-            echo "::error::the registry does not hold ${repo}@${DIGEST} (HTTP ${code}); refusing to move current"
+      - name: Record the digest
+        id: record
+        if: ${{ always() && steps.resolve.outcome == 'success' }}
+        env:
+          REPO: ${{ steps.resolve.outputs.repo }}
+          TAG: ${{ steps.resolve.outputs.tag }}
+          CC: ${{ steps.resolve.outputs.cc }}
+          CX: ${{ steps.resolve.outputs.cx }}
+          GM: ${{ steps.resolve.outputs.gm }}
+          GO: ${{ steps.resolve.outputs.go }}
+          GH: ${{ steps.resolve.outputs.gh }}
+          CC_INT: ${{ steps.resolve.outputs.cc_int }}
+          CC_X64_INT: ${{ steps.resolve.outputs.cc_x64_int }}
+          CX_INT: ${{ steps.resolve.outputs.cx_int }}
+          CX_X64_INT: ${{ steps.resolve.outputs.cx_x64_int }}
+          GM_INT: ${{ steps.resolve.outputs.gm_int }}
+          EXISTING_DIGEST: ${{ steps.existing.outputs.digest }}
+          PUSHED_DIGEST: ${{ steps.push.outputs.digest }}
+        run: |
+          set -euo pipefail
+          if [ -n "$PUSHED_DIGEST" ]; then
+            digest="$PUSHED_DIGEST"; published=true
+          elif [ -n "$EXISTING_DIGEST" ]; then
+            digest="$EXISTING_DIGEST"; published=false
+          else
+            echo "::error::no digest: the tag was not found published and nothing was pushed"
             exit 1
           fi
-          fetched="sha256:$(sha256sum "$work/manifest" | cut -d' ' -f1)"
-          if [ "$fetched" != "$DIGEST" ]; then
-            echo "::error::the manifest served for ${DIGEST} hashes to ${fetched}; refusing to move current"
+          ref="${REPO}:${TAG}@${digest}"
+          line="WORKER-IMAGE-DIGEST ${ref} published=${published}"
+          versions="$(printf 'claude-code=%s integrity=%s\nclaude-code-linux-x64=%s integrity=%s\ncodex=%s integrity=%s\ncodex-linux-x64=%s integrity=%s\ngemini-cli=%s integrity=%s\ngo=%s\ngh=%s' \
+            "$CC" "$CC_INT" "$CC" "$CC_X64_INT" "$CX" "$CX_INT" "$CX" "$CX_X64_INT" "$GM" "$GM_INT" "$GO" "$GH")"
+          echo "$line"
+          echo "$versions"
+          printf '%s\n\n```\n%s\n```\n' "$line" "$versions" >> "$GITHUB_STEP_SUMMARY"
+          printf '%s\n%s\n' "$line" "$versions" > "$RUNNER_TEMP/worker-image-digest.txt"
+          { echo "ref=$ref"; echo "digest=$digest"; echo "published=$published"; } >> "$GITHUB_OUTPUT"
+
+      - name: The package stays private
+        id: private
+        if: ${{ steps.record.outcome == 'success' }}
+        env:
+          REPO: ${{ steps.resolve.outputs.repo }}
+          DIGEST: ${{ steps.record.outputs.digest }}
+        run: |
+          set -euo pipefail
+          anon="$(mktemp -d)"; err="$(mktemp)"
+          trap 'rm -rf "$anon" "$err"' EXIT
+          if DOCKER_CONFIG="$anon" docker buildx imagetools inspect "${REPO}@${DIGEST}" >/dev/null 2>"$err"; then
+            echo "::error::${REPO}@${DIGEST} can be pulled without credentials; the package must be private"
             exit 1
-          fi
-          media="$(header content-type "$work/headers")"
-          if [ -z "$media" ]; then
-            echo "::error::the registry gave no media type for ${repo}@${DIGEST}"
+          elif grep -qiE '\b(denied|unauthorized|forbidden|401|403)\b|not found|name unknown|manifest unknown' "$err"; then
+            cat "$err" >&2
+            echo "${REPO} is private: an anonymous lookup of ${DIGEST} was refused"
+          else
+            cat "$err" >&2
+            echo "::error::could not tell whether ${REPO} is private"
             exit 1
           fi
 
-          registry -o /dev/null -D "$work/before" -I -H "Accept: ${accept}" "${manifests}/current"
-          previous="$(header docker-content-digest "$work/before")"
-          echo "current named ${previous:-nothing} before this move"
+      - name: Upload the digest
+        if: ${{ always() && steps.record.outcome == 'success' }}
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: worker-image-digest
+          path: ${{ runner.temp }}/worker-image-digest.txt
+          retention-days: 90
+          if-no-files-found: error
 
-          code="$(registry -o "$work/put" -w '%{http_code}' -X PUT \
-            -H "Content-Type: ${media}" --data-binary "@$work/manifest" "${manifests}/current")"
-          if [ "$code" != 201 ]; then
-            echo "::error::the registry refused the manifest PUT for ${repo}:current (HTTP ${code})"
-            head -c 2000 "$work/put"
-            exit 1
-          fi
+      - name: Log out of ghcr.io
+        if: ${{ always() }}
+        run: |
+          set -euo pipefail
+          docker logout ghcr.io || true
+          rm -rf "$RUNNER_TEMP/docker-config"
 
-          registry -o /dev/null -D "$work/after" -I -H "Accept: ${accept}" "${manifests}/current"
-          moved="$(header docker-content-digest "$work/after")"
-          if [ "$moved" != "$DIGEST" ]; then
-            echo "::error::${repo}:current names ${moved:-nothing} after the move, not ${DIGEST}"
-            exit 1
-          fi
-          echo "WORKER-IMAGE-CURRENT ${IMAGE}:current ${DIGEST}"
+  # The second job posts the digest build-publish published (or found already
+  # published under the same tag): a run summary and the job's outputs, for a
+  # caller of this workflow to pin the image by digest. It holds no token.
+  post-digest:
+    name: Post the worker image digest
+    needs: build-publish
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions: {}
+    outputs:
+      ref: ${{ steps.post.outputs.ref }}
+      digest: ${{ steps.post.outputs.digest }}
+    steps:
+      - name: Post the digest
+        id: post
+        env:
+          REF: ${{ needs.build-publish.outputs.ref }}
+          DIGEST: ${{ needs.build-publish.outputs.digest }}
+          PUBLISHED: ${{ needs.build-publish.outputs.published }}
+          TAG: ${{ needs.build-publish.outputs.tag }}
+          CC: ${{ needs.build-publish.outputs.cc }}
+          CX: ${{ needs.build-publish.outputs.cx }}
+          GO: ${{ needs.build-publish.outputs.go }}
+          GH: ${{ needs.build-publish.outputs.gh }}
+        run: |
+          set -euo pipefail
+          [[ "$DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "::error::build-publish output no sha256 digest (got '${DIGEST}')"; exit 1; }
+          [[ "$REF" == *":${TAG}@${DIGEST}" ]] || { echo "::error::build-publish ref '${REF}' does not name ${TAG}@${DIGEST}"; exit 1; }
+          line="WORKER-IMAGE-DIGEST ${REF} published=${PUBLISHED}"
+          echo "$line"
+          {
+            printf '### Worker image\n\n'
+            printf '```\n%s\ndigest=%s\nclaude-code=%s codex=%s go=%s gh=%s\n```\n' "$line" "$DIGEST" "$CC" "$CX" "$GO" "$GH"
+          } >> "$GITHUB_STEP_SUMMARY"
+          { echo "ref=$REF"; echo "digest=$DIGEST"; } >> "$GITHUB_OUTPUT"
