@@ -24,6 +24,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	dberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 // mockPolicyStorage implements PolicyStorage for testing.
@@ -1445,5 +1446,104 @@ func TestPolicyEngine_CacheInvalidation(t *testing.T) {
 	policies = cache.GetAll("tenant1")
 	if len(policies) > 0 {
 		t.Errorf("expected cache to be invalidated after delete, got %d policies", len(policies))
+	}
+}
+
+// testPolicyRepair is a PolicyRepair with a fixed held answer and compile
+// result; it counts its compiles.
+type testPolicyRepair struct {
+	held       bool
+	compileErr error
+	compiles   int
+}
+
+func (r *testPolicyRepair) TenantHeld(string) bool { return r.held }
+
+func (r *testPolicyRepair) CompilePolicy(*Policy) error {
+	r.compiles++
+	return r.compileErr
+}
+
+func TestPolicyEngine_HeldTenantRepair(t *testing.T) {
+	ctx := context.Background()
+	syncErr := errors.New("sync failed")
+	compileErr := errors.New("empty expression")
+	repairCtx := tenantctx.WithPolicyRepair(ctx, "tenant1")
+
+	setup := func(t *testing.T, repair PolicyRepair) (*snapshotPolicyStorage, *PolicyEngine) {
+		t.Helper()
+		storage := &snapshotPolicyStorage{mockPolicyStorage: newMockPolicyStorage()}
+		require.NoError(t, storage.CreatePolicy(ctx, "tenant1", createTestPolicy("tenant1", "p")))
+		engine := NewPolicyEngine(PolicyEngineOptions{Storage: storage, ABACSync: snapshotTestABACSync{err: syncErr}, Repair: repair})
+		return storage, engine
+	}
+	repaired := func() *Policy {
+		p := createTestPolicy("tenant1", "p")
+		p.Metadata.Description = "repaired"
+		return p
+	}
+
+	t.Run("a repair update is kept when the sync fails", func(t *testing.T) {
+		repair := &testPolicyRepair{held: true}
+		storage, engine := setup(t, repair)
+		require.NoError(t, engine.UpdatePolicy(repairCtx, "tenant1", repaired()))
+		assert.Equal(t, 1, repair.compiles)
+		assert.Equal(t, 0, storage.restores)
+		got, err := storage.GetPolicy(ctx, "tenant1", "p")
+		require.NoError(t, err)
+		require.NotNil(t, got)
+		assert.Equal(t, "repaired", got.Metadata.Description)
+	})
+
+	t.Run("a repair delete is kept when the sync fails", func(t *testing.T) {
+		repair := &testPolicyRepair{held: true}
+		storage, engine := setup(t, repair)
+		require.NoError(t, engine.DeletePolicy(repairCtx, "tenant1", "p"))
+		assert.Equal(t, 0, storage.restores)
+		_, stored := storage.policies["tenant1"]["p"]
+		assert.False(t, stored, "the deleted policy stays deleted")
+	})
+
+	t.Run("a repair update that does not compile writes nothing", func(t *testing.T) {
+		repair := &testPolicyRepair{held: true, compileErr: compileErr}
+		storage, engine := setup(t, repair)
+		err := engine.UpdatePolicy(repairCtx, "tenant1", repaired())
+		var invalid *InvalidPolicyError
+		require.True(t, errors.As(err, &invalid), "err = %v", err)
+		assert.Contains(t, invalid.Reason, "empty expression")
+		assert.Equal(t, 0, storage.snapshots)
+		assert.Equal(t, 0, storage.restores)
+		got, err := storage.GetPolicy(ctx, "tenant1", "p")
+		require.NoError(t, err)
+		require.NotNil(t, got)
+		assert.NotEqual(t, "repaired", got.Metadata.Description)
+	})
+
+	otherTenantCtx := tenantctx.WithPolicyRepair(ctx, "tenant2")
+	strict := map[string]struct {
+		ctx    context.Context
+		repair PolicyRepair
+	}{
+		"a tenant that is no longer held": {ctx: repairCtx, repair: &testPolicyRepair{}},
+		"no repair mark":                  {ctx: ctx, repair: &testPolicyRepair{held: true}},
+		"a mark for another tenant":       {ctx: otherTenantCtx, repair: &testPolicyRepair{held: true}},
+		"no PolicyRepair wired":           {ctx: repairCtx, repair: nil},
+	}
+	for name, tc := range strict {
+		t.Run(name+": update is rejected by a failed sync", func(t *testing.T) {
+			storage, engine := setup(t, tc.repair)
+			err := engine.UpdatePolicy(tc.ctx, "tenant1", repaired())
+			assert.ErrorIs(t, err, syncErr)
+			assert.Equal(t, 1, storage.restores)
+			if r, ok := tc.repair.(*testPolicyRepair); ok {
+				assert.Equal(t, 0, r.compiles, "a strict write is not compiled as a repair")
+			}
+		})
+		t.Run(name+": delete is rejected by a failed sync", func(t *testing.T) {
+			storage, engine := setup(t, tc.repair)
+			err := engine.DeletePolicy(tc.ctx, "tenant1", "p")
+			assert.ErrorIs(t, err, syncErr)
+			assert.Equal(t, 1, storage.restores)
+		})
 	}
 }

@@ -20,6 +20,7 @@ import (
 	"time"
 
 	dberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 // RBACAuthorizer is the SINGLE decision point PolicyEngine.Evaluate
@@ -69,6 +70,25 @@ type PolicySimulator interface {
 	// draft policy's own rules only (no other stored policy and no RBAC
 	// fallback participate).
 	Simulate(ctx context.Context, policy *Policy, req *CheckRequest) (*CheckResponse, error)
+}
+
+// PolicyRepair is the seam PolicyEngine uses to let the system admin repair
+// a held tenant's stored policies one at a time. A tenant is held at unseal
+// while any of its stored policies fails to load into the live authorizer,
+// and the sync that follows every policy write fails for as long as one such
+// policy is left, so with several broken policies no single repair could
+// pass it. During a repair the engine checks the one written policy on its
+// own and keeps the write when the sync still fails; the tenant stays held
+// until its unseal checks load the whole set. This interface carries no qrdb
+// dependency into pkg/iam; pkg/server injects the real implementation at
+// composition time.
+type PolicyRepair interface {
+	// TenantHeld reports whether tenantID is closed to requests because its
+	// unseal has not passed its checks.
+	TenantHeld(tenantID string) bool
+	// CompilePolicy returns an error when policy alone would not load into
+	// the live authorizer.
+	CompilePolicy(policy *Policy) error
 }
 
 // PolicySimulatorUnavailableError is returned by SimulatePolicy when no
@@ -203,6 +223,10 @@ func (e *PolicyEngine) GetPolicy(ctx context.Context, tenantID, name string) (*P
 // compensation) and the sync error is returned. A PolicyWriteSnapshotter
 // storage restores its snapshot instead, after a failed storage write too,
 // guarded: only a record still holding what this write stored is put back.
+// The system admin's repair of a held tenant's policy (see PolicyRepair) is
+// the one exception: the policy must compile on its own before anything is
+// written, and the write then stays stored when the sync fails, because
+// another of the tenant's stored policies may still be broken.
 func (e *PolicyEngine) UpdatePolicy(ctx context.Context, tenantID string, policy *Policy) error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -222,6 +246,19 @@ func (e *PolicyEngine) UpdatePolicy(ctx context.Context, tenantID string, policy
 	if policy.Metadata.Tenant != tenantID {
 		return &InvalidPolicyError{
 			Reason: "policy tenant does not match request tenant",
+		}
+	}
+
+	// A repair of a held tenant's policy must compile on its own: the sync
+	// below cannot vouch for it while another stored policy still fails.
+	repair := e.repairing(ctx, tenantID)
+	if repair {
+		if err := e.opts.Repair.CompilePolicy(policy); err != nil {
+			return &InvalidPolicyError{
+				TenantID: tenantID,
+				Name:     policy.Metadata.Name,
+				Reason:   "policy does not compile: " + err.Error(),
+			}
 		}
 	}
 
@@ -267,7 +304,10 @@ func (e *PolicyEngine) UpdatePolicy(ctx context.Context, tenantID string, policy
 		return reject(err)
 	}
 
-	if err := e.syncABAC(ctx); err != nil {
+	// A held tenant's repair stays stored when the sync fails: another of
+	// its stored policies may still be broken, and its unseal checks load
+	// the whole set before the tenant serves a request.
+	if err := e.syncABAC(ctx); err != nil && !repair {
 		return reject(err)
 	}
 
@@ -284,7 +324,10 @@ func (e *PolicyEngine) UpdatePolicy(ctx context.Context, tenantID string, policy
 // write: the deleted policy is re-created in storage (best-effort
 // compensation) and the sync error is returned. A PolicyWriteSnapshotter
 // storage restores its snapshot instead, after a failed storage delete too,
-// guarded: only a record this delete left absent is put back.
+// guarded: only a record this delete left absent is put back. The system
+// admin's delete of a held tenant's policy (see PolicyRepair) is the one
+// exception: it stays deleted when the sync fails, because another of the
+// tenant's stored policies may still be broken.
 func (e *PolicyEngine) DeletePolicy(ctx context.Context, tenantID, name string) error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -301,6 +344,8 @@ func (e *PolicyEngine) DeletePolicy(ctx context.Context, tenantID, name string) 
 			Name:     name,
 		}
 	}
+
+	repair := e.repairing(ctx, tenantID)
 
 	// Snapshot every record the delete may touch; a failed snapshot deletes nothing.
 	var restore func(context.Context) error
@@ -332,7 +377,10 @@ func (e *PolicyEngine) DeletePolicy(ctx context.Context, tenantID, name string) 
 		return reject(err)
 	}
 
-	if err := e.syncABAC(ctx); err != nil {
+	// A held tenant's repair stays stored when the sync fails: another of
+	// its stored policies may still be broken, and its unseal checks load
+	// the whole set before the tenant serves a request.
+	if err := e.syncABAC(ctx); err != nil && !repair {
 		return reject(err)
 	}
 
@@ -371,6 +419,14 @@ func (e *PolicyEngine) ValidatePolicy(policy *Policy) error {
 	}
 
 	return policy.Validate()
+}
+
+// repairing reports whether a write to tenantID is the system admin's repair
+// of a held tenant's policy: a PolicyRepair is wired, ctx carries the repair
+// mark for exactly that tenant, and the tenant is still held. Only such a
+// write may outlive a failed sync. Callers already hold e.mu.
+func (e *PolicyEngine) repairing(ctx context.Context, tenantID string) bool {
+	return e.opts.Repair != nil && tenantctx.InPolicyRepair(ctx, tenantID) && e.opts.Repair.TenantHeld(tenantID)
 }
 
 // syncABAC drives opts.ABACSync (when configured) to recompute the full
