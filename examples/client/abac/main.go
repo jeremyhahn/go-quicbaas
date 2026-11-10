@@ -625,7 +625,7 @@ func createIPBasedPolicy(ctx context.Context, client quicbaas.Client) (*iam.Poli
 								Type:     iam.ConditionTypeIP,
 								Key:      "source_ip",
 								Operator: iam.ComparisonStartsWith,
-								Value:    "192.168.",
+								Value:    "192.0.2.",
 							},
 							{
 								Type:     iam.ConditionTypeIP,

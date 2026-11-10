@@ -127,12 +127,12 @@ func TestRecoveredHostFromCert_Branches(t *testing.T) {
 // TestSplitHostPortSafe_Branches covers the success and error branches of the
 // splitHostPortSafe wrapper.
 func TestSplitHostPortSafe_Branches(t *testing.T) {
-	host, port, err := splitHostPortSafe("192.168.1.10:8443")
+	host, port, err := splitHostPortSafe("192.0.2.10:8443")
 	if err != nil {
 		t.Fatalf("unexpected error for valid host:port: %v", err)
 	}
-	if host != "192.168.1.10" || port != "8443" {
-		t.Errorf("splitHostPortSafe = (%q, %q), want (192.168.1.10, 8443)", host, port)
+	if host != "192.0.2.10" || port != "8443" {
+		t.Errorf("splitHostPortSafe = (%q, %q), want (192.0.2.10, 8443)", host, port)
 	}
 
 	h, p, err := splitHostPortSafe("missing-port")

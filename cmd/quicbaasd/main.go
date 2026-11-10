@@ -159,7 +159,7 @@ Examples:
 
   # Start with static peer list
   quicbaasd node --node-id 1 --discovery static \
-    --join-addresses "192.168.1.2:63001,192.168.1.3:63002"
+    --join-addresses "192.0.2.2:63001,192.0.2.3:63002"
 
   # Start with DNS discovery
   quicbaasd node --node-id 1 --discovery dns

@@ -4,6 +4,7 @@
 package iam
 
 import (
+	"errors"
 	"testing"
 	"time"
 )
@@ -71,16 +72,67 @@ func TestParseTenantResponse(t *testing.T) {
 
 func TestParseTenantStatus(t *testing.T) {
 	cases := map[string]TenantStatus{
+		"":          TenantStatusUnspecified,
 		"active":    TenantStatusActive,
 		"suspended": TenantStatusSuspended,
 		"pending":   TenantStatusUnspecified,
 		"deleted":   TenantStatusDeleted,
-		"other":     TenantStatusActive,
 	}
 	for in, want := range cases {
-		if got := parseTenantStatus(in); got != want {
-			t.Errorf("parseTenantStatus(%q) = %v, want %v", in, got, want)
+		got, err := parseTenantStatus(in)
+		if err != nil || got != want {
+			t.Errorf("parseTenantStatus(%q) = %v, %v, want %v", in, got, err, want)
 		}
+	}
+}
+
+// TestParseTenantStatus_UnknownFailsClosed proves a status the SDK does not
+// recognize is refused with the typed error, never read back as active
+// (#1518).
+func TestParseTenantStatus_UnknownFailsClosed(t *testing.T) {
+	for _, in := range []string{"other", "ACTIVE", "disabled"} {
+		got, err := parseTenantStatus(in)
+		var enumErr *UnknownEnumValueError
+		if !errors.As(err, &enumErr) || enumErr.Value != in {
+			t.Errorf("parseTenantStatus(%q) err = %v, want UnknownEnumValueError", in, err)
+		}
+		if got == TenantStatusActive {
+			t.Errorf("parseTenantStatus(%q) = active, want not active", in)
+		}
+	}
+}
+
+// TestParseTenantResponse_UnknownStatusFailsClosed proves a tenant read whose
+// status is unknown, or not a string, returns the typed error instead of a
+// tenant (#1518).
+func TestParseTenantResponse_UnknownStatusFailsClosed(t *testing.T) {
+	for _, status := range []interface{}{"disabled", float64(1)} {
+		tenant, err := parseTenantResponse(map[string]interface{}{"id": "t1", "status": status})
+		var enumErr *UnknownEnumValueError
+		if !errors.As(err, &enumErr) {
+			t.Errorf("status %v: err = %v, want UnknownEnumValueError", status, err)
+		}
+		if tenant != nil {
+			t.Errorf("status %v: tenant = %+v, want nil", status, tenant)
+		}
+	}
+}
+
+// TestParseListTenantsResponse_UnknownStatusFailsClosed proves a listed tenant
+// with an unknown status fails the whole list rather than being dropped from
+// it or read back as active (#1518).
+func TestParseListTenantsResponse_UnknownStatusFailsClosed(t *testing.T) {
+	resp := map[string]interface{}{"tenants": []interface{}{
+		map[string]interface{}{"id": "t1", "status": "active"},
+		map[string]interface{}{"id": "t2", "status": "disabled"},
+	}}
+	list, err := parseListTenantsResponse(resp)
+	var enumErr *UnknownEnumValueError
+	if !errors.As(err, &enumErr) || enumErr.Value != "disabled" {
+		t.Errorf("err = %v, want UnknownEnumValueError{disabled}", err)
+	}
+	if list != nil {
+		t.Errorf("list = %+v, want nil", list)
 	}
 }
 

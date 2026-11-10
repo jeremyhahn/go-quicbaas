@@ -102,7 +102,7 @@ func createTestAuditEvent(tenantID, eventID, eventType string) *iam.AuditEvent {
 		},
 		Action:    "read",
 		Details:   map[string]interface{}{"key": "value"},
-		IPAddress: "192.168.1.1",
+		IPAddress: "192.0.2.1",
 		UserAgent: "test-client/1.0",
 		Timestamp: now,
 	}
@@ -315,7 +315,7 @@ func TestAuditServer_GetAuditEvent(t *testing.T) {
 				assert.Equal(t, "user", resp.ActorType)
 				assert.Equal(t, "resource-1", resp.ResourceId)
 				assert.Equal(t, "read", resp.Action)
-				assert.Equal(t, "192.168.1.1", resp.IpAddress)
+				assert.Equal(t, "192.0.2.1", resp.IpAddress)
 				assert.Equal(t, "test-client/1.0", resp.UserAgent)
 			},
 		},
