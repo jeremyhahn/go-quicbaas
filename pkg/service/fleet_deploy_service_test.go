@@ -1085,12 +1085,12 @@ func TestPathJoinHome(t *testing.T) {
 // TestHostnameForCert strips user@ and :port off SSH targets.
 func TestHostnameForCert(t *testing.T) {
 	cases := map[string]string{
-		"host":                "host",
-		"host:22":             "host",
-		"alice@host":          "host",
-		"alice@host:22":       "host",
-		"alice@gpu-host-01":   "gpu-host-01",
-		"alice@remote.lan:22": "remote.lan",
+		"host":                    "host",
+		"host:22":                 "host",
+		"alice@host":              "host",
+		"alice@host:22":           "host",
+		"alice@gpu-host-01":       "gpu-host-01",
+		"alice@remote.example:22": "remote.example",
 		// IPv6 literals survive whole, without their brackets.
 		"[2001:db8::1]:22":       "2001:db8::1",
 		"[2001:db8::1]":          "2001:db8::1",

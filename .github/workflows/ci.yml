@@ -244,8 +244,8 @@
 # v1.1 (2026-08-14): gosec findings now also print to the job log (the SARIF
 # upload only exists on github.com, so on Gitea the findings were invisible).
 # Also NEVER add `GOPROXY: direct` / `GOSUMDB: off` to a repo's env block:
-# GOPRIVATE (injected by the runners, dependency-resolution.md §6) already
-# exempts first-party modules from proxy and sumdb; the blanket override
+# first-party modules resolve through the proxy and checksum database like
+# any other; the blanket override
 # disables checksum-database verification for every third-party dependency
 # and breaks the build when an upstream re-points a tag (go-tpm-tools v0.4.8,
 # 2026-08-14). `ghcr.io` likewise does not exist on Gitea — use the Gitea
@@ -293,11 +293,6 @@ env:
   # The per-package -timeout of the -race run. The Makefile default (30m) is
   # sized for a workstation; a 4-core runner is slower, so CI doubles it.
   RACE_TIMEOUT: 60m
-  # Hosted runners inject no GOPRIVATE, so first-party modules would resolve
-  # through the public proxy and checksum database. Those cached some tags
-  # before the history rewrite moved them, and go.sum records what the origin
-  # serves now, so first-party modules are fetched from their origin.
-  GOPRIVATE: github.com/jeremyhahn/*
   # CUSTOMIZE (v1.9.2): the repo's full build-tag set, SPACE separated — the go
   # tool's own form. Leave EMPTY if no package is tag-gated. Every analysis step
   # below derives its own form from this ONE value; never write the tag list
@@ -305,6 +300,12 @@ env:
   # while the gate still reports green (automatethethings#7: go-signal had eight
   # such packages, including its whole WebAuthn implementation).
   GO_BUILD_TAGS: ""
+  # The Go toolchain of the jobs that run on the self-hosted bigdisk pool,
+  # where setup-go installs it natively. It is the toolchain image's Go:
+  # pkg/version/toolchain.mk `GO_VERSION := 1.27.3`, which
+  # build/docker/devcontainer/Dockerfile's `FROM golang:${GO_VERSION}-trixie`
+  # builds from. Bump both together.
+  GO_VERSION: '1.27.3'
 
 jobs:
   # DS-3161: a pull request whose every changed file is documentation runs
@@ -314,13 +315,18 @@ jobs:
   # a pull request with any other file run every stage.
   changes:
     name: Changed files
-    runs-on: ubuntu-latest
+    # Same-repo pull requests and pushes to main run on the self-hosted
+    # bigdisk pool; a fork pull request stays on ubuntu-latest. The job needs
+    # only git and grep, and scripts/docs-only.sh diffs the local history, so
+    # the checkout keeps no credentials.
+    runs-on: ${{ ((github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)) && fromJSON('["self-hosted","linux","x64","bigdisk"]') || 'ubuntu-latest' }}
     outputs:
       docs_only: ${{ steps.filter.outputs.docs_only }}
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           fetch-depth: 0
+          persist-credentials: false
 
       - name: Docs-only filter
         id: filter
@@ -352,8 +358,9 @@ jobs:
   # (in-toolchain-image.sh v2, ci-standard.md §6), so a stage writes its
   # caches there and not into its container's layer.
   #
-  # The forge credentials reach the image build only as the gomodauth BuildKit
-  # secret, from a file outside the context that the job removes.
+  # The gomodauth BuildKit secret the image builds mount is an empty file from
+  # outside the context, which the job removes; no credential reaches an image
+  # build.
   # No step and no make target prints that file, the job environment (`env`,
   # `printenv`, `set -x`) or a matched line: `make stage-gomodauth` and the
   # file writes run silent, and lint steps and `make check-public-literals`
@@ -373,27 +380,32 @@ jobs:
     env:
       DOCS_ONLY: ${{ needs.changes.outputs.docs_only }}
       CI_STACK_PREFIX: ${{ github.event.repository.name }}-ci-
+      # gpu-host's 8g sidecar cap (#2200, ruling 289); no cap on GitHub-hosted runners.
+      IN_IMAGE_MEMORY: ${{ github.server_url != 'https://github.com' && '8g' || 'none' }}
       # v1.22: the cache volumes' trust class. Only a push to main writes the
       # caches main's build reads; every other event, pull requests included,
       # gets the `pr` set (ci-standard.md §6).
       CI_CACHE_CLASS: ${{ github.event_name == 'push' && 'main' || 'pr' }}
       IT_IMAGE: ${{ github.event.repository.name }}-ci-it:${{ github.run_id }}-${{ github.run_attempt }}-image
     steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
-
-      # v1.21.1 (Company Agent m605 item 8): mask the forge credentials before
-      # any other step. The runner injects them as plain environment
-      # (dependency-resolution.md §6), which the log does not mask by itself,
-      # and the token sits inside GIT_CONFIG_KEY_0's URL, so it is masked alone
-      # as well.
-      - name: Mask the forge credentials
+      # No credential reaches a job. A runner that injects a git credential
+      # through GIT_CONFIG_* stops the job here, before any later step can
+      # print it; only the variable names are logged.
+      - name: Refuse injected forge credentials
+        shell: bash
         run: |
-          for v in GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0; do
-            val=${!v:-}
-            [ -n "$val" ] || continue
-            echo "::add-mask::$val"
-            case $val in *://*:*@*) t=${val#*://}; t=${t%%@*}; echo "::add-mask::${t#*:}" ;; esac
+          found=0
+          for v in $(compgen -e); do
+            case "$v" in
+              GIT_CONFIG_COUNT|GIT_CONFIG_KEY_*|GIT_CONFIG_VALUE_*)
+                echo "::error::the job environment carries $v; no credential may reach this job"
+                found=1
+                ;;
+            esac
           done
+          exit "$found"
+
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
 
       - name: Reap stale CI stacks
         run: scripts/reap-stale-ci-stacks.sh "$CI_STACK_PREFIX"
@@ -418,10 +430,7 @@ jobs:
 
       - name: Build the devcontainer images
         run: |
-          ( umask 077; : > "$RUNNER_TEMP/gomodauth.env"
-            for v in GOPRIVATE GIT_CONFIG_COUNT GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0; do
-              if [ -n "${!v:-}" ]; then printf '%s=%s\n' "$v" "${!v}" >> "$RUNNER_TEMP/gomodauth.env"; fi
-            done )
+          ( umask 077; : > "$RUNNER_TEMP/gomodauth.env" )
           # A docs-only pull request runs lint alone, which needs only the
           # toolchain image (DS-3161).
           target=docker-build
@@ -600,7 +609,13 @@ jobs:
   # DOCS_ONLY instead, so a docs-only pull request passes the job empty.
   unit:
     name: Unit tests -race (shard ${{ matrix.shard }})
-    runs-on: ubuntu-latest
+    # Same-repo pull requests and pushes to main run on the self-hosted
+    # bigdisk pool; a fork pull request stays on ubuntu-latest. The pool is
+    # a single-use container with no Docker, no sudo and no apt, so there the
+    # job runs its make target natively under setup-go (the steps guarded
+    # `runner.environment == 'self-hosted'`); on a GitHub-hosted runner it
+    # builds the toolchain image and runs the target in it, as before.
+    runs-on: ${{ ((github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)) && fromJSON('["self-hosted","linux","x64","bigdisk"]') || 'ubuntu-latest' }}
     timeout-minutes: 150      # CUSTOMIZE: a shard is expected to take about an hour
     needs: [changes]
     strategy:
@@ -613,16 +628,31 @@ jobs:
       CI_CACHE_CLASS: ${{ github.event_name == 'push' && 'main' || 'pr' }}
       SHARD: ${{ matrix.shard }}
     steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
-
-      - name: Mask the forge credentials
+      # No credential reaches a job. A runner that injects a git credential
+      # through GIT_CONFIG_* stops the job here, before any later step can
+      # print it; only the variable names are logged.
+      - name: Refuse injected forge credentials
+        shell: bash
         run: |
-          for v in GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0; do
-            val=${!v:-}
-            [ -n "$val" ] || continue
-            echo "::add-mask::$val"
-            case $val in *://*:*@*) t=${val#*://}; t=${t%%@*}; echo "::add-mask::${t#*:}" ;; esac
+          found=0
+          for v in $(compgen -e); do
+            case "$v" in
+              GIT_CONFIG_COUNT|GIT_CONFIG_KEY_*|GIT_CONFIG_VALUE_*)
+                echo "::error::the job environment carries $v; no credential may reach this job"
+                found=1
+                ;;
+            esac
           done
+          exit "$found"
+
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        if: runner.environment == 'github-hosted'
+
+      - name: Check out (bigdisk pool)
+        if: runner.environment == 'self-hosted'
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
 
       - name: Validate the merge result, not the head alone
         run: .github/scripts/ci-merge-base.sh "${{ github.event_name }}" "${{ github.base_ref }}" "${{ github.event.pull_request.base.sha }}"
@@ -635,26 +665,47 @@ jobs:
           df -h /
 
       - name: Build the toolchain image
-        if: ${{ env.DOCS_ONLY != 'true' }}
+        if: ${{ runner.environment == 'github-hosted' && env.DOCS_ONLY != 'true' }}
         run: |
-          ( umask 077; : > "$RUNNER_TEMP/gomodauth.env"
-            for v in GOPRIVATE GIT_CONFIG_COUNT GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0; do
-              if [ -n "${!v:-}" ]; then printf '%s=%s\n' "$v" "${!v}" >> "$RUNNER_TEMP/gomodauth.env"; fi
-            done )
+          ( umask 077; : > "$RUNNER_TEMP/gomodauth.env" )
           make docker-build-toolchain-image MODULE_ENV_FILE="$RUNNER_TEMP/gomodauth.env"
           rm -f "$RUNNER_TEMP/gomodauth.env"
           echo "TOOLCHAIN_IMAGE=$(make -s toolchain-image)" >> "$GITHUB_ENV"
 
       - name: make coverage-shard
-        if: ${{ !cancelled() && env.TOOLCHAIN_IMAGE != '' && env.DOCS_ONLY != 'true' }}
+        if: ${{ !cancelled() && runner.environment == 'github-hosted' && env.TOOLCHAIN_IMAGE != '' && env.DOCS_ONLY != 'true' }}
         run: |
           profile="coverage-shard-$SHARD-of-$UNIT_SHARDS.out"
           scripts/in-toolchain-image.sh "$TOOLCHAIN_IMAGE" \
             "make coverage-shard SHARD=$SHARD SHARDS=$UNIT_SHARDS RACE_TIMEOUT=$RACE_TIMEOUT GO_BUILD_TAGS='$GO_BUILD_TAGS' 1>&2 && cat coverage/$profile" \
             > "$profile"
 
+      # The pool has no toolchain image, so Go comes from setup-go, at the
+      # image's version (GO_VERSION above). No other tool is installed: every
+      # target this job runs needs only go, git, make and a POSIX shell.
+      - name: Set up Go (bigdisk pool)
+        if: ${{ runner.environment == 'self-hosted' && env.DOCS_ONLY != 'true' }}
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      # The same target natively. It writes coverage/<profile>; the upload
+      # below reads the profile at the top level, where the hosted step puts it.
+      - name: make coverage-shard (bigdisk pool, native)
+        if: ${{ !cancelled() && runner.environment == 'self-hosted' && env.DOCS_ONLY != 'true' }}
+        # The toolchain image's module settings (Dockerfile ENV), except that
+        # modules come from proxy.golang.org instead of the image's offline cache.
+        env:
+          GOFLAGS: -mod=readonly
+          GOWORK: 'off'
+          GOPROXY: https://proxy.golang.org
+        run: |
+          profile="coverage-shard-$SHARD-of-$UNIT_SHARDS.out"
+          make coverage-shard SHARD="$SHARD" SHARDS="$UNIT_SHARDS" RACE_TIMEOUT="$RACE_TIMEOUT" GO_BUILD_TAGS="$GO_BUILD_TAGS"
+          cp "coverage/$profile" "$profile"
+
       - name: Upload the shard's coverage profile
-        if: ${{ !cancelled() && env.TOOLCHAIN_IMAGE != '' && env.DOCS_ONLY != 'true' }}
+        if: ${{ !cancelled() && (env.TOOLCHAIN_IMAGE != '' || runner.environment == 'self-hosted') && env.DOCS_ONLY != 'true' }}
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
           name: coverage-shard-${{ matrix.shard }}
@@ -673,7 +724,13 @@ jobs:
   # leaves this job skipped and CI Gate fails on it.
   coverage:
     name: Coverage gate [merged unit shards]
-    runs-on: ubuntu-latest
+    # Same-repo pull requests and pushes to main run on the self-hosted
+    # bigdisk pool; a fork pull request stays on ubuntu-latest. The pool is
+    # a single-use container with no Docker, no sudo and no apt, so there the
+    # job runs its make target natively under setup-go (the steps guarded
+    # `runner.environment == 'self-hosted'`); on a GitHub-hosted runner it
+    # builds the toolchain image and runs the target in it, as before.
+    runs-on: ${{ ((github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)) && fromJSON('["self-hosted","linux","x64","bigdisk"]') || 'ubuntu-latest' }}
     timeout-minutes: 60
     needs: [changes, unit]
     env:
@@ -681,16 +738,31 @@ jobs:
       CI_STACK_PREFIX: ${{ github.event.repository.name }}-ci-
       CI_CACHE_CLASS: ${{ github.event_name == 'push' && 'main' || 'pr' }}
     steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
-
-      - name: Mask the forge credentials
+      # No credential reaches a job. A runner that injects a git credential
+      # through GIT_CONFIG_* stops the job here, before any later step can
+      # print it; only the variable names are logged.
+      - name: Refuse injected forge credentials
+        shell: bash
         run: |
-          for v in GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0; do
-            val=${!v:-}
-            [ -n "$val" ] || continue
-            echo "::add-mask::$val"
-            case $val in *://*:*@*) t=${val#*://}; t=${t%%@*}; echo "::add-mask::${t#*:}" ;; esac
+          found=0
+          for v in $(compgen -e); do
+            case "$v" in
+              GIT_CONFIG_COUNT|GIT_CONFIG_KEY_*|GIT_CONFIG_VALUE_*)
+                echo "::error::the job environment carries $v; no credential may reach this job"
+                found=1
+                ;;
+            esac
           done
+          exit "$found"
+
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        if: runner.environment == 'github-hosted'
+
+      - name: Check out (bigdisk pool)
+        if: runner.environment == 'self-hosted'
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
 
       # The report reads the source the shards tested: the same merge result.
       - name: Validate the merge result, not the head alone
@@ -704,12 +776,9 @@ jobs:
           df -h /
 
       - name: Build the toolchain image
-        if: ${{ env.DOCS_ONLY != 'true' }}
+        if: ${{ runner.environment == 'github-hosted' && env.DOCS_ONLY != 'true' }}
         run: |
-          ( umask 077; : > "$RUNNER_TEMP/gomodauth.env"
-            for v in GOPRIVATE GIT_CONFIG_COUNT GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0; do
-              if [ -n "${!v:-}" ]; then printf '%s=%s\n' "$v" "${!v}" >> "$RUNNER_TEMP/gomodauth.env"; fi
-            done )
+          ( umask 077; : > "$RUNNER_TEMP/gomodauth.env" )
           make docker-build-toolchain-image MODULE_ENV_FILE="$RUNNER_TEMP/gomodauth.env"
           rm -f "$RUNNER_TEMP/gomodauth.env"
           echo "TOOLCHAIN_IMAGE=$(make -s toolchain-image)" >> "$GITHUB_ENV"
@@ -723,8 +792,27 @@ jobs:
           merge-multiple: true
 
       - name: make coverage-merge (the threshold)
-        if: ${{ !cancelled() && env.TOOLCHAIN_IMAGE != '' && env.DOCS_ONLY != 'true' }}
+        if: ${{ !cancelled() && runner.environment == 'github-hosted' && env.TOOLCHAIN_IMAGE != '' && env.DOCS_ONLY != 'true' }}
         run: scripts/in-toolchain-image.sh "$TOOLCHAIN_IMAGE" "make coverage-merge SHARDS=$UNIT_SHARDS COVERAGE_THRESHOLD=$COVERAGE_THRESHOLD"
+
+      # The pool has no toolchain image, so Go comes from setup-go, at the
+      # image's version (GO_VERSION above). No other tool is installed: every
+      # target this job runs needs only go, git, make and a POSIX shell.
+      - name: Set up Go (bigdisk pool)
+        if: ${{ runner.environment == 'self-hosted' && env.DOCS_ONLY != 'true' }}
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: make coverage-merge (the threshold; bigdisk pool, native)
+        if: ${{ !cancelled() && runner.environment == 'self-hosted' && env.DOCS_ONLY != 'true' }}
+        # The toolchain image's module settings (Dockerfile ENV), except that
+        # modules come from proxy.golang.org instead of the image's offline cache.
+        env:
+          GOFLAGS: -mod=readonly
+          GOWORK: 'off'
+          GOPROXY: https://proxy.golang.org
+        run: make coverage-merge SHARDS="$UNIT_SHARDS" COVERAGE_THRESHOLD="$COVERAGE_THRESHOLD"
 
       - name: Tear down
         if: always()
@@ -736,7 +824,13 @@ jobs:
   # one job holds them; they used to share the unsharded run's hour with it.
   unit-passes:
     name: Unit tests [checks, Go SDK, tag passes, tooling]
-    runs-on: ubuntu-latest
+    # Same-repo pull requests and pushes to main run on the self-hosted
+    # bigdisk pool; a fork pull request stays on ubuntu-latest. The pool is
+    # a single-use container with no Docker, no sudo and no apt, so there the
+    # job runs its make target natively under setup-go (the steps guarded
+    # `runner.environment == 'self-hosted'`); on a GitHub-hosted runner it
+    # builds the toolchain image and runs the target in it, as before.
+    runs-on: ${{ ((github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)) && fromJSON('["self-hosted","linux","x64","bigdisk"]') || 'ubuntu-latest' }}
     timeout-minutes: 180
     needs: [changes]
     env:
@@ -744,16 +838,31 @@ jobs:
       CI_STACK_PREFIX: ${{ github.event.repository.name }}-ci-
       CI_CACHE_CLASS: ${{ github.event_name == 'push' && 'main' || 'pr' }}
     steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
-
-      - name: Mask the forge credentials
+      # No credential reaches a job. A runner that injects a git credential
+      # through GIT_CONFIG_* stops the job here, before any later step can
+      # print it; only the variable names are logged.
+      - name: Refuse injected forge credentials
+        shell: bash
         run: |
-          for v in GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0; do
-            val=${!v:-}
-            [ -n "$val" ] || continue
-            echo "::add-mask::$val"
-            case $val in *://*:*@*) t=${val#*://}; t=${t%%@*}; echo "::add-mask::${t#*:}" ;; esac
+          found=0
+          for v in $(compgen -e); do
+            case "$v" in
+              GIT_CONFIG_COUNT|GIT_CONFIG_KEY_*|GIT_CONFIG_VALUE_*)
+                echo "::error::the job environment carries $v; no credential may reach this job"
+                found=1
+                ;;
+            esac
           done
+          exit "$found"
+
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        if: runner.environment == 'github-hosted'
+
+      - name: Check out (bigdisk pool)
+        if: runner.environment == 'self-hosted'
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
 
       - name: Validate the merge result, not the head alone
         run: .github/scripts/ci-merge-base.sh "${{ github.event_name }}" "${{ github.base_ref }}" "${{ github.event.pull_request.base.sha }}"
@@ -766,19 +875,35 @@ jobs:
           df -h /
 
       - name: Build the toolchain image
-        if: ${{ env.DOCS_ONLY != 'true' }}
+        if: ${{ runner.environment == 'github-hosted' && env.DOCS_ONLY != 'true' }}
         run: |
-          ( umask 077; : > "$RUNNER_TEMP/gomodauth.env"
-            for v in GOPRIVATE GIT_CONFIG_COUNT GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0; do
-              if [ -n "${!v:-}" ]; then printf '%s=%s\n' "$v" "${!v}" >> "$RUNNER_TEMP/gomodauth.env"; fi
-            done )
+          ( umask 077; : > "$RUNNER_TEMP/gomodauth.env" )
           make docker-build-toolchain-image MODULE_ENV_FILE="$RUNNER_TEMP/gomodauth.env"
           rm -f "$RUNNER_TEMP/gomodauth.env"
           echo "TOOLCHAIN_IMAGE=$(make -s toolchain-image)" >> "$GITHUB_ENV"
 
       - name: make coverage-passes
-        if: ${{ !cancelled() && env.TOOLCHAIN_IMAGE != '' && env.DOCS_ONLY != 'true' }}
+        if: ${{ !cancelled() && runner.environment == 'github-hosted' && env.TOOLCHAIN_IMAGE != '' && env.DOCS_ONLY != 'true' }}
         run: scripts/in-toolchain-image.sh "$TOOLCHAIN_IMAGE" "make coverage-passes GO_BUILD_TAGS='$GO_BUILD_TAGS'"
+
+      # The pool has no toolchain image, so Go comes from setup-go, at the
+      # image's version (GO_VERSION above). No other tool is installed: every
+      # target this job runs needs only go, git, make and a POSIX shell.
+      - name: Set up Go (bigdisk pool)
+        if: ${{ runner.environment == 'self-hosted' && env.DOCS_ONLY != 'true' }}
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: make coverage-passes (bigdisk pool, native)
+        if: ${{ !cancelled() && runner.environment == 'self-hosted' && env.DOCS_ONLY != 'true' }}
+        # The toolchain image's module settings (Dockerfile ENV), except that
+        # modules come from proxy.golang.org instead of the image's offline cache.
+        env:
+          GOFLAGS: -mod=readonly
+          GOWORK: 'off'
+          GOPROXY: https://proxy.golang.org
+        run: make coverage-passes GO_BUILD_TAGS="$GO_BUILD_TAGS"
 
       - name: Tear down
         if: always()
@@ -798,24 +923,29 @@ jobs:
     if: ${{ needs.changes.outputs.docs_only != 'true' }}
     env:
       CI_STACK_PREFIX: ${{ github.event.repository.name }}-ci-
+      # gpu-host's 8g sidecar cap (#2200, ruling 289); no cap on GitHub-hosted runners.
+      IN_IMAGE_MEMORY: ${{ github.server_url != 'https://github.com' && '8g' || 'none' }}
       IT_PROJECT: ${{ github.event.repository.name }}-ci-${{ github.run_id }}-${{ github.run_attempt }}
       IT_IMAGE: ${{ github.event.repository.name }}-ci-it:${{ github.run_id }}-${{ github.run_attempt }}
     steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
-
-      # v1.21.1 (Company Agent m605 item 8): mask the forge credentials before
-      # any other step. The runner injects them as plain environment
-      # (dependency-resolution.md §6), which the log does not mask by itself,
-      # and the token sits inside GIT_CONFIG_KEY_0's URL, so it is masked alone
-      # as well.
-      - name: Mask the forge credentials
+      # No credential reaches a job. A runner that injects a git credential
+      # through GIT_CONFIG_* stops the job here, before any later step can
+      # print it; only the variable names are logged.
+      - name: Refuse injected forge credentials
+        shell: bash
         run: |
-          for v in GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0; do
-            val=${!v:-}
-            [ -n "$val" ] || continue
-            echo "::add-mask::$val"
-            case $val in *://*:*@*) t=${val#*://}; t=${t%%@*}; echo "::add-mask::${t#*:}" ;; esac
+          found=0
+          for v in $(compgen -e); do
+            case "$v" in
+              GIT_CONFIG_COUNT|GIT_CONFIG_KEY_*|GIT_CONFIG_VALUE_*)
+                echo "::error::the job environment carries $v; no credential may reach this job"
+                found=1
+                ;;
+            esac
           done
+          exit "$found"
+
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
 
       - name: Reap stale CI stacks
         run: scripts/reap-stale-ci-stacks.sh "$CI_STACK_PREFIX"
@@ -837,9 +967,6 @@ jobs:
         run: |
           umask 077
           : > "$RUNNER_TEMP/gomodauth.env"
-          for v in GOPRIVATE GIT_CONFIG_COUNT GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0; do
-            if [ -n "${!v:-}" ]; then printf '%s=%s\n' "$v" "${!v}" >> "$RUNNER_TEMP/gomodauth.env"; fi
-          done
 
       - name: make integration-test (integration image)
         run: make integration-test MODULE_ENV_FILE="$RUNNER_TEMP/gomodauth.env" IT_PROJECT="$IT_PROJECT" IT_IMAGE="$IT_IMAGE" GO_BUILD_TAGS="$GO_BUILD_TAGS"
@@ -880,11 +1007,21 @@ jobs:
   # A source check with grep, not a stage: it runs on the runner's shell.
   arch-gates:
     name: Architecture Gates
-    runs-on: ubuntu-latest
+    # Same-repo pull requests and pushes to main run on the self-hosted
+    # bigdisk pool; a fork pull request stays on ubuntu-latest. The check is
+    # grep and sed only, so it needs no toolchain on either runner.
+    runs-on: ${{ ((github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)) && fromJSON('["self-hosted","linux","x64","bigdisk"]') || 'ubuntu-latest' }}
     env:
       OBJSTORE_SEAMS: 'pkg/backup/|pkg/catalog/backend_manager\.go|pkg/config/storage\.go|pkg/security/storage_adapter\.go'      # CUSTOMIZE
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        if: runner.environment == 'github-hosted'
+
+      - name: Check out (bigdisk pool)
+        if: runner.environment == 'self-hosted'
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
 
       - name: No direct go-objstore import outside the storage seam
         run: |
@@ -909,7 +1046,10 @@ jobs:
   # (v1.9, devops.md §8a: the alpha regime).
   ci-gate:
     name: CI Gate
-    runs-on: ubuntu-latest
+    # CA m2475 (2h): the gate runs on the self-hosted bigdisk pool (main pushes
+    # and same-repo PRs), so it never waits in the hosted queue and always
+    # reports; it needs no Docker. Fork PRs stay on ubuntu-latest.
+    runs-on: ${{ ((github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)) && fromJSON('["self-hosted","linux","x64","bigdisk"]') || 'ubuntu-latest' }}
     if: always()
     # CUSTOMIZE: the repo's job list. Add every CUSTOMIZE job here AND as a
     # check line below; remove none of the template's jobs.
