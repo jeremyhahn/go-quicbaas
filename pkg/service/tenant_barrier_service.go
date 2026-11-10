@@ -232,7 +232,7 @@ func (s *tenantBarrierService) TenantBarrierUnseal(ctx context.Context, tenantID
 	if err != nil {
 		return err
 	}
-	if err = qrdb.TenantBarrierUnseal(ctx, &qrdbtransport.TenantBarrierUnsealRequest{
+	if err := qrdb.TenantBarrierUnseal(ctx, &qrdbtransport.TenantBarrierUnsealRequest{
 		TenantID: tenantID,
 		Key:      key,
 	}); err != nil {
