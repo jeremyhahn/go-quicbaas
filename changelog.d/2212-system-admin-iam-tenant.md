@@ -35,3 +35,7 @@
 - Fleet node registration no longer reports an existing tenant as absent
   when the caller acts inside that tenant: the tenant check reads the
   catalog in the system namespace (#2212).
+- Shutdown now refuses new per-tenant barrier calls from the moment it
+  begins: a tenant unseal that arrives on a native transport while jobs
+  drain or services stop is answered as unavailable instead of opening
+  the barrier (#2212).
