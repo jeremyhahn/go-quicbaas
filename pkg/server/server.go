@@ -1235,6 +1235,15 @@ func (s *Server) Shutdown(ctx context.Context) error {
 		s.closed = true
 		s.mu.Unlock()
 
+		// Stop the admission of per-tenant barrier calls before anything is
+		// drained or torn down: from here no tenant-barrier SDK client is
+		// built or returned, so a tenant unseal that arrives on one of the
+		// node's native transports during shutdown is answered as
+		// unavailable. The node keeps those transports open until
+		// stopQRDBNode below, and the clients already built are closed after
+		// it.
+		s.stopTenantBarrierClient()
+
 		// Wait for any in-flight initialize() to fully return before
 		// touching a single component. A caller racing Shutdown against a
 		// still-running Start (see the initWG field doc) would otherwise
@@ -1534,13 +1543,6 @@ func (s *Server) Shutdown(ctx context.Context) error {
 				s.logger.Info("Bootstrap ceremony client closed")
 			}
 		}
-
-		// Stop the tenant-barrier SDK client (in-process qrdb SDK client
-		// over the node's TenantServicer): from here none is built or
-		// returned, so a tenant unseal that arrives during shutdown is
-		// answered as unavailable. The clients are closed after the node
-		// has stopped its transports, below.
-		s.stopTenantBarrierClient()
 
 		// Shutdown sharded qrdb client
 		if s.qrdbClient != nil {
