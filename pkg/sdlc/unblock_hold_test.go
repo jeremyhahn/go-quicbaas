@@ -32,7 +32,7 @@ func TestSweep_ARulingOnAHeldIssueDoesNotReadmit(t *testing.T) {
 	task := f.parkedForRuling(orchestration.TaskBlockKindNeedsInfo)
 	number := issueNumber(t, task)
 	f.forge.putIssue(number, "lead-driven workstream", HoldLabel)
-	f.forge.comment(number, 601, "agent-company", "Approved; delivery stays lead-driven.", parkedAt.Add(time.Minute))
+	f.forge.comment(number, 601, "company-agent", "Approved; delivery stays lead-driven.", parkedAt.Add(time.Minute))
 
 	finding := onlyFinding(t, f.sweep(t))
 
@@ -95,7 +95,7 @@ func TestReadmitOnRuling_AHeldIssueIsNotReadmitted(t *testing.T) {
 	task := f.parkedForRuling(orchestration.TaskBlockKindEscalated)
 	number := issueNumber(t, task)
 	f.forge.putIssue(number, "lead-driven workstream", HoldLabel)
-	f.forge.comment(number, 602, "agent-company", "Approved.", parkedAt.Add(time.Minute))
+	f.forge.comment(number, 602, "company-agent", "Approved.", parkedAt.Add(time.Minute))
 
 	readmitted, err := f.sweeper.ReadmitOnRuling(context.Background(), testTenant, testProject, number)
 	if err != nil {

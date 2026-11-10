@@ -141,7 +141,20 @@ func (s *Server) HandleCreateNamespace(w http.ResponseWriter, r *http.Request) {
 	RespondJSON(w, r, http.StatusCreated, resp)
 }
 
-// HandleUpdateNamespace modifies namespace configuration.
+// NamespaceUpdateUnsupportedError refuses UpdateNamespace. The vector service
+// has no in-place namespace update, and deleting and recreating the namespace
+// would permanently destroy every vector it holds.
+type NamespaceUpdateUnsupportedError struct {
+	Namespace string
+}
+
+// HandleUpdateNamespace refuses namespace updates with 501 Not Implemented,
+// after the same validation every transport applies: a malformed body is a
+// bad request and a missing namespace is not found.
+func (e *NamespaceUpdateUnsupportedError) Error() string {
+	return "vector namespace " + e.Namespace + " cannot be updated: the qrdb SDK has no in-place namespace update"
+}
+
 func (s *Server) HandleUpdateNamespace(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	namespace := chi.URLParam(r, "namespace")
@@ -172,17 +185,9 @@ func (s *Server) HandleUpdateNamespace(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Note: Actual metadata update would require a new service method.
-	// For now, we'll acknowledge the request but indicate a rebuild may be needed.
-	requiresRebuild := len(req.IndexParams) > 0
-
-	resp := &UpdateNamespaceResponse{
-		Namespace:       namespace,
-		Timestamp:       time.Now(),
-		RequiresRebuild: requiresRebuild,
-	}
-
-	RespondJSON(w, r, http.StatusOK, resp)
+	RespondError(w, r, http.StatusNotImplemented, &NamespaceUpdateUnsupportedError{
+		Namespace: namespace,
+	})
 }
 
 // HandleDeleteNamespace removes a namespace and all its vectors.

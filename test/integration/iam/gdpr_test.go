@@ -253,7 +253,7 @@ func TestGDPR_GrantConsent_AllPurposes(t *testing.T) {
 			consent := ConsentRequest{
 				Purpose:   purpose,
 				Version:   "1.0",
-				IPAddress: "192.168.1.100",
+				IPAddress: "192.0.2.100",
 				UserAgent: "TestClient/1.0",
 			}
 
@@ -280,7 +280,7 @@ func TestGDPR_GrantConsent_AllPurposes(t *testing.T) {
 			assert.Equal(t, purpose, result.Purpose, "Purpose should match")
 			assert.Equal(t, "granted", result.Status, "Status should be granted")
 			assert.Equal(t, "1.0", result.Version, "Version should match")
-			assert.Equal(t, "192.168.1.100", result.IPAddress, "IPAddress should match")
+			assert.Equal(t, "192.0.2.100", result.IPAddress, "IPAddress should match")
 			assert.Equal(t, "TestClient/1.0", result.UserAgent, "UserAgent should match")
 			assert.NotNil(t, result.GrantedAt, "GrantedAt should be set")
 			assert.NotZero(t, result.Created, "Created timestamp should be set")
@@ -1506,7 +1506,7 @@ func TestGDPR_GrantConsent(t *testing.T) {
 	consent := ConsentRequest{
 		Purpose:   "marketing",
 		Version:   "1.0",
-		IPAddress: "192.168.1.1",
+		IPAddress: "192.0.2.1",
 		UserAgent: "Test/1.0",
 	}
 

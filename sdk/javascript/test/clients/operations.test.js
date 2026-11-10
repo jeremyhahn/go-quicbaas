@@ -341,14 +341,14 @@ describe('OperationsClient', () => {
 
       const result = await client.replaceNode(1, 4, {
         shardId: 1,
-        newAddress: '192.168.1.4:5000',
+        newAddress: '192.0.2.4:5000',
       });
 
       expect(mockTransport.post).toHaveBeenCalledWith('/api/v1/operations/nodes/replace', {
         shardId: 1,
         oldNodeId: 1,
         newNodeId: 4,
-        newAddress: '192.168.1.4:5000',
+        newAddress: '192.0.2.4:5000',
       });
       expect(result.jobId).toBe('job-123');
       expect(result.status).toBe('pending');
@@ -357,52 +357,52 @@ describe('OperationsClient', () => {
     it('should throw ValidationError when oldNodeId is missing', async () => {
       await expect(client.replaceNode(undefined, 4, {
         shardId: 1,
-        newAddress: '192.168.1.4:5000',
+        newAddress: '192.0.2.4:5000',
       })).rejects.toThrow(ValidationError);
     });
 
     it('should throw ValidationError when oldNodeId is not positive', async () => {
       await expect(client.replaceNode(0, 4, {
         shardId: 1,
-        newAddress: '192.168.1.4:5000',
+        newAddress: '192.0.2.4:5000',
       })).rejects.toThrow(ValidationError);
 
       await expect(client.replaceNode(-1, 4, {
         shardId: 1,
-        newAddress: '192.168.1.4:5000',
+        newAddress: '192.0.2.4:5000',
       })).rejects.toThrow(ValidationError);
     });
 
     it('should throw ValidationError when oldNodeId is not an integer', async () => {
       await expect(client.replaceNode(1.5, 4, {
         shardId: 1,
-        newAddress: '192.168.1.4:5000',
+        newAddress: '192.0.2.4:5000',
       })).rejects.toThrow(ValidationError);
     });
 
     it('should throw ValidationError when newNodeId is missing', async () => {
       await expect(client.replaceNode(1, undefined, {
         shardId: 1,
-        newAddress: '192.168.1.4:5000',
+        newAddress: '192.0.2.4:5000',
       })).rejects.toThrow(ValidationError);
     });
 
     it('should throw ValidationError when newNodeId is not positive', async () => {
       await expect(client.replaceNode(1, 0, {
         shardId: 1,
-        newAddress: '192.168.1.4:5000',
+        newAddress: '192.0.2.4:5000',
       })).rejects.toThrow(ValidationError);
 
       await expect(client.replaceNode(1, -1, {
         shardId: 1,
-        newAddress: '192.168.1.4:5000',
+        newAddress: '192.0.2.4:5000',
       })).rejects.toThrow(ValidationError);
     });
 
     it('should throw ValidationError when old and new nodeIds are the same', async () => {
       await expect(client.replaceNode(1, 1, {
         shardId: 1,
-        newAddress: '192.168.1.4:5000',
+        newAddress: '192.0.2.4:5000',
       })).rejects.toThrow(ValidationError);
     });
 
@@ -419,14 +419,14 @@ describe('OperationsClient', () => {
 
     it('should throw ValidationError when shardId is missing', async () => {
       await expect(client.replaceNode(1, 4, {
-        newAddress: '192.168.1.4:5000',
+        newAddress: '192.0.2.4:5000',
       })).rejects.toThrow(ValidationError);
     });
 
     it('should throw ValidationError when shardId is not positive', async () => {
       await expect(client.replaceNode(1, 4, {
         shardId: 0,
-        newAddress: '192.168.1.4:5000',
+        newAddress: '192.0.2.4:5000',
       })).rejects.toThrow(ValidationError);
     });
 
@@ -446,7 +446,7 @@ describe('OperationsClient', () => {
 
       const result = await client.replaceNode(1, 4, {
         shardId: 1,
-        newAddress: '192.168.1.4:5000',
+        newAddress: '192.0.2.4:5000',
       });
 
       expect(result.jobId).toBe('');

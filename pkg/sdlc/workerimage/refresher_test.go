@@ -100,7 +100,7 @@ func TestRefresh_SmokesEveryAgentThePromotionWouldRunPlusTheDefaultModel(t *test
 
 func TestRefresh_PublishesThenBindsTheDigestPinnedReference(t *testing.T) {
 	cfg := testConfig()
-	cfg.Registry = "198.51.100.50:3001/jeremyhahn/software-factory-worker"
+	cfg.Registry = "198.51.100.50:3000/jeremyhahn/software-factory-worker"
 	cfg.Credential = fakeCredential{}
 	h := newHarness(t, cfg)
 
@@ -123,7 +123,7 @@ func TestRefresh_PublishesThenBindsTheDigestPinnedReference(t *testing.T) {
 
 func TestRefresh_ARegistryReferenceIsManagedToo(t *testing.T) {
 	cfg := testConfig()
-	cfg.Registry = "reg.example:3001/o/worker"
+	cfg.Registry = "reg.example:3000/o/worker"
 	h := newHarness(t, cfg)
 	pinned := cfg.Registry + ":0.10.0-alpha@" + testDigest
 	h.agents.put("acme", orchestration.Agent{ID: "coder", Backend: "claude", Model: "claude-opus-5-5", Image: pinned})
@@ -276,7 +276,7 @@ func TestCheckLanguages_RefusesAMissingEmptyOrUnknownList(t *testing.T) {
 	}
 }
 
-func withRegistry(cfg *Config) { cfg.Registry = "reg.example:3001/o/worker" }
+func withRegistry(cfg *Config) { cfg.Registry = "reg.example:3000/o/worker" }
 
 func withCredentialError(cfg *Config) {
 	withRegistry(cfg)
@@ -531,7 +531,7 @@ func TestNewRefresher_RefusesAnIncompleteConfiguration(t *testing.T) {
 		"tagged repository":     func(c *Config) { c.Repository = "worker:1" },
 		"digest repository":     func(c *Config) { c.Repository = "worker@" + testDigest },
 		"registry without path": func(c *Config) { c.Registry = "registry" },
-		"tagged registry":       func(c *Config) { c.Registry = "reg.example:3001/o/w:1" },
+		"tagged registry":       func(c *Config) { c.Registry = "reg.example:3000/o/w:1" },
 		"no smoke model":        func(c *Config) { c.SmokeModel = " " },
 		"negative uid":          func(c *Config) { c.UID = -1 },
 		"bad base":              func(c *Config) { c.Base = "1.0+x" },
