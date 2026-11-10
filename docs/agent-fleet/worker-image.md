@@ -178,7 +178,9 @@ releases from npm; the dispatch inputs `claude_code_version` and
 - **Tag.** The content tag above, `<VERSION>-cc<claude-code>-cx<codex>`,
   pushed to `ghcr.io/<owner>/quicbaas-software-factory-worker`. When that tag
   is already published the job builds and pushes nothing and reports the
-  existing digest: a tag is never overwritten.
+  existing digest: a tag is never overwritten. A lookup that fails for any
+  reason other than "not found" stops the job before the build, so nothing is
+  pushed.
 - **Scan.** The Trivy gate is `make push-worker-image`'s own: a fixable
   CRITICAL or HIGH finding fails the job before anything is tagged or pushed.
 - **Credentials.** `GITHUB_TOKEN` only (`packages: write` to push,

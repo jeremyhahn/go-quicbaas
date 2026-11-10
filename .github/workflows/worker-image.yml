@@ -308,13 +308,20 @@ jobs:
           TAG: ${{ steps.resolve.outputs.tag }}
         run: |
           set -euo pipefail
-          if manifest="$(docker buildx imagetools inspect "${REPO}:${TAG}" --format '{{json .Manifest}}')"; then
+          err="$(mktemp)"
+          if manifest="$(docker buildx imagetools inspect "${REPO}:${TAG}" --format '{{json .Manifest}}' 2>"$err")"; then
             digest="$(printf '%s' "$manifest" | jq -r .digest)"
             [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "::error::${REPO}:${TAG} exists but names no sha256 digest"; exit 1; }
             echo "${REPO}:${TAG} is already published at ${digest}; pushing nothing"
             { echo "exists=true"; echo "digest=$digest"; } >> "$GITHUB_OUTPUT"
-          else
+          elif grep -qiE 'not found|manifest unknown|name unknown' "$err"; then
+            cat "$err" >&2
+            echo "${REPO}:${TAG} is not published yet"
             echo "exists=false" >> "$GITHUB_OUTPUT"
+          else
+            cat "$err" >&2
+            echo "::error::could not tell whether ${REPO}:${TAG} is already published; pushing nothing"
+            exit 1
           fi
 
       - name: Build the worker image
