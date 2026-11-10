@@ -66,20 +66,25 @@ type AuditQueryResponse struct {
 	Offset int                  `json:"offset"`
 }
 
-// setupTenantForAuditTests creates a test tenant.
+// setupTenantForAuditTests creates a test tenant. Creating a tenant is a
+// system-tenant route (tenants:create), so it is sent as the fixture system
+// admin. The audit queries that follow are not: the audit routes answer only
+// for the caller's own tenant (iam.ResolveRequestTenant), so they stay on the
+// cluster the test passes.
 func setupTenantForAuditTests(t *testing.T, cluster *testCluster) string {
 	tenantID := generateUniqueTenantID()
 	createTenantReq := map[string]interface{}{
 		"id":   tenantID,
 		"name": "Audit Test Tenant",
 	}
-	require.NoError(t, cluster.postJSON("/api/v1/tenants", createTenantReq, nil))
+	require.NoError(t, cluster.asSystemAdmin().postJSON("/api/v1/tenants", createTenantReq, nil))
 	return tenantID
 }
 
-// cleanupAuditTests cleans up test resources.
+// cleanupAuditTests cleans up test resources. Deleting a tenant is a
+// system-tenant route (tenants:delete), sent as the fixture system admin.
 func cleanupAuditTests(cluster *testCluster, tenantID string) {
-	cluster.deleteJSON(fmt.Sprintf("/api/v1/tenants/%s", tenantID))
+	cluster.asSystemAdmin().deleteJSON(fmt.Sprintf("/api/v1/tenants/%s", tenantID))
 }
 
 // waitForAuditEvents polls the audit query endpoint until at least min events
@@ -151,7 +156,9 @@ func TestAuditEventQueryWithFilters(t *testing.T) {
 	var user struct {
 		ID string `json:"id"`
 	}
-	err := cluster.postJSON(fmt.Sprintf("/api/v1/tenants/%s/users", tenantID), createUserReq, &user)
+	// The user create acts in the test's tenant as the system admin
+	// (tenant lift, pkg/api/rest/tenant_target.go).
+	err := cluster.asSystemAdmin().postJSON(fmt.Sprintf("/api/v1/tenants/%s/users", tenantID), createUserReq, &user)
 	require.NoError(t, err)
 
 	// Wait for the user creation event to become queryable
@@ -210,7 +217,9 @@ func TestAuditEventQueryPagination(t *testing.T) {
 			"username": generateUniqueUsername(),
 			"name":     fmt.Sprintf("Pagination Test User %d", i),
 		}
-		err := cluster.postJSON(fmt.Sprintf("/api/v1/tenants/%s/users", tenantID), createUserReq, nil)
+		// The user create acts in the test's tenant as the system admin
+		// (tenant lift, pkg/api/rest/tenant_target.go).
+		err := cluster.asSystemAdmin().postJSON(fmt.Sprintf("/api/v1/tenants/%s/users", tenantID), createUserReq, nil)
 		require.NoError(t, err)
 	}
 
@@ -255,7 +264,9 @@ func TestAuditEventQueryTimeRange(t *testing.T) {
 		"username": generateUniqueUsername(),
 		"name":     "Time Range Test User",
 	}
-	err := cluster.postJSON(fmt.Sprintf("/api/v1/tenants/%s/users", tenantID), createUserReq, nil)
+	// The user create acts in the test's tenant as the system admin
+	// (tenant lift, pkg/api/rest/tenant_target.go).
+	err := cluster.asSystemAdmin().postJSON(fmt.Sprintf("/api/v1/tenants/%s/users", tenantID), createUserReq, nil)
 	require.NoError(t, err)
 
 	// Wait for the user creation event to become queryable
@@ -361,7 +372,9 @@ func TestAuditEventDelete(t *testing.T) {
 			"username": generateUniqueUsername(),
 			"name":     fmt.Sprintf("Delete Test User %d", i),
 		}
-		err := cluster.postJSON(fmt.Sprintf("/api/v1/tenants/%s/users", tenantID), createUserReq, nil)
+		// The user create acts in the test's tenant as the system admin
+		// (tenant lift, pkg/api/rest/tenant_target.go).
+		err := cluster.asSystemAdmin().postJSON(fmt.Sprintf("/api/v1/tenants/%s/users", tenantID), createUserReq, nil)
 		require.NoError(t, err)
 	}
 
@@ -409,7 +422,8 @@ func TestAuditEventTenantIsolation(t *testing.T) {
 		"id":   tenant2ID,
 		"name": "Isolation Test Tenant 2",
 	}
-	require.NoError(t, cluster.postJSON("/api/v1/tenants", createTenant2Req, nil))
+	// Creating a tenant is a system-tenant route: the fixture system admin.
+	require.NoError(t, cluster.asSystemAdmin().postJSON("/api/v1/tenants", createTenant2Req, nil))
 	defer cleanupAuditTests(cluster, tenant2ID)
 
 	// Create a user in tenant1
@@ -422,7 +436,9 @@ func TestAuditEventTenantIsolation(t *testing.T) {
 	var user1 struct {
 		ID string `json:"id"`
 	}
-	err := cluster.postJSON(fmt.Sprintf("/api/v1/tenants/%s/users", tenant1ID), createUserReq, &user1)
+	// The user create acts in the test's tenant as the system admin
+	// (tenant lift, pkg/api/rest/tenant_target.go).
+	err := cluster.asSystemAdmin().postJSON(fmt.Sprintf("/api/v1/tenants/%s/users", tenant1ID), createUserReq, &user1)
 	require.NoError(t, err)
 
 	// Wait for the tenant1 user creation and the tenant2 creation events to become queryable
@@ -485,7 +501,9 @@ func TestAuditEventGeneration(t *testing.T) {
 					"username": generateUniqueUsername(),
 					"name":     "Event Gen Test User",
 				}
-				return cluster.postJSON(fmt.Sprintf("/api/v1/tenants/%s/users", tenantID), createUserReq, nil)
+				// The user create acts in the test's tenant as the system admin
+				// (tenant lift, pkg/api/rest/tenant_target.go).
+				return cluster.asSystemAdmin().postJSON(fmt.Sprintf("/api/v1/tenants/%s/users", tenantID), createUserReq, nil)
 			},
 			expectedEvent: "user_management",
 		},
@@ -507,7 +525,9 @@ func TestAuditEventGeneration(t *testing.T) {
 					"name":        fmt.Sprintf("test-role-%d", time.Now().UnixNano()),
 					"description": "Test role for audit events",
 				}
-				return cluster.postJSON(fmt.Sprintf("/api/v1/tenants/%s/roles", tenantID), createRoleReq, nil)
+				// The role create acts in the test's tenant as the system admin
+				// (tenant lift, pkg/api/rest/tenant_target.go).
+				return cluster.asSystemAdmin().postJSON(fmt.Sprintf("/api/v1/tenants/%s/roles", tenantID), createRoleReq, nil)
 			},
 			expectedEvent: "role_management",
 		},
