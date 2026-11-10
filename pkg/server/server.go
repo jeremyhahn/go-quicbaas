@@ -2004,25 +2004,28 @@ func (s *Server) rawQRDBTenantServicer() qrdbsdk.ServiceTenantServicer {
 
 // GetQRDBTenantServicer returns the tenant servicer composers wire into the
 // SDK's embedded qrdb transport (WithEmbeddedQRDB) for TenantMgmt() and the
-// per-tenant barrier surface. It is the tenant unseal router, the servicer
-// the node's network transports use: an embedded unseal runs the hooked
-// barrier facade, so it tells the unseal observers, which reload the tenant's
-// stored policies, and needs a caller bound to that tenant; every other call
-// reaches the node's own tenant service. Returns nil when the node is absent,
-// its service graph is not yet built (e.g. while sealed), or the router is
-// not installed.
+// per-tenant barrier surface. It is the in-process view of the tenant unseal
+// router, the servicer the node's network transports use: an embedded unseal
+// runs the hooked barrier facade, so it tells the unseal observers, which
+// reload the tenant's stored policies, and needs a caller bound to that
+// tenant. An in-process caller with no principal of its own is bound to the
+// tenant it names on the context (see inProcessTenantServicer). Every other
+// call reaches the node's own tenant service. Returns nil when the node is
+// absent, its service graph is not yet built (e.g. while sealed), or the
+// router is not installed.
 func (s *Server) GetQRDBTenantServicer() qrdbsdk.ServiceTenantServicer {
 	return hookedTenantServicer(s.rawQRDBTenantServicer(), s.tenantUnsealRouter)
 }
 
-// hookedTenantServicer returns router as the embedded tenant servicer once
-// the node's own servicer (raw) exists, and nil otherwise. It never returns
-// raw: an unseal on raw would skip the hooked barrier facade.
+// hookedTenantServicer returns the in-process view of router as the embedded
+// tenant servicer once the node's own servicer (raw) exists, and nil
+// otherwise. It never returns raw: an unseal on raw would skip the hooked
+// barrier facade.
 func hookedTenantServicer(raw qrdbsdk.ServiceTenantServicer, router *tenantUnsealRouter) qrdbsdk.ServiceTenantServicer {
 	if raw == nil || router == nil {
 		return nil
 	}
-	return router
+	return inProcessTenantServicer{router}
 }
 
 // Service returns the QuicBaaS facade for direct database operations. The

@@ -25,7 +25,9 @@ import (
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/auth"
+	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 // errTenantServiceUnavailable is returned by every tenantUnsealRouter call
@@ -107,6 +109,64 @@ func (r *tenantUnsealRouter) applyProbeLocked() {
 		return
 	}
 	wiring.SetTenantDataProbe(r.probe)
+}
+
+// inProcessTenantPrincipal names the subject an in-process caller acts as
+// when it names a tenant and carries no principal of its own.
+const inProcessTenantPrincipal = "in-process"
+
+// inProcessTenantServicer is the tenant servicer an in-process composer wires
+// into the SDK's embedded qrdb transport (Server.GetQRDBTenantServicer). It
+// is the router with one difference: a tenant unseal or unseal-share from a
+// caller that carries no principal acts for the tenant the caller named with
+// tenantctx.WithTenant. The embedded transport is the in-process path: there
+// is no wire and no authenticator, and the caller is the program that
+// composed the server. The facade's tenant binding still applies, so a caller
+// that names no tenant, the system tenant, or a tenant other than the target
+// is refused. The node's network transports never hold this view; they hold
+// the router itself, which accepts a verified identity only.
+type inProcessTenantServicer struct {
+	*tenantUnsealRouter
+}
+
+var (
+	_ qrdbsdk.ServiceTenantServicer    = inProcessTenantServicer{}
+	_ qrdbtenant.IsolationChangeWiring = inProcessTenantServicer{}
+)
+
+// TenantBarrierUnseal runs the router's unseal for the tenant an in-process
+// caller named.
+func (v inProcessTenantServicer) TenantBarrierUnseal(ctx context.Context, tenantID string, key []byte) error {
+	return v.tenantUnsealRouter.TenantBarrierUnseal(inProcessTenantContext(ctx), tenantID, key)
+}
+
+// TenantBarrierUnsealShare runs the router's unseal-share for the tenant an
+// in-process caller named.
+func (v inProcessTenantServicer) TenantBarrierUnsealShare(ctx context.Context, tenantID, share string) (*qrdbtenant.TenantBarrierUnsealProgress, error) {
+	return v.tenantUnsealRouter.TenantBarrierUnsealShare(inProcessTenantContext(ctx), tenantID, share)
+}
+
+// inProcessTenantContext binds the in-process principal of the tenant ctx
+// names. A context that already carries a Subject or a qrdb identity is
+// returned unchanged, so a verified principal is never replaced; so is a
+// context that names no tenant, which the facade then refuses.
+func inProcessTenantContext(ctx context.Context) context.Context {
+	if _, ok := auth.SubjectFromContext(ctx); ok {
+		return ctx
+	}
+	if qrdbsdk.IdentityFromContext(ctx) != nil {
+		return ctx
+	}
+	tenantID, ok := tenantctx.Lookup(ctx)
+	if !ok {
+		return ctx
+	}
+	return auth.SubjectIntoContext(ctx, interfaces.Subject{
+		ID:            inProcessTenantPrincipal,
+		Username:      inProcessTenantPrincipal,
+		TenantID:      tenantID,
+		Authenticated: true,
+	})
 }
 
 // TenantBarrierUnseal runs the hooked per-tenant barrier facade, never the

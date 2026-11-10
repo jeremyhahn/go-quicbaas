@@ -286,13 +286,15 @@ func TestTenantUnsealRouter_ProbeReachesTheNodeServicer(t *testing.T) {
 	require.Same(t, second, inner.currentProbe())
 }
 
-// The embedded tenant servicer is the hooked router, and only once the node's
-// own servicer exists.
+// The embedded tenant servicer is the in-process view of the hooked router,
+// and only once the node's own servicer exists.
 func TestHookedTenantServicer_IsTheRouterOnceTheNodeServicerExists(t *testing.T) {
 	router, _ := hookedUnsealRouter(t)
 	raw := &fakeNodeTenantServicer{t: t}
 
-	require.Same(t, router, hookedTenantServicer(raw, router))
+	view, ok := hookedTenantServicer(raw, router).(inProcessTenantServicer)
+	require.True(t, ok, "the embedded tenant servicer must be the in-process view")
+	require.Same(t, router, view.tenantUnsealRouter)
 	require.Nil(t, hookedTenantServicer(nil, router))
 	require.Nil(t, hookedTenantServicer(raw, nil))
 }

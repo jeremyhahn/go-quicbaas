@@ -19,3 +19,6 @@
 - A tenant unseal through the node's own endpoints keeps working after the
   node rebuilds its services, for example after a system encryption
   migration, and is answered as unavailable once shutdown has begun (#2212).
+- On the embedded transport, `quicbaas iam tenant barrier unseal` and
+  `unseal-share` act for the tenant `--tenant` names; an unseal for any
+  other tenant is refused (#2212).
