@@ -308,12 +308,13 @@ func TestPolicyEvaluation(t *testing.T) {
 	// The test creates its own tenant and its policies as the fixture system
 	// admin (a system-tenant route, then the tenant lift into the URL's
 	// tenant, pkg/api/rest/tenant_target.go). The POST /api/v1/iam/check
-	// calls stay on the unauthenticated base cluster: the route needs
-	// permissions:resolve, which no existing test principal holds.
+	// calls go as a user of that tenant bound to its Admin role (asResolver):
+	// the route needs permissions:resolve.
 	cluster := base.asSystemAdmin()
 
 	tenantID := setupTenantForTests(t, cluster)
 	defer cluster.deleteJSON(fmt.Sprintf("/api/v1/tenants/%s", tenantID))
+	resolver := base.asResolver(t, tenantID)
 
 	// Create a policy
 	policy := map[string]interface{}{
@@ -353,7 +354,7 @@ func TestPolicyEvaluation(t *testing.T) {
 	}
 
 	var response iam.CheckResponse
-	err := base.postJSON("/api/v1/iam/check", checkReq, &response)
+	err := resolver.postJSON("/api/v1/iam/check", checkReq, &response)
 	require.NoError(t, err)
 
 	assert.True(t, response.Allowed, "Access should be allowed for own data")
@@ -361,7 +362,7 @@ func TestPolicyEvaluation(t *testing.T) {
 
 	// Test denial (different user)
 	checkReq["resource"] = "keys/users/user456/profile"
-	err = base.postJSON("/api/v1/iam/check", checkReq, &response)
+	err = resolver.postJSON("/api/v1/iam/check", checkReq, &response)
 	require.NoError(t, err)
 
 	assert.False(t, response.Allowed, "Access should be denied for other user's data")
@@ -374,12 +375,13 @@ func TestPolicyPriority(t *testing.T) {
 	// The test creates its own tenant and its policies as the fixture system
 	// admin (a system-tenant route, then the tenant lift into the URL's
 	// tenant, pkg/api/rest/tenant_target.go). The POST /api/v1/iam/check
-	// calls stay on the unauthenticated base cluster: the route needs
-	// permissions:resolve, which no existing test principal holds.
+	// calls go as a user of that tenant bound to its Admin role (asResolver):
+	// the route needs permissions:resolve.
 	cluster := base.asSystemAdmin()
 
 	tenantID := setupTenantForTests(t, cluster)
 	defer cluster.deleteJSON(fmt.Sprintf("/api/v1/tenants/%s", tenantID))
+	resolver := base.asResolver(t, tenantID)
 
 	// Create high-priority deny policy
 	denyPolicy := map[string]interface{}{
@@ -447,7 +449,7 @@ func TestPolicyPriority(t *testing.T) {
 	}
 
 	var response iam.CheckResponse
-	err := base.postJSON("/api/v1/iam/check", checkReq, &response)
+	err := resolver.postJSON("/api/v1/iam/check", checkReq, &response)
 	require.NoError(t, err)
 
 	assert.False(t, response.Allowed, "Deny should take precedence over allow")
@@ -460,12 +462,13 @@ func TestPolicyConditions(t *testing.T) {
 	// The test creates its own tenant and its policies as the fixture system
 	// admin (a system-tenant route, then the tenant lift into the URL's
 	// tenant, pkg/api/rest/tenant_target.go). The POST /api/v1/iam/check
-	// calls stay on the unauthenticated base cluster: the route needs
-	// permissions:resolve, which no existing test principal holds.
+	// calls go as a user of that tenant bound to its Admin role (asResolver):
+	// the route needs permissions:resolve.
 	cluster := base.asSystemAdmin()
 
 	tenantID := setupTenantForTests(t, cluster)
 	defer cluster.deleteJSON(fmt.Sprintf("/api/v1/tenants/%s", tenantID))
+	resolver := base.asResolver(t, tenantID)
 
 	t.Run("AttributeCondition", func(t *testing.T) {
 		policy := map[string]interface{}{
@@ -513,7 +516,7 @@ func TestPolicyConditions(t *testing.T) {
 		}
 
 		var response iam.CheckResponse
-		err := base.postJSON("/api/v1/iam/check", checkReq, &response)
+		err := resolver.postJSON("/api/v1/iam/check", checkReq, &response)
 		require.NoError(t, err)
 		assert.True(t, response.Allowed, "Access should be allowed with matching department")
 
@@ -521,7 +524,7 @@ func TestPolicyConditions(t *testing.T) {
 		checkReq["subject"].(map[string]interface{})["attributes"] = map[string]interface{}{
 			"department": "sales",
 		}
-		err = base.postJSON("/api/v1/iam/check", checkReq, &response)
+		err = resolver.postJSON("/api/v1/iam/check", checkReq, &response)
 		require.NoError(t, err)
 		assert.False(t, response.Allowed, "Access should be denied with non-matching department")
 	})
@@ -534,12 +537,13 @@ func TestPolicyResourcePatterns(t *testing.T) {
 	// The test creates its own tenant and its policies as the fixture system
 	// admin (a system-tenant route, then the tenant lift into the URL's
 	// tenant, pkg/api/rest/tenant_target.go). The POST /api/v1/iam/check
-	// calls stay on the unauthenticated base cluster: the route needs
-	// permissions:resolve, which no existing test principal holds.
+	// calls go as a user of that tenant bound to its Admin role (asResolver):
+	// the route needs permissions:resolve.
 	cluster := base.asSystemAdmin()
 
 	tenantID := setupTenantForTests(t, cluster)
 	defer cluster.deleteJSON(fmt.Sprintf("/api/v1/tenants/%s", tenantID))
+	resolver := base.asResolver(t, tenantID)
 
 	policy := map[string]interface{}{
 		"apiVersion": "abac.quicbaas.io/v1",
@@ -597,7 +601,7 @@ func TestPolicyResourcePatterns(t *testing.T) {
 			}
 
 			var response iam.CheckResponse
-			err := base.postJSON("/api/v1/iam/check", checkReq, &response)
+			err := resolver.postJSON("/api/v1/iam/check", checkReq, &response)
 			require.NoError(t, err)
 			assert.Equal(t, tt.allowed, response.Allowed, "Resource: %s", tt.resource)
 		})

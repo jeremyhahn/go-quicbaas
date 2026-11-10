@@ -35,12 +35,14 @@ func TestPEPSingleCheck(t *testing.T) {
 	cluster := setupTestCluster(t)
 	defer cluster.Close()
 	// Tenant and policy calls go as the system admin, acting in the test's
-	// tenants by the tenant lift. The /api/v1/iam/check calls stay on cluster:
-	// no test principal holds permissions:resolve for them yet.
+	// tenants by the tenant lift. The /api/v1/iam/check calls go as a user of
+	// the subject's tenant bound to its Admin role (asResolver), which holds
+	// permissions:resolve.
 	admin := cluster.asSystemAdmin()
 
 	tenantID := setupTenantForTests(t, admin)
 	defer admin.deleteJSON(fmt.Sprintf("/api/v1/tenants/%s", tenantID))
+	resolver := cluster.asResolver(t, tenantID)
 
 	// Create a simple policy
 	policy := map[string]interface{}{
@@ -80,7 +82,7 @@ func TestPEPSingleCheck(t *testing.T) {
 	}
 
 	var response iam.CheckResponse
-	err := cluster.postJSON("/api/v1/iam/check", checkReq, &response)
+	err := resolver.postJSON("/api/v1/iam/check", checkReq, &response)
 	require.NoError(t, err)
 
 	assert.True(t, response.Allowed)
@@ -93,12 +95,14 @@ func TestPEPBatchCheck(t *testing.T) {
 	cluster := setupTestCluster(t)
 	defer cluster.Close()
 	// Tenant and policy calls go as the system admin, acting in the test's
-	// tenants by the tenant lift. The /api/v1/iam/check calls stay on cluster:
-	// no test principal holds permissions:resolve for them yet.
+	// tenants by the tenant lift. The /api/v1/iam/check calls go as a user of
+	// the subject's tenant bound to its Admin role (asResolver), which holds
+	// permissions:resolve.
 	admin := cluster.asSystemAdmin()
 
 	tenantID := setupTenantForTests(t, admin)
 	defer admin.deleteJSON(fmt.Sprintf("/api/v1/tenants/%s", tenantID))
+	resolver := cluster.asResolver(t, tenantID)
 
 	// Create policy
 	policy := map[string]interface{}{
@@ -160,7 +164,7 @@ func TestPEPBatchCheck(t *testing.T) {
 	}
 
 	var batchResponse map[string]interface{}
-	err := cluster.postJSON("/api/v1/iam/check/batch", batchReq, &batchResponse)
+	err := resolver.postJSON("/api/v1/iam/check/batch", batchReq, &batchResponse)
 	require.NoError(t, err)
 
 	responses, ok := batchResponse["results"].([]interface{})
@@ -185,12 +189,14 @@ func TestPEPCaching(t *testing.T) {
 	cluster := setupTestCluster(t)
 	defer cluster.Close()
 	// Tenant and policy calls go as the system admin, acting in the test's
-	// tenants by the tenant lift. The /api/v1/iam/check calls stay on cluster:
-	// no test principal holds permissions:resolve for them yet.
+	// tenants by the tenant lift. The /api/v1/iam/check calls go as a user of
+	// the subject's tenant bound to its Admin role (asResolver), which holds
+	// permissions:resolve.
 	admin := cluster.asSystemAdmin()
 
 	tenantID := setupTenantForTests(t, admin)
 	defer admin.deleteJSON(fmt.Sprintf("/api/v1/tenants/%s", tenantID))
+	resolver := cluster.asResolver(t, tenantID)
 
 	// Create policy
 	policy := map[string]interface{}{
@@ -231,13 +237,13 @@ func TestPEPCaching(t *testing.T) {
 	// First request
 	start := time.Now()
 	var response1 iam.CheckResponse
-	require.NoError(t, cluster.postJSON("/api/v1/iam/check", checkReq, &response1))
+	require.NoError(t, resolver.postJSON("/api/v1/iam/check", checkReq, &response1))
 	firstDuration := time.Since(start)
 
 	// Second request (should be cached)
 	start = time.Now()
 	var response2 iam.CheckResponse
-	require.NoError(t, cluster.postJSON("/api/v1/iam/check", checkReq, &response2))
+	require.NoError(t, resolver.postJSON("/api/v1/iam/check", checkReq, &response2))
 	secondDuration := time.Since(start)
 
 	// Both should have same result
@@ -253,12 +259,14 @@ func TestPEPPolicySync(t *testing.T) {
 	cluster := setupTestCluster(t)
 	defer cluster.Close()
 	// Tenant and policy calls go as the system admin, acting in the test's
-	// tenants by the tenant lift. The /api/v1/iam/check calls stay on cluster:
-	// no test principal holds permissions:resolve for them yet.
+	// tenants by the tenant lift. The /api/v1/iam/check calls go as a user of
+	// the subject's tenant bound to its Admin role (asResolver), which holds
+	// permissions:resolve.
 	admin := cluster.asSystemAdmin()
 
 	tenantID := setupTenantForTests(t, admin)
 	defer admin.deleteJSON(fmt.Sprintf("/api/v1/tenants/%s", tenantID))
+	resolver := cluster.asResolver(t, tenantID)
 
 	// Create initial policy (deny)
 	policy := map[string]interface{}{
@@ -298,7 +306,7 @@ func TestPEPPolicySync(t *testing.T) {
 
 	// Check should be denied
 	var response1 iam.CheckResponse
-	require.NoError(t, cluster.postJSON("/api/v1/iam/check", checkReq, &response1))
+	require.NoError(t, resolver.postJSON("/api/v1/iam/check", checkReq, &response1))
 	assert.False(t, response1.Allowed, "Access should be denied initially")
 
 	// Update policy to allow
@@ -330,7 +338,7 @@ func TestPEPPolicySync(t *testing.T) {
 	// Wait for the policy update to propagate to the PEP
 	require.Eventually(t, func() bool {
 		var probe iam.CheckResponse
-		if err := cluster.postJSON("/api/v1/iam/check", checkReq, &probe); err != nil {
+		if err := resolver.postJSON("/api/v1/iam/check", checkReq, &probe); err != nil {
 			t.Logf("policy check not ready: %v", err)
 			return false
 		}
@@ -339,7 +347,7 @@ func TestPEPPolicySync(t *testing.T) {
 
 	// Check should now be allowed
 	var response2 iam.CheckResponse
-	require.NoError(t, cluster.postJSON("/api/v1/iam/check", checkReq, &response2))
+	require.NoError(t, resolver.postJSON("/api/v1/iam/check", checkReq, &response2))
 	assert.True(t, response2.Allowed, "Access should be allowed after policy update")
 }
 
@@ -348,12 +356,14 @@ func TestPEPPerformance(t *testing.T) {
 	cluster := setupTestCluster(t)
 	defer cluster.Close()
 	// Tenant and policy calls go as the system admin, acting in the test's
-	// tenants by the tenant lift. The /api/v1/iam/check calls stay on cluster:
-	// no test principal holds permissions:resolve for them yet.
+	// tenants by the tenant lift. The /api/v1/iam/check calls go as a user of
+	// the subject's tenant bound to its Admin role (asResolver), which holds
+	// permissions:resolve.
 	admin := cluster.asSystemAdmin()
 
 	tenantID := setupTenantForTests(t, admin)
 	defer admin.deleteJSON(fmt.Sprintf("/api/v1/tenants/%s", tenantID))
+	resolver := cluster.asResolver(t, tenantID)
 
 	// Create policy
 	policy := map[string]interface{}{
@@ -394,7 +404,7 @@ func TestPEPPerformance(t *testing.T) {
 	// Warm up
 	for i := 0; i < 10; i++ {
 		var response iam.CheckResponse
-		cluster.postJSON("/api/v1/iam/check", checkReq, &response)
+		resolver.postJSON("/api/v1/iam/check", checkReq, &response)
 	}
 
 	// Measure performance
@@ -402,7 +412,7 @@ func TestPEPPerformance(t *testing.T) {
 	start := time.Now()
 	for i := 0; i < iterations; i++ {
 		var response iam.CheckResponse
-		err := cluster.postJSON("/api/v1/iam/check", checkReq, &response)
+		err := resolver.postJSON("/api/v1/iam/check", checkReq, &response)
 		require.NoError(t, err)
 	}
 	duration := time.Since(start)
@@ -421,12 +431,14 @@ func TestPEPConcurrency(t *testing.T) {
 	cluster := setupTestCluster(t)
 	defer cluster.Close()
 	// Tenant and policy calls go as the system admin, acting in the test's
-	// tenants by the tenant lift. The /api/v1/iam/check calls stay on cluster:
-	// no test principal holds permissions:resolve for them yet.
+	// tenants by the tenant lift. The /api/v1/iam/check calls go as a user of
+	// the subject's tenant bound to its Admin role (asResolver), which holds
+	// permissions:resolve.
 	admin := cluster.asSystemAdmin()
 
 	tenantID := setupTenantForTests(t, admin)
 	defer admin.deleteJSON(fmt.Sprintf("/api/v1/tenants/%s", tenantID))
+	resolver := cluster.asResolver(t, tenantID)
 
 	// Create policy
 	policy := map[string]interface{}{
@@ -485,7 +497,7 @@ func TestPEPConcurrency(t *testing.T) {
 					}
 
 					var response iam.CheckResponse
-					if err := cluster.postJSON("/api/v1/iam/check", checkReq, &response); err != nil {
+					if err := resolver.postJSON("/api/v1/iam/check", checkReq, &response); err != nil {
 						errors <- err
 						return
 					}
@@ -523,8 +535,9 @@ func TestPEPMultiTenantPolicyIsolation(t *testing.T) {
 	cluster := setupTestCluster(t)
 	defer cluster.Close()
 	// Tenant and policy calls go as the system admin, acting in the test's
-	// tenants by the tenant lift. The /api/v1/iam/check calls stay on cluster:
-	// no test principal holds permissions:resolve for them yet.
+	// tenants by the tenant lift. The /api/v1/iam/check calls go as a user of
+	// the subject's tenant bound to its Admin role (asResolver), which holds
+	// permissions:resolve.
 	admin := cluster.asSystemAdmin()
 
 	// Create two separate tenants
@@ -533,6 +546,8 @@ func TestPEPMultiTenantPolicyIsolation(t *testing.T) {
 
 	tenant2ID := setupTenantForTests(t, admin)
 	defer admin.deleteJSON(fmt.Sprintf("/api/v1/tenants/%s", tenant2ID))
+	resolver1 := cluster.asResolver(t, tenant1ID)
+	resolver2 := cluster.asResolver(t, tenant2ID)
 
 	// Create a policy in tenant1 that allows read on data/**
 	policy1 := map[string]interface{}{
@@ -599,7 +614,7 @@ func TestPEPMultiTenantPolicyIsolation(t *testing.T) {
 		}
 
 		var response iam.CheckResponse
-		err := cluster.postJSON("/api/v1/iam/check", checkReq, &response)
+		err := resolver1.postJSON("/api/v1/iam/check", checkReq, &response)
 		require.NoError(t, err)
 		assert.True(t, response.Allowed, "Tenant1 user should be allowed to read")
 		assert.Equal(t, "tenant1-allow-policy", response.MatchedPolicy)
@@ -618,7 +633,7 @@ func TestPEPMultiTenantPolicyIsolation(t *testing.T) {
 		}
 
 		var response iam.CheckResponse
-		err := cluster.postJSON("/api/v1/iam/check", checkReq, &response)
+		err := resolver2.postJSON("/api/v1/iam/check", checkReq, &response)
 		require.NoError(t, err)
 		assert.False(t, response.Allowed, "Tenant2 user should be denied from reading")
 		assert.Equal(t, "tenant2-deny-policy", response.MatchedPolicy)
@@ -639,7 +654,7 @@ func TestPEPMultiTenantPolicyIsolation(t *testing.T) {
 		}
 
 		var response iam.CheckResponse
-		err := cluster.postJSON("/api/v1/iam/check", checkReq, &response)
+		err := resolver2.postJSON("/api/v1/iam/check", checkReq, &response)
 		require.NoError(t, err)
 
 		// Should be denied because tenant2's policy denies, NOT allowed by tenant1's policy
@@ -654,12 +669,14 @@ func TestPEPFailover(t *testing.T) {
 	cluster := setupTestCluster(t)
 	defer cluster.Close()
 	// Tenant and policy calls go as the system admin, acting in the test's
-	// tenants by the tenant lift. The /api/v1/iam/check calls stay on cluster:
-	// no test principal holds permissions:resolve for them yet.
+	// tenants by the tenant lift. The /api/v1/iam/check calls go as a user of
+	// the subject's tenant bound to its Admin role (asResolver), which holds
+	// permissions:resolve.
 	admin := cluster.asSystemAdmin()
 
 	tenantID := setupTenantForTests(t, admin)
 	defer admin.deleteJSON(fmt.Sprintf("/api/v1/tenants/%s", tenantID))
+	resolver := cluster.asResolver(t, tenantID)
 
 	// Create policy
 	policy := map[string]interface{}{
@@ -699,11 +716,11 @@ func TestPEPFailover(t *testing.T) {
 
 	// Perform the check twice: the policy must hold across requests
 	var response1 iam.CheckResponse
-	require.NoError(t, cluster.postJSON("/api/v1/iam/check", checkReq, &response1))
+	require.NoError(t, resolver.postJSON("/api/v1/iam/check", checkReq, &response1))
 	assert.True(t, response1.Allowed)
 
 	var response2 iam.CheckResponse
-	require.NoError(t, cluster.postJSON("/api/v1/iam/check", checkReq, &response2))
+	require.NoError(t, resolver.postJSON("/api/v1/iam/check", checkReq, &response2))
 	assert.True(t, response2.Allowed)
 
 	// Policy should persist
@@ -717,12 +734,14 @@ func TestPEPPolicyPriorityEvaluation(t *testing.T) {
 	cluster := setupTestCluster(t)
 	defer cluster.Close()
 	// Tenant and policy calls go as the system admin, acting in the test's
-	// tenants by the tenant lift. The /api/v1/iam/check calls stay on cluster:
-	// no test principal holds permissions:resolve for them yet.
+	// tenants by the tenant lift. The /api/v1/iam/check calls go as a user of
+	// the subject's tenant bound to its Admin role (asResolver), which holds
+	// permissions:resolve.
 	admin := cluster.asSystemAdmin()
 
 	tenantID := setupTenantForTests(t, admin)
 	defer admin.deleteJSON(fmt.Sprintf("/api/v1/tenants/%s", tenantID))
+	resolver := cluster.asResolver(t, tenantID)
 
 	// Create a low-priority allow policy
 	lowPriorityPolicy := map[string]interface{}{
@@ -789,7 +808,7 @@ func TestPEPPolicyPriorityEvaluation(t *testing.T) {
 		}
 
 		var response iam.CheckResponse
-		err := cluster.postJSON("/api/v1/iam/check", checkReq, &response)
+		err := resolver.postJSON("/api/v1/iam/check", checkReq, &response)
 		require.NoError(t, err)
 		assert.True(t, response.Allowed, "Regular data should be allowed")
 	})
@@ -807,7 +826,7 @@ func TestPEPPolicyPriorityEvaluation(t *testing.T) {
 		}
 
 		var response iam.CheckResponse
-		err := cluster.postJSON("/api/v1/iam/check", checkReq, &response)
+		err := resolver.postJSON("/api/v1/iam/check", checkReq, &response)
 		require.NoError(t, err)
 		assert.False(t, response.Allowed, "Secret data should be denied by high-priority policy")
 		assert.Equal(t, "high-priority-deny", response.MatchedPolicy)
@@ -819,12 +838,14 @@ func TestPEPWildcardResourceMatching(t *testing.T) {
 	cluster := setupTestCluster(t)
 	defer cluster.Close()
 	// Tenant and policy calls go as the system admin, acting in the test's
-	// tenants by the tenant lift. The /api/v1/iam/check calls stay on cluster:
-	// no test principal holds permissions:resolve for them yet.
+	// tenants by the tenant lift. The /api/v1/iam/check calls go as a user of
+	// the subject's tenant bound to its Admin role (asResolver), which holds
+	// permissions:resolve.
 	admin := cluster.asSystemAdmin()
 
 	tenantID := setupTenantForTests(t, admin)
 	defer admin.deleteJSON(fmt.Sprintf("/api/v1/tenants/%s", tenantID))
+	resolver := cluster.asResolver(t, tenantID)
 
 	// Create policy with various wildcard patterns
 	policy := map[string]interface{}{
@@ -884,7 +905,7 @@ func TestPEPWildcardResourceMatching(t *testing.T) {
 			}
 
 			var response iam.CheckResponse
-			err := cluster.postJSON("/api/v1/iam/check", checkReq, &response)
+			err := resolver.postJSON("/api/v1/iam/check", checkReq, &response)
 			require.NoError(t, err)
 			assert.Equal(t, tc.expected, response.Allowed,
 				"Resource %s should be allowed=%v", tc.resource, tc.expected)
