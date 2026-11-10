@@ -522,12 +522,14 @@ func (d *Daemon) sendHeartbeat(ctx context.Context) {
 	}
 	if err := d.heartbeat.SendHeartbeat(ctx, identity, status); err != nil {
 		d.logger.Warnf("fleet node daemon heartbeat (seq=%d): %v", status.SequenceNumber, err)
-		// Terminal re-register failure → record + signal the loop to
-		// exit so systemd restarts the unit from a fresh process state.
+		// Terminal re-register failure → signal the loop to exit, then
+		// record the cause, so systemd restarts the unit from a fresh
+		// process state. The signal sets the failed state, so it goes
+		// first: a caller that sees the run error also sees the state.
 		// All other errors are transient; the next tick retries.
 		if errors.Is(err, ErrNodeReRegisterFailed) {
-			d.recordRunErr(err)
 			d.signalReregisterFailure()
+			d.recordRunErr(err)
 		}
 	}
 }
