@@ -80,7 +80,7 @@ func (s *Server) policyRepairTenant(w http.ResponseWriter, r *http.Request, op, 
 // refuses tenantID: the tenant is still running its unseal checks, so no
 // request may reach its data yet. A nil TenantAdmission admits every tenant.
 func (s *Server) admitTenant(w http.ResponseWriter, r *http.Request, tenantID string) bool {
-	if s.config == nil || s.config.TenantAdmission == nil {
+	if s == nil || s.config == nil || s.config.TenantAdmission == nil {
 		return true
 	}
 	if err := s.config.TenantAdmission(tenantID); err != nil {
