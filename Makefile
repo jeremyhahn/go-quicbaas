@@ -1642,7 +1642,7 @@ test-verbose: ## Run tests with verbose output
 # GNU make never matches `test-api/grpc` against test-% (it strips the
 # directory part first), so nested packages are named with dashes:
 # api-grpc reaches pkg/api/grpc, while a real hyphenated directory such as
-# server-tpm2-keys still reaches pkg/server/tpm2-keys. scripts/resolve-package.sh
+# quicbaas-git-sign still reaches cmd/quicbaas-git-sign. scripts/resolve-package.sh
 # documents the search. Resolving at expansion time puts the real path and tag
 # set in `make -n`, which scripts/resolve-package_test.sh relies on.
 PKG_ROOTS := pkg cmd
@@ -1680,7 +1680,7 @@ pkg_tags = $(if $(filter pkg/iam pkg/iam/%,$(call pkg_dir,$(PKG_ROOTS))),$(IAM_T
 # Dynamic package test targets - use: make test-<package>
 # Examples: make test-xkms, make test-kms, make test-iam
 # Nested packages use dashes: make test-api-grpc (pkg/api/grpc),
-# make test-iam-dpop (pkg/iam/dpop), make test-server-tpm2-keys
+# make test-iam-dpop (pkg/iam/dpop), make test-quicbaas-git-sign
 test-%: ## Run unit tests for a specific package (e.g., make test-xkms, make test-api-grpc)
 	@$(call pkg_resolve,$(PKG_ROOTS)); \
 	TAGS='$(pkg_tags)'; \
@@ -2765,7 +2765,7 @@ integration-test-ollama-cpu: ## Run the full integration suite INCLUDING Ollama 
 .PHONY: integration-test-ollama-gpu
 integration-test-ollama-gpu: ## Run the full integration suite INCLUDING Ollama + GPU tests against a remote GPU host (requires GPU_HOST=<host>)
 	@if [ -z "$(strip $(GPU_HOST))" ]; then \
-		echo "$(RED)Error: integration-test-ollama-gpu requires GPU_HOST=<host> (e.g. make integration-test-ollama-gpu GPU_HOST=gpu01.lan)$(NC)"; \
+		echo "$(RED)Error: integration-test-ollama-gpu requires GPU_HOST=<host> (e.g. make integration-test-ollama-gpu GPU_HOST=core-01.example)$(NC)"; \
 		exit 1; \
 	fi
 	@echo "$(BLUE)Running integration tests with remote GPU Ollama host: $(GPU_HOST)$(NC)"
@@ -3397,13 +3397,13 @@ RACE_TIMEOUT := 30m
 # `make coverage` runs all three with a single shard. It runs the same
 # TEST_CHECKS validations as `make test` first, so replacing `make test` with
 # it keeps every check.
-COVERAGE_PASSES := test-sdk-go test-minimal test-standard test-lean test-tooling
+COVERAGE_PASSES := test-sdk-go test-minimal test-standard test-lean test-tooling test-software-factory-worker
 
 # coverage_shard_profile is shard $(1)'s profile in a run of SHARDS shards.
 coverage_shard_profile = $(COVERAGE_DIR)/coverage-shard-$(1)-of-$(SHARDS).out
 
 .PHONY: coverage
-coverage: $(TEST_CHECKS) ## The CI test stage: unit tests with -race and coverage (fail below COVER_MIN, generated code excluded), then the Go SDK, the minimal/standard/lean tag passes and the tooling tests
+coverage: $(TEST_CHECKS) ## The CI test stage: unit tests with -race and coverage (fail below COVER_MIN, generated code excluded), then the Go SDK, the minimal/standard/lean tag passes, the tooling tests and the worker image package tests
 	@$(MAKE) --no-print-directory coverage-shard SHARD=0 SHARDS=1
 	@$(MAKE) --no-print-directory coverage-merge SHARDS=1
 	@$(MAKE) --no-print-directory $(COVERAGE_PASSES)
@@ -3465,7 +3465,7 @@ coverage-merge: ## Join the SHARDS coverage-shard profiles and fail below COVER_
 	printf "$(GREEN)Coverage gate passed (%s%% >= %s%%)$(NC)\n" "$$TOTAL" "$(COVER_MIN)"
 
 .PHONY: coverage-passes
-coverage-passes: $(TEST_CHECKS) ## The test stage beside the coverage shards: the TEST_CHECKS validations, the Go SDK, the minimal/standard/lean tag passes and the tooling tests
+coverage-passes: $(TEST_CHECKS) ## The test stage beside the coverage shards: the TEST_CHECKS validations, the Go SDK, the minimal/standard/lean tag passes, the tooling tests and the worker image package tests
 	@$(MAKE) --no-print-directory $(COVERAGE_PASSES)
 
 # shard-packages prints shard SHARD of SHARDS of SHARD_PKGS under the tags
@@ -3824,12 +3824,14 @@ endif
 # actionlint and shellcheck, where a project's `make lint` lints workflows
 # (#1039).
 #
-# THE AGENT CLIS ARE PINNED TOO, and these pins are the ones that MOVE. A
-# manual build installs exactly CLAUDE_CODE_VERSION, CODEX_VERSION and
-# GEMINI_CLI_VERSION; the daemon's worker image refresh (pkg/sdlc/workerimage)
-# rebuilds the same Dockerfile with whatever newer versions the npm registry
-# publishes, gates the result and rebinds projects to it. Override them on the
-# command line to build a newer image by hand:
+# THE AGENT CLIS ARE PINNED TOO, in $(WORKER_IMAGE_DIR)/versions.lock (the
+# lock the nightly worker-image workflow builds from), and these pins are the
+# ones that MOVE. A manual build installs exactly CLAUDE_CODE_VERSION,
+# CODEX_VERSION and GEMINI_CLI_VERSION as the lock gives them; the daemon's
+# worker image refresh (pkg/sdlc/workerimage) rebuilds the same Dockerfile with
+# whatever newer versions the npm registry publishes, gates the result and
+# rebinds projects to it. Override them on the command line to build a newer
+# image by hand:
 #
 #   make build-worker-image CLAUDE_CODE_VERSION=2.1.293 CODEX_VERSION=0.161.0 GEMINI_CLI_VERSION=0.64.0
 #
@@ -3842,9 +3844,14 @@ WORKER_IMAGE_DIR := deployments/agents/software-factory-worker
 WORKER_IMAGE_REPO := $(DOCKER_IMAGE)-software-factory-worker
 WORKER_IMAGE_UID ?= $(shell id -u)
 WORKER_IMAGE_GID ?= $(shell id -g)
-CLAUDE_CODE_VERSION ?= 2.1.296
-CODEX_VERSION ?= 0.162.1
-GEMINI_CLI_VERSION ?= 0.64.0
+WORKER_IMAGE_LOCK := $(WORKER_IMAGE_DIR)/versions.lock
+worker_image_lock = $(strip $(shell sed -n 's/^$(1)=//p' $(WORKER_IMAGE_LOCK)))
+CLAUDE_CODE_VERSION ?= $(call worker_image_lock,CLAUDE_CODE_VERSION)
+CODEX_VERSION ?= $(call worker_image_lock,CODEX_VERSION)
+GEMINI_CLI_VERSION ?= $(call worker_image_lock,GEMINI_CLI_VERSION)
+ifeq ($(and $(CLAUDE_CODE_VERSION),$(CODEX_VERSION),$(GEMINI_CLI_VERSION)),)
+$(error $(WORKER_IMAGE_LOCK) must set CLAUDE_CODE_VERSION, CODEX_VERSION and GEMINI_CLI_VERSION)
+endif
 WORKER_IMAGE_TAG := $(DOCKER_TAG)-cc$(CLAUDE_CODE_VERSION)-cx$(CODEX_VERSION)
 # WORKER_IMAGE_REGISTRY is where `make push-worker-image` publishes, as
 # host[:port]/owner/name. It has no default: the registry is the operator's.
@@ -3879,6 +3886,9 @@ build-worker-image: ## Build the Software Factory worker image (quicbaas-softwar
 		--build-arg OPENCODE_VERSION=$(OPENCODE_VERSION) \
 		--build-arg OPENCODE_SHA256_X86_64=$(OPENCODE_SHA256_X86_64) \
 		--build-arg OPENCODE_SHA256_AARCH64=$(OPENCODE_SHA256_AARCH64) \
+		--build-arg GH_VERSION=$(GH_VERSION) \
+		--build-arg GH_SHA256_X86_64=$(GH_SHA256_X86_64) \
+		--build-arg GH_SHA256_AARCH64=$(GH_SHA256_AARCH64) \
 		--build-arg PROTOC_VERSION=$(PROTOC_VERSION) \
 		--build-arg PROTOC_SHA256_X86_64=$(PROTOC_SHA256_X86_64) \
 		--build-arg PROTOC_SHA256_AARCH64=$(PROTOC_SHA256_AARCH64) \
@@ -3949,13 +3959,15 @@ test-worker-image: build-worker-image ## Build the worker image and run its prob
 
 # The worker image's Go package -- its Dockerfile, pins, labels, probes and
 # fixtures -- unit-tested without an engine. test-% reaches only pkg/ and cmd/.
+# CI runs it through COVERAGE_PASSES.
 .PHONY: test-software-factory-worker
 test-software-factory-worker: ## Run the worker image package's unit tests (no container engine)
 	$(GOTEST) -v -timeout=5m ./$(WORKER_IMAGE_DIR)/...
 
 # EVERY WORKER-IMAGE PIN IS KEPT AT ITS UPSTREAM'S LATEST RELEASE
 # (devops.md: track the latest). This fails when any pin in
-# pkg/version/toolchain.mk, or CLAUDE_CODE_VERSION / CODEX_VERSION above, is
+# pkg/version/toolchain.mk, or CLAUDE_CODE_VERSION / CODEX_VERSION in
+# $(WORKER_IMAGE_DIR)/versions.lock, is
 # behind, naming each one and the release it is behind. Nightly CI runs it.
 # The script's header lists where each pin's latest release is read from.
 .PHONY: check-worker-toolchain-currency
