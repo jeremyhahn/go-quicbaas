@@ -186,7 +186,7 @@ func TestRunDaemonFlagOverrides(t *testing.T) {
 
 	t.Run("RaftAddressOverride", func(t *testing.T) {
 		cmd := nodeCmd
-		err := cmd.Flags().Set("raft-address", "192.168.1.1:63000")
+		err := cmd.Flags().Set("raft-address", "192.0.2.1:63000")
 		require.NoError(t, err)
 
 		raftAddr := cmd.Flags().Lookup("raft-address").Value.String()
@@ -195,8 +195,8 @@ func TestRunDaemonFlagOverrides(t *testing.T) {
 			cfg.Raft.ListenAddress = raftAddr
 		}
 
-		assert.Equal(t, "192.168.1.1:63000", cfg.Raft.RaftAddress)
-		assert.Equal(t, "192.168.1.1:63000", cfg.Raft.ListenAddress)
+		assert.Equal(t, "192.0.2.1:63000", cfg.Raft.RaftAddress)
+		assert.Equal(t, "192.0.2.1:63000", cfg.Raft.ListenAddress)
 	})
 }
 
@@ -1887,12 +1887,12 @@ func TestApplyRaftFlags(t *testing.T) {
 		cfg = config.Default()
 		cmd := newTestCmdWithRaftFlags()
 
-		err := cmd.Flags().Set("raft-address", "192.168.1.100:63001")
+		err := cmd.Flags().Set("raft-address", "192.0.2.100:63001")
 		require.NoError(t, err)
 
 		require.NoError(t, applyRaftFlags(cmd, os.Hostname))
-		assert.Equal(t, "192.168.1.100:63001", cfg.Raft.RaftAddress)
-		assertDerivedListenAddr(t, "192.168.1.100:63001")
+		assert.Equal(t, "192.0.2.100:63001", cfg.Raft.RaftAddress)
+		assertDerivedListenAddr(t, "192.0.2.100:63001")
 
 		// Reset global for subsequent tests
 		raftAddress = ""
@@ -2129,7 +2129,7 @@ func TestRunNodeWithStaticDiscovery(t *testing.T) {
 
 	err := cmd.Flags().Set("discovery", "static")
 	require.NoError(t, err)
-	err = cmd.Flags().Set("join-addresses", "192.168.1.2:63001,192.168.1.3:63002")
+	err = cmd.Flags().Set("join-addresses", "192.0.2.2:63001,192.0.2.3:63002")
 	require.NoError(t, err)
 
 	raftAddress = ""
@@ -2142,11 +2142,11 @@ func TestRunNodeWithStaticDiscovery(t *testing.T) {
 	cfg.Discovery.Enabled = true
 	cfg.Discovery.Type = "static"
 	if cmd.Flags().Changed("join-addresses") {
-		cfg.Discovery.StaticPeers = []string{"192.168.1.2:63001", "192.168.1.3:63002"}
+		cfg.Discovery.StaticPeers = []string{"192.0.2.2:63001", "192.0.2.3:63002"}
 	}
 
 	assert.Equal(t, "static", cfg.Discovery.Type)
-	assert.Equal(t, []string{"192.168.1.2:63001", "192.168.1.3:63002"}, cfg.Discovery.StaticPeers)
+	assert.Equal(t, []string{"192.0.2.2:63001", "192.0.2.3:63002"}, cfg.Discovery.StaticPeers)
 
 	// Exercise prepareDaemon for logging coverage
 	err = prepareDaemon("node")
@@ -2448,7 +2448,7 @@ func TestPrepareDaemon_ClusterModeWithRaftConfig(t *testing.T) {
 	cfg.Server.Unix.Enabled = true
 	cfg.Server.Unix.Socket = filepath.Join(tempDir, "cluster.sock")
 	cfg.Raft.NodeID = 42
-	cfg.Raft.RaftAddress = "192.168.1.100:63000"
+	cfg.Raft.RaftAddress = "192.0.2.100:63000"
 	cfg.Server.GRPC.Enabled = false
 	cfg.Server.REST.Enabled = false
 	cfg.Discovery.Enabled = false
@@ -2688,7 +2688,7 @@ func TestRunCluster_WithAllOptions(t *testing.T) {
 	cmd := newTestCmdWithRaftFlags()
 	require.NoError(t, cmd.Flags().Set("node-id", "5"))
 
-	raftAddress = "192.168.1.5:63000"
+	raftAddress = "192.0.2.5:63000"
 	defer func() { raftAddress = "" }()
 
 	// Apply the config changes that runCluster would apply
