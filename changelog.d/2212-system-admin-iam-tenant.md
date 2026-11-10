@@ -24,3 +24,7 @@
   other tenant is refused (#2212).
 - WebAuthn credential administration inside a tenant uses that tenant's
   relying-party override, not the global relying party (#2212).
+- After the node rebuilds its services, for example after a system encryption
+  migration, IAM and the other tenant stores read the node's current storage,
+  so a tenant unseal reloads that tenant's stored policies, denies included
+  (#2212).
