@@ -431,7 +431,7 @@ func TestMFAChallengeValidate(t *testing.T) {
 				Attempts:     0,
 				MaxAttempts:  3,
 				Created:      time.Now(),
-				IPAddress:    "192.168.1.1",
+				IPAddress:    "192.0.2.1",
 				UserAgent:    "Mozilla/5.0",
 			},
 			wantErr: false,

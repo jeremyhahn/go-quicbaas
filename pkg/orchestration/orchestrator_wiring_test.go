@@ -316,115 +316,40 @@ var _ ContainerRuntime = (*mockContainerRuntime)(nil)
 // Setter Tests
 // =============================================================================
 
-func TestOrchestrator_SetTaskStore(t *testing.T) {
-	t.Parallel()
-
-	svc, err := NewAgentService(NewInMemoryAgentStore(), nil, &agentTestLogger{})
-	if err != nil {
-		t.Fatalf("failed to create service: %v", err)
-	}
-
-	store := &mockTaskStore{}
-	impl := svc.(*agentServiceImpl)
-	impl.SetTaskStore(store)
-
-	if impl.taskStore != store {
-		t.Fatal("expected task store to be set")
-	}
-}
-
-func TestOrchestrator_SetChannelServer(t *testing.T) {
-	t.Parallel()
-
-	svc, err := NewAgentService(NewInMemoryAgentStore(), nil, &agentTestLogger{})
-	if err != nil {
-		t.Fatalf("failed to create service: %v", err)
-	}
-
-	var buf bytes.Buffer
-	cs := NewChannelServer(ChannelServerConfig{ServerName: "test"}, bytes.NewReader(nil), &buf, &agentTestLogger{})
-	impl := svc.(*agentServiceImpl)
-	impl.SetChannelServer(cs)
-
-	if impl.channelServer != cs {
-		t.Fatal("expected channel server to be set")
-	}
-}
-
-func TestOrchestrator_SetContainerRuntime(t *testing.T) {
-	t.Parallel()
-
-	svc, err := NewAgentService(NewInMemoryAgentStore(), nil, &agentTestLogger{})
-	if err != nil {
-		t.Fatalf("failed to create service: %v", err)
-	}
-
-	rt := &mockContainerRuntime{available: true}
-	impl := svc.(*agentServiceImpl)
-	impl.SetContainerRuntime(rt)
-
-	if impl.containerRuntime != rt {
-		t.Fatal("expected container runtime to be set")
-	}
-}
-
-func TestOrchestrator_SetMessaging(t *testing.T) {
-	t.Parallel()
-
-	svc, err := NewAgentService(NewInMemoryAgentStore(), nil, &agentTestLogger{})
-	if err != nil {
-		t.Fatalf("failed to create service: %v", err)
-	}
-
-	pub := &mockMessagingPublisher{}
-	impl := svc.(*agentServiceImpl)
-	impl.SetMessaging(pub)
-
-	if impl.messaging != pub {
-		t.Fatal("expected messaging publisher to be set")
-	}
-}
-
 func TestOrchestrator_SetLeadAgent(t *testing.T) {
 	t.Parallel()
 
-	svc, err := NewAgentService(NewInMemoryAgentStore(), nil, &agentTestLogger{})
-	if err != nil {
-		t.Fatalf("failed to create service: %v", err)
+	tests := []struct {
+		name   string
+		config *LeadAgentConfig
+	}{
+		{
+			name: "config",
+			config: &LeadAgentConfig{
+				Agent:   AgentRefTo("claude-lead"),
+				Backend: "claude",
+				Model:   "opus-4",
+			},
+		},
+		{name: "nil clears the lead agent", config: nil},
 	}
 
-	config := &LeadAgentConfig{
-		Agent:   AgentRefTo("claude-lead"),
-		Backend: "claude",
-		Model:   "opus-4",
-	}
-	impl := svc.(*agentServiceImpl)
-	impl.SetLeadAgent(config)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 
-	if impl.leadAgent != config {
-		t.Fatal("expected lead agent config to be set")
-	}
-	if impl.leadAgent.Backend != "claude" {
-		t.Errorf("expected backend 'claude', got %q", impl.leadAgent.Backend)
-	}
-	if impl.leadAgent.Model != "opus-4" {
-		t.Errorf("expected model 'opus-4', got %q", impl.leadAgent.Model)
-	}
-}
+			svc, err := NewAgentService(NewInMemoryAgentStore(), nil, &agentTestLogger{})
+			if err != nil {
+				t.Fatalf("failed to create service: %v", err)
+			}
 
-func TestOrchestrator_SetLeadAgent_Nil(t *testing.T) {
-	t.Parallel()
+			impl := svc.(*agentServiceImpl)
+			impl.SetLeadAgent(tt.config)
 
-	svc, err := NewAgentService(NewInMemoryAgentStore(), nil, &agentTestLogger{})
-	if err != nil {
-		t.Fatalf("failed to create service: %v", err)
-	}
-
-	impl := svc.(*agentServiceImpl)
-	impl.SetLeadAgent(nil)
-
-	if impl.leadAgent != nil {
-		t.Fatal("expected lead agent config to be nil")
+			if impl.leadAgent != tt.config {
+				t.Fatalf("expected lead agent %v, got %v", tt.config, impl.leadAgent)
+			}
+		})
 	}
 }
 
@@ -436,12 +361,14 @@ func TestOrchestrator_CreateTask_DelegatesToStore(t *testing.T) {
 	t.Parallel()
 
 	store := &mockTaskStore{}
+	pub := &mockMessagingPublisher{}
 	svc, err := NewAgentService(NewInMemoryAgentStore(), nil, &agentTestLogger{})
 	if err != nil {
 		t.Fatalf("failed to create service: %v", err)
 	}
 	impl := svc.(*agentServiceImpl)
 	impl.SetTaskStore(store)
+	impl.SetMessaging(pub)
 
 	task, err := svc.CreateTask(context.Background(), &CreateTaskRequest{
 		TenantID:    "tenant-1",
@@ -469,94 +396,6 @@ func TestOrchestrator_CreateTask_DelegatesToStore(t *testing.T) {
 	if len(store.createCalls) != 1 {
 		t.Fatalf("expected 1 create call, got %d", len(store.createCalls))
 	}
-}
-
-func TestOrchestrator_CreateTask_NoTaskStore(t *testing.T) {
-	t.Parallel()
-
-	svc, err := NewAgentService(NewInMemoryAgentStore(), nil, &agentTestLogger{})
-	if err != nil {
-		t.Fatalf("failed to create service: %v", err)
-	}
-
-	_, createErr := svc.CreateTask(context.Background(), &CreateTaskRequest{
-		TenantID: "tenant-1",
-		Subject:  "test",
-	})
-	if createErr == nil {
-		t.Fatal("expected error when no task store configured")
-	}
-	if !errors.Is(createErr, ErrTaskStoreRequired) {
-		t.Fatalf("expected ErrTaskStoreRequired, got %v", createErr)
-	}
-}
-
-func TestOrchestrator_CreateTask_EmptyTenantID(t *testing.T) {
-	t.Parallel()
-
-	store := &mockTaskStore{}
-	svc, err := NewAgentService(NewInMemoryAgentStore(), nil, &agentTestLogger{})
-	if err != nil {
-		t.Fatalf("failed to create service: %v", err)
-	}
-	impl := svc.(*agentServiceImpl)
-	impl.SetTaskStore(store)
-
-	_, createErr := svc.CreateTask(context.Background(), &CreateTaskRequest{
-		TenantID: "",
-		Subject:  "test",
-	})
-	if createErr == nil {
-		t.Fatal("expected error for empty tenant ID")
-	}
-	if !errors.Is(createErr, ErrTenantIDRequired) {
-		t.Fatalf("expected ErrTenantIDRequired, got %v", createErr)
-	}
-}
-
-func TestOrchestrator_CreateTask_EmptySubject(t *testing.T) {
-	t.Parallel()
-
-	store := &mockTaskStore{}
-	svc, err := NewAgentService(NewInMemoryAgentStore(), nil, &agentTestLogger{})
-	if err != nil {
-		t.Fatalf("failed to create service: %v", err)
-	}
-	impl := svc.(*agentServiceImpl)
-	impl.SetTaskStore(store)
-
-	_, createErr := svc.CreateTask(context.Background(), &CreateTaskRequest{
-		TenantID: "tenant-1",
-		Subject:  "",
-	})
-	if createErr == nil {
-		t.Fatal("expected error for empty subject")
-	}
-	if !errors.Is(createErr, ErrTaskSubjectRequired) {
-		t.Fatalf("expected ErrTaskSubjectRequired, got %v", createErr)
-	}
-}
-
-func TestOrchestrator_CreateTask_PublishesToMessaging(t *testing.T) {
-	t.Parallel()
-
-	store := &mockTaskStore{}
-	pub := &mockMessagingPublisher{}
-	svc, err := NewAgentService(NewInMemoryAgentStore(), nil, &agentTestLogger{})
-	if err != nil {
-		t.Fatalf("failed to create service: %v", err)
-	}
-	impl := svc.(*agentServiceImpl)
-	impl.SetTaskStore(store)
-	impl.SetMessaging(pub)
-
-	_, createErr := svc.CreateTask(context.Background(), &CreateTaskRequest{
-		TenantID: "tenant-1",
-		Subject:  "test task",
-	})
-	if createErr != nil {
-		t.Fatalf("expected no error, got %v", createErr)
-	}
 
 	pub.mu.Lock()
 	defer pub.mu.Unlock()
@@ -565,6 +404,125 @@ func TestOrchestrator_CreateTask_PublishesToMessaging(t *testing.T) {
 	}
 	if pub.calls[0].Channel != "orchestrator:events:tenant-1" {
 		t.Errorf("expected channel 'orchestrator:events:tenant-1', got %q", pub.calls[0].Channel)
+	}
+}
+
+func TestOrchestrator_TaskMethods_Errors(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		// store is the task store wired into the service; nil leaves it unset.
+		store   *mockTaskStore
+		call    func(svc AgentService) error
+		wantErr error
+	}{
+		{
+			name: "CreateTask without task store",
+			call: func(svc AgentService) error {
+				_, err := svc.CreateTask(context.Background(), &CreateTaskRequest{TenantID: "tenant-1", Subject: "test"})
+				return err
+			},
+			wantErr: ErrTaskStoreRequired,
+		},
+		{
+			name:  "CreateTask store error",
+			store: &mockTaskStore{createErr: &TaskAlreadyExistsError{TaskID: "dup"}},
+			call: func(svc AgentService) error {
+				_, err := svc.CreateTask(context.Background(), &CreateTaskRequest{TenantID: "tenant-1", Subject: "test"})
+				return err
+			},
+			wantErr: ErrTaskAlreadyExists,
+		},
+		{
+			name: "CompleteTask store error",
+			store: &mockTaskStore{
+				completeErr: &TaskInvalidStateError{TaskID: "task-1", CurrentState: TaskStatusPending, TargetState: TaskStatusCompleted},
+			},
+			call: func(svc AgentService) error {
+				return svc.CompleteTask(context.Background(), "tenant-1", "task-1", nil)
+			},
+			wantErr: ErrTaskInvalidState,
+		},
+		{
+			name:  "CreateTask empty tenant ID",
+			store: &mockTaskStore{},
+			call: func(svc AgentService) error {
+				_, err := svc.CreateTask(context.Background(), &CreateTaskRequest{TenantID: "", Subject: "test"})
+				return err
+			},
+			wantErr: ErrTenantIDRequired,
+		},
+		{
+			name:  "CreateTask empty subject",
+			store: &mockTaskStore{},
+			call: func(svc AgentService) error {
+				_, err := svc.CreateTask(context.Background(), &CreateTaskRequest{TenantID: "tenant-1", Subject: ""})
+				return err
+			},
+			wantErr: ErrTaskSubjectRequired,
+		},
+		{
+			name:  "GetTask empty tenant ID",
+			store: &mockTaskStore{},
+			call: func(svc AgentService) error {
+				_, err := svc.GetTask(context.Background(), "", "task-1")
+				return err
+			},
+			wantErr: ErrTenantIDRequired,
+		},
+		{
+			name:  "GetTask empty task ID",
+			store: &mockTaskStore{},
+			call: func(svc AgentService) error {
+				_, err := svc.GetTask(context.Background(), "tenant-1", "")
+				return err
+			},
+			wantErr: ErrTaskIDRequired,
+		},
+		{
+			name:  "ListTasks empty tenant ID",
+			store: &mockTaskStore{},
+			call: func(svc AgentService) error {
+				_, err := svc.ListTasks(context.Background(), "", nil)
+				return err
+			},
+			wantErr: ErrTenantIDRequired,
+		},
+		{
+			name:  "CompleteTask empty tenant ID",
+			store: &mockTaskStore{},
+			call: func(svc AgentService) error {
+				return svc.CompleteTask(context.Background(), "", "task-1", nil)
+			},
+			wantErr: ErrTenantIDRequired,
+		},
+		{
+			name:  "CompleteTask empty task ID",
+			store: &mockTaskStore{},
+			call: func(svc AgentService) error {
+				return svc.CompleteTask(context.Background(), "tenant-1", "", nil)
+			},
+			wantErr: ErrTaskIDRequired,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			svc, err := NewAgentService(NewInMemoryAgentStore(), nil, &agentTestLogger{})
+			if err != nil {
+				t.Fatalf("failed to create service: %v", err)
+			}
+			if tt.store != nil {
+				svc.(*agentServiceImpl).SetTaskStore(tt.store)
+			}
+
+			if callErr := tt.call(svc); !errors.Is(callErr, tt.wantErr) {
+				t.Fatalf("expected %v, got %v", tt.wantErr, callErr)
+			}
+		})
 	}
 }
 
@@ -603,31 +561,6 @@ func TestOrchestrator_CreateTask_PushesToChannel(t *testing.T) {
 	}
 }
 
-func TestOrchestrator_CreateTask_StoreError(t *testing.T) {
-	t.Parallel()
-
-	store := &mockTaskStore{
-		createErr: &TaskAlreadyExistsError{TaskID: "dup"},
-	}
-	svc, err := NewAgentService(NewInMemoryAgentStore(), nil, &agentTestLogger{})
-	if err != nil {
-		t.Fatalf("failed to create service: %v", err)
-	}
-	impl := svc.(*agentServiceImpl)
-	impl.SetTaskStore(store)
-
-	_, createErr := svc.CreateTask(context.Background(), &CreateTaskRequest{
-		TenantID: "tenant-1",
-		Subject:  "test",
-	})
-	if createErr == nil {
-		t.Fatal("expected error from store")
-	}
-	if !errors.Is(createErr, ErrTaskAlreadyExists) {
-		t.Fatalf("expected ErrTaskAlreadyExists, got %v", createErr)
-	}
-}
-
 // =============================================================================
 // GetTask Tests
 // =============================================================================
@@ -651,46 +584,6 @@ func TestOrchestrator_GetTask(t *testing.T) {
 	}
 	if task.Subject != "found" {
 		t.Errorf("expected subject 'found', got %q", task.Subject)
-	}
-}
-
-func TestOrchestrator_GetTask_EmptyTenantID(t *testing.T) {
-	t.Parallel()
-
-	store := &mockTaskStore{}
-	svc, err := NewAgentService(NewInMemoryAgentStore(), nil, &agentTestLogger{})
-	if err != nil {
-		t.Fatalf("failed to create service: %v", err)
-	}
-	impl := svc.(*agentServiceImpl)
-	impl.SetTaskStore(store)
-
-	_, getErr := svc.GetTask(context.Background(), "", "task-1")
-	if getErr == nil {
-		t.Fatal("expected error for empty tenant ID")
-	}
-	if !errors.Is(getErr, ErrTenantIDRequired) {
-		t.Fatalf("expected ErrTenantIDRequired, got %v", getErr)
-	}
-}
-
-func TestOrchestrator_GetTask_EmptyTaskID(t *testing.T) {
-	t.Parallel()
-
-	store := &mockTaskStore{}
-	svc, err := NewAgentService(NewInMemoryAgentStore(), nil, &agentTestLogger{})
-	if err != nil {
-		t.Fatalf("failed to create service: %v", err)
-	}
-	impl := svc.(*agentServiceImpl)
-	impl.SetTaskStore(store)
-
-	_, getErr := svc.GetTask(context.Background(), "tenant-1", "")
-	if getErr == nil {
-		t.Fatal("expected error for empty task ID")
-	}
-	if !errors.Is(getErr, ErrTaskIDRequired) {
-		t.Fatalf("expected ErrTaskIDRequired, got %v", getErr)
 	}
 }
 
@@ -723,23 +616,6 @@ func TestOrchestrator_ListTasks(t *testing.T) {
 	}
 }
 
-func TestOrchestrator_ListTasks_EmptyTenantID(t *testing.T) {
-	t.Parallel()
-
-	store := &mockTaskStore{}
-	svc, err := NewAgentService(NewInMemoryAgentStore(), nil, &agentTestLogger{})
-	if err != nil {
-		t.Fatalf("failed to create service: %v", err)
-	}
-	impl := svc.(*agentServiceImpl)
-	impl.SetTaskStore(store)
-
-	_, listErr := svc.ListTasks(context.Background(), "", nil)
-	if listErr == nil {
-		t.Fatal("expected error for empty tenant ID")
-	}
-}
-
 // =============================================================================
 // ClaimTask Tests
 // =============================================================================
@@ -748,12 +624,14 @@ func TestOrchestrator_ClaimTask_DelegatesToStore(t *testing.T) {
 	t.Parallel()
 
 	store := &mockTaskStore{}
+	pub := &mockMessagingPublisher{}
 	svc, err := NewAgentService(NewInMemoryAgentStore(), nil, &agentTestLogger{})
 	if err != nil {
 		t.Fatalf("failed to create service: %v", err)
 	}
 	impl := svc.(*agentServiceImpl)
 	impl.SetTaskStore(store)
+	impl.SetMessaging(pub)
 
 	claimErr := svc.ClaimTask(context.Background(), "tenant-1", "task-1", "agent-1")
 	if claimErr != nil {
@@ -773,6 +651,15 @@ func TestOrchestrator_ClaimTask_DelegatesToStore(t *testing.T) {
 	}
 	if store.claimCalls[0].AgentID != "agent-1" {
 		t.Errorf("expected agent 'agent-1', got %q", store.claimCalls[0].AgentID)
+	}
+
+	pub.mu.Lock()
+	defer pub.mu.Unlock()
+	if len(pub.calls) != 1 {
+		t.Fatalf("expected 1 messaging call, got %d", len(pub.calls))
+	}
+	if pub.calls[0].Channel != "orchestrator:events:tenant-1" {
+		t.Errorf("expected channel 'orchestrator:events:tenant-1', got %q", pub.calls[0].Channel)
 	}
 }
 
@@ -815,34 +702,6 @@ func TestOrchestrator_ClaimTask_TenantIsolation(t *testing.T) {
 	}
 }
 
-func TestOrchestrator_ClaimTask_PublishesEvent(t *testing.T) {
-	t.Parallel()
-
-	store := &mockTaskStore{}
-	pub := &mockMessagingPublisher{}
-	svc, err := NewAgentService(NewInMemoryAgentStore(), nil, &agentTestLogger{})
-	if err != nil {
-		t.Fatalf("failed to create service: %v", err)
-	}
-	impl := svc.(*agentServiceImpl)
-	impl.SetTaskStore(store)
-	impl.SetMessaging(pub)
-
-	claimErr := svc.ClaimTask(context.Background(), "tenant-1", "task-1", "agent-1")
-	if claimErr != nil {
-		t.Fatalf("expected no error, got %v", claimErr)
-	}
-
-	pub.mu.Lock()
-	defer pub.mu.Unlock()
-	if len(pub.calls) != 1 {
-		t.Fatalf("expected 1 messaging call, got %d", len(pub.calls))
-	}
-	if pub.calls[0].Channel != "orchestrator:events:tenant-1" {
-		t.Errorf("expected channel 'orchestrator:events:tenant-1', got %q", pub.calls[0].Channel)
-	}
-}
-
 // =============================================================================
 // CompleteTask Tests
 // =============================================================================
@@ -881,68 +740,6 @@ func TestOrchestrator_CompleteTask_PublishesEvent(t *testing.T) {
 	defer pub.mu.Unlock()
 	if len(pub.calls) != 1 {
 		t.Fatalf("expected 1 messaging call, got %d", len(pub.calls))
-	}
-}
-
-func TestOrchestrator_CompleteTask_EmptyTenantID(t *testing.T) {
-	t.Parallel()
-
-	store := &mockTaskStore{}
-	svc, err := NewAgentService(NewInMemoryAgentStore(), nil, &agentTestLogger{})
-	if err != nil {
-		t.Fatalf("failed to create service: %v", err)
-	}
-	impl := svc.(*agentServiceImpl)
-	impl.SetTaskStore(store)
-
-	completeErr := svc.CompleteTask(context.Background(), "", "task-1", nil)
-	if completeErr == nil {
-		t.Fatal("expected error for empty tenant ID")
-	}
-	if !errors.Is(completeErr, ErrTenantIDRequired) {
-		t.Fatalf("expected ErrTenantIDRequired, got %v", completeErr)
-	}
-}
-
-func TestOrchestrator_CompleteTask_EmptyTaskID(t *testing.T) {
-	t.Parallel()
-
-	store := &mockTaskStore{}
-	svc, err := NewAgentService(NewInMemoryAgentStore(), nil, &agentTestLogger{})
-	if err != nil {
-		t.Fatalf("failed to create service: %v", err)
-	}
-	impl := svc.(*agentServiceImpl)
-	impl.SetTaskStore(store)
-
-	completeErr := svc.CompleteTask(context.Background(), "tenant-1", "", nil)
-	if completeErr == nil {
-		t.Fatal("expected error for empty task ID")
-	}
-	if !errors.Is(completeErr, ErrTaskIDRequired) {
-		t.Fatalf("expected ErrTaskIDRequired, got %v", completeErr)
-	}
-}
-
-func TestOrchestrator_CompleteTask_StoreError(t *testing.T) {
-	t.Parallel()
-
-	store := &mockTaskStore{
-		completeErr: &TaskInvalidStateError{TaskID: "task-1", CurrentState: TaskStatusPending, TargetState: TaskStatusCompleted},
-	}
-	svc, err := NewAgentService(NewInMemoryAgentStore(), nil, &agentTestLogger{})
-	if err != nil {
-		t.Fatalf("failed to create service: %v", err)
-	}
-	impl := svc.(*agentServiceImpl)
-	impl.SetTaskStore(store)
-
-	completeErr := svc.CompleteTask(context.Background(), "tenant-1", "task-1", nil)
-	if completeErr == nil {
-		t.Fatal("expected error from store")
-	}
-	if !errors.Is(completeErr, ErrTaskInvalidState) {
-		t.Fatalf("expected ErrTaskInvalidState, got %v", completeErr)
 	}
 }
 
@@ -1150,6 +947,7 @@ func TestOrchestrator_SpawnSession_DefaultPreferred_FallsBack(t *testing.T) {
 func TestOrchestrator_SpawnSession_NonSandboxed(t *testing.T) {
 	t.Parallel()
 
+	pub := &mockMessagingPublisher{}
 	backends := map[string]AgentBackend{
 		"mock": &mockAgentBackend{},
 	}
@@ -1157,6 +955,7 @@ func TestOrchestrator_SpawnSession_NonSandboxed(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create service: %v", err)
 	}
+	svc.(*agentServiceImpl).SetMessaging(pub)
 
 	resp, spawnErr := svc.SpawnSession(context.Background(), &SpawnSessionRequest{
 		Backend:   "mock",
@@ -1170,6 +969,15 @@ func TestOrchestrator_SpawnSession_NonSandboxed(t *testing.T) {
 	}
 	if resp.SessionID == "" {
 		t.Fatal("expected non-empty session ID")
+	}
+
+	pub.mu.Lock()
+	defer pub.mu.Unlock()
+	if len(pub.calls) != 1 {
+		t.Fatalf("expected 1 messaging call, got %d", len(pub.calls))
+	}
+	if pub.calls[0].Channel != "orchestrator:events" {
+		t.Errorf("expected channel 'orchestrator:events', got %q", pub.calls[0].Channel)
 	}
 }
 
@@ -1217,41 +1025,6 @@ func TestOrchestrator_SpawnSession_WithEnv(t *testing.T) {
 	}
 	if capturedReq.WorkDir != "/custom/workspace" {
 		t.Errorf("expected WorkDir '/custom/workspace', got %q", capturedReq.WorkDir)
-	}
-}
-
-// =============================================================================
-// SpawnSession Event Publishing Tests
-// =============================================================================
-
-func TestOrchestrator_SpawnSession_PublishesEvent(t *testing.T) {
-	t.Parallel()
-
-	pub := &mockMessagingPublisher{}
-	backends := map[string]AgentBackend{
-		"mock": &mockAgentBackend{},
-	}
-	svc, err := NewAgentService(NewInMemoryAgentStore(), backends, &agentTestLogger{})
-	if err != nil {
-		t.Fatalf("failed to create service: %v", err)
-	}
-	impl := svc.(*agentServiceImpl)
-	impl.SetMessaging(pub)
-
-	_, spawnErr := svc.SpawnSession(context.Background(), &SpawnSessionRequest{
-		Backend: "mock",
-	})
-	if spawnErr != nil {
-		t.Fatalf("expected no error, got %v", spawnErr)
-	}
-
-	pub.mu.Lock()
-	defer pub.mu.Unlock()
-	if len(pub.calls) != 1 {
-		t.Fatalf("expected 1 messaging call, got %d", len(pub.calls))
-	}
-	if pub.calls[0].Channel != "orchestrator:events" {
-		t.Errorf("expected channel 'orchestrator:events', got %q", pub.calls[0].Channel)
 	}
 }
 

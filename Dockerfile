@@ -32,12 +32,10 @@ COPY sdk/go/go.mod sdk/go/go.sum ./sdk/go/
 # armon/go-metrics version pin, neither of which needs rewriting. The COPY of
 # a directory that no longer exists failed the build outright.
 #
-# go.mod pins first-party modules published to the internal Gitea, which this
-# download cannot reach on its own: the runner injects GOPRIVATE and the
-# tokenised insteadOf rewrite into the *job* environment
-# (dependency-resolution.md §6), and a docker build does not inherit it.
+# go.mod pins first-party modules, which this download resolves through the
+# module proxy and the checksum database like any other module.
 #
-# They arrive as a BuildKit secret, never a build arg -- an arg is recorded in
+# Fetch credentials arrive as a BuildKit secret, never a build arg -- an arg is recorded in
 # image metadata and readable with `docker history`, while a secret is mounted
 # on tmpfs for this RUN alone and never becomes a layer. It is sourced rather
 # than exported so the value never reaches a command line either (`ps` on the

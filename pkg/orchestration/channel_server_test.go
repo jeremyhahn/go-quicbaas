@@ -148,40 +148,38 @@ func performHandshake(t *testing.T, conn *channelTestConn) *JSONRPCMessage {
 	return resp
 }
 
-func TestNewChannelServer_DefaultConfig(t *testing.T) {
-	var buf bytes.Buffer
-	srv := NewChannelServer(ChannelServerConfig{}, strings.NewReader(""), &buf, &channelTestLogger{})
-
-	if srv.config.ServerName != "quicbaas" {
-		t.Errorf("default ServerName = %q, want %q", srv.config.ServerName, "quicbaas")
+func TestNewChannelServer_Config(t *testing.T) {
+	tests := []struct {
+		name           string
+		config         ChannelServerConfig
+		wantServerName string
+		wantBufferSize int
+	}{
+		{"empty config uses defaults", ChannelServerConfig{}, "quicbaas", defaultEventBufferSize},
+		{"negative buffer size uses default", ChannelServerConfig{EventBufferSize: -10}, "quicbaas", defaultEventBufferSize},
+		{
+			"custom config",
+			ChannelServerConfig{ServerName: "test-server", Instructions: "test instructions", EnableReply: true, EventBufferSize: 64},
+			"test-server",
+			64,
+		},
 	}
 
-	if cap(srv.eventCh) != defaultEventBufferSize {
-		t.Errorf("default event buffer size = %d, want %d", cap(srv.eventCh), defaultEventBufferSize)
-	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var buf bytes.Buffer
+			srv := NewChannelServer(tt.config, strings.NewReader(""), &buf, &channelTestLogger{})
 
-	if srv.Initialized() {
-		t.Error("server should not be initialized before handshake")
-	}
-}
-
-func TestNewChannelServer_CustomConfig(t *testing.T) {
-	config := ChannelServerConfig{
-		ServerName:      "test-server",
-		Instructions:    "test instructions",
-		EnableReply:     true,
-		EventBufferSize: 64,
-	}
-
-	var buf bytes.Buffer
-	srv := NewChannelServer(config, strings.NewReader(""), &buf, &channelTestLogger{})
-
-	if srv.config.ServerName != "test-server" {
-		t.Errorf("ServerName = %q, want %q", srv.config.ServerName, "test-server")
-	}
-
-	if cap(srv.eventCh) != 64 {
-		t.Errorf("event buffer size = %d, want 64", cap(srv.eventCh))
+			if srv.config.ServerName != tt.wantServerName {
+				t.Errorf("ServerName = %q, want %q", srv.config.ServerName, tt.wantServerName)
+			}
+			if cap(srv.eventCh) != tt.wantBufferSize {
+				t.Errorf("event buffer size = %d, want %d", cap(srv.eventCh), tt.wantBufferSize)
+			}
+			if srv.Initialized() {
+				t.Error("server should not be initialized before handshake")
+			}
+		})
 	}
 }
 
@@ -256,39 +254,6 @@ func TestChannelServer_InitializeHandshake(t *testing.T) {
 	<-startDone
 }
 
-func TestChannelServer_InitializeHandshake_NoReply(t *testing.T) {
-	srv, conn := newTestChannelServer(t, ChannelServerConfig{
-		ServerName: "no-reply-server",
-	})
-
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	startDone := make(chan error, 1)
-	go func() {
-		startDone <- srv.Start(ctx)
-	}()
-
-	resp := performHandshake(t, conn)
-
-	resultBytes, err := json.Marshal(resp.Result)
-	if err != nil {
-		t.Fatalf("marshal result: %v", err)
-	}
-
-	var result mcpInitializeResult
-	if err := json.Unmarshal(resultBytes, &result); err != nil {
-		t.Fatalf("unmarshal result: %v", err)
-	}
-
-	if result.Capabilities.Tools != nil {
-		t.Error("tools capability should be nil when EnableReply=false")
-	}
-
-	cancel()
-	<-startDone
-}
-
 func TestChannelServer_InitializeHandshake_PermissionRelay(t *testing.T) {
 	srv, conn := newTestChannelServer(t, ChannelServerConfig{
 		ServerName:            "perm-relay-server",
@@ -318,6 +283,10 @@ func TestChannelServer_InitializeHandshake_PermissionRelay(t *testing.T) {
 	_, ok := result.Capabilities.Experimental["claude/channel/permission"]
 	if !ok {
 		t.Fatal("missing claude/channel/permission capability")
+	}
+
+	if result.Capabilities.Tools != nil {
+		t.Error("tools capability should be nil when EnableReply=false")
 	}
 
 	cancel()
@@ -654,8 +623,52 @@ func TestChannelServer_ReplyTool_Disabled(t *testing.T) {
 		t.Errorf("expected 0 tools when reply disabled, got %d", len(toolsList.Tools))
 	}
 
+	// Calling reply anyway must be rejected.
+	callResult := callReplyTool(t, conn, 3, map[string]any{
+		"channel": "dev",
+		"message": "test",
+	})
+
+	if !callResult.IsError {
+		t.Error("expected IsError=true when reply tool is disabled")
+	}
+
+	if !strings.Contains(callResult.Content[0].Text, "reply tool is not enabled") {
+		t.Errorf("error text = %q", callResult.Content[0].Text)
+	}
+
 	cancel()
 	<-startDone
+}
+
+// callReplyTool sends a tools/call for the reply tool and decodes the result.
+func callReplyTool(t *testing.T, conn *channelTestConn, id float64, args map[string]any) mcpToolCallResult {
+	t.Helper()
+
+	sendJSONRPC(t, conn.clientWrite, &JSONRPCMessage{
+		JSONRPC: JSONRPCVersion,
+		ID:      id,
+		Method:  "tools/call",
+		Params: map[string]any{
+			"name":      "reply",
+			"arguments": args,
+		},
+	})
+
+	callResp := readJSONRPC(t, conn.scanner)
+	callResultBytes, err := json.Marshal(callResp.Result)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+
+	var callResult mcpToolCallResult
+	if err := json.Unmarshal(callResultBytes, &callResult); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(callResult.Content) == 0 {
+		t.Fatal("expected content in tool call result")
+	}
+	return callResult
 }
 
 func TestChannelServer_ReplyTool_HandlerError(t *testing.T) {
@@ -718,9 +731,9 @@ func TestChannelServer_ReplyTool_HandlerError(t *testing.T) {
 	<-startDone
 }
 
-func TestChannelServer_ReplyTool_MissingChannel(t *testing.T) {
+func TestChannelServer_ReplyTool_BadArguments(t *testing.T) {
 	srv, conn := newTestChannelServer(t, ChannelServerConfig{
-		ServerName:  "reply-missing-channel",
+		ServerName:  "reply-bad-args",
 		EnableReply: true,
 	})
 
@@ -734,44 +747,37 @@ func TestChannelServer_ReplyTool_MissingChannel(t *testing.T) {
 
 	performHandshake(t, conn)
 
-	sendJSONRPC(t, conn.clientWrite, &JSONRPCMessage{
-		JSONRPC: JSONRPCVersion,
-		ID:      float64(2),
-		Method:  "tools/call",
-		Params: map[string]any{
-			"name": "reply",
-			"arguments": map[string]any{
-				"message": "no channel provided",
-			},
-		},
-	})
-
-	callResp := readJSONRPC(t, conn.scanner)
-	callResultBytes, err := json.Marshal(callResp.Result)
-	if err != nil {
-		t.Fatalf("marshal: %v", err)
+	tests := []struct {
+		name    string
+		args    map[string]any
+		wantErr string
+	}{
+		{"missing channel", map[string]any{"message": "no channel provided"}, "missing required argument: channel"},
+		{"missing message", map[string]any{"channel": "dev"}, "missing required argument: message"},
+		{"non-string channel", map[string]any{"channel": 123, "message": "test"}, "channel must be a string"},
+		{"non-string message", map[string]any{"channel": "dev", "message": 456}, "message must be a string"},
 	}
 
-	var callResult mcpToolCallResult
-	if err := json.Unmarshal(callResultBytes, &callResult); err != nil {
-		t.Fatalf("unmarshal: %v", err)
-	}
+	for i, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			callResult := callReplyTool(t, conn, float64(i+2), tt.args)
 
-	if !callResult.IsError {
-		t.Error("expected IsError=true for missing channel")
-	}
-
-	if !strings.Contains(callResult.Content[0].Text, "missing required argument: channel") {
-		t.Errorf("error text = %q", callResult.Content[0].Text)
+			if !callResult.IsError {
+				t.Error("expected IsError=true")
+			}
+			if !strings.Contains(callResult.Content[0].Text, tt.wantErr) {
+				t.Errorf("error text = %q, want it to contain %q", callResult.Content[0].Text, tt.wantErr)
+			}
+		})
 	}
 
 	cancel()
 	<-startDone
 }
 
-func TestChannelServer_ReplyTool_MissingMessage(t *testing.T) {
+func TestChannelServer_RequestErrors(t *testing.T) {
 	srv, conn := newTestChannelServer(t, ChannelServerConfig{
-		ServerName:  "reply-missing-msg",
+		ServerName:  "request-errors",
 		EnableReply: true,
 	})
 
@@ -785,199 +791,38 @@ func TestChannelServer_ReplyTool_MissingMessage(t *testing.T) {
 
 	performHandshake(t, conn)
 
-	sendJSONRPC(t, conn.clientWrite, &JSONRPCMessage{
-		JSONRPC: JSONRPCVersion,
-		ID:      float64(2),
-		Method:  "tools/call",
-		Params: map[string]any{
-			"name": "reply",
-			"arguments": map[string]any{
-				"channel": "dev",
-			},
-		},
-	})
-
-	callResp := readJSONRPC(t, conn.scanner)
-	callResultBytes, err := json.Marshal(callResp.Result)
-	if err != nil {
-		t.Fatalf("marshal: %v", err)
+	tests := []struct {
+		name     string
+		method   string
+		params   any
+		wantCode int // 0 skips the code check
+		wantText string
+	}{
+		{"unknown method", "unknown/method", nil, -32601, "method not found"},
+		{"unknown tool", "tools/call", map[string]any{"name": "nonexistent", "arguments": map[string]any{}}, 0, "unknown tool"},
+		{"invalid tools/call params", "tools/call", "not an object", -32602, ""},
 	}
 
-	var callResult mcpToolCallResult
-	if err := json.Unmarshal(callResultBytes, &callResult); err != nil {
-		t.Fatalf("unmarshal: %v", err)
-	}
+	for i, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			sendJSONRPC(t, conn.clientWrite, &JSONRPCMessage{
+				JSONRPC: JSONRPCVersion,
+				ID:      float64(i + 10),
+				Method:  tt.method,
+				Params:  tt.params,
+			})
 
-	if !callResult.IsError {
-		t.Error("expected IsError=true for missing message")
-	}
-
-	if !strings.Contains(callResult.Content[0].Text, "missing required argument: message") {
-		t.Errorf("error text = %q", callResult.Content[0].Text)
-	}
-
-	cancel()
-	<-startDone
-}
-
-func TestChannelServer_ReplyTool_InvalidArgTypes(t *testing.T) {
-	srv, conn := newTestChannelServer(t, ChannelServerConfig{
-		ServerName:  "reply-bad-types",
-		EnableReply: true,
-	})
-
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	startDone := make(chan error, 1)
-	go func() {
-		startDone <- srv.Start(ctx)
-	}()
-
-	performHandshake(t, conn)
-
-	// channel is not a string
-	sendJSONRPC(t, conn.clientWrite, &JSONRPCMessage{
-		JSONRPC: JSONRPCVersion,
-		ID:      float64(2),
-		Method:  "tools/call",
-		Params: map[string]any{
-			"name": "reply",
-			"arguments": map[string]any{
-				"channel": 123,
-				"message": "test",
-			},
-		},
-	})
-
-	callResp := readJSONRPC(t, conn.scanner)
-	callResultBytes, err := json.Marshal(callResp.Result)
-	if err != nil {
-		t.Fatalf("marshal: %v", err)
-	}
-
-	var callResult mcpToolCallResult
-	if err := json.Unmarshal(callResultBytes, &callResult); err != nil {
-		t.Fatalf("unmarshal: %v", err)
-	}
-
-	if !callResult.IsError {
-		t.Error("expected IsError=true for non-string channel")
-	}
-
-	if !strings.Contains(callResult.Content[0].Text, "channel must be a string") {
-		t.Errorf("error text = %q", callResult.Content[0].Text)
-	}
-
-	// message is not a string
-	sendJSONRPC(t, conn.clientWrite, &JSONRPCMessage{
-		JSONRPC: JSONRPCVersion,
-		ID:      float64(3),
-		Method:  "tools/call",
-		Params: map[string]any{
-			"name": "reply",
-			"arguments": map[string]any{
-				"channel": "dev",
-				"message": 456,
-			},
-		},
-	})
-
-	callResp2 := readJSONRPC(t, conn.scanner)
-	callResultBytes2, err := json.Marshal(callResp2.Result)
-	if err != nil {
-		t.Fatalf("marshal: %v", err)
-	}
-
-	var callResult2 mcpToolCallResult
-	if err := json.Unmarshal(callResultBytes2, &callResult2); err != nil {
-		t.Fatalf("unmarshal: %v", err)
-	}
-
-	if !callResult2.IsError {
-		t.Error("expected IsError=true for non-string message")
-	}
-
-	if !strings.Contains(callResult2.Content[0].Text, "message must be a string") {
-		t.Errorf("error text = %q", callResult2.Content[0].Text)
-	}
-
-	cancel()
-	<-startDone
-}
-
-func TestChannelServer_UnknownMethod(t *testing.T) {
-	srv, conn := newTestChannelServer(t, ChannelServerConfig{
-		ServerName: "unknown-method",
-	})
-
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	startDone := make(chan error, 1)
-	go func() {
-		startDone <- srv.Start(ctx)
-	}()
-
-	performHandshake(t, conn)
-
-	// Send unknown method with an ID
-	sendJSONRPC(t, conn.clientWrite, &JSONRPCMessage{
-		JSONRPC: JSONRPCVersion,
-		ID:      float64(10),
-		Method:  "unknown/method",
-	})
-
-	resp := readJSONRPC(t, conn.scanner)
-	if resp.Error == nil {
-		t.Fatal("expected error response for unknown method")
-	}
-
-	if resp.Error.Code != -32601 {
-		t.Errorf("error code = %d, want -32601", resp.Error.Code)
-	}
-
-	if !strings.Contains(resp.Error.Message, "method not found") {
-		t.Errorf("error message = %q, want 'method not found'", resp.Error.Message)
-	}
-
-	cancel()
-	<-startDone
-}
-
-func TestChannelServer_UnknownTool(t *testing.T) {
-	srv, conn := newTestChannelServer(t, ChannelServerConfig{
-		ServerName:  "unknown-tool",
-		EnableReply: true,
-	})
-
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	startDone := make(chan error, 1)
-	go func() {
-		startDone <- srv.Start(ctx)
-	}()
-
-	performHandshake(t, conn)
-
-	sendJSONRPC(t, conn.clientWrite, &JSONRPCMessage{
-		JSONRPC: JSONRPCVersion,
-		ID:      float64(5),
-		Method:  "tools/call",
-		Params: map[string]any{
-			"name":      "nonexistent",
-			"arguments": map[string]any{},
-		},
-	})
-
-	resp := readJSONRPC(t, conn.scanner)
-	if resp.Error == nil {
-		t.Fatal("expected error for unknown tool")
-	}
-
-	if !strings.Contains(resp.Error.Message, "unknown tool") {
-		t.Errorf("error message = %q, want 'unknown tool'", resp.Error.Message)
+			resp := readJSONRPC(t, conn.scanner)
+			if resp.Error == nil {
+				t.Fatal("expected error response")
+			}
+			if tt.wantCode != 0 && resp.Error.Code != tt.wantCode {
+				t.Errorf("error code = %d, want %d", resp.Error.Code, tt.wantCode)
+			}
+			if !strings.Contains(resp.Error.Message, tt.wantText) {
+				t.Errorf("error message = %q, want it to contain %q", resp.Error.Message, tt.wantText)
+			}
+		})
 	}
 
 	cancel()
@@ -1080,99 +925,56 @@ func TestChannelServer_StartAfterStop(t *testing.T) {
 }
 
 func TestChannelEvent_Serialization(t *testing.T) {
-	event := &ChannelEvent{
-		Content: "Task assigned: implement feature X",
-		Metadata: map[string]string{
-			"task_id":  "t42",
-			"priority": "high",
-			"assignee": "agent-1",
+	tests := []struct {
+		name     string
+		event    ChannelEvent
+		wantMeta bool
+	}{
+		{
+			name: "with metadata",
+			event: ChannelEvent{
+				Content: "Task assigned: implement feature X",
+				Metadata: map[string]string{
+					"task_id":  "t42",
+					"priority": "high",
+					"assignee": "agent-1",
+				},
+			},
+			wantMeta: true,
+		},
+		{
+			name:     "without metadata omits meta",
+			event:    ChannelEvent{Content: "simple event"},
+			wantMeta: false,
 		},
 	}
 
-	data, err := json.Marshal(event)
-	if err != nil {
-		t.Fatalf("marshal event: %v", err)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			data, err := json.Marshal(&tt.event)
+			if err != nil {
+				t.Fatalf("marshal event: %v", err)
+			}
+
+			if got := strings.Contains(string(data), `"meta"`); got != tt.wantMeta {
+				t.Errorf("meta key present = %v, want %v: %s", got, tt.wantMeta, data)
+			}
+
+			var decoded ChannelEvent
+			if err := json.Unmarshal(data, &decoded); err != nil {
+				t.Fatalf("unmarshal event: %v", err)
+			}
+
+			if decoded.Content != tt.event.Content {
+				t.Errorf("content = %q, want %q", decoded.Content, tt.event.Content)
+			}
+			for k, want := range tt.event.Metadata {
+				if decoded.Metadata[k] != want {
+					t.Errorf("meta.%s = %q, want %q", k, decoded.Metadata[k], want)
+				}
+			}
+		})
 	}
-
-	var decoded ChannelEvent
-	if err := json.Unmarshal(data, &decoded); err != nil {
-		t.Fatalf("unmarshal event: %v", err)
-	}
-
-	if decoded.Content != event.Content {
-		t.Errorf("content = %q, want %q", decoded.Content, event.Content)
-	}
-
-	if decoded.Metadata["task_id"] != "t42" {
-		t.Errorf("meta.task_id = %q, want %q", decoded.Metadata["task_id"], "t42")
-	}
-
-	if decoded.Metadata["priority"] != "high" {
-		t.Errorf("meta.priority = %q, want %q", decoded.Metadata["priority"], "high")
-	}
-
-	if decoded.Metadata["assignee"] != "agent-1" {
-		t.Errorf("meta.assignee = %q, want %q", decoded.Metadata["assignee"], "agent-1")
-	}
-}
-
-func TestChannelEvent_Serialization_NoMetadata(t *testing.T) {
-	event := &ChannelEvent{
-		Content: "simple event",
-	}
-
-	data, err := json.Marshal(event)
-	if err != nil {
-		t.Fatalf("marshal event: %v", err)
-	}
-
-	// Verify "meta" key is omitted when nil
-	if strings.Contains(string(data), "meta") {
-		t.Errorf("expected meta to be omitted, got: %s", data)
-	}
-
-	var decoded ChannelEvent
-	if err := json.Unmarshal(data, &decoded); err != nil {
-		t.Fatalf("unmarshal event: %v", err)
-	}
-
-	if decoded.Content != "simple event" {
-		t.Errorf("content = %q, want %q", decoded.Content, "simple event")
-	}
-}
-
-func TestChannelServerConfig_Defaults(t *testing.T) {
-	t.Run("EmptyServerName", func(t *testing.T) {
-		var buf bytes.Buffer
-		srv := NewChannelServer(ChannelServerConfig{}, strings.NewReader(""), &buf, &channelTestLogger{})
-		if srv.config.ServerName != "quicbaas" {
-			t.Errorf("default ServerName = %q, want %q", srv.config.ServerName, "quicbaas")
-		}
-	})
-
-	t.Run("ZeroBufferSize", func(t *testing.T) {
-		var buf bytes.Buffer
-		srv := NewChannelServer(ChannelServerConfig{EventBufferSize: 0}, strings.NewReader(""), &buf, &channelTestLogger{})
-		if cap(srv.eventCh) != defaultEventBufferSize {
-			t.Errorf("default buffer size = %d, want %d", cap(srv.eventCh), defaultEventBufferSize)
-		}
-	})
-
-	t.Run("NegativeBufferSize", func(t *testing.T) {
-		var buf bytes.Buffer
-		srv := NewChannelServer(ChannelServerConfig{EventBufferSize: -10}, strings.NewReader(""), &buf, &channelTestLogger{})
-		if cap(srv.eventCh) != defaultEventBufferSize {
-			t.Errorf("negative buffer size = %d, want %d", cap(srv.eventCh), defaultEventBufferSize)
-		}
-	})
-
-	t.Run("CustomBufferSize", func(t *testing.T) {
-		var buf bytes.Buffer
-		srv := NewChannelServer(ChannelServerConfig{EventBufferSize: 512}, strings.NewReader(""), &buf, &channelTestLogger{})
-		if cap(srv.eventCh) != 512 {
-			t.Errorf("custom buffer size = %d, want 512", cap(srv.eventCh))
-		}
-	})
 }
 
 func TestChannelServer_MalformedJSON(t *testing.T) {
@@ -1204,171 +1006,41 @@ func TestChannelServer_MalformedJSON(t *testing.T) {
 	<-startDone
 }
 
-func TestChannelServer_ToolsCall_InvalidParams(t *testing.T) {
-	srv, conn := newTestChannelServer(t, ChannelServerConfig{
-		ServerName:  "invalid-params",
-		EnableReply: true,
-	})
-
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	startDone := make(chan error, 1)
-	go func() {
-		startDone <- srv.Start(ctx)
-	}()
-
-	performHandshake(t, conn)
-
-	// Send tools/call with invalid params (not an object with name/arguments)
-	sendJSONRPC(t, conn.clientWrite, &JSONRPCMessage{
-		JSONRPC: JSONRPCVersion,
-		ID:      float64(5),
-		Method:  "tools/call",
-		Params:  "not an object",
-	})
-
-	resp := readJSONRPC(t, conn.scanner)
-	if resp.Error == nil {
-		t.Fatal("expected error for invalid params")
-	}
-
-	if resp.Error.Code != -32602 {
-		t.Errorf("error code = %d, want -32602", resp.Error.Code)
-	}
-
-	cancel()
-	<-startDone
-}
-
-func TestChannelServer_ReplyTool_DisabledButCalled(t *testing.T) {
-	srv, conn := newTestChannelServer(t, ChannelServerConfig{
-		ServerName:  "reply-disabled-call",
-		EnableReply: false,
-	})
-
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	startDone := make(chan error, 1)
-	go func() {
-		startDone <- srv.Start(ctx)
-	}()
-
-	performHandshake(t, conn)
-
-	// Try calling reply even though it's disabled
-	sendJSONRPC(t, conn.clientWrite, &JSONRPCMessage{
-		JSONRPC: JSONRPCVersion,
-		ID:      float64(2),
-		Method:  "tools/call",
-		Params: map[string]any{
-			"name": "reply",
-			"arguments": map[string]any{
-				"channel": "dev",
-				"message": "test",
-			},
-		},
-	})
-
-	callResp := readJSONRPC(t, conn.scanner)
-
-	callResultBytes, err := json.Marshal(callResp.Result)
-	if err != nil {
-		t.Fatalf("marshal: %v", err)
-	}
-
-	var callResult mcpToolCallResult
-	if err := json.Unmarshal(callResultBytes, &callResult); err != nil {
-		t.Fatalf("unmarshal: %v", err)
-	}
-
-	if !callResult.IsError {
-		t.Error("expected IsError=true when reply tool is disabled")
-	}
-
-	if !strings.Contains(callResult.Content[0].Text, "reply tool is not enabled") {
-		t.Errorf("error text = %q", callResult.Content[0].Text)
-	}
-
-	cancel()
-	<-startDone
-}
-
 // =============================================================================
 // Error type tests
 // =============================================================================
 
-func TestChannelServerError(t *testing.T) {
-	t.Run("WithCause", func(t *testing.T) {
-		cause := errors.New("timeout")
-		err := &ChannelServerError{Message: "connection failed", Cause: cause}
+func TestChannelErrorTypes(t *testing.T) {
+	cause := errors.New("timeout")
 
-		if !strings.Contains(err.Error(), "connection failed") {
-			t.Errorf("error = %q, want to contain 'connection failed'", err.Error())
-		}
-		if !strings.Contains(err.Error(), "timeout") {
-			t.Errorf("error = %q, want to contain 'timeout'", err.Error())
-		}
-		if !errors.Is(err, ErrChannelServer) {
-			t.Error("should unwrap to ErrChannelServer")
-		}
-		if !errors.Is(err, cause) {
-			t.Error("should unwrap to cause")
-		}
-	})
-
-	t.Run("WithoutCause", func(t *testing.T) {
-		err := &ChannelServerError{Message: "general failure"}
-
-		if !strings.Contains(err.Error(), "general failure") {
-			t.Errorf("error = %q, want to contain 'general failure'", err.Error())
-		}
-		if !errors.Is(err, ErrChannelServer) {
-			t.Error("should unwrap to ErrChannelServer")
-		}
-	})
-}
-
-func TestChannelEventError(t *testing.T) {
-	t.Run("WithCause", func(t *testing.T) {
-		cause := errors.New("buffer full")
-		err := &ChannelEventError{Message: "push failed", Cause: cause}
-
-		if !strings.Contains(err.Error(), "push failed") {
-			t.Errorf("error = %q, want to contain 'push failed'", err.Error())
-		}
-		if !strings.Contains(err.Error(), "buffer full") {
-			t.Errorf("error = %q, want to contain 'buffer full'", err.Error())
-		}
-		if !errors.Is(err, ErrChannelEvent) {
-			t.Error("should unwrap to ErrChannelEvent")
-		}
-		if !errors.Is(err, cause) {
-			t.Error("should unwrap to cause")
-		}
-	})
-
-	t.Run("WithoutCause", func(t *testing.T) {
-		err := &ChannelEventError{Message: "nil event"}
-
-		if !strings.Contains(err.Error(), "nil event") {
-			t.Errorf("error = %q, want to contain 'nil event'", err.Error())
-		}
-		if !errors.Is(err, ErrChannelEvent) {
-			t.Error("should unwrap to ErrChannelEvent")
-		}
-	})
-}
-
-func TestChannelConnectionClosedError(t *testing.T) {
-	err := &ChannelConnectionClosedError{Reason: "pipe broken"}
-
-	if !strings.Contains(err.Error(), "pipe broken") {
-		t.Errorf("error = %q, want to contain 'pipe broken'", err.Error())
+	tests := []struct {
+		name      string
+		err       error
+		wantText  []string
+		sentinel  error
+		wantCause bool
+	}{
+		{"server error with cause", &ChannelServerError{Message: "connection failed", Cause: cause}, []string{"connection failed", "timeout"}, ErrChannelServer, true},
+		{"server error without cause", &ChannelServerError{Message: "general failure"}, []string{"general failure"}, ErrChannelServer, false},
+		{"event error with cause", &ChannelEventError{Message: "push failed", Cause: cause}, []string{"push failed", "timeout"}, ErrChannelEvent, true},
+		{"event error without cause", &ChannelEventError{Message: "nil event"}, []string{"nil event"}, ErrChannelEvent, false},
+		{"connection closed", &ChannelConnectionClosedError{Reason: "pipe broken"}, []string{"pipe broken"}, ErrChannelConnectionClosed, false},
 	}
-	if !errors.Is(err, ErrChannelConnectionClosed) {
-		t.Error("should unwrap to ErrChannelConnectionClosed")
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			for _, want := range tt.wantText {
+				if !strings.Contains(tt.err.Error(), want) {
+					t.Errorf("error = %q, want to contain %q", tt.err.Error(), want)
+				}
+			}
+			if !errors.Is(tt.err, tt.sentinel) {
+				t.Errorf("errors.Is(%v, %v) = false, want true", tt.err, tt.sentinel)
+			}
+			if got := errors.Is(tt.err, cause); got != tt.wantCause {
+				t.Errorf("errors.Is(err, cause) = %v, want %v", got, tt.wantCause)
+			}
+		})
 	}
 }
 
