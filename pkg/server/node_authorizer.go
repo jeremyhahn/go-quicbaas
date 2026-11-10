@@ -70,23 +70,36 @@ type admittingAuthorizer struct {
 // (503, UNAVAILABLE) and not as a failed credential. The target is the tenant
 // bound to ctx, else the identity's tenant. The tenant_barrier resource
 // (seal, unseal, status and votes) clears the hold and always reaches the
-// inner authorizer. An unseal gate's own requests for the tenant it is
-// admitting (service.InUnsealGate), the token-liveness reads of a held tenant
-// (tenantctx.InAuthRecordRead) and the ABAC sync's reads of its policies
-// (tenantctx.InPolicySyncRead) reach it too, as they do in
-// admittingStoreResolver.Resolve.
+// inner authorizer, and so does admin:health, the liveness check an SDK
+// connection starts with (heldTenantExempt). An unseal gate's own requests
+// for the tenant it is admitting (service.InUnsealGate), the token-liveness
+// reads of a held tenant (tenantctx.InAuthRecordRead) and the ABAC sync's
+// reads of its policies (tenantctx.InPolicySyncRead) reach it too, as they do
+// in admittingStoreResolver.Resolve.
 func (a *admittingAuthorizer) Authorize(ctx context.Context, identity *qrdbsdk.Identity, resource, action string) error {
 	target, ok := qrdbsdk.TenantFromContext(ctx)
 	if !ok && identity != nil {
 		target = identity.TenantID
 	}
-	if target != "" && resource != "tenant_barrier" &&
+	if target != "" && !heldTenantExempt(resource, action) &&
 		!service.InUnsealGate(ctx, target) && !tenantctx.InAuthRecordRead(ctx, target) && !tenantctx.InPolicySyncRead(ctx, target) {
 		if err := a.hooks.Admit(target); err != nil {
 			return &authmw.StoreUnavailableError{Err: err}
 		}
 	}
 	return a.inner.Authorize(ctx, identity, resource, action)
+}
+
+// heldTenantExempt reports whether a native request reaches the node's
+// authorizer although its target tenant is held. The tenant_barrier resource
+// (seal, unseal, status and votes) clears the hold. admin:health is the
+// node-liveness check every go-qrdb SDK transport makes when it connects
+// (it takes PermissionDenied as reachable, not Unavailable), so a held
+// tenant's admin must pass admission with it to open the connection its
+// unseal retry runs on. It reads no tenant data, and the node's authorizer
+// still authenticates and authorizes it.
+func heldTenantExempt(resource, action string) bool {
+	return resource == "tenant_barrier" || (resource == "admin" && action == "health")
 }
 
 // capturedNodeAuthorizer returns the node authorizer recorded by

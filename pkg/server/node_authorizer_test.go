@@ -244,3 +244,54 @@ func TestAdmittingAuthorizer_HeldTenantIsUnavailableOnNativeTransports(t *testin
 		t.Fatalf("a held tenant's request reached the inner authorizer %d time(s)", rec.calls.Load())
 	}
 }
+
+// A held tenant's admin can still connect: admin:health, the liveness check
+// every go-qrdb SDK transport makes on Connect, reaches the node's
+// authorizer, so a fresh connection can retry the unseal that clears the
+// hold. Every other verb stays refused, and the node authorizer's own denial
+// of the health check still passes through.
+func TestAdmittingAuthorizer_HeldTenantHealthCheckReachesTheNode(t *testing.T) {
+	s := &Server{}
+	gateErr := errors.New("policy reload failed")
+	var gateFails atomic.Bool
+	gateFails.Store(true)
+	s.tenantUnsealHooks.RegisterGate(service.TenantUnsealGateFunc(func(context.Context, string) error {
+		if gateFails.Load() {
+			return gateErr
+		}
+		return nil
+	}))
+	barrier := service.NewTenantBarrierService(unsealingTenantClient{}, service.WithTenantUnsealHooks(&s.tenantUnsealHooks))
+	rec := &countingAuthorizer{}
+	authz := s.wrapNodeAuthorizer(rec)
+
+	if err := barrier.TenantBarrierUnseal(tenantAdminCtx("acme"), "acme", []byte("key")); !errors.Is(err, gateErr) {
+		t.Fatalf("the gate's failure must fail the unseal, got %v", err)
+	}
+
+	acme := qrdbsdk.ContextWithTenant(context.Background(), "acme")
+	acmeAdmin := &qrdbsdk.Identity{Subject: "admin", TenantID: "acme"}
+
+	// Reconnect: the SDK's health check passes admission while the tenant is held.
+	assertReached(t, authz, rec, acme, acmeAdmin, "admin", "health")
+	assertReached(t, authz, rec, context.Background(), acmeAdmin, "admin", "health")
+	for _, ra := range [][2]string{{"admin", "stats"}, {"admin", "backup"}, {"health", "admin"}, {"kv", "health"}, {"kv", "read"}} {
+		assertRefused(t, authz, rec, acme, acmeAdmin, ra[0], ra[1])
+	}
+
+	// The health check is still authorized: the node authorizer's denial is returned.
+	denied := errors.New("permission denied")
+	rec.err = denied
+	if err := authz.Authorize(acme, acmeAdmin, "admin", "health"); !errors.Is(err, denied) {
+		t.Fatalf("Authorize(admin, health) = %v, want the node authorizer's denial", err)
+	}
+	rec.err = nil
+
+	// The unseal retry on the new connection then clears the hold.
+	assertReached(t, authz, rec, acme, acmeAdmin, "tenant_barrier", "unseal")
+	gateFails.Store(false)
+	if err := barrier.TenantBarrierUnseal(tenantAdminCtx("acme"), "acme", []byte("key")); err != nil {
+		t.Fatalf("an unseal whose gates pass must open the tenant, got %v", err)
+	}
+	assertReached(t, authz, rec, acme, acmeAdmin, "kv", "read")
+}

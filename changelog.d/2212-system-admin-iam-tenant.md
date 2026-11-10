@@ -19,3 +19,5 @@
 - A policy repair that arrives after a held tenant's unseal checks have loaded
   its policies, but before the tenant opens, is rejected when its reload
   fails, like any other policy write.
+- A tenant that is held at unseal still answers the node health check, so an
+  SDK or CLI client can connect and retry the unseal.
