@@ -34,7 +34,7 @@ import (
 
 func agentRegisterReq(t *testing.T, body string, cert *x509.Certificate) *http.Request {
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/fleet/enroll", strings.NewReader(body))
-	req.Host = "192.168.1.1:18080"
+	req.Host = "192.0.2.1:18080"
 	req.Header.Set("Content-Type", "application/json")
 	if cert != nil {
 		req.TLS = &tls.ConnectionState{PeerCertificates: []*x509.Certificate{cert}}

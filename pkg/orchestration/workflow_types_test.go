@@ -20,159 +20,79 @@ import (
 )
 
 // =============================================================================
-// ValidateTopology
+// Enum validators
 // =============================================================================
 
-func TestValidateTopology_ValidTopologies(t *testing.T) {
-	valid := []CommunicationTopology{
-		TopologyHubAndSpoke,
-		TopologyHybrid,
-		TopologyPeerToPeer,
-	}
-	for _, topo := range valid {
-		t.Run(string(topo), func(t *testing.T) {
-			if err := ValidateTopology(topo); err != nil {
-				t.Errorf("expected %s to be valid, got: %v", topo, err)
+// enumCase is one input to an enum validator: wantField is empty when the
+// input is accepted, otherwise the field the validation error must name.
+type enumCase struct {
+	input     string
+	wantField string
+}
+
+// checkEnumValidator runs validate over cases and asserts each input is
+// accepted or refused with a *WorkflowValidationError naming wantField.
+func checkEnumValidator(t *testing.T, validate func(string) error, cases []enumCase) {
+	t.Helper()
+	for _, tc := range cases {
+		t.Run("input="+tc.input, func(t *testing.T) {
+			err := validate(tc.input)
+			if tc.wantField == "" {
+				if err != nil {
+					t.Fatalf("expected %q to be accepted, got: %v", tc.input, err)
+				}
+				return
+			}
+			if !errors.Is(err, ErrWorkflowValidation) {
+				t.Fatalf("expected ErrWorkflowValidation for %q, got: %v", tc.input, err)
+			}
+			var valErr *WorkflowValidationError
+			if !errors.As(err, &valErr) {
+				t.Fatalf("expected *WorkflowValidationError, got %T", err)
+			}
+			if valErr.Field != tc.wantField {
+				t.Errorf("expected field=%s, got %s", tc.wantField, valErr.Field)
 			}
 		})
 	}
 }
 
-func TestValidateTopology_EmptyAccepted(t *testing.T) {
-	if err := ValidateTopology(""); err != nil {
-		t.Errorf("expected empty topology to be accepted, got: %v", err)
-	}
+func TestValidateTopology(t *testing.T) {
+	checkEnumValidator(t, func(s string) error { return ValidateTopology(CommunicationTopology(s)) }, []enumCase{
+		{input: string(TopologyHubAndSpoke)},
+		{input: string(TopologyHybrid)},
+		{input: string(TopologyPeerToPeer)},
+		{input: ""},
+		{input: "mesh", wantField: "topology"},
+	})
 }
 
-func TestValidateTopology_InvalidRejected(t *testing.T) {
-	err := ValidateTopology("mesh")
-	if err == nil {
-		t.Fatal("expected invalid topology to be rejected")
-	}
-	if !errors.Is(err, ErrWorkflowValidation) {
-		t.Errorf("expected ErrWorkflowValidation, got: %v", err)
-	}
-	var valErr *WorkflowValidationError
-	if !errors.As(err, &valErr) {
-		t.Fatalf("expected *WorkflowValidationError, got %T", err)
-	}
-	if valErr.Field != "topology" {
-		t.Errorf("expected field=topology, got %s", valErr.Field)
-	}
+func TestValidateIsolation(t *testing.T) {
+	checkEnumValidator(t, func(s string) error { return ValidateIsolation(WorkspaceIsolation(s)) }, []enumCase{
+		{input: string(IsolationShared)},
+		{input: string(IsolationWorktree)},
+		{input: ""},
+		{input: "container", wantField: "isolation"},
+	})
 }
 
-// =============================================================================
-// ValidateIsolation
-// =============================================================================
-
-func TestValidateIsolation_ValidIsolations(t *testing.T) {
-	valid := []WorkspaceIsolation{IsolationShared, IsolationWorktree}
-	for _, iso := range valid {
-		t.Run(string(iso), func(t *testing.T) {
-			if err := ValidateIsolation(iso); err != nil {
-				t.Errorf("expected %s to be valid, got: %v", iso, err)
-			}
-		})
-	}
+func TestValidateOverflowAction(t *testing.T) {
+	checkEnumValidator(t, ValidateOverflowAction, []enumCase{
+		{input: "reject"},
+		{input: "drop_oldest"},
+		{input: ""},
+		{input: "discard", wantField: "overflow_action"},
+	})
 }
 
-func TestValidateIsolation_EmptyAccepted(t *testing.T) {
-	if err := ValidateIsolation(""); err != nil {
-		t.Errorf("expected empty isolation to be accepted, got: %v", err)
-	}
-}
-
-func TestValidateIsolation_InvalidRejected(t *testing.T) {
-	err := ValidateIsolation("container")
-	if err == nil {
-		t.Fatal("expected invalid isolation to be rejected")
-	}
-	if !errors.Is(err, ErrWorkflowValidation) {
-		t.Errorf("expected ErrWorkflowValidation, got: %v", err)
-	}
-	var valErr *WorkflowValidationError
-	if !errors.As(err, &valErr) {
-		t.Fatalf("expected *WorkflowValidationError, got %T", err)
-	}
-	if valErr.Field != "isolation" {
-		t.Errorf("expected field=isolation, got %s", valErr.Field)
-	}
-}
-
-// =============================================================================
-// ValidateOverflowAction
-// =============================================================================
-
-func TestValidateOverflowAction_ValidActions(t *testing.T) {
-	valid := []string{"reject", "drop_oldest"}
-	for _, action := range valid {
-		t.Run(action, func(t *testing.T) {
-			if err := ValidateOverflowAction(action); err != nil {
-				t.Errorf("expected %s to be valid, got: %v", action, err)
-			}
-		})
-	}
-}
-
-func TestValidateOverflowAction_EmptyAccepted(t *testing.T) {
-	if err := ValidateOverflowAction(""); err != nil {
-		t.Errorf("expected empty overflow action to be accepted, got: %v", err)
-	}
-}
-
-func TestValidateOverflowAction_InvalidRejected(t *testing.T) {
-	err := ValidateOverflowAction("discard")
-	if err == nil {
-		t.Fatal("expected invalid overflow action to be rejected")
-	}
-	if !errors.Is(err, ErrWorkflowValidation) {
-		t.Errorf("expected ErrWorkflowValidation, got: %v", err)
-	}
-	var valErr *WorkflowValidationError
-	if !errors.As(err, &valErr) {
-		t.Fatalf("expected *WorkflowValidationError, got %T", err)
-	}
-	if valErr.Field != "overflow_action" {
-		t.Errorf("expected field=overflow_action, got %s", valErr.Field)
-	}
-}
-
-// =============================================================================
-// ValidateBudgetAction
-// =============================================================================
-
-func TestValidateBudgetAction_ValidActions(t *testing.T) {
-	valid := []string{"warn", "pause", "shutdown"}
-	for _, action := range valid {
-		t.Run(action, func(t *testing.T) {
-			if err := ValidateBudgetAction(action); err != nil {
-				t.Errorf("expected %s to be valid, got: %v", action, err)
-			}
-		})
-	}
-}
-
-func TestValidateBudgetAction_EmptyAccepted(t *testing.T) {
-	if err := ValidateBudgetAction(""); err != nil {
-		t.Errorf("expected empty budget action to be accepted, got: %v", err)
-	}
-}
-
-func TestValidateBudgetAction_InvalidRejected(t *testing.T) {
-	err := ValidateBudgetAction("kill")
-	if err == nil {
-		t.Fatal("expected invalid budget action to be rejected")
-	}
-	if !errors.Is(err, ErrWorkflowValidation) {
-		t.Errorf("expected ErrWorkflowValidation, got: %v", err)
-	}
-	var valErr *WorkflowValidationError
-	if !errors.As(err, &valErr) {
-		t.Fatalf("expected *WorkflowValidationError, got %T", err)
-	}
-	if valErr.Field != "budget_action" {
-		t.Errorf("expected field=budget_action, got %s", valErr.Field)
-	}
+func TestValidateBudgetAction(t *testing.T) {
+	checkEnumValidator(t, ValidateBudgetAction, []enumCase{
+		{input: "warn"},
+		{input: "pause"},
+		{input: "shutdown"},
+		{input: ""},
+		{input: "kill", wantField: "budget_action"},
+	})
 }
 
 // =============================================================================
@@ -219,6 +139,9 @@ func TestWorkflowSettings_ApplyDefaults_AllZeroValues(t *testing.T) {
 	if ws.Recovery.RestartBackoff != "30s" {
 		t.Errorf("expected restart_backoff=30s, got %s", ws.Recovery.RestartBackoff)
 	}
+	if ws.NumCtx != 0 {
+		t.Errorf("expected NumCtx=0 (omitted), got %d", ws.NumCtx)
+	}
 }
 
 func TestWorkflowSettings_ApplyDefaults_PreservesExistingValues(t *testing.T) {
@@ -243,6 +166,7 @@ func TestWorkflowSettings_ApplyDefaults_PreservesExistingValues(t *testing.T) {
 			MaxRestarts:    5,
 			RestartBackoff: "1m",
 		},
+		NumCtx: 65536,
 	}
 	ws.ApplyDefaults()
 
@@ -273,68 +197,46 @@ func TestWorkflowSettings_ApplyDefaults_PreservesExistingValues(t *testing.T) {
 	if ws.Recovery.MaxRestarts != 5 {
 		t.Errorf("expected max_restarts preserved as 5, got %d", ws.Recovery.MaxRestarts)
 	}
+	if ws.NumCtx != 65536 {
+		t.Errorf("expected NumCtx preserved as 65536, got %d", ws.NumCtx)
+	}
 }
 
 // =============================================================================
 // WorkflowSettings.Validate
 // =============================================================================
 
-func TestWorkflowSettings_Validate_ValidDefaults(t *testing.T) {
-	ws := &WorkflowSettings{}
-	ws.ApplyDefaults()
-	if err := ws.Validate(); err != nil {
-		t.Errorf("expected defaults to validate, got: %v", err)
+func TestWorkflowSettings_Validate(t *testing.T) {
+	defaults := WorkflowSettings{}
+	defaults.ApplyDefaults()
+	tests := []struct {
+		name      string
+		settings  WorkflowSettings
+		wantField string
+	}{
+		{name: "defaults", settings: defaults},
+		{name: "invalid topology", settings: WorkflowSettings{Topology: "mesh"}, wantField: "topology"},
+		{name: "invalid isolation", settings: WorkflowSettings{Topology: TopologyHubAndSpoke, Isolation: "container"}, wantField: "isolation"},
+		{name: "invalid overflow action", settings: WorkflowSettings{PeerMessaging: PeerMessagingSettings{OverflowAction: "discard"}}, wantField: "overflow_action"},
+		{name: "invalid budget action", settings: WorkflowSettings{CostControls: CostControlSettings{BudgetAction: "kill"}}, wantField: "budget_action"},
 	}
-}
-
-func TestWorkflowSettings_Validate_InvalidTopology(t *testing.T) {
-	ws := &WorkflowSettings{Topology: "mesh"}
-	err := ws.Validate()
-	if err == nil {
-		t.Fatal("expected validation error for invalid topology")
-	}
-	if !errors.Is(err, ErrWorkflowValidation) {
-		t.Errorf("expected ErrWorkflowValidation, got: %v", err)
-	}
-}
-
-func TestWorkflowSettings_Validate_InvalidIsolation(t *testing.T) {
-	ws := &WorkflowSettings{
-		Topology:  TopologyHubAndSpoke,
-		Isolation: "container",
-	}
-	err := ws.Validate()
-	if err == nil {
-		t.Fatal("expected validation error for invalid isolation")
-	}
-	if !errors.Is(err, ErrWorkflowValidation) {
-		t.Errorf("expected ErrWorkflowValidation, got: %v", err)
-	}
-}
-
-func TestWorkflowSettings_Validate_InvalidOverflowAction(t *testing.T) {
-	ws := &WorkflowSettings{
-		PeerMessaging: PeerMessagingSettings{OverflowAction: "discard"},
-	}
-	err := ws.Validate()
-	if err == nil {
-		t.Fatal("expected validation error for invalid overflow action")
-	}
-	if !errors.Is(err, ErrWorkflowValidation) {
-		t.Errorf("expected ErrWorkflowValidation, got: %v", err)
-	}
-}
-
-func TestWorkflowSettings_Validate_InvalidBudgetAction(t *testing.T) {
-	ws := &WorkflowSettings{
-		CostControls: CostControlSettings{BudgetAction: "kill"},
-	}
-	err := ws.Validate()
-	if err == nil {
-		t.Fatal("expected validation error for invalid budget action")
-	}
-	if !errors.Is(err, ErrWorkflowValidation) {
-		t.Errorf("expected ErrWorkflowValidation, got: %v", err)
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			err := tc.settings.Validate()
+			if tc.wantField == "" {
+				if err != nil {
+					t.Fatalf("expected settings to validate, got: %v", err)
+				}
+				return
+			}
+			var valErr *WorkflowValidationError
+			if !errors.Is(err, ErrWorkflowValidation) || !errors.As(err, &valErr) {
+				t.Fatalf("expected *WorkflowValidationError, got: %v", err)
+			}
+			if valErr.Field != tc.wantField {
+				t.Errorf("expected field=%s, got %s", tc.wantField, valErr.Field)
+			}
+		})
 	}
 }
 
@@ -342,304 +244,82 @@ func TestWorkflowSettings_Validate_InvalidBudgetAction(t *testing.T) {
 // WorkflowDefinition.Validate (with settings validation)
 // =============================================================================
 
-func TestWorkflowDefinition_Validate_ValidWithSettings(t *testing.T) {
-	wd := &WorkflowDefinition{
-		Name: "test-workflow",
-		Mode: WorkflowModeAutonomous,
-		Agents: []AgentRoleSpec{
-			{Role: "worker", Backend: "claude", Model: "opus"},
-		},
-		Settings: WorkflowSettings{
-			Topology:  TopologyHybrid,
-			Isolation: IsolationWorktree,
-		},
-	}
-	if err := wd.Validate(); err != nil {
-		t.Errorf("expected valid workflow to pass, got: %v", err)
-	}
-}
-
-func TestWorkflowDefinition_Validate_InvalidSettings(t *testing.T) {
-	wd := &WorkflowDefinition{
-		Name: "test-workflow",
-		Mode: WorkflowModeAutonomous,
-		Agents: []AgentRoleSpec{
-			{Role: "worker", Backend: "claude", Model: "opus"},
-		},
-		Settings: WorkflowSettings{
-			Topology: "invalid_topo",
-		},
-	}
-	err := wd.Validate()
-	if err == nil {
-		t.Fatal("expected validation error for invalid settings")
-	}
-	if !errors.Is(err, ErrWorkflowValidation) {
-		t.Errorf("expected ErrWorkflowValidation, got: %v", err)
-	}
-}
-
-func TestWorkflowDefinition_Validate_EmptyName(t *testing.T) {
-	wd := &WorkflowDefinition{
-		Mode: WorkflowModeAutonomous,
-		Agents: []AgentRoleSpec{
-			{Role: "worker", Backend: "claude", Model: "opus"},
-		},
-	}
-	err := wd.Validate()
-	if err == nil {
-		t.Fatal("expected validation error for empty name")
-	}
-	var valErr *WorkflowValidationError
-	if !errors.As(err, &valErr) {
-		t.Fatalf("expected *WorkflowValidationError, got %T", err)
-	}
-	if valErr.Field != "name" {
-		t.Errorf("expected field=name, got %s", valErr.Field)
-	}
-}
-
-func TestWorkflowDefinition_Validate_InvalidMode(t *testing.T) {
-	wd := &WorkflowDefinition{
-		Name: "test",
-		Mode: "invalid",
-		Agents: []AgentRoleSpec{
-			{Role: "worker", Backend: "claude", Model: "opus"},
-		},
-	}
-	err := wd.Validate()
-	if err == nil {
-		t.Fatal("expected validation error for invalid mode")
-	}
-	var valErr *WorkflowValidationError
-	if !errors.As(err, &valErr) {
-		t.Fatalf("expected *WorkflowValidationError, got %T", err)
-	}
-	if valErr.Field != "mode" {
-		t.Errorf("expected field=mode, got %s", valErr.Field)
-	}
-}
-
-func TestWorkflowDefinition_Validate_NoAgents(t *testing.T) {
-	wd := &WorkflowDefinition{
-		Name: "test",
-		Mode: WorkflowModeAutonomous,
-	}
-	err := wd.Validate()
-	if err == nil {
-		t.Fatal("expected validation error for no agents")
-	}
-	var valErr *WorkflowValidationError
-	if !errors.As(err, &valErr) {
-		t.Fatalf("expected *WorkflowValidationError, got %T", err)
-	}
-	if valErr.Field != "agents" {
-		t.Errorf("expected field=agents, got %s", valErr.Field)
-	}
-}
-
-func TestWorkflowDefinition_Validate_CannedRequiresLead(t *testing.T) {
-	wd := &WorkflowDefinition{
-		Name: "test",
-		Mode: WorkflowModeCanned,
-		Agents: []AgentRoleSpec{
-			{Role: "worker", Backend: "claude", Model: "opus"},
-		},
-	}
-	err := wd.Validate()
-	if err == nil {
-		t.Fatal("expected validation error for canned without lead")
-	}
-}
-
-func TestWorkflowDefinition_Validate_CannedWithLead(t *testing.T) {
-	wd := &WorkflowDefinition{
-		Name: "test",
-		Mode: WorkflowModeCanned,
-		Agents: []AgentRoleSpec{
-			{Role: "lead", Backend: "claude", Model: "opus"},
-			{Role: "worker", Backend: "claude", Model: "opus"},
-		},
-	}
-	if err := wd.Validate(); err != nil {
-		t.Errorf("expected canned with lead to pass, got: %v", err)
-	}
-}
-
-// =============================================================================
-// Struct Field Coverage
-// =============================================================================
-
-func TestPeerMessagingSettings_Fields(t *testing.T) {
-	s := PeerMessagingSettings{
-		MaxMessageSize: 2048,
-		MaxInboxSize:   100,
-		OverflowAction: "reject",
-		InboxTTL:       "30m",
-	}
-	if s.MaxMessageSize != 2048 {
-		t.Errorf("expected MaxMessageSize=2048, got %d", s.MaxMessageSize)
-	}
-	if s.MaxInboxSize != 100 {
-		t.Errorf("expected MaxInboxSize=100, got %d", s.MaxInboxSize)
-	}
-	if s.OverflowAction != "reject" {
-		t.Errorf("expected OverflowAction=reject, got %s", s.OverflowAction)
-	}
-	if s.InboxTTL != "30m" {
-		t.Errorf("expected InboxTTL=30m, got %s", s.InboxTTL)
-	}
-}
-
-func TestFileLockSettings_Fields(t *testing.T) {
-	s := FileLockSettings{
-		LeaseTTL:          "10m",
-		HeartbeatInterval: "1m",
-		MaxRenewals:       30,
-	}
-	if s.LeaseTTL != "10m" {
-		t.Errorf("expected LeaseTTL=10m, got %s", s.LeaseTTL)
-	}
-	if s.HeartbeatInterval != "1m" {
-		t.Errorf("expected HeartbeatInterval=1m, got %s", s.HeartbeatInterval)
-	}
-	if s.MaxRenewals != 30 {
-		t.Errorf("expected MaxRenewals=30, got %d", s.MaxRenewals)
-	}
-}
-
-func TestVectorDBSettings_Fields(t *testing.T) {
-	s := VectorDBSettings{
-		Enabled:        true,
-		IndexType:      "hnsw",
-		AutoIndex:      true,
-		Triggers:       []string{"on_commit", "on_save"},
-		GPUAccelerated: true,
-	}
-	if !s.Enabled {
-		t.Error("expected Enabled=true")
-	}
-	if s.IndexType != "hnsw" {
-		t.Errorf("expected IndexType=hnsw, got %s", s.IndexType)
-	}
-	if !s.AutoIndex {
-		t.Error("expected AutoIndex=true")
-	}
-	if len(s.Triggers) != 2 {
-		t.Errorf("expected 2 triggers, got %d", len(s.Triggers))
-	}
-	if !s.GPUAccelerated {
-		t.Error("expected GPUAccelerated=true")
-	}
-}
-
-func TestCostControlSettings_Fields(t *testing.T) {
-	s := CostControlSettings{
-		MaxTokensPerJob:   1000000,
-		MaxTokensPerAgent: 100000,
-		BudgetAction:      "pause",
-	}
-	if s.MaxTokensPerJob != 1000000 {
-		t.Errorf("expected MaxTokensPerJob=1000000, got %d", s.MaxTokensPerJob)
-	}
-	if s.MaxTokensPerAgent != 100000 {
-		t.Errorf("expected MaxTokensPerAgent=100000, got %d", s.MaxTokensPerAgent)
-	}
-	if s.BudgetAction != "pause" {
-		t.Errorf("expected BudgetAction=pause, got %s", s.BudgetAction)
-	}
-}
-
-func TestRecoverySettings_Fields(t *testing.T) {
-	s := RecoverySettings{
-		AutoRestart:    true,
-		MaxRestarts:    5,
-		RestartBackoff: "1m",
-	}
-	if !s.AutoRestart {
-		t.Error("expected AutoRestart=true")
-	}
-	if s.MaxRestarts != 5 {
-		t.Errorf("expected MaxRestarts=5, got %d", s.MaxRestarts)
-	}
-	if s.RestartBackoff != "1m" {
-		t.Errorf("expected RestartBackoff=1m, got %s", s.RestartBackoff)
-	}
-}
-
-// =============================================================================
-// AgentRoleSpec NumCtx
-// =============================================================================
-
-func TestAgentRoleSpec_NumCtx_Set(t *testing.T) {
-	spec := AgentRoleSpec{
-		Role:    "worker",
-		Backend: "ollama",
-		Model:   "llama3.3:70b-32k",
-		NumCtx:  32768,
-	}
-	if spec.NumCtx != 32768 {
-		t.Errorf("expected NumCtx=32768, got %d", spec.NumCtx)
-	}
-}
-
-func TestAgentRoleSpec_NumCtx_ZeroDefault(t *testing.T) {
-	spec := AgentRoleSpec{
-		Role:    "worker",
-		Backend: "claude",
-		Model:   "opus",
-	}
-	if spec.NumCtx != 0 {
-		t.Errorf("expected NumCtx=0 (omitted), got %d", spec.NumCtx)
-	}
-}
-
-// =============================================================================
-// WorkflowSettings NumCtx
-// =============================================================================
-
-func TestWorkflowSettings_NumCtx_Set(t *testing.T) {
-	ws := &WorkflowSettings{
-		NumCtx: 65536,
-	}
-	ws.ApplyDefaults()
-	if ws.NumCtx != 65536 {
-		t.Errorf("expected NumCtx=65536, got %d", ws.NumCtx)
-	}
-}
-
-func TestWorkflowSettings_NumCtx_ZeroDefault(t *testing.T) {
-	ws := &WorkflowSettings{}
-	ws.ApplyDefaults()
-	if ws.NumCtx != 0 {
-		t.Errorf("expected NumCtx=0 (omitted), got %d", ws.NumCtx)
-	}
-}
-
-func TestWorkflowDefinition_Validate_WithNumCtx(t *testing.T) {
-	wd := &WorkflowDefinition{
-		Name: "ollama-workflow",
-		Mode: WorkflowModeConstrained,
-		Agents: []AgentRoleSpec{
-			{
-				Role:    "lead",
-				Backend: "ollama",
-				Model:   "llama3.3:70b-32k",
-				NumCtx:  32768,
-			},
-			{
-				Role:    "worker",
-				Backend: "ollama",
-				Model:   "qwen2.5-coder:32b-16k",
-				NumCtx:  16384,
+func TestWorkflowDefinition_Validate(t *testing.T) {
+	worker := AgentRoleSpec{Role: "worker", Backend: "claude", Model: "opus"}
+	lead := AgentRoleSpec{Role: "lead", Backend: "claude", Model: "opus"}
+	tests := []struct {
+		name      string
+		def       WorkflowDefinition
+		wantField string
+	}{
+		{
+			name: "autonomous with settings",
+			def: WorkflowDefinition{
+				Name: "test-workflow", Mode: WorkflowModeAutonomous, Agents: []AgentRoleSpec{worker},
+				Settings: WorkflowSettings{Topology: TopologyHybrid, Isolation: IsolationWorktree},
 			},
 		},
-		Settings: WorkflowSettings{
-			NumCtx: 32768,
+		{
+			name: "canned with lead",
+			def:  WorkflowDefinition{Name: "test", Mode: WorkflowModeCanned, Agents: []AgentRoleSpec{lead, worker}},
+		},
+		{
+			name: "constrained with NumCtx",
+			def: WorkflowDefinition{
+				Name: "ollama-workflow", Mode: WorkflowModeConstrained,
+				Agents: []AgentRoleSpec{
+					{Role: "lead", Backend: "ollama", Model: "llama3.3:70b-32k", NumCtx: 32768},
+					{Role: "worker", Backend: "ollama", Model: "qwen2.5-coder:32b-16k", NumCtx: 16384},
+				},
+				Settings: WorkflowSettings{NumCtx: 32768},
+			},
+		},
+		{
+			name:      "empty name",
+			def:       WorkflowDefinition{Mode: WorkflowModeAutonomous, Agents: []AgentRoleSpec{worker}},
+			wantField: "name",
+		},
+		{
+			name:      "invalid mode",
+			def:       WorkflowDefinition{Name: "test", Mode: "invalid", Agents: []AgentRoleSpec{worker}},
+			wantField: "mode",
+		},
+		{
+			name:      "no agents",
+			def:       WorkflowDefinition{Name: "test", Mode: WorkflowModeAutonomous},
+			wantField: "agents",
+		},
+		{
+			name:      "canned without lead",
+			def:       WorkflowDefinition{Name: "test", Mode: WorkflowModeCanned, Agents: []AgentRoleSpec{worker}},
+			wantField: "agents",
+		},
+		{
+			name: "invalid settings",
+			def: WorkflowDefinition{
+				Name: "test-workflow", Mode: WorkflowModeAutonomous, Agents: []AgentRoleSpec{worker},
+				Settings: WorkflowSettings{Topology: "invalid_topo"},
+			},
+			wantField: "topology",
 		},
 	}
-	if err := wd.Validate(); err != nil {
-		t.Errorf("expected workflow with NumCtx to validate, got: %v", err)
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			err := tc.def.Validate()
+			if tc.wantField == "" {
+				if err != nil {
+					t.Fatalf("expected workflow to validate, got: %v", err)
+				}
+				return
+			}
+			var valErr *WorkflowValidationError
+			if !errors.Is(err, ErrWorkflowValidation) || !errors.As(err, &valErr) {
+				t.Fatalf("expected *WorkflowValidationError, got: %v", err)
+			}
+			if valErr.Field != tc.wantField {
+				t.Errorf("expected field=%s, got %s", tc.wantField, valErr.Field)
+			}
+		})
 	}
 }
 
