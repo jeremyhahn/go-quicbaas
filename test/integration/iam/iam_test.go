@@ -450,7 +450,8 @@ func (tc *testCluster) callerUserID(t *testing.T, tenantID string) string {
 }
 
 // bearerFor returns the bearer a request to path carries: the system admin's
-// for the tenant control plane (/api/v1/tenants and a tenant's record), the
+// for the tenant control plane (/api/v1/tenants and a tenant's record) and the
+// delegated-admin routes (/api/v1/admin/), the
 // tenant's own admin's for a path inside a tenant, for other /api/v1/iam/ paths
 // the admin's of the tenant the tenant_id query parameter names when that
 // tenant was provisioned here, else the current tenant's admin's (else the
@@ -469,7 +470,7 @@ func (tc *testCluster) bearerFor(method, path string) (string, error) {
 
 	const tenantsPath = "/api/v1/tenants"
 	switch {
-	case path == tenantsPath:
+	case path == tenantsPath, strings.HasPrefix(path, "/api/v1/admin/"):
 		return tc.systemAdminBearer()
 
 	case strings.HasPrefix(path, tenantsPath+"/"):
@@ -524,6 +525,41 @@ func (tc *testCluster) systemAdminBearer() (string, error) {
 	}
 	tc.systemBearer = bearer
 	return bearer, nil
+}
+
+// adminClient returns tc.client with the system admin's bearer on every
+// request that carries no Authorization header of its own. Tests that call
+// the delegated-admin routes (/api/v1/admin/) with a raw client use it: those
+// routes refuse an anonymous caller.
+func (tc *testCluster) adminClient() *http.Client {
+	client := *tc.client
+	client.Transport = &systemAdminTransport{tc: tc, base: tc.client.Transport}
+	return &client
+}
+
+// systemAdminTransport adds the system admin's bearer to a request that has
+// no Authorization header.
+type systemAdminTransport struct {
+	tc   *testCluster
+	base http.RoundTripper
+}
+
+// RoundTrip implements http.RoundTripper.
+func (s *systemAdminTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	base := s.base
+	if base == nil {
+		base = http.DefaultTransport
+	}
+	if req.Header.Get("Authorization") != "" {
+		return base.RoundTrip(req)
+	}
+	bearer, err := s.tc.systemAdminBearer()
+	if err != nil {
+		return nil, err
+	}
+	authed := req.Clone(req.Context())
+	authed.Header.Set("Authorization", "Bearer "+bearer)
+	return base.RoundTrip(authed)
 }
 
 // tenantAdminBearer returns the bearer of tenantID's admin session.
