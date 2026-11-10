@@ -725,8 +725,8 @@ func TestAdmin_CheckPermission_Allowed(t *testing.T) {
 	body, err := json.Marshal(checkReq)
 	require.NoError(t, err)
 
-	resp, err := cluster.client.Post(
-		cluster.httpEndpoint+"/api/v1/admin/check-permission",
+	resp, err := admin.client.Post(
+		admin.httpEndpoint+"/api/v1/admin/check-permission",
 		"application/json",
 		bytes.NewReader(body),
 	)
@@ -772,8 +772,8 @@ func TestAdmin_CheckPermission_Denied(t *testing.T) {
 	body, err := json.Marshal(checkReq)
 	require.NoError(t, err)
 
-	resp, err := cluster.client.Post(
-		cluster.httpEndpoint+"/api/v1/admin/check-permission",
+	resp, err := admin.client.Post(
+		admin.httpEndpoint+"/api/v1/admin/check-permission",
 		"application/json",
 		bytes.NewReader(body),
 	)
@@ -796,6 +796,7 @@ func TestAdmin_CheckPermission_Denied(t *testing.T) {
 func TestAdmin_CheckPermission_NoAssignment(t *testing.T) {
 	cluster := setupTestCluster(t)
 	defer cluster.Close()
+	admin := adminAPIView(t, cluster)
 
 	// Use a user ID that doesn't have any assignment
 	nonExistentUser := generateUniqueUserID()
@@ -808,8 +809,8 @@ func TestAdmin_CheckPermission_NoAssignment(t *testing.T) {
 	body, err := json.Marshal(checkReq)
 	require.NoError(t, err)
 
-	resp, err := cluster.client.Post(
-		cluster.httpEndpoint+"/api/v1/admin/check-permission",
+	resp, err := admin.client.Post(
+		admin.httpEndpoint+"/api/v1/admin/check-permission",
 		"application/json",
 		bytes.NewReader(body),
 	)
@@ -870,8 +871,8 @@ func TestAdmin_CheckPermission_ExpiredAssignment(t *testing.T) {
 		checkBody, err := json.Marshal(checkReq)
 		require.NoError(t, err)
 
-		checkResp, err := cluster.client.Post(
-			cluster.httpEndpoint+"/api/v1/admin/check-permission",
+		checkResp, err := admin.client.Post(
+			admin.httpEndpoint+"/api/v1/admin/check-permission",
 			"application/json",
 			bytes.NewReader(checkBody),
 		)
@@ -917,8 +918,8 @@ func TestAdmin_CheckPermission_TenantScope(t *testing.T) {
 		body, err := json.Marshal(checkReq)
 		require.NoError(t, err)
 
-		resp, err := cluster.client.Post(
-			cluster.httpEndpoint+"/api/v1/admin/check-permission",
+		resp, err := admin.client.Post(
+			admin.httpEndpoint+"/api/v1/admin/check-permission",
 			"application/json",
 			bytes.NewReader(body),
 		)
@@ -944,8 +945,8 @@ func TestAdmin_CheckPermission_TenantScope(t *testing.T) {
 		body, err := json.Marshal(checkReq)
 		require.NoError(t, err)
 
-		resp, err := cluster.client.Post(
-			cluster.httpEndpoint+"/api/v1/admin/check-permission",
+		resp, err := admin.client.Post(
+			admin.httpEndpoint+"/api/v1/admin/check-permission",
 			"application/json",
 			bytes.NewReader(body),
 		)
@@ -988,8 +989,8 @@ func TestAdmin_CheckPermission_DeniedPermissions(t *testing.T) {
 	body, err := json.Marshal(checkReq)
 	require.NoError(t, err)
 
-	resp, err := cluster.client.Post(
-		cluster.httpEndpoint+"/api/v1/admin/check-permission",
+	resp, err := admin.client.Post(
+		admin.httpEndpoint+"/api/v1/admin/check-permission",
 		"application/json",
 		bytes.NewReader(body),
 	)
@@ -1477,8 +1478,8 @@ func TestAdmin_UpdateAssignment_Deactivate(t *testing.T) {
 	checkBody, err := json.Marshal(checkReq)
 	require.NoError(t, err)
 
-	checkResp, err := cluster.client.Post(
-		cluster.httpEndpoint+"/api/v1/admin/check-permission",
+	checkResp, err := admin.client.Post(
+		admin.httpEndpoint+"/api/v1/admin/check-permission",
 		"application/json",
 		bytes.NewReader(checkBody),
 	)
@@ -1568,8 +1569,8 @@ func TestAdmin_CheckPermission_WithResourceContext(t *testing.T) {
 		body, err := json.Marshal(checkReq)
 		require.NoError(t, err)
 
-		resp, err := cluster.client.Post(
-			cluster.httpEndpoint+"/api/v1/admin/check-permission",
+		resp, err := admin.client.Post(
+			admin.httpEndpoint+"/api/v1/admin/check-permission",
 			"application/json",
 			bytes.NewReader(body),
 		)
@@ -1597,8 +1598,8 @@ func TestAdmin_CheckPermission_WithResourceContext(t *testing.T) {
 		body, err := json.Marshal(checkReq)
 		require.NoError(t, err)
 
-		resp, err := cluster.client.Post(
-			cluster.httpEndpoint+"/api/v1/admin/check-permission",
+		resp, err := admin.client.Post(
+			admin.httpEndpoint+"/api/v1/admin/check-permission",
 			"application/json",
 			bytes.NewReader(body),
 		)
@@ -1645,8 +1646,8 @@ func TestAdmin_Assignment_WithExpiry(t *testing.T) {
 	body, err := json.Marshal(checkReq)
 	require.NoError(t, err)
 
-	resp, err := cluster.client.Post(
-		cluster.httpEndpoint+"/api/v1/admin/check-permission",
+	resp, err := admin.client.Post(
+		admin.httpEndpoint+"/api/v1/admin/check-permission",
 		"application/json",
 		bytes.NewReader(body),
 	)
@@ -1777,8 +1778,8 @@ func TestAdmin_MultipleAssignments_SameUser(t *testing.T) {
 	body, err := json.Marshal(checkReq)
 	require.NoError(t, err)
 
-	checkResp, err := cluster.client.Post(
-		cluster.httpEndpoint+"/api/v1/admin/check-permission",
+	checkResp, err := admin.client.Post(
+		admin.httpEndpoint+"/api/v1/admin/check-permission",
 		"application/json",
 		bytes.NewReader(body),
 	)
