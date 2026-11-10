@@ -65,12 +65,15 @@ type testCluster struct {
 	// t is the test that set the cluster up.
 	t *testing.T
 
-	// mu guards systemBearer, tenantAdmins and current.
+	// mu guards systemBearer, tenantAdmins, securityOfficers and current.
 	mu sync.Mutex
 	// systemBearer is the system admin's bearer, fetched once.
 	systemBearer string
 	// tenantAdmins holds each provisioned tenant's admin session, by tenant ID.
 	tenantAdmins map[string]*helpers.TenantAdminSession
+	// securityOfficers holds each tenant's security officer session, by tenant
+	// ID, enrolled the first time a test writes a role in that tenant.
+	securityOfficers map[string]*helpers.TenantAdminSession
 	// current is the tenant the test last provisioned.
 	current string
 }
@@ -291,14 +294,15 @@ func setupTestCluster(t *testing.T) *testCluster {
 	require.NoError(t, err, "Failed to connect to gRPC endpoint")
 
 	return &testCluster{
-		httpEndpoint: httpEndpoint,
-		grpcEndpoint: grpcEndpoint,
-		quicEndpoint: quicEndpoint,
-		unixSocket:   unixSocket,
-		client:       httpClient,
-		grpcConn:     grpcConn,
-		t:            t,
-		tenantAdmins: make(map[string]*helpers.TenantAdminSession),
+		httpEndpoint:     httpEndpoint,
+		grpcEndpoint:     grpcEndpoint,
+		quicEndpoint:     quicEndpoint,
+		unixSocket:       unixSocket,
+		client:           httpClient,
+		grpcConn:         grpcConn,
+		t:                t,
+		tenantAdmins:     make(map[string]*helpers.TenantAdminSession),
+		securityOfficers: make(map[string]*helpers.TenantAdminSession),
 	}
 }
 
@@ -361,7 +365,7 @@ func (tc *testCluster) doHTTPRequest(method, path string, body interface{}) (*ht
 		return nil, err
 	}
 
-	bearer, err := tc.bearerFor(path)
+	bearer, err := tc.bearerFor(method, path)
 	if err != nil {
 		return nil, err
 	}
@@ -421,6 +425,7 @@ func (tc *testCluster) provisionTenant(t *testing.T, tenantID string) string {
 	t.Cleanup(func() {
 		tc.mu.Lock()
 		delete(tc.tenantAdmins, tenantID)
+		delete(tc.securityOfficers, tenantID)
 		if tc.current == tenantID {
 			tc.current = ""
 		}
@@ -451,8 +456,9 @@ func (tc *testCluster) callerUserID(t *testing.T, tenantID string) string {
 // tenant was provisioned here, else the current tenant's admin's (else the
 // system admin's), and none for public endpoints. The system bearer never goes
 // to a path inside a tenant that has a recorded admin, because the tenant
-// routes refuse it.
-func (tc *testCluster) bearerFor(path string) (string, error) {
+// routes refuse it. A role create, update or delete inside such a tenant
+// carries the bearer of the tenant's security officer.
+func (tc *testCluster) bearerFor(method, path string) (string, error) {
 	queryTenant := ""
 	if i := strings.IndexByte(path, '?'); i >= 0 {
 		if values, err := url.ParseQuery(path[i+1:]); err == nil {
@@ -477,6 +483,9 @@ func (tc *testCluster) bearerFor(path string) (string, error) {
 		tc.mu.Unlock()
 		if session == nil {
 			return tc.systemAdminBearer()
+		}
+		if isRoleWrite(method, sub) {
+			return tc.securityOfficerBearer(session, tenantID)
 		}
 		return tenantAdminBearer(session, tenantID)
 
@@ -522,6 +531,44 @@ func tenantAdminBearer(session *helpers.TenantAdminSession, tenantID string) (st
 	bearer, err := session.Bearer(context.Background())
 	if err != nil {
 		return "", fmt.Errorf("tenant %q admin login: %w", tenantID, err)
+	}
+	return bearer, nil
+}
+
+// isRoleWrite reports whether a request to sub, the path below a tenant,
+// creates, updates or deletes a role. go-qrdb grants those to the tenant's
+// Security Officer and not to its Admin.
+func isRoleWrite(method, sub string) bool {
+	if method != http.MethodPost && method != http.MethodPut && method != http.MethodDelete {
+		return false
+	}
+	return sub == "roles" || strings.HasPrefix(sub, "roles/")
+}
+
+// securityOfficerBearer returns the bearer of tenantID's security officer.
+// The first call for a tenant has admin, the tenant's admin, enrol the
+// officer.
+func (tc *testCluster) securityOfficerBearer(admin *helpers.TenantAdminSession, tenantID string) (string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	tc.mu.Lock()
+	officer := tc.securityOfficers[tenantID]
+	tc.mu.Unlock()
+	if officer == nil {
+		enrolled, err := helpers.EnrollTenantSecurityOfficer(ctx, tc.httpEndpoint, admin)
+		if err != nil {
+			return "", fmt.Errorf("tenant %q security officer enrolment: %w", tenantID, err)
+		}
+		tc.mu.Lock()
+		tc.securityOfficers[tenantID] = enrolled
+		tc.mu.Unlock()
+		officer = enrolled
+	}
+
+	bearer, err := officer.Bearer(ctx)
+	if err != nil {
+		return "", fmt.Errorf("tenant %q security officer login: %w", tenantID, err)
 	}
 	return bearer, nil
 }
