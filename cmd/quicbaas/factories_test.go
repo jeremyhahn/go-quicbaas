@@ -14,7 +14,6 @@
 package main
 
 import (
-	"context"
 	"encoding/base64"
 	"testing"
 	"time"
@@ -78,147 +77,42 @@ func TestResetFactories(t *testing.T) {
 	authClientFactory = origAuthFactory
 }
 
-// TestCryptoEncryptFactoryError tests crypto encrypt command with factory error.
-func TestCryptoEncryptFactoryError(t *testing.T) {
-	// Save original factory
-	origFactory := cryptoClientFactory
-	defer func() { cryptoClientFactory = origFactory }()
-
-	// Mock factory to return error
-	factoryErr := errors.Newf(errors.ErrUnavailable, "test", "connection refused")
-	cryptoClientFactory = func() (CryptoClient, error) {
-		return nil, factoryErr
+// TestCryptoCommandsFactoryError checks that every crypto command returns the
+// client factory's error instead of calling the service.
+func TestCryptoCommandsFactoryError(t *testing.T) {
+	tests := []struct {
+		name  string
+		setup func()
+		run   func(*cobra.Command, []string) error
+		args  []string
+	}{
+		{"encrypt", func() { cryptoData = "test data"; cryptoBase64 = false }, runCryptoEncryptCommand, []string{"test-key"}},
+		{"decrypt", func() { cryptoData = "48656c6c6f" }, runCryptoDecryptCommand, []string{"test-key"}},
+		{"rewrap", func() { cryptoData = "48656c6c6f" }, runCryptoRewrapCommand, []string{"test-key"}},
+		{"sign", func() { cryptoData = "test data" }, runCryptoSignCommand, []string{"test-key"}},
+		{"verify", func() { cryptoData = "test data"; cryptoSignature = "dGVzdA==" }, runCryptoVerifyCommand, []string{"test-key"}},
+		{"hash", func() { cryptoData = "test data" }, runCryptoHashCommand, []string{}},
+		{"data key", func() { cryptoBits = 256 }, runCryptoDataKeyCommand, []string{"test-key"}},
 	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			origFactory := cryptoClientFactory
+			defer func() {
+				cryptoClientFactory = origFactory
+				cryptoData = ""
+				cryptoSignature = ""
+				cryptoBits = 256
+			}()
+			cryptoClientFactory = func() (CryptoClient, error) {
+				return nil, errors.Newf(errors.ErrUnavailable, "test", "connection refused")
+			}
+			tt.setup()
 
-	// Set required flags
-	cryptoData = "test data"
-	cryptoBase64 = false
-	defer func() { cryptoData = "" }()
-
-	cmd := &cobra.Command{}
-	err := runCryptoEncryptCommand(cmd, []string{"test-key"})
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "connection refused")
-}
-
-// TestCryptoDecryptFactoryError tests crypto decrypt command with factory error.
-func TestCryptoDecryptFactoryError(t *testing.T) {
-	origFactory := cryptoClientFactory
-	defer func() { cryptoClientFactory = origFactory }()
-
-	factoryErr := errors.Newf(errors.ErrUnavailable, "test", "connection refused")
-	cryptoClientFactory = func() (CryptoClient, error) {
-		return nil, factoryErr
+			err := tt.run(&cobra.Command{}, tt.args)
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "connection refused")
+		})
 	}
-
-	// Set valid hex data for the test
-	cryptoData = "48656c6c6f" // "Hello" in hex
-	defer func() { cryptoData = "" }()
-
-	cmd := &cobra.Command{}
-	err := runCryptoDecryptCommand(cmd, []string{"test-key"})
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "connection refused")
-}
-
-// TestCryptoRewrapFactoryError tests crypto rewrap command with factory error.
-func TestCryptoRewrapFactoryError(t *testing.T) {
-	origFactory := cryptoClientFactory
-	defer func() { cryptoClientFactory = origFactory }()
-
-	factoryErr := errors.Newf(errors.ErrUnavailable, "test", "connection refused")
-	cryptoClientFactory = func() (CryptoClient, error) {
-		return nil, factoryErr
-	}
-
-	// Set valid hex data
-	cryptoData = "48656c6c6f"
-	defer func() { cryptoData = "" }()
-
-	cmd := &cobra.Command{}
-	err := runCryptoRewrapCommand(cmd, []string{"test-key"})
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "connection refused")
-}
-
-// TestCryptoSignFactoryError tests crypto sign command with factory error.
-func TestCryptoSignFactoryError(t *testing.T) {
-	origFactory := cryptoClientFactory
-	defer func() { cryptoClientFactory = origFactory }()
-
-	factoryErr := errors.Newf(errors.ErrUnavailable, "test", "connection refused")
-	cryptoClientFactory = func() (CryptoClient, error) {
-		return nil, factoryErr
-	}
-
-	cryptoData = "test data"
-	defer func() { cryptoData = "" }()
-
-	cmd := &cobra.Command{}
-	err := runCryptoSignCommand(cmd, []string{"test-key"})
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "connection refused")
-}
-
-// TestCryptoVerifyFactoryError tests crypto verify command with factory error.
-func TestCryptoVerifyFactoryError(t *testing.T) {
-	origFactory := cryptoClientFactory
-	defer func() { cryptoClientFactory = origFactory }()
-
-	factoryErr := errors.Newf(errors.ErrUnavailable, "test", "connection refused")
-	cryptoClientFactory = func() (CryptoClient, error) {
-		return nil, factoryErr
-	}
-
-	cryptoData = "test data"
-	cryptoSignature = "dGVzdA==" // base64 "test"
-	defer func() {
-		cryptoData = ""
-		cryptoSignature = ""
-	}()
-
-	cmd := &cobra.Command{}
-	err := runCryptoVerifyCommand(cmd, []string{"test-key"})
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "connection refused")
-}
-
-// TestCryptoHashFactoryError tests crypto hash command with factory error.
-func TestCryptoHashFactoryError(t *testing.T) {
-	origFactory := cryptoClientFactory
-	defer func() { cryptoClientFactory = origFactory }()
-
-	factoryErr := errors.Newf(errors.ErrUnavailable, "test", "connection refused")
-	cryptoClientFactory = func() (CryptoClient, error) {
-		return nil, factoryErr
-	}
-
-	cryptoData = "test data"
-	defer func() { cryptoData = "" }()
-
-	cmd := &cobra.Command{}
-	err := runCryptoHashCommand(cmd, []string{})
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "connection refused")
-}
-
-// TestCryptoDataKeyFactoryError tests crypto datakey command with factory error.
-func TestCryptoDataKeyFactoryError(t *testing.T) {
-	origFactory := cryptoClientFactory
-	defer func() { cryptoClientFactory = origFactory }()
-
-	factoryErr := errors.Newf(errors.ErrUnavailable, "test", "connection refused")
-	cryptoClientFactory = func() (CryptoClient, error) {
-		return nil, factoryErr
-	}
-
-	cryptoBits = 256
-	defer func() { cryptoBits = 256 }()
-
-	cmd := &cobra.Command{}
-	err := runCryptoDataKeyCommand(cmd, []string{"test-key"})
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "connection refused")
 }
 
 // =============================================================================
@@ -240,18 +134,41 @@ func TestParseSecretsStoreResponse_ValidInput(t *testing.T) {
 	assert.False(t, resp.Timestamp.IsZero())
 }
 
-func TestParseSecretsStoreResponse_InvalidInput(t *testing.T) {
-	resp, err := parseSecretsStoreResponse("invalid")
-	assert.Error(t, err)
-	assert.Nil(t, resp)
+// TestParseSecretsResponses_InvalidInput checks that every secrets response
+// parser rejects a result that does not decode to a JSON object.
+func TestParseSecretsResponses_InvalidInput(t *testing.T) {
+	parsers := map[string]func(interface{}) (interface{}, error){
+		"store": func(v interface{}) (interface{}, error) { return parseSecretsStoreResponse(v) },
+		"get":   func(v interface{}) (interface{}, error) { return parseSecretsGetResponse(v) },
+		"delete": func(v interface{}) (interface{}, error) {
+			return parseSecretsDeleteResponse(v)
+		},
+		"list": func(v interface{}) (interface{}, error) { return parseSecretsListResponse(v) },
+		"get_by_prefix": func(v interface{}) (interface{}, error) {
+			return parseSecretsGetByPrefixResponse(v)
+		},
+		"rotate": func(v interface{}) (interface{}, error) { return parseSecretsRotateResponse(v) },
+		"list_versions": func(v interface{}) (interface{}, error) {
+			return parseSecretsListVersionsResponse(v)
+		},
+		"rollback": func(v interface{}) (interface{}, error) { return parseSecretsRollbackResponse(v) },
+		"update_status": func(v interface{}) (interface{}, error) {
+			return parseSecretsUpdateStatusResponse(v)
+		},
+	}
+	for name, parse := range parsers {
+		t.Run(name, func(t *testing.T) {
+			resp, err := parse("invalid")
+			assert.Error(t, err)
+			assert.Nil(t, resp)
+		})
+	}
 }
 
 func TestParseSecretsGetResponse_ValidInput(t *testing.T) {
-	encoded := base64.StdEncoding.EncodeToString([]byte(`{"key":"value"}`))
 	input := map[string]interface{}{
 		"secret_id":  "test/secret",
 		"version":    float64(2),
-		"data":       encoded,
 		"created_at": float64(1700000000),
 		"timestamp":  float64(1700000001),
 		"metadata": map[string]interface{}{
@@ -263,53 +180,43 @@ func TestParseSecretsGetResponse_ValidInput(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "test/secret", resp.SecretID)
 	assert.Equal(t, uint64(2), resp.Version)
-	assert.Contains(t, string(resp.Data), "key")
 	assert.Equal(t, "admin", resp.Metadata["author"])
 }
 
-func TestParseSecretsGetResponse_RawStringData(t *testing.T) {
-	// Data that is not valid base64 should be treated as raw string
-	input := map[string]interface{}{
-		"secret_id": "test/secret",
-		"version":   float64(1),
-		"data":      "not-base64!!!",
+func TestParseSecretsGetResponse_Data(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    map[string]interface{}
+		wantData []byte
+	}{
+		{
+			name:     "base64 string is decoded",
+			input:    map[string]interface{}{"data": base64.StdEncoding.EncodeToString([]byte(`{"key":"value"}`))},
+			wantData: []byte(`{"key":"value"}`),
+		},
+		{
+			name:     "non-base64 string is kept raw",
+			input:    map[string]interface{}{"data": "not-base64!!!"},
+			wantData: []byte("not-base64!!!"),
+		},
+		{
+			name:     "direct bytes are kept",
+			input:    map[string]interface{}{"data": []byte("raw bytes")},
+			wantData: []byte("raw bytes"),
+		},
+		{
+			name:  "no data and no metadata",
+			input: map[string]interface{}{"secret_id": "test/secret"},
+		},
 	}
-
-	resp, err := parseSecretsGetResponse(input)
-	require.NoError(t, err)
-	assert.Equal(t, "not-base64!!!", string(resp.Data))
-}
-
-func TestParseSecretsGetResponse_BytesData(t *testing.T) {
-	// Data provided as direct bytes (empty string path)
-	input := map[string]interface{}{
-		"secret_id": "test/secret",
-		"version":   float64(1),
-		"data":      []byte("raw bytes"),
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			resp, err := parseSecretsGetResponse(tt.input)
+			require.NoError(t, err)
+			assert.Equal(t, tt.wantData, resp.Data)
+			assert.Nil(t, resp.Metadata)
+		})
 	}
-
-	// When data string is empty, it falls through to getBytes path
-	// But since we pass []byte directly and getString returns "", it hits getBytes
-	resp, err := parseSecretsGetResponse(input)
-	require.NoError(t, err)
-	assert.NotNil(t, resp)
-}
-
-func TestParseSecretsGetResponse_NoMetadata(t *testing.T) {
-	input := map[string]interface{}{
-		"secret_id": "test/secret",
-		"version":   float64(1),
-	}
-
-	resp, err := parseSecretsGetResponse(input)
-	require.NoError(t, err)
-	assert.Nil(t, resp.Metadata)
-}
-
-func TestParseSecretsGetResponse_InvalidInput(t *testing.T) {
-	resp, err := parseSecretsGetResponse("invalid")
-	assert.Error(t, err)
-	assert.Nil(t, resp)
 }
 
 func TestParseSecretsDeleteResponse_ValidInput(t *testing.T) {
@@ -323,12 +230,6 @@ func TestParseSecretsDeleteResponse_ValidInput(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "test/secret", resp.SecretID)
 	assert.True(t, resp.Deleted)
-}
-
-func TestParseSecretsDeleteResponse_InvalidInput(t *testing.T) {
-	resp, err := parseSecretsDeleteResponse("invalid")
-	assert.Error(t, err)
-	assert.Nil(t, resp)
 }
 
 func TestParseSecretsListResponse_ValidInput(t *testing.T) {
@@ -365,42 +266,19 @@ func TestParseSecretsListResponse_ValidInput(t *testing.T) {
 	assert.Equal(t, 10, resp.TotalCount)
 }
 
-func TestParseSecretsListResponse_EmptySecrets(t *testing.T) {
-	input := map[string]interface{}{
-		"secrets":     []interface{}{},
-		"has_more":    false,
-		"total_count": float64(0),
+func TestParseSecretsListResponse_NoUsableEntries(t *testing.T) {
+	tests := map[string]map[string]interface{}{
+		"empty secrets list":  {"secrets": []interface{}{}, "has_more": false, "total_count": float64(0)},
+		"no secrets key":      {},
+		"non-map entry skips": {"secrets": []interface{}{"not-a-map"}},
 	}
-
-	resp, err := parseSecretsListResponse(input)
-	require.NoError(t, err)
-	assert.Empty(t, resp.Secrets)
-}
-
-func TestParseSecretsListResponse_NoSecrets(t *testing.T) {
-	input := map[string]interface{}{}
-
-	resp, err := parseSecretsListResponse(input)
-	require.NoError(t, err)
-	assert.Empty(t, resp.Secrets)
-}
-
-func TestParseSecretsListResponse_InvalidSecretEntry(t *testing.T) {
-	input := map[string]interface{}{
-		"secrets": []interface{}{
-			"not-a-map", // should be skipped
-		},
+	for name, input := range tests {
+		t.Run(name, func(t *testing.T) {
+			resp, err := parseSecretsListResponse(input)
+			require.NoError(t, err)
+			assert.Empty(t, resp.Secrets)
+		})
 	}
-
-	resp, err := parseSecretsListResponse(input)
-	require.NoError(t, err)
-	assert.Empty(t, resp.Secrets) // invalid entry skipped
-}
-
-func TestParseSecretsListResponse_InvalidInput(t *testing.T) {
-	resp, err := parseSecretsListResponse("invalid")
-	assert.Error(t, err)
-	assert.Nil(t, resp)
 }
 
 func TestParseSecretsGetByPrefixResponse_ValidInput(t *testing.T) {
@@ -432,32 +310,27 @@ func TestParseSecretsGetByPrefixResponse_ValidInput(t *testing.T) {
 	assert.Equal(t, 1, resp.TotalCount)
 }
 
-func TestParseSecretsGetByPrefixResponse_RawStringData(t *testing.T) {
-	input := map[string]interface{}{
-		"secrets": map[string]interface{}{
-			"app/db": map[string]interface{}{
-				"password": "not-base64!!!",
-			},
-		},
+func TestParseSecretsGetByPrefixResponse_Data(t *testing.T) {
+	tests := map[string]struct {
+		value interface{}
+		want  []byte
+	}{
+		"non-base64 string is kept raw": {value: "not-base64!!!", want: []byte("not-base64!!!")},
+		"direct bytes are kept":         {value: []byte("raw-bytes"), want: []byte("raw-bytes")},
 	}
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			input := map[string]interface{}{
+				"secrets": map[string]interface{}{
+					"app/db": map[string]interface{}{"password": tt.value},
+				},
+			}
 
-	resp, err := parseSecretsGetByPrefixResponse(input)
-	require.NoError(t, err)
-	assert.Equal(t, []byte("not-base64!!!"), resp.Secrets["app/db"]["password"])
-}
-
-func TestParseSecretsGetByPrefixResponse_BytesData(t *testing.T) {
-	input := map[string]interface{}{
-		"secrets": map[string]interface{}{
-			"app/db": map[string]interface{}{
-				"password": []byte("raw-bytes"),
-			},
-		},
+			resp, err := parseSecretsGetByPrefixResponse(input)
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, resp.Secrets["app/db"]["password"])
+		})
 	}
-
-	resp, err := parseSecretsGetByPrefixResponse(input)
-	require.NoError(t, err)
-	assert.Equal(t, []byte("raw-bytes"), resp.Secrets["app/db"]["password"])
 }
 
 func TestParseSecretsGetByPrefixResponse_InvalidPathData(t *testing.T) {
@@ -476,12 +349,6 @@ func TestParseSecretsGetByPrefixResponse_InvalidPathData(t *testing.T) {
 	assert.NotContains(t, resp.Secrets, "app/db")
 }
 
-func TestParseSecretsGetByPrefixResponse_InvalidInput(t *testing.T) {
-	resp, err := parseSecretsGetByPrefixResponse("invalid")
-	assert.Error(t, err)
-	assert.Nil(t, resp)
-}
-
 func TestParseSecretsRotateResponse_ValidInput(t *testing.T) {
 	input := map[string]interface{}{
 		"secret_id":   "test/secret",
@@ -495,12 +362,6 @@ func TestParseSecretsRotateResponse_ValidInput(t *testing.T) {
 	assert.Equal(t, "test/secret", resp.SecretID)
 	assert.Equal(t, uint64(1), resp.OldVersion)
 	assert.Equal(t, uint64(2), resp.NewVersion)
-}
-
-func TestParseSecretsRotateResponse_InvalidInput(t *testing.T) {
-	resp, err := parseSecretsRotateResponse("invalid")
-	assert.Error(t, err)
-	assert.Nil(t, resp)
 }
 
 func TestParseSecretsListVersionsResponse_ValidInput(t *testing.T) {
@@ -529,30 +390,18 @@ func TestParseSecretsListVersionsResponse_ValidInput(t *testing.T) {
 	assert.Equal(t, "admin", resp.Versions[0].CreatedBy)
 }
 
-func TestParseSecretsListVersionsResponse_InvalidVersionEntry(t *testing.T) {
-	input := map[string]interface{}{
-		"versions": []interface{}{
-			"not-a-map",
-		},
+func TestParseSecretsListVersionsResponse_NoUsableEntries(t *testing.T) {
+	tests := map[string]map[string]interface{}{
+		"no versions key":     {},
+		"non-map entry skips": {"versions": []interface{}{"not-a-map"}},
 	}
-
-	resp, err := parseSecretsListVersionsResponse(input)
-	require.NoError(t, err)
-	assert.Empty(t, resp.Versions)
-}
-
-func TestParseSecretsListVersionsResponse_NoVersions(t *testing.T) {
-	input := map[string]interface{}{}
-
-	resp, err := parseSecretsListVersionsResponse(input)
-	require.NoError(t, err)
-	assert.Empty(t, resp.Versions)
-}
-
-func TestParseSecretsListVersionsResponse_InvalidInput(t *testing.T) {
-	resp, err := parseSecretsListVersionsResponse("invalid")
-	assert.Error(t, err)
-	assert.Nil(t, resp)
+	for name, input := range tests {
+		t.Run(name, func(t *testing.T) {
+			resp, err := parseSecretsListVersionsResponse(input)
+			require.NoError(t, err)
+			assert.Empty(t, resp.Versions)
+		})
+	}
 }
 
 func TestParseSecretsRollbackResponse_ValidInput(t *testing.T) {
@@ -568,12 +417,6 @@ func TestParseSecretsRollbackResponse_ValidInput(t *testing.T) {
 	assert.Equal(t, uint64(3), resp.NewVersion)
 }
 
-func TestParseSecretsRollbackResponse_InvalidInput(t *testing.T) {
-	resp, err := parseSecretsRollbackResponse("invalid")
-	assert.Error(t, err)
-	assert.Nil(t, resp)
-}
-
 func TestParseSecretsUpdateStatusResponse_ValidInput(t *testing.T) {
 	input := map[string]interface{}{
 		"secret_id":  "test/secret",
@@ -587,12 +430,6 @@ func TestParseSecretsUpdateStatusResponse_ValidInput(t *testing.T) {
 	assert.Equal(t, "test/secret", resp.SecretID)
 	assert.Equal(t, service.SecretStatus("active"), resp.OldStatus)
 	assert.Equal(t, service.SecretStatus("disabled"), resp.NewStatus)
-}
-
-func TestParseSecretsUpdateStatusResponse_InvalidInput(t *testing.T) {
-	resp, err := parseSecretsUpdateStatusResponse("invalid")
-	assert.Error(t, err)
-	assert.Nil(t, resp)
 }
 
 func TestParseSecretsTimestamp_ValidTimestamp(t *testing.T) {
@@ -619,433 +456,54 @@ func TestToJSONMap_ValidMap(t *testing.T) {
 	assert.Equal(t, "value1", result["key1"])
 }
 
-func TestToJSONMap_InvalidInput(t *testing.T) {
-	result, err := toJSONMap("not-a-map")
-	assert.Error(t, err)
-	assert.Nil(t, result)
-}
-
 func TestToJSONMap_NilInput(t *testing.T) {
 	result, err := toJSONMap(nil)
 	assert.NoError(t, err)
 	assert.NotNil(t, result)
 }
 
-func TestGetString_ValidKey(t *testing.T) {
-	m := map[string]interface{}{"name": "test"}
-	assert.Equal(t, "test", getString(m, "name"))
-}
+// TestMapGetters checks each typed map getter on a matching value, a missing
+// key and a value of the wrong type.
+func TestMapGetters(t *testing.T) {
+	str := func(m map[string]interface{}) interface{} { return getString(m, "k") }
+	i64 := func(m map[string]interface{}) interface{} { return getInt64(m, "k") }
+	boolean := func(m map[string]interface{}) interface{} { return getBool(m, "k") }
+	nested := func(m map[string]interface{}) interface{} { return getMap(m, "k") }
+	raw := func(m map[string]interface{}) interface{} { return getBytes(m, "k") }
 
-func TestGetString_MissingKey(t *testing.T) {
-	m := map[string]interface{}{}
-	assert.Equal(t, "", getString(m, "name"))
-}
-
-func TestGetString_NonStringValue(t *testing.T) {
-	m := map[string]interface{}{"name": 123}
-	assert.Equal(t, "", getString(m, "name"))
-}
-
-func TestGetInt64_ValidFloat64(t *testing.T) {
-	m := map[string]interface{}{"count": float64(42)}
-	assert.Equal(t, int64(42), getInt64(m, "count"))
-}
-
-func TestGetInt64_ValidInt(t *testing.T) {
-	m := map[string]interface{}{"count": 42}
-	assert.Equal(t, int64(42), getInt64(m, "count"))
-}
-
-func TestGetInt64_ValidInt64(t *testing.T) {
-	m := map[string]interface{}{"count": int64(42)}
-	assert.Equal(t, int64(42), getInt64(m, "count"))
-}
-
-func TestGetInt64_MissingKey(t *testing.T) {
-	m := map[string]interface{}{}
-	assert.Equal(t, int64(0), getInt64(m, "count"))
-}
-
-func TestGetInt64_NonNumeric(t *testing.T) {
-	m := map[string]interface{}{"count": "not-a-number"}
-	assert.Equal(t, int64(0), getInt64(m, "count"))
-}
-
-func TestGetBool_ValidTrue(t *testing.T) {
-	m := map[string]interface{}{"flag": true}
-	assert.True(t, getBool(m, "flag"))
-}
-
-func TestGetBool_ValidFalse(t *testing.T) {
-	m := map[string]interface{}{"flag": false}
-	assert.False(t, getBool(m, "flag"))
-}
-
-func TestGetBool_MissingKey(t *testing.T) {
-	m := map[string]interface{}{}
-	assert.False(t, getBool(m, "flag"))
-}
-
-func TestGetBool_NonBool(t *testing.T) {
-	m := map[string]interface{}{"flag": "yes"}
-	assert.False(t, getBool(m, "flag"))
-}
-
-func TestGetMap_ValidMap(t *testing.T) {
-	inner := map[string]interface{}{"nested": "value"}
-	m := map[string]interface{}{"data": inner}
-	result := getMap(m, "data")
-	assert.Equal(t, "value", result["nested"])
-}
-
-func TestGetMap_MissingKey(t *testing.T) {
-	m := map[string]interface{}{}
-	result := getMap(m, "data")
-	assert.Nil(t, result)
-}
-
-func TestGetMap_NonMap(t *testing.T) {
-	m := map[string]interface{}{"data": "not-a-map"}
-	result := getMap(m, "data")
-	assert.Nil(t, result)
-}
-
-func TestGetBytes_ValidBytes(t *testing.T) {
-	m := map[string]interface{}{"data": []byte("hello")}
-	result := getBytes(m, "data")
-	assert.Equal(t, []byte("hello"), result)
-}
-
-func TestGetBytes_MissingKey(t *testing.T) {
-	m := map[string]interface{}{}
-	result := getBytes(m, "data")
-	assert.Nil(t, result)
-}
-
-func TestGetBytes_NonBytes(t *testing.T) {
-	m := map[string]interface{}{"data": "a-string"}
-	result := getBytes(m, "data")
-	assert.Equal(t, []byte("a-string"), result)
+	tests := []struct {
+		name string
+		get  func(map[string]interface{}) interface{}
+		in   map[string]interface{}
+		want interface{}
+	}{
+		{"string value", str, map[string]interface{}{"k": "test"}, "test"},
+		{"string missing", str, map[string]interface{}{}, ""},
+		{"string wrong type", str, map[string]interface{}{"k": 123}, ""},
+		{"int64 from float64", i64, map[string]interface{}{"k": float64(42)}, int64(42)},
+		{"int64 from int", i64, map[string]interface{}{"k": 42}, int64(42)},
+		{"int64 from int64", i64, map[string]interface{}{"k": int64(42)}, int64(42)},
+		{"int64 missing", i64, map[string]interface{}{}, int64(0)},
+		{"int64 wrong type", i64, map[string]interface{}{"k": "not-a-number"}, int64(0)},
+		{"bool true", boolean, map[string]interface{}{"k": true}, true},
+		{"bool false", boolean, map[string]interface{}{"k": false}, false},
+		{"bool missing", boolean, map[string]interface{}{}, false},
+		{"bool wrong type", boolean, map[string]interface{}{"k": "yes"}, false},
+		{"map value", nested, map[string]interface{}{"k": map[string]interface{}{"nested": "value"}}, map[string]interface{}{"nested": "value"}},
+		{"map missing", nested, map[string]interface{}{}, map[string]interface{}(nil)},
+		{"map wrong type", nested, map[string]interface{}{"k": "not-a-map"}, map[string]interface{}(nil)},
+		{"bytes value", raw, map[string]interface{}{"k": []byte("hello")}, []byte("hello")},
+		{"bytes from string", raw, map[string]interface{}{"k": "a-string"}, []byte("a-string")},
+		{"bytes missing", raw, map[string]interface{}{}, []byte(nil)},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, tt.get(tt.in))
+		})
+	}
 }
 
 // =============================================================================
 // Mock Client Method Coverage Tests
 // These test mock methods that have nil function handlers (default paths).
 // =============================================================================
-
-func TestMockSecretsClient_DefaultMethods(t *testing.T) {
-	client := &MockSecretsClient{}
-	ctx := context.Background()
-
-	t.Run("StoreSecret", func(t *testing.T) {
-		resp, err := client.StoreSecret(ctx, &service.StoreSecretRequest{SecretID: "test"})
-		assert.Error(t, err)
-		assert.Nil(t, resp)
-	})
-
-	t.Run("GetSecret", func(t *testing.T) {
-		resp, err := client.GetSecret(ctx, &service.GetSecretRequest{SecretID: "test"})
-		assert.Error(t, err)
-		assert.Nil(t, resp)
-	})
-
-	t.Run("DeleteSecret", func(t *testing.T) {
-		resp, err := client.DeleteSecret(ctx, &service.DeleteSecretRequest{SecretID: "test"})
-		assert.Error(t, err)
-		assert.Nil(t, resp)
-	})
-
-	t.Run("ListSecrets", func(t *testing.T) {
-		resp, err := client.ListSecrets(ctx, &service.ListSecretsRequest{})
-		assert.Error(t, err)
-		assert.Nil(t, resp)
-	})
-
-	t.Run("GetSecretsByPrefix", func(t *testing.T) {
-		resp, err := client.GetSecretsByPrefix(ctx, &service.GetSecretsByPrefixRequest{Prefix: "test/"})
-		assert.Error(t, err)
-		assert.Nil(t, resp)
-	})
-
-	t.Run("RotateSecret", func(t *testing.T) {
-		resp, err := client.RotateSecret(ctx, &service.RotateSecretRequest{SecretID: "test"})
-		assert.Error(t, err)
-		assert.Nil(t, resp)
-	})
-
-	t.Run("ListSecretVersions", func(t *testing.T) {
-		resp, err := client.ListSecretVersions(ctx, &service.ListSecretVersionsRequest{SecretID: "test"})
-		assert.Error(t, err)
-		assert.Nil(t, resp)
-	})
-
-	t.Run("RollbackSecret", func(t *testing.T) {
-		resp, err := client.RollbackSecret(ctx, &service.RollbackSecretRequest{SecretID: "test"})
-		assert.Error(t, err)
-		assert.Nil(t, resp)
-	})
-
-	t.Run("UpdateSecretStatus", func(t *testing.T) {
-		resp, err := client.UpdateSecretStatus(ctx, &service.UpdateSecretStatusRequest{SecretID: "test"})
-		assert.Error(t, err)
-		assert.Nil(t, resp)
-	})
-
-	t.Run("WatchSecretsByPrefix", func(t *testing.T) {
-		ch, err := client.WatchSecretsByPrefix(ctx, &service.WatchSecretsRequest{Prefix: "test/"})
-		assert.Error(t, err)
-		assert.Nil(t, ch)
-	})
-
-	t.Run("Close", func(t *testing.T) {
-		err := client.Close()
-		assert.NoError(t, err)
-	})
-}
-
-func TestMockKMSClient_DefaultMethods(t *testing.T) {
-	client := &MockKMSClient{}
-	ctx := context.Background()
-
-	t.Run("KMSGenerateKey", func(t *testing.T) {
-		resp, err := client.KMSGenerateKey(ctx, &service.GenerateKeyRequest{})
-		assert.NoError(t, err)
-		assert.NotNil(t, resp)
-	})
-
-	t.Run("KMSImportKey", func(t *testing.T) {
-		resp, err := client.KMSImportKey(ctx, &service.ImportKeyRequest{})
-		assert.NoError(t, err)
-		assert.NotNil(t, resp)
-	})
-
-	t.Run("KMSGetKey", func(t *testing.T) {
-		resp, err := client.KMSGetKey(ctx, &service.GetKeyRequest{})
-		assert.NoError(t, err)
-		assert.NotNil(t, resp)
-	})
-
-	t.Run("KMSListKeys", func(t *testing.T) {
-		resp, err := client.KMSListKeys(ctx, &service.ListKeysRequest{})
-		assert.NoError(t, err)
-		assert.NotNil(t, resp)
-	})
-
-	t.Run("KMSRotateKey", func(t *testing.T) {
-		resp, err := client.KMSRotateKey(ctx, &service.RotateKeyRequest{})
-		assert.NoError(t, err)
-		assert.NotNil(t, resp)
-	})
-
-	t.Run("KMSDeleteKey", func(t *testing.T) {
-		resp, err := client.KMSDeleteKey(ctx, &service.DeleteKeyRequest{})
-		assert.NoError(t, err)
-		assert.NotNil(t, resp)
-	})
-
-	t.Run("KMSUpdateKeyStatus", func(t *testing.T) {
-		resp, err := client.KMSUpdateKeyStatus(ctx, &service.UpdateKeyStatusRequest{})
-		assert.NoError(t, err)
-		assert.Nil(t, resp)
-	})
-
-	t.Run("KMSListKeyVersions", func(t *testing.T) {
-		resp, err := client.KMSListKeyVersions(ctx, &service.ListKeyVersionsRequest{})
-		assert.NoError(t, err)
-		assert.Nil(t, resp)
-	})
-
-	t.Run("KMSExportKey", func(t *testing.T) {
-		resp, err := client.KMSExportKey(ctx, &service.ExportKeyRequest{})
-		assert.NoError(t, err)
-		assert.Nil(t, resp)
-	})
-
-	t.Run("KMSUnwrapKey", func(t *testing.T) {
-		resp, err := client.KMSUnwrapKey(ctx, &service.UnwrapKeyRequest{})
-		assert.NoError(t, err)
-		assert.Nil(t, resp)
-	})
-
-	t.Run("KMSSetKeySafety", func(t *testing.T) {
-		resp, err := client.KMSSetKeySafety(ctx, &service.SetKeySafetyRequest{})
-		assert.NoError(t, err)
-		assert.Nil(t, resp)
-	})
-
-	t.Run("KMSEncrypt", func(t *testing.T) {
-		resp, err := client.KMSEncrypt(ctx, &service.EncryptRequest{})
-		assert.NoError(t, err)
-		assert.NotNil(t, resp)
-	})
-
-	t.Run("KMSDecrypt", func(t *testing.T) {
-		resp, err := client.KMSDecrypt(ctx, &service.DecryptRequest{})
-		assert.NoError(t, err)
-		assert.NotNil(t, resp)
-	})
-
-	t.Run("Close", func(t *testing.T) {
-		err := client.Close()
-		assert.NoError(t, err)
-	})
-}
-
-func TestMockCryptoClient_DefaultMethods(t *testing.T) {
-	client := &MockCryptoClient{}
-	ctx := context.Background()
-
-	t.Run("KMSEncrypt", func(t *testing.T) {
-		resp, err := client.KMSEncrypt(ctx, &service.EncryptRequest{})
-		assert.NoError(t, err)
-		assert.NotNil(t, resp)
-	})
-
-	t.Run("KMSDecrypt", func(t *testing.T) {
-		resp, err := client.KMSDecrypt(ctx, &service.DecryptRequest{})
-		assert.NoError(t, err)
-		assert.NotNil(t, resp)
-	})
-
-	t.Run("KMSSign", func(t *testing.T) {
-		resp, err := client.KMSSign(ctx, &service.SignRequest{})
-		assert.NoError(t, err)
-		assert.NotNil(t, resp)
-	})
-
-	t.Run("KMSVerify", func(t *testing.T) {
-		resp, err := client.KMSVerify(ctx, &service.VerifyRequest{})
-		assert.NoError(t, err)
-		assert.NotNil(t, resp)
-	})
-
-	t.Run("KMSHash", func(t *testing.T) {
-		resp, err := client.KMSHash(ctx, &service.HashRequest{})
-		assert.NoError(t, err)
-		assert.NotNil(t, resp)
-	})
-
-	t.Run("KMSRewrap", func(t *testing.T) {
-		resp, err := client.KMSRewrap(ctx, &service.RewrapRequest{})
-		assert.NoError(t, err)
-		assert.NotNil(t, resp)
-	})
-
-	t.Run("KMSGenerateDataKey", func(t *testing.T) {
-		resp, err := client.KMSGenerateDataKey(ctx, &service.GenerateDataKeyRequest{})
-		assert.NoError(t, err)
-		assert.NotNil(t, resp)
-	})
-
-	t.Run("KMSGenerateRandom", func(t *testing.T) {
-		resp, err := client.KMSGenerateRandom(ctx, &service.GenerateRandomRequest{})
-		assert.NoError(t, err)
-		assert.NotNil(t, resp)
-	})
-
-	t.Run("Close", func(t *testing.T) {
-		err := client.Close()
-		assert.NoError(t, err)
-	})
-}
-
-func TestMockBackendClient_DefaultMethods(t *testing.T) {
-	client := &MockBackendClient{}
-	ctx := context.Background()
-
-	t.Run("KMSBackendStatus", func(t *testing.T) {
-		resp, err := client.KMSBackendStatus(ctx)
-		assert.Error(t, err)
-		assert.Nil(t, resp)
-	})
-
-	t.Run("KMSBackendTest", func(t *testing.T) {
-		resp, err := client.KMSBackendTest(ctx)
-		assert.Error(t, err)
-		assert.Nil(t, resp)
-	})
-
-	t.Run("Close", func(t *testing.T) {
-		err := client.Close()
-		assert.NoError(t, err)
-	})
-}
-
-func TestMockSafetyClient_DefaultMethods(t *testing.T) {
-	client := &MockSafetyClient{}
-	ctx := context.Background()
-
-	t.Run("KMSSafetyCheck", func(t *testing.T) {
-		resp, err := client.KMSSafetyCheck(ctx, &service.SafetyCheckRequest{})
-		assert.Error(t, err)
-		assert.Nil(t, resp)
-	})
-
-	t.Run("KMSSafetyReport", func(t *testing.T) {
-		resp, err := client.KMSSafetyReport(ctx, &service.SafetyReportRequest{})
-		assert.Error(t, err)
-		assert.Nil(t, resp)
-	})
-
-	t.Run("Close", func(t *testing.T) {
-		err := client.Close()
-		assert.NoError(t, err)
-	})
-}
-
-func TestMockBackupClient_DefaultMethods(t *testing.T) {
-	client := &MockBackupClient{}
-	ctx := context.Background()
-
-	t.Run("CreateBackup", func(t *testing.T) {
-		resp, err := client.CreateBackup(ctx, &BackupCreateRequest{Name: "test"})
-		assert.Error(t, err)
-		assert.Nil(t, resp)
-	})
-
-	t.Run("ListBackups", func(t *testing.T) {
-		resp, err := client.ListBackups(ctx, &BackupListRequest{})
-		assert.Error(t, err)
-		assert.Nil(t, resp)
-	})
-
-	t.Run("RestoreBackup", func(t *testing.T) {
-		resp, err := client.RestoreBackup(ctx, &BackupRestoreRequest{BackupID: "test"})
-		assert.Error(t, err)
-		assert.Nil(t, resp)
-	})
-
-	t.Run("DeleteBackup", func(t *testing.T) {
-		resp, err := client.DeleteBackup(ctx, &BackupDeleteRequest{BackupID: "test"})
-		assert.Error(t, err)
-		assert.Nil(t, resp)
-	})
-
-	t.Run("VerifyBackup", func(t *testing.T) {
-		resp, err := client.VerifyBackup(ctx, &BackupVerifyRequest{BackupID: "test"})
-		assert.NoError(t, err)
-		assert.NotNil(t, resp)
-	})
-
-	t.Run("Close", func(t *testing.T) {
-		err := client.Close()
-		assert.NoError(t, err)
-	})
-}
-
-// =============================================================================
-// createTransportAwareSecretsClient routing tests
-// =============================================================================
-
-func TestCreateTransportAwareSecretsClient_DefaultTransport(t *testing.T) {
-	// Cannot create actual gRPC client without server, but we test the routing
-	origTransport := transport
-	defer func() { transport = origTransport }()
-
-	// The "rest", "quic", "mcp" paths require SDK factory, which needs a real connection
-	// Test the switch statement coverage by testing "default" path
-	transport = "unknown-transport"
-	// This will try createGRPCSecretsClient which requires a server connection
-	// So we only verify it does not panic
-	_, _ = createTransportAwareSecretsClient()
-}

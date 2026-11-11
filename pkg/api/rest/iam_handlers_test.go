@@ -214,28 +214,33 @@ func withChiParams(r *http.Request, params map[string]string) *http.Request {
 // OIDC Handler Tests
 // =============================================================================
 
-func TestIAMHandler_GetOIDCConfig_ServiceNotAvailable(t *testing.T) {
-	_, _, _, handler, cleanup := setupIAMTestServer(t)
-	defer cleanup()
+func TestIAMHandler_Discovery_ServiceNotAvailable(t *testing.T) {
+	tests := []struct {
+		name   string
+		target string
+		call   func(h *IAMHandler, w http.ResponseWriter, r *http.Request)
+	}{
+		{name: "GetOIDCConfig", target: "/.well-known/openid-configuration",
+			call: (*IAMHandler).GetOIDCConfig},
+		{name: "GetJWKS", target: "/.well-known/jwks.json",
+			call: (*IAMHandler).GetJWKS},
+		{name: "GetOAuthASMetadata", target: "/.well-known/oauth-authorization-server",
+			call: (*IAMHandler).GetOAuthASMetadata},
+	}
 
-	req := httptest.NewRequest(http.MethodGet, "/.well-known/openid-configuration", nil)
-	w := httptest.NewRecorder()
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, _, _, handler, cleanup := setupIAMTestServer(t)
+			defer cleanup()
 
-	handler.GetOIDCConfig(w, req)
+			req := httptest.NewRequest(http.MethodGet, tt.target, nil)
+			w := httptest.NewRecorder()
 
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
-}
+			tt.call(handler, w, req)
 
-func TestIAMHandler_GetJWKS_ServiceNotAvailable(t *testing.T) {
-	_, _, _, handler, cleanup := setupIAMTestServer(t)
-	defer cleanup()
-
-	req := httptest.NewRequest(http.MethodGet, "/.well-known/jwks.json", nil)
-	w := httptest.NewRecorder()
-
-	handler.GetJWKS(w, req)
-
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
+			assert.Equal(t, http.StatusInternalServerError, w.Code)
+		})
+	}
 }
 
 func TestIAMHandler_Authorize_MissingClientID(t *testing.T) {
@@ -266,61 +271,59 @@ func TestIAMHandler_Authorize_MissingResponseType(t *testing.T) {
 	assertAuthorizeErrorRedirect(t, w, ErrInvalidRequest, "st-1")
 }
 
-func TestIAMHandler_Token_InvalidFormData(t *testing.T) {
-	_, _, _, handler, cleanup := setupIAMTestServer(t)
-	defer cleanup()
+func TestIAMHandler_Token_InvalidRequest(t *testing.T) {
+	tests := []struct {
+		name string
+		body string
+	}{
+		{name: "malformed form body", body: "grant_type=%zz"},
+		{name: "missing grant_type", body: url.Values{}.Encode()},
+	}
 
-	// Create a request with invalid form data (body but wrong content type)
-	req := httptest.NewRequest(http.MethodPost, "/oauth2/token", strings.NewReader("invalid%data"))
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	w := httptest.NewRecorder()
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, _, _, handler, cleanup := setupIAMTestServer(t)
+			defer cleanup()
 
-	handler.Token(w, req)
+			req := httptest.NewRequest(http.MethodPost, "/oauth2/token", strings.NewReader(tt.body))
+			req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+			w := httptest.NewRecorder()
 
-	// Should return error for missing grant_type
-	assert.Equal(t, http.StatusBadRequest, w.Code)
+			handler.Token(w, req)
+
+			assert.Equal(t, http.StatusBadRequest, w.Code)
+			var errResp map[string]interface{}
+			require.NoError(t, json.NewDecoder(w.Body).Decode(&errResp))
+			assert.Equal(t, "invalid_request", errResp["error"])
+		})
+	}
 }
 
-func TestIAMHandler_Token_MissingGrantType(t *testing.T) {
-	_, _, _, handler, cleanup := setupIAMTestServer(t)
-	defer cleanup()
+func TestIAMHandler_UserInfo_Unauthorized(t *testing.T) {
+	tests := []struct {
+		name          string
+		authorization string
+	}{
+		{name: "missing token", authorization: ""},
+		{name: "non-bearer scheme", authorization: "Basic invalid"},
+	}
 
-	form := url.Values{}
-	req := httptest.NewRequest(http.MethodPost, "/oauth2/token", strings.NewReader(form.Encode()))
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	w := httptest.NewRecorder()
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, _, _, handler, cleanup := setupIAMTestServer(t)
+			defer cleanup()
 
-	handler.Token(w, req)
+			req := httptest.NewRequest(http.MethodGet, "/oauth2/userinfo", nil)
+			if tt.authorization != "" {
+				req.Header.Set("Authorization", tt.authorization)
+			}
+			w := httptest.NewRecorder()
 
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-	var errResp map[string]interface{}
-	require.NoError(t, json.NewDecoder(w.Body).Decode(&errResp))
-	assert.Equal(t, "invalid_request", errResp["error"])
-}
+			handler.UserInfo(w, req)
 
-func TestIAMHandler_UserInfo_MissingToken(t *testing.T) {
-	_, _, _, handler, cleanup := setupIAMTestServer(t)
-	defer cleanup()
-
-	req := httptest.NewRequest(http.MethodGet, "/oauth2/userinfo", nil)
-	w := httptest.NewRecorder()
-
-	handler.UserInfo(w, req)
-
-	assert.Equal(t, http.StatusUnauthorized, w.Code)
-}
-
-func TestIAMHandler_UserInfo_InvalidTokenFormat(t *testing.T) {
-	_, _, _, handler, cleanup := setupIAMTestServer(t)
-	defer cleanup()
-
-	req := httptest.NewRequest(http.MethodGet, "/oauth2/userinfo", nil)
-	req.Header.Set("Authorization", "Basic invalid")
-	w := httptest.NewRecorder()
-
-	handler.UserInfo(w, req)
-
-	assert.Equal(t, http.StatusUnauthorized, w.Code)
+			assert.Equal(t, http.StatusUnauthorized, w.Code)
+		})
+	}
 }
 
 func TestIAMHandler_Revoke_MissingToken(t *testing.T) {
@@ -341,106 +344,66 @@ func TestIAMHandler_Revoke_MissingToken(t *testing.T) {
 // Tenant Handler Tests
 // =============================================================================
 
-func TestIAMHandler_ListTenants_Success(t *testing.T) {
-	_, _, memStorage, handler, cleanup := setupIAMTestServer(t)
-	defer cleanup()
+func TestIAMHandler_ListTenants(t *testing.T) {
+	tests := []struct {
+		name      string
+		query     string
+		wantCount int
+	}{
+		{name: "default limit", query: "", wantCount: 2},
+		{name: "explicit limit", query: "?limit=1", wantCount: 1},
+		{name: "invalid limit falls back to default", query: "?limit=invalid", wantCount: 2},
+	}
 
-	// Seed tenants
-	ctx := context.Background()
-	_ = memStorage.CreateTenant(ctx, &iam.Tenant{ID: "tenant1", Name: "Tenant 1"})
-	_ = memStorage.CreateTenant(ctx, &iam.Tenant{ID: "tenant2", Name: "Tenant 2"})
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, _, memStorage, handler, cleanup := setupIAMTestServer(t)
+			defer cleanup()
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/tenants", nil)
-	w := httptest.NewRecorder()
+			ctx := context.Background()
+			require.NoError(t, memStorage.CreateTenant(ctx, &iam.Tenant{ID: "tenant1", Name: "Tenant 1"}))
+			require.NoError(t, memStorage.CreateTenant(ctx, &iam.Tenant{ID: "tenant2", Name: "Tenant 2"}))
 
-	handler.ListTenants(w, req)
+			req := httptest.NewRequest(http.MethodGet, "/api/v1/tenants"+tt.query, nil)
+			w := httptest.NewRecorder()
 
-	assert.Equal(t, http.StatusOK, w.Code)
-	var resp map[string]interface{}
-	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
-	tenants := resp["tenants"].([]interface{})
-	assert.Len(t, tenants, 2)
+			handler.ListTenants(w, req)
+
+			assert.Equal(t, http.StatusOK, w.Code)
+			var resp map[string]interface{}
+			require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
+			tenants := resp["tenants"].([]interface{})
+			assert.Len(t, tenants, tt.wantCount)
+		})
+	}
 }
 
-func TestIAMHandler_ListTenants_WithPagination(t *testing.T) {
-	_, _, _, handler, cleanup := setupIAMTestServer(t)
-	defer cleanup()
+func TestIAMHandler_CreateTenant(t *testing.T) {
+	tests := []struct {
+		name       string
+		body       string
+		wantStatus int
+	}{
+		{name: "success", body: `{"id": "new-tenant", "name": "New Tenant"}`, wantStatus: http.StatusCreated},
+		{name: "missing id", body: `{"name": "New Tenant"}`, wantStatus: http.StatusBadRequest},
+		{name: "missing name", body: `{"id": "new-tenant"}`, wantStatus: http.StatusBadRequest},
+		{name: "invalid json", body: `{invalid json}`, wantStatus: http.StatusBadRequest},
+	}
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/tenants?limit=50&offset=10", nil)
-	w := httptest.NewRecorder()
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, _, _, handler, cleanup := setupIAMTestServer(t)
+			defer cleanup()
 
-	handler.ListTenants(w, req)
+			req := httptest.NewRequest(http.MethodPost, "/api/v1/tenants", strings.NewReader(tt.body))
+			req.Header.Set("Content-Type", "application/json")
+			w := httptest.NewRecorder()
 
-	assert.Equal(t, http.StatusOK, w.Code)
-}
+			handler.CreateTenant(w, req)
 
-func TestIAMHandler_ListTenants_InvalidLimit(t *testing.T) {
-	_, _, _, handler, cleanup := setupIAMTestServer(t)
-	defer cleanup()
-
-	// Invalid limit should use default (100)
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/tenants?limit=invalid", nil)
-	w := httptest.NewRecorder()
-
-	handler.ListTenants(w, req)
-
-	assert.Equal(t, http.StatusOK, w.Code)
-}
-
-func TestIAMHandler_CreateTenant_Success(t *testing.T) {
-	_, _, _, handler, cleanup := setupIAMTestServer(t)
-	defer cleanup()
-
-	body := `{"id": "new-tenant", "name": "New Tenant"}`
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/tenants", bytes.NewReader([]byte(body)))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-
-	handler.CreateTenant(w, req)
-
-	assert.Equal(t, http.StatusCreated, w.Code)
-}
-
-func TestIAMHandler_CreateTenant_MissingID(t *testing.T) {
-	_, _, _, handler, cleanup := setupIAMTestServer(t)
-	defer cleanup()
-
-	body := `{"name": "New Tenant"}`
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/tenants", bytes.NewReader([]byte(body)))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-
-	handler.CreateTenant(w, req)
-
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestIAMHandler_CreateTenant_MissingName(t *testing.T) {
-	_, _, _, handler, cleanup := setupIAMTestServer(t)
-	defer cleanup()
-
-	body := `{"id": "new-tenant"}`
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/tenants", bytes.NewReader([]byte(body)))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-
-	handler.CreateTenant(w, req)
-
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestIAMHandler_CreateTenant_InvalidJSON(t *testing.T) {
-	_, _, _, handler, cleanup := setupIAMTestServer(t)
-	defer cleanup()
-
-	body := `{invalid json}`
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/tenants", bytes.NewReader([]byte(body)))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-
-	handler.CreateTenant(w, req)
-
-	assert.Equal(t, http.StatusBadRequest, w.Code)
+			assert.Equal(t, tt.wantStatus, w.Code)
+		})
+	}
 }
 
 func TestIAMHandler_GetTenant_Success(t *testing.T) {
@@ -552,24 +515,6 @@ func TestIAMHandler_CreateUser_GroupsIsNotAUserField(t *testing.T) {
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 	_, present := resp["groups"]
 	assert.False(t, present, "the user response must carry no group list")
-}
-
-func TestIAMHandler_CreateUser_Success(t *testing.T) {
-	_, _, memStorage, handler, cleanup := setupIAMTestServer(t)
-	defer cleanup()
-
-	ctx := context.Background()
-	_ = memStorage.CreateTenant(ctx, &iam.Tenant{ID: "tenant1", Name: "Tenant 1"})
-
-	body := `{"email": "newuser@example.com", "username": "newuser", "name": "New User"}`
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/tenants/tenant1/users", bytes.NewReader([]byte(body)))
-	req.Header.Set("Content-Type", "application/json")
-	req = withChiParams(req, map[string]string{"tenant_id": "tenant1"})
-	w := httptest.NewRecorder()
-
-	handler.CreateUser(w, req)
-
-	assert.Equal(t, http.StatusCreated, w.Code)
 }
 
 // TestIAMHandler_CreateUser_ResponseShape is a regression test for the bug
@@ -778,52 +723,34 @@ func TestIAMHandler_DeleteRole_Success(t *testing.T) {
 }
 
 // =============================================================================
-// OAuth Metadata Handler Tests
-// =============================================================================
-
-func TestIAMHandler_GetOAuthASMetadata_ServiceNotAvailable(t *testing.T) {
-	_, _, _, handler, cleanup := setupIAMTestServer(t)
-	defer cleanup()
-
-	req := httptest.NewRequest(http.MethodGet, "/.well-known/oauth-authorization-server", nil)
-	w := httptest.NewRecorder()
-
-	handler.GetOAuthASMetadata(w, req)
-
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
-}
-
-// =============================================================================
 // IAM Error Response Tests
 // =============================================================================
 
-func TestIAMAPIError_Fields(t *testing.T) {
-	err := &IAMAPIError{
-		Error:            "bad_request",
-		ErrorDescription: "test error description",
+func TestIAMErrorConstructors(t *testing.T) {
+	apiErr := NewIAMAPIError("not_found", "resource not found")
+	oauthErr := NewInvalidRequestError("missing client_id")
+
+	tests := []struct {
+		name     string
+		gotCode  string
+		gotDesc  string
+		wantCode string
+		wantDesc string
+	}{
+		{name: "NewIAMAPIError", gotCode: apiErr.Error, gotDesc: apiErr.ErrorDescription,
+			wantCode: "not_found", wantDesc: "resource not found"},
+		{name: "NewInvalidRequestError", gotCode: oauthErr.Code, gotDesc: oauthErr.ErrorDescription,
+			wantCode: "invalid_request", wantDesc: "missing client_id"},
 	}
-	assert.Equal(t, "bad_request", err.Error)
-	assert.Equal(t, "test error description", err.ErrorDescription)
-}
 
-func TestOAuthError_Error(t *testing.T) {
-	err := &OAuthError{
-		Code:             "invalid_request",
-		ErrorDescription: "missing required parameter",
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.wantCode, tt.gotCode)
+			assert.Equal(t, tt.wantDesc, tt.gotDesc)
+		})
 	}
-	assert.Contains(t, err.Error(), "invalid_request")
-}
 
-func TestNewIAMAPIError(t *testing.T) {
-	err := NewIAMAPIError("not_found", "resource not found")
-	assert.Equal(t, "not_found", err.Error)
-	assert.Equal(t, "resource not found", err.ErrorDescription)
-}
-
-func TestNewInvalidRequestError(t *testing.T) {
-	err := NewInvalidRequestError("missing client_id")
-	assert.Equal(t, "invalid_request", err.Code)
-	assert.Equal(t, "missing client_id", err.ErrorDescription)
+	assert.Contains(t, oauthErr.Error(), "invalid_request")
 }
 
 // =============================================================================
@@ -837,32 +764,23 @@ func TestIAMHandler_RegisterRoutes(t *testing.T) {
 	router := chi.NewRouter()
 	handler.RegisterRoutes(router)
 
-	// Verify routes are registered
+	registered := make(map[string]bool)
 	walkErr := chi.Walk(router, func(method string, route string, handler http.Handler, middlewares ...func(http.Handler) http.Handler) error {
+		registered[method+" "+route] = true
 		return nil
 	})
+	require.NoError(t, walkErr)
 
-	assert.NoError(t, walkErr)
-}
-
-// =============================================================================
-// IAM Middleware Tests
-// =============================================================================
-
-func TestIAMMiddleware_TenantContext(t *testing.T) {
-	// Create a test handler that checks tenant context
-	testHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Verify context propagation
-		w.WriteHeader(http.StatusOK)
-	})
-
-	// Test the middleware if it exists in the IAM module
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/tenants/tenant1/users", nil)
-	w := httptest.NewRecorder()
-
-	testHandler.ServeHTTP(w, req)
-
-	assert.Equal(t, http.StatusOK, w.Code)
+	for _, route := range []string{
+		"GET /.well-known/openid-configuration",
+		"GET /.well-known/jwks.json",
+		"GET /oauth2/authorize",
+		"POST /oauth2/token",
+		"GET /oauth2/userinfo",
+		"POST /oauth2/revoke",
+	} {
+		assert.True(t, registered[route], "route %q not registered", route)
+	}
 }
 
 // TestIAMHandler_CreateUser_WithRoles proves the REST body schema accepts a

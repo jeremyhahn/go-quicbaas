@@ -86,7 +86,14 @@ func TestParseEncryptionTags(t *testing.T) {
 				"Email":    "aes256",
 				"Password": "aes256",
 			},
-			wantErr: false,
+		},
+		{
+			name:  "pointer to struct",
+			input: &TestUser{},
+			want: map[string]string{
+				"Email":    "aes256",
+				"Password": "aes256",
+			},
 		},
 		{
 			name:  "document with single encrypted field",
@@ -94,7 +101,6 @@ func TestParseEncryptionTags(t *testing.T) {
 			want: map[string]string{
 				"Content": "aes128",
 			},
-			wantErr: false,
 		},
 		{
 			name:  "mixed encryption algorithms",
@@ -103,25 +109,23 @@ func TestParseEncryptionTags(t *testing.T) {
 				"PrivateData": "aes256",
 				"SecretData":  "aes128",
 			},
-			wantErr: false,
 		},
 		{
-			name:    "no encryption tags",
-			input:   TestNoEncryption{},
-			want:    map[string]string{},
-			wantErr: false,
+			name:  "no encryption tags",
+			input: TestNoEncryption{},
+			want:  map[string]string{},
 		},
 		{
-			name:    "invalid algorithm",
-			input:   TestInvalidAlgorithm{},
-			want:    nil,
-			wantErr: true,
+			name:  "empty tag ignored",
+			input: TestEmptyTag{},
+			want:  map[string]string{},
 		},
 		{
-			name:    "invalid field type",
-			input:   TestInvalidFieldType{},
-			want:    nil,
-			wantErr: true,
+			name:  "whitespace around algorithm trimmed",
+			input: TestWhitespaceAlgorithm{},
+			want: map[string]string{
+				"Secret": "aes256",
+			},
 		},
 		{
 			name:  "unexported field ignored",
@@ -129,7 +133,6 @@ func TestParseEncryptionTags(t *testing.T) {
 			want: map[string]string{
 				"PublicField": "aes128",
 			},
-			wantErr: false,
 		},
 		{
 			name:  "byte slice field",
@@ -137,64 +140,43 @@ func TestParseEncryptionTags(t *testing.T) {
 			want: map[string]string{
 				"Data": "aes256",
 			},
-			wantErr: false,
 		},
+		{name: "invalid algorithm", input: TestInvalidAlgorithm{}, wantErr: true},
+		{name: "int field", input: TestInvalidIntField{}, wantErr: true},
+		{name: "float field", input: TestInvalidFloatField{}, wantErr: true},
+		{name: "bool field", input: TestInvalidBoolField{}, wantErr: true},
+		{name: "struct field", input: TestInvalidStructField{}, wantErr: true},
+		{name: "non-struct int", input: 42, wantErr: true},
+		{name: "non-struct string", input: "hello", wantErr: true},
+		{name: "non-struct slice", input: []int{1, 2, 3}, wantErr: true},
+		{name: "non-struct map", input: map[string]int{"a": 1}, wantErr: true},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			structType := reflect.TypeOf(tt.input)
-			got, err := ParseEncryptionTags(structType)
+			got, err := ParseEncryptionTags(reflect.TypeOf(tt.input))
 
 			if tt.wantErr {
-				assert.Error(t, err)
 				var qbErr *errors.QBError
-				assert.ErrorAs(t, err, &qbErr)
-			} else {
-				assert.NoError(t, err)
-				assert.Equal(t, tt.want, got)
+				require.ErrorAs(t, err, &qbErr)
+				assert.Equal(t, errors.ErrInvalidInput, qbErr.Code)
+				return
 			}
-		})
-	}
-}
-
-func TestParseEncryptionTags_PointerType(t *testing.T) {
-	// Test with pointer to struct
-	user := &TestUser{}
-	tags, err := ParseEncryptionTags(reflect.TypeOf(user))
-	require.NoError(t, err)
-
-	expected := map[string]string{
-		"Email":    "aes256",
-		"Password": "aes256",
-	}
-	assert.Equal(t, expected, tags)
-}
-
-func TestParseEncryptionTags_NonStruct(t *testing.T) {
-	tests := []struct {
-		name  string
-		input interface{}
-	}{
-		{"int", 42},
-		{"string", "hello"},
-		{"slice", []int{1, 2, 3}},
-		{"map", map[string]int{"a": 1}},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			_, err := ParseEncryptionTags(reflect.TypeOf(tt.input))
-			assert.Error(t, err)
-
-			var qbErr *errors.QBError
-			assert.ErrorAs(t, err, &qbErr)
-			assert.Equal(t, errors.ErrInvalidInput, qbErr.Code)
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, got)
 		})
 	}
 }
 
 func TestGetFieldEncryption(t *testing.T) {
+	type fieldIndexes struct {
+		ID       uint64 `json:"id"`
+		Name     string `json:"name"`
+		Email    string `json:"email" encrypt:"aes256"`
+		Age      int    `json:"age"`
+		Password string `json:"password" encrypt:"aes128"`
+	}
+
 	tests := []struct {
 		name    string
 		input   interface{}
@@ -208,7 +190,14 @@ func TestGetFieldEncryption(t *testing.T) {
 				{FieldName: "Email", Algorithm: "aes256", FieldIndex: 1},
 				{FieldName: "Password", Algorithm: "aes256", FieldIndex: 2},
 			},
-			wantErr: false,
+		},
+		{
+			name:  "pointer to struct",
+			input: &TestUser{},
+			want: []FieldEncryption{
+				{FieldName: "Email", Algorithm: "aes256", FieldIndex: 1},
+				{FieldName: "Password", Algorithm: "aes256", FieldIndex: 2},
+			},
 		},
 		{
 			name:  "document with one encrypted field",
@@ -216,7 +205,6 @@ func TestGetFieldEncryption(t *testing.T) {
 			want: []FieldEncryption{
 				{FieldName: "Content", Algorithm: "aes128", FieldIndex: 2},
 			},
-			wantErr: false,
 		},
 		{
 			name:  "mixed encryption",
@@ -225,33 +213,63 @@ func TestGetFieldEncryption(t *testing.T) {
 				{FieldName: "PrivateData", Algorithm: "aes256", FieldIndex: 2},
 				{FieldName: "SecretData", Algorithm: "aes128", FieldIndex: 3},
 			},
-			wantErr: false,
 		},
 		{
-			name:    "no encrypted fields",
-			input:   TestNoEncryption{},
-			want:    []FieldEncryption{},
-			wantErr: false,
+			name:  "multiple byte slices",
+			input: TestMultipleByteSlices{},
+			want: []FieldEncryption{
+				{FieldName: "Data1", Algorithm: "aes128", FieldIndex: 1},
+				{FieldName: "Data2", Algorithm: "aes256", FieldIndex: 2},
+			},
 		},
+		{
+			name:  "field indexes skip plain fields",
+			input: fieldIndexes{},
+			want: []FieldEncryption{
+				{FieldName: "Email", Algorithm: "aes256", FieldIndex: 2},
+				{FieldName: "Password", Algorithm: "aes128", FieldIndex: 4},
+			},
+		},
+		{
+			name:  "whitespace around algorithm trimmed",
+			input: TestWhitespaceAlgorithm{},
+			want: []FieldEncryption{
+				{FieldName: "Secret", Algorithm: "aes256", FieldIndex: 1},
+			},
+		},
+		{
+			name:  "no encrypted fields",
+			input: TestNoEncryption{},
+			want:  []FieldEncryption{},
+		},
+		{
+			name:  "empty tag ignored",
+			input: TestEmptyTag{},
+			want:  []FieldEncryption{},
+		},
+		{name: "invalid algorithm", input: TestInvalidAlgorithmTag{}, wantErr: true},
+		{name: "int field", input: TestInvalidIntField{}, wantErr: true},
+		{name: "struct field", input: TestInvalidStructField{}, wantErr: true},
+		{name: "non-struct int", input: 42, wantErr: true},
+		{name: "non-struct map", input: map[string]int{"a": 1}, wantErr: true},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			structType := reflect.TypeOf(tt.input)
-			got, err := GetFieldEncryption(structType)
+			got, err := GetFieldEncryption(reflect.TypeOf(tt.input))
 
 			if tt.wantErr {
-				assert.Error(t, err)
-			} else {
-				assert.NoError(t, err)
-				assert.Equal(t, len(tt.want), len(got))
-
-				// Compare each field encryption
-				for i, want := range tt.want {
-					assert.Equal(t, want.FieldName, got[i].FieldName)
-					assert.Equal(t, want.Algorithm, got[i].Algorithm)
-					assert.Equal(t, want.FieldIndex, got[i].FieldIndex)
-				}
+				var qbErr *errors.QBError
+				require.ErrorAs(t, err, &qbErr)
+				assert.Equal(t, errors.ErrInvalidInput, qbErr.Code)
+				return
+			}
+			require.NoError(t, err)
+			require.Len(t, got, len(tt.want))
+			for i, want := range tt.want {
+				assert.Equal(t, want.FieldName, got[i].FieldName)
+				assert.Equal(t, want.Algorithm, got[i].Algorithm)
+				assert.Equal(t, want.FieldIndex, got[i].FieldIndex)
 			}
 		})
 	}
@@ -263,26 +281,16 @@ func TestHasEncryptedFields(t *testing.T) {
 		input interface{}
 		want  bool
 	}{
-		{
-			name:  "struct with encrypted fields",
-			input: TestUser{},
-			want:  true,
-		},
-		{
-			name:  "struct without encrypted fields",
-			input: TestNoEncryption{},
-			want:  false,
-		},
-		{
-			name:  "non-struct type",
-			input: 42,
-			want:  false,
-		},
-		{
-			name:  "pointer to struct with encrypted fields",
-			input: &TestUser{},
-			want:  true,
-		},
+		{"struct with encrypted fields", TestUser{}, true},
+		{"pointer to struct with encrypted fields", &TestUser{}, true},
+		{"byte slice encrypted", TestByteSlice{}, true},
+		{"exported field tagged beside unexported one", TestUnexportedField{}, true},
+		{"struct without encrypted fields", TestNoEncryption{}, false},
+		{"empty tag", TestEmptyTag{}, false},
+		{"non-struct int", 42, false},
+		{"non-struct string", "hello", false},
+		{"non-struct slice", []int{1, 2, 3}, false},
+		{"non-struct map", map[string]int{"a": 1}, false},
 	}
 
 	for _, tt := range tests {
@@ -299,36 +307,22 @@ func TestValidateEncryptionTags(t *testing.T) {
 		input   interface{}
 		wantErr bool
 	}{
-		{
-			name:    "valid encryption tags",
-			input:   TestUser{},
-			wantErr: false,
-		},
-		{
-			name:    "invalid algorithm",
-			input:   TestInvalidAlgorithm{},
-			wantErr: true,
-		},
-		{
-			name:    "invalid field type",
-			input:   TestInvalidFieldType{},
-			wantErr: true,
-		},
-		{
-			name:    "no encryption tags",
-			input:   TestNoEncryption{},
-			wantErr: false,
-		},
+		{name: "valid encryption tags", input: TestUser{}},
+		{name: "no encryption tags", input: TestNoEncryption{}},
+		{name: "invalid algorithm", input: TestInvalidAlgorithmTag{}, wantErr: true},
+		{name: "invalid field type", input: TestInvalidFieldType{}, wantErr: true},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			err := ValidateEncryptionTags(reflect.TypeOf(tt.input))
-			if tt.wantErr {
-				assert.Error(t, err)
-			} else {
+			if !tt.wantErr {
 				assert.NoError(t, err)
+				return
 			}
+			var qbErr *errors.QBError
+			require.ErrorAs(t, err, &qbErr)
+			assert.Equal(t, errors.ErrInvalidInput, qbErr.Code)
 		})
 	}
 }
@@ -367,6 +361,21 @@ func TestIsEncryptableType(t *testing.T) {
 		{
 			name:      "pointer type",
 			fieldType: reflect.TypeOf((*string)(nil)),
+			want:      false,
+		},
+		{
+			name:      "string slice type",
+			fieldType: reflect.TypeOf([]string{}),
+			want:      false,
+		},
+		{
+			name:      "float slice type",
+			fieldType: reflect.TypeOf([]float64{}),
+			want:      false,
+		},
+		{
+			name:      "bool slice type",
+			fieldType: reflect.TypeOf([]bool{}),
 			want:      false,
 		},
 	}
@@ -453,244 +462,4 @@ type TestInvalidAlgorithmTag struct {
 type TestEmptyTag struct {
 	ID     uint64 `json:"id"`
 	Secret string `json:"secret" encrypt:""`
-}
-
-// Test GetFieldEncryption with non-struct types.
-func TestGetFieldEncryption_NonStruct(t *testing.T) {
-	tests := []struct {
-		name  string
-		input interface{}
-	}{
-		{"int", 42},
-		{"string", "hello"},
-		{"slice", []int{1, 2, 3}},
-		{"map", map[string]int{"a": 1}},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			_, err := GetFieldEncryption(reflect.TypeOf(tt.input))
-			assert.Error(t, err)
-
-			var qbErr *errors.QBError
-			assert.ErrorAs(t, err, &qbErr)
-			assert.Equal(t, errors.ErrInvalidInput, qbErr.Code)
-		})
-	}
-}
-
-// Test GetFieldEncryption with pointer type.
-func TestGetFieldEncryption_PointerType(t *testing.T) {
-	user := &TestUser{}
-	fields, err := GetFieldEncryption(reflect.TypeOf(user))
-	require.NoError(t, err)
-
-	assert.Equal(t, 2, len(fields))
-	assert.Equal(t, "Email", fields[0].FieldName)
-	assert.Equal(t, "aes256", fields[0].Algorithm)
-	assert.Equal(t, "Password", fields[1].FieldName)
-	assert.Equal(t, "aes256", fields[1].Algorithm)
-}
-
-// Test GetFieldEncryption with invalid algorithm.
-func TestGetFieldEncryption_InvalidAlgorithm(t *testing.T) {
-	_, err := GetFieldEncryption(reflect.TypeOf(TestInvalidAlgorithmTag{}))
-	assert.Error(t, err)
-
-	var qbErr *errors.QBError
-	assert.ErrorAs(t, err, &qbErr)
-	assert.Equal(t, errors.ErrInvalidInput, qbErr.Code)
-}
-
-// Test GetFieldEncryption with invalid field types.
-func TestGetFieldEncryption_InvalidFieldTypes(t *testing.T) {
-	tests := []struct {
-		name  string
-		input interface{}
-	}{
-		{"int field", TestInvalidIntField{}},
-		{"float field", TestInvalidFloatField{}},
-		{"bool field", TestInvalidBoolField{}},
-		{"struct field", TestInvalidStructField{}},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			_, err := GetFieldEncryption(reflect.TypeOf(tt.input))
-			assert.Error(t, err)
-
-			var qbErr *errors.QBError
-			assert.ErrorAs(t, err, &qbErr)
-			assert.Equal(t, errors.ErrInvalidInput, qbErr.Code)
-		})
-	}
-}
-
-// Test GetFieldEncryption with multiple byte slices.
-func TestGetFieldEncryption_MultipleByteSlices(t *testing.T) {
-	fields, err := GetFieldEncryption(reflect.TypeOf(TestMultipleByteSlices{}))
-	require.NoError(t, err)
-
-	assert.Equal(t, 2, len(fields))
-	assert.Equal(t, "Data1", fields[0].FieldName)
-	assert.Equal(t, "aes128", fields[0].Algorithm)
-	assert.Equal(t, "Data2", fields[1].FieldName)
-	assert.Equal(t, "aes256", fields[1].Algorithm)
-}
-
-// Test GetFieldEncryption with whitespace in algorithm tag.
-func TestGetFieldEncryption_WhitespaceAlgorithm(t *testing.T) {
-	fields, err := GetFieldEncryption(reflect.TypeOf(TestWhitespaceAlgorithm{}))
-	require.NoError(t, err)
-
-	assert.Equal(t, 1, len(fields))
-	assert.Equal(t, "Secret", fields[0].FieldName)
-	assert.Equal(t, "aes256", fields[0].Algorithm)
-}
-
-// Test GetFieldEncryption with empty tag.
-func TestGetFieldEncryption_EmptyTag(t *testing.T) {
-	fields, err := GetFieldEncryption(reflect.TypeOf(TestEmptyTag{}))
-	require.NoError(t, err)
-
-	// Empty tag should be ignored
-	assert.Equal(t, 0, len(fields))
-}
-
-// Test ParseEncryptionTags with invalid field types.
-func TestParseEncryptionTags_InvalidFieldTypes(t *testing.T) {
-	tests := []struct {
-		name  string
-		input interface{}
-	}{
-		{"int field", TestInvalidIntField{}},
-		{"float field", TestInvalidFloatField{}},
-		{"bool field", TestInvalidBoolField{}},
-		{"struct field", TestInvalidStructField{}},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			_, err := ParseEncryptionTags(reflect.TypeOf(tt.input))
-			assert.Error(t, err)
-
-			var qbErr *errors.QBError
-			assert.ErrorAs(t, err, &qbErr)
-			assert.Equal(t, errors.ErrInvalidInput, qbErr.Code)
-		})
-	}
-}
-
-// Test ParseEncryptionTags with whitespace algorithm.
-func TestParseEncryptionTags_WhitespaceAlgorithm(t *testing.T) {
-	tags, err := ParseEncryptionTags(reflect.TypeOf(TestWhitespaceAlgorithm{}))
-	require.NoError(t, err)
-
-	assert.Equal(t, 1, len(tags))
-	assert.Equal(t, "aes256", tags["Secret"])
-}
-
-// Test ParseEncryptionTags with empty tag.
-func TestParseEncryptionTags_EmptyTag(t *testing.T) {
-	tags, err := ParseEncryptionTags(reflect.TypeOf(TestEmptyTag{}))
-	require.NoError(t, err)
-
-	// Empty tag should be ignored
-	assert.Equal(t, 0, len(tags))
-}
-
-// Test HasEncryptedFields with various types.
-func TestHasEncryptedFields_EdgeCases(t *testing.T) {
-	tests := []struct {
-		name  string
-		input interface{}
-		want  bool
-	}{
-		{"with encrypted fields", TestUser{}, true},
-		{"without encrypted fields", TestNoEncryption{}, false},
-		{"with empty tag", TestEmptyTag{}, false},
-		{"int type", 42, false},
-		{"string type", "hello", false},
-		{"slice type", []int{1, 2, 3}, false},
-		{"map type", map[string]int{"a": 1}, false},
-		{"byte slice encrypted", TestByteSlice{}, true},
-		{"unexported fields only", TestUnexportedField{}, true},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := HasEncryptedFields(reflect.TypeOf(tt.input))
-			assert.Equal(t, tt.want, got)
-		})
-	}
-}
-
-// Test ValidateEncryptionTags with invalid algorithms.
-func TestValidateEncryptionTags_InvalidAlgorithms(t *testing.T) {
-	err := ValidateEncryptionTags(reflect.TypeOf(TestInvalidAlgorithmTag{}))
-	assert.Error(t, err)
-
-	var qbErr *errors.QBError
-	assert.ErrorAs(t, err, &qbErr)
-	assert.Equal(t, errors.ErrInvalidInput, qbErr.Code)
-}
-
-// Test ValidateEncryptionTags with empty tags.
-func TestValidateEncryptionTags_EmptyTag(t *testing.T) {
-	err := ValidateEncryptionTags(reflect.TypeOf(TestEmptyTag{}))
-	assert.NoError(t, err)
-}
-
-// Test ValidateEncryptionTags with whitespace.
-func TestValidateEncryptionTags_WhitespaceAlgorithm(t *testing.T) {
-	err := ValidateEncryptionTags(reflect.TypeOf(TestWhitespaceAlgorithm{}))
-	assert.NoError(t, err)
-}
-
-// Test isEncryptableType with various slice types.
-func TestIsEncryptableType_SliceVariations(t *testing.T) {
-	tests := []struct {
-		name  string
-		input interface{}
-		want  bool
-	}{
-		{"byte slice", []byte{}, true},
-		{"int slice", []int{}, false},
-		{"string slice", []string{}, false},
-		{"float slice", []float64{}, false},
-		{"bool slice", []bool{}, false},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := isEncryptableType(reflect.TypeOf(tt.input))
-			assert.Equal(t, tt.want, got)
-		})
-	}
-}
-
-// Test field index correctness.
-func TestGetFieldEncryption_FieldIndexes(t *testing.T) {
-	type TestFieldIndexes struct {
-		ID       uint64 `json:"id"`                        // index 0
-		Name     string `json:"name"`                      // index 1
-		Email    string `json:"email" encrypt:"aes256"`    // index 2
-		Age      int    `json:"age"`                       // index 3
-		Password string `json:"password" encrypt:"aes128"` // index 4
-	}
-
-	fields, err := GetFieldEncryption(reflect.TypeOf(TestFieldIndexes{}))
-	require.NoError(t, err)
-
-	assert.Equal(t, 2, len(fields))
-
-	// Email should be at index 2
-	assert.Equal(t, "Email", fields[0].FieldName)
-	assert.Equal(t, 2, fields[0].FieldIndex)
-	assert.Equal(t, "aes256", fields[0].Algorithm)
-
-	// Password should be at index 4
-	assert.Equal(t, "Password", fields[1].FieldName)
-	assert.Equal(t, 4, fields[1].FieldIndex)
-	assert.Equal(t, "aes128", fields[1].Algorithm)
 }

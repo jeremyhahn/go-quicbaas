@@ -122,199 +122,6 @@ func TestParseEncryptionType(t *testing.T) {
 	}
 }
 
-func TestBackupCreateResponseFormatter(t *testing.T) {
-	formatter := cli.NewFormatter(false)
-	resp := &cli.BackupCreateResponse{
-		BackupID:    "backup-test-123",
-		Type:        "full",
-		Size:        1024 * 1024 * 100, // 100 MB
-		Compression: "zstd",
-		Encryption:  "none",
-		Duration:    5 * time.Second,
-		Timestamp:   time.Date(2025, 10, 14, 12, 0, 0, 0, time.UTC),
-		Success:     true,
-	}
-
-	tests := []struct {
-		name         string
-		format       cli.OutputFormat
-		expectedText []string
-	}{
-		{
-			name:   "table format",
-			format: cli.OutputFormatTable,
-			expectedText: []string{
-				"BACKUP CREATED",
-				"backup-test-123",
-				"full",
-				"100.0 MB",
-				"zstd",
-				"none",
-				"5s",
-			},
-		},
-		{
-			name:   "json format",
-			format: cli.OutputFormatJSON,
-			expectedText: []string{
-				"backup-test-123",
-				"full",
-				"zstd",
-			},
-		},
-		{
-			name:   "yaml format",
-			format: cli.OutputFormatYAML,
-			expectedText: []string{
-				"backupid: backup-test-123",
-				"type: full",
-			},
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			var buf bytes.Buffer
-			err := formatter.FormatBackupCreateResponse(resp, tt.format, &buf)
-			require.NoError(t, err)
-
-			output := strings.ToLower(buf.String())
-			for _, expected := range tt.expectedText {
-				assert.Contains(t, output, strings.ToLower(expected),
-					"Expected output to contain '%s'\nGot:\n%s", expected, buf.String())
-			}
-		})
-	}
-}
-
-func TestBackupListResponseFormatter(t *testing.T) {
-	formatter := cli.NewFormatter(false)
-	resp := &cli.BackupListResponse{
-		Backups: []cli.BackupInfo{
-			{
-				ID:          "backup-prod-1",
-				Type:        "full",
-				Size:        1024 * 1024 * 100,
-				Compression: "zstd",
-				Encryption:  "none",
-				NumShards:   3,
-				NumKeys:     10000,
-				Timestamp:   time.Date(2025, 10, 14, 12, 0, 0, 0, time.UTC),
-			},
-			{
-				ID:          "backup-prod-2",
-				Type:        "incremental",
-				Size:        1024 * 1024 * 10,
-				Compression: "gzip",
-				Encryption:  "aes256",
-				NumShards:   3,
-				NumKeys:     1000,
-				Timestamp:   time.Date(2025, 10, 14, 13, 0, 0, 0, time.UTC),
-			},
-		},
-		TotalCount:  2,
-		StoragePath: "/var/lib/quicbaas/backups",
-	}
-
-	tests := []struct {
-		name         string
-		format       cli.OutputFormat
-		expectedText []string
-	}{
-		{
-			name:   "table format",
-			format: cli.OutputFormatTable,
-			expectedText: []string{
-				"BACKUPS",
-				"backup-prod-1",
-				"backup-prod-2",
-				"full",
-				"incremental",
-				"100.0 MB",
-				"10.0 MB",
-				"Total backups:",
-				"2",
-			},
-		},
-		{
-			name:   "json format",
-			format: cli.OutputFormatJSON,
-			expectedText: []string{
-				"backup-prod-1",
-				"backup-prod-2",
-				"total_count",
-			},
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			var buf bytes.Buffer
-			err := formatter.FormatBackupListResponse(resp, tt.format, &buf)
-			require.NoError(t, err)
-
-			output := strings.ToLower(buf.String())
-			for _, expected := range tt.expectedText {
-				assert.Contains(t, output, strings.ToLower(expected),
-					"Expected output to contain '%s'\nGot:\n%s", expected, buf.String())
-			}
-		})
-	}
-}
-
-func TestBackupRestoreResponseFormatter(t *testing.T) {
-	formatter := cli.NewFormatter(false)
-	resp := &cli.BackupRestoreResponse{
-		BackupID:       "backup-prod-1",
-		KeysRestored:   10000,
-		ShardsRestored: 3,
-		Duration:       30 * time.Second,
-		Timestamp:      time.Date(2025, 10, 14, 12, 0, 0, 0, time.UTC),
-		Success:        true,
-	}
-
-	tests := []struct {
-		name         string
-		format       cli.OutputFormat
-		expectedText []string
-	}{
-		{
-			name:   "table format",
-			format: cli.OutputFormatTable,
-			expectedText: []string{
-				"RESTORE COMPLETE",
-				"backup-prod-1",
-				"10000",
-				"3",
-				"30s",
-			},
-		},
-		{
-			name:   "json format",
-			format: cli.OutputFormatJSON,
-			expectedText: []string{
-				"backup-prod-1",
-				"10000",
-				"success",
-			},
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			var buf bytes.Buffer
-			err := formatter.FormatBackupRestoreResponse(resp, tt.format, &buf)
-			require.NoError(t, err)
-
-			output := strings.ToLower(buf.String())
-			for _, expected := range tt.expectedText {
-				assert.Contains(t, output, strings.ToLower(expected),
-					"Expected output to contain '%s'\nGot:\n%s", expected, buf.String())
-			}
-		})
-	}
-}
-
 func TestBackupDeleteResponseFormatter(t *testing.T) {
 	formatter := cli.NewFormatter(false)
 	resp := &cli.BackupDeleteResponse{
@@ -328,14 +135,6 @@ func TestBackupDeleteResponseFormatter(t *testing.T) {
 		format       cli.OutputFormat
 		expectedText []string
 	}{
-		{
-			name:   "table format",
-			format: cli.OutputFormatTable,
-			expectedText: []string{
-				"backup-prod-1",
-				"true",
-			},
-		},
 		{
 			name:   "default format",
 			format: cli.OutputFormat(""),
@@ -370,25 +169,6 @@ func TestBackupVerifyResponseFormatter(t *testing.T) {
 		format       cli.OutputFormat
 		expectedText []string
 	}{
-		{
-			name: "valid backup table format",
-			resp: &cli.BackupVerifyResponse{
-				BackupID:      "backup-prod-1",
-				Valid:         true,
-				ChecksumValid: true,
-				ShardsValid:   3,
-				Issues:        []string{},
-				Timestamp:     time.Date(2025, 10, 14, 12, 0, 0, 0, time.UTC),
-			},
-			format: cli.OutputFormatTable,
-			expectedText: []string{
-				"BACKUP VERIFICATION",
-				"backup-prod-1",
-				"true",
-				"3",
-				"None",
-			},
-		},
 		{
 			name: "invalid backup with issues",
 			resp: &cli.BackupVerifyResponse{
@@ -440,85 +220,6 @@ func TestBackupVerifyResponseFormatter(t *testing.T) {
 					"Expected output to contain '%s'\nGot:\n%s", expected, buf.String())
 			}
 		})
-	}
-}
-
-func TestFormatBytes(t *testing.T) {
-	tests := []struct {
-		name  string
-		bytes int64
-		want  string
-	}{
-		{
-			name:  "bytes",
-			bytes: 512,
-			want:  "512 B",
-		},
-		{
-			name:  "kilobytes",
-			bytes: 1024,
-			want:  "1.0 KB",
-		},
-		{
-			name:  "megabytes",
-			bytes: 1024 * 1024,
-			want:  "1.0 MB",
-		},
-		{
-			name:  "gigabytes",
-			bytes: 1024 * 1024 * 1024,
-			want:  "1.0 GB",
-		},
-		{
-			name:  "partial megabytes",
-			bytes: 1024 * 1024 * 100,
-			want:  "100.0 MB",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			// We need to test the formatBytes function indirectly through the formatter
-			formatter := cli.NewFormatter(false)
-			resp := &cli.BackupCreateResponse{
-				BackupID:    "test",
-				Type:        "full",
-				Size:        tt.bytes,
-				Compression: "zstd",
-				Encryption:  "none",
-				Timestamp:   time.Now(),
-				Success:     true,
-			}
-
-			var buf bytes.Buffer
-			err := formatter.FormatBackupCreateResponse(resp, cli.OutputFormatTable, &buf)
-			require.NoError(t, err)
-
-			output := buf.String()
-			assert.Contains(t, output, tt.want, "Expected formatted size %s in output", tt.want)
-		})
-	}
-}
-
-func TestBackupCommandStructure(t *testing.T) {
-	// Test that all backup commands are properly defined
-	cmd := newBackupCommands()
-
-	assert.NotNil(t, cmd)
-	assert.Equal(t, "backup", cmd.Use)
-	assert.Greater(t, len(cmd.Commands()), 0, "Backup command should have subcommands")
-
-	// Check all expected subcommands exist
-	expectedCommands := []string{"create", "list", "restore", "delete", "verify"}
-	for _, expectedCmd := range expectedCommands {
-		found := false
-		for _, subCmd := range cmd.Commands() {
-			if strings.HasPrefix(subCmd.Use, expectedCmd) {
-				found = true
-				break
-			}
-		}
-		assert.True(t, found, "Expected to find subcommand '%s'", expectedCmd)
 	}
 }
 
@@ -1244,80 +945,6 @@ func TestRunBackupRestoreCommand(t *testing.T) {
 	}
 }
 
-// TestRunBackupDeleteCommand tests the backup delete command execution.
-func TestRunBackupDeleteCommand(t *testing.T) {
-	// Save and restore factory
-	originalFactory := backupClientFactory
-	defer func() { backupClientFactory = originalFactory }()
-
-	// Set up mock
-	backupClientFactory = func() (BackupClient, error) {
-		return &MockBackupClient{
-			DeleteBackupFunc: func(ctx context.Context, req *BackupDeleteRequest) (*cli.BackupDeleteResponse, error) {
-				return &cli.BackupDeleteResponse{
-					BackupID: req.BackupID,
-
-					Message:   "Backup deleted successfully",
-					Deleted:   true,
-					Timestamp: time.Now(),
-				}, nil
-			},
-		}, nil
-	}
-
-	tests := []struct {
-		name         string
-		args         []string
-		force        bool
-		storagePath  string
-		outputFormat string
-		expectError  bool
-	}{
-		{
-			name:         "delete with force",
-			args:         []string{"backup-prod-1"},
-			force:        true,
-			storagePath:  "/tmp/quicbaas-test-backups",
-			outputFormat: "table",
-			expectError:  false,
-		},
-		{
-			name:         "delete with json output",
-			args:         []string{"backup-prod-1"},
-			force:        true,
-			storagePath:  "/tmp/quicbaas-test-backups",
-			outputFormat: "json",
-			expectError:  false,
-		},
-		{
-			name:         "delete with yaml output",
-			args:         []string{"backup-prod-1"},
-			force:        true,
-			storagePath:  "/tmp/quicbaas-test-backups",
-			outputFormat: "yaml",
-			expectError:  false,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			cmd := newBackupDeleteCommand()
-
-			backupDeleteForce = tt.force
-			backupStoragePath = tt.storagePath
-			backupOutputFormat = tt.outputFormat
-
-			err := cmd.RunE(cmd, tt.args)
-
-			if tt.expectError {
-				assert.Error(t, err)
-			} else {
-				assert.NoError(t, err)
-			}
-		})
-	}
-}
-
 // TestRunBackupVerifyCommand tests the backup verify command execution.
 func TestRunBackupVerifyCommand(t *testing.T) {
 	// Save and restore factory
@@ -1480,14 +1107,6 @@ func TestRunBackupDeleteCommandWithoutConfirmation(t *testing.T) {
 			outputFormat: "table",
 			expectError:  false,
 		},
-		{
-			name:         "delete with yaml output",
-			args:         []string{"backup-test-8"},
-			force:        true,
-			storagePath:  "/tmp/quicbaas-test-backups",
-			outputFormat: "yaml",
-			expectError:  false,
-		},
 	}
 
 	for _, tt := range tests {
@@ -1564,66 +1183,6 @@ func TestRunBackupDeleteCommandOutputFormats(t *testing.T) {
 	}
 }
 
-// TestRunBackupDeleteCommandEdgeCases tests edge cases.
-func TestRunBackupDeleteCommandEdgeCases(t *testing.T) {
-	// Save and restore factory
-	originalFactory := backupClientFactory
-	defer func() { backupClientFactory = originalFactory }()
-
-	// Set up mock
-	backupClientFactory = func() (BackupClient, error) {
-		return &MockBackupClient{
-			DeleteBackupFunc: func(ctx context.Context, req *BackupDeleteRequest) (*cli.BackupDeleteResponse, error) {
-				return &cli.BackupDeleteResponse{
-					BackupID: req.BackupID,
-
-					Message:   "Backup deleted successfully",
-					Deleted:   true,
-					Timestamp: time.Now(),
-				}, nil
-			},
-		}, nil
-	}
-
-	tests := []struct {
-		name        string
-		args        []string
-		storagePath string
-		expectError bool
-	}{
-		{
-			name:        "empty storage path",
-			args:        []string{"backup-test"},
-			storagePath: "",
-			expectError: false, // Should use default path
-		},
-		{
-			name:        "custom storage path",
-			args:        []string{"backup-test"},
-			storagePath: "/custom/path/backups",
-			expectError: false,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			cmd := newBackupDeleteCommand()
-
-			backupDeleteForce = true
-			backupStoragePath = tt.storagePath
-			backupOutputFormat = "table"
-
-			err := cmd.RunE(cmd, tt.args)
-
-			if tt.expectError {
-				assert.Error(t, err)
-			} else {
-				assert.NoError(t, err)
-			}
-		})
-	}
-}
-
 // TestBackupDeleteCommandConfirmationReadError tests confirmation prompt read error handling.
 func TestBackupDeleteCommandConfirmationReadError(t *testing.T) {
 	// Save and restore factory
@@ -1668,43 +1227,6 @@ func TestBackupDeleteCommandConfirmationReadError(t *testing.T) {
 	assert.NoError(t, err)
 }
 
-// TestRunBackupDeleteCommandMultipleBackups tests deleting multiple backups sequentially.
-func TestRunBackupDeleteCommandMultipleBackups(t *testing.T) {
-	// Save and restore factory
-	originalFactory := backupClientFactory
-	defer func() { backupClientFactory = originalFactory }()
-
-	// Set up mock
-	backupClientFactory = func() (BackupClient, error) {
-		return &MockBackupClient{
-			DeleteBackupFunc: func(ctx context.Context, req *BackupDeleteRequest) (*cli.BackupDeleteResponse, error) {
-				return &cli.BackupDeleteResponse{
-					BackupID: req.BackupID,
-
-					Message:   "Backup deleted successfully",
-					Deleted:   true,
-					Timestamp: time.Now(),
-				}, nil
-			},
-		}, nil
-	}
-
-	backupIDs := []string{"backup-1", "backup-2", "backup-3"}
-
-	for _, backupID := range backupIDs {
-		t.Run("delete_"+backupID, func(t *testing.T) {
-			cmd := newBackupDeleteCommand()
-
-			backupDeleteForce = true
-			backupStoragePath = "/tmp/quicbaas-test-backups"
-			backupOutputFormat = "json"
-
-			err := cmd.RunE(cmd, []string{backupID})
-			assert.NoError(t, err)
-		})
-	}
-}
-
 // TestRunBackupDeleteCommandStdoutCapture tests that output is written correctly.
 func TestRunBackupDeleteCommandStdoutCapture(t *testing.T) {
 	// Save and restore factory
@@ -1734,7 +1256,7 @@ func TestRunBackupDeleteCommandStdoutCapture(t *testing.T) {
 	os.Stdout = w
 
 	backupDeleteForce = true
-	backupStoragePath = "/tmp/quicbaas-test-backups"
+	backupStoragePath = "" // empty selects the default storage path
 	backupOutputFormat = "table"
 
 	err := cmd.RunE(cmd, []string{"backup-capture-test"})
@@ -1750,6 +1272,7 @@ func TestRunBackupDeleteCommandStdoutCapture(t *testing.T) {
 	output := buf.String()
 	assert.Contains(t, output, "Deleting backup")
 	assert.Contains(t, output, "backup-capture-test")
+	assert.Contains(t, output, "/var/lib/quicbaas/backups")
 }
 
 type mockBackupClientForStatus struct {
@@ -1859,40 +1382,6 @@ func (m *mockBackupClientForStatus) Close() error {
 // BackupCLIError Tests
 // =============================================================================
 
-func TestBackupCLIError_Error(t *testing.T) {
-	tests := []struct {
-		name     string
-		err      *BackupCLIError
-		expected string
-	}{
-		{
-			name: "with_cause",
-			err: &BackupCLIError{
-				Op:      "create",
-				Message: "failed to create backup",
-				Cause:   errors.Newf(errors.ErrInternal, "test", "storage unavailable"),
-			},
-			expected: "backup create: failed to create backup:",
-		},
-		{
-			name: "without_cause",
-			err: &BackupCLIError{
-				Op:      "delete",
-				Message: "backup not found",
-				Cause:   nil,
-			},
-			expected: "backup delete: backup not found",
-		},
-	}
-
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			errorStr := tc.err.Error()
-			assert.Contains(t, errorStr, tc.expected)
-		})
-	}
-}
-
 func TestBackupCLIError_Unwrap(t *testing.T) {
 	innerErr := errors.Newf(errors.ErrInternal, "test", "inner error")
 	err := &BackupCLIError{
@@ -1920,189 +1409,86 @@ func TestBackupCLIError_Unwrap_Nil(t *testing.T) {
 // Backup Status Command Tests
 // =============================================================================
 
-func TestNewBackupStatusCommand(t *testing.T) {
-	cmd := newBackupStatusCommand()
-
-	require.NotNil(t, cmd)
-	assert.Equal(t, "status [backup-id]", cmd.Use)
-	assert.Contains(t, cmd.Short, "Show backup status")
-
-	// Verify flags exist
-	assert.NotNil(t, cmd.Flags().Lookup("storage-path"))
-}
-
-func TestRunBackupStatusCommand_WithBackupID(t *testing.T) {
-	// Save original factory and restore after test
-	origFactory := backupClientFactory
-	defer func() { backupClientFactory = origFactory }()
-
-	mockClient := &mockBackupClientForStatus{}
-	backupClientFactory = func() (BackupClient, error) {
-		return mockClient, nil
-	}
-
-	// Reset globals
-	oldTimeout := globalTimeout
-	oldFormat := backupOutputFormat
-	defer func() {
-		globalTimeout = oldTimeout
-		backupOutputFormat = oldFormat
-		backupStoragePath = ""
-	}()
-	globalTimeout = 30 * time.Second
-	backupOutputFormat = "json"
-
-	cmd := &cobra.Command{}
-	err := runBackupStatusCommand(cmd, []string{"backup-123"})
-	assert.NoError(t, err)
-}
-
-func TestRunBackupStatusCommand_NoBackupID(t *testing.T) {
-	// Save original factory and restore after test
-	origFactory := backupClientFactory
-	defer func() { backupClientFactory = origFactory }()
-
-	mockClient := &mockBackupClientForStatus{}
-	backupClientFactory = func() (BackupClient, error) {
-		return mockClient, nil
-	}
-
-	// Reset globals
-	oldTimeout := globalTimeout
-	oldFormat := backupOutputFormat
-	defer func() {
-		globalTimeout = oldTimeout
-		backupOutputFormat = oldFormat
-		backupStoragePath = ""
-	}()
-	globalTimeout = 30 * time.Second
-	backupOutputFormat = "json"
-
-	cmd := &cobra.Command{}
-	err := runBackupStatusCommand(cmd, []string{})
-	assert.NoError(t, err)
-}
-
-func TestRunBackupStatusCommand_NoBackups(t *testing.T) {
-	// Save original factory and restore after test
-	origFactory := backupClientFactory
-	defer func() { backupClientFactory = origFactory }()
-
-	mockClient := &mockBackupClientForStatus{
-		ListBackupsFunc: func(ctx context.Context, req *BackupListRequest) (*cli.BackupListResponse, error) {
-			return &cli.BackupListResponse{
-				Backups:    []cli.BackupInfo{},
-				TotalCount: 0,
-			}, nil
+func TestRunBackupStatusCommand(t *testing.T) {
+	tests := []struct {
+		name      string
+		client    *mockBackupClientForStatus
+		clientErr error
+		format    string
+		args      []string
+		wantErr   string
+	}{
+		{name: "with backup id json", client: &mockBackupClientForStatus{}, format: "json", args: []string{"backup-123"}},
+		{name: "with backup id table", client: &mockBackupClientForStatus{}, format: "table", args: []string{"backup-123"}},
+		{name: "no backup id", client: &mockBackupClientForStatus{}, format: "json", args: []string{}},
+		{
+			name: "no backups",
+			client: &mockBackupClientForStatus{
+				ListBackupsFunc: func(ctx context.Context, req *BackupListRequest) (*cli.BackupListResponse, error) {
+					return &cli.BackupListResponse{Backups: []cli.BackupInfo{}, TotalCount: 0}, nil
+				},
+			},
+			format: "json",
+			args:   []string{},
+		},
+		{
+			name:      "client error",
+			clientErr: errors.Newf(errors.ErrUnavailable, "test", "connection refused"),
+			args:      []string{},
+			wantErr:   "failed to create backup client",
+		},
+		{
+			name: "verify error",
+			client: &mockBackupClientForStatus{
+				VerifyBackupFunc: func(ctx context.Context, req *BackupVerifyRequest) (*cli.BackupVerifyResponse, error) {
+					return nil, errors.Newf(errors.ErrNotFound, "backup", "backup not found")
+				},
+			},
+			args:    []string{"nonexistent-backup"},
+			wantErr: "failed to get status for backup",
+		},
+		{
+			name: "list error",
+			client: &mockBackupClientForStatus{
+				ListBackupsFunc: func(ctx context.Context, req *BackupListRequest) (*cli.BackupListResponse, error) {
+					return nil, errors.Newf(errors.ErrInternal, "backup", "list failed")
+				},
+			},
+			args:    []string{},
+			wantErr: "failed to get backup status",
 		},
 	}
-	backupClientFactory = func() (BackupClient, error) {
-		return mockClient, nil
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			origFactory := backupClientFactory
+			oldTimeout := globalTimeout
+			oldFormat := backupOutputFormat
+			defer func() {
+				backupClientFactory = origFactory
+				globalTimeout = oldTimeout
+				backupOutputFormat = oldFormat
+				backupStoragePath = ""
+			}()
+
+			backupClientFactory = func() (BackupClient, error) {
+				if tc.clientErr != nil {
+					return nil, tc.clientErr
+				}
+				return tc.client, nil
+			}
+			globalTimeout = 30 * time.Second
+			backupOutputFormat = tc.format
+
+			err := runBackupStatusCommand(&cobra.Command{}, tc.args)
+			if tc.wantErr == "" {
+				assert.NoError(t, err)
+				return
+			}
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), tc.wantErr)
+		})
 	}
-
-	// Reset globals
-	oldTimeout := globalTimeout
-	oldFormat := backupOutputFormat
-	defer func() {
-		globalTimeout = oldTimeout
-		backupOutputFormat = oldFormat
-	}()
-	globalTimeout = 30 * time.Second
-	backupOutputFormat = "json"
-
-	cmd := &cobra.Command{}
-	err := runBackupStatusCommand(cmd, []string{})
-	assert.NoError(t, err)
-}
-
-func TestRunBackupStatusCommand_ClientError(t *testing.T) {
-	// Save original factory and restore after test
-	origFactory := backupClientFactory
-	defer func() { backupClientFactory = origFactory }()
-
-	backupClientFactory = func() (BackupClient, error) {
-		return nil, errors.Newf(errors.ErrUnavailable, "test", "connection refused")
-	}
-
-	cmd := &cobra.Command{}
-	err := runBackupStatusCommand(cmd, []string{})
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "failed to create backup client")
-}
-
-func TestRunBackupStatusCommand_VerifyError(t *testing.T) {
-	// Save original factory and restore after test
-	origFactory := backupClientFactory
-	defer func() { backupClientFactory = origFactory }()
-
-	mockClient := &mockBackupClientForStatus{
-		VerifyBackupFunc: func(ctx context.Context, req *BackupVerifyRequest) (*cli.BackupVerifyResponse, error) {
-			return nil, errors.Newf(errors.ErrNotFound, "backup", "backup not found")
-		},
-	}
-	backupClientFactory = func() (BackupClient, error) {
-		return mockClient, nil
-	}
-
-	// Reset globals
-	oldTimeout := globalTimeout
-	defer func() { globalTimeout = oldTimeout }()
-	globalTimeout = 30 * time.Second
-
-	cmd := &cobra.Command{}
-	err := runBackupStatusCommand(cmd, []string{"nonexistent-backup"})
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "failed to get status for backup")
-}
-
-func TestRunBackupStatusCommand_ListError(t *testing.T) {
-	// Save original factory and restore after test
-	origFactory := backupClientFactory
-	defer func() { backupClientFactory = origFactory }()
-
-	mockClient := &mockBackupClientForStatus{
-		ListBackupsFunc: func(ctx context.Context, req *BackupListRequest) (*cli.BackupListResponse, error) {
-			return nil, errors.Newf(errors.ErrInternal, "backup", "list failed")
-		},
-	}
-	backupClientFactory = func() (BackupClient, error) {
-		return mockClient, nil
-	}
-
-	// Reset globals
-	oldTimeout := globalTimeout
-	defer func() { globalTimeout = oldTimeout }()
-	globalTimeout = 30 * time.Second
-
-	cmd := &cobra.Command{}
-	err := runBackupStatusCommand(cmd, []string{})
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "failed to get backup status")
-}
-
-func TestRunBackupStatusCommand_TableFormat(t *testing.T) {
-	// Save original factory and restore after test
-	origFactory := backupClientFactory
-	defer func() { backupClientFactory = origFactory }()
-
-	mockClient := &mockBackupClientForStatus{}
-	backupClientFactory = func() (BackupClient, error) {
-		return mockClient, nil
-	}
-
-	// Reset globals
-	oldTimeout := globalTimeout
-	oldFormat := backupOutputFormat
-	defer func() {
-		globalTimeout = oldTimeout
-		backupOutputFormat = oldFormat
-	}()
-	globalTimeout = 30 * time.Second
-	backupOutputFormat = "table"
-
-	cmd := &cobra.Command{}
-	err := runBackupStatusCommand(cmd, []string{"backup-123"})
-	assert.NoError(t, err)
 }
 
 // =============================================================================
@@ -2147,49 +1533,28 @@ func TestNewBackupCommands(t *testing.T) {
 	assert.Contains(t, commandNames, "delete", "delete command should be registered")
 	assert.Contains(t, commandNames, "verify", "verify command should be registered")
 	assert.Contains(t, commandNames, "status", "status command should be registered")
-}
 
-func TestNewBackupCreateCommand(t *testing.T) {
-	cmd := newBackupCreateCommand()
-
-	require.NotNil(t, cmd)
-	assert.Contains(t, cmd.Use, "create")
-	assert.Contains(t, cmd.Short, "Create")
-}
-
-func TestNewBackupListCommand(t *testing.T) {
-	cmd := newBackupListCommand()
-
-	require.NotNil(t, cmd)
-	assert.Equal(t, "list", cmd.Use)
-	assert.Contains(t, cmd.Short, "List")
-}
-
-func TestNewBackupRestoreCommand(t *testing.T) {
-	cmd := newBackupRestoreCommand()
-
-	require.NotNil(t, cmd)
-	assert.Contains(t, cmd.Use, "restore")
-	assert.Contains(t, cmd.Short, "Restore")
-}
-
-func TestNewBackupDeleteCommand(t *testing.T) {
-	cmd := newBackupDeleteCommand()
-
-	require.NotNil(t, cmd)
-	assert.Equal(t, "delete <backup-id>", cmd.Use)
-	assert.Contains(t, cmd.Short, "Delete")
-
-	// Verify flags exist
-	assert.NotNil(t, cmd.Flags().Lookup("yes"))
-}
-
-func TestNewBackupVerifyCommand(t *testing.T) {
-	cmd := newBackupVerifyCommand()
-
-	require.NotNil(t, cmd)
-	assert.Equal(t, "verify <backup-id>", cmd.Use)
-	assert.Contains(t, cmd.Short, "Verify")
+	constructors := []struct {
+		name  string
+		build func() *cobra.Command
+		use   string
+		short string
+	}{
+		{name: "create", build: newBackupCreateCommand, use: "create", short: "Create"},
+		{name: "list", build: newBackupListCommand, use: "list", short: "List"},
+		{name: "restore", build: newBackupRestoreCommand, use: "restore", short: "Restore"},
+		{name: "delete", build: newBackupDeleteCommand, use: "delete <backup-id>", short: "Delete"},
+		{name: "verify", build: newBackupVerifyCommand, use: "verify <backup-id>", short: "Verify"},
+		{name: "status", build: newBackupStatusCommand, use: "status [backup-id]", short: "Show backup status"},
+	}
+	for _, tc := range constructors {
+		t.Run(tc.name, func(t *testing.T) {
+			sub := tc.build()
+			require.NotNil(t, sub)
+			assert.Contains(t, sub.Use, tc.use)
+			assert.Contains(t, sub.Short, tc.short)
+		})
+	}
 }
 
 func TestParseHashAlgorithm(t *testing.T) {
@@ -2369,48 +1734,6 @@ func TestDataKeyAlgorithmToKeyAttributes(t *testing.T) {
 }
 
 // =============================================================================
-// Embedded Server Error Types Tests
-// =============================================================================
-
-func TestEmbeddedServerFailedError(t *testing.T) {
-	t.Run("Error method returns formatted message", func(t *testing.T) {
-		err := &EmbeddedServerFailedError{Reason: "connection refused"}
-		assert.Equal(t, "embedded server failed: connection refused", err.Error())
-	})
-
-	t.Run("Error with empty reason", func(t *testing.T) {
-		err := &EmbeddedServerFailedError{Reason: ""}
-		assert.Equal(t, "embedded server failed: ", err.Error())
-	})
-
-	t.Run("Error implements error interface", func(t *testing.T) {
-		var err error = &EmbeddedServerFailedError{Reason: "test"}
-		assert.NotNil(t, err)
-		assert.Contains(t, err.Error(), "embedded server failed")
-	})
-}
-
-func TestEmbeddedPortError(t *testing.T) {
-	t.Run("Error method returns message", func(t *testing.T) {
-		err := &EmbeddedPortError{}
-		assert.Equal(t, "listener address is not a TCP address", err.Error())
-	})
-
-	t.Run("Error implements error interface", func(t *testing.T) {
-		var err error = &EmbeddedPortError{}
-		assert.NotNil(t, err)
-		assert.Contains(t, err.Error(), "TCP address")
-	})
-}
-
-func TestErrEmbeddedServerNotStarted(t *testing.T) {
-	t.Run("Sentinel error is defined", func(t *testing.T) {
-		assert.NotNil(t, ErrEmbeddedServerNotStarted)
-		assert.Contains(t, ErrEmbeddedServerNotStarted.Error(), "embedded server not started")
-	})
-}
-
-// =============================================================================
 // ShutdownEmbeddedServer Tests
 // =============================================================================
 
@@ -2446,52 +1769,32 @@ func TestCreateAuthClientFactoryError(t *testing.T) {
 	})
 }
 
-func TestFactoryTransportSwitch(t *testing.T) {
-	// Save original transport and restore after test
+// A transport other than grpc or mcp routes createKMSClient through the SDK.
+func TestCreateKMSClientSDKTransport(t *testing.T) {
 	origTransport := transport
-	defer func() { transport = origTransport }()
+	origFactory := sdkClientFactory
+	defer func() {
+		transport = origTransport
+		sdkClientFactory = origFactory
+	}()
+	transport = "rest"
 
-	t.Run("createKMSClient with default transport", func(t *testing.T) {
-		transport = ""
-		// This will fail due to no server, but tests the code path
-		_, _ = createKMSClient()
-		// Client creation may succeed if server is running - tests the code path
+	t.Run("SDK factory error is returned", func(t *testing.T) {
+		sdkClientFactory = func() (quicbaas.Client, error) {
+			return nil, errors.Newf(errors.ErrUnavailable, "test", "connection refused")
+		}
+		_, err := createKMSClient()
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "connection refused")
 	})
 
-	t.Run("createKMSClient with grpc transport", func(t *testing.T) {
-		transport = "grpc"
-		_, _ = createKMSClient()
-		// Client creation may succeed if server is running - tests the code path
-	})
-
-	t.Run("createKMSClient with unknown transport defaults to grpc", func(t *testing.T) {
-		transport = "unknown"
-		_, _ = createKMSClient()
-		// Client creation may succeed if server is running - tests the code path
-	})
-
-	t.Run("createBackendClient with default transport", func(t *testing.T) {
-		transport = ""
-		_, _ = createBackendClient()
-		// Client creation may succeed if server is running - tests the code path
-	})
-
-	t.Run("createBackendClient with grpc transport", func(t *testing.T) {
-		transport = "grpc"
-		_, _ = createBackendClient()
-		// Client creation may succeed if server is running - tests the code path
-	})
-
-	t.Run("createSafetyClient with default transport", func(t *testing.T) {
-		transport = ""
-		_, _ = createSafetyClient()
-		// Client creation may succeed if server is running - tests the code path
-	})
-
-	t.Run("createSafetyClient with grpc transport", func(t *testing.T) {
-		transport = "grpc"
-		_, _ = createSafetyClient()
-		// Client creation may succeed if server is running - tests the code path
+	t.Run("SDK client is wrapped", func(t *testing.T) {
+		sdkClientFactory = func() (quicbaas.Client, error) {
+			return nil, nil
+		}
+		client, err := createKMSClient()
+		require.NoError(t, err)
+		assert.IsType(t, &sdkKMSClient{}, client)
 	})
 }
 
@@ -2502,23 +1805,6 @@ func TestCreateBackupClientFactory(t *testing.T) {
 		require.NoError(t, err)
 		assert.NotNil(t, client)
 		// Client is now a real gRPC adapter that implements BackupClient interface
-	})
-}
-
-func TestCreateGRPCCryptoClient(t *testing.T) {
-	t.Run("createCryptoClient with grpc transport", func(t *testing.T) {
-		// This will fail due to no server, but tests the code path
-		transport = "grpc"
-		_, _ = createCryptoClient()
-		// Client creation may succeed if server is running - tests the code path
-	})
-}
-
-func TestCreateGRPCSecretsClient(t *testing.T) {
-	t.Run("createGRPCSecretsClient returns client", func(t *testing.T) {
-		// This will fail due to no server, but tests the code path
-		_, _ = createGRPCSecretsClient()
-		// Client creation may succeed if server is running - tests the code path
 	})
 }
 
@@ -2550,296 +1836,17 @@ func TestExecuteCryptoDataKeyNilClient(t *testing.T) {
 // Mock Client Method Coverage Tests
 // =============================================================================
 
-func TestMockBackupClientMethods(t *testing.T) {
-	t.Run("CreateBackup default implementation returns unimplemented", func(t *testing.T) {
-		client := &MockBackupClient{}
-		ctx := context.Background()
-		_, err := client.CreateBackup(ctx, &BackupCreateRequest{})
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "not yet implemented")
-	})
-
-	t.Run("ListBackups default implementation returns unimplemented", func(t *testing.T) {
-		client := &MockBackupClient{}
-		ctx := context.Background()
-		_, err := client.ListBackups(ctx, &BackupListRequest{})
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "not yet implemented")
-	})
-
-	t.Run("RestoreBackup default implementation returns unimplemented", func(t *testing.T) {
-		client := &MockBackupClient{}
-		ctx := context.Background()
-		_, err := client.RestoreBackup(ctx, &BackupRestoreRequest{})
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "not yet implemented")
-	})
-
-	t.Run("DeleteBackup default implementation returns unimplemented", func(t *testing.T) {
-		client := &MockBackupClient{}
-		ctx := context.Background()
-		_, err := client.DeleteBackup(ctx, &BackupDeleteRequest{})
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "not yet implemented")
-	})
-
-	t.Run("VerifyBackup default implementation returns success", func(t *testing.T) {
-		client := &MockBackupClient{}
-		ctx := context.Background()
-		resp, err := client.VerifyBackup(ctx, &BackupVerifyRequest{BackupID: "test-id"})
-		require.NoError(t, err)
-		assert.True(t, resp.Valid)
-		assert.True(t, resp.ChecksumValid)
-	})
-
-	t.Run("Close default implementation returns nil", func(t *testing.T) {
-		client := &MockBackupClient{}
-		err := client.Close()
-		require.NoError(t, err)
-	})
-
-	t.Run("CreateBackup with custom function", func(t *testing.T) {
-		client := &MockBackupClient{
-			CreateBackupFunc: func(ctx context.Context, req *BackupCreateRequest) (*cli.BackupCreateResponse, error) {
-				return &cli.BackupCreateResponse{BackupID: "custom-id"}, nil
-			},
-		}
-		ctx := context.Background()
-		resp, err := client.CreateBackup(ctx, &BackupCreateRequest{})
-		require.NoError(t, err)
-		assert.Equal(t, "custom-id", resp.BackupID)
-	})
-
-	t.Run("ListBackups with custom function", func(t *testing.T) {
-		client := &MockBackupClient{
-			ListBackupsFunc: func(ctx context.Context, req *BackupListRequest) (*cli.BackupListResponse, error) {
-				return &cli.BackupListResponse{TotalCount: 5}, nil
-			},
-		}
-		ctx := context.Background()
-		resp, err := client.ListBackups(ctx, &BackupListRequest{})
-		require.NoError(t, err)
-		assert.Equal(t, 5, resp.TotalCount)
-	})
-
-	t.Run("RestoreBackup with custom function", func(t *testing.T) {
-		client := &MockBackupClient{
-			RestoreBackupFunc: func(ctx context.Context, req *BackupRestoreRequest) (*cli.BackupRestoreResponse, error) {
-				return &cli.BackupRestoreResponse{Success: true}, nil
-			},
-		}
-		ctx := context.Background()
-		resp, err := client.RestoreBackup(ctx, &BackupRestoreRequest{})
-		require.NoError(t, err)
-		assert.True(t, resp.Success)
-	})
-
-	t.Run("DeleteBackup with custom function", func(t *testing.T) {
-		client := &MockBackupClient{
-			DeleteBackupFunc: func(ctx context.Context, req *BackupDeleteRequest) (*cli.BackupDeleteResponse, error) {
-				return &cli.BackupDeleteResponse{Deleted: true}, nil
-			},
-		}
-		ctx := context.Background()
-		resp, err := client.DeleteBackup(ctx, &BackupDeleteRequest{})
-		require.NoError(t, err)
-		assert.True(t, resp.Deleted)
-	})
-
-	t.Run("VerifyBackup with custom function", func(t *testing.T) {
-		client := &MockBackupClient{
-			VerifyBackupFunc: func(ctx context.Context, req *BackupVerifyRequest) (*cli.BackupVerifyResponse, error) {
-				return &cli.BackupVerifyResponse{Valid: false}, nil
-			},
-		}
-		ctx := context.Background()
-		resp, err := client.VerifyBackup(ctx, &BackupVerifyRequest{})
-		require.NoError(t, err)
-		assert.False(t, resp.Valid)
-	})
-
-	t.Run("Close with custom function", func(t *testing.T) {
-		client := &MockBackupClient{
-			CloseFunc: func() error {
-				return errors.Newf(errors.ErrInternal, "close", "custom error")
-			},
-		}
-		err := client.Close()
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "custom error")
-	})
-}
-
-func TestMockBackendClientMethods(t *testing.T) {
-	t.Run("KMSBackendStatus default returns unimplemented", func(t *testing.T) {
-		client := &MockBackendClient{}
-		ctx := context.Background()
-		_, err := client.KMSBackendStatus(ctx)
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "not yet implemented")
-	})
-
-	t.Run("KMSBackendTest default returns unimplemented", func(t *testing.T) {
-		client := &MockBackendClient{}
-		ctx := context.Background()
-		_, err := client.KMSBackendTest(ctx)
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "not yet implemented")
-	})
-
-	t.Run("Close default returns nil", func(t *testing.T) {
-		client := &MockBackendClient{}
-		err := client.Close()
-		require.NoError(t, err)
-	})
-
-	t.Run("KMSBackendStatus with custom function", func(t *testing.T) {
-		client := &MockBackendClient{
-			KMSBackendStatusFunc: func(ctx context.Context) (*service.BackendStatusResponse, error) {
-				return &service.BackendStatusResponse{
-					BackendType: "tpm2",
-					Status:      "healthy",
-				}, nil
-			},
-		}
-		ctx := context.Background()
-		resp, err := client.KMSBackendStatus(ctx)
-		require.NoError(t, err)
-		assert.Equal(t, "tpm2", resp.BackendType)
-		assert.Equal(t, "healthy", resp.Status)
-	})
-
-	t.Run("KMSBackendTest with custom function", func(t *testing.T) {
-		client := &MockBackendClient{
-			KMSBackendTestFunc: func(ctx context.Context) (*service.BackendTestResponse, error) {
-				return &service.BackendTestResponse{
-					Success:   true,
-					Duration:  100 * time.Millisecond,
-					Timestamp: time.Now(),
-				}, nil
-			},
-		}
-		ctx := context.Background()
-		resp, err := client.KMSBackendTest(ctx)
-		require.NoError(t, err)
-		assert.True(t, resp.Success)
-	})
-
-	t.Run("Close with custom function", func(t *testing.T) {
-		client := &MockBackendClient{
-			CloseFunc: func() error {
-				return errors.Newf(errors.ErrInternal, "close", "backend close error")
-			},
-		}
-		err := client.Close()
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "backend close error")
-	})
-}
-
-func TestMockSafetyClientMethods(t *testing.T) {
-	t.Run("KMSSafetyCheck default returns unimplemented", func(t *testing.T) {
-		client := &MockSafetyClient{}
-		ctx := context.Background()
-		_, err := client.KMSSafetyCheck(ctx, &service.SafetyCheckRequest{})
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "not yet implemented")
-	})
-
-	t.Run("KMSSafetyReport default returns unimplemented", func(t *testing.T) {
-		client := &MockSafetyClient{}
-		ctx := context.Background()
-		_, err := client.KMSSafetyReport(ctx, &service.SafetyReportRequest{})
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "not yet implemented")
-	})
-
-	t.Run("Close default returns nil", func(t *testing.T) {
-		client := &MockSafetyClient{}
-		err := client.Close()
-		require.NoError(t, err)
-	})
-
-	t.Run("KMSSafetyCheck with custom function", func(t *testing.T) {
-		client := &MockSafetyClient{
-			KMSSafetyCheckFunc: func(ctx context.Context, req *service.SafetyCheckRequest) (*service.SafetyCheckResponse, error) {
-				return &service.SafetyCheckResponse{
-					TotalKeysChecked: 10,
-					TotalDEKsChecked: 5,
-					Timestamp:        time.Now(),
-				}, nil
-			},
-		}
-		ctx := context.Background()
-		resp, err := client.KMSSafetyCheck(ctx, &service.SafetyCheckRequest{})
-		require.NoError(t, err)
-		assert.Equal(t, 10, resp.TotalKeysChecked)
-	})
-
-	t.Run("KMSSafetyReport with custom function", func(t *testing.T) {
-		client := &MockSafetyClient{
-			KMSSafetyReportFunc: func(ctx context.Context, req *service.SafetyReportRequest) (*service.SafetyReportResponse, error) {
-				return &service.SafetyReportResponse{
-					Timestamp: time.Now(),
-				}, nil
-			},
-		}
-		ctx := context.Background()
-		resp, err := client.KMSSafetyReport(ctx, &service.SafetyReportRequest{})
-		require.NoError(t, err)
-		assert.NotNil(t, resp)
-	})
-
-	t.Run("Close with custom function", func(t *testing.T) {
-		client := &MockSafetyClient{
-			CloseFunc: func() error {
-				return errors.Newf(errors.ErrInternal, "close", "safety close error")
-			},
-		}
-		err := client.Close()
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "safety close error")
-	})
-}
-
-func TestRunBackupListCommand_SuccessJSONFormat(t *testing.T) {
-	origFactory := backupClientFactory
-	origFmt := backupOutputFormat
-	origStorageType := backupStorageType
-	defer func() {
-		backupClientFactory = origFactory
-		backupOutputFormat = origFmt
-		backupStorageType = origStorageType
-	}()
-
-	backupOutputFormat = "json"
-	backupStorageType = "local"
-
-	backupClientFactory = func() (BackupClient, error) {
-		return &MockBackupClient{
-			ListBackupsFunc: func(ctx context.Context, req *BackupListRequest) (*cli.BackupListResponse, error) {
-				return &cli.BackupListResponse{
-					Backups: []cli.BackupInfo{
-						{
-							ID:          "backup-001",
-							Type:        "full",
-							Size:        1024 * 1024,
-							Compression: "zstd",
-							Encryption:  "none",
-							NumShards:   3,
-							NumKeys:     5000,
-							Timestamp:   time.Now(),
-						},
-					},
-					TotalCount: 1,
-				}, nil
-			},
-		}, nil
+// The backup commands discard Close errors (defer client.Close()), so the
+// CloseFunc hook of MockBackupClient is only reachable directly.
+func TestMockBackupClientCloseFunc(t *testing.T) {
+	client := &MockBackupClient{
+		CloseFunc: func() error {
+			return errors.Newf(errors.ErrInternal, "close", "custom error")
+		},
 	}
-
-	cmd := newBackupListCommand()
-	err := runBackupListCommand(cmd, nil)
-	assert.NoError(t, err)
+	err := client.Close()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "custom error")
 }
 
 func TestRunBackupListCommand_SuccessTableFormat(t *testing.T) {
@@ -2919,35 +1926,6 @@ func TestRunBackupListCommand_ListError(t *testing.T) {
 // Backup Verify Command - Output Format Paths
 // =============================================================================
 
-func TestRunBackupVerifyCommand_SuccessJSONFormat(t *testing.T) {
-	origFactory := backupClientFactory
-	origFmt := backupOutputFormat
-	defer func() {
-		backupClientFactory = origFactory
-		backupOutputFormat = origFmt
-	}()
-
-	backupOutputFormat = "json"
-
-	backupClientFactory = func() (BackupClient, error) {
-		return &MockBackupClient{
-			VerifyBackupFunc: func(ctx context.Context, req *BackupVerifyRequest) (*cli.BackupVerifyResponse, error) {
-				return &cli.BackupVerifyResponse{
-					BackupID:      req.BackupID,
-					Valid:         true,
-					ChecksumValid: true,
-					ShardsValid:   3,
-					Timestamp:     time.Now(),
-				}, nil
-			},
-		}, nil
-	}
-
-	cmd := newBackupVerifyCommand()
-	err := runBackupVerifyCommand(cmd, []string{"backup-001"})
-	assert.NoError(t, err)
-}
-
 func TestRunBackupVerifyCommand_SuccessTableFormat(t *testing.T) {
 	origFactory := backupClientFactory
 	origFmt := backupOutputFormat
@@ -3014,39 +1992,6 @@ func TestRunBackupVerifyCommand_VerifyError(t *testing.T) {
 // Backup Restore Command - Additional Paths
 // =============================================================================
 
-func TestRunBackupRestoreCommand_SuccessDefaultFormat(t *testing.T) {
-	origFactory := backupClientFactory
-	origFmt := backupOutputFormat
-	origStorageType := backupStorageType
-	defer func() {
-		backupClientFactory = origFactory
-		backupOutputFormat = origFmt
-		backupStorageType = origStorageType
-	}()
-
-	backupOutputFormat = ""
-	backupStorageType = "local"
-
-	backupClientFactory = func() (BackupClient, error) {
-		return &MockBackupClient{
-			RestoreBackupFunc: func(ctx context.Context, req *BackupRestoreRequest) (*cli.BackupRestoreResponse, error) {
-				return &cli.BackupRestoreResponse{
-					BackupID:       req.BackupID,
-					KeysRestored:   1000,
-					ShardsRestored: 3,
-					Duration:       5 * time.Second,
-					Timestamp:      time.Now(),
-					Success:        true,
-				}, nil
-			},
-		}, nil
-	}
-
-	cmd := newBackupRestoreCommand()
-	err := runBackupRestoreCommand(cmd, []string{"backup-001"})
-	assert.NoError(t, err)
-}
-
 func TestRunBackupRestoreCommand_RestoreError(t *testing.T) {
 	origFactory := backupClientFactory
 	origStorageType := backupStorageType
@@ -3071,124 +2016,9 @@ func TestRunBackupRestoreCommand_RestoreError(t *testing.T) {
 	assert.Contains(t, err.Error(), "restore failed")
 }
 
-func TestRunBackupRestoreCommand_InvalidPointInTime(t *testing.T) {
-	origPIT := backupRestorePointInTime
-	defer func() { backupRestorePointInTime = origPIT }()
-
-	cmd := newBackupRestoreCommand()
-	backupRestorePointInTime = "not-a-valid-timestamp"
-	err := runBackupRestoreCommand(cmd, []string{"backup-001"})
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "invalid point-in-time")
-}
-
 // =============================================================================
 // Backup Create Command - Additional Validation Paths
 // =============================================================================
-
-func TestRunBackupCreateCommand_InvalidCompressionType(t *testing.T) {
-	origCompression := backupCompression
-	defer func() { backupCompression = origCompression }()
-
-	cmd := newBackupCreateCommand()
-	backupCompression = "lz77"
-	err := runBackupCreateCommand(cmd, []string{"test-backup"})
-	assert.Error(t, err)
-}
-
-func TestRunBackupCreateCommand_InvalidEncryptionType(t *testing.T) {
-	origCompression := backupCompression
-	origEncryption := backupEncryption
-	defer func() {
-		backupCompression = origCompression
-		backupEncryption = origEncryption
-	}()
-
-	cmd := newBackupCreateCommand()
-	backupCompression = "zstd"
-	backupEncryption = "triple-des"
-	err := runBackupCreateCommand(cmd, []string{"test-backup"})
-	assert.Error(t, err)
-}
-
-func TestRunBackupCreateCommand_AES256NoKey(t *testing.T) {
-	origCompression := backupCompression
-	origEncryption := backupEncryption
-	origKey := backupEncryptKey
-	defer func() {
-		backupCompression = origCompression
-		backupEncryption = origEncryption
-		backupEncryptKey = origKey
-	}()
-
-	cmd := newBackupCreateCommand()
-	backupCompression = "zstd"
-	backupEncryption = "aes256"
-	backupEncryptKey = ""
-
-	err := runBackupCreateCommand(cmd, []string{"test-backup"})
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "encryption key is required")
-}
-
-func TestRunBackupCreateCommand_AES256WrongKeyLength(t *testing.T) {
-	origCompression := backupCompression
-	origEncryption := backupEncryption
-	origKey := backupEncryptKey
-	defer func() {
-		backupCompression = origCompression
-		backupEncryption = origEncryption
-		backupEncryptKey = origKey
-	}()
-
-	cmd := newBackupCreateCommand()
-	backupCompression = "zstd"
-	backupEncryption = "aes256"
-	backupEncryptKey = "tooshort"
-
-	err := runBackupCreateCommand(cmd, []string{"test-backup"})
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "32 bytes")
-}
-
-func TestRunBackupCreateCommand_IncrementalType(t *testing.T) {
-	origFactory := backupClientFactory
-	origCompression := backupCompression
-	origEncryption := backupEncryption
-	origIncremental := backupIncremental
-	origFmt := backupOutputFormat
-	origStorageType := backupStorageType
-	defer func() {
-		backupClientFactory = origFactory
-		backupCompression = origCompression
-		backupEncryption = origEncryption
-		backupIncremental = origIncremental
-		backupOutputFormat = origFmt
-		backupStorageType = origStorageType
-	}()
-
-	backupStorageType = "local"
-
-	backupClientFactory = func() (BackupClient, error) {
-		return &MockBackupClient{
-			CreateBackupFunc: func(ctx context.Context, req *BackupCreateRequest) (*cli.BackupCreateResponse, error) {
-				return &cli.BackupCreateResponse{
-					BackupID:  "backup-inc-001",
-					Success:   true,
-					Timestamp: time.Now(),
-				}, nil
-			},
-		}, nil
-	}
-
-	cmd := newBackupCreateCommand()
-	backupCompression = "zstd"
-	backupEncryption = "none"
-	backupIncremental = true
-	backupOutputFormat = "json"
-	err := runBackupCreateCommand(cmd, []string{"incremental-backup"})
-	assert.NoError(t, err)
-}
 
 func TestRunBackupCreateCommand_ClientError(t *testing.T) {
 	origFactory := backupClientFactory

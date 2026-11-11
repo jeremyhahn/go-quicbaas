@@ -43,7 +43,7 @@ func TestGetMetrics(t *testing.T) {
 	}
 
 	metrics := GetMetrics()
-	assert.NotNil(t, metrics)
+	require.Len(t, metrics, 8)
 
 	// Check all expected metrics are present
 	assert.Contains(t, metrics, "encryption_ops")
@@ -54,37 +54,8 @@ func TestGetMetrics(t *testing.T) {
 	assert.Contains(t, metrics, "decryption_duration")
 	assert.Contains(t, metrics, "encrypted_bytes_total")
 	assert.Contains(t, metrics, "decrypted_bytes_total")
-}
 
-func TestMetrics_NotInitialized(t *testing.T) {
-	// These functions should handle uninitialized metrics gracefully
-	// by checking metricsInitialized and returning early
-	assert.NotPanics(t, func() {
-		// If not initialized, record functions should return early
-		// We can't actually test this without resetting global state,
-		// but we verify no panics occur
-		_ = GetMetrics()
-	})
-}
-
-func TestMetrics_Integration(t *testing.T) {
-	// Ensure metrics are initialized (idempotent)
-	if !metricsInitialized {
-		InitMetrics()
-	}
-
-	// Get metrics and verify they're not nil
-	metrics := GetMetrics()
-	require.NotNil(t, metrics)
-	assert.Len(t, metrics, 8)
-
-	// Verify individual metrics are not nil
 	for name, metric := range metrics {
 		assert.NotNil(t, metric, "metric %s should not be nil", name)
 	}
 }
-
-// Note: We're not testing the record* functions directly because:
-// 1. They have bugs in the metrics package (incorrect label cardinality)
-// 2. They depend on global Prometheus registry which can't be easily reset between tests
-// These tests verify the initialization and retrieval logic only.

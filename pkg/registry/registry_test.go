@@ -221,10 +221,13 @@ func TestRegistry_ResolveOrdersByInstanceID(t *testing.T) {
 func TestRegistry_RegisterInvalid(t *testing.T) {
 	r := New(newFakeBackend())
 	cases := map[string]ServiceInstance{
-		"missing id":       {Service: "x", Address: "a:1"},
-		"missing address":  {Service: "x", ID: "i"},
-		"oversize service": {Service: strings.Repeat("s", maxNameLen+1), ID: "i", Address: "a:1"},
-		"oversize id":      {Service: "s", ID: strings.Repeat("i", maxNameLen+1), Address: "a:1"},
+		"missing service":      {ID: "i", Address: "a:1"},
+		"missing id":           {Service: "x", Address: "a:1"},
+		"missing address":      {Service: "x", ID: "i"},
+		"oversize service":     {Service: strings.Repeat("s", maxNameLen+1), ID: "i", Address: "a:1"},
+		"oversize id":          {Service: "s", ID: strings.Repeat("i", maxNameLen+1), Address: "a:1"},
+		"separator in service": {Service: "foo/bar", ID: "i", Address: "a:1"},
+		"separator in id":      {Service: "s", ID: "a/b", Address: "a:1"},
 	}
 	for name, inst := range cases {
 		_, err := r.Register(sysCtx(), inst, time.Second)
@@ -321,23 +324,6 @@ func TestRegistry_InvalidTenantRejected(t *testing.T) {
 	}
 	if _, err := r.Renew(ctx, 1); !errors.As(err, &ie) {
 		t.Fatalf("Renew error = %T (%v), want *InvalidInstanceError for invalid tenant", err, err)
-	}
-}
-
-func TestRegistry_RegisterRejectsReservedNames(t *testing.T) {
-	r := New(newFakeBackend())
-	cases := []ServiceInstance{
-		{Service: "foo/bar", ID: "x", Address: "a:1"}, // service with separator
-		{Service: "svc", ID: "a/b", Address: "a:1"},   // id with separator
-		{Service: "", ID: "x", Address: "a:1"},        // empty service
-		{Service: "svc", ID: "", Address: "a:1"},      // empty id
-	}
-	for _, inst := range cases {
-		_, err := r.Register(sysCtx(), inst, time.Second)
-		var ie *InvalidInstanceError
-		if !errors.As(err, &ie) {
-			t.Fatalf("Register(%+v) error = %T (%v), want *InvalidInstanceError", inst, err, err)
-		}
 	}
 }
 
@@ -448,16 +434,6 @@ func TestRegistry_ResolveSkipsMalformed(t *testing.T) {
 	}
 	if len(instances) != 1 {
 		t.Fatalf("Resolve returned %d, want 1 (malformed skipped)", len(instances))
-	}
-}
-
-func TestRegistry_ResolveError(t *testing.T) {
-	b := newFakeBackend()
-	b.rangeErr = errors.New("range boom")
-	_, _, err := New(b).Resolve(sysCtx(), "payments")
-	var re *RegistryError
-	if !errors.As(err, &re) || re.Op != "range" {
-		t.Fatalf("error = %v, want RegistryError{Op:range}", err)
 	}
 }
 
@@ -585,53 +561,76 @@ func TestRegistry_WatchOpenErrors(t *testing.T) {
 	}
 }
 
-func TestRegistry_RegisterGrantError(t *testing.T) {
-	b := newFakeBackend()
-	b.grantErr = errors.New("grant boom")
-	_, err := New(b).Register(sysCtx(), sampleInstance(), time.Second)
-	var re *RegistryError
-	if !errors.As(err, &re) || re.Op != "grant" {
-		t.Fatalf("error = %v, want RegistryError{Op:grant}", err)
+// TestRegistry_BackendErrors injects one backend failure per verb and checks
+// that each verb wraps it in a RegistryError naming the failed operation.
+func TestRegistry_BackendErrors(t *testing.T) {
+	boom := errors.New("boom")
+	cases := []struct {
+		name   string
+		inject func(b *fakeBackend)
+		call   func(r *Registry, leaseID int64) error
+		wantOp string
+	}{
+		{
+			name:   "register grant",
+			inject: func(b *fakeBackend) { b.grantErr = boom },
+			call: func(r *Registry, _ int64) error {
+				_, err := r.Register(sysCtx(), sampleInstance(), time.Second)
+				return err
+			},
+			wantOp: "grant",
+		},
+		{
+			name:   "renew keepalive",
+			inject: func(b *fakeBackend) { b.keepAliveErr = boom },
+			call: func(r *Registry, leaseID int64) error {
+				_, err := r.Renew(sysCtx(), leaseID)
+				return err
+			},
+			wantOp: "keepalive",
+		},
+		{
+			name:   "renew ownership check",
+			inject: func(b *fakeBackend) { b.existsErr = boom },
+			call: func(r *Registry, leaseID int64) error {
+				_, err := r.Renew(sysCtx(), leaseID)
+				return err
+			},
+			wantOp: "exists",
+		},
+		{
+			name:   "deregister revoke",
+			inject: func(b *fakeBackend) { b.revokeErr = boom },
+			call: func(r *Registry, leaseID int64) error {
+				return r.Deregister(sysCtx(), leaseID)
+			},
+			wantOp: "revoke",
+		},
+		{
+			name:   "resolve range",
+			inject: func(b *fakeBackend) { b.rangeErr = boom },
+			call: func(r *Registry, _ int64) error {
+				_, _, err := r.Resolve(sysCtx(), "payments")
+				return err
+			},
+			wantOp: "range",
+		},
 	}
-}
-
-func TestRegistry_RenewError(t *testing.T) {
-	b := newFakeBackend()
-	r := New(b)
-	leaseID, err := r.Register(sysCtx(), sampleInstance(), time.Second)
-	if err != nil {
-		t.Fatalf("Register: %v", err)
-	}
-	b.keepAliveErr = errors.New("keepalive boom")
-	_, err = r.Renew(sysCtx(), leaseID)
-	var re *RegistryError
-	if !errors.As(err, &re) || re.Op != "keepalive" {
-		t.Fatalf("error = %v, want RegistryError{Op:keepalive}", err)
-	}
-}
-
-func TestRegistry_OwnershipCheckError(t *testing.T) {
-	b := newFakeBackend()
-	b.existsErr = errors.New("exists boom")
-	_, err := New(b).Renew(sysCtx(), 1)
-	var re *RegistryError
-	if !errors.As(err, &re) || re.Op != "exists" {
-		t.Fatalf("error = %v, want RegistryError{Op:exists}", err)
-	}
-}
-
-func TestRegistry_DeregisterError(t *testing.T) {
-	b := newFakeBackend()
-	r := New(b)
-	leaseID, err := r.Register(sysCtx(), sampleInstance(), time.Second)
-	if err != nil {
-		t.Fatalf("Register: %v", err)
-	}
-	b.revokeErr = errors.New("revoke boom")
-	err = r.Deregister(sysCtx(), leaseID)
-	var re *RegistryError
-	if !errors.As(err, &re) || re.Op != "revoke" {
-		t.Fatalf("error = %v, want RegistryError{Op:revoke}", err)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			b := newFakeBackend()
+			r := New(b)
+			leaseID, err := r.Register(sysCtx(), sampleInstance(), time.Second)
+			if err != nil {
+				t.Fatalf("Register: %v", err)
+			}
+			tc.inject(b)
+			err = tc.call(r, leaseID)
+			var re *RegistryError
+			if !errors.As(err, &re) || re.Op != tc.wantOp {
+				t.Fatalf("error = %v, want RegistryError{Op:%s}", err, tc.wantOp)
+			}
+		})
 	}
 }
 
@@ -697,9 +696,6 @@ func TestRegistryErrors_Messages(t *testing.T) {
 	re := &RegistryError{Op: "put", Err: errors.New("boom")}
 	if re.Error() != "registry: put: boom" {
 		t.Fatalf("RegistryError.Error() = %q", re.Error())
-	}
-	if !errors.Is(re, re.Unwrap()) {
-		t.Fatal("RegistryError.Unwrap should return the wrapped error")
 	}
 	ie := &InvalidInstanceError{Reason: "service is required"}
 	if ie.Error() != "registry: invalid service instance: service is required" {

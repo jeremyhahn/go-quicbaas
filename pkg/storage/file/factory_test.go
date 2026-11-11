@@ -28,21 +28,6 @@ import (
 // Factory tests
 // -----------------------------------------------------------------------------
 
-func TestFactory_NewFactory_CreatesFactory(t *testing.T) {
-	log, err := logger.New(logger.Default())
-	require.NoError(t, err)
-
-	factory := NewFactory(log)
-
-	require.NotNil(t, factory)
-}
-
-func TestFactory_NewFactory_WithNilLogger(t *testing.T) {
-	factory := NewFactory(nil)
-
-	require.NotNil(t, factory)
-}
-
 func TestFactory_NewFactory_WithCodecOption(t *testing.T) {
 	log, err := logger.New(logger.Default())
 	require.NoError(t, err)

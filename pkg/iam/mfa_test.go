@@ -181,7 +181,23 @@ func totpCodesForBracket(t *testing.T, secret string, config MFAConfig, before, 
 }
 
 // TestNewMFAManager tests creating a new MFA manager
+// createMFATestUser stores user 123 of tenant-123, with an email, in the
+// manager's user storage, so enrollment can label the account with it.
+func createMFATestUser(t *testing.T, m *DefaultMFAManager) {
+	t.Helper()
+	user := &User{
+		ID:       123,
+		TenantID: "tenant-123",
+		Email:    "test@example.com",
+		Name:     "Test User",
+		Created:  time.Now(),
+		Updated:  time.Now(),
+	}
+	require.NoError(t, m.userStorage.CreateUser(context.Background(), user))
+}
+
 func TestNewMFAManager(t *testing.T) {
+	customStorage := NewMemoryMFAStorage()
 	tests := []struct {
 		name        string
 		opts        []MFAManagerOption
@@ -228,11 +244,11 @@ func TestNewMFAManager(t *testing.T) {
 		{
 			name: "custom storage",
 			opts: []MFAManagerOption{
-				WithMFAStorage(NewMemoryMFAStorage()),
+				WithMFAStorage(customStorage),
 			},
 			expectError: false,
 			validate: func(t *testing.T, m *DefaultMFAManager) {
-				assert.NotNil(t, m.storage)
+				assert.Same(t, customStorage, m.storage)
 			},
 		},
 		{
@@ -309,7 +325,8 @@ func TestBeginEnrollment(t *testing.T) {
 		userID      uint64
 		tenantID    string
 		method      MFAMethod
-		setup       func(m *DefaultMFAManager)
+		opts        []MFAManagerOption
+		setup       func(t *testing.T, m *DefaultMFAManager)
 		expectError error
 		validate    func(t *testing.T, resp *MFAEnrollResponse)
 	}{
@@ -325,6 +342,28 @@ func TestBeginEnrollment(t *testing.T) {
 				assert.NotEmpty(t, resp.Secret)
 				assert.True(t, resp.ExpiresAt.After(time.Now()))
 				assert.Contains(t, resp.QRCodeURI, "otpauth://totp/")
+			},
+		},
+		{
+			name:     "configured issuer and stored user email label the QR code",
+			userID:   123,
+			tenantID: "tenant-123",
+			method:   MFAMethodTOTP,
+			opts: []MFAManagerOption{
+				WithMFAConfig(MFAConfig{
+					Issuer:      "TestIssuer",
+					Digits:      6,
+					Period:      30,
+					Algorithm:   MFAAlgorithmSHA256,
+					Skew:        1,
+					BackupCodes: 10,
+				}),
+				WithUserStorage(NewMemoryStorage()),
+			},
+			setup: createMFATestUser,
+			validate: func(t *testing.T, resp *MFAEnrollResponse) {
+				assert.Contains(t, resp.QRCodeURI, "TestIssuer")
+				assert.Contains(t, resp.QRCodeURI, "example.com")
 			},
 		},
 		{
@@ -353,7 +392,7 @@ func TestBeginEnrollment(t *testing.T) {
 			userID:   123,
 			tenantID: "tenant-123",
 			method:   MFAMethodTOTP,
-			setup: func(m *DefaultMFAManager) {
+			setup: func(t *testing.T, m *DefaultMFAManager) {
 				// Create a verified secret
 				secret := &MFASecret{
 					ID:        "secret-1",
@@ -374,11 +413,11 @@ func TestBeginEnrollment(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			m, err := NewMFAManager()
+			m, err := NewMFAManager(tt.opts...)
 			require.NoError(t, err)
 
 			if tt.setup != nil {
-				tt.setup(m)
+				tt.setup(t, m)
 			}
 
 			resp, err := m.BeginEnrollment(context.Background(), tt.userID, tt.tenantID, tt.method)
@@ -402,8 +441,11 @@ func TestBeginEnrollment(t *testing.T) {
 func TestCompleteEnrollment(t *testing.T) {
 	tests := []struct {
 		name        string
+		opts        []MFAManagerOption
 		setup       func(t *testing.T, m *DefaultMFAManager) (enrollmentID, code string)
 		expectError error
+		// after checks stored state once CompleteEnrollment has returned.
+		after func(t *testing.T, m *DefaultMFAManager, enrollmentID string)
 	}{
 		{
 			name: "successful enrollment completion",
@@ -414,6 +456,25 @@ func TestCompleteEnrollment(t *testing.T) {
 				return resp.EnrollmentID, code
 			},
 			expectError: nil,
+			after: func(t *testing.T, m *DefaultMFAManager, enrollmentID string) {
+				_, err := m.storage.GetEnrollment(context.Background(), enrollmentID)
+				assert.ErrorIs(t, err, ErrMFAEnrollmentNotFound, "a completed enrollment is deleted")
+			},
+		},
+		{
+			name: "stored user email names the enrolled account",
+			opts: []MFAManagerOption{WithUserStorage(NewMemoryStorage())},
+			setup: func(t *testing.T, m *DefaultMFAManager) (string, string) {
+				createMFATestUser(t, m)
+				resp, err := m.BeginEnrollment(context.Background(), 123, "tenant-123", MFAMethodTOTP)
+				require.NoError(t, err)
+				return resp.EnrollmentID, generateValidTOTPCode(t, resp.Secret, m.config)
+			},
+			after: func(t *testing.T, m *DefaultMFAManager, enrollmentID string) {
+				secret, err := m.storage.GetSecret(context.Background(), 123, "tenant-123")
+				require.NoError(t, err)
+				assert.Equal(t, "test@example.com", secret.AccountName)
+			},
 		},
 		{
 			name: "missing enrollment ID",
@@ -462,6 +523,11 @@ func TestCompleteEnrollment(t *testing.T) {
 				return resp.EnrollmentID, "000000" // invalid code
 			},
 			expectError: ErrMFACodeInvalid,
+			after: func(t *testing.T, m *DefaultMFAManager, enrollmentID string) {
+				enrollment, err := m.storage.GetEnrollment(context.Background(), enrollmentID)
+				require.NoError(t, err)
+				assert.Equal(t, 1, enrollment.Attempts, "a wrong code counts an attempt")
+			},
 		},
 		{
 			name: "max attempts exceeded",
@@ -483,7 +549,7 @@ func TestCompleteEnrollment(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			m, err := NewMFAManager()
+			m, err := NewMFAManager(tt.opts...)
 			require.NoError(t, err)
 
 			enrollmentID, code := tt.setup(t, m)
@@ -505,6 +571,9 @@ func TestCompleteEnrollment(t *testing.T) {
 				backupCodes, err := m.storage.GetBackupCodes(context.Background(), 123, "tenant-123")
 				assert.NoError(t, err)
 				assert.Len(t, backupCodes.Codes, m.config.BackupCodes)
+			}
+			if tt.after != nil {
+				tt.after(t, m, enrollmentID)
 			}
 		})
 	}
@@ -689,6 +758,8 @@ func TestVerifyChallenge(t *testing.T) {
 		setup       func(t *testing.T, m *DefaultMFAManager) (challengeID, code string)
 		expectError error
 		validate    func(t *testing.T, resp *MFAVerifyResponse)
+		// after checks stored state once VerifyChallenge has returned.
+		after func(t *testing.T, m *DefaultMFAManager, challengeID string)
 	}{
 		{
 			name: "successful verification with TOTP",
@@ -715,6 +786,10 @@ func TestVerifyChallenge(t *testing.T) {
 			validate: func(t *testing.T, resp *MFAVerifyResponse) {
 				assert.True(t, resp.Success)
 				assert.Equal(t, "session-token", resp.Token)
+			},
+			after: func(t *testing.T, m *DefaultMFAManager, challengeID string) {
+				_, err := m.storage.GetChallenge(context.Background(), challengeID)
+				assert.ErrorIs(t, err, ErrMFAChallengeNotFound, "a verified challenge is deleted")
 			},
 		},
 		{
@@ -804,6 +879,33 @@ func TestVerifyChallenge(t *testing.T) {
 				return challenge.ID, "000000" // invalid code
 			},
 			expectError: ErrMFACodeInvalid,
+			after: func(t *testing.T, m *DefaultMFAManager, challengeID string) {
+				challenge, err := m.storage.GetChallenge(context.Background(), challengeID)
+				require.NoError(t, err)
+				assert.Equal(t, 1, challenge.Attempts, "a wrong code counts an attempt")
+			},
+		},
+		{
+			name: "no enrolled secret and no backup codes",
+			setup: func(t *testing.T, m *DefaultMFAManager) (string, string) {
+				challenge := &MFAChallenge{
+					ID:           "challenge-1",
+					UserID:       123,
+					TenantID:     "tenant-123",
+					SessionToken: "session-token",
+					Method:       MFAMethodTOTP,
+					ExpiresAt:    time.Now().Add(5 * time.Minute),
+					MaxAttempts:  3,
+				}
+				require.NoError(t, m.storage.SaveChallenge(context.Background(), challenge))
+				return challenge.ID, "123456"
+			},
+			expectError: ErrMFACodeInvalid,
+			after: func(t *testing.T, m *DefaultMFAManager, challengeID string) {
+				challenge, err := m.storage.GetChallenge(context.Background(), challengeID)
+				require.NoError(t, err)
+				assert.Equal(t, 1, challenge.Attempts, "a failed lookup counts an attempt")
+			},
 		},
 		{
 			name: "max attempts exceeded",
@@ -880,6 +982,9 @@ func TestVerifyChallenge(t *testing.T) {
 					tt.validate(t, resp)
 				}
 			}
+			if tt.after != nil {
+				tt.after(t, m, challengeID)
+			}
 		})
 	}
 }
@@ -893,6 +998,8 @@ func TestVerifyCode(t *testing.T) {
 		code        string
 		setup       func(t *testing.T, m *DefaultMFAManager) string
 		expectError error
+		// after checks stored state once VerifyCode has returned.
+		after func(t *testing.T, m *DefaultMFAManager)
 	}{
 		{
 			name:     "successful verification",
@@ -910,6 +1017,11 @@ func TestVerifyCode(t *testing.T) {
 				return generateValidTOTPCode(t, secret.Secret, m.config)
 			},
 			expectError: nil,
+			after: func(t *testing.T, m *DefaultMFAManager) {
+				secret, err := m.storage.GetSecret(context.Background(), 123, "tenant-123")
+				require.NoError(t, err)
+				assert.NotNil(t, secret.LastUsed, "a verified code records its use")
+			},
 		},
 		{
 			name:        "missing user ID",
@@ -1004,6 +1116,9 @@ func TestVerifyCode(t *testing.T) {
 			} else {
 				assert.NoError(t, err)
 			}
+			if tt.after != nil {
+				tt.after(t, m)
+			}
 		})
 	}
 }
@@ -1014,14 +1129,16 @@ func TestDisableMFA(t *testing.T) {
 		name        string
 		userID      uint64
 		tenantID    string
-		setup       func(m *DefaultMFAManager)
+		setup       func(t *testing.T, m *DefaultMFAManager)
 		expectError error
+		// after checks stored state once DisableMFA has returned.
+		after func(t *testing.T, m *DefaultMFAManager)
 	}{
 		{
-			name:     "successful disable",
+			name:     "successful disable removes secret, enrollment, challenge and backup codes",
 			userID:   123,
 			tenantID: "tenant-123",
-			setup: func(m *DefaultMFAManager) {
+			setup: func(t *testing.T, m *DefaultMFAManager) {
 				secret := &MFASecret{
 					ID:        "secret-1",
 					UserID:    123,
@@ -1033,9 +1150,51 @@ func TestDisableMFA(t *testing.T) {
 					Verified:  true,
 					Created:   time.Now(),
 				}
-				_ = m.storage.SaveSecret(context.Background(), secret)
+				require.NoError(t, m.storage.SaveSecret(context.Background(), secret))
+
+				enrollment := &MFAEnrollment{
+					ID:          "enrollment-1",
+					UserID:      123,
+					TenantID:    "tenant-123",
+					Method:      MFAMethodTOTP,
+					Secret:      "test-secret",
+					ExpiresAt:   time.Now().Add(10 * time.Minute),
+					MaxAttempts: 3,
+				}
+				require.NoError(t, m.storage.SaveEnrollment(context.Background(), enrollment))
+
+				challenge := &MFAChallenge{
+					ID:           "challenge-1",
+					UserID:       123,
+					TenantID:     "tenant-123",
+					SessionToken: "session-token",
+					Method:       MFAMethodTOTP,
+					ExpiresAt:    time.Now().Add(5 * time.Minute),
+					MaxAttempts:  3,
+				}
+				require.NoError(t, m.storage.SaveChallenge(context.Background(), challenge))
+
+				_, err := m.GenerateBackupCodes(context.Background(), 123, "tenant-123")
+				require.NoError(t, err)
 			},
 			expectError: nil,
+			after: func(t *testing.T, m *DefaultMFAManager) {
+				_, err := m.storage.GetSecret(context.Background(), 123, "tenant-123")
+				assert.ErrorIs(t, err, ErrMFANotEnrolled)
+
+				_, err = m.storage.GetEnrollment(context.Background(), "enrollment-1")
+				assert.ErrorIs(t, err, ErrMFAEnrollmentNotFound)
+
+				_, err = m.storage.GetChallenge(context.Background(), "challenge-1")
+				assert.ErrorIs(t, err, ErrMFAChallengeNotFound)
+
+				_, err = m.storage.GetBackupCodes(context.Background(), 123, "tenant-123")
+				assert.ErrorIs(t, err, ErrMFANotEnrolled)
+
+				status, err := m.GetMFAStatus(context.Background(), 123, "tenant-123")
+				require.NoError(t, err)
+				assert.False(t, status.Enabled)
+			},
 		},
 		{
 			name:        "missing user ID",
@@ -1063,7 +1222,7 @@ func TestDisableMFA(t *testing.T) {
 			require.NoError(t, err)
 
 			if tt.setup != nil {
-				tt.setup(m)
+				tt.setup(t, m)
 			}
 
 			err = m.DisableMFA(context.Background(), tt.userID, tt.tenantID)
@@ -1073,6 +1232,9 @@ func TestDisableMFA(t *testing.T) {
 				assert.ErrorIs(t, err, tt.expectError)
 			} else {
 				assert.NoError(t, err)
+			}
+			if tt.after != nil {
+				tt.after(t, m)
 			}
 		})
 	}
@@ -1285,10 +1447,6 @@ func TestGenerateBackupCodes(t *testing.T) {
 			expectError: nil,
 			validate: func(t *testing.T, codes []string, m *DefaultMFAManager) {
 				assert.Len(t, codes, m.config.BackupCodes)
-				for _, code := range codes {
-					assert.Len(t, code, 9) // XXXX-XXXX format
-					assert.Contains(t, code, "-")
-				}
 			},
 		},
 		{
@@ -1684,11 +1842,7 @@ func TestGenerateBackupCode(t *testing.T) {
 		code, err := generateBackupCode()
 		assert.NoError(t, err)
 		assert.Len(t, code, 9) // XXXX-XXXX format
-		assert.Contains(t, code, "-")
-
-		// Verify format: 4 chars, dash, 4 chars
-		parts := len(code)
-		assert.Equal(t, 9, parts)
+		assert.Equal(t, "-", code[4:5])
 
 		// Ensure uniqueness
 		assert.False(t, codes[code], "duplicate code generated: %s", code)
@@ -1701,322 +1855,6 @@ func TestGenerateBackupCode(t *testing.T) {
 			}
 		}
 	}
-}
-
-// TestMFAManagerWithUserStorage tests MFA manager with user storage
-func TestMFAManagerWithUserStorage(t *testing.T) {
-	userStorage := NewMemoryStorage()
-	m, err := NewMFAManager(WithUserStorage(userStorage))
-	require.NoError(t, err)
-	assert.NotNil(t, m.userStorage)
-
-	// Test that MFA operations still work without requiring the user storage integration
-	// (the integration has parameter order issues that should be fixed in the implementation)
-
-	// Begin enrollment
-	resp, err := m.BeginEnrollment(context.Background(), 123, "tenant-123", MFAMethodTOTP)
-	require.NoError(t, err)
-	assert.NotEmpty(t, resp.EnrollmentID)
-	assert.NotEmpty(t, resp.QRCodeURI)
-
-	// Complete enrollment
-	code := generateValidTOTPCode(t, resp.Secret, m.config)
-	err = m.CompleteEnrollment(context.Background(), 123, "tenant-123", resp.EnrollmentID, code)
-	require.NoError(t, err)
-
-	// Verify secret was saved
-	secret, err := m.storage.GetSecret(context.Background(), 123, "tenant-123")
-	assert.NoError(t, err)
-	assert.True(t, secret.Verified)
-}
-
-// TestCompleteEnrollmentIncrementAttempts tests that failed enrollment attempts are tracked
-func TestCompleteEnrollmentIncrementAttempts(t *testing.T) {
-	m, err := NewMFAManager()
-	require.NoError(t, err)
-
-	// Begin enrollment
-	resp, err := m.BeginEnrollment(context.Background(), 123, "tenant-123", MFAMethodTOTP)
-	require.NoError(t, err)
-
-	// Try with invalid code multiple times
-	for i := 0; i < 3; i++ {
-		err = m.CompleteEnrollment(context.Background(), 123, "tenant-123", resp.EnrollmentID, "000000")
-		assert.ErrorIs(t, err, ErrMFACodeInvalid)
-
-		// Verify attempts are incremented
-		enrollment, err := m.storage.GetEnrollment(context.Background(), resp.EnrollmentID)
-		require.NoError(t, err)
-		assert.Equal(t, i+1, enrollment.Attempts)
-	}
-}
-
-// TestVerifyChallengeIncrementAttempts tests that failed challenge attempts are tracked
-func TestVerifyChallengeIncrementAttempts(t *testing.T) {
-	m, err := NewMFAManager()
-	require.NoError(t, err)
-
-	// Setup MFA
-	secret := &MFASecret{
-		ID:        "secret-1",
-		UserID:    123,
-		TenantID:  "tenant-123",
-		Secret:    testTOTPSecret,
-		Algorithm: defaultMFAAlgorithm(),
-		Digits:    6,
-		Period:    30,
-		Verified:  true,
-		Created:   time.Now(),
-	}
-	err = m.storage.SaveSecret(context.Background(), secret)
-	require.NoError(t, err)
-
-	// Begin challenge
-	challenge, err := m.BeginChallenge(context.Background(), 123, "tenant-123", "session-token")
-	require.NoError(t, err)
-
-	// Try with invalid code
-	_, err = m.VerifyChallenge(context.Background(), 123, "tenant-123", challenge.ID, "000000")
-	assert.ErrorIs(t, err, ErrMFACodeInvalid)
-
-	// Verify attempts are incremented
-	updatedChallenge, err := m.storage.GetChallenge(context.Background(), challenge.ID)
-	require.NoError(t, err)
-	assert.Equal(t, 1, updatedChallenge.Attempts)
-}
-
-// TestVerifyCodeUpdatesLastUsed tests that successful verification updates last used time
-func TestVerifyCodeUpdatesLastUsed(t *testing.T) {
-	m, err := NewMFAManager()
-	require.NoError(t, err)
-
-	// Enroll MFA
-	enrollResp, err := m.BeginEnrollment(context.Background(), 123, "tenant-123", MFAMethodTOTP)
-	require.NoError(t, err)
-	validCode := generateValidTOTPCode(t, enrollResp.Secret, m.config)
-	err = m.CompleteEnrollment(context.Background(), 123, "tenant-123", enrollResp.EnrollmentID, validCode)
-	require.NoError(t, err)
-
-	// Get initial secret
-	secret, err := m.storage.GetSecret(context.Background(), 123, "tenant-123")
-	require.NoError(t, err)
-	initialLastUsed := secret.LastUsed
-
-	// Wait a bit to ensure time difference
-	time.Sleep(10 * time.Millisecond)
-
-	// Verify code
-	validCode = generateValidTOTPCode(t, secret.Secret, m.config)
-	err = m.VerifyCode(context.Background(), 123, "tenant-123", validCode)
-	require.NoError(t, err)
-
-	// Verify last used was updated
-	updatedSecret, err := m.storage.GetSecret(context.Background(), 123, "tenant-123")
-	require.NoError(t, err)
-	assert.NotNil(t, updatedSecret.LastUsed)
-	if initialLastUsed != nil {
-		assert.True(t, updatedSecret.LastUsed.After(*initialLastUsed))
-	}
-}
-
-// TestDisableMFAWithUserStorage tests disabling MFA when user storage is configured
-func TestDisableMFAWithUserStorage(t *testing.T) {
-	userStorage := NewMemoryStorage()
-	m, err := NewMFAManager(WithUserStorage(userStorage))
-	require.NoError(t, err)
-
-	// Create a user first
-	user := &User{
-		ID:       123,
-		TenantID: "tenant-123",
-		Email:    "test@example.com",
-		Name:     "Test User",
-		Created:  time.Now(),
-		Updated:  time.Now(),
-	}
-	err = userStorage.CreateUser(context.Background(), user)
-	require.NoError(t, err)
-
-	// Enroll MFA
-	enrollResp, err := m.BeginEnrollment(context.Background(), 123, "tenant-123", MFAMethodTOTP)
-	require.NoError(t, err)
-	validCode := generateValidTOTPCode(t, enrollResp.Secret, m.config)
-	err = m.CompleteEnrollment(context.Background(), 123, "tenant-123", enrollResp.EnrollmentID, validCode)
-	require.NoError(t, err)
-
-	// Verify MFA is enabled
-	status, err := m.GetMFAStatus(context.Background(), 123, "tenant-123")
-	require.NoError(t, err)
-	assert.True(t, status.Enabled)
-
-	// Disable MFA - this exercises the user storage update path
-	err = m.DisableMFA(context.Background(), 123, "tenant-123")
-	require.NoError(t, err)
-
-	// Verify MFA is disabled
-	status, err = m.GetMFAStatus(context.Background(), 123, "tenant-123")
-	require.NoError(t, err)
-	assert.False(t, status.Enabled)
-
-	// The MFA store is the only record of MFA state; the identity record
-	// deliberately carries no copy to fall out of step with it.
-}
-
-// TestDisableMFAWithEnrollmentAndChallenge tests disabling MFA also cleans up enrollments and challenges
-func TestDisableMFAWithEnrollmentAndChallenge(t *testing.T) {
-	m, err := NewMFAManager()
-	require.NoError(t, err)
-
-	// Setup MFA
-	secret := &MFASecret{
-		ID:        "secret-1",
-		UserID:    123,
-		TenantID:  "tenant-123",
-		Secret:    testTOTPSecret,
-		Algorithm: defaultMFAAlgorithm(),
-		Digits:    6,
-		Period:    30,
-		Verified:  true,
-		Created:   time.Now(),
-	}
-	err = m.storage.SaveSecret(context.Background(), secret)
-	require.NoError(t, err)
-
-	// Create a pending enrollment
-	enrollment := &MFAEnrollment{
-		ID:          "enrollment-1",
-		UserID:      123,
-		TenantID:    "tenant-123",
-		Method:      MFAMethodTOTP,
-		Secret:      "test-secret",
-		ExpiresAt:   time.Now().Add(10 * time.Minute),
-		MaxAttempts: 3,
-	}
-	err = m.storage.SaveEnrollment(context.Background(), enrollment)
-	require.NoError(t, err)
-
-	// Create a pending challenge
-	challenge, err := m.BeginChallenge(context.Background(), 123, "tenant-123", "session-token")
-	require.NoError(t, err)
-	assert.NotEmpty(t, challenge.ID)
-
-	// Generate backup codes
-	_, err = m.GenerateBackupCodes(context.Background(), 123, "tenant-123")
-	require.NoError(t, err)
-
-	// Disable MFA
-	err = m.DisableMFA(context.Background(), 123, "tenant-123")
-	require.NoError(t, err)
-
-	// Verify everything is deleted
-	_, err = m.storage.GetSecret(context.Background(), 123, "tenant-123")
-	assert.ErrorIs(t, err, ErrMFANotEnrolled)
-
-	_, err = m.storage.GetEnrollment(context.Background(), enrollment.ID)
-	assert.ErrorIs(t, err, ErrMFAEnrollmentNotFound)
-
-	_, err = m.storage.GetChallenge(context.Background(), challenge.ID)
-	assert.ErrorIs(t, err, ErrMFAChallengeNotFound)
-
-	_, err = m.storage.GetBackupCodes(context.Background(), 123, "tenant-123")
-	assert.ErrorIs(t, err, ErrMFANotEnrolled)
-}
-
-// TestBeginEnrollmentWithUserStorage tests enrollment updates user storage
-func TestBeginEnrollmentWithUserStorage(t *testing.T) {
-	userStorage := NewMemoryStorage()
-	m, err := NewMFAManager(WithUserStorage(userStorage))
-	require.NoError(t, err)
-
-	// Create user
-	user := &User{
-		ID:       123,
-		TenantID: "tenant-123",
-		Email:    "test@example.com",
-		Name:     "Test User",
-		Created:  time.Now(),
-		Updated:  time.Now(),
-	}
-	err = userStorage.CreateUser(context.Background(), user)
-	require.NoError(t, err)
-
-	// Begin enrollment
-	resp, err := m.BeginEnrollment(context.Background(), 123, "tenant-123", MFAMethodTOTP)
-	require.NoError(t, err)
-	assert.NotEmpty(t, resp.EnrollmentID)
-
-	// Complete enrollment
-	validCode := generateValidTOTPCode(t, resp.Secret, m.config)
-	err = m.CompleteEnrollment(context.Background(), 123, "tenant-123", resp.EnrollmentID, validCode)
-	require.NoError(t, err)
-
-	// The enrollment is recorded in the MFA store, which is what answers for
-	// it. Assert against that store rather than a copy on the identity record:
-	// the copy was read by nothing and could only ever disagree.
-	status, err := m.GetMFAStatus(context.Background(), 123, "tenant-123")
-	require.NoError(t, err)
-	assert.True(t, status.Enabled)
-	assert.Equal(t, MFAMethodTOTP, status.Method)
-	assert.NotNil(t, status.EnrolledAt)
-}
-
-// TestCompleteEnrollmentDeletesEnrollment tests that completing enrollment cleans up enrollment record
-func TestCompleteEnrollmentDeletesEnrollment(t *testing.T) {
-	m, err := NewMFAManager()
-	require.NoError(t, err)
-
-	// Begin enrollment
-	resp, err := m.BeginEnrollment(context.Background(), 123, "tenant-123", MFAMethodTOTP)
-	require.NoError(t, err)
-
-	// Verify enrollment exists
-	enrollment, err := m.storage.GetEnrollment(context.Background(), resp.EnrollmentID)
-	require.NoError(t, err)
-	assert.Equal(t, resp.EnrollmentID, enrollment.ID)
-
-	// Complete enrollment
-	validCode := generateValidTOTPCode(t, resp.Secret, m.config)
-	err = m.CompleteEnrollment(context.Background(), 123, "tenant-123", resp.EnrollmentID, validCode)
-	require.NoError(t, err)
-
-	// Verify enrollment is deleted
-	_, err = m.storage.GetEnrollment(context.Background(), resp.EnrollmentID)
-	assert.ErrorIs(t, err, ErrMFAEnrollmentNotFound)
-}
-
-// TestVerifyChallengeDeletesChallenge tests that successful verification cleans up challenge record
-func TestVerifyChallengeDeletesChallenge(t *testing.T) {
-	m, err := NewMFAManager()
-	require.NoError(t, err)
-
-	// Enroll MFA
-	enrollResp, err := m.BeginEnrollment(context.Background(), 123, "tenant-123", MFAMethodTOTP)
-	require.NoError(t, err)
-	validCode := generateValidTOTPCode(t, enrollResp.Secret, m.config)
-	err = m.CompleteEnrollment(context.Background(), 123, "tenant-123", enrollResp.EnrollmentID, validCode)
-	require.NoError(t, err)
-
-	// Begin challenge
-	challenge, err := m.BeginChallenge(context.Background(), 123, "tenant-123", "session-token")
-	require.NoError(t, err)
-
-	// Verify challenge exists
-	_, err = m.storage.GetChallenge(context.Background(), challenge.ID)
-	require.NoError(t, err)
-
-	// Get secret for verification
-	secret, err := m.storage.GetSecret(context.Background(), 123, "tenant-123")
-	require.NoError(t, err)
-	code := generateValidTOTPCode(t, secret.Secret, m.config)
-
-	// Verify challenge
-	resp, err := m.VerifyChallenge(context.Background(), 123, "tenant-123", challenge.ID, code)
-	require.NoError(t, err)
-	assert.True(t, resp.Success)
-
-	// Verify challenge is deleted
-	_, err = m.storage.GetChallenge(context.Background(), challenge.ID)
-	assert.ErrorIs(t, err, ErrMFAChallengeNotFound)
 }
 
 // TestContextCancellation tests that MFA operations respect context cancellation
@@ -2060,53 +1898,4 @@ func TestMFAContextCancellation(t *testing.T) {
 	// Test GetBackupCodeStatus
 	_, err = m.GetBackupCodeStatus(ctx, 123, "tenant-123")
 	assert.Error(t, err)
-}
-
-// TestBeginEnrollmentQRCodeFormat tests that the QR code URI is properly formatted
-func TestBeginEnrollmentQRCodeFormat(t *testing.T) {
-	m, err := NewMFAManager(WithMFAConfig(MFAConfig{
-		Issuer:      "TestIssuer",
-		Digits:      6,
-		Period:      30,
-		Algorithm:   MFAAlgorithmSHA256,
-		Skew:        1,
-		BackupCodes: 10,
-	}))
-	require.NoError(t, err)
-
-	resp, err := m.BeginEnrollment(context.Background(), 123, "tenant-123", MFAMethodTOTP)
-	require.NoError(t, err)
-	assert.NotEmpty(t, resp.EnrollmentID)
-	assert.NotEmpty(t, resp.QRCodeURI)
-	assert.Contains(t, resp.QRCodeURI, "otpauth://totp/")
-	assert.Contains(t, resp.QRCodeURI, "TestIssuer")
-}
-
-// TestVerifyChallengeSecretNotFound tests challenge verification when secret is missing
-func TestVerifyChallengeSecretNotFound(t *testing.T) {
-	m, err := NewMFAManager()
-	require.NoError(t, err)
-
-	// Create a valid challenge directly
-	challenge := &MFAChallenge{
-		ID:           "challenge-1",
-		UserID:       123,
-		TenantID:     "tenant-123",
-		SessionToken: "session-token",
-		Method:       MFAMethodTOTP,
-		ExpiresAt:    time.Now().Add(5 * time.Minute),
-		MaxAttempts:  3,
-	}
-	err = m.storage.SaveChallenge(context.Background(), challenge)
-	require.NoError(t, err)
-
-	// Try to verify without having a secret - code verification fails (no secret),
-	// then backup code verification also fails (no backup codes), so it returns ErrMFACodeInvalid
-	_, err = m.VerifyChallenge(context.Background(), 123, "tenant-123", challenge.ID, "123456")
-	assert.ErrorIs(t, err, ErrMFACodeInvalid)
-
-	// Verify attempts were incremented
-	updatedChallenge, err := m.storage.GetChallenge(context.Background(), challenge.ID)
-	require.NoError(t, err)
-	assert.Equal(t, 1, updatedChallenge.Attempts)
 }

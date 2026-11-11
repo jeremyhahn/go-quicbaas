@@ -25,6 +25,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/jeremyhahn/go-quicbaas/pkg/api"
 	"github.com/jeremyhahn/go-quicbaas/pkg/credentials"
 	dberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	quicbaasErrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
@@ -296,79 +297,47 @@ func (l *mockDSLogger) WithFields(fields map[string]interface{}) interfaces.Logg
 func (l *mockDSLogger) WithError(err error) interfaces.Logger                      { return l }
 
 func TestNewDynamicSecretsHandler_Success(t *testing.T) {
-	store := newDSStore()
-	leaseMgr := newMockDSLeaseManager()
-	registry := credentials.NewGeneratorRegistry()
-	logger := newMockDSLogger()
-
 	config := &DynamicSecretsConfig{
-		Store: store, LeaseManager: leaseMgr, GeneratorRegistry: registry, Logger: logger,
+		Store: newDSStore(), LeaseManager: newMockDSLeaseManager(), GeneratorRegistry: credentials.NewGeneratorRegistry(), Logger: newMockDSLogger(),
 	}
 
 	svc, err := NewDynamicSecretsHandler(context.Background(), config)
 
 	require.NoError(t, err)
-	assert.NotNil(t, svc)
+	require.NotNil(t, svc)
+	assert.NotNil(t, svc.metrics)
 }
 
-func TestNewDynamicSecretsHandler_NilConfig(t *testing.T) {
-	svc, err := NewDynamicSecretsHandler(context.Background(), nil)
-
-	require.Error(t, err)
-	assert.Nil(t, svc)
-	assert.Contains(t, err.Error(), "config cannot be nil")
-
-	var qbErr *quicbaasErrors.QBError
-	assert.True(t, stderrors.As(err, &qbErr))
-	assert.Equal(t, quicbaasErrors.ErrInvalidInput, qbErr.Code)
-}
-
-func TestNewDynamicSecretsHandler_NilStore(t *testing.T) {
-	config := &DynamicSecretsConfig{
-		Store: nil, LeaseManager: newMockDSLeaseManager(), GeneratorRegistry: credentials.NewGeneratorRegistry(), Logger: newMockDSLogger(),
+func TestNewDynamicSecretsHandler_RejectsMissingDependency(t *testing.T) {
+	valid := func() *DynamicSecretsConfig {
+		return &DynamicSecretsConfig{
+			Store: newDSStore(), LeaseManager: newMockDSLeaseManager(), GeneratorRegistry: credentials.NewGeneratorRegistry(), Logger: newMockDSLogger(),
+		}
 	}
 
-	svc, err := NewDynamicSecretsHandler(context.Background(), config)
-
-	require.Error(t, err)
-	assert.Nil(t, svc)
-	assert.Contains(t, err.Error(), "store cannot be nil")
-}
-
-func TestNewDynamicSecretsHandler_NilLeaseManager(t *testing.T) {
-	config := &DynamicSecretsConfig{
-		Store: newDSStore(), LeaseManager: nil, GeneratorRegistry: credentials.NewGeneratorRegistry(), Logger: newMockDSLogger(),
+	tests := []struct {
+		name    string
+		config  func() *DynamicSecretsConfig
+		wantMsg string
+	}{
+		{"nil config", func() *DynamicSecretsConfig { return nil }, "config cannot be nil"},
+		{"nil store", func() *DynamicSecretsConfig { c := valid(); c.Store = nil; return c }, "store cannot be nil"},
+		{"nil lease manager", func() *DynamicSecretsConfig { c := valid(); c.LeaseManager = nil; return c }, "lease manager cannot be nil"},
+		{"nil registry", func() *DynamicSecretsConfig { c := valid(); c.GeneratorRegistry = nil; return c }, "generator registry cannot be nil"},
+		{"nil logger", func() *DynamicSecretsConfig { c := valid(); c.Logger = nil; return c }, "logger cannot be nil"},
 	}
 
-	svc, err := NewDynamicSecretsHandler(context.Background(), config)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			svc, err := NewDynamicSecretsHandler(context.Background(), tt.config())
 
-	require.Error(t, err)
-	assert.Nil(t, svc)
-	assert.Contains(t, err.Error(), "lease manager cannot be nil")
-}
-
-func TestNewDynamicSecretsHandler_NilRegistry(t *testing.T) {
-	config := &DynamicSecretsConfig{
-		Store: newDSStore(), LeaseManager: newMockDSLeaseManager(), GeneratorRegistry: nil, Logger: newMockDSLogger(),
+			assert.Nil(t, svc)
+			var qbErr *quicbaasErrors.QBError
+			require.ErrorAs(t, err, &qbErr)
+			assert.Equal(t, quicbaasErrors.ErrInvalidInput, qbErr.Code)
+			assert.Contains(t, err.Error(), tt.wantMsg)
+		})
 	}
-
-	svc, err := NewDynamicSecretsHandler(context.Background(), config)
-
-	require.Error(t, err)
-	assert.Nil(t, svc)
-	assert.Contains(t, err.Error(), "generator registry cannot be nil")
-}
-
-func TestNewDynamicSecretsHandler_NilLogger(t *testing.T) {
-	config := &DynamicSecretsConfig{
-		Store: newDSStore(), LeaseManager: newMockDSLeaseManager(), GeneratorRegistry: credentials.NewGeneratorRegistry(), Logger: nil,
-	}
-
-	svc, err := NewDynamicSecretsHandler(context.Background(), config)
-
-	require.Error(t, err)
-	assert.Nil(t, svc)
-	assert.Contains(t, err.Error(), "logger cannot be nil")
 }
 
 func TestDynamicSecretsService_CreateRole_Success(t *testing.T) {
@@ -397,46 +366,181 @@ func TestDynamicSecretsService_CreateRole_Success(t *testing.T) {
 	assert.Equal(t, "db-readonly", resp.Role.Name)
 }
 
-func TestDynamicSecretsService_CreateRole_NilRequest(t *testing.T) {
-	svc, _ := NewDynamicSecretsHandler(context.Background(), &DynamicSecretsConfig{
-		Store: newDSStore(), LeaseManager: newMockDSLeaseManager(), GeneratorRegistry: credentials.NewGeneratorRegistry(), Logger: newMockDSLogger(),
-	})
+// TestDynamicSecretsService_RejectsBadInput checks every method's guard: a
+// nil or empty request is invalid input, and a canceled context is a timeout
+// reported before any work is done.
+func TestDynamicSecretsService_RejectsBadInput(t *testing.T) {
+	canceled, cancel := context.WithCancel(context.Background())
+	cancel()
+	live := context.Background()
 
-	resp, err := svc.CreateRole(context.Background(), nil)
+	tests := []struct {
+		name     string
+		ctx      context.Context
+		call     func(ctx context.Context, svc *dynamicSecretsHandler) error
+		wantCode quicbaasErrors.ErrorCode
+	}{
+		{"CreateRole nil request", live, func(ctx context.Context, svc *dynamicSecretsHandler) error {
+			_, err := svc.CreateRole(ctx, nil)
+			return err
+		}, quicbaasErrors.ErrInvalidInput},
+		{"CreateRole empty name", live, func(ctx context.Context, svc *dynamicSecretsHandler) error {
+			_, err := svc.CreateRole(ctx, &CreateRoleRequest{GeneratorType: "mock", DefaultTTL: time.Hour, MaxTTL: 2 * time.Hour})
+			return err
+		}, quicbaasErrors.ErrInvalidInput},
+		{"CreateRole canceled", canceled, func(ctx context.Context, svc *dynamicSecretsHandler) error {
+			_, err := svc.CreateRole(ctx, &CreateRoleRequest{Name: "r", GeneratorType: "mock", DefaultTTL: time.Hour, MaxTTL: 2 * time.Hour})
+			return err
+		}, quicbaasErrors.ErrTimeout},
+		{"GetRole nil request", live, func(ctx context.Context, svc *dynamicSecretsHandler) error {
+			_, err := svc.GetRole(ctx, nil)
+			return err
+		}, quicbaasErrors.ErrInvalidInput},
+		{"GetRole empty name", live, func(ctx context.Context, svc *dynamicSecretsHandler) error {
+			_, err := svc.GetRole(ctx, &GetRoleRequest{})
+			return err
+		}, quicbaasErrors.ErrInvalidInput},
+		{"GetRole canceled", canceled, func(ctx context.Context, svc *dynamicSecretsHandler) error {
+			_, err := svc.GetRole(ctx, &GetRoleRequest{Name: "r"})
+			return err
+		}, quicbaasErrors.ErrTimeout},
+		{"ListRoles canceled", canceled, func(ctx context.Context, svc *dynamicSecretsHandler) error {
+			_, err := svc.ListRoles(ctx, &ListRolesRequest{})
+			return err
+		}, quicbaasErrors.ErrTimeout},
+		{"DeleteRole nil request", live, func(ctx context.Context, svc *dynamicSecretsHandler) error {
+			_, err := svc.DeleteRole(ctx, nil)
+			return err
+		}, quicbaasErrors.ErrInvalidInput},
+		{"DeleteRole empty name", live, func(ctx context.Context, svc *dynamicSecretsHandler) error {
+			_, err := svc.DeleteRole(ctx, &DeleteRoleRequest{})
+			return err
+		}, quicbaasErrors.ErrInvalidInput},
+		{"DeleteRole canceled", canceled, func(ctx context.Context, svc *dynamicSecretsHandler) error {
+			_, err := svc.DeleteRole(ctx, &DeleteRoleRequest{Name: "r"})
+			return err
+		}, quicbaasErrors.ErrTimeout},
+		{"GenerateCredential nil request", live, func(ctx context.Context, svc *dynamicSecretsHandler) error {
+			_, err := svc.GenerateCredential(ctx, nil)
+			return err
+		}, quicbaasErrors.ErrInvalidInput},
+		{"GenerateCredential empty role name", live, func(ctx context.Context, svc *dynamicSecretsHandler) error {
+			_, err := svc.GenerateCredential(ctx, &GenerateCredentialRequest{})
+			return err
+		}, quicbaasErrors.ErrInvalidInput},
+		{"GenerateCredential canceled", canceled, func(ctx context.Context, svc *dynamicSecretsHandler) error {
+			_, err := svc.GenerateCredential(ctx, &GenerateCredentialRequest{RoleName: "r"})
+			return err
+		}, quicbaasErrors.ErrTimeout},
+		{"RenewLease nil request", live, func(ctx context.Context, svc *dynamicSecretsHandler) error {
+			_, err := svc.RenewLease(ctx, nil)
+			return err
+		}, quicbaasErrors.ErrInvalidInput},
+		{"RenewLease empty lease ID", live, func(ctx context.Context, svc *dynamicSecretsHandler) error {
+			_, err := svc.RenewLease(ctx, &RenewLeaseRequest{})
+			return err
+		}, quicbaasErrors.ErrInvalidInput},
+		{"RenewLease canceled", canceled, func(ctx context.Context, svc *dynamicSecretsHandler) error {
+			_, err := svc.RenewLease(ctx, &RenewLeaseRequest{LeaseID: "l", Increment: time.Hour})
+			return err
+		}, quicbaasErrors.ErrTimeout},
+		{"RevokeLease nil request", live, func(ctx context.Context, svc *dynamicSecretsHandler) error {
+			_, err := svc.RevokeLease(ctx, nil)
+			return err
+		}, quicbaasErrors.ErrInvalidInput},
+		{"RevokeLease empty lease ID", live, func(ctx context.Context, svc *dynamicSecretsHandler) error {
+			_, err := svc.RevokeLease(ctx, &RevokeLeaseRequest{})
+			return err
+		}, quicbaasErrors.ErrInvalidInput},
+		{"RevokeLease canceled", canceled, func(ctx context.Context, svc *dynamicSecretsHandler) error {
+			_, err := svc.RevokeLease(ctx, &RevokeLeaseRequest{LeaseID: "l"})
+			return err
+		}, quicbaasErrors.ErrTimeout},
+		{"ListLeases canceled", canceled, func(ctx context.Context, svc *dynamicSecretsHandler) error {
+			_, err := svc.ListLeases(ctx, &ListLeasesRequest{})
+			return err
+		}, quicbaasErrors.ErrTimeout},
+	}
 
-	require.Error(t, err)
-	assert.Nil(t, resp)
-	assert.Contains(t, err.Error(), "request cannot be nil")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			svc, err := NewDynamicSecretsHandler(context.Background(), &DynamicSecretsConfig{
+				Store: newDSStore(), LeaseManager: newMockDSLeaseManager(), GeneratorRegistry: credentials.NewGeneratorRegistry(), Logger: newMockDSLogger(),
+			})
+			require.NoError(t, err)
+
+			err = tt.call(tt.ctx, svc)
+
+			var qbErr *quicbaasErrors.QBError
+			require.ErrorAs(t, err, &qbErr)
+			assert.Equal(t, tt.wantCode, qbErr.Code)
+		})
+	}
 }
 
-func TestDynamicSecretsService_CreateRole_EmptyName(t *testing.T) {
-	svc, _ := NewDynamicSecretsHandler(context.Background(), &DynamicSecretsConfig{
-		Store: newDSStore(), LeaseManager: newMockDSLeaseManager(), GeneratorRegistry: credentials.NewGeneratorRegistry(), Logger: newMockDSLogger(),
-	})
+// TestDynamicSecretsService_CreateRole_RejectsInvalidRole checks each CreateRole
+// validation in the order the service applies them.
+func TestDynamicSecretsService_CreateRole_RejectsInvalidRole(t *testing.T) {
+	isType := func(target any) func(error) bool {
+		return func(err error) bool { return stderrors.As(err, target) }
+	}
 
-	req := &CreateRoleRequest{Name: "", GeneratorType: "postgres", DefaultTTL: 1 * time.Hour, MaxTTL: 24 * time.Hour}
-	resp, err := svc.CreateRole(context.Background(), req)
+	tests := []struct {
+		name     string
+		req      *CreateRoleRequest
+		wantCode quicbaasErrors.ErrorCode
+		wantErr  func(error) bool
+	}{
+		{
+			name:     "empty generator type",
+			req:      &CreateRoleRequest{Name: "r", DefaultTTL: time.Hour, MaxTTL: 2 * time.Hour},
+			wantCode: quicbaasErrors.ErrInvalidInput,
+			wantErr:  func(err error) bool { return strings.Contains(err.Error(), "generator type cannot be empty") },
+		},
+		{
+			name:     "default TTL below minimum",
+			req:      &CreateRoleRequest{Name: "r", GeneratorType: "postgres", DefaultTTL: 30 * time.Second, MaxTTL: 24 * time.Hour},
+			wantCode: quicbaasErrors.ErrInvalidInput,
+			wantErr:  isType(new(*api.MinDurationValueError)),
+		},
+		{
+			name:     "max TTL above limit",
+			req:      &CreateRoleRequest{Name: "r", GeneratorType: "postgres", DefaultTTL: time.Hour, MaxTTL: MaxRoleTTL + time.Hour},
+			wantCode: quicbaasErrors.ErrInvalidInput,
+			wantErr:  isType(new(*api.MaxDurationValueError)),
+		},
+		{
+			name:     "default TTL above max TTL",
+			req:      &CreateRoleRequest{Name: "r", GeneratorType: "postgres", DefaultTTL: 3 * time.Hour, MaxTTL: 2 * time.Hour},
+			wantCode: quicbaasErrors.ErrInvalidInput,
+			wantErr:  isType(new(*api.DefaultTTLExceedsMaxError)),
+		},
+		{
+			name:     "unregistered generator",
+			req:      &CreateRoleRequest{Name: "r", GeneratorType: "nonexistent", DefaultTTL: time.Hour, MaxTTL: 2 * time.Hour},
+			wantCode: quicbaasErrors.ErrNotFound,
+			wantErr:  isType(new(*api.GeneratorNotFoundError)),
+		},
+	}
 
-	require.Error(t, err)
-	assert.Nil(t, resp)
-	assert.Contains(t, err.Error(), "role name cannot be empty")
-}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			registry := credentials.NewGeneratorRegistry()
+			require.NoError(t, registry.Register(newMockDSGenerator("postgres")))
+			svc, err := NewDynamicSecretsHandler(context.Background(), &DynamicSecretsConfig{
+				Store: newDSStore(), LeaseManager: newMockDSLeaseManager(), GeneratorRegistry: registry, Logger: newMockDSLogger(),
+			})
+			require.NoError(t, err)
 
-func TestDynamicSecretsService_CreateRole_InvalidTTL_TooShort(t *testing.T) {
-	registry := credentials.NewGeneratorRegistry()
-	gen := newMockDSGenerator("postgres")
-	require.NoError(t, registry.Register(gen))
+			resp, err := svc.CreateRole(context.Background(), tt.req)
 
-	svc, _ := NewDynamicSecretsHandler(context.Background(), &DynamicSecretsConfig{
-		Store: newDSStore(), LeaseManager: newMockDSLeaseManager(), GeneratorRegistry: registry, Logger: newMockDSLogger(),
-	})
-
-	req := &CreateRoleRequest{Name: "db-role", GeneratorType: "postgres", Config: map[string]string{}, DefaultTTL: 30 * time.Second, MaxTTL: 24 * time.Hour}
-	resp, err := svc.CreateRole(context.Background(), req)
-
-	require.Error(t, err)
-	assert.Nil(t, resp)
-	assert.Contains(t, err.Error(), "default TTL must be at least")
+			assert.Nil(t, resp)
+			var qbErr *quicbaasErrors.QBError
+			require.ErrorAs(t, err, &qbErr)
+			assert.Equal(t, tt.wantCode, qbErr.Code)
+			assert.True(t, tt.wantErr(err), "unexpected error: %v", err)
+		})
+	}
 }
 
 func TestDynamicSecretsService_CreateRole_DuplicateRole(t *testing.T) {
@@ -489,26 +593,6 @@ func TestDynamicSecretsService_GetRole_NotFound(t *testing.T) {
 	require.Error(t, err)
 	assert.Nil(t, resp)
 	assert.Contains(t, err.Error(), "role not found")
-}
-
-func TestDynamicSecretsService_ListRoles_Success(t *testing.T) {
-	registry := credentials.NewGeneratorRegistry()
-	gen := newMockDSGenerator("postgres")
-	require.NoError(t, registry.Register(gen))
-
-	svc, _ := NewDynamicSecretsHandler(context.Background(), &DynamicSecretsConfig{
-		Store: newDSStore(), LeaseManager: newMockDSLeaseManager(), GeneratorRegistry: registry, Logger: newMockDSLogger(),
-	})
-
-	for _, name := range []string{"db-readonly", "db-admin"} {
-		_, err := svc.CreateRole(context.Background(), &CreateRoleRequest{Name: name, GeneratorType: "postgres", Config: map[string]string{}, DefaultTTL: 1 * time.Hour, MaxTTL: 24 * time.Hour})
-		require.NoError(t, err)
-	}
-
-	resp, err := svc.ListRoles(context.Background(), &ListRolesRequest{})
-
-	require.NoError(t, err)
-	assert.Equal(t, 2, resp.Count)
 }
 
 func TestDynamicSecretsService_DeleteRole_Success(t *testing.T) {
@@ -687,154 +771,9 @@ func TestDynamicSecretsService_GenerateCredential_StoreCredentialError(t *testin
 		RoleName: "cred-fail-role",
 		TTL:      30 * time.Minute,
 	})
-	if err != nil {
-		assert.Nil(t, resp)
-	}
-}
-
-func TestDynamicSecretsService_GenerateCredential_DefaultTTL(t *testing.T) {
-	registry := credentials.NewGeneratorRegistry()
-	gen := newMockDSGenerator("postgres")
-	require.NoError(t, registry.Register(gen))
-
-	svc, err := NewDynamicSecretsHandler(context.Background(), &DynamicSecretsConfig{
-		Store:             newDSStore(),
-		LeaseManager:      newMockDSLeaseManager(),
-		GeneratorRegistry: registry,
-		Logger:            newMockDSLogger(),
-	})
-	require.NoError(t, err)
-
-	_, err = svc.CreateRole(context.Background(), &CreateRoleRequest{
-		Name:          "default-ttl-role",
-		GeneratorType: "postgres",
-		Config:        map[string]string{},
-		DefaultTTL:    2 * time.Hour,
-		MaxTTL:        24 * time.Hour,
-	})
-	require.NoError(t, err)
-
-	resp, err := svc.GenerateCredential(context.Background(), &GenerateCredentialRequest{
-		RoleName: "default-ttl-role",
-		TTL:      0,
-	})
-	require.NoError(t, err)
-	require.NotNil(t, resp)
-	assert.NotEmpty(t, resp.LeaseID)
-}
-
-func TestDynamicSecretsService_CreateRole_ContextCanceled(t *testing.T) {
-	store := newDSStore()
-	leaseManager := newMockDSLeaseManager()
-	generatorReg := credentials.NewGeneratorRegistry()
-	generatorReg.Register(newMockDSGenerator("mock"))
-	logger := newMockDSLogger()
-
-	svc, err := NewDynamicSecretsHandler(context.Background(), &DynamicSecretsConfig{
-		Store:             store,
-		LeaseManager:      leaseManager,
-		GeneratorRegistry: generatorReg,
-		Logger:            logger,
-	})
-	require.NoError(t, err)
-
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-
-	req := &CreateRoleRequest{
-		Name:          "test-role",
-		GeneratorType: "mock",
-		DefaultTTL:    time.Hour,
-		MaxTTL:        2 * time.Hour,
-	}
-
-	_, err = svc.CreateRole(ctx, req)
-	assert.Error(t, err)
-	qbErr, ok := err.(*quicbaasErrors.QBError)
-	require.True(t, ok)
-	assert.Equal(t, quicbaasErrors.ErrTimeout, qbErr.Code)
-}
-
-func TestDynamicSecretsService_GetRole_ContextCanceled(t *testing.T) {
-	store := newDSStore()
-	leaseManager := newMockDSLeaseManager()
-	generatorReg := credentials.NewGeneratorRegistry()
-	generatorReg.Register(newMockDSGenerator("mock"))
-	logger := newMockDSLogger()
-
-	svc, err := NewDynamicSecretsHandler(context.Background(), &DynamicSecretsConfig{
-		Store:             store,
-		LeaseManager:      leaseManager,
-		GeneratorRegistry: generatorReg,
-		Logger:            logger,
-	})
-	require.NoError(t, err)
-
-	// Create a role first
-	_, err = svc.CreateRole(context.Background(), &CreateRoleRequest{
-		Name:          "test-role",
-		GeneratorType: "mock",
-		DefaultTTL:    time.Hour,
-		MaxTTL:        2 * time.Hour,
-	})
-	require.NoError(t, err)
-
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-
-	_, err = svc.GetRole(ctx, &GetRoleRequest{Name: "test-role"})
-	assert.Error(t, err)
-	qbErr, ok := err.(*quicbaasErrors.QBError)
-	require.True(t, ok)
-	assert.Equal(t, quicbaasErrors.ErrTimeout, qbErr.Code)
-}
-
-func TestDynamicSecretsService_ListRoles_ContextCanceled(t *testing.T) {
-	store := newDSStore()
-	leaseManager := newMockDSLeaseManager()
-	generatorReg := credentials.NewGeneratorRegistry()
-	logger := newMockDSLogger()
-
-	svc, err := NewDynamicSecretsHandler(context.Background(), &DynamicSecretsConfig{
-		Store:             store,
-		LeaseManager:      leaseManager,
-		GeneratorRegistry: generatorReg,
-		Logger:            logger,
-	})
-	require.NoError(t, err)
-
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-
-	_, err = svc.ListRoles(ctx, &ListRolesRequest{})
-	assert.Error(t, err)
-	qbErr, ok := err.(*quicbaasErrors.QBError)
-	require.True(t, ok)
-	assert.Equal(t, quicbaasErrors.ErrTimeout, qbErr.Code)
-}
-
-func TestDynamicSecretsService_DeleteRole_ContextCanceled(t *testing.T) {
-	store := newDSStore()
-	leaseManager := newMockDSLeaseManager()
-	generatorReg := credentials.NewGeneratorRegistry()
-	logger := newMockDSLogger()
-
-	svc, err := NewDynamicSecretsHandler(context.Background(), &DynamicSecretsConfig{
-		Store:             store,
-		LeaseManager:      leaseManager,
-		GeneratorRegistry: generatorReg,
-		Logger:            logger,
-	})
-	require.NoError(t, err)
-
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-
-	_, err = svc.DeleteRole(ctx, &DeleteRoleRequest{Name: "test-role"})
-	assert.Error(t, err)
-	qbErr, ok := err.(*quicbaasErrors.QBError)
-	require.True(t, ok)
-	assert.Equal(t, quicbaasErrors.ErrTimeout, qbErr.Code)
+	require.Error(t, err)
+	assert.Nil(t, resp)
+	assert.Contains(t, err.Error(), "store credential failed")
 }
 
 func TestDynamicSecretsService_GenerateCredential_TTLExceedsMax(t *testing.T) {
@@ -862,11 +801,13 @@ func TestDynamicSecretsService_GenerateCredential_TTLExceedsMax(t *testing.T) {
 	require.NoError(t, err)
 
 	// Try to generate with TTL exceeding max
-	_, err = svc.GenerateCredential(context.Background(), &GenerateCredentialRequest{
+	resp, err := svc.GenerateCredential(context.Background(), &GenerateCredentialRequest{
 		RoleName: "test-role",
 		TTL:      3 * time.Hour,
 	})
-	assert.Error(t, err)
+	assert.Nil(t, resp)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "exceeds max TTL")
 	qbErr, ok := err.(*quicbaasErrors.QBError)
 	require.True(t, ok)
 	assert.Equal(t, quicbaasErrors.ErrInvalidInput, qbErr.Code)
@@ -998,30 +939,6 @@ func TestDynamicSecretsService_RevokeLease_Failure(t *testing.T) {
 	assert.Error(t, err)
 }
 
-func TestDynamicSecretsService_ListLeases_ContextCanceled(t *testing.T) {
-	store := newDSStore()
-	leaseManager := newMockDSLeaseManager()
-	generatorReg := credentials.NewGeneratorRegistry()
-	logger := newMockDSLogger()
-
-	svc, err := NewDynamicSecretsHandler(context.Background(), &DynamicSecretsConfig{
-		Store:             store,
-		LeaseManager:      leaseManager,
-		GeneratorRegistry: generatorReg,
-		Logger:            logger,
-	})
-	require.NoError(t, err)
-
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-
-	_, err = svc.ListLeases(ctx, &ListLeasesRequest{})
-	assert.Error(t, err)
-	qbErr, ok := err.(*quicbaasErrors.QBError)
-	require.True(t, ok)
-	assert.Equal(t, quicbaasErrors.ErrTimeout, qbErr.Code)
-}
-
 func TestDynamicSecretsService_ListLeases_Failure(t *testing.T) {
 	store := newDSStore()
 	leaseManager := newMockDSLeaseManager()
@@ -1055,6 +972,8 @@ func TestDynamicSecretsService_LoadRoles_WithData(t *testing.T) {
 	roleJSON := `{"name":"preloaded","generator_type":"mock","default_ttl":3600000000000,"max_ttl":7200000000000}`
 	err := store.Put(context.Background(), RolePrefix+"preloaded", []byte(roleJSON))
 	require.NoError(t, err)
+	// An undecodable role is skipped without stopping the others loading.
+	require.NoError(t, store.Put(context.Background(), RolePrefix+"invalid", []byte("not json")))
 
 	svc, err := NewDynamicSecretsHandler(context.Background(), &DynamicSecretsConfig{
 		Store:             store,
@@ -1067,309 +986,10 @@ func TestDynamicSecretsService_LoadRoles_WithData(t *testing.T) {
 	// Verify role was loaded
 	svc.mu.RLock()
 	_, exists := svc.credentialRoles["preloaded"]
+	_, invalidLoaded := svc.credentialRoles["invalid"]
 	svc.mu.RUnlock()
 	assert.True(t, exists)
-}
-
-func TestDynamicSecretsService_LoadRoles_SkipInvalidJSON(t *testing.T) {
-	store := newDSStore()
-	leaseManager := newMockDSLeaseManager()
-	generatorReg := credentials.NewGeneratorRegistry()
-	logger := newMockDSLogger()
-
-	// Pre-populate with invalid JSON
-	err := store.Put(context.Background(), RolePrefix+"invalid", []byte("not json"))
-	require.NoError(t, err)
-
-	svc, err := NewDynamicSecretsHandler(context.Background(), &DynamicSecretsConfig{
-		Store:             store,
-		LeaseManager:      leaseManager,
-		GeneratorRegistry: generatorReg,
-		Logger:            logger,
-	})
-	require.NoError(t, err)
-
-	// Verify invalid role was not loaded
-	svc.mu.RLock()
-	_, exists := svc.credentialRoles["invalid"]
-	svc.mu.RUnlock()
-	assert.False(t, exists)
-}
-
-func TestDynamicSecretsService_CreateRole_GeneratorNotFound(t *testing.T) {
-	store := newDSStore()
-	leaseManager := newMockDSLeaseManager()
-	generatorReg := credentials.NewGeneratorRegistry()
-	logger := newMockDSLogger()
-
-	svc, err := NewDynamicSecretsHandler(context.Background(), &DynamicSecretsConfig{
-		Store:             store,
-		LeaseManager:      leaseManager,
-		GeneratorRegistry: generatorReg,
-		Logger:            logger,
-	})
-	require.NoError(t, err)
-
-	_, err = svc.CreateRole(context.Background(), &CreateRoleRequest{
-		Name:          "test-role",
-		GeneratorType: "nonexistent",
-		DefaultTTL:    time.Hour,
-		MaxTTL:        2 * time.Hour,
-	})
-	assert.Error(t, err)
-	qbErr, ok := err.(*quicbaasErrors.QBError)
-	require.True(t, ok)
-	assert.Equal(t, quicbaasErrors.ErrNotFound, qbErr.Code)
-}
-
-// TestNewDynamicSecretsHandler_InitMetricsSuccess tests metrics initialization during service creation.
-func TestNewDynamicSecretsHandler_InitMetricsSuccess(t *testing.T) {
-	store := newDSStore()
-	leaseManager := newMockDSLeaseManager()
-	generatorReg := credentials.NewGeneratorRegistry()
-	logger := newMockDSLogger()
-
-	svc, err := NewDynamicSecretsHandler(context.Background(), &DynamicSecretsConfig{
-		Store:             store,
-		LeaseManager:      leaseManager,
-		GeneratorRegistry: generatorReg,
-		Logger:            logger,
-	})
-
-	require.NoError(t, err)
-	require.NotNil(t, svc)
-
-	// Metrics should be initialized
-	assert.NotNil(t, svc.metrics)
-}
-
-// TestDynamicSecretsService_CreateRole_EmptyGeneratorType tests validation.
-func TestDynamicSecretsService_CreateRole_EmptyGeneratorType(t *testing.T) {
-	store := newDSStore()
-	leaseManager := newMockDSLeaseManager()
-	generatorReg := credentials.NewGeneratorRegistry()
-	logger := newMockDSLogger()
-
-	svc, err := NewDynamicSecretsHandler(context.Background(), &DynamicSecretsConfig{
-		Store:             store,
-		LeaseManager:      leaseManager,
-		GeneratorRegistry: generatorReg,
-		Logger:            logger,
-	})
-	require.NoError(t, err)
-
-	_, err = svc.CreateRole(context.Background(), &CreateRoleRequest{
-		Name:          "test-role",
-		GeneratorType: "", // Empty generator type
-		DefaultTTL:    time.Hour,
-		MaxTTL:        2 * time.Hour,
-	})
-
-	assert.Error(t, err)
-	qbErr, ok := err.(*quicbaasErrors.QBError)
-	require.True(t, ok)
-	assert.Equal(t, quicbaasErrors.ErrInvalidInput, qbErr.Code)
-}
-
-// TestDynamicSecretsService_CreateRole_TTLBoundaries tests TTL validation boundaries.
-func TestDynamicSecretsService_CreateRole_TTLBoundaries(t *testing.T) {
-	store := newDSStore()
-	leaseManager := newMockDSLeaseManager()
-	generatorReg := credentials.NewGeneratorRegistry()
-	generatorReg.Register(newMockDSGenerator("mock"))
-	logger := newMockDSLogger()
-
-	svc, err := NewDynamicSecretsHandler(context.Background(), &DynamicSecretsConfig{
-		Store:             store,
-		LeaseManager:      leaseManager,
-		GeneratorRegistry: generatorReg,
-		Logger:            logger,
-	})
-	require.NoError(t, err)
-
-	// Test MaxTTL exceeds limit
-	_, err = svc.CreateRole(context.Background(), &CreateRoleRequest{
-		Name:          "test-role",
-		GeneratorType: "mock",
-		DefaultTTL:    time.Hour,
-		MaxTTL:        MaxRoleTTL + time.Hour, // Exceeds max
-	})
-	assert.Error(t, err)
-
-	// Test DefaultTTL > MaxTTL
-	_, err = svc.CreateRole(context.Background(), &CreateRoleRequest{
-		Name:          "test-role2",
-		GeneratorType: "mock",
-		DefaultTTL:    3 * time.Hour,
-		MaxTTL:        2 * time.Hour, // Default exceeds max
-	})
-	assert.Error(t, err)
-}
-
-// TestDynamicSecretsService_GetRole_NilRequest tests nil request handling.
-func TestDynamicSecretsService_GetRole_NilRequest(t *testing.T) {
-	store := newDSStore()
-	leaseManager := newMockDSLeaseManager()
-	generatorReg := credentials.NewGeneratorRegistry()
-	logger := newMockDSLogger()
-
-	svc, err := NewDynamicSecretsHandler(context.Background(), &DynamicSecretsConfig{
-		Store:             store,
-		LeaseManager:      leaseManager,
-		GeneratorRegistry: generatorReg,
-		Logger:            logger,
-	})
-	require.NoError(t, err)
-
-	_, err = svc.GetRole(context.Background(), nil)
-	assert.Error(t, err)
-}
-
-// TestDynamicSecretsService_DeleteRole_NilRequest tests nil request handling.
-func TestDynamicSecretsService_DeleteRole_NilRequest(t *testing.T) {
-	store := newDSStore()
-	leaseManager := newMockDSLeaseManager()
-	generatorReg := credentials.NewGeneratorRegistry()
-	logger := newMockDSLogger()
-
-	svc, err := NewDynamicSecretsHandler(context.Background(), &DynamicSecretsConfig{
-		Store:             store,
-		LeaseManager:      leaseManager,
-		GeneratorRegistry: generatorReg,
-		Logger:            logger,
-	})
-	require.NoError(t, err)
-
-	_, err = svc.DeleteRole(context.Background(), nil)
-	assert.Error(t, err)
-}
-
-// TestDynamicSecretsService_RenewLease_ContextCanceled tests context handling.
-func TestDynamicSecretsService_RenewLease_ContextCanceled(t *testing.T) {
-	store := newDSStore()
-	leaseManager := newMockDSLeaseManager()
-	generatorReg := credentials.NewGeneratorRegistry()
-	logger := newMockDSLogger()
-
-	svc, err := NewDynamicSecretsHandler(context.Background(), &DynamicSecretsConfig{
-		Store:             store,
-		LeaseManager:      leaseManager,
-		GeneratorRegistry: generatorReg,
-		Logger:            logger,
-	})
-	require.NoError(t, err)
-
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-
-	_, err = svc.RenewLease(ctx, &RenewLeaseRequest{
-		LeaseID:   "test-lease",
-		Increment: time.Hour,
-	})
-	assert.Error(t, err)
-}
-
-// TestDynamicSecretsService_RevokeLease_ContextCanceled tests context handling.
-func TestDynamicSecretsService_RevokeLease_ContextCanceled(t *testing.T) {
-	store := newDSStore()
-	leaseManager := newMockDSLeaseManager()
-	generatorReg := credentials.NewGeneratorRegistry()
-	logger := newMockDSLogger()
-
-	svc, err := NewDynamicSecretsHandler(context.Background(), &DynamicSecretsConfig{
-		Store:             store,
-		LeaseManager:      leaseManager,
-		GeneratorRegistry: generatorReg,
-		Logger:            logger,
-	})
-	require.NoError(t, err)
-
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-
-	_, err = svc.RevokeLease(ctx, &RevokeLeaseRequest{LeaseID: "test-lease"})
-	assert.Error(t, err)
-}
-
-// TestDynamicSecretsService_GenerateCredential_NilRequest tests nil request.
-func TestDynamicSecretsService_GenerateCredential_NilRequest(t *testing.T) {
-	store := newDSStore()
-	leaseManager := newMockDSLeaseManager()
-	generatorReg := credentials.NewGeneratorRegistry()
-	logger := newMockDSLogger()
-
-	svc, err := NewDynamicSecretsHandler(context.Background(), &DynamicSecretsConfig{
-		Store:             store,
-		LeaseManager:      leaseManager,
-		GeneratorRegistry: generatorReg,
-		Logger:            logger,
-	})
-	require.NoError(t, err)
-
-	_, err = svc.GenerateCredential(context.Background(), nil)
-	assert.Error(t, err)
-}
-
-// TestDynamicSecretsService_GenerateCredential_ContextCanceled tests context.
-func TestDynamicSecretsService_GenerateCredential_ContextCanceled(t *testing.T) {
-	store := newDSStore()
-	leaseManager := newMockDSLeaseManager()
-	generatorReg := credentials.NewGeneratorRegistry()
-	logger := newMockDSLogger()
-
-	svc, err := NewDynamicSecretsHandler(context.Background(), &DynamicSecretsConfig{
-		Store:             store,
-		LeaseManager:      leaseManager,
-		GeneratorRegistry: generatorReg,
-		Logger:            logger,
-	})
-	require.NoError(t, err)
-
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-
-	_, err = svc.GenerateCredential(ctx, &GenerateCredentialRequest{
-		RoleName: "test-role",
-	})
-	assert.Error(t, err)
-}
-
-// TestDynamicSecretsService_RenewLease_NilRequest tests nil request.
-func TestDynamicSecretsService_RenewLease_NilRequest(t *testing.T) {
-	store := newDSStore()
-	leaseManager := newMockDSLeaseManager()
-	generatorReg := credentials.NewGeneratorRegistry()
-	logger := newMockDSLogger()
-
-	svc, err := NewDynamicSecretsHandler(context.Background(), &DynamicSecretsConfig{
-		Store:             store,
-		LeaseManager:      leaseManager,
-		GeneratorRegistry: generatorReg,
-		Logger:            logger,
-	})
-	require.NoError(t, err)
-
-	_, err = svc.RenewLease(context.Background(), nil)
-	assert.Error(t, err)
-}
-
-// TestDynamicSecretsService_RevokeLease_NilRequest tests nil request.
-func TestDynamicSecretsService_RevokeLease_NilRequest(t *testing.T) {
-	store := newDSStore()
-	leaseManager := newMockDSLeaseManager()
-	generatorReg := credentials.NewGeneratorRegistry()
-	logger := newMockDSLogger()
-
-	svc, err := NewDynamicSecretsHandler(context.Background(), &DynamicSecretsConfig{
-		Store:             store,
-		LeaseManager:      leaseManager,
-		GeneratorRegistry: generatorReg,
-		Logger:            logger,
-	})
-	require.NoError(t, err)
-
-	_, err = svc.RevokeLease(context.Background(), nil)
-	assert.Error(t, err)
+	assert.False(t, invalidLoaded)
 }
 
 // TestDynamicSecretsService_DeleteRole_NotFound tests deleting non-existent role.
@@ -1396,82 +1016,6 @@ func TestDynamicSecretsService_DeleteRole_NotFound(t *testing.T) {
 	assert.Equal(t, quicbaasErrors.ErrNotFound, qbErr.Code)
 }
 
-// TestDynamicSecretsService_GetRole_EmptyName tests empty role name.
-func TestDynamicSecretsService_GetRole_EmptyName(t *testing.T) {
-	store := newDSStore()
-	leaseManager := newMockDSLeaseManager()
-	generatorReg := credentials.NewGeneratorRegistry()
-	logger := newMockDSLogger()
-
-	svc, err := NewDynamicSecretsHandler(context.Background(), &DynamicSecretsConfig{
-		Store:             store,
-		LeaseManager:      leaseManager,
-		GeneratorRegistry: generatorReg,
-		Logger:            logger,
-	})
-	require.NoError(t, err)
-
-	_, err = svc.GetRole(context.Background(), &GetRoleRequest{Name: ""})
-	assert.Error(t, err)
-}
-
-// TestDynamicSecretsService_DeleteRole_EmptyName tests empty role name.
-func TestDynamicSecretsService_DeleteRole_EmptyName(t *testing.T) {
-	store := newDSStore()
-	leaseManager := newMockDSLeaseManager()
-	generatorReg := credentials.NewGeneratorRegistry()
-	logger := newMockDSLogger()
-
-	svc, err := NewDynamicSecretsHandler(context.Background(), &DynamicSecretsConfig{
-		Store:             store,
-		LeaseManager:      leaseManager,
-		GeneratorRegistry: generatorReg,
-		Logger:            logger,
-	})
-	require.NoError(t, err)
-
-	_, err = svc.DeleteRole(context.Background(), &DeleteRoleRequest{Name: ""})
-	assert.Error(t, err)
-}
-
-// TestDynamicSecretsService_RenewLease_EmptyLeaseID tests empty lease ID.
-func TestDynamicSecretsService_RenewLease_EmptyLeaseID(t *testing.T) {
-	store := newDSStore()
-	leaseManager := newMockDSLeaseManager()
-	generatorReg := credentials.NewGeneratorRegistry()
-	logger := newMockDSLogger()
-
-	svc, err := NewDynamicSecretsHandler(context.Background(), &DynamicSecretsConfig{
-		Store:             store,
-		LeaseManager:      leaseManager,
-		GeneratorRegistry: generatorReg,
-		Logger:            logger,
-	})
-	require.NoError(t, err)
-
-	_, err = svc.RenewLease(context.Background(), &RenewLeaseRequest{LeaseID: ""})
-	assert.Error(t, err)
-}
-
-// TestDynamicSecretsService_RevokeLease_EmptyLeaseID tests empty lease ID.
-func TestDynamicSecretsService_RevokeLease_EmptyLeaseID(t *testing.T) {
-	store := newDSStore()
-	leaseManager := newMockDSLeaseManager()
-	generatorReg := credentials.NewGeneratorRegistry()
-	logger := newMockDSLogger()
-
-	svc, err := NewDynamicSecretsHandler(context.Background(), &DynamicSecretsConfig{
-		Store:             store,
-		LeaseManager:      leaseManager,
-		GeneratorRegistry: generatorReg,
-		Logger:            logger,
-	})
-	require.NoError(t, err)
-
-	_, err = svc.RevokeLease(context.Background(), &RevokeLeaseRequest{LeaseID: ""})
-	assert.Error(t, err)
-}
-
 // TestDynamicSecretsService_ListLeases_NilRequest tests nil request with default behavior.
 func TestDynamicSecretsService_ListLeases_NilRequest(t *testing.T) {
 	store := newDSStore()
@@ -1491,27 +1035,6 @@ func TestDynamicSecretsService_ListLeases_NilRequest(t *testing.T) {
 	resp, err := svc.ListLeases(context.Background(), nil)
 	assert.NoError(t, err)
 	assert.NotNil(t, resp)
-}
-
-// TestDynamicSecretsService_GenerateCredential_EmptyRoleName tests empty role name.
-func TestDynamicSecretsService_GenerateCredential_EmptyRoleName(t *testing.T) {
-	store := newDSStore()
-	leaseManager := newMockDSLeaseManager()
-	generatorReg := credentials.NewGeneratorRegistry()
-	logger := newMockDSLogger()
-
-	svc, err := NewDynamicSecretsHandler(context.Background(), &DynamicSecretsConfig{
-		Store:             store,
-		LeaseManager:      leaseManager,
-		GeneratorRegistry: generatorReg,
-		Logger:            logger,
-	})
-	require.NoError(t, err)
-
-	_, err = svc.GenerateCredential(context.Background(), &GenerateCredentialRequest{
-		RoleName: "",
-	})
-	assert.Error(t, err)
 }
 
 // TestDynamicSecretsService_GenerateCredential_GetGeneratorError tests when getting generator fails.
@@ -1561,6 +1084,10 @@ func TestDynamicSecretsService_ListRoles_WithPrefix(t *testing.T) {
 	})
 	require.NoError(t, err)
 
+	empty, err := svc.ListRoles(context.Background(), &ListRolesRequest{})
+	require.NoError(t, err)
+	assert.Equal(t, 0, empty.Count)
+
 	// Create roles with different names
 	for _, name := range []string{"db-readonly", "db-admin", "cache-reader"} {
 		_, err := svc.CreateRole(context.Background(), &CreateRoleRequest{
@@ -1580,25 +1107,10 @@ func TestDynamicSecretsService_ListRoles_WithPrefix(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, resp)
 	assert.Equal(t, 2, resp.Count)
-}
 
-func TestDynamicSecretsService_ListRoles_EmptyResult(t *testing.T) {
-	registry := credentials.NewGeneratorRegistry()
-	gen := newMockDSGenerator("postgres")
-	require.NoError(t, registry.Register(gen))
-
-	svc, err := NewDynamicSecretsHandler(context.Background(), &DynamicSecretsConfig{
-		Store:             newDSStore(),
-		LeaseManager:      newMockDSLeaseManager(),
-		GeneratorRegistry: registry,
-		Logger:            newMockDSLogger(),
-	})
+	all, err := svc.ListRoles(context.Background(), &ListRolesRequest{})
 	require.NoError(t, err)
-
-	resp, err := svc.ListRoles(context.Background(), &ListRolesRequest{})
-	require.NoError(t, err)
-	require.NotNil(t, resp)
-	assert.Equal(t, 0, resp.Count)
+	assert.Equal(t, 3, all.Count)
 }
 
 func TestDynamicSecretsService_CreateRole_StorageError(t *testing.T) {
@@ -1625,24 +1137,7 @@ func TestDynamicSecretsService_CreateRole_StorageError(t *testing.T) {
 	})
 	require.Error(t, err)
 	assert.Nil(t, resp)
-}
-
-func TestDynamicSecretsService_DeleteRole_NotFoundPath(t *testing.T) {
-	registry := credentials.NewGeneratorRegistry()
-	gen := newMockDSGenerator("postgres")
-	require.NoError(t, registry.Register(gen))
-
-	svc, err := NewDynamicSecretsHandler(context.Background(), &DynamicSecretsConfig{
-		Store:             newDSStore(),
-		LeaseManager:      newMockDSLeaseManager(),
-		GeneratorRegistry: registry,
-		Logger:            newMockDSLogger(),
-	})
-	require.NoError(t, err)
-
-	resp, err := svc.DeleteRole(context.Background(), &DeleteRoleRequest{Name: "nonexistent"})
-	require.Error(t, err)
-	assert.Nil(t, resp)
+	assert.Contains(t, err.Error(), "store role failed")
 }
 
 func TestDynamicSecretsService_GenerateCredential_WithCustomTTL(t *testing.T) {
@@ -1674,86 +1169,6 @@ func TestDynamicSecretsService_GenerateCredential_WithCustomTTL(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, resp)
 	assert.NotEmpty(t, resp.LeaseID)
-}
-
-func TestDynamicSecretsService_GenerateCredential_TTLClampedToMax(t *testing.T) {
-	registry := credentials.NewGeneratorRegistry()
-	gen := newMockDSGenerator("postgres")
-	require.NoError(t, registry.Register(gen))
-
-	svc, err := NewDynamicSecretsHandler(context.Background(), &DynamicSecretsConfig{
-		Store:             newDSStore(),
-		LeaseManager:      newMockDSLeaseManager(),
-		GeneratorRegistry: registry,
-		Logger:            newMockDSLogger(),
-	})
-	require.NoError(t, err)
-
-	_, err = svc.CreateRole(context.Background(), &CreateRoleRequest{
-		Name:          "max-ttl-role",
-		GeneratorType: "postgres",
-		Config:        map[string]string{},
-		DefaultTTL:    1 * time.Hour,
-		MaxTTL:        2 * time.Hour,
-	})
-	require.NoError(t, err)
-
-	// Request TTL exceeding the max should return an error
-	resp, err := svc.GenerateCredential(context.Background(), &GenerateCredentialRequest{
-		RoleName: "max-ttl-role",
-		TTL:      48 * time.Hour, // exceeds max
-	})
-	require.Error(t, err)
-	assert.Nil(t, resp)
-	assert.Contains(t, err.Error(), "exceeds max TTL")
-}
-
-func TestDynamicSecretsService_RevokeLease_NotFoundPath(t *testing.T) {
-	svc, err := NewDynamicSecretsHandler(context.Background(), &DynamicSecretsConfig{
-		Store:             newDSStore(),
-		LeaseManager:      newMockDSLeaseManager(),
-		GeneratorRegistry: credentials.NewGeneratorRegistry(),
-		Logger:            newMockDSLogger(),
-	})
-	require.NoError(t, err)
-
-	resp, err := svc.RevokeLease(context.Background(), &RevokeLeaseRequest{
-		LeaseID: "nonexistent-lease",
-	})
-	require.Error(t, err)
-	assert.Nil(t, resp)
-}
-
-func TestDynamicSecretsService_storeRole_SetError(t *testing.T) {
-	store := newFaultDSStore().failAllWrites(stderrors.New("storage write error"))
-	svc := &dynamicSecretsHandler{
-		store: store,
-	}
-
-	role := &credentials.Role{
-		Name:          "test-role",
-		GeneratorType: "postgres",
-	}
-
-	err := svc.storeRole(context.Background(), role)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "store role failed")
-}
-
-func TestDynamicSecretsService_storeCredential_SetError(t *testing.T) {
-	store := newFaultDSStore().failAllWrites(stderrors.New("storage write error"))
-	svc := &dynamicSecretsHandler{
-		store: store,
-	}
-
-	cred := &credentials.Credential{
-		CredentialID: "test-cred-id",
-		Type:         "database",
-	}
-
-	err := svc.storeCredential(context.Background(), cred)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "store credential failed")
 }
 
 // =============================================================================

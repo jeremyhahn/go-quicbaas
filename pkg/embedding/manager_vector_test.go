@@ -110,29 +110,33 @@ func newManagerWithFake(t *testing.T, fp *fakeProvider) *Manager {
 // NewManager
 // =============================================================================
 
-func TestNewManager_Success(t *testing.T) {
-	m, err := NewManager(validManagerConfig())
-	require.NoError(t, err)
-	require.NotNil(t, m)
-	_ = m.Close()
-}
+func TestNewManager(t *testing.T) {
+	cached := validManagerConfig()
+	cached.CacheEnabled = true
+	cached.CacheSize = 16
 
-func TestNewManager_InvalidConfig(t *testing.T) {
-	_, err := NewManager(Config{}) // empty provider
-	require.Error(t, err)
-	assert.ErrorIs(t, err, qrdbsdk.ErrEmbeddingProviderRequired)
-}
-
-func TestNewManager_WithCache(t *testing.T) {
-	cfg := validManagerConfig()
-	cfg.CacheEnabled = true
-	cfg.CacheSize = 16
-	m, err := NewManager(cfg)
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = m.Close() })
-
-	stats := m.GetStats()
-	assert.True(t, stats.CacheEnabled)
+	tests := []struct {
+		name      string
+		cfg       Config
+		wantErr   error
+		wantCache bool
+	}{
+		{name: "empty provider", cfg: Config{}, wantErr: qrdbsdk.ErrEmbeddingProviderRequired},
+		{name: "valid without cache", cfg: validManagerConfig()},
+		{name: "valid with cache", cfg: cached, wantCache: true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			m, err := NewManager(tc.cfg)
+			if tc.wantErr != nil {
+				assert.ErrorIs(t, err, tc.wantErr)
+				return
+			}
+			require.NoError(t, err)
+			t.Cleanup(func() { _ = m.Close() })
+			assert.Equal(t, tc.wantCache, m.GetStats().CacheEnabled)
+		})
+	}
 }
 
 // =============================================================================
@@ -156,18 +160,6 @@ func TestManager_GetProvider_NotFound(t *testing.T) {
 
 	_, err = m.GetProvider("missing")
 	require.Error(t, err)
-	assert.ErrorIs(t, err, ErrProviderNotFound)
-}
-
-func TestManager_RegisterProvider_NilInner(t *testing.T) {
-	m := &Manager{} // inner is nil
-	err := m.RegisterProvider("x", &fakeProvider{})
-	assert.ErrorIs(t, err, ErrProviderNotFound)
-}
-
-func TestManager_GetProvider_NilInner(t *testing.T) {
-	m := &Manager{}
-	_, err := m.GetProvider("x")
 	assert.ErrorIs(t, err, ErrProviderNotFound)
 }
 
@@ -216,12 +208,6 @@ func TestManager_Embed_Error(t *testing.T) {
 	assert.True(t, errors.As(err, &fe))
 }
 
-func TestManager_Embed_NilInner(t *testing.T) {
-	m := &Manager{}
-	_, err := m.Embed(context.Background(), "x")
-	assert.ErrorIs(t, err, ErrProviderNotFound)
-}
-
 func TestManager_EmbedBatch_Success(t *testing.T) {
 	fp := &fakeProvider{name: "ollama"}
 	m := newManagerWithFake(t, fp)
@@ -249,12 +235,6 @@ func TestManager_EmbedBatch_ProviderError(t *testing.T) {
 	require.Error(t, err)
 	var fe *fakeProviderError
 	assert.True(t, errors.As(err, &fe))
-}
-
-func TestManager_EmbedBatch_NilInner(t *testing.T) {
-	m := &Manager{}
-	_, err := m.EmbedBatch(context.Background(), []string{"a"})
-	assert.ErrorIs(t, err, ErrProviderNotFound)
 }
 
 func TestManager_EmbedBatch_ProviderNotRegistered(t *testing.T) {
@@ -296,13 +276,6 @@ func TestManager_Dimensions_Success(t *testing.T) {
 	assert.Equal(t, 768, d)
 }
 
-func TestManager_Dimensions_NilInner(t *testing.T) {
-	m := &Manager{}
-	d, err := m.Dimensions()
-	assert.Equal(t, 0, d)
-	assert.ErrorIs(t, err, ErrProviderNotFound)
-}
-
 func TestManager_GetStats_Success(t *testing.T) {
 	fp := &fakeProvider{name: "ollama"}
 	m := newManagerWithFake(t, fp)
@@ -311,11 +284,6 @@ func TestManager_GetStats_Success(t *testing.T) {
 	assert.Equal(t, 1, stats.ProvidersRegistered)
 	assert.Equal(t, "ollama", stats.DefaultProvider)
 	assert.Contains(t, stats.ProviderNames, "ollama")
-}
-
-func TestManager_GetStats_NilInner(t *testing.T) {
-	m := &Manager{}
-	assert.Equal(t, Stats{}, m.GetStats())
 }
 
 func TestManager_Close_Success(t *testing.T) {
@@ -328,9 +296,52 @@ func TestManager_Close_Success(t *testing.T) {
 	assert.NoError(t, m.Close())
 }
 
-func TestManager_Close_NilInner(t *testing.T) {
-	m := &Manager{}
-	assert.NoError(t, m.Close())
+// TestManager_NilInner checks that every method of a zero-value Manager (no
+// underlying go-qrdb manager) fails safely instead of panicking.
+func TestManager_NilInner(t *testing.T) {
+	tests := []struct {
+		name    string
+		call    func(t *testing.T, m *Manager) error
+		wantErr error
+	}{
+		{"RegisterProvider", func(_ *testing.T, m *Manager) error {
+			return m.RegisterProvider("x", &fakeProvider{})
+		}, ErrProviderNotFound},
+		{"GetProvider", func(_ *testing.T, m *Manager) error {
+			_, err := m.GetProvider("x")
+			return err
+		}, ErrProviderNotFound},
+		{"Embed", func(_ *testing.T, m *Manager) error {
+			_, err := m.Embed(context.Background(), "x")
+			return err
+		}, ErrProviderNotFound},
+		{"EmbedBatch", func(_ *testing.T, m *Manager) error {
+			_, err := m.EmbedBatch(context.Background(), []string{"a"})
+			return err
+		}, ErrProviderNotFound},
+		{"Dimensions", func(t *testing.T, m *Manager) error {
+			d, err := m.Dimensions()
+			assert.Equal(t, 0, d)
+			return err
+		}, ErrProviderNotFound},
+		{"GetStats", func(t *testing.T, m *Manager) error {
+			assert.Equal(t, Stats{}, m.GetStats())
+			return nil
+		}, nil},
+		{"Close", func(_ *testing.T, m *Manager) error {
+			return m.Close()
+		}, nil},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			err := tc.call(t, &Manager{})
+			if tc.wantErr == nil {
+				assert.NoError(t, err)
+				return
+			}
+			assert.ErrorIs(t, err, tc.wantErr)
+		})
+	}
 }
 
 // =============================================================================

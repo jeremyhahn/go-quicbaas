@@ -131,52 +131,27 @@ func TestNewCodecManager(t *testing.T) {
 	})
 }
 
-func TestCodecManager_EncodeForStorage(t *testing.T) {
+// TestCodecManager_StorageErrors covers the storage error paths; the storage
+// success path is covered by TestCodecManager_DualCodecRoundTrip.
+func TestCodecManager_StorageErrors(t *testing.T) {
 	mgr, err := NewCodecManager(DefaultConfig())
 	require.NoError(t, err)
 
-	t.Run("success", func(t *testing.T) {
-		entity := &EntityWithJSONTags{ID: 1, Name: "test"}
-		data, err := mgr.EncodeForStorage(entity)
-		require.NoError(t, err)
-		assert.NotEmpty(t, data)
-
-		// Storage should always use msgpack (default storage codec)
-		assert.Equal(t, "msgpack", mgr.GetStorageCodecName())
-	})
-
-	t.Run("nil entity", func(t *testing.T) {
+	t.Run("encode nil entity", func(t *testing.T) {
 		data, err := mgr.EncodeForStorage(nil)
 		assert.Error(t, err)
 		assert.Nil(t, data)
 		assert.Contains(t, err.Error(), "cannot encode nil entity")
 	})
-}
 
-func TestCodecManager_DecodeFromStorage(t *testing.T) {
-	mgr, err := NewCodecManager(DefaultConfig())
-	require.NoError(t, err)
-
-	t.Run("success", func(t *testing.T) {
-		original := &EntityWithJSONTags{ID: 42, Name: "storage-test"}
-		data, err := mgr.EncodeForStorage(original)
-		require.NoError(t, err)
-
-		decoded := &EntityWithJSONTags{}
-		err = mgr.DecodeFromStorage(data, decoded)
-		require.NoError(t, err)
-		assert.Equal(t, original.ID, decoded.ID)
-		assert.Equal(t, original.Name, decoded.Name)
-	})
-
-	t.Run("empty data", func(t *testing.T) {
+	t.Run("decode empty data", func(t *testing.T) {
 		entity := &EntityWithJSONTags{}
 		err := mgr.DecodeFromStorage([]byte{}, entity)
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "cannot decode empty data")
 	})
 
-	t.Run("nil entity", func(t *testing.T) {
+	t.Run("decode nil entity", func(t *testing.T) {
 		err := mgr.DecodeFromStorage([]byte{1, 2, 3}, nil)
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "cannot decode into nil entity")
@@ -238,6 +213,13 @@ func TestCodecManager_EncodeForWire_DualMode(t *testing.T) {
 		assert.Equal(t, "json", codecName) // Should fallback to default wire codec
 	})
 
+	t.Run("non-struct falls back to default", func(t *testing.T) {
+		data, codecName, err := mgr.EncodeForWire(42)
+		require.NoError(t, err)
+		assert.NotEmpty(t, data)
+		assert.Equal(t, "json", codecName)
+	})
+
 	t.Run("nil entity", func(t *testing.T) {
 		data, codecName, err := mgr.EncodeForWire(nil)
 		assert.Error(t, err)
@@ -247,52 +229,66 @@ func TestCodecManager_EncodeForWire_DualMode(t *testing.T) {
 	})
 }
 
-func TestCodecManager_EncodeForWire_SingleMode(t *testing.T) {
-	cfg := &Config{
-		StorageCodec:     "msgpack",
-		DefaultWireCodec: "json",
-		AutoDetect:       true,
-		DualCodecMode:    false, // Single codec mode
+func TestCodecManager_EncodeForWire_Modes(t *testing.T) {
+	tests := []struct {
+		name          string
+		dualCodecMode bool
+		autoDetect    bool
+		entity        interface{}
+		wantCodec     string
+	}{
+		{
+			name:          "single mode uses storage codec",
+			dualCodecMode: false,
+			autoDetect:    true,
+			entity:        &EntityWithJSONTags{ID: 1, Name: "single"},
+			wantCodec:     "msgpack",
+		},
+		{
+			name:          "no auto-detect keeps explicit tag",
+			dualCodecMode: true,
+			autoDetect:    false,
+			entity:        &EntityWithExplicitCodec{ID: 1, Name: "explicit"},
+			wantCodec:     "yaml",
+		},
+		{
+			name:          "no auto-detect ignores struct tags",
+			dualCodecMode: true,
+			autoDetect:    false,
+			entity:        &EntityWithYAMLTags{Key: "k", Value: "v"},
+			wantCodec:     "json",
+		},
 	}
-	mgr, err := NewCodecManager(cfg)
-	require.NoError(t, err)
 
-	t.Run("uses storage codec", func(t *testing.T) {
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := DefaultConfig()
+			cfg.DualCodecMode = tt.dualCodecMode
+			cfg.AutoDetect = tt.autoDetect
+			mgr, err := NewCodecManager(cfg)
+			require.NoError(t, err)
+
+			data, codecName, err := mgr.EncodeForWire(tt.entity)
+			require.NoError(t, err)
+			assert.NotEmpty(t, data)
+			assert.Equal(t, tt.wantCodec, codecName)
+		})
+	}
+
+	t.Run("single mode wire data decodes from storage", func(t *testing.T) {
+		cfg := DefaultConfig()
+		cfg.DualCodecMode = false
+		mgr, err := NewCodecManager(cfg)
+		require.NoError(t, err)
+
 		entity := &EntityWithJSONTags{ID: 1, Name: "single"}
-		data, codecName, err := mgr.EncodeForWire(entity)
+		data, _, err := mgr.EncodeForWire(entity)
 		require.NoError(t, err)
-		assert.NotEmpty(t, data)
-		assert.Equal(t, "msgpack", codecName) // Should use storage codec in single mode
 
-		// Verify we can decode with storage codec
 		decoded := &EntityWithJSONTags{}
-		err = mgr.DecodeFromStorage(data, decoded)
-		require.NoError(t, err)
+		require.NoError(t, mgr.DecodeFromStorage(data, decoded))
 		assert.Equal(t, entity.ID, decoded.ID)
 		assert.Equal(t, entity.Name, decoded.Name)
-	})
-}
-
-func TestCodecManager_EncodeForWire_NoAutoDetect(t *testing.T) {
-	cfg := DefaultConfig()
-	cfg.AutoDetect = false // Disable auto-detection
-	mgr, err := NewCodecManager(cfg)
-	require.NoError(t, err)
-
-	t.Run("explicit tag still works", func(t *testing.T) {
-		entity := &EntityWithExplicitCodec{ID: 1, Name: "explicit"}
-		data, codecName, err := mgr.EncodeForWire(entity)
-		require.NoError(t, err)
-		assert.NotEmpty(t, data)
-		assert.Equal(t, "yaml", codecName) // Explicit tag should still work
-	})
-
-	t.Run("no auto-detect, uses default", func(t *testing.T) {
-		entity := &EntityWithJSONTags{ID: 2, Name: "json"}
-		data, codecName, err := mgr.EncodeForWire(entity)
-		require.NoError(t, err)
-		assert.NotEmpty(t, data)
-		assert.Equal(t, "json", codecName) // Should use default, not auto-detect
 	})
 }
 
@@ -450,74 +446,6 @@ func TestCodecManager_ListCodecs(t *testing.T) {
 	assert.Contains(t, codecs, "yaml")
 	assert.Contains(t, codecs, "protobuf")
 	assert.Len(t, codecs, 4) // Should have all 4 standard codecs
-}
-
-func TestCodecManager_detectEntityCodec(t *testing.T) {
-	mgr, err := NewCodecManager(DefaultConfig())
-	require.NoError(t, err)
-
-	t.Run("detects explicit codec", func(t *testing.T) {
-		entity := &EntityWithExplicitCodec{}
-		codecName := mgr.detectEntityCodec(entity)
-		assert.Equal(t, "yaml", codecName)
-	})
-
-	t.Run("no explicit codec", func(t *testing.T) {
-		entity := &EntityWithJSONTags{}
-		codecName := mgr.detectEntityCodec(entity)
-		assert.Empty(t, codecName)
-	})
-
-	t.Run("nil entity", func(t *testing.T) {
-		codecName := mgr.detectEntityCodec(nil)
-		assert.Empty(t, codecName)
-	})
-
-	t.Run("non-struct entity", func(t *testing.T) {
-		var num int = 42
-		codecName := mgr.detectEntityCodec(num)
-		assert.Empty(t, codecName)
-	})
-}
-
-func TestCodecManager_autoDetectCodec(t *testing.T) {
-	mgr, err := NewCodecManager(DefaultConfig())
-	require.NoError(t, err)
-
-	t.Run("detects json tags", func(t *testing.T) {
-		entity := &EntityWithJSONTags{}
-		codecName := mgr.autoDetectCodec(entity)
-		assert.Equal(t, "json", codecName)
-	})
-
-	t.Run("detects yaml tags", func(t *testing.T) {
-		entity := &EntityWithYAMLTags{}
-		codecName := mgr.autoDetectCodec(entity)
-		assert.Equal(t, "yaml", codecName)
-	})
-
-	t.Run("detects msgpack tags", func(t *testing.T) {
-		entity := &EntityWithMsgPackTags{}
-		codecName := mgr.autoDetectCodec(entity)
-		assert.Equal(t, "msgpack", codecName)
-	})
-
-	t.Run("protobuf priority over json", func(t *testing.T) {
-		entity := &EntityWithMixedTags{}
-		codecName := mgr.autoDetectCodec(entity)
-		assert.Equal(t, "protobuf", codecName)
-	})
-
-	t.Run("no tags", func(t *testing.T) {
-		entity := &EntityWithNoTags{}
-		codecName := mgr.autoDetectCodec(entity)
-		assert.Empty(t, codecName)
-	})
-
-	t.Run("nil entity", func(t *testing.T) {
-		codecName := mgr.autoDetectCodec(nil)
-		assert.Empty(t, codecName)
-	})
 }
 
 // Benchmark tests

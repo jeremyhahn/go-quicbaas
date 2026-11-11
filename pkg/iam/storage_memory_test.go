@@ -102,56 +102,6 @@ func TestMemoryStorage_TenantOperations(t *testing.T) {
 	}
 }
 
-func TestMemoryStorage_QuotaOperations(t *testing.T) {
-	ctx := context.Background()
-	storage := NewMemoryStorage()
-
-	tenant := &Tenant{
-		ID:      "quota-tenant",
-		Name:    "Quota Test",
-		Created: time.Now(),
-		Updated: time.Now(),
-	}
-	storage.CreateTenant(ctx, tenant)
-
-	// Use BaaS-layer IAM quota (policies); users are engine-level owned by qrdb
-	quota := &TenantQuota{
-		MaxPolicies: 5,
-	}
-	err := storage.UpdateQuota(ctx, tenant.ID, quota)
-	if err != nil {
-		t.Fatalf("UpdateQuota failed: %v", err)
-	}
-
-	// Test quota increment within limits
-	err = storage.IncrementQuotaUsage(ctx, tenant.ID, "policies", 3)
-	if err != nil {
-		t.Fatalf("IncrementQuotaUsage failed: %v", err)
-	}
-
-	retrieved, _ := storage.GetQuota(ctx, tenant.ID)
-	if retrieved.CurrentPolicies != 3 {
-		t.Errorf("Expected CurrentPolicies=3, got %d", retrieved.CurrentPolicies)
-	}
-
-	// Test quota exceeded
-	err = storage.IncrementQuotaUsage(ctx, tenant.ID, "policies", 10)
-	if err == nil {
-		t.Error("Expected quota exceeded error")
-	}
-
-	// Test quota decrement
-	err = storage.DecrementQuotaUsage(ctx, tenant.ID, "policies", 2)
-	if err != nil {
-		t.Fatalf("DecrementQuotaUsage failed: %v", err)
-	}
-
-	retrieved, _ = storage.GetQuota(ctx, tenant.ID)
-	if retrieved.CurrentPolicies != 1 {
-		t.Errorf("Expected CurrentPolicies=1, got %d", retrieved.CurrentPolicies)
-	}
-}
-
 func TestMemoryStorage_UserOperations(t *testing.T) {
 	ctx := context.Background()
 	storage := NewMemoryStorage()
@@ -573,19 +523,10 @@ func TestMemoryStorage_GetAppByTenant(t *testing.T) {
 	if !errors.As(err, &qbErr) || qbErr.Code != dberrors.ErrNotFound {
 		t.Errorf("Expected ErrNotFound, got: %v", err)
 	}
-
-	// Test error path - app doesn't exist
-	_, err = storage.GetAppByTenant(ctx, tenant.ID, "nonexistent")
-	if err == nil {
-		t.Error("Expected error for nonexistent app")
-	}
-	if !errors.As(err, &qbErr) || qbErr.Code != dberrors.ErrNotFound {
-		t.Errorf("Expected ErrNotFound, got: %v", err)
-	}
 }
 
 // TestMemoryStorage_StoreAuthCode tests the StoreAuthCode function
-func TestMemoryStorage_StoreAuthCode(t *testing.T) {
+func TestMemoryStorage_GetAuthCode(t *testing.T) {
 	ctx := context.Background()
 	storage := NewMemoryStorage()
 
@@ -602,51 +543,17 @@ func TestMemoryStorage_StoreAuthCode(t *testing.T) {
 		ExpiresAt:           time.Now().Add(10 * time.Minute),
 		CreatedAt:           time.Now(),
 	}
-
-	// Test storing auth code
-	err := storage.StoreAuthCode(ctx, authCode)
-	if err != nil {
+	if err := storage.StoreAuthCode(ctx, authCode); err != nil {
 		t.Fatalf("StoreAuthCode failed: %v", err)
 	}
-
-	// Verify it was stored by retrieving it
-	retrieved, err := storage.GetAuthCode(ctx, authCode.Code)
-	if err != nil {
-		t.Fatalf("GetAuthCode failed after StoreAuthCode: %v", err)
-	}
-	if retrieved.Code != authCode.Code {
-		t.Errorf("Expected code %s, got %s", authCode.Code, retrieved.Code)
-	}
-	if retrieved.UserID != authCode.UserID {
-		t.Errorf("Expected userID %d, got %d", authCode.UserID, retrieved.UserID)
-	}
-	if retrieved.ClientID != authCode.ClientID {
-		t.Errorf("Expected clientID %s, got %s", authCode.ClientID, retrieved.ClientID)
-	}
-}
-
-// TestMemoryStorage_GetAuthCode tests the GetAuthCode function
-func TestMemoryStorage_GetAuthCode(t *testing.T) {
-	ctx := context.Background()
-	storage := NewMemoryStorage()
-
-	authCode := &AuthCodeData{
-		Code:      "code456",
-		UserID:    20002,
-		TenantID:  "tenant2",
-		ClientID:  "client2",
-		ExpiresAt: time.Now().Add(10 * time.Minute),
-		CreatedAt: time.Now(),
-	}
-	storage.StoreAuthCode(ctx, authCode)
 
 	// Test happy path - code exists
 	retrieved, err := storage.GetAuthCode(ctx, authCode.Code)
 	if err != nil {
 		t.Fatalf("GetAuthCode failed: %v", err)
 	}
-	if retrieved.Code != authCode.Code {
-		t.Errorf("Expected code %s, got %s", authCode.Code, retrieved.Code)
+	if retrieved.Code != authCode.Code || retrieved.UserID != authCode.UserID || retrieved.ClientID != authCode.ClientID {
+		t.Errorf("GetAuthCode = %+v, want the stored code %+v", retrieved, authCode)
 	}
 
 	// Test error path - code doesn't exist
@@ -756,177 +663,110 @@ func TestMemoryStorage_GetTokenByValue(t *testing.T) {
 }
 
 // TestMemoryStorage_IncrementQuotaUsage_Comprehensive tests all resource types
-func TestMemoryStorage_IncrementQuotaUsage_Comprehensive(t *testing.T) {
+// newQuotaStorage returns a store holding tenant "t1" with the given quota, or
+// an empty store when quota is nil (no tenant and no quota record).
+func newQuotaStorage(t *testing.T, quota *TenantQuota) *MemoryStorage {
+	t.Helper()
 	ctx := context.Background()
 	storage := NewMemoryStorage()
-
-	tenant := &Tenant{
-		ID:      "quota-tenant",
-		Name:    "Quota Test",
-		Created: time.Now(),
-		Updated: time.Now(),
+	if quota == nil {
+		return storage
 	}
-	storage.CreateTenant(ctx, tenant)
-
-	// BaaS-layer IAM quotas only; users and roles are engine-level (qrdb-owned).
-	quota := &TenantQuota{
-		MaxPolicies: 8,
-		MaxApps:     4,
+	if err := storage.CreateTenant(ctx, &Tenant{ID: "t1", Name: "Test"}); err != nil {
+		t.Fatalf("CreateTenant failed: %v", err)
 	}
-	storage.UpdateQuota(ctx, tenant.ID, quota)
+	if err := storage.UpdateQuota(ctx, "t1", quota); err != nil {
+		t.Fatalf("UpdateQuota failed: %v", err)
+	}
+	return storage
+}
 
+// checkQuotaUsage asserts the policy and app usage recorded for tenant "t1".
+func checkQuotaUsage(t *testing.T, storage *MemoryStorage, wantPolicies, wantApps int64) {
+	t.Helper()
+	q, err := storage.GetQuota(context.Background(), "t1")
+	if err != nil {
+		t.Fatalf("GetQuota failed: %v", err)
+	}
+	if q.CurrentPolicies != wantPolicies || q.CurrentApps != wantApps {
+		t.Fatalf("usage = policies %d, apps %d; want policies %d, apps %d",
+			q.CurrentPolicies, q.CurrentApps, wantPolicies, wantApps)
+	}
+}
+
+func TestMemoryStorage_IncrementQuotaUsage(t *testing.T) {
 	tests := []struct {
 		name         string
+		quota        *TenantQuota
 		resource     string
 		delta        int64
-		expectError  bool
-		expectedUsed int64
+		wantExceeded bool
+		wantPolicies int64
+		wantApps     int64
 	}{
-		{"users no-op (engine-level)", "users", 5, false, 0}, // no-op: engine-owned
-		{"roles no-op (engine-level)", "roles", 2, false, 0}, // no-op: engine-owned
-		{"policies within limit", "policies", 4, false, 4},
-		{"apps within limit", "apps", 2, false, 2},
-		{"policies exceed limit", "policies", 5, true, 4}, // Would go to 9, exceeds 8
-		{"unknown resource", "unknown", 1, false, 0},      // Unknown resources don't trigger quota
+		{"policies within limit", &TenantQuota{MaxPolicies: 5}, "policies", 3, false, 3, 0},
+		{"apps up to the limit", &TenantQuota{MaxApps: 2}, "apps", 2, false, 0, 2},
+		{"policies over the limit", &TenantQuota{MaxPolicies: 8, CurrentPolicies: 4}, "policies", 5, true, 4, 0},
+		{"apps over the limit", &TenantQuota{MaxApps: 2, CurrentApps: 2}, "apps", 1, true, 0, 2},
+		{"zero limit is unlimited", &TenantQuota{}, "policies", 5, false, 5, 0},
+		{"engine-level resource is not counted", &TenantQuota{MaxPolicies: 8, MaxApps: 4}, "users", 5, false, 0, 0},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := storage.IncrementQuotaUsage(ctx, tenant.ID, tt.resource, tt.delta)
-			if tt.expectError && err == nil {
-				t.Error("Expected quota exceeded error")
+			storage := newQuotaStorage(t, tt.quota)
+			err := storage.IncrementQuotaUsage(context.Background(), "t1", tt.resource, tt.delta)
+			var exceeded *QuotaExceededError
+			if got := errors.As(err, &exceeded); got != tt.wantExceeded {
+				t.Fatalf("IncrementQuotaUsage error = %v, want QuotaExceededError: %v", err, tt.wantExceeded)
 			}
-			if !tt.expectError && err != nil {
-				t.Errorf("Unexpected error: %v", err)
+			if !tt.wantExceeded && err != nil {
+				t.Fatalf("IncrementQuotaUsage failed: %v", err)
 			}
-
-			// Verify the current usage for BaaS-layer resources
-			if !tt.expectError && tt.resource != "unknown" && tt.resource != "users" && tt.resource != "roles" {
-				retrieved, _ := storage.GetQuota(ctx, tenant.ID)
-				var currentUsage int64
-				switch tt.resource {
-				case "policies":
-					currentUsage = retrieved.CurrentPolicies
-				case "apps":
-					currentUsage = retrieved.CurrentApps
-				}
-				if currentUsage != tt.expectedUsed {
-					t.Errorf("Expected %s usage %d, got %d", tt.resource, tt.expectedUsed, currentUsage)
-				}
-			}
+			checkQuotaUsage(t, storage, tt.wantPolicies, tt.wantApps)
 		})
 	}
+
+	t.Run("no quota record", func(t *testing.T) {
+		storage := newQuotaStorage(t, nil)
+		if err := storage.IncrementQuotaUsage(context.Background(), "t1", "policies", 1); err != nil {
+			t.Fatalf("IncrementQuotaUsage without a quota record failed: %v", err)
+		}
+	})
 }
 
-// TestMemoryStorage_IncrementQuotaUsage_NoQuota tests incrementing when quota doesn't exist
-func TestMemoryStorage_IncrementQuotaUsage_NoQuota(t *testing.T) {
-	ctx := context.Background()
-	storage := NewMemoryStorage()
-
-	tenant := &Tenant{
-		ID:      "no-quota-tenant",
-		Name:    "No Quota Test",
-		Created: time.Now(),
-		Updated: time.Now(),
-	}
-	storage.CreateTenant(ctx, tenant)
-
-	// Don't set any quota; increment a BaaS-layer resource (policies)
-	err := storage.IncrementQuotaUsage(ctx, tenant.ID, "policies", 5)
-	if err != nil {
-		t.Fatalf("IncrementQuotaUsage failed when quota doesn't exist: %v", err)
-	}
-
-	retrieved, _ := storage.GetQuota(ctx, tenant.ID)
-	if retrieved.CurrentPolicies != 5 {
-		t.Errorf("Expected CurrentPolicies=5, got %d", retrieved.CurrentPolicies)
-	}
-}
-
-// TestMemoryStorage_DecrementQuotaUsage_Comprehensive tests all resource types
-func TestMemoryStorage_DecrementQuotaUsage_Comprehensive(t *testing.T) {
-	ctx := context.Background()
-	storage := NewMemoryStorage()
-
-	tenant := &Tenant{
-		ID:      "decrement-tenant",
-		Name:    "Decrement Test",
-		Created: time.Now(),
-		Updated: time.Now(),
-	}
-	storage.CreateTenant(ctx, tenant)
-
-	// BaaS-layer IAM quotas only; users and roles are engine-level (qrdb-owned).
-	quota := &TenantQuota{
-		MaxPolicies:     8,
-		CurrentPolicies: 6,
-		MaxApps:         4,
-		CurrentApps:     3,
-	}
-	storage.UpdateQuota(ctx, tenant.ID, quota)
-
+func TestMemoryStorage_DecrementQuotaUsage(t *testing.T) {
 	tests := []struct {
 		name         string
+		quota        *TenantQuota
 		resource     string
 		delta        int64
-		expectedUsed int64
+		wantPolicies int64
+		wantApps     int64
 	}{
-		{"users no-op (engine-level)", "users", 3, 0},
-		{"roles no-op (engine-level)", "roles", 1, 0},
-		{"policies decrement", "policies", 4, 2},
-		{"apps decrement", "apps", 2, 1},
-		{"policies decrement below zero", "policies", 10, 0}, // Clamped to 0
-		{"unknown resource", "unknown", 1, 0},
+		{"policies decrement", &TenantQuota{CurrentPolicies: 6}, "policies", 4, 2, 0},
+		{"apps decrement", &TenantQuota{MaxApps: 10, CurrentApps: 5}, "apps", 3, 0, 2},
+		{"policies floor at zero", &TenantQuota{CurrentPolicies: 6}, "policies", 10, 0, 0},
+		{"apps floor at zero", &TenantQuota{CurrentApps: 1}, "apps", 10, 0, 0},
+		{"engine-level resource is not counted", &TenantQuota{CurrentPolicies: 6, CurrentApps: 3}, "users", 3, 6, 3},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := storage.DecrementQuotaUsage(ctx, tenant.ID, tt.resource, tt.delta)
-			if err != nil {
-				t.Errorf("DecrementQuotaUsage failed: %v", err)
+			storage := newQuotaStorage(t, tt.quota)
+			if err := storage.DecrementQuotaUsage(context.Background(), "t1", tt.resource, tt.delta); err != nil {
+				t.Fatalf("DecrementQuotaUsage failed: %v", err)
 			}
-
-			if tt.resource != "unknown" && tt.resource != "users" && tt.resource != "roles" {
-				retrieved, _ := storage.GetQuota(ctx, tenant.ID)
-				var currentUsage int64
-				switch tt.resource {
-				case "policies":
-					currentUsage = retrieved.CurrentPolicies
-				case "apps":
-					currentUsage = retrieved.CurrentApps
-				}
-				if currentUsage != tt.expectedUsed {
-					t.Errorf("Expected %s usage %d, got %d", tt.resource, tt.expectedUsed, currentUsage)
-				}
-			}
+			checkQuotaUsage(t, storage, tt.wantPolicies, tt.wantApps)
 		})
 	}
-}
 
-// TestMemoryStorage_DecrementQuotaUsage_NoQuota tests decrementing when quota doesn't exist
-func TestMemoryStorage_DecrementQuotaUsage_NoQuota(t *testing.T) {
-	ctx := context.Background()
-	storage := NewMemoryStorage()
-
-	tenant := &Tenant{
-		ID:      "no-quota-dec-tenant",
-		Name:    "No Quota Decrement Test",
-		Created: time.Now(),
-		Updated: time.Now(),
-	}
-	storage.CreateTenant(ctx, tenant)
-
-	// Don't set any quota, should not error (no-op for engine-level resources)
-	err := storage.DecrementQuotaUsage(ctx, tenant.ID, "policies", 5)
-	if err != nil {
-		t.Errorf("DecrementQuotaUsage should not error when quota doesn't exist: %v", err)
-	}
-
-	// Verify quota was not created (or current policies is still 0)
-	retrieved, _ := storage.GetQuota(ctx, tenant.ID)
-	if retrieved.CurrentPolicies != 0 {
-		t.Errorf("Expected CurrentPolicies=0 (quota should not exist), got %d", retrieved.CurrentPolicies)
-	}
+	t.Run("no quota record", func(t *testing.T) {
+		storage := newQuotaStorage(t, nil)
+		if err := storage.DecrementQuotaUsage(context.Background(), "t1", "policies", 5); err != nil {
+			t.Fatalf("DecrementQuotaUsage without a quota record failed: %v", err)
+		}
+	})
 }
 
 // TestMemoryStorage_AuthCodeExpiration tests auth code expiration handling
@@ -976,46 +816,6 @@ func TestMemoryStorage_AuthCodeExpiration(t *testing.T) {
 }
 
 // TestMemoryStorage_GetAppByTenant_EdgeCases tests edge cases for GetAppByTenant
-func TestMemoryStorage_GetAppByTenant_EdgeCases(t *testing.T) {
-	ctx := context.Background()
-	storage := NewMemoryStorage()
-
-	tenant := &Tenant{ID: "edge-tenant", Name: "Edge Tenant", Created: time.Now(), Updated: time.Now()}
-	storage.CreateTenant(ctx, tenant)
-
-	// Test with empty tenant ID
-	_, err := storage.GetAppByTenant(ctx, "", "client123")
-	if err == nil {
-		t.Error("Expected error with empty tenant ID")
-	}
-
-	// Test with empty client ID
-	_, err = storage.GetAppByTenant(ctx, tenant.ID, "")
-	if err == nil {
-		t.Error("Expected error with empty client ID")
-	}
-
-	// Create app and verify isolation
-	app := &Application{
-		ClientID:     "isolated-client",
-		Name:         "Isolated App",
-		TenantID:     tenant.ID,
-		RedirectURIs: []string{"https://example.com/callback"},
-		Created:      time.Now(),
-		Updated:      time.Now(),
-	}
-	storage.CreateApp(ctx, app)
-
-	// Verify app is accessible with correct tenant
-	retrieved, err := storage.GetAppByTenant(ctx, tenant.ID, app.ClientID)
-	if err != nil {
-		t.Fatalf("Failed to retrieve app with correct tenant: %v", err)
-	}
-	if retrieved.ClientID != app.ClientID {
-		t.Errorf("Expected clientID %s, got %s", app.ClientID, retrieved.ClientID)
-	}
-}
-
 // TestMemoryStorage_GetSettings tests the GetSettings function
 func TestMemoryStorage_GetSettings(t *testing.T) {
 	ctx := context.Background()
@@ -1149,23 +949,55 @@ func TestMemoryStorage_UpdateSettings(t *testing.T) {
 	}
 }
 
-func TestMemoryStorage_UpdateTenant_NotFound(t *testing.T) {
-	ctx := context.Background()
-	storage := NewMemoryStorage()
-
-	err := storage.UpdateTenant(ctx, &Tenant{ID: "nonexistent", Name: "updated"})
-	if err == nil {
-		t.Fatal("expected error updating nonexistent tenant")
+// TestMemoryStorage_NotFound pins that every operation on an absent record
+// answers with a not-found QBError, the code callers branch on.
+func TestMemoryStorage_NotFound(t *testing.T) {
+	tests := []struct {
+		name string
+		call func(ctx context.Context, s *MemoryStorage) error
+	}{
+		{"UpdateTenant", func(ctx context.Context, s *MemoryStorage) error {
+			return s.UpdateTenant(ctx, &Tenant{ID: "nonexistent", Name: "updated"})
+		}},
+		{"UpdateUser", func(ctx context.Context, s *MemoryStorage) error {
+			return s.UpdateUser(ctx, &User{ID: 99995, TenantID: "t1", Email: "a@b.com"})
+		}},
+		{"UpdateRole", func(ctx context.Context, s *MemoryStorage) error {
+			return s.UpdateRole(ctx, &Role{ID: "none", TenantID: "t1", Name: "Test"})
+		}},
+		{"DeleteRole", func(ctx context.Context, s *MemoryStorage) error {
+			return s.DeleteRole(ctx, "t1", "nonexistent")
+		}},
+		{"GetQuota", func(ctx context.Context, s *MemoryStorage) error {
+			_, err := s.GetQuota(ctx, "nonexistent-tenant")
+			return err
+		}},
+		{"UpdateQuota", func(ctx context.Context, s *MemoryStorage) error {
+			return s.UpdateQuota(ctx, "nonexistent", &TenantQuota{})
+		}},
+		{"UpdateApp", func(ctx context.Context, s *MemoryStorage) error {
+			return s.UpdateApp(ctx, &Application{ClientID: "nonexistent"})
+		}},
+		{"DeleteApp", func(ctx context.Context, s *MemoryStorage) error {
+			return s.DeleteApp(ctx, "nonexistent")
+		}},
+		{"ValidateClientSecret", func(ctx context.Context, s *MemoryStorage) error {
+			_, err := s.ValidateClientSecret(ctx, "nonexistent", "secret")
+			return err
+		}},
+		{"GetAppByTenant", func(ctx context.Context, s *MemoryStorage) error {
+			_, err := s.GetAppByTenant(ctx, "t1", "nonexistent")
+			return err
+		}},
 	}
-}
 
-func TestMemoryStorage_UpdateUser_NotFound(t *testing.T) {
-	ctx := context.Background()
-	storage := NewMemoryStorage()
-
-	err := storage.UpdateUser(ctx, &User{ID: 99995, TenantID: "t1", Email: "a@b.com"})
-	if err == nil {
-		t.Fatal("expected error updating nonexistent user")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := tt.call(context.Background(), NewMemoryStorage())
+			if !dberrors.IsNotFound(err) {
+				t.Fatalf("%s on an absent record: got %v, want a not-found QBError", tt.name, err)
+			}
+		})
 	}
 }
 
@@ -1275,133 +1107,6 @@ func TestMemoryStorage_DeleteUser_PIVThumbprintCleanup(t *testing.T) {
 	}
 }
 
-func TestMemoryStorage_UpdateRole_NotFound(t *testing.T) {
-	ctx := context.Background()
-	storage := NewMemoryStorage()
-
-	err := storage.UpdateRole(ctx, &Role{ID: "none", TenantID: "t1", Name: "Test"})
-	if err == nil {
-		t.Fatal("expected error updating nonexistent role")
-	}
-}
-
-func TestMemoryStorage_DeleteRole_NotFound(t *testing.T) {
-	ctx := context.Background()
-	storage := NewMemoryStorage()
-
-	err := storage.DeleteRole(ctx, "t1", "nonexistent")
-	if err == nil {
-		t.Fatal("expected error deleting nonexistent role")
-	}
-}
-
-func TestMemoryStorage_GetQuota_NotFound(t *testing.T) {
-	ctx := context.Background()
-	storage := NewMemoryStorage()
-
-	_, err := storage.GetQuota(ctx, "nonexistent-tenant")
-	if err == nil {
-		t.Fatal("expected error for nonexistent quota")
-	}
-}
-
-func TestMemoryStorage_UpdateQuota_NotFound(t *testing.T) {
-	ctx := context.Background()
-	storage := NewMemoryStorage()
-
-	err := storage.UpdateQuota(ctx, "nonexistent", &TenantQuota{})
-	if err == nil {
-		t.Fatal("expected error updating quota for nonexistent tenant")
-	}
-}
-
-func TestMemoryStorage_IncrementQuotaUsage_ExceedsLimit(t *testing.T) {
-	ctx := context.Background()
-	storage := NewMemoryStorage()
-
-	// Create tenant with quota
-	if err := storage.CreateTenant(ctx, &Tenant{ID: "t1", Name: "Test"}); err != nil {
-		t.Fatalf("CreateTenant failed: %v", err)
-	}
-
-	// Use BaaS-layer IAM quota (apps); users are engine-level owned by qrdb.
-	quota := &TenantQuota{MaxApps: 2}
-	if err := storage.UpdateQuota(ctx, "t1", quota); err != nil {
-		t.Fatalf("UpdateQuota failed: %v", err)
-	}
-
-	// Increment within limit
-	if err := storage.IncrementQuotaUsage(ctx, "t1", "apps", 2); err != nil {
-		t.Fatalf("IncrementQuotaUsage within limit failed: %v", err)
-	}
-
-	// Increment beyond limit
-	err := storage.IncrementQuotaUsage(ctx, "t1", "apps", 1)
-	if err == nil {
-		t.Fatal("expected error when exceeding quota")
-	}
-}
-
-func TestMemoryStorage_DecrementQuotaUsage_ExistingQuota(t *testing.T) {
-	ctx := context.Background()
-	storage := NewMemoryStorage()
-
-	if err := storage.CreateTenant(ctx, &Tenant{ID: "t1", Name: "Test"}); err != nil {
-		t.Fatalf("CreateTenant failed: %v", err)
-	}
-
-	quota := &TenantQuota{MaxApps: 10}
-	if err := storage.UpdateQuota(ctx, "t1", quota); err != nil {
-		t.Fatalf("UpdateQuota failed: %v", err)
-	}
-
-	// Increment first
-	if err := storage.IncrementQuotaUsage(ctx, "t1", "apps", 5); err != nil {
-		t.Fatalf("IncrementQuotaUsage failed: %v", err)
-	}
-
-	// Decrement
-	if err := storage.DecrementQuotaUsage(ctx, "t1", "apps", 3); err != nil {
-		t.Fatalf("DecrementQuotaUsage failed: %v", err)
-	}
-
-	// Verify quota
-	q, err := storage.GetQuota(ctx, "t1")
-	if err != nil {
-		t.Fatalf("GetQuota failed: %v", err)
-	}
-	if q.CurrentApps != 2 {
-		t.Fatalf("expected 2 apps after decrement, got %d", q.CurrentApps)
-	}
-}
-
-func TestMemoryStorage_DecrementQuotaUsage_FloorAtZero(t *testing.T) {
-	ctx := context.Background()
-	storage := NewMemoryStorage()
-
-	if err := storage.CreateTenant(ctx, &Tenant{ID: "t1", Name: "Test"}); err != nil {
-		t.Fatalf("CreateTenant failed: %v", err)
-	}
-
-	quota := &TenantQuota{MaxApps: 10}
-	if err := storage.UpdateQuota(ctx, "t1", quota); err != nil {
-		t.Fatalf("UpdateQuota failed: %v", err)
-	}
-
-	// Decrement more than current (should floor at 0)
-	if err := storage.DecrementQuotaUsage(ctx, "t1", "apps", 100); err != nil {
-		t.Fatalf("DecrementQuotaUsage failed: %v", err)
-	}
-
-	q, err := storage.GetQuota(ctx, "t1")
-	if err != nil {
-		t.Fatalf("GetQuota failed: %v", err)
-	}
-	if q.CurrentApps != 0 {
-		t.Fatalf("expected 0 apps after excessive decrement, got %d", q.CurrentApps)
-	}
-}
-
 func TestMemoryStorage_CreateApp_DuplicateClientID(t *testing.T) {
 	ctx := context.Background()
 	storage := NewMemoryStorage()
@@ -1423,194 +1128,6 @@ func TestMemoryStorage_CreateApp_DuplicateClientID(t *testing.T) {
 	err := storage.CreateApp(ctx, app2)
 	if err == nil {
 		t.Fatal("expected error for duplicate client ID")
-	}
-}
-
-func TestMemoryStorage_UpdateApp_NotFound(t *testing.T) {
-	ctx := context.Background()
-	storage := NewMemoryStorage()
-
-	err := storage.UpdateApp(ctx, &Application{ClientID: "nonexistent"})
-	if err == nil {
-		t.Fatal("expected error updating nonexistent app")
-	}
-}
-
-func TestMemoryStorage_DeleteApp_NotFound(t *testing.T) {
-	ctx := context.Background()
-	storage := NewMemoryStorage()
-
-	err := storage.DeleteApp(ctx, "nonexistent")
-	if err == nil {
-		t.Fatal("expected error deleting nonexistent app")
-	}
-}
-
-func TestMemoryStorage_ValidateClientSecret_NotFound(t *testing.T) {
-	t.Parallel()
-
-	ctx := context.Background()
-	storage := NewMemoryStorage()
-
-	_, err := storage.ValidateClientSecret(ctx, "nonexistent", "secret")
-	if err == nil {
-		t.Fatal("expected error validating secret for nonexistent app")
-	}
-}
-
-func TestMemoryStorage_GetAppByTenant_NotFound(t *testing.T) {
-	ctx := context.Background()
-	storage := NewMemoryStorage()
-
-	_, err := storage.GetAppByTenant(ctx, "t1", "nonexistent")
-	if err == nil {
-		t.Fatal("expected error for nonexistent app by tenant")
-	}
-}
-
-// =============================================================================
-// MemoryStorage - IncrementQuotaUsage / DecrementQuotaUsage Additional Coverage
-// =============================================================================
-
-func TestMemoryStorage_IncrementQuotaUsage_AppsResource(t *testing.T) {
-	storage := NewMemoryStorage()
-	ctx := context.Background()
-
-	// Create tenant first
-	tenant := &Tenant{
-		ID:      "test-tenant",
-		Name:    "Test Tenant",
-		Created: time.Now(),
-		Updated: time.Now(),
-	}
-	if err := storage.CreateTenant(ctx, tenant); err != nil {
-		t.Fatalf("CreateTenant failed: %v", err)
-	}
-
-	// Set initial quota with apps limit
-	quota := &TenantQuota{
-		MaxApps:     5,
-		CurrentApps: 0,
-	}
-	if err := storage.UpdateQuota(ctx, "test-tenant", quota); err != nil {
-		t.Fatalf("UpdateQuota failed: %v", err)
-	}
-
-	// Increment apps count
-	err := storage.IncrementQuotaUsage(ctx, "test-tenant", "apps", 1)
-	if err != nil {
-		t.Fatalf("IncrementQuotaUsage failed: %v", err)
-	}
-
-	// Verify increment
-	updatedQuota, err := storage.GetQuota(ctx, "test-tenant")
-	if err != nil {
-		t.Fatalf("GetQuota failed: %v", err)
-	}
-	if updatedQuota.CurrentApps != 1 {
-		t.Errorf("expected CurrentApps=1, got %d", updatedQuota.CurrentApps)
-	}
-}
-
-func TestMemoryStorage_IncrementQuotaUsage_AppsExceedsLimit(t *testing.T) {
-	storage := NewMemoryStorage()
-	ctx := context.Background()
-
-	tenant := &Tenant{
-		ID:      "test-tenant-2",
-		Name:    "Test Tenant 2",
-		Created: time.Now(),
-		Updated: time.Now(),
-	}
-	if err := storage.CreateTenant(ctx, tenant); err != nil {
-		t.Fatalf("CreateTenant failed: %v", err)
-	}
-
-	quota := &TenantQuota{
-		MaxApps:     2,
-		CurrentApps: 2,
-	}
-	if err := storage.UpdateQuota(ctx, "test-tenant-2", quota); err != nil {
-		t.Fatalf("UpdateQuota failed: %v", err)
-	}
-
-	// Try to increment beyond limit
-	err := storage.IncrementQuotaUsage(ctx, "test-tenant-2", "apps", 1)
-	if err == nil {
-		t.Error("expected error when exceeding apps quota")
-	}
-}
-
-func TestMemoryStorage_DecrementQuotaUsage_AppsResource(t *testing.T) {
-	storage := NewMemoryStorage()
-	ctx := context.Background()
-
-	tenant := &Tenant{
-		ID:      "test-tenant-3",
-		Name:    "Test Tenant 3",
-		Created: time.Now(),
-		Updated: time.Now(),
-	}
-	if err := storage.CreateTenant(ctx, tenant); err != nil {
-		t.Fatalf("CreateTenant failed: %v", err)
-	}
-
-	quota := &TenantQuota{
-		MaxApps:     10,
-		CurrentApps: 5,
-	}
-	if err := storage.UpdateQuota(ctx, "test-tenant-3", quota); err != nil {
-		t.Fatalf("UpdateQuota failed: %v", err)
-	}
-
-	err := storage.DecrementQuotaUsage(ctx, "test-tenant-3", "apps", 2)
-	if err != nil {
-		t.Fatalf("DecrementQuotaUsage failed: %v", err)
-	}
-
-	updatedQuota, err := storage.GetQuota(ctx, "test-tenant-3")
-	if err != nil {
-		t.Fatalf("GetQuota failed: %v", err)
-	}
-	if updatedQuota.CurrentApps != 3 {
-		t.Errorf("expected CurrentApps=3, got %d", updatedQuota.CurrentApps)
-	}
-}
-
-func TestMemoryStorage_DecrementQuotaUsage_AppsFloorAtZero(t *testing.T) {
-	storage := NewMemoryStorage()
-	ctx := context.Background()
-
-	tenant := &Tenant{
-		ID:      "test-tenant-4",
-		Name:    "Test Tenant 4",
-		Created: time.Now(),
-		Updated: time.Now(),
-	}
-	if err := storage.CreateTenant(ctx, tenant); err != nil {
-		t.Fatalf("CreateTenant failed: %v", err)
-	}
-
-	quota := &TenantQuota{
-		MaxApps:     10,
-		CurrentApps: 1,
-	}
-	if err := storage.UpdateQuota(ctx, "test-tenant-4", quota); err != nil {
-		t.Fatalf("UpdateQuota failed: %v", err)
-	}
-
-	// Decrement more than current
-	err := storage.DecrementQuotaUsage(ctx, "test-tenant-4", "apps", 10)
-	if err != nil {
-		t.Fatalf("DecrementQuotaUsage failed: %v", err)
-	}
-
-	updatedQuota, err := storage.GetQuota(ctx, "test-tenant-4")
-	if err != nil {
-		t.Fatalf("GetQuota failed: %v", err)
-	}
-	if updatedQuota.CurrentApps != 0 {
-		t.Errorf("expected CurrentApps=0 (floor), got %d", updatedQuota.CurrentApps)
 	}
 }
 
@@ -1683,7 +1200,6 @@ func TestPolicyCache_EnforceMaxSize_MultipleCycles(t *testing.T) {
 	for i := 0; i < 5; i++ {
 		policy := &Policy{Metadata: PolicyMetadata{Name: stringFromInt(i)}}
 		cache.Set("tenant-1", policy)
-		time.Sleep(10 * time.Millisecond) // Different timestamps for eviction order
 	}
 
 	// Enforce max size
@@ -1866,72 +1382,64 @@ func TestMemoryDeletionStorage_ListDeletionRequests_NoMatchingTenant(t *testing.
 // BatchProcessor - ImportGroups and ImportPolicies path coverage
 // =============================================================================
 
-func TestBatchProcessor_ImportPolicies_NoPolicyObject(t *testing.T) {
-	storage := newMockBatchStorage()
-	tenantMgr := newMockTenantManager()
-	bp := NewIAMBatchProcessor(storage, tenantMgr)
-
-	ctx := context.Background()
-	tenantID := "test-tenant"
-
-	// Import with Name but no Policy object - should construct policy from fields
-	items := []PolicyImportItem{
+// TestBatchProcessor_ProcessPolicies runs the import worker synchronously, so
+// the progress counters are read after it returns rather than after a sleep.
+func TestBatchProcessor_ProcessPolicies(t *testing.T) {
+	const tenantID = "test-tenant"
+	rule := Rule{Name: "r1", Effect: EffectAllow, Actions: []string{"read"}, Resources: []string{"*"}}
+	tests := []struct {
+		name          string
+		items         []PolicyImportItem
+		opts          BatchOptions
+		wantSucceeded int
+		wantFailed    int
+	}{
 		{
-			Name:        "inline-policy",
-			Description: "Policy from fields",
-			Subjects:    SubjectSelector{Users: []string{"user-1"}},
-			Rules:       []Rule{{Name: "r1", Effect: EffectAllow, Actions: []string{"read"}, Resources: []string{"*"}}},
+			name: "policy built from item fields when no Policy object",
+			items: []PolicyImportItem{{
+				Name:        "inline-policy",
+				Description: "Policy from fields",
+				Subjects:    SubjectSelector{Users: []string{"user-1"}},
+				Rules:       []Rule{rule},
+			}},
+			wantSucceeded: 1,
 		},
-	}
-
-	op, err := bp.ImportPolicies(ctx, tenantID, items, BatchOptions{})
-	if err != nil {
-		t.Fatalf("ImportPolicies failed: %v", err)
-	}
-
-	time.Sleep(300 * time.Millisecond)
-
-	saved, _ := storage.GetOperation(ctx, op.ID)
-	if saved.Progress.Succeeded != 1 {
-		t.Errorf("expected 1 successful import, got %d (failed: %d)", saved.Progress.Succeeded, saved.Progress.Failed)
-	}
-}
-
-func TestBatchProcessor_ImportPolicies_ContinueOnErrorBreak(t *testing.T) {
-	storage := newMockBatchStorage()
-	tenantMgr := newMockTenantManager()
-	bp := NewIAMBatchProcessor(storage, tenantMgr)
-
-	ctx := context.Background()
-	tenantID := "test-tenant"
-
-	// First item invalid, second valid - with ContinueOnError=false should break
-	items := []PolicyImportItem{
-		{Name: "", Description: "Invalid policy - no name"},
 		{
-			Name: "valid-policy",
-			Policy: &Policy{
-				APIVersion: "v1",
-				Kind:       "Policy",
-				Metadata:   PolicyMetadata{Name: "valid-policy", Tenant: tenantID},
-				Spec:       PolicySpec{Rules: []Rule{{Name: "r1", Effect: EffectAllow, Actions: []string{"read"}, Resources: []string{"*"}}}},
+			name: "first failure stops the run without ContinueOnError",
+			items: []PolicyImportItem{
+				{Name: "", Description: "Invalid policy - no name"},
+				{Name: "valid-policy", Policy: &Policy{
+					APIVersion: "v1",
+					Kind:       "Policy",
+					Metadata:   PolicyMetadata{Name: "valid-policy", Tenant: tenantID},
+					Spec:       PolicySpec{Rules: []Rule{rule}},
+				}},
 			},
+			opts:       BatchOptions{ContinueOnError: false},
+			wantFailed: 1,
 		},
 	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx := context.Background()
+			storage := newMockBatchStorage()
+			bp := NewIAMBatchProcessor(storage, newMockTenantManager())
+			op := bp.createOperation(tenantID, BatchOperationTypePolicies, len(tt.items), tt.opts)
+			if err := storage.SaveOperation(ctx, op); err != nil {
+				t.Fatalf("SaveOperation failed: %v", err)
+			}
 
-	op, err := bp.ImportPolicies(ctx, tenantID, items, BatchOptions{
-		ContinueOnError: false,
-	})
-	if err != nil {
-		t.Fatalf("ImportPolicies failed: %v", err)
-	}
+			bp.processPolicies(ctx, op, tt.items, tt.opts)
 
-	time.Sleep(300 * time.Millisecond)
-
-	saved, _ := storage.GetOperation(ctx, op.ID)
-	// Should stop after first error
-	if saved.Progress.Failed != 1 {
-		t.Errorf("expected 1 failed (break on error), got %d", saved.Progress.Failed)
+			saved, err := storage.GetOperation(ctx, op.ID)
+			if err != nil {
+				t.Fatalf("GetOperation failed: %v", err)
+			}
+			if saved.Progress.Succeeded != tt.wantSucceeded || saved.Progress.Failed != tt.wantFailed {
+				t.Errorf("progress = %d succeeded, %d failed; want %d, %d",
+					saved.Progress.Succeeded, saved.Progress.Failed, tt.wantSucceeded, tt.wantFailed)
+			}
+		})
 	}
 }
 

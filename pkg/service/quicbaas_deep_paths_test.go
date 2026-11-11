@@ -29,196 +29,115 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
-func TestWriteBatch_NilPointInBatch_Validation(t *testing.T) {
-	log := createTestLogger(t)
-	svc := &quicBaaS{logger: log}
-	mockTS := newTestMockTimeSeriesStorage()
-	tsSvc := &timeSeriesService{svc: svc, tsStorage: mockTS}
-
-	req := &WriteBatchRequest{
-		Points: []*WritePointRequest{
-			{Metric: "cpu.usage", Value: 75.5},
-			nil, // nil point should return validation error
-		},
+func TestWriteBatch_InvalidPoint(t *testing.T) {
+	tests := []struct {
+		name   string
+		points []*WritePointRequest
+	}{
+		{name: "nil point", points: []*WritePointRequest{{Metric: "cpu.usage", Value: 75.5}, nil}},
+		{name: "empty metric", points: []*WritePointRequest{{Metric: "", Value: 100.0}}},
 	}
 
-	resp, err := tsSvc.WriteBatch(tenantctx.WithSystem(context.Background()), req)
-	require.Error(t, err)
-	assert.Nil(t, resp)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			svc := &quicBaaS{logger: createTestLogger(t)}
+			tsSvc := &timeSeriesService{svc: svc, tsStorage: newTestMockTimeSeriesStorage()}
 
-	var qbErr *errors.QBError
-	require.ErrorAs(t, err, &qbErr)
-	assert.Equal(t, errors.ErrInvalidInput, qbErr.Code)
-}
+			resp, err := tsSvc.WriteBatch(tenantctx.WithSystem(context.Background()), &WriteBatchRequest{Points: tt.points})
+			require.Error(t, err)
+			assert.Nil(t, resp)
 
-func TestWriteBatch_EmptyMetricInBatch_Validation(t *testing.T) {
-	log := createTestLogger(t)
-	svc := &quicBaaS{logger: log}
-	mockTS := newTestMockTimeSeriesStorage()
-	tsSvc := &timeSeriesService{svc: svc, tsStorage: mockTS}
-
-	req := &WriteBatchRequest{
-		Points: []*WritePointRequest{
-			{Metric: "", Value: 100.0}, // empty metric
-		},
+			var qbErr *errors.QBError
+			require.ErrorAs(t, err, &qbErr)
+			assert.Equal(t, errors.ErrInvalidInput, qbErr.Code)
+		})
 	}
-
-	resp, err := tsSvc.WriteBatch(tenantctx.WithSystem(context.Background()), req)
-	require.Error(t, err)
-	assert.Nil(t, resp)
-
-	var qbErr *errors.QBError
-	require.ErrorAs(t, err, &qbErr)
-	assert.Equal(t, errors.ErrInvalidInput, qbErr.Code)
 }
 
 // =============================================================================
 // Aggregate - Unsupported function, default value field, non-numeric skip
 // =============================================================================
 
-func TestAggregate_UnsupportedFunction(t *testing.T) {
-	log := createTestLogger(t)
-
-	data1 := map[string]interface{}{"timestamp": float64(10), "value": float64(100)}
-	json1, _ := json.Marshal(data1)
-
-	qrdbProvider := newSvcBoostMockQRDBProvider(sliceToCannedScanResult([][]byte{json1}), nil)
-	svc := &quicBaaS{logger: log, qrdbClient: qrdbProvider}
-	tsSvc := &timeSeriesService{svc: svc}
-
-	req := &AggregateRequest{
-		EntityType: "metrics",
-		StartTime:  1,
-		EndTime:    100,
-		Function:   AggregateFunction(999), // invalid function
+func TestAggregate_FunctionAndValueShape(t *testing.T) {
+	tests := []struct {
+		name       string
+		entity     map[string]interface{}
+		fieldName  string
+		function   AggregateFunction
+		wantErr    bool
+		wantResult float64
+		wantCount  uint64
+	}{
+		{
+			name:     "unsupported function",
+			entity:   map[string]interface{}{"timestamp": float64(10), "value": float64(100)},
+			function: AggregateFunction(999),
+			wantErr:  true,
+		},
+		{
+			name:       "empty field name defaults to value",
+			entity:     map[string]interface{}{"timestamp": float64(10), "value": float64(42.0)},
+			function:   AggregateFunctionSum,
+			wantResult: 42.0,
+			wantCount:  1,
+		},
+		{
+			name:      "non-numeric field is skipped",
+			entity:    map[string]interface{}{"timestamp": float64(10), "status": "active"},
+			fieldName: "status",
+			function:  AggregateFunctionSum,
+		},
+		{
+			name:     "missing default value field is skipped",
+			entity:   map[string]interface{}{"timestamp": float64(10), "status": "ok"},
+			function: AggregateFunctionCount,
+		},
+		{
+			name:     "min with no values",
+			function: AggregateFunctionMin,
+		},
+		{
+			name:     "max with no values",
+			function: AggregateFunctionMax,
+		},
 	}
 
-	resp, err := tsSvc.Aggregate(tenantctx.WithSystem(context.Background()), req)
-	require.Error(t, err)
-	assert.Nil(t, resp)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var scan [][]byte
+			if tt.entity != nil {
+				raw, err := json.Marshal(tt.entity)
+				require.NoError(t, err)
+				scan = [][]byte{raw}
+			}
 
-	var qbErr *errors.QBError
-	require.ErrorAs(t, err, &qbErr)
-	assert.Equal(t, errors.ErrInvalidInput, qbErr.Code)
-}
+			qrdbProvider := newSvcBoostMockQRDBProvider(sliceToCannedScanResult(scan), nil)
+			svc := &quicBaaS{logger: createTestLogger(t), qrdbClient: qrdbProvider}
+			tsSvc := &timeSeriesService{svc: svc}
 
-func TestAggregate_DefaultValueField(t *testing.T) {
-	log := createTestLogger(t)
+			req := &AggregateRequest{
+				EntityType: "metrics",
+				StartTime:  1,
+				EndTime:    100,
+				FieldName:  tt.fieldName,
+				Function:   tt.function,
+			}
 
-	// No FieldName set, should use "value" field by default
-	data1 := map[string]interface{}{"timestamp": float64(10), "value": float64(42.0)}
-	json1, _ := json.Marshal(data1)
-
-	qrdbProvider := newSvcBoostMockQRDBProvider(sliceToCannedScanResult([][]byte{json1}), nil)
-	svc := &quicBaaS{logger: log, qrdbClient: qrdbProvider}
-	tsSvc := &timeSeriesService{svc: svc}
-
-	req := &AggregateRequest{
-		EntityType: "metrics",
-		StartTime:  1,
-		EndTime:    100,
-		FieldName:  "", // empty, should use "value" as default
-		Function:   AggregateFunctionSum,
+			resp, err := tsSvc.Aggregate(tenantctx.WithSystem(context.Background()), req)
+			if tt.wantErr {
+				require.Error(t, err)
+				assert.Nil(t, resp)
+				var qbErr *errors.QBError
+				require.ErrorAs(t, err, &qbErr)
+				assert.Equal(t, errors.ErrInvalidInput, qbErr.Code)
+				return
+			}
+			require.NoError(t, err)
+			require.NotNil(t, resp)
+			assert.Equal(t, tt.wantResult, resp.Result)
+			assert.Equal(t, tt.wantCount, resp.Count)
+		})
 	}
-
-	resp, err := tsSvc.Aggregate(tenantctx.WithSystem(context.Background()), req)
-	require.NoError(t, err)
-	require.NotNil(t, resp)
-	assert.Equal(t, 42.0, resp.Result)
-	assert.Equal(t, uint64(1), resp.Count)
-}
-
-func TestAggregate_NonNumericFieldSkip(t *testing.T) {
-	log := createTestLogger(t)
-
-	// Entity where the custom field is a string (not numeric)
-	data1 := map[string]interface{}{"timestamp": float64(10), "status": "active"}
-	json1, _ := json.Marshal(data1)
-
-	qrdbProvider := newSvcBoostMockQRDBProvider(sliceToCannedScanResult([][]byte{json1}), nil)
-	svc := &quicBaaS{logger: log, qrdbClient: qrdbProvider}
-	tsSvc := &timeSeriesService{svc: svc}
-
-	req := &AggregateRequest{
-		EntityType: "metrics",
-		StartTime:  1,
-		EndTime:    100,
-		FieldName:  "status", // non-numeric field
-		Function:   AggregateFunctionSum,
-	}
-
-	resp, err := tsSvc.Aggregate(tenantctx.WithSystem(context.Background()), req)
-	require.NoError(t, err)
-	require.NotNil(t, resp)
-	assert.Equal(t, float64(0), resp.Result)
-	assert.Equal(t, uint64(0), resp.Count) // skipped because field is not numeric
-}
-
-func TestAggregate_MissingDefaultValueField(t *testing.T) {
-	log := createTestLogger(t)
-
-	// No FieldName and no "value" field in entity -- should be skipped
-	data1 := map[string]interface{}{"timestamp": float64(10), "status": "ok"}
-	json1, _ := json.Marshal(data1)
-
-	qrdbProvider := newSvcBoostMockQRDBProvider(sliceToCannedScanResult([][]byte{json1}), nil)
-	svc := &quicBaaS{logger: log, qrdbClient: qrdbProvider}
-	tsSvc := &timeSeriesService{svc: svc}
-
-	req := &AggregateRequest{
-		EntityType: "metrics",
-		StartTime:  1,
-		EndTime:    100,
-		FieldName:  "", // no field specified, and entity has no "value" field
-		Function:   AggregateFunctionCount,
-	}
-
-	resp, err := tsSvc.Aggregate(tenantctx.WithSystem(context.Background()), req)
-	require.NoError(t, err)
-	require.NotNil(t, resp)
-	assert.Equal(t, float64(0), resp.Result) // count of 0 entities with "value" field
-}
-
-func TestAggregate_MinWithEmptyValues(t *testing.T) {
-	log := createTestLogger(t)
-
-	// No matching entities after filtering
-	qrdbProvider := newSvcBoostMockQRDBProvider(nil, nil)
-	svc := &quicBaaS{logger: log, qrdbClient: qrdbProvider}
-	tsSvc := &timeSeriesService{svc: svc}
-
-	req := &AggregateRequest{
-		EntityType: "metrics",
-		StartTime:  1,
-		EndTime:    100,
-		Function:   AggregateFunctionMin,
-	}
-
-	resp, err := tsSvc.Aggregate(tenantctx.WithSystem(context.Background()), req)
-	require.NoError(t, err)
-	require.NotNil(t, resp)
-	assert.Equal(t, float64(0), resp.Result) // Min with no values = 0
-	assert.Equal(t, uint64(0), resp.Count)
-}
-
-func TestAggregate_MaxWithEmptyValues(t *testing.T) {
-	log := createTestLogger(t)
-
-	qrdbProvider := newSvcBoostMockQRDBProvider(nil, nil)
-	svc := &quicBaaS{logger: log, qrdbClient: qrdbProvider}
-	tsSvc := &timeSeriesService{svc: svc}
-
-	req := &AggregateRequest{
-		EntityType: "metrics",
-		StartTime:  1,
-		EndTime:    100,
-		Function:   AggregateFunctionMax,
-	}
-
-	resp, err := tsSvc.Aggregate(tenantctx.WithSystem(context.Background()), req)
-	require.NoError(t, err)
-	require.NotNil(t, resp)
-	assert.Equal(t, float64(0), resp.Result) // Max with no values = 0
 }
 
 // =============================================================================
@@ -373,75 +292,40 @@ func TestTimeSeriesQuery_ContextCancellation(t *testing.T) {
 // GetMigrationProgress - Non-migration type, ETA calculation, not found
 // =============================================================================
 
-func TestGetMigrationProgress_NilRequest(t *testing.T) {
-	log := createTestLogger(t)
-	svc := &quicBaaS{logger: log}
-	opsSvc := newOperationsService(svc)
-
-	resp, err := opsSvc.GetMigrationProgress(tenantctx.WithSystem(context.Background()), nil)
-	require.Error(t, err)
-	assert.Nil(t, resp)
-
-	var qbErr *errors.QBError
-	require.ErrorAs(t, err, &qbErr)
-	assert.Equal(t, errors.ErrInvalidInput, qbErr.Code)
-}
-
-func TestGetMigrationProgress_EmptyMigrationID(t *testing.T) {
-	log := createTestLogger(t)
-	svc := &quicBaaS{logger: log}
-	opsSvc := newOperationsService(svc)
-
-	resp, err := opsSvc.GetMigrationProgress(tenantctx.WithSystem(context.Background()), &GetMigrationProgressRequest{
-		MigrationID: "",
-	})
-	require.Error(t, err)
-	assert.Nil(t, resp)
-
-	var qbErr *errors.QBError
-	require.ErrorAs(t, err, &qbErr)
-	assert.Equal(t, errors.ErrInvalidInput, qbErr.Code)
-}
-
-func TestGetMigrationProgress_NotFound(t *testing.T) {
-	log := createTestLogger(t)
-	svc := &quicBaaS{logger: log}
-	opsSvc := newOperationsService(svc)
-
-	resp, err := opsSvc.GetMigrationProgress(tenantctx.WithSystem(context.Background()), &GetMigrationProgressRequest{
-		MigrationID: "nonexistent-id",
-	})
-	require.Error(t, err)
-	assert.Nil(t, resp)
-
-	var qbErr *errors.QBError
-	require.ErrorAs(t, err, &qbErr)
-	assert.Equal(t, errors.ErrNotFound, qbErr.Code)
-}
-
-func TestGetMigrationProgress_NonMigrationType(t *testing.T) {
-	log := createTestLogger(t)
-	svc := &quicBaaS{logger: log}
-	opsSvc := newOperationsService(svc)
-
-	// Insert a job that is NOT of type "migration"
-	opsSvc.jobsMu.Lock()
-	opsSvc.jobs["upgrade-job-1"] = &operationJob{
-		ID:     "upgrade-job-1",
-		Type:   "upgrade",
-		Status: "running",
+func TestGetMigrationProgress_InvalidInput(t *testing.T) {
+	tests := []struct {
+		name     string
+		req      *GetMigrationProgressRequest
+		wantCode errors.ErrorCode
+	}{
+		{name: "nil request", req: nil, wantCode: errors.ErrInvalidInput},
+		{name: "empty migration id", req: &GetMigrationProgressRequest{MigrationID: ""}, wantCode: errors.ErrInvalidInput},
+		{name: "unknown migration id", req: &GetMigrationProgressRequest{MigrationID: "nonexistent-id"}, wantCode: errors.ErrNotFound},
+		{name: "job is not a migration", req: &GetMigrationProgressRequest{MigrationID: "upgrade-job-1"}, wantCode: errors.ErrInvalidInput},
 	}
-	opsSvc.jobsMu.Unlock()
 
-	resp, err := opsSvc.GetMigrationProgress(tenantctx.WithSystem(context.Background()), &GetMigrationProgressRequest{
-		MigrationID: "upgrade-job-1",
-	})
-	require.Error(t, err)
-	assert.Nil(t, resp)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			svc := &quicBaaS{logger: createTestLogger(t)}
+			opsSvc := newOperationsService(svc)
 
-	var qbErr *errors.QBError
-	require.ErrorAs(t, err, &qbErr)
-	assert.Equal(t, errors.ErrInvalidInput, qbErr.Code)
+			opsSvc.jobsMu.Lock()
+			opsSvc.jobs["upgrade-job-1"] = &operationJob{
+				ID:     "upgrade-job-1",
+				Type:   "upgrade",
+				Status: "running",
+			}
+			opsSvc.jobsMu.Unlock()
+
+			resp, err := opsSvc.GetMigrationProgress(tenantctx.WithSystem(context.Background()), tt.req)
+			require.Error(t, err)
+			assert.Nil(t, resp)
+
+			var qbErr *errors.QBError
+			require.ErrorAs(t, err, &qbErr)
+			assert.Equal(t, tt.wantCode, qbErr.Code)
+		})
+	}
 }
 
 func TestGetMigrationProgress_ETACalculation(t *testing.T) {
@@ -663,198 +547,161 @@ func listOnePage(t *testing.T, svc QuicBaaS, ctx context.Context, req *ListReque
 // ListMetrics - Storage error, default limit
 // =============================================================================
 
-func TestListMetrics_StorageError(t *testing.T) {
-	log := createTestLogger(t)
-	svc := &quicBaaS{logger: log}
-	mockTS := newTestMockTimeSeriesStorage()
-	tsSvc := &timeSeriesService{svc: svc, tsStorage: mockTS}
+func TestListMetrics(t *testing.T) {
+	tests := []struct {
+		name       string
+		req        *TSListMetricsRequest
+		noStorage  bool
+		wantPrefix string
+		wantLimit  int
+		metrics    []string
+		storageErr error
+		wantErr    bool
+		wantCode   errors.ErrorCode
+	}{
+		{
+			name:      "nil request uses defaults",
+			req:       nil,
+			wantLimit: 1000,
+			metrics:   []string{"cpu.usage", "memory.used"},
+		},
+		{
+			name:       "prefix and limit are passed through",
+			req:        &TSListMetricsRequest{Prefix: "cpu.", Limit: 50},
+			wantPrefix: "cpu.",
+			wantLimit:  50,
+			metrics:    []string{"cpu.usage", "cpu.idle"},
+		},
+		{
+			name:       "storage error",
+			req:        &TSListMetricsRequest{},
+			wantLimit:  1000,
+			storageErr: stderrors.New("storage read error"),
+			wantErr:    true,
+			wantCode:   errors.ErrInternal,
+		},
+		{
+			name:      "storage not configured",
+			req:       &TSListMetricsRequest{},
+			noStorage: true,
+			wantErr:   true,
+			wantCode:  errors.ErrNotImplemented,
+		},
+	}
 
-	mockTS.On("ListMetrics", "", 1000).
-		Return(nil, stderrors.New("storage read error")).Once()
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			svc := &quicBaaS{logger: createTestLogger(t)}
+			tsSvc := &timeSeriesService{svc: svc}
+			mockTS := newTestMockTimeSeriesStorage()
+			if !tt.noStorage {
+				tsSvc.tsStorage = mockTS
+				mockTS.On("ListMetrics", tt.wantPrefix, tt.wantLimit).
+					Return(tt.metrics, tt.storageErr).Once()
+			}
 
-	resp, err := tsSvc.ListMetrics(tenantctx.WithSystem(context.Background()), &TSListMetricsRequest{})
-	require.Error(t, err)
-	assert.Nil(t, resp)
-
-	var qbErr *errors.QBError
-	require.ErrorAs(t, err, &qbErr)
-	assert.Equal(t, errors.ErrInternal, qbErr.Code)
-	mockTS.AssertExpectations(t)
-}
-
-func TestListMetrics_NilRequest(t *testing.T) {
-	log := createTestLogger(t)
-	svc := &quicBaaS{logger: log}
-	mockTS := newTestMockTimeSeriesStorage()
-	tsSvc := &timeSeriesService{svc: svc, tsStorage: mockTS}
-
-	mockTS.On("ListMetrics", "", 1000).
-		Return([]string{"cpu.usage", "memory.used"}, nil).Once()
-
-	resp, err := tsSvc.ListMetrics(tenantctx.WithSystem(context.Background()), nil)
-	require.NoError(t, err)
-	require.NotNil(t, resp)
-	assert.Len(t, resp.Metrics, 2)
-	mockTS.AssertExpectations(t)
-}
-
-func TestListMetrics_WithPrefixAndLimit(t *testing.T) {
-	log := createTestLogger(t)
-	svc := &quicBaaS{logger: log}
-	mockTS := newTestMockTimeSeriesStorage()
-	tsSvc := &timeSeriesService{svc: svc, tsStorage: mockTS}
-
-	mockTS.On("ListMetrics", "cpu.", 50).
-		Return([]string{"cpu.usage", "cpu.idle"}, nil).Once()
-
-	resp, err := tsSvc.ListMetrics(tenantctx.WithSystem(context.Background()), &TSListMetricsRequest{
-		Prefix: "cpu.",
-		Limit:  50,
-	})
-	require.NoError(t, err)
-	require.NotNil(t, resp)
-	assert.Len(t, resp.Metrics, 2)
-	mockTS.AssertExpectations(t)
-}
-
-func TestListMetrics_StorageNotConfigured(t *testing.T) {
-	log := createTestLogger(t)
-	svc := &quicBaaS{logger: log}
-	tsSvc := &timeSeriesService{svc: svc, tsStorage: nil}
-
-	resp, err := tsSvc.ListMetrics(tenantctx.WithSystem(context.Background()), &TSListMetricsRequest{})
-	require.Error(t, err)
-	assert.Nil(t, resp)
-
-	var qbErr *errors.QBError
-	require.ErrorAs(t, err, &qbErr)
-	assert.Equal(t, errors.ErrNotImplemented, qbErr.Code)
+			resp, err := tsSvc.ListMetrics(tenantctx.WithSystem(context.Background()), tt.req)
+			mockTS.AssertExpectations(t)
+			if tt.wantErr {
+				require.Error(t, err)
+				assert.Nil(t, resp)
+				var qbErr *errors.QBError
+				require.ErrorAs(t, err, &qbErr)
+				assert.Equal(t, tt.wantCode, qbErr.Code)
+				return
+			}
+			require.NoError(t, err)
+			require.NotNil(t, resp)
+			assert.Equal(t, tt.metrics, resp.Metrics)
+		})
+	}
 }
 
 // =============================================================================
 // Backup functions - Type assertion failures, error paths
 // =============================================================================
 
-func TestCreateBackup_NilBackupManager(t *testing.T) {
-	log := createTestLogger(t)
-	svc := &quicBaaS{logger: log, backupMgr: nil}
-	backupSvc := &backupService{svc: svc}
+func TestBackupService_ManagerFailures(t *testing.T) {
+	type backupCall func(ctx context.Context, s *backupService) (interface{}, error)
 
-	resp, err := backupSvc.CreateBackup(tenantctx.WithSystem(context.Background()), &CreateBackupRequest{Name: "full"})
-	require.Error(t, err)
-	assert.Nil(t, resp)
+	createBackup := func(ctx context.Context, s *backupService) (interface{}, error) {
+		return s.CreateBackup(ctx, &CreateBackupRequest{Name: "full"})
+	}
+	restoreBackup := func(ctx context.Context, s *backupService) (interface{}, error) {
+		return s.RestoreBackup(ctx, &RestoreBackupRequest{BackupID: "backup-123"})
+	}
+	deleteBackup := func(ctx context.Context, s *backupService) (interface{}, error) {
+		return s.DeleteBackup(ctx, &DeleteBackupRequest{BackupID: "backup-123"})
+	}
 
-	var qbErr *errors.QBError
-	require.ErrorAs(t, err, &qbErr)
-	assert.Equal(t, errors.ErrNotImplemented, qbErr.Code)
-}
-
-func TestCreateBackup_ManagerError(t *testing.T) {
-	log := createTestLogger(t)
-	svc := &quicBaaS{logger: log, backupMgr: &mockBackupManager{
-		createBackupFn: func(ctx context.Context, backupType interface{}) (interface{}, error) {
-			return nil, stderrors.New("backup creation failed")
+	tests := []struct {
+		name     string
+		mgr      *mockBackupManager
+		call     backupCall
+		wantCode errors.ErrorCode
+	}{
+		{name: "create: nil manager", call: createBackup, wantCode: errors.ErrNotImplemented},
+		{
+			name: "create: manager error",
+			mgr: &mockBackupManager{
+				createBackupFn: func(ctx context.Context, backupType interface{}) (interface{}, error) {
+					return nil, stderrors.New("backup creation failed")
+				},
+			},
+			call:     createBackup,
+			wantCode: errors.ErrInternal,
 		},
-	}}
-	backupSvc := &backupService{svc: svc}
-
-	resp, err := backupSvc.CreateBackup(tenantctx.WithSystem(context.Background()), &CreateBackupRequest{Name: "full"})
-	require.Error(t, err)
-	assert.Nil(t, resp)
-
-	var qbErr *errors.QBError
-	require.ErrorAs(t, err, &qbErr)
-	assert.Equal(t, errors.ErrInternal, qbErr.Code)
-}
-
-func TestCreateBackup_TypeAssertionFailure(t *testing.T) {
-	log := createTestLogger(t)
-	svc := &quicBaaS{logger: log, backupMgr: &mockBackupManager{
-		createBackupFn: func(ctx context.Context, backupType interface{}) (interface{}, error) {
-			return "not-a-backup-struct", nil // wrong type
+		{
+			name: "create: manager returns wrong type",
+			mgr: &mockBackupManager{
+				createBackupFn: func(ctx context.Context, backupType interface{}) (interface{}, error) {
+					return "not-a-backup-struct", nil
+				},
+			},
+			call:     createBackup,
+			wantCode: errors.ErrInternal,
 		},
-	}}
-	backupSvc := &backupService{svc: svc}
-
-	resp, err := backupSvc.CreateBackup(tenantctx.WithSystem(context.Background()), &CreateBackupRequest{Name: "incremental"})
-	require.Error(t, err)
-	assert.Nil(t, resp)
-
-	var qbErr *errors.QBError
-	require.ErrorAs(t, err, &qbErr)
-	assert.Equal(t, errors.ErrInternal, qbErr.Code)
-}
-
-func TestRestoreBackup_NilBackupManager(t *testing.T) {
-	log := createTestLogger(t)
-	svc := &quicBaaS{logger: log, backupMgr: nil}
-	backupSvc := &backupService{svc: svc}
-
-	resp, err := backupSvc.RestoreBackup(tenantctx.WithSystem(context.Background()), &RestoreBackupRequest{
-		BackupID: "backup-123",
-	})
-	require.Error(t, err)
-	assert.Nil(t, resp)
-
-	var qbErr *errors.QBError
-	require.ErrorAs(t, err, &qbErr)
-	assert.Equal(t, errors.ErrNotImplemented, qbErr.Code)
-}
-
-func TestRestoreBackup_ManagerError(t *testing.T) {
-	log := createTestLogger(t)
-	svc := &quicBaaS{logger: log, backupMgr: &mockBackupManager{
-		restoreBackupFn: func(ctx context.Context, backupID string, opts interface{}) error {
-			return stderrors.New("restore failed")
+		{name: "restore: nil manager", call: restoreBackup, wantCode: errors.ErrNotImplemented},
+		{
+			name: "restore: manager error",
+			mgr: &mockBackupManager{
+				restoreBackupFn: func(ctx context.Context, backupID string, opts interface{}) error {
+					return stderrors.New("restore failed")
+				},
+			},
+			call:     restoreBackup,
+			wantCode: errors.ErrInternal,
 		},
-	}}
-	backupSvc := &backupService{svc: svc}
-
-	resp, err := backupSvc.RestoreBackup(tenantctx.WithSystem(context.Background()), &RestoreBackupRequest{
-		BackupID: "backup-123",
-	})
-	require.Error(t, err)
-	assert.Nil(t, resp)
-
-	var qbErr *errors.QBError
-	require.ErrorAs(t, err, &qbErr)
-	assert.Equal(t, errors.ErrInternal, qbErr.Code)
-}
-
-func TestDeleteBackup_NilBackupManager(t *testing.T) {
-	log := createTestLogger(t)
-	svc := &quicBaaS{logger: log, backupMgr: nil}
-	backupSvc := &backupService{svc: svc}
-
-	resp, err := backupSvc.DeleteBackup(tenantctx.WithSystem(context.Background()), &DeleteBackupRequest{
-		BackupID: "backup-123",
-	})
-	require.Error(t, err)
-	assert.Nil(t, resp)
-
-	var qbErr *errors.QBError
-	require.ErrorAs(t, err, &qbErr)
-	assert.Equal(t, errors.ErrNotImplemented, qbErr.Code)
-}
-
-func TestDeleteBackup_ManagerError(t *testing.T) {
-	log := createTestLogger(t)
-	svc := &quicBaaS{logger: log, backupMgr: &mockBackupManager{
-		deleteBackupFn: func(ctx context.Context, backupID string) error {
-			return stderrors.New("delete failed")
+		{name: "delete: nil manager", call: deleteBackup, wantCode: errors.ErrNotImplemented},
+		{
+			name: "delete: manager error",
+			mgr: &mockBackupManager{
+				deleteBackupFn: func(ctx context.Context, backupID string) error {
+					return stderrors.New("delete failed")
+				},
+			},
+			call:     deleteBackup,
+			wantCode: errors.ErrInternal,
 		},
-	}}
-	backupSvc := &backupService{svc: svc}
+	}
 
-	resp, err := backupSvc.DeleteBackup(tenantctx.WithSystem(context.Background()), &DeleteBackupRequest{
-		BackupID: "backup-123",
-	})
-	require.Error(t, err)
-	assert.Nil(t, resp)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			svc := &quicBaaS{logger: createTestLogger(t)}
+			if tt.mgr != nil {
+				svc.backupMgr = tt.mgr
+			}
+			backupSvc := &backupService{svc: svc}
 
-	var qbErr *errors.QBError
-	require.ErrorAs(t, err, &qbErr)
-	assert.Equal(t, errors.ErrInternal, qbErr.Code)
+			resp, err := tt.call(tenantctx.WithSystem(context.Background()), backupSvc)
+			require.Error(t, err)
+			assert.Nil(t, resp)
+
+			var qbErr *errors.QBError
+			require.ErrorAs(t, err, &qbErr)
+			assert.Equal(t, tt.wantCode, qbErr.Code)
+		})
+	}
 }
 
 // =============================================================================
@@ -872,114 +719,50 @@ func (m *mockCacheInterface) Delete(ctx context.Context, key string) error { ret
 func (m *mockCacheInterface) Clear()                                       {}
 func (m *mockCacheInterface) Close() error                                 { return nil }
 
-func TestGetCacheStats_NilCacheManager(t *testing.T) {
-	log := createTestLogger(t)
-	svc := &quicBaaS{logger: log, cacheManager: nil}
-	cacheSvc := &cacheService{svc: svc}
+func TestCacheService_ManagerFailures(t *testing.T) {
+	methods := []struct {
+		name string
+		call func(ctx context.Context, s *cacheService) (interface{}, error)
+	}{
+		{"GetCacheStats", func(ctx context.Context, s *cacheService) (interface{}, error) {
+			return s.GetCacheStats(ctx, &GetCacheStatsRequest{})
+		}},
+		{"ClearCache", func(ctx context.Context, s *cacheService) (interface{}, error) {
+			return s.ClearCache(ctx, &ClearCacheRequest{})
+		}},
+		{"GetCacheConfig", func(ctx context.Context, s *cacheService) (interface{}, error) {
+			return s.GetCacheConfig(ctx, &GetCacheConfigRequest{})
+		}},
+		{"UpdateCacheConfig", func(ctx context.Context, s *cacheService) (interface{}, error) {
+			return s.UpdateCacheConfig(ctx, &UpdateCacheConfigRequest{})
+		}},
+	}
+	failures := []struct {
+		name     string
+		mgr      *mockCacheInterface
+		wantCode errors.ErrorCode
+	}{
+		{name: "nil manager", wantCode: errors.ErrNotImplemented},
+		{name: "manager of wrong type", mgr: &mockCacheInterface{}, wantCode: errors.ErrInternal},
+	}
 
-	resp, err := cacheSvc.GetCacheStats(tenantctx.WithSystem(context.Background()), &GetCacheStatsRequest{})
-	require.Error(t, err)
-	assert.Nil(t, resp)
+	for _, m := range methods {
+		for _, f := range failures {
+			t.Run(m.name+": "+f.name, func(t *testing.T) {
+				svc := &quicBaaS{logger: createTestLogger(t)}
+				if f.mgr != nil {
+					svc.cacheManager = f.mgr
+				}
+				cacheSvc := &cacheService{svc: svc}
 
-	var qbErr *errors.QBError
-	require.ErrorAs(t, err, &qbErr)
-	assert.Equal(t, errors.ErrNotImplemented, qbErr.Code)
-}
+				resp, err := m.call(tenantctx.WithSystem(context.Background()), cacheSvc)
+				require.Error(t, err)
+				assert.Nil(t, resp)
 
-func TestGetCacheStats_TypeAssertionFailure(t *testing.T) {
-	log := createTestLogger(t)
-	svc := &quicBaaS{logger: log, cacheManager: &mockCacheInterface{}}
-	cacheSvc := &cacheService{svc: svc}
-
-	resp, err := cacheSvc.GetCacheStats(tenantctx.WithSystem(context.Background()), &GetCacheStatsRequest{})
-	require.Error(t, err)
-	assert.Nil(t, resp)
-
-	var qbErr *errors.QBError
-	require.ErrorAs(t, err, &qbErr)
-	assert.Equal(t, errors.ErrInternal, qbErr.Code)
-}
-
-func TestClearCache_NilCacheManager(t *testing.T) {
-	log := createTestLogger(t)
-	svc := &quicBaaS{logger: log, cacheManager: nil}
-	cacheSvc := &cacheService{svc: svc}
-
-	resp, err := cacheSvc.ClearCache(tenantctx.WithSystem(context.Background()), &ClearCacheRequest{})
-	require.Error(t, err)
-	assert.Nil(t, resp)
-
-	var qbErr *errors.QBError
-	require.ErrorAs(t, err, &qbErr)
-	assert.Equal(t, errors.ErrNotImplemented, qbErr.Code)
-}
-
-func TestClearCache_TypeAssertionFailure(t *testing.T) {
-	log := createTestLogger(t)
-	svc := &quicBaaS{logger: log, cacheManager: &mockCacheInterface{}}
-	cacheSvc := &cacheService{svc: svc}
-
-	resp, err := cacheSvc.ClearCache(tenantctx.WithSystem(context.Background()), &ClearCacheRequest{})
-	require.Error(t, err)
-	assert.Nil(t, resp)
-
-	var qbErr *errors.QBError
-	require.ErrorAs(t, err, &qbErr)
-	assert.Equal(t, errors.ErrInternal, qbErr.Code)
-}
-
-func TestGetCacheConfig_NilCacheManager(t *testing.T) {
-	log := createTestLogger(t)
-	svc := &quicBaaS{logger: log, cacheManager: nil}
-	cacheSvc := &cacheService{svc: svc}
-
-	resp, err := cacheSvc.GetCacheConfig(tenantctx.WithSystem(context.Background()), &GetCacheConfigRequest{})
-	require.Error(t, err)
-	assert.Nil(t, resp)
-
-	var qbErr *errors.QBError
-	require.ErrorAs(t, err, &qbErr)
-	assert.Equal(t, errors.ErrNotImplemented, qbErr.Code)
-}
-
-func TestGetCacheConfig_TypeAssertionFailure(t *testing.T) {
-	log := createTestLogger(t)
-	svc := &quicBaaS{logger: log, cacheManager: &mockCacheInterface{}}
-	cacheSvc := &cacheService{svc: svc}
-
-	resp, err := cacheSvc.GetCacheConfig(tenantctx.WithSystem(context.Background()), &GetCacheConfigRequest{})
-	require.Error(t, err)
-	assert.Nil(t, resp)
-
-	var qbErr *errors.QBError
-	require.ErrorAs(t, err, &qbErr)
-	assert.Equal(t, errors.ErrInternal, qbErr.Code)
-}
-
-func TestUpdateCacheConfig_NilCacheManager(t *testing.T) {
-	log := createTestLogger(t)
-	svc := &quicBaaS{logger: log, cacheManager: nil}
-	cacheSvc := &cacheService{svc: svc}
-
-	resp, err := cacheSvc.UpdateCacheConfig(tenantctx.WithSystem(context.Background()), &UpdateCacheConfigRequest{})
-	require.Error(t, err)
-	assert.Nil(t, resp)
-
-	var qbErr *errors.QBError
-	require.ErrorAs(t, err, &qbErr)
-	assert.Equal(t, errors.ErrNotImplemented, qbErr.Code)
-}
-
-func TestUpdateCacheConfig_TypeAssertionFailure(t *testing.T) {
-	log := createTestLogger(t)
-	svc := &quicBaaS{logger: log, cacheManager: &mockCacheInterface{}}
-	cacheSvc := &cacheService{svc: svc}
-
-	resp, err := cacheSvc.UpdateCacheConfig(tenantctx.WithSystem(context.Background()), &UpdateCacheConfigRequest{})
-	require.Error(t, err)
-	assert.Nil(t, resp)
-
-	var qbErr *errors.QBError
-	require.ErrorAs(t, err, &qbErr)
-	assert.Equal(t, errors.ErrInternal, qbErr.Code)
+				var qbErr *errors.QBError
+				require.ErrorAs(t, err, &qbErr)
+				assert.Equal(t, f.wantCode, qbErr.Code)
+			})
+		}
+	}
 }

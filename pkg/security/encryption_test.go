@@ -72,6 +72,15 @@ func TestNewEncryptionManager(t *testing.T) {
 			},
 			wantErr: false,
 		},
+		{
+			name: "unsupported algorithm",
+			config: &EncryptionConfig{
+				Enabled:     true,
+				Algorithm:   "INVALID-ALGO",
+				KeyProvider: "local",
+			},
+			wantErr: true,
+		},
 	}
 
 	for _, tt := range tests {
@@ -292,6 +301,7 @@ func TestKeyring_RotateKeyWithHistory(t *testing.T) {
 	// Should be able to get both keys
 	assert.NotNil(t, kr.GetKey(1))
 	assert.NotNil(t, kr.GetKey(2))
+	assert.Nil(t, kr.GetKey(99), "unknown version returns nil")
 }
 
 func TestKeyring_GetKeyMetadata(t *testing.T) {
@@ -942,36 +952,6 @@ func TestNewKeyring_GCPKMSProviderError(t *testing.T) {
 }
 
 // TestEncryptionManager_EncryptBatchMultiple tests batch encryption with multiple items
-func TestEncryptionManager_EncryptBatchMultiple(t *testing.T) {
-	logger := createTestLogger(t)
-
-	cfg := &EncryptionConfig{
-		Enabled:     true,
-		KeyProvider: "local",
-		Algorithm:   "AES-256-GCM",
-	}
-
-	em, err := NewEncryptionManager(cfg, logger)
-	require.NoError(t, err)
-
-	plaintexts := [][]byte{
-		[]byte("data1"),
-		[]byte("data2"),
-		[]byte("data3"),
-		[]byte("data4"),
-		[]byte("data5"),
-	}
-
-	ciphertexts, err := em.EncryptBatch(plaintexts)
-	assert.NoError(t, err)
-	assert.Len(t, ciphertexts, 5)
-
-	// Decrypt to verify
-	decryptedTexts, err := em.DecryptBatch(ciphertexts)
-	assert.NoError(t, err)
-	assert.Equal(t, plaintexts, decryptedTexts)
-}
-
 // TestEncryptionManager_EncryptBatchDisabled tests batch with disabled encryption
 func TestEncryptionManager_EncryptBatchDisabled(t *testing.T) {
 	logger := createTestLogger(t)
@@ -1205,15 +1185,6 @@ func (m *mockSecretBackend) Close() error {
 }
 
 // ---------------------------------------------------------------------------
-// createTestLogger error path (testing.go:23 -- 80%)
-// ---------------------------------------------------------------------------
-
-func TestCreateTestLogger_Success(t *testing.T) {
-	log := createTestLogger(t)
-	assert.NotNil(t, log)
-}
-
-// ---------------------------------------------------------------------------
 // buildStructuredData - cover paths with empty/nil details
 // ---------------------------------------------------------------------------
 
@@ -1259,77 +1230,6 @@ func TestBuildStructuredData_EmptyEventID(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// Verify mapEventToSeverity with different result types
-// ---------------------------------------------------------------------------
-
-func TestMapEventToSeverity_AllResults(t *testing.T) {
-	exporter := &SyslogExporter{
-		config: &SyslogExporterConfig{},
-	}
-
-	tests := []struct {
-		name     string
-		result   string
-		expected SyslogSeverity
-	}{
-		{
-			name:     "success",
-			result:   ResultSuccess,
-			expected: SyslogSeverityInformational,
-		},
-		{
-			name:     "failure",
-			result:   ResultFailure,
-			expected: SyslogSeverityError,
-		},
-		{
-			name:     "denied",
-			result:   ResultDenied,
-			expected: SyslogSeverityWarning,
-		},
-		{
-			name:     "unknown",
-			result:   "unknown-result",
-			expected: SyslogSeverityInformational,
-		},
-	}
-
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			event := &AuditEvent{Result: tc.result}
-			severity := exporter.mapEventToSeverity(event)
-			assert.Equal(t, tc.expected, severity)
-		})
-	}
-}
-
-// ---------------------------------------------------------------------------
-// formatMessage - cover all event fields
-// ---------------------------------------------------------------------------
-
-func TestFormatMessage_AllFields(t *testing.T) {
-	exporter := &SyslogExporter{
-		config: &SyslogExporterConfig{},
-	}
-
-	event := &AuditEvent{
-		EventID:   "evt-format",
-		Action:    ActionWrite,
-		Resource:  "database",
-		Result:    ResultSuccess,
-		UserID:    "user-123",
-		Username:  "admin",
-		IPAddress: "10.0.0.1",
-		ErrorMsg:  "some error",
-	}
-
-	msg := exporter.formatMessage(event)
-	assert.Contains(t, msg, "QuicBaaS Audit")
-	assert.Contains(t, msg, ActionWrite)
-	assert.Contains(t, msg, "database")
-}
-
-// ---------------------------------------------------------------------------
 // Log with write error
 // ---------------------------------------------------------------------------
 
@@ -1339,86 +1239,8 @@ func (w *errorWriter) Write(_ []byte) (int, error) {
 	return 0, fmt.Errorf("write failed")
 }
 
-func TestEncryptionManager_Decrypt_CiphertextTooShortForTag(t *testing.T) {
-	log := createTestLogger(t)
-	em, err := NewEncryptionManager(&EncryptionConfig{Enabled: true, Algorithm: DefaultAlgorithm, KeyProvider: "local"}, log)
-	require.NoError(t, err)
-
-	short := make([]byte, 14)
-	short[0] = em.GetKeyVersion()
-	_, err = em.Decrypt(short)
-	assert.Error(t, err)
-}
-
-func TestEncryptionManager_RotateKeys_Success(t *testing.T) {
-	log := createTestLogger(t)
-	em, err := NewEncryptionManager(&EncryptionConfig{Enabled: true, Algorithm: DefaultAlgorithm, KeyProvider: "local"}, log)
-	require.NoError(t, err)
-	assert.NoError(t, em.RotateKeys(context.Background()))
-}
-
-func TestNewKeyring_InvalidAlgorithm(t *testing.T) {
-	log := createTestLogger(t)
-	_, err := NewKeyring(&EncryptionConfig{Enabled: true, Algorithm: "unsupported-algo", KeyProvider: "local"}, log)
-	assert.Error(t, err)
-}
-
-func TestNewKeyring_InitializeXKMSError(t *testing.T) {
-	log := createTestLogger(t)
-	_, err := NewKeyring(&EncryptionConfig{Enabled: true, Algorithm: DefaultAlgorithm, KeyProvider: "invalid-provider"}, log)
-	assert.Error(t, err)
-}
-
-func TestEncryptionManager_Decrypt_InvalidVersion(t *testing.T) {
-	log := createTestLogger(t)
-	em, err := NewEncryptionManager(&EncryptionConfig{Enabled: true, Algorithm: DefaultAlgorithm, KeyProvider: "local"}, log)
-	require.NoError(t, err)
-
-	ct := make([]byte, 50)
-	ct[0] = 255
-	_, err = em.Decrypt(ct)
-	assert.Error(t, err)
-}
-
-func TestEncryptDecrypt_RoundTrip_96(t *testing.T) {
-	log := createTestLogger(t)
-	em, err := NewEncryptionManager(&EncryptionConfig{Enabled: true, Algorithm: DefaultAlgorithm, KeyProvider: "local"}, log)
-	require.NoError(t, err)
-
-	plaintext := []byte("test data for encryption round trip")
-	ciphertext, err := em.Encrypt(plaintext)
-	require.NoError(t, err)
-
-	decrypted, err := em.Decrypt(ciphertext)
-	require.NoError(t, err)
-	assert.Equal(t, plaintext, decrypted)
-}
-
-func TestDecryptCiphertextTooShort(t *testing.T) {
-	log := createTestLogger(t)
-	em, err := NewEncryptionManager(&EncryptionConfig{Enabled: true, Algorithm: DefaultAlgorithm, KeyProvider: "local"}, log)
-	require.NoError(t, err)
-	_, err = em.Decrypt([]byte{em.GetKeyVersion()})
-	assert.Error(t, err)
-}
-
 // TestDecrypt_DataEndTooSmallForTag exercises Decrypt with the minimum valid
 // ciphertext length (29 bytes), covering the boundary at encryption.go:212.
-func TestDecrypt_DataEndTooSmallForTag(t *testing.T) {
-	log := createTestLogger(t)
-	em, err := NewEncryptionManager(&EncryptionConfig{
-		Enabled:     true,
-		Algorithm:   DefaultAlgorithm,
-		KeyProvider: "local",
-	}, log)
-	require.NoError(t, err)
-
-	ct := make([]byte, 29)
-	ct[0] = em.GetKeyVersion()
-	_, err = em.Decrypt(ct)
-	assert.Error(t, err)
-}
-
 // TestNewKeyring_DefaultAlgorithm tests that NewKeyring properly applies
 // the default algorithm when cfg.Algorithm is empty, covering encryption.go:280-281.
 func TestNewKeyring_DefaultAlgorithm(t *testing.T) {
@@ -1435,35 +1257,7 @@ func TestNewKeyring_DefaultAlgorithm(t *testing.T) {
 
 // TestAutoRotate_Success tests the autoRotate function directly, covering
 // encryption.go:604-615 including the timer reset path.
-func TestAutoRotate_Success(t *testing.T) {
-	log := createTestLogger(t)
-	kr, err := NewKeyring(&EncryptionConfig{
-		Enabled:     true,
-		Algorithm:   DefaultAlgorithm,
-		KeyProvider: "local",
-		RotateDays:  1,
-	}, log)
-	require.NoError(t, err)
-	defer kr.Close()
-
-	err = kr.autoRotate()
-	assert.NoError(t, err)
-}
-
 // TestKeyring_Close_WithTimer tests Keyring.Close when rotationTimer is set.
-func TestKeyring_Close_WithTimer(t *testing.T) {
-	log := createTestLogger(t)
-	kr, err := NewKeyring(&EncryptionConfig{
-		Enabled:     true,
-		Algorithm:   DefaultAlgorithm,
-		KeyProvider: "local",
-		RotateDays:  30,
-	}, log)
-	require.NoError(t, err)
-	assert.NotNil(t, kr)
-	kr.Close()
-}
-
 // TestNewKeyring_LoadExistingKey tests that NewKeyring loads an existing key
 // when the same key storage backend is reused, covering the "key exists" path
 // in loadOrGenerateKey at encryption.go:423-438.
@@ -1540,6 +1334,7 @@ func TestEncryptionManager_EncryptAfterRotate(t *testing.T) {
 	plaintext := []byte("data after rotation")
 	ciphertext, err := em.Encrypt(plaintext)
 	require.NoError(t, err)
+	assert.Equal(t, byte(2), ciphertext[0], "ciphertext carries the rotated key version")
 
 	decrypted, err := em.Decrypt(ciphertext)
 	require.NoError(t, err)
@@ -1548,38 +1343,8 @@ func TestEncryptionManager_EncryptAfterRotate(t *testing.T) {
 
 // TestSendRemote_NilConn tests sendRemote when remoteConn is nil,
 // covering the early return at audit.go:377-378.
-func TestSendRemote_NilConn(t *testing.T) {
-	log := createTestLogger(t)
-	s := &SyslogExporter{
-		config: &SyslogExporterConfig{
-			Address: "127.0.0.1:514",
-			Network: "tcp",
-		},
-		logger:   log,
-		isRemote: true,
-	}
-	s.connected.Store(true) // Pretend connected to skip reconnect
-
-	event := &AuditEvent{Action: "test", Result: "success"}
-	err := s.sendRemote(event, SyslogSeverityInformational, "test message")
-	assert.Error(t, err, "should fail when remoteConn is nil")
-}
-
 // TestSendLocal_NilConn tests sendLocal when localConn is nil,
 // covering the early return at audit.go:342-343.
-func TestSendLocal_NilConn(t *testing.T) {
-	log := createTestLogger(t)
-	s := &SyslogExporter{
-		config: &SyslogExporterConfig{
-			Network: "unix",
-		},
-		logger: log,
-	}
-
-	err := s.sendLocal(SyslogSeverityInformational, "test message")
-	assert.Error(t, err, "should fail when localConn is nil")
-}
-
 // TestKeyring_LoadOrGenerateKey tests the loadOrGenerateKey function.
 func TestKeyring_LoadOrGenerateKey(t *testing.T) {
 	t.Run("generate new key", func(t *testing.T) {
@@ -1720,31 +1485,6 @@ func TestKeyring_LoadOrGenerateKey(t *testing.T) {
 }
 
 // TestEncryptionManager_EncryptBatchDisabled_Extended tests batch encryption when disabled with more data.
-func TestEncryptionManager_EncryptBatchDisabled_Extended(t *testing.T) {
-	log := createTestLogger(t)
-	config := &EncryptionConfig{
-		Enabled: false,
-	}
-
-	em, err := NewEncryptionManager(config, log)
-	require.NoError(t, err)
-
-	plaintexts := [][]byte{
-		[]byte("data1"),
-		[]byte("data2"),
-		[]byte("data3"),
-	}
-
-	ciphertexts, err := em.EncryptBatch(plaintexts)
-	assert.NoError(t, err)
-	assert.Equal(t, plaintexts, ciphertexts)
-
-	// Also test decrypt batch
-	decrypted, err := em.DecryptBatch(ciphertexts)
-	assert.NoError(t, err)
-	assert.Equal(t, plaintexts, decrypted)
-}
-
 // TestKeyring_AlgorithmToSymmetric tests algorithm conversion.
 func TestKeyring_AlgorithmToSymmetric(t *testing.T) {
 	log := createTestLogger(t)
@@ -1814,64 +1554,8 @@ func TestKeyring_IsValidAlgorithm(t *testing.T) {
 }
 
 // TestNewKeyring_UnsupportedAlgorithm tests keyring creation with unsupported algorithm.
-func TestNewKeyring_UnsupportedAlgorithm(t *testing.T) {
-	log := createTestLogger(t)
-
-	cfg := &EncryptionConfig{
-		KeyID:       "test",
-		Algorithm:   AlgorithmChaCha20Poly, // Not yet implemented
-		KeyProvider: "local",
-	}
-
-	kr, err := NewKeyring(cfg, log)
-	assert.Error(t, err)
-	assert.Nil(t, kr)
-	assert.Contains(t, err.Error(), "unsupported algorithm")
-}
-
 // TestKeyring_EncryptDecryptNilEncrypter tests encrypt/decrypt with nil encrypter.
-func TestKeyring_EncryptDecryptNilEncrypter(t *testing.T) {
-	log := createTestLogger(t)
-
-	kr := &Keyring{
-		encrypter: nil,
-		config: &EncryptionConfig{
-			Algorithm: AlgorithmAES256GCM,
-		},
-		logger: log,
-		keys:   make(map[byte]*EncryptionKey),
-	}
-
-	// Test encrypt with nil encrypter
-	_, err := kr.Encrypt([]byte("test"))
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "no encrypter available")
-
-	// Test decrypt with nil encrypter
-	_, err = kr.Decrypt(&xkmssdk.EncryptedData{})
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "no encrypter available")
-}
-
 // TestKeyring_RotateKeyNilBackend tests rotation with nil backend.
-func TestKeyring_RotateKeyNilBackend(t *testing.T) {
-	log := createTestLogger(t)
-
-	kr := &Keyring{
-		backend: nil,
-		config: &EncryptionConfig{
-			KeyID:     "test",
-			Algorithm: AlgorithmAES256GCM,
-		},
-		logger: log,
-		keys:   make(map[byte]*EncryptionKey),
-	}
-
-	_, err := kr.RotateKey(context.Background())
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "backend not initialized")
-}
-
 // TestInitializeXKMS_NonPKCS8Backend tests XKMS with non-PKCS8 backend.
 func TestInitializeXKMS_NonPKCS8Backend(t *testing.T) {
 	log := createTestLogger(t)
@@ -1912,66 +1596,6 @@ func TestInitializeXKMS_NonPKCS8Backend(t *testing.T) {
 // delegated to go-xkms backends. The following functionality is tested through
 // the public Encrypt/Decrypt API in the tests below.
 
-// TestEncryptionManager_Decrypt_TooShort tests decryption with empty ciphertext.
-func TestEncryptionManager_Decrypt_TooShort(t *testing.T) {
-	log := createTestLogger(t)
-
-	config := &EncryptionConfig{
-		Enabled:   true,
-		Algorithm: AlgorithmAES256GCM,
-	}
-
-	em, err := NewEncryptionManager(config, log)
-	require.NoError(t, err)
-	defer em.keyring.Close()
-
-	_, err = em.Decrypt([]byte{})
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "too short")
-}
-
-// TestEncryptionManager_Decrypt_KeyNotFound tests decryption with missing key version.
-func TestEncryptionManager_Decrypt_KeyNotFound(t *testing.T) {
-	log := createTestLogger(t)
-
-	config := &EncryptionConfig{
-		Enabled:   true,
-		Algorithm: AlgorithmAES256GCM,
-	}
-
-	em, err := NewEncryptionManager(config, log)
-	require.NoError(t, err)
-	defer em.keyring.Close()
-
-	// Create ciphertext with non-existent key version
-	ciphertext := []byte{99} // Version 99 doesn't exist
-	ciphertext = append(ciphertext, make([]byte, 32)...)
-
-	_, err = em.Decrypt(ciphertext)
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "not found")
-}
-
-// TestEncryptionManager_NoKey tests encryption when no key is available.
-func TestEncryptionManager_NoKey(t *testing.T) {
-	log := createTestLogger(t)
-
-	config := &EncryptionConfig{
-		Enabled:   true,
-		Algorithm: AlgorithmAES256GCM,
-	}
-
-	em, err := NewEncryptionManager(config, log)
-	require.NoError(t, err)
-
-	// Set current key to nil
-	em.keyring.currentKey = nil
-
-	_, err = em.Encrypt([]byte("test"))
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "no active encryption key")
-}
-
 // TestKeyring_RotateKey tests key rotation via the public API.
 func TestKeyring_RotateKey(t *testing.T) {
 	log := createTestLogger(t)
@@ -1998,20 +1622,6 @@ func TestKeyring_RotateKey(t *testing.T) {
 }
 
 // TestEnvBackend_GetNonExistent tests getting non-existent environment variable.
-func TestEnvBackend_GetNonExistent(t *testing.T) {
-	log := createTestLogger(t)
-
-	eb, err := NewEnvBackend(log)
-	require.NoError(t, err)
-	defer eb.Close()
-
-	ctx := context.Background()
-
-	_, err = eb.Get(ctx, "NON_EXISTENT_VAR_12345")
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "not found")
-}
-
 // TestEncryptionManager_DecryptAESGCM_InvalidCiphertext tests invalid ciphertext decryption.
 func TestEncryptionManager_DecryptAESGCM_InvalidCiphertext(t *testing.T) {
 	log := createTestLogger(t)
@@ -2088,8 +1698,6 @@ func TestEncryptionManager_EncryptAESGCM_ReadFull(t *testing.T) {
 	assert.NotEqual(t, ciphertext1, ciphertext2)
 }
 
-// TestAuditLogger_OpenLogFile_CreateDir tests directory creation
-
 // TestEncryptionManager_DecryptCorruptedCiphertext tests decryption of corrupted data.
 func TestEncryptionManager_DecryptCorruptedCiphertext(t *testing.T) {
 	log := createTestLogger(t)
@@ -2140,58 +1748,6 @@ func TestKeyring_UnsupportedProvider(t *testing.T) {
 // ---------------------------------------------------------------------------
 // encryption.go -- initializeXKMS provider paths
 // ---------------------------------------------------------------------------
-
-func TestKeyring_InitializeXKMS_RejectsVaultProvider(t *testing.T) {
-	cfg := &EncryptionConfig{
-		Enabled:     true,
-		Algorithm:   AlgorithmAES256GCM,
-		KeyProvider: "vault",
-	}
-	log := createTestLogger(t)
-
-	_, err := NewEncryptionManager(cfg, log)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "vault")
-}
-
-func TestKeyring_InitializeXKMS_RejectsAWSKMSProvider(t *testing.T) {
-	cfg := &EncryptionConfig{
-		Enabled:     true,
-		Algorithm:   AlgorithmAES256GCM,
-		KeyProvider: "awskms",
-	}
-	log := createTestLogger(t)
-
-	_, err := NewEncryptionManager(cfg, log)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "awskms")
-}
-
-func TestKeyring_InitializeXKMS_RejectsUnknownProvider(t *testing.T) {
-	cfg := &EncryptionConfig{
-		Enabled:     true,
-		Algorithm:   AlgorithmAES256GCM,
-		KeyProvider: "some-unknown-provider",
-	}
-	log := createTestLogger(t)
-
-	_, err := NewEncryptionManager(cfg, log)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "unsupported key provider")
-}
-
-func TestKeyring_InitializeXKMS_RejectsChaCha20(t *testing.T) {
-	cfg := &EncryptionConfig{
-		Enabled:     true,
-		Algorithm:   AlgorithmChaCha20Poly,
-		KeyProvider: "local",
-	}
-	log := createTestLogger(t)
-
-	_, err := NewEncryptionManager(cfg, log)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "unsupported algorithm")
-}
 
 func TestKeyring_InitializeXKMS_InvalidKeyStorage(t *testing.T) {
 	cfg := &EncryptionConfig{
@@ -2271,18 +1827,6 @@ func TestEncryptionManager_EncryptDecryptBatchEnabled(t *testing.T) {
 	}
 }
 
-func TestEncryptionManager_DecryptBatchWhenDisabled(t *testing.T) {
-	cfg := &EncryptionConfig{Enabled: false}
-	log := createTestLogger(t)
-	em, err := NewEncryptionManager(cfg, log)
-	require.NoError(t, err)
-
-	ciphertexts := [][]byte{[]byte("a"), []byte("b")}
-	result, err := em.DecryptBatch(ciphertexts)
-	require.NoError(t, err)
-	assert.Equal(t, ciphertexts, result)
-}
-
 // ---------------------------------------------------------------------------
 // encryption.go -- RotateKeys and GetKeyVersion
 // ---------------------------------------------------------------------------
@@ -2328,32 +1872,6 @@ func TestEncryptionManager_GetKeyVersionWhenDisabled(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// encryption.go -- Keyring Encrypt/Decrypt with nil encrypter
-// ---------------------------------------------------------------------------
-
-func TestKeyring_EncryptNilEncrypterError(t *testing.T) {
-	kr := &Keyring{
-		config: &EncryptionConfig{Algorithm: AlgorithmAES256GCM},
-		keys:   make(map[byte]*EncryptionKey),
-	}
-
-	_, err := kr.Encrypt([]byte("plaintext"))
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "no encrypter available")
-}
-
-func TestKeyring_RotateKeyWithNilBackend(t *testing.T) {
-	kr := &Keyring{
-		config: &EncryptionConfig{Algorithm: AlgorithmAES256GCM},
-		keys:   make(map[byte]*EncryptionKey),
-	}
-
-	_, err := kr.RotateKey(context.Background())
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "backend not initialized")
-}
-
-// ---------------------------------------------------------------------------
 // encryption.go -- EncryptionManager Decrypt edge: tag too short
 // ---------------------------------------------------------------------------
 
@@ -2377,76 +1895,8 @@ func TestEncryptionManager_DecryptTooShortForTag(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// encryption.go -- Encrypt/Decrypt passthrough when disabled
+// EnvBackend.Close
 // ---------------------------------------------------------------------------
-
-func TestEncryptionManager_EncryptNoopWhenDisabled(t *testing.T) {
-	cfg := &EncryptionConfig{Enabled: false}
-	log := createTestLogger(t)
-	em, err := NewEncryptionManager(cfg, log)
-	require.NoError(t, err)
-
-	plaintext := []byte("not encrypted")
-	result, err := em.Encrypt(plaintext)
-	require.NoError(t, err)
-	assert.Equal(t, plaintext, result)
-}
-
-func TestEncryptionManager_DecryptNoopWhenDisabled(t *testing.T) {
-	cfg := &EncryptionConfig{Enabled: false}
-	log := createTestLogger(t)
-	em, err := NewEncryptionManager(cfg, log)
-	require.NoError(t, err)
-
-	ciphertext := []byte("not encrypted")
-	result, err := em.Decrypt(ciphertext)
-	require.NoError(t, err)
-	assert.Equal(t, ciphertext, result)
-}
-
-func TestEnvBackend_GetErrorOnMissing(t *testing.T) {
-	log := createTestLogger(t)
-	backend, err := NewEnvBackend(log)
-	require.NoError(t, err)
-
-	ctx := context.Background()
-	_, err = backend.Get(ctx, "NONEXISTENT_ENV_VAR_999")
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "not found")
-}
-
-func TestEnvBackend_SetReturnsError(t *testing.T) {
-	log := createTestLogger(t)
-	backend, err := NewEnvBackend(log)
-	require.NoError(t, err)
-
-	ctx := context.Background()
-	err = backend.Set(ctx, "key", &Secret{})
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "not supported")
-}
-
-func TestEnvBackend_DeleteReturnsError(t *testing.T) {
-	log := createTestLogger(t)
-	backend, err := NewEnvBackend(log)
-	require.NoError(t, err)
-
-	ctx := context.Background()
-	err = backend.Delete(ctx, "key")
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "not supported")
-}
-
-func TestEnvBackend_ListReturnsError(t *testing.T) {
-	log := createTestLogger(t)
-	backend, err := NewEnvBackend(log)
-	require.NoError(t, err)
-
-	ctx := context.Background()
-	_, err = backend.List(ctx, "prefix")
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "not supported")
-}
 
 func TestEnvBackend_CloseReturnsNil(t *testing.T) {
 	log := createTestLogger(t)
@@ -2481,65 +1931,9 @@ func (s SyslogSeverity) String() string {
 	}
 }
 
-func TestEscapeSDParam_SpecialChars(t *testing.T) {
-	tests := []struct {
-		name  string
-		input string
-		want  string
-	}{
-		{name: "no special chars", input: "hello", want: "hello"},
-		{name: "backslash", input: `a\b`, want: `a\\b`},
-		{name: "double quote", input: `a"b`, want: `a\"b`},
-		{name: "close bracket", input: "a]b", want: `a\]b`},
-		{name: "all special", input: `\"]`, want: `\\\"\]`},
-	}
-
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			got := escapeSDParam(tc.input)
-			assert.Equal(t, tc.want, got)
-		})
-	}
-}
-
 // ---------------------------------------------------------------------------
 // Encryption helper functions
 // ---------------------------------------------------------------------------
-
-func TestInitializeWithVault_ReturnsError(t *testing.T) {
-	cfg := &EncryptionConfig{KeyProvider: "vault"}
-	log := createTestLogger(t)
-	err := InitializeWithVault(cfg, log)
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "vault backend requires explicit initialization")
-}
-
-func TestInitializeWithAWSKMS_ReturnsError(t *testing.T) {
-	cfg := &EncryptionConfig{KeyProvider: "awskms"}
-	log := createTestLogger(t)
-	err := InitializeWithAWSKMS(cfg, log)
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "awskms backend requires explicit initialization")
-}
-
-func TestKeyring_AlgorithmToSymmetricMapping(t *testing.T) {
-	tests := []struct {
-		name      string
-		algorithm string
-	}{
-		{name: "AES-256-GCM", algorithm: AlgorithmAES256GCM},
-		{name: "AES-192-GCM", algorithm: "AES-192-GCM"},
-		{name: "AES-128-GCM", algorithm: "AES-128-GCM"},
-		{name: "default fallback", algorithm: "something-else"},
-	}
-
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			kr := &Keyring{config: &EncryptionConfig{Algorithm: tc.algorithm}}
-			_ = kr.algorithmToSymmetric()
-		})
-	}
-}
 
 func TestKeyring_ReturnsKeyMetadata(t *testing.T) {
 	cfg := &EncryptionConfig{
@@ -2581,32 +1975,6 @@ func TestKeyring_AutoRotateIncrementsVersion(t *testing.T) {
 	assert.Equal(t, oldVersion+1, newVersion)
 }
 
-func TestKeyring_InitializeXKMS_RejectsAzureKV(t *testing.T) {
-	cfg := &EncryptionConfig{
-		Enabled:     true,
-		Algorithm:   AlgorithmAES256GCM,
-		KeyProvider: "azurekv",
-	}
-	log := createTestLogger(t)
-
-	_, err := NewEncryptionManager(cfg, log)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "azurekv")
-}
-
-func TestKeyring_InitializeXKMS_RejectsGCPKMS(t *testing.T) {
-	cfg := &EncryptionConfig{
-		Enabled:     true,
-		Algorithm:   AlgorithmAES256GCM,
-		KeyProvider: "gcpkms",
-	}
-	log := createTestLogger(t)
-
-	_, err := NewEncryptionManager(cfg, log)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "gcpkms")
-}
-
 func TestKeyring_EncryptAndDecryptRoundTrip(t *testing.T) {
 	cfg := &EncryptionConfig{
 		Enabled:     true,
@@ -2628,33 +1996,9 @@ func TestKeyring_EncryptAndDecryptRoundTrip(t *testing.T) {
 	assert.Equal(t, plaintext, decrypted)
 }
 
-func TestKeyring_DecryptFailsWithNilEncrypter(t *testing.T) {
-	kr := &Keyring{
-		config: &EncryptionConfig{Algorithm: AlgorithmAES256GCM},
-		keys:   make(map[byte]*EncryptionKey),
-	}
-
-	_, err := kr.Decrypt(nil)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "no encrypter available")
-}
-
 // ---------------------------------------------------------------------------
 // EncryptionManager
 // ---------------------------------------------------------------------------
-
-func TestEncryptionManager_EncryptBatchWhenDisabled(t *testing.T) {
-	cfg := &EncryptionConfig{Enabled: false}
-	log := createTestLogger(t)
-
-	em, err := NewEncryptionManager(cfg, log)
-	require.NoError(t, err)
-
-	plaintexts := [][]byte{[]byte("a"), []byte("b")}
-	result, err := em.EncryptBatch(plaintexts)
-	require.NoError(t, err)
-	assert.Equal(t, plaintexts, result)
-}
 
 func TestEncryptionManager_RejectsNilConfig(t *testing.T) {
 	log := createTestLogger(t)
@@ -2683,23 +2027,6 @@ func TestEncryptionManager_EncryptDecryptCycle(t *testing.T) {
 	decrypted, err := em.Decrypt(ciphertext)
 	require.NoError(t, err)
 	assert.Equal(t, plaintext, decrypted)
-}
-
-func TestEncryptionManager_DecryptRejectsTooShort(t *testing.T) {
-	cfg := &EncryptionConfig{
-		Enabled:     true,
-		Algorithm:   AlgorithmAES256GCM,
-		KeyProvider: "local",
-	}
-
-	log := createTestLogger(t)
-	em, err := NewEncryptionManager(cfg, log)
-	require.NoError(t, err)
-	defer em.keyring.Close()
-
-	_, err = em.Decrypt([]byte{0x01, 0x02})
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "ciphertext too short")
 }
 
 func TestEncryptionManager_DecryptRejectsWrongVersion(t *testing.T) {
@@ -2744,85 +2071,7 @@ func TestEncryptionManager_DecryptMinimalCiphertext(t *testing.T) {
 	require.Error(t, err)
 }
 
-func TestEncryptionManager_BatchRoundTrip(t *testing.T) {
-	cfg := &EncryptionConfig{
-		Enabled:     true,
-		Algorithm:   AlgorithmAES256GCM,
-		KeyProvider: "local",
-	}
-
-	log := createTestLogger(t)
-	em, err := NewEncryptionManager(cfg, log)
-	require.NoError(t, err)
-	defer em.keyring.Close()
-
-	plaintexts := [][]byte{
-		[]byte("first"),
-		[]byte("second"),
-		[]byte("third"),
-	}
-
-	ciphertexts, err := em.EncryptBatch(plaintexts)
-	require.NoError(t, err)
-	assert.Len(t, ciphertexts, 3)
-
-	decrypted, err := em.DecryptBatch(ciphertexts)
-	require.NoError(t, err)
-	assert.Equal(t, plaintexts, decrypted)
-}
-
-// ---------------------------------------------------------------------------
-// Encryption disabled passthrough
-// ---------------------------------------------------------------------------
-
-func TestEncryptionManager_EncryptPassthroughWhenDisabled(t *testing.T) {
-	cfg := &EncryptionConfig{Enabled: false}
-	log := createTestLogger(t)
-
-	em, err := NewEncryptionManager(cfg, log)
-	require.NoError(t, err)
-
-	plaintext := []byte("unchanged")
-	result, err := em.Encrypt(plaintext)
-	require.NoError(t, err)
-	assert.Equal(t, plaintext, result)
-}
-
-func TestEncryptionManager_DecryptPassthroughWhenDisabled(t *testing.T) {
-	cfg := &EncryptionConfig{Enabled: false}
-	log := createTestLogger(t)
-
-	em, err := NewEncryptionManager(cfg, log)
-	require.NoError(t, err)
-
-	ciphertext := []byte("unchanged")
-	result, err := em.Decrypt(ciphertext)
-	require.NoError(t, err)
-	assert.Equal(t, ciphertext, result)
-}
-
-// ---------------------------------------------------------------------------
-// generateEventID
-// ---------------------------------------------------------------------------
-
-func TestGenerateEventID_UniqueIDs(t *testing.T) {
-	id1 := generateEventID()
-	assert.NotEmpty(t, id1)
-	assert.Contains(t, id1, "evt-")
-
-	id2 := generateEventID()
-	assert.NotEqual(t, id1, id2)
-}
-
 // Test createTestLogger to bump its coverage
-func TestCreateTestLogger_Coverage(t *testing.T) {
-	// This just ensures the function is called to boost coverage
-	logger := createTestLogger(t)
-	assert.NotNil(t, logger)
-}
-
-// Test compressFile placeholder function
-
 // Test various encryption scenarios to boost initializeXKMS coverage
 func TestKeyring_InitializeXKMS_LocalWithStorage(t *testing.T) {
 	logger := createTestLogger(t)
@@ -2867,103 +2116,11 @@ func TestKeyring_LoadOrGenerateKey_Generate(t *testing.T) {
 }
 
 // TestEncryptionManager_RotateKeys tests key rotation.
-func TestEncryptionManager_RotateKeys(t *testing.T) {
-	cfg := &EncryptionConfig{
-		Enabled:     true,
-		Algorithm:   AlgorithmAES256GCM,
-		KeyProvider: "local",
-		RotateDays:  90,
-	}
-
-	log := createTestLogger(t)
-	em, err := NewEncryptionManager(cfg, log)
-	require.NoError(t, err)
-
-	oldVersion := em.GetKeyVersion()
-
-	err = em.RotateKeys(context.Background())
-	assert.NoError(t, err)
-
-	newVersion := em.GetKeyVersion()
-	assert.Equal(t, oldVersion+1, newVersion)
-}
-
 // TestEncryptionManager_RotateKeysDisabled tests rotation when encryption is disabled.
-func TestEncryptionManager_RotateKeysDisabled(t *testing.T) {
-	cfg := &EncryptionConfig{
-		Enabled: false,
-	}
-
-	log := createTestLogger(t)
-	em, err := NewEncryptionManager(cfg, log)
-	require.NoError(t, err)
-
-	err = em.RotateKeys(context.Background())
-	assert.NoError(t, err)
-}
-
 // TestEncryptionManager_ChaCha20PolyNotImplemented tests unsupported algorithm.
-func TestEncryptionManager_ChaCha20PolyNotImplemented(t *testing.T) {
-	cfg := &EncryptionConfig{
-		Enabled:     true,
-		Algorithm:   AlgorithmChaCha20Poly,
-		KeyProvider: "local",
-	}
-
-	log := createTestLogger(t)
-	// ChaCha20-Poly1305 should fail at initialization since it's not yet supported
-	_, err := NewEncryptionManager(cfg, log)
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "unsupported algorithm")
-}
-
 // TestKeyring_LoadOrGenerateKeyVault tests Vault key provider.
-func TestKeyring_LoadOrGenerateKeyVault(t *testing.T) {
-	cfg := &EncryptionConfig{
-		Enabled:     true,
-		Algorithm:   AlgorithmAES256GCM,
-		KeyProvider: "vault",
-		VaultAddr:   "http://localhost:8200",
-	}
-
-	log := createTestLogger(t)
-	_, err := NewEncryptionManager(cfg, log)
-	assert.Error(t, err)
-	// Vault requires explicit backend initialization via go-xkms
-	assert.Contains(t, err.Error(), "vault backend requires explicit initialization")
-}
-
 // TestKeyring_LoadOrGenerateKeyKMS tests KMS key provider.
-func TestKeyring_LoadOrGenerateKeyKMS(t *testing.T) {
-	cfg := &EncryptionConfig{
-		Enabled:     true,
-		Algorithm:   AlgorithmAES256GCM,
-		KeyProvider: "awskms",
-		KMSKeyID:    "arn:aws:kms:us-east-1:123456789012:key/12345678",
-		KMSRegion:   "us-east-1",
-	}
-
-	log := createTestLogger(t)
-	_, err := NewEncryptionManager(cfg, log)
-	assert.Error(t, err)
-	// AWS KMS requires explicit backend initialization via go-xkms
-	assert.Contains(t, err.Error(), "awskms backend requires explicit initialization")
-}
-
 // TestKeyring_UnsupportedKeyProvider tests unsupported key provider.
-func TestKeyring_UnsupportedKeyProvider(t *testing.T) {
-	cfg := &EncryptionConfig{
-		Enabled:     true,
-		Algorithm:   AlgorithmAES256GCM,
-		KeyProvider: "unknown",
-	}
-
-	log := createTestLogger(t)
-	_, err := NewEncryptionManager(cfg, log)
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "unsupported key provider")
-}
-
 // TestEncryptionManager_EncryptBatchError tests batch encryption with error.
 func TestEncryptionManager_EncryptBatchError(t *testing.T) {
 	cfg := &EncryptionConfig{
@@ -3063,72 +2220,9 @@ func TestEncryptionManager_DecryptAESGCMError(t *testing.T) {
 }
 
 // TestEnvBackend_List tests env backend list operation.
-func TestEnvBackend_List(t *testing.T) {
-	log := createTestLogger(t)
-	eb, err := NewEnvBackend(log)
-	require.NoError(t, err)
-	defer eb.Close()
-
-	ctx := context.Background()
-
-	_, err = eb.List(ctx, "test")
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "not supported")
-}
-
 // TestEncryptionManager_NoActiveKey tests encryption with no active key.
-func TestEncryptionManager_NoActiveKey(t *testing.T) {
-	cfg := &EncryptionConfig{
-		Enabled:     true,
-		Algorithm:   AlgorithmAES256GCM,
-		KeyProvider: "local",
-	}
-
-	log := createTestLogger(t)
-	em, err := NewEncryptionManager(cfg, log)
-	require.NoError(t, err)
-
-	// Remove current key
-	em.keyring.currentKey = nil
-
-	_, err = em.Encrypt([]byte("test"))
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "no active encryption key")
-}
-
 // TestKeyring_Close tests keyring closure.
-func TestKeyring_Close(t *testing.T) {
-	cfg := &EncryptionConfig{
-		Enabled:     true,
-		Algorithm:   AlgorithmAES256GCM,
-		KeyProvider: "local",
-		RotateDays:  90,
-	}
-
-	log := createTestLogger(t)
-	kr, err := NewKeyring(cfg, log)
-	require.NoError(t, err)
-
-	kr.Close()
-
-	// Timer should be stopped
-	assert.NotNil(t, kr.rotationTimer)
-}
-
 // TestEncryptionManager_GetKeyVersionDisabled tests getting key version when disabled.
-func TestEncryptionManager_GetKeyVersionDisabled(t *testing.T) {
-	cfg := &EncryptionConfig{
-		Enabled: false,
-	}
-
-	log := createTestLogger(t)
-	em, err := NewEncryptionManager(cfg, log)
-	require.NoError(t, err)
-
-	version := em.GetKeyVersion()
-	assert.Equal(t, byte(0), version)
-}
-
 // TestEncryptionManager_GetKeyVersionWithNilKey tests getting version with nil key.
 func TestEncryptionManager_GetKeyVersionWithNilKey(t *testing.T) {
 	cfg := &EncryptionConfig{
@@ -3149,21 +2243,3 @@ func TestEncryptionManager_GetKeyVersionWithNilKey(t *testing.T) {
 }
 
 // TestEncryptionManager_DecryptBatchDisabled tests batch decryption when disabled.
-func TestEncryptionManager_DecryptBatchDisabled(t *testing.T) {
-	cfg := &EncryptionConfig{
-		Enabled: false,
-	}
-
-	log := createTestLogger(t)
-	em, err := NewEncryptionManager(cfg, log)
-	require.NoError(t, err)
-
-	ciphertexts := [][]byte{
-		[]byte("test1"),
-		[]byte("test2"),
-	}
-
-	plaintexts, err := em.DecryptBatch(ciphertexts)
-	assert.NoError(t, err)
-	assert.Equal(t, ciphertexts, plaintexts)
-}

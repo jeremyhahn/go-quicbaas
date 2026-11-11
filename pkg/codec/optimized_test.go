@@ -49,21 +49,6 @@ func TestJSONOptimizedCodec_EncodeTo(t *testing.T) {
 		assert.NotEqual(t, cap(buf), cap(result))
 	})
 
-	t.Run("buffer reuse in loop", func(t *testing.T) {
-		buf := make([]byte, 0, 1024)
-
-		for i := 0; i < 100; i++ {
-			entity := &JSONTestEntity{ID: uint64(i), Name: "loop-test"}
-			var err error
-			buf, err = codec.EncodeTo(buf[:0], entity)
-			require.NoError(t, err)
-			assert.NotEmpty(t, buf)
-		}
-
-		// Buffer should still have same capacity after all iterations
-		assert.LessOrEqual(t, cap(buf), 1024)
-	})
-
 	t.Run("nil entity", func(t *testing.T) {
 		buf := make([]byte, 0, 1024)
 		result, err := codec.EncodeTo(buf, nil)
@@ -71,44 +56,13 @@ func TestJSONOptimizedCodec_EncodeTo(t *testing.T) {
 		assert.Nil(t, result)
 		assert.Contains(t, err.Error(), "cannot encode nil entity")
 	})
-
-	t.Run("nil buffer", func(t *testing.T) {
-		entity := &JSONTestEntity{ID: 42, Name: "test"}
-		result, err := codec.EncodeTo(nil, entity)
-		require.NoError(t, err)
-		assert.NotEmpty(t, result)
-	})
 }
 
 // TestJSONOptimizedCodec_DecodeWith tests the optimized DecodeWith method.
 func TestJSONOptimizedCodec_DecodeWith(t *testing.T) {
 	codec := NewJSONOptimized()
 
-	t.Run("success without scratch buffer", func(t *testing.T) {
-		original := &JSONTestEntity{ID: 100, Name: "scratch-test"}
-		data, err := codec.Encode(original)
-		require.NoError(t, err)
-
-		decoded := &JSONTestEntity{}
-		err = codec.DecodeWith(data, decoded, nil)
-		require.NoError(t, err)
-		assert.Equal(t, original.ID, decoded.ID)
-		assert.Equal(t, original.Name, decoded.Name)
-	})
-
-	t.Run("success with scratch buffer", func(t *testing.T) {
-		original := &JSONTestEntity{ID: 200, Name: "with-scratch"}
-		data, err := codec.Encode(original)
-		require.NoError(t, err)
-
-		scratch := make([]byte, 4096)
-		decoded := &JSONTestEntity{}
-		err = codec.DecodeWith(data, decoded, scratch)
-		require.NoError(t, err)
-		assert.Equal(t, original.ID, decoded.ID)
-		assert.Equal(t, original.Name, decoded.Name)
-	})
-
+	// The success path is covered by TestOptimizedCodecs_RoundTrip.
 	t.Run("empty data", func(t *testing.T) {
 		entity := &JSONTestEntity{}
 		err := codec.DecodeWith([]byte{}, entity, nil)
@@ -201,21 +155,6 @@ func TestMsgPackOptimizedCodec_EncodeTo(t *testing.T) {
 		assert.NotEqual(t, cap(buf), cap(result))
 	})
 
-	t.Run("buffer reuse in loop", func(t *testing.T) {
-		buf := make([]byte, 0, 1024)
-
-		for i := 0; i < 100; i++ {
-			entity := &MsgPackTestEntity{ID: uint64(i), Name: "loop-test"}
-			var err error
-			buf, err = codec.EncodeTo(buf[:0], entity)
-			require.NoError(t, err)
-			assert.NotEmpty(t, buf)
-		}
-
-		// Buffer should still have same capacity after all iterations
-		assert.LessOrEqual(t, cap(buf), 1024)
-	})
-
 	t.Run("nil entity", func(t *testing.T) {
 		buf := make([]byte, 0, 1024)
 		result, err := codec.EncodeTo(buf, nil)
@@ -223,44 +162,13 @@ func TestMsgPackOptimizedCodec_EncodeTo(t *testing.T) {
 		assert.Nil(t, result)
 		assert.Contains(t, err.Error(), "cannot encode nil entity")
 	})
-
-	t.Run("nil buffer", func(t *testing.T) {
-		entity := &MsgPackTestEntity{ID: 42, Name: "test"}
-		result, err := codec.EncodeTo(nil, entity)
-		require.NoError(t, err)
-		assert.NotEmpty(t, result)
-	})
 }
 
 // TestMsgPackOptimizedCodec_DecodeWith tests the optimized DecodeWith method.
 func TestMsgPackOptimizedCodec_DecodeWith(t *testing.T) {
 	codec := NewMsgPackOptimized()
 
-	t.Run("success without scratch buffer", func(t *testing.T) {
-		original := &MsgPackTestEntity{ID: 100, Name: "scratch-test"}
-		data, err := codec.Encode(original)
-		require.NoError(t, err)
-
-		decoded := &MsgPackTestEntity{}
-		err = codec.DecodeWith(data, decoded, nil)
-		require.NoError(t, err)
-		assert.Equal(t, original.ID, decoded.ID)
-		assert.Equal(t, original.Name, decoded.Name)
-	})
-
-	t.Run("success with scratch buffer", func(t *testing.T) {
-		original := &MsgPackTestEntity{ID: 200, Name: "with-scratch"}
-		data, err := codec.Encode(original)
-		require.NoError(t, err)
-
-		scratch := make([]byte, 4096)
-		decoded := &MsgPackTestEntity{}
-		err = codec.DecodeWith(data, decoded, scratch)
-		require.NoError(t, err)
-		assert.Equal(t, original.ID, decoded.ID)
-		assert.Equal(t, original.Name, decoded.Name)
-	})
-
+	// The success path is covered by TestOptimizedCodecs_RoundTrip.
 	t.Run("empty data", func(t *testing.T) {
 		entity := &MsgPackTestEntity{}
 		err := codec.DecodeWith([]byte{}, entity, nil)

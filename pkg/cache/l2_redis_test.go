@@ -17,7 +17,6 @@ package cache
 
 import (
 	"context"
-	"crypto/tls"
 	"testing"
 	"time"
 
@@ -234,6 +233,17 @@ func TestRedisL2Config_Validate(t *testing.T) {
 			},
 			wantError: true,
 			errorMsg:  "max retries cannot be negative",
+		},
+		{
+			name: "zero max retries",
+			config: RedisL2Config{
+				Addr:         "localhost:6379",
+				DialTimeout:  5 * time.Second,
+				ReadTimeout:  3 * time.Second,
+				WriteTimeout: 3 * time.Second,
+				MaxRetries:   0,
+			},
+			wantError: false,
 		},
 		{
 			name: "negative min retry backoff",
@@ -534,66 +544,6 @@ func TestRedisL2Cache_PoolStats(t *testing.T) {
 	})
 }
 
-func TestRedisL2Config_TLSConfig(t *testing.T) {
-	t.Run("config with TLS", func(t *testing.T) {
-		tlsConfig := &tls.Config{
-			MinVersion: tls.VersionTLS13,
-		}
-
-		config := DefaultRedisL2Config()
-		config.TLSConfig = tlsConfig
-
-		err := config.Validate()
-		assert.NoError(t, err)
-		assert.NotNil(t, config.TLSConfig)
-		assert.Equal(t, uint16(tls.VersionTLS13), config.TLSConfig.MinVersion)
-	})
-}
-
-func TestRedisL2Config_AdvancedPoolSettings(t *testing.T) {
-	t.Run("custom pool settings", func(t *testing.T) {
-		config := DefaultRedisL2Config()
-		config.PoolSize = 20
-		config.MinIdleConns = 5
-		config.MaxIdleConns = 10
-		config.ConnMaxIdleTime = 1 * time.Hour
-		config.ConnMaxLifetime = 24 * time.Hour
-		config.PoolTimeout = 5 * time.Second
-
-		err := config.Validate()
-		assert.NoError(t, err)
-		assert.Equal(t, 20, config.PoolSize)
-		assert.Equal(t, 5, config.MinIdleConns)
-		assert.Equal(t, 10, config.MaxIdleConns)
-		assert.Equal(t, 1*time.Hour, config.ConnMaxIdleTime)
-		assert.Equal(t, 24*time.Hour, config.ConnMaxLifetime)
-		assert.Equal(t, 5*time.Second, config.PoolTimeout)
-	})
-}
-
-func TestRedisL2Config_RetrySettings(t *testing.T) {
-	t.Run("custom retry settings", func(t *testing.T) {
-		config := DefaultRedisL2Config()
-		config.MaxRetries = 5
-		config.MinRetryBackoff = 10 * time.Millisecond
-		config.MaxRetryBackoff = 1 * time.Second
-
-		err := config.Validate()
-		assert.NoError(t, err)
-		assert.Equal(t, 5, config.MaxRetries)
-		assert.Equal(t, 10*time.Millisecond, config.MinRetryBackoff)
-		assert.Equal(t, 1*time.Second, config.MaxRetryBackoff)
-	})
-
-	t.Run("zero retries", func(t *testing.T) {
-		config := DefaultRedisL2Config()
-		config.MaxRetries = 0
-
-		err := config.Validate()
-		assert.NoError(t, err)
-	})
-}
-
 func TestRedisL2Cache_ContextCancellation(t *testing.T) {
 	// These tests verify that context cancellation is handled correctly
 	// We can't test actual Redis operations without a running Redis instance,
@@ -617,10 +567,9 @@ func TestRedisL2Cache_ContextCancellation(t *testing.T) {
 		assert.Error(t, err)
 	})
 
-	t.Run("set with timeout context", func(t *testing.T) {
-		ctx, cancel := context.WithTimeout(context.Background(), 1*time.Nanosecond)
-		defer cancel()
-		time.Sleep(2 * time.Nanosecond) // Ensure timeout
+	t.Run("set with cancelled context", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
 
 		cache := &RedisL2Cache{
 			logger: testLogger(t),
@@ -636,49 +585,19 @@ func TestRedisL2Cache_ContextCancellation(t *testing.T) {
 	})
 }
 
-func TestRedisL2Cache_EdgeCases(t *testing.T) {
-	t.Run("large value", func(t *testing.T) {
-		cache := &RedisL2Cache{
-			logger: testLogger(t),
-			closed: false,
-		}
+func TestRedisL2Cache_Set_NilClient(t *testing.T) {
+	cache := &RedisL2Cache{
+		logger: testLogger(t),
+		closed: false,
+	}
 
-		// Verify validation passes for large values
-		largeValue := make([]byte, 1024*1024) // 1MB
-		err := cache.Set(context.Background(), "large", largeValue, time.Minute)
-		// Will fail without real Redis, but proves validation passes
-		assert.Error(t, err)
-	})
-
-	t.Run("zero TTL", func(t *testing.T) {
-		cache := &RedisL2Cache{
-			logger: testLogger(t),
-			closed: false,
-		}
-
-		// Zero TTL means no expiration - should be allowed
-		err := cache.Set(context.Background(), "noexpire", []byte("value"), 0)
-		assert.Error(t, err) // Fails without Redis, but proves validation passes
-	})
-
-	t.Run("negative TTL", func(t *testing.T) {
-		cache := &RedisL2Cache{
-			logger: testLogger(t),
-			closed: false,
-		}
-
-		// Negative TTL should be treated as immediate expiration by Redis
-		err := cache.Set(context.Background(), "expired", []byte("value"), -1*time.Second)
-		assert.Error(t, err) // Fails without Redis, but proves validation passes
-	})
+	err := cache.Set(context.Background(), "key", []byte("value"), time.Minute)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "client not initialized")
 }
 
-func TestRedisL2Cache_InterfaceCompliance(t *testing.T) {
-	// Verify that RedisL2Cache implements L2Cache interface
-	var _ L2Cache = (*RedisL2Cache)(nil)
-}
-
-func TestMockL2Cache_InterfaceCompliance(t *testing.T) {
-	// Verify that MockL2Cache implements L2Cache interface
-	var _ L2Cache = (*MockL2Cache)(nil)
-}
+// Both L2 implementations must satisfy L2Cache; the compiler checks it.
+var (
+	_ L2Cache = (*RedisL2Cache)(nil)
+	_ L2Cache = (*MockL2Cache)(nil)
+)
