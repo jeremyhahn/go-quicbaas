@@ -393,7 +393,7 @@ func skipIfProtocolUnavailable(t *testing.T, protocol string, endpoint string) {
 
 		tlsCfg, err := helpers.IntegrationTLSConfig()
 		require.NoError(t, err, "load integration TLS config")
-		client, err := grpcclient.NewClient(endpoint, grpcclient.WithTLSConfig(tlsCfg))
+		client, err := grpcclient.NewClient(endpoint, grpcclient.WithTLSConfig(tlsCfg), kmsGRPCAuth(t))
 		if err != nil {
 			require.NoError(t, err, "%s service must be available at %s", protocol, endpoint)
 		}
@@ -451,7 +451,7 @@ type RESTClient struct {
 func NewRESTClient(baseURL string) *RESTClient {
 	return &RESTClient{
 		baseURL:    baseURL,
-		httpClient: helpers.NewHTTPClient(30 * time.Second),
+		httpClient: newKMSHTTPClient(30 * time.Second),
 	}
 }
 

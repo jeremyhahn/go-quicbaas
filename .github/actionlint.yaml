@@ -34,6 +34,10 @@
 # devcontainer images and runs the stages in them, and `ci-gate`, where CI Gate runs
 # (Company Agent m386). go-quicraft's ci.yml has used both since v1.18.
 #
+# v6: `batch`, `bigdisk` and `ci-gate` removed. Every job that used them runs
+# on ubuntu-latest, and an allowlisted label that no workflow uses cannot
+# catch a typo of itself (see v3).
+#
 # Verify against the fleet, not against this comment:
 #   curl -sH "Authorization: token $TOK" \
 #     "$GITEA/api/v1/admin/actions/runners" \
@@ -47,6 +51,3 @@ self-hosted-runner:
     - codex-task
     - claude
     - code-review
-    - batch
-    - bigdisk
-    - ci-gate

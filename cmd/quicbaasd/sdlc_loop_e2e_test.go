@@ -1347,7 +1347,7 @@ func registerFactoryProject(t *testing.T, srv *server.Server, backend *e2eAgentB
 			TenantID: loopE2ETenant, Name: loopE2EProject,
 			WorkspacePath: factoryProjectWorkspace(t),
 			GitRepoURL:    "file://" + repo, GitDefaultBranch: "main",
-			GitAuthorName: "agent-" + loopE2EProject, GitAuthorEmail: "agent-" + loopE2EProject + "@example.internal",
+			GitAuthorName: "agent-" + loopE2EProject, GitAuthorEmail: "agent-" + loopE2EProject + "@example.com",
 			GitSigningEnabled: true, GitSigningKeyName: loopE2EKeyName, GitSigningKeyScope: loopE2EKeyScope, GitSigningKeyOwner: loopE2EKeyOwner,
 		})
 		require.NoError(t, createErr)
@@ -1415,7 +1415,15 @@ func factoryCtx() context.Context {
 	return orchestration.ContextWithTenant(tenantctx.WithTenant(context.Background(), loopE2ETenant), loopE2ETenant)
 }
 
-// awaitJob waits for one job to reach a terminal state and returns it.
+// awaitJob waits for the delivery job, the one the sdlc runner drives, to
+// reach a terminal state and returns it.
+//
+// THE RUNNER IS PART OF THE QUESTION. A node that starts with a project
+// already bound runs its backstop boot pass, and that pass starts a triage job
+// which finds nothing to judge and completes within milliseconds. A wait for
+// any job in the wanted state returns on that one while the delivery is still
+// initializing, and the caller then reads a forge the delivery has not
+// touched yet.
 func awaitJob(t *testing.T, srv *server.Server, want orchestration.JobState) *orchestration.JobStatus {
 	t.Helper()
 	var found *orchestration.JobStatus
@@ -1425,13 +1433,13 @@ func awaitJob(t *testing.T, srv *server.Server, want orchestration.JobState) *or
 			return false
 		}
 		for _, job := range jobs {
-			if job.State == want {
+			if job.State == want && job.Runner == sdlc.JobRunnerName {
 				found = job
 				return true
 			}
 		}
 		return false
-	}, 90*time.Second, 50*time.Millisecond, "no job reached %s", want)
+	}, 90*time.Second, 50*time.Millisecond, "no %s job reached %s", sdlc.JobRunnerName, want)
 	return found
 }
 
@@ -1772,11 +1780,11 @@ func TestSDLCRunner_TheContainerCommitsSignsAndPushes(t *testing.T) {
 	raw := gitOut(t, rig.repo, "cat-file", "commit", delivery.HeadSHA)
 	require.Contains(t, raw, "BEGIN SSH SIGNATURE",
 		"the head the container published carries no signature:\n%s", raw)
-	require.Contains(t, raw, "agent-"+loopE2EProject+"@example.internal",
+	require.Contains(t, raw, "agent-"+loopE2EProject+"@example.com",
 		"the commit was not authored as the project's agent identity:\n%s", raw)
 
 	allowed := filepath.Join(t.TempDir(), "allowed_signers")
-	entry := "agent-" + loopE2EProject + "@example.internal " + tenantSigningPublicKey(t, rig.srv)
+	entry := "agent-" + loopE2EProject + "@example.com " + tenantSigningPublicKey(t, rig.srv)
 	require.NoError(t, os.WriteFile(allowed, []byte(entry+"\n"), 0o600))
 	verified := gitOut(t, rig.repo, "-c", "gpg.ssh.allowedSignersFile="+allowed, "verify-commit", delivery.HeadSHA)
 	require.Contains(t, verified, "Good",

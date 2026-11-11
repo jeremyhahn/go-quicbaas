@@ -375,8 +375,8 @@ describe('ProjectsView — create dialog, git identity and autonomy', () => {
     await openCreateDialog(container);
 
     await setValue(container, '#proj-name', 'go-truststrap');
-    await setValue(container, '#proj-git-author-name', 'agent-go-truststrap');
-    await setValue(container, '#proj-git-author-email', 'agent@example.internal');
+    await setValue(container, '#proj-git-author-name', 'agent-truststrap');
+    await setValue(container, '#proj-git-author-email', 'agent@example.com');
     await fireEvent.click(container.querySelector('#proj-git-signing-enabled') as HTMLInputElement);
     await setValue(container, '#proj-git-signing-key-name', 'commit-signing');
     await fireEvent.change(container.querySelector('#proj-git-signing-key-scope') as HTMLSelectElement, {
@@ -390,8 +390,8 @@ describe('ProjectsView — create dialog, git identity and autonomy', () => {
 
     await waitFor(() => expect(mockCreateProject).toHaveBeenCalled());
     const req = mockCreateProject.mock.calls[0][0];
-    expect(req.git_author_name).toBe('agent-go-truststrap');
-    expect(req.git_author_email).toBe('agent@example.internal');
+    expect(req.git_author_name).toBe('agent-truststrap');
+    expect(req.git_author_email).toBe('agent@example.com');
     expect(req.git_signing_enabled).toBe(true);
     expect(req.git_signing_key_name).toBe('commit-signing');
     expect(req.git_signing_key_scope).toBe('tenant');
@@ -495,8 +495,8 @@ describe('ProjectsView — edit dialog, git identity and autonomy', () => {
     context_repos: [{ name: 'handbook', repo_url: 'https://git.example/org/handbook', ref: 'main' }],
     git_repo_url: 'https://git.example/org/go-truststrap',
     git_default_branch: 'main',
-    git_author_name: 'agent-go-truststrap',
-    git_author_email: 'agent@example.internal',
+    git_author_name: 'agent-truststrap',
+    git_author_email: 'agent@example.com',
     git_signing_enabled: true,
     git_signing_algorithm: 'ED25519',
     git_signing_key_name: 'commit-signing',
@@ -535,8 +535,8 @@ describe('ProjectsView — edit dialog, git identity and autonomy', () => {
     await openEditDialog(container);
 
     const value = (id: string) => (container.querySelector(id) as HTMLInputElement).value;
-    expect(value('#edit-proj-git-author-name')).toBe('agent-go-truststrap');
-    expect(value('#edit-proj-git-author-email')).toBe('agent@example.internal');
+    expect(value('#edit-proj-git-author-name')).toBe('agent-truststrap');
+    expect(value('#edit-proj-git-author-email')).toBe('agent@example.com');
     expect((container.querySelector('#edit-proj-git-signing-enabled') as HTMLInputElement).checked).toBe(true);
     expect(value('#edit-proj-git-signing-key-name')).toBe('commit-signing');
     expect(value('#edit-proj-git-signing-key-scope')).toBe('tenant');
@@ -567,13 +567,13 @@ describe('ProjectsView — edit dialog, git identity and autonomy', () => {
     await openEditDialog(container);
 
     await fireEvent.input(container.querySelector('#edit-proj-git-author-email') as HTMLInputElement, {
-      target: { value: 'other@example.internal' },
+      target: { value: 'other@example.com' },
     });
     await save(container);
 
     await waitFor(() => expect(mockUpdateProject).toHaveBeenCalled());
     const req = mockUpdateProject.mock.calls[0][0];
-    expect(req.git_author_email).toBe('other@example.internal');
+    expect(req.git_author_email).toBe('other@example.com');
     expect(req.git_author_name).toBeUndefined();
     expect(req.autonomous).toBeUndefined();
     expect(req.context_repos).toBeUndefined();
