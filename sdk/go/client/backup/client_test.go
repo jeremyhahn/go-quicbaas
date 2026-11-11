@@ -770,12 +770,12 @@ func TestValidateRestoreRequest(t *testing.T) {
 		{
 			name:    "source only",
 			req:     &RestoreRequest{BackupID: "", Source: "/path/to/backup"},
-			wantErr: false,
+			wantErr: true,
 		},
 		{
 			name:    "both backup ID and source",
 			req:     &RestoreRequest{BackupID: "backup-123", Source: "/path/to/backup"},
-			wantErr: false,
+			wantErr: true,
 		},
 	}
 
