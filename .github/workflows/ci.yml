@@ -302,10 +302,10 @@ env:
   GO_BUILD_TAGS: ""
   # The Go toolchain of the jobs that run on the self-hosted bigdisk pool,
   # where setup-go installs it natively. It is the toolchain image's Go:
-  # pkg/version/toolchain.mk `GO_VERSION := 1.27.3`, which
+  # pkg/version/toolchain.mk `GO_VERSION := 1.27.4`, which
   # build/docker/devcontainer/Dockerfile's `FROM golang:${GO_VERSION}-trixie`
   # builds from. Bump both together.
-  GO_VERSION: '1.27.3'
+  GO_VERSION: '1.27.4'
 
 jobs:
   # DS-3161: a pull request whose every changed file is documentation runs
