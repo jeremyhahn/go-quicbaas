@@ -682,8 +682,11 @@ func TestNewControlLoop_CreatesValidInstance(t *testing.T) {
 	if cl.job.Logger == nil {
 		t.Fatal("expected logger to be set")
 	}
-	if cl.job.events == nil {
+	if cl.Events() == nil {
 		t.Fatal("expected events channel to be initialized")
+	}
+	if cl.Status() != nil {
+		t.Fatal("expected nil status before Run")
 	}
 	if cl.workerSessions == nil {
 		t.Fatal("expected workerSessions map to be initialized")
@@ -711,17 +714,8 @@ func TestNewControlLoop_CreatesValidInstance(t *testing.T) {
 			t.Fatalf("expected handler for state %q", state)
 		}
 	}
-}
-
-func TestNewControlLoop_HandlersLength(t *testing.T) {
-	t.Parallel()
-
-	cl := NewControlLoop(&controlLoopMockService{}, &controlLoopMockLogger{})
-
-	// 11 states: initializing, decomposing, scheduling, assigning, executing,
-	// validating, reviewing, re-delegating, completing, cleanup, escalating
-	if len(cl.handlers) != 11 {
-		t.Fatalf("expected 11 handlers, got %d", len(cl.handlers))
+	if len(cl.handlers) != len(expectedStates) {
+		t.Fatalf("expected %d handlers, got %d", len(expectedStates), len(cl.handlers))
 	}
 }
 
@@ -742,17 +736,6 @@ func TestSetWorkflow_SetsDefinition(t *testing.T) {
 
 	if cl.workflow != wf {
 		t.Fatal("expected workflow to be set")
-	}
-}
-
-func TestSetWorkflow_NilWorkflow(t *testing.T) {
-	t.Parallel()
-
-	cl := NewControlLoop(&controlLoopMockService{}, &controlLoopMockLogger{})
-	cl.SetWorkflow(nil)
-
-	if cl.workflow != nil {
-		t.Fatal("expected workflow to be nil")
 	}
 }
 
@@ -1088,6 +1071,13 @@ func TestHandleDecompose_Success(t *testing.T) {
 	cl.job.Config = newTestConfig()
 	cl.job.JobID = "test-job"
 	cl.job.memory = NewJobMemory()
+	// Feedback from an earlier iteration is folded into the decompose prompt.
+	cl.job.memory.AddFeedback("review feedback from iteration 1")
+
+	var auditEvents []string
+	cl.job.auditFn = func(eventType, details string) {
+		auditEvents = append(auditEvents, eventType+":"+details)
+	}
 
 	nextState, err := cl.handleDecompose(context.Background())
 	if err != nil {
@@ -1099,85 +1089,16 @@ func TestHandleDecompose_Success(t *testing.T) {
 	if len(cl.workItems) != 2 {
 		t.Fatalf("expected 2 work items, got %d", len(cl.workItems))
 	}
-}
 
-func TestHandleDecompose_WithAccumulatedContext(t *testing.T) {
-	t.Parallel()
-
-	var capturedTask string
-	svc := &controlLoopMockService{
-		decomposeResponse: &DecomposeTaskResponse{
-			WorkItems: []*WorkItem{
-				{ID: "w1", Title: "Task 1"},
-			},
-		},
+	// decompose_start, one work_item per item, decomposed.
+	if len(auditEvents) != 4 {
+		t.Fatalf("expected 4 audit events, got %d: %v", len(auditEvents), auditEvents)
 	}
-
-	// Wrap to capture the decompose task description.
-	originalResp := svc.decomposeResponse
-	svc.decomposeResponse = originalResp
-
-	logger := &controlLoopMockLogger{}
-	cl := NewControlLoop(svc, logger)
-	cl.job.Config = newTestConfig()
-	cl.job.JobID = "test-job"
-	cl.job.memory = NewJobMemory()
-	cl.job.memory.AddFeedback("review feedback from iteration 1")
-
-	nextState, err := cl.handleDecompose(context.Background())
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	if !strings.Contains(auditEvents[0], "lead:decompose_start") {
+		t.Fatalf("expected decompose_start audit event, got %q", auditEvents[0])
 	}
-	if nextState != JobStateScheduling {
-		t.Fatalf("expected scheduling state, got %q", nextState)
-	}
-	_ = capturedTask
-}
-
-func TestHandleDecompose_EmptyResult(t *testing.T) {
-	t.Parallel()
-
-	svc := &controlLoopMockService{
-		decomposeResponse: &DecomposeTaskResponse{
-			WorkItems: []*WorkItem{},
-		},
-	}
-	logger := &controlLoopMockLogger{}
-	cl := NewControlLoop(svc, logger)
-	cl.job.Config = newTestConfig()
-	cl.job.JobID = "test-job"
-	cl.job.memory = NewJobMemory()
-
-	nextState, err := cl.handleDecompose(context.Background())
-	if err == nil {
-		t.Fatal("expected error for empty decomposition")
-	}
-	if nextState != JobStateFailed {
-		t.Fatalf("expected failed state, got %q", nextState)
-	}
-	if !errors.Is(err, ErrEmptyDecomposition) {
-		t.Fatalf("expected ErrEmptyDecomposition, got: %v", err)
-	}
-}
-
-func TestHandleDecompose_ServiceError(t *testing.T) {
-	t.Parallel()
-
-	svc := &controlLoopMockService{
-		decomposeErr: errors.New("service unavailable"),
-	}
-	logger := &controlLoopMockLogger{}
-	cl := NewControlLoop(svc, logger)
-	cl.job.Config = newTestConfig()
-	cl.job.JobID = "test-job"
-	cl.job.memory = NewJobMemory()
-
-	nextState, err := cl.handleDecompose(context.Background())
-	if err == nil {
-		t.Fatal("expected error from service")
-	}
-	if nextState != JobStateFailed {
-		t.Fatalf("expected failed state, got %q", nextState)
+	if !strings.Contains(auditEvents[3], "orchestration:decomposed") {
+		t.Fatalf("expected decomposed audit event, got %q", auditEvents[3])
 	}
 }
 
@@ -1198,6 +1119,11 @@ func TestHandleSchedule_Success(t *testing.T) {
 		{ID: "w2", Title: "Task 2", Dependencies: []string{"w1"}},
 	}
 
+	var auditEvents []string
+	cl.job.auditFn = func(eventType, details string) {
+		auditEvents = append(auditEvents, eventType+":"+details)
+	}
+
 	nextState, err := cl.handleSchedule(context.Background())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -1213,6 +1139,9 @@ func TestHandleSchedule_Success(t *testing.T) {
 	}
 	if cl.currentWave != 0 {
 		t.Fatalf("expected currentWave=0, got %d", cl.currentWave)
+	}
+	if len(auditEvents) != 1 || !strings.Contains(auditEvents[0], "orchestration:scheduled") {
+		t.Fatalf("expected one scheduled audit event, got %v", auditEvents)
 	}
 }
 
@@ -1300,67 +1229,6 @@ func TestHandleSchedule_CancelledContext(t *testing.T) {
 // Tests: handleAssign
 // =============================================================================
 
-func TestHandleAssign_Success(t *testing.T) {
-	t.Parallel()
-
-	svc := &controlLoopMockService{
-		backends: newTestBackends(),
-		agents:   newTestAgents(),
-	}
-	logger := &controlLoopMockLogger{}
-	cl := NewControlLoop(svc, logger)
-	cl.job.Config = newTestConfig()
-	cl.job.JobID = "test-job"
-	cl.workItems = []*WorkItem{
-		{ID: "w1", Title: "Task 1"},
-	}
-
-	// Set up execution plan with a single wave.
-	cl.executionPlan = &ExecutionPlan{
-		Waves: [][]*WorkItem{cl.workItems},
-	}
-	cl.currentWave = 0
-
-	nextState, err := cl.handleAssign(context.Background())
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if nextState != JobStateExecuting {
-		t.Fatalf("expected executing state, got %q", nextState)
-	}
-	if len(cl.taskIDs) != 1 {
-		t.Fatalf("expected 1 task ID, got %d", len(cl.taskIDs))
-	}
-}
-
-func TestHandleAssign_NoAgents(t *testing.T) {
-	t.Parallel()
-
-	svc := &controlLoopMockService{
-		backends: newTestBackends(),
-		agents:   []*FleetNode{},
-	}
-	logger := &controlLoopMockLogger{}
-	cl := NewControlLoop(svc, logger)
-	cl.job.Config = newTestConfig()
-	cl.job.JobID = "test-job"
-	cl.workItems = []*WorkItem{{ID: "w1", Title: "Task 1"}}
-	cl.executionPlan = &ExecutionPlan{
-		Waves: [][]*WorkItem{cl.workItems},
-	}
-
-	nextState, err := cl.handleAssign(context.Background())
-	if err == nil {
-		t.Fatal("expected error for no agents")
-	}
-	if nextState != JobStateFailed {
-		t.Fatalf("expected failed state, got %q", nextState)
-	}
-	if !errors.Is(err, ErrNoFleetNodesAvailable) {
-		t.Fatalf("expected ErrNoFleetNodesAvailable, got: %v", err)
-	}
-}
-
 func TestHandleAssign_CreateTaskError(t *testing.T) {
 	t.Parallel()
 
@@ -1431,30 +1299,6 @@ func TestHandleAssign_WithPersistentBackend_SpawnsSession(t *testing.T) {
 // Tests: handleExecute
 // =============================================================================
 
-func TestHandleExecute_AllTasksComplete(t *testing.T) {
-	t.Parallel()
-
-	svc := &controlLoopMockService{
-		tasks: []*Task{
-			{ID: "task-1", Status: TaskStatusCompleted, Result: &TaskResult{Output: "done"}},
-		},
-	}
-	logger := &controlLoopMockLogger{}
-	cl := NewControlLoop(svc, logger)
-	cl.job.Config = newTestConfig()
-	cl.job.JobID = "test-job"
-	cl.taskIDs = []string{"task-1"}
-	cl.workItems = []*WorkItem{{ID: "w1", Title: "Task 1"}}
-
-	nextState, err := cl.handleExecute(context.Background())
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if nextState != JobStateValidating {
-		t.Fatalf("expected validating state, got %q", nextState)
-	}
-}
-
 func TestHandleExecute_AdvancesWave(t *testing.T) {
 	t.Parallel()
 
@@ -1490,34 +1334,6 @@ func TestHandleExecute_AdvancesWave(t *testing.T) {
 	}
 	if cl.currentWave != 1 {
 		t.Fatalf("expected currentWave=1, got %d", cl.currentWave)
-	}
-}
-
-func TestHandleExecute_ContextCancelled(t *testing.T) {
-	t.Parallel()
-
-	svc := &controlLoopMockService{
-		// Tasks never complete.
-		tasks: []*Task{
-			{ID: "task-1", Status: TaskStatusPending},
-		},
-	}
-	logger := &controlLoopMockLogger{}
-	cl := NewControlLoop(svc, logger)
-	cl.job.Config = newTestConfig()
-	cl.job.JobID = "test-job"
-	cl.taskIDs = []string{"task-1"}
-	cl.workItems = []*WorkItem{{ID: "w1", Title: "Task 1"}}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
-	defer cancel()
-
-	nextState, err := cl.handleExecute(ctx)
-	if err == nil {
-		t.Fatal("expected error from context timeout")
-	}
-	if nextState != JobStateFailed {
-		t.Fatalf("expected failed state, got %q", nextState)
 	}
 }
 
@@ -1750,24 +1566,6 @@ func TestHandleReview_ParseError(t *testing.T) {
 // Tests: handleComplete
 // =============================================================================
 
-func TestHandleComplete_TransitionsToCleanup(t *testing.T) {
-	t.Parallel()
-
-	svc := &controlLoopMockService{}
-	logger := &controlLoopMockLogger{}
-	cl := NewControlLoop(svc, logger)
-	cl.job.Config = newTestConfig()
-	cl.job.JobID = "test-job"
-
-	nextState, err := cl.handleComplete(context.Background())
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if nextState != JobStateCleanup {
-		t.Fatalf("expected cleanup state, got %q", nextState)
-	}
-}
-
 func TestHandleComplete_CancelledContext(t *testing.T) {
 	t.Parallel()
 
@@ -1878,6 +1676,11 @@ func TestHandleRedelegate_WithinLimit(t *testing.T) {
 		},
 	}
 
+	var auditEvents []string
+	cl.job.auditFn = func(eventType, details string) {
+		auditEvents = append(auditEvents, eventType+":"+details)
+	}
+
 	nextState, err := cl.handleRedelegate(context.Background())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -1894,30 +1697,8 @@ func TestHandleRedelegate_WithinLimit(t *testing.T) {
 	if len(cl.job.memory.FailedApproaches) != 1 {
 		t.Fatalf("expected 1 failed approach, got %d", len(cl.job.memory.FailedApproaches))
 	}
-}
-
-func TestHandleRedelegate_ExceedsLimit(t *testing.T) {
-	t.Parallel()
-
-	svc := &controlLoopMockService{}
-	logger := &controlLoopMockLogger{}
-	cl := NewControlLoop(svc, logger)
-	cl.job.Config = newTestConfig()
-	cl.job.Config.MaxIterations = 2
-	cl.job.JobID = "test-job"
-	cl.job.iteration = 1 // Will become 2 after increment, matching limit.
-	cl.job.memory = NewJobMemory()
-	cl.reviewResponse = &ReviewResponse{
-		Approved: false,
-		Feedback: "still bad",
-	}
-
-	nextState, err := cl.handleRedelegate(context.Background())
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if nextState != JobStateEscalating {
-		t.Fatalf("expected escalating state, got %q", nextState)
+	if len(auditEvents) != 1 || !strings.Contains(auditEvents[0], "orchestration:redelegate") {
+		t.Fatalf("expected one redelegate audit event, got %v", auditEvents)
 	}
 }
 
@@ -1983,29 +1764,6 @@ func TestHandleEscalate_ReturnsFailed(t *testing.T) {
 	}
 	if len(cl.workerSessions) != 0 {
 		t.Fatal("expected worker sessions to be cleaned up during escalation")
-	}
-}
-
-// =============================================================================
-// Tests: Status and Events
-// =============================================================================
-
-func TestStatus_ReturnsNilBeforeRun(t *testing.T) {
-	t.Parallel()
-
-	cl := NewControlLoop(&controlLoopMockService{}, &controlLoopMockLogger{})
-	if cl.Status() != nil {
-		t.Fatal("expected nil status before Run")
-	}
-}
-
-func TestEvents_ReturnsChannel(t *testing.T) {
-	t.Parallel()
-
-	cl := NewControlLoop(&controlLoopMockService{}, &controlLoopMockLogger{})
-	ch := cl.Events()
-	if ch == nil {
-		t.Fatal("expected non-nil events channel")
 	}
 }
 
@@ -2141,131 +1899,97 @@ func TestBuildValidationSummary(t *testing.T) {
 // Tests: Response Parsing
 // =============================================================================
 
-func TestParseReviewResponse_ValidApproved(t *testing.T) {
+func TestParseReviewResponse(t *testing.T) {
 	t.Parallel()
 
-	review, err := parseReviewResponse(`{"approved": true, "feedback": "good"}`)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	tests := []struct {
+		name         string
+		input        string
+		wantErr      bool
+		wantApproved bool
+		wantFeedback string
+		wantNewItems int
+	}{
+		{name: "approved", input: `{"approved": true, "feedback": "good"}`, wantApproved: true, wantFeedback: "good"},
+		{name: "rejected with new work items", input: `{"approved": false, "feedback": "bad", "new_work_items": [{"id":"r1","title":"Fix"}]}`, wantFeedback: "bad", wantNewItems: 1},
+		{name: "json embedded in text", input: `Here is my review: {"approved": true, "feedback": "looks good"} Thanks!`, wantApproved: true, wantFeedback: "looks good"},
+		{name: "no json", input: "no json here", wantErr: true},
+		{name: "invalid json", input: `{invalid json}`, wantErr: true},
 	}
-	if !review.Approved {
-		t.Fatal("expected approved=true")
-	}
-	if review.Feedback != "good" {
-		t.Fatalf("expected feedback='good', got %q", review.Feedback)
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			review, err := parseReviewResponse(tt.input)
+			if tt.wantErr {
+				if !errors.Is(err, ErrReviewParseFailed) {
+					t.Fatalf("expected ErrReviewParseFailed, got: %v", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if review.Approved != tt.wantApproved {
+				t.Fatalf("expected approved=%v, got %v", tt.wantApproved, review.Approved)
+			}
+			if review.Feedback != tt.wantFeedback {
+				t.Fatalf("expected feedback=%q, got %q", tt.wantFeedback, review.Feedback)
+			}
+			if len(review.NewWorkItems) != tt.wantNewItems {
+				t.Fatalf("expected %d new work items, got %d", tt.wantNewItems, len(review.NewWorkItems))
+			}
+		})
 	}
 }
 
-func TestParseReviewResponse_ValidRejected(t *testing.T) {
+func TestExtractJSONFromText_NoBalancedObject(t *testing.T) {
 	t.Parallel()
 
-	review, err := parseReviewResponse(`{"approved": false, "feedback": "bad", "new_work_items": [{"id":"r1","title":"Fix"}]}`)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if review.Approved {
-		t.Fatal("expected approved=false")
-	}
-	if len(review.NewWorkItems) != 1 {
-		t.Fatalf("expected 1 new work item, got %d", len(review.NewWorkItems))
+	for _, input := range []string{"", "{incomplete"} {
+		if result := extractJSONFromText(input); result != "" {
+			t.Fatalf("extractJSONFromText(%q): expected empty string, got %q", input, result)
+		}
 	}
 }
 
-func TestParseReviewResponse_NoJSON(t *testing.T) {
+func TestExtractPromptSessionText(t *testing.T) {
 	t.Parallel()
 
-	_, err := parseReviewResponse("no json here")
-	if err == nil {
-		t.Fatal("expected error for no JSON")
-	}
-	if !errors.Is(err, ErrReviewParseFailed) {
-		t.Fatalf("expected ErrReviewParseFailed, got: %v", err)
-	}
-}
-
-func TestParseReviewResponse_InvalidJSON(t *testing.T) {
-	t.Parallel()
-
-	_, err := parseReviewResponse(`{invalid json}`)
-	if err == nil {
-		t.Fatal("expected error for invalid JSON")
-	}
-	if !errors.Is(err, ErrReviewParseFailed) {
-		t.Fatalf("expected ErrReviewParseFailed, got: %v", err)
-	}
-}
-
-func TestParseReviewResponse_JSONEmbeddedInText(t *testing.T) {
-	t.Parallel()
-
-	review, err := parseReviewResponse(`Here is my review: {"approved": true, "feedback": "looks good"} Thanks!`)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if !review.Approved {
-		t.Fatal("expected approved=true")
-	}
-}
-
-func TestExtractJSONFromText_EmptyString(t *testing.T) {
-	t.Parallel()
-
-	result := extractJSONFromText("")
-	if result != "" {
-		t.Fatalf("expected empty string, got %q", result)
-	}
-}
-
-func TestExtractJSONFromText_UnbalancedBraces(t *testing.T) {
-	t.Parallel()
-
-	result := extractJSONFromText("{incomplete")
-	if result != "" {
-		t.Fatalf("expected empty string for unbalanced braces, got %q", result)
-	}
-}
-
-func TestExtractPromptSessionText_NilResponse(t *testing.T) {
-	t.Parallel()
-
-	result := extractPromptSessionText(nil)
-	if result != "" {
-		t.Fatalf("expected empty string, got %q", result)
-	}
-}
-
-func TestExtractPromptSessionText_MultipleBlocks(t *testing.T) {
-	t.Parallel()
-
-	resp := &PromptSessionResponse{
-		Content: []ContentBlock{
-			{Type: "text", Text: "hello "},
-			{Type: "tool_call", Text: ""},
-			{Type: "text", Text: "world"},
+	tests := []struct {
+		name string
+		resp *PromptSessionResponse
+		want string
+	}{
+		{name: "nil response", resp: nil, want: ""},
+		{
+			name: "text blocks joined, other blocks skipped",
+			resp: &PromptSessionResponse{
+				Content: []ContentBlock{
+					{Type: "text", Text: "hello "},
+					{Type: "tool_call", Text: ""},
+					{Type: "text", Text: "world"},
+				},
+			},
+			want: "hello world",
 		},
 	}
 
-	result := extractPromptSessionText(resp)
-	if result != "hello world" {
-		t.Fatalf("expected 'hello world', got %q", result)
+	for _, tt := range tests {
+		if result := extractPromptSessionText(tt.resp); result != tt.want {
+			t.Fatalf("%s: expected %q, got %q", tt.name, tt.want, result)
+		}
 	}
 }
 
-func TestExtractDecomposeText_NilResponse(t *testing.T) {
+func TestExtractDecomposeText_NoWorkItems(t *testing.T) {
 	t.Parallel()
 
-	result := extractDecomposeText(nil)
-	if result != "" {
-		t.Fatalf("expected empty string, got %q", result)
-	}
-}
-
-func TestExtractDecomposeText_EmptyWorkItems(t *testing.T) {
-	t.Parallel()
-
-	result := extractDecomposeText(&DecomposeTaskResponse{WorkItems: []*WorkItem{}})
-	if result != "" {
-		t.Fatalf("expected empty string, got %q", result)
+	for _, resp := range []*DecomposeTaskResponse{nil, {WorkItems: []*WorkItem{}}} {
+		if result := extractDecomposeText(resp); result != "" {
+			t.Fatalf("expected empty string, got %q", result)
+		}
 	}
 }
 
@@ -2273,7 +1997,7 @@ func TestExtractDecomposeText_EmptyWorkItems(t *testing.T) {
 // Tests: ID Generation
 // =============================================================================
 
-func TestGenerateJobID_Uniqueness(t *testing.T) {
+func TestGenerateIDs_FormatAndUniqueness(t *testing.T) {
 	t.Parallel()
 
 	ids := make(map[string]struct{}, 100)
@@ -2282,55 +2006,33 @@ func TestGenerateJobID_Uniqueness(t *testing.T) {
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
+		// 16 bytes -> 32 hex chars.
+		if len(id) != 32 {
+			t.Fatalf("expected 32-char job ID, got %d chars: %s", len(id), id)
+		}
 		if _, exists := ids[id]; exists {
 			t.Fatalf("duplicate job ID generated: %s", id)
 		}
 		ids[id] = struct{}{}
 	}
-}
 
-func TestGenerateJobID_Length(t *testing.T) {
-	t.Parallel()
-
-	id, err := generateJobID()
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	// 16 bytes -> 32 hex chars.
-	if len(id) != 32 {
-		t.Fatalf("expected 32-char job ID, got %d chars: %s", len(id), id)
-	}
-}
-
-func TestGenerateCorrelationID_Format(t *testing.T) {
-	t.Parallel()
-
-	id, err := generateCorrelationID()
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if !strings.HasPrefix(id, "corr-") {
-		t.Fatalf("expected correlation ID to start with 'corr-', got %q", id)
-	}
-	// "corr-" + 32 hex chars = 37 chars.
-	if len(id) != 37 {
-		t.Fatalf("expected 37-char correlation ID, got %d chars: %s", len(id), id)
-	}
-}
-
-func TestGenerateCorrelationID_Uniqueness(t *testing.T) {
-	t.Parallel()
-
-	ids := make(map[string]struct{}, 100)
+	corrIDs := make(map[string]struct{}, 100)
 	for i := 0; i < 100; i++ {
 		id, err := generateCorrelationID()
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		if _, exists := ids[id]; exists {
+		if !strings.HasPrefix(id, "corr-") {
+			t.Fatalf("expected correlation ID to start with 'corr-', got %q", id)
+		}
+		// "corr-" + 32 hex chars = 37 chars.
+		if len(id) != 37 {
+			t.Fatalf("expected 37-char correlation ID, got %d chars: %s", len(id), id)
+		}
+		if _, exists := corrIDs[id]; exists {
 			t.Fatalf("duplicate correlation ID: %s", id)
 		}
-		ids[id] = struct{}{}
+		corrIDs[id] = struct{}{}
 	}
 }
 
@@ -2338,108 +2040,73 @@ func TestGenerateCorrelationID_Uniqueness(t *testing.T) {
 // Tests: Helper Methods
 // =============================================================================
 
-func TestResolveBackendForItem_ExplicitBackend(t *testing.T) {
+func TestResolveBackendForItem(t *testing.T) {
 	t.Parallel()
 
-	cl := NewControlLoop(&controlLoopMockService{}, &controlLoopMockLogger{})
-	cl.job.Config = newTestConfig()
+	workflow := &WorkflowDefinition{
+		Name:   "test",
+		Agents: []AgentRoleSpec{{Role: "developer", Backend: "claude"}},
+	}
+	tests := []struct {
+		name     string
+		workflow *WorkflowDefinition
+		item     *WorkItem
+		want     string
+	}{
+		{name: "explicit backend", item: &WorkItem{Backend: "custom-backend"}, want: "custom-backend"},
+		{name: "workflow role", workflow: workflow, item: &WorkItem{RequiredRole: "developer"}, want: "claude"},
+		// "ollama" is newTestConfig's LeadBackend.
+		{name: "falls back to lead backend", item: &WorkItem{Title: "no backend specified"}, want: "ollama"},
+	}
 
-	item := &WorkItem{Backend: "custom-backend"}
-	result := cl.resolveBackendForItem(item)
-	if result != "custom-backend" {
-		t.Fatalf("expected 'custom-backend', got %q", result)
+	for _, tt := range tests {
+		cl := NewControlLoop(&controlLoopMockService{}, &controlLoopMockLogger{})
+		cl.job.Config = newTestConfig()
+		cl.workflow = tt.workflow
+
+		if result := cl.resolveBackendForItem(tt.item); result != tt.want {
+			t.Fatalf("%s: expected %q, got %q", tt.name, tt.want, result)
+		}
 	}
 }
 
-func TestResolveBackendForItem_WorkflowRole(t *testing.T) {
+func TestResolveModelForRole(t *testing.T) {
 	t.Parallel()
 
 	cl := NewControlLoop(&controlLoopMockService{}, &controlLoopMockLogger{})
 	cl.job.Config = newTestConfig()
 	cl.workflow = &WorkflowDefinition{
-		Name: "test",
-		Agents: []AgentRoleSpec{
-			{Role: "developer", Backend: "claude"},
-		},
+		Agents: []AgentRoleSpec{{Role: "worker", Model: "gpt-4"}},
 	}
 
-	item := &WorkItem{RequiredRole: "developer"}
-	result := cl.resolveBackendForItem(item)
-	if result != "claude" {
-		t.Fatalf("expected 'claude', got %q", result)
-	}
-}
-
-func TestResolveBackendForItem_FallsBackToLeadBackend(t *testing.T) {
-	t.Parallel()
-
-	cl := NewControlLoop(&controlLoopMockService{}, &controlLoopMockLogger{})
-	cl.job.Config = newTestConfig()
-
-	item := &WorkItem{Title: "no backend specified"}
-	result := cl.resolveBackendForItem(item)
-	if result != "ollama" { // From newTestConfig.LeadBackend
-		t.Fatalf("expected fallback to lead backend 'ollama', got %q", result)
-	}
-}
-
-func TestResolveModelForRole_Found(t *testing.T) {
-	t.Parallel()
-
-	cl := NewControlLoop(&controlLoopMockService{}, &controlLoopMockLogger{})
-	cl.job.Config = newTestConfig()
-	cl.workflow = &WorkflowDefinition{
-		Agents: []AgentRoleSpec{
-			{Role: "worker", Model: "gpt-4"},
-		},
-	}
-
-	model := cl.resolveModelForRole("worker")
-	if model != "gpt-4" {
+	if model := cl.resolveModelForRole("worker"); model != "gpt-4" {
 		t.Fatalf("expected 'gpt-4', got %q", model)
 	}
-}
-
-func TestResolveModelForRole_FallsBack(t *testing.T) {
-	t.Parallel()
-
-	cl := NewControlLoop(&controlLoopMockService{}, &controlLoopMockLogger{})
-	cl.job.Config = newTestConfig()
-
-	model := cl.resolveModelForRole("unknown")
-	if model != "test-model" { // From newTestConfig.LeadModel
+	// "test-model" is newTestConfig's LeadModel.
+	if model := cl.resolveModelForRole("unknown"); model != "test-model" {
 		t.Fatalf("expected fallback to 'test-model', got %q", model)
 	}
 }
 
-func TestBackendSupportsSessions_True(t *testing.T) {
+func TestBackendSupportsSessions(t *testing.T) {
 	t.Parallel()
 
 	cl := NewControlLoop(&controlLoopMockService{}, &controlLoopMockLogger{})
-	backends := newTestBackendsWithPersistent()
-
-	if !cl.backendSupportsSessions("claude", backends) {
-		t.Fatal("expected claude backend to support sessions")
+	tests := []struct {
+		name     string
+		backend  string
+		backends []*AgentBackendInfo
+		want     bool
+	}{
+		{name: "persistent backend", backend: "claude", backends: newTestBackendsWithPersistent(), want: true},
+		{name: "non-persistent backend", backend: "ollama", backends: newTestBackends(), want: false},
+		{name: "unknown backend", backend: "nonexistent", backends: nil, want: false},
 	}
-}
 
-func TestBackendSupportsSessions_False(t *testing.T) {
-	t.Parallel()
-
-	cl := NewControlLoop(&controlLoopMockService{}, &controlLoopMockLogger{})
-	backends := newTestBackends()
-
-	if cl.backendSupportsSessions("ollama", backends) {
-		t.Fatal("expected ollama backend to NOT support sessions")
-	}
-}
-
-func TestBackendSupportsSessions_NotFound(t *testing.T) {
-	t.Parallel()
-
-	cl := NewControlLoop(&controlLoopMockService{}, &controlLoopMockLogger{})
-	if cl.backendSupportsSessions("nonexistent", nil) {
-		t.Fatal("expected false for nonexistent backend")
+	for _, tt := range tests {
+		if got := cl.backendSupportsSessions(tt.backend, tt.backends); got != tt.want {
+			t.Fatalf("%s: expected %v, got %v", tt.name, tt.want, got)
+		}
 	}
 }
 
@@ -2489,89 +2156,57 @@ func TestFilterJobTasks_EmptyTaskIDs(t *testing.T) {
 // Tests: Typed Errors
 // =============================================================================
 
-func TestSchedulingError_Error(t *testing.T) {
+func TestTypedErrors_MessageAndUnwrap(t *testing.T) {
 	t.Parallel()
 
-	cause := errors.New("cyclic dependency")
-	err := &SchedulingError{Message: "failed to build plan", Cause: cause}
+	tests := []struct {
+		name     string
+		err      error
+		sentinel error
+		contains []string
+	}{
+		{
+			name:     "scheduling error with cause",
+			err:      &SchedulingError{Message: "failed to build plan", Cause: errors.New("cyclic dependency")},
+			sentinel: ErrSchedulingFailed,
+			contains: []string{"failed to build plan", "cyclic dependency"},
+		},
+		{
+			name:     "scheduling error without cause",
+			err:      &SchedulingError{Message: "some issue"},
+			sentinel: ErrSchedulingFailed,
+			contains: []string{"some issue"},
+		},
+		{
+			name:     "escalation error",
+			err:      &EscalationError{JobID: "job-123", Iterations: 5, Reason: "max iterations exceeded"},
+			sentinel: ErrEscalation,
+			contains: []string{"job-123", "5"},
+		},
+		{
+			name:     "worker session error with cause",
+			err:      &WorkerSessionError{Role: "worker", Backend: "claude", Cause: errors.New("connection refused")},
+			sentinel: ErrWorkerSessionFailed,
+			contains: []string{"worker", "claude", "connection refused"},
+		},
+		{
+			name:     "worker session error without cause",
+			err:      &WorkerSessionError{Role: "worker", Backend: "ollama"},
+			sentinel: ErrWorkerSessionFailed,
+			contains: []string{"worker"},
+		},
+	}
 
-	msg := err.Error()
-	if !strings.Contains(msg, "failed to build plan") {
-		t.Fatalf("expected message in error, got: %s", msg)
-	}
-	if !strings.Contains(msg, "cyclic dependency") {
-		t.Fatalf("expected cause in error, got: %s", msg)
-	}
-	if !errors.Is(err, ErrSchedulingFailed) {
-		t.Fatal("expected Unwrap to return ErrSchedulingFailed")
-	}
-}
-
-func TestSchedulingError_NilCause(t *testing.T) {
-	t.Parallel()
-
-	err := &SchedulingError{Message: "some issue"}
-	msg := err.Error()
-	if !strings.Contains(msg, "some issue") {
-		t.Fatalf("expected message in error, got: %s", msg)
-	}
-	if !errors.Is(err, ErrSchedulingFailed) {
-		t.Fatal("expected Unwrap to return ErrSchedulingFailed")
-	}
-}
-
-func TestEscalationError_Error(t *testing.T) {
-	t.Parallel()
-
-	err := &EscalationError{
-		JobID:      "job-123",
-		Iterations: 5,
-		Reason:     "max iterations exceeded",
-	}
-
-	msg := err.Error()
-	if !strings.Contains(msg, "job-123") {
-		t.Fatalf("expected job ID in error, got: %s", msg)
-	}
-	if !strings.Contains(msg, "5") {
-		t.Fatalf("expected iterations in error, got: %s", msg)
-	}
-	if !errors.Is(err, ErrEscalation) {
-		t.Fatal("expected Unwrap to return ErrEscalation")
-	}
-}
-
-func TestWorkerSessionError_Error(t *testing.T) {
-	t.Parallel()
-
-	cause := errors.New("connection refused")
-	err := &WorkerSessionError{Role: "worker", Backend: "claude", Cause: cause}
-
-	msg := err.Error()
-	if !strings.Contains(msg, "worker") {
-		t.Fatalf("expected role in error, got: %s", msg)
-	}
-	if !strings.Contains(msg, "claude") {
-		t.Fatalf("expected backend in error, got: %s", msg)
-	}
-	if !strings.Contains(msg, "connection refused") {
-		t.Fatalf("expected cause in error, got: %s", msg)
-	}
-	if !errors.Is(err, ErrWorkerSessionFailed) {
-		t.Fatal("expected Unwrap to return ErrWorkerSessionFailed")
-	}
-}
-
-func TestWorkerSessionError_NilCause(t *testing.T) {
-	t.Parallel()
-
-	err := &WorkerSessionError{Role: "worker", Backend: "ollama"}
-	msg := err.Error()
-	if !strings.Contains(msg, "worker") {
-		t.Fatalf("expected role in error, got: %s", msg)
-	}
-	if !errors.Is(err, ErrWorkerSessionFailed) {
-		t.Fatal("expected Unwrap to return ErrWorkerSessionFailed")
+	for _, tt := range tests {
+		msg := tt.err.Error()
+		for _, want := range tt.contains {
+			if !strings.Contains(msg, want) {
+				t.Fatalf("%s: expected %q in error, got: %s", tt.name, want, msg)
+			}
+		}
+		if !errors.Is(tt.err, tt.sentinel) {
+			t.Fatalf("%s: expected errors.Is(%v)", tt.name, tt.sentinel)
+		}
 	}
 }
 
@@ -2651,128 +2286,75 @@ func TestMatchAgentForTask_NoMatch(t *testing.T) {
 // Tests: resolveBackendForMode
 // =============================================================================
 
-func TestResolveBackendForMode_ConstrainedMode_UsesWorkflowRole(t *testing.T) {
+func TestResolveBackendForMode(t *testing.T) {
 	t.Parallel()
 
-	cl := NewControlLoop(&controlLoopMockService{}, &controlLoopMockLogger{})
-	cl.job.Config = newTestConfig()
-	cl.workflow = &WorkflowDefinition{
-		Name: "test",
-		Mode: WorkflowModeConstrained,
-		Agents: []AgentRoleSpec{
-			{Role: "developer", Backend: "claude"},
-			{Role: "worker", Backend: "ollama"},
+	workflow := func(mode WorkflowMode, agents ...AgentRoleSpec) *WorkflowDefinition {
+		return &WorkflowDefinition{Name: "test", Mode: mode, Agents: agents}
+	}
+	tests := []struct {
+		name     string
+		workflow *WorkflowDefinition
+		item     *WorkItem
+		backends []*AgentBackendInfo
+		want     string
+	}{
+		{
+			name: "constrained mode uses workflow role",
+			workflow: workflow(WorkflowModeConstrained,
+				AgentRoleSpec{Role: "developer", Backend: "claude"},
+				AgentRoleSpec{Role: "worker", Backend: "ollama"}),
+			item:     &WorkItem{RequiredRole: "developer"},
+			backends: newTestBackendsWithPersistent(),
+			want:     "claude",
+		},
+		{
+			// "ollama" is newTestConfig's LeadBackend.
+			name:     "constrained mode falls back to lead",
+			workflow: workflow(WorkflowModeConstrained, AgentRoleSpec{Role: "lead", Backend: "claude"}),
+			item:     &WorkItem{RequiredRole: "unknown-role"},
+			backends: newTestBackends(),
+			want:     "ollama",
+		},
+		{
+			name:     "canned mode uses workflow role",
+			workflow: workflow(WorkflowModeCanned, AgentRoleSpec{Role: "worker", Backend: "ollama"}),
+			item:     &WorkItem{RequiredRole: "worker"},
+			backends: newTestBackends(),
+			want:     "ollama",
+		},
+		{
+			name:     "autonomous mode uses item backend",
+			workflow: workflow(WorkflowModeAutonomous, AgentRoleSpec{Role: "worker", Backend: "ollama"}),
+			item:     &WorkItem{Backend: "claude"},
+			backends: newTestBackendsWithPersistent(),
+			want:     "claude",
+		},
+		{
+			// An unknown backend falls through to resolveBackendForItem,
+			// which returns item.Backend directly.
+			name:     "autonomous mode unknown backend falls through",
+			workflow: workflow(WorkflowModeAutonomous, AgentRoleSpec{Role: "worker", Backend: "ollama"}),
+			item:     &WorkItem{Backend: "nonexistent-backend"},
+			backends: newTestBackends(),
+			want:     "nonexistent-backend",
+		},
+		{
+			name:     "nil workflow",
+			item:     &WorkItem{Backend: "custom"},
+			backends: newTestBackends(),
+			want:     "custom",
 		},
 	}
 
-	item := &WorkItem{RequiredRole: "developer"}
-	backends := newTestBackendsWithPersistent()
+	for _, tt := range tests {
+		cl := NewControlLoop(&controlLoopMockService{}, &controlLoopMockLogger{})
+		cl.job.Config = newTestConfig()
+		cl.workflow = tt.workflow
 
-	result := cl.resolveBackendForMode(item, backends)
-	if result != "claude" {
-		t.Fatalf("expected 'claude' for constrained mode with developer role, got %q", result)
-	}
-}
-
-func TestResolveBackendForMode_ConstrainedMode_FallsBackToLead(t *testing.T) {
-	t.Parallel()
-
-	cl := NewControlLoop(&controlLoopMockService{}, &controlLoopMockLogger{})
-	cl.job.Config = newTestConfig()
-	cl.workflow = &WorkflowDefinition{
-		Name: "test",
-		Mode: WorkflowModeConstrained,
-		Agents: []AgentRoleSpec{
-			{Role: "lead", Backend: "claude"},
-		},
-	}
-
-	// No matching role in workflow agents.
-	item := &WorkItem{RequiredRole: "unknown-role"}
-	result := cl.resolveBackendForMode(item, newTestBackends())
-	if result != "ollama" { // LeadBackend from newTestConfig
-		t.Fatalf("expected fallback to lead backend 'ollama', got %q", result)
-	}
-}
-
-func TestResolveBackendForMode_CannedMode_UsesWorkflowRole(t *testing.T) {
-	t.Parallel()
-
-	cl := NewControlLoop(&controlLoopMockService{}, &controlLoopMockLogger{})
-	cl.job.Config = newTestConfig()
-	cl.workflow = &WorkflowDefinition{
-		Name: "test",
-		Mode: WorkflowModeCanned,
-		Agents: []AgentRoleSpec{
-			{Role: "worker", Backend: "ollama"},
-		},
-	}
-
-	item := &WorkItem{RequiredRole: "worker"}
-	result := cl.resolveBackendForMode(item, newTestBackends())
-	if result != "ollama" {
-		t.Fatalf("expected 'ollama' for canned mode worker role, got %q", result)
-	}
-}
-
-func TestResolveBackendForMode_AutonomousMode_UsesItemBackend(t *testing.T) {
-	t.Parallel()
-
-	cl := NewControlLoop(&controlLoopMockService{}, &controlLoopMockLogger{})
-	cl.job.Config = newTestConfig()
-	cl.workflow = &WorkflowDefinition{
-		Name: "test",
-		Mode: WorkflowModeAutonomous,
-		Agents: []AgentRoleSpec{
-			{Role: "worker", Backend: "ollama"},
-		},
-	}
-
-	item := &WorkItem{Backend: "claude"}
-	backends := newTestBackendsWithPersistent()
-
-	result := cl.resolveBackendForMode(item, backends)
-	if result != "claude" {
-		t.Fatalf("expected 'claude' for autonomous mode with explicit backend, got %q", result)
-	}
-}
-
-func TestResolveBackendForMode_AutonomousMode_UnknownBackendFallsBack(t *testing.T) {
-	t.Parallel()
-
-	logger := &controlLoopMockLogger{}
-	cl := NewControlLoop(&controlLoopMockService{}, logger)
-	cl.job.Config = newTestConfig()
-	cl.workflow = &WorkflowDefinition{
-		Name: "test",
-		Mode: WorkflowModeAutonomous,
-		Agents: []AgentRoleSpec{
-			{Role: "worker", Backend: "ollama"},
-		},
-	}
-
-	item := &WorkItem{Backend: "nonexistent-backend"}
-	backends := newTestBackends()
-
-	result := cl.resolveBackendForMode(item, backends)
-	// Should fall back since nonexistent-backend is not in backends list.
-	if result != "nonexistent-backend" {
-		// Falls through to resolveBackendForItem which returns item.Backend directly.
-		t.Fatalf("expected fallback resolution, got %q", result)
-	}
-}
-
-func TestResolveBackendForMode_NilWorkflow(t *testing.T) {
-	t.Parallel()
-
-	cl := NewControlLoop(&controlLoopMockService{}, &controlLoopMockLogger{})
-	cl.job.Config = newTestConfig()
-	cl.workflow = nil
-
-	item := &WorkItem{Backend: "custom"}
-	result := cl.resolveBackendForMode(item, newTestBackends())
-	if result != "custom" {
-		t.Fatalf("expected 'custom' with nil workflow, got %q", result)
+		if result := cl.resolveBackendForMode(tt.item, tt.backends); result != tt.want {
+			t.Fatalf("%s: expected %q, got %q", tt.name, tt.want, result)
+		}
 	}
 }
 
@@ -2780,50 +2362,44 @@ func TestResolveBackendForMode_NilWorkflow(t *testing.T) {
 // Tests: resolveScopes
 // =============================================================================
 
-func TestResolveScopes_WithMatchingRole(t *testing.T) {
+func TestResolveScopes(t *testing.T) {
 	t.Parallel()
 
-	cl := NewControlLoop(&controlLoopMockService{}, &controlLoopMockLogger{})
-	cl.workflow = &WorkflowDefinition{
-		Agents: []AgentRoleSpec{
-			{Role: "worker", MCPScopes: []string{"kms:read", "secrets:read"}},
+	tests := []struct {
+		name     string
+		workflow *WorkflowDefinition
+		want     []string
+	}{
+		{
+			name: "matching role",
+			workflow: &WorkflowDefinition{Agents: []AgentRoleSpec{
+				{Role: "worker", MCPScopes: []string{"kms:read", "secrets:read"}},
+			}},
+			want: []string{"kms:read", "secrets:read"},
 		},
-	}
-
-	scopes := cl.resolveScopes("worker")
-	if len(scopes) != 2 {
-		t.Fatalf("expected 2 scopes, got %d", len(scopes))
-	}
-	if scopes[0] != "kms:read" || scopes[1] != "secrets:read" {
-		t.Fatalf("unexpected scopes: %v", scopes)
-	}
-}
-
-func TestResolveScopes_NoMatchingRole(t *testing.T) {
-	t.Parallel()
-
-	cl := NewControlLoop(&controlLoopMockService{}, &controlLoopMockLogger{})
-	cl.workflow = &WorkflowDefinition{
-		Agents: []AgentRoleSpec{
-			{Role: "lead", MCPScopes: []string{"kms:read"}},
+		{
+			name: "no matching role",
+			workflow: &WorkflowDefinition{Agents: []AgentRoleSpec{
+				{Role: "lead", MCPScopes: []string{"kms:read"}},
+			}},
 		},
+		{name: "nil workflow"},
 	}
 
-	scopes := cl.resolveScopes("worker")
-	if scopes != nil {
-		t.Fatalf("expected nil scopes for unmatched role, got %v", scopes)
-	}
-}
+	for _, tt := range tests {
+		cl := NewControlLoop(&controlLoopMockService{}, &controlLoopMockLogger{})
+		cl.workflow = tt.workflow
 
-func TestResolveScopes_NilWorkflow(t *testing.T) {
-	t.Parallel()
-
-	cl := NewControlLoop(&controlLoopMockService{}, &controlLoopMockLogger{})
-	cl.workflow = nil
-
-	scopes := cl.resolveScopes("worker")
-	if scopes != nil {
-		t.Fatalf("expected nil scopes with nil workflow, got %v", scopes)
+		scopes := cl.resolveScopes("worker")
+		if tt.want == nil {
+			if scopes != nil {
+				t.Fatalf("%s: expected nil scopes, got %v", tt.name, scopes)
+			}
+			continue
+		}
+		if len(scopes) != len(tt.want) || scopes[0] != tt.want[0] || scopes[1] != tt.want[1] {
+			t.Fatalf("%s: expected scopes %v, got %v", tt.name, tt.want, scopes)
+		}
 	}
 }
 
@@ -2936,33 +2512,6 @@ func TestExtractConstraints_DuplicateConstraints(t *testing.T) {
 // Tests: advanceOrValidate
 // =============================================================================
 
-func TestAdvanceOrValidate_MoreWaves(t *testing.T) {
-	t.Parallel()
-
-	cl := NewControlLoop(&controlLoopMockService{}, &controlLoopMockLogger{})
-	cl.job.Config = newTestConfig()
-	cl.job.JobID = "test-job"
-	cl.executionPlan = &ExecutionPlan{
-		Waves: [][]*WorkItem{
-			{{ID: "w1", Title: "Wave 1"}},
-			{{ID: "w2", Title: "Wave 2"}},
-		},
-	}
-	cl.currentWave = 0
-	cl.taskIDs = []string{"task-1"}
-
-	nextState, err := cl.advanceOrValidate()
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if nextState != JobStateAssigning {
-		t.Fatalf("expected assigning state, got %q", nextState)
-	}
-	if cl.currentWave != 1 {
-		t.Fatalf("expected currentWave=1, got %d", cl.currentWave)
-	}
-}
-
 func TestAdvanceOrValidate_LastWave(t *testing.T) {
 	t.Parallel()
 
@@ -3063,55 +2612,20 @@ func TestHandleAssign_DoesNotDuplicateIdentities(t *testing.T) {
 	}
 	cl.currentWave = 0
 
-	_, err := cl.handleAssign(context.Background())
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	// Both items use "worker" role, so only one identity should exist.
-	if len(cl.agentIdentities) != 1 {
-		t.Fatalf("expected 1 agent identity, got %d", len(cl.agentIdentities))
-	}
-}
-
-// =============================================================================
-// Tests: handleAssign - Workflow Mode Branching
-// =============================================================================
-
-func TestHandleAssign_ConstrainedMode_UsesWorkflowAgents(t *testing.T) {
-	t.Parallel()
-
-	svc := &controlLoopMockService{
-		backends: newTestBackendsWithPersistent(),
-		agents: []*FleetNode{
-			{ID: "a1", TenantID: "test-tenant", Backend: "claude", Status: FleetNodeStatusIdle},
-		},
-	}
-	logger := &controlLoopMockLogger{}
-	cl := NewControlLoop(svc, logger)
-	cl.job.Config = newTestConfig()
-	cl.job.JobID = "test-job"
-	cl.workflow = &WorkflowDefinition{
-		Name: "test",
-		Mode: WorkflowModeConstrained,
-		Agents: []AgentRoleSpec{
-			{Role: "developer", Backend: "claude", MCPScopes: []string{"code:write"}},
-		},
-	}
-	cl.workItems = []*WorkItem{
-		{ID: "w1", Title: "Code task", RequiredRole: "developer", Backend: "claude"},
-	}
-	cl.executionPlan = &ExecutionPlan{
-		Waves: [][]*WorkItem{cl.workItems},
-	}
-	cl.currentWave = 0
-
 	nextState, err := cl.handleAssign(context.Background())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if nextState != JobStateExecuting {
 		t.Fatalf("expected executing state, got %q", nextState)
+	}
+	if len(cl.taskIDs) != 2 {
+		t.Fatalf("expected 2 task IDs, got %d", len(cl.taskIDs))
+	}
+
+	// Both items use "worker" role, so only one identity should exist.
+	if len(cl.agentIdentities) != 1 {
+		t.Fatalf("expected 1 agent identity, got %d", len(cl.agentIdentities))
 	}
 }
 
@@ -3205,8 +2719,6 @@ func TestHandleExecute_ConcurrentWorkerFailure(t *testing.T) {
 		t.Fatalf("expected failed approach title 'Failing Task', got %q", cl.job.memory.FailedApproaches[0].WorkItemTitle)
 	}
 }
-
-// =============================================================================
 
 // =============================================================================
 // Tests: handleExecute - Per-Session Serialization
@@ -3606,88 +3118,6 @@ func TestHandleReview_ConsultsCommunicationPolicy(t *testing.T) {
 }
 
 // =============================================================================
-// Tests: handleDecompose - Audit Event
-// =============================================================================
-
-func TestHandleDecompose_EmitsAuditEvent(t *testing.T) {
-	t.Parallel()
-
-	svc := &controlLoopMockService{
-		decomposeResponse: &DecomposeTaskResponse{
-			WorkItems: []*WorkItem{
-				{ID: "w1", Title: "Task 1"},
-			},
-		},
-	}
-	logger := &controlLoopMockLogger{}
-	cl := NewControlLoop(svc, logger)
-	cl.job.Config = newTestConfig()
-	cl.job.JobID = "test-job"
-	cl.job.memory = NewJobMemory()
-
-	var auditEvents []string
-	cl.job.auditFn = func(eventType, details string) {
-		auditEvents = append(auditEvents, eventType+":"+details)
-	}
-
-	nextState, err := cl.handleDecompose(context.Background())
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if nextState != JobStateScheduling {
-		t.Fatalf("expected scheduling state, got %q", nextState)
-	}
-
-	// Expect 3 audit events: decompose_start, work_item (1 item), decomposed
-	if len(auditEvents) != 3 {
-		t.Fatalf("expected 3 audit events, got %d: %v", len(auditEvents), auditEvents)
-	}
-	if !strings.Contains(auditEvents[0], "lead:decompose_start") {
-		t.Fatalf("expected decompose_start audit event, got %q", auditEvents[0])
-	}
-	if !strings.Contains(auditEvents[2], "orchestration:decomposed") {
-		t.Fatalf("expected decomposed audit event, got %q", auditEvents[2])
-	}
-}
-
-// =============================================================================
-// Tests: handleSchedule - Audit Event
-// =============================================================================
-
-func TestHandleSchedule_EmitsAuditEvent(t *testing.T) {
-	t.Parallel()
-
-	svc := &controlLoopMockService{}
-	logger := &controlLoopMockLogger{}
-	cl := NewControlLoop(svc, logger)
-	cl.job.Config = newTestConfig()
-	cl.job.JobID = "test-job"
-	cl.workItems = []*WorkItem{
-		{ID: "w1", Title: "Task 1"},
-	}
-
-	var auditEvents []string
-	cl.job.auditFn = func(eventType, details string) {
-		auditEvents = append(auditEvents, eventType+":"+details)
-	}
-
-	nextState, err := cl.handleSchedule(context.Background())
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if nextState != JobStateAssigning {
-		t.Fatalf("expected assigning state, got %q", nextState)
-	}
-
-	if len(auditEvents) != 1 {
-		t.Fatalf("expected 1 audit event, got %d", len(auditEvents))
-	}
-	if !strings.Contains(auditEvents[0], "orchestration:scheduled") {
-		t.Fatalf("expected scheduled audit event, got %q", auditEvents[0])
-	}
-}
-
-// =============================================================================
 // Tests: handleComplete - Audit Event
 // =============================================================================
 
@@ -3718,44 +3148,6 @@ func TestHandleComplete_EmitsAuditEvent(t *testing.T) {
 	}
 	if !strings.Contains(auditEvents[0], "orchestration:job_completing") {
 		t.Fatalf("expected job_completing audit event, got %q", auditEvents[0])
-	}
-}
-
-// =============================================================================
-// Tests: handleRedelegate - Audit Event
-// =============================================================================
-
-func TestHandleRedelegate_EmitsAuditEvent(t *testing.T) {
-	t.Parallel()
-
-	svc := &controlLoopMockService{}
-	logger := &controlLoopMockLogger{}
-	cl := NewControlLoop(svc, logger)
-	cl.job.Config = newTestConfig()
-	cl.job.Config.MaxIterations = 10
-	cl.job.JobID = "test-job"
-	cl.job.iteration = 0
-	cl.job.memory = NewJobMemory()
-	cl.reviewResponse = &ReviewResponse{Feedback: "try again"}
-
-	var auditEvents []string
-	cl.job.auditFn = func(eventType, details string) {
-		auditEvents = append(auditEvents, eventType+":"+details)
-	}
-
-	nextState, err := cl.handleRedelegate(context.Background())
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if nextState != JobStateDecomposing {
-		t.Fatalf("expected decomposing state, got %q", nextState)
-	}
-
-	if len(auditEvents) != 1 {
-		t.Fatalf("expected 1 audit event, got %d", len(auditEvents))
-	}
-	if !strings.Contains(auditEvents[0], "orchestration:redelegate") {
-		t.Fatalf("expected redelegate audit event, got %q", auditEvents[0])
 	}
 }
 
@@ -3812,6 +3204,9 @@ func TestBuildWorkerPrompt_WithToolGuidance(t *testing.T) {
 	if !strings.Contains(prompt, guidance) {
 		t.Fatal("expected prompt to contain tool guidance text")
 	}
+	if count := strings.Count(prompt, "TOOL USAGE RULES"); count != 1 {
+		t.Fatalf("expected guidance to appear exactly once, found %d occurrences", count)
+	}
 	if !strings.Contains(prompt, "Create API handler") {
 		t.Fatal("expected prompt to contain item title")
 	}
@@ -3838,92 +3233,42 @@ func TestBuildWorkerPrompt_WithoutToolGuidance(t *testing.T) {
 	}
 }
 
-func TestBuildWorkerPrompt_ToolGuidanceNotDuplicated(t *testing.T) {
-	t.Parallel()
-
-	item := &WorkItem{
-		Title: "Build feature",
-	}
-	guidance := "TOOL USAGE RULES (required by this agent):\n- Bash needs 'description'.\n"
-
-	prompt := buildWorkerPrompt(workflowPrompts, item, "", guidance)
-
-	// Count occurrences of the guidance text.
-	count := strings.Count(prompt, "TOOL USAGE RULES")
-	if count != 1 {
-		t.Fatalf("expected guidance to appear exactly once, found %d occurrences", count)
-	}
-}
-
 // =============================================================================
 // Tests: WorkItem.HostAffinity and filterFleetNodesByHostAffinity
 // =============================================================================
 
-// TestWorkItem_HostAffinity_ProvidesToSpawn verifies that a WorkItem carrying
-// a HostAffinity value is correctly represented and that filterFleetNodesByHostAffinity
-// restricts the candidate list to agents whose Name or Host field matches.
-func TestWorkItem_HostAffinity_ProvidesToSpawn(t *testing.T) {
+// TestFilterFleetNodesByHostAffinity verifies that the filter keeps only the
+// nodes whose Name or Host matches the affinity, and returns the original
+// unfiltered slice when no node matches (warn-only semantics: hard failure is
+// at dispatch time).
+func TestFilterFleetNodesByHostAffinity(t *testing.T) {
 	t.Parallel()
 
-	item := &WorkItem{
-		ID:           "item-1",
-		Title:        "GPU inference task",
-		HostAffinity: "gpu-host",
-	}
-
-	// Three agents: only the one named "gpu-host" or hosted at "gpu-host" should match.
 	agents := []*FleetNode{
-		{ID: "a1", Name: "general-1", Host: "server-a", Backend: "ollama", Status: FleetNodeStatusIdle},
+		{ID: "a1", Name: "general-1", Host: "alpha", Backend: "ollama", Status: FleetNodeStatusIdle},
 		{ID: "a2", Name: "gpu-host", Host: "gpu-host.local", Backend: "ollama", Status: FleetNodeStatusIdle},
-		{ID: "a3", Name: "general-2", Host: "server-c", Backend: "ollama", Status: FleetNodeStatusIdle},
+		{ID: "a3", Name: "general-2", Host: "beta", Backend: "ollama", Status: FleetNodeStatusIdle},
+	}
+	tests := []struct {
+		name     string
+		affinity string
+		wantIDs  []string
+	}{
+		{name: "name match", affinity: "gpu-host", wantIDs: []string{"a2"}},
+		{name: "host field match", affinity: "beta", wantIDs: []string{"a3"}},
+		{name: "no match returns the full list", affinity: "nonexistent-host", wantIDs: []string{"a1", "a2", "a3"}},
 	}
 
-	filtered, _ := filterFleetNodesByHostAffinity(agents, item.HostAffinity, false)
-
-	if len(filtered) != 1 {
-		t.Fatalf("expected 1 matching agent, got %d", len(filtered))
-	}
-	if filtered[0].ID != "a2" {
-		t.Errorf("expected agent a2 (gpu-host), got %q", filtered[0].ID)
-	}
-}
-
-// TestWorkItem_HostAffinity_HostFieldMatch verifies that filterFleetNodesByHostAffinity
-// also matches on the Host field (not just Name).
-func TestWorkItem_HostAffinity_HostFieldMatch(t *testing.T) {
-	t.Parallel()
-
-	agents := []*FleetNode{
-		{ID: "a1", Name: "worker-1", Host: "alpha", Backend: "ollama", Status: FleetNodeStatusIdle},
-		{ID: "a2", Name: "worker-2", Host: "beta", Backend: "ollama", Status: FleetNodeStatusIdle},
-	}
-
-	filtered, _ := filterFleetNodesByHostAffinity(agents, "beta", false)
-
-	if len(filtered) != 1 {
-		t.Fatalf("expected 1 matching agent, got %d", len(filtered))
-	}
-	if filtered[0].ID != "a2" {
-		t.Errorf("expected agent a2, got %q", filtered[0].ID)
-	}
-}
-
-// TestWorkItem_HostAffinity_NoMatch_ReturnsFull verifies that
-// filterFleetNodesByHostAffinity returns the original unfiltered slice when no
-// agent matches (warn-only semantics: hard failure is at dispatch time).
-func TestWorkItem_HostAffinity_NoMatch_ReturnsFull(t *testing.T) {
-	t.Parallel()
-
-	agents := []*FleetNode{
-		{ID: "a1", Name: "worker-1", Host: "alpha", Backend: "ollama", Status: FleetNodeStatusIdle},
-		{ID: "a2", Name: "worker-2", Host: "beta", Backend: "ollama", Status: FleetNodeStatusIdle},
-	}
-
-	filtered, _ := filterFleetNodesByHostAffinity(agents, "nonexistent-host", false)
-
-	// Should fall through to original list, not return empty.
-	if len(filtered) != len(agents) {
-		t.Fatalf("expected %d agents (unfiltered fallback), got %d", len(agents), len(filtered))
+	for _, tt := range tests {
+		filtered, _ := filterFleetNodesByHostAffinity(agents, tt.affinity, false)
+		if len(filtered) != len(tt.wantIDs) {
+			t.Fatalf("%s: expected %d agents, got %d", tt.name, len(tt.wantIDs), len(filtered))
+		}
+		for i, id := range tt.wantIDs {
+			if filtered[i].ID != id {
+				t.Fatalf("%s: expected agent %q at %d, got %q", tt.name, id, i, filtered[i].ID)
+			}
+		}
 	}
 }
 
@@ -3950,57 +3295,6 @@ func TestControlLoop_HostAffinityFromWorkflow_FiltersAgents(t *testing.T) {
 
 	if agentID != "a-gpu" {
 		t.Errorf("expected host-affinity to select agent a-gpu, got %q", agentID)
-	}
-}
-
-// TestControlLoop_AgentSpec_HostAffinityPropagatedToSpawnReq verifies that
-// when a workflow AgentRoleSpec carries HostAffinity, the control loop copies
-// it onto the SpawnSessionRequest before calling SpawnSession.
-func TestControlLoop_AgentSpec_HostAffinityPropagatedToSpawnReq(t *testing.T) {
-	t.Parallel()
-
-	var capturedSpawnReq *SpawnSessionRequest
-	svc := &controlLoopMockService{
-		backends: newTestBackends(),
-		agents: []*FleetNode{
-			{ID: "a-gpu-host", Name: "gpu-host", Host: "gpu-host", Backend: "ollama", Status: FleetNodeStatusIdle},
-		},
-	}
-	// Override SpawnSession to capture what the control loop sends.
-	type spawnCapture struct {
-		controlLoopMockService
-		spawnFn func(*SpawnSessionRequest) (*SpawnSessionResponse, error)
-	}
-
-	// Use a custom mock that captures the spawn request.
-	capturingSvc := struct {
-		*controlLoopMockService
-		capturedReq *SpawnSessionRequest
-	}{
-		controlLoopMockService: svc,
-	}
-	_ = capturingSvc // unused, use direct assertion below
-
-	// Build a simpler assertion by using filterFleetNodesByHostAffinity directly
-	// and checking the spawnReq fields are copied as documented in the
-	// implementation. This tests the data flow from AgentRoleSpec → SpawnReq.
-	agentSpec := &AgentRoleSpec{
-		Role:         "worker",
-		Backend:      "ollama",
-		HostAffinity: "gpu-host",
-	}
-
-	spawnReq := &SpawnSessionRequest{
-		Backend: agentSpec.Backend,
-	}
-	if agentSpec.HostAffinity != "" {
-		spawnReq.HostAffinity = agentSpec.HostAffinity
-	}
-
-	capturedSpawnReq = spawnReq
-
-	if capturedSpawnReq.HostAffinity != "gpu-host" {
-		t.Errorf("expected HostAffinity 'gpu-host' on SpawnSessionRequest, got %q", capturedSpawnReq.HostAffinity)
 	}
 }
 

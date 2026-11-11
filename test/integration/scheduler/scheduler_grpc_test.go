@@ -167,9 +167,11 @@ func setupGRPCClient(t *testing.T, ctx context.Context) *grpcclient.Client {
 	endpoints := helpers.GetClusterEndpoints()
 	require.NotEmpty(t, endpoints, "gRPC endpoints must be available for integration tests")
 
+	// Every RPC of this file is a SchedulerService job RPC, sent as the
+	// tenant operator.
 	tlsCfg, err := helpers.IntegrationTLSConfig()
 	require.NoError(t, err, "load integration TLS config")
-	client, err := grpcclient.NewClient(endpoints[0], grpcclient.WithTLSConfig(tlsCfg))
+	client, err := grpcclient.NewClient(endpoints[0], grpcclient.WithTLSConfig(tlsCfg), operatorGRPCAuth(t))
 	require.NoError(t, err, "Failed to create gRPC client for endpoint %s", endpoints[0])
 
 	return client

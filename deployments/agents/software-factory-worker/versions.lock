@@ -1,0 +1,14 @@
+# The worker image's agent-CLI lock (G3). One KEY=VALUE per line, no spaces,
+# no quotes. The Makefile reads it (CLAUDE_CODE_VERSION ?= the value here) and
+# the nightly worker-image workflow builds exactly these versions, never "latest".
+# The toolchain pins (GO_VERSION, GH_VERSION and the rest, with their tarball
+# SHA-256s) are in pkg/version/toolchain.mk, the repository's single copy of
+# those. Bump a line here by PR; `make check-worker-toolchain-currency` (nightly)
+# fails when a line is behind its upstream's latest release.
+#
+# Sources: registry.npmjs.org/@anthropic-ai/claude-code/latest,
+# registry.npmjs.org/@openai/codex/latest, registry.npmjs.org/@google/gemini-cli
+# (gemini is held at 0.64.0: it is not a used lane and is not currency-checked).
+CLAUDE_CODE_VERSION=2.1.322
+CODEX_VERSION=0.167.0
+GEMINI_CLI_VERSION=0.64.0
