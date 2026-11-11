@@ -105,6 +105,11 @@ type agentServiceImpl struct {
 	// SetSpendAuthority and turn_spend_gate.go.
 	turnSpend SpendAuthority
 
+	// turnLocks holds one lock per session ID, so a session's turns run one
+	// at a time from the spend check to the usage record. See
+	// lockSessionTurn in turn_spend_gate.go.
+	turnLocks sync.Map
+
 	// limitClassifier decides whether a failed turn was a provider limit.
 	// Nil selects the built-in heuristic (see NewAccountLimitClassifier).
 	limitClassifier AccountLimitClassifier
@@ -2393,6 +2398,16 @@ func (p *promptTurnPlan) appendPromptSubmitted(s *agentServiceImpl) {
 // ctx is passed explicitly rather than taken from the plan: the asynchronous
 // path runs on a context detached from the request that accepted the turn.
 func (s *agentServiceImpl) runPromptTurn(ctx context.Context, plan *promptTurnPlan) (*PromptSessionResponse, error) {
+	// ONE TURN AT A TIME PER SESSION, from the spend check below to the
+	// usage record at the end. Without it, turns queued on one session all
+	// pass the check while the account is under its cap and then run after
+	// the first has spent it. See lockSessionTurn.
+	unlock, err := s.lockSessionTurn(ctx, plan.request.SessionID)
+	if err != nil {
+		return nil, err
+	}
+	defer unlock()
+
 	// THE SPEND CAP, ASKED AGAIN FOR THIS TURN. A session gated only at spawn
 	// runs on past its account's window; refusing here, before the session is
 	// reconstituted or the backend runs anything, leaves the refused turn

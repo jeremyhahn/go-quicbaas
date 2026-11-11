@@ -83,3 +83,30 @@ func (s *agentServiceImpl) authorizeTurnSpend(ctx context.Context, sessionID str
 	}
 	return s.turnSpend.Authorize(ctx, SpendAuthorizeRequest{Account: account}, time.Now().UTC())
 }
+
+// lockSessionTurn waits until no other turn is running on sessionID and
+// returns the function that lets the next one in.
+//
+// The spend check is only as good as the ledger it reads, and a turn's usage
+// reaches the ledger only when the turn is over. Turns on one session that
+// overlap — several PromptSessionAsync calls, which a backend then queues
+// behind its own session lock — would each pass the check against a ledger
+// that does not yet hold the turns ahead of them. Holding this lock from the
+// check to the usage record makes every turn ask after the one before it was
+// charged.
+//
+// A caller whose context ends while it waits gets the context's error and runs
+// nothing. An empty session ID is not locked: there is no session to share.
+func (s *agentServiceImpl) lockSessionTurn(ctx context.Context, sessionID string) (func(), error) {
+	if sessionID == "" {
+		return func() {}, nil
+	}
+	value, _ := s.turnLocks.LoadOrStore(sessionID, make(chan struct{}, 1))
+	slot := value.(chan struct{})
+	select {
+	case slot <- struct{}{}:
+		return func() { <-slot }, nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+}
