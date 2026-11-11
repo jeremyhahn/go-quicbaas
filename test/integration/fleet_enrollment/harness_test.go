@@ -346,11 +346,6 @@ func newEnrollmentFixture(t *testing.T) *enrollmentFixture {
 	require.True(t, ok, "the account service must accept a token manager, as server lifecycle wires it")
 	accountWirer.SetTokenManager(
 		orchestration.NewAccountTokenManager(accountSecrets, accountStore, 0))
-	usageWirer, ok := accountSvc.(interface {
-		SetUsageTracker(orchestration.CostTracker)
-	})
-	require.True(t, ok, "the account service must accept a usage tracker, as server lifecycle wires it")
-	usageWirer.SetUsageTracker(orchestration.NewCostTracker(kvstore.NewMemory(), logger.NewAdapter(log)))
 
 	// The usage ledger and the session reservation table, bound to the
 	// account service as pkg/server binds them (lifecycle_orchestration.go:
