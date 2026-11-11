@@ -114,26 +114,33 @@ func newCLITestContext(t *testing.T, protocol, address string) *cliTestContext {
 // until the token expires), writes the bearer to the context's session home
 // and returns the environment the CLI process needs to present it.
 //
+// It returns a login or token-save error rather than failing the test: the
+// context holds the top-level test, while run and runExpectError are called
+// from its subtests, and FailNow on a parent from a subtest aborts the
+// whole package.
+//
 // The system admin is the suite's interim principal for these commands: the
 // tests ran with no credential before. A narrower tenant session for the KMS
 // commands is planned.
-func (c *cliTestContext) sessionEnv() []string {
-	c.t.Helper()
-
+func (c *cliTestContext) sessionEnv() ([]string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
 	bearer, expiresAt, err := helpers.AuthPIVSession(ctx, getRESTEndpoints()[0], "", "", "")
-	require.NoError(c.t, err, "PIV login for the CLI bearer failed")
+	if err != nil {
+		return nil, fmt.Errorf("PIV login for the CLI bearer: %w", err)
+	}
 
 	tokenPath := filepath.Join(c.home, ".quicbaas", "token")
-	require.NoError(c.t, clitoken.SaveToken(tokenPath, &clitoken.TokenData{
+	if err := clitoken.SaveToken(tokenPath, &clitoken.TokenData{
 		AccessToken: bearer,
 		ExpiresAt:   expiresAt,
 		TokenType:   "Bearer",
-	}), "persist the CLI bearer")
+	}); err != nil {
+		return nil, fmt.Errorf("persist the CLI bearer: %w", err)
+	}
 
-	return append(os.Environ(), "HOME="+c.home)
+	return append(os.Environ(), "HOME="+c.home), nil
 }
 
 // run executes a CLI command with the configured protocol and address.
@@ -149,7 +156,10 @@ func (c *cliTestContext) run(args ...string) (string, error) {
 	}
 	fullArgs = append(fullArgs, args...)
 
-	env := c.sessionEnv()
+	env, err := c.sessionEnv()
+	if err != nil {
+		return "", err
+	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), c.timeout)
 	defer cancel()
@@ -160,7 +170,7 @@ func (c *cliTestContext) run(args ...string) (string, error) {
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 
-	err := cmd.Run()
+	err = cmd.Run()
 
 	c.t.Logf("[%s] %s %s", c.protocol, c.binary, strings.Join(fullArgs, " "))
 	if stdout.Len() > 0 {
@@ -189,7 +199,13 @@ func (c *cliTestContext) runExpectError(args ...string) (string, error) {
 	}
 	fullArgs = append(fullArgs, args...)
 
-	env := c.sessionEnv()
+	// A failed login is never the CLI failure the caller expects: Errorf
+	// (safe from a subtest) marks the test failed.
+	env, err := c.sessionEnv()
+	if err != nil {
+		c.t.Errorf("PIV login for the CLI bearer failed: %v", err)
+		return "", err
+	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), c.timeout)
 	defer cancel()
@@ -200,7 +216,7 @@ func (c *cliTestContext) runExpectError(args ...string) (string, error) {
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 
-	err := cmd.Run()
+	err = cmd.Run()
 
 	c.t.Logf("[%s] %s %s", c.protocol, c.binary, strings.Join(fullArgs, " "))
 	if stdout.Len() > 0 {
