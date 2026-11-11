@@ -17,6 +17,7 @@ import (
 	"context"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 	qrdbembedded "github.com/jeremyhahn/go-qrdb/sdk/go/transport/embedded"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/sdlc"
@@ -71,12 +72,26 @@ func (e *TenantBarrierWiringError) Unwrap() error { return e.Cause }
 // tenant service is unavailable (typical pre-wire / sealed-window state), so
 // callers can skip registering the per-tenant barrier surface until the
 // embedded node is live.
+//
+// The facade holds no client: it asks currentTenantClient on every call. A
+// facade a transport took at boot therefore follows the node when it replaces
+// its service graph, and answers unavailable once shutdown has begun.
 func (s *Server) buildTenantBarrierService() service.TenantBarrierServicer {
+	if s.qrdbTenantClient() == nil {
+		return nil
+	}
+	return service.NewTenantBarrierServiceFrom(s.currentTenantClient, service.WithTenantUnsealHooks(&s.tenantUnsealHooks))
+}
+
+// currentTenantClient returns the qrdb tenant client over the node's current
+// service graph, or nil while there is none. It is the per-call source of
+// every per-tenant barrier facade this server builds.
+func (s *Server) currentTenantClient() qrdbtransport.TenantClient {
 	client := s.qrdbTenantClient()
 	if client == nil {
 		return nil
 	}
-	return service.NewTenantBarrierService(client.Tenants(), service.WithTenantUnsealHooks(&s.tenantUnsealHooks))
+	return client.Tenants()
 }
 
 // =============================================================================
@@ -121,38 +136,82 @@ func (r *tenantBarrierAttentionReader) BarrierStatus(ctx context.Context, tenant
 
 // qrdbTenantClient returns the in-process qrdb SDK client whose embedded
 // transport carries the node's TenantServicer, building and caching it on
-// first use. Boot is single-threaded (all transport bring-ups run
-// sequentially inside initialize()), so no locking is required; the cached
-// client is closed during Shutdown.
+// first use. The cached client belongs to one node service graph: the node
+// replaces its graph when the system barrier is unsealed again and when its
+// encryption is migrated, and the client is then built again over the new
+// graph's KV, Admin and Tenant servicers, all three taken from one snapshot.
+// The replaced client stays open for the calls that already hold it.
+//
+// The node's native transports call this on every tenant unseal, at any time
+// and from any goroutine, so the cache is guarded by tenantSDKMu. Once
+// Shutdown has begun (stopTenantBarrierClient) it builds and returns nothing.
 //
 // Returns nil when the node, its service graph, or the tenant service is not
 // available — e.g. before the node boots or during the sealed window, where
 // the per-tenant barrier surface is intentionally unreachable.
 func (s *Server) qrdbTenantClient() *qrdbsdk.Client {
-	if s.tenantSDKClient != nil {
-		return s.tenantSDKClient
-	}
 	node := s.getQRDBNode()
 	if node == nil {
 		return nil
 	}
 	svcs := node.Services()
-	if svcs == nil || svcs.Tenant == nil {
-		return nil
-	}
-	kv := s.GetQRDBKVServicer()
-	admin := s.GetQRDBAdminServicer()
-	if kv == nil || admin == nil {
+	if svcs == nil || svcs.Tenant == nil || svcs.KV == nil || svcs.Admin == nil {
 		return nil
 	}
 
-	client, err := newTenantBarrierClient(kv, admin, svcs.Tenant)
+	s.tenantSDKMu.Lock()
+	defer s.tenantSDKMu.Unlock()
+	if s.tenantSDKStopped {
+		return nil
+	}
+	if s.tenantSDKClient != nil && s.tenantSDKGraph == any(svcs) {
+		return s.tenantSDKClient
+	}
+
+	client, err := newTenantBarrierClient(svcs.KV, svcs.Admin, svcs.Tenant)
 	if err != nil {
 		s.logger.Warnf("Tenant barrier facade bound to nil transport: %v", err)
 		return nil
 	}
+	if s.tenantSDKClient != nil {
+		s.tenantSDKRetired = append(s.tenantSDKRetired, s.tenantSDKClient)
+	}
 	s.tenantSDKClient = client
+	s.tenantSDKGraph = svcs
 	return client
+}
+
+// stopTenantBarrierClient ends the building of tenant-barrier SDK clients:
+// from here qrdbTenantClient returns nil, so a per-tenant barrier call is
+// answered as unavailable. The clients already built stay open for the calls
+// that hold them until closeTenantBarrierClients.
+func (s *Server) stopTenantBarrierClient() {
+	s.tenantSDKMu.Lock()
+	defer s.tenantSDKMu.Unlock()
+	s.tenantSDKStopped = true
+}
+
+// closeTenantBarrierClients closes the current and every replaced
+// tenant-barrier SDK client and returns the first close error. Shutdown calls
+// it after the node has stopped its transports, so no handler is still inside
+// one of them. It also stops the building of new clients.
+func (s *Server) closeTenantBarrierClients() error {
+	s.tenantSDKMu.Lock()
+	defer s.tenantSDKMu.Unlock()
+	s.tenantSDKStopped = true
+	clients := s.tenantSDKRetired
+	if s.tenantSDKClient != nil {
+		clients = append(clients, s.tenantSDKClient)
+	}
+	s.tenantSDKClient, s.tenantSDKGraph, s.tenantSDKRetired = nil, nil, nil
+
+	var first error
+	for _, client := range clients {
+		if err := client.Close(); err != nil && first == nil {
+			first = err
+		}
+	}
+	return first
 }
 
 // newTenantBarrierClient composes the qrdb embedded transport + SDK client

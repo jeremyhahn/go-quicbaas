@@ -294,7 +294,9 @@ func (c *restBackupClient) Setup(t *testing.T, ctx context.Context) error {
 		return &qberrors.MessageError{Message: "no REST endpoints available"}
 	}
 	c.baseURL = endpoints[0]
-	c.httpClient = helpers.NewHTTPClient(30 * time.Second)
+	// backup:* is cross-tenant scope: only a system-tenant identity is
+	// admitted, so the backup clients act as the system admin.
+	c.httpClient = helpers.NewSystemAdminHTTPClient(t, 30*time.Second)
 
 	// Probe to verify backup feature is available
 	url := fmt.Sprintf("%s/api/v1/backups", c.baseURL)
@@ -393,6 +395,7 @@ func (c *grpcBackupClient) Setup(t *testing.T, ctx context.Context) error {
 	}
 	conn, err := grpc.DialContext(ctx, endpoints[0],
 		grpc.WithTransportCredentials(credentials.NewTLS(tlsCfg)),
+		grpc.WithPerRPCCredentials(helpers.SystemAdminGRPCCredentials(t)),
 		grpc.WithBlock(),
 	)
 	if err != nil {
@@ -483,6 +486,7 @@ func (c *unixSocketBackupClient) Setup(t *testing.T, ctx context.Context) error 
 	conn, err := grpc.DialContext(ctx,
 		"unix://"+socketPath,
 		grpc.WithTransportCredentials(credentials.NewTLS(tlsCfg)),
+		grpc.WithPerRPCCredentials(helpers.SystemAdminGRPCCredentials(t)),
 		grpc.WithBlock(),
 		grpc.WithContextDialer(func(ctx context.Context, addr string) (net.Conn, error) {
 			return net.DialTimeout("unix", socketPath, 10*time.Second)
