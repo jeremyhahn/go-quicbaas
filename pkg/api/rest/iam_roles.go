@@ -25,19 +25,18 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 // ListRoles handles GET /api/v1/tenants/{tenant_id}/roles - List roles in a tenant.
 func (h *IAMHandler) ListRoles(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-
 	tenantID := chi.URLParam(r, "tenant_id")
 	if tenantID == "" {
 		RespondIAMError(w, r, http.StatusBadRequest,
 			NewIAMAPIError(ErrBadRequest, "tenant ID is required"))
 		return
 	}
-	tenantID, ok := h.server.urlTenant(w, r, "rest.IAM", "tenant_id")
+	ctx, tenantID, ok := h.server.urlTenant(w, r, "rest.IAM", "tenant_id")
 	if !ok {
 		return
 	}
@@ -79,7 +78,7 @@ func (h *IAMHandler) ListRoles(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Validate tenant exists
-	_, err = store.GetTenant(ctx, tenantID)
+	_, err = store.GetTenant(tenantctx.WithSystem(ctx), tenantID) // the tenant catalog lives in the system namespace
 	if err != nil {
 		RespondIAMError(w, r, http.StatusNotFound,
 			NewIAMAPIError(ErrNotFound, "tenant not found"))
@@ -110,15 +109,13 @@ func (h *IAMHandler) ListRoles(w http.ResponseWriter, r *http.Request) {
 
 // CreateRole handles POST /api/v1/tenants/{tenant_id}/roles - Create a new role.
 func (h *IAMHandler) CreateRole(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-
 	tenantID := chi.URLParam(r, "tenant_id")
 	if tenantID == "" {
 		RespondIAMError(w, r, http.StatusBadRequest,
 			NewIAMAPIError(ErrBadRequest, "tenant ID is required"))
 		return
 	}
-	tenantID, ok := h.server.urlTenant(w, r, "rest.IAM", "tenant_id")
+	ctx, tenantID, ok := h.server.urlTenant(w, r, "rest.IAM", "tenant_id")
 	if !ok {
 		return
 	}
@@ -205,15 +202,13 @@ func (h *IAMHandler) CreateRole(w http.ResponseWriter, r *http.Request) {
 
 // GetRole handles GET /api/v1/tenants/{tenant_id}/roles/{role_id} - Get a specific role.
 func (h *IAMHandler) GetRole(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-
 	tenantID := chi.URLParam(r, "tenant_id")
 	if tenantID == "" {
 		RespondIAMError(w, r, http.StatusBadRequest,
 			NewIAMAPIError(ErrBadRequest, "tenant ID is required"))
 		return
 	}
-	tenantID, ok := h.server.urlTenant(w, r, "rest.IAM", "tenant_id")
+	ctx, tenantID, ok := h.server.urlTenant(w, r, "rest.IAM", "tenant_id")
 	if !ok {
 		return
 	}
@@ -258,15 +253,13 @@ func (h *IAMHandler) GetRole(w http.ResponseWriter, r *http.Request) {
 
 // UpdateRole handles PUT /api/v1/tenants/{tenant_id}/roles/{role_id} - Update a role.
 func (h *IAMHandler) UpdateRole(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-
 	tenantID := chi.URLParam(r, "tenant_id")
 	if tenantID == "" {
 		RespondIAMError(w, r, http.StatusBadRequest,
 			NewIAMAPIError(ErrBadRequest, "tenant ID is required"))
 		return
 	}
-	tenantID, ok := h.server.urlTenant(w, r, "rest.IAM", "tenant_id")
+	ctx, tenantID, ok := h.server.urlTenant(w, r, "rest.IAM", "tenant_id")
 	if !ok {
 		return
 	}
@@ -341,15 +334,13 @@ func (h *IAMHandler) UpdateRole(w http.ResponseWriter, r *http.Request) {
 
 // DeleteRole handles DELETE /api/v1/tenants/{tenant_id}/roles/{role_id} - Delete a role.
 func (h *IAMHandler) DeleteRole(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-
 	tenantID := chi.URLParam(r, "tenant_id")
 	if tenantID == "" {
 		RespondIAMError(w, r, http.StatusBadRequest,
 			NewIAMAPIError(ErrBadRequest, "tenant ID is required"))
 		return
 	}
-	tenantID, ok := h.server.urlTenant(w, r, "rest.IAM", "tenant_id")
+	ctx, tenantID, ok := h.server.urlTenant(w, r, "rest.IAM", "tenant_id")
 	if !ok {
 		return
 	}
@@ -411,15 +402,13 @@ func (h *IAMHandler) DeleteRole(w http.ResponseWriter, r *http.Request) {
 // from every role seeded before that verb existed, so nobody would hold the
 // grant needed to repair exactly that absence.
 func (h *IAMHandler) ReconcileRoles(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-
 	tenantID := chi.URLParam(r, "tenant_id")
 	if tenantID == "" {
 		RespondIAMError(w, r, http.StatusBadRequest,
 			NewIAMAPIError(ErrBadRequest, "tenant ID is required"))
 		return
 	}
-	tenantID, ok := h.server.urlTenant(w, r, "rest.IAM", "tenant_id")
+	ctx, tenantID, ok := h.server.urlTenant(w, r, "rest.IAM", "tenant_id")
 	if !ok {
 		return
 	}
@@ -446,7 +435,7 @@ func (h *IAMHandler) ReconcileRoles(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Validate tenant exists
-	if _, err := store.GetTenant(ctx, tenantID); err != nil {
+	if _, err := store.GetTenant(tenantctx.WithSystem(ctx), tenantID); err != nil { // the tenant catalog lives in the system namespace
 		RespondIAMError(w, r, http.StatusNotFound,
 			NewIAMAPIError(ErrNotFound, "tenant not found"))
 		return

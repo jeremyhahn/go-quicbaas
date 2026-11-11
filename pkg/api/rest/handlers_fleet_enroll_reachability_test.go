@@ -155,13 +155,13 @@ func TestHandleFleetEnroll_UnprobedAddressIsUnverified(t *testing.T) {
 	reg := &fakeFleetRegistrar{}
 	srv.SetFleetRegistrar(reg)
 
-	body := `{"tenant_id":"acme","bind_addr":"192.168.1.50:9091","hostname":"agent01"}`
+	body := `{"tenant_id":"acme","bind_addr":"192.0.2.50:9091","hostname":"agent01"}`
 	w := httptest.NewRecorder()
 	srv.HandleFleetEnroll(w, agentRegisterReq(t, body, agentRegisterTestPeerCert(t, "acme", "agent01")))
 
 	require.Equal(t, http.StatusCreated, w.Code, w.Body.String())
 	require.True(t, reg.called)
-	assert.Equal(t, "192.168.1.50:9091", reg.req.Host)
+	assert.Equal(t, "192.0.2.50:9091", reg.req.Host)
 	assert.Empty(t, reg.req.AdvertisedAddress)
 	assert.Equal(t, string(orchestration.FleetNodeReachabilityUnverified), reg.req.Reachability)
 	assert.False(t, strings.Contains(w.Body.String(), "agent_address_unreachable"))

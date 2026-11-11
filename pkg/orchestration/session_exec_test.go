@@ -128,7 +128,7 @@ func (r *execSessionRig) assertNothingRan(t *testing.T) {
 func commitSpec() *ExecSpec {
 	return &ExecSpec{
 		Cmd:     []string{"git", "commit", "-F", "-"},
-		Env:     map[string]string{"GIT_AUTHOR_NAME": "agent-go-quicbaas"},
+		Env:     map[string]string{"GIT_AUTHOR_NAME": "agent-quicbaas"},
 		WorkDir: "/workspace",
 		Stdin:   []byte("subject\n"),
 	}

@@ -221,15 +221,13 @@ func (h *IAMHandler) getIAMFederationManager(ctx context.Context) (iam.Federatio
 
 // RegisterProvider handles POST /api/v1/tenants/{tenant_id}/providers - Register a new identity provider.
 func (h *IAMHandler) RegisterProvider(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-
 	tenantID := chi.URLParam(r, "tenant_id")
 	if tenantID == "" {
 		RespondIAMError(w, r, http.StatusBadRequest,
 			NewIAMAPIError(ErrBadRequest, "tenant ID is required"))
 		return
 	}
-	tenantID, ok := h.server.urlTenant(w, r, "rest.IAM", "tenant_id")
+	ctx, tenantID, ok := h.server.urlTenant(w, r, "rest.IAM", "tenant_id")
 	if !ok {
 		return
 	}
@@ -319,15 +317,13 @@ func (h *IAMHandler) RegisterProvider(w http.ResponseWriter, r *http.Request) {
 
 // ListProviders handles GET /api/v1/tenants/{tenant_id}/providers - List identity providers.
 func (h *IAMHandler) ListProviders(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-
 	tenantID := chi.URLParam(r, "tenant_id")
 	if tenantID == "" {
 		RespondIAMError(w, r, http.StatusBadRequest,
 			NewIAMAPIError(ErrBadRequest, "tenant ID is required"))
 		return
 	}
-	tenantID, ok := h.server.urlTenant(w, r, "rest.IAM", "tenant_id")
+	ctx, tenantID, ok := h.server.urlTenant(w, r, "rest.IAM", "tenant_id")
 	if !ok {
 		return
 	}
@@ -384,15 +380,13 @@ func (h *IAMHandler) ListProviders(w http.ResponseWriter, r *http.Request) {
 
 // GetProvider handles GET /api/v1/tenants/{tenant_id}/providers/{provider_id} - Get a provider.
 func (h *IAMHandler) GetProvider(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-
 	tenantID := chi.URLParam(r, "tenant_id")
 	if tenantID == "" {
 		RespondIAMError(w, r, http.StatusBadRequest,
 			NewIAMAPIError(ErrBadRequest, "tenant ID is required"))
 		return
 	}
-	tenantID, ok := h.server.urlTenant(w, r, "rest.IAM", "tenant_id")
+	ctx, tenantID, ok := h.server.urlTenant(w, r, "rest.IAM", "tenant_id")
 	if !ok {
 		return
 	}
@@ -423,15 +417,13 @@ func (h *IAMHandler) GetProvider(w http.ResponseWriter, r *http.Request) {
 
 // UpdateProvider handles PUT /api/v1/tenants/{tenant_id}/providers/{provider_id} - Update a provider.
 func (h *IAMHandler) UpdateProvider(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-
 	tenantID := chi.URLParam(r, "tenant_id")
 	if tenantID == "" {
 		RespondIAMError(w, r, http.StatusBadRequest,
 			NewIAMAPIError(ErrBadRequest, "tenant ID is required"))
 		return
 	}
-	tenantID, ok := h.server.urlTenant(w, r, "rest.IAM", "tenant_id")
+	ctx, tenantID, ok := h.server.urlTenant(w, r, "rest.IAM", "tenant_id")
 	if !ok {
 		return
 	}
@@ -525,15 +517,13 @@ func (h *IAMHandler) UpdateProvider(w http.ResponseWriter, r *http.Request) {
 
 // DeleteProvider handles DELETE /api/v1/tenants/{tenant_id}/providers/{provider_id} - Delete a provider.
 func (h *IAMHandler) DeleteProvider(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-
 	tenantID := chi.URLParam(r, "tenant_id")
 	if tenantID == "" {
 		RespondIAMError(w, r, http.StatusBadRequest,
 			NewIAMAPIError(ErrBadRequest, "tenant ID is required"))
 		return
 	}
-	tenantID, ok := h.server.urlTenant(w, r, "rest.IAM", "tenant_id")
+	ctx, tenantID, ok := h.server.urlTenant(w, r, "rest.IAM", "tenant_id")
 	if !ok {
 		return
 	}
@@ -720,15 +710,13 @@ func (h *IAMHandler) HandleFederatedCallback(w http.ResponseWriter, r *http.Requ
 
 // LinkAccount handles POST /api/v1/tenants/{tenant_id}/users/{user_id}/links - Link an external account.
 func (h *IAMHandler) LinkAccount(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-
 	tenantID := chi.URLParam(r, "tenant_id")
 	if tenantID == "" {
 		RespondIAMError(w, r, http.StatusBadRequest,
 			NewIAMAPIError(ErrBadRequest, "tenant ID is required"))
 		return
 	}
-	tenantID, ok := h.server.urlTenant(w, r, "rest.IAM", "tenant_id")
+	ctx, tenantID, ok := h.server.urlTenant(w, r, "rest.IAM", "tenant_id")
 	if !ok {
 		return
 	}
@@ -807,15 +795,13 @@ func (h *IAMHandler) LinkAccount(w http.ResponseWriter, r *http.Request) {
 
 // UnlinkAccount handles DELETE /api/v1/tenants/{tenant_id}/users/{user_id}/links/{provider_id} - Unlink an account.
 func (h *IAMHandler) UnlinkAccount(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-
 	tenantID := chi.URLParam(r, "tenant_id")
 	if tenantID == "" {
 		RespondIAMError(w, r, http.StatusBadRequest,
 			NewIAMAPIError(ErrBadRequest, "tenant ID is required"))
 		return
 	}
-	tenantID, ok := h.server.urlTenant(w, r, "rest.IAM", "tenant_id")
+	ctx, tenantID, ok := h.server.urlTenant(w, r, "rest.IAM", "tenant_id")
 	if !ok {
 		return
 	}
@@ -860,15 +846,13 @@ func (h *IAMHandler) UnlinkAccount(w http.ResponseWriter, r *http.Request) {
 
 // GetUserLinks handles GET /api/v1/tenants/{tenant_id}/users/{user_id}/links - Get user's linked accounts.
 func (h *IAMHandler) GetUserLinks(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-
 	tenantID := chi.URLParam(r, "tenant_id")
 	if tenantID == "" {
 		RespondIAMError(w, r, http.StatusBadRequest,
 			NewIAMAPIError(ErrBadRequest, "tenant ID is required"))
 		return
 	}
-	tenantID, ok := h.server.urlTenant(w, r, "rest.IAM", "tenant_id")
+	ctx, tenantID, ok := h.server.urlTenant(w, r, "rest.IAM", "tenant_id")
 	if !ok {
 		return
 	}

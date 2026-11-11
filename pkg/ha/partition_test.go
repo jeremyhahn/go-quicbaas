@@ -1082,8 +1082,8 @@ func TestPartitionDetector_ConcurrentAccess(t *testing.T) {
 // TestHealthURL_BareHostPort verifies that a bare "host:port" address is
 // prefixed with "https://" and the /health path is appended.
 func TestHealthURL_BareHostPort(t *testing.T) {
-	got := healthURL("192.168.1.10:8443")
-	assert.Equal(t, "https://192.168.1.10:8443/health", got)
+	got := healthURL("192.0.2.10:8443")
+	assert.Equal(t, "https://192.0.2.10:8443/health", got)
 }
 
 // TestHealthURL_AlreadyHTTPS verifies that an address with an "https://"

@@ -63,7 +63,7 @@ func TestSessionClient_Get(t *testing.T) {
 					LastActive:  now,
 					ExpiresAt:   now.Add(24 * time.Hour),
 					MFAVerified: true,
-					IPAddress:   "192.168.1.1",
+					IPAddress:   "192.0.2.1",
 					UserAgent:   "Mozilla/5.0",
 					AuthMethod:  "password",
 				}, nil

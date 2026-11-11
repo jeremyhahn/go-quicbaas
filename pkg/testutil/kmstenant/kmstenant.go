@@ -29,8 +29,10 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
 
+	"github.com/jeremyhahn/go-quicbaas/pkg/auth"
 	"github.com/jeremyhahn/go-quicbaas/pkg/config"
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 	"github.com/jeremyhahn/go-quicbaas/pkg/kms"
@@ -57,10 +59,14 @@ const (
 // SigningKeyName and DEKPath as OwnerTenant.
 func NewService(t *testing.T) service.KMSService {
 	t.Helper()
+	// Key policies fail closed without a store, so every shard reads and
+	// writes one in-memory store.
+	store := qrdbsdk.NewMemoryKVStore()
 	svc, err := service.NewServiceBuilder().
 		WithConfig(&service.ServiceConfig{NodeID: 1, RequestTimeout: 5 * time.Second}).
 		WithRaftNode(&unusedRaftNode{}).
 		WithKMSManager(NewManager()).
+		WithKVStoreProvider(func(uint64) interface{} { return store }).
 		Build()
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, svc.Close()) })
@@ -98,10 +104,13 @@ type OwnerState struct {
 	DEK              *service.DEKMetadata
 }
 
-// ReadOwnerState reads OwnerState through svc as OwnerTenant.
+// ReadOwnerState reads OwnerState through svc as OwnerTenant. It is
+// ground-truth inspection of stored state, not a tenant caller's request,
+// so it reads under the system context, which bypasses the per-key
+// authorization gate.
 func ReadOwnerState(t *testing.T, svc service.KMSService) OwnerState {
 	t.Helper()
-	ctx := tenantctx.WithTenant(context.Background(), OwnerTenant)
+	ctx := auth.NewSystemContext(tenantctx.WithTenant(context.Background(), OwnerTenant))
 	state := OwnerState{
 		Keys:             make(map[string]*service.KeyMetadata),
 		Policies:         make(map[string]*service.KeyPolicy),

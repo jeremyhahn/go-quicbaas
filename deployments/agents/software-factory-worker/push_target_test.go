@@ -42,7 +42,7 @@ const (
 	// none.
 	fakePushDigestEnv = "QUICBAAS_TEST_FAKE_PUSH_DIGEST"
 
-	testPushRegistry = "registry.example:3001/owner/software-factory-worker"
+	testPushRegistry = "registry.example:3000/owner/software-factory-worker"
 	testPushDigest   = "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
 )
 
@@ -86,7 +86,7 @@ func runFakeTool(args []string) int {
 		// environment. This fake stands in for that lookup, so a test can
 		// prove the Makefile actually exported the variable down to this
 		// process rather than merely naming it on the command line.
-		for _, name := range []string{"DEVCACHE_GOPROXY", "DEVCACHE_GOPRIVATE", "DEVCACHE_NPM_REGISTRY"} {
+		for _, name := range []string{"DEVCACHE_GOPROXY", "DEVCACHE_NPM_REGISTRY"} {
 			if v, ok := os.LookupEnv(name); ok {
 				fmt.Fprintln(logFile, "ENV "+name+"="+v)
 			}

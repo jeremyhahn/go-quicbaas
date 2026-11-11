@@ -84,7 +84,7 @@ func deliveredTo(mode DiscoveryMode) *ProjectBinding {
 // burn-in node runs and the shape triage could not clone.
 func sshAccessProject() *orchestration.Project {
 	project := testOrchProject()
-	project.Git.RepoURL = "ssh://git@forge.test:2222/acme/api.git"
+	project.Git.RepoURL = "ssh://git@forge.test:2022/acme/api.git"
 	return project
 }
 

@@ -20,6 +20,8 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/jeremyhahn/go-quicbaas/pkg/auth"
+	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 	"github.com/jeremyhahn/go-quicbaas/pkg/testutil/kmstenant"
 	sdkerrors "github.com/jeremyhahn/go-quicbaas/sdk/go/errors"
@@ -100,7 +102,8 @@ func TestKMSHandlers_TenantBGetsNotFoundForTenantAKey(t *testing.T) {
 				svc := kmstenant.NewService(t)
 				tr, err := New(&mockQuicBaaS{kmsService: svc})
 				require.NoError(t, err)
-				ctx := transport.ContextWithTenant(context.Background(), tc.tenant)
+				ctx := auth.SubjectIntoContext(transport.ContextWithTenant(context.Background(), tc.tenant),
+					interfaces.Subject{ID: "caller", TenantID: tc.tenant, Authenticated: true, Attributes: map[string]interface{}{}})
 				id := call.id
 				if tc.missingID {
 					id = kmstenant.MissingID

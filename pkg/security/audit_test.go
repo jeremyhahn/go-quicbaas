@@ -127,7 +127,7 @@ func TestAuditLogger_Log(t *testing.T) {
 		Action:    ActionRead,
 		Resource:  "keys",
 		Result:    ResultSuccess,
-		IPAddress: "192.168.1.100",
+		IPAddress: "192.0.2.100",
 		Details: map[string]string{
 			"key": "/test/key",
 		},
@@ -172,7 +172,7 @@ func TestAuditLogger_LogWithSigning(t *testing.T) {
 		Action:    ActionWrite,
 		Resource:  "keys",
 		Result:    ResultSuccess,
-		IPAddress: "192.168.1.100",
+		IPAddress: "192.0.2.100",
 	}
 
 	err = al.Log(context.Background(), event)
@@ -207,7 +207,7 @@ func TestAuditLogger_LogAuthSuccess(t *testing.T) {
 
 	al.writer = &buf
 
-	err = al.LogAuthSuccess(context.Background(), "alice", "user-123", "192.168.1.100")
+	err = al.LogAuthSuccess(context.Background(), "alice", "user-123", "192.0.2.100")
 	assert.NoError(t, err)
 
 	var logged AuditEvent
@@ -233,7 +233,7 @@ func TestAuditLogger_LogAuthFailure(t *testing.T) {
 
 	al.writer = &buf
 
-	err = al.LogAuthFailure(context.Background(), "alice", "192.168.1.100", "invalid password")
+	err = al.LogAuthFailure(context.Background(), "alice", "192.0.2.100", "invalid password")
 	assert.NoError(t, err)
 
 	var logged AuditEvent
@@ -260,7 +260,7 @@ func TestAuditLogger_LogAuthzDenied(t *testing.T) {
 
 	al.writer = &buf
 
-	err = al.LogAuthzDenied(context.Background(), "alice", "user-123", "cluster", "admin", "192.168.1.100")
+	err = al.LogAuthzDenied(context.Background(), "alice", "user-123", "cluster", "admin", "192.0.2.100")
 	assert.NoError(t, err)
 
 	var logged AuditEvent
@@ -287,7 +287,7 @@ func TestAuditLogger_LogDataAccess(t *testing.T) {
 
 	al.writer = &buf
 
-	err = al.LogDataAccess(context.Background(), "alice", "user-123", ActionRead, "/test/key", "192.168.1.100", true)
+	err = al.LogDataAccess(context.Background(), "alice", "user-123", ActionRead, "/test/key", "192.0.2.100", true)
 	assert.NoError(t, err)
 
 	var logged AuditEvent
@@ -315,7 +315,7 @@ func TestAuditLogger_LogClusterChange(t *testing.T) {
 	al.writer = &buf
 
 	details := map[string]string{
-		"node_addr": "192.168.1.10:5000",
+		"node_addr": "192.0.2.10:5000",
 	}
 	err = al.LogClusterChange(context.Background(), ActionClusterJoin, 1, details)
 	assert.NoError(t, err)
@@ -518,7 +518,7 @@ func TestLogTenantSwitch(t *testing.T) {
 		"tenant-b",
 		"investigating support ticket #12345",
 		"TICKET-12345",
-		"192.168.1.100",
+		"192.0.2.100",
 	)
 	require.NoError(t, err)
 
@@ -532,7 +532,7 @@ func TestLogTenantSwitch(t *testing.T) {
 	assert.Equal(t, "admin-user", event.Username)
 	assert.Equal(t, "tenant", event.Resource)
 	assert.Equal(t, ResultSuccess, event.Result)
-	assert.Equal(t, "192.168.1.100", event.IPAddress)
+	assert.Equal(t, "192.0.2.100", event.IPAddress)
 	assert.Equal(t, "tenant-a", event.Details["original_tenant"])
 	assert.Equal(t, "tenant-b", event.Details["target_tenant"])
 	assert.Equal(t, "investigating support ticket #12345", event.Details["justification"])
@@ -553,7 +553,7 @@ func TestLogTenantSwitch_WithoutAssignmentID(t *testing.T) {
 		"tenant-b",
 		"justification",
 		"", // no assignment ID
-		"192.168.1.100",
+		"192.0.2.100",
 	)
 	require.NoError(t, err)
 
@@ -580,7 +580,7 @@ func TestLogCrossTenantRead(t *testing.T) {
 		"tenant-b",
 		"keys/user-data",
 		"support investigation",
-		"192.168.1.100",
+		"192.0.2.100",
 	)
 	require.NoError(t, err)
 
@@ -610,7 +610,7 @@ func TestLogCrossTenantWrite(t *testing.T) {
 		"tenant-b",
 		"keys/config",
 		"migration operation",
-		"192.168.1.100",
+		"192.0.2.100",
 	)
 	require.NoError(t, err)
 
@@ -637,7 +637,7 @@ func TestLogCrossTenantDelete(t *testing.T) {
 		"tenant-b",
 		"keys/old-data",
 		"data cleanup",
-		"192.168.1.100",
+		"192.0.2.100",
 	)
 	require.NoError(t, err)
 
@@ -663,7 +663,7 @@ func TestLogTenantAccessDenied(t *testing.T) {
 		"tenant-a",
 		"tenant-b",
 		"keys/secret-data",
-		"192.168.1.100",
+		"192.0.2.100",
 		"cross-tenant access not permitted",
 	)
 	require.NoError(t, err)
@@ -726,7 +726,7 @@ func TestLogTenantDEKOperation(t *testing.T) {
 				"tenant-xyz",
 				"admin-user",
 				"user-123",
-				"192.168.1.100",
+				"192.0.2.100",
 				tt.success,
 			)
 			require.NoError(t, err)
@@ -908,7 +908,7 @@ func TestSyslogExporter_Export(t *testing.T) {
 		Action:    ActionRead,
 		Resource:  "keys/test",
 		Result:    ResultSuccess,
-		IPAddress: "192.168.1.100",
+		IPAddress: "192.0.2.100",
 		Details: map[string]string{
 			"custom_field": "custom_value",
 		},
@@ -1112,12 +1112,12 @@ func TestSyslogExporter_FormatRFC5424(t *testing.T) {
 		Action:    ActionRead,
 		Resource:  "keys/test",
 		Result:    ResultSuccess,
-		IPAddress: "192.168.1.100",
+		IPAddress: "192.0.2.100",
 		NodeID:    "node-1",
 		ShardID:   42,
 	}
 
-	message := "QuicBaaS Audit: action=read resource=keys/test result=success user=alice ip=192.168.1.100"
+	message := "QuicBaaS Audit: action=read resource=keys/test result=success user=alice ip=192.0.2.100"
 	formatted := exporter.formatRFC5424(event, SyslogSeverityInformational, message)
 
 	// Verify RFC 5424 format components
@@ -1133,7 +1133,7 @@ func TestSyslogExporter_FormatRFC5424(t *testing.T) {
 	assert.Contains(t, formatted, "result=\"success\"")
 	assert.Contains(t, formatted, "userID=\"user-123\"")
 	assert.Contains(t, formatted, "username=\"alice\"")
-	assert.Contains(t, formatted, "ipAddress=\"192.168.1.100\"")
+	assert.Contains(t, formatted, "ipAddress=\"192.0.2.100\"")
 	assert.Contains(t, formatted, "nodeID=\"node-1\"")
 	assert.Contains(t, formatted, "shardID=\"42\"")
 	assert.True(t, strings.HasSuffix(formatted, message+"\n"))
@@ -1268,7 +1268,7 @@ func TestSyslogExporter_FormatMessage(t *testing.T) {
 				Resource:  "keys/test",
 				Result:    ResultSuccess,
 				Username:  "alice",
-				IPAddress: "192.168.1.100",
+				IPAddress: "192.0.2.100",
 				ErrorMsg:  "",
 			},
 			contains: []string{
@@ -1277,7 +1277,7 @@ func TestSyslogExporter_FormatMessage(t *testing.T) {
 				"resource=keys/test",
 				"result=success",
 				"user=alice",
-				"ip=192.168.1.100",
+				"ip=192.0.2.100",
 			},
 		},
 		{
@@ -1496,11 +1496,11 @@ func TestSyslogConnectionError_Error(t *testing.T) {
 		{
 			name: "remote connection error",
 			err: &SyslogConnectionError{
-				Address: "192.168.1.100:514",
+				Address: "192.0.2.100:514",
 				Network: "tcp",
 				Err:     net.UnknownNetworkError("test"),
 			},
-			expected: "failed to connect to syslog at tcp://192.168.1.100:514: unknown network test",
+			expected: "failed to connect to syslog at tcp://192.0.2.100:514: unknown network test",
 		},
 	}
 
@@ -2942,11 +2942,11 @@ func TestSyslogExporter_ExportRemote(t *testing.T) {
 
 func TestSyslogConnectionError(t *testing.T) {
 	err := &SyslogConnectionError{
-		Address: "192.168.1.1:514",
+		Address: "192.0.2.1:514",
 		Network: "tcp",
 		Err:     errors.New("connection refused"),
 	}
-	assert.Contains(t, err.Error(), "192.168.1.1:514")
+	assert.Contains(t, err.Error(), "192.0.2.1:514")
 	assert.Contains(t, err.Error(), "tcp")
 	assert.NotNil(t, err.Unwrap())
 }
@@ -3688,7 +3688,7 @@ func TestSyslogExporter_SendRemoteWithAllEventFields(t *testing.T) {
 		Result:    ResultSuccess,
 		UserID:    "admin-user",
 		Username:  "admin",
-		IPAddress: "192.168.1.100",
+		IPAddress: "192.0.2.100",
 		NodeID:    "node-1",
 		ShardID:   42,
 		Details: map[string]string{
@@ -4785,7 +4785,7 @@ func TestAuditLogger_LogDataAccess_Failure(t *testing.T) {
 
 	al.writer = &buf
 
-	err = al.LogDataAccess(context.Background(), "alice", "user-123", ActionWrite, "/test/key", "192.168.1.100", false)
+	err = al.LogDataAccess(context.Background(), "alice", "user-123", ActionWrite, "/test/key", "192.0.2.100", false)
 	assert.NoError(t, err)
 
 	var logged AuditEvent
@@ -5349,7 +5349,7 @@ func TestAuditLogger_LogKeyExport_Success(t *testing.T) {
 
 	al.writer = &buf
 
-	err = al.LogKeyExport(context.Background(), "alice", "user-123", "key-001", "AES-256-GCM", "wrapping-key", "RSA-OAEP", "192.168.1.100", true)
+	err = al.LogKeyExport(context.Background(), "alice", "user-123", "key-001", "AES-256-GCM", "wrapping-key", "RSA-OAEP", "192.0.2.100", true)
 	require.NoError(t, err)
 
 	assert.Contains(t, buf.String(), "key.export")
@@ -5370,7 +5370,7 @@ func TestAuditLogger_LogKeyExport_Failure(t *testing.T) {
 
 	al.writer = &buf
 
-	err = al.LogKeyExport(context.Background(), "alice", "user-123", "key-001", "AES-256-GCM", "wrapping-key", "RSA-OAEP", "192.168.1.100", false)
+	err = al.LogKeyExport(context.Background(), "alice", "user-123", "key-001", "AES-256-GCM", "wrapping-key", "RSA-OAEP", "192.0.2.100", false)
 	require.NoError(t, err)
 
 	assert.Contains(t, buf.String(), "key.export")
@@ -5391,7 +5391,7 @@ func TestAuditLogger_LogKeyGenerate_Success(t *testing.T) {
 
 	al.writer = &buf
 
-	err = al.LogKeyGenerate(context.Background(), "alice", "user-123", "key-001", "my-key", "AES-256-GCM", "192.168.1.100", true)
+	err = al.LogKeyGenerate(context.Background(), "alice", "user-123", "key-001", "my-key", "AES-256-GCM", "192.0.2.100", true)
 	require.NoError(t, err)
 
 	assert.Contains(t, buf.String(), "key.generate")
@@ -5412,7 +5412,7 @@ func TestAuditLogger_LogKeyGenerate_Failure(t *testing.T) {
 
 	al.writer = &buf
 
-	err = al.LogKeyGenerate(context.Background(), "alice", "user-123", "key-001", "my-key", "AES-256-GCM", "192.168.1.100", false)
+	err = al.LogKeyGenerate(context.Background(), "alice", "user-123", "key-001", "my-key", "AES-256-GCM", "192.0.2.100", false)
 	require.NoError(t, err)
 
 	assert.Contains(t, buf.String(), "key.generate")
@@ -5433,7 +5433,7 @@ func TestAuditLogger_LogKeyImport_Success(t *testing.T) {
 
 	al.writer = &buf
 
-	err = al.LogKeyImport(context.Background(), "alice", "user-123", "key-001", "imported-key", "AES-256-GCM", "192.168.1.100", true)
+	err = al.LogKeyImport(context.Background(), "alice", "user-123", "key-001", "imported-key", "AES-256-GCM", "192.0.2.100", true)
 	require.NoError(t, err)
 
 	assert.Contains(t, buf.String(), "key.import")
@@ -5454,7 +5454,7 @@ func TestAuditLogger_LogKeyImport_Failure(t *testing.T) {
 
 	al.writer = &buf
 
-	err = al.LogKeyImport(context.Background(), "alice", "user-123", "key-001", "imported-key", "AES-256-GCM", "192.168.1.100", false)
+	err = al.LogKeyImport(context.Background(), "alice", "user-123", "key-001", "imported-key", "AES-256-GCM", "192.0.2.100", false)
 	require.NoError(t, err)
 
 	assert.Contains(t, buf.String(), "key.import")
@@ -5475,7 +5475,7 @@ func TestAuditLogger_LogKeyDeletion_Success(t *testing.T) {
 
 	al.writer = &buf
 
-	err = al.LogKeyDeletion(context.Background(), "alice", "user-123", "key-001", "192.168.1.100", true)
+	err = al.LogKeyDeletion(context.Background(), "alice", "user-123", "key-001", "192.0.2.100", true)
 	require.NoError(t, err)
 
 	assert.Contains(t, buf.String(), "key.delete")
@@ -5496,7 +5496,7 @@ func TestAuditLogger_LogKeyDeletion_Failure(t *testing.T) {
 
 	al.writer = &buf
 
-	err = al.LogKeyDeletion(context.Background(), "alice", "user-123", "key-001", "192.168.1.100", false)
+	err = al.LogKeyDeletion(context.Background(), "alice", "user-123", "key-001", "192.0.2.100", false)
 	require.NoError(t, err)
 
 	assert.Contains(t, buf.String(), "key.delete")
@@ -6225,14 +6225,14 @@ func TestSyslogExporterError_ErrorMessage(t *testing.T) {
 func TestSyslogConnectionError_ErrorWithNetworkField(t *testing.T) {
 	cause := errors.New("connection refused")
 	err := &SyslogConnectionError{
-		Address: "192.168.1.1:514",
+		Address: "192.0.2.1:514",
 		Network: "udp",
 		Err:     cause,
 	}
 
 	got := err.Error()
 	assert.Contains(t, got, "udp")
-	assert.Contains(t, got, "192.168.1.1:514")
+	assert.Contains(t, got, "192.0.2.1:514")
 	assert.Contains(t, got, "connection refused")
 }
 
@@ -7465,7 +7465,7 @@ func TestAuditLogger_VerifySignature(t *testing.T) {
 		Action:    ActionRead,
 		Resource:  "test-resource",
 		Result:    ResultSuccess,
-		IPAddress: "192.168.1.1",
+		IPAddress: "192.0.2.1",
 	}
 
 	// Sign the event
@@ -7794,7 +7794,7 @@ func TestAuditLogger_LogSignatureGeneration(t *testing.T) {
 		Action:    ActionRead,
 		Resource:  "test-resource",
 		Result:    ResultSuccess,
-		IPAddress: "192.168.1.1",
+		IPAddress: "192.0.2.1",
 	}
 
 	// Manually generate signature

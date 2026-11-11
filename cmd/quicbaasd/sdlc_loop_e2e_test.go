@@ -16,6 +16,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -68,6 +69,7 @@ const (
 	loopE2ETenant                     = "sdlc-loop-e2e-tenant"
 	loopE2EProject                    = "sdlc-loop-e2e-project"
 	loopE2EBackend                    = "e2e-agent"
+	loopE2EModel                      = "claude-opus-5" // the Anthropic family makes the codex review independent
 	loopE2EWorkerAgent                = "e2e-coder"
 	loopE2EKeyName                    = "agent-sdlc-loop-e2e"
 	loopE2EKeyScope                   = "service"
@@ -660,10 +662,16 @@ type e2eAgentBackend struct {
 	// directory the runner's clone puts the project in, seen from the daemon
 	// side of the bind mount, which is where the worker writes.
 	sessions map[string]string
+	// peakLive is the most sessions that were live at once: sessions grows
+	// on Spawn and shrinks on Close, so this is the high-water mark of it.
+	peakLive int
 	seq      int
 	prompts  []string
 	spawns   []*orchestration.SpawnRequest
-	block    chan struct{}
+	// specs holds each spawn's workspace spec, read at spawn while the spec
+	// directory still exists, in spawn order.
+	specs []orchestration.WorkspaceSpec
+	block chan struct{}
 
 	// onPrompt runs after each prompt is recorded, so a scenario can act as
 	// the reviewer between rounds.
@@ -693,7 +701,9 @@ func (b *e2eAgentBackend) Spawn(_ context.Context, req *orchestration.SpawnReque
 	id := "e2e-session-" + strconv.Itoa(b.seq)
 	containerID := "e2e-container-" + strconv.Itoa(b.seq)
 	b.sessions[id] = filepath.Join(req.WorkDir, spec.Project.Name)
+	b.peakLive = max(b.peakLive, len(b.sessions))
 	b.spawns = append(b.spawns, req)
+	b.specs = append(b.specs, spec)
 	runtime := b.runtime
 	b.mu.Unlock()
 	// The backend OWNS the container it put the agent in, exactly as the ACP
@@ -724,6 +734,7 @@ func runGit(dir string, args ...string) error {
 func (b *e2eAgentBackend) Prompt(ctx context.Context, req *orchestration.PromptRequest) (*orchestration.PromptResponse, error) {
 	b.mu.Lock()
 	b.prompts = append(b.prompts, req.Prompt)
+	turn := len(b.prompts)
 	workDir := b.sessions[req.SessionID]
 	block := b.block
 	onPrompt := b.onPrompt
@@ -739,7 +750,10 @@ func (b *e2eAgentBackend) Prompt(ctx context.Context, req *orchestration.PromptR
 	if workDir == "" {
 		return nil, errors.New("e2e backend: the worker session has no checkout")
 	}
-	if err := os.WriteFile(filepath.Join(workDir, "WORK.md"), []byte("done by the e2e worker\n"), 0o600); err != nil {
+	// Each turn writes different content, so a later round changes the
+	// tree the way a real worker's fix does.
+	content := "done by the e2e worker, turn " + strconv.Itoa(turn) + "\n"
+	if err := os.WriteFile(filepath.Join(workDir, "WORK.md"), []byte(content), 0o600); err != nil {
 		return nil, err
 	}
 	if onPrompt != nil {
@@ -765,7 +779,7 @@ func (b *e2eAgentBackend) Capabilities() orchestration.BackendCapabilities {
 func (b *e2eAgentBackend) Type() string         { return "e2e" }
 func (b *e2eAgentBackend) ToolGuidance() string { return "" }
 func (b *e2eAgentBackend) ListModels(context.Context) ([]string, error) {
-	return []string{"e2e-model"}, nil
+	return []string{loopE2EModel}, nil
 }
 
 // spawnCount is how many sessions the job asked for. For an sdlc job it is
@@ -774,6 +788,27 @@ func (b *e2eAgentBackend) spawnCount() int {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	return len(b.spawns)
+}
+
+// peakLiveSessions is the most sessions the backend held open at once over
+// the job's life: a session closed before the next spawn counts once.
+func (b *e2eAgentBackend) peakLiveSessions() int {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.peakLive
+}
+
+// spawnedWorkspaces is, per spawn in order, the work directory, project and
+// branch the worker was put on.
+func (b *e2eAgentBackend) spawnedWorkspaces() []string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	workspaces := make([]string, 0, len(b.spawns))
+	for i, req := range b.spawns {
+		spec := b.specs[i]
+		workspaces = append(workspaces, req.WorkDir+" "+spec.Project.Name+" "+spec.Branch.Name)
+	}
+	return workspaces
 }
 
 func (b *e2eAgentBackend) promptTexts() []string {
@@ -831,6 +866,11 @@ type e2eContainer struct {
 	// checkoutRoot is what the container calls hostDir.
 	checkoutRoot string
 
+	// mounts are the container's other mounts, keyed by container path: the
+	// spec directory the daemon wrote (allowed_signers lives there) and a
+	// stand-in for the credential tier the runner delivers the forge token to.
+	mounts []orchestration.ContainerMount
+
 	authSock string
 }
 
@@ -848,12 +888,40 @@ func (c *e2eContainer) hostPath(containerDir string) (string, error) {
 	return filepath.Join(c.hostDir, rel), nil
 }
 
+// hostArg translates an argument naming a path under one of the container's
+// mounts, alone or as the value of a key=value git config, into the host path
+// behind it; any other argument is returned as is.
+func (c *e2eContainer) hostArg(arg string) string {
+	key, value, isConfig := strings.Cut(arg, "=")
+	if !isConfig {
+		key, value = "", arg
+	}
+	for _, mount := range c.mounts {
+		rest, ok := strings.CutPrefix(value, mount.Target+"/")
+		if !ok {
+			continue
+		}
+		host := filepath.Join(mount.Source, rest)
+		if isConfig {
+			return key + "=" + host
+		}
+		return host
+	}
+	return arg
+}
+
 // e2eExecCall is one command the runner ran in a container.
 type e2eExecCall struct {
 	ContainerID string
 	WorkDir     string
 	Cmd         []string
 	ExitCode    int
+}
+
+// forgeCredentialStep reports whether call is the runner delivering the forge
+// token to the container's credential tier, or revoking it from there.
+func (call e2eExecCall) forgeCredentialStep() bool {
+	return call.Cmd[len(call.Cmd)-1] == orchestration.WorkspaceForgeCredentialFile
 }
 
 func newE2EContainerRuntime() *e2eContainerRuntime {
@@ -868,11 +936,20 @@ func (r *e2eContainerRuntime) register(containerID string, req *orchestration.Sp
 	if err != nil {
 		return err
 	}
-	container := &e2eContainer{hostDir: req.WorkDir, checkoutRoot: spec.CheckoutRoot}
+	credentialDir := req.WorkDir + ".credentials"
+	if err := os.MkdirAll(credentialDir, 0o700); err != nil {
+		return err
+	}
+	container := &e2eContainer{
+		hostDir:      req.WorkDir,
+		checkoutRoot: spec.CheckoutRoot,
+		mounts:       []orchestration.ContainerMount{{Source: credentialDir, Target: orchestration.WorkspaceCredentialDir}},
+	}
 	for _, mount := range req.ExtraMounts {
 		if mount.Target == orchestration.WorkspaceSigningAgentSocket {
 			container.authSock = mount.Source
 		}
+		container.mounts = append(container.mounts, mount)
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -895,8 +972,15 @@ func (r *e2eContainerRuntime) Exec(ctx context.Context, containerID string, spec
 	if translateErr != nil {
 		return nil, &orchestration.ContainerExecError{ContainerID: containerID, Cause: translateErr}
 	}
-	cmd := exec.CommandContext(ctx, spec.Cmd[0], spec.Cmd[1:]...)
+	args := make([]string, 0, len(spec.Cmd)-1)
+	for _, arg := range spec.Cmd[1:] {
+		args = append(args, container.hostArg(arg))
+	}
+	cmd := exec.CommandContext(ctx, spec.Cmd[0], args...)
 	cmd.Dir = workDir
+	if len(spec.Stdin) > 0 {
+		cmd.Stdin = bytes.NewReader(spec.Stdin)
+	}
 	cmd.Env = append(os.Environ(), "SSH_AUTH_SOCK="+container.authSock)
 	for key, value := range spec.Env {
 		cmd.Env = append(cmd.Env, key+"="+value)
@@ -1208,7 +1292,7 @@ func defineFactoryWorker(t *testing.T, ctx context.Context, agents orchestration
 	_, err := directory.CreateAgent(ctx, loopE2ETenant, &orchestration.Agent{
 		ID: loopE2EWorkerAgent, Name: "Factory e2e coder",
 		Roles:   []orchestration.AgentRole{orchestration.AgentRoleCoding},
-		Backend: loopE2EBackend, Model: "claude-opus-5",
+		Backend: loopE2EBackend, Model: loopE2EModel,
 	})
 	require.NoError(t, err, "defining the worker Agent")
 	return ref
@@ -1263,7 +1347,7 @@ func registerFactoryProject(t *testing.T, srv *server.Server, backend *e2eAgentB
 			TenantID: loopE2ETenant, Name: loopE2EProject,
 			WorkspacePath: factoryProjectWorkspace(t),
 			GitRepoURL:    "file://" + repo, GitDefaultBranch: "main",
-			GitAuthorName: "agent-" + loopE2EProject, GitAuthorEmail: "agent-" + loopE2EProject + "@example.internal",
+			GitAuthorName: "agent-" + loopE2EProject, GitAuthorEmail: "agent-" + loopE2EProject + "@example.com",
 			GitSigningEnabled: true, GitSigningKeyName: loopE2EKeyName, GitSigningKeyScope: loopE2EKeyScope, GitSigningKeyOwner: loopE2EKeyOwner,
 		})
 		require.NoError(t, createErr)
@@ -1331,7 +1415,15 @@ func factoryCtx() context.Context {
 	return orchestration.ContextWithTenant(tenantctx.WithTenant(context.Background(), loopE2ETenant), loopE2ETenant)
 }
 
-// awaitJob waits for one job to reach a terminal state and returns it.
+// awaitJob waits for the delivery job, the one the sdlc runner drives, to
+// reach a terminal state and returns it.
+//
+// THE RUNNER IS PART OF THE QUESTION. A node that starts with a project
+// already bound runs its backstop boot pass, and that pass starts a triage job
+// which finds nothing to judge and completes within milliseconds. A wait for
+// any job in the wanted state returns on that one while the delivery is still
+// initializing, and the caller then reads a forge the delivery has not
+// touched yet.
 func awaitJob(t *testing.T, srv *server.Server, want orchestration.JobState) *orchestration.JobStatus {
 	t.Helper()
 	var found *orchestration.JobStatus
@@ -1341,13 +1433,13 @@ func awaitJob(t *testing.T, srv *server.Server, want orchestration.JobState) *or
 			return false
 		}
 		for _, job := range jobs {
-			if job.State == want {
+			if job.State == want && job.Runner == sdlc.JobRunnerName {
 				found = job
 				return true
 			}
 		}
 		return false
-	}, 90*time.Second, 50*time.Millisecond, "no job reached %s", want)
+	}, 90*time.Second, 50*time.Millisecond, "no %s job reached %s", sdlc.JobRunnerName, want)
 	return found
 }
 
@@ -1406,24 +1498,42 @@ func taskOfJob(t *testing.T, srv *server.Server, job *orchestration.JobStatus) s
 	return job.Config.TaskID
 }
 
-// TestSDLCRunner_ChangesRequestedRunsAnotherRoundOnTheSameSession: the review
-// sends the work back, the SAME worker is prompted again with the findings,
-// and the second round lands.
-func TestSDLCRunner_ChangesRequestedRunsAnotherRoundOnTheSameSession(t *testing.T) {
+// TestSDLCRunner_ChangesRequestedRunsAnotherRoundOnTheSameBranch: the review
+// sends the work back and the second round lands on the same branch and
+// workspace, through the same pull request. The runner closes the worker on
+// entry to reviewing (go-quicbaas#938), so the round spawns a fresh one: two
+// spawns over the job's life, but never more than WorkerSessionCount live at
+// once.
+func TestSDLCRunner_ChangesRequestedRunsAnotherRoundOnTheSameBranch(t *testing.T) {
 	rig := startFactory(t, 72)
 	loopForge.setVerdictOnOpen("REQUEST_CHANGES")
-	rig.backend.onPrompt = func(string) {
-		if rig.backend.promptCount() >= 2 {
-			loopForge.approveEveryOpenPullRequest()
+	// Round one opens the pull request on the head the reviewer refuses.
+	// The fake forge keeps that head on the pull request until an approval.
+	var refused *sdlc.ForgePullRequest
+	require.Eventually(t, func() bool {
+		prs := loopForge.pullRequests()
+		if len(prs) != 1 || prs[0].HeadSHA == "" {
+			return false
 		}
-	}
+		refused = prs[0]
+		return true
+	}, 90*time.Second, 50*time.Millisecond, "round one never opened its pull request")
+	// The reviewer approves only once round two has pushed a new head.
+	require.Eventually(t, func() bool {
+		return rig.backend.promptCount() >= 2 && branchHeadOrEmpty(t, rig.repo, refused.HeadRef) != refused.HeadSHA
+	}, 90*time.Second, 50*time.Millisecond, "the second round never pushed a new head")
+	loopForge.approveEveryOpenPullRequest()
 
 	job := awaitJob(t, rig.srv, orchestration.JobStateCompleted)
 	require.Equal(t, sdlc.JobRunnerName, job.Runner)
-	require.Equal(t, 1, rig.backend.spawnCount(), "a review round must not spawn a second worker")
+	require.Equal(t, sdlc.WorkerSessionCount, rig.backend.peakLiveSessions(), "a review round held two workers at once")
+	require.Equal(t, 2, rig.backend.spawnCount(), "each round spawns one worker, since reviewing released the first")
+	workspaces := rig.backend.spawnedWorkspaces()
+	require.Equal(t, workspaces[0], workspaces[1], "the review round ran on a different workspace or branch")
 	require.GreaterOrEqual(t, rig.backend.promptCount(), 2, "the findings never reached the worker")
 	require.Len(t, loopForge.pullRequests(), 1, "a review round opened a second pull request")
-	t.Logf("OBSERVED: sessions=%d prompts=%d iteration=%d", rig.backend.spawnCount(), rig.backend.promptCount(), job.Iteration)
+	t.Logf("OBSERVED: sessions=%d peak=%d prompts=%d iteration=%d",
+		rig.backend.spawnCount(), rig.backend.peakLiveSessions(), rig.backend.promptCount(), job.Iteration)
 }
 
 // TestSDLCRunner_TrunkBasedCarveOutLandsWithoutAPullRequest: a change class
@@ -1634,12 +1744,17 @@ func TestSDLCRunner_TheContainerCommitsSignsAndPushes(t *testing.T) {
 	containerDir := filepath.Join(orchestration.WorkspaceCheckoutRoot, loopE2EProject)
 	commands := rig.runtime.commandsRun()
 	require.NotEmpty(t, commands, "no command was run in the worker's container")
-	var sawClone, sawCommit, sawPush bool
+	var sawClone, sawCommit, sawPush, sawCredential bool
 	for _, call := range rig.runtime.execs {
 		require.Contains(t, []string{orchestration.WorkspaceCheckoutRoot, containerDir}, call.WorkDir,
 			"a command named %q, which is neither the checkout root nor the container's checkout", call.WorkDir)
-		// git and the binding's verification are the two things the runner runs
-		// in a worker's container; both run there and nothing else does.
+		// Beside git and the binding's verification, the runner delivers the
+		// forge token to the container's credential tier and revokes it; those
+		// run there and nothing else does.
+		if call.forgeCredentialStep() {
+			sawCredential = true
+			continue
+		}
 		require.Contains(t, []string{"git", "sh"}, call.Cmd[0],
 			"the runner ran something unaccounted for in the container: %v", call.Cmd)
 		if strings.Contains(strings.Join(call.Cmd, " "), " clone ") {
@@ -1658,17 +1773,18 @@ func TestSDLCRunner_TheContainerCommitsSignsAndPushes(t *testing.T) {
 	require.True(t, sawClone, "nothing cloned in the container: %v", commands)
 	require.True(t, sawCommit, "nothing committed in the container: %v", commands)
 	require.True(t, sawPush, "nothing pushed from the container: %v", commands)
+	require.True(t, sawCredential, "the forge token never reached the container: %v", commands)
 
 	// The commit that reached the remote carries a signature, and git accepts
 	// it against the tenant's signing key.
 	raw := gitOut(t, rig.repo, "cat-file", "commit", delivery.HeadSHA)
 	require.Contains(t, raw, "BEGIN SSH SIGNATURE",
 		"the head the container published carries no signature:\n%s", raw)
-	require.Contains(t, raw, "agent-"+loopE2EProject+"@example.internal",
+	require.Contains(t, raw, "agent-"+loopE2EProject+"@example.com",
 		"the commit was not authored as the project's agent identity:\n%s", raw)
 
 	allowed := filepath.Join(t.TempDir(), "allowed_signers")
-	entry := "agent-" + loopE2EProject + "@example.internal " + tenantSigningPublicKey(t, rig.srv)
+	entry := "agent-" + loopE2EProject + "@example.com " + tenantSigningPublicKey(t, rig.srv)
 	require.NoError(t, os.WriteFile(allowed, []byte(entry+"\n"), 0o600))
 	verified := gitOut(t, rig.repo, "-c", "gpg.ssh.allowedSignersFile="+allowed, "verify-commit", delivery.HeadSHA)
 	require.Contains(t, verified, "Good",
@@ -1727,7 +1843,7 @@ func TestSDLCRunner_TheContainerRunsTheVerificationCommands(t *testing.T) {
 
 	var verifications []e2eExecCall
 	for _, call := range rig.runtime.execs {
-		if call.Cmd[0] == "sh" {
+		if call.Cmd[0] == "sh" && !call.forgeCredentialStep() {
 			verifications = append(verifications, call)
 		}
 	}
