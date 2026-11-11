@@ -347,6 +347,15 @@ func kmsGenerateKeyArgs(req interface{}) (map[string]interface{}, error) {
 	if r.DeletionProtection {
 		args["deletion_protection"] = true
 	}
+	if r.Description != "" {
+		args["description"] = r.Description
+	}
+	if len(r.Tags) > 0 {
+		args["tags"] = r.Tags
+	}
+	if r.Owner != "" {
+		args["owner"] = r.Owner
+	}
 	return args, nil
 }
 

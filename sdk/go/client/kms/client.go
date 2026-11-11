@@ -107,6 +107,15 @@ type GenerateKeyRequest struct {
 
 	// DeletionProtection prevents accidental deletion of the key.
 	DeletionProtection bool `json:"deletion_protection,omitempty"`
+
+	// Description is a human-readable description.
+	Description string `json:"description,omitempty"`
+
+	// Tags are optional key-value metadata.
+	Tags map[string]string `json:"tags,omitempty"`
+
+	// Owner identifies the principal that owns the key.
+	Owner string `json:"owner,omitempty"`
 }
 
 // KeyAlgorithm represents the key algorithm.

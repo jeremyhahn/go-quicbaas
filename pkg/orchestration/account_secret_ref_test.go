@@ -100,14 +100,14 @@ func mustGetRefAccount(t *testing.T, store AccountStore, accountID string) *Acco
 
 func TestAccountTokenManager_ResolvesSecretRefAsAccessToken(t *testing.T) {
 	resolver := newMemorySecretResolver()
-	resolver.put("tenant-a", "agents/claude/claude1/oauth_token", "sk-fake-<account>\n")
+	resolver.put("tenant-a", "agents/claude/claude1/oauth_token", "sk-fake-token-a\n")
 	manager, _, account := refAccountFixture(t, resolver, AccountProviderClaude, "agents/claude/claude1/oauth_token", "")
 
 	cred, err := manager.Resolve(context.Background(), account)
 	if err != nil {
 		t.Fatalf("Resolve: %v", err)
 	}
-	if cred.AccessToken != "sk-fake-<account>" {
+	if cred.AccessToken != "sk-fake-token-a" {
 		t.Errorf("AccessToken = %q, want the trimmed secret value", cred.AccessToken)
 	}
 	if cred.AccessTokenEnvKey != "CLAUDE_CODE_OAUTH_TOKEN" {
