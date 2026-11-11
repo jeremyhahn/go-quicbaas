@@ -894,10 +894,11 @@ func newSDLCForgeTokenSources(commands map[string]config.SDLCForgeTokenCommand) 
 	sources := make(map[sdlc.ForgeType]sdlc.ForgeTokenSource, len(commands))
 	for forgeType, command := range commands {
 		source, err := sdlc.NewCommandTokenSource(sdlc.CommandTokenSourceConfig{
-			Argv:          command.Argv,
-			Env:           []string{sdlc.ForgeTokenEnvType + "=" + forgeType},
-			RefreshBefore: command.RefreshBefore,
-			Timeout:       command.Timeout,
+			Argv:            command.Argv,
+			Env:             []string{sdlc.ForgeTokenEnvType + "=" + forgeType},
+			RefreshBefore:   command.RefreshBefore,
+			Timeout:         command.Timeout,
+			AllowedBaseURLs: command.AllowedBaseURLs,
 		})
 		if err != nil {
 			return nil, err

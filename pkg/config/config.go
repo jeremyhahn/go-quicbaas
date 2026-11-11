@@ -1203,6 +1203,13 @@ type SDLCForgeTokenCommand struct {
 
 	// Timeout bounds one run. Zero takes 30s.
 	Timeout time.Duration `mapstructure:"timeout"`
+
+	// AllowedBaseURLs are the forge API origins the command may be run
+	// for, as scheme://host[:port] with an optional path prefix. A binding
+	// whose base URL is not one of them is refused before the command runs,
+	// so a tenant's binding cannot point the node's credential at a host of
+	// its choosing. Required.
+	AllowedBaseURLs []string `mapstructure:"allowed_base_urls"`
 }
 
 // SDLCSurfacing is the retry behind a parked task's comment on its issue.

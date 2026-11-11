@@ -57,12 +57,15 @@ func TestSDLCForge_NegativeIsRefusedAndZeroIsNot(t *testing.T) {
 
 func TestSDLCForge_TokenCommandRefusalsNameTheirKey(t *testing.T) {
 	const argv = "/usr/local/bin/forge-mint"
+	const api = "https://api.github.com"
 	cases := map[string]map[string]SDLCForgeTokenCommand{
-		"sdlc.forge.token_commands.gitlab":                {"gitlab": {Argv: []string{argv}}},
-		"sdlc.forge.token_commands.github.argv":           {"github": {}},
-		"sdlc.forge.token_commands.gitea.argv":            {"gitea": {Argv: []string{"bin/forge-mint"}}},
-		"sdlc.forge.token_commands.github.refresh_before": {"github": {Argv: []string{argv}, RefreshBefore: -time.Second}},
-		"sdlc.forge.token_commands.github.timeout":        {"github": {Argv: []string{argv}, Timeout: -time.Second}},
+		"sdlc.forge.token_commands.gitlab":                   {"gitlab": {Argv: []string{argv}}},
+		"sdlc.forge.token_commands.github.argv":              {"github": {}},
+		"sdlc.forge.token_commands.gitea.argv":               {"gitea": {Argv: []string{"bin/forge-mint"}}},
+		"sdlc.forge.token_commands.github.refresh_before":    {"github": {Argv: []string{argv}, RefreshBefore: -time.Second, AllowedBaseURLs: []string{api}}},
+		"sdlc.forge.token_commands.github.timeout":           {"github": {Argv: []string{argv}, Timeout: -time.Second, AllowedBaseURLs: []string{api}}},
+		"sdlc.forge.token_commands.github.allowed_base_urls": {"github": {Argv: []string{argv}}},
+		"sdlc.forge.token_commands.gitea.allowed_base_urls":  {"gitea": {Argv: []string{argv}, AllowedBaseURLs: []string{"https://user:pw@gitea.test"}}},
 	}
 	for key, commands := range cases {
 		t.Run(key, func(t *testing.T) {
@@ -79,8 +82,8 @@ func TestSDLCForge_TokenCommandRefusalsNameTheirKey(t *testing.T) {
 
 	cfg := enabledSDLCSection()
 	cfg.Forge.TokenCommands = map[string]SDLCForgeTokenCommand{
-		"github": {Argv: []string{argv, "--app", "pilot"}, RefreshBefore: 5 * time.Minute, Timeout: 30 * time.Second},
-		"gitea":  {Argv: []string{argv}},
+		"github": {Argv: []string{argv, "--app", "pilot"}, RefreshBefore: 5 * time.Minute, Timeout: 30 * time.Second, AllowedBaseURLs: []string{api}},
+		"gitea":  {Argv: []string{argv}, AllowedBaseURLs: []string{"https://gitea.test/api/v1"}},
 	}
 	v := NewValidator()
 	v.validateSDLC(cfg)

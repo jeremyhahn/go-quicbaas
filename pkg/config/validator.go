@@ -1110,4 +1110,15 @@ func (v *Validator) validateSDLCForgeTokenCommand(key, forgeType string, cmd SDL
 	if cmd.Timeout < 0 {
 		v.addError(key+".timeout", "must not be negative; zero takes 30s")
 	}
+	if len(cmd.AllowedBaseURLs) == 0 {
+		v.addError(key+".allowed_base_urls", "must name the forge API origins the command may be run for")
+	}
+	for _, raw := range cmd.AllowedBaseURLs {
+		u, err := url.Parse(raw)
+		if err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "" ||
+			u.User != nil || u.RawQuery != "" || u.Fragment != "" {
+			v.addError(key+".allowed_base_urls", "must hold absolute http(s) URLs with no credentials, query or fragment")
+			return
+		}
+	}
 }

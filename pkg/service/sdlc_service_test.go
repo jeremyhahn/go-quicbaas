@@ -1056,6 +1056,22 @@ func TestSDLCService_ForgeTokenSourceErrorIsReturnedTyped(t *testing.T) {
 	}
 }
 
+func TestSDLCService_ReviewerForgeTokenKeepsTheReviewersSecret(t *testing.T) {
+	rig := newSDLCServiceRig(t)
+	cfg := rig.binding().Forge
+	source := &sdlcFakeTokenSource{token: "command-token"}
+	rig.svc.forgeTokens = map[sdlc.ForgeType]sdlc.ForgeTokenSource{cfg.Type: source}
+	rig.secrets.err = errors.New("secret read refused")
+	reviewer := sdlc.ReviewerConfig{TokenSecretRef: "reviewer-token"}
+
+	if _, err := rig.svc.ForgeToken(context.Background(), sdlcTestTenant, reviewer.ForgeConfigFor(cfg)); err == nil {
+		t.Fatal("a reviewer's token must come from the reviewer's secret, not the node's command")
+	}
+	if len(source.baseURLs) != 0 {
+		t.Fatal("the node's command was asked for a reviewer's token")
+	}
+}
+
 func TestSDLCService_ForgeTokenOfAnotherTypeStillReadsTheSecret(t *testing.T) {
 	rig := newSDLCServiceRig(t)
 	cfg := rig.binding().Forge
