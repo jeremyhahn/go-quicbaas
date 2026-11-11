@@ -4284,8 +4284,8 @@ clean: ## Clean build artifacts and test data
 	rm -f /tmp/quicbaas-*.log /tmp/quicbaas-*.pid /tmp/QuicBaaS_*.log 2>/dev/null || true
 	@# Clean test data and logs
 	rm -rf data/ logs/ 2>/dev/null || true
-	@# Clean testdata directories (except processor testdata which has real test fixtures)
-	find . -type d -name "testdata" -not -path "*/pkg/rag/processor/testdata" -exec rm -rf {} + 2>/dev/null || true
+	@# Clean untracked and ignored files under testdata directories; tracked fixtures are never removed
+	git clean -fdxq -- ':(glob)**/testdata/**'
 	@# Clean benchmark artifacts
 	rm -rf test/benchmark/results test/benchmark/profiles/*.prof 2>/dev/null || true
 	@# Clean empty directories left by tests
