@@ -5603,7 +5603,7 @@ release-alpha:
 # DEPS_CHECK_GOPROXY defaults to the fleet cache when DEVCACHE_GOPROXY is set,
 # then the public proxy. First-party modules resolve through the proxy and the
 # checksum database like any other.
-DEPS_CHECK_GOPROXY ?= $(if $(DEVCACHE_GOPROXY),$(DEVCACHE_GOPROXY)|)https://proxy.golang.org|direct
+DEPS_CHECK_GOPROXY ?= $(if $(DEVCACHE_GOPROXY),$(DEVCACHE_GOPROXY)|)https://proxy.golang.org
 DEPS_CHECK_MODULES := . sdk/go
 # The JSON fields scripts/depscheck reads, written by a template rather than
 # `-json`: `-json` also resolves each module's retractions and deprecation,
@@ -5683,6 +5683,11 @@ docker-build: ## Build both devcontainer images, toolchain and integration
 .PHONY: docker-build-toolchain-image
 docker-build-toolchain-image: ## Build the toolchain devcontainer image alone
 	@$(DEVCONTAINER_BUILD) toolchain
+
+# ci-template v1.30 (devcontainer.md section 6): the lint and lint-gates jobs
+# build the toolchain image alone under the template's target name.
+.PHONY: docker-build-toolchain
+docker-build-toolchain: docker-build-toolchain-image ## Build the toolchain devcontainer image alone (ci-template name)
 
 # The integration image is the node image of the integration compose stack
 # (go-quicbaas#1383): the targets that drive that stack build it first and hand
