@@ -192,6 +192,8 @@ func TestModule_RegisterGRPC_RegistersFullGRPCSurface(t *testing.T) {
 		&pb.SecretsManagement_ServiceDesc,
 		&pb.KeyManagement_ServiceDesc,
 		&pb.DEKManagement_ServiceDesc,
+		&pb.VectorDB_ServiceDesc,
+		&pb.VectorAdmin_ServiceDesc,
 		&pb.PromptService_ServiceDesc,
 		&pb.AgentCatalogService_ServiceDesc,
 		&pb.SDLCService_ServiceDesc,
@@ -200,7 +202,7 @@ func TestModule_RegisterGRPC_RegistersFullGRPCSurface(t *testing.T) {
 		&iampb.SessionService_ServiceDesc,
 	}
 	info := server.GetServiceInfo()
-	require.Len(t, info, len(generated), "exactly the twenty-four quicbaas-native and broker services must be registered")
+	require.Len(t, info, len(generated), "exactly the twenty-six quicbaas-native and broker services must be registered")
 
 	for _, desc := range generated {
 		svcInfo, ok := info[desc.ServiceName]
@@ -242,8 +244,6 @@ func TestModule_RegisterGRPC_ExcludesProxyPlanes(t *testing.T) {
 		pb.Barrier_ServiceDesc.ServiceName,
 		pb.TenantBarrier_ServiceDesc.ServiceName,
 		pb.Ceremony_ServiceDesc.ServiceName,
-		pb.VectorDB_ServiceDesc.ServiceName,
-		pb.VectorAdmin_ServiceDesc.ServiceName,
 	}
 	for _, name := range excluded {
 		_, ok := info[name]
