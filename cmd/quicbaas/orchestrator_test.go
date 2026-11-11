@@ -592,7 +592,6 @@ func TestOrchestratorRunOrchClose(t *testing.T) {
 		err := cmd.RunE(cmd, []string{"sess_123"})
 		assert.NoError(t, err)
 	})
-
 }
 
 func TestOrchestratorRunOrchSessions(t *testing.T) {
@@ -617,7 +616,6 @@ func TestOrchestratorRunOrchSessions(t *testing.T) {
 		err := cmd.RunE(cmd, []string{})
 		assert.NoError(t, err)
 	})
-
 }
 
 func TestOrchestratorRunOrchBackends(t *testing.T) {
@@ -642,7 +640,6 @@ func TestOrchestratorRunOrchBackends(t *testing.T) {
 		err := cmd.RunE(cmd, []string{})
 		assert.NoError(t, err)
 	})
-
 }
 
 func TestOrchestratorRunOrchHealth(t *testing.T) {

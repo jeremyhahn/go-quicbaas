@@ -18,9 +18,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/require"
+
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
-	"github.com/stretchr/testify/require"
 )
 
 func newTestL2Logger(t *testing.T) interfaces.Logger {
