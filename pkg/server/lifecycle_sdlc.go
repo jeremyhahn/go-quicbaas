@@ -515,7 +515,7 @@ func (s *Server) startSDLC() error {
 		// keyspace; without it every tenant's bindings would share one store.
 		return &SDLCInitError{Component: "tenant store resolver", Cause: ErrSDLCUnavailable}
 	}
-	store, err := sdlc.NewStore(svcs.StoreResolver)
+	store, err := sdlc.NewStore(s.liveTenantStoreResolver())
 	if err != nil {
 		return &SDLCInitError{Component: "store", Cause: err}
 	}
