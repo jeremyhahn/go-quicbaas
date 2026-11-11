@@ -112,7 +112,7 @@ func TestRemoteKMSResolver_CanResolve(t *testing.T) {
 		// Positive cases
 		{name: "valid remote-kms URI", raw: "remote-kms://host:9443/path/to/secret", want: true},
 		{name: "remote-kms with localhost", raw: "remote-kms://localhost:9443/secret", want: true},
-		{name: "remote-kms with IP", raw: "remote-kms://192.168.1.100:9443/db/password", want: true},
+		{name: "remote-kms with IP", raw: "remote-kms://192.0.2.100:9443/db/password", want: true},
 		{name: "remote-kms with long path", raw: "remote-kms://host:9443/very/long/path/to/secret", want: true},
 		{name: "remote-kms without port", raw: "remote-kms://host/secret", want: true},
 
@@ -208,8 +208,8 @@ func TestRemoteKMSResolver_Resolve_URIParsing(t *testing.T) {
 		},
 		{
 			name:         "IP address",
-			uri:          "remote-kms://192.168.1.100:9443/db/password",
-			wantHost:     "192.168.1.100:9443",
+			uri:          "remote-kms://192.0.2.100:9443/db/password",
+			wantHost:     "192.0.2.100:9443",
 			wantSecretID: "db/password",
 		},
 		{

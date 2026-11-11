@@ -2204,7 +2204,7 @@ func TestIsUnixSocketAddress_Coverage(t *testing.T) {
 		expected bool
 	}{
 		{"tcp_address", "localhost:50051", false},
-		{"tcp_with_host", "192.168.1.1:50051", false},
+		{"tcp_with_host", "192.0.2.1:50051", false},
 		{"unix_prefix", "unix:///tmp/quicbaas.sock", true},
 		{"unix_abstract_prefix", "unix-abstract://quicbaas", true},
 		{"absolute_path_sock", "/tmp/quicbaas.sock", true},

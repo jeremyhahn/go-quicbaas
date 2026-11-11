@@ -297,7 +297,6 @@ func TestGenerateKey(t *testing.T) {
 }
 
 func TestImportKey(t *testing.T) {
-	log, _ := logger.New(logger.LogConfig{Level: "debug", Format: "json", Output: "stdout"})
 	now := time.Now()
 
 	tests := []struct {
@@ -365,9 +364,9 @@ func TestImportKey(t *testing.T) {
 			mockMgr := &mockKMSManager{
 				importKeyFunc: tt.mockFunc,
 			}
-			server := NewKMSServer(mockMgr, log)
+			server := newServiceBackedKMSServer(t, mockMgr)
 
-			resp, err := server.ImportKey(context.Background(), tt.request)
+			resp, err := server.ImportKey(importTenantContext(), tt.request)
 
 			if tt.expectError {
 				require.Error(t, err)
@@ -1669,48 +1668,6 @@ func TestGenerateKey_UpdateMetadataError(t *testing.T) {
 }
 
 // --- ImportKey edge cases ---
-
-func TestImportKey_TypeAssertionFailure(t *testing.T) {
-	mgr := &mockKMSManager{
-		importKeyFunc: func(_ context.Context, _ string, _ []byte, _ string) (interface{}, error) {
-			return "not-a-key-metadata", nil
-		},
-	}
-	srv := newTestKMSServer(t, mgr)
-
-	_, err := srv.ImportKey(context.Background(), &pb.ImportKeyRequest{
-		Name:        "import-type-fail",
-		KeyMaterial: []byte("key-material"),
-		KeySpec: &pb.KeySpec{
-			Algorithm: pb.KeyAlgorithm_KEY_ALG_AES_256_GCM,
-		},
-	})
-	require.Error(t, err)
-	assert.Equal(t, codes.Internal, status.Code(err))
-}
-
-func TestImportKey_UpdateMetadataError(t *testing.T) {
-	now := time.Now()
-	mgr := &mockKMSManager{
-		importKeyFunc: func(_ context.Context, keyID string, _ []byte, _ string) (interface{}, error) {
-			return newMockKeyMetadata(keyID, now), nil
-		},
-		updateStoredMetadataFunc: func(_ interface{}) error {
-			return dberrors.New(dberrors.ErrInternal, "update", "persist failed")
-		},
-	}
-	srv := newTestKMSServer(t, mgr)
-
-	resp, err := srv.ImportKey(context.Background(), &pb.ImportKeyRequest{
-		Name:        "import-meta-err",
-		KeyMaterial: []byte("key-material"),
-		KeySpec: &pb.KeySpec{
-			Algorithm: pb.KeyAlgorithm_KEY_ALG_AES_256_GCM,
-		},
-	})
-	require.NoError(t, err)
-	assert.NotNil(t, resp)
-}
 
 // --- GetKey edge cases ---
 

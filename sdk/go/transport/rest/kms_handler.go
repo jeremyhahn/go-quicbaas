@@ -309,6 +309,7 @@ type kmsGenerateKeyRequest struct {
 	Description   string                   `json:"description,omitempty"`
 	KeyAttributes *kmsKeyAttributesRequest `json:"key_attributes"`
 	Tags          map[string]string        `json:"tags,omitempty"`
+	Owner         string                   `json:"owner,omitempty"`
 }
 
 type kmsImportKeyRequest struct {
@@ -352,13 +353,16 @@ func (h *kmsRESTHandler) handleGenerateKey(ctx context.Context, req interface{})
 		return nil, errors.NewInvalidInput("rest.kms.GenerateKey", "request is required")
 	}
 	body := &kmsGenerateKeyRequest{
-		Name: r.Name,
+		Name:        r.Name,
+		Description: r.Description,
 		KeyAttributes: &kmsKeyAttributesRequest{
 			Algorithm:          r.Algorithm.String(),
 			KeyUsage:           kmsUsagesToStrings(r.Usage),
 			Exportable:         r.Exportable,
 			DeletionProtection: r.DeletionProtection,
 		},
+		Tags:  r.Tags,
+		Owner: r.Owner,
 	}
 	var wire kmsGenerateKeyWire
 	if err := h.transport.doJSONRequest(ctx, http.MethodPost, "/api/v1/kms/keys", body, &wire); err != nil {

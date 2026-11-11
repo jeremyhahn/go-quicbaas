@@ -378,7 +378,12 @@ func (k *kmsServiceImpl) SafetyCheck(ctx context.Context, req *SafetyCheckReques
 		threshold = int(req.ThresholdPercent)
 	}
 
-	results := k.safetyTracker.SafetyCheck(threshold)
+	// The tracker is shared by every tenant: report only the caller's own.
+	tenantID, err := prepareTenantContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+	results := safetyResultsForTenant(tenantID, k.safetyTracker.SafetyCheck(threshold))
 
 	items := make([]SafetyCheckItem, 0, len(results))
 	keyCount := 0
@@ -411,7 +416,12 @@ func (k *kmsServiceImpl) SafetyCheck(ctx context.Context, req *SafetyCheckReques
 
 // SafetyReport generates a comprehensive safety report for all keys/DEKs.
 func (k *kmsServiceImpl) SafetyReport(ctx context.Context, req *SafetyReportRequest) (*SafetyReportResponse, error) {
-	results := k.safetyTracker.SafetyReport()
+	// The tracker is shared by every tenant: report only the caller's own.
+	tenantID, err := prepareTenantContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+	results := safetyResultsForTenant(tenantID, k.safetyTracker.SafetyReport())
 
 	items := make([]SafetyCheckItem, 0, len(results))
 	var totalOps uint64
@@ -549,19 +559,6 @@ func (k *kmsServiceImpl) GenerateKey(ctx context.Context, req *GenerateKeyReques
 		Timestamp: time.Now(),
 	}
 
-	if k.metrics != nil {
-		k.metrics.keysGeneratedTotal.Inc()
-		k.metrics.activeKeys.Inc()
-	}
-
-	if k.logger != nil {
-		k.logger.WithFields(map[string]interface{}{
-			"key_id":    req.Name,
-			"algorithm": KeyAlgorithm(attrsToAlgorithm(req.KeyAttributes)),
-			"owner":     req.Owner,
-		}).Info("Generated new cryptographic key")
-	}
-
 	// Persist application-level metadata (description, exportable, tags, owner,
 	// and optional rotation policy) that the crypto backend does not store natively.
 	if kmsMeta, ok := keyMetadata.(*kms.KeyMetadata); ok {
@@ -572,6 +569,10 @@ func (k *kmsServiceImpl) GenerateKey(ctx context.Context, req *GenerateKeyReques
 		kmsMeta.Tags = req.Tags
 		kmsMeta.Owner = req.Owner
 		kmsMeta.Usage = serviceUsageToKMS(req.Usage)
+
+		// policyPersisted records that this call wrote the rotation policy to
+		// the KVStore, so the rollback below removes exactly that entry.
+		policyPersisted := false
 
 		// Apply rotation policy if supplied at creation time.
 		if resolvedRotationPolicy != nil {
@@ -585,17 +586,44 @@ func (k *kmsServiceImpl) GenerateKey(ctx context.Context, req *GenerateKeyReques
 						"error":  persistErr.Error(),
 					}).Warn("GenerateKey: failed to persist rotation policy to KVStore")
 				}
+			} else {
+				policyPersisted = true
 			}
 		}
 
-		if err := k.kmsManager.UpdateStoredMetadata(kmsMeta); err != nil {
-			if k.logger != nil {
-				k.logger.WithFields(map[string]interface{}{
-					"key_id": req.Name,
-					"error":  err.Error(),
-				}).Warn("Failed to persist application-level key metadata")
+		// A key without its metadata must not exist: delete the key this
+		// call created (the name check above refused an existing one) and
+		// the rotation policy it persisted, then fail, so the caller can
+		// retry the same name and the retry never inherits this attempt's
+		// policy. A cleanup that fails is carried in the returned error.
+		if storeErr := k.kmsManager.UpdateStoredMetadata(kmsMeta); storeErr != nil {
+			if k.metrics != nil {
+				k.metrics.errorsByType.With("kms_error", "generate_key").Inc()
 			}
+			cause := storeErr
+			if delErr := k.kmsManager.DeleteKey(ctx, keyID); delErr != nil {
+				cause = stderrors.Join(cause, delErr)
+			}
+			if policyPersisted {
+				if policyErr := k.persistRotationPolicy(ctx, keyID, nil); policyErr != nil {
+					cause = stderrors.Join(cause, policyErr)
+				}
+			}
+			return nil, WrapError(cause, errors.ErrInternal, "kms.GenerateKey", "failed to store key metadata")
 		}
+	}
+
+	if k.metrics != nil {
+		k.metrics.keysGeneratedTotal.Inc()
+		k.metrics.activeKeys.Inc()
+	}
+
+	if k.logger != nil {
+		k.logger.WithFields(map[string]interface{}{
+			"key_id":    req.Name,
+			"algorithm": KeyAlgorithm(attrsToAlgorithm(req.KeyAttributes)),
+			"owner":     req.Owner,
+		}).Info("Generated new cryptographic key")
 	}
 
 	// Track the tenant-scoped key name to prevent duplicates within a tenant
@@ -640,7 +668,7 @@ func (k *kmsServiceImpl) ImportKey(ctx context.Context, req *ImportKeyRequest) (
 		if k.metrics != nil {
 			k.metrics.errorsByType.With("kms_error", "import_key").Inc()
 		}
-		return nil, WrapError(err, errors.ErrInternal, "kms.ImportKey", "failed to import key")
+		return nil, WrapError(err, importKeyErrorCode(err), "kms.ImportKey", "failed to import key")
 	}
 
 	// Convert manager response to service response
@@ -701,6 +729,32 @@ func (k *kmsServiceImpl) ImportKey(ctx context.Context, req *ImportKeyRequest) (
 	}
 
 	return resp, nil
+}
+
+// importKeyClassifiedCodes are the manager failure codes ImportKey passes
+// through unchanged. WrapError always stamps the supplied code, so without
+// this set an import of an existing key (AlreadyExists) or of bad material
+// (InvalidInput) would be clobbered with ErrInternal and answer 500.
+var importKeyClassifiedCodes = map[errors.ErrorCode]struct{}{
+	errors.ErrAlreadyExists: {},
+	errors.ErrNotFound:      {},
+	errors.ErrInvalidInput:  {},
+}
+
+// importKeyErrorCode returns the code ImportKey reports for a manager
+// failure: the manager's own code when it classified the failure, not-found
+// for a missing key, and ErrInternal for anything unclassified.
+func importKeyErrorCode(err error) errors.ErrorCode {
+	if stderrors.Is(err, kms.ErrKeyNotFound) {
+		return errors.ErrNotFound
+	}
+	var qbErr *errors.QBError
+	if stderrors.As(err, &qbErr) {
+		if _, ok := importKeyClassifiedCodes[qbErr.Code]; ok {
+			return qbErr.Code
+		}
+	}
+	return errors.ErrInternal
 }
 
 // GetKey retrieves key material or public key by key ID.
@@ -1912,6 +1966,16 @@ func (k *kmsServiceImpl) validateGenerateKeyRequest(req *GenerateKeyRequest) err
 func (k *kmsServiceImpl) validateImportKeyRequest(req *ImportKeyRequest) error {
 	if req == nil {
 		return NewError(errors.ErrInvalidInput, "kms.validateImportKeyRequest", "request is nil")
+	}
+
+	if strings.TrimSpace(req.Name) == "" {
+		return NewError(errors.ErrInvalidInput, "kms.validateImportKeyRequest", "key name is required")
+	}
+
+	// A name inside the tenant key namespace would let the caller address
+	// another tenant's keys, so it is refused rather than scoped.
+	if strings.HasPrefix(req.Name, kmsTenantKeyPrefix) {
+		return NewError(errors.ErrInvalidInput, "kms.validateImportKeyRequest", "key name uses the reserved tenant namespace")
 	}
 
 	if len(req.KeyMaterial) == 0 {

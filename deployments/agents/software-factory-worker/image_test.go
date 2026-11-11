@@ -32,6 +32,11 @@ import (
 // never varies without an edit to the Dockerfile itself.
 var dockerfileArgPattern = regexp.MustCompile(`(?m)^ARG\s+([A-Za-z_][A-Za-z0-9_]*)\s*$`)
 
+// privateModuleVarPattern matches an ARG or ENV instruction line that names
+// GOPRIVATE, GONOPROXY or GONOSUMDB: every module resolves through the proxy
+// and the checksum database, so the image declares none of them.
+var privateModuleVarPattern = regexp.MustCompile(`(?m)^\s*(ARG|ENV)\s.*\b(GOPRIVATE|GONOPROXY|GONOSUMDB)\b.*$`)
+
 // dockerfileCopyPattern matches a COPY instruction's own line (not the
 // heredoc body that may follow it).
 var dockerfileCopyPattern = regexp.MustCompile(`(?m)^COPY\s+\S.*$`)
@@ -46,6 +51,7 @@ func testPins() Pins {
 	return Pins{Go: "1.27.1", Golangci: "v2.14.0", Gosec: "v2.29.0", Govulncheck: "v1.8.0", Gopls: "v0.23.0", Serena: "v1.7.0",
 		Actionlint: "v1.7.12", Shellcheck: "v0.11.0", ShellcheckSHA256X86_64: "8c3b", ShellcheckSHA256Aarch64: "12b3",
 		Opencode: "v1.18.35", OpencodeSHA256X86_64: "1ce4", OpencodeSHA256Aarch64: "abf3",
+		GH: "v2.103.3", GHSHA256X86_64: "9a9a", GHSHA256Aarch64: "8b8b",
 		Protoc: "36.2", ProtocSHA256X86_64: "aaaa", ProtocSHA256Aarch64: "bbbb",
 		ProtocGenGo: "v1.36.12", ProtocGenGoGRPC: "v1.6.2",
 		ToolDependencyFloors: "golang.org/x/mod@v0.41.0", SerenaDependencyFloors: "urllib3>=2.8.0",
@@ -117,6 +123,7 @@ func TestBuild_BuildArgsCarryEveryInput(t *testing.T) {
 		"ACTIONLINT_VERSION":        "v1.7.12", "SHELLCHECK_VERSION": "v0.11.0",
 		"SHELLCHECK_SHA256_X86_64": "8c3b", "SHELLCHECK_SHA256_AARCH64": "12b3",
 		"OPENCODE_VERSION": "v1.18.35", "OPENCODE_SHA256_X86_64": "1ce4", "OPENCODE_SHA256_AARCH64": "abf3",
+		"GH_VERSION": "v2.103.3", "GH_SHA256_X86_64": "9a9a", "GH_SHA256_AARCH64": "8b8b",
 		"PROTOC_VERSION": "36.2", "PROTOC_SHA256_X86_64": "aaaa", "PROTOC_SHA256_AARCH64": "bbbb",
 		"PROTOC_GEN_GO_VERSION": "v1.36.12", "PROTOC_GEN_GO_GRPC_VERSION": "v1.6.2",
 		"NODE_VERSION": "v26.10.0", "NODE_SHA256_X86_64": "cccc", "NODE_SHA256_AARCH64": "dddd", "NPM_VERSION": "12.2.0",
@@ -172,7 +179,6 @@ func TestDockerfile_DeclaresEveryBuildArgAndLabel(t *testing.T) {
 	// whether it belongs on the tag.
 	optionalBuildEnvArgs := map[string]bool{
 		"DEVCACHE_GOPROXY":      true,
-		"DEVCACHE_GOPRIVATE":    true,
 		"DEVCACHE_NPM_REGISTRY": true,
 	}
 	for _, arg := range dockerfileArgNames(dockerfile) {
@@ -191,10 +197,13 @@ func TestDockerfile_DeclaresEveryBuildArgAndLabel(t *testing.T) {
 			t.Errorf("ARG %s must never become an ENV: it would outlive the RUN that needs it", arg)
 		}
 	}
-	for _, name := range []string{"GOPROXY", "GOPRIVATE", "GONOPROXY", "GONOSUMDB", "npm_config_registry"} {
+	for _, name := range []string{"GOPROXY", "npm_config_registry"} {
 		if strings.Contains(dockerfile, "ENV "+name) {
 			t.Errorf("the Dockerfile must never ENV %s: an empty/unset cache must build exactly as it did before the caches existed", name)
 		}
+	}
+	for _, line := range privateModuleVarPattern.FindAllString(dockerfile, -1) {
+		t.Errorf("the image must never ARG or ENV a private-module variable: %q", strings.TrimSpace(line))
 	}
 
 	// The Dockerfile builds from an EMPTY context (pkg/orchestration/
@@ -254,16 +263,19 @@ func TestDockerfile_EmbedsDevcacheEnvAtThePinnedDigest(t *testing.T) {
 // TestDockerfile_GoInstallUsesDevcacheProxyChain proves the toolchain stage's
 // `go install` / `go get` / `go build` RUN feeds DEVCACHE_GOPROXY through
 // Go's `|` fallback chain -- never `,`, which fails a build outright on a
-// cache outage -- and sets GOPRIVATE/GONOPROXY/GONOSUMDB from
-// DEVCACHE_GOPRIVATE, so a private module path never reaches a public proxy
-// on a cache miss (../handbook/software/conventions/devops.md section 2a).
+// cache outage -- and sets none of GOPRIVATE, GONOPROXY or GONOSUMDB, so
+// every module, first-party included, resolves through the proxy and is
+// checked against the checksum database
+// (../handbook/software/conventions/devops.md section 2a).
 func TestDockerfile_GoInstallUsesDevcacheProxyChain(t *testing.T) {
 	dockerfile := string(Dockerfile)
 	if !strings.Contains(dockerfile, `GOPROXY="${DEVCACHE_GOPROXY:+${DEVCACHE_GOPROXY%/}|https://proxy.golang.org|direct}"`) {
 		t.Error("the Go install RUN does not build GOPROXY from DEVCACHE_GOPROXY with the | fallback chain")
 	}
-	if !strings.Contains(dockerfile, `export GOPRIVATE="${DEVCACHE_GOPRIVATE}" GONOPROXY="${DEVCACHE_GOPRIVATE}" GONOSUMDB="${DEVCACHE_GOPRIVATE}"`) {
-		t.Error("the Go install RUN does not set GOPRIVATE, GONOPROXY and GONOSUMDB from DEVCACHE_GOPRIVATE")
+	for _, name := range []string{"GOPRIVATE=", "GONOPROXY=", "GONOSUMDB="} {
+		if strings.Contains(dockerfile, name) {
+			t.Errorf("the Dockerfile sets %s: modules must resolve through the proxy and the checksum database", name)
+		}
 	}
 }
 
@@ -321,24 +333,24 @@ func TestToolchainPins_AreTheRepositorysPins(t *testing.T) {
 func TestPins_ValidateNamesWhatIsMissing(t *testing.T) {
 	var missing *PinsMissingError
 	err := Pins{}.Validate()
-	if !errors.As(err, &missing) || len(missing.Missing) != 46 ||
+	if !errors.As(err, &missing) || len(missing.Missing) != 49 ||
 		!strings.Contains(err.Error(), "GOPLS_VERSION") || !strings.Contains(err.Error(), "SHELLCHECK_SHA256_AARCH64") ||
-		!strings.Contains(err.Error(), "OPENCODE_SHA256_AARCH64") || !strings.Contains(err.Error(), "GO_TOOL_DEPENDENCY_FLOORS") ||
+		!strings.Contains(err.Error(), "OPENCODE_SHA256_AARCH64") || !strings.Contains(err.Error(), "GH_SHA256_AARCH64") || !strings.Contains(err.Error(), "GO_TOOL_DEPENDENCY_FLOORS") ||
 		!strings.Contains(err.Error(), "SERENA_DEPENDENCY_FLOORS") || !strings.Contains(err.Error(), "PROTOC_VERSION") ||
 		!strings.Contains(err.Error(), "PROTOC_SHA256_AARCH64") || !strings.Contains(err.Error(), "PROTOC_GEN_GO_GRPC_VERSION") ||
 		!strings.Contains(err.Error(), "NODE_SHA256_AARCH64") || !strings.Contains(err.Error(), "UV_VERSION") ||
 		!strings.Contains(err.Error(), "TYPESCRIPT_LANGUAGE_SERVER_VERSION") || !strings.Contains(err.Error(), "CLANGD_SHA256_X86_64") ||
 		!strings.Contains(err.Error(), "MARKSMAN_SHA256_AARCH64") || !strings.Contains(err.Error(), "NPM_BUNDLED_DEPENDENCY_FLOORS") ||
 		!strings.Contains(err.Error(), "OPENJDK_MAJOR") || !strings.Contains(err.Error(), "KOTLIN_LSP_SHA256_AARCH64") {
-		t.Fatalf("Validate() = %v, want all forty-six pins named", err)
+		t.Fatalf("Validate() = %v, want all forty-nine pins named", err)
 	}
 }
 
 func TestBuild_LabelsRecordToolVersionsNotTarballDigests(t *testing.T) {
 	labels := testBuild().Labels()
 	if labels[LabelActionlintVersion] != "v1.7.12" || labels[LabelShellcheckVersion] != "v0.11.0" ||
-		labels[LabelOpencodeVersion] != "v1.18.35" {
-		t.Fatalf("labels = %v, want actionlint, shellcheck and opencode versions recorded", labels)
+		labels[LabelOpencodeVersion] != "v1.18.35" || labels[LabelGHVersion] != "v2.103.3" {
+		t.Fatalf("labels = %v, want actionlint, shellcheck, opencode and gh versions recorded", labels)
 	}
 	if labels[LabelProtocVersion] != "36.2" || labels[LabelProtocGenGoVersion] != "v1.36.12" ||
 		labels[LabelProtocGenGoGRPCVersion] != "v1.6.2" {

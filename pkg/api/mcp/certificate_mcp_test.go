@@ -376,7 +376,7 @@ func TestCertificateIssue(t *testing.T) {
 			"province":            "CA",
 			"locality":            "San Francisco",
 			"dns_names":           `["test.example.com", "www.test.example.com"]`,
-			"ip_addresses":        `["192.168.1.1"]`,
+			"ip_addresses":        `["192.0.2.1"]`,
 			"email_addresses":     `["admin@example.com"]`,
 			"uris":                `["https://example.com"]`,
 			"validity_days":       365,

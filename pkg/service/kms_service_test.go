@@ -551,6 +551,46 @@ func TestKMSService_ImportKey_ManagerError(t *testing.T) {
 	assert.Nil(t, resp)
 }
 
+// TestKMSService_ImportKey_ManagerClassifiedErrorKeepsItsCode pins that the
+// service keeps the manager's classified failure: importing a key that
+// already exists must stay AlreadyExists, not be re-stamped as Internal.
+func TestKMSService_ImportKey_ManagerClassifiedErrorKeepsItsCode(t *testing.T) {
+	tests := []struct {
+		name     string
+		mgrErr   error
+		wantCode errors.ErrorCode
+	}{
+		{"already exists", errors.New(errors.ErrAlreadyExists, "ImportKey", "key already exists"), errors.ErrAlreadyExists},
+		{"invalid input", errors.New(errors.ErrInvalidInput, "ImportKey", "bad material"), errors.ErrInvalidInput},
+		{"key not found sentinel", kms.ErrKeyNotFound, errors.ErrNotFound},
+		{"unclassified", stderrors.New("backend unavailable"), errors.ErrInternal},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mockManager := newMockKMSManager()
+			mockManager.importKeyFn = func(ctx context.Context, keyID string, material []byte, algorithm string) (interface{}, error) {
+				return nil, tt.mgrErr
+			}
+			svc := newKMSService(mockManager, newMockLogger())
+
+			resp, err := svc.ImportKey(systemTenantCtx(), &ImportKeyRequest{
+				Name:        "imported-key",
+				KeyMaterial: []byte("mock-key"),
+				KeyAttributes: &xkmssdk.KeyAttributes{
+					SymmetricAlgorithm: xkmssdk.SymmetricAES256GCM,
+				},
+				Usage: []KeyUsage{KeyUsageEncrypt},
+			})
+
+			require.Error(t, err)
+			assert.Nil(t, resp)
+			var qbErr *errors.QBError
+			require.True(t, stderrors.As(err, &qbErr), "service error must be a QBError, got %T", err)
+			assert.Equal(t, tt.wantCode, qbErr.Code)
+		})
+	}
+}
+
 // =============================================================================
 // GetKey Tests
 // =============================================================================
@@ -1086,6 +1126,7 @@ func TestKMSService_SetKeyPolicy_Success(t *testing.T) {
 	}
 	logger := newMockLogger()
 	svc := newKMSService(mockManager, logger)
+	svc.SetKVStore(newMockKVStore())
 
 	req := &SetKeyPolicyRequest{
 		KeyID: "test-key-123",
@@ -1141,6 +1182,7 @@ func TestKMSService_SetKeyPolicy_NoAllowedOperations(t *testing.T) {
 	mockManager := newMockKMSManager()
 	logger := newMockLogger()
 	svc := newKMSService(mockManager, logger)
+	svc.SetKVStore(newMockKVStore())
 
 	req := &SetKeyPolicyRequest{
 		KeyID: "test-key-123",
@@ -1172,6 +1214,7 @@ func TestKMSService_GetKeyPolicy_Success(t *testing.T) {
 	}
 	logger := newMockLogger()
 	svc := newKMSService(mockManager, logger)
+	svc.SetKVStore(newMockKVStore())
 
 	req := &GetKeyPolicyRequest{
 		KeyID: "test-key-123",
@@ -1506,13 +1549,13 @@ func TestWithKMSAuditLogger(t *testing.T) {
 func TestWithAuditContext(t *testing.T) {
 	ctx := systemTenantCtx()
 
-	ctx = WithAuditContext(ctx, "testuser", "user-123", "192.168.1.1")
+	ctx = WithAuditContext(ctx, "testuser", "user-123", "192.0.2.1")
 
 	// Verify the context values
 	username, userID, ipAddr := extractAuditContext(ctx)
 	assert.Equal(t, "testuser", username)
 	assert.Equal(t, "user-123", userID)
-	assert.Equal(t, "192.168.1.1", ipAddr)
+	assert.Equal(t, "192.0.2.1", ipAddr)
 }
 
 func TestExtractAuditContext_Empty(t *testing.T) {
@@ -4377,8 +4420,27 @@ func TestKMSService_ValidateImportKeyRequest(t *testing.T) {
 			errContains: "request is nil",
 		},
 		{
+			name: "blank key name returns error",
+			req: &ImportKeyRequest{
+				Name:        "  ",
+				KeyMaterial: []byte("some-key-data"),
+			},
+			wantErr:     true,
+			errContains: "key name is required",
+		},
+		{
+			name: "reserved tenant namespace returns error",
+			req: &ImportKeyRequest{
+				Name:        kmsTenantKeyPrefix + "other-tenant/planted",
+				KeyMaterial: []byte("some-key-data"),
+			},
+			wantErr:     true,
+			errContains: "reserved tenant namespace",
+		},
+		{
 			name: "empty key material returns error",
 			req: &ImportKeyRequest{
+				Name:        "import-key",
 				KeyMaterial: []byte{},
 			},
 			wantErr:     true,
@@ -4387,6 +4449,7 @@ func TestKMSService_ValidateImportKeyRequest(t *testing.T) {
 		{
 			name: "missing algorithm returns error",
 			req: &ImportKeyRequest{
+				Name:          "import-key",
 				KeyMaterial:   []byte("some-key-data"),
 				KeyAttributes: nil,
 			},
@@ -4396,6 +4459,7 @@ func TestKMSService_ValidateImportKeyRequest(t *testing.T) {
 		{
 			name: "valid request returns no error",
 			req: &ImportKeyRequest{
+				Name:        "import-key",
 				KeyMaterial: make([]byte, 32),
 				KeyAttributes: &xkmssdk.KeyAttributes{
 					SymmetricAlgorithm: xkmssdk.SymmetricAES256GCM,
