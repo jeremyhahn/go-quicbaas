@@ -1524,7 +1524,6 @@ func TestGetBatchSizeAndParallelism(t *testing.T) {
 			t.Errorf("expected 4, got %d", result)
 		}
 	})
-
 }
 
 // TestImportAllErrorPropagation tests error propagation in ImportAll

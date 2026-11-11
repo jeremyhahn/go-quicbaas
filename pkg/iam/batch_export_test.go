@@ -554,7 +554,6 @@ func TestExportRolesWithFilters(t *testing.T) {
 			t.Errorf("expected 2 roles, got %d", len(roles))
 		}
 	})
-
 }
 
 // TestExportPoliciesWithFilters tests ExportPolicies with various filter combinations.

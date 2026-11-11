@@ -825,7 +825,6 @@ func TestOrchestratorRunOrchTaskClaim(t *testing.T) {
 		err := cmd.RunE(cmd, []string{"task_123"})
 		assert.NoError(t, err)
 	})
-
 }
 
 func TestOrchestratorRunOrchTaskComplete(t *testing.T) {
@@ -865,7 +864,6 @@ func TestOrchestratorRunOrchTaskComplete(t *testing.T) {
 		err := cmd.RunE(cmd, []string{"task_123"})
 		assert.NoError(t, err)
 	})
-
 }
 
 // TestOrchestratorRunOrchFactoryError checks that every command returns the

@@ -165,7 +165,6 @@ func TestJSONCodec_Encode(t *testing.T) {
 			} else {
 				require.NoError(t, err)
 				assert.NotEmpty(t, data)
-
 			}
 		})
 	}
