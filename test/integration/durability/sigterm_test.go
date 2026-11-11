@@ -63,6 +63,21 @@ const gracefulShutdownMarker = "Performing graceful shutdown..."
 // discarded buffered writes.
 const nodeCloseMarker = "Embedded qrdb node shutdown complete"
 
+// durabilityTrustDomain is the SPIFFE trust domain the signal tests give the
+// daemon. First boot refuses to start without one, and the setting is read
+// only from the config file.
+const durabilityTrustDomain = "quicbaas.durability.test"
+
+// writeTrustDomainConfig writes a minimal daemon config carrying the trust
+// domain into dataDir and returns its path for --config.
+func writeTrustDomainConfig(t *testing.T, dataDir string) string {
+	t.Helper()
+	path := filepath.Join(dataDir, "quicbaasd.yaml")
+	body := "iam:\n  spiffe_trust_domain: " + durabilityTrustDomain + "\n"
+	require.NoError(t, os.WriteFile(path, []byte(body), 0o600), "write daemon config")
+	return path
+}
+
 // resolveDaemonBinary returns an absolute path to the quicbaasd binary built
 // from the current tree. PATH is deliberately not consulted so the test can
 // never silently validate a stale install.
@@ -173,6 +188,7 @@ func TestDaemonSIGTERMRunsGracefulShutdown(t *testing.T) {
 
 	cmd := exec.Command(binary,
 		"start",
+		"--config", writeTrustDomainConfig(t, dataDir),
 		"--data-dir", dataDir,
 		"--log-level", "info",
 		"--http-port", strconv.Itoa(restPort),
@@ -254,6 +270,7 @@ func TestDaemonSIGINTRunsGracefulShutdown(t *testing.T) {
 
 	cmd := exec.Command(binary,
 		"start",
+		"--config", writeTrustDomainConfig(t, dataDir),
 		"--data-dir", dataDir,
 		"--log-level", "info",
 		"--http-port", strconv.Itoa(restPort),
