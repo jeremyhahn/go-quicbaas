@@ -15,6 +15,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   A config file that still carries a `qrdb:` block is refused with
   `RemovedKeyError` naming the `qrdb` key; delete the block.
 
+### Changed
+
+- **Module-credential and live-forge variables use forge-neutral names.**
+  `make stage-gomodauth` reads the read token from `FORGE_READ_TOKEN`, and the
+  key it looks up in the agent tokens file now defaults to `FORGE_READ_TOKEN`;
+  a tokens file that keeps the token under another name sets
+  `GOMODAUTH_TOKEN_KEY`. The live forge suite (`make
+  integration-test-forge-gitea`) reads `FORGE_ITEST_BASE_URL`,
+  `FORGE_ITEST_TOKEN`, `FORGE_ITEST_OWNER` and `FORGE_ITEST_REPO`.
+
+- **The default ruler login is `company-agent`.** When `sdlc.rulers.default`
+  is unset, comments from the `company-agent` forge login count as owner
+  rulings. A deployment whose administrative agent uses another login names
+  it in `sdlc.rulers.default`.
+
 ## [0.16.0-alpha] - 2026-10-18
 
 ### Fixed
@@ -1816,15 +1831,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   on every transport.
 
 - **The Software Factory worker image builds through the fleet's dev caches
-  (go-quicbaas#1159).** `make build-worker-image` passes `DEVCACHE_GOPROXY`,
-  `DEVCACHE_GOPRIVATE` and `DEVCACHE_NPM_REGISTRY` through by name, from the
-  caller's environment or command line, to three new `ARG`s the Dockerfile
-  declares but never defaults or `ENV`s; unset, or with a cache unreachable,
-  the build is byte-for-byte what it always was. The toolchain stage's `go
-  install` / `go get` / `go build` feed `DEVCACHE_GOPROXY` through Go's `|`
-  fallback chain and set `GOPRIVATE`/`GONOPROXY`/`GONOSUMDB` from
-  `DEVCACHE_GOPRIVATE`; the agent-CLI `npm install -g` evaluates
-  `devcache-env` first. The image now carries `devcache-env` itself at
+  (go-quicbaas#1159).** `make build-worker-image` passes `DEVCACHE_GOPROXY`
+  and `DEVCACHE_NPM_REGISTRY` through by name, from the caller's environment
+  or command line, to new `ARG`s the Dockerfile declares but never defaults
+  or `ENV`s; unset, or with a cache unreachable, the build is byte-for-byte
+  what it always was. The toolchain stage's `go install` / `go get` / `go
+  build` feed `DEVCACHE_GOPROXY` through Go's `|` fallback chain; the
+  agent-CLI `npm install -g` evaluates `devcache-env` first. The image now
+  carries `devcache-env` itself at
   `/usr/local/bin/devcache-env`, embedded byte-for-byte from dev-cache
   v0.1.0 via a BuildKit heredoc and checked against its pinned SHA-256 at
   build time, so the Dockerfile keeps building from the empty context the
@@ -4684,9 +4698,8 @@ v0.13.1-alpha (held; see Changed).
   `make stage-gomodauth` built the `gomodauth` BuildKit secret only from the
   variables a Gitea runner injects, so anywhere else it was written empty and
   the image's `go mod download` failed on `github.com/jeremyhahn/go-auth` with
-  `unknown revision`. It now falls back to a Gitea read token from
-  `GITEA_READ_TOKEN` or `AGENT_TOKEN_GO_QUICBAAS` in
-  `~/.agent-identity/tokens.env`, against an overridable `GITEA_HTTP_ORIGIN`,
+  `unknown revision`. It now falls back to a Gitea read token from the
+  environment or from `~/.agent-identity/tokens.env`, against an overridable `GITEA_HTTP_ORIGIN`,
   and refuses a value that is not token-shaped. `integration-test-seal`,
   `integration-test-tenantbarrier`, `integration-bench`, `test-e2e-docker` and
   `test-e2e-acp-docker` now stage the secret too, and every one of them empties

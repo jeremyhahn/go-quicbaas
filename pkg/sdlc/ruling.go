@@ -53,7 +53,7 @@ import (
 // comments are owner rulings when no other set is configured: the company's
 // administrative agent, which relays the owner's decisions (handbook
 // conventions/sdlc.md).
-var DefaultRulers = []string{"agent-company"}
+var DefaultRulers = []string{"company-agent"}
 
 // factoryCommentMarker opens every comment the factory writes to an issue.
 const factoryCommentMarker = "<!-- quicbaas-sdlc:"

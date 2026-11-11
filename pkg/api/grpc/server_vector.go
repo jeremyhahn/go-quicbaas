@@ -114,7 +114,10 @@ func (s *Server) CreateNamespace(ctx context.Context, req *pb.CreateNamespaceReq
 	}, nil
 }
 
-// UpdateNamespace modifies namespace configuration.
+// UpdateNamespace refuses every namespace update with codes.Unimplemented.
+// The qrdb SDK has no in-place namespace update, and deleting and
+// recreating the namespace would destroy every vector stored in it.
+// A missing namespace still reports its lookup error.
 func (s *Server) UpdateNamespace(ctx context.Context, req *pb.UpdateNamespaceRequest) (*pb.UpdateNamespaceResponse, error) {
 	if req == nil {
 		return nil, status.Error(codes.InvalidArgument, "request is nil")
@@ -133,70 +136,17 @@ func (s *Server) UpdateNamespace(ctx context.Context, req *pb.UpdateNamespaceReq
 		return nil, status.Error(codes.Unimplemented, "vector service not available")
 	}
 
-	// Get current namespace info
+	// Confirm the namespace exists so a missing namespace keeps its error
 	getReq := &service.GetNamespaceInfoRequest{
 		Namespace: req.Namespace,
 		ShardID:   s.vectorShardID,
 	}
 
-	info, err := vectorService.GetNamespaceInfo(ctx, getReq)
-	if err != nil {
+	if _, err := vectorService.GetNamespaceInfo(ctx, getReq); err != nil {
 		return nil, toProtoError(err)
 	}
 
-	// Merge index params if provided
-	indexConfig := info.IndexConfig
-	if indexConfig == nil {
-		indexConfig = make(map[string]string)
-	}
-	if req.IndexParams != nil {
-		for k, v := range req.IndexParams {
-			indexConfig[k] = v
-		}
-	}
-
-	// Merge metadata if provided
-	metadata := info.Metadata
-	if metadata == nil {
-		metadata = make(map[string]interface{})
-	}
-	if req.Metadata != nil {
-		for k, v := range req.Metadata {
-			metadata[k] = v
-		}
-	}
-
-	// Note: For now, we'll delete and recreate the namespace with updated config
-	// A production implementation should support in-place updates
-	deleteReq := &service.DeleteNamespaceRequest{
-		Namespace: req.Namespace,
-		ShardID:   s.vectorShardID,
-	}
-
-	_, err = vectorService.DeleteNamespace(ctx, deleteReq)
-	if err != nil {
-		return nil, toProtoError(err)
-	}
-
-	// Recreate with updated config
-	createReq := &service.CreateNamespaceRequest{
-		Namespace:   req.Namespace,
-		Dimension:   info.Dimension,
-		IndexConfig: indexConfig,
-		Metadata:    metadata,
-		ShardID:     s.vectorShardID,
-	}
-
-	createResp, err := vectorService.CreateNamespace(ctx, createReq)
-	if err != nil {
-		return nil, toProtoError(err)
-	}
-
-	return &pb.UpdateNamespaceResponse{
-		Namespace:       createResp.Namespace,
-		Timestamp:       timestamppb.New(time.Unix(0, createResp.Timestamp)),
-		RequiresRebuild: true, // Always requires rebuild after update
-	}, nil
+	return nil, toProtoError(&NamespaceUpdateUnsupportedError{Namespace: req.Namespace})
 }
 
 // DeleteNamespace removes a namespace and all its vectors.

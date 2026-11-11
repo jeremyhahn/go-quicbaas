@@ -53,7 +53,7 @@ import (
 // something to clean up first. Merges target a per-run base branch and NEVER
 // the scratch repo's main, so one run cannot change what another sees.
 //
-// The scratch repo is the agent's own (agent-go-quicbaas/sdlc-itest), so
+// The scratch repo is the agent's own (agent-quicbaas/sdlc-itest), so
 // "an agent writes only its own repo" holds without exception. No product
 // repository is touched by anything in this file.
 
@@ -75,25 +75,25 @@ func liveEnv(t *testing.T) liveConfig {
 	t.Helper()
 
 	cfg := liveConfig{
-		baseURL: os.Getenv("GITEA_ITEST_BASE_URL"),
-		token:   os.Getenv("GITEA_ITEST_TOKEN"),
+		baseURL: os.Getenv("FORGE_ITEST_BASE_URL"),
+		token:   os.Getenv("FORGE_ITEST_TOKEN"),
 		repo: RepoRef{
-			Owner: os.Getenv("GITEA_ITEST_OWNER"),
-			Repo:  os.Getenv("GITEA_ITEST_REPO"),
+			Owner: os.Getenv("FORGE_ITEST_OWNER"),
+			Repo:  os.Getenv("FORGE_ITEST_REPO"),
 		},
 	}
 	missing := make([]string, 0, 4)
 	if cfg.baseURL == "" {
-		missing = append(missing, "GITEA_ITEST_BASE_URL (e.g. http://host:3001/api/v1)")
+		missing = append(missing, "FORGE_ITEST_BASE_URL (e.g. http://host:3000/api/v1)")
 	}
 	if cfg.token == "" {
-		missing = append(missing, "GITEA_ITEST_TOKEN")
+		missing = append(missing, "FORGE_ITEST_TOKEN")
 	}
 	if cfg.repo.Owner == "" {
-		missing = append(missing, "GITEA_ITEST_OWNER")
+		missing = append(missing, "FORGE_ITEST_OWNER")
 	}
 	if cfg.repo.Repo == "" {
-		missing = append(missing, "GITEA_ITEST_REPO")
+		missing = append(missing, "FORGE_ITEST_REPO")
 	}
 	if len(missing) > 0 {
 		t.Fatalf("the live Gitea suite is not configured; set:\n\t%s", strings.Join(missing, "\n\t"))

@@ -356,7 +356,7 @@ its issue** after the park:
   (picked in the project's binding editor from the repository's
   collaborators, each validated at bind time as the owner or a collaborator);
   and the node's `sdlc.rulers` — `sdlc.rulers.tenants.<tenant>` when the
-  tenant has an entry, else `sdlc.rulers.default`, else `agent-company`
+  tenant has an entry, else `sdlc.rulers.default`, else `company-agent`
   (`sdlc.DefaultRulers`). A binding can only add rulers; a tenant entry
   replaces the node default for that tenant. Project agents, workers, reviewers and the task's
   own bot do not — nor does any comment carrying the factory's

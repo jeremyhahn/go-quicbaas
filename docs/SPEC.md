@@ -27,12 +27,12 @@ go-qrdb under go-quicbaas is embedded only, because the hardware implementations
 QuicBaaS adds, and owns:
 
 - The multi-protocol API server and the transports, plus OAuth 2.1 / OIDC on the go-qrdb user (token subjects are go-qrdb users).
-- The application services: agentic orchestration and the Software Factory (accounts, agent fleet, projects, SDLC), messaging, the scheduler and workload placement, cache, the Ollama client, the parameter store, object storage, observability, the service registry and the hardware-backend composition. All of them keep their records in the embedded go-qrdb node.
+- The application services: agentic orchestration and the Software Factory (accounts, agent fleet, projects, SDLC), messaging, the scheduler and workload placement, cache, the Ollama client, the parameter store, object storage, observability, the service registry, the hardware-backend composition, and container orchestration: the container runtime, services and rollout, the OCI registry, measured launch and volumes. All of them keep their records in the embedded go-qrdb node. go-trusted-platform builds on QuicBaaS container orchestration.
 
 QuicBaaS never implements:
 
 - Anything listed above as go-qrdb's or go-xkms's.
-- Provisioning, SDN and node-side attestation: go-trusted-platform's.
+- Device provisioning and lifecycle, SDN, the policy engine, DNS integration, and the network's automation, orchestration and security: all go-trusted-platform's. Enrollment, for all three layers, is go-xkms ACME with its extensions.
 
 QuicBaaS has no firmware dependency. It carries only the generic DICE and attestation primitives usable with any device, and attestation verification goes through go-xkms.
 

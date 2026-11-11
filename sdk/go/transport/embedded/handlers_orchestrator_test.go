@@ -685,7 +685,7 @@ func TestHandleProject_DefaultWorkflowAndGitIdentityRoundTrip(t *testing.T) {
 	updated, err := handleProjectUpdate(ctx, svc, &projectSDK.UpdateProjectRequest{
 		TenantID: "tenant-a", ProjectID: info.ID,
 		GitSigningEnabled: &off,
-		GitAuthorEmail:    "agent-api@example.internal",
+		GitAuthorEmail:    "agent-api@example.com",
 		GitSSHKeyName:     "rotated",
 	})
 	require.NoError(t, err)
@@ -693,7 +693,7 @@ func TestHandleProject_DefaultWorkflowAndGitIdentityRoundTrip(t *testing.T) {
 	require.True(t, ok)
 	assert.False(t, uinfo.Git.Signing.Enabled)
 	assert.Equal(t, "api-signing", uinfo.Git.Signing.Key.Name, "turning signing off keeps the key reference")
-	assert.Equal(t, "agent-api@example.internal", uinfo.Git.Author.Email)
+	assert.Equal(t, "agent-api@example.com", uinfo.Git.Author.Email)
 	assert.Equal(t, "rotated", uinfo.Git.SSHKey.Name)
 	assert.Equal(t, "service", uinfo.Git.SSHKey.Scope, "an unset scope leaves the stored scope")
 

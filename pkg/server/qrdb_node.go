@@ -22,6 +22,7 @@ import (
 	"strconv"
 	"strings"
 
+	qrdbserver "github.com/jeremyhahn/go-qrdb/pkg/server"
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	qrdbnode "github.com/jeremyhahn/go-qrdb/sdk/go/node"
 	xkmslib "github.com/jeremyhahn/go-xkms/pkg/xkms"
@@ -636,6 +637,15 @@ func (s *Server) unifiedModuleServerOptions(serverOpts []qrdbsdk.ServerOption) (
 	}
 	serverOpts = append(serverOpts, qrdbsdk.WithAuditLogger(s.qrdbAuditSink))
 
+	// The caller's options come after the node's own, so this replaces the
+	// node's tenant servicer for REST, gRPC, QUIC, Unix and MCP, and
+	// GetQRDBTenantServicer hands the same router to the embedded transport:
+	// every native unseal goes through the hooked barrier facade
+	// (go-quicbaas 2212). The router's inner servicer is the node's own
+	// service, never GetQRDBTenantServicer, which returns the router.
+	s.tenantUnsealRouter = newTenantUnsealRouter(s.rawQRDBTenantServicer, s.buildTenantBarrierService)
+	serverOpts = append(serverOpts, qrdbserver.WithTenantService(s.tenantUnsealRouter))
+
 	module, err := s.newQuicBaaSModule()
 	if err != nil {
 		return nil, err
@@ -709,9 +719,9 @@ func (s *Server) unifiedModuleServerOptions(serverOpts []qrdbsdk.ServerOption) (
 	// plane. go-xkms no longer registers /api/v1/barrier/* in a host
 	// composition, so quicbaas's barrier surface (go-quicbaas#405) needs no
 	// exclusion.
-	hostedXKMSModule, err := apimodule.NewRouteExcludingModule(xkmsModule, apimodule.XKMSRouteExclusions)
+	hostedXKMSModule, err := s.hostXKMSModule(xkmsModule)
 	if err != nil {
-		return nil, &QRDBNodeError{Stage: "compose xkms module route precedence", Cause: err}
+		return nil, err
 	}
 	serverOpts = append(serverOpts, qrdbsdk.WithModule(hostedXKMSModule))
 
@@ -961,6 +971,9 @@ func (s *Server) initStandaloneQRDBNode() error {
 	}
 
 	s.setQRDBNode(node)
+	if s.tenantUnsealRouter != nil {
+		s.tenantUnsealRouter.bind()
+	}
 
 	s.logger.Info("Standalone qrdb node started; at-rest encryption and hardware crypto active")
 	return nil
@@ -1185,6 +1198,9 @@ func (s *Server) initClusteredQRDBNode() error {
 	}
 
 	s.setQRDBNode(node)
+	if s.tenantUnsealRouter != nil {
+		s.tenantUnsealRouter.bind()
+	}
 
 	s.logger.Infof("Clustered qrdb node started; members: %d, at-rest encryption and hardware crypto active",
 		len(members))
@@ -1368,6 +1384,24 @@ func (s *Server) pivLoginModuleOptions() *xkmssdk.ServiceModulePIVLoginOptions {
 		TrustedIssuers:  s.config.IAM.PIVLogin.TrustedIssuers,
 		AllowUnattested: s.config.IAM.PIVLogin.AllowUnattested,
 	}
+}
+
+// hostXKMSModule composes the xkms module as this node hosts it: quicbaas's
+// route precedence (apimodule.XKMSRouteExclusions), then the tenant binding of
+// xkms's certificate login (apimodule.XKMSCertLoginRoutes), so a tenant
+// admin's certificate is looked up in the tenant its SPIFFE SAN names rather
+// than in the system tenant.
+func (s *Server) hostXKMSModule(xkmsModule qrdbsdk.ServiceModule) (qrdbsdk.ServiceModule, error) {
+	hosted, err := apimodule.NewRouteExcludingModule(xkmsModule, apimodule.XKMSRouteExclusions)
+	if err != nil {
+		return nil, &QRDBNodeError{Stage: "compose xkms module route precedence", Cause: err}
+	}
+	hosted, err = apimodule.NewCertLoginTenantModule(hosted, s.config.IAM.SPIFFETrustDomain,
+		apimodule.XKMSCertLoginRoutes, &caRevocationChecker{server: s})
+	if err != nil {
+		return nil, &QRDBNodeError{Stage: "bind xkms certificate login tenant", Cause: err}
+	}
+	return hosted, nil
 }
 
 // pivLoginModuleEnabled reports whether the xkms module's own PIV login surface

@@ -41,7 +41,7 @@ interface WiredVerb {
   want: unknown;
 }
 
-const node = { id: 'node-1', name: 'gpu-1', host: 'gpu-1.lan', status: 'online' };
+const node = { id: 'node-1', name: 'gpu-1', host: 'gpu-1.example', status: 'online' };
 const policy = { tenant_id: 't1', limits: { windows: [{ name: 'day', size: 86400000000000, max_tokens: 10 }] } };
 const costSettings = { settings: { tenant_id: 't1', electricity_price_per_kwh: 0.2 }, electricity: { price_per_kwh: 0.2, source: 'tenant' } };
 const workerImage = { serving: true, running: false, queued: false };
@@ -86,9 +86,9 @@ const wired: WiredVerb[] = [
   },
   {
     name: 'listFleetNodes',
-    call: (o) => o.listFleetNodes({ tenant_id: 't1', host: 'gpu-1.lan', backend: 'ollama', limit: 5 }),
+    call: (o) => o.listFleetNodes({ tenant_id: 't1', host: 'gpu-1.example', backend: 'ollama', limit: 5 }),
     tool: 'quicbaas_fleet_list',
-    args: { tenant_id: 't1', host: 'gpu-1.lan', backend: 'ollama', limit: 5 },
+    args: { tenant_id: 't1', host: 'gpu-1.example', backend: 'ollama', limit: 5 },
     reply: { nodes: [node], count: 1, total: 1 },
     want: { nodes: [node], count: 1 },
   },
@@ -102,9 +102,9 @@ const wired: WiredVerb[] = [
   },
   {
     name: 'registerFleetNode',
-    call: (o) => o.registerFleetNode({ tenant_id: 't1', name: 'gpu-1', host: 'gpu-1.lan', backend: 'ollama', node_type: 'daemon' }),
+    call: (o) => o.registerFleetNode({ tenant_id: 't1', name: 'gpu-1', host: 'gpu-1.example', backend: 'ollama', node_type: 'daemon' }),
     tool: 'quicbaas_fleet_register',
-    args: { tenant_id: 't1', name: 'gpu-1', host: 'gpu-1.lan', backend: 'ollama', node_type: 'daemon' },
+    args: { tenant_id: 't1', name: 'gpu-1', host: 'gpu-1.example', backend: 'ollama', node_type: 'daemon' },
     reply: { node },
     want: { node },
   },

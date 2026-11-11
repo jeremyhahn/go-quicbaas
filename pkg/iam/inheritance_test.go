@@ -969,7 +969,7 @@ func TestMemoryConsentStorage_UpdateConsent_Success(t *testing.T) {
 		Status:    ConsentStatusWithdrawn,
 		Version:   "2.0",
 		ExpiresAt: &newExpires,
-		IPAddress: "192.168.1.1",
+		IPAddress: "192.0.2.1",
 		UserAgent: "TestAgent/1.0",
 		Metadata:  map[string]string{"key": "value"},
 	})
@@ -983,8 +983,8 @@ func TestMemoryConsentStorage_UpdateConsent_Success(t *testing.T) {
 	if updated.Version != "2.0" {
 		t.Errorf("expected version 2.0, got %s", updated.Version)
 	}
-	if updated.IPAddress != "192.168.1.1" {
-		t.Errorf("expected IP 192.168.1.1, got %s", updated.IPAddress)
+	if updated.IPAddress != "192.0.2.1" {
+		t.Errorf("expected IP 192.0.2.1, got %s", updated.IPAddress)
 	}
 }
 

@@ -56,6 +56,7 @@ func newOperatorTLSIntegrationNode(t *testing.T) (*Server, service.IAMComponents
 	srv.config.Security.TLSCAFile = certFile
 	srv.config.CA.KeysDir = filepath.Join(t.TempDir(), "ca-keys")
 	require.NoError(t, srv.initializeCA(), "initializeCA")
+	wireCAAdapter(t, srv)
 
 	require.NoError(t, srv.initStandaloneQRDBNode(), "qrdb node init")
 	t.Cleanup(func() { assert.NoError(t, srv.stopQRDBNode(), "stopping the qrdb node") })
