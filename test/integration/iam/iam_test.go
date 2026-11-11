@@ -59,6 +59,12 @@ type testCluster struct {
 	unixSocket   string
 	client       *http.Client
 	grpcConn     *grpc.ClientConn
+
+	// bearer, when set, supplies the bearer doHTTPRequest sends. It is nil on
+	// the cluster setupTestCluster returns, which stays unauthenticated for
+	// the login, registration and OIDC ceremonies and the negative paths; the
+	// asSystemAdmin and asTenantAdmin views set it.
+	bearer func(ctx context.Context) (string, error)
 }
 
 // TestMain sets up and tears down the test environment.
@@ -139,6 +145,24 @@ func (b *retryBackoff) wait() {
 	b.delay = min(time.Duration(float64(b.delay)*retryBackoffMult), retryMaxDelay)
 }
 
+// listTenantsAsSystemAdmin sends the readiness probe's tenant listing with
+// the fixture system admin's bearer: listing every tenant is a system-tenant
+// call (tenants:list). The login is cached by the helper and needs the IAM
+// shard itself, so a failed login counts as a failed probe and the next probe
+// logs in again.
+func listTenantsAsSystemAdmin(ctx context.Context, client *http.Client, endpoint string) (*http.Response, error) {
+	bearer, err := helpers.AuthSystemAdminContext(ctx, endpoint)
+	if err != nil {
+		return nil, err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint+"/api/v1/tenants", nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+bearer)
+	return client.Do(req)
+}
+
 // waitForIAMReady waits for the IAM shard (shard 1) to be ready.
 // It does this by attempting multiple ListTenants operations which require
 // the IAM shard to be available for reads. We require multiple consecutive
@@ -152,7 +176,7 @@ func waitForIAMReady(ctx context.Context, client *http.Client, endpoint string) 
 
 	for {
 		interval := 2 * time.Second
-		resp, err := client.Get(endpoint + "/api/v1/tenants")
+		resp, err := listTenantsAsSystemAdmin(ctx, client, endpoint)
 		if err == nil {
 			body, _ := io.ReadAll(resp.Body)
 			resp.Body.Close()
@@ -330,6 +354,16 @@ func (tc *testCluster) doHTTPRequest(method, path string, body interface{}) (*ht
 
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
+	}
+
+	if tc.bearer != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), defaultTimeout)
+		defer cancel()
+		token, err := tc.bearer(ctx)
+		if err != nil {
+			return nil, err
+		}
+		req.Header.Set("Authorization", "Bearer "+token)
 	}
 
 	return tc.client.Do(req)

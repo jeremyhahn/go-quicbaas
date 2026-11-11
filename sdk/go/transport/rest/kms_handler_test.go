@@ -18,6 +18,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"testing"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
@@ -110,6 +111,65 @@ func TestKMSRESTHandler_GenerateKey_ThreadsProtectionFlags(t *testing.T) {
 	}
 	if resp.Metadata == nil || !resp.Metadata.Exportable || !resp.Metadata.DeletionProtection {
 		t.Errorf("response metadata flags lost: %+v", resp.Metadata)
+	}
+}
+
+// TestKMSRESTHandler_GenerateKey_CarriesDescriptionTagsOwner proves the
+// description, tags and owner reach the REST wire body, so a consumer sets
+// them in the GenerateKey call instead of a second update.
+func TestKMSRESTHandler_GenerateKey_CarriesDescriptionTagsOwner(t *testing.T) {
+	var body kmsGenerateKeyRequest
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Errorf("decode: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
+		if err := json.NewEncoder(w).Encode(kmsGenerateKeyWire{
+			Key:       &kmsKeyHandleWire{KeyID: "key-m", Version: 1, Algorithm: "AES-256-GCM", Status: "enabled"},
+			Metadata:  &kmsKeyMetadataWire{KeyID: "key-m", Algorithm: "AES-256-GCM", Version: 1},
+			Timestamp: 1700000000,
+		}); err != nil {
+			t.Errorf("encode: %v", err)
+		}
+	}))
+	defer server.Close()
+
+	tr := newTestTransport(t, server)
+	defer tr.Close()
+
+	_, err := tr.Request(context.Background(), "quicbaas.KMS", "GenerateKey", &kmsclient.GenerateKeyRequest{
+		Name:        "key-m",
+		Algorithm:   kmsclient.AlgorithmAES256GCM,
+		Description: "d",
+		Tags:        map[string]string{"env": "prod"},
+		Owner:       "svc-a",
+	})
+	if err != nil {
+		t.Fatalf("GenerateKey failed: %v", err)
+	}
+	if body.Description != "d" {
+		t.Errorf("description = %q, want %q", body.Description, "d")
+	}
+	if !reflect.DeepEqual(body.Tags, map[string]string{"env": "prod"}) {
+		t.Errorf("tags = %v, want env=prod", body.Tags)
+	}
+	if body.Owner != "svc-a" {
+		t.Errorf("owner = %q, want %q", body.Owner, "svc-a")
+	}
+}
+
+func TestKMSRESTHandler_GenerateKey_WrongRequestType(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Errorf("unexpected request to %s", r.URL.Path)
+	}))
+	defer server.Close()
+
+	tr := newTestTransport(t, server)
+	defer tr.Close()
+
+	if _, err := tr.Request(context.Background(), "quicbaas.KMS", "GenerateKey", &kmsclient.ExportKeyRequest{}); err == nil {
+		t.Fatal("expected an error for a wrong request type")
 	}
 }
 

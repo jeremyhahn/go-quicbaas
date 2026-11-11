@@ -140,7 +140,9 @@ func TestServerRESTAPI(t *testing.T) {
 // TestServerMetrics tests the Prometheus metrics endpoint
 func TestServerMetrics(t *testing.T) {
 	metricsURL := getMetricsEndpoint()
-	client := helpers.NewHTTPClient(30 * time.Second)
+	// The metrics scrape route admits any authenticated identity and needs
+	// no permission: the data-plane principal is the narrowest one.
+	client := helpers.NewDataPlaneHTTPClient(t, 30*time.Second)
 
 	resp, err := client.Get(metricsURL)
 	require.NoError(t, err)
@@ -166,7 +168,9 @@ func TestServerMetrics(t *testing.T) {
 // The test validates the API is reachable and returns parseable JSON.
 func TestServerClusterStatus(t *testing.T) {
 	baseURL := getRESTEndpoint()
-	client := helpers.NewHTTPClient(30 * time.Second)
+	// The cluster status route requires admin:status, which the Operator
+	// role holds.
+	client := helpers.NewTenantOperatorHTTPClient(t, 30*time.Second)
 
 	resp, err := client.Get(baseURL + "/api/v1/cluster/status")
 	require.NoError(t, err)
