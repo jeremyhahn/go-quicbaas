@@ -52,7 +52,7 @@ const (
 		stamp + "ok  \tgithub.com/jeremyhahn/go-quicbaas/pkg/api/websocket\t35.451s\n"
 
 	// logHostDefect is a container the OCI runtime refused. From job 77604.
-	logHostDefect = stamp + "docker run image=forge.internal:3001/jeremyhahn/ci-runner:latest\n" +
+	logHostDefect = stamp + "docker run image=forge.internal:3000/jeremyhahn/ci-runner:latest\n" +
 		stamp + "failed to start container: Error response from daemon: failed to create task for container: " +
 		"failed to create shim task: OCI runtime create failed: runc create failed: unable to start " +
 		"container process: error during container init: error mounting \"/var/lib/lxcfs/proc/diskstats\"\n"
@@ -83,8 +83,8 @@ const (
 		stamp + "##[error]Process completed with exit code 1.\n" + logRunnerTeardown
 
 	// logRegistryUnreachable is a job image that never arrived. From job 77520.
-	logRegistryUnreachable = stamp + "docker pull image=forge.internal:3001/jeremyhahn/ci-runner:latest\n" +
-		stamp + "failed to pull image 'forge.internal:3001/jeremyhahn/ci-runner:latest' (): Error response " +
+	logRegistryUnreachable = stamp + "docker pull image=forge.internal:3000/jeremyhahn/ci-runner:latest\n" +
+		stamp + "failed to pull image 'forge.internal:3000/jeremyhahn/ci-runner:latest' (): Error response " +
 		"from daemon: http: server gave HTTP response to HTTPS client\n"
 )
 

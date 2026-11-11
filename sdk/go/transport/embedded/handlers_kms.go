@@ -60,6 +60,9 @@ func handleKMSGenerateKey(ctx context.Context, svc service.QuicBaaS, req interfa
 		KeyAttributes:      sdkAlgToKeyAttributes(sdkReq.Algorithm),
 		Exportable:         sdkReq.Exportable,
 		DeletionProtection: sdkReq.DeletionProtection,
+		Description:        sdkReq.Description,
+		Tags:               sdkReq.Tags,
+		Owner:              sdkReq.Owner,
 	}
 	return kmsSvc.GenerateKey(ctx, svcReq)
 }

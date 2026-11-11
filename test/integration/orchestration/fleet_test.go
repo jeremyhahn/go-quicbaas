@@ -35,7 +35,7 @@ func TestE2E_FleetRegisterAgent(t *testing.T) {
 	resp, err := svc.RegisterFleetNode(ctx, &orchestration.RegisterFleetNodeRequest{
 		TenantID: tenantID,
 		Name:     "test-agent",
-		Host:     "192.168.1.1",
+		Host:     "192.0.2.1",
 		NodeType: "claude-code",
 		Backend:  "acp",
 	})
@@ -45,7 +45,7 @@ func TestE2E_FleetRegisterAgent(t *testing.T) {
 
 	assert.NotEmpty(t, resp.Node.ID, "agent ID must not be empty")
 	assert.Equal(t, "test-agent", resp.Node.Name)
-	assert.Equal(t, "192.168.1.1", resp.Node.Host)
+	assert.Equal(t, "192.0.2.1", resp.Node.Host)
 	assert.Equal(t, "claude-code", resp.Node.NodeType)
 	assert.Equal(t, tenantID, resp.Node.TenantID)
 	assert.Equal(t, orchestration.FleetNodeStatusRegistered, resp.Node.Status)
@@ -60,7 +60,7 @@ func TestE2E_FleetRegisterAgent_MissingName(t *testing.T) {
 
 	_, err := svc.RegisterFleetNode(ctx, &orchestration.RegisterFleetNodeRequest{
 		TenantID: tenantID,
-		Host:     "192.168.1.1",
+		Host:     "192.0.2.1",
 		NodeType: "claude-code",
 		Backend:  "acp",
 	})
@@ -137,7 +137,7 @@ func TestE2E_FleetListAgents(t *testing.T) {
 		_, err := svc.RegisterFleetNode(ctx, &orchestration.RegisterFleetNodeRequest{
 			TenantID: tenantID,
 			Name:     "agent-" + string(rune('a'+i)),
-			Host:     "192.168.1." + string(rune('1'+i)),
+			Host:     "192.0.2." + string(rune('1'+i)),
 			NodeType: "claude-code",
 			Backend:  "acp",
 		})
@@ -231,7 +231,7 @@ func TestE2E_FleetListAgents_FilterByAgentType(t *testing.T) {
 		_, err := svc.RegisterFleetNode(ctx, &orchestration.RegisterFleetNodeRequest{
 			TenantID: tenantID,
 			Name:     "agent-type-" + string(rune('0'+i)),
-			Host:     "192.168.1." + string(rune('1'+i)),
+			Host:     "192.0.2." + string(rune('1'+i)),
 			NodeType: agentType,
 			Backend:  "acp",
 		})

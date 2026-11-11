@@ -92,3 +92,65 @@ func (e *ReportError) Error() string {
 }
 
 func (e *ReportError) Unwrap() error { return e.Err }
+
+// PatternProblem says what is wrong with one line of the pattern text. It is a
+// fixed vocabulary on purpose: the line is private, so an error may say what
+// kind of defect it is and where, and nothing about what the line says.
+type PatternProblem string
+
+const (
+	// PatternNotClassTabRegex is a line with no tab separating class from regex.
+	PatternNotClassTabRegex PatternProblem = "is not class<TAB>regex"
+
+	// PatternUnknownClass is a line whose class is not one the gate reports.
+	PatternUnknownClass PatternProblem = "has an unknown class"
+
+	// PatternEmptyRegex is a line with nothing after the tab.
+	PatternEmptyRegex PatternProblem = "has an empty regex"
+
+	// PatternBadRegex is a line whose regex does not compile.
+	PatternBadRegex PatternProblem = "has a regex that does not compile"
+)
+
+// PatternError is returned when a line of the pattern text cannot be used. One
+// unusable rule fails the whole set: a gate that silently dropped it would pass
+// every tree that rule was written for. The error names the line by number
+// only, never its text, because the text is the private value and an error
+// message ends up in a CI log.
+type PatternError struct {
+	// Line is the 1-based line number in the pattern text.
+	Line int
+
+	// Problem is what is wrong with the line.
+	Problem PatternProblem
+
+	// Code is the regexp/syntax error code for PatternBadRegex, such as
+	// "missing closing )". It describes the defect without quoting it.
+	Code string
+}
+
+func (e *PatternError) Error() string {
+	msg := "labstrings: pattern line " + strconv.Itoa(e.Line) + " " + string(e.Problem)
+	if e.Code != "" {
+		msg += " (" + e.Code + ")"
+	}
+	return msg
+}
+
+// NoPatternsError is returned when the gate is asked to scan with no rules. The
+// rules are not in this repository, so a scan without them sees nothing, and
+// reporting that as a clean tree would be the blindfold this package exists to
+// prevent.
+type NoPatternsError struct {
+	// Variable is the environment variable the rules were read from, empty
+	// when the caller passed an empty set itself.
+	Variable string
+}
+
+func (e *NoPatternsError) Error() string {
+	if e.Variable == "" {
+		return "labstrings: no patterns to scan with"
+	}
+	return "labstrings: no patterns to scan with: " + e.Variable +
+		" is unset, empty or holds no class<TAB>regex line"
+}
