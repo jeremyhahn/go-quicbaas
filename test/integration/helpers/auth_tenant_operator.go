@@ -56,17 +56,23 @@ func TenantOperatorHTTPClient(ctx context.Context, timeout time.Duration) (*http
 	return tenantOperatorAuth.newHTTPClient(ctx, timeout)
 }
 
-// enrollTenantOperator has the tenant principal, the admin of this suite
-// process's tenant, enrol a PIV user in that tenant and bind it to go-qrdb's
-// built-in Operator role. The tenant is provisioned first if it is not yet.
+// enrollTenantOperator has the system admin enrol a PIV user in this suite
+// process's tenant (the tenant principal's, provisioned first if it is not
+// yet) and bind it to go-qrdb's built-in Operator role. The tenant's own admin
+// cannot: every tenant-nested IAM write requires tenants:create, a
+// cross-scope permission only a system-tenant identity holds (go-quicbaas#2342).
 func enrollTenantOperator(ctx context.Context, baseURL string) (*enrolledPrincipal, error) {
-	adminBearer, err := tenantPrincipalAuth.bearer(ctx, baseURL)
-	if err != nil {
+	if _, err := tenantPrincipalAuth.bearer(ctx, baseURL); err != nil {
 		return nil, &PrincipalAuthError{Principal: tenantOperatorName, Step: "tenant admin login", Cause: err}
 	}
 	tenantID := tenantPrincipalAuth.tenantID(baseURL)
 
-	userID, certPEM, keyPEM, err := enrollTenantPIVUser(ctx, baseURL, tenantID, adminBearer)
+	systemBearer, _, err := authPIV(ctx, baseURL, pivCertPath(), pivKeyPath(), pivCAFile())
+	if err != nil {
+		return nil, &PrincipalAuthError{Principal: tenantOperatorName, Step: "system admin login", TenantID: tenantID, Cause: err}
+	}
+
+	userID, certPEM, keyPEM, err := enrollTenantPIVUser(ctx, baseURL, tenantID, systemBearer)
 	if err != nil {
 		return nil, &PrincipalAuthError{Principal: tenantOperatorName, Step: "enroll PIV user", TenantID: tenantID, Cause: err}
 	}
@@ -74,7 +80,7 @@ func enrollTenantOperator(ctx context.Context, baseURL string) (*enrolledPrincip
 	// The tenant is fresh, so its Operator role carries the identifier go-qrdb
 	// seeds it under.
 	binding := map[string]interface{}{"role_id": qrdbsdk.SystemRoleID(tenantID, qrdbsdk.RoleNameOperator)}
-	if _, err := postJSON(ctx, baseURL+"/api/v1/tenants/"+tenantID+"/users/"+userID+"/roles", adminBearer, binding); err != nil {
+	if _, err := postJSON(ctx, baseURL+"/api/v1/tenants/"+tenantID+"/users/"+userID+"/roles", systemBearer, binding); err != nil {
 		return nil, &PrincipalAuthError{Principal: tenantOperatorName, Step: "bind Operator role to user " + userID, TenantID: tenantID, Cause: err}
 	}
 

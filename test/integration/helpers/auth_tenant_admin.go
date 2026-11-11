@@ -153,10 +153,11 @@ func deleteTenantAsSystemAdmin(ctx context.Context, baseURL, tenantID string) er
 
 // enrollTenantPIVUser has the fixture CA issue an ephemeral tenant-scoped
 // client cert, creates a PIV user in tenantID and activates it through the
-// invite flow, binding the cert. adminBearer must be bound to tenantID (the
-// tenant's admin, see ProvisionTenant): the users route refuses a bearer of
-// any other tenant, the system tenant included. The user holds no
-// role: the caller grants whatever the principal is for.
+// invite flow, binding the cert. adminBearer must be the system admin's: the
+// users route requires tenants:create, a cross-scope permission a tenant's own
+// admin never holds, and since go-quicbaas#2342 a system caller acts in the
+// tenant the URL names. The user holds no role: the caller grants whatever
+// the principal is for.
 func enrollTenantPIVUser(ctx context.Context, baseURL, tenantID, adminBearer string) (userID string, certPEM, keyPEM []byte, err error) {
 	certPEM, keyPEM, err = IssueTenantClientCert(ctx, tenantID)
 	if err != nil {
@@ -402,6 +403,37 @@ func postJSON(ctx context.Context, rawURL, bearer string, body interface{}) ([]b
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, &AuthError{Op: "POST", URL: rawURL, Cause: err}
+	}
+	defer resp.Body.Close()
+
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, &AuthError{Op: "read response", URL: rawURL, Cause: err}
+	}
+
+	if resp.StatusCode < 200 || resp.StatusCode > 299 {
+		return nil, &AuthBadStatusError{URL: rawURL, Status: resp.StatusCode, Body: string(respBody)}
+	}
+
+	return respBody, nil
+}
+
+// getJSON GETs rawURL with bearer and returns the response body, or an
+// AuthBadStatusError for a non-2xx status.
+func getJSON(ctx context.Context, rawURL, bearer string) ([]byte, error) {
+	client := NewHTTPClient(30 * time.Second)
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
+	if err != nil {
+		return nil, &AuthError{Op: "build request", URL: rawURL, Cause: err}
+	}
+	if bearer != "" {
+		req.Header.Set("Authorization", "Bearer "+bearer)
+	}
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, &AuthError{Op: "GET", URL: rawURL, Cause: err}
 	}
 	defer resp.Body.Close()
 
