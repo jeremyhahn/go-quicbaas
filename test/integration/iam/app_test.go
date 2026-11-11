@@ -28,8 +28,11 @@ import (
 
 // TestAppRegistration tests OAuth application registration.
 func TestAppRegistration(t *testing.T) {
-	cluster := setupTestCluster(t)
-	defer cluster.Close()
+	base := setupTestCluster(t)
+	defer base.Close()
+	// The test creates its own tenant as the system admin and works inside it,
+	// so the app calls go as the system admin acting in the URL's tenant.
+	cluster := base.asSystemAdmin()
 
 	tenantID := setupTenantForTests(t, cluster)
 	defer cluster.deleteJSON(fmt.Sprintf("/api/v1/tenants/%s", tenantID))
@@ -150,8 +153,11 @@ func TestAppRegistration(t *testing.T) {
 
 // TestAppSecretRotation tests rotating application client secrets.
 func TestAppSecretRotation(t *testing.T) {
-	cluster := setupTestCluster(t)
-	defer cluster.Close()
+	base := setupTestCluster(t)
+	defer base.Close()
+	// The test creates its own tenant as the system admin and works inside it,
+	// so the app calls go as the system admin acting in the URL's tenant.
+	cluster := base.asSystemAdmin()
 
 	tenantID := setupTenantForTests(t, cluster)
 	defer cluster.deleteJSON(fmt.Sprintf("/api/v1/tenants/%s", tenantID))
@@ -179,8 +185,12 @@ func TestAppSecretRotation(t *testing.T) {
 
 // TestAppClientValidation tests client validation during OAuth flows.
 func TestAppClientValidation(t *testing.T) {
-	cluster := setupTestCluster(t)
-	defer cluster.Close()
+	base := setupTestCluster(t)
+	defer base.Close()
+	// The test creates its own tenant as the system admin and works inside it,
+	// so the app calls go as the system admin acting in the URL's tenant;
+	// validate-client names no tenant and goes as the system admin.
+	cluster := base.asSystemAdmin()
 
 	tenantID := setupTenantForTests(t, cluster)
 	defer cluster.deleteJSON(fmt.Sprintf("/api/v1/tenants/%s", tenantID))
@@ -258,8 +268,11 @@ func TestAppClientValidation(t *testing.T) {
 
 // TestAppRedirectURIValidation tests redirect URI validation.
 func TestAppRedirectURIValidation(t *testing.T) {
-	cluster := setupTestCluster(t)
-	defer cluster.Close()
+	base := setupTestCluster(t)
+	defer base.Close()
+	// The test creates its own tenant as the system admin and works inside it,
+	// so the app calls go as the system admin acting in the URL's tenant.
+	cluster := base.asSystemAdmin()
 
 	tenantID := setupTenantForTests(t, cluster)
 	defer cluster.deleteJSON(fmt.Sprintf("/api/v1/tenants/%s", tenantID))
@@ -330,8 +343,11 @@ func TestAppRedirectURIValidation(t *testing.T) {
 
 // TestAppGrantTypes tests different OAuth grant type configurations.
 func TestAppGrantTypes(t *testing.T) {
-	cluster := setupTestCluster(t)
-	defer cluster.Close()
+	base := setupTestCluster(t)
+	defer base.Close()
+	// The test creates its own tenant as the system admin and works inside it,
+	// so the app calls go as the system admin acting in the URL's tenant.
+	cluster := base.asSystemAdmin()
 
 	tenantID := setupTenantForTests(t, cluster)
 	defer cluster.deleteJSON(fmt.Sprintf("/api/v1/tenants/%s", tenantID))
@@ -408,8 +424,11 @@ func TestAppGrantTypes(t *testing.T) {
 
 // TestAppResourcePrefix tests application resource prefix for scoping.
 func TestAppResourcePrefix(t *testing.T) {
-	cluster := setupTestCluster(t)
-	defer cluster.Close()
+	base := setupTestCluster(t)
+	defer base.Close()
+	// The test creates its own tenant as the system admin and works inside it,
+	// so the app calls go as the system admin acting in the URL's tenant.
+	cluster := base.asSystemAdmin()
 
 	tenantID := setupTenantForTests(t, cluster)
 	defer cluster.deleteJSON(fmt.Sprintf("/api/v1/tenants/%s", tenantID))
@@ -430,8 +449,11 @@ func TestAppResourcePrefix(t *testing.T) {
 
 // TestAppDeletion tests application deletion and cleanup.
 func TestAppDeletion(t *testing.T) {
-	cluster := setupTestCluster(t)
-	defer cluster.Close()
+	base := setupTestCluster(t)
+	defer base.Close()
+	// The test creates its own tenant as the system admin and works inside it,
+	// so the app calls go as the system admin acting in the URL's tenant.
+	cluster := base.asSystemAdmin()
 
 	tenantID := setupTenantForTests(t, cluster)
 	defer cluster.deleteJSON(fmt.Sprintf("/api/v1/tenants/%s", tenantID))
@@ -459,8 +481,11 @@ func TestAppDeletion(t *testing.T) {
 
 // TestAppTenantIsolation tests that apps from different tenants are isolated.
 func TestAppTenantIsolation(t *testing.T) {
-	cluster := setupTestCluster(t)
-	defer cluster.Close()
+	base := setupTestCluster(t)
+	defer base.Close()
+	// The test creates its own tenant as the system admin and works inside it,
+	// so the app calls go as the system admin acting in the URL's tenant.
+	cluster := base.asSystemAdmin()
 
 	tenant1ID := generateUniqueTenantID()
 	tenant2ID := generateUniqueTenantID()

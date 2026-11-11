@@ -1891,8 +1891,8 @@ func (r *ToolRegistry) handleXKMSPIVExportCert(ctx context.Context, args map[str
 // Unlike REST and QUIC — where the authentication ceremony is pre-auth
 // because WebAuthn IS the authentication — the MCP surface keeps ALL four
 // verbs behind authorization: widening the unauthenticated MCP tool surface
-// is an owner decision (see the quicbaas_login_begin / quicbaas_login_finish
-// precedent in authz_qrdb_unmapped.go). Authenticated callers can still
+// is an access-control decision (publicTools in authz.go holds only the
+// documented health tools). Authenticated callers can still
 // drive the full ceremony (e.g. step-up verification of an enrolled factor).
 
 // fido2TenantFromArgs resolves the tenant scope for a FIDO2 ceremony tool
