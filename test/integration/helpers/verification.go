@@ -29,6 +29,7 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/pkg/util/id"
 	quicbaas "github.com/jeremyhahn/go-quicbaas/sdk/go"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/cluster"
+	sdkerrors "github.com/jeremyhahn/go-quicbaas/sdk/go/errors"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/service"
 )
 
@@ -938,11 +939,21 @@ func contains(slice []uint64, val uint64) bool {
 // cluster status and checks whether any node reports a leader. If no leader is
 // found across all nodes or the cluster status API returns errors, the cluster
 // is considered to be in standalone mode.
+//
+// The probe acts as the tenant operator, whose Operator role holds
+// admin:status, the permission ClusterStatus requires. A node that refuses
+// the call as unauthenticated or forbidden says nothing about the cluster's
+// mode, so a refusal fails the test instead of answering standalone: a caller
+// that returns early on standalone must never pass because it was refused.
+// It must be called from the test goroutine.
 func IsStandaloneMode(t *testing.T, endpoints []string) bool {
 	t.Helper()
 
+	bearer := tenantOperatorAuth.mustBearer(t, GetRESTEndpoints()[0])
+
 	for _, endpoint := range endpoints {
-		client, err := connectToNode(context.Background(), endpoint, 10*time.Second, 1, 500*time.Millisecond)
+		client, err := connectToNode(context.Background(), endpoint, 10*time.Second, 1, 500*time.Millisecond,
+			quicbaas.WithAuthToken(bearer))
 		if err != nil {
 			t.Logf("IsStandaloneMode: could not connect to %s: %v", endpoint, err)
 			continue
@@ -953,6 +964,9 @@ func IsStandaloneMode(t *testing.T, endpoints []string) bool {
 		cancel()
 		_ = client.Close()
 
+		if sdkerrors.IsUnauthorized(err) || sdkerrors.IsForbidden(err) {
+			t.Fatalf("IsStandaloneMode: %s refused the tenant operator's cluster status call: %v", endpoint, err)
+		}
 		if err != nil {
 			t.Logf("IsStandaloneMode: cluster status error from %s: %v", endpoint, err)
 			continue
