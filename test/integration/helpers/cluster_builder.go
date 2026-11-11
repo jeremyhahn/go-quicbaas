@@ -190,8 +190,10 @@ func (tc *TestCluster) FindLeader(ctx context.Context) (*TestNode, quicbaas.Clie
 	return nil, nil, fmt.Errorf("no leader found in cluster")
 }
 
-// connectToNode establishes a connection to a node using the SDK.
-func connectToNode(ctx context.Context, endpoint string, timeout time.Duration, retries int, retryBackoff time.Duration) (quicbaas.Client, error) {
+// connectToNode establishes a connection to a node using the SDK. The client
+// carries no credential of its own: a caller whose calls are gated passes
+// quicbaas.WithAuthToken with one of this package's principals in opts.
+func connectToNode(ctx context.Context, endpoint string, timeout time.Duration, retries int, retryBackoff time.Duration, opts ...quicbaas.Option) (quicbaas.Client, error) {
 	var client quicbaas.Client
 	var err error
 
@@ -200,14 +202,15 @@ func connectToNode(ctx context.Context, endpoint string, timeout time.Duration, 
 		return nil, err
 	}
 
+	clientOpts := append([]quicbaas.Option{
+		quicbaas.WithTimeout(timeout),
+		quicbaas.WithTLSConfig(tlsCfg),
+	}, opts...)
+
 	// Retry connection with exponential backoff
 	backoff := retryBackoff
 	for attempt := 0; attempt <= retries; attempt++ {
-		client, err = quicbaas.NewClient(
-			endpoint,
-			quicbaas.WithTimeout(timeout),
-			quicbaas.WithTLSConfig(tlsCfg),
-		)
+		client, err = quicbaas.NewClient(endpoint, clientOpts...)
 		if err == nil {
 			return client, nil
 		}

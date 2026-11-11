@@ -59,11 +59,11 @@ ARG DATE
 ARG BUILD_TAGS
 
 # Build static binaries using downloaded dependencies
-RUN CGO_ENABLED=0 GOOS=linux GONOSUMCHECK='*' go build -mod=mod -tags "${BUILD_TAGS}" -buildvcs=false \
+RUN CGO_ENABLED=0 GOOS=linux go build -mod=mod -tags "${BUILD_TAGS}" -buildvcs=false \
     -ldflags="-w -s -X github.com/jeremyhahn/go-quicbaas/pkg/version.Version=${VERSION} -X github.com/jeremyhahn/go-quicbaas/pkg/version.BuildTime=${DATE} -X github.com/jeremyhahn/go-quicbaas/pkg/version.GitCommit=${COMMIT}" \
     -o quicbaasd ./cmd/quicbaasd
 
-RUN CGO_ENABLED=0 GOOS=linux GONOSUMCHECK='*' go build -mod=mod -tags "${BUILD_TAGS}" -buildvcs=false \
+RUN CGO_ENABLED=0 GOOS=linux go build -mod=mod -tags "${BUILD_TAGS}" -buildvcs=false \
     -ldflags="-w -s -X github.com/jeremyhahn/go-quicbaas/pkg/version.Version=${VERSION} -X github.com/jeremyhahn/go-quicbaas/pkg/version.BuildTime=${DATE} -X github.com/jeremyhahn/go-quicbaas/pkg/version.GitCommit=${COMMIT}" \
     -o quicbaas ./cmd/quicbaas
 

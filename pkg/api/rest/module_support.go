@@ -33,9 +33,19 @@ import (
 // module_http.go, backed by Server.AuthenticateHTTP below) — and the ONE
 // qrdb authorizer renders the decision at the registration site
 // (pkg/apimodule RegisterHTTP). Re-running spec's Resource:Action here would
-// double-authorize the call against a different decision point.
+// double-authorize the call against a different decision point, so that
+// decision is not repeated for a caller acting in its own tenant. The route's
+// permission is carried in the request context instead, so urlTenant can
+// render it in the URL's tenant for a system caller that names another
+// tenant (go-quicbaas#2212).
 func (s *Server) BindRoute(spec RouteSpec) http.Handler {
 	var h http.Handler = spec.Handler(s)
+	if spec.Resource != "" && spec.Action != "" {
+		next := h
+		h = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			next.ServeHTTP(w, r.WithContext(withRoutePermission(r.Context(), spec.Resource, spec.Action)))
+		})
+	}
 
 	switch spec.Group {
 	case GroupAPI:
