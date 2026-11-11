@@ -28,9 +28,11 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	qrdbtenant "github.com/jeremyhahn/go-qrdb/pkg/tenant"
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/config"
+	dberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 )
 
@@ -439,7 +441,14 @@ func (h *IAMHandler) RegisterSelfBegin(w http.ResponseWriter, r *http.Request) {
 
 	// Derive tenant ID (slug + collision suffix).
 	identityStore, _ := h.getIdentityStore(ctx)
+	// retired holds the ids the engine refused as deleted during this begin.
+	// A deleted tenant id is retired for good, and the broker's own record of
+	// it is gone, so only the engine's refusal tells the derivation to move on.
+	retired := map[string]bool{}
 	tenantExists := func(ctx context.Context, id string) (bool, error) {
+		if retired[id] {
+			return true, nil
+		}
 		if identityStore == nil {
 			return false, nil
 		}
@@ -505,7 +514,26 @@ func (h *IAMHandler) RegisterSelfBegin(w http.ResponseWriter, r *http.Request) {
 	// the broker's derived handle exist before the ceremony opens, and the
 	// ceremony is the invite path, which enrols only an existing pending
 	// account. Every failure from here on removes both again.
-	if err := h.provisionRegistration(ctx, tenantMgr, identityStore, sess, cfg.DefaultRole); err != nil {
+	err = h.provisionRegistration(ctx, tenantMgr, identityStore, sess, cfg.DefaultRole)
+	// An id a discarded registration once held is retired by the engine, so a
+	// retry under the same tenant name advances to the next candidate.
+	for skips := 0; isRetiredTenantID(err) && skips < maxRetiredTenantSkips; skips++ {
+		retired[sess.tenantID] = true
+		next, deriveErr := deriveTenantID(ctx, req.TenantName, tenantExists)
+		if deriveErr != nil {
+			err = deriveErr
+			break
+		}
+		if isReservedTenantID(next) {
+			RespondIAMError(w, r, http.StatusBadRequest,
+				NewIAMAPIError(ErrReservedTenantID,
+					"tenant_name produces a reserved tenant id"))
+			return
+		}
+		sess.tenantID = next
+		err = h.provisionRegistration(ctx, tenantMgr, identityStore, sess, cfg.DefaultRole)
+	}
+	if err != nil {
 		var grantErr *SelfRegistrationRoleGrantError
 		if errors.As(err, &grantErr) {
 			RespondIAMError(w, r, http.StatusInternalServerError,
@@ -515,7 +543,7 @@ func (h *IAMHandler) RegisterSelfBegin(w http.ResponseWriter, r *http.Request) {
 		h.server.handleServiceError(w, r, err)
 		return
 	}
-	options, err := mgr.BeginInviteRegistration(ctx, tenantID, req.Email)
+	options, err := mgr.BeginInviteRegistration(ctx, sess.tenantID, req.Email)
 	if err != nil {
 		h.discardRegistration(ctx, sess)
 		h.server.handleServiceError(w, r, err)
@@ -649,16 +677,21 @@ func (h *IAMHandler) RegisterSelfFinish(w http.ResponseWriter, r *http.Request) 
 
 	// The roles were granted at begin, before the ceremony opened, so the
 	// ceremony's attestation gate held this administrator to the hardware bar.
-	// The tenant's registration record is removed, so the sweep never discards
-	// an account that is held for admin approval or email verification.
-	if _, err := tenantMgr.UpdateTenant(ctx, sess.tenantID, iam.UpdateTenantOptions{
-		FinishSelfRegistration: true,
-	}); err != nil {
-		h.discardRegistration(ctx, sess)
-		h.server.logger.WithError(err).Error("iam.self_registration: recording the enrolment failed, registration refused")
-		RespondIAMError(w, r, http.StatusInternalServerError,
-			NewIAMAPIError(ErrInternalError, "registration could not record the enrolled account"))
-		return
+	// An account a gate holds pending has the tenant's registration record
+	// removed now, so the sweep never discards an account that is held for
+	// admin approval or email verification. An account no gate holds keeps
+	// the record until it is active: a crash before activation leaves a
+	// pending account the sweep still discards, never one nothing recovers.
+	if cfg.RequireAdminApproval || cfg.RequireEmailVerification {
+		if _, err := tenantMgr.UpdateTenant(ctx, sess.tenantID, iam.UpdateTenantOptions{
+			FinishSelfRegistration: true,
+		}); err != nil {
+			h.discardRegistration(ctx, sess)
+			h.server.logger.WithError(err).Error("iam.self_registration: recording the enrolment failed, registration refused")
+			RespondIAMError(w, r, http.StatusInternalServerError,
+				NewIAMAPIError(ErrInternalError, "registration could not record the enrolled account"))
+			return
+		}
 	}
 
 	if cfg.RequireAdminApproval {
@@ -697,6 +730,14 @@ func (h *IAMHandler) RegisterSelfFinish(w http.ResponseWriter, r *http.Request) 
 		h.discardRegistration(ctx, sess)
 		h.server.handleServiceError(w, r, err)
 		return
+	}
+	// The account is active, so the registration is finished whatever happens
+	// to its record: a failure to remove the record is logged, and the sweep
+	// keeps a tenant whose account is active.
+	if _, err := tenantMgr.UpdateTenant(ctx, sess.tenantID, iam.UpdateTenantOptions{
+		FinishSelfRegistration: true,
+	}); err != nil {
+		h.server.logger.WithError(err).Error("iam.self_registration: removing the registration record of an activated account failed")
 	}
 
 	// Mint session tokens via the OIDC provider.
@@ -996,11 +1037,44 @@ func (h *IAMHandler) provisionRegistration(ctx context.Context, tenants iam.Tena
 func (h *IAMHandler) discardRegistration(ctx context.Context, sess *registrationSession) {
 	store, storeErr := h.getIdentityStore(ctx)
 	tenants, tenantErr := h.getTenantManager(ctx)
-	err := errors.Join(storeErr, tenantErr, removeRegistration(ctx, tenants, store, sess))
+	err := errors.Join(storeErr, tenantErr, discardOwnedRegistration(ctx, tenants, store, sess))
 	if err != nil {
 		h.server.logger.WithError(err).Error("iam.self_registration: discarding an incomplete registration failed")
 	}
 }
+
+// discardOwnedRegistration deletes the registration's account and tenant only
+// while they are still the registration's own: the tenant still records the
+// unfinished registration, and it holds nothing but the registrant's
+// still-pending account. An account an operator approved, or a tenant another
+// user joined, while the ceremony was open is reported and kept.
+func discardOwnedRegistration(ctx context.Context, tenants iam.TenantManager, store *iam.IdentityStore, sess *registrationSession) error {
+	if tenants == nil || store == nil {
+		return removeRegistration(ctx, tenants, store, sess)
+	}
+	ctx = context.WithoutCancel(ctx)
+	tenant, err := tenants.GetTenant(ctx, sess.tenantID)
+	if err != nil {
+		if dberrors.IsNotFound(err) {
+			return nil
+		}
+		return err
+	}
+	if tenant.SelfRegistration == nil {
+		return &SelfRegistrationTenantInUseError{TenantID: sess.tenantID}
+	}
+	return discardUnfinishedTenant(ctx, tenants, store, sess.tenantID, sess.userID)
+}
+
+// isRetiredTenantID reports whether err is the engine's refusal of a tenant id
+// that was used and deleted.
+func isRetiredTenantID(err error) bool {
+	var deleted *qrdbtenant.TenantDeletedError
+	return errors.As(err, &deleted)
+}
+
+// maxRetiredTenantSkips bounds how many retired ids one begin steps past.
+const maxRetiredTenantSkips = 20
 
 // removeRegistration deletes the registration's account and tenant, and
 // returns what failed.

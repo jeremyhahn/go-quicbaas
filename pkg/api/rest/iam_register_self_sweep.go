@@ -117,7 +117,7 @@ func (s *registrationSweeper) settle(ctx context.Context, tenant *iam.Tenant) er
 		s.arm(ctx, tenant.ID, wait)
 		return nil
 	}
-	return discardUnfinishedTenant(ctx, s.tenants, s.store, tenant.ID)
+	return discardUnfinishedTenant(ctx, s.tenants, s.store, tenant.ID, 0)
 }
 
 // arm schedules the tenant to be settled again after wait. Nothing is armed
@@ -180,8 +180,8 @@ func (s *registrationSweeper) stop() {
 // tenant, after verifying the tenant is the registration's own: the tenant's
 // record says self-registration created it, and it holds nothing but the
 // registrant's still-pending account. A tenant holding anything more is
-// reported and kept.
-func discardUnfinishedTenant(ctx context.Context, tenants iam.TenantManager, store *iam.IdentityStore, tenantID string) error {
+// reported and kept. A non-zero registrantID must be that account's id.
+func discardUnfinishedTenant(ctx context.Context, tenants iam.TenantManager, store *iam.IdentityStore, tenantID string, registrantID uint64) error {
 	// Two is enough to tell "only the registrant" from "more than that".
 	users, err := store.ListUsers(ctx, tenantID, iam.ListOptions{Limit: 2})
 	if err != nil {
@@ -192,7 +192,7 @@ func discardUnfinishedTenant(ctx context.Context, tenants iam.TenantManager, sto
 	case len(users) > 1:
 		return &SelfRegistrationTenantInUseError{TenantID: tenantID}
 	case len(users) == 1:
-		if users[0].Lifecycle != iam.LifecyclePending {
+		if users[0].Lifecycle != iam.LifecyclePending || (registrantID != 0 && users[0].ID != registrantID) {
 			return &SelfRegistrationTenantInUseError{TenantID: tenantID}
 		}
 		sess.userID = users[0].ID
