@@ -135,33 +135,6 @@ func TestCacheWarmerDependenciesNilLoggerError(t *testing.T) {
 }
 
 // =============================================================================
-// Logger Adapter Tests
-// =============================================================================
-
-func TestLoggerAdapter(t *testing.T) {
-	testLog, err := logger.New(logger.LogConfig{
-		Level:     "error",
-		Format:    "json",
-		Output:    "stderr",
-		Component: "test",
-	})
-	require.NoError(t, err)
-
-	tests := []struct {
-		name string
-		in   *logger.Logger
-	}{
-		{name: "nil logger is wrapped", in: nil},
-		{name: "valid logger", in: testLog},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			assert.NotNil(t, asInterfaceLogger(tt.in))
-		})
-	}
-}
-
-// =============================================================================
 // Command Structure Tests
 // =============================================================================
 

@@ -34,6 +34,8 @@ func TestLoggerAdapter(t *testing.T) {
 	})
 	require.NoError(t, err)
 
+	assert.NotNil(t, asInterfaceLogger(nil), "a nil logger is wrapped")
+
 	base := asInterfaceLogger(baseLogger)
 	baseAdapter, ok := base.(*loggerAdapter)
 	require.True(t, ok, "asInterfaceLogger should return *loggerAdapter")

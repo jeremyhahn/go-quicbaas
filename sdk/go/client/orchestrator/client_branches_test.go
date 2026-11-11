@@ -52,10 +52,10 @@ var branchCalls = map[string]branchCall{
 	},
 }
 
-// TestClient_NilContext checks that a nil context is rejected as invalid
+// TestClientBranches_NilContext checks that a nil context is rejected as invalid
 // input before the transport is reached (the failing transport would
 // otherwise surface an internal error).
-func TestClient_NilContext(t *testing.T) {
+func TestClientBranches_NilContext(t *testing.T) {
 	for _, method := range []string{
 		"CreateTask", "CreateWorkflow", "ListWorkflows", "GetWorkflow", "UpdateWorkflow",
 		"DisableFleetNode", "EnableFleetNode", "SubmitTaskArtifacts", "GetTaskArtifact", "ListTaskArtifacts",
@@ -70,9 +70,9 @@ func TestClient_NilContext(t *testing.T) {
 	}
 }
 
-// TestClient_TransportError checks that a transport failure is returned
+// TestClientBranches_TransportError checks that a transport failure is returned
 // to the caller unchanged.
-func TestClient_TransportError(t *testing.T) {
+func TestClientBranches_TransportError(t *testing.T) {
 	for _, method := range []string{
 		"CreateTask", "ListWorkflows", "GetWorkflow", "UpdateWorkflow",
 		"EnableFleetNode", "GetTaskArtifact", "ListTaskArtifacts",
@@ -85,10 +85,10 @@ func TestClient_TransportError(t *testing.T) {
 	}
 }
 
-// TestClient_NilResponse checks the (nil, nil) transport result: every
+// TestClientBranches_NilResponse checks the (nil, nil) transport result: every
 // method reports an internal error except ListTaskArtifacts, which returns
 // an empty listing for the requested task.
-func TestClient_NilResponse(t *testing.T) {
+func TestClientBranches_NilResponse(t *testing.T) {
 	for _, method := range []string{
 		"CreateTask", "CreateWorkflow", "GetWorkflow", "UpdateWorkflow",
 		"DisableFleetNode", "EnableFleetNode", "SubmitTaskArtifacts", "GetTaskArtifact",
@@ -112,9 +112,9 @@ func TestClient_NilResponse(t *testing.T) {
 	})
 }
 
-// TestClient_TypeMismatch checks that a response of the wrong concrete type
+// TestClientBranches_TypeMismatch checks that a response of the wrong concrete type
 // is reported as an internal error.
-func TestClient_TypeMismatch(t *testing.T) {
+func TestClientBranches_TypeMismatch(t *testing.T) {
 	for _, method := range []string{
 		"CreateTask", "CreateWorkflow", "ListWorkflows", "GetWorkflow", "UpdateWorkflow",
 		"DisableFleetNode", "EnableFleetNode", "SubmitTaskArtifacts", "GetTaskArtifact", "ListTaskArtifacts",

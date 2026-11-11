@@ -1217,25 +1217,3 @@ func TestRebalanceCommands_SDKClientError(t *testing.T) {
 		})
 	}
 }
-
-func TestDisplayRebalanceProgressSDK_Formats(t *testing.T) {
-	tests := []struct {
-		name   string
-		format string
-		resp   *cluster.GetRebalanceProgressResponse
-	}{
-		{"json in progress", "json", &cluster.GetRebalanceProgressResponse{
-			OperationID: "op-123", Status: "in_progress", PercentComplete: 55.5,
-			ShardsMoved: 3, TotalShards: 6, ElapsedTime: int64(30 * time.Second),
-		}},
-		{"table completed", "table", &cluster.GetRebalanceProgressResponse{
-			OperationID: "op-456", Status: "completed", PercentComplete: 100.0,
-			ShardsMoved: 5, TotalShards: 5, ElapsedTime: int64(2 * time.Minute),
-		}},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			assert.NoError(t, displayRebalanceProgressSDK(tt.resp, tt.format))
-		})
-	}
-}
