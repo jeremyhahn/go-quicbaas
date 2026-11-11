@@ -49,13 +49,13 @@ func TestTableFormatter(t *testing.T) {
 			name:    "varying widths",
 			headers: []string{"ID", "Name", "Address"},
 			rows: [][]string{
-				{"1", "node-primary", "192.168.1.100:9000"},
+				{"1", "node-primary", "203.0.113.100:9000"},
 				{"2", "n2", "10.0.0.1:9000"},
 			},
 			want: []string{
 				"| ID | Name         | Address            |",
 				"|-",
-				"| 1  | node-primary | 192.168.1.100:9000 |",
+				"| 1  | node-primary | 203.0.113.100:9000 |",
 				"| 2  | n2           | 10.0.0.1:9000      |",
 			},
 		},

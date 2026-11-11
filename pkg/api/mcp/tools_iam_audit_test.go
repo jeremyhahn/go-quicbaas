@@ -144,28 +144,27 @@ func TestAdminServiceUnavailableError(t *testing.T) {
 // getAuditLogger Tests
 // =============================================================================
 
-func TestGetAuditLogger_ServiceDoesNotSupport(t *testing.T) {
-	log := newTestLogger(t)
-	reg := &ToolRegistry{service: &mockService{}, logger: log}
-
-	_, err := reg.getAuditLogger(context.Background())
-	require.Error(t, err)
-}
-
-func TestGetAuditLogger_NilLogger(t *testing.T) {
-	reg := newAuditRegistry(t, nil)
-
-	_, err := reg.getAuditLogger(context.Background())
-	require.Error(t, err)
-}
-
-func TestGetAuditLogger_Success(t *testing.T) {
-	auditLog := &mockAuditLogger{}
-	reg := newAuditRegistry(t, auditLog)
-
-	al, err := reg.getAuditLogger(context.Background())
-	require.NoError(t, err)
-	require.NotNil(t, al)
+func TestGetAuditLogger(t *testing.T) {
+	tests := []struct {
+		name    string
+		reg     *ToolRegistry
+		wantErr bool
+	}{
+		{"service does not support audit", &ToolRegistry{service: &mockService{}, logger: newTestLogger(t)}, true},
+		{"nil audit logger", newAuditRegistry(t, nil), true},
+		{"configured audit logger", newAuditRegistry(t, &mockAuditLogger{}), false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			al, err := tt.reg.getAuditLogger(context.Background())
+			if tt.wantErr {
+				require.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+			require.NotNil(t, al)
+		})
+	}
 }
 
 // =============================================================================
@@ -195,17 +194,6 @@ func TestExecuteIAMAuditQuery_Success(t *testing.T) {
 	assert.NotNil(t, resultMap["events"])
 }
 
-func TestExecuteIAMAuditQuery_DefaultLimit(t *testing.T) {
-	auditLog := &mockAuditLogger{}
-	reg := newAuditRegistry(t, auditLog)
-
-	result, err := reg.executeIAMAuditQuery(context.Background(), map[string]interface{}{
-		"tenant_id": "t1",
-	})
-	require.NoError(t, err)
-	require.NotNil(t, result)
-}
-
 func TestExecuteIAMAuditQuery_Error(t *testing.T) {
 	auditLog := &mockAuditLogger{
 		queryFn: func(_ context.Context, _ *iam.AuditFilter) ([]*iam.AuditEvent, int, error) {
@@ -220,14 +208,31 @@ func TestExecuteIAMAuditQuery_Error(t *testing.T) {
 	require.Error(t, err)
 }
 
-func TestExecuteIAMAuditQuery_ServiceUnavailable(t *testing.T) {
-	log := newTestLogger(t)
-	reg := &ToolRegistry{service: &mockService{}, logger: log}
-
-	_, err := reg.executeIAMAuditQuery(context.Background(), map[string]interface{}{
-		"tenant_id": "t1",
-	})
-	require.Error(t, err)
+// TestAuditAndPEPTools_ServiceUnavailable checks that every audit and PEP
+// tool refuses when the service exposes neither an audit logger nor a PEP.
+func TestAuditAndPEPTools_ServiceUnavailable(t *testing.T) {
+	reg := &ToolRegistry{service: &mockService{}, logger: newTestLogger(t)}
+	pepArgs := map[string]interface{}{
+		"tenant_id": "t1", "principal": "user-1",
+		"action": "read", "resource": "documents",
+	}
+	tests := []struct {
+		name string
+		tool func(context.Context, map[string]interface{}) (interface{}, error)
+		args map[string]interface{}
+	}{
+		{"audit query", reg.executeIAMAuditQuery, map[string]interface{}{"tenant_id": "t1"}},
+		{"audit get", reg.executeIAMAuditGet, map[string]interface{}{"tenant_id": "t1", "event_id": "evt-1"}},
+		{"audit delete", reg.executeIAMAuditDelete, map[string]interface{}{"tenant_id": "t1", "before": "2024-01-01T00:00:00Z"}},
+		{"pep check", reg.executePEPCheck, pepArgs},
+		{"pep check batch", reg.executePEPCheckBatch, map[string]interface{}{"checks": []interface{}{pepArgs}}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := tt.tool(context.Background(), tt.args)
+			require.Error(t, err)
+		})
+	}
 }
 
 // =============================================================================
@@ -261,35 +266,46 @@ func TestExecuteIAMAuditGet_Error(t *testing.T) {
 	require.Error(t, err)
 }
 
-func TestExecuteIAMAuditGet_ServiceUnavailable(t *testing.T) {
-	log := newTestLogger(t)
-	reg := &ToolRegistry{service: &mockService{}, logger: log}
-
-	_, err := reg.executeIAMAuditGet(context.Background(), map[string]interface{}{
-		"tenant_id": "t1",
-		"event_id":  "evt-1",
-	})
-	require.Error(t, err)
-}
-
 // =============================================================================
 // Audit Delete Tests
 // =============================================================================
 
+// TestExecuteIAMAuditDelete_Success deletes when dry_run is absent or an
+// explicit JSON false.
 func TestExecuteIAMAuditDelete_Success(t *testing.T) {
-	auditLog := &mockAuditLogger{}
-	reg := newAuditRegistry(t, auditLog)
+	tests := []struct {
+		name  string
+		extra map[string]interface{}
+	}{
+		{"dry_run absent", nil},
+		{"dry_run false", map[string]interface{}{"dry_run": false}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			deleteCalled := false
+			auditLog := &mockAuditLogger{
+				deleteOlderFn: func(_ context.Context, _ string, _ time.Time) (int, error) {
+					deleteCalled = true
+					return 5, nil
+				},
+			}
+			reg := newAuditRegistry(t, auditLog)
+			args := map[string]interface{}{
+				"tenant_id": auditDeleteTenant,
+				"before":    "2024-01-01T00:00:00Z",
+			}
+			for k, v := range tt.extra {
+				args[k] = v
+			}
 
-	result, err := reg.executeIAMAuditDelete(auditDeleteCtx(t, reg, true), map[string]interface{}{
-		"tenant_id": auditDeleteTenant,
-		"before":    "2024-01-01T00:00:00Z",
-	})
-	require.NoError(t, err)
-	require.NotNil(t, result)
-
-	resultMap, ok := result.(map[string]interface{})
-	require.True(t, ok)
-	assert.Equal(t, float64(5), resultMap["deleted"])
+			result, err := reg.executeIAMAuditDelete(auditDeleteCtx(t, reg, true), args)
+			require.NoError(t, err)
+			resultMap, ok := result.(map[string]interface{})
+			require.True(t, ok)
+			assert.Equal(t, float64(5), resultMap["deleted"])
+			assert.True(t, deleteCalled)
+		})
+	}
 }
 
 // TestExecuteIAMAuditDelete_WithoutAuditDeleteRefused proves the route
@@ -404,30 +420,6 @@ func TestExecuteIAMAuditDelete_MalformedDryRunRefused(t *testing.T) {
 	}
 }
 
-// TestExecuteIAMAuditDelete_DryRunFalseDeletes pins that an explicit boolean
-// false dry_run deletes exactly as an absent one does.
-func TestExecuteIAMAuditDelete_DryRunFalseDeletes(t *testing.T) {
-	deleteCalled := false
-	auditLog := &mockAuditLogger{
-		deleteOlderFn: func(_ context.Context, _ string, _ time.Time) (int, error) {
-			deleteCalled = true
-			return 5, nil
-		},
-	}
-	reg := newAuditRegistry(t, auditLog)
-
-	result, err := reg.executeIAMAuditDelete(auditDeleteCtx(t, reg, true), map[string]interface{}{
-		"tenant_id": auditDeleteTenant,
-		"before":    "2024-01-01T00:00:00Z",
-		"dry_run":   false,
-	})
-	require.NoError(t, err)
-	resultMap, ok := result.(map[string]interface{})
-	require.True(t, ok)
-	assert.Equal(t, float64(5), resultMap["deleted"])
-	assert.True(t, deleteCalled)
-}
-
 // TestIAMAuditDeleteSchemaDeclaresDryRun pins that the tool schema declares
 // dry_run as a boolean, so schema validation sees a malformed value too.
 func TestIAMAuditDeleteSchemaDeclaresDryRun(t *testing.T) {
@@ -534,49 +526,6 @@ func TestExecuteIAMAuditDelete_Error(t *testing.T) {
 	require.EqualError(t, err, "delete failed")
 }
 
-func TestExecuteIAMAuditDelete_ServiceUnavailable(t *testing.T) {
-	log := newTestLogger(t)
-	reg := &ToolRegistry{service: &mockService{}, logger: log}
-
-	_, err := reg.executeIAMAuditDelete(context.Background(), map[string]interface{}{
-		"tenant_id": "t1",
-		"before":    "2024-01-01T00:00:00Z",
-	})
-	require.Error(t, err)
-}
-
-// =============================================================================
-// PEP Service Unavailable Tests
-// =============================================================================
-
-func TestExecutePEPCheck_ServiceUnavailable(t *testing.T) {
-	log := newTestLogger(t)
-	reg := &ToolRegistry{service: &mockService{}, logger: log}
-
-	_, err := reg.executePEPCheck(context.Background(), map[string]interface{}{
-		"tenant_id": "t1",
-		"principal": "user-1",
-		"action":    "read",
-		"resource":  "documents",
-	})
-	require.Error(t, err)
-}
-
-func TestExecutePEPCheckBatch_ServiceUnavailable(t *testing.T) {
-	log := newTestLogger(t)
-	reg := &ToolRegistry{service: &mockService{}, logger: log}
-
-	_, err := reg.executePEPCheckBatch(context.Background(), map[string]interface{}{
-		"checks": []interface{}{
-			map[string]interface{}{
-				"tenant_id": "t1", "principal": "user-1",
-				"action": "read", "resource": "documents",
-			},
-		},
-	})
-	require.Error(t, err)
-}
-
 // =============================================================================
 // PEP Input Validation Tests
 // =============================================================================
@@ -590,118 +539,52 @@ func (m *pepMockService) GetPolicyEngine(_ context.Context) (*iam.PolicyEngine, 
 	return m.engine, nil
 }
 
-func TestExecutePEPCheck_NilEngine(t *testing.T) {
+// TestExecutePEPCheck_InputRefused checks the typed errors the PEP tools
+// return for an unconfigured engine and for each missing input.
+func TestExecutePEPCheck_InputRefused(t *testing.T) {
 	log := newTestLogger(t)
-	svc := &pepMockService{engine: nil}
-	reg := &ToolRegistry{service: svc, logger: log}
-
-	_, err := reg.executePEPCheck(context.Background(), map[string]interface{}{
-		"tenant_id": "t1", "principal": "user-1",
-		"action": "read", "resource": "docs",
-	})
-	require.Error(t, err)
-	var pepErr *PEPServiceUnavailableError
-	assert.ErrorAs(t, err, &pepErr)
-}
-
-func TestExecutePEPCheckBatch_NilEngine(t *testing.T) {
-	log := newTestLogger(t)
-	svc := &pepMockService{engine: nil}
-	reg := &ToolRegistry{service: svc, logger: log}
-
-	_, err := reg.executePEPCheckBatch(context.Background(), map[string]interface{}{
-		"checks": []interface{}{
-			map[string]interface{}{
-				"tenant_id": "t1", "principal": "user-1",
-				"action": "read", "resource": "docs",
-			},
-		},
-	})
-	require.Error(t, err)
-	var pepErr *PEPServiceUnavailableError
-	assert.ErrorAs(t, err, &pepErr)
-}
-
-func TestExecutePEPCheckBatch_MissingChecksArrayInput(t *testing.T) {
-	log := newTestLogger(t)
-	engine := iam.NewPolicyEngine(iam.PolicyEngineOptions{})
-	svc := &pepMockService{engine: engine}
-	reg := &ToolRegistry{service: svc, logger: log}
-
-	_, err := reg.executePEPCheckBatch(context.Background(), map[string]interface{}{
-		"not_checks": "invalid",
-	})
-	require.Error(t, err)
-	var pepErr *PEPInvalidInputError
-	assert.ErrorAs(t, err, &pepErr)
-}
-
-func TestExecutePEPCheck_MissingTenantID(t *testing.T) {
-	log := newTestLogger(t)
-	engine := iam.NewPolicyEngine(iam.PolicyEngineOptions{})
-	svc := &pepMockService{engine: engine}
-	reg := &ToolRegistry{service: svc, logger: log}
-
-	_, err := reg.executePEPCheck(context.Background(), map[string]interface{}{
-		"principal": "user-1",
-		"action":    "read",
-		"resource":  "docs",
-	})
-	require.Error(t, err)
-	var pepErr *PEPInvalidInputError
-	assert.ErrorAs(t, err, &pepErr)
-	assert.Equal(t, "tenant_id", pepErr.Field)
-}
-
-func TestExecutePEPCheck_MissingPrincipal(t *testing.T) {
-	log := newTestLogger(t)
-	engine := iam.NewPolicyEngine(iam.PolicyEngineOptions{})
-	svc := &pepMockService{engine: engine}
-	reg := &ToolRegistry{service: svc, logger: log}
-
-	_, err := reg.executePEPCheck(context.Background(), map[string]interface{}{
-		"tenant_id": "t1",
-		"action":    "read",
-		"resource":  "docs",
-	})
-	require.Error(t, err)
-	var pepErr *PEPInvalidInputError
-	assert.ErrorAs(t, err, &pepErr)
-	assert.Equal(t, "principal", pepErr.Field)
-}
-
-func TestExecutePEPCheck_MissingAction(t *testing.T) {
-	log := newTestLogger(t)
-	engine := iam.NewPolicyEngine(iam.PolicyEngineOptions{})
-	svc := &pepMockService{engine: engine}
-	reg := &ToolRegistry{service: svc, logger: log}
-
-	_, err := reg.executePEPCheck(context.Background(), map[string]interface{}{
-		"tenant_id": "t1",
-		"principal": "user-1",
-		"resource":  "docs",
-	})
-	require.Error(t, err)
-	var pepErr *PEPInvalidInputError
-	assert.ErrorAs(t, err, &pepErr)
-	assert.Equal(t, "action", pepErr.Field)
-}
-
-func TestExecutePEPCheck_MissingResource(t *testing.T) {
-	log := newTestLogger(t)
-	engine := iam.NewPolicyEngine(iam.PolicyEngineOptions{})
-	svc := &pepMockService{engine: engine}
-	reg := &ToolRegistry{service: svc, logger: log}
-
-	_, err := reg.executePEPCheck(context.Background(), map[string]interface{}{
-		"tenant_id": "t1",
-		"principal": "user-1",
-		"action":    "read",
-	})
-	require.Error(t, err)
-	var pepErr *PEPInvalidInputError
-	assert.ErrorAs(t, err, &pepErr)
-	assert.Equal(t, "resource", pepErr.Field)
+	noEngine := &ToolRegistry{service: &pepMockService{engine: nil}, logger: log}
+	withEngine := &ToolRegistry{
+		service: &pepMockService{engine: iam.NewPolicyEngine(iam.PolicyEngineOptions{})},
+		logger:  log,
+	}
+	full := func(drop string) map[string]interface{} {
+		args := map[string]interface{}{
+			"tenant_id": "t1", "principal": "user-1",
+			"action": "read", "resource": "docs",
+		}
+		delete(args, drop)
+		return args
+	}
+	tests := []struct {
+		name      string
+		tool      func(context.Context, map[string]interface{}) (interface{}, error)
+		args      map[string]interface{}
+		wantInput bool
+		wantField string
+	}{
+		{"check nil engine", noEngine.executePEPCheck, full(""), false, ""},
+		{"batch nil engine", noEngine.executePEPCheckBatch, map[string]interface{}{"checks": []interface{}{full("")}}, false, ""},
+		{"batch missing checks", withEngine.executePEPCheckBatch, map[string]interface{}{"not_checks": "invalid"}, true, "checks"},
+		{"check missing tenant_id", withEngine.executePEPCheck, full("tenant_id"), true, "tenant_id"},
+		{"check missing principal", withEngine.executePEPCheck, full("principal"), true, "principal"},
+		{"check missing action", withEngine.executePEPCheck, full("action"), true, "action"},
+		{"check missing resource", withEngine.executePEPCheck, full("resource"), true, "resource"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := tt.tool(context.Background(), tt.args)
+			require.Error(t, err)
+			if !tt.wantInput {
+				var unavailable *PEPServiceUnavailableError
+				assert.ErrorAs(t, err, &unavailable)
+				return
+			}
+			var inputErr *PEPInvalidInputError
+			require.ErrorAs(t, err, &inputErr)
+			assert.Equal(t, tt.wantField, inputErr.Field)
+		})
+	}
 }
 
 func TestExecutePEPCheck_SuccessWithContext(t *testing.T) {
@@ -716,7 +599,7 @@ func TestExecutePEPCheck_SuccessWithContext(t *testing.T) {
 		"principal": "user-1",
 		"action":    "read",
 		"resource":  "documents",
-		"context":   map[string]interface{}{"ip": "192.168.1.1"},
+		"context":   map[string]interface{}{"ip": "192.0.2.1"},
 	})
 	require.NoError(t, err)
 	require.NotNil(t, result)

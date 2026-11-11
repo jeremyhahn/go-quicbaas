@@ -295,7 +295,7 @@ func TestExecuteIAMGDPRConsentGrant_WithExpiration(t *testing.T) {
 		"purpose":    "analytics",
 		"version":    "2.0",
 		"expires_at": "2030-12-31T23:59:59Z",
-		"ip_address": "192.168.1.1",
+		"ip_address": "192.0.2.1",
 		"user_agent": "Mozilla/5.0",
 	})
 	require.NoError(t, err)

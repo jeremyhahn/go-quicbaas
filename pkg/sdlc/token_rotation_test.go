@@ -393,8 +393,8 @@ func (s *fakeSecretStore) Rollback(_ context.Context, path string, version int) 
 }
 
 const (
-	testSecretPath = "forge/agent-go-quicbaas/token"
-	testAccount    = "agent-go-quicbaas"
+	testSecretPath = "forge/agent-quicbaas/token"
+	testAccount    = "agent-quicbaas"
 )
 
 // seedCurrentToken puts an in-force credential at the path.
@@ -410,7 +410,7 @@ func seedCurrentToken(s *fakeSecretStore, name string, slot string) {
 
 func testSpec() TokenRotationSpec {
 	return TokenRotationSpec{
-		Purpose:    "agent-go-quicbaas",
+		Purpose:    "agent-quicbaas",
 		Username:   testAccount,
 		SecretPath: testSecretPath,
 	}
@@ -421,7 +421,7 @@ func testSpec() TokenRotationSpec {
 func TestRotate_RevokesTheOldTokenOnlyAfterVerifying(t *testing.T) {
 	lifecycle := &fakeLifecycle{verifyAs: testAccount}
 	store := newFakeSecretStore()
-	seedCurrentToken(store, "sdlc-agent-go-quicbaas-v1", "1")
+	seedCurrentToken(store, "sdlc-agent-quicbaas-v1", "1")
 
 	rotator, err := NewTokenRotator(lifecycle, store)
 	if err != nil {
@@ -433,17 +433,17 @@ func TestRotate_RevokesTheOldTokenOnlyAfterVerifying(t *testing.T) {
 		t.Fatalf("Rotate: %v", err)
 	}
 
-	if result.NewTokenName != "sdlc-agent-go-quicbaas-v2" {
+	if result.NewTokenName != "sdlc-agent-quicbaas-v2" {
 		t.Errorf("new token name = %q, want the next slot", result.NewTokenName)
 	}
-	if result.RevokedTokenName != "sdlc-agent-go-quicbaas-v1" {
+	if result.RevokedTokenName != "sdlc-agent-quicbaas-v1" {
 		t.Errorf("revoked = %q, want the previous token", result.RevokedTokenName)
 	}
 
 	// mint, then verify, then revoke. Any other order either revokes a
 	// credential before its replacement is proven, or proves nothing.
 	got := strings.Join(lifecycle.calls, " ")
-	want := "mint:sdlc-agent-go-quicbaas-v2:read:user verify revoke:sdlc-agent-go-quicbaas-v1"
+	want := "mint:sdlc-agent-quicbaas-v2:read:user verify revoke:sdlc-agent-quicbaas-v1"
 	if got != want {
 		t.Errorf("call order:\n got: %s\nwant: %s", got, want)
 	}
@@ -460,7 +460,7 @@ func TestRotate_RevokesTheOldTokenOnlyAfterVerifying(t *testing.T) {
 func TestRotate_WritesTheIntentBeforeMinting(t *testing.T) {
 	lifecycle := &fakeLifecycle{verifyAs: testAccount}
 	store := newFakeSecretStore()
-	seedCurrentToken(store, "sdlc-agent-go-quicbaas-v1", "1")
+	seedCurrentToken(store, "sdlc-agent-quicbaas-v1", "1")
 
 	rotator, _ := NewTokenRotator(lifecycle, store)
 	if _, err := rotator.Rotate(context.Background(), testSpec()); err != nil {
@@ -482,7 +482,7 @@ func TestRotate_WritesTheIntentBeforeMinting(t *testing.T) {
 func TestRotate_VerificationFailureLeavesTheOldTokenALIVE(t *testing.T) {
 	lifecycle := &fakeLifecycle{verifyErr: errors.New("401 unauthorized")}
 	store := newFakeSecretStore()
-	seedCurrentToken(store, "sdlc-agent-go-quicbaas-v1", "1")
+	seedCurrentToken(store, "sdlc-agent-quicbaas-v1", "1")
 
 	rotator, _ := NewTokenRotator(lifecycle, store)
 	_, err := rotator.Rotate(context.Background(), testSpec())
@@ -496,7 +496,7 @@ func TestRotate_VerificationFailureLeavesTheOldTokenALIVE(t *testing.T) {
 	}
 
 	for _, revoked := range lifecycle.revoked {
-		if revoked == "sdlc-agent-go-quicbaas-v1" {
+		if revoked == "sdlc-agent-quicbaas-v1" {
 			t.Fatal("THE OLD TOKEN WAS REVOKED after the replacement failed to " +
 				"verify; the account is now locked out with no working credential")
 		}
@@ -504,7 +504,7 @@ func TestRotate_VerificationFailureLeavesTheOldTokenALIVE(t *testing.T) {
 
 	// The useless replacement is what gets destroyed, and the stored version
 	// rolls back so the in-force credential is the one that still works.
-	if len(lifecycle.revoked) != 1 || lifecycle.revoked[0] != "sdlc-agent-go-quicbaas-v2" {
+	if len(lifecycle.revoked) != 1 || lifecycle.revoked[0] != "sdlc-agent-quicbaas-v2" {
 		t.Errorf("revoked = %v, want only the unverifiable replacement", lifecycle.revoked)
 	}
 	if store.rolledTo[testSecretPath] != 1 {
@@ -520,7 +520,7 @@ func TestRotate_VerificationFailureLeavesTheOldTokenALIVE(t *testing.T) {
 func TestRotate_WrongAccountIsAVerificationFailure(t *testing.T) {
 	lifecycle := &fakeLifecycle{verifyAs: "somebody-else"}
 	store := newFakeSecretStore()
-	seedCurrentToken(store, "sdlc-agent-go-quicbaas-v1", "1")
+	seedCurrentToken(store, "sdlc-agent-quicbaas-v1", "1")
 
 	rotator, _ := NewTokenRotator(lifecycle, store)
 	_, err := rotator.Rotate(context.Background(), testSpec())
@@ -529,7 +529,7 @@ func TestRotate_WrongAccountIsAVerificationFailure(t *testing.T) {
 	}
 
 	for _, revoked := range lifecycle.revoked {
-		if revoked == "sdlc-agent-go-quicbaas-v1" {
+		if revoked == "sdlc-agent-quicbaas-v1" {
 			t.Fatal("the old token was revoked for a replacement belonging to someone else")
 		}
 	}
@@ -546,7 +546,7 @@ func TestRotate_FirstRotationRevokesNothing(t *testing.T) {
 		t.Fatalf("Rotate: %v", err)
 	}
 
-	if result.Slot != 1 || result.NewTokenName != "sdlc-agent-go-quicbaas-v1" {
+	if result.Slot != 1 || result.NewTokenName != "sdlc-agent-quicbaas-v1" {
 		t.Errorf("result = %+v, want the first slot", result)
 	}
 	if len(lifecycle.revoked) != 0 {
@@ -581,10 +581,10 @@ func TestRotate_AlwaysRequestsAnIdentityScope(t *testing.T) {
 func TestRecoverOrphan_RevokesATokenLeftByACrash(t *testing.T) {
 	lifecycle := &fakeLifecycle{}
 	store := newFakeSecretStore()
-	seedCurrentToken(store, "sdlc-agent-go-quicbaas-v1", "1")
+	seedCurrentToken(store, "sdlc-agent-quicbaas-v1", "1")
 	// A rotation recorded its intent and died before storing the result.
 	store.data[testSecretPath+rotationIntentSuffix] = map[string][]byte{
-		metadataTokenName: []byte("sdlc-agent-go-quicbaas-v2"),
+		metadataTokenName: []byte("sdlc-agent-quicbaas-v2"),
 	}
 
 	rotator, _ := NewTokenRotator(lifecycle, store)
@@ -592,7 +592,7 @@ func TestRecoverOrphan_RevokesATokenLeftByACrash(t *testing.T) {
 		t.Fatalf("RecoverOrphan: %v", err)
 	}
 
-	if len(lifecycle.revoked) != 1 || lifecycle.revoked[0] != "sdlc-agent-go-quicbaas-v2" {
+	if len(lifecycle.revoked) != 1 || lifecycle.revoked[0] != "sdlc-agent-quicbaas-v2" {
 		t.Errorf("revoked = %v, want the orphan", lifecycle.revoked)
 	}
 }
@@ -605,10 +605,10 @@ func TestRecoverOrphan_RevokesATokenLeftByACrash(t *testing.T) {
 func TestRecoverOrphan_NeverRevokesTheTokenInForce(t *testing.T) {
 	lifecycle := &fakeLifecycle{}
 	store := newFakeSecretStore()
-	seedCurrentToken(store, "sdlc-agent-go-quicbaas-v2", "2")
+	seedCurrentToken(store, "sdlc-agent-quicbaas-v2", "2")
 	// The rotation COMPLETED; the intent simply was not cleared.
 	store.data[testSecretPath+rotationIntentSuffix] = map[string][]byte{
-		metadataTokenName: []byte("sdlc-agent-go-quicbaas-v2"),
+		metadataTokenName: []byte("sdlc-agent-quicbaas-v2"),
 	}
 
 	rotator, _ := NewTokenRotator(lifecycle, store)
@@ -626,12 +626,12 @@ func TestRecoverOrphan_NeverRevokesTheTokenInForce(t *testing.T) {
 // on: the same inputs always produce the same name, so an orphan can be found
 // by recomputing rather than by remembering.
 func TestRotationTokenName_IsDeterministic(t *testing.T) {
-	first := RotationTokenName("agent-go-quicbaas", 7)
-	second := RotationTokenName("agent-go-quicbaas", 7)
+	first := RotationTokenName("agent-quicbaas", 7)
+	second := RotationTokenName("agent-quicbaas", 7)
 	if first != second {
 		t.Fatalf("%q != %q", first, second)
 	}
-	if first == RotationTokenName("agent-go-quicbaas", 8) {
+	if first == RotationTokenName("agent-quicbaas", 8) {
 		t.Fatal("different slots must produce different names")
 	}
 }
@@ -735,10 +735,10 @@ func (f *fakeHandlerRegistry) RegisterHandler(name string, handler scheduler.Job
 func TestRegisterTokenRotationHandler_RecoversBeforeRotating(t *testing.T) {
 	lifecycle := &fakeLifecycle{verifyAs: testAccount}
 	store := newFakeSecretStore()
-	seedCurrentToken(store, "sdlc-agent-go-quicbaas-v1", "1")
+	seedCurrentToken(store, "sdlc-agent-quicbaas-v1", "1")
 	// A previous rotation died after recording its intent.
 	store.data[testSecretPath+rotationIntentSuffix] = map[string][]byte{
-		metadataTokenName: []byte("sdlc-agent-go-quicbaas-v99"),
+		metadataTokenName: []byte("sdlc-agent-quicbaas-v99"),
 	}
 
 	rotator, _ := NewTokenRotator(lifecycle, store)
@@ -764,7 +764,7 @@ func TestRegisterTokenRotationHandler_RecoversBeforeRotating(t *testing.T) {
 	}
 
 	// The orphan is revoked first, then the rotation proceeds.
-	if len(lifecycle.revoked) == 0 || lifecycle.revoked[0] != "sdlc-agent-go-quicbaas-v99" {
+	if len(lifecycle.revoked) == 0 || lifecycle.revoked[0] != "sdlc-agent-quicbaas-v99" {
 		t.Errorf("revoked = %v, want the orphan cleaned up first", lifecycle.revoked)
 	}
 }
@@ -777,7 +777,7 @@ func TestRegisterTokenRotationHandler_RecoversBeforeRotating(t *testing.T) {
 func TestRegisterTokenRotationHandler_ResultCarriesNoSecret(t *testing.T) {
 	lifecycle := &fakeLifecycle{verifyAs: testAccount, mintedSecret: "SUPER-SECRET-VALUE"}
 	store := newFakeSecretStore()
-	seedCurrentToken(store, "sdlc-agent-go-quicbaas-v1", "1")
+	seedCurrentToken(store, "sdlc-agent-quicbaas-v1", "1")
 
 	rotator, _ := NewTokenRotator(lifecycle, store)
 	registry := &fakeHandlerRegistry{}
@@ -840,9 +840,9 @@ func TestSchedulerHandlerRegistry_IsSatisfiedByTheRealEngine(t *testing.T) {
 func TestRecoverOrphan_RefusesWhenTheCurrentTokenCannotBeRead(t *testing.T) {
 	lifecycle := &fakeLifecycle{}
 	store := newFakeSecretStore()
-	seedCurrentToken(store, "sdlc-agent-go-quicbaas-v2", "2")
+	seedCurrentToken(store, "sdlc-agent-quicbaas-v2", "2")
 	store.data[testSecretPath+rotationIntentSuffix] = map[string][]byte{
-		metadataTokenName: []byte("sdlc-agent-go-quicbaas-v2"),
+		metadataTokenName: []byte("sdlc-agent-quicbaas-v2"),
 	}
 	// The credential record is unreadable — NOT absent.
 	store.getErr[testSecretPath] = errors.New("storage backend unavailable")
@@ -867,7 +867,7 @@ func TestRecoverOrphan_RefusesWhenTheCurrentTokenCannotBeRead(t *testing.T) {
 func TestRotate_RefusesWhenTheCurrentTokenCannotBeRead(t *testing.T) {
 	lifecycle := &fakeLifecycle{verifyAs: testAccount}
 	store := newFakeSecretStore()
-	seedCurrentToken(store, "sdlc-agent-go-quicbaas-v7", "7")
+	seedCurrentToken(store, "sdlc-agent-quicbaas-v7", "7")
 	store.getErr[testSecretPath] = errors.New("storage backend unavailable")
 
 	rotator, _ := NewTokenRotator(lifecycle, store)
@@ -906,7 +906,7 @@ func TestRotate_AbsentIsStillAnOrdinaryFirstRotation(t *testing.T) {
 func TestRecoverOrphan_AbsentIntentIsNotAnError(t *testing.T) {
 	lifecycle := &fakeLifecycle{}
 	store := newFakeSecretStore()
-	seedCurrentToken(store, "sdlc-agent-go-quicbaas-v1", "1")
+	seedCurrentToken(store, "sdlc-agent-quicbaas-v1", "1")
 
 	rotator, _ := NewTokenRotator(lifecycle, store)
 	if err := rotator.RecoverOrphan(context.Background(), testSpec()); err != nil {
@@ -922,7 +922,7 @@ func TestRecoverOrphan_AbsentIntentIsNotAnError(t *testing.T) {
 func TestRecoverOrphan_UnreadableIntentIsAnErrorNotSilence(t *testing.T) {
 	lifecycle := &fakeLifecycle{}
 	store := newFakeSecretStore()
-	seedCurrentToken(store, "sdlc-agent-go-quicbaas-v1", "1")
+	seedCurrentToken(store, "sdlc-agent-quicbaas-v1", "1")
 	store.getErr[testSecretPath+rotationIntentSuffix] = errors.New("storage backend unavailable")
 
 	rotator, _ := NewTokenRotator(lifecycle, store)
@@ -946,7 +946,7 @@ func TestRecoverOrphan_UnreadableIntentIsAnErrorNotSilence(t *testing.T) {
 func TestRotate_VersionEnumerationFailureAbortsBeforeStoring(t *testing.T) {
 	lifecycle := &fakeLifecycle{verifyAs: testAccount}
 	store := newFakeSecretStore()
-	seedCurrentToken(store, "agent-go-quicbaas-r1", "1")
+	seedCurrentToken(store, "agent-quicbaas-r1", "1")
 	store.listVersionsErr = errors.New("version index unreachable")
 	rotator, err := NewTokenRotator(lifecycle, store)
 	if err != nil {
@@ -980,7 +980,7 @@ func TestRotate_VersionEnumerationFailureAbortsBeforeStoring(t *testing.T) {
 func TestRotate_RollbackFailureStopsTheRevokeAndReportsBoth(t *testing.T) {
 	lifecycle := &fakeLifecycle{verifyErr: errors.New("401 unauthorized")}
 	store := newFakeSecretStore()
-	seedCurrentToken(store, "agent-go-quicbaas-r1", "1")
+	seedCurrentToken(store, "agent-quicbaas-r1", "1")
 	store.rollbackErr = errors.New("rollback plane down")
 	rotator, err := NewTokenRotator(lifecycle, store)
 	if err != nil {
@@ -1004,7 +1004,7 @@ func TestRotate_RollbackFailureStopsTheRevokeAndReportsBoth(t *testing.T) {
 			"destroys the only credential the store holds", lifecycle.revoked)
 	}
 	// The intent survives for the next recovery pass.
-	if name := string(store.data[testSecretPath+rotationIntentSuffix][metadataTokenName]); name != RotationTokenName("agent-go-quicbaas", 2) {
+	if name := string(store.data[testSecretPath+rotationIntentSuffix][metadataTokenName]); name != RotationTokenName("agent-quicbaas", 2) {
 		t.Fatalf("the intent record was discharged or lost: %q", name)
 	}
 }
@@ -1018,7 +1018,7 @@ func TestRotate_RollbackFailureStopsTheRevokeAndReportsBoth(t *testing.T) {
 func TestRotate_NilIdentityIsAVerificationFailureNotAPanic(t *testing.T) {
 	lifecycle := &fakeLifecycle{verifyNil: true}
 	store := newFakeSecretStore()
-	seedCurrentToken(store, "agent-go-quicbaas-r1", "1")
+	seedCurrentToken(store, "agent-quicbaas-r1", "1")
 	rotator, err := NewTokenRotator(lifecycle, store)
 	if err != nil {
 		t.Fatalf("NewTokenRotator: %v", err)
@@ -1032,7 +1032,7 @@ func TestRotate_NilIdentityIsAVerificationFailureNotAPanic(t *testing.T) {
 	if store.rolledTo[testSecretPath] != 1 {
 		t.Fatalf("rolled back to %d, want the previous version 1", store.rolledTo[testSecretPath])
 	}
-	if len(lifecycle.revoked) != 1 || lifecycle.revoked[0] != RotationTokenName("agent-go-quicbaas", 2) {
+	if len(lifecycle.revoked) != 1 || lifecycle.revoked[0] != RotationTokenName("agent-quicbaas", 2) {
 		t.Fatalf("revoked %v, want the unverified replacement", lifecycle.revoked)
 	}
 }
@@ -1105,7 +1105,7 @@ func failThenRecoverRotation(t *testing.T) (*fakeLifecycle, *fakeSecretStore, *T
 	t.Helper()
 	lifecycle := &fakeLifecycle{verifyErr: errors.New("401 unauthorized")}
 	store := newFakeSecretStore()
-	seedCurrentToken(store, "agent-go-quicbaas-r1", "1")
+	seedCurrentToken(store, "agent-quicbaas-r1", "1")
 	store.rollbackErr = errors.New("rollback plane down")
 
 	rotator, err := NewTokenRotator(lifecycle, store)
@@ -1138,11 +1138,11 @@ func TestRecoverOrphan_RetriesTheRollbackBeforeRevoking(t *testing.T) {
 		t.Fatalf("RecoverOrphan with the rollback plane restored: %v", err)
 	}
 
-	replacement := RotationTokenName("agent-go-quicbaas", 2)
+	replacement := RotationTokenName("agent-quicbaas", 2)
 	if got := string(store.data[testSecretPath][tokenSecretKey]); got != "old-secret" {
 		t.Fatalf("stored credential = %q, want the PREVIOUS credential rolled back into force", got)
 	}
-	if got := store.metadata[testSecretPath][metadataTokenName]; got != "agent-go-quicbaas-r1" {
+	if got := store.metadata[testSecretPath][metadataTokenName]; got != "agent-quicbaas-r1" {
 		t.Fatalf("stored token name = %q, want the previous credential's", got)
 	}
 	if len(lifecycle.revoked) != 1 || lifecycle.revoked[0] != replacement {
@@ -1160,7 +1160,7 @@ func TestRecoverOrphan_RetriesTheRollbackBeforeRevoking(t *testing.T) {
 	if err != nil {
 		t.Fatalf("rotation after recovery: %v", err)
 	}
-	if result.RevokedTokenName != "agent-go-quicbaas-r1" {
+	if result.RevokedTokenName != "agent-quicbaas-r1" {
 		t.Fatalf("post-recovery rotation revoked %q, want the restored original", result.RevokedTokenName)
 	}
 }
@@ -1179,7 +1179,7 @@ func TestRecoverOrphan_FailedRollbackRetryStopsTheRevoke(t *testing.T) {
 	if len(lifecycle.revoked) != 0 {
 		t.Fatalf("revoked %v with the rollback still lost", lifecycle.revoked)
 	}
-	replacement := RotationTokenName("agent-go-quicbaas", 2)
+	replacement := RotationTokenName("agent-quicbaas", 2)
 	if name := string(store.data[testSecretPath+rotationIntentSuffix][metadataTokenName]); name != replacement {
 		t.Fatalf("recovery state lost: intent names %q, want %q", name, replacement)
 	}
@@ -1210,13 +1210,13 @@ func TestRotate_RefusesWhileARollbackIsPending(t *testing.T) {
 	if !errors.As(err, &pending) {
 		t.Fatalf("err = %v, want RotationRecoveryPendingError naming the stuck state", err)
 	}
-	if pending.Name != RotationTokenName("agent-go-quicbaas", 2) {
+	if pending.Name != RotationTokenName("agent-quicbaas", 2) {
 		t.Fatalf("refusal names %q, want the unverified replacement", pending.Name)
 	}
 	if len(lifecycle.calls) != mintsBefore {
 		t.Fatalf("touched the forge over a pending rollback: %v", lifecycle.calls[mintsBefore:])
 	}
-	replacement := RotationTokenName("agent-go-quicbaas", 2)
+	replacement := RotationTokenName("agent-quicbaas", 2)
 	if name := string(store.data[testSecretPath+rotationIntentSuffix][metadataTokenName]); name != replacement {
 		t.Fatalf("the refused rotation still overwrote the recovery state: intent names %q", name)
 	}
@@ -1234,7 +1234,7 @@ func TestRotate_RefusesWhileARollbackIsPending(t *testing.T) {
 func TestRotate_StagesTheIntentBeforeStoringTheReplacement(t *testing.T) {
 	lifecycle := &fakeLifecycle{verifyAs: testAccount}
 	store := newFakeSecretStore()
-	seedCurrentToken(store, "agent-go-quicbaas-r1", "1")
+	seedCurrentToken(store, "agent-quicbaas-r1", "1")
 
 	var markerAtStore string
 	var sawStore bool
@@ -1276,13 +1276,13 @@ func TestRotate_StagesTheIntentBeforeStoringTheReplacement(t *testing.T) {
 // assertion.
 func TestRotate_ClearsTheMarkerBeforeRevokingTheOldToken(t *testing.T) {
 	store := newFakeSecretStore()
-	seedCurrentToken(store, "sdlc-agent-go-quicbaas-v1", "1")
+	seedCurrentToken(store, "sdlc-agent-quicbaas-v1", "1")
 
 	lifecycle := &fakeLifecycle{verifyAs: testAccount}
 	var markerAtRevoke string
 	var revokedOld bool
 	lifecycle.onRevoke = func(name string) {
-		if name == "sdlc-agent-go-quicbaas-v1" {
+		if name == "sdlc-agent-quicbaas-v1" {
 			revokedOld = true
 			markerAtRevoke = store.metadata[testSecretPath+rotationIntentSuffix][metadataPendingRollback]
 		}
@@ -1313,7 +1313,7 @@ func TestRotate_ClearsTheMarkerBeforeRevokingTheOldToken(t *testing.T) {
 func TestRotate_MarkerClearFailureStopsTheRevoke(t *testing.T) {
 	lifecycle := &fakeLifecycle{verifyAs: testAccount}
 	store := newFakeSecretStore()
-	seedCurrentToken(store, "sdlc-agent-go-quicbaas-v1", "1")
+	seedCurrentToken(store, "sdlc-agent-quicbaas-v1", "1")
 	rotator, err := NewTokenRotator(lifecycle, store)
 	if err != nil {
 		t.Fatalf("NewTokenRotator: %v", err)
@@ -1373,7 +1373,7 @@ func armThirdIntentWrite(store *fakeSecretStore) {
 func TestRecoverOrphan_AlreadyRevokedOrphanStillDischarges(t *testing.T) {
 	lifecycle := &fakeLifecycle{verifyErr: errors.New("401 unauthorized")}
 	store := newFakeSecretStore()
-	seedCurrentToken(store, "agent-go-quicbaas-r1", "1")
+	seedCurrentToken(store, "agent-quicbaas-r1", "1")
 	rotator, err := NewTokenRotator(lifecycle, store)
 	if err != nil {
 		t.Fatalf("NewTokenRotator: %v", err)
@@ -1384,7 +1384,7 @@ func TestRecoverOrphan_AlreadyRevokedOrphanStillDischarges(t *testing.T) {
 	if _, err := rotator.Rotate(context.Background(), testSpec()); err == nil {
 		t.Fatal("the rotation was supposed to fail verification")
 	}
-	replacement := RotationTokenName("agent-go-quicbaas", 2)
+	replacement := RotationTokenName("agent-quicbaas", 2)
 	if len(lifecycle.revoked) != 1 || lifecycle.revoked[0] != replacement {
 		t.Fatalf("revoked %v, want the replacement revoked inline", lifecycle.revoked)
 	}
@@ -1403,9 +1403,9 @@ func TestRecoverOrphan_AlreadyRevokedOrphanStillDischarges(t *testing.T) {
 // the rotation that replaced it.
 func TestRotate_AlreadyRevokedOldTokenStillCompletes(t *testing.T) {
 	lifecycle := &fakeLifecycle{verifyAs: testAccount}
-	lifecycle.revoked = []string{"sdlc-agent-go-quicbaas-v1"} // already gone on the forge
+	lifecycle.revoked = []string{"sdlc-agent-quicbaas-v1"} // already gone on the forge
 	store := newFakeSecretStore()
-	seedCurrentToken(store, "sdlc-agent-go-quicbaas-v1", "1")
+	seedCurrentToken(store, "sdlc-agent-quicbaas-v1", "1")
 	rotator, err := NewTokenRotator(lifecycle, store)
 	if err != nil {
 		t.Fatalf("NewTokenRotator: %v", err)
@@ -1415,7 +1415,7 @@ func TestRotate_AlreadyRevokedOldTokenStillCompletes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("rotation failed over an already-dead old credential: %v", err)
 	}
-	if result.NewTokenName != "sdlc-agent-go-quicbaas-v2" {
+	if result.NewTokenName != "sdlc-agent-quicbaas-v2" {
 		t.Fatalf("result = %+v", result)
 	}
 	if name := string(store.data[testSecretPath+rotationIntentSuffix][metadataTokenName]); name != "" {
@@ -1431,7 +1431,7 @@ func TestRotate_AlreadyRevokedOldTokenStillCompletes(t *testing.T) {
 func TestRotator_ConcurrentRotateAndRecoverArePerPathSingleFlight(t *testing.T) {
 	lifecycle := &fakeLifecycle{verifyAs: testAccount}
 	store := newFakeSecretStore()
-	seedCurrentToken(store, "sdlc-agent-go-quicbaas-v1", "1")
+	seedCurrentToken(store, "sdlc-agent-quicbaas-v1", "1")
 	rotator, err := NewTokenRotator(lifecycle, store)
 	if err != nil {
 		t.Fatalf("NewTokenRotator: %v", err)
@@ -1471,7 +1471,7 @@ func TestRotator_ConcurrentRotateAndRecoverArePerPathSingleFlight(t *testing.T) 
 func TestRecoverOrphan_RealRevokeFailureStillSurfaces(t *testing.T) {
 	lifecycle := &fakeLifecycle{verifyErr: errors.New("401 unauthorized")}
 	store := newFakeSecretStore()
-	seedCurrentToken(store, "agent-go-quicbaas-r1", "1")
+	seedCurrentToken(store, "agent-quicbaas-r1", "1")
 	rotator, err := NewTokenRotator(lifecycle, store)
 	if err != nil {
 		t.Fatalf("NewTokenRotator: %v", err)
@@ -1486,7 +1486,7 @@ func TestRecoverOrphan_RealRevokeFailureStillSurfaces(t *testing.T) {
 	if !errors.Is(err, forgeDown) {
 		t.Fatalf("err = %v, want the forge failure surfaced", err)
 	}
-	replacement := RotationTokenName("agent-go-quicbaas", 2)
+	replacement := RotationTokenName("agent-quicbaas", 2)
 	if name := string(store.data[testSecretPath+rotationIntentSuffix][metadataTokenName]); name != replacement {
 		t.Fatalf("intent = %q, want it intact for the next pass", name)
 	}
@@ -1498,8 +1498,8 @@ func TestRecoverOrphan_RealRevokeFailureStillSurfaces(t *testing.T) {
 func TestRotation_CorruptStagingMarkerFailsClosed(t *testing.T) {
 	lifecycle := &fakeLifecycle{verifyAs: testAccount}
 	store := newFakeSecretStore()
-	seedCurrentToken(store, "sdlc-agent-go-quicbaas-v1", "1")
-	store.data[testSecretPath+rotationIntentSuffix] = map[string][]byte{metadataTokenName: []byte("sdlc-agent-go-quicbaas-v2")}
+	seedCurrentToken(store, "sdlc-agent-quicbaas-v1", "1")
+	store.data[testSecretPath+rotationIntentSuffix] = map[string][]byte{metadataTokenName: []byte("sdlc-agent-quicbaas-v2")}
 	store.metadata[testSecretPath+rotationIntentSuffix] = map[string]string{metadataPendingRollback: "garbage"}
 	rotator, err := NewTokenRotator(lifecycle, store)
 	if err != nil {
@@ -1532,7 +1532,7 @@ func TestRotation_CorruptStagingMarkerFailsClosed(t *testing.T) {
 func TestRotate_RevokeFailureKeepsTheOldTokenNamed(t *testing.T) {
 	lifecycle := &fakeLifecycle{verifyAs: testAccount}
 	store := newFakeSecretStore()
-	seedCurrentToken(store, "sdlc-agent-go-quicbaas-v1", "1")
+	seedCurrentToken(store, "sdlc-agent-quicbaas-v1", "1")
 	rotator, err := NewTokenRotator(lifecycle, store)
 	if err != nil {
 		t.Fatalf("NewTokenRotator: %v", err)
@@ -1554,7 +1554,7 @@ func TestRotate_RevokeFailureKeepsTheOldTokenNamed(t *testing.T) {
 	if err := rotator.RecoverOrphan(context.Background(), testSpec()); !errors.Is(err, forgeDown) {
 		t.Fatalf("RecoverOrphan with the forge down: %v", err)
 	}
-	if got := store.metadata[testSecretPath+rotationIntentSuffix][metadataRevokePending]; got != "sdlc-agent-go-quicbaas-v1" {
+	if got := store.metadata[testSecretPath+rotationIntentSuffix][metadataRevokePending]; got != "sdlc-agent-quicbaas-v1" {
 		t.Fatalf("a failed recovery lost the pending revoke: %q", got)
 	}
 
@@ -1566,7 +1566,7 @@ func TestRotate_RevokeFailureKeepsTheOldTokenNamed(t *testing.T) {
 	}
 	attempts := 0
 	for _, call := range lifecycle.calls {
-		if call == "revoke:sdlc-agent-go-quicbaas-v1" {
+		if call == "revoke:sdlc-agent-quicbaas-v1" {
 			attempts++
 		}
 	}
@@ -1575,7 +1575,7 @@ func TestRotate_RevokeFailureKeepsTheOldTokenNamed(t *testing.T) {
 	}
 	revokedOld := false
 	for _, name := range lifecycle.revoked {
-		if name == "sdlc-agent-go-quicbaas-v1" {
+		if name == "sdlc-agent-quicbaas-v1" {
 			revokedOld = true
 		}
 	}
@@ -1586,7 +1586,7 @@ func TestRotate_RevokeFailureKeepsTheOldTokenNamed(t *testing.T) {
 		t.Fatalf("intent record not discharged after the revoke landed: %q", name)
 	}
 	// The verified replacement stayed in force throughout.
-	if got := store.metadata[testSecretPath][metadataTokenName]; got != "sdlc-agent-go-quicbaas-v2" {
+	if got := store.metadata[testSecretPath][metadataTokenName]; got != "sdlc-agent-quicbaas-v2" {
 		t.Fatalf("stored token name = %q after recovery", got)
 	}
 }
@@ -1602,17 +1602,17 @@ func TestRecoverOrphan_CrashBeforeTheRevokeStillKillsTheOldToken(t *testing.T) {
 	// The store: verified replacement in force.
 	store.data[testSecretPath] = map[string][]byte{tokenSecretKey: []byte("new-secret")}
 	store.metadata[testSecretPath] = map[string]string{
-		metadataTokenName:    "sdlc-agent-go-quicbaas-v2",
+		metadataTokenName:    "sdlc-agent-quicbaas-v2",
 		metadataRotationSlot: "2",
 	}
 	store.versions[testSecretPath] = 2
 	// The intent: verified phase, old token revoke-pending.
 	store.data[testSecretPath+rotationIntentSuffix] = map[string][]byte{
-		metadataTokenName: []byte("sdlc-agent-go-quicbaas-v2"),
+		metadataTokenName: []byte("sdlc-agent-quicbaas-v2"),
 	}
 	store.metadata[testSecretPath+rotationIntentSuffix] = map[string]string{
 		metadataRotationSlot:  "2",
-		metadataRevokePending: "sdlc-agent-go-quicbaas-v1",
+		metadataRevokePending: "sdlc-agent-quicbaas-v1",
 	}
 
 	rotator, err := NewTokenRotator(lifecycle, store)
@@ -1622,7 +1622,7 @@ func TestRecoverOrphan_CrashBeforeTheRevokeStillKillsTheOldToken(t *testing.T) {
 	if err := rotator.RecoverOrphan(context.Background(), testSpec()); err != nil {
 		t.Fatalf("RecoverOrphan: %v", err)
 	}
-	if len(lifecycle.revoked) != 1 || lifecycle.revoked[0] != "sdlc-agent-go-quicbaas-v1" {
+	if len(lifecycle.revoked) != 1 || lifecycle.revoked[0] != "sdlc-agent-quicbaas-v1" {
 		t.Fatalf("revoked %v, want exactly the old token", lifecycle.revoked)
 	}
 	if name := string(store.data[testSecretPath+rotationIntentSuffix][metadataTokenName]); name != "" {
@@ -1644,7 +1644,7 @@ func TestRecoverOrphan_CrashBeforeTheRevokeStillKillsTheOldToken(t *testing.T) {
 func TestRotate_RefusesWhileARevokeIsPending(t *testing.T) {
 	lifecycle := &fakeLifecycle{verifyAs: testAccount}
 	store := newFakeSecretStore()
-	seedCurrentToken(store, "sdlc-agent-go-quicbaas-v1", "1")
+	seedCurrentToken(store, "sdlc-agent-quicbaas-v1", "1")
 	rotator, err := NewTokenRotator(lifecycle, store)
 	if err != nil {
 		t.Fatalf("NewTokenRotator: %v", err)
@@ -1661,13 +1661,13 @@ func TestRotate_RefusesWhileARevokeIsPending(t *testing.T) {
 	if !errors.As(err, &pending) {
 		t.Fatalf("err = %v, want RotationRevokePendingError", err)
 	}
-	if pending.OldToken != "sdlc-agent-go-quicbaas-v1" {
+	if pending.OldToken != "sdlc-agent-quicbaas-v1" {
 		t.Fatalf("refusal names %q, want the old token", pending.OldToken)
 	}
 	if len(lifecycle.calls) != callsBefore {
 		t.Fatalf("the forge was touched over a pending revoke: %v", lifecycle.calls[callsBefore:])
 	}
-	if got := store.metadata[testSecretPath+rotationIntentSuffix][metadataRevokePending]; got != "sdlc-agent-go-quicbaas-v1" {
+	if got := store.metadata[testSecretPath+rotationIntentSuffix][metadataRevokePending]; got != "sdlc-agent-quicbaas-v1" {
 		t.Fatalf("the refused rotation erased the pending revoke: %q", got)
 	}
 }
@@ -1688,7 +1688,7 @@ func TestRotate_RefusesWhileARevokeIsPending(t *testing.T) {
 func TestRotate_CommittedButErroredStoreIsResolvedByObservation(t *testing.T) {
 	lifecycle := &fakeLifecycle{verifyAs: testAccount}
 	store := newFakeSecretStore()
-	seedCurrentToken(store, "sdlc-agent-go-quicbaas-v1", "1")
+	seedCurrentToken(store, "sdlc-agent-quicbaas-v1", "1")
 	rotator, err := NewTokenRotator(lifecycle, store)
 	if err != nil {
 		t.Fatalf("NewTokenRotator: %v", err)
@@ -1723,7 +1723,7 @@ func TestRotate_CommittedButErroredStoreIsResolvedByObservation(t *testing.T) {
 	if got := string(store.data[testSecretPath][tokenSecretKey]); got != "old-secret" {
 		t.Fatalf("stored credential = %q, want the previous credential rolled back into force", got)
 	}
-	replacement := RotationTokenName("agent-go-quicbaas", 2)
+	replacement := RotationTokenName("agent-quicbaas", 2)
 	if len(lifecycle.revoked) != 1 || lifecycle.revoked[0] != replacement {
 		t.Fatalf("revoked %v, want exactly the unverified replacement", lifecycle.revoked)
 	}
@@ -1745,7 +1745,7 @@ func TestRotate_CommittedButErroredStoreIsResolvedByObservation(t *testing.T) {
 func TestRotate_UncommittedStoreFailureResolvesToACleanClear(t *testing.T) {
 	lifecycle := &fakeLifecycle{verifyAs: testAccount}
 	store := newFakeSecretStore()
-	seedCurrentToken(store, "sdlc-agent-go-quicbaas-v1", "1")
+	seedCurrentToken(store, "sdlc-agent-quicbaas-v1", "1")
 	rotator, err := NewTokenRotator(lifecycle, store)
 	if err != nil {
 		t.Fatalf("NewTokenRotator: %v", err)
@@ -1770,7 +1770,7 @@ func TestRotate_UncommittedStoreFailureResolvesToACleanClear(t *testing.T) {
 			t.Fatal("a rollback ran for a write the observation shows never committed")
 		}
 	}
-	replacement := RotationTokenName("agent-go-quicbaas", 2)
+	replacement := RotationTokenName("agent-quicbaas", 2)
 	if len(lifecycle.revoked) != 1 || lifecycle.revoked[0] != replacement {
 		t.Fatalf("revoked %v, want exactly the mint-only orphan", lifecycle.revoked)
 	}
@@ -1788,7 +1788,7 @@ func TestRotate_UncommittedStoreFailureResolvesToACleanClear(t *testing.T) {
 func TestRecoverOrphan_UnreadableObservationFailsClosed(t *testing.T) {
 	lifecycle := &fakeLifecycle{verifyAs: testAccount}
 	store := newFakeSecretStore()
-	seedCurrentToken(store, "sdlc-agent-go-quicbaas-v1", "1")
+	seedCurrentToken(store, "sdlc-agent-quicbaas-v1", "1")
 	rotator, err := NewTokenRotator(lifecycle, store)
 	if err != nil {
 		t.Fatalf("NewTokenRotator: %v", err)
@@ -1855,7 +1855,7 @@ func TestRecoverOrphan_AdoptsACommittedVerifiedFirstRotation(t *testing.T) {
 	if len(lifecycle.revoked) != 0 {
 		t.Fatalf("recovery revoked %v — that credential verified as the right account", lifecycle.revoked)
 	}
-	replacement := RotationTokenName("agent-go-quicbaas", 1)
+	replacement := RotationTokenName("agent-quicbaas", 1)
 	if got := store.metadata[testSecretPath][metadataTokenName]; got != replacement {
 		t.Fatalf("stored token name = %q, want the adopted replacement %q", got, replacement)
 	}
@@ -1890,7 +1890,7 @@ func TestRecoverOrphan_FailedFirstRotationResolvesToAbsence(t *testing.T) {
 		t.Fatalf("RecoverOrphan: %v", err)
 	}
 
-	replacement := RotationTokenName("agent-go-quicbaas", 1)
+	replacement := RotationTokenName("agent-quicbaas", 1)
 	if len(lifecycle.revoked) != 1 || lifecycle.revoked[0] != replacement {
 		t.Fatalf("revoked %v, want exactly the unverifiable replacement %q", lifecycle.revoked, replacement)
 	}
@@ -1935,7 +1935,7 @@ func TestRotate_FailedFirstRotationLeavesAbsenceNotADeadCredential(t *testing.T)
 		t.Fatal("the rotation was supposed to fail verification")
 	}
 
-	replacement := RotationTokenName("agent-go-quicbaas", 1)
+	replacement := RotationTokenName("agent-quicbaas", 1)
 	if _, held := store.data[testSecretPath]; held {
 		t.Fatalf("store holds %q as current after the inline revoke; want absence",
 			store.metadata[testSecretPath][metadataTokenName])
@@ -1970,7 +1970,7 @@ func TestRotate_FailedFirstRotationLeavesAbsenceNotADeadCredential(t *testing.T)
 func TestRecoverOrphan_PendingRevokeRefusesWhenTheWorldChanged(t *testing.T) {
 	lifecycle := &fakeLifecycle{verifyAs: testAccount}
 	store := newFakeSecretStore()
-	seedCurrentToken(store, "sdlc-agent-go-quicbaas-v1", "1")
+	seedCurrentToken(store, "sdlc-agent-quicbaas-v1", "1")
 	rotator, err := NewTokenRotator(lifecycle, store)
 	if err != nil {
 		t.Fatalf("NewTokenRotator: %v", err)
@@ -1998,7 +1998,7 @@ func TestRecoverOrphan_PendingRevokeRefusesWhenTheWorldChanged(t *testing.T) {
 	if len(lifecycle.revoked) != 0 {
 		t.Fatalf("recovery revoked %v — the store says that credential is back in force", lifecycle.revoked)
 	}
-	if got := store.metadata[testSecretPath+rotationIntentSuffix][metadataRevokePending]; got != "sdlc-agent-go-quicbaas-v1" {
+	if got := store.metadata[testSecretPath+rotationIntentSuffix][metadataRevokePending]; got != "sdlc-agent-quicbaas-v1" {
 		t.Fatalf("the divergence refusal lost the pending revoke record: %q", got)
 	}
 
@@ -2010,7 +2010,7 @@ func TestRecoverOrphan_PendingRevokeRefusesWhenTheWorldChanged(t *testing.T) {
 	if err := rotator.RecoverOrphan(context.Background(), testSpec()); err != nil {
 		t.Fatalf("RecoverOrphan with the world consistent again: %v", err)
 	}
-	if len(lifecycle.revoked) != 1 || lifecycle.revoked[0] != "sdlc-agent-go-quicbaas-v1" {
+	if len(lifecycle.revoked) != 1 || lifecycle.revoked[0] != "sdlc-agent-quicbaas-v1" {
 		t.Fatalf("revoked %v, want exactly the old token once the observation held", lifecycle.revoked)
 	}
 	if name := string(store.data[testSecretPath+rotationIntentSuffix][metadataTokenName]); name != "" {
@@ -2025,7 +2025,7 @@ func TestRecoverOrphan_PendingRevokeRefusesWhenTheWorldChanged(t *testing.T) {
 func TestRotate_RefusesOverAnUnstagedOrphanIntent(t *testing.T) {
 	lifecycle := &fakeLifecycle{verifyAs: testAccount}
 	store := newFakeSecretStore()
-	seedCurrentToken(store, "sdlc-agent-go-quicbaas-v1", "1")
+	seedCurrentToken(store, "sdlc-agent-quicbaas-v1", "1")
 	rotator, err := NewTokenRotator(lifecycle, store)
 	if err != nil {
 		t.Fatalf("NewTokenRotator: %v", err)
@@ -2038,7 +2038,7 @@ func TestRotate_RefusesOverAnUnstagedOrphanIntent(t *testing.T) {
 		t.Fatalf("Rotate err = %v, want the mint failure surfaced", err)
 	}
 	lifecycle.mintErr = nil
-	orphan := RotationTokenName("agent-go-quicbaas", 2)
+	orphan := RotationTokenName("agent-quicbaas", 2)
 	mintsBefore := len(lifecycle.calls)
 
 	// A direct Rotate over the standing record refuses, typed, and touches
@@ -2078,9 +2078,9 @@ func TestRotate_RefusesOverAnUnstagedOrphanIntent(t *testing.T) {
 func TestRecoverOrphan_DischargesAStaleCompletedIntent(t *testing.T) {
 	lifecycle := &fakeLifecycle{verifyAs: testAccount}
 	store := newFakeSecretStore()
-	seedCurrentToken(store, "sdlc-agent-go-quicbaas-v2", "2")
+	seedCurrentToken(store, "sdlc-agent-quicbaas-v2", "2")
 	store.data[testSecretPath+rotationIntentSuffix] = map[string][]byte{
-		metadataTokenName: []byte("sdlc-agent-go-quicbaas-v2"),
+		metadataTokenName: []byte("sdlc-agent-quicbaas-v2"),
 	}
 
 	rotator, err := NewTokenRotator(lifecycle, store)
@@ -2172,10 +2172,10 @@ func TestRotator_TwoInstancesSerializeOnePath(t *testing.T) {
 	}
 	// The durable end state is one coherent lineage: slot 2's token stored as
 	// current, slot 1's revoked.
-	if got := store.metadata[testSecretPath][metadataTokenName]; got != RotationTokenName("agent-go-quicbaas", 2) {
+	if got := store.metadata[testSecretPath][metadataTokenName]; got != RotationTokenName("agent-quicbaas", 2) {
 		t.Fatalf("stored token name = %q, want slot 2's", got)
 	}
-	if len(lifecycle.revoked) != 1 || lifecycle.revoked[0] != RotationTokenName("agent-go-quicbaas", 1) {
+	if len(lifecycle.revoked) != 1 || lifecycle.revoked[0] != RotationTokenName("agent-quicbaas", 1) {
 		t.Fatalf("revoked %v, want exactly slot 1's token", lifecycle.revoked)
 	}
 	if name := string(store.data[testSecretPath+rotationIntentSuffix][metadataTokenName]); name != "" {
@@ -2235,7 +2235,7 @@ func TestRecoverOrphan_FailedDestroyKeepsTheTokenAndTheRecord(t *testing.T) {
 	if err := rotator.RecoverOrphan(context.Background(), testSpec()); err != nil {
 		t.Fatalf("RecoverOrphan after the store recovered: %v", err)
 	}
-	replacement := RotationTokenName("agent-go-quicbaas", 1)
+	replacement := RotationTokenName("agent-quicbaas", 1)
 	if len(lifecycle.revoked) != 1 || lifecycle.revoked[0] != replacement {
 		t.Fatalf("revoked %v, want exactly %q", lifecycle.revoked, replacement)
 	}
@@ -2272,13 +2272,13 @@ func TestRotate_RefusesAMintResponseNothingCanTrust(t *testing.T) {
 		// recompute it, and absorbing a rename silently would change the
 		// recovery identity model. Refused, with the returned token revoked
 		// at the one moment its actual name is in hand.
-		"divergent_name": func(l *fakeLifecycle) { l.mintedName = "sdlc-agent-go-quicbaas-v2-normalized" },
+		"divergent_name": func(l *fakeLifecycle) { l.mintedName = "sdlc-agent-quicbaas-v2-normalized" },
 	}
 	for name, arm := range cases {
 		t.Run(name, func(t *testing.T) {
 			lifecycle := &fakeLifecycle{verifyAs: testAccount}
 			store := newFakeSecretStore()
-			seedCurrentToken(store, "sdlc-agent-go-quicbaas-v1", "1")
+			seedCurrentToken(store, "sdlc-agent-quicbaas-v1", "1")
 			arm(lifecycle)
 			rotator, err := NewTokenRotator(lifecycle, store)
 			if err != nil {
@@ -2290,10 +2290,10 @@ func TestRotate_RefusesAMintResponseNothingCanTrust(t *testing.T) {
 			if !errors.As(err, &mintErr) {
 				t.Fatalf("err = %v, want *MintResponseError", err)
 			}
-			if got := store.metadata[testSecretPath][metadataTokenName]; got != "sdlc-agent-go-quicbaas-v1" {
+			if got := store.metadata[testSecretPath][metadataTokenName]; got != "sdlc-agent-quicbaas-v1" {
 				t.Fatalf("stored token name = %q; the unusable mint response reached the store", got)
 			}
-			requested := RotationTokenName("agent-go-quicbaas", 2)
+			requested := RotationTokenName("agent-quicbaas", 2)
 			intentName := string(store.data[testSecretPath+rotationIntentSuffix][metadataTokenName])
 			if name == "divergent_name" {
 				// The actual returned credential was revoked at the only
@@ -2302,7 +2302,7 @@ func TestRotate_RefusesAMintResponseNothingCanTrust(t *testing.T) {
 				// die after the token it names does).
 				found := false
 				for _, r := range lifecycle.revoked {
-					if r == "sdlc-agent-go-quicbaas-v2-normalized" {
+					if r == "sdlc-agent-quicbaas-v2-normalized" {
 						found = true
 					}
 				}
@@ -2330,7 +2330,7 @@ func TestRotate_DivergentMintRevokeFailureKeepsCustody(t *testing.T) {
 	lifecycle := &fakeLifecycle{verifyAs: testAccount, mintedName: "renamed-by-forge"}
 	lifecycle.revokeErr = errors.New("forge: 502")
 	store := newFakeSecretStore()
-	seedCurrentToken(store, "sdlc-agent-go-quicbaas-v1", "1")
+	seedCurrentToken(store, "sdlc-agent-quicbaas-v1", "1")
 	rotator, err := NewTokenRotator(lifecycle, store)
 	if err != nil {
 		t.Fatalf("NewTokenRotator: %v", err)
@@ -2384,7 +2384,7 @@ func TestRotate_DivergentMintRevokeFailureKeepsCustody(t *testing.T) {
 	if err != nil {
 		t.Fatalf("rotation after recovery: %v", err)
 	}
-	if result.RevokedTokenName != "sdlc-agent-go-quicbaas-v1" {
+	if result.RevokedTokenName != "sdlc-agent-quicbaas-v1" {
 		t.Fatalf("post-recovery rotation revoked %q, want the surviving original", result.RevokedTokenName)
 	}
 }
@@ -2456,7 +2456,7 @@ func TestRecoverOrphan_SweepsAPartiallyDestroyedPath(t *testing.T) {
 
 	// The crash state, built through the real plane: a committed staged
 	// first rotation...
-	name := RotationTokenName("agent-go-quicbaas", 1)
+	name := RotationTokenName("agent-quicbaas", 1)
 	if err := manager.Store(ctx, testSecretPath,
 		map[string][]byte{tokenSecretKey: []byte("unverified-secret")},
 		map[string]string{metadataTokenName: name, metadataRotationSlot: "1"}); err != nil {
@@ -2542,13 +2542,13 @@ func TestRotate_VerificationSeesTheSecretOnlyDuringTheCall(t *testing.T) {
 // observable.
 func TestReadStoredToken_WipesTheDataItFetched(t *testing.T) {
 	store := newFakeSecretStore()
-	seedCurrentToken(store, "sdlc-agent-go-quicbaas-v1", "1")
+	seedCurrentToken(store, "sdlc-agent-quicbaas-v1", "1")
 
 	meta, absent, err := readStoredToken(context.Background(), store, testSecretPath)
 	if err != nil || absent {
 		t.Fatalf("readStoredToken: err=%v absent=%v", err, absent)
 	}
-	if meta[metadataTokenName] != "sdlc-agent-go-quicbaas-v1" {
+	if meta[metadataTokenName] != "sdlc-agent-quicbaas-v1" {
 		t.Fatalf("metadata lost: %v", meta)
 	}
 	if store.lastGet == nil {
@@ -2628,7 +2628,7 @@ func TestRecoverOrphan_AdoptsUnderTheRecordedOwner(t *testing.T) {
 
 	// A committed, unverified FIRST rotation crashed under alice: the store
 	// holds the replacement, the staged intent records name and owner.
-	name := RotationTokenName("agent-go-quicbaas", 1)
+	name := RotationTokenName("agent-quicbaas", 1)
 	store.data[testSecretPath] = map[string][]byte{tokenSecretKey: []byte("alice-secret")}
 	store.metadata[testSecretPath] = map[string]string{
 		metadataTokenName: name, metadataRotationSlot: "1",
@@ -2670,7 +2670,7 @@ func TestRotate_DestroysTheMintedSecretOnEveryPath(t *testing.T) {
 	t.Run("Success", func(t *testing.T) {
 		lifecycle := &fakeLifecycle{verifyAs: testAccount}
 		store := newFakeSecretStore()
-		seedCurrentToken(store, "sdlc-agent-go-quicbaas-v1", "1")
+		seedCurrentToken(store, "sdlc-agent-quicbaas-v1", "1")
 		rotator, _ := NewTokenRotator(lifecycle, store)
 		if _, err := rotator.Rotate(context.Background(), testSpec()); err != nil {
 			t.Fatalf("Rotate: %v", err)
@@ -2690,7 +2690,7 @@ func TestRotate_DestroysTheMintedSecretOnEveryPath(t *testing.T) {
 	t.Run("DivergentRefusal", func(t *testing.T) {
 		lifecycle := &fakeLifecycle{verifyAs: testAccount, mintedName: "renamed-by-forge"}
 		store := newFakeSecretStore()
-		seedCurrentToken(store, "sdlc-agent-go-quicbaas-v1", "1")
+		seedCurrentToken(store, "sdlc-agent-quicbaas-v1", "1")
 		rotator, _ := NewTokenRotator(lifecycle, store)
 		if _, err := rotator.Rotate(context.Background(), testSpec()); err == nil {
 			t.Fatal("a divergent mint was accepted")

@@ -425,7 +425,7 @@ func demonstrateSessionManagement(ctx context.Context, client quicbaas.Client) {
 		fmt.Println("    Created:     " + time.Now().Add(-24*time.Hour).Format(time.RFC3339))
 		fmt.Println("    Last Active: " + time.Now().Add(-5*time.Minute).Format(time.RFC3339))
 		fmt.Println("    Expires:     " + time.Now().Add(6*time.Hour).Format(time.RFC3339))
-		fmt.Println("    IP Address:  192.168.1.100")
+		fmt.Println("    IP Address:  192.0.2.100")
 		fmt.Println("    User Agent:  Mozilla/5.0 (Macintosh; Intel Mac OS X)")
 		fmt.Println("    Device:      MacBook Pro")
 		fmt.Println("    Auth Method: password")

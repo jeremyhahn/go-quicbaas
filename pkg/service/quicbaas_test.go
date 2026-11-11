@@ -792,6 +792,54 @@ func TestTransactionService_Transaction_CompareExists(t *testing.T) {
 	assert.True(t, resp.Succeeded)
 }
 
+// A tenant's transaction must compare, read and write the same tenant-scoped
+// keys kvService uses, or a compare-and-swap commits to a key the tenant's
+// later Get never reads (#2030).
+func TestTransactionService_Transaction_UsesTenantKeyspace(t *testing.T) {
+	qrdbProvider := newSvcBoostMockQRDBProviderWithGet([]byte(`{"counter":1}`), nil)
+	svc := createTestService(t, withQRDBClientProvider(qrdbProvider))
+	defer svc.Close()
+
+	req := &TransactionRequest{
+		Compare: []*CompareCondition{
+			{EntityType: "user", ID: 1, Target: CompareTargetExists, Operator: CompareOperatorEqual},
+		},
+		Success: []*TransactionOp{
+			{OpType: TransactionOpTypeGet, EntityType: "user", ID: 1},
+			{OpType: TransactionOpTypePut, EntityType: "user", ID: 1, Data: []byte(`{"counter":2}`)},
+			{OpType: TransactionOpTypeDelete, EntityType: "user", ID: 2},
+		},
+	}
+
+	resp, err := svc.Transaction(tenantctx.WithTenant(context.Background(), "beta-inc"), req)
+	require.NoError(t, err)
+	require.True(t, resp.Succeeded)
+
+	assert.Equal(t, "__t:beta-inc:user:1", qrdbProvider.capturedGetKey())
+	calls := qrdbProvider.capturedBatchCalls()
+	require.Len(t, calls, 1)
+	require.Len(t, calls[0], 2)
+	assert.Equal(t, "__t:beta-inc:user:1", string(calls[0][0].Key))
+	assert.Equal(t, "__t:beta-inc:user:2", string(calls[0][1].Key))
+}
+
+func TestTransactionService_Transaction_InvalidEntityTypeRejected(t *testing.T) {
+	qrdbProvider := newSvcBoostMockQRDBProviderWithGet([]byte(`data`), nil)
+	svc := createTestService(t, withQRDBClientProvider(qrdbProvider))
+	defer svc.Close()
+
+	req := &TransactionRequest{
+		Success: []*TransactionOp{
+			{OpType: TransactionOpTypePut, EntityType: "__t:other", ID: 1, Data: []byte(`x`)},
+		},
+	}
+
+	resp, err := svc.Transaction(tenantctx.WithTenant(context.Background(), "beta-inc"), req)
+	require.Error(t, err)
+	assert.Nil(t, resp)
+	assert.Empty(t, qrdbProvider.capturedBatchCalls(), "an invalid key must not reach the qrdb batch")
+}
+
 func TestTransactionService_Transaction_FailedComparison(t *testing.T) {
 	mockRaft := &mockRaftNode{
 		syncReadFn: func(ctx context.Context, shardID uint64, query interface{}) (interface{}, error) {

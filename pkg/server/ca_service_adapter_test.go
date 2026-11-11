@@ -29,6 +29,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
+
 	qrdbspiffe "github.com/jeremyhahn/go-qrdb/pkg/auth/spiffe"
 	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
 	xkmstransport "github.com/jeremyhahn/go-xkms/sdk/go/transport"
@@ -495,7 +497,7 @@ func TestCAServiceAdapter_RevokeCertificate(t *testing.T) {
 	adapter, _ := newCAServiceAdapter(ca)
 
 	t.Run("revokes existing serial", func(t *testing.T) {
-		resp, err := adapter.RevokeCertificate(context.Background(), &xkmstransport.RevokeCertificateRequest{
+		resp, err := adapter.RevokeCertificate(tenantctx.WithSystem(context.Background()), &xkmstransport.RevokeCertificateRequest{
 			SerialNumber: "ff",
 			Reason:       1,
 		})
@@ -596,7 +598,7 @@ func TestCAServiceAdapter_IsRevoked(t *testing.T) {
 	})
 
 	t.Run("returns true after revoke", func(t *testing.T) {
-		_, err := adapter.RevokeCertificate(context.Background(), &xkmstransport.RevokeCertificateRequest{
+		_, err := adapter.RevokeCertificate(tenantctx.WithSystem(context.Background()), &xkmstransport.RevokeCertificateRequest{
 			SerialNumber: "cafe",
 		})
 		if err != nil {

@@ -30,6 +30,8 @@ import (
 	"github.com/stretchr/testify/require"
 
 	xkmstransport "github.com/jeremyhahn/go-xkms/sdk/go/transport"
+
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 // =============================================================================
@@ -73,7 +75,9 @@ func TestBoost2_CAServiceAdapter_RevokeCertificate_CAErrorIsCapturedInResponse(t
 	adapter, err := newCAServiceAdapter(ca)
 	require.NoError(t, err)
 
-	resp, err := adapter.RevokeCertificate(context.Background(), &xkmstransport.RevokeCertificateRequest{
+	// The system caller passes the issuing-tenant binding, so the CA's own
+	// failure is what the response carries.
+	resp, err := adapter.RevokeCertificate(tenantctx.WithSystem(context.Background()), &xkmstransport.RevokeCertificateRequest{
 		SerialNumber: "ff",
 		Reason:       1,
 	})

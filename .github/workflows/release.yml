@@ -5,9 +5,9 @@ on:
     tags:
       - 'v*'
 
-# GOPROXY / GOSUMDB are deliberately absent, as in ci.yml. GOPRIVATE comes from
-# the runner (dependency-resolution.md §6) and already exempts
-# github.com/jeremyhahn/* from proxy and checksum database; setting
+# GOPROXY / GOSUMDB are deliberately absent, as in ci.yml. First-party
+# github.com/jeremyhahn/* modules resolve through the proxy and checksum
+# database like any other; setting
 # `GOPROXY: direct` and `GOSUMDB: off` here additionally routed every
 # third-party module around proxy.golang.org with sumdb verification off,
 # resolving them from mutable VCS refs. §1 says not to add them.
@@ -21,7 +21,7 @@ on:
 # credentials there and skip every push -- so off github.com REGISTRY only
 # prefixes the local tag the Trivy gate scans.
 env:
-  GO_VERSION: '1.27.3'
+  GO_VERSION: '1.27.4'
   REGISTRY: ${{ vars.REGISTRY || 'ghcr.io' }}
   IMAGE_NAME_DAEMON: jeremyhahn/quicbaasd
   IMAGE_NAME_CLI: jeremyhahn/quicbaas
@@ -270,13 +270,11 @@ jobs:
           # path itself, so it works regardless of where the two filesystems
           # actually live relative to each other.
           #
-          # This container's `go build` also needs the Gitea fetch
-          # credentials the runner injects into this job's shell
-          # (GOPRIVATE/GIT_CONFIG_*, dependency-resolution.md §6) to resolve
-          # go-xkms/go-qrdb. `docker create` (unlike `docker run`) does not
-          # reliably forward bare `-e NAME` host-value passthrough, so each
-          # var is explicitly expanded here (empty string when unset, e.g. on
-          # GitHub Actions).
+          # This container's `go build` resolves go-xkms/go-qrdb through the
+          # module proxy and checksum database like any other module, so no
+          # fetch credentials are forwarded. `docker create` (unlike
+          # `docker run`) does not reliably forward bare `-e NAME` host-value
+          # passthrough, so each var is explicitly expanded here.
           CID=$(docker create \
             --platform=${{ matrix.platform }} \
             -w /src \
@@ -285,10 +283,6 @@ jobs:
             -e DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
             -e GOARCH="${{ matrix.arch }}" \
             -e WITH_FIPS="${{ matrix.fips }}" \
-            -e GOPRIVATE="${GOPRIVATE:-}" \
-            -e GIT_CONFIG_COUNT="${GIT_CONFIG_COUNT:-}" \
-            -e GIT_CONFIG_KEY_0="${GIT_CONFIG_KEY_0:-}" \
-            -e GIT_CONFIG_VALUE_0="${GIT_CONFIG_VALUE_0:-}" \
             golang:1.27-bookworm \
             bash /src/build.sh)
           docker cp . "$CID":/src
@@ -464,10 +458,9 @@ jobs:
             type=semver,pattern={{major}}
             type=raw,value=latest,enable={{is_default_branch}}
 
-      # docker build does NOT inherit the job environment
-      # (dependency-resolution.md §6), so the Gitea fetch credentials the
-      # runner injects into this job's shell (GOPRIVATE/GIT_CONFIG_*) have to
-      # be staged into a file and handed to buildx as a secret mount --
+      # First-party modules resolve through the module proxy and checksum
+      # database like any other, so no fetch credentials are staged; the
+      # file stays empty and is still handed to buildx as a secret mount --
       # Dockerfile's `RUN --mount=type=secret,id=gomodauth` expects one but
       # nothing in this workflow previously supplied it, so `go mod
       # download` for the private go-xkms/go-qrdb modules had no
@@ -478,14 +471,6 @@ jobs:
         run: |
           umask 077
           : > gomodauth.env
-          if [ -n "${GIT_CONFIG_KEY_0:-}" ]; then
-            {
-              echo "export GOPRIVATE=${GOPRIVATE:-}"
-              echo "export GIT_CONFIG_COUNT=${GIT_CONFIG_COUNT:-1}"
-              echo "export GIT_CONFIG_KEY_0=${GIT_CONFIG_KEY_0:-}"
-              echo "export GIT_CONFIG_VALUE_0=${GIT_CONFIG_VALUE_0:-}"
-            } > gomodauth.env
-          fi
 
       # devops.md §8: no image reaches a registry unscanned. Built amd64-only
       # and loaded into the local daemon so Trivy can read it; the multi-arch
@@ -589,14 +574,6 @@ jobs:
         run: |
           umask 077
           : > gomodauth.env
-          if [ -n "${GIT_CONFIG_KEY_0:-}" ]; then
-            {
-              echo "export GOPRIVATE=${GOPRIVATE:-}"
-              echo "export GIT_CONFIG_COUNT=${GIT_CONFIG_COUNT:-1}"
-              echo "export GIT_CONFIG_KEY_0=${GIT_CONFIG_KEY_0:-}"
-              echo "export GIT_CONFIG_VALUE_0=${GIT_CONFIG_VALUE_0:-}"
-            } > gomodauth.env
-          fi
 
       # devops.md §8: no image reaches a registry unscanned. See the daemon job
       # for why this builds amd64-only and loads rather than pushing.
@@ -695,14 +672,6 @@ jobs:
         run: |
           umask 077
           : > gomodauth.env
-          if [ -n "${GIT_CONFIG_KEY_0:-}" ]; then
-            {
-              echo "export GOPRIVATE=${GOPRIVATE:-}"
-              echo "export GIT_CONFIG_COUNT=${GIT_CONFIG_COUNT:-1}"
-              echo "export GIT_CONFIG_KEY_0=${GIT_CONFIG_KEY_0:-}"
-              echo "export GIT_CONFIG_VALUE_0=${GIT_CONFIG_VALUE_0:-}"
-            } > gomodauth.env
-          fi
 
       # devops.md §8: no image reaches a registry unscanned. See the daemon job
       # for why this builds amd64-only and loads rather than pushing.

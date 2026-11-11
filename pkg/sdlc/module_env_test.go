@@ -22,14 +22,14 @@ import (
 // modules are private to Go, and git reaches them at the forge beside the
 // project — same scheme, user, host, port and owner, repository dropped.
 func TestModuleEnv_RewritesTheImportPrefixToTheForgeOverSSH(t *testing.T) {
-	env, err := ModuleEnv(ModulePolicy{RewritePrefix: "https://github.com/acme/"}, "ssh://git@forge.test:2222/acme/api.git")
+	env, err := ModuleEnv(ModulePolicy{RewritePrefix: "https://github.com/acme/"}, "ssh://git@forge.test:2022/acme/api.git")
 	if err != nil {
 		t.Fatal(err)
 	}
 	want := map[string]string{
 		"GOPRIVATE":          "github.com/acme/*",
 		"GIT_CONFIG_COUNT":   "1",
-		"GIT_CONFIG_KEY_0":   "url.ssh://git@forge.test:2222/acme/.insteadOf",
+		"GIT_CONFIG_KEY_0":   "url.ssh://git@forge.test:2022/acme/.insteadOf",
 		"GIT_CONFIG_VALUE_0": "https://github.com/acme/",
 	}
 	if len(env) != len(want) {
@@ -59,7 +59,7 @@ func TestModuleEnv_AnHTTPSRemoteRewritesToHTTPS(t *testing.T) {
 // gets no GOPRIVATE and no rewrite, so its Go behaves exactly as the image
 // ships it.
 func TestModuleEnv_NoPolicyInjectsNothing(t *testing.T) {
-	env, err := ModuleEnv(ModulePolicy{}, "ssh://git@forge.test:2222/acme/api.git")
+	env, err := ModuleEnv(ModulePolicy{}, "ssh://git@forge.test:2022/acme/api.git")
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -1516,11 +1516,11 @@ func TestGDPRManager_GrantConsent_EdgeCases(t *testing.T) {
 
 	t.Run("update existing consent", func(t *testing.T) {
 		// Grant initial consent
-		consent1, err := manager.GrantConsent(ctx, "tenant-1", 10001, ConsentPurposeMarketing, "v1", nil, "192.168.1.1", "Mozilla/5.0")
+		consent1, err := manager.GrantConsent(ctx, "tenant-1", 10001, ConsentPurposeMarketing, "v1", nil, "192.0.2.1", "Mozilla/5.0")
 		require.NoError(t, err)
 
 		// Grant consent again with new version (should update)
-		consent2, err := manager.GrantConsent(ctx, "tenant-1", 10001, ConsentPurposeMarketing, "v2", nil, "192.168.1.2", "Chrome/100")
+		consent2, err := manager.GrantConsent(ctx, "tenant-1", 10001, ConsentPurposeMarketing, "v2", nil, "192.0.2.2", "Chrome/100")
 		require.NoError(t, err)
 
 		// Should be the same consent record updated
