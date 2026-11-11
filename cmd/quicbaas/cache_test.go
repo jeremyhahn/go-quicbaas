@@ -1412,12 +1412,15 @@ func TestBuildSDKClientOptions(t *testing.T) {
 		mayFail     bool
 		expectError bool
 	}{
+		{name: "empty defaults to grpc", transport: "", timeout: 5 * time.Second},
+		{name: "grpc", transport: "grpc", timeout: 5 * time.Second},
 		{name: "rest", transport: "rest", timeout: 10 * time.Second},
 		{name: "quic", transport: "quic", timeout: 5 * time.Second},
 		{name: "unix", transport: "unix", address: "/tmp/quicbaas.sock", timeout: 5 * time.Second},
 		{name: "mcp", transport: "mcp", timeout: 5 * time.Second},
 		{name: "embedded", transport: "embedded", timeout: 5 * time.Second, mayFail: true},
 		{name: "unsupported", transport: "unsupported", timeout: 5 * time.Second, expectError: true},
+		{name: "websocket unsupported", transport: "websocket", timeout: 5 * time.Second, expectError: true},
 	}
 
 	for _, tt := range tests {

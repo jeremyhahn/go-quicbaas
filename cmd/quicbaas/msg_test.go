@@ -59,50 +59,6 @@ func TestCreateSDKClientEmptyAddressError(t *testing.T) {
 	assert.Equal(t, ErrEmptyAddress, err)
 }
 
-func TestBuildSDKClientOptions(t *testing.T) {
-	tests := []struct {
-		name      string
-		transport string
-		address   string
-		wantErr   bool
-	}{
-		{name: "empty defaults to grpc", transport: ""},
-		{name: "grpc", transport: "grpc"},
-		{name: "rest", transport: "rest"},
-		{name: "quic", transport: "quic"},
-		{name: "unix", transport: "unix", address: "/tmp/test.sock"},
-		{name: "mcp", transport: "mcp"},
-		{name: "invalid transport", transport: "invalid-transport", wantErr: true},
-		{name: "websocket unsupported", transport: "websocket", wantErr: true},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			origTransport := transport
-			origAddress := address
-			defer func() {
-				transport = origTransport
-				address = origAddress
-			}()
-
-			transport = tt.transport
-			if tt.address != "" {
-				address = tt.address
-			}
-
-			opts, err := buildSDKClientOptions()
-			if tt.wantErr {
-				var ute *UnsupportedTransportError
-				assert.ErrorAs(t, err, &ute)
-				assert.Empty(t, opts)
-				return
-			}
-			assert.NoError(t, err)
-			assert.NotEmpty(t, opts)
-		})
-	}
-}
-
 func TestGetSDKClientNilReturn(t *testing.T) {
 	// Save and restore
 	defer resetSDKClient()
