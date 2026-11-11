@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/errors"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/transport"
 )
@@ -264,14 +265,14 @@ func TestClient_Restore_Validation(t *testing.T) {
 			wantErr: false,
 		},
 		{
-			name:    "valid request with source only",
+			name:    "source only is refused (the service has no source)",
 			req:     &RestoreRequest{Source: "s3://bucket/backup"},
-			wantErr: false,
+			wantErr: true,
 		},
 		{
-			name:    "valid request with both",
+			name:    "backup ID with source is refused (the source would be dropped)",
 			req:     &RestoreRequest{BackupID: "backup-123", Source: "s3://bucket/backup"},
-			wantErr: false,
+			wantErr: true,
 		},
 	}
 
@@ -660,10 +661,10 @@ func TestClient_Create_RequestValidation(t *testing.T) {
 }
 
 func TestClient_Restore_RequestValidation(t *testing.T) {
-	var capturedReq *RestoreRequest
+	var capturedReq *service.RestoreBackupRequest
 	mockT := &mockTransport{
-		requestFn: func(ctx context.Context, service, method string, req interface{}) (interface{}, error) {
-			capturedReq = req.(*RestoreRequest)
+		requestFn: func(ctx context.Context, svc, method string, req interface{}) (interface{}, error) {
+			capturedReq = req.(*service.RestoreBackupRequest)
 			return &RestoreResponse{
 				Restored: true,
 				Duration: time.Second,
@@ -676,7 +677,6 @@ func TestClient_Restore_RequestValidation(t *testing.T) {
 
 	originalReq := &RestoreRequest{
 		BackupID: "backup-456",
-		Source:   "s3://my-bucket/backups/backup-456",
 	}
 
 	_, err := client.Restore(ctx, originalReq)
@@ -686,9 +686,6 @@ func TestClient_Restore_RequestValidation(t *testing.T) {
 
 	if capturedReq.BackupID != originalReq.BackupID {
 		t.Errorf("expected BackupID=%q, got %q", originalReq.BackupID, capturedReq.BackupID)
-	}
-	if capturedReq.Source != originalReq.Source {
-		t.Errorf("expected Source=%q, got %q", originalReq.Source, capturedReq.Source)
 	}
 }
 
