@@ -32,8 +32,11 @@ import (
 
 // TestTenantCRUD tests complete tenant lifecycle: create, read, update, delete.
 func TestTenantCRUD(t *testing.T) {
-	cluster := setupTestCluster(t)
-	defer cluster.Close()
+	base := setupTestCluster(t)
+	defer base.Close()
+	// Tenant create, read, list, update and delete are system-tenant routes,
+	// so every call goes as the system admin.
+	cluster := base.asSystemAdmin()
 
 	tenantID := generateUniqueTenantID()
 
@@ -135,8 +138,11 @@ func TestTenantCRUD(t *testing.T) {
 
 // TestTenantIsolation verifies that tenants are completely isolated.
 func TestTenantIsolation(t *testing.T) {
-	cluster := setupTestCluster(t)
-	defer cluster.Close()
+	base := setupTestCluster(t)
+	defer base.Close()
+	// The tenants are created and deleted as the system admin; the calls inside
+	// them go as the system admin acting in the URL's tenant (the tenant lift).
+	cluster := base.asSystemAdmin()
 
 	// Create two separate tenants
 	tenantA := generateUniqueTenantID()
@@ -188,8 +194,11 @@ func TestTenantIsolation(t *testing.T) {
 
 // TestTenantQuotas tests tenant quota enforcement and persistence.
 func TestTenantQuotas(t *testing.T) {
-	cluster := setupTestCluster(t)
-	defer cluster.Close()
+	base := setupTestCluster(t)
+	defer base.Close()
+	// Tenant create, read, list, update and delete are system-tenant routes,
+	// so every call goes as the system admin.
+	cluster := base.asSystemAdmin()
 
 	tenantID := generateUniqueTenantID()
 
@@ -244,8 +253,11 @@ func TestTenantQuotas(t *testing.T) {
 
 // TestTenantSettings tests tenant settings configuration and persistence.
 func TestTenantSettings(t *testing.T) {
-	cluster := setupTestCluster(t)
-	defer cluster.Close()
+	base := setupTestCluster(t)
+	defer base.Close()
+	// Tenant create, read, list, update and delete are system-tenant routes,
+	// so every call goes as the system admin.
+	cluster := base.asSystemAdmin()
 
 	t.Run("MFARequired", func(t *testing.T) {
 		tenantID := generateUniqueTenantID()
@@ -313,7 +325,7 @@ func TestTenantSettings(t *testing.T) {
 			"settings": map[string]interface{}{
 				"named_networks": map[string]interface{}{
 					"office":     []string{"10.0.0.0/8", "172.16.0.0/12"},
-					"vpn":        []string{"192.168.100.0/24"},
+					"vpn":        []string{"198.51.100.0/24"},
 					"datacenter": []string{"10.10.0.0/16"},
 				},
 			},
@@ -332,7 +344,7 @@ func TestTenantSettings(t *testing.T) {
 		assert.Contains(t, tenant.Settings.NamedNetworks, "vpn", "Should have vpn network")
 		assert.Contains(t, tenant.Settings.NamedNetworks, "datacenter", "Should have datacenter network")
 		assert.Equal(t, []string{"10.0.0.0/8", "172.16.0.0/12"}, tenant.Settings.NamedNetworks["office"])
-		assert.Equal(t, []string{"192.168.100.0/24"}, tenant.Settings.NamedNetworks["vpn"])
+		assert.Equal(t, []string{"198.51.100.0/24"}, tenant.Settings.NamedNetworks["vpn"])
 
 		// Verify persistence
 		var fetched iam.Tenant
@@ -418,8 +430,11 @@ func TestTenantSettings(t *testing.T) {
 
 // TestTenantDeletionCascade verifies that deleting a tenant also deletes associated resources.
 func TestTenantDeletionCascade(t *testing.T) {
-	cluster := setupTestCluster(t)
-	defer cluster.Close()
+	base := setupTestCluster(t)
+	defer base.Close()
+	// The tenants are created and deleted as the system admin; the calls inside
+	// them go as the system admin acting in the URL's tenant (the tenant lift).
+	cluster := base.asSystemAdmin()
 
 	tenantID := generateUniqueTenantID()
 
@@ -474,8 +489,11 @@ func TestTenantDeletionCascade(t *testing.T) {
 
 // TestTenantValidation tests input validation for tenant creation.
 func TestTenantValidation(t *testing.T) {
-	cluster := setupTestCluster(t)
-	defer cluster.Close()
+	base := setupTestCluster(t)
+	defer base.Close()
+	// Tenant creation is a system-tenant route: the system admin sends these
+	// cases, so the refusal under test is the 400, not a missing credential.
+	cluster := base.asSystemAdmin()
 
 	t.Run("Valid_tenant", func(t *testing.T) {
 		tenantID := generateUniqueTenantID()

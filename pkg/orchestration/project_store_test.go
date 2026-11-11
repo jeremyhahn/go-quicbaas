@@ -215,16 +215,6 @@ func (r *projectAuditRecorder) snapshot() []StoreAuditEvent {
 // Create
 // =============================================================================
 
-func TestProjectStore_Create_HappyPath(t *testing.T) {
-	store := NewInMemoryProjectStore()
-	ctx := context.Background()
-
-	p := newTestProject("id-1", "tenant-1", "my-project")
-	if err := store.Create(ctx, p); err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-}
-
 func TestProjectStore_Create_SetsTimestamps(t *testing.T) {
 	store := NewInMemoryProjectStore()
 	ctx := context.Background()
@@ -312,163 +302,102 @@ func TestProjectStore_Create_DuplicateID(t *testing.T) {
 	}
 }
 
-func TestProjectStore_Create_NilProject(t *testing.T) {
-	store := NewInMemoryProjectStore()
-	err := store.Create(context.Background(), nil)
-	if err == nil {
-		t.Fatal("expected error for nil project, got nil")
-	}
-	if !errors.Is(err, ErrProjectInvalid) {
-		t.Errorf("expected ErrProjectInvalid, got %T: %v", err, err)
-	}
-}
-
-func TestProjectStore_Create_EmptyID(t *testing.T) {
-	store := NewInMemoryProjectStore()
-	p := newTestProject("", "tenant-1", "name")
-	err := store.Create(context.Background(), p)
-	if err == nil {
-		t.Fatal("expected error for empty ID")
-	}
-	if !errors.Is(err, ErrProjectInvalid) {
-		t.Errorf("expected ErrProjectInvalid, got %v", err)
-	}
-}
-
-func TestProjectStore_Create_EmptyTenantID(t *testing.T) {
-	store := NewInMemoryProjectStore()
-	p := newTestProject("id-1", "", "name")
-	err := store.Create(context.Background(), p)
-	if err == nil {
-		t.Fatal("expected error for empty tenantID")
-	}
-	if !errors.Is(err, ErrProjectInvalid) {
-		t.Errorf("expected ErrProjectInvalid, got %v", err)
-	}
-}
-
-func TestProjectStore_Create_EmptyName(t *testing.T) {
-	store := NewInMemoryProjectStore()
-	p := newTestProject("id-1", "tenant-1", "")
-	err := store.Create(context.Background(), p)
-	if err == nil {
-		t.Fatal("expected error for empty name")
-	}
-	if !errors.Is(err, ErrProjectInvalid) {
-		t.Errorf("expected ErrProjectInvalid, got %v", err)
-	}
-}
-
 // =============================================================================
 // Get
 // =============================================================================
 
-func TestProjectStore_Get_HappyPath(t *testing.T) {
-	store := NewInMemoryProjectStore()
+// TestProjectStore_NilAndNotFoundErrors drives each method with a nil project
+// or an absent record and checks the typed error it returns. Empty and
+// separator-bearing key segments are covered by
+// TestProjectStore_KeySegmentRejection.
+func TestProjectStore_NilAndNotFoundErrors(t *testing.T) {
 	ctx := context.Background()
-
-	p := newTestProject("id-1", "tenant-1", "proj")
-	if err := store.Create(ctx, p); err != nil {
-		t.Fatalf("create failed: %v", err)
+	tests := []struct {
+		name string
+		call func(s ProjectStore) error
+		want error
+	}{
+		{"Create nil project", func(s ProjectStore) error {
+			return s.Create(ctx, nil)
+		}, ErrProjectInvalid},
+		{"Get not found", func(s ProjectStore) error {
+			_, err := s.Get(ctx, "tenant-1", "missing-id")
+			return err
+		}, ErrProjectNotFound},
+		{"GetByName not found", func(s ProjectStore) error {
+			_, err := s.GetByName(ctx, "tenant-1", "ghost")
+			return err
+		}, ErrProjectNotFound},
+		{"Update not found", func(s ProjectStore) error {
+			return s.Update(ctx, newTestProject("ghost", "tenant-1", "ghost"))
+		}, ErrProjectNotFound},
+		{"Update nil project", func(s ProjectStore) error {
+			return s.Update(ctx, nil)
+		}, ErrProjectInvalid},
+		{"Delete not found", func(s ProjectStore) error {
+			return s.Delete(ctx, "tenant-1", "ghost")
+		}, ErrProjectNotFound},
 	}
-
-	got, err := store.Get(ctx, "tenant-1", "id-1")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if got.Name != "proj" {
-		t.Errorf("expected name 'proj', got %q", got.Name)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := tt.call(NewInMemoryProjectStore())
+			if !errors.Is(err, tt.want) {
+				t.Errorf("expected %v, got %T: %v", tt.want, err, err)
+			}
+		})
 	}
 }
 
-func TestProjectStore_Get_NotFound(t *testing.T) {
-	store := NewInMemoryProjectStore()
-	_, err := store.Get(context.Background(), "tenant-1", "missing-id")
-	if err == nil {
-		t.Fatal("expected not-found error, got nil")
+// TestProjectStore_CorruptRecord asserts that every read path reports a record
+// that is not decodable as a store failure rather than as a missing project,
+// so operators can tell corruption apart from absence.
+func TestProjectStore_CorruptRecord(t *testing.T) {
+	tests := []struct {
+		name string
+		read func(ctx context.Context, s ProjectStore) error
+	}{
+		{"Get", func(ctx context.Context, s ProjectStore) error {
+			_, err := s.Get(ctx, "tenant-1", "id-1")
+			return err
+		}},
+		{"GetByName", func(ctx context.Context, s ProjectStore) error {
+			_, err := s.GetByName(ctx, "tenant-1", "named")
+			return err
+		}},
+		{"ListByTenant", func(ctx context.Context, s ProjectStore) error {
+			_, err := s.ListByTenant(ctx, "tenant-1")
+			return err
+		}},
 	}
-	if !errors.Is(err, ErrProjectNotFound) {
-		t.Errorf("expected ErrProjectNotFound, got %T: %v", err, err)
-	}
-}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx := context.Background()
+			kv := NewMemoryTaskKV()
+			store := NewProjectStore(kv)
 
-func TestProjectStore_Get_EmptyTenantID(t *testing.T) {
-	store := NewInMemoryProjectStore()
-	_, err := store.Get(context.Background(), "", "id-1")
-	if err == nil {
-		t.Fatal("expected error for empty tenantID")
-	}
-	if !errors.Is(err, ErrProjectInvalid) {
-		t.Errorf("expected ErrProjectInvalid, got %v", err)
-	}
-}
+			if err := store.Create(ctx, newTestProject("id-1", "tenant-1", "named")); err != nil {
+				t.Fatalf("create: %v", err)
+			}
+			key, err := projectRecordKey("tenant-1", "id-1")
+			if err != nil {
+				t.Fatalf("projectRecordKey: %v", err)
+			}
+			if err := kv.Put(ctx, key, []byte("{not json")); err != nil {
+				t.Fatalf("seed corrupt record: %v", err)
+			}
 
-// TestProjectStore_Get_CorruptRecord asserts a record that is not decodable is
-// reported as a store failure rather than as a missing project, so operators
-// can tell corruption apart from absence.
-func TestProjectStore_Get_CorruptRecord(t *testing.T) {
-	kv := NewMemoryTaskKV()
-	store := NewProjectStore(kv)
-	ctx := context.Background()
-
-	key, err := projectRecordKey("tenant-1", "id-1")
-	if err != nil {
-		t.Fatalf("projectRecordKey: %v", err)
-	}
-	if err := kv.Put(ctx, key, []byte("{not json")); err != nil {
-		t.Fatalf("seed corrupt record: %v", err)
-	}
-
-	_, err = store.Get(ctx, "tenant-1", "id-1")
-	var storeErr *ProjectStoreError
-	if !errors.As(err, &storeErr) {
-		t.Fatalf("want *ProjectStoreError for corrupt record, got %T: %v", err, err)
+			err = tt.read(ctx, store)
+			var storeErr *ProjectStoreError
+			if !errors.As(err, &storeErr) {
+				t.Fatalf("want *ProjectStoreError for corrupt record, got %T: %v", err, err)
+			}
+		})
 	}
 }
 
 // =============================================================================
 // GetByName
 // =============================================================================
-
-func TestProjectStore_GetByName_HappyPath(t *testing.T) {
-	store := NewInMemoryProjectStore()
-	ctx := context.Background()
-
-	p := newTestProject("id-1", "tenant-1", "by-name")
-	if err := store.Create(ctx, p); err != nil {
-		t.Fatalf("create failed: %v", err)
-	}
-
-	got, err := store.GetByName(ctx, "tenant-1", "by-name")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if got.ID != "id-1" {
-		t.Errorf("expected ID 'id-1', got %q", got.ID)
-	}
-}
-
-func TestProjectStore_GetByName_NotFound(t *testing.T) {
-	store := NewInMemoryProjectStore()
-	_, err := store.GetByName(context.Background(), "tenant-1", "ghost")
-	if err == nil {
-		t.Fatal("expected not-found error, got nil")
-	}
-	if !errors.Is(err, ErrProjectNotFound) {
-		t.Errorf("expected ErrProjectNotFound, got %T: %v", err, err)
-	}
-}
-
-func TestProjectStore_GetByName_EmptyName(t *testing.T) {
-	store := NewInMemoryProjectStore()
-	_, err := store.GetByName(context.Background(), "tenant-1", "")
-	if err == nil {
-		t.Fatal("expected error for empty name")
-	}
-	if !errors.Is(err, ErrProjectInvalid) {
-		t.Errorf("expected ErrProjectInvalid, got %v", err)
-	}
-}
 
 // TestProjectStore_GetByName_DanglingIndex asserts a name reservation whose
 // record is gone reads as not-found rather than as an internal failure.
@@ -494,34 +423,6 @@ func TestProjectStore_GetByName_DanglingIndex(t *testing.T) {
 // =============================================================================
 // Update
 // =============================================================================
-
-func TestProjectStore_Update_HappyPath(t *testing.T) {
-	store := NewInMemoryProjectStore()
-	ctx := context.Background()
-
-	p := newTestProject("id-1", "tenant-1", "old-name")
-	if err := store.Create(ctx, p); err != nil {
-		t.Fatalf("create failed: %v", err)
-	}
-
-	p.Name = "new-name"
-	if err := store.Update(ctx, p); err != nil {
-		t.Fatalf("update failed: %v", err)
-	}
-
-	got, err := store.GetByName(ctx, "tenant-1", "new-name")
-	if err != nil {
-		t.Fatalf("get by new name failed: %v", err)
-	}
-	if got.ID != "id-1" {
-		t.Errorf("expected ID 'id-1', got %q", got.ID)
-	}
-
-	// The old reservation must be released so the name can be reused.
-	if _, oldErr := store.GetByName(ctx, "tenant-1", "old-name"); !errors.Is(oldErr, ErrProjectNotFound) {
-		t.Errorf("old name must be released, got %v", oldErr)
-	}
-}
 
 func TestProjectStore_Update_PreservesCreatedAtAndBumpsUpdatedAt(t *testing.T) {
 	store := NewInMemoryProjectStore()
@@ -587,29 +488,6 @@ func TestProjectStore_Update_EmptyNameKeepsCurrentName(t *testing.T) {
 	}
 }
 
-func TestProjectStore_Update_NotFound(t *testing.T) {
-	store := NewInMemoryProjectStore()
-	p := newTestProject("ghost", "tenant-1", "ghost")
-	err := store.Update(context.Background(), p)
-	if err == nil {
-		t.Fatal("expected not-found error, got nil")
-	}
-	if !errors.Is(err, ErrProjectNotFound) {
-		t.Errorf("expected ErrProjectNotFound, got %T: %v", err, err)
-	}
-}
-
-func TestProjectStore_Update_NilProject(t *testing.T) {
-	store := NewInMemoryProjectStore()
-	err := store.Update(context.Background(), nil)
-	if err == nil {
-		t.Fatal("expected error for nil project")
-	}
-	if !errors.Is(err, ErrProjectInvalid) {
-		t.Errorf("expected ErrProjectInvalid, got %v", err)
-	}
-}
-
 // =============================================================================
 // Delete
 // =============================================================================
@@ -638,67 +516,9 @@ func TestProjectStore_Delete_HappyPath(t *testing.T) {
 	}
 }
 
-func TestProjectStore_Delete_NotFound(t *testing.T) {
-	store := NewInMemoryProjectStore()
-	err := store.Delete(context.Background(), "tenant-1", "ghost")
-	if err == nil {
-		t.Fatal("expected not-found error, got nil")
-	}
-	if !errors.Is(err, ErrProjectNotFound) {
-		t.Errorf("expected ErrProjectNotFound, got %T: %v", err, err)
-	}
-}
-
-func TestProjectStore_Delete_EmptyID(t *testing.T) {
-	store := NewInMemoryProjectStore()
-	err := store.Delete(context.Background(), "tenant-1", "")
-	if err == nil {
-		t.Fatal("expected error for empty ID")
-	}
-	if !errors.Is(err, ErrProjectInvalid) {
-		t.Errorf("expected ErrProjectInvalid, got %v", err)
-	}
-}
-
 // =============================================================================
 // ListByTenant
 // =============================================================================
-
-func TestProjectStore_ListByTenant_HappyPath(t *testing.T) {
-	store := NewInMemoryProjectStore()
-	ctx := context.Background()
-
-	for _, name := range []string{"a", "b", "c"} {
-		p := newTestProject("id-"+name, "tenant-1", name)
-		if err := store.Create(ctx, p); err != nil {
-			t.Fatalf("create %q failed: %v", name, err)
-		}
-	}
-	// Create a project for a different tenant — must not appear.
-	other := newTestProject("other-id", "tenant-2", "other")
-	if err := store.Create(ctx, other); err != nil {
-		t.Fatalf("create other-tenant project failed: %v", err)
-	}
-
-	projects, err := store.ListByTenant(ctx, "tenant-1")
-	if err != nil {
-		t.Fatalf("list failed: %v", err)
-	}
-	if len(projects) != 3 {
-		t.Errorf("expected 3 projects, got %d", len(projects))
-	}
-}
-
-func TestProjectStore_ListByTenant_EmptyTenantID(t *testing.T) {
-	store := NewInMemoryProjectStore()
-	_, err := store.ListByTenant(context.Background(), "")
-	if err == nil {
-		t.Fatal("expected error for empty tenantID")
-	}
-	if !errors.Is(err, ErrProjectInvalid) {
-		t.Errorf("expected ErrProjectInvalid, got %v", err)
-	}
-}
 
 func TestProjectStore_ListByTenant_Empty(t *testing.T) {
 	store := NewInMemoryProjectStore()
@@ -713,29 +533,6 @@ func TestProjectStore_ListByTenant_Empty(t *testing.T) {
 
 // TestProjectStore_ListByTenant_CorruptRecord asserts a record that cannot be
 // decoded fails the whole listing rather than silently shortening it.
-func TestProjectStore_ListByTenant_CorruptRecord(t *testing.T) {
-	kv := NewMemoryTaskKV()
-	store := NewProjectStore(kv)
-	ctx := context.Background()
-
-	if err := store.Create(ctx, newTestProject("id-1", "tenant-1", "good")); err != nil {
-		t.Fatalf("create: %v", err)
-	}
-	key, err := projectRecordKey("tenant-1", "id-2")
-	if err != nil {
-		t.Fatalf("projectRecordKey: %v", err)
-	}
-	if err := kv.Put(ctx, key, []byte("{not json")); err != nil {
-		t.Fatalf("seed corrupt record: %v", err)
-	}
-
-	_, err = store.ListByTenant(ctx, "tenant-1")
-	var storeErr *ProjectStoreError
-	if !errors.As(err, &storeErr) {
-		t.Fatalf("want *ProjectStoreError, got %T: %v", err, err)
-	}
-}
-
 // =============================================================================
 // CRUD round-trip across backends
 // =============================================================================
@@ -1618,42 +1415,27 @@ type projectNilValueKV struct {
 
 func (k *projectNilValueKV) Get(context.Context, string) ([]byte, error) { return nil, nil }
 
-func TestProjectStore_Get_NilValueIsMissing(t *testing.T) {
-	store := NewProjectStore(&projectNilValueKV{KVStore: NewMemoryTaskKV()})
-	if _, err := store.Get(context.Background(), "tenant-1", "id-1"); !errors.Is(err, ErrProjectNotFound) {
-		t.Fatalf("want ErrProjectNotFound for a nil value, got %T: %v", err, err)
+func TestProjectStore_NilValueIsMissing(t *testing.T) {
+	tests := []struct {
+		name string
+		read func(ctx context.Context, s ProjectStore) error
+	}{
+		{"Get", func(ctx context.Context, s ProjectStore) error {
+			_, err := s.Get(ctx, "tenant-1", "id-1")
+			return err
+		}},
+		{"GetByName", func(ctx context.Context, s ProjectStore) error {
+			_, err := s.GetByName(ctx, "tenant-1", "name")
+			return err
+		}},
 	}
-}
-
-func TestProjectStore_GetByName_NilValueIsMissing(t *testing.T) {
-	store := NewProjectStore(&projectNilValueKV{KVStore: NewMemoryTaskKV()})
-	if _, err := store.GetByName(context.Background(), "tenant-1", "name"); !errors.Is(err, ErrProjectNotFound) {
-		t.Fatalf("want ErrProjectNotFound for a nil value, got %T: %v", err, err)
-	}
-}
-
-// TestProjectStore_GetByName_CorruptRecord asserts a decode failure behind a
-// valid name reservation is reported as corruption, not as absence.
-func TestProjectStore_GetByName_CorruptRecord(t *testing.T) {
-	ctx := context.Background()
-	kv := NewMemoryTaskKV()
-	store := NewProjectStore(kv)
-
-	if err := store.Create(ctx, newTestProject("id-1", "tenant-1", "named")); err != nil {
-		t.Fatalf("create: %v", err)
-	}
-	recordKey, err := projectRecordKey("tenant-1", "id-1")
-	if err != nil {
-		t.Fatalf("projectRecordKey: %v", err)
-	}
-	if err := kv.Put(ctx, recordKey, []byte("{not json")); err != nil {
-		t.Fatalf("corrupt record: %v", err)
-	}
-
-	_, err = store.GetByName(ctx, "tenant-1", "named")
-	var storeErr *ProjectStoreError
-	if !errors.As(err, &storeErr) {
-		t.Fatalf("want *ProjectStoreError, got %T: %v", err, err)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			store := NewProjectStore(&projectNilValueKV{KVStore: NewMemoryTaskKV()})
+			if err := tt.read(context.Background(), store); !errors.Is(err, ErrProjectNotFound) {
+				t.Fatalf("want ErrProjectNotFound for a nil value, got %T: %v", err, err)
+			}
+		})
 	}
 }
 

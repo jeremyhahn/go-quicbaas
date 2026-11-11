@@ -108,17 +108,17 @@ func TestExpandCanonicalHome_NoTilde(t *testing.T) {
 }
 
 func TestExpandCanonicalHome_TildeOnly(t *testing.T) {
-	t.Setenv("HOME", "/home/alice")
-	assert.Equal(t, "/home/alice", expandCanonicalHome("~"))
+	t.Setenv("HOME", "/home/user")
+	assert.Equal(t, "/home/user", expandCanonicalHome("~"))
 }
 
 func TestExpandCanonicalHome_TildeSlash(t *testing.T) {
-	t.Setenv("HOME", "/home/alice")
-	assert.Equal(t, "/home/alice/.quicbaas", expandCanonicalHome("~/.quicbaas"))
+	t.Setenv("HOME", "/home/user")
+	assert.Equal(t, "/home/user/.quicbaas", expandCanonicalHome("~/.quicbaas"))
 }
 
 func TestExpandCanonicalHome_TildeWithoutSlash(t *testing.T) {
-	t.Setenv("HOME", "/home/alice")
+	t.Setenv("HOME", "/home/user")
 	// "~foo" is returned unchanged (not expanded).
 	assert.Equal(t, "~foo", expandCanonicalHome("~foo"))
 }

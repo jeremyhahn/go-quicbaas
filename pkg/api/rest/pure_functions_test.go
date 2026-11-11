@@ -1001,9 +1001,9 @@ func TestGetClientIPExhaustive(t *testing.T) {
 		// X-Forwarded-For tests
 		{
 			name:          "X-Forwarded-For single IP",
-			xForwardedFor: "192.168.1.100",
+			xForwardedFor: "192.0.2.100",
 			remoteAddr:    "10.0.0.1:12345",
-			expectedIP:    "192.168.1.100",
+			expectedIP:    "192.0.2.100",
 		},
 		{
 			name:          "X-Forwarded-For multiple IPs",
@@ -1013,9 +1013,9 @@ func TestGetClientIPExhaustive(t *testing.T) {
 		},
 		{
 			name:          "X-Forwarded-For with spaces",
-			xForwardedFor: "  192.168.1.100  , 10.0.0.1",
+			xForwardedFor: "  192.0.2.100  , 10.0.0.1",
 			remoteAddr:    "127.0.0.1:8080",
-			expectedIP:    "192.168.1.100",
+			expectedIP:    "192.0.2.100",
 		},
 		{
 			name:          "X-Forwarded-For IPv6",
@@ -1026,15 +1026,15 @@ func TestGetClientIPExhaustive(t *testing.T) {
 		// X-Real-IP tests
 		{
 			name:       "X-Real-IP only",
-			xRealIP:    "192.168.1.100",
+			xRealIP:    "192.0.2.100",
 			remoteAddr: "10.0.0.1:12345",
-			expectedIP: "192.168.1.100",
+			expectedIP: "192.0.2.100",
 		},
 		{
 			name:       "X-Real-IP with whitespace",
-			xRealIP:    "  192.168.1.100  ",
+			xRealIP:    "  192.0.2.100  ",
 			remoteAddr: "10.0.0.1:12345",
-			expectedIP: "192.168.1.100",
+			expectedIP: "192.0.2.100",
 		},
 		{
 			name:       "X-Real-IP IPv6",
@@ -1046,20 +1046,20 @@ func TestGetClientIPExhaustive(t *testing.T) {
 		{
 			name:          "X-Forwarded-For precedence over X-Real-IP",
 			xForwardedFor: "10.0.0.50",
-			xRealIP:       "192.168.1.100",
+			xRealIP:       "192.0.2.100",
 			remoteAddr:    "127.0.0.1:8080",
 			expectedIP:    "10.0.0.50",
 		},
 		// RemoteAddr fallback tests
 		{
 			name:       "RemoteAddr with port",
-			remoteAddr: "192.168.1.100:12345",
-			expectedIP: "192.168.1.100",
+			remoteAddr: "192.0.2.100:12345",
+			expectedIP: "192.0.2.100",
 		},
 		{
 			name:       "RemoteAddr without port",
-			remoteAddr: "192.168.1.100",
-			expectedIP: "192.168.1.100",
+			remoteAddr: "192.0.2.100",
+			expectedIP: "192.0.2.100",
 		},
 		{
 			name:       "RemoteAddr IPv6 with port in brackets",
@@ -1092,8 +1092,8 @@ func TestGetClientIPExhaustive(t *testing.T) {
 			name:          "empty X-Forwarded-For and X-Real-IP",
 			xForwardedFor: "",
 			xRealIP:       "",
-			remoteAddr:    "192.168.1.1:443",
-			expectedIP:    "192.168.1.1",
+			remoteAddr:    "192.0.2.1:443",
+			expectedIP:    "192.0.2.1",
 		},
 		{
 			// A lone comma names no client, so the header contributes nothing
@@ -1107,15 +1107,15 @@ func TestGetClientIPExhaustive(t *testing.T) {
 		},
 		{
 			name:          "X-Forwarded-For with multiple commas",
-			xForwardedFor: "192.168.1.1, , 10.0.0.1",
+			xForwardedFor: "192.0.2.1, , 10.0.0.1",
 			remoteAddr:    "127.0.0.1:8080",
-			expectedIP:    "192.168.1.1",
+			expectedIP:    "192.0.2.1",
 		},
 		{
 			name:          "X-Forwarded-For single IP with trailing comma",
-			xForwardedFor: "192.168.1.1,",
+			xForwardedFor: "192.0.2.1,",
 			remoteAddr:    "127.0.0.1:8080",
-			expectedIP:    "192.168.1.1",
+			expectedIP:    "192.0.2.1",
 		},
 		{
 			name:       "RemoteAddr only colon returns colon",

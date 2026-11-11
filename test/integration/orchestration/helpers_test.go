@@ -59,7 +59,13 @@ func postJSON(ctx context.Context, url string, body interface{}) (*http.Response
 	}
 	req.Header.Set("Content-Type", "application/json")
 
-	client := helpers.NewHTTPClient(30 * time.Second)
+	// The orchestrator routes are gated. The request carries the bearer of the
+	// tenant operator, the narrowest test principal holding the orchestrator
+	// verbs.
+	client, err := helpers.TenantOperatorHTTPClient(ctx, 30*time.Second)
+	if err != nil {
+		return nil, &testHTTPError{URL: url, Method: "POST", Cause: err}
+	}
 	return client.Do(req)
 }
 
@@ -71,7 +77,11 @@ func getJSON(ctx context.Context, url string, result interface{}) (*http.Respons
 	}
 	req.Header.Set("Accept", "application/json")
 
-	client := helpers.NewHTTPClient(30 * time.Second)
+	// As postJSON: the request carries the tenant operator's bearer.
+	client, err := helpers.TenantOperatorHTTPClient(ctx, 30*time.Second)
+	if err != nil {
+		return nil, &testHTTPError{URL: url, Method: "GET", Cause: err}
+	}
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, &testHTTPError{URL: url, Method: "GET", Cause: err}
