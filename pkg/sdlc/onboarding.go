@@ -343,6 +343,24 @@ func NormalizeWebhookPublicURL(raw string) (string, error) {
 	return trimmed, nil
 }
 
+// CheckDelivery refuses a binding that asks for webhook deliveries this node
+// cannot take: it names a webhook secret and the node has no public URL.
+//
+// It is asked BEFORE anything is written. Bind retires the prior delivery,
+// switches autonomy on, records the route and stores the binding before it
+// onboards, and onboarding creates labels before it reaches the webhook; a
+// refusal found only there would leave the binding active behind an error
+// that says it was refused.
+func (o *Onboarder) CheckDelivery(binding *ProjectBinding) error {
+	if binding == nil {
+		return nil
+	}
+	if strings.TrimSpace(binding.Forge.WebhookSecretRef) != "" && o.hookBase == "" {
+		return &WebhookPublicURLMissingError{ProjectID: binding.ProjectID}
+	}
+	return nil
+}
+
 // WebhookURL is where this node expects one project's deliveries.
 func (o *Onboarder) WebhookURL(projectID string) string {
 	return o.hookBase + WebhookPathPrefix + url.PathEscape(projectID)
@@ -361,6 +379,10 @@ func (o *Onboarder) Onboard(ctx context.Context, tenantID string, binding *Proje
 		return nil, err
 	}
 	if err := binding.Validate(); err != nil {
+		return nil, err
+	}
+	// Refused before the labels are written, not after: see CheckDelivery.
+	if err := o.CheckDelivery(binding); err != nil {
 		return nil, err
 	}
 	forge, err := o.forges.ForgeFor(ctx, tenantID, binding.Forge)
