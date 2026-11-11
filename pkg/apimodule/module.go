@@ -36,13 +36,22 @@
 // One family of legacy gRPC services is deliberately NOT registered here even
 // though pkg/server/lifecycle.go serves it on the legacy transport:
 //
-//   - qrdb-proxy planes (Barrier, TenantBarrier, Ceremony, VectorDB,
-//     VectorAdmin): their handlers forward every verb through the embedded
-//     go-qrdb node's own SDK client (qrdbtransport.*Client) or mirror
-//     go-qrdb's own pkg/service surface verbatim. qrdb serves the identical
-//     capability natively on the unified server; registering quicbaas's
-//     wrapper here would duplicate that surface under a redundant proto
-//     name.
+//   - qrdb-proxy planes (Barrier, TenantBarrier, Ceremony): their handlers
+//     forward every verb through the embedded go-qrdb node's own SDK client
+//     (qrdbtransport.*Client) or mirror go-qrdb's own pkg/service surface
+//     verbatim. qrdb serves the identical capability natively on the
+//     unified server; registering quicbaas's wrapper here would duplicate
+//     that surface under a redundant proto name.
+//
+// VectorDB and VectorAdmin ARE registered here, nil-gated on Vector() exactly
+// like the legacy transport and built with the same grpcapi wrappers
+// (NewVectorDBWrapper, NewVectorAdminWrapper) over the shared facade. The
+// quicbaas SDK gRPC client (pkg/api/grpc client_vector*.go) dials
+// quicbaas.vector.v1.VectorDB, a proto name go-qrdb does not register, so
+// without them the node's TCP gRPC listener answers Unimplemented "unknown
+// service quicbaas.vector.v1.VectorDB". Every RPC carries a
+// (qrdb.v1.permission) option (api/proto/vector.proto) and passes through the
+// same unified-server authz chain as every other service here.
 //
 // SecretsManagement IS registered here even though its handler delegates to
 // the composed go-xkms library (pkg/service/kms.go's Secrets() facade
@@ -381,6 +390,8 @@ type grpcServers struct {
 	secretsManagement  pb.SecretsManagementServer
 	keyManagement      pb.KeyManagementServer
 	dekManagement      pb.DEKManagementServer
+	vectorDB           pb.VectorDBServer
+	vectorAdmin        pb.VectorAdminServer
 	prompt             pb.PromptServiceServer
 	agentCatalog       pb.AgentCatalogServiceServer
 	sdlc               pb.SDLCServiceServer
@@ -460,6 +471,8 @@ var grpcRegistrations = []grpcRegistration{
 	{desc: &pb.SecretsManagement_ServiceDesc, capability: "secrets-management", pick: func(s *grpcServers) any { return s.secretsManagement }},
 	{desc: &pb.KeyManagement_ServiceDesc, capability: "key-management", pick: func(s *grpcServers) any { return s.keyManagement }},
 	{desc: &pb.DEKManagement_ServiceDesc, capability: "dek-management", pick: func(s *grpcServers) any { return s.dekManagement }},
+	{desc: &pb.VectorDB_ServiceDesc, capability: "vector", pick: func(s *grpcServers) any { return s.vectorDB }},
+	{desc: &pb.VectorAdmin_ServiceDesc, capability: "vector-admin", pick: func(s *grpcServers) any { return s.vectorAdmin }},
 	{desc: &pb.PromptService_ServiceDesc, capability: "prompt", pick: func(s *grpcServers) any { return s.prompt }},
 	{desc: &pb.AgentCatalogService_ServiceDesc, capability: "agent-catalog", pick: func(s *grpcServers) any { return s.agentCatalog }},
 	{desc: &pb.SDLCService_ServiceDesc, capability: "sdlc", pick: func(s *grpcServers) any { return s.sdlc }},
@@ -689,6 +702,16 @@ func (m *Module) bind() (*grpcServers, error) {
 		if kmsSvc != nil {
 			built.dekManagement = grpcapi.NewDEKServer(kmsSvc, m.log)
 		}
+	}
+
+	// VectorDB and VectorAdmin are quicbaas-native here: go-qrdb registers no
+	// quicbaas.vector.v1 name (package doc). They wrap the shared facade, so
+	// the WithShardRouting vector shard ID applied above reaches them, and
+	// they are gated on Vector() exactly as pkg/server/lifecycle.go gates
+	// them on the legacy transport.
+	if svc.Vector() != nil {
+		built.vectorDB = grpcapi.NewVectorDBWrapper(facade)
+		built.vectorAdmin = grpcapi.NewVectorAdminWrapper(facade)
 	}
 
 	// The registry, agent catalog and SDLC services are quicbaas-native, so
