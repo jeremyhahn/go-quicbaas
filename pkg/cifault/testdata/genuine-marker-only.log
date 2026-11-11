@@ -2,8 +2,8 @@
 2026-09-09T10:58:44.0148024Z [command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
 2026-09-09T10:58:44.0200259Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
 2026-09-09T10:58:44.0778934Z Removing HTTP extra header
-2026-09-09T10:58:44.0791532Z [command]/usr/bin/git config --local --name-only --get-regexp http\.http\:\/\/forge\.internal\:3001\/\.extraheader
-2026-09-09T10:58:44.0876564Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.http\:\/\/forge\.internal\:3001\/\.extraheader' && git config --local --unset-all 'http.http://forge.internal:3001/.extraheader' || :"
+2026-09-09T10:58:44.0791532Z [command]/usr/bin/git config --local --name-only --get-regexp http\.http\:\/\/forge\.internal\:3000\/\.extraheader
+2026-09-09T10:58:44.0876564Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.http\:\/\/forge\.internal\:3000\/\.extraheader' && git config --local --unset-all 'http.http://forge.internal:3000/.extraheader' || :"
 2026-09-09T10:58:44.1445115Z Removing includeIf entries pointing to credentials config files
 2026-09-09T10:58:44.1460905Z [command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
 2026-09-09T10:58:44.1518921Z includeif.gitdir:/workspace/jeremyhahn/go-quicbaas/.git.path

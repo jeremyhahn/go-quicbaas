@@ -978,7 +978,7 @@ func TestSysExp_RemoteTCPExport(t *testing.T) {
 		Action:    ActionWrite,
 		Resource:  "data",
 		Result:    ResultFailure,
-		IPAddress: "192.168.1.1",
+		IPAddress: "192.0.2.1",
 		ErrorMsg:  "denied",
 		Details:   map[string]string{"key": "value"},
 	}))

@@ -294,7 +294,7 @@ func TestSessionToProto(t *testing.T) {
 			LastActivity: now,
 			Expires:      expires,
 			MFAVerified:  true,
-			IPAddress:    "192.168.1.1",
+			IPAddress:    "192.0.2.1",
 			UserAgent:    "TestAgent/1.0",
 			AuthMethod:   "oauth2",
 		}
@@ -646,7 +646,7 @@ func TestSessionToProto_FullSession(t *testing.T) {
 		LastActivity: now.Add(5 * time.Minute),
 		Expires:      now.Add(24 * time.Hour),
 		MFAVerified:  true,
-		IPAddress:    "192.168.1.1",
+		IPAddress:    "192.0.2.1",
 		UserAgent:    "Mozilla/5.0",
 		AuthMethod:   "password",
 	}
@@ -657,7 +657,7 @@ func TestSessionToProto_FullSession(t *testing.T) {
 	assert.Equal(t, "10001", result.UserId)
 	assert.Equal(t, "tenant-1", result.TenantId)
 	assert.True(t, result.MfaVerified)
-	assert.Equal(t, "192.168.1.1", result.IpAddress)
+	assert.Equal(t, "192.0.2.1", result.IpAddress)
 	assert.Equal(t, "Mozilla/5.0", result.UserAgent)
 	assert.Equal(t, "password", result.DeviceInfo)
 	assert.NotNil(t, result.CreatedAt)

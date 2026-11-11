@@ -38,7 +38,8 @@ func TestClusterManagement_CreateShards(t *testing.T) {
 	// Connect to node 1
 	tlsCfg := requireTLSConfig(t)
 	conn, err := grpc.NewClient("test-node1:50051",
-		grpc.WithTransportCredentials(credentials.NewTLS(tlsCfg)))
+		grpc.WithTransportCredentials(credentials.NewTLS(tlsCfg)),
+		withClusterPrincipals(t))
 	require.NoError(t, err, "Failed to connect to node1")
 	defer conn.Close()
 
@@ -166,7 +167,8 @@ func TestClusterManagement_Rebalancing(t *testing.T) {
 	// Connect to node 1
 	tlsCfg := requireTLSConfig(t)
 	conn, err := grpc.NewClient("test-node1:50051",
-		grpc.WithTransportCredentials(credentials.NewTLS(tlsCfg)))
+		grpc.WithTransportCredentials(credentials.NewTLS(tlsCfg)),
+		withClusterPrincipals(t))
 	if err != nil {
 		t.Fatalf("Failed to connect to node1: %v", err)
 	}

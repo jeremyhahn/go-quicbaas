@@ -26,7 +26,10 @@ import (
 
 // setupGRPCConnection establishes a gRPC connection to the first cluster endpoint.
 // It wraps the central helpers package for transaction-specific test setup.
+// Every RPC carries the tenant operator's bearer: the Operator role holds the
+// KV, batch and transaction grants these tests use.
 func setupGRPCConnection(t *testing.T, ctx context.Context) *grpc.ClientConn {
 	endpoints := helpers.GetClusterEndpoints()
-	return helpers.MustSetupGRPCConnectionToEndpoint(t, ctx, endpoints[0])
+	return helpers.MustSetupGRPCConnectionToEndpoint(t, ctx, endpoints[0],
+		grpc.WithPerRPCCredentials(helpers.TenantOperatorGRPCCredentials(t)))
 }

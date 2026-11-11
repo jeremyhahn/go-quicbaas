@@ -139,6 +139,26 @@ func TestMCPPermissions_DeclaredDeadToolsExist(t *testing.T) {
 	}
 }
 
+// TestMCPPermissions_PublicToolsExist is the reverse guard for the public
+// bucket: every name in publicTools must belong to a registered tool. A stale
+// entry is dead weight that a later tool of the same name would silently
+// inherit as an unauthenticated capability.
+func TestMCPPermissions_PublicToolsExist(t *testing.T) {
+	t.Parallel()
+
+	registered := make(map[string]struct{})
+	for _, name := range registeredToolNames(t) {
+		registered[name] = struct{}{}
+	}
+
+	for name := range publicTools {
+		_, ok := registered[name]
+		assert.Truef(t, ok,
+			"publicTools declares %q public but no such tool is registered; "+
+				"remove the stale entry or fix the name", name)
+	}
+}
+
 // TestMCPPermissions_EveryMappingIsRegistered asserts every permission the
 // mapping tables require actually exists in the permission registry the qrdb
 // policy decision point resolves against.

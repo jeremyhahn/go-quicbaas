@@ -162,7 +162,7 @@ describe('Project shape — autonomy, context repos and git identity', () => {
     git: {
       repo_url: 'https://git.example/org/go-truststrap',
       default_branch: 'main',
-      author: { name: 'agent', email: 'agent@example.internal' },
+      author: { name: 'agent', email: 'agent@example.com' },
       signing: { enabled: true, algorithm: 'ED25519', key: { name: 'k', scope: 'tenant', owner: 'default' } },
       ssh_key: { name: 'deploy-key', scope: 'service', owner: 'ci' },
     },
@@ -180,7 +180,7 @@ describe('Project shape — autonomy, context repos and git identity', () => {
       { name: 'handbook', repo_url: 'https://git.example/org/handbook', ref: 'main' },
     ]);
     expect(project.default_workflow).toBe('delivery');
-    expect(project.git?.author?.email).toBe('agent@example.internal');
+    expect(project.git?.author?.email).toBe('agent@example.com');
     expect(project.git?.signing?.key?.scope).toBe('tenant');
     expect(project.git?.ssh_key?.owner).toBe('ci');
   });
@@ -193,7 +193,7 @@ describe('Project shape — autonomy, context repos and git identity', () => {
       autonomous: true,
       context_repos: [{ name: 'handbook', repo_url: 'https://git.example/org/handbook', ref: 'main' }],
       git_author_name: 'agent',
-      git_author_email: 'agent@example.internal',
+      git_author_email: 'agent@example.com',
       git_signing_enabled: true,
       git_signing_key_name: 'k',
       git_ssh_key_name: 'deploy-key',
@@ -203,7 +203,7 @@ describe('Project shape — autonomy, context repos and git identity', () => {
     const sent = JSON.parse((fetchMock.mock.calls[0][1] as RequestInit).body as string);
     expect(sent.autonomous).toBe(true);
     expect(sent.context_repos[0].repo_url).toBe('https://git.example/org/handbook');
-    expect(sent.git_author_email).toBe('agent@example.internal');
+    expect(sent.git_author_email).toBe('agent@example.com');
     expect(sent.git_signing_enabled).toBe(true);
     expect(sent.git_ssh_key_name).toBe('deploy-key');
     expect(sent.default_workflow).toBe('delivery');

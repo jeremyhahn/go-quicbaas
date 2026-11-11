@@ -40,11 +40,9 @@ COPY sdk/go/go.mod sdk/go/go.sum ./sdk/go/
 # needs rewriting. The COPY of a directory that no longer exists failed the
 # build outright.
 #
-# go.mod pins first-party modules published to the internal Gitea, which this
-# download cannot reach on its own: the runner injects GOPRIVATE and the
-# tokenised insteadOf rewrite into the *job* environment
-# (dependency-resolution.md §6), and a docker build does not inherit it. They
-# arrive as a BuildKit secret, never a build arg, mounted on tmpfs for this
+# go.mod pins first-party modules, which this download resolves through the
+# module proxy and the checksum database like any other module. Any fetch
+# credentials arrive as a BuildKit secret, never a build arg, mounted on tmpfs for this
 # RUN alone and never becoming a layer. The mount is optional by design: on
 # GitHub Actions no secret is supplied and these modules resolve from the
 # public proxy once tags are mirrored (§7), so the same Dockerfile builds on
@@ -52,7 +50,7 @@ COPY sdk/go/go.mod sdk/go/go.sum ./sdk/go/
 RUN --mount=type=secret,id=gomodauth \
     set -eu; \
     if [ -f /run/secrets/gomodauth ]; then . /run/secrets/gomodauth; fi; \
-    GONOSUMCHECK='*' go mod download
+    go mod download
 
 # Copy source code
 COPY . .
@@ -66,11 +64,11 @@ ARG BUILD_TAGS
 
 # Build static FIPS binaries using downloaded dependencies
 # GOFIPS140=v1.0.0 enables FIPS 140-3 mode by default
-RUN GOFIPS140=${GOFIPS140} CGO_ENABLED=0 GOOS=linux GONOSUMCHECK='*' go build -mod=mod -tags "${BUILD_TAGS}" -buildvcs=false \
+RUN GOFIPS140=${GOFIPS140} CGO_ENABLED=0 GOOS=linux go build -mod=mod -tags "${BUILD_TAGS}" -buildvcs=false \
     -ldflags="-w -s -X github.com/jeremyhahn/go-quicbaas/pkg/version.Version=${VERSION} -X github.com/jeremyhahn/go-quicbaas/pkg/version.BuildTime=${DATE} -X github.com/jeremyhahn/go-quicbaas/pkg/version.GitCommit=${COMMIT}" \
     -o quicbaasd ./cmd/quicbaasd
 
-RUN GOFIPS140=${GOFIPS140} CGO_ENABLED=0 GOOS=linux GONOSUMCHECK='*' go build -mod=mod -tags "${BUILD_TAGS}" -buildvcs=false \
+RUN GOFIPS140=${GOFIPS140} CGO_ENABLED=0 GOOS=linux go build -mod=mod -tags "${BUILD_TAGS}" -buildvcs=false \
     -ldflags="-w -s -X github.com/jeremyhahn/go-quicbaas/pkg/version.Version=${VERSION} -X github.com/jeremyhahn/go-quicbaas/pkg/version.BuildTime=${DATE} -X github.com/jeremyhahn/go-quicbaas/pkg/version.GitCommit=${COMMIT}" \
     -o quicbaas ./cmd/quicbaas
 
