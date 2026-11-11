@@ -288,7 +288,7 @@ func TestHandleAgentRegister_AdvertisesEventIngestAddr(t *testing.T) {
 	const ingestURL = "https://198.51.100.91:19090"
 	srv := newFleetEnrollTestServer(t, ingestURL)
 
-	body := `{"tenant_id":"acme","bind_addr":"192.168.1.50:9091","hostname":"agent01"}`
+	body := `{"tenant_id":"acme","bind_addr":"192.0.2.50:9091","hostname":"agent01"}`
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/fleet/enroll", strings.NewReader(body))
 	req.Host = "198.51.100.91:18080"
 	req.Header.Set("Content-Type", "application/json")
@@ -393,7 +393,7 @@ func TestHandleAgentRegister_OmitsEventIngestAddr(t *testing.T) {
 // enrollWithCN posts an enrollment whose client certificate carries cn.
 func enrollWithCN(t *testing.T, srv *Server, cn string) *httptest.ResponseRecorder {
 	t.Helper()
-	body := `{"tenant_id":"acme","bind_addr":"192.168.1.50:9091","hostname":"agent01"}`
+	body := `{"tenant_id":"acme","bind_addr":"192.0.2.50:9091","hostname":"agent01"}`
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/fleet/enroll", strings.NewReader(body))
 	req.Host = "198.51.100.91:18080"
 	req.Header.Set("Content-Type", "application/json")

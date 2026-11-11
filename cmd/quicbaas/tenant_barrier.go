@@ -49,6 +49,7 @@ import (
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/cli"
 	"github.com/jeremyhahn/go-quicbaas/pkg/errors"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 // =============================================================================
@@ -314,6 +315,16 @@ Example:
 	return cmd
 }
 
+// tenantBarrierActingContext returns the parent context of a tenant barrier
+// unseal: it names the --tenant the operator acts for. On the embedded
+// transport, which has no authenticator, that is the tenant the in-process
+// caller acts for, and the server's tenant binding still refuses every other
+// tenant. Over a network transport the binding never leaves the process: the
+// server takes the caller's tenant from the credential.
+func tenantBarrierActingContext() context.Context {
+	return tenantctx.WithTenant(context.Background(), tenantBarrierTenantID)
+}
+
 // runTenantBarrierUnsealCommand executes 'quicbaas iam tenant barrier unseal'.
 func runTenantBarrierUnsealCommand(cmd *cobra.Command, _ []string) error {
 	if err := requireTenantID("tenant.barrier.unseal"); err != nil {
@@ -335,7 +346,7 @@ func runTenantBarrierUnsealCommand(cmd *cobra.Command, _ []string) error {
 		return formatError(err)
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
+	ctx, cancel := context.WithTimeout(tenantBarrierActingContext(), globalTimeout)
 	defer cancel()
 
 	// Key is []byte, so the protected slice crosses directly: the passphrase
@@ -403,7 +414,7 @@ func runTenantBarrierUnsealShareCommand(cmd *cobra.Command, _ []string) error {
 		return formatError(err)
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
+	ctx, cancel := context.WithTimeout(tenantBarrierActingContext(), globalTimeout)
 	defer cancel()
 
 	progress, err := client.TenantBarrierUnsealShare(ctx, &qrdbtransport.TenantBarrierUnsealShareRequest{

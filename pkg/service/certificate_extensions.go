@@ -274,6 +274,17 @@ var (
 		Op:   "CertificateService.IssueDeviceIdentity",
 		Err:  errCertExtMissingTCGCSR,
 	}
+
+	// ErrCertExtDeviceIdentityTenantUnsupported is returned when a caller
+	// outside the system tenant asks for a device identity certificate.
+	// go-xkms records no issuing tenant on EK, AK or IDevID certificates, so
+	// the tenant could never revoke one. The refusal lifts once go-xkms
+	// #1764 is pinned.
+	ErrCertExtDeviceIdentityTenantUnsupported = &errors.QBError{
+		Code: errors.ErrUnimplemented,
+		Op:   "CertificateService.IssueDeviceIdentity",
+		Err:  errCertExtDeviceIdentityTenantUnsupported,
+	}
 )
 
 var (
@@ -287,6 +298,9 @@ var (
 	errCertExtMissingEKPub  = stderrors.New("EK public key is required for EK certificates")
 	errCertExtMissingAKPub  = stderrors.New("AK public key is required for AK certificates")
 	errCertExtMissingTCGCSR = stderrors.New("TCG-CSR-IDEVID is required for IDevID certificates")
+
+	errCertExtDeviceIdentityTenantUnsupported = stderrors.New(
+		"device identity certificates are issued to the system tenant only")
 )
 
 // =============================================================================
@@ -387,8 +401,15 @@ func (s *certificateService) IssueDeviceIdentity(ctx context.Context, req *Issue
 	// A device identity is issued in the caller's own tenant only. A request
 	// naming another tenant is refused, the system tenant included: go-qrdb
 	// v0.28 lets no caller mint another tenant's certificates.
-	if _, err := tenantctx.Target(ctx, "CertificateService.IssueDeviceIdentity", req.TenantID); err != nil {
+	target, err := tenantctx.Target(ctx, "CertificateService.IssueDeviceIdentity", req.TenantID)
+	if err != nil {
 		return nil, err
+	}
+	// Until go-xkms records the issuing tenant on device identity
+	// certificates (go-xkms #1764), a tenant could not revoke one issued to
+	// it, so only the system tenant may issue them.
+	if !tenantctx.IsSystem(target) {
+		return nil, ErrCertExtDeviceIdentityTenantUnsupported
 	}
 
 	ca, err := s.extensionsCA()

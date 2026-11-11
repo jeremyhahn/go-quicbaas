@@ -17,6 +17,8 @@ import (
 	"context"
 	"sync/atomic"
 
+	"github.com/jeremyhahn/go-quicbaas/pkg/auth"
+	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/transport"
@@ -567,7 +569,11 @@ func (t *Transport) Request(ctx context.Context, svcName, method string, req int
 		return nil, classifyServiceError(svcName, method, err)
 	}
 
-	resp, err := handler(inProcessTenant(ctx), t.service, req)
+	ctx = inProcessTenant(ctx)
+	if keyAuthorizedServices[svcName] {
+		ctx = inProcessPrincipal(ctx)
+	}
+	resp, err := handler(ctx, t.service, req)
 	return resp, classifyServiceError(svcName, method, err)
 }
 
@@ -588,6 +594,34 @@ func inProcessTenant(ctx context.Context) context.Context {
 		return tenantctx.WithTenant(ctx, tenantID)
 	}
 	return tenantctx.WithSystem(ctx)
+}
+
+// inProcessPrincipalID names the trusted in-process caller to the services'
+// authorization checks, so a key policy can allow or deny it like any other
+// principal.
+const inProcessPrincipalID = "in-process"
+
+// keyAuthorizedServices are the services whose verbs pass the per-key
+// authorization gate, which refuses a request without an authenticated
+// principal. Only their requests get the in-process principal: other services
+// read the subject as a real user, so a synthetic one would mislead them.
+var keyAuthorizedServices = map[string]bool{
+	"quicbaas.Crypto": true,
+	"quicbaas.KMS":    true,
+}
+
+// inProcessPrincipal binds the in-process caller's authenticated subject when
+// ctx carries none. A subject the caller supplied is kept unchanged. The
+// caller is a principal, not the system: key policies still apply to it.
+func inProcessPrincipal(ctx context.Context) context.Context {
+	if _, ok := auth.SubjectFromContext(ctx); ok {
+		return ctx
+	}
+	return auth.SubjectIntoContext(ctx, interfaces.Subject{
+		ID:            inProcessPrincipalID,
+		Username:      inProcessPrincipalID,
+		Authenticated: true,
+	})
 }
 
 // RequestStream initiates a streaming request.

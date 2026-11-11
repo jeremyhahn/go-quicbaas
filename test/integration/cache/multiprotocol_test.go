@@ -591,7 +591,10 @@ func (c *restProtocolClient) Name() string { return "REST" }
 
 func (c *restProtocolClient) Setup(t *testing.T, ctx context.Context) error {
 	c.endpoint = getRESTEndpoint()
-	c.client = helpers.NewHTTPClient(30 * time.Second)
+	// The cache routes require admin:status (stats, config read) and
+	// admin:capabilities (clear, config update). The tenant principal's
+	// Admin role holds both; the Operator role holds only admin:status.
+	c.client = helpers.NewTenantHTTPClient(t, 30*time.Second)
 
 	// Verify endpoint is reachable
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet,
@@ -815,7 +818,10 @@ func (c *grpcProtocolClient) Setup(t *testing.T, ctx context.Context) error {
 
 	endpoint := endpoints[0]
 
-	conn, err := helpers.SetupGRPCConnectionToEndpoint(t, ctx, endpoint)
+	// The cache RPCs require admin:status and admin:capabilities, which the
+	// tenant principal's Admin role holds.
+	conn, err := helpers.SetupGRPCConnectionToEndpoint(t, ctx, endpoint,
+		grpc.WithPerRPCCredentials(helpers.TenantGRPCCredentials(t)))
 	if err != nil {
 		return &qberrors.WrappedMessageError{Message: "failed to connect to gRPC endpoint " + endpoint, Cause: err}
 	}
@@ -934,6 +940,7 @@ func (c *unixSocketProtocolClient) Setup(t *testing.T, ctx context.Context) erro
 		"unix://"+socketPath,
 		grpc.WithTransportCredentials(credentials.NewTLS(tlsCfg)),
 		grpc.WithDefaultCallOptions(grpc.WaitForReady(true)),
+		grpc.WithPerRPCCredentials(helpers.TenantGRPCCredentials(t)),
 	)
 	if err != nil {
 		return &qberrors.WrappedMessageError{Message: "failed to connect to unix socket", Cause: err}

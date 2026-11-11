@@ -16,6 +16,7 @@
 package rest
 
 import (
+	"context"
 	"errors"
 	"net/http"
 
@@ -66,9 +67,7 @@ type webAuthnCredentialsDeletedResponse struct {
 // GET /api/v1/tenants/{tenant_id}/users/{user_id}/webauthn/credentials —
 // list the WebAuthn credentials registered to a user.
 func (h *IAMHandler) ListUserWebAuthnCredentials(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-
-	tenantID, userID, svc, ok := h.resolveWebAuthnCredentialSubject(w, r)
+	ctx, tenantID, userID, svc, ok := h.resolveWebAuthnCredentialSubject(w, r)
 	if !ok {
 		return
 	}
@@ -90,8 +89,6 @@ func (h *IAMHandler) ListUserWebAuthnCredentials(w http.ResponseWriter, r *http.
 // remove one of a user's registered authenticators. The credential id is the
 // base64url value the list verb returns.
 func (h *IAMHandler) DeleteUserWebAuthnCredential(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-
 	credentialID := chi.URLParam(r, "credential_id")
 	if credentialID == "" {
 		RespondIAMError(w, r, http.StatusBadRequest,
@@ -99,7 +96,7 @@ func (h *IAMHandler) DeleteUserWebAuthnCredential(w http.ResponseWriter, r *http
 		return
 	}
 
-	tenantID, userID, svc, ok := h.resolveWebAuthnCredentialSubject(w, r)
+	ctx, tenantID, userID, svc, ok := h.resolveWebAuthnCredentialSubject(w, r)
 	if !ok {
 		return
 	}
@@ -118,9 +115,7 @@ func (h *IAMHandler) DeleteUserWebAuthnCredential(w http.ResponseWriter, r *http
 // recovery verb for an account whose registration ceremony is being refused by
 // the authenticator, and the same operation user deletion cascades through.
 func (h *IAMHandler) DeleteUserWebAuthnCredentials(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-
-	tenantID, userID, svc, ok := h.resolveWebAuthnCredentialSubject(w, r)
+	ctx, tenantID, userID, svc, ok := h.resolveWebAuthnCredentialSubject(w, r)
 	if !ok {
 		return
 	}
@@ -136,7 +131,8 @@ func (h *IAMHandler) DeleteUserWebAuthnCredentials(w http.ResponseWriter, r *htt
 
 // resolveWebAuthnCredentialSubject resolves the tenant, the subject user id and
 // the shared credential administration service, writing the error response and
-// reporting false when any of them is unavailable.
+// reporting false when any of them is unavailable. It returns the tenant-bound
+// context urlTenant resolved; the caller must use it for every downstream call.
 //
 // The subject is named by IAM user id on the wire, matching every neighbouring
 // user-nested route. Translating that id to the email the credential store is
@@ -146,27 +142,27 @@ func (h *IAMHandler) DeleteUserWebAuthnCredentials(w http.ResponseWriter, r *htt
 func (h *IAMHandler) resolveWebAuthnCredentialSubject(
 	w http.ResponseWriter,
 	r *http.Request,
-) (string, uint64, service.WebAuthnCredentialService, bool) {
+) (context.Context, string, uint64, service.WebAuthnCredentialService, bool) {
 	tenantID := chi.URLParam(r, "tenant_id")
 	if tenantID == "" {
 		RespondIAMError(w, r, http.StatusBadRequest,
 			NewIAMAPIError(ErrBadRequest, "tenant ID is required"))
-		return "", 0, nil, false
+		return nil, "", 0, nil, false
 	}
-	tenantID, ok := h.server.urlTenant(w, r, "rest.IAM", "tenant_id")
+	ctx, tenantID, ok := h.server.urlTenant(w, r, "rest.IAM", "tenant_id")
 	if !ok {
-		return "", 0, nil, false
+		return nil, "", 0, nil, false
 	}
 
 	userID, ok := requireUserIDParam(w, r)
 	if !ok {
-		return "", 0, nil, false
+		return nil, "", 0, nil, false
 	}
 
 	if h.server == nil || h.server.service == nil {
 		RespondIAMError(w, r, http.StatusServiceUnavailable,
 			NewIAMAPIError(ErrInternalError, "WebAuthn is not available on this node"))
-		return "", 0, nil, false
+		return nil, "", 0, nil, false
 	}
 	provider, ok := h.server.service.(interface {
 		WebAuthnCredentials() service.WebAuthnCredentialService
@@ -174,16 +170,16 @@ func (h *IAMHandler) resolveWebAuthnCredentialSubject(
 	if !ok {
 		RespondIAMError(w, r, http.StatusServiceUnavailable,
 			NewIAMAPIError(ErrInternalError, "WebAuthn is not available on this node"))
-		return "", 0, nil, false
+		return nil, "", 0, nil, false
 	}
 	svc := provider.WebAuthnCredentials()
 	if svc == nil {
 		RespondIAMError(w, r, http.StatusServiceUnavailable,
 			NewIAMAPIError(ErrInternalError, "WebAuthn is not available on this node"))
-		return "", 0, nil, false
+		return nil, "", 0, nil, false
 	}
 
-	return tenantID, userID, svc, true
+	return ctx, tenantID, userID, svc, true
 }
 
 // respondWebAuthnCredentialError maps the credential surface's typed errors
