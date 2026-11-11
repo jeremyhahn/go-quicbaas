@@ -103,6 +103,14 @@ func (m *mockService) Put(ctx context.Context, req *service.PutRequest) (*servic
 	return &service.PutResponse{ID: req.ID, Version: 1, Timestamp: time.Now().Unix()}, nil
 }
 
+func (m *mockService) CompareAndSwap(_ context.Context, _ *service.CompareAndSwapRequest) (*service.ConditionalPutResponse, error) {
+	return &service.ConditionalPutResponse{}, nil
+}
+
+func (m *mockService) PutIfAbsent(_ context.Context, _ *service.PutIfAbsentRequest) (*service.ConditionalPutResponse, error) {
+	return &service.ConditionalPutResponse{}, nil
+}
+
 func (m *mockService) Get(ctx context.Context, req *service.GetRequest) (*service.GetResponse, error) {
 	if m.getFunc != nil {
 		return m.getFunc(ctx, req)
