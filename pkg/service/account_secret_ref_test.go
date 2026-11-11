@@ -724,7 +724,7 @@ func TestAccountSecretResolver_TheSecretVersionIsTheGeneration(t *testing.T) {
 	f := newSecretRefFixture(t)
 	refs := NewAccountSecretResolver(f.secrets)
 
-	f.putTenantSecret(t, nsTenant, refName, "sk-fake-<account>")
+	f.putTenantSecret(t, nsTenant, refName, "sk-fake-token-a")
 	first, err := refs.ResolveAccountSecret(context.Background(), nsTenant, refName)
 	if err != nil {
 		t.Fatalf("ResolveAccountSecret() error = %v", err)
@@ -736,11 +736,11 @@ func TestAccountSecretResolver_TheSecretVersionIsTheGeneration(t *testing.T) {
 	if first.Generation <= 0 || again.Generation != first.Generation {
 		t.Fatalf("generations = %d then %d, want one positive generation for an unchanged secret", first.Generation, again.Generation)
 	}
-	if string(first.Data) != "sk-fake-<account>" {
+	if string(first.Data) != "sk-fake-token-a" {
 		t.Errorf("Data = %q, want the secret's value", first.Data)
 	}
 
-	f.putTenantSecret(t, nsTenant, refName, "sk-fake-<account>")
+	f.putTenantSecret(t, nsTenant, refName, "sk-fake-token-b")
 	rewritten, err := refs.ResolveAccountSecret(context.Background(), nsTenant, refName)
 	if err != nil {
 		t.Fatalf("ResolveAccountSecret() error = %v", err)

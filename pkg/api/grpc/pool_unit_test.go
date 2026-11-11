@@ -16,13 +16,13 @@ package grpc
 import (
 	"context"
 	"crypto/tls"
-	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"google.golang.org/grpc/connectivity"
+	grpclib "google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
 	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
@@ -109,6 +109,13 @@ func TestPoolOptionsUnit(t *testing.T) {
 		assert.Error(t, err)
 	})
 
+	t.Run("WithMaxConnectionAge negative", func(t *testing.T) {
+		opts := defaultPoolOptions()
+		err := WithMaxConnectionAge(-5 * time.Second)(opts)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "positive")
+	})
+
 	t.Run("WithMaxRequestsPerConn valid", func(t *testing.T) {
 		opts := defaultPoolOptions()
 		err := WithMaxRequestsPerConn(50000)(opts)
@@ -158,34 +165,6 @@ func TestPoolOptionsUnit(t *testing.T) {
 	})
 }
 
-func TestPooledConnAtomic(t *testing.T) {
-	t.Run("atomic operations on pooledConn", func(t *testing.T) {
-		pc := &pooledConn{
-			created: time.Now(),
-		}
-
-		// Test healthy flag
-		pc.healthy.Store(true)
-		assert.True(t, pc.healthy.Load())
-		pc.healthy.Store(false)
-		assert.False(t, pc.healthy.Load())
-
-		// Test inUse flag
-		pc.inUse.Store(true)
-		assert.True(t, pc.inUse.Load())
-		pc.inUse.Store(false)
-		assert.False(t, pc.inUse.Load())
-
-		// Test requests counter
-		pc.requests.Store(0)
-		assert.Equal(t, uint64(0), pc.requests.Load())
-		pc.requests.Add(1)
-		assert.Equal(t, uint64(1), pc.requests.Load())
-		pc.requests.Add(100)
-		assert.Equal(t, uint64(101), pc.requests.Load())
-	})
-}
-
 func TestPoolMetricsUnit(t *testing.T) {
 	t.Run("create pool metrics", func(t *testing.T) {
 		m := newPoolMetrics("localhost:50051")
@@ -216,163 +195,112 @@ func TestDefaultPoolOptions(t *testing.T) {
 	})
 }
 
-func TestPoolUpdateMetrics(t *testing.T) {
-	t.Run("update metrics with empty pool", func(t *testing.T) {
-		pool := &ConnectionPool{
-			conns:   make([]*pooledConn, 0),
-			metrics: newPoolMetrics("localhost:50051"),
-		}
-
-		// Should not panic
-		pool.updateMetrics()
-	})
-
-	t.Run("update metrics with connections", func(t *testing.T) {
-		pool := &ConnectionPool{
-			conns: []*pooledConn{
-				{created: time.Now()},
-				{created: time.Now()},
-			},
-			metrics: newPoolMetrics("localhost:50051"),
-		}
-
-		// Set some connection states
-		pool.conns[0].inUse.Store(true)
-		pool.conns[0].healthy.Store(true)
-		pool.conns[1].inUse.Store(false)
-		pool.conns[1].healthy.Store(true)
-
-		// Should not panic
-		pool.updateMetrics()
-	})
-
-	t.Run("update metrics with unhealthy connections", func(t *testing.T) {
-		pool := &ConnectionPool{
-			conns: []*pooledConn{
-				{created: time.Now()},
-				{created: time.Now()},
-			},
-			metrics: newPoolMetrics("localhost:50051"),
-		}
-
-		// Mark first connection as unhealthy
-		pool.conns[0].inUse.Store(false)
-		pool.conns[0].healthy.Store(false)
-		pool.conns[1].inUse.Store(false)
-		pool.conns[1].healthy.Store(true)
-
-		// Should not panic
-		pool.updateMetrics()
-	})
-}
-
 // --- Merged from session_backup_pool_coverage_91_test.go ---
 
 // =============================================================================
 // Pool Tests: Stats, Close, String, Get closed pool
 // =============================================================================
 
-func TestPool91_Stats_EmptyPool(t *testing.T) {
+func TestConnectionPool_Stats(t *testing.T) {
 	t.Parallel()
 
-	pool := &ConnectionPool{
-		conns:   make([]*pooledConn, 0),
-		metrics: newPoolMetrics("localhost:50051"),
+	newConn := func(inUse bool) *pooledConn {
+		conn := &pooledConn{created: time.Now()}
+		conn.inUse.Store(inUse)
+		return conn
 	}
 
-	stats := pool.Stats()
-	assert.Equal(t, 0, stats.PoolSize)
-	assert.Equal(t, 0, stats.ActiveConns)
-	assert.Equal(t, 0, stats.IdleConns)
-	assert.Equal(t, uint64(0), stats.TotalRequests)
-	assert.Equal(t, uint64(0), stats.RecycledConns)
-	assert.Equal(t, uint64(0), stats.FailedConns)
-	assert.Equal(t, uint64(0), stats.HealthChecksFailed)
+	tests := []struct {
+		name  string
+		conns []*pooledConn
+		want  PoolStats
+	}{
+		{
+			name:  "empty pool",
+			conns: []*pooledConn{},
+			want:  PoolStats{},
+		},
+		{
+			name:  "active and idle connections with counters",
+			conns: []*pooledConn{newConn(true), newConn(false), newConn(false)},
+			want: PoolStats{
+				PoolSize:           3,
+				ActiveConns:        1,
+				IdleConns:          2,
+				TotalRequests:      42,
+				RecycledConns:      5,
+				FailedConns:        2,
+				HealthChecksFailed: 1,
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			pool := &ConnectionPool{
+				conns:   tt.conns,
+				metrics: newPoolMetrics("localhost:50051"),
+			}
+			pool.totalRequests.Store(tt.want.TotalRequests)
+			pool.recycledConns.Store(tt.want.RecycledConns)
+			pool.failedConns.Store(tt.want.FailedConns)
+			pool.healthChecksFailed.Store(tt.want.HealthChecksFailed)
+
+			assert.Equal(t, tt.want, pool.Stats())
+		})
+	}
 }
 
-func TestPool91_Stats_WithConnections(t *testing.T) {
+func TestConnectionPool_String(t *testing.T) {
 	t.Parallel()
 
-	conn1 := &pooledConn{created: time.Now()}
-	conn1.inUse.Store(true)
-	conn1.healthy.Store(true)
-
-	conn2 := &pooledConn{created: time.Now()}
-	conn2.inUse.Store(false)
-	conn2.healthy.Store(true)
-
-	conn3 := &pooledConn{created: time.Now()}
-	conn3.inUse.Store(false)
-	conn3.healthy.Store(false)
-
-	pool := &ConnectionPool{
-		conns:   []*pooledConn{conn1, conn2, conn3},
-		metrics: newPoolMetrics("localhost:50051"),
+	tests := []struct {
+		name   string
+		active []bool
+		want   []string
+	}{
+		{
+			name: "empty pool",
+			want: []string{"ConnectionPool", "localhost:50051", "size=0"},
+		},
+		{
+			name:   "active and idle connections",
+			active: []bool{true, false},
+			want: []string{"ConnectionPool", "localhost:50051", "size=2", "active=1",
+				"idle=1", "requests=100", "recycled=3"},
+		},
 	}
-	pool.totalRequests.Store(42)
-	pool.recycledConns.Store(5)
-	pool.failedConns.Store(2)
-	pool.healthChecksFailed.Store(1)
 
-	stats := pool.Stats()
-	assert.Equal(t, 3, stats.PoolSize)
-	assert.Equal(t, 1, stats.ActiveConns)
-	assert.Equal(t, 2, stats.IdleConns)
-	assert.Equal(t, uint64(42), stats.TotalRequests)
-	assert.Equal(t, uint64(5), stats.RecycledConns)
-	assert.Equal(t, uint64(2), stats.FailedConns)
-	assert.Equal(t, uint64(1), stats.HealthChecksFailed)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			pool := &ConnectionPool{
+				address: "localhost:50051",
+				conns:   []*pooledConn{},
+				metrics: newPoolMetrics("localhost:50051"),
+			}
+			for _, inUse := range tt.active {
+				conn := &pooledConn{created: time.Now()}
+				conn.inUse.Store(inUse)
+				pool.conns = append(pool.conns, conn)
+			}
+			if len(tt.active) > 0 {
+				pool.totalRequests.Store(100)
+				pool.recycledConns.Store(3)
+			}
+
+			str := pool.String()
+			for _, want := range tt.want {
+				assert.Contains(t, str, want)
+			}
+		})
+	}
 }
 
-func TestPool91_String(t *testing.T) {
-	t.Parallel()
-
-	conn1 := &pooledConn{created: time.Now()}
-	conn1.inUse.Store(true)
-	conn2 := &pooledConn{created: time.Now()}
-	conn2.inUse.Store(false)
-
-	pool := &ConnectionPool{
-		address: "localhost:50051",
-		conns:   []*pooledConn{conn1, conn2},
-		metrics: newPoolMetrics("localhost:50051"),
-	}
-	pool.totalRequests.Store(100)
-	pool.recycledConns.Store(3)
-
-	str := pool.String()
-	assert.Contains(t, str, "localhost:50051")
-	assert.Contains(t, str, "size=2")
-	assert.Contains(t, str, "active=1")
-	assert.Contains(t, str, "idle=1")
-	assert.Contains(t, str, "requests=100")
-	assert.Contains(t, str, "recycled=3")
-}
-
-func TestPool91_Close_EmptyPool(t *testing.T) {
-	t.Parallel()
-
-	logConfig := logger.LogConfig{
-		Level:  "error",
-		Format: "json",
-		Output: "stdout",
-	}
-	log, err := logger.New(logConfig)
-	require.NoError(t, err)
-
-	pool := &ConnectionPool{
-		address:         "localhost:50051",
-		conns:           make([]*pooledConn, 0),
-		metrics:         newPoolMetrics("localhost:50051"),
-		stopHealthCheck: make(chan struct{}),
-		logger:          log,
-	}
-
-	err = pool.Close()
-	assert.NoError(t, err)
-}
-
-func TestPool91_Close_AlreadyClosed(t *testing.T) {
+func TestConnectionPool_Close(t *testing.T) {
 	t.Parallel()
 
 	logConfig := logger.LogConfig{
@@ -400,381 +328,120 @@ func TestPool91_Close_AlreadyClosed(t *testing.T) {
 	assert.NoError(t, err)
 }
 
-func TestPool91_Get_ClosedPool(t *testing.T) {
+func TestConnectionPool_Get_Errors(t *testing.T) {
 	t.Parallel()
 
-	logConfig := logger.LogConfig{
-		Level:  "error",
-		Format: "json",
-		Output: "stdout",
-	}
-	log, err := logger.New(logConfig)
-	require.NoError(t, err)
-
-	pool := &ConnectionPool{
-		address:         "localhost:50051",
-		conns:           make([]*pooledConn, 0),
-		metrics:         newPoolMetrics("localhost:50051"),
-		stopHealthCheck: make(chan struct{}),
-		logger:          log,
+	tests := []struct {
+		name    string
+		closed  bool
+		wantErr string
+	}{
+		{name: "closed pool", closed: true, wantErr: "pool is closed"},
+		{name: "pool with no connections", closed: false, wantErr: "pool has no connections"},
 	}
 
-	// Close the pool
-	err = pool.Close()
-	require.NoError(t, err)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 
-	// Get should fail on closed pool
-	conn, err := pool.Get()
-	assert.Error(t, err)
-	assert.Nil(t, conn)
-	assert.Contains(t, err.Error(), "pool is closed")
+			pool := &ConnectionPool{
+				address: "localhost:50051",
+				conns:   make([]*pooledConn, 0),
+				metrics: newPoolMetrics("localhost:50051"),
+			}
+			pool.closed.Store(tt.closed)
+
+			conn, err := pool.Get()
+			require.Error(t, err)
+			assert.Nil(t, conn)
+			assert.Contains(t, err.Error(), tt.wantErr)
+		})
+	}
 }
 
-func TestPool91_Get_EmptyPool(t *testing.T) {
+func TestConnectionPool_NeedsRecycling(t *testing.T) {
 	t.Parallel()
 
-	pool := &ConnectionPool{
-		address: "localhost:50051",
-		conns:   make([]*pooledConn, 0),
-		metrics: newPoolMetrics("localhost:50051"),
+	tests := []struct {
+		name     string
+		healthy  bool
+		age      time.Duration
+		requests uint64
+		closed   bool
+		want     bool
+	}{
+		{name: "healthy idle connection is kept", healthy: true, requests: 100, want: false},
+		{name: "unhealthy connection is recycled", healthy: false, requests: 100, want: true},
+		{name: "connection older than max age is recycled", healthy: true, age: 15 * time.Minute, requests: 100, want: true},
+		{name: "connection at max requests is recycled", healthy: true, requests: 1000, want: true},
+		{name: "shut down connection is recycled", healthy: true, requests: 100, closed: true, want: true},
 	}
 
-	conn, err := pool.Get()
-	assert.Error(t, err)
-	assert.Nil(t, conn)
-	assert.Contains(t, err.Error(), "pool has no connections")
-}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 
-func TestPool91_NeedsRecycling_HealthyConn(t *testing.T) {
-	t.Parallel()
+			pool := &ConnectionPool{
+				maxAge:      10 * time.Minute,
+				maxRequests: 1000,
+			}
 
-	pool := &ConnectionPool{
-		maxAge:      30 * time.Minute,
-		maxRequests: 100000,
+			// NewClient does not dial, so the connection stays Idle until
+			// it is closed, which moves it to Shutdown.
+			cc, err := grpclib.NewClient("passthrough:///localhost:1",
+				grpclib.WithTransportCredentials(insecure.NewCredentials()))
+			require.NoError(t, err)
+			if tt.closed {
+				require.NoError(t, cc.Close())
+			} else {
+				t.Cleanup(func() { assert.NoError(t, cc.Close()) })
+			}
+
+			conn := &pooledConn{
+				conn:    cc,
+				created: time.Now().Add(-tt.age),
+			}
+			conn.healthy.Store(tt.healthy)
+			conn.requests.Store(tt.requests)
+
+			assert.Equal(t, tt.want, pool.needsRecycling(conn))
+		})
 	}
-
-	conn := &pooledConn{
-		created: time.Now(),
-	}
-	conn.healthy.Store(true)
-	conn.requests.Store(0)
-
-	// Cannot fully test needsRecycling without a real gRPC conn,
-	// but we can verify the method exists and the struct fields are accessible
-	assert.True(t, conn.healthy.Load())
-	assert.Equal(t, uint64(0), conn.requests.Load())
-	assert.True(t, time.Since(conn.created) < pool.maxAge)
-}
-
-func TestPool91_NeedsRecycling_UnhealthyConn(t *testing.T) {
-	t.Parallel()
-
-	conn := &pooledConn{
-		created: time.Now(),
-	}
-	conn.healthy.Store(false)
-
-	assert.False(t, conn.healthy.Load())
-}
-
-func TestPool91_NeedsRecycling_OldConn(t *testing.T) {
-	t.Parallel()
-
-	pool := &ConnectionPool{
-		maxAge:      1 * time.Millisecond,
-		maxRequests: 100000,
-	}
-
-	conn := &pooledConn{
-		created: time.Now().Add(-1 * time.Hour),
-	}
-	conn.healthy.Store(true)
-
-	assert.True(t, time.Since(conn.created) > pool.maxAge)
-}
-
-func TestPool91_NeedsRecycling_MaxRequests(t *testing.T) {
-	t.Parallel()
-
-	pool := &ConnectionPool{
-		maxAge:      30 * time.Minute,
-		maxRequests: 100,
-	}
-
-	conn := &pooledConn{
-		created: time.Now(),
-	}
-	conn.healthy.Store(true)
-	conn.requests.Store(101)
-
-	assert.True(t, conn.requests.Load() >= pool.maxRequests)
 }
 
 // =============================================================================
 // Pool Options Coverage
 // =============================================================================
 
-func TestPool91_DefaultPoolOptions(t *testing.T) {
-	t.Parallel()
-
-	opts := defaultPoolOptions()
-	assert.Equal(t, 5, opts.minSize)
-	assert.Equal(t, 20, opts.maxSize)
-	assert.Equal(t, 30*time.Minute, opts.maxAge)
-	assert.Equal(t, uint64(100000), opts.maxRequests)
-	assert.Equal(t, 30*time.Second, opts.healthCheck)
-	assert.True(t, opts.warmupConns)
-	assert.NotNil(t, opts.clientOpts)
-}
-
-func TestPool91_WithMaxConnectionAge_Negative(t *testing.T) {
-	t.Parallel()
-
-	opts := defaultPoolOptions()
-	err := WithMaxConnectionAge(-5 * time.Second)(opts)
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "positive")
-}
-
-func TestPool91_PoolStats_StructFields(t *testing.T) {
-	t.Parallel()
-
-	stats := PoolStats{
-		PoolSize:           10,
-		ActiveConns:        5,
-		IdleConns:          5,
-		TotalRequests:      1000,
-		RecycledConns:      50,
-		FailedConns:        3,
-		HealthChecksFailed: 2,
-	}
-
-	assert.Equal(t, 10, stats.PoolSize)
-	assert.Equal(t, 5, stats.ActiveConns)
-	assert.Equal(t, 5, stats.IdleConns)
-	assert.Equal(t, uint64(1000), stats.TotalRequests)
-	assert.Equal(t, uint64(50), stats.RecycledConns)
-	assert.Equal(t, uint64(3), stats.FailedConns)
-	assert.Equal(t, uint64(2), stats.HealthChecksFailed)
-}
-
 // =============================================================================
 // Backup Client Adapter Coverage
 // =============================================================================
 
-func TestBackup91_NewBackupClientAdapter_NilClient(t *testing.T) {
+func TestNewBackupClientAdapter_Clients(t *testing.T) {
 	t.Parallel()
 
-	adapter := NewBackupClientAdapter(nil)
-	assert.NotNil(t, adapter)
-	assert.Nil(t, adapter.client)
-}
-
-func TestBackup91_NewBackupClientAdapter_WithClient(t *testing.T) {
-	t.Parallel()
-
-	client := &Client{}
-	adapter := NewBackupClientAdapter(client)
-	assert.NotNil(t, adapter)
-	assert.Equal(t, client, adapter.client)
-}
-
-func TestBackup91_BackupCreateRequest_AllTypes(t *testing.T) {
-	t.Parallel()
-
-	testCases := []struct {
-		name        string
-		backupType  string
-		compression string
-		encryption  string
+	tests := []struct {
+		name   string
+		client *Client
 	}{
-		{"full_gzip_aes256", "full", "gzip", "aes256"},
-		{"incremental_snappy_none", "incremental", "snappy", "none"},
-		{"snapshot_lz4_aes256gcm", "snapshot", "lz4", "aes256gcm"},
-		{"default_none_none", "", "none", "none"},
-		{"full_zstd_unset", "full", "zstd", ""},
+		{name: "nil client", client: nil},
+		{name: "with client", client: &Client{}},
 	}
 
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
-			req := &mockBackupCreateRequest{
-				name:        "backup-" + tc.name,
-				backupType:  tc.backupType,
-				compression: tc.compression,
-				encryption:  tc.encryption,
-				storagePath: "/backups",
-				storageType: "local",
-				tags:        map[string]string{"env": "test"},
-			}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 
-			assert.Equal(t, tc.backupType, req.GetBackupType())
-			assert.Equal(t, tc.compression, req.GetCompression())
-			assert.Equal(t, tc.encryption, req.GetEncryption())
+			adapter := NewBackupClientAdapter(tt.client)
+			require.NotNil(t, adapter)
+			assert.Same(t, tt.client, adapter.client)
 		})
 	}
-}
-
-func TestBackup91_BackupRestoreRequest_AllOptions(t *testing.T) {
-	t.Parallel()
-
-	pit := time.Date(2025, 1, 15, 10, 0, 0, 0, time.UTC)
-	req := &mockBackupRestoreRequest{
-		backupID:       "backup-123",
-		storagePath:    "/restore/path",
-		verifyFirst:    true,
-		verifyChecksum: true,
-		skipExisting:   true,
-		pointInTime:    pit,
-		storageType:    "s3",
-		storageConfig:  map[string]interface{}{"bucket": "test-bucket"},
-		encryptionKey:  "enc-key-123",
-	}
-
-	assert.Equal(t, "backup-123", req.GetBackupID())
-	assert.Equal(t, "/restore/path", req.GetStoragePath())
-	assert.True(t, req.GetVerifyFirst())
-	assert.True(t, req.GetVerifyChecksum())
-	assert.True(t, req.GetSkipExisting())
-	assert.Equal(t, pit, req.GetPointInTime())
-	assert.Equal(t, "s3", req.GetStorageType())
-	assert.Equal(t, "enc-key-123", req.GetEncryptionKey())
-}
-
-func TestBackup91_BackupDeleteRequest_ForceFlag(t *testing.T) {
-	t.Parallel()
-
-	t.Run("force true", func(t *testing.T) {
-		req := &mockBackupDeleteRequest{
-			backupID:    "del-1",
-			storagePath: "/path",
-			force:       true,
-		}
-		assert.True(t, req.GetForce())
-	})
-
-	t.Run("force false", func(t *testing.T) {
-		req := &mockBackupDeleteRequest{
-			backupID:    "del-2",
-			storagePath: "/path",
-			force:       false,
-		}
-		assert.False(t, req.GetForce())
-	})
-}
-
-func TestBackup91_BackupVerifyRequest_WithConfig(t *testing.T) {
-	t.Parallel()
-
-	req := &mockBackupVerifyRequest{
-		backupID:    "verify-1",
-		storagePath: "/verify/path",
-		storageType: "azure",
-		storageConfig: map[string]interface{}{
-			"container": "test-container",
-			"account":   "storage-account",
-		},
-		encryptionKey: "verify-enc-key",
-	}
-
-	assert.Equal(t, "verify-1", req.GetBackupID())
-	assert.Equal(t, "/verify/path", req.GetStoragePath())
-	assert.Equal(t, "azure", req.GetStorageType())
-	assert.Equal(t, "test-container", req.GetStorageConfig()["container"])
-	assert.Equal(t, "storage-account", req.GetStorageConfig()["account"])
-	assert.Equal(t, "verify-enc-key", req.GetEncryptionKey())
-}
-
-func TestBackup91_BackupListRequest_Pagination(t *testing.T) {
-	t.Parallel()
-
-	req := &mockBackupListRequest{
-		limit:       50,
-		offset:      25,
-		storagePath: "/list/path",
-		storageType: "gcs",
-		storageConfig: map[string]interface{}{
-			"project": "my-project",
-		},
-	}
-
-	assert.Equal(t, 50, req.GetLimit())
-	assert.Equal(t, 25, req.GetOffset())
-	assert.Equal(t, "/list/path", req.GetStoragePath())
-	assert.Equal(t, "gcs", req.GetStorageType())
-	assert.Equal(t, "my-project", req.GetStorageConfig()["project"])
 }
 
 // =============================================================================
 // Pool Metrics Coverage
 // =============================================================================
-
-func TestPool91_PoolMetrics_Creation(t *testing.T) {
-	t.Parallel()
-
-	m := newPoolMetrics("test-address:9090")
-	assert.NotNil(t, m)
-	assert.NotNil(t, m.poolSize)
-	assert.NotNil(t, m.activeConns)
-	assert.NotNil(t, m.idleConns)
-	assert.NotNil(t, m.totalRequests)
-	assert.NotNil(t, m.connectionReuse)
-	assert.NotNil(t, m.connectionCreated)
-	assert.NotNil(t, m.connectionRecycled)
-	assert.NotNil(t, m.healthChecksFailed)
-	assert.NotNil(t, m.getLatency)
-}
-
-func TestPool91_PoolMetrics_Operations(t *testing.T) {
-	t.Parallel()
-
-	m := newPoolMetrics("test-address:9090")
-
-	// Test gauge operations
-	m.poolSize.Set(10)
-	m.activeConns.Set(5)
-	m.idleConns.Set(5)
-
-	// Test counter operations
-	m.totalRequests.Inc()
-	m.connectionReuse.Inc()
-	m.connectionCreated.Inc()
-	m.connectionRecycled.Inc()
-	m.healthChecksFailed.Inc()
-
-	// Test histogram operations
-	m.getLatency.Observe(0.001)
-	m.getLatency.Observe(0.005)
-}
-
-func TestPool91_PooledConn_AtomicOperations(t *testing.T) {
-	t.Parallel()
-
-	pc := &pooledConn{
-		created: time.Now(),
-	}
-
-	// Test healthy flag toggling
-	pc.healthy.Store(true)
-	assert.True(t, pc.healthy.Load())
-	old := pc.healthy.Swap(false)
-	assert.True(t, old)
-	assert.False(t, pc.healthy.Load())
-
-	// Test inUse flag
-	pc.inUse.Store(true)
-	assert.True(t, pc.inUse.Load())
-	pc.inUse.Store(false)
-	assert.False(t, pc.inUse.Load())
-
-	// Test requests counter
-	pc.requests.Store(0)
-	pc.requests.Add(1)
-	pc.requests.Add(10)
-	assert.Equal(t, uint64(11), pc.requests.Load())
-
-	// Test created timestamp
-	assert.False(t, pc.created.IsZero())
-}
 
 func TestPool91_UpdateMetrics_MixedStates(t *testing.T) {
 	t.Parallel()
@@ -811,213 +478,6 @@ func TestPool91_UpdateMetrics_MixedStates(t *testing.T) {
 // Pool Coverage Tests
 // =============================================================================
 
-func TestConnectionPool_Stats_Coverage(t *testing.T) {
-	t.Parallel()
-
-	t.Run("empty pool stats", func(t *testing.T) {
-		pool := &ConnectionPool{
-			conns:   make([]*pooledConn, 0),
-			metrics: newPoolMetrics("test:50051"),
-		}
-
-		stats := pool.Stats()
-		assert.Equal(t, 0, stats.PoolSize)
-		assert.Equal(t, 0, stats.ActiveConns)
-		assert.Equal(t, 0, stats.IdleConns)
-		assert.Equal(t, uint64(0), stats.TotalRequests)
-	})
-
-	t.Run("pool with connections", func(t *testing.T) {
-		pool := &ConnectionPool{
-			conns: []*pooledConn{
-				{created: time.Now()},
-				{created: time.Now()},
-				{created: time.Now()},
-			},
-			metrics: newPoolMetrics("test:50051"),
-		}
-
-		// Set up connection states
-		pool.conns[0].inUse.Store(true)
-		pool.conns[1].inUse.Store(false)
-		pool.conns[2].inUse.Store(true)
-		pool.totalRequests.Store(100)
-		pool.recycledConns.Store(5)
-		pool.failedConns.Store(2)
-		pool.healthChecksFailed.Store(1)
-
-		stats := pool.Stats()
-		assert.Equal(t, 3, stats.PoolSize)
-		assert.Equal(t, 2, stats.ActiveConns)
-		assert.Equal(t, 1, stats.IdleConns)
-		assert.Equal(t, uint64(100), stats.TotalRequests)
-		assert.Equal(t, uint64(5), stats.RecycledConns)
-		assert.Equal(t, uint64(2), stats.FailedConns)
-		assert.Equal(t, uint64(1), stats.HealthChecksFailed)
-	})
-}
-
-func TestConnectionPool_String_Coverage(t *testing.T) {
-	t.Parallel()
-
-	pool := &ConnectionPool{
-		address: "localhost:50051",
-		conns: []*pooledConn{
-			{created: time.Now()},
-			{created: time.Now()},
-		},
-		metrics: newPoolMetrics("test:50051"),
-	}
-
-	pool.conns[0].inUse.Store(true)
-	pool.conns[1].inUse.Store(false)
-	pool.totalRequests.Store(50)
-	pool.recycledConns.Store(3)
-
-	str := pool.String()
-	assert.Contains(t, str, "ConnectionPool")
-	assert.Contains(t, str, "localhost:50051")
-	assert.Contains(t, str, "size=2")
-	assert.Contains(t, str, "active=1")
-	assert.Contains(t, str, "idle=1")
-	assert.Contains(t, str, "requests=50")
-	assert.Contains(t, str, "recycled=3")
-}
-
-func TestConnectionPool_NeedsRecycling_Coverage(t *testing.T) {
-	t.Parallel()
-
-	pool := &ConnectionPool{
-		maxAge:      10 * time.Minute,
-		maxRequests: 1000,
-	}
-
-	t.Run("healthy connection does not need recycling", func(t *testing.T) {
-		conn := &mockPooledConnTest{
-			healthy:  true,
-			created:  time.Now(),
-			requests: 100,
-			state:    connectivity.Ready,
-		}
-		assert.False(t, pool.needsRecyclingForMockTest(conn))
-	})
-
-	t.Run("unhealthy connection needs recycling", func(t *testing.T) {
-		conn := &mockPooledConnTest{
-			healthy:  false,
-			created:  time.Now(),
-			requests: 100,
-			state:    connectivity.Ready,
-		}
-		assert.True(t, pool.needsRecyclingForMockTest(conn))
-	})
-
-	t.Run("old connection needs recycling", func(t *testing.T) {
-		conn := &mockPooledConnTest{
-			healthy:  true,
-			created:  time.Now().Add(-15 * time.Minute),
-			requests: 100,
-			state:    connectivity.Ready,
-		}
-		assert.True(t, pool.needsRecyclingForMockTest(conn))
-	})
-
-	t.Run("connection over max requests needs recycling", func(t *testing.T) {
-		conn := &mockPooledConnTest{
-			healthy:  true,
-			created:  time.Now(),
-			requests: 1001,
-			state:    connectivity.Ready,
-		}
-		assert.True(t, pool.needsRecyclingForMockTest(conn))
-	})
-
-	t.Run("transient failure needs recycling", func(t *testing.T) {
-		conn := &mockPooledConnTest{
-			healthy:  true,
-			created:  time.Now(),
-			requests: 100,
-			state:    connectivity.TransientFailure,
-		}
-		assert.True(t, pool.needsRecyclingForMockTest(conn))
-	})
-
-	t.Run("shutdown connection needs recycling", func(t *testing.T) {
-		conn := &mockPooledConnTest{
-			healthy:  true,
-			created:  time.Now(),
-			requests: 100,
-			state:    connectivity.Shutdown,
-		}
-		assert.True(t, pool.needsRecyclingForMockTest(conn))
-	})
-}
-
-// mockPooledConnTest for unit testing pool recycling logic
-type mockPooledConnTest struct {
-	healthy  bool
-	created  time.Time
-	requests uint64
-	state    connectivity.State
-}
-
-// needsRecyclingForMockTest is a test helper that checks mock connections
-func (p *ConnectionPool) needsRecyclingForMockTest(conn *mockPooledConnTest) bool {
-	if !conn.healthy {
-		return true
-	}
-	if time.Since(conn.created) > p.maxAge {
-		return true
-	}
-	if conn.requests >= p.maxRequests {
-		return true
-	}
-	if conn.state == connectivity.TransientFailure || conn.state == connectivity.Shutdown {
-		return true
-	}
-	return false
-}
-
-func TestConnectionPool_Get_ClosedPool_Coverage(t *testing.T) {
-	t.Parallel()
-
-	pool := &ConnectionPool{
-		metrics: newPoolMetrics("test:50051"),
-	}
-	pool.closed.Store(true)
-
-	conn, err := pool.Get()
-	assert.Error(t, err)
-	assert.Nil(t, conn)
-	assert.Contains(t, err.Error(), "pool is closed")
-}
-
-func TestConnectionPool_Get_EmptyPool_Coverage(t *testing.T) {
-	t.Parallel()
-
-	pool := &ConnectionPool{
-		conns:   make([]*pooledConn, 0),
-		metrics: newPoolMetrics("test:50051"),
-	}
-
-	conn, err := pool.Get()
-	assert.Error(t, err)
-	assert.Nil(t, conn)
-	assert.Contains(t, err.Error(), "pool has no connections")
-}
-
-func TestConnectionPool_Close_AlreadyClosed_Coverage(t *testing.T) {
-	t.Parallel()
-
-	pool := &ConnectionPool{
-		stopHealthCheck: make(chan struct{}),
-	}
-	pool.closed.Store(true)
-
-	err := pool.Close()
-	assert.NoError(t, err)
-}
-
 // =============================================================================
 // Peer Credentials Coverage Tests
 // =============================================================================
@@ -1040,52 +500,18 @@ func TestIsPeerCredentialsAvailable_Coverage(t *testing.T) {
 		ctx := ContextWithPeerCredentials(context.Background(), creds)
 		available := IsPeerCredentialsAvailable(ctx)
 		assert.True(t, available)
+
+		retrieved := PeerCredentialsFromContext(ctx)
+		require.NotNil(t, retrieved)
+		assert.Equal(t, int32(1234), retrieved.PID)
+		assert.Equal(t, uint32(1000), retrieved.UID)
+		assert.Equal(t, uint32(1000), retrieved.GID)
 	})
-}
-
-func TestPeerCredentialsFromContext_FromContextValue_Coverage(t *testing.T) {
-	t.Parallel()
-
-	creds := &PeerCredentials{
-		PID: 5678,
-		UID: 500,
-		GID: 500,
-	}
-
-	ctx := ContextWithPeerCredentials(context.Background(), creds)
-	retrieved := PeerCredentialsFromContext(ctx)
-
-	require.NotNil(t, retrieved)
-	assert.Equal(t, int32(5678), retrieved.PID)
-	assert.Equal(t, uint32(500), retrieved.UID)
-	assert.Equal(t, uint32(500), retrieved.GID)
 }
 
 // =============================================================================
 // PoolStats Tests
 // =============================================================================
-
-func TestPoolStats_Structure_Coverage(t *testing.T) {
-	t.Parallel()
-
-	stats := PoolStats{
-		PoolSize:           10,
-		ActiveConns:        5,
-		IdleConns:          5,
-		TotalRequests:      1000,
-		RecycledConns:      20,
-		FailedConns:        2,
-		HealthChecksFailed: 1,
-	}
-
-	assert.Equal(t, 10, stats.PoolSize)
-	assert.Equal(t, 5, stats.ActiveConns)
-	assert.Equal(t, 5, stats.IdleConns)
-	assert.Equal(t, uint64(1000), stats.TotalRequests)
-	assert.Equal(t, uint64(20), stats.RecycledConns)
-	assert.Equal(t, uint64(2), stats.FailedConns)
-	assert.Equal(t, uint64(1), stats.HealthChecksFailed)
-}
 
 // =============================================================================
 // healthCheckLoop Coverage Tests
@@ -1103,9 +529,6 @@ func TestConnectionPool_HealthCheckLoop_Cancellation_Coverage(t *testing.T) {
 
 	pool.wg.Add(1)
 	go pool.healthCheckLoop()
-
-	// Give the loop a moment to start
-	time.Sleep(50 * time.Millisecond)
 
 	// Close the stop channel to trigger graceful shutdown
 	close(pool.stopHealthCheck)
@@ -1129,45 +552,58 @@ func TestConnectionPool_HealthCheckLoop_Cancellation_Coverage(t *testing.T) {
 // Client Options Builder Coverage
 // =============================================================================
 
-func TestBuildDialOptions_DefaultInsecure_Coverage(t *testing.T) {
+func TestBuildDialOptions_TLSModes(t *testing.T) {
 	t.Parallel()
 
-	opts := defaultClientOptions()
-	opts.tlsEnabled = false
+	tests := []struct {
+		name    string
+		modify  func(opts *clientOptions)
+		wantErr string
+	}{
+		{
+			name:    "TLS disabled is rejected",
+			modify:  func(opts *clientOptions) { opts.tlsEnabled = false },
+			wantErr: "TLS configuration is required",
+		},
+		{
+			name: "TLS with keepalive",
+			modify: func(opts *clientOptions) {
+				opts.tlsEnabled = true
+				opts.tlsConfig = &tls.Config{MinVersion: tls.VersionTLS13}
+				opts.keepaliveTime = 30 * time.Second
+				opts.keepaliveTimeout = 10 * time.Second
+			},
+		},
+		{
+			name: "TLS with pool settings",
+			modify: func(opts *clientOptions) {
+				opts.tlsEnabled = true
+				opts.tlsConfig = &tls.Config{MinVersion: tls.VersionTLS13}
+				opts.usePool = true
+				opts.poolMinSize = 10
+				opts.poolMaxSize = 50
+			},
+		},
+	}
 
-	dialOpts, err := opts.buildDialOptions()
-	assert.Error(t, err)
-	assert.Nil(t, dialOpts)
-	assert.Contains(t, err.Error(), "TLS configuration is required")
-}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 
-func TestBuildDialOptions_WithKeepalive_Coverage(t *testing.T) {
-	t.Parallel()
+			opts := defaultClientOptions()
+			tt.modify(opts)
 
-	opts := defaultClientOptions()
-	opts.tlsEnabled = true
-	opts.tlsConfig = &tls.Config{MinVersion: tls.VersionTLS13}
-	opts.keepaliveTime = 30 * time.Second
-	opts.keepaliveTimeout = 10 * time.Second
-
-	dialOpts, err := opts.buildDialOptions()
-	assert.NoError(t, err)
-	assert.NotEmpty(t, dialOpts)
-}
-
-func TestBuildDialOptions_WithPoolSettings_Coverage(t *testing.T) {
-	t.Parallel()
-
-	opts := defaultClientOptions()
-	opts.tlsEnabled = true
-	opts.tlsConfig = &tls.Config{MinVersion: tls.VersionTLS13}
-	opts.usePool = true
-	opts.poolMinSize = 10
-	opts.poolMaxSize = 50
-
-	dialOpts, err := opts.buildDialOptions()
-	assert.NoError(t, err)
-	assert.NotEmpty(t, dialOpts)
+			dialOpts, err := opts.buildDialOptions()
+			if tt.wantErr != "" {
+				require.Error(t, err)
+				assert.Nil(t, dialOpts)
+				assert.Contains(t, err.Error(), tt.wantErr)
+				return
+			}
+			require.NoError(t, err)
+			assert.NotEmpty(t, dialOpts)
+		})
+	}
 }
 
 // --- Merged from coverage_unit_test.go ---
@@ -1176,444 +612,105 @@ func TestBuildDialOptions_WithPoolSettings_Coverage(t *testing.T) {
 // Pool Tests
 // =============================================================================
 
-func TestPoolStats_ZeroValues(t *testing.T) {
-	t.Parallel()
-
-	stats := PoolStats{}
-	assert.Equal(t, 0, stats.PoolSize)
-	assert.Equal(t, 0, stats.ActiveConns)
-	assert.Equal(t, 0, stats.IdleConns)
-	assert.Equal(t, uint64(0), stats.TotalRequests)
-	assert.Equal(t, uint64(0), stats.RecycledConns)
-	assert.Equal(t, uint64(0), stats.FailedConns)
-	assert.Equal(t, uint64(0), stats.HealthChecksFailed)
-}
-
-func TestPoolStats_WithValues(t *testing.T) {
-	t.Parallel()
-
-	stats := PoolStats{
-		PoolSize:           10,
-		ActiveConns:        5,
-		IdleConns:          5,
-		TotalRequests:      1000,
-		RecycledConns:      50,
-		FailedConns:        2,
-		HealthChecksFailed: 3,
-	}
-
-	assert.Equal(t, 10, stats.PoolSize)
-	assert.Equal(t, 5, stats.ActiveConns)
-	assert.Equal(t, 5, stats.IdleConns)
-	assert.Equal(t, uint64(1000), stats.TotalRequests)
-	assert.Equal(t, uint64(50), stats.RecycledConns)
-	assert.Equal(t, uint64(2), stats.FailedConns)
-	assert.Equal(t, uint64(3), stats.HealthChecksFailed)
-}
-
-func TestPooledConn_ConcurrentAccess(t *testing.T) {
-	t.Parallel()
-
-	pc := &pooledConn{
-		created: time.Now(),
-	}
-	pc.healthy.Store(true)
-	pc.inUse.Store(false)
-
-	// Simulate concurrent access patterns
-	done := make(chan struct{})
-	go func() {
-		for i := 0; i < 100; i++ {
-			pc.healthy.Load()
-			pc.inUse.Load()
-			pc.requests.Load()
-		}
-		close(done)
-	}()
-
-	for i := 0; i < 100; i++ {
-		pc.healthy.Store(true)
-		pc.inUse.Store(true)
-		pc.requests.Add(1)
-	}
-
-	<-done
-	assert.True(t, pc.requests.Load() >= 100)
-}
-
-func TestPoolNeedsRecycling_Unhealthy(t *testing.T) {
-	t.Parallel()
-
-	pool := &ConnectionPool{
-		maxAge:      30 * time.Minute,
-		maxRequests: 100000,
-	}
-
-	conn := &pooledConn{
-		created: time.Now(),
-	}
-	conn.healthy.Store(false) // Unhealthy
-
-	assert.True(t, pool.needsRecycling(conn))
-}
-
-func TestPoolNeedsRecycling_TooOld(t *testing.T) {
-	t.Parallel()
-
-	pool := &ConnectionPool{
-		maxAge:      1 * time.Nanosecond, // Very short max age
-		maxRequests: 100000,
-	}
-
-	conn := &pooledConn{
-		created: time.Now().Add(-1 * time.Minute), // Created 1 minute ago
-	}
-	conn.healthy.Store(true)
-
-	assert.True(t, pool.needsRecycling(conn))
-}
-
-func TestPoolNeedsRecycling_TooManyRequests(t *testing.T) {
-	t.Parallel()
-
-	pool := &ConnectionPool{
-		maxAge:      30 * time.Minute,
-		maxRequests: 10, // Low max requests
-	}
-
-	conn := &pooledConn{
-		created: time.Now(),
-	}
-	conn.healthy.Store(true)
-	conn.requests.Store(15) // More than max
-
-	assert.True(t, pool.needsRecycling(conn))
-}
-
-func TestPoolString_Empty(t *testing.T) {
-	t.Parallel()
-
-	pool := &ConnectionPool{
-		address: "localhost:50051",
-		conns:   []*pooledConn{},
-		metrics: newPoolMetrics("localhost:50051"),
-	}
-
-	str := pool.String()
-	assert.Contains(t, str, "ConnectionPool")
-	assert.Contains(t, str, "localhost:50051")
-	assert.Contains(t, str, "size=0")
-}
-
-func TestPoolString_WithConnections(t *testing.T) {
-	t.Parallel()
-
-	pc1 := &pooledConn{created: time.Now()}
-	pc1.inUse.Store(true)
-	pc2 := &pooledConn{created: time.Now()}
-	pc2.inUse.Store(false)
-
-	pool := &ConnectionPool{
-		address: "test-server:50051",
-		conns:   []*pooledConn{pc1, pc2},
-		metrics: newPoolMetrics("test-server:50051"),
-	}
-	pool.totalRequests.Store(500)
-	pool.recycledConns.Store(10)
-
-	str := pool.String()
-	assert.Contains(t, str, "ConnectionPool")
-	assert.Contains(t, str, "test-server:50051")
-	assert.Contains(t, str, "size=2")
-	assert.Contains(t, str, "active=1")
-	assert.Contains(t, str, "idle=1")
-	assert.Contains(t, str, "requests=500")
-	assert.Contains(t, str, "recycled=10")
-}
-
-func TestPoolClose_AlreadyClosed(t *testing.T) {
-	t.Parallel()
-
-	pool := &ConnectionPool{
-		conns:           []*pooledConn{},
-		stopHealthCheck: make(chan struct{}),
-		metrics:         newPoolMetrics("localhost:50051"),
-	}
-	pool.closed.Store(true)
-
-	err := pool.Close()
-	assert.NoError(t, err)
-}
-
-func TestPoolGet_Closed(t *testing.T) {
-	t.Parallel()
-
-	pool := &ConnectionPool{
-		conns:   []*pooledConn{},
-		metrics: newPoolMetrics("localhost:50051"),
-	}
-	pool.closed.Store(true)
-
-	_, err := pool.Get()
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "pool is closed")
-}
-
-func TestPoolGet_NoConnections(t *testing.T) {
-	t.Parallel()
-
-	pool := &ConnectionPool{
-		conns:   []*pooledConn{},
-		metrics: newPoolMetrics("localhost:50051"),
-	}
-
-	_, err := pool.Get()
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "pool has no connections")
-}
-
-func TestPoolStats_Method(t *testing.T) {
-	t.Parallel()
-
-	pc1 := &pooledConn{created: time.Now()}
-	pc1.inUse.Store(true)
-	pc2 := &pooledConn{created: time.Now()}
-	pc2.inUse.Store(false)
-
-	pool := &ConnectionPool{
-		address: "test:50051",
-		conns:   []*pooledConn{pc1, pc2},
-		metrics: newPoolMetrics("test:50051"),
-	}
-	pool.totalRequests.Store(1000)
-	pool.recycledConns.Store(50)
-	pool.failedConns.Store(5)
-	pool.healthChecksFailed.Store(2)
-
-	stats := pool.Stats()
-	assert.Equal(t, 2, stats.PoolSize)
-	assert.Equal(t, 1, stats.ActiveConns)
-	assert.Equal(t, 1, stats.IdleConns)
-	assert.Equal(t, uint64(1000), stats.TotalRequests)
-	assert.Equal(t, uint64(50), stats.RecycledConns)
-	assert.Equal(t, uint64(5), stats.FailedConns)
-	assert.Equal(t, uint64(2), stats.HealthChecksFailed)
-}
-
 // =============================================================================
 // Vector Metrics Tests
 // =============================================================================
 
-func TestGetTenantID_WithContext(t *testing.T) {
+func TestGetTenantID_Fallback(t *testing.T) {
 	t.Parallel()
 
-	ctx := tenantctx.WithTenant(context.Background(), "test-tenant")
-	tenantID := getTenantID(ctx)
-	assert.Equal(t, "test-tenant", tenantID)
+	tests := []struct {
+		name string
+		ctx  context.Context
+		want string
+	}{
+		{name: "tenant from context", ctx: tenantctx.WithTenant(context.Background(), "test-tenant"), want: "test-tenant"},
+		{name: "no tenant falls back to default", ctx: context.Background(), want: defaultTenantID},
+		{name: "empty tenant falls back to default", ctx: tenantctx.WithTenant(context.Background(), ""), want: defaultTenantID},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, tt.want, getTenantID(tt.ctx))
+		})
+	}
 }
 
-func TestGetTenantID_Default(t *testing.T) {
+func TestVectorMetricsRecorder(t *testing.T) {
 	t.Parallel()
 
-	ctx := context.Background()
-	tenantID := getTenantID(ctx)
-	assert.Equal(t, defaultTenantID, tenantID)
-}
-
-func TestGetTenantID_EmptyTenant(t *testing.T) {
-	t.Parallel()
-
-	ctx := tenantctx.WithTenant(context.Background(), "")
-	tenantID := getTenantID(ctx)
-	assert.Equal(t, defaultTenantID, tenantID)
-}
-
-func TestNewVectorMetricsRecorder_Coverage(t *testing.T) {
-	t.Parallel()
+	start := time.Now().Add(-100 * time.Millisecond)
+	tests := []struct {
+		name   string
+		record func(r *VectorMetricsRecorder, ctx context.Context, success bool)
+	}{
+		{name: "RecordUpsert", record: func(r *VectorMetricsRecorder, ctx context.Context, success bool) {
+			r.RecordUpsert(ctx, "test-ns", start, success)
+		}},
+		{name: "RecordBatchUpsert", record: func(r *VectorMetricsRecorder, ctx context.Context, success bool) {
+			r.RecordBatchUpsert(ctx, "test-ns", 100, start, success)
+		}},
+		{name: "RecordGet", record: func(r *VectorMetricsRecorder, ctx context.Context, success bool) {
+			r.RecordGet(ctx, "test-ns", start, success)
+		}},
+		{name: "RecordDelete", record: func(r *VectorMetricsRecorder, ctx context.Context, success bool) {
+			r.RecordDelete(ctx, "test-ns", start, success)
+		}},
+		{name: "RecordBatchDelete", record: func(r *VectorMetricsRecorder, ctx context.Context, success bool) {
+			r.RecordBatchDelete(ctx, "test-ns", 50, start, success)
+		}},
+		{name: "RecordSearch", record: func(r *VectorMetricsRecorder, ctx context.Context, success bool) {
+			r.RecordSearch(ctx, "test-ns", "knn", start, success)
+		}},
+		{name: "RecordNamespaceCreate", record: func(r *VectorMetricsRecorder, ctx context.Context, success bool) {
+			r.RecordNamespaceCreate(ctx, "new-ns", start, success)
+		}},
+		{name: "RecordNamespaceDelete", record: func(r *VectorMetricsRecorder, ctx context.Context, success bool) {
+			r.RecordNamespaceDelete(ctx, "old-ns", start, success)
+		}},
+		{name: "UpdateNamespaceStats", record: func(r *VectorMetricsRecorder, ctx context.Context, _ bool) {
+			r.UpdateNamespaceStats(ctx, "test-ns", 1000, 1024*1024)
+		}},
+		{name: "UpdateQuotaUsage", record: func(r *VectorMetricsRecorder, ctx context.Context, _ bool) {
+			r.UpdateQuotaUsage(ctx, "test-ns", "vectors", 0.75)
+		}},
+		{name: "UpdateTenantNamespaceCount", record: func(r *VectorMetricsRecorder, ctx context.Context, _ bool) {
+			r.UpdateTenantNamespaceCount(ctx, 5)
+		}},
+		{name: "RecordExport", record: func(r *VectorMetricsRecorder, ctx context.Context, success bool) {
+			r.RecordExport(ctx, "test-ns", 10000, start, success)
+		}},
+		{name: "RecordImport", record: func(r *VectorMetricsRecorder, ctx context.Context, success bool) {
+			r.RecordImport(ctx, "test-ns", 5000, start, success)
+		}},
+		{name: "RecordIndexRebuild", record: func(r *VectorMetricsRecorder, ctx context.Context, success bool) {
+			r.RecordIndexRebuild(ctx, "test-ns", start, success)
+		}},
+	}
 
 	recorder := NewVectorMetricsRecorder()
 	require.NotNil(t, recorder)
-	assert.NotNil(t, recorder.metrics)
-}
+	require.NotNil(t, recorder.metrics)
 
-func TestVectorMetricsRecorder_RecordUpsert(t *testing.T) {
-	t.Parallel()
+	contexts := []context.Context{
+		context.Background(),
+		tenantctx.WithTenant(context.Background(), "tenant-abc"),
+	}
 
-	recorder := NewVectorMetricsRecorder()
-	ctx := context.Background()
-	startTime := time.Now().Add(-100 * time.Millisecond)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 
-	// Should not panic
-	recorder.RecordUpsert(ctx, "test-ns", startTime, true)
-	recorder.RecordUpsert(ctx, "test-ns", startTime, false)
-}
-
-func TestVectorMetricsRecorder_RecordBatchUpsert(t *testing.T) {
-	t.Parallel()
-
-	recorder := NewVectorMetricsRecorder()
-	ctx := context.Background()
-	startTime := time.Now().Add(-100 * time.Millisecond)
-
-	// Should not panic
-	recorder.RecordBatchUpsert(ctx, "test-ns", 100, startTime, true)
-	recorder.RecordBatchUpsert(ctx, "test-ns", 100, startTime, false)
-}
-
-func TestVectorMetricsRecorder_RecordGet(t *testing.T) {
-	t.Parallel()
-
-	recorder := NewVectorMetricsRecorder()
-	ctx := context.Background()
-	startTime := time.Now().Add(-10 * time.Millisecond)
-
-	// Should not panic
-	recorder.RecordGet(ctx, "test-ns", startTime, true)
-	recorder.RecordGet(ctx, "test-ns", startTime, false)
-}
-
-func TestVectorMetricsRecorder_RecordDelete(t *testing.T) {
-	t.Parallel()
-
-	recorder := NewVectorMetricsRecorder()
-	ctx := context.Background()
-	startTime := time.Now().Add(-10 * time.Millisecond)
-
-	// Should not panic
-	recorder.RecordDelete(ctx, "test-ns", startTime, true)
-	recorder.RecordDelete(ctx, "test-ns", startTime, false)
-}
-
-func TestVectorMetricsRecorder_RecordBatchDelete(t *testing.T) {
-	t.Parallel()
-
-	recorder := NewVectorMetricsRecorder()
-	ctx := context.Background()
-	startTime := time.Now().Add(-100 * time.Millisecond)
-
-	// Should not panic
-	recorder.RecordBatchDelete(ctx, "test-ns", 50, startTime, true)
-	recorder.RecordBatchDelete(ctx, "test-ns", 50, startTime, false)
-}
-
-func TestVectorMetricsRecorder_RecordSearch(t *testing.T) {
-	t.Parallel()
-
-	recorder := NewVectorMetricsRecorder()
-	ctx := context.Background()
-	startTime := time.Now().Add(-50 * time.Millisecond)
-
-	// Should not panic
-	recorder.RecordSearch(ctx, "test-ns", "knn", startTime, true)
-	recorder.RecordSearch(ctx, "test-ns", "hybrid", startTime, false)
-}
-
-func TestVectorMetricsRecorder_RecordNamespaceCreate(t *testing.T) {
-	t.Parallel()
-
-	recorder := NewVectorMetricsRecorder()
-	ctx := context.Background()
-	startTime := time.Now().Add(-200 * time.Millisecond)
-
-	// Should not panic
-	recorder.RecordNamespaceCreate(ctx, "new-ns", startTime, true)
-	recorder.RecordNamespaceCreate(ctx, "new-ns", startTime, false)
-}
-
-func TestVectorMetricsRecorder_RecordNamespaceDelete(t *testing.T) {
-	t.Parallel()
-
-	recorder := NewVectorMetricsRecorder()
-	ctx := context.Background()
-	startTime := time.Now().Add(-200 * time.Millisecond)
-
-	// Should not panic
-	recorder.RecordNamespaceDelete(ctx, "old-ns", startTime, true)
-	recorder.RecordNamespaceDelete(ctx, "old-ns", startTime, false)
-}
-
-func TestVectorMetricsRecorder_UpdateNamespaceStats(t *testing.T) {
-	t.Parallel()
-
-	recorder := NewVectorMetricsRecorder()
-	ctx := context.Background()
-
-	// Should not panic
-	recorder.UpdateNamespaceStats(ctx, "test-ns", 1000, 1024*1024)
-}
-
-func TestVectorMetricsRecorder_UpdateQuotaUsage(t *testing.T) {
-	t.Parallel()
-
-	recorder := NewVectorMetricsRecorder()
-	ctx := context.Background()
-
-	// Should not panic
-	recorder.UpdateQuotaUsage(ctx, "test-ns", "vectors", 0.75)
-	recorder.UpdateQuotaUsage(ctx, "test-ns", "storage", 0.50)
-}
-
-func TestVectorMetricsRecorder_UpdateTenantNamespaceCount(t *testing.T) {
-	t.Parallel()
-
-	recorder := NewVectorMetricsRecorder()
-	ctx := context.Background()
-
-	// Should not panic
-	recorder.UpdateTenantNamespaceCount(ctx, 5)
-}
-
-func TestVectorMetricsRecorder_RecordExport(t *testing.T) {
-	t.Parallel()
-
-	recorder := NewVectorMetricsRecorder()
-	ctx := context.Background()
-	startTime := time.Now().Add(-1 * time.Second)
-
-	// Should not panic
-	recorder.RecordExport(ctx, "test-ns", 10000, startTime, true)
-	recorder.RecordExport(ctx, "test-ns", 10000, startTime, false)
-}
-
-func TestVectorMetricsRecorder_RecordImport(t *testing.T) {
-	t.Parallel()
-
-	recorder := NewVectorMetricsRecorder()
-	ctx := context.Background()
-	startTime := time.Now().Add(-2 * time.Second)
-
-	// Should not panic
-	recorder.RecordImport(ctx, "test-ns", 5000, startTime, true)
-	recorder.RecordImport(ctx, "test-ns", 5000, startTime, false)
-}
-
-func TestVectorMetricsRecorder_RecordIndexRebuild(t *testing.T) {
-	t.Parallel()
-
-	recorder := NewVectorMetricsRecorder()
-	ctx := context.Background()
-	startTime := time.Now().Add(-5 * time.Second)
-
-	// Should not panic
-	recorder.RecordIndexRebuild(ctx, "test-ns", startTime, true)
-	recorder.RecordIndexRebuild(ctx, "test-ns", startTime, false)
-}
-
-func TestVectorMetricsRecorder_WithTenant(t *testing.T) {
-	t.Parallel()
-
-	recorder := NewVectorMetricsRecorder()
-	ctx := tenantctx.WithTenant(context.Background(), "tenant-abc")
-	startTime := time.Now()
-
-	// All operations should use the tenant from context
-	recorder.RecordUpsert(ctx, "ns", startTime, true)
-	recorder.RecordGet(ctx, "ns", startTime, true)
-	recorder.RecordDelete(ctx, "ns", startTime, true)
-	recorder.RecordSearch(ctx, "ns", "knn", startTime, true)
-	recorder.UpdateNamespaceStats(ctx, "ns", 100, 1024)
-	recorder.UpdateQuotaUsage(ctx, "ns", "vectors", 0.5)
-	recorder.UpdateTenantNamespaceCount(ctx, 3)
+			// The recorder has no return value; each call must record its
+			// success and failure outcome, with and without a tenant, without
+			// panicking.
+			for _, ctx := range contexts {
+				assert.NotPanics(t, func() { tt.record(recorder, ctx, true) })
+				assert.NotPanics(t, func() { tt.record(recorder, ctx, false) })
+			}
+		})
+	}
 }
 
 // =============================================================================
@@ -1631,53 +728,37 @@ func TestInitStreamBatchMetrics(t *testing.T) {
 	assert.NotNil(t, metrics.operationsTotal)
 	assert.NotNil(t, metrics.backpressure)
 	assert.NotNil(t, metrics.activeStreams)
-}
 
-func TestInitStreamBatchMetrics_Singleton(t *testing.T) {
-	t.Parallel()
-
-	metrics1 := initStreamBatchMetrics()
-	metrics2 := initStreamBatchMetrics()
-
-	// Should return the same instance
-	assert.Same(t, metrics1, metrics2)
+	// Later calls return the same instance.
+	assert.Same(t, metrics, initStreamBatchMetrics())
 }
 
 // =============================================================================
 // Client State Tests
 // =============================================================================
 
-func TestClient_IsConnected_Closed(t *testing.T) {
+func TestClient_IsConnected(t *testing.T) {
 	t.Parallel()
 
-	client := &Client{
-		connected: true,
-		closed:    true,
+	tests := []struct {
+		name      string
+		connected bool
+		closed    bool
+		want      bool
+	}{
+		{name: "connected and open", connected: true, closed: false, want: true},
+		{name: "connected but closed", connected: true, closed: true, want: false},
+		{name: "not connected", connected: false, closed: false, want: false},
 	}
 
-	assert.False(t, client.isConnected())
-}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 
-func TestClient_IsConnected_NotConnected(t *testing.T) {
-	t.Parallel()
-
-	client := &Client{
-		connected: false,
-		closed:    false,
+			client := &Client{connected: tt.connected, closed: tt.closed}
+			assert.Equal(t, tt.want, client.isConnected())
+		})
 	}
-
-	assert.False(t, client.isConnected())
-}
-
-func TestClient_IsConnected_True(t *testing.T) {
-	t.Parallel()
-
-	client := &Client{
-		connected: true,
-		closed:    false,
-	}
-
-	assert.True(t, client.isConnected())
 }
 
 func TestClient_Conn_ReturnsNil(t *testing.T) {
@@ -1688,61 +769,4 @@ func TestClient_Conn_ReturnsNil(t *testing.T) {
 	}
 
 	assert.Nil(t, client.Conn())
-}
-
-// =============================================================================
-// Connection State Tests
-// =============================================================================
-
-func TestConnectivityState(t *testing.T) {
-	t.Parallel()
-
-	// Test that we understand gRPC connectivity states
-	states := []connectivity.State{
-		connectivity.Idle,
-		connectivity.Connecting,
-		connectivity.Ready,
-		connectivity.TransientFailure,
-		connectivity.Shutdown,
-	}
-
-	for _, state := range states {
-		assert.NotEmpty(t, state.String())
-	}
-}
-
-// =============================================================================
-// Atomic Operations Tests
-// =============================================================================
-
-func TestAtomicBool(t *testing.T) {
-	t.Parallel()
-
-	var b atomic.Bool
-	assert.False(t, b.Load())
-
-	b.Store(true)
-	assert.True(t, b.Load())
-
-	old := b.Swap(false)
-	assert.True(t, old)
-	assert.False(t, b.Load())
-
-	swapped := b.CompareAndSwap(false, true)
-	assert.True(t, swapped)
-	assert.True(t, b.Load())
-}
-
-func TestAtomicUint64(t *testing.T) {
-	t.Parallel()
-
-	var u atomic.Uint64
-	assert.Equal(t, uint64(0), u.Load())
-
-	u.Store(100)
-	assert.Equal(t, uint64(100), u.Load())
-
-	new := u.Add(50)
-	assert.Equal(t, uint64(150), new)
-	assert.Equal(t, uint64(150), u.Load())
 }

@@ -185,10 +185,12 @@ func newSDKClient(transport string, ports PortBundle, dataDir string) (quicbaas.
 			quicbaas.WithTLSConfig(tlsCfg),
 		)
 	case "quic":
-		address := fmt.Sprintf("127.0.0.1:%d", ports.QUIC)
-		// QUIC requires NextProtos that the server advertises. The
-		// daemon uses the standard "h3" + "quicbaas" ALPNs; we let the
-		// transport layer set its own preference list.
+		// The SDK's QUIC transport is the REST dialect over HTTP/3 and
+		// the daemon serves HTTP/3 on the REST port (ports.QUIC is that
+		// port on this row), so the address carries the same /api/v1
+		// base path as the REST case: Health.Liveness maps to
+		// <base>/health/live. The transport sets the "h3" ALPN itself.
+		address := fmt.Sprintf("https://127.0.0.1:%d/api/v1", ports.QUIC)
 		return quicbaas.NewClient(address,
 			quicbaas.WithQUIC(),
 			quicbaas.WithTLSConfig(tlsCfg),

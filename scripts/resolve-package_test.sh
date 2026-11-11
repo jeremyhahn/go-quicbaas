@@ -116,7 +116,6 @@ unknown() {
 }
 
 expect test-api-grpc pkg/api/grpc "$TEST_TAGS"
-expect test-server-tpm2-keys pkg/server/tpm2-keys "$TEST_TAGS"
 expect test-quicbaas-git-sign cmd/quicbaas-git-sign "$TEST_TAGS"
 # test-iam is an explicit target (a longer race timeout); it must keep the IAM tags.
 runs test-iam "-tags '$IAM_TEST_TAGS'" ./pkg/iam/...

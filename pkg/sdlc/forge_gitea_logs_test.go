@@ -148,7 +148,7 @@ func TestGiteaCheckRunLogs_RefusesAStatusURLThisForgeDidNotWrite(t *testing.T) {
 		{"traversal that resolves elsewhere", "/jeremyhahn/go-quicbaas/actions/runs/1/jobs/../../../../other/repo/actions/runs/1/jobs/32352"},
 		{"a query string carrying the shape", "/jeremyhahn/go-quicbaas?x=/actions/runs/1/jobs/32352"},
 		{"a fragment carrying the shape", "/jeremyhahn/go-quicbaas#/actions/runs/1/jobs/32352"},
-		{"userinfo smuggling the host", "https://forge.internal:3001@attacker.invalid/jeremyhahn/go-quicbaas/actions/runs/1/jobs/32352"},
+		{"userinfo smuggling the host", "https://forge.internal:3000@attacker.invalid/jeremyhahn/go-quicbaas/actions/runs/1/jobs/32352"},
 		{"a scheme mismatch", "https://127.0.0.1:1/jeremyhahn/go-quicbaas/actions/runs/1/jobs/32352"},
 		{"a non-numeric job", "/jeremyhahn/go-quicbaas/actions/runs/1/jobs/32352abc"},
 		{"a non-numeric run", "/jeremyhahn/go-quicbaas/actions/runs/latest/jobs/32352"},
@@ -176,8 +176,8 @@ func TestGiteaCheckRunLogs_RefusesAStatusURLThisForgeDidNotWrite(t *testing.T) {
 // forge served from a subpath carries that subpath in the field.
 func TestGiteaJobFromStatusURL_AcceptsWhatGiteaWrites(t *testing.T) {
 	for _, tc := range []struct{ name, base, url string }{
-		{"root-relative, as observed live", "http://forge.internal:3001/api/v1", "/jeremyhahn/go-quicbaas/actions/runs/8133/jobs/32352"},
-		{"absolute on the same origin", "http://forge.internal:3001/api/v1", "http://forge.internal:3001/jeremyhahn/go-quicbaas/actions/runs/8133/jobs/32352"},
+		{"root-relative, as observed live", "http://forge.internal:3000/api/v1", "/jeremyhahn/go-quicbaas/actions/runs/8133/jobs/32352"},
+		{"absolute on the same origin", "http://forge.internal:3000/api/v1", "http://forge.internal:3000/jeremyhahn/go-quicbaas/actions/runs/8133/jobs/32352"},
 		{"a forge served from a subpath", "https://git.example.invalid/gitea/api/v1", "/gitea/jeremyhahn/go-quicbaas/actions/runs/8133/jobs/32352"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
