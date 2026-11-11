@@ -22,6 +22,7 @@ import (
 	"strconv"
 	"strings"
 
+	qrdbserver "github.com/jeremyhahn/go-qrdb/pkg/server"
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	qrdbnode "github.com/jeremyhahn/go-qrdb/sdk/go/node"
 	xkmslib "github.com/jeremyhahn/go-xkms/pkg/xkms"
@@ -636,6 +637,12 @@ func (s *Server) unifiedModuleServerOptions(serverOpts []qrdbsdk.ServerOption) (
 	}
 	serverOpts = append(serverOpts, qrdbsdk.WithAuditLogger(s.qrdbAuditSink))
 
+	// The caller's options come after the node's own, so this replaces the
+	// node's tenant servicer for REST, gRPC, QUIC, Unix and MCP: every native
+	// unseal goes through the hooked barrier facade (go-quicbaas 2212).
+	s.tenantUnsealRouter = newTenantUnsealRouter(s.GetQRDBTenantServicer, s.buildTenantBarrierService)
+	serverOpts = append(serverOpts, qrdbserver.WithTenantService(s.tenantUnsealRouter))
+
 	module, err := s.newQuicBaaSModule()
 	if err != nil {
 		return nil, err
@@ -961,6 +968,9 @@ func (s *Server) initStandaloneQRDBNode() error {
 	}
 
 	s.setQRDBNode(node)
+	if s.tenantUnsealRouter != nil {
+		s.tenantUnsealRouter.bind()
+	}
 
 	s.logger.Info("Standalone qrdb node started; at-rest encryption and hardware crypto active")
 	return nil
@@ -1185,6 +1195,9 @@ func (s *Server) initClusteredQRDBNode() error {
 	}
 
 	s.setQRDBNode(node)
+	if s.tenantUnsealRouter != nil {
+		s.tenantUnsealRouter.bind()
+	}
 
 	s.logger.Infof("Clustered qrdb node started; members: %d, at-rest encryption and hardware crypto active",
 		len(members))

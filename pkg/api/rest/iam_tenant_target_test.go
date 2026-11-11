@@ -6,6 +6,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/go-chi/chi/v5"
@@ -30,12 +31,13 @@ func callerRouteContext(ctx context.Context, rctx *chi.Context) context.Context 
 // IAM data by naming it in the URL (go-quicbaas#1150): a tenant naming a
 // different tenant, the system tenant (which gets no cross-tenant lift), and a
 // request with no tenant bound at all.
+// The system tenant is not among them: the system admin acts in the tenant
+// the URL names (go-quicbaas#2212).
 var tenantTargetRefusals = []struct {
 	name   string
 	caller func(context.Context) context.Context
 }{
 	{"other tenant", func(ctx context.Context) context.Context { return tenantctx.WithTenant(ctx, "tenant-a") }},
-	{"system tenant", tenantctx.WithSystem},
 	{"no tenant", func(ctx context.Context) context.Context { return ctx }},
 }
 
@@ -126,6 +128,49 @@ func TestIAMHandlers_CallerNamingItsOwnTenantSucceeds(t *testing.T) {
 	assert.Equal(t, http.StatusOK, w.Code, "body: %s", w.Body.String())
 }
 
+func TestURLTenant_SystemCallerActsInTheNamedTenant(t *testing.T) {
+	_, _, memStorage, handler, cleanup := setupIAMTestServer(t)
+	defer cleanup()
+	require.NoError(t, memStorage.CreateTenant(context.Background(), &iam.Tenant{ID: "acme", Name: "Acme"}))
+
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("tenant_id", "acme")
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/tenants/acme/roles", nil)
+	req = req.WithContext(context.WithValue(tenantctx.WithSystem(req.Context()), chi.RouteCtxKey, rctx))
+	w := httptest.NewRecorder()
+
+	handler.ListRoles(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code, "body: %s", w.Body.String())
+
+	var s Server
+	ctx, tenantID, ok := s.urlTenant(w, req, "rest.IAM", "tenant_id")
+	require.True(t, ok)
+	assert.Equal(t, "acme", tenantID)
+	resolved, err := tenantctx.FromContext(ctx, "rest.IAM")
+	require.NoError(t, err)
+	assert.Equal(t, "acme", resolved, "urlTenant did not return the URL's tenant in its context")
+	bound, err := tenantctx.FromContext(req.Context(), "rest.IAM")
+	require.NoError(t, err)
+	assert.Equal(t, "acme", bound, "urlTenant did not bind the URL's tenant into the request")
+}
+
+func TestURLTenant_RefusesAnUnboundRequest(t *testing.T) {
+	_, _, _, handler, cleanup := setupIAMTestServer(t)
+	defer cleanup()
+
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("tenant_id", "acme")
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/tenants/acme/roles", nil)
+	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	w := httptest.NewRecorder()
+
+	handler.ListRoles(w, req)
+
+	assert.Equal(t, http.StatusForbidden, w.Code, "body: %s", w.Body.String())
+	assert.Contains(t, w.Body.String(), "no tenant is bound")
+}
+
 // TestWebAuthnCredentials_RefuseANamedTenantThatIsNotTheCaller covers the
 // credential routes, which resolve the tenant through their own subject helper.
 func TestWebAuthnCredentials_RefuseANamedTenantThatIsNotTheCaller(t *testing.T) {
@@ -137,12 +182,170 @@ func TestWebAuthnCredentials_RefuseANamedTenantThatIsNotTheCaller(t *testing.T) 
 			req := httptest.NewRequest(http.MethodDelete, credentialPath(""), nil)
 			rec := httptest.NewRecorder()
 
-			// credentialPath names tenant acme; tenant-a, system and tenantless
-			// callers all differ from it.
+			// credentialPath names tenant acme; tenant-a and tenantless
+			// callers both differ from it.
 			h.ServeHTTP(rec, req.WithContext(refusal.caller(req.Context())))
 
 			assert.Equal(t, http.StatusForbidden, rec.Code, "body: %s", rec.Body.String())
 			assert.Len(t, store.credentials, 2, "a refused request deleted credentials")
 		})
+	}
+}
+
+// ownerFollowingRoleStorage stands in for QRDBRoleStorage on the role update
+// path: it ignores the tenantID argument and finds a role by its globally
+// unique ID, then admits the read only when the context's tenant owns the role
+// or is the system tenant, as go-qrdb's OwningTenant does. It records the
+// tenant of every context it receives.
+type ownerFollowingRoleStorage struct {
+	*iam.MemoryStorage
+	owners map[string]string
+	seen   []string
+}
+
+func (s *ownerFollowingRoleStorage) contextTenant(ctx context.Context) string {
+	tenantID, err := tenantctx.FromContext(ctx, "test")
+	if err != nil {
+		return ""
+	}
+	s.seen = append(s.seen, tenantID)
+	return tenantID
+}
+
+func (s *ownerFollowingRoleStorage) GetRole(ctx context.Context, _, roleID string) (*iam.Role, error) {
+	caller := s.contextTenant(ctx)
+	owner, ok := s.owners[roleID]
+	if !ok || (caller != owner && !tenantctx.IsSystem(caller)) {
+		return nil, iam.ErrRoleNotFound
+	}
+	return s.MemoryStorage.GetRole(ctx, owner, roleID)
+}
+
+func (s *ownerFollowingRoleStorage) UpdateRole(ctx context.Context, role *iam.Role) error {
+	s.contextTenant(ctx)
+	return s.MemoryStorage.UpdateRole(ctx, role)
+}
+
+// TestUpdateRole_SystemAdminCannotReachAnotherTenantsRole pins the handler
+// passing urlTenant's resolved context to the store: a system-admin PUT to
+// /tenants/acme/roles/<id> reaches storage bound to acme, so a role Globex
+// owns is refused and left unchanged, while an Acme role updates
+// (go-quicbaas#2212).
+func TestUpdateRole_SystemAdminCannotReachAnotherTenantsRole(t *testing.T) {
+	_, mockService, memStorage, handler, cleanup := setupIAMTestServer(t)
+	defer cleanup()
+	ctx := context.Background()
+	for _, tenant := range []*iam.Tenant{{ID: "acme", Name: "Acme"}, {ID: "globex", Name: "Globex"}} {
+		require.NoError(t, memStorage.CreateTenant(ctx, tenant))
+	}
+	require.NoError(t, memStorage.CreateRole(ctx, &iam.Role{ID: "role-globex", Name: "globex-ops", TenantID: "globex"}))
+	require.NoError(t, memStorage.CreateRole(ctx, &iam.Role{ID: "role-acme", Name: "acme-ops", TenantID: "acme"}))
+
+	roles := &ownerFollowingRoleStorage{
+		MemoryStorage: memStorage,
+		owners:        map[string]string{"role-globex": "globex", "role-acme": "acme"},
+	}
+	mockService.identityStore = iam.NewIdentityStore(iam.IdentityStoreOptions{
+		UserStorage: memStorage,
+		RoleStorage: roles,
+		Tenants:     mockService.tenantManager,
+	})
+
+	update := func(roleID string) *httptest.ResponseRecorder {
+		rctx := chi.NewRouteContext()
+		rctx.URLParams.Add("tenant_id", "acme")
+		rctx.URLParams.Add("role_id", roleID)
+		req := httptest.NewRequest(http.MethodPut, "/api/v1/tenants/acme/roles/"+roleID,
+			strings.NewReader(`{"name":"renamed"}`))
+		req = req.WithContext(context.WithValue(tenantctx.WithSystem(req.Context()), chi.RouteCtxKey, rctx))
+		w := httptest.NewRecorder()
+		handler.UpdateRole(w, req)
+		return w
+	}
+
+	t.Run("another tenant's role is refused", func(t *testing.T) {
+		roles.seen = nil
+		w := update("role-globex")
+
+		assert.False(t, w.Code >= 200 && w.Code < 300, "status %d, body: %s", w.Code, w.Body.String())
+		require.NotEmpty(t, roles.seen, "the store was never called")
+		for _, tenantID := range roles.seen {
+			assert.Equal(t, "acme", tenantID, "the store received a context not bound to the URL's tenant")
+		}
+		role, err := memStorage.GetRole(ctx, "globex", "role-globex")
+		require.NoError(t, err)
+		assert.Equal(t, "globex-ops", role.Name, "Globex's role was modified")
+	})
+
+	t.Run("the named tenant's role updates", func(t *testing.T) {
+		roles.seen = nil
+		w := update("role-acme")
+
+		assert.Equal(t, http.StatusOK, w.Code, "body: %s", w.Body.String())
+		require.NotEmpty(t, roles.seen, "the store was never called")
+		for _, tenantID := range roles.seen {
+			assert.Equal(t, "acme", tenantID, "the store received a context not bound to the URL's tenant")
+		}
+		role, err := memStorage.GetRole(ctx, "acme", "role-acme")
+		require.NoError(t, err)
+		assert.Equal(t, "renamed", role.Name)
+	})
+}
+
+// systemOnlyTenantManager answers GetTenant the way production storage does:
+// the tenant catalog lives in the system namespace, so a read under any other
+// tenant binding misses.
+type systemOnlyTenantManager struct {
+	*testTenantManager
+}
+
+func (m *systemOnlyTenantManager) GetTenant(ctx context.Context, id string) (*iam.Tenant, error) {
+	if tenantID, err := tenantctx.FromContext(ctx, "test"); err == nil && !tenantctx.IsSystem(tenantID) {
+		return nil, iam.NewTenantNotFoundError(id)
+	}
+	return m.testTenantManager.GetTenant(ctx, id)
+}
+
+func TestIAMHandlers_TenantCatalogReadsUseTheSystemNamespace(t *testing.T) {
+	_, mockService, memStorage, handler, cleanup := setupIAMTestServer(t)
+	defer cleanup()
+	require.NoError(t, memStorage.CreateTenant(tenantctx.WithSystem(context.Background()),
+		&iam.Tenant{ID: "acme", Name: "Acme"}))
+	mockService.identityStore = iam.NewIdentityStore(iam.IdentityStoreOptions{
+		UserStorage: memStorage,
+		RoleStorage: &reconcilingRoleStorage{MemoryStorage: memStorage, report: &iam.RoleReconcileReport{}},
+		Tenants:     &systemOnlyTenantManager{testTenantManager: mockService.tenantManager},
+	})
+
+	handlers := []struct {
+		name   string
+		method string
+		path   string
+		serve  http.HandlerFunc
+	}{
+		{"ListRoles", http.MethodGet, "/api/v1/tenants/acme/roles", handler.ListRoles},
+		{"ListUsers", http.MethodGet, "/api/v1/tenants/acme/users", handler.ListUsers},
+		{"ReconcileRoles", http.MethodPost, "/api/v1/tenants/acme/roles/reconcile", handler.ReconcileRoles},
+	}
+	callers := []struct {
+		name string
+		bind func(context.Context) context.Context
+	}{
+		{"system caller", tenantctx.WithSystem},
+		{"acme caller", func(ctx context.Context) context.Context { return tenantctx.WithTenant(ctx, "acme") }},
+	}
+	for _, h := range handlers {
+		for _, c := range callers {
+			t.Run(h.name+"/"+c.name, func(t *testing.T) {
+				rctx := chi.NewRouteContext()
+				rctx.URLParams.Add("tenant_id", "acme")
+				req := httptest.NewRequest(h.method, h.path, nil)
+				req = req.WithContext(context.WithValue(c.bind(req.Context()), chi.RouteCtxKey, rctx))
+				w := httptest.NewRecorder()
+				h.serve(w, req)
+
+				assert.Equal(t, http.StatusOK, w.Code, "body: %s", w.Body.String())
+			})
+		}
 	}
 }

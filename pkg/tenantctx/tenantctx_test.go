@@ -158,10 +158,112 @@ func TestContextForTarget_BindsTheResolvedTenant(t *testing.T) {
 	assert.Equal(t, caller, ctx)
 }
 
+func TestAdminTarget_SystemCallerActsInTheNamedTenant(t *testing.T) {
+	ctx, tenantID, err := AdminTarget(WithSystem(context.Background()), "op", "acme")
+	require.NoError(t, err)
+	assert.Equal(t, "acme", tenantID)
+	bound, err := FromContext(ctx, "op")
+	require.NoError(t, err)
+	assert.Equal(t, "acme", bound)
+}
+
+func TestAdminTarget_SystemCallerNamingNothingStaysSystem(t *testing.T) {
+	ctx, tenantID, err := AdminTarget(WithSystem(context.Background()), "op", "")
+	require.NoError(t, err)
+	assert.Equal(t, SystemTenantID, tenantID)
+	bound, err := FromContext(ctx, "op")
+	require.NoError(t, err)
+	assert.Equal(t, SystemTenantID, bound)
+}
+
+func TestAdminTarget_TenantCallerNamesOnlyItself(t *testing.T) {
+	caller := WithTenant(context.Background(), "acme")
+	ctx, tenantID, err := AdminTarget(caller, "op", "other")
+	cross := requireForbidden[*CrossTenantError](t, err)
+	assert.Equal(t, "acme", cross.CallerTenant)
+	assert.Equal(t, "other", cross.TargetTenant)
+	assert.Empty(t, tenantID)
+	assert.Equal(t, caller, ctx)
+}
+
+func TestAdminTarget_RefusesAnUnboundCallerWhateverItNames(t *testing.T) {
+	for _, requested := range []string{"", "acme", SystemTenantID} {
+		_, tenantID, err := AdminTarget(context.Background(), "op", requested)
+		requireForbidden[*MissingTenantError](t, err)
+		assert.Empty(t, tenantID)
+	}
+}
+
 // TestErrorMessages_NameTheOperationAndTenants keeps the refusals diagnosable.
 func TestErrorMessages_NameTheOperationAndTenants(t *testing.T) {
 	assert.Contains(t, (&MissingTenantError{Operation: "kms"}).Error(), "kms")
 	msg := (&CrossTenantError{Operation: "kms", CallerTenant: "acme", TargetTenant: "globex"}).Error()
 	assert.Contains(t, msg, "acme")
 	assert.Contains(t, msg, "globex")
+}
+
+func TestAuthRecordRead_NamesOneTenant(t *testing.T) {
+	ctx := WithAuthRecordRead(context.Background(), "acme")
+	if !InAuthRecordRead(ctx, "acme") {
+		t.Fatal("a context marked for acme must report acme")
+	}
+	if InAuthRecordRead(ctx, "beta") {
+		t.Fatal("a context marked for acme must not report beta")
+	}
+	if InAuthRecordRead(ctx, "") {
+		t.Fatal("an empty tenant must never report marked")
+	}
+	if InAuthRecordRead(context.Background(), "acme") {
+		t.Fatal("an unmarked context must not report marked")
+	}
+	if InAuthRecordRead(WithAuthRecordRead(context.Background(), ""), "") {
+		t.Fatal("an empty tenant must leave the context unmarked")
+	}
+}
+
+func TestPolicySyncRead_NamesOneTenant(t *testing.T) {
+	ctx := WithPolicySyncRead(context.Background(), "acme")
+	if !InPolicySyncRead(ctx, "acme") {
+		t.Fatal("a context marked for acme must report acme")
+	}
+	if InPolicySyncRead(ctx, "beta") {
+		t.Fatal("a context marked for acme must not report beta")
+	}
+	if InPolicySyncRead(ctx, "") {
+		t.Fatal("an empty tenant must never report marked")
+	}
+	if InPolicySyncRead(context.Background(), "acme") {
+		t.Fatal("an unmarked context must not report marked")
+	}
+	if InPolicySyncRead(WithPolicySyncRead(context.Background(), ""), "") {
+		t.Fatal("an empty tenant must leave the context unmarked")
+	}
+	if InPolicySyncRead(WithAuthRecordRead(context.Background(), "acme"), "acme") {
+		t.Fatal("an authentication-record read must not report a policy sync read")
+	}
+	if InAuthRecordRead(ctx, "acme") {
+		t.Fatal("a policy sync read must not report an authentication-record read")
+	}
+}
+
+func TestPolicyRepair_MarksOnlyItsTenant(t *testing.T) {
+	ctx := WithPolicyRepair(context.Background(), "acme")
+	if !InPolicyRepair(ctx, "acme") {
+		t.Fatal("a context marked for acme must report acme")
+	}
+	if InPolicyRepair(ctx, "beta") {
+		t.Fatal("a context marked for acme must not report beta")
+	}
+	if InPolicyRepair(ctx, "") {
+		t.Fatal("an empty tenant must never report marked")
+	}
+	if InPolicyRepair(context.Background(), "acme") {
+		t.Fatal("an unmarked context must not report marked")
+	}
+	if InPolicyRepair(WithPolicyRepair(context.Background(), ""), "") {
+		t.Fatal("an empty tenant must leave the context unmarked")
+	}
+	if InPolicyRepair(WithPolicySyncRead(context.Background(), "acme"), "acme") {
+		t.Fatal("a policy sync read must not report a policy repair")
+	}
 }

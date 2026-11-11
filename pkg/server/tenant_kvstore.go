@@ -23,6 +23,7 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
+	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 	qbshards "github.com/jeremyhahn/go-quicbaas/pkg/shards"
 	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
@@ -84,7 +85,7 @@ func (s *Server) tenantRoutingStore() interfaces.KVStore {
 	if svcs == nil || svcs.StoreResolver == nil {
 		return nil
 	}
-	return newTenantRoutingKVStore(&resolverAdapter{inner: svcs.StoreResolver})
+	return newTenantRoutingKVStore(&resolverAdapter{inner: s.admittedStoreResolver(svcs.StoreResolver)})
 }
 
 // durableKVStore is tenantRoutedKVStore without the panic: it returns nil when
@@ -118,7 +119,7 @@ func (s *Server) iamTenantScopeStore() qrdbsdk.PermissionScopeResolver {
 	if svcs == nil || svcs.StoreResolver == nil {
 		return nil
 	}
-	store, err := qrdbsdk.NewTenantScopeStore(svcs.StoreResolver)
+	store, err := qrdbsdk.NewTenantScopeStore(s.admittedStoreResolver(svcs.StoreResolver))
 	if err != nil {
 		s.logger.WithError(err).Warn("iam: failed to build tenant scope store; per-tenant permission scopes disabled")
 		return nil
@@ -142,6 +143,39 @@ type storeResolver interface {
 // interface directly.
 type resolverAdapter struct {
 	inner qrdbsdk.TenantStoreResolver
+}
+
+// admittingStoreResolver refuses to resolve a tenant whose unseal has not yet
+// passed its unseal gates: such a tenant's barrier may already be open, but
+// its stores stay closed until the hooks admit it.
+type admittingStoreResolver struct {
+	inner qrdbsdk.TenantStoreResolver
+	hooks *service.TenantUnsealHooks
+}
+
+// Resolve returns the hooks' admission error for a held tenant, and the inner
+// resolver's store otherwise. An unseal gate's own read of the tenant it is
+// admitting (service.InUnsealGate) reaches the inner resolver. The token-liveness
+// reads of a held tenant (tenantctx.InAuthRecordRead) reach it too, so its admin
+// can authenticate the retry or the seal that clears the hold, and every other
+// read stays refused. The ABAC sync's reads of a held tenant's policies
+// (tenantctx.InPolicySyncRead) reach it too, so a reload for another tenant
+// keeps its deny rules. The system admin's repair of a held tenant's policies
+// (tenantctx.InPolicyRepair) reaches it too, so the policy that holds the
+// tenant can be fixed and the next unseal's gate can pass.
+func (a *admittingStoreResolver) Resolve(ctx context.Context, tenantID string) (qrdbsdk.KVStore, error) {
+	if !service.InUnsealGate(ctx, tenantID) && !tenantctx.InAuthRecordRead(ctx, tenantID) && !tenantctx.InPolicySyncRead(ctx, tenantID) && !tenantctx.InPolicyRepair(ctx, tenantID) {
+		if err := a.hooks.Admit(tenantID); err != nil {
+			return nil, err
+		}
+	}
+	return a.inner.Resolve(ctx, tenantID)
+}
+
+// admittedStoreResolver wraps r so that it resolves no tenant the server's
+// unseal hooks hold.
+func (s *Server) admittedStoreResolver(r qrdbsdk.TenantStoreResolver) qrdbsdk.TenantStoreResolver {
+	return &admittingStoreResolver{inner: r, hooks: &s.tenantUnsealHooks}
 }
 
 // Resolve routes to the qrdb StoreResolver and returns the per-tenant store
@@ -193,6 +227,21 @@ func (s *tenantRoutingKVStore) resolve(ctx context.Context) (interfaces.KVStore,
 		return nil, err
 	}
 	return store, nil
+}
+
+// SharesStore reports whether contexts a and b resolve to the same store. One
+// key names one physical record under both contexts exactly when they do; the
+// resolvers cache one store per tenant namespace, so the comparison is identity.
+func (s *tenantRoutingKVStore) SharesStore(a, b context.Context) (bool, error) {
+	storeA, err := s.resolve(a)
+	if err != nil {
+		return false, err
+	}
+	storeB, err := s.resolve(b)
+	if err != nil {
+		return false, err
+	}
+	return storeA == storeB, nil
 }
 
 // tenantFromAnyContext reads the request tenant from whichever context key the
@@ -420,7 +469,7 @@ func (s *Server) buildTenantInviteStore() (iam.InviteStore, error) {
 	if svcs == nil || svcs.StoreResolver == nil {
 		return nil, nil
 	}
-	store, err := qrdbsdk.NewTenantInviteStore(svcs.StoreResolver)
+	store, err := qrdbsdk.NewTenantInviteStore(s.admittedStoreResolver(svcs.StoreResolver))
 	if err != nil {
 		return nil, &InviteStoreError{Cause: err}
 	}
@@ -440,5 +489,5 @@ func (s *Server) buildUserActivationClaims() (*iam.UserActivationClaims, error) 
 	if svcs == nil || svcs.StoreResolver == nil {
 		return nil, nil
 	}
-	return iam.NewUserActivationClaims(svcs.StoreResolver)
+	return iam.NewUserActivationClaims(s.admittedStoreResolver(svcs.StoreResolver))
 }

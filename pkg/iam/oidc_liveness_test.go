@@ -20,6 +20,8 @@ import (
 	"strconv"
 	"testing"
 	"time"
+
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 // The liveness fixtures' user ids. A user id is a qrdb Snowflake rendered in
@@ -90,6 +92,37 @@ func TestTokenLiveness_EnabledUser(t *testing.T) {
 	}
 	if !live {
 		t.Fatalf("enabled user must be live")
+	}
+}
+
+// authRecordCtxStorage records whether IsTokenRevoked ran under an
+// authentication-record read marked for its tenant.
+type authRecordCtxStorage struct {
+	*mockTokenStorage
+	tenant string
+	marked bool
+}
+
+func (s *authRecordCtxStorage) IsTokenRevoked(ctx context.Context, _ string) (bool, error) {
+	s.marked = tenantctx.InAuthRecordRead(ctx, s.tenant)
+	return false, nil
+}
+
+func TestTokenLiveness_MarksItsReadsAsAuthRecordReads(t *testing.T) {
+	provider, _, _, _, _ := createTestOIDCProvider(t)
+	storage := &authRecordCtxStorage{mockTokenStorage: newMockTokenStorage(), tenant: "tenant-a"}
+	provider.tokenService.storage = storage
+	seedLivenessUser(t, provider, "tenant-a", liveUserID, LifecycleActive)
+
+	live, err := provider.TokenLiveness(context.Background(), "tenant-a", "", liveUserID, "", "jti-mark")
+	if err != nil {
+		t.Fatalf("TokenLiveness() error = %v", err)
+	}
+	if !live {
+		t.Fatal("enabled user must be live")
+	}
+	if !storage.marked {
+		t.Fatal("the revocation read must be marked as an auth-record read for its tenant")
 	}
 }
 

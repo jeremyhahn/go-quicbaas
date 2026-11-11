@@ -74,6 +74,12 @@ type Config struct {
 	// Default: 100 MB (DefaultMaxUploadBodySize).
 	MaxUploadBodySize int64
 
+	// TenantAdmission refuses a tenant that may not serve requests yet (its
+	// barrier is being unsealed and its unseal checks have not passed): a
+	// request bound to it, or naming it in its URL, is answered 503. Nil
+	// admits every tenant.
+	TenantAdmission func(tenantID string) error
+
 	// MaxConnections is the maximum number of concurrent connections.
 	// When greater than zero, the listener rejects new connections once
 	// the limit is reached (callers block in Accept until a slot opens).

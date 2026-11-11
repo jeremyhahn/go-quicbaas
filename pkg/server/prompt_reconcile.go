@@ -45,7 +45,7 @@ func (s *Server) ensurePromptStore() error {
 	if svcs == nil || svcs.StoreResolver == nil {
 		return nil
 	}
-	store, err := prompts.NewStore(svcs.StoreResolver,
+	store, err := prompts.NewStore(s.admittedStoreResolver(svcs.StoreResolver),
 		prompts.WithAuditor(promptAuditor{newOrchestrationStoreAuditor(s.auditLoggerForStores)}))
 	if err != nil {
 		return err
