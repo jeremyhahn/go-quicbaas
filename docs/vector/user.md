@@ -42,6 +42,10 @@ go-quicbaas/                         go-qrdb/
 | GPU_IVF_PQ | >10M + GPU | ~85-90% | Hardware |
 | GPU_BRUTE_FORCE | Any + GPU | 100% | Hardware |
 
+## Namespaces
+
+A namespace's index parameters and metadata cannot be changed after it is created. `UpdateNamespace` is refused on every transport (gRPC `Unimplemented`, REST 501, MCP typed error) and leaves the namespace and its vectors unchanged; to change them, create a new namespace and re-import the vectors.
+
 ## Distance Metrics
 
 All metrics have SIMD-accelerated implementations via `github.com/viterin/vek`:

@@ -75,16 +75,77 @@ func (s *Server) TenantRoutedKVStore() interfaces.KVStore {
 
 // tenantRoutingStore returns the per-tenant routing store, or nil when the
 // embedded node exposes no StoreResolver.
+//
+// The store holds no resolver: it asks liveTenantStoreResolver on every
+// operation. A store a subsystem took at boot (IAM, the policy engine and its
+// ABAC reload, orchestration) therefore follows the node when it replaces its
+// service graph, and reads the storage the node serves now.
 func (s *Server) tenantRoutingStore() interfaces.KVStore {
+	if s.currentStoreResolver() == nil {
+		return nil
+	}
+	return newTenantRoutingKVStore(&resolverAdapter{inner: s.liveTenantStoreResolver()})
+}
+
+// ErrTenantStoreUnavailable reports that the embedded node has no tenant store
+// resolver at the moment of the call: the node is gone, or it is between two
+// service graphs (a system encryption migration closes the data plane before
+// it opens the new one), or the graph it serves has no data plane because the
+// system barrier is sealed.
+var ErrTenantStoreUnavailable = errors.New("tenant kv: the embedded node has no tenant store resolver at present")
+
+// currentStoreResolver returns the tenant store resolver of the node's
+// CURRENT service graph, or nil while there is none.
+//
+// The node replaces its service graph when the system barrier is unsealed
+// again and when its encryption is migrated. The migration closes the storage
+// the replaced graph's resolver reads, so a resolver taken from an earlier
+// graph must not be used after it: every caller asks again.
+func (s *Server) currentStoreResolver() qrdbsdk.TenantStoreResolver {
 	node := s.getQRDBNode()
 	if node == nil {
 		return nil
 	}
 	svcs := node.Services()
-	if svcs == nil || svcs.StoreResolver == nil {
+	if svcs == nil {
 		return nil
 	}
-	return newTenantRoutingKVStore(&resolverAdapter{inner: svcs.StoreResolver})
+	return svcs.StoreResolver
+}
+
+// liveStoreResolver is a qrdb tenant store resolver that holds no resolver of
+// its own. Each Resolve asks current for the resolver of the node's present
+// service graph and delegates to it, so a store built over it at boot keeps
+// working after the node replaces the graph.
+//
+// It fails closed. While current returns nil, Resolve answers
+// ErrTenantStoreUnavailable, classified ErrUnavailable; it never falls back to
+// a resolver or a store from an earlier graph, and never to the shared store.
+// The resolver it delegates to keeps every rule of its own, a sealed barrier
+// tenant's ErrTenantStoreSealed included.
+type liveStoreResolver struct {
+	current func() qrdbsdk.TenantStoreResolver
+}
+
+var _ qrdbsdk.TenantStoreResolver = (*liveStoreResolver)(nil)
+
+// Resolve implements qrdbsdk.TenantStoreResolver over the resolver of the
+// node's current service graph.
+func (r *liveStoreResolver) Resolve(ctx context.Context, tenantID string) (qrdbsdk.KVStore, error) {
+	resolver := r.current()
+	if resolver == nil {
+		return nil, &dberrors.QBError{Code: dberrors.ErrUnavailable, Op: "tenant.kv.resolve", Err: ErrTenantStoreUnavailable}
+	}
+	return resolver.Resolve(ctx, tenantID)
+}
+
+// liveTenantStoreResolver returns the resolver every tenant-routed store of
+// this server is built over: one that follows the node's current service
+// graph on every call (see liveStoreResolver). It is never nil; a caller that
+// must know whether the node exposes a resolver now asks currentStoreResolver
+// first.
+func (s *Server) liveTenantStoreResolver() qrdbsdk.TenantStoreResolver {
+	return &liveStoreResolver{current: s.currentStoreResolver}
 }
 
 // durableKVStore is tenantRoutedKVStore without the panic: it returns nil when
@@ -109,16 +170,12 @@ func (s *Server) durableKVStore() interfaces.KVStore {
 // tenant's live in the shared store; a sealed barrier tenant fails closed
 // (tenant.ErrTenantSealed). The resolver is installed on the REST RBAC provider
 // so an admitted permission is gated by its scope in the subject's own tenant.
+// The store follows the node's current service graph (liveTenantStoreResolver).
 func (s *Server) iamTenantScopeStore() qrdbsdk.PermissionScopeResolver {
-	node := s.getQRDBNode()
-	if node == nil {
+	if s.currentStoreResolver() == nil {
 		return nil
 	}
-	svcs := node.Services()
-	if svcs == nil || svcs.StoreResolver == nil {
-		return nil
-	}
-	store, err := qrdbsdk.NewTenantScopeStore(svcs.StoreResolver)
+	store, err := qrdbsdk.NewTenantScopeStore(s.liveTenantStoreResolver())
 	if err != nil {
 		s.logger.WithError(err).Warn("iam: failed to build tenant scope store; per-tenant permission scopes disabled")
 		return nil
@@ -410,17 +467,13 @@ func (e *InviteStoreError) Unwrap() error { return e.Cause }
 // this repository previously kept a parallel copy of each. A nil node yields a
 // nil store, which the caller treats as "invitations unavailable" rather than
 // silently falling back to a non-persistent one — an invite that vanished on
-// restart would strand the operator holding the activation URL.
+// restart would strand the operator holding the activation URL. The store
+// follows the node's current service graph (liveTenantStoreResolver).
 func (s *Server) buildTenantInviteStore() (iam.InviteStore, error) {
-	node := s.getQRDBNode()
-	if node == nil {
+	if s.currentStoreResolver() == nil {
 		return nil, nil
 	}
-	svcs := node.Services()
-	if svcs == nil || svcs.StoreResolver == nil {
-		return nil, nil
-	}
-	store, err := qrdbsdk.NewTenantInviteStore(svcs.StoreResolver)
+	store, err := qrdbsdk.NewTenantInviteStore(s.liveTenantStoreResolver())
 	if err != nil {
 		return nil, &InviteStoreError{Cause: err}
 	}
@@ -432,13 +485,8 @@ func (s *Server) buildTenantInviteStore() (iam.InviteStore, error) {
 // beside the invites it arbitrates. A nil node yields nil claims, which the
 // PIV activator refuses exactly as it refuses a nil invitation store.
 func (s *Server) buildUserActivationClaims() (*iam.UserActivationClaims, error) {
-	node := s.getQRDBNode()
-	if node == nil {
+	if s.currentStoreResolver() == nil {
 		return nil, nil
 	}
-	svcs := node.Services()
-	if svcs == nil || svcs.StoreResolver == nil {
-		return nil, nil
-	}
-	return iam.NewUserActivationClaims(svcs.StoreResolver)
+	return iam.NewUserActivationClaims(s.liveTenantStoreResolver())
 }

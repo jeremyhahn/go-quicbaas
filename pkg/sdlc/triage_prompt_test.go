@@ -193,8 +193,8 @@ func TestTriagePrompt_MarksTheAnswerToTriagesLastVerdict(t *testing.T) {
 		Repo:  RepoRef{Owner: "jeremyhahn", Repo: "go-luks2"},
 		Issue: ForgeIssue{Number: 12, Title: "Adopt Go 1.27.0", State: "open"},
 		Comments: []ForgeComment{
-			{Body: "Blocked pending the owner's ruling.", Author: "agent-company"},
-			{Body: "Triage cannot hand this to a worker yet.\n\n<!-- " + triageCommentMarker + " verdict=not_actionable -->", Author: "agent-go-luks2"},
+			{Body: "Blocked pending the owner's ruling.", Author: "company-agent"},
+			{Body: "Triage cannot hand this to a worker yet.\n\n<!-- " + triageCommentMarker + " verdict=not_actionable -->", Author: "agent-luks2"},
 			{Body: "Ruling: 1.27.0 is the standard.", Author: "jeremyhahn"},
 		},
 	}
@@ -205,14 +205,14 @@ func TestTriagePrompt_MarksTheAnswerToTriagesLastVerdict(t *testing.T) {
 	discussion := prompt[strings.Index(prompt, "### Discussion"):]
 	for _, want := range []string{
 		"a ruling given there is settled",
-		"### Comment 2 — @agent-go-luks2 -- TRIAGE'S LAST VERDICT",
+		"### Comment 2 — @agent-luks2 -- TRIAGE'S LAST VERDICT",
 		"### Comment 3 — @jeremyhahn -- POSTED AFTER TRIAGE'S LAST VERDICT: THIS IS THE ANSWER TO IT",
 	} {
 		if !strings.Contains(discussion, want) {
 			t.Fatalf("discussion must carry %q:\n%s", want, discussion)
 		}
 	}
-	if strings.Contains(discussion, "### Comment 1 — @agent-company --") {
+	if strings.Contains(discussion, "### Comment 1 — @company-agent --") {
 		t.Fatalf("a comment before the verdict must carry no mark:\n%s", discussion)
 	}
 }
@@ -227,7 +227,7 @@ func TestTriagePrompt_ALongDiscussionKeepsItsNewestComments(t *testing.T) {
 		{Body: "first " + big, Author: "a"},
 		{Body: "second " + big, Author: "b"},
 		{Body: "third " + big, Author: "c"},
-		{Body: "verdict <!-- " + triageCommentMarker + " -->", Author: "agent-go-luks2"},
+		{Body: "verdict <!-- " + triageCommentMarker + " -->", Author: "agent-luks2"},
 		{Body: "the answer", Author: "jeremyhahn"},
 	}
 	prompt, err := TriagePrompt(TriagePromptSpec{
@@ -260,8 +260,8 @@ func TestTriagePrompt_ALongDiscussionKeepsItsNewestComments(t *testing.T) {
 func TestTriagePrompt_AFirstTriageMarksNothing(t *testing.T) {
 	for name, comments := range map[string][]ForgeComment{
 		"never judged":      {{Body: "Still broken on main.", Author: "jeremyhahn"}},
-		"verdict newest":    {{Body: "Still broken.", Author: "jeremyhahn"}, {Body: "<!-- " + triageCommentMarker + " verdict=needs_info -->", Author: "agent-go-luks2"}},
-		"only blanks after": {{Body: "<!-- " + triageCommentMarker + " -->", Author: "agent-go-luks2"}, {Body: "   ", Author: "jeremyhahn"}},
+		"verdict newest":    {{Body: "Still broken.", Author: "jeremyhahn"}, {Body: "<!-- " + triageCommentMarker + " verdict=needs_info -->", Author: "agent-luks2"}},
+		"only blanks after": {{Body: "<!-- " + triageCommentMarker + " -->", Author: "agent-luks2"}, {Body: "   ", Author: "jeremyhahn"}},
 	} {
 		prompt, err := TriagePrompt(TriagePromptSpec{
 			Repo:     RepoRef{Owner: "jeremyhahn", Repo: "go-luks2"},

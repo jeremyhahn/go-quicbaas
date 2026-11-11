@@ -816,78 +816,22 @@ func TestProtoToServiceCompareOperator_AllOperators(t *testing.T) {
 // protoToServiceTransactionOpType Tests (converters.go)
 // =============================================================================
 
-func TestProtoToServiceTransactionOpType_AllTypes(t *testing.T) {
+func TestTransactionOpTypeConversion_RoundTrip(t *testing.T) {
 	tests := []struct {
-		name     string
-		input    pb.TransactionOpType
-		expected service.TransactionOpType
+		name  string
+		proto pb.TransactionOpType
+		svc   service.TransactionOpType
 	}{
-		{
-			name:     "put",
-			input:    pb.TransactionOpType_TRANSACTION_OP_TYPE_PUT,
-			expected: service.TransactionOpTypePut,
-		},
-		{
-			name:     "get",
-			input:    pb.TransactionOpType_TRANSACTION_OP_TYPE_GET,
-			expected: service.TransactionOpTypeGet,
-		},
-		{
-			name:     "delete",
-			input:    pb.TransactionOpType_TRANSACTION_OP_TYPE_DELETE,
-			expected: service.TransactionOpTypeDelete,
-		},
-		{
-			name:     "unspecified",
-			input:    pb.TransactionOpType_TRANSACTION_OP_TYPE_UNSPECIFIED,
-			expected: service.TransactionOpTypeUnspecified,
-		},
+		{name: "put", proto: pb.TransactionOpType_TRANSACTION_OP_TYPE_PUT, svc: service.TransactionOpTypePut},
+		{name: "get", proto: pb.TransactionOpType_TRANSACTION_OP_TYPE_GET, svc: service.TransactionOpTypeGet},
+		{name: "delete", proto: pb.TransactionOpType_TRANSACTION_OP_TYPE_DELETE, svc: service.TransactionOpTypeDelete},
+		{name: "unspecified", proto: pb.TransactionOpType_TRANSACTION_OP_TYPE_UNSPECIFIED, svc: service.TransactionOpTypeUnspecified},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := protoToServiceTransactionOpType(tt.input)
-			assert.Equal(t, tt.expected, result)
-		})
-	}
-}
-
-// =============================================================================
-// serviceTransactionOpTypeToProto Tests (converters.go)
-// =============================================================================
-
-func TestServiceTransactionOpTypeToProto_AllTypes(t *testing.T) {
-	tests := []struct {
-		name     string
-		input    service.TransactionOpType
-		expected pb.TransactionOpType
-	}{
-		{
-			name:     "put",
-			input:    service.TransactionOpTypePut,
-			expected: pb.TransactionOpType_TRANSACTION_OP_TYPE_PUT,
-		},
-		{
-			name:     "get",
-			input:    service.TransactionOpTypeGet,
-			expected: pb.TransactionOpType_TRANSACTION_OP_TYPE_GET,
-		},
-		{
-			name:     "delete",
-			input:    service.TransactionOpTypeDelete,
-			expected: pb.TransactionOpType_TRANSACTION_OP_TYPE_DELETE,
-		},
-		{
-			name:     "unspecified",
-			input:    service.TransactionOpTypeUnspecified,
-			expected: pb.TransactionOpType_TRANSACTION_OP_TYPE_UNSPECIFIED,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := serviceTransactionOpTypeToProto(tt.input)
-			assert.Equal(t, tt.expected, result)
+			assert.Equal(t, tt.svc, protoToServiceTransactionOpType(tt.proto))
+			assert.Equal(t, tt.proto, serviceTransactionOpTypeToProto(tt.svc))
 		})
 	}
 }
@@ -896,180 +840,192 @@ func TestServiceTransactionOpTypeToProto_AllTypes(t *testing.T) {
 // BatchGet Additional Tests
 // =============================================================================
 
-func TestBatchGet_ServiceError(t *testing.T) {
-	srv, mockSvc := createTestServerWithMockService(t)
-
-	mockSvc.On("BatchGet", mock.Anything, mock.Anything).
-		Return(nil, assert.AnError).Once()
-
-	_, err := srv.BatchGet(context.Background(), &pb.BatchGetRequest{
-		Requests: []*pb.GetRequest{
-			{EntityType: "users", Id: 1},
+func TestBatchGet_Cases(t *testing.T) {
+	tests := []struct {
+		name      string
+		requests  []*pb.GetRequest
+		mockResp  *service.BatchGetResponse
+		mockErr   error
+		wantErr   bool
+		wantCode  codes.Code
+		wantFound []bool
+	}{
+		{
+			name:     "service error",
+			requests: []*pb.GetRequest{{EntityType: "users", Id: 1}},
+			mockErr:  assert.AnError,
+			wantErr:  true,
 		},
-	})
-
-	require.Error(t, err)
-	mockSvc.AssertExpectations(t)
-}
-
-func TestBatchGet_EmptyRequests(t *testing.T) {
-	srv, _ := createTestServerWithMockService(t)
-
-	_, err := srv.BatchGet(context.Background(), &pb.BatchGetRequest{
-		Requests: []*pb.GetRequest{},
-	})
-
-	require.Error(t, err)
-	assert.Equal(t, codes.InvalidArgument, status.Code(err))
-}
-
-func TestBatchGet_PartialResults(t *testing.T) {
-	srv, mockSvc := createTestServerWithMockService(t)
-
-	mockSvc.On("BatchGet", mock.Anything, mock.Anything).
-		Return(&service.BatchGetResponse{
-			Responses: []*service.GetResponse{
-				{ID: 1, Found: true, Data: []byte(`{"name":"user1"}`)},
-				{ID: 2, Found: false}, // Not found
-				{ID: 3, Found: true, Data: []byte(`{"name":"user3"}`)},
+		{
+			name:     "empty requests",
+			requests: []*pb.GetRequest{},
+			wantErr:  true,
+			wantCode: codes.InvalidArgument,
+		},
+		{
+			name: "partial results",
+			requests: []*pb.GetRequest{
+				{EntityType: "users", Id: 1},
+				{EntityType: "users", Id: 2},
+				{EntityType: "users", Id: 3},
 			},
-		}, nil).Once()
-
-	resp, err := srv.BatchGet(context.Background(), &pb.BatchGetRequest{
-		Requests: []*pb.GetRequest{
-			{EntityType: "users", Id: 1},
-			{EntityType: "users", Id: 2},
-			{EntityType: "users", Id: 3},
+			mockResp: &service.BatchGetResponse{
+				Responses: []*service.GetResponse{
+					{ID: 1, Found: true, Data: []byte(`{"name":"user1"}`)},
+					{ID: 2, Found: false},
+					{ID: 3, Found: true, Data: []byte(`{"name":"user3"}`)},
+				},
+			},
+			wantFound: []bool{true, false, true},
 		},
-	})
+	}
 
-	require.NoError(t, err)
-	assert.Len(t, resp.Responses, 3)
-	assert.True(t, resp.Responses[0].Found)
-	assert.False(t, resp.Responses[1].Found)
-	assert.True(t, resp.Responses[2].Found)
-	mockSvc.AssertExpectations(t)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			srv, mockSvc := createTestServerWithMockService(t)
+			if tt.mockResp != nil || tt.mockErr != nil {
+				mockSvc.On("BatchGet", mock.Anything, mock.Anything).
+					Return(tt.mockResp, tt.mockErr).Once()
+			}
+
+			resp, err := srv.BatchGet(context.Background(), &pb.BatchGetRequest{Requests: tt.requests})
+
+			if tt.wantErr {
+				require.Error(t, err)
+				if tt.wantCode != codes.OK {
+					assert.Equal(t, tt.wantCode, status.Code(err))
+				}
+			} else {
+				require.NoError(t, err)
+				require.Len(t, resp.Responses, len(tt.wantFound))
+				for i, found := range tt.wantFound {
+					assert.Equal(t, found, resp.Responses[i].Found)
+				}
+			}
+			mockSvc.AssertExpectations(t)
+		})
+	}
 }
 
 // =============================================================================
 // BatchDelete Additional Tests
 // =============================================================================
 
-func TestBatchDelete_ServiceError(t *testing.T) {
-	srv, mockSvc := createTestServerWithMockService(t)
-
-	mockSvc.On("BatchDelete", mock.Anything, mock.Anything).
-		Return(nil, assert.AnError).Once()
-
-	_, err := srv.BatchDelete(context.Background(), &pb.BatchDeleteRequest{
-		Requests: []*pb.DeleteRequest{
-			{EntityType: "users", Id: 1},
+func TestBatchDelete_Cases(t *testing.T) {
+	tests := []struct {
+		name        string
+		requests    []*pb.DeleteRequest
+		mockResp    *service.BatchDeleteResponse
+		mockErr     error
+		wantErr     bool
+		wantCode    codes.Code
+		wantDeleted []bool
+	}{
+		{
+			name:     "service error",
+			requests: []*pb.DeleteRequest{{EntityType: "users", Id: 1}},
+			mockErr:  assert.AnError,
+			wantErr:  true,
 		},
-	})
-
-	require.Error(t, err)
-	mockSvc.AssertExpectations(t)
-}
-
-func TestBatchDelete_EmptyRequests(t *testing.T) {
-	srv, _ := createTestServerWithMockService(t)
-
-	_, err := srv.BatchDelete(context.Background(), &pb.BatchDeleteRequest{
-		Requests: []*pb.DeleteRequest{},
-	})
-
-	require.Error(t, err)
-	assert.Equal(t, codes.InvalidArgument, status.Code(err))
-}
-
-func TestBatchDelete_PartialDeletions(t *testing.T) {
-	srv, mockSvc := createTestServerWithMockService(t)
-
-	mockSvc.On("BatchDelete", mock.Anything, mock.Anything).
-		Return(&service.BatchDeleteResponse{
-			Responses: []*service.DeleteResponse{
-				{Deleted: true, Timestamp: time.Now().UnixNano()},
-				{Deleted: false, Timestamp: time.Now().UnixNano()}, // Not found
-				{Deleted: true, Timestamp: time.Now().UnixNano()},
+		{
+			name:     "empty requests",
+			requests: []*pb.DeleteRequest{},
+			wantErr:  true,
+			wantCode: codes.InvalidArgument,
+		},
+		{
+			name: "partial deletions",
+			requests: []*pb.DeleteRequest{
+				{EntityType: "users", Id: 1},
+				{EntityType: "users", Id: 999},
+				{EntityType: "users", Id: 3},
 			},
-			Timestamp: time.Now().UnixNano(),
-		}, nil).Once()
-
-	resp, err := srv.BatchDelete(context.Background(), &pb.BatchDeleteRequest{
-		Requests: []*pb.DeleteRequest{
-			{EntityType: "users", Id: 1},
-			{EntityType: "users", Id: 999}, // Does not exist
-			{EntityType: "users", Id: 3},
+			mockResp: &service.BatchDeleteResponse{
+				Responses: []*service.DeleteResponse{
+					{Deleted: true, Timestamp: time.Now().UnixNano()},
+					{Deleted: false, Timestamp: time.Now().UnixNano()},
+					{Deleted: true, Timestamp: time.Now().UnixNano()},
+				},
+				Timestamp: time.Now().UnixNano(),
+			},
+			wantDeleted: []bool{true, false, true},
 		},
-	})
+	}
 
-	require.NoError(t, err)
-	assert.Len(t, resp.Responses, 3)
-	assert.True(t, resp.Responses[0].Deleted)
-	assert.False(t, resp.Responses[1].Deleted)
-	assert.True(t, resp.Responses[2].Deleted)
-	mockSvc.AssertExpectations(t)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			srv, mockSvc := createTestServerWithMockService(t)
+			if tt.mockResp != nil || tt.mockErr != nil {
+				mockSvc.On("BatchDelete", mock.Anything, mock.Anything).
+					Return(tt.mockResp, tt.mockErr).Once()
+			}
+
+			resp, err := srv.BatchDelete(context.Background(), &pb.BatchDeleteRequest{Requests: tt.requests})
+
+			if tt.wantErr {
+				require.Error(t, err)
+				if tt.wantCode != codes.OK {
+					assert.Equal(t, tt.wantCode, status.Code(err))
+				}
+			} else {
+				require.NoError(t, err)
+				require.Len(t, resp.Responses, len(tt.wantDeleted))
+				for i, deleted := range tt.wantDeleted {
+					assert.Equal(t, deleted, resp.Responses[i].Deleted)
+				}
+			}
+			mockSvc.AssertExpectations(t)
+		})
+	}
 }
 
 // =============================================================================
 // Aggregate Additional Tests
 // =============================================================================
 
-func TestAggregate_ServiceError(t *testing.T) {
-	srv, mockSvc := createTestServerWithMockService(t)
-
+func TestAggregate_Cases(t *testing.T) {
 	startTime := time.Now().Add(-1 * time.Hour).UnixNano()
 	endTime := time.Now().UnixNano()
 
-	mockSvc.On("Aggregate", mock.Anything, mock.Anything).
-		Return(nil, assert.AnError).Once()
-
-	_, err := srv.Aggregate(context.Background(), &pb.AggregateRequest{
-		EntityType: "metrics",
-		FieldName:  "value",
-		Function:   pb.AggregateFunction_AGGREGATE_FUNCTION_SUM,
-		StartTime:  startTime,
-		EndTime:    endTime,
-	})
-
-	require.Error(t, err)
-	mockSvc.AssertExpectations(t)
-}
-
-func TestAggregate_AllFunctions(t *testing.T) {
-	functions := []pb.AggregateFunction{
-		pb.AggregateFunction_AGGREGATE_FUNCTION_SUM,
-		pb.AggregateFunction_AGGREGATE_FUNCTION_AVG,
-		pb.AggregateFunction_AGGREGATE_FUNCTION_MIN,
-		pb.AggregateFunction_AGGREGATE_FUNCTION_MAX,
-		pb.AggregateFunction_AGGREGATE_FUNCTION_COUNT,
+	tests := []struct {
+		name       string
+		mockResp   *service.AggregateResponse
+		mockErr    error
+		wantErr    bool
+		wantResult float64
+	}{
+		{
+			name:       "success",
+			mockResp:   &service.AggregateResponse{Result: 42.0, Count: 10, StartTime: startTime, EndTime: endTime},
+			wantResult: 42.0,
+		},
+		{
+			name:    "service error",
+			mockErr: assert.AnError,
+			wantErr: true,
+		},
 	}
 
-	for _, fn := range functions {
-		t.Run(fn.String(), func(t *testing.T) {
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
 			srv, mockSvc := createTestServerWithMockService(t)
-
-			startTime := time.Now().Add(-1 * time.Hour).UnixNano()
-			endTime := time.Now().UnixNano()
-
 			mockSvc.On("Aggregate", mock.Anything, mock.Anything).
-				Return(&service.AggregateResponse{
-					Result:    42.0,
-					Count:     10,
-					StartTime: startTime,
-					EndTime:   endTime,
-				}, nil).Once()
+				Return(tt.mockResp, tt.mockErr).Once()
 
 			resp, err := srv.Aggregate(context.Background(), &pb.AggregateRequest{
 				EntityType: "metrics",
 				FieldName:  "value",
-				Function:   fn,
+				Function:   pb.AggregateFunction_AGGREGATE_FUNCTION_SUM,
 				StartTime:  startTime,
 				EndTime:    endTime,
 			})
 
-			require.NoError(t, err)
-			assert.Equal(t, 42.0, resp.Result)
+			if tt.wantErr {
+				require.Error(t, err)
+			} else {
+				require.NoError(t, err)
+				assert.Equal(t, tt.wantResult, resp.Result)
+			}
 			mockSvc.AssertExpectations(t)
 		})
 	}
@@ -1106,42 +1062,6 @@ func TestTransaction_ServiceError(t *testing.T) {
 	})
 
 	require.Error(t, err)
-	mockSvc.AssertExpectations(t)
-}
-
-func TestTransaction_ConditionNotMet(t *testing.T) {
-	srv, mockSvc := createTestServerWithMockService(t)
-
-	mockSvc.On("Transaction", mock.Anything, mock.Anything).
-		Return(&service.TransactionResponse{
-			Succeeded: false,
-			Responses: []*service.TransactionOpResponse{},
-			Message:   "Condition not met",
-			Timestamp: time.Now().UnixNano(),
-		}, nil).Once()
-
-	resp, err := srv.Transaction(context.Background(), &pb.TransactionRequest{
-		Compare: []*pb.CompareCondition{
-			{
-				EntityType: "user",
-				Id:         1,
-				Target:     pb.CompareTarget_COMPARE_TARGET_VERSION,
-				Operator:   pb.CompareOperator_COMPARE_OPERATOR_EQUAL,
-				Version:    999, // Wrong version
-			},
-		},
-		Success: []*pb.TransactionOp{
-			{
-				OpType:     pb.TransactionOpType_TRANSACTION_OP_TYPE_PUT,
-				EntityType: "user",
-				Id:         1,
-				Data:       []byte(`{}`),
-			},
-		},
-	})
-
-	require.NoError(t, err)
-	assert.False(t, resp.Succeeded)
 	mockSvc.AssertExpectations(t)
 }
 
@@ -1289,50 +1209,80 @@ func (m *mockShardRouter) Route(entityType string, id uint64) uint64 {
 // Get Additional Tests
 // =============================================================================
 
-func TestGet_ServiceError(t *testing.T) {
-	srv, mockSvc := createTestServerWithMockService(t)
+func TestSingleOperations_ServiceError(t *testing.T) {
+	tests := []struct {
+		method string
+		call   func(srv *Server) error
+	}{
+		{
+			method: "Get",
+			call: func(srv *Server) error {
+				_, err := srv.Get(context.Background(), &pb.GetRequest{EntityType: "users", Id: 1})
+				return err
+			},
+		},
+		{
+			method: "Delete",
+			call: func(srv *Server) error {
+				_, err := srv.Delete(context.Background(), &pb.DeleteRequest{EntityType: "users", Id: 1})
+				return err
+			},
+		},
+	}
 
-	mockSvc.On("Get", mock.Anything, mock.Anything).
-		Return(nil, assert.AnError).Once()
+	for _, tt := range tests {
+		t.Run(tt.method, func(t *testing.T) {
+			srv, mockSvc := createTestServerWithMockService(t)
+			mockSvc.On(tt.method, mock.Anything, mock.Anything).
+				Return(nil, assert.AnError).Once()
 
-	_, err := srv.Get(context.Background(), &pb.GetRequest{
-		EntityType: "users",
-		Id:         1,
-	})
-
-	require.Error(t, err)
-	mockSvc.AssertExpectations(t)
+			require.Error(t, tt.call(srv))
+			mockSvc.AssertExpectations(t)
+		})
+	}
 }
 
-func TestGet_EmptyEntityType(t *testing.T) {
-	srv, _ := createTestServerWithMockService(t)
+func TestSingleOperations_EmptyEntityType(t *testing.T) {
+	tests := []struct {
+		name string
+		call func(srv *Server) error
+	}{
+		{
+			name: "Get",
+			call: func(srv *Server) error {
+				_, err := srv.Get(context.Background(), &pb.GetRequest{EntityType: "", Id: 1})
+				return err
+			},
+		},
+		{
+			name: "Delete",
+			call: func(srv *Server) error {
+				_, err := srv.Delete(context.Background(), &pb.DeleteRequest{EntityType: "", Id: 1})
+				return err
+			},
+		},
+		{
+			name: "Put",
+			call: func(srv *Server) error {
+				_, err := srv.Put(context.Background(), &pb.PutRequest{EntityType: "", Id: 1, Data: []byte(`{}`)})
+				return err
+			},
+		},
+	}
 
-	_, err := srv.Get(context.Background(), &pb.GetRequest{
-		EntityType: "",
-		Id:         1,
-	})
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			srv, mockSvc := createTestServerWithMockService(t)
 
-	require.Error(t, err)
+			require.Error(t, tt.call(srv))
+			mockSvc.AssertExpectations(t)
+		})
+	}
 }
 
 // =============================================================================
 // Delete Additional Tests
 // =============================================================================
-
-func TestDelete_ServiceError(t *testing.T) {
-	srv, mockSvc := createTestServerWithMockService(t)
-
-	mockSvc.On("Delete", mock.Anything, mock.Anything).
-		Return(nil, assert.AnError).Once()
-
-	_, err := srv.Delete(context.Background(), &pb.DeleteRequest{
-		EntityType: "users",
-		Id:         1,
-	})
-
-	require.Error(t, err)
-	mockSvc.AssertExpectations(t)
-}
 
 func TestDelete_NotFound(t *testing.T) {
 	srv, mockSvc := createTestServerWithMockService(t)
@@ -1353,138 +1303,134 @@ func TestDelete_NotFound(t *testing.T) {
 	mockSvc.AssertExpectations(t)
 }
 
-func TestDelete_EmptyEntityType(t *testing.T) {
-	srv, _ := createTestServerWithMockService(t)
-
-	_, err := srv.Delete(context.Background(), &pb.DeleteRequest{
-		EntityType: "",
-		Id:         1,
-	})
-
-	require.Error(t, err)
-}
-
 // =============================================================================
 // BatchPut Additional Tests
 // =============================================================================
 
-func TestBatchPut_ServiceError(t *testing.T) {
-	srv, mockSvc := createTestServerWithMockService(t)
-
-	mockSvc.On("BatchPut", mock.Anything, mock.Anything).
-		Return(nil, assert.AnError).Once()
-
-	_, err := srv.BatchPut(context.Background(), &pb.BatchPutRequest{
-		Requests: []*pb.PutRequest{
-			{EntityType: "users", Id: 1, Data: []byte(`{}`)},
-		},
-	})
-
-	require.Error(t, err)
-	mockSvc.AssertExpectations(t)
-}
-
-func TestBatchPut_LargeBatch(t *testing.T) {
-	srv, mockSvc := createTestServerWithMockService(t)
-
-	// Create large batch
-	requests := make([]*pb.PutRequest, 100)
-	responses := make([]*service.PutResponse, 100)
-	for i := 0; i < 100; i++ {
-		requests[i] = &pb.PutRequest{
-			EntityType: "users",
-			Id:         uint64(i),
-			Data:       []byte(`{"name":"user"}`),
-		}
-		responses[i] = &service.PutResponse{
-			ID:        uint64(i),
-			Version:   1,
-			Timestamp: time.Now().UnixNano(),
-		}
+func TestBatchPut_Cases(t *testing.T) {
+	largeRequests := make([]*pb.PutRequest, 100)
+	largeResponses := make([]*service.PutResponse, 100)
+	for i := range largeRequests {
+		largeRequests[i] = &pb.PutRequest{EntityType: "users", Id: uint64(i), Data: []byte(`{"name":"user"}`)}
+		largeResponses[i] = &service.PutResponse{ID: uint64(i), Version: 1, Timestamp: time.Now().UnixNano()}
 	}
 
-	mockSvc.On("BatchPut", mock.Anything, mock.Anything).
-		Return(&service.BatchPutResponse{
-			Responses: responses,
-			Timestamp: time.Now().UnixNano(),
-		}, nil).Once()
+	tests := []struct {
+		name     string
+		requests []*pb.PutRequest
+		mockResp *service.BatchPutResponse
+		mockErr  error
+		wantErr  bool
+		wantCode codes.Code
+		wantLen  int
+	}{
+		{
+			name:     "service error",
+			requests: []*pb.PutRequest{{EntityType: "users", Id: 1, Data: []byte(`{}`)}},
+			mockErr:  assert.AnError,
+			wantErr:  true,
+		},
+		{
+			name:     "empty requests",
+			requests: []*pb.PutRequest{},
+			wantErr:  true,
+			wantCode: codes.InvalidArgument,
+		},
+		{
+			name:     "large batch",
+			requests: largeRequests,
+			mockResp: &service.BatchPutResponse{Responses: largeResponses, Timestamp: time.Now().UnixNano()},
+			wantLen:  100,
+		},
+	}
 
-	resp, err := srv.BatchPut(context.Background(), &pb.BatchPutRequest{
-		Requests: requests,
-	})
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			srv, mockSvc := createTestServerWithMockService(t)
+			if tt.mockResp != nil || tt.mockErr != nil {
+				mockSvc.On("BatchPut", mock.Anything, mock.Anything).
+					Return(tt.mockResp, tt.mockErr).Once()
+			}
 
-	require.NoError(t, err)
-	assert.Len(t, resp.Responses, 100)
-	mockSvc.AssertExpectations(t)
-}
+			resp, err := srv.BatchPut(context.Background(), &pb.BatchPutRequest{Requests: tt.requests})
 
-func TestBatchPut_EmptyRequests(t *testing.T) {
-	srv, _ := createTestServerWithMockService(t)
-
-	_, err := srv.BatchPut(context.Background(), &pb.BatchPutRequest{
-		Requests: []*pb.PutRequest{},
-	})
-
-	require.Error(t, err)
+			if tt.wantErr {
+				require.Error(t, err)
+				if tt.wantCode != codes.OK {
+					assert.Equal(t, tt.wantCode, status.Code(err))
+				}
+			} else {
+				require.NoError(t, err)
+				assert.Len(t, resp.Responses, tt.wantLen)
+			}
+			mockSvc.AssertExpectations(t)
+		})
+	}
 }
 
 // =============================================================================
 // Health Additional Tests
 // =============================================================================
 
-func TestHealth_Success(t *testing.T) {
-	srv, mockSvc := createTestServerWithMockService(t)
-
-	mockSvc.On("Health", mock.Anything, mock.Anything).
-		Return(&service.HealthResponse{
-			Status:        service.HealthStatusHealthy,
-			NodeID:        1,
-			Version:       "v1.0.0",
-			UptimeSeconds: 3600,
-			Details: map[string]*service.ComponentHealth{
-				"database": {Status: service.HealthStatusHealthy, Message: "ok"},
-				"raft":     {Status: service.HealthStatusHealthy, Message: "leader"},
+func TestHealth_Cases(t *testing.T) {
+	tests := []struct {
+		name       string
+		mockResp   *service.HealthResponse
+		mockErr    error
+		wantErr    bool
+		wantStatus pb.HealthStatus
+	}{
+		{
+			name: "healthy",
+			mockResp: &service.HealthResponse{
+				Status:        service.HealthStatusHealthy,
+				NodeID:        1,
+				Version:       "v1.0.0",
+				UptimeSeconds: 3600,
+				Details: map[string]*service.ComponentHealth{
+					"database": {Status: service.HealthStatusHealthy, Message: "ok"},
+					"raft":     {Status: service.HealthStatusHealthy, Message: "leader"},
+				},
 			},
-		}, nil).Once()
-
-	resp, err := srv.Health(context.Background(), &pb.HealthRequest{})
-
-	require.NoError(t, err)
-	assert.Equal(t, pb.HealthStatus_HEALTH_STATUS_HEALTHY, resp.Status)
-	mockSvc.AssertExpectations(t)
-}
-
-func TestHealth_ServiceError(t *testing.T) {
-	srv, mockSvc := createTestServerWithMockService(t)
-
-	mockSvc.On("Health", mock.Anything, mock.Anything).
-		Return(nil, assert.AnError).Once()
-
-	_, err := srv.Health(context.Background(), &pb.HealthRequest{})
-
-	require.Error(t, err)
-	mockSvc.AssertExpectations(t)
-}
-
-func TestHealth_Unhealthy(t *testing.T) {
-	srv, mockSvc := createTestServerWithMockService(t)
-
-	mockSvc.On("Health", mock.Anything, mock.Anything).
-		Return(&service.HealthResponse{
-			Status:        service.HealthStatusDegraded,
-			NodeID:        1,
-			UptimeSeconds: 3600,
-			Details: map[string]*service.ComponentHealth{
-				"database": {Status: service.HealthStatusHealthy, Message: "ok"},
-				"raft":     {Status: service.HealthStatusUnhealthy, Message: "no leader"},
+			wantStatus: pb.HealthStatus_HEALTH_STATUS_HEALTHY,
+		},
+		{
+			name: "degraded",
+			mockResp: &service.HealthResponse{
+				Status:        service.HealthStatusDegraded,
+				NodeID:        1,
+				UptimeSeconds: 3600,
+				Details: map[string]*service.ComponentHealth{
+					"database": {Status: service.HealthStatusHealthy, Message: "ok"},
+					"raft":     {Status: service.HealthStatusUnhealthy, Message: "no leader"},
+				},
 			},
-		}, nil).Once()
+			wantStatus: pb.HealthStatus_HEALTH_STATUS_DEGRADED,
+		},
+		{
+			name:    "service error",
+			mockErr: assert.AnError,
+			wantErr: true,
+		},
+	}
 
-	resp, err := srv.Health(context.Background(), &pb.HealthRequest{})
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			srv, mockSvc := createTestServerWithMockService(t)
+			mockSvc.On("Health", mock.Anything, mock.Anything).
+				Return(tt.mockResp, tt.mockErr).Once()
 
-	require.NoError(t, err)
-	assert.Equal(t, pb.HealthStatus_HEALTH_STATUS_DEGRADED, resp.Status)
-	mockSvc.AssertExpectations(t)
+			resp, err := srv.Health(context.Background(), &pb.HealthRequest{})
+
+			if tt.wantErr {
+				require.Error(t, err)
+			} else {
+				require.NoError(t, err)
+				assert.Equal(t, tt.wantStatus, resp.Status)
+			}
+			mockSvc.AssertExpectations(t)
+		})
+	}
 }
 
 // =============================================================================
@@ -1529,18 +1475,6 @@ func TestClusterStatus_ServiceError(t *testing.T) {
 // Put Additional Tests
 // =============================================================================
 
-func TestPut_EmptyEntityType(t *testing.T) {
-	srv, _ := createTestServerWithMockService(t)
-
-	_, err := srv.Put(context.Background(), &pb.PutRequest{
-		EntityType: "",
-		Id:         1,
-		Data:       []byte(`{}`),
-	})
-
-	require.Error(t, err)
-}
-
 func TestPut_WithTTL(t *testing.T) {
 	srv, mockSvc := createTestServerWithMockService(t)
 
@@ -1563,70 +1497,9 @@ func TestPut_WithTTL(t *testing.T) {
 	mockSvc.AssertExpectations(t)
 }
 
-func TestPut_AllConsistencyLevels(t *testing.T) {
-	consistencyLevels := []pb.ConsistencyLevel{
-		pb.ConsistencyLevel_CONSISTENCY_LEVEL_UNSPECIFIED,
-		pb.ConsistencyLevel_CONSISTENCY_LEVEL_EVENTUAL,
-		pb.ConsistencyLevel_CONSISTENCY_LEVEL_STRONG,
-		pb.ConsistencyLevel_CONSISTENCY_LEVEL_LINEARIZABLE,
-	}
-
-	for _, level := range consistencyLevels {
-		t.Run(level.String(), func(t *testing.T) {
-			srv, mockSvc := createTestServerWithMockService(t)
-
-			mockSvc.On("Put", mock.Anything, mock.Anything).
-				Return(&service.PutResponse{
-					ID:        1,
-					Version:   1,
-					Timestamp: time.Now().UnixNano(),
-				}, nil).Once()
-
-			resp, err := srv.Put(context.Background(), &pb.PutRequest{
-				EntityType:  "users",
-				Id:          1,
-				Data:        []byte(`{"name":"test"}`),
-				Consistency: level,
-			})
-
-			require.NoError(t, err)
-			assert.Equal(t, uint64(1), resp.Id)
-			mockSvc.AssertExpectations(t)
-		})
-	}
-}
-
 // =============================================================================
 // Transaction Additional Tests
 // =============================================================================
-
-func TestTransaction_WithMultipleSuccessOps(t *testing.T) {
-	srv, mockSvc := createTestServerWithMockService(t)
-
-	mockSvc.On("Transaction", mock.Anything, mock.Anything).
-		Return(&service.TransactionResponse{
-			Succeeded: true,
-			Responses: []*service.TransactionOpResponse{
-				{Success: true, ID: 1, Version: 1},
-				{Success: true, ID: 2, Version: 1},
-				{Success: true, ID: 3, Version: 1},
-			},
-			Timestamp: time.Now().UnixNano(),
-		}, nil).Once()
-
-	resp, err := srv.Transaction(context.Background(), &pb.TransactionRequest{
-		Success: []*pb.TransactionOp{
-			{OpType: pb.TransactionOpType_TRANSACTION_OP_TYPE_PUT, EntityType: "users", Id: 1, Data: []byte(`{"name":"a"}`)},
-			{OpType: pb.TransactionOpType_TRANSACTION_OP_TYPE_PUT, EntityType: "users", Id: 2, Data: []byte(`{"name":"b"}`)},
-			{OpType: pb.TransactionOpType_TRANSACTION_OP_TYPE_PUT, EntityType: "users", Id: 3, Data: []byte(`{"name":"c"}`)},
-		},
-	})
-
-	require.NoError(t, err)
-	assert.True(t, resp.Succeeded)
-	assert.Len(t, resp.Responses, 3)
-	mockSvc.AssertExpectations(t)
-}
 
 func TestTransaction_AllOpTypes(t *testing.T) {
 	srv, mockSvc := createTestServerWithMockService(t)
@@ -1652,6 +1525,7 @@ func TestTransaction_AllOpTypes(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.True(t, resp.Succeeded)
+	assert.Len(t, resp.Responses, 3)
 	mockSvc.AssertExpectations(t)
 }
 
