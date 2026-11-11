@@ -33,6 +33,7 @@ import (
 	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
 
 	dberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 // WebAuthnFactoryConfig holds the relying-party configuration used by the
@@ -728,11 +729,16 @@ func NewTenantManagerWebAuthnSettings(tenants TenantManager) *TenantManagerWebAu
 //   - any other GetTenant error (storage/transport/decode failure) ->
 //     (*WebAuthnSettingsReadError): the WebAuthn ceremony for that tenant is
 //     denied rather than served under the wrong relying party.
+//
+// The tenant catalog lives in the system namespace, so the read is bound to
+// it whatever tenant ctx carries: a caller acting inside tenantID (credential
+// administration) would otherwise read that tenant's own store, find no
+// catalog record there, and get the global relying party as "no override".
 func (a *TenantManagerWebAuthnSettings) WebAuthnSettingsFor(ctx context.Context, tenantID string) (*TenantWebAuthnConfig, error) {
 	if a == nil || a.tenants == nil {
 		return nil, nil
 	}
-	tenant, err := a.tenants.GetTenant(ctx, tenantID)
+	tenant, err := a.tenants.GetTenant(tenantctx.WithSystem(ctx), tenantID) // the tenant catalog lives in the system namespace
 	if err != nil {
 		if dberrors.IsNotFound(err) {
 			// No such tenant: the legitimate not-configured case. Fall back

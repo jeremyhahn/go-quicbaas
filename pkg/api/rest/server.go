@@ -893,7 +893,9 @@ func (s *Server) SetTenantBarrierService(svc service.TenantBarrierServicer) {
 // tenant_barrier:enable_encryption against the named tenant for a tenant's.
 // Lifecycle wiring passes go-qrdb's RBAC authorizer — the same decision point
 // every registration-site permission is rendered by. Passing nil makes the
-// route fail closed (503).
+// route fail closed (503). The same authorizer renders the route permission
+// in the URL's tenant when a system caller names another tenant on the REST
+// IAM routes (urlTenant).
 func (s *Server) SetBarrierScopeAuthorizer(authz qrdbsdk.Authorizer) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

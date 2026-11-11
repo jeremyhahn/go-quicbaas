@@ -389,6 +389,10 @@ func (s *Server) initializeIAMComponents() (service.IAMComponents, error) {
 		s.logger.WithError(syncErr).Warn("Initial ABAC policy sync failed; live enforcement may not reflect previously stored policies")
 	}
 
+	// A tenant sealed now stands in the live set as a deny; reload when its
+	// barrier opens so its stored policies take over.
+	s.resyncABACOnTenantUnseal(policyEngine.SyncABAC)
+
 	// Create app manager
 	// The grantor gate on application updates reads the caller's qrdb
 	// effective permissions through the same late-bound resolver token
