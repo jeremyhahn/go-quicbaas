@@ -25,8 +25,10 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -59,6 +61,21 @@ type testCluster struct {
 	unixSocket   string
 	client       *http.Client
 	grpcConn     *grpc.ClientConn
+
+	// t is the test that set the cluster up.
+	t *testing.T
+
+	// mu guards systemBearer, tenantAdmins, securityOfficers and current.
+	mu sync.Mutex
+	// systemBearer is the system admin's bearer, fetched once.
+	systemBearer string
+	// tenantAdmins holds each provisioned tenant's admin session, by tenant ID.
+	tenantAdmins map[string]*helpers.TenantAdminSession
+	// securityOfficers holds each tenant's security officer session, by tenant
+	// ID, enrolled the first time a test writes a role in that tenant.
+	securityOfficers map[string]*helpers.TenantAdminSession
+	// current is the tenant the test last provisioned.
+	current string
 }
 
 // TestMain sets up and tears down the test environment.
@@ -142,20 +159,46 @@ func (b *retryBackoff) wait() {
 // waitForIAMReady waits for the IAM shard (shard 1) to be ready.
 // It does this by attempting multiple ListTenants operations which require
 // the IAM shard to be available for reads. We require multiple consecutive
-// successful responses to ensure the shard is stable.
+// successful responses to ensure the shard is stable. The probe reads as the
+// system admin, because the integration node runs with require_authz and
+// ListTenants needs a bearer.
 func waitForIAMReady(ctx context.Context, client *http.Client, endpoint string) bool {
 	fmt.Println("Waiting for IAM shard to be ready...")
 
 	// Require 10 consecutive successes, 3 seconds apart, for 30 seconds of stability
 	const requiredSuccesses = 10
 	consecutiveSuccesses := 0
+	var bearer string
 
 	for {
 		interval := 2 * time.Second
-		resp, err := client.Get(endpoint + "/api/v1/tenants")
+		var resp *http.Response
+		var err error
+		if bearer == "" {
+			var token string
+			token, _, err = helpers.AuthPIVSession(ctx, endpoint, "", "", "")
+			if err != nil {
+				fmt.Printf("IAM readiness login failed: %v\n", err)
+				bearer = ""
+			} else {
+				bearer = token
+			}
+		}
+		if err == nil {
+			var req *http.Request
+			req, err = http.NewRequestWithContext(ctx, http.MethodGet, endpoint+"/api/v1/tenants", nil)
+			if err == nil {
+				req.Header.Set("Authorization", "Bearer "+bearer)
+				resp, err = client.Do(req)
+			}
+		}
 		if err == nil {
 			body, _ := io.ReadAll(resp.Body)
 			resp.Body.Close()
+			if resp.StatusCode == http.StatusUnauthorized {
+				// The bearer expired or was refused: log in again on the next pass.
+				bearer = ""
+			}
 
 			switch {
 			case resp.StatusCode == http.StatusOK:
@@ -251,12 +294,15 @@ func setupTestCluster(t *testing.T) *testCluster {
 	require.NoError(t, err, "Failed to connect to gRPC endpoint")
 
 	return &testCluster{
-		httpEndpoint: httpEndpoint,
-		grpcEndpoint: grpcEndpoint,
-		quicEndpoint: quicEndpoint,
-		unixSocket:   unixSocket,
-		client:       httpClient,
-		grpcConn:     grpcConn,
+		httpEndpoint:     httpEndpoint,
+		grpcEndpoint:     grpcEndpoint,
+		quicEndpoint:     quicEndpoint,
+		unixSocket:       unixSocket,
+		client:           httpClient,
+		grpcConn:         grpcConn,
+		t:                t,
+		tenantAdmins:     make(map[string]*helpers.TenantAdminSession),
+		securityOfficers: make(map[string]*helpers.TenantAdminSession),
 	}
 }
 
@@ -314,6 +360,35 @@ func isRetryableError(statusCode int, body string) bool {
 
 // doHTTPRequest performs an HTTP request and returns the response.
 func (tc *testCluster) doHTTPRequest(method, path string, body interface{}) (*http.Response, error) {
+	req, err := tc.newHTTPRequest(method, path, body)
+	if err != nil {
+		return nil, err
+	}
+
+	bearer, err := tc.bearerFor(method, path)
+	if err != nil {
+		return nil, err
+	}
+	if bearer != "" {
+		req.Header.Set("Authorization", "Bearer "+bearer)
+	}
+
+	return tc.client.Do(req)
+}
+
+// doAnonHTTPRequest sends the request with no bearer, for tests that check
+// unauthenticated access.
+func (tc *testCluster) doAnonHTTPRequest(method, path string, body interface{}) (*http.Response, error) {
+	req, err := tc.newHTTPRequest(method, path, body)
+	if err != nil {
+		return nil, err
+	}
+	return tc.client.Do(req)
+}
+
+// newHTTPRequest builds a request to the cluster's REST endpoint, with body
+// encoded as JSON when it is not nil.
+func (tc *testCluster) newHTTPRequest(method, path string, body interface{}) (*http.Request, error) {
 	var reqBody io.Reader
 	if body != nil {
 		data, err := json.Marshal(body)
@@ -331,8 +406,207 @@ func (tc *testCluster) doHTTPRequest(method, path string, body interface{}) (*ht
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
+	return req, nil
+}
 
-	return tc.client.Do(req)
+// provisionTenant is how a test gets a tenant it then works inside: the system
+// admin provisions tenantID through helpers.TenantAdmin, whose own cleanup
+// deletes it, and tenant-scoped calls through the helpers (getJSON, postJSON,
+// putJSON, deleteJSON, ...) then carry that tenant admin's bearer.
+func (tc *testCluster) provisionTenant(t *testing.T, tenantID string) string {
+	t.Helper()
+	session := helpers.TenantAdmin(t, tc.httpEndpoint, tenantID)
+
+	tc.mu.Lock()
+	tc.tenantAdmins[tenantID] = session
+	tc.current = tenantID
+	tc.mu.Unlock()
+
+	t.Cleanup(func() {
+		tc.mu.Lock()
+		delete(tc.tenantAdmins, tenantID)
+		delete(tc.securityOfficers, tenantID)
+		if tc.current == tenantID {
+			tc.current = ""
+		}
+		tc.mu.Unlock()
+	})
+	return tenantID
+}
+
+// callerUserID returns the user id of tenantID's provisioned admin: the user
+// the helpers authenticate as on /api/v1/iam/ paths while tenantID is the
+// current tenant.
+func (tc *testCluster) callerUserID(t *testing.T, tenantID string) string {
+	t.Helper()
+	tc.mu.Lock()
+	session := tc.tenantAdmins[tenantID]
+	tc.mu.Unlock()
+	require.NotNil(t, session, "tenant %q has no provisioned admin", tenantID)
+
+	userID := session.Tenant().AdminUserID
+	require.NotEmpty(t, userID, "the provision response for tenant %q named no admin user", tenantID)
+	return userID
+}
+
+// bearerFor returns the bearer a request to path carries: the system admin's
+// for the tenant control plane (/api/v1/tenants and a tenant's record) and the
+// delegated-admin routes (/api/v1/admin/), the
+// tenant's own admin's for a path inside a tenant, for other /api/v1/iam/ paths
+// the admin's of the tenant the tenant_id query parameter names when that
+// tenant was provisioned here, else the current tenant's admin's (else the
+// system admin's), and none for public endpoints. The system bearer never goes
+// to a path inside a tenant that has a recorded admin, because the tenant
+// routes refuse it. A role create, update or delete inside such a tenant
+// carries the bearer of the tenant's security officer.
+func (tc *testCluster) bearerFor(method, path string) (string, error) {
+	queryTenant := ""
+	if i := strings.IndexByte(path, '?'); i >= 0 {
+		if values, err := url.ParseQuery(path[i+1:]); err == nil {
+			queryTenant = values.Get("tenant_id")
+		}
+		path = path[:i]
+	}
+
+	const tenantsPath = "/api/v1/tenants"
+	switch {
+	case path == tenantsPath, strings.HasPrefix(path, "/api/v1/admin/"):
+		return tc.systemAdminBearer()
+
+	case strings.HasPrefix(path, tenantsPath+"/"):
+		tenantID, sub, _ := strings.Cut(strings.TrimPrefix(path, tenantsPath+"/"), "/")
+		if sub == "" {
+			// The tenant record itself.
+			return tc.systemAdminBearer()
+		}
+		tc.mu.Lock()
+		session := tc.tenantAdmins[tenantID]
+		tc.mu.Unlock()
+		if session == nil {
+			return tc.systemAdminBearer()
+		}
+		if isRoleWrite(method, sub) {
+			return tc.securityOfficerBearer(session, tenantID)
+		}
+		return tenantAdminBearer(session, tenantID)
+
+	case strings.HasPrefix(path, "/api/v1/iam/"):
+		tc.mu.Lock()
+		tenantID := tc.current
+		if queryTenant != "" && tc.tenantAdmins[queryTenant] != nil {
+			tenantID = queryTenant
+		}
+		session := tc.tenantAdmins[tenantID]
+		tc.mu.Unlock()
+		if session == nil {
+			return tc.systemAdminBearer()
+		}
+		return tenantAdminBearer(session, tenantID)
+
+	default:
+		return "", nil
+	}
+}
+
+// systemAdminBearer logs in as the system admin once per testCluster and
+// caches the bearer.
+func (tc *testCluster) systemAdminBearer() (string, error) {
+	tc.mu.Lock()
+	defer tc.mu.Unlock()
+	if tc.systemBearer != "" {
+		return tc.systemBearer, nil
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	bearer, err := helpers.AuthSystemAdminContext(ctx, tc.httpEndpoint)
+	if err != nil {
+		return "", fmt.Errorf("system admin login: %w", err)
+	}
+	tc.systemBearer = bearer
+	return bearer, nil
+}
+
+// adminClient returns tc.client with the system admin's bearer on every
+// request that carries no Authorization header of its own. Tests that call
+// the delegated-admin routes (/api/v1/admin/) with a raw client use it: those
+// routes refuse an anonymous caller.
+func (tc *testCluster) adminClient() *http.Client {
+	client := *tc.client
+	client.Transport = &systemAdminTransport{tc: tc, base: tc.client.Transport}
+	return &client
+}
+
+// systemAdminTransport adds the system admin's bearer to a request that has
+// no Authorization header.
+type systemAdminTransport struct {
+	tc   *testCluster
+	base http.RoundTripper
+}
+
+// RoundTrip implements http.RoundTripper.
+func (s *systemAdminTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	base := s.base
+	if base == nil {
+		base = http.DefaultTransport
+	}
+	if req.Header.Get("Authorization") != "" {
+		return base.RoundTrip(req)
+	}
+	bearer, err := s.tc.systemAdminBearer()
+	if err != nil {
+		return nil, err
+	}
+	authed := req.Clone(req.Context())
+	authed.Header.Set("Authorization", "Bearer "+bearer)
+	return base.RoundTrip(authed)
+}
+
+// tenantAdminBearer returns the bearer of tenantID's admin session.
+func tenantAdminBearer(session *helpers.TenantAdminSession, tenantID string) (string, error) {
+	bearer, err := session.Bearer(context.Background())
+	if err != nil {
+		return "", fmt.Errorf("tenant %q admin login: %w", tenantID, err)
+	}
+	return bearer, nil
+}
+
+// isRoleWrite reports whether a request to sub, the path below a tenant,
+// creates, updates or deletes a role. go-qrdb grants those to the tenant's
+// Security Officer and not to its Admin.
+func isRoleWrite(method, sub string) bool {
+	if method != http.MethodPost && method != http.MethodPut && method != http.MethodDelete {
+		return false
+	}
+	return sub == "roles" || strings.HasPrefix(sub, "roles/")
+}
+
+// securityOfficerBearer returns the bearer of tenantID's security officer.
+// The first call for a tenant has admin, the tenant's admin, enrol the
+// officer.
+func (tc *testCluster) securityOfficerBearer(admin *helpers.TenantAdminSession, tenantID string) (string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	tc.mu.Lock()
+	officer := tc.securityOfficers[tenantID]
+	tc.mu.Unlock()
+	if officer == nil {
+		enrolled, err := helpers.EnrollTenantSecurityOfficer(ctx, tc.httpEndpoint, admin)
+		if err != nil {
+			return "", fmt.Errorf("tenant %q security officer enrolment: %w", tenantID, err)
+		}
+		tc.mu.Lock()
+		tc.securityOfficers[tenantID] = enrolled
+		tc.mu.Unlock()
+		officer = enrolled
+	}
+
+	bearer, err := officer.Bearer(ctx)
+	if err != nil {
+		return "", fmt.Errorf("tenant %q security officer login: %w", tenantID, err)
+	}
+	return bearer, nil
 }
 
 // getJSON performs a GET request and unmarshals the JSON response.

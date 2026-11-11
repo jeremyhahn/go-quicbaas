@@ -729,12 +729,8 @@ func TestOIDCMultiTenantIsolation(t *testing.T) {
 	tenant1ID := generateUniqueTenantID()
 	tenant2ID := generateUniqueTenantID()
 
-	tenant1 := map[string]interface{}{"id": tenant1ID, "name": "Tenant 1"}
-	tenant2 := map[string]interface{}{"id": tenant2ID, "name": "Tenant 2"}
-
-	var t1, t2 iam.Tenant
-	require.NoError(t, cluster.postJSON("/api/v1/tenants", tenant1, &t1))
-	require.NoError(t, cluster.postJSON("/api/v1/tenants", tenant2, &t2))
+	cluster.provisionTenant(t, tenant1ID)
+	cluster.provisionTenant(t, tenant2ID)
 
 	defer cluster.deleteJSON(fmt.Sprintf("/api/v1/tenants/%s", tenant1ID))
 	defer cluster.deleteJSON(fmt.Sprintf("/api/v1/tenants/%s", tenant2ID))

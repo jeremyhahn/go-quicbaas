@@ -72,7 +72,8 @@ func pivLoginSession(t *testing.T, cluster *testCluster) *helpers.PIVSession {
 	return session
 }
 
-// postRefresh redeems a refresh credential against the public renewal endpoint.
+// postRefresh redeems a refresh credential at quicbaas's own renewal endpoint,
+// /api/v1/iam/refresh. On a composed node, /api/v1/auth/refresh is go-xkms's.
 func postRefresh(t *testing.T, cluster *testCluster, refreshToken string) (int, sessionTokens, string) {
 	t.Helper()
 
@@ -80,7 +81,7 @@ func postRefresh(t *testing.T, cluster *testCluster, refreshToken string) (int, 
 	require.NoError(t, err)
 
 	req, err := http.NewRequest(http.MethodPost,
-		cluster.httpEndpoint+"/api/v1/auth/refresh", bytes.NewReader(payload))
+		cluster.httpEndpoint+"/api/v1/iam/refresh", bytes.NewReader(payload))
 	require.NoError(t, err)
 	req.Header.Set("Content-Type", "application/json")
 

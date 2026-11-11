@@ -31,17 +31,15 @@ import (
 	"net/http"
 )
 
-// RoleID names the tenant role the data-plane principal is bound to.
-const RoleID = "integration-data-plane"
-
 // TenantPrefix prefixes the tenant each suite process provisions for its
 // data-plane principal.
 const TenantPrefix = "itest-dp"
 
-// Permissions is the complete permission set of the data-plane role: the
-// entity CRUD, list and range verbs and the batch verb. It is what the server's
-// authorization mapping requires for Get, Put, Delete, List, Query, the Batch*
-// RPCs, StreamBatchPut and the REST entity and batch routes.
+// Permissions is the permission set the data-plane principal needs: the
+// entity CRUD, list and range verbs and the batch verb. The tenant's built-in
+// Operator role grants all of them. It is what the server's authorization
+// mapping requires for Get, Put, Delete, List, Query, the Batch* RPCs,
+// StreamBatchPut and the REST entity and batch routes.
 var Permissions = []string{
 	"kv:get",
 	"kv:put",
