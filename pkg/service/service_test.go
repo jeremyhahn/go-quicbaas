@@ -739,8 +739,61 @@ type coverageEmbeddingManager struct {
 	mock.Mock
 }
 
+func newCoverageEmbeddingManager() *coverageEmbeddingManager {
+	return &coverageEmbeddingManager{}
+}
+
+type coverageEmbeddingProvider struct {
+	mock.Mock
+}
+
+func newCoverageEmbeddingProvider() *coverageEmbeddingProvider {
+	return &coverageEmbeddingProvider{}
+}
+
+func (m *coverageEmbeddingProvider) MaxTokens() int {
+	args := m.Called()
+	return args.Int(0)
+}
+
+func (m *coverageEmbeddingProvider) Name() string {
+	args := m.Called()
+	return args.String(0)
+}
+
+func (m *coverageEmbeddingProvider) Embed(ctx context.Context, text string) ([]float32, error) {
+	args := m.Called(ctx, text)
+	if v := args.Get(0); v != nil {
+		return v.([]float32), args.Error(1)
+	}
+	return nil, args.Error(1)
+}
+
+func (m *coverageEmbeddingProvider) EmbedBatch(ctx context.Context, texts []string) ([][]float32, error) {
+	args := m.Called(ctx, texts)
+	if v := args.Get(0); v != nil {
+		return v.([][]float32), args.Error(1)
+	}
+	return nil, args.Error(1)
+}
+
+func (m *coverageEmbeddingProvider) Dimensions() int {
+	args := m.Called()
+	return args.Int(0)
+}
+
+func (m *coverageEmbeddingProvider) Close() error {
+	return nil
+}
+
 type coverageEmbeddingLogger struct {
 	fields map[string]interface{}
+}
+
+func newCoverageEmbeddingLogger() *coverageEmbeddingLogger {
+	return &coverageEmbeddingLogger{
+		fields: make(map[string]interface{}),
+	}
 }
 
 type mockKMSScheduler struct{}
