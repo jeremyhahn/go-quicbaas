@@ -78,7 +78,10 @@ type TenantBarrierServicer interface {
 // TenantClient bound to the platform shard. It carries no barrier state — it is
 // a pure delegation facade, mirroring databaseService.
 type tenantBarrierService struct {
-	qrdb qrdbtransport.TenantClient
+	// source returns the qrdb tenant client for one call. The facade asks on
+	// every call, so a client rebuilt over a replaced node service graph is
+	// the one used; nil is answered as unavailable.
+	source func() qrdbtransport.TenantClient
 
 	// unsealed is told after every successful unseal; nil tells no one.
 	unsealed *TenantUnsealHooks
@@ -91,11 +94,31 @@ var _ TenantBarrierServicer = (*tenantBarrierService)(nil)
 // qrdb node's TenantClient. The client MUST be non-nil; callers gate
 // construction on a live platform-shard client.
 func NewTenantBarrierService(qrdb qrdbtransport.TenantClient, opts ...TenantBarrierOption) TenantBarrierServicer {
-	svc := &tenantBarrierService{qrdb: qrdb}
+	return NewTenantBarrierServiceFrom(func() qrdbtransport.TenantClient { return qrdb }, opts...)
+}
+
+// NewTenantBarrierServiceFrom creates a TenantBarrierServicer that asks source
+// for the qrdb TenantClient on every call. It is for a caller whose client can
+// be replaced while the facade lives: the embedded node builds a new service
+// graph when the system barrier is unsealed again or its encryption is
+// migrated. While source returns nil every verb answers ErrUnavailable.
+func NewTenantBarrierServiceFrom(source func() qrdbtransport.TenantClient, opts ...TenantBarrierOption) TenantBarrierServicer {
+	svc := &tenantBarrierService{source: source}
 	for _, opt := range opts {
 		opt(svc)
 	}
 	return svc
+}
+
+// client returns the qrdb tenant client for one call, or ErrUnavailable while
+// there is none.
+func (s *tenantBarrierService) client(op string) (qrdbtransport.TenantClient, error) {
+	if s.source != nil {
+		if qrdb := s.source(); qrdb != nil {
+			return qrdb, nil
+		}
+	}
+	return nil, NewError(errors.ErrUnavailable, op, "tenant barrier service unavailable: the embedded qrdb node is not running")
 }
 
 // enforceTenantBinding is the MUTATION gate: it ensures the authenticated
@@ -187,7 +210,11 @@ func (s *tenantBarrierService) TenantBarrierInit(ctx context.Context, tenantID s
 			return nil, NewError(errors.ErrInvalidInput, "tenant_barrier.init", "shamir threshold must be <= shares")
 		}
 	}
-	return s.qrdb.TenantBarrierInit(ctx, &qrdbtransport.TenantBarrierInitRequest{
+	qrdb, err := s.client("tenant_barrier.init")
+	if err != nil {
+		return nil, err
+	}
+	return qrdb.TenantBarrierInit(ctx, &qrdbtransport.TenantBarrierInitRequest{
 		TenantID:   tenantID,
 		Passphrase: passphrase,
 		Threshold:  threshold,
@@ -201,7 +228,11 @@ func (s *tenantBarrierService) TenantBarrierUnseal(ctx context.Context, tenantID
 	if err := enforceTenantBinding(ctx, "tenant_barrier.unseal", tenantID); err != nil {
 		return err
 	}
-	if err := s.qrdb.TenantBarrierUnseal(ctx, &qrdbtransport.TenantBarrierUnsealRequest{
+	qrdb, err := s.client("tenant_barrier.unseal")
+	if err != nil {
+		return err
+	}
+	if err := qrdb.TenantBarrierUnseal(ctx, &qrdbtransport.TenantBarrierUnsealRequest{
 		TenantID: tenantID,
 		Key:      key,
 	}); err != nil {
@@ -217,7 +248,11 @@ func (s *tenantBarrierService) TenantBarrierUnsealShare(ctx context.Context, ten
 	if err := enforceTenantBinding(ctx, "tenant_barrier.unseal_share", tenantID); err != nil {
 		return nil, err
 	}
-	progress, err := s.qrdb.TenantBarrierUnsealShare(ctx, &qrdbtransport.TenantBarrierUnsealShareRequest{
+	qrdb, err := s.client("tenant_barrier.unseal_share")
+	if err != nil {
+		return nil, err
+	}
+	progress, err := qrdb.TenantBarrierUnsealShare(ctx, &qrdbtransport.TenantBarrierUnsealShareRequest{
 		TenantID: tenantID,
 		Share:    share,
 	})
@@ -235,7 +270,11 @@ func (s *tenantBarrierService) TenantBarrierSeal(ctx context.Context, tenantID s
 	if err := enforceTenantBinding(ctx, "tenant_barrier.seal", tenantID); err != nil {
 		return err
 	}
-	return s.qrdb.TenantBarrierSeal(ctx, &qrdbtransport.TenantBarrierSealRequest{TenantID: tenantID})
+	qrdb, err := s.client("tenant_barrier.seal")
+	if err != nil {
+		return err
+	}
+	return qrdb.TenantBarrierSeal(ctx, &qrdbtransport.TenantBarrierSealRequest{TenantID: tenantID})
 }
 
 // TenantBarrierStatus delegates a status query to qrdb. Status is the
@@ -246,5 +285,9 @@ func (s *tenantBarrierService) TenantBarrierStatus(ctx context.Context, tenantID
 	if err := enforceTenantReadBinding(ctx, "tenant_barrier.status", tenantID); err != nil {
 		return nil, err
 	}
-	return s.qrdb.TenantBarrierStatus(ctx, &qrdbtransport.TenantBarrierStatusRequest{TenantID: tenantID})
+	qrdb, err := s.client("tenant_barrier.status")
+	if err != nil {
+		return nil, err
+	}
+	return qrdb.TenantBarrierStatus(ctx, &qrdbtransport.TenantBarrierStatusRequest{TenantID: tenantID})
 }

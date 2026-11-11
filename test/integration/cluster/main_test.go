@@ -36,6 +36,14 @@ func TestMain(m *testing.M) {
 	// Run tests
 	code := m.Run()
 
+	// The tenant of the suite's tenant operator outlives every test, so no
+	// t.Cleanup can delete it. A release that fails, for example because a
+	// failover target left node 1 stopped, is reported and does not change
+	// the exit code.
+	if err := helpers.ReleaseDataPlaneTenants(); err != nil {
+		fmt.Fprintf(os.Stderr, "release data-plane tenants: %v\n", err)
+	}
+
 	// Exit with test result code
 	os.Exit(code)
 }
