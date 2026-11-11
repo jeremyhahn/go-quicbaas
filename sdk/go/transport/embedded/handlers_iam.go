@@ -461,7 +461,11 @@ func handleIAMUserList(ctx context.Context, svc service.QuicBaaS, req interface{
 	}
 	tenantID, _ := iamRequestField(req, "TenantID")
 	limit := 0
-	if r, ok := req.(*iamsdk.ListUsersRequest); ok {
+	if r, ok := iamRequestStructPtr(req, "Request").(*iamsdk.ListUsersRequest); ok && r != nil {
+		// The SDK client sends its wrapper (TenantID plus Request), so the
+		// page size is read from the wrapped request (#1846).
+		limit = r.PageSize
+	} else if r, ok := req.(*iamsdk.ListUsersRequest); ok && r != nil {
 		limit = r.PageSize
 	}
 	users, err := store.ListUsers(ctx, tenantID, iam.ListOptions{Limit: limit})
@@ -556,7 +560,11 @@ func handleIAMRoleList(ctx context.Context, svc service.QuicBaaS, req interface{
 	}
 	tenantID, _ := iamRequestField(req, "TenantID")
 	limit := 0
-	if r, ok := req.(*iamsdk.ListRolesRequest); ok {
+	if r, ok := iamRequestStructPtr(req, "Request").(*iamsdk.ListRolesRequest); ok && r != nil {
+		// The SDK client sends its wrapper (TenantID plus Request), so the
+		// page size is read from the wrapped request (#1846).
+		limit = r.PageSize
+	} else if r, ok := req.(*iamsdk.ListRolesRequest); ok && r != nil {
 		limit = r.PageSize
 	}
 	roles, err := store.ListRoles(ctx, tenantID, iam.ListOptions{Limit: limit})
