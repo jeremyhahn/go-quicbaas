@@ -63,6 +63,21 @@ const gracefulShutdownMarker = "Performing graceful shutdown..."
 // discarded buffered writes.
 const nodeCloseMarker = "Embedded qrdb node shutdown complete"
 
+// durabilityTrustDomain is the SPIFFE trust domain the signal tests give the
+// daemon. First boot refuses to start without one, and the setting is read
+// only from the config file.
+const durabilityTrustDomain = "quicbaas.durability.test"
+
+// writeTrustDomainConfig writes a minimal daemon config carrying the trust
+// domain into dataDir and returns its path for --config.
+func writeTrustDomainConfig(t *testing.T, dataDir string) string {
+	t.Helper()
+	path := filepath.Join(dataDir, "quicbaasd.yaml")
+	body := "iam:\n  spiffe_trust_domain: " + durabilityTrustDomain + "\n"
+	require.NoError(t, os.WriteFile(path, []byte(body), 0o600), "write daemon config")
+	return path
+}
+
 // resolveDaemonBinary returns an absolute path to the quicbaasd binary built
 // from the current tree. PATH is deliberately not consulted so the test can
 // never silently validate a stale install.
@@ -148,6 +163,28 @@ func waitForREST(t *testing.T, port int, exited <-chan struct{}) error {
 	}
 }
 
+// daemonLogTailBytes bounds how much of the daemon log a failed run prints.
+const daemonLogTailBytes = 8 << 10
+
+// logDaemonTailOnFailure prints the end of the daemon's own log when the test
+// has failed: an exit status says that the daemon stopped, only its log says
+// why.
+func logDaemonTailOnFailure(t *testing.T, logPath string) {
+	t.Helper()
+	if !t.Failed() {
+		return
+	}
+	logBytes, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Logf("daemon log unreadable: %v", err)
+		return
+	}
+	if len(logBytes) > daemonLogTailBytes {
+		logBytes = logBytes[len(logBytes)-daemonLogTailBytes:]
+	}
+	t.Logf("daemon log tail:\n%s", logBytes)
+}
+
 // TestDaemonSIGTERMRunsGracefulShutdown is the end-to-end regression test for
 // the reported data loss. It spawns the real quicbaasd binary, sends SIGTERM,
 // and asserts the daemon shut down gracefully.
@@ -170,9 +207,11 @@ func TestDaemonSIGTERMRunsGracefulShutdown(t *testing.T) {
 	logFile, err := os.Create(logPath)
 	require.NoError(t, err, "create daemon log file")
 	defer logFile.Close()
+	defer logDaemonTailOnFailure(t, logPath)
 
 	cmd := exec.Command(binary,
 		"start",
+		"--config", writeTrustDomainConfig(t, dataDir),
 		"--data-dir", dataDir,
 		"--log-level", "info",
 		"--http-port", strconv.Itoa(restPort),
@@ -251,9 +290,11 @@ func TestDaemonSIGINTRunsGracefulShutdown(t *testing.T) {
 	logFile, err := os.Create(logPath)
 	require.NoError(t, err, "create daemon log file")
 	defer logFile.Close()
+	defer logDaemonTailOnFailure(t, logPath)
 
 	cmd := exec.Command(binary,
 		"start",
+		"--config", writeTrustDomainConfig(t, dataDir),
 		"--data-dir", dataDir,
 		"--log-level", "info",
 		"--http-port", strconv.Itoa(restPort),

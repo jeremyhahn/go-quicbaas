@@ -408,7 +408,7 @@ func TestCAServiceAdapter_RevokeCertificate_Local_CAErrorReturnsFailureResponse(
 	adapter, err := newCAServiceAdapter(ca)
 	require.NoError(t, err)
 
-	resp, gerr := adapter.RevokeCertificate(context.Background(), &xkmstransport.RevokeCertificateRequest{
+	resp, gerr := adapter.RevokeCertificate(qrdbsdk.ContextWithTenant(context.Background(), qrdbsdk.SystemTenantID), &xkmstransport.RevokeCertificateRequest{
 		SerialNumber: "ff",
 	})
 	require.Error(t, gerr, "the CA error must be surfaced to the caller")

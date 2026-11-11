@@ -31,9 +31,9 @@ func loadSDLCYAML(t *testing.T, body string) (*Config, error) {
 
 func TestLoad_SDLCRulersDecodePerTenant(t *testing.T) {
 	cfg, err := loadSDLCYAML(t, "sdlc:\n  enabled: true\n  repo_hosts: [forge.test]\n  webhook:\n    public_url: https://node.test\n"+
-		"  rulers:\n    default: [agent-company, ops]\n    tenants:\n      automatethethings: [lead-agent]\n      quiet: []\n")
+		"  rulers:\n    default: [company-agent, ops]\n    tenants:\n      automatethethings: [lead-agent]\n      quiet: []\n")
 	require.NoError(t, err)
-	assert.Equal(t, []string{"agent-company", "ops"}, cfg.SDLC.Rulers.Default)
+	assert.Equal(t, []string{"company-agent", "ops"}, cfg.SDLC.Rulers.Default)
 	assert.Equal(t, []string{"lead-agent"}, cfg.SDLC.Rulers.Tenants["automatethethings"])
 	quiet, ok := cfg.SDLC.Rulers.Tenants["quiet"]
 	assert.True(t, ok, "a tenant given no rulers must keep its entry")

@@ -120,7 +120,7 @@ const giteaDefaultPageSize = 50
 // GiteaConfig configures the adapter.
 type GiteaConfig struct {
 	// BaseURL is the API root, including the version segment — for example
-	// "http://gitea.internal:3001/api/v1".
+	// "http://gitea.internal:3000/api/v1".
 	BaseURL string
 
 	// Token authenticates every call. It is a VALUE here because the adapter

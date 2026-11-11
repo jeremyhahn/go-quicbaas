@@ -52,11 +52,14 @@ func TestXKMSCAServicer_SignOptionsWithSPIFFE(t *testing.T) {
 		}
 	})
 
-	t.Run("no trust domain omits SPIFFE", func(t *testing.T) {
+	t.Run("no trust domain omits SPIFFE but records the tenant", func(t *testing.T) {
 		a := &xkmsCAServicer{}
 		opts := a.signOptionsWithSPIFFE("client", 0, "acme-corp")
-		if opts.SPIFFETrustDomain != "" || opts.TenantID != "" || opts.SPIFFEKind != "" {
+		if opts.SPIFFETrustDomain != "" || opts.SPIFFEKind != "" {
 			t.Fatalf("expected no SPIFFE fields, got %+v", opts)
+		}
+		if opts.TenantID != "acme-corp" {
+			t.Fatalf("TenantID = %q, want the issuing tenant acme-corp", opts.TenantID)
 		}
 	})
 
@@ -99,12 +102,15 @@ func TestXKMSCAServicer_ApplyKeypairSPIFFE(t *testing.T) {
 		}
 	})
 
-	t.Run("no trust domain omits SPIFFE", func(t *testing.T) {
+	t.Run("no trust domain omits SPIFFE but records the tenant", func(t *testing.T) {
 		a := &xkmsCAServicer{}
 		req := &xkmssdk.TrustedCACertificateRequest{}
 		a.applyKeypairSPIFFE(req, "client", "acme-corp")
-		if req.SPIFFETrustDomain != "" || req.TenantID != "" || req.SPIFFEKind != "" {
+		if req.SPIFFETrustDomain != "" || req.SPIFFEKind != "" {
 			t.Fatalf("expected no SPIFFE fields, got %+v", req)
+		}
+		if req.TenantID != "acme-corp" {
+			t.Fatalf("TenantID = %q, want the issuing tenant acme-corp", req.TenantID)
 		}
 	})
 

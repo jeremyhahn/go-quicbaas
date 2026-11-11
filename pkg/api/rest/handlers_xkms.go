@@ -26,13 +26,20 @@ import (
 	"crypto/x509"
 	"encoding/json"
 	"encoding/pem"
+	"errors"
 	"io"
 	"net/http"
+	"slices"
+	"sort"
 	"strconv"
 	"time"
 
 	"github.com/go-chi/chi/v5"
 
+	qberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
+	"github.com/jeremyhahn/go-quicbaas/pkg/service"
+
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
 	transportTypes "github.com/jeremyhahn/go-xkms/sdk/go/transport"
 )
@@ -674,6 +681,10 @@ func (s *Server) HandleXKMSSaveCert(w http.ResponseWriter, r *http.Request) {
 		respondXKMSError(w, http.StatusPreconditionFailed, err)
 		return
 	}
+	if err := service.RequireSystemKeyStoreWriter(r.Context(), "SaveCertificate"); err != nil {
+		respondXKMSError(w, http.StatusForbidden, err)
+		return
+	}
 
 	var body struct {
 		CertificatePEM string `json:"certificate_pem"`
@@ -732,20 +743,39 @@ func (s *Server) HandleXKMSListCerts(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	backend := r.URL.Query().Get("backend")
-
-	var certIDs []string
-	var listErr error
-	if backend != "" {
-		certIDs, listErr = xkmssdk.ServiceListCertificates(r.Context(), backend)
-	} else {
-		certIDs, listErr = xkmssdk.ServiceListCertificates(r.Context())
+	backends := []string{r.URL.Query().Get("backend")}
+	if backends[0] == "" {
+		backends = slices.Clone(xkmssdk.ServiceBackends())
+		sort.Strings(backends)
 	}
-	if listErr != nil {
+	list := func(ctx context.Context, name string) ([]string, error) {
+		return xkmssdk.ServiceListCertificates(ctx, name)
+	}
+	lookup := func(ctx context.Context, name, keyID string) (*x509.Certificate, error) {
+		b, err := xkmssdk.ServiceGetBackend(name)
+		if err != nil {
+			return nil, err
+		}
+		return b.GetCert(ctx, keyID)
+	}
+
+	certIDs, filterErr := service.FilterBackendCertificateIDsForCaller(r.Context(), s.service.Certificate(), backends, list, lookup)
+	var listErr *service.CertificateListError
+	if errors.As(filterErr, &listErr) {
 		respondXKMSError(w, http.StatusInternalServerError, &XKMSOperationError{
 			Op:     "ListCertificates",
 			Detail: listErr.Error(),
 		})
+		return
+	}
+	if filterErr != nil {
+		status := http.StatusForbidden
+		var lookupErr *service.CertificateLookupError
+		var qbErr *qberrors.QBError
+		if errors.As(filterErr, &lookupErr) || (errors.As(filterErr, &qbErr) && qbErr.Code == qberrors.ErrInternal) {
+			status = http.StatusInternalServerError
+		}
+		respondXKMSError(w, status, filterErr)
 		return
 	}
 
@@ -776,7 +806,7 @@ func (s *Server) HandleXKMSGetCert(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	cert, err := xkmssdk.ServiceCertificateByID(r.Context(), keyID)
+	cert, err := s.xkmsCertificateForCaller(r.Context(), keyID)
 	if err != nil {
 		respondXKMSError(w, http.StatusNotFound, &XKMSOperationError{
 			Op:     "GetCertificate",
@@ -811,6 +841,14 @@ func (s *Server) HandleXKMSDeleteCert(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if _, err := s.xkmsCertificateForCaller(r.Context(), keyID); err != nil {
+		respondXKMSError(w, http.StatusNotFound, &XKMSOperationError{
+			Op:     "DeleteCertificate",
+			Detail: err.Error(),
+		})
+		return
+	}
+
 	if err := xkmssdk.ServiceDeleteCertificateByID(r.Context(), keyID); err != nil {
 		respondXKMSError(w, http.StatusInternalServerError, &XKMSOperationError{
 			Op:     "DeleteCertificate",
@@ -835,19 +873,27 @@ func (s *Server) HandleXKMSCertExists(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	attrs, err := xkmssdk.ServiceParseCertificateID(keyID)
-	if err != nil {
-		w.WriteHeader(http.StatusNotFound)
-		return
-	}
-
-	exists, err := xkmssdk.ServiceCertificateExists(r.Context(), attrs)
-	if err != nil || !exists {
+	if _, err := s.xkmsCertificateForCaller(r.Context(), keyID); err != nil {
 		w.WriteHeader(http.StatusNotFound)
 		return
 	}
 
 	w.WriteHeader(http.StatusOK)
+}
+
+// xkmsCertificateForCaller reads the certificate stored under keyID in the
+// go-xkms key store and binds the caller to the tenant the CA issued it for
+// (service.BindCertificateToCaller), as certificate revoke does. The key store
+// records no tenant, so a refusal answers like a missing certificate.
+func (s *Server) xkmsCertificateForCaller(ctx context.Context, keyID string) (*x509.Certificate, error) {
+	cert, err := xkmssdk.ServiceCertificateByID(ctx, keyID)
+	if err != nil {
+		return nil, err
+	}
+	if err := service.BindCertificateToCaller(ctx, s.service.Certificate(), cert); err != nil {
+		return nil, err
+	}
+	return cert, nil
 }
 
 // HandleXKMSSeal handles POST /api/v1/xkms/seal.
@@ -1128,26 +1174,57 @@ func (s *Server) HandleXKMSDisableAllKeyVersions(w http.ResponseWriter, r *http.
 // PIV Handlers
 // =============================================================================
 
-// HandleXKMSListPIVSlots handles GET /api/v1/xkms/piv/slots.
-func (s *Server) HandleXKMSListPIVSlots(w http.ResponseWriter, r *http.Request) {
+// XKMSPIVServiceUnavailableError is returned when the service facade carries
+// no PIV service.
+type XKMSPIVServiceUnavailableError struct{}
+
+func (e *XKMSPIVServiceUnavailableError) Error() string {
+	return "xkms: PIV service is not available"
+}
+
+// xkmsPIVService resolves the service-layer PIV composition service, the one
+// gRPC and MCP use, so every REST PIV verb runs its platform-scope check.
+func (s *Server) xkmsPIVService(w http.ResponseWriter) (service.PIVService, bool) {
 	if err := ensureXKMSInitialized(); err != nil {
 		respondXKMSError(w, http.StatusPreconditionFailed, err)
+		return nil, false
+	}
+	pivService := s.service.PIV()
+	if pivService == nil {
+		respondXKMSError(w, http.StatusServiceUnavailable, &XKMSPIVServiceUnavailableError{})
+		return nil, false
+	}
+	return pivService, true
+}
+
+// respondXKMSPIVError answers a PIV service failure: 403 when the
+// platform-scope check refused the caller, 500 otherwise.
+func respondXKMSPIVError(w http.ResponseWriter, op string, err error) {
+	if errors.Is(err, qrdbsdk.ErrTenantMissing) {
+		respondXKMSError(w, http.StatusForbidden, err)
 		return
 	}
+	respondXKMSError(w, http.StatusInternalServerError, &XKMSOperationError{
+		Op:     op,
+		Detail: err.Error(),
+	})
+}
 
-	backend := r.URL.Query().Get("backend")
+// HandleXKMSListPIVSlots handles GET /api/v1/xkms/piv/slots.
+func (s *Server) HandleXKMSListPIVSlots(w http.ResponseWriter, r *http.Request) {
+	pivService, ok := s.xkmsPIVService(w)
+	if !ok {
+		return
+	}
 
 	ctx, cancel := xkmsContextWithTimeout(r.Context())
 	defer cancel()
 
-	resp, err := xkmssdk.ServiceListPIVSlots(ctx, &transportTypes.ListPIVSlotsRequest{
-		Backend: backend,
+	resp, err := pivService.ListPIVSlots(ctx, &transportTypes.ListPIVSlotsRequest{
+		Backend: r.URL.Query().Get("backend"),
 	})
 	if err != nil {
-		respondXKMSError(w, http.StatusInternalServerError, &XKMSOperationError{
-			Op:     "ListPIVSlots",
-			Detail: err.Error(),
-		})
+		respondXKMSPIVError(w, "ListPIVSlots", err)
 		return
 	}
 
@@ -1156,8 +1233,8 @@ func (s *Server) HandleXKMSListPIVSlots(w http.ResponseWriter, r *http.Request) 
 
 // HandleXKMSGetPIVCertificate handles GET /api/v1/xkms/piv/slots/{slot}/cert.
 func (s *Server) HandleXKMSGetPIVCertificate(w http.ResponseWriter, r *http.Request) {
-	if err := ensureXKMSInitialized(); err != nil {
-		respondXKMSError(w, http.StatusPreconditionFailed, err)
+	pivService, ok := s.xkmsPIVService(w)
+	if !ok {
 		return
 	}
 
@@ -1171,16 +1248,13 @@ func (s *Server) HandleXKMSGetPIVCertificate(w http.ResponseWriter, r *http.Requ
 	ctx, cancel := xkmsContextWithTimeout(r.Context())
 	defer cancel()
 
-	resp, err := xkmssdk.ServiceGetPIVCertificate(ctx, &transportTypes.GetPIVCertificateRequest{
+	resp, err := pivService.GetPIVCertificate(ctx, &transportTypes.GetPIVCertificateRequest{
 		Backend: backend,
 		Slot:    slot,
 		Format:  format,
 	})
 	if err != nil {
-		respondXKMSError(w, http.StatusInternalServerError, &XKMSOperationError{
-			Op:     "GetPIVCertificate",
-			Detail: err.Error(),
-		})
+		respondXKMSPIVError(w, "GetPIVCertificate", err)
 		return
 	}
 
@@ -1189,28 +1263,23 @@ func (s *Server) HandleXKMSGetPIVCertificate(w http.ResponseWriter, r *http.Requ
 
 // HandleXKMSStorePIVCertificate handles PUT /api/v1/xkms/piv/slots/{slot}/cert.
 func (s *Server) HandleXKMSStorePIVCertificate(w http.ResponseWriter, r *http.Request) {
-	if err := ensureXKMSInitialized(); err != nil {
-		respondXKMSError(w, http.StatusPreconditionFailed, err)
+	pivService, ok := s.xkmsPIVService(w)
+	if !ok {
 		return
 	}
-
-	slot := chi.URLParam(r, "slot")
 
 	var req transportTypes.StorePIVCertificateRequest
 	if err := readXKMSBody(r, &req); err != nil {
 		respondXKMSError(w, http.StatusBadRequest, err)
 		return
 	}
-	req.Slot = slot
+	req.Slot = chi.URLParam(r, "slot")
 
 	ctx, cancel := xkmsContextWithTimeout(r.Context())
 	defer cancel()
 
-	if err := xkmssdk.ServiceStorePIVCertificate(ctx, &req); err != nil {
-		respondXKMSError(w, http.StatusInternalServerError, &XKMSOperationError{
-			Op:     "StorePIVCertificate",
-			Detail: err.Error(),
-		})
+	if err := pivService.StorePIVCertificate(ctx, &req); err != nil {
+		respondXKMSPIVError(w, "StorePIVCertificate", err)
 		return
 	}
 
@@ -1219,25 +1288,19 @@ func (s *Server) HandleXKMSStorePIVCertificate(w http.ResponseWriter, r *http.Re
 
 // HandleXKMSDeletePIVCertificate handles DELETE /api/v1/xkms/piv/slots/{slot}/cert.
 func (s *Server) HandleXKMSDeletePIVCertificate(w http.ResponseWriter, r *http.Request) {
-	if err := ensureXKMSInitialized(); err != nil {
-		respondXKMSError(w, http.StatusPreconditionFailed, err)
+	pivService, ok := s.xkmsPIVService(w)
+	if !ok {
 		return
 	}
-
-	slot := chi.URLParam(r, "slot")
-	backend := r.URL.Query().Get("backend")
 
 	ctx, cancel := xkmsContextWithTimeout(r.Context())
 	defer cancel()
 
-	if err := xkmssdk.ServiceDeletePIVCertificate(ctx, &transportTypes.DeletePIVCertificateRequest{
-		Backend: backend,
-		Slot:    slot,
+	if err := pivService.DeletePIVCertificate(ctx, &transportTypes.DeletePIVCertificateRequest{
+		Backend: r.URL.Query().Get("backend"),
+		Slot:    chi.URLParam(r, "slot"),
 	}); err != nil {
-		respondXKMSError(w, http.StatusInternalServerError, &XKMSOperationError{
-			Op:     "DeletePIVCertificate",
-			Detail: err.Error(),
-		})
+		respondXKMSPIVError(w, "DeletePIVCertificate", err)
 		return
 	}
 
@@ -1246,29 +1309,24 @@ func (s *Server) HandleXKMSDeletePIVCertificate(w http.ResponseWriter, r *http.R
 
 // HandleXKMSGeneratePIVKey handles POST /api/v1/xkms/piv/slots/{slot}/key.
 func (s *Server) HandleXKMSGeneratePIVKey(w http.ResponseWriter, r *http.Request) {
-	if err := ensureXKMSInitialized(); err != nil {
-		respondXKMSError(w, http.StatusPreconditionFailed, err)
+	pivService, ok := s.xkmsPIVService(w)
+	if !ok {
 		return
 	}
-
-	slot := chi.URLParam(r, "slot")
 
 	var req transportTypes.GeneratePIVKeyRequest
 	if err := readXKMSBody(r, &req); err != nil {
 		respondXKMSError(w, http.StatusBadRequest, err)
 		return
 	}
-	req.Slot = slot
+	req.Slot = chi.URLParam(r, "slot")
 
 	ctx, cancel := xkmsContextWithTimeout(r.Context())
 	defer cancel()
 
-	resp, err := xkmssdk.ServiceGeneratePIVKey(ctx, &req)
+	resp, err := pivService.GeneratePIVKey(ctx, &req)
 	if err != nil {
-		respondXKMSError(w, http.StatusInternalServerError, &XKMSOperationError{
-			Op:     "GeneratePIVKey",
-			Detail: err.Error(),
-		})
+		respondXKMSPIVError(w, "GeneratePIVKey", err)
 		return
 	}
 
@@ -1277,29 +1335,24 @@ func (s *Server) HandleXKMSGeneratePIVKey(w http.ResponseWriter, r *http.Request
 
 // HandleXKMSGeneratePIVCSR handles POST /api/v1/xkms/piv/slots/{slot}/csr.
 func (s *Server) HandleXKMSGeneratePIVCSR(w http.ResponseWriter, r *http.Request) {
-	if err := ensureXKMSInitialized(); err != nil {
-		respondXKMSError(w, http.StatusPreconditionFailed, err)
+	pivService, ok := s.xkmsPIVService(w)
+	if !ok {
 		return
 	}
-
-	slot := chi.URLParam(r, "slot")
 
 	var req transportTypes.GeneratePIVCSRRequest
 	if err := readXKMSBody(r, &req); err != nil {
 		respondXKMSError(w, http.StatusBadRequest, err)
 		return
 	}
-	req.Slot = slot
+	req.Slot = chi.URLParam(r, "slot")
 
 	ctx, cancel := xkmsContextWithTimeout(r.Context())
 	defer cancel()
 
-	resp, err := xkmssdk.ServiceGeneratePIVCSR(ctx, &req)
+	resp, err := pivService.GeneratePIVCSR(ctx, &req)
 	if err != nil {
-		respondXKMSError(w, http.StatusInternalServerError, &XKMSOperationError{
-			Op:     "GeneratePIVCSR",
-			Detail: err.Error(),
-		})
+		respondXKMSPIVError(w, "GeneratePIVCSR", err)
 		return
 	}
 

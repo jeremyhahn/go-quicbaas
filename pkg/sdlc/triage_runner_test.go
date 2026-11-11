@@ -134,7 +134,7 @@ func newTriageRig(t *testing.T) *triageRig {
 func (r *triageRig) onSSH() {
 	r.t.Helper()
 	project := testOrchProject()
-	project.Git.RepoURL = "ssh://git@forge.test:2222/acme/api.git"
+	project.Git.RepoURL = "ssh://git@forge.test:2022/acme/api.git"
 	r.project = project
 	r.binding.Forge.SSHHostKey = testSSHHostKey
 	if err := r.store.PutBinding(context.Background(), testTenant, r.binding); err != nil {
@@ -1419,7 +1419,7 @@ func TestTriageRunner_ClonesAnSSHRemoteItCanAuthenticate(t *testing.T) {
 		t.Fatalf("run: %v", err)
 	}
 	clones := rig.container.clonesMade()
-	if len(clones) != 1 || clones[0].URL != "ssh://git@forge.test:2222/acme/api.git" {
+	if len(clones) != 1 || clones[0].URL != "ssh://git@forge.test:2022/acme/api.git" {
 		t.Fatalf("clones = %+v, want the project cloned over ssh", clones)
 	}
 	// The verdict landed, which is only possible if the checkout the charter

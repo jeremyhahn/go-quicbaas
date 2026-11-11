@@ -17,17 +17,21 @@ package rest
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 )
 
-// TestUpdateTenant_RefusesUnstoredFieldsAsBadRequest proves an update that
-// sets description, metadata or status answers 400 naming the field and
-// stores nothing, not even the display_name beside it (#1518).
-func TestUpdateTenant_RefusesUnstoredFieldsAsBadRequest(t *testing.T) {
+// TestUpdateTenant_RefusesUnstoredFieldsWithTypedError proves an update that
+// sets description, metadata or status answers 400 with the coded
+// ErrTenantFieldNotStored refusal naming the field, as every other transport
+// does, and stores nothing, not even the display_name beside it (#1518).
+func TestUpdateTenant_RefusesUnstoredFieldsWithTypedError(t *testing.T) {
 	cases := map[string]string{
 		"description": `{"display_name":"New","description":"d"}`,
 		"metadata":    `{"display_name":"New","metadata":{"k":"v"}}`,
@@ -43,7 +47,11 @@ func TestUpdateTenant_RefusesUnstoredFieldsAsBadRequest(t *testing.T) {
 			w = putTenant(handler, "acme", body)
 
 			assert.Equal(t, http.StatusBadRequest, w.Code, w.Body.String())
-			assert.Contains(t, w.Body.String(), field)
+			var resp ErrorResponse
+			require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+			assert.Equal(t, iam.ErrTenantFieldNotStored.Code.String(), resp.Code)
+			refusal := &iam.TenantFieldNotStoredError{Fields: []string{field}}
+			assert.Contains(t, resp.Error, refusal.Error())
 			stored, err := tenants.GetTenant(ctx, "acme")
 			require.NoError(t, err)
 			assert.Equal(t, "Old", stored.Settings.DisplayName)
