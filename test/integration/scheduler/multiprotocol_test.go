@@ -844,7 +844,8 @@ func (c *grpcProtocolClient) Setup(t *testing.T, ctx context.Context) error {
 
 	tlsCfg, err := helpers.IntegrationTLSConfig()
 	require.NoError(t, err, "load integration TLS config")
-	client, err := grpcclient.NewClient(endpoints[0], grpcclient.WithTLSConfig(tlsCfg))
+	client, err := grpcclient.NewClient(endpoints[0], grpcclient.WithTLSConfig(tlsCfg),
+		grpcclient.WithDialOptions(grpc.WithPerRPCCredentials(helpers.TenantOperatorGRPCCredentials(t))))
 	require.NoError(t, err, "Failed to connect to gRPC endpoint %s", endpoints[0])
 	c.client = client
 
@@ -935,7 +936,8 @@ func (c *unixSocketProtocolClient) Setup(t *testing.T, ctx context.Context) erro
 
 	tlsCfgClient, err := helpers.IntegrationTLSConfig()
 	require.NoError(t, err, "load integration TLS config")
-	client, err := grpcclient.NewClient("unix://"+socketPath, grpcclient.WithTLSConfig(tlsCfgClient))
+	client, err := grpcclient.NewClient("unix://"+socketPath, grpcclient.WithTLSConfig(tlsCfgClient),
+		grpcclient.WithDialOptions(grpc.WithPerRPCCredentials(helpers.TenantOperatorGRPCCredentials(t))))
 	require.NoError(t, err, "Failed to create gRPC client over unix socket at %s", socketPath)
 	c.client = client
 
@@ -1514,7 +1516,7 @@ type ServiceSchedulerRESTClient struct {
 func NewServiceSchedulerRESTClient(baseURL string) *ServiceSchedulerRESTClient {
 	return &ServiceSchedulerRESTClient{
 		baseURL:    baseURL,
-		httpClient: helpers.NewHTTPClient(30 * time.Second),
+		httpClient: newOperatorHTTPClient(30 * time.Second),
 	}
 }
 

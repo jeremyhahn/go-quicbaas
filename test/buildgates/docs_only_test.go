@@ -9,7 +9,7 @@ import (
 	"testing"
 )
 
-// docsOnlyScript is the filter ci.yml's changes job runs. A docs-only pull
+// docsOnlyScript is the filter ci.yml's preflight job runs. A docs-only pull
 // request skips build, unit tests, SDK tests, security scans and the
 // integration job, so a wrong "true" ships untested code (Codex 6488).
 var docsOnlyScript = filepath.Join(repoRoot, "scripts", "docs-only.sh")
@@ -243,95 +243,97 @@ func stepIf(step string) string {
 	return ""
 }
 
-func TestChangesJobRunsTheDocsOnlyScript(t *testing.T) {
+func TestPreflightRunsTheDocsOnlyScript(t *testing.T) {
 	_, jobs := ciJobs(t, readFile(t, ciWorkflowPath))
-	changes, ok := jobs["changes"]
+	preflight, ok := jobs["preflight"]
 	if !ok {
-		t.Fatalf("%s has no changes job. Every docs-only skip reads its output.", ciWorkflowPath)
+		t.Fatalf("%s has no preflight job. Every docs-only skip reads its output.", ciWorkflowPath)
 	}
 	for _, want := range []string{
-		"docs_only: ${{ steps.filter.outputs.docs_only }}",
-		"id: filter",
+		"docs_only: ${{ steps.diff.outputs.docs_only }}",
+		"id: diff",
 		"EVENT: ${{ github.event_name }}",
 		"BASE_SHA: ${{ github.event.pull_request.base.sha }}",
-		`run: scripts/docs-only.sh >> "$GITHUB_OUTPUT"`,
+		`scripts/docs-only.sh >> "$GITHUB_OUTPUT"`,
 	} {
-		if !strings.Contains(changes, want) {
-			t.Errorf("changes job lacks %q. The classification is tested in "+
+		if !strings.Contains(preflight, want) {
+			t.Errorf("preflight job lacks %q. The classification is tested in "+
 				"scripts/docs-only.sh; a filter written inline in the job, or one "+
 				"fed other inputs, is not the one the tests prove.", want)
 		}
 	}
 }
 
+// docsOnlySkip is the job-level condition term every code job carries, so a
+// docs-only pull request skips it and CI Gate reads the skip as `code`.
+const docsOnlySkip = "needs.preflight.outputs.docs_only != 'true'"
+
+// jobIf returns a job's job-level `if:` condition, or "" when it has none.
+func jobIf(job string) string {
+	for _, line := range strings.Split(job, "\n") {
+		if cond, ok := strings.CutPrefix(line, "    if: "); ok {
+			return cond
+		}
+	}
+	return ""
+}
+
 func TestOnlyLintRunsForADocsOnlyPullRequest(t *testing.T) {
 	_, jobs := ciJobs(t, readFile(t, ciWorkflowPath))
-	image := jobs["image"]
-	if !strings.Contains(image, "DOCS_ONLY: ${{ needs.changes.outputs.docs_only }}") {
-		t.Errorf("image job does not set DOCS_ONLY from the changes job; every " +
-			"stage guard below would compare an empty value and never skip")
+	if cond := jobIf(jobs["lint"]); strings.Contains(cond, "docs_only") {
+		t.Errorf("the lint job is skipped on docs_only (if: %s). Lint is the one "+
+			"stage a docs-only pull request still runs.", cond)
 	}
-	const guard = "env.DOCS_ONLY != 'true'"
-	stages := 0
-	for _, step := range ciSteps(image) {
-		if !strings.Contains(step, "scripts/in-toolchain-image.sh") {
+	tiers := gateChecks(jobs[gateJobName])
+	for _, name := range []string{"image", "unit", "coverage", "unit-passes", "integration"} {
+		job, ok := jobs[name]
+		if !ok {
+			t.Errorf("ci.yml has no %s job", name)
 			continue
 		}
-		stages++
-		name, cond := stepName(step), stepIf(step)
-		if name == "make lint" {
-			if strings.Contains(cond, "DOCS_ONLY") {
-				t.Errorf("make lint is guarded by DOCS_ONLY (if: %s). Lint is the "+
-					"one stage a docs-only pull request still runs.", cond)
-			}
+		if cond := jobIf(job); !strings.Contains(cond, docsOnlySkip) {
+			t.Errorf("job %q runs on a docs-only pull request (if: %s); it must "+
+				"carry %q", name, cond, docsOnlySkip)
+		}
+		if nonGatingJobs[name] {
 			continue
 		}
-		if !strings.Contains(cond, guard) {
-			t.Errorf("step %q runs in the toolchain image without %q in its if: "+
-				"(if: %s). A docs-only pull request builds only the toolchain "+
-				"image, so the stage would fail, or run for nothing.", name, guard, cond)
+		if tiers[name] != "code" {
+			t.Errorf("job %q skips on a docs-only pull request, so its check line "+
+				"in %s must be `code`, not %q", name, gateJobName, tiers[name])
 		}
-	}
-	if stages < 2 {
-		t.Fatalf("found %d toolchain-image steps in the image job; step discovery "+
-			"has broken and the guard check passed over nothing", stages)
 	}
 }
 
-func TestDocsOnlyBuildsTheToolchainImageAlone(t *testing.T) {
+func TestLintBuildsTheToolchainImageAlone(t *testing.T) {
 	_, jobs := ciJobs(t, readFile(t, ciWorkflowPath))
-	var build string
-	for _, step := range ciSteps(jobs["image"]) {
-		if stepName(step) == "Build the devcontainer images" {
-			build = step
+	step := func(job, name string) string {
+		for _, s := range ciSteps(jobs[job]) {
+			if stepName(s) == name {
+				return s
+			}
 		}
+		t.Fatalf("%s job has no %q step", job, name)
+		return ""
 	}
-	if build == "" {
-		t.Fatalf("image job has no \"Build the devcontainer images\" step")
+	if lint := step("lint", "Build the toolchain image"); !strings.Contains(lint, "make docker-build-toolchain MODULE_ENV_FILE=") {
+		t.Errorf("the lint job must build the toolchain image alone (make docker-build-toolchain):\n%s", lint)
 	}
-	const choice = `if [ "$DOCS_ONLY" = true ]; then target=docker-build-toolchain-image; fi`
-	if !strings.Contains(build, "target=docker-build\n") || !strings.Contains(build, choice) {
-		t.Errorf("the build step must default to docker-build and choose "+
-			"docker-build-toolchain-image only through %q: any other pull request "+
-			"needs the integration image its stages scan and test", choice)
-	}
-	if n := strings.Count(build, "docker-build-toolchain-image"); n != 1 {
-		t.Errorf("docker-build-toolchain-image appears %d times in the build step, "+
-			"want 1 (the DOCS_ONLY branch). A second use could build the "+
-			"toolchain image alone for a code change.", n)
+	if image := step("image", "Build the devcontainer images"); !strings.Contains(image, "make docker-build MODULE_ENV_FILE=") {
+		t.Errorf("the image job must build both images (make docker-build): its stages scan the integration image:\n%s", image)
 	}
 }
 
 func TestIntegrationSkipsOnlyForADocsOnlyPullRequest(t *testing.T) {
 	_, jobs := ciJobs(t, readFile(t, ciWorkflowPath))
-	const cond = "if: ${{ needs.changes.outputs.docs_only != 'true' }}"
+	const cond = "if: ${{ !github.event.pull_request.draft && needs.preflight.outputs.verdict == 'run' && " + docsOnlySkip + " }}"
 	if !strings.Contains(jobs["integration"], "\n    "+cond+"\n") {
 		t.Errorf("integration job lacks %q. It must skip for a docs-only pull "+
 			"request and run for every other change.", cond)
 	}
 	needs := gateNeeds(t, jobs[gateJobName])
-	if missing([]string{"changes"}, needs) != nil {
-		t.Errorf("%s needs %v, want changes among them: a failed filter must "+
+	if missing([]string{"preflight"}, needs) != nil {
+		t.Errorf("%s needs %v, want preflight among them: a failed filter must "+
 			"fail the gate, not leave every stage skipped and green", gateJobName, needs)
 	}
 }

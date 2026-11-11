@@ -35,7 +35,9 @@ production code path:
    --http-port <p> ...` with per-subtest non-overlapping ports.
 5. **Readiness** — poll `https://127.0.0.1:<rest>/api/v1/health/ready`
    AND probe the transport-under-test's listener (TCP open / TLS
-   handshake / UDP write-read for QUIC / Unix socket connect). The
+   handshake / UDP write-read for QUIC / Unix socket connect). QUIC is
+   probed on the REST port: the daemon serves it as REST over HTTP/3
+   there and binds no other QUIC port. The
    daemon's CA chain must land on disk before the cell is considered
    ready.
 6. **PKI post-conditions** — `<dataDir>/certs/ca-chain.crt` and
