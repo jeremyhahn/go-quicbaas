@@ -345,7 +345,7 @@ func (c *restClusterClient) Setup(t *testing.T, ctx context.Context) error {
 	endpoints := helpers.GetRESTEndpoints()
 	require.NotEmpty(t, endpoints, "REST endpoints must be available for integration tests")
 	c.baseURL = endpoints[0]
-	c.client = newInsecureHTTPClient(30 * time.Second)
+	c.client = newClusterPrincipalsRESTClient(t, 30*time.Second)
 	return nil
 }
 
@@ -606,7 +606,7 @@ func (c *grpcClusterClient) Setup(t *testing.T, ctx context.Context) error {
 	require.NotEmpty(t, endpoints, "gRPC endpoints must be available for integration tests")
 
 	tlsCfg := requireTLSConfig(t)
-	conn, err := grpc.NewClient(endpoints[0], grpc.WithTransportCredentials(credentials.NewTLS(tlsCfg)))
+	conn, err := grpc.NewClient(endpoints[0], grpc.WithTransportCredentials(credentials.NewTLS(tlsCfg)), withClusterPrincipals(t))
 	if err != nil {
 		return err
 	}
@@ -737,6 +737,7 @@ func (c *unixSocketClusterClient) Setup(t *testing.T, ctx context.Context) error
 	conn, err := grpc.NewClient(
 		"unix://"+socketPath,
 		grpc.WithTransportCredentials(credentials.NewTLS(tlsCfg)),
+		withClusterPrincipals(t),
 	)
 	require.NoError(t, err, "Failed to create gRPC connection over unix socket at %s", socketPath)
 	c.conn = conn

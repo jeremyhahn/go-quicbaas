@@ -850,8 +850,10 @@ type QUICClient struct {
 	protocol  Protocol
 }
 
-// NewQUICClient creates a new QUIC protocol client.
-func NewQUICClient(endpoint string) (*QUICClient, error) {
+// NewQUICClient creates a new QUIC protocol client that sends authToken as
+// its bearer. The SDK QUIC transport fixes the bearer when it is built, so a
+// client speaks for one principal only.
+func NewQUICClient(endpoint, authToken string) (*QUICClient, error) {
 	tlsCfg, err := helpers.IntegrationTLSConfig()
 	if err != nil {
 		return nil, &qberrors.WrappedMessageError{Message: "load integration TLS config", Cause: err}
@@ -864,6 +866,7 @@ func NewQUICClient(endpoint string) (*QUICClient, error) {
 		MaxRetries:      3,
 		RetryBackoff:    100 * time.Millisecond,
 		MaxRetryBackoff: 5 * time.Second,
+		AuthToken:       authToken,
 	}
 
 	t, err := quictransport.New(cfg)
@@ -1655,8 +1658,11 @@ func requireProtocolClient(t *testing.T, protocol Protocol, cluster *testCluster
 		return client
 
 	case ProtocolREST:
-		// REST is always available via the test cluster
-		return NewRESTClient(cluster)
+		// REST is always available via the test cluster. Every test here
+		// creates its own tenant and works inside it, so REST calls go as the
+		// system admin: tenant routes in the system tenant, the rest through
+		// the tenant lift.
+		return NewRESTClient(cluster.asSystemAdmin())
 
 	case ProtocolGRPC:
 		// Try to create gRPC client - fail if not available
@@ -1667,7 +1673,11 @@ func requireProtocolClient(t *testing.T, protocol Protocol, cluster *testCluster
 	case ProtocolQUIC:
 		// QUIC client - uses SDK QUIC transport
 		require.NotEmpty(t, cluster.quicEndpoint, "QUIC endpoint must be configured for test cluster")
-		quicClient, err := NewQUICClient(cluster.quicEndpoint)
+		// The QUIC transport carries the same REST routes, so it also goes as
+		// the system admin, with the bearer fixed when the client is built.
+		bearer, err := cluster.asSystemAdmin().bearer(context.Background())
+		require.NoError(t, err, "system admin bearer for the QUIC client")
+		quicClient, err := NewQUICClient(cluster.quicEndpoint, bearer)
 		require.NoError(t, err, "QUIC protocol must be available - ensure the test cluster is properly configured with QUIC endpoint")
 		return quicClient
 
@@ -2068,8 +2078,8 @@ func TestProtocolConsistency(t *testing.T) {
 	ctx := context.Background()
 	tenantID := fmt.Sprintf("tenant-consistency-%d", time.Now().UnixNano())
 
-	// Create tenant via REST
-	restClient := NewRESTClient(cluster)
+	// Create tenant via REST, as the system admin
+	restClient := NewRESTClient(cluster.asSystemAdmin())
 	defer restClient.Close()
 
 	tenant, err := restClient.CreateTenant(ctx, tenantID, "Consistency Test", nil)
