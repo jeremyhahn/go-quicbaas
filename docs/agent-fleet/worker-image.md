@@ -313,7 +313,7 @@ make push-worker-image WORKER_IMAGE_REGISTRY=<host>/<owner>/software-factory-wor
 
 This repository's own factory images (the worker and its go-xkms variant) are
 published by `.github/workflows/worker-image.yml` under
-`<registry>/agent-go-quicbaas/<image>`, the namespace of the repository's agent
+`<registry>/<agent>/<image>`, the namespace of the repository's agent
 identity, and pushed with that identity's token, never the owner's account.
 
 `push-worker-image` runs `trivy image --severity CRITICAL,HIGH --ignore-unfixed
@@ -358,16 +358,18 @@ private login, point `DOCKER` at a private configuration:
 
 ### Through the dev caches
 
-`build-worker-image` passes `DEVCACHE_GOPROXY`, `DEVCACHE_GOPRIVATE` and
-`DEVCACHE_NPM_REGISTRY` through to `docker build` by name only (never a
-value written here), from whatever the caller's environment or command line
-already set (`../handbook/software/conventions/devops.md` §2a):
+`build-worker-image` passes `DEVCACHE_GOPROXY` and `DEVCACHE_NPM_REGISTRY`
+through to `docker build` by name only (never a value written here), from
+whatever the caller's environment or command line already set
+(`../handbook/software/conventions/devops.md` §2a):
 
 ```
 make build-worker-image DEVCACHE_GOPROXY=http://athens.example:3000 \
-  DEVCACHE_GOPRIVATE='example.com/acme/*' \
   DEVCACHE_NPM_REGISTRY=http://cache.example:4873
 ```
+
+The vendored `devcache-env` script still reads a private-module setting of its
+own at run time, but no make target or build arg passes one.
 
 Unset, or with a cache unreachable, the build is exactly what it always was:
 Go's own default proxy chain, npm's own default registry. The image also

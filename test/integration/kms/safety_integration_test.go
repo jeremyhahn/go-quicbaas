@@ -43,7 +43,7 @@ func TestGRPCExportKey(t *testing.T) {
 	endpoints := getGRPCEndpoints()
 	tlsCfg, err := helpers.IntegrationTLSConfig()
 	require.NoError(t, err, "load integration TLS config")
-	client, err := grpcclient.NewClient(endpoints[0], grpcclient.WithTLSConfig(tlsCfg))
+	client, err := grpcclient.NewClient(endpoints[0], grpcclient.WithTLSConfig(tlsCfg), kmsGRPCAuth(t))
 	require.NoError(t, err, "Could not connect to gRPC server")
 	defer client.Close()
 
@@ -153,7 +153,7 @@ func TestGRPCUnwrapKey(t *testing.T) {
 	endpoints := getGRPCEndpoints()
 	tlsCfg, err := helpers.IntegrationTLSConfig()
 	require.NoError(t, err, "load integration TLS config")
-	client, err := grpcclient.NewClient(endpoints[0], grpcclient.WithTLSConfig(tlsCfg))
+	client, err := grpcclient.NewClient(endpoints[0], grpcclient.WithTLSConfig(tlsCfg), kmsGRPCAuth(t))
 	require.NoError(t, err, "Could not connect to gRPC server")
 	defer client.Close()
 
@@ -282,7 +282,7 @@ func TestGRPCSetKeySafety(t *testing.T) {
 	endpoints := getGRPCEndpoints()
 	tlsCfg, err := helpers.IntegrationTLSConfig()
 	require.NoError(t, err, "load integration TLS config")
-	client, err := grpcclient.NewClient(endpoints[0], grpcclient.WithTLSConfig(tlsCfg))
+	client, err := grpcclient.NewClient(endpoints[0], grpcclient.WithTLSConfig(tlsCfg), kmsGRPCAuth(t))
 	require.NoError(t, err, "Could not connect to gRPC server")
 	defer client.Close()
 
@@ -355,7 +355,7 @@ func TestGRPCClearKeySafety(t *testing.T) {
 	endpoints := getGRPCEndpoints()
 	tlsCfg, err := helpers.IntegrationTLSConfig()
 	require.NoError(t, err, "load integration TLS config")
-	client, err := grpcclient.NewClient(endpoints[0], grpcclient.WithTLSConfig(tlsCfg))
+	client, err := grpcclient.NewClient(endpoints[0], grpcclient.WithTLSConfig(tlsCfg), kmsGRPCAuth(t))
 	require.NoError(t, err, "Could not connect to gRPC server")
 	defer client.Close()
 
@@ -414,7 +414,7 @@ func TestGRPCSafetyCheck(t *testing.T) {
 	endpoints := getGRPCEndpoints()
 	tlsCfg, err := helpers.IntegrationTLSConfig()
 	require.NoError(t, err, "load integration TLS config")
-	client, err := grpcclient.NewClient(endpoints[0], grpcclient.WithTLSConfig(tlsCfg))
+	client, err := grpcclient.NewClient(endpoints[0], grpcclient.WithTLSConfig(tlsCfg), kmsGRPCAuth(t))
 	require.NoError(t, err, "Could not connect to gRPC server")
 	defer client.Close()
 
@@ -506,7 +506,7 @@ func TestGRPCSafetyReport(t *testing.T) {
 	endpoints := getGRPCEndpoints()
 	tlsCfg, err := helpers.IntegrationTLSConfig()
 	require.NoError(t, err, "load integration TLS config")
-	client, err := grpcclient.NewClient(endpoints[0], grpcclient.WithTLSConfig(tlsCfg))
+	client, err := grpcclient.NewClient(endpoints[0], grpcclient.WithTLSConfig(tlsCfg), kmsGRPCAuth(t))
 	require.NoError(t, err, "Could not connect to gRPC server")
 	defer client.Close()
 
@@ -551,7 +551,7 @@ func TestGRPCDEKOperations(t *testing.T) {
 	endpoints := getGRPCEndpoints()
 	tlsCfg, err := helpers.IntegrationTLSConfig()
 	require.NoError(t, err, "load integration TLS config")
-	client, err := grpcclient.NewClient(endpoints[0], grpcclient.WithTLSConfig(tlsCfg))
+	client, err := grpcclient.NewClient(endpoints[0], grpcclient.WithTLSConfig(tlsCfg), kmsGRPCAuth(t))
 	require.NoError(t, err, "Could not connect to gRPC server")
 	defer client.Close()
 
@@ -682,7 +682,7 @@ func TestGRPCSetDefaultDEK(t *testing.T) {
 	endpoints := getGRPCEndpoints()
 	tlsCfg, err := helpers.IntegrationTLSConfig()
 	require.NoError(t, err, "load integration TLS config")
-	client, err := grpcclient.NewClient(endpoints[0], grpcclient.WithTLSConfig(tlsCfg))
+	client, err := grpcclient.NewClient(endpoints[0], grpcclient.WithTLSConfig(tlsCfg), kmsGRPCAuth(t))
 	require.NoError(t, err, "Could not connect to gRPC server")
 	defer client.Close()
 
@@ -750,7 +750,7 @@ func TestGRPCDEKSafety(t *testing.T) {
 	endpoints := getGRPCEndpoints()
 	tlsCfg, err := helpers.IntegrationTLSConfig()
 	require.NoError(t, err, "load integration TLS config")
-	client, err := grpcclient.NewClient(endpoints[0], grpcclient.WithTLSConfig(tlsCfg))
+	client, err := grpcclient.NewClient(endpoints[0], grpcclient.WithTLSConfig(tlsCfg), kmsGRPCAuth(t))
 	require.NoError(t, err, "Could not connect to gRPC server")
 	defer client.Close()
 

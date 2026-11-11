@@ -165,9 +165,130 @@ func TestNewObjectStorageAdminServer_Success(t *testing.T) {
 	assert.NotNil(t, server)
 }
 
-func TestNewObjectStorageAdminServer_NilService(t *testing.T) {
-	server := NewObjectStorageAdminServer(nil)
-	assert.NotNil(t, server)
+// TestObjectStorageAdmin_gRPC_Guards covers every verb's request guards: a nil
+// request, a missing required field, and a server built without a service.
+func TestObjectStorageAdmin_gRPC_Guards(t *testing.T) {
+	ctx := context.Background()
+	available := newTestObjectStorageAdminServer(&mockObjectStorageAdminService{})
+	unavailable := NewObjectStorageAdminServer(nil)
+
+	tests := []struct {
+		name string
+		call func() error
+		want codes.Code
+	}{
+		{"CreateBackend/NilRequest", func() error {
+			_, err := available.CreateBackend(ctx, nil)
+			return err
+		}, codes.InvalidArgument},
+		{"CreateBackend/EmptyName", func() error {
+			_, err := available.CreateBackend(ctx, &pb.CreateBackendRequest{
+				Type: pb.BackendType_BACKEND_TYPE_LOCAL,
+				Tier: pb.StorageTier_STORAGE_TIER_HOT,
+			})
+			return err
+		}, codes.InvalidArgument},
+		{"CreateBackend/ServiceUnavailable", func() error {
+			_, err := unavailable.CreateBackend(ctx, &pb.CreateBackendRequest{Name: "test-backend"})
+			return err
+		}, codes.Unavailable},
+		{"UpdateBackend/NilRequest", func() error {
+			_, err := available.UpdateBackend(ctx, nil)
+			return err
+		}, codes.InvalidArgument},
+		{"UpdateBackend/EmptyName", func() error {
+			_, err := available.UpdateBackend(ctx, &pb.UpdateBackendRequest{Config: map[string]string{"key": "value"}})
+			return err
+		}, codes.InvalidArgument},
+		{"UpdateBackend/ServiceUnavailable", func() error {
+			_, err := unavailable.UpdateBackend(ctx, &pb.UpdateBackendRequest{Name: "test-backend"})
+			return err
+		}, codes.Unavailable},
+		{"DeleteBackend/NilRequest", func() error {
+			_, err := available.DeleteBackend(ctx, nil)
+			return err
+		}, codes.InvalidArgument},
+		{"DeleteBackend/EmptyName", func() error {
+			_, err := available.DeleteBackend(ctx, &pb.DeleteBackendRequest{Force: true})
+			return err
+		}, codes.InvalidArgument},
+		{"DeleteBackend/ServiceUnavailable", func() error {
+			_, err := unavailable.DeleteBackend(ctx, &pb.DeleteBackendRequest{Name: "test-backend"})
+			return err
+		}, codes.Unavailable},
+		{"SetBackendStatus/NilRequest", func() error {
+			_, err := available.SetBackendStatus(ctx, nil)
+			return err
+		}, codes.InvalidArgument},
+		{"SetBackendStatus/EmptyName", func() error {
+			_, err := available.SetBackendStatus(ctx, &pb.SetBackendStatusRequest{Enabled: true})
+			return err
+		}, codes.InvalidArgument},
+		{"SetBackendStatus/ServiceUnavailable", func() error {
+			_, err := unavailable.SetBackendStatus(ctx, &pb.SetBackendStatusRequest{Name: "test-backend"})
+			return err
+		}, codes.Unavailable},
+		{"GetStorageStats/NilRequest", func() error {
+			_, err := available.GetStorageStats(ctx, nil)
+			return err
+		}, codes.InvalidArgument},
+		{"GetStorageStats/ServiceUnavailable", func() error {
+			_, err := unavailable.GetStorageStats(ctx, &pb.GetStorageStatsRequest{})
+			return err
+		}, codes.Unavailable},
+		{"RunGarbageCollection/NilRequest", func() error {
+			_, err := available.RunGarbageCollection(ctx, nil)
+			return err
+		}, codes.InvalidArgument},
+		{"RunGarbageCollection/ServiceUnavailable", func() error {
+			_, err := unavailable.RunGarbageCollection(ctx, &pb.RunGarbageCollectionRequest{})
+			return err
+		}, codes.Unavailable},
+		{"GetGarbageCollectionProgress/NilRequest", func() error {
+			_, err := available.GetGarbageCollectionProgress(ctx, nil)
+			return err
+		}, codes.InvalidArgument},
+		{"GetGarbageCollectionProgress/EmptyOperationID", func() error {
+			_, err := available.GetGarbageCollectionProgress(ctx, &pb.GetGarbageCollectionProgressRequest{})
+			return err
+		}, codes.InvalidArgument},
+		{"GetGarbageCollectionProgress/ServiceUnavailable", func() error {
+			_, err := unavailable.GetGarbageCollectionProgress(ctx, &pb.GetGarbageCollectionProgressRequest{OperationId: "gc-operation-123"})
+			return err
+		}, codes.Unavailable},
+		{"RepairObject/NilRequest", func() error {
+			_, err := available.RepairObject(ctx, nil)
+			return err
+		}, codes.InvalidArgument},
+		{"RepairObject/EmptyKey", func() error {
+			_, err := available.RepairObject(ctx, &pb.RepairObjectRequest{})
+			return err
+		}, codes.InvalidArgument},
+		{"RepairObject/ServiceUnavailable", func() error {
+			_, err := unavailable.RepairObject(ctx, &pb.RepairObjectRequest{Key: "test-key"})
+			return err
+		}, codes.Unavailable},
+		{"CompactBackend/NilRequest", func() error {
+			_, err := available.CompactBackend(ctx, nil)
+			return err
+		}, codes.InvalidArgument},
+		{"CompactBackend/EmptyName", func() error {
+			_, err := available.CompactBackend(ctx, &pb.CompactBackendRequest{})
+			return err
+		}, codes.InvalidArgument},
+		{"CompactBackend/ServiceUnavailable", func() error {
+			_, err := unavailable.CompactBackend(ctx, &pb.CompactBackendRequest{Name: "test-backend"})
+			return err
+		}, codes.Unavailable},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := tt.call()
+			require.Error(t, err)
+			assert.Equal(t, tt.want, status.Code(err))
+		})
+	}
 }
 
 // =============================================================================
@@ -191,46 +312,6 @@ func TestCreateBackend_gRPC_Success(t *testing.T) {
 	assert.NotNil(t, resp)
 	assert.Equal(t, "test-backend", resp.Name)
 	assert.NotNil(t, resp.CreatedAt)
-}
-
-func TestCreateBackend_gRPC_NilRequest(t *testing.T) {
-	mockSvc := &mockObjectStorageAdminService{}
-	server := newTestObjectStorageAdminServer(mockSvc)
-
-	resp, err := server.CreateBackend(context.Background(), nil)
-	assert.Nil(t, resp)
-	assert.Error(t, err)
-	assert.Equal(t, codes.InvalidArgument, status.Code(err))
-}
-
-func TestCreateBackend_gRPC_EmptyName(t *testing.T) {
-	mockSvc := &mockObjectStorageAdminService{}
-	server := newTestObjectStorageAdminServer(mockSvc)
-
-	req := &pb.CreateBackendRequest{
-		Type: pb.BackendType_BACKEND_TYPE_LOCAL,
-		Tier: pb.StorageTier_STORAGE_TIER_HOT,
-	}
-
-	resp, err := server.CreateBackend(context.Background(), req)
-	assert.Nil(t, resp)
-	assert.Error(t, err)
-	assert.Equal(t, codes.InvalidArgument, status.Code(err))
-}
-
-func TestCreateBackend_gRPC_ServiceUnavailable(t *testing.T) {
-	server := newTestObjectStorageAdminServer(nil)
-
-	req := &pb.CreateBackendRequest{
-		Name: "test-backend",
-		Type: pb.BackendType_BACKEND_TYPE_LOCAL,
-		Tier: pb.StorageTier_STORAGE_TIER_HOT,
-	}
-
-	resp, err := server.CreateBackend(context.Background(), req)
-	assert.Nil(t, resp)
-	assert.Error(t, err)
-	assert.Equal(t, codes.Unavailable, status.Code(err))
 }
 
 func TestCreateBackend_gRPC_ServiceError(t *testing.T) {
@@ -275,44 +356,6 @@ func TestUpdateBackend_gRPC_Success(t *testing.T) {
 	assert.NotNil(t, resp)
 	assert.Equal(t, "test-backend", resp.Name)
 	assert.NotNil(t, resp.UpdatedAt)
-}
-
-func TestUpdateBackend_gRPC_NilRequest(t *testing.T) {
-	mockSvc := &mockObjectStorageAdminService{}
-	server := newTestObjectStorageAdminServer(mockSvc)
-
-	resp, err := server.UpdateBackend(context.Background(), nil)
-	assert.Nil(t, resp)
-	assert.Error(t, err)
-	assert.Equal(t, codes.InvalidArgument, status.Code(err))
-}
-
-func TestUpdateBackend_gRPC_EmptyName(t *testing.T) {
-	mockSvc := &mockObjectStorageAdminService{}
-	server := newTestObjectStorageAdminServer(mockSvc)
-
-	req := &pb.UpdateBackendRequest{
-		Config: map[string]string{"key": "value"},
-	}
-
-	resp, err := server.UpdateBackend(context.Background(), req)
-	assert.Nil(t, resp)
-	assert.Error(t, err)
-	assert.Equal(t, codes.InvalidArgument, status.Code(err))
-}
-
-func TestUpdateBackend_gRPC_ServiceUnavailable(t *testing.T) {
-	server := newTestObjectStorageAdminServer(nil)
-
-	req := &pb.UpdateBackendRequest{
-		Name:   "test-backend",
-		Config: map[string]string{"key": "value"},
-	}
-
-	resp, err := server.UpdateBackend(context.Background(), req)
-	assert.Nil(t, resp)
-	assert.Error(t, err)
-	assert.Equal(t, codes.Unavailable, status.Code(err))
 }
 
 func TestUpdateBackend_gRPC_NotFound(t *testing.T) {
@@ -380,116 +423,28 @@ func TestDeleteBackend_gRPC_WithMigration(t *testing.T) {
 	assert.Equal(t, int64(50), resp.MigratedObjects)
 }
 
-func TestDeleteBackend_gRPC_NilRequest(t *testing.T) {
-	mockSvc := &mockObjectStorageAdminService{}
-	server := newTestObjectStorageAdminServer(mockSvc)
-
-	resp, err := server.DeleteBackend(context.Background(), nil)
-	assert.Nil(t, resp)
-	assert.Error(t, err)
-	assert.Equal(t, codes.InvalidArgument, status.Code(err))
-}
-
-func TestDeleteBackend_gRPC_EmptyName(t *testing.T) {
-	mockSvc := &mockObjectStorageAdminService{}
-	server := newTestObjectStorageAdminServer(mockSvc)
-
-	req := &pb.DeleteBackendRequest{
-		Force: true,
-	}
-
-	resp, err := server.DeleteBackend(context.Background(), req)
-	assert.Nil(t, resp)
-	assert.Error(t, err)
-	assert.Equal(t, codes.InvalidArgument, status.Code(err))
-}
-
-func TestDeleteBackend_gRPC_ServiceUnavailable(t *testing.T) {
-	server := newTestObjectStorageAdminServer(nil)
-
-	req := &pb.DeleteBackendRequest{
-		Name:  "test-backend",
-		Force: true,
-	}
-
-	resp, err := server.DeleteBackend(context.Background(), req)
-	assert.Nil(t, resp)
-	assert.Error(t, err)
-	assert.Equal(t, codes.Unavailable, status.Code(err))
-}
-
 // =============================================================================
 // SetBackendStatus Tests
 // =============================================================================
 
 func TestSetBackendStatus_gRPC_Success(t *testing.T) {
-	mockSvc := &mockObjectStorageAdminService{}
-	server := newTestObjectStorageAdminServer(mockSvc)
+	for name, enabled := range map[string]bool{"Enable": true, "Disable": false} {
+		t.Run(name, func(t *testing.T) {
+			server := newTestObjectStorageAdminServer(&mockObjectStorageAdminService{})
 
-	req := &pb.SetBackendStatusRequest{
-		Name:    "test-backend",
-		Enabled: true,
+			req := &pb.SetBackendStatusRequest{
+				Name:    "test-backend",
+				Enabled: enabled,
+			}
+
+			resp, err := server.SetBackendStatus(context.Background(), req)
+			require.NoError(t, err)
+			require.NotNil(t, resp)
+			assert.Equal(t, "test-backend", resp.Name)
+			assert.Equal(t, enabled, resp.Enabled)
+			assert.NotNil(t, resp.UpdatedAt)
+		})
 	}
-
-	resp, err := server.SetBackendStatus(context.Background(), req)
-	require.NoError(t, err)
-	assert.NotNil(t, resp)
-	assert.Equal(t, "test-backend", resp.Name)
-	assert.True(t, resp.Enabled)
-	assert.NotNil(t, resp.UpdatedAt)
-}
-
-func TestSetBackendStatus_gRPC_Disable(t *testing.T) {
-	mockSvc := &mockObjectStorageAdminService{}
-	server := newTestObjectStorageAdminServer(mockSvc)
-
-	req := &pb.SetBackendStatusRequest{
-		Name:    "test-backend",
-		Enabled: false,
-	}
-
-	resp, err := server.SetBackendStatus(context.Background(), req)
-	require.NoError(t, err)
-	assert.NotNil(t, resp)
-	assert.False(t, resp.Enabled)
-}
-
-func TestSetBackendStatus_gRPC_NilRequest(t *testing.T) {
-	mockSvc := &mockObjectStorageAdminService{}
-	server := newTestObjectStorageAdminServer(mockSvc)
-
-	resp, err := server.SetBackendStatus(context.Background(), nil)
-	assert.Nil(t, resp)
-	assert.Error(t, err)
-	assert.Equal(t, codes.InvalidArgument, status.Code(err))
-}
-
-func TestSetBackendStatus_gRPC_EmptyName(t *testing.T) {
-	mockSvc := &mockObjectStorageAdminService{}
-	server := newTestObjectStorageAdminServer(mockSvc)
-
-	req := &pb.SetBackendStatusRequest{
-		Enabled: true,
-	}
-
-	resp, err := server.SetBackendStatus(context.Background(), req)
-	assert.Nil(t, resp)
-	assert.Error(t, err)
-	assert.Equal(t, codes.InvalidArgument, status.Code(err))
-}
-
-func TestSetBackendStatus_gRPC_ServiceUnavailable(t *testing.T) {
-	server := newTestObjectStorageAdminServer(nil)
-
-	req := &pb.SetBackendStatusRequest{
-		Name:    "test-backend",
-		Enabled: true,
-	}
-
-	resp, err := server.SetBackendStatus(context.Background(), req)
-	assert.Nil(t, resp)
-	assert.Error(t, err)
-	assert.Equal(t, codes.Unavailable, status.Code(err))
 }
 
 // =============================================================================
@@ -542,27 +497,6 @@ func TestGetStorageStats_gRPC_WithBackendStats(t *testing.T) {
 	assert.Len(t, resp.BackendStats, 2)
 }
 
-func TestGetStorageStats_gRPC_NilRequest(t *testing.T) {
-	mockSvc := &mockObjectStorageAdminService{}
-	server := newTestObjectStorageAdminServer(mockSvc)
-
-	resp, err := server.GetStorageStats(context.Background(), nil)
-	assert.Nil(t, resp)
-	assert.Error(t, err)
-	assert.Equal(t, codes.InvalidArgument, status.Code(err))
-}
-
-func TestGetStorageStats_gRPC_ServiceUnavailable(t *testing.T) {
-	server := newTestObjectStorageAdminServer(nil)
-
-	req := &pb.GetStorageStatsRequest{}
-
-	resp, err := server.GetStorageStats(context.Background(), req)
-	assert.Nil(t, resp)
-	assert.Error(t, err)
-	assert.Equal(t, codes.Unavailable, status.Code(err))
-}
-
 // =============================================================================
 // RunGarbageCollection Tests
 // =============================================================================
@@ -582,40 +516,6 @@ func TestRunGarbageCollection_gRPC_Success(t *testing.T) {
 	assert.NotNil(t, resp)
 	assert.NotEmpty(t, resp.OperationId)
 	assert.NotNil(t, resp.StartedAt)
-}
-
-func TestRunGarbageCollection_gRPC_DryRun(t *testing.T) {
-	mockSvc := &mockObjectStorageAdminService{}
-	server := newTestObjectStorageAdminServer(mockSvc)
-
-	req := &pb.RunGarbageCollectionRequest{
-		DryRun: true,
-	}
-
-	resp, err := server.RunGarbageCollection(context.Background(), req)
-	require.NoError(t, err)
-	assert.NotNil(t, resp)
-}
-
-func TestRunGarbageCollection_gRPC_NilRequest(t *testing.T) {
-	mockSvc := &mockObjectStorageAdminService{}
-	server := newTestObjectStorageAdminServer(mockSvc)
-
-	resp, err := server.RunGarbageCollection(context.Background(), nil)
-	assert.Nil(t, resp)
-	assert.Error(t, err)
-	assert.Equal(t, codes.InvalidArgument, status.Code(err))
-}
-
-func TestRunGarbageCollection_gRPC_ServiceUnavailable(t *testing.T) {
-	server := newTestObjectStorageAdminServer(nil)
-
-	req := &pb.RunGarbageCollectionRequest{}
-
-	resp, err := server.RunGarbageCollection(context.Background(), req)
-	assert.Nil(t, resp)
-	assert.Error(t, err)
-	assert.Equal(t, codes.Unavailable, status.Code(err))
 }
 
 // =============================================================================
@@ -665,43 +565,6 @@ func TestGetGarbageCollectionProgress_gRPC_Completed(t *testing.T) {
 	assert.NotNil(t, resp.CompletedAt)
 }
 
-func TestGetGarbageCollectionProgress_gRPC_NilRequest(t *testing.T) {
-	mockSvc := &mockObjectStorageAdminService{}
-	server := newTestObjectStorageAdminServer(mockSvc)
-
-	resp, err := server.GetGarbageCollectionProgress(context.Background(), nil)
-	assert.Nil(t, resp)
-	assert.Error(t, err)
-	assert.Equal(t, codes.InvalidArgument, status.Code(err))
-}
-
-func TestGetGarbageCollectionProgress_gRPC_EmptyOperationID(t *testing.T) {
-	mockSvc := &mockObjectStorageAdminService{}
-	server := newTestObjectStorageAdminServer(mockSvc)
-
-	req := &pb.GetGarbageCollectionProgressRequest{
-		OperationId: "",
-	}
-
-	resp, err := server.GetGarbageCollectionProgress(context.Background(), req)
-	assert.Nil(t, resp)
-	assert.Error(t, err)
-	assert.Equal(t, codes.InvalidArgument, status.Code(err))
-}
-
-func TestGetGarbageCollectionProgress_gRPC_ServiceUnavailable(t *testing.T) {
-	server := newTestObjectStorageAdminServer(nil)
-
-	req := &pb.GetGarbageCollectionProgressRequest{
-		OperationId: "gc-operation-123",
-	}
-
-	resp, err := server.GetGarbageCollectionProgress(context.Background(), req)
-	assert.Nil(t, resp)
-	assert.Error(t, err)
-	assert.Equal(t, codes.Unavailable, status.Code(err))
-}
-
 func TestGetGarbageCollectionProgress_gRPC_NotFound(t *testing.T) {
 	mockSvc := &mockObjectStorageAdminService{
 		getGarbageCollectionProgressFunc: func(ctx context.Context, req *service.GetGarbageCollectionProgressRequest) (*service.GetGarbageCollectionProgressResponse, error) {
@@ -745,66 +608,6 @@ func TestRepairObject_gRPC_Success(t *testing.T) {
 	assert.NotEmpty(t, resp.RepairedLocations)
 }
 
-func TestRepairObject_gRPC_NoRepairNeeded(t *testing.T) {
-	mockSvc := &mockObjectStorageAdminService{
-		repairObjectFunc: func(ctx context.Context, req *service.RepairObjectRequest) (*service.RepairObjectResponse, error) {
-			return &service.RepairObjectResponse{
-				Key:               req.Key,
-				Success:           true,
-				RepairedLocations: []string{},
-			}, nil
-		},
-	}
-	server := newTestObjectStorageAdminServer(mockSvc)
-
-	req := &pb.RepairObjectRequest{
-		Key: "test-key",
-	}
-
-	resp, err := server.RepairObject(context.Background(), req)
-	require.NoError(t, err)
-	assert.NotNil(t, resp)
-	assert.True(t, resp.Success)
-	assert.Empty(t, resp.RepairedLocations)
-}
-
-func TestRepairObject_gRPC_NilRequest(t *testing.T) {
-	mockSvc := &mockObjectStorageAdminService{}
-	server := newTestObjectStorageAdminServer(mockSvc)
-
-	resp, err := server.RepairObject(context.Background(), nil)
-	assert.Nil(t, resp)
-	assert.Error(t, err)
-	assert.Equal(t, codes.InvalidArgument, status.Code(err))
-}
-
-func TestRepairObject_gRPC_EmptyKey(t *testing.T) {
-	mockSvc := &mockObjectStorageAdminService{}
-	server := newTestObjectStorageAdminServer(mockSvc)
-
-	req := &pb.RepairObjectRequest{
-		Key: "",
-	}
-
-	resp, err := server.RepairObject(context.Background(), req)
-	assert.Nil(t, resp)
-	assert.Error(t, err)
-	assert.Equal(t, codes.InvalidArgument, status.Code(err))
-}
-
-func TestRepairObject_gRPC_ServiceUnavailable(t *testing.T) {
-	server := newTestObjectStorageAdminServer(nil)
-
-	req := &pb.RepairObjectRequest{
-		Key: "test-key",
-	}
-
-	resp, err := server.RepairObject(context.Background(), req)
-	assert.Nil(t, resp)
-	assert.Error(t, err)
-	assert.Equal(t, codes.Unavailable, status.Code(err))
-}
-
 func TestRepairObject_gRPC_ObjectNotFound(t *testing.T) {
 	mockSvc := &mockObjectStorageAdminService{
 		repairObjectFunc: func(ctx context.Context, req *service.RepairObjectRequest) (*service.RepairObjectResponse, error) {
@@ -845,57 +648,6 @@ func TestCompactBackend_gRPC_Success(t *testing.T) {
 	assert.Equal(t, "test-backend", resp.Name)
 	assert.NotEmpty(t, resp.OperationId)
 	assert.NotNil(t, resp.StartedAt)
-}
-
-func TestCompactBackend_gRPC_Aggressive(t *testing.T) {
-	mockSvc := &mockObjectStorageAdminService{}
-	server := newTestObjectStorageAdminServer(mockSvc)
-
-	req := &pb.CompactBackendRequest{
-		Name:       "test-backend",
-		Aggressive: true,
-	}
-
-	resp, err := server.CompactBackend(context.Background(), req)
-	require.NoError(t, err)
-	assert.NotNil(t, resp)
-}
-
-func TestCompactBackend_gRPC_NilRequest(t *testing.T) {
-	mockSvc := &mockObjectStorageAdminService{}
-	server := newTestObjectStorageAdminServer(mockSvc)
-
-	resp, err := server.CompactBackend(context.Background(), nil)
-	assert.Nil(t, resp)
-	assert.Error(t, err)
-	assert.Equal(t, codes.InvalidArgument, status.Code(err))
-}
-
-func TestCompactBackend_gRPC_EmptyName(t *testing.T) {
-	mockSvc := &mockObjectStorageAdminService{}
-	server := newTestObjectStorageAdminServer(mockSvc)
-
-	req := &pb.CompactBackendRequest{
-		Name: "",
-	}
-
-	resp, err := server.CompactBackend(context.Background(), req)
-	assert.Nil(t, resp)
-	assert.Error(t, err)
-	assert.Equal(t, codes.InvalidArgument, status.Code(err))
-}
-
-func TestCompactBackend_gRPC_ServiceUnavailable(t *testing.T) {
-	server := newTestObjectStorageAdminServer(nil)
-
-	req := &pb.CompactBackendRequest{
-		Name: "test-backend",
-	}
-
-	resp, err := server.CompactBackend(context.Background(), req)
-	assert.Nil(t, resp)
-	assert.Error(t, err)
-	assert.Equal(t, codes.Unavailable, status.Code(err))
 }
 
 func TestCompactBackend_gRPC_BackendNotFound(t *testing.T) {

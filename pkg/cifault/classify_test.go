@@ -155,7 +155,7 @@ func TestClassify_RealJobLogs(t *testing.T) {
 		{
 			name: "private module could not be resolved",
 			source: "go-quicbaas Actions job 77532 (task 67430, job \"lint\", runner ci-runner-01), last 45 of " +
-				"453 lines. act_runner ignored its mounted config, so GOPRIVATE was unset.",
+				"453 lines. act_runner ignored its mounted config, so the module settings were unset.",
 			file:          "module-resolution.log",
 			conclusion:    ConclusionFailure,
 			owners:        ownersOfThisFleet,
