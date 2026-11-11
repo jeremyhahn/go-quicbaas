@@ -3311,6 +3311,89 @@ func TestBackendStorage_GetPolicy_NotFound(t *testing.T) {
 	}
 }
 
+func TestBackendStorage_PolicyRecord_RoundTripsUndecodableBytes(t *testing.T) {
+	ctx := context.Background()
+	storage := NewBackendStorage(newMockKVStore91())
+
+	raw := []byte("{not json")
+	require.NoError(t, storage.PutPolicyRecord(ctx, "tenant", "bad", raw))
+	_, err := storage.GetPolicy(ctx, "tenant", "bad")
+	require.Error(t, err, "the record must not decode")
+
+	got, err := storage.GetPolicyRecord(ctx, "tenant", "bad")
+	require.NoError(t, err)
+	assert.Equal(t, raw, got)
+	got[0] = 'X'
+	again, err := storage.GetPolicyRecord(ctx, "tenant", "bad")
+	require.NoError(t, err)
+	assert.Equal(t, raw, again, "GetPolicyRecord returns a copy")
+
+	_, err = storage.GetPolicyRecord(ctx, "tenant", "missing")
+	assert.True(t, dberrors.Is(err, dberrors.ErrNotFound), "err = %v", err)
+}
+
+// plainWriteFailingKV is a guarded in-memory KV whose plain Put and Delete
+// fail the test, so a restore must take the guarded calls.
+type plainWriteFailingKV struct {
+	*notFoundMemoryKV
+	t *testing.T
+}
+
+func (k *plainWriteFailingKV) Put(_ context.Context, key string, _ []byte) error {
+	k.t.Errorf("Put(%q) called; a restore must use the guarded writes", key)
+	return nil
+}
+
+func (k *plainWriteFailingKV) Delete(_ context.Context, key string) error {
+	k.t.Errorf("Delete(%q) called; a restore must use the guarded writes", key)
+	return nil
+}
+
+func TestBackendStorage_RestorePolicyRecordIsGuarded(t *testing.T) {
+	ctx := context.Background()
+	p := createTestPolicy("tenant1", "p")
+	written, err := encodeStoredPolicy(p)
+	require.NoError(t, err)
+	snapshot := []byte(`{"snapshot":"record"}`)
+	other := []byte(`{"other":"writer"}`)
+
+	tests := []struct {
+		name     string
+		written  *Policy
+		snapshot []byte
+		present  bool
+		current  []byte // nil: no record
+		want     []byte // nil: no record
+	}{
+		{"update still holding the written bytes is put back", p, snapshot, true, written, snapshot},
+		{"update changed by another writer keeps that writer's bytes", p, snapshot, true, other, other},
+		{"update that never wrote leaves the snapshot", p, snapshot, true, snapshot, snapshot},
+		{"create still holding the written bytes is removed", p, nil, false, written, nil},
+		{"create replaced by another writer keeps it", p, nil, false, other, other},
+		{"delete still absent gets the snapshot back", nil, snapshot, true, nil, snapshot},
+		{"delete re-created by another writer keeps that writer's record", nil, snapshot, true, other, other},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			mem := newNotFoundMemoryKV()
+			key := policyKey("tenant1", "p")
+			if tc.current != nil {
+				require.NoError(t, mem.Put(ctx, key, tc.current))
+			}
+			storage := NewBackendStorage(&plainWriteFailingKV{notFoundMemoryKV: mem, t: t})
+
+			require.NoError(t, storage.RestorePolicyRecord(ctx, "tenant1", "p", tc.written, tc.snapshot, tc.present))
+			got, err := mem.Get(ctx, key)
+			if tc.want == nil {
+				assert.Error(t, err, "the record must be gone")
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tc.want, got)
+		})
+	}
+}
+
 // Test GetRole not found
 func TestBackendStorage_GetRole_NotFound(t *testing.T) {
 	ctx := context.Background()

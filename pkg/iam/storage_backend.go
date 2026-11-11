@@ -15,6 +15,7 @@
 package iam
 
 import (
+	"bytes"
 	"context"
 	"crypto/subtle"
 	"encoding/json"
@@ -1438,18 +1439,63 @@ func (s *BackendStorage) RevokeUserTokens(ctx context.Context, userID string) er
 // PolicyStorage implementation
 // -----------------------------------------------------------------------------
 
-// CreatePolicy creates a new policy.
+// guardedPolicyStore is the guarded-write capability a policy create and its
+// revert use; the tenant routing store implements it without the rest of
+// qrdbsdk.AtomicKVStore.
+type guardedPolicyStore interface {
+	PutIfAbsent(ctx context.Context, key string, value []byte) (stored bool, err error)
+	CompareAndDelete(ctx context.Context, key string, expected []byte) (deleted bool, err error)
+}
+
+// guardedPolicySwapper is a KV store that replaces a value only while it
+// still holds the expected bytes.
+type guardedPolicySwapper interface {
+	CompareAndSwap(ctx context.Context, key string, expected, next []byte) (swapped bool, err error)
+}
+
+// storeSharer reports whether two contexts resolve to the one physical store.
+type storeSharer interface {
+	SharesStore(a, b context.Context) (bool, error)
+}
+
+// SharesPolicyRecord reports whether one policy key names the same physical
+// record under contexts a and b. A store that cannot tell routes every
+// context to itself, so the answer is then true.
+func (s *BackendStorage) SharesPolicyRecord(a, b context.Context) (bool, error) {
+	if sharer, ok := s.kv.(storeSharer); ok {
+		return sharer.SharesStore(a, b)
+	}
+	return true, nil
+}
+
+// CreatePolicy creates a new policy only when its name is absent, with
+// PutIfAbsent where the store has guarded writes (guardedPolicyStore); any lookup failure but not-found
+// is returned before anything is written.
 func (s *BackendStorage) CreatePolicy(ctx context.Context, tenantID string, policy *Policy) error {
 	key := policyKey(tenantID, policy.Metadata.Name)
-
-	_, err := s.get(ctx, key)
-	if err == nil {
-		return ErrAlreadyExists
-	}
 
 	data, err := encodeStoredPolicy(policy)
 	if err != nil {
 		return &dberrors.QBError{Code: dberrors.ErrInternal, Op: "iam.policy.create", Err: err}
+	}
+
+	if atomic, ok := s.kv.(guardedPolicyStore); ok {
+		stored, err := atomic.PutIfAbsent(ctx, key, data)
+		if err != nil {
+			return err
+		}
+		if !stored {
+			return ErrAlreadyExists
+		}
+		return nil
+	}
+
+	_, err = s.get(ctx, key)
+	if err == nil {
+		return ErrAlreadyExists
+	}
+	if !dberrors.Is(err, dberrors.ErrNotFound) {
+		return err
 	}
 
 	return s.put(ctx, key, data)
@@ -1469,6 +1515,20 @@ func (s *BackendStorage) GetPolicy(ctx context.Context, tenantID, name string) (
 	}
 
 	return policy, nil
+}
+
+// GetPolicyRecord reads a policy's stored bytes as they are, undecodable ones included, for write snapshots.
+func (s *BackendStorage) GetPolicyRecord(ctx context.Context, tenantID, name string) ([]byte, error) {
+	data, err := s.get(ctx, policyKey(tenantID, name))
+	if err != nil {
+		return nil, err
+	}
+	return append([]byte(nil), data...), nil
+}
+
+// PutPolicyRecord writes a policy's stored bytes as they are, undecodable ones included, for write snapshots.
+func (s *BackendStorage) PutPolicyRecord(ctx context.Context, tenantID, name string, data []byte) error {
+	return s.put(ctx, policyKey(tenantID, name), data)
 }
 
 // UpdatePolicy updates an existing policy.
@@ -1495,6 +1555,94 @@ func (s *BackendStorage) DeletePolicy(ctx context.Context, tenantID, name string
 		return err
 	}
 	return s.delete(ctx, policyKey(tenantID, name))
+}
+
+// RevertCreatedPolicy removes policy's record only while it still holds the
+// bytes a create of policy wrote. Only the guarded (guardedPolicyStore CompareAndDelete) path is
+// race-free; the fallback read-then-delete can still race another writer.
+func (s *BackendStorage) RevertCreatedPolicy(ctx context.Context, tenantID string, policy *Policy) error {
+	key := policyKey(tenantID, policy.Metadata.Name)
+	data, err := encodeStoredPolicy(policy)
+	if err != nil {
+		return &dberrors.QBError{Code: dberrors.ErrInternal, Op: "iam.policy.revert", Err: err}
+	}
+
+	if atomic, ok := s.kv.(guardedPolicyStore); ok {
+		_, err := atomic.CompareAndDelete(ctx, key, data)
+		return err
+	}
+
+	current, err := s.get(ctx, key)
+	if dberrors.Is(err, dberrors.ErrNotFound) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if !bytes.Equal(current, data) {
+		return nil
+	}
+	return s.delete(ctx, key)
+}
+
+// RestorePolicyRecord puts a write snapshot of tenantID's policy name back,
+// only while the record still holds exactly what the write left there:
+// written's stored bytes, or no record when written is nil (a delete).
+// snapshot and present are the record the snapshot found. A record holding
+// anything else is another writer's and is left alone; that is not an error.
+// Only the guarded (guardedPolicySwapper CompareAndSwap, guardedPolicyStore
+// CompareAndDelete and PutIfAbsent) path is race-free; the fallback
+// read-then-write can still race another writer.
+func (s *BackendStorage) RestorePolicyRecord(ctx context.Context, tenantID, name string, written *Policy, snapshot []byte, present bool) error {
+	if written == nil && !present {
+		return nil
+	}
+	key := policyKey(tenantID, name)
+	var writtenBytes []byte
+	if written != nil {
+		data, err := encodeStoredPolicy(written)
+		if err != nil {
+			return &dberrors.QBError{Code: dberrors.ErrInternal, Op: "iam.policy.restore", Err: err}
+		}
+		writtenBytes = data
+	}
+
+	switch {
+	case written != nil && present:
+		if atomic, ok := s.kv.(guardedPolicySwapper); ok {
+			_, err := atomic.CompareAndSwap(ctx, key, writtenBytes, snapshot)
+			return err
+		}
+	case written != nil:
+		if atomic, ok := s.kv.(guardedPolicyStore); ok {
+			_, err := atomic.CompareAndDelete(ctx, key, writtenBytes)
+			return err
+		}
+	default:
+		if atomic, ok := s.kv.(guardedPolicyStore); ok {
+			_, err := atomic.PutIfAbsent(ctx, key, snapshot)
+			return err
+		}
+	}
+
+	current, err := s.get(ctx, key)
+	found := err == nil
+	if err != nil && !dberrors.Is(err, dberrors.ErrNotFound) {
+		return err
+	}
+	if written == nil {
+		if found {
+			return nil
+		}
+		return s.put(ctx, key, snapshot)
+	}
+	if !found || !bytes.Equal(current, writtenBytes) {
+		return nil
+	}
+	if present {
+		return s.put(ctx, key, snapshot)
+	}
+	return s.delete(ctx, key)
 }
 
 // ListPolicies lists policies for a tenant.

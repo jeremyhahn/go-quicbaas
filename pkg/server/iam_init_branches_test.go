@@ -682,3 +682,30 @@ func writeTestCertPEM(t *testing.T) string {
 	require.NoError(t, os.WriteFile(path, pemFromDER(der), 0o600))
 	return path
 }
+
+func TestInitialABACLoad_FailureStopsInit(t *testing.T) {
+	syncErr := errors.New("reload rejected")
+	prepared := false
+	err := initialABACLoad(context.Background(),
+		func(ctx context.Context, prepare func(context.Context)) error {
+			prepare(ctx)
+			return syncErr
+		},
+		func(context.Context) { prepared = true })
+
+	var initErr *IAMComponentInitError
+	require.True(t, errors.As(err, &initErr), "err = %v", err)
+	assert.Equal(t, "initial ABAC policy load", initErr.Component)
+	assert.Equal(t, syncErr, initErr.Cause)
+	assert.True(t, prepared)
+}
+
+func TestInitialABACLoad_Success(t *testing.T) {
+	err := initialABACLoad(context.Background(),
+		func(ctx context.Context, prepare func(context.Context)) error {
+			prepare(ctx)
+			return nil
+		},
+		func(context.Context) {})
+	assert.NoError(t, err)
+}

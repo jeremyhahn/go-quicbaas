@@ -101,8 +101,8 @@ func classTenantBarrierError(err error) error {
 // tenantUnsealRouter is the tenant servicer the embedded qrdb node's native
 // transports (REST, gRPC, QUIC, Unix and MCP) call: it replaces the node's own
 // tenant servicer on every one of them, so a native tenant unseal or
-// unseal-share runs quicbaas's per-tenant barrier facade (tenant binding and
-// unseal observers) with the caller's verified qrdb identity projected onto
+// unseal-share runs quicbaas's per-tenant barrier facade (tenant binding,
+// unseal hold, gates and observers) with the caller's verified qrdb identity projected onto
 // the quicbaas Subject (go-quicbaas 2212). Every other call
 // reaches the node's own servicer unchanged. While the node, or the facade, is
 // not running the router fails closed with errTenantServiceUnavailable; an

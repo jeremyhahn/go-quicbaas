@@ -151,6 +151,6 @@ func (s *Server) grpcAuthorizationInterceptors() (ggrpc.UnaryServerInterceptor, 
 		s.SealedWindowProbe(), s.OperationalProbe(),
 		qbsealedwindow.NewLoggerAuditSink(s.logger))
 
-	return grpcapi.UnaryAuthorizationInterceptor(validator, grpcapi.WithSealedWindowAuthBypass(sealedBypass)),
-		grpcapi.StreamAuthorizationInterceptor(validator, grpcapi.WithSealedWindowAuthBypass(sealedBypass)), nil
+	return grpcapi.UnaryTenantAdmission(grpcapi.UnaryAuthorizationInterceptor(validator, grpcapi.WithSealedWindowAuthBypass(sealedBypass)), s.tenantUnsealHooks.Admit),
+		grpcapi.StreamTenantAdmission(grpcapi.StreamAuthorizationInterceptor(validator, grpcapi.WithSealedWindowAuthBypass(sealedBypass)), s.tenantUnsealHooks.Admit), nil
 }
