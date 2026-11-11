@@ -26,7 +26,9 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 )
 
-// setupTenantForTests creates a test tenant and returns its ID.
+// setupTenantForTests creates a test tenant and returns its ID. Creating a
+// tenant is a system-tenant route (tenants:create), so the create is sent as
+// the fixture system admin whichever view of the cluster the caller passes.
 func setupTenantForTests(t *testing.T, cluster *testCluster) string {
 	tenantID := generateUniqueTenantID()
 	createReq := map[string]interface{}{
@@ -34,14 +36,19 @@ func setupTenantForTests(t *testing.T, cluster *testCluster) string {
 		"name": "Test Tenant for Identity",
 	}
 	var tenant iam.Tenant
-	require.NoError(t, cluster.postJSON("/api/v1/tenants", createReq, &tenant))
+	require.NoError(t, cluster.asSystemAdmin().postJSON("/api/v1/tenants", createReq, &tenant))
 	return tenantID
 }
 
 // TestUserCRUD tests complete user lifecycle.
 func TestUserCRUD(t *testing.T) {
-	cluster := setupTestCluster(t)
-	defer cluster.Close()
+	base := setupTestCluster(t)
+	defer base.Close()
+	// The test creates its own tenant and works inside it, so every call is
+	// the fixture system admin's: the tenant create, update and delete are
+	// system-tenant routes, and the in-tenant calls act in the URL's tenant
+	// through the tenant lift (pkg/api/rest/tenant_target.go).
+	cluster := base.asSystemAdmin()
 
 	tenantID := setupTenantForTests(t, cluster)
 	defer cluster.deleteJSON(fmt.Sprintf("/api/v1/tenants/%s", tenantID))
@@ -134,8 +141,13 @@ func TestUserCRUD(t *testing.T) {
 
 // TestUserEmailUniqueness verifies email uniqueness within a tenant.
 func TestUserEmailUniqueness(t *testing.T) {
-	cluster := setupTestCluster(t)
-	defer cluster.Close()
+	base := setupTestCluster(t)
+	defer base.Close()
+	// The test creates its own tenant and works inside it, so every call is
+	// the fixture system admin's: the tenant create, update and delete are
+	// system-tenant routes, and the in-tenant calls act in the URL's tenant
+	// through the tenant lift (pkg/api/rest/tenant_target.go).
+	cluster := base.asSystemAdmin()
 
 	tenantID := setupTenantForTests(t, cluster)
 	defer cluster.deleteJSON(fmt.Sprintf("/api/v1/tenants/%s", tenantID))
@@ -165,8 +177,13 @@ func TestUserEmailUniqueness(t *testing.T) {
 
 // TestUserRoleAssignment tests assigning and revoking roles.
 func TestUserRoleAssignment(t *testing.T) {
-	cluster := setupTestCluster(t)
-	defer cluster.Close()
+	base := setupTestCluster(t)
+	defer base.Close()
+	// The test creates its own tenant and works inside it, so every call is
+	// the fixture system admin's: the tenant create, update and delete are
+	// system-tenant routes, and the in-tenant calls act in the URL's tenant
+	// through the tenant lift (pkg/api/rest/tenant_target.go).
+	cluster := base.asSystemAdmin()
 
 	tenantID := setupTenantForTests(t, cluster)
 	defer cluster.deleteJSON(fmt.Sprintf("/api/v1/tenants/%s", tenantID))
@@ -216,8 +233,13 @@ func TestUserRoleAssignment(t *testing.T) {
 
 // TestRoleCRUD tests complete role lifecycle.
 func TestRoleCRUD(t *testing.T) {
-	cluster := setupTestCluster(t)
-	defer cluster.Close()
+	base := setupTestCluster(t)
+	defer base.Close()
+	// The test creates its own tenant and works inside it, so every call is
+	// the fixture system admin's: the tenant create, update and delete are
+	// system-tenant routes, and the in-tenant calls act in the URL's tenant
+	// through the tenant lift (pkg/api/rest/tenant_target.go).
+	cluster := base.asSystemAdmin()
 
 	tenantID := setupTenantForTests(t, cluster)
 	defer cluster.deleteJSON(fmt.Sprintf("/api/v1/tenants/%s", tenantID))
@@ -283,8 +305,13 @@ func TestRoleCRUD(t *testing.T) {
 
 // TestRoleAssignmentRevocation tests role assignment to users and revocation.
 func TestRoleAssignmentRevocation(t *testing.T) {
-	cluster := setupTestCluster(t)
-	defer cluster.Close()
+	base := setupTestCluster(t)
+	defer base.Close()
+	// The test creates its own tenant and works inside it, so every call is
+	// the fixture system admin's: the tenant create, update and delete are
+	// system-tenant routes, and the in-tenant calls act in the URL's tenant
+	// through the tenant lift (pkg/api/rest/tenant_target.go).
+	cluster := base.asSystemAdmin()
 
 	tenantID := setupTenantForTests(t, cluster)
 	defer cluster.deleteJSON(fmt.Sprintf("/api/v1/tenants/%s", tenantID))

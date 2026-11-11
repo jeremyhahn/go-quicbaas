@@ -93,9 +93,11 @@ func newTenantAdminSession(dir, tenantID string) *tenantAdminSession {
 	}
 }
 
-// args are the global flags that make the CLI present the admin certificate.
+// args are the global flags that make the CLI act in the admin's own tenant
+// (the global --tenant otherwise defaults to the system tenant) and present
+// the admin certificate.
 func (s *tenantAdminSession) args() []string {
-	return []string{"--tls-cert", s.certPath, "--tls-key", s.keyPath}
+	return []string{"--tenant", s.tenantID, "--tls-cert", s.certPath, "--tls-key", s.keyPath}
 }
 
 // env points HOME at the session's own directory, so the CLI reads the

@@ -85,8 +85,10 @@ func cleanupMFATests(cluster *testCluster, tenantID string) {
 
 // TestMFAStatusNotEnrolled tests getting MFA status for a user without MFA.
 func TestMFAStatusNotEnrolled(t *testing.T) {
-	cluster := setupTestCluster(t)
-	defer cluster.Close()
+	base := setupTestCluster(t)
+	defer base.Close()
+	// The system admin creates the test's tenant and acts in it by the tenant lift.
+	cluster := base.asSystemAdmin()
 
 	tenantID, userID := setupUserForMFATests(t, cluster)
 	defer cleanupMFATests(cluster, tenantID)
@@ -103,8 +105,10 @@ func TestMFAStatusNotEnrolled(t *testing.T) {
 
 // TestMFAEnrollmentBegin tests starting MFA enrollment.
 func TestMFAEnrollmentBegin(t *testing.T) {
-	cluster := setupTestCluster(t)
-	defer cluster.Close()
+	base := setupTestCluster(t)
+	defer base.Close()
+	// The system admin creates the test's tenant and acts in it by the tenant lift.
+	cluster := base.asSystemAdmin()
 
 	tenantID, userID := setupUserForMFATests(t, cluster)
 	defer cleanupMFATests(cluster, tenantID)
@@ -125,8 +129,10 @@ func TestMFAEnrollmentBegin(t *testing.T) {
 
 // TestMFAEnrollmentCancel tests canceling MFA enrollment.
 func TestMFAEnrollmentCancel(t *testing.T) {
-	cluster := setupTestCluster(t)
-	defer cluster.Close()
+	base := setupTestCluster(t)
+	defer base.Close()
+	// The system admin creates the test's tenant and acts in it by the tenant lift.
+	cluster := base.asSystemAdmin()
 
 	tenantID, userID := setupUserForMFATests(t, cluster)
 	defer cleanupMFATests(cluster, tenantID)
@@ -153,8 +159,10 @@ func TestMFAEnrollmentCancel(t *testing.T) {
 
 // TestMFABackupCodesBeforeEnrollment tests backup code operations before enrollment.
 func TestMFABackupCodesBeforeEnrollment(t *testing.T) {
-	cluster := setupTestCluster(t)
-	defer cluster.Close()
+	base := setupTestCluster(t)
+	defer base.Close()
+	// The system admin creates the test's tenant and acts in it by the tenant lift.
+	cluster := base.asSystemAdmin()
 
 	tenantID, userID := setupUserForMFATests(t, cluster)
 	defer cleanupMFATests(cluster, tenantID)
@@ -170,8 +178,10 @@ func TestMFABackupCodesBeforeEnrollment(t *testing.T) {
 
 // TestMFADisableNotEnrolled tests disabling MFA when not enrolled.
 func TestMFADisableNotEnrolled(t *testing.T) {
-	cluster := setupTestCluster(t)
-	defer cluster.Close()
+	base := setupTestCluster(t)
+	defer base.Close()
+	// The system admin creates the test's tenant and acts in it by the tenant lift.
+	cluster := base.asSystemAdmin()
 
 	tenantID, userID := setupUserForMFATests(t, cluster)
 	defer cleanupMFATests(cluster, tenantID)
@@ -188,8 +198,10 @@ func TestMFADisableNotEnrolled(t *testing.T) {
 
 // TestMFAInvalidMethod tests enrollment with invalid method.
 func TestMFAInvalidMethod(t *testing.T) {
-	cluster := setupTestCluster(t)
-	defer cluster.Close()
+	base := setupTestCluster(t)
+	defer base.Close()
+	// The system admin creates the test's tenant and acts in it by the tenant lift.
+	cluster := base.asSystemAdmin()
 
 	tenantID, userID := setupUserForMFATests(t, cluster)
 	defer cleanupMFATests(cluster, tenantID)
@@ -209,8 +221,10 @@ func TestMFAInvalidMethod(t *testing.T) {
 
 // TestMFAStatusNonExistentUser tests getting MFA status for non-existent user.
 func TestMFAStatusNonExistentUser(t *testing.T) {
-	cluster := setupTestCluster(t)
-	defer cluster.Close()
+	base := setupTestCluster(t)
+	defer base.Close()
+	// The system admin creates the test's tenant and acts in it by the tenant lift.
+	cluster := base.asSystemAdmin()
 
 	tenantID := generateUniqueTenantID()
 	createTenantReq := map[string]interface{}{
@@ -233,8 +247,10 @@ func TestMFAStatusNonExistentUser(t *testing.T) {
 
 // TestMFAEnrollmentMultipleAttempts tests that multiple enrollments don't conflict.
 func TestMFAEnrollmentMultipleAttempts(t *testing.T) {
-	cluster := setupTestCluster(t)
-	defer cluster.Close()
+	base := setupTestCluster(t)
+	defer base.Close()
+	// The system admin creates the test's tenant and acts in it by the tenant lift.
+	cluster := base.asSystemAdmin()
 
 	tenantID, userID := setupUserForMFATests(t, cluster)
 	defer cleanupMFATests(cluster, tenantID)
@@ -263,8 +279,10 @@ func TestMFAEnrollmentMultipleAttempts(t *testing.T) {
 
 // TestMFAEndpointPaths tests that all MFA endpoint paths are valid.
 func TestMFAEndpointPaths(t *testing.T) {
-	cluster := setupTestCluster(t)
-	defer cluster.Close()
+	base := setupTestCluster(t)
+	defer base.Close()
+	// The system admin creates the test's tenant and acts in it by the tenant lift.
+	cluster := base.asSystemAdmin()
 
 	tenantID, userID := setupUserForMFATests(t, cluster)
 	defer cleanupMFATests(cluster, tenantID)

@@ -39,10 +39,13 @@ curl -X POST http://localhost:8888/mcp \
 ```
 
 **Public Tools (no auth required):**
-- `quicbaas_health` - Health check
-- `quicbaas_login` - Authenticate
-- `quicbaas_version` - Version info
+- `qrdb_health` - Health check
 - `quicbaas_liveness` - Liveness probe
+- `quicbaas_readiness` - Readiness probe
+
+Not yet reachable without a credential: see the known gap in
+[`user.md`](user.md#what-an-assistant-can-and-cannot-see).
+`quicbaas_login_begin` and `quicbaas_login_finish` are refused on MCP (see [`engineering.md`](engineering.md#public-tools)); log in over REST or gRPC.
 
 ## Architecture
 
@@ -89,7 +92,7 @@ curl -X POST http://127.0.0.1:8888/mcp \
 # Test public endpoint (no auth required)
 curl -X POST http://127.0.0.1:8888/mcp \
   -H "Content-Type: application/json" \
-  -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"quicbaas_health"}}'
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"quicbaas_readiness"}}'
 ```
 
 ## JSON-RPC Protocol
