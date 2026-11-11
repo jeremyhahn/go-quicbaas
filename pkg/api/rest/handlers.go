@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strconv"
 	"time"
 
@@ -452,10 +453,15 @@ func (s *Server) HandlePut(w http.ResponseWriter, r *http.Request) {
 	RespondJSON(w, r, statusCode, resp)
 }
 
-// HandleCompareAndSwap handles POST /api/v1/entities/{type}/{id}/compare-and-swap.
-// qrdb decides the match; a stale expect value is reported as applied=false.
+// HandleCompareAndSwap handles POST /api/v1/kv/{type}/{key}/compare-and-swap.
+//
+// It addresses the record HandleKVPut writes for the same {type}/{key}: the
+// key is hashed the same way and expect and set are wrapped the way a KV put
+// stores its value, so a value written with PUT /api/v1/kv/{type}/{key} is
+// the one compared. qrdb decides the match; a stale expect value is reported
+// as applied=false.
 func (s *Server) HandleCompareAndSwap(w http.ResponseWriter, r *http.Request) {
-	entityType, entityID, ok := entityPathParams(w, r)
+	entityType, key, entityID, ok := kvConditionalPathParams(w, r)
 	if !ok {
 		return
 	}
@@ -464,13 +470,23 @@ func (s *Server) HandleCompareAndSwap(w http.ResponseWriter, r *http.Request) {
 	if !decodeConditionalPutBody(w, r, &req) {
 		return
 	}
+	expect, err := wrapKVValue(key, req.Expect)
+	if err != nil {
+		RespondError(w, r, http.StatusInternalServerError, &InternalServerError{Message: "failed to encode data"})
+		return
+	}
+	set, err := wrapKVValue(key, req.Set)
+	if err != nil {
+		RespondError(w, r, http.StatusInternalServerError, &InternalServerError{Message: "failed to encode data"})
+		return
+	}
 
 	incRestShardRequest(s.shardRouter.Route(entityType, entityID), entityType, "compare_and_swap")
 	resp, err := s.service.CompareAndSwap(r.Context(), &service.CompareAndSwapRequest{
 		EntityType: entityType,
 		ID:         entityID,
-		Expect:     req.Expect,
-		Set:        req.Set,
+		Expect:     expect,
+		Set:        set,
 	})
 	if err != nil {
 		s.handleServiceError(w, r, err)
@@ -480,10 +496,11 @@ func (s *Server) HandleCompareAndSwap(w http.ResponseWriter, r *http.Request) {
 	RespondJSON(w, r, http.StatusOK, ConditionalPutResponse{Applied: resp.Applied})
 }
 
-// HandlePutIfAbsent handles POST /api/v1/entities/{type}/{id}/put-if-absent.
-// A present entity is reported as applied=false.
+// HandlePutIfAbsent handles POST /api/v1/kv/{type}/{key}/put-if-absent,
+// addressing and wrapping the record exactly as HandleKVPut does. A present
+// record is reported as applied=false.
 func (s *Server) HandlePutIfAbsent(w http.ResponseWriter, r *http.Request) {
-	entityType, entityID, ok := entityPathParams(w, r)
+	entityType, key, entityID, ok := kvConditionalPathParams(w, r)
 	if !ok {
 		return
 	}
@@ -492,12 +509,17 @@ func (s *Server) HandlePutIfAbsent(w http.ResponseWriter, r *http.Request) {
 	if !decodeConditionalPutBody(w, r, &req) {
 		return
 	}
+	data, err := wrapKVValue(key, req.Data)
+	if err != nil {
+		RespondError(w, r, http.StatusInternalServerError, &InternalServerError{Message: "failed to encode data"})
+		return
+	}
 
 	incRestShardRequest(s.shardRouter.Route(entityType, entityID), entityType, "put_if_absent")
 	resp, err := s.service.PutIfAbsent(r.Context(), &service.PutIfAbsentRequest{
 		EntityType: entityType,
 		ID:         entityID,
-		Data:       req.Data,
+		Data:       data,
 	})
 	if err != nil {
 		s.handleServiceError(w, r, err)
@@ -528,6 +550,40 @@ func entityPathParams(w http.ResponseWriter, r *http.Request) (string, uint64, b
 		return "", 0, false
 	}
 	return entityType, entityID, true
+}
+
+// kvConditionalPathParams reads the {type} and {key} URL parameters of a KV
+// conditional route and the ID HandleKVPut stores that key under, responding
+// 400 and returning false when either is missing or the key is malformed.
+func kvConditionalPathParams(w http.ResponseWriter, r *http.Request) (string, string, uint64, bool) {
+	entityType := chi.URLParam(r, "type")
+	if entityType == "" {
+		RespondError(w, r, http.StatusBadRequest, &ValidationError{
+			Field:   "type",
+			Message: "entity type is required",
+		})
+		return "", "", 0, false
+	}
+	key, err := url.PathUnescape(chi.URLParam(r, "key"))
+	if err != nil || key == "" {
+		RespondError(w, r, http.StatusBadRequest, &ValidationError{
+			Field:   "key",
+			Message: "key is required",
+		})
+		return "", "", 0, false
+	}
+	return entityType, key, hashStringKey(entityType, key), true
+}
+
+// wrapKVValue is the stored form of value under key: the kvDataWrapper a KV
+// put of the same value stores, its value the JSON (base64) form the SDK
+// sends, so a conditional write compares and stores what HandleKVPut does.
+func wrapKVValue(key string, value []byte) ([]byte, error) {
+	raw, err := json.Marshal(value)
+	if err != nil {
+		return nil, err
+	}
+	return json.Marshal(kvDataWrapper{Key: key, Value: raw})
 }
 
 // decodeConditionalPutBody decodes a conditional write's JSON body into dst,

@@ -294,6 +294,35 @@ func (r *ToolRegistry) registerTools() {
 	})
 
 	r.addTool(ToolDefinition{
+		Name:        "quicbaas_kv_compare_and_swap",
+		Description: "Replace an entity's value only when it currently holds the expected value; answers {swapped: bool}",
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"entityType": map[string]interface{}{"type": "string", "description": "Entity type"},
+				"id":         map[string]interface{}{"type": "integer", "description": "Entity ID"},
+				"expected":   map[string]interface{}{"type": "string", "description": "Base64-encoded (standard) value the entity must hold"},
+				"next":       map[string]interface{}{"type": "string", "description": "Base64-encoded (standard) value stored when it does"},
+			},
+			"required": []string{"entityType", "id", "expected", "next"},
+		},
+	})
+
+	r.addTool(ToolDefinition{
+		Name:        "quicbaas_kv_put_if_absent",
+		Description: "Store an entity's value only when the entity is absent; answers {stored: bool}",
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"entityType": map[string]interface{}{"type": "string", "description": "Entity type"},
+				"id":         map[string]interface{}{"type": "integer", "description": "Entity ID"},
+				"value":      map[string]interface{}{"type": "string", "description": "Base64-encoded (standard) value"},
+			},
+			"required": []string{"entityType", "id", "value"},
+		},
+	})
+
+	r.addTool(ToolDefinition{
 		Name:        "qrdb_get",
 		Description: "Retrieve a value by key from QuicBaaS",
 		InputSchema: map[string]interface{}{
@@ -1070,6 +1099,10 @@ func (r *ToolRegistry) ExecuteTool(ctx context.Context, name string, args map[st
 		return r.executeDelete(ctx, args)
 	case "qrdb_list":
 		return r.executeList(ctx, args)
+	case "quicbaas_kv_compare_and_swap":
+		return r.executeKVCompareAndSwap(ctx, args)
+	case "quicbaas_kv_put_if_absent":
+		return r.executeKVPutIfAbsent(ctx, args)
 
 	// Batch Operations
 	case "quicbaas_batch_put":
@@ -1691,6 +1724,57 @@ func (r *ToolRegistry) executePut(ctx context.Context, args map[string]interface
 		return nil, err
 	}
 	return marshalResult(resp)
+}
+
+// executeKVCompareAndSwap is the conditional form of executePut: it names the
+// entity the same way, so it compares the record qrdb_put wrote.
+func (r *ToolRegistry) executeKVCompareAndSwap(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+	entityType := getStringAlt(args, "entityType", "entity_type")
+	expect, err := decodeConditionalArg(args, "expected")
+	if err != nil {
+		return nil, err
+	}
+	next, err := decodeConditionalArg(args, "next")
+	if err != nil {
+		return nil, err
+	}
+	resp, err := r.service.CompareAndSwap(ctx, &service.CompareAndSwapRequest{
+		EntityType: entityType,
+		ID:         getIDOrHashKey(entityType, args),
+		Expect:     expect,
+		Set:        next,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return map[string]interface{}{"swapped": resp.Applied}, nil
+}
+
+// executeKVPutIfAbsent is the conditional form of executePut.
+func (r *ToolRegistry) executeKVPutIfAbsent(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+	entityType := getStringAlt(args, "entityType", "entity_type")
+	value, err := decodeConditionalArg(args, "value")
+	if err != nil {
+		return nil, err
+	}
+	resp, err := r.service.PutIfAbsent(ctx, &service.PutIfAbsentRequest{
+		EntityType: entityType,
+		ID:         getIDOrHashKey(entityType, args),
+		Data:       value,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return map[string]interface{}{"stored": resp.Applied}, nil
+}
+
+// decodeConditionalArg decodes a base64 argument of the KV conditional tools.
+func decodeConditionalArg(args map[string]interface{}, name string) ([]byte, error) {
+	data, err := base64.StdEncoding.DecodeString(getString(args, name))
+	if err != nil {
+		return nil, &UserToolInvalidArgumentError{Arg: name, Err: err}
+	}
+	return data, nil
 }
 
 // decodePutData decodes the data argument of the KV put tools (qrdb_put and

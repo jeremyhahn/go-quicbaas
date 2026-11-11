@@ -16,7 +16,6 @@ package mcp
 import (
 	"context"
 	"encoding/base64"
-	"strconv"
 	"strings"
 
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/errors"
@@ -45,12 +44,6 @@ func isMCPKVService(service string) bool {
 	return strings.TrimPrefix(service, "quicbaas.") == "KV"
 }
 
-// kvKey builds the qrdb key for an entity: {entityType}:{id}. qrdb scopes
-// it to the caller's tenant, as the embedded transport's keyspace does.
-func kvKey(entityType string, id uint64) string {
-	return entityType + ":" + strconv.FormatUint(id, 10)
-}
-
 // compareAndSwapArguments builds qrdb_compare_and_swap's arguments. Values
 // travel base64-encoded (RFC 4648), as qrdb's tool requires.
 func compareAndSwapArguments(req interface{}) (map[string]interface{}, error) {
@@ -63,9 +56,10 @@ func compareAndSwapArguments(req interface{}) (map[string]interface{}, error) {
 		return nil, errors.NewInvalidInput("mcp.kv.CompareAndSwap", "entity type is required")
 	}
 	return map[string]interface{}{
-		"key":      kvKey(r.EntityType, r.ID),
-		"expected": base64.StdEncoding.EncodeToString(r.Expect),
-		"next":     base64.StdEncoding.EncodeToString(r.Set),
+		"entityType": r.EntityType,
+		"id":         r.ID,
+		"expected":   base64.StdEncoding.EncodeToString(r.Expect),
+		"next":       base64.StdEncoding.EncodeToString(r.Set),
 	}, nil
 }
 
@@ -80,8 +74,9 @@ func putIfAbsentArguments(req interface{}) (map[string]interface{}, error) {
 		return nil, errors.NewInvalidInput("mcp.kv.PutIfAbsent", "entity type is required")
 	}
 	return map[string]interface{}{
-		"key":   kvKey(r.EntityType, r.ID),
-		"value": base64.StdEncoding.EncodeToString(r.Data),
+		"entityType": r.EntityType,
+		"id":         r.ID,
+		"value":      base64.StdEncoding.EncodeToString(r.Data),
 	}, nil
 }
 

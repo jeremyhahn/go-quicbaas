@@ -53,8 +53,8 @@ type PutResponse struct {
 }
 
 // CompareAndSwapRequest is the body of POST
-// /api/v1/entities/{type}/{id}/compare-and-swap. Expect and Set are raw bytes,
-// base64-encoded in JSON, so the stored value is compared byte for byte.
+// /api/v1/kv/{type}/{key}/compare-and-swap. Expect and Set are the values a
+// KV put of the same key sends, base64-encoded in JSON.
 type CompareAndSwapRequest struct {
 	// Expect is the value the entity must currently hold
 	Expect []byte `json:"expect"`
@@ -64,8 +64,8 @@ type CompareAndSwapRequest struct {
 }
 
 // PutIfAbsentRequest is the body of POST
-// /api/v1/entities/{type}/{id}/put-if-absent. Data is raw bytes,
-// base64-encoded in JSON.
+// /api/v1/kv/{type}/{key}/put-if-absent. Data is the value, base64-encoded
+// in JSON.
 type PutIfAbsentRequest struct {
 	// Data is the value stored when the entity is absent
 	Data []byte `json:"data"`

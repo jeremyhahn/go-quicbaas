@@ -66,8 +66,8 @@ func b64(s string) string { return base64.StdEncoding.EncodeToString([]byte(s)) 
 
 func TestToolName_KVConditionalWrites(t *testing.T) {
 	cases := map[string]string{
-		"CompareAndSwap": "qrdb_compare_and_swap",
-		"PutIfAbsent":    "qrdb_put_if_absent",
+		"CompareAndSwap": "quicbaas_kv_compare_and_swap",
+		"PutIfAbsent":    "quicbaas_kv_put_if_absent",
 	}
 	for method, want := range cases {
 		if got := ToolName("quicbaas.KV", method); got != want {
@@ -87,7 +87,7 @@ func TestTransport_CompareAndSwap(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			var g guardedToolServer
-			tr := g.start(t, "qrdb_compare_and_swap", "swapped", tt.decided)
+			tr := g.start(t, "quicbaas_kv_compare_and_swap", "swapped", tt.decided)
 
 			result, err := tr.Request(context.Background(), "quicbaas.KV", "CompareAndSwap",
 				&service.CompareAndSwapRequest{EntityType: "users", ID: 42, Expect: []byte("old"), Set: []byte("new")})
@@ -103,10 +103,10 @@ func TestTransport_CompareAndSwap(t *testing.T) {
 			}
 
 			args := g.arguments()
-			want := map[string]string{"key": "users:42", "expected": b64("old"), "next": b64("new")}
+			want := map[string]interface{}{"entityType": "users", "id": float64(42), "expected": b64("old"), "next": b64("new")}
 			for k, v := range want {
 				if args[k] != v {
-					t.Errorf("argument %s = %v, want %q", k, args[k], v)
+					t.Errorf("argument %s = %v, want %v", k, args[k], v)
 				}
 			}
 		})
@@ -124,7 +124,7 @@ func TestTransport_PutIfAbsent(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			var g guardedToolServer
-			tr := g.start(t, "qrdb_put_if_absent", "stored", tt.decided)
+			tr := g.start(t, "quicbaas_kv_put_if_absent", "stored", tt.decided)
 
 			result, err := tr.Request(context.Background(), "quicbaas.KV", "PutIfAbsent",
 				&service.PutIfAbsentRequest{EntityType: "locks", ID: 7, Data: []byte("owner")})
@@ -140,8 +140,8 @@ func TestTransport_PutIfAbsent(t *testing.T) {
 			}
 
 			args := g.arguments()
-			if args["key"] != "locks:7" || args["value"] != b64("owner") {
-				t.Errorf("arguments = %v, want key locks:7 and value %q", args, b64("owner"))
+			if args["entityType"] != "locks" || args["id"] != float64(7) || args["value"] != b64("owner") {
+				t.Errorf("arguments = %v, want entityType locks, id 7 and value %q", args, b64("owner"))
 			}
 		})
 	}
@@ -151,7 +151,7 @@ func TestTransport_PutIfAbsent(t *testing.T) {
 // that lacks the decision field rather than reading it as applied=false.
 func TestTransport_CompareAndSwap_AnswerWithoutDecision(t *testing.T) {
 	var g guardedToolServer
-	tr := g.start(t, "qrdb_compare_and_swap", "unexpected", true)
+	tr := g.start(t, "quicbaas_kv_compare_and_swap", "unexpected", true)
 
 	_, err := tr.Request(context.Background(), "quicbaas.KV", "CompareAndSwap",
 		&service.CompareAndSwapRequest{EntityType: "users", ID: 1})

@@ -42,13 +42,13 @@ func (s *conditionalPutServer) ServeHTTP(w http.ResponseWriter, r *http.Request)
 	defer s.mu.Unlock()
 	applied := false
 	switch r.URL.Path {
-	case "/api/v1/entities/locks/7/compare-and-swap":
+	case "/api/v1/kv/locks/7/compare-and-swap":
 		held, ok := s.stored["locks/7"]
 		if ok && bytes.Equal(held, body.Expect) {
 			s.stored["locks/7"] = body.Set
 			applied = true
 		}
-	case "/api/v1/entities/locks/7/put-if-absent":
+	case "/api/v1/kv/locks/7/put-if-absent":
 		if _, ok := s.stored["locks/7"]; !ok {
 			s.stored["locks/7"] = body.Data
 			applied = true

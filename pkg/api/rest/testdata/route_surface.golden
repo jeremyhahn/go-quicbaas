@@ -406,8 +406,6 @@ POST /api/v1/crypto/verify/{name}
 POST /api/v1/embedding/batch
 POST /api/v1/embedding/generate
 POST /api/v1/entities/{type}/
-POST /api/v1/entities/{type}/{id}/compare-and-swap
-POST /api/v1/entities/{type}/{id}/put-if-absent
 POST /api/v1/hooks/task-completed
 POST /api/v1/hooks/task-created
 POST /api/v1/hooks/teammate-idle
@@ -445,6 +443,8 @@ POST /api/v1/kms/keys/{name}/export
 POST /api/v1/kms/keys/{name}/revoke
 POST /api/v1/kms/keys/{name}/rotate
 POST /api/v1/kv/{type}/{key}
+POST /api/v1/kv/{type}/{key}/compare-and-swap
+POST /api/v1/kv/{type}/{key}/put-if-absent
 POST /api/v1/messaging/channels
 POST /api/v1/messaging/publish-delta/{channel}
 POST /api/v1/messaging/publish/{channel}

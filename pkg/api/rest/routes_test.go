@@ -154,7 +154,7 @@ import (
 // PLUS 8 for the prompt store's verbs (/api/v1/prompts/{set}[/{name}...],
 // handlers_prompt.go, go-quicbaas#805) under prompts:read, prompts:history
 // and prompts:write. PLUS 2 for the KV conditional writes
-// (/api/v1/entities/{type}/{id}/compare-and-swap and /put-if-absent,
+// (/api/v1/kv/{type}/{key}/compare-and-swap and /put-if-absent,
 // go-quicbaas#2029) under kv:put.
 const baseRouteTableSize = 674
 

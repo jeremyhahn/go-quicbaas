@@ -1116,8 +1116,9 @@ func ToolName(service, method string) string {
 		case "Put", "Get", "Delete", "List", "Scan":
 			return "qrdb_" + strings.ToLower(method)
 		case "CompareAndSwap", "PutIfAbsent":
-			// qrdb's own guarded tools, served by the embedded node.
-			return "qrdb_" + camelToSnake(method)
+			// quicbaas's conditional tools, which name the entity as
+			// qrdb_put does and so act on the record it wrote.
+			return "quicbaas_kv_" + camelToSnake(method)
 		default:
 			return "quicbaas_" + strings.ToLower(method)
 		}

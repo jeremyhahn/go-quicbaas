@@ -137,7 +137,7 @@ func (h *kvHandler) handlePut(ctx context.Context, req interface{}) (interface{}
 }
 
 // handleCompareAndSwap handles CompareAndSwap requests via
-// POST /api/v1/entities/{type}/{id}/compare-and-swap.
+// POST /api/v1/kv/{type}/{id}/compare-and-swap, the key handlePut writes.
 func (h *kvHandler) handleCompareAndSwap(ctx context.Context, req interface{}) (interface{}, error) {
 	sdkReq, ok := req.(*service.CompareAndSwapRequest)
 	if !ok || sdkReq == nil {
@@ -153,7 +153,7 @@ func (h *kvHandler) handleCompareAndSwap(ctx context.Context, req interface{}) (
 }
 
 // handlePutIfAbsent handles PutIfAbsent requests via
-// POST /api/v1/entities/{type}/{id}/put-if-absent.
+// POST /api/v1/kv/{type}/{id}/put-if-absent, the key handlePut writes.
 func (h *kvHandler) handlePutIfAbsent(ctx context.Context, req interface{}) (interface{}, error) {
 	sdkReq, ok := req.(*service.PutIfAbsentRequest)
 	if !ok || sdkReq == nil {
@@ -171,7 +171,7 @@ func (h *kvHandler) handlePutIfAbsent(ctx context.Context, req interface{}) (int
 // returns the server's {"applied": bool} as a ConditionalPutResponse.
 func (h *kvHandler) conditionalPut(ctx context.Context, op, entityType string, id uint64, verb string, body map[string][]byte) (interface{}, error) {
 	url := h.transport.baseURL + h.transport.basePath +
-		fmt.Sprintf("/api/v1/entities/%s/%d/%s", neturl.PathEscape(entityType), id, verb)
+		fmt.Sprintf("/api/v1/kv/%s/%d/%s", neturl.PathEscape(entityType), id, verb)
 
 	bodyBytes, err := json.Marshal(body)
 	if err != nil {

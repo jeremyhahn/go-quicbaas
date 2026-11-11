@@ -19,14 +19,14 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 )
 
-// conditionalPutRequest builds a POST to an entity's conditional-write route
-// with the chi {type} and {id} parameters set.
-func conditionalPutRequest(t *testing.T, entityType, id, body string) *http.Request {
+// conditionalPutRequest builds a POST to a key's conditional-write route
+// with the chi {type} and {key} parameters set.
+func conditionalPutRequest(t *testing.T, entityType, key, body string) *http.Request {
 	t.Helper()
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("type", entityType)
-	rctx.URLParams.Add("id", id)
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/entities/"+entityType+"/"+id+"/compare-and-swap", strings.NewReader(body))
+	rctx.URLParams.Add("key", key)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/kv/"+entityType+"/"+key+"/compare-and-swap", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	return req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
 }
@@ -56,7 +56,8 @@ func TestHandleCompareAndSwap(t *testing.T) {
 
 			// The mock stands in for qrdb's match: applied only when expect equals the stored value.
 			mockService.On("CompareAndSwap", mock.Anything, mock.MatchedBy(func(r *service.CompareAndSwapRequest) bool {
-				return r.EntityType == "locks" && r.ID == 7 && bytes.Equal(r.Expect, tt.expect) && bytes.Equal(r.Set, []byte("v2"))
+				return r.EntityType == "locks" && r.ID == hashStringKey("locks", "7") &&
+					bytes.Equal(r.Expect, mustWrapKV(t, "7", tt.expect)) && bytes.Equal(r.Set, mustWrapKV(t, "7", []byte("v2")))
 			})).Return(&service.ConditionalPutResponse{Applied: bytes.Equal(tt.expect, stored)}, nil)
 
 			body, err := json.Marshal(CompareAndSwapRequest{Expect: tt.expect, Set: []byte("v2")})
@@ -76,7 +77,7 @@ func TestHandleCompareAndSwap_BadInput(t *testing.T) {
 		id   string
 		body string
 	}{
-		{name: "non-numeric id", id: "abc", body: `{"expect":"djE=","set":"djI="}`},
+		{name: "missing key", id: "", body: `{"expect":"djE=","set":"djI="}`},
 		{name: "invalid JSON body", id: "7", body: `{`},
 	}
 	for _, tt := range tests {
@@ -119,7 +120,7 @@ func TestHandlePutIfAbsent(t *testing.T) {
 			defer cleanup()
 
 			mockService.On("PutIfAbsent", mock.Anything, mock.MatchedBy(func(r *service.PutIfAbsentRequest) bool {
-				return r.EntityType == "locks" && r.ID == 7 && bytes.Equal(r.Data, []byte("owner-a"))
+				return r.EntityType == "locks" && r.ID == hashStringKey("locks", "7") && bytes.Equal(r.Data, mustWrapKV(t, "7", []byte("owner-a")))
 			})).Return(&service.ConditionalPutResponse{Applied: !tt.present}, nil)
 
 			body, err := json.Marshal(PutIfAbsentRequest{Data: []byte("owner-a")})
@@ -165,4 +166,48 @@ func TestHandlePutIfAbsent_ServiceError(t *testing.T) {
 	server.HandlePutIfAbsent(w, conditionalPutRequest(t, "locks", "7", `{"data":"djE="}`))
 
 	assert.GreaterOrEqual(t, w.Code, http.StatusInternalServerError)
+}
+
+// mustWrapKV is wrapKVValue for a test.
+func mustWrapKV(t *testing.T, key string, value []byte) []byte {
+	t.Helper()
+	wrapped, err := wrapKVValue(key, value)
+	require.NoError(t, err)
+	return wrapped
+}
+
+// TestHandleCompareAndSwap_AddressesTheRecordAKVPutWrote pins the keyspace:
+// a compare-and-swap whose expect is the value a KV put stored names the
+// same ID and the same stored bytes the put did.
+func TestHandleCompareAndSwap_AddressesTheRecordAKVPutWrote(t *testing.T) {
+	server, mockService, cleanup := setupMockServer(t)
+	defer cleanup()
+
+	var put *service.PutRequest
+	mockService.On("Put", mock.Anything, mock.MatchedBy(func(r *service.PutRequest) bool {
+		put = r
+		return true
+	})).Return(&service.PutResponse{ID: 1, Timestamp: 1}, nil)
+	putBody, err := json.Marshal(map[string]interface{}{"value": []byte("v1")})
+	require.NoError(t, err)
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("type", "locks")
+	rctx.URLParams.Add("key", "door")
+	putReq := httptest.NewRequest(http.MethodPut, "/api/v1/kv/locks/door", bytes.NewReader(putBody))
+	putReq = putReq.WithContext(context.WithValue(putReq.Context(), chi.RouteCtxKey, rctx))
+	w := httptest.NewRecorder()
+	server.HandleKVPut(w, putReq)
+	require.Equal(t, http.StatusOK, w.Code)
+	require.NotNil(t, put)
+
+	mockService.On("CompareAndSwap", mock.Anything, mock.MatchedBy(func(r *service.CompareAndSwapRequest) bool {
+		return r.EntityType == put.EntityType && r.ID == put.ID && bytes.Equal(r.Expect, put.Data)
+	})).Return(&service.ConditionalPutResponse{Applied: true}, nil)
+	casBody, err := json.Marshal(CompareAndSwapRequest{Expect: []byte("v1"), Set: []byte("v2")})
+	require.NoError(t, err)
+	w = httptest.NewRecorder()
+	server.HandleCompareAndSwap(w, conditionalPutRequest(t, "locks", "door", string(casBody)))
+
+	require.Equal(t, http.StatusOK, w.Code)
+	assert.True(t, decodeApplied(t, w))
 }
