@@ -271,11 +271,15 @@ func getLeaderNode(ctx context.Context, t *testing.T) (string, uint64) {
 	tlsCfg, err := helpers.IntegrationTLSConfig()
 	require.NoError(t, err, "load integration TLS config")
 
+	// ClusterStatus requires admin:status, which the Operator role holds.
+	operatorCreds := helpers.TenantOperatorGRPCCredentials(t)
+
 	for _, endpoint := range endpoints {
 		connCtx, connCancel := context.WithTimeout(ctx, 10*time.Second)
 		conn, err := grpc.DialContext(connCtx, endpoint,
 			grpc.WithTransportCredentials(credentials.NewTLS(tlsCfg)),
 			grpc.WithBlock(),
+			grpc.WithPerRPCCredentials(operatorCreds),
 		)
 		connCancel()
 
