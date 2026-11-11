@@ -285,15 +285,18 @@ const deployLocalExample = `
 // runFleetDeploy orchestrates flag parsing → service invocation →
 // output formatting.
 // deployContext binds the operator's deploy tenant to parent: the spec's
-// tenant when it names one, otherwise the system tenant. The deploy service
-// runs in this process and its tenantctx.Target check refuses a context
-// with no bound caller; the remote calls it makes (cert minting through the
-// server) are authorised by the server over mTLS (go-quicbaas#2229).
+// tenant when it names one, otherwise the system tenant. A spec that names
+// no tenant is given the system tenant too, so the service's validation and
+// the node certificate it mints see the same tenant the context carries.
+// The deploy service runs in this process and its tenantctx.Target check
+// refuses a context with no bound caller; the remote calls it makes (cert
+// minting through the server) are authorised by the server over mTLS
+// (go-quicbaas#2229).
 func deployContext(parent context.Context, spec *deploy.Spec) context.Context {
-	if spec.Tenant != "" {
-		return tenantctx.WithTenant(parent, spec.Tenant)
+	if spec.Tenant == "" {
+		spec.Tenant = tenantctx.SystemTenantID
 	}
-	return tenantctx.WithSystem(parent)
+	return tenantctx.WithTenant(parent, spec.Tenant)
 }
 
 func runFleetDeploy(cmd *cobra.Command, args []string) error {

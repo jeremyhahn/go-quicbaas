@@ -317,9 +317,10 @@ func TestRunFleetDeploy_BindsTheSystemTenantWhenTheSpecNamesNone(t *testing.T) {
 	deployWaitOnline = 0
 	setDeployTenant(t, "")
 
-	var seen string
+	var seen, specTenant string
 	installStubService(t, func(ctx context.Context, spec *deploy.Spec) (*deploy.Result, error) {
 		seen = boundTenant(t, ctx)
+		specTenant = spec.Tenant
 		return &deploy.Result{Host: spec.Host}, nil
 	})
 	if err := runFleetDeploy(nil, nil); err != nil {
@@ -327,6 +328,11 @@ func TestRunFleetDeploy_BindsTheSystemTenantWhenTheSpecNamesNone(t *testing.T) {
 	}
 	if !tenantctx.IsSystem(seen) {
 		t.Fatalf("Deploy saw tenant %q, want the system tenant", seen)
+	}
+	// The service validates spec.Tenant and mints the node certificate from
+	// it, so the spec must carry the same tenant as the context.
+	if specTenant != tenantctx.SystemTenantID {
+		t.Fatalf("Deploy saw spec tenant %q, want %q", specTenant, tenantctx.SystemTenantID)
 	}
 }
 
@@ -365,9 +371,13 @@ func TestDeployContext_BindsTheSpecTenant(t *testing.T) {
 }
 
 func TestDeployContext_FallsBackToTheSystemTenant(t *testing.T) {
-	ctx := deployContext(context.Background(), &deploy.Spec{})
+	spec := &deploy.Spec{}
+	ctx := deployContext(context.Background(), spec)
 	if got := boundTenant(t, ctx); !tenantctx.IsSystem(got) {
 		t.Fatalf("tenant = %q, want the system tenant", got)
+	}
+	if spec.Tenant != tenantctx.SystemTenantID {
+		t.Fatalf("spec tenant = %q, want %q", spec.Tenant, tenantctx.SystemTenantID)
 	}
 }
 
