@@ -202,7 +202,18 @@ func handleOrchestratorGetSessionHistory(ctx context.Context, conn *grpc.ClientC
 		}
 		out.Events = append(out.Events, item)
 		if limit > 0 && len(out.Events) >= limit {
-			out.NextSeq = env.Sequence + 1
+			// The page is full. Read one message more to learn whether the
+			// history goes on: an event names the next page's first
+			// sequence, and EOF means this page ended the history, so
+			// NextSeq stays 0 as the client contract documents.
+			var peek pb.SessionEventEnvelope
+			switch err := cs.RecvMsg(&peek); {
+			case err == nil:
+				out.NextSeq = peek.Sequence
+			case err == io.EOF:
+			default:
+				return nil, convertGRPCError(err, "grpc.orchestrator.GetSessionHistory")
+			}
 			break
 		}
 	}
