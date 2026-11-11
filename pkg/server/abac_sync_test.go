@@ -59,19 +59,26 @@ func (m *abacTestTenants) ListTenants(context.Context, iam.ListOptions) ([]*iam.
 }
 
 // abacTestPolicies is a PolicyStorage double holding policies per tenant and
-// recording which tenants were listed.
+// recording which tenants were listed. Like tenant-routed storage, a
+// non-system tenant listed under the system context reads the system
+// namespace: its legacy records (legacyByTenant), which a sealed tenant's
+// barrier (errByTenant) does not guard.
 type abacTestPolicies struct {
 	iam.PolicyStorage
-	byTenant    map[string][]*iam.Policy
-	err         error
-	errByTenant map[string]error
-	listed      []string
+	byTenant       map[string][]*iam.Policy
+	legacyByTenant map[string][]*iam.Policy
+	err            error
+	errByTenant    map[string]error
+	listed         []string
 }
 
-func (s *abacTestPolicies) ListPolicies(_ context.Context, tenantID string, _ iam.ListOptions) ([]*iam.Policy, error) {
+func (s *abacTestPolicies) ListPolicies(ctx context.Context, tenantID string, _ iam.ListOptions) ([]*iam.Policy, error) {
 	s.listed = append(s.listed, tenantID)
 	if s.err != nil {
 		return nil, s.err
+	}
+	if bound, ok := tenantctx.Lookup(ctx); ok && tenantctx.IsSystem(bound) && !tenantctx.IsSystem(tenantID) {
+		return s.legacyByTenant[tenantID], nil
 	}
 	if err := s.errByTenant[tenantID]; err != nil {
 		return nil, err
@@ -257,8 +264,8 @@ func TestQRDBABACSync_allPolicies(t *testing.T) {
 // and the system policies in the system namespace, and each tenant's
 // policies in that tenant's own namespace.
 func TestQRDBABACSync_allPolicies_TenantRoutedStorage(t *testing.T) {
-	r := newFakeStoreResolver(kvstore.NewMemory())
-	r.barrierTenant("acme")
+	r := newFakeStoreResolver(qrdbsdk.NewMemoryKVStore())
+	r.barrierTenantStore("acme", qrdbsdk.NewMemoryKVStore())
 	bs := iam.NewBackendStorage(newTenantRoutingKVStore(r))
 	tm := iam.NewDefaultTenantManager(bs)
 

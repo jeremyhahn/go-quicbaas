@@ -48,6 +48,7 @@ func TestTenantAdmission_HeldTenantIsRefused503(t *testing.T) {
 		rctx.URLParams.Add("tenant", "acme")
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/tenants/acme/things", nil)
 		req = asTenantCaller(req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx)), qrdbsdk.SystemTenantID)
+		req = systemAdminLiftRequest(t, req, "tenants", "read")
 		rec := httptest.NewRecorder()
 		_, tenantID, ok := s.urlTenant(rec, req, "list users", "tenant")
 		if ok {
@@ -57,6 +58,7 @@ func TestTenantAdmission_HeldTenantIsRefused503(t *testing.T) {
 	}
 
 	s := &Server{config: &Config{TenantAdmission: admit}}
+	s.SetBarrierScopeAuthorizer(&identityRecordingAuthorizer{})
 
 	code, called := bound(s)
 	assert.Equal(t, http.StatusServiceUnavailable, code, "a request bound to a held tenant is refused")
@@ -92,10 +94,15 @@ func TestTenantAdmission_SystemAdminRepairsAHeldTenantsPolicies(t *testing.T) {
 		rctx := chi.NewRouteContext()
 		rctx.URLParams.Add("tenant", tenant)
 		req := httptest.NewRequest(http.MethodPut, "/api/v1/tenants/"+tenant+"/policies/fix", nil)
-		return asTenantCaller(req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx)), caller)
+		req = asTenantCaller(req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx)), caller)
+		if caller == qrdbsdk.SystemTenantID {
+			req = systemAdminLiftRequest(t, req, "tenants", "create")
+		}
+		return req
 	}
 
 	s := &Server{config: &Config{TenantAdmission: admit}}
+	s.SetBarrierScopeAuthorizer(&identityRecordingAuthorizer{})
 
 	rec := httptest.NewRecorder()
 	ctx, tenantID, repair, ok := s.policyRepairTenant(rec, request("acme", qrdbsdk.SystemTenantID), "update policy", "tenant")
