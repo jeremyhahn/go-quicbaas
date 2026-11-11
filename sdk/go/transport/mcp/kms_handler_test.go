@@ -912,6 +912,39 @@ func TestKMSMCP_GenerateKey(t *testing.T) {
 	}
 }
 
+// TestKMSMCP_GenerateKey_CarriesDescriptionTagsOwner proves the description,
+// tags and owner reach the tool arguments.
+func TestKMSMCP_GenerateKey_CarriesDescriptionTagsOwner(t *testing.T) {
+	tr, cleanup := newFakeMCPServer(t, mcpToolExpectation{
+		wantTool: "quicbaas_kms_generate_key",
+		assertArgs: func(t *testing.T, args map[string]interface{}) {
+			want := map[string]interface{}{
+				"name": "k", "algorithm": "AES-256-GCM",
+				"description": "d",
+				"tags":        map[string]interface{}{"env": "prod"},
+				"owner":       "svc-a",
+			}
+			if !reflect.DeepEqual(args, want) {
+				t.Errorf("tool arguments = %v, want %v", args, want)
+			}
+		},
+		result: map[string]interface{}{
+			"key_id": "key-1", "name": "k", "algorithm": "AES-256-GCM",
+			"status": "enabled", "version": 1,
+			"created_at": kmsStamp.Unix(), "updated_at": kmsStamp.Unix(), "timestamp": kmsStamp.Unix(),
+		},
+	})
+	defer cleanup()
+
+	_, err := kmsclient.NewClient(tr).GenerateKey(context.Background(), &kmsclient.GenerateKeyRequest{
+		Name: "k", Algorithm: kmsclient.AlgorithmAES256GCM,
+		Description: "d", Tags: map[string]string{"env": "prod"}, Owner: "svc-a",
+	})
+	if err != nil {
+		t.Fatalf("GenerateKey: %v", err)
+	}
+}
+
 func TestKMSMCP_GenerateKey_OptionalUnset(t *testing.T) {
 	tr, cleanup := newFakeMCPServer(t, mcpToolExpectation{
 		wantTool: "quicbaas_kms_generate_key",

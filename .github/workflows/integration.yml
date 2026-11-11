@@ -67,12 +67,12 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  GO_VERSION: '1.27.3'
+  GO_VERSION: '1.27.4'
 
 jobs:
   integration-test:
     name: Integration Tests
-    runs-on: ubuntu-latest
+    runs-on: ${{ ((github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)) && fromJSON('["self-hosted","linux","x64","bigdisk-docker"]') || 'ubuntu-latest' }}
     # Full tier: the same condition as ci.yml's (see its header).
     if: github.event_name == 'push' || github.event_name == 'workflow_dispatch' || contains(github.event.pull_request.labels.*.name, 'ci:full')
     timeout-minutes: 120
@@ -94,7 +94,10 @@ jobs:
       # codex-review job image on two of the shared runners and failed 16 review runs
       # portfolio-wide (#3). Space beyond this job's own stack is host
       # maintenance, not this workflow's to reclaim.
+      # Hosted runners only: the pool guest (bigdisk-docker, ruling 442) is a
+      # throwaway VM with its own large disk and no passwordless sudo promise.
       - name: Free up disk space
+        if: runner.environment == 'github-hosted'
         run: |
           echo "=== Disk space before cleanup ==="
           df -h
