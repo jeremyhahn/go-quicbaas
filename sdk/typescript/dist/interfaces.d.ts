@@ -276,6 +276,45 @@ export interface DeleteIAMAuditEventsResponse {
     deleted_count: number;
     before: string;
 }
+export interface ImpersonationSession {
+    id: string;
+    admin_user_id: string;
+    admin_username?: string;
+    target_user_id: string;
+    target_username?: string;
+    tenant_id: string;
+    reason: string;
+    started_at: string;
+    expires_at: string;
+    /** Set once the session has ended. */
+    ended_at?: string;
+    operation_count: number;
+    audit_log_id: string;
+}
+export interface StartImpersonationRequest {
+    target_user_id: string;
+    tenant_id: string;
+    reason: string;
+    /** Go duration string such as `30m`; the server default applies when omitted. */
+    duration?: string;
+}
+export interface ListImpersonationsOptions {
+    /** Sends `active=true` when true; nothing otherwise. */
+    activeOnly?: boolean;
+    /** Only sessions started by this admin user. */
+    adminUserID?: string;
+}
+export interface ListImpersonationsResponse {
+    sessions: ImpersonationSession[];
+    total: number;
+}
+export type EndImpersonationResult = ImpersonationSession | {
+    status: 'impersonation_ended';
+};
+export interface ListUserImpersonationsResponse {
+    user_id: string;
+    sessions: ImpersonationSession[];
+}
 export type IAMProviderType = 'oidc' | 'saml' | 'oauth2' | 'ldap';
 export interface RegisterIAMProviderRequest {
     /** Optional provider ID; the server generates one when omitted. */
@@ -889,6 +928,14 @@ export interface IAMClient {
     recordAuditEvent(req: RecordIAMAuditEventRequest): Promise<RecordIAMAuditEventResponse>;
     /** deleteAuditEventsBefore prunes IAM audit events older than `before` (RFC 3339). */
     deleteAuditEventsBefore(before: string, tenantID?: string): Promise<DeleteIAMAuditEventsResponse>;
+    /** listImpersonations lists impersonation sessions, optionally only active ones or one admin's. */
+    listImpersonations(opts?: ListImpersonationsOptions): Promise<ListImpersonationsResponse>;
+    /** startImpersonation starts a session in which an admin acts as the target user. */
+    startImpersonation(req: StartImpersonationRequest): Promise<ImpersonationSession>;
+    /** endImpersonation ends a session; the result is the session or a bare status. */
+    endImpersonation(sessionID: string): Promise<EndImpersonationResult>;
+    /** listUserImpersonations lists the sessions that targeted one user. */
+    listUserImpersonations(userID: string): Promise<ListUserImpersonationsResponse>;
     getRole(tenantID: string, roleID: string): Promise<IAMRole>;
     registerProvider(tenantID: string, req: RegisterIAMProviderRequest): Promise<IAMExternalProvider>;
     listProviders(tenantID: string, opts?: ListIAMProvidersOptions): Promise<ListIAMProvidersResponse>;

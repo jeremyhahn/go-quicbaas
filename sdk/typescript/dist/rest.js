@@ -2647,6 +2647,28 @@ class RestIAMClient {
             method: 'DELETE',
         });
     }
+    // Maps to GET /api/v1/admin/impersonation/?active=true&admin_user_id=
+    async listImpersonations(opts) {
+        const q = [];
+        if (opts?.activeOnly === true)
+            q.push('active=true');
+        if (opts?.adminUserID !== undefined)
+            q.push(`admin_user_id=${encodeURIComponent(opts.adminUserID)}`);
+        const qs = q.length > 0 ? `?${q.join('&')}` : '';
+        return this.fetchJSON(`/api/v1/admin/impersonation/${qs}`);
+    }
+    // Maps to POST /api/v1/admin/impersonation/start
+    async startImpersonation(req) {
+        return this.fetchJSON('/api/v1/admin/impersonation/start', { method: 'POST', body: JSON.stringify(req) });
+    }
+    // Maps to POST /api/v1/admin/impersonation/{sessionID}/end
+    async endImpersonation(sessionID) {
+        return this.fetchJSON(`/api/v1/admin/impersonation/${encodeURIComponent(sessionID)}/end`, { method: 'POST' });
+    }
+    // Maps to GET /api/v1/admin/users/{userID}/impersonations
+    async listUserImpersonations(userID) {
+        return this.fetchJSON(`/api/v1/admin/users/${encodeURIComponent(userID)}/impersonations`);
+    }
     // Maps to GET /api/v1/tenants/{tenantID}/roles/{roleID}
     async getRole(tenantID, roleID) {
         return this.fetchJSON(`/api/v1/tenants/${encodeURIComponent(tenantID)}/roles/${encodeURIComponent(roleID)}`);
