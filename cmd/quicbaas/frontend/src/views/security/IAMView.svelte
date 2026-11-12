@@ -46,6 +46,9 @@
     UserConsent,
     IAMSession,
     MFAStatusResponse,
+    ProvisionTenantRequest,
+    ProvisionTenantResponse,
+    TenantAdminEnrollment,
   } from '@quicbaas/sdk';
   import { ShieldCheck, UserPlus, Pencil, Trash2, UserCheck, ToggleLeft, RefreshCw, FileCheck, MonitorSmartphone, KeyRound } from 'lucide-svelte';
   import EmptyState from '../../components/core/EmptyState.svelte';
@@ -276,6 +279,23 @@
   let newTenantDesc = $state('');
   let createTenantError: string | null = $state(null);
   let creatingTenant = $state(false);
+
+  // ---------------------------------------------------------------------------
+  // Provision Tenant dialog state
+  // ---------------------------------------------------------------------------
+
+  let showProvisionTenant = $state(false);
+  let provTenantID = $state('');
+  let provTenantName = $state('');
+  let provAdminUsername = $state('');
+  let provEnrollment: TenantAdminEnrollment = $state('invite');
+  let provCsrPem = $state('');
+  let provInviteExpiry = $state('');
+  let provisionTenantError: string | null = $state(null);
+  let provisioningTenant = $state(false);
+  // The provisioning result; holds the one-time invite token or certificate
+  // until the result dialog closes.
+  let provisionResult: ProvisionTenantResponse | null = $state(null);
 
   // ---------------------------------------------------------------------------
   // Edit Tenant dialog state
@@ -824,6 +844,84 @@
   }
 
   // ---------------------------------------------------------------------------
+  // Provision tenant (tenant + first admin by invite or CSR)
+  // ---------------------------------------------------------------------------
+
+  function openProvisionTenant(): void {
+    provTenantID = '';
+    provTenantName = '';
+    provAdminUsername = '';
+    provEnrollment = 'invite';
+    provCsrPem = '';
+    provInviteExpiry = '';
+    provisionTenantError = null;
+    showProvisionTenant = true;
+  }
+
+  function closeProvisionTenant(): void {
+    showProvisionTenant = false;
+    provisionTenantError = null;
+    provCsrPem = '';
+  }
+
+  async function submitProvisionTenant(): Promise<void> {
+    provisionTenantError = null;
+    const tenantID = provTenantID.trim();
+    if (!tenantID) {
+      provisionTenantError = 'Tenant ID is required';
+      return;
+    }
+    const req: ProvisionTenantRequest = { tenant_id: tenantID, admin_enrollment: provEnrollment };
+    const name = provTenantName.trim();
+    if (name) req.name = name;
+    const adminUsername = provAdminUsername.trim();
+    if (adminUsername) req.admin_username = adminUsername;
+    if (provEnrollment === 'cert') {
+      const csr = provCsrPem.trim();
+      if (!csr) {
+        provisionTenantError = 'Admin CSR PEM is required for certificate enrollment';
+        return;
+      }
+      req.admin_csr_pem = csr;
+    } else {
+      const expiry = String(provInviteExpiry).trim();
+      if (expiry) {
+        if (!/^\d+$/.test(expiry) || Number(expiry) <= 0) {
+          provisionTenantError = 'Invite expiry must be a positive whole number of hours';
+          return;
+        }
+        req.invite_expiry_hours = Number(expiry);
+      }
+    }
+    provisioningTenant = true;
+    try {
+      const client = await getSDKClient();
+      provisionResult = await client.iam.provisionTenant(req);
+      showToast({ message: `Tenant "${tenantID}" provisioned`, type: 'success' });
+      closeProvisionTenant();
+    } catch (e) {
+      provisionTenantError = e instanceof Error ? e.message : 'Failed to provision tenant';
+    } finally {
+      provisioningTenant = false;
+    }
+  }
+
+  function closeProvisionResult(): void {
+    provisionResult = null;
+    void loadTenants();
+  }
+
+  async function copyProvisionSecret(value: string | undefined, what: string): Promise<void> {
+    if (!value) return;
+    try {
+      await navigator.clipboard.writeText(value);
+      showToast({ message: `${what} copied`, type: 'success' });
+    } catch {
+      showToast({ message: `Could not copy the ${what.toLowerCase()}`, type: 'error' });
+    }
+  }
+
+  // ---------------------------------------------------------------------------
   // Edit tenant
   // ---------------------------------------------------------------------------
 
@@ -1114,6 +1212,13 @@
         aria-label="Create tenant"
       >
         + Create Tenant
+      </button>
+      <button
+        class="btn btn-ghost btn-sm"
+        onclick={openProvisionTenant}
+        aria-label="Provision tenant"
+      >
+        + Provision Tenant
       </button>
     {:else if activeTab === 'roles'}
       <button
@@ -1837,6 +1942,103 @@
       </div>
     </div>
     <div class="modal-backdrop" role="none" onclick={() => { showCreateTenant = false; }} onkeydown={() => { showCreateTenant = false; }}></div>
+  </div>
+{/if}
+
+<!-- =========================================================================
+     PROVISION TENANT DIALOG
+     ========================================================================= -->
+{#if showProvisionTenant}
+  <div class="modal modal-open" role="dialog" aria-modal="true" aria-label="Provision tenant dialog">
+    <div class="modal-box max-w-md">
+      <h3 class="text-base font-semibold mb-4">Provision Tenant</h3>
+      {#if provisionTenantError}
+        <div class="alert alert-error text-sm mb-3" role="alert">{provisionTenantError}</div>
+      {/if}
+      <div class="space-y-3">
+        <div class="form-control">
+          <label class="label label-text" for="prov-tenant-id">Tenant ID</label>
+          <input id="prov-tenant-id" class="input input-bordered input-sm" type="text" placeholder="acme" bind:value={provTenantID} />
+        </div>
+        <div class="form-control">
+          <label class="label label-text" for="prov-tenant-name">Name</label>
+          <input id="prov-tenant-name" class="input input-bordered input-sm" type="text" placeholder="Optional display name" bind:value={provTenantName} />
+        </div>
+        <div class="form-control">
+          <label class="label label-text" for="prov-admin-username">Admin username</label>
+          <input id="prov-admin-username" class="input input-bordered input-sm" type="text" placeholder="Optional; the server picks a default" bind:value={provAdminUsername} />
+        </div>
+        <fieldset class="form-control">
+          <legend class="label label-text">Admin enrollment</legend>
+          <label class="label cursor-pointer justify-start gap-2">
+            <input type="radio" class="radio radio-sm" name="prov-enrollment" value="invite" bind:group={provEnrollment} />
+            <span class="label-text">Invite</span>
+          </label>
+          <label class="label cursor-pointer justify-start gap-2">
+            <input type="radio" class="radio radio-sm" name="prov-enrollment" value="cert" bind:group={provEnrollment} />
+            <span class="label-text">Certificate (CSR)</span>
+          </label>
+        </fieldset>
+        {#if provEnrollment === 'cert'}
+          <div class="form-control">
+            <label class="label label-text" for="prov-csr-pem">Admin CSR PEM</label>
+            <textarea id="prov-csr-pem" class="textarea textarea-bordered textarea-sm font-mono text-xs" rows="6" placeholder="-----BEGIN CERTIFICATE REQUEST-----" bind:value={provCsrPem}></textarea>
+          </div>
+        {:else}
+          <div class="form-control">
+            <label class="label label-text" for="prov-invite-expiry">Invite expiry (hours)</label>
+            <input id="prov-invite-expiry" class="input input-bordered input-sm" type="text" inputmode="numeric" placeholder="Optional; server default" bind:value={provInviteExpiry} />
+          </div>
+        {/if}
+      </div>
+      <div class="modal-action">
+        <button class="btn btn-ghost btn-sm" onclick={closeProvisionTenant}>Cancel</button>
+        <button class="btn btn-primary btn-sm" disabled={provisioningTenant} onclick={submitProvisionTenant}>{provisioningTenant ? 'Provisioning…' : 'Provision'}</button>
+      </div>
+    </div>
+    <div class="modal-backdrop" role="none" onclick={closeProvisionTenant} onkeydown={closeProvisionTenant}></div>
+  </div>
+{/if}
+
+<!-- =========================================================================
+     PROVISION TENANT RESULT DIALOG
+     ========================================================================= -->
+{#if provisionResult}
+  <div class="modal modal-open" role="dialog" aria-modal="true" aria-label="Tenant provisioned dialog">
+    <div class="modal-box max-w-lg">
+      <h3 class="text-base font-semibold mb-4">Tenant Provisioned</h3>
+      <dl class="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-sm">
+        <dt class="font-medium">Tenant ID</dt><dd class="font-mono">{provisionResult.tenant_id}</dd>
+        <dt class="font-medium">Admin username</dt><dd class="font-mono">{provisionResult.admin_username}</dd>
+        <dt class="font-medium">Admin user ID</dt><dd class="font-mono">{provisionResult.admin_user_id}</dd>
+        <dt class="font-medium">Admin role ID</dt><dd class="font-mono">{provisionResult.admin_role_id}</dd>
+        <dt class="font-medium">Pending</dt><dd>{provisionResult.admin_pending ? 'Yes' : 'No'}</dd>
+      </dl>
+      {#if provisionResult.invite_token}
+        <div class="mt-4 space-y-2">
+          <div class="alert alert-warning text-sm">This invite token is shown once. Copy it now and send it to the admin.</div>
+          <label class="label label-text" for="prov-invite-token">Invite token</label>
+          <textarea id="prov-invite-token" class="textarea textarea-bordered textarea-sm font-mono text-xs w-full" rows="3" readonly value={provisionResult.invite_token}></textarea>
+          <button class="btn btn-ghost btn-xs" aria-label="Copy invite token" onclick={() => copyProvisionSecret(provisionResult?.invite_token, 'Invite token')}>Copy</button>
+          {#if provisionResult.invite_expires_at}
+            <p class="text-xs">Expires {formatDateTime(provisionResult.invite_expires_at)}</p>
+          {/if}
+        </div>
+      {/if}
+      {#if provisionResult.admin_cert_pem}
+        <div class="mt-4 space-y-2">
+          <label class="label label-text" for="prov-admin-cert">Admin certificate</label>
+          <textarea id="prov-admin-cert" class="textarea textarea-bordered textarea-sm font-mono text-xs w-full" rows="6" readonly value={provisionResult.admin_cert_pem}></textarea>
+          <button class="btn btn-ghost btn-xs" aria-label="Copy certificate" onclick={() => copyProvisionSecret(provisionResult?.admin_cert_pem, 'Certificate')}>Copy</button>
+          {#if provisionResult.admin_cert_thumbprint}
+            <p class="text-xs">Thumbprint <span class="font-mono">{provisionResult.admin_cert_thumbprint}</span></p>
+          {/if}
+        </div>
+      {/if}
+      <div class="modal-action">
+        <button class="btn btn-primary btn-sm" onclick={closeProvisionResult}>Done</button>
+      </div>
+    </div>
   </div>
 {/if}
 

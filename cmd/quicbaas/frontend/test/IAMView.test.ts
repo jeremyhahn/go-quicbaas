@@ -842,3 +842,119 @@ describe('IAMView', () => {
     });
   });
 });
+
+describe('Provision tenant', () => {
+  let provisionTenant: ReturnType<typeof vi.fn>;
+  let listTenants: ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    setAuthenticated({ access_token: sessionToken('acme') });
+    provisionTenant = vi.fn().mockResolvedValue({
+      tenant_id: 'globex',
+      admin_user_id: 'usr_admin',
+      admin_username: 'root',
+      admin_role_id: 'role_admin',
+      admin_pending: true,
+      invite_token: 'inv-secret-token',
+      invite_expires_at: '2026-11-13T00:00:00Z',
+      timestamp: '2026-11-12T00:00:00Z',
+    });
+    listTenants = vi.fn().mockResolvedValue({ tenants: mockTenants, count: 1 });
+    mockGetSDKClient.mockResolvedValue({
+      iam: {
+        listUsers: vi.fn().mockResolvedValue({ users: mockUsers, count: 2 }),
+        listTenants,
+        listRoles: vi.fn().mockResolvedValue({ roles: mockRoles, count: 1 }),
+        listPolicies: vi.fn().mockResolvedValue({ policies: mockPolicies, count: 1 }),
+        createTenant: vi.fn(),
+        provisionTenant,
+      },
+    });
+  });
+
+  afterEach(() => {
+    routeIAMTab('users');
+    setUnauthenticated();
+  });
+
+  async function openDialog(): Promise<void> {
+    render(IAMView);
+    await fireEvent.click(screen.getByRole('tab', { name: /Tenants/i }));
+    await fireEvent.click(await screen.findByRole('button', { name: 'Provision tenant' }));
+    await screen.findByRole('dialog', { name: 'Provision tenant dialog' });
+  }
+
+  async function submit(): Promise<void> {
+    await fireEvent.click(screen.getByRole('button', { name: 'Provision' }));
+  }
+
+  it('sends the invite-mode fields and never a CSR', async () => {
+    await openDialog();
+    await fireEvent.input(screen.getByLabelText('Tenant ID'), { target: { value: 'globex' } });
+    await fireEvent.input(screen.getByLabelText('Name'), { target: { value: 'Globex' } });
+    await fireEvent.input(screen.getByLabelText('Admin username'), { target: { value: 'root' } });
+    await fireEvent.input(screen.getByLabelText('Invite expiry (hours)'), { target: { value: '48' } });
+    await submit();
+    await waitFor(() => expect(provisionTenant).toHaveBeenCalledTimes(1));
+    const req = provisionTenant.mock.calls[0][0];
+    expect(req).toEqual({
+      tenant_id: 'globex',
+      name: 'Globex',
+      admin_username: 'root',
+      admin_enrollment: 'invite',
+      invite_expiry_hours: 48,
+    });
+    expect(req).not.toHaveProperty('admin_csr_pem');
+    expect(req).not.toHaveProperty('isolation_type');
+  });
+
+  it('requires the CSR in cert mode and sends it', async () => {
+    await openDialog();
+    await fireEvent.input(screen.getByLabelText('Tenant ID'), { target: { value: 'globex' } });
+    await fireEvent.click(screen.getByLabelText('Certificate (CSR)'));
+    await submit();
+    expect(await screen.findByRole('alert')).toHaveTextContent(/CSR PEM is required/);
+    expect(provisionTenant).not.toHaveBeenCalled();
+    const csr = '-----BEGIN CERTIFICATE REQUEST-----\nabc\n-----END CERTIFICATE REQUEST-----';
+    await fireEvent.input(screen.getByLabelText('Admin CSR PEM'), { target: { value: csr } });
+    await submit();
+    await waitFor(() => expect(provisionTenant).toHaveBeenCalledTimes(1));
+    const req = provisionTenant.mock.calls[0][0];
+    expect(req).toEqual({ tenant_id: 'globex', admin_enrollment: 'cert', admin_csr_pem: csr });
+    expect(req).not.toHaveProperty('invite_expiry_hours');
+  });
+
+  it('calls nothing without a tenant id', async () => {
+    await openDialog();
+    await submit();
+    expect(await screen.findByRole('alert')).toHaveTextContent('Tenant ID is required');
+    expect(provisionTenant).not.toHaveBeenCalled();
+  });
+
+  it('shows the invite token once, clears it on close and reloads the list', async () => {
+    await openDialog();
+    await fireEvent.input(screen.getByLabelText('Tenant ID'), { target: { value: 'globex' } });
+    await submit();
+    const result = await screen.findByRole('dialog', { name: 'Tenant provisioned dialog' });
+    expect(result).toHaveTextContent('usr_admin');
+    expect(result).toHaveTextContent('role_admin');
+    expect(result).toHaveTextContent(/shown once/);
+    expect(screen.getByLabelText('Invite token')).toHaveValue('inv-secret-token');
+    expect(screen.getByRole('button', { name: 'Copy invite token' })).toBeInTheDocument();
+    const loadsBefore = listTenants.mock.calls.length;
+    await fireEvent.click(screen.getByRole('button', { name: 'Done' }));
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Tenant provisioned dialog' })).toBeNull());
+    expect(screen.queryByDisplayValue('inv-secret-token')).toBeNull();
+    await waitFor(() => expect(listTenants.mock.calls.length).toBeGreaterThan(loadsBefore));
+  });
+
+  it('shows an SDK error in the alert', async () => {
+    provisionTenant.mockRejectedValue(new Error('tenant already exists'));
+    await openDialog();
+    await fireEvent.input(screen.getByLabelText('Tenant ID'), { target: { value: 'globex' } });
+    await submit();
+    expect(await screen.findByRole('alert')).toHaveTextContent('tenant already exists');
+    expect(screen.getByRole('dialog', { name: 'Provision tenant dialog' })).toBeInTheDocument();
+  });
+});
