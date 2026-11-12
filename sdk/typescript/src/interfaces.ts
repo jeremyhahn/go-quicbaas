@@ -33,6 +33,7 @@ import type { TrustClient } from './trust.js';
 import type { CryptoClient } from './crypto.js';
 import type { DEKClient } from './dek.js';
 import type { PIVClient } from './piv.js';
+import type { XKMSClient } from './xkms.js';
 import type { DynamicSecretsClient } from './dynamicsecrets.js';
 
 import type {
@@ -1481,6 +1482,11 @@ export interface Client {
    * Null on transports that do not carry it.
    */
   readonly piv: PIVClient;
+  /**
+   * xkms drives the xkms passthrough routes (/api/v1/xkms/*): backends,
+   * health, seal and unseal, and stored certificates.
+   */
+  readonly xkms: XKMSClient;
   /**
    * dynamicSecrets manages credential-generation roles, on-demand
    * short-lived credential minting, and lease renewal/revocation.

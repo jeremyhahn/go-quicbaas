@@ -1343,6 +1343,7 @@ export class McpClient implements Client {
   readonly dek: any = null;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   readonly piv: any = null;
+  readonly xkms: any = null;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   readonly dynamicSecrets: any = null;
   readonly barrier: BarrierClient;
