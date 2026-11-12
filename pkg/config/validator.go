@@ -1085,4 +1085,40 @@ func (v *Validator) validateSDLCForge(cfg *SDLCForge) {
 			v.addError(field.key, "must not be negative; zero takes the default")
 		}
 	}
+	for forgeType, command := range cfg.TokenCommands {
+		v.validateSDLCForgeTokenCommand("sdlc.forge.token_commands."+forgeType, forgeType, command)
+	}
+}
+
+// sdlcTokenCommandForgeTypes are the forge types a token command may serve.
+var sdlcTokenCommandForgeTypes = map[string]bool{"github": true, "gitea": true}
+
+func (v *Validator) validateSDLCForgeTokenCommand(key, forgeType string, cmd SDLCForgeTokenCommand) {
+	if !sdlcTokenCommandForgeTypes[forgeType] {
+		v.addError(key, "is not a forge type with a token command; use github or gitea")
+		return
+	}
+	switch {
+	case len(cmd.Argv) == 0 || cmd.Argv[0] == "":
+		v.addError(key+".argv", "must name a command")
+	case !filepath.IsAbs(cmd.Argv[0]):
+		v.addError(key+".argv", "must start with an absolute path; no shell runs it")
+	}
+	if cmd.RefreshBefore < 0 {
+		v.addError(key+".refresh_before", "must not be negative; zero takes 5m")
+	}
+	if cmd.Timeout < 0 {
+		v.addError(key+".timeout", "must not be negative; zero takes 30s")
+	}
+	if len(cmd.AllowedBaseURLs) == 0 {
+		v.addError(key+".allowed_base_urls", "must name the forge API origins the command may be run for")
+	}
+	for _, raw := range cmd.AllowedBaseURLs {
+		u, err := url.Parse(raw)
+		if err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "" ||
+			u.User != nil || u.RawQuery != "" || u.Fragment != "" {
+			v.addError(key+".allowed_base_urls", "must hold absolute http(s) URLs with no credentials, query or fragment")
+			return
+		}
+	}
 }

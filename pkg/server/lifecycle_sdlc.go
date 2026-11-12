@@ -598,6 +598,10 @@ func (s *Server) startSDLC() error {
 	}
 
 	rulers := sdlc.RulerPolicy{Default: cfg.Rulers.Default, Tenants: cfg.Rulers.Tenants}
+	forgeTokens, err := newSDLCForgeTokenSources(cfg.Forge.TokenCommands)
+	if err != nil {
+		return &SDLCInitError{Component: "forge token commands", Cause: err}
+	}
 	sdlcService, err := service.NewSDLCService(service.SDLCServiceConfig{
 		Store: store, Routes: routes, Projects: projectSvc, ProjectWriter: projectStores.Store(),
 		Secrets: secrets, Guard: guard, Verification: verification, Tasks: agents,
@@ -624,6 +628,9 @@ func (s *Server) startSDLC() error {
 			ReadAttempts:      cfg.Forge.ReadAttempts,
 			RetryBackoff:      cfg.Forge.RetryBackoff,
 		},
+		// The node's forge token commands; a forge type without one reads
+		// each binding's token secret.
+		ForgeTokens: forgeTokens,
 	})
 	if err != nil {
 		return &SDLCInitError{Component: "binding service", Cause: err}
@@ -875,6 +882,30 @@ func newSDLCTriage(cfg sdlc.TriageRunnerConfig, jobs sdlc.TriageJobStarter, stor
 		return nil, nil, &SDLCInitError{Component: "triage scheduler", Cause: err}
 	}
 	return runner, scheduler, nil
+}
+
+// newSDLCForgeTokenSources builds one command token source per forge type in
+// sdlc.forge.token_commands. Each command learns its forge type from its
+// environment; the base URL is added per call. No commands yields nil.
+func newSDLCForgeTokenSources(commands map[string]config.SDLCForgeTokenCommand) (map[sdlc.ForgeType]sdlc.ForgeTokenSource, error) {
+	if len(commands) == 0 {
+		return nil, nil
+	}
+	sources := make(map[sdlc.ForgeType]sdlc.ForgeTokenSource, len(commands))
+	for forgeType, command := range commands {
+		source, err := sdlc.NewCommandTokenSource(sdlc.CommandTokenSourceConfig{
+			Argv:            command.Argv,
+			Env:             []string{sdlc.ForgeTokenEnvType + "=" + forgeType},
+			RefreshBefore:   command.RefreshBefore,
+			Timeout:         command.Timeout,
+			AllowedBaseURLs: command.AllowedBaseURLs,
+		})
+		if err != nil {
+			return nil, err
+		}
+		sources[sdlc.ForgeType(forgeType)] = source
+	}
+	return sources, nil
 }
 
 func (s *Server) stopSDLC() {
