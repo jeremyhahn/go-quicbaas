@@ -3573,6 +3573,38 @@ async listSessions(
     );
   }
 
+  // Maps to PATCH /api/v1/tenants/{tenantID}/quotas (204)
+  async updateTenantQuotas(
+    tenantID: string,
+    quotas: import('./interfaces.js').TenantQuotas,
+  ): Promise<void> {
+    await this.fetchJSON<void>(
+      `/api/v1/tenants/${encodeURIComponent(tenantID)}/quotas`,
+      { method: 'PATCH', body: JSON.stringify(quotas) },
+    );
+  }
+
+  // Maps to PATCH /api/v1/tenants/{tenantID}/entitlements (204)
+  async updateTenantEntitlements(
+    tenantID: string,
+    entitlements: import('./interfaces.js').TenantEntitlements,
+  ): Promise<void> {
+    await this.fetchJSON<void>(
+      `/api/v1/tenants/${encodeURIComponent(tenantID)}/entitlements`,
+      { method: 'PATCH', body: JSON.stringify(entitlements) },
+    );
+  }
+
+  // Maps to POST /api/v1/tenants/{tenantID}/provision (201)
+  async provisionTenant(
+    req: import('./interfaces.js').ProvisionTenantRequest,
+  ): Promise<import('./interfaces.js').ProvisionTenantResponse> {
+    return this.fetchJSON<import('./interfaces.js').ProvisionTenantResponse>(
+      `/api/v1/tenants/${encodeURIComponent(req.tenant_id)}/provision`,
+      { method: 'POST', body: JSON.stringify(req) },
+    );
+  }
+
   async listRoles(tenantID: string): Promise<ListRolesResponse> {
     // Server returns {limit, offset, roles:[...]} — count field absent; derive it.
     const raw = await this.fetchJSON<{ roles?: IAMRole[]; count?: number; limit?: number; offset?: number }>(
