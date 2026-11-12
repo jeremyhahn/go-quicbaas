@@ -32,6 +32,7 @@ import type { CAClient } from './ca.js';
 import type { TrustClient } from './trust.js';
 import type { CryptoClient } from './crypto.js';
 import type { DEKClient } from './dek.js';
+import type { XKMSKeysClient } from './xkms_keys.js';
 import type { PIVClient } from './piv.js';
 import type { XKMSClient } from './xkms.js';
 import type { DynamicSecretsClient } from './dynamicsecrets.js';
@@ -1476,6 +1477,12 @@ export interface Client {
    * background re-encryption. Paths: /api/v1/kms/deks/*.
    */
   readonly dek: DEKClient;
+  /**
+   * XKMS keys client: the xkms passthrough's key routes (generate, list,
+   * get, delete, rotate, encrypt, decrypt, sign, verify, key versions).
+   * Maps to /api/v1/xkms/keys/* REST endpoints.
+   */
+  readonly xkmsKeys: XKMSKeysClient;
   /**
    * PIV slots of an xkms backend: list slots, generate keys and CSRs, and
    * store, read or delete slot certificates (/api/v1/xkms/piv/slots*).

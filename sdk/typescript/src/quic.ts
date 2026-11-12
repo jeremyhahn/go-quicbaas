@@ -385,6 +385,8 @@ export class QuicClient implements Client {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   readonly dek: any = null;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  readonly xkmsKeys: any = null;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   readonly piv: any = null;
   readonly xkms: any = null;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
