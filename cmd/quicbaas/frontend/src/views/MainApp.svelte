@@ -93,6 +93,7 @@
   import OAuthAppsView from './security/OAuthAppsView.svelte';
   import IdentityProvidersView from './security/IdentityProvidersView.svelte';
   import PolicyTesterView from './security/PolicyTesterView.svelte';
+  import ImpersonationView from './security/ImpersonationView.svelte';
 
   // CLUSTER views
   import ClusterDashboard from './cluster/ClusterDashboard.svelte';
@@ -274,6 +275,7 @@
         { id: 'oauth-apps', label: 'OAuth Apps', icon: AppWindow, implemented: true },
         { id: 'identity-providers', label: 'Identity Providers', icon: Fingerprint, implemented: true },
         { id: 'policy-tester', label: 'Policy Tester', icon: FlaskConical, implemented: true },
+        { id: 'impersonation', label: 'Impersonation', icon: UserCog, implemented: true },
       ],
     },
     {
@@ -795,6 +797,9 @@
             {:else if routerStore.name === 'policy-tester'}
               <li class="text-base-content/40">Security</li>
               <li class="font-medium">Policy Tester</li>
+            {:else if routerStore.name === 'impersonation'}
+              <li class="text-base-content/40">Security</li>
+              <li class="font-medium">Impersonation</li>
             {:else if routerStore.name === 'projects'}
               <li class="text-base-content/40">{FACTORY_CRUMB}</li>
               <li class="font-medium">Projects</li>
@@ -1173,6 +1178,10 @@
       {:else if routerStore.name === 'policy-tester'}
         <div class="flex-1 overflow-y-auto">
           <PolicyTesterView />
+        </div>
+      {:else if routerStore.name === 'impersonation'}
+        <div class="flex-1 overflow-y-auto">
+          <ImpersonationView />
         </div>
 
       {:else if routerStore.name === 'projects'}
