@@ -3699,6 +3699,66 @@ async listSessions(
     );
   }
 
+  // Maps to GET /api/v1/tenants/{tenantID}/roles/{roleID}
+  async getRole(tenantID: string, roleID: string): Promise<IAMRole> {
+    return this.fetchJSON<IAMRole>(
+      `/api/v1/tenants/${encodeURIComponent(tenantID)}/roles/${encodeURIComponent(roleID)}`,
+    );
+  }
+
+  // Maps to POST /api/v1/tenants/{tenantID}/providers/
+  async registerProvider(
+    tenantID: string,
+    req: import('./interfaces.js').RegisterIAMProviderRequest,
+  ): Promise<import('./interfaces.js').IAMExternalProvider> {
+    return this.fetchJSON<import('./interfaces.js').IAMExternalProvider>(
+      `/api/v1/tenants/${encodeURIComponent(tenantID)}/providers/`,
+      { method: 'POST', body: JSON.stringify(req) },
+    );
+  }
+
+  // Maps to GET /api/v1/tenants/{tenantID}/providers/?limit=&offset=&type=
+  async listProviders(
+    tenantID: string,
+    opts?: import('./interfaces.js').ListIAMProvidersOptions,
+  ): Promise<import('./interfaces.js').ListIAMProvidersResponse> {
+    const q: string[] = [];
+    if (opts?.limit !== undefined) q.push(`limit=${encodeURIComponent(String(opts.limit))}`);
+    if (opts?.offset !== undefined) q.push(`offset=${encodeURIComponent(String(opts.offset))}`);
+    if (opts?.type !== undefined) q.push(`type=${encodeURIComponent(opts.type)}`);
+    const qs = q.length > 0 ? `?${q.join('&')}` : '';
+    return this.fetchJSON<import('./interfaces.js').ListIAMProvidersResponse>(
+      `/api/v1/tenants/${encodeURIComponent(tenantID)}/providers/${qs}`,
+    );
+  }
+
+  // Maps to GET /api/v1/tenants/{tenantID}/providers/{providerID}
+  async getProvider(tenantID: string, providerID: string): Promise<import('./interfaces.js').IAMExternalProvider> {
+    return this.fetchJSON<import('./interfaces.js').IAMExternalProvider>(
+      `/api/v1/tenants/${encodeURIComponent(tenantID)}/providers/${encodeURIComponent(providerID)}`,
+    );
+  }
+
+  // Maps to PUT /api/v1/tenants/{tenantID}/providers/{providerID}
+  async updateProvider(
+    tenantID: string,
+    providerID: string,
+    req: import('./interfaces.js').UpdateIAMProviderRequest,
+  ): Promise<import('./interfaces.js').IAMExternalProvider> {
+    return this.fetchJSON<import('./interfaces.js').IAMExternalProvider>(
+      `/api/v1/tenants/${encodeURIComponent(tenantID)}/providers/${encodeURIComponent(providerID)}`,
+      { method: 'PUT', body: JSON.stringify(req) },
+    );
+  }
+
+  // Maps to DELETE /api/v1/tenants/{tenantID}/providers/{providerID}
+  async deleteProvider(tenantID: string, providerID: string): Promise<void> {
+    await this.fetchJSON<void>(
+      `/api/v1/tenants/${encodeURIComponent(tenantID)}/providers/${encodeURIComponent(providerID)}`,
+      { method: 'DELETE' },
+    );
+  }
+
   async deleteRole(tenantID: string, roleID: string): Promise<void> {
     await this.fetchJSON<void>(
       `/api/v1/tenants/${encodeURIComponent(tenantID)}/roles/${encodeURIComponent(roleID)}`,
