@@ -1132,11 +1132,13 @@ class RestOrchestratorClient implements OrchestratorClient {
     );
   }
 
-  // decomposeTask maps to POST /api/v1/orchestrator/tasks/:taskID/decompose
+  // decomposeTask maps to POST /api/v1/orchestrator/tasks/decompose?tenant_id=<id>
+  // The tenant travels as the query; every other field is the JSON body.
   async decomposeTask(req: DecomposeTaskRequest): Promise<DecomposeTaskResponse> {
+    const { tenant_id, ...body } = req;
     return this.fetchJSON<DecomposeTaskResponse>(
-      `/tasks/${encodeURIComponent(req.task_id)}/decompose?tenant_id=${encodeURIComponent(req.tenant_id)}`,
-      { method: 'POST', body: JSON.stringify(req) },
+      `/tasks/decompose?tenant_id=${encodeURIComponent(tenant_id)}`,
+      { method: 'POST', body: JSON.stringify(body) },
     );
   }
 

@@ -458,8 +458,8 @@ export interface OrchestratorClient {
   // Maps to POST /api/v1/orchestrator/attention/:taskID/resolve
   resolveAttention(req: AttentionResolveRequest): Promise<AttentionItem>;
 
-  // decomposeTask asks the orchestrator to decompose a task into sub-tasks.
-  // Maps to POST /api/v1/orchestrator/tasks/:taskID/decompose
+  // decomposeTask asks the orchestrator to split a free-text task into work items.
+  // Maps to POST /api/v1/orchestrator/tasks/decompose?tenant_id=<id>
   decomposeTask(req: DecomposeTaskRequest): Promise<DecomposeTaskResponse>;
 
   // registerFleetNode registers a new node with the fleet.
