@@ -42,6 +42,8 @@
     UpdateRoleRequest,
     CreatePolicyRequest,
     UpdatePolicyRequest,
+    ConsentPurpose,
+    UserConsent,
   } from '@quicbaas/sdk';
   import { ShieldCheck, UserPlus, Pencil, Trash2, UserCheck, ToggleLeft, RefreshCw, FileCheck } from 'lucide-svelte';
   import EmptyState from '../../components/core/EmptyState.svelte';
@@ -219,23 +221,6 @@
   // Consents dialog state
   // ---------------------------------------------------------------------------
 
-  // The SDK's ConsentPurpose and UserConsent shapes; the package index does
-  // not re-export them, so the view declares the fields it renders.
-  type ConsentPurpose =
-    | 'marketing'
-    | 'analytics'
-    | 'personalization'
-    | 'third_party'
-    | 'data_processing'
-    | 'data_retention'
-    | 'functional';
-  interface ConsentRecord {
-    purpose: ConsentPurpose;
-    status: string;
-    version: string;
-    granted_at?: string;
-    withdrawn_at?: string;
-  }
   const consentPurposes: ConsentPurpose[] = [
     'marketing',
     'analytics',
@@ -247,7 +232,7 @@
   ];
 
   let userForConsents: IAMUser | null = $state(null);
-  let userConsents: ConsentRecord[] = $state([]);
+  let userConsents: UserConsent[] = $state([]);
   let consentsLoading = $state(false);
   let consentsError: string | null = $state(null);
   let grantPurpose: ConsentPurpose | '' = $state('');
