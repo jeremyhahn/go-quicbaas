@@ -425,6 +425,10 @@ func (o *Onboarder) Onboard(ctx context.Context, tenantID string, binding *Proje
 // configuration change. The webhook is different: left behind it delivers to a
 // node that no longer drives the project, which is a live wrong behaviour
 // rather than a stale display.
+//
+// A node with no public URL cannot rebuild the absolute URL it provisioned
+// before the URL was cleared, so it retires every delivery to this project's
+// ingress path on any host instead (go-quicbaas#2225).
 func (o *Onboarder) Offboard(ctx context.Context, tenantID string, binding *ProjectBinding) error {
 	if err := o.checkArgs(tenantID, binding); err != nil {
 		return err
@@ -432,6 +436,9 @@ func (o *Onboarder) Offboard(ctx context.Context, tenantID string, binding *Proj
 	forge, err := o.forges.ForgeFor(ctx, tenantID, binding.Forge)
 	if err != nil {
 		return err
+	}
+	if o.hookBase == "" {
+		return retireProjectDeliveries(ctx, forge, binding)
 	}
 	return forge.DeleteWebhook(ctx, binding.Repo(), o.WebhookURL(binding.ProjectID))
 }
@@ -708,6 +715,25 @@ func isSDLCWebhookURL(hookURL, projectID string) bool {
 		return false
 	}
 	return strings.HasSuffix(strings.TrimRight(parsed.Path, "/"), WebhookPathPrefix+projectID)
+}
+
+// retireProjectDeliveries deletes every delivery on the binding's repository
+// that targets this project's SDLC ingress path, on whatever host. Deliveries
+// of other projects and hooks that are not SDLC deliveries are left alone.
+func retireProjectDeliveries(ctx context.Context, forge ForgeBackend, binding *ProjectBinding) error {
+	hooks, err := forge.Webhooks(ctx, binding.Repo())
+	if err != nil {
+		return err
+	}
+	for _, hook := range hooks {
+		if !isSDLCWebhookURL(hook.URL, binding.ProjectID) {
+			continue
+		}
+		if err := forge.DeleteWebhook(ctx, binding.Repo(), hook.URL); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // checkLabels reports every declared label the repository does not define.

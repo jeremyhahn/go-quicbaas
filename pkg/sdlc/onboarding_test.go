@@ -539,6 +539,49 @@ func TestOffboard_RefusesBadInput(t *testing.T) {
 	}
 }
 
+func TestOffboard_WithNoPublicURLRetiresTheProvisionedDelivery(t *testing.T) {
+	backend, gitea := newStatefulGitea(t)
+	binding := onboardTestBinding()
+	provisioner, err := NewOnboarder(&giteaForges{backend: backend}, onboardingSecrets(), onboardingHookBase)
+	if err != nil {
+		t.Fatalf("NewOnboarder: %v", err)
+	}
+	if _, err := provisioner.Onboard(context.Background(), testTenant, binding); err != nil {
+		t.Fatalf("Onboard: %v", err)
+	}
+	other := "https://old-node.test" + WebhookPathPrefix + "other-project"
+	gitea.PutHook(other, true, "issues")
+
+	noPublicURL, err := NewOnboarder(&giteaForges{backend: backend}, onboardingSecrets(), "")
+	if err != nil {
+		t.Fatalf("NewOnboarder: %v", err)
+	}
+	if err := noPublicURL.Offboard(context.Background(), testTenant, binding); err != nil {
+		t.Fatalf("Offboard: %v", err)
+	}
+	if got := gitea.HookURLs(); len(got) != 1 || got[0] != other {
+		t.Errorf("hooks = %v, want only %q; the provisioned delivery was left live", got, other)
+	}
+}
+
+func TestOffboard_WithNoPublicURLIsSafeOnAPollOnlyRepository(t *testing.T) {
+	backend, gitea := newStatefulGitea(t)
+	noPublicURL, err := NewOnboarder(&giteaForges{backend: backend}, onboardingSecrets(), "")
+	if err != nil {
+		t.Fatalf("NewOnboarder: %v", err)
+	}
+	binding := onboardTestBinding()
+
+	for i := 0; i < 2; i++ {
+		if err := noPublicURL.Offboard(context.Background(), testTenant, binding); err != nil {
+			t.Fatalf("Offboard #%d: %v", i+1, err)
+		}
+	}
+	if got := gitea.HookURLs(); len(got) != 0 {
+		t.Errorf("hooks = %v, want none", got)
+	}
+}
+
 // =============================================================================
 // Conformance
 // =============================================================================
