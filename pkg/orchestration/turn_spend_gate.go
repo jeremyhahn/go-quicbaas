@@ -15,6 +15,7 @@ package orchestration
 
 import (
 	"context"
+	"fmt"
 	"time"
 )
 
@@ -102,7 +103,10 @@ func (s *agentServiceImpl) lockSessionTurn(ctx context.Context, sessionID string
 		return func() {}, nil
 	}
 	value, _ := s.turnLocks.LoadOrStore(sessionID, make(chan struct{}, 1))
-	slot := value.(chan struct{})
+	slot, ok := value.(chan struct{})
+	if !ok {
+		return nil, fmt.Errorf("orchestration: turn lock for session %q has type %T", sessionID, value)
+	}
 	select {
 	case slot <- struct{}{}:
 		return func() { <-slot }, nil
