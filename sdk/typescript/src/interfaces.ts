@@ -1072,6 +1072,91 @@ export interface RevokeOtherSessionsResponse {
   kept_session_id: string;
 }
 
+// TenantQuotas is a tenant's resource limits (go-qrdb quota.Quotas), the
+// body of PATCH /api/v1/tenants/{tenantID}/quotas. The current_* fields are
+// read-only usage counters the server reports and ignores on write.
+export interface TenantQuotas {
+  max_databases: number;
+  max_raft_groups: number;
+  max_replicas_per_group: number;
+  max_total_replicas: number;
+  max_collections: number;
+  max_keys: number;
+  max_storage_bytes: number;
+  max_database_size_bytes: number;
+  max_users: number;
+  max_roles: number;
+  max_certificates: number;
+  max_backups: number;
+  max_vector_dims: number;
+  max_ts_metrics: number;
+  max_dedicated_wal_groups: number;
+  system_barrier_quota: number;
+  current_databases?: number;
+  current_raft_groups?: number;
+  current_total_replicas?: number;
+  current_collections?: number;
+  current_keys?: number;
+  current_storage_bytes?: number;
+  current_database_size_bytes?: number;
+  current_users?: number;
+  current_roles?: number;
+  current_certificates?: number;
+  current_backups?: number;
+  current_vector_dims?: number;
+  current_ts_metrics?: number;
+  current_dedicated_wal_groups?: number;
+  current_system_barrier_bytes?: number;
+}
+
+// TenantEntitlements is the feature set a tenant may use (go-qrdb
+// quota.Entitlements), the body of PATCH
+// /api/v1/tenants/{tenantID}/entitlements.
+export interface TenantEntitlements {
+  allowed_isolation_modes?: string[];
+  allow_dedicated_raft?: boolean;
+  allow_volume_storage?: boolean;
+  allow_system_managed_barrier?: boolean;
+  allow_dedicated_wal?: boolean;
+  allowed_barrier_modes?: string[];
+}
+
+// TenantAdminEnrollment is how a provisioned tenant's first admin enrolls:
+// with a CSR signed now ("cert", the default) or a one-time invite token.
+export type TenantAdminEnrollment = 'cert' | 'invite';
+
+// ProvisionTenantRequest is the body of POST
+// /api/v1/tenants/{tenantID}/provision.
+export interface ProvisionTenantRequest {
+  tenant_id: string;
+  name?: string;
+  // isolation_type: the server accepts only "prefix" today.
+  isolation_type?: string;
+  admin_username?: string;
+  admin_enrollment?: TenantAdminEnrollment;
+  // admin_csr_pem is required in cert mode and refused in invite mode.
+  admin_csr_pem?: string;
+  invite_expiry_hours?: number;
+}
+
+// ProvisionTenantResponse is returned by POST
+// /api/v1/tenants/{tenantID}/provision.
+export interface ProvisionTenantResponse {
+  tenant_id: string;
+  // admin_user_id is a uint64 the server encodes as a string.
+  admin_user_id: string;
+  admin_username: string;
+  admin_role_id: string;
+  // admin_pending is true in invite mode until the invite is redeemed.
+  admin_pending: boolean;
+  admin_cert_pem?: string;
+  admin_cert_thumbprint?: string;
+  invite_token?: string;
+  // invite_expires_at is an RFC 3339 timestamp.
+  invite_expires_at?: string;
+  timestamp: string;
+}
+
 export interface IAMClient {
   // listUsers returns all users within a tenant.
   // Maps to GET /api/v1/tenants/{tenantID}/users
@@ -1134,6 +1219,19 @@ export interface IAMClient {
   // deleteTenant removes a tenant.
   // Maps to DELETE /api/v1/tenants/{tenantID}
   deleteTenant(tenantID: string): Promise<void>;
+
+  // updateTenantQuotas sets a tenant's resource limits.
+  // Maps to PATCH /api/v1/tenants/{tenantID}/quotas (204)
+  updateTenantQuotas(tenantID: string, quotas: TenantQuotas): Promise<void>;
+
+  // updateTenantEntitlements sets the features a tenant may use.
+  // Maps to PATCH /api/v1/tenants/{tenantID}/entitlements (204)
+  updateTenantEntitlements(tenantID: string, entitlements: TenantEntitlements): Promise<void>;
+
+  // provisionTenant creates a tenant with its first admin, enrolled by CSR
+  // or by invite token. The path segment is req.tenant_id.
+  // Maps to POST /api/v1/tenants/{tenantID}/provision (201)
+  provisionTenant(req: ProvisionTenantRequest): Promise<ProvisionTenantResponse>;
 
   // listRoles returns all roles within a tenant.
   // Maps to GET /api/v1/tenants/{tenantID}/roles
