@@ -772,11 +772,14 @@ var qrdbToolExactMapping = map[string]qrdbToolResource{
 	"quicbaas_iam_app_rotate_secret": {"tenants", "update"},
 	"quicbaas_iam_app_delete":        {"tenants", "delete"},
 
-	"quicbaas_iam_session_get":             {"users", "read"},
-	"quicbaas_iam_session_list":            {"users", "read"},
+	// get, list, revoke and revoke_all act only on the caller's own sessions
+	// and serve the SDK Auth session verbs, so they declare what the embedded
+	// transport's quicbaas.Auth session verbs declare (ruling 207).
+	"quicbaas_iam_session_get":             {"user_authfactors", "login"},
+	"quicbaas_iam_session_list":            {"user_authfactors", "login"},
 	"quicbaas_iam_session_touch":           {"users", "update"},
-	"quicbaas_iam_session_revoke":          {"users", "update"},
-	"quicbaas_iam_session_revoke_all":      {"users", "update"},
+	"quicbaas_iam_session_revoke":          {"user_authfactors", "login"},
+	"quicbaas_iam_session_revoke_all":      {"user_authfactors", "login"},
 	"quicbaas_iam_session_revoke_others":   {"users", "update"},
 	"quicbaas_iam_impersonation_start":     {"users", "update"},
 	"quicbaas_iam_impersonation_end":       {"users", "update"},
