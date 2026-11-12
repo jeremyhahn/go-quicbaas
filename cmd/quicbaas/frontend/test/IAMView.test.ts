@@ -658,6 +658,107 @@ describe('IAMView', () => {
     });
   });
 
+  describe('MFA dialog', () => {
+    const enabled = {
+      enabled: true,
+      method: 'totp',
+      enrolled_at: '2026-01-02T03:04:05Z',
+      last_verified: '2026-02-03T04:05:06Z',
+      backup_codes_total: 10,
+      backup_codes_remaining: 7,
+    };
+    const disabled = { enabled: false };
+
+    function stubMFA(overrides: Record<string, ReturnType<typeof vi.fn>>): void {
+      mockGetSDKClient.mockResolvedValue({
+        iam: {
+          listUsers: vi.fn().mockResolvedValue({ users: mockUsers, count: mockUsers.length }),
+          listTenants: vi.fn().mockResolvedValue({ tenants: mockTenants, count: 1 }),
+          listRoles: vi.fn().mockResolvedValue({ roles: mockRoles, count: 2 }),
+          listPolicies: vi.fn().mockResolvedValue({ policies: mockPolicies, count: 1 }),
+          getMFAStatus: vi.fn().mockResolvedValue(enabled),
+          disableMFA: vi.fn().mockResolvedValue(undefined),
+          ...overrides,
+        },
+      });
+    }
+
+    async function openMFADialog(username: string): Promise<HTMLElement> {
+      render(IAMView);
+      const open = await screen.findByRole('button', { name: `MFA of ${username}` });
+      await fireEvent.click(open);
+      return screen.getByRole('dialog', { name: /^MFA dialog$/ });
+    }
+
+    it('opens from the user row and shows every status field', async () => {
+      const get = vi.fn().mockResolvedValue(enabled);
+      stubMFA({ getMFAStatus: get });
+      const dialog = await openMFADialog('alice');
+      expect(dialog.querySelector('h3')?.textContent).toBe('MFA of alice');
+      const table = await screen.findByRole('table', { name: 'MFA status' });
+      expect(get).toHaveBeenCalledWith('acme', 'user-1');
+      expect(table.textContent).toContain('Enabled');
+      expect(table.textContent).toContain('totp');
+      expect(table.textContent).toContain('Enrolled');
+      expect(table.textContent).toContain('Last verified');
+      expect(table.textContent).toContain('7 of 10 remaining');
+      expect(screen.getByRole('button', { name: 'Disable MFA' })).toBeInTheDocument();
+    });
+
+    it('hides the Disable button when MFA is off', async () => {
+      stubMFA({ getMFAStatus: vi.fn().mockResolvedValue(disabled) });
+      await openMFADialog('alice');
+      const table = await screen.findByRole('table', { name: 'MFA status' });
+      expect(table.textContent).toContain('Disabled');
+      expect(table.textContent).not.toContain('Method');
+      expect(screen.queryByRole('button', { name: 'Disable MFA' })).not.toBeInTheDocument();
+    });
+
+    it('disables MFA after confirmation, toasts and reloads', async () => {
+      const get = vi.fn().mockResolvedValueOnce(enabled).mockResolvedValue(disabled);
+      const disable = vi.fn().mockResolvedValue(undefined);
+      stubMFA({ getMFAStatus: get, disableMFA: disable });
+      await openMFADialog('alice');
+      await fireEvent.click(await screen.findByRole('button', { name: 'Disable MFA' }));
+      expect(disable).not.toHaveBeenCalled();
+      const confirm = screen.getByRole('dialog', { name: 'Disable MFA confirmation' });
+      const confirmButton = Array.from(confirm.querySelectorAll('button')).find((b) => b.textContent === 'Disable');
+      expect(confirmButton).toBeDefined();
+      if (confirmButton) await fireEvent.click(confirmButton);
+
+      await waitFor(() => {
+        expect(disable).toHaveBeenCalledWith('acme', 'user-1');
+        expect(mockShowToast).toHaveBeenCalledWith({ message: 'MFA disabled for "alice"', type: 'success' });
+        expect(get).toHaveBeenCalledTimes(2);
+      });
+      await waitFor(() => {
+        expect(screen.queryByRole('button', { name: 'Disable MFA' })).not.toBeInTheDocument();
+      });
+      expect(screen.queryByRole('dialog', { name: 'Disable MFA confirmation' })).not.toBeInTheDocument();
+    });
+
+    it('shows the SDK error in the dialog when the status load fails', async () => {
+      stubMFA({ getMFAStatus: vi.fn().mockRejectedValue(new Error('mfa unavailable')) });
+      const dialog = await openMFADialog('alice');
+      await waitFor(() => {
+        expect(dialog.querySelector('[role="alert"]')?.textContent).toBe('mfa unavailable');
+      });
+    });
+
+    it('shows the SDK error in the dialog when the disable is rejected', async () => {
+      stubMFA({ disableMFA: vi.fn().mockRejectedValue(new Error('disable denied')) });
+      const dialog = await openMFADialog('alice');
+      await fireEvent.click(await screen.findByRole('button', { name: 'Disable MFA' }));
+      const confirm = screen.getByRole('dialog', { name: 'Disable MFA confirmation' });
+      const confirmButton = Array.from(confirm.querySelectorAll('button')).find((b) => b.textContent === 'Disable');
+      if (confirmButton) await fireEvent.click(confirmButton);
+      await waitFor(() => {
+        expect(dialog.querySelector('[role="alert"]')?.textContent).toBe('disable denied');
+      });
+      expect(mockShowToast).not.toHaveBeenCalled();
+    });
+  });
+
   // -------------------------------------------------------------------------
   // Issue #573: built-in roles are seeded once and never reconciled, so a
   // permission rename in the server build strands every existing tenant. The
