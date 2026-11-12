@@ -32,6 +32,7 @@ import type { CAClient } from './ca.js';
 import type { TrustClient } from './trust.js';
 import type { CryptoClient } from './crypto.js';
 import type { DEKClient } from './dek.js';
+import type { PromptsClient } from './prompts.js';
 import type { DynamicSecretsClient } from './dynamicsecrets.js';
 
 import type {
@@ -1378,6 +1379,11 @@ export interface Client {
    * background re-encryption. Paths: /api/v1/kms/deks/*.
    */
   readonly dek: DEKClient;
+  /**
+   * prompts reads, overrides, diffs, resets and rolls back orchestrator
+   * prompts per layer (project, tenant, system). Paths: /api/v1/prompts/*.
+   */
+  readonly prompts: PromptsClient;
   /**
    * dynamicSecrets manages credential-generation roles, on-demand
    * short-lived credential minting, and lease renewal/revocation.
