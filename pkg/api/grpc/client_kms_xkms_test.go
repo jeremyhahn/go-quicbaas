@@ -54,6 +54,10 @@ type recordingKeystoreServer struct {
 	err      error
 	listKeys []*xkmssdk.ProtoKeyInfo
 	total    int32
+
+	// deleteRefused makes DeleteKey answer Success=false with deleteMessage.
+	deleteRefused bool
+	deleteMessage string
 }
 
 func (s *recordingKeystoreServer) GenerateKey(_ context.Context, req *xkmssdk.ProtoGenerateKeyRequest) (*xkmssdk.ProtoGenerateKeyResponse, error) {
@@ -117,7 +121,7 @@ func (s *recordingKeystoreServer) DeleteKey(_ context.Context, req *xkmssdk.Prot
 	if s.err != nil {
 		return nil, s.err
 	}
-	return &xkmssdk.ProtoDeleteKeyResponse{Success: true}, nil
+	return &xkmssdk.ProtoDeleteKeyResponse{Success: !s.deleteRefused, Message: s.deleteMessage}, nil
 }
 
 // newXKMSKeystoreClient serves fake over bufconn with ONLY the xkms.v1
@@ -540,4 +544,40 @@ func TestClientKMSDeleteKey_XKMSKeystoreNotFound(t *testing.T) {
 	var qbErr *errors.QBError
 	require.True(t, stderrors.As(err, &qbErr), "error must be a typed QBError, got %T", err)
 	assert.Equal(t, errors.ErrNotFound, qbErr.Code)
+}
+
+func TestClientKMSDeleteKey_XKMSKeystorePendingWindow(t *testing.T) {
+	fake := &recordingKeystoreServer{}
+	client := newXKMSKeystoreClient(t, fake)
+
+	resp, err := client.KMSDeleteKey(context.Background(), &service.DeleteKeyRequest{KeyID: "k1", PendingWindowDays: 7})
+	require.Error(t, err)
+	assert.Nil(t, resp)
+	var qbErr *errors.QBError
+	require.True(t, stderrors.As(err, &qbErr), "error must be a typed QBError, got %T", err)
+	assert.Equal(t, errors.ErrInvalidInput, qbErr.Code)
+
+	fake.mu.Lock()
+	defer fake.mu.Unlock()
+	assert.Nil(t, fake.deleteReq, "a pending window must not send a DeleteKey RPC")
+}
+
+func TestClientKMSDeleteKey_XKMSKeystoreRefused(t *testing.T) {
+	fake := &recordingKeystoreServer{deleteRefused: true, deleteMessage: "deletion protected"}
+	client := newXKMSKeystoreClient(t, fake)
+
+	resp, err := client.KMSDeleteKey(context.Background(), &service.DeleteKeyRequest{KeyID: "k1"})
+	require.Error(t, err)
+	assert.Nil(t, resp)
+	var qbErr *errors.QBError
+	require.True(t, stderrors.As(err, &qbErr), "error must be a typed QBError, got %T", err)
+	assert.Equal(t, errors.ErrInternal, qbErr.Code)
+	var refused *xkmsDeleteKeyRefusedError
+	require.True(t, stderrors.As(err, &refused), "error must wrap xkmsDeleteKeyRefusedError, got %T", err)
+	assert.Equal(t, "k1", refused.KeyID)
+	assert.Equal(t, "deletion protected", refused.Message)
+
+	fake.mu.Lock()
+	defer fake.mu.Unlock()
+	assert.NotNil(t, fake.deleteReq)
 }
