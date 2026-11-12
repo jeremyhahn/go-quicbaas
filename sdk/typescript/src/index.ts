@@ -292,6 +292,27 @@ export type {
   GetReencryptionProgressResponse,
 } from './dek.js';
 export type {
+  XKMSKeysClient,
+  XKMSKeyInfo,
+  XKMSListKeysResponse,
+  XKMSGenerateKeyRequest,
+  XKMSGenerateKeyResponse,
+  XKMSDeleteKeyResponse,
+  XKMSRotateKeyResponse,
+  XKMSEncryptRequest,
+  XKMSEncryptResponse,
+  XKMSDecryptRequest,
+  XKMSDecryptResponse,
+  XKMSSignRequest,
+  XKMSSignResponse,
+  XKMSVerifyRequest,
+  XKMSVerifyResponse,
+  XKMSKeyVersion,
+  XKMSListKeyVersionsResponse,
+  XKMSBulkKeyVersionsResponse,
+  XKMSKeyVersionStatusResponse,
+} from './xkms_keys.js';
+export type {
   DynamicSecretsClient,
   DynamicSecretRole,
   CreateRoleRequest as DynamicSecretCreateRoleRequest,

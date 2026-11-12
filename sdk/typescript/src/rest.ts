@@ -181,6 +181,26 @@ import type {
   GetReencryptionProgressResponse,
 } from './dek.js';
 import type {
+  XKMSKeysClient,
+  XKMSKeyInfo,
+  XKMSListKeysResponse,
+  XKMSGenerateKeyRequest,
+  XKMSGenerateKeyResponse,
+  XKMSDeleteKeyResponse,
+  XKMSRotateKeyResponse,
+  XKMSEncryptRequest,
+  XKMSEncryptResponse,
+  XKMSDecryptRequest,
+  XKMSDecryptResponse,
+  XKMSSignRequest,
+  XKMSSignResponse,
+  XKMSVerifyRequest,
+  XKMSVerifyResponse,
+  XKMSListKeyVersionsResponse,
+  XKMSBulkKeyVersionsResponse,
+  XKMSKeyVersionStatusResponse,
+} from './xkms_keys.js';
+import type {
   DynamicSecretsClient,
   DynamicSecretRole,
   CreateRoleRequest as DynamicSecretCreateRoleRequest,
@@ -3554,6 +3574,163 @@ class RestKMSClient implements KMSClient {
   }
 }
 
+// ---------------------------------------------------------------------------
+// RestXKMSKeysClient
+// ---------------------------------------------------------------------------
+
+/** RestXKMSKeysClient implements XKMSKeysClient over /api/v1/xkms/keys/*. */
+export class RestXKMSKeysClient implements XKMSKeysClient {
+  private readonly baseUrl: string;
+  private readonly config: ClientConfig;
+
+  constructor(baseUrl: string, config: ClientConfig = {}) {
+    this.baseUrl = baseUrl.replace(/\/$/, '');
+    this.config = config;
+  }
+
+  private async authHeaders(): Promise<Record<string, string>> {
+    const headers: Record<string, string> = {};
+    const tok = await resolveToken(this.config.token);
+    if (tok) headers['Authorization'] = `Bearer ${tok}`;
+    if (this.config.tenantID) headers['X-Tenant-ID'] = this.config.tenantID;
+    return headers;
+  }
+
+  private async fetchJSON<T>(path: string, init?: RequestInit): Promise<T> {
+    const url = `${this.baseUrl}${path}`;
+    const auth = await this.authHeaders();
+    const resp = await fetch(url, {
+      ...init,
+      headers: {
+        'Content-Type': 'application/json',
+        Accept: 'application/json',
+        ...auth,
+        ...(init?.headers ?? {}),
+      },
+    });
+    if (!resp.ok) {
+      let message = resp.statusText;
+      try {
+        const body = (await resp.json()) as { error?: string; message?: string };
+        message = body.error ?? body.message ?? message;
+      } catch {
+        // Use statusText when body is not parseable.
+      }
+      throw new APIError(resp.status, message);
+    }
+    return parseResponseBody<T>(resp);
+  }
+
+  private keyPath(id: string, suffix = ''): string {
+    return `/api/v1/xkms/keys/${encodeURIComponent(id)}${suffix}`;
+  }
+
+  private static backendQuery(backend?: string): string {
+    return backend ? `?backend=${encodeURIComponent(backend)}` : '';
+  }
+
+  // Maps to GET /api/v1/xkms/keys[?backend=]
+  async listKeys(backend?: string): Promise<XKMSListKeysResponse> {
+    return this.fetchJSON<XKMSListKeysResponse>(
+      `/api/v1/xkms/keys${RestXKMSKeysClient.backendQuery(backend)}`,
+    );
+  }
+
+  // Maps to POST /api/v1/xkms/keys (201)
+  async generateKey(req: XKMSGenerateKeyRequest): Promise<XKMSGenerateKeyResponse> {
+    return this.fetchJSON<XKMSGenerateKeyResponse>('/api/v1/xkms/keys', {
+      method: 'POST',
+      body: JSON.stringify(req),
+    });
+  }
+
+  // Maps to GET /api/v1/xkms/keys/{id}[?backend=]
+  async getKey(id: string, backend?: string): Promise<XKMSKeyInfo> {
+    return this.fetchJSON<XKMSKeyInfo>(
+      this.keyPath(id, RestXKMSKeysClient.backendQuery(backend)),
+    );
+  }
+
+  // Maps to DELETE /api/v1/xkms/keys/{id}
+  async deleteKey(id: string): Promise<XKMSDeleteKeyResponse> {
+    return this.fetchJSON<XKMSDeleteKeyResponse>(this.keyPath(id), { method: 'DELETE' });
+  }
+
+  // Maps to POST /api/v1/xkms/keys/{id}/rotate
+  async rotateKey(id: string): Promise<XKMSRotateKeyResponse> {
+    return this.fetchJSON<XKMSRotateKeyResponse>(this.keyPath(id, '/rotate'), { method: 'POST' });
+  }
+
+  // Maps to POST /api/v1/xkms/keys/{id}/encrypt
+  async encrypt(id: string, req: XKMSEncryptRequest): Promise<XKMSEncryptResponse> {
+    return this.fetchJSON<XKMSEncryptResponse>(this.keyPath(id, '/encrypt'), {
+      method: 'POST',
+      body: JSON.stringify(req),
+    });
+  }
+
+  // Maps to POST /api/v1/xkms/keys/{id}/decrypt
+  async decrypt(id: string, req: XKMSDecryptRequest): Promise<XKMSDecryptResponse> {
+    return this.fetchJSON<XKMSDecryptResponse>(this.keyPath(id, '/decrypt'), {
+      method: 'POST',
+      body: JSON.stringify(req),
+    });
+  }
+
+  // Maps to POST /api/v1/xkms/keys/{id}/sign
+  async sign(id: string, req: XKMSSignRequest): Promise<XKMSSignResponse> {
+    return this.fetchJSON<XKMSSignResponse>(this.keyPath(id, '/sign'), {
+      method: 'POST',
+      body: JSON.stringify(req),
+    });
+  }
+
+  // Maps to POST /api/v1/xkms/keys/{id}/verify
+  async verify(id: string, req: XKMSVerifyRequest): Promise<XKMSVerifyResponse> {
+    return this.fetchJSON<XKMSVerifyResponse>(this.keyPath(id, '/verify'), {
+      method: 'POST',
+      body: JSON.stringify(req),
+    });
+  }
+
+  // Maps to GET /api/v1/xkms/keys/{id}/versions
+  async listKeyVersions(id: string): Promise<XKMSListKeyVersionsResponse> {
+    return this.fetchJSON<XKMSListKeyVersionsResponse>(this.keyPath(id, '/versions'));
+  }
+
+  // Maps to POST /api/v1/xkms/keys/{id}/versions/enable-all
+  async enableAllKeyVersions(id: string): Promise<XKMSBulkKeyVersionsResponse> {
+    return this.fetchJSON<XKMSBulkKeyVersionsResponse>(
+      this.keyPath(id, '/versions/enable-all'),
+      { method: 'POST' },
+    );
+  }
+
+  // Maps to POST /api/v1/xkms/keys/{id}/versions/disable-all
+  async disableAllKeyVersions(id: string): Promise<XKMSBulkKeyVersionsResponse> {
+    return this.fetchJSON<XKMSBulkKeyVersionsResponse>(
+      this.keyPath(id, '/versions/disable-all'),
+      { method: 'POST' },
+    );
+  }
+
+  // Maps to POST /api/v1/xkms/keys/{id}/versions/{version}/enable
+  async enableKeyVersion(id: string, version: number): Promise<XKMSKeyVersionStatusResponse> {
+    return this.fetchJSON<XKMSKeyVersionStatusResponse>(
+      this.keyPath(id, `/versions/${encodeURIComponent(String(version))}/enable`),
+      { method: 'POST' },
+    );
+  }
+
+  // Maps to POST /api/v1/xkms/keys/{id}/versions/{version}/disable
+  async disableKeyVersion(id: string, version: number): Promise<XKMSKeyVersionStatusResponse> {
+    return this.fetchJSON<XKMSKeyVersionStatusResponse>(
+      this.keyPath(id, `/versions/${encodeURIComponent(String(version))}/disable`),
+      { method: 'POST' },
+    );
+  }
+}
+
 // RestSecretsClient implements SecretsClient over the QuicBaaS REST secrets endpoints.
 // All endpoints are under /api/v1/secrets.
 class RestSecretsClient implements SecretsClient {
@@ -5258,6 +5435,7 @@ export class RestClient implements Client {
   readonly trust: TrustClient;
   readonly crypto: CryptoClient;
   readonly dek: DEKClient;
+  readonly xkmsKeys: XKMSKeysClient;
   readonly dynamicSecrets: DynamicSecretsClient;
   readonly barrier: BarrierClient;
   readonly tenantBarrier: TenantBarrierClient;
@@ -5300,6 +5478,7 @@ export class RestClient implements Client {
     this.trust = new RestTrustClient(baseUrl, config);
     this.crypto = new RestCryptoClient(baseUrl, config);
     this.dek = new RestDEKClient(baseUrl, config);
+    this.xkmsKeys = new RestXKMSKeysClient(baseUrl, config);
     this.dynamicSecrets = new RestDynamicSecretsClient(baseUrl, config);
     this.barrier = new RestBarrierClient(baseUrl, config);
     this.tenantBarrier = new RestTenantBarrierClient(baseUrl, config);
