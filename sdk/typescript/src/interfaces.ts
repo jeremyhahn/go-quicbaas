@@ -42,6 +42,7 @@ import type { ClusterNodesClient } from './cluster_nodes.js';
 import type { EntitiesClient } from './entities.js';
 import type { KMSAdminClient } from './kms_admin.js';
 import type { ObjectStorageAdminClient } from './objectstorage_admin.js';
+import type { ParametersClient } from './parameters.js';
 import type { DynamicSecretsClient } from './dynamicsecrets.js';
 
 import type {
@@ -2731,6 +2732,11 @@ export interface Client {
    * /api/v1/admin/objects/repair. Replies keep the Go field names.
    */
   readonly objectStorageAdmin: ObjectStorageAdminClient;
+  /**
+   * Parameter store client: read, write, list, tag search and batch
+   * operations on hierarchical parameters. Paths: /api/v1/parameters/*.
+   */
+  readonly parameters: ParametersClient;
   /**
    * dynamicSecrets manages credential-generation roles, on-demand
    * short-lived credential minting, and lease renewal/revocation.

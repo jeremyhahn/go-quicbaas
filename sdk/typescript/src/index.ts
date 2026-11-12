@@ -537,6 +537,27 @@ export type {
   ObjectStorageAdminRepairResponse,
 } from './objectstorage_admin.js';
 export type {
+  ParametersClient,
+  ParameterValue,
+  ParameterGetOptions,
+  GetParameterResponse,
+  SetParameterRequest,
+  SetParameterResponse,
+  DeleteParameterResponse,
+  ParameterListOptions,
+  ListParametersResponse,
+  GetParametersRequest,
+  GetParametersResponse,
+  ParameterBatchSetEntry,
+  SetParametersRequest,
+  ParameterSetResult,
+  SetParametersResponse,
+  ParameterDeleteResult,
+  DeleteParametersResponse,
+  ParameterSearchByTagsRequest,
+  ParameterSearchByTagsResponse,
+} from './parameters.js';
+export type {
   DynamicSecretsClient,
   DynamicSecretRole,
   CreateRoleRequest as DynamicSecretCreateRoleRequest,
