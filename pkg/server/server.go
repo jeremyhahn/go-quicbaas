@@ -19,6 +19,7 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"fmt"
 	"io"
 	"net"
 	"sync"
@@ -1138,17 +1139,29 @@ func (s *Server) initialize() error {
 
 	// Log listener info only when not in embedded mode
 	if !s.config.Server.Embedded {
-		if s.config.Server.REST.Enabled {
-			s.logger.Infof("HTTP server listening on %s:%d", s.config.Server.Host, s.config.Server.REST.Port)
-		}
-		if s.grpcServer != nil {
-			s.logger.Infof("gRPC server listening on %s:%d", s.config.Server.Host, s.config.Server.GRPC.Port)
+		for _, line := range networkListenerLogLines(s.config) {
+			s.logger.Info(line)
 		}
 	} else {
 		s.logger.Info("Running in embedded mode - access via Server.Service()")
 	}
 
 	return nil
+}
+
+// networkListenerLogLines returns the listener lines Start logs for a
+// non-embedded node: one per network listener the configuration enables.
+// The in-process gRPC server always exists (it serves the Unix socket), so
+// it is not evidence of a network gRPC listener; server.grpc.enabled is.
+func networkListenerLogLines(cfg *config.Config) []string {
+	var lines []string
+	if cfg.Server.REST.Enabled {
+		lines = append(lines, fmt.Sprintf("HTTP server listening on %s:%d", cfg.Server.Host, cfg.Server.REST.Port))
+	}
+	if cfg.Server.GRPC.Enabled {
+		lines = append(lines, fmt.Sprintf("gRPC server listening on %s:%d", cfg.Server.Host, cfg.Server.GRPC.Port))
+	}
+	return lines
 }
 
 // Shutdown gracefully shuts down all server components in reverse order:
