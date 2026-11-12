@@ -209,6 +209,29 @@ func TestKV_ShardAndConsistencyForwarded(t *testing.T) {
 	}
 }
 
+func TestKV_GetTimeoutForwarded(t *testing.T) {
+	tr, kv := newQuicbaasKVTransport(t)
+	ctx := context.Background()
+
+	if _, err := tr.Request(ctx, "quicbaas.KV", "Get", &service.GetRequest{
+		EntityType: "users", ID: 7, TimeoutMs: 1500,
+	}); err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if kv.args["quicbaas_kv_get"]["timeout_ms"] != "1500" {
+		t.Errorf("timeout_ms = %v, want \"1500\"", kv.args["quicbaas_kv_get"]["timeout_ms"])
+	}
+
+	if _, err := tr.Request(ctx, "quicbaas.KV", "Get", &service.GetRequest{
+		EntityType: "users", ID: 7,
+	}); err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if v, present := kv.args["quicbaas_kv_get"]["timeout_ms"]; present {
+		t.Errorf("timeout_ms = %v for TimeoutMs 0, want no key", v)
+	}
+}
+
 func TestKV_IDAbove2To53IsExact(t *testing.T) {
 	tr, kv := newQuicbaasKVTransport(t)
 	ctx := context.Background()

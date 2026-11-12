@@ -171,6 +171,21 @@ func TestKVTools_ShardAndConsistencyReachTheService(t *testing.T) {
 	assert.Equal(t, "users", svc.puts[0].EntityType)
 }
 
+func TestKVTools_GetTimeoutReachesTheService(t *testing.T) {
+	registry, svc := newKVRecordingRegistry(t)
+	var got kvGetResult
+	kvToolCall(t, registry, "quicbaas_kv_get", kvArgs("7", map[string]interface{}{"timeout_ms": "1500"}), &got)
+	require.Len(t, svc.gets, 1)
+	assert.Equal(t, uint64(1500), svc.gets[0].TimeoutMs)
+
+	registry, svc = newKVRecordingRegistry(t)
+	_, err := registry.ExecuteTool(context.Background(), "quicbaas_kv_get", kvArgs("7", map[string]interface{}{"timeout_ms": "x"}))
+	var argErr *UserToolInvalidArgumentError
+	require.ErrorAs(t, err, &argErr)
+	assert.Equal(t, "timeout_ms", argErr.Arg)
+	assert.Empty(t, svc.gets)
+}
+
 func TestKVTools_DefaultShardIsZero(t *testing.T) {
 	registry, svc := newKVRecordingRegistry(t)
 	var got kvGetResult

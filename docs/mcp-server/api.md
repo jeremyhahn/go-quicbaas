@@ -315,6 +315,7 @@ canonical key from the caller's tenant. Arguments:
 | `id` | decimal string | yes | Entity ID (uint64) |
 | `shard_id` | decimal string | no | Target shard; `0` (default) lets the service route |
 | `consistency` | decimal string | no | `0` default, `1` eventual, `2` linearizable, `3` strong |
+| `timeout_ms` | decimal string | get only | Read timeout in milliseconds; `0` (default) uses the service default |
 | `data` | base64 string | put only | Entity bytes, standard base64 |
 
 Every uint64 in arguments and answers (`id`, `shard_id`, `version`,

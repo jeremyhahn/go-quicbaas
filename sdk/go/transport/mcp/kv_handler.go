@@ -115,7 +115,11 @@ func kvGetArgs(req interface{}) (map[string]interface{}, bool) {
 	if !ok || r == nil {
 		return nil, false
 	}
-	return kvArgs(r.EntityType, r.ID, r.ShardID, r.Consistency), true
+	args := kvArgs(r.EntityType, r.ID, r.ShardID, r.Consistency)
+	if r.TimeoutMs > 0 {
+		args["timeout_ms"] = strconv.FormatUint(r.TimeoutMs, 10)
+	}
+	return args, true
 }
 
 func kvGetResult(text string) (interface{}, error) {

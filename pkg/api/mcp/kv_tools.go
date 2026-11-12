@@ -63,7 +63,7 @@ type kvTarget struct {
 	consistency service.ConsistencyLevel
 }
 
-func kvToolSchema(withData bool) map[string]interface{} {
+func kvToolSchema(withData, withTimeout bool) map[string]interface{} {
 	properties := map[string]interface{}{
 		"entity_type": map[string]interface{}{"type": "string", "description": "Entity type"},
 		"id":          map[string]interface{}{"type": "string", "description": "Entity ID as a decimal string"},
@@ -75,6 +75,9 @@ func kvToolSchema(withData bool) map[string]interface{} {
 		properties["data"] = map[string]interface{}{"type": "string", "description": "Base64-encoded (standard) data"}
 		required = append(required, "data")
 	}
+	if withTimeout {
+		properties["timeout_ms"] = map[string]interface{}{"type": "string", "description": "Read timeout in milliseconds; 0 or absent uses the default"}
+	}
 	return map[string]interface{}{"type": "object", "properties": properties, "required": required}
 }
 
@@ -83,17 +86,17 @@ func (r *ToolRegistry) registerKVTools() {
 	r.addTool(ToolDefinition{
 		Name:        "quicbaas_kv_put",
 		Description: "Store an entity through the QuicBaaS KV service",
-		InputSchema: kvToolSchema(true),
+		InputSchema: kvToolSchema(true, false),
 	})
 	r.addTool(ToolDefinition{
 		Name:        "quicbaas_kv_get",
 		Description: "Read an entity through the QuicBaaS KV service; a missing entity answers found:false",
-		InputSchema: kvToolSchema(false),
+		InputSchema: kvToolSchema(false, true),
 	})
 	r.addTool(ToolDefinition{
 		Name:        "quicbaas_kv_delete",
 		Description: "Delete an entity through the QuicBaaS KV service",
-		InputSchema: kvToolSchema(false),
+		InputSchema: kvToolSchema(false, false),
 	})
 }
 
@@ -174,11 +177,16 @@ func (r *ToolRegistry) executeKVGet(ctx context.Context, args map[string]interfa
 	if err != nil {
 		return nil, err
 	}
+	timeoutMs, err := parseDecimalArg(args, "timeout_ms", false)
+	if err != nil {
+		return nil, err
+	}
 	resp, err := r.service.Get(ctx, &service.GetRequest{
 		EntityType:  target.entityType,
 		ID:          target.id,
 		Consistency: target.consistency,
 		ShardID:     target.shardID,
+		TimeoutMs:   timeoutMs,
 	})
 	if isKVNotFound(err) {
 		return &kvGetResult{ID: target.id, Found: false}, nil
