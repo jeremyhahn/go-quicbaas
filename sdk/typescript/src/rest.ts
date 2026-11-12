@@ -181,6 +181,16 @@ import type {
   GetReencryptionProgressResponse,
 } from './dek.js';
 import type {
+  XKMSFIDO2Client,
+  XKMSFIDO2BeginRegistrationRequest,
+  XKMSFIDO2Challenge,
+  XKMSFIDO2FinishRegistrationRequest,
+  XKMSFIDO2FinishRegistrationResponse,
+  XKMSFIDO2BeginAuthenticationRequest,
+  XKMSFIDO2FinishAuthenticationRequest,
+  XKMSFIDO2FinishAuthenticationResponse,
+} from './xkms_fido2.js';
+import type {
   DynamicSecretsClient,
   DynamicSecretRole,
   CreateRoleRequest as DynamicSecretCreateRoleRequest,
@@ -4297,6 +4307,72 @@ export class RestDEKClient implements DEKClient {
   }
 }
 
+// xkmsFido2TenantQuery renders the optional ?tenant_id= query; without a
+// tenant the server uses the caller's session tenant.
+function xkmsFido2TenantQuery(tenantId?: string): string {
+  return tenantId !== undefined ? `?tenant_id=${encodeURIComponent(tenantId)}` : '';
+}
+
+// RestXKMSFIDO2Client registers and authenticates FIDO2 passkeys over REST.
+export class RestXKMSFIDO2Client implements XKMSFIDO2Client {
+  private readonly http: FetchHelper;
+
+  constructor(baseUrl: string, config: ClientConfig = {}) {
+    this.http = newFetchHelper(baseUrl, config);
+  }
+
+  // Maps to POST /api/v1/xkms/fido2/register/begin[?tenant_id=]
+  async beginRegistration(
+    req: XKMSFIDO2BeginRegistrationRequest,
+    tenantId?: string,
+  ): Promise<XKMSFIDO2Challenge> {
+    return this.http.fetchJSON<XKMSFIDO2Challenge>(
+      `/api/v1/xkms/fido2/register/begin${xkmsFido2TenantQuery(tenantId)}`,
+      { method: 'POST', body: JSON.stringify(req) },
+    );
+  }
+
+  // Maps to POST /api/v1/xkms/fido2/register/finish[?tenant_id=]
+  async finishRegistration(
+    req: XKMSFIDO2FinishRegistrationRequest,
+    tenantId?: string,
+  ): Promise<XKMSFIDO2FinishRegistrationResponse> {
+    return this.http.fetchJSON<XKMSFIDO2FinishRegistrationResponse>(
+      `/api/v1/xkms/fido2/register/finish${xkmsFido2TenantQuery(tenantId)}`,
+      { method: 'POST', body: JSON.stringify(req) },
+    );
+  }
+
+  // Maps to POST /api/v1/xkms/fido2/credentials/begin (the session's tenant)
+  async beginAddCredential(): Promise<XKMSFIDO2Challenge> {
+    return this.http.fetchJSON<XKMSFIDO2Challenge>('/api/v1/xkms/fido2/credentials/begin', {
+      method: 'POST',
+    });
+  }
+
+  // Maps to POST /api/v1/xkms/fido2/authenticate/begin[?tenant_id=]
+  async beginAuthentication(
+    req: XKMSFIDO2BeginAuthenticationRequest,
+    tenantId?: string,
+  ): Promise<XKMSFIDO2Challenge> {
+    return this.http.fetchJSON<XKMSFIDO2Challenge>(
+      `/api/v1/xkms/fido2/authenticate/begin${xkmsFido2TenantQuery(tenantId)}`,
+      { method: 'POST', body: JSON.stringify(req) },
+    );
+  }
+
+  // Maps to POST /api/v1/xkms/fido2/authenticate/finish[?tenant_id=]
+  async finishAuthentication(
+    req: XKMSFIDO2FinishAuthenticationRequest,
+    tenantId?: string,
+  ): Promise<XKMSFIDO2FinishAuthenticationResponse> {
+    return this.http.fetchJSON<XKMSFIDO2FinishAuthenticationResponse>(
+      `/api/v1/xkms/fido2/authenticate/finish${xkmsFido2TenantQuery(tenantId)}`,
+      { method: 'POST', body: JSON.stringify(req) },
+    );
+  }
+}
+
 // ---------------------------------------------------------------------------
 // RestDynamicSecretsClient — /api/v1/secrets/dynamic/* surface.
 // ---------------------------------------------------------------------------
@@ -5258,6 +5334,7 @@ export class RestClient implements Client {
   readonly trust: TrustClient;
   readonly crypto: CryptoClient;
   readonly dek: DEKClient;
+  readonly xkmsFido2: XKMSFIDO2Client;
   readonly dynamicSecrets: DynamicSecretsClient;
   readonly barrier: BarrierClient;
   readonly tenantBarrier: TenantBarrierClient;
@@ -5300,6 +5377,7 @@ export class RestClient implements Client {
     this.trust = new RestTrustClient(baseUrl, config);
     this.crypto = new RestCryptoClient(baseUrl, config);
     this.dek = new RestDEKClient(baseUrl, config);
+    this.xkmsFido2 = new RestXKMSFIDO2Client(baseUrl, config);
     this.dynamicSecrets = new RestDynamicSecretsClient(baseUrl, config);
     this.barrier = new RestBarrierClient(baseUrl, config);
     this.tenantBarrier = new RestTenantBarrierClient(baseUrl, config);

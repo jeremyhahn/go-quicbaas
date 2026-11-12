@@ -32,6 +32,7 @@ import type { CAClient } from './ca.js';
 import type { TrustClient } from './trust.js';
 import type { CryptoClient } from './crypto.js';
 import type { DEKClient } from './dek.js';
+import type { XKMSFIDO2Client } from './xkms_fido2.js';
 import type { DynamicSecretsClient } from './dynamicsecrets.js';
 
 import type {
@@ -1378,6 +1379,12 @@ export interface Client {
    * background re-encryption. Paths: /api/v1/kms/deks/*.
    */
   readonly dek: DEKClient;
+  /**
+   * xkmsFido2 registers and authenticates FIDO2 (WebAuthn) passkeys:
+   * begin/finish registration, begin adding a credential, and
+   * begin/finish authentication. Paths: /api/v1/xkms/fido2/*.
+   */
+  readonly xkmsFido2: XKMSFIDO2Client;
   /**
    * dynamicSecrets manages credential-generation roles, on-demand
    * short-lived credential minting, and lease renewal/revocation.
