@@ -405,6 +405,31 @@ go_packages = pkgs=$$(go list $(1)) || { echo "$(RED)$@: go list failed, so ther
 	pkgs=$$(printf '%s\n' "$$pkgs" | grep -v -e '$(2)'); \
 	if [ -z "$$pkgs" ]; then echo "$(RED)$@: go list found no packages outside '$(2)'$(NC)"; exit 1; fi
 
+# SHARD and SHARDS pick one slice of a package list: `make coverage-shard
+# SHARD=1 SHARDS=4` runs the second of four. The defaults are the whole list.
+SHARD ?= 0
+SHARDS ?= 1
+
+# check_shard is a recipe fragment for $(call check_shard,SHARD,SHARDS): it
+# exits 1, naming the target, unless both are numbers and SHARD < SHARDS.
+check_shard = case "$(1):$(2)" in *[!0-9:]* | :* | *:) echo "$(RED)$@: SHARD and SHARDS must be numbers, got SHARD=$(1) SHARDS=$(2)$(NC)"; exit 1 ;; esac; \
+	if [ "$(1)" -ge "$(2)" ]; then echo "$(RED)$@: SHARD=$(1) must be below SHARDS=$(2)$(NC)"; exit 1; fi
+
+# shard_packages is a recipe fragment for $(call shard_packages,LIST ARGS), run
+# after go_packages with the same go list flags (build tags): it narrows the
+# shell variable pkgs to shard SHARD of SHARDS. A package weighs the bytes of
+# its _test.go files. Heaviest first (ties by import path), each package goes
+# to the lightest shard so far (ties to the lowest index). The deal depends
+# only on the tree, so every shard computes the same split: the shards are
+# disjoint and together hold every package, untested ones included.
+shard_packages = $(call check_shard,$(SHARD),$(SHARDS)); \
+	dirs=$$(go list $(1) -f '{{.ImportPath}} {{.Dir}}' $$pkgs) || { echo "$(RED)$@: go list failed, so there is nothing to shard$(NC)"; exit 1; }; \
+	pkgs=$$(printf '%s\n' "$$dirs" | \
+		while read -r p d; do printf '%s %s\n' "$$(cat "$$d"/*_test.go 2>/dev/null | wc -c)" "$$p"; done | \
+		LC_ALL=C sort -k1,1nr -k2,2 | \
+		awk -v s=$(SHARD) -v n=$(SHARDS) 'BEGIN { for (i = 0; i < n; i++) w[i] = 0 } { b = 0; for (i = 1; i < n; i++) if (w[i] < w[b]) b = i; w[b] += $$1; if (b == s) print $$2 }'); \
+	if [ -z "$$pkgs" ]; then echo "$(RED)$@: shard $(SHARD) of $(SHARDS) holds no package$(NC)"; exit 1; fi
+
 ##@ General
 
 .PHONY: help
@@ -1590,6 +1615,19 @@ test-fips-conformance: ## Run the FIPS conformance pass (GODEBUG=fips140=only)
 	@echo "$(YELLOW)  fips140=only. The fix is upstream; adding the package here would$(NC)"
 	@echo "$(YELLOW)  report a go-xkms defect as a quicbaas one.$(NC)"
 
+# FIPS_PKGS is the scope of the full fips140=only unit run (nightly.yml): the
+# whole root module, untagged. It is not test-fips-conformance's curated
+# subset: packages that reach an unapproved algorithm fail here.
+FIPS_PKGS ?= ./...
+FIPS_TIMEOUT := 15m
+
+.PHONY: test-fips-shard
+test-fips-shard: ## Run shard SHARD of SHARDS of the full unit suite under GODEBUG=fips140=only
+	@$(call go_packages,$(FIPS_PKGS),/proto$$); \
+	$(call shard_packages,); \
+	printf "$(BLUE)FIPS shard $(SHARD) of $(SHARDS): %s packages$(NC)\n" "$$(printf '%s\n' "$$pkgs" | wc -l)"; \
+	$(FIPS_ONLY_ENV) $(GOTEST) -count=1 -timeout=$(FIPS_TIMEOUT) $$pkgs
+
 .PHONY: test-unit
 test-unit: test ## Alias for test (unit tests only)
 	@# This is now an alias for the test target which already excludes integration tests
@@ -1604,7 +1642,7 @@ test-verbose: ## Run tests with verbose output
 # GNU make never matches `test-api/grpc` against test-% (it strips the
 # directory part first), so nested packages are named with dashes:
 # api-grpc reaches pkg/api/grpc, while a real hyphenated directory such as
-# server-tpm2-keys still reaches pkg/server/tpm2-keys. scripts/resolve-package.sh
+# quicbaas-git-sign still reaches cmd/quicbaas-git-sign. scripts/resolve-package.sh
 # documents the search. Resolving at expansion time puts the real path and tag
 # set in `make -n`, which scripts/resolve-package_test.sh relies on.
 PKG_ROOTS := pkg cmd
@@ -1642,7 +1680,7 @@ pkg_tags = $(if $(filter pkg/iam pkg/iam/%,$(call pkg_dir,$(PKG_ROOTS))),$(IAM_T
 # Dynamic package test targets - use: make test-<package>
 # Examples: make test-xkms, make test-kms, make test-iam
 # Nested packages use dashes: make test-api-grpc (pkg/api/grpc),
-# make test-iam-dpop (pkg/iam/dpop), make test-server-tpm2-keys
+# make test-iam-dpop (pkg/iam/dpop), make test-quicbaas-git-sign
 test-%: ## Run unit tests for a specific package (e.g., make test-xkms, make test-api-grpc)
 	@$(call pkg_resolve,$(PKG_ROOTS)); \
 	TAGS='$(pkg_tags)'; \
@@ -1845,9 +1883,9 @@ integration-test-sdk: integration-test-sdk-go integration-test-sdk-js ## Run ALL
 # exactly this way -- snake_case merge fields, drafts having no API field, and
 # webhook event expansion -- each of which a mock reproduced happily.
 .PHONY: integration-test-forge-gitea
-integration-test-forge-gitea: ## Run the live Gitea forge suite (needs GITEA_ITEST_* env)
+integration-test-forge-gitea: ## Run the live Gitea forge suite (needs FORGE_ITEST_* env)
 	@echo "$(BLUE)Running live Gitea forge integration tests...$(NC)"
-	@echo "$(YELLOW)Requires GITEA_ITEST_BASE_URL, _TOKEN, _OWNER, _REPO against a SCRATCH repo$(NC)"
+	@echo "$(YELLOW)Requires FORGE_ITEST_BASE_URL, _TOKEN, _OWNER, _REPO against a SCRATCH repo$(NC)"
 	$(GOTEST) -tags integration -count=1 -v -timeout=10m -run 'TestLive_' ./pkg/sdlc/
 	@echo "$(GREEN)✓ Live Gitea forge tests passed$(NC)"
 
@@ -2327,7 +2365,7 @@ coverage-%: ## Generate coverage report for a specific package (e.g., make cover
 	TAGS='$(pkg_tags)'; \
 	echo "$(BLUE)Generating coverage for $${PKG_PATH}...$(NC)"; \
 	mkdir -p $(COVERAGE_DIR); \
-	GOTOOLCHAIN=go$(GO_VERSION) GONOSUMCHECK='*' $(GOTEST) -tags "$${TAGS}" -coverprofile=$${PROFILE}.out $${PKG_PATH} || exit $$?; \
+	GOTOOLCHAIN=go$(GO_VERSION) $(GOTEST) -tags "$${TAGS}" -coverprofile=$${PROFILE}.out $${PKG_PATH} || exit $$?; \
 	$(pkg_cover_report)
 
 # Dynamic benchmark targets - use: make bench-<package>
@@ -2449,36 +2487,30 @@ GOMODAUTH_ENV := $(MODULE_ENV_FILE)
 endif
 export GOMODAUTH_ENV
 
+# Every compose file that builds an image passes GOMODAUTH_ENV as a build
+# secret. compose hands builds to buildx bake, and bake refuses to read a file
+# outside the build context unless the caller grants it, which compose has no
+# flag for, so a non-interactive build fails. A build secret is mounted for one
+# RUN step and never lands in a layer, so the filesystem entitlement check is
+# turned off for the builds make drives.
+export BUILDX_BAKE_ENTITLEMENTS_FS := 0
+
 # Where integration-test backs go.mod up while the stack runs, restored after.
 # Overridable so a gate that drives the recipe never touches a real run's copy.
 GOMOD_BACKUP ?= /tmp/quicbaas-$(RUN_ID_SLUG)-gomod-backup
 SDK_GOMOD_BACKUP ?= /tmp/quicbaas-$(RUN_ID_SLUG)-sdk-gomod-backup
 
-# Where stage-gomodauth finds a Gitea read token on a host that is not a Gitea
-# runner (#1031). A runner injects the dependency-resolution.md section-6
-# variables itself; a developer or agent host resolves the private modules
-# through a ~/.gitconfig rewrite a container cannot see, so the variables are
-# built here from a read token instead. The token comes from GITEA_READ_TOKEN
-# in the environment, else from the GOMODAUTH_TOKEN_KEY line of the agent
-# tokens file. It is only ever read inside the recipe's shell -- never into a
-# make variable, a command line, a build arg or the log.
-#
-# GITEA_HTTP_ORIGIN is the forge the token is good for (http:// or https://,
-# host and port). It has no default: the tree names no forge. Set it in the
-# environment, or put a GITEA_HTTP_ORIGIN= line in the tokens file beside the
-# token, which is where a private deployment keeps it. A token with no origin
-# is refused rather than staged against a guess.
-GOMODAUTH_TOKENS_FILE ?= $(HOME)/.agent-identity/tokens.env
-GOMODAUTH_TOKEN_KEY ?= AGENT_TOKEN_GO_QUICBAAS
-GITEA_HTTP_ORIGIN ?=
-GOMODAUTH_OWNER ?= jeremyhahn
+# The image builds resolve every module through the module proxy and the
+# checksum database, so no credential is staged. stage-gomodauth only creates
+# the gomodauth secret file, empty and 0600, so the compose files and
+# Dockerfiles that mount it keep a path to it.
 
 # Empties the staged file. Every target that stages it runs this once its
 # images are built, and arms it in an EXIT trap so a failed or cancelled build
 # clears it too. The file is emptied rather than removed: a later compose
 # invocation against the same project still resolves the secret's path.
 # umask applies only to a file this creates; stage-gomodauth chmods an existing
-# one to 0600 before it writes a token into it.
+# one to 0600 when it empties it.
 GOMODAUTH_CLEAR = { umask 077; : > "$(GOMODAUTH_ENV)"; } 2>/dev/null || true
 # A file CI supplied in MODULE_ENV_FILE belongs to the caller: no target stages
 # into it or clears it, so every recipe that arms GOMODAUTH_CLEAR or calls
@@ -2488,60 +2520,11 @@ GOMODAUTH_CLEAR = true
 endif
 
 .PHONY: stage-gomodauth
-stage-gomodauth: ## Stage Gitea module-fetch credentials for the image builds
+stage-gomodauth: ## Stage the empty gomodauth secret file for the image builds
 ifneq ($(strip $(MODULE_ENV_FILE)),)
 	@true
 else
 	@umask 077; : > "$(GOMODAUTH_ENV)" && chmod 600 "$(GOMODAUTH_ENV)"
-	@if [ -n "$${GIT_CONFIG_KEY_0:-}" ]; then \
-		umask 077; \
-		{ \
-			printf 'export GOPRIVATE=%s\n' "$${GOPRIVATE:-}"; \
-			printf 'export GIT_CONFIG_COUNT=%s\n' "$${GIT_CONFIG_COUNT:-}"; \
-			printf 'export GIT_CONFIG_KEY_0=%s\n' "$${GIT_CONFIG_KEY_0}"; \
-			printf 'export GIT_CONFIG_VALUE_0=%s\n' "$${GIT_CONFIG_VALUE_0:-}"; \
-		} > "$(GOMODAUTH_ENV)"; \
-		exit 0; \
-	fi; \
-	token="$${GITEA_READ_TOKEN:-}"; source=GITEA_READ_TOKEN; \
-	if [ -z "$$token" ] && [ -r "$(GOMODAUTH_TOKENS_FILE)" ]; then \
-		token=$$(sed -n 's/^[[:space:]]*\(export[[:space:]]\{1,\}\)\{0,1\}$(GOMODAUTH_TOKEN_KEY)=//p' "$(GOMODAUTH_TOKENS_FILE)" | tail -n 1 | tr -d "\"' \r"); \
-		source="$(GOMODAUTH_TOKEN_KEY) in $(GOMODAUTH_TOKENS_FILE)"; \
-	fi; \
-	if [ -z "$$token" ]; then \
-		echo "$(YELLOW)No Gitea module credentials: no GIT_CONFIG_KEY_0 (Gitea runner), no GITEA_READ_TOKEN,$(NC)"; \
-		echo "$(YELLOW)  and no $(GOMODAUTH_TOKEN_KEY) in the agent tokens file.$(NC)"; \
-		echo "$(YELLOW)  Image builds resolve modules from the public proxy, where private first-party$(NC)"; \
-		echo "$(YELLOW)  modules not yet mirrored fail with 'unknown revision' (docs/testing/private-modules.md)$(NC)"; \
-		exit 0; \
-	fi; \
-	case "$$token" in \
-		*[!A-Za-z0-9_-]*) \
-			echo "$(RED)Error: the Gitea read token from $$source is not token-shaped (expected [A-Za-z0-9_-]); nothing staged$(NC)"; \
-			exit 1 ;; \
-	esac; \
-	origin="$(GITEA_HTTP_ORIGIN)"; \
-	if [ -z "$$origin" ] && [ -r "$(GOMODAUTH_TOKENS_FILE)" ]; then \
-		origin=$$(sed -n 's/^[[:space:]]*\(export[[:space:]]\{1,\}\)\{0,1\}GITEA_HTTP_ORIGIN=//p' "$(GOMODAUTH_TOKENS_FILE)" | tail -n 1 | tr -d "\"' \r"); \
-	fi; \
-	if [ -z "$$origin" ]; then \
-		echo "$(RED)Error: a Gitea read token was found ($$source) but no Gitea origin is set; nothing staged$(NC)"; \
-		echo "$(RED)  Set GITEA_HTTP_ORIGIN (e.g. https://gitea.example.com:3000) in the environment or in the agent tokens file$(NC)"; \
-		exit 1; \
-	fi; \
-	origin="$${origin%/}"; \
-	case "$$origin" in \
-		http://*|https://*) ;; \
-		*) echo "$(RED)Error: GITEA_HTTP_ORIGIN must be an http:// or https:// origin; nothing staged$(NC)"; exit 1 ;; \
-	esac; \
-	scheme="$${origin%%://*}"; hostport="$${origin#*://}"; \
-	umask 077; \
-	{ \
-		printf 'export GOPRIVATE=%s\n' "$${GOPRIVATE:-github.com/$(GOMODAUTH_OWNER)/*}"; \
-		printf 'export GIT_CONFIG_COUNT=1\n'; \
-		printf 'export GIT_CONFIG_KEY_0=url.%s://x:%s@%s/%s/.insteadOf\n' "$$scheme" "$$token" "$$hostport" "$(GOMODAUTH_OWNER)"; \
-		printf 'export GIT_CONFIG_VALUE_0=https://github.com/%s/\n' "$(GOMODAUTH_OWNER)"; \
-	} > "$(GOMODAUTH_ENV)"
 endif
 
 .PHONY: clear-gomodauth
@@ -2782,7 +2765,7 @@ integration-test-ollama-cpu: ## Run the full integration suite INCLUDING Ollama 
 .PHONY: integration-test-ollama-gpu
 integration-test-ollama-gpu: ## Run the full integration suite INCLUDING Ollama + GPU tests against a remote GPU host (requires GPU_HOST=<host>)
 	@if [ -z "$(strip $(GPU_HOST))" ]; then \
-		echo "$(RED)Error: integration-test-ollama-gpu requires GPU_HOST=<host> (e.g. make integration-test-ollama-gpu GPU_HOST=gpu01.lan)$(NC)"; \
+		echo "$(RED)Error: integration-test-ollama-gpu requires GPU_HOST=<host> (e.g. make integration-test-ollama-gpu GPU_HOST=core-01.example)$(NC)"; \
 		exit 1; \
 	fi
 	@echo "$(BLUE)Running integration tests with remote GPU Ollama host: $(GPU_HOST)$(NC)"
@@ -3406,17 +3389,51 @@ COVER_PKGS ?= ./pkg/... ./cmd/...
 # default; see the note in the `race` recipe for the measurements.
 RACE_TIMEOUT := 30m
 
-# ci-template's test stage runs `make coverage COVERAGE_THRESHOLD=<n>` as the
-# one unit-test pass (m601 (c)): it runs with -race and fails below the
-# threshold (see the Coverage Gate below). It runs the same TEST_CHECKS
-# validations as `make test` first, so replacing `make test` with it in CI
-# keeps every check.
+# The test stage is three pieces, so CI can run the slow -race pass as
+# parallel shards and a developer runs the same targets in one go:
+#   coverage-shard   one shard of the -race unit run, writing its profile
+#   coverage-merge   joins the SHARDS profiles and gates the total (COVER_MIN)
+#   coverage-passes  the TEST_CHECKS validations and COVERAGE_PASSES
+# `make coverage` runs all three with a single shard. It runs the same
+# TEST_CHECKS validations as `make test` first, so replacing `make test` with
+# it keeps every check.
+COVERAGE_PASSES := test-sdk-go test-minimal test-standard test-lean test-tooling test-software-factory-worker
+
+# coverage_shard_profile is shard $(1)'s profile in a run of SHARDS shards.
+coverage_shard_profile = $(COVERAGE_DIR)/coverage-shard-$(1)-of-$(SHARDS).out
+
 .PHONY: coverage
-coverage: $(TEST_CHECKS) ## The CI test stage: unit tests with -race and coverage (fail below COVER_MIN, generated code excluded), then the Go SDK, the minimal/standard/lean tag passes and the tooling tests
-	@printf "$(BLUE)Generating coverage report...$(NC)\n"
+coverage: $(TEST_CHECKS) ## The CI test stage: unit tests with -race and coverage (fail below COVER_MIN, generated code excluded), then the Go SDK, the minimal/standard/lean tag passes, the tooling tests and the worker image package tests
+	@$(MAKE) --no-print-directory coverage-shard SHARD=0 SHARDS=1
+	@$(MAKE) --no-print-directory coverage-merge SHARDS=1
+	@$(MAKE) --no-print-directory $(COVERAGE_PASSES)
+
+.PHONY: coverage-shard
+coverage-shard: ## Run shard SHARD of SHARDS of the -race unit run, writing coverage/coverage-shard-SHARD-of-SHARDS.out
 	@mkdir -p $(COVERAGE_DIR)
 	@$(call go_packages,-tags '$(TEST_TAGS)' $(COVER_PKGS),/proto$$); \
-	GOTOOLCHAIN=go$(GO_VERSION) GONOSUMCHECK='*' CGO_ENABLED=1 $(GOTEST) -race -p 2 -timeout=$(RACE_TIMEOUT) -tags '$(TEST_TAGS)' -coverprofile=$(COVERAGE_DIR)/coverage-raw.out $$pkgs
+	$(call shard_packages,-tags '$(TEST_TAGS)'); \
+	printf "$(BLUE)Coverage shard $(SHARD) of $(SHARDS): %s packages$(NC)\n" "$$(printf '%s\n' "$$pkgs" | wc -l)"; \
+	GOTOOLCHAIN=go$(GO_VERSION) CGO_ENABLED=1 $(GOTEST) -race -p 2 -timeout=$(RACE_TIMEOUT) -tags '$(TEST_TAGS)' -coverprofile=$(call coverage_shard_profile,$(SHARD)) $$pkgs
+
+# The shards hold disjoint packages, so their profiles join by concatenation:
+# one mode line, then every shard's blocks. Every one of the SHARDS profiles
+# must be present and share the mode line, or the total would be wrong.
+.PHONY: coverage-merge
+coverage-merge: ## Join the SHARDS coverage-shard profiles and fail below COVER_MIN (generated code excluded)
+	@$(call check_shard,0,$(SHARDS)); \
+	printf "$(BLUE)Merging $(SHARDS) coverage shard profiles...$(NC)\n"; \
+	mode=""; i=0; \
+	while [ $$i -lt $(SHARDS) ]; do \
+		f=$(call coverage_shard_profile,$$i); \
+		[ -s "$$f" ] || { echo "$(RED)$@: $$f is missing or empty (make coverage-shard SHARD=$$i SHARDS=$(SHARDS))$(NC)"; exit 1; }; \
+		m=$$(head -1 "$$f"); \
+		case "$$m" in mode:*) ;; *) echo "$(RED)$@: $$f does not start with a mode line$(NC)"; exit 1 ;; esac; \
+		if [ -z "$$mode" ]; then mode=$$m; printf '%s\n' "$$mode" > $(COVERAGE_DIR)/coverage-raw.out; \
+		elif [ "$$m" != "$$mode" ]; then echo "$(RED)$@: $$f has '$$m', shard 0 has '$$mode'$(NC)"; exit 1; fi; \
+		tail -n +2 "$$f" >> $(COVERAGE_DIR)/coverage-raw.out; \
+		i=$$((i + 1)); \
+	done
 	@printf "$(BLUE)Filtering out non-production code (generated, mocks, stubs, test helpers)...$(NC)\n"
 	@head -1 $(COVERAGE_DIR)/coverage-raw.out > $(COVERAGE_DIR)/coverage.out
 	@grep -v '\.pb\.go:' $(COVERAGE_DIR)/coverage-raw.out | \
@@ -3446,7 +3463,22 @@ coverage: $(TEST_CHECKS) ## The CI test stage: unit tests with -race and coverag
 		exit 1; \
 	fi; \
 	printf "$(GREEN)Coverage gate passed (%s%% >= %s%%)$(NC)\n" "$$TOTAL" "$(COVER_MIN)"
-	@$(MAKE) --no-print-directory test-sdk-go test-minimal test-standard test-lean test-tooling
+
+.PHONY: coverage-passes
+coverage-passes: $(TEST_CHECKS) ## The test stage beside the coverage shards: the TEST_CHECKS validations, the Go SDK, the minimal/standard/lean tag passes, the tooling tests and the worker image package tests
+	@$(MAKE) --no-print-directory $(COVERAGE_PASSES)
+
+# shard-packages prints shard SHARD of SHARDS of SHARD_PKGS under the tags
+# SHARD_TAGS, one import path per line, for a workflow that runs go test
+# itself (batch.yml's race-full). It deals packages as coverage-shard does.
+SHARD_PKGS ?= $(COVER_PKGS)
+SHARD_TAGS ?= $(TEST_TAGS)
+
+.PHONY: shard-packages
+shard-packages: ## Print shard SHARD of SHARDS of SHARD_PKGS (tags SHARD_TAGS), one package per line
+	@$(call go_packages,-tags '$(SHARD_TAGS)' $(SHARD_PKGS),/proto$$); \
+	$(call shard_packages,-tags '$(SHARD_TAGS)'); \
+	printf '%s\n' "$$pkgs"
 
 # ==============================================================================
 # Coverage Gate (hard threshold — mirrors go-qrdb's COVER_MIN / check-coverage)
@@ -3471,7 +3503,7 @@ coverage-fips: ## Generate coverage report for FIPS mode
 	@echo "$(BLUE)Generating FIPS coverage report...$(NC)"
 	@echo "$(YELLOW)Using GOFIPS140=latest (Go 1.24+)$(NC)"
 	@mkdir -p $(COVERAGE_DIR)
-	GOTOOLCHAIN=go$(GO_VERSION) GONOSUMCHECK='*' GOFIPS140=latest $(GOTEST) -coverprofile=$(COVERAGE_DIR)/coverage-fips.out -tags fips ./pkg/fips/...
+	GOTOOLCHAIN=go$(GO_VERSION) GOFIPS140=latest $(GOTEST) -coverprofile=$(COVERAGE_DIR)/coverage-fips.out -tags fips ./pkg/fips/...
 	$(GOCMD) tool cover -html=$(COVERAGE_DIR)/coverage-fips.out -o $(COVERAGE_DIR)/coverage-fips.html
 	@echo "$(GREEN)FIPS coverage report: $(COVERAGE_DIR)/coverage-fips.html$(NC)"
 	@echo "$(BLUE)Total FIPS coverage:$(NC)"
@@ -3556,22 +3588,29 @@ gosec: ## Run gosec security scanner
 		exit $$rc; \
 	fi
 
+VULN_ALLOWLIST := scripts/vuln-allowlist.txt
 .PHONY: vuln
-vuln: ## Run govulncheck to scan for known vulnerabilities
+vuln: ## Run govulncheck; fail on a reachable advisory not on scripts/vuln-allowlist.txt, or a stale entry
 	@echo "$(BLUE)Running vulnerability scan with govulncheck...$(NC)"
 	@GOVULNCHECK_BIN=$$(command -v govulncheck 2>/dev/null || echo "$$HOME/go/bin/govulncheck"); \
 	if [ -x "$$GOVULNCHECK_BIN" ]; then \
-		$$GOVULNCHECK_BIN ./...; rc=$$?; \
-		if [ $$rc -eq 0 ]; then \
-			echo "$(GREEN)Vulnerability scan complete$(NC)"; \
-		elif [ $$rc -gt 128 ]; then \
+		out=$$(mktemp); trap 'rm -f "$$out"' EXIT; \
+		$$GOVULNCHECK_BIN -format json ./... > "$$out"; rc=$$?; \
+		if [ $$rc -gt 128 ]; then \
 			echo "$(RED)govulncheck was KILLED by signal $$(($$rc - 128)) (exit $$rc) -- it did NOT report a vulnerability.$(NC)"; \
 			echo "$(RED)On a 16 GB job container this is the memory cap: govulncheck holds the whole$(NC)"; \
 			echo "$(RED)package graph and its SSA live, which GOMEMLIMIT cannot collect. Re-run when$(NC)"; \
 			echo "$(RED)the host is quieter, or raise the cap -- do not read this as a finding.$(NC)"; \
 			exit $$rc; \
+		elif [ $$rc -ne 0 ]; then \
+			echo "$(RED)govulncheck failed (exit $$rc)$(NC)"; \
+			exit $$rc; \
+		fi; \
+		$(GOCMD) run ./scripts/vulnallow $(VULN_ALLOWLIST) < "$$out"; rc=$$?; \
+		if [ $$rc -eq 0 ]; then \
+			echo "$(GREEN)Vulnerability scan complete$(NC)"; \
 		else \
-			echo "$(RED)govulncheck found reachable vulnerabilities$(NC)"; \
+			echo "$(RED)govulncheck found reachable vulnerabilities not on $(VULN_ALLOWLIST)$(NC)"; \
 			exit $$rc; \
 		fi; \
 	else \
@@ -3785,12 +3824,14 @@ endif
 # actionlint and shellcheck, where a project's `make lint` lints workflows
 # (#1039).
 #
-# THE AGENT CLIS ARE PINNED TOO, and these pins are the ones that MOVE. A
-# manual build installs exactly CLAUDE_CODE_VERSION, CODEX_VERSION and
-# GEMINI_CLI_VERSION; the daemon's worker image refresh (pkg/sdlc/workerimage)
-# rebuilds the same Dockerfile with whatever newer versions the npm registry
-# publishes, gates the result and rebinds projects to it. Override them on the
-# command line to build a newer image by hand:
+# THE AGENT CLIS ARE PINNED TOO, in $(WORKER_IMAGE_DIR)/versions.lock (the
+# lock the nightly worker-image workflow builds from), and these pins are the
+# ones that MOVE. A manual build installs exactly CLAUDE_CODE_VERSION,
+# CODEX_VERSION and GEMINI_CLI_VERSION as the lock gives them; the daemon's
+# worker image refresh (pkg/sdlc/workerimage) rebuilds the same Dockerfile with
+# whatever newer versions the npm registry publishes, gates the result and
+# rebinds projects to it. Override them on the command line to build a newer
+# image by hand:
 #
 #   make build-worker-image CLAUDE_CODE_VERSION=2.1.293 CODEX_VERSION=0.161.0 GEMINI_CLI_VERSION=0.64.0
 #
@@ -3803,15 +3844,20 @@ WORKER_IMAGE_DIR := deployments/agents/software-factory-worker
 WORKER_IMAGE_REPO := $(DOCKER_IMAGE)-software-factory-worker
 WORKER_IMAGE_UID ?= $(shell id -u)
 WORKER_IMAGE_GID ?= $(shell id -g)
-CLAUDE_CODE_VERSION ?= 2.1.296
-CODEX_VERSION ?= 0.162.1
-GEMINI_CLI_VERSION ?= 0.64.0
+WORKER_IMAGE_LOCK := $(WORKER_IMAGE_DIR)/versions.lock
+worker_image_lock = $(strip $(shell sed -n 's/^$(1)=//p' $(WORKER_IMAGE_LOCK)))
+CLAUDE_CODE_VERSION ?= $(call worker_image_lock,CLAUDE_CODE_VERSION)
+CODEX_VERSION ?= $(call worker_image_lock,CODEX_VERSION)
+GEMINI_CLI_VERSION ?= $(call worker_image_lock,GEMINI_CLI_VERSION)
+ifeq ($(and $(CLAUDE_CODE_VERSION),$(CODEX_VERSION),$(GEMINI_CLI_VERSION)),)
+$(error $(WORKER_IMAGE_LOCK) must set CLAUDE_CODE_VERSION, CODEX_VERSION and GEMINI_CLI_VERSION)
+endif
 WORKER_IMAGE_TAG := $(DOCKER_TAG)-cc$(CLAUDE_CODE_VERSION)-cx$(CODEX_VERSION)
 # WORKER_IMAGE_REGISTRY is where `make push-worker-image` publishes, as
 # host[:port]/owner/name. It has no default: the registry is the operator's.
 WORKER_IMAGE_REGISTRY ?=
 
-# DEVCACHE_GOPROXY / DEVCACHE_GOPRIVATE / DEVCACHE_NPM_REGISTRY: the fleet's
+# DEVCACHE_GOPROXY / DEVCACHE_NPM_REGISTRY: the fleet's
 # dev caches (../handbook/software/conventions/devops.md section 2a). NEVER
 # given a value here -- an operator off the fleet leaves them unset and the
 # build behaves exactly as it always has. `export` with no value passes
@@ -3819,7 +3865,6 @@ WORKER_IMAGE_REGISTRY ?=
 # (`make build-worker-image DEVCACHE_GOPROXY=http://...`), without writing a
 # host, port or path into this file.
 export DEVCACHE_GOPROXY
-export DEVCACHE_GOPRIVATE
 export DEVCACHE_NPM_REGISTRY
 
 .PHONY: build-worker-image
@@ -3841,6 +3886,9 @@ build-worker-image: ## Build the Software Factory worker image (quicbaas-softwar
 		--build-arg OPENCODE_VERSION=$(OPENCODE_VERSION) \
 		--build-arg OPENCODE_SHA256_X86_64=$(OPENCODE_SHA256_X86_64) \
 		--build-arg OPENCODE_SHA256_AARCH64=$(OPENCODE_SHA256_AARCH64) \
+		--build-arg GH_VERSION=$(GH_VERSION) \
+		--build-arg GH_SHA256_X86_64=$(GH_SHA256_X86_64) \
+		--build-arg GH_SHA256_AARCH64=$(GH_SHA256_AARCH64) \
 		--build-arg PROTOC_VERSION=$(PROTOC_VERSION) \
 		--build-arg PROTOC_SHA256_X86_64=$(PROTOC_SHA256_X86_64) \
 		--build-arg PROTOC_SHA256_AARCH64=$(PROTOC_SHA256_AARCH64) \
@@ -3879,7 +3927,6 @@ build-worker-image: ## Build the Software Factory worker image (quicbaas-softwar
 		--build-arg AGENT_UID=$(WORKER_IMAGE_UID) \
 		--build-arg AGENT_GID=$(WORKER_IMAGE_GID) \
 		--build-arg DEVCACHE_GOPROXY \
-		--build-arg DEVCACHE_GOPRIVATE \
 		--build-arg DEVCACHE_NPM_REGISTRY \
 		-f $(WORKER_IMAGE_DIR)/Dockerfile \
 		--label $(DOCKER_RUN_LABEL) \
@@ -3912,13 +3959,15 @@ test-worker-image: build-worker-image ## Build the worker image and run its prob
 
 # The worker image's Go package -- its Dockerfile, pins, labels, probes and
 # fixtures -- unit-tested without an engine. test-% reaches only pkg/ and cmd/.
+# CI runs it through COVERAGE_PASSES.
 .PHONY: test-software-factory-worker
 test-software-factory-worker: ## Run the worker image package's unit tests (no container engine)
 	$(GOTEST) -v -timeout=5m ./$(WORKER_IMAGE_DIR)/...
 
 # EVERY WORKER-IMAGE PIN IS KEPT AT ITS UPSTREAM'S LATEST RELEASE
 # (devops.md: track the latest). This fails when any pin in
-# pkg/version/toolchain.mk, or CLAUDE_CODE_VERSION / CODEX_VERSION above, is
+# pkg/version/toolchain.mk, or CLAUDE_CODE_VERSION / CODEX_VERSION in
+# $(WORKER_IMAGE_DIR)/versions.lock, is
 # behind, naming each one and the release it is behind. Nightly CI runs it.
 # The script's header lists where each pin's latest release is read from.
 .PHONY: check-worker-toolchain-currency
@@ -4568,33 +4617,33 @@ test-rag-coverage: ## Run RAG tests with coverage report
 .PHONY: test-acp
 test-acp: ## Run ACP/agent backend unit tests
 	@echo "$(BLUE)Running ACP tests...$(NC)"
-	GOTOOLCHAIN=go$(GO_VERSION) GONOSUMCHECK='*' $(GOTEST) -v -race -tags 'rag $(BUILD_TAGS)' ./pkg/acp/...
+	GOTOOLCHAIN=go$(GO_VERSION) $(GOTEST) -v -race -tags 'rag $(BUILD_TAGS)' ./pkg/acp/...
 	@echo "$(GREEN)ACP unit tests passed$(NC)"
 
 .PHONY: test-fleet
 test-fleet: ## Run fleet node daemon unit tests (pkg/fleet/*)
 	@echo "$(BLUE)Running fleet node daemon tests...$(NC)"
-	GOTOOLCHAIN=go$(GO_VERSION) GONOSUMCHECK='*' $(GOTEST) -v -race -count=1 -tags 'rag mcp $(BUILD_TAGS)' ./pkg/fleet/...
+	GOTOOLCHAIN=go$(GO_VERSION) $(GOTEST) -v -race -count=1 -tags 'rag mcp $(BUILD_TAGS)' ./pkg/fleet/...
 	@echo "$(GREEN)Fleet node daemon tests passed$(NC)"
 
 .PHONY: coverage-acp
 coverage-acp: ## Generate coverage report for ACP package
 	@mkdir -p $(COVERAGE_DIR)
-	GOTOOLCHAIN=go$(GO_VERSION) GONOSUMCHECK='*' $(GOTEST) -v -race -tags 'rag $(BUILD_TAGS)' -coverprofile=$(COVERAGE_DIR)/coverage-acp.out -covermode=atomic ./pkg/acp/...
+	GOTOOLCHAIN=go$(GO_VERSION) $(GOTEST) -v -race -tags 'rag $(BUILD_TAGS)' -coverprofile=$(COVERAGE_DIR)/coverage-acp.out -covermode=atomic ./pkg/acp/...
 	$(GOCMD) tool cover -html=$(COVERAGE_DIR)/coverage-acp.out -o $(COVERAGE_DIR)/coverage-acp.html
 	$(GOCMD) tool cover -func=$(COVERAGE_DIR)/coverage-acp.out | grep total
 
 .PHONY: bench-fleet
 bench-fleet: ## Run fleet node daemon benchmarks
 	@echo "$(BLUE)Running fleet node daemon benchmarks...$(NC)"
-	GOTOOLCHAIN=go$(GO_VERSION) GONOSUMCHECK='*' $(GOTEST) -bench=. -benchmem -benchtime=$(BENCHTIME) -run=^$$ -tags 'rag mcp $(BUILD_TAGS)' ./pkg/fleet/...
+	GOTOOLCHAIN=go$(GO_VERSION) $(GOTEST) -bench=. -benchmem -benchtime=$(BENCHTIME) -run=^$$ -tags 'rag mcp $(BUILD_TAGS)' ./pkg/fleet/...
 	@echo "$(GREEN)Fleet node daemon benchmarks completed$(NC)"
 
 .PHONY: coverage-fleet
 coverage-fleet: ## Generate coverage report for the fleet node daemon package
 	@echo "$(BLUE)Generating fleet node daemon coverage report...$(NC)"
 	@mkdir -p $(COVERAGE_DIR)
-	GOTOOLCHAIN=go$(GO_VERSION) GONOSUMCHECK='*' $(GOTEST) -v -race -count=1 -tags 'rag mcp $(BUILD_TAGS)' -coverprofile=$(COVERAGE_DIR)/coverage-fleet.out -covermode=atomic ./pkg/fleet/...
+	GOTOOLCHAIN=go$(GO_VERSION) $(GOTEST) -v -race -count=1 -tags 'rag mcp $(BUILD_TAGS)' -coverprofile=$(COVERAGE_DIR)/coverage-fleet.out -covermode=atomic ./pkg/fleet/...
 	$(GOCMD) tool cover -html=$(COVERAGE_DIR)/coverage-fleet.out -o $(COVERAGE_DIR)/coverage-fleet.html
 	@echo "$(YELLOW)Coverage report: file://$(COVERAGE_DIR)/coverage-fleet.html$(NC)"
 	$(GOCMD) tool cover -func=$(COVERAGE_DIR)/coverage-fleet.out | grep total
@@ -4698,7 +4747,7 @@ integration-test-agent: ## Run agent orchestration integration tests (requires D
 	echo "$(GREEN)Ollama is ready with tinyllama model on localhost:$$OLLAMA_PORT$(NC)"; \
 	echo "$(BLUE)Running agent orchestration integration tests...$(NC)"; \
 	OLLAMA_URL=http://localhost:$$OLLAMA_PORT OLLAMA_MODEL=tinyllama \
-		GOTOOLCHAIN=go$(GO_VERSION) GONOSUMCHECK='*' \
+		GOTOOLCHAIN=go$(GO_VERSION) \
 		$(GOTEST) -v -race -tags 'integration rag' -timeout 300s ./test/integration/agent/...; \
 	echo "$(GREEN)Agent integration tests passed$(NC)"
 
@@ -4877,7 +4926,7 @@ integration-test-agents: ## Run full E2E agent orchestration tests with real age
 	echo "$(BLUE)Running E2E agent orchestration tests...$(NC)"; \
 	QUICBAAS_URL=http://localhost:$$QUICBAAS_PORT \
 		OLLAMA_URL=http://localhost:$$OLLAMA_PORT \
-		GOTOOLCHAIN=go$(GO_VERSION) GONOSUMCHECK='*' \
+		GOTOOLCHAIN=go$(GO_VERSION) \
 		$(GOTEST) -v -tags 'integration agents' -timeout 600s \
 		./test/integration/agents/... 2>&1 | tee integration-test-agents.log; \
 	TEST_EXIT=$${PIPESTATUS[0]}; \
@@ -4913,14 +4962,14 @@ coverage-uicontract: ## Generate coverage report for the uicontract package
 .PHONY: coverage-orchestration
 coverage-orchestration: ## Generate coverage report for orchestration package
 	@mkdir -p $(COVERAGE_DIR)
-	GOTOOLCHAIN=go$(GO_VERSION) GONOSUMCHECK='*' $(GOTEST) -v -race -tags 'rag mcp $(BUILD_TAGS)' -coverprofile=$(COVERAGE_DIR)/coverage-orchestration.out -covermode=atomic ./pkg/orchestration/...
+	GOTOOLCHAIN=go$(GO_VERSION) $(GOTEST) -v -race -tags 'rag mcp $(BUILD_TAGS)' -coverprofile=$(COVERAGE_DIR)/coverage-orchestration.out -covermode=atomic ./pkg/orchestration/...
 	$(GOCMD) tool cover -html=$(COVERAGE_DIR)/coverage-orchestration.out -o $(COVERAGE_DIR)/coverage-orchestration.html
 	$(GOCMD) tool cover -func=$(COVERAGE_DIR)/coverage-orchestration.out | grep total
 
 .PHONY: bench-orchestration
 bench-orchestration: ## Run orchestration package benchmarks
 	@echo "$(BLUE)Running orchestration benchmarks...$(NC)"
-	GOTOOLCHAIN=go$(GO_VERSION) GONOSUMCHECK='*' $(GOTEST) -v -race -tags 'rag mcp $(BUILD_TAGS)' -bench=. -benchmem -run=^$$ ./pkg/orchestration/...
+	GOTOOLCHAIN=go$(GO_VERSION) $(GOTEST) -v -race -tags 'rag mcp $(BUILD_TAGS)' -bench=. -benchmem -run=^$$ ./pkg/orchestration/...
 
 # =============================================================================
 # Pooled Provider Account Tests (the `quicbaas account` surface)
@@ -4935,40 +4984,40 @@ ACCOUNT_PKGS := ./pkg/service/... ./pkg/api/rest/... ./pkg/api/grpc/... ./pkg/ap
 .PHONY: test-account
 test-account: ## Run pooled provider account unit tests (service + all transports + CLI)
 	@echo "$(BLUE)Running pooled provider account tests...$(NC)"
-	GOTOOLCHAIN=go$(GO_VERSION) GONOSUMCHECK='*' $(GOTEST) -v -count=1 -tags '$(BUILD_TAGS)' -run 'Account' $(ACCOUNT_PKGS)
+	GOTOOLCHAIN=go$(GO_VERSION) $(GOTEST) -v -count=1 -tags '$(BUILD_TAGS)' -run 'Account' $(ACCOUNT_PKGS)
 	@echo "$(BLUE)Running SDK account client + transport tests...$(NC)"
-	cd sdk/go && GOTOOLCHAIN=go$(GO_VERSION) GONOSUMCHECK='*' $(GOTEST) -v -count=1 -run 'Account' ./client/account/... ./transport/...
+	cd sdk/go && GOTOOLCHAIN=go$(GO_VERSION) $(GOTEST) -v -count=1 -run 'Account' ./client/account/... ./transport/...
 
 .PHONY: coverage-account
 coverage-account: ## Generate coverage report for the pooled provider account surface
 	@mkdir -p $(COVERAGE_DIR)
-	cd sdk/go && GOTOOLCHAIN=go$(GO_VERSION) GONOSUMCHECK='*' $(GOTEST) -coverprofile=../../$(COVERAGE_DIR)/coverage-account.out -covermode=atomic ./client/account/...
+	cd sdk/go && GOTOOLCHAIN=go$(GO_VERSION) $(GOTEST) -coverprofile=../../$(COVERAGE_DIR)/coverage-account.out -covermode=atomic ./client/account/...
 	$(GOCMD) tool cover -html=$(COVERAGE_DIR)/coverage-account.out -o $(COVERAGE_DIR)/coverage-account.html
 	$(GOCMD) tool cover -func=$(COVERAGE_DIR)/coverage-account.out | grep total
 
 .PHONY: bench-account
 bench-account: ## Run pooled provider account benchmarks
 	@echo "$(BLUE)Running pooled provider account benchmarks...$(NC)"
-	cd sdk/go && GOTOOLCHAIN=go$(GO_VERSION) GONOSUMCHECK='*' $(GOTEST) -bench=. -benchmem -run=^$$ ./client/account/...
+	cd sdk/go && GOTOOLCHAIN=go$(GO_VERSION) $(GOTEST) -bench=. -benchmem -run=^$$ ./client/account/...
 
 .PHONY: test-registry
 test-registry: ## Run service registry unit tests (storage, service, every transport, SDK client, CLI)
 	@echo "$(BLUE)Running service registry unit tests...$(NC)"
-	GOTOOLCHAIN=go$(GO_VERSION) GONOSUMCHECK='*' $(GOTEST) -count=1 -race -tags '$(TEST_TAGS)' ./pkg/registry/...
-	GOTOOLCHAIN=go$(GO_VERSION) GONOSUMCHECK='*' $(GOTEST) -count=1 -race -tags '$(TEST_TAGS)' -run 'Registry' ./pkg/service/ ./pkg/api/grpc/ ./pkg/api/rest/ ./pkg/api/mcp/ ./cmd/quicbaas/
-	cd sdk/go && GOTOOLCHAIN=go$(GO_VERSION) GONOSUMCHECK='*' $(GOTEST) -count=1 -race ./client/registry/... && \
-		GOTOOLCHAIN=go$(GO_VERSION) GONOSUMCHECK='*' $(GOTEST) -count=1 -race -run 'Registry' ./transport/...
+	GOTOOLCHAIN=go$(GO_VERSION) $(GOTEST) -count=1 -race -tags '$(TEST_TAGS)' ./pkg/registry/...
+	GOTOOLCHAIN=go$(GO_VERSION) $(GOTEST) -count=1 -race -tags '$(TEST_TAGS)' -run 'Registry' ./pkg/service/ ./pkg/api/grpc/ ./pkg/api/rest/ ./pkg/api/mcp/ ./cmd/quicbaas/
+	cd sdk/go && GOTOOLCHAIN=go$(GO_VERSION) $(GOTEST) -count=1 -race ./client/registry/... && \
+		GOTOOLCHAIN=go$(GO_VERSION) $(GOTEST) -count=1 -race -run 'Registry' ./transport/...
 
 .PHONY: coverage-registry
 coverage-registry: ## Generate coverage report for the service registry packages
 	@mkdir -p $(COVERAGE_DIR)
-	GOTOOLCHAIN=go$(GO_VERSION) GONOSUMCHECK='*' $(GOTEST) -tags '$(TEST_TAGS)' -coverprofile=$(COVERAGE_DIR)/coverage-registry.out -covermode=atomic ./pkg/registry/...
+	GOTOOLCHAIN=go$(GO_VERSION) $(GOTEST) -tags '$(TEST_TAGS)' -coverprofile=$(COVERAGE_DIR)/coverage-registry.out -covermode=atomic ./pkg/registry/...
 	$(GOCMD) tool cover -func=$(COVERAGE_DIR)/coverage-registry.out | grep total
-	cd sdk/go && GOTOOLCHAIN=go$(GO_VERSION) GONOSUMCHECK='*' $(GOTEST) -cover ./client/registry/...
+	cd sdk/go && GOTOOLCHAIN=go$(GO_VERSION) $(GOTEST) -cover ./client/registry/...
 
 .PHONY: bench-registry
 bench-registry: ## Run service registry benchmarks
-	GOTOOLCHAIN=go$(GO_VERSION) GONOSUMCHECK='*' $(GOTEST) -bench=. -benchmem -run=^$$ ./pkg/registry/...
+	GOTOOLCHAIN=go$(GO_VERSION) $(GOTEST) -bench=. -benchmem -run=^$$ ./pkg/registry/...
 
 .PHONY: integration-test-registry
 integration-test-registry: ## Run service registry CLI integration tests (all transports, in the devcontainer)
@@ -4977,18 +5026,18 @@ integration-test-registry: ## Run service registry CLI integration tests (all tr
 .PHONY: test-attestation
 test-attestation: ## Run attestation Verifier unit tests (service, every transport, SDK, CLI)
 	@echo "$(BLUE)Running attestation unit tests...$(NC)"
-	GOTOOLCHAIN=go$(GO_VERSION) GONOSUMCHECK='*' $(GOTEST) -count=1 -race -tags '$(TEST_TAGS)' -run 'Attestation|Verifier|ComparePCRBaseline' ./pkg/service/... ./pkg/api/grpc/ ./pkg/api/rest/ ./pkg/api/mcp/ ./cmd/quicbaas/
-	cd sdk/go && GOTOOLCHAIN=go$(GO_VERSION) GONOSUMCHECK='*' $(GOTEST) -count=1 -race -run 'Attestation' . ./transport/...
+	GOTOOLCHAIN=go$(GO_VERSION) $(GOTEST) -count=1 -race -tags '$(TEST_TAGS)' -run 'Attestation|Verifier|ComparePCRBaseline' ./pkg/service/... ./pkg/api/grpc/ ./pkg/api/rest/ ./pkg/api/mcp/ ./cmd/quicbaas/
+	cd sdk/go && GOTOOLCHAIN=go$(GO_VERSION) $(GOTEST) -count=1 -race -run 'Attestation' . ./transport/...
 
 .PHONY: coverage-attestation
 coverage-attestation: ## Generate coverage report for the attestation Verifier
 	@mkdir -p $(COVERAGE_DIR)
-	GOTOOLCHAIN=go$(GO_VERSION) GONOSUMCHECK='*' $(GOTEST) -tags '$(TEST_TAGS)' -run 'Verifier|ComparePCRBaseline|Attestation' -coverprofile=$(COVERAGE_DIR)/coverage-attestation.out -covermode=atomic ./pkg/service/
+	GOTOOLCHAIN=go$(GO_VERSION) $(GOTEST) -tags '$(TEST_TAGS)' -run 'Verifier|ComparePCRBaseline|Attestation' -coverprofile=$(COVERAGE_DIR)/coverage-attestation.out -covermode=atomic ./pkg/service/
 	$(GOCMD) tool cover -func=$(COVERAGE_DIR)/coverage-attestation.out | grep -E 'attestation_verifier.go|total'
 
 .PHONY: bench-attestation
 bench-attestation: ## Run attestation Verifier benchmarks
-	GOTOOLCHAIN=go$(GO_VERSION) GONOSUMCHECK='*' $(GOTEST) -tags '$(TEST_TAGS)' -bench='Appraise' -benchmem -run=^$$ ./pkg/service/
+	GOTOOLCHAIN=go$(GO_VERSION) $(GOTEST) -tags '$(TEST_TAGS)' -bench='Appraise' -benchmem -run=^$$ ./pkg/service/
 
 .PHONY: integration-test-attestation
 integration-test-attestation: ## Run attestation Verifier CLI integration tests (all transports, in the devcontainer)
@@ -5005,19 +5054,19 @@ integration-test-account: ## Run pooled provider account CLI integration tests (
 .PHONY: test-kvstore
 test-kvstore: ## Run kvstore package unit tests
 	@echo "$(BLUE)Running kvstore tests...$(NC)"
-	GOTOOLCHAIN=go$(GO_VERSION) GONOSUMCHECK='*' $(GOTEST) -v -race -count=1 -tags '$(BUILD_TAGS)' ./pkg/kvstore/...
+	GOTOOLCHAIN=go$(GO_VERSION) $(GOTEST) -v -race -count=1 -tags '$(BUILD_TAGS)' ./pkg/kvstore/...
 
 .PHONY: coverage-kvstore
 coverage-kvstore: ## Generate coverage report for kvstore package
 	@mkdir -p $(COVERAGE_DIR)
-	GOTOOLCHAIN=go$(GO_VERSION) GONOSUMCHECK='*' $(GOTEST) -v -race -tags '$(BUILD_TAGS)' -coverprofile=$(COVERAGE_DIR)/coverage-kvstore.out -covermode=atomic ./pkg/kvstore/...
+	GOTOOLCHAIN=go$(GO_VERSION) $(GOTEST) -v -race -tags '$(BUILD_TAGS)' -coverprofile=$(COVERAGE_DIR)/coverage-kvstore.out -covermode=atomic ./pkg/kvstore/...
 	$(GOCMD) tool cover -html=$(COVERAGE_DIR)/coverage-kvstore.out -o $(COVERAGE_DIR)/coverage-kvstore.html
 	$(GOCMD) tool cover -func=$(COVERAGE_DIR)/coverage-kvstore.out | grep total
 
 .PHONY: bench-kvstore
 bench-kvstore: ## Run kvstore package benchmarks
 	@echo "$(BLUE)Running kvstore benchmarks...$(NC)"
-	GOTOOLCHAIN=go$(GO_VERSION) GONOSUMCHECK='*' $(GOTEST) -v -race -tags '$(BUILD_TAGS)' -bench=. -benchmem -run=^$$ ./pkg/kvstore/...
+	GOTOOLCHAIN=go$(GO_VERSION) $(GOTEST) -v -race -tags '$(BUILD_TAGS)' -bench=. -benchmem -run=^$$ ./pkg/kvstore/...
 
 # =============================================================================
 # Go SDK Tests
@@ -5036,7 +5085,7 @@ bench-kvstore: ## Run kvstore package benchmarks
 test-sdk-go: ## Run Go SDK unit tests (excludes integration tests)
 	@echo "$(BLUE)Running Go SDK unit tests...$(NC)"
 	@cd sdk/go || exit 1; $(call go_packages,./...,/test/); \
-	go test -v -race -count=1 $$pkgs
+	CGO_ENABLED=1 go test -v -race -count=1 $$pkgs
 	@echo "$(GREEN)✓ Go SDK unit tests passed$(NC)"
 
 .PHONY: test-sdk-go-coverage
@@ -5442,7 +5491,7 @@ verify-integration-teardown: ## Fail if the integration stack can outlive a run 
 	@$(GOCMD) run ./scripts/verifyteardown
 
 .PHONY: verify-gomodauth
-verify-gomodauth: ## Fail if the Docker test builds cannot fetch private modules off a runner, or keep the token after the build
+verify-gomodauth: ## Fail if a Docker test build receives module credentials, or the staged secret file is not empty and 0600
 	@echo "$(BLUE)verify-gomodauth: checking module credentials are staged on any host and cleared after the build...$(NC)"
 	@$(GOCMD) run ./scripts/verifygomodauth
 
@@ -5552,15 +5601,16 @@ release-alpha:
 # reason (devops.md section 9). It is the one stage that needs a module proxy at
 # run time, so it does not inherit GOPROXY=off from the toolchain image:
 # DEPS_CHECK_GOPROXY defaults to the fleet cache when DEVCACHE_GOPROXY is set,
-# then the public proxy. First-party modules resolve as GOPRIVATE through
-# whatever git credentials the environment carries (docs/testing/private-modules.md).
-DEPS_CHECK_GOPROXY ?= $(if $(DEVCACHE_GOPROXY),$(DEVCACHE_GOPROXY)|)https://proxy.golang.org|direct
+# then the public proxy. First-party modules resolve through the proxy and the
+# checksum database like any other.
+DEPS_CHECK_GOPROXY ?= $(if $(DEVCACHE_GOPROXY),$(DEVCACHE_GOPROXY)|)https://proxy.golang.org
 DEPS_CHECK_MODULES := . sdk/go
 # The JSON fields scripts/depscheck reads, written by a template rather than
 # `-json`: `-json` also resolves each module's retractions and deprecation,
 # which fetches go.mod files into the module cache and stalls on the toolchain
-# image's read-only cache.
-DEPS_CHECK_TEMPLATE := {"Path":"{{.Path}}","Version":"{{.Version}}","Main":{{.Main}}{{with .Update}},"Update":{"Version":"{{.Version}}"}{{end}}{{with .Replace}},"Replace":{"Path":"{{.Path}}"}{{end}}{{with .Error}},"Error":{"Err":{{printf "%q" .Err}}}{{end}}}
+# image's read-only cache. Update carries the latest release's time: depscheck
+# reports a release younger than 7 days and fails one with no time (#1704).
+DEPS_CHECK_TEMPLATE := {"Path":"{{.Path}}","Version":"{{.Version}}","Main":{{.Main}}{{with .Update}},"Update":{"Version":"{{.Version}}"{{with .Time}},"Time":"{{.UTC.Format "2006-01-02T15:04:05Z07:00"}}"{{end}}}{{end}}{{with .Replace}},"Replace":{"Path":"{{.Path}}"}{{end}}{{with .Error}},"Error":{"Err":{{printf "%q" .Err}}}{{end}}}
 
 # The go command keeps the checksum database's state in $GOPATH/pkg/sumdb, and
 # the toolchain image's GOPATH is read-only, so deps-check points GOPATH at a
@@ -5570,8 +5620,6 @@ DEPS_CHECK_TEMPLATE := {"Path":"{{.Path}}","Version":"{{.Version}}","Main":{{.Ma
 deps-check: ## Fail when a direct dependency is behind its latest release without a reason in go.mod
 	@set -e; \
 	export GOWORK=off GOPROXY='$(DEPS_CHECK_GOPROXY)' GOFLAGS=-mod=readonly GIT_TERMINAL_PROMPT=0; \
-	export GOPRIVATE="$${GOPRIVATE:-github.com/jeremyhahn/*}"; \
-	export GONOPROXY="$$GOPRIVATE" GONOSUMDB="$$GOPRIVATE"; \
 	export GOMODCACHE="$$($(GOCMD) env GOMODCACHE)"; \
 	sumdb_gopath="$$(mktemp -d -t quicbaas-$(RUN_ID_SLUG)-gopath.XXXXXX)"; \
 	trap 'rm -rf "$$sumdb_gopath"' EXIT; \
@@ -5596,8 +5644,7 @@ deps-check: ## Fail when a direct dependency is behind its latest release withou
 # gives a new tag and never reuses a stale image. GO_VERSION and GO_IMAGE_DIGEST reach
 # the compose file from pkg/version/toolchain.mk; private modules reach the
 # build through the gomodauth secret (docs/testing/private-modules.md), and the
-# fleet's module cache through DEVCACHE_GOPROXY / DEVCACHE_GOPRIVATE
-# (devops.md section 2a).
+# fleet's module cache through DEVCACHE_GOPROXY (devops.md section 2a).
 DEVCONTAINER_DIR := build/docker/devcontainer
 DEVCONTAINER_REPO := $(APP_NAME)-devcontainer
 DEVCONTAINER_INPUTS := $(DEVCONTAINER_DIR)/Dockerfile pkg/version/toolchain.mk go.mod go.sum sdk/go/go.mod sdk/go/go.sum \
@@ -5614,7 +5661,7 @@ DEVCONTAINER_COMPOSE = TOOLCHAIN_IMAGE='$(TOOLCHAIN_IMAGE)' \
 	INTEGRATION_IMAGE='$(INTEGRATION_IMAGE)' QUICBAAS_INTEGRATION_IMAGE='$(INTEGRATION_IMAGE)' \
 	INTEGRATION_BUILD_TAGS='$(strip $(INTEGRATION_BUILD_TAGS))' \
 	GO_VERSION='$(GO_VERSION)' GO_IMAGE_DIGEST='$(GO_IMAGE_DIGEST)' \
-	GO_BUILD_PROXY="$${DEVCACHE_GOPROXY:-}" GO_BUILD_PRIVATE="$${DEVCACHE_GOPRIVATE:-}" \
+	GO_BUILD_PROXY="$${DEVCACHE_GOPROXY:-}" \
 	GOMODAUTH_ENV='$(GOMODAUTH_ENV)' RUN_UID="$$(id -u)" RUN_GID="$$(id -g)" \
 	$(DOCKER) compose -f $(DEVCONTAINER_DIR)/compose.yaml
 # Builds the named compose services with the module credentials staged for the
@@ -5637,6 +5684,11 @@ docker-build: ## Build both devcontainer images, toolchain and integration
 docker-build-toolchain-image: ## Build the toolchain devcontainer image alone
 	@$(DEVCONTAINER_BUILD) toolchain
 
+# ci-template v1.30 (devcontainer.md section 6): the lint and lint-gates jobs
+# build the toolchain image alone under the template's target name.
+.PHONY: docker-build-toolchain
+docker-build-toolchain: docker-build-toolchain-image ## Build the toolchain devcontainer image alone (ci-template name)
+
 # The integration image is the node image of the integration compose stack
 # (go-quicbaas#1383): the targets that drive that stack build it first and hand
 # its tag to compose as QUICBAAS_INTEGRATION_IMAGE.
@@ -5655,7 +5707,7 @@ docker-run: ## Run CMD in the toolchain compose service (e.g. CMD='make test'), 
 	@if ! $(DOCKER) image inspect '$(TOOLCHAIN_IMAGE)' >/dev/null 2>&1; then \
 		$(DEVCONTAINER_BUILD) toolchain; \
 	fi
-	@$(DEVCONTAINER_COMPOSE) run --rm --no-deps -e DEVCACHE_GOPROXY -e DEVCACHE_GOPRIVATE toolchain $(CMD)
+	@$(DEVCONTAINER_COMPOSE) run --rm --no-deps -e DEVCACHE_GOPROXY toolchain $(CMD)
 
 deps-latest:
 	@GOWORK=off sh -c ' \
@@ -5678,24 +5730,24 @@ deps-latest:
 .PHONY: test-sdlc
 test-sdlc: ## Run SDLC module unit tests (bindings, delivery, runner, triage)
 	@echo "$(BLUE)Running SDLC module tests...$(NC)"
-	GOTOOLCHAIN=go$(GO_VERSION) GONOSUMCHECK='*' $(GOTEST) -race -count=1 -tags '$(TEST_TAGS)' ./pkg/sdlc/...
+	GOTOOLCHAIN=go$(GO_VERSION) $(GOTEST) -race -count=1 -tags '$(TEST_TAGS)' ./pkg/sdlc/...
 	@echo "$(GREEN)SDLC module unit tests passed$(NC)"
 
 .PHONY: test-triage
 test-triage: ## Run issue-triage unit tests (verdict, prompt, runner, scheduler)
 	@echo "$(BLUE)Running issue triage tests...$(NC)"
-	GOTOOLCHAIN=go$(GO_VERSION) GONOSUMCHECK='*' $(GOTEST) -race -count=1 -tags '$(TEST_TAGS)' \
+	GOTOOLCHAIN=go$(GO_VERSION) $(GOTEST) -race -count=1 -tags '$(TEST_TAGS)' \
 		-run 'Triage|TriageRunner|TriageScheduler|TriageSweep|WebhookIngest_Wakes' ./pkg/sdlc/...
-	GOTOOLCHAIN=go$(GO_VERSION) GONOSUMCHECK='*' $(GOTEST) -race -count=1 -tags '$(TEST_TAGS)' \
+	GOTOOLCHAIN=go$(GO_VERSION) $(GOTEST) -race -count=1 -tags '$(TEST_TAGS)' \
 		-run 'Triage' ./pkg/server/...
-	GOTOOLCHAIN=go$(GO_VERSION) GONOSUMCHECK='*' $(GOTEST) -race -count=1 -tags '$(TEST_TAGS)' \
+	GOTOOLCHAIN=go$(GO_VERSION) $(GOTEST) -race -count=1 -tags '$(TEST_TAGS)' \
 		-run 'ProjectCapacity|CountLiveJobLeases|JobLeasePolicy' ./pkg/orchestration/...
 	@echo "$(GREEN)Issue triage unit tests passed$(NC)"
 
 .PHONY: coverage-sdlc
 coverage-sdlc: ## Generate coverage report for the SDLC module
 	@mkdir -p $(COVERAGE_DIR)
-	GOTOOLCHAIN=go$(GO_VERSION) GONOSUMCHECK='*' $(GOTEST) -count=1 -tags '$(TEST_TAGS)' \
+	GOTOOLCHAIN=go$(GO_VERSION) $(GOTEST) -count=1 -tags '$(TEST_TAGS)' \
 		-coverprofile=$(COVERAGE_DIR)/coverage-sdlc.out -covermode=atomic ./pkg/sdlc/...
 	$(GOCMD) tool cover -html=$(COVERAGE_DIR)/coverage-sdlc.out -o $(COVERAGE_DIR)/coverage-sdlc.html
 	$(GOCMD) tool cover -func=$(COVERAGE_DIR)/coverage-sdlc.out | grep total
@@ -5703,13 +5755,13 @@ coverage-sdlc: ## Generate coverage report for the SDLC module
 .PHONY: test-prompts
 test-prompts: ## Run prompt-set unit tests (registry, store, resolver, seeder)
 	@echo "$(BLUE)Running prompt-set tests...$(NC)"
-	GOTOOLCHAIN=go$(GO_VERSION) GONOSUMCHECK='*' $(GOTEST) -race -count=1 -tags '$(TEST_TAGS)' ./pkg/orchestration/prompts/...
+	GOTOOLCHAIN=go$(GO_VERSION) $(GOTEST) -race -count=1 -tags '$(TEST_TAGS)' ./pkg/orchestration/prompts/...
 	@echo "$(GREEN)Prompt-set unit tests passed$(NC)"
 
 .PHONY: coverage-prompts
 coverage-prompts: ## Generate coverage report for the prompt-set package
 	@mkdir -p $(COVERAGE_DIR)
-	GOTOOLCHAIN=go$(GO_VERSION) GONOSUMCHECK='*' $(GOTEST) -count=1 -tags '$(TEST_TAGS)' \
+	GOTOOLCHAIN=go$(GO_VERSION) $(GOTEST) -count=1 -tags '$(TEST_TAGS)' \
 		-coverprofile=$(COVERAGE_DIR)/coverage-prompts.out -covermode=atomic ./pkg/orchestration/prompts/...
 	$(GOCMD) tool cover -func=$(COVERAGE_DIR)/coverage-prompts.out | grep total
 
@@ -5718,20 +5770,20 @@ coverage-prompts: ## Generate coverage report for the prompt-set package
 .PHONY: test-containerruntime
 test-containerruntime: ## Run in-process container runtime unit tests (cgo)
 	@echo "$(BLUE)Running container runtime tests...$(NC)"
-	CGO_ENABLED=1 GOTOOLCHAIN=go$(GO_VERSION) GONOSUMCHECK='*' $(GOTEST) -race -count=1 -tags '$(TEST_TAGS)' ./pkg/containerruntime/...
+	CGO_ENABLED=1 GOTOOLCHAIN=go$(GO_VERSION) $(GOTEST) -race -count=1 -tags '$(TEST_TAGS)' ./pkg/containerruntime/...
 	@echo "$(GREEN)Container runtime unit tests passed$(NC)"
 
 .PHONY: coverage-containerruntime
 coverage-containerruntime: ## Generate coverage report for the in-process container runtime (cgo)
 	@mkdir -p $(COVERAGE_DIR)
-	CGO_ENABLED=1 GOTOOLCHAIN=go$(GO_VERSION) GONOSUMCHECK='*' $(GOTEST) -count=1 -tags '$(TEST_TAGS)' \
+	CGO_ENABLED=1 GOTOOLCHAIN=go$(GO_VERSION) $(GOTEST) -count=1 -tags '$(TEST_TAGS)' \
 		-coverprofile=$(COVERAGE_DIR)/coverage-containerruntime.out -covermode=atomic ./pkg/containerruntime/...
 	$(GOCMD) tool cover -func=$(COVERAGE_DIR)/coverage-containerruntime.out | grep total
 
 .PHONY: bench-containerruntime
 bench-containerruntime: ## Run in-process container runtime benchmarks (cgo)
 	@echo "$(BLUE)Running container runtime benchmarks...$(NC)"
-	CGO_ENABLED=1 GOTOOLCHAIN=go$(GO_VERSION) GONOSUMCHECK='*' $(GOTEST) -race -count=1 -tags '$(TEST_TAGS)' -bench=. -benchmem -run=^$$ ./pkg/containerruntime/...
+	CGO_ENABLED=1 GOTOOLCHAIN=go$(GO_VERSION) $(GOTEST) -race -count=1 -tags '$(TEST_TAGS)' -bench=. -benchmem -run=^$$ ./pkg/containerruntime/...
 
 # Runs pkg/containerruntime end to end in a privileged container against a
 # local registry: real pulls, storage-unpacked root filesystems and
@@ -5757,13 +5809,13 @@ integration-test-containerruntime: ## Run in-process container runtime integrati
 .PHONY: coverage-triage
 coverage-triage: ## Report coverage of the issue-triage sources specifically
 	@mkdir -p $(COVERAGE_DIR)
-	GOTOOLCHAIN=go$(GO_VERSION) GONOSUMCHECK='*' $(GOTEST) -count=1 -tags '$(TEST_TAGS)' \
+	GOTOOLCHAIN=go$(GO_VERSION) $(GOTEST) -count=1 -tags '$(TEST_TAGS)' \
 		-coverprofile=$(COVERAGE_DIR)/coverage-triage.out -covermode=atomic ./pkg/sdlc/...
 	$(GOCMD) tool cover -func=$(COVERAGE_DIR)/coverage-triage.out | grep -E 'triage_|^total'
 
 .PHONY: bench-sdlc
 bench-sdlc: ## Run SDLC module benchmarks
 	@echo "$(BLUE)Running SDLC module benchmarks...$(NC)"
-	GOTOOLCHAIN=go$(GO_VERSION) GONOSUMCHECK='*' $(GOTEST) -bench=. -benchmem -benchtime=$(BENCHTIME) \
+	GOTOOLCHAIN=go$(GO_VERSION) $(GOTEST) -bench=. -benchmem -benchtime=$(BENCHTIME) \
 		-run=^$$ -tags '$(TEST_TAGS)' ./pkg/sdlc/...
 	@echo "$(GREEN)SDLC module benchmarks completed$(NC)"

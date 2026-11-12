@@ -1129,10 +1129,9 @@ repo for the portfolio-wide rules; the short version is below.
 ### How resolution works
 
 Every sibling module keeps the module path `github.com/jeremyhahn/<repo>`, and
-`GOPRIVATE=github.com/jeremyhahn/*` plus a git url-rewrite points fetches at
-Gitea. `GOPRIVATE` is the only mechanism in play — it exempts those paths from
-both the module proxy and the checksum database, which is what lets the
-rewrite fire. Do not set `GOPROXY`, `GOSUMDB`, `GONOSUMDB`, `GOINSECURE` or
+resolves through the module proxy and the checksum database like any
+third-party module; no private-module environment variable is set.
+Do not set `GOPROXY`, `GOSUMDB`, `GOINSECURE` or
 `GOFLAGS` to work around a fetch problem: doing so also routes every
 *third-party* module around proxy.golang.org and disables sumdb verification
 for all of them. That is not hypothetical — it broke this repo on 2026-08-14
@@ -1185,12 +1184,10 @@ RUN --mount=type=secret,id=gomodauth \
     go mod download
 ```
 
-`make stage-gomodauth` writes that secret file with `umask 077` -- from the
-`GIT_CONFIG_*` variables the runners inject, or on a developer or agent host
-from a Gitea read token -- and every target whose compose file mounts it stages
-it before its build and empties it afterwards. See
-[private-modules.md](../testing/private-modules.md). The secret is sourced,
-never echoed; verify a token by its shape, never by printing it.
+`make stage-gomodauth` creates that secret file empty with `umask 077`, and
+every target whose compose file mounts it stages it before its build and
+empties it afterwards; no credential reaches an image build. See
+[private-modules.md](../testing/private-modules.md).
 
 Two rules the harness depends on, both learned the hard way:
 

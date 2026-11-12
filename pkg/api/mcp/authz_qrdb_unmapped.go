@@ -154,18 +154,36 @@ var unmappedToolGroups = []unmappedToolGroup{
 		},
 	},
 	{
-		// Both siblings treat login as PRE-AUTHENTICATION, not as a
-		// permission: gRPC lists /quicbaas.login.v1.Login/BeginLogin and
-		// FinishLogin among its public methods, and REST declares the login
-		// routes in authz_public_routes.go. The MCP equivalent of that
-		// treatment is membership in publicTools, which WIDENS the
-		// unauthenticated MCP surface. That is a security-posture decision for
-		// the owner, not a mapping, so the tools stay dead — failing closed.
-		reason: "siblings treat login as pre-auth (gRPC public methods, REST public routes); " +
-			"the MCP equivalent is publicTools membership, which widens the unauthenticated surface",
-		resolution: "owner decision: add to publicTools, or keep login off the MCP transport",
+		// Login is pre-authentication on every sibling, so the MCP equivalent
+		// would be membership in publicTools. login_begin stays dead instead:
+		// every call allocates a login attempt in the pinned go-qrdb/sdk/go
+		// (transport/embedded BeginLogin), which keeps the caller's hint and
+		// tenant strings until FinishLogin removes the attempt. Nothing
+		// evicts an expired attempt and nothing caps their number, and
+		// login_finish is refused on MCP (the next group), so an attempt
+		// begun here would never be removed: repeated calls would grow the
+		// daemon's memory without bound.
+		reason: "login_begin allocates a login attempt that only login_finish removes; the pinned " +
+			"go-qrdb/sdk/go neither expires nor caps abandoned attempts, and login_finish is refused on MCP",
+		resolution: "pin a go-qrdb/sdk/go that expires and caps abandoned login attempts, cover the " +
+			"expiry with a test, then add to publicTools",
 		tools: []string{
 			"quicbaas_login_begin",
+		},
+	},
+	{
+		// login_finish binds the session to the caller's VERIFIED mTLS leaf
+		// (service.WithVerifiedPeerCert), which REST and gRPC read from their
+		// own handshakes. The MCP tools are served on go-qrdb's MCP listener,
+		// whose verified chain reaches a tool handler only through go-qrdb's
+		// SDK verified-chain seam (go-qrdb#1181); reading PeerCertificates[0]
+		// or verifying in go-quicbaas is ruled out (ruling 172). Public
+		// without the leaf, every mTLS login would answer
+		// MTLSPeerCertRequiredError, so the tool stays dead.
+		reason: "login_finish needs the verified mTLS leaf, which the MCP listener exposes only " +
+			"through go-qrdb's SDK verified-chain seam (go-qrdb#1181), absent from the pinned go-qrdb/sdk/go",
+		resolution: "pin the go-qrdb alpha carrying #1181, put its verified leaf on the context, then add to publicTools",
+		tools: []string{
 			"quicbaas_login_finish",
 		},
 	},

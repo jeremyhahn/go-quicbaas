@@ -79,14 +79,19 @@ func kmsKeyPolicyKey(keyID string) string {
 	return kmsKeyPolicyPrefix + keyID
 }
 
+// errKeyPolicyStoreNotConfigured reports that per-key policies cannot be
+// stored or read because no KVStore has been set on the KMS service.
+func errKeyPolicyStoreNotConfigured(op string) error {
+	return NewError(errors.ErrUnavailable, op, "key policy store is not configured")
+}
+
 // persistKeyPolicy serialises and stores policy in the KVStore.
 // It does NOT validate input; callers must validate before calling.
-// When kvStore is nil (not configured) the operation is a no-op so that
-// deployments without Raft storage continue to function with in-memory-only
-// policy semantics (policies are not replicated across nodes).
+// When kvStore is nil (not configured) it returns ErrUnavailable: a policy
+// that cannot be stored must not be silently dropped.
 func (k *kmsServiceImpl) persistKeyPolicy(ctx context.Context, policy *KeyPolicy) error {
 	if k.kvStore == nil {
-		return nil
+		return errKeyPolicyStoreNotConfigured("kms.persistKeyPolicy")
 	}
 	data, err := json.Marshal(policy)
 	if err != nil {
@@ -99,10 +104,11 @@ func (k *kmsServiceImpl) persistKeyPolicy(ctx context.Context, policy *KeyPolicy
 }
 
 // loadKeyPolicy reads the stored policy for keyID from the KVStore.
-// Returns (nil, nil) when no policy has been stored (first use).
+// Returns (nil, nil) when no policy has been stored (first use), and
+// ErrUnavailable when no KVStore is configured, so callers fail closed.
 func (k *kmsServiceImpl) loadKeyPolicy(ctx context.Context, keyID string) (*KeyPolicy, error) {
 	if k.kvStore == nil {
-		return nil, nil
+		return nil, errKeyPolicyStoreNotConfigured("kms.loadKeyPolicy")
 	}
 	data, err := k.kvStore.Get(ctx, kmsKeyPolicyKey(keyID))
 	if err != nil {
@@ -123,9 +129,10 @@ func (k *kmsServiceImpl) loadKeyPolicy(ctx context.Context, keyID string) (*KeyP
 }
 
 // deleteKeyPolicy removes the stored policy for keyID from the KVStore.
+// It returns ErrUnavailable when no KVStore is configured.
 func (k *kmsServiceImpl) deleteKeyPolicy(ctx context.Context, keyID string) error {
 	if k.kvStore == nil {
-		return nil
+		return errKeyPolicyStoreNotConfigured("kms.deleteKeyPolicy")
 	}
 	return k.kvStore.Delete(ctx, kmsKeyPolicyKey(keyID))
 }
@@ -184,8 +191,9 @@ func (k *kmsServiceImpl) checkKeyAuthz(ctx context.Context, keyID, operation str
 		return NewError(errors.ErrForbidden, "kms.checkKeyAuthz", "principal in denied_principals for key "+keyID)
 	}
 
-	// Check AllowedOperations: if set, operation must be listed.
-	if len(policy.AllowedOperations) > 0 {
+	// Check AllowedOperations: if set, operation must be listed. The list
+	// names key usages, so key-management operations are not checked here.
+	if len(policy.AllowedOperations) > 0 && !isKeyManagementOperation(operation) {
 		op := operationToKeyUsage(operation)
 		if !k.operationAllowed(op, policy.AllowedOperations) {
 			k.emitKeyUseAudit(ctx, subject.ID, keyID, operation, keyUseOutcomeDeny)
@@ -245,6 +253,20 @@ func operationToKeyUsage(op string) KeyUsage {
 	// any specific AllowedOperation and will therefore be denied when
 	// AllowedOperations is non-empty.
 	return ""
+}
+
+// keyManagementOperations change or read a key's configuration rather than
+// use its material. A key policy's AllowedOperations lists key usages, so
+// these operations are outside it; the principal lists and expiry still apply.
+var keyManagementOperations = map[string]struct{}{
+	"set_rotation_policy":    {},
+	"get_rotation_policy":    {},
+	"delete_rotation_policy": {},
+}
+
+func isKeyManagementOperation(op string) bool {
+	_, ok := keyManagementOperations[op]
+	return ok
 }
 
 // emitKeyUseAudit emits a key-use audit event when a KMSKeyUseAuditLogger is

@@ -719,7 +719,7 @@ func TestUpdateCA_NilIsNoop(t *testing.T) {
 	srv, err := NewServer(cfg)
 	require.NoError(t, err)
 
-	// caAdapter is nil (server not started, TLS not set up).
+	// The adapter holds no CA yet (server not started).
 	if err := srv.UpdateCA(nil); err != nil {
 		t.Fatalf("UpdateCA(nil) should be a no-op, got error: %v", err)
 	}
@@ -731,21 +731,42 @@ func TestUpdateCA_NilIsNoop(t *testing.T) {
 func TestUpdateCA_ErrorsWhenAdapterNotReady(t *testing.T) {
 	t.Parallel()
 
-	cfg := createTestConfig(t)
-	t.Cleanup(func() { cleanupTestData(t, cfg) })
-
-	srv, err := NewServer(cfg)
-	require.NoError(t, err)
+	// NewServer always builds the adapter, so only a Server built without
+	// it has none.
+	srv := &Server{}
 
 	mockCA := &mockCertificateAuthority{}
-	err = srv.UpdateCA(mockCA)
+	err := srv.UpdateCA(mockCA)
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrUpdateCANotReady)
 }
 
-// TestUpdateCA_SwapsCAOnAdapter verifies that UpdateCA updates both
-// Server.xkmsCA and the live caAdapter reference.
-func TestUpdateCA_SwapsCAOnAdapter(t *testing.T) {
+// TestUpdateCA_NewServerWithoutCA_NotReady verifies that a server built with
+// NewServer, TLS disabled and no external CA refuses UpdateCA: startService
+// never wires its adapter into the certificate service, so a swap would
+// report success while changing nothing.
+func TestUpdateCA_NewServerWithoutCA_NotReady(t *testing.T) {
+	t.Parallel()
+
+	cfg := createTestConfig(t)
+	t.Cleanup(func() { cleanupTestData(t, cfg) })
+	cfg.Security.TLSEnabled = false
+
+	srv, err := NewServer(cfg)
+	require.NoError(t, err)
+	require.NotNil(t, srv.caAdapter)
+
+	err = srv.UpdateCA(&mockCertificateAuthority{})
+	var notReady UpdateCANotReadyError
+	require.ErrorAs(t, err, &notReady)
+	assert.Nil(t, srv.xkmsCA, "a refused UpdateCA must not adopt the CA")
+	assert.Nil(t, srv.caAdapter.getCA(), "a refused UpdateCA must not fill the adapter")
+}
+
+// TestUpdateCA_WiredAdapter_SwapsCA verifies that once the adapter is wired
+// into the certificate service, UpdateCA updates both Server.xkmsCA and the
+// live caAdapter reference.
+func TestUpdateCA_WiredAdapter_SwapsCA(t *testing.T) {
 	t.Parallel()
 
 	cfg := createTestConfig(t)
@@ -757,11 +778,14 @@ func TestUpdateCA_SwapsCAOnAdapter(t *testing.T) {
 	firstCA := &mockCertificateAuthority{}
 	secondCA := &mockCertificateAuthority{}
 
-	// Simulate a wired caAdapter (as done by startService after TLS init).
-	adapter, adapterErr := newCAServiceAdapter(firstCA)
-	require.NoError(t, adapterErr)
-	srv.caAdapter = adapter
-	srv.xkmsCA = firstCA
+	// Publish the first CA into the adapter NewServer built, as
+	// initializeCA does.
+	adapter := srv.caAdapter
+	srv.adoptCA(firstCA)
+	require.Equal(t, firstCA, adapter.getCA())
+	// startService marks the adapter wired once it hands it to the service
+	// builder with WithCAService.
+	srv.caWired.Store(true)
 
 	// UpdateCA should swap to secondCA.
 	require.NoError(t, srv.UpdateCA(secondCA))
@@ -771,4 +795,21 @@ func TestUpdateCA_SwapsCAOnAdapter(t *testing.T) {
 
 	// Adapter-level reference should also be updated.
 	assert.Equal(t, secondCA, adapter.getCA())
+}
+
+// TestNewServer_BuildsPendingCAAdapter verifies that NewServer builds the CA
+// adapter before any listener starts, holding no CA until initializeCA
+// publishes one, so the caAdapter field is never reassigned while logins
+// are served.
+func TestNewServer_BuildsPendingCAAdapter(t *testing.T) {
+	t.Parallel()
+
+	cfg := createTestConfig(t)
+	t.Cleanup(func() { cleanupTestData(t, cfg) })
+
+	srv, err := NewServer(cfg)
+	require.NoError(t, err)
+
+	require.NotNil(t, srv.caAdapter)
+	assert.Nil(t, srv.caAdapter.getCA())
 }

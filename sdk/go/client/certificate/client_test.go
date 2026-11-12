@@ -130,7 +130,7 @@ func TestClient_IssueCertificate_Validation(t *testing.T) {
 				Province:           "California",
 				Locality:           "San Francisco",
 				DNSNames:           []string{"test.example.com", "*.test.example.com"},
-				IPAddresses:        []string{"192.168.1.1"},
+				IPAddresses:        []string{"192.0.2.1"},
 				EmailAddresses:     []string{"admin@example.com"},
 				URIs:               []string{"spiffe://example.com/test"},
 				ValidityDays:       365,

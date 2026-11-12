@@ -38,7 +38,7 @@ import (
 
 const (
 	sdkIssuerTenant = "automatethethings"
-	sdkIssuerHost   = "agent-1.lan"
+	sdkIssuerHost   = "agent-1.example"
 )
 
 // issueLeafPEM returns one real CA-signed leaf certificate PEM, for tests that
@@ -144,7 +144,7 @@ func TestSDKAgentCertIssuer_SignsACSRAndKeepsTheMatchingKey(t *testing.T) {
 			Organization:       sdkIssuerTenant,
 			OrganizationalUnit: DefaultFleetNodeCertOU,
 		},
-		ExtraDNSNames: []string{"alias.lan"},
+		ExtraDNSNames: []string{"alias.example"},
 		ValidityDays:  30,
 	})
 	if err != nil {
@@ -202,7 +202,7 @@ func TestSDKAgentCertIssuer_SignsACSRAndKeepsTheMatchingKey(t *testing.T) {
 		t.Errorf("O = %v, want the tenant", leaf.Subject.Organization)
 	}
 	assertSDKHasDNSName(t, leaf, sdkIssuerHost)
-	assertSDKHasDNSName(t, leaf, "alias.lan")
+	assertSDKHasDNSName(t, leaf, "alias.example")
 
 	if len(issued.CAPEM) == 0 {
 		t.Fatal("no CA bundle returned; the agent cannot verify the endpoint")
@@ -241,7 +241,7 @@ func TestSDKAgentCertIssuer_AppliesDefaults(t *testing.T) {
 		TenantID: sdkIssuerTenant,
 		Hostname: sdkIssuerHost,
 		// Duplicate and blank extras must be dropped rather than emitted.
-		ExtraDNSNames: []string{"", sdkIssuerHost, "  ", "extra.lan"},
+		ExtraDNSNames: []string{"", sdkIssuerHost, "  ", "extra.example"},
 	})
 	if err != nil {
 		t.Fatalf("IssueFleetNodeCertificate: %v", err)
@@ -271,7 +271,7 @@ func TestSDKAgentCertIssuer_AppliesDefaults(t *testing.T) {
 	if count != 1 {
 		t.Errorf("hostname appears %d times in %v, want once", count, leaf.DNSNames)
 	}
-	assertSDKHasDNSName(t, leaf, "extra.lan")
+	assertSDKHasDNSName(t, leaf, "extra.example")
 }
 
 // Two agents must never share a key, or one session's credential authenticates

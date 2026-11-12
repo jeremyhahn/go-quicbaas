@@ -456,7 +456,17 @@ func newQuicBaaS(b *serviceBuilder) (QuicBaaS, error) {
 	// Initialize KMS service if KMS manager is provided
 	if kmsManager != nil {
 		svc.kmsManager = kmsManager
-		svc.kmsService = newKMSService(kmsManager, logger)
+		// Per-key policy enforcement is always on in the production
+		// construction path: persisted key policies gate every key use.
+		kmsImpl := newKMSService(kmsManager, logger)
+		WithKMSAuthzEnabled(true)(kmsImpl)
+		// The KMS service always gets the durable store: it holds the
+		// persisted key policies and replicated version status, whether or
+		// not the scheduler runs.
+		if svc.kvStoreProvider != nil {
+			kmsImpl.SetKVStore(svc.kvStoreProvider(1))
+		}
+		svc.kmsService = kmsImpl
 	}
 
 	// Initialize Scheduler if enabled
@@ -514,9 +524,6 @@ func newQuicBaaS(b *serviceBuilder) (QuicBaaS, error) {
 				// Wire scheduler adapter to KMS service for grace period job scheduling
 				kmsImpl.SetScheduler(schedulerAdapter)
 
-				// Wire KVStore for persistent version status replication across cluster nodes
-				kmsImpl.SetKVStore(kvStore)
-
 				// Cryptoperiod enforcement (PCI DSS 3.6) is a scheduler
 				// system job, so a cluster rotates each due key exactly once.
 				if err := registerKMSRotation(schedulerEngine, kmsImpl, b.config.KMSRotationScanInterval); err != nil {
@@ -572,6 +579,14 @@ func newQuicBaaS(b *serviceBuilder) (QuicBaaS, error) {
 		// CryptoManager provided explicitly via builder
 		svc.cryptoService = newCryptoService(b.cryptoManager, kmsManager, logger, nil)
 	}
+	// Crypto verbs gate every key use through the KMS service's persisted
+	// key policies.
+	if crypto, ok := svc.cryptoService.(*cryptoService); ok {
+		if kmsImpl, ok := svc.kmsService.(*kmsServiceImpl); ok {
+			crypto.kmsSvc = kmsImpl
+			crypto.authzEnabled = true
+		}
+	}
 
 	// Initialize Secrets service if secrets manager is provided
 	if b.secretsManager != nil {
@@ -623,7 +638,7 @@ func newQuicBaaS(b *serviceBuilder) (QuicBaaS, error) {
 	// FIDO2 resolves the per-tenant xkms relying-party service through the
 	// IAM WebAuthn factory at call time and reports ErrFIDO2NotConfigured
 	// until that manager is wired.
-	svc.pivService = NewPIVService()
+	svc.pivService = NewPIVService(composedXKMSService)
 	svc.fido2Service = NewFIDO2Service(svc)
 	// User-addressed WebAuthn credential administration. Like FIDO2 it
 	// resolves at call time, so it is wired unconditionally and reports
@@ -1966,7 +1981,10 @@ func (t *transactionService) Transaction(ctx context.Context, req *TransactionRe
 }
 
 func (t *transactionService) evaluateCompare(ctx context.Context, shardID uint64, cmp *CompareCondition) (bool, error) {
-	key := []byte(fmt.Sprintf("%s:%d", cmp.EntityType, cmp.ID))
+	key, err := t.svc.keyspaceResolver.BuildKey(ctx, cmp.EntityType, cmp.ID)
+	if err != nil {
+		return false, err
+	}
 
 	// Read via qrdb SDK
 	client, err := t.svc.qrdbForShard(shardID)
@@ -2059,7 +2077,10 @@ func (t *transactionService) executeTransactionOps(ctx context.Context, shardID 
 			}
 
 		case TransactionOpTypePut:
-			key := []byte(fmt.Sprintf("%s:%d", op.EntityType, op.ID))
+			key, err := t.svc.keyspaceResolver.BuildKey(ctx, op.EntityType, op.ID)
+			if err != nil {
+				return nil, err
+			}
 			batchOps = append(batchOps, qrdbtransport.Op{
 				Type:  qrdbtransport.OpPut,
 				Key:   key,
@@ -2068,7 +2089,10 @@ func (t *transactionService) executeTransactionOps(ctx context.Context, shardID 
 			writeOpsMetadata = append(writeOpsMetadata, op)
 
 		case TransactionOpTypeDelete:
-			key := []byte(fmt.Sprintf("%s:%d", op.EntityType, op.ID))
+			key, err := t.svc.keyspaceResolver.BuildKey(ctx, op.EntityType, op.ID)
+			if err != nil {
+				return nil, err
+			}
 			batchOps = append(batchOps, qrdbtransport.Op{
 				Type: qrdbtransport.OpDelete,
 				Key:  key,
@@ -2121,7 +2145,10 @@ func (t *transactionService) executeTransactionOps(ctx context.Context, shardID 
 }
 
 func (t *transactionService) executeGetOp(ctx context.Context, shardID uint64, op *TransactionOp) (*TransactionOpResponse, error) {
-	key := []byte(fmt.Sprintf("%s:%d", op.EntityType, op.ID))
+	key, err := t.svc.keyspaceResolver.BuildKey(ctx, op.EntityType, op.ID)
+	if err != nil {
+		return nil, err
+	}
 
 	// Read via qrdb SDK
 	client, err := t.svc.qrdbForShard(shardID)

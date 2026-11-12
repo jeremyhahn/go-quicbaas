@@ -287,7 +287,7 @@ func (s *Server) initializeCA() error {
 	// CA for embedded/in-process servers (TLS off, no listeners) even though
 	// they had explicitly passed WithCA(...), leaving those SDK accessors nil.
 	if s.opts.externalCA != nil {
-		s.xkmsCA = s.opts.externalCA
+		s.adoptCA(s.opts.externalCA)
 		s.logger.Info("Using external certificate authority — skipping internal CA bootstrap")
 		// Only issue a TLS serving cert when this server actually serves TLS.
 		if !s.config.Security.TLSEnabled {
@@ -608,7 +608,7 @@ func (s *Server) initializeCA() error {
 		s.logger.Info("Certificate authority loaded from existing files")
 	}
 
-	s.xkmsCA = xkmsCA
+	s.adoptCA(xkmsCA)
 
 	// Update config paths for TLS transports unless the operator has already
 	// configured them (via security.tls_cert_file / tls_key_file / tls_ca_file
@@ -803,6 +803,17 @@ func (s *Server) initializeCA() error {
 	}).Info("TLS certificates ready")
 
 	return nil
+}
+
+// adoptCA makes ca the node's certificate authority. The CA adapter built
+// by NewServer takes it under its lock, so certificate logins already being
+// served (the unified listeners start before initializeCA) see either no CA
+// and fail closed, or this one.
+func (s *Server) adoptCA(ca xkmssdk.TrustedCA) {
+	s.xkmsCA = ca
+	if s.caAdapter != nil {
+		s.caAdapter.SetCA(ca)
+	}
 }
 
 // issueTLSCertFromExternalCA configures TLS using the externally injected CA.
@@ -2073,7 +2084,17 @@ func (s *Server) startService() error {
 	// it is now reachable through the service facade for callers such as
 	// platformd's provisionDaemonIdentity.
 	if s.xkmsCA != nil {
-		caAdapter, caErr := newCAServiceAdapter(s.xkmsCA)
+		// NewServer builds s.caAdapter before any listener starts and
+		// initializeCA published the CA into it, so it is reused here and
+		// never reassigned. Only a Server built without NewServer has none.
+		caAdapter := s.caAdapter
+		var caErr error
+		if caAdapter == nil {
+			caAdapter, caErr = newCAServiceAdapter(s.xkmsCA)
+			if caErr == nil {
+				s.caAdapter = caAdapter
+			}
+		}
 		if caErr != nil {
 			s.logger.Warnf("Failed to wire CA into service builder: %v", caErr)
 		} else {
@@ -2081,9 +2102,8 @@ func (s *Server) startService() error {
 			// certificates carry their tenant-scoped SPIFFE URI SAN; login
 			// derives the tenant from the verified peer certificate.
 			caAdapter.SetSPIFFETrustDomain(s.config.IAM.SPIFFETrustDomain)
-			// Keep a reference so UpdateCA() can swap the backing CA after start.
-			s.caAdapter = caAdapter
 			builder = builder.WithCAService(caAdapter)
+			s.caWired.Store(true)
 			// Thread the application-supplied DANE publisher (if any) so
 			// Trust().PublishDANE has a DNS hook. xkms ships none; when unset
 			// PublishDANE returns a typed not-configured error.

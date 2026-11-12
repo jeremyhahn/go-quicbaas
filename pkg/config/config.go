@@ -1041,7 +1041,7 @@ type SDLCRulers struct {
 	// Default applies to every tenant without an entry in Tenants.
 	//
 	// Default: unset, which takes sdlc.DefaultRulers (the company's
-	// administrative agent, agent-company). An explicit empty list leaves
+	// administrative agent, company-agent). An explicit empty list leaves
 	// each repository's owner and its binding's rulers as the only ones.
 	Default []string `mapstructure:"default"`
 

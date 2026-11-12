@@ -27,9 +27,9 @@ import (
 const workerImageStatusJSON = `{"serving":true,"running":false,"queued":true,` +
 	`"last":{"trigger":"schedule","outcome":"promoted","started_at":"2026-09-22T10:00:00Z","finished_at":"2026-09-22T10:20:00Z",` +
 	`"latest":{"claude_code":"2.1.280","codex":"0.156.0"},"candidate":"quicbaas-software-factory-worker:0.11.0-alpha-cc2.1.280-cx0.156.0",` +
-	`"reference":"reg:3001/o/w:0.11.0-alpha-cc2.1.280-cx0.156.0@sha256:abc","digest":"sha256:abc",` +
+	`"reference":"reg:3000/o/w:0.11.0-alpha-cc2.1.280-cx0.156.0@sha256:abc","digest":"sha256:abc",` +
 	`"probes":[{"name":"toolchain, signing and both agents","passed":true}],` +
-	`"promotions":[{"tenant_id":"acme","project_id":"p1","from":["w:old"],"to":"reg:3001/o/w@sha256:abc"}]}}`
+	`"promotions":[{"tenant_id":"acme","project_id":"p1","from":["w:old"],"to":"reg:3000/o/w@sha256:abc"}]}}`
 
 func TestWorkerImageVerbsReachTheServersRoutes(t *testing.T) {
 	var gotMethod, gotPath, gotQuery string
