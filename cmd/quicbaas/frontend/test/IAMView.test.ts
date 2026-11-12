@@ -570,6 +570,94 @@ describe('IAMView', () => {
     });
   });
 
+  describe('Sessions dialog', () => {
+    const session = {
+      id: 's-1', created: '2026-01-02T03:04:05Z', last_active: '2026-01-03T03:04:05Z',
+      expires_at: '2026-02-02T03:04:05Z', mfa_verified: true, ip_address: '203.0.113.7',
+      user_agent: 'Mozilla/5.0 TestBrowser',
+      device_info: { id: 'd-1', name: 'Work laptop', type: 'desktop', fingerprint: 'fp', trusted: true },
+    };
+
+    function stubSessions(overrides: Record<string, ReturnType<typeof vi.fn>>): void {
+      mockGetSDKClient.mockResolvedValue({
+        iam: {
+          listUsers: vi.fn().mockResolvedValue({ users: mockUsers, count: mockUsers.length }),
+          listTenants: vi.fn().mockResolvedValue({ tenants: mockTenants, count: 1 }),
+          listRoles: vi.fn().mockResolvedValue({ roles: mockRoles, count: 2 }),
+          listPolicies: vi.fn().mockResolvedValue({ policies: mockPolicies, count: 1 }),
+          listUserSessions: vi.fn().mockResolvedValue({ sessions: [session] }),
+          revokeAllUserSessions: vi.fn().mockResolvedValue(undefined),
+          ...overrides,
+        },
+      });
+    }
+
+    async function openSessionsDialog(username: string): Promise<HTMLElement> {
+      render(IAMView);
+      const open = await screen.findByRole('button', { name: `Sessions of ${username}` });
+      await fireEvent.click(open);
+      return screen.getByRole('dialog', { name: /Sessions dialog/i });
+    }
+
+    it('opens from the user row and lists the user\'s sessions', async () => {
+      const list = vi.fn().mockResolvedValue({ sessions: [session] });
+      stubSessions({ listUserSessions: list });
+      const dialog = await openSessionsDialog('alice');
+      expect(dialog.querySelector('h3')?.textContent).toBe('Sessions of alice');
+      const table = await screen.findByRole('table', { name: 'User sessions' });
+      expect(list).toHaveBeenCalledWith('acme', 'user-1');
+      expect(table.textContent).toContain('203.0.113.7');
+      expect(table.textContent).toContain('Mozilla/5.0 TestBrowser');
+      expect(table.textContent).toContain('verified');
+      expect(table.textContent).toContain('Work laptop');
+    });
+
+    it('shows "No active sessions" for a user with none', async () => {
+      stubSessions({ listUserSessions: vi.fn().mockResolvedValue({ sessions: [] }) });
+      const dialog = await openSessionsDialog('alice');
+      await waitFor(() => expect(dialog.textContent).toContain('No active sessions'));
+    });
+
+    it('revokes all sessions after confirmation, toasts and reloads', async () => {
+      const list = vi.fn().mockResolvedValue({ sessions: [session] });
+      const revoke = vi.fn().mockResolvedValue(undefined);
+      stubSessions({ listUserSessions: list, revokeAllUserSessions: revoke });
+      await openSessionsDialog('alice');
+      await screen.findByRole('table', { name: 'User sessions' });
+      await fireEvent.click(screen.getByRole('button', { name: 'Revoke all sessions' }));
+      expect(revoke).not.toHaveBeenCalled();
+      screen.getByRole('dialog', { name: 'Revoke sessions confirmation' });
+      await fireEvent.click(screen.getByRole('button', { name: 'Revoke' }));
+
+      await waitFor(() => {
+        expect(revoke).toHaveBeenCalledWith('acme', 'user-1');
+        expect(mockShowToast).toHaveBeenCalledWith({ message: 'All sessions of "alice" revoked', type: 'success' });
+        expect(list).toHaveBeenCalledTimes(2);
+      });
+      expect(screen.queryByRole('dialog', { name: 'Revoke sessions confirmation' })).not.toBeInTheDocument();
+    });
+
+    it('shows the SDK error in the dialog when the list fails', async () => {
+      stubSessions({ listUserSessions: vi.fn().mockRejectedValue(new Error('sessions unavailable')) });
+      const dialog = await openSessionsDialog('alice');
+      await waitFor(() => {
+        expect(dialog.querySelector('[role="alert"]')?.textContent).toBe('sessions unavailable');
+      });
+    });
+
+    it('shows the SDK error in the dialog when the revoke is rejected', async () => {
+      stubSessions({ revokeAllUserSessions: vi.fn().mockRejectedValue(new Error('revoke denied')) });
+      const dialog = await openSessionsDialog('alice');
+      await screen.findByRole('table', { name: 'User sessions' });
+      await fireEvent.click(screen.getByRole('button', { name: 'Revoke all sessions' }));
+      await fireEvent.click(screen.getByRole('button', { name: 'Revoke' }));
+      await waitFor(() => {
+        expect(dialog.querySelector('[role="alert"]')?.textContent).toBe('revoke denied');
+      });
+      expect(mockShowToast).not.toHaveBeenCalled();
+    });
+  });
+
   // -------------------------------------------------------------------------
   // Issue #573: built-in roles are seeded once and never reconciled, so a
   // permission rename in the server build strands every existing tenant. The
