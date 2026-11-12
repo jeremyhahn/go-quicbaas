@@ -76,99 +76,29 @@ func TestSentinelErrors(t *testing.T) {
 		assert.Equal(t, "failed to close RAG system", ErrRAGCloseFailed.Error())
 	})
 
-	t.Run("ErrUnsupportedTransport", func(t *testing.T) {
-		assert.Equal(t, "unsupported qrdb transport type", ErrUnsupportedTransport.Error())
-	})
-
-	t.Run("ErrTransportCreationFailed", func(t *testing.T) {
-		assert.Equal(t, "qrdb transport creation failed", ErrTransportCreationFailed.Error())
-	})
-
-	t.Run("ErrNetworkTransportMissingAddress", func(t *testing.T) {
-		assert.Equal(t, "address is required for network qrdb transport", ErrNetworkTransportMissingAddress.Error())
-	})
-
-	t.Run("ErrUnixTransportMissingSocket", func(t *testing.T) {
-		assert.Equal(t, "unix socket path is required for unix qrdb transport", ErrUnixTransportMissingSocket.Error())
+	t.Run("ErrShardedClientNoNode", func(t *testing.T) {
+		assert.Equal(t, "sharded client has no embedded qrdb node client", ErrShardedClientNoNode.Error())
 	})
 }
 
-func TestUnsupportedTransportError(t *testing.T) {
-	t.Run("formats message with transport name", func(t *testing.T) {
-		err := &UnsupportedTransportError{Transport: "websocket"}
-		assert.Equal(t, "unsupported qrdb transport type: websocket", err.Error())
+func TestShardedClientNoNodeError(t *testing.T) {
+	t.Run("formats message with shard", func(t *testing.T) {
+		err := &ShardedClientNoNodeError{ShardID: 3}
+		assert.Equal(t, "sharded client has no embedded qrdb node client for shard 3", err.Error())
 	})
 
 	t.Run("unwraps to sentinel", func(t *testing.T) {
-		err := &UnsupportedTransportError{Transport: "websocket"}
-		assert.True(t, errors.Is(err, ErrUnsupportedTransport))
+		err := &ShardedClientNoNodeError{ShardID: 1}
+		assert.True(t, errors.Is(err, ErrShardedClientNoNode))
+		assert.False(t, errors.Is(err, ErrShardedClientClosed))
 	})
 
 	t.Run("errors.As extracts typed error", func(t *testing.T) {
-		var target *UnsupportedTransportError
-		err := &UnsupportedTransportError{Transport: "ftp"}
-		assert.True(t, errors.As(err, &target))
-		assert.Equal(t, "ftp", target.Transport)
-	})
-}
-
-func TestTransportCreationError(t *testing.T) {
-	t.Run("formats message with transport and cause", func(t *testing.T) {
-		cause := errors.New("dial refused")
-		err := &TransportCreationError{Transport: "grpc", Cause: cause}
-		assert.Equal(t, "qrdb grpc transport creation failed: dial refused", err.Error())
-	})
-
-	t.Run("unwraps to sentinel", func(t *testing.T) {
-		cause := errors.New("timeout")
-		err := &TransportCreationError{Transport: "rest", Cause: cause}
-		assert.True(t, errors.Is(err, ErrTransportCreationFailed))
-	})
-
-	t.Run("errors.As extracts typed error", func(t *testing.T) {
-		var target *TransportCreationError
-		cause := errors.New("TLS handshake failed")
-		err := &TransportCreationError{Transport: "quic", Cause: cause}
-		assert.True(t, errors.As(err, &target))
-		assert.Equal(t, "quic", target.Transport)
-		assert.Equal(t, cause, target.Cause)
-	})
-}
-
-func TestNetworkTransportMissingAddressError(t *testing.T) {
-	t.Run("formats message with transport name", func(t *testing.T) {
-		err := &NetworkTransportMissingAddressError{Transport: "grpc"}
-		assert.Equal(t, "address is required for grpc qrdb transport", err.Error())
-	})
-
-	t.Run("unwraps to sentinel", func(t *testing.T) {
-		err := &NetworkTransportMissingAddressError{Transport: "rest"}
-		assert.True(t, errors.Is(err, ErrNetworkTransportMissingAddress))
-	})
-
-	t.Run("errors.As extracts typed error", func(t *testing.T) {
-		var target *NetworkTransportMissingAddressError
-		err := &NetworkTransportMissingAddressError{Transport: "mcp"}
-		assert.True(t, errors.As(err, &target))
-		assert.Equal(t, "mcp", target.Transport)
-	})
-}
-
-func TestUnixTransportMissingSocketError(t *testing.T) {
-	t.Run("formats message", func(t *testing.T) {
-		err := &UnixTransportMissingSocketError{}
-		assert.Equal(t, "unix socket path is required for unix qrdb transport", err.Error())
-	})
-
-	t.Run("unwraps to sentinel", func(t *testing.T) {
-		err := &UnixTransportMissingSocketError{}
-		assert.True(t, errors.Is(err, ErrUnixTransportMissingSocket))
-	})
-
-	t.Run("errors.As extracts typed error", func(t *testing.T) {
-		var target *UnixTransportMissingSocketError
-		err := &UnixTransportMissingSocketError{}
-		assert.True(t, errors.As(err, &target))
+		var target *ShardedClientNoNodeError
+		var err error = &ShardedClientNoNodeError{ShardID: 9}
+		if assert.True(t, errors.As(err, &target)) {
+			assert.Equal(t, uint64(9), target.ShardID)
+		}
 	})
 }
 

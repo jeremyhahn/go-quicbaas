@@ -208,180 +208,12 @@ func TestServer_Accessors(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// TransportFactory tests
-// ---------------------------------------------------------------------------
-
-func TestTransportFactory_IsEmbedded(t *testing.T) {
-	t.Run("nil config is embedded", func(t *testing.T) {
-		f := newTransportFactory(nil, nil, nil)
-		assert.True(t, f.isEmbedded())
-	})
-
-	t.Run("embedded transport config", func(t *testing.T) {
-		cfg := &config.QRDBConfig{Transport: "embedded"}
-		f := newTransportFactory(cfg, nil, nil)
-		assert.True(t, f.isEmbedded())
-	})
-
-	t.Run("grpc transport is not embedded", func(t *testing.T) {
-		cfg := &config.QRDBConfig{Transport: "grpc"}
-		f := newTransportFactory(cfg, nil, nil)
-		assert.False(t, f.isEmbedded())
-	})
-}
-
-func TestTransportFactory_TransportType(t *testing.T) {
-	t.Run("nil config returns embedded", func(t *testing.T) {
-		f := newTransportFactory(nil, nil, nil)
-		assert.Equal(t, TransportEmbedded, f.transportType())
-	})
-
-	t.Run("empty transport returns embedded", func(t *testing.T) {
-		cfg := &config.QRDBConfig{Transport: ""}
-		f := newTransportFactory(cfg, nil, nil)
-		assert.Equal(t, TransportEmbedded, f.transportType())
-	})
-
-	t.Run("grpc transport", func(t *testing.T) {
-		cfg := &config.QRDBConfig{Transport: "grpc"}
-		f := newTransportFactory(cfg, nil, nil)
-		assert.Equal(t, TransportGRPC, f.transportType())
-	})
-
-	t.Run("rest transport", func(t *testing.T) {
-		cfg := &config.QRDBConfig{Transport: "rest"}
-		f := newTransportFactory(cfg, nil, nil)
-		assert.Equal(t, TransportREST, f.transportType())
-	})
-
-	t.Run("quic transport", func(t *testing.T) {
-		cfg := &config.QRDBConfig{Transport: "quic"}
-		f := newTransportFactory(cfg, nil, nil)
-		assert.Equal(t, TransportQUIC, f.transportType())
-	})
-
-	t.Run("mcp transport", func(t *testing.T) {
-		cfg := &config.QRDBConfig{Transport: "mcp"}
-		f := newTransportFactory(cfg, nil, nil)
-		assert.Equal(t, TransportMCP, f.transportType())
-	})
-
-	t.Run("unix transport", func(t *testing.T) {
-		cfg := &config.QRDBConfig{Transport: "unix"}
-		f := newTransportFactory(cfg, nil, nil)
-		assert.Equal(t, TransportUnix, f.transportType())
-	})
-}
-
-func TestTransportFactory_ValidateNetworkConfig(t *testing.T) {
-	t.Run("unix transport missing socket", func(t *testing.T) {
-		f := newTransportFactory(&config.QRDBConfig{}, nil, nil)
-		err := f.validateNetworkConfig(TransportUnix)
-		require.Error(t, err)
-		assert.True(t, errors.Is(err, ErrUnixTransportMissingSocket))
-	})
-
-	t.Run("unix transport with socket", func(t *testing.T) {
-		cfg := &config.QRDBConfig{UnixSocketPath: "/tmp/test.sock"}
-		f := newTransportFactory(cfg, nil, nil)
-		err := f.validateNetworkConfig(TransportUnix)
-		assert.NoError(t, err)
-	})
-
-	t.Run("unix transport nil config", func(t *testing.T) {
-		f := newTransportFactory(nil, nil, nil)
-		err := f.validateNetworkConfig(TransportUnix)
-		require.Error(t, err)
-		assert.True(t, errors.Is(err, ErrUnixTransportMissingSocket))
-	})
-
-	t.Run("grpc transport missing address", func(t *testing.T) {
-		f := newTransportFactory(&config.QRDBConfig{}, nil, nil)
-		err := f.validateNetworkConfig(TransportGRPC)
-		require.Error(t, err)
-		assert.True(t, errors.Is(err, ErrNetworkTransportMissingAddress))
-	})
-
-	t.Run("grpc transport with address", func(t *testing.T) {
-		cfg := &config.QRDBConfig{Address: "localhost:9090"}
-		f := newTransportFactory(cfg, nil, nil)
-		err := f.validateNetworkConfig(TransportGRPC)
-		assert.NoError(t, err)
-	})
-
-	t.Run("rest transport missing address nil config", func(t *testing.T) {
-		f := newTransportFactory(nil, nil, nil)
-		err := f.validateNetworkConfig(TransportREST)
-		require.Error(t, err)
-		assert.True(t, errors.Is(err, ErrNetworkTransportMissingAddress))
-	})
-}
-
-func TestBuildTransportOptions(t *testing.T) {
-	t.Run("nil config returns nil", func(t *testing.T) {
-		opts := buildTransportOptions(nil)
-		assert.Nil(t, opts)
-	})
-
-	t.Run("unix transport uses socket path", func(t *testing.T) {
-		cfg := &config.QRDBConfig{
-			Transport:      config.QRDBTransportUnix,
-			UnixSocketPath: "/tmp/qrdb.sock",
-		}
-		opts := buildTransportOptions(cfg)
-		assert.NotNil(t, opts)
-		assert.Len(t, opts, 1)
-	})
-
-	t.Run("network transport uses address", func(t *testing.T) {
-		cfg := &config.QRDBConfig{
-			Transport: "grpc",
-			Address:   "localhost:9090",
-		}
-		opts := buildTransportOptions(cfg)
-		assert.NotNil(t, opts)
-		assert.Len(t, opts, 1)
-	})
-
-	t.Run("tls options added when enabled", func(t *testing.T) {
-		cfg := &config.QRDBConfig{
-			Transport:   "grpc",
-			Address:     "localhost:9090",
-			TLSEnabled:  true,
-			TLSCertFile: "/tmp/cert.pem",
-			TLSKeyFile:  "/tmp/key.pem",
-			TLSCAFile:   "/tmp/ca.pem",
-		}
-		opts := buildTransportOptions(cfg)
-		assert.Len(t, opts, 2) // address + TLS
-	})
-
-	t.Run("empty address produces no address option", func(t *testing.T) {
-		cfg := &config.QRDBConfig{
-			Transport: "grpc",
-			Address:   "",
-		}
-		opts := buildTransportOptions(cfg)
-		assert.Nil(t, opts)
-	})
-
-	t.Run("unix transport empty socket produces no options", func(t *testing.T) {
-		cfg := &config.QRDBConfig{
-			Transport:      config.QRDBTransportUnix,
-			UnixSocketPath: "",
-		}
-		opts := buildTransportOptions(cfg)
-		assert.Nil(t, opts)
-	})
-}
-
-// ---------------------------------------------------------------------------
 // ShardedClient tests
 // ---------------------------------------------------------------------------
 
 func TestShardedClient_Close(t *testing.T) {
 	t.Run("close is idempotent", func(t *testing.T) {
-		sc := NewShardedClient(nil)
+		sc := newDetachedShardedClient()
 		err := sc.Close()
 		assert.NoError(t, err)
 
@@ -391,36 +223,21 @@ func TestShardedClient_Close(t *testing.T) {
 	})
 }
 
-func TestShardedClient_IsEmbedded(t *testing.T) {
-	t.Run("nil config is embedded", func(t *testing.T) {
-		sc := NewShardedClient(nil)
-		assert.True(t, sc.IsEmbedded())
-	})
-
-	t.Run("grpc config is not embedded", func(t *testing.T) {
-		cfg := &config.QRDBConfig{Transport: "grpc", Address: "localhost:9090"}
-		sc := NewShardedClient(nil, WithTransportConfig(cfg))
-		assert.False(t, sc.IsEmbedded())
-	})
-}
-
 func TestShardedClient_ForShard_EmbeddedReturnsError(t *testing.T) {
 	t.Run("bare embedded transport returns error for ForShard", func(t *testing.T) {
-		// Phase E removed the legacy in-memory baasTransport path. A bare
-		// ShardedClient (no node-backed client, no transport address) can no
-		// longer materialize a per-shard client: ForShard surfaces the
-		// "address is required for embedded qrdb transport" error from the
-		// transport factory. Node-backed clients short-circuit this via nodeClient.
-		sc := NewShardedClient(nil)
+		// go-qrdb is embedded only (#1617): a ShardedClient without the
+		// embedded node's client has nothing to fall back to.
+		sc := newDetachedShardedClient()
 		t.Cleanup(func() { assert.NoError(t, sc.Close()) })
 		client, err := sc.ForShard(1)
 		require.Error(t, err)
+		assert.True(t, errors.Is(err, ErrShardedClientNoNode))
 		assert.Nil(t, client)
 	})
 
 	t.Run("embedded transport returns closed error after close", func(t *testing.T) {
 		// After Close, ForShard returns ShardedClientClosedError.
-		sc := NewShardedClient(nil)
+		sc := newDetachedShardedClient()
 		require.NoError(t, sc.Close())
 		_, err := sc.ForShard(1)
 		require.Error(t, err)
@@ -595,7 +412,7 @@ func TestServer_LifecycleNoopMethods(t *testing.T) {
 func TestServer_ShutdownWithShardedClient(t *testing.T) {
 	t.Run("shutdown with sharded client", func(t *testing.T) {
 		srv := withTempServer(t)
-		srv.qrdbClient = NewShardedClient(nil)
+		srv.qrdbClient = newDetachedShardedClient()
 
 		ctx := context.Background()
 		err := srv.Shutdown(ctx)
@@ -633,7 +450,7 @@ func TestServer_GetKVStore_PanicsWhenClientNil(t *testing.T) {
 func TestServer_GetKVStore_PanicsOnShardError(t *testing.T) {
 	t.Run("panics when ForShard fails", func(t *testing.T) {
 		srv := withTempServer(t)
-		sc := NewShardedClient(nil)
+		sc := newDetachedShardedClient()
 		require.NoError(t, sc.Close())
 		srv.qrdbClient = sc
 
@@ -679,21 +496,6 @@ func TestServer_ConcurrentAccessors(t *testing.T) {
 		wg.Wait()
 	})
 }
-
-// ---------------------------------------------------------------------------
-// Transport type constants tests
-// ---------------------------------------------------------------------------
-
-func TestTransportTypeConstants(t *testing.T) {
-	assert.Equal(t, TransportType("embedded"), TransportEmbedded)
-	assert.Equal(t, TransportType("grpc"), TransportGRPC)
-	assert.Equal(t, TransportType("rest"), TransportREST)
-	assert.Equal(t, TransportType("quic"), TransportQUIC)
-	assert.Equal(t, TransportType("mcp"), TransportMCP)
-	assert.Equal(t, TransportType("unix"), TransportUnix)
-}
-
-// ---------------------------------------------------------------------------
 
 // ---------------------------------------------------------------------------
 // cloneTLSConfig tests

@@ -175,13 +175,10 @@ func newSealedWindowClient(s *Server, cs *CeremonyServices) (*qrdbsdk.Client, er
 // typed SealedNodeUnavailableError — and is unreachable anyway because the
 // sealed-phase listeners deny everything off-allowlist.
 func (s *Server) buildSealedWindowFacade() (service.QuicBaaS, *ShardedClient, error) {
-	embeddedCfg := &config.QRDBConfig{Transport: config.QRDBTransportEmbedded}
 	sharded := &ShardedClient{
-		factory:    newTransportFactory(embeddedCfg, nil, nil),
 		nodeClient: s.sealedWindowClient,
 		// The sealed-window client's lifetime is owned by the sealed-window
 		// phase (closed in stopSealedTransports), not by the ShardedClient.
-		nodeOwned: true,
 	}
 
 	svcConfig := &service.ServiceConfig{

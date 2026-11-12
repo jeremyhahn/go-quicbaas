@@ -2168,9 +2168,6 @@ func (s *Server) startService() error {
 		s.logger.Info("secret resolver registry wired into QuicBaaS facade")
 	}
 
-	// Update the ShardedClient's transport factory with the service reference
-	// for embedded transport mode (needed when creating embedded SDK clients).
-	s.qrdbClient.factory.kvService = svc
 	svc.SetQRDBClient(s.qrdbClient)
 	s.logger.Info("qrdb ShardedClient attached to service")
 
