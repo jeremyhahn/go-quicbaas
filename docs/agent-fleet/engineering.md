@@ -99,8 +99,8 @@ every `--heartbeat-interval` (30s).
 |---|---|
 | 2xx | done |
 | 5xx or network error | back off (up to 30s) and retry |
-| 401 | invalidate the token source, retry once with a fresh JWT |
-| 404 or 403 | `Reregisterer`: clear credentials, enroll at `/api/v1/fleet/enroll`, persist, invalidate the token, retry once |
+| 401 | invalidate the token source, retry once with a fresh JWT; a second 401 is handled as 404 or 403 |
+| 404, 403, or 401 after refresh | `Reregisterer`: clear credentials, enroll at `/api/v1/fleet/enroll`, persist, invalidate the token, retry once |
 | other 4xx | terminal |
 
 Three consecutive `Reregisterer` failures (`maxConsecutiveReregisterFailures`)
