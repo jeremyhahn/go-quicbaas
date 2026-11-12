@@ -64,6 +64,8 @@ import type {
   EmitAuthorizedResponse,
   VerifyAuthorizedRequest,
   VerifyAuthorizedResponse,
+  AddAuthorizedKeyRequest,
+  ListAuthorizedKeysRequest,
   FleetNode,
   SessionStatusResponse,
   CloseSessionRequest,
@@ -1310,6 +1312,22 @@ export interface SSHAuthorizedKeysClient {
   // the given scope/owner. Returns the matching entry.
   // Maps to POST /api/v1/ssh/authorized/verify.
   verify(req: VerifyAuthorizedRequest): Promise<VerifyAuthorizedResponse>;
+
+  // add stores an authorized_keys entry under scope/owner/name.
+  // Maps to POST /api/v1/ssh/authorized/keys (201, empty body).
+  add(req: AddAuthorizedKeyRequest): Promise<void>;
+
+  // list returns the stored entries, optionally filtered by scope and owner.
+  // Maps to GET /api/v1/ssh/authorized/keys[?scope=&owner=].
+  list(req?: ListAuthorizedKeysRequest): Promise<SSHAuthorizedEntry[]>;
+
+  // get returns one stored entry.
+  // Maps to GET /api/v1/ssh/authorized/keys/{scope}/{owner}/{name}.
+  get(scope: SSHScope, owner: string, name: string): Promise<SSHAuthorizedEntry>;
+
+  // remove deletes one stored entry.
+  // Maps to DELETE /api/v1/ssh/authorized/keys/{scope}/{owner}/{name} (204).
+  remove(scope: SSHScope, owner: string, name: string): Promise<void>;
 }
 
 // SSHClient is the top-level SSH namespace exposed on the RestClient as
