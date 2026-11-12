@@ -81,6 +81,11 @@ type OrchestratorBot struct {
 	subscriptions map[string]context.CancelFunc
 
 	running atomic.Bool
+
+	// onRunning, when set, is called by Run as soon as the bot counts as
+	// running and before its cancel func is stored. Tests use it to land
+	// a Stop in that window.
+	onRunning func()
 }
 
 // NewOrchestratorBot validates the runtime and returns a bot ready to
@@ -127,16 +132,22 @@ func NewOrchestratorBot(rt BotConfigRuntime) (*OrchestratorBot, error) {
 // Run blocks until Stop is called or ctx is cancelled.
 func (b *OrchestratorBot) Run(ctx context.Context) error {
 	const op = "signalbridge.OrchestratorBot.Run"
+	runCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	// The bot counts as running and its cancel func is stored under one
+	// lock, so a Stop never sees a running bot without a cancel func.
+	b.cancelMu.Lock()
 	if !b.running.CompareAndSwap(false, true) {
+		b.cancelMu.Unlock()
 		return newError(op, ErrKindConflict, "bot already running")
 	}
-	defer b.running.Store(false)
-
-	runCtx, cancel := context.WithCancel(ctx)
-	b.cancelMu.Lock()
+	if b.onRunning != nil {
+		b.onRunning()
+	}
 	b.cancel = cancel
 	b.cancelMu.Unlock()
-	defer cancel()
+	defer b.running.Store(false)
 
 	// Resume subscriptions for any session persisted as attached.
 	for _, sid := range b.manager.AttachedSessions() {

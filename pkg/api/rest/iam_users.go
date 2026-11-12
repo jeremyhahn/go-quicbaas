@@ -27,19 +27,18 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 // ListUsers handles GET /api/v1/tenants/{tenant_id}/users - List users in a tenant.
 func (h *IAMHandler) ListUsers(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-
 	tenantID := chi.URLParam(r, "tenant_id")
 	if tenantID == "" {
 		RespondIAMError(w, r, http.StatusBadRequest,
 			NewIAMAPIError(ErrBadRequest, "tenant ID is required"))
 		return
 	}
-	tenantID, ok := h.server.urlTenant(w, r, "rest.IAM", "tenant_id")
+	ctx, tenantID, ok := h.server.urlTenant(w, r, "rest.IAM", "tenant_id")
 	if !ok {
 		return
 	}
@@ -81,7 +80,7 @@ func (h *IAMHandler) ListUsers(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Validate tenant exists
-	_, err = store.GetTenant(ctx, tenantID)
+	_, err = store.GetTenant(tenantctx.WithSystem(ctx), tenantID) // the tenant catalog lives in the system namespace
 	if err != nil {
 		RespondIAMError(w, r, http.StatusNotFound,
 			NewIAMAPIError(ErrNotFound, "tenant not found"))
@@ -112,15 +111,13 @@ func (h *IAMHandler) ListUsers(w http.ResponseWriter, r *http.Request) {
 
 // CreateUser handles POST /api/v1/tenants/{tenant_id}/users - Create a new user.
 func (h *IAMHandler) CreateUser(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-
 	tenantID := chi.URLParam(r, "tenant_id")
 	if tenantID == "" {
 		RespondIAMError(w, r, http.StatusBadRequest,
 			NewIAMAPIError(ErrBadRequest, "tenant ID is required"))
 		return
 	}
-	tenantID, ok := h.server.urlTenant(w, r, "rest.IAM", "tenant_id")
+	ctx, tenantID, ok := h.server.urlTenant(w, r, "rest.IAM", "tenant_id")
 	if !ok {
 		return
 	}
@@ -301,15 +298,13 @@ func (h *IAMHandler) CreateUser(w http.ResponseWriter, r *http.Request) {
 
 // GetUser handles GET /api/v1/tenants/{tenant_id}/users/{user_id} - Get a specific user.
 func (h *IAMHandler) GetUser(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-
 	tenantID := chi.URLParam(r, "tenant_id")
 	if tenantID == "" {
 		RespondIAMError(w, r, http.StatusBadRequest,
 			NewIAMAPIError(ErrBadRequest, "tenant ID is required"))
 		return
 	}
-	tenantID, ok := h.server.urlTenant(w, r, "rest.IAM", "tenant_id")
+	ctx, tenantID, ok := h.server.urlTenant(w, r, "rest.IAM", "tenant_id")
 	if !ok {
 		return
 	}
@@ -352,15 +347,13 @@ func (h *IAMHandler) GetUser(w http.ResponseWriter, r *http.Request) {
 
 // UpdateUser handles PUT /api/v1/tenants/{tenant_id}/users/{user_id} - Update a user.
 func (h *IAMHandler) UpdateUser(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-
 	tenantID := chi.URLParam(r, "tenant_id")
 	if tenantID == "" {
 		RespondIAMError(w, r, http.StatusBadRequest,
 			NewIAMAPIError(ErrBadRequest, "tenant ID is required"))
 		return
 	}
-	tenantID, ok := h.server.urlTenant(w, r, "rest.IAM", "tenant_id")
+	ctx, tenantID, ok := h.server.urlTenant(w, r, "rest.IAM", "tenant_id")
 	if !ok {
 		return
 	}
@@ -448,15 +441,13 @@ func (h *IAMHandler) UpdateUser(w http.ResponseWriter, r *http.Request) {
 
 // DeleteUser handles DELETE /api/v1/tenants/{tenant_id}/users/{user_id} - Delete a user.
 func (h *IAMHandler) DeleteUser(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-
 	tenantID := chi.URLParam(r, "tenant_id")
 	if tenantID == "" {
 		RespondIAMError(w, r, http.StatusBadRequest,
 			NewIAMAPIError(ErrBadRequest, "tenant ID is required"))
 		return
 	}
-	tenantID, ok := h.server.urlTenant(w, r, "rest.IAM", "tenant_id")
+	ctx, tenantID, ok := h.server.urlTenant(w, r, "rest.IAM", "tenant_id")
 	if !ok {
 		return
 	}
@@ -498,15 +489,13 @@ func (h *IAMHandler) DeleteUser(w http.ResponseWriter, r *http.Request) {
 
 // AssignRole handles POST /api/v1/tenants/{tenant_id}/users/{user_id}/roles - Assign a role to a user.
 func (h *IAMHandler) AssignRole(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-
 	tenantID := chi.URLParam(r, "tenant_id")
 	if tenantID == "" {
 		RespondIAMError(w, r, http.StatusBadRequest,
 			NewIAMAPIError(ErrBadRequest, "tenant ID is required"))
 		return
 	}
-	tenantID, ok := h.server.urlTenant(w, r, "rest.IAM", "tenant_id")
+	ctx, tenantID, ok := h.server.urlTenant(w, r, "rest.IAM", "tenant_id")
 	if !ok {
 		return
 	}
@@ -574,15 +563,13 @@ func (h *IAMHandler) AssignRole(w http.ResponseWriter, r *http.Request) {
 
 // RevokeRole handles DELETE /api/v1/tenants/{tenant_id}/users/{user_id}/roles/{role} - Revoke a role from a user.
 func (h *IAMHandler) RevokeRole(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-
 	tenantID := chi.URLParam(r, "tenant_id")
 	if tenantID == "" {
 		RespondIAMError(w, r, http.StatusBadRequest,
 			NewIAMAPIError(ErrBadRequest, "tenant ID is required"))
 		return
 	}
-	tenantID, ok := h.server.urlTenant(w, r, "rest.IAM", "tenant_id")
+	ctx, tenantID, ok := h.server.urlTenant(w, r, "rest.IAM", "tenant_id")
 	if !ok {
 		return
 	}

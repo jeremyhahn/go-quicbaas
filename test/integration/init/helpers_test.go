@@ -94,16 +94,6 @@ func TestDaemonStartArgs_NoConfig(t *testing.T) {
 	}
 }
 
-func TestAllocPortBundle_QUICIsTheRESTPort(t *testing.T) {
-	bundle := allocPortBundle(t, "quic", t.TempDir())
-	if bundle.REST == 0 {
-		t.Fatalf("allocPortBundle(quic) REST port is zero")
-	}
-	if bundle.QUIC != bundle.REST {
-		t.Errorf("allocPortBundle(quic) QUIC = %d, REST = %d; HTTP/3 is served on the REST port", bundle.QUIC, bundle.REST)
-	}
-}
-
 // TestDaemonStartArgs_UnknownTransport checks a transport the matrix does
 // not know is refused with a typed error rather than started.
 func TestDaemonStartArgs_UnknownTransport(t *testing.T) {
@@ -114,5 +104,22 @@ func TestDaemonStartArgs_UnknownTransport(t *testing.T) {
 	}
 	if string(unknown) != "carrier-pigeon" {
 		t.Errorf("unknownTransportError = %q, want carrier-pigeon", string(unknown))
+	}
+}
+
+// TestAllocPortBundle_QUICRowIsTheRESTPort pins the QUIC row to the port the
+// daemon serves it on. quicbaasd starts no QUIC listener of its own: QUIC is
+// REST over HTTP/3 on the REST port. A separate QUIC port is one nothing
+// binds, so the readiness probe on it is refused until the start deadline.
+func TestAllocPortBundle_QUICRowIsTheRESTPort(t *testing.T) {
+	quicRow := allocPortBundle(t, "quic", t.TempDir())
+	if quicRow.REST == 0 || quicRow.QUIC != quicRow.REST {
+		t.Errorf("quic row: QUIC port = %d, REST port = %d, want the same non-zero port",
+			quicRow.QUIC, quicRow.REST)
+	}
+
+	restRow := allocPortBundle(t, "rest", t.TempDir())
+	if restRow.QUIC != 0 {
+		t.Errorf("rest row: QUIC port = %d, want 0", restRow.QUIC)
 	}
 }

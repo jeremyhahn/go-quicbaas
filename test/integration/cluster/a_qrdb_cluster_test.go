@@ -134,7 +134,7 @@ func kvPut(t *testing.T, nodeURL, key string, value []byte) {
 	var lastErr error
 	var lastStatus int
 	for attempt := 1; attempt <= maxAttempts; attempt++ {
-		client := newInsecureHTTPClient(30 * time.Second)
+		client := newTenantOperatorRESTClient(t, 30*time.Second)
 		req, err := http.NewRequestWithContext(context.Background(), http.MethodPut,
 			apiURL, strings.NewReader(string(jsonValue)))
 		require.NoError(t, err)
@@ -175,7 +175,7 @@ func kvGet(t *testing.T, nodeURL, key string) []byte {
 	const maxAttempts = 6
 	const retryDelay = 3 * time.Second
 	for attempt := 1; attempt <= maxAttempts; attempt++ {
-		client := newInsecureHTTPClient(10 * time.Second)
+		client := newTenantOperatorRESTClient(t, 10*time.Second)
 		resp, err := client.Get(apiURL)
 		if err != nil {
 			t.Logf("kvGet attempt %d/%d: network error: %v", attempt, maxAttempts, err)

@@ -19,6 +19,8 @@ import (
 	"testing"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
+	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 // failingTenantManager is a tenant directory that cannot answer.
@@ -57,6 +59,29 @@ func TestIAMTenantLister_TenantExists(t *testing.T) {
 				t.Fatalf("TenantExists(%q) = %v, %v; want %v", tt.tenantID, got, err, tt.want)
 			}
 		})
+	}
+}
+
+// catalogTenantManager answers as the routed IAM store does: the tenant
+// catalog is in the system namespace, so a read bound to any other tenant
+// finds no record.
+type catalogTenantManager struct {
+	iam.TenantManager
+}
+
+func (catalogTenantManager) GetTenant(ctx context.Context, id string) (*iam.Tenant, error) {
+	if bound, ok := tenantctx.Lookup(ctx); !ok || !tenantctx.IsSystem(bound) {
+		return nil, iam.NewTenantNotFoundError(id)
+	}
+	return &iam.Tenant{ID: id}, nil
+}
+
+func TestIAMTenantLister_TenantExistsReadsTheSystemCatalog(t *testing.T) {
+	tenants := &iamTenantLister{tenants: catalogTenantManager{}}
+	ctx := orchestration.ContextWithTenant(tenantctx.WithTenant(context.Background(), "acme"), "acme")
+	exists, err := tenants.TenantExists(ctx, "acme")
+	if err != nil || !exists {
+		t.Fatalf("TenantExists from inside the tenant = %v, %v; want the catalog record found", exists, err)
 	}
 }
 

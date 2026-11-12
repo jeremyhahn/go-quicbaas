@@ -27,6 +27,7 @@ import (
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
+	"github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 	iamsdk "github.com/jeremyhahn/go-quicbaas/sdk/go/client/iam"
@@ -373,7 +374,11 @@ func (h *IAMHandler) UpdateTenant(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := iam.CheckTenantFieldsStored(req.Description != "", len(req.Metadata) > 0, req.Status != nil); err != nil {
-		RespondIAMError(w, r, http.StatusBadRequest, NewIAMAPIError(ErrBadRequest, err.Error()))
+		// Answer with the coded refusal every other transport returns,
+		// keeping the field names the sentinel alone does not carry (#1518).
+		refused := iam.ErrTenantFieldNotStored
+		RespondError(w, r, refused.Code.HTTPStatus(),
+			&errors.QBError{Code: refused.Code, Op: refused.Op, Err: err})
 		return
 	}
 
