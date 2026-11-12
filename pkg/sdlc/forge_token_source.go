@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/url"
 	"os"
@@ -25,8 +26,8 @@ const (
 // Environment variables a forge token command receives on top of the
 // daemon's own environment.
 const (
-	ForgeTokenEnvType    = "QUICBAAS_FORGE_TYPE"
-	ForgeTokenEnvBaseURL = "QUICBAAS_FORGE_BASE_URL"
+	ForgeTokenEnvType    = "QUICBAAS_FORGE_TYPE"     //nolint:gosec // G101: environment variable names, not credentials
+	ForgeTokenEnvBaseURL = "QUICBAAS_FORGE_BASE_URL" //nolint:gosec // G101: environment variable names, not credentials
 )
 
 // ForgeTokenSource yields the token that authenticates calls to the forge at
@@ -239,7 +240,10 @@ func (s *CommandTokenSource) ForgeToken(ctx context.Context, baseURL string) (st
 	if !ok || !s.allowed[norm] {
 		return "", &ForgeTokenOriginError{BaseURL: baseURL}
 	}
-	entry := s.entry(baseURL)
+	entry, err := s.entry(baseURL)
+	if err != nil {
+		return "", err
+	}
 	if token, ok := entry.fresh(s.clock()); ok {
 		return token, nil
 	}
@@ -262,12 +266,20 @@ func (s *CommandTokenSource) ForgeToken(ctx context.Context, baseURL string) (st
 	return cached.token, nil
 }
 
-func (s *CommandTokenSource) entry(baseURL string) *commandTokenEntry {
+func (s *CommandTokenSource) entry(baseURL string) (*commandTokenEntry, error) {
 	if found, ok := s.entries.Load(baseURL); ok {
-		return found.(*commandTokenEntry)
+		entry, ok := found.(*commandTokenEntry)
+		if !ok {
+			return nil, fmt.Errorf("sdlc: forge token entry for %q has type %T", baseURL, found)
+		}
+		return entry, nil
 	}
 	found, _ := s.entries.LoadOrStore(baseURL, &commandTokenEntry{refresh: make(chan struct{}, 1)})
-	return found.(*commandTokenEntry)
+	entry, ok := found.(*commandTokenEntry)
+	if !ok {
+		return nil, fmt.Errorf("sdlc: forge token entry for %q has type %T", baseURL, found)
+	}
+	return entry, nil
 }
 
 func (e *commandTokenEntry) fresh(now time.Time) (string, bool) {
