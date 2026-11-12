@@ -55,6 +55,7 @@
  *   #/sshkeys        → bookmark-friendly alias for /ssh-keys
  *   #/my-sessions    → My Sessions (the caller's IAM sessions)
  *   #/attestation    → Attestation (verifier endorsements and reference values)
+ *   #/oauth-apps     → OAuth Apps (a tenant's registered OAuth applications)
  *   #/accounts       → Pooled provider accounts
  *   #/invite/:token → Invite activation (passwordless)
  */
@@ -105,6 +106,7 @@ export type RouteName =
   | 'ssh-keys'
   | 'my-sessions'
   | 'attestation'
+  | 'oauth-apps'
   // ORCHESTRATION — inference
   | 'inference'
   // ORCHESTRATION — projects
@@ -299,6 +301,9 @@ function matchPath(path: string, hash: string): Route {
   }
   if (path === '/attestation') {
     return { name: 'attestation', params: {}, hash };
+  }
+  if (path === '/oauth-apps') {
+    return { name: 'oauth-apps', params: {}, hash };
   }
   // AI/ML
   if (path === '/rag') {
@@ -510,6 +515,7 @@ export function routeSeal(): void { routeBarrier(); }
 export function routeSSHKeys(): void { navigateTo('/ssh-keys'); }
 export function routeMySessions(): void { navigateTo('/my-sessions'); }
 export function routeAttestation(): void { navigateTo('/attestation'); }
+export function routeOAuthApps(): void { navigateTo('/oauth-apps'); }
 // AI/ML
 export function routeRAG(): void { navigateTo('/rag'); }
 export function routeEmbeddings(): void { navigateTo('/embeddings'); }
