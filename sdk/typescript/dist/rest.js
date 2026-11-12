@@ -2397,6 +2397,35 @@ class RestIAMClient {
     async revokeRoleFromUser(tenantID, userID, role) {
         await this.fetchJSON(`/api/v1/tenants/${encodeURIComponent(tenantID)}/users/${encodeURIComponent(userID)}/roles/${encodeURIComponent(role)}`, { method: 'DELETE' });
     }
+    async listSessions(opts) {
+        const params = new URLSearchParams();
+        if (opts?.user_id)
+            params.set('user_id', opts.user_id);
+        if (opts?.tenant_id)
+            params.set('tenant_id', opts.tenant_id);
+        const qs = params.toString();
+        return this.fetchJSON(`/api/v1/iam/sessions${qs ? `?${qs}` : ''}`);
+    }
+    async getSession(sessionID) {
+        return this.fetchJSON(`/api/v1/iam/sessions/${encodeURIComponent(sessionID)}`);
+    }
+    async revokeSession(sessionID) {
+        await this.fetchJSON(`/api/v1/iam/sessions/${encodeURIComponent(sessionID)}`, { method: 'DELETE' });
+    }
+    async revokeAllSessions(opts) {
+        const params = new URLSearchParams();
+        if (opts?.except)
+            params.set('except', opts.except);
+        if (opts?.user_id)
+            params.set('user_id', opts.user_id);
+        if (opts?.tenant_id)
+            params.set('tenant_id', opts.tenant_id);
+        const qs = params.toString();
+        await this.fetchJSON(`/api/v1/iam/sessions${qs ? `?${qs}` : ''}`, { method: 'DELETE' });
+    }
+    async revokeOtherSessions(keepSessionID) {
+        return this.fetchJSON('/api/v1/iam/sessions/revoke-others', { method: 'POST', body: JSON.stringify({ keep_session_id: keepSessionID }) });
+    }
     async updateTenant(tenantID, req) {
         return this.fetchJSON(`/api/v1/tenants/${encodeURIComponent(tenantID)}`, { method: 'PUT', body: JSON.stringify(req) });
     }
@@ -2458,6 +2487,53 @@ class RestIAMClient {
     }
     async activatePIV(tenantID, token, certPEM) {
         return this.fetchJSON(`/api/v1/iam/${encodeURIComponent(tenantID)}/invites/${encodeURIComponent(token)}/activate/piv`, { method: 'POST', body: JSON.stringify({ cert_pem: certPEM }) });
+    }
+    // gdprPath is the GDPR route prefix of one user in one tenant.
+    gdprPath(tenantID, userID) {
+        return `/api/v1/tenants/${encodeURIComponent(tenantID)}/users/${encodeURIComponent(userID)}/gdpr`;
+    }
+    async grantConsent(tenantID, userID, req) {
+        return this.fetchJSON(`${this.gdprPath(tenantID, userID)}/consent`, {
+            method: 'POST',
+            body: JSON.stringify(req),
+        });
+    }
+    async listUserConsents(tenantID, userID) {
+        const consents = await this.fetchJSON(`${this.gdprPath(tenantID, userID)}/consents`);
+        return consents ?? [];
+    }
+    async getConsent(tenantID, userID, purpose) {
+        return this.fetchJSON(`${this.gdprPath(tenantID, userID)}/consent/${encodeURIComponent(purpose)}`);
+    }
+    async withdrawConsent(tenantID, userID, purpose, req) {
+        return this.fetchJSON(`${this.gdprPath(tenantID, userID)}/consent/${encodeURIComponent(purpose)}/withdraw`, { method: 'PUT', body: JSON.stringify(req ?? {}) });
+    }
+    async requestDataExport(tenantID, userID, req) {
+        return this.fetchJSON(`${this.gdprPath(tenantID, userID)}/export`, {
+            method: 'POST',
+            body: JSON.stringify(req ?? {}),
+        });
+    }
+    async getExportStatus(tenantID, userID, exportID) {
+        return this.fetchJSON(`${this.gdprPath(tenantID, userID)}/export/${encodeURIComponent(exportID)}`);
+    }
+    // downloadExport reads the export as JSON: DownloadExport always writes
+    // application/json, whatever format the request named.
+    async downloadExport(tenantID, userID, exportID) {
+        return this.fetchJSON(`${this.gdprPath(tenantID, userID)}/export/${encodeURIComponent(exportID)}/download`);
+    }
+    async requestDeletion(tenantID, userID, req) {
+        return this.fetchJSON(`${this.gdprPath(tenantID, userID)}/deletion`, {
+            method: 'POST',
+            body: JSON.stringify(req ?? {}),
+        });
+    }
+    async getDeletionStatus(tenantID, userID, deletionID) {
+        return this.fetchJSON(`${this.gdprPath(tenantID, userID)}/deletion/${encodeURIComponent(deletionID)}`);
+    }
+    async cancelDeletion(tenantID, userID, deletionID, cancelledBy) {
+        const query = cancelledBy ? `?${new URLSearchParams({ cancelled_by: cancelledBy }).toString()}` : '';
+        return this.fetchJSON(`${this.gdprPath(tenantID, userID)}/deletion/${encodeURIComponent(deletionID)}${query}`, { method: 'DELETE' });
     }
 }
 // RestKMSClient implements KMSClient over the QuicBaaS REST KMS endpoints.
