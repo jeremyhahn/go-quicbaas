@@ -710,8 +710,6 @@ func (s *TokenService) IssueHardwareTokens(ctx context.Context, opts HardwareTok
 		Name:      opts.User.Name,
 		Scope:     scope,
 		ClientID:  opts.ClientID,
-		AMR:       opts.AMR,
-		ACR:       opts.ACR,
 		// Carried on the bearer and not only on the ID token: renewal replays
 		// it from the frozen session, so a bearer that omitted it would gain
 		// the claim at the first refresh and read as an UPGRADE in assurance
