@@ -45,6 +45,7 @@ import type { ObjectStorageAdminClient } from './objectstorage_admin.js';
 import type { ParametersClient } from './parameters.js';
 import type { VectorAdminClient } from './vector_admin.js';
 import type { XKMSFIDO2Client } from './xkms_fido2.js';
+import type { RegistryClient } from './registry.js';
 import type { DynamicSecretsClient } from './dynamicsecrets.js';
 
 import type {
@@ -2751,6 +2752,13 @@ export interface Client {
    * begin/finish authentication. Paths: /api/v1/xkms/fido2/*.
    */
   readonly xkmsFido2: XKMSFIDO2Client;
+
+  /**
+   * registry registers service instances under TTL leases, renews and
+   * revokes the leases, and resolves a service's live instances.
+   * Paths: /api/v1/registry/*.
+   */
+  readonly registry: RegistryClient;
   /**
    * dynamicSecrets manages credential-generation roles, on-demand
    * short-lived credential minting, and lease renewal/revocation.

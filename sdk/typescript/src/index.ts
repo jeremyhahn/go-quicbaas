@@ -579,6 +579,13 @@ export type {
   XKMSFIDO2FinishAuthenticationResponse,
 } from './xkms_fido2.js';
 export type {
+  RegistryClient,
+  RegistryServiceInstance,
+  RegistryRegisterRequest,
+  RegistryLeaseResponse,
+  RegistryResolveResponse,
+} from './registry.js';
+export type {
   DynamicSecretsClient,
   DynamicSecretRole,
   CreateRoleRequest as DynamicSecretCreateRoleRequest,

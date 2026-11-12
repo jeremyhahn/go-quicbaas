@@ -369,6 +369,13 @@ import type {
   XKMSFIDO2FinishAuthenticationResponse,
 } from './xkms_fido2.js';
 import type {
+  RegistryClient,
+  RegistryServiceInstance,
+  RegistryRegisterRequest,
+  RegistryLeaseResponse,
+  RegistryResolveResponse,
+} from './registry.js';
+import type {
   DynamicSecretsClient,
   DynamicSecretRole,
   CreateRoleRequest as DynamicSecretCreateRoleRequest,
@@ -6294,6 +6301,50 @@ export class RestXKMSFIDO2Client implements XKMSFIDO2Client {
 }
 
 // ---------------------------------------------------------------------------
+// RestRegistryClient
+// ---------------------------------------------------------------------------
+
+export class RestRegistryClient implements RegistryClient {
+  private readonly http: FetchHelper;
+
+  constructor(baseUrl: string, config: ClientConfig = {}) {
+    this.http = newFetchHelper(baseUrl, config);
+  }
+
+  // Maps to POST /api/v1/registry/instances (201).
+  async register(instance: RegistryServiceInstance, ttlSeconds: number): Promise<RegistryLeaseResponse> {
+    const req: RegistryRegisterRequest = { instance, ttl_seconds: ttlSeconds };
+    return this.http.fetchJSON<RegistryLeaseResponse>('/api/v1/registry/instances', {
+      method: 'POST',
+      body: JSON.stringify(req),
+    });
+  }
+
+  // Maps to POST /api/v1/registry/leases/{lease_id}/renew.
+  async renew(leaseId: string): Promise<RegistryLeaseResponse> {
+    return this.http.fetchJSON<RegistryLeaseResponse>(
+      `/api/v1/registry/leases/${encodeURIComponent(leaseId)}/renew`,
+      { method: 'POST' },
+    );
+  }
+
+  // Maps to DELETE /api/v1/registry/leases/{lease_id} (204).
+  async deregister(leaseId: string): Promise<void> {
+    return this.http.fetchVoid(`/api/v1/registry/leases/${encodeURIComponent(leaseId)}`, {
+      method: 'DELETE',
+    });
+  }
+
+  // Maps to GET /api/v1/registry/services/{service}.
+  async resolve(service: string): Promise<RegistryResolveResponse> {
+    const wire = await this.http.fetchJSON<RegistryResolveResponse>(
+      `/api/v1/registry/services/${encodeURIComponent(service)}`,
+    );
+    return { ...wire, instances: wire.instances ?? [] };
+  }
+}
+
+// ---------------------------------------------------------------------------
 // RestDynamicSecretsClient — /api/v1/secrets/dynamic/* surface.
 // ---------------------------------------------------------------------------
 
@@ -7375,6 +7426,7 @@ export class RestClient implements Client {
   readonly parameters: ParametersClient;
   readonly vectorAdmin: VectorAdminClient;
   readonly xkmsFido2: XKMSFIDO2Client;
+  readonly registry: RegistryClient;
   readonly dynamicSecrets: DynamicSecretsClient;
   readonly barrier: BarrierClient;
   readonly tenantBarrier: TenantBarrierClient;
@@ -7430,6 +7482,7 @@ export class RestClient implements Client {
     this.parameters = new RestParametersClient(baseUrl, config);
     this.vectorAdmin = new RestVectorAdminClient(baseUrl, config);
     this.xkmsFido2 = new RestXKMSFIDO2Client(baseUrl, config);
+    this.registry = new RestRegistryClient(baseUrl, config);
     this.dynamicSecrets = new RestDynamicSecretsClient(baseUrl, config);
     this.barrier = new RestBarrierClient(baseUrl, config);
     this.tenantBarrier = new RestTenantBarrierClient(baseUrl, config);
