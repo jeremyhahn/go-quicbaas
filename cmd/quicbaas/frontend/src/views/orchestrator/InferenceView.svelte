@@ -533,13 +533,7 @@
             {:else if availableModels.length === 0}
               {#if isAPIInferenceBackend}
                 <div class="text-xs text-warning mb-1" role="alert">
-                  No provider configured for this backend — see
-                  <button
-                    type="button"
-                    class="link link-primary"
-                    onclick={() => navigate('settings')}
-                    aria-label="Open Settings to configure inference providers"
-                  >Settings → Inference Providers</button>.
+                  No inference provider is registered for this backend on the daemon.
                 </div>
               {:else}
                 <div class="text-xs text-base-content/40 mb-1">
