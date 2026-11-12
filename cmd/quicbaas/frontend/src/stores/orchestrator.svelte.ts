@@ -156,8 +156,8 @@ export interface JobStatus {
   error?: string;
   events?: JobAuditEvent[];
   work_items?: WorkItem[];
-  config?: JobConfig;
-  memory?: JobMemory;
+  config?: JobConfig | null;
+  memory?: JobMemory | null;
   workflow_name?: string;
   /** task_id is the Task this job is an attempt at; absent for lead-driven jobs. */
   task_id?: string;
