@@ -282,6 +282,7 @@ export class UnixClient implements Client {
   readonly crypto: any = null;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   readonly dek: any = null;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   readonly entities: any = null;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   readonly attestation: any = null;
@@ -291,6 +292,7 @@ export class UnixClient implements Client {
   readonly xkmsKeys: any = null;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   readonly piv: any = null;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   readonly xkms: any = null;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   readonly backups: any = null;
