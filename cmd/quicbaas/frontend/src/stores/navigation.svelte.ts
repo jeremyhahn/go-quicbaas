@@ -55,6 +55,7 @@ export type ViewID =
   | 'ssh-keys'
   | 'my-sessions'
   | 'attestation'
+  | 'identity-providers'
   | 'cluster'
   | 'nodes'
   | 'backup'
@@ -102,6 +103,7 @@ const viewHashPaths: Partial<Record<ViewID, string>> = {
   'ssh-keys':    '/ssh-keys',
   'my-sessions': '/my-sessions',
   attestation:   '/attestation',
+  'identity-providers': '/identity-providers',
   // ORCHESTRATION — inference
   inference:     '/inference',
   // ORCHESTRATION — projects
@@ -156,6 +158,7 @@ const routeToViewID: Partial<Record<RouteName, ViewID>> = {
   'ssh-keys':       'ssh-keys',
   'my-sessions':    'my-sessions',
   attestation:      'attestation',
+  'identity-providers': 'identity-providers',
   // ORCHESTRATION — inference
   inference:        'inference',
   // ORCHESTRATION — projects
