@@ -547,19 +547,6 @@ func (k *kmsServiceImpl) GenerateKey(ctx context.Context, req *GenerateKeyReques
 		Timestamp: time.Now(),
 	}
 
-	if k.metrics != nil {
-		k.metrics.keysGeneratedTotal.Inc()
-		k.metrics.activeKeys.Inc()
-	}
-
-	if k.logger != nil {
-		k.logger.WithFields(map[string]interface{}{
-			"key_id":    req.Name,
-			"algorithm": KeyAlgorithm(attrsToAlgorithm(req.KeyAttributes)),
-			"owner":     req.Owner,
-		}).Info("Generated new cryptographic key")
-	}
-
 	// Persist application-level metadata (description, exportable, tags, owner,
 	// and optional rotation policy) that the crypto backend does not store natively.
 	if kmsMeta, ok := keyMetadata.(*kms.KeyMetadata); ok {
@@ -570,6 +557,10 @@ func (k *kmsServiceImpl) GenerateKey(ctx context.Context, req *GenerateKeyReques
 		kmsMeta.Tags = req.Tags
 		kmsMeta.Owner = req.Owner
 		kmsMeta.Usage = serviceUsageToKMS(req.Usage)
+
+		// policyPersisted records that this call wrote the rotation policy to
+		// the KVStore, so the rollback below removes exactly that entry.
+		policyPersisted := false
 
 		// Apply rotation policy if supplied at creation time.
 		if resolvedRotationPolicy != nil {
@@ -583,17 +574,44 @@ func (k *kmsServiceImpl) GenerateKey(ctx context.Context, req *GenerateKeyReques
 						"error":  persistErr.Error(),
 					}).Warn("GenerateKey: failed to persist rotation policy to KVStore")
 				}
+			} else {
+				policyPersisted = true
 			}
 		}
 
-		if err := k.kmsManager.UpdateStoredMetadata(kmsMeta); err != nil {
-			if k.logger != nil {
-				k.logger.WithFields(map[string]interface{}{
-					"key_id": req.Name,
-					"error":  err.Error(),
-				}).Warn("Failed to persist application-level key metadata")
+		// A key without its metadata must not exist: delete the key this
+		// call created (the name check above refused an existing one) and
+		// the rotation policy it persisted, then fail, so the caller can
+		// retry the same name and the retry never inherits this attempt's
+		// policy. A cleanup that fails is carried in the returned error.
+		if storeErr := k.kmsManager.UpdateStoredMetadata(kmsMeta); storeErr != nil {
+			if k.metrics != nil {
+				k.metrics.errorsByType.With("kms_error", "generate_key").Inc()
 			}
+			cause := storeErr
+			if delErr := k.kmsManager.DeleteKey(ctx, keyID); delErr != nil {
+				cause = stderrors.Join(cause, delErr)
+			}
+			if policyPersisted {
+				if policyErr := k.persistRotationPolicy(ctx, keyID, nil); policyErr != nil {
+					cause = stderrors.Join(cause, policyErr)
+				}
+			}
+			return nil, WrapError(cause, errors.ErrInternal, "kms.GenerateKey", "failed to store key metadata")
 		}
+	}
+
+	if k.metrics != nil {
+		k.metrics.keysGeneratedTotal.Inc()
+		k.metrics.activeKeys.Inc()
+	}
+
+	if k.logger != nil {
+		k.logger.WithFields(map[string]interface{}{
+			"key_id":    req.Name,
+			"algorithm": KeyAlgorithm(attrsToAlgorithm(req.KeyAttributes)),
+			"owner":     req.Owner,
+		}).Info("Generated new cryptographic key")
 	}
 
 	// Track the tenant-scoped key name to prevent duplicates within a tenant

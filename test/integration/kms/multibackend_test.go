@@ -138,7 +138,7 @@ func TestGRPCBackendOperations(t *testing.T) {
 	endpoints := getGRPCEndpoints()
 	tlsCfg, err := helpers.IntegrationTLSConfig()
 	require.NoError(t, err, "load integration TLS config")
-	client, err := grpcclient.NewClient(endpoints[0], grpcclient.WithTLSConfig(tlsCfg))
+	client, err := grpcclient.NewClient(endpoints[0], grpcclient.WithTLSConfig(tlsCfg), kmsGRPCAuth(t))
 	require.NoError(t, err, "must be able to connect to gRPC server in integration tests")
 	defer client.Close()
 
@@ -419,7 +419,7 @@ type MultiBackendRESTClient struct {
 func NewMultiBackendRESTClient(baseURL string) *MultiBackendRESTClient {
 	return &MultiBackendRESTClient{
 		baseURL:    baseURL,
-		httpClient: helpers.NewHTTPClient(30 * time.Second),
+		httpClient: newKMSHTTPClient(30 * time.Second),
 	}
 }
 
@@ -671,7 +671,7 @@ type DEKRESTClient struct {
 func NewDEKRESTClient(baseURL string) *DEKRESTClient {
 	return &DEKRESTClient{
 		baseURL:    baseURL,
-		httpClient: helpers.NewHTTPClient(30 * time.Second),
+		httpClient: newKMSHTTPClient(30 * time.Second),
 	}
 }
 
