@@ -327,6 +327,9 @@ const (
 type (
 	PutRequest              = pkgservice.PutRequest
 	PutResponse             = pkgservice.PutResponse
+	CompareAndSwapRequest   = pkgservice.CompareAndSwapRequest
+	PutIfAbsentRequest      = pkgservice.PutIfAbsentRequest
+	ConditionalPutResponse  = pkgservice.ConditionalPutResponse
 	GetRequest              = pkgservice.GetRequest
 	GetResponse             = pkgservice.GetResponse
 	DeleteRequest           = pkgservice.DeleteRequest

@@ -38,6 +38,8 @@
 //   - "quicbaas.KV/Put" -> "quicbaas_kv_put"
 //   - "quicbaas.KV/Get" -> "quicbaas_kv_get"
 //   - "quicbaas.KV/Delete" -> "quicbaas_kv_delete"
+//   - "quicbaas.KV/CompareAndSwap" -> "quicbaas_kv_compare_and_swap"
+//   - "quicbaas.KV/PutIfAbsent" -> "quicbaas_kv_put_if_absent"
 //   - "quicbaas.Cluster/Status" -> "quicbaas_cluster_status"
 //   - "quicbaas.Health/Check" -> "qrdb_health"
 //   - "quicbaas.KMS/GenerateKey" -> "quicbaas_kms_generate_key"

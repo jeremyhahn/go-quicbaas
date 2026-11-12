@@ -311,6 +311,20 @@ type KVService interface {
 	//   - error: ErrInvalidInput, ErrTimeout, ErrRaft
 	Put(ctx context.Context, req *PutRequest) (*PutResponse, error)
 
+	// CompareAndSwap atomically replaces an existing entity's value when it
+	// equals req.Expect, delegating to qrdb's Coordinator.CompareAndSwap.
+	// Returns:
+	//   - ConditionalPutResponse: Applied is false when the precondition missed
+	//   - error: ErrInvalidInput, ErrRaft
+	CompareAndSwap(ctx context.Context, req *CompareAndSwapRequest) (*ConditionalPutResponse, error)
+
+	// PutIfAbsent atomically stores an entity only when it does not exist,
+	// expressed as qrdb's CompareAndSwap with a nil expect.
+	// Returns:
+	//   - ConditionalPutResponse: Applied is false when the entity exists
+	//   - error: ErrInvalidInput, ErrRaft
+	PutIfAbsent(ctx context.Context, req *PutIfAbsentRequest) (*ConditionalPutResponse, error)
+
 	// Get retrieves a value by key with configurable consistency.
 	// Parameters:
 	//   - ctx: Request context with timeout and metadata

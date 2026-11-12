@@ -94,6 +94,10 @@ var qrdbToolExactMapping = map[string]qrdbToolResource{
 	"quicbaas_kv_put":        {"kv", "put"},
 	"quicbaas_kv_delete":     {"kv", "delete"},
 
+	// KV conditional writes, in the keyspace qrdb_put writes.
+	"quicbaas_kv_compare_and_swap": {"kv", "put"},
+	"quicbaas_kv_put_if_absent":    {"kv", "put"},
+
 	// Transaction
 	"quicbaas_transaction": {"transaction", "execute"},
 

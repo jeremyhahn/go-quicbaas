@@ -444,6 +444,8 @@ POST /api/v1/kms/keys/{name}/export
 POST /api/v1/kms/keys/{name}/revoke
 POST /api/v1/kms/keys/{name}/rotate
 POST /api/v1/kv/{type}/{key}
+POST /api/v1/kv/{type}/{key}/compare-and-swap
+POST /api/v1/kv/{type}/{key}/put-if-absent
 POST /api/v1/messaging/channels
 POST /api/v1/messaging/publish-delta/{channel}
 POST /api/v1/messaging/publish/{channel}

@@ -28,6 +28,8 @@ const (
 	QuicBaaS_Put_FullMethodName                  = "/quicbaas.v1.QuicBaaS/Put"
 	QuicBaaS_Get_FullMethodName                  = "/quicbaas.v1.QuicBaaS/Get"
 	QuicBaaS_Delete_FullMethodName               = "/quicbaas.v1.QuicBaaS/Delete"
+	QuicBaaS_CompareAndSwap_FullMethodName       = "/quicbaas.v1.QuicBaaS/CompareAndSwap"
+	QuicBaaS_PutIfAbsent_FullMethodName          = "/quicbaas.v1.QuicBaaS/PutIfAbsent"
 	QuicBaaS_List_FullMethodName                 = "/quicbaas.v1.QuicBaaS/List"
 	QuicBaaS_ListEntityTypes_FullMethodName      = "/quicbaas.v1.QuicBaaS/ListEntityTypes"
 	QuicBaaS_Watch_FullMethodName                = "/quicbaas.v1.QuicBaaS/Watch"
@@ -102,6 +104,12 @@ type QuicBaaSClient interface {
 	// Delete removes a key-value pair from the database.
 	// Returns success even if the key doesn't exist (idempotent).
 	Delete(ctx context.Context, in *DeleteRequest, opts ...grpc.CallOption) (*DeleteResponse, error)
+	// CompareAndSwap atomically replaces an existing entity's value when it
+	// equals expect. qrdb decides the match; a miss is applied=false, not an error.
+	CompareAndSwap(ctx context.Context, in *CompareAndSwapRequest, opts ...grpc.CallOption) (*ConditionalPutResponse, error)
+	// PutIfAbsent atomically stores an entity only when it does not exist.
+	// A present entity is applied=false, not an error.
+	PutIfAbsent(ctx context.Context, in *PutIfAbsentRequest, opts ...grpc.CallOption) (*ConditionalPutResponse, error)
 	// List returns all entities of a given type with pagination support.
 	// Uses server-side streaming for efficient memory usage with large datasets.
 	List(ctx context.Context, in *ListRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[ListResponse], error)
@@ -264,6 +272,26 @@ func (c *quicBaaSClient) Delete(ctx context.Context, in *DeleteRequest, opts ...
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(DeleteResponse)
 	err := c.cc.Invoke(ctx, QuicBaaS_Delete_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *quicBaaSClient) CompareAndSwap(ctx context.Context, in *CompareAndSwapRequest, opts ...grpc.CallOption) (*ConditionalPutResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ConditionalPutResponse)
+	err := c.cc.Invoke(ctx, QuicBaaS_CompareAndSwap_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *quicBaaSClient) PutIfAbsent(ctx context.Context, in *PutIfAbsentRequest, opts ...grpc.CallOption) (*ConditionalPutResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ConditionalPutResponse)
+	err := c.cc.Invoke(ctx, QuicBaaS_PutIfAbsent_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -894,6 +922,12 @@ type QuicBaaSServer interface {
 	// Delete removes a key-value pair from the database.
 	// Returns success even if the key doesn't exist (idempotent).
 	Delete(context.Context, *DeleteRequest) (*DeleteResponse, error)
+	// CompareAndSwap atomically replaces an existing entity's value when it
+	// equals expect. qrdb decides the match; a miss is applied=false, not an error.
+	CompareAndSwap(context.Context, *CompareAndSwapRequest) (*ConditionalPutResponse, error)
+	// PutIfAbsent atomically stores an entity only when it does not exist.
+	// A present entity is applied=false, not an error.
+	PutIfAbsent(context.Context, *PutIfAbsentRequest) (*ConditionalPutResponse, error)
 	// List returns all entities of a given type with pagination support.
 	// Uses server-side streaming for efficient memory usage with large datasets.
 	List(*ListRequest, grpc.ServerStreamingServer[ListResponse]) error
@@ -1039,6 +1073,12 @@ func (UnimplementedQuicBaaSServer) Get(context.Context, *GetRequest) (*GetRespon
 }
 func (UnimplementedQuicBaaSServer) Delete(context.Context, *DeleteRequest) (*DeleteResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method Delete not implemented")
+}
+func (UnimplementedQuicBaaSServer) CompareAndSwap(context.Context, *CompareAndSwapRequest) (*ConditionalPutResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method CompareAndSwap not implemented")
+}
+func (UnimplementedQuicBaaSServer) PutIfAbsent(context.Context, *PutIfAbsentRequest) (*ConditionalPutResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method PutIfAbsent not implemented")
 }
 func (UnimplementedQuicBaaSServer) List(*ListRequest, grpc.ServerStreamingServer[ListResponse]) error {
 	return status.Error(codes.Unimplemented, "method List not implemented")
@@ -1278,6 +1318,42 @@ func _QuicBaaS_Delete_Handler(srv interface{}, ctx context.Context, dec func(int
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(QuicBaaSServer).Delete(ctx, req.(*DeleteRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _QuicBaaS_CompareAndSwap_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(CompareAndSwapRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(QuicBaaSServer).CompareAndSwap(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: QuicBaaS_CompareAndSwap_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(QuicBaaSServer).CompareAndSwap(ctx, req.(*CompareAndSwapRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _QuicBaaS_PutIfAbsent_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(PutIfAbsentRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(QuicBaaSServer).PutIfAbsent(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: QuicBaaS_PutIfAbsent_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(QuicBaaSServer).PutIfAbsent(ctx, req.(*PutIfAbsentRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -2262,6 +2338,14 @@ var QuicBaaS_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "Delete",
 			Handler:    _QuicBaaS_Delete_Handler,
+		},
+		{
+			MethodName: "CompareAndSwap",
+			Handler:    _QuicBaaS_CompareAndSwap_Handler,
+		},
+		{
+			MethodName: "PutIfAbsent",
+			Handler:    _QuicBaaS_PutIfAbsent_Handler,
 		},
 		{
 			MethodName: "ListEntityTypes",

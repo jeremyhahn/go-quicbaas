@@ -480,6 +480,8 @@ var frozenRoutePermissions = map[string]frozenPermission{
 	"POST /api/v1/kms/keys/{name}/revoke":                                              {auth: RouteAuthPermission, resource: "keys", action: "delete"},
 	"POST /api/v1/kms/keys/{name}/rotate":                                              {auth: RouteAuthPermission, resource: "keys", action: "create"},
 	"POST /api/v1/kv/{type}/{key}":                                                     {auth: RouteAuthPermission, resource: "kv", action: "put"},
+	"POST /api/v1/kv/{type}/{key}/compare-and-swap":                                    {auth: RouteAuthPermission, resource: "kv", action: "put"},
+	"POST /api/v1/kv/{type}/{key}/put-if-absent":                                       {auth: RouteAuthPermission, resource: "kv", action: "put"},
 	"POST /api/v1/messaging/channels":                                                  {auth: RouteAuthPermission, resource: "messaging", action: "channel_create"},
 	"POST /api/v1/messaging/publish-delta/{channel}":                                   {auth: RouteAuthPermission, resource: "messaging", action: "publish"},
 	"POST /api/v1/messaging/publish/{channel}":                                         {auth: RouteAuthPermission, resource: "messaging", action: "publish"},

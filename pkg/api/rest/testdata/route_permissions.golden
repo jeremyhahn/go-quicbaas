@@ -437,6 +437,8 @@ POST /api/v1/kms/keys/{name}/export permission keys:create
 POST /api/v1/kms/keys/{name}/revoke permission keys:delete
 POST /api/v1/kms/keys/{name}/rotate permission keys:create
 POST /api/v1/kv/{type}/{key} permission kv:put
+POST /api/v1/kv/{type}/{key}/compare-and-swap permission kv:put
+POST /api/v1/kv/{type}/{key}/put-if-absent permission kv:put
 POST /api/v1/messaging/channels permission messaging:channel_create
 POST /api/v1/messaging/publish-delta/{channel} permission messaging:publish
 POST /api/v1/messaging/publish/{channel} permission messaging:publish

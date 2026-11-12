@@ -36,6 +36,18 @@ service QuicBaaS {
       option (qrdb.v1.permission) = "kv:delete";
   }
 
+  // CompareAndSwap atomically replaces an existing entity's value when it
+  // equals expect. qrdb decides the match; a miss is applied=false, not an error.
+  rpc CompareAndSwap(CompareAndSwapRequest) returns (ConditionalPutResponse) {
+      option (qrdb.v1.permission) = "kv:put";
+  }
+
+  // PutIfAbsent atomically stores an entity only when it does not exist.
+  // A present entity is applied=false, not an error.
+  rpc PutIfAbsent(PutIfAbsentRequest) returns (ConditionalPutResponse) {
+      option (qrdb.v1.permission) = "kv:put";
+  }
+
   // List returns all entities of a given type with pagination support.
   // Uses server-side streaming for efficient memory usage with large datasets.
   rpc List(ListRequest) returns (stream ListResponse) {
@@ -438,6 +450,45 @@ message PutResponse {
 
   // leader_id identifies which node handled the write.
   uint64 leader_id = 4;
+}
+
+// CompareAndSwapRequest replaces an existing entity's value when it equals expect.
+message CompareAndSwapRequest {
+  // entity_type categorizes the data.
+  string entity_type = 1;
+
+  // id is the unique identifier.
+  uint64 id = 2;
+
+  // expect is the value the entity must currently hold.
+  bytes expect = 3;
+
+  // set is the value stored when expect matches.
+  bytes set = 4;
+
+  // shard_id specifies the target shard (0 = default).
+  uint64 shard_id = 5;
+}
+
+// PutIfAbsentRequest stores an entity only when it does not exist.
+message PutIfAbsentRequest {
+  // entity_type categorizes the data.
+  string entity_type = 1;
+
+  // id is the unique identifier.
+  uint64 id = 2;
+
+  // data is the value stored when the entity is absent.
+  bytes data = 3;
+
+  // shard_id specifies the target shard (0 = default).
+  uint64 shard_id = 4;
+}
+
+// ConditionalPutResponse reports whether a conditional write was stored.
+message ConditionalPutResponse {
+  // applied is true when the precondition held and the write was stored.
+  bool applied = 1;
 }
 
 // GetRequest retrieves a value by key.
