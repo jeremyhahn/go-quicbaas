@@ -292,6 +292,14 @@ export type {
   GetReencryptionProgressResponse,
 } from './dek.js';
 export type {
+  CacheClient,
+  CacheStatsResponse,
+  CacheClearResponse,
+  CacheConfigResponse,
+  CacheConfigUpdateRequest,
+  CacheConfigUpdateResponse,
+} from './cache.js';
+export type {
   DynamicSecretsClient,
   DynamicSecretRole,
   CreateRoleRequest as DynamicSecretCreateRoleRequest,

@@ -181,6 +181,14 @@ import type {
   GetReencryptionProgressResponse,
 } from './dek.js';
 import type {
+  CacheClient,
+  CacheStatsResponse,
+  CacheClearResponse,
+  CacheConfigResponse,
+  CacheConfigUpdateRequest,
+  CacheConfigUpdateResponse,
+} from './cache.js';
+import type {
   DynamicSecretsClient,
   DynamicSecretRole,
   CreateRoleRequest as DynamicSecretCreateRoleRequest,
@@ -4297,6 +4305,41 @@ export class RestDEKClient implements DEKClient {
   }
 }
 
+/** RestCacheClient reads and manages the server's cache over REST. */
+export class RestCacheClient implements CacheClient {
+  private readonly http: FetchHelper;
+
+  constructor(baseUrl: string, config: ClientConfig = {}) {
+    this.http = newFetchHelper(baseUrl, config);
+  }
+
+  // Maps to GET /api/v1/cache/stats.
+  async stats(): Promise<CacheStatsResponse> {
+    return this.http.fetchJSON<CacheStatsResponse>('/api/v1/cache/stats');
+  }
+
+  // Maps to POST /api/v1/cache/clear (no body).
+  async clear(): Promise<CacheClearResponse> {
+    return this.http.fetchJSON<CacheClearResponse>('/api/v1/cache/clear', { method: 'POST' });
+  }
+
+  // Maps to GET /api/v1/cache/config.
+  async getConfig(): Promise<CacheConfigResponse> {
+    return this.http.fetchJSON<CacheConfigResponse>('/api/v1/cache/config');
+  }
+
+  // Maps to PUT /api/v1/cache/config; only the fields given are sent.
+  async updateConfig(req: CacheConfigUpdateRequest): Promise<CacheConfigUpdateResponse> {
+    const body: CacheConfigUpdateRequest = {};
+    if (req.l1_size !== undefined) body.l1_size = req.l1_size;
+    if (req.l1_ttl_seconds !== undefined) body.l1_ttl_seconds = req.l1_ttl_seconds;
+    return this.http.fetchJSON<CacheConfigUpdateResponse>('/api/v1/cache/config', {
+      method: 'PUT',
+      body: JSON.stringify(body),
+    });
+  }
+}
+
 // ---------------------------------------------------------------------------
 // RestDynamicSecretsClient — /api/v1/secrets/dynamic/* surface.
 // ---------------------------------------------------------------------------
@@ -5258,6 +5301,7 @@ export class RestClient implements Client {
   readonly trust: TrustClient;
   readonly crypto: CryptoClient;
   readonly dek: DEKClient;
+  readonly cache: CacheClient;
   readonly dynamicSecrets: DynamicSecretsClient;
   readonly barrier: BarrierClient;
   readonly tenantBarrier: TenantBarrierClient;
@@ -5300,6 +5344,7 @@ export class RestClient implements Client {
     this.trust = new RestTrustClient(baseUrl, config);
     this.crypto = new RestCryptoClient(baseUrl, config);
     this.dek = new RestDEKClient(baseUrl, config);
+    this.cache = new RestCacheClient(baseUrl, config);
     this.dynamicSecrets = new RestDynamicSecretsClient(baseUrl, config);
     this.barrier = new RestBarrierClient(baseUrl, config);
     this.tenantBarrier = new RestTenantBarrierClient(baseUrl, config);
