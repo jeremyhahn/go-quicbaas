@@ -72,7 +72,7 @@
     try {
       const client = await getSDKClient();
       const resp = await client.iam.listSessions();
-      sessions = (resp.sessions ?? []) as SessionRow[];
+      sessions = resp.sessions ?? [];
     } catch (e) {
       error = e instanceof Error ? e.message : 'Failed to load sessions';
     } finally {
