@@ -25,6 +25,7 @@ import (
 	iampb "github.com/jeremyhahn/go-quicbaas/api/proto/iam"
 	"github.com/jeremyhahn/go-quicbaas/pkg/api/sealedwindow"
 	"github.com/jeremyhahn/go-quicbaas/pkg/auth"
+	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/platformtoken"
@@ -219,11 +220,27 @@ func requireRolesAssign(req interface{}) []string {
 	return []string{roleAssignmentPermission}
 }
 
+// requireUserUpdateArguments is requireRolesAssign plus the lifecycle rule:
+// moving a user to "active" needs users:enable and to any other lifecycle
+// users:disable, as REST's approve and reject routes declare, so
+// users:update alone cannot approve or suspend a user.
+func requireUserUpdateArguments(req interface{}) []string {
+	perms := requireRolesAssign(req)
+	update, ok := req.(*iampb.UpdateUserRequest)
+	if !ok || update.GetLifecycle() == "" {
+		return perms
+	}
+	if update.GetLifecycle() == string(iam.LifecycleActive) {
+		return append(perms, "users:enable")
+	}
+	return append(perms, "users:disable")
+}
+
 // grpcArgumentPermissions maps a full method name to the permissions its
 // request arguments demand on top of the method's own permission.
 var grpcArgumentPermissions = map[string]func(req interface{}) []string{
 	iampb.IAMService_CreateUser_FullMethodName: requireRolesAssign,
-	iampb.IAMService_UpdateUser_FullMethodName: requireRolesAssign,
+	iampb.IAMService_UpdateUser_FullMethodName: requireUserUpdateArguments,
 }
 
 // grpcArgumentPermissionsFor returns the extra permissions req demands for
