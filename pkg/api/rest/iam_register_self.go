@@ -31,6 +31,7 @@ import (
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/config"
+	dberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 )
 
@@ -650,15 +651,26 @@ func (h *IAMHandler) RegisterSelfFinish(w http.ResponseWriter, r *http.Request) 
 	// The roles were granted at begin, before the ceremony opened, so the
 	// ceremony's attestation gate held this administrator to the hardware bar.
 	// The tenant's registration record is removed, so the sweep never discards
-	// an account that is held for admin approval or email verification.
-	if _, err := tenantMgr.UpdateTenant(ctx, sess.tenantID, iam.UpdateTenantOptions{
-		FinishSelfRegistration: true,
-	}); err != nil {
-		h.discardRegistration(ctx, sess)
-		h.server.logger.WithError(err).Error("iam.self_registration: recording the enrolment failed, registration refused")
-		RespondIAMError(w, r, http.StatusInternalServerError,
-			NewIAMAPIError(ErrInternalError, "registration could not record the enrolled account"))
-		return
+	// an account that is held for admin approval or email verification. On the
+	// ungated path the record is cleared after activation, so a crash between
+	// the two leaves a pending account the sweep still finds.
+	recordFinished := func() bool {
+		if _, err := tenantMgr.UpdateTenant(ctx, sess.tenantID, iam.UpdateTenantOptions{
+			FinishSelfRegistration: true,
+		}); err != nil {
+			h.discardRegistration(ctx, sess)
+			h.server.logger.WithError(err).Error("iam.self_registration: recording the enrolment failed, registration refused")
+			RespondIAMError(w, r, http.StatusInternalServerError,
+				NewIAMAPIError(ErrInternalError, "registration could not record the enrolled account"))
+			return false
+		}
+		return true
+	}
+
+	if cfg.RequireAdminApproval || cfg.RequireEmailVerification {
+		if !recordFinished() {
+			return
+		}
 	}
 
 	if cfg.RequireAdminApproval {
@@ -697,6 +709,13 @@ func (h *IAMHandler) RegisterSelfFinish(w http.ResponseWriter, r *http.Request) 
 		h.discardRegistration(ctx, sess)
 		h.server.handleServiceError(w, r, err)
 		return
+	}
+	// The account is active now, so a failed record write is not a reason to
+	// discard it: the sweep keeps a tenant whose registrant is active.
+	if _, err := tenantMgr.UpdateTenant(ctx, sess.tenantID, iam.UpdateTenantOptions{
+		FinishSelfRegistration: true,
+	}); err != nil {
+		h.server.logger.WithError(err).Error("iam.self_registration: clearing the registration record after activation failed")
 	}
 
 	// Mint session tokens via the OIDC provider.
@@ -996,10 +1015,33 @@ func (h *IAMHandler) provisionRegistration(ctx context.Context, tenants iam.Tena
 func (h *IAMHandler) discardRegistration(ctx context.Context, sess *registrationSession) {
 	store, storeErr := h.getIdentityStore(ctx)
 	tenants, tenantErr := h.getTenantManager(ctx)
-	err := errors.Join(storeErr, tenantErr, removeRegistration(ctx, tenants, store, sess))
+	err := errors.Join(storeErr, tenantErr, h.discardRegistrationTenant(ctx, tenants, store, sess))
 	if err != nil {
 		h.server.logger.WithError(err).Error("iam.self_registration: discarding an incomplete registration failed")
 	}
+}
+
+// discardRegistrationTenant applies the sweep's safeguards to a session's
+// discard: a tenant that is gone needs nothing, a tenant without a
+// registration record is not the registration's own, and a tenant with a
+// second user or a registrant no longer pending is in use. A server with no
+// store or no tenant manager removes what it can, as before.
+func (h *IAMHandler) discardRegistrationTenant(ctx context.Context, tenants iam.TenantManager, store *iam.IdentityStore, sess *registrationSession) error {
+	if store == nil || tenants == nil {
+		return removeRegistration(ctx, tenants, store, sess)
+	}
+	ctx = context.WithoutCancel(ctx)
+	tenant, err := tenants.GetTenant(ctx, sess.tenantID)
+	if err != nil {
+		if dberrors.IsNotFound(err) {
+			return nil
+		}
+		return err
+	}
+	if tenant.SelfRegistration == nil {
+		return &SelfRegistrationTenantInUseError{TenantID: sess.tenantID}
+	}
+	return discardUnfinishedTenant(ctx, tenants, store, sess.tenantID)
 }
 
 // removeRegistration deletes the registration's account and tenant, and
