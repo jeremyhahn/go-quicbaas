@@ -228,12 +228,13 @@
     if (selectedTenantID === '') return;
     initing = true;
     try {
-      // Encode here, not in the picker: a barrier credential is base64 BYTES
-      // on the wire, and unseal below has always encoded. Forwarding the
-      // picker's plaintext meant a barrier initialized through this view could
-      // not be unsealed through it — and worse, a passphrase that happens to
-      // be valid base64 initialized silently with different bytes
-      // (go-quicbaas#988). Both paths now go through the one encoder.
+      // Encode here, not in the picker: a barrier credential is BYTES, which
+      // the SDK base64-encodes once onto the wire, and unseal below goes
+      // through the same encoder. Forwarding the picker's plaintext meant a
+      // barrier initialized through this view could not be unsealed through
+      // it (go-quicbaas#988); handing the SDK an already-base64 string sent
+      // all-zero bytes (go-quicbaas#2372). Both paths now send the typed
+      // text's UTF-8 bytes through the one encoder.
       const resp = await tb.tenantBarrierInit(
         selectedTenantID,
         encodeInitParams(params),

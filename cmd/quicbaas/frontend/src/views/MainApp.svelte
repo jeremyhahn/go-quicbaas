@@ -1170,8 +1170,8 @@
     <div class="flex items-center gap-3">
       {#if orchestratorStore.health}
         <StatusBadge
-          text={orchestratorStore.health.status}
-          variant={orchestratorStore.health.status === 'ok' || orchestratorStore.health.status === 'healthy' ? 'success' : 'warning'}
+          text={orchestratorStore.health.unhealthy === 0 ? 'healthy' : `${orchestratorStore.health.unhealthy} unhealthy`}
+          variant={orchestratorStore.health.unhealthy === 0 ? 'success' : 'warning'}
         />
       {/if}
       <span class="text-base-content/60">QuicBaaS v0.1.0</span>
