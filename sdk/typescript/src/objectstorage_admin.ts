@@ -18,11 +18,10 @@
 // (/api/v1/admin/object-backends/*, /api/v1/admin/storage/*,
 // /api/v1/admin/objects/repair) and pkg/service/objectstorage_admin_types.go.
 //
-// Wire note: the request bodies use snake_case keys, but the replies are the
-// untagged Go structs of objectstorage_admin_types.go, so their JSON keys are
-// the Go field names in PascalCase (Name, CreatedAt, OperationID, ...). The
-// Go SDK decodes them the same way. Every time is an int64 unix-nanosecond
-// count, delivered as a number.
+// Wire note: the request bodies and the replies both use snake_case keys, the
+// JSON tags of pkg/service/objectstorage_admin_types.go and
+// objectstorage_types.go (name, created_at, operation_id, ...). Every time is
+// an int64 unix-nanosecond count, delivered as a number.
 //
 // The backend name and the GC operation_id are encoded with
 // encodeURIComponent, so a name containing '/' stays one path segment.
@@ -39,8 +38,8 @@ export interface ObjectStorageAdminCreateBackendRequest {
 
 /** ObjectStorageAdminCreateBackendResponse confirms a backend was created. */
 export interface ObjectStorageAdminCreateBackendResponse {
-  Name: string;
-  CreatedAt: number;
+  name: string;
+  created_at: number;
 }
 
 /** ObjectStorageAdminUpdateBackendRequest changes a backend's config or tier. */
@@ -51,8 +50,8 @@ export interface ObjectStorageAdminUpdateBackendRequest {
 
 /** ObjectStorageAdminUpdateBackendResponse confirms a backend was updated. */
 export interface ObjectStorageAdminUpdateBackendResponse {
-  Name: string;
-  UpdatedAt: number;
+  name: string;
+  updated_at: number;
 }
 
 /** ObjectStorageAdminDeleteBackendRequest removes a backend, optionally migrating its objects. */
@@ -63,16 +62,16 @@ export interface ObjectStorageAdminDeleteBackendRequest {
 
 /** ObjectStorageAdminDeleteBackendResponse confirms a backend was deleted. */
 export interface ObjectStorageAdminDeleteBackendResponse {
-  Name: string;
-  Deleted: boolean;
-  MigratedObjects: number;
+  name: string;
+  deleted: boolean;
+  migrated_objects: number;
 }
 
 /** ObjectStorageAdminBackendStatusResponse confirms a backend's enabled state. */
 export interface ObjectStorageAdminBackendStatusResponse {
-  Name: string;
-  Enabled: boolean;
-  UpdatedAt: number;
+  name: string;
+  enabled: boolean;
+  updated_at: number;
 }
 
 /** ObjectStorageAdminCompactBackendRequest starts a backend compaction. */
@@ -82,41 +81,41 @@ export interface ObjectStorageAdminCompactBackendRequest {
 
 /** ObjectStorageAdminCompactBackendResponse identifies a started compaction. */
 export interface ObjectStorageAdminCompactBackendResponse {
-  Name: string;
-  OperationID: string;
-  StartedAt: number;
+  name: string;
+  operation_id: string;
+  started_at: number;
 }
 
 /** ObjectStorageAdminBackendHealth is a backend's last health check. */
 export interface ObjectStorageAdminBackendHealth {
-  Healthy: boolean;
-  Latency: number;
-  LastCheck: number;
-  Error: string;
+  healthy: boolean;
+  latency: number;
+  last_check: number;
+  error?: string;
 }
 
 /** ObjectStorageAdminBackendInfo describes one backend in the storage stats. */
 export interface ObjectStorageAdminBackendInfo {
-  Name: string;
-  Type: string;
-  Enabled: boolean;
-  Default: boolean;
-  Tier: string;
-  Region: string;
-  ObjectCount: number;
-  TotalSize: number;
-  Health: ObjectStorageAdminBackendHealth | null;
+  name: string;
+  type: string;
+  enabled: boolean;
+  default: boolean;
+  tier: string;
+  region: string;
+  object_count: number;
+  total_size: number;
+  health?: ObjectStorageAdminBackendHealth;
 }
 
 /** ObjectStorageAdminTenantStats is one tenant's storage usage by tier. */
 export interface ObjectStorageAdminTenantStats {
-  TenantID: string;
-  TotalBytes: number;
-  ObjectCount: number;
-  HotBytes: number;
-  WarmBytes: number;
-  ColdBytes: number;
-  ArchiveBytes: number;
+  tenant_id: string;
+  total_bytes: number;
+  object_count: number;
+  hot_bytes: number;
+  warm_bytes: number;
+  cold_bytes: number;
+  archive_bytes: number;
 }
 
 /** ObjectStorageAdminStatsOptions selects the per-backend and per-tenant breakdowns. */
@@ -127,13 +126,13 @@ export interface ObjectStorageAdminStatsOptions {
 
 /** ObjectStorageAdminStatsResponse summarises object storage usage. */
 export interface ObjectStorageAdminStatsResponse {
-  TotalBytes: number;
-  TotalObjects: number;
-  TotalBackends: number;
-  HealthyBackends: number;
-  BackendStats: ObjectStorageAdminBackendInfo[] | null;
-  TenantStats: ObjectStorageAdminTenantStats[] | null;
-  CalculatedAt: number;
+  total_bytes: number;
+  total_objects: number;
+  total_backends: number;
+  healthy_backends: number;
+  backend_stats: ObjectStorageAdminBackendInfo[];
+  tenant_stats: ObjectStorageAdminTenantStats[];
+  calculated_at: number;
 }
 
 /** ObjectStorageAdminGCRequest starts a garbage collection run. */
@@ -145,8 +144,8 @@ export interface ObjectStorageAdminGCRequest {
 
 /** ObjectStorageAdminGCResponse identifies a started garbage collection run. */
 export interface ObjectStorageAdminGCResponse {
-  OperationID: string;
-  StartedAt: number;
+  operation_id: string;
+  started_at: number;
 }
 
 /** ObjectStorageAdminGCStatus is the state of a garbage collection run. */
@@ -154,14 +153,14 @@ export type ObjectStorageAdminGCStatus = 'running' | 'completed' | 'failed';
 
 /** ObjectStorageAdminGCProgressResponse reports a garbage collection run's progress. */
 export interface ObjectStorageAdminGCProgressResponse {
-  OperationID: string;
-  Status: ObjectStorageAdminGCStatus;
-  ObjectsScanned: number;
-  ObjectsDeleted: number;
-  BytesReclaimed: number;
-  PercentComplete: number;
-  Error: string;
-  CompletedAt: number;
+  operation_id: string;
+  status: ObjectStorageAdminGCStatus;
+  objects_scanned: number;
+  objects_deleted: number;
+  bytes_reclaimed: number;
+  percent_complete: number;
+  error?: string;
+  completed_at: number;
 }
 
 /** ObjectStorageAdminRepairRequest repairs one object's replicas. */
@@ -173,10 +172,10 @@ export interface ObjectStorageAdminRepairRequest {
 
 /** ObjectStorageAdminRepairResponse reports an object repair's outcome. */
 export interface ObjectStorageAdminRepairResponse {
-  Key: string;
-  Success: boolean;
-  RepairedLocations: string[] | null;
-  Error: string;
+  key: string;
+  success: boolean;
+  repaired_locations: string[];
+  error?: string;
 }
 
 // ---------------------------------------------------------------------------

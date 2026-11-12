@@ -12,7 +12,7 @@
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
 // Tests for RestObjectStorageAdminClient: every method's URL, HTTP method and
-// body, name encoding, PascalCase replies returned as is, and error rejection.
+// body, name encoding, snake_case replies returned as is, and error rejection.
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { RestClient } from '../src/rest';
@@ -56,8 +56,8 @@ const base = 'http://localhost';
 const client = (): RestClient => new RestClient(base);
 
 describe('RestObjectStorageAdminClient', () => {
-  it('createBackend POSTs the snake_case body and returns the PascalCase reply', async () => {
-    const wire = { Name: 'b1', CreatedAt: 1700000000000000000 };
+  it('createBackend POSTs the snake_case body and returns the snake_case reply', async () => {
+    const wire = { name: 'b1', created_at: 1700000000000000000 };
     reply(wire, 201);
     const req = { name: 'b1', type: 's3', tier: 'hot', config: { bucket: 'x' }, enabled: true };
     const res = await client().objectStorageAdmin.createBackend(req);
@@ -69,9 +69,9 @@ describe('RestObjectStorageAdminClient', () => {
   });
 
   it('updateBackend PUTs to the encoded name', async () => {
-    reply({ Name: 'a/b', UpdatedAt: 5 });
+    reply({ name: 'a/b', updated_at: 5 });
     const res = await client().objectStorageAdmin.updateBackend('a/b', { tier: 'cold' });
-    expect(res).toEqual({ Name: 'a/b', UpdatedAt: 5 });
+    expect(res).toEqual({ name: 'a/b', updated_at: 5 });
     const c = call();
     expect(c.url).toBe(`${base}/api/v1/admin/object-backends/a%2Fb`);
     expect(c.method).toBe('PUT');
@@ -79,7 +79,7 @@ describe('RestObjectStorageAdminClient', () => {
   });
 
   it('deleteBackend DELETEs with the migrate body, {} by default', async () => {
-    const wire = { Name: 'b1', Deleted: true, MigratedObjects: 3 };
+    const wire = { name: 'b1', deleted: true, migrated_objects: 3 };
     reply(wire);
     const res = await client().objectStorageAdmin.deleteBackend('a/b', { migrate_to: 'b2', force: true });
     expect(res).toEqual(wire);
@@ -95,7 +95,7 @@ describe('RestObjectStorageAdminClient', () => {
   });
 
   it('setBackendStatus PUTs {enabled} to /status', async () => {
-    const wire = { Name: 'b1', Enabled: false, UpdatedAt: 9 };
+    const wire = { name: 'b1', enabled: false, updated_at: 9 };
     reply(wire);
     const res = await client().objectStorageAdmin.setBackendStatus('a/b', false);
     expect(res).toEqual(wire);
@@ -106,7 +106,7 @@ describe('RestObjectStorageAdminClient', () => {
   });
 
   it('compactBackend POSTs to /compact', async () => {
-    const wire = { Name: 'b1', OperationID: 'op1', StartedAt: 7 };
+    const wire = { name: 'b1', operation_id: 'op1', started_at: 7 };
     reply(wire, 202);
     const res = await client().objectStorageAdmin.compactBackend('a/b', { aggressive: true });
     expect(res).toEqual(wire);
@@ -118,25 +118,35 @@ describe('RestObjectStorageAdminClient', () => {
 
   it('storageStats GETs with the optional breakdown flags', async () => {
     const wire = {
-      TotalBytes: 10,
-      TotalObjects: 2,
-      TotalBackends: 1,
-      HealthyBackends: 1,
-      BackendStats: [
+      total_bytes: 10,
+      total_objects: 2,
+      total_backends: 1,
+      healthy_backends: 1,
+      backend_stats: [
         {
-          Name: 'b1',
-          Type: 's3',
-          Enabled: true,
-          Default: true,
-          Tier: 'hot',
-          Region: 'r',
-          ObjectCount: 2,
-          TotalSize: 10,
-          Health: { Healthy: true, Latency: 1, LastCheck: 2, Error: '' },
+          name: 'b1',
+          type: 's3',
+          enabled: true,
+          default: true,
+          tier: 'hot',
+          region: 'r',
+          object_count: 2,
+          total_size: 10,
+          health: { healthy: true, latency: 1, last_check: 2 },
         },
       ],
-      TenantStats: null,
-      CalculatedAt: 3,
+      tenant_stats: [
+        {
+          tenant_id: 't1',
+          total_bytes: 10,
+          object_count: 2,
+          hot_bytes: 10,
+          warm_bytes: 0,
+          cold_bytes: 0,
+          archive_bytes: 0,
+        },
+      ],
+      calculated_at: 3,
     };
     reply(wire);
     const res = await client().objectStorageAdmin.storageStats({ backends: true, tenants: true });
@@ -152,7 +162,7 @@ describe('RestObjectStorageAdminClient', () => {
   });
 
   it('runGarbageCollection POSTs the request, {} when none', async () => {
-    const wire = { OperationID: 'gc1', StartedAt: 4 };
+    const wire = { operation_id: 'gc1', started_at: 4 };
     reply(wire, 202);
     const res = await client().objectStorageAdmin.runGarbageCollection();
     expect(res).toEqual(wire);
@@ -169,14 +179,13 @@ describe('RestObjectStorageAdminClient', () => {
 
   it('garbageCollectionProgress GETs with the encoded operation_id', async () => {
     const wire = {
-      OperationID: 'op/1',
-      Status: 'running',
-      ObjectsScanned: 5,
-      ObjectsDeleted: 1,
-      BytesReclaimed: 100,
-      PercentComplete: 50,
-      Error: '',
-      CompletedAt: 0,
+      operation_id: 'op/1',
+      status: 'running',
+      objects_scanned: 5,
+      objects_deleted: 1,
+      bytes_reclaimed: 100,
+      percent_complete: 50,
+      completed_at: 0,
     };
     reply(wire);
     const res = await client().objectStorageAdmin.garbageCollectionProgress('op/1');
@@ -187,7 +196,7 @@ describe('RestObjectStorageAdminClient', () => {
   });
 
   it('repairObject POSTs the repair body', async () => {
-    const wire = { Key: 'k', Success: true, RepairedLocations: ['b2'], Error: '' };
+    const wire = { key: 'k', success: true, repaired_locations: ['b2'] };
     reply(wire);
     const req = { key: 'k', source_location: 'b1', timeout_ms: 1000 };
     const res = await client().objectStorageAdmin.repairObject(req);
