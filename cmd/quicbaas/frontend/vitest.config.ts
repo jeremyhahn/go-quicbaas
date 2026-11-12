@@ -19,6 +19,13 @@ export default defineConfig({
     include: ['test/**/*.test.ts'],
     maxWorkers: MAX_WORKERS,
     minWorkers: 1,
+    // Node 26 defines its own localStorage/sessionStorage globals, which shadow
+    // jsdom's window.localStorage (it reads undefined). Turn Node's off in the
+    // workers so the tests see jsdom's storage.
+    poolOptions: {
+      forks: { execArgv: ['--no-experimental-webstorage'] },
+      threads: { execArgv: ['--no-experimental-webstorage'] },
+    },
     alias: {
       $lib: '/src/lib',
       $stores: '/src/stores',
