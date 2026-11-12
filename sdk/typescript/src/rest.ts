@@ -181,6 +181,14 @@ import type {
   GetReencryptionProgressResponse,
 } from './dek.js';
 import type {
+  VectorHealthResponse,
+  VectorClusterStatsResponse,
+  VectorHybridSearchRequest,
+  VectorHybridSearchResponse,
+  VectorMetadataSearchRequest,
+  VectorMetadataSearchResponse,
+} from './vector_search.js';
+import type {
   DynamicSecretsClient,
   DynamicSecretRole,
   CreateRoleRequest as DynamicSecretCreateRoleRequest,
@@ -1636,6 +1644,32 @@ class RestVectorsClient implements VectorsClient {
       { method: 'POST', body: JSON.stringify(req) },
     );
     return raw.results ?? [];
+  }
+
+  // health maps to GET /api/v1/vector/health
+  async health(): Promise<VectorHealthResponse> {
+    return this.fetchJSON<VectorHealthResponse>('/api/v1/vector/health');
+  }
+
+  // clusterStats maps to GET /api/v1/vector/cluster/stats
+  async clusterStats(): Promise<VectorClusterStatsResponse> {
+    return this.fetchJSON<VectorClusterStatsResponse>('/api/v1/vector/cluster/stats');
+  }
+
+  // hybridSearch maps to POST /api/v1/vector/hybrid-search
+  async hybridSearch(req: VectorHybridSearchRequest): Promise<VectorHybridSearchResponse> {
+    return this.fetchJSON<VectorHybridSearchResponse>('/api/v1/vector/hybrid-search', {
+      method: 'POST',
+      body: JSON.stringify(req),
+    });
+  }
+
+  // searchByMetadata maps to POST /api/v1/vector/search-by-metadata
+  async searchByMetadata(req: VectorMetadataSearchRequest): Promise<VectorMetadataSearchResponse> {
+    return this.fetchJSON<VectorMetadataSearchResponse>('/api/v1/vector/search-by-metadata', {
+      method: 'POST',
+      body: JSON.stringify(req),
+    });
   }
 }
 

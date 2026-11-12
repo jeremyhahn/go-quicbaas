@@ -22,6 +22,14 @@ import type {
 } from './page.js';
 import type { RAGClient } from './rag.js';
 import type { EmbeddingsClient } from './embedding_sdk.js';
+import type {
+  VectorHealthResponse,
+  VectorClusterStatsResponse,
+  VectorHybridSearchRequest,
+  VectorHybridSearchResponse,
+  VectorMetadataSearchRequest,
+  VectorMetadataSearchResponse,
+} from './vector_search.js';
 import type { MessagingClient } from './messaging_sdk.js';
 import type { SchedulerClient } from './scheduler_sdk.js';
 import type { ProjectsClient } from './projects.js';
@@ -692,6 +700,22 @@ export interface VectorsClient {
     top_k?: number;
     filter?: Record<string, unknown>;
   }): Promise<VectorSearchResult[]>;
+
+  // health reports the vector store's health.
+  // Maps to GET /api/v1/vector/health
+  health(): Promise<VectorHealthResponse>;
+
+  // clusterStats reports cluster-wide vector statistics.
+  // Maps to GET /api/v1/vector/cluster/stats
+  clusterStats(): Promise<VectorClusterStatsResponse>;
+
+  // hybridSearch runs a similarity search narrowed by metadata filters.
+  // Maps to POST /api/v1/vector/hybrid-search
+  hybridSearch(req: VectorHybridSearchRequest): Promise<VectorHybridSearchResponse>;
+
+  // searchByMetadata finds vectors by their metadata alone.
+  // Maps to POST /api/v1/vector/search-by-metadata
+  searchByMetadata(req: VectorMetadataSearchRequest): Promise<VectorMetadataSearchResponse>;
 }
 
 // ---------------------------------------------------------------------------
