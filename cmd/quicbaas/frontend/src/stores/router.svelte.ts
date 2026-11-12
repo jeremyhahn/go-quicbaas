@@ -57,6 +57,7 @@
  *   #/attestation    → Attestation (verifier endorsements and reference values)
  *   #/oauth-apps     → OAuth Apps (a tenant's registered OAuth applications)
  *   #/identity-providers → Identity Providers (a tenant's federation providers)
+ *   #/policy-tester  → Policy Tester (check, simulate and explain tenant policies)
  *   #/accounts       → Pooled provider accounts
  *   #/invite/:token → Invite activation (passwordless)
  */
@@ -109,6 +110,7 @@ export type RouteName =
   | 'attestation'
   | 'oauth-apps'
   | 'identity-providers'
+  | 'policy-tester'
   // ORCHESTRATION — inference
   | 'inference'
   // ORCHESTRATION — projects
@@ -309,6 +311,9 @@ function matchPath(path: string, hash: string): Route {
   }
   if (path === '/identity-providers') {
     return { name: 'identity-providers', params: {}, hash };
+  }
+  if (path === '/policy-tester') {
+    return { name: 'policy-tester', params: {}, hash };
   }
   // AI/ML
   if (path === '/rag') {
@@ -522,6 +527,7 @@ export function routeMySessions(): void { navigateTo('/my-sessions'); }
 export function routeAttestation(): void { navigateTo('/attestation'); }
 export function routeOAuthApps(): void { navigateTo('/oauth-apps'); }
 export function routeIdentityProviders(): void { navigateTo('/identity-providers'); }
+export function routePolicyTester(): void { navigateTo('/policy-tester'); }
 // AI/ML
 export function routeRAG(): void { navigateTo('/rag'); }
 export function routeEmbeddings(): void { navigateTo('/embeddings'); }
