@@ -182,10 +182,10 @@ type Client interface {
 	// makes the tenant unmetered.
 	SetTenantSpendPolicy(ctx context.Context, req *SetTenantSpendPolicyRequest) (*TenantSpendPolicy, error)
 
-	// SubscribeSessionEvents returns a live stream of session events. When
-	// req.FromSequence > 0 the stream begins with a historical replay
-	// from that sequence, then transitions to live tail when Follow is
-	// true. The returned channel closes when the stream is done or the
+	// SubscribeSessionEvents returns a live stream of session events. The
+	// stream begins with a historical replay from req.FromSequence
+	// (inclusive; 0 replays from the first event), then transitions to
+	// live tail when Follow is true. The returned channel closes when the stream is done or the
 	// context is cancelled.
 	SubscribeSessionEvents(ctx context.Context, req *SubscribeSessionEventsRequest) (<-chan *SessionEventEnvelope, error)
 
@@ -655,7 +655,7 @@ type GetSpendReportResponse struct {
 type SubscribeSessionEventsRequest struct {
 	TenantID     string `json:"tenant_id,omitempty"`
 	SessionID    string `json:"session_id"`
-	FromSequence uint64 `json:"from_sequence,omitempty"` // 0 = only new events; 1+ = replay-then-tail
+	FromSequence uint64 `json:"from_sequence,omitempty"` // replay from this sequence, inclusive; 0 = from the first event
 	Follow       bool   `json:"follow"`                  // true = continue streaming after replay
 }
 
