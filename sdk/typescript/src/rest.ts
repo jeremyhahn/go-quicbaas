@@ -181,6 +181,17 @@ import type {
   GetReencryptionProgressResponse,
 } from './dek.js';
 import type {
+  PIVClient,
+  ListPIVSlotsResponse,
+  GetPIVCertificateOptions,
+  GetPIVCertificateResponse,
+  StorePIVCertificateRequest,
+  GeneratePIVKeyRequest,
+  GeneratePIVKeyResponse,
+  GeneratePIVCSRRequest,
+  GeneratePIVCSRResponse,
+} from './piv.js';
+import type {
   DynamicSecretsClient,
   DynamicSecretRole,
   CreateRoleRequest as DynamicSecretCreateRoleRequest,
@@ -4297,6 +4308,77 @@ export class RestDEKClient implements DEKClient {
   }
 }
 
+/** pivQuery builds a `?k=v&...` suffix from the set values, each encoded. */
+function pivQuery(params: Record<string, string | undefined>): string {
+  const parts: string[] = [];
+  for (const [k, v] of Object.entries(params)) {
+    if (v !== undefined && v !== '') parts.push(`${encodeURIComponent(k)}=${encodeURIComponent(v)}`);
+  }
+  return parts.length ? `?${parts.join('&')}` : '';
+}
+
+/**
+ * RestPIVClient manages xkms PIV slots over REST
+ * (/api/v1/xkms/piv/slots*, pkg/api/rest/handlers_xkms.go).
+ */
+export class RestPIVClient implements PIVClient {
+  private readonly http: FetchHelper;
+
+  constructor(baseUrl: string, config: ClientConfig = {}) {
+    this.http = newFetchHelper(baseUrl, config);
+  }
+
+  private slotPath(slot: string): string {
+    return `/api/v1/xkms/piv/slots/${encodeURIComponent(slot)}`;
+  }
+
+  // Maps to GET /api/v1/xkms/piv/slots[?backend=]
+  async listSlots(backend?: string): Promise<ListPIVSlotsResponse> {
+    const wire = await this.http.fetchJSON<ListPIVSlotsResponse>(
+      `/api/v1/xkms/piv/slots${pivQuery({ backend })}`,
+    );
+    return { ...wire, slots: wire?.slots ?? [] };
+  }
+
+  // Maps to GET /api/v1/xkms/piv/slots/{slot}/cert[?backend=&format=]
+  async getCertificate(slot: string, opts: GetPIVCertificateOptions = {}): Promise<GetPIVCertificateResponse> {
+    return this.http.fetchJSON<GetPIVCertificateResponse>(
+      `${this.slotPath(slot)}/cert${pivQuery({ backend: opts.backend, format: opts.format })}`,
+    );
+  }
+
+  // Maps to PUT /api/v1/xkms/piv/slots/{slot}/cert (200, empty body)
+  async storeCertificate(slot: string, req: StorePIVCertificateRequest): Promise<void> {
+    await this.http.fetchVoid(`${this.slotPath(slot)}/cert`, {
+      method: 'PUT',
+      body: JSON.stringify(req),
+    });
+  }
+
+  // Maps to DELETE /api/v1/xkms/piv/slots/{slot}/cert[?backend=] (200, empty body)
+  async deleteCertificate(slot: string, backend?: string): Promise<void> {
+    await this.http.fetchVoid(`${this.slotPath(slot)}/cert${pivQuery({ backend })}`, {
+      method: 'DELETE',
+    });
+  }
+
+  // Maps to POST /api/v1/xkms/piv/slots/{slot}/key (201)
+  async generateKey(slot: string, req: GeneratePIVKeyRequest): Promise<GeneratePIVKeyResponse> {
+    return this.http.fetchJSON<GeneratePIVKeyResponse>(`${this.slotPath(slot)}/key`, {
+      method: 'POST',
+      body: JSON.stringify(req),
+    });
+  }
+
+  // Maps to POST /api/v1/xkms/piv/slots/{slot}/csr (201)
+  async generateCSR(slot: string, req: GeneratePIVCSRRequest): Promise<GeneratePIVCSRResponse> {
+    return this.http.fetchJSON<GeneratePIVCSRResponse>(`${this.slotPath(slot)}/csr`, {
+      method: 'POST',
+      body: JSON.stringify(req),
+    });
+  }
+}
+
 // ---------------------------------------------------------------------------
 // RestDynamicSecretsClient — /api/v1/secrets/dynamic/* surface.
 // ---------------------------------------------------------------------------
@@ -5258,6 +5340,7 @@ export class RestClient implements Client {
   readonly trust: TrustClient;
   readonly crypto: CryptoClient;
   readonly dek: DEKClient;
+  readonly piv: PIVClient;
   readonly dynamicSecrets: DynamicSecretsClient;
   readonly barrier: BarrierClient;
   readonly tenantBarrier: TenantBarrierClient;
@@ -5300,6 +5383,7 @@ export class RestClient implements Client {
     this.trust = new RestTrustClient(baseUrl, config);
     this.crypto = new RestCryptoClient(baseUrl, config);
     this.dek = new RestDEKClient(baseUrl, config);
+    this.piv = new RestPIVClient(baseUrl, config);
     this.dynamicSecrets = new RestDynamicSecretsClient(baseUrl, config);
     this.barrier = new RestBarrierClient(baseUrl, config);
     this.tenantBarrier = new RestTenantBarrierClient(baseUrl, config);

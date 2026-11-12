@@ -292,6 +292,20 @@ export type {
   GetReencryptionProgressResponse,
 } from './dek.js';
 export type {
+  PIVClient,
+  PIVKeyAlgorithm,
+  PIVCertFormat,
+  PIVSlotStatus,
+  ListPIVSlotsResponse,
+  GetPIVCertificateOptions,
+  GetPIVCertificateResponse,
+  StorePIVCertificateRequest,
+  GeneratePIVKeyRequest,
+  GeneratePIVKeyResponse,
+  GeneratePIVCSRRequest,
+  GeneratePIVCSRResponse,
+} from './piv.js';
+export type {
   DynamicSecretsClient,
   DynamicSecretRole,
   CreateRoleRequest as DynamicSecretCreateRoleRequest,
