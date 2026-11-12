@@ -186,6 +186,19 @@ import type {
   GetReencryptionProgressResponse,
 } from './dek.js';
 import type {
+  PromptsClient,
+  PromptAddress,
+  PromptList,
+  PromptView,
+  EffectivePrompt,
+  PromptDiff,
+  PromptHistory,
+  PutPromptRequest,
+  RollbackPromptRequest,
+  GetPromptOptions,
+  ResetPromptOptions,
+} from './prompts.js';
+import type {
   XKMSKeysClient,
   XKMSKeyInfo,
   XKMSListKeysResponse,
@@ -4610,6 +4623,97 @@ export class RestDEKClient implements DEKClient {
   }
 }
 
+// promptQuery builds the query string of a prompts route from the fields
+// that are set; it returns '' when none is.
+function promptQuery(fields: Record<string, string | number | undefined>): string {
+  const params = new URLSearchParams();
+  for (const [k, v] of Object.entries(fields)) {
+    if (v !== undefined && v !== '') params.set(k, String(v));
+  }
+  const q = params.toString();
+  return q ? `?${q}` : '';
+}
+
+function promptAddressFields(addr: PromptAddress = {}): Record<string, string | undefined> {
+  return { tenant_id: addr.tenant_id, scope: addr.scope, project_id: addr.project_id };
+}
+
+export class RestPromptsClient implements PromptsClient {
+  private readonly http: FetchHelper;
+
+  constructor(baseUrl: string, config: ClientConfig = {}) {
+    this.http = newFetchHelper(baseUrl, config);
+  }
+
+  private path(set: string, name?: string, suffix = ''): string {
+    const base = `/api/v1/prompts/${encodeURIComponent(set)}`;
+    return name === undefined ? base : `${base}/${encodeURIComponent(name)}${suffix}`;
+  }
+
+  // Maps to GET /api/v1/prompts/{set}
+  async listPrompts(set: string, addr?: PromptAddress): Promise<PromptList> {
+    return this.http.fetchJSON<PromptList>(`${this.path(set)}${promptQuery(promptAddressFields(addr))}`);
+  }
+
+  // Maps to GET /api/v1/prompts/{set}/{name}[?version=]
+  async getPrompt(set: string, name: string, opts: GetPromptOptions = {}): Promise<PromptView> {
+    const query = promptQuery({ ...promptAddressFields(opts), version: opts.version });
+    return this.http.fetchJSON<PromptView>(`${this.path(set, name)}${query}`);
+  }
+
+  // Maps to PUT /api/v1/prompts/{set}/{name}
+  async putPrompt(set: string, name: string, req: PutPromptRequest, addr?: PromptAddress): Promise<PromptView> {
+    return this.http.fetchJSON<PromptView>(
+      `${this.path(set, name)}${promptQuery(promptAddressFields(addr))}`,
+      { method: 'PUT', body: JSON.stringify(req) },
+    );
+  }
+
+  // Maps to DELETE /api/v1/prompts/{set}/{name}[?expected_version=&note=]
+  async resetPrompt(set: string, name: string, opts: ResetPromptOptions = {}): Promise<PromptView> {
+    const query = promptQuery({
+      ...promptAddressFields(opts),
+      expected_version: opts.expected_version,
+      note: opts.note,
+    });
+    return this.http.fetchJSON<PromptView>(`${this.path(set, name)}${query}`, { method: 'DELETE' });
+  }
+
+  // Maps to GET /api/v1/prompts/{set}/{name}/effective
+  async getEffectivePrompt(set: string, name: string, addr?: PromptAddress): Promise<EffectivePrompt> {
+    return this.http.fetchJSON<EffectivePrompt>(
+      `${this.path(set, name, '/effective')}${promptQuery(promptAddressFields(addr))}`,
+    );
+  }
+
+  // Maps to GET /api/v1/prompts/{set}/{name}/diff
+  async diffPrompt(set: string, name: string, addr?: PromptAddress): Promise<PromptDiff> {
+    return this.http.fetchJSON<PromptDiff>(
+      `${this.path(set, name, '/diff')}${promptQuery(promptAddressFields(addr))}`,
+    );
+  }
+
+  // Maps to GET /api/v1/prompts/{set}/{name}/history
+  async getPromptHistory(set: string, name: string, addr?: PromptAddress): Promise<PromptHistory> {
+    return this.http.fetchJSON<PromptHistory>(
+      `${this.path(set, name, '/history')}${promptQuery(promptAddressFields(addr))}`,
+    );
+  }
+
+  // Maps to POST /api/v1/prompts/{set}/{name}/rollback
+  async rollbackPrompt(
+    set: string,
+    name: string,
+    req: RollbackPromptRequest,
+    addr?: PromptAddress,
+  ): Promise<PromptView> {
+    return this.http.fetchJSON<PromptView>(
+      `${this.path(set, name, '/rollback')}${promptQuery(promptAddressFields(addr))}`,
+      { method: 'POST', body: JSON.stringify(req) },
+    );
+  }
+}
+
 /** pivQuery builds a `?k=v&...` suffix from the set values, each encoded. */
 function pivQuery(params: Record<string, string | undefined>): string {
   const parts: string[] = [];
@@ -5687,6 +5791,7 @@ export class RestClient implements Client {
   readonly trust: TrustClient;
   readonly crypto: CryptoClient;
   readonly dek: DEKClient;
+  readonly prompts: PromptsClient;
   readonly xkmsKeys: XKMSKeysClient;
   readonly piv: PIVClient;
   readonly xkms: XKMSClient;
@@ -5732,6 +5837,7 @@ export class RestClient implements Client {
     this.trust = new RestTrustClient(baseUrl, config);
     this.crypto = new RestCryptoClient(baseUrl, config);
     this.dek = new RestDEKClient(baseUrl, config);
+    this.prompts = new RestPromptsClient(baseUrl, config);
     this.xkmsKeys = new RestXKMSKeysClient(baseUrl, config);
     this.piv = new RestPIVClient(baseUrl, config);
     this.xkms = new RestXKMSClient(baseUrl, config);

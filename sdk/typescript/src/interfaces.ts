@@ -32,6 +32,7 @@ import type { CAClient } from './ca.js';
 import type { TrustClient } from './trust.js';
 import type { CryptoClient } from './crypto.js';
 import type { DEKClient } from './dek.js';
+import type { PromptsClient } from './prompts.js';
 import type { XKMSKeysClient } from './xkms_keys.js';
 import type { PIVClient } from './piv.js';
 import type { XKMSClient } from './xkms.js';
@@ -1477,6 +1478,11 @@ export interface Client {
    * background re-encryption. Paths: /api/v1/kms/deks/*.
    */
   readonly dek: DEKClient;
+  /**
+   * prompts reads, overrides, diffs, resets and rolls back orchestrator
+   * prompts per layer (project, tenant, system). Paths: /api/v1/prompts/*.
+   */
+  readonly prompts: PromptsClient;
   /**
    * XKMS keys client: the xkms passthrough's key routes (generate, list,
    * get, delete, rotate, encrypt, decrypt, sign, verify, key versions).

@@ -297,6 +297,25 @@ export type {
   GetReencryptionProgressResponse,
 } from './dek.js';
 export type {
+  PromptsClient,
+  PromptScope,
+  PromptAddress,
+  PromptVersionRef,
+  PromptListEntry,
+  PromptList,
+  PromptView,
+  PromptLayer,
+  EffectivePrompt,
+  PromptDiffLine,
+  PromptDiff,
+  PromptRevisionSummary,
+  PromptHistory,
+  PutPromptRequest,
+  RollbackPromptRequest,
+  GetPromptOptions,
+  ResetPromptOptions,
+} from './prompts.js';
+export type {
   XKMSKeysClient,
   XKMSKeyInfo,
   XKMSListKeysResponse,
