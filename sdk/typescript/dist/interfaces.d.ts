@@ -219,6 +219,196 @@ export interface UpdatePolicyRequest {
     description?: string;
     spec_yaml?: string;
 }
+export type ConsentPurpose = 'marketing' | 'analytics' | 'personalization' | 'third_party' | 'data_processing' | 'data_retention' | 'functional';
+export type ConsentStatus = 'granted' | 'denied' | 'withdrawn' | 'pending';
+export interface UserConsent {
+    id: string;
+    user_id: string;
+    tenant_id: string;
+    purpose: ConsentPurpose;
+    status: ConsentStatus;
+    version: string;
+    granted_at?: string;
+    withdrawn_at?: string;
+    expires_at?: string;
+    ip_address?: string;
+    user_agent?: string;
+    metadata?: Record<string, string>;
+    created: string;
+    updated: string;
+}
+export interface GrantConsentRequest {
+    purpose: ConsentPurpose;
+    version: string;
+    expires_at?: string;
+    ip_address?: string;
+    user_agent?: string;
+}
+export interface WithdrawConsentRequest {
+    ip_address?: string;
+    user_agent?: string;
+}
+export type DataExportFormat = 'json' | 'csv' | 'xml';
+export type DataExportStatus = 'pending' | 'processing' | 'completed' | 'failed' | 'expired';
+export type DeletionStatus = 'pending' | 'processing' | 'completed' | 'failed' | 'cancelled';
+export interface RequestDataExportRequest {
+    format?: DataExportFormat;
+    requested_by?: string;
+    include_categories?: string[];
+    exclude_categories?: string[];
+}
+export interface DataExportRequest {
+    id: string;
+    user_id: string;
+    tenant_id: string;
+    requested_by: string;
+    format: DataExportFormat;
+    status: DataExportStatus;
+    include_categories?: string[];
+    exclude_categories?: string[];
+    requested_at: string;
+    started_at?: string;
+    completed_at?: string;
+    expires_at?: string;
+    download_url?: string;
+    file_size_bytes?: number;
+    error_message?: string;
+    metadata?: Record<string, string>;
+}
+export interface ExportMetadata {
+    export_id: string;
+    user_id: string;
+    tenant_id: string;
+    exported_at: string;
+    format: DataExportFormat;
+    categories: string[];
+    schema_version: string;
+}
+export interface UserDataExport {
+    export_metadata: ExportMetadata;
+    profile?: {
+        id: string;
+        email: string;
+        name: string;
+        attributes?: Record<string, string>;
+        created: string;
+        updated: string;
+        last_auth?: string;
+    };
+    sessions?: Array<{
+        id: string;
+        started_at: string;
+        expires_at: string;
+        last_active: string;
+        ip_address?: string;
+        user_agent?: string;
+        auth_method: string;
+        ended_at?: string;
+    }>;
+    consents?: Array<{
+        purpose: ConsentPurpose;
+        status: ConsentStatus;
+        version: string;
+        granted_at?: string;
+        withdrawn_at?: string;
+    }>;
+    roles?: Array<{
+        role_id: string;
+        role_name: string;
+        assigned_at: string;
+    }>;
+    audit_logs?: Array<{
+        timestamp: string;
+        action: string;
+        resource: string;
+        ip_address?: string;
+        success: boolean;
+    }>;
+    credentials?: Array<{
+        id: string;
+        type: string;
+        name?: string;
+        created_at: string;
+        last_used_at: string;
+        attestation?: string;
+        transports?: string[];
+    }>;
+    mfa_info?: {
+        enabled: boolean;
+        method: string;
+        enrolled_at?: string;
+        backup_codes_remaining: number;
+    };
+}
+export interface RequestDeletionRequest {
+    requested_by?: string;
+    reason?: string;
+    delete_categories?: string[];
+    preserve_categories?: string[];
+    grace_period_days?: number;
+}
+export interface DeletionSummary {
+    profile_deleted: boolean;
+    sessions_deleted: number;
+    audit_logs_anonymized: number;
+    consents_deleted: number;
+    credentials_deleted: number;
+    role_assignments_removed: number;
+    tokens_revoked: number;
+    additional_data?: Record<string, number>;
+}
+export interface DeletionRequest {
+    id: string;
+    user_id: string;
+    tenant_id: string;
+    requested_by: string;
+    reason?: string;
+    status: DeletionStatus;
+    delete_categories?: string[];
+    preserve_categories?: string[];
+    requested_at: string;
+    grace_period_ends_at?: string;
+    started_at?: string;
+    completed_at?: string;
+    cancelled_at?: string;
+    cancelled_by?: string;
+    deleted_data_summary?: DeletionSummary;
+    error_message?: string;
+    metadata?: Record<string, string>;
+}
+export interface IAMSessionDeviceInfo {
+    id: string;
+    name: string;
+    type: string;
+    fingerprint: string;
+    trusted: boolean;
+}
+export interface IAMSession {
+    id: string;
+    created: string;
+    last_active: string;
+    expires_at: string;
+    mfa_verified: boolean;
+    ip_address: string;
+    user_agent: string;
+    device_info: IAMSessionDeviceInfo | null;
+}
+export interface ListSessionsOptions {
+    user_id?: string;
+    tenant_id?: string;
+}
+export interface ListIAMSessionsResponse {
+    sessions: IAMSession[];
+}
+export interface RevokeAllSessionsOptions {
+    except?: string;
+    user_id?: string;
+    tenant_id?: string;
+}
+export interface RevokeOtherSessionsResponse {
+    message: string;
+    kept_session_id: string;
+}
 export interface IAMClient {
     listUsers(tenantID: string): Promise<ListUsersResponse>;
     createUser(tenantID: string, req: CreateUserRequest): Promise<CreateUserResponse>;
@@ -226,6 +416,11 @@ export interface IAMClient {
     deleteUser(tenantID: string, userID: string): Promise<void>;
     assignRoleToUser(tenantID: string, userID: string, role: string): Promise<void>;
     revokeRoleFromUser(tenantID: string, userID: string, role: string): Promise<void>;
+    listSessions(opts?: ListSessionsOptions): Promise<ListIAMSessionsResponse>;
+    getSession(sessionID: string): Promise<IAMSession>;
+    revokeSession(sessionID: string): Promise<void>;
+    revokeAllSessions(opts?: RevokeAllSessionsOptions): Promise<void>;
+    revokeOtherSessions(keepSessionID: string): Promise<RevokeOtherSessionsResponse>;
     listTenants(): Promise<ListTenantsResponse>;
     createTenant(req: CreateTenantRequest): Promise<CreateTenantResponse>;
     updateTenant(tenantID: string, req: UpdateTenantRequest): Promise<IAMTenant>;
@@ -243,6 +438,16 @@ export interface IAMClient {
     activateFIDO2Begin(tenantID: string, token: string): Promise<Record<string, unknown>>;
     activateFIDO2Finish(tenantID: string, token: string, credential: Record<string, unknown>): Promise<import('./types.js').ActivationResponse>;
     activatePIV(tenantID: string, token: string, certPEM: string): Promise<import('./types.js').ActivationResponse>;
+    grantConsent(tenantID: string, userID: string, req: GrantConsentRequest): Promise<UserConsent>;
+    listUserConsents(tenantID: string, userID: string): Promise<UserConsent[]>;
+    getConsent(tenantID: string, userID: string, purpose: ConsentPurpose): Promise<UserConsent>;
+    withdrawConsent(tenantID: string, userID: string, purpose: ConsentPurpose, req?: WithdrawConsentRequest): Promise<UserConsent>;
+    requestDataExport(tenantID: string, userID: string, req?: RequestDataExportRequest): Promise<DataExportRequest>;
+    getExportStatus(tenantID: string, userID: string, exportID: string): Promise<DataExportRequest>;
+    downloadExport(tenantID: string, userID: string, exportID: string): Promise<UserDataExport>;
+    requestDeletion(tenantID: string, userID: string, req?: RequestDeletionRequest): Promise<DeletionRequest>;
+    getDeletionStatus(tenantID: string, userID: string, deletionID: string): Promise<DeletionRequest>;
+    cancelDeletion(tenantID: string, userID: string, deletionID: string, cancelledBy?: string): Promise<DeletionRequest>;
 }
 export interface KMSClient {
     listKeys(limit?: number): Promise<ListKeysResponse>;
