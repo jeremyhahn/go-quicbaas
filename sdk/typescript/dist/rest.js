@@ -2432,6 +2432,42 @@ class RestIAMClient {
     async deleteTenant(tenantID) {
         await this.fetchJSON(`/api/v1/tenants/${encodeURIComponent(tenantID)}`, { method: 'DELETE' });
     }
+    // Maps to GET /api/v1/tenants/{tenantID}
+    async getTenant(tenantID) {
+        // Same wire shape as a listTenants element: created/updated → *_at.
+        const t = await this.fetchJSON(`/api/v1/tenants/${encodeURIComponent(tenantID)}`);
+        return {
+            id: t.id ?? '',
+            name: t.name ?? '',
+            description: t.description ?? '',
+            created_at: t.created_at ?? t.created ?? '',
+            updated_at: t.updated_at ?? t.updated ?? '',
+        };
+    }
+    // Maps to GET /api/v1/tenants/{tenantID}/users/{userID}
+    async getUser(tenantID, userID) {
+        // Same wire shape as a listUsers element; normalised the same way.
+        const u = await this.fetchJSON(`/api/v1/tenants/${encodeURIComponent(tenantID)}/users/${encodeURIComponent(userID)}`);
+        return {
+            id: u.id ?? '',
+            tenant_id: u.tenant_id ?? tenantID,
+            username: u.username ?? u.name ?? u.email ?? '',
+            email: u.email ?? '',
+            lifecycle: u.lifecycle,
+            roles: u.roles ?? (u.role ? [u.role] : []),
+            created_at: u.created_at ?? u.created ?? '',
+            updated_at: u.updated_at ?? u.updated ?? '',
+        };
+    }
+    // Maps to GET /api/v1/tenants/{tenantID}/users/{userID}/sessions[?limit=N]
+    async listUserSessions(tenantID, userID, limit) {
+        const qs = limit !== undefined && limit > 0 ? `?limit=${limit}` : '';
+        return this.fetchJSON(`/api/v1/tenants/${encodeURIComponent(tenantID)}/users/${encodeURIComponent(userID)}/sessions${qs}`);
+    }
+    // Maps to DELETE /api/v1/tenants/{tenantID}/users/{userID}/sessions
+    async revokeAllUserSessions(tenantID, userID) {
+        await this.fetchJSON(`/api/v1/tenants/${encodeURIComponent(tenantID)}/users/${encodeURIComponent(userID)}/sessions`, { method: 'DELETE' });
+    }
     async listRoles(tenantID) {
         // Server returns {limit, offset, roles:[...]} — count field absent; derive it.
         const raw = await this.fetchJSON(`/api/v1/tenants/${encodeURIComponent(tenantID)}/roles`);
@@ -3168,6 +3204,48 @@ export class RestDEKClient {
         return this.http.fetchJSON(`/api/v1/kms/deks/${encodeURIComponent(path)}/reencrypt${query ? `?${query}` : ''}`);
     }
 }
+/**
+ * RestAttestationClient manages the attestation verifier's endorsements and
+ * reference values over REST (/api/v1/attestation/*).
+ */
+export class RestAttestationClient {
+    http;
+    constructor(baseUrl, config = {}) {
+        this.http = newFetchHelper(baseUrl, config);
+    }
+    // Maps to PUT /api/v1/attestation/endorsements/{name}
+    async putEndorsement(name, req) {
+        return this.http.fetchJSON(`/api/v1/attestation/endorsements/${encodeURIComponent(name)}`, { method: 'PUT', body: JSON.stringify(req) });
+    }
+    // Maps to GET /api/v1/attestation/endorsements[?kind=]
+    async listEndorsements(kind) {
+        const query = kind ? `?kind=${encodeURIComponent(kind)}` : '';
+        const wire = await this.http.fetchJSON(`/api/v1/attestation/endorsements${query}`);
+        return { ...wire, endorsements: wire?.endorsements ?? [] };
+    }
+    // Maps to DELETE /api/v1/attestation/endorsements/{name}
+    async deleteEndorsement(name) {
+        return this.http.fetchVoid(`/api/v1/attestation/endorsements/${encodeURIComponent(name)}`, { method: 'DELETE' });
+    }
+    // Maps to PUT /api/v1/attestation/reference-values/{name}
+    async putReferenceValues(name, signedCoRIM) {
+        const req = { signed_corim: signedCoRIM };
+        return this.http.fetchJSON(`/api/v1/attestation/reference-values/${encodeURIComponent(name)}`, { method: 'PUT', body: JSON.stringify(req) });
+    }
+    // Maps to GET /api/v1/attestation/reference-values/{name}
+    async getReferenceValues(name) {
+        return this.http.fetchJSON(`/api/v1/attestation/reference-values/${encodeURIComponent(name)}`);
+    }
+    // Maps to GET /api/v1/attestation/reference-values
+    async listReferenceValues() {
+        const wire = await this.http.fetchJSON('/api/v1/attestation/reference-values');
+        return { ...wire, reference_values: wire?.reference_values ?? [] };
+    }
+    // Maps to DELETE /api/v1/attestation/reference-values/{name}
+    async deleteReferenceValues(name) {
+        return this.http.fetchVoid(`/api/v1/attestation/reference-values/${encodeURIComponent(name)}`, { method: 'DELETE' });
+    }
+}
 // ---------------------------------------------------------------------------
 // RestDynamicSecretsClient — /api/v1/secrets/dynamic/* surface.
 // ---------------------------------------------------------------------------
@@ -3889,6 +3967,7 @@ export class RestClient {
     trust;
     crypto;
     dek;
+    attestation;
     dynamicSecrets;
     barrier;
     tenantBarrier;
@@ -3930,6 +4009,7 @@ export class RestClient {
         this.trust = new RestTrustClient(baseUrl, config);
         this.crypto = new RestCryptoClient(baseUrl, config);
         this.dek = new RestDEKClient(baseUrl, config);
+        this.attestation = new RestAttestationClient(baseUrl, config);
         this.dynamicSecrets = new RestDynamicSecretsClient(baseUrl, config);
         this.barrier = new RestBarrierClient(baseUrl, config);
         this.tenantBarrier = new RestTenantBarrierClient(baseUrl, config);

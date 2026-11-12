@@ -56,6 +56,7 @@ export declare class GrpcWebClient implements Client {
     readonly trust: any;
     readonly crypto: any;
     readonly dek: any;
+    readonly attestation: any;
     readonly dynamicSecrets: any;
     readonly barrier: BarrierClient;
     readonly tenantBarrier: any;

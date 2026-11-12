@@ -229,6 +229,8 @@ export class GrpcWebClient {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     dek = null;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    attestation = null;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     dynamicSecrets = null;
     barrier;
     // Per-tenant barrier is a REST-only surface; non-REST transports stub it.

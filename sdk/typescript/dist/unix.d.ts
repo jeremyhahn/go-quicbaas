@@ -26,6 +26,7 @@ export declare class UnixClient implements Client {
     readonly trust: any;
     readonly crypto: any;
     readonly dek: any;
+    readonly attestation: any;
     readonly dynamicSecrets: any;
     readonly barrier: any;
     readonly tenantBarrier: any;
