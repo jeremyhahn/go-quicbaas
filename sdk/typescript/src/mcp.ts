@@ -1361,9 +1361,11 @@ export class McpClient implements Client {
   readonly objectStorageAdmin: any = null;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   readonly parameters: any = null;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   readonly vectorAdmin: any = null;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   readonly xkmsFido2: any = null;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   readonly registry: any = null;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   readonly cache: any = null;
