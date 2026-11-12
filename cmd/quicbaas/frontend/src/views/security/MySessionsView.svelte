@@ -18,8 +18,10 @@
 
   It lists the authenticated caller's IAM sessions (GET /api/v1/iam/sessions),
   revokes one session (DELETE /api/v1/iam/sessions/{id}) and revokes every
-  other session (POST /api/v1/iam/sessions/revoke-others), each after a
-  confirmation dialog.
+  other session (POST /api/v1/iam/sessions/revoke-others), or signs out of
+  every session, this one included (DELETE /api/v1/iam/sessions), each after
+  a confirmation dialog. "Details" shows one session as GET
+  /api/v1/iam/sessions/{id} returns it.
 
   IAMSession carries no "current" flag today; a session the response marks
   with `current` or `is_current` is shown as the current one, and "Revoke
@@ -39,7 +41,7 @@
   // markers a server can use to say which session made the request.
   type SessionRow = IAMSession & { current?: boolean; is_current?: boolean };
 
-  type Pending = { kind: 'one'; session: SessionRow } | { kind: 'others' };
+  type Pending = { kind: 'one'; session: SessionRow } | { kind: 'others' } | { kind: 'all' };
 
   // ---------------------------------------------------------------------------
   // State
@@ -50,6 +52,12 @@
   let error: string | null = $state(null);
   let pending: Pending | null = $state(null);
   let revoking = $state(false);
+
+  // Session details dialog: the row it was opened for, and what getSession returned.
+  let detailsFor: SessionRow | null = $state(null);
+  let details: IAMSession | null = $state(null);
+  let detailsLoading = $state(false);
+  let detailsError: string | null = $state(null);
 
   const SESSION_COLUMNS: Column<SessionRow>[] = [
     { key: 'device', label: 'Device', searchable: true },
@@ -96,6 +104,9 @@
       if (pending.kind === 'one') {
         await client.iam.revokeSession(pending.session.id);
         showToast('success', 'Session revoked');
+      } else if (pending.kind === 'all') {
+        await client.iam.revokeAllSessions();
+        showToast('success', 'Signed out of every session');
       } else {
         if (!currentSession) throw new Error('The current session is unknown');
         await client.iam.revokeOtherSessions(currentSession.id);
@@ -108,6 +119,33 @@
     } finally {
       revoking = false;
     }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Details
+  // ---------------------------------------------------------------------------
+
+  async function openDetails(s: SessionRow): Promise<void> {
+    detailsFor = s;
+    details = null;
+    detailsError = null;
+    detailsLoading = true;
+    try {
+      const client = await getSDKClient();
+      const got = await client.iam.getSession(s.id);
+      if (detailsFor === s) details = got;
+    } catch (e) {
+      if (detailsFor === s) detailsError = e instanceof Error ? e.message : 'Failed to load the session';
+    } finally {
+      if (detailsFor === s) detailsLoading = false;
+    }
+  }
+
+  function closeDetails(): void {
+    detailsFor = null;
+    details = null;
+    detailsError = null;
+    detailsLoading = false;
   }
 
   // ---------------------------------------------------------------------------
@@ -139,6 +177,14 @@
         aria-label="Revoke other sessions"
       >
         Revoke Other Sessions
+      </button>
+      <button
+        class="btn btn-error btn-outline btn-sm"
+        disabled={sessions.length === 0}
+        onclick={() => { pending = { kind: 'all' }; }}
+        aria-label="Sign out of every session"
+      >
+        Sign out everywhere
       </button>
     {/snippet}
   </PageHeader>
@@ -208,6 +254,13 @@
           <td class="text-xs text-base-content/50">{formatDateTime(s.last_active)}</td>
           <td class="text-xs text-base-content/50">{formatDateTime(s.expires_at)}</td>
           <td>
+            <button
+              class="btn btn-ghost btn-xs"
+              onclick={() => { void openDetails(s); }}
+              aria-label={`Details for session ${deviceLabel(s)}`}
+            >
+              Details
+            </button>
             {#if !isCurrent(s)}
               <button
                 class="btn btn-ghost btn-xs text-error"
@@ -233,6 +286,11 @@
         <p class="text-sm text-base-content/70">
           Revoke the session on <span class="font-semibold">{deviceLabel(pending.session)}</span>?
           That device will be signed out.
+        </p>
+      {:else if pending.kind === 'all'}
+        <h3 class="text-base font-semibold mb-2">Sign Out Everywhere</h3>
+        <p class="text-sm text-base-content/70">
+          Sign out of every session, this one included? Every device, this one too, will be signed out.
         </p>
       {:else}
         <h3 class="text-base font-semibold mb-2">Revoke Other Sessions</h3>
@@ -261,6 +319,64 @@
       role="none"
       onclick={() => { pending = null; }}
       onkeydown={() => { pending = null; }}
+    ></div>
+  </div>
+{/if}
+
+<!-- Session details dialog -->
+{#if detailsFor !== null}
+  <div class="modal modal-open" role="dialog" aria-modal="true" aria-label="Session details">
+    <div class="modal-box max-w-md">
+      <h3 class="text-base font-semibold mb-2">Session Details</h3>
+      {#if detailsLoading}
+        <div class="space-y-2" aria-label="Session details loading">
+          <div class="skeleton h-4 w-full"></div>
+          <div class="skeleton h-4 w-3/4"></div>
+          <div class="skeleton h-4 w-1/2"></div>
+        </div>
+      {:else if detailsError}
+        <div class="alert alert-error text-sm" role="alert">
+          <span>{detailsError}</span>
+        </div>
+      {:else if details}
+        <dl class="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-sm">
+          <dt class="text-base-content/60">Session ID</dt>
+          <dd class="font-mono text-xs break-all">{details.id}</dd>
+          <dt class="text-base-content/60">Created</dt>
+          <dd>{formatDateTime(details.created)}</dd>
+          <dt class="text-base-content/60">Last active</dt>
+          <dd>{formatDateTime(details.last_active)}</dd>
+          <dt class="text-base-content/60">Expires</dt>
+          <dd>{formatDateTime(details.expires_at)}</dd>
+          <dt class="text-base-content/60">MFA verified</dt>
+          <dd>{details.mfa_verified ? 'Yes' : 'No'}</dd>
+          <dt class="text-base-content/60">IP address</dt>
+          <dd class="font-mono text-xs">{details.ip_address || '—'}</dd>
+          <dt class="text-base-content/60">User agent</dt>
+          <dd class="break-all">{details.user_agent || '—'}</dd>
+          {#if details.device_info}
+            <dt class="text-base-content/60">Device ID</dt>
+            <dd class="font-mono text-xs break-all">{details.device_info.id || '—'}</dd>
+            <dt class="text-base-content/60">Device name</dt>
+            <dd>{details.device_info.name || '—'}</dd>
+            <dt class="text-base-content/60">Device type</dt>
+            <dd>{details.device_info.type || '—'}</dd>
+            <dt class="text-base-content/60">Fingerprint</dt>
+            <dd class="font-mono text-xs break-all">{details.device_info.fingerprint || '—'}</dd>
+            <dt class="text-base-content/60">Trusted device</dt>
+            <dd>{details.device_info.trusted ? 'Yes' : 'No'}</dd>
+          {/if}
+        </dl>
+      {/if}
+      <div class="modal-action">
+        <button class="btn btn-ghost btn-sm" onclick={closeDetails}>Close</button>
+      </div>
+    </div>
+    <div
+      class="modal-backdrop"
+      role="none"
+      onclick={closeDetails}
+      onkeydown={closeDetails}
     ></div>
   </div>
 {/if}
