@@ -45,6 +45,8 @@ import type {
   TaskBlockKind,
   TaskConclusionReason,
   TaskFaultOrigin,
+  Task,
+  TaskResult,
   TaskSource,
 } from '@quicbaas/sdk';
 import { getSDKClient } from './sdkClient.ts';
@@ -245,58 +247,8 @@ export interface SessionInfo {
   job_id?: string;
 }
 
-export interface TaskResult {
-  success: boolean;
-  output?: string;
-  error?: string;
-}
-
-export interface Task {
-  id: string;
-  tenant_id: string;
-  team_name: string;
-  subject: string;
-  description: string;
-  status: TaskStatus;
-  assigned_to?: string;
-  created_by?: string;
-  dependencies?: string[];
-  blocks?: string[];
-  result?: TaskResult;
-  metadata?: Record<string, string>;
-  created_at: number;
-  updated_at: number;
-  claimed_at?: number;
-  completed_at?: number;
-  auto_spawn?: boolean;
-  spawned_job_id?: string;
-  spawned_at?: number;
-  // Generic Task model (stage 1a): provenance, attempt accounting, and the
-  // parked-on-a-person state. Absent on the wire until the server carries
-  // them; every view renders an absent field as an em-dash.
-  project_id?: string;
-  output_artifacts?: Artifact[];
-  input_artifacts?: Artifact[];
-  source?: TaskSource;
-  priority?: number;
-  attempts?: number;
-  attempt_budget?: number;
-  environment_faults?: number;
-  consecutive_environment_faults?: number;
-  retry_not_before?: number;
-  blocked_reason?: string;
-  block_kind?: TaskBlockKind;
-  status_changed_at?: number;
-  // Why the task stopped (go-quicbaas#947). charged_attempts, effective_budget,
-  // fault_class and fault_origin are derived by the server on every read.
-  question_attempts?: number;
-  block_fault_class?: string;
-  conclusion_reason?: TaskConclusionReason | string;
-  charged_attempts?: number;
-  effective_budget?: number;
-  fault_class?: string;
-  fault_origin?: TaskFaultOrigin;
-}
+// The store's task types are the SDK's, as the SDK client returns them.
+export type { Task, TaskResult };
 
 export interface BackendCapabilities {
   [key: string]: unknown;
