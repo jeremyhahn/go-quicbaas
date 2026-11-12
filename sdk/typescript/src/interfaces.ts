@@ -32,6 +32,13 @@ import type { CAClient } from './ca.js';
 import type { TrustClient } from './trust.js';
 import type { CryptoClient } from './crypto.js';
 import type { DEKClient } from './dek.js';
+import type {
+  TSBatchPoint,
+  TSWriteBatchResponse,
+  TSRetentionPolicy,
+  TSRetentionPolicyResponse,
+  TSSetRetentionPolicyResponse,
+} from './timeseries_admin.js';
 import type { DynamicSecretsClient } from './dynamicsecrets.js';
 
 import type {
@@ -736,6 +743,18 @@ export interface TimeSeriesClient {
   // deleteSeries deletes all data for a metric.
   // Maps to DELETE /api/v1/timeseries/series
   deleteSeries(metric: string): Promise<void>;
+
+  // writeBatch writes many data points in one request.
+  // Maps to POST /api/v1/timeseries/write-batch
+  writeBatch(points: TSBatchPoint[]): Promise<TSWriteBatchResponse>;
+
+  // getRetentionPolicy returns the retention policy of a metric.
+  // Maps to GET /api/v1/timeseries/retention/{metric}
+  getRetentionPolicy(metric: string): Promise<TSRetentionPolicyResponse>;
+
+  // setRetentionPolicy sets the retention policy of a metric.
+  // Maps to PUT /api/v1/timeseries/retention/{metric}
+  setRetentionPolicy(metric: string, policy: TSRetentionPolicy): Promise<TSSetRetentionPolicyResponse>;
 }
 
 // ---------------------------------------------------------------------------
