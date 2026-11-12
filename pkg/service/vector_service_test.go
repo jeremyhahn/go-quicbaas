@@ -2414,3 +2414,63 @@ func TestLocalPointsToSDK_Multiple(t *testing.T) {
 	result := localPointsToSDK(points)
 	assert.Len(t, result, 2)
 }
+
+func TestPerformIndexRebuild_UsesNamespaceMetric(t *testing.T) {
+	svc, storage, _, _ := newVecSvcWithSDK(t, "test-ns", 3)
+	storage.scanNamespaceFn = func(_ context.Context, _ string, opts *interfaces.VectorScanOptions) ([]*interfaces.VectorValue, error) {
+		if opts.Offset > 0 {
+			return nil, nil
+		}
+		return []*interfaces.VectorValue{{ID: 1, Embedding: []float32{1, 2, 3}}, {ID: 2, Embedding: []float32{4, 5, 6}}}, nil
+	}
+	var gotMetric string
+	svc.indexFactory = &vecMockVectorIndexFactory{createFn: func(config *interfaces.VectorIndexConfig) (interfaces.VectorIndex, error) {
+		gotMetric = config.DistanceMetric
+		return newVecMockVectorIndex(), nil
+	}}
+	job := &RebuildJobState{JobID: "jm", Namespace: "test-ns", InProgress: true, TotalVectors: 2, StartedAt: time.Now(), DistanceMetric: "COSINE"}
+	svc.jobMu.Lock()
+	svc.rebuildJobs["jm"] = job
+	svc.jobMu.Unlock()
+
+	err := svc.performIndexRebuild(tenantctx.WithSystem(context.Background()), "jm", "test-ns", nil)
+	require.NoError(t, err)
+	assert.Equal(t, "cosine", gotMetric)
+}
+
+func TestVectorIndexDistanceMetric(t *testing.T) {
+	tests := []struct {
+		stored string
+		want   string
+	}{
+		{"COSINE", "cosine"},
+		{"cosine", "cosine"},
+		{"DOT_PRODUCT", "dot_product"},
+		{"dot_product", "dot_product"},
+		{"L2", "l2"},
+		{"", "l2"},
+	}
+	for _, tt := range tests {
+		assert.Equal(t, tt.want, vectorIndexDistanceMetric(tt.stored), "stored=%q", tt.stored)
+	}
+}
+
+func TestGetRebuildProgress_TenantNamespace(t *testing.T) {
+	svc, _, _, _ := newVecSvcWithSDK(t, "test-ns", 128)
+	job := &RebuildJobState{JobID: "jt", Namespace: vectorTenantScopedNamespace("acme-corp", "test-ns"), InProgress: true, StartedAt: time.Now()}
+	svc.jobMu.Lock()
+	svc.rebuildJobs["jt"] = job
+	svc.jobMu.Unlock()
+
+	acme := tenantctx.WithTenant(context.Background(), "acme-corp")
+	resp, err := svc.GetRebuildProgress(acme, &GetRebuildProgressRequest{Namespace: "test-ns"})
+	require.NoError(t, err)
+	assert.Equal(t, "jt", resp.JobID)
+	assert.Equal(t, "test-ns", resp.Namespace)
+
+	other := tenantctx.WithTenant(context.Background(), "other-co")
+	_, err = svc.GetRebuildProgress(other, &GetRebuildProgressRequest{Namespace: "test-ns"})
+	require.Error(t, err)
+	_, err = svc.GetRebuildProgress(other, &GetRebuildProgressRequest{JobID: "jt"})
+	require.Error(t, err)
+}
