@@ -215,6 +215,9 @@ func (kb *XKMSBackend) CreateKey(ctx context.Context, attrs *kctypes.KeyAttribut
 
 	// Generate key using go-xkms
 	if isSymmetric {
+		if kb.legacySymmetricKeyExists(ctx, attrs.CN, kb.attrsToAlgorithmString(attrs)) {
+			return nil, api.NewAlreadyExistsError("XKMSBackend.CreateKey", "key", attrs.CN)
+		}
 		// Generate symmetric key under the type every lookup here addresses.
 		attrs.KeyType = symmetricKeyType
 		_, err := xkms.GenerateSymmetricKey(ctx, string(kb.backendType), attrs)
@@ -280,6 +283,10 @@ func (kb *XKMSBackend) ImportKey(ctx context.Context, keyID string, material []b
 	kind := "symmetric"
 	if !kb.isSymmetricAlgorithm(algorithm) {
 		kind = "asymmetric"
+	}
+
+	if kind == "symmetric" && kb.legacySymmetricKeyExists(ctx, keyID, algorithm) {
+		return nil, api.NewAlreadyExistsError("XKMSBackend.ImportKey", "key", keyID)
 	}
 
 	if err := xkms.ImportKeyMaterial(ctx, string(kb.backendType), attrs, material); err != nil {
@@ -694,6 +701,17 @@ func (kb *XKMSBackend) resolveSymmetricKID(ctx context.Context, keyID, algorithm
 		return legacyKID
 	}
 	return kid
+}
+
+// legacySymmetricKeyExists reports whether a symmetric key named keyID is
+// stored under the pre-#1768 encryption-typed kid. go-xkms checks existence
+// only at the secret-typed kid a new key is generated or imported under, so
+// without this check a new key would shadow the legacy key of the same name
+// and old ciphertext would stop decrypting.
+func (kb *XKMSBackend) legacySymmetricKeyExists(ctx context.Context, keyID, algorithm string) bool {
+	legacyKID := fmt.Sprintf("%s:%s:%s:%s", kb.backendType, legacySymmetricKeyTypeSegment, kb.algorithmToKeyIDFormat(algorithm), keyID)
+	_, err := xkms.GetSymmetricKey(ctx, legacyKID)
+	return err == nil
 }
 
 // deleteWithLegacyFallback deletes the key attrs names. When a symmetric key

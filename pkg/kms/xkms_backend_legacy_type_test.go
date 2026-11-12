@@ -21,6 +21,7 @@ import (
 
 	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
 
+	"github.com/jeremyhahn/go-quicbaas/pkg/api"
 	"github.com/jeremyhahn/go-quicbaas/pkg/config"
 	dbxkms "github.com/jeremyhahn/go-quicbaas/pkg/xkms"
 )
@@ -75,4 +76,45 @@ func TestXKMSBackend_LegacyEncryptionTypedKeyStaysReachable(t *testing.T) {
 
 	_, err = newBackend().GetKeyMetadata(ctx, "legacy-kek")
 	require.ErrorIs(t, err, ErrKeyNotFound)
+}
+
+// TestXKMSBackend_LegacyKeyNameCannotBeShadowed checks that a new or imported
+// symmetric key may not take the name of a legacy encryption-typed key, so
+// the legacy key keeps decrypting its ciphertext.
+func TestXKMSBackend_LegacyKeyNameCannotBeShadowed(t *testing.T) {
+	cleanup := initXKMSForTest(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	_, err := dbxkms.GenerateSymmetricKey(ctx, "software", &xkmssdk.KeyAttributes{
+		CN:                 "legacy-kek",
+		StoreType:          xkmssdk.StoreType("software"),
+		KeyType:            xkmssdk.KeyTypeEncryption,
+		SymmetricAlgorithm: xkmssdk.SymmetricAES256GCM,
+	})
+	require.NoError(t, err)
+
+	payload := []byte("payload")
+	encrypted, err := dbxkms.Encrypt(ctx, "software:encryption:aes256-gcm:legacy-kek", payload, &xkmssdk.EncryptOptions{})
+	require.NoError(t, err)
+
+	// A fresh backend has no in-memory record of the legacy key name.
+	backend, err := NewXKMSBackend(&XKMSBackendConfig{
+		BackendType: config.BackendTypeSoftware,
+		Logger:      &mockLogger{},
+	})
+	require.NoError(t, err)
+	ct, err := backend.serializeEncryptedData(encrypted)
+	require.NoError(t, err)
+
+	_, err = backend.CreateKey(ctx, &xkmssdk.KeyAttributes{CN: "legacy-kek", SymmetricAlgorithm: xkmssdk.SymmetricAES256GCM})
+	var exists *api.AlreadyExistsError
+	require.ErrorAs(t, err, &exists)
+
+	_, err = backend.ImportKey(ctx, "legacy-kek", make([]byte, 32), "AES-256-GCM", nil)
+	require.ErrorAs(t, err, &exists)
+
+	got, err := backend.Decrypt(ctx, "legacy-kek", ct, nil)
+	require.NoError(t, err)
+	require.Equal(t, payload, got)
 }
