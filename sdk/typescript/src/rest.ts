@@ -3736,6 +3736,59 @@ async listSessions(
     );
   }
 
+  // Maps to GET /api/v1/tenants/{tenantID}/policies/{policyName}
+  async getPolicy(tenantID: string, policyName: string): Promise<import('./interfaces.js').IAMPolicyDocument> {
+    return this.fetchJSON<import('./interfaces.js').IAMPolicyDocument>(
+      `/api/v1/tenants/${encodeURIComponent(tenantID)}/policies/${encodeURIComponent(policyName)}`,
+    );
+  }
+
+  // Maps to POST /api/v1/tenants/{tenantID}/policies/validate[?name=]
+  async validatePolicy(
+    tenantID: string,
+    req: import('./interfaces.js').CreatePolicyRequest,
+    name?: string,
+  ): Promise<import('./interfaces.js').IAMPolicyValidationResult> {
+    const query = name !== undefined ? `?name=${encodeURIComponent(name)}` : '';
+    return this.fetchJSON<import('./interfaces.js').IAMPolicyValidationResult>(
+      `/api/v1/tenants/${encodeURIComponent(tenantID)}/policies/validate${query}`,
+      { method: 'POST', body: JSON.stringify(req) },
+    );
+  }
+
+  // Maps to POST /api/v1/tenants/{tenantID}/policies/test
+  async testPolicy(
+    tenantID: string,
+    req: import('./interfaces.js').IAMCheckRequest,
+  ): Promise<import('./interfaces.js').IAMCheckResponse> {
+    return this.fetchJSON<import('./interfaces.js').IAMCheckResponse>(
+      `/api/v1/tenants/${encodeURIComponent(tenantID)}/policies/test`,
+      { method: 'POST', body: JSON.stringify(req) },
+    );
+  }
+
+  // Maps to POST /api/v1/tenants/{tenantID}/policies/simulate
+  async simulatePolicy(
+    tenantID: string,
+    req: import('./interfaces.js').IAMPolicySimulationRequest,
+  ): Promise<import('./interfaces.js').IAMPolicySimulationResult> {
+    return this.fetchJSON<import('./interfaces.js').IAMPolicySimulationResult>(
+      `/api/v1/tenants/${encodeURIComponent(tenantID)}/policies/simulate`,
+      { method: 'POST', body: JSON.stringify(req) },
+    );
+  }
+
+  // Maps to POST /api/v1/tenants/{tenantID}/policies/effective-permissions
+  async getEffectivePermissions(
+    tenantID: string,
+    req: import('./interfaces.js').IAMEffectivePermissionsRequest,
+  ): Promise<import('./interfaces.js').IAMEffectivePermissionsResult> {
+    return this.fetchJSON<import('./interfaces.js').IAMEffectivePermissionsResult>(
+      `/api/v1/tenants/${encodeURIComponent(tenantID)}/policies/effective-permissions`,
+      { method: 'POST', body: JSON.stringify(req) },
+    );
+  }
+
   // THE TENANT IS A PATH SEGMENT, and it is not optional. Invitations live in
   // their tenant's own store, so a token issued for one tenant is simply absent
   // from another — isolation is structural rather than a check that could be
