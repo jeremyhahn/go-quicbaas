@@ -44,8 +44,9 @@
     UpdatePolicyRequest,
     ConsentPurpose,
     UserConsent,
+    IAMSession,
   } from '@quicbaas/sdk';
-  import { ShieldCheck, UserPlus, Pencil, Trash2, UserCheck, ToggleLeft, RefreshCw, FileCheck } from 'lucide-svelte';
+  import { ShieldCheck, UserPlus, Pencil, Trash2, UserCheck, ToggleLeft, RefreshCw, FileCheck, MonitorSmartphone } from 'lucide-svelte';
   import EmptyState from '../../components/core/EmptyState.svelte';
   import { routerStore, routeIAMTab } from '../../stores/router.svelte.ts';
   import { formatDateTime } from '../../lib/time.ts';
@@ -240,6 +241,18 @@
   let grantingConsent = $state(false);
   // The purpose whose withdraw is in flight, if any.
   let withdrawingPurpose: ConsentPurpose | null = $state(null);
+
+  // ---------------------------------------------------------------------------
+  // Sessions dialog state
+  // ---------------------------------------------------------------------------
+
+  let userForSessions: IAMUser | null = $state(null);
+  let userSessions: IAMSession[] = $state([]);
+  let sessionsLoading = $state(false);
+  let sessionsError: string | null = $state(null);
+  // The revoke-all confirmation is open.
+  let confirmRevokeSessions = $state(false);
+  let revokingSessions = $state(false);
 
   // ---------------------------------------------------------------------------
   // Create Tenant dialog state
@@ -660,6 +673,58 @@
       consentsError = e instanceof Error ? e.message : 'Failed to withdraw consent';
     } finally {
       withdrawingPurpose = null;
+    }
+  }
+
+  async function loadUserSessions(user: IAMUser): Promise<void> {
+    sessionsLoading = true;
+    try {
+      const client = await getSDKClient();
+      const resp = await client.iam.listUserSessions(selectedTenantID, user.id);
+      // Drop a response that lands after the dialog closed or moved to another user.
+      if (userForSessions?.id === user.id) {
+        userSessions = resp?.sessions ?? [];
+      }
+    } catch (e) {
+      if (userForSessions?.id === user.id) {
+        sessionsError = e instanceof Error ? e.message : 'Failed to load sessions';
+      }
+    } finally {
+      sessionsLoading = false;
+    }
+  }
+
+  function openSessions(user: IAMUser): void {
+    userForSessions = user;
+    userSessions = [];
+    sessionsError = null;
+    confirmRevokeSessions = false;
+    revokingSessions = false;
+    void loadUserSessions(user);
+  }
+
+  function closeSessions(): void {
+    userForSessions = null;
+    sessionsError = null;
+    confirmRevokeSessions = false;
+  }
+
+  async function confirmRevokeAllSessions(): Promise<void> {
+    if (!userForSessions) return;
+    const user = userForSessions;
+    sessionsError = null;
+    revokingSessions = true;
+    try {
+      const client = await getSDKClient();
+      await client.iam.revokeAllUserSessions(selectedTenantID, user.id);
+      showToast({ message: `All sessions of "${user.username}" revoked`, type: 'success' });
+      confirmRevokeSessions = false;
+      await loadUserSessions(user);
+    } catch (e) {
+      confirmRevokeSessions = false;
+      sessionsError = e instanceof Error ? e.message : 'Failed to revoke sessions';
+    } finally {
+      revokingSessions = false;
     }
   }
 
@@ -1130,6 +1195,14 @@
                   <FileCheck class="h-3 w-3" />
                 </button>
                 <button
+                  class="btn btn-ghost btn-xs"
+                  title="Sessions"
+                  aria-label={`Sessions of ${user.username}`}
+                  onclick={() => openSessions(user)}
+                >
+                  <MonitorSmartphone class="h-3 w-3" />
+                </button>
+                <button
                   class="btn btn-ghost btn-xs text-error"
                   title={`Delete user ${user.username}`}
                   aria-label={`Delete user ${user.username}`}
@@ -1529,6 +1602,69 @@
     </div>
     <div class="modal-backdrop" role="none" onclick={closeConsents} onkeydown={closeConsents}></div>
   </div>
+{/if}
+
+<!-- =========================================================================
+     SESSIONS DIALOG
+     ========================================================================= -->
+{#if userForSessions}
+  <div class="modal modal-open" role="dialog" aria-modal="true" aria-label="Sessions dialog">
+    <div class="modal-box max-w-3xl">
+      <h3 class="text-base font-semibold mb-4">Sessions of <span class="font-mono text-primary">{userForSessions.username}</span></h3>
+      {#if sessionsError}
+        <div class="alert alert-error text-sm mb-3" role="alert">{sessionsError}</div>
+      {/if}
+      {#if sessionsLoading && userSessions.length === 0}
+        <div class="flex items-center gap-2 py-2 mb-3">
+          <span class="loading loading-spinner loading-xs"></span>
+          <span class="text-sm text-base-content/50">Loading sessions…</span>
+        </div>
+      {:else if userSessions.length === 0}
+        <p class="text-sm text-base-content/50 mb-3">No active sessions</p>
+      {:else}
+        <div class="overflow-x-auto mb-3">
+          <table class="table table-xs" aria-label="User sessions">
+            <thead>
+              <tr><th>Created</th><th>Last active</th><th>Expires</th><th>IP address</th><th>User agent</th><th>MFA</th><th>Device</th></tr>
+            </thead>
+            <tbody>
+              {#each userSessions as s (s.id)}
+                <tr>
+                  <td class="text-xs">{formatDateTime(s.created)}</td>
+                  <td class="text-xs">{formatDateTime(s.last_active)}</td>
+                  <td class="text-xs">{formatDateTime(s.expires_at)}</td>
+                  <td class="font-mono text-xs">{s.ip_address || '—'}</td>
+                  <td class="text-xs max-w-xs truncate" title={s.user_agent}>{s.user_agent || '—'}</td>
+                  <td><span class="badge badge-xs {s.mfa_verified ? 'badge-success' : 'badge-ghost'}">{s.mfa_verified ? 'verified' : 'no'}</span></td>
+                  <td class="text-xs">{s.device_info?.name || '—'}</td>
+                </tr>
+              {/each}
+            </tbody>
+          </table>
+        </div>
+      {/if}
+      <div class="modal-action">
+        <button class="btn btn-ghost btn-sm" onclick={closeSessions}>Close</button>
+        <button class="btn btn-error btn-sm" disabled={revokingSessions || userSessions.length === 0} onclick={() => { confirmRevokeSessions = true; }}>Revoke all sessions</button>
+      </div>
+    </div>
+    <div class="modal-backdrop" role="none" onclick={closeSessions} onkeydown={closeSessions}></div>
+  </div>
+  {#if confirmRevokeSessions}
+    <div class="modal modal-open" role="dialog" aria-modal="true" aria-label="Revoke sessions confirmation">
+      <div class="modal-box max-w-sm">
+        <h3 class="text-base font-semibold mb-2">Revoke All Sessions?</h3>
+        <p class="text-sm text-base-content/70">
+          Sign <span class="font-mono font-semibold">{userForSessions.username}</span> out of every session? They must sign in again.
+        </p>
+        <div class="modal-action">
+          <button class="btn btn-ghost btn-sm" onclick={() => { confirmRevokeSessions = false; }}>Cancel</button>
+          <button class="btn btn-error btn-sm" disabled={revokingSessions} onclick={confirmRevokeAllSessions}>{revokingSessions ? 'Revoking…' : 'Revoke'}</button>
+        </div>
+      </div>
+      <div class="modal-backdrop" role="none" onclick={() => { confirmRevokeSessions = false; }} onkeydown={() => { confirmRevokeSessions = false; }}></div>
+    </div>
+  {/if}
 {/if}
 
 <!-- =========================================================================
