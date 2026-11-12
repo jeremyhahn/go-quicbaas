@@ -24,6 +24,7 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 // errRoleAssignNotGranted is the refusal roleAssignAuthorizer returns.
@@ -35,9 +36,14 @@ type roleAssignAuthorizer struct {
 	granted map[string]bool
 }
 
-func (a roleAssignAuthorizer) Authorize(_ context.Context, subject *iam.Subject, resource, action string) error {
+func (a roleAssignAuthorizer) Authorize(ctx context.Context, subject *iam.Subject, resource, action string) error {
 	if resource == adminResourceRoles && action == adminActionAssign && !a.granted[subject.ID] {
 		return errRoleAssignNotGranted
+	}
+	if resource == adminResourceRoles && action == adminActionAssign {
+		if tenant, ok := tenantctx.Lookup(ctx); !ok || tenant != subject.TenantID {
+			return errRoleAssignNotGranted
+		}
 	}
 	return nil
 }
@@ -102,6 +108,7 @@ func TestHandleIAMUserCreate_RolesRequireRolesAssign(t *testing.T) {
 		{"bound caller with roles:assign is allowed", bound("assigner"), "all@example.com", true, false},
 		{"create without roles skips the check", bound("plain"), "nor@example.com", false, false},
 		{"unbound host context is unrestricted", context.Background(), "hst@example.com", true, false},
+		{"bound caller of another tenant is refused", auth.SubjectIntoContext(context.Background(), interfaces.Subject{ID: "assigner", TenantID: "t-2"}), "oth@example.com", true, true},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

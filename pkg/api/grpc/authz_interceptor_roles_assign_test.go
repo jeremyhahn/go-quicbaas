@@ -109,3 +109,45 @@ func TestUnaryAuthorizationInterceptor_UserWriteMappedAndRolesAssignReached(t *t
 		})
 	}
 }
+
+// TestAuthorizeGRPCArguments_UpdateUserLifecycleRequiresEnableOrDisable pins
+// the lifecycle rule: moving a user to active needs users:enable, to any
+// other lifecycle users:disable, besides users:update.
+func TestAuthorizeGRPCArguments_UpdateUserLifecycleRequiresEnableOrDisable(t *testing.T) {
+	method := iampb.IAMService_UpdateUser_FullMethodName
+	tests := []struct {
+		name    string
+		scp     map[string]bool
+		req     *iampb.UpdateUserRequest
+		allowed bool
+	}{
+		{"active with users:update only is refused", map[string]bool{"users:update": true}, &iampb.UpdateUserRequest{Lifecycle: "active"}, false},
+		{"active with users:enable is allowed", map[string]bool{"users:update": true, "users:enable": true}, &iampb.UpdateUserRequest{Lifecycle: "active"}, true},
+		{"suspended with users:enable only is refused", map[string]bool{"users:update": true, "users:enable": true}, &iampb.UpdateUserRequest{Lifecycle: "suspended"}, false},
+		{"suspended with users:disable is allowed", map[string]bool{"users:update": true, "users:enable": true, "users:disable": true}, &iampb.UpdateUserRequest{Lifecycle: "suspended"}, true},
+		{"no lifecycle and no roles needs users:update only", map[string]bool{"users:update": true}, &iampb.UpdateUserRequest{}, true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			authz := &scopeSetAuthorizer{token: "tok", scp: tc.scp}
+			err := authorizeGRPCArguments(bearerContext("tok"), method, tc.req, authz)
+			if tc.allowed {
+				require.NoError(t, err)
+				return
+			}
+			require.Error(t, err)
+			assert.Equal(t, codes.PermissionDenied, status.Code(err))
+		})
+	}
+
+	t.Run("interceptor refuses active with users:update only", func(t *testing.T) {
+		called := false
+		handler := func(context.Context, interface{}) (interface{}, error) { called = true; return nil, nil }
+		authz := &scopeSetAuthorizer{token: "tok", scp: map[string]bool{"users:update": true}}
+		info := &grpc.UnaryServerInfo{FullMethod: method}
+
+		_, err := UnaryAuthorizationInterceptor(authz)(bearerContext("tok"), &iampb.UpdateUserRequest{Lifecycle: "active"}, info, handler)
+		assert.False(t, called, "the handler ran without users:enable")
+		assert.Equal(t, codes.PermissionDenied, status.Code(err))
+	})
+}
