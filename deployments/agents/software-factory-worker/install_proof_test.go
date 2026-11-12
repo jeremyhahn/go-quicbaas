@@ -76,6 +76,24 @@ func TestDockerfile_BaseImageCarriesTheJDK(t *testing.T) {
 	}
 }
 
+// TestDockerfile_NodeWebStorageIsOffAfterTheNodeInstall pins #2391: Node 26's
+// global localStorage shadows jsdom's, so the image must set
+// NODE_OPTIONS=--no-experimental-webstorage, after Node is installed.
+func TestDockerfile_NodeWebStorageIsOffAfterTheNodeInstall(t *testing.T) {
+	text := string(Dockerfile)
+	env := strings.Index(text, "\nENV NODE_OPTIONS=--no-experimental-webstorage\n")
+	if env < 0 {
+		t.Fatal("the Dockerfile does not set ENV NODE_OPTIONS=--no-experimental-webstorage")
+	}
+	install := strings.Index(text, `test "$(node --version)" = "${NODE_VERSION}"`)
+	if install < 0 {
+		t.Fatal("the Dockerfile's Node install step was not found")
+	}
+	if env < install {
+		t.Error("ENV NODE_OPTIONS=--no-experimental-webstorage must come after the Node install")
+	}
+}
+
 // TestProbes_ToolchainChecksJavaAndKotlinLsp proves the toolchain probe fails
 // an image whose java is not the pinned major, or whose kotlin-lsp is not on
 // the login PATH: the two tools #1746 adds are certified like every other.

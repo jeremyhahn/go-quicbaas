@@ -633,6 +633,14 @@ RUN set -eux; \
     rm -f "/tmp/$tarball" /usr/local/CHANGELOG.md /usr/local/README.md /usr/local/LICENSE; \
     test "$(node --version)" = "${NODE_VERSION}"
 
+# NODE 26'S BUILT-IN WEB STORAGE IS TURNED OFF. Node 26 defines a global
+# localStorage that shadows jsdom's window.localStorage, so a project's jsdom
+# web tests see Node's store and fail (go-xkms: 90 of 111, #2391). The flag
+# keeps the pinned Node and drops only that global. /etc/profile resets PATH,
+# not NODE_OPTIONS, so the `sh -lc` the agent runs keeps it; the toolchain
+# probe checks that localStorage is undefined.
+ENV NODE_OPTIONS=--no-experimental-webstorage
+
 # THE RELEASE-BINARY LANGUAGE SERVERS serena drives: clangd (C/C++),
 # rust-analyzer (Rust) and marksman (markdown). Each from its project's own
 # release, its SHA-256 per architecture pinned beside the version as the
