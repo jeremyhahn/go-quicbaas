@@ -53,6 +53,7 @@ import type {
   TSRetentionPolicyResponse,
   TSSetRetentionPolicyResponse,
 } from './timeseries_admin.js';
+import type { CacheClient } from './cache.js';
 import type { DynamicSecretsClient } from './dynamicsecrets.js';
 
 import type {
@@ -2778,6 +2779,11 @@ export interface Client {
    * Paths: /api/v1/registry/*.
    */
   readonly registry: RegistryClient;
+  /**
+   * cache reads the server's L1 cache statistics and configuration, clears
+   * the cache and updates its configuration. Paths: /api/v1/cache/*.
+   */
+  readonly cache: CacheClient;
   /**
    * dynamicSecrets manages credential-generation roles, on-demand
    * short-lived credential minting, and lease renewal/revocation.

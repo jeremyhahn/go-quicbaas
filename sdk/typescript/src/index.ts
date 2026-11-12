@@ -593,6 +593,14 @@ export type {
   TSSetRetentionPolicyResponse,
 } from './timeseries_admin.js';
 export type {
+  CacheClient,
+  CacheStatsResponse,
+  CacheClearResponse,
+  CacheConfigResponse,
+  CacheConfigUpdateRequest,
+  CacheConfigUpdateResponse,
+} from './cache.js';
+export type {
   DynamicSecretsClient,
   DynamicSecretRole,
   CreateRoleRequest as DynamicSecretCreateRoleRequest,

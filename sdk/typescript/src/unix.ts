@@ -307,6 +307,8 @@ export class UnixClient implements Client {
   readonly xkmsFido2: any = null;
   readonly registry: any = null;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  readonly cache: any = null;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   readonly dynamicSecrets: any = null;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   readonly barrier: any = null;
