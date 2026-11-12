@@ -1021,6 +1021,57 @@ export interface DeletionRequest {
   metadata?: Record<string, string>;
 }
 
+// IAMSessionDeviceInfo is the device a session was opened from, as the IAM
+// session handlers write it.
+export interface IAMSessionDeviceInfo {
+  id: string;
+  name: string;
+  type: string;
+  fingerprint: string;
+  trusted: boolean;
+}
+
+// IAMSession is one sanitized session of the authenticated caller. Times are
+// RFC 3339 strings.
+export interface IAMSession {
+  id: string;
+  created: string;
+  last_active: string;
+  expires_at: string;
+  mfa_verified: boolean;
+  ip_address: string;
+  user_agent: string;
+  device_info: IAMSessionDeviceInfo | null;
+}
+
+// ListSessionsOptions are the query parameters GET /api/v1/iam/sessions
+// reads. The server lists the authenticated caller's sessions; a user_id or
+// tenant_id that does not match the caller is rejected with 403.
+export interface ListSessionsOptions {
+  user_id?: string;
+  tenant_id?: string;
+}
+
+// ListIAMSessionsResponse is the body of GET /api/v1/iam/sessions.
+export interface ListIAMSessionsResponse {
+  sessions: IAMSession[];
+}
+
+// RevokeAllSessionsOptions are the query parameters DELETE
+// /api/v1/iam/sessions reads. except keeps that one session of the caller.
+export interface RevokeAllSessionsOptions {
+  except?: string;
+  user_id?: string;
+  tenant_id?: string;
+}
+
+// RevokeOtherSessionsResponse is the body of POST
+// /api/v1/iam/sessions/revoke-others.
+export interface RevokeOtherSessionsResponse {
+  message: string;
+  kept_session_id: string;
+}
+
 export interface IAMClient {
   // listUsers returns all users within a tenant.
   // Maps to GET /api/v1/tenants/{tenantID}/users
@@ -1045,6 +1096,28 @@ export interface IAMClient {
   // revokeRoleFromUser removes a role from a user.
   // Maps to DELETE /api/v1/tenants/{tenantID}/users/{userID}/roles/{role}
   revokeRoleFromUser(tenantID: string, userID: string, role: string): Promise<void>;
+
+  // listSessions returns the authenticated caller's sessions.
+  // Maps to GET /api/v1/iam/sessions
+  listSessions(opts?: ListSessionsOptions): Promise<ListIAMSessionsResponse>;
+
+  // getSession returns one of the authenticated caller's sessions.
+  // Maps to GET /api/v1/iam/sessions/{id}
+  getSession(sessionID: string): Promise<IAMSession>;
+
+  // revokeSession revokes one of the authenticated caller's sessions.
+  // Maps to DELETE /api/v1/iam/sessions/{id}
+  revokeSession(sessionID: string): Promise<void>;
+
+  // revokeAllSessions revokes all the authenticated caller's sessions, except
+  // the one opts.except names.
+  // Maps to DELETE /api/v1/iam/sessions
+  revokeAllSessions(opts?: RevokeAllSessionsOptions): Promise<void>;
+
+  // revokeOtherSessions revokes every session of the authenticated caller
+  // except keepSessionID.
+  // Maps to POST /api/v1/iam/sessions/revoke-others
+  revokeOtherSessions(keepSessionID: string): Promise<RevokeOtherSessionsResponse>;
 
   // listTenants returns all tenants.
   // Maps to GET /api/v1/tenants

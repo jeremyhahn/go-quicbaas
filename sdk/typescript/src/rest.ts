@@ -3273,6 +3273,52 @@ class RestIAMClient implements IAMClient {
     );
   }
 
+async listSessions(
+    opts?: import('./interfaces.js').ListSessionsOptions,
+  ): Promise<import('./interfaces.js').ListIAMSessionsResponse> {
+    const params = new URLSearchParams();
+    if (opts?.user_id) params.set('user_id', opts.user_id);
+    if (opts?.tenant_id) params.set('tenant_id', opts.tenant_id);
+    const qs = params.toString();
+    return this.fetchJSON<import('./interfaces.js').ListIAMSessionsResponse>(
+      `/api/v1/iam/sessions${qs ? `?${qs}` : ''}`,
+    );
+  }
+
+  async getSession(sessionID: string): Promise<import('./interfaces.js').IAMSession> {
+    return this.fetchJSON<import('./interfaces.js').IAMSession>(
+      `/api/v1/iam/sessions/${encodeURIComponent(sessionID)}`,
+    );
+  }
+
+  async revokeSession(sessionID: string): Promise<void> {
+    await this.fetchJSON<void>(
+      `/api/v1/iam/sessions/${encodeURIComponent(sessionID)}`,
+      { method: 'DELETE' },
+    );
+  }
+
+  async revokeAllSessions(opts?: import('./interfaces.js').RevokeAllSessionsOptions): Promise<void> {
+    const params = new URLSearchParams();
+    if (opts?.except) params.set('except', opts.except);
+    if (opts?.user_id) params.set('user_id', opts.user_id);
+    if (opts?.tenant_id) params.set('tenant_id', opts.tenant_id);
+    const qs = params.toString();
+    await this.fetchJSON<void>(
+      `/api/v1/iam/sessions${qs ? `?${qs}` : ''}`,
+      { method: 'DELETE' },
+    );
+  }
+
+  async revokeOtherSessions(
+    keepSessionID: string,
+  ): Promise<import('./interfaces.js').RevokeOtherSessionsResponse> {
+    return this.fetchJSON<import('./interfaces.js').RevokeOtherSessionsResponse>(
+      '/api/v1/iam/sessions/revoke-others',
+      { method: 'POST', body: JSON.stringify({ keep_session_id: keepSessionID }) },
+    );
+  }
+
   async updateTenant(tenantID: string, req: import('./interfaces.js').UpdateTenantRequest): Promise<IAMTenant> {
     return this.fetchJSON<IAMTenant>(
       `/api/v1/tenants/${encodeURIComponent(tenantID)}`,
