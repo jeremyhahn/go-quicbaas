@@ -150,6 +150,7 @@ Verbs:
   clear-safety        Remove custom AEAD safety limits
   reencrypt           Start background re-encryption to a new DEK version
   reencrypt-progress  Show re-encryption progress
+  tenant              Per-tenant DEK keyring (status, rotate, retire)
 
 All verbs route through Security().DEK() on the active SDK transport
 (rest, grpc, quic, mcp, unix, embedded).`,
@@ -168,6 +169,7 @@ All verbs route through Security().DEK() on the active SDK transport
 	cmd.AddCommand(newDEKClearSafetyCommand())
 	cmd.AddCommand(newDEKReencryptCommand())
 	cmd.AddCommand(newDEKReencryptProgressCommand())
+	cmd.AddCommand(newDEKTenantCommand())
 	return cmd
 }
 
