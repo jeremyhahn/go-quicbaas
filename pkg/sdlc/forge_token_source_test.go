@@ -327,6 +327,24 @@ func TestCommandTokenSource_RunnerCancelledReturnsCtxErr(t *testing.T) {
 	}
 }
 
+// TestRunForgeTokenCommand_TimeoutBoundsInheritedPipes checks that the
+// command's timeout also bounds the wait for its output pipes when a
+// descendant that inherited stdout outlives the killed command.
+func TestRunForgeTokenCommand_TimeoutBoundsInheritedPipes(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+
+	start := time.Now()
+	_, err := runForgeTokenCommand(ctx, []string{"/bin/sh", "-c", "sleep 30 & sleep 30"}, nil)
+	elapsed := time.Since(start)
+	if err == nil {
+		t.Fatal("runForgeTokenCommand returned no error, want a timeout error")
+	}
+	if elapsed > 5*time.Second {
+		t.Fatalf("runForgeTokenCommand took %v, want under 5s", elapsed)
+	}
+}
+
 func TestNewCommandTokenSource_Defaults(t *testing.T) {
 	s, err := NewCommandTokenSource(CommandTokenSourceConfig{Argv: []string{testForgeTokenArgv}})
 	if err != nil {
