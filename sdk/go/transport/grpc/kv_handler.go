@@ -51,9 +51,31 @@ func newKVHandler(conn *grpc.ClientConn) *kvHandler {
 	return &kvHandler{conn: conn}
 }
 
+// kvMethodFunc converts one SDK request onto its QuicBaaS RPC and back.
+type kvMethodFunc func(h *kvHandler, ctx context.Context, client pb.QuicBaaSClient, req interface{}) (interface{}, error)
+
+// batchMethods routes the quicbaas.Batch service's verbs, as the batch client
+// (sdk/go/client/batch) names them.
+var batchMethods = map[string]kvMethodFunc{
+	"Put":    (*kvHandler).handleBatchPut,
+	"Get":    (*kvHandler).handleBatchGet,
+	"Delete": (*kvHandler).handleBatchDelete,
+}
+
 // handleRequest routes KV requests to the appropriate handler based on method name.
 func (h *kvHandler) handleRequest(ctx context.Context, svc, method string, req interface{}) (interface{}, error) {
 	client := pb.NewQuicBaaSClient(h.conn)
+
+	// The batch client sends quicbaas.Batch with bare verbs (Put, Get,
+	// Delete) that would otherwise collide with the KV verbs below.
+	if strings.HasPrefix(svc, batchServicePrefix) {
+		fn, ok := batchMethods[method]
+		if !ok {
+			return nil, errors.NewUnimplemented("kvHandler.handleRequest",
+				"unsupported batch method: "+method)
+		}
+		return fn(h, ctx, client, req)
+	}
 
 	// Route based on method name.
 	switch method {

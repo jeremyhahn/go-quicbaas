@@ -147,6 +147,70 @@ func (s *Server) HandleBatchPut(w http.ResponseWriter, r *http.Request) {
 	RespondJSON(w, r, http.StatusOK, resp)
 }
 
+// batchExecuteOpTypes maps the wire operation type of a mixed batch to the
+// service operation type.
+var batchExecuteOpTypes = map[string]service.BatchExecuteOpType{
+	"PUT":    service.BatchExecutePut,
+	"DELETE": service.BatchExecuteDelete,
+}
+
+// HandleBatchExecute handles a mixed batch of puts and deletes that commits
+// atomically through one qrdb batch.
+func (s *Server) HandleBatchExecute(w http.ResponseWriter, r *http.Request) {
+	defer r.Body.Close()
+
+	var batchReq BatchExecuteRequest
+	if err := json.NewDecoder(r.Body).Decode(&batchReq); err != nil {
+		RespondError(w, r, http.StatusBadRequest, &ValidationError{
+			Message: "invalid JSON body",
+		})
+		return
+	}
+
+	if len(batchReq.Operations) == 0 {
+		RespondError(w, r, http.StatusBadRequest, &ValidationError{
+			Message: "batch operations cannot be empty",
+		})
+		return
+	}
+
+	serviceReq := &service.BatchExecuteRequest{
+		Operations: make([]*service.BatchExecuteOperation, len(batchReq.Operations)),
+	}
+	for i, op := range batchReq.Operations {
+		opType, ok := batchExecuteOpTypes[op.Type]
+		if !ok {
+			RespondError(w, r, http.StatusBadRequest, &ValidationError{
+				Field:   "type",
+				Message: "type must be PUT or DELETE for all operations",
+			})
+			return
+		}
+		serviceReq.Operations[i] = &service.BatchExecuteOperation{
+			Type:       opType,
+			EntityType: op.EntityType,
+			Key:        op.Key,
+			Value:      op.Value,
+		}
+	}
+
+	serviceResp, err := s.service.BatchExecute(r.Context(), serviceReq)
+	if err != nil {
+		s.handleServiceError(w, r, err)
+		return
+	}
+
+	results := make([]BatchExecuteResult, len(serviceResp.Results))
+	for i, result := range serviceResp.Results {
+		results[i] = BatchExecuteResult{Success: result.Succeeded}
+	}
+
+	RespondJSON(w, r, http.StatusOK, BatchExecuteResponse{
+		Success: true,
+		Results: results,
+	})
+}
+
 // HandleBatchGet handles batch get operations for retrieving multiple entities.
 func (s *Server) HandleBatchGet(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()

@@ -374,6 +374,7 @@ POST /api/v1/barrier/shamir/unseal-share
 POST /api/v1/barrier/shamir/unseal-shares
 POST /api/v1/barrier/unseal
 POST /api/v1/batch/delete
+POST /api/v1/batch/execute
 POST /api/v1/batch/get
 POST /api/v1/batch/put
 POST /api/v1/bootstrap/auto
