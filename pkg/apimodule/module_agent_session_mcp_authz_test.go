@@ -238,6 +238,10 @@ func TestAgentSession_EnrolledCertificateHoldsExactlyItsFloor(t *testing.T) {
 		// kv:put, the permission qrdbPutTool already holds.
 		"quicbaas_kv_compare_and_swap": true,
 		"quicbaas_kv_put_if_absent":    true,
+		// quicbaas's own KV tools need the same kv:get and kv:put the floor
+		// grants; quicbaas_kv_delete needs kv:delete and stays refused.
+		"quicbaas_kv_get": true,
+		"quicbaas_kv_put": true,
 	}
 	for tool := range allowed {
 		if _, covered := registry.Lookup(tool); !covered {
