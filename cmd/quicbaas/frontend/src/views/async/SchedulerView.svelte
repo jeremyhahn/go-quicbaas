@@ -684,7 +684,7 @@
         </button>
       </div>
     </div>
-    <div class="modal-backdrop" onclick={() => { pendingAction = null; }}></div>
+    <div class="modal-backdrop" role="presentation" onclick={() => { pendingAction = null; }}></div>
   </div>
 {/if}
 
@@ -698,7 +698,7 @@
       </div>
       <pre class="bg-base-300 rounded p-3 text-xs overflow-x-auto">{JSON.stringify(nodeDetail, null, 2)}</pre>
     </div>
-    <div class="modal-backdrop" onclick={() => { nodeDetail = null; }}></div>
+    <div class="modal-backdrop" role="presentation" onclick={() => { nodeDetail = null; }}></div>
   </div>
 {/if}
 
@@ -712,7 +712,7 @@
       </div>
       <pre class="bg-base-300 rounded p-3 text-xs overflow-x-auto">{JSON.stringify(placementDetail, null, 2)}</pre>
     </div>
-    <div class="modal-backdrop" onclick={() => { placementDetail = null; }}></div>
+    <div class="modal-backdrop" role="presentation" onclick={() => { placementDetail = null; }}></div>
   </div>
 {/if}
 
