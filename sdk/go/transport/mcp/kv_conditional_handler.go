@@ -16,7 +16,6 @@ package mcp
 import (
 	"context"
 	"encoding/base64"
-	"strings"
 
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/errors"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/service"
@@ -36,12 +35,6 @@ type kvConditionalVerb struct {
 var kvConditionalVerbs = map[string]kvConditionalVerb{
 	"CompareAndSwap": {arguments: compareAndSwapArguments, field: "swapped"},
 	"PutIfAbsent":    {arguments: putIfAbsentArguments, field: "stored"},
-}
-
-// isMCPKVService reports whether service names the KV service, with or
-// without the quicbaas. package prefix.
-func isMCPKVService(service string) bool {
-	return strings.TrimPrefix(service, "quicbaas.") == "KV"
 }
 
 // compareAndSwapArguments builds qrdb_compare_and_swap's arguments. Values
