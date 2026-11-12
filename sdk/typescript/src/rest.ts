@@ -3319,6 +3319,99 @@ async listSessions(
     );
   }
 
+  private mfaPath(tenantID: string, userID: string): string {
+    return `/api/v1/tenants/${encodeURIComponent(tenantID)}/users/${encodeURIComponent(userID)}/mfa`;
+  }
+
+  // Maps to GET /api/v1/tenants/{tenant_id}/users/{user_id}/mfa/
+  async getMFAStatus(tenantID: string, userID: string): Promise<import('./interfaces.js').MFAStatusResponse> {
+    return this.fetchJSON<import('./interfaces.js').MFAStatusResponse>(`${this.mfaPath(tenantID, userID)}/`);
+  }
+
+  // Maps to DELETE /api/v1/tenants/{tenant_id}/users/{user_id}/mfa/
+  async disableMFA(tenantID: string, userID: string): Promise<void> {
+    await this.fetchJSON<void>(`${this.mfaPath(tenantID, userID)}/`, { method: 'DELETE' });
+  }
+
+  // Maps to POST /api/v1/tenants/{tenant_id}/users/{user_id}/mfa/enroll
+  async beginMFAEnrollment(
+    tenantID: string,
+    userID: string,
+    method?: string,
+  ): Promise<import('./interfaces.js').MFAEnrollResponse> {
+    return this.fetchJSON<import('./interfaces.js').MFAEnrollResponse>(
+      `${this.mfaPath(tenantID, userID)}/enroll`,
+      { method: 'POST', body: JSON.stringify(method ? { method } : {}) },
+    );
+  }
+
+  // Maps to POST /api/v1/tenants/{tenant_id}/users/{user_id}/mfa/verify
+  async completeMFAEnrollment(
+    tenantID: string,
+    userID: string,
+    enrollmentID: string,
+    code: string,
+  ): Promise<import('./interfaces.js').MFACompleteResponse> {
+    return this.fetchJSON<import('./interfaces.js').MFACompleteResponse>(
+      `${this.mfaPath(tenantID, userID)}/verify`,
+      { method: 'POST', body: JSON.stringify({ enrollment_id: enrollmentID, code }) },
+    );
+  }
+
+  // Maps to DELETE /api/v1/tenants/{tenant_id}/users/{user_id}/mfa/enroll/{enrollment_id}
+  async cancelMFAEnrollment(tenantID: string, userID: string, enrollmentID: string): Promise<void> {
+    await this.fetchJSON<void>(
+      `${this.mfaPath(tenantID, userID)}/enroll/${encodeURIComponent(enrollmentID)}`,
+      { method: 'DELETE' },
+    );
+  }
+
+  // Maps to POST /api/v1/tenants/{tenant_id}/users/{user_id}/mfa/challenge
+  async beginMFAChallenge(
+    tenantID: string,
+    userID: string,
+    sessionToken: string,
+  ): Promise<import('./interfaces.js').MFAChallengeResponse> {
+    return this.fetchJSON<import('./interfaces.js').MFAChallengeResponse>(
+      `${this.mfaPath(tenantID, userID)}/challenge`,
+      { method: 'POST', body: JSON.stringify({ session_token: sessionToken }) },
+    );
+  }
+
+  // Maps to POST /api/v1/tenants/{tenant_id}/users/{user_id}/mfa/verify-challenge
+  async verifyMFAChallenge(
+    tenantID: string,
+    userID: string,
+    challengeID: string,
+    code: string,
+  ): Promise<import('./interfaces.js').MFAVerifyResponse> {
+    return this.fetchJSON<import('./interfaces.js').MFAVerifyResponse>(
+      `${this.mfaPath(tenantID, userID)}/verify-challenge`,
+      { method: 'POST', body: JSON.stringify({ challenge_id: challengeID, code }) },
+    );
+  }
+
+  // Maps to GET /api/v1/tenants/{tenant_id}/users/{user_id}/mfa/backup-codes
+  async getBackupCodeStatus(
+    tenantID: string,
+    userID: string,
+  ): Promise<import('./interfaces.js').MFABackupCodeStatusResponse> {
+    return this.fetchJSON<import('./interfaces.js').MFABackupCodeStatusResponse>(
+      `${this.mfaPath(tenantID, userID)}/backup-codes`,
+    );
+  }
+
+  // Maps to POST /api/v1/tenants/{tenant_id}/users/{user_id}/mfa/backup-codes
+  async generateBackupCodes(
+    tenantID: string,
+    userID: string,
+  ): Promise<import('./interfaces.js').MFABackupCodesResponse> {
+    return this.fetchJSON<import('./interfaces.js').MFABackupCodesResponse>(
+      `${this.mfaPath(tenantID, userID)}/backup-codes`,
+      { method: 'POST' },
+    );
+  }
+
   async updateTenant(tenantID: string, req: import('./interfaces.js').UpdateTenantRequest): Promise<IAMTenant> {
     return this.fetchJSON<IAMTenant>(
       `/api/v1/tenants/${encodeURIComponent(tenantID)}`,
