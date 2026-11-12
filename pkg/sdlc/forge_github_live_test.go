@@ -18,7 +18,9 @@ package sdlc
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -259,6 +261,34 @@ func ghDeleteLabel(t *testing.T, cfg ghConfig, name string) {
 		repoPath(cfg.repo)+"/labels/"+url.PathEscape(name), nil, http.StatusNotFound)
 }
 
+// ghLabelName is a label name unique to ns that fits GitHub's 50-character
+// label limit, which a namespace plus a suffix does not: the namespace is
+// hashed to 12 hex characters.
+func ghLabelName(ns, suffix string) string {
+	sum := sha256.Sum256([]byte(ns))
+	return "it-" + hex.EncodeToString(sum[:6]) + "-" + suffix
+}
+
+// TestGitHubLabelName_FitsGitHubsLimit checks, without the network, that a
+// label name built from the longest namespace fits GitHub's 50-character
+// limit and that different namespaces give different names.
+func TestGitHubLabelName_FitsGitHubsLimit(t *testing.T) {
+	ns := "it-1234567890123456789-" + strings.Repeat("x", 24)
+	if len(ns) != 47 {
+		t.Fatalf("the test namespace is %d characters, want 47", len(ns))
+	}
+	other := "it-1234567890123456789-" + strings.Repeat("y", 24)
+	for _, suffix := range []string{"kept", "dropped", "never-defined"} {
+		name := ghLabelName(ns, suffix)
+		if len(name) > 50 {
+			t.Errorf("ghLabelName(%q, %q) = %q is %d characters, want at most 50", ns, suffix, name, len(name))
+		}
+		if name == ghLabelName(other, suffix) {
+			t.Errorf("two namespaces give the same label name %q", name)
+		}
+	}
+}
+
 // ghDelivery is one entry of a hook's delivery log.
 type ghDelivery struct {
 	ID    int64  `json:"id"`
@@ -276,15 +306,17 @@ func ghHookDeliveries(t *testing.T, cfg ghConfig, hookID int64) []ghDelivery {
 	return deliveries
 }
 
-// ghHookDelivery reads one delivery back: the request headers GitHub sent
-// and the payload, as raw bytes for a signature check.
-func ghHookDelivery(t *testing.T, cfg ghConfig, hookID, deliveryID int64) (http.Header, []byte) {
+// ghHookDelivery reads one delivery back: the request headers GitHub sent.
+// The API's payload is a re-serialized JSON object, not the HTTP body GitHub
+// signed, so it is not returned: a signature round trip on the original body
+// needs a reachable receiver and is covered by the fixture tests of
+// VerifyWebhook, not here.
+func ghHookDelivery(t *testing.T, cfg ghConfig, hookID, deliveryID int64) http.Header {
 	t.Helper()
 
 	var delivery struct {
 		Request struct {
 			Headers map[string]string `json:"headers"`
-			Payload json.RawMessage   `json:"payload"`
 		} `json:"request"`
 	}
 	ghRequest(t, cfg, cfg.token, http.MethodGet,
@@ -294,7 +326,7 @@ func ghHookDelivery(t *testing.T, cfg ghConfig, hookID, deliveryID int64) (http.
 	for name, value := range delivery.Request.Headers {
 		headers.Set(name, value)
 	}
-	return headers, delivery.Request.Payload
+	return headers
 }
 
 // ghEventually polls check every interval until it reports done or timeout
@@ -481,6 +513,8 @@ func TestLiveGitHub_PullRequestHeadFollowsAPush(t *testing.T) {
 // TestLiveGitHub_StaleApprovalIsRefusedThenTheApprovedHeadSquashes approves
 // head A, pushes head B, and checks a merge expecting A is refused and
 // merges nothing; then approves B and squash-merges at B, deleting the branch.
+// The direct PUT at the stale sha proves GitHub's own sha guard; the
+// adapter's 409 mapping stays with the fixture tests.
 func TestLiveGitHub_StaleApprovalIsRefusedThenTheApprovedHeadSquashes(t *testing.T) {
 	s := ghLiveBackend(t)
 	ctx := context.Background()
@@ -503,6 +537,24 @@ func TestLiveGitHub_StaleApprovalIsRefusedThenTheApprovedHeadSquashes(t *testing
 	if after.Merged || after.State != "open" {
 		t.Fatalf("after the refusal the pull request is state %q merged %v, want open and unmerged",
 			after.State, after.Merged)
+	}
+
+	before, err := s.author.GetBranch(ctx, s.cfg.repo, pull.base)
+	if err != nil {
+		t.Fatalf("reading the base branch: %v", err)
+	}
+	status, _ := ghSend(t, s.cfg, s.cfg.token, http.MethodPut,
+		fmt.Sprintf("%s/pulls/%d/merge", repoPath(s.cfg.repo), pull.number),
+		map[string]any{"sha": pull.head, "merge_method": "squash", "commit_title": ns + " stale direct"})
+	if status != http.StatusConflict {
+		t.Fatalf("a merge at the stale sha answered HTTP %d, want 409: GitHub must refuse it server-side", status)
+	}
+	unchanged, err := s.author.GetBranch(ctx, s.cfg.repo, pull.base)
+	if err != nil {
+		t.Fatalf("re-reading the base branch: %v", err)
+	}
+	if unchanged.SHA != before.SHA {
+		t.Fatalf("the base moved from %s to %s after a refused merge", before.SHA, unchanged.SHA)
 	}
 
 	ghApprove(t, s, pull.number, moved)
@@ -612,8 +664,8 @@ func TestLiveGitHub_LabelsRoundTripOnAPullRequest(t *testing.T) {
 	ctx := context.Background()
 	ns := namespace(t)
 	pull := ghOpenPull(t, s, ns, "labels")
-	kept := ghCreateLabel(t, s.cfg, ns+"-kept")
-	dropped := ghCreateLabel(t, s.cfg, ns+"-dropped")
+	kept := ghCreateLabel(t, s.cfg, ghLabelName(ns, "kept"))
+	dropped := ghCreateLabel(t, s.cfg, ghLabelName(ns, "dropped"))
 
 	if err := s.author.AddIssueLabels(ctx, s.cfg.repo, pull.number, []string{kept, dropped}); err != nil {
 		t.Fatalf("adding the labels: %v", err)
@@ -655,7 +707,7 @@ func TestLiveGitHub_AnUndefinedLabelIsRefused(t *testing.T) {
 	ns := namespace(t)
 	pull := ghOpenPull(t, s, ns, "undefined label")
 
-	err := s.author.AddIssueLabels(context.Background(), s.cfg.repo, pull.number, []string{ns + "-never-defined"})
+	err := s.author.AddIssueLabels(context.Background(), s.cfg.repo, pull.number, []string{ghLabelName(ns, "never-defined")})
 	if !errors.Is(err, ErrInvalidInput) {
 		t.Fatalf("error = %v, want ErrInvalidInput", err)
 	}
@@ -663,8 +715,10 @@ func TestLiveGitHub_AnUndefinedLabelIsRefused(t *testing.T) {
 
 // TestLiveGitHub_WebhookIsSignedAndUpdatedInPlace provisions a hook with a
 // secret, ensures it again with more events, and checks there is one hook.
-// It then reads GitHub's ping delivery back and verifies its signature, and
-// checks a one-byte change to the payload is refused.
+// It then reads GitHub's ping delivery back and checks it carries a
+// sha256 signature header. The signature round trip on the original body
+// needs a reachable receiver and is covered by the fixture tests of
+// VerifyWebhook, not here.
 func TestLiveGitHub_WebhookIsSignedAndUpdatedInPlace(t *testing.T) {
 	s := ghLiveBackend(t)
 	ctx := context.Background()
@@ -721,23 +775,14 @@ func TestLiveGitHub_WebhookIsSignedAndUpdatedInPlace(t *testing.T) {
 		return false
 	})
 
-	headers, payload := ghHookDelivery(t, s.cfg, hookID, ping.ID)
+	headers := ghHookDelivery(t, s.cfg, hookID, ping.ID)
 	signature := headers.Get(GitHubSignatureHeader)
-	if signature == "" {
-		t.Fatalf("the ping delivery carries no %s header", GitHubSignatureHeader)
+	digest, ok := strings.CutPrefix(signature, "sha256=")
+	if !ok {
+		t.Fatalf("the ping delivery's %s header is %q, want a sha256= signature", GitHubSignatureHeader, signature)
 	}
-	if err := s.author.VerifyWebhook(payload, signature, secret); err != nil {
-		t.Fatalf("verifying the ping delivery: %v", err)
-	}
-
-	if len(payload) == 0 {
-		t.Fatal("the ping delivery's payload is empty; there is nothing to alter")
-	}
-	altered := bytes.Clone(payload)
-	altered[len(altered)/2] ^= 0x01
-	var unverified *WebhookUnverifiedError
-	if err := s.author.VerifyWebhook(altered, signature, secret); !errors.As(err, &unverified) {
-		t.Fatalf("verifying an altered payload: error = %v, want a *WebhookUnverifiedError", err)
+	if _, err := hex.DecodeString(digest); err != nil || len(digest) != 64 {
+		t.Fatalf("the ping delivery's %s digest %q is not 64 hex characters", GitHubSignatureHeader, digest)
 	}
 }
 
