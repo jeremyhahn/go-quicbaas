@@ -43,6 +43,7 @@ import type { EntitiesClient } from './entities.js';
 import type { KMSAdminClient } from './kms_admin.js';
 import type { ObjectStorageAdminClient } from './objectstorage_admin.js';
 import type { ParametersClient } from './parameters.js';
+import type { VectorAdminClient } from './vector_admin.js';
 import type { DynamicSecretsClient } from './dynamicsecrets.js';
 
 import type {
@@ -2737,6 +2738,12 @@ export interface Client {
    * operations on hierarchical parameters. Paths: /api/v1/parameters/*.
    */
   readonly parameters: ParametersClient;
+
+  /**
+   * Vector admin: cluster-wide stats, namespace compaction and JSON Lines
+   * export/import. Paths: /api/v1/vector/admin/*.
+   */
+  readonly vectorAdmin: VectorAdminClient;
   /**
    * dynamicSecrets manages credential-generation roles, on-demand
    * short-lived credential minting, and lease renewal/revocation.

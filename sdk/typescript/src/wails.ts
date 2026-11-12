@@ -1010,6 +1010,7 @@ export class WailsClient implements Client {
   readonly objectStorageAdmin: any = null;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   readonly parameters: any = null;
+  readonly vectorAdmin: any = null;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   readonly dynamicSecrets: any = null;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any

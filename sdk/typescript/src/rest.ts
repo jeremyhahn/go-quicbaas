@@ -350,6 +350,15 @@ import type {
   ParameterSearchByTagsResponse,
 } from './parameters.js';
 import type {
+  VectorAdminClient,
+  ClusterStatsResponse,
+  CompactNamespaceResponse,
+  CompactionProgress,
+  ExportVectorsRequest,
+  VectorExportEntry,
+  ImportVectorsResponse,
+} from './vector_admin.js';
+import type {
   DynamicSecretsClient,
   DynamicSecretRole,
   CreateRoleRequest as DynamicSecretCreateRoleRequest,
@@ -6119,6 +6128,96 @@ export class RestParametersClient implements ParametersClient {
 }
 
 // ---------------------------------------------------------------------------
+// RestVectorAdminClient — /api/v1/vector/admin/* surface.
+// ---------------------------------------------------------------------------
+
+// RestVectorAdminClient implements VectorAdminClient. Export and import move
+// JSON Lines, which FetchHelper does not parse, so sendText builds the
+// request the way newFetchHelper does but reads and sends text.
+export class RestVectorAdminClient implements VectorAdminClient {
+  private readonly http: FetchHelper;
+  private readonly baseUrl: string;
+  private readonly config: ClientConfig;
+
+  constructor(baseUrl: string, config: ClientConfig = {}) {
+    this.http = newFetchHelper(baseUrl, config);
+    this.baseUrl = baseUrl.replace(/\/$/, '');
+    this.config = config;
+  }
+
+  // Maps to GET /api/v1/vector/admin/stats/global
+  async getGlobalStats(): Promise<ClusterStatsResponse> {
+    return this.http.fetchJSON<ClusterStatsResponse>('/api/v1/vector/admin/stats/global');
+  }
+
+  // Maps to POST /api/v1/vector/admin/compact
+  async compactNamespace(namespace: string): Promise<CompactNamespaceResponse> {
+    return this.http.fetchJSON<CompactNamespaceResponse>('/api/v1/vector/admin/compact', {
+      method: 'POST',
+      body: JSON.stringify({ namespace }),
+    });
+  }
+
+  // Maps to GET /api/v1/vector/admin/compact/progress?operation_id=
+  async getCompactionProgress(operationId: string): Promise<CompactionProgress> {
+    return this.http.fetchJSON<CompactionProgress>(
+      `/api/v1/vector/admin/compact/progress?operation_id=${encodeURIComponent(operationId)}`,
+    );
+  }
+
+  // Maps to POST /api/v1/vector/admin/export/{namespace}
+  async exportVectors(namespace: string, req: ExportVectorsRequest = {}): Promise<VectorExportEntry[]> {
+    const text = await this.sendText(`/api/v1/vector/admin/export/${encodeURIComponent(namespace)}`, {
+      method: 'POST',
+      body: JSON.stringify(req),
+    });
+    return text
+      .split('\n')
+      .filter((line) => line.trim() !== '')
+      .map((line) => JSON.parse(line) as VectorExportEntry);
+  }
+
+  // Maps to POST /api/v1/vector/admin/import/{namespace}
+  async importVectors(namespace: string, entries: VectorExportEntry[]): Promise<ImportVectorsResponse> {
+    const text = await this.sendText(`/api/v1/vector/admin/import/${encodeURIComponent(namespace)}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-ndjson' },
+      body: entries.map((e) => JSON.stringify(e)).join('\n'),
+    });
+    return JSON.parse(text) as ImportVectorsResponse;
+  }
+
+  // sendText sends a request with newFetchHelper's headers and error
+  // handling and returns the response body as text.
+  private async sendText(path: string, init: FetchInit): Promise<string> {
+    const headers: Record<string, string> = {};
+    const tok = await resolveToken(this.config.token);
+    if (tok) headers['Authorization'] = `Bearer ${tok}`;
+    if (this.config.tenantID) headers['X-Tenant-ID'] = this.config.tenantID;
+    const resp = await fetch(`${this.baseUrl}${path}`, {
+      ...init,
+      headers: {
+        'Content-Type': 'application/json',
+        Accept: 'application/json',
+        ...headers,
+        ...(init.headers ?? {}),
+      },
+    });
+    if (!resp.ok) {
+      let message = resp.statusText;
+      try {
+        const body = (await resp.json()) as { error?: string; message?: string };
+        message = body.error ?? body.message ?? message;
+      } catch {
+        // Body not JSON: fall back to statusText.
+      }
+      throw new APIError(resp.status, message);
+    }
+    return resp.text();
+  }
+}
+
+// ---------------------------------------------------------------------------
 // RestDynamicSecretsClient — /api/v1/secrets/dynamic/* surface.
 // ---------------------------------------------------------------------------
 
@@ -7198,6 +7297,7 @@ export class RestClient implements Client {
   readonly kmsAdmin: KMSAdminClient;
   readonly objectStorageAdmin: ObjectStorageAdminClient;
   readonly parameters: ParametersClient;
+  readonly vectorAdmin: VectorAdminClient;
   readonly dynamicSecrets: DynamicSecretsClient;
   readonly barrier: BarrierClient;
   readonly tenantBarrier: TenantBarrierClient;
@@ -7251,6 +7351,7 @@ export class RestClient implements Client {
     this.kmsAdmin = new RestKMSAdminClient(baseUrl, config);
     this.objectStorageAdmin = new RestObjectStorageAdminClient(baseUrl, config);
     this.parameters = new RestParametersClient(baseUrl, config);
+    this.vectorAdmin = new RestVectorAdminClient(baseUrl, config);
     this.dynamicSecrets = new RestDynamicSecretsClient(baseUrl, config);
     this.barrier = new RestBarrierClient(baseUrl, config);
     this.tenantBarrier = new RestTenantBarrierClient(baseUrl, config);
