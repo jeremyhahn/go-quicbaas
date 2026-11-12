@@ -624,6 +624,67 @@ func (s *Server) HandleImportKey(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Route through the service layer, which scopes the key name to the
+	// caller's tenant.
+	if kmsSvc := s.service.KMS(); kmsSvc != nil {
+		keyID := req.Name
+		if keyID == "" {
+			keyID = fmt.Sprintf("key-import-%d", time.Now().UnixNano())
+		}
+
+		attrReq := req.KeyAttributes
+		if attrReq == nil {
+			attrReq = &KeyAttributesRequest{Algorithm: "AES-256-GCM"}
+		}
+		attrs, err := keyAttributesRequestToXKMS(keyID, attrReq)
+		if err != nil {
+			RespondBadRequest(w, r, err.Error())
+			return
+		}
+
+		var usage []service.KeyUsage
+		if req.KeyAttributes != nil && len(req.KeyAttributes.KeyUsage) > 0 {
+			usage = make([]service.KeyUsage, len(req.KeyAttributes.KeyUsage))
+			for i, u := range req.KeyAttributes.KeyUsage {
+				usage[i] = service.KeyUsage(u)
+			}
+		}
+
+		svcResp, err := kmsSvc.ImportKey(ctx, &service.ImportKeyRequest{
+			KeyMaterial:        req.KeyMaterial,
+			WrappingKeyID:      req.WrappingKeyID,
+			KeyAttributes:      attrs,
+			Name:               keyID,
+			Description:        req.Description,
+			Usage:              usage,
+			DeletionProtection: attrReq.DeletionProtection,
+			Tags:               req.Tags,
+		})
+		if err != nil {
+			s.handleKMSError(w, r, err)
+			return
+		}
+
+		key, err := svcKeyHandleToResponse(svcResp.Key)
+		if err != nil {
+			s.handleServiceError(w, r, err)
+			return
+		}
+		metadata, err := svcMetadataToRESTResponse(svcResp.Metadata)
+		if err != nil {
+			s.handleServiceError(w, r, err)
+			return
+		}
+
+		RespondJSON(w, r, http.StatusCreated, &GenerateKeyRESTResponse{
+			Key:       key,
+			Metadata:  metadata,
+			Timestamp: svcResp.Timestamp.Unix(),
+		})
+		return
+	}
+
+	// Fallback: call KMS manager directly (no tenant isolation)
 	kmsMgr := s.service.KMSManager()
 	if kmsMgr == nil {
 		RespondError(w, r, http.StatusInternalServerError, ErrKMSServiceUnavailable)
