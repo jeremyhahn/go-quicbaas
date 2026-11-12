@@ -182,6 +182,31 @@ func TestBatchRESTHandler_RefusesUnknownMethodsAndRequestTypes(t *testing.T) {
 	}
 }
 
+func TestBatchRESTHandler_RefusesShardSelection(t *testing.T) {
+	tr, seen := newBatchServer(t, `{}`)
+	calls := []struct {
+		name   string
+		method string
+		req    interface{}
+	}{
+		{"put item shard", "Put", &service.BatchPutRequest{Requests: []*service.PutRequest{{EntityType: "users", ID: 1, ShardID: 2}}}},
+		{"put batch shard", "Put", &service.BatchPutRequest{ShardID: 2, Requests: []*service.PutRequest{{EntityType: "users", ID: 1}}}},
+		{"get item shard", "Get", &service.BatchGetRequest{Requests: []*service.GetRequest{{EntityType: "users", ID: 1, ShardID: 2}}}},
+		{"get batch shard", "Get", &service.BatchGetRequest{ShardID: 2, Requests: []*service.GetRequest{{EntityType: "users", ID: 1}}}},
+		{"delete item shard", "Delete", &service.BatchDeleteRequest{Requests: []*service.DeleteRequest{{EntityType: "users", ID: 1, ShardID: 2}}}},
+		{"delete batch shard", "Delete", &service.BatchDeleteRequest{ShardID: 2, Requests: []*service.DeleteRequest{{EntityType: "users", ID: 1}}}},
+	}
+	for _, c := range calls {
+		_, err := tr.Request(context.Background(), "quicbaas.Batch", c.method, c.req)
+		if !errors.IsInvalidInput(err) {
+			t.Errorf("%s answered %v, want invalid input", c.name, err)
+		}
+	}
+	if seen.path != "" {
+		t.Errorf("a shard-specific call reached the server at %s", seen.path)
+	}
+}
+
 func TestBatchRESTHandler_MapsServerRefusals(t *testing.T) {
 	statuses := map[int]func(error) bool{
 		http.StatusBadRequest:         errors.IsInvalidInput,

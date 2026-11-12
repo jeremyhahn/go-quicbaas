@@ -71,6 +71,17 @@ func batchRequest[T any](method string, req interface{}) (*T, error) {
 	return r, nil
 }
 
+// refuseShardSelection refuses a shard the /api/v1/batch routes cannot
+// carry, so a shard-specific batch never runs on shard 1 instead.
+func refuseShardSelection(method string, shardIDs ...uint64) error {
+	for _, id := range shardIDs {
+		if id != 0 {
+			return errors.NewInvalidInput("batch."+method, "the REST batch routes do not carry shard_id; use the gRPC transport for a shard-specific batch")
+		}
+	}
+	return nil
+}
+
 // Wire shapes of the /api/v1/batch routes (pkg/api/rest/types.go).
 type (
 	batchExecuteWireOp struct {
@@ -146,6 +157,13 @@ func (h *batchRESTHandler) handlePut(ctx context.Context, req interface{}) (inte
 	if err != nil {
 		return nil, err
 	}
+	shards := []uint64{r.ShardID}
+	for _, put := range r.Requests {
+		shards = append(shards, put.ShardID)
+	}
+	if err := refuseShardSelection("Put", shards...); err != nil {
+		return nil, err
+	}
 	ops := make([]batchEntityWireOp, len(r.Requests))
 	for i, put := range r.Requests {
 		ops[i] = batchEntityWireOp{EntityType: put.EntityType, ID: put.ID, Data: put.Data}
@@ -169,6 +187,13 @@ func (h *batchRESTHandler) handleGet(ctx context.Context, req interface{}) (inte
 	if err != nil {
 		return nil, err
 	}
+	shards := []uint64{r.ShardID}
+	for _, get := range r.Requests {
+		shards = append(shards, get.ShardID)
+	}
+	if err := refuseShardSelection("Get", shards...); err != nil {
+		return nil, err
+	}
 	ops := make([]batchEntityWireOp, len(r.Requests))
 	for i, get := range r.Requests {
 		ops[i] = batchEntityWireOp{EntityType: get.EntityType, ID: get.ID}
@@ -187,6 +212,13 @@ func (h *batchRESTHandler) handleGet(ctx context.Context, req interface{}) (inte
 func (h *batchRESTHandler) handleDelete(ctx context.Context, req interface{}) (interface{}, error) {
 	r, err := batchRequest[service.BatchDeleteRequest]("Delete", req)
 	if err != nil {
+		return nil, err
+	}
+	shards := []uint64{r.ShardID}
+	for _, del := range r.Requests {
+		shards = append(shards, del.ShardID)
+	}
+	if err := refuseShardSelection("Delete", shards...); err != nil {
 		return nil, err
 	}
 	ops := make([]batchEntityWireOp, len(r.Requests))
