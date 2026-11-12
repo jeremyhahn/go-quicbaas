@@ -88,6 +88,7 @@
   import CeremonyView from './security/CeremonyView.svelte';
   import BootstrapView from './security/BootstrapView.svelte';
   import SSHKeysView from './security/SSHKeysView.svelte';
+  import MySessionsView from './security/MySessionsView.svelte';
 
   // CLUSTER views
   import ClusterDashboard from './cluster/ClusterDashboard.svelte';
@@ -260,6 +261,7 @@
         { id: 'ceremony',  label: 'Ceremony',  icon: Users,    implemented: true },
         { id: 'bootstrap', label: 'Bootstrap', icon: Compass,  implemented: true },
         { id: 'ssh-keys',  label: 'SSH Keys',  icon: KeyRound, implemented: true },
+        { id: 'my-sessions', label: 'My Sessions', icon: Timer, implemented: true },
       ],
     },
     {
@@ -766,6 +768,9 @@
             {:else if routerStore.name === 'ssh-keys'}
               <li class="text-base-content/40">Security</li>
               <li class="font-medium">SSH Keys</li>
+            {:else if routerStore.name === 'my-sessions'}
+              <li class="text-base-content/40">Security</li>
+              <li class="font-medium">My Sessions</li>
             {:else if routerStore.name === 'projects'}
               <li class="text-base-content/40">{FACTORY_CRUMB}</li>
               <li class="font-medium">Projects</li>
@@ -1121,6 +1126,11 @@
       {:else if routerStore.name === 'ssh-keys'}
         <div class="flex-1 overflow-y-auto">
           <SSHKeysView />
+        </div>
+
+      {:else if routerStore.name === 'my-sessions'}
+        <div class="flex-1 overflow-y-auto">
+          <MySessionsView />
         </div>
 
       {:else if routerStore.name === 'projects'}
