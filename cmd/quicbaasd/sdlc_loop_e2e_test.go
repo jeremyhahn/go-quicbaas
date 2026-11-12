@@ -1415,7 +1415,15 @@ func factoryCtx() context.Context {
 	return orchestration.ContextWithTenant(tenantctx.WithTenant(context.Background(), loopE2ETenant), loopE2ETenant)
 }
 
-// awaitJob waits for one job to reach a terminal state and returns it.
+// awaitJob waits for the delivery job, the one the sdlc runner drives, to
+// reach a terminal state and returns it.
+//
+// THE RUNNER IS PART OF THE QUESTION. A node that starts with a project
+// already bound runs its backstop boot pass, and that pass starts a triage job
+// which finds nothing to judge and completes within milliseconds. A wait for
+// any job in the wanted state returns on that one while the delivery is still
+// initializing, and the caller then reads a forge the delivery has not
+// touched yet.
 func awaitJob(t *testing.T, srv *server.Server, want orchestration.JobState) *orchestration.JobStatus {
 	t.Helper()
 	var found *orchestration.JobStatus
@@ -1431,7 +1439,7 @@ func awaitJob(t *testing.T, srv *server.Server, want orchestration.JobState) *or
 			}
 		}
 		return false
-	}, 90*time.Second, 50*time.Millisecond, "no job reached %s", want)
+	}, 90*time.Second, 50*time.Millisecond, "no %s job reached %s", sdlc.JobRunnerName, want)
 	return found
 }
 

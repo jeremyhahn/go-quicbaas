@@ -77,8 +77,9 @@ import (
 
 // daemonAccountRoutes is the pooled-account surface an enrolled daemon uses:
 // the two metadata reads it SELECTS over, the usage ledger the least-usage
-// strategy balances on, the one release verb that hands it a credential, and
-// the session reservation it takes before that release and gives back after.
+// strategy balances on, the session slot it claims (and gives back) in the
+// control plane's reservation table, and the one release verb that hands it a
+// credential.
 //
 // The permission each one carries is NOT restated here — it is read out of the
 // production route table (restapi.Routes), so a route re-permissioned without
@@ -87,9 +88,9 @@ var daemonAccountRoutes = []accountRoute{
 	{http.MethodGet, accountCollection},
 	{http.MethodGet, "/api/v1/agent-accounts/{id}"},
 	{http.MethodGet, "/api/v1/agent-accounts/{id}/usage"},
-	{http.MethodPost, "/api/v1/agent-accounts/{id}/materialize"},
 	{http.MethodPost, "/api/v1/agent-accounts/{id}/reservations"},
 	{http.MethodDelete, "/api/v1/agent-accounts/{id}/reservations/{rid}"},
+	{http.MethodPost, "/api/v1/agent-accounts/{id}/materialize"},
 }
 
 // adminAccountRoutes are the writes a tenant admin makes against the
@@ -185,6 +186,11 @@ func (f *enrollmentFixture) adminEdge(t *testing.T) *httptest.Server {
 	if f.admin != nil {
 		return f.admin
 	}
+
+	// The built-in role's grants are read from qrdb's registry below, so the
+	// go-quicbaas permissions must be in it first — the same call
+	// server.NewServer makes. accountEdge registers them too, but only after
+	// this check has run.
 	quicbaaspermission.Register()
 
 	// The tenant admin holds go-qrdb's built-in admin role. The harness role

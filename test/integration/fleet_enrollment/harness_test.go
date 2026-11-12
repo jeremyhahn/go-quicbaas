@@ -319,8 +319,9 @@ func newEnrollmentFixture(t *testing.T) *enrollmentFixture {
 	store := newTenantRoutingStore()
 	registry := orchestration.NewFleetRegistry(store)
 
+	agentStore := orchestration.NewInMemoryAgentStore()
 	agentSvc, err := orchestration.NewAgentService(
-		orchestration.NewInMemoryAgentStore(),
+		agentStore,
 		map[string]orchestration.AgentBackend{},
 		logger.NewAdapter(log),
 	)
@@ -350,6 +351,32 @@ func newEnrollmentFixture(t *testing.T) *enrollmentFixture {
 	})
 	require.True(t, ok, "the account service must accept a usage tracker, as server lifecycle wires it")
 	usageWirer.SetUsageTracker(orchestration.NewCostTracker(kvstore.NewMemory(), logger.NewAdapter(log)))
+
+	// The usage ledger and the session reservation table, bound to the
+	// account service as pkg/server binds them (lifecycle_orchestration.go:
+	// SetUsageTracker, SetSessionReserver). The daemon's resolver reads an
+	// account's usage before every release, for the spend verdict and the
+	// live-session count, and then claims a session slot in this table. A
+	// control plane without them answers both calls with 503, and no pooled
+	// credential reaches the daemon.
+	//
+	// The ledger is over a memory KV, which reports an absent counter as not
+	// found; the ledger reads that as zero usage. The reservation table counts
+	// the session records of the agent store above.
+	usageWirer, ok := accountSvc.(interface {
+		SetUsageTracker(orchestration.CostTracker)
+	})
+	require.True(t, ok, "the account service must accept a usage tracker, as server lifecycle wires it")
+	usageWirer.SetUsageTracker(
+		orchestration.NewCostTracker(kvstore.NewMemory(), logger.NewAdapter(log)))
+
+	sessionCounter, err := orchestration.NewAccountSessionCounter(agentStore)
+	require.NoError(t, err)
+	sessionWirer, ok := accountSvc.(interface {
+		SetSessionReserver(orchestration.AccountSessionReserver)
+	})
+	require.True(t, ok, "the account service must accept a session reserver, as server lifecycle wires it")
+	sessionWirer.SetSessionReserver(sessionCounter)
 
 	svc := &enrollmentService{
 		MockQuicBaaS:   testutil.NewMockQuicBaaS(),

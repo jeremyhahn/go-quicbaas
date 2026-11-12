@@ -41,6 +41,7 @@ const repoRoot = "../.."
 var fixtureFiles = []string{
 	"Makefile",
 	"pkg/version/toolchain.mk",
+	"deployments/agents/software-factory-worker/versions.lock",
 	"test/integration/docker-compose.integration.yml",
 	"test/integration/docker-compose.seal.yml",
 	"test/integration/Dockerfile",

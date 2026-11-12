@@ -328,6 +328,8 @@ type Server struct {
 	// tenant's barrier is unsealed; the boot migrations register here to
 	// reach the tenants that were sealed at boot.
 	tenantUnsealHooks service.TenantUnsealHooks
+	// tenantUnsealRouter is the tenant servicer the embedded node's native transports call, built in unifiedModuleServerOptions.
+	tenantUnsealRouter *tenantUnsealRouter
 
 	// orchFleetCapacity answers admission's fleet axis: how many worker slots
 	// the deployment has. Built once in startOrchestration and shared by BOTH
@@ -529,10 +531,19 @@ type Server struct {
 	// transport carries the node's TenantServicer. It backs the per-tenant
 	// barrier facade shared by every transport (see tenant_barrier_wiring.go).
 	// The node's own SDK client does not register a tenant servicer on its
-	// embedded transport, so quicbaas composes this dedicated client, built
-	// lazily on first use during the single-threaded boot and closed during
-	// Shutdown.
-	tenantSDKClient *qrdbsdk.Client
+	// embedded transport, so quicbaas composes this dedicated client. It is
+	// built on first use and built again when the node replaces its service
+	// graph; tenantSDKGraph is the graph the client was built over. Tenant
+	// unseals reach it at any time, so tenantSDKMu guards these fields. A
+	// replaced client moves to tenantSDKRetired and stays open for the calls
+	// that already hold it. Shutdown sets tenantSDKStopped, after which no
+	// client is built or returned, and closes them all once the node has
+	// stopped its transports.
+	tenantSDKMu      sync.Mutex
+	tenantSDKClient  *qrdbsdk.Client
+	tenantSDKGraph   any
+	tenantSDKRetired []*qrdbsdk.Client
+	tenantSDKStopped bool
 
 	// sealedWindowClient is the in-process qrdb SDK client composed over the
 	// sealed node's OWN Barrier/Ceremony/Credential servicers during the
@@ -1224,6 +1235,15 @@ func (s *Server) Shutdown(ctx context.Context) error {
 		s.closed = true
 		s.mu.Unlock()
 
+		// Stop the admission of per-tenant barrier calls before anything is
+		// drained or torn down: from here no tenant-barrier SDK client is
+		// built or returned, so a tenant unseal that arrives on one of the
+		// node's native transports during shutdown is answered as
+		// unavailable. The node keeps those transports open until
+		// stopQRDBNode below, and the clients already built are closed after
+		// it.
+		s.stopTenantBarrierClient()
+
 		// Wait for any in-flight initialize() to fully return before
 		// touching a single component. A caller racing Shutdown against a
 		// still-running Start (see the initWG field doc) would otherwise
@@ -1524,20 +1544,6 @@ func (s *Server) Shutdown(ctx context.Context) error {
 			}
 		}
 
-		// Close the tenant-barrier SDK client (in-process qrdb SDK client
-		// over the node's TenantServicer). Closed before the node because
-		// its embedded transport references the node's KV/Admin servicers.
-		if s.tenantSDKClient != nil {
-			s.logger.Info("Closing tenant barrier client...")
-			if err := s.tenantSDKClient.Close(); err != nil {
-				errs = append(errs, err)
-				s.logger.WithError(err).Error("Failed to close tenant barrier client")
-			} else {
-				s.logger.Info("Tenant barrier client closed")
-			}
-			s.tenantSDKClient = nil
-		}
-
 		// Shutdown sharded qrdb client
 		if s.qrdbClient != nil {
 			s.logger.Info("Shutting down sharded qrdb client...")
@@ -1573,6 +1579,13 @@ func (s *Server) Shutdown(ctx context.Context) error {
 		if err := s.stopQRDBNode(); err != nil {
 			errs = append(errs, err)
 			s.logger.WithError(err).Error("Failed to shutdown embedded qrdb node")
+		}
+
+		// Close the tenant-barrier SDK clients now that the node has
+		// stopped its transports: no native handler is still inside one.
+		if err := s.closeTenantBarrierClients(); err != nil {
+			errs = append(errs, err)
+			s.logger.WithError(err).Error("Failed to close tenant barrier client")
 		}
 
 		// Close the data-plane barrier: its PebbleDB seal sub-store AND the
@@ -1973,14 +1986,13 @@ func (s *Server) GetQRDBUserAuthFactorServicer() qrdbsdk.UserAuthFactorServicer 
 	return node.UserAuthFactorService()
 }
 
-// GetQRDBTenantServicer returns the qrdb tenant.TenantServicer exposed by
-// the embedded engine node's service graph — the same instance the IAM
-// tenant lifecycle provisions through. Composers wire this into the SDK's
-// embedded qrdb transport (WithEmbeddedQRDB) so TenantMgmt() and the
-// per-tenant barrier surface dispatch against the node's canonical tenant
-// service. Returns nil when the node is absent or its service graph is not
-// yet built (e.g. while sealed).
-func (s *Server) GetQRDBTenantServicer() qrdbsdk.ServiceTenantServicer {
+// rawQRDBTenantServicer returns the tenant.TenantServicer of the embedded
+// engine node's service graph: the instance the IAM tenant lifecycle
+// provisions through and the hooked barrier facade delegates to. It is the
+// tenant unseal router's inner servicer and must never be the router itself.
+// Returns nil when the node is absent or its service graph is not yet built
+// (e.g. while sealed).
+func (s *Server) rawQRDBTenantServicer() qrdbsdk.ServiceTenantServicer {
 	node := s.getQRDBNode()
 	if node == nil {
 		return nil
@@ -1990,6 +2002,32 @@ func (s *Server) GetQRDBTenantServicer() qrdbsdk.ServiceTenantServicer {
 		return nil
 	}
 	return svcs.Tenant
+}
+
+// GetQRDBTenantServicer returns the tenant servicer composers wire into the
+// SDK's embedded qrdb transport (WithEmbeddedQRDB) for TenantMgmt() and the
+// per-tenant barrier surface. It is the in-process view of the tenant unseal
+// router, the servicer the node's network transports use: an embedded unseal
+// runs the hooked barrier facade, so it tells the unseal observers, which
+// reload the tenant's stored policies, and needs a caller bound to that
+// tenant. An in-process caller with no principal of its own is bound to the
+// tenant it names on the context (see inProcessTenantServicer). Every other
+// call reaches the node's own tenant service. Returns nil when the node is
+// absent, its service graph is not yet built (e.g. while sealed), or the
+// router is not installed.
+func (s *Server) GetQRDBTenantServicer() qrdbsdk.ServiceTenantServicer {
+	return hookedTenantServicer(s.rawQRDBTenantServicer(), s.tenantUnsealRouter)
+}
+
+// hookedTenantServicer returns the in-process view of router as the embedded
+// tenant servicer once the node's own servicer (raw) exists, and nil
+// otherwise. It never returns raw: an unseal on raw would skip the hooked
+// barrier facade.
+func hookedTenantServicer(raw qrdbsdk.ServiceTenantServicer, router *tenantUnsealRouter) qrdbsdk.ServiceTenantServicer {
+	if raw == nil || router == nil {
+		return nil
+	}
+	return inProcessTenantServicer{router}
 }
 
 // Service returns the QuicBaaS facade for direct database operations. The

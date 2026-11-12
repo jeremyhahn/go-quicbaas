@@ -844,8 +844,8 @@ var qrdbToolExactMapping = map[string]qrdbToolResource{
 	// canonical mount resolves (pkg/api/rest/authz_pep_mapping.go). The
 	// authentication verbs stay behind authorization on MCP — REST and QUIC
 	// treat them as pre-auth, but widening the UNAUTHENTICATED MCP tool
-	// surface is an owner decision (see the quicbaas_login_begin precedent
-	// in authz_qrdb_unmapped.go); authenticated callers use them for
+	// surface is an access-control decision (publicTools in authz.go holds
+	// only the documented health tools); authenticated callers use them for
 	// step-up verification of an enrolled factor, a factor read.
 	"xkms.fido2.beginRegistration":    {"user_authfactors", "add"},
 	"xkms.fido2.finishRegistration":   {"user_authfactors", "add"},
