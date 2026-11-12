@@ -181,6 +181,17 @@ import type {
   GetReencryptionProgressResponse,
 } from './dek.js';
 import type {
+  EntitiesClient,
+  EntityList,
+  EntityListOptions,
+  EntityGetOptions,
+  EntityWriteOptions,
+  EntityRecord,
+  PutEntityRequest,
+  PutEntityResponse,
+  DeleteEntityResponse,
+} from './entities.js';
+import type {
   DynamicSecretsClient,
   DynamicSecretRole,
   CreateRoleRequest as DynamicSecretCreateRoleRequest,
@@ -4297,6 +4308,73 @@ export class RestDEKClient implements DEKClient {
   }
 }
 
+// entityQuery builds a query string from the parameters that are set.
+function entityQuery(params: Record<string, string | number | undefined>): string {
+  const parts: string[] = [];
+  for (const [key, value] of Object.entries(params)) {
+    if (value === undefined || value === '') continue;
+    parts.push(`${encodeURIComponent(key)}=${encodeURIComponent(String(value))}`);
+  }
+  return parts.length > 0 ? `?${parts.join('&')}` : '';
+}
+
+/** RestEntitiesClient implements EntitiesClient over the generic entity REST routes. */
+export class RestEntitiesClient implements EntitiesClient {
+  private readonly http: FetchHelper;
+
+  constructor(baseUrl: string, config: ClientConfig = {}) {
+    this.http = newFetchHelper(baseUrl, config);
+  }
+
+  // Maps to GET /api/v1/entities/{type}/ (trailing slash).
+  async list(type: string, opts: EntityListOptions = {}): Promise<EntityList> {
+    const query = entityQuery({ limit: opts.limit, cursor: opts.cursor, consistency: opts.consistency });
+    const wire = await this.http.fetchJSON<EntityList>(
+      `/api/v1/entities/${encodeURIComponent(type)}/${query}`,
+    );
+    return { ...wire, entities: wire.entities ?? [] };
+  }
+
+  // Maps to POST /api/v1/entities/{type}/ (trailing slash).
+  async create(type: string, data: unknown, opts: EntityWriteOptions = {}): Promise<PutEntityResponse> {
+    const body: PutEntityRequest = { entity_type: type, data };
+    return this.http.fetchJSON<PutEntityResponse>(
+      `/api/v1/entities/${encodeURIComponent(type)}/${entityQuery({ write_mode: opts.write_mode })}`,
+      { method: 'POST', body: JSON.stringify(body) },
+    );
+  }
+
+  // Maps to PUT /api/v1/entities/{type}/{id}.
+  async put(
+    type: string,
+    id: number | string,
+    data: unknown,
+    opts: EntityWriteOptions = {},
+  ): Promise<PutEntityResponse> {
+    const body: PutEntityRequest = { entity_type: type, id, data };
+    return this.http.fetchJSON<PutEntityResponse>(
+      `/api/v1/entities/${encodeURIComponent(type)}/${encodeURIComponent(String(id))}${entityQuery({ write_mode: opts.write_mode })}`,
+      { method: 'PUT', body: JSON.stringify(body) },
+    );
+  }
+
+  // Maps to GET /api/v1/entities/{type}/{id}.
+  async get(type: string, id: number | string, opts: EntityGetOptions = {}): Promise<EntityRecord> {
+    const query = entityQuery({ consistency: opts.consistency, timeout_ms: opts.timeout_ms });
+    return this.http.fetchJSON<EntityRecord>(
+      `/api/v1/entities/${encodeURIComponent(type)}/${encodeURIComponent(String(id))}${query}`,
+    );
+  }
+
+  // Maps to DELETE /api/v1/entities/{type}/{id}.
+  async delete(type: string, id: number | string, opts: EntityWriteOptions = {}): Promise<DeleteEntityResponse> {
+    return this.http.fetchJSON<DeleteEntityResponse>(
+      `/api/v1/entities/${encodeURIComponent(type)}/${encodeURIComponent(String(id))}${entityQuery({ write_mode: opts.write_mode })}`,
+      { method: 'DELETE' },
+    );
+  }
+}
+
 // ---------------------------------------------------------------------------
 // RestDynamicSecretsClient — /api/v1/secrets/dynamic/* surface.
 // ---------------------------------------------------------------------------
@@ -5258,6 +5336,7 @@ export class RestClient implements Client {
   readonly trust: TrustClient;
   readonly crypto: CryptoClient;
   readonly dek: DEKClient;
+  readonly entities: EntitiesClient;
   readonly dynamicSecrets: DynamicSecretsClient;
   readonly barrier: BarrierClient;
   readonly tenantBarrier: TenantBarrierClient;
@@ -5300,6 +5379,7 @@ export class RestClient implements Client {
     this.trust = new RestTrustClient(baseUrl, config);
     this.crypto = new RestCryptoClient(baseUrl, config);
     this.dek = new RestDEKClient(baseUrl, config);
+    this.entities = new RestEntitiesClient(baseUrl, config);
     this.dynamicSecrets = new RestDynamicSecretsClient(baseUrl, config);
     this.barrier = new RestBarrierClient(baseUrl, config);
     this.tenantBarrier = new RestTenantBarrierClient(baseUrl, config);

@@ -1341,6 +1341,7 @@ export class McpClient implements Client {
   readonly crypto: any = null;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   readonly dek: any = null;
+  readonly entities: any = null;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   readonly dynamicSecrets: any = null;
   readonly barrier: BarrierClient;

@@ -292,6 +292,18 @@ export type {
   GetReencryptionProgressResponse,
 } from './dek.js';
 export type {
+  EntitiesClient,
+  PutEntityRequest,
+  PutEntityResponse,
+  EntityRecord,
+  DeleteEntityResponse,
+  EntityItem,
+  EntityList,
+  EntityListOptions,
+  EntityGetOptions,
+  EntityWriteOptions,
+} from './entities.js';
+export type {
   DynamicSecretsClient,
   DynamicSecretRole,
   CreateRoleRequest as DynamicSecretCreateRoleRequest,
