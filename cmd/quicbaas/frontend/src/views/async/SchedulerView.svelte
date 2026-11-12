@@ -429,7 +429,7 @@
         </button>
       </div>
     </div>
-    <div class="modal-backdrop" onclick={() => { jobToDelete = null; }}></div>
+    <div class="modal-backdrop" role="presentation" onclick={() => { jobToDelete = null; }}></div>
   </div>
 {/if}
 
@@ -470,7 +470,7 @@
         </button>
       </div>
     </div>
-    <div class="modal-backdrop" onclick={() => { jobToEdit = null; }}></div>
+    <div class="modal-backdrop" role="presentation" onclick={() => { jobToEdit = null; }}></div>
   </div>
 {/if}
 
@@ -562,6 +562,6 @@
         </button>
       </div>
     </div>
-    <div class="modal-backdrop" onclick={closeCreateDialog}></div>
+    <div class="modal-backdrop" role="presentation" onclick={closeCreateDialog}></div>
   </div>
 {/if}

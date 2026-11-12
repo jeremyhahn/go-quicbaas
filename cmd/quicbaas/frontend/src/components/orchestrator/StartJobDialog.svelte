@@ -4,6 +4,7 @@
   field is pre-populated and read-only.
 -->
 <script lang="ts">
+  import { untrack } from 'svelte';
   import { orchestratorStore, refresh } from '../../stores/orchestrator.svelte.ts';
   import { showToast } from '../../stores/toast.svelte.ts';
   import { navigateTo } from '../../stores/router.svelte.ts';
@@ -26,7 +27,7 @@
   // Form fields matching StartJobRequest.
   let tenantID = $state(orchestratorStore.activeTenantID);
   let description = $state('');
-  let workflowName = $state(prefillWorkflow);
+  let workflowName = $state(untrack(() => prefillWorkflow));
   // lead is the Agent or pool the lead runs as, "agent:<id>" or "pool:<id>";
   // empty takes the project's default lead.
   let lead = $state('');
