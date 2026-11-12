@@ -282,6 +282,13 @@ func (p *OIDCProvider) Authorize(ctx context.Context, req *AuthorizeRequest) (*A
 		return nil, err
 	}
 
+	// A user of one tenant must not obtain a code for another tenant's
+	// client. The client is valid, so the refusal is redirected
+	// (RFC 6749 §4.1.2.1). An unscoped request keeps the unscoped lookup.
+	if req.TenantID != "" && app.TenantID != req.TenantID {
+		return nil, NewOAuthError(ErrOAuthAccessDenied, "client does not belong to the user's tenant")
+	}
+
 	if !contains(app.GrantTypes, GrantTypeAuthorizationCode) {
 		return nil, NewOAuthError(ErrOAuthUnauthorizedClient, "authorization_code grant not allowed for this client")
 	}
@@ -1029,15 +1036,15 @@ func (p *OIDCProvider) validateAuthorizeRequest(req *AuthorizeRequest) error {
 // requireGrantType refuses a client whose registration does not list
 // grantType (RFC 6749 §5.2 unauthorized_client). Call it after the client has
 // authenticated, so the answer reveals nothing to an unauthenticated caller.
-func (p *OIDCProvider) requireGrantType(ctx context.Context, clientID, grantType string) error {
+func (p *OIDCProvider) requireGrantType(ctx context.Context, clientID, grantType string) (*Application, error) {
 	app, err := p.appStorage.GetApp(ctx, clientID)
 	if err != nil {
-		return NewOAuthError(ErrOAuthInvalidClient, "invalid client")
+		return nil, NewOAuthError(ErrOAuthInvalidClient, "invalid client")
 	}
 	if !contains(app.GrantTypes, grantType) {
-		return NewOAuthError(ErrOAuthUnauthorizedClient, grantType+" grant not allowed for this client")
+		return nil, NewOAuthError(ErrOAuthUnauthorizedClient, grantType+" grant not allowed for this client")
 	}
-	return nil
+	return app, nil
 }
 
 // validateAuthorizeClient checks that the authorization request names a
@@ -1092,7 +1099,8 @@ func (p *OIDCProvider) handleAuthorizationCodeGrant(ctx context.Context, req *To
 	if err != nil || !valid {
 		return nil, NewOAuthError(ErrOAuthInvalidClient, "client authentication failed")
 	}
-	if err := p.requireGrantType(ctx, req.ClientID, GrantTypeAuthorizationCode); err != nil {
+	app, err := p.requireGrantType(ctx, req.ClientID, GrantTypeAuthorizationCode)
+	if err != nil {
 		return nil, err
 	}
 
@@ -1111,6 +1119,9 @@ func (p *OIDCProvider) handleAuthorizationCodeGrant(ctx context.Context, req *To
 	// Validate client ID
 	if authCode.ClientID != req.ClientID {
 		return nil, NewOAuthError(ErrOAuthInvalidGrant, "client_id mismatch")
+	}
+	if authCode.TenantID != "" && authCode.TenantID != app.TenantID {
+		return nil, NewOAuthError(ErrOAuthInvalidGrant, "tenant mismatch")
 	}
 
 	// Validate PKCE if present
@@ -1245,7 +1256,8 @@ func (p *OIDCProvider) handleRefreshTokenGrant(ctx context.Context, req *TokenRe
 	if err != nil || !valid {
 		return nil, NewOAuthError(ErrOAuthInvalidClient, "client authentication failed")
 	}
-	if err := p.requireGrantType(ctx, req.ClientID, GrantTypeRefreshToken); err != nil {
+	app, err := p.requireGrantType(ctx, req.ClientID, GrantTypeRefreshToken)
+	if err != nil {
 		return nil, err
 	}
 
@@ -1267,6 +1279,9 @@ func (p *OIDCProvider) handleRefreshTokenGrant(ctx context.Context, req *TokenRe
 	}
 	if token.ClientID != req.ClientID {
 		return nil, NewOAuthError(ErrOAuthInvalidGrant, "client_id mismatch")
+	}
+	if token.TenantID != "" && token.TenantID != app.TenantID {
+		return nil, NewOAuthError(ErrOAuthInvalidGrant, "tenant mismatch")
 	}
 
 	// Get user. The refresh token's subject is the user id in decimal; a
