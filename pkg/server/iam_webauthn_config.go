@@ -133,7 +133,7 @@ func webauthnDefaultsFromIssuer(issuerURL string) (rpID, rpOrigin string, err er
 // IP-literal issuer host with only one half of the identity configured, say)
 // returns an error instead of mounting a relying party that rejects every
 // ceremony it is ever handed.
-func webauthnFactoryConfigFromOperator(c config.IAMWebAuthnConfig, issuerRPID, issuerRPOrigin string, allowPublicRegistration bool) (iam.WebAuthnFactoryConfig, error) {
+func webauthnFactoryConfigFromOperator(c config.IAMWebAuthnConfig, issuerRPID, issuerRPOrigin string) (iam.WebAuthnFactoryConfig, error) {
 	// Resolve into a copy of the operator's own config type so exactly one
 	// validator describes the contract for both the input and the result.
 	resolved := c
@@ -160,7 +160,6 @@ func webauthnFactoryConfigFromOperator(c config.IAMWebAuthnConfig, issuerRPID, i
 		ResidentKeyRequirement:  resolved.ResidentKeyRequirement,
 		AuthenticatorAttachment: resolved.AuthenticatorAttachment,
 		Debug:                   resolved.Debug,
-		AllowPublicRegistration: allowPublicRegistration,
 	}
 	timeout, err := resolved.CeremonyTimeout()
 	if err != nil {
