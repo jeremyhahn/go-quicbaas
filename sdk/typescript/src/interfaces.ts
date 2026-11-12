@@ -183,6 +183,16 @@ import type {
   BootstrapBundleRequest,
   BootstrapBundleResponse,
   ClusterStatusResponse,
+  ClusterLeaderResponse,
+  ShardLeaderResponse,
+  RebalanceRequest,
+  RebalanceResponse,
+  RebalanceStatusResponse,
+  RebalancePlanResponse,
+  MigrationRequest,
+  MigrationResponse,
+  MigrationStatusResponse,
+  CancelMigrationResponse,
   SessionEventEnvelope,
   SessionInfo,
   SpawnSessionRequest,
@@ -2338,14 +2348,48 @@ export interface CeremonyClient {
 // supported trust bootstrap methods (auto, dane, noise, spki). The methods
 // are intended for first-contact use before TLS is available; each one
 // ClusterClient exposes the Raft cluster control plane. Mirrors the Go SDK
-// cluster.Client (sdk/go/client/cluster). Only the read surface the dashboards
-// need is implemented today; membership/rebalance writes are added when a UI
-// or caller requires them. Path: /api/v1/cluster.
+// cluster.Client (sdk/go/client/cluster). It reads the cluster status and
+// the cluster and shard leaders, and starts, tracks and cancels shard
+// migrations and rebalances. Path: /api/v1/cluster.
 export interface ClusterClient {
   // status returns the current cluster status (node id, leadership, shards,
   // health). In standalone (non-Raft) mode `shards` is empty and total_nodes
   // is 1. Maps to GET /api/v1/cluster/status.
   status(): Promise<ClusterStatusResponse>;
+
+  // leader returns the cluster's leader node; it rejects with a 503
+  // APIError when the cluster has no leader.
+  // Maps to GET /api/v1/cluster/leader.
+  leader(): Promise<ClusterLeaderResponse>;
+
+  // shardLeader returns the leader of one shard.
+  // Maps to GET /api/v1/cluster/leader/{shardID}.
+  shardLeader(shardID: number): Promise<ShardLeaderResponse>;
+
+  // startRebalance starts a shard rebalance; with no request the server's
+  // defaults apply. Maps to POST /api/v1/cluster/rebalance/.
+  startRebalance(req?: RebalanceRequest): Promise<RebalanceResponse>;
+
+  // rebalanceStatus returns the progress of a rebalance (the current one
+  // when operationID is omitted).
+  // Maps to GET /api/v1/cluster/rebalance/status[?operation_id=].
+  rebalanceStatus(operationID?: string): Promise<RebalanceStatusResponse>;
+
+  // rebalancePlan returns the plan a rebalance would follow.
+  // Maps to GET /api/v1/cluster/rebalance/plan.
+  rebalancePlan(): Promise<RebalancePlanResponse>;
+
+  // startMigration starts moving data from one shard to another.
+  // Maps to POST /api/v1/cluster/migrate/.
+  startMigration(req: MigrationRequest): Promise<MigrationResponse>;
+
+  // migrationStatus returns the progress of one migration.
+  // Maps to GET /api/v1/cluster/migrate/status?operation_id=.
+  migrationStatus(operationID: string): Promise<MigrationStatusResponse>;
+
+  // cancelMigration cancels one migration.
+  // Maps to DELETE /api/v1/cluster/migrate/?operation_id=.
+  cancelMigration(operationID: string): Promise<CancelMigrationResponse>;
 }
 
 // advertises a different verification mechanism. Paths: /api/v1/bootstrap.
