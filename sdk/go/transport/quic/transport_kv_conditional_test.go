@@ -68,7 +68,7 @@ func TestCompareAndSwapOverHTTP3(t *testing.T) {
 
 		call := receiveCall(t, calls)
 		assert.Equal(t, http.MethodPost, call.method)
-		assert.Equal(t, "/api/v1/entities/users/42/compare-and-swap", call.path)
+		assert.Equal(t, "/api/v1/kv/users/42/compare-and-swap", call.path)
 		assert.Equal(t, b64("old"), call.body["expect"])
 		assert.Equal(t, b64("new"), call.body["set"])
 	}
@@ -85,7 +85,7 @@ func TestPutIfAbsentOverHTTP3(t *testing.T) {
 
 		call := receiveCall(t, calls)
 		assert.Equal(t, http.MethodPost, call.method)
-		assert.Equal(t, "/api/v1/entities/locks/7/put-if-absent", call.path)
+		assert.Equal(t, "/api/v1/kv/locks/7/put-if-absent", call.path)
 		assert.Equal(t, b64("owner"), call.body["data"])
 	}
 }
