@@ -62,6 +62,19 @@ func TestDockerfile_BaseImageCarriesJq(t *testing.T) {
 	}
 }
 
+func TestDockerfile_BaseImageCarriesGcovr(t *testing.T) {
+	packages := baseAptPackages(string(Dockerfile))
+	if len(packages) == 0 {
+		t.Fatal("the Dockerfile's base apt-get install list was not found")
+	}
+	if !slices.Contains(packages, "gcovr") {
+		t.Errorf("the image's apt list %v does not carry gcovr", packages)
+	}
+	if !strings.Contains(string(Dockerfile), "\nRUN gcovr --version\n") {
+		t.Error("the Dockerfile does not assert gcovr --version after the sudo proof")
+	}
+}
+
 // TestDockerfile_BaseImageCarriesTheJDK proves the runtime stage installs the
 // headless JDK at the pinned major (OPENJDK_MAJOR), from Debian's archive
 // beside the other apt packages, rather than a hard-coded major the pin and
