@@ -178,14 +178,31 @@
   let initShares: string[] | null = $state(null);
   let initError: string | null = $state(null);
 
+  // Operations card state (seal, rekey, recovery keys). The typed SDK
+  // client is kept next to the structural adapter so these calls go
+  // through the SDK's own routes.
+  let sdkClient: SDKBarrierClient | null = $state(null);
+  type PendingOp = 'seal' | 'rekey' | 'delete-recovery' | null;
+  let pendingOp: PendingOp = $state(null);
+  let opBusy = $state(false);
+  let sealSOPIN = $state('');
+  let rekeyThreshold: number | null = $state(null);
+  let rekeyTotal: number | null = $state(null);
+  let rekeyShares: string[] | null = $state(null);
+  let recoveryHasKeys: boolean | null = $state(null);
+  let recoveryThreshold: number | null = $state(null);
+  let recoveryTotal: number | null = $state(null);
+  let recoveryKeys: string[] | null = $state(null);
+
   async function loadStatus(): Promise<void> {
     loading = true;
     statusError = null;
     subsystemDisabled = false;
     try {
       if (client === null) {
-        const { structural } = await makeClient();
+        const { structural, sdk } = await makeClient();
         client = structural;
+        sdkClient = sdk;
       }
       status = await client.status();
     } catch (e) {
@@ -228,6 +245,126 @@
       initError = e instanceof Error ? e.message : 'Initialize failed';
     } finally {
       initing = false;
+    }
+  }
+
+  function errorMessage(e: unknown, fallback: string): string {
+    return e instanceof Error && e.message !== '' ? e.message : fallback;
+  }
+
+  // canOperate is true when the barrier is initialized and unsealed: the
+  // states in which it can be sealed, rekeyed or given recovery keys.
+  let canOperate = $derived.by((): boolean => {
+    const s: BarrierStatus | null = status;
+    if (s === null || sdkClient === null) return false;
+    return s.strategy !== 'disabled' && s.initialized && !s.sealed;
+  });
+
+  async function loadRecoveryStatus(): Promise<void> {
+    if (sdkClient === null) return;
+    try {
+      const resp = await sdkClient.recoveryStatus();
+      recoveryHasKeys = Boolean(resp.has_keys);
+    } catch (e) {
+      recoveryHasKeys = null;
+      showToast({ message: errorMessage(e, 'Failed to load recovery key status'), type: 'error' });
+    }
+  }
+
+  $effect(() => {
+    if (canOperate) {
+      void loadRecoveryStatus();
+    }
+  });
+
+  async function confirmSeal(): Promise<void> {
+    if (sdkClient === null) return;
+    pendingOp = null;
+    opBusy = true;
+    const pin = sealSOPIN;
+    try {
+      await sdkClient.seal(pin !== '' ? { so_pin: pin } : undefined);
+      showToast({ message: 'Barrier sealed', type: 'success' });
+      void loadStatus();
+    } catch (e) {
+      showToast({ message: errorMessage(e, 'Seal failed'), type: 'error' });
+    } finally {
+      sealSOPIN = '';
+      opBusy = false;
+    }
+  }
+
+  function requestRekey(): void {
+    if (rekeyThreshold === null || rekeyTotal === null) {
+      showToast({ message: 'Enter the new threshold and total shares', type: 'error' });
+      return;
+    }
+    pendingOp = 'rekey';
+  }
+
+  async function confirmRekey(): Promise<void> {
+    if (sdkClient === null || rekeyThreshold === null || rekeyTotal === null) return;
+    pendingOp = null;
+    opBusy = true;
+    const req = { threshold: Number(rekeyThreshold), total: Number(rekeyTotal) };
+    try {
+      const resp = await sdkClient.rekey(req);
+      rekeyShares = resp.shares ?? [];
+      showToast({ message: 'Barrier rekeyed — store the new shares securely!', type: 'warning' });
+      void loadStatus();
+    } catch (e) {
+      showToast({ message: errorMessage(e, 'Rekey failed'), type: 'error' });
+    } finally {
+      rekeyThreshold = null;
+      rekeyTotal = null;
+      opBusy = false;
+    }
+  }
+
+  async function submitGenerateRecovery(): Promise<void> {
+    if (sdkClient === null) return;
+    if (recoveryThreshold === null || recoveryTotal === null) {
+      showToast({ message: 'Enter the recovery threshold and total keys', type: 'error' });
+      return;
+    }
+    opBusy = true;
+    const req = { threshold: Number(recoveryThreshold), total: Number(recoveryTotal) };
+    try {
+      const resp = await sdkClient.generateRecoveryKeys(req);
+      recoveryKeys = resp.keys ?? [];
+      showToast({ message: 'Recovery keys generated — store them securely!', type: 'warning' });
+      void loadRecoveryStatus();
+    } catch (e) {
+      showToast({ message: errorMessage(e, 'Generating recovery keys failed'), type: 'error' });
+    } finally {
+      recoveryThreshold = null;
+      recoveryTotal = null;
+      opBusy = false;
+    }
+  }
+
+  async function confirmDeleteRecovery(): Promise<void> {
+    if (sdkClient === null) return;
+    pendingOp = null;
+    opBusy = true;
+    try {
+      await sdkClient.deleteRecoveryKeys();
+      recoveryKeys = null;
+      showToast({ message: 'Recovery keys deleted', type: 'success' });
+    } catch (e) {
+      showToast({ message: errorMessage(e, 'Deleting recovery keys failed'), type: 'error' });
+    } finally {
+      opBusy = false;
+      void loadRecoveryStatus();
+    }
+  }
+
+  async function copyValues(values: string[]): Promise<void> {
+    try {
+      await navigator.clipboard.writeText(values.join('\n'));
+      showToast({ message: 'Copied to clipboard', type: 'success' });
+    } catch (e) {
+      showToast({ message: errorMessage(e, 'Copy failed'), type: 'error' });
     }
   }
 </script>
@@ -457,4 +594,142 @@
       </div>
     </div>
   </div>
+
+  {#snippet shownOnce(title: string, values: string[], testid: string, ondismiss: () => void)}
+    <div class="alert alert-warning text-sm" role="alert" data-testid={testid}>
+      <div class="w-full space-y-2">
+        <div class="font-semibold">{title}</div>
+        <div class="text-xs">These values are shown only once and are not shown again. Store them securely now.</div>
+        <div class="space-y-1">
+          {#each values as value, i}
+            <div class="font-mono text-xs break-all" data-testid="{testid}-value">
+              <span class="text-base-content/50">#{i + 1}</span> {value}
+            </div>
+          {/each}
+        </div>
+        <div class="flex gap-2">
+          <button class="btn btn-xs" onclick={() => { void copyValues(values); }}>Copy</button>
+          <button class="btn btn-xs btn-ghost" onclick={ondismiss}>Dismiss</button>
+        </div>
+      </div>
+    </div>
+  {/snippet}
+
+  {#if canOperate}
+    <div class="card bg-base-200 rounded-box" data-testid="barrier-operations">
+      <div class="card-body p-6 gap-6">
+        <h2 class="text-lg font-semibold">Operations</h2>
+
+        {#if pendingOp !== null}
+          <div class="alert alert-error text-sm" role="alertdialog" aria-label="Confirm barrier operation" data-testid="barrier-op-confirm">
+            <div class="w-full space-y-2">
+              {#if pendingOp === 'seal'}
+                <p>Seal the barrier? Every service that uses the barrier stops until it is unsealed again.</p>
+              {:else if pendingOp === 'rekey'}
+                <p>Rekey the barrier to {rekeyThreshold} of {rekeyTotal} shares? The current shares stop working.</p>
+              {:else}
+                <p>Delete the recovery keys? They can no longer be used to recover the barrier.</p>
+              {/if}
+              <div class="flex gap-2">
+                <button
+                  class="btn btn-sm btn-error"
+                  disabled={opBusy}
+                  onclick={() => {
+                    if (pendingOp === 'seal') void confirmSeal();
+                    else if (pendingOp === 'rekey') void confirmRekey();
+                    else void confirmDeleteRecovery();
+                  }}
+                >Confirm</button>
+                <button class="btn btn-sm btn-ghost" onclick={() => { pendingOp = null; }}>Cancel</button>
+              </div>
+            </div>
+          </div>
+        {/if}
+
+        <!-- Seal -->
+        <section class="space-y-2" data-testid="barrier-op-seal">
+          <h3 class="font-semibold">Seal</h3>
+          <div class="form-control max-w-sm">
+            <label class="label label-text" for="barrier-seal-so-pin">Security Officer PIN (if required)</label>
+            <input
+              id="barrier-seal-so-pin"
+              class="input input-bordered input-sm"
+              type="password"
+              autocomplete="off"
+              bind:value={sealSOPIN}
+            />
+          </div>
+          <button class="btn btn-warning btn-sm" disabled={opBusy} onclick={() => { pendingOp = 'seal'; }}>
+            Seal barrier
+          </button>
+        </section>
+
+        <!-- Rekey -->
+        <section class="space-y-2" data-testid="barrier-op-rekey">
+          <h3 class="font-semibold">Rekey</h3>
+          {#if rekeyShares !== null}
+            {@render shownOnce('New shares', rekeyShares, 'barrier-rekey-shares', () => { rekeyShares = null; })}
+          {/if}
+          <form
+            class="space-y-2"
+            data-testid="barrier-rekey-form"
+            onsubmit={(e) => { e.preventDefault(); requestRekey(); }}
+          >
+            <div class="grid grid-cols-2 gap-3 max-w-md">
+              <div class="form-control">
+                <label class="label label-text" for="barrier-rekey-threshold">New threshold</label>
+                <input id="barrier-rekey-threshold" class="input input-bordered input-sm" type="number" min="1" bind:value={rekeyThreshold} />
+              </div>
+              <div class="form-control">
+                <label class="label label-text" for="barrier-rekey-total">New total shares</label>
+                <input id="barrier-rekey-total" class="input input-bordered input-sm" type="number" min="1" bind:value={rekeyTotal} />
+              </div>
+            </div>
+            <button class="btn btn-sm" type="submit" disabled={opBusy}>Rekey barrier</button>
+          </form>
+        </section>
+
+        <!-- Recovery keys -->
+        <section class="space-y-2" data-testid="barrier-op-recovery">
+          <h3 class="font-semibold">Recovery keys</h3>
+          <p class="text-sm" data-testid="barrier-recovery-status">
+            {#if recoveryHasKeys === null}
+              Recovery key status unknown.
+            {:else if recoveryHasKeys}
+              Recovery keys exist.
+            {:else}
+              No recovery keys have been generated.
+            {/if}
+          </p>
+          {#if recoveryKeys !== null}
+            {@render shownOnce('Recovery keys', recoveryKeys, 'barrier-recovery-keys', () => { recoveryKeys = null; })}
+          {/if}
+          <form
+            class="space-y-2"
+            data-testid="barrier-recovery-form"
+            onsubmit={(e) => { e.preventDefault(); void submitGenerateRecovery(); }}
+          >
+            <div class="grid grid-cols-2 gap-3 max-w-md">
+              <div class="form-control">
+                <label class="label label-text" for="barrier-recovery-threshold">Recovery threshold</label>
+                <input id="barrier-recovery-threshold" class="input input-bordered input-sm" type="number" min="1" bind:value={recoveryThreshold} />
+              </div>
+              <div class="form-control">
+                <label class="label label-text" for="barrier-recovery-total">Recovery keys to generate</label>
+                <input id="barrier-recovery-total" class="input input-bordered input-sm" type="number" min="1" bind:value={recoveryTotal} />
+              </div>
+            </div>
+            <div class="flex gap-2">
+              <button class="btn btn-sm" type="submit" disabled={opBusy}>Generate recovery keys</button>
+              {#if recoveryHasKeys}
+                <button class="btn btn-sm btn-error btn-outline" type="button" disabled={opBusy} onclick={() => { pendingOp = 'delete-recovery'; }}>
+                  Delete recovery keys
+                </button>
+              {/if}
+            </div>
+          </form>
+        </section>
+      </div>
+    </div>
+  {/if}
 </div>
