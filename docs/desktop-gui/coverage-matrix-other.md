@@ -44,123 +44,132 @@ pairs are also registered by `iam.go` (rows 101-104 below).
 
 ## iam.go (`IAMHandler.RegisterRoutes`)
 
-Registered: `RegisterRoutes` is called by `Server.registerIAMRoutes`
-(iam_register.go:25), which `server.go:562` calls; the outer caller of that
-function, and so whether it is mounted, is unaudited (the comments in iam.go
-call this the legacy in-process listener that `startRESTServer` never starts).
-Every other caller is a test. Paths below are the full paths chi composes.
+Registered: mounted (`rest` build tag). `RegisterRoutes` is called by
+`Server.registerIAMRoutes` (iam_register.go:25), which `Server.setupRouter`
+calls (server.go:562). `setupRouter` runs from `rest.NewServer`
+(server.go:489) and again from `SetSealedWindowGate` (sealed_window.go:74).
+Production reaches both through `pkg/server`: `newREST = restapi.NewServer`
+(lifecycle_rest.go:61) in `buildRESTServer`, which `ModuleRESTServer`
+(lifecycle_rest.go:365) calls and the apimodule wires in at
+`apimodule.WithRESTServer` (qrdb_node.go:788), with
+`restServer.SetSealedWindowGate` at lifecycle_rest.go:338; and
+`startSealedRESTServer` (sealed_window_rest.go:61, :85, called from
+sealed_window.go:252). Rows 22-109 are also in routes_iam.go's
+`iamManagedRouteSpecs` (`duplicate of routes_iam.go`); rows 1-21 have not
+been checked against routes_iam.go's other spec functions yet. Paths below
+are the full paths chi composes.
 
 | # | Method | Path | Handler | Registered | SDK method | Console |
 |---|---|---|---|---|---|---|
-| 1 | GET | /.well-known/openid-configuration | GetOIDCConfig | unaudited | unaudited | not-UI: OAuth/OIDC protocol endpoint for clients |
-| 2 | GET | /.well-known/oauth-authorization-server | GetOAuthASMetadata | unaudited | unaudited | not-UI: OAuth/OIDC protocol endpoint for clients |
-| 3 | GET | /.well-known/oauth-protected-resource | GetProtectedResourceMetadata | unaudited | unaudited | not-UI: OAuth/OIDC protocol endpoint for clients |
-| 4 | GET | /.well-known/jwks.json | GetJWKS | unaudited | unaudited | not-UI: OAuth/OIDC protocol endpoint for clients |
-| 5 | GET | /oauth2/authorize | Authorize | unaudited | unaudited | not-UI: OAuth/OIDC protocol endpoint for clients |
-| 6 | POST | /oauth2/token | Token | unaudited | unaudited | not-UI: OAuth/OIDC protocol endpoint for clients |
-| 7 | POST | /oauth2/token-mtls | TokenMTLS | unaudited | unaudited | not-UI: OAuth/OIDC protocol endpoint for clients |
-| 8 | GET | /oauth2/userinfo | UserInfo | unaudited | unaudited | not-UI: OAuth/OIDC protocol endpoint for clients |
-| 9 | POST | /oauth2/revoke | Revoke | unaudited | unaudited | not-UI: OAuth/OIDC protocol endpoint for clients |
-| 10 | POST | /oauth2/introspect | Introspect | unaudited | unaudited | not-UI: OAuth/OIDC protocol endpoint for clients |
-| 11 | POST | /oauth2/register/ | RegisterDynamicClient | unaudited | unaudited | not-UI: RFC 7591/7592 client self-registration |
-| 12 | GET | /oauth2/register/{client_id} | GetDynamicClient | unaudited | unaudited | not-UI: RFC 7591/7592 client self-registration |
-| 13 | PUT | /oauth2/register/{client_id} | UpdateDynamicClient | unaudited | unaudited | not-UI: RFC 7591/7592 client self-registration |
-| 14 | DELETE | /oauth2/register/{client_id} | DeleteDynamicClient | unaudited | unaudited | not-UI: RFC 7591/7592 client self-registration |
-| 15 | POST | /api/v1/auth/refresh | RefreshToken | unaudited | unaudited | unaudited |
-| 16 | POST | /api/v1/auth/logout | Logout | unaudited | unaudited | unaudited |
-| 17 | POST | /api/v1/auth/validate | ValidateToken | unaudited | unaudited | unaudited |
-| 18 | POST | /api/v1/auth/login/begin | CeremonyBeginLogin | unaudited | unaudited | unaudited |
-| 19 | POST | /api/v1/auth/login/finish | CeremonyFinishLogin | unaudited | unaudited | unaudited |
-| 20 | POST | /api/v1/auth/register/begin | RegisterSelfBegin | unaudited | unaudited | unaudited |
-| 21 | POST | /api/v1/auth/register/finish | RegisterSelfFinish | unaudited | unaudited | unaudited |
-| 22 | POST | /api/v1/iam/login/piv | PIVLogin | unaudited | unaudited | unaudited |
-| 23 | POST | /api/v1/iam/refresh | RefreshToken | unaudited | unaudited | unaudited |
-| 24 | POST | /api/v1/iam/validate | ValidateToken | unaudited | unaudited | unaudited |
-| 25 | POST | /api/v1/iam/logout | Logout | unaudited | unaudited | unaudited |
-| 26 | GET | /api/v1/tenants/ | ListTenants | unaudited | unaudited | unaudited |
-| 27 | POST | /api/v1/tenants/ | CreateTenant | unaudited | unaudited | unaudited |
-| 28 | GET | /api/v1/tenants/{tenant_id} | GetTenant | unaudited | unaudited | unaudited |
-| 29 | PUT | /api/v1/tenants/{tenant_id} | UpdateTenant | unaudited | unaudited | unaudited |
-| 30 | DELETE | /api/v1/tenants/{tenant_id} | DeleteTenant | unaudited | unaudited | unaudited |
-| 31 | PATCH | /api/v1/tenants/{tenant_id}/quotas | UpdateTenantEngineQuotas | unaudited | unaudited | unaudited |
-| 32 | PATCH | /api/v1/tenants/{tenant_id}/entitlements | UpdateTenantEngineEntitlements | unaudited | unaudited | unaudited |
-| 33 | POST | /api/v1/tenants/{tenant_id}/provision | ProvisionTenant | unaudited | unaudited | unaudited |
-| 34 | POST | /api/v1/tenants/{tenant_id}/barrier/init | HandleTenantBarrierInit | unaudited | unaudited | unaudited |
-| 35 | POST | /api/v1/tenants/{tenant_id}/barrier/unseal | HandleTenantBarrierUnseal | unaudited | unaudited | unaudited |
-| 36 | POST | /api/v1/tenants/{tenant_id}/barrier/unseal-share | HandleTenantBarrierUnsealShare | unaudited | unaudited | unaudited |
-| 37 | POST | /api/v1/tenants/{tenant_id}/barrier/seal | HandleTenantBarrierSeal | unaudited | unaudited | unaudited |
-| 38 | GET | /api/v1/tenants/{tenant_id}/barrier/status | HandleTenantBarrierStatus | unaudited | unaudited | unaudited |
-| 39 | POST | /api/v1/tenants/{tenant_id}/barrier/enable-encryption | HandleTenantBarrierEnableEncryption | unaudited | unaudited | unaudited |
-| 40 | GET | /api/v1/tenants/{tenant_id}/users/ | ListUsers | unaudited | unaudited | unaudited |
-| 41 | POST | /api/v1/tenants/{tenant_id}/users/ | CreateUser | unaudited | unaudited | unaudited |
-| 42 | GET | /api/v1/tenants/{tenant_id}/users/{user_id} | GetUser | unaudited | unaudited | unaudited |
-| 43 | PUT | /api/v1/tenants/{tenant_id}/users/{user_id} | UpdateUser | unaudited | unaudited | unaudited |
-| 44 | DELETE | /api/v1/tenants/{tenant_id}/users/{user_id} | DeleteUser | unaudited | unaudited | unaudited |
-| 45 | POST | /api/v1/tenants/{tenant_id}/users/{user_id}/roles | AssignRole | unaudited | unaudited | unaudited |
-| 46 | DELETE | /api/v1/tenants/{tenant_id}/users/{user_id}/roles/{role} | RevokeRole | unaudited | unaudited | unaudited |
-| 47 | GET | /api/v1/tenants/{tenant_id}/users/{user_id}/sessions/ | ListUserSessions | unaudited | unaudited | unaudited |
-| 48 | POST | /api/v1/tenants/{tenant_id}/users/{user_id}/sessions/ | CreateSession | unaudited | unaudited | unaudited |
-| 49 | DELETE | /api/v1/tenants/{tenant_id}/users/{user_id}/sessions/ | RevokeAllUserSessions | unaudited | unaudited | unaudited |
-| 50 | GET | /api/v1/tenants/{tenant_id}/users/{user_id}/mfa/ | GetMFAStatus | unaudited | unaudited | unaudited |
-| 51 | DELETE | /api/v1/tenants/{tenant_id}/users/{user_id}/mfa/ | DisableMFA | unaudited | unaudited | unaudited |
-| 52 | POST | /api/v1/tenants/{tenant_id}/users/{user_id}/mfa/enroll | BeginMFAEnrollment | unaudited | unaudited | unaudited |
-| 53 | POST | /api/v1/tenants/{tenant_id}/users/{user_id}/mfa/verify | CompleteMFAEnrollment | unaudited | unaudited | unaudited |
-| 54 | DELETE | /api/v1/tenants/{tenant_id}/users/{user_id}/mfa/enroll/{enrollment_id} | CancelMFAEnrollment | unaudited | unaudited | unaudited |
-| 55 | POST | /api/v1/tenants/{tenant_id}/users/{user_id}/mfa/challenge | BeginMFAChallenge | unaudited | unaudited | unaudited |
-| 56 | POST | /api/v1/tenants/{tenant_id}/users/{user_id}/mfa/verify-challenge | VerifyMFAChallenge | unaudited | unaudited | unaudited |
-| 57 | GET | /api/v1/tenants/{tenant_id}/users/{user_id}/mfa/backup-codes | GetBackupCodeStatus | unaudited | unaudited | unaudited |
-| 58 | POST | /api/v1/tenants/{tenant_id}/users/{user_id}/mfa/backup-codes | GenerateBackupCodes | unaudited | unaudited | unaudited |
-| 59 | GET | /api/v1/tenants/{tenant_id}/users/{user_id}/webauthn/credentials/ | ListUserWebAuthnCredentials | unaudited | unaudited | unaudited |
-| 60 | DELETE | /api/v1/tenants/{tenant_id}/users/{user_id}/webauthn/credentials/ | DeleteUserWebAuthnCredentials | unaudited | unaudited | unaudited |
-| 61 | DELETE | /api/v1/tenants/{tenant_id}/users/{user_id}/webauthn/credentials/{credential_id} | DeleteUserWebAuthnCredential | unaudited | unaudited | unaudited |
-| 62 | POST | /api/v1/tenants/{tenant_id}/users/{user_id}/links/ | LinkAccount | unaudited | unaudited | unaudited |
-| 63 | GET | /api/v1/tenants/{tenant_id}/users/{user_id}/links/ | GetUserLinks | unaudited | unaudited | unaudited |
-| 64 | DELETE | /api/v1/tenants/{tenant_id}/users/{user_id}/links/{provider_id} | UnlinkAccount | unaudited | unaudited | unaudited |
-| 65 | GET | /api/v1/tenants/{tenant_id}/roles/ | ListRoles | unaudited | unaudited | unaudited |
-| 66 | POST | /api/v1/tenants/{tenant_id}/roles/ | CreateRole | unaudited | unaudited | unaudited |
-| 67 | POST | /api/v1/tenants/{tenant_id}/roles/reconcile | ReconcileRoles | unaudited | unaudited | unaudited |
-| 68 | GET | /api/v1/tenants/{tenant_id}/roles/{role_id} | GetRole | unaudited | unaudited | unaudited |
-| 69 | PUT | /api/v1/tenants/{tenant_id}/roles/{role_id} | UpdateRole | unaudited | unaudited | unaudited |
-| 70 | DELETE | /api/v1/tenants/{tenant_id}/roles/{role_id} | DeleteRole | unaudited | unaudited | unaudited |
-| 71 | GET | /api/v1/tenants/{tenant_id}/apps/ | ListApps | unaudited | unaudited | unaudited |
-| 72 | POST | /api/v1/tenants/{tenant_id}/apps/ | RegisterApp | unaudited | unaudited | unaudited |
-| 73 | GET | /api/v1/tenants/{tenant_id}/apps/{client_id} | GetApp | unaudited | unaudited | unaudited |
-| 74 | PUT | /api/v1/tenants/{tenant_id}/apps/{client_id} | UpdateApp | unaudited | unaudited | unaudited |
-| 75 | DELETE | /api/v1/tenants/{tenant_id}/apps/{client_id} | DeleteApp | unaudited | unaudited | unaudited |
-| 76 | POST | /api/v1/tenants/{tenant_id}/apps/{client_id}/rotate-secret | RotateSecret | unaudited | unaudited | unaudited |
-| 77 | GET | /api/v1/tenants/{tenant_id}/policies/ | ListPolicies | unaudited | unaudited | unaudited |
-| 78 | POST | /api/v1/tenants/{tenant_id}/policies/ | CreatePolicy | unaudited | unaudited | unaudited |
-| 79 | GET | /api/v1/tenants/{tenant_id}/policies/{policy_name} | GetPolicy | unaudited | unaudited | unaudited |
-| 80 | PUT | /api/v1/tenants/{tenant_id}/policies/{policy_name} | UpdatePolicy | unaudited | unaudited | unaudited |
-| 81 | DELETE | /api/v1/tenants/{tenant_id}/policies/{policy_name} | DeletePolicy | unaudited | unaudited | unaudited |
-| 82 | POST | /api/v1/tenants/{tenant_id}/policies/validate | ValidatePolicy | unaudited | unaudited | unaudited |
-| 83 | POST | /api/v1/tenants/{tenant_id}/policies/test | TestPolicy | unaudited | unaudited | unaudited |
-| 84 | POST | /api/v1/tenants/{tenant_id}/policies/simulate | SimulatePolicy | unaudited | unaudited | unaudited |
-| 85 | POST | /api/v1/tenants/{tenant_id}/policies/effective-permissions | GetEffectivePermissions | unaudited | unaudited | unaudited |
-| 86 | POST | /api/v1/tenants/{tenant_id}/providers/ | RegisterProvider | unaudited | unaudited | unaudited |
-| 87 | GET | /api/v1/tenants/{tenant_id}/providers/ | ListProviders | unaudited | unaudited | unaudited |
-| 88 | GET | /api/v1/tenants/{tenant_id}/providers/{provider_id} | GetProvider | unaudited | unaudited | unaudited |
-| 89 | PUT | /api/v1/tenants/{tenant_id}/providers/{provider_id} | UpdateProvider | unaudited | unaudited | unaudited |
-| 90 | DELETE | /api/v1/tenants/{tenant_id}/providers/{provider_id} | DeleteProvider | unaudited | unaudited | unaudited |
-| 91 | GET | /api/v1/iam/{tenant_id}/invites/{token} | GetInvite | unaudited | unaudited | unaudited |
-| 92 | POST | /api/v1/iam/{tenant_id}/invites/{token}/activate/fido2/begin | ActivateFIDO2Begin | unaudited | unaudited | unaudited |
-| 93 | POST | /api/v1/iam/{tenant_id}/invites/{token}/activate/fido2/finish | ActivateFIDO2Finish | unaudited | unaudited | unaudited |
-| 94 | POST | /api/v1/iam/{tenant_id}/invites/{token}/activate/piv | ActivatePIV | unaudited | unaudited | unaudited |
-| 95 | POST | /api/v1/iam/users/{user_id}/approve | ApproveUser | unaudited | unaudited | unaudited |
-| 96 | POST | /api/v1/iam/users/{user_id}/reject | RejectUser | unaudited | unaudited | unaudited |
-| 97 | POST | /api/v1/iam/validate-client | ValidateClient | unaudited | unaudited | unaudited |
-| 98 | POST | /api/v1/iam/check | CheckAccess | unaudited | unaudited | unaudited |
-| 99 | POST | /api/v1/iam/check/batch | BatchCheckAccess | unaudited | unaudited | unaudited |
-| 100 | POST | /api/v1/iam/batch-check | BatchCheckAccess | unaudited | unaudited | unaudited |
-| 101 | GET | /api/v1/iam/audit | ListAuditEvents | unaudited | none | not covered |
-| 102 | GET | /api/v1/iam/audit/{id} | GetAuditEvent | unaudited | none | not covered |
-| 103 | POST | /api/v1/iam/audit | RecordAuditEvent | unaudited | none | not-UI: services record audit events, not operators |
-| 104 | DELETE | /api/v1/iam/audit | DeleteOldAuditEvents | unaudited | none | not covered |
-| 105 | GET | /api/v1/iam/sessions | ListSessions | unaudited | unaudited | unaudited |
-| 106 | DELETE | /api/v1/iam/sessions | RevokeAllSessions | unaudited | unaudited | unaudited |
-| 107 | GET | /api/v1/iam/sessions/{id} | GetSession | unaudited | unaudited | unaudited |
-| 108 | DELETE | /api/v1/iam/sessions/{id} | RevokeSession | unaudited | unaudited | unaudited |
-| 109 | POST | /api/v1/iam/sessions/revoke-others | RevokeOtherSessions | unaudited | unaudited | unaudited |
+| 1 | GET | /.well-known/openid-configuration | GetOIDCConfig | mounted (ModuleRESTServer) | unaudited | not-UI: OAuth/OIDC protocol endpoint for clients |
+| 2 | GET | /.well-known/oauth-authorization-server | GetOAuthASMetadata | mounted (ModuleRESTServer) | unaudited | not-UI: OAuth/OIDC protocol endpoint for clients |
+| 3 | GET | /.well-known/oauth-protected-resource | GetProtectedResourceMetadata | mounted (ModuleRESTServer) | unaudited | not-UI: OAuth/OIDC protocol endpoint for clients |
+| 4 | GET | /.well-known/jwks.json | GetJWKS | mounted (ModuleRESTServer) | unaudited | not-UI: OAuth/OIDC protocol endpoint for clients |
+| 5 | GET | /oauth2/authorize | Authorize | mounted (ModuleRESTServer) | unaudited | not-UI: OAuth/OIDC protocol endpoint for clients |
+| 6 | POST | /oauth2/token | Token | mounted (ModuleRESTServer) | unaudited | not-UI: OAuth/OIDC protocol endpoint for clients |
+| 7 | POST | /oauth2/token-mtls | TokenMTLS | mounted (ModuleRESTServer) | unaudited | not-UI: OAuth/OIDC protocol endpoint for clients |
+| 8 | GET | /oauth2/userinfo | UserInfo | mounted (ModuleRESTServer) | unaudited | not-UI: OAuth/OIDC protocol endpoint for clients |
+| 9 | POST | /oauth2/revoke | Revoke | mounted (ModuleRESTServer) | unaudited | not-UI: OAuth/OIDC protocol endpoint for clients |
+| 10 | POST | /oauth2/introspect | Introspect | mounted (ModuleRESTServer) | unaudited | not-UI: OAuth/OIDC protocol endpoint for clients |
+| 11 | POST | /oauth2/register/ | RegisterDynamicClient | mounted (ModuleRESTServer) | unaudited | not-UI: RFC 7591/7592 client self-registration |
+| 12 | GET | /oauth2/register/{client_id} | GetDynamicClient | mounted (ModuleRESTServer) | unaudited | not-UI: RFC 7591/7592 client self-registration |
+| 13 | PUT | /oauth2/register/{client_id} | UpdateDynamicClient | mounted (ModuleRESTServer) | unaudited | not-UI: RFC 7591/7592 client self-registration |
+| 14 | DELETE | /oauth2/register/{client_id} | DeleteDynamicClient | mounted (ModuleRESTServer) | unaudited | not-UI: RFC 7591/7592 client self-registration |
+| 15 | POST | /api/v1/auth/refresh | RefreshToken | mounted (ModuleRESTServer) | unaudited | unaudited |
+| 16 | POST | /api/v1/auth/logout | Logout | mounted (ModuleRESTServer) | unaudited | unaudited |
+| 17 | POST | /api/v1/auth/validate | ValidateToken | mounted (ModuleRESTServer) | unaudited | unaudited |
+| 18 | POST | /api/v1/auth/login/begin | CeremonyBeginLogin | mounted (ModuleRESTServer) | unaudited | unaudited |
+| 19 | POST | /api/v1/auth/login/finish | CeremonyFinishLogin | mounted (ModuleRESTServer) | unaudited | unaudited |
+| 20 | POST | /api/v1/auth/register/begin | RegisterSelfBegin | mounted (ModuleRESTServer) | unaudited | unaudited |
+| 21 | POST | /api/v1/auth/register/finish | RegisterSelfFinish | mounted (ModuleRESTServer) | unaudited | unaudited |
+| 22 | POST | /api/v1/iam/login/piv | PIVLogin | mounted (ModuleRESTServer); duplicate of routes_iam.go | unaudited | unaudited |
+| 23 | POST | /api/v1/iam/refresh | RefreshToken | mounted (ModuleRESTServer); duplicate of routes_iam.go | unaudited | unaudited |
+| 24 | POST | /api/v1/iam/validate | ValidateToken | mounted (ModuleRESTServer); duplicate of routes_iam.go | unaudited | unaudited |
+| 25 | POST | /api/v1/iam/logout | Logout | mounted (ModuleRESTServer); duplicate of routes_iam.go | unaudited | unaudited |
+| 26 | GET | /api/v1/tenants/ | ListTenants | mounted (ModuleRESTServer); duplicate of routes_iam.go | unaudited | unaudited |
+| 27 | POST | /api/v1/tenants/ | CreateTenant | mounted (ModuleRESTServer); duplicate of routes_iam.go | unaudited | unaudited |
+| 28 | GET | /api/v1/tenants/{tenant_id} | GetTenant | mounted (ModuleRESTServer); duplicate of routes_iam.go | unaudited | unaudited |
+| 29 | PUT | /api/v1/tenants/{tenant_id} | UpdateTenant | mounted (ModuleRESTServer); duplicate of routes_iam.go | unaudited | unaudited |
+| 30 | DELETE | /api/v1/tenants/{tenant_id} | DeleteTenant | mounted (ModuleRESTServer); duplicate of routes_iam.go | unaudited | unaudited |
+| 31 | PATCH | /api/v1/tenants/{tenant_id}/quotas | UpdateTenantEngineQuotas | mounted (ModuleRESTServer); duplicate of routes_iam.go | unaudited | unaudited |
+| 32 | PATCH | /api/v1/tenants/{tenant_id}/entitlements | UpdateTenantEngineEntitlements | mounted (ModuleRESTServer); duplicate of routes_iam.go | unaudited | unaudited |
+| 33 | POST | /api/v1/tenants/{tenant_id}/provision | ProvisionTenant | mounted (ModuleRESTServer); duplicate of routes_iam.go | unaudited | unaudited |
+| 34 | POST | /api/v1/tenants/{tenant_id}/barrier/init | HandleTenantBarrierInit | mounted (ModuleRESTServer); duplicate of routes_iam.go | unaudited | unaudited |
+| 35 | POST | /api/v1/tenants/{tenant_id}/barrier/unseal | HandleTenantBarrierUnseal | mounted (ModuleRESTServer); duplicate of routes_iam.go | unaudited | unaudited |
+| 36 | POST | /api/v1/tenants/{tenant_id}/barrier/unseal-share | HandleTenantBarrierUnsealShare | mounted (ModuleRESTServer); duplicate of routes_iam.go | unaudited | unaudited |
+| 37 | POST | /api/v1/tenants/{tenant_id}/barrier/seal | HandleTenantBarrierSeal | mounted (ModuleRESTServer); duplicate of routes_iam.go | unaudited | unaudited |
+| 38 | GET | /api/v1/tenants/{tenant_id}/barrier/status | HandleTenantBarrierStatus | mounted (ModuleRESTServer); duplicate of routes_iam.go | unaudited | unaudited |
+| 39 | POST | /api/v1/tenants/{tenant_id}/barrier/enable-encryption | HandleTenantBarrierEnableEncryption | mounted (ModuleRESTServer); duplicate of routes_iam.go | unaudited | unaudited |
+| 40 | GET | /api/v1/tenants/{tenant_id}/users/ | ListUsers | mounted (ModuleRESTServer); duplicate of routes_iam.go | unaudited | unaudited |
+| 41 | POST | /api/v1/tenants/{tenant_id}/users/ | CreateUser | mounted (ModuleRESTServer); duplicate of routes_iam.go | unaudited | unaudited |
+| 42 | GET | /api/v1/tenants/{tenant_id}/users/{user_id} | GetUser | mounted (ModuleRESTServer); duplicate of routes_iam.go | unaudited | unaudited |
+| 43 | PUT | /api/v1/tenants/{tenant_id}/users/{user_id} | UpdateUser | mounted (ModuleRESTServer); duplicate of routes_iam.go | unaudited | unaudited |
+| 44 | DELETE | /api/v1/tenants/{tenant_id}/users/{user_id} | DeleteUser | mounted (ModuleRESTServer); duplicate of routes_iam.go | unaudited | unaudited |
+| 45 | POST | /api/v1/tenants/{tenant_id}/users/{user_id}/roles | AssignRole | mounted (ModuleRESTServer); duplicate of routes_iam.go | unaudited | unaudited |
+| 46 | DELETE | /api/v1/tenants/{tenant_id}/users/{user_id}/roles/{role} | RevokeRole | mounted (ModuleRESTServer); duplicate of routes_iam.go | unaudited | unaudited |
+| 47 | GET | /api/v1/tenants/{tenant_id}/users/{user_id}/sessions/ | ListUserSessions | mounted (ModuleRESTServer); duplicate of routes_iam.go | unaudited | unaudited |
+| 48 | POST | /api/v1/tenants/{tenant_id}/users/{user_id}/sessions/ | CreateSession | mounted (ModuleRESTServer); duplicate of routes_iam.go | unaudited | unaudited |
+| 49 | DELETE | /api/v1/tenants/{tenant_id}/users/{user_id}/sessions/ | RevokeAllUserSessions | mounted (ModuleRESTServer); duplicate of routes_iam.go | unaudited | unaudited |
+| 50 | GET | /api/v1/tenants/{tenant_id}/users/{user_id}/mfa/ | GetMFAStatus | mounted (ModuleRESTServer); duplicate of routes_iam.go | unaudited | unaudited |
+| 51 | DELETE | /api/v1/tenants/{tenant_id}/users/{user_id}/mfa/ | DisableMFA | mounted (ModuleRESTServer); duplicate of routes_iam.go | unaudited | unaudited |
+| 52 | POST | /api/v1/tenants/{tenant_id}/users/{user_id}/mfa/enroll | BeginMFAEnrollment | mounted (ModuleRESTServer); duplicate of routes_iam.go | unaudited | unaudited |
+| 53 | POST | /api/v1/tenants/{tenant_id}/users/{user_id}/mfa/verify | CompleteMFAEnrollment | mounted (ModuleRESTServer); duplicate of routes_iam.go | unaudited | unaudited |
+| 54 | DELETE | /api/v1/tenants/{tenant_id}/users/{user_id}/mfa/enroll/{enrollment_id} | CancelMFAEnrollment | mounted (ModuleRESTServer); duplicate of routes_iam.go | unaudited | unaudited |
+| 55 | POST | /api/v1/tenants/{tenant_id}/users/{user_id}/mfa/challenge | BeginMFAChallenge | mounted (ModuleRESTServer); duplicate of routes_iam.go | unaudited | unaudited |
+| 56 | POST | /api/v1/tenants/{tenant_id}/users/{user_id}/mfa/verify-challenge | VerifyMFAChallenge | mounted (ModuleRESTServer); duplicate of routes_iam.go | unaudited | unaudited |
+| 57 | GET | /api/v1/tenants/{tenant_id}/users/{user_id}/mfa/backup-codes | GetBackupCodeStatus | mounted (ModuleRESTServer); duplicate of routes_iam.go | unaudited | unaudited |
+| 58 | POST | /api/v1/tenants/{tenant_id}/users/{user_id}/mfa/backup-codes | GenerateBackupCodes | mounted (ModuleRESTServer); duplicate of routes_iam.go | unaudited | unaudited |
+| 59 | GET | /api/v1/tenants/{tenant_id}/users/{user_id}/webauthn/credentials/ | ListUserWebAuthnCredentials | mounted (ModuleRESTServer); duplicate of routes_iam.go | unaudited | unaudited |
+| 60 | DELETE | /api/v1/tenants/{tenant_id}/users/{user_id}/webauthn/credentials/ | DeleteUserWebAuthnCredentials | mounted (ModuleRESTServer); duplicate of routes_iam.go | unaudited | unaudited |
+| 61 | DELETE | /api/v1/tenants/{tenant_id}/users/{user_id}/webauthn/credentials/{credential_id} | DeleteUserWebAuthnCredential | mounted (ModuleRESTServer); duplicate of routes_iam.go | unaudited | unaudited |
+| 62 | POST | /api/v1/tenants/{tenant_id}/users/{user_id}/links/ | LinkAccount | mounted (ModuleRESTServer); duplicate of routes_iam.go | unaudited | unaudited |
+| 63 | GET | /api/v1/tenants/{tenant_id}/users/{user_id}/links/ | GetUserLinks | mounted (ModuleRESTServer); duplicate of routes_iam.go | unaudited | unaudited |
+| 64 | DELETE | /api/v1/tenants/{tenant_id}/users/{user_id}/links/{provider_id} | UnlinkAccount | mounted (ModuleRESTServer); duplicate of routes_iam.go | unaudited | unaudited |
+| 65 | GET | /api/v1/tenants/{tenant_id}/roles/ | ListRoles | mounted (ModuleRESTServer); duplicate of routes_iam.go | unaudited | unaudited |
+| 66 | POST | /api/v1/tenants/{tenant_id}/roles/ | CreateRole | mounted (ModuleRESTServer); duplicate of routes_iam.go | unaudited | unaudited |
+| 67 | POST | /api/v1/tenants/{tenant_id}/roles/reconcile | ReconcileRoles | mounted (ModuleRESTServer); duplicate of routes_iam.go | unaudited | unaudited |
+| 68 | GET | /api/v1/tenants/{tenant_id}/roles/{role_id} | GetRole | mounted (ModuleRESTServer); duplicate of routes_iam.go | unaudited | unaudited |
+| 69 | PUT | /api/v1/tenants/{tenant_id}/roles/{role_id} | UpdateRole | mounted (ModuleRESTServer); duplicate of routes_iam.go | unaudited | unaudited |
+| 70 | DELETE | /api/v1/tenants/{tenant_id}/roles/{role_id} | DeleteRole | mounted (ModuleRESTServer); duplicate of routes_iam.go | unaudited | unaudited |
+| 71 | GET | /api/v1/tenants/{tenant_id}/apps/ | ListApps | mounted (ModuleRESTServer); duplicate of routes_iam.go | unaudited | unaudited |
+| 72 | POST | /api/v1/tenants/{tenant_id}/apps/ | RegisterApp | mounted (ModuleRESTServer); duplicate of routes_iam.go | unaudited | unaudited |
+| 73 | GET | /api/v1/tenants/{tenant_id}/apps/{client_id} | GetApp | mounted (ModuleRESTServer); duplicate of routes_iam.go | unaudited | unaudited |
+| 74 | PUT | /api/v1/tenants/{tenant_id}/apps/{client_id} | UpdateApp | mounted (ModuleRESTServer); duplicate of routes_iam.go | unaudited | unaudited |
+| 75 | DELETE | /api/v1/tenants/{tenant_id}/apps/{client_id} | DeleteApp | mounted (ModuleRESTServer); duplicate of routes_iam.go | unaudited | unaudited |
+| 76 | POST | /api/v1/tenants/{tenant_id}/apps/{client_id}/rotate-secret | RotateSecret | mounted (ModuleRESTServer); duplicate of routes_iam.go | unaudited | unaudited |
+| 77 | GET | /api/v1/tenants/{tenant_id}/policies/ | ListPolicies | mounted (ModuleRESTServer); duplicate of routes_iam.go | unaudited | unaudited |
+| 78 | POST | /api/v1/tenants/{tenant_id}/policies/ | CreatePolicy | mounted (ModuleRESTServer); duplicate of routes_iam.go | unaudited | unaudited |
+| 79 | GET | /api/v1/tenants/{tenant_id}/policies/{policy_name} | GetPolicy | mounted (ModuleRESTServer); duplicate of routes_iam.go | unaudited | unaudited |
+| 80 | PUT | /api/v1/tenants/{tenant_id}/policies/{policy_name} | UpdatePolicy | mounted (ModuleRESTServer); duplicate of routes_iam.go | unaudited | unaudited |
+| 81 | DELETE | /api/v1/tenants/{tenant_id}/policies/{policy_name} | DeletePolicy | mounted (ModuleRESTServer); duplicate of routes_iam.go | unaudited | unaudited |
+| 82 | POST | /api/v1/tenants/{tenant_id}/policies/validate | ValidatePolicy | mounted (ModuleRESTServer); duplicate of routes_iam.go | unaudited | unaudited |
+| 83 | POST | /api/v1/tenants/{tenant_id}/policies/test | TestPolicy | mounted (ModuleRESTServer); duplicate of routes_iam.go | unaudited | unaudited |
+| 84 | POST | /api/v1/tenants/{tenant_id}/policies/simulate | SimulatePolicy | mounted (ModuleRESTServer); duplicate of routes_iam.go | unaudited | unaudited |
+| 85 | POST | /api/v1/tenants/{tenant_id}/policies/effective-permissions | GetEffectivePermissions | mounted (ModuleRESTServer); duplicate of routes_iam.go | unaudited | unaudited |
+| 86 | POST | /api/v1/tenants/{tenant_id}/providers/ | RegisterProvider | mounted (ModuleRESTServer); duplicate of routes_iam.go | unaudited | unaudited |
+| 87 | GET | /api/v1/tenants/{tenant_id}/providers/ | ListProviders | mounted (ModuleRESTServer); duplicate of routes_iam.go | unaudited | unaudited |
+| 88 | GET | /api/v1/tenants/{tenant_id}/providers/{provider_id} | GetProvider | mounted (ModuleRESTServer); duplicate of routes_iam.go | unaudited | unaudited |
+| 89 | PUT | /api/v1/tenants/{tenant_id}/providers/{provider_id} | UpdateProvider | mounted (ModuleRESTServer); duplicate of routes_iam.go | unaudited | unaudited |
+| 90 | DELETE | /api/v1/tenants/{tenant_id}/providers/{provider_id} | DeleteProvider | mounted (ModuleRESTServer); duplicate of routes_iam.go | unaudited | unaudited |
+| 91 | GET | /api/v1/iam/{tenant_id}/invites/{token} | GetInvite | mounted (ModuleRESTServer); duplicate of routes_iam.go | unaudited | unaudited |
+| 92 | POST | /api/v1/iam/{tenant_id}/invites/{token}/activate/fido2/begin | ActivateFIDO2Begin | mounted (ModuleRESTServer); duplicate of routes_iam.go | unaudited | unaudited |
+| 93 | POST | /api/v1/iam/{tenant_id}/invites/{token}/activate/fido2/finish | ActivateFIDO2Finish | mounted (ModuleRESTServer); duplicate of routes_iam.go | unaudited | unaudited |
+| 94 | POST | /api/v1/iam/{tenant_id}/invites/{token}/activate/piv | ActivatePIV | mounted (ModuleRESTServer); duplicate of routes_iam.go | unaudited | unaudited |
+| 95 | POST | /api/v1/iam/users/{user_id}/approve | ApproveUser | mounted (ModuleRESTServer); duplicate of routes_iam.go | unaudited | unaudited |
+| 96 | POST | /api/v1/iam/users/{user_id}/reject | RejectUser | mounted (ModuleRESTServer); duplicate of routes_iam.go | unaudited | unaudited |
+| 97 | POST | /api/v1/iam/validate-client | ValidateClient | mounted (ModuleRESTServer); duplicate of routes_iam.go | unaudited | unaudited |
+| 98 | POST | /api/v1/iam/check | CheckAccess | mounted (ModuleRESTServer); duplicate of routes_iam.go | unaudited | unaudited |
+| 99 | POST | /api/v1/iam/check/batch | BatchCheckAccess | mounted (ModuleRESTServer); duplicate of routes_iam.go | unaudited | unaudited |
+| 100 | POST | /api/v1/iam/batch-check | BatchCheckAccess | mounted (ModuleRESTServer); duplicate of routes_iam.go | unaudited | unaudited |
+| 101 | GET | /api/v1/iam/audit | ListAuditEvents | mounted (ModuleRESTServer); duplicate of routes_iam.go | none | not covered |
+| 102 | GET | /api/v1/iam/audit/{id} | GetAuditEvent | mounted (ModuleRESTServer); duplicate of routes_iam.go | none | not covered |
+| 103 | POST | /api/v1/iam/audit | RecordAuditEvent | mounted (ModuleRESTServer); duplicate of routes_iam.go | none | not-UI: services record audit events, not operators |
+| 104 | DELETE | /api/v1/iam/audit | DeleteOldAuditEvents | mounted (ModuleRESTServer); duplicate of routes_iam.go | none | not covered |
+| 105 | GET | /api/v1/iam/sessions | ListSessions | mounted (ModuleRESTServer); duplicate of routes_iam.go | unaudited | unaudited |
+| 106 | DELETE | /api/v1/iam/sessions | RevokeAllSessions | mounted (ModuleRESTServer); duplicate of routes_iam.go | unaudited | unaudited |
+| 107 | GET | /api/v1/iam/sessions/{id} | GetSession | mounted (ModuleRESTServer); duplicate of routes_iam.go | unaudited | unaudited |
+| 108 | DELETE | /api/v1/iam/sessions/{id} | RevokeSession | mounted (ModuleRESTServer); duplicate of routes_iam.go | unaudited | unaudited |
+| 109 | POST | /api/v1/iam/sessions/revoke-others | RevokeOtherSessions | mounted (ModuleRESTServer); duplicate of routes_iam.go | unaudited | unaudited |
 
 `RegisterRoutes` also calls `RegisterFederationAuthRoutes(router, h)`,
 `RegisterGDPRRoutes` (under `/api/v1/tenants/{tenant_id}/users/{user_id}/gdpr`)
@@ -182,10 +191,13 @@ under `pkg/api/rest`.
 
 ## Still to audit
 
-- iam.go Registered column: the outer caller of the function holding
-  `s.registerIAMRoutes(r)` at `server.go:562`, and whether production starts it.
-- iam.go rows 1-100 and 105-109: SDK method (`sdk/typescript/src/rest.ts`) and
+- iam.go rows 1-100 and 105-109: SDK method (`sdk/typescript/src/rest.ts`);
   Console cell for rows 15-100 and 105-109.
-- iam.go: which rows routes_iam.go also registers (`duplicate of routes_iam.go`).
+- iam.go rows 1-21: whether `oidcDiscoveryRouteSpecs`, `oauth2CoreRouteSpecs`,
+  `oauth2RegisterRouteSpecs` or `apiAuthPublicRouteSpecs` (routes_iam.go)
+  register the same method and path (`duplicate of routes_iam.go`).
+- Totals: the file has no totals line yet. Counted once each, the iam.go
+  table has 109 rows (POST /api/v1/iam/audit is row 103 only; the
+  iam_audit.go table's row is the separate test-only registration).
 - iam.go: the routes `RegisterFederationAuthRoutes`, `RegisterGDPRRoutes` and
   `RegisterAdminRoutes` register.
