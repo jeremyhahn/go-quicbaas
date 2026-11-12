@@ -759,6 +759,165 @@ describe('IAMView', () => {
     });
   });
 
+  describe('Passkeys', () => {
+    const credentials = [
+      {
+        id: 'cred-aaaaaaaaaaaaaaaaaaaa-1',
+        aaguid: 'aaguid-1',
+        attestation_type: 'packed',
+        transports: ['usb', 'nfc'],
+        sign_count: 42,
+        backup_eligible: true,
+        backup_state: false,
+        clone_warning: true,
+      },
+      {
+        id: 'cred-2',
+        sign_count: 3,
+        backup_eligible: false,
+        backup_state: false,
+        clone_warning: false,
+      },
+    ];
+
+    function stubPasskeys(overrides: Record<string, ReturnType<typeof vi.fn>>): void {
+      mockGetSDKClient.mockResolvedValue({
+        iam: {
+          listUsers: vi.fn().mockResolvedValue({ users: mockUsers, count: mockUsers.length }),
+          listTenants: vi.fn().mockResolvedValue({ tenants: mockTenants, count: 1 }),
+          listRoles: vi.fn().mockResolvedValue({ roles: mockRoles, count: 2 }),
+          listPolicies: vi.fn().mockResolvedValue({ policies: mockPolicies, count: 1 }),
+          listWebAuthnCredentials: vi.fn().mockResolvedValue({ credentials, total: credentials.length }),
+          deleteWebAuthnCredential: vi.fn().mockResolvedValue(undefined),
+          deleteAllWebAuthnCredentials: vi.fn().mockResolvedValue({ deleted: 2 }),
+          ...overrides,
+        },
+      });
+    }
+
+    async function openPasskeysDialog(username: string): Promise<HTMLElement> {
+      render(IAMView);
+      const open = await screen.findByRole('button', { name: `Passkeys of ${username}` });
+      await fireEvent.click(open);
+      return screen.getByRole('dialog', { name: 'Passkeys dialog' });
+    }
+
+    function buttonIn(dialogName: string, text: string): HTMLButtonElement | undefined {
+      const dialog = screen.getByRole('dialog', { name: dialogName });
+      return Array.from(dialog.querySelectorAll('button')).find((b) => b.textContent === text);
+    }
+
+    it("lists the user's credentials with every field", async () => {
+      const list = vi.fn().mockResolvedValue({ credentials, total: 2 });
+      stubPasskeys({ listWebAuthnCredentials: list });
+      const dialog = await openPasskeysDialog('alice');
+      expect(dialog.querySelector('h3')?.textContent).toBe('Passkeys of alice');
+      const table = await screen.findByRole('table', { name: 'Passkeys' });
+      expect(list).toHaveBeenCalledWith('acme', 'user-1');
+      expect(table.querySelector('[title="cred-aaaaaaaaaaaaaaaaaaaa-1"]')).not.toBeNull();
+      expect(table.textContent).toContain('aaguid-1');
+      expect(table.textContent).toContain('packed');
+      expect(table.textContent).toContain('usb, nfc');
+      expect(table.textContent).toContain('42');
+      expect(table.textContent).toContain('Yes');
+      expect(table.textContent).toContain('No');
+      expect(table.textContent).toContain('cred-2');
+    });
+
+    it('shows the clone warning badge only on a flagged credential', async () => {
+      stubPasskeys({});
+      await openPasskeysDialog('alice');
+      const table = await screen.findByRole('table', { name: 'Passkeys' });
+      const rows = table.querySelectorAll('tbody tr');
+      expect(rows[0].textContent).toContain('Clone warning');
+      expect(rows[1].textContent).not.toContain('Clone warning');
+    });
+
+    it('shows the empty state when the user has no passkeys', async () => {
+      stubPasskeys({ listWebAuthnCredentials: vi.fn().mockResolvedValue({ credentials: [], total: 0 }) });
+      const dialog = await openPasskeysDialog('alice');
+      await waitFor(() => {
+        expect(dialog.textContent).toContain('No passkeys registered.');
+      });
+      expect(screen.queryByRole('button', { name: 'Remove all' })).not.toBeInTheDocument();
+    });
+
+    it('removes one credential only after confirmation, then reloads', async () => {
+      const list = vi.fn().mockResolvedValue({ credentials, total: 2 });
+      const remove = vi.fn().mockResolvedValue(undefined);
+      stubPasskeys({ listWebAuthnCredentials: list, deleteWebAuthnCredential: remove });
+      await openPasskeysDialog('alice');
+      await fireEvent.click(await screen.findByRole('button', { name: 'Remove passkey cred-2' }));
+      expect(remove).not.toHaveBeenCalled();
+      const confirmButton = buttonIn('Remove passkey confirmation', 'Remove');
+      expect(confirmButton).toBeDefined();
+      if (confirmButton) await fireEvent.click(confirmButton);
+      await waitFor(() => {
+        expect(remove).toHaveBeenCalledWith('acme', 'user-1', 'cred-2');
+        expect(list).toHaveBeenCalledTimes(2);
+      });
+      expect(remove).toHaveBeenCalledTimes(1);
+      expect(screen.queryByRole('dialog', { name: 'Remove passkey confirmation' })).not.toBeInTheDocument();
+    });
+
+    it('removes all credentials after confirmation, toasts the count and reloads', async () => {
+      const list = vi.fn().mockResolvedValueOnce({ credentials, total: 2 }).mockResolvedValue({ credentials: [], total: 0 });
+      const removeAll = vi.fn().mockResolvedValue({ deleted: 2 });
+      stubPasskeys({ listWebAuthnCredentials: list, deleteAllWebAuthnCredentials: removeAll });
+      const dialog = await openPasskeysDialog('alice');
+      await fireEvent.click(await screen.findByRole('button', { name: 'Remove all' }));
+      expect(removeAll).not.toHaveBeenCalled();
+      const confirmButton = buttonIn('Remove all passkeys confirmation', 'Remove all');
+      expect(confirmButton).toBeDefined();
+      if (confirmButton) await fireEvent.click(confirmButton);
+      await waitFor(() => {
+        expect(removeAll).toHaveBeenCalledWith('acme', 'user-1');
+        expect(mockShowToast).toHaveBeenCalledWith({ message: '2 passkey(s) removed from "alice"', type: 'success' });
+        expect(list).toHaveBeenCalledTimes(2);
+      });
+      await waitFor(() => {
+        expect(dialog.textContent).toContain('No passkeys registered.');
+      });
+    });
+
+    it('calls nothing when a confirmation is cancelled', async () => {
+      const remove = vi.fn().mockResolvedValue(undefined);
+      const removeAll = vi.fn().mockResolvedValue({ deleted: 2 });
+      stubPasskeys({ deleteWebAuthnCredential: remove, deleteAllWebAuthnCredentials: removeAll });
+      await openPasskeysDialog('alice');
+      await fireEvent.click(await screen.findByRole('button', { name: 'Remove passkey cred-2' }));
+      const cancel = buttonIn('Remove passkey confirmation', 'Cancel');
+      if (cancel) await fireEvent.click(cancel);
+      expect(screen.queryByRole('dialog', { name: 'Remove passkey confirmation' })).not.toBeInTheDocument();
+      await fireEvent.click(screen.getByRole('button', { name: 'Remove all' }));
+      const cancelAll = buttonIn('Remove all passkeys confirmation', 'Cancel');
+      if (cancelAll) await fireEvent.click(cancelAll);
+      expect(screen.queryByRole('dialog', { name: 'Remove all passkeys confirmation' })).not.toBeInTheDocument();
+      expect(remove).not.toHaveBeenCalled();
+      expect(removeAll).not.toHaveBeenCalled();
+    });
+
+    it('shows the SDK error in the dialog when the list fails', async () => {
+      stubPasskeys({ listWebAuthnCredentials: vi.fn().mockRejectedValue(new Error('webauthn unavailable')) });
+      const dialog = await openPasskeysDialog('alice');
+      await waitFor(() => {
+        expect(dialog.querySelector('[role="alert"]')?.textContent).toBe('webauthn unavailable');
+      });
+    });
+
+    it('shows the SDK error in the dialog when a remove is rejected', async () => {
+      stubPasskeys({ deleteWebAuthnCredential: vi.fn().mockRejectedValue(new Error('remove denied')) });
+      const dialog = await openPasskeysDialog('alice');
+      await fireEvent.click(await screen.findByRole('button', { name: 'Remove passkey cred-2' }));
+      const confirmButton = buttonIn('Remove passkey confirmation', 'Remove');
+      if (confirmButton) await fireEvent.click(confirmButton);
+      await waitFor(() => {
+        expect(dialog.querySelector('[role="alert"]')?.textContent).toBe('remove denied');
+      });
+      expect(mockShowToast).not.toHaveBeenCalled();
+    });
+  });
+
   // -------------------------------------------------------------------------
   // Issue #573: built-in roles are seeded once and never reconciled, so a
   // permission rename in the server build strands every existing tenant. The

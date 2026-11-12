@@ -46,8 +46,9 @@
     UserConsent,
     IAMSession,
     MFAStatusResponse,
+    WebAuthnCredentialSummary,
   } from '@quicbaas/sdk';
-  import { ShieldCheck, UserPlus, Pencil, Trash2, UserCheck, ToggleLeft, RefreshCw, FileCheck, MonitorSmartphone, KeyRound } from 'lucide-svelte';
+  import { ShieldCheck, UserPlus, Pencil, Trash2, UserCheck, ToggleLeft, RefreshCw, FileCheck, MonitorSmartphone, KeyRound, Fingerprint } from 'lucide-svelte';
   import EmptyState from '../../components/core/EmptyState.svelte';
   import { routerStore, routeIAMTab } from '../../stores/router.svelte.ts';
   import { formatDateTime } from '../../lib/time.ts';
@@ -266,6 +267,20 @@
   // Set while the Disable MFA confirmation is shown.
   let confirmDisableMFA = $state(false);
   let disablingMFA = $state(false);
+
+  // ---------------------------------------------------------------------------
+  // Passkeys (WebAuthn credentials) dialog state
+  // ---------------------------------------------------------------------------
+
+  let userForPasskeys: IAMUser | null = $state(null);
+  let passkeys: WebAuthnCredentialSummary[] | null = $state(null);
+  let passkeysLoading = $state(false);
+  let passkeysError: string | null = $state(null);
+  // Set while the Remove confirmation for one credential is shown.
+  let confirmRemovePasskey: WebAuthnCredentialSummary | null = $state(null);
+  // Set while the Remove all confirmation is shown.
+  let confirmRemoveAllPasskeys = $state(false);
+  let removingPasskeys = $state(false);
 
   // ---------------------------------------------------------------------------
   // Create Tenant dialog state
@@ -700,6 +715,93 @@
       }
     } finally {
       disablingMFA = false;
+    }
+  }
+
+  async function loadUserPasskeys(user: IAMUser): Promise<void> {
+    passkeysLoading = true;
+    try {
+      const client = await getSDKClient();
+      const result = await client.iam.listWebAuthnCredentials(selectedTenantID, user.id);
+      // Drop a response that lands after the dialog closed or moved to another user.
+      if (userForPasskeys?.id === user.id) {
+        passkeys = result.credentials ?? [];
+      }
+    } catch (e) {
+      if (userForPasskeys?.id === user.id) {
+        passkeysError = e instanceof Error ? e.message : 'Failed to load passkeys';
+      }
+    } finally {
+      passkeysLoading = false;
+    }
+  }
+
+  function openPasskeys(user: IAMUser): void {
+    userForPasskeys = user;
+    passkeys = null;
+    passkeysError = null;
+    confirmRemovePasskey = null;
+    confirmRemoveAllPasskeys = false;
+    removingPasskeys = false;
+    void loadUserPasskeys(user);
+  }
+
+  function closePasskeys(): void {
+    userForPasskeys = null;
+    passkeysError = null;
+    confirmRemovePasskey = null;
+    confirmRemoveAllPasskeys = false;
+  }
+
+  /** shortCredentialID keeps the head of a long credential id for the table. */
+  function shortCredentialID(id: string): string {
+    return id.length > 16 ? `${id.slice(0, 12)}…` : id;
+  }
+
+  async function submitRemovePasskey(): Promise<void> {
+    if (!userForPasskeys || !confirmRemovePasskey) return;
+    const user = userForPasskeys;
+    const credential = confirmRemovePasskey;
+    passkeysError = null;
+    removingPasskeys = true;
+    try {
+      const client = await getSDKClient();
+      await client.iam.deleteWebAuthnCredential(selectedTenantID, user.id, credential.id);
+      showToast({ message: `Passkey removed from "${user.username}"`, type: 'success' });
+      confirmRemovePasskey = null;
+      if (userForPasskeys?.id === user.id) {
+        await loadUserPasskeys(user);
+      }
+    } catch (e) {
+      confirmRemovePasskey = null;
+      if (userForPasskeys?.id === user.id) {
+        passkeysError = e instanceof Error ? e.message : 'Failed to remove passkey';
+      }
+    } finally {
+      removingPasskeys = false;
+    }
+  }
+
+  async function submitRemoveAllPasskeys(): Promise<void> {
+    if (!userForPasskeys) return;
+    const user = userForPasskeys;
+    passkeysError = null;
+    removingPasskeys = true;
+    try {
+      const client = await getSDKClient();
+      const result = await client.iam.deleteAllWebAuthnCredentials(selectedTenantID, user.id);
+      showToast({ message: `${result.deleted} passkey(s) removed from "${user.username}"`, type: 'success' });
+      confirmRemoveAllPasskeys = false;
+      if (userForPasskeys?.id === user.id) {
+        await loadUserPasskeys(user);
+      }
+    } catch (e) {
+      confirmRemoveAllPasskeys = false;
+      if (userForPasskeys?.id === user.id) {
+        passkeysError = e instanceof Error ? e.message : 'Failed to remove passkeys';
+      }
+    } finally {
+      removingPasskeys = false;
     }
   }
 
@@ -1280,6 +1382,14 @@
                   <KeyRound class="h-3 w-3" />
                 </button>
                 <button
+                  class="btn btn-ghost btn-xs"
+                  title="Passkeys"
+                  aria-label={`Passkeys of ${user.username}`}
+                  onclick={() => openPasskeys(user)}
+                >
+                  <Fingerprint class="h-3 w-3" />
+                </button>
+                <button
                   class="btn btn-ghost btn-xs text-error"
                   title={`Delete user ${user.username}`}
                   aria-label={`Delete user ${user.username}`}
@@ -1808,6 +1918,110 @@
       </div>
     </div>
     <div class="modal-backdrop" role="none" onclick={() => { confirmDisableMFA = false; }} onkeydown={() => { confirmDisableMFA = false; }}></div>
+  </div>
+{/if}
+
+<!-- =========================================================================
+     PASSKEYS DIALOG
+     ========================================================================= -->
+{#if userForPasskeys}
+  <div class="modal modal-open" role="dialog" aria-modal="true" aria-label="Passkeys dialog">
+    <div class="modal-box max-w-3xl">
+      <h3 class="text-base font-semibold mb-4">Passkeys of <span class="font-mono text-primary">{userForPasskeys.username}</span></h3>
+      {#if passkeysError}
+        <div class="alert alert-error text-sm mb-3" role="alert">{passkeysError}</div>
+      {/if}
+      {#if passkeysLoading && !passkeys}
+        <div class="flex items-center gap-2 py-2 mb-3">
+          <span class="loading loading-spinner loading-xs"></span>
+          <span class="text-sm text-base-content/50">Loading passkeys…</span>
+        </div>
+      {:else if passkeys && passkeys.length === 0}
+        <p class="text-sm text-base-content/50 mb-3">No passkeys registered.</p>
+      {:else if passkeys}
+        <div class="overflow-x-auto mb-3">
+          <table class="table table-xs" aria-label="Passkeys">
+            <thead>
+              <tr>
+                <th>ID</th>
+                <th>AAGUID</th>
+                <th>Attestation</th>
+                <th>Transports</th>
+                <th>Sign count</th>
+                <th>Backup eligible</th>
+                <th>Backup state</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              {#each passkeys as credential (credential.id)}
+                <tr>
+                  <td class="font-mono" title={credential.id}>
+                    {shortCredentialID(credential.id)}
+                    {#if credential.clone_warning}
+                      <span class="badge badge-xs badge-warning ml-1" title="The authenticator's sign count went backwards: it may be cloned">Clone warning</span>
+                    {/if}
+                  </td>
+                  <td class="font-mono">{credential.aaguid || '—'}</td>
+                  <td>{credential.attestation_type || '—'}</td>
+                  <td>{credential.transports && credential.transports.length > 0 ? credential.transports.join(', ') : '—'}</td>
+                  <td class="font-mono">{credential.sign_count}</td>
+                  <td>{credential.backup_eligible ? 'Yes' : 'No'}</td>
+                  <td>{credential.backup_state ? 'Yes' : 'No'}</td>
+                  <td>
+                    <button
+                      class="btn btn-ghost btn-xs text-error"
+                      aria-label={`Remove passkey ${credential.id}`}
+                      disabled={removingPasskeys}
+                      onclick={() => { confirmRemovePasskey = credential; }}
+                    >Remove</button>
+                  </td>
+                </tr>
+              {/each}
+            </tbody>
+          </table>
+        </div>
+      {/if}
+      <div class="modal-action">
+        <button class="btn btn-ghost btn-sm" onclick={closePasskeys}>Close</button>
+        {#if passkeys && passkeys.length > 0}
+          <button class="btn btn-error btn-sm" disabled={removingPasskeys} onclick={() => { confirmRemoveAllPasskeys = true; }}>Remove all</button>
+        {/if}
+      </div>
+    </div>
+    <div class="modal-backdrop" role="none" onclick={closePasskeys} onkeydown={closePasskeys}></div>
+  </div>
+{/if}
+
+{#if userForPasskeys && confirmRemovePasskey}
+  <div class="modal modal-open" role="dialog" aria-modal="true" aria-label="Remove passkey confirmation">
+    <div class="modal-box max-w-sm">
+      <h3 class="text-base font-semibold mb-2">Remove passkey?</h3>
+      <p class="text-sm text-base-content/70">
+        Remove passkey <span class="font-mono font-semibold" title={confirmRemovePasskey.id}>{shortCredentialID(confirmRemovePasskey.id)}</span> from <span class="font-mono font-semibold">{userForPasskeys.username}</span>? The user can no longer sign in with it.
+      </p>
+      <div class="modal-action">
+        <button class="btn btn-ghost btn-sm" onclick={() => { confirmRemovePasskey = null; }}>Cancel</button>
+        <button class="btn btn-error btn-sm" disabled={removingPasskeys} onclick={submitRemovePasskey}>{removingPasskeys ? 'Removing…' : 'Remove'}</button>
+      </div>
+    </div>
+    <div class="modal-backdrop" role="none" onclick={() => { confirmRemovePasskey = null; }} onkeydown={() => { confirmRemovePasskey = null; }}></div>
+  </div>
+{/if}
+
+{#if userForPasskeys && confirmRemoveAllPasskeys}
+  <div class="modal modal-open" role="dialog" aria-modal="true" aria-label="Remove all passkeys confirmation">
+    <div class="modal-box max-w-sm">
+      <h3 class="text-base font-semibold mb-2">Remove all passkeys?</h3>
+      <p class="text-sm text-base-content/70">
+        Remove every passkey of <span class="font-mono font-semibold">{userForPasskeys.username}</span>? The user must register again to sign in with a passkey.
+      </p>
+      <div class="modal-action">
+        <button class="btn btn-ghost btn-sm" onclick={() => { confirmRemoveAllPasskeys = false; }}>Cancel</button>
+        <button class="btn btn-error btn-sm" disabled={removingPasskeys} onclick={submitRemoveAllPasskeys}>{removingPasskeys ? 'Removing…' : 'Remove all'}</button>
+      </div>
+    </div>
+    <div class="modal-backdrop" role="none" onclick={() => { confirmRemoveAllPasskeys = false; }} onkeydown={() => { confirmRemoveAllPasskeys = false; }}></div>
   </div>
 {/if}
 
