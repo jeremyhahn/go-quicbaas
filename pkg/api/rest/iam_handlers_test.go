@@ -55,6 +55,10 @@ type testTenantManager struct {
 	// the way production's DefaultTenantManager does (iam_init.go
 	// SetRoleSeeder). Nil leaves the tenant without roles.
 	roleSeeder iam.TenantRoleSeeder
+
+	// onUpdate, when set, is called first by UpdateTenant, so a test can
+	// observe the state at the moment of a tenant write.
+	onUpdate func(id string, opts iam.UpdateTenantOptions)
 }
 
 func (m *testTenantManager) CreateTenant(ctx context.Context, opts iam.CreateTenantOptions) (*iam.Tenant, error) {
@@ -88,6 +92,9 @@ func (m *testTenantManager) GetTenant(ctx context.Context, id string) (*iam.Tena
 }
 
 func (m *testTenantManager) UpdateTenant(ctx context.Context, id string, opts iam.UpdateTenantOptions) (*iam.Tenant, error) {
+	if m.onUpdate != nil {
+		m.onUpdate(id, opts)
+	}
 	tenant, err := m.storage.GetTenant(ctx, id)
 	if err != nil {
 		return nil, err

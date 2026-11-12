@@ -734,3 +734,135 @@ func TestSelfRegistrationTenantInUseError_NamesTheTenant(t *testing.T) {
 
 	assert.Contains(t, err.Error(), "acme-inc")
 }
+
+// TestRegisterSelf_ReaperKeepsATenantInUse pins the session reaper to the
+// sweep's in-use check: a tenant with a second account, or whose registrant
+// is no longer pending, is kept.
+func TestRegisterSelf_ReaperKeepsATenantInUse(t *testing.T) {
+	tests := []struct {
+		name  string
+		after func(t *testing.T, svc *selfRegService, registrant *iam.User)
+		users int
+	}{
+		{
+			name: "a second account",
+			after: func(t *testing.T, svc *selfRegService, _ *iam.User) {
+				_, err := svc.store.CreateUser(context.Background(), "acme-inc", iam.CreateUserOptions{
+					Email: "bob@acme.example", Username: "bob", Name: "Bob",
+				})
+				require.NoError(t, err)
+			},
+			users: 2,
+		},
+		{
+			name: "the registrant activated",
+			after: func(t *testing.T, svc *selfRegService, registrant *iam.User) {
+				active := iam.LifecycleActive
+				_, err := svc.store.UpdateUser(context.Background(), "acme-inc", registrant.ID,
+					iam.UpdateUserOptions{Lifecycle: &active})
+				require.NoError(t, err)
+			},
+			users: 1,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			handler := setupSelfRegHandler(t, brokerSelfRegConfig())
+			svc := handler.server.service.(*selfRegService)
+			newXKMSCeremony(svc, true)
+			sessionID := selfRegBegin(t, handler, "Acme Inc", "jane@acme.example")
+			users := usersIn(t, handler, "acme-inc")
+			require.Len(t, users, 1)
+			tt.after(t, svc, users[0])
+
+			handler.reapRegistration(context.Background(), sessionID)
+
+			assert.Equal(t, []string{"acme-inc"}, tenantIDs(t, handler))
+			assert.Len(t, usersIn(t, handler, "acme-inc"), tt.users)
+		})
+	}
+}
+
+// TestRegisterSelf_ReaperKeepsATenantWithoutARegistrationRecord pins the
+// ownership check: a tenant whose registration record is gone is not the
+// registration's own, so the reaper keeps it.
+func TestRegisterSelf_ReaperKeepsATenantWithoutARegistrationRecord(t *testing.T) {
+	ctx := context.Background()
+	handler := setupSelfRegHandler(t, brokerSelfRegConfig())
+	svc := handler.server.service.(*selfRegService)
+	newXKMSCeremony(svc, true)
+	sessionID := selfRegBegin(t, handler, "Acme Inc", "jane@acme.example")
+	_, err := svc.tenants.UpdateTenant(ctx, "acme-inc", iam.UpdateTenantOptions{FinishSelfRegistration: true})
+	require.NoError(t, err)
+
+	handler.reapRegistration(ctx, sessionID)
+
+	assert.Equal(t, []string{"acme-inc"}, tenantIDs(t, handler))
+	assert.Len(t, usersIn(t, handler, "acme-inc"), 1)
+}
+
+// TestRegisterSelfFinish_ClearsTheRecordAfterActivation pins the order of the
+// finish's writes: the ungated finish activates the account before it clears
+// the registration record; a gated finish clears it with the account pending.
+func TestRegisterSelfFinish_ClearsTheRecordAfterActivation(t *testing.T) {
+	tests := []struct {
+		name      string
+		gated     bool
+		lifecycle iam.Lifecycle
+	}{
+		{name: "ungated", lifecycle: iam.LifecycleActive},
+		{name: "admin approval", gated: true, lifecycle: iam.LifecyclePending},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := brokerSelfRegConfig()
+			cfg.RequireAdminApproval = tt.gated
+			handler := setupSelfRegHandler(t, cfg)
+			svc := handler.server.service.(*selfRegService)
+			newXKMSCeremony(svc, true)
+			sessionID := selfRegBegin(t, handler, "Acme Inc", "jane@acme.example")
+			var recorded []iam.Lifecycle
+			svc.tenants.onUpdate = func(_ string, opts iam.UpdateTenantOptions) {
+				if opts.FinishSelfRegistration {
+					recorded = append(recorded, usersIn(t, handler, "acme-inc")[0].Lifecycle)
+				}
+			}
+
+			w := selfRegFinish(t, handler, sessionID)
+
+			require.Equal(t, http.StatusOK, w.Code, "finish body: %s", w.Body.String())
+			assert.Equal(t, []iam.Lifecycle{tt.lifecycle}, recorded)
+			tenant, err := svc.tenants.GetTenant(context.Background(), "acme-inc")
+			require.NoError(t, err)
+			assert.Nil(t, tenant.SelfRegistration)
+		})
+	}
+}
+
+// TestRegistrationSweeper_KeepsARegistrantActivatedBeforeACrash covers a crash
+// between the ungated finish's activation and its record write: the record is
+// still there, but the active registrant keeps the tenant.
+func TestRegistrationSweeper_KeepsARegistrantActivatedBeforeACrash(t *testing.T) {
+	handler := setupSelfRegHandler(t, brokerSelfRegConfig())
+	svc := handler.server.service.(*selfRegService)
+	newXKMSCeremony(svc, true)
+	sessionID := selfRegBegin(t, handler, "Acme Inc", "jane@acme.example")
+	users := usersIn(t, handler, "acme-inc")
+	require.Len(t, users, 1)
+	active := iam.LifecycleActive
+	_, err := svc.store.UpdateUser(context.Background(), "acme-inc", users[0].ID,
+		iam.UpdateUserOptions{Lifecycle: &active})
+	require.NoError(t, err)
+	restart(t, sessionID)
+	sweeper, _ := newTestSweeper(handler, &testClock{at: afterExpiry()})
+
+	err = sweeper.sweep(context.Background())
+
+	var inUse *SelfRegistrationTenantInUseError
+	require.ErrorAs(t, err, &inUse)
+	assert.Equal(t, "acme-inc", inUse.TenantID)
+	assert.Equal(t, []string{"acme-inc"}, tenantIDs(t, handler))
+	users = usersIn(t, handler, "acme-inc")
+	require.Len(t, users, 1)
+	assert.Equal(t, iam.LifecycleActive, users[0].Lifecycle)
+}
