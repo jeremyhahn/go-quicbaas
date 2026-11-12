@@ -56,6 +56,7 @@ export type ViewID =
   | 'my-sessions'
   | 'attestation'
   | 'oauth-apps'
+  | 'identity-providers'
   | 'cluster'
   | 'nodes'
   | 'backup'
@@ -104,6 +105,7 @@ const viewHashPaths: Partial<Record<ViewID, string>> = {
   'my-sessions': '/my-sessions',
   attestation:   '/attestation',
   'oauth-apps':  '/oauth-apps',
+  'identity-providers': '/identity-providers',
   // ORCHESTRATION — inference
   inference:     '/inference',
   // ORCHESTRATION — projects
@@ -159,6 +161,7 @@ const routeToViewID: Partial<Record<RouteName, ViewID>> = {
   'my-sessions':    'my-sessions',
   attestation:      'attestation',
   'oauth-apps':     'oauth-apps',
+  'identity-providers': 'identity-providers',
   // ORCHESTRATION — inference
   inference:        'inference',
   // ORCHESTRATION — projects
