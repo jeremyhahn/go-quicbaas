@@ -239,6 +239,14 @@ export type {
   ListCertificatesResponse,
   GenerateCRLResponse,
   IsRevokedResponse,
+  XKMSCABundleOptions,
+  XKMSCABundle,
+  XKMSCACertificate,
+  XKMSCASignCSRRequest,
+  XKMSCASignCSRResponse,
+  XKMSCAIssueRequest,
+  XKMSCAIssueResponse,
+  XKMSCARevokeResponse,
 } from './ca.js';
 export type {
   TrustClient,

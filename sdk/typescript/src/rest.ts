@@ -133,6 +133,14 @@ import type {
   ListCertificatesResponse,
   GenerateCRLResponse,
   IsRevokedResponse,
+  XKMSCABundleOptions,
+  XKMSCABundle,
+  XKMSCACertificate,
+  XKMSCASignCSRRequest,
+  XKMSCASignCSRResponse,
+  XKMSCAIssueRequest,
+  XKMSCAIssueResponse,
+  XKMSCARevokeResponse,
 } from './ca.js';
 import type {
   TrustClient,
@@ -3963,6 +3971,68 @@ export class RestCAClient implements CAClient {
     return this.http.fetchJSON<IsRevokedResponse>(
       `/api/v1/xkms/ca/revoked/${encodeURIComponent(serialNumber)}`,
     );
+  }
+
+  // The xkms CA passthrough routes carry Go []byte fields, so every *_pem
+  // field travels as base64 of the PEM text. xkmsPEM decodes one, falling
+  // back to the raw string (as generateCRL does) when it is not base64.
+  private static xkmsPEM(wire: string | undefined): string {
+    if (!wire) return wire ?? '';
+    try {
+      return atob(wire);
+    } catch {
+      return wire;
+    }
+  }
+
+  async xkmsGetCABundle(opts?: XKMSCABundleOptions): Promise<XKMSCABundle> {
+    const q: string[] = [];
+    if (opts?.store_type) q.push(`store_type=${encodeURIComponent(opts.store_type)}`);
+    if (opts?.algorithm) q.push(`algorithm=${encodeURIComponent(opts.algorithm)}`);
+    const path = '/api/v1/xkms/ca/bundle' + (q.length ? `?${q.join('&')}` : '');
+    const wire = await this.http.fetchJSON<XKMSCABundle>(path);
+    return { ...wire, bundle_pem: RestCAClient.xkmsPEM(wire.bundle_pem), certificates: wire.certificates ?? [] };
+  }
+
+  async xkmsGetCACertificate(identity?: string): Promise<XKMSCACertificate> {
+    const path = '/api/v1/xkms/ca/cert' + (identity ? `?identity=${encodeURIComponent(identity)}` : '');
+    const wire = await this.http.fetchJSON<XKMSCACertificate>(path);
+    return { ...wire, certificate_pem: RestCAClient.xkmsPEM(wire.certificate_pem) };
+  }
+
+  async xkmsSignCSR(req: XKMSCASignCSRRequest): Promise<XKMSCASignCSRResponse> {
+    const wire = await this.http.fetchJSON<XKMSCASignCSRResponse>('/api/v1/xkms/ca/sign', {
+      method: 'POST',
+      body: JSON.stringify({ ...req, csr_pem: btoa(req.csr_pem) }),
+    });
+    return {
+      ...wire,
+      certificate_pem: RestCAClient.xkmsPEM(wire.certificate_pem),
+      chain_pem: RestCAClient.xkmsPEM(wire.chain_pem),
+    };
+  }
+
+  async xkmsIssueCertificate(req: XKMSCAIssueRequest): Promise<XKMSCAIssueResponse> {
+    const wire = await this.http.fetchJSON<XKMSCAIssueResponse>('/api/v1/xkms/ca/issue', {
+      method: 'POST',
+      body: JSON.stringify(req),
+    });
+    const out: XKMSCAIssueResponse = {
+      ...wire,
+      certificate_pem: RestCAClient.xkmsPEM(wire.certificate_pem),
+      chain_pem: RestCAClient.xkmsPEM(wire.chain_pem),
+    };
+    if (wire.private_key_pem) out.private_key_pem = RestCAClient.xkmsPEM(wire.private_key_pem);
+    return out;
+  }
+
+  async xkmsRevokeCertificate(serialNumber: string, reason: number, tenantId?: string): Promise<XKMSCARevokeResponse> {
+    const body: { serial_number: string; reason: number; tenant_id?: string } = { serial_number: serialNumber, reason };
+    if (tenantId) body.tenant_id = tenantId;
+    return this.http.fetchJSON<XKMSCARevokeResponse>('/api/v1/xkms/ca/revoke', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    });
   }
 }
 
