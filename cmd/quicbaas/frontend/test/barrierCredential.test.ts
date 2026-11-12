@@ -41,14 +41,15 @@ describe('encodeBarrierCredential', () => {
 
   it('encodes a multi-byte passphrase by its UTF-8 bytes, not its characters', () => {
     const encoded = encodeBarrierCredential('pässwörd–ü');
-    expect(encoded).toBeInstanceOf(Uint8Array);
-    expect(encoded).toEqual(Uint8Array.from(Buffer.from('pässwörd–ü', 'utf8')));
+    // Compare byte values: the test DOM's TextEncoder returns a Uint8Array
+    // from another realm, so an instanceof or cross-realm toEqual misleads.
+    expect(Array.from(encoded)).toEqual(Array.from(Buffer.from('pässwörd–ü', 'utf8')));
     expect(encoded.length).toBe(Buffer.byteLength('pässwörd–ü', 'utf8'));
     expect(new TextDecoder().decode(encoded)).toBe('pässwörd–ü');
   });
 
   it('encodes the empty passphrase to the empty credential', () => {
-    expect(encodeBarrierCredential('')).toEqual(new Uint8Array());
+    expect(encodeBarrierCredential('').length).toBe(0);
   });
 });
 
