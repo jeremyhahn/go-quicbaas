@@ -66,7 +66,7 @@ func (f *giteaForges) ForgeFor(context.Context, string, ForgeConfig) (ForgeBacke
 // zeroizes what it is given, and a shared slice would empty on the first pass
 // and make the second look like a missing secret.
 func onboardingSecrets() *staticSecrets {
-	return &staticSecrets{secrets: map[string][]byte{"wh": []byte("hmac")}}
+	return &staticSecrets{secrets: map[string][]byte{"wh": []byte("hmac-hook-value")}}
 }
 
 // newOnboarderAgainstGitea wires an onboarder onto a fresh stateful Gitea.

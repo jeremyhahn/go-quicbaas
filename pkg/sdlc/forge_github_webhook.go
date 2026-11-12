@@ -53,6 +53,9 @@ func (g *GitHubBackend) VerifyWebhook(payload []byte, signature string, secret [
 	if len(secret) == 0 {
 		return &WebhookUnverifiedError{Type: ForgeGitHub, Reason: "no signing secret is configured"}
 	}
+	if len(secret) < MinWebhookSecretBytes {
+		return &WebhookUnverifiedError{Type: ForgeGitHub, Reason: shortWebhookSecretReason}
+	}
 	if signature == "" {
 		return &WebhookUnverifiedError{Type: ForgeGitHub, Reason: "delivery carried no signature"}
 	}
@@ -266,6 +269,9 @@ func (g *GitHubBackend) EnsureWebhook(ctx context.Context, repo RepoRef, spec We
 			Field:   "secret",
 			Message: "an unsigned webhook cannot be verified, and an unverifiable delivery is discarded",
 		}
+	}
+	if len(secret) < MinWebhookSecretBytes {
+		return &InvalidInputError{Field: "secret", Message: shortWebhookSecretReason}
 	}
 
 	existing, err := g.listHooks(ctx, repo)
