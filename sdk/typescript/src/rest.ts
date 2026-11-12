@@ -376,6 +376,13 @@ import type {
   RegistryResolveResponse,
 } from './registry.js';
 import type {
+  TSBatchPoint,
+  TSWriteBatchResponse,
+  TSRetentionPolicy,
+  TSRetentionPolicyResponse,
+  TSSetRetentionPolicyResponse,
+} from './timeseries_admin.js';
+import type {
   DynamicSecretsClient,
   DynamicSecretRole,
   CreateRoleRequest as DynamicSecretCreateRoleRequest,
@@ -1958,6 +1965,32 @@ class RestTimeSeriesClient implements TimeSeriesClient {
     await this.fetchJSON<void>(`/api/v1/timeseries/series?metric=${encodeURIComponent(metric)}`, {
       method: 'DELETE',
     });
+  }
+
+  // writeBatch maps to POST /api/v1/timeseries/write-batch
+  async writeBatch(points: TSBatchPoint[]): Promise<TSWriteBatchResponse> {
+    return this.fetchJSON<TSWriteBatchResponse>('/api/v1/timeseries/write-batch', {
+      method: 'POST',
+      body: JSON.stringify({ points }),
+    });
+  }
+
+  // getRetentionPolicy maps to GET /api/v1/timeseries/retention/{metric}
+  async getRetentionPolicy(metric: string): Promise<TSRetentionPolicyResponse> {
+    return this.fetchJSON<TSRetentionPolicyResponse>(
+      `/api/v1/timeseries/retention/${encodeURIComponent(metric)}`,
+    );
+  }
+
+  // setRetentionPolicy maps to PUT /api/v1/timeseries/retention/{metric}
+  async setRetentionPolicy(
+    metric: string,
+    policy: TSRetentionPolicy,
+  ): Promise<TSSetRetentionPolicyResponse> {
+    return this.fetchJSON<TSSetRetentionPolicyResponse>(
+      `/api/v1/timeseries/retention/${encodeURIComponent(metric)}`,
+      { method: 'PUT', body: JSON.stringify({ policy }) },
+    );
   }
 }
 

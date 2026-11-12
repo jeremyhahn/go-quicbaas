@@ -586,6 +586,13 @@ export type {
   RegistryResolveResponse,
 } from './registry.js';
 export type {
+  TSBatchPoint,
+  TSWriteBatchResponse,
+  TSRetentionPolicy,
+  TSRetentionPolicyResponse,
+  TSSetRetentionPolicyResponse,
+} from './timeseries_admin.js';
+export type {
   DynamicSecretsClient,
   DynamicSecretRole,
   CreateRoleRequest as DynamicSecretCreateRoleRequest,
