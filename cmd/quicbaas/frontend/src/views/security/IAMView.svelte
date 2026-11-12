@@ -17,7 +17,7 @@
   IAMView renders a tabbed operator console for Identity and Access Management.
 
   Tabs:
-    Users     — user table for a tenant: create / edit / disable / delete / assign role.
+    Users     — user table for a tenant: create / edit / disable / delete / assign role / GDPR consents.
     Tenants   — tenant list: create / edit / delete.
     Roles     — role list per tenant: create / edit / delete.
     Policies  — ABAC policy list per tenant: create / edit / delete.
@@ -43,7 +43,7 @@
     CreatePolicyRequest,
     UpdatePolicyRequest,
   } from '@quicbaas/sdk';
-  import { ShieldCheck, UserPlus, Pencil, Trash2, UserCheck, ToggleLeft, RefreshCw } from 'lucide-svelte';
+  import { ShieldCheck, UserPlus, Pencil, Trash2, UserCheck, ToggleLeft, RefreshCw, FileCheck } from 'lucide-svelte';
   import EmptyState from '../../components/core/EmptyState.svelte';
   import { routerStore, routeIAMTab } from '../../stores/router.svelte.ts';
   import { formatDateTime } from '../../lib/time.ts';
@@ -214,6 +214,47 @@
   let userRoleIDs: string[] = $state([]);
   // The role UUID whose revoke is in flight, if any.
   let revokingRoleID: string | null = $state(null);
+
+  // ---------------------------------------------------------------------------
+  // Consents dialog state
+  // ---------------------------------------------------------------------------
+
+  // The SDK's ConsentPurpose and UserConsent shapes; the package index does
+  // not re-export them, so the view declares the fields it renders.
+  type ConsentPurpose =
+    | 'marketing'
+    | 'analytics'
+    | 'personalization'
+    | 'third_party'
+    | 'data_processing'
+    | 'data_retention'
+    | 'functional';
+  interface ConsentRecord {
+    purpose: ConsentPurpose;
+    status: string;
+    version: string;
+    granted_at?: string;
+    withdrawn_at?: string;
+  }
+  const consentPurposes: ConsentPurpose[] = [
+    'marketing',
+    'analytics',
+    'personalization',
+    'third_party',
+    'data_processing',
+    'data_retention',
+    'functional',
+  ];
+
+  let userForConsents: IAMUser | null = $state(null);
+  let userConsents: ConsentRecord[] = $state([]);
+  let consentsLoading = $state(false);
+  let consentsError: string | null = $state(null);
+  let grantPurpose: ConsentPurpose | '' = $state('');
+  let grantVersion = $state('');
+  let grantingConsent = $state(false);
+  // The purpose whose withdraw is in flight, if any.
+  let withdrawingPurpose: ConsentPurpose | null = $state(null);
 
   // ---------------------------------------------------------------------------
   // Create Tenant dialog state
@@ -559,6 +600,81 @@
       assignRoleError = e instanceof Error ? e.message : 'Failed to revoke role';
     } finally {
       revokingRoleID = null;
+    }
+  }
+
+  async function loadUserConsents(user: IAMUser): Promise<void> {
+    consentsLoading = true;
+    try {
+      const client = await getSDKClient();
+      const list = await client.iam.listUserConsents(selectedTenantID, user.id);
+      // Drop a response that lands after the dialog closed or moved to another user.
+      if (userForConsents?.id === user.id) {
+        userConsents = list ?? [];
+      }
+    } catch (e) {
+      if (userForConsents?.id === user.id) {
+        consentsError = e instanceof Error ? e.message : 'Failed to load consents';
+      }
+    } finally {
+      consentsLoading = false;
+    }
+  }
+
+  function openConsents(user: IAMUser): void {
+    userForConsents = user;
+    userConsents = [];
+    consentsError = null;
+    grantPurpose = '';
+    grantVersion = '';
+    withdrawingPurpose = null;
+    void loadUserConsents(user);
+  }
+
+  function closeConsents(): void {
+    userForConsents = null;
+    consentsError = null;
+  }
+
+  async function submitGrantConsent(): Promise<void> {
+    if (!userForConsents) return;
+    const user = userForConsents;
+    consentsError = null;
+    const version = grantVersion.trim();
+    if (!grantPurpose || !version) {
+      consentsError = 'A purpose and a version are required';
+      return;
+    }
+    const purpose = grantPurpose;
+    grantingConsent = true;
+    try {
+      const client = await getSDKClient();
+      await client.iam.grantConsent(selectedTenantID, user.id, { purpose, version });
+      showToast({ message: `Consent "${purpose}" granted for "${user.username}"`, type: 'success' });
+      grantPurpose = '';
+      grantVersion = '';
+      await loadUserConsents(user);
+    } catch (e) {
+      consentsError = e instanceof Error ? e.message : 'Failed to grant consent';
+    } finally {
+      grantingConsent = false;
+    }
+  }
+
+  async function withdrawUserConsent(purpose: ConsentPurpose): Promise<void> {
+    if (!userForConsents) return;
+    const user = userForConsents;
+    consentsError = null;
+    withdrawingPurpose = purpose;
+    try {
+      const client = await getSDKClient();
+      await client.iam.withdrawConsent(selectedTenantID, user.id, purpose);
+      showToast({ message: `Consent "${purpose}" withdrawn for "${user.username}"`, type: 'success' });
+      await loadUserConsents(user);
+    } catch (e) {
+      consentsError = e instanceof Error ? e.message : 'Failed to withdraw consent';
+    } finally {
+      withdrawingPurpose = null;
     }
   }
 
@@ -1021,6 +1137,14 @@
                   <UserCheck class="h-3 w-3" />
                 </button>
                 <button
+                  class="btn btn-ghost btn-xs"
+                  title={`Consents of ${user.username}`}
+                  aria-label={`Consents of ${user.username}`}
+                  onclick={() => openConsents(user)}
+                >
+                  <FileCheck class="h-3 w-3" />
+                </button>
+                <button
                   class="btn btn-ghost btn-xs text-error"
                   title={`Delete user ${user.username}`}
                   aria-label={`Delete user ${user.username}`}
@@ -1351,6 +1475,74 @@
       </div>
     </div>
     <div class="modal-backdrop" role="none" onclick={() => { userForRole = null; }} onkeydown={() => { userForRole = null; }}></div>
+  </div>
+{/if}
+
+<!-- =========================================================================
+     CONSENTS DIALOG
+     ========================================================================= -->
+{#if userForConsents}
+  <div class="modal modal-open" role="dialog" aria-modal="true" aria-label="Consents dialog">
+    <div class="modal-box max-w-lg">
+      <h3 class="text-base font-semibold mb-4">Consents of <span class="font-mono text-primary">{userForConsents.username}</span></h3>
+      {#if consentsError}
+        <div class="alert alert-error text-sm mb-3" role="alert">{consentsError}</div>
+      {/if}
+      {#if consentsLoading && userConsents.length === 0}
+        <div class="flex items-center gap-2 py-2 mb-3">
+          <span class="loading loading-spinner loading-xs"></span>
+          <span class="text-sm text-base-content/50">Loading consents…</span>
+        </div>
+      {:else if userConsents.length === 0}
+        <p class="text-sm text-base-content/50 mb-3">No consents recorded</p>
+      {:else}
+        <table class="table table-xs mb-3" aria-label="User consents">
+          <thead>
+            <tr><th>Purpose</th><th>Status</th><th>Version</th><th>Granted / withdrawn</th><th><span class="sr-only">Actions</span></th></tr>
+          </thead>
+          <tbody>
+            {#each userConsents as c (c.purpose)}
+              <tr>
+                <td class="font-mono">{c.purpose}</td>
+                <td><span class="badge badge-xs {c.status === 'granted' ? 'badge-success' : 'badge-ghost'}">{c.status}</span></td>
+                <td class="font-mono">{c.version}</td>
+                <td class="text-xs text-base-content/50">{c.status === 'withdrawn' && c.withdrawn_at ? formatDateTime(c.withdrawn_at) : c.granted_at ? formatDateTime(c.granted_at) : '—'}</td>
+                <td>
+                  {#if c.status === 'granted'}
+                    <button
+                      class="btn btn-ghost btn-xs text-error"
+                      aria-label={`Withdraw consent ${c.purpose} of ${userForConsents.username}`}
+                      disabled={withdrawingPurpose === c.purpose}
+                      onclick={() => withdrawUserConsent(c.purpose)}
+                    >{withdrawingPurpose === c.purpose ? 'Withdrawing…' : 'Withdraw'}</button>
+                  {/if}
+                </td>
+              </tr>
+            {/each}
+          </tbody>
+        </table>
+      {/if}
+      <div class="grid grid-cols-2 gap-2">
+        <div class="form-control">
+          <label class="label label-text" for="grant-consent-purpose">Purpose</label>
+          <select id="grant-consent-purpose" class="select select-bordered select-sm" bind:value={grantPurpose}>
+            <option value="">— select a purpose —</option>
+            {#each consentPurposes as p (p)}
+              <option value={p}>{p}</option>
+            {/each}
+          </select>
+        </div>
+        <div class="form-control">
+          <label class="label label-text" for="grant-consent-version">Version</label>
+          <input id="grant-consent-version" class="input input-bordered input-sm" type="text" placeholder="e.g. 2026-01" bind:value={grantVersion} />
+        </div>
+      </div>
+      <div class="modal-action">
+        <button class="btn btn-ghost btn-sm" onclick={closeConsents}>Close</button>
+        <button class="btn btn-primary btn-sm" disabled={grantingConsent || !grantPurpose || !grantVersion.trim()} onclick={submitGrantConsent}>{grantingConsent ? 'Granting…' : 'Grant'}</button>
+      </div>
+    </div>
+    <div class="modal-backdrop" role="none" onclick={closeConsents} onkeydown={closeConsents}></div>
   </div>
 {/if}
 

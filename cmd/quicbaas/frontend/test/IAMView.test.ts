@@ -461,6 +461,115 @@ describe('IAMView', () => {
     });
   });
 
+  describe('Consents dialog', () => {
+    const granted = {
+      id: 'c-1', user_id: 'user-1', tenant_id: 'acme', purpose: 'marketing', status: 'granted',
+      version: 'v1', granted_at: '2026-01-02T03:04:05Z', created: '2026-01-02T03:04:05Z', updated: '2026-01-02T03:04:05Z',
+    };
+    const withdrawn = {
+      id: 'c-2', user_id: 'user-1', tenant_id: 'acme', purpose: 'analytics', status: 'withdrawn',
+      version: 'v2', granted_at: '2026-01-01T00:00:00Z', withdrawn_at: '2026-02-01T00:00:00Z',
+      created: '2026-01-01T00:00:00Z', updated: '2026-02-01T00:00:00Z',
+    };
+
+    function stubConsents(overrides: Record<string, ReturnType<typeof vi.fn>>): void {
+      mockGetSDKClient.mockResolvedValue({
+        iam: {
+          listUsers: vi.fn().mockResolvedValue({ users: mockUsers, count: mockUsers.length }),
+          listTenants: vi.fn().mockResolvedValue({ tenants: mockTenants, count: 1 }),
+          listRoles: vi.fn().mockResolvedValue({ roles: mockRoles, count: 2 }),
+          listPolicies: vi.fn().mockResolvedValue({ policies: mockPolicies, count: 1 }),
+          listUserConsents: vi.fn().mockResolvedValue([granted, withdrawn]),
+          grantConsent: vi.fn().mockResolvedValue(granted),
+          withdrawConsent: vi.fn().mockResolvedValue({ ...granted, status: 'withdrawn' }),
+          ...overrides,
+        },
+      });
+    }
+
+    async function openConsentsDialog(username: string): Promise<HTMLElement> {
+      render(IAMView);
+      const open = await screen.findByRole('button', { name: `Consents of ${username}` });
+      await fireEvent.click(open);
+      return screen.getByRole('dialog', { name: /Consents dialog/i });
+    }
+
+    it('opens from the user row and lists the user\'s consents', async () => {
+      const list = vi.fn().mockResolvedValue([granted, withdrawn]);
+      stubConsents({ listUserConsents: list });
+      const dialog = await openConsentsDialog('alice');
+      expect(dialog.querySelector('h3')?.textContent).toBe('Consents of alice');
+      const table = await screen.findByRole('table', { name: 'User consents' });
+      expect(list).toHaveBeenCalledWith('acme', 'user-1');
+      expect(table.textContent).toContain('marketing');
+      expect(table.textContent).toContain('granted');
+      expect(table.textContent).toContain('v1');
+      expect(table.textContent).toContain('analytics');
+      expect(table.textContent).toContain('withdrawn');
+      expect(screen.getByRole('button', { name: 'Withdraw consent marketing of alice' })).toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: 'Withdraw consent analytics of alice' })).not.toBeInTheDocument();
+    });
+
+    it('shows "No consents recorded" for a user with none', async () => {
+      stubConsents({ listUserConsents: vi.fn().mockResolvedValue([]) });
+      const dialog = await openConsentsDialog('alice');
+      await waitFor(() => expect(dialog.textContent).toContain('No consents recorded'));
+    });
+
+    it('grants a consent with the purpose and version, toasts and reloads', async () => {
+      const list = vi.fn().mockResolvedValue([]);
+      const grant = vi.fn().mockResolvedValue(granted);
+      stubConsents({ listUserConsents: list, grantConsent: grant });
+      await openConsentsDialog('alice');
+      await waitFor(() => expect(list).toHaveBeenCalledTimes(1));
+      await fireEvent.change(screen.getByLabelText('Purpose'), { target: { value: 'marketing' } });
+      await fireEvent.input(screen.getByLabelText('Version'), { target: { value: 'v1' } });
+      await fireEvent.click(screen.getByRole('button', { name: 'Grant' }));
+
+      await waitFor(() => {
+        expect(grant).toHaveBeenCalledWith('acme', 'user-1', { purpose: 'marketing', version: 'v1' });
+        expect(mockShowToast).toHaveBeenCalledWith({ message: 'Consent "marketing" granted for "alice"', type: 'success' });
+        expect(list).toHaveBeenCalledTimes(2);
+      });
+    });
+
+    it('withdraws a granted consent by its purpose, toasts and reloads', async () => {
+      const list = vi.fn().mockResolvedValue([granted]);
+      const withdraw = vi.fn().mockResolvedValue({ ...granted, status: 'withdrawn' });
+      stubConsents({ listUserConsents: list, withdrawConsent: withdraw });
+      await openConsentsDialog('alice');
+      await fireEvent.click(await screen.findByRole('button', { name: 'Withdraw consent marketing of alice' }));
+
+      await waitFor(() => {
+        expect(withdraw).toHaveBeenCalledWith('acme', 'user-1', 'marketing');
+        expect(mockShowToast).toHaveBeenCalledWith({ message: 'Consent "marketing" withdrawn for "alice"', type: 'success' });
+        expect(list).toHaveBeenCalledTimes(2);
+      });
+    });
+
+    it('shows the SDK error in the dialog when the withdraw is rejected', async () => {
+      stubConsents({
+        listUserConsents: vi.fn().mockResolvedValue([granted]),
+        withdrawConsent: vi.fn().mockRejectedValue(new Error('withdraw denied')),
+      });
+      const dialog = await openConsentsDialog('alice');
+      await fireEvent.click(await screen.findByRole('button', { name: 'Withdraw consent marketing of alice' }));
+
+      await waitFor(() => {
+        expect(dialog.querySelector('[role="alert"]')?.textContent).toBe('withdraw denied');
+      });
+      expect(mockShowToast).not.toHaveBeenCalled();
+    });
+
+    it('shows the SDK error in the dialog when the list fails', async () => {
+      stubConsents({ listUserConsents: vi.fn().mockRejectedValue(new Error('consents unavailable')) });
+      const dialog = await openConsentsDialog('alice');
+      await waitFor(() => {
+        expect(dialog.querySelector('[role="alert"]')?.textContent).toBe('consents unavailable');
+      });
+    });
+  });
+
   // -------------------------------------------------------------------------
   // Issue #573: built-in roles are seeded once and never reconciled, so a
   // permission rename in the server build strands every existing tenant. The
