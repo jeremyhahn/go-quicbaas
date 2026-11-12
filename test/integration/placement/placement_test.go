@@ -22,8 +22,10 @@ package placement
 import (
 	"context"
 	"crypto/tls"
+	"fmt"
 	"os"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -63,8 +65,51 @@ func adminTLS(t *testing.T) *tls.Config {
 	return cfg
 }
 
-// transports builds an admin SDK client per transport.
-func transports(t *testing.T) map[string]func() (quicbaas.Client, error) {
+// TestMain deletes the tenant this package's principals acted in once the
+// tests have all run, keeping m.Run's exit code.
+func TestMain(m *testing.M) {
+	code := m.Run()
+	if err := helpers.ReleaseDataPlaneTenants(); err != nil {
+		fmt.Fprintf(os.Stderr, "release data-plane tenants: %v\n", err)
+	}
+	os.Exit(code)
+}
+
+// bearerScheme is what the helpers' per-RPC credentials put before the token
+// in the authorization metadata.
+const bearerScheme = "Bearer "
+
+// restEndpoint returns the first REST endpoint, the one the helpers log
+// their principals in at.
+func restEndpoint(t *testing.T) string {
+	t.Helper()
+	endpoints := helpers.GetRESTEndpoints()
+	if len(endpoints) == 0 {
+		t.Fatalf("no REST endpoint configured")
+	}
+	return endpoints[0]
+}
+
+// operatorBearer returns the tenant operator's bearer for the SDK's
+// WithAuthToken. The helpers hand the operator out as per-RPC credentials
+// only, so the token is read from the authorization metadata they send.
+func operatorBearer(t *testing.T) string {
+	t.Helper()
+	md, err := helpers.TenantOperatorGRPCCredentials(t).GetRequestMetadata(context.Background())
+	if err != nil {
+		t.Fatalf("tenant operator bearer: %v", err)
+	}
+	token, ok := strings.CutPrefix(md["authorization"], bearerScheme)
+	if !ok || token == "" {
+		t.Fatalf("tenant operator credentials sent no bearer")
+	}
+	return token
+}
+
+// transports builds an SDK client per transport. Every client presents
+// bearer, so the server's authorization gate binds the tenant and checks the
+// permissions of the principal the bearer was issued to.
+func transports(t *testing.T, bearer string) map[string]func() (quicbaas.Client, error) {
 	tlsCfg := adminTLS(t)
 	first := func(endpoints []string, name string) string {
 		if len(endpoints) == 0 {
@@ -73,26 +118,27 @@ func transports(t *testing.T) map[string]func() (quicbaas.Client, error) {
 		return endpoints[0]
 	}
 	timeout := quicbaas.WithTimeout(30 * time.Second)
+	auth := quicbaas.WithAuthToken(bearer)
 	return map[string]func() (quicbaas.Client, error){
 		"REST": func() (quicbaas.Client, error) {
-			return quicbaas.NewClient(first(helpers.GetRESTEndpoints(), "REST"), quicbaas.WithREST(), quicbaas.WithTLSConfig(tlsCfg), timeout)
+			return quicbaas.NewClient(first(helpers.GetRESTEndpoints(), "REST"), quicbaas.WithREST(), quicbaas.WithTLSConfig(tlsCfg), auth, timeout)
 		},
 		"gRPC": func() (quicbaas.Client, error) {
-			return quicbaas.NewClient(first(helpers.GetClusterEndpoints(), "gRPC"), quicbaas.WithTLSConfig(tlsCfg), timeout)
+			return quicbaas.NewClient(first(helpers.GetClusterEndpoints(), "gRPC"), quicbaas.WithTLSConfig(tlsCfg), auth, timeout)
 		},
 		"QUIC": func() (quicbaas.Client, error) {
 			quicCfg := tlsCfg.Clone()
 			quicCfg.NextProtos = []string{"quicbaas-quic"}
-			return quicbaas.NewClient(first(helpers.GetQUICEndpoints(), "QUIC"), quicbaas.WithQUIC(), quicbaas.WithTLSConfig(quicCfg), timeout)
+			return quicbaas.NewClient(first(helpers.GetQUICEndpoints(), "QUIC"), quicbaas.WithQUIC(), quicbaas.WithTLSConfig(quicCfg), auth, timeout)
 		},
 		"Unix": func() (quicbaas.Client, error) {
 			socket := helpers.GetUnixSocketPath()
 			unixCfg := tlsCfg.Clone()
 			unixCfg.ServerName = "localhost"
-			return quicbaas.NewClient("unix://"+socket, quicbaas.WithUnix(socket), quicbaas.WithTLSConfig(unixCfg), timeout)
+			return quicbaas.NewClient("unix://"+socket, quicbaas.WithUnix(socket), quicbaas.WithTLSConfig(unixCfg), auth, timeout)
 		},
 		"MCP": func() (quicbaas.Client, error) {
-			return quicbaas.NewClient(first(helpers.GetMCPEndpoints(), "MCP"), quicbaas.WithMCP(), quicbaas.WithTLSConfig(tlsCfg), timeout)
+			return quicbaas.NewClient(first(helpers.GetMCPEndpoints(), "MCP"), quicbaas.WithMCP(), quicbaas.WithTLSConfig(tlsCfg), auth, timeout)
 		},
 	}
 }
@@ -103,7 +149,11 @@ func transports(t *testing.T) map[string]func() (quicbaas.Client, error) {
 // — on every transport, each in its own ID namespace.
 func TestPlacementMultiProtocol(t *testing.T) {
 	stamp := strconv.FormatInt(time.Now().UnixNano(), 36)
-	for name, build := range transports(t) {
+	// Registering, cordoning and draining a node needs placement:manage,
+	// which only the tenant's Admin role holds, so the conformance acts as
+	// the tenant principal.
+	bearer := helpers.AuthTenantPrincipal(t, restEndpoint(t))
+	for name, build := range transports(t, bearer) {
 		t.Run(name, func(t *testing.T) {
 			client, err := build()
 			if err != nil {
@@ -127,7 +177,9 @@ func TestSchedulerJobsMultiProtocol(t *testing.T) {
 	defer cancel()
 	stamp := strconv.FormatInt(time.Now().UnixNano(), 36)
 
-	for name, build := range transports(t) {
+	// The Operator role holds every scheduler job permission this test
+	// uses, so the jobs act as the tenant operator.
+	for name, build := range transports(t, operatorBearer(t)) {
 		t.Run(name, func(t *testing.T) {
 			client, err := build()
 			if err != nil {
