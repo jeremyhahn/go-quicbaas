@@ -25,11 +25,11 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/test/integration/helpers"
 )
 
-// e2eHTTPClient is a package-level HTTP client configured for self-signed TLS certs.
-var e2eHTTPClient = helpers.NewHTTPClient(30 * time.Second)
-
 // TestMetricsCardinality validates that metric cardinality is within bounds
 func TestMetricsCardinality(t *testing.T) {
+	// The metrics scrape route admits any authenticated identity and needs
+	// no permission: the data-plane principal is the narrowest one.
+	e2eHTTPClient := helpers.NewDataPlaneHTTPClient(t, 30*time.Second)
 	nodes := getNodeURLs()
 	if len(nodes) == 0 {
 		t.Fatal("No nodes available for testing")

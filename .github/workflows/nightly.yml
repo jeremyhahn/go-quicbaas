@@ -27,7 +27,7 @@ on:
   workflow_dispatch:
 
 env:
-  GO_VERSION: '1.27.3'
+  GO_VERSION: '1.27.4'
 
 jobs:
   # The whole root module under fips140=only, dealt over two shards by `make
