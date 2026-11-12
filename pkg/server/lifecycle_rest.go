@@ -347,8 +347,9 @@ func (s *Server) buildRESTServer() (*restapi.Server, error) {
 // running legacy REST server so both surfaces share one handler state; when
 // the legacy REST listener is disabled it lazily constructs a non-listening
 // restapi.Server from the identical configuration (buildRESTServer).
-// Returns nil while the QuicBaaS facade is still composing — module routes
-// answer 503 until then.
+// Returns nil while the QuicBaaS facade is still composing, before IAM is
+// attached, or after a failed construction — module routes answer 503 until
+// a later request builds it.
 func (s *Server) ModuleRESTServer() *restapi.Server {
 	s.mu.RLock()
 	if s.restServer != nil {
@@ -358,27 +359,34 @@ func (s *Server) ModuleRESTServer() *restapi.Server {
 	}
 	composing := s.quicBaaSService == nil
 	s.mu.RUnlock()
-	if composing {
+	// Build nothing before attachIAMComponents has finished (iamReady), as
+	// hostGRPCServers does: the REST authz gate resolves the OIDC provider at
+	// construction, and before IAM is attached it resolves nothing.
+	if composing || !s.iamReady.Load() {
 		return nil
 	}
 
-	s.moduleRESTOnce.Do(func() {
-		srv, err := s.buildRESTServer()
-		if err != nil {
-			s.logger.Errorf("module REST binding: server construction failed: %v", err)
-			return
-		}
-		s.mu.Lock()
-		s.moduleREST = srv
-		s.mu.Unlock()
-	})
-
+	s.moduleRESTMu.Lock()
+	defer s.moduleRESTMu.Unlock()
 	s.mu.RLock()
-	defer s.mu.RUnlock()
-	if s.moduleREST != nil {
-		return s.moduleREST
+	built, legacy := s.moduleREST, s.restServer
+	s.mu.RUnlock()
+	if built != nil {
+		return built
 	}
-	return s.restServer
+	if legacy != nil {
+		return legacy
+	}
+	srv, err := s.buildRESTServer()
+	if err != nil {
+		// Not cached: the next module request tries again.
+		s.logger.Errorf("module REST binding: server construction failed: %v", err)
+		return nil
+	}
+	s.mu.Lock()
+	s.moduleREST = srv
+	s.mu.Unlock()
+	return srv
 }
 
 // cloneTLSConfig returns a clone of cfg, or nil if cfg is nil.

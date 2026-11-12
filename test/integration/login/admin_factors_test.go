@@ -80,7 +80,9 @@ func (p *softwarePasskey) RegisterWebAuthn(opts fido2.WebAuthnRegistrationOption
 	if opts.RequireUserVerification {
 		userVerification = "required"
 	}
-	optionsJSON, err := json.Marshal(map[string]any{
+	// The software adapter reads the browser-shaped CredentialCreation
+	// document, so the options sit under "publicKey".
+	optionsJSON, err := json.Marshal(map[string]any{"publicKey": map[string]any{
 		"challenge": base64.RawURLEncoding.EncodeToString(opts.Challenge),
 		"rp":        map[string]string{"id": opts.RPID, "name": opts.RPName},
 		"user": map[string]string{
@@ -91,7 +93,7 @@ func (p *softwarePasskey) RegisterWebAuthn(opts fido2.WebAuthnRegistrationOption
 		"pubKeyCredParams":       []map[string]any{{"type": "public-key", "alg": -7}},
 		"attestation":            "none",
 		"authenticatorSelection": map[string]string{"userVerification": userVerification},
-	})
+	}})
 	if err != nil {
 		return nil, &SoftwarePasskeyError{Op: "encode creation options", Cause: err}
 	}
