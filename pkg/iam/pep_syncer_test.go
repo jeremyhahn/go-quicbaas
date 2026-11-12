@@ -45,7 +45,7 @@ func (m *mockIAMClient) AddPolicy(policy *Policy) {
 	m.policies = append(m.policies, policy)
 }
 
-func (m *mockIAMClient) FetchPolicies(_ string, _ []string) ([]*Policy, error) {
+func (m *mockIAMClient) FetchPolicies(_ context.Context, _ string, _ []string) ([]*Policy, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.fetchError != nil {
@@ -56,7 +56,7 @@ func (m *mockIAMClient) FetchPolicies(_ string, _ []string) ([]*Policy, error) {
 	return out, nil
 }
 
-func (m *mockIAMClient) Subscribe(_ string, _ []string) (<-chan *PolicyUpdate, error) {
+func (m *mockIAMClient) Subscribe(_ context.Context, _ string, _ []string) (<-chan *PolicyUpdate, error) {
 	ch := make(chan *PolicyUpdate)
 	close(ch)
 	return ch, nil
@@ -443,5 +443,78 @@ func BenchmarkPolicySyncer_SyncNow(b *testing.B) {
 
 	for i := 0; i < b.N; i++ {
 		_ = syncer.SyncNow(ctx)
+	}
+}
+
+// blockingIAMClient's FetchPolicies blocks until its context ends, standing in
+// for a hung IAM fetch.
+type blockingIAMClient struct{}
+
+func (blockingIAMClient) FetchPolicies(ctx context.Context, _ string, _ []string) ([]*Policy, error) {
+	<-ctx.Done()
+	return nil, ctx.Err()
+}
+
+func (blockingIAMClient) Subscribe(_ context.Context, _ string, _ []string) (<-chan *PolicyUpdate, error) {
+	ch := make(chan *PolicyUpdate)
+	close(ch)
+	return ch, nil
+}
+
+func (blockingIAMClient) Close() error { return nil }
+
+var _ IAMClient = blockingIAMClient{}
+
+func TestPolicySyncer_SyncNowHonoursContext(t *testing.T) {
+	cache := NewPolicyCache(&CacheConfig{
+		TTL:               5 * time.Minute,
+		MaxSize:           1000,
+		BloomFilterSize:   100000,
+		BloomFilterHashes: 7,
+	})
+
+	syncer := NewPolicySyncer(blockingIAMClient{}, cache, 100*time.Millisecond, "test-tenant")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+
+	syncDone := make(chan error, 1)
+	go func() { syncDone <- syncer.SyncNow(ctx) }()
+
+	select {
+	case err := <-syncDone:
+		if err == nil {
+			t.Error("SyncNow() should return an error when its context ends")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("SyncNow() did not return after its context ended")
+	}
+
+	if syncer.GetSyncErrors() != 1 {
+		t.Errorf("Sync errors = %d, want 1", syncer.GetSyncErrors())
+	}
+
+	startCtx, startCancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer startCancel()
+
+	startDone := make(chan error, 1)
+	go func() { startDone <- syncer.Start(startCtx) }()
+
+	select {
+	case <-startDone:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Start() did not return after its context ended")
+	}
+
+	stopDone := make(chan struct{})
+	go func() {
+		syncer.Stop()
+		close(stopDone)
+	}()
+
+	select {
+	case <-stopDone:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Stop() did not return")
 	}
 }
