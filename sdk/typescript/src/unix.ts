@@ -294,6 +294,8 @@ export class UnixClient implements Client {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   readonly backups: any = null;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  readonly clusterNodes: any = null;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   readonly dynamicSecrets: any = null;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   readonly barrier: any = null;

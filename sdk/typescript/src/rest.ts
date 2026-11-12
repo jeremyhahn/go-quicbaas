@@ -282,6 +282,15 @@ import type {
   BackupStatusResponse,
 } from './backups.js';
 import type {
+  ClusterNodesClient,
+  ListClusterNodesResponse,
+  AddNodeRequest,
+  AddNodeResponse,
+  RemoveNodeResponse,
+  ReplaceNodeRequest,
+  ReplaceNodeResponse,
+} from './cluster_nodes.js';
+import type {
   DynamicSecretsClient,
   DynamicSecretRole,
   CreateRoleRequest as DynamicSecretCreateRoleRequest,
@@ -5695,6 +5704,52 @@ export class RestBackupsClient implements BackupsClient {
   }
 }
 
+/**
+ * RestClusterNodesClient manages cluster node membership over REST.
+ * Distinct from RestClusterClient (client.cluster).
+ */
+export class RestClusterNodesClient implements ClusterNodesClient {
+  private readonly http: FetchHelper;
+
+  constructor(baseUrl: string, config: ClientConfig = {}) {
+    this.http = newFetchHelper(baseUrl, config);
+  }
+
+  // Maps to GET /api/v1/cluster/nodes/ (the trailing slash is part of the route).
+  async listNodes(): Promise<ListClusterNodesResponse> {
+    return this.http.fetchJSON<ListClusterNodesResponse>('/api/v1/cluster/nodes/');
+  }
+
+  // Maps to POST /api/v1/cluster/nodes/ (the trailing slash is part of the route).
+  async addNode(req: AddNodeRequest): Promise<AddNodeResponse> {
+    return this.http.fetchJSON<AddNodeResponse>('/api/v1/cluster/nodes/', {
+      method: 'POST',
+      body: JSON.stringify(req),
+    });
+  }
+
+  // Maps to GET /api/v1/cluster/nodes/non-leader.
+  async listNonLeaderNodes(): Promise<ListClusterNodesResponse> {
+    return this.http.fetchJSON<ListClusterNodesResponse>('/api/v1/cluster/nodes/non-leader');
+  }
+
+  // Maps to DELETE /api/v1/cluster/nodes/{nodeId}?shard_id= (shard_id is required).
+  async removeNode(nodeId: number, shardId: number): Promise<RemoveNodeResponse> {
+    return this.http.fetchJSON<RemoveNodeResponse>(
+      `/api/v1/cluster/nodes/${encodeURIComponent(String(nodeId))}?shard_id=${encodeURIComponent(String(shardId))}`,
+      { method: 'DELETE' },
+    );
+  }
+
+  // Maps to PUT /api/v1/cluster/nodes/{nodeId}/replace.
+  async replaceNode(nodeId: number, req: ReplaceNodeRequest): Promise<ReplaceNodeResponse> {
+    return this.http.fetchJSON<ReplaceNodeResponse>(
+      `/api/v1/cluster/nodes/${encodeURIComponent(String(nodeId))}/replace`,
+      { method: 'PUT', body: JSON.stringify(req) },
+    );
+  }
+}
+
 // ---------------------------------------------------------------------------
 // RestDynamicSecretsClient — /api/v1/secrets/dynamic/* surface.
 // ---------------------------------------------------------------------------
@@ -6770,6 +6825,7 @@ export class RestClient implements Client {
   readonly piv: PIVClient;
   readonly xkms: XKMSClient;
   readonly backups: BackupsClient;
+  readonly clusterNodes: ClusterNodesClient;
   readonly dynamicSecrets: DynamicSecretsClient;
   readonly barrier: BarrierClient;
   readonly tenantBarrier: TenantBarrierClient;
@@ -6818,6 +6874,7 @@ export class RestClient implements Client {
     this.piv = new RestPIVClient(baseUrl, config);
     this.xkms = new RestXKMSClient(baseUrl, config);
     this.backups = new RestBackupsClient(baseUrl, config);
+    this.clusterNodes = new RestClusterNodesClient(baseUrl, config);
     this.dynamicSecrets = new RestDynamicSecretsClient(baseUrl, config);
     this.barrier = new RestBarrierClient(baseUrl, config);
     this.tenantBarrier = new RestTenantBarrierClient(baseUrl, config);

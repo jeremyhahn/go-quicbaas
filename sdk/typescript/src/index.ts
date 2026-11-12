@@ -476,6 +476,17 @@ export type {
   XKMSCertificateResponse,
 } from './xkms.js';
 export type {
+  ClusterNodesClient,
+  ClusterNodeInfo,
+  ListClusterNodesResponse,
+  AddNodeRequest,
+  AddNodeResponse,
+  RemoveNodeResponse,
+  ReplaceNodeRequest,
+  ReplaceNodeResponse,
+} from './cluster_nodes.js';
+export { RestClusterNodesClient } from './rest.js';
+export type {
   DynamicSecretsClient,
   DynamicSecretRole,
   CreateRoleRequest as DynamicSecretCreateRoleRequest,

@@ -38,6 +38,7 @@ import type { XKMSKeysClient } from './xkms_keys.js';
 import type { PIVClient } from './piv.js';
 import type { XKMSClient } from './xkms.js';
 import type { BackupsClient } from './backups.js';
+import type { ClusterNodesClient } from './cluster_nodes.js';
 import type { DynamicSecretsClient } from './dynamicsecrets.js';
 
 import type {
@@ -2705,6 +2706,11 @@ export interface Client {
    * health, seal and unseal, and stored certificates.
    */
   readonly xkms: XKMSClient;
+  /**
+   * Cluster node membership: list nodes, add, remove and replace them.
+   * Paths: /api/v1/cluster/nodes/*. Distinct from `cluster` (status).
+   */
+  readonly clusterNodes: ClusterNodesClient;
   /**
    * dynamicSecrets manages credential-generation roles, on-demand
    * short-lived credential minting, and lease renewal/revocation.
