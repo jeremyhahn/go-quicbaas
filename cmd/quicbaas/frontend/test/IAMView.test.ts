@@ -1171,6 +1171,135 @@ describe('IAMView', () => {
     });
   });
 
+  describe('Linked accounts dialog', () => {
+    const links = [
+      {
+        id: 'fi-1',
+        user_id: 'user-1',
+        tenant_id: 'acme',
+        provider_id: 'oidc/google',
+        external_id: 'g-123',
+        external_email: 'alice@gmail.com',
+        last_login: '2026-03-04T05:06:07Z',
+        created: '2026-01-02T03:04:05Z',
+        updated: '2026-01-02T03:04:05Z',
+      },
+      {
+        id: 'fi-2',
+        user_id: 'user-1',
+        tenant_id: 'acme',
+        provider_id: 'github',
+        external_id: 'gh-9',
+        external_name: 'Alice GH',
+        last_login: '2026-03-05T05:06:07Z',
+        created: '2026-01-03T03:04:05Z',
+        updated: '2026-01-03T03:04:05Z',
+      },
+    ];
+
+    function stubLinks(overrides: Record<string, ReturnType<typeof vi.fn>>): void {
+      mockGetSDKClient.mockResolvedValue({
+        iam: {
+          listUsers: vi.fn().mockResolvedValue({ users: mockUsers, count: mockUsers.length }),
+          listTenants: vi.fn().mockResolvedValue({ tenants: mockTenants, count: 1 }),
+          listRoles: vi.fn().mockResolvedValue({ roles: mockRoles, count: 2 }),
+          listPolicies: vi.fn().mockResolvedValue({ policies: mockPolicies, count: 1 }),
+          listAccountLinks: vi.fn().mockResolvedValue({ links, limit: 50, offset: 0 }),
+          createAccountLink: vi.fn().mockResolvedValue({}),
+          deleteAccountLink: vi.fn().mockResolvedValue(undefined),
+          ...overrides,
+        },
+      });
+    }
+
+    async function openLinksDialog(username: string): Promise<HTMLElement> {
+      render(IAMView);
+      const open = await screen.findByRole('button', { name: `Linked accounts of ${username}` });
+      await fireEvent.click(open);
+      return screen.getByRole('dialog', { name: 'Linked accounts dialog' });
+    }
+
+    it('lists the user\'s linked accounts', async () => {
+      const list = vi.fn().mockResolvedValue({ links, limit: 50, offset: 0 });
+      stubLinks({ listAccountLinks: list });
+      const dialog = await openLinksDialog('alice');
+      expect(dialog.querySelector('h3')?.textContent).toBe('Linked accounts of alice');
+      const table = await screen.findByRole('table', { name: 'Linked accounts' });
+      expect(list).toHaveBeenCalledWith('acme', 'user-1');
+      expect(table.querySelectorAll('tbody tr')).toHaveLength(2);
+      expect(table.textContent).toContain('oidc/google');
+      expect(table.textContent).toContain('g-123');
+      expect(table.textContent).toContain('alice@gmail.com');
+      expect(table.textContent).toContain('Alice GH');
+    });
+
+    it('shows the empty state', async () => {
+      stubLinks({ listAccountLinks: vi.fn().mockResolvedValue({ links: [], limit: 50, offset: 0 }) });
+      const dialog = await openLinksDialog('alice');
+      await waitFor(() => {
+        expect(dialog.textContent).toContain('No linked accounts');
+      });
+      expect(screen.queryByRole('table', { name: 'Linked accounts' })).not.toBeInTheDocument();
+    });
+
+    it('unlinks after a confirmation naming the provider, then reloads', async () => {
+      const list = vi.fn().mockResolvedValueOnce({ links, limit: 50, offset: 0 })
+        .mockResolvedValue({ links: [links[1]], limit: 50, offset: 0 });
+      const del = vi.fn().mockResolvedValue(undefined);
+      stubLinks({ listAccountLinks: list, deleteAccountLink: del });
+      await openLinksDialog('alice');
+      await fireEvent.click(await screen.findByRole('button', { name: 'Unlink oidc/google' }));
+      expect(del).not.toHaveBeenCalled();
+      const confirm = screen.getByRole('dialog', { name: 'Unlink account confirmation' });
+      expect(confirm.textContent).toContain('oidc/google');
+      const confirmButton = Array.from(confirm.querySelectorAll('button')).find((b) => b.textContent === 'Unlink');
+      expect(confirmButton).toBeDefined();
+      if (confirmButton) await fireEvent.click(confirmButton);
+
+      await waitFor(() => {
+        expect(del).toHaveBeenCalledWith('acme', 'user-1', 'oidc/google');
+        expect(mockShowToast).toHaveBeenCalledWith({ message: 'Unlinked "oidc/google" from "alice"', type: 'success' });
+        expect(list).toHaveBeenCalledTimes(2);
+      });
+      await waitFor(() => {
+        expect(screen.queryByRole('button', { name: 'Unlink oidc/google' })).not.toBeInTheDocument();
+      });
+      expect(screen.queryByRole('dialog', { name: 'Unlink account confirmation' })).not.toBeInTheDocument();
+    });
+
+    it('links an account with both fields, toasts and reloads', async () => {
+      const list = vi.fn().mockResolvedValue({ links: [], limit: 50, offset: 0 });
+      const create = vi.fn().mockResolvedValue({});
+      stubLinks({ listAccountLinks: list, createAccountLink: create });
+      const dialog = await openLinksDialog('alice');
+      await waitFor(() => {
+        expect(dialog.textContent).toContain('No linked accounts');
+      });
+      const submit = screen.getByRole('button', { name: 'Link account' });
+      expect(submit).toBeDisabled();
+      await fireEvent.input(screen.getByLabelText('Provider ID'), { target: { value: 'github' } });
+      expect(submit).toBeDisabled();
+      await fireEvent.input(screen.getByLabelText('External ID'), { target: { value: 'gh-42' } });
+      expect(submit).not.toBeDisabled();
+      await fireEvent.click(submit);
+
+      await waitFor(() => {
+        expect(create).toHaveBeenCalledWith('acme', 'user-1', { provider_id: 'github', external_id: 'gh-42' });
+        expect(mockShowToast).toHaveBeenCalledWith({ message: 'Linked "github" to "alice"', type: 'success' });
+        expect(list).toHaveBeenCalledTimes(2);
+      });
+    });
+
+    it('shows the SDK error in the dialog when the list load fails', async () => {
+      stubLinks({ listAccountLinks: vi.fn().mockRejectedValue(new Error('links unavailable')) });
+      const dialog = await openLinksDialog('alice');
+      await waitFor(() => {
+        expect(dialog.querySelector('[role="alert"]')?.textContent).toBe('links unavailable');
+      });
+      expect(mockShowToast).not.toHaveBeenCalled();
+    });
+  });
+
   // -------------------------------------------------------------------------
   // Issue #573: built-in roles are seeded once and never reconciled, so a
   // permission rename in the server build strands every existing tenant. The
