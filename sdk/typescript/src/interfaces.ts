@@ -40,6 +40,7 @@ import type { XKMSClient } from './xkms.js';
 import type { BackupsClient } from './backups.js';
 import type { ClusterNodesClient } from './cluster_nodes.js';
 import type { EntitiesClient } from './entities.js';
+import type { KMSAdminClient } from './kms_admin.js';
 import type { DynamicSecretsClient } from './dynamicsecrets.js';
 
 import type {
@@ -2717,6 +2718,11 @@ export interface Client {
    * of any registered type (/api/v1/entities/*).
    */
   readonly entities: EntitiesClient;
+  /**
+   * KMS key administration: metadata, access policy and rotation policy of
+   * named keys. Paths: /api/v1/kms/keys/{name}/{metadata,policy,rotation-policy}.
+   */
+  readonly kmsAdmin: KMSAdminClient;
   /**
    * dynamicSecrets manages credential-generation roles, on-demand
    * short-lived credential minting, and lease renewal/revocation.

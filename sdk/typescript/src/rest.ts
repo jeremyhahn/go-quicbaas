@@ -302,6 +302,18 @@ import type {
   DeleteEntityResponse,
 } from './entities.js';
 import type {
+  KMSAdminClient,
+  KMSKeyMetadataResponse,
+  UpdateKMSKeyMetadataRequest,
+  GetKMSKeyPolicyResponse,
+  KMSKeyPolicyInput,
+  SetKMSKeyPolicyResponse,
+  GetKMSRotationPolicyResponse,
+  KMSRotationPolicyInput,
+  SetKMSRotationPolicyResponse,
+  DeleteKMSRotationPolicyResponse,
+} from './kms_admin.js';
+import type {
   DynamicSecretsClient,
   DynamicSecretRole,
   CreateRoleRequest as DynamicSecretCreateRoleRequest,
@@ -5828,6 +5840,68 @@ export class RestEntitiesClient implements EntitiesClient {
   }
 }
 
+/**
+ * RestKMSAdminClient administers named KMS keys over REST: metadata, access
+ * policy and rotation policy under /api/v1/kms/keys/{name}/*.
+ */
+export class RestKMSAdminClient implements KMSAdminClient {
+  private readonly http: FetchHelper;
+
+  constructor(baseUrl: string, config: ClientConfig = {}) {
+    this.http = newFetchHelper(baseUrl, config);
+  }
+
+  private keyPath(name: string, suffix: string): string {
+    return `/api/v1/kms/keys/${encodeURIComponent(name)}/${suffix}`;
+  }
+
+  // Maps to GET /api/v1/kms/keys/{name}/metadata
+  async getKeyMetadata(name: string): Promise<KMSKeyMetadataResponse> {
+    return this.http.fetchJSON<KMSKeyMetadataResponse>(this.keyPath(name, 'metadata'));
+  }
+
+  // Maps to PUT /api/v1/kms/keys/{name}/metadata
+  async updateKeyMetadata(name: string, req: UpdateKMSKeyMetadataRequest): Promise<KMSKeyMetadataResponse> {
+    return this.http.fetchJSON<KMSKeyMetadataResponse>(this.keyPath(name, 'metadata'), {
+      method: 'PUT',
+      body: JSON.stringify(req),
+    });
+  }
+
+  // Maps to GET /api/v1/kms/keys/{name}/policy
+  async getKeyPolicy(name: string): Promise<GetKMSKeyPolicyResponse> {
+    return this.http.fetchJSON<GetKMSKeyPolicyResponse>(this.keyPath(name, 'policy'));
+  }
+
+  // Maps to PUT /api/v1/kms/keys/{name}/policy
+  async setKeyPolicy(name: string, policy: KMSKeyPolicyInput): Promise<SetKMSKeyPolicyResponse> {
+    return this.http.fetchJSON<SetKMSKeyPolicyResponse>(this.keyPath(name, 'policy'), {
+      method: 'PUT',
+      body: JSON.stringify({ policy }),
+    });
+  }
+
+  // Maps to GET /api/v1/kms/keys/{name}/rotation-policy
+  async getKeyRotationPolicy(name: string): Promise<GetKMSRotationPolicyResponse> {
+    return this.http.fetchJSON<GetKMSRotationPolicyResponse>(this.keyPath(name, 'rotation-policy'));
+  }
+
+  // Maps to PUT /api/v1/kms/keys/{name}/rotation-policy
+  async setKeyRotationPolicy(name: string, req: KMSRotationPolicyInput): Promise<SetKMSRotationPolicyResponse> {
+    return this.http.fetchJSON<SetKMSRotationPolicyResponse>(this.keyPath(name, 'rotation-policy'), {
+      method: 'PUT',
+      body: JSON.stringify(req),
+    });
+  }
+
+  // Maps to DELETE /api/v1/kms/keys/{name}/rotation-policy
+  async deleteKeyRotationPolicy(name: string): Promise<DeleteKMSRotationPolicyResponse> {
+    return this.http.fetchJSON<DeleteKMSRotationPolicyResponse>(this.keyPath(name, 'rotation-policy'), {
+      method: 'DELETE',
+    });
+  }
+}
+
 // ---------------------------------------------------------------------------
 // RestDynamicSecretsClient — /api/v1/secrets/dynamic/* surface.
 // ---------------------------------------------------------------------------
@@ -6905,6 +6979,7 @@ export class RestClient implements Client {
   readonly backups: BackupsClient;
   readonly clusterNodes: ClusterNodesClient;
   readonly entities: EntitiesClient;
+  readonly kmsAdmin: KMSAdminClient;
   readonly dynamicSecrets: DynamicSecretsClient;
   readonly barrier: BarrierClient;
   readonly tenantBarrier: TenantBarrierClient;
@@ -6955,6 +7030,7 @@ export class RestClient implements Client {
     this.backups = new RestBackupsClient(baseUrl, config);
     this.clusterNodes = new RestClusterNodesClient(baseUrl, config);
     this.entities = new RestEntitiesClient(baseUrl, config);
+    this.kmsAdmin = new RestKMSAdminClient(baseUrl, config);
     this.dynamicSecrets = new RestDynamicSecretsClient(baseUrl, config);
     this.barrier = new RestBarrierClient(baseUrl, config);
     this.tenantBarrier = new RestTenantBarrierClient(baseUrl, config);

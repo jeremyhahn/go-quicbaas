@@ -499,6 +499,21 @@ export type {
   EntityWriteOptions,
 } from './entities.js';
 export type {
+  KMSAdminClient,
+  KMSKeyMetadata,
+  UpdateKMSKeyMetadataRequest,
+  KMSKeyMetadataResponse,
+  KMSKeyPolicy,
+  KMSKeyPolicyInput,
+  GetKMSKeyPolicyResponse,
+  SetKMSKeyPolicyResponse,
+  KMSRotationPolicy,
+  KMSRotationPolicyInput,
+  GetKMSRotationPolicyResponse,
+  SetKMSRotationPolicyResponse,
+  DeleteKMSRotationPolicyResponse,
+} from './kms_admin.js';
+export type {
   DynamicSecretsClient,
   DynamicSecretRole,
   CreateRoleRequest as DynamicSecretCreateRoleRequest,
