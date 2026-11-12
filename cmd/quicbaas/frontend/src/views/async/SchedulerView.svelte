@@ -23,8 +23,8 @@
   import type { Column } from '../../lib/dataTable.ts';
   import { getSDKClient } from '../../stores/sdkClient.ts';
   import { showToast } from '../../stores/toast.svelte.ts';
-  import type { SchedulerJob, CreateJobRequest } from '@quicbaas/sdk';
-  import { CalendarClock, Plus, RefreshCw, Trash2, Play, Pause, Square, Pencil, X } from 'lucide-svelte';
+  import type { SchedulerJob, CreateJobRequest, SchedulerStatus, PlacementNodeInfo, Placement } from '@quicbaas/sdk';
+  import { CalendarClock, Plus, RefreshCw, Trash2, Play, Pause, Square, Pencil, X, Server } from 'lucide-svelte';
   import EmptyState from '../../components/core/EmptyState.svelte';
 
   // ---------------------------------------------------------------------------
@@ -280,6 +280,141 @@
     if (status === 'failed' || status === 'cancelled') return 'badge-error';
     return 'badge-ghost';
   }
+
+  // ---------------------------------------------------------------------------
+  // Placement: scheduler status, nodes and placements
+  // ---------------------------------------------------------------------------
+
+  let schedStatus = $state<SchedulerStatus | null>(null);
+  let nodes = $state<PlacementNodeInfo[]>([]);
+  let placements = $state<Placement[]>([]);
+  let placementLoading = $state(false);
+  let placementError = $state('');
+
+  function errMsg(err: unknown): string {
+    return err instanceof Error ? err.message : String(err);
+  }
+
+  async function fetchPlacement(): Promise<void> {
+    placementLoading = true;
+    placementError = '';
+    try {
+      const client = await getSDKClient();
+      const [st, ns, ps] = await Promise.all([
+        client.scheduler.getStatus(),
+        client.scheduler.listNodes(),
+        client.scheduler.listPlacements(),
+      ]);
+      schedStatus = st;
+      nodes = ns ?? [];
+      placements = ps ?? [];
+    } catch (err: unknown) {
+      const msg = errMsg(err);
+      placementError = `Failed to load placement: ${msg}`;
+      showToast({ type: 'error', message: placementError });
+    } finally {
+      placementLoading = false;
+    }
+  }
+
+  $effect(() => { void fetchPlacement(); });
+
+  function formatResources(rec?: Record<string, number>): string {
+    if (!rec) return '—';
+    const parts = Object.entries(rec).map(([k, v]) => `${k}=${v}`);
+    return parts.length ? parts.join(', ') : '—';
+  }
+
+  function nodeState(node: PlacementNodeInfo): string {
+    if (node.status?.draining) return 'draining';
+    if (node.status?.unschedulable) return 'cordoned';
+    return 'ready';
+  }
+
+  function nodeStateVariant(node: PlacementNodeInfo): string {
+    const s = nodeState(node);
+    if (s === 'ready') return 'badge-success';
+    if (s === 'draining') return 'badge-error';
+    return 'badge-warning';
+  }
+
+  let nodeDetail = $state<PlacementNodeInfo | null>(null);
+  let placementDetail = $state<Placement | null>(null);
+  let busyNode: string | null = $state(null);
+
+  async function showNodeDetails(nodeId: string): Promise<void> {
+    try {
+      const client = await getSDKClient();
+      nodeDetail = await client.scheduler.getNode(nodeId);
+    } catch (err: unknown) {
+      showToast({ type: 'error', message: `Failed to load node: ${errMsg(err)}` });
+    }
+  }
+
+  async function showPlacementDetails(workloadId: string): Promise<void> {
+    try {
+      const client = await getSDKClient();
+      placementDetail = await client.scheduler.getPlacement(workloadId);
+    } catch (err: unknown) {
+      showToast({ type: 'error', message: `Failed to load placement: ${errMsg(err)}` });
+    }
+  }
+
+  async function toggleCordon(node: PlacementNodeInfo): Promise<void> {
+    const id = node.facts.node_id;
+    busyNode = id;
+    try {
+      const client = await getSDKClient();
+      if (node.status?.unschedulable) {
+        await client.scheduler.uncordonNode(id);
+        showToast({ type: 'success', message: `Node "${id}" uncordoned.` });
+      } else {
+        await client.scheduler.cordonNode(id);
+        showToast({ type: 'success', message: `Node "${id}" cordoned.` });
+      }
+      await fetchPlacement();
+    } catch (err: unknown) {
+      showToast({ type: 'error', message: `Failed: ${errMsg(err)}` });
+    } finally {
+      busyNode = null;
+    }
+  }
+
+  type PendingAction = { kind: 'drain' | 'deregister' | 'release'; id: string };
+  let pendingAction = $state<PendingAction | null>(null);
+  let confirming = $state(false);
+
+  const ACTION_LABEL: Record<PendingAction['kind'], string> = {
+    drain: 'Drain',
+    deregister: 'Deregister',
+    release: 'Release',
+  };
+
+  async function confirmPendingAction(): Promise<void> {
+    if (!pendingAction) return;
+    const { kind, id } = pendingAction;
+    confirming = true;
+    try {
+      const client = await getSDKClient();
+      if (kind === 'drain') {
+        const moved = await client.scheduler.drainNode(id);
+        const n = moved?.length ?? 0;
+        showToast({ type: 'success', message: `Node "${id}" drained: ${n} placement${n === 1 ? '' : 's'} to move.` });
+      } else if (kind === 'deregister') {
+        await client.scheduler.deregisterNode(id);
+        showToast({ type: 'success', message: `Node "${id}" deregistered.` });
+      } else {
+        await client.scheduler.release(id);
+        showToast({ type: 'success', message: `Placement "${id}" released.` });
+      }
+      pendingAction = null;
+      await fetchPlacement();
+    } catch (err: unknown) {
+      showToast({ type: 'error', message: `${ACTION_LABEL[kind]} failed: ${errMsg(err)}` });
+    } finally {
+      confirming = false;
+    }
+  }
 </script>
 
 <div class="flex h-full flex-col">
@@ -410,8 +545,176 @@
       </div>
     </section>
 
+    <!-- Placement -->
+    <section class="card bg-base-200 shadow-sm" aria-label="Placement">
+      <div class="card-body gap-4">
+        <div class="flex items-center justify-between">
+          <h2 class="card-title text-base gap-2"><Server class="h-4 w-4" /> Placement</h2>
+          <button
+            class="btn btn-ghost btn-sm gap-2"
+            onclick={() => { void fetchPlacement(); }}
+            disabled={placementLoading}
+            aria-label="Refresh placement"
+          >
+            <RefreshCw class={`h-4 w-4${placementLoading ? ' animate-spin' : ''}`} />
+            Refresh
+          </button>
+        </div>
+
+        {#if placementError}
+          <div class="alert alert-error text-sm flex items-center justify-between">
+            <span>{placementError}</span>
+            <button class="btn btn-xs btn-ghost" onclick={() => { void fetchPlacement(); }}>Retry</button>
+          </div>
+        {/if}
+
+        {#if schedStatus}
+          <dl class="grid grid-cols-2 gap-2 text-sm md:grid-cols-5" aria-label="Scheduler status">
+            <div><dt class="text-base-content/60 text-xs">Running</dt><dd>{schedStatus.running ? 'yes' : 'no'}</dd></div>
+            <div><dt class="text-base-content/60 text-xs">Jobs</dt><dd>{schedStatus.stats?.job_count ?? '—'}</dd></div>
+            <div><dt class="text-base-content/60 text-xs">Running jobs</dt><dd>{schedStatus.stats?.running_jobs ?? '—'}</dd></div>
+            <div><dt class="text-base-content/60 text-xs">Successes</dt><dd>{schedStatus.stats?.success_count ?? '—'}</dd></div>
+            <div><dt class="text-base-content/60 text-xs">Failures</dt><dd>{schedStatus.stats?.failure_count ?? '—'}</dd></div>
+          </dl>
+        {/if}
+
+        <h3 class="text-sm font-semibold">Nodes</h3>
+        {#if nodes.length === 0}
+          <p class="text-sm text-base-content/60">No placement nodes registered.</p>
+        {:else}
+          <div class="overflow-x-auto">
+            <table class="table table-sm" aria-label="Placement nodes">
+              <thead>
+                <tr>
+                  <th>Node</th><th>State</th><th>Capacity</th><th>Allocated</th>
+                  <th>Placements</th><th>TTL (s)</th><th>Registered</th><th class="text-right">Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {#each nodes as node (node.facts.node_id)}
+                  <tr>
+                    <td class="font-mono text-xs">{node.facts.node_id}</td>
+                    <td><span class="badge badge-sm {nodeStateVariant(node)}">{nodeState(node)}</span></td>
+                    <td class="font-mono text-xs">{formatResources(node.facts.capacity)}</td>
+                    <td class="font-mono text-xs">{formatResources(node.allocated)}</td>
+                    <td>{node.placements}</td>
+                    <td>{node.ttl_seconds}</td>
+                    <td class="text-xs text-base-content/60">{formatNextRun(node.registered_at)}</td>
+                    <td class="text-right">
+                      <div class="flex justify-end gap-1">
+                        <button class="btn btn-ghost btn-xs" onclick={() => void showNodeDetails(node.facts.node_id)} aria-label={`Details for node ${node.facts.node_id}`}>Details</button>
+                        <button
+                          class="btn btn-ghost btn-xs"
+                          disabled={busyNode === node.facts.node_id}
+                          onclick={() => void toggleCordon(node)}
+                          aria-label={node.status?.unschedulable ? `Uncordon node ${node.facts.node_id}` : `Cordon node ${node.facts.node_id}`}
+                        >{node.status?.unschedulable ? 'Uncordon' : 'Cordon'}</button>
+                        <button class="btn btn-ghost btn-xs" onclick={() => { pendingAction = { kind: 'drain', id: node.facts.node_id }; }} aria-label={`Drain node ${node.facts.node_id}`}>Drain</button>
+                        <button class="btn btn-ghost btn-xs text-error" onclick={() => { pendingAction = { kind: 'deregister', id: node.facts.node_id }; }} aria-label={`Deregister node ${node.facts.node_id}`}>Deregister</button>
+                      </div>
+                    </td>
+                  </tr>
+                {/each}
+              </tbody>
+            </table>
+          </div>
+        {/if}
+
+        <h3 class="text-sm font-semibold">Placements</h3>
+        {#if placements.length === 0}
+          <p class="text-sm text-base-content/60">No workload placements.</p>
+        {:else}
+          <div class="overflow-x-auto">
+            <table class="table table-sm" aria-label="Workload placements">
+              <thead>
+                <tr>
+                  <th>Workload</th><th>Node</th><th>Group</th><th>Resources</th>
+                  <th>Score</th><th>Created</th><th class="text-right">Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {#each placements as p (p.workload_id)}
+                  <tr>
+                    <td class="font-mono text-xs">
+                      {p.workload_id}
+                      {#if p.orphaned}<span class="badge badge-warning badge-xs ml-1">orphaned</span>{/if}
+                    </td>
+                    <td class="font-mono text-xs">{p.node_id}</td>
+                    <td class="text-xs">{p.group ?? '—'}</td>
+                    <td class="font-mono text-xs">{formatResources(p.resources)}</td>
+                    <td>{p.score}</td>
+                    <td class="text-xs text-base-content/60">{formatNextRun(p.created_at)}</td>
+                    <td class="text-right">
+                      <div class="flex justify-end gap-1">
+                        <button class="btn btn-ghost btn-xs" onclick={() => void showPlacementDetails(p.workload_id)} aria-label={`Details for placement ${p.workload_id}`}>Details</button>
+                        <button class="btn btn-ghost btn-xs text-error" onclick={() => { pendingAction = { kind: 'release', id: p.workload_id }; }} aria-label={`Release placement ${p.workload_id}`}>Release</button>
+                      </div>
+                    </td>
+                  </tr>
+                {/each}
+              </tbody>
+            </table>
+          </div>
+        {/if}
+      </div>
+    </section>
+
   </div>
 </div>
+
+<!-- Placement confirm dialog (drain / deregister / release) -->
+{#if pendingAction}
+  <div class="modal modal-open" role="dialog" aria-modal="true" aria-label={`Confirm ${pendingAction.kind}`}>
+    <div class="modal-box max-w-sm">
+      <h3 class="text-base font-semibold mb-2">{ACTION_LABEL[pendingAction.kind]}?</h3>
+      <p class="text-sm text-base-content/70">
+        {#if pendingAction.kind === 'release'}
+          Release the placement of workload <span class="font-mono font-semibold">{pendingAction.id}</span>?
+        {:else if pendingAction.kind === 'drain'}
+          Drain node <span class="font-mono font-semibold">{pendingAction.id}</span>? Its placements will be moved.
+        {:else}
+          Deregister node <span class="font-mono font-semibold">{pendingAction.id}</span>? Its lease is revoked.
+        {/if}
+      </p>
+      <div class="modal-action">
+        <button class="btn btn-ghost" onclick={() => { pendingAction = null; }}>Cancel</button>
+        <button class="btn btn-error gap-2" onclick={confirmPendingAction} disabled={confirming}>
+          {#if confirming}<span class="loading loading-spinner loading-xs"></span>{/if}
+          {ACTION_LABEL[pendingAction.kind]}
+        </button>
+      </div>
+    </div>
+    <div class="modal-backdrop" onclick={() => { pendingAction = null; }}></div>
+  </div>
+{/if}
+
+<!-- Node details dialog -->
+{#if nodeDetail}
+  <div class="modal modal-open" role="dialog" aria-modal="true" aria-label="Node details">
+    <div class="modal-box">
+      <div class="mb-4 flex items-center justify-between">
+        <h3 class="text-base font-semibold">Node {nodeDetail.facts.node_id}</h3>
+        <button class="btn btn-ghost btn-square btn-sm" onclick={() => { nodeDetail = null; }} aria-label="Close"><X class="h-4 w-4" /></button>
+      </div>
+      <pre class="bg-base-300 rounded p-3 text-xs overflow-x-auto">{JSON.stringify(nodeDetail, null, 2)}</pre>
+    </div>
+    <div class="modal-backdrop" onclick={() => { nodeDetail = null; }}></div>
+  </div>
+{/if}
+
+<!-- Placement details dialog -->
+{#if placementDetail}
+  <div class="modal modal-open" role="dialog" aria-modal="true" aria-label="Placement details">
+    <div class="modal-box">
+      <div class="mb-4 flex items-center justify-between">
+        <h3 class="text-base font-semibold">Placement {placementDetail.workload_id}</h3>
+        <button class="btn btn-ghost btn-square btn-sm" onclick={() => { placementDetail = null; }} aria-label="Close"><X class="h-4 w-4" /></button>
+      </div>
+      <pre class="bg-base-300 rounded p-3 text-xs overflow-x-auto">{JSON.stringify(placementDetail, null, 2)}</pre>
+    </div>
+    <div class="modal-backdrop" onclick={() => { placementDetail = null; }}></div>
+  </div>
+{/if}
 
 <!-- Delete Job Confirm Dialog -->
 {#if jobToDelete}
