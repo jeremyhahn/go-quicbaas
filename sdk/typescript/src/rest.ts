@@ -181,6 +181,23 @@ import type {
   GetReencryptionProgressResponse,
 } from './dek.js';
 import type {
+  ParametersClient,
+  ParameterGetOptions,
+  GetParameterResponse,
+  SetParameterRequest,
+  SetParameterResponse,
+  DeleteParameterResponse,
+  ParameterListOptions,
+  ListParametersResponse,
+  GetParametersRequest,
+  GetParametersResponse,
+  SetParametersRequest,
+  SetParametersResponse,
+  DeleteParametersResponse,
+  ParameterSearchByTagsRequest,
+  ParameterSearchByTagsResponse,
+} from './parameters.js';
+import type {
   DynamicSecretsClient,
   DynamicSecretRole,
   CreateRoleRequest as DynamicSecretCreateRoleRequest,
@@ -4297,6 +4314,93 @@ export class RestDEKClient implements DEKClient {
   }
 }
 
+/**
+ * parameterURL turns a parameter path such as "/app/db/host" into its route,
+ * /api/v1/parameters/app/db/host: the leading '/' dropped and each segment
+ * encodeURIComponent'd.
+ */
+function parameterURL(path: string): string {
+  const segments = path.replace(/^\/+/, '').split('/').map((s) => encodeURIComponent(s));
+  return `/api/v1/parameters/${segments.join('/')}`;
+}
+
+export class RestParametersClient implements ParametersClient {
+  private readonly http: FetchHelper;
+
+  constructor(baseUrl: string, config: ClientConfig = {}) {
+    this.http = newFetchHelper(baseUrl, config);
+  }
+
+  // Maps to GET /api/v1/parameters/{path}[?with_decryption=false]
+  async get(path: string, opts: ParameterGetOptions = {}): Promise<GetParameterResponse> {
+    const query = opts.withDecryption !== undefined
+      ? `?with_decryption=${String(opts.withDecryption)}`
+      : '';
+    return this.http.fetchJSON<GetParameterResponse>(`${parameterURL(path)}${query}`);
+  }
+
+  // Maps to PUT /api/v1/parameters/{path}
+  async set(path: string, req: SetParameterRequest): Promise<SetParameterResponse> {
+    return this.http.fetchJSON<SetParameterResponse>(parameterURL(path), {
+      method: 'PUT',
+      body: JSON.stringify(req),
+    });
+  }
+
+  // Maps to DELETE /api/v1/parameters/{path}
+  async delete(path: string): Promise<DeleteParameterResponse> {
+    return this.http.fetchJSON<DeleteParameterResponse>(parameterURL(path), { method: 'DELETE' });
+  }
+
+  // Maps to GET /api/v1/parameters/?prefix=&recursive=&with_values=&with_decryption=&cursor=&limit=
+  async list(opts: ParameterListOptions = {}): Promise<ListParametersResponse> {
+    const params: Record<string, string> = {};
+    if (opts.prefix !== undefined) params.prefix = opts.prefix;
+    if (opts.recursive !== undefined) params.recursive = String(opts.recursive);
+    if (opts.withValues !== undefined) params.with_values = String(opts.withValues);
+    if (opts.withDecryption !== undefined) params.with_decryption = String(opts.withDecryption);
+    if (opts.cursor !== undefined) params.cursor = opts.cursor;
+    if (opts.limit !== undefined) params.limit = String(opts.limit);
+    const query = new URLSearchParams(params).toString();
+    const wire = await this.http.fetchJSON<ListParametersResponse>(
+      `/api/v1/parameters/${query ? `?${query}` : ''}`,
+    );
+    return { ...wire, parameters: wire.parameters ?? [] };
+  }
+
+  // Maps to POST /api/v1/parameters/batch/get
+  async getBatch(req: GetParametersRequest): Promise<GetParametersResponse> {
+    return this.http.fetchJSON<GetParametersResponse>('/api/v1/parameters/batch/get', {
+      method: 'POST',
+      body: JSON.stringify(req),
+    });
+  }
+
+  // Maps to POST /api/v1/parameters/batch/set
+  async setBatch(req: SetParametersRequest): Promise<SetParametersResponse> {
+    return this.http.fetchJSON<SetParametersResponse>('/api/v1/parameters/batch/set', {
+      method: 'POST',
+      body: JSON.stringify(req),
+    });
+  }
+
+  // Maps to POST /api/v1/parameters/batch/delete
+  async deleteBatch(paths: string[]): Promise<DeleteParametersResponse> {
+    return this.http.fetchJSON<DeleteParametersResponse>('/api/v1/parameters/batch/delete', {
+      method: 'POST',
+      body: JSON.stringify({ paths }),
+    });
+  }
+
+  // Maps to POST /api/v1/parameters/search
+  async searchByTags(req: ParameterSearchByTagsRequest): Promise<ParameterSearchByTagsResponse> {
+    return this.http.fetchJSON<ParameterSearchByTagsResponse>('/api/v1/parameters/search', {
+      method: 'POST',
+      body: JSON.stringify(req),
+    });
+  }
+}
+
 // ---------------------------------------------------------------------------
 // RestDynamicSecretsClient — /api/v1/secrets/dynamic/* surface.
 // ---------------------------------------------------------------------------
@@ -5258,6 +5362,7 @@ export class RestClient implements Client {
   readonly trust: TrustClient;
   readonly crypto: CryptoClient;
   readonly dek: DEKClient;
+  readonly parameters: ParametersClient;
   readonly dynamicSecrets: DynamicSecretsClient;
   readonly barrier: BarrierClient;
   readonly tenantBarrier: TenantBarrierClient;
@@ -5300,6 +5405,7 @@ export class RestClient implements Client {
     this.trust = new RestTrustClient(baseUrl, config);
     this.crypto = new RestCryptoClient(baseUrl, config);
     this.dek = new RestDEKClient(baseUrl, config);
+    this.parameters = new RestParametersClient(baseUrl, config);
     this.dynamicSecrets = new RestDynamicSecretsClient(baseUrl, config);
     this.barrier = new RestBarrierClient(baseUrl, config);
     this.tenantBarrier = new RestTenantBarrierClient(baseUrl, config);
