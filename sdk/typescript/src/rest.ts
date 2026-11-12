@@ -181,6 +181,13 @@ import type {
   GetReencryptionProgressResponse,
 } from './dek.js';
 import type {
+  ObjectsBatchPutOperation,
+  ObjectsBatchPutResponse,
+  ObjectsBatchGetOptions,
+  ObjectsBatchGetResponse,
+  ObjectsBatchDeleteResponse,
+} from './objects_batch.js';
+import type {
   DynamicSecretsClient,
   DynamicSecretRole,
   CreateRoleRequest as DynamicSecretCreateRoleRequest,
@@ -1730,10 +1737,12 @@ class RestTimeSeriesClient implements TimeSeriesClient {
 class RestObjectsClient implements ObjectsClient {
   private readonly baseUrl: string;
   private readonly config: ClientConfig;
+  private readonly http: FetchHelper;
 
   constructor(baseUrl: string, config: ClientConfig = {}) {
     this.baseUrl = baseUrl.replace(/\/$/, '');
     this.config = config;
+    this.http = newFetchHelper(baseUrl, config);
   }
 
   private async authHeaders(): Promise<Record<string, string>> {
@@ -1820,6 +1829,32 @@ class RestObjectsClient implements ObjectsClient {
     if (!resp.ok) {
       throw new APIError(resp.status, resp.statusText);
     }
+  }
+
+  // batchPut maps to POST /api/v1/objects/batch
+  async batchPut(objects: ObjectsBatchPutOperation[]): Promise<ObjectsBatchPutResponse> {
+    return this.http.fetchJSON<ObjectsBatchPutResponse>('/api/v1/objects/batch', {
+      method: 'POST',
+      body: JSON.stringify({ objects }),
+    });
+  }
+
+  // batchGet maps to POST /api/v1/objects/batch/get
+  async batchGet(keys: string[], opts?: ObjectsBatchGetOptions): Promise<ObjectsBatchGetResponse> {
+    const body: { keys: string[]; include_metadata?: boolean } = { keys };
+    if (opts?.includeMetadata !== undefined) body.include_metadata = opts.includeMetadata;
+    return this.http.fetchJSON<ObjectsBatchGetResponse>('/api/v1/objects/batch/get', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    });
+  }
+
+  // batchDelete maps to POST /api/v1/objects/batch/delete
+  async batchDelete(keys: string[]): Promise<ObjectsBatchDeleteResponse> {
+    return this.http.fetchJSON<ObjectsBatchDeleteResponse>('/api/v1/objects/batch/delete', {
+      method: 'POST',
+      body: JSON.stringify({ keys }),
+    });
   }
 }
 

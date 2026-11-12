@@ -292,6 +292,16 @@ export type {
   GetReencryptionProgressResponse,
 } from './dek.js';
 export type {
+  ObjectsBatchPutOperation,
+  ObjectsBatchPutResult,
+  ObjectsBatchPutResponse,
+  ObjectsBatchGetOptions,
+  ObjectsBatchGetResult,
+  ObjectsBatchGetResponse,
+  ObjectsBatchDeleteResult,
+  ObjectsBatchDeleteResponse,
+} from './objects_batch.js';
+export type {
   DynamicSecretsClient,
   DynamicSecretRole,
   CreateRoleRequest as DynamicSecretCreateRoleRequest,
