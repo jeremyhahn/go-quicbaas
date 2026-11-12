@@ -41,6 +41,7 @@ import type { BackupsClient } from './backups.js';
 import type { ClusterNodesClient } from './cluster_nodes.js';
 import type { EntitiesClient } from './entities.js';
 import type { KMSAdminClient } from './kms_admin.js';
+import type { ObjectStorageAdminClient } from './objectstorage_admin.js';
 import type { DynamicSecretsClient } from './dynamicsecrets.js';
 
 import type {
@@ -2723,6 +2724,13 @@ export interface Client {
    * named keys. Paths: /api/v1/kms/keys/{name}/{metadata,policy,rotation-policy}.
    */
   readonly kmsAdmin: KMSAdminClient;
+  /**
+   * objectStorageAdmin manages object storage backends and reports storage
+   * stats, runs garbage collection and repairs objects. Paths:
+   * /api/v1/admin/object-backends/*, /api/v1/admin/storage/*,
+   * /api/v1/admin/objects/repair. Replies keep the Go field names.
+   */
+  readonly objectStorageAdmin: ObjectStorageAdminClient;
   /**
    * dynamicSecrets manages credential-generation roles, on-demand
    * short-lived credential minting, and lease renewal/revocation.
