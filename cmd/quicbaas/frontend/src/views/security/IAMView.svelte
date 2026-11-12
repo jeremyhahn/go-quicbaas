@@ -44,8 +44,10 @@
     UpdatePolicyRequest,
     ConsentPurpose,
     UserConsent,
+    DataExportRequest,
+    DeletionRequest,
   } from '@quicbaas/sdk';
-  import { ShieldCheck, UserPlus, Pencil, Trash2, UserCheck, ToggleLeft, RefreshCw, FileCheck } from 'lucide-svelte';
+  import { ShieldCheck, UserPlus, Pencil, Trash2, UserCheck, ToggleLeft, RefreshCw, FileCheck, Download } from 'lucide-svelte';
   import EmptyState from '../../components/core/EmptyState.svelte';
   import { routerStore, routeIAMTab } from '../../stores/router.svelte.ts';
   import { formatDateTime } from '../../lib/time.ts';
@@ -240,6 +242,21 @@
   let grantingConsent = $state(false);
   // The purpose whose withdraw is in flight, if any.
   let withdrawingPurpose: ConsentPurpose | null = $state(null);
+
+  // ---------------------------------------------------------------------------
+  // Data export and deletion (GDPR) dialog state
+  // ---------------------------------------------------------------------------
+
+  // The SDK has no list route for a user's GDPR requests, so the dialog keeps
+  // the latest export and deletion of each user it has requested or polled.
+  let latestExports: Record<string, DataExportRequest> = $state({});
+  let latestDeletions: Record<string, DeletionRequest> = $state({});
+  let userForGDPR: IAMUser | null = $state(null);
+  let gdprError: string | null = $state(null);
+  // The GDPR action in flight, if any.
+  let gdprBusy: 'export' | 'export-status' | 'download' | 'delete' | 'delete-status' | 'cancel' | null = $state(null);
+  let confirmingDeletion = $state(false);
+  let deletionReason = $state('');
 
   // ---------------------------------------------------------------------------
   // Create Tenant dialog state
@@ -661,6 +678,108 @@
     } finally {
       withdrawingPurpose = null;
     }
+  }
+
+  function openGDPR(user: IAMUser): void {
+    userForGDPR = user;
+    gdprError = null;
+    gdprBusy = null;
+    confirmingDeletion = false;
+    deletionReason = '';
+  }
+
+  function closeGDPR(): void {
+    userForGDPR = null;
+    gdprError = null;
+    confirmingDeletion = false;
+  }
+
+  // runGDPR runs one GDPR action for the open user, showing its error in the dialog.
+  async function runGDPR(kind: NonNullable<typeof gdprBusy>, fallback: string, action: (user: IAMUser) => Promise<void>): Promise<void> {
+    if (!userForGDPR) return;
+    const user = userForGDPR;
+    gdprError = null;
+    gdprBusy = kind;
+    try {
+      await action(user);
+    } catch (e) {
+      if (userForGDPR?.id === user.id) {
+        gdprError = e instanceof Error ? e.message : fallback;
+      }
+    } finally {
+      gdprBusy = null;
+    }
+  }
+
+  function requestUserExport(): Promise<void> {
+    return runGDPR('export', 'Failed to request the export', async (user) => {
+      const client = await getSDKClient();
+      const req = await client.iam.requestDataExport(selectedTenantID, user.id);
+      latestExports = { ...latestExports, [user.id]: req };
+      showToast({ message: `Data export requested for "${user.username}"`, type: 'success' });
+    });
+  }
+
+  function refreshUserExport(): Promise<void> {
+    return runGDPR('export-status', 'Failed to load the export status', async (user) => {
+      const current = latestExports[user.id];
+      if (!current) return;
+      const client = await getSDKClient();
+      const req = await client.iam.getExportStatus(selectedTenantID, user.id, current.id);
+      latestExports = { ...latestExports, [user.id]: req };
+    });
+  }
+
+  function downloadUserExport(): Promise<void> {
+    return runGDPR('download', 'Failed to download the export', async (user) => {
+      const current = latestExports[user.id];
+      if (!current) return;
+      const client = await getSDKClient();
+      const data = await client.iam.downloadExport(selectedTenantID, user.id, current.id);
+      if (typeof URL.createObjectURL === 'function') {
+        const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+        const href = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = href;
+        a.download = `export-${user.username}-${current.id}.json`;
+        a.click();
+        URL.revokeObjectURL(href);
+      }
+      showToast({ message: `Data export of "${user.username}" downloaded`, type: 'success' });
+    });
+  }
+
+  function requestUserDeletion(): Promise<void> {
+    return runGDPR('delete', 'Failed to request the deletion', async (user) => {
+      const client = await getSDKClient();
+      const reason = deletionReason.trim();
+      const req = await client.iam.requestDeletion(selectedTenantID, user.id, reason ? { reason } : undefined);
+      latestDeletions = { ...latestDeletions, [user.id]: req };
+      confirmingDeletion = false;
+      deletionReason = '';
+      showToast({ message: `Data deletion requested for "${user.username}"`, type: 'success' });
+    });
+  }
+
+  function refreshUserDeletion(): Promise<void> {
+    return runGDPR('delete-status', 'Failed to load the deletion status', async (user) => {
+      const current = latestDeletions[user.id];
+      if (!current) return;
+      const client = await getSDKClient();
+      const req = await client.iam.getDeletionStatus(selectedTenantID, user.id, current.id);
+      latestDeletions = { ...latestDeletions, [user.id]: req };
+    });
+  }
+
+  function cancelUserDeletion(): Promise<void> {
+    return runGDPR('cancel', 'Failed to cancel the deletion', async (user) => {
+      const current = latestDeletions[user.id];
+      if (!current) return;
+      const client = await getSDKClient();
+      const req = await client.iam.cancelDeletion(selectedTenantID, user.id, current.id);
+      latestDeletions = { ...latestDeletions, [user.id]: req };
+      showToast({ message: `Data deletion of "${user.username}" cancelled`, type: 'success' });
+    });
   }
 
   // ---------------------------------------------------------------------------
@@ -1130,6 +1249,14 @@
                   <FileCheck class="h-3 w-3" />
                 </button>
                 <button
+                  class="btn btn-ghost btn-xs"
+                  title={`Data export and deletion of ${user.username}`}
+                  aria-label={`Data export and deletion of ${user.username}`}
+                  onclick={() => openGDPR(user)}
+                >
+                  <Download class="h-3 w-3" />
+                </button>
+                <button
                   class="btn btn-ghost btn-xs text-error"
                   title={`Delete user ${user.username}`}
                   aria-label={`Delete user ${user.username}`}
@@ -1528,6 +1655,80 @@
       </div>
     </div>
     <div class="modal-backdrop" role="none" onclick={closeConsents} onkeydown={closeConsents}></div>
+  </div>
+{/if}
+
+{#if userForGDPR}
+  {@const gdprExport = latestExports[userForGDPR.id]}
+  {@const gdprDeletion = latestDeletions[userForGDPR.id]}
+  <div class="modal modal-open" role="dialog" aria-modal="true" aria-label="Data export and deletion dialog">
+    <div class="modal-box max-w-xl">
+      <h3 class="text-base font-semibold mb-4">Data export and deletion of <span class="font-mono text-primary">{userForGDPR.username}</span></h3>
+      {#if gdprError}
+        <div class="alert alert-error text-sm mb-3" role="alert">{gdprError}</div>
+      {/if}
+
+      <section class="mb-4" aria-label="Data export">
+        <h4 class="text-sm font-semibold mb-2">Data export</h4>
+        {#if gdprExport}
+          <p class="text-sm mb-2" data-testid="gdpr-export-status">
+            Export <span class="font-mono">{gdprExport.id}</span>: <span class="badge badge-sm">{gdprExport.status}</span>
+            <span class="text-base-content/50">requested {formatDateTime(gdprExport.requested_at)}</span>
+          </p>
+        {:else}
+          <p class="text-sm text-base-content/50 mb-2">No export requested in this session</p>
+        {/if}
+        <div class="flex gap-2">
+          <button class="btn btn-primary btn-sm" disabled={gdprBusy !== null} onclick={requestUserExport}>{gdprBusy === 'export' ? 'Requesting…' : 'Request export'}</button>
+          {#if gdprExport}
+            <button class="btn btn-ghost btn-sm" disabled={gdprBusy !== null} onclick={refreshUserExport}>{gdprBusy === 'export-status' ? 'Refreshing…' : 'Refresh export status'}</button>
+            {#if gdprExport.status === 'completed'}
+              <button class="btn btn-ghost btn-sm" disabled={gdprBusy !== null} onclick={downloadUserExport}>{gdprBusy === 'download' ? 'Downloading…' : 'Download export'}</button>
+            {/if}
+          {/if}
+        </div>
+      </section>
+
+      <section aria-label="Data deletion">
+        <h4 class="text-sm font-semibold mb-2">Data deletion</h4>
+        {#if gdprDeletion}
+          <p class="text-sm mb-2" data-testid="gdpr-deletion-status">
+            Deletion <span class="font-mono">{gdprDeletion.id}</span>: <span class="badge badge-sm">{gdprDeletion.status}</span>
+            {#if gdprDeletion.grace_period_ends_at}
+              <span class="text-base-content/50">grace period ends {formatDateTime(gdprDeletion.grace_period_ends_at)}</span>
+            {/if}
+          </p>
+        {:else}
+          <p class="text-sm text-base-content/50 mb-2">No deletion requested in this session</p>
+        {/if}
+        {#if confirmingDeletion}
+          <div class="alert alert-warning text-sm mb-2">This queues the deletion of all of the user's data.</div>
+          <div class="form-control mb-2">
+            <label class="label label-text" for="gdpr-deletion-reason">Reason</label>
+            <input id="gdpr-deletion-reason" class="input input-bordered input-sm" type="text" bind:value={deletionReason} />
+          </div>
+          <div class="flex gap-2">
+            <button class="btn btn-ghost btn-sm" onclick={() => (confirmingDeletion = false)}>Keep data</button>
+            <button class="btn btn-error btn-sm" disabled={gdprBusy !== null} onclick={requestUserDeletion}>{gdprBusy === 'delete' ? 'Requesting…' : 'Confirm deletion'}</button>
+          </div>
+        {:else}
+          <div class="flex gap-2">
+            <button class="btn btn-error btn-outline btn-sm" disabled={gdprBusy !== null} onclick={() => (confirmingDeletion = true)}>Request deletion</button>
+            {#if gdprDeletion}
+              <button class="btn btn-ghost btn-sm" disabled={gdprBusy !== null} onclick={refreshUserDeletion}>{gdprBusy === 'delete-status' ? 'Refreshing…' : 'Refresh deletion status'}</button>
+              {#if gdprDeletion.status === 'pending'}
+                <button class="btn btn-ghost btn-sm" disabled={gdprBusy !== null} onclick={cancelUserDeletion}>{gdprBusy === 'cancel' ? 'Cancelling…' : 'Cancel deletion'}</button>
+              {/if}
+            {/if}
+          </div>
+        {/if}
+      </section>
+
+      <div class="modal-action">
+        <button class="btn btn-ghost btn-sm" onclick={closeGDPR}>Close</button>
+      </div>
+    </div>
+    <div class="modal-backdrop" role="none" onclick={closeGDPR} onkeydown={closeGDPR}></div>
   </div>
 {/if}
 

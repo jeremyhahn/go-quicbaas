@@ -570,6 +570,115 @@ describe('IAMView', () => {
     });
   });
 
+  describe('Data export and deletion dialog (#2372)', () => {
+    const pendingExport = {
+      id: 'exp-1', user_id: 'user-1', tenant_id: 'acme', requested_by: 'user-1', format: 'json',
+      status: 'pending', requested_at: '2026-01-02T03:04:05Z',
+    };
+    const completedExport = { ...pendingExport, status: 'completed', completed_at: '2026-01-02T04:00:00Z' };
+    const pendingDeletion = {
+      id: 'del-1', user_id: 'user-1', tenant_id: 'acme', requested_by: 'user-1', status: 'pending',
+      requested_at: '2026-01-02T03:04:05Z', grace_period_ends_at: '2026-02-01T03:04:05Z',
+    };
+
+    function stubGDPR(overrides: Record<string, ReturnType<typeof vi.fn>>): void {
+      mockGetSDKClient.mockResolvedValue({
+        iam: {
+          listUsers: vi.fn().mockResolvedValue({ users: mockUsers, count: mockUsers.length }),
+          listTenants: vi.fn().mockResolvedValue({ tenants: mockTenants, count: 1 }),
+          listRoles: vi.fn().mockResolvedValue({ roles: mockRoles, count: 2 }),
+          listPolicies: vi.fn().mockResolvedValue({ policies: mockPolicies, count: 1 }),
+          requestDataExport: vi.fn().mockResolvedValue(pendingExport),
+          getExportStatus: vi.fn().mockResolvedValue(completedExport),
+          downloadExport: vi.fn().mockResolvedValue({ export_metadata: {} }),
+          requestDeletion: vi.fn().mockResolvedValue(pendingDeletion),
+          getDeletionStatus: vi.fn().mockResolvedValue(pendingDeletion),
+          cancelDeletion: vi.fn().mockResolvedValue({ ...pendingDeletion, status: 'cancelled' }),
+          ...overrides,
+        },
+      });
+    }
+
+    async function openGDPRDialog(username: string): Promise<HTMLElement> {
+      render(IAMView);
+      const open = await screen.findByRole('button', { name: `Data export and deletion of ${username}` });
+      await fireEvent.click(open);
+      return screen.getByRole('dialog', { name: /Data export and deletion dialog/i });
+    }
+
+    it('opens from the user row with no request yet', async () => {
+      stubGDPR({});
+      const dialog = await openGDPRDialog('alice');
+      expect(dialog.querySelector('h3')?.textContent).toBe('Data export and deletion of alice');
+      expect(dialog.textContent).toContain('No export requested in this session');
+      expect(dialog.textContent).toContain('No deletion requested in this session');
+    });
+
+    it('requests an export for the user and shows its status', async () => {
+      const request = vi.fn().mockResolvedValue(pendingExport);
+      stubGDPR({ requestDataExport: request });
+      const dialog = await openGDPRDialog('alice');
+      await fireEvent.click(screen.getByRole('button', { name: 'Request export' }));
+      await waitFor(() => {
+        expect(request).toHaveBeenCalledWith('acme', 'user-1');
+        expect(dialog.querySelector('[data-testid="gdpr-export-status"]')?.textContent).toContain('pending');
+      });
+      expect(screen.queryByRole('button', { name: 'Download export' })).not.toBeInTheDocument();
+    });
+
+    it('polls the export status and downloads a ready export', async () => {
+      const status = vi.fn().mockResolvedValue(completedExport);
+      const download = vi.fn().mockResolvedValue({ export_metadata: {} });
+      stubGDPR({ getExportStatus: status, downloadExport: download });
+      await openGDPRDialog('alice');
+      await fireEvent.click(screen.getByRole('button', { name: 'Request export' }));
+      await fireEvent.click(await screen.findByRole('button', { name: 'Refresh export status' }));
+      await waitFor(() => expect(status).toHaveBeenCalledWith('acme', 'user-1', 'exp-1'));
+      await fireEvent.click(await screen.findByRole('button', { name: 'Download export' }));
+      await waitFor(() => {
+        expect(download).toHaveBeenCalledWith('acme', 'user-1', 'exp-1');
+        expect(mockShowToast).toHaveBeenCalledWith({ message: 'Data export of "alice" downloaded', type: 'success' });
+      });
+    });
+
+    it('requests a deletion only after the confirm step', async () => {
+      const del = vi.fn().mockResolvedValue(pendingDeletion);
+      stubGDPR({ requestDeletion: del });
+      const dialog = await openGDPRDialog('alice');
+      await fireEvent.click(screen.getByRole('button', { name: 'Request deletion' }));
+      expect(del).not.toHaveBeenCalled();
+      await fireEvent.click(screen.getByRole('button', { name: 'Confirm deletion' }));
+      await waitFor(() => {
+        expect(del).toHaveBeenCalledWith('acme', 'user-1', undefined);
+        expect(dialog.querySelector('[data-testid="gdpr-deletion-status"]')?.textContent).toContain('pending');
+      });
+    });
+
+    it('cancels a pending deletion', async () => {
+      const cancel = vi.fn().mockResolvedValue({ ...pendingDeletion, status: 'cancelled' });
+      stubGDPR({ cancelDeletion: cancel });
+      const dialog = await openGDPRDialog('alice');
+      await fireEvent.click(screen.getByRole('button', { name: 'Request deletion' }));
+      await fireEvent.click(screen.getByRole('button', { name: 'Confirm deletion' }));
+      await fireEvent.click(await screen.findByRole('button', { name: 'Cancel deletion' }));
+      await waitFor(() => {
+        expect(cancel).toHaveBeenCalledWith('acme', 'user-1', 'del-1');
+        expect(dialog.querySelector('[data-testid="gdpr-deletion-status"]')?.textContent).toContain('cancelled');
+      });
+      expect(screen.queryByRole('button', { name: 'Cancel deletion' })).not.toBeInTheDocument();
+    });
+
+    it('shows the SDK error in the dialog when the export request is rejected', async () => {
+      stubGDPR({ requestDataExport: vi.fn().mockRejectedValue(new Error('export denied')) });
+      const dialog = await openGDPRDialog('alice');
+      await fireEvent.click(screen.getByRole('button', { name: 'Request export' }));
+      await waitFor(() => {
+        expect(dialog.querySelector('[role="alert"]')?.textContent).toBe('export denied');
+      });
+      expect(mockShowToast).not.toHaveBeenCalled();
+    });
+  });
+
   // -------------------------------------------------------------------------
   // Issue #573: built-in roles are seeded once and never reconciled, so a
   // permission rename in the server build strands every existing tenant. The
