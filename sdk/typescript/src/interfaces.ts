@@ -1044,6 +1044,82 @@ export interface IAMSession {
   device_info: IAMSessionDeviceInfo | null;
 }
 
+// WebAuthnCredentialSummary is one WebAuthn credential of a tenant user.
+export interface WebAuthnCredentialSummary {
+  id: string;
+  aaguid?: string;
+  attestation_type?: string;
+  transports?: string[];
+  sign_count: number;
+  backup_eligible: boolean;
+  backup_state: boolean;
+  clone_warning: boolean;
+}
+
+// ListWebAuthnCredentialsResponse is the body of GET
+// /api/v1/tenants/{tenant_id}/users/{user_id}/webauthn/credentials/.
+export interface ListWebAuthnCredentialsResponse {
+  credentials: WebAuthnCredentialSummary[];
+  total: number;
+}
+
+// DeleteWebAuthnCredentialsResponse is the body of DELETE
+// /api/v1/tenants/{tenant_id}/users/{user_id}/webauthn/credentials/.
+export interface DeleteWebAuthnCredentialsResponse {
+  deleted: number;
+}
+
+// CreateAccountLinkRequest is the body of POST
+// /api/v1/tenants/{tenant_id}/users/{user_id}/links/.
+export interface CreateAccountLinkRequest {
+  provider_id: string;
+  external_id: string;
+  access_token?: string;
+}
+
+// AccountLink is the link POST .../links/ creates. Times are RFC 3339.
+export interface AccountLink {
+  id: string;
+  user_id: string;
+  provider_id: string;
+  provider_name: string;
+  external_id: string;
+  email?: string;
+  metadata?: Record<string, unknown>;
+  created_at: string;
+  updated_at: string;
+}
+
+// FederatedIdentity is one identity link GET .../links/ lists. Times are
+// RFC 3339.
+export interface FederatedIdentity {
+  id: string;
+  user_id: string;
+  tenant_id: string;
+  provider_id: string;
+  external_id: string;
+  external_email?: string;
+  external_name?: string;
+  claims?: Record<string, unknown>;
+  last_login: string;
+  created: string;
+  updated: string;
+}
+
+// ListAccountLinksOptions are the query parameters GET .../links/ reads.
+export interface ListAccountLinksOptions {
+  limit?: number;
+  offset?: number;
+}
+
+// ListAccountLinksResponse is the body of GET
+// /api/v1/tenants/{tenant_id}/users/{user_id}/links/.
+export interface ListAccountLinksResponse {
+  links: FederatedIdentity[];
+  limit: number;
+  offset: number;
+}
+
 // ListSessionsOptions are the query parameters GET /api/v1/iam/sessions
 // reads. The server lists the authenticated caller's sessions; a user_id or
 // tenant_id that does not match the caller is rejected with 403.
@@ -1168,6 +1244,33 @@ export interface IAMClient {
   // except keepSessionID.
   // Maps to POST /api/v1/iam/sessions/revoke-others
   revokeOtherSessions(keepSessionID: string): Promise<RevokeOtherSessionsResponse>;
+
+  // listWebAuthnCredentials lists a tenant user's registered WebAuthn
+  // credentials.
+  // Maps to GET /api/v1/tenants/{tenant_id}/users/{user_id}/webauthn/credentials/
+  listWebAuthnCredentials(tenantID: string, userID: string): Promise<ListWebAuthnCredentialsResponse>;
+
+  // deleteAllWebAuthnCredentials removes every WebAuthn credential of a tenant
+  // user and returns how many were removed.
+  // Maps to DELETE /api/v1/tenants/{tenant_id}/users/{user_id}/webauthn/credentials/
+  deleteAllWebAuthnCredentials(tenantID: string, userID: string): Promise<DeleteWebAuthnCredentialsResponse>;
+
+  // deleteWebAuthnCredential removes one WebAuthn credential of a tenant user.
+  // Maps to DELETE /api/v1/tenants/{tenant_id}/users/{user_id}/webauthn/credentials/{credential_id}
+  deleteWebAuthnCredential(tenantID: string, userID: string, credentialID: string): Promise<void>;
+
+  // createAccountLink links a tenant user to an external identity provider
+  // account.
+  // Maps to POST /api/v1/tenants/{tenant_id}/users/{user_id}/links/
+  createAccountLink(tenantID: string, userID: string, req: CreateAccountLinkRequest): Promise<AccountLink>;
+
+  // listAccountLinks lists a tenant user's federated identity links.
+  // Maps to GET /api/v1/tenants/{tenant_id}/users/{user_id}/links/
+  listAccountLinks(tenantID: string, userID: string, opts?: ListAccountLinksOptions): Promise<ListAccountLinksResponse>;
+
+  // deleteAccountLink removes a tenant user's link to one identity provider.
+  // Maps to DELETE /api/v1/tenants/{tenant_id}/users/{user_id}/links/{provider_id}
+  deleteAccountLink(tenantID: string, userID: string, providerID: string): Promise<void>;
 
   // getMFAStatus returns a tenant user's MFA status.
   // Maps to GET /api/v1/tenants/{tenant_id}/users/{user_id}/mfa/

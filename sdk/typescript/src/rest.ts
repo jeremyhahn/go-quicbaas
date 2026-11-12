@@ -3319,6 +3319,73 @@ async listSessions(
     );
   }
 
+  private userPath(tenantID: string, userID: string): string {
+    return `/api/v1/tenants/${encodeURIComponent(tenantID)}/users/${encodeURIComponent(userID)}`;
+  }
+
+  // Maps to GET /api/v1/tenants/{tenant_id}/users/{user_id}/webauthn/credentials/
+  async listWebAuthnCredentials(
+    tenantID: string,
+    userID: string,
+  ): Promise<import('./interfaces.js').ListWebAuthnCredentialsResponse> {
+    return this.fetchJSON<import('./interfaces.js').ListWebAuthnCredentialsResponse>(
+      `${this.userPath(tenantID, userID)}/webauthn/credentials/`,
+    );
+  }
+
+  // Maps to DELETE /api/v1/tenants/{tenant_id}/users/{user_id}/webauthn/credentials/
+  async deleteAllWebAuthnCredentials(
+    tenantID: string,
+    userID: string,
+  ): Promise<import('./interfaces.js').DeleteWebAuthnCredentialsResponse> {
+    return this.fetchJSON<import('./interfaces.js').DeleteWebAuthnCredentialsResponse>(
+      `${this.userPath(tenantID, userID)}/webauthn/credentials/`,
+      { method: 'DELETE' },
+    );
+  }
+
+  // Maps to DELETE /api/v1/tenants/{tenant_id}/users/{user_id}/webauthn/credentials/{credential_id}
+  async deleteWebAuthnCredential(tenantID: string, userID: string, credentialID: string): Promise<void> {
+    await this.fetchJSON<void>(
+      `${this.userPath(tenantID, userID)}/webauthn/credentials/${encodeURIComponent(credentialID)}`,
+      { method: 'DELETE' },
+    );
+  }
+
+  // Maps to POST /api/v1/tenants/{tenant_id}/users/{user_id}/links/
+  async createAccountLink(
+    tenantID: string,
+    userID: string,
+    req: import('./interfaces.js').CreateAccountLinkRequest,
+  ): Promise<import('./interfaces.js').AccountLink> {
+    return this.fetchJSON<import('./interfaces.js').AccountLink>(`${this.userPath(tenantID, userID)}/links/`, {
+      method: 'POST',
+      body: JSON.stringify(req),
+    });
+  }
+
+  // Maps to GET /api/v1/tenants/{tenant_id}/users/{user_id}/links/
+  async listAccountLinks(
+    tenantID: string,
+    userID: string,
+    opts?: import('./interfaces.js').ListAccountLinksOptions,
+  ): Promise<import('./interfaces.js').ListAccountLinksResponse> {
+    const params = new URLSearchParams();
+    if (opts?.limit !== undefined) params.set('limit', String(opts.limit));
+    if (opts?.offset !== undefined) params.set('offset', String(opts.offset));
+    const qs = params.toString();
+    return this.fetchJSON<import('./interfaces.js').ListAccountLinksResponse>(
+      `${this.userPath(tenantID, userID)}/links/${qs ? `?${qs}` : ''}`,
+    );
+  }
+
+  // Maps to DELETE /api/v1/tenants/{tenant_id}/users/{user_id}/links/{provider_id}
+  async deleteAccountLink(tenantID: string, userID: string, providerID: string): Promise<void> {
+    await this.fetchJSON<void>(`${this.userPath(tenantID, userID)}/links/${encodeURIComponent(providerID)}`, {
+      method: 'DELETE',
+    });
+  }
+
   private mfaPath(tenantID: string, userID: string): string {
     return `/api/v1/tenants/${encodeURIComponent(tenantID)}/users/${encodeURIComponent(userID)}/mfa`;
   }
