@@ -569,6 +569,16 @@ export type {
   ImportVectorsResponse,
 } from './vector_admin.js';
 export type {
+  XKMSFIDO2Client,
+  XKMSFIDO2BeginRegistrationRequest,
+  XKMSFIDO2Challenge,
+  XKMSFIDO2FinishRegistrationRequest,
+  XKMSFIDO2FinishRegistrationResponse,
+  XKMSFIDO2BeginAuthenticationRequest,
+  XKMSFIDO2FinishAuthenticationRequest,
+  XKMSFIDO2FinishAuthenticationResponse,
+} from './xkms_fido2.js';
+export type {
   DynamicSecretsClient,
   DynamicSecretRole,
   CreateRoleRequest as DynamicSecretCreateRoleRequest,

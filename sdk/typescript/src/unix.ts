@@ -304,6 +304,8 @@ export class UnixClient implements Client {
   readonly parameters: any = null;
   readonly vectorAdmin: any = null;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  readonly xkmsFido2: any = null;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   readonly dynamicSecrets: any = null;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   readonly barrier: any = null;

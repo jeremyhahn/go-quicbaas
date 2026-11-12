@@ -44,6 +44,7 @@ import type { KMSAdminClient } from './kms_admin.js';
 import type { ObjectStorageAdminClient } from './objectstorage_admin.js';
 import type { ParametersClient } from './parameters.js';
 import type { VectorAdminClient } from './vector_admin.js';
+import type { XKMSFIDO2Client } from './xkms_fido2.js';
 import type { DynamicSecretsClient } from './dynamicsecrets.js';
 
 import type {
@@ -2744,6 +2745,12 @@ export interface Client {
    * export/import. Paths: /api/v1/vector/admin/*.
    */
   readonly vectorAdmin: VectorAdminClient;
+  /**
+   * xkmsFido2 registers and authenticates FIDO2 (WebAuthn) passkeys:
+   * begin/finish registration, begin adding a credential, and
+   * begin/finish authentication. Paths: /api/v1/xkms/fido2/*.
+   */
+  readonly xkmsFido2: XKMSFIDO2Client;
   /**
    * dynamicSecrets manages credential-generation roles, on-demand
    * short-lived credential minting, and lease renewal/revocation.
