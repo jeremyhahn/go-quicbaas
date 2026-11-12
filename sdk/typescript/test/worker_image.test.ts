@@ -49,7 +49,7 @@ const status: WorkerImageStatus = {
         stale: true,
       },
     ],
-    reference: 'reg:3001/o/w:0.11.0-alpha-cc2.1.280-cx0.156.0@sha256:abc',
+    reference: 'reg:3000/o/w:0.11.0-alpha-cc2.1.280-cx0.156.0@sha256:abc',
     probes: [{ name: 'toolchain, signing and both agents', passed: true }],
   },
 };

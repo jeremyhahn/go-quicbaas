@@ -44,6 +44,12 @@ func TestMain(m *testing.M) {
 
 	code := m.Run()
 
+	// The tenant of the suite's tenant principal and tenant operator outlives
+	// every test, so no t.Cleanup can delete it.
+	if err := helpers.ReleaseDataPlaneTenants(); err != nil {
+		fmt.Fprintf(os.Stderr, "release data-plane tenants: %v\n", err)
+	}
+
 	// Cleanup
 	if srv != nil {
 		helpers.TeardownEmbeddedServer(srv)
@@ -76,7 +82,7 @@ func TestSchedulerAvailability(t *testing.T) {
 			t.Run(endpoint, func(t *testing.T) {
 				tlsCfg, err := helpers.IntegrationTLSConfig()
 				require.NoError(t, err, "load integration TLS config")
-				client, err := grpcclient.NewClient(endpoint, grpcclient.WithTLSConfig(tlsCfg))
+				client, err := grpcclient.NewClient(endpoint, grpcclient.WithTLSConfig(tlsCfg), kmsGRPCAuth(t))
 				require.NoError(t, err, "gRPC service must be available at %s", endpoint)
 				defer client.Close()
 

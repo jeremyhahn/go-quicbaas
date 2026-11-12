@@ -504,14 +504,14 @@ service TrustService {
   // AutoImportAIA walks the AIA extension of each supplied DER-encoded
   // certificate and imports the referenced issuing CA certificates.
   rpc AutoImportAIA(AutoImportAIARequest) returns (AutoImportAIAResponse) {
-      option (qrdb.v1.permission) = "certs:generate";
+      option (qrdb.v1.permission) = "trust:write";
   }
 
   // PublishDANE derives the DANE TLSA records for the supplied certificate
   // and publishes them via the registered DANE publisher. Returns a
   // not-configured error when no publisher is registered on the server.
   rpc PublishDANE(PublishDANERequest) returns (PublishDANEResponse) {
-      option (qrdb.v1.permission) = "certs:generate";
+      option (qrdb.v1.permission) = "trust:write";
   }
 }
 

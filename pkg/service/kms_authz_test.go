@@ -638,3 +638,62 @@ func TestCryptoService_KeyUseAudit_EmittedOnDeny(t *testing.T) {
 	require.Len(t, auditLog.events, 1)
 	assert.Equal(t, keyUseOutcomeDeny, auditLog.events[0].outcome)
 }
+
+// newAuthzEnabledKMSWithoutStore builds the KMS service the way quicbaas.go
+// does when no KV store provider is configured: authz on, no policy store.
+func newAuthzEnabledKMSWithoutStore() *kmsServiceImpl {
+	km := newMockKMSManager()
+	km.keys["key1"] = &mockKeyData{keyID: "key1", status: "enabled"}
+	svc := newKMSService(km, nil)
+	WithKMSAuthzEnabled(true)(svc)
+	return svc
+}
+
+func requireQBErrorCode(t *testing.T, err error, code errors.ErrorCode) {
+	t.Helper()
+	require.Error(t, err)
+	var qe *errors.QBError
+	require.ErrorAs(t, err, &qe)
+	assert.Equal(t, code, qe.Code)
+}
+
+func TestSetKeyPolicy_NoStore_ReturnsUnavailable(t *testing.T) {
+	svc := newAuthzEnabledKMSWithoutStore()
+	ctx := systemTenantCtx()
+
+	_, err := svc.SetKeyPolicy(ctx, &SetKeyPolicyRequest{
+		KeyID:  "key1",
+		Policy: &KeyPolicy{KeyID: "key1", DeniedPrincipals: []string{"alice"}},
+	})
+	require.Error(t, err)
+	assert.ErrorContains(t, err, "key policy store is not configured")
+
+	// Nothing was stored: once a store is attached, the key has no policy.
+	svc.SetKVStore(newMockKVStore())
+	policy, err := svc.loadKeyPolicy(ctx, "key1")
+	require.NoError(t, err)
+	assert.Nil(t, policy)
+}
+
+func TestCheckKeyAuthz_NoStore_DeniesAuthenticatedSubject(t *testing.T) {
+	svc := newAuthzEnabledKMSWithoutStore()
+	ctx := subjectCtx(authenticatedSubject("user-1", "alice"))
+
+	err := svc.checkKeyAuthz(ctx, "key1", "encrypt")
+	requireQBErrorCode(t, err, errors.ErrForbidden)
+}
+
+func TestCheckKeyAuthz_NoStore_SystemContextAllows(t *testing.T) {
+	svc := newAuthzEnabledKMSWithoutStore()
+	ctx := auth.NewSystemContext(systemTenantCtx())
+
+	require.NoError(t, svc.checkKeyAuthz(ctx, "key1", "encrypt"))
+}
+
+func TestCheckKeyAuthz_StoreWithoutPolicy_Allows(t *testing.T) {
+	svc := newAuthzEnabledKMSWithoutStore()
+	svc.SetKVStore(newMockKVStore())
+	ctx := subjectCtx(authenticatedSubject("user-1", "alice"))
+
+	require.NoError(t, svc.checkKeyAuthz(ctx, "key1", "encrypt"))
+}

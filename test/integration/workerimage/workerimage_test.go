@@ -16,7 +16,9 @@
 package workerimage_test
 
 import (
+	"bytes"
 	"context"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -68,9 +70,15 @@ func docker(t *testing.T, args ...string) string {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
-	out, err := exec.CommandContext(ctx, "docker", args...).CombinedOutput()
-	require.NoError(t, err, "docker %s: %s", strings.Join(args, " "), out)
-	return strings.TrimSpace(string(out))
+	// Only stdout is parsed: docker writes pull progress for an image that is
+	// not cached locally to stderr, which is kept for the error message.
+	var stdout, stderr bytes.Buffer
+	cmd := exec.CommandContext(ctx, "docker", args...)
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	err := cmd.Run()
+	require.NoError(t, err, "docker %s: %s%s", strings.Join(args, " "), stdout.String(), stderr.String())
+	return strings.TrimSpace(stdout.String())
 }
 
 func removeImages(t *testing.T, refs ...string) {
@@ -97,8 +105,35 @@ func startRegistry(t *testing.T) string {
 			t.Logf("cleanup registry: %v: %s", err, out)
 		}
 	})
+	// `docker run -d` returns once the container starts, not once the
+	// registry listens; a push in that gap is refused. The probe runs inside
+	// the container so it does not depend on the test sharing the daemon's
+	// network namespace.
+	require.Eventually(t, func() bool {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		return exec.CommandContext(ctx, "docker", "exec", id, "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:5000/v2/").Run() == nil
+	}, time.Minute, 250*time.Millisecond, "registry %s never answered /v2/", id)
 	port := docker(t, "port", id, "5000/tcp")
 	return "localhost:" + port[strings.LastIndex(port, ":")+1:]
+}
+
+// dockerOutputLimit bounds the docker output a failure message carries.
+const dockerOutputLimit = 2 << 10
+
+// dockerOutput returns the tail of the docker output behind err, which
+// CommandError keeps off its Error() string. This registry is a throwaway
+// with no credential, so its push output is safe to print.
+func dockerOutput(err error) string {
+	var cmdErr *orchestration.CommandError
+	if !errors.As(err, &cmdErr) {
+		return ""
+	}
+	out := cmdErr.Output
+	if len(out) > dockerOutputLimit {
+		out = out[len(out)-dockerOutputLimit:]
+	}
+	return out
 }
 
 const tinyDockerfile = "FROM alpine:3.21\nCMD [\"true\"]\n"
@@ -124,7 +159,7 @@ func TestE2E_BuildInspectTagPushAndPullByDigest(t *testing.T) {
 	require.NoError(t, rt.TagImage(ctx, id, remote))
 	removeImages(t, remote)
 	digest, err := rt.PushImage(ctx, remote, nil)
-	require.NoError(t, err)
+	require.NoError(t, err, "docker output: %s", dockerOutput(err))
 	require.NoError(t, orchestration.ValidateImageDigest(digest))
 
 	// A node that never held the image fetches it by digest — the reference
@@ -271,7 +306,13 @@ func TestE2E_ACandidateThatFailsItsProbesIsNeverPromoted(t *testing.T) {
 	oldBuild.Agents = softwarefactoryworker.Agents{ClaudeCode: "1.0.0", Codex: "1.0.0", Gemini: "1.0.0"}
 	_, err = rt.BuildImage(ctx, &orchestration.ImageBuildSpec{Dockerfile: []byte(tinyDockerfile), Tags: []string{stale}, Labels: oldBuild.Labels()})
 	require.NoError(t, err)
-	_, err = rt.BuildImage(ctx, &orchestration.ImageBuildSpec{Dockerfile: []byte(tinyDockerfile), Tags: []string{candidate}, Labels: build.Labels()})
+	// The worker Dockerfile declares its languages in a LABEL, not through
+	// Build.Labels, and the refresher refuses a candidate without them before
+	// any probe runs. The candidate carries the label so the probes are what
+	// fail it.
+	candidateLabels := build.Labels()
+	candidateLabels[softwarefactoryworker.LabelLanguages] = "go"
+	_, err = rt.BuildImage(ctx, &orchestration.ImageBuildSpec{Dockerfile: []byte(tinyDockerfile), Tags: []string{candidate}, Labels: candidateLabels})
 	require.NoError(t, err)
 	removeImages(t, stale, candidate)
 

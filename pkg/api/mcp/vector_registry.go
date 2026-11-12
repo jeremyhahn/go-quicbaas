@@ -283,17 +283,25 @@ func (r *ToolRegistry) handleVectorGetNamespaceInfo(ctx context.Context, svc ser
 	}, nil
 }
 
-// handleVectorUpdateNamespace updates namespace configuration.
-func (r *ToolRegistry) handleVectorUpdateNamespace(ctx context.Context, svc service.VectorService, args map[string]interface{}) (interface{}, error) {
-	// UpdateNamespace is not directly supported by VectorService interface,
-	// but we can provide a wrapper that modifies index config if needed
-	namespace := getString(args, "namespace")
-	if namespace == "" {
-		return nil, api.NewRequiredFieldError("namespace")
-	}
+// VectorNamespaceUpdateUnsupportedError refuses UpdateNamespace. The vector
+// service has no in-place namespace update, and deleting and recreating the
+// namespace would permanently destroy every vector it holds.
+type VectorNamespaceUpdateUnsupportedError struct {
+	Namespace string
+}
 
-	// For now, just return the namespace info as updates require index rebuilding
-	return r.handleVectorGetNamespaceInfo(ctx, svc, args)
+func (e *VectorNamespaceUpdateUnsupportedError) Error() string {
+	return "vector namespace " + e.Namespace + " cannot be updated: the qrdb SDK has no in-place namespace update"
+}
+
+// handleVectorUpdateNamespace refuses namespace updates after the same
+// validation every transport applies: an empty namespace is a bad request and
+// a missing namespace is not found.
+func (r *ToolRegistry) handleVectorUpdateNamespace(ctx context.Context, svc service.VectorService, args map[string]interface{}) (interface{}, error) {
+	if _, err := r.handleVectorGetNamespaceInfo(ctx, svc, args); err != nil {
+		return nil, err
+	}
+	return nil, &VectorNamespaceUpdateUnsupportedError{Namespace: getString(args, "namespace")}
 }
 
 // handleVectorUpsert inserts or updates a vector.

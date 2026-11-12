@@ -298,7 +298,7 @@ func TestIAMSessionListWithMock(t *testing.T) {
 					LastActive:  now,
 					ExpiresAt:   now.Add(24 * time.Hour),
 					MFAVerified: true,
-					IPAddress:   "192.168.1.1",
+					IPAddress:   "192.0.2.1",
 					UserAgent:   "Mozilla/5.0",
 				},
 			},
@@ -345,7 +345,7 @@ func TestIAMSessionListJSONFormat(t *testing.T) {
 					LastActive:  now,
 					ExpiresAt:   now.Add(24 * time.Hour),
 					MFAVerified: true,
-					IPAddress:   "192.168.1.1",
+					IPAddress:   "192.0.2.1",
 					UserAgent:   "Mozilla/5.0",
 				},
 			},
@@ -424,7 +424,7 @@ func TestIAMSessionGetWithMock(t *testing.T) {
 			LastActive:  now,
 			ExpiresAt:   now.Add(24 * time.Hour),
 			MFAVerified: true,
-			IPAddress:   "192.168.1.1",
+			IPAddress:   "192.0.2.1",
 			UserAgent:   "Mozilla/5.0",
 			DeviceInfo:  "Chrome on MacOS",
 		}, nil
@@ -565,7 +565,7 @@ func TestIAMAuditQueryWithMock(t *testing.T) {
 					EventType: iam.AuditEventTypeAuthentication,
 					Action:    "user.login",
 					Outcome:   iam.AuditOutcomeSuccess,
-					Actor:     &iam.AuditActor{ID: "user-456", Type: "user", IPAddress: "192.168.1.1", UserAgent: "Mozilla/5.0"},
+					Actor:     &iam.AuditActor{ID: "user-456", Type: "user", IPAddress: "192.0.2.1", UserAgent: "Mozilla/5.0"},
 					Resource:  &iam.AuditResource{ID: "session-789"},
 					Timestamp: now,
 				},
@@ -687,7 +687,7 @@ func TestIAMAuditGetWithMock(t *testing.T) {
 			EventType: iam.AuditEventTypeAuthentication,
 			Action:    "user.login",
 			Outcome:   iam.AuditOutcomeSuccess,
-			Actor:     &iam.AuditActor{ID: "user-456", Type: "user", IPAddress: "192.168.1.1", UserAgent: "Mozilla/5.0"},
+			Actor:     &iam.AuditActor{ID: "user-456", Type: "user", IPAddress: "192.0.2.1", UserAgent: "Mozilla/5.0"},
 			Resource:  &iam.AuditResource{ID: "session-789"},
 			Timestamp: now,
 		}, nil
@@ -893,7 +893,7 @@ func TestIAMPEPCheckWithContext(t *testing.T) {
 	testSubject := `{"id":"user1","roles":["developer"]}`
 	testAction := "write"
 	testResource := "orders/123"
-	testContext := `{"ip":"192.168.1.1","time":"2025-01-01T12:00:00Z"}`
+	testContext := `{"ip":"192.0.2.1","time":"2025-01-01T12:00:00Z"}`
 
 	cmd := newIAMPEPCheckCommand()
 	cmd.SetArgs([]string{"--subject", testSubject, "--action", testAction, "--resource", testResource, "--context", testContext})
@@ -3361,7 +3361,7 @@ func TestIAMPEPCheck_WithContext(t *testing.T) {
 	pepSubject = `{"id":"user_001","roles":["developer"],"groups":["engineering"]}`
 	pepAction = "write"
 	pepResource = "orders://orders/123"
-	pepContext = `{"ip":"192.168.1.1","time":"2025-01-01T12:00:00Z"}`
+	pepContext = `{"ip":"192.0.2.1","time":"2025-01-01T12:00:00Z"}`
 	globalTenantID = "tenant_test"
 	iamOutputFormat = "table"
 
