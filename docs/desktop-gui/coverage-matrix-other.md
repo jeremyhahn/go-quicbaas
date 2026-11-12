@@ -55,33 +55,37 @@ Production reaches both through `pkg/server`: `newREST = restapi.NewServer`
 `restServer.SetSealedWindowGate` at lifecycle_rest.go:338; and
 `startSealedRESTServer` (sealed_window_rest.go:61, :85, called from
 sealed_window.go:252). Rows 22-109 are also in routes_iam.go's
-`iamManagedRouteSpecs` (`duplicate of routes_iam.go`); rows 1-21 have not
-been checked against routes_iam.go's other spec functions yet. Paths below
+`iamManagedRouteSpecs` (`duplicate of routes_iam.go`); rows 1-4 are in
+`oidcDiscoveryRouteSpecs`, rows 5-10 in `oauth2CoreRouteSpecs`, rows 11-14 in
+`oauth2RegisterRouteSpecs` and rows 18-21 in `apiAuthPublicRouteSpecs`; rows
+15-17 are in none of those four. `sdk/typescript/src/rest.ts` has no method
+for the OIDC discovery, JWKS, OAuth 2 or dynamic client registration paths
+(rows 1-14). Paths below
 are the full paths chi composes.
 
 | # | Method | Path | Handler | Registered | SDK method | Console |
 |---|---|---|---|---|---|---|
-| 1 | GET | /.well-known/openid-configuration | GetOIDCConfig | mounted (ModuleRESTServer) | unaudited | not-UI: OAuth/OIDC protocol endpoint for clients |
-| 2 | GET | /.well-known/oauth-authorization-server | GetOAuthASMetadata | mounted (ModuleRESTServer) | unaudited | not-UI: OAuth/OIDC protocol endpoint for clients |
-| 3 | GET | /.well-known/oauth-protected-resource | GetProtectedResourceMetadata | mounted (ModuleRESTServer) | unaudited | not-UI: OAuth/OIDC protocol endpoint for clients |
-| 4 | GET | /.well-known/jwks.json | GetJWKS | mounted (ModuleRESTServer) | unaudited | not-UI: OAuth/OIDC protocol endpoint for clients |
-| 5 | GET | /oauth2/authorize | Authorize | mounted (ModuleRESTServer) | unaudited | not-UI: OAuth/OIDC protocol endpoint for clients |
-| 6 | POST | /oauth2/token | Token | mounted (ModuleRESTServer) | unaudited | not-UI: OAuth/OIDC protocol endpoint for clients |
-| 7 | POST | /oauth2/token-mtls | TokenMTLS | mounted (ModuleRESTServer) | unaudited | not-UI: OAuth/OIDC protocol endpoint for clients |
-| 8 | GET | /oauth2/userinfo | UserInfo | mounted (ModuleRESTServer) | unaudited | not-UI: OAuth/OIDC protocol endpoint for clients |
-| 9 | POST | /oauth2/revoke | Revoke | mounted (ModuleRESTServer) | unaudited | not-UI: OAuth/OIDC protocol endpoint for clients |
-| 10 | POST | /oauth2/introspect | Introspect | mounted (ModuleRESTServer) | unaudited | not-UI: OAuth/OIDC protocol endpoint for clients |
-| 11 | POST | /oauth2/register/ | RegisterDynamicClient | mounted (ModuleRESTServer) | unaudited | not-UI: RFC 7591/7592 client self-registration |
-| 12 | GET | /oauth2/register/{client_id} | GetDynamicClient | mounted (ModuleRESTServer) | unaudited | not-UI: RFC 7591/7592 client self-registration |
-| 13 | PUT | /oauth2/register/{client_id} | UpdateDynamicClient | mounted (ModuleRESTServer) | unaudited | not-UI: RFC 7591/7592 client self-registration |
-| 14 | DELETE | /oauth2/register/{client_id} | DeleteDynamicClient | mounted (ModuleRESTServer) | unaudited | not-UI: RFC 7591/7592 client self-registration |
+| 1 | GET | /.well-known/openid-configuration | GetOIDCConfig | mounted (ModuleRESTServer); duplicate of routes_iam.go | none | not-UI: OAuth/OIDC protocol endpoint for clients |
+| 2 | GET | /.well-known/oauth-authorization-server | GetOAuthASMetadata | mounted (ModuleRESTServer); duplicate of routes_iam.go | none | not-UI: OAuth/OIDC protocol endpoint for clients |
+| 3 | GET | /.well-known/oauth-protected-resource | GetProtectedResourceMetadata | mounted (ModuleRESTServer); duplicate of routes_iam.go | none | not-UI: OAuth/OIDC protocol endpoint for clients |
+| 4 | GET | /.well-known/jwks.json | GetJWKS | mounted (ModuleRESTServer); duplicate of routes_iam.go | none | not-UI: OAuth/OIDC protocol endpoint for clients |
+| 5 | GET | /oauth2/authorize | Authorize | mounted (ModuleRESTServer); duplicate of routes_iam.go | none | not-UI: OAuth/OIDC protocol endpoint for clients |
+| 6 | POST | /oauth2/token | Token | mounted (ModuleRESTServer); duplicate of routes_iam.go | none | not-UI: OAuth/OIDC protocol endpoint for clients |
+| 7 | POST | /oauth2/token-mtls | TokenMTLS | mounted (ModuleRESTServer); duplicate of routes_iam.go | none | not-UI: OAuth/OIDC protocol endpoint for clients |
+| 8 | GET | /oauth2/userinfo | UserInfo | mounted (ModuleRESTServer); duplicate of routes_iam.go | none | not-UI: OAuth/OIDC protocol endpoint for clients |
+| 9 | POST | /oauth2/revoke | Revoke | mounted (ModuleRESTServer); duplicate of routes_iam.go | none | not-UI: OAuth/OIDC protocol endpoint for clients |
+| 10 | POST | /oauth2/introspect | Introspect | mounted (ModuleRESTServer); duplicate of routes_iam.go | none | not-UI: OAuth/OIDC protocol endpoint for clients |
+| 11 | POST | /oauth2/register/ | RegisterDynamicClient | mounted (ModuleRESTServer); duplicate of routes_iam.go | none | not-UI: RFC 7591/7592 client self-registration |
+| 12 | GET | /oauth2/register/{client_id} | GetDynamicClient | mounted (ModuleRESTServer); duplicate of routes_iam.go | none | not-UI: RFC 7591/7592 client self-registration |
+| 13 | PUT | /oauth2/register/{client_id} | UpdateDynamicClient | mounted (ModuleRESTServer); duplicate of routes_iam.go | none | not-UI: RFC 7591/7592 client self-registration |
+| 14 | DELETE | /oauth2/register/{client_id} | DeleteDynamicClient | mounted (ModuleRESTServer); duplicate of routes_iam.go | none | not-UI: RFC 7591/7592 client self-registration |
 | 15 | POST | /api/v1/auth/refresh | RefreshToken | mounted (ModuleRESTServer) | none | not-UI: on a composed node xkms owns /api/v1/auth refresh, logout and validate; the console uses the /api/v1/iam session plane |
 | 16 | POST | /api/v1/auth/logout | Logout | mounted (ModuleRESTServer) | none | not-UI: on a composed node xkms owns /api/v1/auth refresh, logout and validate; the console uses the /api/v1/iam session plane |
 | 17 | POST | /api/v1/auth/validate | ValidateToken | mounted (ModuleRESTServer) | none (`RestAuthClient.authValidate` posts /api/v1/iam/validate) | not-UI: on a composed node xkms owns /api/v1/auth refresh, logout and validate; the console uses the /api/v1/iam session plane |
-| 18 | POST | /api/v1/auth/login/begin | CeremonyBeginLogin | mounted (ModuleRESTServer) | `RestAuthClient.webAuthnBeginLogin` | covered: views/orchestrator/LoginView.svelte |
-| 19 | POST | /api/v1/auth/login/finish | CeremonyFinishLogin | mounted (ModuleRESTServer) | `RestAuthClient.webAuthnFinishLogin` | covered: views/orchestrator/LoginView.svelte |
-| 20 | POST | /api/v1/auth/register/begin | RegisterSelfBegin | mounted (ModuleRESTServer) | `RestAuthClient.registerBegin` | covered: views/orchestrator/RegisterView.svelte |
-| 21 | POST | /api/v1/auth/register/finish | RegisterSelfFinish | mounted (ModuleRESTServer) | `RestAuthClient.registerFinish` | covered: views/orchestrator/RegisterView.svelte |
+| 18 | POST | /api/v1/auth/login/begin | CeremonyBeginLogin | mounted (ModuleRESTServer); duplicate of routes_iam.go | `RestAuthClient.webAuthnBeginLogin` | covered: views/orchestrator/LoginView.svelte |
+| 19 | POST | /api/v1/auth/login/finish | CeremonyFinishLogin | mounted (ModuleRESTServer); duplicate of routes_iam.go | `RestAuthClient.webAuthnFinishLogin` | covered: views/orchestrator/LoginView.svelte |
+| 20 | POST | /api/v1/auth/register/begin | RegisterSelfBegin | mounted (ModuleRESTServer); duplicate of routes_iam.go | `RestAuthClient.registerBegin` | covered: views/orchestrator/RegisterView.svelte |
+| 21 | POST | /api/v1/auth/register/finish | RegisterSelfFinish | mounted (ModuleRESTServer); duplicate of routes_iam.go | `RestAuthClient.registerFinish` | covered: views/orchestrator/RegisterView.svelte |
 | 22 | POST | /api/v1/iam/login/piv | PIVLogin | mounted (ModuleRESTServer); duplicate of routes_iam.go | `RestAuthClient.loginPIV` | covered: views/orchestrator/LoginView.svelte |
 | 23 | POST | /api/v1/iam/refresh | RefreshToken | mounted (ModuleRESTServer); duplicate of routes_iam.go | none | not covered |
 | 24 | POST | /api/v1/iam/validate | ValidateToken | mounted (ModuleRESTServer); duplicate of routes_iam.go | `RestAuthClient.authValidate` | covered: stores/auth.svelte.ts |
@@ -191,14 +195,10 @@ under `pkg/api/rest`.
 
 ## Still to audit
 
-- iam.go rows 1-14: SDK method (`sdk/typescript/src/rest.ts`).
-- iam.go rows 1-21: whether `oidcDiscoveryRouteSpecs`, `oauth2CoreRouteSpecs`,
-  `oauth2RegisterRouteSpecs` or `apiAuthPublicRouteSpecs` (routes_iam.go)
-  register the same method and path (`duplicate of routes_iam.go`).
 - Totals (iam.go table, each Console mark counted once per row): covered 34,
   not covered 53, not-UI 22, unaudited 0; 109 rows (POST /api/v1/iam/audit
   is row 103 only; the iam_audit.go table's row is the separate test-only
-  registration). SDK cells `none`: rows 15, 16, 23, 28, 31-33, 39, 42, 47-64,
+  registration). SDK cells `none`: rows 1-16, 23, 28, 31-33, 39, 42, 47-64,
   68, 71-76, 79, 82-90 and 95-109.
 - iam.go: the routes `RegisterFederationAuthRoutes`, `RegisterGDPRRoutes` and
   `RegisterAdminRoutes` register.
