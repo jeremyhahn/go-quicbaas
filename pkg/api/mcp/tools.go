@@ -277,6 +277,7 @@ func (r *ToolRegistry) registerTools() {
 	// Register XKMS-compatible tools
 
 	r.registerXKMSTools()
+	r.registerKVTools()
 	// KV Operations
 	r.addTool(ToolDefinition{
 		Name:        "qrdb_put",
@@ -1093,6 +1094,12 @@ func (r *ToolRegistry) ExecuteTool(ctx context.Context, name string, args map[st
 		return r.executeGet(ctx, args)
 	case "qrdb_delete":
 		return r.executeDelete(ctx, args)
+	case "quicbaas_kv_put":
+		return r.executeKVPut(ctx, args)
+	case "quicbaas_kv_get":
+		return r.executeKVGet(ctx, args)
+	case "quicbaas_kv_delete":
+		return r.executeKVDelete(ctx, args)
 	case "qrdb_list":
 		return r.executeList(ctx, args)
 
