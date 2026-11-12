@@ -53,7 +53,7 @@
       const client = await getSDKClient();
       const resp = await client.scheduler.listJobs({ limit: 100 });
       const raw = resp.jobs ?? [];
-      const seen = new Set<string>();
+      const seen = new Set<SchedulerJob['id']>();
       jobs = raw.filter((j) => {
         if (seen.has(j.id)) return false;
         seen.add(j.id);

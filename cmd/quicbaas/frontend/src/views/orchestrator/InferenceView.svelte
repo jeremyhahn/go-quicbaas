@@ -223,7 +223,7 @@
       availableModels = models ?? [];
       // Default to first model returned, or the backend's static default.
       if (availableModels.length > 0) {
-        selectedModel = availableModels[0];
+        selectedModel = availableModels[0] ?? '';
       } else {
         const backend = backends.find((b) => b.name === backendName);
         selectedModel = backend?.default_model ?? '';
