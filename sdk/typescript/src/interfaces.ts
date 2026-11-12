@@ -33,6 +33,10 @@ import type { TrustClient } from './trust.js';
 import type { CryptoClient } from './crypto.js';
 import type { DEKClient } from './dek.js';
 import type { AttestationClient } from './attestation.js';
+import type { PromptsClient } from './prompts.js';
+import type { XKMSKeysClient } from './xkms_keys.js';
+import type { PIVClient } from './piv.js';
+import type { XKMSClient } from './xkms.js';
 import type { DynamicSecretsClient } from './dynamicsecrets.js';
 
 import type {
@@ -64,6 +68,8 @@ import type {
   EmitAuthorizedResponse,
   VerifyAuthorizedRequest,
   VerifyAuthorizedResponse,
+  AddAuthorizedKeyRequest,
+  ListAuthorizedKeysRequest,
   FleetNode,
   SessionStatusResponse,
   CloseSessionRequest,
@@ -673,6 +679,68 @@ export interface VectorNamespace {
   created_at?: string;
 }
 
+// NamespaceInfo is the full description of one vector namespace.
+// Maps to GET /api/v1/vector/namespaces/{namespace}
+export interface NamespaceInfo {
+  namespace: string;
+  dimensions: number;
+  distance_metric: string;
+  precision?: string;
+  index_type: string;
+  index_params?: Record<string, string>;
+  vector_count: number;
+  indexed_count: number;
+  pending_count?: number;
+  storage_bytes: number;
+  index_bytes: number;
+  created_at?: string;
+  updated_at?: string;
+  last_index_build?: string;
+  shard_id?: number;
+  replication_factor?: number;
+  compression_enabled?: boolean;
+  metadata?: Record<string, string>;
+}
+
+// NamespaceStats is the usage statistics of one vector namespace.
+// Maps to GET /api/v1/vector/namespaces/{namespace}/stats
+export interface NamespaceStats {
+  namespace: string;
+  vector_count: number;
+  indexed_count: number;
+  storage_bytes: number;
+  index_bytes: number;
+  avg_search_latency_ms: number;
+  search_count: number;
+}
+
+// RebuildIndexRequest is the body of an index rebuild.
+export interface RebuildIndexRequest {
+  index_params?: Record<string, string>;
+  async: boolean;
+  timeout_ms?: number;
+}
+
+// RebuildIndexResponse answers an index rebuild (202 Accepted).
+export interface RebuildIndexResponse {
+  operation_id: string;
+  started: string;
+  estimated_duration_ms: number;
+}
+
+// IndexProgress is the progress of one index rebuild operation.
+export interface IndexProgress {
+  operation_id: string;
+  namespace: string;
+  vectors_indexed: number;
+  total_vectors: number;
+  percent_complete: number;
+  elapsed_time_ms: number;
+  estimated_remaining_ms: number;
+  status: string;
+  error_message?: string;
+}
+
 // VectorSearchResult is one result from a similarity search.
 export interface VectorSearchResult {
   id: string;
@@ -694,6 +762,22 @@ export interface VectorsClient {
   // deleteNamespace deletes a vector namespace by name.
   // Maps to DELETE /api/v1/vector/namespaces/{namespace}
   deleteNamespace(namespace: string): Promise<void>;
+
+  // getNamespace returns the full description of one namespace.
+  // Maps to GET /api/v1/vector/namespaces/{namespace}
+  getNamespace(namespace: string): Promise<NamespaceInfo>;
+
+  // getNamespaceStats returns the usage statistics of one namespace.
+  // Maps to GET /api/v1/vector/namespaces/{namespace}/stats
+  getNamespaceStats(namespace: string): Promise<NamespaceStats>;
+
+  // rebuildIndex starts a rebuild of the namespace's index.
+  // Maps to POST /api/v1/vector/namespaces/{namespace}/index/rebuild
+  rebuildIndex(namespace: string, req: RebuildIndexRequest): Promise<RebuildIndexResponse>;
+
+  // getIndexProgress returns the progress of one index rebuild.
+  // Maps to GET /api/v1/vector/namespaces/{namespace}/index/progress?operation_id=
+  getIndexProgress(namespace: string, operationID: string): Promise<IndexProgress>;
 
   // searchSimilar performs a similarity search in the given namespace.
   // Maps to POST /api/v1/vector/namespaces/{namespace}/search/similar
@@ -2500,6 +2584,22 @@ export interface SSHAuthorizedKeysClient {
   // the given scope/owner. Returns the matching entry.
   // Maps to POST /api/v1/ssh/authorized/verify.
   verify(req: VerifyAuthorizedRequest): Promise<VerifyAuthorizedResponse>;
+
+  // add stores an authorized_keys entry under scope/owner/name.
+  // Maps to POST /api/v1/ssh/authorized/keys (201, empty body).
+  add(req: AddAuthorizedKeyRequest): Promise<void>;
+
+  // list returns the stored entries, optionally filtered by scope and owner.
+  // Maps to GET /api/v1/ssh/authorized/keys[?scope=&owner=].
+  list(req?: ListAuthorizedKeysRequest): Promise<SSHAuthorizedEntry[]>;
+
+  // get returns one stored entry.
+  // Maps to GET /api/v1/ssh/authorized/keys/{scope}/{owner}/{name}.
+  get(scope: SSHScope, owner: string, name: string): Promise<SSHAuthorizedEntry>;
+
+  // remove deletes one stored entry.
+  // Maps to DELETE /api/v1/ssh/authorized/keys/{scope}/{owner}/{name} (204).
+  remove(scope: SSHScope, owner: string, name: string): Promise<void>;
 }
 
 // SSHClient is the top-level SSH namespace exposed on the RestClient as
@@ -2570,12 +2670,35 @@ export interface Client {
    */
   readonly dek: DEKClient;
   /**
+<<<<<<< HEAD
    * Attestation verifier: endorsements (reference-value signers and AK
    * roots) and signed CoRIM reference values.
    * Paths: /api/v1/attestation/endorsements/* and
    * /api/v1/attestation/reference-values/*.
    */
   readonly attestation: AttestationClient;
+  /**
+   * prompts reads, overrides, diffs, resets and rolls back orchestrator
+   * prompts per layer (project, tenant, system). Paths: /api/v1/prompts/*.
+   */
+  readonly prompts: PromptsClient;
+  /**
+   * XKMS keys client: the xkms passthrough's key routes (generate, list,
+   * get, delete, rotate, encrypt, decrypt, sign, verify, key versions).
+   * Maps to /api/v1/xkms/keys/* REST endpoints.
+   */
+  readonly xkmsKeys: XKMSKeysClient;
+  /**
+   * PIV slots of an xkms backend: list slots, generate keys and CSRs, and
+   * store, read or delete slot certificates (/api/v1/xkms/piv/slots*).
+   * Null on transports that do not carry it.
+   */
+  readonly piv: PIVClient;
+  /**
+   * xkms drives the xkms passthrough routes (/api/v1/xkms/*): backends,
+   * health, seal and unseal, and stored certificates.
+   */
+  readonly xkms: XKMSClient;
   /**
    * dynamicSecrets manages credential-generation roles, on-demand
    * short-lived credential minting, and lease renewal/revocation.
