@@ -92,8 +92,9 @@ shell, Python and minified JavaScript as readily as Go.
 RELEASABILITY_PATTERNS="$(cat <private pattern file>)" go test ./pkg/labstrings/   # the gate, ~1s
 ```
 
-A failure names the file, the line, the class, the matched text, and what to use
-instead.
+A failure names the file, the line, the class and what to use instead, never
+the matched text: a CI log is public, so look at the named line in your own
+checkout to see the value.
 
 ### Accepting a line
 

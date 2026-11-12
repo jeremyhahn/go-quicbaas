@@ -428,9 +428,14 @@ func TestReport_SaysWhatToDoAndOnlyWhenDirty(t *testing.T) {
 	if !dirty {
 		t.Error("dirty = false with a finding")
 	}
-	for _, want := range []string{"cmd/quicbaas/thing.go:7", "fleet-node-04", "name the role", waiverPrefix} {
+	for _, want := range []string{"cmd/quicbaas/thing.go:7: [" + string(ClassLabHost) + "]", "name the role", waiverPrefix} {
 		if !strings.Contains(out.String(), want) {
 			t.Errorf("report omits %q:\n%s", want, out.String())
+		}
+	}
+	for _, leak := range []string{"fleet-node-04", "observed on"} {
+		if strings.Contains(out.String(), leak) {
+			t.Errorf("report prints %q; a finding names the place, never the value:\n%s", leak, out.String())
 		}
 	}
 }
