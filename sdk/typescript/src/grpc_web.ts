@@ -379,6 +379,7 @@ export class GrpcWebClient implements Client {
   readonly crypto: any = null;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   readonly dek: any = null;
+  readonly vectorAdmin: any = null;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   readonly dynamicSecrets: any = null;
   readonly barrier: BarrierClient;

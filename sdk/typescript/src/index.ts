@@ -292,6 +292,17 @@ export type {
   GetReencryptionProgressResponse,
 } from './dek.js';
 export type {
+  VectorAdminClient,
+  ClusterStatsResponse,
+  NamespaceStatsItem,
+  VectorNodeStats,
+  CompactNamespaceResponse,
+  CompactionProgress,
+  ExportVectorsRequest,
+  VectorExportEntry,
+  ImportVectorsResponse,
+} from './vector_admin.js';
+export type {
   DynamicSecretsClient,
   DynamicSecretRole,
   CreateRoleRequest as DynamicSecretCreateRoleRequest,
