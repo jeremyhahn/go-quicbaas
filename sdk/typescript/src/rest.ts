@@ -351,6 +351,16 @@ import type {
   BootstrapBundleRequest,
   BootstrapBundleResponse,
   ClusterStatusResponse,
+  ClusterLeaderResponse,
+  ShardLeaderResponse,
+  RebalanceRequest,
+  RebalanceResponse,
+  RebalanceStatusResponse,
+  RebalancePlanResponse,
+  MigrationRequest,
+  MigrationResponse,
+  MigrationStatusResponse,
+  CancelMigrationResponse,
   SecretEntry,
   SessionEventEnvelope,
   SessionInfo,
@@ -4774,6 +4784,69 @@ export class RestClusterClient implements ClusterClient {
     return this.http.fetchJSON<ClusterStatusResponse>('/api/v1/cluster/status', {
       method: 'GET',
     });
+  }
+
+  // Maps to GET /api/v1/cluster/leader.
+  async leader(): Promise<ClusterLeaderResponse> {
+    return this.http.fetchJSON<ClusterLeaderResponse>('/api/v1/cluster/leader', {
+      method: 'GET',
+    });
+  }
+
+  // Maps to GET /api/v1/cluster/leader/{shardID}.
+  async shardLeader(shardID: number): Promise<ShardLeaderResponse> {
+    return this.http.fetchJSON<ShardLeaderResponse>(
+      `/api/v1/cluster/leader/${encodeURIComponent(String(shardID))}`,
+      { method: 'GET' },
+    );
+  }
+
+  // Maps to POST /api/v1/cluster/rebalance/.
+  async startRebalance(req?: RebalanceRequest): Promise<RebalanceResponse> {
+    return this.http.fetchJSON<RebalanceResponse>('/api/v1/cluster/rebalance/', {
+      method: 'POST',
+      body: JSON.stringify(req ?? {}),
+    });
+  }
+
+  // Maps to GET /api/v1/cluster/rebalance/status[?operation_id=].
+  async rebalanceStatus(operationID?: string): Promise<RebalanceStatusResponse> {
+    const query = operationID ? `?operation_id=${encodeURIComponent(operationID)}` : '';
+    return this.http.fetchJSON<RebalanceStatusResponse>(
+      `/api/v1/cluster/rebalance/status${query}`,
+      { method: 'GET' },
+    );
+  }
+
+  // Maps to GET /api/v1/cluster/rebalance/plan.
+  async rebalancePlan(): Promise<RebalancePlanResponse> {
+    return this.http.fetchJSON<RebalancePlanResponse>('/api/v1/cluster/rebalance/plan', {
+      method: 'GET',
+    });
+  }
+
+  // Maps to POST /api/v1/cluster/migrate/.
+  async startMigration(req: MigrationRequest): Promise<MigrationResponse> {
+    return this.http.fetchJSON<MigrationResponse>('/api/v1/cluster/migrate/', {
+      method: 'POST',
+      body: JSON.stringify(req),
+    });
+  }
+
+  // Maps to GET /api/v1/cluster/migrate/status?operation_id=.
+  async migrationStatus(operationID: string): Promise<MigrationStatusResponse> {
+    return this.http.fetchJSON<MigrationStatusResponse>(
+      `/api/v1/cluster/migrate/status?operation_id=${encodeURIComponent(operationID)}`,
+      { method: 'GET' },
+    );
+  }
+
+  // Maps to DELETE /api/v1/cluster/migrate/?operation_id=.
+  async cancelMigration(operationID: string): Promise<CancelMigrationResponse> {
+    return this.http.fetchJSON<CancelMigrationResponse>(
+      `/api/v1/cluster/migrate/?operation_id=${encodeURIComponent(operationID)}`,
+      { method: 'DELETE' },
+    );
   }
 }
 

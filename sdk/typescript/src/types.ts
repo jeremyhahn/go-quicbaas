@@ -3098,6 +3098,113 @@ export interface ClusterStatusResponse {
   timestamp: string;
 }
 
+// ClusterNodeInfo describes one cluster node, as returned inside
+// ClusterLeaderResponse. Mirrors the Go REST rest.ClusterNodeInfo.
+export interface ClusterNodeInfo {
+  node_id: number;
+  address: string;
+  raft_address: string;
+  is_leader: boolean;
+  health_status: string;
+  version: string;
+  uptime_seconds: number;
+}
+
+// ClusterLeaderResponse is the wire shape returned by
+// GET /api/v1/cluster/leader (503 when the cluster has no leader).
+export interface ClusterLeaderResponse {
+  leader: ClusterNodeInfo;
+  timestamp: string;
+}
+
+// ShardLeaderResponse is the wire shape returned by
+// GET /api/v1/cluster/leader/{shardID}.
+export interface ShardLeaderResponse {
+  shard_id: number;
+  leader_id: number;
+  leader_address?: string;
+  term?: number;
+  valid: boolean;
+}
+
+// RebalanceRequest is the body of POST /api/v1/cluster/rebalance/.
+export interface RebalanceRequest {
+  strategy?: string;
+  target_shard_count?: number;
+}
+
+// RebalanceResponse is the 202 body of POST /api/v1/cluster/rebalance/.
+export interface RebalanceResponse {
+  operation_id: string;
+  started: boolean;
+  status: string;
+  timestamp: string;
+}
+
+// RebalanceStatusResponse is the wire shape returned by
+// GET /api/v1/cluster/rebalance/status. elapsed_time is integer nanoseconds.
+export interface RebalanceStatusResponse {
+  operation_id?: string;
+  status: string;
+  shards_moved?: number;
+  total_shards?: number;
+  percent_complete: number;
+  elapsed_time: number;
+  timestamp: string;
+}
+
+// RebalancePlanResponse is the wire shape returned by
+// GET /api/v1/cluster/rebalance/plan. estimated_time is integer nanoseconds.
+export interface RebalancePlanResponse {
+  current_shards: number;
+  target_shards: number;
+  strategy: string;
+  estimated_time: number;
+  timestamp: string;
+}
+
+// MigrationRequest is the body of POST /api/v1/cluster/migrate/.
+export interface MigrationRequest {
+  source_shard_id: number;
+  target_shard_id: number;
+  entity_types?: string[];
+}
+
+// MigrationResponse is the 202 body of POST /api/v1/cluster/migrate/.
+// estimated_time is integer nanoseconds.
+export interface MigrationResponse {
+  operation_id: string;
+  status: string;
+  source_shard_id: number;
+  target_shard_id: number;
+  estimated_time: number;
+  timestamp: string;
+}
+
+// MigrationStatusResponse is the wire shape returned by
+// GET /api/v1/cluster/migrate/status. Durations are integer nanoseconds.
+export interface MigrationStatusResponse {
+  operation_id: string;
+  status: string;
+  keys_processed: number;
+  bytes_processed: number;
+  estimated_total?: number;
+  percent_complete: number;
+  elapsed_time: number;
+  estimated_remaining?: number;
+  current_rate?: number;
+  timestamp: string;
+}
+
+// CancelMigrationResponse is the 200 body of
+// DELETE /api/v1/cluster/migrate/?operation_id=.
+export interface CancelMigrationResponse {
+  operation_id: string;
+  cancelled: boolean;
+  message: string;
+  timestamp: string;
+}
+
 // =============================================================================
 // Seal* Deprecation Aliases
 // Re-export Seal* names that point at the new Barrier* shapes so existing
