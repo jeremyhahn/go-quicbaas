@@ -31,7 +31,6 @@ vi.mock('../src/stores/sessionStore.svelte.ts', () => ({
       backend: 'claude',
       status: 'active',
       model: 'claude-3-5-sonnet',
-      tenant_id: 'system',
       created_at: 0,
       last_active: 0,
     },
@@ -40,6 +39,14 @@ vi.mock('../src/stores/sessionStore.svelte.ts', () => ({
   removeLocalPrompt: mocks.removeLocalPrompt,
   clearLocalTranscript: mocks.clearLocalTranscript,
   requestCloseSession: mocks.requestCloseSession,
+}));
+
+// Sessions run in the console's active tenant: the composer reads it from
+// the orchestrator store, not from the session.
+vi.mock('../src/stores/orchestrator.svelte.ts', () => ({
+  orchestratorStore: {
+    get activeTenantID() { return 'system'; },
+  },
 }));
 
 vi.mock('../src/stores/sdkClient.ts', () => ({
