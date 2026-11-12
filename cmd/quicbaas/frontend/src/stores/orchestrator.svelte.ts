@@ -39,6 +39,7 @@ import type {
   Artifact,
   JobAttemptRecord,
   JobDelivery,
+  JobMemory,
   JobStageRecord,
   JobVerificationResult,
   TaskBlockKind,
@@ -121,9 +122,9 @@ export interface WorkItem {
   fallback_backend?: string;
 }
 
-export interface JobMemory {
-  [key: string]: unknown;
-}
+// JobMemory is the SDK's: one declaration of the job's memory, not a looser
+// copy that the SDK's records will not assign into.
+export type { JobMemory };
 
 export interface JobConfig {
   tenant_id: string;
@@ -1046,13 +1047,7 @@ export async function loadSelectedJob(jobID: string): Promise<void> {
       selectedJob = {
         ...job,
         config: job.config ?? undefined,
-        // The store keeps its own looser copy of the job record, and its
-        // JobMemory is an open bag where the SDK's is the concrete four-field
-        // shape. TypeScript will not assign an interface into an
-        // index-signature type, so the one member that differs is converted
-        // here rather than casting the whole record through `unknown` — the
-        // same adoption `setJobs` performs for the list.
-        memory: (job.memory ?? undefined) as JobMemory | undefined,
+        memory: job.memory ?? undefined,
       };
     }
   } catch {
