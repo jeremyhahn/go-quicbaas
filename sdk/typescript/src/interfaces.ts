@@ -893,6 +893,58 @@ export interface DeleteIAMAuditEventsResponse {
   before: string;
 }
 
+// ImpersonationSession is one delegated-admin impersonation session.
+// User IDs travel as decimal strings so 64-bit IDs survive JSON; times are
+// RFC 3339 strings.
+export interface ImpersonationSession {
+  id: string;
+  admin_user_id: string;
+  admin_username?: string;
+  target_user_id: string;
+  target_username?: string;
+  tenant_id: string;
+  reason: string;
+  started_at: string;
+  expires_at: string;
+  /** Set once the session has ended. */
+  ended_at?: string;
+  operation_count: number;
+  audit_log_id: string;
+}
+
+// StartImpersonationRequest starts an impersonation session.
+export interface StartImpersonationRequest {
+  target_user_id: string;
+  tenant_id: string;
+  reason: string;
+  /** Go duration string such as `30m`; the server default applies when omitted. */
+  duration?: string;
+}
+
+// ListImpersonationsOptions filters listImpersonations; only set values are sent.
+export interface ListImpersonationsOptions {
+  /** Sends `active=true` when true; nothing otherwise. */
+  activeOnly?: boolean;
+  /** Only sessions started by this admin user. */
+  adminUserID?: string;
+}
+
+// ListImpersonationsResponse is the result of listImpersonations.
+export interface ListImpersonationsResponse {
+  sessions: ImpersonationSession[];
+  total: number;
+}
+
+// EndImpersonationResult is the ended session, or a bare status when the
+// server cannot reread the session after ending it.
+export type EndImpersonationResult = ImpersonationSession | { status: 'impersonation_ended' };
+
+// ListUserImpersonationsResponse is the result of listUserImpersonations.
+export interface ListUserImpersonationsResponse {
+  user_id: string;
+  sessions: ImpersonationSession[];
+}
+
 // IAMProviderType is the protocol of a tenant's external identity provider.
 export type IAMProviderType = 'oidc' | 'saml' | 'oauth2' | 'ldap';
 
@@ -1851,6 +1903,22 @@ export interface IAMClient {
   /** deleteAuditEventsBefore prunes IAM audit events older than `before` (RFC 3339). */
   // Maps to DELETE /api/v1/iam/audit?before=&tenant_id=
   deleteAuditEventsBefore(before: string, tenantID?: string): Promise<DeleteIAMAuditEventsResponse>;
+
+  /** listImpersonations lists impersonation sessions, optionally only active ones or one admin's. */
+  // Maps to GET /api/v1/admin/impersonation/?active=true&admin_user_id=
+  listImpersonations(opts?: ListImpersonationsOptions): Promise<ListImpersonationsResponse>;
+
+  /** startImpersonation starts a session in which an admin acts as the target user. */
+  // Maps to POST /api/v1/admin/impersonation/start
+  startImpersonation(req: StartImpersonationRequest): Promise<ImpersonationSession>;
+
+  /** endImpersonation ends a session; the result is the session or a bare status. */
+  // Maps to POST /api/v1/admin/impersonation/{sessionID}/end
+  endImpersonation(sessionID: string): Promise<EndImpersonationResult>;
+
+  /** listUserImpersonations lists the sessions that targeted one user. */
+  // Maps to GET /api/v1/admin/users/{userID}/impersonations
+  listUserImpersonations(userID: string): Promise<ListUserImpersonationsResponse>;
 
   // getRole returns one role of a tenant.
   // Maps to GET /api/v1/tenants/{tenantID}/roles/{roleID}
