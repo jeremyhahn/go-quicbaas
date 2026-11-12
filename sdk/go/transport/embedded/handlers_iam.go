@@ -21,7 +21,6 @@ import (
 	"time"
 
 	iamsdk "github.com/jeremyhahn/go-quicbaas/sdk/go/client/iam"
-	pepsdk "github.com/jeremyhahn/go-quicbaas/sdk/go/client/iam"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
@@ -1249,25 +1248,6 @@ func handleIAMAppRotateSecret(ctx context.Context, svc service.QuicBaaS, req int
 		ClientID:     a.ClientID,
 		ClientSecret: a.ClientSecret,
 	}, nil
-}
-
-// =============================================================================
-// PEP handlers (quicbaas.IAM.PEP/*)
-// =============================================================================
-
-// handleIAMPEPCheck delegates to the PEP service when configured. The PEP
-// surface in the embedded build is intentionally minimal — production
-// authorisation goes via the gRPC PEP path; embedded callers receive a
-// "not configured" error when the PEP isn't wired so they can degrade.
-func handleIAMPEPCheck(ctx context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error) {
-	_, ok := req.(*pepsdk.CheckRequest)
-	if !ok {
-		return nil, NewInvalidRequestTypeError("quicbaas.IAM.PEP", "Check",
-			"*iam.CheckRequest", typeNameOf(req))
-	}
-	// PEP enforcement requires a fully wired policy engine; embedded path
-	// surfaces a "not configured" envelope rather than silently allowing.
-	return nil, NewServiceNotConfiguredError("IAM.PEP")
 }
 
 // =============================================================================
