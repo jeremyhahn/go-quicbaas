@@ -59,6 +59,7 @@
  *   #/identity-providers → Identity Providers (a tenant's federation providers)
  *   #/policy-tester  → Policy Tester (check, simulate and explain tenant policies)
  *   #/impersonation  → Impersonation (delegated-admin impersonation sessions)
+ *   #/iam-audit      → IAM Audit (the selected tenant's IAM audit events)
  *   #/accounts       → Pooled provider accounts
  *   #/invite/:token → Invite activation (passwordless)
  */
@@ -113,6 +114,7 @@ export type RouteName =
   | 'identity-providers'
   | 'policy-tester'
   | 'impersonation'
+  | 'iam-audit'
   // ORCHESTRATION — inference
   | 'inference'
   // ORCHESTRATION — projects
@@ -319,6 +321,9 @@ function matchPath(path: string, hash: string): Route {
   }
   if (path === '/impersonation') {
     return { name: 'impersonation', params: {}, hash };
+  }
+  if (path === '/iam-audit') {
+    return { name: 'iam-audit', params: {}, hash };
   }
   // AI/ML
   if (path === '/rag') {
@@ -534,6 +539,7 @@ export function routeOAuthApps(): void { navigateTo('/oauth-apps'); }
 export function routeIdentityProviders(): void { navigateTo('/identity-providers'); }
 export function routePolicyTester(): void { navigateTo('/policy-tester'); }
 export function routeImpersonation(): void { navigateTo('/impersonation'); }
+export function routeIAMAudit(): void { navigateTo('/iam-audit'); }
 // AI/ML
 export function routeRAG(): void { navigateTo('/rag'); }
 export function routeEmbeddings(): void { navigateTo('/embeddings'); }

@@ -94,6 +94,7 @@
   import IdentityProvidersView from './security/IdentityProvidersView.svelte';
   import PolicyTesterView from './security/PolicyTesterView.svelte';
   import ImpersonationView from './security/ImpersonationView.svelte';
+  import IAMAuditView from './security/IAMAuditView.svelte';
 
   // CLUSTER views
   import ClusterDashboard from './cluster/ClusterDashboard.svelte';
@@ -172,6 +173,7 @@
     AppWindow,
     Fingerprint,
     FlaskConical,
+    ScrollText,
   } from 'lucide-svelte';
 
   // ---------------------------------------------------------------------------
@@ -276,6 +278,7 @@
         { id: 'identity-providers', label: 'Identity Providers', icon: Fingerprint, implemented: true },
         { id: 'policy-tester', label: 'Policy Tester', icon: FlaskConical, implemented: true },
         { id: 'impersonation', label: 'Impersonation', icon: UserCog, implemented: true },
+        { id: 'iam-audit', label: 'IAM Audit', icon: ScrollText, implemented: true },
       ],
     },
     {
@@ -800,6 +803,9 @@
             {:else if routerStore.name === 'impersonation'}
               <li class="text-base-content/40">Security</li>
               <li class="font-medium">Impersonation</li>
+            {:else if routerStore.name === 'iam-audit'}
+              <li class="text-base-content/40">Security</li>
+              <li class="font-medium">IAM Audit</li>
             {:else if routerStore.name === 'projects'}
               <li class="text-base-content/40">{FACTORY_CRUMB}</li>
               <li class="font-medium">Projects</li>
@@ -1182,6 +1188,10 @@
       {:else if routerStore.name === 'impersonation'}
         <div class="flex-1 overflow-y-auto">
           <ImpersonationView />
+        </div>
+      {:else if routerStore.name === 'iam-audit'}
+        <div class="flex-1 overflow-y-auto">
+          <IAMAuditView />
         </div>
 
       {:else if routerStore.name === 'projects'}
