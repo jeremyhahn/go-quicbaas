@@ -209,6 +209,11 @@
   let assignRoleID = $state('');
   let assignRoleError: string | null = $state(null);
   let assigningRole = $state(false);
+  // The role UUIDs the user holds, as shown in the dialog; a revoke removes
+  // its role from this list without mutating the users-table row.
+  let userRoleIDs: string[] = $state([]);
+  // The role UUID whose revoke is in flight, if any.
+  let revokingRoleID: string | null = $state(null);
 
   // ---------------------------------------------------------------------------
   // Create Tenant dialog state
@@ -499,6 +504,8 @@
 
   function openAssignRole(user: IAMUser): void {
     userForRole = user;
+    userRoleIDs = [...(user.roles ?? [])];
+    revokingRoleID = null;
     assignRoleID = '';
     assignRoleError = null;
     // Populate the roles dropdown if it hasn't been loaded yet (the roles
@@ -528,6 +535,30 @@
       assignRoleError = e instanceof Error ? e.message : 'Failed to assign role';
     } finally {
       assigningRole = false;
+    }
+  }
+
+  /** The role's name, resolved as the Users table does; the UUID if unknown. */
+  function roleNameOf(roleID: string): string {
+    return roles.find((r) => r.id === roleID)?.name ?? roleID;
+  }
+
+  async function revokeRole(roleID: string): Promise<void> {
+    if (!userForRole) return;
+    const user = userForRole;
+    assignRoleError = null;
+    revokingRoleID = roleID;
+    try {
+      const client = await getSDKClient();
+      // The server's {role} path parameter is the role ID (UUID), not its name.
+      await client.iam.revokeRoleFromUser(selectedTenantID, user.id, roleID);
+      showToast({ message: `Role "${roleNameOf(roleID)}" revoked from "${user.username}"`, type: 'success' });
+      userRoleIDs = userRoleIDs.filter((id) => id !== roleID);
+      void loadUsers();
+    } catch (e) {
+      assignRoleError = e instanceof Error ? e.message : 'Failed to revoke role';
+    } finally {
+      revokingRoleID = null;
     }
   }
 
@@ -1275,9 +1306,26 @@
 {#if userForRole}
   <div class="modal modal-open" role="dialog" aria-modal="true" aria-label="Assign role dialog">
     <div class="modal-box max-w-sm">
-      <h3 class="text-base font-semibold mb-4">Assign Role to <span class="font-mono text-primary">{userForRole.username}</span></h3>
+      <h3 class="text-base font-semibold mb-4">Roles of <span class="font-mono text-primary">{userForRole.username}</span></h3>
       {#if assignRoleError}
         <div class="alert alert-error text-sm mb-3" role="alert">{assignRoleError}</div>
+      {/if}
+      {#if userRoleIDs.length === 0}
+        <p class="text-sm text-base-content/50 mb-3">No roles assigned</p>
+      {:else}
+        <ul class="mb-3 flex flex-col gap-1" aria-label="Current roles">
+          {#each userRoleIDs as roleID (roleID)}
+            <li class="flex items-center justify-between gap-2">
+              <span class="badge badge-sm badge-ghost">{roleNameOf(roleID)}</span>
+              <button
+                class="btn btn-ghost btn-xs text-error"
+                aria-label={`Revoke role ${roleNameOf(roleID)} from ${userForRole.username}`}
+                disabled={revokingRoleID === roleID}
+                onclick={() => revokeRole(roleID)}
+              >{revokingRoleID === roleID ? 'Revoking…' : 'Revoke'}</button>
+            </li>
+          {/each}
+        </ul>
       {/if}
       <div class="form-control">
         <label class="label label-text" for="assign-role-select">Role</label>

@@ -386,6 +386,82 @@ describe('IAMView', () => {
   });
 
   // -------------------------------------------------------------------------
+  // #2372: the Roles dialog lists the user's roles and revokes them.
+  // -------------------------------------------------------------------------
+
+  describe('Roles dialog — revoke', () => {
+    function stubRevoke(
+      revokeRoleFromUser: ReturnType<typeof vi.fn>,
+      users: IAMUser[] = mockUsers,
+    ): ReturnType<typeof vi.fn> {
+      const listUsers = vi.fn().mockResolvedValue({ users, count: users.length });
+      mockGetSDKClient.mockResolvedValue({
+        iam: {
+          listUsers,
+          listTenants: vi.fn().mockResolvedValue({ tenants: mockTenants, count: 1 }),
+          listRoles: vi.fn().mockResolvedValue({ roles: mockRoles, count: 2 }),
+          listPolicies: vi.fn().mockResolvedValue({ policies: mockPolicies, count: 1 }),
+          assignRoleToUser: vi.fn().mockResolvedValue(undefined),
+          revokeRoleFromUser,
+        },
+      });
+      return listUsers;
+    }
+
+    async function openRolesDialog(username: string): Promise<HTMLElement> {
+      render(IAMView);
+      const open = await screen.findByRole('button', { name: `Assign role to ${username}` });
+      await fireEvent.click(open);
+      return screen.getByRole('dialog', { name: /Assign role dialog/i });
+    }
+
+    it('lists the user\'s roles by name', async () => {
+      stubRevoke(vi.fn().mockResolvedValue(undefined));
+      const dialog = await openRolesDialog('alice');
+      expect(dialog.querySelector('h3')?.textContent).toBe('Roles of alice');
+      const list = screen.getByRole('list', { name: 'Current roles' });
+      expect(list.textContent).toContain('admin');
+      expect(list.textContent).not.toContain('role-1');
+      expect(screen.getByRole('button', { name: 'Revoke role admin from alice' })).toBeInTheDocument();
+    });
+
+    it('revokes the role by its UUID and shows the success toast', async () => {
+      const revoke = vi.fn().mockResolvedValue(undefined);
+      const listUsers = stubRevoke(revoke);
+      await openRolesDialog('alice');
+      const callsBefore = listUsers.mock.calls.length;
+      await fireEvent.click(screen.getByRole('button', { name: 'Revoke role admin from alice' }));
+
+      await waitFor(() => {
+        expect(revoke).toHaveBeenCalledWith('acme', 'user-1', 'role-1');
+        expect(mockShowToast).toHaveBeenCalledWith({ message: 'Role "admin" revoked from "alice"', type: 'success' });
+        expect(screen.queryByRole('button', { name: 'Revoke role admin from alice' })).not.toBeInTheDocument();
+        expect(listUsers.mock.calls.length).toBeGreaterThan(callsBefore);
+      });
+    });
+
+    it('shows the error and keeps the role when the revoke is rejected', async () => {
+      stubRevoke(vi.fn().mockRejectedValue(new Error('revoke denied')));
+      const dialog = await openRolesDialog('alice');
+      await fireEvent.click(screen.getByRole('button', { name: 'Revoke role admin from alice' }));
+
+      await waitFor(() => {
+        expect(dialog.querySelector('[role="alert"]')?.textContent).toBe('revoke denied');
+      });
+      const button = screen.getByRole('button', { name: 'Revoke role admin from alice' });
+      expect(button).not.toBeDisabled();
+      expect(mockShowToast).not.toHaveBeenCalled();
+    });
+
+    it('shows "No roles assigned" for a user with no roles', async () => {
+      stubRevoke(vi.fn(), [{ ...mockUsers[0], roles: [] }]);
+      const dialog = await openRolesDialog('alice');
+      expect(dialog.textContent).toContain('No roles assigned');
+      expect(screen.queryByRole('button', { name: /^Revoke role/ })).not.toBeInTheDocument();
+    });
+  });
+
+  // -------------------------------------------------------------------------
   // Issue #573: built-in roles are seeded once and never reconciled, so a
   // permission rename in the server build strands every existing tenant. The
   // Roles tab must surface that drift and offer the repair.
