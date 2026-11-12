@@ -75,52 +75,52 @@ are the full paths chi composes.
 | 12 | GET | /oauth2/register/{client_id} | GetDynamicClient | mounted (ModuleRESTServer) | unaudited | not-UI: RFC 7591/7592 client self-registration |
 | 13 | PUT | /oauth2/register/{client_id} | UpdateDynamicClient | mounted (ModuleRESTServer) | unaudited | not-UI: RFC 7591/7592 client self-registration |
 | 14 | DELETE | /oauth2/register/{client_id} | DeleteDynamicClient | mounted (ModuleRESTServer) | unaudited | not-UI: RFC 7591/7592 client self-registration |
-| 15 | POST | /api/v1/auth/refresh | RefreshToken | mounted (ModuleRESTServer) | unaudited | unaudited |
-| 16 | POST | /api/v1/auth/logout | Logout | mounted (ModuleRESTServer) | unaudited | unaudited |
-| 17 | POST | /api/v1/auth/validate | ValidateToken | mounted (ModuleRESTServer) | unaudited | unaudited |
-| 18 | POST | /api/v1/auth/login/begin | CeremonyBeginLogin | mounted (ModuleRESTServer) | unaudited | unaudited |
-| 19 | POST | /api/v1/auth/login/finish | CeremonyFinishLogin | mounted (ModuleRESTServer) | unaudited | unaudited |
-| 20 | POST | /api/v1/auth/register/begin | RegisterSelfBegin | mounted (ModuleRESTServer) | unaudited | unaudited |
-| 21 | POST | /api/v1/auth/register/finish | RegisterSelfFinish | mounted (ModuleRESTServer) | unaudited | unaudited |
-| 22 | POST | /api/v1/iam/login/piv | PIVLogin | mounted (ModuleRESTServer); duplicate of routes_iam.go | unaudited | unaudited |
-| 23 | POST | /api/v1/iam/refresh | RefreshToken | mounted (ModuleRESTServer); duplicate of routes_iam.go | unaudited | unaudited |
-| 24 | POST | /api/v1/iam/validate | ValidateToken | mounted (ModuleRESTServer); duplicate of routes_iam.go | unaudited | unaudited |
-| 25 | POST | /api/v1/iam/logout | Logout | mounted (ModuleRESTServer); duplicate of routes_iam.go | unaudited | unaudited |
-| 26 | GET | /api/v1/tenants/ | ListTenants | mounted (ModuleRESTServer); duplicate of routes_iam.go | unaudited | unaudited |
-| 27 | POST | /api/v1/tenants/ | CreateTenant | mounted (ModuleRESTServer); duplicate of routes_iam.go | unaudited | unaudited |
-| 28 | GET | /api/v1/tenants/{tenant_id} | GetTenant | mounted (ModuleRESTServer); duplicate of routes_iam.go | unaudited | unaudited |
-| 29 | PUT | /api/v1/tenants/{tenant_id} | UpdateTenant | mounted (ModuleRESTServer); duplicate of routes_iam.go | unaudited | unaudited |
-| 30 | DELETE | /api/v1/tenants/{tenant_id} | DeleteTenant | mounted (ModuleRESTServer); duplicate of routes_iam.go | unaudited | unaudited |
-| 31 | PATCH | /api/v1/tenants/{tenant_id}/quotas | UpdateTenantEngineQuotas | mounted (ModuleRESTServer); duplicate of routes_iam.go | unaudited | unaudited |
-| 32 | PATCH | /api/v1/tenants/{tenant_id}/entitlements | UpdateTenantEngineEntitlements | mounted (ModuleRESTServer); duplicate of routes_iam.go | unaudited | unaudited |
-| 33 | POST | /api/v1/tenants/{tenant_id}/provision | ProvisionTenant | mounted (ModuleRESTServer); duplicate of routes_iam.go | unaudited | unaudited |
-| 34 | POST | /api/v1/tenants/{tenant_id}/barrier/init | HandleTenantBarrierInit | mounted (ModuleRESTServer); duplicate of routes_iam.go | unaudited | unaudited |
-| 35 | POST | /api/v1/tenants/{tenant_id}/barrier/unseal | HandleTenantBarrierUnseal | mounted (ModuleRESTServer); duplicate of routes_iam.go | unaudited | unaudited |
-| 36 | POST | /api/v1/tenants/{tenant_id}/barrier/unseal-share | HandleTenantBarrierUnsealShare | mounted (ModuleRESTServer); duplicate of routes_iam.go | unaudited | unaudited |
-| 37 | POST | /api/v1/tenants/{tenant_id}/barrier/seal | HandleTenantBarrierSeal | mounted (ModuleRESTServer); duplicate of routes_iam.go | unaudited | unaudited |
-| 38 | GET | /api/v1/tenants/{tenant_id}/barrier/status | HandleTenantBarrierStatus | mounted (ModuleRESTServer); duplicate of routes_iam.go | unaudited | unaudited |
-| 39 | POST | /api/v1/tenants/{tenant_id}/barrier/enable-encryption | HandleTenantBarrierEnableEncryption | mounted (ModuleRESTServer); duplicate of routes_iam.go | unaudited | unaudited |
-| 40 | GET | /api/v1/tenants/{tenant_id}/users/ | ListUsers | mounted (ModuleRESTServer); duplicate of routes_iam.go | unaudited | unaudited |
-| 41 | POST | /api/v1/tenants/{tenant_id}/users/ | CreateUser | mounted (ModuleRESTServer); duplicate of routes_iam.go | unaudited | unaudited |
-| 42 | GET | /api/v1/tenants/{tenant_id}/users/{user_id} | GetUser | mounted (ModuleRESTServer); duplicate of routes_iam.go | unaudited | unaudited |
-| 43 | PUT | /api/v1/tenants/{tenant_id}/users/{user_id} | UpdateUser | mounted (ModuleRESTServer); duplicate of routes_iam.go | unaudited | unaudited |
-| 44 | DELETE | /api/v1/tenants/{tenant_id}/users/{user_id} | DeleteUser | mounted (ModuleRESTServer); duplicate of routes_iam.go | unaudited | unaudited |
-| 45 | POST | /api/v1/tenants/{tenant_id}/users/{user_id}/roles | AssignRole | mounted (ModuleRESTServer); duplicate of routes_iam.go | unaudited | unaudited |
-| 46 | DELETE | /api/v1/tenants/{tenant_id}/users/{user_id}/roles/{role} | RevokeRole | mounted (ModuleRESTServer); duplicate of routes_iam.go | unaudited | unaudited |
-| 47 | GET | /api/v1/tenants/{tenant_id}/users/{user_id}/sessions/ | ListUserSessions | mounted (ModuleRESTServer); duplicate of routes_iam.go | unaudited | unaudited |
-| 48 | POST | /api/v1/tenants/{tenant_id}/users/{user_id}/sessions/ | CreateSession | mounted (ModuleRESTServer); duplicate of routes_iam.go | unaudited | unaudited |
-| 49 | DELETE | /api/v1/tenants/{tenant_id}/users/{user_id}/sessions/ | RevokeAllUserSessions | mounted (ModuleRESTServer); duplicate of routes_iam.go | unaudited | unaudited |
-| 50 | GET | /api/v1/tenants/{tenant_id}/users/{user_id}/mfa/ | GetMFAStatus | mounted (ModuleRESTServer); duplicate of routes_iam.go | unaudited | unaudited |
-| 51 | DELETE | /api/v1/tenants/{tenant_id}/users/{user_id}/mfa/ | DisableMFA | mounted (ModuleRESTServer); duplicate of routes_iam.go | unaudited | unaudited |
-| 52 | POST | /api/v1/tenants/{tenant_id}/users/{user_id}/mfa/enroll | BeginMFAEnrollment | mounted (ModuleRESTServer); duplicate of routes_iam.go | unaudited | unaudited |
-| 53 | POST | /api/v1/tenants/{tenant_id}/users/{user_id}/mfa/verify | CompleteMFAEnrollment | mounted (ModuleRESTServer); duplicate of routes_iam.go | unaudited | unaudited |
-| 54 | DELETE | /api/v1/tenants/{tenant_id}/users/{user_id}/mfa/enroll/{enrollment_id} | CancelMFAEnrollment | mounted (ModuleRESTServer); duplicate of routes_iam.go | unaudited | unaudited |
-| 55 | POST | /api/v1/tenants/{tenant_id}/users/{user_id}/mfa/challenge | BeginMFAChallenge | mounted (ModuleRESTServer); duplicate of routes_iam.go | unaudited | unaudited |
-| 56 | POST | /api/v1/tenants/{tenant_id}/users/{user_id}/mfa/verify-challenge | VerifyMFAChallenge | mounted (ModuleRESTServer); duplicate of routes_iam.go | unaudited | unaudited |
-| 57 | GET | /api/v1/tenants/{tenant_id}/users/{user_id}/mfa/backup-codes | GetBackupCodeStatus | mounted (ModuleRESTServer); duplicate of routes_iam.go | unaudited | unaudited |
-| 58 | POST | /api/v1/tenants/{tenant_id}/users/{user_id}/mfa/backup-codes | GenerateBackupCodes | mounted (ModuleRESTServer); duplicate of routes_iam.go | unaudited | unaudited |
-| 59 | GET | /api/v1/tenants/{tenant_id}/users/{user_id}/webauthn/credentials/ | ListUserWebAuthnCredentials | mounted (ModuleRESTServer); duplicate of routes_iam.go | unaudited | unaudited |
-| 60 | DELETE | /api/v1/tenants/{tenant_id}/users/{user_id}/webauthn/credentials/ | DeleteUserWebAuthnCredentials | mounted (ModuleRESTServer); duplicate of routes_iam.go | unaudited | unaudited |
+| 15 | POST | /api/v1/auth/refresh | RefreshToken | mounted (ModuleRESTServer) | none | not-UI: on a composed node xkms owns /api/v1/auth refresh, logout and validate; the console uses the /api/v1/iam session plane |
+| 16 | POST | /api/v1/auth/logout | Logout | mounted (ModuleRESTServer) | none | not-UI: on a composed node xkms owns /api/v1/auth refresh, logout and validate; the console uses the /api/v1/iam session plane |
+| 17 | POST | /api/v1/auth/validate | ValidateToken | mounted (ModuleRESTServer) | none (`RestAuthClient.authValidate` posts /api/v1/iam/validate) | not-UI: on a composed node xkms owns /api/v1/auth refresh, logout and validate; the console uses the /api/v1/iam session plane |
+| 18 | POST | /api/v1/auth/login/begin | CeremonyBeginLogin | mounted (ModuleRESTServer) | `RestAuthClient.webAuthnBeginLogin` | covered: views/orchestrator/LoginView.svelte |
+| 19 | POST | /api/v1/auth/login/finish | CeremonyFinishLogin | mounted (ModuleRESTServer) | `RestAuthClient.webAuthnFinishLogin` | covered: views/orchestrator/LoginView.svelte |
+| 20 | POST | /api/v1/auth/register/begin | RegisterSelfBegin | mounted (ModuleRESTServer) | `RestAuthClient.registerBegin` | covered: views/orchestrator/RegisterView.svelte |
+| 21 | POST | /api/v1/auth/register/finish | RegisterSelfFinish | mounted (ModuleRESTServer) | `RestAuthClient.registerFinish` | covered: views/orchestrator/RegisterView.svelte |
+| 22 | POST | /api/v1/iam/login/piv | PIVLogin | mounted (ModuleRESTServer); duplicate of routes_iam.go | `RestAuthClient.loginPIV` | covered: views/orchestrator/LoginView.svelte |
+| 23 | POST | /api/v1/iam/refresh | RefreshToken | mounted (ModuleRESTServer); duplicate of routes_iam.go | none | not covered |
+| 24 | POST | /api/v1/iam/validate | ValidateToken | mounted (ModuleRESTServer); duplicate of routes_iam.go | `RestAuthClient.authValidate` | covered: stores/auth.svelte.ts |
+| 25 | POST | /api/v1/iam/logout | Logout | mounted (ModuleRESTServer); duplicate of routes_iam.go | `RestAuthClient.logout` | covered: views/MainApp.svelte |
+| 26 | GET | /api/v1/tenants/ | ListTenants | mounted (ModuleRESTServer); duplicate of routes_iam.go | `RestIAMClient.listTenants` | covered: views/security/IAMView.svelte |
+| 27 | POST | /api/v1/tenants/ | CreateTenant | mounted (ModuleRESTServer); duplicate of routes_iam.go | `RestIAMClient.createTenant` | covered: views/security/IAMView.svelte |
+| 28 | GET | /api/v1/tenants/{tenant_id} | GetTenant | mounted (ModuleRESTServer); duplicate of routes_iam.go | none | not covered |
+| 29 | PUT | /api/v1/tenants/{tenant_id} | UpdateTenant | mounted (ModuleRESTServer); duplicate of routes_iam.go | `RestIAMClient.updateTenant` | covered: views/security/IAMView.svelte |
+| 30 | DELETE | /api/v1/tenants/{tenant_id} | DeleteTenant | mounted (ModuleRESTServer); duplicate of routes_iam.go | `RestIAMClient.deleteTenant` | covered: views/security/IAMView.svelte |
+| 31 | PATCH | /api/v1/tenants/{tenant_id}/quotas | UpdateTenantEngineQuotas | mounted (ModuleRESTServer); duplicate of routes_iam.go | none | not covered |
+| 32 | PATCH | /api/v1/tenants/{tenant_id}/entitlements | UpdateTenantEngineEntitlements | mounted (ModuleRESTServer); duplicate of routes_iam.go | none | not covered |
+| 33 | POST | /api/v1/tenants/{tenant_id}/provision | ProvisionTenant | mounted (ModuleRESTServer); duplicate of routes_iam.go | none | not covered |
+| 34 | POST | /api/v1/tenants/{tenant_id}/barrier/init | HandleTenantBarrierInit | mounted (ModuleRESTServer); duplicate of routes_iam.go | `RestTenantBarrierClient.tenantBarrierInit` | covered: views/security/TenantBarrierView.svelte |
+| 35 | POST | /api/v1/tenants/{tenant_id}/barrier/unseal | HandleTenantBarrierUnseal | mounted (ModuleRESTServer); duplicate of routes_iam.go | `RestTenantBarrierClient.tenantBarrierUnseal` | covered: views/security/TenantBarrierView.svelte |
+| 36 | POST | /api/v1/tenants/{tenant_id}/barrier/unseal-share | HandleTenantBarrierUnsealShare | mounted (ModuleRESTServer); duplicate of routes_iam.go | `RestTenantBarrierClient.tenantBarrierUnsealShare` | covered: views/security/TenantBarrierView.svelte |
+| 37 | POST | /api/v1/tenants/{tenant_id}/barrier/seal | HandleTenantBarrierSeal | mounted (ModuleRESTServer); duplicate of routes_iam.go | `RestTenantBarrierClient.tenantBarrierSeal` | covered: views/security/TenantBarrierView.svelte |
+| 38 | GET | /api/v1/tenants/{tenant_id}/barrier/status | HandleTenantBarrierStatus | mounted (ModuleRESTServer); duplicate of routes_iam.go | `RestTenantBarrierClient.tenantBarrierStatus` | covered: views/security/TenantBarrierView.svelte |
+| 39 | POST | /api/v1/tenants/{tenant_id}/barrier/enable-encryption | HandleTenantBarrierEnableEncryption | mounted (ModuleRESTServer); duplicate of routes_iam.go | none | not covered |
+| 40 | GET | /api/v1/tenants/{tenant_id}/users/ | ListUsers | mounted (ModuleRESTServer); duplicate of routes_iam.go | `RestIAMClient.listUsers` | covered: views/security/IAMView.svelte |
+| 41 | POST | /api/v1/tenants/{tenant_id}/users/ | CreateUser | mounted (ModuleRESTServer); duplicate of routes_iam.go | `RestIAMClient.createUser` | covered: views/security/IAMView.svelte |
+| 42 | GET | /api/v1/tenants/{tenant_id}/users/{user_id} | GetUser | mounted (ModuleRESTServer); duplicate of routes_iam.go | none | not covered |
+| 43 | PUT | /api/v1/tenants/{tenant_id}/users/{user_id} | UpdateUser | mounted (ModuleRESTServer); duplicate of routes_iam.go | `RestIAMClient.updateUser` | covered: views/security/IAMView.svelte |
+| 44 | DELETE | /api/v1/tenants/{tenant_id}/users/{user_id} | DeleteUser | mounted (ModuleRESTServer); duplicate of routes_iam.go | `RestIAMClient.deleteUser` | covered: views/security/IAMView.svelte |
+| 45 | POST | /api/v1/tenants/{tenant_id}/users/{user_id}/roles | AssignRole | mounted (ModuleRESTServer); duplicate of routes_iam.go | `RestIAMClient.assignRoleToUser` | covered: views/security/IAMView.svelte |
+| 46 | DELETE | /api/v1/tenants/{tenant_id}/users/{user_id}/roles/{role} | RevokeRole | mounted (ModuleRESTServer); duplicate of routes_iam.go | `RestIAMClient.revokeRoleFromUser` | not covered |
+| 47 | GET | /api/v1/tenants/{tenant_id}/users/{user_id}/sessions/ | ListUserSessions | mounted (ModuleRESTServer); duplicate of routes_iam.go | none | not covered |
+| 48 | POST | /api/v1/tenants/{tenant_id}/users/{user_id}/sessions/ | CreateSession | mounted (ModuleRESTServer); duplicate of routes_iam.go | none | not covered |
+| 49 | DELETE | /api/v1/tenants/{tenant_id}/users/{user_id}/sessions/ | RevokeAllUserSessions | mounted (ModuleRESTServer); duplicate of routes_iam.go | none | not covered |
+| 50 | GET | /api/v1/tenants/{tenant_id}/users/{user_id}/mfa/ | GetMFAStatus | mounted (ModuleRESTServer); duplicate of routes_iam.go | none | not covered |
+| 51 | DELETE | /api/v1/tenants/{tenant_id}/users/{user_id}/mfa/ | DisableMFA | mounted (ModuleRESTServer); duplicate of routes_iam.go | none | not covered |
+| 52 | POST | /api/v1/tenants/{tenant_id}/users/{user_id}/mfa/enroll | BeginMFAEnrollment | mounted (ModuleRESTServer); duplicate of routes_iam.go | none | not covered |
+| 53 | POST | /api/v1/tenants/{tenant_id}/users/{user_id}/mfa/verify | CompleteMFAEnrollment | mounted (ModuleRESTServer); duplicate of routes_iam.go | none | not covered |
+| 54 | DELETE | /api/v1/tenants/{tenant_id}/users/{user_id}/mfa/enroll/{enrollment_id} | CancelMFAEnrollment | mounted (ModuleRESTServer); duplicate of routes_iam.go | none | not covered |
+| 55 | POST | /api/v1/tenants/{tenant_id}/users/{user_id}/mfa/challenge | BeginMFAChallenge | mounted (ModuleRESTServer); duplicate of routes_iam.go | none | not covered |
+| 56 | POST | /api/v1/tenants/{tenant_id}/users/{user_id}/mfa/verify-challenge | VerifyMFAChallenge | mounted (ModuleRESTServer); duplicate of routes_iam.go | none | not covered |
+| 57 | GET | /api/v1/tenants/{tenant_id}/users/{user_id}/mfa/backup-codes | GetBackupCodeStatus | mounted (ModuleRESTServer); duplicate of routes_iam.go | none | not covered |
+| 58 | POST | /api/v1/tenants/{tenant_id}/users/{user_id}/mfa/backup-codes | GenerateBackupCodes | mounted (ModuleRESTServer); duplicate of routes_iam.go | none | not covered |
+| 59 | GET | /api/v1/tenants/{tenant_id}/users/{user_id}/webauthn/credentials/ | ListUserWebAuthnCredentials | mounted (ModuleRESTServer); duplicate of routes_iam.go | none | not covered |
+| 60 | DELETE | /api/v1/tenants/{tenant_id}/users/{user_id}/webauthn/credentials/ | DeleteUserWebAuthnCredentials | mounted (ModuleRESTServer); duplicate of routes_iam.go | none | not covered |
 | 61 | DELETE | /api/v1/tenants/{tenant_id}/users/{user_id}/webauthn/credentials/{credential_id} | DeleteUserWebAuthnCredential | mounted (ModuleRESTServer); duplicate of routes_iam.go | unaudited | unaudited |
 | 62 | POST | /api/v1/tenants/{tenant_id}/users/{user_id}/links/ | LinkAccount | mounted (ModuleRESTServer); duplicate of routes_iam.go | unaudited | unaudited |
 | 63 | GET | /api/v1/tenants/{tenant_id}/users/{user_id}/links/ | GetUserLinks | mounted (ModuleRESTServer); duplicate of routes_iam.go | unaudited | unaudited |
@@ -191,13 +191,15 @@ under `pkg/api/rest`.
 
 ## Still to audit
 
-- iam.go rows 1-100 and 105-109: SDK method (`sdk/typescript/src/rest.ts`);
-  Console cell for rows 15-100 and 105-109.
+- iam.go rows 1-14, 61-100 and 105-109: SDK method
+  (`sdk/typescript/src/rest.ts`); Console cell for rows 61-100 and 105-109.
 - iam.go rows 1-21: whether `oidcDiscoveryRouteSpecs`, `oauth2CoreRouteSpecs`,
   `oauth2RegisterRouteSpecs` or `apiAuthPublicRouteSpecs` (routes_iam.go)
   register the same method and path (`duplicate of routes_iam.go`).
-- Totals: the file has no totals line yet. Counted once each, the iam.go
-  table has 109 rows (POST /api/v1/iam/audit is row 103 only; the
-  iam_audit.go table's row is the separate test-only registration).
+- Totals (iam.go table, each Console mark counted once per row): covered 21,
+  not covered 25, not-UI 18, unaudited 45; 109 rows (POST /api/v1/iam/audit
+  is row 103 only; the iam_audit.go table's row is the separate test-only
+  registration). SDK cells `none`: rows 15-17, 23, 28, 31-33, 39, 42, 47-60
+  and 101-104.
 - iam.go: the routes `RegisterFederationAuthRoutes`, `RegisterGDPRRoutes` and
   `RegisterAdminRoutes` register.
