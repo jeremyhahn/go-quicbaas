@@ -109,6 +109,8 @@ import type {
   EmitAuthorizedResponse,
   VerifyAuthorizedRequest,
   VerifyAuthorizedResponse,
+  AddAuthorizedKeyRequest,
+  ListAuthorizedKeysRequest,
   CreateSSHKeyRequest,
   ImportSSHKeyRequest,
   SignRequest,
@@ -294,6 +296,18 @@ class WailsAuthorizedKeysClient implements SSHAuthorizedKeysClient {
     throw new Error('wails: ssh.authorized not available — use REST transport');
   }
   async verify(_req: VerifyAuthorizedRequest): Promise<VerifyAuthorizedResponse> {
+    throw new Error('wails: ssh.authorized not available — use REST transport');
+  }
+  async add(_req: AddAuthorizedKeyRequest): Promise<void> {
+    throw new Error('wails: ssh.authorized not available — use REST transport');
+  }
+  async list(_req?: ListAuthorizedKeysRequest): Promise<SSHAuthorizedEntry[]> {
+    throw new Error('wails: ssh.authorized not available — use REST transport');
+  }
+  async get(_scope: SSHScope, _owner: string, _name: string): Promise<SSHAuthorizedEntry> {
+    throw new Error('wails: ssh.authorized not available — use REST transport');
+  }
+  async remove(_scope: SSHScope, _owner: string, _name: string): Promise<void> {
     throw new Error('wails: ssh.authorized not available — use REST transport');
   }
 }

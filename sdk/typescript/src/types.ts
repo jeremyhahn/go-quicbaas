@@ -2137,6 +2137,32 @@ export interface VerifyAuthorizedResponse {
   entry: SSHAuthorizedEntry;
 }
 
+// AddAuthorizedKeyRequest is the body of POST /api/v1/ssh/authorized/keys.
+// It stores an authorized_keys entry under scope/owner/name.
+export interface AddAuthorizedKeyRequest {
+  /** Scope that owns the entry. */
+  scope: SSHScope;
+  /** Owner within the scope. */
+  owner: string;
+  /** Entry name, unique within scope/owner. */
+  name: string;
+  /** The authorized_keys line (public key). */
+  line: string;
+  /** Optional authorized_keys options (e.g. "restrict"). */
+  options?: string[];
+  /** Optional comment. */
+  comment?: string;
+}
+
+// ListAuthorizedKeysRequest filters GET /api/v1/ssh/authorized/keys.
+// An absent or empty field is not sent.
+export interface ListAuthorizedKeysRequest {
+  /** Restrict the list to this scope. */
+  scope?: SSHScope;
+  /** Restrict the list to this owner. */
+  owner?: string;
+}
+
 // DeployFleetNodeSpec describes how to deploy a QuicBaaS fleet node to a remote host.
 // Required fields: host, ssh_user, server, tenant, node_bind, backends,
 // binary. The mTLS identity for the daemon is minted by the server-side

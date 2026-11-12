@@ -382,6 +382,8 @@ import type {
   EmitAuthorizedResponse,
   VerifyAuthorizedRequest,
   VerifyAuthorizedResponse,
+  AddAuthorizedKeyRequest,
+  ListAuthorizedKeysRequest,
   AttentionItem,
   AttentionResolveRequest,
 } from './types.js';
@@ -5202,6 +5204,51 @@ export class RestAuthorizedKeysClient implements SSHAuthorizedKeysClient {
     });
     return { entry };
   }
+
+  // add stores an authorized_keys entry under scope/owner/name.
+  // Maps to POST /api/v1/ssh/authorized/keys (201, empty body).
+  async add(req: AddAuthorizedKeyRequest): Promise<void> {
+    await this.fetchSSH<void>('/api/v1/ssh/authorized/keys', {
+      method: 'POST',
+      body: JSON.stringify(req),
+    });
+  }
+
+  // list returns the stored entries, optionally filtered by scope and owner.
+  // Maps to GET /api/v1/ssh/authorized/keys[?scope=&owner=].
+  async list(req?: ListAuthorizedKeysRequest): Promise<SSHAuthorizedEntry[]> {
+    const params: string[] = [];
+    if (req?.scope) params.push(`scope=${encodeURIComponent(req.scope)}`);
+    if (req?.owner) params.push(`owner=${encodeURIComponent(req.owner)}`);
+    const query = params.length > 0 ? `?${params.join('&')}` : '';
+    const resp = await this.fetchSSH<{ items?: SSHAuthorizedEntry[] | null } | undefined>(
+      `/api/v1/ssh/authorized/keys${query}`,
+      { method: 'GET' },
+    );
+    return resp?.items ?? [];
+  }
+
+  // get returns one stored entry.
+  // Maps to GET /api/v1/ssh/authorized/keys/{scope}/{owner}/{name}.
+  async get(scope: SSHScope, owner: string, name: string): Promise<SSHAuthorizedEntry> {
+    return this.fetchSSH<SSHAuthorizedEntry>(authorizedKeyPath(scope, owner, name), {
+      method: 'GET',
+    });
+  }
+
+  // remove deletes one stored entry.
+  // Maps to DELETE /api/v1/ssh/authorized/keys/{scope}/{owner}/{name} (204).
+  async remove(scope: SSHScope, owner: string, name: string): Promise<void> {
+    await this.fetchSSH<void>(authorizedKeyPath(scope, owner, name), {
+      method: 'DELETE',
+    });
+  }
+}
+
+// authorizedKeyPath builds /api/v1/ssh/authorized/keys/{scope}/{owner}/{name},
+// encoding each segment.
+function authorizedKeyPath(scope: SSHScope, owner: string, name: string): string {
+  return `/api/v1/ssh/authorized/keys/${encodeURIComponent(scope)}/${encodeURIComponent(owner)}/${encodeURIComponent(name)}`;
 }
 
 // =============================================================================
