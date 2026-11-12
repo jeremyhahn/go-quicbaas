@@ -3699,6 +3699,46 @@ async listSessions(
     );
   }
 
+  // Maps to GET /api/v1/admin/impersonation/?active=true&admin_user_id=
+  async listImpersonations(
+    opts?: import('./interfaces.js').ListImpersonationsOptions,
+  ): Promise<import('./interfaces.js').ListImpersonationsResponse> {
+    const q: string[] = [];
+    if (opts?.activeOnly === true) q.push('active=true');
+    if (opts?.adminUserID !== undefined) q.push(`admin_user_id=${encodeURIComponent(opts.adminUserID)}`);
+    const qs = q.length > 0 ? `?${q.join('&')}` : '';
+    return this.fetchJSON<import('./interfaces.js').ListImpersonationsResponse>(
+      `/api/v1/admin/impersonation/${qs}`,
+    );
+  }
+
+  // Maps to POST /api/v1/admin/impersonation/start
+  async startImpersonation(
+    req: import('./interfaces.js').StartImpersonationRequest,
+  ): Promise<import('./interfaces.js').ImpersonationSession> {
+    return this.fetchJSON<import('./interfaces.js').ImpersonationSession>(
+      '/api/v1/admin/impersonation/start',
+      { method: 'POST', body: JSON.stringify(req) },
+    );
+  }
+
+  // Maps to POST /api/v1/admin/impersonation/{sessionID}/end
+  async endImpersonation(sessionID: string): Promise<import('./interfaces.js').EndImpersonationResult> {
+    return this.fetchJSON<import('./interfaces.js').EndImpersonationResult>(
+      `/api/v1/admin/impersonation/${encodeURIComponent(sessionID)}/end`,
+      { method: 'POST' },
+    );
+  }
+
+  // Maps to GET /api/v1/admin/users/{userID}/impersonations
+  async listUserImpersonations(
+    userID: string,
+  ): Promise<import('./interfaces.js').ListUserImpersonationsResponse> {
+    return this.fetchJSON<import('./interfaces.js').ListUserImpersonationsResponse>(
+      `/api/v1/admin/users/${encodeURIComponent(userID)}/impersonations`,
+    );
+  }
+
   // Maps to GET /api/v1/tenants/{tenantID}/roles/{roleID}
   async getRole(tenantID: string, roleID: string): Promise<IAMRole> {
     return this.fetchJSON<IAMRole>(
