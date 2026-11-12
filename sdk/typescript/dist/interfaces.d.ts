@@ -211,6 +211,71 @@ export interface UpdateRoleRequest {
     description?: string;
     permissions?: string[];
 }
+export interface IAMAuditActor {
+    user_id?: string;
+    username?: string;
+    email?: string;
+    session_id?: string;
+    client_id?: string;
+    impersonating_user_id?: string;
+    impersonating_username?: string;
+    service_identity?: string;
+    jti?: string;
+    scopes?: string[];
+    roles?: string[];
+}
+export interface IAMAuditResource {
+    type: string;
+    id: string;
+    name?: string;
+}
+export interface IAMAuditEvent {
+    id: string;
+    tenant_id: string;
+    timestamp: string;
+    event_type: string;
+    category: string;
+    actor?: IAMAuditActor;
+    resource?: IAMAuditResource;
+    action: string;
+    outcome: string;
+    details?: Record<string, unknown>;
+    ip_address?: string;
+    user_agent?: string;
+    impersonation_session_id?: string;
+    correlation_id?: string;
+}
+export interface ListIAMAuditEventsOptions {
+    tenantID?: string;
+    eventType?: string;
+    category?: string;
+    outcome?: string;
+    actorID?: string;
+    resourceID?: string;
+    startTime?: string;
+    endTime?: string;
+    limit?: number;
+    offset?: number;
+}
+export interface ListIAMAuditEventsResponse {
+    events: IAMAuditEvent[];
+    total: number;
+    limit: number;
+    offset: number;
+}
+export interface RecordIAMAuditEventRequest {
+    tenant_id?: string;
+    event: IAMAuditEvent;
+    /** When true the server records the event asynchronously and returns an empty event_id. */
+    async?: boolean;
+}
+export interface RecordIAMAuditEventResponse {
+    event_id: string;
+}
+export interface DeleteIAMAuditEventsResponse {
+    deleted_count: number;
+    before: string;
+}
 export type IAMProviderType = 'oidc' | 'saml' | 'oauth2' | 'ldap';
 export interface RegisterIAMProviderRequest {
     /** Optional provider ID; the server generates one when omitted. */
@@ -816,6 +881,14 @@ export interface IAMClient {
     listRoles(tenantID: string): Promise<ListRolesResponse>;
     createRole(tenantID: string, req: CreateRoleRequest): Promise<IAMRole>;
     updateRole(tenantID: string, roleID: string, req: UpdateRoleRequest): Promise<IAMRole>;
+    /** listAuditEvents returns one page of IAM audit events matching the filters. */
+    listAuditEvents(opts?: ListIAMAuditEventsOptions): Promise<ListIAMAuditEventsResponse>;
+    /** getAuditEvent returns one IAM audit event. */
+    getAuditEvent(eventID: string, tenantID?: string): Promise<IAMAuditEvent>;
+    /** recordAuditEvent records one IAM audit event (201); event_id is empty when async. */
+    recordAuditEvent(req: RecordIAMAuditEventRequest): Promise<RecordIAMAuditEventResponse>;
+    /** deleteAuditEventsBefore prunes IAM audit events older than `before` (RFC 3339). */
+    deleteAuditEventsBefore(before: string, tenantID?: string): Promise<DeleteIAMAuditEventsResponse>;
     getRole(tenantID: string, roleID: string): Promise<IAMRole>;
     registerProvider(tenantID: string, req: RegisterIAMProviderRequest): Promise<IAMExternalProvider>;
     listProviders(tenantID: string, opts?: ListIAMProvidersOptions): Promise<ListIAMProvidersResponse>;

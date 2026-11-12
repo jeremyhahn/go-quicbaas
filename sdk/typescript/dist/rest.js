@@ -2606,6 +2606,47 @@ class RestIAMClient {
     async updateRole(tenantID, roleID, req) {
         return this.fetchJSON(`/api/v1/tenants/${encodeURIComponent(tenantID)}/roles/${encodeURIComponent(roleID)}`, { method: 'PUT', body: JSON.stringify(req) });
     }
+    // Maps to GET /api/v1/iam/audit?tenant_id=&event_type=&category=&outcome=&actor_id=&resource_id=&start_time=&end_time=&limit=&offset=
+    async listAuditEvents(opts) {
+        const q = [];
+        const add = (name, v) => {
+            if (v !== undefined)
+                q.push(`${name}=${encodeURIComponent(String(v))}`);
+        };
+        add('tenant_id', opts?.tenantID);
+        add('event_type', opts?.eventType);
+        add('category', opts?.category);
+        add('outcome', opts?.outcome);
+        add('actor_id', opts?.actorID);
+        add('resource_id', opts?.resourceID);
+        add('start_time', opts?.startTime);
+        add('end_time', opts?.endTime);
+        add('limit', opts?.limit);
+        add('offset', opts?.offset);
+        const qs = q.length > 0 ? `?${q.join('&')}` : '';
+        return this.fetchJSON(`/api/v1/iam/audit${qs}`);
+    }
+    // Maps to GET /api/v1/iam/audit/{id}?tenant_id=
+    async getAuditEvent(eventID, tenantID) {
+        const qs = tenantID !== undefined ? `?tenant_id=${encodeURIComponent(tenantID)}` : '';
+        return this.fetchJSON(`/api/v1/iam/audit/${encodeURIComponent(eventID)}${qs}`);
+    }
+    // Maps to POST /api/v1/iam/audit
+    async recordAuditEvent(req) {
+        return this.fetchJSON('/api/v1/iam/audit', {
+            method: 'POST',
+            body: JSON.stringify(req),
+        });
+    }
+    // Maps to DELETE /api/v1/iam/audit?before=&tenant_id=
+    async deleteAuditEventsBefore(before, tenantID) {
+        let qs = `?before=${encodeURIComponent(before)}`;
+        if (tenantID !== undefined)
+            qs += `&tenant_id=${encodeURIComponent(tenantID)}`;
+        return this.fetchJSON(`/api/v1/iam/audit${qs}`, {
+            method: 'DELETE',
+        });
+    }
     // Maps to GET /api/v1/tenants/{tenantID}/roles/{roleID}
     async getRole(tenantID, roleID) {
         return this.fetchJSON(`/api/v1/tenants/${encodeURIComponent(tenantID)}/roles/${encodeURIComponent(roleID)}`);
