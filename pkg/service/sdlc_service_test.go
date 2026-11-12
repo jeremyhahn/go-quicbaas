@@ -178,6 +178,8 @@ func (s *sdlcFakeSecrets) GetSecret(_ context.Context, req *GetSecretRequest) (*
 const (
 	sdlcTestTenant  = "tenant-a"
 	sdlcTestProject = "proj-1"
+	// sdlcTestWebhookSecret is at least sdlc.MinWebhookSecretBytes long, as the forge adapters require.
+	sdlcTestWebhookSecret = "sdlc-test-webhook-signing-secret"
 )
 
 var sdlcSeamsOnce sync.Once
@@ -320,7 +322,7 @@ func newSDLCServiceRigAt(t *testing.T, publicURL string) *sdlcServiceRig {
 		resolver:     resolver,
 		projects:     &sdlcFakeProjects{projects: map[string]*orchestration.Project{sdlcTestProject: sdlcTestProjectRecord()}},
 		agents:       &sdlcFakeAgents{},
-		secrets:      &sdlcFakeSecrets{secrets: map[string][]byte{"tok": []byte("token"), "wh": []byte("secret")}},
+		secrets:      &sdlcFakeSecrets{secrets: map[string][]byte{"tok": []byte("token"), "wh": []byte(sdlcTestWebhookSecret)}},
 		store:        store,
 		forge:        giteafake.New(t, "acme", "api"),
 		audit:        &recordingIssueAuditor{},
@@ -521,11 +523,11 @@ func TestSDLCService_PortsAndNudge(t *testing.T) {
 		t.Fatalf("no token ref: %v", err)
 	}
 	secret, err := rig.svc.WebhookSecret(ctx, sdlcTestTenant, "wh")
-	if err != nil || string(secret) != "secret" {
+	if err != nil || string(secret) != sdlcTestWebhookSecret {
 		t.Fatalf("WebhookSecret = %q, %v", secret, err)
 	}
 	secret[0] = 'X'
-	if again, _ := rig.svc.WebhookSecret(ctx, sdlcTestTenant, "wh"); string(again) != "secret" {
+	if again, _ := rig.svc.WebhookSecret(ctx, sdlcTestTenant, "wh"); string(again) != sdlcTestWebhookSecret {
 		t.Fatal("the secret returned is not a copy")
 	}
 	if s, err := rig.svc.WebhookSecret(ctx, sdlcTestTenant, ""); err != nil || s != nil {
@@ -784,7 +786,7 @@ func newSDLCServiceRigForTenant(t *testing.T, ownerTenant, projectID string, log
 	rig := &sdlcServiceRig{
 		projects: &sdlcFakeProjects{projects: map[string]*orchestration.Project{projectID: project}},
 		agents:   &sdlcFakeAgents{},
-		secrets:  &sdlcFakeSecrets{secrets: map[string][]byte{"tok": []byte("token"), "wh": []byte("secret")}},
+		secrets:  &sdlcFakeSecrets{secrets: map[string][]byte{"tok": []byte("token"), "wh": []byte(sdlcTestWebhookSecret)}},
 		store:    store,
 		forge:    giteafake.New(t, "acme", "api"),
 
@@ -1190,7 +1192,7 @@ func TestSDLCService_AttentionReportsAccountErrorWhenAccountsIsWired(t *testing.
 		t.Fatal(err)
 	}
 	projects := &sdlcFakeProjects{projects: map[string]*orchestration.Project{sdlcTestProject: sdlcTestProjectRecord()}}
-	secrets := &sdlcFakeSecrets{secrets: map[string][]byte{"tok": []byte("token"), "wh": []byte("secret")}}
+	secrets := &sdlcFakeSecrets{secrets: map[string][]byte{"tok": []byte("token"), "wh": []byte(sdlcTestWebhookSecret)}}
 	accounts := orchestration.NewInMemoryAccountStore()
 	ctx := context.Background()
 	if err := accounts.Create(ctx, &orchestration.Account{
