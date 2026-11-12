@@ -1073,6 +1073,56 @@ export interface RevokeOtherSessionsResponse {
   kept_session_id: string;
 }
 
+// MFAStatusResponse is the body of GET
+// /api/v1/tenants/{tenant_id}/users/{user_id}/mfa/. Times are RFC 3339.
+export interface MFAStatusResponse {
+  enabled: boolean;
+  method?: string;
+  enrolled_at?: string;
+  last_verified?: string;
+  backup_codes_total?: number;
+  backup_codes_remaining?: number;
+}
+
+// MFAEnrollResponse is the body of POST .../mfa/enroll.
+export interface MFAEnrollResponse {
+  enrollment_id: string;
+  provisioning_uri: string;
+  secret: string;
+  expires_at: string;
+}
+
+// MFACompleteResponse is the body of POST .../mfa/verify.
+export interface MFACompleteResponse {
+  success: boolean;
+}
+
+// MFAChallengeResponse is the body of POST .../mfa/challenge.
+export interface MFAChallengeResponse {
+  challenge_id: string;
+  method: string;
+  expires_at: string;
+}
+
+// MFAVerifyResponse is the body of POST .../mfa/verify-challenge.
+export interface MFAVerifyResponse {
+  success: boolean;
+  token?: string;
+  backup_codes_remaining?: number;
+}
+
+// MFABackupCodesResponse is the body of POST .../mfa/backup-codes.
+export interface MFABackupCodesResponse {
+  codes: string[];
+}
+
+// MFABackupCodeStatusResponse is the body of GET .../mfa/backup-codes.
+export interface MFABackupCodeStatusResponse {
+  total_codes: number;
+  remaining_codes: number;
+  generated_at?: string;
+}
+
 export interface IAMClient {
   // listUsers returns all users within a tenant.
   // Maps to GET /api/v1/tenants/{tenantID}/users
@@ -1119,6 +1169,52 @@ export interface IAMClient {
   // except keepSessionID.
   // Maps to POST /api/v1/iam/sessions/revoke-others
   revokeOtherSessions(keepSessionID: string): Promise<RevokeOtherSessionsResponse>;
+
+  // getMFAStatus returns a tenant user's MFA status.
+  // Maps to GET /api/v1/tenants/{tenant_id}/users/{user_id}/mfa/
+  getMFAStatus(tenantID: string, userID: string): Promise<MFAStatusResponse>;
+
+  // disableMFA disables a tenant user's MFA.
+  // Maps to DELETE /api/v1/tenants/{tenant_id}/users/{user_id}/mfa/
+  disableMFA(tenantID: string, userID: string): Promise<void>;
+
+  // beginMFAEnrollment starts an MFA enrollment; method defaults to "totp".
+  // Maps to POST /api/v1/tenants/{tenant_id}/users/{user_id}/mfa/enroll
+  beginMFAEnrollment(tenantID: string, userID: string, method?: string): Promise<MFAEnrollResponse>;
+
+  // completeMFAEnrollment confirms an enrollment with a code.
+  // Maps to POST /api/v1/tenants/{tenant_id}/users/{user_id}/mfa/verify
+  completeMFAEnrollment(
+    tenantID: string,
+    userID: string,
+    enrollmentID: string,
+    code: string,
+  ): Promise<MFACompleteResponse>;
+
+  // cancelMFAEnrollment cancels a pending enrollment.
+  // Maps to DELETE /api/v1/tenants/{tenant_id}/users/{user_id}/mfa/enroll/{enrollment_id}
+  cancelMFAEnrollment(tenantID: string, userID: string, enrollmentID: string): Promise<void>;
+
+  // beginMFAChallenge starts an MFA challenge for a session token.
+  // Maps to POST /api/v1/tenants/{tenant_id}/users/{user_id}/mfa/challenge
+  beginMFAChallenge(tenantID: string, userID: string, sessionToken: string): Promise<MFAChallengeResponse>;
+
+  // verifyMFAChallenge answers a challenge with a code.
+  // Maps to POST /api/v1/tenants/{tenant_id}/users/{user_id}/mfa/verify-challenge
+  verifyMFAChallenge(
+    tenantID: string,
+    userID: string,
+    challengeID: string,
+    code: string,
+  ): Promise<MFAVerifyResponse>;
+
+  // getBackupCodeStatus returns how many backup codes remain.
+  // Maps to GET /api/v1/tenants/{tenant_id}/users/{user_id}/mfa/backup-codes
+  getBackupCodeStatus(tenantID: string, userID: string): Promise<MFABackupCodeStatusResponse>;
+
+  // generateBackupCodes generates a fresh set of backup codes.
+  // Maps to POST /api/v1/tenants/{tenant_id}/users/{user_id}/mfa/backup-codes
+  generateBackupCodes(tenantID: string, userID: string): Promise<MFABackupCodesResponse>;
 
   // listTenants returns all tenants.
   // Maps to GET /api/v1/tenants
