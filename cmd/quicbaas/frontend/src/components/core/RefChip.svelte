@@ -28,6 +28,7 @@
   the failure this component exists to make visible.
 -->
 <script lang="ts">
+  import { untrack } from 'svelte';
   import { TriangleAlert } from 'lucide-svelte';
   import '../../lib/refs/providers.ts';
   import { getRefProvider } from '../../lib/refs/registry.ts';
@@ -54,7 +55,7 @@
   const provider = $derived(getRefProvider(kind));
   const ctx = $derived<RefProviderContext>({ tenantID: tenantID ?? authStore.tenantID, ...(context ?? {}) });
 
-  let label = $state(value);
+  let label = $state(untrack(() => value));
   let status = $state<RefStatus | undefined>(undefined);
   let resolvedFor: string | undefined;
 

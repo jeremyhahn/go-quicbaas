@@ -602,6 +602,6 @@
         </button>
       </div>
     </div>
-    <div class="modal-backdrop" onclick={closeIngestDialog}></div>
+    <div class="modal-backdrop" role="presentation" onclick={closeIngestDialog}></div>
   </div>
 {/if}
