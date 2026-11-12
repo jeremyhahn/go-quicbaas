@@ -92,12 +92,12 @@ are the full paths chi composes.
 | 25 | POST | /api/v1/iam/logout | Logout | mounted (ModuleRESTServer); duplicate of routes_iam.go | `RestAuthClient.logout` | covered: views/MainApp.svelte |
 | 26 | GET | /api/v1/tenants/ | ListTenants | mounted (ModuleRESTServer); duplicate of routes_iam.go | `RestIAMClient.listTenants` | covered: views/security/IAMView.svelte |
 | 27 | POST | /api/v1/tenants/ | CreateTenant | mounted (ModuleRESTServer); duplicate of routes_iam.go | `RestIAMClient.createTenant` | covered: views/security/IAMView.svelte |
-| 28 | GET | /api/v1/tenants/{tenant_id} | GetTenant | mounted (ModuleRESTServer); duplicate of routes_iam.go | none | not covered |
+| 28 | GET | /api/v1/tenants/{tenant_id} | GetTenant | mounted (ModuleRESTServer); duplicate of routes_iam.go | `RestIAMClient.getTenant` | not covered |
 | 29 | PUT | /api/v1/tenants/{tenant_id} | UpdateTenant | mounted (ModuleRESTServer); duplicate of routes_iam.go | `RestIAMClient.updateTenant` | covered: views/security/IAMView.svelte |
 | 30 | DELETE | /api/v1/tenants/{tenant_id} | DeleteTenant | mounted (ModuleRESTServer); duplicate of routes_iam.go | `RestIAMClient.deleteTenant` | covered: views/security/IAMView.svelte |
-| 31 | PATCH | /api/v1/tenants/{tenant_id}/quotas | UpdateTenantEngineQuotas | mounted (ModuleRESTServer); duplicate of routes_iam.go | none | not covered |
-| 32 | PATCH | /api/v1/tenants/{tenant_id}/entitlements | UpdateTenantEngineEntitlements | mounted (ModuleRESTServer); duplicate of routes_iam.go | none | not covered |
-| 33 | POST | /api/v1/tenants/{tenant_id}/provision | ProvisionTenant | mounted (ModuleRESTServer); duplicate of routes_iam.go | none | not covered |
+| 31 | PATCH | /api/v1/tenants/{tenant_id}/quotas | UpdateTenantEngineQuotas | mounted (ModuleRESTServer); duplicate of routes_iam.go | `RestIAMClient.updateTenantQuotas` | not covered |
+| 32 | PATCH | /api/v1/tenants/{tenant_id}/entitlements | UpdateTenantEngineEntitlements | mounted (ModuleRESTServer); duplicate of routes_iam.go | `RestIAMClient.updateTenantEntitlements` | not covered |
+| 33 | POST | /api/v1/tenants/{tenant_id}/provision | ProvisionTenant | mounted (ModuleRESTServer); duplicate of routes_iam.go | `RestIAMClient.provisionTenant` | not covered |
 | 34 | POST | /api/v1/tenants/{tenant_id}/barrier/init | HandleTenantBarrierInit | mounted (ModuleRESTServer); duplicate of routes_iam.go | `RestTenantBarrierClient.tenantBarrierInit` | covered: views/security/TenantBarrierView.svelte |
 | 35 | POST | /api/v1/tenants/{tenant_id}/barrier/unseal | HandleTenantBarrierUnseal | mounted (ModuleRESTServer); duplicate of routes_iam.go | `RestTenantBarrierClient.tenantBarrierUnseal` | covered: views/security/TenantBarrierView.svelte |
 | 36 | POST | /api/v1/tenants/{tenant_id}/barrier/unseal-share | HandleTenantBarrierUnsealShare | mounted (ModuleRESTServer); duplicate of routes_iam.go | `RestTenantBarrierClient.tenantBarrierUnsealShare` | covered: views/security/TenantBarrierView.svelte |
@@ -106,55 +106,55 @@ are the full paths chi composes.
 | 39 | POST | /api/v1/tenants/{tenant_id}/barrier/enable-encryption | HandleTenantBarrierEnableEncryption | mounted (ModuleRESTServer); duplicate of routes_iam.go | none | not covered |
 | 40 | GET | /api/v1/tenants/{tenant_id}/users/ | ListUsers | mounted (ModuleRESTServer); duplicate of routes_iam.go | `RestIAMClient.listUsers` | covered: views/security/IAMView.svelte |
 | 41 | POST | /api/v1/tenants/{tenant_id}/users/ | CreateUser | mounted (ModuleRESTServer); duplicate of routes_iam.go | `RestIAMClient.createUser` | covered: views/security/IAMView.svelte |
-| 42 | GET | /api/v1/tenants/{tenant_id}/users/{user_id} | GetUser | mounted (ModuleRESTServer); duplicate of routes_iam.go | none | not covered |
+| 42 | GET | /api/v1/tenants/{tenant_id}/users/{user_id} | GetUser | mounted (ModuleRESTServer); duplicate of routes_iam.go | `RestIAMClient.getUser` | not covered |
 | 43 | PUT | /api/v1/tenants/{tenant_id}/users/{user_id} | UpdateUser | mounted (ModuleRESTServer); duplicate of routes_iam.go | `RestIAMClient.updateUser` | covered: views/security/IAMView.svelte |
 | 44 | DELETE | /api/v1/tenants/{tenant_id}/users/{user_id} | DeleteUser | mounted (ModuleRESTServer); duplicate of routes_iam.go | `RestIAMClient.deleteUser` | covered: views/security/IAMView.svelte |
 | 45 | POST | /api/v1/tenants/{tenant_id}/users/{user_id}/roles | AssignRole | mounted (ModuleRESTServer); duplicate of routes_iam.go | `RestIAMClient.assignRoleToUser` | covered: views/security/IAMView.svelte |
-| 46 | DELETE | /api/v1/tenants/{tenant_id}/users/{user_id}/roles/{role} | RevokeRole | mounted (ModuleRESTServer); duplicate of routes_iam.go | `RestIAMClient.revokeRoleFromUser` | not covered |
-| 47 | GET | /api/v1/tenants/{tenant_id}/users/{user_id}/sessions/ | ListUserSessions | mounted (ModuleRESTServer); duplicate of routes_iam.go | none | not covered |
+| 46 | DELETE | /api/v1/tenants/{tenant_id}/users/{user_id}/roles/{role} | RevokeRole | mounted (ModuleRESTServer); duplicate of routes_iam.go | `RestIAMClient.revokeRoleFromUser` | covered: views/security/IAMView.svelte |
+| 47 | GET | /api/v1/tenants/{tenant_id}/users/{user_id}/sessions/ | ListUserSessions | mounted (ModuleRESTServer); duplicate of routes_iam.go | `RestIAMClient.listUserSessions` | covered: views/security/IAMView.svelte |
 | 48 | POST | /api/v1/tenants/{tenant_id}/users/{user_id}/sessions/ | CreateSession | mounted (ModuleRESTServer); duplicate of routes_iam.go | none | not covered |
-| 49 | DELETE | /api/v1/tenants/{tenant_id}/users/{user_id}/sessions/ | RevokeAllUserSessions | mounted (ModuleRESTServer); duplicate of routes_iam.go | none | not covered |
-| 50 | GET | /api/v1/tenants/{tenant_id}/users/{user_id}/mfa/ | GetMFAStatus | mounted (ModuleRESTServer); duplicate of routes_iam.go | none | not covered |
-| 51 | DELETE | /api/v1/tenants/{tenant_id}/users/{user_id}/mfa/ | DisableMFA | mounted (ModuleRESTServer); duplicate of routes_iam.go | none | not covered |
-| 52 | POST | /api/v1/tenants/{tenant_id}/users/{user_id}/mfa/enroll | BeginMFAEnrollment | mounted (ModuleRESTServer); duplicate of routes_iam.go | none | not covered |
-| 53 | POST | /api/v1/tenants/{tenant_id}/users/{user_id}/mfa/verify | CompleteMFAEnrollment | mounted (ModuleRESTServer); duplicate of routes_iam.go | none | not covered |
-| 54 | DELETE | /api/v1/tenants/{tenant_id}/users/{user_id}/mfa/enroll/{enrollment_id} | CancelMFAEnrollment | mounted (ModuleRESTServer); duplicate of routes_iam.go | none | not covered |
-| 55 | POST | /api/v1/tenants/{tenant_id}/users/{user_id}/mfa/challenge | BeginMFAChallenge | mounted (ModuleRESTServer); duplicate of routes_iam.go | none | not covered |
-| 56 | POST | /api/v1/tenants/{tenant_id}/users/{user_id}/mfa/verify-challenge | VerifyMFAChallenge | mounted (ModuleRESTServer); duplicate of routes_iam.go | none | not covered |
-| 57 | GET | /api/v1/tenants/{tenant_id}/users/{user_id}/mfa/backup-codes | GetBackupCodeStatus | mounted (ModuleRESTServer); duplicate of routes_iam.go | none | not covered |
-| 58 | POST | /api/v1/tenants/{tenant_id}/users/{user_id}/mfa/backup-codes | GenerateBackupCodes | mounted (ModuleRESTServer); duplicate of routes_iam.go | none | not covered |
-| 59 | GET | /api/v1/tenants/{tenant_id}/users/{user_id}/webauthn/credentials/ | ListUserWebAuthnCredentials | mounted (ModuleRESTServer); duplicate of routes_iam.go | none | not covered |
-| 60 | DELETE | /api/v1/tenants/{tenant_id}/users/{user_id}/webauthn/credentials/ | DeleteUserWebAuthnCredentials | mounted (ModuleRESTServer); duplicate of routes_iam.go | none | not covered |
-| 61 | DELETE | /api/v1/tenants/{tenant_id}/users/{user_id}/webauthn/credentials/{credential_id} | DeleteUserWebAuthnCredential | mounted (ModuleRESTServer); duplicate of routes_iam.go | none | not covered |
-| 62 | POST | /api/v1/tenants/{tenant_id}/users/{user_id}/links/ | LinkAccount | mounted (ModuleRESTServer); duplicate of routes_iam.go | none | not covered |
-| 63 | GET | /api/v1/tenants/{tenant_id}/users/{user_id}/links/ | GetUserLinks | mounted (ModuleRESTServer); duplicate of routes_iam.go | none | not covered |
-| 64 | DELETE | /api/v1/tenants/{tenant_id}/users/{user_id}/links/{provider_id} | UnlinkAccount | mounted (ModuleRESTServer); duplicate of routes_iam.go | none | not covered |
+| 49 | DELETE | /api/v1/tenants/{tenant_id}/users/{user_id}/sessions/ | RevokeAllUserSessions | mounted (ModuleRESTServer); duplicate of routes_iam.go | `RestIAMClient.revokeAllUserSessions` | covered: views/security/IAMView.svelte |
+| 50 | GET | /api/v1/tenants/{tenant_id}/users/{user_id}/mfa/ | GetMFAStatus | mounted (ModuleRESTServer); duplicate of routes_iam.go | `RestIAMClient.getMFAStatus` | covered: views/security/IAMView.svelte |
+| 51 | DELETE | /api/v1/tenants/{tenant_id}/users/{user_id}/mfa/ | DisableMFA | mounted (ModuleRESTServer); duplicate of routes_iam.go | `RestIAMClient.disableMFA` | covered: views/security/IAMView.svelte |
+| 52 | POST | /api/v1/tenants/{tenant_id}/users/{user_id}/mfa/enroll | BeginMFAEnrollment | mounted (ModuleRESTServer); duplicate of routes_iam.go | `RestIAMClient.beginMFAEnrollment` | not covered |
+| 53 | POST | /api/v1/tenants/{tenant_id}/users/{user_id}/mfa/verify | CompleteMFAEnrollment | mounted (ModuleRESTServer); duplicate of routes_iam.go | `RestIAMClient.completeMFAEnrollment` | not covered |
+| 54 | DELETE | /api/v1/tenants/{tenant_id}/users/{user_id}/mfa/enroll/{enrollment_id} | CancelMFAEnrollment | mounted (ModuleRESTServer); duplicate of routes_iam.go | `RestIAMClient.cancelMFAEnrollment` | not covered |
+| 55 | POST | /api/v1/tenants/{tenant_id}/users/{user_id}/mfa/challenge | BeginMFAChallenge | mounted (ModuleRESTServer); duplicate of routes_iam.go | `RestIAMClient.beginMFAChallenge` | not covered |
+| 56 | POST | /api/v1/tenants/{tenant_id}/users/{user_id}/mfa/verify-challenge | VerifyMFAChallenge | mounted (ModuleRESTServer); duplicate of routes_iam.go | `RestIAMClient.verifyMFAChallenge` | not covered |
+| 57 | GET | /api/v1/tenants/{tenant_id}/users/{user_id}/mfa/backup-codes | GetBackupCodeStatus | mounted (ModuleRESTServer); duplicate of routes_iam.go | `RestIAMClient.getBackupCodeStatus` | not covered |
+| 58 | POST | /api/v1/tenants/{tenant_id}/users/{user_id}/mfa/backup-codes | GenerateBackupCodes | mounted (ModuleRESTServer); duplicate of routes_iam.go | `RestIAMClient.generateBackupCodes` | not covered |
+| 59 | GET | /api/v1/tenants/{tenant_id}/users/{user_id}/webauthn/credentials/ | ListUserWebAuthnCredentials | mounted (ModuleRESTServer); duplicate of routes_iam.go | `RestIAMClient.listWebAuthnCredentials` | not covered |
+| 60 | DELETE | /api/v1/tenants/{tenant_id}/users/{user_id}/webauthn/credentials/ | DeleteUserWebAuthnCredentials | mounted (ModuleRESTServer); duplicate of routes_iam.go | `RestIAMClient.deleteAllWebAuthnCredentials` | not covered |
+| 61 | DELETE | /api/v1/tenants/{tenant_id}/users/{user_id}/webauthn/credentials/{credential_id} | DeleteUserWebAuthnCredential | mounted (ModuleRESTServer); duplicate of routes_iam.go | `RestIAMClient.deleteWebAuthnCredential` | not covered |
+| 62 | POST | /api/v1/tenants/{tenant_id}/users/{user_id}/links/ | LinkAccount | mounted (ModuleRESTServer); duplicate of routes_iam.go | `RestIAMClient.createAccountLink` | not covered |
+| 63 | GET | /api/v1/tenants/{tenant_id}/users/{user_id}/links/ | GetUserLinks | mounted (ModuleRESTServer); duplicate of routes_iam.go | `RestIAMClient.listAccountLinks` | not covered |
+| 64 | DELETE | /api/v1/tenants/{tenant_id}/users/{user_id}/links/{provider_id} | UnlinkAccount | mounted (ModuleRESTServer); duplicate of routes_iam.go | `RestIAMClient.deleteAccountLink` | not covered |
 | 65 | GET | /api/v1/tenants/{tenant_id}/roles/ | ListRoles | mounted (ModuleRESTServer); duplicate of routes_iam.go | `iam.listRoles` | covered: views/security/IAMView.svelte |
 | 66 | POST | /api/v1/tenants/{tenant_id}/roles/ | CreateRole | mounted (ModuleRESTServer); duplicate of routes_iam.go | `iam.createRole` | covered: views/security/IAMView.svelte |
 | 67 | POST | /api/v1/tenants/{tenant_id}/roles/reconcile | ReconcileRoles | mounted (ModuleRESTServer); duplicate of routes_iam.go | `iam.reconcileRoles` | covered: views/security/IAMView.svelte |
-| 68 | GET | /api/v1/tenants/{tenant_id}/roles/{role_id} | GetRole | mounted (ModuleRESTServer); duplicate of routes_iam.go | none | not covered |
+| 68 | GET | /api/v1/tenants/{tenant_id}/roles/{role_id} | GetRole | mounted (ModuleRESTServer); duplicate of routes_iam.go | `RestIAMClient.getRole` | not covered |
 | 69 | PUT | /api/v1/tenants/{tenant_id}/roles/{role_id} | UpdateRole | mounted (ModuleRESTServer); duplicate of routes_iam.go | `iam.updateRole` | covered: views/security/IAMView.svelte |
 | 70 | DELETE | /api/v1/tenants/{tenant_id}/roles/{role_id} | DeleteRole | mounted (ModuleRESTServer); duplicate of routes_iam.go | `iam.deleteRole` | covered: views/security/IAMView.svelte |
-| 71 | GET | /api/v1/tenants/{tenant_id}/apps/ | ListApps | mounted (ModuleRESTServer); duplicate of routes_iam.go | none | not covered |
-| 72 | POST | /api/v1/tenants/{tenant_id}/apps/ | RegisterApp | mounted (ModuleRESTServer); duplicate of routes_iam.go | none | not covered |
-| 73 | GET | /api/v1/tenants/{tenant_id}/apps/{client_id} | GetApp | mounted (ModuleRESTServer); duplicate of routes_iam.go | none | not covered |
-| 74 | PUT | /api/v1/tenants/{tenant_id}/apps/{client_id} | UpdateApp | mounted (ModuleRESTServer); duplicate of routes_iam.go | none | not covered |
-| 75 | DELETE | /api/v1/tenants/{tenant_id}/apps/{client_id} | DeleteApp | mounted (ModuleRESTServer); duplicate of routes_iam.go | none | not covered |
-| 76 | POST | /api/v1/tenants/{tenant_id}/apps/{client_id}/rotate-secret | RotateSecret | mounted (ModuleRESTServer); duplicate of routes_iam.go | none | not covered |
+| 71 | GET | /api/v1/tenants/{tenant_id}/apps/ | ListApps | mounted (ModuleRESTServer); duplicate of routes_iam.go | `RestIAMClient.listApps` | not covered |
+| 72 | POST | /api/v1/tenants/{tenant_id}/apps/ | RegisterApp | mounted (ModuleRESTServer); duplicate of routes_iam.go | `RestIAMClient.registerApp` | not covered |
+| 73 | GET | /api/v1/tenants/{tenant_id}/apps/{client_id} | GetApp | mounted (ModuleRESTServer); duplicate of routes_iam.go | `RestIAMClient.getApp` | not covered |
+| 74 | PUT | /api/v1/tenants/{tenant_id}/apps/{client_id} | UpdateApp | mounted (ModuleRESTServer); duplicate of routes_iam.go | `RestIAMClient.updateApp` | not covered |
+| 75 | DELETE | /api/v1/tenants/{tenant_id}/apps/{client_id} | DeleteApp | mounted (ModuleRESTServer); duplicate of routes_iam.go | `RestIAMClient.deleteApp` | not covered |
+| 76 | POST | /api/v1/tenants/{tenant_id}/apps/{client_id}/rotate-secret | RotateSecret | mounted (ModuleRESTServer); duplicate of routes_iam.go | `RestIAMClient.rotateAppSecret` | not covered |
 | 77 | GET | /api/v1/tenants/{tenant_id}/policies/ | ListPolicies | mounted (ModuleRESTServer); duplicate of routes_iam.go | `iam.listPolicies` | covered: views/security/IAMView.svelte |
 | 78 | POST | /api/v1/tenants/{tenant_id}/policies/ | CreatePolicy | mounted (ModuleRESTServer); duplicate of routes_iam.go | `iam.createPolicy` | covered: views/security/IAMView.svelte |
-| 79 | GET | /api/v1/tenants/{tenant_id}/policies/{policy_name} | GetPolicy | mounted (ModuleRESTServer); duplicate of routes_iam.go | none | not covered |
+| 79 | GET | /api/v1/tenants/{tenant_id}/policies/{policy_name} | GetPolicy | mounted (ModuleRESTServer); duplicate of routes_iam.go | `RestIAMClient.getPolicy` | not covered |
 | 80 | PUT | /api/v1/tenants/{tenant_id}/policies/{policy_name} | UpdatePolicy | mounted (ModuleRESTServer); duplicate of routes_iam.go | `iam.updatePolicy` | covered: views/security/IAMView.svelte |
 | 81 | DELETE | /api/v1/tenants/{tenant_id}/policies/{policy_name} | DeletePolicy | mounted (ModuleRESTServer); duplicate of routes_iam.go | `iam.deletePolicy` | covered: views/security/IAMView.svelte |
-| 82 | POST | /api/v1/tenants/{tenant_id}/policies/validate | ValidatePolicy | mounted (ModuleRESTServer); duplicate of routes_iam.go | none | not covered |
-| 83 | POST | /api/v1/tenants/{tenant_id}/policies/test | TestPolicy | mounted (ModuleRESTServer); duplicate of routes_iam.go | none | not covered |
-| 84 | POST | /api/v1/tenants/{tenant_id}/policies/simulate | SimulatePolicy | mounted (ModuleRESTServer); duplicate of routes_iam.go | none | not covered |
-| 85 | POST | /api/v1/tenants/{tenant_id}/policies/effective-permissions | GetEffectivePermissions | mounted (ModuleRESTServer); duplicate of routes_iam.go | none | not covered |
-| 86 | POST | /api/v1/tenants/{tenant_id}/providers/ | RegisterProvider | mounted (ModuleRESTServer); duplicate of routes_iam.go | none | not covered |
-| 87 | GET | /api/v1/tenants/{tenant_id}/providers/ | ListProviders | mounted (ModuleRESTServer); duplicate of routes_iam.go | none | not covered |
-| 88 | GET | /api/v1/tenants/{tenant_id}/providers/{provider_id} | GetProvider | mounted (ModuleRESTServer); duplicate of routes_iam.go | none | not covered |
-| 89 | PUT | /api/v1/tenants/{tenant_id}/providers/{provider_id} | UpdateProvider | mounted (ModuleRESTServer); duplicate of routes_iam.go | none | not covered |
-| 90 | DELETE | /api/v1/tenants/{tenant_id}/providers/{provider_id} | DeleteProvider | mounted (ModuleRESTServer); duplicate of routes_iam.go | none | not covered |
+| 82 | POST | /api/v1/tenants/{tenant_id}/policies/validate | ValidatePolicy | mounted (ModuleRESTServer); duplicate of routes_iam.go | `RestIAMClient.validatePolicy` | not covered |
+| 83 | POST | /api/v1/tenants/{tenant_id}/policies/test | TestPolicy | mounted (ModuleRESTServer); duplicate of routes_iam.go | `RestIAMClient.testPolicy` | not covered |
+| 84 | POST | /api/v1/tenants/{tenant_id}/policies/simulate | SimulatePolicy | mounted (ModuleRESTServer); duplicate of routes_iam.go | `RestIAMClient.simulatePolicy` | not covered |
+| 85 | POST | /api/v1/tenants/{tenant_id}/policies/effective-permissions | GetEffectivePermissions | mounted (ModuleRESTServer); duplicate of routes_iam.go | `RestIAMClient.getEffectivePermissions` | not covered |
+| 86 | POST | /api/v1/tenants/{tenant_id}/providers/ | RegisterProvider | mounted (ModuleRESTServer); duplicate of routes_iam.go | `RestIAMClient.registerProvider` | not covered |
+| 87 | GET | /api/v1/tenants/{tenant_id}/providers/ | ListProviders | mounted (ModuleRESTServer); duplicate of routes_iam.go | `RestIAMClient.listProviders` | not covered |
+| 88 | GET | /api/v1/tenants/{tenant_id}/providers/{provider_id} | GetProvider | mounted (ModuleRESTServer); duplicate of routes_iam.go | `RestIAMClient.getProvider` | not covered |
+| 89 | PUT | /api/v1/tenants/{tenant_id}/providers/{provider_id} | UpdateProvider | mounted (ModuleRESTServer); duplicate of routes_iam.go | `RestIAMClient.updateProvider` | not covered |
+| 90 | DELETE | /api/v1/tenants/{tenant_id}/providers/{provider_id} | DeleteProvider | mounted (ModuleRESTServer); duplicate of routes_iam.go | `RestIAMClient.deleteProvider` | not covered |
 | 91 | GET | /api/v1/iam/{tenant_id}/invites/{token} | GetInvite | mounted (ModuleRESTServer); duplicate of routes_iam.go | `iam.getInvite` | covered: views/security/InviteActivateView.svelte |
 | 92 | POST | /api/v1/iam/{tenant_id}/invites/{token}/activate/fido2/begin | ActivateFIDO2Begin | mounted (ModuleRESTServer); duplicate of routes_iam.go | `iam.activateFIDO2Begin` | covered: views/security/InviteActivateView.svelte |
 | 93 | POST | /api/v1/iam/{tenant_id}/invites/{token}/activate/fido2/finish | ActivateFIDO2Finish | mounted (ModuleRESTServer); duplicate of routes_iam.go | `iam.activateFIDO2Finish` | covered: views/security/InviteActivateView.svelte |
@@ -169,11 +169,11 @@ are the full paths chi composes.
 | 102 | GET | /api/v1/iam/audit/{id} | GetAuditEvent | mounted (ModuleRESTServer); duplicate of routes_iam.go | none | not covered |
 | 103 | POST | /api/v1/iam/audit | RecordAuditEvent | mounted (ModuleRESTServer); duplicate of routes_iam.go | none | not-UI: services record audit events, not operators |
 | 104 | DELETE | /api/v1/iam/audit | DeleteOldAuditEvents | mounted (ModuleRESTServer); duplicate of routes_iam.go | none | not covered |
-| 105 | GET | /api/v1/iam/sessions | ListSessions | mounted (ModuleRESTServer); duplicate of routes_iam.go | none | not covered |
-| 106 | DELETE | /api/v1/iam/sessions | RevokeAllSessions | mounted (ModuleRESTServer); duplicate of routes_iam.go | none | not covered |
-| 107 | GET | /api/v1/iam/sessions/{id} | GetSession | mounted (ModuleRESTServer); duplicate of routes_iam.go | none | not covered |
-| 108 | DELETE | /api/v1/iam/sessions/{id} | RevokeSession | mounted (ModuleRESTServer); duplicate of routes_iam.go | none | not covered |
-| 109 | POST | /api/v1/iam/sessions/revoke-others | RevokeOtherSessions | mounted (ModuleRESTServer); duplicate of routes_iam.go | none | not covered |
+| 105 | GET | /api/v1/iam/sessions | ListSessions | mounted (ModuleRESTServer); duplicate of routes_iam.go | `RestIAMClient.listSessions` | covered: views/security/MySessionsView.svelte |
+| 106 | DELETE | /api/v1/iam/sessions | RevokeAllSessions | mounted (ModuleRESTServer); duplicate of routes_iam.go | `RestIAMClient.revokeAllSessions` | not covered |
+| 107 | GET | /api/v1/iam/sessions/{id} | GetSession | mounted (ModuleRESTServer); duplicate of routes_iam.go | `RestIAMClient.getSession` | not covered |
+| 108 | DELETE | /api/v1/iam/sessions/{id} | RevokeSession | mounted (ModuleRESTServer); duplicate of routes_iam.go | `RestIAMClient.revokeSession` | covered: views/security/MySessionsView.svelte |
+| 109 | POST | /api/v1/iam/sessions/revoke-others | RevokeOtherSessions | mounted (ModuleRESTServer); duplicate of routes_iam.go | `RestIAMClient.revokeOtherSessions` | covered: views/security/MySessionsView.svelte |
 
 `RegisterRoutes` also calls `RegisterFederationAuthRoutes(router, h)`,
 `RegisterGDPRRoutes` (under `/api/v1/tenants/{tenant_id}/users/{user_id}/gdpr`)
@@ -195,10 +195,10 @@ under `pkg/api/rest`.
 
 ## Still to audit
 
-- Totals (iam.go table, each Console mark counted once per row): covered 34,
-  not covered 53, not-UI 22, unaudited 0; 109 rows (POST /api/v1/iam/audit
+- Totals (iam.go table, each Console mark counted once per row): covered 42,
+  not covered 45, not-UI 22, unaudited 0; 109 rows (POST /api/v1/iam/audit
   is row 103 only; the iam_audit.go table's row is the separate test-only
-  registration). SDK cells `none`: rows 1-16, 23, 28, 31-33, 39, 42, 47-64,
-  68, 71-76, 79, 82-90 and 95-109.
+  registration). SDK cells `none`: rows 1-16, 23, 39, 48 and 95-104
+  (rows 22-109 checked against `sdk/typescript/src/rest.ts` on this branch).
 - iam.go: the routes `RegisterFederationAuthRoutes`, `RegisterGDPRRoutes` and
   `RegisterAdminRoutes` register.
