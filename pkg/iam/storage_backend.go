@@ -15,10 +15,12 @@
 package iam
 
 import (
+	"cmp"
 	"context"
 	"crypto/subtle"
 	"encoding/json"
 	"errors"
+	"slices"
 	"strings"
 	"time"
 
@@ -855,6 +857,10 @@ func (s *BackendStorage) ListRoles(ctx context.Context, tenantID string, opts Li
 		}
 		roles = append(roles, &role)
 	}
+
+	// The backend's list order is not guaranteed; sort by ID so offset pages
+	// are stable across calls, as MemoryStorage.ListUsers does (#1848).
+	slices.SortFunc(roles, func(a, b *Role) int { return cmp.Compare(a.ID, b.ID) })
 
 	// Apply pagination
 	if opts.Offset > 0 && opts.Offset < len(roles) {
