@@ -757,6 +757,125 @@ describe('IAMView', () => {
       });
       expect(mockShowToast).not.toHaveBeenCalled();
     });
+
+    const enrollment = {
+      enrollment_id: 'enr-1',
+      provisioning_uri: 'otpauth://totp/quicbaas:alice?secret=JBSWY3DPEHPK3PXP',
+      secret: 'JBSWY3DPEHPK3PXP',
+      expires_at: '2026-01-02T03:14:05Z',
+    };
+
+    async function beginEnrollment(): Promise<HTMLElement> {
+      const dialog = await openMFADialog('alice');
+      await fireEvent.click(await screen.findByRole('button', { name: 'Enroll TOTP' }));
+      await screen.findByRole('region', { name: 'TOTP enrollment' });
+      return dialog;
+    }
+
+    it('enrolls TOTP: begins, shows the secret, verifies, toasts and reloads', async () => {
+      const get = vi.fn().mockResolvedValueOnce(disabled).mockResolvedValue(enabled);
+      const begin = vi.fn().mockResolvedValue(enrollment);
+      const complete = vi.fn().mockResolvedValue({ success: true });
+      stubMFA({ getMFAStatus: get, beginMFAEnrollment: begin, completeMFAEnrollment: complete });
+      await beginEnrollment();
+      expect(begin).toHaveBeenCalledWith('acme', 'user-1', 'totp');
+      expect(screen.getByTestId('mfa-secret').textContent).toBe(enrollment.secret);
+      expect(screen.getByTestId('mfa-provisioning-uri').textContent).toBe(enrollment.provisioning_uri);
+      await fireEvent.input(screen.getByLabelText('Verification code'), { target: { value: '123456' } });
+      await fireEvent.click(screen.getByRole('button', { name: 'Verify' }));
+      await waitFor(() => {
+        expect(complete).toHaveBeenCalledWith('acme', 'user-1', 'enr-1', '123456');
+        expect(mockShowToast).toHaveBeenCalledWith({ message: 'TOTP enrolled for "alice"', type: 'success' });
+        expect(get).toHaveBeenCalledTimes(2);
+      });
+      await waitFor(() => {
+        expect(screen.queryByRole('region', { name: 'TOTP enrollment' })).not.toBeInTheDocument();
+        expect(screen.getByRole('button', { name: 'Disable MFA' })).toBeInTheDocument();
+      });
+    });
+
+    it('keeps the enrollment open with an alert when the code is not accepted', async () => {
+      const complete = vi.fn().mockResolvedValue({ success: false });
+      stubMFA({
+        getMFAStatus: vi.fn().mockResolvedValue(disabled),
+        beginMFAEnrollment: vi.fn().mockResolvedValue(enrollment),
+        completeMFAEnrollment: complete,
+      });
+      const dialog = await beginEnrollment();
+      await fireEvent.input(screen.getByLabelText('Verification code'), { target: { value: '000000' } });
+      await fireEvent.click(screen.getByRole('button', { name: 'Verify' }));
+      await waitFor(() => {
+        expect(dialog.querySelector('[role="alert"]')?.textContent).toBe('The verification code was not accepted');
+      });
+      expect(screen.getByRole('region', { name: 'TOTP enrollment' })).toBeInTheDocument();
+      expect(mockShowToast).not.toHaveBeenCalled();
+    });
+
+    it('cancels the open enrollment by its id and returns to the status', async () => {
+      const cancel = vi.fn().mockResolvedValue(undefined);
+      stubMFA({
+        getMFAStatus: vi.fn().mockResolvedValue(disabled),
+        beginMFAEnrollment: vi.fn().mockResolvedValue(enrollment),
+        cancelMFAEnrollment: cancel,
+      });
+      await beginEnrollment();
+      await fireEvent.click(screen.getByRole('button', { name: 'Cancel enrollment' }));
+      await waitFor(() => {
+        expect(cancel).toHaveBeenCalledWith('acme', 'user-1', 'enr-1');
+        expect(screen.queryByRole('region', { name: 'TOTP enrollment' })).not.toBeInTheDocument();
+      });
+      expect(screen.getByRole('button', { name: 'Enroll TOTP' })).toBeInTheDocument();
+    });
+
+    it('cancels an open enrollment when the dialog closes', async () => {
+      const cancel = vi.fn().mockResolvedValue(undefined);
+      stubMFA({
+        getMFAStatus: vi.fn().mockResolvedValue(disabled),
+        beginMFAEnrollment: vi.fn().mockResolvedValue(enrollment),
+        cancelMFAEnrollment: cancel,
+      });
+      await beginEnrollment();
+      await fireEvent.click(screen.getByRole('button', { name: 'Close' }));
+      await waitFor(() => {
+        expect(cancel).toHaveBeenCalledWith('acme', 'user-1', 'enr-1');
+      });
+      expect(screen.queryByRole('dialog', { name: /^MFA dialog$/ })).not.toBeInTheDocument();
+    });
+
+    it('regenerates backup codes after confirmation and lists them once', async () => {
+      const get = vi.fn().mockResolvedValue(enabled);
+      const generate = vi.fn().mockResolvedValue({ codes: ['aaaa-1111', 'bbbb-2222'] });
+      stubMFA({ getMFAStatus: get, generateBackupCodes: generate });
+      await openMFADialog('alice');
+      await fireEvent.click(await screen.findByRole('button', { name: 'Regenerate backup codes' }));
+      expect(generate).not.toHaveBeenCalled();
+      const confirm = screen.getByRole('dialog', { name: 'Regenerate backup codes confirmation' });
+      expect(confirm.textContent).toContain('The old codes stop working');
+      const confirmButton = Array.from(confirm.querySelectorAll('button')).find((b) => b.textContent === 'Regenerate');
+      expect(confirmButton).toBeDefined();
+      if (confirmButton) await fireEvent.click(confirmButton);
+      const list = await screen.findByRole('list', { name: 'Backup codes' });
+      expect(generate).toHaveBeenCalledWith('acme', 'user-1');
+      expect(Array.from(list.querySelectorAll('li')).map((li) => li.textContent)).toEqual(['aaaa-1111', 'bbbb-2222']);
+      expect(screen.getByText(/shown only once/)).toBeInTheDocument();
+      await waitFor(() => {
+        expect(get).toHaveBeenCalledTimes(2);
+      });
+      expect(screen.queryByRole('dialog', { name: 'Regenerate backup codes confirmation' })).not.toBeInTheDocument();
+    });
+
+    it('shows the SDK error in the dialog when the enrollment begin is rejected', async () => {
+      stubMFA({
+        getMFAStatus: vi.fn().mockResolvedValue(disabled),
+        beginMFAEnrollment: vi.fn().mockRejectedValue(new Error('enroll denied')),
+      });
+      const dialog = await openMFADialog('alice');
+      await fireEvent.click(await screen.findByRole('button', { name: 'Enroll TOTP' }));
+      await waitFor(() => {
+        expect(dialog.querySelector('[role="alert"]')?.textContent).toBe('enroll denied');
+      });
+      expect(screen.queryByRole('region', { name: 'TOTP enrollment' })).not.toBeInTheDocument();
+    });
   });
 
   // -------------------------------------------------------------------------

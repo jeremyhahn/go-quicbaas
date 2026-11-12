@@ -46,6 +46,7 @@
     UserConsent,
     IAMSession,
     MFAStatusResponse,
+    MFAEnrollResponse,
   } from '@quicbaas/sdk';
   import { ShieldCheck, UserPlus, Pencil, Trash2, UserCheck, ToggleLeft, RefreshCw, FileCheck, MonitorSmartphone, KeyRound } from 'lucide-svelte';
   import EmptyState from '../../components/core/EmptyState.svelte';
@@ -266,6 +267,12 @@
   // Set while the Disable MFA confirmation is shown.
   let confirmDisableMFA = $state(false);
   let disablingMFA = $state(false);
+  // TOTP enrollment in progress, and the backup codes shown once after a regenerate.
+  let mfaEnrollment: MFAEnrollResponse | null = $state(null);
+  let mfaEnrollCode = $state('');
+  let mfaBusy = $state(false);
+  let confirmRegenerateCodes = $state(false);
+  let mfaBackupCodes: string[] | null = $state(null);
 
   // ---------------------------------------------------------------------------
   // Create Tenant dialog state
@@ -671,13 +678,129 @@
     mfaError = null;
     confirmDisableMFA = false;
     disablingMFA = false;
+    mfaEnrollment = null;
+    mfaEnrollCode = '';
+    mfaBusy = false;
+    confirmRegenerateCodes = false;
+    mfaBackupCodes = null;
     void loadUserMFA(user);
   }
 
   function closeMFA(): void {
+    const user = userForMFA;
+    const enrollment = mfaEnrollment;
     userForMFA = null;
     mfaError = null;
     confirmDisableMFA = false;
+    confirmRegenerateCodes = false;
+    mfaEnrollment = null;
+    mfaEnrollCode = '';
+    mfaBackupCodes = null;
+    if (user && enrollment) {
+      // An enrollment left open when the dialog closes is cancelled on the server.
+      const tenantID = selectedTenantID;
+      void getSDKClient()
+        .then((client) => client.iam.cancelMFAEnrollment(tenantID, user.id, enrollment.enrollment_id))
+        .catch(() => undefined);
+    }
+  }
+
+  async function submitBeginEnrollment(): Promise<void> {
+    if (!userForMFA) return;
+    const user = userForMFA;
+    mfaError = null;
+    mfaBusy = true;
+    try {
+      const client = await getSDKClient();
+      const enrollment = await client.iam.beginMFAEnrollment(selectedTenantID, user.id, 'totp');
+      if (userForMFA?.id === user.id) {
+        mfaEnrollment = enrollment;
+        mfaEnrollCode = '';
+      }
+    } catch (e) {
+      if (userForMFA?.id === user.id) {
+        mfaError = e instanceof Error ? e.message : 'Failed to begin MFA enrollment';
+      }
+    } finally {
+      mfaBusy = false;
+    }
+  }
+
+  async function submitCompleteEnrollment(): Promise<void> {
+    if (!userForMFA || !mfaEnrollment) return;
+    const user = userForMFA;
+    const enrollment = mfaEnrollment;
+    mfaError = null;
+    const code = mfaEnrollCode.trim();
+    if (!/^\d{6}$/.test(code)) {
+      mfaError = 'Enter the 6-digit code from the authenticator';
+      return;
+    }
+    mfaBusy = true;
+    try {
+      const client = await getSDKClient();
+      const res = await client.iam.completeMFAEnrollment(selectedTenantID, user.id, enrollment.enrollment_id, code);
+      if (userForMFA?.id !== user.id) return;
+      if (!res.success) {
+        mfaError = 'The verification code was not accepted';
+        return;
+      }
+      showToast({ message: `TOTP enrolled for "${user.username}"`, type: 'success' });
+      mfaEnrollment = null;
+      mfaEnrollCode = '';
+      await loadUserMFA(user);
+    } catch (e) {
+      if (userForMFA?.id === user.id) {
+        mfaError = e instanceof Error ? e.message : 'Failed to verify MFA enrollment';
+      }
+    } finally {
+      mfaBusy = false;
+    }
+  }
+
+  async function submitCancelEnrollment(): Promise<void> {
+    if (!userForMFA || !mfaEnrollment) return;
+    const user = userForMFA;
+    const enrollment = mfaEnrollment;
+    mfaError = null;
+    mfaBusy = true;
+    try {
+      const client = await getSDKClient();
+      await client.iam.cancelMFAEnrollment(selectedTenantID, user.id, enrollment.enrollment_id);
+      if (userForMFA?.id === user.id) {
+        mfaEnrollment = null;
+        mfaEnrollCode = '';
+      }
+    } catch (e) {
+      if (userForMFA?.id === user.id) {
+        mfaError = e instanceof Error ? e.message : 'Failed to cancel MFA enrollment';
+      }
+    } finally {
+      mfaBusy = false;
+    }
+  }
+
+  async function submitRegenerateBackupCodes(): Promise<void> {
+    if (!userForMFA) return;
+    const user = userForMFA;
+    mfaError = null;
+    mfaBusy = true;
+    try {
+      const client = await getSDKClient();
+      const res = await client.iam.generateBackupCodes(selectedTenantID, user.id);
+      confirmRegenerateCodes = false;
+      if (userForMFA?.id !== user.id) return;
+      mfaBackupCodes = res.codes ?? [];
+      showToast({ message: `Backup codes regenerated for "${user.username}"`, type: 'success' });
+      await loadUserMFA(user);
+    } catch (e) {
+      confirmRegenerateCodes = false;
+      if (userForMFA?.id === user.id) {
+        mfaError = e instanceof Error ? e.message : 'Failed to regenerate backup codes';
+      }
+    } finally {
+      mfaBusy = false;
+    }
   }
 
   async function submitDisableMFA(): Promise<void> {
@@ -1784,10 +1907,46 @@
           </tbody>
         </table>
       {/if}
+      {#if mfaEnrollment}
+        <section class="space-y-2 mb-3" aria-label="TOTP enrollment">
+          <p class="text-sm text-base-content/70">Add this secret to an authenticator app, then enter the code it shows.</p>
+          <div>
+            <div class="text-xs text-base-content/50">Secret</div>
+            <code class="font-mono text-sm break-all select-all" data-testid="mfa-secret">{mfaEnrollment.secret}</code>
+          </div>
+          <div>
+            <div class="text-xs text-base-content/50">Provisioning URI</div>
+            <code class="font-mono text-xs break-all select-all" data-testid="mfa-provisioning-uri">{mfaEnrollment.provisioning_uri}</code>
+          </div>
+          {#if mfaEnrollment.expires_at}
+            <div class="text-xs text-base-content/50">Expires {formatDateTime(mfaEnrollment.expires_at)}</div>
+          {/if}
+          <div class="form-control">
+            <label class="label label-text" for="mfa-enroll-code">Verification code</label>
+            <input id="mfa-enroll-code" class="input input-bordered input-sm font-mono" type="text" inputmode="numeric" autocomplete="one-time-code" maxlength="6" pattern={'\\d{6}'} placeholder="123456" bind:value={mfaEnrollCode} />
+          </div>
+        </section>
+      {/if}
+      {#if mfaBackupCodes}
+        <section class="mb-3" aria-label="New backup codes">
+          <p class="text-sm text-warning mb-2">These codes are shown only once. Store them somewhere safe.</p>
+          <ul class="font-mono text-sm select-all grid grid-cols-2 gap-1" aria-label="Backup codes">
+            {#each mfaBackupCodes as code (code)}
+              <li>{code}</li>
+            {/each}
+          </ul>
+        </section>
+      {/if}
       <div class="modal-action">
         <button class="btn btn-ghost btn-sm" onclick={closeMFA}>Close</button>
-        {#if mfaStatus?.enabled}
+        {#if mfaEnrollment}
+          <button class="btn btn-ghost btn-sm" disabled={mfaBusy} onclick={submitCancelEnrollment}>Cancel enrollment</button>
+          <button class="btn btn-primary btn-sm" disabled={mfaBusy} onclick={submitCompleteEnrollment}>Verify</button>
+        {:else if mfaStatus?.enabled}
+          <button class="btn btn-warning btn-sm" disabled={mfaBusy} onclick={() => { confirmRegenerateCodes = true; }}>Regenerate backup codes</button>
           <button class="btn btn-error btn-sm" disabled={disablingMFA} onclick={() => { confirmDisableMFA = true; }}>Disable MFA</button>
+        {:else if mfaStatus}
+          <button class="btn btn-primary btn-sm" disabled={mfaBusy} onclick={submitBeginEnrollment}>Enroll TOTP</button>
         {/if}
       </div>
     </div>
@@ -1808,6 +1967,22 @@
       </div>
     </div>
     <div class="modal-backdrop" role="none" onclick={() => { confirmDisableMFA = false; }} onkeydown={() => { confirmDisableMFA = false; }}></div>
+  </div>
+{/if}
+
+{#if userForMFA && confirmRegenerateCodes}
+  <div class="modal modal-open" role="dialog" aria-modal="true" aria-label="Regenerate backup codes confirmation">
+    <div class="modal-box max-w-sm">
+      <h3 class="text-base font-semibold mb-2">Regenerate backup codes?</h3>
+      <p class="text-sm text-base-content/70">
+        Generate new backup codes for <span class="font-mono font-semibold">{userForMFA.username}</span>? The old codes stop working.
+      </p>
+      <div class="modal-action">
+        <button class="btn btn-ghost btn-sm" onclick={() => { confirmRegenerateCodes = false; }}>Cancel</button>
+        <button class="btn btn-warning btn-sm" disabled={mfaBusy} onclick={submitRegenerateBackupCodes}>{mfaBusy ? 'Generating…' : 'Regenerate'}</button>
+      </div>
+    </div>
+    <div class="modal-backdrop" role="none" onclick={() => { confirmRegenerateCodes = false; }} onkeydown={() => { confirmRegenerateCodes = false; }}></div>
   </div>
 {/if}
 
