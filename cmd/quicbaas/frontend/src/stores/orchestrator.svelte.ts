@@ -51,6 +51,7 @@ import type {
   TaskSource,
 } from '@quicbaas/sdk';
 import { getSDKClient } from './sdkClient.ts';
+import { toSessionInfo } from '../lib/sessions.ts';
 import {
   announceSessionScopeChange,
   authStore,
@@ -908,7 +909,7 @@ async function _fetchSessions(): Promise<void> {
     const client = await getSDKClient();
     const resp = await client.orchestrator.listSessions({ tenantID });
     if (scope !== currentScope()) return;
-    setSessions(resp.sessions ?? []);
+    setSessions((resp.sessions ?? []).map(toSessionInfo));
   } catch {
     // Silently ignore.
   } finally {
