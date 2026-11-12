@@ -16,6 +16,7 @@ package orchestration
 import (
 	"context"
 	stderrors "errors"
+	"strconv"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -219,5 +220,88 @@ func TestPromptSession_RefusesATurnQueuedBehindTheTurnThatSpentTheAccount(t *tes
 	}
 	if got := turns.Load(); got != 1 {
 		t.Errorf("backend ran %d turns, want 1 — the refused turn must not run", got)
+	}
+}
+
+func TestLockSessionTurn_DropsTheEntryWhenTheLastTurnLeaves(t *testing.T) {
+	svc := &agentServiceImpl{}
+	unlockFirst, err := svc.lockSessionTurn(context.Background(), "s1")
+	if err != nil {
+		t.Fatalf("first lock: %v", err)
+	}
+	if got := svc.turnLocks.size(); got != 1 {
+		t.Fatalf("entries after the first lock = %d, want 1", got)
+	}
+
+	acquired := make(chan func(), 1)
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		unlock, err := svc.lockSessionTurn(ctx, "s1")
+		if err != nil {
+			t.Errorf("second lock: %v", err)
+			acquired <- nil
+			return
+		}
+		acquired <- unlock
+	}()
+
+	select {
+	case <-acquired:
+		t.Fatal("the second turn acquired the lock while the first held it")
+	case <-time.After(200 * time.Millisecond):
+	}
+
+	unlockFirst()
+	var unlockSecond func()
+	select {
+	case unlockSecond = <-acquired:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the second turn did not acquire the lock after the first left")
+	}
+	if unlockSecond == nil {
+		t.Fatal("the second turn failed to lock")
+	}
+	if got := svc.turnLocks.size(); got != 1 {
+		t.Fatalf("entries while the second turn holds the lock = %d, want 1", got)
+	}
+	unlockSecond()
+	if got := svc.turnLocks.size(); got != 0 {
+		t.Fatalf("entries after the last turn left = %d, want 0", got)
+	}
+}
+
+func TestLockSessionTurn_ACancelledWaiterLeavesNoEntry(t *testing.T) {
+	svc := &agentServiceImpl{}
+	unlock, err := svc.lockSessionTurn(context.Background(), "s1")
+	if err != nil {
+		t.Fatalf("first lock: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	time.AfterFunc(50*time.Millisecond, cancel)
+	defer cancel()
+	if _, err := svc.lockSessionTurn(ctx, "s1"); !stderrors.Is(err, context.Canceled) {
+		t.Fatalf("cancelled waiter error = %v, want context.Canceled", err)
+	}
+
+	unlock()
+	if got := svc.turnLocks.size(); got != 0 {
+		t.Fatalf("entries after the holder left = %d, want 0", got)
+	}
+}
+
+func TestLockSessionTurn_ManySessionsLeaveNoEntries(t *testing.T) {
+	svc := &agentServiceImpl{}
+	for i := 0; i < 100; i++ {
+		id := "s" + strconv.Itoa(i)
+		unlock, err := svc.lockSessionTurn(context.Background(), id)
+		if err != nil {
+			t.Fatalf("lock %s: %v", id, err)
+		}
+		unlock()
+	}
+	if got := svc.turnLocks.size(); got != 0 {
+		t.Fatalf("entries after 100 sessions = %d, want 0", got)
 	}
 }

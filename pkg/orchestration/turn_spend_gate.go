@@ -15,7 +15,7 @@ package orchestration
 
 import (
 	"context"
-	"fmt"
+	"sync"
 	"time"
 )
 
@@ -98,19 +98,67 @@ func (s *agentServiceImpl) authorizeTurnSpend(ctx context.Context, sessionID str
 //
 // A caller whose context ends while it waits gets the context's error and runs
 // nothing. An empty session ID is not locked: there is no session to share.
+// A session's entry is removed when its last holder or waiter leaves, so the
+// registry holds only sessions with a turn running or queued.
 func (s *agentServiceImpl) lockSessionTurn(ctx context.Context, sessionID string) (func(), error) {
 	if sessionID == "" {
 		return func() {}, nil
 	}
-	value, _ := s.turnLocks.LoadOrStore(sessionID, make(chan struct{}, 1))
-	slot, ok := value.(chan struct{})
-	if !ok {
-		return nil, fmt.Errorf("orchestration: turn lock for session %q has type %T", sessionID, value)
-	}
+	lock := s.turnLocks.acquire(sessionID)
 	select {
-	case slot <- struct{}{}:
-		return func() { <-slot }, nil
+	case lock.slot <- struct{}{}:
+		return func() {
+			<-lock.slot
+			s.turnLocks.release(sessionID, lock)
+		}, nil
 	case <-ctx.Done():
+		s.turnLocks.release(sessionID, lock)
 		return nil, ctx.Err()
 	}
+}
+
+// sessionTurnLocks is one turn lock per session ID, kept only while a turn
+// holds it or waits on it. The zero value is ready to use.
+type sessionTurnLocks struct {
+	mu    sync.Mutex
+	locks map[string]*sessionTurnLock
+}
+
+// sessionTurnLock is one session's slot and how many callers hold or wait on it.
+type sessionTurnLock struct {
+	slot chan struct{}
+	refs int
+}
+
+// acquire returns sessionID's lock, creating it, and counts the caller in.
+func (l *sessionTurnLocks) acquire(sessionID string) *sessionTurnLock {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.locks == nil {
+		l.locks = make(map[string]*sessionTurnLock)
+	}
+	lock, ok := l.locks[sessionID]
+	if !ok {
+		lock = &sessionTurnLock{slot: make(chan struct{}, 1)}
+		l.locks[sessionID] = lock
+	}
+	lock.refs++
+	return lock
+}
+
+// release counts the caller out and drops the entry when nobody is left.
+func (l *sessionTurnLocks) release(sessionID string, lock *sessionTurnLock) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	lock.refs--
+	if lock.refs == 0 {
+		delete(l.locks, sessionID)
+	}
+}
+
+// size is how many sessions have a lock entry now.
+func (l *sessionTurnLocks) size() int {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return len(l.locks)
 }

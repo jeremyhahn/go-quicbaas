@@ -105,10 +105,11 @@ type agentServiceImpl struct {
 	// SetSpendAuthority and turn_spend_gate.go.
 	turnSpend SpendAuthority
 
-	// turnLocks holds one lock per session ID, so a session's turns run one
-	// at a time from the spend check to the usage record. See
+	// turnLocks holds one lock per session with a turn running or waiting,
+	// so a session's turns run one at a time from the spend check to the
+	// usage record; an entry is removed when the last one leaves. See
 	// lockSessionTurn in turn_spend_gate.go.
-	turnLocks sync.Map
+	turnLocks sessionTurnLocks
 
 	// limitClassifier decides whether a failed turn was a provider limit.
 	// Nil selects the built-in heuristic (see NewAccountLimitClassifier).
