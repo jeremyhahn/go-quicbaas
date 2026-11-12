@@ -53,6 +53,7 @@ export type ViewID =
   | 'ceremony'
   | 'bootstrap'
   | 'ssh-keys'
+  | 'my-sessions'
   | 'cluster'
   | 'nodes'
   | 'backup'
@@ -98,6 +99,7 @@ const viewHashPaths: Partial<Record<ViewID, string>> = {
   ceremony:      '/ceremony',
   bootstrap:     '/bootstrap',
   'ssh-keys':    '/ssh-keys',
+  'my-sessions': '/my-sessions',
   // ORCHESTRATION — inference
   inference:     '/inference',
   // ORCHESTRATION — projects
@@ -150,6 +152,7 @@ const routeToViewID: Partial<Record<RouteName, ViewID>> = {
   ceremony:         'ceremony',
   bootstrap:        'bootstrap',
   'ssh-keys':       'ssh-keys',
+  'my-sessions':    'my-sessions',
   // ORCHESTRATION — inference
   inference:        'inference',
   // ORCHESTRATION — projects

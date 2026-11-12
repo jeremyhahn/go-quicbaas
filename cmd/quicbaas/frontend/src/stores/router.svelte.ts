@@ -53,6 +53,7 @@
  *   #/bootstrap      → First-contact trust bootstrap wizard
  *   #/ssh-keys       → SSH Keys
  *   #/sshkeys        → bookmark-friendly alias for /ssh-keys
+ *   #/my-sessions    → My Sessions (the caller's IAM sessions)
  *   #/accounts       → Pooled provider accounts
  *   #/invite/:token → Invite activation (passwordless)
  */
@@ -101,6 +102,7 @@ export type RouteName =
   | 'ceremony'
   | 'bootstrap'
   | 'ssh-keys'
+  | 'my-sessions'
   // ORCHESTRATION — inference
   | 'inference'
   // ORCHESTRATION — projects
@@ -289,6 +291,9 @@ function matchPath(path: string, hash: string): Route {
   // operators who type the path without a hyphen.
   if (path === '/ssh-keys' || path === '/sshkeys') {
     return { name: 'ssh-keys', params: {}, hash };
+  }
+  if (path === '/my-sessions') {
+    return { name: 'my-sessions', params: {}, hash };
   }
   // AI/ML
   if (path === '/rag') {
@@ -498,6 +503,7 @@ export function routeBootstrap(): void { navigateTo('/bootstrap'); }
 /** @deprecated Use routeBarrier — /seal is the legacy hash. */
 export function routeSeal(): void { routeBarrier(); }
 export function routeSSHKeys(): void { navigateTo('/ssh-keys'); }
+export function routeMySessions(): void { navigateTo('/my-sessions'); }
 // AI/ML
 export function routeRAG(): void { navigateTo('/rag'); }
 export function routeEmbeddings(): void { navigateTo('/embeddings'); }
