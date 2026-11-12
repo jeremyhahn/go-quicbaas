@@ -570,6 +570,140 @@ describe('IAMView', () => {
     });
   });
 
+  describe('Data requests', () => {
+    const exportPending = { id: 'exp-1', status: 'pending', format: 'json', requested_at: '2026-01-02T03:04:05Z' };
+    const exportDone = { ...exportPending, status: 'completed', completed_at: '2026-01-02T04:00:00Z', expires_at: '2026-01-09T04:00:00Z' };
+    const deletionPending = {
+      id: 'del-1', status: 'pending', reason: 'leaving', requested_at: '2026-01-02T03:04:05Z',
+      grace_period_ends_at: '2026-02-01T03:04:05Z',
+    };
+
+    function stubDataRequests(overrides: Record<string, ReturnType<typeof vi.fn>>): void {
+      mockGetSDKClient.mockResolvedValue({
+        iam: {
+          listUsers: vi.fn().mockResolvedValue({ users: mockUsers, count: mockUsers.length }),
+          listTenants: vi.fn().mockResolvedValue({ tenants: mockTenants, count: 1 }),
+          listRoles: vi.fn().mockResolvedValue({ roles: mockRoles, count: 2 }),
+          listPolicies: vi.fn().mockResolvedValue({ policies: mockPolicies, count: 1 }),
+          requestDataExport: vi.fn().mockResolvedValue(exportPending),
+          getExportStatus: vi.fn().mockResolvedValue(exportDone),
+          downloadExport: vi.fn().mockResolvedValue({ user: { id: 'user-1' } }),
+          requestDeletion: vi.fn().mockResolvedValue(deletionPending),
+          getDeletionStatus: vi.fn().mockResolvedValue(deletionPending),
+          cancelDeletion: vi.fn().mockResolvedValue({ ...deletionPending, status: 'cancelled', cancelled_at: '2026-01-03T00:00:00Z' }),
+          ...overrides,
+        },
+      });
+    }
+
+    async function openDataRequestsDialog(username: string): Promise<HTMLElement> {
+      render(IAMView);
+      const open = await screen.findByRole('button', { name: `Data requests for ${username}` });
+      await fireEvent.click(open);
+      return screen.getByRole('dialog', { name: /Data requests dialog/i });
+    }
+
+    it('opens from the user row for that user', async () => {
+      stubDataRequests({});
+      const dialog = await openDataRequestsDialog('alice');
+      expect(dialog.querySelector('h3')?.textContent).toBe('Data requests of alice');
+      expect(screen.getByRole('button', { name: 'Request export' })).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'Request deletion' })).toBeInTheDocument();
+    });
+
+    it('requests an export with no options and shows its status and id', async () => {
+      const request = vi.fn().mockResolvedValue(exportPending);
+      stubDataRequests({ requestDataExport: request });
+      await openDataRequestsDialog('alice');
+      await fireEvent.click(screen.getByRole('button', { name: 'Request export' }));
+
+      const table = await screen.findByRole('table', { name: 'Data export request' });
+      expect(request).toHaveBeenCalledWith('acme', 'user-1');
+      expect(table.textContent).toContain('exp-1');
+      expect(table.textContent).toContain('pending');
+      expect((screen.getByLabelText('Export ID') as HTMLInputElement).value).toBe('exp-1');
+      expect(screen.queryByRole('button', { name: 'Download' })).not.toBeInTheDocument();
+    });
+
+    it('checks the status of the typed export id and downloads a completed export', async () => {
+      const status = vi.fn().mockResolvedValue(exportDone);
+      const download = vi.fn().mockResolvedValue({ user: { id: 'user-1' } });
+      stubDataRequests({ getExportStatus: status, downloadExport: download });
+      const createURL = vi.fn().mockReturnValue('blob:export');
+      const revokeURL = vi.fn();
+      Object.defineProperty(URL, 'createObjectURL', { value: createURL, configurable: true, writable: true });
+      Object.defineProperty(URL, 'revokeObjectURL', { value: revokeURL, configurable: true, writable: true });
+      const click = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {});
+      try {
+        await openDataRequestsDialog('alice');
+        await fireEvent.input(screen.getByLabelText('Export ID'), { target: { value: 'exp-1' } });
+        await fireEvent.click(screen.getByRole('button', { name: 'Check export status' }));
+
+        const table = await screen.findByRole('table', { name: 'Data export request' });
+        expect(status).toHaveBeenCalledWith('acme', 'user-1', 'exp-1');
+        expect(table.textContent).toContain('completed');
+
+        await fireEvent.click(screen.getByRole('button', { name: 'Download' }));
+        await waitFor(() => {
+          expect(download).toHaveBeenCalledWith('acme', 'user-1', 'exp-1');
+          expect(createURL).toHaveBeenCalledTimes(1);
+          expect(click).toHaveBeenCalledTimes(1);
+        });
+        expect(createURL.mock.calls[0][0]).toBeInstanceOf(Blob);
+        expect((click.mock.instances[0] as unknown as HTMLAnchorElement).download).toBe('export-exp-1.json');
+        expect(revokeURL).toHaveBeenCalledWith('blob:export');
+      } finally {
+        click.mockRestore();
+      }
+    });
+
+    it('requests a deletion with the reason only after the confirmation', async () => {
+      const request = vi.fn().mockResolvedValue(deletionPending);
+      stubDataRequests({ requestDeletion: request });
+      await openDataRequestsDialog('alice');
+      await fireEvent.input(screen.getByLabelText('Reason'), { target: { value: 'leaving' } });
+      await fireEvent.click(screen.getByRole('button', { name: 'Request deletion' }));
+
+      const confirm = screen.getByRole('dialog', { name: 'Request deletion confirmation' });
+      expect(confirm.textContent).toContain('will be deleted after the grace period');
+      expect(request).not.toHaveBeenCalled();
+
+      await fireEvent.click(screen.getByRole('button', { name: 'Request' }));
+      const table = await screen.findByRole('table', { name: 'Data deletion request' });
+      expect(request).toHaveBeenCalledWith('acme', 'user-1', { reason: 'leaving' });
+      expect(table.textContent).toContain('del-1');
+      expect(table.textContent).toContain('leaving');
+      expect((screen.getByLabelText('Deletion ID') as HTMLInputElement).value).toBe('del-1');
+      expect(screen.queryByRole('dialog', { name: 'Request deletion confirmation' })).not.toBeInTheDocument();
+    });
+
+    it('checks a deletion status and cancels a pending deletion', async () => {
+      const status = vi.fn().mockResolvedValue(deletionPending);
+      const cancel = vi.fn().mockResolvedValue({ ...deletionPending, status: 'cancelled', cancelled_at: '2026-01-03T00:00:00Z' });
+      stubDataRequests({ getDeletionStatus: status, cancelDeletion: cancel });
+      await openDataRequestsDialog('alice');
+      await fireEvent.input(screen.getByLabelText('Deletion ID'), { target: { value: 'del-1' } });
+      await fireEvent.click(screen.getByRole('button', { name: 'Check deletion status' }));
+      await waitFor(() => expect(status).toHaveBeenCalledWith('acme', 'user-1', 'del-1'));
+
+      await fireEvent.click(await screen.findByRole('button', { name: 'Cancel deletion' }));
+      await waitFor(() => {
+        expect(cancel).toHaveBeenCalledWith('acme', 'user-1', 'del-1');
+        expect(screen.getByRole('table', { name: 'Data deletion request' }).textContent).toContain('cancelled');
+      });
+      expect(screen.queryByRole('button', { name: 'Cancel deletion' })).not.toBeInTheDocument();
+    });
+
+    it('shows the SDK error in the dialog alert', async () => {
+      stubDataRequests({ requestDataExport: vi.fn().mockRejectedValue(new Error('export denied')) });
+      const dialog = await openDataRequestsDialog('alice');
+      await fireEvent.click(screen.getByRole('button', { name: 'Request export' }));
+      await waitFor(() => {
+        expect(dialog.querySelector('[role="alert"]')?.textContent).toBe('export denied');
+      });
+    });
+  });
+
   describe('Sessions dialog', () => {
     const session = {
       id: 's-1', created: '2026-01-02T03:04:05Z', last_active: '2026-01-03T03:04:05Z',

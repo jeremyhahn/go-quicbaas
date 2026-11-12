@@ -46,8 +46,10 @@
     UserConsent,
     IAMSession,
     MFAStatusResponse,
+    DataExportRequest,
+    DeletionRequest,
   } from '@quicbaas/sdk';
-  import { ShieldCheck, UserPlus, Pencil, Trash2, UserCheck, ToggleLeft, RefreshCw, FileCheck, MonitorSmartphone, KeyRound } from 'lucide-svelte';
+  import { ShieldCheck, UserPlus, Pencil, Trash2, UserCheck, ToggleLeft, RefreshCw, FileCheck, MonitorSmartphone, KeyRound, Database } from 'lucide-svelte';
   import EmptyState from '../../components/core/EmptyState.svelte';
   import { routerStore, routeIAMTab } from '../../stores/router.svelte.ts';
   import { formatDateTime } from '../../lib/time.ts';
@@ -242,6 +244,25 @@
   let grantingConsent = $state(false);
   // The purpose whose withdraw is in flight, if any.
   let withdrawingPurpose: ConsentPurpose | null = $state(null);
+
+  // ---------------------------------------------------------------------------
+  // Data requests (GDPR export / deletion) dialog state
+  // ---------------------------------------------------------------------------
+
+  let userForDataRequests: IAMUser | null = $state(null);
+  let dataRequestsError: string | null = $state(null);
+  let exportIDInput = $state('');
+  let exportRequest: DataExportRequest | null = $state(null);
+  let exportBusy = $state(false);
+  let deletionReason = $state('');
+  let deletionIDInput = $state('');
+  let deletionRequest: DeletionRequest | null = $state(null);
+  let deletionBusy = $state(false);
+  // The request-deletion confirmation is open.
+  let confirmRequestDeletion = $state(false);
+  // The server has no list route: the ids created this session, per user, newest last.
+  const createdExportIDs = new Map<string, string[]>();
+  const createdDeletionIDs = new Map<string, string[]>();
 
   // ---------------------------------------------------------------------------
   // Sessions dialog state
@@ -645,6 +666,163 @@
   function closeConsents(): void {
     userForConsents = null;
     consentsError = null;
+  }
+
+  function rememberID(store: Map<string, string[]>, userID: string, id: string): void {
+    const ids = store.get(userID) ?? [];
+    if (!ids.includes(id)) ids.push(id);
+    store.set(userID, ids);
+  }
+
+  function newestID(store: Map<string, string[]>, userID: string): string {
+    return store.get(userID)?.at(-1) ?? '';
+  }
+
+  function openDataRequests(user: IAMUser): void {
+    userForDataRequests = user;
+    dataRequestsError = null;
+    exportRequest = null;
+    deletionRequest = null;
+    exportBusy = false;
+    deletionBusy = false;
+    deletionReason = '';
+    confirmRequestDeletion = false;
+    exportIDInput = newestID(createdExportIDs, user.id);
+    deletionIDInput = newestID(createdDeletionIDs, user.id);
+  }
+
+  function closeDataRequests(): void {
+    userForDataRequests = null;
+    dataRequestsError = null;
+    confirmRequestDeletion = false;
+  }
+
+  function dataRequestErr(e: unknown, fallback: string): string {
+    return e instanceof Error ? e.message : fallback;
+  }
+
+  async function submitRequestExport(): Promise<void> {
+    if (!userForDataRequests) return;
+    const user = userForDataRequests;
+    dataRequestsError = null;
+    exportBusy = true;
+    try {
+      const client = await getSDKClient();
+      const req = await client.iam.requestDataExport(selectedTenantID, user.id);
+      rememberID(createdExportIDs, user.id, req.id);
+      if (userForDataRequests?.id === user.id) {
+        exportRequest = req;
+        exportIDInput = req.id;
+      }
+      showToast({ message: `Data export requested for "${user.username}"`, type: 'success' });
+    } catch (e) {
+      if (userForDataRequests?.id === user.id) dataRequestsError = dataRequestErr(e, 'Failed to request export');
+    } finally {
+      exportBusy = false;
+    }
+  }
+
+  async function checkExportStatus(): Promise<void> {
+    if (!userForDataRequests) return;
+    const user = userForDataRequests;
+    const id = exportIDInput.trim();
+    if (!id) return;
+    dataRequestsError = null;
+    exportBusy = true;
+    try {
+      const client = await getSDKClient();
+      const req = await client.iam.getExportStatus(selectedTenantID, user.id, id);
+      if (userForDataRequests?.id === user.id) exportRequest = req;
+    } catch (e) {
+      if (userForDataRequests?.id === user.id) dataRequestsError = dataRequestErr(e, 'Failed to check export status');
+    } finally {
+      exportBusy = false;
+    }
+  }
+
+  async function downloadDataExport(): Promise<void> {
+    if (!userForDataRequests || !exportRequest) return;
+    const user = userForDataRequests;
+    const id = exportRequest.id;
+    dataRequestsError = null;
+    exportBusy = true;
+    try {
+      const client = await getSDKClient();
+      const data = await client.iam.downloadExport(selectedTenantID, user.id, id);
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `export-${id}.json`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      if (userForDataRequests?.id === user.id) dataRequestsError = dataRequestErr(e, 'Failed to download export');
+    } finally {
+      exportBusy = false;
+    }
+  }
+
+  async function submitRequestDeletion(): Promise<void> {
+    if (!userForDataRequests) return;
+    const user = userForDataRequests;
+    dataRequestsError = null;
+    deletionBusy = true;
+    try {
+      const client = await getSDKClient();
+      const reason = deletionReason.trim();
+      const req = await client.iam.requestDeletion(selectedTenantID, user.id, reason ? { reason } : undefined);
+      rememberID(createdDeletionIDs, user.id, req.id);
+      if (userForDataRequests?.id === user.id) {
+        deletionRequest = req;
+        deletionIDInput = req.id;
+        deletionReason = '';
+      }
+      showToast({ message: `Data deletion requested for "${user.username}"`, type: 'success' });
+    } catch (e) {
+      if (userForDataRequests?.id === user.id) dataRequestsError = dataRequestErr(e, 'Failed to request deletion');
+    } finally {
+      confirmRequestDeletion = false;
+      deletionBusy = false;
+    }
+  }
+
+  async function checkDeletionStatus(): Promise<void> {
+    if (!userForDataRequests) return;
+    const user = userForDataRequests;
+    const id = deletionIDInput.trim();
+    if (!id) return;
+    dataRequestsError = null;
+    deletionBusy = true;
+    try {
+      const client = await getSDKClient();
+      const req = await client.iam.getDeletionStatus(selectedTenantID, user.id, id);
+      if (userForDataRequests?.id === user.id) deletionRequest = req;
+    } catch (e) {
+      if (userForDataRequests?.id === user.id) dataRequestsError = dataRequestErr(e, 'Failed to check deletion status');
+    } finally {
+      deletionBusy = false;
+    }
+  }
+
+  async function submitCancelDeletion(): Promise<void> {
+    if (!userForDataRequests || !deletionRequest) return;
+    const user = userForDataRequests;
+    const id = deletionRequest.id;
+    dataRequestsError = null;
+    deletionBusy = true;
+    try {
+      const client = await getSDKClient();
+      const req = await client.iam.cancelDeletion(selectedTenantID, user.id, id);
+      if (userForDataRequests?.id === user.id) deletionRequest = req;
+      showToast({ message: `Data deletion cancelled for "${user.username}"`, type: 'success' });
+    } catch (e) {
+      if (userForDataRequests?.id === user.id) dataRequestsError = dataRequestErr(e, 'Failed to cancel deletion');
+    } finally {
+      deletionBusy = false;
+    }
   }
 
   async function loadUserMFA(user: IAMUser): Promise<void> {
@@ -1265,6 +1443,14 @@
                 </button>
                 <button
                   class="btn btn-ghost btn-xs"
+                  title={`Data requests for ${user.username}`}
+                  aria-label={`Data requests for ${user.username}`}
+                  onclick={() => openDataRequests(user)}
+                >
+                  <Database class="h-3 w-3" />
+                </button>
+                <button
+                  class="btn btn-ghost btn-xs"
                   title="Sessions"
                   aria-label={`Sessions of ${user.username}`}
                   onclick={() => openSessions(user)}
@@ -1679,6 +1865,105 @@
     </div>
     <div class="modal-backdrop" role="none" onclick={closeConsents} onkeydown={closeConsents}></div>
   </div>
+{/if}
+
+<!-- =========================================================================
+     DATA REQUESTS DIALOG (GDPR export / deletion)
+     ========================================================================= -->
+{#if userForDataRequests}
+  <div class="modal modal-open" role="dialog" aria-modal="true" aria-label="Data requests dialog">
+    <div class="modal-box max-w-xl">
+      <h3 class="text-base font-semibold mb-4">Data requests of <span class="font-mono text-primary">{userForDataRequests.username}</span></h3>
+      {#if dataRequestsError}
+        <div class="alert alert-error text-sm mb-3" role="alert">{dataRequestsError}</div>
+      {/if}
+
+      <section aria-label="Data export" class="mb-4">
+        <h4 class="text-sm font-semibold mb-2">Export</h4>
+        <div class="flex items-end gap-2 mb-2">
+          <button class="btn btn-primary btn-sm" disabled={exportBusy} onclick={submitRequestExport}>Request export</button>
+          <div class="form-control flex-1">
+            <label class="label label-text" for="data-export-id">Export ID</label>
+            <input id="data-export-id" class="input input-bordered input-sm font-mono" type="text" bind:value={exportIDInput} />
+          </div>
+          <button class="btn btn-ghost btn-sm" aria-label="Check export status" disabled={exportBusy || !exportIDInput.trim()} onclick={checkExportStatus}>Check status</button>
+        </div>
+        {#if exportRequest}
+          <table class="table table-xs mb-2" aria-label="Data export request">
+            <tbody>
+              <tr><th>ID</th><td class="font-mono">{exportRequest.id}</td></tr>
+              <tr><th>Status</th><td>{exportRequest.status}</td></tr>
+              <tr><th>Requested</th><td>{exportRequest.requested_at ? formatDateTime(exportRequest.requested_at) : '—'}</td></tr>
+              <tr><th>Completed</th><td>{exportRequest.completed_at ? formatDateTime(exportRequest.completed_at) : '—'}</td></tr>
+              <tr><th>Expires</th><td>{exportRequest.expires_at ? formatDateTime(exportRequest.expires_at) : '—'}</td></tr>
+              {#if exportRequest.error_message}
+                <tr><th>Error</th><td class="text-error">{exportRequest.error_message}</td></tr>
+              {/if}
+            </tbody>
+          </table>
+          {#if exportRequest.status === 'completed'}
+            <button class="btn btn-ghost btn-sm" disabled={exportBusy} onclick={downloadDataExport}>Download</button>
+          {/if}
+        {/if}
+      </section>
+
+      <section aria-label="Data deletion">
+        <h4 class="text-sm font-semibold mb-2">Deletion</h4>
+        <div class="flex items-end gap-2 mb-2">
+          <div class="form-control flex-1">
+            <label class="label label-text" for="data-deletion-reason">Reason</label>
+            <input id="data-deletion-reason" class="input input-bordered input-sm" type="text" bind:value={deletionReason} />
+          </div>
+          <button class="btn btn-error btn-sm" disabled={deletionBusy} onclick={() => { confirmRequestDeletion = true; }}>Request deletion</button>
+        </div>
+        <div class="flex items-end gap-2 mb-2">
+          <div class="form-control flex-1">
+            <label class="label label-text" for="data-deletion-id">Deletion ID</label>
+            <input id="data-deletion-id" class="input input-bordered input-sm font-mono" type="text" bind:value={deletionIDInput} />
+          </div>
+          <button class="btn btn-ghost btn-sm" aria-label="Check deletion status" disabled={deletionBusy || !deletionIDInput.trim()} onclick={checkDeletionStatus}>Check status</button>
+        </div>
+        {#if deletionRequest}
+          <table class="table table-xs mb-2" aria-label="Data deletion request">
+            <tbody>
+              <tr><th>ID</th><td class="font-mono">{deletionRequest.id}</td></tr>
+              <tr><th>Status</th><td>{deletionRequest.status}</td></tr>
+              <tr><th>Reason</th><td>{deletionRequest.reason || '—'}</td></tr>
+              <tr><th>Requested</th><td>{deletionRequest.requested_at ? formatDateTime(deletionRequest.requested_at) : '—'}</td></tr>
+              <tr><th>Grace period ends</th><td>{deletionRequest.grace_period_ends_at ? formatDateTime(deletionRequest.grace_period_ends_at) : '—'}</td></tr>
+              <tr><th>Cancelled</th><td>{deletionRequest.cancelled_at ? formatDateTime(deletionRequest.cancelled_at) : '—'}</td></tr>
+              {#if deletionRequest.error_message}
+                <tr><th>Error</th><td class="text-error">{deletionRequest.error_message}</td></tr>
+              {/if}
+            </tbody>
+          </table>
+          {#if deletionRequest.status === 'pending'}
+            <button class="btn btn-ghost btn-sm text-error" disabled={deletionBusy} onclick={submitCancelDeletion}>Cancel deletion</button>
+          {/if}
+        {/if}
+      </section>
+
+      <div class="modal-action">
+        <button class="btn btn-ghost btn-sm" onclick={closeDataRequests}>Close</button>
+      </div>
+    </div>
+    <div class="modal-backdrop" role="none" onclick={closeDataRequests} onkeydown={closeDataRequests}></div>
+  </div>
+  {#if confirmRequestDeletion}
+    <div class="modal modal-open" role="dialog" aria-modal="true" aria-label="Request deletion confirmation">
+      <div class="modal-box max-w-sm">
+        <h3 class="text-base font-semibold mb-2">Request Data Deletion?</h3>
+        <p class="text-sm text-base-content/70">
+          The data of <span class="font-mono font-semibold">{userForDataRequests.username}</span> will be deleted after the grace period, unless the request is cancelled before it ends.
+        </p>
+        <div class="modal-action">
+          <button class="btn btn-ghost btn-sm" onclick={() => { confirmRequestDeletion = false; }}>Cancel</button>
+          <button class="btn btn-error btn-sm" disabled={deletionBusy} onclick={submitRequestDeletion}>{deletionBusy ? 'Requesting…' : 'Request'}</button>
+        </div>
+      </div>
+      <div class="modal-backdrop" role="none" onclick={() => { confirmRequestDeletion = false; }} onkeydown={() => { confirmRequestDeletion = false; }}></div>
+    </div>
+  {/if}
 {/if}
 
 <!-- =========================================================================
