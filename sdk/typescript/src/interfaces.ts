@@ -810,6 +810,98 @@ export interface UpdateRoleRequest {
   permissions?: string[];
 }
 
+// IAMProviderType is the protocol of a tenant's external identity provider.
+export type IAMProviderType = 'oidc' | 'saml' | 'oauth2' | 'ldap';
+
+// RegisterIAMProviderRequest registers a federation provider for a tenant.
+// Wire spelling: requests send `issuer` and `claim_mapping`, while the
+// IAMExternalProvider response carries `issuer_url` and `claim_mappings`.
+// Each is mirrored here exactly as the server spells it.
+export interface RegisterIAMProviderRequest {
+  /** Optional provider ID; the server generates one when omitted. */
+  id?: string;
+  name: string;
+  type: IAMProviderType;
+  enabled: boolean;
+  client_id: string;
+  client_secret: string;
+  /** Issuer URL (the response spells it `issuer_url`). */
+  issuer?: string;
+  auth_url?: string;
+  token_url?: string;
+  userinfo_url?: string;
+  jwks_url?: string;
+  scopes?: string[];
+  /** Claim mapping (the response spells it `claim_mappings`). */
+  claim_mapping?: Record<string, string>;
+  metadata?: Record<string, unknown>;
+}
+
+// UpdateIAMProviderRequest holds a provider's updatable fields; omitted fields
+// are left unchanged. Like RegisterIAMProviderRequest it sends `issuer` and
+// `claim_mapping`, which the response spells `issuer_url` and `claim_mappings`.
+export interface UpdateIAMProviderRequest {
+  name?: string;
+  enabled?: boolean;
+  client_id?: string;
+  client_secret?: string;
+  /** Issuer URL (the response spells it `issuer_url`). */
+  issuer?: string;
+  auth_url?: string;
+  token_url?: string;
+  userinfo_url?: string;
+  jwks_url?: string;
+  scopes?: string[];
+  /** Claim mapping (the response spells it `claim_mappings`). */
+  claim_mapping?: Record<string, string>;
+  metadata?: Record<string, unknown>;
+}
+
+// IAMExternalProvider is a tenant's federation provider as the server returns
+// it. Times are RFC 3339 strings. It carries `issuer_url` and `claim_mappings`,
+// where the requests send `issuer` and `claim_mapping`.
+export interface IAMExternalProvider {
+  id: string;
+  tenant_id: string;
+  name: string;
+  type: IAMProviderType;
+  enabled: boolean;
+  client_id: string;
+  /** Always sent empty by the server; the secret is never returned. */
+  client_secret: string;
+  /** Issuer URL (requests spell it `issuer`). */
+  issuer_url: string;
+  auth_url?: string;
+  token_url?: string;
+  userinfo_url?: string;
+  jwks_url?: string;
+  scopes: string[];
+  /** Claim mappings (requests spell it `claim_mapping`). */
+  claim_mappings?: Record<string, unknown>;
+  auto_provision: boolean;
+  allow_linking: boolean;
+  default_roles?: string[];
+  default_scopes?: string[];
+  allowed_email_domains?: string[];
+  require_explicit_role_mapping?: boolean;
+  created: string;
+  updated: string;
+}
+
+// ListIAMProvidersResponse is one page of a tenant's federation providers.
+export interface ListIAMProvidersResponse {
+  providers: IAMExternalProvider[];
+  limit: number;
+  offset: number;
+}
+
+// ListIAMProvidersOptions pages and filters listProviders.
+export interface ListIAMProvidersOptions {
+  limit?: number;
+  offset?: number;
+  type?: IAMProviderType;
+}
+
 // CreatePolicyRequest defines a new ABAC policy.
 export interface CreatePolicyRequest {
   name: string;
@@ -1463,6 +1555,31 @@ export interface IAMClient {
   // updateRole updates a role's mutable fields.
   // Maps to PUT /api/v1/tenants/{tenantID}/roles/{roleID}
   updateRole(tenantID: string, roleID: string, req: UpdateRoleRequest): Promise<IAMRole>;
+
+  // getRole returns one role of a tenant.
+  // Maps to GET /api/v1/tenants/{tenantID}/roles/{roleID}
+  getRole(tenantID: string, roleID: string): Promise<IAMRole>;
+
+  // registerProvider registers a federation provider for a tenant (201).
+  // Maps to POST /api/v1/tenants/{tenantID}/providers/
+  registerProvider(tenantID: string, req: RegisterIAMProviderRequest): Promise<IAMExternalProvider>;
+
+  // listProviders returns one page of a tenant's federation providers,
+  // optionally filtered by type.
+  // Maps to GET /api/v1/tenants/{tenantID}/providers/?limit=&offset=&type=
+  listProviders(tenantID: string, opts?: ListIAMProvidersOptions): Promise<ListIAMProvidersResponse>;
+
+  // getProvider returns one federation provider of a tenant.
+  // Maps to GET /api/v1/tenants/{tenantID}/providers/{providerID}
+  getProvider(tenantID: string, providerID: string): Promise<IAMExternalProvider>;
+
+  // updateProvider updates a federation provider; omitted fields are left unchanged.
+  // Maps to PUT /api/v1/tenants/{tenantID}/providers/{providerID}
+  updateProvider(tenantID: string, providerID: string, req: UpdateIAMProviderRequest): Promise<IAMExternalProvider>;
+
+  // deleteProvider removes a federation provider from a tenant (204).
+  // Maps to DELETE /api/v1/tenants/{tenantID}/providers/{providerID}
+  deleteProvider(tenantID: string, providerID: string): Promise<void>;
 
   // deleteRole removes a role from a tenant.
   // Maps to DELETE /api/v1/tenants/{tenantID}/roles/{roleID}
