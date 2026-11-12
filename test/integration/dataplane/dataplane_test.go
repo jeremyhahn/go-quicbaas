@@ -110,3 +110,32 @@ func TestNewBearerTransport_DefaultsBase(t *testing.T) {
 	require.NoError(t, err)
 	assert.Same(t, http.DefaultTransport, transport.base)
 }
+
+func targetSource(ctx context.Context) (string, error) {
+	return "tok-" + Target(ctx), nil
+}
+
+func TestBearerCredentials_RecordsTheTarget(t *testing.T) {
+	creds, err := NewBearerCredentials(targetSource)
+	require.NoError(t, err)
+
+	md, err := creds.GetRequestMetadata(context.Background(), "https://test-node2:50051/pkg.Svc")
+	require.NoError(t, err)
+	assert.Equal(t, map[string]string{"authorization": "Bearer tok-https://test-node2:50051/pkg.Svc"}, md)
+}
+
+func TestBearerTransport_RecordsTheTarget(t *testing.T) {
+	base := &recordingTransport{}
+	transport, err := NewBearerTransport(targetSource, base)
+	require.NoError(t, err)
+
+	req, err := http.NewRequest(http.MethodGet, "https://test-node2:8080/api/v1/kv/a/b", nil)
+	require.NoError(t, err)
+
+	resp, err := transport.RoundTrip(req)
+	require.NoError(t, err)
+	require.NoError(t, resp.Body.Close())
+
+	require.NotNil(t, base.got)
+	assert.Equal(t, "Bearer tok-https://test-node2:8080/api/v1/kv/a/b", base.got.Header.Get("Authorization"))
+}
