@@ -38,6 +38,11 @@ import type {
   TSQueryResponse,
   TimeSeriesClient,
   VectorNamespace,
+  NamespaceInfo,
+  NamespaceStats,
+  RebuildIndexRequest,
+  RebuildIndexResponse,
+  IndexProgress,
   VectorSearchResult,
   VectorsClient,
   OrchestratorClient,
@@ -1637,6 +1642,33 @@ class RestVectorsClient implements VectorsClient {
     await this.fetchJSON<void>(`/api/v1/vector/namespaces/${encodeURIComponent(namespace)}`, {
       method: 'DELETE',
     });
+  }
+
+  // getNamespace maps to GET /api/v1/vector/namespaces/{namespace}
+  async getNamespace(namespace: string): Promise<NamespaceInfo> {
+    return this.fetchJSON<NamespaceInfo>(`/api/v1/vector/namespaces/${encodeURIComponent(namespace)}`);
+  }
+
+  // getNamespaceStats maps to GET /api/v1/vector/namespaces/{namespace}/stats
+  async getNamespaceStats(namespace: string): Promise<NamespaceStats> {
+    return this.fetchJSON<NamespaceStats>(
+      `/api/v1/vector/namespaces/${encodeURIComponent(namespace)}/stats`,
+    );
+  }
+
+  // rebuildIndex maps to POST /api/v1/vector/namespaces/{namespace}/index/rebuild
+  async rebuildIndex(namespace: string, req: RebuildIndexRequest): Promise<RebuildIndexResponse> {
+    return this.fetchJSON<RebuildIndexResponse>(
+      `/api/v1/vector/namespaces/${encodeURIComponent(namespace)}/index/rebuild`,
+      { method: 'POST', body: JSON.stringify(req) },
+    );
+  }
+
+  // getIndexProgress maps to GET /api/v1/vector/namespaces/{namespace}/index/progress?operation_id=
+  async getIndexProgress(namespace: string, operationID: string): Promise<IndexProgress> {
+    return this.fetchJSON<IndexProgress>(
+      `/api/v1/vector/namespaces/${encodeURIComponent(namespace)}/index/progress?operation_id=${encodeURIComponent(operationID)}`,
+    );
   }
 
   // searchSimilar maps to POST /api/v1/vector/namespaces/{namespace}/search/similar
