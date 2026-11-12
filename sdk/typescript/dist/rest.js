@@ -2545,6 +2545,36 @@ class RestIAMClient {
     async revokeAllUserSessions(tenantID, userID) {
         await this.fetchJSON(`/api/v1/tenants/${encodeURIComponent(tenantID)}/users/${encodeURIComponent(userID)}/sessions`, { method: 'DELETE' });
     }
+    // Maps to GET /api/v1/tenants/{tenantID}/apps/?limit=&offset=
+    async listApps(tenantID, opts) {
+        const params = new URLSearchParams();
+        if (opts?.limit !== undefined)
+            params.set('limit', String(opts.limit));
+        if (opts?.offset !== undefined)
+            params.set('offset', String(opts.offset));
+        const qs = params.toString();
+        return this.fetchJSON(`/api/v1/tenants/${encodeURIComponent(tenantID)}/apps/${qs ? `?${qs}` : ''}`);
+    }
+    // Maps to POST /api/v1/tenants/{tenantID}/apps/ (201)
+    async registerApp(tenantID, req) {
+        return this.fetchJSON(`/api/v1/tenants/${encodeURIComponent(tenantID)}/apps/`, { method: 'POST', body: JSON.stringify(req) });
+    }
+    // Maps to GET /api/v1/tenants/{tenantID}/apps/{clientID}
+    async getApp(tenantID, clientID) {
+        return this.fetchJSON(`/api/v1/tenants/${encodeURIComponent(tenantID)}/apps/${encodeURIComponent(clientID)}`);
+    }
+    // Maps to PUT /api/v1/tenants/{tenantID}/apps/{clientID}
+    async updateApp(tenantID, clientID, req) {
+        return this.fetchJSON(`/api/v1/tenants/${encodeURIComponent(tenantID)}/apps/${encodeURIComponent(clientID)}`, { method: 'PUT', body: JSON.stringify({ ...req, client_id: clientID }) });
+    }
+    // Maps to DELETE /api/v1/tenants/{tenantID}/apps/{clientID} (204)
+    async deleteApp(tenantID, clientID) {
+        await this.fetchJSON(`/api/v1/tenants/${encodeURIComponent(tenantID)}/apps/${encodeURIComponent(clientID)}`, { method: 'DELETE' });
+    }
+    // Maps to POST /api/v1/tenants/{tenantID}/apps/{clientID}/rotate-secret
+    async rotateAppSecret(tenantID, clientID) {
+        return this.fetchJSON(`/api/v1/tenants/${encodeURIComponent(tenantID)}/apps/${encodeURIComponent(clientID)}/rotate-secret`, { method: 'POST' });
+    }
     // Maps to PATCH /api/v1/tenants/{tenantID}/quotas (204)
     async updateTenantQuotas(tenantID, quotas) {
         await this.fetchJSON(`/api/v1/tenants/${encodeURIComponent(tenantID)}/quotas`, { method: 'PATCH', body: JSON.stringify(quotas) });
@@ -2576,6 +2606,38 @@ class RestIAMClient {
     async updateRole(tenantID, roleID, req) {
         return this.fetchJSON(`/api/v1/tenants/${encodeURIComponent(tenantID)}/roles/${encodeURIComponent(roleID)}`, { method: 'PUT', body: JSON.stringify(req) });
     }
+    // Maps to GET /api/v1/tenants/{tenantID}/roles/{roleID}
+    async getRole(tenantID, roleID) {
+        return this.fetchJSON(`/api/v1/tenants/${encodeURIComponent(tenantID)}/roles/${encodeURIComponent(roleID)}`);
+    }
+    // Maps to POST /api/v1/tenants/{tenantID}/providers/
+    async registerProvider(tenantID, req) {
+        return this.fetchJSON(`/api/v1/tenants/${encodeURIComponent(tenantID)}/providers/`, { method: 'POST', body: JSON.stringify(req) });
+    }
+    // Maps to GET /api/v1/tenants/{tenantID}/providers/?limit=&offset=&type=
+    async listProviders(tenantID, opts) {
+        const q = [];
+        if (opts?.limit !== undefined)
+            q.push(`limit=${encodeURIComponent(String(opts.limit))}`);
+        if (opts?.offset !== undefined)
+            q.push(`offset=${encodeURIComponent(String(opts.offset))}`);
+        if (opts?.type !== undefined)
+            q.push(`type=${encodeURIComponent(opts.type)}`);
+        const qs = q.length > 0 ? `?${q.join('&')}` : '';
+        return this.fetchJSON(`/api/v1/tenants/${encodeURIComponent(tenantID)}/providers/${qs}`);
+    }
+    // Maps to GET /api/v1/tenants/{tenantID}/providers/{providerID}
+    async getProvider(tenantID, providerID) {
+        return this.fetchJSON(`/api/v1/tenants/${encodeURIComponent(tenantID)}/providers/${encodeURIComponent(providerID)}`);
+    }
+    // Maps to PUT /api/v1/tenants/{tenantID}/providers/{providerID}
+    async updateProvider(tenantID, providerID, req) {
+        return this.fetchJSON(`/api/v1/tenants/${encodeURIComponent(tenantID)}/providers/${encodeURIComponent(providerID)}`, { method: 'PUT', body: JSON.stringify(req) });
+    }
+    // Maps to DELETE /api/v1/tenants/{tenantID}/providers/{providerID}
+    async deleteProvider(tenantID, providerID) {
+        await this.fetchJSON(`/api/v1/tenants/${encodeURIComponent(tenantID)}/providers/${encodeURIComponent(providerID)}`, { method: 'DELETE' });
+    }
     async deleteRole(tenantID, roleID) {
         await this.fetchJSON(`/api/v1/tenants/${encodeURIComponent(tenantID)}/roles/${encodeURIComponent(roleID)}`, { method: 'DELETE' });
     }
@@ -2593,6 +2655,27 @@ class RestIAMClient {
     }
     async deletePolicy(tenantID, policyName) {
         await this.fetchJSON(`/api/v1/tenants/${encodeURIComponent(tenantID)}/policies/${encodeURIComponent(policyName)}`, { method: 'DELETE' });
+    }
+    // Maps to GET /api/v1/tenants/{tenantID}/policies/{policyName}
+    async getPolicy(tenantID, policyName) {
+        return this.fetchJSON(`/api/v1/tenants/${encodeURIComponent(tenantID)}/policies/${encodeURIComponent(policyName)}`);
+    }
+    // Maps to POST /api/v1/tenants/{tenantID}/policies/validate[?name=]
+    async validatePolicy(tenantID, req, name) {
+        const query = name !== undefined ? `?name=${encodeURIComponent(name)}` : '';
+        return this.fetchJSON(`/api/v1/tenants/${encodeURIComponent(tenantID)}/policies/validate${query}`, { method: 'POST', body: JSON.stringify(req) });
+    }
+    // Maps to POST /api/v1/tenants/{tenantID}/policies/test
+    async testPolicy(tenantID, req) {
+        return this.fetchJSON(`/api/v1/tenants/${encodeURIComponent(tenantID)}/policies/test`, { method: 'POST', body: JSON.stringify(req) });
+    }
+    // Maps to POST /api/v1/tenants/{tenantID}/policies/simulate
+    async simulatePolicy(tenantID, req) {
+        return this.fetchJSON(`/api/v1/tenants/${encodeURIComponent(tenantID)}/policies/simulate`, { method: 'POST', body: JSON.stringify(req) });
+    }
+    // Maps to POST /api/v1/tenants/{tenantID}/policies/effective-permissions
+    async getEffectivePermissions(tenantID, req) {
+        return this.fetchJSON(`/api/v1/tenants/${encodeURIComponent(tenantID)}/policies/effective-permissions`, { method: 'POST', body: JSON.stringify(req) });
     }
     // THE TENANT IS A PATH SEGMENT, and it is not optional. Invitations live in
     // their tenant's own store, so a token issued for one tenant is simply absent

@@ -211,6 +211,79 @@ export interface UpdateRoleRequest {
     description?: string;
     permissions?: string[];
 }
+export type IAMProviderType = 'oidc' | 'saml' | 'oauth2' | 'ldap';
+export interface RegisterIAMProviderRequest {
+    /** Optional provider ID; the server generates one when omitted. */
+    id?: string;
+    name: string;
+    type: IAMProviderType;
+    enabled: boolean;
+    client_id: string;
+    client_secret: string;
+    /** Issuer URL (the response spells it `issuer_url`). */
+    issuer?: string;
+    auth_url?: string;
+    token_url?: string;
+    userinfo_url?: string;
+    jwks_url?: string;
+    scopes?: string[];
+    /** Claim mapping (the response spells it `claim_mappings`). */
+    claim_mapping?: Record<string, string>;
+    metadata?: Record<string, unknown>;
+}
+export interface UpdateIAMProviderRequest {
+    name?: string;
+    enabled?: boolean;
+    client_id?: string;
+    client_secret?: string;
+    /** Issuer URL (the response spells it `issuer_url`). */
+    issuer?: string;
+    auth_url?: string;
+    token_url?: string;
+    userinfo_url?: string;
+    jwks_url?: string;
+    scopes?: string[];
+    /** Claim mapping (the response spells it `claim_mappings`). */
+    claim_mapping?: Record<string, string>;
+    metadata?: Record<string, unknown>;
+}
+export interface IAMExternalProvider {
+    id: string;
+    tenant_id: string;
+    name: string;
+    type: IAMProviderType;
+    enabled: boolean;
+    client_id: string;
+    /** Always sent empty by the server; the secret is never returned. */
+    client_secret: string;
+    /** Issuer URL (requests spell it `issuer`). */
+    issuer_url: string;
+    auth_url?: string;
+    token_url?: string;
+    userinfo_url?: string;
+    jwks_url?: string;
+    scopes: string[];
+    /** Claim mappings (requests spell it `claim_mapping`). */
+    claim_mappings?: Record<string, unknown>;
+    auto_provision: boolean;
+    allow_linking: boolean;
+    default_roles?: string[];
+    default_scopes?: string[];
+    allowed_email_domains?: string[];
+    require_explicit_role_mapping?: boolean;
+    created: string;
+    updated: string;
+}
+export interface ListIAMProvidersResponse {
+    providers: IAMExternalProvider[];
+    limit: number;
+    offset: number;
+}
+export interface ListIAMProvidersOptions {
+    limit?: number;
+    offset?: number;
+    type?: IAMProviderType;
+}
 export interface CreatePolicyRequest {
     name: string;
     description?: string;
@@ -219,6 +292,92 @@ export interface CreatePolicyRequest {
 export interface UpdatePolicyRequest {
     description?: string;
     spec_yaml?: string;
+}
+export interface IAMSubject {
+    id: string;
+    name?: string;
+    email?: string;
+    tenant?: string;
+    tenant_id: string;
+    roles?: string[];
+    groups?: string[];
+    authenticated: boolean;
+    mfa_verified?: boolean;
+    mfa_timestamp?: string;
+    last_login?: string;
+}
+export interface IAMCheckRequest {
+    subject: IAMSubject;
+    action: string;
+    resource: string;
+}
+export interface IAMCheckResponse {
+    allowed: boolean;
+    matched_policy?: string;
+    matched_rule?: string;
+    reason?: string;
+}
+export interface IAMPolicyDocument {
+    apiVersion: string;
+    kind: string;
+    metadata: {
+        name: string;
+        tenant: string;
+        description?: string;
+        labels?: Record<string, string>;
+        priority?: number;
+        created?: string;
+        updated?: string;
+    };
+    spec: {
+        subjects: Record<string, unknown>;
+        variables?: Record<string, string>;
+        rules: unknown[];
+    };
+    load_error?: {
+        reason: string;
+        unknown_keys?: string[];
+    };
+}
+export interface IAMPolicyValidationResult {
+    valid: boolean;
+    errors?: string[];
+}
+export interface IAMPolicySimulationRequest {
+    policy: IAMPolicyDocument;
+    check_request: IAMCheckRequest;
+    include_trace?: boolean;
+}
+export interface IAMEvaluationStep {
+    step_number: number;
+    policy_name: string;
+    rule_name?: string;
+    action: string;
+    result: boolean;
+    details?: string;
+}
+export interface IAMPolicySimulationResult {
+    allowed: boolean;
+    matched_policy?: string;
+    matched_rule?: string;
+    evaluation_steps?: IAMEvaluationStep[];
+    reason?: string;
+}
+export interface IAMEffectivePermissionsRequest {
+    subject: IAMSubject;
+    resource_patterns: string[];
+    actions?: string[];
+    include_deny_details?: boolean;
+}
+export interface IAMPermissionSet {
+    allowed: string[];
+    denied?: string[];
+    sources?: Record<string, string[]>;
+}
+export interface IAMEffectivePermissionsResult {
+    subject: IAMSubject;
+    permissions: Record<string, IAMPermissionSet>;
+    total_policies_evaluated: number;
 }
 export type ConsentPurpose = 'marketing' | 'analytics' | 'personalization' | 'third_party' | 'data_processing' | 'data_retention' | 'functional';
 export type ConsentStatus = 'granted' | 'denied' | 'withdrawn' | 'pending';
@@ -393,6 +552,53 @@ export interface IAMSession {
     ip_address: string;
     user_agent: string;
     device_info: IAMSessionDeviceInfo | null;
+}
+export interface IAMApplication {
+    client_id: string;
+    name: string;
+    tenant_id: string;
+    client_secret?: string;
+    redirect_uris: string[];
+    resource_prefix?: string;
+    scopes?: string[];
+    default_audience?: string;
+    grant_types: string[];
+    response_types: string[];
+    token_endpoint_auth_method?: string;
+    mtls_cert_thumbprint?: string;
+    mtls_subject_dn?: string;
+    mtls_san_dns?: string;
+    created: string;
+    updated: string;
+}
+export interface RegisterIAMAppRequest {
+    name: string;
+    redirect_uris: string[];
+    resource_prefix?: string;
+    grant_types?: string[];
+    response_types?: string[];
+    pkce_required: boolean;
+    token_endpoint_auth_method?: string;
+}
+export interface UpdateIAMAppRequest {
+    name?: string;
+    redirect_uris?: string[];
+    grant_types?: string[];
+    response_types?: string[];
+    resource_prefix?: string;
+    default_audience?: string;
+    scopes?: string[];
+    token_endpoint_auth_method?: string;
+}
+export interface ListIAMAppsOptions {
+    limit?: number;
+    offset?: number;
+}
+export interface ListIAMAppsResponse {
+    applications: IAMApplication[];
+    apps: IAMApplication[];
+    limit: number;
+    offset: number;
 }
 export interface WebAuthnCredentialSummary {
     id: string;
@@ -598,18 +804,35 @@ export interface IAMClient {
     getUser(tenantID: string, userID: string): Promise<IAMUser>;
     listUserSessions(tenantID: string, userID: string, limit?: number): Promise<ListIAMSessionsResponse>;
     revokeAllUserSessions(tenantID: string, userID: string): Promise<void>;
+    listApps(tenantID: string, opts?: ListIAMAppsOptions): Promise<ListIAMAppsResponse>;
+    registerApp(tenantID: string, req: RegisterIAMAppRequest): Promise<IAMApplication>;
+    getApp(tenantID: string, clientID: string): Promise<IAMApplication>;
+    updateApp(tenantID: string, clientID: string, req: UpdateIAMAppRequest): Promise<IAMApplication>;
+    deleteApp(tenantID: string, clientID: string): Promise<void>;
+    rotateAppSecret(tenantID: string, clientID: string): Promise<IAMApplication>;
     updateTenantQuotas(tenantID: string, quotas: TenantQuotas): Promise<void>;
     updateTenantEntitlements(tenantID: string, entitlements: TenantEntitlements): Promise<void>;
     provisionTenant(req: ProvisionTenantRequest): Promise<ProvisionTenantResponse>;
     listRoles(tenantID: string): Promise<ListRolesResponse>;
     createRole(tenantID: string, req: CreateRoleRequest): Promise<IAMRole>;
     updateRole(tenantID: string, roleID: string, req: UpdateRoleRequest): Promise<IAMRole>;
+    getRole(tenantID: string, roleID: string): Promise<IAMRole>;
+    registerProvider(tenantID: string, req: RegisterIAMProviderRequest): Promise<IAMExternalProvider>;
+    listProviders(tenantID: string, opts?: ListIAMProvidersOptions): Promise<ListIAMProvidersResponse>;
+    getProvider(tenantID: string, providerID: string): Promise<IAMExternalProvider>;
+    updateProvider(tenantID: string, providerID: string, req: UpdateIAMProviderRequest): Promise<IAMExternalProvider>;
+    deleteProvider(tenantID: string, providerID: string): Promise<void>;
     deleteRole(tenantID: string, roleID: string): Promise<void>;
     reconcileRoles(tenantID: string): Promise<ReconcileRolesResponse>;
     listPolicies(tenantID: string): Promise<ListPoliciesResponse>;
     createPolicy(tenantID: string, req: CreatePolicyRequest): Promise<IAMPolicy>;
     updatePolicy(tenantID: string, policyName: string, req: UpdatePolicyRequest): Promise<IAMPolicy>;
     deletePolicy(tenantID: string, policyName: string): Promise<void>;
+    getPolicy(tenantID: string, policyName: string): Promise<IAMPolicyDocument>;
+    validatePolicy(tenantID: string, req: CreatePolicyRequest, name?: string): Promise<IAMPolicyValidationResult>;
+    testPolicy(tenantID: string, req: IAMCheckRequest): Promise<IAMCheckResponse>;
+    simulatePolicy(tenantID: string, req: IAMPolicySimulationRequest): Promise<IAMPolicySimulationResult>;
+    getEffectivePermissions(tenantID: string, req: IAMEffectivePermissionsRequest): Promise<IAMEffectivePermissionsResult>;
     getInvite(tenantID: string, token: string): Promise<import('./types.js').InviteMetadata>;
     activateFIDO2Begin(tenantID: string, token: string): Promise<Record<string, unknown>>;
     activateFIDO2Finish(tenantID: string, token: string, credential: Record<string, unknown>): Promise<import('./types.js').ActivationResponse>;
