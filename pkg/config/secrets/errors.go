@@ -87,6 +87,15 @@ type ResolutionFailedError struct {
 
 	// Reason is the reason for the failure
 	Reason string
+
+	// Cause is the underlying failure, may be nil
+	Cause error
+}
+
+// Unwrap returns the underlying cause, so errors.Is and errors.As can
+// reach the error the secret provider returned.
+func (e *ResolutionFailedError) Unwrap() error {
+	return e.Cause
 }
 
 // Error implements the error interface.
@@ -226,6 +235,7 @@ func NewResolutionFailedError(op, uri, reason string, cause error) *dberrors.QBE
 		Err: &ResolutionFailedError{
 			URI:    uri,
 			Reason: reason,
+			Cause:  cause,
 		},
 		Context: map[string]interface{}{
 			"uri":    uri,

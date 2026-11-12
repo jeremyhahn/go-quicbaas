@@ -1490,3 +1490,26 @@ func TestErrorsAs_AllTypes(t *testing.T) {
 		})
 	}
 }
+
+func TestNewResolutionFailedError_UnwrapsCause(t *testing.T) {
+	sentinel := stderrors.New("kms down")
+	err := NewResolutionFailedError("op", "kms://a", "failed", sentinel)
+	if !stderrors.Is(err, sentinel) {
+		t.Fatalf("errors.Is(err, sentinel) = false, want true")
+	}
+	if !IsResolutionFailed(err) {
+		t.Fatalf("IsResolutionFailed(err) = false, want true")
+	}
+	if !strings.Contains(err.Error(), "kms://a") {
+		t.Fatalf("Error() = %q, want it to name the URI", err.Error())
+	}
+
+	nilCause := NewResolutionFailedError("op", "kms://a", "failed", nil)
+	var rfe *ResolutionFailedError
+	if !stderrors.As(nilCause, &rfe) {
+		t.Fatalf("errors.As(*ResolutionFailedError) = false, want true")
+	}
+	if got := stderrors.Unwrap(rfe); got != nil {
+		t.Fatalf("errors.Unwrap(inner) = %v, want nil", got)
+	}
+}
