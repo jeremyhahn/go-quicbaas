@@ -15,6 +15,7 @@ package grpc
 
 import (
 	"context"
+	"strconv"
 	"time"
 
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -200,10 +201,15 @@ func (h *iamHandler) handleListUsers(ctx context.Context, client iampb.IAMServic
 
 	pageSize, _ := getInt(requestData, "page_size")
 	roleID, _ := getString(requestData, "role_id")
+	offset, err := iamPageOffset("handleListUsers", requestData)
+	if err != nil {
+		return nil, err
+	}
 
 	pbReq := &iampb.ListUsersRequest{
 		TenantId: tenantID,
 		Limit:    int32(pageSize),
+		Offset:   offset,
 		Role:     roleID,
 	}
 
@@ -220,11 +226,33 @@ func (h *iamHandler) handleListUsers(ctx context.Context, client iampb.IAMServic
 	}
 
 	return &iam.ListUsersResponse{
-		Users: users,
-		Pagination: iam.PaginationInfo{
-			TotalCount: int(resp.Total),
-		},
+		Users:      users,
+		Pagination: iamPagination(offset, pageSize, len(resp.Users), resp.Total),
 	}, nil
+}
+
+// iamPageOffset decodes the page_token (a decimal offset) the list calls carry.
+func iamPageOffset(op string, m map[string]interface{}) (int32, error) {
+	token, _ := getString(m, "page_token")
+	if token == "" {
+		return 0, nil
+	}
+	n, err := strconv.ParseInt(token, 10, 32)
+	if err != nil || n < 0 {
+		return 0, errors.NewInvalidInput(op, "invalid page token")
+	}
+	return int32(n), nil
+}
+
+// iamPagination builds the page info, with a next token while items remain.
+func iamPagination(offset int32, pageSize, returned int, total int32) iam.PaginationInfo {
+	p := iam.PaginationInfo{TotalCount: int(total), PageSize: pageSize}
+	next := int(offset) + returned
+	if returned > 0 && next < int(total) {
+		p.NextPageToken = strconv.Itoa(next)
+		p.HasMore = true
+	}
+	return p
 }
 
 // handleAssignRole handles AssignRole requests.
@@ -462,9 +490,14 @@ func (h *iamHandler) handleListTenants(ctx context.Context, client iampb.IAMServ
 	}
 
 	pageSize, _ := getInt(reqMap, "page_size")
+	offset, err := iamPageOffset("handleListTenants", reqMap)
+	if err != nil {
+		return nil, err
+	}
 
 	pbReq := &iampb.ListTenantsRequest{
-		Limit: int32(pageSize),
+		Limit:  int32(pageSize),
+		Offset: offset,
 	}
 
 	resp, err := client.ListTenants(ctx, pbReq)
@@ -480,10 +513,8 @@ func (h *iamHandler) handleListTenants(ctx context.Context, client iampb.IAMServ
 	}
 
 	return &iam.ListTenantsResponse{
-		Tenants: tenants,
-		Pagination: iam.PaginationInfo{
-			TotalCount: int(resp.Total),
-		},
+		Tenants:    tenants,
+		Pagination: iamPagination(offset, pageSize, len(resp.Tenants), resp.Total),
 	}, nil
 }
 
@@ -609,10 +640,15 @@ func (h *iamHandler) handleListRoles(ctx context.Context, client iampb.IAMServic
 	requestData, _ := getMap(reqMap, "request")
 
 	pageSize, _ := getInt(requestData, "page_size")
+	offset, err := iamPageOffset("handleListRoles", requestData)
+	if err != nil {
+		return nil, err
+	}
 
 	pbReq := &iampb.ListRolesRequest{
 		TenantId: tenantID,
 		Limit:    int32(pageSize),
+		Offset:   offset,
 	}
 
 	resp, err := client.ListRoles(ctx, pbReq)
@@ -628,10 +664,8 @@ func (h *iamHandler) handleListRoles(ctx context.Context, client iampb.IAMServic
 	}
 
 	return &iam.ListRolesResponse{
-		Roles: roles,
-		Pagination: iam.PaginationInfo{
-			TotalCount: int(resp.Total),
-		},
+		Roles:      roles,
+		Pagination: iamPagination(offset, pageSize, len(resp.Roles), resp.Total),
 	}, nil
 }
 
