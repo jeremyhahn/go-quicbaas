@@ -53,10 +53,11 @@ func (r *countingRunner) run(_ context.Context, _, env []string) ([]byte, error)
 func newTestTokenSource(t *testing.T, runner ForgeTokenRunner, clock *fakeTokenClock) *CommandTokenSource {
 	t.Helper()
 	s, err := NewCommandTokenSource(CommandTokenSourceConfig{
-		Argv:   []string{testForgeTokenArgv, "--app", "pilot"},
-		Env:    []string{ForgeTokenEnvType + "=github"},
-		Runner: runner,
-		Clock:  clock.Now,
+		Argv:            []string{testForgeTokenArgv, "--app", "pilot"},
+		Env:             []string{ForgeTokenEnvType + "=github"},
+		AllowedBaseURLs: []string{testForgeBaseURL, "https://github.example.test/api/v3"},
+		Runner:          runner,
+		Clock:           clock.Now,
 	})
 	if err != nil {
 		t.Fatalf("NewCommandTokenSource: %v", err)
@@ -328,7 +329,7 @@ func TestCommandTokenSource_RunnerCancelledReturnsCtxErr(t *testing.T) {
 }
 
 func TestNewCommandTokenSource_Defaults(t *testing.T) {
-	s, err := NewCommandTokenSource(CommandTokenSourceConfig{Argv: []string{testForgeTokenArgv}})
+	s, err := NewCommandTokenSource(CommandTokenSourceConfig{Argv: []string{testForgeTokenArgv}, AllowedBaseURLs: []string{testForgeBaseURL}})
 	if err != nil {
 		t.Fatalf("NewCommandTokenSource: %v", err)
 	}
@@ -341,17 +342,39 @@ func TestNewCommandTokenSource_Defaults(t *testing.T) {
 	}
 }
 
+func TestCommandTokenSource_RefusesABaseURLNotAllowed(t *testing.T) {
+	clock := newFakeTokenClock()
+	runner := &countingRunner{stdout: tokenOutput(testForgeToken, testTokenEpoch.Add(time.Hour))}
+	s := newTestTokenSource(t, runner.run, clock)
+	ctx := context.Background()
+
+	_, err := s.ForgeToken(ctx, "https://attacker.test")
+	if !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("err = %v, want ErrInvalidInput", err)
+	}
+	if runner.calls.Load() != 0 {
+		t.Fatalf("runner calls = %d, want 0", runner.calls.Load())
+	}
+	assertNoLeak(t, err)
+
+	if _, err := s.ForgeToken(ctx, testForgeBaseURL+"/"); err != nil {
+		t.Fatalf("ForgeToken(trailing /): %v", err)
+	}
+}
+
 func TestNewCommandTokenSource_RefusesBadConfig(t *testing.T) {
+	allowed := []string{testForgeBaseURL}
 	cases := []struct {
 		name  string
 		cfg   CommandTokenSourceConfig
 		field string
 	}{
-		{"empty argv", CommandTokenSourceConfig{}, "argv"},
-		{"empty argv[0]", CommandTokenSourceConfig{Argv: []string{""}}, "argv"},
-		{"relative argv[0]", CommandTokenSourceConfig{Argv: []string{"bin/forge-mint"}}, "argv"},
-		{"negative refresh_before", CommandTokenSourceConfig{Argv: []string{testForgeTokenArgv}, RefreshBefore: -time.Second}, "refresh_before"},
-		{"negative timeout", CommandTokenSourceConfig{Argv: []string{testForgeTokenArgv}, Timeout: -time.Second}, "timeout"},
+		{"empty argv", CommandTokenSourceConfig{AllowedBaseURLs: allowed}, "argv"},
+		{"empty argv[0]", CommandTokenSourceConfig{Argv: []string{""}, AllowedBaseURLs: allowed}, "argv"},
+		{"relative argv[0]", CommandTokenSourceConfig{Argv: []string{"bin/forge-mint"}, AllowedBaseURLs: allowed}, "argv"},
+		{"negative refresh_before", CommandTokenSourceConfig{Argv: []string{testForgeTokenArgv}, AllowedBaseURLs: allowed, RefreshBefore: -time.Second}, "refresh_before"},
+		{"negative timeout", CommandTokenSourceConfig{Argv: []string{testForgeTokenArgv}, AllowedBaseURLs: allowed, Timeout: -time.Second}, "timeout"},
+		{"no allowed base URLs", CommandTokenSourceConfig{Argv: []string{testForgeTokenArgv}}, "allowed_base_urls"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -366,3 +389,11 @@ func TestNewCommandTokenSource_RefusesBadConfig(t *testing.T) {
 		})
 	}
 }
+
+func TestCommandTokenSource_RefusesABaseURLNotAllowed(t *testing.T) {
+	clock := newFakeTokenClock()
+	runner := &countingRunner{stdout: tokenOutput(testForgeToken, testTokenEpoch.Add(time.Hour))}
+	s := newTestTokenSource(t, runner.run, clock)
+	ctx := context.Background()
+
+	// DUPLICATE-BODY

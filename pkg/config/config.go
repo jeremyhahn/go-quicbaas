@@ -1197,6 +1197,11 @@ type SDLCForgeTokenCommand struct {
 	// shell runs it.
 	Argv []string `mapstructure:"argv"`
 
+	// AllowedBaseURLs are the forge API roots this command's token may be
+	// sent to. Required: a binding whose base_url is not listed is refused
+	// before the command runs.
+	AllowedBaseURLs []string `mapstructure:"allowed_base_urls"`
+
 	// RefreshBefore is how long before expires_at the command runs again.
 	// Zero takes 5m.
 	RefreshBefore time.Duration `mapstructure:"refresh_before"`

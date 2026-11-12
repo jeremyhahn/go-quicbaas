@@ -1104,6 +1104,16 @@ func (v *Validator) validateSDLCForgeTokenCommand(key, forgeType string, cmd SDL
 	case !filepath.IsAbs(cmd.Argv[0]):
 		v.addError(key+".argv", "must start with an absolute path; no shell runs it")
 	}
+	if len(cmd.AllowedBaseURLs) == 0 {
+		v.addError(key+".allowed_base_urls", "must name at least one forge API root the token may be sent to")
+	}
+	for i, raw := range cmd.AllowedBaseURLs {
+		u, err := url.Parse(raw)
+		if err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "" ||
+			u.User != nil || u.RawQuery != "" || u.Fragment != "" {
+			v.addError(key+".allowed_base_urls", fmt.Sprintf("entry %d must be an http(s) API root with no userinfo, query or fragment", i))
+		}
+	}
 	if cmd.RefreshBefore < 0 {
 		v.addError(key+".refresh_before", "must not be negative; zero takes 5m")
 	}

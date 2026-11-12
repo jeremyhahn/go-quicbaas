@@ -384,12 +384,15 @@ sdlc:
     # token_commands:               # per forge type (github, gitea); optional
     #   github:
     #     argv: ["/usr/local/bin/forge-mint", "--app", "factory"]
+    #     allowed_base_urls: ["https://api.github.com"]  # required; the token is sent nowhere else
     #     refresh_before: 5m        # run again this long before expires_at
     #     timeout: 30s              # one run
     #
     # A token command is node configuration only: no tenant, project or binding
     # can name one, and a binding of a listed forge type never reads its
-    # token_secret_ref. The command runs without a shell, with the daemon's
+    # token_secret_ref. A binding whose base_url is not in the command's
+    # allowed_base_urls is refused before the command runs or the cache is
+    # read. The command runs without a shell, with the daemon's
     # environment plus QUICBAAS_FORGE_TYPE and QUICBAAS_FORGE_BASE_URL, and
     # prints one JSON object on stdout: {"token": "...", "expires_at":
     # "<RFC 3339>"}. The token is cached per forge base URL and the command runs

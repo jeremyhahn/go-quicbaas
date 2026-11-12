@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -48,6 +49,11 @@ type CommandTokenSourceConfig struct {
 	// ForgeTokenEnvBaseURL is added per call.
 	Env []string
 
+	// AllowedBaseURLs are the forge API roots the token may be minted for
+	// and sent to; any other base URL is refused before the command runs.
+	// Required. Compared after trimming a trailing "/".
+	AllowedBaseURLs []string
+
 	// RefreshBefore is how long before expires_at the token is refreshed.
 	// Zero takes DefaultForgeTokenRefreshBefore.
 	RefreshBefore time.Duration
@@ -74,6 +80,9 @@ type CommandTokenSource struct {
 	timeout       time.Duration
 	runner        ForgeTokenRunner
 	clock         func() time.Time
+
+	// allowed holds the trimmed forge API roots the token may be sent to.
+	allowed map[string]bool
 
 	// entries maps a base URL to its *commandTokenEntry.
 	entries sync.Map
@@ -157,7 +166,15 @@ func NewCommandTokenSource(cfg CommandTokenSourceConfig) (*CommandTokenSource, e
 	if cfg.Timeout < 0 {
 		return nil, &ForgeTokenCommandConfigError{Field: "timeout", Reason: "must not be negative"}
 	}
+	if len(cfg.AllowedBaseURLs) == 0 {
+		return nil, &ForgeTokenCommandConfigError{Field: "allowed_base_urls", Reason: "must name at least one forge API root"}
+	}
+	allowed := make(map[string]bool, len(cfg.AllowedBaseURLs))
+	for _, u := range cfg.AllowedBaseURLs {
+		allowed[strings.TrimRight(u, "/")] = true
+	}
 	s := &CommandTokenSource{
+		allowed:       allowed,
 		argv:          append([]string(nil), cfg.Argv...),
 		env:           append([]string(nil), cfg.Env...),
 		refreshBefore: cfg.RefreshBefore,
@@ -186,6 +203,9 @@ func NewCommandTokenSource(cfg CommandTokenSourceConfig) (*CommandTokenSource, e
 func (s *CommandTokenSource) ForgeToken(ctx context.Context, baseURL string) (string, error) {
 	if err := ctx.Err(); err != nil {
 		return "", err
+	}
+	if !s.allowed[strings.TrimRight(baseURL, "/")] {
+		return "", &InvalidInputError{Field: "forge.base_url", Message: "is not a forge API root sdlc.forge.token_commands allows for the node's token: " + baseURL}
 	}
 	entry := s.entry(baseURL)
 	if token, ok := entry.fresh(s.clock()); ok {
