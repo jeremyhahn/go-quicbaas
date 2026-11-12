@@ -68,7 +68,11 @@ type (
 
 // Re-exported function values and helpers
 var (
-	NewCA                        = xkmssdk.NewCA
+	NewCA = xkmssdk.NewCA
+	// NewParentCA builds only the root CA from Params.Identity[0], uninitialized; the caller runs Init() or Load().
+	NewParentCA = xkmssdk.NewParentCA
+	// NewIntermediateCA builds the intermediate CA from Params.Identity[1], signed by an initialized parent.
+	NewIntermediateCA            = xkmssdk.NewIntermediateCA
 	DefaultMultiIdentityCAConfig = xkmssdk.DefaultMultiIdentityCAConfig
 
 	// CAIAKCommonName returns the subject common name ("iak-<model>-<serial>")
