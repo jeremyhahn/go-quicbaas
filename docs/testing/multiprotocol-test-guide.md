@@ -38,7 +38,9 @@ On first use in a test process, the system admin creates three things on the
 first REST endpoint's cluster:
 
 1. a tenant named `itest-dp-<unixnano>`;
-2. a role `integration-data-plane` holding exactly `dataplane.Permissions`
+2. a role named `integration-data-plane` (id `integration-data-plane-<tenant>`,
+   because qrdb claims role ids across all tenants) holding exactly
+   `dataplane.Permissions`
    (`kv:get`, `kv:put`, `kv:delete`, `kv:list`, `kv:range`, `batch:execute`);
 3. a PIV user bound to that role.
 

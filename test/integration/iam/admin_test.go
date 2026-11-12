@@ -18,11 +18,14 @@ package iam_test
 
 import (
 	"bytes"
+	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"strconv"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -1015,8 +1018,9 @@ func TestAdmin_StartImpersonation_Success(t *testing.T) {
 	defer cluster.Close()
 	admin := adminAPIView(t, cluster)
 
-	// Create super admin with impersonation permission
-	adminUserID := generateUniqueUserID()
+	// The server takes the acting admin from the bearer's uid claim, not
+	// from the request: grant the caller the impersonation permission.
+	adminUserID := callerUserID(t, admin)
 	createReq := AdminAssignmentRequest{
 		UserID:      adminUserID,
 		AdminRole:   "super_admin",
@@ -1027,12 +1031,27 @@ func TestAdmin_StartImpersonation_Success(t *testing.T) {
 	created := createTestAssignment(t, admin, createReq)
 	defer deleteTestAssignment(t, admin, created.ID)
 
+	// The target must be a real user of the request's tenant.
+	tenantID := generateUniqueTenantID()
+	require.NoError(t, cluster.asSystemAdmin().postJSON("/api/v1/tenants", map[string]interface{}{
+		"id":   tenantID,
+		"name": "Impersonation Test Tenant",
+	}, nil))
+	var target struct {
+		ID string `json:"id"`
+	}
+	require.NoError(t, cluster.asSystemAdmin().postJSON(fmt.Sprintf("/api/v1/tenants/%s/users", tenantID), map[string]interface{}{
+		"email":    generateUniqueEmail(),
+		"username": generateUniqueUsername(),
+	}, &target))
+	require.NotEmpty(t, target.ID, "created target user should have an id")
+	targetUserID := target.ID
+
 	// Start impersonation
-	targetUserID := generateUniqueUserID()
 	impersonationReq := ImpersonationRequest{
 		AdminUserID:  adminUserID,
 		TargetUserID: targetUserID,
-		TenantID:     "test-tenant",
+		TenantID:     tenantID,
 		Reason:       "Support ticket #12345 - user cannot access dashboard",
 		Duration:     "1h",
 	}
@@ -1059,11 +1078,29 @@ func TestAdmin_StartImpersonation_Success(t *testing.T) {
 	assert.NotEmpty(t, session.ID, "Session ID should not be empty")
 	assert.Equal(t, adminUserID, session.AdminUserID, "AdminUserID should match")
 	assert.Equal(t, targetUserID, session.TargetUserID, "TargetUserID should match")
-	assert.Equal(t, "test-tenant", session.TenantID, "TenantID should match")
+	assert.Equal(t, tenantID, session.TenantID, "TenantID should match")
 	assert.Equal(t, "Support ticket #12345 - user cannot access dashboard", session.Reason, "Reason should match")
 	assert.NotEmpty(t, session.StartedAt, "StartedAt should be set")
 	assert.NotEmpty(t, session.ExpiresAt, "ExpiresAt should be set")
 	assert.Nil(t, session.EndedAt, "EndedAt should be nil for active session")
+}
+
+// callerUserID returns the user ID the server authorizes for view: the
+// uid claim of its bearer JWT.
+func callerUserID(t *testing.T, view *testCluster) string {
+	t.Helper()
+	token, err := view.bearer(context.Background())
+	require.NoError(t, err, "caller bearer")
+	parts := strings.Split(token, ".")
+	require.Len(t, parts, 3, "caller bearer should be a JWT")
+	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
+	require.NoError(t, err, "decode caller bearer payload")
+	var claims struct {
+		UID string `json:"uid"`
+	}
+	require.NoError(t, json.Unmarshal(payload, &claims), "unmarshal caller bearer claims")
+	require.NotEmpty(t, claims.UID, "caller bearer should carry a uid claim")
+	return claims.UID
 }
 
 // TestAdmin_StartImpersonation_NotAllowed tests starting impersonation without permission.

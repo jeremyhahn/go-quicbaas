@@ -31,8 +31,17 @@ import (
 	"net/http"
 )
 
-// RoleID names the tenant role the data-plane principal is bound to.
+// RoleID names the tenant role the data-plane principal is bound to. It is
+// the role's name; its id is TenantRoleID, because qrdb claims a role id
+// across ALL tenants, so one fixed id would collide in every tenant after the
+// first.
 const RoleID = "integration-data-plane"
+
+// TenantRoleID returns the id of the data-plane role in tenantID: RoleID
+// suffixed with the tenant, so each suite process's tenant claims its own id.
+func TenantRoleID(tenantID string) string {
+	return RoleID + "-" + tenantID
+}
 
 // TenantPrefix prefixes the tenant each suite process provisions for its
 // data-plane principal.
