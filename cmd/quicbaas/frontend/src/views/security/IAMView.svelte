@@ -44,8 +44,9 @@
     UpdatePolicyRequest,
     ConsentPurpose,
     UserConsent,
+    MFAStatusResponse,
   } from '@quicbaas/sdk';
-  import { ShieldCheck, UserPlus, Pencil, Trash2, UserCheck, ToggleLeft, RefreshCw, FileCheck } from 'lucide-svelte';
+  import { ShieldCheck, UserPlus, Pencil, Trash2, UserCheck, ToggleLeft, RefreshCw, FileCheck, KeyRound } from 'lucide-svelte';
   import EmptyState from '../../components/core/EmptyState.svelte';
   import { routerStore, routeIAMTab } from '../../stores/router.svelte.ts';
   import { formatDateTime } from '../../lib/time.ts';
@@ -240,6 +241,18 @@
   let grantingConsent = $state(false);
   // The purpose whose withdraw is in flight, if any.
   let withdrawingPurpose: ConsentPurpose | null = $state(null);
+
+  // ---------------------------------------------------------------------------
+  // MFA dialog state
+  // ---------------------------------------------------------------------------
+
+  let userForMFA: IAMUser | null = $state(null);
+  let mfaStatus: MFAStatusResponse | null = $state(null);
+  let mfaLoading = $state(false);
+  let mfaError: string | null = $state(null);
+  // Set while the Disable MFA confirmation is shown.
+  let confirmDisableMFA = $state(false);
+  let disablingMFA = $state(false);
 
   // ---------------------------------------------------------------------------
   // Create Tenant dialog state
@@ -619,6 +632,62 @@
   function closeConsents(): void {
     userForConsents = null;
     consentsError = null;
+  }
+
+  async function loadUserMFA(user: IAMUser): Promise<void> {
+    mfaLoading = true;
+    try {
+      const client = await getSDKClient();
+      const status = await client.iam.getMFAStatus(selectedTenantID, user.id);
+      // Drop a response that lands after the dialog closed or moved to another user.
+      if (userForMFA?.id === user.id) {
+        mfaStatus = status;
+      }
+    } catch (e) {
+      if (userForMFA?.id === user.id) {
+        mfaError = e instanceof Error ? e.message : 'Failed to load MFA status';
+      }
+    } finally {
+      mfaLoading = false;
+    }
+  }
+
+  function openMFA(user: IAMUser): void {
+    userForMFA = user;
+    mfaStatus = null;
+    mfaError = null;
+    confirmDisableMFA = false;
+    disablingMFA = false;
+    void loadUserMFA(user);
+  }
+
+  function closeMFA(): void {
+    userForMFA = null;
+    mfaError = null;
+    confirmDisableMFA = false;
+  }
+
+  async function submitDisableMFA(): Promise<void> {
+    if (!userForMFA) return;
+    const user = userForMFA;
+    mfaError = null;
+    disablingMFA = true;
+    try {
+      const client = await getSDKClient();
+      await client.iam.disableMFA(selectedTenantID, user.id);
+      showToast({ message: `MFA disabled for "${user.username}"`, type: 'success' });
+      confirmDisableMFA = false;
+      if (userForMFA?.id === user.id) {
+        await loadUserMFA(user);
+      }
+    } catch (e) {
+      confirmDisableMFA = false;
+      if (userForMFA?.id === user.id) {
+        mfaError = e instanceof Error ? e.message : 'Failed to disable MFA';
+      }
+    } finally {
+      disablingMFA = false;
+    }
   }
 
   async function submitGrantConsent(): Promise<void> {
@@ -1130,6 +1199,14 @@
                   <FileCheck class="h-3 w-3" />
                 </button>
                 <button
+                  class="btn btn-ghost btn-xs"
+                  title="MFA"
+                  aria-label={`MFA of ${user.username}`}
+                  onclick={() => openMFA(user)}
+                >
+                  <KeyRound class="h-3 w-3" />
+                </button>
+                <button
                   class="btn btn-ghost btn-xs text-error"
                   title={`Delete user ${user.username}`}
                   aria-label={`Delete user ${user.username}`}
@@ -1528,6 +1605,73 @@
       </div>
     </div>
     <div class="modal-backdrop" role="none" onclick={closeConsents} onkeydown={closeConsents}></div>
+  </div>
+{/if}
+
+<!-- =========================================================================
+     MFA DIALOG
+     ========================================================================= -->
+{#if userForMFA}
+  <div class="modal modal-open" role="dialog" aria-modal="true" aria-label="MFA dialog">
+    <div class="modal-box max-w-md">
+      <h3 class="text-base font-semibold mb-4">MFA of <span class="font-mono text-primary">{userForMFA.username}</span></h3>
+      {#if mfaError}
+        <div class="alert alert-error text-sm mb-3" role="alert">{mfaError}</div>
+      {/if}
+      {#if mfaLoading && !mfaStatus}
+        <div class="flex items-center gap-2 py-2 mb-3">
+          <span class="loading loading-spinner loading-xs"></span>
+          <span class="text-sm text-base-content/50">Loading MFA status…</span>
+        </div>
+      {:else if mfaStatus}
+        <table class="table table-xs mb-3" aria-label="MFA status">
+          <tbody>
+            <tr>
+              <th>Status</th>
+              <td><span class="badge badge-xs {mfaStatus.enabled ? 'badge-success' : 'badge-ghost'}">{mfaStatus.enabled ? 'Enabled' : 'Disabled'}</span></td>
+            </tr>
+            {#if mfaStatus.method}
+              <tr><th>Method</th><td class="font-mono">{mfaStatus.method}</td></tr>
+            {/if}
+            {#if mfaStatus.enrolled_at}
+              <tr><th>Enrolled</th><td class="text-xs">{formatDateTime(mfaStatus.enrolled_at)}</td></tr>
+            {/if}
+            {#if mfaStatus.last_verified}
+              <tr><th>Last verified</th><td class="text-xs">{formatDateTime(mfaStatus.last_verified)}</td></tr>
+            {/if}
+            {#if mfaStatus.backup_codes_remaining !== undefined || mfaStatus.backup_codes_total !== undefined}
+              <tr>
+                <th>Backup codes</th>
+                <td class="font-mono">{mfaStatus.backup_codes_remaining ?? '—'}{mfaStatus.backup_codes_total !== undefined ? ` of ${mfaStatus.backup_codes_total}` : ''} remaining</td>
+              </tr>
+            {/if}
+          </tbody>
+        </table>
+      {/if}
+      <div class="modal-action">
+        <button class="btn btn-ghost btn-sm" onclick={closeMFA}>Close</button>
+        {#if mfaStatus?.enabled}
+          <button class="btn btn-error btn-sm" disabled={disablingMFA} onclick={() => { confirmDisableMFA = true; }}>Disable MFA</button>
+        {/if}
+      </div>
+    </div>
+    <div class="modal-backdrop" role="none" onclick={closeMFA} onkeydown={closeMFA}></div>
+  </div>
+{/if}
+
+{#if userForMFA && confirmDisableMFA}
+  <div class="modal modal-open" role="dialog" aria-modal="true" aria-label="Disable MFA confirmation">
+    <div class="modal-box max-w-sm">
+      <h3 class="text-base font-semibold mb-2">Disable MFA?</h3>
+      <p class="text-sm text-base-content/70">
+        Disable MFA for <span class="font-mono font-semibold">{userForMFA.username}</span>? The user must enroll again to restore it.
+      </p>
+      <div class="modal-action">
+        <button class="btn btn-ghost btn-sm" onclick={() => { confirmDisableMFA = false; }}>Cancel</button>
+        <button class="btn btn-error btn-sm" disabled={disablingMFA} onclick={submitDisableMFA}>{disablingMFA ? 'Disabling…' : 'Disable'}</button>
+      </div>
+    </div>
+    <div class="modal-backdrop" role="none" onclick={() => { confirmDisableMFA = false; }} onkeydown={() => { confirmDisableMFA = false; }}></div>
   </div>
 {/if}
 
