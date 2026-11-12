@@ -996,55 +996,55 @@ func (r *ListBackendsRequest) Validate() error {
 // ListBackendsResponse contains the list of backends.
 type ListBackendsResponse struct {
 	// Backends contains the backend information.
-	Backends []*BackendInfo
+	Backends []*BackendInfo `json:"backends"`
 
 	// Timestamp is the query timestamp (Unix nanoseconds).
-	Timestamp int64
+	Timestamp int64 `json:"timestamp"`
 }
 
 // BackendInfo contains information about a storage backend.
 type BackendInfo struct {
 	// Name is the backend name.
-	Name string
+	Name string `json:"name"`
 
 	// Type is the backend type (s3, gcs, local, etc.).
-	Type string
+	Type string `json:"type"`
 
 	// Enabled indicates if the backend is enabled.
-	Enabled bool
+	Enabled bool `json:"enabled"`
 
 	// Default indicates if this is the default backend.
-	Default bool
+	Default bool `json:"default"`
 
 	// Tier is the storage tier (hot, warm, cold).
-	Tier string
+	Tier string `json:"tier"`
 
 	// Region is the geographic region.
-	Region string
+	Region string `json:"region"`
 
 	// ObjectCount is the number of objects in this backend.
-	ObjectCount int64
+	ObjectCount int64 `json:"object_count"`
 
 	// TotalSize is the total size in bytes.
-	TotalSize int64
+	TotalSize int64 `json:"total_size"`
 
 	// Health contains health status (if requested).
-	Health *BackendHealthInfo
+	Health *BackendHealthInfo `json:"health,omitempty"`
 }
 
 // BackendHealthInfo contains health information for a backend.
 type BackendHealthInfo struct {
 	// Healthy indicates if the backend is healthy.
-	Healthy bool
+	Healthy bool `json:"healthy"`
 
 	// Latency is the last health check latency in milliseconds.
-	Latency int64
+	Latency int64 `json:"latency"`
 
 	// LastCheck is the last health check timestamp (Unix nanoseconds).
-	LastCheck int64
+	LastCheck int64 `json:"last_check"`
 
 	// Error contains the error message if unhealthy.
-	Error string
+	Error string `json:"error,omitempty"`
 }
 
 // GetBackendHealthRequest contains parameters for getting backend health.
@@ -1075,22 +1075,22 @@ func (r *GetBackendHealthRequest) Validate() error {
 // GetBackendHealthResponse contains backend health status.
 type GetBackendHealthResponse struct {
 	// Name is the backend name.
-	Name string
+	Name string `json:"name"`
 
 	// Healthy indicates if the backend is healthy.
-	Healthy bool
+	Healthy bool `json:"healthy"`
 
 	// Latency is the last health check latency in milliseconds.
-	Latency int64
+	Latency int64 `json:"latency"`
 
 	// LastCheck is the last health check timestamp (Unix nanoseconds).
-	LastCheck int64
+	LastCheck int64 `json:"last_check"`
 
 	// Status provides additional status information.
-	Status string
+	Status string `json:"status"`
 
 	// Error contains the error message if unhealthy.
-	Error string
+	Error string `json:"error,omitempty"`
 }
 
 // =============================================================================
