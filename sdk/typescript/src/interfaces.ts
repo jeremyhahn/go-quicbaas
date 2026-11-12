@@ -1045,6 +1045,66 @@ export interface IAMSession {
   device_info: IAMSessionDeviceInfo | null;
 }
 
+// IAMApplication is one OAuth application of a tenant. Times are RFC 3339.
+// client_secret is present only when the secret is issued (register, rotate).
+export interface IAMApplication {
+  client_id: string;
+  name: string;
+  tenant_id: string;
+  client_secret?: string;
+  redirect_uris: string[];
+  resource_prefix?: string;
+  scopes?: string[];
+  default_audience?: string;
+  grant_types: string[];
+  response_types: string[];
+  token_endpoint_auth_method?: string;
+  mtls_cert_thumbprint?: string;
+  mtls_subject_dn?: string;
+  mtls_san_dns?: string;
+  created: string;
+  updated: string;
+}
+
+// RegisterIAMAppRequest is the body of registerApp.
+export interface RegisterIAMAppRequest {
+  name: string;
+  redirect_uris: string[];
+  resource_prefix?: string;
+  grant_types?: string[];
+  response_types?: string[];
+  pkce_required: boolean;
+  token_endpoint_auth_method?: string;
+}
+
+// UpdateIAMAppRequest is the body of updateApp; omitted fields are left
+// unchanged. client_id is filled by updateApp from its argument.
+export interface UpdateIAMAppRequest {
+  name?: string;
+  redirect_uris?: string[];
+  grant_types?: string[];
+  response_types?: string[];
+  resource_prefix?: string;
+  default_audience?: string;
+  scopes?: string[];
+  token_endpoint_auth_method?: string;
+}
+
+// ListIAMAppsOptions pages listApps.
+export interface ListIAMAppsOptions {
+  limit?: number;
+  offset?: number;
+}
+
+// ListIAMAppsResponse is one page of a tenant's OAuth applications;
+// applications and apps carry the same list.
+export interface ListIAMAppsResponse {
+  applications: IAMApplication[];
+  apps: IAMApplication[];
+  limit: number;
+  offset: number;
+}
+
 // WebAuthnCredentialSummary is one WebAuthn credential of a tenant user.
 export interface WebAuthnCredentialSummary {
   id: string;
@@ -1438,6 +1498,32 @@ export interface IAMClient {
   // It is the admin counterpart of the caller-scoped revokeAllSessions.
   // Maps to DELETE /api/v1/tenants/{tenantID}/users/{userID}/sessions
   revokeAllUserSessions(tenantID: string, userID: string): Promise<void>;
+
+  // listApps lists a tenant's OAuth applications, one page at a time.
+  // Maps to GET /api/v1/tenants/{tenantID}/apps/?limit=&offset=
+  listApps(tenantID: string, opts?: ListIAMAppsOptions): Promise<ListIAMAppsResponse>;
+
+  // registerApp registers a new OAuth application in a tenant; the response
+  // carries its client_id and client_secret.
+  // Maps to POST /api/v1/tenants/{tenantID}/apps/ (201)
+  registerApp(tenantID: string, req: RegisterIAMAppRequest): Promise<IAMApplication>;
+
+  // getApp returns one OAuth application of a tenant.
+  // Maps to GET /api/v1/tenants/{tenantID}/apps/{clientID}
+  getApp(tenantID: string, clientID: string): Promise<IAMApplication>;
+
+  // updateApp changes an OAuth application; omitted fields are left unchanged.
+  // Maps to PUT /api/v1/tenants/{tenantID}/apps/{clientID}
+  updateApp(tenantID: string, clientID: string, req: UpdateIAMAppRequest): Promise<IAMApplication>;
+
+  // deleteApp removes an OAuth application from a tenant.
+  // Maps to DELETE /api/v1/tenants/{tenantID}/apps/{clientID} (204)
+  deleteApp(tenantID: string, clientID: string): Promise<void>;
+
+  // rotateAppSecret issues a new client secret for an OAuth application.
+  // The returned client_secret is shown once: store it, it cannot be read again.
+  // Maps to POST /api/v1/tenants/{tenantID}/apps/{clientID}/rotate-secret
+  rotateAppSecret(tenantID: string, clientID: string): Promise<IAMApplication>;
 
   // updateTenantQuotas sets a tenant's resource limits.
   // Maps to PATCH /api/v1/tenants/{tenantID}/quotas (204)

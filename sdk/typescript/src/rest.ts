@@ -3573,6 +3573,66 @@ async listSessions(
     );
   }
 
+  // Maps to GET /api/v1/tenants/{tenantID}/apps/?limit=&offset=
+  async listApps(
+    tenantID: string,
+    opts?: import('./interfaces.js').ListIAMAppsOptions,
+  ): Promise<import('./interfaces.js').ListIAMAppsResponse> {
+    const params = new URLSearchParams();
+    if (opts?.limit !== undefined) params.set('limit', String(opts.limit));
+    if (opts?.offset !== undefined) params.set('offset', String(opts.offset));
+    const qs = params.toString();
+    return this.fetchJSON<import('./interfaces.js').ListIAMAppsResponse>(
+      `/api/v1/tenants/${encodeURIComponent(tenantID)}/apps/${qs ? `?${qs}` : ''}`,
+    );
+  }
+
+  // Maps to POST /api/v1/tenants/{tenantID}/apps/ (201)
+  async registerApp(
+    tenantID: string,
+    req: import('./interfaces.js').RegisterIAMAppRequest,
+  ): Promise<import('./interfaces.js').IAMApplication> {
+    return this.fetchJSON<import('./interfaces.js').IAMApplication>(
+      `/api/v1/tenants/${encodeURIComponent(tenantID)}/apps/`,
+      { method: 'POST', body: JSON.stringify(req) },
+    );
+  }
+
+  // Maps to GET /api/v1/tenants/{tenantID}/apps/{clientID}
+  async getApp(tenantID: string, clientID: string): Promise<import('./interfaces.js').IAMApplication> {
+    return this.fetchJSON<import('./interfaces.js').IAMApplication>(
+      `/api/v1/tenants/${encodeURIComponent(tenantID)}/apps/${encodeURIComponent(clientID)}`,
+    );
+  }
+
+  // Maps to PUT /api/v1/tenants/{tenantID}/apps/{clientID}
+  async updateApp(
+    tenantID: string,
+    clientID: string,
+    req: import('./interfaces.js').UpdateIAMAppRequest,
+  ): Promise<import('./interfaces.js').IAMApplication> {
+    return this.fetchJSON<import('./interfaces.js').IAMApplication>(
+      `/api/v1/tenants/${encodeURIComponent(tenantID)}/apps/${encodeURIComponent(clientID)}`,
+      { method: 'PUT', body: JSON.stringify({ ...req, client_id: clientID }) },
+    );
+  }
+
+  // Maps to DELETE /api/v1/tenants/{tenantID}/apps/{clientID} (204)
+  async deleteApp(tenantID: string, clientID: string): Promise<void> {
+    await this.fetchJSON<void>(
+      `/api/v1/tenants/${encodeURIComponent(tenantID)}/apps/${encodeURIComponent(clientID)}`,
+      { method: 'DELETE' },
+    );
+  }
+
+  // Maps to POST /api/v1/tenants/{tenantID}/apps/{clientID}/rotate-secret
+  async rotateAppSecret(tenantID: string, clientID: string): Promise<import('./interfaces.js').IAMApplication> {
+    return this.fetchJSON<import('./interfaces.js').IAMApplication>(
+      `/api/v1/tenants/${encodeURIComponent(tenantID)}/apps/${encodeURIComponent(clientID)}/rotate-secret`,
+      { method: 'POST' },
+    );
+  }
+
   // Maps to PATCH /api/v1/tenants/{tenantID}/quotas (204)
   async updateTenantQuotas(
     tenantID: string,
