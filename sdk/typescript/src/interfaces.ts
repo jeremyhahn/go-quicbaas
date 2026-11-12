@@ -30,6 +30,13 @@ import type {
   VectorMetadataSearchRequest,
   VectorMetadataSearchResponse,
 } from './vector_search.js';
+import type {
+  ObjectsBatchPutOperation,
+  ObjectsBatchPutResponse,
+  ObjectsBatchGetOptions,
+  ObjectsBatchGetResponse,
+  ObjectsBatchDeleteResponse,
+} from './objects_batch.js';
 import type { MessagingClient } from './messaging_sdk.js';
 import type { SchedulerClient } from './scheduler_sdk.js';
 import type { ProjectsClient } from './projects.js';
@@ -923,6 +930,18 @@ export interface ObjectsClient {
   // deleteObject removes an object by key.
   // Maps to DELETE /api/v1/objects/{key}
   deleteObject(key: string): Promise<void>;
+
+  // batchPut stores several objects in one request.
+  // Maps to POST /api/v1/objects/batch
+  batchPut(objects: ObjectsBatchPutOperation[]): Promise<ObjectsBatchPutResponse>;
+
+  // batchGet reads several objects by key in one request.
+  // Maps to POST /api/v1/objects/batch/get
+  batchGet(keys: string[], opts?: ObjectsBatchGetOptions): Promise<ObjectsBatchGetResponse>;
+
+  // batchDelete removes several objects by key in one request.
+  // Maps to POST /api/v1/objects/batch/delete
+  batchDelete(keys: string[]): Promise<ObjectsBatchDeleteResponse>;
 }
 
 // ---------------------------------------------------------------------------

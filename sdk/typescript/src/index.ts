@@ -613,6 +613,16 @@ export type {
   VectorMetadataSearchResponse,
 } from './vector_search.js';
 export type {
+  ObjectsBatchPutOperation,
+  ObjectsBatchPutResult,
+  ObjectsBatchPutResponse,
+  ObjectsBatchGetOptions,
+  ObjectsBatchGetResult,
+  ObjectsBatchGetResponse,
+  ObjectsBatchDeleteResult,
+  ObjectsBatchDeleteResponse,
+} from './objects_batch.js';
+export type {
   DynamicSecretsClient,
   DynamicSecretRole,
   CreateRoleRequest as DynamicSecretCreateRoleRequest,
