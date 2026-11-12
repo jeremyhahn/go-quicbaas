@@ -90,6 +90,7 @@
   import SSHKeysView from './security/SSHKeysView.svelte';
   import MySessionsView from './security/MySessionsView.svelte';
   import AttestationView from './security/AttestationView.svelte';
+  import PolicyTesterView from './security/PolicyTesterView.svelte';
 
   // CLUSTER views
   import ClusterDashboard from './cluster/ClusterDashboard.svelte';
@@ -165,6 +166,7 @@
     Timer,
     Inbox,
     BadgeCheck,
+    FlaskConical,
   } from 'lucide-svelte';
 
   // ---------------------------------------------------------------------------
@@ -265,6 +267,7 @@
         { id: 'ssh-keys',  label: 'SSH Keys',  icon: KeyRound, implemented: true },
         { id: 'my-sessions', label: 'My Sessions', icon: Timer, implemented: true },
         { id: 'attestation', label: 'Attestation', icon: BadgeCheck, implemented: true },
+        { id: 'policy-tester', label: 'Policy Tester', icon: FlaskConical, implemented: true },
       ],
     },
     {
@@ -777,6 +780,9 @@
             {:else if routerStore.name === 'attestation'}
               <li class="text-base-content/40">Security</li>
               <li class="font-medium">Attestation</li>
+            {:else if routerStore.name === 'policy-tester'}
+              <li class="text-base-content/40">Security</li>
+              <li class="font-medium">Policy Tester</li>
             {:else if routerStore.name === 'projects'}
               <li class="text-base-content/40">{FACTORY_CRUMB}</li>
               <li class="font-medium">Projects</li>
@@ -1142,6 +1148,11 @@
       {:else if routerStore.name === 'attestation'}
         <div class="flex-1 overflow-y-auto">
           <AttestationView />
+        </div>
+
+      {:else if routerStore.name === 'policy-tester'}
+        <div class="flex-1 overflow-y-auto">
+          <PolicyTesterView />
         </div>
 
       {:else if routerStore.name === 'projects'}
