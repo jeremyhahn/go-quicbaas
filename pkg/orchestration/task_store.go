@@ -321,6 +321,13 @@ type taskStore struct {
 	// first adopter's cleanup.
 	releaser guardedDeleter
 
+	// swapper is kv's guarded-edit capability. Every record write commits
+	// through it against the bytes it read, so two nodes editing one task
+	// cannot both land (go-quicbaas#719): recordMu below is per process and
+	// arbitrates nothing between nodes. Nil when the store cannot decide a
+	// swap, in which case every edit refuses rather than overwriting blind.
+	swapper guardedSwapper
+
 	// inlineLimit is the maximum artifact size, in bytes, embedded directly in
 	// a task record. Larger artifacts are written to their own key.
 	inlineLimit int64
@@ -367,6 +374,9 @@ func NewTaskStore(kv interfaces.KVStore, arbiter TaskClaimArbiter, opts ...Store
 	}
 	if releaser, ok := kv.(guardedDeleter); ok {
 		store.releaser = releaser
+	}
+	if swapper, ok := kv.(guardedSwapper); ok {
+		store.swapper = swapper
 	}
 	return store
 }
@@ -590,20 +600,27 @@ func (s *taskStore) ready() error {
 
 // load reads and decodes one task record.
 func (s *taskStore) load(ctx context.Context, key, tenantID, taskID string) (*Task, error) {
+	task, _, err := s.loadRecord(ctx, key, tenantID, taskID)
+	return task, err
+}
+
+// loadRecord is load that also returns the stored bytes, which a guarded
+// write names as the value it expects to replace.
+func (s *taskStore) loadRecord(ctx context.Context, key, tenantID, taskID string) (*Task, []byte, error) {
 	data, err := s.kv.Get(ctx, key)
 	if err != nil {
 		if qerrors.IsNotFound(err) {
-			return nil, &TaskNotFoundError{TenantID: tenantID, TaskID: taskID}
+			return nil, nil, &TaskNotFoundError{TenantID: tenantID, TaskID: taskID}
 		}
-		return nil, backendError("failed to read task", err)
+		return nil, nil, backendError("failed to read task", err)
 	}
 	if data == nil {
-		return nil, &TaskNotFoundError{TenantID: tenantID, TaskID: taskID}
+		return nil, nil, &TaskNotFoundError{TenantID: tenantID, TaskID: taskID}
 	}
 
 	var task Task
 	if err := json.Unmarshal(data, &task); err != nil {
-		return nil, &TaskStoreError{
+		return nil, nil, &TaskStoreError{
 			Sentinel: ErrTaskStoreMarshal,
 			Message:  "failed to unmarshal task: " + err.Error(),
 		}
@@ -614,10 +631,10 @@ func (s *taskStore) load(ctx context.Context, key, tenantID, taskID string) (*Ta
 	// corrupted or bypassed. Report it as absent rather than returning another
 	// tenant's task to this caller.
 	if task.TenantID != tenantID {
-		return nil, &TaskNotFoundError{TenantID: tenantID, TaskID: taskID}
+		return nil, nil, &TaskNotFoundError{TenantID: tenantID, TaskID: taskID}
 	}
 
-	return &task, nil
+	return &task, data, nil
 }
 
 // marshalTask encodes one task record for storage.
@@ -644,16 +661,19 @@ func marshalTask(task *Task) ([]byte, error) {
 	return data, nil
 }
 
-// writeRecord encodes and stores one task record.
-func (s *taskStore) writeRecord(ctx context.Context, key string, task *Task) error {
+// commitRecord encodes task and stores it only while key still holds
+// expected, the bytes the caller read. It reports false when another writer
+// committed in between; the store, not this process, decides which one did.
+func (s *taskStore) commitRecord(ctx context.Context, key string, expected []byte, task *Task) (bool, error) {
 	data, err := marshalTask(task)
 	if err != nil {
-		return err
+		return false, err
 	}
-	if err := s.kv.Put(ctx, key, data); err != nil {
-		return backendError("failed to write task", err)
+	swapped, err := s.swapper.CompareAndSwap(ctx, key, expected, data)
+	if err != nil {
+		return false, backendError("failed to write task", err)
 	}
-	return nil
+	return swapped, nil
 }
 
 // taskMutator applies one state transition to the record loaded under the key
@@ -661,15 +681,17 @@ func (s *taskStore) writeRecord(ctx context.Context, key string, task *Task) err
 // transition, or the caller's own record for UpdateTask.
 type taskMutator func(current *Task, now int64) (*Task, error)
 
-// mutate performs the locked read-modify-write behind every transition. The
-// lock is held across load, transition and write, so the sequence is atomic
-// against other writers in this process; the version bump it applies is what
-// lets a writer on another node detect that it raced.
+// mutate performs the read-modify-write behind every transition. The record
+// is committed with a compare-and-swap against the bytes it was read as, so
+// the write lands only if no other writer, on this node or another, committed
+// in between (go-quicbaas#719). A lost swap re-reads and re-applies: the
+// mutator then sees the other writer's record, and a version check or a
+// transition guard inside it refuses what is no longer true.
 //
-// Detection is the whole contract here, and it is the right one for an edit —
-// a loser re-reads and re-applies. It is NOT sufficient for a claim, which is
-// why ClaimTask has the arbiter decide before its mutator returns a record to
-// write. Nothing in this function arbitrates.
+// The process lock only spares writers in one process from losing swaps to
+// each other; it arbitrates nothing. A claim still needs more than this,
+// which is why ClaimTask has the arbiter decide before its mutator returns a
+// record to write.
 func (s *taskStore) mutate(ctx context.Context, tenantID, taskID string, apply taskMutator) error {
 	if err := ctx.Err(); err != nil {
 		return err
@@ -682,25 +704,40 @@ func (s *taskStore) mutate(ctx context.Context, tenantID, taskID string, apply t
 	if err != nil {
 		return err
 	}
+	if s.swapper == nil {
+		return &TaskStoreError{
+			Sentinel: ErrTaskStoreInvalidInput,
+			Message:  "edits need a store that can decide them; this one cannot guard a swap",
+		}
+	}
 
 	unlock := s.recordMu.lock(key)
 	defer unlock()
 
-	current, err := s.load(ctx, key, tenantID, taskID)
-	if err != nil {
-		return err
+	for attempt := 0; attempt < cas.MaxAttempts; attempt++ {
+		current, raw, err := s.loadRecord(ctx, key, tenantID, taskID)
+		if err != nil {
+			return err
+		}
+
+		now := time.Now().UnixNano()
+		next, err := apply(current, now)
+		if err != nil {
+			return err
+		}
+
+		next.UpdatedAt = now
+		next.Version = current.Version + 1
+
+		swapped, err := s.commitRecord(ctx, key, raw, next)
+		if err != nil || swapped {
+			return err
+		}
 	}
-
-	now := time.Now().UnixNano()
-	next, err := apply(current, now)
-	if err != nil {
-		return err
+	return &TaskStoreError{
+		Sentinel: ErrTaskVersionConflict,
+		Message:  "task " + taskID + " changed under every attempt to write it",
 	}
-
-	next.UpdatedAt = now
-	next.Version = current.Version + 1
-
-	return s.writeRecord(ctx, key, next)
 }
 
 // =============================================================================
@@ -1276,7 +1313,11 @@ func (s *taskStore) update(ctx context.Context, task *Task) error {
 		}
 	}
 
-	return s.mutate(ctx, task.TenantID, task.ID, func(current *Task, now int64) (*Task, error) {
+	// The mutator writes a copy, never the caller's task: mutate stamps the
+	// version on what it is handed, and a stamp left by a lost swap would let
+	// the retry pass the version check over the other writer's record.
+	var written *Task
+	err := s.mutate(ctx, task.TenantID, task.ID, func(current *Task, now int64) (*Task, error) {
 		if task.Version != current.Version {
 			return nil, &TaskVersionConflictError{
 				TaskID:          task.ID,
@@ -1284,11 +1325,18 @@ func (s *taskStore) update(ctx context.Context, task *Task) error {
 				ActualVersion:   current.Version,
 			}
 		}
-		if task.Status != current.Status {
-			task.StatusChangedAt = now
+		next := *task
+		if next.Status != current.Status {
+			next.StatusChangedAt = now
 		}
-		return task, nil
+		written = &next
+		return written, nil
 	})
+	if err != nil {
+		return err
+	}
+	*task = *written
+	return nil
 }
 
 // =============================================================================
