@@ -11,7 +11,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, waitFor } from '@testing-library/svelte';
+import { render, screen, fireEvent, waitFor, within } from '@testing-library/svelte';
 import type { IAMAuditEvent, IAMTenant } from '@quicbaas/sdk';
 
 // ---------------------------------------------------------------------------
@@ -141,7 +141,7 @@ describe('IAMAuditView', () => {
     await fireEvent.input(screen.getByLabelText('Resource ID'), { target: { value: 's-1' } });
     await fireEvent.input(screen.getByLabelText('From'), { target: { value: '2026-11-01T08:30' } });
     await fireEvent.input(screen.getByLabelText('To'), { target: { value: '2026-11-02T09:00' } });
-    await fireEvent.click(screen.getByRole('button', { name: 'Apply' }));
+    await fireEvent.submit(screen.getByRole('form', { name: 'Audit filters' }));
 
     await waitFor(() => {
       expect(lastListOptions()).toEqual({
@@ -181,14 +181,14 @@ describe('IAMAuditView', () => {
     const before = mockListAuditEvents.mock.calls.length;
 
     await fireEvent.input(screen.getByLabelText('Delete before date'), { target: { value: '2026-10-01' } });
-    await fireEvent.click(screen.getByRole('button', { name: 'Delete events before' }));
+    await fireEvent.submit(screen.getByRole('form', { name: 'Delete events before' }));
 
     const dialog = await screen.findByRole('dialog', { name: 'Delete confirmation' });
     expect(dialog).toHaveTextContent('2026-10-01');
     expect(dialog).toHaveTextContent('Acme');
     expect(mockDeleteAuditEventsBefore).not.toHaveBeenCalled();
 
-    await fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
+    await fireEvent.click(within(dialog).getByRole('button', { name: 'Delete' }));
     await waitFor(() => {
       expect(mockDeleteAuditEventsBefore).toHaveBeenCalledWith('2026-10-01T00:00:00Z', 'tenant-a');
       expect(mockShowToast).toHaveBeenCalledWith('success', 'Deleted 7 audit events');
