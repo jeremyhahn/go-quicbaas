@@ -151,3 +151,26 @@ func TestAuthorizeGRPCArguments_UpdateUserLifecycleRequiresEnableOrDisable(t *te
 		assert.Equal(t, codes.PermissionDenied, status.Code(err))
 	})
 }
+
+func TestAuthorizeGRPCArguments_UpdateUserAttributesRequireRolesAssign(t *testing.T) {
+	method := iampb.IAMService_UpdateUser_FullMethodName
+	attrsOnly := &iampb.UpdateUserRequest{Attributes: map[string]string{"department": "finance"}}
+
+	t.Run("attributes with users:update only is denied", func(t *testing.T) {
+		authz := &scopeSetAuthorizer{token: "tok", scp: map[string]bool{"users:update": true}}
+		err := authorizeGRPCArguments(bearerContext("tok"), method, attrsOnly, authz)
+		require.Error(t, err)
+		assert.Equal(t, codes.PermissionDenied, status.Code(err))
+	})
+	t.Run("attributes with roles:assign is allowed", func(t *testing.T) {
+		authz := &scopeSetAuthorizer{token: "tok", scp: map[string]bool{"users:update": true, "roles:assign": true}}
+		require.NoError(t, authorizeGRPCArguments(bearerContext("tok"), method, attrsOnly, authz))
+	})
+	t.Run("roles and attributes ask roles:assign once", func(t *testing.T) {
+		req := &iampb.UpdateUserRequest{Roles: []string{"admin"}, Attributes: map[string]string{"department": "finance"}}
+		assert.Equal(t, []string{roleAssignmentPermission}, requireUserUpdateArguments(req))
+	})
+	t.Run("attributes-only asks roles:assign", func(t *testing.T) {
+		assert.Equal(t, []string{roleAssignmentPermission}, requireUserUpdateArguments(attrsOnly))
+	})
+}

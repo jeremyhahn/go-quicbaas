@@ -220,13 +220,19 @@ func requireRolesAssign(req interface{}) []string {
 	return []string{roleAssignmentPermission}
 }
 
-// requireUserUpdateArguments is requireRolesAssign plus the lifecycle rule:
-// moving a user to "active" needs users:enable and to any other lifecycle
-// users:disable, as REST's approve and reject routes declare, so
-// users:update alone cannot approve or suspend a user.
+// requireUserUpdateArguments is requireRolesAssign plus the attributes and
+// lifecycle rules. A user's attributes feed ABAC, so writing them is an
+// authorization write like writing roles and needs roles:assign (asked once
+// when the request carries both). Moving a user to "active" needs
+// users:enable and to any other lifecycle users:disable, as REST's approve
+// and reject routes declare, so users:update alone cannot approve or suspend
+// a user.
 func requireUserUpdateArguments(req interface{}) []string {
 	perms := requireRolesAssign(req)
 	update, ok := req.(*iampb.UpdateUserRequest)
+	if ok && len(update.GetAttributes()) > 0 && len(perms) == 0 {
+		perms = append(perms, roleAssignmentPermission)
+	}
 	if !ok || update.GetLifecycle() == "" {
 		return perms
 	}
