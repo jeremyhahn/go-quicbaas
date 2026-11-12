@@ -1251,4 +1251,9 @@ type PolicyEngineOptions struct {
 	// enforcement state. Nil disables SimulatePolicy (returns
 	// ErrSimulatorUnavailable).
 	Simulator PolicySimulator
+
+	// Repair lets the system admin repair a held tenant's stored policies
+	// one at a time (see PolicyRepair). Nil keeps every write strict: a
+	// failed sync always rejects it.
+	Repair PolicyRepair
 }

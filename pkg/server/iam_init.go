@@ -373,21 +373,27 @@ func (s *Server) initializeIAMComponents() (service.IAMComponents, error) {
 	// (GetQRDBNodeClient().RBAC()). ABACSync/Simulator keep that live
 	// decorator synchronized with the policy store on every CRUD mutation
 	// and back SimulatePolicy's isolated draft-policy dry run, respectively.
+	abacSync := newQRDBABACSync(s, tenantManager, backendStorage)
 	policyEngine := iam.NewPolicyEngine(iam.PolicyEngineOptions{
-		Storage:        backendStorage,
+		Storage:        newLegacyCleanupPolicyStorage(backendStorage),
 		Cache:          policyCache,
 		RBACAuthorizer: newQRDBPEPRBACAuthorizer(s),
-		ABACSync:       newQRDBABACSync(s, tenantManager, backendStorage),
+		ABACSync:       abacSync,
 		Simulator:      newQRDBPolicySimulator(),
+		Repair:         newHeldTenantPolicyRepair(s.tenantUnsealHooks.Admit),
 	})
+	// Move tenant policies an earlier release kept in the system namespace.
 	// Initial ABAC load: post-unseal, now that the IAM policy store is
 	// readable and the qrdb node is already live (initializeIAMComponents
 	// runs after node construction, see lifecycle.go), push every
 	// previously stored policy into the node's live ABAC decorator before
-	// the first request is evaluated.
-	if syncErr := policyEngine.SyncABAC(context.Background()); syncErr != nil {
-		s.logger.WithError(syncErr).Warn("Initial ABAC policy sync failed; live enforcement may not reflect previously stored policies")
+	// the first request is evaluated. A failed load stops initialization, so
+	// the node never serves without its stored deny policies.
+	if err := initialABACLoad(context.Background(), policyEngine.SyncABACAfter, abacSync.migrateLegacyPolicies); err != nil {
+		return nil, err
 	}
+	// A sealed tenant's policies are skipped above; reload them on its unseal.
+	abacSync.resyncOnUnseal(&s.tenantUnsealHooks, policyEngine.SyncABACAtUnseal)
 
 	// A tenant sealed now stands in the live set as a deny; reload when its
 	// barrier opens so its stored policies take over.
@@ -874,6 +880,15 @@ func (s *Server) initializeIAMComponents() (service.IAMComponents, error) {
 
 	s.logger.Info("IAM components initialized successfully")
 	return components, nil
+}
+
+// initialABACLoad runs the initial ABAC policy sync, with prepare run first
+// under the sync's lock. A failed sync is an IAM initialization error.
+func initialABACLoad(ctx context.Context, sync func(context.Context, func(context.Context)) error, prepare func(context.Context)) error {
+	if err := sync(ctx, prepare); err != nil {
+		return &IAMComponentInitError{Component: "initial ABAC policy load", Cause: err}
+	}
+	return nil
 }
 
 // adminBundleDirName is the sub-directory of the data dir that receives the

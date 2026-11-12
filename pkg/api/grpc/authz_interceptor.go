@@ -22,6 +22,7 @@ import (
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 
+	pb "github.com/jeremyhahn/go-quicbaas/api/proto"
 	iampb "github.com/jeremyhahn/go-quicbaas/api/proto/iam"
 	"github.com/jeremyhahn/go-quicbaas/pkg/api/sealedwindow"
 	"github.com/jeremyhahn/go-quicbaas/pkg/auth"
@@ -271,4 +272,65 @@ func StreamAuthorizationInterceptor(authorizer GRPCValidatorAuthorizer, opts ...
 		}
 		return handler(srv, ss)
 	}
+}
+
+// UnaryTenantAdmission wraps an authorization interceptor so that, once it
+// has bound the caller's tenant, a tenant admit refuses is answered with
+// codes.Unavailable and the handler is never called. admit is the server's
+// unseal admission (a tenant still running its unseal checks is refused); a
+// nil admit returns next unchanged.
+func UnaryTenantAdmission(next grpc.UnaryServerInterceptor, admit func(tenantID string) error) grpc.UnaryServerInterceptor {
+	if admit == nil {
+		return next
+	}
+	return func(ctx context.Context, req interface{}, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (interface{}, error) {
+		return next(ctx, req, info, func(ctx context.Context, req interface{}) (interface{}, error) {
+			if err := admitBoundTenant(ctx, info.FullMethod, admit); err != nil {
+				return nil, err
+			}
+			return handler(ctx, req)
+		})
+	}
+}
+
+// StreamTenantAdmission is the streaming form of UnaryTenantAdmission.
+func StreamTenantAdmission(next grpc.StreamServerInterceptor, admit func(tenantID string) error) grpc.StreamServerInterceptor {
+	if admit == nil {
+		return next
+	}
+	return func(srv interface{}, ss grpc.ServerStream, info *grpc.StreamServerInfo, handler grpc.StreamHandler) error {
+		return next(srv, ss, info, func(srv interface{}, ss grpc.ServerStream) error {
+			if err := admitBoundTenant(ss.Context(), info.FullMethod, admit); err != nil {
+				return err
+			}
+			return handler(srv, ss)
+		})
+	}
+}
+
+// admitBoundTenant checks the tenant the authorization interceptor bound to
+// ctx. A request with no bound subject (a public method) has no tenant to
+// check.
+func admitBoundTenant(ctx context.Context, fullMethod string, admit func(tenantID string) error) error {
+	if _, ok := tenantRecoveryMethods[fullMethod]; ok {
+		return nil
+	}
+	subject, ok := auth.SubjectFromContext(ctx)
+	if !ok {
+		return nil
+	}
+	if err := admit(subject.TenantID); err != nil {
+		return status.Error(codes.Unavailable, err.Error())
+	}
+	return nil
+}
+
+// tenantRecoveryMethods are the tenant barrier recovery operations (unseal,
+// unseal share, seal), which a tenant still held by its unseal checks must be
+// able to retry. They skip the unseal admission only, never authentication or
+// authorization.
+var tenantRecoveryMethods = map[string]struct{}{
+	pb.TenantBarrier_Unseal_FullMethodName:      {},
+	pb.TenantBarrier_UnsealShare_FullMethodName: {},
+	pb.TenantBarrier_Seal_FullMethodName:        {},
 }
