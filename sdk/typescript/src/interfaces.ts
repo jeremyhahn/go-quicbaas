@@ -872,6 +872,155 @@ export interface WithdrawConsentRequest {
   user_agent?: string;
 }
 
+// DataExportFormat is the format of a GDPR data export (pkg/iam DataExportFormat).
+export type DataExportFormat = 'json' | 'csv' | 'xml';
+
+// DataExportStatus is the state of a GDPR data export (pkg/iam DataExportStatus).
+export type DataExportStatus = 'pending' | 'processing' | 'completed' | 'failed' | 'expired';
+
+// DeletionStatus is the state of a GDPR deletion request (pkg/iam DeletionStatus).
+export type DeletionStatus = 'pending' | 'processing' | 'completed' | 'failed' | 'cancelled';
+
+// RequestDataExportRequest is the body of POST …/gdpr/export. format defaults
+// to json and requested_by to the user on the server.
+export interface RequestDataExportRequest {
+  format?: DataExportFormat;
+  requested_by?: string;
+  include_categories?: string[];
+  exclude_categories?: string[];
+}
+
+// DataExportRequest is one GDPR data export (pkg/iam DataExportRequest).
+// user_id and requested_by are decimal strings; times are RFC 3339 strings.
+export interface DataExportRequest {
+  id: string;
+  user_id: string;
+  tenant_id: string;
+  requested_by: string;
+  format: DataExportFormat;
+  status: DataExportStatus;
+  include_categories?: string[];
+  exclude_categories?: string[];
+  requested_at: string;
+  started_at?: string;
+  completed_at?: string;
+  expires_at?: string;
+  download_url?: string;
+  file_size_bytes?: number;
+  error_message?: string;
+  metadata?: Record<string, string>;
+}
+
+// ExportMetadata describes a generated export (pkg/iam ExportMetadata).
+export interface ExportMetadata {
+  export_id: string;
+  user_id: string;
+  tenant_id: string;
+  exported_at: string;
+  format: DataExportFormat;
+  categories: string[];
+  schema_version: string;
+}
+
+// UserDataExport is the JSON document GET …/gdpr/export/{export_id}/download
+// sends (pkg/iam UserDataExport).
+export interface UserDataExport {
+  export_metadata: ExportMetadata;
+  profile?: {
+    id: string;
+    email: string;
+    name: string;
+    attributes?: Record<string, string>;
+    created: string;
+    updated: string;
+    last_auth?: string;
+  };
+  sessions?: Array<{
+    id: string;
+    started_at: string;
+    expires_at: string;
+    last_active: string;
+    ip_address?: string;
+    user_agent?: string;
+    auth_method: string;
+    ended_at?: string;
+  }>;
+  consents?: Array<{
+    purpose: ConsentPurpose;
+    status: ConsentStatus;
+    version: string;
+    granted_at?: string;
+    withdrawn_at?: string;
+  }>;
+  roles?: Array<{ role_id: string; role_name: string; assigned_at: string }>;
+  audit_logs?: Array<{
+    timestamp: string;
+    action: string;
+    resource: string;
+    ip_address?: string;
+    success: boolean;
+  }>;
+  credentials?: Array<{
+    id: string;
+    type: string;
+    name?: string;
+    created_at: string;
+    last_used_at: string;
+    attestation?: string;
+    transports?: string[];
+  }>;
+  mfa_info?: {
+    enabled: boolean;
+    method: string;
+    enrolled_at?: string;
+    backup_codes_remaining: number;
+  };
+}
+
+// RequestDeletionRequest is the body of POST …/gdpr/deletion. requested_by
+// defaults to the user on the server.
+export interface RequestDeletionRequest {
+  requested_by?: string;
+  reason?: string;
+  delete_categories?: string[];
+  preserve_categories?: string[];
+  grace_period_days?: number;
+}
+
+// DeletionSummary counts what a completed deletion removed (pkg/iam DeletionSummary).
+export interface DeletionSummary {
+  profile_deleted: boolean;
+  sessions_deleted: number;
+  audit_logs_anonymized: number;
+  consents_deleted: number;
+  credentials_deleted: number;
+  role_assignments_removed: number;
+  tokens_revoked: number;
+  additional_data?: Record<string, number>;
+}
+
+// DeletionRequest is one GDPR deletion request (pkg/iam DeletionRequest).
+// user_id and requested_by are decimal strings; times are RFC 3339 strings.
+export interface DeletionRequest {
+  id: string;
+  user_id: string;
+  tenant_id: string;
+  requested_by: string;
+  reason?: string;
+  status: DeletionStatus;
+  delete_categories?: string[];
+  preserve_categories?: string[];
+  requested_at: string;
+  grace_period_ends_at?: string;
+  started_at?: string;
+  completed_at?: string;
+  cancelled_at?: string;
+  cancelled_by?: string;
+  deleted_data_summary?: DeletionSummary;
+  error_message?: string;
+  metadata?: Record<string, string>;
+}
+
 export interface IAMClient {
   // listUsers returns all users within a tenant.
   // Maps to GET /api/v1/tenants/{tenantID}/users
@@ -989,6 +1138,43 @@ export interface IAMClient {
     purpose: ConsentPurpose,
     req?: WithdrawConsentRequest,
   ): Promise<UserConsent>;
+
+  // requestDataExport queues an export of the user's data.
+  // Maps to POST /api/v1/tenants/{tenant_id}/users/{user_id}/gdpr/export
+  requestDataExport(
+    tenantID: string,
+    userID: string,
+    req?: RequestDataExportRequest,
+  ): Promise<DataExportRequest>;
+
+  // getExportStatus returns one export request of the user.
+  // Maps to GET /api/v1/tenants/{tenant_id}/users/{user_id}/gdpr/export/{export_id}
+  getExportStatus(tenantID: string, userID: string, exportID: string): Promise<DataExportRequest>;
+
+  // downloadExport returns the generated export, which the server sends as JSON.
+  // Maps to GET /api/v1/tenants/{tenant_id}/users/{user_id}/gdpr/export/{export_id}/download
+  downloadExport(tenantID: string, userID: string, exportID: string): Promise<UserDataExport>;
+
+  // requestDeletion queues the deletion of the user's data.
+  // Maps to POST /api/v1/tenants/{tenant_id}/users/{user_id}/gdpr/deletion
+  requestDeletion(
+    tenantID: string,
+    userID: string,
+    req?: RequestDeletionRequest,
+  ): Promise<DeletionRequest>;
+
+  // getDeletionStatus returns one deletion request of the user.
+  // Maps to GET /api/v1/tenants/{tenant_id}/users/{user_id}/gdpr/deletion/{deletion_id}
+  getDeletionStatus(tenantID: string, userID: string, deletionID: string): Promise<DeletionRequest>;
+
+  // cancelDeletion cancels a pending deletion; cancelledBy defaults to the user.
+  // Maps to DELETE /api/v1/tenants/{tenant_id}/users/{user_id}/gdpr/deletion/{deletion_id}
+  cancelDeletion(
+    tenantID: string,
+    userID: string,
+    deletionID: string,
+    cancelledBy?: string,
+  ): Promise<DeletionRequest>;
 }
 
 // ---------------------------------------------------------------------------

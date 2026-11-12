@@ -45,6 +45,11 @@ import type {
   GrantConsentRequest,
   UserConsent,
   WithdrawConsentRequest,
+  DataExportRequest,
+  DeletionRequest,
+  RequestDataExportRequest,
+  RequestDeletionRequest,
+  UserDataExport,
 } from './interfaces.js';
 import type {
   RAGClient,
@@ -3422,6 +3427,61 @@ class RestIAMClient implements IAMClient {
     return this.fetchJSON<UserConsent>(
       `${this.gdprPath(tenantID, userID)}/consent/${encodeURIComponent(purpose)}/withdraw`,
       { method: 'PUT', body: JSON.stringify(req ?? {}) },
+    );
+  }
+
+  async requestDataExport(
+    tenantID: string,
+    userID: string,
+    req?: RequestDataExportRequest,
+  ): Promise<DataExportRequest> {
+    return this.fetchJSON<DataExportRequest>(`${this.gdprPath(tenantID, userID)}/export`, {
+      method: 'POST',
+      body: JSON.stringify(req ?? {}),
+    });
+  }
+
+  async getExportStatus(tenantID: string, userID: string, exportID: string): Promise<DataExportRequest> {
+    return this.fetchJSON<DataExportRequest>(
+      `${this.gdprPath(tenantID, userID)}/export/${encodeURIComponent(exportID)}`,
+    );
+  }
+
+  // downloadExport reads the export as JSON: DownloadExport always writes
+  // application/json, whatever format the request named.
+  async downloadExport(tenantID: string, userID: string, exportID: string): Promise<UserDataExport> {
+    return this.fetchJSON<UserDataExport>(
+      `${this.gdprPath(tenantID, userID)}/export/${encodeURIComponent(exportID)}/download`,
+    );
+  }
+
+  async requestDeletion(
+    tenantID: string,
+    userID: string,
+    req?: RequestDeletionRequest,
+  ): Promise<DeletionRequest> {
+    return this.fetchJSON<DeletionRequest>(`${this.gdprPath(tenantID, userID)}/deletion`, {
+      method: 'POST',
+      body: JSON.stringify(req ?? {}),
+    });
+  }
+
+  async getDeletionStatus(tenantID: string, userID: string, deletionID: string): Promise<DeletionRequest> {
+    return this.fetchJSON<DeletionRequest>(
+      `${this.gdprPath(tenantID, userID)}/deletion/${encodeURIComponent(deletionID)}`,
+    );
+  }
+
+  async cancelDeletion(
+    tenantID: string,
+    userID: string,
+    deletionID: string,
+    cancelledBy?: string,
+  ): Promise<DeletionRequest> {
+    const query = cancelledBy ? `?${new URLSearchParams({ cancelled_by: cancelledBy }).toString()}` : '';
+    return this.fetchJSON<DeletionRequest>(
+      `${this.gdprPath(tenantID, userID)}/deletion/${encodeURIComponent(deletionID)}${query}`,
+      { method: 'DELETE' },
     );
   }
 }
