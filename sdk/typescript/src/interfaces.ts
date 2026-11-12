@@ -823,6 +823,117 @@ export interface UpdatePolicyRequest {
   spec_yaml?: string;
 }
 
+// IAMSubject is the principal a policy is evaluated for. Times are RFC 3339
+// strings.
+export interface IAMSubject {
+  id: string;
+  name?: string;
+  email?: string;
+  tenant?: string;
+  tenant_id: string;
+  roles?: string[];
+  groups?: string[];
+  authenticated: boolean;
+  mfa_verified?: boolean;
+  mfa_timestamp?: string;
+  last_login?: string;
+}
+
+// IAMCheckRequest asks whether a subject may perform an action on a resource.
+export interface IAMCheckRequest {
+  subject: IAMSubject;
+  action: string;
+  resource: string;
+}
+
+// IAMCheckResponse is the decision for an IAMCheckRequest.
+export interface IAMCheckResponse {
+  allowed: boolean;
+  matched_policy?: string;
+  matched_rule?: string;
+  reason?: string;
+}
+
+// IAMPolicyDocument is a stored policy document (not the IAMPolicy list
+// shape). Times are RFC 3339 strings.
+export interface IAMPolicyDocument {
+  apiVersion: string;
+  kind: string;
+  metadata: {
+    name: string;
+    tenant: string;
+    description?: string;
+    labels?: Record<string, string>;
+    priority?: number;
+    created?: string;
+    updated?: string;
+  };
+  spec: {
+    subjects: Record<string, unknown>;
+    variables?: Record<string, string>;
+    rules: unknown[];
+  };
+  load_error?: {
+    reason: string;
+    unknown_keys?: string[];
+  };
+}
+
+// IAMPolicyValidationResult is the validate route's answer; an invalid
+// policy is still a 200 with valid=false.
+export interface IAMPolicyValidationResult {
+  valid: boolean;
+  errors?: string[];
+}
+
+// IAMPolicySimulationRequest evaluates a policy that is not stored.
+export interface IAMPolicySimulationRequest {
+  policy: IAMPolicyDocument;
+  check_request: IAMCheckRequest;
+  include_trace?: boolean;
+}
+
+// IAMEvaluationStep is one step of a simulation trace.
+export interface IAMEvaluationStep {
+  step_number: number;
+  policy_name: string;
+  rule_name?: string;
+  action: string;
+  result: boolean;
+  details?: string;
+}
+
+// IAMPolicySimulationResult is the decision of a simulated policy.
+export interface IAMPolicySimulationResult {
+  allowed: boolean;
+  matched_policy?: string;
+  matched_rule?: string;
+  evaluation_steps?: IAMEvaluationStep[];
+  reason?: string;
+}
+
+// IAMEffectivePermissionsRequest asks what a subject may do on resources.
+export interface IAMEffectivePermissionsRequest {
+  subject: IAMSubject;
+  resource_patterns: string[];
+  actions?: string[];
+  include_deny_details?: boolean;
+}
+
+// IAMPermissionSet is the allowed and denied actions on one resource pattern.
+export interface IAMPermissionSet {
+  allowed: string[];
+  denied?: string[];
+  sources?: Record<string, string[]>;
+}
+
+// IAMEffectivePermissionsResult maps each resource pattern to its permissions.
+export interface IAMEffectivePermissionsResult {
+  subject: IAMSubject;
+  permissions: Record<string, IAMPermissionSet>;
+  total_policies_evaluated: number;
+}
+
 // IAMClient provides identity and access management operations.
 // Paths: /api/v1/tenants and /api/v1/iam
 // ConsentPurpose is what a GDPR consent is for (pkg/iam ConsentPurpose).
@@ -1490,6 +1601,27 @@ export interface IAMClient {
   // deletePolicy removes an ABAC policy.
   // Maps to DELETE /api/v1/tenants/{tenantID}/policies/{policyName}
   deletePolicy(tenantID: string, policyName: string): Promise<void>;
+
+  // getPolicy returns a tenant's stored policy document.
+  // Maps to GET /api/v1/tenants/{tenantID}/policies/{policyName}
+  getPolicy(tenantID: string, policyName: string): Promise<IAMPolicyDocument>;
+
+  // validatePolicy checks a policy without storing it; an invalid policy
+  // resolves with valid=false.
+  // Maps to POST /api/v1/tenants/{tenantID}/policies/validate[?name=]
+  validatePolicy(tenantID: string, req: CreatePolicyRequest, name?: string): Promise<IAMPolicyValidationResult>;
+
+  // testPolicy evaluates a check against the tenant's stored policies.
+  // Maps to POST /api/v1/tenants/{tenantID}/policies/test
+  testPolicy(tenantID: string, req: IAMCheckRequest): Promise<IAMCheckResponse>;
+
+  // simulatePolicy evaluates a check against a policy that is not stored.
+  // Maps to POST /api/v1/tenants/{tenantID}/policies/simulate
+  simulatePolicy(tenantID: string, req: IAMPolicySimulationRequest): Promise<IAMPolicySimulationResult>;
+
+  // getEffectivePermissions returns what a subject may do on resource patterns.
+  // Maps to POST /api/v1/tenants/{tenantID}/policies/effective-permissions
+  getEffectivePermissions(tenantID: string, req: IAMEffectivePermissionsRequest): Promise<IAMEffectivePermissionsResult>;
 
   // getInvite returns publicly visible metadata for a pending invite.
   // Unauthenticated — use to populate the activation UI.
