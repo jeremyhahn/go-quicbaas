@@ -234,7 +234,6 @@ func TestGDPR_GrantConsent_AllPurposes(t *testing.T) {
 
 	tenantID := generateUniqueTenantID()
 	createTestTenant(t, cluster, tenantID)
-	defer cleanupTestTenant(t, cluster, tenantID)
 
 	purposes := []string{
 		"marketing",
@@ -260,7 +259,7 @@ func TestGDPR_GrantConsent_AllPurposes(t *testing.T) {
 			body, err := json.Marshal(consent)
 			require.NoError(t, err)
 
-			resp, err := cluster.client.Post(
+			resp, err := gdprClient(cluster).Post(
 				cluster.httpEndpoint+"/api/v1/tenants/"+tenantID+"/users/"+userID+"/gdpr/consent",
 				"application/json",
 				bytes.NewReader(body),
@@ -296,7 +295,6 @@ func TestGDPR_GrantConsent_WithExpiry(t *testing.T) {
 
 	tenantID := generateUniqueTenantID()
 	createTestTenant(t, cluster, tenantID)
-	defer cleanupTestTenant(t, cluster, tenantID)
 
 	userID := generateGDPRUserID()
 	expiryTime := time.Now().Add(365 * 24 * time.Hour) // 1 year from now
@@ -311,7 +309,7 @@ func TestGDPR_GrantConsent_WithExpiry(t *testing.T) {
 	body, err := json.Marshal(consent)
 	require.NoError(t, err)
 
-	resp, err := cluster.client.Post(
+	resp, err := gdprClient(cluster).Post(
 		cluster.httpEndpoint+"/api/v1/tenants/"+tenantID+"/users/"+userID+"/gdpr/consent",
 		"application/json",
 		bytes.NewReader(body),
@@ -346,7 +344,6 @@ func TestGDPR_GrantConsent_UpdateExisting(t *testing.T) {
 
 	tenantID := generateUniqueTenantID()
 	createTestTenant(t, cluster, tenantID)
-	defer cleanupTestTenant(t, cluster, tenantID)
 
 	userID := generateGDPRUserID()
 
@@ -359,7 +356,7 @@ func TestGDPR_GrantConsent_UpdateExisting(t *testing.T) {
 	body, err := json.Marshal(consent1)
 	require.NoError(t, err)
 
-	resp, err := cluster.client.Post(
+	resp, err := gdprClient(cluster).Post(
 		cluster.httpEndpoint+"/api/v1/tenants/"+tenantID+"/users/"+userID+"/gdpr/consent",
 		"application/json",
 		bytes.NewReader(body),
@@ -377,7 +374,7 @@ func TestGDPR_GrantConsent_UpdateExisting(t *testing.T) {
 	body, err = json.Marshal(consent2)
 	require.NoError(t, err)
 
-	resp, err = cluster.client.Post(
+	resp, err = gdprClient(cluster).Post(
 		cluster.httpEndpoint+"/api/v1/tenants/"+tenantID+"/users/"+userID+"/gdpr/consent",
 		"application/json",
 		bytes.NewReader(body),
@@ -396,7 +393,7 @@ func TestGDPR_GrantConsent_UpdateExisting(t *testing.T) {
 	assert.Equal(t, "granted", result.Status)
 
 	// Verify only one consent exists (not duplicate)
-	resp, err = cluster.client.Get(
+	resp, err = gdprClient(cluster).Get(
 		cluster.httpEndpoint + "/api/v1/tenants/" + tenantID + "/users/" + userID + "/gdpr/consents",
 	)
 	require.NoError(t, err)
@@ -423,7 +420,6 @@ func TestGDPR_WithdrawConsent_Success(t *testing.T) {
 
 	tenantID := generateUniqueTenantID()
 	createTestTenant(t, cluster, tenantID)
-	defer cleanupTestTenant(t, cluster, tenantID)
 
 	userID := generateGDPRUserID()
 
@@ -436,7 +432,7 @@ func TestGDPR_WithdrawConsent_Success(t *testing.T) {
 	body, err := json.Marshal(consent)
 	require.NoError(t, err)
 
-	resp, err := cluster.client.Post(
+	resp, err := gdprClient(cluster).Post(
 		cluster.httpEndpoint+"/api/v1/tenants/"+tenantID+"/users/"+userID+"/gdpr/consent",
 		"application/json",
 		bytes.NewReader(body),
@@ -453,7 +449,7 @@ func TestGDPR_WithdrawConsent_Success(t *testing.T) {
 	)
 	require.NoError(t, err)
 
-	resp, err = cluster.client.Do(req)
+	resp, err = gdprClient(cluster).Do(req)
 	require.NoError(t, err)
 	defer resp.Body.Close()
 
@@ -475,7 +471,6 @@ func TestGDPR_WithdrawConsent_NotFound(t *testing.T) {
 
 	tenantID := generateUniqueTenantID()
 	createTestTenant(t, cluster, tenantID)
-	defer cleanupTestTenant(t, cluster, tenantID)
 
 	userID := generateGDPRUserID()
 
@@ -487,7 +482,7 @@ func TestGDPR_WithdrawConsent_NotFound(t *testing.T) {
 	)
 	require.NoError(t, err)
 
-	resp, err := cluster.client.Do(req)
+	resp, err := gdprClient(cluster).Do(req)
 	require.NoError(t, err)
 	defer resp.Body.Close()
 
@@ -506,7 +501,6 @@ func TestGDPR_GetConsent_Success(t *testing.T) {
 
 	tenantID := generateUniqueTenantID()
 	createTestTenant(t, cluster, tenantID)
-	defer cleanupTestTenant(t, cluster, tenantID)
 
 	userID := generateGDPRUserID()
 
@@ -521,7 +515,7 @@ func TestGDPR_GetConsent_Success(t *testing.T) {
 	body, err := json.Marshal(consent)
 	require.NoError(t, err)
 
-	resp, err := cluster.client.Post(
+	resp, err := gdprClient(cluster).Post(
 		cluster.httpEndpoint+"/api/v1/tenants/"+tenantID+"/users/"+userID+"/gdpr/consent",
 		"application/json",
 		bytes.NewReader(body),
@@ -531,7 +525,7 @@ func TestGDPR_GetConsent_Success(t *testing.T) {
 	require.Equal(t, http.StatusCreated, resp.StatusCode)
 
 	// Get consent by purpose
-	resp, err = cluster.client.Get(
+	resp, err = gdprClient(cluster).Get(
 		cluster.httpEndpoint + "/api/v1/tenants/" + tenantID + "/users/" + userID + "/gdpr/consent/functional",
 	)
 	require.NoError(t, err)
@@ -560,12 +554,11 @@ func TestGDPR_ListConsents_Empty(t *testing.T) {
 
 	tenantID := generateUniqueTenantID()
 	createTestTenant(t, cluster, tenantID)
-	defer cleanupTestTenant(t, cluster, tenantID)
 
 	userID := generateGDPRUserID()
 
 	// List consents for user that has none
-	resp, err := cluster.client.Get(
+	resp, err := gdprClient(cluster).Get(
 		cluster.httpEndpoint + "/api/v1/tenants/" + tenantID + "/users/" + userID + "/gdpr/consents",
 	)
 	require.NoError(t, err)
@@ -588,7 +581,6 @@ func TestGDPR_ListConsents_Multiple(t *testing.T) {
 
 	tenantID := generateUniqueTenantID()
 	createTestTenant(t, cluster, tenantID)
-	defer cleanupTestTenant(t, cluster, tenantID)
 
 	userID := generateGDPRUserID()
 
@@ -603,7 +595,7 @@ func TestGDPR_ListConsents_Multiple(t *testing.T) {
 		body, err := json.Marshal(consent)
 		require.NoError(t, err)
 
-		resp, err := cluster.client.Post(
+		resp, err := gdprClient(cluster).Post(
 			cluster.httpEndpoint+"/api/v1/tenants/"+tenantID+"/users/"+userID+"/gdpr/consent",
 			"application/json",
 			bytes.NewReader(body),
@@ -614,7 +606,7 @@ func TestGDPR_ListConsents_Multiple(t *testing.T) {
 	}
 
 	// List all consents
-	resp, err := cluster.client.Get(
+	resp, err := gdprClient(cluster).Get(
 		cluster.httpEndpoint + "/api/v1/tenants/" + tenantID + "/users/" + userID + "/gdpr/consents",
 	)
 	require.NoError(t, err)
@@ -653,14 +645,13 @@ func TestGDPR_RequestExport_AllFormats(t *testing.T) {
 
 	tenantID := generateUniqueTenantID()
 	createTestTenant(t, cluster, tenantID)
-	defer cleanupTestTenant(t, cluster, tenantID)
 
 	for _, format := range []string{"csv", "xml"} {
 		t.Run(format+"_refused", func(t *testing.T) {
 			body, err := json.Marshal(ExportRequest{Format: format})
 			require.NoError(t, err)
 
-			resp, err := cluster.client.Post(
+			resp, err := gdprClient(cluster).Post(
 				cluster.httpEndpoint+"/api/v1/tenants/"+tenantID+"/users/"+generateGDPRUserID()+"/gdpr/export",
 				"application/json",
 				bytes.NewReader(body),
@@ -683,7 +674,7 @@ func TestGDPR_RequestExport_AllFormats(t *testing.T) {
 			body, err := json.Marshal(exportReq)
 			require.NoError(t, err)
 
-			resp, err := cluster.client.Post(
+			resp, err := gdprClient(cluster).Post(
 				cluster.httpEndpoint+"/api/v1/tenants/"+tenantID+"/users/"+userID+"/gdpr/export",
 				"application/json",
 				bytes.NewReader(body),
@@ -714,7 +705,6 @@ func TestGDPR_RequestExport_DuplicatePending(t *testing.T) {
 
 	tenantID := generateUniqueTenantID()
 	createTestTenant(t, cluster, tenantID)
-	defer cleanupTestTenant(t, cluster, tenantID)
 
 	userID := generateGDPRUserID()
 
@@ -726,7 +716,7 @@ func TestGDPR_RequestExport_DuplicatePending(t *testing.T) {
 	body, err := json.Marshal(exportReq)
 	require.NoError(t, err)
 
-	resp, err := cluster.client.Post(
+	resp, err := gdprClient(cluster).Post(
 		cluster.httpEndpoint+"/api/v1/tenants/"+tenantID+"/users/"+userID+"/gdpr/export",
 		"application/json",
 		bytes.NewReader(body),
@@ -736,7 +726,7 @@ func TestGDPR_RequestExport_DuplicatePending(t *testing.T) {
 	require.Equal(t, http.StatusAccepted, resp.StatusCode)
 
 	// Request second export before first completes
-	resp, err = cluster.client.Post(
+	resp, err = gdprClient(cluster).Post(
 		cluster.httpEndpoint+"/api/v1/tenants/"+tenantID+"/users/"+userID+"/gdpr/export",
 		"application/json",
 		bytes.NewReader(body),
@@ -759,7 +749,6 @@ func TestGDPR_GetExportStatus_Transitions(t *testing.T) {
 
 	tenantID := generateUniqueTenantID()
 	createTestTenant(t, cluster, tenantID)
-	defer cleanupTestTenant(t, cluster, tenantID)
 
 	userID := generateGDPRUserID()
 
@@ -771,7 +760,7 @@ func TestGDPR_GetExportStatus_Transitions(t *testing.T) {
 	body, err := json.Marshal(exportReq)
 	require.NoError(t, err)
 
-	resp, err := cluster.client.Post(
+	resp, err := gdprClient(cluster).Post(
 		cluster.httpEndpoint+"/api/v1/tenants/"+tenantID+"/users/"+userID+"/gdpr/export",
 		"application/json",
 		bytes.NewReader(body),
@@ -799,7 +788,7 @@ func TestGDPR_GetExportStatus_Transitions(t *testing.T) {
 	lastStatus := "pending"
 
 	for {
-		resp, err = cluster.client.Get(
+		resp, err = gdprClient(cluster).Get(
 			cluster.httpEndpoint + "/api/v1/tenants/" + tenantID + "/users/" + userID + "/gdpr/export/" + exportID,
 		)
 		require.NoError(t, err)
@@ -836,7 +825,6 @@ func TestGDPR_GenerateExport_AllCategories(t *testing.T) {
 
 	tenantID := generateUniqueTenantID()
 	createTestTenant(t, cluster, tenantID)
-	defer cleanupTestTenant(t, cluster, tenantID)
 
 	userID := generateGDPRUserID()
 
@@ -849,7 +837,7 @@ func TestGDPR_GenerateExport_AllCategories(t *testing.T) {
 		body, err := json.Marshal(consent)
 		require.NoError(t, err)
 
-		resp, err := cluster.client.Post(
+		resp, err := gdprClient(cluster).Post(
 			cluster.httpEndpoint+"/api/v1/tenants/"+tenantID+"/users/"+userID+"/gdpr/consent",
 			"application/json",
 			bytes.NewReader(body),
@@ -866,7 +854,7 @@ func TestGDPR_GenerateExport_AllCategories(t *testing.T) {
 	body, err := json.Marshal(exportReq)
 	require.NoError(t, err)
 
-	resp, err := cluster.client.Post(
+	resp, err := gdprClient(cluster).Post(
 		cluster.httpEndpoint+"/api/v1/tenants/"+tenantID+"/users/"+userID+"/gdpr/export",
 		"application/json",
 		bytes.NewReader(body),
@@ -903,7 +891,6 @@ func TestGDPR_GenerateExport_SelectiveCategories(t *testing.T) {
 
 	tenantID := generateUniqueTenantID()
 	createTestTenant(t, cluster, tenantID)
-	defer cleanupTestTenant(t, cluster, tenantID)
 
 	userID := generateGDPRUserID()
 	createTestUser(t, cluster, tenantID, userID)
@@ -912,7 +899,7 @@ func TestGDPR_GenerateExport_SelectiveCategories(t *testing.T) {
 	consent := ConsentRequest{Purpose: "marketing", Version: "1.0"}
 	body, err := json.Marshal(consent)
 	require.NoError(t, err)
-	resp, err := cluster.client.Post(
+	resp, err := gdprClient(cluster).Post(
 		cluster.httpEndpoint+"/api/v1/tenants/"+tenantID+"/users/"+userID+"/gdpr/consent",
 		"application/json",
 		bytes.NewReader(body),
@@ -929,7 +916,7 @@ func TestGDPR_GenerateExport_SelectiveCategories(t *testing.T) {
 		body, err := json.Marshal(exportReq)
 		require.NoError(t, err)
 
-		resp, err := cluster.client.Post(
+		resp, err := gdprClient(cluster).Post(
 			cluster.httpEndpoint+"/api/v1/tenants/"+tenantID+"/users/"+userID+"/gdpr/export",
 			"application/json",
 			bytes.NewReader(body),
@@ -959,7 +946,7 @@ func TestGDPR_GenerateExport_SelectiveCategories(t *testing.T) {
 		userID2 := generateGDPRUserID()
 		createTestUser(t, cluster, tenantID, userID2)
 
-		resp, err := cluster.client.Post(
+		resp, err := gdprClient(cluster).Post(
 			cluster.httpEndpoint+"/api/v1/tenants/"+tenantID+"/users/"+userID2+"/gdpr/export",
 			"application/json",
 			bytes.NewReader(body),
@@ -988,7 +975,6 @@ func TestGDPR_RequestDeletion_Success(t *testing.T) {
 
 	tenantID := generateUniqueTenantID()
 	createTestTenant(t, cluster, tenantID)
-	defer cleanupTestTenant(t, cluster, tenantID)
 
 	userID := generateGDPRUserID()
 	createTestUser(t, cluster, tenantID, userID)
@@ -1001,7 +987,7 @@ func TestGDPR_RequestDeletion_Success(t *testing.T) {
 	body, err := json.Marshal(deletionReq)
 	require.NoError(t, err)
 
-	resp, err := cluster.client.Post(
+	resp, err := gdprClient(cluster).Post(
 		cluster.httpEndpoint+"/api/v1/tenants/"+tenantID+"/users/"+userID+"/gdpr/deletion",
 		"application/json",
 		bytes.NewReader(body),
@@ -1038,7 +1024,6 @@ func TestGDPR_RequestDeletion_CustomGracePeriod(t *testing.T) {
 
 	tenantID := generateUniqueTenantID()
 	createTestTenant(t, cluster, tenantID)
-	defer cleanupTestTenant(t, cluster, tenantID)
 
 	testCases := []struct {
 		name            string
@@ -1063,7 +1048,7 @@ func TestGDPR_RequestDeletion_CustomGracePeriod(t *testing.T) {
 			body, err := json.Marshal(deletionReq)
 			require.NoError(t, err)
 
-			resp, err := cluster.client.Post(
+			resp, err := gdprClient(cluster).Post(
 				cluster.httpEndpoint+"/api/v1/tenants/"+tenantID+"/users/"+userID+"/gdpr/deletion",
 				"application/json",
 				bytes.NewReader(body),
@@ -1103,7 +1088,6 @@ func TestGDPR_CancelDeletion_DuringGracePeriod(t *testing.T) {
 
 	tenantID := generateUniqueTenantID()
 	createTestTenant(t, cluster, tenantID)
-	defer cleanupTestTenant(t, cluster, tenantID)
 
 	userID := generateGDPRUserID()
 	createTestUser(t, cluster, tenantID, userID)
@@ -1117,7 +1101,7 @@ func TestGDPR_CancelDeletion_DuringGracePeriod(t *testing.T) {
 	body, err := json.Marshal(deletionReq)
 	require.NoError(t, err)
 
-	resp, err := cluster.client.Post(
+	resp, err := gdprClient(cluster).Post(
 		cluster.httpEndpoint+"/api/v1/tenants/"+tenantID+"/users/"+userID+"/gdpr/deletion",
 		"application/json",
 		bytes.NewReader(body),
@@ -1140,7 +1124,7 @@ func TestGDPR_CancelDeletion_DuringGracePeriod(t *testing.T) {
 	)
 	require.NoError(t, err)
 
-	resp, err = cluster.client.Do(req)
+	resp, err = gdprClient(cluster).Do(req)
 	require.NoError(t, err)
 	defer resp.Body.Close()
 
@@ -1162,7 +1146,6 @@ func TestGDPR_CancelDeletion_AfterProcessing(t *testing.T) {
 
 	tenantID := generateUniqueTenantID()
 	createTestTenant(t, cluster, tenantID)
-	defer cleanupTestTenant(t, cluster, tenantID)
 
 	userID := generateGDPRUserID()
 	createTestUser(t, cluster, tenantID, userID)
@@ -1176,7 +1159,7 @@ func TestGDPR_CancelDeletion_AfterProcessing(t *testing.T) {
 	body, err := json.Marshal(deletionReq)
 	require.NoError(t, err)
 
-	resp, err := cluster.client.Post(
+	resp, err := gdprClient(cluster).Post(
 		cluster.httpEndpoint+"/api/v1/tenants/"+tenantID+"/users/"+userID+"/gdpr/deletion",
 		"application/json",
 		bytes.NewReader(body),
@@ -1196,7 +1179,7 @@ func TestGDPR_CancelDeletion_AfterProcessing(t *testing.T) {
 	defer cancel()
 	var statusResult DeletionResponse
 	for {
-		resp, err = cluster.client.Get(
+		resp, err = gdprClient(cluster).Get(
 			cluster.httpEndpoint + "/api/v1/tenants/" + tenantID + "/users/" + userID + "/gdpr/deletion/" + deletionID,
 		)
 		require.NoError(t, err)
@@ -1219,7 +1202,7 @@ func TestGDPR_CancelDeletion_AfterProcessing(t *testing.T) {
 		)
 		require.NoError(t, err)
 
-		resp, err = cluster.client.Do(req)
+		resp, err = gdprClient(cluster).Do(req)
 		require.NoError(t, err)
 		defer resp.Body.Close()
 
@@ -1234,7 +1217,6 @@ func TestGDPR_ProcessDeletion_Success(t *testing.T) {
 
 	tenantID := generateUniqueTenantID()
 	createTestTenant(t, cluster, tenantID)
-	defer cleanupTestTenant(t, cluster, tenantID)
 
 	userID := generateGDPRUserID()
 	createTestUser(t, cluster, tenantID, userID)
@@ -1243,7 +1225,7 @@ func TestGDPR_ProcessDeletion_Success(t *testing.T) {
 	consent := ConsentRequest{Purpose: "marketing", Version: "1.0"}
 	body, err := json.Marshal(consent)
 	require.NoError(t, err)
-	resp, err := cluster.client.Post(
+	resp, err := gdprClient(cluster).Post(
 		cluster.httpEndpoint+"/api/v1/tenants/"+tenantID+"/users/"+userID+"/gdpr/consent",
 		"application/json",
 		bytes.NewReader(body),
@@ -1260,7 +1242,7 @@ func TestGDPR_ProcessDeletion_Success(t *testing.T) {
 	body, err = json.Marshal(deletionReq)
 	require.NoError(t, err)
 
-	resp, err = cluster.client.Post(
+	resp, err = gdprClient(cluster).Post(
 		cluster.httpEndpoint+"/api/v1/tenants/"+tenantID+"/users/"+userID+"/gdpr/deletion",
 		"application/json",
 		bytes.NewReader(body),
@@ -1279,7 +1261,7 @@ func TestGDPR_ProcessDeletion_Success(t *testing.T) {
 	defer cancel()
 	var finalStatus DeletionResponse
 	for {
-		resp, err = cluster.client.Get(
+		resp, err = gdprClient(cluster).Get(
 			cluster.httpEndpoint + "/api/v1/tenants/" + tenantID + "/users/" + userID + "/gdpr/deletion/" + deletionID,
 		)
 		require.NoError(t, err)
@@ -1302,7 +1284,7 @@ func TestGDPR_ProcessDeletion_Success(t *testing.T) {
 	assert.NotNil(t, finalStatus.DeletedDataSummary, "Deletion summary should be provided")
 
 	// Verify user data is actually deleted
-	resp, err = cluster.client.Get(
+	resp, err = gdprClient(cluster).Get(
 		cluster.httpEndpoint + "/api/v1/tenants/" + tenantID + "/users/" + userID,
 	)
 	require.NoError(t, err)
@@ -1318,7 +1300,6 @@ func TestGDPR_ProcessDeletion_PartialCategories(t *testing.T) {
 
 	tenantID := generateUniqueTenantID()
 	createTestTenant(t, cluster, tenantID)
-	defer cleanupTestTenant(t, cluster, tenantID)
 
 	userID := generateGDPRUserID()
 	createTestUser(t, cluster, tenantID, userID)
@@ -1327,7 +1308,7 @@ func TestGDPR_ProcessDeletion_PartialCategories(t *testing.T) {
 	consent := ConsentRequest{Purpose: "analytics", Version: "1.0"}
 	body, err := json.Marshal(consent)
 	require.NoError(t, err)
-	resp, err := cluster.client.Post(
+	resp, err := gdprClient(cluster).Post(
 		cluster.httpEndpoint+"/api/v1/tenants/"+tenantID+"/users/"+userID+"/gdpr/consent",
 		"application/json",
 		bytes.NewReader(body),
@@ -1345,7 +1326,7 @@ func TestGDPR_ProcessDeletion_PartialCategories(t *testing.T) {
 	body, err = json.Marshal(deletionReq)
 	require.NoError(t, err)
 
-	resp, err = cluster.client.Post(
+	resp, err = gdprClient(cluster).Post(
 		cluster.httpEndpoint+"/api/v1/tenants/"+tenantID+"/users/"+userID+"/gdpr/deletion",
 		"application/json",
 		bytes.NewReader(body),
@@ -1366,7 +1347,7 @@ func TestGDPR_ProcessDeletion_PartialCategories(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	for {
-		resp, err = cluster.client.Get(
+		resp, err = gdprClient(cluster).Get(
 			cluster.httpEndpoint + "/api/v1/tenants/" + tenantID + "/users/" + userID + "/gdpr/deletion/" + deletionID,
 		)
 		require.NoError(t, err)
@@ -1384,7 +1365,7 @@ func TestGDPR_ProcessDeletion_PartialCategories(t *testing.T) {
 	}
 
 	// Profile should still exist
-	resp, err = cluster.client.Get(
+	resp, err = gdprClient(cluster).Get(
 		cluster.httpEndpoint + "/api/v1/tenants/" + tenantID + "/users/" + userID,
 	)
 	require.NoError(t, err)
@@ -1393,7 +1374,7 @@ func TestGDPR_ProcessDeletion_PartialCategories(t *testing.T) {
 	assert.Equal(t, http.StatusOK, resp.StatusCode, "User profile should still exist after partial deletion")
 
 	// Consents should still exist
-	resp, err = cluster.client.Get(
+	resp, err = gdprClient(cluster).Get(
 		cluster.httpEndpoint + "/api/v1/tenants/" + tenantID + "/users/" + userID + "/gdpr/consents",
 	)
 	require.NoError(t, err)
@@ -1411,7 +1392,6 @@ func TestGDPR_ProcessDeletion_PreserveCategories(t *testing.T) {
 
 	tenantID := generateUniqueTenantID()
 	createTestTenant(t, cluster, tenantID)
-	defer cleanupTestTenant(t, cluster, tenantID)
 
 	userID := generateGDPRUserID()
 	createTestUser(t, cluster, tenantID, userID)
@@ -1420,7 +1400,7 @@ func TestGDPR_ProcessDeletion_PreserveCategories(t *testing.T) {
 	consent := ConsentRequest{Purpose: "data_processing", Version: "1.0"}
 	body, err := json.Marshal(consent)
 	require.NoError(t, err)
-	resp, err := cluster.client.Post(
+	resp, err := gdprClient(cluster).Post(
 		cluster.httpEndpoint+"/api/v1/tenants/"+tenantID+"/users/"+userID+"/gdpr/consent",
 		"application/json",
 		bytes.NewReader(body),
@@ -1438,7 +1418,7 @@ func TestGDPR_ProcessDeletion_PreserveCategories(t *testing.T) {
 	body, err = json.Marshal(deletionReq)
 	require.NoError(t, err)
 
-	resp, err = cluster.client.Post(
+	resp, err = gdprClient(cluster).Post(
 		cluster.httpEndpoint+"/api/v1/tenants/"+tenantID+"/users/"+userID+"/gdpr/deletion",
 		"application/json",
 		bytes.NewReader(body),
@@ -1460,7 +1440,7 @@ func TestGDPR_ProcessDeletion_PreserveCategories(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	for {
-		resp, err = cluster.client.Get(
+		resp, err = gdprClient(cluster).Get(
 			cluster.httpEndpoint + "/api/v1/tenants/" + tenantID + "/users/" + userID + "/gdpr/deletion/" + deletionID,
 		)
 		require.NoError(t, err)
@@ -1473,7 +1453,7 @@ func TestGDPR_ProcessDeletion_PreserveCategories(t *testing.T) {
 			// Verify preserved data still exists
 			if status.Status == "completed" {
 				// Consents should be preserved
-				consResp, err := cluster.client.Get(
+				consResp, err := gdprClient(cluster).Get(
 					cluster.httpEndpoint + "/api/v1/tenants/" + tenantID + "/users/" + userID + "/gdpr/consents",
 				)
 				if err == nil {
@@ -1500,7 +1480,8 @@ func TestGDPR_GrantConsent(t *testing.T) {
 	cluster := setupTestCluster(t)
 	defer cluster.Close()
 
-	tenantID := "test-tenant"
+	tenantID := generateUniqueTenantID()
+	createTestTenant(t, cluster, tenantID)
 	userID := "gdpr_user_1"
 
 	consent := ConsentRequest{
@@ -1513,7 +1494,7 @@ func TestGDPR_GrantConsent(t *testing.T) {
 	body, err := json.Marshal(consent)
 	require.NoError(t, err)
 
-	resp, err := cluster.client.Post(
+	resp, err := gdprClient(cluster).Post(
 		cluster.httpEndpoint+"/api/v1/tenants/"+tenantID+"/users/"+userID+"/gdpr/consent",
 		"application/json",
 		bytes.NewReader(body),
@@ -1539,7 +1520,8 @@ func TestGDPR_WithdrawConsent(t *testing.T) {
 	cluster := setupTestCluster(t)
 	defer cluster.Close()
 
-	tenantID := "test-tenant"
+	tenantID := generateUniqueTenantID()
+	createTestTenant(t, cluster, tenantID)
 	userID := "gdpr_user_2"
 
 	// First grant consent
@@ -1551,7 +1533,7 @@ func TestGDPR_WithdrawConsent(t *testing.T) {
 	body, err := json.Marshal(consent)
 	require.NoError(t, err)
 
-	resp, err := cluster.client.Post(
+	resp, err := gdprClient(cluster).Post(
 		cluster.httpEndpoint+"/api/v1/tenants/"+tenantID+"/users/"+userID+"/gdpr/consent",
 		"application/json",
 		bytes.NewReader(body),
@@ -1570,7 +1552,7 @@ func TestGDPR_WithdrawConsent(t *testing.T) {
 	)
 	require.NoError(t, err)
 
-	resp, err = cluster.client.Do(req)
+	resp, err = gdprClient(cluster).Do(req)
 	require.NoError(t, err)
 	defer resp.Body.Close()
 
@@ -1588,7 +1570,8 @@ func TestGDPR_ListConsents(t *testing.T) {
 	cluster := setupTestCluster(t)
 	defer cluster.Close()
 
-	tenantID := "test-tenant"
+	tenantID := generateUniqueTenantID()
+	createTestTenant(t, cluster, tenantID)
 	userID := "gdpr_user_3"
 
 	// Grant multiple consents
@@ -1602,7 +1585,7 @@ func TestGDPR_ListConsents(t *testing.T) {
 		body, err := json.Marshal(consent)
 		require.NoError(t, err)
 
-		resp, err := cluster.client.Post(
+		resp, err := gdprClient(cluster).Post(
 			cluster.httpEndpoint+"/api/v1/tenants/"+tenantID+"/users/"+userID+"/gdpr/consent",
 			"application/json",
 			bytes.NewReader(body),
@@ -1612,7 +1595,7 @@ func TestGDPR_ListConsents(t *testing.T) {
 	}
 
 	// List consents
-	resp, err := cluster.client.Get(
+	resp, err := gdprClient(cluster).Get(
 		cluster.httpEndpoint + "/api/v1/tenants/" + tenantID + "/users/" + userID + "/gdpr/consents",
 	)
 	require.NoError(t, err)
@@ -1632,7 +1615,8 @@ func TestGDPR_RequestDataExport(t *testing.T) {
 	cluster := setupTestCluster(t)
 	defer cluster.Close()
 
-	tenantID := "test-tenant"
+	tenantID := generateUniqueTenantID()
+	createTestTenant(t, cluster, tenantID)
 	userID := "gdpr_user_4"
 
 	exportReq := ExportRequest{
@@ -1642,7 +1626,7 @@ func TestGDPR_RequestDataExport(t *testing.T) {
 	body, err := json.Marshal(exportReq)
 	require.NoError(t, err)
 
-	resp, err := cluster.client.Post(
+	resp, err := gdprClient(cluster).Post(
 		cluster.httpEndpoint+"/api/v1/tenants/"+tenantID+"/users/"+userID+"/gdpr/export",
 		"application/json",
 		bytes.NewReader(body),
@@ -1666,7 +1650,8 @@ func TestGDPR_GetExportStatus(t *testing.T) {
 	cluster := setupTestCluster(t)
 	defer cluster.Close()
 
-	tenantID := "test-tenant"
+	tenantID := generateUniqueTenantID()
+	createTestTenant(t, cluster, tenantID)
 	userID := "gdpr_user_5"
 
 	// Request export
@@ -1677,7 +1662,7 @@ func TestGDPR_GetExportStatus(t *testing.T) {
 	body, err := json.Marshal(exportReq)
 	require.NoError(t, err)
 
-	resp, err := cluster.client.Post(
+	resp, err := gdprClient(cluster).Post(
 		cluster.httpEndpoint+"/api/v1/tenants/"+tenantID+"/users/"+userID+"/gdpr/export",
 		"application/json",
 		bytes.NewReader(body),
@@ -1692,7 +1677,7 @@ func TestGDPR_GetExportStatus(t *testing.T) {
 	exportID := result["id"].(string)
 
 	// Get export status
-	resp, err = cluster.client.Get(
+	resp, err = gdprClient(cluster).Get(
 		cluster.httpEndpoint + "/api/v1/tenants/" + tenantID + "/users/" + userID + "/gdpr/export/" + exportID,
 	)
 	require.NoError(t, err)
@@ -1711,9 +1696,8 @@ func TestGDPR_RequestDataDeletion(t *testing.T) {
 	cluster := setupTestCluster(t)
 	defer cluster.Close()
 
-	// Use a unique tenant ID to avoid conflicts with other GDPR tests that
-	// may leave deletion state in shared "test-tenant"
-	tenantID := fmt.Sprintf("deletion-test-tenant-%d", time.Now().UnixNano())
+	tenantID := generateUniqueTenantID()
+	createTestTenant(t, cluster, tenantID)
 	userID := generateGDPRUserID()
 
 	deletionReq := DeletionRequest{
@@ -1724,7 +1708,7 @@ func TestGDPR_RequestDataDeletion(t *testing.T) {
 	body, err := json.Marshal(deletionReq)
 	require.NoError(t, err)
 
-	resp, err := cluster.client.Post(
+	resp, err := gdprClient(cluster).Post(
 		cluster.httpEndpoint+"/api/v1/tenants/"+tenantID+"/users/"+userID+"/gdpr/deletion",
 		"application/json",
 		bytes.NewReader(body),
@@ -1748,7 +1732,8 @@ func TestGDPR_CancelDeletion(t *testing.T) {
 	cluster := setupTestCluster(t)
 	defer cluster.Close()
 
-	tenantID := "test-tenant"
+	tenantID := generateUniqueTenantID()
+	createTestTenant(t, cluster, tenantID)
 	userID := generateGDPRUserID()
 
 	// Request deletion
@@ -1760,7 +1745,7 @@ func TestGDPR_CancelDeletion(t *testing.T) {
 	body, err := json.Marshal(deletionReq)
 	require.NoError(t, err)
 
-	resp, err := cluster.client.Post(
+	resp, err := gdprClient(cluster).Post(
 		cluster.httpEndpoint+"/api/v1/tenants/"+tenantID+"/users/"+userID+"/gdpr/deletion",
 		"application/json",
 		bytes.NewReader(body),
@@ -1782,7 +1767,7 @@ func TestGDPR_CancelDeletion(t *testing.T) {
 	)
 	require.NoError(t, err)
 
-	resp, err = cluster.client.Do(req)
+	resp, err = gdprClient(cluster).Do(req)
 	require.NoError(t, err)
 	defer resp.Body.Close()
 
@@ -1799,7 +1784,8 @@ func TestGDPR_SelectiveExport(t *testing.T) {
 	cluster := setupTestCluster(t)
 	defer cluster.Close()
 
-	tenantID := "test-tenant"
+	tenantID := generateUniqueTenantID()
+	createTestTenant(t, cluster, tenantID)
 	userID := "gdpr_user_8"
 
 	// Request export with specific categories
@@ -1812,7 +1798,7 @@ func TestGDPR_SelectiveExport(t *testing.T) {
 	body, err := json.Marshal(exportReq)
 	require.NoError(t, err)
 
-	resp, err := cluster.client.Post(
+	resp, err := gdprClient(cluster).Post(
 		cluster.httpEndpoint+"/api/v1/tenants/"+tenantID+"/users/"+userID+"/gdpr/export",
 		"application/json",
 		bytes.NewReader(body),
@@ -1834,7 +1820,8 @@ func TestGDPR_PartialDeletion(t *testing.T) {
 	cluster := setupTestCluster(t)
 	defer cluster.Close()
 
-	tenantID := "test-tenant"
+	tenantID := generateUniqueTenantID()
+	createTestTenant(t, cluster, tenantID)
 	userID := generateGDPRUserID()
 
 	// Request partial deletion - delete sessions but preserve profile
@@ -1848,7 +1835,7 @@ func TestGDPR_PartialDeletion(t *testing.T) {
 	body, err := json.Marshal(deletionReq)
 	require.NoError(t, err)
 
-	resp, err := cluster.client.Post(
+	resp, err := gdprClient(cluster).Post(
 		cluster.httpEndpoint+"/api/v1/tenants/"+tenantID+"/users/"+userID+"/gdpr/deletion",
 		"application/json",
 		bytes.NewReader(body),
@@ -1870,7 +1857,8 @@ func TestGDPR_ConsentHistory(t *testing.T) {
 	cluster := setupTestCluster(t)
 	defer cluster.Close()
 
-	tenantID := "test-tenant"
+	tenantID := generateUniqueTenantID()
+	createTestTenant(t, cluster, tenantID)
 	userID := "gdpr_user_10"
 
 	// Grant consent
@@ -1882,7 +1870,7 @@ func TestGDPR_ConsentHistory(t *testing.T) {
 	body, err := json.Marshal(consent)
 	require.NoError(t, err)
 
-	resp, err := cluster.client.Post(
+	resp, err := gdprClient(cluster).Post(
 		cluster.httpEndpoint+"/api/v1/tenants/"+tenantID+"/users/"+userID+"/gdpr/consent",
 		"application/json",
 		bytes.NewReader(body),
@@ -1895,7 +1883,7 @@ func TestGDPR_ConsentHistory(t *testing.T) {
 	body, err = json.Marshal(consent)
 	require.NoError(t, err)
 
-	resp, err = cluster.client.Post(
+	resp, err = gdprClient(cluster).Post(
 		cluster.httpEndpoint+"/api/v1/tenants/"+tenantID+"/users/"+userID+"/gdpr/consent",
 		"application/json",
 		bytes.NewReader(body),
@@ -1904,7 +1892,7 @@ func TestGDPR_ConsentHistory(t *testing.T) {
 	resp.Body.Close()
 
 	// Get consent - should show latest version
-	resp, err = cluster.client.Get(
+	resp, err = gdprClient(cluster).Get(
 		cluster.httpEndpoint + "/api/v1/tenants/" + tenantID + "/users/" + userID + "/gdpr/consent/marketing",
 	)
 	require.NoError(t, err)
@@ -1922,7 +1910,8 @@ func TestGDPR_ExportFormats(t *testing.T) {
 	cluster := setupTestCluster(t)
 	defer cluster.Close()
 
-	tenantID := "test-tenant"
+	tenantID := generateUniqueTenantID()
+	createTestTenant(t, cluster, tenantID)
 
 	formats := []string{"json", "csv", "xml"}
 
@@ -1936,7 +1925,7 @@ func TestGDPR_ExportFormats(t *testing.T) {
 		body, err := json.Marshal(exportReq)
 		require.NoError(t, err)
 
-		resp, err := cluster.client.Post(
+		resp, err := gdprClient(cluster).Post(
 			cluster.httpEndpoint+"/api/v1/tenants/"+tenantID+"/users/"+userID+"/gdpr/export",
 			"application/json",
 			bytes.NewReader(body),
@@ -1965,48 +1954,43 @@ func TestGDPR_ExportFormats(t *testing.T) {
 // createTestTenant creates a test tenant for GDPR tests.
 func createTestTenant(t *testing.T, cluster *testCluster, tenantID string) {
 	t.Helper()
-
-	tenant := map[string]interface{}{
-		"id":   tenantID,
-		"name": "GDPR Test Tenant " + tenantID,
-	}
-
-	body, err := json.Marshal(tenant)
-	require.NoError(t, err)
-
-	resp, err := cluster.client.Post(
-		cluster.httpEndpoint+"/api/v1/tenants",
-		"application/json",
-		bytes.NewReader(body),
-	)
-	require.NoError(t, err)
-	defer resp.Body.Close()
-
-	// Accept 201 Created or 409 Conflict (if already exists)
-	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusConflict {
-		bodyBytes, _ := io.ReadAll(resp.Body)
-		t.Fatalf("Failed to create tenant: %d - %s", resp.StatusCode, string(bodyBytes))
-	}
+	cluster.provisionTenant(t, tenantID)
 }
 
-// cleanupTestTenant removes a test tenant.
-func cleanupTestTenant(t *testing.T, cluster *testCluster, tenantID string) {
-	t.Helper()
+// gdprClient returns a copy of the cluster's client whose requests carry the
+// bearer bearerFor picks for their path: the tenant admin's for a GDPR path of
+// a provisioned tenant.
+func gdprClient(tc *testCluster) *http.Client {
+	client := *tc.client
+	client.Transport = &gdprBearerTransport{tc: tc, base: tc.client.Transport}
+	return &client
+}
 
-	req, err := http.NewRequest(
-		http.MethodDelete,
-		cluster.httpEndpoint+"/api/v1/tenants/"+tenantID,
-		nil,
-	)
-	if err != nil {
-		return
-	}
+// gdprBearerTransport sets the bearer bearerFor picks on a request that has no
+// Authorization header.
+type gdprBearerTransport struct {
+	tc   *testCluster
+	base http.RoundTripper
+}
 
-	resp, err := cluster.client.Do(req)
-	if err != nil {
-		return
+func (g *gdprBearerTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	base := g.base
+	if base == nil {
+		base = http.DefaultTransport
 	}
-	resp.Body.Close()
+	if req.Header.Get("Authorization") != "" {
+		return base.RoundTrip(req)
+	}
+	bearer, err := g.tc.bearerFor(req.Method, req.URL.RequestURI())
+	if err != nil {
+		return nil, err
+	}
+	if bearer == "" {
+		return base.RoundTrip(req)
+	}
+	authed := req.Clone(req.Context())
+	authed.Header.Set("Authorization", "Bearer "+bearer)
+	return base.RoundTrip(authed)
 }
 
 // createTestUser creates a test user for GDPR tests.
@@ -2023,7 +2007,7 @@ func createTestUser(t *testing.T, cluster *testCluster, tenantID, userID string)
 	body, err := json.Marshal(user)
 	require.NoError(t, err)
 
-	resp, err := cluster.client.Post(
+	resp, err := gdprClient(cluster).Post(
 		cluster.httpEndpoint+"/api/v1/tenants/"+tenantID+"/users",
 		"application/json",
 		bytes.NewReader(body),
@@ -2046,7 +2030,7 @@ func waitForExportCompletion(t *testing.T, cluster *testCluster, tenantID, userI
 	defer cancel()
 
 	for {
-		resp, err := cluster.client.Get(
+		resp, err := gdprClient(cluster).Get(
 			cluster.httpEndpoint + "/api/v1/tenants/" + tenantID + "/users/" + userID + "/gdpr/export/" + exportID,
 		)
 		require.NoError(t, err)
@@ -2061,7 +2045,7 @@ func waitForExportCompletion(t *testing.T, cluster *testCluster, tenantID, userI
 			if status.DownloadURL != "" {
 				// DownloadURL is a relative path, construct full URL
 				fullURL := cluster.httpEndpoint + status.DownloadURL
-				dataResp, err := cluster.client.Get(fullURL)
+				dataResp, err := gdprClient(cluster).Get(fullURL)
 				if err != nil {
 					t.Fatalf("Failed to download export data: %v", err)
 				}
