@@ -190,6 +190,16 @@ import type {
   GetReencryptionProgressResponse,
 } from './dek.js';
 import type {
+  AttestationClient,
+  Endorsement,
+  EndorsementKind,
+  ListEndorsementsResponse,
+  ListReferenceValuesResponse,
+  PutEndorsementRequest,
+  PutReferenceValuesRequest,
+  ReferenceValues,
+} from './attestation.js';
+import type {
   DynamicSecretsClient,
   DynamicSecretRole,
   CreateRoleRequest as DynamicSecretCreateRoleRequest,
@@ -3333,6 +3343,76 @@ async listSessions(
     );
   }
 
+  // Maps to GET /api/v1/tenants/{tenantID}
+  async getTenant(tenantID: string): Promise<IAMTenant> {
+    // Same wire shape as a listTenants element: created/updated → *_at.
+    const t = await this.fetchJSON<{
+      id?: string;
+      name?: string;
+      description?: string;
+      created?: string;
+      created_at?: string;
+      updated?: string;
+      updated_at?: string;
+    }>(`/api/v1/tenants/${encodeURIComponent(tenantID)}`);
+    return {
+      id: t.id ?? '',
+      name: t.name ?? '',
+      description: t.description ?? '',
+      created_at: t.created_at ?? t.created ?? '',
+      updated_at: t.updated_at ?? t.updated ?? '',
+    };
+  }
+
+  // Maps to GET /api/v1/tenants/{tenantID}/users/{userID}
+  async getUser(tenantID: string, userID: string): Promise<IAMUser> {
+    // Same wire shape as a listUsers element; normalised the same way.
+    const u = await this.fetchJSON<{
+      id?: string;
+      email?: string;
+      name?: string;
+      username?: string;
+      tenant_id?: string;
+      created?: string;
+      created_at?: string;
+      updated?: string;
+      updated_at?: string;
+      lifecycle?: import('./types.js').UserLifecycle;
+      role?: string;
+      roles?: string[];
+    }>(`/api/v1/tenants/${encodeURIComponent(tenantID)}/users/${encodeURIComponent(userID)}`);
+    return {
+      id: u.id ?? '',
+      tenant_id: u.tenant_id ?? tenantID,
+      username: u.username ?? u.name ?? u.email ?? '',
+      email: u.email ?? '',
+      lifecycle: u.lifecycle,
+      roles: u.roles ?? (u.role ? [u.role] : []),
+      created_at: u.created_at ?? u.created ?? '',
+      updated_at: u.updated_at ?? u.updated ?? '',
+    };
+  }
+
+  // Maps to GET /api/v1/tenants/{tenantID}/users/{userID}/sessions[?limit=N]
+  async listUserSessions(
+    tenantID: string,
+    userID: string,
+    limit?: number,
+  ): Promise<import('./interfaces.js').ListIAMSessionsResponse> {
+    const qs = limit !== undefined && limit > 0 ? `?limit=${limit}` : '';
+    return this.fetchJSON<import('./interfaces.js').ListIAMSessionsResponse>(
+      `/api/v1/tenants/${encodeURIComponent(tenantID)}/users/${encodeURIComponent(userID)}/sessions${qs}`,
+    );
+  }
+
+  // Maps to DELETE /api/v1/tenants/{tenantID}/users/{userID}/sessions
+  async revokeAllUserSessions(tenantID: string, userID: string): Promise<void> {
+    await this.fetchJSON<void>(
+      `/api/v1/tenants/${encodeURIComponent(tenantID)}/users/${encodeURIComponent(userID)}/sessions`,
+      { method: 'DELETE' },
+    );
+  }
+
   async listRoles(tenantID: string): Promise<ListRolesResponse> {
     // Server returns {limit, offset, roles:[...]} — count field absent; derive it.
     const raw = await this.fetchJSON<{ roles?: IAMRole[]; count?: number; limit?: number; offset?: number }>(
@@ -4444,6 +4524,75 @@ export class RestDEKClient implements DEKClient {
   }
 }
 
+/**
+ * RestAttestationClient manages the attestation verifier's endorsements and
+ * reference values over REST (/api/v1/attestation/*).
+ */
+export class RestAttestationClient implements AttestationClient {
+  private readonly http: FetchHelper;
+
+  constructor(baseUrl: string, config: ClientConfig = {}) {
+    this.http = newFetchHelper(baseUrl, config);
+  }
+
+  // Maps to PUT /api/v1/attestation/endorsements/{name}
+  async putEndorsement(name: string, req: PutEndorsementRequest): Promise<Endorsement> {
+    return this.http.fetchJSON<Endorsement>(
+      `/api/v1/attestation/endorsements/${encodeURIComponent(name)}`,
+      { method: 'PUT', body: JSON.stringify(req) },
+    );
+  }
+
+  // Maps to GET /api/v1/attestation/endorsements[?kind=]
+  async listEndorsements(kind?: EndorsementKind): Promise<ListEndorsementsResponse> {
+    const query = kind ? `?kind=${encodeURIComponent(kind)}` : '';
+    const wire = await this.http.fetchJSON<ListEndorsementsResponse>(
+      `/api/v1/attestation/endorsements${query}`,
+    );
+    return { ...wire, endorsements: wire?.endorsements ?? [] };
+  }
+
+  // Maps to DELETE /api/v1/attestation/endorsements/{name}
+  async deleteEndorsement(name: string): Promise<void> {
+    return this.http.fetchVoid(
+      `/api/v1/attestation/endorsements/${encodeURIComponent(name)}`,
+      { method: 'DELETE' },
+    );
+  }
+
+  // Maps to PUT /api/v1/attestation/reference-values/{name}
+  async putReferenceValues(name: string, signedCoRIM: string): Promise<ReferenceValues> {
+    const req: PutReferenceValuesRequest = { signed_corim: signedCoRIM };
+    return this.http.fetchJSON<ReferenceValues>(
+      `/api/v1/attestation/reference-values/${encodeURIComponent(name)}`,
+      { method: 'PUT', body: JSON.stringify(req) },
+    );
+  }
+
+  // Maps to GET /api/v1/attestation/reference-values/{name}
+  async getReferenceValues(name: string): Promise<ReferenceValues> {
+    return this.http.fetchJSON<ReferenceValues>(
+      `/api/v1/attestation/reference-values/${encodeURIComponent(name)}`,
+    );
+  }
+
+  // Maps to GET /api/v1/attestation/reference-values
+  async listReferenceValues(): Promise<ListReferenceValuesResponse> {
+    const wire = await this.http.fetchJSON<ListReferenceValuesResponse>(
+      '/api/v1/attestation/reference-values',
+    );
+    return { ...wire, reference_values: wire?.reference_values ?? [] };
+  }
+
+  // Maps to DELETE /api/v1/attestation/reference-values/{name}
+  async deleteReferenceValues(name: string): Promise<void> {
+    return this.http.fetchVoid(
+      `/api/v1/attestation/reference-values/${encodeURIComponent(name)}`,
+      { method: 'DELETE' },
+    );
+  }
+}
+
 // ---------------------------------------------------------------------------
 // RestDynamicSecretsClient — /api/v1/secrets/dynamic/* surface.
 // ---------------------------------------------------------------------------
@@ -5405,6 +5554,7 @@ export class RestClient implements Client {
   readonly trust: TrustClient;
   readonly crypto: CryptoClient;
   readonly dek: DEKClient;
+  readonly attestation: AttestationClient;
   readonly dynamicSecrets: DynamicSecretsClient;
   readonly barrier: BarrierClient;
   readonly tenantBarrier: TenantBarrierClient;
@@ -5447,6 +5597,7 @@ export class RestClient implements Client {
     this.trust = new RestTrustClient(baseUrl, config);
     this.crypto = new RestCryptoClient(baseUrl, config);
     this.dek = new RestDEKClient(baseUrl, config);
+    this.attestation = new RestAttestationClient(baseUrl, config);
     this.dynamicSecrets = new RestDynamicSecretsClient(baseUrl, config);
     this.barrier = new RestBarrierClient(baseUrl, config);
     this.tenantBarrier = new RestTenantBarrierClient(baseUrl, config);

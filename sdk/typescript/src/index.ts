@@ -313,6 +313,16 @@ export type {
   GetReencryptionProgressResponse,
 } from './dek.js';
 export type {
+  AttestationClient,
+  Endorsement,
+  EndorsementKind,
+  ListEndorsementsResponse,
+  ListReferenceValuesResponse,
+  PutEndorsementRequest,
+  PutReferenceValuesRequest,
+  ReferenceValues,
+} from './attestation.js';
+export type {
   DynamicSecretsClient,
   DynamicSecretRole,
   CreateRoleRequest as DynamicSecretCreateRoleRequest,
