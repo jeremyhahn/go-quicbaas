@@ -54,7 +54,7 @@ type stubKMSManager struct{}
 func (stubKMSManager) GenerateKey(context.Context, *xkmstypes.KeyAttributes) (interface{}, error) {
 	return nil, nil
 }
-func (stubKMSManager) ImportKey(context.Context, string, []byte, string) (interface{}, error) {
+func (stubKMSManager) ImportKey(context.Context, string, []byte, string, bool) (interface{}, error) {
 	return nil, nil
 }
 func (stubKMSManager) GetKey(context.Context, string) (interface{}, error)  { return nil, nil }

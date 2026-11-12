@@ -35,7 +35,7 @@ func TestMockKMSManager_AllMethods(t *testing.T) {
 	assert.Nil(t, result)
 
 	// Test ImportKey
-	result, err = kms.ImportKey(ctx, "test-key", []byte("material"), "AES-256")
+	result, err = kms.ImportKey(ctx, "test-key", []byte("material"), "AES-256", false)
 	assert.NoError(t, err)
 	assert.Nil(t, result)
 

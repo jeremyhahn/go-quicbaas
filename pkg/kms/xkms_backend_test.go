@@ -676,7 +676,7 @@ func TestXKMSBackend_buildFullKeyID_AES256GCM(t *testing.T) {
 	}
 
 	result := backend.buildFullKeyID("my-key", "AES-256-GCM")
-	assert.Equal(t, "software:encryption:aes256-gcm:my-key", result)
+	assert.Equal(t, "software:secret:aes256-gcm:my-key", result)
 }
 
 func TestXKMSBackend_buildFullKeyID_AES128GCM(t *testing.T) {
@@ -687,7 +687,7 @@ func TestXKMSBackend_buildFullKeyID_AES128GCM(t *testing.T) {
 	}
 
 	result := backend.buildFullKeyID("my-key", "AES-128-GCM")
-	assert.Equal(t, "software:encryption:aes128-gcm:my-key", result)
+	assert.Equal(t, "software:secret:aes128-gcm:my-key", result)
 }
 
 func TestXKMSBackend_buildFullKeyID_ChaCha20(t *testing.T) {
@@ -698,7 +698,7 @@ func TestXKMSBackend_buildFullKeyID_ChaCha20(t *testing.T) {
 	}
 
 	result := backend.buildFullKeyID("my-key", "CHACHA20-POLY1305")
-	assert.Equal(t, "software:encryption:chacha20-poly1305:my-key", result)
+	assert.Equal(t, "software:secret:chacha20-poly1305:my-key", result)
 }
 
 func TestXKMSBackend_buildFullKeyID_TPM2Backend(t *testing.T) {
@@ -709,7 +709,7 @@ func TestXKMSBackend_buildFullKeyID_TPM2Backend(t *testing.T) {
 	}
 
 	result := backend.buildFullKeyID("my-key", "AES-256-GCM")
-	assert.Equal(t, "tpm2:encryption:aes256-gcm:my-key", result)
+	assert.Equal(t, "tpm2:secret:aes256-gcm:my-key", result)
 }
 
 // =============================================================================
@@ -1608,7 +1608,7 @@ func TestXKMSBackend_algorithmToKeyAttributes_KeyType(t *testing.T) {
 
 	// Symmetric key should have encryption key type
 	symAttrs := backend.algorithmToKeyAttributes("test-key", AlgAES256GCM)
-	assert.Equal(t, xkmssdk.KeyTypeEncryption, symAttrs.KeyType)
+	assert.Equal(t, xkmssdk.KeyTypeSecret, symAttrs.KeyType)
 
 	// Asymmetric signing key should have signing key type
 	rsaAttrs := backend.algorithmToKeyAttributes("test-key", AlgRSA4096)

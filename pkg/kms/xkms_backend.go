@@ -58,6 +58,16 @@ type XKMSBackend struct {
 }
 
 // XKMSBackendConfig configures the XKMSBackend.
+// symmetricKeyType is the KeyType every symmetric key is generated and
+// addressed under. go-xkms's symmetric provider lists only "secret" keys as
+// symmetric, with their stored Exportable flag, and skips a symmetric key of
+// any other type, so go-xkms could neither list nor export it (#1768).
+const symmetricKeyType = kctypes.KeyTypeSecret
+
+// symmetricKeyTypeSegment is symmetricKeyType as the type segment of a
+// go-xkms kid ("backend:type:algo:keyname").
+var symmetricKeyTypeSegment = strings.ToLower(symmetricKeyType.String())
+
 type XKMSBackendConfig struct {
 	// BackendType is the type of go-xkms backend to use.
 	// Use config.BackendType constants (e.g., config.BackendTypeSoftware).
@@ -200,7 +210,8 @@ func (kb *XKMSBackend) CreateKey(ctx context.Context, attrs *kctypes.KeyAttribut
 
 	// Generate key using go-xkms
 	if isSymmetric {
-		// Generate symmetric key
+		// Generate symmetric key under the type every lookup here addresses.
+		attrs.KeyType = symmetricKeyType
 		_, err := xkms.GenerateSymmetricKey(ctx, string(kb.backendType), attrs)
 		if err != nil {
 			return nil, api.NewSymmetricKeyGenerationError("XKMSBackend.CreateKey", err)
@@ -249,8 +260,11 @@ func (kb *XKMSBackend) ImportKey(ctx context.Context, keyID string, material []b
 		return nil, ErrKeyMaterialEmpty
 	}
 
-	// Build key attributes for the imported key
+	// Build key attributes for the imported key. go-xkms records Exportable
+	// from these attributes at import and enforces it on export, so the flag
+	// has to reach it here; the metadata below only mirrors it (#1779).
 	attrs := kb.algorithmToKeyAttributes(keyID, algorithm)
+	attrs.Exportable = options["exportable"] == true
 
 	// Symmetric and asymmetric import are ONE operation. The algorithm rides on
 	// attrs, and go-xkms interprets the material accordingly: raw bytes for a
@@ -273,22 +287,18 @@ func (kb *XKMSBackend) ImportKey(ctx context.Context, keyID string, material []b
 	// Build metadata
 	now := time.Now()
 	meta := &KeyMetadata{
-		KeyID:     keyID,
-		Algorithm: algorithm,
-		State:     KeyStateEnabled,
-		Version:   1,
-		Created:   now,
-		Updated:   now,
+		KeyID:      keyID,
+		Algorithm:  algorithm,
+		State:      KeyStateEnabled,
+		Version:    1,
+		Exportable: attrs.Exportable,
+		Created:    now,
+		Updated:    now,
 	}
 
 	// Extract options if provided
-	if options != nil {
-		if desc, ok := options["description"].(string); ok {
-			meta.Description = desc
-		}
-		if exp, ok := options["exportable"].(bool); ok {
-			meta.Exportable = exp
-		}
+	if desc, ok := options["description"].(string); ok {
+		meta.Description = desc
 	}
 
 	// Cache metadata
@@ -350,7 +360,7 @@ func (kb *XKMSBackend) GetKeyMetadata(ctx context.Context, keyID string) (*KeyMe
 		}
 
 		for _, sf := range symmetricFormats {
-			kid := fmt.Sprintf("%s:encryption:%s:%s", kb.backendType, sf.format, keyID)
+			kid := fmt.Sprintf("%s:%s:%s:%s", kb.backendType, symmetricKeyTypeSegment, sf.format, keyID)
 			if _, err := xkms.GetSymmetricKey(ctx, kid); err == nil {
 				foundAlgorithm = sf.algo
 				break
@@ -611,7 +621,7 @@ func (kb *XKMSBackend) DeleteKey(ctx context.Context, keyID string) error {
 		attrs = &kctypes.KeyAttributes{
 			CN:                 keyID,
 			StoreType:          kctypes.StoreType(string(kb.backendType)),
-			KeyType:            kctypes.KeyTypeEncryption,
+			KeyType:            symmetricKeyType,
 			SymmetricAlgorithm: kctypes.SymmetricAES256GCM,
 		}
 	}
@@ -625,7 +635,7 @@ func (kb *XKMSBackend) DeleteKey(ctx context.Context, keyID string) error {
 		defaultAttrs := &kctypes.KeyAttributes{
 			CN:                 keyID,
 			StoreType:          kctypes.StoreType(string(kb.backendType)),
-			KeyType:            kctypes.KeyTypeEncryption,
+			KeyType:            symmetricKeyType,
 			SymmetricAlgorithm: kctypes.SymmetricAES256GCM,
 		}
 		if err2 := xkms.DeleteKey(ctx, defaultAttrs); err2 != nil {
@@ -653,11 +663,11 @@ func (kb *XKMSBackend) formatKeyID(keyID string) string {
 }
 
 // buildFullKeyID constructs the full key ID format expected by go-xkms for crypto operations.
-// Format: "backend:type:algo:keyname" (e.g., "software:encryption:aes256-gcm:my-key").
+// Format: "backend:type:algo:keyname" (e.g., "software:secret:aes256-gcm:my-key").
 func (kb *XKMSBackend) buildFullKeyID(keyID string, algorithm string) string {
 	// Map algorithm to go-xkms format
 	algoFormat := kb.algorithmToKeyIDFormat(algorithm)
-	return fmt.Sprintf("%s:encryption:%s:%s", kb.backendType, algoFormat, keyID)
+	return fmt.Sprintf("%s:%s:%s:%s", kb.backendType, symmetricKeyTypeSegment, algoFormat, keyID)
 }
 
 // buildSigningKeyID constructs the full key ID format for signing operations.
@@ -981,7 +991,7 @@ func (kb *XKMSBackend) algorithmToKeyAttributes(keyID, algorithm string) *kctype
 	attrs := &kctypes.KeyAttributes{
 		CN:        keyID,
 		StoreType: kctypes.StoreType(string(kb.backendType)),
-		KeyType:   kctypes.KeyTypeEncryption,
+		KeyType:   symmetricKeyType,
 	}
 
 	alg := strings.ToUpper(algorithm)
