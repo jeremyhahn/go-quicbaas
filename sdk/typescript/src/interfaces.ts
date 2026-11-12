@@ -662,6 +662,68 @@ export interface VectorNamespace {
   created_at?: string;
 }
 
+// NamespaceInfo is the full description of one vector namespace.
+// Maps to GET /api/v1/vector/namespaces/{namespace}
+export interface NamespaceInfo {
+  namespace: string;
+  dimensions: number;
+  distance_metric: string;
+  precision?: string;
+  index_type: string;
+  index_params?: Record<string, string>;
+  vector_count: number;
+  indexed_count: number;
+  pending_count?: number;
+  storage_bytes: number;
+  index_bytes: number;
+  created_at?: string;
+  updated_at?: string;
+  last_index_build?: string;
+  shard_id?: number;
+  replication_factor?: number;
+  compression_enabled?: boolean;
+  metadata?: Record<string, string>;
+}
+
+// NamespaceStats is the usage statistics of one vector namespace.
+// Maps to GET /api/v1/vector/namespaces/{namespace}/stats
+export interface NamespaceStats {
+  namespace: string;
+  vector_count: number;
+  indexed_count: number;
+  storage_bytes: number;
+  index_bytes: number;
+  avg_search_latency_ms: number;
+  search_count: number;
+}
+
+// RebuildIndexRequest is the body of an index rebuild.
+export interface RebuildIndexRequest {
+  index_params?: Record<string, string>;
+  async: boolean;
+  timeout_ms?: number;
+}
+
+// RebuildIndexResponse answers an index rebuild (202 Accepted).
+export interface RebuildIndexResponse {
+  operation_id: string;
+  started: string;
+  estimated_duration_ms: number;
+}
+
+// IndexProgress is the progress of one index rebuild operation.
+export interface IndexProgress {
+  operation_id: string;
+  namespace: string;
+  vectors_indexed: number;
+  total_vectors: number;
+  percent_complete: number;
+  elapsed_time_ms: number;
+  estimated_remaining_ms: number;
+  status: string;
+  error_message?: string;
+}
+
 // VectorSearchResult is one result from a similarity search.
 export interface VectorSearchResult {
   id: string;
@@ -683,6 +745,22 @@ export interface VectorsClient {
   // deleteNamespace deletes a vector namespace by name.
   // Maps to DELETE /api/v1/vector/namespaces/{namespace}
   deleteNamespace(namespace: string): Promise<void>;
+
+  // getNamespace returns the full description of one namespace.
+  // Maps to GET /api/v1/vector/namespaces/{namespace}
+  getNamespace(namespace: string): Promise<NamespaceInfo>;
+
+  // getNamespaceStats returns the usage statistics of one namespace.
+  // Maps to GET /api/v1/vector/namespaces/{namespace}/stats
+  getNamespaceStats(namespace: string): Promise<NamespaceStats>;
+
+  // rebuildIndex starts a rebuild of the namespace's index.
+  // Maps to POST /api/v1/vector/namespaces/{namespace}/index/rebuild
+  rebuildIndex(namespace: string, req: RebuildIndexRequest): Promise<RebuildIndexResponse>;
+
+  // getIndexProgress returns the progress of one index rebuild.
+  // Maps to GET /api/v1/vector/namespaces/{namespace}/index/progress?operation_id=
+  getIndexProgress(namespace: string, operationID: string): Promise<IndexProgress>;
 
   // searchSimilar performs a similarity search in the given namespace.
   // Maps to POST /api/v1/vector/namespaces/{namespace}/search/similar
