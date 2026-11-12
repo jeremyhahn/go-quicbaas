@@ -824,6 +824,54 @@ export interface UpdatePolicyRequest {
 
 // IAMClient provides identity and access management operations.
 // Paths: /api/v1/tenants and /api/v1/iam
+// ConsentPurpose is what a GDPR consent is for (pkg/iam ConsentPurpose).
+export type ConsentPurpose =
+  | 'marketing'
+  | 'analytics'
+  | 'personalization'
+  | 'third_party'
+  | 'data_processing'
+  | 'data_retention'
+  | 'functional';
+
+// ConsentStatus is the state of a GDPR consent (pkg/iam ConsentStatus).
+export type ConsentStatus = 'granted' | 'denied' | 'withdrawn' | 'pending';
+
+// UserConsent is one GDPR consent record (pkg/iam Consent). user_id is a
+// string because the Go tag is `,string`; times are RFC 3339 strings.
+export interface UserConsent {
+  id: string;
+  user_id: string;
+  tenant_id: string;
+  purpose: ConsentPurpose;
+  status: ConsentStatus;
+  version: string;
+  granted_at?: string;
+  withdrawn_at?: string;
+  expires_at?: string;
+  ip_address?: string;
+  user_agent?: string;
+  metadata?: Record<string, string>;
+  created: string;
+  updated: string;
+}
+
+// GrantConsentRequest is the body of POST …/gdpr/consent.
+export interface GrantConsentRequest {
+  purpose: ConsentPurpose;
+  version: string;
+  // expires_at is an RFC 3339 timestamp; omitted, the consent never expires.
+  expires_at?: string;
+  ip_address?: string;
+  user_agent?: string;
+}
+
+// WithdrawConsentRequest is the body of PUT …/gdpr/consent/{purpose}/withdraw.
+export interface WithdrawConsentRequest {
+  ip_address?: string;
+  user_agent?: string;
+}
+
 export interface IAMClient {
   // listUsers returns all users within a tenant.
   // Maps to GET /api/v1/tenants/{tenantID}/users
@@ -920,6 +968,27 @@ export interface IAMClient {
   // activatePIV activates the user with a PIV X.509 certificate PEM block.
   // Maps to POST /api/v1/iam/{tenant_id}/invites/{token}/activate/piv
   activatePIV(tenantID: string, token: string, certPEM: string): Promise<import('./types.js').ActivationResponse>;
+
+  // grantConsent records the user's consent for a purpose.
+  // Maps to POST /api/v1/tenants/{tenant_id}/users/{user_id}/gdpr/consent
+  grantConsent(tenantID: string, userID: string, req: GrantConsentRequest): Promise<UserConsent>;
+
+  // listUserConsents returns every consent record of the user.
+  // Maps to GET /api/v1/tenants/{tenant_id}/users/{user_id}/gdpr/consents
+  listUserConsents(tenantID: string, userID: string): Promise<UserConsent[]>;
+
+  // getConsent returns the user's consent record for one purpose.
+  // Maps to GET /api/v1/tenants/{tenant_id}/users/{user_id}/gdpr/consent/{purpose}
+  getConsent(tenantID: string, userID: string, purpose: ConsentPurpose): Promise<UserConsent>;
+
+  // withdrawConsent withdraws the user's consent for one purpose.
+  // Maps to PUT /api/v1/tenants/{tenant_id}/users/{user_id}/gdpr/consent/{purpose}/withdraw
+  withdrawConsent(
+    tenantID: string,
+    userID: string,
+    purpose: ConsentPurpose,
+    req?: WithdrawConsentRequest,
+  ): Promise<UserConsent>;
 }
 
 // ---------------------------------------------------------------------------

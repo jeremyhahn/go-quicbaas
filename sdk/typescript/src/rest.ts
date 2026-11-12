@@ -41,6 +41,10 @@ import type {
   VectorSearchResult,
   VectorsClient,
   OrchestratorClient,
+  ConsentPurpose,
+  GrantConsentRequest,
+  UserConsent,
+  WithdrawConsentRequest,
 } from './interfaces.js';
 import type {
   RAGClient,
@@ -3381,6 +3385,43 @@ class RestIAMClient implements IAMClient {
     return this.fetchJSON<import('./types.js').ActivationResponse>(
       `/api/v1/iam/${encodeURIComponent(tenantID)}/invites/${encodeURIComponent(token)}/activate/piv`,
       { method: 'POST', body: JSON.stringify({ cert_pem: certPEM }) },
+    );
+  }
+
+  // gdprPath is the GDPR route prefix of one user in one tenant.
+  private gdprPath(tenantID: string, userID: string): string {
+    return `/api/v1/tenants/${encodeURIComponent(tenantID)}/users/${encodeURIComponent(userID)}/gdpr`;
+  }
+
+  async grantConsent(tenantID: string, userID: string, req: GrantConsentRequest): Promise<UserConsent> {
+    return this.fetchJSON<UserConsent>(`${this.gdprPath(tenantID, userID)}/consent`, {
+      method: 'POST',
+      body: JSON.stringify(req),
+    });
+  }
+
+  async listUserConsents(tenantID: string, userID: string): Promise<UserConsent[]> {
+    const consents = await this.fetchJSON<UserConsent[] | null>(
+      `${this.gdprPath(tenantID, userID)}/consents`,
+    );
+    return consents ?? [];
+  }
+
+  async getConsent(tenantID: string, userID: string, purpose: ConsentPurpose): Promise<UserConsent> {
+    return this.fetchJSON<UserConsent>(
+      `${this.gdprPath(tenantID, userID)}/consent/${encodeURIComponent(purpose)}`,
+    );
+  }
+
+  async withdrawConsent(
+    tenantID: string,
+    userID: string,
+    purpose: ConsentPurpose,
+    req?: WithdrawConsentRequest,
+  ): Promise<UserConsent> {
+    return this.fetchJSON<UserConsent>(
+      `${this.gdprPath(tenantID, userID)}/consent/${encodeURIComponent(purpose)}/withdraw`,
+      { method: 'PUT', body: JSON.stringify(req ?? {}) },
     );
   }
 }
