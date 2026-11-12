@@ -487,6 +487,18 @@ export type {
 } from './cluster_nodes.js';
 export { RestClusterNodesClient } from './rest.js';
 export type {
+  EntitiesClient,
+  PutEntityRequest,
+  PutEntityResponse,
+  EntityRecord,
+  DeleteEntityResponse,
+  EntityItem,
+  EntityList,
+  EntityListOptions,
+  EntityGetOptions,
+  EntityWriteOptions,
+} from './entities.js';
+export type {
   DynamicSecretsClient,
   DynamicSecretRole,
   CreateRoleRequest as DynamicSecretCreateRoleRequest,

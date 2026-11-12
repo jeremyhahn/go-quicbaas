@@ -39,6 +39,7 @@ import type { PIVClient } from './piv.js';
 import type { XKMSClient } from './xkms.js';
 import type { BackupsClient } from './backups.js';
 import type { ClusterNodesClient } from './cluster_nodes.js';
+import type { EntitiesClient } from './entities.js';
 import type { DynamicSecretsClient } from './dynamicsecrets.js';
 
 import type {
@@ -2711,6 +2712,11 @@ export interface Client {
    * Paths: /api/v1/cluster/nodes/*. Distinct from `cluster` (status).
    */
   readonly clusterNodes: ClusterNodesClient;
+  /**
+   * Generic entity operations: list, create, put, get and delete entities
+   * of any registered type (/api/v1/entities/*).
+   */
+  readonly entities: EntitiesClient;
   /**
    * dynamicSecrets manages credential-generation roles, on-demand
    * short-lived credential minting, and lease renewal/revocation.
