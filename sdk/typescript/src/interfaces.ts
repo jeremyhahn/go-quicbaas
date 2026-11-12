@@ -810,6 +810,89 @@ export interface UpdateRoleRequest {
   permissions?: string[];
 }
 
+// IAMAuditActor identifies who performed an audited IAM action.
+export interface IAMAuditActor {
+  user_id?: string;
+  username?: string;
+  email?: string;
+  session_id?: string;
+  client_id?: string;
+  impersonating_user_id?: string;
+  impersonating_username?: string;
+  service_identity?: string;
+  jti?: string;
+  scopes?: string[];
+  roles?: string[];
+}
+
+// IAMAuditResource identifies the resource an audited IAM action touched.
+export interface IAMAuditResource {
+  type: string;
+  id: string;
+  name?: string;
+}
+
+// IAMAuditEvent is one IAM audit log entry. `timestamp` is RFC 3339.
+export interface IAMAuditEvent {
+  id: string;
+  tenant_id: string;
+  timestamp: string;
+  event_type: string;
+  category: string;
+  actor?: IAMAuditActor;
+  resource?: IAMAuditResource;
+  action: string;
+  outcome: string;
+  details?: Record<string, unknown>;
+  ip_address?: string;
+  user_agent?: string;
+  impersonation_session_id?: string;
+  correlation_id?: string;
+}
+
+// ListIAMAuditEventsOptions filters and pages the IAM audit log. Fields are
+// sent as their snake_case query names; only set values are sent. Times are
+// RFC 3339.
+export interface ListIAMAuditEventsOptions {
+  tenantID?: string;
+  eventType?: string;
+  category?: string;
+  outcome?: string;
+  actorID?: string;
+  resourceID?: string;
+  startTime?: string;
+  endTime?: string;
+  limit?: number;
+  offset?: number;
+}
+
+// ListIAMAuditEventsResponse is one page of IAM audit events.
+export interface ListIAMAuditEventsResponse {
+  events: IAMAuditEvent[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
+// RecordIAMAuditEventRequest records one IAM audit event.
+export interface RecordIAMAuditEventRequest {
+  tenant_id?: string;
+  event: IAMAuditEvent;
+  /** When true the server records the event asynchronously and returns an empty event_id. */
+  async?: boolean;
+}
+
+// RecordIAMAuditEventResponse carries the recorded event's ID (empty when async).
+export interface RecordIAMAuditEventResponse {
+  event_id: string;
+}
+
+// DeleteIAMAuditEventsResponse reports how many events a prune removed.
+export interface DeleteIAMAuditEventsResponse {
+  deleted_count: number;
+  before: string;
+}
+
 // IAMProviderType is the protocol of a tenant's external identity provider.
 export type IAMProviderType = 'oidc' | 'saml' | 'oauth2' | 'ldap';
 
@@ -1752,6 +1835,22 @@ export interface IAMClient {
   // updateRole updates a role's mutable fields.
   // Maps to PUT /api/v1/tenants/{tenantID}/roles/{roleID}
   updateRole(tenantID: string, roleID: string, req: UpdateRoleRequest): Promise<IAMRole>;
+
+  /** listAuditEvents returns one page of IAM audit events matching the filters. */
+  // Maps to GET /api/v1/iam/audit?tenant_id=&event_type=&category=&outcome=&actor_id=&resource_id=&start_time=&end_time=&limit=&offset=
+  listAuditEvents(opts?: ListIAMAuditEventsOptions): Promise<ListIAMAuditEventsResponse>;
+
+  /** getAuditEvent returns one IAM audit event. */
+  // Maps to GET /api/v1/iam/audit/{id}?tenant_id=
+  getAuditEvent(eventID: string, tenantID?: string): Promise<IAMAuditEvent>;
+
+  /** recordAuditEvent records one IAM audit event (201); event_id is empty when async. */
+  // Maps to POST /api/v1/iam/audit
+  recordAuditEvent(req: RecordIAMAuditEventRequest): Promise<RecordIAMAuditEventResponse>;
+
+  /** deleteAuditEventsBefore prunes IAM audit events older than `before` (RFC 3339). */
+  // Maps to DELETE /api/v1/iam/audit?before=&tenant_id=
+  deleteAuditEventsBefore(before: string, tenantID?: string): Promise<DeleteIAMAuditEventsResponse>;
 
   // getRole returns one role of a tenant.
   // Maps to GET /api/v1/tenants/{tenantID}/roles/{roleID}

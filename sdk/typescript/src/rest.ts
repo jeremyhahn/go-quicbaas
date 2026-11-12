@@ -3699,6 +3699,58 @@ async listSessions(
     );
   }
 
+  // Maps to GET /api/v1/iam/audit?tenant_id=&event_type=&category=&outcome=&actor_id=&resource_id=&start_time=&end_time=&limit=&offset=
+  async listAuditEvents(
+    opts?: import('./interfaces.js').ListIAMAuditEventsOptions,
+  ): Promise<import('./interfaces.js').ListIAMAuditEventsResponse> {
+    const q: string[] = [];
+    const add = (name: string, v: string | number | undefined): void => {
+      if (v !== undefined) q.push(`${name}=${encodeURIComponent(String(v))}`);
+    };
+    add('tenant_id', opts?.tenantID);
+    add('event_type', opts?.eventType);
+    add('category', opts?.category);
+    add('outcome', opts?.outcome);
+    add('actor_id', opts?.actorID);
+    add('resource_id', opts?.resourceID);
+    add('start_time', opts?.startTime);
+    add('end_time', opts?.endTime);
+    add('limit', opts?.limit);
+    add('offset', opts?.offset);
+    const qs = q.length > 0 ? `?${q.join('&')}` : '';
+    return this.fetchJSON<import('./interfaces.js').ListIAMAuditEventsResponse>(`/api/v1/iam/audit${qs}`);
+  }
+
+  // Maps to GET /api/v1/iam/audit/{id}?tenant_id=
+  async getAuditEvent(eventID: string, tenantID?: string): Promise<import('./interfaces.js').IAMAuditEvent> {
+    const qs = tenantID !== undefined ? `?tenant_id=${encodeURIComponent(tenantID)}` : '';
+    return this.fetchJSON<import('./interfaces.js').IAMAuditEvent>(
+      `/api/v1/iam/audit/${encodeURIComponent(eventID)}${qs}`,
+    );
+  }
+
+  // Maps to POST /api/v1/iam/audit
+  async recordAuditEvent(
+    req: import('./interfaces.js').RecordIAMAuditEventRequest,
+  ): Promise<import('./interfaces.js').RecordIAMAuditEventResponse> {
+    return this.fetchJSON<import('./interfaces.js').RecordIAMAuditEventResponse>('/api/v1/iam/audit', {
+      method: 'POST',
+      body: JSON.stringify(req),
+    });
+  }
+
+  // Maps to DELETE /api/v1/iam/audit?before=&tenant_id=
+  async deleteAuditEventsBefore(
+    before: string,
+    tenantID?: string,
+  ): Promise<import('./interfaces.js').DeleteIAMAuditEventsResponse> {
+    let qs = `?before=${encodeURIComponent(before)}`;
+    if (tenantID !== undefined) qs += `&tenant_id=${encodeURIComponent(tenantID)}`;
+    return this.fetchJSON<import('./interfaces.js').DeleteIAMAuditEventsResponse>(`/api/v1/iam/audit${qs}`, {
+      method: 'DELETE',
+    });
+  }
+
   // Maps to GET /api/v1/tenants/{tenantID}/roles/{roleID}
   async getRole(tenantID: string, roleID: string): Promise<IAMRole> {
     return this.fetchJSON<IAMRole>(
