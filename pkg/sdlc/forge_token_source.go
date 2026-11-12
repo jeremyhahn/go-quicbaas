@@ -287,9 +287,16 @@ func (s *CommandTokenSource) outputError(reason string) error {
 // runForgeTokenCommand is the default ForgeTokenRunner: argv runs without a
 // shell, stdout is captured and stderr is discarded, so neither reaches an
 // error value.
+// forgeTokenCommandWaitDelay bounds how long runForgeTokenCommand waits for
+// the command's output pipes to close after its context is done and the
+// command is killed. A descendant that inherited stdout would otherwise keep
+// the pipe open, and Output would block until it exits.
+const forgeTokenCommandWaitDelay = 2 * time.Second
+
 func runForgeTokenCommand(ctx context.Context, argv, env []string) ([]byte, error) {
 	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
 	cmd.Env = append(os.Environ(), env...)
 	cmd.Stderr = io.Discard
+	cmd.WaitDelay = forgeTokenCommandWaitDelay
 	return cmd.Output()
 }
