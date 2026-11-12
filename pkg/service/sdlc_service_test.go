@@ -1089,7 +1089,7 @@ func TestSDLCService_ReviewerTokenIsTheReviewersSecretEvenWithANodeCommand(t *te
 	if err != nil {
 		t.Fatalf("ForgeToken: %v", err)
 	}
-	if got != "reviewer-token" {
+	if string(got) != "reviewer-token" {
 		t.Fatalf("token = %q, want the reviewer's secret", got)
 	}
 	if len(source.baseURLs) != 0 {
