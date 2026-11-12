@@ -174,10 +174,44 @@ are the full paths chi composes.
 | 107 | GET | /api/v1/iam/sessions/{id} | GetSession | mounted (ModuleRESTServer); duplicate of routes_iam.go | `RestIAMClient.getSession` | not covered |
 | 108 | DELETE | /api/v1/iam/sessions/{id} | RevokeSession | mounted (ModuleRESTServer); duplicate of routes_iam.go | `RestIAMClient.revokeSession` | covered: views/security/MySessionsView.svelte |
 | 109 | POST | /api/v1/iam/sessions/revoke-others | RevokeOtherSessions | mounted (ModuleRESTServer); duplicate of routes_iam.go | `RestIAMClient.revokeOtherSessions` | covered: views/security/MySessionsView.svelte |
+| 110 | GET | /api/v1/auth/providers/{tenant_id}/{provider_name}/login | BeginFederatedLogin | mounted (ModuleRESTServer); duplicate of routes_iam.go | none | not covered |
+| 111 | GET | /api/v1/auth/providers/{tenant_id}/{provider_name}/callback | HandleFederatedCallback | mounted (ModuleRESTServer); duplicate of routes_iam.go | none | not-UI: the external identity provider redirects the browser here |
+| 112 | POST | /api/v1/tenants/{tenant_id}/users/{user_id}/gdpr/consent | GrantConsent | mounted (ModuleRESTServer); duplicate of routes_iam.go | `RestIAMClient.grantConsent` | covered: views/security/IAMView.svelte |
+| 113 | GET | /api/v1/tenants/{tenant_id}/users/{user_id}/gdpr/consents | ListUserConsents | mounted (ModuleRESTServer); duplicate of routes_iam.go | `RestIAMClient.listUserConsents` | covered: views/security/IAMView.svelte |
+| 114 | GET | /api/v1/tenants/{tenant_id}/users/{user_id}/gdpr/consent/{purpose} | GetConsent | mounted (ModuleRESTServer); duplicate of routes_iam.go | `RestIAMClient.getConsent` | not covered |
+| 115 | PUT | /api/v1/tenants/{tenant_id}/users/{user_id}/gdpr/consent/{purpose}/withdraw | WithdrawConsent | mounted (ModuleRESTServer); duplicate of routes_iam.go | `RestIAMClient.withdrawConsent` | covered: views/security/IAMView.svelte |
+| 116 | DELETE | /api/v1/tenants/{tenant_id}/users/{user_id}/gdpr/consent/{purpose} | WithdrawConsent | mounted (ModuleRESTServer); duplicate of routes_iam.go | none | not-UI: RESTful alias of row 115, which the console uses |
+| 117 | POST | /api/v1/tenants/{tenant_id}/users/{user_id}/gdpr/export | RequestDataExport | mounted (ModuleRESTServer); duplicate of routes_iam.go | `RestIAMClient.requestDataExport` | not covered |
+| 118 | GET | /api/v1/tenants/{tenant_id}/users/{user_id}/gdpr/export/{export_id} | GetExportStatus | mounted (ModuleRESTServer); duplicate of routes_iam.go | `RestIAMClient.getExportStatus` | not covered |
+| 119 | GET | /api/v1/tenants/{tenant_id}/users/{user_id}/gdpr/export/{export_id}/download | DownloadExport | mounted (ModuleRESTServer); duplicate of routes_iam.go | `RestIAMClient.downloadExport` | not covered |
+| 120 | POST | /api/v1/tenants/{tenant_id}/users/{user_id}/gdpr/deletion | RequestDeletion | mounted (ModuleRESTServer); duplicate of routes_iam.go | `RestIAMClient.requestDeletion` | not covered |
+| 121 | GET | /api/v1/tenants/{tenant_id}/users/{user_id}/gdpr/deletion/{deletion_id} | GetDeletionStatus | mounted (ModuleRESTServer); duplicate of routes_iam.go | `RestIAMClient.getDeletionStatus` | not covered |
+| 122 | DELETE | /api/v1/tenants/{tenant_id}/users/{user_id}/gdpr/deletion/{deletion_id} | CancelDeletion | mounted (ModuleRESTServer); duplicate of routes_iam.go | `RestIAMClient.cancelDeletion` | not covered |
+| 123 | POST | /api/v1/admin/assignments/ | CreateAdminAssignment | mounted (ModuleRESTServer); duplicate of routes_iam.go | none | not covered |
+| 124 | GET | /api/v1/admin/assignments/ | ListAdminAssignments | mounted (ModuleRESTServer); duplicate of routes_iam.go | none | not covered |
+| 125 | GET | /api/v1/admin/assignments/{assignment_id} | GetAdminAssignment | mounted (ModuleRESTServer); duplicate of routes_iam.go | none | not covered |
+| 126 | PUT | /api/v1/admin/assignments/{assignment_id} | UpdateAdminAssignment | mounted (ModuleRESTServer); duplicate of routes_iam.go | none | not covered |
+| 127 | DELETE | /api/v1/admin/assignments/{assignment_id} | DeleteAdminAssignment | mounted (ModuleRESTServer); duplicate of routes_iam.go | none | not covered |
+| 128 | POST | /api/v1/admin/check-permission | CheckAdminPermission | mounted (ModuleRESTServer); duplicate of routes_iam.go | none | not-UI: services call it at request time to check an admin permission |
+| 129 | GET | /api/v1/admin/impersonation/ | ListImpersonations | mounted (ModuleRESTServer); duplicate of routes_iam.go | none | not covered |
+| 130 | POST | /api/v1/admin/impersonation/start | StartImpersonation | mounted (ModuleRESTServer); duplicate of routes_iam.go | none | not covered |
+| 131 | POST | /api/v1/admin/impersonation/{session_id}/end | EndImpersonation | mounted (ModuleRESTServer); duplicate of routes_iam.go | none | not covered |
+| 132 | GET | /api/v1/admin/users/{user_id}/assignments | GetUserAssignments | mounted (ModuleRESTServer); duplicate of routes_iam.go | none | not covered |
+| 133 | GET | /api/v1/admin/users/{user_id}/impersonations | ListActiveImpersonations | mounted (ModuleRESTServer); duplicate of routes_iam.go | none | not covered |
 
-`RegisterRoutes` also calls `RegisterFederationAuthRoutes(router, h)`,
-`RegisterGDPRRoutes` (under `/api/v1/tenants/{tenant_id}/users/{user_id}/gdpr`)
-and `RegisterAdminRoutes(router, h)`; their routes are not listed yet.
+Rows 110-133 are registered by the three functions `RegisterRoutes` calls
+unconditionally: `RegisterFederationAuthRoutes(router, h)` (iam_federation.go,
+called at iam.go:172; rows 110-111), `RegisterGDPRRoutes(userRouter, h)`
+(iam_gdpr.go, called at iam.go:239 inside the
+`/api/v1/tenants/{tenant_id}/users/{user_id}/gdpr` route; rows 112-122) and
+`RegisterAdminRoutes(router, h)` (iam_admin.go, called at iam.go:373; rows
+123-133). Each is mounted through the same `RegisterRoutes` chain as rows
+1-109; tests also call each directly (`iam_federation_test.go`,
+`iam_sessions_test.go`, `iam_admin_test.go`). All 24 method/path pairs are
+also in routes_iam.go (federation at lines 440-441, GDPR at 131-141, admin at
+319-329). The GDPR SDK methods are on `RestIAMClient` in
+`sdk/typescript/src/rest.ts` (lines 3887-3976); rest.ts has no method for the
+federation or `/api/v1/admin` paths.
 
 ## Fleet deploy
 
@@ -195,10 +229,11 @@ under `pkg/api/rest`.
 
 ## Still to audit
 
-- Totals (iam.go table, each Console mark counted once per row): covered 42,
-  not covered 45, not-UI 22, unaudited 0; 109 rows (POST /api/v1/iam/audit
+- Totals (iam.go table, each Console mark counted once per row): covered 45,
+  not covered 63, not-UI 25, unaudited 0; 133 rows (POST /api/v1/iam/audit
   is row 103 only; the iam_audit.go table's row is the separate test-only
-  registration). SDK cells `none`: rows 1-16, 23, 39, 48 and 95-104
-  (rows 22-109 checked against `sdk/typescript/src/rest.ts` on this branch).
-- iam.go: the routes `RegisterFederationAuthRoutes`, `RegisterGDPRRoutes` and
-  `RegisterAdminRoutes` register.
+  registration). SDK cells `none`: rows 1-16, 23, 39, 48, 95-104, 110-111,
+  116 and 123-133 (rows 22-133 checked against `sdk/typescript/src/rest.ts`
+  on this branch).
+- iam.go: nothing; rows 110-133 list the routes `RegisterFederationAuthRoutes`,
+  `RegisterGDPRRoutes` and `RegisterAdminRoutes` register.
