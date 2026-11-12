@@ -181,6 +181,19 @@ import type {
   GetReencryptionProgressResponse,
 } from './dek.js';
 import type {
+  XKMSClient,
+  XKMSBackendInfo,
+  XKMSListBackendsResponse,
+  XKMSHealthResponse,
+  XKMSSealCapabilityResponse,
+  XKMSSealRequest,
+  XKMSSealResponse,
+  XKMSUnsealRequest,
+  XKMSUnsealResponse,
+  XKMSListCertificatesResponse,
+  XKMSCertificateResponse,
+} from './xkms.js';
+import type {
   DynamicSecretsClient,
   DynamicSecretRole,
   CreateRoleRequest as DynamicSecretCreateRoleRequest,
@@ -3554,6 +3567,84 @@ class RestKMSClient implements KMSClient {
   }
 }
 
+// RestXKMSClient drives the xkms passthrough routes (/api/v1/xkms/*).
+export class RestXKMSClient implements XKMSClient {
+  private readonly http: FetchHelper;
+
+  constructor(baseUrl: string, config: ClientConfig = {}) {
+    this.http = newFetchHelper(baseUrl, config);
+  }
+
+  // Maps to GET /api/v1/xkms/backends.
+  async listBackends(): Promise<XKMSListBackendsResponse> {
+    return this.http.fetchJSON<XKMSListBackendsResponse>('/api/v1/xkms/backends');
+  }
+
+  // Maps to GET /api/v1/xkms/backends/{id}.
+  async getBackend(id: string): Promise<XKMSBackendInfo> {
+    return this.http.fetchJSON<XKMSBackendInfo>(
+      `/api/v1/xkms/backends/${encodeURIComponent(id)}`,
+    );
+  }
+
+  // Maps to GET /api/v1/xkms/health.
+  async health(): Promise<XKMSHealthResponse> {
+    return this.http.fetchJSON<XKMSHealthResponse>('/api/v1/xkms/health');
+  }
+
+  // Maps to GET /api/v1/xkms/seal/capability[?backend=].
+  async canSeal(backend?: string): Promise<XKMSSealCapabilityResponse> {
+    const q = backend ? `?backend=${encodeURIComponent(backend)}` : '';
+    return this.http.fetchJSON<XKMSSealCapabilityResponse>(
+      `/api/v1/xkms/seal/capability${q}`,
+    );
+  }
+
+  // Maps to POST /api/v1/xkms/seal.
+  async seal(req: XKMSSealRequest): Promise<XKMSSealResponse> {
+    return this.http.fetchJSON<XKMSSealResponse>('/api/v1/xkms/seal', {
+      method: 'POST',
+      body: JSON.stringify(req),
+    });
+  }
+
+  // Maps to POST /api/v1/xkms/unseal.
+  async unseal(req: XKMSUnsealRequest): Promise<XKMSUnsealResponse> {
+    return this.http.fetchJSON<XKMSUnsealResponse>('/api/v1/xkms/unseal', {
+      method: 'POST',
+      body: JSON.stringify(req),
+    });
+  }
+
+  // Maps to GET /api/v1/xkms/certs[?backend=].
+  async listCertificates(backend?: string): Promise<XKMSListCertificatesResponse> {
+    const q = backend ? `?backend=${encodeURIComponent(backend)}` : '';
+    return this.http.fetchJSON<XKMSListCertificatesResponse>(`/api/v1/xkms/certs${q}`);
+  }
+
+  // Maps to GET /api/v1/xkms/certs/{id}.
+  async getCertificate(keyID: string): Promise<XKMSCertificateResponse> {
+    return this.http.fetchJSON<XKMSCertificateResponse>(
+      `/api/v1/xkms/certs/${encodeURIComponent(keyID)}`,
+    );
+  }
+
+  // Maps to POST /api/v1/xkms/certs?key_id= (200 with an empty body).
+  async saveCertificate(keyID: string, certificatePEM: string): Promise<void> {
+    await this.http.fetchVoid(`/api/v1/xkms/certs?key_id=${encodeURIComponent(keyID)}`, {
+      method: 'POST',
+      body: JSON.stringify({ certificate_pem: certificatePEM }),
+    });
+  }
+
+  // Maps to DELETE /api/v1/xkms/certs/{id} (200 with an empty body).
+  async deleteCertificate(keyID: string): Promise<void> {
+    await this.http.fetchVoid(`/api/v1/xkms/certs/${encodeURIComponent(keyID)}`, {
+      method: 'DELETE',
+    });
+  }
+}
+
 // RestSecretsClient implements SecretsClient over the QuicBaaS REST secrets endpoints.
 // All endpoints are under /api/v1/secrets.
 class RestSecretsClient implements SecretsClient {
@@ -5258,6 +5349,7 @@ export class RestClient implements Client {
   readonly trust: TrustClient;
   readonly crypto: CryptoClient;
   readonly dek: DEKClient;
+  readonly xkms: XKMSClient;
   readonly dynamicSecrets: DynamicSecretsClient;
   readonly barrier: BarrierClient;
   readonly tenantBarrier: TenantBarrierClient;
@@ -5300,6 +5392,7 @@ export class RestClient implements Client {
     this.trust = new RestTrustClient(baseUrl, config);
     this.crypto = new RestCryptoClient(baseUrl, config);
     this.dek = new RestDEKClient(baseUrl, config);
+    this.xkms = new RestXKMSClient(baseUrl, config);
     this.dynamicSecrets = new RestDynamicSecretsClient(baseUrl, config);
     this.barrier = new RestBarrierClient(baseUrl, config);
     this.tenantBarrier = new RestTenantBarrierClient(baseUrl, config);
