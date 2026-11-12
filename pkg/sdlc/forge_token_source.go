@@ -23,8 +23,8 @@ const (
 // Environment variables a forge token command receives on top of the
 // daemon's own environment.
 const (
-	ForgeTokenEnvType    = "QUICBAAS_FORGE_TYPE"
-	ForgeTokenEnvBaseURL = "QUICBAAS_FORGE_BASE_URL"
+	ForgeTokenEnvType    = "QUICBAAS_FORGE_TYPE"     //nolint:gosec // G101: an environment variable name, not a credential
+	ForgeTokenEnvBaseURL = "QUICBAAS_FORGE_BASE_URL" //nolint:gosec // G101: an environment variable name, not a credential
 )
 
 // ForgeTokenSource yields the token that authenticates calls to the forge at
@@ -212,10 +212,18 @@ func (s *CommandTokenSource) ForgeToken(ctx context.Context, baseURL string) (st
 
 func (s *CommandTokenSource) entry(baseURL string) *commandTokenEntry {
 	if found, ok := s.entries.Load(baseURL); ok {
-		return found.(*commandTokenEntry)
+		if e, ok := found.(*commandTokenEntry); ok {
+			return e
+		}
 	}
-	found, _ := s.entries.LoadOrStore(baseURL, &commandTokenEntry{refresh: make(chan struct{}, 1)})
-	return found.(*commandTokenEntry)
+	fresh := &commandTokenEntry{refresh: make(chan struct{}, 1)}
+	found, _ := s.entries.LoadOrStore(baseURL, fresh)
+	e, ok := found.(*commandTokenEntry)
+	if !ok {
+		s.entries.Store(baseURL, fresh)
+		return fresh
+	}
+	return e
 }
 
 func (e *commandTokenEntry) fresh(now time.Time) (string, bool) {

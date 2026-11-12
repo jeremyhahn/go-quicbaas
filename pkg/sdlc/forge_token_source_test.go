@@ -13,7 +13,7 @@ import (
 const (
 	testForgeToken     = "tok-forge-source-value"
 	testStderrMarker   = "stderr-marker-text"
-	testForgeTokenArgv = "/usr/local/bin/forge-mint"
+	testForgeTokenArgv = "/usr/local/bin/token-helper"
 	testForgeBaseURL   = "https://api.github.com"
 )
 
@@ -349,7 +349,7 @@ func TestNewCommandTokenSource_RefusesBadConfig(t *testing.T) {
 	}{
 		{"empty argv", CommandTokenSourceConfig{}, "argv"},
 		{"empty argv[0]", CommandTokenSourceConfig{Argv: []string{""}}, "argv"},
-		{"relative argv[0]", CommandTokenSourceConfig{Argv: []string{"bin/forge-mint"}}, "argv"},
+		{"relative argv[0]", CommandTokenSourceConfig{Argv: []string{"bin/token-helper"}}, "argv"},
 		{"negative refresh_before", CommandTokenSourceConfig{Argv: []string{testForgeTokenArgv}, RefreshBefore: -time.Second}, "refresh_before"},
 		{"negative timeout", CommandTokenSourceConfig{Argv: []string{testForgeTokenArgv}, Timeout: -time.Second}, "timeout"},
 	}
