@@ -3333,6 +3333,76 @@ async listSessions(
     );
   }
 
+  // Maps to GET /api/v1/tenants/{tenantID}
+  async getTenant(tenantID: string): Promise<IAMTenant> {
+    // Same wire shape as a listTenants element: created/updated → *_at.
+    const t = await this.fetchJSON<{
+      id?: string;
+      name?: string;
+      description?: string;
+      created?: string;
+      created_at?: string;
+      updated?: string;
+      updated_at?: string;
+    }>(`/api/v1/tenants/${encodeURIComponent(tenantID)}`);
+    return {
+      id: t.id ?? '',
+      name: t.name ?? '',
+      description: t.description ?? '',
+      created_at: t.created_at ?? t.created ?? '',
+      updated_at: t.updated_at ?? t.updated ?? '',
+    };
+  }
+
+  // Maps to GET /api/v1/tenants/{tenantID}/users/{userID}
+  async getUser(tenantID: string, userID: string): Promise<IAMUser> {
+    // Same wire shape as a listUsers element; normalised the same way.
+    const u = await this.fetchJSON<{
+      id?: string;
+      email?: string;
+      name?: string;
+      username?: string;
+      tenant_id?: string;
+      created?: string;
+      created_at?: string;
+      updated?: string;
+      updated_at?: string;
+      lifecycle?: import('./types.js').UserLifecycle;
+      role?: string;
+      roles?: string[];
+    }>(`/api/v1/tenants/${encodeURIComponent(tenantID)}/users/${encodeURIComponent(userID)}`);
+    return {
+      id: u.id ?? '',
+      tenant_id: u.tenant_id ?? tenantID,
+      username: u.username ?? u.name ?? u.email ?? '',
+      email: u.email ?? '',
+      lifecycle: u.lifecycle,
+      roles: u.roles ?? (u.role ? [u.role] : []),
+      created_at: u.created_at ?? u.created ?? '',
+      updated_at: u.updated_at ?? u.updated ?? '',
+    };
+  }
+
+  // Maps to GET /api/v1/tenants/{tenantID}/users/{userID}/sessions[?limit=N]
+  async listUserSessions(
+    tenantID: string,
+    userID: string,
+    limit?: number,
+  ): Promise<import('./interfaces.js').ListIAMSessionsResponse> {
+    const qs = limit !== undefined && limit > 0 ? `?limit=${limit}` : '';
+    return this.fetchJSON<import('./interfaces.js').ListIAMSessionsResponse>(
+      `/api/v1/tenants/${encodeURIComponent(tenantID)}/users/${encodeURIComponent(userID)}/sessions${qs}`,
+    );
+  }
+
+  // Maps to DELETE /api/v1/tenants/{tenantID}/users/{userID}/sessions
+  async revokeAllUserSessions(tenantID: string, userID: string): Promise<void> {
+    await this.fetchJSON<void>(
+      `/api/v1/tenants/${encodeURIComponent(tenantID)}/users/${encodeURIComponent(userID)}/sessions`,
+      { method: 'DELETE' },
+    );
+  }
+
   async listRoles(tenantID: string): Promise<ListRolesResponse> {
     // Server returns {limit, offset, roles:[...]} — count field absent; derive it.
     const raw = await this.fetchJSON<{ roles?: IAMRole[]; count?: number; limit?: number; offset?: number }>(

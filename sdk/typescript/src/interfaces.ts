@@ -1135,6 +1135,25 @@ export interface IAMClient {
   // Maps to DELETE /api/v1/tenants/{tenantID}
   deleteTenant(tenantID: string): Promise<void>;
 
+  // getTenant returns one tenant, in the same shape as a listTenants element.
+  // Maps to GET /api/v1/tenants/{tenantID}
+  getTenant(tenantID: string): Promise<IAMTenant>;
+
+  // getUser returns one user of a tenant, in the same shape as a listUsers element.
+  // Maps to GET /api/v1/tenants/{tenantID}/users/{userID}
+  getUser(tenantID: string, userID: string): Promise<IAMUser>;
+
+  // listUserSessions returns the sanitized sessions of one user of a tenant.
+  // It is the admin counterpart of the caller-scoped listSessions; limit is
+  // sent only when it is given and greater than zero.
+  // Maps to GET /api/v1/tenants/{tenantID}/users/{userID}/sessions[?limit=N]
+  listUserSessions(tenantID: string, userID: string, limit?: number): Promise<ListIAMSessionsResponse>;
+
+  // revokeAllUserSessions revokes every session of one user of a tenant.
+  // It is the admin counterpart of the caller-scoped revokeAllSessions.
+  // Maps to DELETE /api/v1/tenants/{tenantID}/users/{userID}/sessions
+  revokeAllUserSessions(tenantID: string, userID: string): Promise<void>;
+
   // listRoles returns all roles within a tenant.
   // Maps to GET /api/v1/tenants/{tenantID}/roles
   listRoles(tenantID: string): Promise<ListRolesResponse>;
