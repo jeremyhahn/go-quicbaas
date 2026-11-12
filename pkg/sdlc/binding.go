@@ -113,6 +113,12 @@ type ForgeConfig struct {
 	// TokenSecretRef names the tenant secret holding the forge API token.
 	TokenSecretRef string `json:"token_secret_ref,omitempty"`
 
+	// ReviewerIdentity is set only by ReviewerConfig.ForgeConfigFor. The
+	// token resolver then reads TokenSecretRef even when the node has a token
+	// command for this forge type, because the reviewer must act as its own
+	// forge account, not the node's. It is never stored.
+	ReviewerIdentity bool `json:"-"`
+
 	// SSHHostKey pins the forge's SSH host public key: one OpenSSH
 	// public-key line, "<type> <base64> [comment]", as `ssh-keyscan` prints
 	// after the host field.

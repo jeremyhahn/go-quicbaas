@@ -343,6 +343,24 @@ func TestOnboardRepo_NodeTokenCommandNeedsNoForgeTokenSecret(t *testing.T) {
 	}
 }
 
+func TestOnboardRepo_NodeTokenCommandStillNeedsTheSecretForAManagedHTTPSClone(t *testing.T) {
+	// The server clones a managed workspace with the forge token secret, not
+	// the node's command, so onboarding without it would fail late.
+	rig := newOnboardRig(t)
+	rig.projects.projects[sdlcTestProject].Provisioning.Managed = true
+	delete(rig.secrets.secrets, sdlc.ForgeTokenRef(onboardTestRepo))
+	rig.svc.forgeTokens = map[sdlc.ForgeType]sdlc.ForgeTokenSource{
+		rig.binding().Forge.Type: &sdlcFakeTokenSource{token: "web-token"},
+	}
+
+	report := rig.onboard(t, onboardRequest())
+
+	requireStep(t, report, sdlc.OnboardStepForgeToken, sdlc.OnboardFinding)
+	if rig.projects.created != 0 {
+		t.Fatal("a managed HTTPS project was created without its forge token secret")
+	}
+}
+
 func TestOnboardRepo_MissingSigningKeyIsAFinding(t *testing.T) {
 	rig := newOnboardRig(t)
 	delete(rig.sshKeys.keys, onboardTestSigningKey)

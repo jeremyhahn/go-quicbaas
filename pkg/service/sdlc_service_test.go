@@ -1075,6 +1075,28 @@ func TestSDLCService_ForgeTokenOfAnotherTypeStillReadsTheSecret(t *testing.T) {
 	}
 }
 
+func TestSDLCService_ReviewerTokenIsTheReviewersSecretEvenWithANodeCommand(t *testing.T) {
+	// The node's command acts as the node's account, which may be the PR's
+	// author: a reviewer acting through it would approve its own change.
+	rig := newSDLCServiceRig(t)
+	cfg := rig.binding().Forge
+	source := &sdlcFakeTokenSource{token: "command-token"}
+	rig.svc.forgeTokens = map[sdlc.ForgeType]sdlc.ForgeTokenSource{cfg.Type: source}
+	rig.secrets.secrets["reviewer-tok"] = []byte("reviewer-token")
+
+	got, err := rig.svc.ForgeToken(context.Background(), sdlcTestTenant,
+		sdlc.ReviewerConfig{TokenSecretRef: "reviewer-tok"}.ForgeConfigFor(cfg))
+	if err != nil {
+		t.Fatalf("ForgeToken: %v", err)
+	}
+	if got != "reviewer-token" {
+		t.Fatalf("token = %q, want the reviewer's secret", got)
+	}
+	if len(source.baseURLs) != 0 {
+		t.Fatal("the node's token command was asked for the reviewer's token")
+	}
+}
+
 // TestSDLCService_UnbindStillRefusesATransientForgeFailure is the other half,
 // and the reason the fix is narrow rather than a blanket "ignore offboarding".
 //

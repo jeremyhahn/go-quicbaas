@@ -147,7 +147,9 @@ func (s *SDLCService) onboardSigningKey(ctx context.Context, o *repoOnboarding) 
 // operator stores it: the forge user and token are made outside the module.
 // A forge type with a node token command has no secret to check.
 func (s *SDLCService) onboardForgeToken(ctx context.Context, o *repoOnboarding) error {
-	if _, ok := s.forgeTokens[o.like.Forge.Type]; ok {
+	// A managed HTTPS clone still reads the forge token secret: project
+	// provisioning does not use the node's command.
+	if _, ok := s.forgeTokens[o.like.Forge.Type]; ok && !o.clonesWithForgeToken() {
 		o.record(sdlc.OnboardStepForgeToken, sdlc.OnboardUnchanged, "the forge token comes from the node's token command", "")
 		return nil
 	}
@@ -430,6 +432,16 @@ func (o *repoOnboarding) signingKey() orchestration.KMSKeyRef {
 // swapped in: the same workspace root, context repositories, quotas and
 // defaults, its own repository URL, author and signing key, and autonomy off
 // until the bind turns it on.
+// clonesWithForgeToken reports whether the new project's workspace is cloned
+// by the server over HTTPS with the repository's forge token secret: a
+// managed workspace on an https repository URL with no SSH key. The swapped
+// repository URL keeps the template's scheme.
+func (o *repoOnboarding) clonesWithForgeToken() bool {
+	return o.template.Provisioning.Managed &&
+		strings.HasPrefix(o.template.Git.RepoURL, "https://") &&
+		o.template.Git.SSHKey.Name == ""
+}
+
 func (o *repoOnboarding) createProjectRequest() (*CreateProjectRequest, error) {
 	t := o.template
 	oldRepo, newRepo := o.like.Forge.Repo, o.req.Repo
@@ -479,7 +491,7 @@ func (o *repoOnboarding) createProjectRequest() (*CreateProjectRequest, error) {
 	case t.Provisioning.Managed:
 		// A managed workspace is cloned by the server, over HTTPS with the
 		// repository's own forge token.
-		if strings.HasPrefix(repoURL, "https://") && req.GitSSHKeyName == "" {
+		if o.clonesWithForgeToken() {
 			req.GitCredentialSecretRef = sdlc.ForgeTokenRef(newRepo)
 		}
 	case t.Workspace.Path != "":

@@ -920,9 +920,10 @@ func (s *SDLCService) ForgeToken(ctx context.Context, tenantID string, cfg sdlc.
 
 // forgeToken returns the forge token for a binding: from the node's token
 // command for its forge type when one is configured, else from the tenant
-// secret the binding names.
+// secret the binding names. A reviewer's config (ReviewerIdentity) always
+// reads its own secret: the node's command acts as the node's account.
 func (s *SDLCService) forgeToken(ctx context.Context, tenantID string, cfg sdlc.ForgeConfig) (string, error) {
-	if source, ok := s.forgeTokens[cfg.Type]; ok {
+	if source, ok := s.forgeTokens[cfg.Type]; ok && !cfg.ReviewerIdentity {
 		return source.ForgeToken(ctx, cfg.BaseURL)
 	}
 	ref := cfg.TokenSecretRef
