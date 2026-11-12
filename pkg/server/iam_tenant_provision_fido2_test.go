@@ -91,6 +91,12 @@ func newPasskeyFixture(t *testing.T) *passkeyFixture {
 	node := buildMemoryStandaloneNode(t, nodeOpts...)
 	t.Cleanup(func() { require.NoError(t, node.Close()) })
 	srv.qrdbNode = node
+	// Production hands the issuer the node's factor client once the node is
+	// up (lifecycle.go), so a passkey login resolves the user go-qrdb bound
+	// to the factor (ruling 254 option 1).
+	issuer, ok := srv.loginSessionIssuer.(*oidcSessionIssuer)
+	require.True(t, ok)
+	issuer.SetAuthFactorClient(node.Client().UserAuthFactors())
 
 	storage := iam.NewMemoryStorage()
 	users := qrdbadapter.NewQRDBUserStorage(nodeUserServicer{svc: node.UserService()})
