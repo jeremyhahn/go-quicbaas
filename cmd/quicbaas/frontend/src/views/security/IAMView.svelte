@@ -46,8 +46,9 @@
     UserConsent,
     IAMSession,
     MFAStatusResponse,
+    FederatedIdentity,
   } from '@quicbaas/sdk';
-  import { ShieldCheck, UserPlus, Pencil, Trash2, UserCheck, ToggleLeft, RefreshCw, FileCheck, MonitorSmartphone, KeyRound } from 'lucide-svelte';
+  import { ShieldCheck, UserPlus, Pencil, Trash2, UserCheck, ToggleLeft, RefreshCw, FileCheck, MonitorSmartphone, KeyRound, Link2 } from 'lucide-svelte';
   import EmptyState from '../../components/core/EmptyState.svelte';
   import { routerStore, routeIAMTab } from '../../stores/router.svelte.ts';
   import { formatDateTime } from '../../lib/time.ts';
@@ -266,6 +267,17 @@
   // Set while the Disable MFA confirmation is shown.
   let confirmDisableMFA = $state(false);
   let disablingMFA = $state(false);
+
+  // Linked accounts (federated identities) dialog state.
+  let userForLinks: IAMUser | null = $state(null);
+  let accountLinks: FederatedIdentity[] | null = $state(null);
+  let linksLoading = $state(false);
+  let linksError: string | null = $state(null);
+  let linkToRemove: FederatedIdentity | null = $state(null);
+  let unlinking = $state(false);
+  let newLinkProviderID = $state('');
+  let newLinkExternalID = $state('');
+  let linking = $state(false);
 
   // ---------------------------------------------------------------------------
   // Create Tenant dialog state
@@ -700,6 +712,95 @@
       }
     } finally {
       disablingMFA = false;
+    }
+  }
+
+  async function loadAccountLinks(user: IAMUser): Promise<void> {
+    linksLoading = true;
+    try {
+      const client = await getSDKClient();
+      const resp = await client.iam.listAccountLinks(selectedTenantID, user.id);
+      // Drop a response that lands after the dialog closed or moved to another user.
+      if (userForLinks?.id === user.id) {
+        accountLinks = resp.links ?? [];
+      }
+    } catch (e) {
+      if (userForLinks?.id === user.id) {
+        linksError = e instanceof Error ? e.message : 'Failed to load linked accounts';
+      }
+    } finally {
+      linksLoading = false;
+    }
+  }
+
+  function openAccountLinks(user: IAMUser): void {
+    userForLinks = user;
+    accountLinks = null;
+    linksError = null;
+    linkToRemove = null;
+    unlinking = false;
+    linking = false;
+    newLinkProviderID = '';
+    newLinkExternalID = '';
+    void loadAccountLinks(user);
+  }
+
+  function closeAccountLinks(): void {
+    userForLinks = null;
+    linksError = null;
+    linkToRemove = null;
+  }
+
+  async function submitUnlink(): Promise<void> {
+    if (!userForLinks || !linkToRemove) return;
+    const user = userForLinks;
+    const providerID = linkToRemove.provider_id;
+    linksError = null;
+    unlinking = true;
+    try {
+      const client = await getSDKClient();
+      await client.iam.deleteAccountLink(selectedTenantID, user.id, providerID);
+      showToast({ message: `Unlinked "${providerID}" from "${user.username}"`, type: 'success' });
+      linkToRemove = null;
+      if (userForLinks?.id === user.id) {
+        await loadAccountLinks(user);
+      }
+    } catch (e) {
+      linkToRemove = null;
+      if (userForLinks?.id === user.id) {
+        linksError = e instanceof Error ? e.message : 'Failed to unlink account';
+      }
+    } finally {
+      unlinking = false;
+    }
+  }
+
+  async function submitLink(): Promise<void> {
+    if (!userForLinks) return;
+    const user = userForLinks;
+    const providerID = newLinkProviderID.trim();
+    const externalID = newLinkExternalID.trim();
+    linksError = null;
+    if (!providerID || !externalID) {
+      linksError = 'A provider id and an external id are required';
+      return;
+    }
+    linking = true;
+    try {
+      const client = await getSDKClient();
+      await client.iam.createAccountLink(selectedTenantID, user.id, { provider_id: providerID, external_id: externalID });
+      showToast({ message: `Linked "${providerID}" to "${user.username}"`, type: 'success' });
+      if (userForLinks?.id === user.id) {
+        newLinkProviderID = '';
+        newLinkExternalID = '';
+        await loadAccountLinks(user);
+      }
+    } catch (e) {
+      if (userForLinks?.id === user.id) {
+        linksError = e instanceof Error ? e.message : 'Failed to link account';
+      }
+    } finally {
+      linking = false;
     }
   }
 
@@ -1280,6 +1381,14 @@
                   <KeyRound class="h-3 w-3" />
                 </button>
                 <button
+                  class="btn btn-ghost btn-xs"
+                  title="Linked accounts"
+                  aria-label={`Linked accounts of ${user.username}`}
+                  onclick={() => openAccountLinks(user)}
+                >
+                  <Link2 class="h-3 w-3" />
+                </button>
+                <button
                   class="btn btn-ghost btn-xs text-error"
                   title={`Delete user ${user.username}`}
                   aria-label={`Delete user ${user.username}`}
@@ -1808,6 +1917,92 @@
       </div>
     </div>
     <div class="modal-backdrop" role="none" onclick={() => { confirmDisableMFA = false; }} onkeydown={() => { confirmDisableMFA = false; }}></div>
+  </div>
+{/if}
+
+<!-- =========================================================================
+     LINKED ACCOUNTS DIALOG
+     ========================================================================= -->
+{#if userForLinks}
+  <div class="modal modal-open" role="dialog" aria-modal="true" aria-label="Linked accounts dialog">
+    <div class="modal-box max-w-3xl">
+      <h3 class="text-base font-semibold mb-4">Linked accounts of <span class="font-mono text-primary">{userForLinks.username}</span></h3>
+      {#if linksError}
+        <div class="alert alert-error text-sm mb-3" role="alert">{linksError}</div>
+      {/if}
+      {#if linksLoading && !accountLinks}
+        <div class="flex items-center gap-2 py-2 mb-3">
+          <span class="loading loading-spinner loading-xs"></span>
+          <span class="text-sm text-base-content/50">Loading linked accounts…</span>
+        </div>
+      {:else if accountLinks && accountLinks.length === 0}
+        <p class="text-sm text-base-content/50 py-2 mb-3">No linked accounts</p>
+      {:else if accountLinks}
+        <table class="table table-xs mb-3" aria-label="Linked accounts">
+          <thead>
+            <tr><th>Provider</th><th>External ID</th><th>Email or name</th><th>Last login</th><th>Created</th><th></th></tr>
+          </thead>
+          <tbody>
+            {#each accountLinks as link (link.id)}
+              <tr>
+                <td class="font-mono">{link.provider_id}</td>
+                <td class="font-mono">{link.external_id}</td>
+                <td>{link.external_email || link.external_name || '—'}</td>
+                <td class="text-xs">{formatDateTime(link.last_login)}</td>
+                <td class="text-xs">{formatDateTime(link.created)}</td>
+                <td>
+                  <button
+                    class="btn btn-ghost btn-xs text-error"
+                    aria-label={`Unlink ${link.provider_id}`}
+                    disabled={unlinking}
+                    onclick={() => { linkToRemove = link; }}
+                  >Unlink</button>
+                </td>
+              </tr>
+            {/each}
+          </tbody>
+        </table>
+      {/if}
+      <form
+        class="flex flex-wrap items-end gap-2 mb-1"
+        aria-label="Link account form"
+        onsubmit={(e) => { e.preventDefault(); void submitLink(); }}
+      >
+        <div class="form-control">
+          <label class="label label-text" for="link-provider-id">Provider ID</label>
+          <input id="link-provider-id" class="input input-bordered input-sm" type="text" bind:value={newLinkProviderID} />
+        </div>
+        <div class="form-control">
+          <label class="label label-text" for="link-external-id">External ID</label>
+          <input id="link-external-id" class="input input-bordered input-sm" type="text" bind:value={newLinkExternalID} />
+        </div>
+        <button
+          class="btn btn-primary btn-sm"
+          type="submit"
+          disabled={linking || !newLinkProviderID.trim() || !newLinkExternalID.trim()}
+        >{linking ? 'Linking…' : 'Link account'}</button>
+      </form>
+      <div class="modal-action">
+        <button class="btn btn-ghost btn-sm" onclick={closeAccountLinks}>Close</button>
+      </div>
+    </div>
+    <div class="modal-backdrop" role="none" onclick={closeAccountLinks} onkeydown={closeAccountLinks}></div>
+  </div>
+{/if}
+
+{#if userForLinks && linkToRemove}
+  <div class="modal modal-open" role="dialog" aria-modal="true" aria-label="Unlink account confirmation">
+    <div class="modal-box max-w-sm">
+      <h3 class="text-base font-semibold mb-2">Unlink account?</h3>
+      <p class="text-sm text-base-content/70">
+        Unlink <span class="font-mono font-semibold">{linkToRemove.provider_id}</span> from <span class="font-mono font-semibold">{userForLinks.username}</span>?
+      </p>
+      <div class="modal-action">
+        <button class="btn btn-ghost btn-sm" onclick={() => { linkToRemove = null; }}>Cancel</button>
+        <button class="btn btn-error btn-sm" disabled={unlinking} onclick={submitUnlink}>{unlinking ? 'Unlinking…' : 'Unlink'}</button>
+      </div>
+    </div>
+    <div class="modal-backdrop" role="none" onclick={() => { linkToRemove = null; }} onkeydown={() => { linkToRemove = null; }}></div>
   </div>
 {/if}
 
