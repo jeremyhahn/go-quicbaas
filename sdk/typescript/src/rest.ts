@@ -181,6 +181,16 @@ import type {
   GetReencryptionProgressResponse,
 } from './dek.js';
 import type {
+  AttestationClient,
+  Endorsement,
+  EndorsementKind,
+  ListEndorsementsResponse,
+  ListReferenceValuesResponse,
+  PutEndorsementRequest,
+  PutReferenceValuesRequest,
+  ReferenceValues,
+} from './attestation.js';
+import type {
   DynamicSecretsClient,
   DynamicSecretRole,
   CreateRoleRequest as DynamicSecretCreateRoleRequest,
@@ -4297,6 +4307,75 @@ export class RestDEKClient implements DEKClient {
   }
 }
 
+/**
+ * RestAttestationClient manages the attestation verifier's endorsements and
+ * reference values over REST (/api/v1/attestation/*).
+ */
+export class RestAttestationClient implements AttestationClient {
+  private readonly http: FetchHelper;
+
+  constructor(baseUrl: string, config: ClientConfig = {}) {
+    this.http = newFetchHelper(baseUrl, config);
+  }
+
+  // Maps to PUT /api/v1/attestation/endorsements/{name}
+  async putEndorsement(name: string, req: PutEndorsementRequest): Promise<Endorsement> {
+    return this.http.fetchJSON<Endorsement>(
+      `/api/v1/attestation/endorsements/${encodeURIComponent(name)}`,
+      { method: 'PUT', body: JSON.stringify(req) },
+    );
+  }
+
+  // Maps to GET /api/v1/attestation/endorsements[?kind=]
+  async listEndorsements(kind?: EndorsementKind): Promise<ListEndorsementsResponse> {
+    const query = kind ? `?kind=${encodeURIComponent(kind)}` : '';
+    const wire = await this.http.fetchJSON<ListEndorsementsResponse>(
+      `/api/v1/attestation/endorsements${query}`,
+    );
+    return { ...wire, endorsements: wire?.endorsements ?? [] };
+  }
+
+  // Maps to DELETE /api/v1/attestation/endorsements/{name}
+  async deleteEndorsement(name: string): Promise<void> {
+    return this.http.fetchVoid(
+      `/api/v1/attestation/endorsements/${encodeURIComponent(name)}`,
+      { method: 'DELETE' },
+    );
+  }
+
+  // Maps to PUT /api/v1/attestation/reference-values/{name}
+  async putReferenceValues(name: string, signedCoRIM: string): Promise<ReferenceValues> {
+    const req: PutReferenceValuesRequest = { signed_corim: signedCoRIM };
+    return this.http.fetchJSON<ReferenceValues>(
+      `/api/v1/attestation/reference-values/${encodeURIComponent(name)}`,
+      { method: 'PUT', body: JSON.stringify(req) },
+    );
+  }
+
+  // Maps to GET /api/v1/attestation/reference-values/{name}
+  async getReferenceValues(name: string): Promise<ReferenceValues> {
+    return this.http.fetchJSON<ReferenceValues>(
+      `/api/v1/attestation/reference-values/${encodeURIComponent(name)}`,
+    );
+  }
+
+  // Maps to GET /api/v1/attestation/reference-values
+  async listReferenceValues(): Promise<ListReferenceValuesResponse> {
+    const wire = await this.http.fetchJSON<ListReferenceValuesResponse>(
+      '/api/v1/attestation/reference-values',
+    );
+    return { ...wire, reference_values: wire?.reference_values ?? [] };
+  }
+
+  // Maps to DELETE /api/v1/attestation/reference-values/{name}
+  async deleteReferenceValues(name: string): Promise<void> {
+    return this.http.fetchVoid(
+      `/api/v1/attestation/reference-values/${encodeURIComponent(name)}`,
+      { method: 'DELETE' },
+    );
+  }
+}
+
 // ---------------------------------------------------------------------------
 // RestDynamicSecretsClient — /api/v1/secrets/dynamic/* surface.
 // ---------------------------------------------------------------------------
@@ -5258,6 +5337,7 @@ export class RestClient implements Client {
   readonly trust: TrustClient;
   readonly crypto: CryptoClient;
   readonly dek: DEKClient;
+  readonly attestation: AttestationClient;
   readonly dynamicSecrets: DynamicSecretsClient;
   readonly barrier: BarrierClient;
   readonly tenantBarrier: TenantBarrierClient;
@@ -5300,6 +5380,7 @@ export class RestClient implements Client {
     this.trust = new RestTrustClient(baseUrl, config);
     this.crypto = new RestCryptoClient(baseUrl, config);
     this.dek = new RestDEKClient(baseUrl, config);
+    this.attestation = new RestAttestationClient(baseUrl, config);
     this.dynamicSecrets = new RestDynamicSecretsClient(baseUrl, config);
     this.barrier = new RestBarrierClient(baseUrl, config);
     this.tenantBarrier = new RestTenantBarrierClient(baseUrl, config);

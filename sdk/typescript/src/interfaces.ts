@@ -32,6 +32,7 @@ import type { CAClient } from './ca.js';
 import type { TrustClient } from './trust.js';
 import type { CryptoClient } from './crypto.js';
 import type { DEKClient } from './dek.js';
+import type { AttestationClient } from './attestation.js';
 import type { DynamicSecretsClient } from './dynamicsecrets.js';
 
 import type {
@@ -1378,6 +1379,13 @@ export interface Client {
    * background re-encryption. Paths: /api/v1/kms/deks/*.
    */
   readonly dek: DEKClient;
+  /**
+   * Attestation verifier: endorsements (reference-value signers and AK
+   * roots) and signed CoRIM reference values.
+   * Paths: /api/v1/attestation/endorsements/* and
+   * /api/v1/attestation/reference-values/*.
+   */
+  readonly attestation: AttestationClient;
   /**
    * dynamicSecrets manages credential-generation roles, on-demand
    * short-lived credential minting, and lease renewal/revocation.
