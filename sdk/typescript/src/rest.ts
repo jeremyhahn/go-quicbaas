@@ -270,6 +270,18 @@ import type {
   XKMSCertificateResponse,
 } from './xkms.js';
 import type {
+  BackupsClient,
+  BackupCreateRequest,
+  BackupCreateResponse,
+  BackupListOptions,
+  BackupListResponse,
+  BackupRestoreRequest,
+  BackupRestoreResponse,
+  BackupDeleteResponse,
+  BackupVerifyResponse,
+  BackupStatusResponse,
+} from './backups.js';
+import type {
   DynamicSecretsClient,
   DynamicSecretRole,
   CreateRoleRequest as DynamicSecretCreateRoleRequest,
@@ -5621,6 +5633,69 @@ export class RestPIVClient implements PIVClient {
 }
 
 // ---------------------------------------------------------------------------
+// RestBackupsClient
+// ---------------------------------------------------------------------------
+
+export class RestBackupsClient implements BackupsClient {
+  private readonly http: FetchHelper;
+
+  constructor(baseUrl: string, config: ClientConfig = {}) {
+    this.http = newFetchHelper(baseUrl, config);
+  }
+
+  // Maps to POST /api/v1/backups
+  async create(req: BackupCreateRequest = {}): Promise<BackupCreateResponse> {
+    return this.http.fetchJSON<BackupCreateResponse>('/api/v1/backups', {
+      method: 'POST',
+      body: JSON.stringify(req),
+    });
+  }
+
+  // Maps to GET /api/v1/backups[?limit=][&offset=]
+  async list(opts: BackupListOptions = {}): Promise<BackupListResponse> {
+    const params: Record<string, string> = {};
+    if (opts.limit !== undefined) params.limit = String(opts.limit);
+    if (opts.offset !== undefined) params.offset = String(opts.offset);
+    const query = new URLSearchParams(params).toString();
+    const wire = await this.http.fetchJSON<BackupListResponse>(
+      `/api/v1/backups${query ? `?${query}` : ''}`,
+    );
+    return { ...wire, backups: wire.backups ?? [] };
+  }
+
+  // Maps to POST /api/v1/backups/{id}/restore
+  async restore(backupID: string, req: BackupRestoreRequest = {}): Promise<BackupRestoreResponse> {
+    return this.http.fetchJSON<BackupRestoreResponse>(
+      `/api/v1/backups/${encodeURIComponent(backupID)}/restore`,
+      { method: 'POST', body: JSON.stringify(req) },
+    );
+  }
+
+  // Maps to DELETE /api/v1/backups/{id}
+  async delete(backupID: string): Promise<BackupDeleteResponse> {
+    return this.http.fetchJSON<BackupDeleteResponse>(
+      `/api/v1/backups/${encodeURIComponent(backupID)}`,
+      { method: 'DELETE' },
+    );
+  }
+
+  // Maps to POST /api/v1/backups/{id}/verify
+  async verify(backupID: string): Promise<BackupVerifyResponse> {
+    return this.http.fetchJSON<BackupVerifyResponse>(
+      `/api/v1/backups/${encodeURIComponent(backupID)}/verify`,
+      { method: 'POST' },
+    );
+  }
+
+  // Maps to GET /api/v1/backups/{id}/status
+  async status(backupID: string): Promise<BackupStatusResponse> {
+    return this.http.fetchJSON<BackupStatusResponse>(
+      `/api/v1/backups/${encodeURIComponent(backupID)}/status`,
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
 // RestDynamicSecretsClient — /api/v1/secrets/dynamic/* surface.
 // ---------------------------------------------------------------------------
 
@@ -6694,6 +6769,7 @@ export class RestClient implements Client {
   readonly xkmsKeys: XKMSKeysClient;
   readonly piv: PIVClient;
   readonly xkms: XKMSClient;
+  readonly backups: BackupsClient;
   readonly dynamicSecrets: DynamicSecretsClient;
   readonly barrier: BarrierClient;
   readonly tenantBarrier: TenantBarrierClient;
@@ -6741,6 +6817,7 @@ export class RestClient implements Client {
     this.xkmsKeys = new RestXKMSKeysClient(baseUrl, config);
     this.piv = new RestPIVClient(baseUrl, config);
     this.xkms = new RestXKMSClient(baseUrl, config);
+    this.backups = new RestBackupsClient(baseUrl, config);
     this.dynamicSecrets = new RestDynamicSecretsClient(baseUrl, config);
     this.barrier = new RestBarrierClient(baseUrl, config);
     this.tenantBarrier = new RestTenantBarrierClient(baseUrl, config);

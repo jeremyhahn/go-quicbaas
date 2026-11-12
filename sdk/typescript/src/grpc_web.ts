@@ -389,6 +389,8 @@ export class GrpcWebClient implements Client {
   readonly piv: any = null;
   readonly xkms: any = null;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  readonly backups: any = null;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   readonly dynamicSecrets: any = null;
   readonly barrier: BarrierClient;
   // Per-tenant barrier is a REST-only surface; non-REST transports stub it.

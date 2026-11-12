@@ -1000,6 +1000,8 @@ export class WailsClient implements Client {
   readonly piv: any = null;
   readonly xkms: any = null;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  readonly backups: any = null;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   readonly dynamicSecrets: any = null;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   readonly barrier: any = null;

@@ -381,6 +381,21 @@ export type {
   StartReencryptionResponse,
   GetReencryptionProgressResponse,
 } from './dek.js';
+
+// Backups
+export type {
+  BackupsClient,
+  BackupCreateRequest,
+  BackupCreateResponse,
+  BackupInfo,
+  BackupListOptions,
+  BackupListResponse,
+  BackupRestoreRequest,
+  BackupRestoreResponse,
+  BackupDeleteResponse,
+  BackupVerifyResponse,
+  BackupStatusResponse,
+} from './backups.js';
 export type {
   AttestationClient,
   Endorsement,

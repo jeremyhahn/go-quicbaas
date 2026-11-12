@@ -37,6 +37,7 @@ import type { PromptsClient } from './prompts.js';
 import type { XKMSKeysClient } from './xkms_keys.js';
 import type { PIVClient } from './piv.js';
 import type { XKMSClient } from './xkms.js';
+import type { BackupsClient } from './backups.js';
 import type { DynamicSecretsClient } from './dynamicsecrets.js';
 
 import type {
@@ -2669,8 +2670,13 @@ export interface Client {
    * background re-encryption. Paths: /api/v1/kms/deks/*.
    */
   readonly dek: DEKClient;
+
   /**
-<<<<<<< HEAD
+   * Backup management: create, list, restore, verify and delete backups.
+   * Maps to /api/v1/backups/* REST endpoints.
+   */
+  readonly backups: BackupsClient;
+  /**
    * Attestation verifier: endorsements (reference-value signers and AK
    * roots) and signed CoRIM reference values.
    * Paths: /api/v1/attestation/endorsements/* and
