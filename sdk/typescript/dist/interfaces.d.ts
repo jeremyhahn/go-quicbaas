@@ -394,6 +394,61 @@ export interface IAMSession {
     user_agent: string;
     device_info: IAMSessionDeviceInfo | null;
 }
+export interface WebAuthnCredentialSummary {
+    id: string;
+    aaguid?: string;
+    attestation_type?: string;
+    transports?: string[];
+    sign_count: number;
+    backup_eligible: boolean;
+    backup_state: boolean;
+    clone_warning: boolean;
+}
+export interface ListWebAuthnCredentialsResponse {
+    credentials: WebAuthnCredentialSummary[];
+    total: number;
+}
+export interface DeleteWebAuthnCredentialsResponse {
+    deleted: number;
+}
+export interface CreateAccountLinkRequest {
+    provider_id: string;
+    external_id: string;
+    access_token?: string;
+}
+export interface AccountLink {
+    id: string;
+    user_id: string;
+    provider_id: string;
+    provider_name: string;
+    external_id: string;
+    email?: string;
+    metadata?: Record<string, unknown>;
+    created_at: string;
+    updated_at: string;
+}
+export interface FederatedIdentity {
+    id: string;
+    user_id: string;
+    tenant_id: string;
+    provider_id: string;
+    external_id: string;
+    external_email?: string;
+    external_name?: string;
+    claims?: Record<string, unknown>;
+    last_login: string;
+    created: string;
+    updated: string;
+}
+export interface ListAccountLinksOptions {
+    limit?: number;
+    offset?: number;
+}
+export interface ListAccountLinksResponse {
+    links: FederatedIdentity[];
+    limit: number;
+    offset: number;
+}
 export interface ListSessionsOptions {
     user_id?: string;
     tenant_id?: string;
@@ -410,6 +465,104 @@ export interface RevokeOtherSessionsResponse {
     message: string;
     kept_session_id: string;
 }
+export interface MFAStatusResponse {
+    enabled: boolean;
+    method?: string;
+    enrolled_at?: string;
+    last_verified?: string;
+    backup_codes_total?: number;
+    backup_codes_remaining?: number;
+}
+export interface MFAEnrollResponse {
+    enrollment_id: string;
+    provisioning_uri: string;
+    secret: string;
+    expires_at: string;
+}
+export interface MFACompleteResponse {
+    success: boolean;
+}
+export interface MFAChallengeResponse {
+    challenge_id: string;
+    method: string;
+    expires_at: string;
+}
+export interface MFAVerifyResponse {
+    success: boolean;
+    token?: string;
+    backup_codes_remaining?: number;
+}
+export interface MFABackupCodesResponse {
+    codes: string[];
+}
+export interface MFABackupCodeStatusResponse {
+    total_codes: number;
+    remaining_codes: number;
+    generated_at?: string;
+}
+export interface TenantQuotas {
+    max_databases: number;
+    max_raft_groups: number;
+    max_replicas_per_group: number;
+    max_total_replicas: number;
+    max_collections: number;
+    max_keys: number;
+    max_storage_bytes: number;
+    max_database_size_bytes: number;
+    max_users: number;
+    max_roles: number;
+    max_certificates: number;
+    max_backups: number;
+    max_vector_dims: number;
+    max_ts_metrics: number;
+    max_dedicated_wal_groups: number;
+    system_barrier_quota: number;
+    current_databases?: number;
+    current_raft_groups?: number;
+    current_total_replicas?: number;
+    current_collections?: number;
+    current_keys?: number;
+    current_storage_bytes?: number;
+    current_database_size_bytes?: number;
+    current_users?: number;
+    current_roles?: number;
+    current_certificates?: number;
+    current_backups?: number;
+    current_vector_dims?: number;
+    current_ts_metrics?: number;
+    current_dedicated_wal_groups?: number;
+    current_system_barrier_bytes?: number;
+}
+export interface TenantEntitlements {
+    allowed_isolation_modes?: string[];
+    allow_dedicated_raft?: boolean;
+    allow_volume_storage?: boolean;
+    allow_system_managed_barrier?: boolean;
+    allow_dedicated_wal?: boolean;
+    allowed_barrier_modes?: string[];
+}
+export type TenantAdminEnrollment = 'cert' | 'invite';
+export interface ProvisionTenantRequest {
+    tenant_id: string;
+    name?: string;
+    isolation_type?: string;
+    admin_username?: string;
+    admin_enrollment?: TenantAdminEnrollment;
+    admin_csr_pem?: string;
+    invite_expiry_hours?: number;
+}
+export interface ProvisionTenantResponse {
+    tenant_id: string;
+    admin_user_id: string;
+    admin_username: string;
+    admin_role_id: string;
+    admin_pending: boolean;
+    admin_cert_pem?: string;
+    admin_cert_thumbprint?: string;
+    invite_token?: string;
+    invite_expires_at?: string;
+    timestamp: string;
+}
 export interface IAMClient {
     listUsers(tenantID: string): Promise<ListUsersResponse>;
     createUser(tenantID: string, req: CreateUserRequest): Promise<CreateUserResponse>;
@@ -422,6 +575,21 @@ export interface IAMClient {
     revokeSession(sessionID: string): Promise<void>;
     revokeAllSessions(opts?: RevokeAllSessionsOptions): Promise<void>;
     revokeOtherSessions(keepSessionID: string): Promise<RevokeOtherSessionsResponse>;
+    listWebAuthnCredentials(tenantID: string, userID: string): Promise<ListWebAuthnCredentialsResponse>;
+    deleteAllWebAuthnCredentials(tenantID: string, userID: string): Promise<DeleteWebAuthnCredentialsResponse>;
+    deleteWebAuthnCredential(tenantID: string, userID: string, credentialID: string): Promise<void>;
+    createAccountLink(tenantID: string, userID: string, req: CreateAccountLinkRequest): Promise<AccountLink>;
+    listAccountLinks(tenantID: string, userID: string, opts?: ListAccountLinksOptions): Promise<ListAccountLinksResponse>;
+    deleteAccountLink(tenantID: string, userID: string, providerID: string): Promise<void>;
+    getMFAStatus(tenantID: string, userID: string): Promise<MFAStatusResponse>;
+    disableMFA(tenantID: string, userID: string): Promise<void>;
+    beginMFAEnrollment(tenantID: string, userID: string, method?: string): Promise<MFAEnrollResponse>;
+    completeMFAEnrollment(tenantID: string, userID: string, enrollmentID: string, code: string): Promise<MFACompleteResponse>;
+    cancelMFAEnrollment(tenantID: string, userID: string, enrollmentID: string): Promise<void>;
+    beginMFAChallenge(tenantID: string, userID: string, sessionToken: string): Promise<MFAChallengeResponse>;
+    verifyMFAChallenge(tenantID: string, userID: string, challengeID: string, code: string): Promise<MFAVerifyResponse>;
+    getBackupCodeStatus(tenantID: string, userID: string): Promise<MFABackupCodeStatusResponse>;
+    generateBackupCodes(tenantID: string, userID: string): Promise<MFABackupCodesResponse>;
     listTenants(): Promise<ListTenantsResponse>;
     createTenant(req: CreateTenantRequest): Promise<CreateTenantResponse>;
     updateTenant(tenantID: string, req: UpdateTenantRequest): Promise<IAMTenant>;
@@ -430,6 +598,9 @@ export interface IAMClient {
     getUser(tenantID: string, userID: string): Promise<IAMUser>;
     listUserSessions(tenantID: string, userID: string, limit?: number): Promise<ListIAMSessionsResponse>;
     revokeAllUserSessions(tenantID: string, userID: string): Promise<void>;
+    updateTenantQuotas(tenantID: string, quotas: TenantQuotas): Promise<void>;
+    updateTenantEntitlements(tenantID: string, entitlements: TenantEntitlements): Promise<void>;
+    provisionTenant(req: ProvisionTenantRequest): Promise<ProvisionTenantResponse>;
     listRoles(tenantID: string): Promise<ListRolesResponse>;
     createRole(tenantID: string, req: CreateRoleRequest): Promise<IAMRole>;
     updateRole(tenantID: string, roleID: string, req: UpdateRoleRequest): Promise<IAMRole>;

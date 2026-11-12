@@ -2426,6 +2426,83 @@ class RestIAMClient {
     async revokeOtherSessions(keepSessionID) {
         return this.fetchJSON('/api/v1/iam/sessions/revoke-others', { method: 'POST', body: JSON.stringify({ keep_session_id: keepSessionID }) });
     }
+    userPath(tenantID, userID) {
+        return `/api/v1/tenants/${encodeURIComponent(tenantID)}/users/${encodeURIComponent(userID)}`;
+    }
+    // Maps to GET /api/v1/tenants/{tenant_id}/users/{user_id}/webauthn/credentials/
+    async listWebAuthnCredentials(tenantID, userID) {
+        return this.fetchJSON(`${this.userPath(tenantID, userID)}/webauthn/credentials/`);
+    }
+    // Maps to DELETE /api/v1/tenants/{tenant_id}/users/{user_id}/webauthn/credentials/
+    async deleteAllWebAuthnCredentials(tenantID, userID) {
+        return this.fetchJSON(`${this.userPath(tenantID, userID)}/webauthn/credentials/`, { method: 'DELETE' });
+    }
+    // Maps to DELETE /api/v1/tenants/{tenant_id}/users/{user_id}/webauthn/credentials/{credential_id}
+    async deleteWebAuthnCredential(tenantID, userID, credentialID) {
+        await this.fetchJSON(`${this.userPath(tenantID, userID)}/webauthn/credentials/${encodeURIComponent(credentialID)}`, { method: 'DELETE' });
+    }
+    // Maps to POST /api/v1/tenants/{tenant_id}/users/{user_id}/links/
+    async createAccountLink(tenantID, userID, req) {
+        return this.fetchJSON(`${this.userPath(tenantID, userID)}/links/`, {
+            method: 'POST',
+            body: JSON.stringify(req),
+        });
+    }
+    // Maps to GET /api/v1/tenants/{tenant_id}/users/{user_id}/links/
+    async listAccountLinks(tenantID, userID, opts) {
+        const params = new URLSearchParams();
+        if (opts?.limit !== undefined)
+            params.set('limit', String(opts.limit));
+        if (opts?.offset !== undefined)
+            params.set('offset', String(opts.offset));
+        const qs = params.toString();
+        return this.fetchJSON(`${this.userPath(tenantID, userID)}/links/${qs ? `?${qs}` : ''}`);
+    }
+    // Maps to DELETE /api/v1/tenants/{tenant_id}/users/{user_id}/links/{provider_id}
+    async deleteAccountLink(tenantID, userID, providerID) {
+        await this.fetchJSON(`${this.userPath(tenantID, userID)}/links/${encodeURIComponent(providerID)}`, {
+            method: 'DELETE',
+        });
+    }
+    mfaPath(tenantID, userID) {
+        return `/api/v1/tenants/${encodeURIComponent(tenantID)}/users/${encodeURIComponent(userID)}/mfa`;
+    }
+    // Maps to GET /api/v1/tenants/{tenant_id}/users/{user_id}/mfa/
+    async getMFAStatus(tenantID, userID) {
+        return this.fetchJSON(`${this.mfaPath(tenantID, userID)}/`);
+    }
+    // Maps to DELETE /api/v1/tenants/{tenant_id}/users/{user_id}/mfa/
+    async disableMFA(tenantID, userID) {
+        await this.fetchJSON(`${this.mfaPath(tenantID, userID)}/`, { method: 'DELETE' });
+    }
+    // Maps to POST /api/v1/tenants/{tenant_id}/users/{user_id}/mfa/enroll
+    async beginMFAEnrollment(tenantID, userID, method) {
+        return this.fetchJSON(`${this.mfaPath(tenantID, userID)}/enroll`, { method: 'POST', body: JSON.stringify(method ? { method } : {}) });
+    }
+    // Maps to POST /api/v1/tenants/{tenant_id}/users/{user_id}/mfa/verify
+    async completeMFAEnrollment(tenantID, userID, enrollmentID, code) {
+        return this.fetchJSON(`${this.mfaPath(tenantID, userID)}/verify`, { method: 'POST', body: JSON.stringify({ enrollment_id: enrollmentID, code }) });
+    }
+    // Maps to DELETE /api/v1/tenants/{tenant_id}/users/{user_id}/mfa/enroll/{enrollment_id}
+    async cancelMFAEnrollment(tenantID, userID, enrollmentID) {
+        await this.fetchJSON(`${this.mfaPath(tenantID, userID)}/enroll/${encodeURIComponent(enrollmentID)}`, { method: 'DELETE' });
+    }
+    // Maps to POST /api/v1/tenants/{tenant_id}/users/{user_id}/mfa/challenge
+    async beginMFAChallenge(tenantID, userID, sessionToken) {
+        return this.fetchJSON(`${this.mfaPath(tenantID, userID)}/challenge`, { method: 'POST', body: JSON.stringify({ session_token: sessionToken }) });
+    }
+    // Maps to POST /api/v1/tenants/{tenant_id}/users/{user_id}/mfa/verify-challenge
+    async verifyMFAChallenge(tenantID, userID, challengeID, code) {
+        return this.fetchJSON(`${this.mfaPath(tenantID, userID)}/verify-challenge`, { method: 'POST', body: JSON.stringify({ challenge_id: challengeID, code }) });
+    }
+    // Maps to GET /api/v1/tenants/{tenant_id}/users/{user_id}/mfa/backup-codes
+    async getBackupCodeStatus(tenantID, userID) {
+        return this.fetchJSON(`${this.mfaPath(tenantID, userID)}/backup-codes`);
+    }
+    // Maps to POST /api/v1/tenants/{tenant_id}/users/{user_id}/mfa/backup-codes
+    async generateBackupCodes(tenantID, userID) {
+        return this.fetchJSON(`${this.mfaPath(tenantID, userID)}/backup-codes`, { method: 'POST' });
+    }
     async updateTenant(tenantID, req) {
         return this.fetchJSON(`/api/v1/tenants/${encodeURIComponent(tenantID)}`, { method: 'PUT', body: JSON.stringify(req) });
     }
@@ -2467,6 +2544,18 @@ class RestIAMClient {
     // Maps to DELETE /api/v1/tenants/{tenantID}/users/{userID}/sessions
     async revokeAllUserSessions(tenantID, userID) {
         await this.fetchJSON(`/api/v1/tenants/${encodeURIComponent(tenantID)}/users/${encodeURIComponent(userID)}/sessions`, { method: 'DELETE' });
+    }
+    // Maps to PATCH /api/v1/tenants/{tenantID}/quotas (204)
+    async updateTenantQuotas(tenantID, quotas) {
+        await this.fetchJSON(`/api/v1/tenants/${encodeURIComponent(tenantID)}/quotas`, { method: 'PATCH', body: JSON.stringify(quotas) });
+    }
+    // Maps to PATCH /api/v1/tenants/{tenantID}/entitlements (204)
+    async updateTenantEntitlements(tenantID, entitlements) {
+        await this.fetchJSON(`/api/v1/tenants/${encodeURIComponent(tenantID)}/entitlements`, { method: 'PATCH', body: JSON.stringify(entitlements) });
+    }
+    // Maps to POST /api/v1/tenants/{tenantID}/provision (201)
+    async provisionTenant(req) {
+        return this.fetchJSON(`/api/v1/tenants/${encodeURIComponent(req.tenant_id)}/provision`, { method: 'POST', body: JSON.stringify(req) });
     }
     async listRoles(tenantID) {
         // Server returns {limit, offset, roles:[...]} — count field absent; derive it.
