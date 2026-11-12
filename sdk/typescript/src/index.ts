@@ -292,6 +292,13 @@ export type {
   GetReencryptionProgressResponse,
 } from './dek.js';
 export type {
+  RegistryClient,
+  RegistryServiceInstance,
+  RegistryRegisterRequest,
+  RegistryLeaseResponse,
+  RegistryResolveResponse,
+} from './registry.js';
+export type {
   DynamicSecretsClient,
   DynamicSecretRole,
   CreateRoleRequest as DynamicSecretCreateRoleRequest,

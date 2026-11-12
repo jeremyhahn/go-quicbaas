@@ -282,6 +282,7 @@ export class UnixClient implements Client {
   readonly crypto: any = null;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   readonly dek: any = null;
+  readonly registry: any = null;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   readonly dynamicSecrets: any = null;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
