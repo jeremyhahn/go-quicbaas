@@ -20,6 +20,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -450,6 +451,111 @@ func TestWatcher_Debouncing(t *testing.T) {
 		"%d writes to one path buffered in a single batch window must coalesce into exactly 1 event", writes)
 	assert.Equal(t, int64(writes), forTestFile[0].Size,
 		"the coalesced event must carry the newest write, not an earlier one")
+}
+
+// windowTestDelay is the debounce window of the window tests. Only the fake
+// clock measures it, so its length costs no wall-clock time.
+const windowTestDelay = time.Second
+
+// windowTestGuard bounds a receive that must succeed. It is a failure guard
+// only: no assertion depends on how long anything takes.
+const windowTestGuard = 30 * time.Second
+
+// atomicClock is a clock the test advances by hand. Unlike fakeClock, it is
+// read by the processEvents and processBatches goroutines, so its offset is
+// atomic.
+type atomicClock struct {
+	base   time.Time
+	offset atomic.Int64
+}
+
+func (c *atomicClock) now() time.Time {
+	return c.base.Add(time.Duration(c.offset.Load()))
+}
+
+func (c *atomicClock) advance(d time.Duration) {
+	c.offset.Add(int64(d))
+}
+
+// startWindowWatcher starts a watcher whose debouncer reads clock and whose
+// batches are flushed only through the manualFlush seam. It returns a channel
+// that receives once for each event the debouncer has buffered.
+func startWindowWatcher(t *testing.T, ctx context.Context, dir string, clock *atomicClock) (*fsWatcher, <-chan struct{}) {
+	t.Helper()
+
+	w, err := New(Config{
+		Paths:         []string{dir},
+		DebounceDelay: windowTestDelay,
+		// The real ticker must never fire: the test owns every flush.
+		BatchInterval: time.Hour,
+		BufferSize:    100,
+	})
+	require.NoError(t, err)
+
+	fw, ok := w.(*fsWatcher)
+	require.True(t, ok, "New must return *fsWatcher")
+
+	debounced := make(chan struct{}, 100)
+	fw.debouncer.now = clock.now
+	fw.manualFlush = make(chan struct{})
+	fw.onDebounce = func() { debounced <- struct{}{} }
+
+	require.NoError(t, fw.Start(ctx))
+	t.Cleanup(func() { assert.NoError(t, fw.Stop()) })
+
+	return fw, debounced
+}
+
+// createEmptyFile creates path with no content, so the watcher sees exactly
+// one Create event and no Write event that could restart the window later.
+func createEmptyFile(t *testing.T, path string) {
+	t.Helper()
+	require.NoError(t, os.WriteFile(path, nil, 0644))
+}
+
+func waitDebounced(t *testing.T, debounced <-chan struct{}) {
+	t.Helper()
+	select {
+	case <-debounced:
+	case <-time.After(windowTestGuard):
+		t.Fatal("the event never reached the debouncer")
+	}
+}
+
+func TestWatcher_ManualFlushHoldsEventsInsideWindow(t *testing.T) {
+	tmpDir := t.TempDir()
+	clock := &atomicClock{base: time.Unix(1_700_000_000, 0)}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	fw, debounced := startWindowWatcher(t, ctx, tmpDir, clock)
+
+	testFile := filepath.Join(tmpDir, "held.txt")
+	createEmptyFile(t, testFile)
+	waitDebounced(t, debounced)
+
+	// processBatches is one goroutine reading an unbuffered channel, so the
+	// second send returns only once the first flush has finished.
+	fw.manualFlush <- struct{}{}
+	fw.manualFlush <- struct{}{}
+
+	select {
+	case e := <-fw.Events():
+		t.Fatalf("an event inside its debounce window was delivered: %+v", e)
+	default:
+	}
+
+	clock.advance(windowTestDelay + time.Millisecond)
+	fw.manualFlush <- struct{}{}
+
+	select {
+	case e := <-fw.Events():
+		assert.Equal(t, testFile, e.Path)
+		assert.Equal(t, EventCreate, e.Type)
+	case <-time.After(windowTestGuard):
+		t.Fatal("the event was not delivered once its debounce window had passed")
+	}
 }
 
 func TestWatcher_AddPath(t *testing.T) {
