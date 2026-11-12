@@ -32,6 +32,7 @@ import type { CAClient } from './ca.js';
 import type { TrustClient } from './trust.js';
 import type { CryptoClient } from './crypto.js';
 import type { DEKClient } from './dek.js';
+import type { ObjectStorageAdminClient } from './objectstorage_admin.js';
 import type { DynamicSecretsClient } from './dynamicsecrets.js';
 
 import type {
@@ -1378,6 +1379,13 @@ export interface Client {
    * background re-encryption. Paths: /api/v1/kms/deks/*.
    */
   readonly dek: DEKClient;
+  /**
+   * objectStorageAdmin manages object storage backends and reports storage
+   * stats, runs garbage collection and repairs objects. Paths:
+   * /api/v1/admin/object-backends/*, /api/v1/admin/storage/*,
+   * /api/v1/admin/objects/repair. Replies keep the Go field names.
+   */
+  readonly objectStorageAdmin: ObjectStorageAdminClient;
   /**
    * dynamicSecrets manages credential-generation roles, on-demand
    * short-lived credential minting, and lease renewal/revocation.

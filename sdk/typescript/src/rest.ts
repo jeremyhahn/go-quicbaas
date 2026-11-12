@@ -181,6 +181,25 @@ import type {
   GetReencryptionProgressResponse,
 } from './dek.js';
 import type {
+  ObjectStorageAdminClient,
+  ObjectStorageAdminCreateBackendRequest,
+  ObjectStorageAdminCreateBackendResponse,
+  ObjectStorageAdminUpdateBackendRequest,
+  ObjectStorageAdminUpdateBackendResponse,
+  ObjectStorageAdminDeleteBackendRequest,
+  ObjectStorageAdminDeleteBackendResponse,
+  ObjectStorageAdminBackendStatusResponse,
+  ObjectStorageAdminCompactBackendRequest,
+  ObjectStorageAdminCompactBackendResponse,
+  ObjectStorageAdminStatsOptions,
+  ObjectStorageAdminStatsResponse,
+  ObjectStorageAdminGCRequest,
+  ObjectStorageAdminGCResponse,
+  ObjectStorageAdminGCProgressResponse,
+  ObjectStorageAdminRepairRequest,
+  ObjectStorageAdminRepairResponse,
+} from './objectstorage_admin.js';
+import type {
   DynamicSecretsClient,
   DynamicSecretRole,
   CreateRoleRequest as DynamicSecretCreateRoleRequest,
@@ -4297,6 +4316,99 @@ export class RestDEKClient implements DEKClient {
   }
 }
 
+// RestObjectStorageAdminClient implements ObjectStorageAdminClient over REST.
+// The replies keep the Go field names (PascalCase); see objectstorage_admin.ts.
+export class RestObjectStorageAdminClient implements ObjectStorageAdminClient {
+  private readonly http: FetchHelper;
+
+  constructor(baseUrl: string, config: ClientConfig = {}) {
+    this.http = newFetchHelper(baseUrl, config);
+  }
+
+  // Maps to POST /api/v1/admin/object-backends
+  async createBackend(req: ObjectStorageAdminCreateBackendRequest): Promise<ObjectStorageAdminCreateBackendResponse> {
+    return this.http.fetchJSON<ObjectStorageAdminCreateBackendResponse>('/api/v1/admin/object-backends', {
+      method: 'POST',
+      body: JSON.stringify(req),
+    });
+  }
+
+  // Maps to PUT /api/v1/admin/object-backends/{name}
+  async updateBackend(
+    name: string,
+    req: ObjectStorageAdminUpdateBackendRequest,
+  ): Promise<ObjectStorageAdminUpdateBackendResponse> {
+    return this.http.fetchJSON<ObjectStorageAdminUpdateBackendResponse>(
+      `/api/v1/admin/object-backends/${encodeURIComponent(name)}`,
+      { method: 'PUT', body: JSON.stringify(req) },
+    );
+  }
+
+  // Maps to DELETE /api/v1/admin/object-backends/{name}
+  async deleteBackend(
+    name: string,
+    req: ObjectStorageAdminDeleteBackendRequest = {},
+  ): Promise<ObjectStorageAdminDeleteBackendResponse> {
+    return this.http.fetchJSON<ObjectStorageAdminDeleteBackendResponse>(
+      `/api/v1/admin/object-backends/${encodeURIComponent(name)}`,
+      { method: 'DELETE', body: JSON.stringify(req) },
+    );
+  }
+
+  // Maps to PUT /api/v1/admin/object-backends/{name}/status
+  async setBackendStatus(name: string, enabled: boolean): Promise<ObjectStorageAdminBackendStatusResponse> {
+    return this.http.fetchJSON<ObjectStorageAdminBackendStatusResponse>(
+      `/api/v1/admin/object-backends/${encodeURIComponent(name)}/status`,
+      { method: 'PUT', body: JSON.stringify({ enabled }) },
+    );
+  }
+
+  // Maps to POST /api/v1/admin/object-backends/{name}/compact
+  async compactBackend(
+    name: string,
+    req: ObjectStorageAdminCompactBackendRequest = {},
+  ): Promise<ObjectStorageAdminCompactBackendResponse> {
+    return this.http.fetchJSON<ObjectStorageAdminCompactBackendResponse>(
+      `/api/v1/admin/object-backends/${encodeURIComponent(name)}/compact`,
+      { method: 'POST', body: JSON.stringify(req) },
+    );
+  }
+
+  // Maps to GET /api/v1/admin/storage/stats[?backends=true][&tenants=true]
+  async storageStats(opts: ObjectStorageAdminStatsOptions = {}): Promise<ObjectStorageAdminStatsResponse> {
+    const params: Record<string, string> = {};
+    if (opts.backends) params.backends = 'true';
+    if (opts.tenants) params.tenants = 'true';
+    const query = new URLSearchParams(params).toString();
+    return this.http.fetchJSON<ObjectStorageAdminStatsResponse>(
+      `/api/v1/admin/storage/stats${query ? `?${query}` : ''}`,
+    );
+  }
+
+  // Maps to POST /api/v1/admin/storage/gc
+  async runGarbageCollection(req: ObjectStorageAdminGCRequest = {}): Promise<ObjectStorageAdminGCResponse> {
+    return this.http.fetchJSON<ObjectStorageAdminGCResponse>('/api/v1/admin/storage/gc', {
+      method: 'POST',
+      body: JSON.stringify(req),
+    });
+  }
+
+  // Maps to GET /api/v1/admin/storage/gc/progress?operation_id=
+  async garbageCollectionProgress(operationID: string): Promise<ObjectStorageAdminGCProgressResponse> {
+    return this.http.fetchJSON<ObjectStorageAdminGCProgressResponse>(
+      `/api/v1/admin/storage/gc/progress?operation_id=${encodeURIComponent(operationID)}`,
+    );
+  }
+
+  // Maps to POST /api/v1/admin/objects/repair
+  async repairObject(req: ObjectStorageAdminRepairRequest): Promise<ObjectStorageAdminRepairResponse> {
+    return this.http.fetchJSON<ObjectStorageAdminRepairResponse>('/api/v1/admin/objects/repair', {
+      method: 'POST',
+      body: JSON.stringify(req),
+    });
+  }
+}
+
 // ---------------------------------------------------------------------------
 // RestDynamicSecretsClient — /api/v1/secrets/dynamic/* surface.
 // ---------------------------------------------------------------------------
@@ -5258,6 +5370,7 @@ export class RestClient implements Client {
   readonly trust: TrustClient;
   readonly crypto: CryptoClient;
   readonly dek: DEKClient;
+  readonly objectStorageAdmin: ObjectStorageAdminClient;
   readonly dynamicSecrets: DynamicSecretsClient;
   readonly barrier: BarrierClient;
   readonly tenantBarrier: TenantBarrierClient;
@@ -5300,6 +5413,7 @@ export class RestClient implements Client {
     this.trust = new RestTrustClient(baseUrl, config);
     this.crypto = new RestCryptoClient(baseUrl, config);
     this.dek = new RestDEKClient(baseUrl, config);
+    this.objectStorageAdmin = new RestObjectStorageAdminClient(baseUrl, config);
     this.dynamicSecrets = new RestDynamicSecretsClient(baseUrl, config);
     this.barrier = new RestBarrierClient(baseUrl, config);
     this.tenantBarrier = new RestTenantBarrierClient(baseUrl, config);
