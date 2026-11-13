@@ -451,7 +451,11 @@ func TestTriageRunner_NeverClosesAnIssue(t *testing.T) {
 
 // TestTriageRunner_AnUnreadableReplyIsNeverReady proves the safe direction:
 // every way of failing to understand the agent leaves the issue for a person,
-// and none of them applies the trigger label.
+// and none of them applies the trigger label. It also proves the charter's
+// demand for evidence is enforced: a declaration with no prose, a duplicate
+// of the issue itself, and a duplicate of an issue the pass never listed are
+// all set aside unposted. Each of those is a shape the NPU model produced on
+// go-luks2 on 2026-09-21 and a person then had to undo.
 func TestTriageRunner_AnUnreadableReplyIsNeverReady(t *testing.T) {
 	tests := []struct {
 		name  string
@@ -473,6 +477,22 @@ func TestTriageRunner_AnUnreadableReplyIsNeverReady(t *testing.T) {
 			name:  "an empty reply",
 			reply: "",
 		},
+		{
+			name:  "a bare not-actionable",
+			reply: "SDLC-TRIAGE: not-actionable",
+		},
+		{
+			name:  "a bare needs-info",
+			reply: "SDLC-TRIAGE: needs-info",
+		},
+		{
+			name:  "a duplicate of itself",
+			reply: "Same thing.\n\nSDLC-TRIAGE-DUPLICATE: #301\nSDLC-TRIAGE: duplicate",
+		},
+		{
+			name:  "a duplicate of an unlisted issue",
+			reply: "Same thing.\n\nSDLC-TRIAGE-DUPLICATE: #999\nSDLC-TRIAGE: duplicate",
+		},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -483,51 +503,15 @@ func TestTriageRunner_AnUnreadableReplyIsNeverReady(t *testing.T) {
 			if err := rig.run(); err != nil {
 				t.Fatalf("run: %v", err)
 			}
-			if rig.hasLabel(301, rig.binding.Forge.TriggerLabel) {
-				t.Fatalf("an unreadable verdict must never be read as ready, got %v", rig.labels(301))
-			}
 			if got := rig.comments(301); len(got) != 0 {
 				t.Fatalf("a reply that is not a verdict writes nothing to the issue, got %v", got)
 			}
 			if got := rig.labels(301); len(got) != 0 {
-				t.Fatalf("a reply that is not a verdict labels nothing, got %v", got)
-			}
-			if !rig.audited("sdlc:triage_unusable") {
-				t.Fatal("setting a reply aside is recorded on the audit trail")
-			}
-		})
-	}
-}
-
-// TestTriageRunner_AVerdictWithoutEvidenceIsNotAVerdict proves the charter's
-// demand for evidence is enforced: a declaration with no prose, a duplicate
-// of the issue itself, and a duplicate of an issue the pass never listed are
-// all set aside unposted. Each is a shape the NPU model produced on go-luks2
-// on 2026-09-21 and a person then had to undo.
-func TestTriageRunner_AVerdictWithoutEvidenceIsNotAVerdict(t *testing.T) {
-	tests := map[string]string{
-		"a bare not-actionable":            "SDLC-TRIAGE: not-actionable",
-		"a bare needs-info":                "SDLC-TRIAGE: needs-info",
-		"a duplicate of itself":            "Same thing.\n\nSDLC-TRIAGE-DUPLICATE: #301\nSDLC-TRIAGE: duplicate",
-		"a duplicate of an unlisted issue": "Same thing.\n\nSDLC-TRIAGE-DUPLICATE: #999\nSDLC-TRIAGE: duplicate",
-	}
-	for name, reply := range tests {
-		t.Run(name, func(t *testing.T) {
-			rig := newTriageRig(t)
-			rig.forge.putIssue(301, "some issue")
-			rig.answers(reply)
-			if err := rig.run(); err != nil {
-				t.Fatalf("run: %v", err)
-			}
-			if got := rig.comments(301); len(got) != 0 {
-				t.Fatalf("nothing is posted for a reply without evidence, got %v", got)
-			}
-			if got := rig.labels(301); len(got) != 0 {
-				t.Fatalf("nothing is labelled for a reply without evidence, got %v", got)
+				t.Fatalf("a reply that is not a verdict labels nothing, not even the trigger label, got %v", got)
 			}
 			details, ok := rig.auditDetails("sdlc:triage_unusable")
 			if !ok || !strings.Contains(details, "issue=301") {
-				t.Fatalf("the audit trail names the issue set aside, got %q", details)
+				t.Fatalf("setting a reply aside is audited with the issue, got %q", details)
 			}
 		})
 	}
@@ -1564,6 +1548,15 @@ func triageRunFor(forge ForgeBackend, binding *ProjectBinding) *triageRun {
 // that opted in would have every not-actionable closed — including the ones
 // that are out of scope or waiting on a person, which are exactly the ones a
 // person still needs to see open.
+//
+// An issue left open must carry the escalated label, and a closed one must
+// not. A not-actionable verdict used to comment and stop, leaving the issue
+// open carrying NO factory label. Because the newest comment was then
+// triage's own, spokenToSinceTriage ruled it not a candidate on every later
+// pass: invisible to the factory and unmarked for a person. Measured on
+// go-luks2 2026-09-16 — five issues in that state and 34 hours of a fleet
+// triaging nothing. A closed issue also carrying "a person must look" is a
+// contradiction that puts it back in somebody's queue.
 func TestApplyNotActionable_ClosesOnlyWhenBothConditionsHold(t *testing.T) {
 	cases := []struct {
 		name      string
@@ -1580,6 +1573,7 @@ func TestApplyNotActionable_ClosesOnlyWhenBothConditionsHold(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			forge := newFakeForge()
 			binding := testBinding()
+			binding.Forge.Labels[LabelEscalated] = "factory:escalated"
 			binding.TriageMayClose = c.mayClose
 			issue := ForgeIssue{Number: 42, Title: "stale report"}
 			forge.issues[42] = &issue
@@ -1602,6 +1596,16 @@ func TestApplyNotActionable_ClosesOnlyWhenBothConditionsHold(t *testing.T) {
 			// never landed tells a person nothing about why.
 			if len(forge.comments[42]) != 1 {
 				t.Fatalf("the evidence comment must be posted in every case, got %d", len(forge.comments[42]))
+			}
+			if c.wantClose {
+				if len(forge.labelAdds) != 0 {
+					t.Fatalf("labels added = %v, want none on a closed issue", forge.labelAdds)
+				}
+				return
+			}
+			want := binding.Forge.Label(LabelEscalated)
+			if len(forge.labelAdds) != 1 || forge.labelAdds[0] != want {
+				t.Fatalf("labels added = %v, want exactly [%s] so a person can find it", forge.labelAdds, want)
 			}
 		})
 	}
