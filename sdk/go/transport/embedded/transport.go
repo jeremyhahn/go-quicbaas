@@ -514,6 +514,7 @@ var unaryHandlers = map[string]handlerFunc{
 	"quicbaas.ObjectStorage/BatchPutObjects":    handleObjBatchPutObjects,
 	"quicbaas.ObjectStorage/BatchGetObjects":    handleObjBatchGetObjects,
 	"quicbaas.ObjectStorage/BatchDeleteObjects": handleObjBatchDeleteObjects,
+	"quicbaas.ObjectTransfer/FetchObject":       handleTransferFetchObject,
 
 	// Messaging service handlers
 	"quicbaas.Messaging/CreateChannel":   handleMessagingCreateChannel,
@@ -532,14 +533,17 @@ var unaryHandlers = map[string]handlerFunc{
 
 // streamHandlers maps service/method to stream handler functions for O(1) dispatch.
 var streamHandlers = map[string]streamHandlerFunc{
-	"quicbaas.KV/List":                         handleListStream,
-	"quicbaas.KV/Watch":                        handleWatchStream,
-	"quicbaas.Query/Query":                     handleQueryStream,
-	"quicbaas.Query/ScanIndex":                 handleScanIndexStream,
-	"quicbaas.TimeSeries/Query":                handleTimeSeriesQueryStream,
-	"quicbaas.Orchestrator/SubscribeJobEvents": handleSubscribeJobEventsStream,
-	"quicbaas.Orchestrator/InferenceStream":    handleOrchestratorInferenceStream,
-	registryService + "/Watch":                 handleRegistryWatchStream,
+	"quicbaas.KV/List":                           handleListStream,
+	"quicbaas.KV/Watch":                          handleWatchStream,
+	"quicbaas.Query/Query":                       handleQueryStream,
+	"quicbaas.Query/ScanIndex":                   handleScanIndexStream,
+	"quicbaas.TimeSeries/Query":                  handleTimeSeriesQueryStream,
+	"quicbaas.Orchestrator/SubscribeJobEvents":   handleSubscribeJobEventsStream,
+	"quicbaas.Orchestrator/InferenceStream":      handleOrchestratorInferenceStream,
+	registryService + "/Watch":                   handleRegistryWatchStream,
+	"quicbaas.ObjectStorage/StreamPutObject":     handleObjStreamPutObject,
+	"quicbaas.ObjectStorage/StreamGetObject":     handleObjStreamGetObject,
+	"quicbaas.ObjectTransfer/StreamFetchObjects": handleTransferStreamFetchObjects,
 }
 
 // New creates a new embedded transport with the given service.
