@@ -53,6 +53,9 @@ var unaryHandlers = map[string]handlerFunc{
 	// Transaction operations
 	"quicbaas.Transaction/Execute": handleTransaction,
 
+	// Query operations (Query and ScanIndex are streams)
+	"quicbaas.Query/Execute": handleQueryExecute,
+
 	// Cluster operations
 	"quicbaas.Cluster/Status":             handleClusterStatus,
 	"quicbaas.Cluster/GetLeader":          handleGetLeader,

@@ -64,11 +64,11 @@ Dedicated transport handlers: rest=no, grpc=no, mcp=no; embedded routes register
 
 ### `quicbaas.Query` — SDK package `sdk/go/client/query`
 
-Dedicated transport handlers: rest=no, grpc=no, mcp=no; embedded routes registered: 2; MCP tools registered server-side: 0.
+Dedicated transport handlers: rest=no, grpc=no, mcp=no; embedded routes registered: 3; MCP tools registered server-side: 0.
 
 | SDK method | REST route (transport) | Served? | gRPC | MCP | Embedded | Permission |
 |---|---|---|---|---|---|---|
-| `Execute` | `POST /api/v1/query/execute` *(default branch)* | **no** | MISSING | MISSING | MISSING | — |
+| `Execute` | `POST /api/v1/query/execute` *(default branch)* | **no** | MISSING | MISSING | yes | — |
 
 
 ## REST API

@@ -253,6 +253,22 @@ func (e *InvalidPageTokenError) Error() string {
 		strconv.Quote(e.Value) + " is not a non-negative decimal offset"
 }
 
+// UnsupportedQueryFieldError indicates a query request field the query
+// service cannot honour; it matches one index value by equality, without a
+// cursor.
+type UnsupportedQueryFieldError struct {
+	Service string
+	Method  string
+	Field   string
+	Value   string
+}
+
+// Error implements the error interface.
+func (e *UnsupportedQueryFieldError) Error() string {
+	return "INVALID_INPUT: embedded: " + e.Service + "/" + e.Method + ": " + e.Field + " " +
+		strconv.Quote(e.Value) + " is not supported (equality on a string or bytes value, no cursor)"
+}
+
 // ServiceNotConfiguredError indicates a sub-service is not configured.
 type ServiceNotConfiguredError struct {
 	Service string
