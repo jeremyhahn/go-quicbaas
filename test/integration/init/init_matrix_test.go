@@ -87,12 +87,13 @@ var matrixTransports = []string{"rest", "grpc", "quic", "mcp", "unix"}
 func TestCanonicalInit_Matrix(t *testing.T) {
 	requireIntegrationGate(t)
 	binary := resolveDaemonBinary(t)
+	cliBinary := resolveCLIBinary(t)
 
 	for _, strategy := range matrixStrategies {
 		for _, transport := range matrixTransports {
 			strategy, transport := strategy, transport
 			t.Run(matrixSubtestName(strategy, transport), func(t *testing.T) {
-				runMatrixCell(t, binary, strategy, transport)
+				runMatrixCell(t, binary, cliBinary, strategy, transport)
 			})
 		}
 	}
@@ -106,7 +107,7 @@ func matrixSubtestName(strategy, transport string) string {
 
 // runMatrixCell is the per-(strategy, transport) integration body. The
 // body is intentionally linear so a failure points to exactly one phase.
-func runMatrixCell(t *testing.T, binary, strategy, transport string) {
+func runMatrixCell(t *testing.T, binary, cliBinary, strategy, transport string) {
 	t.Helper()
 
 	dataDir := t.TempDir()
@@ -139,13 +140,15 @@ func runMatrixCell(t *testing.T, binary, strategy, transport string) {
 	requireFileExists(t, caChainPath(dataDir), "platform CA chain (ca-chain.crt)")
 	requireFileExists(t, serverCertPath(dataDir), "platform server cert (server.crt)")
 
-	// Phase 4: SDK reaches the daemon over this transport. Health.Liveness
-	// is the cheapest cross-transport SDK call (no auth required) and is
-	// wired across every supported transport. A successful response proves
+	// Phase 4: SDK reaches the daemon over this transport, as the
+	// administrator first boot issued. Health.Liveness is the cheapest
+	// cross-transport SDK call and is wired across every supported transport;
+	// MCP refuses an uncredentialed initialize, so the cell logs in first. A successful response proves
 	// the SDK transport stack lines up with the daemon's listener for this
 	// cell — a regression here would silently break every downstream SDK
 	// caller without firing in the raw-socket probes above.
-	verifySDKLivenessOverTransport(t, transport, ports, dataDir)
+	token := loginFirstBootAdmin(ctx, t, cliBinary, transport, ports, dataDir, strategy)
+	verifySDKLivenessOverTransport(t, transport, ports, dataDir, token)
 
 	// Phase 5: cross-strategy invariants on the marker (e.g. credential
 	// strategy default = "barrier"). assertInitDoneMarker already covered
