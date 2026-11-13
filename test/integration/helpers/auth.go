@@ -227,6 +227,12 @@ func AuthPIVFullSession(ctx context.Context, baseURL, certPath, keyPath, caPath 
 	return &out, nil
 }
 
+// pivLoginPath is quicbaas's PIV login. Its tokens are signed by the IAM OIDC
+// provider, whose key set the node's platform-token validator verifies. The
+// xkms module's /api/v1/auth/login/piv mints tokens under its own signing key,
+// which quicbaas routes refuse once require_authz is on.
+const pivLoginPath = "/api/v1/iam/login/piv"
+
 func authPIV(ctx context.Context, baseURL, certPath, keyPath, caPath string) (string, time.Time, error) {
 	baseURL = strings.TrimRight(baseURL, "/")
 	cacheKey := baseURL + "|" + certPath + "|" + keyPath + "|" + caPath
@@ -262,7 +268,7 @@ func authPIV(ctx context.Context, baseURL, certPath, keyPath, caPath string) (st
 		},
 	}
 
-	endpoint := baseURL + "/api/v1/auth/login/piv"
+	endpoint := baseURL + pivLoginPath
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, nil)
 	if err != nil {
 		return "", time.Time{}, &AuthError{Op: "build request", URL: endpoint, Cause: err}
