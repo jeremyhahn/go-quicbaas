@@ -168,7 +168,7 @@ describe('BarrierView strategy-aware rendering', () => {
     expect(screen.getByTestId('barrier-status-badge')).toHaveTextContent('software');
   });
 
-  it('shamir strategy (uninitialized) shows the init form with threshold/total fields', async () => {
+  it('shamir strategy (uninitialized) shows the ceremony init form', async () => {
     spy = makeFetchSpy({
       '/api/v1/barrier/status': () => ({
         sealed: true,
@@ -183,17 +183,30 @@ describe('BarrierView strategy-aware rendering', () => {
       expect(screen.getByTestId('barrier-strategy-shamir-init')).toBeInTheDocument();
     });
     expect(screen.getByLabelText(/Threshold/i)).toBeInTheDocument();
-    expect(screen.getByLabelText(/Total shares/i)).toBeInTheDocument();
+    expect(screen.getByLabelText(/SO PIN/i)).toBeInTheDocument();
+    expect(screen.getByLabelText(/User PIN/i)).toBeInTheDocument();
+    expect(screen.getByLabelText(/Officer 1 username/i)).toBeInTheDocument();
+    expect(screen.getByLabelText(/Officer 1 CSR/i)).toBeInTheDocument();
+    expect(screen.queryByLabelText(/Total shares/i)).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: /Initialize Shamir barrier/i })).toBeInTheDocument();
     expect(screen.getByTestId('barrier-status-badge')).toHaveTextContent('shamir');
   });
 
-  it('shamir init posts to /api/v1/barrier/shamir/initialize', async () => {
+  // Codex 7420 P1 6 (#1895): the system barrier refuses a bare Shamir init,
+  // so the form must run the initialization ceremony (POST
+  // /api/v1/init/initialize) with the threshold, the PINs and the officers,
+  // and never call /api/v1/barrier/shamir/initialize.
+  it('shamir init runs the initialization ceremony (POST /api/v1/init/initialize)', async () => {
     spy = makeFetchSpy({
-      '/api/v1/barrier/shamir/initialize': () => ({
-        shares: ['s1', 's2', 's3'],
-        threshold: 2,
-        total_shares: 3,
+      '/api/v1/barrier/shamir/initialize': () => {
+        throw new Error('the system barrier refuses a bare Shamir init');
+      },
+      '/api/v1/init/initialize': () => ({
+        spki_pin: 'pin',
+        ca_cert_pem: 'ca',
+        tls_cert_pem: 'tls',
+        state: 'initialized',
+        share_count: 2,
       }),
       '/api/v1/barrier/status': () => ({
         sealed: true,
@@ -206,14 +219,66 @@ describe('BarrierView strategy-aware rendering', () => {
     await waitFor(() => {
       expect(screen.getByRole('button', { name: /Initialize Shamir barrier/i })).toBeInTheDocument();
     });
+    await fireEvent.input(screen.getByLabelText(/Threshold/i), { target: { value: '2' } });
+    await fireEvent.input(screen.getByLabelText(/SO PIN/i), { target: { value: 'so-secret' } });
+    await fireEvent.input(screen.getByLabelText(/User PIN/i), { target: { value: 'user-secret' } });
+    await fireEvent.input(screen.getByLabelText(/Officer 1 username/i), { target: { value: 'alice' } });
+    await fireEvent.input(screen.getByLabelText(/Officer 1 CSR/i), { target: { value: 'CSR-A' } });
+    await fireEvent.click(screen.getByRole('button', { name: /Add officer/i }));
+    await fireEvent.input(screen.getByLabelText(/Officer 2 username/i), { target: { value: 'bob' } });
+    await fireEvent.input(screen.getByLabelText(/Officer 2 CSR/i), { target: { value: 'CSR-B' } });
     await fireEvent.click(screen.getByRole('button', { name: /Initialize Shamir barrier/i }));
 
     await waitFor(() => {
-      const hits = spy.calls.filter((c) => c.url.endsWith('/api/v1/barrier/shamir/initialize'));
-      expect(hits.length).toBeGreaterThan(0);
-      expect(hits[0].method).toBe('POST');
+      expect(screen.getByTestId('barrier-shamir-init-result')).toHaveTextContent(/2 shares/);
     });
+    const hits = spy.calls.filter((c) => c.url.endsWith('/api/v1/init/initialize'));
+    expect(hits.length).toBe(1);
+    expect(hits[0].method).toBe('POST');
+    expect(hits[0].body).toMatchObject({
+      threshold: 2,
+      so_pin: 'so-secret',
+      user_pin: 'user-secret',
+      officers: [
+        { username: 'alice', csr_pem: 'CSR-A' },
+        { username: 'bob', csr_pem: 'CSR-B' },
+      ],
+    });
+    expect(spy.calls.some((c) => c.url.includes('/api/v1/barrier/shamir/initialize'))).toBe(false);
     expect(spy.calls.every((c) => !c.url.includes('/api/v1/seal/'))).toBe(true);
+    // The ceremony seals each share to its officer: none reach the browser.
+    expect(screen.queryAllByTestId('shamir-share-result')).toHaveLength(0);
+  });
+
+  it('shamir ceremony init surfaces a server error', async () => {
+    spy = makeFetchSpy({
+      '/api/v1/barrier/status': () => ({ sealed: true, strategy: 'shamir' }),
+    });
+    const base = spy.mock.getMockImplementation()!;
+    spy.mock.mockImplementation((url: string, init?: RequestInit) => {
+      if (url.includes('/api/v1/init/initialize')) {
+        spy.calls.push({ url, method: (init?.method ?? 'GET').toUpperCase(), body: undefined });
+        return Promise.resolve({
+          ok: false,
+          status: 400,
+          statusText: 'Bad Request',
+          text: () => Promise.resolve(JSON.stringify({ error: 'threshold exceeds officers' })),
+          json: () => Promise.resolve({ error: 'threshold exceeds officers' }),
+        });
+      }
+      return base(url, init);
+    });
+    vi.stubGlobal('fetch', spy.mock);
+
+    render(BarrierView);
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /Initialize Shamir barrier/i })).toBeInTheDocument();
+    });
+    await fireEvent.click(screen.getByRole('button', { name: /Initialize Shamir barrier/i }));
+    await waitFor(() => {
+      expect(screen.getByTestId('barrier-shamir-init-error')).toBeInTheDocument();
+    });
+    expect(screen.queryByTestId('barrier-shamir-init-result')).not.toBeInTheDocument();
   });
 
   it('software unseal posts to /api/v1/barrier/unseal', async () => {
