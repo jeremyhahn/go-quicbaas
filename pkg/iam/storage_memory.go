@@ -810,6 +810,10 @@ func (m *MemoryStorage) ListRoles(ctx context.Context, tenantID string, opts Lis
 		}
 	}
 
+	// Map iteration order is random; sort by ID so offset pages are stable
+	// across calls, as ListUsers does.
+	slices.SortFunc(result, func(a, b *Role) int { return cmp.Compare(a.ID, b.ID) })
+
 	// Apply pagination
 	start := opts.Offset
 	if start >= len(result) {
