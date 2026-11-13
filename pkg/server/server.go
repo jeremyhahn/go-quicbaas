@@ -1822,6 +1822,30 @@ func (s *Server) RESTAddr() net.Addr {
 	return tcpAddr
 }
 
+// QRDBQUICAddr returns the UDP address of the embedded node's native go-qrdb
+// QUIC listener, or nil when REST is disabled, running in embedded mode, or
+// not yet listening. Callers that configure server.qrdb_quic.port as 0 use it
+// to learn the kernel-assigned port.
+func (s *Server) QRDBQUICAddr() net.Addr {
+	node := s.getQRDBNode()
+	if node == nil {
+		return nil
+	}
+	qsrv := node.Server()
+	if qsrv == nil {
+		return nil
+	}
+	addrStr := qsrv.QUICAddr()
+	if addrStr == "" {
+		return nil
+	}
+	udpAddr, err := net.ResolveUDPAddr("udp", addrStr)
+	if err != nil {
+		return nil
+	}
+	return udpAddr
+}
+
 // GetGRPCServer returns the gRPC server (for health checks).
 func (s *Server) GetGRPCServer() *ggrpc.Server {
 	return s.grpcServer

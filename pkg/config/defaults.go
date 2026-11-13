@@ -76,6 +76,7 @@ func DefaultConfig() *Config {
 					Enabled: true,
 				},
 			},
+			QRDBQUIC: ServerQRDBQUICConfig{Port: DefaultQRDBQUICPort},
 			Unix: ServerUnixConfig{
 				Enabled: true,
 				Socket:  DefaultUnixSocket,
@@ -382,6 +383,7 @@ func DefaultServerConfig() ServerConfig {
 				Enabled: true,
 			},
 		},
+		QRDBQUIC: ServerQRDBQUICConfig{Port: DefaultQRDBQUICPort},
 		Unix: ServerUnixConfig{
 			Enabled: true,
 			Socket:  DefaultUnixSocket,

@@ -84,6 +84,11 @@ type clientOptions struct {
 	// Unix socket settings
 	unixSocketPath string
 
+	// qrdbQUICAddress is the host:port of quicbaasd's native go-qrdb QUIC
+	// listener (server.qrdb_quic.port), dialed by the go-qrdb sub-client
+	// under TransportQUIC. Empty dials the client address.
+	qrdbQUICAddress string
+
 	// Embedded settings
 	// Note: Uses interface{} to avoid import cycles. The actual type
 	// (service.QuicBaaS) is checked when creating the transport.
@@ -292,6 +297,21 @@ func WithREST() Option {
 func WithQUIC() Option {
 	return func(o *clientOptions) error {
 		o.transportType = TransportQUIC
+		return nil
+	}
+}
+
+// WithQRDBQUICAddress sets the host:port of the server's native go-qrdb QUIC
+// listener (quicbaasd's server.qrdb_quic.port). Under TransportQUIC the
+// client's own address carries REST over HTTP/3, while the go-qrdb sub-client
+// (Barrier, Ceremony, Credentials, KV and the other go-qrdb verbs) speaks
+// go-qrdb's native QUIC protocol and dials this address instead.
+func WithQRDBQUICAddress(address string) Option {
+	return func(o *clientOptions) error {
+		if address == "" {
+			return errors.NewInvalidInput("WithQRDBQUICAddress", "address cannot be empty")
+		}
+		o.qrdbQUICAddress = address
 		return nil
 	}
 }

@@ -595,6 +595,9 @@ func (c *client) buildQRDBTransport() (qrdbtransport.Transport, error) {
 	case TransportREST:
 		return qrdbrest.New(buildOpts(address)...)
 	case TransportQUIC:
+		if c.opts.qrdbQUICAddress != "" {
+			address = c.opts.qrdbQUICAddress
+		}
 		return qrdbquic.New(buildOpts(address)...)
 	case TransportUnix:
 		return c.buildQRDBUnixTransport()

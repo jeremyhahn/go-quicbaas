@@ -2066,6 +2066,18 @@ type ServerMCPConfig struct {
 	BindAddress string `mapstructure:"bind_address"`
 }
 
+// ServerQRDBQUICConfig configures the embedded qrdb node's native binary QUIC
+// listener: go-qrdb's own QUIC protocol, which the Go SDK's go-qrdb
+// sub-client dials under TransportQUIC. It is on exactly when quicbaas QUIC is
+// on, that is, when REST is enabled and the node serves REST's HTTP/3 sibling
+// on the REST port. The listener binds Server.Host.
+type ServerQRDBQUICConfig struct {
+	// Port is the UDP port of the native QUIC listener. It must differ from
+	// the REST port, whose UDP side carries HTTP/3. Zero asks the kernel for
+	// a free port; Server.QRDBQUICAddr reports it.
+	Port int `mapstructure:"port"`
+}
+
 // ServerUnixConfig contains Unix domain socket server configuration.
 type ServerUnixConfig struct {
 	Enabled bool   `mapstructure:"enabled"`
@@ -2149,6 +2161,9 @@ type ServerConfig struct {
 	GRPC ServerGRPCConfig `mapstructure:"grpc"`
 	REST ServerRESTConfig `mapstructure:"rest"`
 	MCP  ServerMCPConfig  `mapstructure:"mcp"`
+	// QRDBQUIC addresses the node's native go-qrdb QUIC listener, served
+	// beside REST's HTTP/3 whenever REST is enabled.
+	QRDBQUIC ServerQRDBQUICConfig `mapstructure:"qrdb_quic"`
 	// Unix serves the gRPC surface over a local Unix domain socket for CLI
 	// compatibility. This is local IPC, not network serving: it is served by
 	// quicbaas itself (a live, fully-registered *grpc.Server), independent of

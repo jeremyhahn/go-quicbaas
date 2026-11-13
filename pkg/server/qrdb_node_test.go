@@ -151,24 +151,38 @@ func TestBuildQRDBConfig_SPIFFETrustDomainUnsetLeavesNodeUnpinned(t *testing.T) 
 	assert.Empty(t, qcfg.Auth.SPIFFETrustDomain)
 }
 
-// TestBuildQRDBConfig_NoNativeQUICListener pins that the embedded node never
-// starts go-qrdb's native QUIC server, whatever quicbaas serves. That server
-// is the only QUIC route to qrdb.v1 barrier.Seal; quicbaas's QUIC is REST
-// over HTTP/3, whose seal the BarrierService facade gates on the SO PIN
-// (#946). Enabling native QUIC would add a route docs/barrier/api.md must
-// then cover.
-func TestBuildQRDBConfig_NoNativeQUICListener(t *testing.T) {
+// TestBuildQRDBConfig_NativeQUICListenerFollowsREST pins that the embedded node
+// serves go-qrdb's native QUIC protocol on server.qrdb_quic.port exactly when
+// quicbaas QUIC (REST's HTTP/3 sibling) is on, in both node modes. The Go
+// SDK's go-qrdb sub-client dials that listener under TransportQUIC.
+func TestBuildQRDBConfig_NativeQUICListenerFollowsREST(t *testing.T) {
 	for _, clusterMode := range []bool{false, true} {
 		cfg := clusterTestConfig()
 		cfg.Server.REST.Enabled = true
 		cfg.Server.GRPC.Enabled = true
-		cfg.Server.MCP.Enabled = true
+		cfg.Server.QRDBQUIC.Port = 10443
 
 		qcfg := mustBuildQRDBConfig(t, cfg, clusterMode)
 
-		assert.True(t, qcfg.Protocols.REST, "clusterMode=%v: REST must be served", clusterMode)
-		assert.False(t, qcfg.Protocols.QUIC,
-			"clusterMode=%v: quicbaas serves QUIC as REST over HTTP/3 only, never go-qrdb's native QUIC", clusterMode)
+		assert.True(t, qcfg.Protocols.QUIC, "clusterMode=%v: native QUIC must be served beside HTTP/3", clusterMode)
+		assert.Equal(t, 10443, qcfg.Server.QUICPort, "clusterMode=%v: native QUIC must bind the configured port", clusterMode)
+	}
+}
+
+// TestBuildQRDBConfig_NativeQUICListenerOffWithoutREST pins that disabling
+// REST, and with it quicbaas QUIC, starts no native QUIC listener either,
+// whatever server.qrdb_quic.port holds.
+func TestBuildQRDBConfig_NativeQUICListenerOffWithoutREST(t *testing.T) {
+	for _, clusterMode := range []bool{false, true} {
+		cfg := clusterTestConfig()
+		cfg.Server.REST.Enabled = false
+		cfg.Server.GRPC.Enabled = true
+		cfg.Server.QRDBQUIC.Port = 10443
+
+		qcfg := mustBuildQRDBConfig(t, cfg, clusterMode)
+
+		assert.False(t, qcfg.Protocols.QUIC, "clusterMode=%v: no QUIC without REST", clusterMode)
+		assert.Zero(t, qcfg.Server.QUICPort, "clusterMode=%v: no QUIC port without REST", clusterMode)
 	}
 }
 

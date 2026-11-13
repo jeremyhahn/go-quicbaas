@@ -142,6 +142,34 @@ func TestValidateServerConfig(t *testing.T) {
 			errorField:  "server.mcp.port",
 		},
 		{
+			name: "qrdb QUIC port on the REST port",
+			modify: func(cfg *Config) {
+				cfg.Server.REST.Enabled = true
+				cfg.Server.REST.Port = 8443
+				cfg.Server.QRDBQUIC.Port = 8443
+			},
+			expectError: true,
+			errorField:  "server.qrdb_quic.port",
+		},
+		{
+			name: "invalid qrdb QUIC port",
+			modify: func(cfg *Config) {
+				cfg.Server.REST.Enabled = true
+				cfg.Server.QRDBQUIC.Port = 70000
+			},
+			expectError: true,
+			errorField:  "server.qrdb_quic.port",
+		},
+		{
+			name: "kernel-assigned qrdb QUIC port",
+			modify: func(cfg *Config) {
+				cfg.Security.TLSEnabled = true
+				cfg.Server.REST.Enabled = true
+				cfg.Server.QRDBQUIC.Port = 0
+			},
+			expectError: false,
+		},
+		{
 			name: "invalid read timeout",
 			modify: func(cfg *Config) {
 				cfg.Server.ReadTimeout = 0

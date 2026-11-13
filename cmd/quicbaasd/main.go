@@ -407,6 +407,7 @@ func bindEnvVars() {
 	_ = viper.BindEnv("server.quic.port")
 	_ = viper.BindEnv("server.mcp.enabled")
 	_ = viper.BindEnv("server.mcp.port")
+	_ = viper.BindEnv("server.qrdb_quic.port")
 	_ = viper.BindEnv("server.unix.enabled")
 	_ = viper.BindEnv("server.unix.socket")
 	// NOTE: server.shards and server.entity_shard_pins are NOT bound to viper

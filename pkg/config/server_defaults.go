@@ -17,3 +17,10 @@ package config
 // needs the REST port when none is configured reads this constant, never a
 // second literal that can drift from it.
 const DefaultRESTPort = 8443
+
+// DefaultQRDBQUICPort is the defaults-layer value of server.qrdb_quic.port:
+// the UDP port of go-qrdb's native QUIC listener. It is 0, kernel-assigned,
+// so the default can never collide with REST's HTTP/3 on UDP DefaultRESTPort
+// or with another node on the host. Operators who publish the listener pin
+// a port.
+const DefaultQRDBQUICPort = 0

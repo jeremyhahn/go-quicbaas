@@ -19,9 +19,11 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 
+	qrdbquicwire "github.com/jeremyhahn/go-qrdb/pkg/api/quic/wire"
 	qrdbserver "github.com/jeremyhahn/go-qrdb/pkg/server"
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	qrdbnode "github.com/jeremyhahn/go-qrdb/sdk/go/node"
@@ -218,6 +220,14 @@ func buildQRDBConfig(cfg *config.Config, clusterMode bool) (*qrdbsdk.DaemonConfi
 		qcfg.Protocols.MCP = cfg.Server.MCP.Enabled
 		if qcfg.Protocols.MCP {
 			qcfg.MCP.Port = cfg.Server.MCP.Port
+		}
+		// quicbaas QUIC is REST's HTTP/3 sibling on the REST port. Beside it
+		// the node serves go-qrdb's native QUIC protocol, which the Go SDK's
+		// go-qrdb sub-client dials under TransportQUIC, so a go-qrdb client
+		// works unchanged against quicbaasd.
+		qcfg.Protocols.QUIC = cfg.Server.REST.Enabled
+		if qcfg.Protocols.QUIC {
+			qcfg.Server.QUICPort = cfg.Server.QRDBQUIC.Port
 		}
 	}
 
@@ -507,14 +517,29 @@ func (s *Server) serverTLSConfigRef() *tls.Config {
 func (s *Server) unifiedServerTLSConfig() *tls.Config {
 	return &tls.Config{
 		MinVersion: tls.VersionTLS13,
-		GetConfigForClient: func(*tls.ClientHelloInfo) (*tls.Config, error) {
+		GetConfigForClient: func(hello *tls.ClientHelloInfo) (*tls.Config, error) {
 			cfg := s.serverTLSConfigRef()
 			if cfg == nil {
 				return nil, &UnifiedTLSNotReadyError{}
 			}
-			return cfg, nil
+			return withQRDBQUICALPN(cfg, hello), nil
 		},
 	}
+}
+
+// withQRDBQUICALPN returns cfg, or, when the client offers go-qrdb's native
+// QUIC protocol, a clone of cfg that negotiates it. go-qrdb's QUIC listener
+// sets its ALPN on the outer config only, and the config returned here (which
+// offers h2 and http/1.1) replaces it, so without this every native-QUIC
+// handshake fails with "tls: no application protocol" (go-quicbaas#1401).
+// Clients that do not offer the protocol get cfg unchanged.
+func withQRDBQUICALPN(cfg *tls.Config, hello *tls.ClientHelloInfo) *tls.Config {
+	if hello == nil || !slices.Contains(hello.SupportedProtos, qrdbquicwire.ProtocolV2) {
+		return cfg
+	}
+	cloned := cfg.Clone()
+	cloned.NextProtos = []string{qrdbquicwire.ProtocolV2}
+	return cloned
 }
 
 // buildModuleShardRouter constructs the identical multi-shard router and

@@ -397,6 +397,28 @@ func TestWithUnix_EmptyPath(t *testing.T) {
 	}
 }
 
+func TestWithQRDBQUICAddress_Success(t *testing.T) {
+	opts := defaultOptions()
+	err := WithQRDBQUICAddress("localhost:10443")(opts)
+	if err != nil {
+		t.Errorf("unexpected error: %v", err)
+	}
+	if opts.qrdbQUICAddress != "localhost:10443" {
+		t.Errorf("expected qrdbQUICAddress=%q, got %q", "localhost:10443", opts.qrdbQUICAddress)
+	}
+}
+
+func TestWithQRDBQUICAddress_EmptyAddress(t *testing.T) {
+	opts := defaultOptions()
+	err := WithQRDBQUICAddress("")(opts)
+	if err == nil {
+		t.Fatal("expected error for empty address")
+	}
+	if !errors.IsInvalidInput(err) {
+		t.Errorf("expected InvalidInput error, got %v", err)
+	}
+}
+
 func TestWithEmbedded_Success(t *testing.T) {
 	opts := defaultOptions()
 	mockService := &struct{}{}

@@ -180,6 +180,15 @@ func (v *Validator) validateServer(cfg *ServerConfig) {
 		if cfg.REST.RateLimit < -1 {
 			v.addError("server.rest.rate_limit", fmt.Sprintf("REST rate limit must be -1 (disabled), 0 (default) or positive, got %d", cfg.REST.RateLimit))
 		}
+		// REST brings up go-qrdb's native QUIC listener beside its HTTP/3.
+		// Zero is a kernel-assigned port; the REST port is taken on UDP by
+		// HTTP/3.
+		if cfg.QRDBQUIC.Port < 0 || cfg.QRDBQUIC.Port > 65535 {
+			v.addError("server.qrdb_quic.port", fmt.Sprintf("qrdb QUIC port must be between 0 and 65535, got %d", cfg.QRDBQUIC.Port))
+		}
+		if cfg.QRDBQUIC.Port != 0 && cfg.QRDBQUIC.Port == cfg.REST.Port {
+			v.addError("server.qrdb_quic.port", "qrdb QUIC port must be different from REST port, whose UDP side serves HTTP/3")
+		}
 	}
 
 	// Validate gRPC configuration
