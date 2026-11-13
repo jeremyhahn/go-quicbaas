@@ -15,6 +15,8 @@ package server
 
 import (
 	"context"
+	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -62,17 +64,18 @@ func NewNodeAuditLogger(sink qrdbsdk.NodeAuditLogger) *NodeAuditLogger {
 // Compile-time interface check.
 var _ iam.AuditLogger = (*NodeAuditLogger)(nil)
 
-// Log synchronously emits event onto the node's audit chain.
+// Log synchronously emits event onto the node's audit chain. It fails closed:
+// when the sink reports that the event did not reach its durability boundary
+// (a *qrdbsdk.NodeAuditWriteError), Log returns that error so the caller does
+// not treat an unrecorded action as recorded (ruling 189, issue #827).
 func (l *NodeAuditLogger) Log(ctx context.Context, event *iam.AuditEvent) error {
 	if event == nil {
 		return &NilAuditEventError{}
 	}
 	stampAuditEvent(event)
-	// Emit is documented non-blocking and best-effort, so its error is not
-	// the caller's to act on and Log has always returned nil here. Discarding
-	// it explicitly says that is deliberate. Whether Log should surface it
-	// instead is a contract question, not a lint fix.
-	_ = l.sink.Emit(ctx, toNodeAuditEvent(event))
+	if err := l.sink.Emit(ctx, toNodeAuditEvent(event)); err != nil {
+		return fmt.Errorf("audit event %s not recorded: %w", event.ID, err)
+	}
 	return nil
 }
 
@@ -86,8 +89,14 @@ func (l *NodeAuditLogger) LogAsync(event *iam.AuditEvent) {
 		return
 	}
 	stampAuditEvent(event)
-	// Best-effort by contract, and LogAsync has no way to report anyway.
-	_ = l.sink.Emit(context.Background(), toNodeAuditEvent(event))
+	// LogAsync has no error return (iam.AuditLogger), so a failed write is
+	// logged rather than discarded. Callers that must not proceed on an
+	// unrecorded event use Log.
+	if err := l.sink.Emit(context.Background(), toNodeAuditEvent(event)); err != nil {
+		slog.Warn("audit event not recorded",
+			slog.String("event_id", event.ID),
+			slog.String("error", err.Error()))
+	}
 }
 
 // stampAuditEvent assigns event's ID and Timestamp when unset, mirroring

@@ -14,7 +14,10 @@
 package server
 
 import (
+	"bytes"
 	"context"
+	"errors"
+	"log/slog"
 	"testing"
 	"time"
 
@@ -60,6 +63,47 @@ func TestNodeAuditLogger_LogAsync_NilEventIsNoop(t *testing.T) {
 	l := newTestNodeAuditLogger()
 	// Must not panic.
 	l.LogAsync(nil)
+}
+
+// failingAuditSink is a NodeAuditLogger whose Emit never reaches its
+// durability boundary; every other method is the embedded ring buffer's.
+type failingAuditSink struct {
+	qrdbsdk.NodeAuditLogger
+}
+
+func (failingAuditSink) Emit(context.Context, qrdbsdk.NodeAuditEvent) error {
+	return &qrdbsdk.NodeAuditWriteError{Backend: "test-chain", Err: errors.New("disk full")}
+}
+
+func newFailingNodeAuditLogger() *NodeAuditLogger {
+	return NewNodeAuditLogger(failingAuditSink{qrdbsdk.NewAuditRingBuffer(10)})
+}
+
+// TestNodeAuditLogger_Log_SinkWriteErrorFailsClosed proves Log surfaces the
+// sink's write error instead of reporting an unrecorded event as recorded.
+func TestNodeAuditLogger_Log_SinkWriteErrorFailsClosed(t *testing.T) {
+	l := newFailingNodeAuditLogger()
+	err := l.Log(context.Background(), &iam.AuditEvent{TenantID: "t1", Action: "user.create"})
+	require.Error(t, err)
+	var writeErr *qrdbsdk.NodeAuditWriteError
+	require.ErrorAs(t, err, &writeErr)
+	assert.Equal(t, "test-chain", writeErr.Backend)
+}
+
+// TestNodeAuditLogger_LogAsync_SinkWriteErrorIsLogged proves LogAsync, which
+// cannot return the error, logs it rather than discarding it.
+func TestNodeAuditLogger_LogAsync_SinkWriteErrorIsLogged(t *testing.T) {
+	var buf bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, nil)))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	l := newFailingNodeAuditLogger()
+	l.LogAsync(&iam.AuditEvent{TenantID: "t1", Action: "user.create"})
+
+	out := buf.String()
+	assert.Contains(t, out, "audit event not recorded")
+	assert.Contains(t, out, "disk full")
 }
 
 // TestNodeAuditLogger_RoundTrip proves an event emitted via LogAsync
