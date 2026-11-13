@@ -3027,10 +3027,31 @@ install-sdk-ts: ## Install TypeScript SDK dependencies from the tracked lockfile
 	@cd sdk/typescript && npm ci --silent
 
 .PHONY: test-sdk-ts
-test-sdk-ts: install-sdk-ts ## Run TypeScript SDK unit tests
+test-sdk-ts: check-sdk-ts-dist ## Run TypeScript SDK unit tests
 	@echo "$(BLUE)Running TypeScript SDK tests...$(NC)"
 	@cd sdk/typescript && npx vitest run
 	@echo "$(GREEN)TypeScript SDK tests passed$(NC)"
+
+# sdk/typescript/dist is committed, so a merge can leave it out of step with
+# src and nothing else notices (#1779). This rebuilds dist from scratch with
+# the package's own build script (tsc) and fails if the result differs from
+# the dist git has (the index, so a staged src+dist change passes): a changed
+# or deleted file, or a new one tsc emits. A stale file whose source is gone
+# shows as deleted, since dist is removed before the build.
+.PHONY: check-sdk-ts-dist
+check-sdk-ts-dist: install-sdk-ts ## Fail when sdk/typescript/dist differs from a tsc build of src
+	@echo "$(BLUE)Checking sdk/typescript/dist against a tsc build of src...$(NC)"
+	@cd sdk/typescript && rm -rf dist && npm run --silent build
+	@changed="$$(git diff --name-status -- sdk/typescript/dist)" || exit 1; \
+	added="$$(git ls-files --others --exclude-standard -- sdk/typescript/dist)" || exit 1; \
+	if [ -n "$$changed$$added" ]; then \
+		echo "$(RED)sdk/typescript/dist differs from a tsc build of sdk/typescript/src:$(NC)"; \
+		[ -z "$$changed" ] || printf '%s\n' "$$changed"; \
+		[ -z "$$added" ] || printf 'A\t%s\n' $$added; \
+		echo "Run 'cd sdk/typescript && rm -rf dist && npm run build' and commit dist."; \
+		exit 1; \
+	fi
+	@echo "$(GREEN)sdk/typescript/dist matches src$(NC)"
 
 # npm ci installs exactly sdk/javascript/package-lock.json, so a clean CI
 # runner gets the same jest and eslint as a developer checkout.
