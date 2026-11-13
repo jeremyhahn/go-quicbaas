@@ -30,8 +30,10 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	qrdbtenant "github.com/jeremyhahn/go-qrdb/pkg/tenant"
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
+	dberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam/iamtest"
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
@@ -55,15 +57,33 @@ type testTenantManager struct {
 	// the way production's DefaultTenantManager does (iam_init.go
 	// SetRoleSeeder). Nil leaves the tenant without roles.
 	roleSeeder iam.TenantRoleSeeder
+
+	// retireOnDelete makes the manager keep the engine's contract that a
+	// deleted tenant id is retired: CreateTenant refuses it afterwards with
+	// the engine's TenantDeletedError. Off, a deleted id is free again.
+	retireOnDelete bool
+	retired        map[string]bool
+
+	// finishErr, when set, fails an UpdateTenant that removes a tenant's
+	// self-registration record.
+	finishErr error
 }
 
 func (m *testTenantManager) CreateTenant(ctx context.Context, opts iam.CreateTenantOptions) (*iam.Tenant, error) {
 	m.lastCreateOpts = opts
+	if m.retired[opts.ID] {
+		return nil, &dberrors.QBError{
+			Code: dberrors.ErrConflict,
+			Op:   "iam.CreateTenant.provision",
+			Err:  &qrdbtenant.TenantDeletedError{TenantID: opts.ID},
+		}
+	}
 	tenant := &iam.Tenant{
-		ID:      opts.ID,
-		Name:    opts.Name,
-		Created: time.Now(),
-		Updated: time.Now(),
+		ID:               opts.ID,
+		Name:             opts.Name,
+		SelfRegistration: opts.SelfRegistration,
+		Created:          time.Now(),
+		Updated:          time.Now(),
 	}
 	if opts.Settings != nil {
 		tenant.Settings = *opts.Settings
@@ -100,6 +120,12 @@ func (m *testTenantManager) UpdateTenant(ctx context.Context, id string, opts ia
 	if opts.Quotas != nil {
 		tenant.Quotas = *opts.Quotas
 	}
+	if opts.FinishSelfRegistration {
+		if m.finishErr != nil {
+			return nil, m.finishErr
+		}
+		tenant.SelfRegistration = nil
+	}
 	tenant.Updated = time.Now()
 	if err := m.storage.UpdateTenant(ctx, tenant); err != nil {
 		return nil, err
@@ -108,7 +134,16 @@ func (m *testTenantManager) UpdateTenant(ctx context.Context, id string, opts ia
 }
 
 func (m *testTenantManager) DeleteTenant(ctx context.Context, id string) error {
-	return m.storage.DeleteTenant(ctx, id)
+	if err := m.storage.DeleteTenant(ctx, id); err != nil {
+		return err
+	}
+	if m.retireOnDelete {
+		if m.retired == nil {
+			m.retired = map[string]bool{}
+		}
+		m.retired[id] = true
+	}
+	return nil
 }
 
 func (m *testTenantManager) ListTenants(ctx context.Context, opts iam.ListOptions) ([]*iam.Tenant, error) {
@@ -880,6 +915,7 @@ func TestIAMHandler_CreateUser_WithRoles(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/tenants/tenant1/users", bytes.NewReader([]byte(body)))
 	req.Header.Set("Content-Type", "application/json")
 	req = withChiParams(req, map[string]string{"tenant_id": "tenant1"})
+	req = asRoleAssigner(handler, req)
 	w := httptest.NewRecorder()
 
 	handler.CreateUser(w, req)
@@ -909,6 +945,7 @@ func TestIAMHandler_CreateUser_UnknownRole_NotFoundNoUser(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/tenants/tenant1/users", bytes.NewReader([]byte(body)))
 	req.Header.Set("Content-Type", "application/json")
 	req = withChiParams(req, map[string]string{"tenant_id": "tenant1"})
+	req = asRoleAssigner(handler, req)
 	w := httptest.NewRecorder()
 
 	handler.CreateUser(w, req)

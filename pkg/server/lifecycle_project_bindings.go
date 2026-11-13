@@ -35,7 +35,7 @@ func (s *Server) wireProjectBindings(svc service.QuicBaaS) error {
 	if svcs == nil || svcs.StoreResolver == nil {
 		return nil
 	}
-	store, err := sdlc.NewStore(s.liveTenantStoreResolver())
+	store, err := sdlc.NewStore(s.admittedStoreResolver(s.liveTenantStoreResolver()))
 	if err != nil {
 		return &SDLCInitError{Component: "project binding reader", Cause: err}
 	}

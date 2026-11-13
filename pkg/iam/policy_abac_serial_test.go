@@ -56,24 +56,56 @@ func (b *blockingABACSync) Sync(context.Context) error {
 // second enters only after the first has stored its set, so an older snapshot
 // cannot be stored over a newer one.
 func TestPolicyEngine_SyncABACSerializesReloads(t *testing.T) {
-	fake := newBlockingABACSync()
-	engine := NewPolicyEngine(PolicyEngineOptions{ABACSync: fake})
-	ctx := context.Background()
+	t.Run("SyncABAC", func(t *testing.T) {
+		fake := newBlockingABACSync()
+		engine := NewPolicyEngine(PolicyEngineOptions{ABACSync: fake})
+		ctx := context.Background()
 
-	errs := make(chan error, 2)
-	for range 2 {
+		errs := make(chan error, 2)
+		for range 2 {
+			go func() { errs <- engine.SyncABAC(ctx) }()
+		}
+
+		<-fake.entered
+		select {
+		case <-fake.entered:
+			t.Fatal("a second reload entered while the first was still running")
+		case <-time.After(100 * time.Millisecond):
+		}
+		close(fake.release)
+		for range 2 {
+			require.NoError(t, <-errs)
+		}
+		assert.Equal(t, int32(1), fake.maxSeen.Load())
+	})
+
+	t.Run("SyncABACAfter", func(t *testing.T) {
+		fake := newBlockingABACSync()
+		engine := NewPolicyEngine(PolicyEngineOptions{ABACSync: fake})
+		ctx := context.Background()
+
+		var prepared atomic.Bool
+		errs := make(chan error, 2)
 		go func() { errs <- engine.SyncABAC(ctx) }()
-	}
+		<-fake.entered
+		go func() {
+			errs <- engine.SyncABACAfter(ctx, func(context.Context) {
+				prepared.Store(true)
+			})
+		}()
 
-	<-fake.entered
-	select {
-	case <-fake.entered:
-		t.Fatal("a second reload entered while the first was still running")
-	case <-time.After(100 * time.Millisecond):
-	}
-	close(fake.release)
-	for range 2 {
-		require.NoError(t, <-errs)
-	}
-	assert.Equal(t, int32(1), fake.maxSeen.Load())
+		select {
+		case <-fake.entered:
+			t.Fatal("a second reload entered while the first was still running")
+		case <-time.After(100 * time.Millisecond):
+		}
+		assert.False(t, prepared.Load(), "prepare ran while another reload held the lock")
+		close(fake.release)
+		<-fake.entered
+		assert.True(t, prepared.Load(), "prepare must run before its reload enters")
+		for range 2 {
+			require.NoError(t, <-errs)
+		}
+		assert.Equal(t, int32(1), fake.maxSeen.Load())
+	})
 }

@@ -18,6 +18,9 @@ import (
 	"errors"
 	"sync"
 	"time"
+
+	dberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 // RBACAuthorizer is the SINGLE decision point PolicyEngine.Evaluate
@@ -69,6 +72,25 @@ type PolicySimulator interface {
 	Simulate(ctx context.Context, policy *Policy, req *CheckRequest) (*CheckResponse, error)
 }
 
+// PolicyRepair is the seam PolicyEngine uses to let the system admin repair
+// a held tenant's stored policies one at a time. A tenant is held at unseal
+// while any of its stored policies fails to load into the live authorizer,
+// and the sync that follows every policy write fails for as long as one such
+// policy is left, so with several broken policies no single repair could
+// pass it. During a repair the engine checks the one written policy on its
+// own and keeps the write when the sync still fails; the tenant stays held
+// until its unseal checks load the whole set. This interface carries no qrdb
+// dependency into pkg/iam; pkg/server injects the real implementation at
+// composition time.
+type PolicyRepair interface {
+	// TenantHeld reports whether tenantID is closed to requests because its
+	// unseal has not passed its checks.
+	TenantHeld(tenantID string) bool
+	// CompilePolicy returns an error when policy alone would not load into
+	// the live authorizer.
+	CompilePolicy(policy *Policy) error
+}
+
 // PolicySimulatorUnavailableError is returned by SimulatePolicy when no
 // PolicySimulator was wired into PolicyEngineOptions (embedded/test
 // contexts with no qrdb node composed).
@@ -91,6 +113,10 @@ type PolicyEngine struct {
 	cache   *PolicyCache
 	opts    PolicyEngineOptions
 	mu      sync.RWMutex
+
+	// unsealLoaded holds the tenants whose stored policy set loaded at their
+	// latest unseal check (see SyncABACAtUnseal). Guarded by mu.
+	unsealLoaded map[string]struct{}
 }
 
 // NewPolicyEngine creates a new policy engine. opts.RBACAuthorizer becomes
@@ -106,10 +132,11 @@ func NewPolicyEngine(opts PolicyEngineOptions) *PolicyEngine {
 }
 
 // CreatePolicy creates a new policy, then synchronizes qrdb's live ABAC
-// decorator with the full current policy store. A failed sync rejects the
-// write: the just-created policy is deleted from storage (best-effort
-// compensation) and the sync error is returned, leaving both storage and
-// live enforcement in their pre-call state.
+// decorator with the full current policy store. A storage refusal is
+// returned unchanged and compensates nothing. A failed sync rejects the
+// write: a PolicyCreateReverter removes only the record this create wrote
+// (without one, the policy is deleted) and the sync error is returned. A
+// name held by any record, even one that does not decode, refuses the create.
 func (e *PolicyEngine) CreatePolicy(ctx context.Context, tenantID string, policy *Policy) error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -133,21 +160,31 @@ func (e *PolicyEngine) CreatePolicy(ctx context.Context, tenantID string, policy
 
 	// Check if policy already exists
 	existing, err := e.storage.GetPolicy(ctx, tenantID, policy.Metadata.Name)
-	if err == nil && existing != nil {
+	var loadErr *StoredPolicyDecodeError
+	if (err == nil && existing != nil) || errors.As(err, &loadErr) {
 		return &PolicyExistsError{
 			TenantID: tenantID,
 			Name:     policy.Metadata.Name,
 		}
 	}
+	if err != nil && !dberrors.Is(err, dberrors.ErrNotFound) {
+		return err
+	}
 
-	// Store policy
+	// Store policy; a refusal wrote nothing of ours, so nothing is compensated.
 	if err := e.storage.CreatePolicy(ctx, tenantID, policy); err != nil {
 		return err
 	}
 
 	if err := e.syncABAC(ctx); err != nil {
-		// Reject the write: compensate by deleting what was just created.
-		_ = e.storage.DeletePolicy(ctx, tenantID, policy.Metadata.Name)
+		// Reject the write: remove only the record this create wrote.
+		if r, ok := e.storage.(PolicyCreateReverter); ok {
+			if rerr := r.RevertCreatedPolicy(ctx, tenantID, policy); rerr != nil {
+				err = errors.Join(err, rerr)
+			}
+		} else {
+			_ = e.storage.DeletePolicy(ctx, tenantID, policy.Metadata.Name)
+		}
 		if e.cache != nil {
 			e.cache.InvalidateAll(tenantID)
 		}
@@ -187,7 +224,13 @@ func (e *PolicyEngine) GetPolicy(ctx context.Context, tenantID, name string) (*P
 // UpdatePolicy updates an existing policy, then synchronizes qrdb's live
 // ABAC decorator with the full current policy store. A failed sync rejects
 // the write: the previous policy value is restored in storage (best-effort
-// compensation) and the sync error is returned.
+// compensation) and the sync error is returned. A PolicyWriteSnapshotter
+// storage restores its snapshot instead, after a failed storage write too,
+// guarded: only a record still holding what this write stored is put back.
+// The system admin's repair of a held tenant's policy (see PolicyRepair) is
+// the one exception: the policy must compile on its own before anything is
+// written, and the write then stays stored when the sync fails, because
+// another of the tenant's stored policies may still be broken.
 func (e *PolicyEngine) UpdatePolicy(ctx context.Context, tenantID string, policy *Policy) error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -210,6 +253,19 @@ func (e *PolicyEngine) UpdatePolicy(ctx context.Context, tenantID string, policy
 		}
 	}
 
+	// A repair of a held tenant's policy must compile on its own: the sync
+	// below cannot vouch for it while another stored policy still fails.
+	repair := e.repairing(ctx, tenantID)
+	if repair {
+		if err := e.opts.Repair.CompilePolicy(policy); err != nil {
+			return &InvalidPolicyError{
+				TenantID: tenantID,
+				Name:     policy.Metadata.Name,
+				Reason:   "policy does not compile: " + err.Error(),
+			}
+		}
+	}
+
 	// Check if policy exists
 	existing, err := repairableRecord(e.storage.GetPolicy(ctx, tenantID, policy.Metadata.Name))
 	if err != nil {
@@ -222,18 +278,41 @@ func (e *PolicyEngine) UpdatePolicy(ctx context.Context, tenantID string, policy
 		}
 	}
 
-	// Update policy
-	if err := e.storage.UpdatePolicy(ctx, tenantID, policy); err != nil {
-		return err
+	// Snapshot every record the write may touch; a failed snapshot writes nothing.
+	var restore func(context.Context) error
+	if s, ok := e.storage.(PolicyWriteSnapshotter); ok {
+		if restore, err = s.SnapshotPolicy(ctx, tenantID, policy.Metadata.Name, policy); err != nil {
+			return err
+		}
 	}
-
-	if err := e.syncABAC(ctx); err != nil {
-		// Reject the write: compensate by restoring the previous value.
-		_ = e.storage.UpdatePolicy(ctx, tenantID, existing)
+	reject := func(err error) error {
+		if restore != nil {
+			if rerr := restore(ctx); rerr != nil {
+				err = errors.Join(err, rerr)
+			}
+		} else {
+			// Reject the write: compensate by restoring the previous value.
+			_ = e.storage.UpdatePolicy(ctx, tenantID, existing)
+		}
 		if e.cache != nil {
 			e.cache.InvalidateAll(tenantID)
 		}
 		return err
+	}
+
+	// Update policy
+	if err := e.storage.UpdatePolicy(ctx, tenantID, policy); err != nil {
+		if restore == nil {
+			return err
+		}
+		return reject(err)
+	}
+
+	// A held tenant's repair stays stored when the sync fails: another of
+	// its stored policies may still be broken, and its unseal checks load
+	// the whole set before the tenant serves a request.
+	if err := e.syncABAC(ctx); err != nil && !repair {
+		return reject(err)
 	}
 
 	// Invalidate cache
@@ -247,7 +326,12 @@ func (e *PolicyEngine) UpdatePolicy(ctx context.Context, tenantID string, policy
 // DeletePolicy deletes a policy by name, then synchronizes qrdb's live ABAC
 // decorator with the full current policy store. A failed sync rejects the
 // write: the deleted policy is re-created in storage (best-effort
-// compensation) and the sync error is returned.
+// compensation) and the sync error is returned. A PolicyWriteSnapshotter
+// storage restores its snapshot instead, after a failed storage delete too,
+// guarded: only a record this delete left absent is put back. The system
+// admin's delete of a held tenant's policy (see PolicyRepair) is the one
+// exception: it stays deleted when the sync fails, because another of the
+// tenant's stored policies may still be broken.
 func (e *PolicyEngine) DeletePolicy(ctx context.Context, tenantID, name string) error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -265,18 +349,43 @@ func (e *PolicyEngine) DeletePolicy(ctx context.Context, tenantID, name string) 
 		}
 	}
 
-	// Delete policy
-	if err := e.storage.DeletePolicy(ctx, tenantID, name); err != nil {
-		return err
-	}
+	repair := e.repairing(ctx, tenantID)
 
-	if err := e.syncABAC(ctx); err != nil {
-		// Reject the write: compensate by re-creating the deleted policy.
-		_ = e.storage.CreatePolicy(ctx, tenantID, existing)
+	// Snapshot every record the delete may touch; a failed snapshot deletes nothing.
+	var restore func(context.Context) error
+	if s, ok := e.storage.(PolicyWriteSnapshotter); ok {
+		if restore, err = s.SnapshotPolicy(ctx, tenantID, name, nil); err != nil {
+			return err
+		}
+	}
+	reject := func(err error) error {
+		if restore != nil {
+			if rerr := restore(ctx); rerr != nil {
+				err = errors.Join(err, rerr)
+			}
+		} else {
+			// Reject the write: compensate by re-creating the deleted policy.
+			_ = e.storage.CreatePolicy(ctx, tenantID, existing)
+		}
 		if e.cache != nil {
 			e.cache.InvalidateAll(tenantID)
 		}
 		return err
+	}
+
+	// Delete policy
+	if err := e.storage.DeletePolicy(ctx, tenantID, name); err != nil {
+		if restore == nil {
+			return err
+		}
+		return reject(err)
+	}
+
+	// A held tenant's repair stays stored when the sync fails: another of
+	// its stored policies may still be broken, and its unseal checks load
+	// the whole set before the tenant serves a request.
+	if err := e.syncABAC(ctx); err != nil && !repair {
+		return reject(err)
 	}
 
 	// Invalidate cache
@@ -316,6 +425,20 @@ func (e *PolicyEngine) ValidatePolicy(policy *Policy) error {
 	return policy.Validate()
 }
 
+// repairing reports whether a write to tenantID is the system admin's repair
+// of a held tenant's policy: a PolicyRepair is wired, ctx carries the repair
+// mark for exactly that tenant, the tenant is still held, and its policy set
+// has not loaded at an unseal check since it was held (see
+// SyncABACAtUnseal). Only such a write may outlive a failed sync. Callers
+// already hold e.mu.
+func (e *PolicyEngine) repairing(ctx context.Context, tenantID string) bool {
+	if e.opts.Repair == nil || !tenantctx.InPolicyRepair(ctx, tenantID) || !e.opts.Repair.TenantHeld(tenantID) {
+		return false
+	}
+	_, loaded := e.unsealLoaded[tenantID]
+	return !loaded
+}
+
 // syncABAC drives opts.ABACSync (when configured) to recompute the full
 // cross-tenant policy set from storage and reload it into qrdb's live ABAC
 // decorator. Nil-safe: a nil ABACSync is a no-op success (embedded/test
@@ -339,6 +462,42 @@ func (e *PolicyEngine) SyncABAC(ctx context.Context) error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	return e.syncABAC(ctx)
+}
+
+// SyncABACAfter is SyncABAC with prepare run first under the same write lock:
+// prepare does storage work that must not interleave with a policy mutation,
+// such as a legacy-policy migration, just before the reload.
+func (e *PolicyEngine) SyncABACAfter(ctx context.Context, prepare func(context.Context)) error {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if prepare != nil {
+		prepare(ctx)
+	}
+	return e.syncABAC(ctx)
+}
+
+// SyncABACAtUnseal is SyncABACAfter for tenantID's unseal check. A reload
+// that succeeds also ends the tenant's repair exception under the same write
+// lock: its whole stored set has loaded, so from here on a failed sync
+// rejects every write to it, although the tenant stays held until the rest
+// of its unseal checks pass and the hold is released outside this lock. A
+// repair can therefore never be kept after the reload that admits the
+// tenant. A reload that fails opens the exception again.
+func (e *PolicyEngine) SyncABACAtUnseal(ctx context.Context, tenantID string, prepare func(context.Context)) error {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	delete(e.unsealLoaded, tenantID)
+	if prepare != nil {
+		prepare(ctx)
+	}
+	if err := e.syncABAC(ctx); err != nil {
+		return err
+	}
+	if e.unsealLoaded == nil {
+		e.unsealLoaded = make(map[string]struct{})
+	}
+	e.unsealLoaded[tenantID] = struct{}{}
+	return nil
 }
 
 // TestPolicy evaluates a check request against the CURRENT active policies

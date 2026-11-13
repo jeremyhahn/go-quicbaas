@@ -14724,7 +14724,7 @@ const file_api_proto_iam_iam_proto_rawDesc = "" +
 	"\x19PROVIDER_TYPE_UNSPECIFIED\x10\x00\x12\x16\n" +
 	"\x12PROVIDER_TYPE_OIDC\x10\x01\x12\x16\n" +
 	"\x12PROVIDER_TYPE_SAML\x10\x02\x12\x18\n" +
-	"\x14PROVIDER_TYPE_OAUTH2\x10\x032\x90,\n" +
+	"\x14PROVIDER_TYPE_OAUTH2\x10\x032\xb4,\n" +
 	"\n" +
 	"IAMService\x12M\n" +
 	"\fCreateTenant\x12$.quicbaas.iam.v1.CreateTenantRequest\x1a\x17.quicbaas.iam.v1.Tenant\x12G\n" +
@@ -14732,12 +14732,12 @@ const file_api_proto_iam_iam_proto_rawDesc = "" +
 	"\fUpdateTenant\x12$.quicbaas.iam.v1.UpdateTenantRequest\x1a\x17.quicbaas.iam.v1.Tenant\x12[\n" +
 	"\fDeleteTenant\x12$.quicbaas.iam.v1.DeleteTenantRequest\x1a%.quicbaas.iam.v1.DeleteTenantResponse\x12X\n" +
 	"\vListTenants\x12#.quicbaas.iam.v1.ListTenantsRequest\x1a$.quicbaas.iam.v1.ListTenantsResponse\x12x\n" +
-	"\x0fProvisionTenant\x12'.quicbaas.iam.v1.ProvisionTenantRequest\x1a(.quicbaas.iam.v1.ProvisionTenantResponse\"\x12\xc2\xf3\x18\x0etenants:create\x12G\n" +
+	"\x0fProvisionTenant\x12'.quicbaas.iam.v1.ProvisionTenantRequest\x1a(.quicbaas.iam.v1.ProvisionTenantResponse\"\x12\xc2\xf3\x18\x0etenants:create\x12Y\n" +
 	"\n" +
-	"CreateUser\x12\".quicbaas.iam.v1.CreateUserRequest\x1a\x15.quicbaas.iam.v1.User\x12A\n" +
-	"\aGetUser\x12\x1f.quicbaas.iam.v1.GetUserRequest\x1a\x15.quicbaas.iam.v1.User\x12G\n" +
+	"CreateUser\x12\".quicbaas.iam.v1.CreateUserRequest\x1a\x15.quicbaas.iam.v1.User\"\x10\xc2\xf3\x18\fusers:create\x12A\n" +
+	"\aGetUser\x12\x1f.quicbaas.iam.v1.GetUserRequest\x1a\x15.quicbaas.iam.v1.User\x12Y\n" +
 	"\n" +
-	"UpdateUser\x12\".quicbaas.iam.v1.UpdateUserRequest\x1a\x15.quicbaas.iam.v1.User\x12U\n" +
+	"UpdateUser\x12\".quicbaas.iam.v1.UpdateUserRequest\x1a\x15.quicbaas.iam.v1.User\"\x10\xc2\xf3\x18\fusers:update\x12U\n" +
 	"\n" +
 	"DeleteUser\x12\".quicbaas.iam.v1.DeleteUserRequest\x1a#.quicbaas.iam.v1.DeleteUserResponse\x12R\n" +
 	"\tListUsers\x12!.quicbaas.iam.v1.ListUsersRequest\x1a\".quicbaas.iam.v1.ListUsersResponse\x12j\n" +

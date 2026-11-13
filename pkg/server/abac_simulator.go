@@ -145,3 +145,42 @@ func (s *qrdbPolicySimulator) Simulate(ctx context.Context, policy *iam.Policy, 
 
 	return nil, authErr
 }
+
+// compileABACPolicy returns an error when policy alone does not load into a
+// qrdb ABAC decorator: the check go-qrdb runs on every policy of a reload.
+func compileABACPolicy(policy *iam.Policy) error {
+	abacPolicy, err := policyToABAC(policy)
+	if err != nil {
+		return err
+	}
+	_, err = qrdbsdk.DecorateAuthorizer(denyAllAuthorizer{},
+		qrdbsdk.ABACWithPolicies([]*qrdbsdk.ABACPolicy{abacPolicy}))
+	return err
+}
+
+// heldTenantPolicyRepair implements iam.PolicyRepair: a tenant is held while
+// admit refuses it, and a repaired policy must compile in a scratch qrdb
+// ABAC decorator of its own.
+type heldTenantPolicyRepair struct {
+	admit func(tenantID string) error
+}
+
+// newHeldTenantPolicyRepair builds the PolicyRepair iam.PolicyEngine uses
+// for a held tenant's policy writes. admit is the unseal hooks' Admit.
+func newHeldTenantPolicyRepair(admit func(tenantID string) error) *heldTenantPolicyRepair {
+	return &heldTenantPolicyRepair{admit: admit}
+}
+
+// Compile-time interface check.
+var _ iam.PolicyRepair = (*heldTenantPolicyRepair)(nil)
+
+// TenantHeld reports whether admit refuses tenantID. With no admit function
+// no tenant is held, so no write is ever treated as a repair.
+func (r *heldTenantPolicyRepair) TenantHeld(tenantID string) bool {
+	return r.admit != nil && r.admit(tenantID) != nil
+}
+
+// CompilePolicy returns go-qrdb's refusal of policy, if any.
+func (r *heldTenantPolicyRepair) CompilePolicy(policy *iam.Policy) error {
+	return compileABACPolicy(policy)
+}

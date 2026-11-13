@@ -201,3 +201,69 @@ func TestErrorMessages_NameTheOperationAndTenants(t *testing.T) {
 	assert.Contains(t, msg, "acme")
 	assert.Contains(t, msg, "globex")
 }
+
+func TestAuthRecordRead_NamesOneTenant(t *testing.T) {
+	ctx := WithAuthRecordRead(context.Background(), "acme")
+	if !InAuthRecordRead(ctx, "acme") {
+		t.Fatal("a context marked for acme must report acme")
+	}
+	if InAuthRecordRead(ctx, "beta") {
+		t.Fatal("a context marked for acme must not report beta")
+	}
+	if InAuthRecordRead(ctx, "") {
+		t.Fatal("an empty tenant must never report marked")
+	}
+	if InAuthRecordRead(context.Background(), "acme") {
+		t.Fatal("an unmarked context must not report marked")
+	}
+	if InAuthRecordRead(WithAuthRecordRead(context.Background(), ""), "") {
+		t.Fatal("an empty tenant must leave the context unmarked")
+	}
+}
+
+func TestPolicySyncRead_NamesOneTenant(t *testing.T) {
+	ctx := WithPolicySyncRead(context.Background(), "acme")
+	if !InPolicySyncRead(ctx, "acme") {
+		t.Fatal("a context marked for acme must report acme")
+	}
+	if InPolicySyncRead(ctx, "beta") {
+		t.Fatal("a context marked for acme must not report beta")
+	}
+	if InPolicySyncRead(ctx, "") {
+		t.Fatal("an empty tenant must never report marked")
+	}
+	if InPolicySyncRead(context.Background(), "acme") {
+		t.Fatal("an unmarked context must not report marked")
+	}
+	if InPolicySyncRead(WithPolicySyncRead(context.Background(), ""), "") {
+		t.Fatal("an empty tenant must leave the context unmarked")
+	}
+	if InPolicySyncRead(WithAuthRecordRead(context.Background(), "acme"), "acme") {
+		t.Fatal("an authentication-record read must not report a policy sync read")
+	}
+	if InAuthRecordRead(ctx, "acme") {
+		t.Fatal("a policy sync read must not report an authentication-record read")
+	}
+}
+
+func TestPolicyRepair_MarksOnlyItsTenant(t *testing.T) {
+	ctx := WithPolicyRepair(context.Background(), "acme")
+	if !InPolicyRepair(ctx, "acme") {
+		t.Fatal("a context marked for acme must report acme")
+	}
+	if InPolicyRepair(ctx, "beta") {
+		t.Fatal("a context marked for acme must not report beta")
+	}
+	if InPolicyRepair(ctx, "") {
+		t.Fatal("an empty tenant must never report marked")
+	}
+	if InPolicyRepair(context.Background(), "acme") {
+		t.Fatal("an unmarked context must not report marked")
+	}
+	if InPolicyRepair(WithPolicyRepair(context.Background(), ""), "") {
+		t.Fatal("an empty tenant must leave the context unmarked")
+	}
+	if InPolicyRepair(WithPolicySyncRead(context.Background(), "acme"), "acme") {
+		t.Fatal("a policy sync read must not report a policy repair")
+	}
+}

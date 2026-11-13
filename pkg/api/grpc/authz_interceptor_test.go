@@ -15,6 +15,7 @@ package grpc
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -24,6 +25,7 @@ import (
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 
+	pb "github.com/jeremyhahn/go-quicbaas/api/proto"
 	"github.com/jeremyhahn/go-quicbaas/pkg/auth"
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/platformtoken"
@@ -392,6 +394,103 @@ func TestStreamAuthorizationInterceptor_AllowAndDeny(t *testing.T) {
 		func(interface{}, grpc.ServerStream) error { served = true; return nil })
 	require.Error(t, err)
 	assert.Equal(t, codes.PermissionDenied, status.Code(err))
+	assert.False(t, served)
+}
+
+// TestTenantAdmission_RefusesAHeldTenant pins the gRPC request barrier: a
+// caller whose bound tenant is refused admission (it is still running its
+// unseal checks) is answered with codes.Unavailable on both interceptors and
+// the handler never runs; an admitted tenant is served.
+func TestTenantAdmission_RefusesAHeldTenant(t *testing.T) {
+	authorizer := &fakeValidatorAuthorizer{
+		token:       "good",
+		grantedPerm: "kv:put",
+		authzCtx:    &platformtoken.AuthorizedContext{Subject: "u1", TenantID: "acme", Roles: []string{"admin"}, Scopes: []string{"kv:put"}},
+	}
+	held := map[string]bool{"acme": true}
+	var admitted []string
+	admit := func(tenantID string) error {
+		admitted = append(admitted, tenantID)
+		if held[tenantID] {
+			return errors.New("tenant is still running its unseal checks")
+		}
+		return nil
+	}
+
+	unary := UnaryTenantAdmission(UnaryAuthorizationInterceptor(authorizer), admit)
+	served := false
+	handler := func(context.Context, interface{}) (interface{}, error) { served = true; return "ok", nil }
+	_, err := unary(ctxWithBearer("good"), nil, &grpc.UnaryServerInfo{FullMethod: "/quicbaas.v1.QuicBaaS/Put"}, handler)
+	require.Error(t, err)
+	assert.Equal(t, codes.Unavailable, status.Code(err))
+	assert.False(t, served, "a held tenant's request must never reach the handler")
+	assert.Equal(t, []string{"acme"}, admitted, "admission checks the tenant the token binds")
+
+	authorizer.grantedPerm = "watch:watch"
+	stream := StreamTenantAdmission(StreamAuthorizationInterceptor(authorizer), admit)
+	streamHandler := func(interface{}, grpc.ServerStream) error { served = true; return nil }
+	err = stream(nil, &dummyStream{ctx: ctxWithBearer("good")},
+		&grpc.StreamServerInfo{FullMethod: "/quicbaas.v1.QuicBaaS/Watch"}, streamHandler)
+	require.Error(t, err)
+	assert.Equal(t, codes.Unavailable, status.Code(err))
+	assert.False(t, served)
+
+	delete(held, "acme")
+	err = stream(nil, &dummyStream{ctx: ctxWithBearer("good")},
+		&grpc.StreamServerInfo{FullMethod: "/quicbaas.v1.QuicBaaS/Watch"}, streamHandler)
+	require.NoError(t, err)
+	assert.True(t, served, "an admitted tenant is served")
+
+	assert.Nil(t, UnaryTenantAdmission(nil, nil), "a nil admit leaves the interceptor unchanged")
+}
+
+func TestTenantAdmission_RecoveryMethodsPassAHeldTenant(t *testing.T) {
+	admit := func(tenantID string) error {
+		if tenantID == "acme" {
+			return errors.New("tenant is still running its unseal checks")
+		}
+		return nil
+	}
+	bind := func(ctx context.Context) context.Context {
+		return contextWithAuthorizedSubject(ctx, &platformtoken.AuthorizedContext{Subject: "u1", TenantID: "acme", Roles: []string{"admin"}})
+	}
+	unaryAuthz := func(ctx context.Context, req interface{}, _ *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (interface{}, error) {
+		return handler(bind(ctx), req)
+	}
+	unary := UnaryTenantAdmission(unaryAuthz, admit)
+
+	for _, method := range []string{
+		pb.TenantBarrier_Unseal_FullMethodName,
+		pb.TenantBarrier_UnsealShare_FullMethodName,
+		pb.TenantBarrier_Seal_FullMethodName,
+	} {
+		served := false
+		handler := func(context.Context, interface{}) (interface{}, error) { served = true; return "ok", nil }
+		_, err := unary(context.Background(), nil, &grpc.UnaryServerInfo{FullMethod: method}, handler)
+		require.NoError(t, err, method)
+		assert.True(t, served, "a held tenant can retry %s", method)
+	}
+
+	served := false
+	handler := func(context.Context, interface{}) (interface{}, error) { served = true; return "ok", nil }
+	_, err := unary(context.Background(), nil, &grpc.UnaryServerInfo{FullMethod: "/quicbaas.v1.QuicBaaS/Put"}, handler)
+	assert.Equal(t, codes.Unavailable, status.Code(err))
+	assert.False(t, served, "a held tenant's data methods stay refused")
+
+	streamAuthz := func(srv interface{}, ss grpc.ServerStream, _ *grpc.StreamServerInfo, handler grpc.StreamHandler) error {
+		return handler(srv, &dummyStream{ctx: bind(ss.Context())})
+	}
+	stream := StreamTenantAdmission(streamAuthz, admit)
+	streamHandler := func(interface{}, grpc.ServerStream) error { served = true; return nil }
+	err = stream(nil, &dummyStream{ctx: context.Background()},
+		&grpc.StreamServerInfo{FullMethod: pb.TenantBarrier_Unseal_FullMethodName}, streamHandler)
+	require.NoError(t, err)
+	assert.True(t, served, "the stream form passes a recovery method too")
+
+	served = false
+	err = stream(nil, &dummyStream{ctx: context.Background()},
+		&grpc.StreamServerInfo{FullMethod: "/quicbaas.v1.QuicBaaS/Watch"}, streamHandler)
+	assert.Equal(t, codes.Unavailable, status.Code(err))
 	assert.False(t, served)
 }
 

@@ -57,12 +57,20 @@ event := &iam.AuditEvent{
 err := logger.Log(ctx, event)
 ```
 
+`Log` fails closed: when the node's audit sink does not reach its durability
+boundary, it returns the sink's `*qrdbsdk.NodeAuditWriteError`. Propagate it
+when the record is part of the decision being made.
+
 #### Asynchronous Logging (Hot Paths)
 
 ```go
 // Non-blocking - suitable for high-throughput operations
 logger.LogAsync(event)
 ```
+
+`LogAsync` is best-effort: a write the sink refuses is logged as a warning
+(`audit event not recorded`) and the caller carries on. Use it only for the
+post-hoc record of an operation that has already committed.
 
 #### Helper Methods
 

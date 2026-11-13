@@ -272,31 +272,38 @@ func TestWebAuthnServiceFactory_AttestationConveyance(t *testing.T) {
 	}
 }
 
-// TestXKMSWebAuthnConfig_CarriesPublicRegistration proves the per-tenant
-// relying party is handed the operator's self-service registration decision
-// as an explicit value in both directions. go-xkms v0.9.2-alpha reads a nil
-// AllowPublicRegistration as closed, so a projection that dropped the field
-// would silently refuse every unknown-email registration on a node that has
-// self-service switched on.
-func TestXKMSWebAuthnConfig_CarriesPublicRegistration(t *testing.T) {
-	for _, allow := range []bool{true, false} {
-		cfg := xkmsWebAuthnConfig(WebAuthnFactoryConfig{
-			RPID:                    "example.com",
-			RPDisplayName:           "Example",
-			RPOrigins:               []string{"https://example.com"},
-			AllowPublicRegistration: allow,
-		})
-		if cfg.AllowPublicRegistration == nil {
-			t.Fatalf("AllowPublicRegistration is nil for allow=%v; go-xkms would read it as closed", allow)
-		}
-		if *cfg.AllowPublicRegistration != allow {
-			t.Errorf("AllowPublicRegistration = %v, want %v", *cfg.AllowPublicRegistration, allow)
-		}
-		if cfg.PublicRegistrationAllowed() != allow {
-			t.Errorf("PublicRegistrationAllowed() = %v, want %v", cfg.PublicRegistrationAllowed(), allow)
-		}
-		if cfg.RPID != "example.com" || len(cfg.RPOrigins) != 1 {
-			t.Errorf("relying-party identity was not carried: %+v", cfg)
-		}
+// TestXKMSWebAuthnConfig_PublicRegistrationClosed proves the per-tenant
+// relying party never lets a ceremony create an account (ruling 189, #482):
+// self-service registration creates the account in the broker and the
+// ceremony only binds a credential to it. The setting is written as an
+// explicit false rather than left to go-xkms's nil default.
+func TestXKMSWebAuthnConfig_PublicRegistrationClosed(t *testing.T) {
+	cfg := xkmsWebAuthnConfig(WebAuthnFactoryConfig{
+		RPID:          "example.com",
+		RPDisplayName: "Example",
+		RPOrigins:     []string{"https://example.com"},
+	})
+	if cfg.AllowPublicRegistration == nil {
+		t.Fatal("AllowPublicRegistration is nil; quicbaas must write the closed setting explicitly")
+	}
+	if *cfg.AllowPublicRegistration || cfg.PublicRegistrationAllowed() {
+		t.Error("public registration is open; a ceremony must never create an account")
+	}
+	if cfg.RPID != "example.com" || len(cfg.RPOrigins) != 1 {
+		t.Errorf("relying-party identity was not carried: %+v", cfg)
+	}
+}
+
+// TestPublicRegistrationClosed_FreshValue: each call returns its own false,
+// so a caller that writes through one config's pointer cannot open another's.
+func TestPublicRegistrationClosed_FreshValue(t *testing.T) {
+	first := publicRegistrationClosed()
+	second := publicRegistrationClosed()
+	if first == second {
+		t.Fatal("publicRegistrationClosed returned a shared pointer")
+	}
+	*first = true
+	if *second {
+		t.Error("writing through one closed setting opened another")
 	}
 }

@@ -455,14 +455,6 @@ type Claims struct {
 	// AuthMethod is the authentication method used
 	AuthMethod string `json:"auth_method,omitempty"`
 
-	// AMR is the Authentication Methods References (RFC 8176).
-	// Examples: ["webauthn","hwk"], ["smartcard","mfa"]
-	AMR []string `json:"amr,omitempty"`
-
-	// ACR is the Authentication Context Class Reference.
-	// For hardware-attested logins: "urn:quicbaas:auth:hardware-attested"
-	ACR string `json:"acr,omitempty"`
-
 	// AttestAAGUID is the hex-encoded FIDO2 authenticator model identifier of
 	// the credential that authenticated this session. It is empty for PIV
 	// smartcards, which have no AAGUID.

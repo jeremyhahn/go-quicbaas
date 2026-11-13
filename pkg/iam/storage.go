@@ -335,6 +335,11 @@ type CreateTenantOptions struct {
 	// QRDBTenantProvisioner.UpdateEntitlements immediately after engine-side
 	// CreateTenant succeeds.
 	EngineEntitlements *qrdbsdk.Entitlements
+
+	// SelfRegistration, when set, records on the tenant that self-service
+	// registration created it and has not finished. Only the self-registration
+	// broker sets it; see Tenant.SelfRegistration.
+	SelfRegistration *TenantSelfRegistration
 }
 
 // UpdateTenantOptions contains options for updating a tenant.
@@ -347,6 +352,11 @@ type UpdateTenantOptions struct {
 
 	// Quotas contains tenant quotas
 	Quotas *TenantQuotas
+
+	// FinishSelfRegistration, when true, removes the tenant's
+	// SelfRegistration record: the registrant finished the ceremony, so the
+	// tenant is no longer an unfinished registration's to discard.
+	FinishSelfRegistration bool
 }
 
 // IdentityStoreOptions contains options for creating an identity store.
@@ -528,4 +538,23 @@ type PolicyStorage interface {
 
 	// ListPolicies lists policies for a tenant.
 	ListPolicies(ctx context.Context, tenantID string, opts ListOptions) ([]*Policy, error)
+}
+
+// PolicyWriteSnapshotter is a PolicyStorage whose one policy write can
+// touch more than one stored record. SnapshotPolicy captures every record a
+// write of tenantID's policy name may change. written is the policy the
+// write stores, nil for a delete. restore puts each record back only while
+// it still holds exactly what this write left there: written's stored bytes
+// after an update or create, and no record after a delete. A record holding
+// anything else is another writer's and is left alone; that is not an error.
+type PolicyWriteSnapshotter interface {
+	SnapshotPolicy(ctx context.Context, tenantID, name string, written *Policy) (restore func(context.Context) error, err error)
+}
+
+// PolicyCreateReverter is a PolicyStorage that can undo one create.
+// RevertCreatedPolicy removes policy's record only while it still holds
+// exactly the bytes a create of policy wrote; an absent or different record
+// is left alone and is not an error.
+type PolicyCreateReverter interface {
+	RevertCreatedPolicy(ctx context.Context, tenantID string, policy *Policy) error
 }
