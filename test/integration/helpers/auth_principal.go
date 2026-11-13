@@ -18,7 +18,9 @@ package helpers
 import (
 	"context"
 	"errors"
+	"net"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"sync"
@@ -56,12 +58,15 @@ func (e *PrincipalAuthError) Error() string {
 func (e *PrincipalAuthError) Unwrap() error { return e.Cause }
 
 // enrolledPrincipal is a suite principal enrolled in one cluster: its tenant,
-// the client cert it logs in with and its current bearer.
+// the client cert it logs in with and its bearer at each node.
 type enrolledPrincipal struct {
 	tenantID string
 	certPEM  []byte
 	keyPEM   []byte
-	token    pivCachedToken
+	// tokens holds the principal's bearer per REST endpoint it logged in at:
+	// each node signs with its own key, so a bearer is good only at the node
+	// that issued it.
+	tokens map[string]pivCachedToken
 }
 
 // principalEnroller provisions a principal in the cluster at baseURL. A
@@ -104,32 +109,72 @@ func loginWithPIVCA(ctx context.Context, baseURL string, certPEM, keyPEM []byte)
 
 // bearer returns the principal's bearer for the cluster at baseURL, enrolling
 // the principal on first use and logging in again once the bearer nears
-// expiry. A failed enrollment is not remembered, so the next call retries it.
+// expiry.
 func (r *principalRegistry) bearer(ctx context.Context, baseURL string) (string, error) {
-	baseURL = strings.TrimRight(baseURL, "/")
+	return r.bearerAt(ctx, baseURL, baseURL)
+}
+
+// bearerAt returns the principal's bearer issued by the node at loginURL,
+// enrolling the principal in the cluster at clusterURL on first use and
+// logging in at loginURL again once that node's bearer nears expiry. A failed
+// enrollment is not remembered, so the next call retries it.
+func (r *principalRegistry) bearerAt(ctx context.Context, clusterURL, loginURL string) (string, error) {
+	clusterURL = strings.TrimRight(clusterURL, "/")
+	loginURL = strings.TrimRight(loginURL, "/")
 
 	r.Lock()
 	defer r.Unlock()
 
-	principal, ok := r.principals[baseURL]
+	principal, ok := r.principals[clusterURL]
 	if !ok {
-		enrolled, err := r.enroll(ctx, baseURL)
+		enrolled, err := r.enroll(ctx, clusterURL)
 		if err != nil {
 			return "", err
 		}
 		principal = enrolled
-		r.principals[baseURL] = principal
+		r.principals[clusterURL] = principal
 	}
-	if time.Now().Before(principal.token.ExpiresAt) {
-		return principal.token.Bearer, nil
+	if principal.tokens == nil {
+		principal.tokens = make(map[string]pivCachedToken)
+	}
+	if token, ok := principal.tokens[loginURL]; ok && time.Now().Before(token.ExpiresAt) {
+		return token.Bearer, nil
 	}
 
-	bearer, expiresIn, err := r.login(ctx, baseURL, principal.certPEM, principal.keyPEM)
+	bearer, expiresIn, err := r.login(ctx, loginURL, principal.certPEM, principal.keyPEM)
 	if err != nil {
 		return "", &PrincipalAuthError{Principal: r.name, Step: "PIV login", TenantID: principal.tenantID, Cause: err}
 	}
-	principal.token = pivCachedToken{Bearer: bearer, ExpiresAt: bearerExpiry(expiresIn)}
+	principal.tokens[loginURL] = pivCachedToken{Bearer: bearer, ExpiresAt: bearerExpiry(expiresIn)}
 	return bearer, nil
+}
+
+// loginURLFor returns the REST endpoint on the host target names, so a call
+// carries a bearer the called node signed. A target on no listed node (a
+// Unix socket, an unknown host, none) gets clusterURL.
+func loginURLFor(clusterURL, target string) string {
+	host := targetHostname(target)
+	if host == "" {
+		return clusterURL
+	}
+	for _, endpoint := range GetRESTEndpoints() {
+		if u, err := url.Parse(endpoint); err == nil && u.Hostname() == host {
+			return endpoint
+		}
+	}
+	return clusterURL
+}
+
+// targetHostname returns the hostname of target: a URL such as gRPC's
+// "https://test-node2:50051/pkg.Service", or a bare "host:port".
+func targetHostname(target string) string {
+	if u, err := url.Parse(target); err == nil && u.Hostname() != "" {
+		return u.Hostname()
+	}
+	if host, _, err := net.SplitHostPort(target); err == nil {
+		return host
+	}
+	return target
 }
 
 // tenantID returns the tenant of the principal enrolled for baseURL, or ""
@@ -174,14 +219,15 @@ func (r *principalRegistry) mustBearer(t *testing.T, baseURL string) string {
 
 // newTokenSource enrolls the principal of the first REST endpoint's cluster
 // up front, so a provisioning failure surfaces with its cause rather than
-// later as a refused call, and then refreshes the bearer on demand.
+// later as a refused call, and then returns, per call, the bearer of the node
+// the call goes to.
 func (r *principalRegistry) newTokenSource(ctx context.Context) (dataplane.TokenSource, error) {
 	baseURL := GetRESTEndpoints()[0]
 	if _, err := r.bearer(ctx, baseURL); err != nil {
 		return nil, err
 	}
 	return func(ctx context.Context) (string, error) {
-		return r.bearer(ctx, baseURL)
+		return r.bearerAt(ctx, baseURL, loginURLFor(baseURL, dataplane.Target(ctx)))
 	}, nil
 }
 

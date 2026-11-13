@@ -21,6 +21,8 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+
+	"github.com/jeremyhahn/go-quicbaas/test/integration/dataplane"
 )
 
 const testBaseURL = "https://node:8443"
@@ -253,4 +255,50 @@ func TestNamedPrincipal_RefusesNamesThatCannotNameATenant(t *testing.T) {
 		require.Equal(t, name, nameErr.Name)
 	}
 	require.Empty(t, named.registries, "a refused name creates no principal")
+}
+
+func setThreeNodes(t *testing.T) {
+	t.Setenv("QUICBAAS_NODE1_URL", "https://n1:8080")
+	t.Setenv("QUICBAAS_NODE2_URL", "https://n2:8080")
+	t.Setenv("QUICBAAS_NODE3_URL", "https://n3:8080")
+}
+
+func TestLoginURLFor_PicksTheCalledNode(t *testing.T) {
+	setThreeNodes(t)
+	for _, target := range []string{"https://n2:50051/pkg.Svc", "n2:4433", "https://n2:8080/api/v1/kv/a/b"} {
+		require.Equal(t, "https://n2:8080", loginURLFor("https://n1:8080", target), target)
+	}
+	for _, target := range []string{"", "unix:///var/run/quicbaas/q.sock", "https://other:8080"} {
+		require.Equal(t, "https://n1:8080", loginURLFor("https://n1:8080", target), target)
+	}
+}
+
+func TestPrincipalTokenSource_LogsInAtTheCalledNode(t *testing.T) {
+	setThreeNodes(t)
+	fake := &fakeEnrollment{expiresIn: 3600}
+	var logins []string
+	login := func(_ context.Context, baseURL string, _, _ []byte) (string, int, error) {
+		logins = append(logins, baseURL)
+		return "bearer@" + baseURL, 3600, nil
+	}
+	registry := newPrincipalRegistry("test", fake.enroll, login)
+
+	ctx := context.Background()
+	source, err := registry.newTokenSource(ctx)
+	require.NoError(t, err)
+
+	bearer, err := source(dataplane.WithTarget(ctx, "https://n2:50051/pkg.Svc"))
+	require.NoError(t, err)
+	require.Equal(t, "bearer@https://n2:8080", bearer)
+
+	bearer, err = source(ctx)
+	require.NoError(t, err)
+	require.Equal(t, "bearer@https://n1:8080", bearer)
+
+	bearer, err = source(dataplane.WithTarget(ctx, "https://n2:50051/pkg.Svc"))
+	require.NoError(t, err)
+	require.Equal(t, "bearer@https://n2:8080", bearer)
+
+	require.Equal(t, 1, fake.enrolls, "the principal is enrolled once per cluster")
+	require.Equal(t, []string{"https://n1:8080", "https://n2:8080"}, logins)
 }

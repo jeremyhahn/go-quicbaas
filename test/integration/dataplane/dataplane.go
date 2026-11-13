@@ -70,8 +70,25 @@ var ErrNoTokenSource = errors.New("dataplane: token source is required")
 var ErrEmptyBearer = errors.New("dataplane: token source returned an empty bearer")
 
 // TokenSource returns the current bearer. It is called on every request, so
-// an implementation can refresh an expired token.
+// an implementation can refresh an expired token. The source may read the
+// endpoint the call is addressed to with Target.
 type TokenSource func(ctx context.Context) (string, error)
+
+// targetKey is the context key under which the bearer credentials record
+// the endpoint a call is addressed to.
+type targetKey struct{}
+
+// WithTarget returns ctx carrying target, the URL or host[:port] a call is
+// addressed to, for a TokenSource to read with Target.
+func WithTarget(ctx context.Context, target string) context.Context {
+	return context.WithValue(ctx, targetKey{}, target)
+}
+
+// Target returns the target WithTarget recorded in ctx, or "".
+func Target(ctx context.Context) string {
+	target, _ := ctx.Value(targetKey{}).(string)
+	return target
+}
 
 // BearerCredentials attaches the bearer as gRPC "authorization" metadata on
 // every RPC. It implements credentials.PerRPCCredentials.
@@ -87,8 +104,13 @@ func NewBearerCredentials(source TokenSource) (*BearerCredentials, error) {
 	return &BearerCredentials{source: source}, nil
 }
 
-// GetRequestMetadata returns the authorization metadata for one RPC.
-func (c *BearerCredentials) GetRequestMetadata(ctx context.Context, _ ...string) (map[string]string, error) {
+// GetRequestMetadata returns the authorization metadata for one RPC. The
+// source sees the RPC's URI (gRPC's "https://<authority>/<service>") through
+// Target.
+func (c *BearerCredentials) GetRequestMetadata(ctx context.Context, uri ...string) (map[string]string, error) {
+	if len(uri) > 0 {
+		ctx = WithTarget(ctx, uri[0])
+	}
 	bearer, err := bearerFrom(ctx, c.source)
 	if err != nil {
 		return nil, err
@@ -123,7 +145,7 @@ func NewBearerTransport(source TokenSource, base http.RoundTripper) (*BearerTran
 // RoundTrip sends a clone of req carrying the bearer. The caller's request is
 // left unmodified, as http.RoundTripper requires.
 func (t *BearerTransport) RoundTrip(req *http.Request) (*http.Response, error) {
-	bearer, err := bearerFrom(req.Context(), t.source)
+	bearer, err := bearerFrom(WithTarget(req.Context(), req.URL.String()), t.source)
 	if err != nil {
 		return nil, err
 	}
