@@ -264,6 +264,12 @@ func (t *Transport) doRequest(ctx context.Context, service, method string, req i
 		return handler.handleRequest(ctx, service, method, req)
 	}
 
+	// The Query service's Execute verb maps onto the QuicBaaS Query stream
+	// RPC (go-quicbaas#1612).
+	if isQueryService(service) {
+		return newQueryHandler(conn).handleRequest(ctx, method, req)
+	}
+
 	// Check if this is a Health service request and route through health handler.
 	// Health services use plain Go structs which don't implement proto.Message,
 	// so we need to convert them to protobuf types before calling gRPC.
