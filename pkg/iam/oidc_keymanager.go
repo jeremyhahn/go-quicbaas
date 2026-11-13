@@ -143,14 +143,16 @@ func computeKID(pub crypto.PublicKey) (string, error) {
 }
 
 // es256KeyAttributes builds the xkms KeyAttributes describing the OIDC signing
-// key: an ECDSA P-256 key used for signing with SHA-256. StoreType is set to
-// the resolved default backend name because some backends (e.g. the software
-// keystore) require an explicit store type during key generation.
+// key: an ECDSA P-256 signing key with SHA-256. Backend names the registered
+// xkms backend that owns the key (go-xkms resolves the backend by this field,
+// not by StoreType), and StoreType carries the same name because some backends
+// (the software keystore) require an explicit store type during key generation.
 func es256KeyAttributes(cn, tenantID, storeType string) *xkmssdk.KeyAttributes {
 	return &xkmssdk.KeyAttributes{
 		CN:           cn,
 		TenantID:     tenantID,
 		StoreType:    xkmssdk.StoreType(storeType),
+		Backend:      storeType,
 		KeyType:      xkmssdk.KeyTypeSigning,
 		KeyAlgorithm: x509.ECDSA,
 		Hash:         crypto.SHA256,
