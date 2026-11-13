@@ -1380,6 +1380,7 @@ jobs:
         if: ${{ runner.environment == 'self-hosted' && env.DOCS_ONLY != 'true' }}
         uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
         with:
+          cache: ${{ runner.environment != 'self-hosted' }}
           go-version: ${{ env.GO_VERSION }}
 
       # The same target natively. It writes coverage/<profile>; the upload
@@ -1496,6 +1497,7 @@ jobs:
         if: ${{ runner.environment == 'self-hosted' && env.DOCS_ONLY != 'true' }}
         uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
         with:
+          cache: ${{ runner.environment != 'self-hosted' }}
           go-version: ${{ env.GO_VERSION }}
 
       - name: make coverage-merge (the threshold; bigdisk pool, native)
@@ -1588,6 +1590,7 @@ jobs:
         if: ${{ runner.environment == 'self-hosted' && env.DOCS_ONLY != 'true' }}
         uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
         with:
+          cache: ${{ runner.environment != 'self-hosted' }}
           go-version: ${{ env.GO_VERSION }}
 
       - name: make coverage-passes (bigdisk pool, native)
