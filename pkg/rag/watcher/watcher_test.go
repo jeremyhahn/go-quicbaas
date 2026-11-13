@@ -30,7 +30,6 @@ import (
 func TestNew(t *testing.T) {
 	config := Config{
 		Paths:         []string{t.TempDir()},
-		DebounceDelay: 50 * time.Millisecond,
 		BatchInterval: 100 * time.Millisecond,
 		BufferSize:    100,
 	}
@@ -57,7 +56,6 @@ func TestWatcher_Start(t *testing.T) {
 
 	config := Config{
 		Paths:         []string{tmpDir},
-		DebounceDelay: 50 * time.Millisecond,
 		BatchInterval: 100 * time.Millisecond,
 		BufferSize:    100,
 	}
@@ -83,7 +81,6 @@ func TestWatcher_Stop(t *testing.T) {
 
 	config := Config{
 		Paths:         []string{tmpDir},
-		DebounceDelay: 50 * time.Millisecond,
 		BatchInterval: 100 * time.Millisecond,
 		BufferSize:    100,
 	}
@@ -110,7 +107,6 @@ func TestWatcher_Events_Create(t *testing.T) {
 
 	config := Config{
 		Paths:         []string{tmpDir},
-		DebounceDelay: 50 * time.Millisecond,
 		BatchInterval: 100 * time.Millisecond,
 		BufferSize:    100,
 		IgnoreHidden:  false,
@@ -163,7 +159,6 @@ func TestWatcher_Events_Modify(t *testing.T) {
 
 	config := Config{
 		Paths:         []string{tmpDir},
-		DebounceDelay: 50 * time.Millisecond,
 		BatchInterval: 100 * time.Millisecond,
 		BufferSize:    100,
 		IgnoreHidden:  false,
@@ -207,7 +202,6 @@ func TestWatcher_Events_Delete(t *testing.T) {
 
 	config := Config{
 		Paths:         []string{tmpDir},
-		DebounceDelay: 50 * time.Millisecond,
 		BatchInterval: 100 * time.Millisecond,
 		BufferSize:    100,
 		IgnoreHidden:  false,
@@ -245,7 +239,6 @@ func TestWatcher_IgnoreHidden(t *testing.T) {
 
 	config := Config{
 		Paths:         []string{tmpDir},
-		DebounceDelay: 50 * time.Millisecond,
 		BatchInterval: 100 * time.Millisecond,
 		BufferSize:    100,
 		IgnoreHidden:  true,
@@ -297,7 +290,6 @@ func TestWatcher_ExcludePatterns(t *testing.T) {
 	config := Config{
 		Paths:         []string{tmpDir},
 		Exclude:       []string{"*.tmp", "ignored/"},
-		DebounceDelay: 50 * time.Millisecond,
 		BatchInterval: 100 * time.Millisecond,
 		BufferSize:    100,
 		IgnoreHidden:  false,
@@ -399,7 +391,6 @@ func TestWatcher_Debouncing(t *testing.T) {
 		Paths: []string{tmpDir},
 		// Effectively infinite: the real batch ticker must never fire — the test
 		// owns flushing via the manualFlush seam, so timing is deterministic.
-		DebounceDelay: 50 * time.Millisecond,
 		BatchInterval: time.Hour,
 		BufferSize:    100,
 		IgnoreHidden:  false,
@@ -458,7 +449,6 @@ func TestWatcher_AddPath(t *testing.T) {
 
 	config := Config{
 		Paths:         []string{tmpDir1},
-		DebounceDelay: 50 * time.Millisecond,
 		BatchInterval: 100 * time.Millisecond,
 		BufferSize:    100,
 		IgnoreHidden:  false,
@@ -500,7 +490,6 @@ func TestWatcher_RemovePath(t *testing.T) {
 
 	config := Config{
 		Paths:         []string{tmpDir},
-		DebounceDelay: 50 * time.Millisecond,
 		BatchInterval: 100 * time.Millisecond,
 		BufferSize:    100,
 		IgnoreHidden:  false,
@@ -542,7 +531,6 @@ func TestWatcher_RemovePath_NotWatched(t *testing.T) {
 
 	config := Config{
 		Paths:         []string{tmpDir},
-		DebounceDelay: 50 * time.Millisecond,
 		BatchInterval: 100 * time.Millisecond,
 		BufferSize:    100,
 	}
@@ -563,7 +551,6 @@ func TestWatcher_RecursiveWatching(t *testing.T) {
 
 	config := Config{
 		Paths:         []string{tmpDir},
-		DebounceDelay: 50 * time.Millisecond,
 		BatchInterval: 100 * time.Millisecond,
 		BufferSize:    100,
 		Recursive:     true,
@@ -606,7 +593,6 @@ func TestWatcher_MaxDepth(t *testing.T) {
 
 	config := Config{
 		Paths:         []string{tmpDir},
-		DebounceDelay: 50 * time.Millisecond,
 		BatchInterval: 100 * time.Millisecond,
 		BufferSize:    100,
 		Recursive:     true,
@@ -673,7 +659,6 @@ func TestWatcher_ContextCancellation(t *testing.T) {
 
 	config := Config{
 		Paths:         []string{tmpDir},
-		DebounceDelay: 50 * time.Millisecond,
 		BatchInterval: 100 * time.Millisecond,
 		BufferSize:    100,
 	}
@@ -713,9 +698,8 @@ func TestNew_ConfigValidation(t *testing.T) {
 		config    Config
 		wantError bool
 	}{
-		{"valid", Config{Paths: []string{"."}, DebounceDelay: 100 * time.Millisecond}, false},
+		{"valid", Config{Paths: []string{"."}, BatchInterval: 100 * time.Millisecond}, false},
 		{"empty paths", Config{Paths: []string{}}, true},
-		{"negative debounce", Config{Paths: []string{"."}, DebounceDelay: -1}, true},
 		{"negative batch", Config{Paths: []string{"."}, BatchInterval: -1}, true},
 		{"negative max depth", Config{Paths: []string{"."}, MaxDepth: -1}, true},
 	}
@@ -752,7 +736,6 @@ func TestWatcher_AddRecursive_EdgeCases(t *testing.T) {
 				MaxDepth:      2,
 				IgnoreHidden:  false,
 				BatchInterval: 100 * time.Millisecond,
-				DebounceDelay: 50 * time.Millisecond,
 			},
 		},
 		{
@@ -761,7 +744,6 @@ func TestWatcher_AddRecursive_EdgeCases(t *testing.T) {
 				Paths:         []string{tmpDir},
 				IgnoreHidden:  true,
 				BatchInterval: 100 * time.Millisecond,
-				DebounceDelay: 50 * time.Millisecond,
 			},
 		},
 		{
@@ -770,7 +752,6 @@ func TestWatcher_AddRecursive_EdgeCases(t *testing.T) {
 				Paths:         []string{tmpDir},
 				Exclude:       []string{"*/c/*"},
 				BatchInterval: 100 * time.Millisecond,
-				DebounceDelay: 50 * time.Millisecond,
 			},
 		},
 	}
@@ -796,7 +777,6 @@ func TestWatcher_FlushEvents(t *testing.T) {
 
 	config := Config{
 		Paths:         []string{tmpDir},
-		DebounceDelay: 50 * time.Millisecond,
 		BatchInterval: 100 * time.Millisecond,
 		BufferSize:    10,
 	}
@@ -825,8 +805,7 @@ func TestWatcher_FlushEvents(t *testing.T) {
 
 func TestWatcher_AddPath_Invalid(t *testing.T) {
 	config := Config{
-		Paths:         []string{t.TempDir()},
-		DebounceDelay: 100 * time.Millisecond,
+		Paths: []string{t.TempDir()},
 	}
 
 	w, err := New(config)
@@ -865,7 +844,6 @@ func TestWatcher_FollowSymlinks(t *testing.T) {
 				Paths:          []string{tmpDir},
 				Recursive:      true,
 				BatchInterval:  100 * time.Millisecond,
-				DebounceDelay:  50 * time.Millisecond,
 				FollowSymlinks: tt.followSymlink,
 			}
 
@@ -897,7 +875,6 @@ func TestWatcher_AddRecursive_DeepNesting(t *testing.T) {
 		Paths:         []string{tmpDir},
 		Recursive:     true,
 		MaxDepth:      3,
-		DebounceDelay: 50 * time.Millisecond,
 		BatchInterval: 100 * time.Millisecond,
 	}
 
@@ -924,7 +901,6 @@ func TestNew_ErrorPaths(t *testing.T) {
 		Paths:         []string{testFile},
 		Recursive:     true,
 		BatchInterval: 100 * time.Millisecond,
-		DebounceDelay: 50 * time.Millisecond,
 	}
 
 	w, err := New(config)
@@ -957,7 +933,6 @@ func TestWatcher_AddRecursive_Errors(t *testing.T) {
 		Paths:         []string{tmpDir},
 		Recursive:     true,
 		BatchInterval: 100 * time.Millisecond,
-		DebounceDelay: 50 * time.Millisecond,
 	}
 
 	w, err := New(config)
@@ -995,7 +970,6 @@ func TestWatcher_AddRecursive_Symlink_Coverage(t *testing.T) {
 		Recursive:      true,
 		FollowSymlinks: true,
 		BatchInterval:  100 * time.Millisecond,
-		DebounceDelay:  50 * time.Millisecond,
 	}
 
 	w, err := New(config)
@@ -1014,7 +988,6 @@ func TestWatcher_FlushEvents_Multiple(t *testing.T) {
 
 	config := Config{
 		Paths:         []string{tmpDir},
-		DebounceDelay: 20 * time.Millisecond,
 		BatchInterval: 50 * time.Millisecond,
 		BufferSize:    5,
 	}
@@ -1062,7 +1035,6 @@ func TestNew_FailedWatcher(t *testing.T) {
 
 	config := Config{
 		Paths:          []string{tmpDir},
-		DebounceDelay:  50 * time.Millisecond,
 		BatchInterval:  100 * time.Millisecond,
 		BufferSize:     10,
 		Recursive:      true,
@@ -1102,7 +1074,6 @@ func TestWatcher_AddRecursive_ErrorHandling(t *testing.T) {
 		Recursive:      true,
 		FollowSymlinks: true,
 		BatchInterval:  100 * time.Millisecond,
-		DebounceDelay:  50 * time.Millisecond,
 		MaxDepth:       5,
 	}
 
@@ -1130,7 +1101,6 @@ func TestWatcher_ProcessEvents_AllPaths(t *testing.T) {
 
 	config := Config{
 		Paths:         []string{tmpDir},
-		DebounceDelay: 30 * time.Millisecond,
 		BatchInterval: 60 * time.Millisecond,
 		BufferSize:    10,
 	}

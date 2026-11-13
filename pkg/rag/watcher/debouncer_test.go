@@ -23,7 +23,7 @@ import (
 )
 
 func TestDebouncer_Add(t *testing.T) {
-	d := newDebouncer(100 * time.Millisecond)
+	d := newDebouncer()
 
 	event1 := Event{
 		Type: EventCreate,
@@ -42,7 +42,7 @@ func TestDebouncer_Add(t *testing.T) {
 }
 
 func TestDebouncer_AddSamePath(t *testing.T) {
-	d := newDebouncer(100 * time.Millisecond)
+	d := newDebouncer()
 
 	event1 := Event{
 		Type: EventCreate,
@@ -66,7 +66,7 @@ func TestDebouncer_AddSamePath(t *testing.T) {
 }
 
 func TestDebouncer_Flush(t *testing.T) {
-	d := newDebouncer(100 * time.Millisecond)
+	d := newDebouncer()
 
 	event1 := Event{
 		Type: EventCreate,
@@ -97,7 +97,7 @@ func TestDebouncer_Flush(t *testing.T) {
 }
 
 func TestDebouncer_FlushEmpty(t *testing.T) {
-	d := newDebouncer(100 * time.Millisecond)
+	d := newDebouncer()
 
 	events := d.Flush()
 	assert.Nil(t, events)
@@ -105,7 +105,7 @@ func TestDebouncer_FlushEmpty(t *testing.T) {
 }
 
 func TestDebouncer_Count(t *testing.T) {
-	d := newDebouncer(100 * time.Millisecond)
+	d := newDebouncer()
 
 	assert.Equal(t, 0, d.Count())
 
@@ -120,7 +120,7 @@ func TestDebouncer_Count(t *testing.T) {
 }
 
 func TestDebouncer_Clear(t *testing.T) {
-	d := newDebouncer(100 * time.Millisecond)
+	d := newDebouncer()
 
 	d.Add(Event{Path: "/file1.txt"})
 	d.Add(Event{Path: "/file2.txt"})
@@ -135,7 +135,7 @@ func TestDebouncer_Clear(t *testing.T) {
 }
 
 func TestDebouncer_ConcurrentAccess(t *testing.T) {
-	d := newDebouncer(100 * time.Millisecond)
+	d := newDebouncer()
 
 	done := make(chan bool)
 

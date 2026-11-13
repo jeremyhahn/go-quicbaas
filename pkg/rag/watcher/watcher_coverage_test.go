@@ -39,7 +39,6 @@ func TestWatcher_ConvertEvent(t *testing.T) {
 
 	config := Config{
 		Paths:         []string{tmpDir},
-		DebounceDelay: 10 * time.Millisecond,
 		BatchInterval: 20 * time.Millisecond,
 		BufferSize:    8,
 	}
@@ -84,7 +83,6 @@ func TestWatcher_ConvertEvent(t *testing.T) {
 func TestWatcher_ConvertEvent_Unknown(t *testing.T) {
 	config := Config{
 		Paths:         []string{t.TempDir()},
-		DebounceDelay: 10 * time.Millisecond,
 		BatchInterval: 20 * time.Millisecond,
 	}
 	w, err := New(config)
@@ -140,7 +138,6 @@ func TestWatcher_Start_AddRecursive_Symlinks(t *testing.T) {
 		Paths:          []string{tmpDir},
 		Recursive:      true,
 		FollowSymlinks: true,
-		DebounceDelay:  10 * time.Millisecond,
 		BatchInterval:  20 * time.Millisecond,
 		BufferSize:     16,
 	}
@@ -179,7 +176,6 @@ func TestWatcher_Start_AddRecursive_NoFollowSymlink(t *testing.T) {
 		Paths:          []string{tmpDir},
 		Recursive:      true,
 		FollowSymlinks: false,
-		DebounceDelay:  10 * time.Millisecond,
 		BatchInterval:  20 * time.Millisecond,
 		BufferSize:     16,
 	}
@@ -216,7 +212,6 @@ func TestWatcher_Start_AddRecursive_ExcludeAndHidden(t *testing.T) {
 		Recursive:     true,
 		IgnoreHidden:  true,
 		Exclude:       []string{"node_modules/"},
-		DebounceDelay: 10 * time.Millisecond,
 		BatchInterval: 20 * time.Millisecond,
 		BufferSize:    16,
 	}

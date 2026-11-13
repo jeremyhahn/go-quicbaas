@@ -158,7 +158,6 @@ func TestAddRecursive_ShouldExclude(t *testing.T) {
 		Paths:         []string{tmpDir},
 		Recursive:     true,
 		Exclude:       []string{"node_modules", "**/node_modules/**"},
-		DebounceDelay: 50 * time.Millisecond,
 		BatchInterval: 100 * time.Millisecond,
 		BufferSize:    100,
 	}
@@ -199,7 +198,6 @@ func TestAddRecursive_NestedExclude(t *testing.T) {
 		Paths:         []string{tmpDir},
 		Recursive:     true,
 		Exclude:       []string{"vendor", "**/vendor/**"},
-		DebounceDelay: 50 * time.Millisecond,
 		BatchInterval: 100 * time.Millisecond,
 		BufferSize:    100,
 	}
@@ -245,7 +243,6 @@ func TestAddRecursive_SymlinkToValidDir(t *testing.T) {
 		Paths:          []string{tmpDir},
 		Recursive:      true,
 		FollowSymlinks: true,
-		DebounceDelay:  50 * time.Millisecond,
 		BatchInterval:  100 * time.Millisecond,
 		BufferSize:     100,
 	}
@@ -288,7 +285,6 @@ func TestAddRecursive_MultipleExcludePatterns(t *testing.T) {
 		Recursive:     true,
 		IgnoreHidden:  true, // Will exclude .cache
 		Exclude:       []string{"node_modules", "vendor", "build", "dist"},
-		DebounceDelay: 50 * time.Millisecond,
 		BatchInterval: 100 * time.Millisecond,
 		BufferSize:    100,
 	}
@@ -316,7 +312,6 @@ func TestProcessEvents_ExcludeInEvent(t *testing.T) {
 		Paths:         []string{tmpDir},
 		Recursive:     false,
 		Exclude:       []string{"*.tmp", "*.log"},
-		DebounceDelay: 50 * time.Millisecond,
 		BatchInterval: 100 * time.Millisecond,
 		BufferSize:    100,
 	}
@@ -393,7 +388,6 @@ func TestProcessEvents_HiddenFilesFiltered(t *testing.T) {
 		Paths:         []string{tmpDir},
 		Recursive:     false,
 		IgnoreHidden:  true,
-		DebounceDelay: 50 * time.Millisecond,
 		BatchInterval: 100 * time.Millisecond,
 		BufferSize:    100,
 	}
@@ -453,7 +447,6 @@ func TestStop_IdempotentMultipleCalls(t *testing.T) {
 	config := Config{
 		Paths:         []string{tmpDir},
 		Recursive:     false,
-		DebounceDelay: 50 * time.Millisecond,
 		BatchInterval: 100 * time.Millisecond,
 		BufferSize:    100,
 	}
@@ -479,7 +472,6 @@ func TestStop_IdempotentMultipleCalls(t *testing.T) {
 func TestStop_ReportsCloseFailureFromContextCancellation(t *testing.T) {
 	config := Config{
 		Paths:         []string{t.TempDir()},
-		DebounceDelay: 50 * time.Millisecond,
 		BatchInterval: 100 * time.Millisecond,
 		BufferSize:    100,
 	}
@@ -526,7 +518,6 @@ func TestFlushEvents_SmallBuffer(t *testing.T) {
 	config := Config{
 		Paths:         []string{tmpDir},
 		Recursive:     false,
-		DebounceDelay: 10 * time.Millisecond,
 		BatchInterval: 20 * time.Millisecond,
 		BufferSize:    1, // Very small buffer
 	}
@@ -563,7 +554,6 @@ func TestNew_GitIgnoreMatcherError(t *testing.T) {
 	config := Config{
 		Paths:         []string{tmpDir},
 		Exclude:       []string{"*.tmp", "test/"},
-		DebounceDelay: 50 * time.Millisecond,
 		BatchInterval: 100 * time.Millisecond,
 		BufferSize:    100,
 	}
@@ -578,7 +568,6 @@ func TestNew_GitIgnoreMatcherError(t *testing.T) {
 func TestNew_InvalidPath(t *testing.T) {
 	config := Config{
 		Paths:         []string{"/this/path/does/not/exist"},
-		DebounceDelay: 50 * time.Millisecond,
 		BatchInterval: 100 * time.Millisecond,
 		BufferSize:    100,
 	}
@@ -612,7 +601,6 @@ func TestAddRecursive_ErrorReadDir(t *testing.T) {
 	config := Config{
 		Paths:         []string{tmpDir},
 		Recursive:     true,
-		DebounceDelay: 50 * time.Millisecond,
 		BatchInterval: 100 * time.Millisecond,
 		BufferSize:    100,
 	}
@@ -645,7 +633,6 @@ func TestAddRecursive_SymlinkError(t *testing.T) {
 		Paths:          []string{tmpDir},
 		Recursive:      true,
 		FollowSymlinks: true,
-		DebounceDelay:  50 * time.Millisecond,
 		BatchInterval:  100 * time.Millisecond,
 		BufferSize:     100,
 	}
@@ -683,7 +670,6 @@ func TestAddRecursive_SymlinkToFile(t *testing.T) {
 		Paths:          []string{tmpDir},
 		Recursive:      true,
 		FollowSymlinks: true,
-		DebounceDelay:  50 * time.Millisecond,
 		BatchInterval:  100 * time.Millisecond,
 		BufferSize:     100,
 	}
@@ -713,7 +699,6 @@ func TestAddRecursive_WatcherAddError(t *testing.T) {
 	config := Config{
 		Paths:         []string{tmpDir},
 		Recursive:     true,
-		DebounceDelay: 50 * time.Millisecond,
 		BatchInterval: 100 * time.Millisecond,
 		BufferSize:    100,
 	}
@@ -735,7 +720,6 @@ func TestFlushEvents_StopChannel(t *testing.T) {
 
 	config := Config{
 		Paths:         []string{tmpDir},
-		DebounceDelay: 20 * time.Millisecond,
 		BatchInterval: 50 * time.Millisecond,
 		BufferSize:    100,
 	}
@@ -784,7 +768,6 @@ func TestFlushEvents_ChannelFull(t *testing.T) {
 
 	config := Config{
 		Paths:         []string{tmpDir},
-		DebounceDelay: 20 * time.Millisecond,
 		BatchInterval: 40 * time.Millisecond,
 		BufferSize:    2, // Small buffer
 	}
@@ -833,7 +816,6 @@ func TestConvertEvent_DeletedFile(t *testing.T) {
 
 	config := Config{
 		Paths:         []string{tmpDir},
-		DebounceDelay: 50 * time.Millisecond,
 		BatchInterval: 100 * time.Millisecond,
 		BufferSize:    100,
 		IgnoreHidden:  false,
@@ -876,7 +858,6 @@ func TestConvertEvent_RenameAsDelete(t *testing.T) {
 
 	config := Config{
 		Paths:         []string{tmpDir},
-		DebounceDelay: 50 * time.Millisecond,
 		BatchInterval: 100 * time.Millisecond,
 		BufferSize:    100,
 		IgnoreHidden:  false,
@@ -1075,7 +1056,6 @@ func TestWatcher_Stop_NormalClose(t *testing.T) {
 
 	config := Config{
 		Paths:         []string{tmpDir},
-		DebounceDelay: 50 * time.Millisecond,
 		BatchInterval: 100 * time.Millisecond,
 		BufferSize:    100,
 	}
@@ -1102,7 +1082,6 @@ func TestRemovePath_WatcherRemoveError(t *testing.T) {
 
 	config := Config{
 		Paths:         []string{tmpDir},
-		DebounceDelay: 50 * time.Millisecond,
 		BatchInterval: 100 * time.Millisecond,
 		BufferSize:    100,
 	}
@@ -1138,7 +1117,6 @@ func TestProcessEvents_WatcherClosed(t *testing.T) {
 
 	config := Config{
 		Paths:         []string{tmpDir},
-		DebounceDelay: 50 * time.Millisecond,
 		BatchInterval: 100 * time.Millisecond,
 		BufferSize:    100,
 	}
@@ -1173,7 +1151,6 @@ func TestConvertEvent_UnknownOp(t *testing.T) {
 
 	config := Config{
 		Paths:         []string{tmpDir},
-		DebounceDelay: 50 * time.Millisecond,
 		BatchInterval: 100 * time.Millisecond,
 		BufferSize:    100,
 	}
@@ -1200,7 +1177,6 @@ func TestWatcher_ContextDone(t *testing.T) {
 
 	config := Config{
 		Paths:         []string{tmpDir},
-		DebounceDelay: 50 * time.Millisecond,
 		BatchInterval: 100 * time.Millisecond,
 		BufferSize:    100,
 	}
@@ -1237,7 +1213,6 @@ func TestWatcher_ErrorChannel(t *testing.T) {
 
 	config := Config{
 		Paths:         []string{tmpDir},
-		DebounceDelay: 50 * time.Millisecond,
 		BatchInterval: 100 * time.Millisecond,
 		BufferSize:    100,
 	}
@@ -1277,7 +1252,6 @@ func TestAddPath_FileNotDirectory(t *testing.T) {
 
 	config := Config{
 		Paths:         []string{tmpDir},
-		DebounceDelay: 50 * time.Millisecond,
 		BatchInterval: 100 * time.Millisecond,
 		BufferSize:    100,
 		Recursive:     false,
@@ -1297,7 +1271,6 @@ func TestWatcher_AddPath_NonExistent(t *testing.T) {
 
 	config := Config{
 		Paths:         []string{tmpDir},
-		DebounceDelay: 50 * time.Millisecond,
 		BatchInterval: 100 * time.Millisecond,
 		BufferSize:    100,
 	}
@@ -1325,7 +1298,6 @@ func TestWatcher_AddRecursive_WithSymlinks(t *testing.T) {
 	// Test with FollowSymlinks = false (default)
 	config := Config{
 		Paths:          []string{tmpDir},
-		DebounceDelay:  50 * time.Millisecond,
 		BatchInterval:  100 * time.Millisecond,
 		BufferSize:     100,
 		Recursive:      true,
@@ -1376,7 +1348,6 @@ func TestWatcher_AddRecursive_FollowSymlinks(t *testing.T) {
 	// Test with FollowSymlinks = true
 	config := Config{
 		Paths:          []string{tmpDir},
-		DebounceDelay:  50 * time.Millisecond,
 		BatchInterval:  100 * time.Millisecond,
 		BufferSize:     100,
 		Recursive:      true,
@@ -1416,7 +1387,6 @@ func TestWatcher_RemovePath_WithError(t *testing.T) {
 
 	config := Config{
 		Paths:         []string{tmpDir},
-		DebounceDelay: 50 * time.Millisecond,
 		BatchInterval: 100 * time.Millisecond,
 		BufferSize:    100,
 	}
@@ -1445,7 +1415,6 @@ func TestWatcher_NonRecursive(t *testing.T) {
 
 	config := Config{
 		Paths:         []string{tmpDir},
-		DebounceDelay: 50 * time.Millisecond,
 		BatchInterval: 100 * time.Millisecond,
 		BufferSize:    100,
 		Recursive:     false, // Non-recursive
@@ -1496,7 +1465,6 @@ func TestWatcher_AddPath_AlreadyWatched(t *testing.T) {
 
 	config := Config{
 		Paths:         []string{tmpDir},
-		DebounceDelay: 50 * time.Millisecond,
 		BatchInterval: 100 * time.Millisecond,
 		BufferSize:    100,
 	}
@@ -1522,7 +1490,6 @@ func TestWatcher_CreateDirectory(t *testing.T) {
 
 	config := Config{
 		Paths:         []string{tmpDir},
-		DebounceDelay: 50 * time.Millisecond,
 		BatchInterval: 100 * time.Millisecond,
 		BufferSize:    100,
 		Recursive:     true,
@@ -1564,7 +1531,6 @@ func TestConvertEvent_ChmodIgnored(t *testing.T) {
 
 	config := Config{
 		Paths:         []string{tmpDir},
-		DebounceDelay: 50 * time.Millisecond,
 		BatchInterval: 100 * time.Millisecond,
 		BufferSize:    100,
 		IgnoreHidden:  false,
@@ -1627,7 +1593,6 @@ func TestWatcher_ErrorHandling(t *testing.T) {
 
 	config := Config{
 		Paths:         []string{tmpDir},
-		DebounceDelay: 50 * time.Millisecond,
 		BatchInterval: 100 * time.Millisecond,
 		BufferSize:    100,
 	}
@@ -1668,7 +1633,6 @@ func TestAddRecursive_SymlinkToDirectory(t *testing.T) {
 		Paths:          []string{tmpDir},
 		Recursive:      true,
 		FollowSymlinks: true, // Follow symlinks
-		DebounceDelay:  50 * time.Millisecond,
 		BatchInterval:  100 * time.Millisecond,
 		BufferSize:     100,
 	}
@@ -1698,7 +1662,6 @@ func TestAddPath_StatError(t *testing.T) {
 
 	config := Config{
 		Paths:         []string{tmpDir},
-		DebounceDelay: 50 * time.Millisecond,
 		BatchInterval: 100 * time.Millisecond,
 		BufferSize:    100,
 	}
@@ -1724,7 +1687,6 @@ func TestAddPath_DirectoryWithRecursive(t *testing.T) {
 	config := Config{
 		Paths:         []string{tmpDir},
 		Recursive:     true,
-		DebounceDelay: 50 * time.Millisecond,
 		BatchInterval: 100 * time.Millisecond,
 		BufferSize:    100,
 	}
@@ -1753,7 +1715,6 @@ func TestProcessEvents_ContextCancellation(t *testing.T) {
 
 	config := Config{
 		Paths:         []string{tmpDir},
-		DebounceDelay: 50 * time.Millisecond,
 		BatchInterval: 100 * time.Millisecond,
 		BufferSize:    100,
 	}
@@ -1800,7 +1761,6 @@ func TestNew_MaxDepthZero(t *testing.T) {
 		Paths:         []string{tmpDir},
 		Recursive:     true,
 		MaxDepth:      0, // Unlimited depth
-		DebounceDelay: 50 * time.Millisecond,
 		BatchInterval: 100 * time.Millisecond,
 		BufferSize:    100,
 	}
@@ -1829,7 +1789,6 @@ func TestStop_NotStarted(t *testing.T) {
 
 	config := Config{
 		Paths:         []string{tmpDir},
-		DebounceDelay: 50 * time.Millisecond,
 		BatchInterval: 100 * time.Millisecond,
 		BufferSize:    100,
 	}
@@ -1858,7 +1817,6 @@ func TestAddRecursive_MaxDepthLimit(t *testing.T) {
 		Paths:         []string{tmpDir},
 		Recursive:     true,
 		MaxDepth:      2, // Only go 2 levels deep
-		DebounceDelay: 50 * time.Millisecond,
 		BatchInterval: 100 * time.Millisecond,
 		BufferSize:    100,
 	}
@@ -1887,7 +1845,6 @@ func TestProcessEvents_StopCh(t *testing.T) {
 
 	config := Config{
 		Paths:         []string{tmpDir},
-		DebounceDelay: 50 * time.Millisecond,
 		BatchInterval: 100 * time.Millisecond,
 		BufferSize:    100,
 	}
@@ -1929,7 +1886,6 @@ func TestAddRecursive_HiddenDirIgnored(t *testing.T) {
 		Paths:         []string{tmpDir},
 		Recursive:     true,
 		IgnoreHidden:  true, // Ignore hidden
-		DebounceDelay: 50 * time.Millisecond,
 		BatchInterval: 100 * time.Millisecond,
 		BufferSize:    100,
 	}
@@ -1971,7 +1927,6 @@ func TestAddRecursive_SkipFiles(t *testing.T) {
 	config := Config{
 		Paths:         []string{tmpDir},
 		Recursive:     true,
-		DebounceDelay: 50 * time.Millisecond,
 		BatchInterval: 100 * time.Millisecond,
 		BufferSize:    100,
 	}
@@ -2004,7 +1959,6 @@ func TestRemovePath_AlreadyRemoved(t *testing.T) {
 
 	config := Config{
 		Paths:         []string{tmpDir},
-		DebounceDelay: 50 * time.Millisecond,
 		BatchInterval: 100 * time.Millisecond,
 		BufferSize:    100,
 	}

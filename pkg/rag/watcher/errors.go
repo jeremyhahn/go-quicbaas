@@ -21,9 +21,6 @@ var (
 	// ErrNoPaths is returned when no paths are configured to watch.
 	ErrNoPaths = errors.New("no paths configured to watch")
 
-	// ErrInvalidDebounceDelay is returned when the debounce delay is negative.
-	ErrInvalidDebounceDelay = errors.New("debounce delay cannot be negative")
-
 	// ErrInvalidBatchInterval is returned when the batch interval is negative.
 	ErrInvalidBatchInterval = errors.New("batch interval cannot be negative")
 

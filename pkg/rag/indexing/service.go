@@ -113,7 +113,6 @@ func NewIndexingService(
 	watchCfg := watcher.Config{
 		Paths:          []string{cfg.ProjectPath},
 		Exclude:        cfg.WatchExclusions,
-		DebounceDelay:  100 * time.Millisecond,
 		BatchInterval:  1 * time.Second,
 		IgnoreHidden:   true,
 		FollowSymlinks: false,
