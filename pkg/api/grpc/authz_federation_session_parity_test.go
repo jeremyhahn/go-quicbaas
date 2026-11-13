@@ -43,11 +43,11 @@ var federationSessionGrants = map[string]methodPermission{
 	// DELETE /api/v1/tenants/{tenant_id}/providers/{provider_id}
 	"/quicbaas.iam.v1.FederationService/DeleteProvider": {"tenants", "delete"},
 	// POST /api/v1/tenants/{tenant_id}/users/{user_id}/links/
-	"/quicbaas.iam.v1.FederationService/LinkAccount": {"tenants", "create"},
+	"/quicbaas.iam.v1.FederationService/LinkAccount": {"users", "update"},
 	// GET /api/v1/tenants/{tenant_id}/users/{user_id}/links/
-	"/quicbaas.iam.v1.FederationService/GetUserLinks": {"tenants", "read"},
+	"/quicbaas.iam.v1.FederationService/GetUserLinks": {"users", "read"},
 	// DELETE /api/v1/tenants/{tenant_id}/users/{user_id}/links/{provider_id}
-	"/quicbaas.iam.v1.FederationService/UnlinkAccount": {"tenants", "delete"},
+	"/quicbaas.iam.v1.FederationService/UnlinkAccount": {"users", "update"},
 	// GET /api/v1/iam/sessions
 	"/quicbaas.iam.v1.SessionService/ListSessions": {"users", "read"},
 	// GET /api/v1/iam/sessions/{id}

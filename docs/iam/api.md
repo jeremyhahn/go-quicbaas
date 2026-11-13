@@ -1027,15 +1027,20 @@ no TOTP factor. The routes are per user under
 
 | Route | Handler | Body → response | Permission |
 |---|---|---|---|
-| `GET …/mfa/` | `GetMFAStatus` | → `MFAStatus` | `tenants:read` |
-| `DELETE …/mfa/` | `DisableMFA` | — | `tenants:delete` |
-| `POST …/mfa/enroll` | `BeginMFAEnrollment` | `MFAEnrollRequest` → `MFAEnrollResponse` (`enrollment_id`, `qr_code_uri`, `secret`, `expires_at`) | `tenants:create` |
-| `POST …/mfa/verify` | `CompleteMFAEnrollment` | `MFAVerifyRequest` (`code`, `enrollment_id`) → `MFAVerifyResponse` | `tenants:create` |
-| `DELETE …/mfa/enroll/{enrollment_id}` | `CancelMFAEnrollment` | — | `tenants:delete` |
-| `POST …/mfa/challenge` | `BeginMFAChallenge` | → `MFAChallenge` | `tenants:create` |
-| `POST …/mfa/verify-challenge` | `VerifyMFAChallenge` | `MFAVerifyRequest` (`code`, `challenge_id`, `use_backup_code`) → `MFAVerifyResponse` | `tenants:create` |
-| `GET …/mfa/backup-codes` | `GetBackupCodeStatus` | → `BackupCodeStatus` (`total`, `remaining`, `used`, `generated_at`) | `tenants:read` |
-| `POST …/mfa/backup-codes` | `GenerateBackupCodes` | → the new codes, shown once | `tenants:create` |
+| `GET …/mfa/` | `GetMFAStatus` | → `MFAStatus` | `users:read` |
+| `DELETE …/mfa/` | `DisableMFA` | — | `users:delete` |
+| `POST …/mfa/enroll` | `BeginMFAEnrollment` | `MFAEnrollRequest` → `MFAEnrollResponse` (`enrollment_id`, `qr_code_uri`, `secret`, `expires_at`) | `users:update` |
+| `POST …/mfa/verify` | `CompleteMFAEnrollment` | `MFAVerifyRequest` (`code`, `enrollment_id`) → `MFAVerifyResponse` | `users:update` |
+| `DELETE …/mfa/enroll/{enrollment_id}` | `CancelMFAEnrollment` | — | `users:delete` |
+| `POST …/mfa/challenge` | `BeginMFAChallenge` | → `MFAChallenge` | `users:update` |
+| `POST …/mfa/verify-challenge` | `VerifyMFAChallenge` | `MFAVerifyRequest` (`code`, `challenge_id`, `use_backup_code`) → `MFAVerifyResponse` | `users:update` |
+| `GET …/mfa/backup-codes` | `GetBackupCodeStatus` | → `BackupCodeStatus` (`total`, `remaining`, `used`, `generated_at`) | `users:read` |
+| `POST …/mfa/backup-codes` | `GenerateBackupCodes` | → the new codes, shown once | `users:update` |
+
+Each route takes a `users:*` grant because it operates on a user's
+credentials. A `tenants:*` grant never reaches a route under
+`…/users/`; `TestTenantUserRoutesNeverTakeATenantPermission` holds every
+route there to that rule (#341).
 
 The types are in `pkg/iam/mfa_types.go`.
 

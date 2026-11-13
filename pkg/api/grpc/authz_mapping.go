@@ -308,12 +308,16 @@ var grpcMethodPermissions = map[string]methodPermission{
 	"/quicbaas.iam.v1.FederationService/UpdateProvider": {"tenants", "create"},
 	// DELETE /api/v1/tenants/{tenant_id}/providers/{provider_id}
 	"/quicbaas.iam.v1.FederationService/DeleteProvider": {"tenants", "delete"},
+	// An account link is a user credential (it lets an external identity log
+	// in as the user), so it takes a users:* grant, not a tenant-lifecycle one
+	// (go-quicbaas#341).
+	//
 	// POST /api/v1/tenants/{tenant_id}/users/{user_id}/links/
-	"/quicbaas.iam.v1.FederationService/LinkAccount": {"tenants", "create"},
+	"/quicbaas.iam.v1.FederationService/LinkAccount": {"users", "update"},
 	// GET /api/v1/tenants/{tenant_id}/users/{user_id}/links/
-	"/quicbaas.iam.v1.FederationService/GetUserLinks": {"tenants", "read"},
+	"/quicbaas.iam.v1.FederationService/GetUserLinks": {"users", "read"},
 	// DELETE /api/v1/tenants/{tenant_id}/users/{user_id}/links/{provider_id}
-	"/quicbaas.iam.v1.FederationService/UnlinkAccount": {"tenants", "delete"},
+	"/quicbaas.iam.v1.FederationService/UnlinkAccount": {"users", "update"},
 
 	// ---- quicbaas.iam.v1.SessionService ----
 	//
