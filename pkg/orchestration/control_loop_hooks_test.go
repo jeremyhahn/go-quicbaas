@@ -16,6 +16,7 @@ package orchestration
 import (
 	"context"
 	"errors"
+	"reflect"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -1084,10 +1085,9 @@ func TestLifecycle_DiscardHonoursItsTimeout(t *testing.T) {
 		<-ctx.Done()
 		return ctx.Err()
 	}}
-	run, err := runLaunch(t, jobLaunch{
-		Agents: leadDrivenService(`{"approved": true}`), Hooks: hooks,
-		Policy: &JobLifecyclePolicy{StageTimeouts: StageTimeouts{Discard: 20 * time.Millisecond}},
-	})
+	svc := leadDrivenService(`{"approved": true}`)
+	svc.lifecyclePolicy = JobLifecyclePolicy{StageTimeouts: StageTimeouts{Discard: 20 * time.Millisecond}}
+	run, err := runLaunch(t, jobLaunch{Agents: svc, Hooks: hooks})
 	var hookErr *JobHookError
 	if !errors.As(err, &hookErr) || hookErr.Stage != JobStageDiscard || !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("got %v, want JobHookError(discard) wrapping DeadlineExceeded", err)
@@ -1162,8 +1162,8 @@ func TestLifecycle_ReviewingCriteriaErrorFailsTheJob(t *testing.T) {
 func TestLifecycle_PolicyFromTheAgentService(t *testing.T) {
 	t.Parallel()
 	guard := guardAllowing(t, "make test")
-	svc := &policyProvidingService{controlLoopMockService: &controlLoopMockService{},
-		policy: JobLifecyclePolicy{Guard: guard, StageTimeouts: StageTimeouts{Prepare: time.Second}}}
+	svc := &controlLoopMockService{
+		lifecyclePolicy: JobLifecyclePolicy{Guard: guard, StageTimeouts: StageTimeouts{Prepare: time.Second}}}
 	cl := NewControlLoop(svc, &controlLoopMockLogger{})
 	policy := cl.lifecyclePolicy()
 	if err := policy.Guard.CheckCommand("c", "make test"); err != nil {
@@ -1181,13 +1181,33 @@ func TestLifecycle_PolicyFromTheAgentService(t *testing.T) {
 	}
 }
 
-// policyProvidingService is an agent service carrying a lifecycle policy.
-type policyProvidingService struct {
-	*controlLoopMockService
-	policy JobLifecyclePolicy
+// TestJobRunConfig_PolicyOnlyFromTheAgentService (#727): a run's lifecycle
+// policy and validator registry are not configuration — JobRunConfig has no
+// Policy or Validators field — and the policy the agent service carries is
+// the run's, with every stage bound the operator left unset at its default
+// (the explicit config branch skipped WithDefaults, so a policy setting one
+// bound ran every other stage at zero).
+func TestJobRunConfig_PolicyOnlyFromTheAgentService(t *testing.T) {
+	t.Parallel()
+	cfgType := reflect.TypeOf(JobRunConfig{})
+	for _, name := range []string{"Policy", "Validators"} {
+		if _, ok := cfgType.FieldByName(name); ok {
+			t.Errorf("JobRunConfig.%s must not exist: the run resolves it, it is not configured", name)
+		}
+	}
+	svc := &controlLoopMockService{
+		lifecyclePolicy: JobLifecyclePolicy{StageTimeouts: StageTimeouts{Discard: 20 * time.Millisecond}}}
+	run := jobLaunch{Agents: svc}.newRun(t)
+	got := run.Policy().StageTimeouts
+	want := DefaultStageTimeouts
+	want.Discard = 20 * time.Millisecond
+	if got != want {
+		t.Fatalf("stage timeouts = %+v, want %+v", got, want)
+	}
+	if run.Validators() != validators {
+		t.Fatal("a run's validators are the engine's registry")
+	}
 }
-
-func (s *policyProvidingService) JobLifecyclePolicy() JobLifecyclePolicy { return s.policy }
 
 // TestControlLoop_HookSetFromTheEnvelopeAndTheOperatorPolicy: the loop runs
 // the moments of the hook set the envelope installed on the run it adopted,
@@ -1196,10 +1216,9 @@ func TestControlLoop_HookSetFromTheEnvelopeAndTheOperatorPolicy(t *testing.T) {
 	t.Parallel()
 	hooks := &recordingHooks{}
 	cl := NewControlLoop(&controlLoopMockService{}, &controlLoopMockLogger{})
-	cl.adopt(jobLaunch{
-		Hooks:  hooks,
-		Policy: &JobLifecyclePolicy{StageTimeouts: StageTimeouts{Blocked: 3 * time.Second}},
-	}.newRun(t))
+	operator := &controlLoopMockService{
+		lifecyclePolicy: JobLifecyclePolicy{StageTimeouts: StageTimeouts{Blocked: 3 * time.Second}}}
+	cl.adopt(jobLaunch{Agents: operator, Hooks: hooks}.newRun(t))
 	if cl.job.hooks != hooks {
 		t.Fatal("the envelope's hook set must reach the loop")
 	}
@@ -1292,11 +1311,11 @@ func threeRoleService() *controlLoopMockService {
 func TestSpawn_EverySiteBindsAPooledAccount(t *testing.T) {
 	t.Parallel()
 	svc := credentialGuarded(threeRoleService())
+	svc.lifecyclePolicy = JobLifecyclePolicy{AgentConfigDir: "/var/lib/quicbaas/agents/claude"}
 	config := newTestConfig()
 	config.LeadBackend = "claude"
 	run, err := runLaunch(t, jobLaunch{
 		Config: config, Agents: svc, Workflow: threeRoleWorkflow("claude"),
-		Policy: &JobLifecyclePolicy{AgentConfigDir: "/var/lib/quicbaas/agents/claude"},
 	})
 	if err != nil {
 		t.Fatalf("run: %v", err)
@@ -1339,11 +1358,11 @@ func TestSpawn_EverySiteBindsAPooledAccount(t *testing.T) {
 func TestSpawn_UnpooledBackendSpawnsAsItWas(t *testing.T) {
 	t.Parallel()
 	svc := credentialGuarded(threeRoleService())
+	svc.lifecyclePolicy = JobLifecyclePolicy{AgentConfigDir: "/var/lib/quicbaas/agents/claude"}
 	config := newTestConfig()
 	config.LeadBackend = "ollama"
 	if _, err := runLaunch(t, jobLaunch{
 		Config: config, Agents: svc, Workflow: threeRoleWorkflow("ollama"),
-		Policy: &JobLifecyclePolicy{AgentConfigDir: "/var/lib/quicbaas/agents/claude"},
 	}); err != nil {
 		t.Fatalf("run: %v", err)
 	}

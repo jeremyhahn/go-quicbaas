@@ -82,10 +82,11 @@ type JobRunConfig struct {
 	// PersistFn, which reports nothing.
 	StoreFn func(status *JobStatus) error
 
-	Hooks      JobLifecycleHooks
-	HooksName  string
-	Policy     *JobLifecyclePolicy
-	Validators *ValidatorRegistry
+	// Hooks is the lifecycle hook set the envelope resolved for the job. The
+	// operator's lifecycle policy is not configured here: the run resolves
+	// it from Agents (JobLifecyclePolicyProvider), the daemon that owns it.
+	Hooks     JobLifecycleHooks
+	HooksName string
 }
 
 // JobRun is one running job: the envelope the engine owns, and the handle a
@@ -312,33 +313,31 @@ func newJobRun(cfg JobRunConfig) *JobRun {
 		leaseTTL = DefaultJobLeaseTTL
 	}
 	run := &JobRun{
-		JobID:             cfg.JobID,
-		TenantID:          tenantID,
-		Runner:            ResolveJobRunnerName(cfg.Runner),
-		Config:            config,
-		Task:              cfg.Task,
-		Project:           cfg.Project,
-		Workflow:          cfg.Workflow,
-		StartState:        cfg.StartState,
-		Resumed:           cfg.Resumed,
-		Prompts:           cfg.Prompts,
-		promptRefs:        cfg.Prompts.Refs(),
-		Agents:            cfg.Agents,
-		Logger:            cfg.Logger,
-		CostTracker:       cfg.CostTracker,
-		events:            make(chan JobEvent, defaultEventBufferSize),
-		leaseSettled:      make(chan struct{}),
-		persistFn:         cfg.PersistFn,
-		storeFn:           cfg.StoreFn,
-		auditFn:           cfg.AuditFn,
-		leases:            cfg.Leases,
-		node:              cfg.Node,
-		leaseTTL:          leaseTTL,
-		hooks:             cfg.Hooks,
-		hooksName:         cfg.HooksName,
-		policy:            cfg.Policy,
-		validatorRegistry: cfg.Validators,
-		memory:            NewJobMemory(),
+		JobID:        cfg.JobID,
+		TenantID:     tenantID,
+		Runner:       ResolveJobRunnerName(cfg.Runner),
+		Config:       config,
+		Task:         cfg.Task,
+		Project:      cfg.Project,
+		Workflow:     cfg.Workflow,
+		StartState:   cfg.StartState,
+		Resumed:      cfg.Resumed,
+		Prompts:      cfg.Prompts,
+		promptRefs:   cfg.Prompts.Refs(),
+		Agents:       cfg.Agents,
+		Logger:       cfg.Logger,
+		CostTracker:  cfg.CostTracker,
+		events:       make(chan JobEvent, defaultEventBufferSize),
+		leaseSettled: make(chan struct{}),
+		persistFn:    cfg.PersistFn,
+		storeFn:      cfg.StoreFn,
+		auditFn:      cfg.AuditFn,
+		leases:       cfg.Leases,
+		node:         cfg.Node,
+		leaseTTL:     leaseTTL,
+		hooks:        cfg.Hooks,
+		hooksName:    cfg.HooksName,
+		memory:       NewJobMemory(),
 	}
 	if run.hooksName == "" && run.hooks != nil {
 		run.hooksName = "explicit"
@@ -502,8 +501,8 @@ func (r *JobRun) verificationResults() []ValidationResult {
 	return append([]ValidationResult(nil), r.verification...)
 }
 
-// Validators is the registry criteria are judged through: the one a test
-// injected, or the engine's.
+// Validators is the registry criteria are judged through: the engine's,
+// unless a test set the run's own.
 func (r *JobRun) Validators() *ValidatorRegistry {
 	if r.validatorRegistry != nil {
 		return r.validatorRegistry
@@ -512,8 +511,9 @@ func (r *JobRun) Validators() *ValidatorRegistry {
 }
 
 // Policy is the operator's command allowlist and per-stage bounds, resolved
-// from the agent service on first use so a run built directly by a test
-// still has one.
+// from the agent service on first use — the only source — with every stage
+// bound the operator left unset at its default. A service that carries no
+// policy yields the zero policy: the everything-refusing guard.
 func (r *JobRun) Policy() *JobLifecyclePolicy {
 	if r.policy != nil {
 		return r.policy

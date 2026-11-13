@@ -76,6 +76,16 @@ type controlLoopMockService struct {
 
 	// SessionStatus behavior
 	sessionState SessionState
+
+	// lifecyclePolicy is the operator's policy the service carries, the way
+	// agentServiceImpl does (JobLifecyclePolicyProvider). The zero value is
+	// what a service carrying no policy resolves to.
+	lifecyclePolicy JobLifecyclePolicy
+}
+
+// JobLifecyclePolicy implements JobLifecyclePolicyProvider.
+func (m *controlLoopMockService) JobLifecyclePolicy() JobLifecyclePolicy {
+	return m.lifecyclePolicy
 }
 
 func (m *controlLoopMockService) DiscoverProjects(_ context.Context, _ *DiscoverProjectsRequest) (*DiscoverProjectsResponse, error) {
@@ -446,14 +456,14 @@ type jobLaunch struct {
 	Agents AgentService
 	Logger interfaces.Logger
 
-	// Workflow is the definition a workflow job runs. Hooks and Policy are
-	// what the envelope installs on the run: the hook set it resolved from
-	// the workflow, and the operator's policy. A launch that must prove the
+	// Workflow is the definition a workflow job runs. Hooks is what the
+	// envelope installs on the run: the hook set it resolved from the
+	// workflow. The operator's policy comes from Agents, as in production
+	// (controlLoopMockService.lifecyclePolicy). A launch that must prove the
 	// resolution itself goes through agentServiceImpl.launchJob, which is
 	// where production does it.
 	Workflow *WorkflowDefinition
 	Hooks    JobLifecycleHooks
-	Policy   *JobLifecyclePolicy
 
 	// Leases, Node and LeaseTTL give the run its lease store, the node it
 	// runs on and the lease TTL. A nil store leaves the job unleased.
@@ -520,7 +530,6 @@ func (l jobLaunch) newRun(t *testing.T) *JobRun {
 		Node:     l.Node,
 		LeaseTTL: l.LeaseTTL,
 		Hooks:    l.Hooks,
-		Policy:   l.Policy,
 	})
 
 	run.StartState = entryStateFor(workflowRunner{})
