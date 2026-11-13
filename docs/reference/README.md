@@ -43,6 +43,7 @@ Each copy is the published text as fetched, with one exception: line 757 of `mqt
 | [rfc6797.txt](rfc6797.txt) | HTTP Strict Transport Security (HSTS) | RFC 6797, November 2012 | `pkg/api/rest` (`middleware.go`) |
 | [rfc7617.txt](rfc7617.txt) | The 'Basic' HTTP Authentication Scheme | RFC 7617, September 2015 | `pkg/signalbridge` (`http_transport.go`) |
 | [rfc3986.txt](rfc3986.txt) | Uniform Resource Identifier (URI): Generic Syntax | RFC 3986, January 2005 | `pkg/api/rest` (`iam_dynamic_registration.go`, scheme syntax) |
+| [draft-ietf-webtrans-http3-16.txt](draft-ietf-webtrans-http3-16.txt) | WebTransport over HTTP/3 | Internet-Draft, **pinned at -16** (2026-07-06) | none yet: the server endpoint and the `sdk/typescript` QUIC client land under #1534 |
 
 ## Logging, naming and messaging
 
