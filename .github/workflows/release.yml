@@ -32,6 +32,7 @@ permissions:
 
 jobs:
   create-release:
+    timeout-minutes: 120
     name: Create Release
     runs-on: ubuntu-latest
     outputs:
@@ -146,6 +147,7 @@ jobs:
           generate_release_notes: false
 
   build-binaries:
+    timeout-minutes: 120
     name: Build Binaries (${{ matrix.platform }}, ${{ matrix.variant }})
     needs: create-release
     runs-on: ubuntu-latest
@@ -338,6 +340,7 @@ jobs:
             quicbaas-${{ needs.create-release.outputs.version }}-linux-${{ matrix.arch }}${{ matrix.variant == 'fips' && '-fips' || '' }}.sha256
 
   build-darwin-binaries:
+    timeout-minutes: 120
     name: Build Darwin Binaries (${{ matrix.arch }})
     needs: create-release
     runs-on: ubuntu-latest
@@ -420,6 +423,7 @@ jobs:
             quicbaas-${{ needs.create-release.outputs.version }}-darwin-${{ matrix.arch }}.sha256
 
   build-docker:
+    timeout-minutes: 120
     name: Build Docker Daemon Image
     needs: create-release
     runs-on: ubuntu-latest
@@ -530,6 +534,7 @@ jobs:
           cache-to: ${{ github.server_url == 'https://github.com' && 'type=gha,mode=max' || '' }}
 
   build-docker-cli:
+    timeout-minutes: 120
     name: Build Docker CLI Image
     needs: create-release
     runs-on: ubuntu-latest
@@ -630,6 +635,7 @@ jobs:
           cache-to: ${{ github.server_url == 'https://github.com' && 'type=gha,mode=max' || '' }}
 
   build-docker-fips:
+    timeout-minutes: 120
     name: Build Docker FIPS Image
     needs: create-release
     runs-on: ubuntu-latest
@@ -728,6 +734,7 @@ jobs:
           cache-to: ${{ github.server_url == 'https://github.com' && 'type=gha,mode=max' || '' }}
 
   create-checksums:
+    timeout-minutes: 120
     name: Create Master Checksums
     needs: [create-release, build-binaries, build-darwin-binaries]
     runs-on: ubuntu-latest
@@ -764,6 +771,7 @@ jobs:
           files: checksums.txt
 
   announce-release:
+    timeout-minutes: 120
     name: Announce Release
     needs: [create-release, build-binaries, build-darwin-binaries, build-docker, build-docker-cli, build-docker-fips, create-checksums]
     runs-on: ubuntu-latest
