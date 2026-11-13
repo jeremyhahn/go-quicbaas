@@ -6915,15 +6915,15 @@ func TestXKMSBackend_buildFullKeyID_AllAlgorithms(t *testing.T) {
 		algorithm   string
 		expected    string
 	}{
-		{config.BackendTypeSoftware, "my-key", "AES-128-GCM", "software:encryption:aes128-gcm:my-key"},
-		{config.BackendTypeSoftware, "my-key", "AES-192-GCM", "software:encryption:aes192-gcm:my-key"},
-		{config.BackendTypeSoftware, "my-key", "AES-256-GCM", "software:encryption:aes256-gcm:my-key"},
-		{config.BackendTypeSoftware, "my-key", "CHACHA20-POLY1305", "software:encryption:chacha20-poly1305:my-key"},
-		{config.BackendTypeSoftware, "my-key", "XCHACHA20-POLY1305", "software:encryption:xchacha20-poly1305:my-key"},
-		{config.BackendTypeTPM2, "tpm-key", "AES-256-GCM", "tpm2:encryption:aes256-gcm:tpm-key"},
-		{config.BackendTypePKCS11, "hsm-key", "AES-256-GCM", "pkcs11:encryption:aes256-gcm:hsm-key"},
+		{config.BackendTypeSoftware, "my-key", "AES-128-GCM", "software:secret:aes128-gcm:my-key"},
+		{config.BackendTypeSoftware, "my-key", "AES-192-GCM", "software:secret:aes192-gcm:my-key"},
+		{config.BackendTypeSoftware, "my-key", "AES-256-GCM", "software:secret:aes256-gcm:my-key"},
+		{config.BackendTypeSoftware, "my-key", "CHACHA20-POLY1305", "software:secret:chacha20-poly1305:my-key"},
+		{config.BackendTypeSoftware, "my-key", "XCHACHA20-POLY1305", "software:secret:xchacha20-poly1305:my-key"},
+		{config.BackendTypeTPM2, "tpm-key", "AES-256-GCM", "tpm2:secret:aes256-gcm:tpm-key"},
+		{config.BackendTypePKCS11, "hsm-key", "AES-256-GCM", "pkcs11:secret:aes256-gcm:hsm-key"},
 		// Unknown algorithm defaults to AES-256-GCM
-		{config.BackendTypeSoftware, "my-key", "UNKNOWN", "software:encryption:aes256-gcm:my-key"},
+		{config.BackendTypeSoftware, "my-key", "UNKNOWN", "software:secret:aes256-gcm:my-key"},
 	}
 
 	for _, tc := range testCases {

@@ -483,15 +483,23 @@ func (k *kmsServiceImpl) GenerateKey(ctx context.Context, req *GenerateKeyReques
 	}
 	attrs.CN = keyID
 
+	// go-xkms enforces exportability from its own key record, which it writes
+	// once, from these attributes, at generation; the quicbaas metadata below
+	// only mirrors it.
+	attrs.Exportable = req.Exportable
+
 	// Set default KeyType if not specified.
 	// This is required by go-xkms for key generation.
 	// When requests come via JSON (e.g., QUIC protocol), the KeyType may be
 	// the zero value if not explicitly set in the request.
 	var zeroKeyType kctypes.KeyType
 	if attrs.KeyType == zeroKeyType {
-		// Determine KeyType based on algorithm: symmetric = encryption, asymmetric = signing
+		// Determine KeyType based on algorithm: symmetric = secret, asymmetric = signing.
+		// go-xkms's symmetric provider lists only "secret" keys as symmetric,
+		// with their stored Exportable flag; it skips a symmetric key of any
+		// other type, so go-xkms could not export it.
 		if attrs.SymmetricAlgorithm != "" {
-			attrs.KeyType = kctypes.KeyTypeEncryption
+			attrs.KeyType = kctypes.KeyTypeSecret
 		} else {
 			attrs.KeyType = kctypes.KeyTypeSigning
 		}
