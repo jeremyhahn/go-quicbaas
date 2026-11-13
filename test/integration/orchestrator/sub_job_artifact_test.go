@@ -96,7 +96,7 @@ func TestSpawnChildJob_LeadCanSpawn(t *testing.T) {
 // TestSpawnChildJob_NonLeadRejected verifies that an agent that is not the
 // parent's lead is rejected with *NotLeadOfParentError.
 func TestSpawnChildJob_NonLeadRejected(t *testing.T) {
-	tenantID := newTenant(t, "tenant-spawn-noLead-")
+	tenantID := newTenant(t, "tenant-spawn-nolead-")
 	ctx := tenantCtx(tenantID)
 
 	leadAgent := registerOnlineAgent(t, ctx, tenantID, "lead-"+uniqueSuffix(), "ollama", nil)
