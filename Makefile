@@ -1628,6 +1628,39 @@ test-fips-shard: ## Run shard SHARD of SHARDS of the full unit suite under GODEB
 	printf "$(BLUE)FIPS shard $(SHARD) of $(SHARDS): %s packages$(NC)\n" "$$(printf '%s\n' "$$pkgs" | wc -l)"; \
 	$(FIPS_ONLY_ENV) $(GOTEST) -count=1 -timeout=$(FIPS_TIMEOUT) $$pkgs
 
+# FIPS_EXCLUDE is what test-fips-gate leaves out of FIPS_PKGS: the packages
+# that refuse under fips140=only on today's tree (#772, owner ruling #114).
+# One `FIPS_EXCLUDE +=` line per package, with its remediation issue in the
+# comment. RULES: the list may only SHRINK. Remove an entry when its fix
+# lands. Adding one means a change made a compliant package refuse, so fix
+# the change instead. test-fips-gate fails on an entry that names no package,
+# and test/buildgates checks that every entry cites an issue.
+FIPS_EXCLUDE :=
+FIPS_EXCLUDE += ./pkg/api/grpc            # test CSRs use RSA keys under 2048 bits (#527)
+FIPS_EXCLUDE += ./pkg/backup              # AES-GCM with arbitrary IVs (#527)
+FIPS_EXCLUDE += ./pkg/catalog             # AES-GCM with arbitrary IVs (#527)
+FIPS_EXCLUDE += ./pkg/iam                 # TOTP HMAC-SHA1 and its tests (#527)
+FIPS_EXCLUDE += ./pkg/sdlc                # webhook test HMAC keys under 112 bits; ed25519 keys from a non-crypto/rand reader (#527)
+FIPS_EXCLUDE += ./pkg/secrets             # AES-GCM with arbitrary IVs, ChaCha20-Poly1305 (#527)
+FIPS_EXCLUDE += ./pkg/security            # go-xkms aead.NewGCM with a caller-supplied IV (#527)
+FIPS_EXCLUDE += ./pkg/server              # AES-GCM with arbitrary IVs; test CSRs use RSA keys under 2048 bits (#527)
+FIPS_EXCLUDE += ./pkg/service             # AES-GCM with arbitrary IVs in batch crypto; test RSA keys under 2048 bits (#527)
+FIPS_EXCLUDE += ./pkg/signalbridge        # X25519 and SHA-1 (Signal primitives) (#527)
+FIPS_EXCLUDE += ./pkg/xkms                # X25519 ECDH-ES, HMAC keys under 112 bits (#527)
+
+.PHONY: test-fips-gate
+test-fips-gate: ## Run the scoped FIPS gate (ci.yml): FIPS_PKGS minus FIPS_EXCLUDE under GODEBUG=fips140=only
+	@excl=""; \
+	if [ -n "$(strip $(FIPS_EXCLUDE))" ]; then \
+		excl=$$(go list $(FIPS_EXCLUDE)) || { echo "$(RED)$@: a FIPS_EXCLUDE entry names no package; remove or fix it$(NC)"; exit 1; }; \
+	fi; \
+	$(call go_packages,$(FIPS_PKGS),/proto$$); \
+	if [ -n "$$excl" ]; then pkgs=$$(printf '%s\n' "$$pkgs" | grep -vxF -e "$$excl"); fi; \
+	if [ -z "$$pkgs" ]; then echo "$(RED)$@: FIPS_EXCLUDE leaves no package to test$(NC)"; exit 1; fi; \
+	$(call shard_packages,); \
+	printf "$(BLUE)FIPS gate shard $(SHARD) of $(SHARDS): %s packages, %s excluded$(NC)\n" "$$(printf '%s\n' "$$pkgs" | wc -l)" "$$(printf '%s' "$$excl" | grep -c .)"; \
+	$(FIPS_ONLY_ENV) $(GOTEST) -count=1 -timeout=$(FIPS_TIMEOUT) $$pkgs
+
 .PHONY: test-unit
 test-unit: test ## Alias for test (unit tests only)
 	@# This is now an alias for the test target which already excludes integration tests
