@@ -21,6 +21,7 @@ import (
 	"google.golang.org/grpc"
 
 	pb "github.com/jeremyhahn/go-quicbaas/api/proto"
+	batchclient "github.com/jeremyhahn/go-quicbaas/sdk/go/client/batch"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/errors"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/service"
 )
@@ -57,9 +58,17 @@ type kvMethodFunc func(h *kvHandler, ctx context.Context, client pb.QuicBaaSClie
 // batchMethods routes the quicbaas.Batch service's verbs, as the batch client
 // (sdk/go/client/batch) names them.
 var batchMethods = map[string]kvMethodFunc{
-	"Put":    (*kvHandler).handleBatchPut,
-	"Get":    (*kvHandler).handleBatchGet,
-	"Delete": (*kvHandler).handleBatchDelete,
+	"Put":     (*kvHandler).handleBatchPut,
+	"Get":     (*kvHandler).handleBatchGet,
+	"Delete":  (*kvHandler).handleBatchDelete,
+	"Execute": (*kvHandler).handleBatchExecute,
+}
+
+// batchExecuteOpTypes maps a batch client operation type to its protobuf
+// counterpart. A type missing from the map is rejected before the call.
+var batchExecuteOpTypes = map[batchclient.OpType]pb.BatchExecuteOpType{
+	batchclient.OpPut:    pb.BatchExecuteOpType_BATCH_EXECUTE_OP_TYPE_PUT,
+	batchclient.OpDelete: pb.BatchExecuteOpType_BATCH_EXECUTE_OP_TYPE_DELETE,
 }
 
 // handleRequest routes KV requests to the appropriate handler based on method name.
@@ -438,6 +447,43 @@ func (h *kvHandler) handleBatchDelete(ctx context.Context, client pb.QuicBaaSCli
 		Responses: sdkResponses,
 		Timestamp: pbResp.Timestamp,
 	}, nil
+}
+
+// handleBatchExecute applies a mixed list of puts and deletes atomically.
+func (h *kvHandler) handleBatchExecute(ctx context.Context, client pb.QuicBaaSClient, req interface{}) (interface{}, error) {
+	batchReq, ok := req.(*batchclient.BatchRequest)
+	if !ok || batchReq == nil {
+		return nil, errors.NewInvalidInput("kvHandler.handleBatchExecute", "invalid request type, expected *batch.BatchRequest")
+	}
+
+	// Convert batch client operations to protobuf operations.
+	pbOperations := make([]*pb.BatchExecuteOperation, len(batchReq.Operations))
+	for i, op := range batchReq.Operations {
+		opType, ok := batchExecuteOpTypes[op.Type]
+		if !ok {
+			return nil, errors.NewInvalidInput("kvHandler.handleBatchExecute", "type must be PUT or DELETE for all operations")
+		}
+		pbOperations[i] = &pb.BatchExecuteOperation{
+			Type:       opType,
+			EntityType: op.EntityType,
+			Key:        op.Key,
+			Value:      op.Value,
+		}
+	}
+
+	// Call gRPC.
+	pbResp, err := client.BatchExecute(ctx, &pb.BatchExecuteRequest{Operations: pbOperations})
+	if err != nil {
+		return nil, convertGRPCError(err, "kvHandler.handleBatchExecute")
+	}
+
+	// Convert protobuf results to batch client results.
+	results := make([]batchclient.BatchResult, len(pbResp.Results))
+	for i, r := range pbResp.Results {
+		results[i] = batchclient.BatchResult{Success: r.Succeeded}
+	}
+
+	return &batchclient.BatchResponse{Results: results}, nil
 }
 
 // handleTransaction handles Transaction requests.
