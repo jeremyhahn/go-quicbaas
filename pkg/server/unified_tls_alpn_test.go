@@ -32,9 +32,12 @@ import (
 
 	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 	qrdbrest "github.com/jeremyhahn/go-qrdb/sdk/go/transport/rest"
+	"github.com/quic-go/quic-go"
+	"github.com/quic-go/quic-go/http3"
 	"github.com/stretchr/testify/require"
 
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/transport"
+	sdkquic "github.com/jeremyhahn/go-quicbaas/sdk/go/transport/quic"
 	sdkrest "github.com/jeremyhahn/go-quicbaas/sdk/go/transport/rest"
 )
 
@@ -103,6 +106,59 @@ func TestUnifiedServerTLS_SDKRESTClientSpeaksTheNegotiatedProtocol(t *testing.T)
 	_, err = client.Request(ctx, "health", "Check", nil)
 	require.NoError(t, err, "the SDK REST client must read the server's response")
 	require.Equal(t, "HTTP/1.1", *lastProto.Load())
+}
+
+// The unified server's HTTP/3 listener takes the node's TLS configuration as
+// given, and that configuration advertises h2 and http/1.1 for the TCP side.
+// A QUIC client offers only "h3", so the handshake must negotiate h3 there
+// (it failed with CRYPTO_ERROR "tls: no application protocol").
+func TestUnifiedServerTLS_SDKQUICClientNegotiatesHTTP3(t *testing.T) {
+	t.Parallel()
+
+	cert, pool := newLoopbackTLSCert(t)
+
+	cfg := createFTConfig(t)
+	cfg.Security.TLSEnabled = true
+	cfg.Storage.DataDir = t.TempDir()
+	srv, err := NewServer(cfg)
+	require.NoError(t, err)
+	srv.opts.tlsCertificate = &cert
+	require.NoError(t, srv.issueTLSCertFromExternalCA())
+
+	pc, err := net.ListenPacket("udp", "127.0.0.1:0")
+	require.NoError(t, err)
+	ln, err := quic.ListenEarly(pc, srv.unifiedServerTLSConfig(), nil)
+	require.NoError(t, err)
+	h3 := &http3.Server{
+		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"status":"ok"}`))
+		}),
+	}
+	go func() { _ = h3.ServeListener(ln) }()
+	t.Cleanup(func() {
+		_ = h3.Close()
+		_ = ln.Close()
+		_ = pc.Close()
+	})
+
+	client, err := sdkquic.New(&transport.Config{
+		Address:   pc.LocalAddr().String(),
+		TLSConfig: &tls.Config{RootCAs: pool, MinVersion: tls.VersionTLS13},
+		Timeout:   10 * time.Second,
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = client.Close() })
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	_, err = client.Request(ctx, "health", "Check", nil)
+	require.NoError(t, err, "the SDK QUIC client must complete the HTTP/3 handshake")
+
+	// The TCP side keeps its ALPN: a client offering h2 still gets h2.
+	tcpCfg, err := srv.unifiedServerTLSConfig().GetConfigForClient(&tls.ClientHelloInfo{SupportedProtos: []string{"h2", "http/1.1"}})
+	require.NoError(t, err)
+	require.Equal(t, []string{"h2", "http/1.1"}, tcpCfg.NextProtos)
 }
 
 // newLoopbackTLSCert returns a self-signed server certificate for 127.0.0.1
