@@ -14,7 +14,9 @@
 package embedded
 
 import (
+	"bytes"
 	"context"
+	"io"
 	"testing"
 	"time"
 
@@ -385,6 +387,65 @@ func TestUnaryHandlers_ObjectStorageRegistered(t *testing.T) {
 		t.Run(method, func(t *testing.T) {
 			_, ok := unaryHandlers[method]
 			assert.True(t, ok, "handler not registered for %s", method)
+		})
+	}
+}
+
+func TestStreamHandlers_StreamGetObjectRegistered(t *testing.T) {
+	_, ok := streamHandlers["quicbaas.ObjectStorage/StreamGetObject"]
+	assert.True(t, ok, "handler not registered for quicbaas.ObjectStorage/StreamGetObject")
+}
+
+// readAllWithin runs io.ReadAll on r and fails the test if the stream does
+// not end before ctx does.
+func readAllWithin(ctx context.Context, t *testing.T, r io.Reader) ([]byte, error) {
+	t.Helper()
+	type result struct {
+		data []byte
+		err  error
+	}
+	done := make(chan result, 1)
+	go func() {
+		data, err := io.ReadAll(r)
+		done <- result{data: data, err: err}
+	}()
+	select {
+	case res := <-done:
+		return res.data, res.err
+	case <-ctx.Done():
+		t.Fatal("stream did not end before the context ended")
+		return nil, ctx.Err()
+	}
+}
+
+func TestStreamGetObject_ReadAllRoundTrip(t *testing.T) {
+	tests := []struct {
+		name    string
+		payload []byte
+	}{
+		{name: "above one chunk", payload: bytes.Repeat([]byte("quicbaas"), 64*1024/8+4321)},
+		{name: "empty object", payload: []byte{}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			objSvc := &mockObjectStorageService{
+				getObjectFunc: func(_ context.Context, req *service.GetObjectRequest) (*service.GetObjectResponse, error) {
+					return &service.GetObjectResponse{Key: req.Key, Value: tt.payload, Size: int64(len(tt.payload))}, nil
+				},
+			}
+			client := newObjectStorageStreamClient(t, objSvc)
+
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+
+			reader, err := client.StreamGetObject(ctx, &objclient.GetObjectRequest{Key: "docs/round-trip"})
+			require.NoError(t, err)
+			defer func() { require.NoError(t, reader.Close()) }()
+
+			got, err := readAllWithin(ctx, t, reader)
+			require.NoError(t, err)
+			require.True(t, bytes.Equal(tt.payload, got), "payload mismatch: want %d bytes, got %d", len(tt.payload), len(got))
 		})
 	}
 }

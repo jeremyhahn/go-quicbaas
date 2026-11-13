@@ -537,6 +537,7 @@ var streamHandlers = map[string]streamHandlerFunc{
 	"quicbaas.Query/Query":                     handleQueryStream,
 	"quicbaas.Query/ScanIndex":                 handleScanIndexStream,
 	"quicbaas.TimeSeries/Query":                handleTimeSeriesQueryStream,
+	"quicbaas.ObjectStorage/StreamGetObject":   handleObjStreamGetObject,
 	"quicbaas.Orchestrator/SubscribeJobEvents": handleSubscribeJobEventsStream,
 	"quicbaas.Orchestrator/InferenceStream":    handleOrchestratorInferenceStream,
 	registryService + "/Watch":                 handleRegistryWatchStream,
