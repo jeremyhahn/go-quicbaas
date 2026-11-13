@@ -293,177 +293,6 @@ func TestDetectFromFilename(t *testing.T) {
 	}
 }
 
-func TestDetectFromContent_Go(t *testing.T) {
-	detector := NewDetector()
-	content := []byte(`package main
-
-import "fmt"
-
-func main() {
-	fmt.Println("Hello, World!")
-}`)
-
-	lang, confidence, err := detector.DetectFromContent(content)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if lang != LanguageGo {
-		t.Errorf("got language %v, want %v", lang, LanguageGo)
-	}
-	if confidence < 0.7 {
-		t.Errorf("confidence %v too low, want >= 0.7", confidence)
-	}
-}
-
-func TestDetectFromContent_Python(t *testing.T) {
-	detector := NewDetector()
-	content := []byte(`def hello():
-    print("Hello, World!")
-
-class MyClass:
-    def __init__(self):
-        pass`)
-
-	lang, confidence, err := detector.DetectFromContent(content)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if lang != LanguagePython {
-		t.Errorf("got language %v, want %v", lang, LanguagePython)
-	}
-	if confidence < 0.7 {
-		t.Errorf("confidence %v too low, want >= 0.7", confidence)
-	}
-}
-
-func TestDetectFromContent_JavaScript(t *testing.T) {
-	detector := NewDetector()
-	content := []byte(`const express = require('express');
-const app = express();
-
-function handler() {
-    console.log("Hello");
-}
-
-async function fetchData() {
-    await fetch('/api');
-}`)
-
-	lang, confidence, err := detector.DetectFromContent(content)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if lang != LanguageJavaScript {
-		t.Errorf("got language %v, want %v", lang, LanguageJavaScript)
-	}
-	if confidence < 0.7 {
-		t.Errorf("confidence %v too low, want >= 0.7", confidence)
-	}
-}
-
-func TestDetectFromContent_Rust(t *testing.T) {
-	detector := NewDetector()
-	content := []byte(`fn main() {
-    let mut x = 5;
-    println!("Value: {}", x);
-}
-
-impl MyTrait for MyStruct {
-    fn method(&mut self) -> Result<(), Error> {
-        match self.value {
-            Some(v) => Ok(()),
-            None => Err(Error),
-        }
-    }
-}`)
-
-	lang, confidence, err := detector.DetectFromContent(content)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if lang != LanguageRust {
-		t.Errorf("got language %v, want %v", lang, LanguageRust)
-	}
-	if confidence < 0.7 {
-		t.Errorf("confidence %v too low, want >= 0.7", confidence)
-	}
-}
-
-func TestDetectFromContent_SQL(t *testing.T) {
-	detector := NewDetector()
-	content := []byte(`SELECT users.name, orders.total
-FROM users
-JOIN orders ON users.id = orders.user_id
-WHERE orders.status = 'completed'
-ORDER BY orders.created_at DESC;
-
-INSERT INTO users (name, email) VALUES ('John', 'john@example.com');
-UPDATE users SET status = 'active' WHERE id = 1;`)
-
-	lang, confidence, err := detector.DetectFromContent(content)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if lang != LanguageSQL {
-		t.Errorf("got language %v, want %v", lang, LanguageSQL)
-	}
-	if confidence < 0.7 {
-		t.Errorf("confidence %v too low, want >= 0.7", confidence)
-	}
-}
-
-func TestDetectFromContent_EmptyContent(t *testing.T) {
-	detector := NewDetector()
-	content := []byte{}
-
-	lang, confidence, err := detector.DetectFromContent(content)
-	if err != ErrEmptyContent {
-		t.Errorf("expected ErrEmptyContent, got %v", err)
-	}
-	if lang != LanguageUnknown {
-		t.Errorf("got language %v, want LanguageUnknown", lang)
-	}
-	if confidence != 0.0 {
-		t.Errorf("got confidence %v, want 0.0", confidence)
-	}
-}
-
-func TestDetectFromContent_UnknownLanguage(t *testing.T) {
-	detector := NewDetector()
-	content := []byte("This is just some plain text without any code patterns.")
-
-	lang, confidence, err := detector.DetectFromContent(content)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if lang != LanguageUnknown {
-		t.Errorf("got language %v, want LanguageUnknown", lang)
-	}
-	if confidence != 0.0 {
-		t.Errorf("got confidence %v, want 0.0", confidence)
-	}
-}
-
-func TestDetectFromContent_BinaryData(t *testing.T) {
-	detector := NewDetector()
-	// Create binary content with null bytes
-	content := make([]byte, 100)
-	for i := 0; i < 50; i++ {
-		content[i] = 0 // Null bytes
-	}
-
-	lang, confidence, err := detector.DetectFromContent(content)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if lang != LanguageUnknown {
-		t.Errorf("got language %v, want LanguageUnknown", lang)
-	}
-	if confidence != 0.0 {
-		t.Errorf("got confidence %v, want 0.0", confidence)
-	}
-}
-
 func TestDetectShebang(t *testing.T) {
 	detector := NewDetector().(*detector)
 
@@ -473,60 +302,31 @@ func TestDetectShebang(t *testing.T) {
 		want    Language
 		wantOk  bool
 	}{
-		{
-			name:    "Python shebang",
-			content: []byte("#!/usr/bin/env python3\nprint('hello')"),
-			want:    LanguagePython,
-			wantOk:  true,
-		},
-		{
-			name:    "Python2 shebang",
-			content: []byte("#!/usr/bin/python2\nprint 'hello'"),
-			want:    LanguagePython,
-			wantOk:  true,
-		},
-		{
-			name:    "Bash shebang",
-			content: []byte("#!/bin/bash\necho hello"),
-			want:    LanguageBash,
-			wantOk:  true,
-		},
-		{
-			name:    "Shell shebang",
-			content: []byte("#!/bin/sh\necho hello"),
-			want:    LanguageShell,
-			wantOk:  true,
-		},
-		{
-			name:    "Node.js shebang",
-			content: []byte("#!/usr/bin/env node\nconsole.log('hello')"),
-			want:    LanguageJavaScript,
-			wantOk:  true,
-		},
-		{
-			name:    "Ruby shebang",
-			content: []byte("#!/usr/bin/env ruby\nputs 'hello'"),
-			want:    LanguageRuby,
-			wantOk:  true,
-		},
-		{
-			name:    "No shebang",
-			content: []byte("package main\nfunc main() {}"),
-			want:    LanguageUnknown,
-			wantOk:  false,
-		},
-		{
-			name:    "Empty content",
-			content: []byte{},
-			want:    LanguageUnknown,
-			wantOk:  false,
-		},
-		{
-			name:    "Comment not shebang",
-			content: []byte("# This is a comment\nprint('hello')"),
-			want:    LanguageUnknown,
-			wantOk:  false,
-		},
+		{"Python env", []byte("#!/usr/bin/env python3\nprint('hello')"), LanguagePython, true},
+		{"Python2 direct path", []byte("#!/usr/bin/python2\nprint 'hello'"), LanguagePython, true},
+		{"Python no newline", []byte("#!/usr/bin/python3"), LanguagePython, true},
+		{"Bash", []byte("#!/bin/bash\necho hello"), LanguageBash, true},
+		{"Bash env", []byte("#!/usr/bin/env bash\necho test"), LanguageBash, true},
+		{"Bash local path", []byte("#!/usr/local/bin/bash\necho test"), LanguageBash, true},
+		{"Bash uppercase", []byte("#!/bin/BASH\necho test"), LanguageBash, true},
+		{"Bash without path", []byte("#!bash\necho test"), LanguageBash, true},
+		{"Bash no newline", []byte("#!/bin/bash"), LanguageBash, true},
+		{"Shell", []byte("#!/bin/sh\necho hello"), LanguageShell, true},
+		{"Shell no newline", []byte("#!/bin/sh"), LanguageShell, true},
+		{"Zsh", []byte("#!/bin/zsh\necho test"), LanguageShell, true},
+		{"Ksh", []byte("#!/bin/ksh\necho test"), LanguageShell, true},
+		{"Node env", []byte("#!/usr/bin/env node\nconsole.log('hello')"), LanguageJavaScript, true},
+		{"Node no newline", []byte("#!/usr/bin/env node"), LanguageJavaScript, true},
+		{"Nodejs", []byte("#!/usr/bin/nodejs\nconsole.log('test')"), LanguageJavaScript, true},
+		{"Ruby env", []byte("#!/usr/bin/env ruby\nputs 'hello'"), LanguageRuby, true},
+		{"PHP", []byte("#!/usr/bin/php\n<?php echo 'test'; ?>"), LanguagePHP, true},
+		{"Unknown interpreter", []byte("#!/usr/bin/unknownlang\ncode here"), LanguageUnknown, false},
+		{"Custom interpreter", []byte("#!/custom/path/interpreter\ncode here"), LanguageUnknown, false},
+		{"No shebang", []byte("package main\nfunc main() {}"), LanguageUnknown, false},
+		{"Comment not shebang", []byte("# This is a comment\nprint('hello')"), LanguageUnknown, false},
+		{"Empty content", []byte{}, LanguageUnknown, false},
+		{"Single hash", []byte("#"), LanguageUnknown, false},
+		{"Single non-hash byte", []byte("x"), LanguageUnknown, false},
 	}
 
 	for _, tt := range tests {
@@ -552,49 +352,27 @@ func TestDetect_CombinedStrategy(t *testing.T) {
 		wantLang          Language
 		wantMinConfidence float64
 		wantMaxConfidence float64
+		wantErr           error
 	}{
-		{
-			name:              "Extension match - highest confidence",
-			content:           []byte("some content"),
-			filename:          "main.go",
-			wantLang:          LanguageGo,
-			wantMinConfidence: 1.0,
-			wantMaxConfidence: 1.0,
-		},
-		{
-			name:              "Shebang match - high confidence",
-			content:           []byte("#!/usr/bin/env python3\nprint('hello')"),
-			filename:          "script",
-			wantLang:          LanguagePython,
-			wantMinConfidence: 0.95,
-			wantMaxConfidence: 0.95,
-		},
-		{
-			name: "Content analysis - medium confidence",
-			content: []byte(`package main
-func main() {
-	println("hello")
-}`),
-			filename:          "file",
-			wantLang:          LanguageGo,
-			wantMinConfidence: 0.7,
-			wantMaxConfidence: 0.95,
-		},
-		{
-			name:              "Extension overrides content",
-			content:           []byte("print('python code')"),
-			filename:          "script.js",
-			wantLang:          LanguageJavaScript,
-			wantMinConfidence: 1.0,
-			wantMaxConfidence: 1.0,
-		},
+		{"Extension match - highest confidence", []byte("some content"), "main.go", LanguageGo, 1.0, 1.0, nil},
+		{"Extension overrides content", []byte("print('python code')"), "script.js", LanguageJavaScript, 1.0, 1.0, nil},
+		{"Extension without content", nil, "script.py", LanguagePython, 1.0, 1.0, nil},
+		{"Shebang match - high confidence", []byte("#!/usr/bin/env python3\nprint('hello')"), "script", LanguagePython, 0.95, 0.95, nil},
+		{"Bash shebang with unknown extension", []byte("#!/bin/bash\necho hello"), "install", LanguageBash, 0.95, 0.95, nil},
+		{"Shell shebang without filename", []byte("#!/bin/sh\necho test"), "", LanguageShell, 0.95, 0.95, nil},
+		{"Content analysis - Go", []byte("package main\nfunc main() {\n\tprintln(\"hello\")\n}"), "file", LanguageGo, 0.7, 0.95, nil},
+		{"Content analysis - Go without filename", []byte("package main\nfunc main() {}"), "", LanguageGo, 0.7, 0.95, nil},
+		{"Content analysis - Python", []byte("def hello():\n    print(\"Hello, World!\")\n\nclass MyClass:\n    def __init__(self):\n        pass"), "script", LanguagePython, 0.7, 0.95, nil},
+		{"No content and unknown extension", nil, "file.unknown", LanguageUnknown, 0.0, 0.0, nil},
+		{"Empty content and unknown extension", []byte{}, "file.txt", LanguageUnknown, 0.0, 0.0, nil},
+		{"No content and no filename", []byte{}, "", LanguageUnknown, 0.0, 0.0, ErrInvalidInput},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			lang, confidence, err := detector.Detect(tt.content, tt.filename)
-			if err != nil {
-				t.Fatalf("unexpected error: %v", err)
+			if err != tt.wantErr {
+				t.Fatalf("Detect() error = %v, want %v", err, tt.wantErr)
 			}
 			if lang != tt.wantLang {
 				t.Errorf("Detect() language = %v, want %v", lang, tt.wantLang)
@@ -604,53 +382,6 @@ func main() {
 					confidence, tt.wantMinConfidence, tt.wantMaxConfidence)
 			}
 		})
-	}
-}
-
-func TestDetect_InvalidInput(t *testing.T) {
-	detector := NewDetector()
-
-	lang, confidence, err := detector.Detect([]byte{}, "")
-	if err != ErrInvalidInput {
-		t.Errorf("expected ErrInvalidInput, got %v", err)
-	}
-	if lang != LanguageUnknown {
-		t.Errorf("got language %v, want LanguageUnknown", lang)
-	}
-	if confidence != 0.0 {
-		t.Errorf("got confidence %v, want 0.0", confidence)
-	}
-}
-
-func TestDetect_OnlyFilename(t *testing.T) {
-	detector := NewDetector()
-
-	lang, confidence, err := detector.Detect(nil, "script.py")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if lang != LanguagePython {
-		t.Errorf("got language %v, want LanguagePython", lang)
-	}
-	if confidence != 1.0 {
-		t.Errorf("got confidence %v, want 1.0", confidence)
-	}
-}
-
-func TestDetect_OnlyContent(t *testing.T) {
-	detector := NewDetector()
-	content := []byte(`package main
-func main() {}`)
-
-	lang, confidence, err := detector.Detect(content, "")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if lang != LanguageGo {
-		t.Errorf("got language %v, want LanguageGo", lang)
-	}
-	if confidence < 0.7 {
-		t.Errorf("confidence %v too low, want >= 0.7", confidence)
 	}
 }
 
@@ -710,38 +441,50 @@ func TestIsBinary(t *testing.T) {
 func TestDetectFromContent_AllLanguages(t *testing.T) {
 	detector := NewDetector()
 
+	// Content with null bytes is treated as binary.
+	binary := make([]byte, 100)
+
 	tests := []struct {
+		name    string
 		lang    Language
 		content string
+		wantErr error
 	}{
-		{LanguageGo, "package main\nimport \"fmt\"\nfunc main() { fmt.Println() }"},
-		{LanguagePython, "def main():\n    import sys\n    class MyClass:\n        pass"},
-		{LanguageJavaScript, "const x = 5;\nfunction test() {}\nconsole.log(x);"},
-		{LanguageTypeScript, "interface User { name: string; age: number; }\ntype ID = string;"},
-		{LanguageJava, "public class Main {\n    private static void main(String[] args) {}\n}"},
-		{LanguageRust, "fn main() {\n    let mut x = 5;\n    impl Trait for Struct {}\n}"},
-		{LanguageC, "#include <stdio.h>\nint main() {\n    printf(\"hello\");\n    return 0;\n}"},
-		{LanguageCPP, "#include <iostream>\nusing namespace std;\nclass Test {};\nint main() {}"},
-		{LanguageRuby, "def hello\n  puts 'hi'\nend\nclass MyClass\n  attr_accessor :name\nend"},
-		{LanguagePHP, "<?php\nfunction test() {\n    echo $_GET['id'];\n}\n?>"},
-		{LanguageMarkdown, "# Heading\n## Subheading\n```code```\n[link](url)\n**bold**"},
-		{LanguageHTML, "<!DOCTYPE html>\n<html>\n<head></head>\n<body><div></div></body>\n</html>"},
-		{LanguageJSON, `{"key": "value", "array": [1, 2, 3], "bool": true, "null": null}`},
-		{LanguageYAML, "---\nkey: value\nlist:\n  - item1\n  - item2\n..."},
-		{LanguageSQL, "SELECT * FROM users WHERE id = 1;\nINSERT INTO users VALUES ('test');\nUPDATE users SET status = 'active';"},
-		{LanguageBash, "#!/bin/bash\necho 'test'\nif [ -f file ]; then\n  echo 'exists'\nfi"},
+		{"Go", LanguageGo, "package main\nimport \"fmt\"\nfunc main() { fmt.Println() }", nil},
+		{"Python", LanguagePython, "def main():\n    import sys\n    class MyClass:\n        pass", nil},
+		{"JavaScript", LanguageJavaScript, "const x = 5;\nfunction test() {}\nconsole.log(x);", nil},
+		{"TypeScript", LanguageTypeScript, "interface User { name: string; age: number; }\ntype ID = string;", nil},
+		{"Java", LanguageJava, "public class Main {\n    private static void main(String[] args) {}\n}", nil},
+		{"Rust", LanguageRust, "fn main() {\n    let mut x = 5;\n    impl Trait for Struct {}\n}", nil},
+		{"C", LanguageC, "#include <stdio.h>\nint main() {\n    printf(\"hello\");\n    return 0;\n}", nil},
+		{"CPP", LanguageCPP, "#include <iostream>\nusing namespace std;\nclass Test {};\nint main() {}", nil},
+		{"Ruby", LanguageRuby, "def hello\n  puts 'hi'\nend\nclass MyClass\n  attr_accessor :name\nend", nil},
+		{"PHP", LanguagePHP, "<?php\nfunction test() {\n    echo $_GET['id'];\n}\n?>", nil},
+		{"Markdown", LanguageMarkdown, "# Heading\n## Subheading\n```code```\n[link](url)\n**bold**", nil},
+		{"HTML", LanguageHTML, "<!DOCTYPE html>\n<html>\n<head></head>\n<body><div></div></body>\n</html>", nil},
+		{"JSON", LanguageJSON, `{"key": "value", "array": [1, 2, 3], "bool": true, "null": null}`, nil},
+		{"YAML", LanguageYAML, "---\nkey: value\nlist:\n  - item1\n  - item2\n...", nil},
+		{"SQL", LanguageSQL, "SELECT * FROM users WHERE id = 1;\nINSERT INTO users VALUES ('test');\nUPDATE users SET status = 'active';", nil},
+		{"Bash", LanguageBash, "#!/bin/bash\necho 'test'\nif [ -f file ]; then\n  echo 'exists'\nfi", nil},
+		{"Empty", LanguageUnknown, "", ErrEmptyContent},
+		{"PlainText", LanguageUnknown, "This is just some plain text without any code patterns.", nil},
+		{"Binary", LanguageUnknown, string(binary), nil},
 	}
 
 	for _, tt := range tests {
-		t.Run(tt.lang.String(), func(t *testing.T) {
+		t.Run(tt.name, func(t *testing.T) {
 			lang, confidence, err := detector.DetectFromContent([]byte(tt.content))
-			if err != nil {
-				t.Fatalf("unexpected error: %v", err)
+			if err != tt.wantErr {
+				t.Fatalf("DetectFromContent() error = %v, want %v", err, tt.wantErr)
 			}
 			if lang != tt.lang {
 				t.Errorf("DetectFromContent() = %v, want %v", lang, tt.lang)
 			}
-			if confidence < 0.7 {
+			if tt.lang == LanguageUnknown {
+				if confidence != 0.0 {
+					t.Errorf("confidence = %v, want 0.0", confidence)
+				}
+			} else if confidence < 0.7 {
 				t.Errorf("confidence %v too low for %v", confidence, tt.lang)
 			}
 		})
@@ -796,376 +539,5 @@ func main() {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		detector.Detect(content, filename)
-	}
-}
-
-func TestDetect_NoContentWithUnknownExtension(t *testing.T) {
-	detector := NewDetector()
-
-	lang, confidence, err := detector.Detect(nil, "file.unknown")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if lang != LanguageUnknown {
-		t.Errorf("got language %v, want LanguageUnknown", lang)
-	}
-	if confidence != 0.0 {
-		t.Errorf("got confidence %v, want 0.0", confidence)
-	}
-}
-
-// TestDetect_EmptyContentWithUnknownExtension tests the path where:
-// - filename is provided but has unknown extension
-// - empty content is provided
-// This covers the path to line 73 (no content and no recognized extension)
-func TestDetect_EmptyContentWithUnknownExtension(t *testing.T) {
-	detector := NewDetector()
-
-	lang, confidence, err := detector.Detect([]byte{}, "file.txt")
-	if err != nil {
-		t.Errorf("unexpected error: %v", err)
-	}
-	if lang != LanguageUnknown {
-		t.Errorf("got language %v, want LanguageUnknown", lang)
-	}
-	if confidence != 0.0 {
-		t.Errorf("got confidence %v, want 0.0", confidence)
-	}
-}
-
-// TestDetectShebang_ShortContent tests shebang detection with content < 2 bytes
-// This covers line 199 in detectShebang function
-func TestDetectShebang_ShortContent(t *testing.T) {
-	detector := NewDetector().(*detector)
-
-	tests := []struct {
-		name    string
-		content []byte
-		want    Language
-		wantOk  bool
-	}{
-		{
-			name:    "Single byte",
-			content: []byte("#"),
-			want:    LanguageUnknown,
-			wantOk:  false,
-		},
-		{
-			name:    "Single character non-shebang",
-			content: []byte("x"),
-			want:    LanguageUnknown,
-			wantOk:  false,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got, gotOk := detector.detectShebang(tt.content)
-			if got != tt.want {
-				t.Errorf("detectShebang() language = %v, want %v", got, tt.want)
-			}
-			if gotOk != tt.wantOk {
-				t.Errorf("detectShebang() ok = %v, want %v", gotOk, tt.wantOk)
-			}
-		})
-	}
-}
-
-// TestDetectShebang_BashVariations tests various bash shebang formats
-// This ensures the bash-specific check on line 212 is fully covered
-func TestDetectShebang_BashVariations(t *testing.T) {
-	detector := NewDetector().(*detector)
-
-	tests := []struct {
-		name    string
-		content []byte
-		want    Language
-		wantOk  bool
-	}{
-		{
-			name:    "Bash with env",
-			content: []byte("#!/usr/bin/env bash\necho test"),
-			want:    LanguageBash,
-			wantOk:  true,
-		},
-		{
-			name:    "Bash direct path",
-			content: []byte("#!/usr/local/bin/bash\necho test"),
-			want:    LanguageBash,
-			wantOk:  true,
-		},
-		{
-			name:    "Bash uppercase",
-			content: []byte("#!/bin/BASH\necho test"),
-			want:    LanguageBash,
-			wantOk:  true,
-		},
-		{
-			name:    "Just bash",
-			content: []byte("#!bash\necho test"),
-			want:    LanguageBash,
-			wantOk:  true,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got, gotOk := detector.detectShebang(tt.content)
-			if got != tt.want {
-				t.Errorf("detectShebang() language = %v, want %v", got, tt.want)
-			}
-			if gotOk != tt.wantOk {
-				t.Errorf("detectShebang() ok = %v, want %v", gotOk, tt.wantOk)
-			}
-		})
-	}
-}
-
-// TestDetectShebang_NoNewline tests shebang without newline
-// This covers the case where idx == -1 on line 205
-func TestDetectShebang_NoNewline(t *testing.T) {
-	detector := NewDetector().(*detector)
-
-	tests := []struct {
-		name    string
-		content []byte
-		want    Language
-		wantOk  bool
-	}{
-		{
-			name:    "Python shebang no newline",
-			content: []byte("#!/usr/bin/python3"),
-			want:    LanguagePython,
-			wantOk:  true,
-		},
-		{
-			name:    "Bash shebang no newline",
-			content: []byte("#!/bin/bash"),
-			want:    LanguageBash,
-			wantOk:  true,
-		},
-		{
-			name:    "Shell shebang no newline",
-			content: []byte("#!/bin/sh"),
-			want:    LanguageShell,
-			wantOk:  true,
-		},
-		{
-			name:    "Node shebang no newline",
-			content: []byte("#!/usr/bin/env node"),
-			want:    LanguageJavaScript,
-			wantOk:  true,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got, gotOk := detector.detectShebang(tt.content)
-			if got != tt.want {
-				t.Errorf("detectShebang() language = %v, want %v", got, tt.want)
-			}
-			if gotOk != tt.wantOk {
-				t.Errorf("detectShebang() ok = %v, want %v", gotOk, tt.wantOk)
-			}
-		})
-	}
-}
-
-// TestDetectShebang_NonBashFromMap tests shebangs that match the map but not bash
-// This covers line 217-220 where other shebangs are checked
-func TestDetectShebang_NonBashFromMap(t *testing.T) {
-	detector := NewDetector().(*detector)
-
-	tests := []struct {
-		name    string
-		content []byte
-		want    Language
-		wantOk  bool
-	}{
-		{
-			name:    "Zsh shebang",
-			content: []byte("#!/bin/zsh\necho test"),
-			want:    LanguageShell,
-			wantOk:  true,
-		},
-		{
-			name:    "Ksh shebang",
-			content: []byte("#!/bin/ksh\necho test"),
-			want:    LanguageShell,
-			wantOk:  true,
-		},
-		{
-			name:    "Ruby env shebang",
-			content: []byte("#!/usr/bin/env ruby\nputs 'hi'"),
-			want:    LanguageRuby,
-			wantOk:  true,
-		},
-		{
-			name:    "PHP shebang",
-			content: []byte("#!/usr/bin/php\n<?php echo 'test'; ?>"),
-			want:    LanguagePHP,
-			wantOk:  true,
-		},
-		{
-			name:    "Node.js shebang",
-			content: []byte("#!/usr/bin/nodejs\nconsole.log('test')"),
-			want:    LanguageJavaScript,
-			wantOk:  true,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got, gotOk := detector.detectShebang(tt.content)
-			if got != tt.want {
-				t.Errorf("detectShebang() language = %v, want %v", got, tt.want)
-			}
-			if gotOk != tt.wantOk {
-				t.Errorf("detectShebang() ok = %v, want %v", gotOk, tt.wantOk)
-			}
-		})
-	}
-}
-
-// TestDetectShebang_UnknownShebang tests shebang that doesn't match any known patterns
-// This covers line 223 where LanguageUnknown is returned
-func TestDetectShebang_UnknownShebang(t *testing.T) {
-	detector := NewDetector().(*detector)
-
-	tests := []struct {
-		name    string
-		content []byte
-	}{
-		{
-			name:    "Unknown interpreter",
-			content: []byte("#!/usr/bin/unknownlang\ncode here"),
-		},
-		{
-			name:    "Custom shebang",
-			content: []byte("#!/custom/path/interpreter\ncode here"),
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got, gotOk := detector.detectShebang(tt.content)
-			if got != LanguageUnknown {
-				t.Errorf("detectShebang() language = %v, want LanguageUnknown", got)
-			}
-			if gotOk != false {
-				t.Errorf("detectShebang() ok = %v, want false", gotOk)
-			}
-		})
-	}
-}
-
-// TestDetect_ShebangPathWithContent tests the shebang detection path within Detect
-// This ensures lines 64-66 are covered (shebang detection in Detect function)
-func TestDetect_ShebangPathWithContent(t *testing.T) {
-	detector := NewDetector()
-
-	tests := []struct {
-		name              string
-		content           []byte
-		filename          string
-		wantLang          Language
-		wantMinConfidence float64
-		wantMaxConfidence float64
-	}{
-		{
-			name:              "Python shebang with unknown extension",
-			content:           []byte("#!/usr/bin/env python3\ndef main():\n    pass"),
-			filename:          "script",
-			wantLang:          LanguagePython,
-			wantMinConfidence: 0.95,
-			wantMaxConfidence: 0.95,
-		},
-		{
-			name:              "Bash shebang with unknown extension",
-			content:           []byte("#!/bin/bash\necho hello"),
-			filename:          "install",
-			wantLang:          LanguageBash,
-			wantMinConfidence: 0.95,
-			wantMaxConfidence: 0.95,
-		},
-		{
-			name:              "Shell shebang no filename",
-			content:           []byte("#!/bin/sh\necho test"),
-			filename:          "",
-			wantLang:          LanguageShell,
-			wantMinConfidence: 0.95,
-			wantMaxConfidence: 0.95,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			lang, confidence, err := detector.Detect(tt.content, tt.filename)
-			if err != nil {
-				t.Fatalf("unexpected error: %v", err)
-			}
-			if lang != tt.wantLang {
-				t.Errorf("Detect() language = %v, want %v", lang, tt.wantLang)
-			}
-			if confidence < tt.wantMinConfidence || confidence > tt.wantMaxConfidence {
-				t.Errorf("Detect() confidence = %v, want between %v and %v",
-					confidence, tt.wantMinConfidence, tt.wantMaxConfidence)
-			}
-		})
-	}
-}
-
-// TestDetect_ContentAnalysisPath tests falling through to content analysis
-// This ensures line 69 is covered
-func TestDetect_ContentAnalysisPath(t *testing.T) {
-	detector := NewDetector()
-
-	tests := []struct {
-		name              string
-		content           []byte
-		filename          string
-		wantLang          Language
-		wantMinConfidence float64
-	}{
-		{
-			name: "Go code without extension or shebang",
-			content: []byte(`package main
-
-import "fmt"
-
-func main() {
-	fmt.Println("Hello")
-}`),
-			filename:          "noext",
-			wantLang:          LanguageGo,
-			wantMinConfidence: 0.7,
-		},
-		{
-			name: "Python code without extension or shebang",
-			content: []byte(`def hello():
-    print("Hello, World!")
-
-class MyClass:
-    def __init__(self):
-        pass`),
-			filename:          "script",
-			wantLang:          LanguagePython,
-			wantMinConfidence: 0.7,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			lang, confidence, err := detector.Detect(tt.content, tt.filename)
-			if err != nil {
-				t.Fatalf("unexpected error: %v", err)
-			}
-			if lang != tt.wantLang {
-				t.Errorf("Detect() language = %v, want %v", lang, tt.wantLang)
-			}
-			if confidence < tt.wantMinConfidence {
-				t.Errorf("Detect() confidence = %v, want >= %v", confidence, tt.wantMinConfidence)
-			}
-		})
 	}
 }
