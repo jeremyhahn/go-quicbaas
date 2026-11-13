@@ -75,8 +75,21 @@
 // this module's derived set, because kms.proto also declares
 // SecretsManagement (module_grants.go reads options per proto file).
 //
-// Crypto, CertificateService, TrustService, AttestationService, and
-// PIVService are DELIBERATELY NOT registered here
+// Crypto and AttestationService ARE registered here as well, built as the
+// legacy transport builds them (Crypto nil-gated on Crypto() with
+// NewCryptoServer; AttestationService on the shared facade, ungated, as
+// registerAttestationService does). The quicbaas CLI's gRPC client
+// (pkg/api/grpc client_crypto.go, the attestation verifier commands) drives
+// quicbaas.kms.v1.Crypto and quicbaas.attestation.v1.AttestationService,
+// names go-xkms does not register, so without them the node's TCP gRPC
+// listener answers Unimplemented "unknown service". Every RPC of both carries
+// a (qrdb.v1.permission) option (api/proto/kms.proto, attestation.proto) and
+// passes through the same unified-server authz chain; the attestation:*
+// permissions keep the scope, duty and role placement pkg/permission declares
+// for them (server.NewServer registers those before this module is built).
+//
+// CertificateService, TrustService, and PIVService are DELIBERATELY NOT
+// registered here
 // (Phase 3 of the login-plane plan, corrective to the prior design): they
 // were quicbaas.v1 wrappers over the SAME composed go-xkms library
 // (xkms.Get(), see pkg/server/qrdb_node.go's xkmsModule composition) that
