@@ -36,6 +36,7 @@
   import type { Column } from '../../lib/dataTable.ts';
   import EmptyState from '../../components/core/EmptyState.svelte';
   import { formatDateTime } from '../../lib/time.ts';
+  import { downloadText } from '../../lib/download.ts';
   import type {
     CAInfoResponse,
     CertificateSummary,
@@ -60,18 +61,6 @@
   // ---------------------------------------------------------------------------
   // Shared helpers
   // ---------------------------------------------------------------------------
-
-  function downloadText(filename: string, content: string, mime = 'application/x-pem-file'): void {
-    const blob = new Blob([content], { type: mime });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = filename;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
-  }
 
   async function copyToClipboard(text: string, label: string): Promise<void> {
     try {
