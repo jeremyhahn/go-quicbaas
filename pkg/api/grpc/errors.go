@@ -158,6 +158,18 @@ func (e *NamespaceUpdateUnsupportedError) GRPCStatus() *status.Status {
 	return status.New(codes.Unimplemented, e.Error())
 }
 
+// KMSListKeysFilterUnsupportedError refuses a KMSListKeys filter the xkms.v1
+// ListKeys endpoint cannot apply. Sending the request anyway would return
+// unfiltered keys, totals and cursors, so the client refuses it instead.
+type KMSListKeysFilterUnsupportedError struct {
+	Key   string
+	Value string
+}
+
+func (e *KMSListKeysFilterUnsupportedError) Error() string {
+	return fmt.Sprintf("list keys filter %q=%q cannot be applied: the xkms.v1 ListKeys endpoint does not apply it", e.Key, e.Value)
+}
+
 // parseUserID converts a wire user id into the iam uint64 id. Zero is
 // refused because it means "not created yet" in the iam model.
 func parseUserID(field, value string) (uint64, error) {
