@@ -1101,11 +1101,15 @@ func ToolName(service, method string) string {
 	// All tool names use snake_case: quicbaas_<service>_<method_in_snake_case>
 	switch serviceName {
 	case "KV":
-		// Core KV operations are qrdb-mirror tools (canonical qrdb_*).
-		// Quicbaas-specific methods (ListEntityTypes, Watch, etc.) keep
-		// the quicbaas_ prefix.
+		// Core KV operations reach quicbaas's entity tools
+		// (entityType/id/data) under their quicbaas_kv_* names: on a full
+		// node the qrdb_* names are go-qrdb's own key/value tools, which
+		// take key/value (CA ruling 574). Quicbaas-specific methods
+		// (ListEntityTypes, Watch, etc.) keep the quicbaas_ prefix.
 		switch method {
-		case "Put", "Get", "Delete", "List", "Scan":
+		case "Put", "Get", "Delete", "List":
+			return "quicbaas_kv_" + strings.ToLower(method)
+		case "Scan":
 			return "qrdb_" + strings.ToLower(method)
 		default:
 			return "quicbaas_" + strings.ToLower(method)

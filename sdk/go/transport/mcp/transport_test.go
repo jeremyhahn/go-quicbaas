@@ -163,10 +163,10 @@ func TestTransport_MapToToolName(t *testing.T) {
 		expected string
 	}{
 		// KV operations
-		{"quicbaas.KV", "Put", "qrdb_put"},
-		{"quicbaas.KV", "Get", "qrdb_get"},
-		{"quicbaas.KV", "Delete", "qrdb_delete"},
-		{"quicbaas.KV", "List", "qrdb_list"},
+		{"quicbaas.KV", "Put", "quicbaas_kv_put"},
+		{"quicbaas.KV", "Get", "quicbaas_kv_get"},
+		{"quicbaas.KV", "Delete", "quicbaas_kv_delete"},
+		{"quicbaas.KV", "List", "quicbaas_kv_list"},
 
 		// Batch operations
 		{"quicbaas.Batch", "Put", "quicbaas_batch_put"},
@@ -297,7 +297,7 @@ func TestTransport_MapToToolName(t *testing.T) {
 		{"quicbaas.IAM.Audit", "Log", "quicbaas_iam_audit_log"},
 
 		// Without package prefix
-		{"KV", "Put", "qrdb_put"},
+		{"KV", "Put", "quicbaas_kv_put"},
 		{"Health", "Check", "qrdb_health"},
 
 		// Unknown service (default mapping)
