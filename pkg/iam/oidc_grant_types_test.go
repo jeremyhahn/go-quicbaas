@@ -35,7 +35,7 @@ func newGrantTypesFixture(t *testing.T, grantTypes ...string) *grantTypesFixture
 	app := &Application{
 		ClientID:      "grant-types-client",
 		ClientSecret:  hashClientSecretFinal(t, secret),
-		TenantID:      "tenant-grant-types",
+		TenantID:      grantTypesTenant,
 		Name:          "Grant Types App",
 		GrantTypes:    grantTypes,
 		ResponseTypes: []string{ResponseTypeCode},
@@ -71,6 +71,7 @@ func (f *grantTypesFixture) authorizeRequest() *AuthorizeRequest {
 		CodeChallenge:       "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM",
 		CodeChallengeMethod: CodeChallengeMethodS256,
 		UserID:              1,
+		TenantID:            grantTypesTenant,
 	}
 }
 

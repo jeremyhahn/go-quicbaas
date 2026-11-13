@@ -1473,6 +1473,27 @@ func (e *AuthorizeDirectError) Unwrap() error {
 	return e.OAuthError
 }
 
+// AuthorizeTenantMismatchError is returned by OIDCProvider.Authorize when the
+// authenticated end user is not in the client's tenant (#1922). The client
+// and redirect URI are already validated, so it carries access_denied and the
+// transport redirects it to the client (RFC 6749 §4.1.2.1). The description
+// names neither tenant.
+type AuthorizeTenantMismatchError struct {
+	*OAuthError
+}
+
+// newAuthorizeTenantMismatchError builds the access_denied refusal.
+func newAuthorizeTenantMismatchError() *AuthorizeTenantMismatchError {
+	return &AuthorizeTenantMismatchError{
+		OAuthError: NewOAuthError(ErrOAuthAccessDenied, "the end user is not in the client's tenant"),
+	}
+}
+
+// Unwrap returns the OAuth error, so errors.As reaches it.
+func (e *AuthorizeTenantMismatchError) Unwrap() error {
+	return e.OAuthError
+}
+
 // ErrPKCEPlainMethodNotAllowed is returned when the plain PKCE method is used.
 // OAuth 2.1 prohibits the plain method; only S256 is allowed.
 var ErrPKCEPlainMethodNotAllowed = &OAuthError{

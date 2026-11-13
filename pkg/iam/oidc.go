@@ -311,6 +311,14 @@ func (p *OIDCProvider) Authorize(ctx context.Context, req *AuthorizeRequest) (*A
 		return nil, NewOAuthError(ErrOAuthInvalidRequest, "code_challenge_method must be S256 (OAuth 2.1)")
 	}
 
+	// A code is only for an end user in the client's own tenant (#1922). The
+	// client and redirect URI are validated above, so the refusal is
+	// redirected to the client (RFC 6749 §4.1.2.1). An end user with no
+	// tenant is refused too: the check fails closed.
+	if req.UserID != 0 && req.TenantID != app.TenantID {
+		return nil, newAuthorizeTenantMismatchError()
+	}
+
 	// Generate authorization code
 	code, err := p.tokenService.GenerateAuthCode(ctx, req, req.UserID)
 	if err != nil {
