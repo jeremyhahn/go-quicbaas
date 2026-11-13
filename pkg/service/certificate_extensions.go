@@ -394,10 +394,6 @@ func (s *certificateService) IssueDeviceIdentity(ctx context.Context, req *Issue
 		return nil, err
 	}
 
-	tenantID, err := prepareTenantContext(ctx)
-	if err != nil {
-		return nil, err
-	}
 	// A device identity is issued in the caller's own tenant only. A request
 	// naming another tenant is refused, the system tenant included: go-qrdb
 	// v0.28 lets no caller mint another tenant's certificates.
@@ -425,7 +421,10 @@ func (s *certificateService) IssueDeviceIdentity(ctx context.Context, req *Issue
 		AKPub:          req.AKPub,
 		QualifyingData: req.QualifyingData,
 		ValidityDays:   req.ValidityDays,
-		TenantID:       tenantID,
+		// The CA stamps this tenant into the certificate and refuses none,
+		// so the literal system tenant is named, not the services' ""
+		// platform scope prepareTenantContext maps it to.
+		TenantID: target,
 	})
 	if err != nil {
 		return nil, &errors.QBError{

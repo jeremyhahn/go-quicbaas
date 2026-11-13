@@ -327,6 +327,8 @@ func (a *caServiceAdapter) IssueDeviceIdentityCert(ctx context.Context, req *ser
 		},
 		Valid:       req.ValidityDays,
 		PermanentID: req.DeviceID,
+		// The CA stamps the issuing tenant into the certificate.
+		TenantID: req.TenantID,
 	}
 
 	cert, err := handler(ctx, tcg, req, certReq)
