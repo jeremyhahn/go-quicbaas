@@ -57,6 +57,7 @@ declare -A SOURCES=(
 	[SERENA_VERSION]="github:oraios/serena"
 	[SHELLCHECK_VERSION]="github:koalaman/shellcheck"
 	[OPENCODE_VERSION]="github:anomalyco/opencode"
+	[GH_VERSION]="github:cli/cli"
 	[PROTOC_VERSION]="github:protocolbuffers/protobuf"
 	[UV_VERSION]="github:astral-sh/uv"
 	[CLANGD_VERSION]="github:clangd/clangd"

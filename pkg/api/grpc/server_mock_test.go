@@ -20,6 +20,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 
 	pb "github.com/jeremyhahn/go-quicbaas/api/proto"
 	"github.com/jeremyhahn/go-quicbaas/pkg/errors"
@@ -59,6 +61,282 @@ func newMockTestHelper(t *testing.T) *mockTestHelper {
 	}
 }
 
+// serviceErr builds the service-layer error the mock returns in error-path tests.
+func serviceErr(code errors.ErrorCode, op string) error {
+	return &errors.QBError{Code: code, Op: op, Err: &errors.MessageError{Message: op + " failed"}}
+}
+
+// TestServerMock_ServiceError checks that each RPC returns no response and maps
+// the service-layer error code to the matching gRPC status code.
+func TestServerMock_ServiceError(t *testing.T) {
+	tests := []struct {
+		name  string
+		setup func(m *mocks.MockQuicBaaS)
+		call  func(ctx context.Context, s *Server) (any, error)
+		want  codes.Code
+	}{
+		{
+			name: "Put",
+			setup: func(m *mocks.MockQuicBaaS) {
+				m.PutFunc = func(context.Context, *service.PutRequest) (*service.PutResponse, error) {
+					return nil, serviceErr(errors.ErrRaft, "Put")
+				}
+			},
+			call: func(ctx context.Context, s *Server) (any, error) {
+				return s.Put(ctx, &pb.PutRequest{EntityType: "user", Id: 123, Data: []byte(`{"name":"test"}`)})
+			},
+			want: codes.Internal,
+		},
+		{
+			name: "Get",
+			setup: func(m *mocks.MockQuicBaaS) {
+				m.GetFunc = func(context.Context, *service.GetRequest) (*service.GetResponse, error) {
+					return nil, serviceErr(errors.ErrTimeout, "Get")
+				}
+			},
+			call: func(ctx context.Context, s *Server) (any, error) {
+				return s.Get(ctx, &pb.GetRequest{EntityType: "user", Id: 123})
+			},
+			want: codes.DeadlineExceeded,
+		},
+		{
+			name: "Delete",
+			setup: func(m *mocks.MockQuicBaaS) {
+				m.DeleteFunc = func(context.Context, *service.DeleteRequest) (*service.DeleteResponse, error) {
+					return nil, serviceErr(errors.ErrNotFound, "Delete")
+				}
+			},
+			call: func(ctx context.Context, s *Server) (any, error) {
+				return s.Delete(ctx, &pb.DeleteRequest{EntityType: "user", Id: 123})
+			},
+			want: codes.NotFound,
+		},
+		{
+			name: "BatchPut",
+			setup: func(m *mocks.MockQuicBaaS) {
+				m.BatchPutFunc = func(context.Context, *service.BatchPutRequest) (*service.BatchPutResponse, error) {
+					return nil, serviceErr(errors.ErrRaft, "BatchPut")
+				}
+			},
+			call: func(ctx context.Context, s *Server) (any, error) {
+				return s.BatchPut(ctx, &pb.BatchPutRequest{Requests: []*pb.PutRequest{
+					{EntityType: "user", Id: 1, Data: []byte(`{"name":"user1"}`)},
+				}})
+			},
+			want: codes.Internal,
+		},
+		{
+			name: "BatchGet",
+			setup: func(m *mocks.MockQuicBaaS) {
+				m.BatchGetFunc = func(context.Context, *service.BatchGetRequest) (*service.BatchGetResponse, error) {
+					return nil, serviceErr(errors.ErrInternal, "BatchGet")
+				}
+			},
+			call: func(ctx context.Context, s *Server) (any, error) {
+				return s.BatchGet(ctx, &pb.BatchGetRequest{Requests: []*pb.GetRequest{{EntityType: "user", Id: 1}}})
+			},
+			want: codes.Internal,
+		},
+		{
+			name: "BatchDelete",
+			setup: func(m *mocks.MockQuicBaaS) {
+				m.BatchDeleteFunc = func(context.Context, *service.BatchDeleteRequest) (*service.BatchDeleteResponse, error) {
+					return nil, serviceErr(errors.ErrRaft, "BatchDelete")
+				}
+			},
+			call: func(ctx context.Context, s *Server) (any, error) {
+				return s.BatchDelete(ctx, &pb.BatchDeleteRequest{Requests: []*pb.DeleteRequest{{EntityType: "user", Id: 1}}})
+			},
+			want: codes.Internal,
+		},
+		{
+			name: "Transaction",
+			setup: func(m *mocks.MockQuicBaaS) {
+				m.TransactionFunc = func(context.Context, *service.TransactionRequest) (*service.TransactionResponse, error) {
+					return nil, serviceErr(errors.ErrRaft, "Transaction")
+				}
+			},
+			call: func(ctx context.Context, s *Server) (any, error) {
+				return s.Transaction(ctx, &pb.TransactionRequest{Success: []*pb.TransactionOp{
+					{OpType: pb.TransactionOpType_TRANSACTION_OP_TYPE_PUT, EntityType: "user", Id: 1, Data: []byte(`{"name":"user1"}`)},
+				}})
+			},
+			want: codes.Internal,
+		},
+		{
+			name: "Health",
+			setup: func(m *mocks.MockQuicBaaS) {
+				m.HealthFunc = func(context.Context, *service.HealthRequest) (*service.HealthResponse, error) {
+					return nil, serviceErr(errors.ErrInternal, "Health")
+				}
+			},
+			call: func(ctx context.Context, s *Server) (any, error) {
+				return s.Health(ctx, &pb.HealthRequest{})
+			},
+			want: codes.Internal,
+		},
+		{
+			name: "ClusterStatus",
+			setup: func(m *mocks.MockQuicBaaS) {
+				m.ClusterStatusFunc = func(context.Context, *service.ClusterStatusRequest) (*service.ClusterStatusResponse, error) {
+					return nil, serviceErr(errors.ErrRaft, "ClusterStatus")
+				}
+			},
+			call: func(ctx context.Context, s *Server) (any, error) {
+				return s.ClusterStatus(ctx, &pb.ClusterStatusRequest{})
+			},
+			want: codes.Internal,
+		},
+		{
+			name: "GetLeader",
+			setup: func(m *mocks.MockQuicBaaS) {
+				m.GetLeaderFunc = func(context.Context, *service.GetLeaderRequest) (*service.GetLeaderResponse, error) {
+					return nil, serviceErr(errors.ErrLeaderNotAvailable, "GetLeader")
+				}
+			},
+			call: func(ctx context.Context, s *Server) (any, error) {
+				return s.GetLeader(ctx, &pb.GetLeaderRequest{ShardId: 1})
+			},
+			want: codes.Unavailable,
+		},
+		{
+			name: "Aggregate",
+			setup: func(m *mocks.MockQuicBaaS) {
+				m.AggregateFunc = func(context.Context, *service.AggregateRequest) (*service.AggregateResponse, error) {
+					return nil, serviceErr(errors.ErrInvalidInput, "Aggregate")
+				}
+			},
+			call: func(ctx context.Context, s *Server) (any, error) {
+				return s.Aggregate(ctx, &pb.AggregateRequest{
+					EntityType: "metrics",
+					FieldName:  "value",
+					Function:   pb.AggregateFunction_AGGREGATE_FUNCTION_SUM,
+				})
+			},
+			want: codes.InvalidArgument,
+		},
+		{
+			name: "CreateBackup",
+			setup: func(m *mocks.MockQuicBaaS) {
+				m.CreateBackupFunc = func(context.Context, *service.CreateBackupRequest) (*service.CreateBackupResponse, error) {
+					return nil, serviceErr(errors.ErrInternal, "CreateBackup")
+				}
+			},
+			call: func(ctx context.Context, s *Server) (any, error) {
+				return s.CreateBackup(ctx, &pb.CreateBackupRequest{})
+			},
+			want: codes.Internal,
+		},
+		{
+			name: "ListEntityTypes",
+			setup: func(m *mocks.MockQuicBaaS) {
+				m.ListEntityTypesFunc = func(context.Context, *service.ListEntityTypesRequest) (*service.ListEntityTypesResponse, error) {
+					return nil, serviceErr(errors.ErrTimeout, "ListEntityTypes")
+				}
+			},
+			call: func(ctx context.Context, s *Server) (any, error) {
+				return s.ListEntityTypes(ctx, &pb.ListEntityTypesRequest{})
+			},
+			want: codes.DeadlineExceeded,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			h := newMockTestHelper(t)
+			tt.setup(h.mock)
+
+			resp, err := tt.call(context.Background(), h.server)
+
+			require.Error(t, err)
+			assert.Nil(t, resp)
+			assert.Equal(t, tt.want, status.Code(err))
+		})
+	}
+}
+
+// TestServerMock_InvalidArgument checks that each RPC rejects a request missing
+// a required field before it reaches the service layer.
+func TestServerMock_InvalidArgument(t *testing.T) {
+	tests := []struct {
+		name string
+		call func(ctx context.Context, s *Server) (any, error)
+	}{
+		{
+			name: "Put empty entity type",
+			call: func(ctx context.Context, s *Server) (any, error) {
+				return s.Put(ctx, &pb.PutRequest{Id: 1, Data: []byte("data")})
+			},
+		},
+		{
+			name: "Get empty entity type",
+			call: func(ctx context.Context, s *Server) (any, error) {
+				return s.Get(ctx, &pb.GetRequest{Id: 1})
+			},
+		},
+		{
+			name: "Delete empty entity type",
+			call: func(ctx context.Context, s *Server) (any, error) {
+				return s.Delete(ctx, &pb.DeleteRequest{Id: 1})
+			},
+		},
+		{
+			name: "Aggregate empty entity type",
+			call: func(ctx context.Context, s *Server) (any, error) {
+				return s.Aggregate(ctx, &pb.AggregateRequest{FieldName: "value"})
+			},
+		},
+		{
+			name: "BatchPut empty batch",
+			call: func(ctx context.Context, s *Server) (any, error) {
+				return s.BatchPut(ctx, &pb.BatchPutRequest{Requests: []*pb.PutRequest{}})
+			},
+		},
+		{
+			name: "BatchGet empty batch",
+			call: func(ctx context.Context, s *Server) (any, error) {
+				return s.BatchGet(ctx, &pb.BatchGetRequest{Requests: []*pb.GetRequest{}})
+			},
+		},
+		{
+			name: "BatchDelete empty batch",
+			call: func(ctx context.Context, s *Server) (any, error) {
+				return s.BatchDelete(ctx, &pb.BatchDeleteRequest{Requests: []*pb.DeleteRequest{}})
+			},
+		},
+		{
+			name: "RestoreBackup empty backup ID",
+			call: func(ctx context.Context, s *Server) (any, error) {
+				return s.RestoreBackup(ctx, &pb.RestoreBackupRequest{})
+			},
+		},
+		{
+			name: "DeleteBackup empty backup ID",
+			call: func(ctx context.Context, s *Server) (any, error) {
+				return s.DeleteBackup(ctx, &pb.DeleteBackupRequest{})
+			},
+		},
+		{
+			name: "VerifyBackup empty backup ID",
+			call: func(ctx context.Context, s *Server) (any, error) {
+				return s.VerifyBackup(ctx, &pb.VerifyBackupRequest{})
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			h := newMockTestHelper(t)
+
+			resp, err := tt.call(context.Background(), h.server)
+
+			require.Error(t, err)
+			assert.Nil(t, resp)
+			assert.Equal(t, codes.InvalidArgument, status.Code(err))
+		})
+	}
+}
+
 // =============================================================================
 // Put Handler Tests
 // =============================================================================
@@ -89,46 +367,6 @@ func TestServerMockPut_Success(t *testing.T) {
 	assert.NotNil(t, resp)
 	assert.Equal(t, uint64(123), resp.Id)
 	assert.Equal(t, uint64(1), resp.Version)
-}
-
-func TestServerMockPut_ServiceError(t *testing.T) {
-	h := newMockTestHelper(t)
-
-	h.mock.PutFunc = func(ctx context.Context, req *service.PutRequest) (*service.PutResponse, error) {
-		return nil, &errors.QBError{
-			Code: errors.ErrRaft,
-			Op:   "Put",
-			Err:  &errors.MessageError{Message: "raft consensus failed"},
-		}
-	}
-
-	ctx := context.Background()
-	req := &pb.PutRequest{
-		EntityType: "user",
-		Id:         123,
-		Data:       []byte(`{"name":"test"}`),
-	}
-
-	resp, err := h.server.Put(ctx, req)
-
-	assert.Error(t, err)
-	assert.Nil(t, resp)
-}
-
-func TestServerMockPut_EmptyEntityType(t *testing.T) {
-	h := newMockTestHelper(t)
-
-	ctx := context.Background()
-	req := &pb.PutRequest{
-		EntityType: "",
-		Id:         1,
-		Data:       []byte("data"),
-	}
-
-	resp, err := h.server.Put(ctx, req)
-
-	assert.Error(t, err)
-	assert.Nil(t, resp)
 }
 
 // =============================================================================
@@ -186,44 +424,6 @@ func TestServerMockGet_NotFound(t *testing.T) {
 	assert.Nil(t, resp)
 }
 
-func TestServerMockGet_ServiceError(t *testing.T) {
-	h := newMockTestHelper(t)
-
-	h.mock.GetFunc = func(ctx context.Context, req *service.GetRequest) (*service.GetResponse, error) {
-		return nil, &errors.QBError{
-			Code: errors.ErrTimeout,
-			Op:   "Get",
-			Err:  &errors.MessageError{Message: "operation timed out"},
-		}
-	}
-
-	ctx := context.Background()
-	req := &pb.GetRequest{
-		EntityType: "user",
-		Id:         123,
-	}
-
-	resp, err := h.server.Get(ctx, req)
-
-	assert.Error(t, err)
-	assert.Nil(t, resp)
-}
-
-func TestServerMockGet_EmptyEntityType(t *testing.T) {
-	h := newMockTestHelper(t)
-
-	ctx := context.Background()
-	req := &pb.GetRequest{
-		EntityType: "",
-		Id:         1,
-	}
-
-	resp, err := h.server.Get(ctx, req)
-
-	assert.Error(t, err)
-	assert.Nil(t, resp)
-}
-
 // =============================================================================
 // Delete Handler Tests
 // =============================================================================
@@ -249,44 +449,6 @@ func TestServerMockDelete_Success(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotNil(t, resp)
 	assert.True(t, resp.Deleted)
-}
-
-func TestServerMockDelete_ServiceError(t *testing.T) {
-	h := newMockTestHelper(t)
-
-	h.mock.DeleteFunc = func(ctx context.Context, req *service.DeleteRequest) (*service.DeleteResponse, error) {
-		return nil, &errors.QBError{
-			Code: errors.ErrNotFound,
-			Op:   "Delete",
-			Err:  &errors.MessageError{Message: "entity not found"},
-		}
-	}
-
-	ctx := context.Background()
-	req := &pb.DeleteRequest{
-		EntityType: "user",
-		Id:         123,
-	}
-
-	resp, err := h.server.Delete(ctx, req)
-
-	assert.Error(t, err)
-	assert.Nil(t, resp)
-}
-
-func TestServerMockDelete_EmptyEntityType(t *testing.T) {
-	h := newMockTestHelper(t)
-
-	ctx := context.Background()
-	req := &pb.DeleteRequest{
-		EntityType: "",
-		Id:         1,
-	}
-
-	resp, err := h.server.Delete(ctx, req)
-
-	assert.Error(t, err)
-	assert.Nil(t, resp)
 }
 
 // =============================================================================
@@ -326,44 +488,6 @@ func TestServerMockBatchPut_Success(t *testing.T) {
 	assert.Len(t, resp.Responses, 2)
 }
 
-func TestServerMockBatchPut_EmptyBatch(t *testing.T) {
-	h := newMockTestHelper(t)
-
-	ctx := context.Background()
-	req := &pb.BatchPutRequest{
-		Requests: []*pb.PutRequest{},
-	}
-
-	resp, err := h.server.BatchPut(ctx, req)
-
-	assert.Error(t, err)
-	assert.Nil(t, resp)
-}
-
-func TestServerMockBatchPut_ServiceError(t *testing.T) {
-	h := newMockTestHelper(t)
-
-	h.mock.BatchPutFunc = func(ctx context.Context, req *service.BatchPutRequest) (*service.BatchPutResponse, error) {
-		return nil, &errors.QBError{
-			Code: errors.ErrRaft,
-			Op:   "BatchPut",
-			Err:  &errors.MessageError{Message: "batch operation failed"},
-		}
-	}
-
-	ctx := context.Background()
-	req := &pb.BatchPutRequest{
-		Requests: []*pb.PutRequest{
-			{EntityType: "user", Id: 1, Data: []byte(`{"name":"user1"}`)},
-		},
-	}
-
-	resp, err := h.server.BatchPut(ctx, req)
-
-	assert.Error(t, err)
-	assert.Nil(t, resp)
-}
-
 // =============================================================================
 // BatchGet Handler Tests
 // =============================================================================
@@ -396,44 +520,6 @@ func TestServerMockBatchGet_Success(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotNil(t, resp)
 	assert.Len(t, resp.Responses, 2)
-}
-
-func TestServerMockBatchGet_EmptyBatch(t *testing.T) {
-	h := newMockTestHelper(t)
-
-	ctx := context.Background()
-	req := &pb.BatchGetRequest{
-		Requests: []*pb.GetRequest{},
-	}
-
-	resp, err := h.server.BatchGet(ctx, req)
-
-	assert.Error(t, err)
-	assert.Nil(t, resp)
-}
-
-func TestServerMockBatchGet_ServiceError(t *testing.T) {
-	h := newMockTestHelper(t)
-
-	h.mock.BatchGetFunc = func(ctx context.Context, req *service.BatchGetRequest) (*service.BatchGetResponse, error) {
-		return nil, &errors.QBError{
-			Code: errors.ErrInternal,
-			Op:   "BatchGet",
-			Err:  &errors.MessageError{Message: "internal error"},
-		}
-	}
-
-	ctx := context.Background()
-	req := &pb.BatchGetRequest{
-		Requests: []*pb.GetRequest{
-			{EntityType: "user", Id: 1},
-		},
-	}
-
-	resp, err := h.server.BatchGet(ctx, req)
-
-	assert.Error(t, err)
-	assert.Nil(t, resp)
 }
 
 // =============================================================================
@@ -470,44 +556,6 @@ func TestServerMockBatchDelete_Success(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotNil(t, resp)
 	assert.Len(t, resp.Responses, 2)
-}
-
-func TestServerMockBatchDelete_EmptyBatch(t *testing.T) {
-	h := newMockTestHelper(t)
-
-	ctx := context.Background()
-	req := &pb.BatchDeleteRequest{
-		Requests: []*pb.DeleteRequest{},
-	}
-
-	resp, err := h.server.BatchDelete(ctx, req)
-
-	assert.Error(t, err)
-	assert.Nil(t, resp)
-}
-
-func TestServerMockBatchDelete_ServiceError(t *testing.T) {
-	h := newMockTestHelper(t)
-
-	h.mock.BatchDeleteFunc = func(ctx context.Context, req *service.BatchDeleteRequest) (*service.BatchDeleteResponse, error) {
-		return nil, &errors.QBError{
-			Code: errors.ErrRaft,
-			Op:   "BatchDelete",
-			Err:  &errors.MessageError{Message: "raft error"},
-		}
-	}
-
-	ctx := context.Background()
-	req := &pb.BatchDeleteRequest{
-		Requests: []*pb.DeleteRequest{
-			{EntityType: "user", Id: 1},
-		},
-	}
-
-	resp, err := h.server.BatchDelete(ctx, req)
-
-	assert.Error(t, err)
-	assert.Nil(t, resp)
 }
 
 // =============================================================================
@@ -553,34 +601,6 @@ func TestServerMockTransaction_Success(t *testing.T) {
 	assert.True(t, resp.Succeeded)
 }
 
-func TestServerMockTransaction_ServiceError(t *testing.T) {
-	h := newMockTestHelper(t)
-
-	h.mock.TransactionFunc = func(ctx context.Context, req *service.TransactionRequest) (*service.TransactionResponse, error) {
-		return nil, &errors.QBError{
-			Code: errors.ErrRaft,
-			Op:   "Transaction",
-			Err:  &errors.MessageError{Message: "transaction failed"},
-		}
-	}
-
-	ctx := context.Background()
-	req := &pb.TransactionRequest{
-		Success: []*pb.TransactionOp{
-			{
-				OpType:     pb.TransactionOpType_TRANSACTION_OP_TYPE_PUT,
-				EntityType: "user",
-				Id:         1,
-			},
-		},
-	}
-
-	resp, err := h.server.Transaction(ctx, req)
-
-	assert.Error(t, err)
-	assert.Nil(t, resp)
-}
-
 // =============================================================================
 // Health Handler Tests
 // =============================================================================
@@ -614,26 +634,6 @@ func TestServerMockHealth_Success(t *testing.T) {
 	assert.Equal(t, pb.HealthStatus_HEALTH_STATUS_HEALTHY, resp.Status)
 	assert.Equal(t, uint64(1), resp.NodeId)
 	assert.NotEmpty(t, resp.Details)
-}
-
-func TestServerMockHealth_ServiceError(t *testing.T) {
-	h := newMockTestHelper(t)
-
-	h.mock.HealthFunc = func(ctx context.Context, req *service.HealthRequest) (*service.HealthResponse, error) {
-		return nil, &errors.QBError{
-			Code: errors.ErrInternal,
-			Op:   "Health",
-			Err:  &errors.MessageError{Message: "health check failed"},
-		}
-	}
-
-	ctx := context.Background()
-	req := &pb.HealthRequest{}
-
-	resp, err := h.server.Health(ctx, req)
-
-	assert.Error(t, err)
-	assert.Nil(t, resp)
 }
 
 // =============================================================================
@@ -679,26 +679,6 @@ func TestServerMockClusterStatus_Success(t *testing.T) {
 	assert.Len(t, resp.Shards, 1)
 }
 
-func TestServerMockClusterStatus_ServiceError(t *testing.T) {
-	h := newMockTestHelper(t)
-
-	h.mock.ClusterStatusFunc = func(ctx context.Context, req *service.ClusterStatusRequest) (*service.ClusterStatusResponse, error) {
-		return nil, &errors.QBError{
-			Code: errors.ErrRaft,
-			Op:   "ClusterStatus",
-			Err:  &errors.MessageError{Message: "failed to get cluster status"},
-		}
-	}
-
-	ctx := context.Background()
-	req := &pb.ClusterStatusRequest{}
-
-	resp, err := h.server.ClusterStatus(ctx, req)
-
-	assert.Error(t, err)
-	assert.Nil(t, resp)
-}
-
 // =============================================================================
 // GetLeader Handler Tests
 // =============================================================================
@@ -723,26 +703,6 @@ func TestServerMockGetLeader_Success(t *testing.T) {
 	assert.NotNil(t, resp)
 	assert.Equal(t, uint64(1), resp.ShardId)
 	assert.Equal(t, uint64(1), resp.LeaderId)
-}
-
-func TestServerMockGetLeader_ServiceError(t *testing.T) {
-	h := newMockTestHelper(t)
-
-	h.mock.GetLeaderFunc = func(ctx context.Context, req *service.GetLeaderRequest) (*service.GetLeaderResponse, error) {
-		return nil, &errors.QBError{
-			Code: errors.ErrLeaderNotAvailable,
-			Op:   "GetLeader",
-			Err:  &errors.MessageError{Message: "leader not available"},
-		}
-	}
-
-	ctx := context.Background()
-	req := &pb.GetLeaderRequest{ShardId: 1}
-
-	resp, err := h.server.GetLeader(ctx, req)
-
-	assert.Error(t, err)
-	assert.Nil(t, resp)
 }
 
 // =============================================================================
@@ -778,45 +738,6 @@ func TestServerMockAggregate_Success(t *testing.T) {
 	assert.Equal(t, uint64(10), resp.Count)
 }
 
-func TestServerMockAggregate_EmptyEntityType(t *testing.T) {
-	h := newMockTestHelper(t)
-
-	ctx := context.Background()
-	req := &pb.AggregateRequest{
-		EntityType: "", // Empty entity type should fail validation
-		FieldName:  "value",
-	}
-
-	resp, err := h.server.Aggregate(ctx, req)
-
-	assert.Error(t, err)
-	assert.Nil(t, resp)
-}
-
-func TestServerMockAggregate_ServiceError(t *testing.T) {
-	h := newMockTestHelper(t)
-
-	h.mock.AggregateFunc = func(ctx context.Context, req *service.AggregateRequest) (*service.AggregateResponse, error) {
-		return nil, &errors.QBError{
-			Code: errors.ErrInvalidInput,
-			Op:   "Aggregate",
-			Err:  &errors.MessageError{Message: "invalid aggregation"},
-		}
-	}
-
-	ctx := context.Background()
-	req := &pb.AggregateRequest{
-		EntityType: "metrics",
-		FieldName:  "value",
-		Function:   pb.AggregateFunction_AGGREGATE_FUNCTION_SUM,
-	}
-
-	resp, err := h.server.Aggregate(ctx, req)
-
-	assert.Error(t, err)
-	assert.Nil(t, resp)
-}
-
 // =============================================================================
 // Backup Handler Tests
 // =============================================================================
@@ -844,26 +765,6 @@ func TestServerMockCreateBackup_Success(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotNil(t, resp)
 	assert.Equal(t, "backup-123", resp.BackupId)
-}
-
-func TestServerMockCreateBackup_ServiceError(t *testing.T) {
-	h := newMockTestHelper(t)
-
-	h.mock.CreateBackupFunc = func(ctx context.Context, req *service.CreateBackupRequest) (*service.CreateBackupResponse, error) {
-		return nil, &errors.QBError{
-			Code: errors.ErrInternal,
-			Op:   "CreateBackup",
-			Err:  &errors.MessageError{Message: "backup failed"},
-		}
-	}
-
-	ctx := context.Background()
-	req := &pb.CreateBackupRequest{}
-
-	resp, err := h.server.CreateBackup(ctx, req)
-
-	assert.Error(t, err)
-	assert.Nil(t, resp)
 }
 
 func TestServerMockListBackups_Success(t *testing.T) {
@@ -894,20 +795,6 @@ func TestServerMockListBackups_Success(t *testing.T) {
 	assert.Len(t, resp.Backups, 1)
 }
 
-func TestServerMockRestoreBackup_EmptyBackupID(t *testing.T) {
-	h := newMockTestHelper(t)
-
-	ctx := context.Background()
-	req := &pb.RestoreBackupRequest{
-		BackupId: "", // Empty backup ID
-	}
-
-	resp, err := h.server.RestoreBackup(ctx, req)
-
-	assert.Error(t, err)
-	assert.Nil(t, resp)
-}
-
 func TestServerMockRestoreBackup_Success(t *testing.T) {
 	h := newMockTestHelper(t)
 
@@ -929,20 +816,6 @@ func TestServerMockRestoreBackup_Success(t *testing.T) {
 	assert.NotNil(t, resp)
 }
 
-func TestServerMockDeleteBackup_EmptyBackupID(t *testing.T) {
-	h := newMockTestHelper(t)
-
-	ctx := context.Background()
-	req := &pb.DeleteBackupRequest{
-		BackupId: "", // Empty backup ID
-	}
-
-	resp, err := h.server.DeleteBackup(ctx, req)
-
-	assert.Error(t, err)
-	assert.Nil(t, resp)
-}
-
 func TestServerMockDeleteBackup_Success(t *testing.T) {
 	h := newMockTestHelper(t)
 
@@ -958,20 +831,6 @@ func TestServerMockDeleteBackup_Success(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotNil(t, resp)
 	assert.True(t, resp.Success)
-}
-
-func TestServerMockVerifyBackup_EmptyBackupID(t *testing.T) {
-	h := newMockTestHelper(t)
-
-	ctx := context.Background()
-	req := &pb.VerifyBackupRequest{
-		BackupId: "", // Empty backup ID
-	}
-
-	resp, err := h.server.VerifyBackup(ctx, req)
-
-	assert.Error(t, err)
-	assert.Nil(t, resp)
 }
 
 func TestServerMockVerifyBackup_Success(t *testing.T) {
@@ -1041,70 +900,4 @@ func TestServerMockListEntityTypes_Success(t *testing.T) {
 	assert.NotNil(t, resp)
 	assert.Len(t, resp.EntityTypes, 3)
 	assert.Contains(t, resp.EntityTypes, "user")
-}
-
-func TestServerMockListEntityTypes_ServiceError(t *testing.T) {
-	h := newMockTestHelper(t)
-
-	h.mock.ListEntityTypesFunc = func(ctx context.Context, req *service.ListEntityTypesRequest) (*service.ListEntityTypesResponse, error) {
-		return nil, &errors.QBError{
-			Code: errors.ErrTimeout,
-			Op:   "ListEntityTypes",
-			Err:  &errors.MessageError{Message: "timeout"},
-		}
-	}
-
-	ctx := context.Background()
-	req := &pb.ListEntityTypesRequest{}
-
-	resp, err := h.server.ListEntityTypes(ctx, req)
-
-	assert.Error(t, err)
-	assert.Nil(t, resp)
-}
-
-// =============================================================================
-// Server Utility Method Tests
-// =============================================================================
-
-func TestServerMockAddress_SetAndGet(t *testing.T) {
-	h := newMockTestHelper(t)
-
-	h.server.SetAddress("localhost:9090")
-	assert.Equal(t, "localhost:9090", h.server.Address())
-}
-
-func TestServerMockQPS_Tracking(t *testing.T) {
-	h := newMockTestHelper(t)
-
-	// Initially QPS should be 0
-	assert.Equal(t, float64(0), h.server.QPS())
-
-	// Record some queries
-	h.server.RecordQuery()
-	h.server.RecordQuery()
-
-	// QPS should now be greater than 0
-	// Note: Actual value depends on timing, so we just check it works
-	h.server.QPS() // Should not panic
-}
-
-func TestServerMockSetShardRouter(t *testing.T) {
-	h := newMockTestHelper(t)
-
-	// Create a custom shard router
-	router := &testMockShardRouter{defaultShard: 5}
-	h.server.SetShardRouter(router)
-
-	// Router should be set (we can't easily verify without exposing internal state)
-	// This test mainly ensures no panic occurs
-}
-
-// testMockShardRouter implements a simple shard router for testing.
-type testMockShardRouter struct {
-	defaultShard uint64
-}
-
-func (m *testMockShardRouter) Route(entityType string, id uint64) uint64 {
-	return m.defaultShard
 }

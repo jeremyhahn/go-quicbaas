@@ -34,6 +34,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jeremyhahn/go-quicbaas/pkg/service"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
+
 	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
 	transportTypes "github.com/jeremyhahn/go-xkms/sdk/go/transport"
 	"github.com/stretchr/testify/assert"
@@ -779,7 +782,7 @@ func TestHandleXKMSSaveCert_NotInitialized(t *testing.T) {
 	body, _ := json.Marshal(map[string]string{
 		"certificate_pem": "-----BEGIN CERTIFICATE-----\ntest\n-----END CERTIFICATE-----",
 	})
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/xkms/certs?key_id=test", bytes.NewReader(body))
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/xkms/certs?key_id=test", bytes.NewReader(body)).WithContext(tenantctx.WithSystem(context.Background()))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	server.router.ServeHTTP(w, req)
@@ -791,7 +794,7 @@ func TestHandleXKMSListCerts_NotInitialized(t *testing.T) {
 	server, _, cleanup := setupMockServer(t)
 	defer cleanup()
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/xkms/certs", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/xkms/certs", nil).WithContext(tenantctx.WithSystem(context.Background()))
 	w := httptest.NewRecorder()
 	server.router.ServeHTTP(w, req)
 
@@ -2136,7 +2139,7 @@ func TestXKMS91_SaveCert(t *testing.T) {
 	certPEM := selfSignedCertPEM(t)
 
 	t.Run("invalid JSON body returns 400", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodPost, "/api/v1/xkms/certs?key_id=test", bytes.NewReader([]byte(`{bad`)))
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/xkms/certs?key_id=test", bytes.NewReader([]byte(`{bad`))).WithContext(tenantctx.WithSystem(context.Background()))
 		req.Header.Set("Content-Type", "application/json")
 		w := httptest.NewRecorder()
 		server.router.ServeHTTP(w, req)
@@ -2147,7 +2150,7 @@ func TestXKMS91_SaveCert(t *testing.T) {
 		body, _ := json.Marshal(map[string]string{
 			"certificate_pem": certPEM,
 		})
-		req := httptest.NewRequest(http.MethodPost, "/api/v1/xkms/certs", bytes.NewReader(body))
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/xkms/certs", bytes.NewReader(body)).WithContext(tenantctx.WithSystem(context.Background()))
 		req.Header.Set("Content-Type", "application/json")
 		w := httptest.NewRecorder()
 		server.router.ServeHTTP(w, req)
@@ -2161,7 +2164,7 @@ func TestXKMS91_SaveCert(t *testing.T) {
 		body, _ := json.Marshal(map[string]string{
 			"certificate_pem": "",
 		})
-		req := httptest.NewRequest(http.MethodPost, "/api/v1/xkms/certs?key_id=test", bytes.NewReader(body))
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/xkms/certs?key_id=test", bytes.NewReader(body)).WithContext(tenantctx.WithSystem(context.Background()))
 		req.Header.Set("Content-Type", "application/json")
 		w := httptest.NewRecorder()
 		server.router.ServeHTTP(w, req)
@@ -2175,7 +2178,7 @@ func TestXKMS91_SaveCert(t *testing.T) {
 		body, _ := json.Marshal(map[string]string{
 			"certificate_pem": "not-a-valid-pem",
 		})
-		req := httptest.NewRequest(http.MethodPost, "/api/v1/xkms/certs?key_id=test", bytes.NewReader(body))
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/xkms/certs?key_id=test", bytes.NewReader(body)).WithContext(tenantctx.WithSystem(context.Background()))
 		req.Header.Set("Content-Type", "application/json")
 		w := httptest.NewRecorder()
 		server.router.ServeHTTP(w, req)
@@ -2193,7 +2196,7 @@ func TestXKMS91_SaveCert(t *testing.T) {
 		body, _ := json.Marshal(map[string]string{
 			"certificate_pem": invalidPEM,
 		})
-		req := httptest.NewRequest(http.MethodPost, "/api/v1/xkms/certs?key_id=test", bytes.NewReader(body))
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/xkms/certs?key_id=test", bytes.NewReader(body)).WithContext(tenantctx.WithSystem(context.Background()))
 		req.Header.Set("Content-Type", "application/json")
 		w := httptest.NewRecorder()
 		server.router.ServeHTTP(w, req)
@@ -2207,7 +2210,7 @@ func TestXKMS91_SaveCert(t *testing.T) {
 		body, _ := json.Marshal(map[string]string{
 			"certificate_pem": certPEM,
 		})
-		req := httptest.NewRequest(http.MethodPost, "/api/v1/xkms/certs?key_id=save-cert-test", bytes.NewReader(body))
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/xkms/certs?key_id=save-cert-test", bytes.NewReader(body)).WithContext(tenantctx.WithSystem(context.Background()))
 		req.Header.Set("Content-Type", "application/json")
 		w := httptest.NewRecorder()
 		server.router.ServeHTTP(w, req)
@@ -2231,14 +2234,14 @@ func TestXKMS91_ListCerts(t *testing.T) {
 	savBody, _ := json.Marshal(map[string]string{
 		"certificate_pem": certPEM,
 	})
-	savReq := httptest.NewRequest(http.MethodPost, "/api/v1/xkms/certs?key_id=list-cert-test", bytes.NewReader(savBody))
+	savReq := httptest.NewRequest(http.MethodPost, "/api/v1/xkms/certs?key_id=list-cert-test", bytes.NewReader(savBody)).WithContext(tenantctx.WithSystem(context.Background()))
 	savReq.Header.Set("Content-Type", "application/json")
 	savW := httptest.NewRecorder()
 	server.router.ServeHTTP(savW, savReq)
 	require.Equal(t, http.StatusOK, savW.Code)
 
 	t.Run("list all certs returns 200", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet, "/api/v1/xkms/certs", nil)
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/xkms/certs", nil).WithContext(tenantctx.WithSystem(context.Background()))
 		w := httptest.NewRecorder()
 		server.router.ServeHTTP(w, req)
 		assert.Equal(t, http.StatusOK, w.Code)
@@ -2248,14 +2251,14 @@ func TestXKMS91_ListCerts(t *testing.T) {
 	})
 
 	t.Run("list certs with backend returns 200", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet, "/api/v1/xkms/certs?backend=software", nil)
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/xkms/certs?backend=software", nil).WithContext(tenantctx.WithSystem(context.Background()))
 		w := httptest.NewRecorder()
 		server.router.ServeHTTP(w, req)
 		assert.Equal(t, http.StatusOK, w.Code)
 	})
 
 	t.Run("list certs with invalid backend returns error", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet, "/api/v1/xkms/certs?backend=nonexistent", nil)
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/xkms/certs?backend=nonexistent", nil).WithContext(tenantctx.WithSystem(context.Background()))
 		w := httptest.NewRecorder()
 		server.router.ServeHTTP(w, req)
 		assert.Equal(t, http.StatusInternalServerError, w.Code)
@@ -2278,14 +2281,14 @@ func TestXKMS91_GetCert(t *testing.T) {
 	savBody, _ := json.Marshal(map[string]string{
 		"certificate_pem": certPEM,
 	})
-	savReq := httptest.NewRequest(http.MethodPost, "/api/v1/xkms/certs?key_id=get-cert-test", bytes.NewReader(savBody))
+	savReq := httptest.NewRequest(http.MethodPost, "/api/v1/xkms/certs?key_id=get-cert-test", bytes.NewReader(savBody)).WithContext(tenantctx.WithSystem(context.Background()))
 	savReq.Header.Set("Content-Type", "application/json")
 	savW := httptest.NewRecorder()
 	server.router.ServeHTTP(savW, savReq)
 	require.Equal(t, http.StatusOK, savW.Code)
 
 	t.Run("get existing cert returns 200", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet, "/api/v1/xkms/certs/get-cert-test", nil)
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/xkms/certs/get-cert-test", nil).WithContext(tenantctx.WithSystem(context.Background()))
 		w := httptest.NewRecorder()
 		server.router.ServeHTTP(w, req)
 		assert.Equal(t, http.StatusOK, w.Code)
@@ -2295,7 +2298,7 @@ func TestXKMS91_GetCert(t *testing.T) {
 	})
 
 	t.Run("get nonexistent cert returns 404", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet, "/api/v1/xkms/certs/nonexistent-cert", nil)
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/xkms/certs/nonexistent-cert", nil).WithContext(tenantctx.WithSystem(context.Background()))
 		w := httptest.NewRecorder()
 		server.router.ServeHTTP(w, req)
 		assert.Equal(t, http.StatusNotFound, w.Code)
@@ -2318,24 +2321,24 @@ func TestXKMS91_DeleteCert(t *testing.T) {
 	savBody, _ := json.Marshal(map[string]string{
 		"certificate_pem": certPEM,
 	})
-	savReq := httptest.NewRequest(http.MethodPost, "/api/v1/xkms/certs?key_id=del-cert-test", bytes.NewReader(savBody))
+	savReq := httptest.NewRequest(http.MethodPost, "/api/v1/xkms/certs?key_id=del-cert-test", bytes.NewReader(savBody)).WithContext(tenantctx.WithSystem(context.Background()))
 	savReq.Header.Set("Content-Type", "application/json")
 	savW := httptest.NewRecorder()
 	server.router.ServeHTTP(savW, savReq)
 	require.Equal(t, http.StatusOK, savW.Code)
 
 	t.Run("delete existing cert returns 200", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodDelete, "/api/v1/xkms/certs/del-cert-test", nil)
+		req := httptest.NewRequest(http.MethodDelete, "/api/v1/xkms/certs/del-cert-test", nil).WithContext(tenantctx.WithSystem(context.Background()))
 		w := httptest.NewRecorder()
 		server.router.ServeHTTP(w, req)
 		assert.Equal(t, http.StatusOK, w.Code)
 	})
 
-	t.Run("delete nonexistent cert returns error", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodDelete, "/api/v1/xkms/certs/nonexistent-delete", nil)
+	t.Run("delete nonexistent cert returns 404", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodDelete, "/api/v1/xkms/certs/nonexistent-delete", nil).WithContext(tenantctx.WithSystem(context.Background()))
 		w := httptest.NewRecorder()
 		server.router.ServeHTTP(w, req)
-		assert.Equal(t, http.StatusInternalServerError, w.Code)
+		assert.Equal(t, http.StatusNotFound, w.Code)
 	})
 }
 
@@ -2355,21 +2358,21 @@ func TestXKMS91_CertExists(t *testing.T) {
 	savBody, _ := json.Marshal(map[string]string{
 		"certificate_pem": certPEM,
 	})
-	savReq := httptest.NewRequest(http.MethodPost, "/api/v1/xkms/certs?key_id=exists-cert-test", bytes.NewReader(savBody))
+	savReq := httptest.NewRequest(http.MethodPost, "/api/v1/xkms/certs?key_id=exists-cert-test", bytes.NewReader(savBody)).WithContext(tenantctx.WithSystem(context.Background()))
 	savReq.Header.Set("Content-Type", "application/json")
 	savW := httptest.NewRecorder()
 	server.router.ServeHTTP(savW, savReq)
 	require.Equal(t, http.StatusOK, savW.Code)
 
 	t.Run("existing cert returns 200", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodHead, "/api/v1/xkms/certs/exists-cert-test", nil)
+		req := httptest.NewRequest(http.MethodHead, "/api/v1/xkms/certs/exists-cert-test", nil).WithContext(tenantctx.WithSystem(context.Background()))
 		w := httptest.NewRecorder()
 		server.router.ServeHTTP(w, req)
 		assert.Equal(t, http.StatusOK, w.Code)
 	})
 
 	t.Run("nonexistent cert returns 404", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodHead, "/api/v1/xkms/certs/nonexistent-exists", nil)
+		req := httptest.NewRequest(http.MethodHead, "/api/v1/xkms/certs/nonexistent-exists", nil).WithContext(tenantctx.WithSystem(context.Background()))
 		w := httptest.NewRecorder()
 		server.router.ServeHTTP(w, req)
 		assert.Equal(t, http.StatusNotFound, w.Code)
@@ -2779,8 +2782,9 @@ func TestXKMS91_ListPIVSlots(t *testing.T) {
 	cleanup := initXKMSForTest(t)
 	defer cleanup()
 
-	server, _, srvCleanup := setupMockServer(t)
+	server, mockService, srvCleanup := setupMockServer(t)
 	defer srvCleanup()
+	mockService.PIVSvc = service.NewPIVService(func() *xkmssdk.XKMSService { return &xkmssdk.XKMSService{} })
 
 	t.Run("returns error when no PIV support available", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/xkms/piv/slots", nil)
@@ -2806,8 +2810,9 @@ func TestXKMS91_GetPIVCertificate(t *testing.T) {
 	cleanup := initXKMSForTest(t)
 	defer cleanup()
 
-	server, _, srvCleanup := setupMockServer(t)
+	server, mockService, srvCleanup := setupMockServer(t)
 	defer srvCleanup()
+	mockService.PIVSvc = service.NewPIVService(func() *xkmssdk.XKMSService { return &xkmssdk.XKMSService{} })
 
 	t.Run("returns error for software backend", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/xkms/piv/slots/9a/cert", nil)
@@ -2832,8 +2837,9 @@ func TestXKMS91_StorePIVCertificate(t *testing.T) {
 	cleanup := initXKMSForTest(t)
 	defer cleanup()
 
-	server, _, srvCleanup := setupMockServer(t)
+	server, mockService, srvCleanup := setupMockServer(t)
 	defer srvCleanup()
+	mockService.PIVSvc = service.NewPIVService(func() *xkmssdk.XKMSService { return &xkmssdk.XKMSService{} })
 
 	t.Run("invalid body returns 400", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodPut, "/api/v1/xkms/piv/slots/9a/cert", bytes.NewReader([]byte(`{bad`)))
@@ -2863,8 +2869,9 @@ func TestXKMS91_DeletePIVCertificate(t *testing.T) {
 	cleanup := initXKMSForTest(t)
 	defer cleanup()
 
-	server, _, srvCleanup := setupMockServer(t)
+	server, mockService, srvCleanup := setupMockServer(t)
 	defer srvCleanup()
+	mockService.PIVSvc = service.NewPIVService(func() *xkmssdk.XKMSService { return &xkmssdk.XKMSService{} })
 
 	t.Run("returns PIV error", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodDelete, "/api/v1/xkms/piv/slots/9a/cert", nil)
@@ -2889,8 +2896,9 @@ func TestXKMS91_GeneratePIVKey(t *testing.T) {
 	cleanup := initXKMSForTest(t)
 	defer cleanup()
 
-	server, _, srvCleanup := setupMockServer(t)
+	server, mockService, srvCleanup := setupMockServer(t)
 	defer srvCleanup()
+	mockService.PIVSvc = service.NewPIVService(func() *xkmssdk.XKMSService { return &xkmssdk.XKMSService{} })
 
 	t.Run("invalid body returns 400", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/xkms/piv/slots/9a/key", bytes.NewReader([]byte(`{bad`)))
@@ -2920,8 +2928,9 @@ func TestXKMS91_GeneratePIVCSR(t *testing.T) {
 	cleanup := initXKMSForTest(t)
 	defer cleanup()
 
-	server, _, srvCleanup := setupMockServer(t)
+	server, mockService, srvCleanup := setupMockServer(t)
 	defer srvCleanup()
+	mockService.PIVSvc = service.NewPIVService(func() *xkmssdk.XKMSService { return &xkmssdk.XKMSService{} })
 
 	t.Run("invalid body returns 400", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/xkms/piv/slots/9a/csr", bytes.NewReader([]byte(`{bad`)))

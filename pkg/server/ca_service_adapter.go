@@ -24,6 +24,7 @@ import (
 	"sync"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 	dbxkms "github.com/jeremyhahn/go-quicbaas/pkg/xkms"
 
 	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
@@ -66,6 +67,10 @@ var (
 	// while building an issuance response. Issuance fails rather than
 	// returning a certificate with an empty chain.
 	ErrCAServiceAdapterBundle = errors.New("server: ca service adapter cannot read the CA bundle")
+
+	// ErrCAServiceAdapterTenantUnsupported is returned when the configured CA
+	// does not record the tenant a certificate was issued for.
+	ErrCAServiceAdapterTenantUnsupported = errors.New("server: ca service adapter CA does not record issuing tenants")
 )
 
 // CAServiceAdapterBundleError carries the cause of a failed CA bundle read.
@@ -134,6 +139,14 @@ func newCAServiceAdapter(ca xkmssdk.TrustedCA) (*caServiceAdapter, error) {
 		return nil, ErrCAServiceAdapterNilCA
 	}
 	return &caServiceAdapter{ca: ca}, nil
+}
+
+// newPendingCAServiceAdapter returns an adapter that holds no CA yet. NewServer
+// builds one before any listener starts so the Server's caAdapter field is
+// never reassigned; getCA returns nil until SetCA publishes the CA under the
+// adapter's lock.
+func newPendingCAServiceAdapter() *caServiceAdapter {
+	return &caServiceAdapter{}
 }
 
 // SetSPIFFETrustDomain records the operator-configured SPIFFE trust domain
@@ -258,22 +271,24 @@ func (a *caServiceAdapter) IssueCertificate(
 // signOptionsWithSPIFFE builds the TrustedCASignOptions for a single signing
 // operation, folding in the operator-configured SPIFFE trust domain, the
 // request tenant, and the SPIFFE workload kind derived from the certificate
-// profile. When the trust domain or tenant is empty the CA omits the SPIFFE
-// SAN (single-domain / pre-broker mode). Returns nil when there is nothing to
-// configure so the CA applies its own profile defaults unchanged.
+// profile. A non-empty tenant is always recorded as the issuing tenant, with
+// or without a trust domain, so a later revoke can bind the caller to it.
+// When the trust domain or tenant is empty the CA omits the SPIFFE SAN
+// (single-domain / pre-broker mode). Returns nil only when profile, validity
+// and tenant are all empty, so the CA applies its own profile defaults
+// unchanged.
 func (a *caServiceAdapter) signOptionsWithSPIFFE(profile string, validityDays int, tenantID string) *xkmssdk.TrustedCASignOptions {
-	trustDomain := a.getSPIFFETrustDomain()
-	spiffeRequested := trustDomain != "" && tenantID != ""
-	if profile == "" && validityDays <= 0 && !spiffeRequested {
+	if profile == "" && validityDays <= 0 && tenantID == "" {
 		return nil
 	}
 	opts := &xkmssdk.TrustedCASignOptions{
 		Profile:      profile,
 		ValidityDays: validityDays,
+		TenantID:     tenantID,
 	}
-	if spiffeRequested {
+	trustDomain := a.getSPIFFETrustDomain()
+	if trustDomain != "" && tenantID != "" {
 		opts.SPIFFETrustDomain = trustDomain
-		opts.TenantID = tenantID
 		opts.SPIFFEKind = service.SPIFFEKindForProfile(profile)
 	}
 	return opts
@@ -319,6 +334,8 @@ func (a *caServiceAdapter) SignCSR(
 //
 // The default sign profile is applied (no SPIFFE synthesis): ACME issuance is
 // driven by the requester's CSR identifiers, not a tenant-scoped login leaf.
+// The caller's tenant is still recorded as the issuing tenant, so the
+// certificate appears in that tenant's listing and the tenant can revoke it.
 func (a *caServiceAdapter) SignCSRPEM(ctx context.Context, csrPEM []byte) (certPEM, chainPEM []byte, err error) {
 	if len(csrPEM) == 0 {
 		return nil, nil, ErrCAServiceAdapterInvalidPEM
@@ -327,7 +344,7 @@ func (a *caServiceAdapter) SignCSRPEM(ctx context.Context, csrPEM []byte) (certP
 	if ca == nil {
 		return nil, nil, ErrCAServiceAdapterNilCA
 	}
-	cert, err := ca.SignCSR(ctx, csrPEM, nil)
+	cert, err := ca.SignCSR(ctx, csrPEM, callerTenantSignOptions(ctx))
 	if err != nil {
 		return nil, nil, err
 	}
@@ -340,6 +357,17 @@ func (a *caServiceAdapter) SignCSRPEM(ctx context.Context, csrPEM []byte) (certP
 		Bytes: cert.Raw,
 	})
 	return certPEM, chain, nil
+}
+
+// callerTenantSignOptions returns sign options that record the context's
+// tenant as the issuing tenant under the CA's default profile, or nil when
+// the context carries no tenant.
+func callerTenantSignOptions(ctx context.Context) *xkmssdk.TrustedCASignOptions {
+	tenantID, err := tenantctx.FromContext(ctx, "acme.sign_csr")
+	if err != nil {
+		return nil
+	}
+	return &xkmssdk.TrustedCASignOptions{TenantID: tenantID}
 }
 
 // RevokeCertificate marks a certificate as revoked by serial number.
@@ -359,7 +387,12 @@ func (a *caServiceAdapter) RevokeCertificate(
 		return nil, ErrCAServiceAdapterInvalidSerial
 	}
 
-	if err := a.getCA().Revoke(ctx, serial, req.Reason); err != nil {
+	ca := a.getCA()
+	if err := service.BindToIssuingTenant(ctx, ca, serial); err != nil {
+		return nil, err
+	}
+
+	if err := ca.Revoke(ctx, serial, req.Reason); err != nil {
 		return &xkmstransport.RevokeCertificateResponse{
 			Success: false,
 			Message: err.Error(),
@@ -474,6 +507,22 @@ func (a *caServiceAdapter) ListStoredCertificates(_ context.Context) ([]*x509.Ce
 		return nil, ErrCAServiceAdapterCertStoreUnavailable
 	}
 	return store.ListCertificates()
+}
+
+// CertificateTenant returns the tenant the embedded CA recorded when it issued
+// the certificate with the given serial (go-xkms ca.CA.CertificateTenant). It
+// makes the adapter a service.CertificateTenantResolver, so the certificate
+// service can show a tenant the certificates issued for it.
+func (a *caServiceAdapter) CertificateTenant(ctx context.Context, serial *big.Int) (string, error) {
+	ca := a.getCA()
+	if ca == nil {
+		return "", ErrCAServiceAdapterNilCA
+	}
+	resolver, ok := ca.(service.CertificateTenantResolver)
+	if !ok {
+		return "", ErrCAServiceAdapterTenantUnsupported
+	}
+	return resolver.CertificateTenant(ctx, serial)
 }
 
 // CrossSignedRootPEMs returns the cross-sign-aware root set for the active

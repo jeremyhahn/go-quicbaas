@@ -268,7 +268,7 @@ class OperationsClient {
    * @example
    * const result = await opsClient.replaceNode(1, 4, {
    *   shardId: 1,
-   *   newAddress: '192.168.1.100:5000'
+   *   newAddress: '192.0.2.100:5000'
    * });
    * console.log(`Replacement job: ${result.jobId}`);
    */

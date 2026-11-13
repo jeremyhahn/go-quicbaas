@@ -28,7 +28,7 @@ import (
 // =============================================================================
 
 func TestValidateForgeLogin_AcceptsForgeLogins(t *testing.T) {
-	for _, login := range []string{"acme", "agent-company", "a", "jeremy.hahn", "bot_1", "A1-b2", strings.Repeat("x", maxForgeLoginLength)} {
+	for _, login := range []string{"acme", "company-agent", "a", "jeremy.hahn", "bot_1", "A1-b2", strings.Repeat("x", maxForgeLoginLength)} {
 		if err := ValidateForgeLogin("rulers", login); err != nil {
 			t.Errorf("ValidateForgeLogin(%q) = %v, want nil", login, err)
 		}
@@ -118,8 +118,8 @@ func TestRulerPolicy_ValidateFailsClosed(t *testing.T) {
 func TestRulerSet_AddsTheBindingsRulers(t *testing.T) {
 	binding := testBinding()
 	binding.Rulers = []string{"Lead-Agent"}
-	set := rulerSet(binding, []string{"agent-company"})
-	for _, login := range []string{fixtureOwner, "lead-agent", "agent-company"} {
+	set := rulerSet(binding, []string{"company-agent"})
+	for _, login := range []string{fixtureOwner, "lead-agent", "company-agent"} {
 		if _, ok := set[login]; !ok {
 			t.Errorf("ruler set %v lacks %q", set, login)
 		}
@@ -201,14 +201,14 @@ func TestSweep_ATenantEntryReplacesTheNodeDefault(t *testing.T) {
 	f := newSweepFixture(t)
 	sweeper, err := NewUnblockSweeper(UnblockSweeperConfig{
 		Tasks: f.tasks, Bindings: &fakeBindings{binding: testBinding()}, Forges: &fakeForges{forge: f.forge},
-		Rulers: RulerPolicy{Default: []string{"agent-company"}, Tenants: map[string][]string{testTenant: {"tenant-lead"}}},
+		Rulers: RulerPolicy{Default: []string{"company-agent"}, Tenants: map[string][]string{testTenant: {"tenant-lead"}}},
 	})
 	if err != nil {
 		t.Fatalf("NewUnblockSweeper: %v", err)
 	}
 	f.sweeper = sweeper
 	task := f.parkedForRuling(orchestration.TaskBlockKindEscalated)
-	f.forge.comment(issueNumber(t, task), 904, "agent-company", "Yes.", parkedAt.Add(time.Minute))
+	f.forge.comment(issueNumber(t, task), 904, "company-agent", "Yes.", parkedAt.Add(time.Minute))
 
 	if finding := onlyFinding(t, f.sweep(t)); finding.Verdict == UnblockReleased {
 		t.Fatalf("finding = %+v: the node default ruled on a tenant that replaced it", finding)
