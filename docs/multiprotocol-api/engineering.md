@@ -1011,6 +1011,18 @@ serves the REST router over quic-go's `http3.Server` (TLS 1.3, ALPN `h3`) on a
 loopback listener and drives it with quic-go's `http3.Transport`. Like the gRPC
 leg, it does not start go-qrdb's listener.
 
+`make interop-test` runs the four legs on their own, and
+`make interop-test-<leg>` runs one (`oidc`, `http3`, `grpc`, `mcp`). The leg
+table is `scripts/interop-legs.sh`. Each leg runs its baseline test alone
+first (OIDC discovery, HTTP/3 discovery, gRPC health, MCP initialize), and
+then every test of the leg. A leg fails when a test fails, and also when its
+pattern runs no passing test, so a renamed test cannot turn the leg into a
+vacuous pass. Each failure prints an `INTEROP-FINDING <leg> <step>` line. A
+failure is a finding, not a flake. `test/buildgates/interop_legs_test.go`
+fails when one of the four surfaces has no leg, when a baseline does not
+select exactly one test, or when a leg selects no operation beyond its
+baseline.
+
 | Claim | File | Enforced by / narrowed |
 |---|---|---|
 | Discovery document carries issuer, endpoints and S256 | `docs/oauth2-oidc/api.md` | `TestOIDCInterop_*` (shared discovery baseline) |
