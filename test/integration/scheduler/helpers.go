@@ -32,6 +32,7 @@ import (
 	grpcclient "github.com/jeremyhahn/go-quicbaas/pkg/api/grpc"
 	"github.com/jeremyhahn/go-quicbaas/pkg/scheduler"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
+	"github.com/jeremyhahn/go-quicbaas/test/integration/helpers"
 )
 
 // Note: Scheduler gRPC client methods are not yet implemented.
@@ -162,6 +163,14 @@ func NewSchedulerRESTClient(baseURL string) *SchedulerRESTClient {
 	return &SchedulerRESTClient{
 		baseURL:    baseURL,
 		httpClient: newOperatorHTTPClient(30 * time.Second),
+	}
+}
+
+// NewSystemAdminSchedulerRESTClient returns a scheduler client with the system admin's bearer: a delegated job (a KMS grace-period job) lives in the system namespace, so only a system caller reads it.
+func NewSystemAdminSchedulerRESTClient(t *testing.T, baseURL string) *SchedulerRESTClient {
+	return &SchedulerRESTClient{
+		baseURL:    baseURL,
+		httpClient: helpers.NewSystemAdminHTTPClient(t, 30*time.Second),
 	}
 }
 

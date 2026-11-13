@@ -52,8 +52,9 @@ var kmsAdminMethods = map[string]struct{}{
 // keys:encrypt and keys:decrypt). No built-in role holds both keys:create and
 // keys:encrypt, so no single principal can drive the grace-period tests. Both
 // principals are users of one tenant, the tenant of this package's scheduler
-// REST client, so a key the admin creates is the key the operator rotates and
-// the grace-period job of that rotation is a job the operator can read. It
+// REST client, so a key the admin creates is the key the operator rotates. The
+// grace-period job of that rotation is delegated, so it lives in the system
+// namespace and the tests read it through the system admin's scheduler client. It
 // implements credentials.PerRPCCredentials.
 type kmsDutyCredentials struct {
 	admin    credentials.PerRPCCredentials
