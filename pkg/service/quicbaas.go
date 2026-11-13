@@ -16,7 +16,6 @@
 package service
 
 import (
-	"bytes"
 	"cmp"
 	"context"
 	"encoding/json"
@@ -1623,15 +1622,12 @@ func batchOpSize(op qrdbtransport.Op) int {
 // atomic batch API. Operations are split into size-bounded sub-batches so
 // that each Raft proposal stays under the QuicRaft entry limit; every
 // sub-batch is committed as one atomic consensus proposal, in input order.
-func (b *batchService) executeShardBatch(ctx context.Context, shardID uint64, ops []qrdbtransport.Op, op string) error {
+func (b *batchService) executeShardBatch(ctx context.Context, shardID uint64, ops []qrdbtransport.Op, op string) ([]qrdbtransport.OpResponse, error) {
 	client, err := b.svc.qrdbForShard(shardID)
 	if err != nil {
-		return &errors.QBError{
-			Code: errors.ErrRaft,
-			Op:   op,
-			Err:  err,
-		}
+		return nil, qrdbFailure(op, err)
 	}
+	responses := make([]qrdbtransport.OpResponse, 0, len(ops))
 	for start := 0; start < len(ops); {
 		size := batchOpSize(ops[start])
 		end := start + 1
@@ -1639,16 +1635,16 @@ func (b *batchService) executeShardBatch(ctx context.Context, shardID uint64, op
 			size += batchOpSize(ops[end])
 			end++
 		}
-		if _, err := client.Batch().ExecuteBatch(ctx, ops[start:end]); err != nil {
-			return &errors.QBError{
-				Code: errors.ErrRaft,
-				Op:   op,
-				Err:  err,
-			}
+		result, err := client.Batch().ExecuteBatch(ctx, ops[start:end])
+		if err != nil {
+			return nil, qrdbFailure(op, err)
+		}
+		if result != nil {
+			responses = append(responses, result.Responses...)
 		}
 		start = end
 	}
-	return nil
+	return responses, nil
 }
 
 func (b *batchService) BatchPut(ctx context.Context, req *BatchPutRequest) (*BatchPutResponse, error) {
@@ -1726,7 +1722,7 @@ func (b *batchService) BatchPut(ctx context.Context, req *BatchPutRequest) (*Bat
 	// Each size-bounded sub-batch is a single Raft consensus proposal
 	// instead of one proposal per operation.
 	for _, shardID := range shardOrder {
-		if err := b.executeShardBatch(ctx, shardID, shardOps[shardID], "service.BatchPut"); err != nil {
+		if _, err := b.executeShardBatch(ctx, shardID, shardOps[shardID], "service.BatchPut"); err != nil {
 			if b.svc.metrics != nil {
 				b.svc.metrics.requestsTotal.With("BatchPut", "error").Inc()
 				b.svc.metrics.errorsByType.With("raft_error").Inc()
@@ -1780,19 +1776,62 @@ func (b *batchService) BatchGet(ctx context.Context, req *BatchGetRequest) (*Bat
 		}
 	}
 
-	// Process each get request
-	responses := make([]*GetResponse, 0, len(req.Requests))
-	for _, getReq := range req.Requests {
-		resp, err := b.svc.kvService.Get(ctx, getReq)
-		if err != nil {
-			// For batch operations, collect errors but continue
-			responses = append(responses, &GetResponse{
-				ID:    getReq.ID,
-				Found: false,
-			})
-			continue
+	// Read every key through the qrdb SDK atomic batch API, grouped by
+	// per-request ShardID. ExecuteBatch carries the entry point's declared
+	// batch:execute permission; a refusal is returned as an error, and only
+	// an absent key is reported as Found:false.
+	shardOrder := make([]uint64, 0, 1)
+	shardOps := make(map[uint64][]qrdbtransport.Op)
+	shardIndexes := make(map[uint64][]int)
+	for i, getReq := range req.Requests {
+		if getReq == nil {
+			if b.svc.metrics != nil {
+				b.svc.metrics.requestsTotal.With("BatchGet", "invalid").Inc()
+			}
+			return nil, &errors.QBError{
+				Code: errors.ErrInvalidInput,
+				Op:   "service.BatchGet",
+				Err:  &api.NilInputError{Name: "get request"},
+			}
 		}
-		responses = append(responses, resp)
+		key, err := b.svc.keyspaceResolver.BuildKey(ctx, getReq.EntityType, getReq.ID)
+		if err != nil {
+			if b.svc.metrics != nil {
+				b.svc.metrics.requestsTotal.With("BatchGet", "invalid").Inc()
+			}
+			return nil, batchKeyError("service.BatchGet", getReq.EntityType, err)
+		}
+		shardID := getReq.ShardID
+		if shardID == 0 {
+			shardID = 1
+		}
+		if _, ok := shardOps[shardID]; !ok {
+			shardOrder = append(shardOrder, shardID)
+		}
+		shardOps[shardID] = append(shardOps[shardID], qrdbtransport.Op{Type: qrdbtransport.OpGet, Key: key})
+		shardIndexes[shardID] = append(shardIndexes[shardID], i)
+	}
+
+	timestamp := time.Now().UnixNano()
+	responses := make([]*GetResponse, len(req.Requests))
+	for _, shardID := range shardOrder {
+		results, err := b.executeShardBatch(ctx, shardID, shardOps[shardID], "service.BatchGet")
+		if err == nil && len(results) != len(shardOps[shardID]) {
+			err = &errors.QBError{
+				Code: errors.ErrRaft,
+				Op:   "service.BatchGet",
+				Err:  &api.LengthMismatchError{FieldA: "gets", LenA: len(shardOps[shardID]), FieldB: "results", LenB: len(results)},
+			}
+		}
+		if err != nil {
+			if b.svc.metrics != nil {
+				b.svc.metrics.requestsTotal.With("BatchGet", "error").Inc()
+			}
+			return nil, err
+		}
+		for j, i := range shardIndexes[shardID] {
+			responses[i] = batchGetResponse(req.Requests[i].ID, results[j], timestamp)
+		}
 	}
 
 	resp := &BatchGetResponse{
@@ -1804,6 +1843,18 @@ func (b *batchService) BatchGet(ctx context.Context, req *BatchGetRequest) (*Bat
 	}
 
 	return resp, nil
+}
+
+// batchGetResponse maps one OpGet result. qrdb returns no key-value pair for
+// an absent key, which is the only case reported as Found:false.
+func batchGetResponse(id uint64, result qrdbtransport.OpResponse, timestamp int64) *GetResponse {
+	resp := &GetResponse{ID: id, Timestamp: timestamp}
+	if len(result.Kvs) > 0 {
+		resp.Data = result.Kvs[0].Value
+		resp.Version = 1
+		resp.Found = true
+	}
+	return resp
 }
 
 func (b *batchService) BatchDelete(ctx context.Context, req *BatchDeleteRequest) (*BatchDeleteResponse, error) {
@@ -1879,7 +1930,7 @@ func (b *batchService) BatchDelete(ctx context.Context, req *BatchDeleteRequest)
 	// Each size-bounded sub-batch is a single Raft consensus proposal
 	// instead of one proposal per operation.
 	for _, shardID := range shardOrder {
-		if err := b.executeShardBatch(ctx, shardID, shardOps[shardID], "service.BatchDelete"); err != nil {
+		if _, err := b.executeShardBatch(ctx, shardID, shardOps[shardID], "service.BatchDelete"); err != nil {
 			if b.svc.metrics != nil {
 				b.svc.metrics.requestsTotal.With("BatchDelete", "error").Inc()
 				b.svc.metrics.errorsByType.With("raft_error").Inc()
@@ -1908,6 +1959,11 @@ type transactionService struct {
 	svc *quicBaaS
 }
 
+// Transaction runs the compares and the selected branch as one qrdb
+// ExecuteTransaction, the verb that carries the entry point's declared
+// transaction:execute permission. qrdb evaluates the compares and applies the
+// branch atomically, so the caller needs no kv:get or batch:execute grant, and
+// a refusal is returned as an error instead of steering the branch.
 func (t *transactionService) Transaction(ctx context.Context, req *TransactionRequest) (*TransactionResponse, error) {
 	start := time.Now()
 	if t.svc.metrics != nil {
@@ -1925,6 +1981,13 @@ func (t *transactionService) Transaction(ctx context.Context, req *TransactionRe
 		}
 		return nil, err
 	}
+	txReq, err := buildQRDBTransaction(req, t.keyBuilder(ctx))
+	if err != nil {
+		if t.svc.metrics != nil {
+			t.svc.metrics.requestsTotal.With("Transaction", "invalid").Inc()
+		}
+		return nil, err
+	}
 
 	// Determine shard ID
 	shardID := req.ShardID
@@ -1932,32 +1995,7 @@ func (t *transactionService) Transaction(ctx context.Context, req *TransactionRe
 		shardID = 1
 	}
 
-	// Evaluate comparison conditions
-	succeeded := true
-	for _, cmp := range req.Compare {
-		result, err := t.evaluateCompare(ctx, shardID, cmp)
-		if err != nil {
-			if t.svc.metrics != nil {
-				t.svc.metrics.requestsTotal.With("Transaction", "error").Inc()
-			}
-			return nil, err
-		}
-		if !result {
-			succeeded = false
-			break
-		}
-	}
-
-	// Select operations based on comparison result
-	var ops []*TransactionOp
-	if succeeded {
-		ops = req.Success
-	} else {
-		ops = req.Failure
-	}
-
-	// Execute operations
-	responses, err := t.executeTransactionOps(ctx, shardID, ops)
+	result, err := t.executeTransaction(ctx, shardID, txReq)
 	if err != nil {
 		if t.svc.metrics != nil {
 			t.svc.metrics.requestsTotal.With("Transaction", "error").Inc()
@@ -1965,12 +2003,18 @@ func (t *transactionService) Transaction(ctx context.Context, req *TransactionRe
 		return nil, err
 	}
 
+	ops := req.Success
+	if !result.Succeeded {
+		ops = req.Failure
+	}
+	responses := transactionOpResponses(ops, result.Responses)
+
 	resp := &TransactionResponse{
-		Succeeded: succeeded,
+		Succeeded: result.Succeeded,
 		Responses: responses,
 		Timestamp: time.Now().UnixNano(),
 		Message:   fmt.Sprintf("Transaction completed: %d operations executed", len(responses)),
-		Revision:  0, // Revision 0 indicates no revision tracking in current transaction
+		Revision:  uint64(max(result.Revision, 0)),
 	}
 
 	if t.svc.metrics != nil {
@@ -1980,195 +2024,206 @@ func (t *transactionService) Transaction(ctx context.Context, req *TransactionRe
 	return resp, nil
 }
 
-func (t *transactionService) evaluateCompare(ctx context.Context, shardID uint64, cmp *CompareCondition) (bool, error) {
-	key, err := t.svc.keyspaceResolver.BuildKey(ctx, cmp.EntityType, cmp.ID)
-	if err != nil {
-		return false, err
-	}
-
-	// Read via qrdb SDK
+func (t *transactionService) executeTransaction(ctx context.Context, shardID uint64, txReq *qrdbtransport.TransactionRequest) (*qrdbtransport.TransactionResponse, error) {
 	client, err := t.svc.qrdbForShard(shardID)
 	if err != nil {
-		return false, err
+		return nil, qrdbFailure("service.Transaction", err)
 	}
-	data, err := client.KV().Get(ctx, string(key))
-
-	// Check if entity exists: error OR nil data means not found
-	entityExists := err == nil && data != nil
-
-	if !entityExists {
-		if cmp.Target == CompareTargetExists {
-			// Entity not found: Equal operator fails (exists != true), NotEqual succeeds (exists == false)
-			return cmp.Operator == CompareOperatorNotEqual, nil
-		}
-		return false, nil
+	result, err := client.Transaction().ExecuteTransaction(ctx, txReq)
+	if err != nil {
+		return nil, qrdbFailure("service.Transaction", err)
 	}
+	return result, nil
+}
 
-	if cmp.Target == CompareTargetExists {
-		// Entity found: Equal operator succeeds (exists == true), NotEqual fails
-		return cmp.Operator == CompareOperatorEqual, nil
-	}
-
-	switch cmp.Target {
-	case CompareTargetVersion:
-		return t.compareVersion(1, cmp.Version, cmp.Operator), nil
-	case CompareTargetValue:
-		return t.compareValue(data, cmp.Value, cmp.Operator), nil
-	default:
-		return false, &api.InvalidInputError{Message: "unsupported compare target"}
+// qrdbFailure wraps an error from a qrdb SDK verb. A qrdb authorization
+// refusal stays a permission error, so no caller can read it as absence or as
+// a transport fault; every other failure is a Raft error.
+// batchKeyError wraps a keyspace resolver failure for an entity type as
+// invalid input, as BatchPut and BatchDelete do.
+func batchKeyError(op, entityType string, err error) error {
+	return &errors.QBError{
+		Code: errors.ErrInvalidInput,
+		Op:   op,
+		Err:  &api.OperationFailedError{Operation: "validate entity type " + entityType, Cause: err},
 	}
 }
 
-func (t *transactionService) compareVersion(actual, expected uint64, op CompareOperator) bool {
-	switch op {
-	case CompareOperatorEqual:
-		return actual == expected
-	case CompareOperatorNotEqual:
-		return actual != expected
-	case CompareOperatorGreater:
-		return actual > expected
-	case CompareOperatorLess:
-		return actual < expected
-	case CompareOperatorGreaterEqual:
-		return actual >= expected
-	case CompareOperatorLessEqual:
-		return actual <= expected
-	default:
-		return false
+func qrdbFailure(op string, err error) *errors.QBError {
+	code := errors.ErrRaft
+	var denied *qrdbsdk.PermissionDeniedError
+	if stderrors.As(err, &denied) {
+		code = errors.ErrForbidden
 	}
+	return &errors.QBError{Code: code, Op: op, Err: err}
 }
 
-func (t *transactionService) compareValue(actual, expected []byte, op CompareOperator) bool {
-	switch op {
-	case CompareOperatorEqual:
-		return bytes.Equal(actual, expected)
-	case CompareOperatorNotEqual:
-		return !bytes.Equal(actual, expected)
-	default:
-		return false
-	}
-}
+// keyBuilder returns the qrdb key of the entity a compare or operation names.
+// Keys go through the keyspace resolver, as the KV and batch verbs' keys do,
+// so a transaction reaches only its caller's tenant keyspace.
+type keyBuilder func(entityType string, id uint64) ([]byte, error)
 
-func (t *transactionService) executeTransactionOps(ctx context.Context, shardID uint64, ops []*TransactionOp) ([]*TransactionOpResponse, error) {
-	if len(ops) == 0 {
-		return []*TransactionOpResponse{}, nil
-	}
-
-	// Separate write and read operations
-	var batchOps []qrdbtransport.Op
-	var writeOpsMetadata []*TransactionOp
-	var responses []*TransactionOpResponse
-
-	// Process operations
-	for _, op := range ops {
-		switch op.OpType {
-		case TransactionOpTypeGet:
-			resp, err := t.executeGetOp(ctx, shardID, op)
-			if err != nil {
-				responses = append(responses, &TransactionOpResponse{
-					OpType:     op.OpType,
-					EntityType: op.EntityType,
-					ID:         op.ID,
-					Success:    false,
-					Error:      err.Error(),
-				})
-			} else {
-				responses = append(responses, resp)
-			}
-
-		case TransactionOpTypePut:
-			key, err := t.svc.keyspaceResolver.BuildKey(ctx, op.EntityType, op.ID)
-			if err != nil {
-				return nil, err
-			}
-			batchOps = append(batchOps, qrdbtransport.Op{
-				Type:  qrdbtransport.OpPut,
-				Key:   key,
-				Value: op.Data,
-			})
-			writeOpsMetadata = append(writeOpsMetadata, op)
-
-		case TransactionOpTypeDelete:
-			key, err := t.svc.keyspaceResolver.BuildKey(ctx, op.EntityType, op.ID)
-			if err != nil {
-				return nil, err
-			}
-			batchOps = append(batchOps, qrdbtransport.Op{
-				Type: qrdbtransport.OpDelete,
-				Key:  key,
-			})
-			writeOpsMetadata = append(writeOpsMetadata, op)
-		}
-	}
-
-	// Execute all write operations in a single batch via qrdb SDK
-	if len(batchOps) > 0 {
-		client, err := t.svc.qrdbForShard(shardID)
+func (t *transactionService) keyBuilder(ctx context.Context) keyBuilder {
+	return func(entityType string, id uint64) ([]byte, error) {
+		key, err := t.svc.keyspaceResolver.BuildKey(ctx, entityType, id)
 		if err != nil {
-			for _, op := range writeOpsMetadata {
-				responses = append(responses, &TransactionOpResponse{
-					OpType:     op.OpType,
-					EntityType: op.EntityType,
-					ID:         op.ID,
-					Success:    false,
-					Error:      err.Error(),
-				})
-			}
-			return responses, err
+			return nil, batchKeyError("service.Transaction", entityType, err)
 		}
-		if _, err := client.Batch().ExecuteBatch(ctx, batchOps); err != nil {
-			for _, op := range writeOpsMetadata {
-				responses = append(responses, &TransactionOpResponse{
-					OpType:     op.OpType,
-					EntityType: op.EntityType,
-					ID:         op.ID,
-					Success:    false,
-					Error:      err.Error(),
-				})
-			}
-			return responses, err
-		}
-
-		timestamp := time.Now().UnixNano()
-		for _, op := range writeOpsMetadata {
-			responses = append(responses, &TransactionOpResponse{
-				OpType:     op.OpType,
-				EntityType: op.EntityType,
-				ID:         op.ID,
-				Success:    true,
-				Timestamp:  timestamp,
-			})
-		}
+		return key, nil
 	}
-
-	return responses, nil
 }
 
-func (t *transactionService) executeGetOp(ctx context.Context, shardID uint64, op *TransactionOp) (*TransactionOpResponse, error) {
-	key, err := t.svc.keyspaceResolver.BuildKey(ctx, op.EntityType, op.ID)
-	if err != nil {
-		return nil, err
+// buildQRDBTransaction translates a service transaction into qrdb's
+// ExecuteTransaction request.
+func buildQRDBTransaction(req *TransactionRequest, keyOf keyBuilder) (*qrdbtransport.TransactionRequest, error) {
+	compares := make([]qrdbtransport.Compare, 0, len(req.Compare))
+	for _, cmp := range req.Compare {
+		compare, err := qrdbCompare(cmp, keyOf)
+		if err != nil {
+			return nil, invalidTransaction(err)
+		}
+		compares = append(compares, compare)
 	}
+	success, err := qrdbTransactionOps(req.Success, keyOf)
+	if err != nil {
+		return nil, invalidTransaction(err)
+	}
+	failure, err := qrdbTransactionOps(req.Failure, keyOf)
+	if err != nil {
+		return nil, invalidTransaction(err)
+	}
+	return &qrdbtransport.TransactionRequest{Compares: compares, SuccessOps: success, FailureOps: failure}, nil
+}
 
-	// Read via qrdb SDK
-	client, err := t.svc.qrdbForShard(shardID)
-	if err != nil {
-		return nil, err
+// invalidTransaction wraps a translation failure as invalid input, keeping
+// the code of an error that already carries one.
+func invalidTransaction(err error) error {
+	var qbErr *errors.QBError
+	if stderrors.As(err, &qbErr) {
+		return err
 	}
-	data, err := client.KV().Get(ctx, string(key))
-	if err != nil {
-		return nil, err
-	}
+	return &errors.QBError{Code: errors.ErrInvalidInput, Op: "service.Transaction", Err: err}
+}
 
-	return &TransactionOpResponse{
-		OpType:     op.OpType,
-		EntityType: op.EntityType,
-		ID:         op.ID,
-		Data:       data,
-		Success:    true,
-		Version:    1,
-		Timestamp:  time.Now().UnixNano(),
-	}, nil
+// compareResults maps the operators qrdb compares natively.
+var compareResults = map[CompareOperator]qrdbtransport.CompareResult{
+	CompareOperatorEqual:    qrdbtransport.CompareEqual,
+	CompareOperatorNotEqual: qrdbtransport.CompareNotEqual,
+	CompareOperatorGreater:  qrdbtransport.CompareGreater,
+	CompareOperatorLess:     qrdbtransport.CompareLess,
+}
+
+// qrdbCompare translates one compare condition. qrdb gives a present key
+// version 1 and an absent key version 0, so "exists" is a version compare
+// against 0, and the inclusive version operators shift the bound by one.
+func qrdbCompare(cmp *CompareCondition, keyOf keyBuilder) (qrdbtransport.Compare, error) {
+	if cmp == nil {
+		return qrdbtransport.Compare{}, &api.NilInputError{Name: "compare"}
+	}
+	key, err := keyOf(cmp.EntityType, cmp.ID)
+	if err != nil {
+		return qrdbtransport.Compare{}, err
+	}
+	compare := qrdbtransport.Compare{Key: key}
+	switch cmp.Target {
+	case CompareTargetExists:
+		compare.Target = qrdbtransport.CompareVersion
+		switch cmp.Operator {
+		case CompareOperatorEqual:
+			compare.Result = qrdbtransport.CompareGreater
+		case CompareOperatorNotEqual:
+			compare.Result = qrdbtransport.CompareEqual
+		default:
+			return qrdbtransport.Compare{}, &api.InvalidInputError{Message: "unsupported operator for exists compare"}
+		}
+		return compare, nil
+	case CompareTargetVersion:
+		if cmp.Version >= math.MaxInt64 {
+			return qrdbtransport.Compare{}, &api.InvalidInputError{Message: "compare version out of range"}
+		}
+		compare.Target = qrdbtransport.CompareVersion
+		compare.Version = int64(cmp.Version)
+		switch cmp.Operator {
+		case CompareOperatorGreaterEqual:
+			compare.Result = qrdbtransport.CompareGreater
+			compare.Version--
+			return compare, nil
+		case CompareOperatorLessEqual:
+			compare.Result = qrdbtransport.CompareLess
+			compare.Version++
+			return compare, nil
+		}
+	case CompareTargetValue:
+		compare.Target = qrdbtransport.CompareValue
+		compare.Value = cmp.Value
+	default:
+		return qrdbtransport.Compare{}, &api.InvalidInputError{Message: "unsupported compare target"}
+	}
+	result, ok := compareResults[cmp.Operator]
+	if !ok {
+		return qrdbtransport.Compare{}, &api.InvalidInputError{Message: "unsupported compare operator"}
+	}
+	compare.Result = result
+	return compare, nil
+}
+
+// transactionOpTypes maps service operation types to qrdb operation types.
+var transactionOpTypes = map[TransactionOpType]qrdbtransport.OpType{
+	TransactionOpTypePut:    qrdbtransport.OpPut,
+	TransactionOpTypeGet:    qrdbtransport.OpGet,
+	TransactionOpTypeDelete: qrdbtransport.OpDelete,
+}
+
+// qrdbTransactionOps translates one branch of a transaction.
+func qrdbTransactionOps(ops []*TransactionOp, keyOf keyBuilder) ([]qrdbtransport.Op, error) {
+	out := make([]qrdbtransport.Op, 0, len(ops))
+	for _, op := range ops {
+		if op == nil {
+			return nil, &api.NilInputError{Name: "transaction operation"}
+		}
+		opType, ok := transactionOpTypes[op.OpType]
+		if !ok {
+			return nil, &api.InvalidInputError{Message: "unsupported transaction operation type"}
+		}
+		key, err := keyOf(op.EntityType, op.ID)
+		if err != nil {
+			return nil, err
+		}
+		qrdbOp := qrdbtransport.Op{Type: opType, Key: key}
+		if opType == qrdbtransport.OpPut {
+			qrdbOp.Value = op.Data
+		}
+		out = append(out, qrdbOp)
+	}
+	return out, nil
+}
+
+// transactionOpResponses pairs the executed branch with qrdb's per-operation
+// results, which arrive in the branch's order. A Get of an absent key is
+// reported as an unsuccessful operation with a not-found error.
+func transactionOpResponses(ops []*TransactionOp, results []qrdbtransport.OpResponse) []*TransactionOpResponse {
+	timestamp := time.Now().UnixNano()
+	responses := make([]*TransactionOpResponse, 0, len(ops))
+	for i, op := range ops {
+		resp := &TransactionOpResponse{
+			OpType:     op.OpType,
+			EntityType: op.EntityType,
+			ID:         op.ID,
+			Success:    i < len(results) && results[i].Succeeded,
+			Timestamp:  timestamp,
+		}
+		if op.OpType == TransactionOpTypeGet && resp.Success {
+			if len(results[i].Kvs) == 0 {
+				resp.Success = false
+				resp.Error = (&api.NotFoundError{Resource: op.EntityType, ID: fmt.Sprintf("%d", op.ID)}).Error()
+			} else {
+				resp.Data = results[i].Kvs[0].Value
+				resp.Version = 1
+			}
+		}
+		responses = append(responses, resp)
+	}
+	return responses
 }
 
 func (t *transactionService) validateTransactionRequest(req *TransactionRequest) error {
