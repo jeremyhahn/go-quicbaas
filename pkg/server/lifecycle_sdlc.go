@@ -895,7 +895,7 @@ func newSDLCForgeTokenSources(commands map[string]config.SDLCForgeTokenCommand) 
 	for forgeType, command := range commands {
 		source, err := sdlc.NewCommandTokenSource(sdlc.CommandTokenSourceConfig{
 			Argv:          command.Argv,
-			Env:           []string{sdlc.ForgeTokenEnvType + "=" + forgeType},
+			Env:           []string{sdlc.ForgeCommandEnvType + "=" + forgeType},
 			RefreshBefore: command.RefreshBefore,
 			Timeout:       command.Timeout,
 		})
