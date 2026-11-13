@@ -1,5 +1,3 @@
-//go:build rest
-
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
@@ -13,7 +11,7 @@
 // 2. Commercial License
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
-package rest
+package xkmsca
 
 import (
 	"context"
@@ -27,7 +25,7 @@ import (
 // TestNewXKMSCAServicer_NilCA verifies the constructor returns nil when no CA
 // is supplied so callers can detect the unconfigured state.
 func TestNewXKMSCAServicer_NilCA(t *testing.T) {
-	if got := newXKMSCAServicer(nil, ""); got != nil {
+	if got := NewServicer(nil, ""); got != nil {
 		t.Fatalf("expected nil servicer for nil CA, got %#v", got)
 	}
 }
@@ -36,7 +34,7 @@ func TestNewXKMSCAServicer_NilCA(t *testing.T) {
 // of every CA operation. These run before any CA method is touched, so a
 // zero-value servicer (nil CA) is sufficient and never panics.
 func TestXKMSCAServicer_ValidationErrors(t *testing.T) {
-	a := &xkmsCAServicer{}
+	a := &Servicer{}
 	ctx := context.Background()
 
 	t.Run("SignCSR nil request", func(t *testing.T) {

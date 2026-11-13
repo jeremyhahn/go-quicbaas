@@ -1,5 +1,3 @@
-//go:build rest
-
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
@@ -13,7 +11,7 @@
 // 2. Commercial License
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
-package rest
+package xkmsca
 
 import (
 	"bytes"
@@ -45,7 +43,7 @@ var errCRLUnavailable = stderrors.New("crl unavailable")
 // HandleGetCRL writes these bytes as application/pkix-crl.
 func TestXKMSCAServicer_CRL_ReturnsCurrentDER(t *testing.T) {
 	want := []byte{0x30, 0x82, 0x01, 0x0a}
-	a := newXKMSCAServicer(&crlOnlyCA{der: want}, "")
+	a := NewServicer(&crlOnlyCA{der: want}, "")
 
 	got, err := a.CRL(context.Background())
 	if err != nil {
@@ -60,7 +58,7 @@ func TestXKMSCAServicer_CRL_ReturnsCurrentDER(t *testing.T) {
 // typed XKMSCAOperationError, still matchable against the underlying cause,
 // and that no partial CRL escapes alongside it.
 func TestXKMSCAServicer_CRL_WrapsCAFailure(t *testing.T) {
-	a := newXKMSCAServicer(&crlOnlyCA{der: []byte{0x30}, err: errCRLUnavailable}, "")
+	a := NewServicer(&crlOnlyCA{der: []byte{0x30}, err: errCRLUnavailable}, "")
 
 	got, err := a.CRL(context.Background())
 	if got != nil {

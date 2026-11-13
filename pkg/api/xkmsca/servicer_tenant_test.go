@@ -1,5 +1,3 @@
-//go:build rest
-
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
@@ -13,7 +11,7 @@
 // 2. Commercial License
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
-package rest
+package xkmsca
 
 import (
 	"context"
@@ -59,10 +57,10 @@ func (c *countingCA) IssueCertificateWithProfile(ctx context.Context, req *xkmss
 	return c.TrustedCA.IssueCertificateWithProfile(ctx, req, profile)
 }
 
-func newTenantTestServicer(t *testing.T) (*xkmsCAServicer, *countingCA) {
+func newTenantTestServicer(t *testing.T) (*Servicer, *countingCA) {
 	t.Helper()
 	ca := &countingCA{TrustedCA: testca.New(t, "xkmsca-tenant-ca")}
-	return newXKMSCAServicer(ca, testTrustDomain), ca
+	return NewServicer(ca, testTrustDomain), ca
 }
 
 func newTestCSR(t *testing.T, commonName string) []byte {
@@ -100,8 +98,8 @@ func spiffeTenant(t *testing.T, certPEM []byte) string {
 
 // issueVerbs runs SignCSR or IssueCertificate with the given tenant_id and
 // returns the issued certificate PEM.
-var issueVerbs = map[string]func(t *testing.T, ctx context.Context, a *xkmsCAServicer, tenantID string) ([]byte, error){
-	"SignCSR": func(t *testing.T, ctx context.Context, a *xkmsCAServicer, tenantID string) ([]byte, error) {
+var issueVerbs = map[string]func(t *testing.T, ctx context.Context, a *Servicer, tenantID string) ([]byte, error){
+	"SignCSR": func(t *testing.T, ctx context.Context, a *Servicer, tenantID string) ([]byte, error) {
 		resp, err := a.SignCSR(ctx, &xkmstransport.SignCSRRequest{
 			CSRPEM:   newTestCSR(t, "alice"),
 			Profile:  "client",
@@ -112,7 +110,7 @@ var issueVerbs = map[string]func(t *testing.T, ctx context.Context, a *xkmsCASer
 		}
 		return resp.CertificatePEM, nil
 	},
-	"IssueCertificate": func(t *testing.T, ctx context.Context, a *xkmsCAServicer, tenantID string) ([]byte, error) {
+	"IssueCertificate": func(t *testing.T, ctx context.Context, a *Servicer, tenantID string) ([]byte, error) {
 		resp, err := a.IssueCertificate(ctx, &xkmstransport.IssueCertificateRequest{
 			CommonName:   "alice",
 			Profile:      "client",
@@ -191,7 +189,7 @@ func TestXKMSCAServicer_NoTenantBoundRefused(t *testing.T) {
 }
 
 func TestXKMSCAServicer_NoTrustDomainNeedsNoTenant(t *testing.T) {
-	a := newXKMSCAServicer(testca.New(t, "xkmsca-no-spiffe-ca"), "")
+	a := NewServicer(testca.New(t, "xkmsca-no-spiffe-ca"), "")
 
 	resp, err := a.IssueCertificate(context.Background(), &xkmstransport.IssueCertificateRequest{
 		CommonName:   "leaf.example.test",
