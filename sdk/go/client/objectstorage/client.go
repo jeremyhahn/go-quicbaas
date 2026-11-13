@@ -15,6 +15,8 @@ package objectstorage
 
 import (
 	"context"
+	stderrors "errors"
+	"io"
 	"sync/atomic"
 
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/errors"
@@ -921,6 +923,7 @@ type streamGetReader struct {
 	bytesRead int64
 	totalSize int64
 	closed    bool
+	eof       bool // set once the stream has ended; later Reads return io.EOF
 }
 
 // Read reads data from the stream.
@@ -937,9 +940,18 @@ func (r *streamGetReader) Read(p []byte) (n int, err error) {
 		return n, nil
 	}
 
+	// The stream has ended; never call Recv on a finished stream.
+	if r.eof {
+		return 0, io.EOF
+	}
+
 	// Receive next chunk from stream.
 	resp, err := r.stream.Recv()
 	if err != nil {
+		if stderrors.Is(err, io.EOF) {
+			r.eof = true
+			return 0, io.EOF
+		}
 		return 0, errors.Wrap(err, errors.CodeConnection, "streamGetReader.Read", "failed to receive chunk")
 	}
 
@@ -957,9 +969,11 @@ func (r *streamGetReader) Read(p []byte) (n int, err error) {
 		r.totalSize = chunk.TotalSize
 	}
 
-	// If this is the last chunk with no data, signal EOF.
-	if chunk.IsLast && len(chunk.Data) == 0 {
-		return 0, errors.NewInternal("streamGetReader.Read", "end of stream")
+	if chunk.IsLast {
+		r.eof = true
+		if len(chunk.Data) == 0 {
+			return 0, io.EOF
+		}
 	}
 
 	// Copy chunk data to output buffer.

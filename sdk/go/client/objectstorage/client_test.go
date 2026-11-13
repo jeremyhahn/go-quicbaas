@@ -5,6 +5,8 @@ package objectstorage
 
 import (
 	"context"
+	stderrors "errors"
+	"io"
 	"strconv"
 	"testing"
 
@@ -2684,6 +2686,148 @@ func TestStreamGetReader_ReadClosed(t *testing.T) {
 	_, err := reader.Read(buf)
 	if err == nil {
 		t.Error("expected error for closed reader")
+	}
+}
+
+// recvSequence returns a recvFn that yields each step in order and then
+// io.EOF, the way a finished transport stream reports its end.
+func recvSequence(steps ...func() (interface{}, error)) func() (interface{}, error) {
+	i := 0
+	return func() (interface{}, error) {
+		if i >= len(steps) {
+			return nil, io.EOF
+		}
+		step := steps[i]
+		i++
+		return step()
+	}
+}
+
+func chunkStep(data string, isLast bool) func() (interface{}, error) {
+	return func() (interface{}, error) {
+		return &ObjectChunk{Data: []byte(data), IsLast: isLast}, nil
+	}
+}
+
+func eofStep() (interface{}, error) {
+	return nil, io.EOF
+}
+
+func TestStreamGetReader_ReadAll(t *testing.T) {
+	tests := []struct {
+		name  string
+		steps []func() (interface{}, error)
+	}{
+		{
+			name:  "empty last chunk",
+			steps: []func() (interface{}, error){chunkStep("hello ", false), chunkStep("world", false), chunkStep("", true)},
+		},
+		{
+			name:  "last chunk carries data",
+			steps: []func() (interface{}, error){chunkStep("hello ", false), chunkStep("world", true)},
+		},
+		{
+			name:  "recv returns io.EOF",
+			steps: []func() (interface{}, error){chunkStep("hello ", false), chunkStep("world", false), eofStep},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			reader := &streamGetReader{
+				stream: &mockStream{recvFn: recvSequence(tt.steps...)},
+				req:    &GetObjectRequest{Key: "test:key"},
+			}
+
+			got, err := io.ReadAll(reader)
+			if err != nil {
+				t.Fatalf("io.ReadAll error = %v, want nil", err)
+			}
+			if string(got) != "hello world" {
+				t.Errorf("io.ReadAll = %q, want %q", got, "hello world")
+			}
+			if reader.BytesRead() != int64(len("hello world")) {
+				t.Errorf("BytesRead = %d, want %d", reader.BytesRead(), len("hello world"))
+			}
+		})
+	}
+}
+
+func TestStreamGetReader_ReadAll_SmallBuffer(t *testing.T) {
+	reader := &streamGetReader{
+		stream: &mockStream{recvFn: recvSequence(chunkStep("abcdef", true))},
+		req:    &GetObjectRequest{Key: "test:key"},
+	}
+
+	var got []byte
+	buf := make([]byte, 4)
+	for {
+		n, err := reader.Read(buf)
+		got = append(got, buf[:n]...)
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			t.Fatalf("Read error = %v", err)
+		}
+	}
+	if string(got) != "abcdef" {
+		t.Errorf("read %q, want %q", got, "abcdef")
+	}
+}
+
+func TestStreamGetReader_ReadAfterEOF(t *testing.T) {
+	tests := []struct {
+		name  string
+		steps []func() (interface{}, error)
+	}{
+		{name: "after last chunk", steps: []func() (interface{}, error){chunkStep("data", true)}},
+		{name: "after recv io.EOF", steps: []func() (interface{}, error){chunkStep("data", false), eofStep}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			stream := &mockStream{recvFn: recvSequence(tt.steps...)}
+			reader := &streamGetReader{stream: stream, req: &GetObjectRequest{Key: "test:key"}}
+
+			if _, err := io.ReadAll(reader); err != nil {
+				t.Fatalf("io.ReadAll error = %v, want nil", err)
+			}
+			calls := stream.recvIndex
+
+			for i := 0; i < 2; i++ {
+				n, err := reader.Read(make([]byte, 8))
+				if n != 0 || err != io.EOF {
+					t.Errorf("Read after EOF = (%d, %v), want (0, io.EOF)", n, err)
+				}
+			}
+			if stream.recvIndex != calls {
+				t.Errorf("Recv called %d more times after EOF, want 0", stream.recvIndex-calls)
+			}
+		})
+	}
+}
+
+func TestStreamGetReader_ReadMidStreamError(t *testing.T) {
+	failure := errors.NewUnavailable("mockStream.Recv", "connection reset")
+	stream := &mockStream{recvFn: recvSequence(
+		chunkStep("partial", false),
+		func() (interface{}, error) { return nil, failure },
+	)}
+	reader := &streamGetReader{stream: stream, req: &GetObjectRequest{Key: "test:key"}}
+
+	got, err := io.ReadAll(reader)
+	if err == nil {
+		t.Fatal("io.ReadAll error = nil, want a connection error")
+	}
+	if stderrors.Is(err, io.EOF) {
+		t.Errorf("mid-stream error %v must not be io.EOF", err)
+	}
+	if code := errors.Code(err); code != errors.CodeConnection {
+		t.Errorf("error code = %v, want %v", code, errors.CodeConnection)
+	}
+	if string(got) != "partial" {
+		t.Errorf("io.ReadAll = %q, want %q", got, "partial")
 	}
 }
 
