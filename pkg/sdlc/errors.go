@@ -84,6 +84,10 @@ var (
 	// the named secret resolved empty.
 	ErrWebhookSecretMissing = errors.New("sdlc: no webhook verification secret is configured")
 
+	// ErrWebhookPublicURLMissing indicates a binding asks for webhook
+	// deliveries on a node with no public webhook URL.
+	ErrWebhookPublicURLMissing = errors.New("sdlc: this node has no webhook public URL")
+
 	// ErrWebhookRepoMismatch indicates a delivery describes a repository other
 	// than the one the binding names.
 	// ErrWebhookRepoMismatch indicates a delivery describes a repository other
@@ -491,6 +495,22 @@ func (e *WebhookSecretMissingError) Error() string {
 
 // Unwrap returns the sentinel for errors.Is support.
 func (e *WebhookSecretMissingError) Unwrap() error { return ErrWebhookSecretMissing }
+
+// WebhookPublicURLMissingError reports a binding that asks for webhook
+// deliveries on a node that takes none: sdlc.webhook.public_url is unset, so
+// there is no origin a forge could deliver to (go-quicbaas#2225).
+type WebhookPublicURLMissingError struct {
+	ProjectID string
+}
+
+// Error implements the error interface.
+func (e *WebhookPublicURLMissingError) Error() string {
+	return "sdlc: project " + e.ProjectID + " names a webhook secret, but this node takes no webhook deliveries: " +
+		"set sdlc.webhook.public_url, or drop the binding's webhook secret to make it poll-only"
+}
+
+// Unwrap returns the sentinel for errors.Is support.
+func (e *WebhookPublicURLMissingError) Unwrap() error { return ErrWebhookPublicURLMissing }
 
 // WebhookRepoMismatchError reports a delivery about a repository the binding
 // does not name.

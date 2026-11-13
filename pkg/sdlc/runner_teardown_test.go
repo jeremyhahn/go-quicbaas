@@ -45,6 +45,7 @@ import (
 // behind exactly as the burn-in did.
 type daemonAgents struct {
 	orchestration.AgentService
+	operatorPolicy
 
 	mu sync.Mutex
 

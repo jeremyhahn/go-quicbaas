@@ -23,6 +23,7 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/pkg/fleet/deploy"
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 	orchestratorSDK "github.com/jeremyhahn/go-quicbaas/sdk/go/client/orchestrator"
 )
 
@@ -118,6 +119,27 @@ func TestAgentDeployBinding_NilContextFallsBack(t *testing.T) {
 	}
 	if capturedCtx == nil {
 		t.Fatal("expected fallback background context")
+	}
+}
+
+func TestFleetDeployBinding_NilContextBindsTheSpecTenant(t *testing.T) {
+	var seen string
+	b := NewFleetDeployBinding(testDeployLogger(t), NewConnectionBinding(testDeployLogger(t)))
+	b.newService = func(service.FleetNodeLister) service.FleetDeployService {
+		return deployCaptureService{fn: func(ctx context.Context, spec *deploy.Spec) (*deploy.Result, error) {
+			tenant, err := tenantctx.FromContext(ctx, "fleet deploy binding test")
+			if err != nil {
+				t.Errorf("no tenant bound: %v", err)
+			}
+			seen = tenant
+			return &deploy.Result{}, nil
+		}}
+	}
+	if _, err := b.Deploy(&deploy.Spec{Tenant: "acme"}); err != nil {
+		t.Fatal(err)
+	}
+	if seen != "acme" {
+		t.Fatalf("Deploy saw tenant %q, want acme", seen)
 	}
 }
 

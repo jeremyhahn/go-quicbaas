@@ -108,6 +108,12 @@ type SDLCServiceConfig struct {
 	// takes sdlc.DefaultForgeTransport's.
 	ForgeTransport sdlc.ForgeTransport
 
+	// ForgeTokens is the node's forge token commands
+	// (sdlc.forge.token_commands), one source per forge type. A binding whose
+	// forge type has a source takes its token from it and its TokenSecretRef
+	// is not read. Optional: a type with no source reads the tenant secret.
+	ForgeTokens map[sdlc.ForgeType]sdlc.ForgeTokenSource
+
 	// Rulers is the node's configured ruler policy: the forge logins whose
 	// comment on a parked issue is an owner ruling, per tenant. The attention
 	// inbox's "ruling posted" flag reads it; a malformed policy is refused.
@@ -151,6 +157,7 @@ type SDLCService struct {
 	verification  orchestration.ExecutionGuard
 	onboarder     *sdlc.Onboarder
 	transport     sdlc.ForgeTransport
+	forgeTokens   map[sdlc.ForgeType]sdlc.ForgeTokenSource
 	logger        *slog.Logger
 	agents        sdlc.AgentCatalog
 	sshKeys       SSHKeyGetter
@@ -212,7 +219,7 @@ func NewSDLCService(cfg SDLCServiceConfig) (*SDLCService, error) {
 	svc := &SDLCService{
 		store: cfg.Store, routes: cfg.Routes, projects: cfg.Projects, projectWriter: cfg.ProjectWriter,
 		secrets: cfg.Secrets, guard: cfg.Guard, verification: cfg.Verification, transport: cfg.ForgeTransport, logger: logger,
-		auditor: cfg.Auditor, agents: cfg.Agents, sshKeys: cfg.SSHKeys,
+		auditor: cfg.Auditor, agents: cfg.Agents, sshKeys: cfg.SSHKeys, forgeTokens: cfg.ForgeTokens,
 	}
 	onboarder, err := sdlc.NewOnboarder(svc, svc, cfg.WebhookPublicURL)
 	if err != nil {
@@ -354,6 +361,13 @@ func (s *SDLCService) Bind(ctx context.Context, tenantID string, binding *sdlc.P
 		return nil, err
 	}
 	if err := s.checkRulers(ctx, tenantID, binding); err != nil {
+		return nil, err
+	}
+	// A binding that asks for deliveries this node cannot take is refused
+	// here, before the prior delivery is retired, autonomy is switched on or
+	// the binding is stored. Found only when the webhook is provisioned, the
+	// refusal would come back with the binding already active.
+	if err := s.onboarder.CheckDelivery(binding); err != nil {
 		return nil, err
 	}
 	if err := s.retirePriorDelivery(ctx, tenantID, binding); err != nil {
@@ -911,8 +925,15 @@ func (s *SDLCService) ForgeToken(ctx context.Context, tenantID string, cfg sdlc.
 	return []byte(token), nil
 }
 
-// forgeToken reads the forge token a binding names.
+// forgeToken returns the forge token for a binding: from the node's token
+// command for its forge type when one is configured, else from the tenant
+// secret the binding names. A config asking for its own secret
+// (TokenFromSecret, a reviewer's) always reads the secret, so a separate
+// reviewer identity is never replaced by the node's.
 func (s *SDLCService) forgeToken(ctx context.Context, tenantID string, cfg sdlc.ForgeConfig) (string, error) {
+	if source, ok := s.forgeTokens[cfg.Type]; ok && !cfg.TokenFromSecret {
+		return source.ForgeToken(ctx, cfg.BaseURL)
+	}
 	ref := cfg.TokenSecretRef
 	if ref == "" {
 		return "", &sdlc.InvalidInputError{

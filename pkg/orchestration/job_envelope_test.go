@@ -336,11 +336,12 @@ func TestJobRun_UseHooksIsRefusedAfterTheFirstState(t *testing.T) {
 // directory, is stamped with the job and project, and is released by CloseAll.
 func TestJobRun_SpawnAppliesTheEnvironmentAndTracksTheSession(t *testing.T) {
 	t.Parallel()
-	svc := &spawnRecordingService{controlLoopMockService: &controlLoopMockService{}}
+	svc := &spawnRecordingService{controlLoopMockService: &controlLoopMockService{
+		lifecyclePolicy: JobLifecyclePolicy{AgentConfigDir: "/etc/quicbaas/agent"},
+	}}
 	run := newEnvelopeRun(t, JobRunConfig{
 		Config: &JobConfig{TenantID: "acme", Description: "d", ProjectID: "proj-1"},
 		Agents: svc,
-		Policy: &JobLifecyclePolicy{AgentConfigDir: "/etc/quicbaas/agent"},
 	})
 
 	ctx := context.Background()
