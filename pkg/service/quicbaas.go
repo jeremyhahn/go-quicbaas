@@ -1651,6 +1651,23 @@ func (b *batchService) executeShardBatch(ctx context.Context, shardID uint64, op
 	return nil
 }
 
+// batchKeyError reports a batch item whose storage key could not be built.
+// A tenant refusal (an ErrForbidden QBError from tenantctx) is returned
+// unchanged, so every transport maps it to 403 / PermissionDenied as the
+// single-item operations do. Any other error is the item's invalid entity
+// type.
+func batchKeyError(op, entityType string, err error) error {
+	var qbErr *errors.QBError
+	if stderrors.As(err, &qbErr) && qbErr.Code == errors.ErrForbidden {
+		return err
+	}
+	return &errors.QBError{
+		Code: errors.ErrInvalidInput,
+		Op:   op,
+		Err:  &api.OperationFailedError{Operation: "validate entity type " + entityType, Cause: err},
+	}
+}
+
 func (b *batchService) BatchPut(ctx context.Context, req *BatchPutRequest) (*BatchPutResponse, error) {
 	start := time.Now()
 	if b.svc.metrics != nil {
@@ -1697,11 +1714,7 @@ func (b *batchService) BatchPut(ctx context.Context, req *BatchPutRequest) (*Bat
 			if b.svc.metrics != nil {
 				b.svc.metrics.requestsTotal.With("BatchPut", "invalid").Inc()
 			}
-			return nil, &errors.QBError{
-				Code: errors.ErrInvalidInput,
-				Op:   "service.BatchPut",
-				Err:  &api.OperationFailedError{Operation: "validate entity type " + putReq.EntityType, Cause: err},
-			}
+			return nil, batchKeyError("service.BatchPut", putReq.EntityType, err)
 		}
 		shardID := putReq.ShardID
 		if shardID == 0 {
@@ -1852,11 +1865,7 @@ func (b *batchService) BatchDelete(ctx context.Context, req *BatchDeleteRequest)
 			if b.svc.metrics != nil {
 				b.svc.metrics.requestsTotal.With("BatchDelete", "invalid").Inc()
 			}
-			return nil, &errors.QBError{
-				Code: errors.ErrInvalidInput,
-				Op:   "service.BatchDelete",
-				Err:  &api.OperationFailedError{Operation: "validate entity type " + delReq.EntityType, Cause: err},
-			}
+			return nil, batchKeyError("service.BatchDelete", delReq.EntityType, err)
 		}
 		shardID := delReq.ShardID
 		if shardID == 0 {
