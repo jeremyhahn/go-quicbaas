@@ -240,10 +240,15 @@ func getOrCreateTestCredentials(t *testing.T, ctx context.Context, httpEndpoint 
 		}, nil
 	}
 
-	// Register the app the way a production caller does: as the admin of a
-	// tenant the system admin provisioned, whose bearer binds that tenant.
+	// Registering an OAuth app for a tenant is a system-tenant operation
+	// (tenants:create), so the fixture system admin registers it into the
+	// provisioned tenant.
 	tenant := provisionAuthTestTenant(t, httpEndpoint)
-	creds, err := createTestOAuthApp(ctx, httpEndpoint, tenant.TenantID, tenant.AdminBearer, "auth-integration-test-app")
+	systemBearer, err := helpers.AuthSystemAdminContext(ctx, httpEndpoint)
+	if err != nil {
+		return nil, fmt.Errorf("system admin bearer for app registration: %w", err)
+	}
+	creds, err := createTestOAuthApp(ctx, httpEndpoint, tenant.TenantID, systemBearer, "auth-integration-test-app")
 	if err != nil {
 		return nil, fmt.Errorf("test credentials not configured and auto-creation failed: %w (set QUICBAAS_TEST_CLIENT_ID and QUICBAAS_TEST_CLIENT_SECRET)", err)
 	}
