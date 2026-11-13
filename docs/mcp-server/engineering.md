@@ -89,22 +89,38 @@ The SDK routes `Auth` `GetSession`, `ListSessions`, `RevokeSession` and
 
 ## Public tools
 
-`isPublicTool` (`transport.go:690-700`) is an exhaustive map:
+`publicTools` (`pkg/api/mcp/authz.go`) is the server's exhaustive set:
 
 ```
-quicbaas_login  quicbaas_login_begin  quicbaas_login_finish
-qrdb_health     quicbaas_liveness     quicbaas_readiness
+qrdb_health           quicbaas_liveness     quicbaas_readiness
 ```
 
-Everything else runs `ensureAuthenticated` before dispatch. Adding a name here
-publishes an unauthenticated capability; it is a security change, not a
-convenience.
+`quicbaas_login_begin` is declared dead in `authz_qrdb_unmapped.go` too. Every
+call allocates a login attempt in the pinned go-qrdb SDK that only
+`quicbaas_login_finish` removes; the SDK neither expires nor caps abandoned
+attempts, and `quicbaas_login_finish` is refused here, so a public
+`quicbaas_login_begin` would let a caller grow the daemon's memory without
+bound. It becomes public once the pinned SDK bounds abandoned attempts.
 
-**Known defect:** stale entries in the `publicTools` set with no guard test are
-a registered boundary-violation item in this repository. A name listed here that
-no longer corresponds to a registered tool is dead weight; a name that does is
-an unauthenticated surface. Any change to this map should land with a test that
-asserts the set matches intent.
+`quicbaas_login_finish` is declared dead in `authz_qrdb_unmapped.go`: it needs
+the caller's verified mTLS leaf, and on go-qrdb's MCP listener that leaf reaches
+a handler only through go-qrdb's SDK verified-chain seam (go-qrdb#1181). Never
+substitute `PeerCertificates[0]` or a verifier built here.
+
+The SDK client's `isPublicTool` (`sdk/go/transport/mcp/transport.go`) skips
+`ensureAuthenticated` for these tools, and also for `quicbaas_login_begin`, `quicbaas_login_finish` and `quicbaas_login`, which its
+logins call but the server refuses or does not register. Everything else runs
+`ensureAuthenticated` before dispatch.
+Adding a name publishes an unauthenticated capability; it is a security change,
+not a convenience.
+
+Two tests hold the set to intent. `TestPublicTools_MatchDocumentedSet`
+(`authz_public_test.go`) pins it to the list above, so widening it means changing
+the docs and the test together. `TestMCPPermissions_PublicToolsExist`
+(`authz_qrdb_coverage_test.go`) fails on an entry that names no registered tool,
+which a later tool of the same name would otherwise inherit as public.
+`TestLoginBegin_StaysDeclaredDead` (`authz_public_test.go`) keeps
+`quicbaas_login_begin` out of the set until that bound exists.
 
 ## Transport mechanics
 
