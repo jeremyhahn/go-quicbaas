@@ -17,9 +17,12 @@ package mcp
 
 import (
 	"context"
+	"strconv"
 	"time"
 
 	api "github.com/jeremyhahn/go-quicbaas/pkg/api"
+	"github.com/jeremyhahn/go-quicbaas/pkg/auth"
+	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 )
 
@@ -48,6 +51,64 @@ func (r *ToolRegistry) getSessionManager(ctx context.Context) (service.SessionMa
 	return mgr, nil
 }
 
+// callerAccount resolves the authenticated caller a self-service session tool
+// acts for to its qrdb account ID and tenant, through
+// service.ResolveCallerAccount. Subject.ID is the login name and never names
+// the account: a numeric username must not reach the account it spells. It
+// fails closed when no caller is bound or its account cannot be resolved.
+func (r *ToolRegistry) callerAccount(ctx context.Context, op string) (uint64, string, error) {
+	subject, ok := auth.SubjectFromContext(ctx)
+	if !ok || !subject.Authenticated || subject.ID == "" {
+		return 0, "", api.NewInsufficientPermissionsError(op)
+	}
+	resolver, ok := r.service.(service.CallerAccountResolver)
+	if !ok {
+		return 0, "", api.NewServiceUnavailableError("caller account")
+	}
+	userID, err := resolver.ResolveCallerAccount(ctx, subject)
+	if service.IsCallerAccountRefused(err) {
+		return 0, "", api.NewInsufficientPermissionsError(op)
+	}
+	if err != nil {
+		return 0, "", err
+	}
+	return userID, subject.TenantID, nil
+}
+
+// sessionOwner resolves the user and tenant a list or revoke-all call acts
+// on: always the caller (ruling 207). A user_id or tenant_id naming anyone
+// else is refused, never honoured.
+func (r *ToolRegistry) sessionOwner(ctx context.Context, args map[string]interface{}, op string) (uint64, string, error) {
+	userID, tenantID, err := r.callerAccount(ctx, op)
+	if err != nil {
+		return 0, "", err
+	}
+	if _, named := args["user_id"]; named && getString(args, "user_id") != strconv.FormatUint(userID, 10) {
+		return 0, "", api.NewInsufficientPermissionsError(op)
+	}
+	if argTenant := getString(args, "tenant_id"); argTenant != "" && argTenant != tenantID {
+		return 0, "", api.NewInsufficientPermissionsError(op)
+	}
+	return userID, tenantID, nil
+}
+
+// callerSession loads sessionID and refuses it unless the caller owns it, as
+// the embedded transport's requireSessionOwner does.
+func (r *ToolRegistry) callerSession(ctx context.Context, sessionMgr service.SessionManager, sessionID, op string) (*iam.SessionExt, error) {
+	userID, tenantID, err := r.callerAccount(ctx, op)
+	if err != nil {
+		return nil, err
+	}
+	session, err := sessionMgr.Get(ctx, sessionID)
+	if err != nil {
+		return nil, err
+	}
+	if !session.OwnedBy(strconv.FormatUint(userID, 10), tenantID) {
+		return nil, api.NewInsufficientPermissionsError(op)
+	}
+	return session, nil
+}
+
 // =============================================================================
 // Session Tools Registration
 // =============================================================================
@@ -55,7 +116,7 @@ func (r *ToolRegistry) getSessionManager(ctx context.Context) (service.SessionMa
 func (r *ToolRegistry) registerSessionTools() {
 	r.addTool(ToolDefinition{
 		Name:        "quicbaas_iam_session_get",
-		Description: "Retrieve a session by ID",
+		Description: "Retrieve one of the authenticated caller's own sessions by ID",
 		InputSchema: map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
@@ -70,26 +131,25 @@ func (r *ToolRegistry) registerSessionTools() {
 
 	r.addTool(ToolDefinition{
 		Name:        "quicbaas_iam_session_list",
-		Description: "List sessions for a user in a tenant",
+		Description: "List the authenticated caller's own sessions",
 		InputSchema: map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
 				"tenant_id": map[string]interface{}{
 					"type":        "string",
-					"description": "Tenant ID",
+					"description": "Optional; must be the caller's own tenant ID",
 				},
 				"user_id": map[string]interface{}{
 					"type":        "string",
-					"description": "User ID to list sessions for",
+					"description": "Optional; must be the caller's own user ID",
 				},
 			},
-			"required": []string{"tenant_id", "user_id"},
 		},
 	})
 
 	r.addTool(ToolDefinition{
 		Name:        "quicbaas_iam_session_revoke",
-		Description: "Revoke a specific session",
+		Description: "Revoke one of the authenticated caller's own sessions",
 		InputSchema: map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
@@ -104,20 +164,19 @@ func (r *ToolRegistry) registerSessionTools() {
 
 	r.addTool(ToolDefinition{
 		Name:        "quicbaas_iam_session_revoke_all",
-		Description: "Revoke all sessions for a user in a tenant",
+		Description: "Revoke all of the authenticated caller's own sessions",
 		InputSchema: map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
 				"tenant_id": map[string]interface{}{
 					"type":        "string",
-					"description": "Tenant ID",
+					"description": "Optional; must be the caller's own tenant ID",
 				},
 				"user_id": map[string]interface{}{
 					"type":        "string",
-					"description": "User ID whose sessions to revoke",
+					"description": "Optional; must be the caller's own user ID",
 				},
 			},
-			"required": []string{"tenant_id", "user_id"},
 		},
 	})
 
@@ -170,29 +229,35 @@ func (r *ToolRegistry) executeIAMSessionGet(ctx context.Context, args map[string
 		return nil, err
 	}
 
-	session, err := sessionMgr.Get(ctx, getString(args, "session_id"))
+	session, err := r.callerSession(ctx, sessionMgr, getString(args, "session_id"), "mcp.iam.session.get")
 	if err != nil {
 		return nil, err
 	}
-	return marshalResult(session)
+	return marshalResult(session.View())
 }
 
 func (r *ToolRegistry) executeIAMSessionList(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+	userID, tenantID, err := r.sessionOwner(ctx, args, "mcp.iam.session.list")
+	if err != nil {
+		return nil, err
+	}
 	sessionMgr, err := r.getSessionManager(ctx)
 	if err != nil {
 		return nil, err
 	}
 
-	userID, err := getUserID(args)
+	sessions, err := sessionMgr.List(ctx, userID, tenantID)
 	if err != nil {
 		return nil, err
 	}
-	sessions, err := sessionMgr.List(ctx, userID, getString(args, "tenant_id"))
-	if err != nil {
-		return nil, err
+	views := make([]*iam.SessionView, 0, len(sessions))
+	for _, s := range sessions {
+		if s != nil {
+			views = append(views, s.View())
+		}
 	}
 	return marshalResult(map[string]interface{}{
-		"sessions":  sessions,
+		"sessions":  views,
 		"timestamp": time.Now(),
 	})
 }
@@ -203,16 +268,14 @@ func (r *ToolRegistry) executeIAMSessionRevoke(ctx context.Context, args map[str
 		return nil, err
 	}
 
-	sessionID := getString(args, "session_id")
-
-	// Verify session exists before attempting revocation.
-	_, getErr := sessionMgr.Get(ctx, sessionID)
-	if getErr != nil {
-		return nil, getErr
+	// Ownership is checked before the revoke: a refused caller must not be
+	// able to destroy a session it was never allowed to see.
+	session, err := r.callerSession(ctx, sessionMgr, getString(args, "session_id"), "mcp.iam.session.revoke")
+	if err != nil {
+		return nil, err
 	}
 
-	err = sessionMgr.Revoke(ctx, sessionID)
-	if err != nil {
+	if err := sessionMgr.Revoke(ctx, session.ID); err != nil {
 		return nil, err
 	}
 	return marshalResult(map[string]interface{}{
@@ -222,17 +285,16 @@ func (r *ToolRegistry) executeIAMSessionRevoke(ctx context.Context, args map[str
 }
 
 func (r *ToolRegistry) executeIAMSessionRevokeAll(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+	userID, tenantID, err := r.sessionOwner(ctx, args, "mcp.iam.session.revoke_all")
+	if err != nil {
+		return nil, err
+	}
 	sessionMgr, err := r.getSessionManager(ctx)
 	if err != nil {
 		return nil, err
 	}
 
-	userID, err := getUserID(args)
-	if err != nil {
-		return nil, err
-	}
-	err = sessionMgr.RevokeAllForUser(ctx, userID, getString(args, "tenant_id"))
-	if err != nil {
+	if err := sessionMgr.RevokeAllForUser(ctx, userID, tenantID); err != nil {
 		return nil, err
 	}
 	return marshalResult(map[string]interface{}{
