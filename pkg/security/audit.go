@@ -41,6 +41,7 @@ import (
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
 	"github.com/jeremyhahn/go-quicbaas/pkg/util/httpbody"
+	"github.com/jeremyhahn/go-quicbaas/sdk/go/secret"
 )
 
 // Compression level constants for audit log compression.
@@ -1307,12 +1308,16 @@ func (s *SIEMExporter) Close() error {
 
 // AuditLogger provides comprehensive audit trail functionality for security events.
 type AuditLogger struct {
-	writer   io.Writer
-	config   *AuditConfig
-	logger   *logger.Logger
-	file     *os.File
-	signKey  []byte
-	mu       sync.Mutex
+	writer io.Writer
+	config *AuditConfig
+	logger *logger.Logger
+	file   *os.File
+	mu     sync.Mutex
+
+	// signKey is the logger's own sealed copy of the HMAC key. The
+	// plaintext exists only inside a WithBytes callback, in mlocked memory;
+	// Close destroys the enclave. It is guarded by mu.
+	signKey  *secret.SecretValue
 	shutdown chan struct{}
 
 	// rotateWG tracks the background work rotation starts -- compressing the
@@ -1364,16 +1369,21 @@ func newSignKeyTooShortError(keyLen int) *AuditError {
 
 // AuditConfig configures audit logging behavior.
 type AuditConfig struct {
-	Enabled          bool          `json:"enabled"`
-	File             string        `json:"file"`
-	MaxSize          int64         `json:"max_size"` // MB
-	MaxBackups       int           `json:"max_backups"`
-	Compress         bool          `json:"compress"`
-	CompressionLevel int           `json:"compression_level"` // gzip compression level (0-9, -1 for default, -2 for Huffman only)
-	SignLogs         bool          `json:"sign_logs"`         // Tamper-proof logging
-	SignKey          string        `json:"sign_key"`          // HMAC key for signatures; at least MinAuditSignKeyLen bytes
-	BufferSize       int           `json:"buffer_size"`       // Buffer size for batching
-	FlushInterval    time.Duration `json:"flush_interval"`    // Auto-flush interval
+	Enabled          bool   `json:"enabled"`
+	File             string `json:"file"`
+	MaxSize          int64  `json:"max_size"` // MB
+	MaxBackups       int    `json:"max_backups"`
+	Compress         bool   `json:"compress"`
+	CompressionLevel int    `json:"compression_level"` // gzip compression level (0-9, -1 for default, -2 for Huffman only)
+	SignLogs         bool   `json:"sign_logs"`         // Tamper-proof logging
+	// SignKey is the HMAC key for signatures, at least MinAuditSignKeyLen
+	// bytes. It is a credential reference (credential://, kms://, ...) that
+	// the config processor resolves and seals into the value's enclave: the
+	// key never rests in a Go string (#23, security-review.md §6).
+	// NewAuditLogger seals its own copy, so the caller may Clear this one.
+	SignKey       *secret.SecretValue `json:"sign_key,omitempty"`
+	BufferSize    int                 `json:"buffer_size"`    // Buffer size for batching
+	FlushInterval time.Duration       `json:"flush_interval"` // Auto-flush interval
 
 	// Legacy output targets (backward compatibility)
 	Syslog       bool   `json:"syslog"`
@@ -1452,6 +1462,48 @@ const (
 )
 
 // NewAuditLogger creates a new audit logger.
+// sealSignKey validates the configured HMAC key and seals the logger's own
+// copy of it. The plaintext is read only through WithBytes, so it is checked
+// and copied in mlocked memory and never becomes a Go string or heap slice.
+//
+// A nil value, a reference the config processor never resolved, and an empty
+// key all fail as AUDIT_SIGN_KEY_REQUIRED: signing with no key would be a
+// silent failure. A key shorter than MinAuditSignKeyLen fails as
+// AUDIT_SIGN_KEY_TOO_SHORT.
+func sealSignKey(src *secret.SecretValue) (*secret.SecretValue, error) {
+	required := &AuditError{
+		Code:    ErrCodeAuditSignKeyRequired,
+		Message: "sign_key is required when sign_logs is enabled",
+	}
+	if src == nil {
+		return nil, required
+	}
+
+	var sealed *secret.SecretValue
+	err := src.WithBytes(func(key []byte) error {
+		if len(key) == 0 {
+			return required
+		}
+		if len(key) < MinAuditSignKeyLen {
+			return newSignKeyTooShortError(len(key))
+		}
+		v, err := secret.NewSecretValue(src.Raw, key, src.Strategy)
+		if err != nil {
+			return &AuditError{
+				Code:    ErrCodeAuditSignKeyRequired,
+				Message: "failed to seal sign_key",
+				Cause:   err,
+			}
+		}
+		sealed = v
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return sealed, nil
+}
+
 func NewAuditLogger(cfg *AuditConfig, log *logger.Logger) (*AuditLogger, error) {
 	if cfg == nil {
 		return nil, &AuditError{
@@ -1492,16 +1544,11 @@ func NewAuditLogger(cfg *AuditConfig, log *logger.Logger) (*AuditLogger, error) 
 
 	// Setup signing key for tamper-proof logging
 	if cfg.SignLogs {
-		if cfg.SignKey == "" {
-			return nil, &AuditError{
-				Code:    ErrCodeAuditSignKeyRequired,
-				Message: "sign_key is required when sign_logs is enabled",
-			}
+		key, err := sealSignKey(cfg.SignKey)
+		if err != nil {
+			return nil, err
 		}
-		if len(cfg.SignKey) < MinAuditSignKeyLen {
-			return nil, newSignKeyTooShortError(len(cfg.SignKey))
-		}
-		al.signKey = []byte(cfg.SignKey)
+		al.signKey = key
 	}
 
 	// Create audit log file
@@ -1953,13 +2000,6 @@ func (al *AuditLogger) LogTenantDEKOperation(ctx context.Context, action, tenant
 
 // signEvent creates an HMAC signature for the audit event.
 func (al *AuditLogger) signEvent(event *AuditEvent) (string, error) {
-	// NewAuditLogger rejects short keys, so this only guards a logger built
-	// by other means. crypto/hmac panics on such keys in FIPS 140-only mode;
-	// a typed error keeps that a caller-visible failure instead.
-	if len(al.signKey) < MinAuditSignKeyLen {
-		return "", newSignKeyTooShortError(len(al.signKey))
-	}
-
 	// Create canonical representation for signing
 	data := fmt.Sprintf("%s|%s|%s|%s|%s|%s",
 		event.Timestamp.Format(time.RFC3339Nano),
@@ -1969,9 +2009,30 @@ func (al *AuditLogger) signEvent(event *AuditEvent) (string, error) {
 		event.Result,
 		event.IPAddress)
 
-	h := hmac.New(sha256.New, al.signKey)
-	h.Write([]byte(data))
-	return hex.EncodeToString(h.Sum(nil)), nil
+	// The key is opened only for this HMAC, in mlocked memory, and the
+	// buffer is destroyed when WithBytes returns. A logger without a key
+	// (built by other means, or after Close) reads an empty key here.
+	if al.signKey == nil {
+		return "", newSignKeyTooShortError(0)
+	}
+	var sig string
+	err := al.signKey.WithBytes(func(key []byte) error {
+		// NewAuditLogger rejects short keys, so this only guards a logger
+		// built by other means or a key destroyed by Close. crypto/hmac
+		// panics on short keys in FIPS 140-only mode; a typed error keeps
+		// that a caller-visible failure instead.
+		if len(key) < MinAuditSignKeyLen {
+			return newSignKeyTooShortError(len(key))
+		}
+		h := hmac.New(sha256.New, key)
+		h.Write([]byte(data))
+		sig = hex.EncodeToString(h.Sum(nil))
+		return nil
+	})
+	if err != nil {
+		return "", err
+	}
+	return sig, nil
 }
 
 // VerifySignature verifies the HMAC signature of an audit event. When
@@ -1988,7 +2049,10 @@ func (al *AuditLogger) VerifySignature(event *AuditEvent) bool {
 		return false
 	}
 
+	// mu orders this read of the key against Close destroying it.
+	al.mu.Lock()
 	expectedSig, err := al.signEvent(event)
+	al.mu.Unlock()
 	if err != nil {
 		return false
 	}
@@ -2402,6 +2466,10 @@ func (al *AuditLogger) Close() error {
 
 	al.mu.Lock()
 	defer al.mu.Unlock()
+
+	// Destroy the logger's sealed copy of the HMAC key. Signing after this
+	// fails closed. Clear is idempotent and safe on nil.
+	al.signKey.Clear()
 
 	// Close SIEM exporter
 	if al.siemExporter != nil {
