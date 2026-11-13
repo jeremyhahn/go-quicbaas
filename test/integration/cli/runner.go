@@ -23,6 +23,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -118,6 +119,13 @@ type TestRunner struct {
 	baseArgs      []string
 	authenticated bool
 
+	// systemAdmin is set by Authenticate. A runner with it set runs every
+	// command the tenant admin does not own as the system admin, from the
+	// system admin's session home (systemAdminSessionEnv). A runner built by
+	// hand for a daemon of its own (the barrier harness) leaves it unset and
+	// presents nothing.
+	systemAdmin bool
+
 	// tenantAdmin, once ActAsTenantAdmin has run, carries the tenant admin's
 	// credentials every tenant-scoped command runs under.
 	tenantAdmin *tenantAdminSession
@@ -167,50 +175,27 @@ func NewTestRunner(t *testing.T, transport Transport, address string) *TestRunne
 	}
 }
 
-// Authenticate provisions a bearer token for transports that require one (MCP).
-// It must be called before running commands that require authentication.
+// Authenticate makes the runner present the system admin on every transport.
+// It must be called before running commands that require authentication;
+// RunForTransports calls it for every runner it builds.
 //
-// Password authentication has been removed from the project; tests acquire a
-// bearer by performing a PIV (mTLS client cert) login against the cluster's
-// REST endpoint. The token is written to the CLI's default token path so
-// subsequent `quicbaas --transport mcp ...` invocations pick it up via
-// loadMCPAuthToken() in cmd/quicbaas/client.go.
+// The system admin is the suite's interim principal: one credential that
+// holds on every transport, so that the suite's outcome does not depend on a
+// token file an earlier test left behind. Narrower sessions chosen per
+// command group (tenant operator, data plane, tenant admin) are planned and
+// replace it family by family; ActAsTenantAdmin is the first of them.
+//
+// Password authentication has been removed from the project; the bearer comes
+// from a PIV (mTLS client cert) login against the cluster's REST endpoint.
+// Run renews the session before every command, because the access token
+// lives 15 minutes and a test may run longer.
 func (r *TestRunner) Authenticate() error {
-	if r.authenticated {
-		return nil
-	}
-
-	// Only MCP needs an explicit bearer set up ahead of time. Other transports
-	// either use mTLS directly (gRPC presents the admin certificate, see
-	// NewTestRunner) or transparently fall back to
-	// the same default token file (REST), so the same setup helps them too —
-	// but if no REST endpoint is reachable we skip rather than fail.
-	if r.transport != TransportMCP {
-		r.authenticated = true
-		return nil
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-
-	restEndpoints := helpers.GetRESTEndpoints()
-	if len(restEndpoints) == 0 {
-		r.t.Logf("[%s] no REST endpoints available for PIV login; MCP commands will be unauthenticated", r.transport)
-		return &MCPAuthEnvError{Reason: "no REST endpoints configured"}
-	}
-
-	bearer, expiresAt, err := helpers.AuthPIVSession(ctx, restEndpoints[0], "", "", "")
-	if err != nil {
-		r.t.Logf("[%s] PIV login for MCP bearer failed: %v", r.transport, err)
+	if _, err := systemAdminSessionEnv(); err != nil {
+		r.t.Logf("[%s] system admin login (PIV) failed: %v", r.transport, err)
 		return err
 	}
 
-	if err := writeMCPSessionToken(bearer, expiresAt); err != nil {
-		r.t.Logf("[%s] failed to persist MCP session token: %v", r.transport, err)
-		return err
-	}
-
-	r.t.Logf("[%s] MCP authentication successful (PIV)", r.transport)
+	r.systemAdmin = true
 	r.authenticated = true
 	return nil
 }
@@ -226,28 +211,55 @@ func (e *MCPAuthEnvError) Error() string {
 	return "mcp auth: " + e.Reason
 }
 
-// writeMCPSessionToken serializes a bearer token in the format the CLI's
-// loadMCPAuthToken() helper expects, at the default path (~/.quicbaas/token
-// when QUICBAAS_TEST_TOKEN_PATH is unset). The CLI's MCP transport client
-// automatically picks the token up via loadMCPAuthToken().
+// systemAdminSession is the system admin's session home for this test
+// process. The CLI has one bearer source, the session file at
+// $HOME/.quicbaas/token (loadStoredAuthToken in cmd/quicbaas/client.go), so a
+// session of its own means a HOME of its own. It replaces the shared
+// ~/.quicbaas/token, which every test package wrote and read.
+var systemAdminSession struct {
+	sync.Mutex
+	home string
+}
+
+// systemAdminSessionEnv logs the fixture's system admin in (PIV, memoized in
+// helpers until the token expires), writes the bearer to the session home and
+// returns the environment a CLI process needs to present it.
 //
-// expiresAt MUST be the server-derived expiry returned by
-// helpers.AuthPIVSession. The token file is shared global state: every
-// later `quicbaas` invocation in ANY test package reads it via
-// loadStoredAuthToken(), and the CLI trusts the recorded expiry. Writing a
-// fabricated expiry longer than the server's 15-minute access-token TTL
-// makes later REST CLI tests present an expired bearer and fail with
-// 401 invalid_token.
-func writeMCPSessionToken(bearer string, expiresAt time.Time) error {
-	path := os.Getenv("QUICBAAS_TEST_TOKEN_PATH")
-	if path == "" {
-		home, err := os.UserHomeDir()
-		if err != nil {
-			return err
-		}
-		path = filepath.Join(home, ".quicbaas", "token")
+// The recorded expiry is the server-derived one returned by
+// helpers.AuthPIVSession, never a fabricated one: the CLI trusts it, and a
+// longer one than the server's 15-minute access-token TTL makes the CLI
+// present an expired bearer (401 invalid_token).
+func systemAdminSessionEnv() ([]string, error) {
+	restEndpoints := helpers.GetRESTEndpoints()
+	if len(restEndpoints) == 0 {
+		return nil, &MCPAuthEnvError{Reason: "no REST endpoints configured"}
 	}
-	return writeSessionToken(path, bearer, expiresAt)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	bearer, expiresAt, err := helpers.AuthPIVSession(ctx, restEndpoints[0], "", "", "")
+	if err != nil {
+		return nil, err
+	}
+
+	systemAdminSession.Lock()
+	defer systemAdminSession.Unlock()
+
+	if systemAdminSession.home == "" {
+		home, err := os.MkdirTemp("", "quicbaas-cli-system-admin-")
+		if err != nil {
+			return nil, err
+		}
+		systemAdminSession.home = home
+	}
+
+	tokenPath := filepath.Join(systemAdminSession.home, ".quicbaas", "token")
+	if err := writeSessionToken(tokenPath, bearer, expiresAt); err != nil {
+		return nil, err
+	}
+
+	return append(os.Environ(), "HOME="+systemAdminSession.home), nil
 }
 
 // writeSessionToken writes bearer at path in the session-envelope format the
@@ -310,6 +322,18 @@ func (r *TestRunner) Run(cmd CommandDef) (stdout string, stderr string, err erro
 		}
 	}
 
+	// Every other command of an authenticated runner runs as the system
+	// admin, the suite's interim principal (see Authenticate). A login that
+	// fails is fatal: the command must not go out with no credential.
+	var systemAdminEnv []string
+	if r.systemAdmin && !actsAsTenantAdmin {
+		env, err := systemAdminSessionEnv()
+		if err != nil {
+			r.t.Fatalf("[%s] system admin session: %v", r.transport, err)
+		}
+		systemAdminEnv = env
+	}
+
 	// Resolve the command's intended deadline.
 	timeout := cmd.Timeout
 	if timeout == 0 {
@@ -341,6 +365,8 @@ func (r *TestRunner) Run(cmd CommandDef) (stdout string, stderr string, err erro
 	execCmd := exec.CommandContext(ctx, r.binary, args...)
 	if actsAsTenantAdmin {
 		execCmd.Env = r.tenantAdmin.env()
+	} else if systemAdminEnv != nil {
+		execCmd.Env = systemAdminEnv
 	}
 
 	var outBuf, errBuf bytes.Buffer
@@ -410,12 +436,18 @@ func (r *TestRunner) RunSuite(commands []CommandDef) {
 
 		// Run the main command
 		r.t.Run(cmd.Name, func(t *testing.T) {
+			// The subtest's runner keeps the suite runner's sessions: a
+			// command of a suite runs under the same credential as a
+			// command run directly.
 			runner := &TestRunner{
-				t:         t,
-				binary:    r.binary,
-				address:   r.address,
-				transport: r.transport,
-				baseArgs:  r.baseArgs,
+				t:             t,
+				binary:        r.binary,
+				address:       r.address,
+				transport:     r.transport,
+				baseArgs:      r.baseArgs,
+				authenticated: r.authenticated,
+				systemAdmin:   r.systemAdmin,
+				tenantAdmin:   r.tenantAdmin,
 			}
 			runner.RunAndAssert(cmd)
 		})
@@ -512,11 +544,12 @@ func RunForTransports(t *testing.T, name string, excludeTransports []Transport, 
 		t.Run(string(cfg.Transport)+"/"+name, func(t *testing.T) {
 			runner := NewTestRunner(t, cfg.Transport, cfg.Address)
 
-			// Authenticate for MCP transport before running tests
-			if cfg.Transport == TransportMCP {
-				if err := runner.Authenticate(); err != nil {
-					t.Fatalf("MCP authentication failed: %v", err)
-				}
+			// Every transport presents the system admin, the suite's interim
+			// principal; narrower sessions per command group are planned (see
+			// Authenticate). Before, only MCP logged in and the other
+			// transports were authenticated by the token file it left behind.
+			if err := runner.Authenticate(); err != nil {
+				t.Fatalf("[%s] system admin authentication failed: %v", cfg.Transport, err)
 			}
 
 			fn(t, runner)
@@ -550,10 +583,31 @@ var unavailableIndicators = []string{
 	"sdkBackupClient.ListBackups: unexpected response type",
 }
 
+// authRefusalIndicators contains error message substrings of an
+// authentication or authorization refusal. A refusal is never "unavailable":
+// a probe that met one must not skip the test or end it early.
+var authRefusalIndicators = []string{
+	"authentication required",
+	"Unauthenticated",
+	"PermissionDenied",
+	"permission denied",
+	"invalid_token",
+	"HTTP 401",
+	"HTTP 403",
+}
+
 // outputIndicatesUnavailable returns true if the combined stdout+stderr output
 // contains any substring that indicates the requested feature is unavailable.
+// It returns false for an authentication or authorization refusal, whatever
+// else the refusal's text says, so the test goes on to its own commands and
+// fails there.
 func outputIndicatesUnavailable(stdout, stderr string) bool {
 	combined := stdout + stderr
+	for _, refusal := range authRefusalIndicators {
+		if strings.Contains(combined, refusal) {
+			return false
+		}
+	}
 	for _, indicator := range unavailableIndicators {
 		if strings.Contains(combined, indicator) {
 			return true

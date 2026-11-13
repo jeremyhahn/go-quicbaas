@@ -1,6 +1,6 @@
 module github.com/jeremyhahn/go-quicbaas/sdk/go
 
-go 1.27.3
+go 1.27.4
 
 // Pin armon/go-metrics to v0.4.1 - newer versions declare as hashicorp/go-metrics
 replace github.com/armon/go-metrics => github.com/armon/go-metrics v0.4.1
@@ -13,9 +13,9 @@ require (
 	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/jeremyhahn/go-qrdb v0.30.1-alpha // held: #1389, the go-qrdb/go-xkms stack pin bump
 	github.com/jeremyhahn/go-qrdb/sdk/go v0.30.1-alpha // held: #1389, the go-qrdb/go-xkms stack pin bump
-	github.com/jeremyhahn/go-quicbaas v0.16.0-alpha
-	github.com/jeremyhahn/go-xkms v0.49.0-alpha // held: #1389, the go-qrdb/go-xkms stack pin bump
-	github.com/jeremyhahn/go-xkms/sdk/go v0.49.0-alpha // held: #1389, the go-qrdb/go-xkms stack pin bump
+	github.com/jeremyhahn/go-quicbaas v0.16.1-alpha
+	github.com/jeremyhahn/go-xkms v0.49.1-alpha // held: #1389, the go-qrdb/go-xkms stack pin bump
+	github.com/jeremyhahn/go-xkms/sdk/go v0.49.1-alpha // held: #1389, the go-qrdb/go-xkms stack pin bump
 	github.com/mark3labs/mcp-go v0.45.0 // held: v1.3.0 released 2026-10-14, under 7 days old (#1704)
 	github.com/quic-go/quic-go v0.63.0 // held: v0.64.0 released 2026-10-16, under 7 days old (#1704)
 	github.com/stretchr/testify v1.12.1
@@ -150,15 +150,15 @@ require (
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
 	github.com/invopop/jsonschema v0.13.0 // indirect
 	github.com/jackc/pgx/v5 v5.11.0 // indirect
-	github.com/jeremyhahn/arduino-generic/sdk/go v0.3.0-alpha // indirect
 	github.com/jeremyhahn/go-auth v0.4.0-alpha // indirect
-	github.com/jeremyhahn/go-codec v1.4.0 // indirect
+	github.com/jeremyhahn/go-codec v1.5.1-alpha // indirect
 	github.com/jeremyhahn/go-enclave v0.6.1-alpha // indirect
-	github.com/jeremyhahn/go-frost v0.3.0-alpha // indirect
+	github.com/jeremyhahn/go-frost v0.3.1-alpha // indirect
 	github.com/jeremyhahn/go-luks2 v0.2.0-alpha // indirect
 	github.com/jeremyhahn/go-objstore v0.3.0-alpha // indirect
 	github.com/jeremyhahn/go-quicraft v0.15.0-alpha // indirect; hold lifted: go-qrdb v0.25.1-alpha declares the at-rest choice for in-process nodes (database.NewRaftWAL: barrier, or WithoutEncryption when seal is off), go-qrdb#566 — the real-node tests in pkg/scheduler/placement start a clustered in-process node on quicraft v0.15.0-alpha.
 	github.com/jeremyhahn/go-truststrap v0.4.0-alpha // indirect
+	github.com/jeremyhahn/trusted-firmware/sdk/go v0.3.0-alpha // indirect
 	github.com/jeroenrinzema/psql-wire v0.18.0 // indirect
 	github.com/jmespath/go-jmespath v0.4.0 // indirect
 	github.com/json-iterator/go v1.1.12 // indirect
@@ -210,7 +210,7 @@ require (
 	github.com/spf13/afero v1.15.0 // indirect
 	github.com/spf13/cast v1.10.0 // indirect
 	github.com/spf13/cobra v1.10.2 // indirect
-	github.com/spf13/pflag v1.0.10 // indirect
+	github.com/spf13/pflag v1.1.0 // indirect
 	github.com/spf13/viper v1.21.0 // indirect
 	github.com/spiffe/go-spiffe/v2 v2.8.1 // indirect
 	github.com/stretchr/objx v0.5.3 // indirect

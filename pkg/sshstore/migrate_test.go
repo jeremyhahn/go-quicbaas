@@ -34,7 +34,7 @@ import (
 // legacyKeys are the keys seedLegacyStore generates, as (scope, owner, name).
 var legacyKeys = []xkmsssh.GetKeyRequest{
 	{Scope: "user", Owner: "alice", Name: "fleet-deploy"},
-	{Scope: "service", Owner: "agent-go-quicbaas", Name: "agent-go-quicbaas-signing"},
+	{Scope: "service", Owner: "agent-quicbaas", Name: "agent-quicbaas-signing"},
 }
 
 const pinnedHost = "node01.example.internal"

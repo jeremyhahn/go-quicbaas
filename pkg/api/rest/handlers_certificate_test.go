@@ -166,7 +166,7 @@ func TestHandleIssueCertificate(t *testing.T) {
 				Province:           "CA",
 				Locality:           "San Francisco",
 				DNSNames:           []string{"test.example.com", "www.test.example.com"},
-				IPAddresses:        []string{"192.168.1.1"},
+				IPAddresses:        []string{"192.0.2.1"},
 				EmailAddresses:     []string{"admin@example.com"},
 				URIs:               []string{"https://example.com"},
 				ValidityDays:       365,

@@ -95,15 +95,17 @@ type iamCLITestContext struct {
 
 // newIAMCLITestContext creates a new IAM CLI test context.
 //
-// For the REST transport it first provisions a fresh admin bearer at the CLI
-// default token path: REST is the only CLI transport that authenticates by
-// bearer alone (gRPC/QUIC/Unix authenticate via mTLS), and the server's
-// access-token TTL is 15 minutes, so a token file left behind by an earlier
-// test package may already be expired (401 invalid_token).
+// For every transport it first provisions a fresh system-admin bearer at the
+// CLI default token path: with the authorization gate on, the gRPC transport
+// like REST accepts only a bearer, and the server's access-token TTL is 15
+// minutes, so a token file left behind by an earlier test package may already
+// be expired (401 invalid_token). Before, only REST got one and the other
+// transports used whatever the file held.
+//
+// The system admin is the suite's interim principal for these commands;
+// narrower sessions per command group are planned.
 func newIAMCLITestContext(t *testing.T, protocol, address, tenantID string) *iamCLITestContext {
-	if protocol == "rest" {
-		provisionRESTBearer(t)
-	}
+	provisionRESTBearer(t)
 	return &iamCLITestContext{
 		t:         t,
 		binary:    requireCLIBinary(t),
@@ -329,7 +331,8 @@ func setupIAMCLITestTenant(t *testing.T) string {
 	tenantID := generateUniqueTenantIDForCLI()
 	restEndpoint := getRESTEndpointForCLI()
 
-	client := helpers.NewHTTPClient(30 * time.Second)
+	// Creating a tenant is a system-tenant route: the system admin's.
+	client := helpers.NewSystemAdminHTTPClient(t, 30*time.Second)
 
 	reqBody := map[string]interface{}{
 		"id":   tenantID,
@@ -374,7 +377,8 @@ func cleanupIAMCLITestTenant(t *testing.T, tenantID string) {
 	}
 
 	restEndpoint := getRESTEndpointForCLI()
-	client := helpers.NewHTTPClient(30 * time.Second)
+	// Deleting a tenant is a system-tenant route: the system admin's.
+	client := helpers.NewSystemAdminHTTPClient(t, 30*time.Second)
 
 	req, err := http.NewRequest(http.MethodDelete,
 		fmt.Sprintf("%s/api/v1/tenants/%s", restEndpoint, tenantID),

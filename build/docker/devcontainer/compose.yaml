@@ -22,7 +22,6 @@ x-build: &build
     GO_VERSION: ${GO_VERSION:-}
     GO_IMAGE_DIGEST: ${GO_IMAGE_DIGEST:-}
     GO_BUILD_PROXY: ${GO_BUILD_PROXY:-}
-    GO_BUILD_PRIVATE: ${GO_BUILD_PRIVATE:-}
   secrets:
     - gomodauth
 
@@ -57,7 +56,6 @@ services:
         GO_VERSION: ${GO_VERSION:-}
         GO_IMAGE_DIGEST: ${GO_IMAGE_DIGEST:-}
         GO_BUILD_PROXY: ${GO_BUILD_PROXY:-}
-        GO_BUILD_PRIVATE: ${GO_BUILD_PRIVATE:-}
         # The Makefile's INTEGRATION_BUILD_TAGS, the tag set the test driver is
         # built with, so the nodes and the driver agree.
         BUILD_TAGS: ${INTEGRATION_BUILD_TAGS:-}

@@ -139,7 +139,7 @@ func TestRemoteKMSResolver_CanResolve(t *testing.T) {
 		},
 		{
 			name:     "valid remote-kms URI with IP address",
-			uri:      "remote-kms://192.168.1.100:8443/secrets/key",
+			uri:      "remote-kms://192.0.2.100:8443/secrets/key",
 			expected: true,
 		},
 		{
@@ -220,7 +220,7 @@ func TestRemoteKMSResolver_ParseURI(t *testing.T) {
 		},
 		{
 			name:        "valid URI with IP and port",
-			uri:         "remote-kms://192.168.1.100:9443/config/key",
+			uri:         "remote-kms://192.0.2.100:9443/config/key",
 			expectError: false,
 		},
 		{
@@ -276,7 +276,7 @@ func TestRemoteKMSResolver_ParseURI(t *testing.T) {
 				// The resolver will do the actual parsing
 				client.SetSecret("node1:8080", "secrets/password", []byte(`{"password":"test"}`))
 				client.SetSecret("node1", "secrets/password", []byte(`{"password":"test"}`))
-				client.SetSecret("192.168.1.100:9443", "config/key", []byte(`{"key":"value"}`))
+				client.SetSecret("192.0.2.100:9443", "config/key", []byte(`{"key":"value"}`))
 				client.SetSecret("cluster.example.com:8443", "app/database/password", []byte(`{"password":"db-pass"}`))
 				client.SetSecret("host:8080", "a/b/c/d/e/secret", []byte(`{"secret":"nested"}`))
 			}
