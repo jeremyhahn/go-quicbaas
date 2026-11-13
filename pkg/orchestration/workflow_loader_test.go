@@ -45,16 +45,6 @@ func TestWorkflowDefinition_Validate_Valid(t *testing.T) {
 			},
 		},
 		{
-			name: "canned with lead only",
-			def: WorkflowDefinition{
-				Name: "canned-workflow",
-				Mode: WorkflowModeCanned,
-				Agents: []AgentRoleSpec{
-					{Role: "lead", Backend: "ollama", Model: "llama3"},
-				},
-			},
-		},
-		{
 			name: "autonomous with lead only",
 			def: WorkflowDefinition{
 				Name: "autonomous-workflow",
@@ -117,15 +107,15 @@ func TestWorkflowDefinition_Validate_Invalid(t *testing.T) {
 			wantField: "agents",
 		},
 		{
-			name: "canned missing lead",
+			name: "canned is refused",
 			def: WorkflowDefinition{
 				Name: "test",
-				Mode: WorkflowModeCanned,
+				Mode: WorkflowMode("canned"),
 				Agents: []AgentRoleSpec{
-					{Role: "worker", Backend: "ollama"},
+					{Role: "lead", Backend: "ollama"},
 				},
 			},
-			wantField: "agents",
+			wantField: "mode",
 		},
 	}
 
@@ -475,7 +465,7 @@ func TestWorkflowLoader_ListDefinitions_SortedByName(t *testing.T) {
 	defs := []*WorkflowDefinition{
 		{Name: "zebra", Description: "Z workflow", Mode: WorkflowModeAutonomous, Agents: []AgentRoleSpec{{Role: "lead"}}},
 		{Name: "alpha", Description: "A workflow", Mode: WorkflowModeConstrained, Agents: []AgentRoleSpec{{Role: "lead"}, {Role: "worker"}}},
-		{Name: "middle", Description: "M workflow", Mode: WorkflowModeCanned, Agents: []AgentRoleSpec{{Role: "lead"}}},
+		{Name: "middle", Description: "M workflow", Mode: WorkflowModeConstrained, Agents: []AgentRoleSpec{{Role: "lead"}}},
 	}
 
 	for _, def := range defs {
@@ -545,7 +535,6 @@ func TestWorkflowErrors_Unwrap(t *testing.T) {
 
 func TestWorkflowMode_AllValidModes(t *testing.T) {
 	modes := []WorkflowMode{
-		WorkflowModeCanned,
 		WorkflowModeConstrained,
 		WorkflowModeAutonomous,
 	}

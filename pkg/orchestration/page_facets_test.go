@@ -306,11 +306,11 @@ func TestAgentFilter_MatchesFacetsServesBackendRatherThanEqualsIt(t *testing.T) 
 func TestWorkflowFilter_Matches(t *testing.T) {
 	t.Parallel()
 
-	definition := &WorkflowDefinition{Name: "sdlc", Mode: WorkflowModeCanned, ProjectID: "proj-a"}
+	definition := &WorkflowDefinition{Name: "sdlc", Mode: WorkflowModeConstrained, ProjectID: "proj-a"}
 	if !(&WorkflowFilter{}).Matches(definition) {
 		t.Error("an empty filter did not match")
 	}
-	if !(&WorkflowFilter{ProjectID: "proj-a", Mode: WorkflowModeCanned}).Matches(definition) {
+	if !(&WorkflowFilter{ProjectID: "proj-a", Mode: WorkflowModeConstrained}).Matches(definition) {
 		t.Error("the matching project and mode did not match")
 	}
 	if (&WorkflowFilter{ProjectID: "proj-b"}).Matches(definition) {

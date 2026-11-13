@@ -1115,10 +1115,10 @@ func TestControlLoop_IsConstrainedWorkflowMode(t *testing.T) {
 		t.Error("expected false when workflow mode is autonomous")
 	}
 
-	// Workflow in canned mode: constrained.
-	cl.workflow = &WorkflowDefinition{Mode: WorkflowModeCanned}
+	// Workflow in constrained mode.
+	cl.workflow = &WorkflowDefinition{Mode: WorkflowModeConstrained}
 	if !cl.isConstrainedWorkflowMode() {
-		t.Error("expected true when workflow mode is canned")
+		t.Error("expected true when workflow mode is constrained")
 	}
 
 	// Workflow in constrained mode: also constrained.
@@ -5947,7 +5947,7 @@ func TestControlLoop_ResolveBackendForMode_DefaultCase(t *testing.T) {
 	cl := NewControlLoop(impl, &peerTestLogger{})
 	cl.job.Config = &JobConfig{LeadBackend: "acp"}
 
-	// Set workflow with an unrecognized mode (not canned/constrained/autonomous).
+	// Set workflow with an unrecognized mode (not constrained/autonomous).
 	cl.workflow = &WorkflowDefinition{
 		Name: "default-mode-wf",
 		Mode: WorkflowMode("unknown-mode"),

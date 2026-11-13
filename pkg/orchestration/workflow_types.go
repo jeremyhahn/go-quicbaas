@@ -68,10 +68,9 @@ var validIsolations = map[WorkspaceIsolation]struct{}{
 // WorkflowMode defines the operational mode for an orchestration workflow.
 type WorkflowMode string
 
+// There is no "canned" mode: it was declared but never built, and ruling 189
+// deleted it (issue #622). Validate refuses it like any unknown mode.
 const (
-	// WorkflowModeCanned runs a fully predetermined workflow with fixed steps.
-	WorkflowModeCanned WorkflowMode = "canned"
-
 	// WorkflowModeConstrained allows the lead agent to decompose tasks but within
 	// defined agent roles and capabilities from the workflow definition.
 	WorkflowModeConstrained WorkflowMode = "constrained"
@@ -83,10 +82,13 @@ const (
 
 // validWorkflowModes is the set of valid workflow modes for O(1) validation.
 var validWorkflowModes = map[WorkflowMode]struct{}{
-	WorkflowModeCanned:      {},
 	WorkflowModeConstrained: {},
 	WorkflowModeAutonomous:  {},
 }
+
+// workflowModeNames names the valid workflow modes, in the order a refusal
+// lists them.
+const workflowModeNames = string(WorkflowModeConstrained) + ", " + string(WorkflowModeAutonomous)
 
 // =============================================================================
 // Overflow and Budget Actions
@@ -151,7 +153,7 @@ type WorkflowDefinition struct {
 
 // Validate checks that the WorkflowDefinition is well-formed.
 // It verifies the name is non-empty, the mode is valid, at least one agent
-// is defined, and that canned/constrained modes include a lead agent role.
+// is defined, and that constrained mode includes a lead agent role.
 // It also validates all settings fields.
 func (wd *WorkflowDefinition) Validate() error {
 	if wd.Name == "" {
@@ -163,7 +165,7 @@ func (wd *WorkflowDefinition) Validate() error {
 	if _, ok := validWorkflowModes[wd.Mode]; !ok {
 		return &WorkflowValidationError{
 			Field:   "mode",
-			Message: "invalid workflow mode: " + string(wd.Mode),
+			Message: "invalid workflow mode: " + strconv.Quote(string(wd.Mode)) + " (the modes are " + workflowModeNames + ")",
 		}
 	}
 	if len(wd.Agents) == 0 {
@@ -172,8 +174,8 @@ func (wd *WorkflowDefinition) Validate() error {
 			Message: "at least one agent is required",
 		}
 	}
-	// Canned and constrained modes require a lead agent role.
-	if wd.Mode == WorkflowModeCanned || wd.Mode == WorkflowModeConstrained {
+	// Constrained mode requires a lead agent role.
+	if wd.Mode == WorkflowModeConstrained {
 		hasLead := false
 		for i := range wd.Agents {
 			if wd.Agents[i].Role == "lead" {
@@ -184,7 +186,7 @@ func (wd *WorkflowDefinition) Validate() error {
 		if !hasLead {
 			return &WorkflowValidationError{
 				Field:   "agents",
-				Message: "canned and constrained modes require a lead agent role",
+				Message: "constrained mode requires a lead agent role",
 			}
 		}
 	}

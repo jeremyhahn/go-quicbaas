@@ -15,7 +15,7 @@ func TestDecodeMCPListWorkflows_FullRESTShape(t *testing.T) {
 				"project_id":  "project-a",
 				"name":        "full-workflow",
 				"description": "uses every workflow settings field",
-				"mode":        "canned",
+				"mode":        "constrained",
 				"agents": []map[string]interface{}{
 					{
 						"role":             "lead",

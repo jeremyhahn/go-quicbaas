@@ -84,7 +84,7 @@ func TestRequest_ListWorkflowsOverHTTP3(t *testing.T) {
 		gotSort <- r.URL.Query().Get("sort")
 		gotQuery <- r.URL.Query().Get("q")
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"workflows":[{"name":"delivery","mode":"canned","agents":[]}],"total":3,"limit":1,"offset":0,"next_offset":1}`))
+		_, _ = w.Write([]byte(`{"workflows":[{"name":"delivery","mode":"constrained","agents":[]}],"total":3,"limit":1,"offset":0,"next_offset":1}`))
 	}))
 	defer shutdown()
 

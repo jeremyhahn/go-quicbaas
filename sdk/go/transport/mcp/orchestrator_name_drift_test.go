@@ -147,12 +147,12 @@ func TestMCPTransformWorkflowRequiresWorkflow(t *testing.T) {
 			t.Errorf("%s: err = %v, want a coded internal error for a result with no workflow", method, err)
 		}
 
-		got, err := h.transformResponse(method, `{"workflow":{"name":"wf","mode":"canned"}}`)
+		got, err := h.transformResponse(method, `{"workflow":{"name":"wf","mode":"constrained"}}`)
 		if err != nil {
 			t.Fatalf("%s: transformResponse: %v", method, err)
 		}
 		wf, ok := got.(*orchestrator.WorkflowDefinition)
-		if !ok || wf.Name != "wf" || wf.Mode != orchestrator.WorkflowModeCanned {
+		if !ok || wf.Name != "wf" || wf.Mode != orchestrator.WorkflowModeConstrained {
 			t.Fatalf("%s: got %#v, want the workflow wf", method, got)
 		}
 	}

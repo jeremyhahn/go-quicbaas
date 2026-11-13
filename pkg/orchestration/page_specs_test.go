@@ -323,7 +323,7 @@ func TestWorkflowPageSpec_OrdersByName(t *testing.T) {
 
 	workflows := []*WorkflowDefinition{
 		{Name: "zeta", Mode: WorkflowModeAutonomous},
-		{Name: "alpha", Mode: WorkflowModeCanned},
+		{Name: "alpha", Mode: WorkflowModeConstrained},
 	}
 
 	page, err := ApplyPage(workflows, nil, workflowPageSpec)

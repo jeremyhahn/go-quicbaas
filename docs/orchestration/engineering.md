@@ -3152,7 +3152,7 @@ Workflow definitions control how the orchestration engine decomposes tasks, assi
 ```yaml
 name: <string>              # Unique workflow identifier
 description: <string>       # Human-readable description
-mode: <canned|constrained|autonomous>
+mode: <constrained|autonomous>
 agents:
   - role: <string>          # Agent role: lead, coder, reviewer, etc.
     backend: <string>       # Backend name: claude, codex, ollama
@@ -3180,7 +3180,7 @@ settings:
 This section used to claim the opposite, and the claim was false. A Workflow
 is one shape of job: **a lead agent decomposing a description into a DAG of
 work items executed by workers.** `handleDecompose` runs unconditionally,
-nothing skips the lead, and a `canned` or `constrained` workflow is refused at
+nothing skips the lead, and a `constrained` workflow is refused at
 validation without a `lead` role. Run a delivery pipeline through it and one
 issue becomes nine work items in seven waves, with the worker prompted with an
 LLM's paraphrase instead of what a person wrote.
@@ -3279,14 +3279,11 @@ image); revisit it when that pin moves a major version.
 
 ### Workflow Modes
 
-#### Canned
-
-**Declared, not implemented — do not select it.** The mode is documented as
-"the lead agent does not decompose tasks; work items are predefined", and
-nothing implements that: `handleDecompose` runs unconditionally and a
-workflow with no `lead` role is refused at validation, so a `canned` workflow
-is decomposed like any other and says nothing about it. Whether it is built
-or removed is an owner decision, tracked as issue #619.
+There are two modes, `constrained` and `autonomous`; the lead decomposes the
+task in both. There is no `canned` mode: it was declared ("work items are
+predefined") but never built, and ruling 189 deleted it (issue #622). A
+workflow with `mode: canned` is refused at validation like any unknown mode,
+and the refusal names the modes that exist.
 
 #### Constrained
 
@@ -3482,9 +3479,9 @@ The `run.sh` script resolves these placeholders using `--gpu-profile` and `--mod
 
 Validation rules:
 - `name` is required and must be unique.
-- `mode` must be `canned`, `constrained`, or `autonomous`.
+- `mode` must be `constrained` or `autonomous` (`canned` is refused, #622).
 - At least one agent must be defined.
-- `canned` and `constrained` modes require a `lead` role agent.
+- `constrained` mode requires a `lead` role agent.
 - `mcp_scopes` follow the `resource:action` format (e.g., `kms:read`, `secrets:write`).
 
 
@@ -3641,7 +3638,7 @@ Source: `pkg/orchestration/workflow_types.go`
 ```yaml
 name: my-workflow
 description: Description of the workflow
-mode: constrained          # canned | constrained | autonomous
+mode: constrained          # constrained | autonomous
 agents:
   - role: lead
     backend: acp
@@ -3662,7 +3659,6 @@ settings:
 
 | Mode | Constant | Description |
 |------|----------|-------------|
-| `canned` | `WorkflowModeCanned` | Declared, not implemented — the lead decomposes anyway (issue #619). Requires lead agent. |
 | `constrained` | `WorkflowModeConstrained` | Lead decomposes tasks within defined agent roles. Requires lead agent. |
 | `autonomous` | `WorkflowModeAutonomous` | Lead has full control over task decomposition and agent spawning. |
 

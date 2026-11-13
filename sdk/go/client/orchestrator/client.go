@@ -1691,10 +1691,8 @@ type InferenceChunk struct {
 // WorkflowMode mirrors orchestration.WorkflowMode for SDK callers.
 type WorkflowMode string
 
+// There is no "canned" mode: the server refuses it (issue #622).
 const (
-	// WorkflowModeCanned runs a fully predetermined workflow with fixed steps.
-	WorkflowModeCanned WorkflowMode = "canned"
-
 	// WorkflowModeConstrained allows the lead agent to decompose tasks but within
 	// defined agent roles and capabilities from the workflow definition.
 	WorkflowModeConstrained WorkflowMode = "constrained"

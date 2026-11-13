@@ -417,7 +417,7 @@ func (cl *ControlLoop) handleAssign(ctx context.Context) (JobState, error) {
 		return JobStateFailed, err
 	}
 
-	// In constrained/canned workflow mode, the fleet registry may be empty
+	// In constrained workflow mode, the fleet registry may be empty
 	// because agents are defined as workflow role specs, not fleet registrations.
 	// Synthesize virtual agent registrations from the workflow so that
 	// matchFleetNodeForTask can resolve them.
@@ -449,7 +449,7 @@ func (cl *ControlLoop) handleAssign(ctx context.Context) (JobState, error) {
 		// Resolve backend based on workflow mode.
 		backendName := cl.resolveBackendForMode(item, backends)
 
-		// In constrained/canned mode, the workflow definition is authoritative.
+		// In constrained mode, the workflow definition is authoritative.
 		// Override LLM-suggested backend/role since the LLM may hallucinate
 		// values that don't match actual workflow agent definitions.
 		if cl.workflow != nil && cl.isConstrainedWorkflowMode() {
@@ -1095,7 +1095,7 @@ func (cl *ControlLoop) cleanupAllSessions(ctx context.Context) {
 }
 
 // resolveBackendForMode resolves the backend for a work item based on the workflow mode.
-// In canned/constrained mode, only agents defined in the workflow are allowed.
+// In constrained mode, only agents defined in the workflow are allowed.
 // In autonomous mode, the work item's backend field is honored for dynamic spawning.
 func (cl *ControlLoop) resolveBackendForMode(item *WorkItem, backends []*AgentBackendInfo) string {
 	if cl.workflow == nil {
@@ -1103,7 +1103,7 @@ func (cl *ControlLoop) resolveBackendForMode(item *WorkItem, backends []*AgentBa
 	}
 
 	switch cl.workflow.Mode {
-	case WorkflowModeCanned, WorkflowModeConstrained:
+	case WorkflowModeConstrained:
 		// Only spawn agents defined in the workflow.
 		if item.RequiredRole != "" {
 			for i := range cl.workflow.Agents {
@@ -1140,12 +1140,12 @@ func (cl *ControlLoop) resolveBackendForMode(item *WorkItem, backends []*AgentBa
 	}
 }
 
-// isConstrainedWorkflowMode returns true if the workflow is in canned or constrained mode.
+// isConstrainedWorkflowMode returns true if the workflow is in constrained mode.
 func (cl *ControlLoop) isConstrainedWorkflowMode() bool {
 	if cl.workflow == nil {
 		return false
 	}
-	return cl.workflow.Mode == WorkflowModeCanned || cl.workflow.Mode == WorkflowModeConstrained
+	return cl.workflow.Mode == WorkflowModeConstrained
 }
 
 // synthesizeWorkflowAgents creates virtual FleetNode entries from the

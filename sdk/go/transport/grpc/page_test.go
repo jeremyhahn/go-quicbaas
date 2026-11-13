@@ -100,7 +100,7 @@ func (f *pagingOrchestratorFake) ListWorkflows(_ context.Context, req *pb.Orches
 	if err != nil {
 		return nil, err
 	}
-	return &pb.OrchestratorListWorkflowsResponse{Workflows: []*pb.OrchestratorWorkflowDefinition{{Name: "wf1", Mode: "canned"}}, Total: total, Limit: limit, Offset: offset, NextOffset: next}, nil
+	return &pb.OrchestratorListWorkflowsResponse{Workflows: []*pb.OrchestratorWorkflowDefinition{{Name: "wf1", Mode: "constrained"}}, Total: total, Limit: limit, Offset: offset, NextOffset: next}, nil
 }
 
 func (f *pagingOrchestratorFake) ListFleetNodes(_ context.Context, req *pb.ListFleetNodesRequest) (*pb.ListFleetNodesResponse, error) {
