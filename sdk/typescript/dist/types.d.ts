@@ -1647,12 +1647,16 @@ export interface TenantBarrierInitResponse {
     tenant_id: string;
     /** Sealing strategy that was provisioned. */
     strategy: TenantBarrierStrategy;
-    /** Shamir shares for distribution — returned exactly once. */
-    shares: string[];
     /** Threshold required for reconstruction. */
     threshold: number;
     /** Total shares generated. */
     total_shares: number;
+    /**
+     * Shares sealed to Security Officer enclaves. Share material is never
+     * returned: each officer claims an individual share through the tenant
+     * share-claim flow.
+     */
+    share_count: number;
 }
 export interface TenantBarrierUnsealShareResponse {
     /** Tenant whose barrier received the share. */

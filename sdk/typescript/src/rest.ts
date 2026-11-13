@@ -4622,7 +4622,8 @@ export class RestTenantBarrierClient implements TenantBarrierClient {
   ): Promise<TenantBarrierInitResponse | undefined> {
     const { passphrase, ...rest } = req;
     const body = passphrase === undefined ? rest : { ...rest, passphrase: bytesToBase64(passphrase) };
-    // The shamir strategy returns 200 with the minted shares; the none and
+    // The shamir strategy returns 200 with share-free metadata (threshold,
+    // total_shares, share_count: the shares are sealed to officers); the none and
     // passphrase strategies return 204 No Content. fetchJSON yields undefined
     // on a 204, so the union return type already covers both cases.
     return this.http.fetchJSON<TenantBarrierInitResponse | undefined>(
