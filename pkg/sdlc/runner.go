@@ -2334,7 +2334,7 @@ func (s *runnerRun) validate(ctx context.Context) (orchestration.JobState, error
 	})
 	s.job.Memory().AddFeedback(s.feedback)
 	return s.nextRoundWithEvidence(ctx, "verification failed", func(budget int) string {
-		return verificationFailureEvidence(failed, budget)
+		return publicVerificationSummary(s.job.JobID, failed, budget)
 	})
 }
 
@@ -2717,51 +2717,16 @@ func (s *runnerRun) nextRoundWithEvidence(ctx context.Context, reason string, ev
 //
 // COMMAND OUTPUT IS NOT TRUSTED TO BE PROSE. An `unblock[` in it would be
 // refused by ComposeBlockedReason as an injected condition, and the park
-// would fail on the very output it exists to report; the marker is defused
-// instead, because the output is what a person must read. A verification
-// summary arrives already defused (verificationSummaryLines), so its
-// measured length holds; this is the guard for any other evidence.
+// would fail on the very evidence it exists to report; the marker is defused
+// instead. A failed verification's evidence is the structured public summary
+// (publicVerificationSummary), which carries no output; its command name is
+// still configuration text, so the guard stays.
 func escalationEvidence(evidence string) string {
 	trimmed := strings.TrimSpace(evidence)
 	if trimmed == "" {
 		return ""
 	}
 	return "\n\n" + defuseUnblockMarker(trimmed)
-}
-
-// verificationVerdict says how a failed command failed: the exit status it
-// ran to, or plainly "failed" for one refused before it ran, which has none.
-func verificationVerdict(result orchestration.ValidationResult) string {
-	if result.ExitCode != 0 {
-		return "exited " + strconv.Itoa(result.ExitCode)
-	}
-	return "failed"
-}
-
-// verificationFailureEvidence renders each failed command's failing lines in
-// at most budget bytes, the room split evenly between the commands so one
-// long failure cannot crowd another out of the escalation.
-func verificationFailureEvidence(failed []orchestration.ValidationResult, budget int) string {
-	if len(failed) == 0 || budget <= 0 {
-		return ""
-	}
-	const separator = "\n\n"
-	share := (budget - len(separator)*(len(failed)-1)) / len(failed)
-	blocks := make([]string, 0, len(failed))
-	for _, result := range failed {
-		head := "`" + result.Name + "` " + verificationVerdict(result) + ":\n```\n"
-		const tail = "\n```"
-		room := share - len(head) - len(tail)
-		if room <= 0 {
-			continue
-		}
-		excerpt := verificationExcerpt(result, room)
-		if excerpt == "" {
-			continue
-		}
-		blocks = append(blocks, head+excerpt+tail)
-	}
-	return strings.Join(blocks, separator)
 }
 
 // =============================================================================

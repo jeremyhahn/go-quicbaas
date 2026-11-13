@@ -18,6 +18,8 @@ import (
 	"strconv"
 	"strings"
 	"unicode/utf8"
+
+	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
 )
 
 // =============================================================================
@@ -43,18 +45,16 @@ import (
 // WorkItem.BlockedReason, so the unsanitised form is never written to the
 // store, never reserved onto a Surfacing record, and never rendered.
 //
-// HONEST ABOUT ITS LIMITS. Pattern redaction cannot be complete — this
-// codebase's own doctrine is that free text cannot be reliably sanitised, which
-// is why the ERROR types withhold their payload outright rather than scrubbing
-// it. The difference here is what the text is FOR: an error's captured output
-// is a diagnostic an operator can get from the daemon, while a failed check's
-// output is the payload a human needs in order to act on the park. Withholding
-// it entirely would leave "verification failed: build" on the issue and send
-// nobody anywhere. So this bounds the exposure rather than eliminating it:
-// known credential shapes go, the window is capped, and what is left is a
-// summary rather than a dump.
+// SUBPROCESS OUTPUT IS NO LONGER PUBLISHED AT ALL (#213, ruling 189). Pattern
+// redaction cannot be complete: a secret printed in a shape no pattern knows
+// passes through, so redacting output and then posting it fails open. A failed
+// check now reaches a forge issue only as the structured summary below
+// (publicCheckSummary), and its output stays in the job's audit record. What
+// publicOutput still bounds is AUTHORED text: the worker's own words, a
+// readiness assessment, a forge adapter's error. For that text the patterns
+// are a second line of defence, not the thing that makes it publishable.
 
-// publicOutputLimit caps how much subprocess output a reason may carry.
+// publicOutputLimit caps how much text a published reason may carry.
 //
 // A cap matters INDEPENDENTLY of secrets: an unbounded stderr dump in an issue
 // comment is unreadable, and a human who cannot read the park cannot act on it
@@ -154,7 +154,10 @@ func redactSecrets(text string) string {
 	return text
 }
 
-// publicOutput turns subprocess output into text that may be posted publicly.
+// publicOutput bounds and scrubs authored text that may be posted publicly.
+//
+// NOT FOR SUBPROCESS OUTPUT. Redaction fails open on a secret shape it does
+// not know, so a command's output is published only as publicCheckSummary.
 //
 // Redacted, then bounded, and in that order: bounding first could cut a
 // credential in half and leave the visible half in the comment.
@@ -198,6 +201,115 @@ func publicOutput(raw string) string {
 	withheld := len(text) - cut
 	return strings.TrimSpace(text[:cut]) +
 		"\n… (" + strconv.Itoa(withheld) + " more bytes withheld; diagnostic truncated for publication)"
+}
+
+// =============================================================================
+// Public check summary
+// =============================================================================
+//
+// A FAILED CHECK IS PUBLISHED AS FIELDS, NEVER AS ITS OUTPUT (#213, ruling 189).
+//
+// A check's output is written by a process the module does not control, and
+// redaction only removes the secret shapes it knows about. A bare database
+// password, a recovery phrase or an internal token with no known prefix gets
+// past every pattern above. Publishing redacted output is therefore fail-open,
+// and security-review.md §6 blocks fail-open in review. So the park reason a
+// forge issue carries for a failed check holds only fields the output never
+// supplies:
+//
+//   - the command, which is the operator's configuration (the binding's
+//     verification list), not the subprocess's output;
+//   - the exit status, an integer;
+//   - how many bytes of output were withheld, an integer;
+//   - the job whose audit record holds the failing lines.
+//
+// THE OUTPUT IS NOT LOST; IT IS KEPT WHERE IT IS NOT PUBLISHED. The job's
+// `sdlc:verification` audit record carries each failed command's failing
+// lines (auditVerificationResults), and the worker's feedback prompt carries
+// the full failure. The summary names the job and the record, so the person
+// who takes the escalation is pointed at the cause instead of left to search
+// the daemon log for it. That pointer is what keeps the park actionable (#198).
+//
+// IT DOES NOT DEPEND ON THE FORGE BEING PRIVATE. Every field is safe to post
+// on a hosted or public forge, so a change of forge does not reopen this.
+
+// publicCheckSummary is the publishable account of one failed check.
+type publicCheckSummary struct {
+	// Command is the verification command as the binding configures it.
+	Command string
+	// ExitCode is the status the command exited with; zero for a command
+	// that failed without running to an exit status.
+	ExitCode int
+	// WithheldBytes is the size of the output kept out of publication.
+	WithheldBytes int
+}
+
+// newPublicCheckSummary takes only the fields of result that its output does
+// not supply. Message and Details are read for their length only.
+func newPublicCheckSummary(result orchestration.ValidationResult) publicCheckSummary {
+	return publicCheckSummary{
+		Command:       result.Name,
+		ExitCode:      result.ExitCode,
+		WithheldBytes: len(result.Message) + len(result.Details),
+	}
+}
+
+// String renders the summary as one line of an issue comment.
+//
+// A backtick in the command would close the code span early and let the rest
+// render as markdown, so it is replaced.
+func (s publicCheckSummary) String() string {
+	verdict := "failed"
+	if s.ExitCode != 0 {
+		verdict = "exited " + strconv.Itoa(s.ExitCode)
+	}
+	return "- `" + strings.ReplaceAll(s.Command, "`", "'") + "` " + verdict +
+		"; " + strconv.Itoa(s.WithheldBytes) + " bytes of output withheld from publication"
+}
+
+// publicVerificationSummary renders the failed checks of a verification as
+// the structured public summary, in at most budget bytes.
+//
+// THE POINTER TO THE OUTPUT IS RESERVED FIRST. A summary that lists checks and
+// drops the line saying where their output is would send the reader nowhere,
+// so the pointer is always kept and the checks that do not fit after it are
+// counted instead of listed.
+func publicVerificationSummary(jobID string, failed []orchestration.ValidationResult, budget int) string {
+	if len(failed) == 0 || budget <= 0 {
+		return ""
+	}
+	pointer := "The output is not published. The failing lines are in the `" + auditVerification +
+		"` audit record of job " + jobID + "."
+	if len(pointer) > budget {
+		return ""
+	}
+	used := len(pointer)
+	var lines []string
+	for i, result := range failed {
+		line := newPublicCheckSummary(result).String()
+		remaining := len(failed) - i - 1
+		// Room for this line, and for the count of any that would follow it.
+		reserve := 0
+		if remaining > 0 {
+			reserve = len(moreFailedChecks(remaining)) + 1
+		}
+		if used+len(line)+1+reserve > budget {
+			// The previous line reserved room for this count; the first line
+			// had no previous one, so the count is checked like any other.
+			if more := moreFailedChecks(len(failed) - i); used+len(more)+1 <= budget {
+				lines = append(lines, more)
+			}
+			break
+		}
+		lines = append(lines, line)
+		used += len(line) + 1
+	}
+	return strings.Join(append(lines, pointer), "\n")
+}
+
+// moreFailedChecks counts the failed checks a summary had no room to list.
+func moreFailedChecks(n int) string {
+	return "- and " + strconv.Itoa(n) + " more failed check(s)"
 }
 
 // =============================================================================

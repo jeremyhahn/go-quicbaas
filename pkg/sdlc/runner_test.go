@@ -1898,7 +1898,8 @@ func TestRunner_VerificationFailureGoesBackToTheWorkerWithTheOutput(t *testing.T
 // TestRunner_AFailedVerificationRecordsAndEscalatesItsFailingLines is
 // go-quicbaas#1037: the output go-luks2#12 escalated on, whose first line was
 // GNU make's harmless `env: can't execute 'GOPATH'` and whose failure was at
-// the end. The record and the escalation carry the failure, not the noise.
+// the end. The record carries the failure, not the noise; the escalation
+// carries neither, only the summary that points at the record (#213).
 func TestRunner_AFailedVerificationRecordsAndEscalatesItsFailingLines(t *testing.T) {
 	rig := newRunnerRig(t)
 	rig.rebindVerification(t, "make test")
@@ -1945,13 +1946,19 @@ func TestRunner_AFailedVerificationRecordsAndEscalatesItsFailingLines(t *testing
 			t.Errorf("the record carries the harmless first line:\n%s", audit)
 		}
 	}
-	for _, want := range []string{"verification failed after 1 review round(s)", "`make test` exited 2:", "make: *** [Makefile:12: test] Error 1", "--- FAIL: TestOpenVolume"} {
+	// The escalation is the structured summary (#213): the command, how it
+	// exited, and where its failing lines are. The lines themselves stay in
+	// the record above.
+	for _, want := range []string{"verification failed after 1 review round(s)", "- `make test` exited 2; ",
+		" bytes of output withheld from publication", "`" + auditVerification + "` audit record of job "} {
 		if !strings.Contains(escalated.Reason, want) {
 			t.Errorf("the escalation lacks %q:\n%s", want, escalated.Reason)
 		}
 	}
-	if strings.Contains(escalated.Reason, noise) {
-		t.Errorf("the escalation names the harmless first line:\n%s", escalated.Reason)
+	for _, output := range []string{noise, "make: *** [Makefile:12: test] Error 1", "--- FAIL: TestOpenVolume", "checksum mismatch"} {
+		if strings.Contains(escalated.Reason, output) {
+			t.Errorf("the escalation carries the command's output %q:\n%s", output, escalated.Reason)
+		}
 	}
 	// Output that happens to spell a marker must not become a condition.
 	if condition, err := ParseUnblockCondition(escalated.Reason); err != nil || condition.Kind != UnblockOwnerRuling {
@@ -1959,14 +1966,13 @@ func TestRunner_AFailedVerificationRecordsAndEscalatesItsFailingLines(t *testing
 	}
 }
 
-// TestRunner_ThePostedEscalationKeepsTheFailureWithinThePublicationBudget
-// reads the comment the forge actually carries, not the reason: the comment
-// keeps only the head of the reason (publicOutputLimit), and a failure whose
-// last stderr lines are long and harmless must still show its `make: ***`
-// line and stdout's compiler diagnostic there. A credential that crosses the
-// summary's line cut, and a PEM block whose delimiters a selection could
-// drop, must leave no fragment on the page.
-func TestRunner_ThePostedEscalationKeepsTheFailureWithinThePublicationBudget(t *testing.T) {
+// TestRunner_ThePostedEscalationCarriesNoSubprocessOutput
+// reads the comment the forge actually carries, not the reason (#213, ruling
+// 189): the comment carries the structured summary and none of the command's
+// output. A password printed with no shape redaction knows stays off the page,
+// as do a credential that crosses the summary's line cut and a PEM block,
+// and the failing lines stay in the verification record, not on the page.
+func TestRunner_ThePostedEscalationCarriesNoSubprocessOutput(t *testing.T) {
 	rig := newRunnerRig(t)
 	rig.rebindVerification(t, "make test")
 	if err := rig.rebind(context.Background(), func(b *ProjectBinding) {
@@ -1982,9 +1988,12 @@ func TestRunner_ThePostedEscalationKeepsTheFailureWithinThePublicationBudget(t *
 		failingOut = "src/luks.c:10:3: error: unknown type name 'foo'"
 		failingErr = "make: *** [Makefile:12: test] Error 1"
 		noise      = "env: can't execute 'GOPATH': No such file or directory"
+		// A database password printed bare: no key name, no known prefix.
+		bareSecret = "connecting as svc with Xq7-plover-Kestrel-91"
 	)
 	var stderr strings.Builder
 	stderr.WriteString(noise + "\n")
+	stderr.WriteString(bareSecret + "\n")
 	// A credential placed so it straddles the 240-byte line cut.
 	stderr.WriteString(strings.Repeat("w", VerificationSummaryLineBytes-10) + " " + token + "\n")
 	stderr.WriteString("-----BEGIN PRIVATE KEY-----\n" + pemBody + "\n-----END PRIVATE KEY-----\n")
@@ -2009,13 +2018,24 @@ func TestRunner_ThePostedEscalationKeepsTheFailureWithinThePublicationBudget(t *
 		t.Fatalf("park comments = %d, want exactly one", len(parks))
 	}
 	body := parks[0].Body
-	for _, want := range []string{"verification failed after 1 review round(s)", failingErr, failingOut} {
+	for _, want := range []string{"verification failed after 1 review round(s)", "- `make test` exited 2; ",
+		"`" + auditVerification + "` audit record of job "} {
 		if !strings.Contains(body, want) {
 			t.Errorf("the posted escalation lacks %q:\n%s", want, body)
 		}
 	}
 	if strings.Contains(body, "more bytes withheld") {
 		t.Errorf("the evidence overran the publication budget and was cut:\n%s", body)
+	}
+	// NO OUTPUT AT ALL REACHES THE ISSUE (#213): not the failing lines, and
+	// not a secret no redaction pattern knows the shape of.
+	for _, output := range []string{failingErr, failingOut, bareSecret, "warning: harmless"} {
+		if strings.Contains(body, output) {
+			t.Errorf("the posted escalation carries the command's output %q:\n%s", output, body)
+		}
+	}
+	if redactSecrets(bareSecret) != bareSecret {
+		t.Fatalf("the fixture's secret is a shape redaction knows; it must be one it does not")
 	}
 	for _, leaked := range []string{"ghp_", token[len(token)-12:], pemBody[:16], pemBody[len(pemBody)-12:]} {
 		if strings.Contains(body, leaked) {

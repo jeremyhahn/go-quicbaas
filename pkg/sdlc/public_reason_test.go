@@ -18,6 +18,8 @@ import (
 	"strings"
 	"testing"
 	"unicode/utf8"
+
+	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
 )
 
 // TestPublicOutput_RedactsTheShapesABuildStepPrints covers the sanitiser at the
@@ -239,5 +241,60 @@ func TestPublicOutput_InvalidUTF8DoesNotEraseTheDiagnostic(t *testing.T) {
 	}
 	if len(got) > publicOutputLimit+120 {
 		t.Errorf("output is %d bytes, want it bounded near %d", len(got), publicOutputLimit)
+	}
+}
+
+// TestPublicVerificationSummary_CarriesNoOutput is #213: whatever a failed
+// command printed, including a secret no pattern recognises, none of it is in
+// the summary. The summary still names the command, its exit status, the size
+// of what was withheld, and the job record that holds the output.
+func TestPublicVerificationSummary_CarriesNoOutput(t *testing.T) {
+	const bare = "recovery phrase: plover kestrel amber ninety"
+	failed := []orchestration.ValidationResult{
+		{Name: "make test", ExitCode: 2, Message: bare + "\nmake: *** Error 1", Details: "--- FAIL: TestX"},
+		{Name: "go `vet`", Message: "refused"},
+	}
+	got := publicVerificationSummary("job-7", failed, publicOutputLimit)
+	for _, output := range []string{"plover", "make: ***", "FAIL", "refused"} {
+		if strings.Contains(got, output) {
+			t.Errorf("the summary carries output %q:\n%s", output, got)
+		}
+	}
+	withheld := len(failed[0].Message) + len(failed[0].Details)
+	for _, want := range []string{
+		"- `make test` exited 2; " + fmt.Sprint(withheld) + " bytes of output withheld from publication",
+		"- `go 'vet'` failed; 7 bytes",
+		"`" + auditVerification + "` audit record of job job-7.",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("the summary lacks %q:\n%s", want, got)
+		}
+	}
+}
+
+// TestPublicVerificationSummary_KeepsThePointerWithinItsBudget: when the
+// checks do not all fit, the ones left out are counted and the line saying
+// where the output is stays.
+func TestPublicVerificationSummary_KeepsThePointerWithinItsBudget(t *testing.T) {
+	var failed []orchestration.ValidationResult
+	for i := 0; i < 40; i++ {
+		failed = append(failed, orchestration.ValidationResult{Name: "make check-" + fmt.Sprint(i), ExitCode: 1})
+	}
+	const budget = 400
+	got := publicVerificationSummary("job-7", failed, budget)
+	if len(got) > budget {
+		t.Fatalf("summary is %d bytes, over its budget of %d:\n%s", len(got), budget, got)
+	}
+	if !strings.Contains(got, "audit record of job job-7.") {
+		t.Errorf("the summary dropped the pointer to the output:\n%s", got)
+	}
+	if !strings.Contains(got, "more failed check(s)") || !strings.Contains(got, "- `make check-0` exited 1") {
+		t.Errorf("the summary neither lists the first check nor counts the rest:\n%s", got)
+	}
+	if publicVerificationSummary("job-7", failed, 10) != "" {
+		t.Error("a budget the pointer cannot fit in yields a summary; want none")
+	}
+	if publicVerificationSummary("job-7", nil, budget) != "" {
+		t.Error("no failed checks yields a summary; want none")
 	}
 }
