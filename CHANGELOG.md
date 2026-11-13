@@ -22,6 +22,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   rulings. A deployment whose administrative agent uses another login names
   it in `sdlc.rulers.default`.
 
+### Removed
+
+- **The `qrdb:` config block and the `QUICBAAS_QRDB_*` variables (go-quicbaas#1617).**
+  go-qrdb under go-quicbaas is embedded only, so `qrdb.transport`,
+  `qrdb.address`, `qrdb.unix_socket_path` and `qrdb.tls_*` selected nothing.
+  A config file that still carries a `qrdb:` block is refused with
+  `RemovedKeyError` naming the `qrdb` key; delete the block.
+
 ## [0.16.0-alpha] - 2026-10-18
 
 ### Fixed

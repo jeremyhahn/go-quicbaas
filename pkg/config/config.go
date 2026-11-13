@@ -95,28 +95,6 @@ const (
 // bootstrap admin credentials when InsecureDevMode is false.
 const MinBootstrapPasswordLength = 12
 
-// QRDBTransport constants enumerate the supported qrdb SDK transport types.
-const (
-	// QRDBTransportEmbedded uses in-process calls via the embedded transport.
-	// This is the default and has zero network overhead.
-	QRDBTransportEmbedded = "embedded"
-
-	// QRDBTransportGRPC uses gRPC to communicate with a remote qrdb server.
-	QRDBTransportGRPC = "grpc"
-
-	// QRDBTransportREST uses REST/HTTP to communicate with a remote qrdb server.
-	QRDBTransportREST = "rest"
-
-	// QRDBTransportQUIC uses QUIC to communicate with a remote qrdb server.
-	QRDBTransportQUIC = "quic"
-
-	// QRDBTransportMCP uses MCP (Model Context Protocol) to communicate with a remote qrdb server.
-	QRDBTransportMCP = "mcp"
-
-	// QRDBTransportUnix uses a Unix domain socket to communicate with a remote qrdb server.
-	QRDBTransportUnix = "unix"
-)
-
 // IAMMTLSConfig holds operator-provided configuration for RFC 8705 mTLS client
 // authentication pools that are loaded at daemon startup.
 type IAMMTLSConfig struct {
@@ -478,7 +456,6 @@ type Config struct {
 	SDLC          SDLCConfig          `mapstructure:"sdlc"`
 	Seal          SealConfig          `mapstructure:"seal"`
 	CA            CAConfig            `mapstructure:"ca"`
-	QRDB          QRDBConfig          `mapstructure:"qrdb"`
 	Databases     DatabasesConfig     `mapstructure:"databases"`
 	XKMS          XKMSConfig          `mapstructure:"xkms"`
 	Crypto        CryptoConfig        `mapstructure:"crypto"`
@@ -488,44 +465,6 @@ type Config struct {
 	// If nil, no trust resolver is configured and outbound connections use the
 	// default OS trust store.
 	Trust *xkmsresolver.Config `mapstructure:"trust" json:"trust,omitempty" yaml:"trust,omitempty"`
-}
-
-// QRDBConfig configures the qrdb SDK client transport.
-type QRDBConfig struct {
-	// Transport specifies which transport the SDK client uses to communicate
-	// with the qrdb service layer. Options:
-	//   - "embedded" (default): In-process calls via embedded transport (zero overhead)
-	//   - "grpc": gRPC transport connecting to a remote qrdb server
-	//   - "rest": REST/HTTP transport
-	//   - "quic": QUIC transport
-	//   - "mcp": MCP (Model Context Protocol) transport
-	//   - "unix": Unix domain socket transport
-	Transport string `mapstructure:"transport"`
-
-	// Address is the target address for network transports (gRPC, REST, QUIC, MCP).
-	// Ignored when transport is "embedded".
-	// Examples: "localhost:50051" (gRPC), "https://localhost:8443" (REST)
-	Address string `mapstructure:"address"`
-
-	// UnixSocketPath is the Unix socket path for the "unix" transport.
-	UnixSocketPath string `mapstructure:"unix_socket_path"`
-
-	// TLSEnabled enables TLS for network transports.
-	TLSEnabled bool `mapstructure:"tls_enabled"`
-
-	// TLSCertFile is the path to the TLS certificate file.
-	TLSCertFile string `mapstructure:"tls_cert_file"`
-
-	// TLSKeyFile is the path to the TLS key file.
-	TLSKeyFile string `mapstructure:"tls_key_file"`
-
-	// TLSCAFile is the path to the CA certificate file for verification.
-	TLSCAFile string `mapstructure:"tls_ca_file"`
-}
-
-// IsEmbedded returns true if the transport is embedded or unset (default).
-func (q *QRDBConfig) IsEmbedded() bool {
-	return q.Transport == "" || q.Transport == QRDBTransportEmbedded
 }
 
 // AuthConfig contains authentication configuration.
@@ -1316,6 +1255,7 @@ func BindSDLCWorkerImageEnv(v *viper.Viper) {
 // to where the setting went. A configuration that sets one is refused at load
 // (RefuseRemovedKeys) — pre-v1, no migration: the key is renamed by hand.
 var RemovedKeys = map[string]string{
+	"qrdb":                                   "nothing; go-qrdb is embedded only, so there is no qrdb transport, address or TLS to configure",
 	"sdlc.triage_backend":                    agentReplacesTuple("sdlc.triage_agent"),
 	"sdlc.triage_model":                      agentReplacesTuple("sdlc.triage_agent"),
 	"orchestration.lead_agent.backend":       agentReplacesTuple("orchestration.lead_agent"),
@@ -2919,7 +2859,6 @@ func (c *Config) Clone() *Config {
 		Seal:       c.Seal,
 		CA:         c.CA,
 		Crypto:     c.Crypto,
-		QRDB:       c.QRDB,
 		Databases:  c.Databases,
 	}
 
