@@ -32,6 +32,7 @@ import (
 	restapi "github.com/jeremyhahn/go-quicbaas/pkg/api/rest"
 	"github.com/jeremyhahn/go-quicbaas/pkg/apimodule"
 	"github.com/jeremyhahn/go-quicbaas/pkg/config"
+	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 	"github.com/jeremyhahn/go-quicbaas/pkg/routing"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 	qbshards "github.com/jeremyhahn/go-quicbaas/pkg/shards"
@@ -698,7 +699,7 @@ func (s *Server) unifiedModuleServerOptions(serverOpts []qrdbsdk.ServerOption) (
 		xkmssdk.WithServiceModuleWebAuthn(quicbaasWebAuthnConfigToXKMS(
 			s.config.IAM.WebAuthn, s.config.IAM.SelfServiceRegistration.Enabled)),
 		xkmssdk.WithServiceModuleWebAuthnCredentialStoreDecorator(webauthnCredentialStoreDecorator),
-		xkmssdk.WithServiceModuleSession(&xkmssdk.ServiceModuleSessionOptions{}),
+		xkmssdk.WithServiceModuleSession(s.xkmsModuleSessionOptions()),
 		// The xkms module serves its OWN PIV login at /api/v1/auth/login/piv.
 		// Since go-xkms v0.49.0-alpha it checks the slot attestation itself,
 		// so it has to be told that the operator accepted unattested login.
@@ -1381,6 +1382,18 @@ func (s *Server) standaloneRegistryNotice() string {
 	}
 	return "Service registry unavailable on a standalone qrdb node: " +
 		"it needs the raft lease and watch planes, so registry calls return RegistryRequiresRaftError"
+}
+
+// xkmsModuleSessionOptions makes the xkms module sign its session tokens
+// with the quicbaas OIDC key, issuer and audience, so one key signs every
+// platform token the node validates (#2134).
+func (s *Server) xkmsModuleSessionOptions() *xkmssdk.ServiceModuleSessionOptions {
+	issuer := s.getIssuerURL()
+	return &xkmssdk.ServiceModuleSessionOptions{
+		SigningKeyCN: iam.OIDCSigningKeyCN,
+		Issuer:       issuer,
+		Audience:     []string{issuer},
+	}
 }
 
 // pivLoginModuleOptions builds the options of the xkms module's own PIV login.
