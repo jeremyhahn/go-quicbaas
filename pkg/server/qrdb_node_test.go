@@ -212,17 +212,6 @@ func TestBuildXKMSCryptoOptions_EmptyStrategy(t *testing.T) {
 // newNodeBackedShardedClient
 // ---------------------------------------------------------------------------
 
-func TestNewNodeBackedShardedClient_IsEmbedded(t *testing.T) {
-	// Build a real memory-backed qrdb standalone node so we have a valid
-	// *qrdbnode.Node to pass to newNodeBackedShardedClient.
-	node := buildMemoryStandaloneNode(t)
-	defer node.Close()
-
-	sc := newNodeBackedShardedClient(node)
-	require.NotNil(t, sc)
-	assert.True(t, sc.IsEmbedded(), "node-backed client must report embedded transport")
-}
-
 func TestNewNodeBackedShardedClient_ForShardReturnsSameClient(t *testing.T) {
 	node := buildMemoryStandaloneNode(t)
 	defer node.Close()
@@ -827,7 +816,6 @@ func TestNewNodeBackedShardedClient_FromClusteredNode(t *testing.T) {
 
 	sc := newNodeBackedShardedClient(s.qrdbNode)
 	require.NotNil(t, sc)
-	assert.True(t, sc.IsEmbedded(), "clustered node-backed client must report embedded transport")
 
 	c1, err := sc.ForShard(1)
 	require.NoError(t, err)

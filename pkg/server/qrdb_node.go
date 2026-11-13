@@ -1287,22 +1287,12 @@ func buildRaftMTLSConfig(cfg *config.Config) (*qrdbnode.RaftMTLSConfig, error) {
 
 // newNodeBackedShardedClient returns a *ShardedClient backed by the qrdb
 // node's SDK client. All shard-ID lookups return the same client via the
-// nodeClient short-circuit in ShardedClient.ForShard.
-//
-// The factory is wired with the embedded transport config so IsEmbedded()
-// returns true — callers that check the transport type still see the correct
-// embedded indicator. The qrdb node owns all per-shard storage; quicbaas
-// does not manage separate per-shard stores.
-//
-// The node client's lifetime is owned by the qrdb node, not the ShardedClient.
-// When nodeOwned is true, Close() is a no-op on the ShardedClient side;
-// the node closes the client during node.Close().
+// nodeClient in ShardedClient.ForShard. The qrdb node owns all per-shard
+// storage and the client's lifetime: the node closes the client during
+// node.Close(), and ShardedClient.Close never does.
 func newNodeBackedShardedClient(node *qrdbnode.Node) *ShardedClient {
-	embeddedCfg := &config.QRDBConfig{Transport: config.QRDBTransportEmbedded}
 	return &ShardedClient{
-		factory:    newTransportFactory(embeddedCfg, nil, nil),
 		nodeClient: node.Client(),
-		nodeOwned:  true,
 	}
 }
 

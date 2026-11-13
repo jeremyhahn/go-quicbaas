@@ -77,8 +77,6 @@ func (p *readinessTestQRDBProvider) Close() error {
 	return p.client.Close()
 }
 
-func (p *readinessTestQRDBProvider) IsEmbedded() bool { return false }
-
 // leaderShard builds a topology shard entry that has an elected leader.
 func leaderShard(id uint64) transport.ShardInfo {
 	return transport.ShardInfo{ShardID: id, LeaderID: 1, IsLeader: id == 1}

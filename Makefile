@@ -4284,8 +4284,8 @@ clean: ## Clean build artifacts and test data
 	rm -f /tmp/quicbaas-*.log /tmp/quicbaas-*.pid /tmp/QuicBaaS_*.log 2>/dev/null || true
 	@# Clean test data and logs
 	rm -rf data/ logs/ 2>/dev/null || true
-	@# Clean testdata directories (except processor testdata which has real test fixtures)
-	find . -type d -name "testdata" -not -path "*/pkg/rag/processor/testdata" -exec rm -rf {} + 2>/dev/null || true
+	@# Clean untracked and ignored files under testdata directories; tracked fixtures are never removed
+	git clean -fdxq -- ':(glob)**/testdata/**'
 	@# Clean benchmark artifacts
 	rm -rf test/benchmark/results test/benchmark/profiles/*.prof 2>/dev/null || true
 	@# Clean empty directories left by tests
@@ -5665,10 +5665,15 @@ DEVCONTAINER_COMPOSE = TOOLCHAIN_IMAGE='$(TOOLCHAIN_IMAGE)' \
 	GOMODAUTH_ENV='$(GOMODAUTH_ENV)' RUN_UID="$$(id -u)" RUN_GID="$$(id -g)" \
 	$(DOCKER) compose -f $(DEVCONTAINER_DIR)/compose.yaml
 # Builds the named compose services with the module credentials staged for the
-# build only, unless CI handed them over in MODULE_ENV_FILE.
+# build only, unless CI handed them over in MODULE_ENV_FILE. compose hands the
+# build to buildx bake, which refuses to read the GOMODAUTH_ENV secret file
+# outside the build context unless the caller grants it, and compose has no
+# flag for that. BUILDX_BAKE_ENTITLEMENTS_FS=0 turns the check off for this
+# one compose build alone: the file is a build secret, mounted for one RUN
+# step, and never lands in a layer.
 DEVCONTAINER_BUILD = $(if $(strip $(MODULE_ENV_FILE)),,trap '$(GOMODAUTH_CLEAR)' EXIT; \
 	$(MAKE) --no-print-directory stage-gomodauth;) \
-	$(DEVCONTAINER_COMPOSE) build
+	BUILDX_BAKE_ENTITLEMENTS_FS=0 $(DEVCONTAINER_COMPOSE) build
 
 .PHONY: toolchain-image
 toolchain-image: ## Print the toolchain image tag, hashed from the files it is built from

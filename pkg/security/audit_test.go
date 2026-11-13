@@ -4534,9 +4534,8 @@ func TestAuditLogger_CheckRotation_Coverage(t *testing.T) {
 		require.NoError(t, err)
 		require.NoError(t, al.file.Sync())
 
-		// Wait for rotation check
-		time.Sleep(2 * time.Second)
-
+		// checkRotation ticks once a minute, so no wait here can reach a
+		// check: Close must stop the watcher with the oversize file in place.
 		err = al.Close()
 		assert.NoError(t, err)
 	})
@@ -6148,11 +6147,8 @@ func TestAuditLogger_CompressFileAsync_Success(t *testing.T) {
 	err = os.WriteFile(testFile, []byte("test data for async compression"), 0644)
 	require.NoError(t, err)
 
-	// Call async compression
+	// compressFileAsync compresses on the caller's goroutine
 	al.compressFileAsync(testFile, 5)
-
-	// Wait for async compression
-	time.Sleep(100 * time.Millisecond)
 
 	// Verify compressed file exists
 	assert.FileExists(t, testFile+".gz")
@@ -6177,9 +6173,6 @@ func TestAuditLogger_CompressFileAsync_NonExistentFile(t *testing.T) {
 
 	// Call async compression with non-existent file - should not panic
 	al.compressFileAsync("/nonexistent/path/file.log", 5)
-
-	// Wait for async compression attempt
-	time.Sleep(50 * time.Millisecond)
 }
 
 // ---------------------------------------------------------------------------
