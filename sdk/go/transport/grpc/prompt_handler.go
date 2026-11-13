@@ -63,8 +63,8 @@ func handlePromptRequest(ctx context.Context, conn *grpc.ClientConn, method stri
 	return handler(ctx, pb.NewPromptServiceClient(conn), req)
 }
 
-// promptRequest asserts the SDK request type of a verb.
-func promptRequest[T any](op string, req interface{}) (*T, error) {
+// sdkRequest asserts the SDK request type of a verb.
+func sdkRequest[T any](op string, req interface{}) (*T, error) {
 	r, ok := req.(*T)
 	if !ok || r == nil {
 		return nil, errors.NewInvalidInput(op, "invalid request type")
@@ -103,7 +103,7 @@ func promptRefFromProto(r *pb.PromptVersionRef) prompt.VersionRef {
 
 func handlePromptList(ctx context.Context, client pb.PromptServiceClient, req interface{}) (interface{}, error) {
 	const op = "grpc.prompt.List"
-	r, err := promptRequest[prompt.ListRequest](op, req)
+	r, err := sdkRequest[prompt.ListRequest](op, req)
 	if err != nil {
 		return nil, err
 	}
@@ -125,7 +125,7 @@ func handlePromptList(ctx context.Context, client pb.PromptServiceClient, req in
 
 func handlePromptGet(ctx context.Context, client pb.PromptServiceClient, req interface{}) (interface{}, error) {
 	const op = "grpc.prompt.Get"
-	r, err := promptRequest[prompt.GetRequest](op, req)
+	r, err := sdkRequest[prompt.GetRequest](op, req)
 	if err != nil {
 		return nil, err
 	}
@@ -138,7 +138,7 @@ func handlePromptGet(ctx context.Context, client pb.PromptServiceClient, req int
 
 func handlePromptEffective(ctx context.Context, client pb.PromptServiceClient, req interface{}) (interface{}, error) {
 	const op = "grpc.prompt.Effective"
-	addr, err := promptRequest[prompt.Address](op, req)
+	addr, err := sdkRequest[prompt.Address](op, req)
 	if err != nil {
 		return nil, err
 	}
@@ -161,7 +161,7 @@ func handlePromptEffective(ctx context.Context, client pb.PromptServiceClient, r
 
 func handlePromptDiff(ctx context.Context, client pb.PromptServiceClient, req interface{}) (interface{}, error) {
 	const op = "grpc.prompt.Diff"
-	addr, err := promptRequest[prompt.Address](op, req)
+	addr, err := sdkRequest[prompt.Address](op, req)
 	if err != nil {
 		return nil, err
 	}
@@ -182,7 +182,7 @@ func handlePromptDiff(ctx context.Context, client pb.PromptServiceClient, req in
 
 func handlePromptHistory(ctx context.Context, client pb.PromptServiceClient, req interface{}) (interface{}, error) {
 	const op = "grpc.prompt.History"
-	addr, err := promptRequest[prompt.Address](op, req)
+	addr, err := sdkRequest[prompt.Address](op, req)
 	if err != nil {
 		return nil, err
 	}
@@ -205,7 +205,7 @@ func handlePromptHistory(ctx context.Context, client pb.PromptServiceClient, req
 
 func handlePromptPut(ctx context.Context, client pb.PromptServiceClient, req interface{}) (interface{}, error) {
 	const op = "grpc.prompt.Put"
-	r, err := promptRequest[prompt.PutRequest](op, req)
+	r, err := sdkRequest[prompt.PutRequest](op, req)
 	if err != nil {
 		return nil, err
 	}
@@ -220,7 +220,7 @@ func handlePromptPut(ctx context.Context, client pb.PromptServiceClient, req int
 
 func handlePromptRollback(ctx context.Context, client pb.PromptServiceClient, req interface{}) (interface{}, error) {
 	const op = "grpc.prompt.Rollback"
-	r, err := promptRequest[prompt.RollbackRequest](op, req)
+	r, err := sdkRequest[prompt.RollbackRequest](op, req)
 	if err != nil {
 		return nil, err
 	}
@@ -235,7 +235,7 @@ func handlePromptRollback(ctx context.Context, client pb.PromptServiceClient, re
 
 func handlePromptReset(ctx context.Context, client pb.PromptServiceClient, req interface{}) (interface{}, error) {
 	const op = "grpc.prompt.Reset"
-	r, err := promptRequest[prompt.ResetRequest](op, req)
+	r, err := sdkRequest[prompt.ResetRequest](op, req)
 	if err != nil {
 		return nil, err
 	}

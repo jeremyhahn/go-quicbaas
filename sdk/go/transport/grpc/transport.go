@@ -517,6 +517,16 @@ func (t *Transport) doRequest(ctx context.Context, service, method string, req i
 		return handleTimeSeriesRequest(ctx, conn, method, req)
 	}
 
+	// Backup and Cache: plain Go SDK structs converted to the generated
+	// QuicBaaS backup and cache RPC types. Served here and, verbatim, on the
+	// Unix transport.
+	if isBackupService(service) {
+		return handleBackupRequest(ctx, conn, method, req)
+	}
+	if isCacheService(service) {
+		return handleCacheRequest(ctx, conn, method, req)
+	}
+
 	// Build full method path for other services.
 	fullMethod := "/" + service + "/" + method
 
