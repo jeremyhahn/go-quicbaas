@@ -759,11 +759,7 @@ func (s *Server) initializeIAMComponents() (service.IAMComponents, error) {
 	// at login time. A misconfigured CA bundle fails startup (fail closed),
 	// mirroring the PIV login TLS pool behavior in lifecycle_rest.go.
 	var pivActivator *iam.PIVActivator
-	if s.config.IAM.PIVLogin.Enabled && s.config.IAM.PIVLogin.CAFile != "" {
-		roots, rootsErr := loadPIVActivationRoots(s.config.IAM.PIVLogin.CAFile)
-		if rootsErr != nil {
-			return nil, &IAMComponentInitError{Component: "PIV activator", Cause: rootsErr}
-		}
+	if roots := s.clientTrustAnchors.certPool(); s.config.IAM.PIVLogin.Enabled && roots != nil {
 		activationClaims, claimsErr := s.buildUserActivationClaims()
 		if claimsErr != nil {
 			return nil, &IAMComponentInitError{Component: "user activation claims", Cause: claimsErr}
@@ -780,7 +776,7 @@ func (s *Server) initializeIAMComponents() (service.IAMComponents, error) {
 		if err != nil {
 			return nil, &IAMComponentInitError{Component: "PIV activator", Cause: err}
 		}
-		s.logger.Infof("PIV invite activation enabled (roots: %s)", s.config.IAM.PIVLogin.CAFile)
+		s.logger.Infof("PIV invite activation enabled (roots: security.tls_ca_file %s)", s.config.Security.TLSCAFile)
 	}
 
 	components := &iamComponents{
@@ -2110,42 +2106,4 @@ func writeOrchestratorDaemonClient(path string, c *OrchestratorDaemonClient) err
 		return err
 	}
 	return os.Rename(tmp, path)
-}
-
-// PIVActivationRootsError indicates the iam.piv_login CA bundle configured for
-// PIV invite activation could not be loaded or parsed.
-type PIVActivationRootsError struct {
-	Path   string
-	Reason string
-	Cause  error
-}
-
-// Error implements the error interface.
-func (e *PIVActivationRootsError) Error() string {
-	msg := "piv activation roots: " + e.Reason + " (" + e.Path + ")"
-	if e.Cause != nil {
-		msg += ": " + e.Cause.Error()
-	}
-	return msg
-}
-
-// Unwrap returns the underlying cause.
-func (e *PIVActivationRootsError) Unwrap() error {
-	return e.Cause
-}
-
-// loadPIVActivationRoots reads the PEM CA bundle at path into a certificate
-// pool for PIV invite-activation chain verification. The path is the
-// operator's iam.piv_login.ca_file -- the same trust anchor the PIV login
-// endpoint verifies against.
-func loadPIVActivationRoots(path string) (*x509.CertPool, error) {
-	pemData, err := os.ReadFile(path)
-	if err != nil {
-		return nil, &PIVActivationRootsError{Path: path, Reason: "read failed", Cause: err}
-	}
-	pool := x509.NewCertPool()
-	if !pool.AppendCertsFromPEM(pemData) {
-		return nil, &PIVActivationRootsError{Path: path, Reason: "no certificates parsed"}
-	}
-	return pool, nil
 }

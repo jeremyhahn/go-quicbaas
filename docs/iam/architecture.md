@@ -710,8 +710,9 @@ is already enrolled to a *different* user fails closed.
 A service account's client certificate is classified by the root it chains to:
 `iam.mtls.tpm_ek_roots_file` (TPM Endorsement Key roots; the token gets
 `amr: ["mtls","hwk"]` and `attest_method: "tpm"`) or `iam.mtls.xkey_roots_file`
-(xkey-issued roots; `attest_method: "xkey"`). `iam.mtls.tls_client_auth_ca_file`
-is the CA pool for `tls_client_auth` clients (RFC 8705 §2.1). TPM evidence
+(xkey-issued roots; `attest_method: "xkey"`). `tls_client_auth` clients
+(RFC 8705 §2.1) chain to `security.tls_ca_file`, the same anchor set the TLS
+handshake verifies against. TPM evidence
 itself is go-xkms's: [TPM 2.0 — Architecture](../../../go-xkms/docs/tpm2/architecture.md).
 
 ### id_token Claims
@@ -804,12 +805,10 @@ iam:
     mode: enforce                 # enforce | log_only
     allowlist_file: /etc/quicbaas/aaguid-allowlist.json
   piv_login:
-    enabled: false
-    ca_file: ""
+    enabled: false                # certs chain to security.tls_ca_file
     attestation_ca_file: ""       # vendor PIV attestation root
     allow_unattested: false
-  mtls:
-    tls_client_auth_ca_file: ""
+  mtls:                           # tls_client_auth trusts security.tls_ca_file
     tpm_ek_roots_file: ""
     xkey_roots_file: ""
 ```

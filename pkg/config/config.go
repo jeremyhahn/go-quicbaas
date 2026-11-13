@@ -120,13 +120,6 @@ const (
 // IAMMTLSConfig holds operator-provided configuration for RFC 8705 mTLS client
 // authentication pools that are loaded at daemon startup.
 type IAMMTLSConfig struct {
-	// TLSClientAuthCAFile is the path to a PEM bundle of trusted CA certificates
-	// for tls_client_auth clients (RFC 8705 §2.1). When set, only certs that
-	// chain to this pool are accepted for PKI-based client authentication.
-	// If empty, tls_client_auth is unavailable; clients must use
-	// self_signed_tls_client_auth instead.
-	TLSClientAuthCAFile string `mapstructure:"tls_client_auth_ca_file"`
-
 	// TPMEKRootsFile is the path to a PEM bundle of trusted TPM Endorsement Key
 	// root CAs. When a client certificate chains to one of these roots the issued
 	// access_token receives amr:["mtls","hwk"] and attest_method:"tpm".
@@ -146,14 +139,12 @@ type IAMPIVLoginConfig struct {
 	// Default: false.
 	Enabled bool `mapstructure:"enabled"`
 
-	// CAFile is the path to a PEM bundle of trusted CA roots for PIV cert chain
-	// verification (e.g., government PIV-I root bundle, internal PKI). Required
-	// when Enabled is true. The pool is appended to tlsConfig.ClientCAs so that
-	// PIV-issuing CAs are trusted at the TLS layer in addition to any mTLS CA.
-	CAFile string `mapstructure:"ca_file"`
+	// PIV login certificates chain to security.tls_ca_file, the one client
+	// trust-anchor set the TLS handshake verifies against; an operator CA that
+	// issues PIV login certificates belongs in that file.
 
 	// TrustedIssuers is an optional list of Subject DN strings that the PIV cert
-	// issuer must match. When empty, any cert that chains to the configured CA pool
+	// issuer must match. When empty, any cert that chains to security.tls_ca_file
 	// is accepted; the deeper identity check occurs in the handler via thumbprint lookup.
 	//
 	// It is a NAME comparison and therefore not evidence of anything: a
@@ -1338,7 +1329,15 @@ var RemovedKeys = map[string]string{
 	"sdlc.worker_image.registry_token_file": "sdlc.worker_image.registry_token_secret and registry_token_tenant: " +
 		"the push token is a QuicBaaS tenant secret, never a plaintext file",
 	"sdlc.worktree_root": workerClonesItsOwnWorkspace,
+	// One client trust-anchor set (go-quicbaas#1318): the handshake, the
+	// tls_client_auth authenticator and PIV login all trust tls_ca_file.
+	"iam.piv_login.ca_file":            clientTrustAnchorsKey,
+	"iam.mtls.tls_client_auth_ca_file": clientTrustAnchorsKey,
 }
+
+// clientTrustAnchorsKey is where every client-certificate CA setting went:
+// the one client trust-anchor set.
+const clientTrustAnchorsKey = "security.tls_ca_file"
 
 // agentReplacesTuple is where a backend/model tuple went: a reference to a
 // tenant Agent or pool, which carries the backend, the model and the image.

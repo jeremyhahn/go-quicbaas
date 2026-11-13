@@ -279,6 +279,12 @@ func (s *Server) initializeCA() error {
 		s.secretRegistry = s.buildSecretRegistry()
 	}
 
+	// Load the operator's security.tls_ca_file before the path is defaulted
+	// below. A configured file that cannot be read is a boot error.
+	if err := s.loadOperatorClientTrustAnchors(); err != nil {
+		return err
+	}
+
 	// When the caller provides an external CA, adopt it. This MUST happen
 	// before the TLSEnabled early-return below: an operator-supplied CA backs
 	// Security().Certificate()/CertificateExt()/Trust() on the service facade,
@@ -635,7 +641,7 @@ func (s *Server) initializeCA() error {
 		s.config.Security.TLSKeyFile = filepath.Join(certsDir, "server.key")
 	}
 	if s.config.Security.TLSCAFile == "" {
-		s.config.Security.TLSCAFile = filepath.Join(certsDir, "ca-chain.crt")
+		s.config.Security.TLSCAFile = s.defaultTLSCAFile()
 	}
 	s.config.Security.TLSEnabled = true
 
@@ -654,18 +660,12 @@ func (s *Server) initializeCA() error {
 			MinVersion:   tls.VersionTLS13,
 			NextProtos:   []string{"h2", "http/1.1"},
 		}
-		// Wire the operator-provided CA for optional mTLS so per-route
-		// client-cert validation still works with externally-managed
-		// chains.
-		if s.config.Security.TLSCAFile != "" {
-			if caBytes, caErr := os.ReadFile(s.config.Security.TLSCAFile); caErr == nil {
-				pool := x509.NewCertPool()
-				if pool.AppendCertsFromPEM(caBytes) {
-					s.tlsConfig.ClientCAs = pool
-					if !s.config.Security.TLSClientAuth {
-						s.tlsConfig.ClientAuth = s.optionalMTLSClientAuth()
-					}
-				}
+		// Trust the operator's security.tls_ca_file set in the handshake,
+		// with optional mTLS unless full mTLS is configured.
+		if s.clientTrustAnchors != nil {
+			s.appendClientTrustAnchors(s.tlsConfig)
+			if !s.config.Security.TLSClientAuth {
+				s.tlsConfig.ClientAuth = s.optionalMTLSClientAuth()
 			}
 		}
 		// Both postures trust the platform xkms CA alongside the operator's
@@ -742,17 +742,25 @@ func (s *Server) initializeCA() error {
 	//   - TLSClientAuth=true  → RequireAndVerifyClientCert: every connection must
 	//     present a CA-signed client cert, with the platform CA appended to any
 	//     operator-supplied client CAs (appendPlatformClientCAs).
+	// The operator's security.tls_ca_file set is trusted alongside the
+	// platform CA in both postures.
 	if !s.config.Security.TLSClientAuth {
+		pool := x509.NewCertPool()
+		platformTrusted := false
 		if caBundle, caErr := xkmsCA.CABundle(); caErr == nil && len(caBundle) > 0 {
-			pool := x509.NewCertPool()
-			if pool.AppendCertsFromPEM(caBundle) {
-				s.tlsConfig.ClientCAs = pool
-				s.tlsConfig.ClientAuth = s.optionalMTLSClientAuth()
-				s.logger.Info("TLS configured with optional mTLS (per-route client cert validation)")
-			}
+			platformTrusted = pool.AppendCertsFromPEM(caBundle)
 		}
-	} else if err := s.appendPlatformClientCAs(s.tlsConfig); err != nil {
-		return err
+		s.clientTrustAnchors.appendTo(pool)
+		if platformTrusted || s.clientTrustAnchors != nil {
+			s.tlsConfig.ClientCAs = pool
+			s.tlsConfig.ClientAuth = s.optionalMTLSClientAuth()
+			s.logger.Info("TLS configured with optional mTLS (per-route client cert validation)")
+		}
+	} else {
+		s.appendClientTrustAnchors(s.tlsConfig)
+		if err := s.appendPlatformClientCAs(s.tlsConfig); err != nil {
+			return err
+		}
 	}
 
 	// Advertise gRPC ALPN (h2) on the in-memory TLS config so gRPC
@@ -768,12 +776,16 @@ func (s *Server) initializeCA() error {
 			return err
 		}
 
-		caBundle, err := xkmsCA.CABundle()
-		if err != nil {
-			return api.NewOperationFailedError("get CA bundle", err)
-		}
-		if err := os.WriteFile(s.config.Security.TLSCAFile, caBundle, 0600); err != nil {
-			return api.NewDataDirOperationError("server.initializeCA", "write CA chain", s.config.Security.TLSCAFile, err)
+		// The chain is written only to the defaulted path: an operator's
+		// tls_ca_file is their trust-anchor set and is never overwritten.
+		if s.config.Security.TLSCAFile == s.defaultTLSCAFile() {
+			caBundle, err := xkmsCA.CABundle()
+			if err != nil {
+				return api.NewOperationFailedError("get CA bundle", err)
+			}
+			if err := os.WriteFile(s.config.Security.TLSCAFile, caBundle, 0600); err != nil {
+				return api.NewDataDirOperationError("server.initializeCA", "write CA chain", s.config.Security.TLSCAFile, err)
+			}
 		}
 	}
 

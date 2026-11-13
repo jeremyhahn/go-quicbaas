@@ -113,25 +113,6 @@ func (s *Server) buildRESTServer() (*restapi.Server, error) {
 	// racing with other servers (QUIC, gRPC) that share s.tlsConfig.
 	clonedTLSConfig := cloneTLSConfig(s.tlsConfig)
 
-	// Append the operator's client CA pool when iam.mtls.tls_client_auth_ca_file
-	// is configured. This extends the TLS handshake to accept certs issued by
-	// the operator's PKI in addition to the daemon's own CA. A non-nil error
-	// here indicates a malformed or missing PEM file and causes startup to abort.
-	if clonedTLSConfig != nil {
-		if err := appendOperatorClientCAsFn(s, clonedTLSConfig); err != nil {
-			return nil, err
-		}
-	}
-
-	// Append the PIV login CA pool when iam.piv_login.enabled is true.
-	// This enables the TLS handshake to solicit a client certificate from the
-	// browser so the server can read r.TLS.PeerCertificates[0] in the PIV handler.
-	if clonedTLSConfig != nil && s.config.IAM.PIVLogin.Enabled {
-		if err := appendPIVClientCAsFn(s, clonedTLSConfig); err != nil {
-			return nil, err
-		}
-	}
-
 	// Create REST server configuration
 	restConfig := &restapi.Config{
 		Address:        fmt.Sprintf("%s:%d", s.config.Server.ResolveBindHost(s.config.Server.REST.BindAddress), s.config.Server.REST.Port),
@@ -163,7 +144,6 @@ func (s *Server) buildRESTServer() (*restapi.Server, error) {
 		// PIV login configuration: thread operator config into REST handler.
 		PIVClientCert: restapi.PIVClientCertConfig{
 			Enabled:                      s.config.IAM.PIVLogin.Enabled,
-			TrustedRootsFile:             s.config.IAM.PIVLogin.CAFile,
 			TrustedIssuers:               s.config.IAM.PIVLogin.TrustedIssuers,
 			AttestationCAFile:            s.config.IAM.PIVLogin.AttestationCAFile,
 			AttestationIntermediatesFile: s.config.IAM.PIVLogin.AttestationIntermediatesFile,
