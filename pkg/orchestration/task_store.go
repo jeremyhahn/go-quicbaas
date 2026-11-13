@@ -321,6 +321,15 @@ type taskStore struct {
 	// first adopter's cleanup.
 	releaser guardedDeleter
 
+	// swapper is kv's guarded-edit capability. When kv has it, every write of
+	// an existing task record (mutate) commits through it against the exact
+	// bytes that write read, so the store itself — go-qrdb's compare-and-swap,
+	// arbitrated in its state machine — decides between two NODES writing one
+	// record (#722). recordMu below only orders writers inside one process.
+	// Nil for a store that cannot decide a guarded edit; such a store is
+	// process-local by construction and keeps the plain write.
+	swapper guardedSwapper
+
 	// inlineLimit is the maximum artifact size, in bytes, embedded directly in
 	// a task record. Larger artifacts are written to their own key.
 	inlineLimit int64
