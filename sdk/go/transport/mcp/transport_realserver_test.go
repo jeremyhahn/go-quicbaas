@@ -35,17 +35,18 @@ import (
 	mcpgo "github.com/mark3labs/mcp-go/mcp"
 	mcpserver "github.com/mark3labs/mcp-go/server"
 
+	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/errors"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/transport"
 )
 
 // TestTransport_Request_Success drives a full Request() round trip against a
-// real MCP server: "quicbaas.KV"/"Get" maps to the qrdb-canonical "qrdb_get"
-// tool, and the JSON the tool returns decodes into the generic result map
+// real MCP server: "quicbaas.KV"/"Get" maps to quicbaas's entity
+// tool "quicbaas_kv_get", and the JSON the tool returns decodes into the generic result map
 // Request returns for services with no dedicated response transform.
 func TestTransport_Request_Success(t *testing.T) {
 	srv := mcpserver.NewMCPServer("TestServer", "1.0.0")
-	srv.AddTool(mcpgo.NewTool("qrdb_get"), func(_ context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
+	srv.AddTool(mcpgo.NewTool("quicbaas_kv_get"), func(_ context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
 		args := req.GetArguments()
 		if args["id"] != float64(123) {
 			t.Errorf("id = %v, want 123", args["id"])
@@ -85,11 +86,50 @@ func TestTransport_Request_Success(t *testing.T) {
 	}
 }
 
+// TestTransport_Request_KVPutReachesEntityTool drives a KV Put over a real
+// MCP server and proves it reaches quicbaas's entity tool quicbaas_kv_put
+// (not qrdb_put, which a full node serves as go-qrdb's key/value tool) with
+// the entity arguments that tool reads: entity type, id and base64 data.
+func TestTransport_Request_KVPutReachesEntityTool(t *testing.T) {
+	srv := mcpserver.NewMCPServer("TestServer", "1.0.0")
+	var called atomic.Bool
+	srv.AddTool(mcpgo.NewTool("quicbaas_kv_put"), func(_ context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
+		called.Store(true)
+		args := req.GetArguments()
+		if args["entity_type"] != "users" {
+			t.Errorf("entity_type = %v, want users", args["entity_type"])
+		}
+		if args["id"] != float64(7) {
+			t.Errorf("id = %v, want 7", args["id"])
+		}
+		if args["data"] != "dGVzdA==" {
+			t.Errorf("data = %v, want base64 of \"test\"", args["data"])
+		}
+		return mcpgo.NewToolResultText(`{"revision":1}`), nil
+	})
+	httpSrv := mcpserver.NewTestStreamableHTTPServer(srv)
+	defer httpSrv.Close()
+
+	tr, err := New(&transport.Config{Address: httpSrv.URL, Timeout: 5 * time.Second})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer tr.Close()
+
+	req := &service.PutRequest{EntityType: "users", ID: 7, Data: []byte("test")}
+	if _, err := tr.Request(context.Background(), "quicbaas.KV", "Put", req); err != nil {
+		t.Fatalf("Request: %v", err)
+	}
+	if !called.Load() {
+		t.Fatal("quicbaas_kv_put was never called")
+	}
+}
+
 // TestTransport_Request_ToolError verifies a tool-level MCP error
 // (IsError=true) surfaces as an SDK error carrying the tool's text message.
 func TestTransport_Request_ToolError(t *testing.T) {
 	srv := mcpserver.NewMCPServer("TestServer", "1.0.0")
-	srv.AddTool(mcpgo.NewTool("qrdb_get"), func(context.Context, mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
+	srv.AddTool(mcpgo.NewTool("quicbaas_kv_get"), func(context.Context, mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
 		return mcpgo.NewToolResultError("Key not found"), nil
 	})
 	httpSrv := mcpserver.NewTestStreamableHTTPServer(srv)
@@ -143,7 +183,7 @@ func TestTransport_Request_ContextCancellation(t *testing.T) {
 	defer close(block)
 
 	srv := mcpserver.NewMCPServer("TestServer", "1.0.0")
-	srv.AddTool(mcpgo.NewTool("qrdb_get"), func(ctx context.Context, _ mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
+	srv.AddTool(mcpgo.NewTool("quicbaas_kv_get"), func(ctx context.Context, _ mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
 		// Block until the client gives up (context canceled) or the test
 		// cleans up, whichever happens first.
 		select {
@@ -197,7 +237,7 @@ func TestTransport_AuthSession(t *testing.T) {
 			"access_token": "tok-123",
 		}))), nil
 	})
-	srv.AddTool(mcpgo.NewTool("qrdb_get"), func(ctx context.Context, _ mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
+	srv.AddTool(mcpgo.NewTool("quicbaas_kv_get"), func(ctx context.Context, _ mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
 		if v, ok := ctx.Value(authHeaderKey{}).(string); ok {
 			sawAuthHeader = v
 		}
