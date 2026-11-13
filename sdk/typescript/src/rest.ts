@@ -414,6 +414,7 @@ import {
   SSHServerError,
   SSHHostMismatchError,
 } from './errors.js';
+import { ceremonyOfficerWireForm } from './ceremony_officer.js';
 import { requireTLSForSOPIN } from './so_pin.js';
 
 // API base path for all orchestrator endpoints.
@@ -4677,9 +4678,13 @@ export class RestCeremonyClient implements CeremonyClient {
   }
 
   async initialize(req: CeremonyInitializeRequest): Promise<CeremonyInitializeResponse> {
+    const body: CeremonyInitializeRequest = { ...req };
+    if (req.officers && req.officers.length > 0) {
+      body.officers = req.officers.map((o) => ceremonyOfficerWireForm('rest', 'REST', o));
+    }
     return this.http.fetchJSON<CeremonyInitializeResponse>('/api/v1/init/initialize', {
       method: 'POST',
-      body: JSON.stringify(req),
+      body: JSON.stringify(body),
     });
   }
 

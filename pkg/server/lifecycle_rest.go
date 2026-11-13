@@ -86,6 +86,12 @@ func (s *Server) startRESTServer() error {
 
 	s.logger.Info("Initializing REST server (unified-server binding, no local listener)...")
 
+	// The unified listeners serve s.tlsConfig, so the operator and PIV CAs
+	// are composed into it once here, before any REST server is built.
+	if err := s.trustIAMClientCAs(); err != nil {
+		return err
+	}
+
 	restServer, err := s.buildRESTServer()
 	if err != nil {
 		return err
@@ -111,26 +117,10 @@ func (s *Server) startRESTServer() error {
 func (s *Server) buildRESTServer() (*restapi.Server, error) {
 	// Clone TLS config to avoid concurrent writes from HTTP/2 setup
 	// racing with other servers (QUIC, gRPC) that share s.tlsConfig.
-	clonedTLSConfig := cloneTLSConfig(s.tlsConfig)
-
-	// Append the operator's client CA pool when iam.mtls.tls_client_auth_ca_file
-	// is configured. This extends the TLS handshake to accept certs issued by
-	// the operator's PKI in addition to the daemon's own CA. A non-nil error
-	// here indicates a malformed or missing PEM file and causes startup to abort.
-	if clonedTLSConfig != nil {
-		if err := appendOperatorClientCAsFn(s, clonedTLSConfig); err != nil {
-			return nil, err
-		}
-	}
-
-	// Append the PIV login CA pool when iam.piv_login.enabled is true.
-	// This enables the TLS handshake to solicit a client certificate from the
-	// browser so the server can read r.TLS.PeerCertificates[0] in the PIV handler.
-	if clonedTLSConfig != nil && s.config.IAM.PIVLogin.Enabled {
-		if err := appendPIVClientCAsFn(s, clonedTLSConfig); err != nil {
-			return nil, err
-		}
-	}
+	// The operator and PIV client CAs are already in s.tlsConfig
+	// (trustIAMClientCAs, called once from startRESTServer), so the clone
+	// inherits them and nothing is appended here.
+	clonedTLSConfig := cloneTLSConfig(s.serverTLSConfigRef())
 
 	// Create REST server configuration
 	restConfig := &restapi.Config{
@@ -399,6 +389,11 @@ func cloneTLSConfig(cfg *tls.Config) *tls.Config {
 	}
 	cloned := cfg.Clone()
 	cloned.NextProtos = []string{"http/1.1"}
+	// Clone is shallow: give the listener a pool of its own, so nothing it
+	// does to its ClientCAs reaches the pool other listeners are serving.
+	if cfg.ClientCAs != nil {
+		cloned.ClientCAs = cfg.ClientCAs.Clone()
+	}
 	return cloned
 }
 

@@ -5491,7 +5491,7 @@ func TestKVService_Get_WithCacheHit(t *testing.T) {
 
 	// Pre-populate cache
 	testData := []byte(`{"name":"cached"}`)
-	err = cacheMgr.Set(tenantctx.WithSystem(context.Background()), "user:1", testData)
+	err = cacheMgr.Set(tenantctx.WithSystem(context.Background()), kvCacheKey(1, []byte("user:1")), testData)
 	require.NoError(t, err)
 
 	mockRaft := &mockRaftNode{} // Should not be called if cache hits

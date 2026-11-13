@@ -10,7 +10,8 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { McpClient } from '../src/mcp';
-import { McpError, SOPINRequiresTLSError } from '../src/errors';
+import { McpError, SOPINRequiresTLSError, UnsupportedArgumentError } from '../src/errors';
+import type { CeremonyOfficer } from '../src/types';
 import { jsonReply, scriptServer, toolCalls, toolText } from './mcp_server';
 
 const endpoint = 'https://node.example:8081/mcp';
@@ -209,6 +210,36 @@ describe('McpBarrierClient tools', () => {
 
 });
 
+describe('McpCeremonyClient initialize officer options', () => {
+  // The MCP ceremony backend reads only username and csr_pem; every other
+  // officer option is refused before any call rather than silently dropped.
+  const options: Array<[string, Partial<CeremonyOfficer>]> = [
+    ['role', { role: 'custodian' }],
+    ['encryption_kem', { encryption_kem: 'ML-KEM-768' }],
+    ['encryption_key', { encryption_key: 'a2V5' }],
+    ['factors', { factors: [{ name: 'fido2', params: { rp_id: 'node.example' } }] }],
+    ['designated', { designated: 'fido2' }],
+  ];
+
+  it.each(options)('refuses an officer that sets %s', async (field, option) => {
+    scriptServer(fetchMock, (msg) => jsonReply(toolText(msg.id as number, {})));
+    const officer: CeremonyOfficer = { username: 'custodian-1', csr_pem: 'CSR-1', ...option };
+
+    const call = new McpClient(endpoint).ceremony.initialize({
+      so_pin: 'so-pin-1234',
+      user_pin: 'user-pin-1234',
+      threshold: 1,
+      officers: [{ username: 'officer-1', csr_pem: 'CSR-0' }, officer],
+    });
+
+    await expect(call).rejects.toBeInstanceOf(UnsupportedArgumentError);
+    await expect(call).rejects.toMatchObject({ transport: 'mcp', argument: field });
+    await expect(call).rejects.toThrow(`ceremony officer "custodian-1" sets ${field}`);
+    await expect(call).rejects.toThrow('MCP ceremony backend does not support it yet');
+    expect(toolCalls(fetchMock)).toHaveLength(0);
+  });
+});
+
 describe('McpCeremonyClient tools', () => {
   const cases: ToolCase[] = [
     {
@@ -235,6 +266,25 @@ describe('McpCeremonyClient tools', () => {
       },
       reply: { spki_pin: 'pin', ca_cert_pem: 'CA', tls_cert_pem: 'TLS', state: 'initialized', share_count: 2 },
       want: { spki_pin: 'pin', ca_cert_pem: 'CA', tls_cert_pem: 'TLS', state: 'initialized', share_count: 2 },
+    },
+    {
+      name: 'initialize sends only username and csr_pem per officer',
+      call: (c) =>
+        c.ceremony.initialize({
+          so_pin: 'so-pin-1234',
+          user_pin: 'user-pin-1234',
+          threshold: 1,
+          officers: [{ username: 'officer-1', role: '', csr_pem: 'CSR-1', factors: [], designated: '' }],
+        }),
+      tool: 'qrdb_ceremony_initialize',
+      args: {
+        so_pin: 'so-pin-1234',
+        user_pin: 'user-pin-1234',
+        threshold: 1,
+        officers: [{ username: 'officer-1', csr_pem: 'CSR-1' }],
+      },
+      reply: { spki_pin: 'pin', ca_cert_pem: 'CA', tls_cert_pem: 'TLS', state: 'initialized', share_count: 1 },
+      want: { spki_pin: 'pin', ca_cert_pem: 'CA', tls_cert_pem: 'TLS', state: 'initialized', share_count: 1 },
     },
     {
       name: 'initialize without the optional fields',

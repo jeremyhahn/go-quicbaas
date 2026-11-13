@@ -171,7 +171,7 @@ func TestKVService_Get_CacheHit_EventualConsistency(t *testing.T) {
 	require.NoError(t, err)
 
 	// Pre-populate the cache
-	cacheMock.data[string(key)] = []byte(`{"name":"cached"}`)
+	cacheMock.data[kvCacheKey(1, key)] = []byte(`{"name":"cached"}`)
 
 	req := &GetRequest{
 		EntityType:  "user",
@@ -297,6 +297,59 @@ func TestKVService_Put_SpecificShardID(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, resp)
 	assert.Equal(t, uint64(5), qrdbProvider.lastShardID.Load())
+}
+
+// TestKVService_Get_EventualReadIsScopedToItsShard checks that an eventual
+// read on one shard never answers from another shard's cached value.
+func TestKVService_Get_EventualReadIsScopedToItsShard(t *testing.T) {
+	qrdbProvider := newSvcBoostMockQRDBProviderWithGet([]byte("shard-3"), nil)
+
+	svc := createTestService(t, withQRDBClientProvider(qrdbProvider))
+	db := svc.(*quicBaaS)
+	cacheMock := newKVAuthCacheMock()
+	db.cacheManager = cacheMock
+
+	ctx := tenantctx.WithSystem(context.Background())
+
+	_, err := svc.Put(ctx, &PutRequest{
+		EntityType: "users",
+		ID:         7,
+		Data:       []byte("shard-1"),
+		ShardID:    1,
+	})
+	require.NoError(t, err)
+
+	resp, err := db.kvService.Get(ctx, &GetRequest{
+		EntityType:  "users",
+		ID:          7,
+		ShardID:     3,
+		Consistency: ConsistencyLevelEventual,
+	})
+	require.NoError(t, err)
+	require.NotNil(t, resp)
+	assert.Equal(t, []byte("shard-3"), resp.Data)
+	assert.Equal(t, uint64(3), qrdbProvider.lastShardID.Load())
+
+	resp, err = db.kvService.Get(ctx, &GetRequest{
+		EntityType:  "users",
+		ID:          7,
+		ShardID:     1,
+		Consistency: ConsistencyLevelEventual,
+	})
+	require.NoError(t, err)
+	require.NotNil(t, resp)
+	assert.Equal(t, []byte("shard-1"), resp.Data)
+
+	_, err = db.kvService.Delete(ctx, &DeleteRequest{
+		EntityType: "users",
+		ID:         7,
+		ShardID:    3,
+	})
+	require.NoError(t, err)
+
+	key, err := db.keyspaceResolver.BuildKey(ctx, "users", 7)
+	require.NoError(t, err)
+	assert.Contains(t, cacheMock.data, kvCacheKey(1, key))
 }
 
 // =============================================================================

@@ -6,7 +6,8 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { RestClient } from '../src/rest';
-import { APIError } from '../src/errors';
+import { APIError, UnsupportedArgumentError } from '../src/errors';
+import type { CeremonyOfficer } from '../src/types';
 
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
@@ -102,6 +103,32 @@ describe('RestCeremonyClient.initialize', () => {
     await expect(
       client.ceremony.initialize({ so_pin: 'x', user_pin: 'y', threshold: 0 }),
     ).rejects.toBeInstanceOf(APIError);
+  });
+
+  // The REST ceremony handler reads only username and csr_pem; every other
+  // officer option is refused before any request rather than silently dropped.
+  const options: Array<[string, Partial<CeremonyOfficer>]> = [
+    ['role', { role: 'custodian' }],
+    ['encryption_kem', { encryption_kem: 'ML-KEM-768' }],
+    ['encryption_key', { encryption_key: 'a2V5' }],
+    ['factors', { factors: [{ name: 'fido2', params: { rp_id: 'node.example' } }] }],
+    ['designated', { designated: 'fido2' }],
+  ];
+
+  it.each(options)('refuses an officer that sets %s', async (field, option) => {
+    const officer: CeremonyOfficer = { username: 'custodian-1', csr_pem: 'CSR-1', ...option };
+
+    const call = new RestClient('http://localhost').ceremony.initialize({
+      so_pin: 'x',
+      user_pin: 'y',
+      threshold: 1,
+      officers: [{ username: 'officer-1', csr_pem: 'CSR-0' }, officer],
+    });
+
+    await expect(call).rejects.toBeInstanceOf(UnsupportedArgumentError);
+    await expect(call).rejects.toMatchObject({ transport: 'rest', argument: field });
+    await expect(call).rejects.toThrow('REST ceremony backend does not support it yet');
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });
 
