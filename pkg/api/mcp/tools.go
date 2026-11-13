@@ -2074,6 +2074,15 @@ func (r *ToolRegistry) executeBatchExecute(ctx context.Context, args map[string]
 		}
 
 		var value []byte
+		if raw, present := opMap["value"]; present {
+			if _, ok := raw.(string); !ok {
+				return nil, &BatchOperationParseError{
+					Index:   i,
+					Field:   "value",
+					Message: "value must be a base64-encoded string",
+				}
+			}
+		}
 		if data := getString(opMap, "value"); data != "" {
 			value, err = decodePutData(data)
 			if err != nil {

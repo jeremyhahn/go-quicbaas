@@ -880,6 +880,13 @@ func contextError(ctx context.Context, op string) error {
 	return &errors.QBError{Code: code, Op: op, Err: err}
 }
 
+// kvCacheKey is the cache key of a tenant key on a shard. The same tenant key
+// on two shards is two values, so the shard is part of the key: a cache read,
+// write or invalidation on one shard never touches another shard's entry.
+func kvCacheKey(shardID uint64, key []byte) string {
+	return strconv.FormatUint(shardID, 10) + "|" + string(key)
+}
+
 func (k *kvService) Put(ctx context.Context, req *PutRequest) (*PutResponse, error) {
 	start := time.Now()
 	if k.svc.metrics != nil {
@@ -961,7 +968,7 @@ func (k *kvService) Put(ctx context.Context, req *PutRequest) (*PutResponse, err
 
 	// Update cache if available (use the same tenant-aware key)
 	if k.svc.cacheManager != nil {
-		_ = k.svc.cacheManager.Set(context.Background(), string(key), req.Data)
+		_ = k.svc.cacheManager.Set(context.Background(), kvCacheKey(shardID, key), req.Data)
 	}
 
 	return resp, nil
@@ -1002,9 +1009,15 @@ func (k *kvService) Get(ctx context.Context, req *GetRequest) (*GetResponse, err
 		return nil, err
 	}
 
+	// Determine shard ID (the cache read below keys on it)
+	shardID := req.ShardID
+	if shardID == 0 {
+		shardID = 1
+	}
+
 	// Check cache first (if consistency allows)
 	if req.Consistency == ConsistencyLevelEventual && k.svc.cacheManager != nil {
-		if data, err := k.svc.cacheManager.Get(context.Background(), string(key)); err == nil && len(data) > 0 {
+		if data, err := k.svc.cacheManager.Get(context.Background(), kvCacheKey(shardID, key)); err == nil && len(data) > 0 {
 			return &GetResponse{
 				ID:        req.ID,
 				Data:      data,
@@ -1013,12 +1026,6 @@ func (k *kvService) Get(ctx context.Context, req *GetRequest) (*GetResponse, err
 				Found:     true,
 			}, nil
 		}
-	}
-
-	// Determine shard ID
-	shardID := req.ShardID
-	if shardID == 0 {
-		shardID = 1
 	}
 
 	// Build read options from request
@@ -1097,7 +1104,7 @@ func (k *kvService) Get(ctx context.Context, req *GetRequest) (*GetResponse, err
 
 		// Update cache (only for non-empty values to avoid cache pollution)
 		if k.svc.cacheManager != nil && len(data) > 0 {
-			_ = k.svc.cacheManager.Set(context.Background(), string(key), data)
+			_ = k.svc.cacheManager.Set(context.Background(), kvCacheKey(shardID, key), data)
 		}
 	}
 
@@ -1181,7 +1188,7 @@ func (k *kvService) Delete(ctx context.Context, req *DeleteRequest) (*DeleteResp
 
 	// Invalidate cache (use the same tenant-aware key)
 	if k.svc.cacheManager != nil {
-		_ = k.svc.cacheManager.Delete(context.Background(), string(key))
+		_ = k.svc.cacheManager.Delete(context.Background(), kvCacheKey(shardID, key))
 	}
 
 	resp := &DeleteResponse{
@@ -1946,7 +1953,7 @@ func (b *batchService) BatchExecute(ctx context.Context, req *BatchExecuteReques
 	// from the cache, as kvService.Put and Delete do.
 	if b.svc.cacheManager != nil {
 		for _, op := range ops {
-			_ = b.svc.cacheManager.Delete(context.Background(), string(op.Key))
+			_ = b.svc.cacheManager.Delete(context.Background(), kvCacheKey(shardID, op.Key))
 		}
 	}
 

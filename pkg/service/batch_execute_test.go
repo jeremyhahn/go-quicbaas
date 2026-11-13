@@ -53,8 +53,8 @@ func TestBatchService_BatchExecute_InvalidatesCache(t *testing.T) {
 	db := svc.(*quicBaaS)
 	cacheMock := newKVAuthCacheMock()
 	db.cacheManager = cacheMock
-	cacheMock.data["users:user-1"] = []byte("stale")
-	cacheMock.data["users:user-old"] = []byte("stale")
+	cacheMock.data[kvCacheKey(1, []byte("users:user-1"))] = []byte("stale")
+	cacheMock.data[kvCacheKey(1, []byte("users:user-old"))] = []byte("stale")
 
 	_, err := svc.BatchExecute(tenantctx.WithSystem(context.Background()), &BatchExecuteRequest{
 		Operations: []*BatchExecuteOperation{
@@ -65,8 +65,8 @@ func TestBatchService_BatchExecute_InvalidatesCache(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	require.NotContains(t, cacheMock.data, "users:user-1")
-	require.NotContains(t, cacheMock.data, "users:user-old")
+	require.NotContains(t, cacheMock.data, kvCacheKey(1, []byte("users:user-1")))
+	require.NotContains(t, cacheMock.data, kvCacheKey(1, []byte("users:user-old")))
 	require.NotContains(t, cacheMock.data, "orders:order-9")
 }
 

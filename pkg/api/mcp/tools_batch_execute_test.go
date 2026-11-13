@@ -95,6 +95,15 @@ func TestBatchExecuteTool_InvalidArguments(t *testing.T) {
 		{"bad base64", map[string]interface{}{"operations": []interface{}{
 			map[string]interface{}{"type": "PUT", "entity_type": "users", "key": "k", "value": "not base64!"},
 		}}},
+		{"number value", map[string]interface{}{"operations": []interface{}{
+			map[string]interface{}{"type": "PUT", "entity_type": "users", "key": "k", "value": 123},
+		}}},
+		{"bool value", map[string]interface{}{"operations": []interface{}{
+			map[string]interface{}{"type": "PUT", "entity_type": "users", "key": "k", "value": true},
+		}}},
+		{"object value", map[string]interface{}{"operations": []interface{}{
+			map[string]interface{}{"type": "PUT", "entity_type": "users", "key": "k", "value": map[string]interface{}{}},
+		}}},
 	}
 
 	for _, tc := range tests {
@@ -110,6 +119,31 @@ func TestBatchExecuteTool_InvalidArguments(t *testing.T) {
 			assert.Nil(t, result)
 			assert.False(t, called, "service must not be reached on invalid arguments")
 		})
+	}
+}
+
+// TestBatchExecuteTool_EmptyOrOmittedValueIsAllowed: an explicitly empty or
+// omitted value still reaches the service, as an empty write.
+func TestBatchExecuteTool_EmptyOrOmittedValueIsAllowed(t *testing.T) {
+	var got *service.BatchExecuteRequest
+	registry := newBatchExecuteRegistry(t, func(_ context.Context, req *service.BatchExecuteRequest) (*service.BatchExecuteResponse, error) {
+		got = req
+		return &service.BatchExecuteResponse{Results: []*service.BatchExecuteResult{
+			{Succeeded: true}, {Succeeded: true},
+		}}, nil
+	})
+
+	_, err := registry.ExecuteTool(context.Background(), "quicbaas_batch_execute", map[string]interface{}{
+		"operations": []interface{}{
+			map[string]interface{}{"type": "PUT", "entity_type": "users", "key": "empty", "value": ""},
+			map[string]interface{}{"type": "PUT", "entity_type": "users", "key": "omitted"},
+		},
+	})
+	require.NoError(t, err)
+	require.NotNil(t, got)
+	require.Len(t, got.Operations, 2)
+	for _, op := range got.Operations {
+		assert.Nil(t, op.Value)
 	}
 }
 
