@@ -195,8 +195,7 @@ func (s *Server) startEmbeddedFleetNode() error {
 				TenantID: embeddedFleetNodeTenantID,
 				Hostname: hostname,
 				Subject: service.FleetNodeCertificateSubject{
-					CommonName:         "agent-" + nodeID,
-					OrganizationalUnit: service.DefaultFleetNodeCertOU,
+					CommonName: "agent-" + nodeID,
 				},
 				ExtraDNSNames: []string{"localhost"},
 				ValidityDays:  service.DefaultFleetNodeCertValidityDays,

@@ -107,8 +107,8 @@ type recoveryServer struct {
 
 func (m *recoveryServer) Agent() orchestration.AgentService { return m.agentService }
 
-// recoverPeerCert mints a self-signed certificate carrying the OU=agents
-// stamp + ClientAuth EKU + Organization=tenant the recoverer validates.
+// recoverPeerCert mints a self-signed certificate carrying the OU=tenant
+// (#1388) + ClientAuth EKU the recoverer validates.
 func recoverPeerCert(t *testing.T, tenantID, cn string) *x509.Certificate {
 	t.Helper()
 	tmpl := &x509.Certificate{
@@ -116,7 +116,7 @@ func recoverPeerCert(t *testing.T, tenantID, cn string) *x509.Certificate {
 		Subject: pkix.Name{
 			CommonName:         cn,
 			Organization:       []string{tenantID},
-			OrganizationalUnit: []string{fleetRegistrarOU},
+			OrganizationalUnit: []string{tenantID},
 		},
 		ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
 	}

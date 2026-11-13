@@ -227,9 +227,8 @@ func (r *AgentMCPPresetResolver) Resolve(ctx context.Context, sessionID, tenantI
 		TenantID: tenant,
 		Hostname: r.hostname,
 		Subject: service.FleetNodeCertificateSubject{
-			CommonName:         cn,
-			Organization:       tenant,
-			OrganizationalUnit: service.DefaultFleetNodeCertOU,
+			CommonName:   cn,
+			Organization: tenant,
 		},
 		ExtraDNSNames:     []string{"localhost"},
 		ValidityDays:      ephemeralAgentCertValidityDays,

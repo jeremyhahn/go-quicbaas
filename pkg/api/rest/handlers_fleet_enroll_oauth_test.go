@@ -113,7 +113,7 @@ func agentOAuthSignedPeerCert(t *testing.T, tenantID, commonName string) *x509.C
 		Subject: pkix.Name{
 			CommonName:         commonName,
 			Organization:       []string{tenantID},
-			OrganizationalUnit: []string{fleetRegistrarOU},
+			OrganizationalUnit: []string{tenantID},
 		},
 		NotBefore:   time.Now().Add(-time.Hour),
 		NotAfter:    time.Now().Add(time.Hour),

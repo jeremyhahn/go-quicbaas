@@ -142,7 +142,7 @@ func TestSDKAgentCertIssuer_SignsACSRAndKeepsTheMatchingKey(t *testing.T) {
 		Subject: FleetNodeCertificateSubject{
 			CommonName:         "agent-ses-4c1d20",
 			Organization:       sdkIssuerTenant,
-			OrganizationalUnit: DefaultFleetNodeCertOU,
+			OrganizationalUnit: sdkIssuerTenant,
 		},
 		ExtraDNSNames: []string{"alias.example"},
 		ValidityDays:  30,
@@ -195,8 +195,8 @@ func TestSDKAgentCertIssuer_SignsACSRAndKeepsTheMatchingKey(t *testing.T) {
 	}
 	// The OU is what the control-plane register handler matches on. The
 	// IssueCertificate route could not express it at all.
-	if len(leaf.Subject.OrganizationalUnit) == 0 || leaf.Subject.OrganizationalUnit[0] != DefaultFleetNodeCertOU {
-		t.Errorf("OU = %v, want %q", leaf.Subject.OrganizationalUnit, DefaultFleetNodeCertOU)
+	if len(leaf.Subject.OrganizationalUnit) == 0 || leaf.Subject.OrganizationalUnit[0] != sdkIssuerTenant {
+		t.Errorf("OU = %v, want %q", leaf.Subject.OrganizationalUnit, sdkIssuerTenant)
 	}
 	if len(leaf.Subject.Organization) == 0 || leaf.Subject.Organization[0] != sdkIssuerTenant {
 		t.Errorf("O = %v, want the tenant", leaf.Subject.Organization)
@@ -255,8 +255,8 @@ func TestSDKAgentCertIssuer_AppliesDefaults(t *testing.T) {
 	if len(leaf.Subject.Organization) == 0 || leaf.Subject.Organization[0] != sdkIssuerTenant {
 		t.Errorf("O = %v, want the tenant as the default", leaf.Subject.Organization)
 	}
-	if len(leaf.Subject.OrganizationalUnit) == 0 || leaf.Subject.OrganizationalUnit[0] != DefaultFleetNodeCertOU {
-		t.Errorf("OU = %v, want %q as the default", leaf.Subject.OrganizationalUnit, DefaultFleetNodeCertOU)
+	if len(leaf.Subject.OrganizationalUnit) == 0 || leaf.Subject.OrganizationalUnit[0] != sdkIssuerTenant {
+		t.Errorf("OU = %v, want %q as the default", leaf.Subject.OrganizationalUnit, sdkIssuerTenant)
 	}
 	if ca.LastSignCSR().ValidityDays != DefaultFleetNodeCertValidityDays {
 		t.Errorf("validity = %d, want the default %d", ca.LastSignCSR().ValidityDays, DefaultFleetNodeCertValidityDays)
