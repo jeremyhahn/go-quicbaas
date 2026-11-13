@@ -366,3 +366,27 @@ func TestRotate_SurvivesARestart(t *testing.T) {
 		t.Fatalf("restarted manager signs with kid %q, want the rotated %q", kid, rotatedKID)
 	}
 }
+
+// TestNewSigningKeyManagerFromXKMSBackendRequiredFields proves the explicit
+// backend constructor rejects an empty common name and an empty store type
+// with a typed config error.
+func TestNewSigningKeyManagerFromXKMSBackendRequiredFields(t *testing.T) {
+	cases := []struct {
+		name, cn, storeType, field string
+	}{
+		{name: "empty cn", cn: "", storeType: "software", field: "signing key common name"},
+		{name: "empty store type", cn: OIDCSigningKeyCN, storeType: "", field: "signing key store type"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := NewSigningKeyManagerFromXKMSBackend(tc.cn, "", tc.storeType)
+			var cfgErr *OIDCConfigRequiredError
+			if !errors.As(err, &cfgErr) {
+				t.Fatalf("want *OIDCConfigRequiredError, got %v", err)
+			}
+			if cfgErr.Field != tc.field {
+				t.Fatalf("field = %q, want %q", cfgErr.Field, tc.field)
+			}
+		})
+	}
+}

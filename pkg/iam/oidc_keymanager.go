@@ -217,6 +217,21 @@ func NewSigningKeyManagerFromXKMS(cn string, tenantID string) (*SigningKeyManage
 	if err != nil {
 		return nil, err
 	}
+	return NewSigningKeyManagerFromXKMSBackend(cn, tenantID, storeType)
+}
+
+// NewSigningKeyManagerFromXKMSBackend builds a SigningKeyManager whose ES256
+// key is get-or-created in the named xkms backend (storeType) instead of the
+// process default. The server passes the replicated OIDC signing backend so
+// every node loads the same key, and therefore publishes and verifies the
+// same kid. Rotation stays on the same backend.
+func NewSigningKeyManagerFromXKMSBackend(cn, tenantID, storeType string) (*SigningKeyManager, error) {
+	if cn == "" {
+		return nil, &OIDCConfigRequiredError{Field: "signing key common name"}
+	}
+	if storeType == "" {
+		return nil, &OIDCConfigRequiredError{Field: "signing key store type"}
+	}
 
 	attrs := es256KeyAttributes(cn, tenantID, storeType)
 	signer, err := loadSignerForAttrs(context.Background(), attrs)
