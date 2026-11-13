@@ -67,21 +67,36 @@ func TestIAMTenantLister_TenantExists(t *testing.T) {
 // finds no record.
 type catalogTenantManager struct {
 	iam.TenantManager
+	known string // the one tenant the catalog holds
 }
 
-func (catalogTenantManager) GetTenant(ctx context.Context, id string) (*iam.Tenant, error) {
+func (c catalogTenantManager) GetTenant(ctx context.Context, id string) (*iam.Tenant, error) {
 	if bound, ok := tenantctx.Lookup(ctx); !ok || !tenantctx.IsSystem(bound) {
+		return nil, iam.NewTenantNotFoundError(id)
+	}
+	if id != c.known {
 		return nil, iam.NewTenantNotFoundError(id)
 	}
 	return &iam.Tenant{ID: id}, nil
 }
 
 func TestIAMTenantLister_TenantExistsReadsTheSystemCatalog(t *testing.T) {
-	tenants := &iamTenantLister{tenants: catalogTenantManager{}}
+	tenants := &iamTenantLister{tenants: catalogTenantManager{known: "acme"}}
 	ctx := orchestration.ContextWithTenant(tenantctx.WithTenant(context.Background(), "acme"), "acme")
 	exists, err := tenants.TenantExists(ctx, "acme")
 	if err != nil || !exists {
 		t.Fatalf("TenantExists from inside the tenant = %v, %v; want the catalog record found", exists, err)
+	}
+}
+
+// An unknown tenant asked about from inside another tenant is still absent:
+// reading the system catalog must not make every ID exist (#1609).
+func TestIAMTenantLister_TenantExistsUnknownTenantFromInsideATenant(t *testing.T) {
+	tenants := &iamTenantLister{tenants: catalogTenantManager{known: "acme"}}
+	ctx := orchestration.ContextWithTenant(tenantctx.WithTenant(context.Background(), "acme"), "acme")
+	exists, err := tenants.TenantExists(ctx, "globex")
+	if err != nil || exists {
+		t.Fatalf("TenantExists(globex) from inside acme = %v, %v; want false, nil", exists, err)
 	}
 }
 
