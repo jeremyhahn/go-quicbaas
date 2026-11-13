@@ -43,7 +43,9 @@ import (
 )
 
 var (
-	kmsAlgorithm         string
+	kmsAlgorithm         string // kms key generate --algorithm
+	kmsImportAlgorithm   string // kms key import --algorithm
+	kmsUnwrapAlgorithm   string // kms key unwrap --algorithm
 	kmsDescription       string
 	kmsExportable        bool
 	kmsMaterial          string
@@ -534,7 +536,7 @@ Examples:
 		RunE: runKMSKeyImportCommand,
 	}
 
-	cmd.Flags().StringVar(&kmsAlgorithm, "algorithm", "AES-256-GCM", "Key algorithm (required)")
+	cmd.Flags().StringVar(&kmsImportAlgorithm, "algorithm", "AES-256-GCM", "Key algorithm (required)")
 	cmd.Flags().StringVar(&kmsMaterial, "material", "", "Key material (base64 encoded) (required)")
 	cmd.Flags().StringVar(&kmsDescription, "description", "", "Key description")
 
@@ -761,9 +763,9 @@ func runKMSKeyImportCommand(cmd *cobra.Command, args []string) error {
 		// than reinterpreting. Silently preferring either side would store a
 		// key under a description of itself that is false, and every later
 		// operation would be reasoning from that description.
-		if cmd.Flags().Changed("algorithm") && !algorithmMatches(kmsAlgorithm, key, algorithm) {
+		if cmd.Flags().Changed("algorithm") && !algorithmMatches(kmsImportAlgorithm, key, algorithm) {
 			return errors.New(errors.ErrInvalidInput, "kms.key.import",
-				"--algorithm "+kmsAlgorithm+" contradicts the supplied key, which is "+
+				"--algorithm "+kmsImportAlgorithm+" contradicts the supplied key, which is "+
 					algorithmName(algorithm)+"; refusing rather than reinterpreting it")
 		}
 
@@ -786,7 +788,7 @@ func runKMSKeyImportCommand(cmd *cobra.Command, args []string) error {
 
 		usage = []service.KeyUsage{service.KeyUsageSign}
 	} else {
-		keyAttrs.SymmetricAlgorithm = parseSymmetricAlgorithm(kmsAlgorithm)
+		keyAttrs.SymmetricAlgorithm = parseSymmetricAlgorithm(kmsImportAlgorithm)
 	}
 
 	req := &service.ImportKeyRequest{
@@ -1005,7 +1007,7 @@ Examples:
 
 	cmd.Flags().StringVar(&kmsWrappingKey, "wrapping-key", "", "Wrapping key (required)")
 	cmd.Flags().StringVar(&kmsMaterial, "material", "", "Wrapped key material (base64) (required)")
-	cmd.Flags().StringVar(&kmsAlgorithm, "algorithm", "", "Target key algorithm (required)")
+	cmd.Flags().StringVar(&kmsUnwrapAlgorithm, "algorithm", "", "Target key algorithm (required)")
 
 	cmd.MarkFlagRequired("wrapping-key")
 	cmd.MarkFlagRequired("material")
@@ -1036,7 +1038,7 @@ func runKMSKeyUnwrapCommand(cmd *cobra.Command, args []string) error {
 		KeyID:         keyName,
 		WrappingKeyID: kmsWrappingKey,
 		WrappedKey:    wrappedKey,
-		Algorithm:     kmsAlgorithm,
+		Algorithm:     kmsUnwrapAlgorithm,
 	}
 
 	resp, err := client.KMSUnwrapKey(ctx, req)
