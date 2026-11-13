@@ -143,11 +143,17 @@ func runMatrixCell(t *testing.T, binary, cliBinary, strategy, transport string) 
 	// Phase 4: SDK reaches the daemon over this transport, as the
 	// administrator first boot issued. Health.Liveness is the cheapest
 	// cross-transport SDK call and is wired across every supported transport;
-	// MCP refuses an uncredentialed initialize, so the cell logs in first. A successful response proves
+	// MCP refuses an uncredentialed initialize (CA ruling 571), so an MCP
+	// cell logs in first; the other transports serve it publicly, which is
+	// what lets a sealed shamir node (no administrator until its officers
+	// unseal it) answer here. A successful response proves
 	// the SDK transport stack lines up with the daemon's listener for this
 	// cell — a regression here would silently break every downstream SDK
 	// caller without firing in the raw-socket probes above.
-	token := loginFirstBootAdmin(ctx, t, cliBinary, transport, ports, dataDir, strategy)
+	var token string
+	if transport == "mcp" {
+		token = loginFirstBootAdmin(ctx, t, cliBinary, transport, ports, dataDir, strategy)
+	}
 	verifySDKLivenessOverTransport(t, transport, ports, dataDir, token)
 
 	// Phase 5: cross-strategy invariants on the marker (e.g. credential
