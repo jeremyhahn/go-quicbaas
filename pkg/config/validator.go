@@ -143,6 +143,7 @@ func (v *Validator) Validate(cfg *Config) error {
 	v.validateTrust(cfg.Trust)
 	v.validateIAM(&cfg.IAM)
 	v.validateAddressBindings(cfg)
+	v.validateWebAuthnRPIDSource(cfg)
 
 	// Return errors if any
 	if len(v.errors) > 0 {
