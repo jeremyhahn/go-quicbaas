@@ -19,6 +19,7 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"errors"
 	"net"
 	"net/http"
 	"os"
@@ -1149,7 +1150,7 @@ func (s *Server) startHTTP3(address string) error {
 	s.http3Server = h3
 	s.logger.WithField("address", address).Info("Starting REST API server over HTTP/3")
 	go func() {
-		if err := h3.Serve(pc); err != nil && err != http.ErrServerClosed {
+		if err := h3.Serve(pc); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			s.logger.WithError(err).Error("REST API HTTP/3 server error")
 		}
 	}()
