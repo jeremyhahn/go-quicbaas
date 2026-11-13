@@ -273,6 +273,36 @@ func TestLoginURLFor_PicksTheCalledNode(t *testing.T) {
 	}
 }
 
+func TestLoginURLFor_TellsApartNodesThatShareAHost(t *testing.T) {
+	t.Setenv("QUICBAAS_NODE1_URL", "https://localhost:8080")
+	t.Setenv("QUICBAAS_NODE2_URL", "https://localhost:8081")
+	t.Setenv("QUICBAAS_NODE3_URL", "https://localhost:8082")
+	t.Setenv("QUICBAAS_NODE1_GRPC", "localhost:50051")
+	t.Setenv("QUICBAAS_NODE2_GRPC", "localhost:50052")
+	t.Setenv("QUICBAAS_NODE3_GRPC", "localhost:50053")
+	t.Setenv("QUICBAAS_NODE1_QUIC", "localhost:4433")
+	t.Setenv("QUICBAAS_NODE2_QUIC", "localhost:4434")
+	t.Setenv("QUICBAAS_NODE3_QUIC", "localhost:4435")
+	t.Setenv("QUICBAAS_NODE1_MCP", "https://localhost:8888/mcp")
+	t.Setenv("QUICBAAS_NODE2_MCP", "https://localhost:8889/mcp")
+	t.Setenv("QUICBAAS_NODE3_MCP", "https://localhost:8890/mcp")
+
+	cases := map[string]string{
+		"https://localhost:8081/api/v1/kv/a/b": "https://localhost:8081",
+		"https://LOCALHOST:8082":               "https://localhost:8082",
+		"https://localhost:50052/pkg.Svc":      "https://localhost:8081",
+		"localhost:50053":                      "https://localhost:8082",
+		"localhost:4434":                       "https://localhost:8081",
+		"https://localhost:8890/mcp":           "https://localhost:8082",
+		"https://localhost:8080":               "https://localhost:8080",
+	}
+	for target, want := range cases {
+		require.Equal(t, want, loginURLFor("https://localhost:8080", target), target)
+	}
+	// A port no node list names cannot say which node shares the host.
+	require.Equal(t, "https://localhost:8080", loginURLFor("https://localhost:8080", "https://localhost:9999"))
+}
+
 func TestPrincipalTokenSource_LogsInAtTheCalledNode(t *testing.T) {
 	setThreeNodes(t)
 	fake := &fakeEnrollment{expiresIn: 3600}

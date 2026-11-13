@@ -153,16 +153,68 @@ func (r *principalRegistry) bearerAt(ctx context.Context, clusterURL, loginURL s
 // carries a bearer the called node signed. A target on no listed node (a
 // Unix socket, an unknown host, none) gets clusterURL.
 func loginURLFor(clusterURL, target string) string {
-	host := targetHostname(target)
-	if host == "" {
+	authority := targetAuthority(target)
+	if authority == "" {
 		return clusterURL
 	}
-	for _, endpoint := range GetRESTEndpoints() {
-		if u, err := url.Parse(endpoint); err == nil && u.Hostname() == host {
+	rest := GetRESTEndpoints()
+	// A REST target names its node by authority: nodes that share a host
+	// differ only by port.
+	for _, endpoint := range rest {
+		if targetAuthority(endpoint) == authority {
 			return endpoint
 		}
 	}
+	// Another transport's endpoint names its node by its place in that
+	// transport's configured node list, which matches the REST list.
+	for _, endpoints := range [][]string{GetClusterEndpoints(), GetQUICEndpoints(), GetMCPEndpoints()} {
+		for i, endpoint := range endpoints {
+			if i < len(rest) && targetAuthority(endpoint) == authority {
+				return rest[i]
+			}
+		}
+	}
+	// A target no list names is matched by host only when one node alone
+	// has that host; a shared host cannot say which node it is.
+	host := targetHostname(target)
+	match := ""
+	for _, endpoint := range rest {
+		if targetHostname(endpoint) != host {
+			continue
+		}
+		if match != "" {
+			return clusterURL
+		}
+		match = endpoint
+	}
+	if match != "" {
+		return match
+	}
 	return clusterURL
+}
+
+// targetAuthority returns target's host:port, with the host lower-cased and
+// the scheme's default port filled in for a URL that names none, or "".
+func targetAuthority(target string) string {
+	if u, err := url.Parse(target); err == nil && u.Host != "" {
+		port := u.Port()
+		if port == "" {
+			switch u.Scheme {
+			case "https":
+				port = "443"
+			case "http":
+				port = "80"
+			}
+		}
+		if port == "" {
+			return strings.ToLower(u.Hostname())
+		}
+		return net.JoinHostPort(strings.ToLower(u.Hostname()), port)
+	}
+	if host, port, err := net.SplitHostPort(target); err == nil && host != "" {
+		return net.JoinHostPort(strings.ToLower(host), port)
+	}
+	return ""
 }
 
 // targetHostname returns the hostname of target: a URL such as gRPC's
