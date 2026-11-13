@@ -67,7 +67,7 @@ func TestSealedBoot_GRPCServesQuicBaaSHealth(t *testing.T) {
 			MinVersion: tls.VersionTLS13,
 			// The node's self-issued certificate is not what this test
 			// pins; the registered service set is.
-			InsecureSkipVerify: true, //nolint:gosec // G402: local unix socket to a test node's self-issued cert
+			InsecureSkipVerify: true,
 		})))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = conn.Close() })
