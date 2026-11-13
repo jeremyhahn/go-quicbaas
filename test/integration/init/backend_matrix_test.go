@@ -195,7 +195,15 @@ func loginFirstBootAdmin(
 ) string {
 	t.Helper()
 
-	loginOut, loginErr := runCLIAgainst(ctx, t, cliBinary, transport, ports, dataDir,
+	// Over MCP the login is made on REST, which every cell serves: the MCP
+	// login tools carry no permission registration and an MCP session needs a
+	// credential to begin with, so MCP cannot be where the credential is
+	// obtained. The session the REST login issues is then used over MCP.
+	loginTransport := transport
+	if transport == "mcp" {
+		loginTransport = "rest"
+	}
+	loginOut, loginErr := runCLIAgainst(ctx, t, cliBinary, loginTransport, ports, dataDir,
 		"auth", "login", "--method", "mtls",
 		"--client-cert", filepath.Join(dataDir, "admin", "admin.crt"),
 		"--username", "admin")
