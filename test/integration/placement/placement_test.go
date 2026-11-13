@@ -35,33 +35,16 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/test/integration/helpers"
 )
 
-// Admin client certificate paths in the integration container, overridable
-// exactly as the login suite's are.
-const (
-	adminCertPath = "/etc/quicbaas/certs/admin.crt"
-	adminKeyPath  = "/etc/quicbaas/certs/admin.key"
-)
-
-// adminTLS trusts the cluster CA and presents the admin certificate, an
-// identity holding placement:manage and the scheduler job permissions.
-func adminTLS(t *testing.T) *tls.Config {
+// caOnlyTLS trusts the cluster CA and presents no client certificate, so the
+// server authenticates each client by the bearer it sends: a client
+// certificate would win the server's mTLS-first auth chain and act as the
+// system admin instead of the tenant principal the test names.
+func caOnlyTLS(t *testing.T) *tls.Config {
 	t.Helper()
 	cfg, err := helpers.IntegrationTLSConfig()
 	if err != nil {
 		t.Fatalf("integration TLS config: %v", err)
 	}
-	certPath, keyPath := adminCertPath, adminKeyPath
-	if v := os.Getenv("QUICBAAS_TEST_PIV_CERT"); v != "" {
-		certPath = v
-	}
-	if v := os.Getenv("QUICBAAS_TEST_PIV_KEY"); v != "" {
-		keyPath = v
-	}
-	cert, err := tls.LoadX509KeyPair(certPath, keyPath)
-	if err != nil {
-		t.Fatalf("admin client certificate %s: %v", certPath, err)
-	}
-	cfg.Certificates = []tls.Certificate{cert}
 	return cfg
 }
 
@@ -106,11 +89,12 @@ func operatorBearer(t *testing.T) string {
 	return token
 }
 
-// transports builds an SDK client per transport. Every client presents
-// bearer, so the server's authorization gate binds the tenant and checks the
-// permissions of the principal the bearer was issued to.
+// transports builds an SDK client per transport. Every client presents only
+// bearer, over CA-only TLS with no client certificate, so the server's
+// authorization gate binds the tenant and checks the permissions of the
+// principal the bearer was issued to.
 func transports(t *testing.T, bearer string) map[string]func() (quicbaas.Client, error) {
-	tlsCfg := adminTLS(t)
+	tlsCfg := caOnlyTLS(t)
 	first := func(endpoints []string, name string) string {
 		if len(endpoints) == 0 {
 			t.Fatalf("no %s endpoint configured", name)
