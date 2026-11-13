@@ -22,7 +22,6 @@ package placement
 import (
 	"context"
 	"crypto/tls"
-	"os"
 	"strconv"
 	"testing"
 	"time"
@@ -33,39 +32,21 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/test/integration/helpers"
 )
 
-// Admin client certificate paths in the integration container, overridable
-// exactly as the login suite's are.
-const (
-	adminCertPath = "/etc/quicbaas/certs/admin.crt"
-	adminKeyPath  = "/etc/quicbaas/certs/admin.key"
-)
-
-// adminTLS trusts the cluster CA and presents the admin certificate, an
-// identity holding placement:manage and the scheduler job permissions.
-func adminTLS(t *testing.T) *tls.Config {
+// clusterTLS trusts the cluster CA. It presents no client certificate: the
+// caller's identity is the tenant admin's bearer, so the server binds that
+// tenant to every request.
+func clusterTLS(t *testing.T) *tls.Config {
 	t.Helper()
 	cfg, err := helpers.IntegrationTLSConfig()
 	if err != nil {
 		t.Fatalf("integration TLS config: %v", err)
 	}
-	certPath, keyPath := adminCertPath, adminKeyPath
-	if v := os.Getenv("QUICBAAS_TEST_PIV_CERT"); v != "" {
-		certPath = v
-	}
-	if v := os.Getenv("QUICBAAS_TEST_PIV_KEY"); v != "" {
-		keyPath = v
-	}
-	cert, err := tls.LoadX509KeyPair(certPath, keyPath)
-	if err != nil {
-		t.Fatalf("admin client certificate %s: %v", certPath, err)
-	}
-	cfg.Certificates = []tls.Certificate{cert}
 	return cfg
 }
 
 // transports builds an admin SDK client per transport.
 func transports(t *testing.T) map[string]func() (quicbaas.Client, error) {
-	tlsCfg := adminTLS(t)
+	tlsCfg := clusterTLS(t)
 	first := func(endpoints []string, name string) string {
 		if len(endpoints) == 0 {
 			t.Fatalf("no %s endpoint configured", name)
@@ -73,26 +54,30 @@ func transports(t *testing.T) map[string]func() (quicbaas.Client, error) {
 		return endpoints[0]
 	}
 	timeout := quicbaas.WithTimeout(30 * time.Second)
+	// Placement and scheduler-job verbs are tenant-scoped, and registering a
+	// node needs placement:manage, which only the tenant's Admin role holds:
+	// every client calls as the tenant admin, so the server binds its tenant.
+	tenantAdmin := quicbaas.WithAuthToken(helpers.AuthTenantPrincipal(t, first(helpers.GetRESTEndpoints(), "REST")))
 	return map[string]func() (quicbaas.Client, error){
 		"REST": func() (quicbaas.Client, error) {
-			return quicbaas.NewClient(first(helpers.GetRESTEndpoints(), "REST"), quicbaas.WithREST(), quicbaas.WithTLSConfig(tlsCfg), timeout)
+			return quicbaas.NewClient(first(helpers.GetRESTEndpoints(), "REST"), quicbaas.WithREST(), quicbaas.WithTLSConfig(tlsCfg), tenantAdmin, timeout)
 		},
 		"gRPC": func() (quicbaas.Client, error) {
-			return quicbaas.NewClient(first(helpers.GetClusterEndpoints(), "gRPC"), quicbaas.WithTLSConfig(tlsCfg), timeout)
+			return quicbaas.NewClient(first(helpers.GetClusterEndpoints(), "gRPC"), quicbaas.WithTLSConfig(tlsCfg), tenantAdmin, timeout)
 		},
 		"QUIC": func() (quicbaas.Client, error) {
 			quicCfg := tlsCfg.Clone()
 			quicCfg.NextProtos = []string{"quicbaas-quic"}
-			return quicbaas.NewClient(first(helpers.GetQUICEndpoints(), "QUIC"), quicbaas.WithQUIC(), quicbaas.WithTLSConfig(quicCfg), timeout)
+			return quicbaas.NewClient(first(helpers.GetQUICEndpoints(), "QUIC"), quicbaas.WithQUIC(), quicbaas.WithTLSConfig(quicCfg), tenantAdmin, timeout)
 		},
 		"Unix": func() (quicbaas.Client, error) {
 			socket := helpers.GetUnixSocketPath()
 			unixCfg := tlsCfg.Clone()
 			unixCfg.ServerName = "localhost"
-			return quicbaas.NewClient("unix://"+socket, quicbaas.WithUnix(socket), quicbaas.WithTLSConfig(unixCfg), timeout)
+			return quicbaas.NewClient("unix://"+socket, quicbaas.WithUnix(socket), quicbaas.WithTLSConfig(unixCfg), tenantAdmin, timeout)
 		},
 		"MCP": func() (quicbaas.Client, error) {
-			return quicbaas.NewClient(first(helpers.GetMCPEndpoints(), "MCP"), quicbaas.WithMCP(), quicbaas.WithTLSConfig(tlsCfg), timeout)
+			return quicbaas.NewClient(first(helpers.GetMCPEndpoints(), "MCP"), quicbaas.WithMCP(), quicbaas.WithTLSConfig(tlsCfg), tenantAdmin, timeout)
 		},
 	}
 }

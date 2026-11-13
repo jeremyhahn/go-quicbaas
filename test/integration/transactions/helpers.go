@@ -19,14 +19,28 @@ import (
 	"context"
 	"testing"
 
+	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials"
 
 	"github.com/jeremyhahn/go-quicbaas/test/integration/helpers"
 )
 
 // setupGRPCConnection establishes a gRPC connection to the first cluster endpoint.
-// It wraps the central helpers package for transaction-specific test setup.
+// The connection acts as the tenant operator, whose Operator role holds the
+// KV, batch and transaction grants: these verbs are tenant-scoped and refuse
+// a caller with no tenant bound.
 func setupGRPCConnection(t *testing.T, ctx context.Context) *grpc.ClientConn {
-	endpoints := helpers.GetClusterEndpoints()
-	return helpers.MustSetupGRPCConnectionToEndpoint(t, ctx, endpoints[0])
+	t.Helper()
+	endpoint := helpers.GetClusterEndpoints()[0]
+
+	tlsCfg, err := helpers.IntegrationTLSConfig()
+	require.NoError(t, err, "load integration TLS config")
+	conn, err := grpc.DialContext(ctx, endpoint,
+		grpc.WithTransportCredentials(credentials.NewTLS(tlsCfg)),
+		grpc.WithBlock(),
+		grpc.WithPerRPCCredentials(helpers.TenantOperatorGRPCCredentials(t)),
+	)
+	require.NoError(t, err, "Failed to connect to gRPC server at %s", endpoint)
+	return conn
 }
