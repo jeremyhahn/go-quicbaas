@@ -409,3 +409,69 @@ func cloneTenantBarrierInitReq(req *qrdbtransport.TenantBarrierInitRequest) *qrd
 	out.Passphrase = bytes.Clone(req.Passphrase)
 	return &out
 }
+
+// newShareStdinCommand builds a bare unseal-share command with --share-stdin set.
+func newShareStdinCommand(t *testing.T) *cobra.Command {
+	t.Helper()
+	cmd := &cobra.Command{Use: "unseal-share"}
+	cmd.Flags().Bool(shareStdinFlag, false, "")
+	require.NoError(t, cmd.Flags().Set(shareStdinFlag, "true"))
+	cmd.SetOut(&bytes.Buffer{})
+	return cmd
+}
+
+func TestTenantBarrierUnsealShare_ShareFromStdin(t *testing.T) {
+	resetTenantBarrierFlags()
+	fc := &fakeTenantBarrierClient{}
+	restore := withFakeTenantBarrier(fc)
+	defer restore()
+	tenantBarrierTenantID = "acme"
+
+	cmd := newShareStdinCommand(t)
+	cmd.SetIn(strings.NewReader("stdin-share\n"))
+	require.NoError(t, runTenantBarrierUnsealShareCommand(cmd, nil))
+
+	require.NotNil(t, fc.lastShareReq)
+	assert.Equal(t, "stdin-share", fc.lastShareReq.Share,
+		"one trailing newline is trimmed from the stdin share")
+	assert.Equal(t, "acme", fc.lastShareReq.TenantID)
+}
+
+func TestTenantBarrierUnsealShare_StdinAndArgvRefused(t *testing.T) {
+	resetTenantBarrierFlags()
+	fc := &fakeTenantBarrierClient{}
+	restore := withFakeTenantBarrier(fc)
+	defer restore()
+	tenantBarrierTenantID = "acme"
+	tenantBarrierShare = "argv-share"
+
+	cmd := newShareStdinCommand(t)
+	cmd.SetIn(strings.NewReader("stdin-share\n"))
+	err := runTenantBarrierUnsealShareCommand(cmd, nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "--share-stdin")
+	assert.Nil(t, fc.lastShareReq, "a refused share must send nothing")
+}
+
+func TestTenantBarrierUnsealShare_MissingNamesBothInputs(t *testing.T) {
+	resetTenantBarrierFlags()
+	fc := &fakeTenantBarrierClient{}
+	restore := withFakeTenantBarrier(fc)
+	defer restore()
+	tenantBarrierTenantID = "acme"
+
+	cmd := &cobra.Command{Use: "unseal-share"}
+	cmd.SetOut(&bytes.Buffer{})
+	err := runTenantBarrierUnsealShareCommand(cmd, nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "--share-stdin")
+	assert.Contains(t, err.Error(), "--share")
+	assert.Nil(t, fc.lastShareReq)
+}
+
+func TestTenantBarrierUnsealShare_HasAStdinFlag(t *testing.T) {
+	c := newTenantBarrierUnsealShareCommand()
+	assert.NotNil(t, c.Flags().Lookup("share-stdin"),
+		"unseal-share must offer a stdin path for its share")
+	assert.NotNil(t, c.Flags().Lookup("share"))
+}

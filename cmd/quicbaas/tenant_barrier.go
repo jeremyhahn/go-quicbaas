@@ -46,6 +46,7 @@ import (
 	"github.com/spf13/cobra"
 
 	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
+	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/cli"
 	"github.com/jeremyhahn/go-quicbaas/pkg/errors"
@@ -391,11 +392,13 @@ accumulated in memory and discarded once the quorum completes, so a later
 unseal requires fresh submissions.
 
 Example:
-  quicbaas iam tenant barrier unseal-share --tenant acme --share "$SHARE"`,
+  printf '%s' "$SHARE" | quicbaas iam tenant barrier unseal-share --tenant acme --share-stdin`,
 		RunE: runTenantBarrierUnsealShareCommand,
 	}
 	cmd.Flags().StringVar(&tenantBarrierShare, "share", "",
-		"One Shamir share (required)")
+		"One Shamir share (visible in the process list; prefer --share-stdin)")
+	cmd.Flags().Bool(shareStdinFlag, false,
+		"Read the share from standard input (preferred: keeps it out of the process list and the shell history)")
 	return cmd
 }
 
@@ -404,9 +407,14 @@ func runTenantBarrierUnsealShareCommand(cmd *cobra.Command, _ []string) error {
 	if err := requireTenantID("tenant.barrier.unseal-share"); err != nil {
 		return err
 	}
-	if tenantBarrierShare == "" {
+	share, err := resolveTenantBarrierShare(cmd, "tenant.barrier.unseal-share")
+	if err != nil {
+		return formatError(err)
+	}
+	defer share.Destroy()
+	if share.Size() == 0 {
 		return errors.Newf(errors.ErrInvalidInput, "tenant.barrier.unseal-share",
-			"--share is required")
+			"a share is required (supply it on stdin with --share-stdin, or on argv with --share)")
 	}
 
 	client, err := tenantBarrierClientFactory()
@@ -419,12 +427,38 @@ func runTenantBarrierUnsealShareCommand(cmd *cobra.Command, _ []string) error {
 
 	progress, err := client.TenantBarrierUnsealShare(ctx, &qrdbtransport.TenantBarrierUnsealShareRequest{
 		TenantID: tenantBarrierTenantID,
-		Share:    tenantBarrierShare,
+		//secure:unborrowed injected-interface the go-qrdb transport request carries the share as a string; the copy is unwipeable (#237).
+		Share: string(share.Bytes()),
 	})
 	if err != nil {
 		return formatError(err)
 	}
 	return formatTenantBarrierProgress(progress, tenantBarrierOutputFmt, cmd.OutOrStdout())
+}
+
+// shareStdinFlag selects the standard-input path for the one share
+// 'tenant barrier unseal-share' submits.
+const shareStdinFlag = "share-stdin"
+
+// resolveTenantBarrierShare returns the share from --share-stdin or, failing
+// that, --share. Both at once is refused. The returned Buffer belongs to the
+// caller, which must Destroy it; a nil Buffer means no share was supplied.
+func resolveTenantBarrierShare(cmd *cobra.Command, op string) (*secure.Buffer, error) {
+	fromStdin, err := cmd.Flags().GetBool(shareStdinFlag)
+	if err != nil {
+		fromStdin = false // a bare command in a unit test has no stdin path
+	}
+	if fromStdin {
+		if tenantBarrierShare != "" {
+			return nil, errors.Newf(errors.ErrInvalidInput, op,
+				"use one of --share-stdin or --share, not both")
+		}
+		return readPassphrase(cmd.InOrStdin(), op, passphraseReadTimeout())
+	}
+	if tenantBarrierShare != "" {
+		return protectExposedPassphrase(tenantBarrierShare, op)
+	}
+	return nil, nil
 }
 
 // =============================================================================
