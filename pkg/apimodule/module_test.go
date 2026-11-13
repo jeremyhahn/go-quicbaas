@@ -189,6 +189,9 @@ func TestModule_RegisterGRPC_RegistersFullGRPCSurface(t *testing.T) {
 		&pb.ObjectStorageAdmin_ServiceDesc,
 		&pb.OllamaService_ServiceDesc,
 		&pb.SecretsManagement_ServiceDesc,
+		&pb.KeyManagement_ServiceDesc,
+		&pb.DEKManagement_ServiceDesc,
+		&pb.Crypto_ServiceDesc,
 		&pb.PromptService_ServiceDesc,
 		&pb.AgentCatalogService_ServiceDesc,
 		&pb.SDLCService_ServiceDesc,
@@ -197,7 +200,7 @@ func TestModule_RegisterGRPC_RegistersFullGRPCSurface(t *testing.T) {
 		&iampb.SessionService_ServiceDesc,
 	}
 	info := server.GetServiceInfo()
-	require.Len(t, info, len(generated), "exactly the twenty-two quicbaas-native and broker services must be registered")
+	require.Len(t, info, len(generated), "exactly the twenty-five quicbaas-native, broker and K1 stopgap services must be registered")
 
 	for _, desc := range generated {
 		svcInfo, ok := info[desc.ServiceName]
@@ -249,18 +252,19 @@ func TestModule_RegisterGRPC_ExcludesProxyPlanes(t *testing.T) {
 	}
 }
 
-// TestModule_RegisterGRPC_ExcludesXKMSCanonicalSurface proves KeyManagement,
-// DEKManagement, Crypto, CertificateService, TrustService, AttestationService,
-// and PIVService stay OFF the quicbaas module's surface (Phase 3 of the
+// TestModule_RegisterGRPC_ExcludesXKMSCanonicalSurface proves
+// CertificateService, TrustService, AttestationService, and PIVService stay
+// OFF the quicbaas module's surface (Phase 3 of the
 // login-plane plan, corrective to the prior design documented in
 // module.go's package doc): they were quicbaas.v1 wrappers over the SAME
 // composed go-xkms library go-xkms's OWN ServiceModule ("xkms") now serves
 // as its canonical xkms.v1 KeystoreService surface on this same unified
 // server — registering both would double-register a redundant proto
 // surface, exactly the failure mode go-qrdb's route/service-collision guard
-// exists to catch. SecretsManagement is deliberately absent from this
-// exclusion list: it is genuinely quicbaas-native (see
-// TestModule_RegisterGRPC_RegistersFullGRPCSurface).
+// exists to catch. SecretsManagement, and KeyManagement, DEKManagement
+// and Crypto (the K1 stopgap, #1817), are deliberately absent from this
+// exclusion list (see TestModule_RegisterGRPC_RegistersFullGRPCSurface and
+// TestModule_KMSStopgap_ServedOnlyWhenPresent).
 func TestModule_RegisterGRPC_ExcludesXKMSCanonicalSurface(t *testing.T) {
 	m, err := NewModule(func() service.QuicBaaS { return nil }, testLogger(t))
 	require.NoError(t, err)
@@ -270,9 +274,6 @@ func TestModule_RegisterGRPC_ExcludesXKMSCanonicalSurface(t *testing.T) {
 	info := server.GetServiceInfo()
 
 	excluded := []string{
-		pb.KeyManagement_ServiceDesc.ServiceName,
-		pb.DEKManagement_ServiceDesc.ServiceName,
-		pb.Crypto_ServiceDesc.ServiceName,
 		pb.CertificateService_ServiceDesc.ServiceName,
 		pb.TrustService_ServiceDesc.ServiceName,
 		pb.AttestationService_ServiceDesc.ServiceName,
@@ -283,6 +284,50 @@ func TestModule_RegisterGRPC_ExcludesXKMSCanonicalSurface(t *testing.T) {
 		assert.False(t, ok, "service %s must NOT be registered on the quicbaas module: "+
 			"go-xkms's own ServiceModule now owns this canonical xkms.v1 surface", name)
 	}
+}
+
+// TestModule_KMSStopgap_ServedOnlyWhenPresent proves the K1 stopgap (#1817):
+// KeyManagement, DEKManagement and Crypto answer on the node gRPC once the
+// facade's KMSManager(), KMS() and Crypto() are configured, and answer
+// Unavailable (not served) while those services are absent. Before #1817 the
+// node answered Unimplemented ("unknown service") for all three.
+func TestModule_KMSStopgap_ServedOnlyWhenPresent(t *testing.T) {
+	ctx := context.Background()
+	call := func(conn *grpc.ClientConn) map[string]error {
+		_, kmsErr := pb.NewKeyManagementClient(conn).ListKeys(ctx, &pb.ListKeysRequest{})
+		_, dekErr := pb.NewDEKManagementClient(conn).ListDEKs(ctx, &pb.ListDEKsRequest{})
+		_, cryptoErr := pb.NewCryptoClient(conn).GenerateRandom(ctx, &pb.GenerateRandomRequest{Length: 16})
+		return map[string]error{
+			pb.KeyManagement_ServiceDesc.ServiceName: kmsErr,
+			pb.DEKManagement_ServiceDesc.ServiceName: dekErr,
+			pb.Crypto_ServiceDesc.ServiceName:        cryptoErr,
+		}
+	}
+
+	t.Run("absent", func(t *testing.T) {
+		m, err := NewModule(func() service.QuicBaaS { return &mocks.MockQuicBaaS{} }, testLogger(t))
+		require.NoError(t, err)
+		for name, err := range call(startBufconnModule(t, m)) {
+			require.Error(t, err, name)
+			assert.Equal(t, codes.Unavailable, status.Code(err),
+				"%s must answer Unavailable when its service is absent", name)
+		}
+	})
+
+	t.Run("present", func(t *testing.T) {
+		composed := &mocks.MockQuicBaaS{
+			KMSManagerServiceFunc: func() interfaces.KMSManager { return stubKMSManager{} },
+			MockKMSService:        &mocks.MockKMSService{},
+			MockCryptoService:     &mocks.MockCryptoService{},
+		}
+		m, err := NewModule(func() service.QuicBaaS { return composed }, testLogger(t))
+		require.NoError(t, err)
+		for name, err := range call(startBufconnModule(t, m)) {
+			code := status.Code(err)
+			assert.NotEqual(t, codes.Unavailable, code, "%s must be served when its service is present: %v", name, err)
+			assert.NotEqual(t, codes.Unimplemented, code, "%s must be registered: %v", name, err)
+		}
+	})
 }
 
 // startBufconnModule registers the module on a bufconn-backed gRPC server and

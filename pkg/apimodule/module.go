@@ -51,8 +51,8 @@
 // dials directly, pkg/api/grpc/client_secrets*.go) — genuinely native, not a
 // wrapper over an xkms capability of the same shape.
 //
-// KeyManagement, DEKManagement, Crypto, CertificateService, TrustService,
-// AttestationService, and PIVService are DELIBERATELY NOT registered here
+// CertificateService, TrustService, AttestationService, and PIVService are
+// DELIBERATELY NOT registered here
 // (Phase 3 of the login-plane plan, corrective to the prior design): they
 // were quicbaas.v1 wrappers over the SAME composed go-xkms library
 // (xkms.Get(), see pkg/server/qrdb_node.go's xkmsModule composition) that
@@ -68,9 +68,21 @@
 // of which project's wire contract now serves it. quicbaas's legacy gRPC
 // transport (pkg/server/lifecycle.go, lifecycle_certificate_register.go,
 // lifecycle_fido2_piv_register.go) is UNCHANGED by this: it still registers
-// its own quicbaas.v1 handlers for these seven services, so a caller already
+// its own quicbaas.v1 handlers for these services, so a caller already
 // dialing the legacy listener directly (not through the unified server or
 // the SDK) keeps working exactly as before.
+//
+// KeyManagement, DEKManagement and Crypto ARE registered here, as an
+// operational stopgap (#1817, CA m1036, owner queue item K1, option (a)) that
+// departs from the layered-stack ruling: the CLI, the pkg/api/grpc clients
+// and the Integration suite dial quicbaas.kms.v1 on the node gRPC and failed
+// with "unknown service" without them. Each is built from the facade's
+// KMSManager(), KMS() and Crypto() with the pkg/api/grpc constructors the
+// legacy transport uses, and answers Unavailable when its service is absent.
+// Retirement: KeyManagement and Crypto go when their callers move to the
+// re-exported go-xkms clients over the xkms.v1 RPCs go-xkms#1681 added;
+// DEKManagement goes when its callers move to go-qrdb's DEK service
+// (DEKClient, re-exported in sdk/go), per the data-encryption-keys SPEC row.
 //
 // FIDO2Service is the other xkms-backed surface registered here: quicbaas's
 // own tenant-scoped LOGIN ceremony (the WebAuthn analogue of the Login
@@ -364,6 +376,9 @@ type grpcServers struct {
 	objectStorageAdmin pb.ObjectStorageAdminServer
 	ollama             pb.OllamaServiceServer
 	secretsManagement  pb.SecretsManagementServer
+	keyManagement      pb.KeyManagementServer
+	dekManagement      pb.DEKManagementServer
+	crypto             pb.CryptoServer
 	prompt             pb.PromptServiceServer
 	agentCatalog       pb.AgentCatalogServiceServer
 	sdlc               pb.SDLCServiceServer
@@ -441,6 +456,9 @@ var grpcRegistrations = []grpcRegistration{
 	{desc: &pb.ObjectStorageAdmin_ServiceDesc, capability: "object-storage-admin", pick: func(s *grpcServers) any { return s.objectStorageAdmin }},
 	{desc: &pb.OllamaService_ServiceDesc, capability: "ollama", pick: func(s *grpcServers) any { return s.ollama }},
 	{desc: &pb.SecretsManagement_ServiceDesc, capability: "secrets-management", pick: func(s *grpcServers) any { return s.secretsManagement }},
+	{desc: &pb.KeyManagement_ServiceDesc, capability: "kms", pick: func(s *grpcServers) any { return s.keyManagement }},
+	{desc: &pb.DEKManagement_ServiceDesc, capability: "dek-management", pick: func(s *grpcServers) any { return s.dekManagement }},
+	{desc: &pb.Crypto_ServiceDesc, capability: "crypto", pick: func(s *grpcServers) any { return s.crypto }},
 	{desc: &pb.PromptService_ServiceDesc, capability: "prompt", pick: func(s *grpcServers) any { return s.prompt }},
 	{desc: &pb.AgentCatalogService_ServiceDesc, capability: "agent-catalog", pick: func(s *grpcServers) any { return s.agentCatalog }},
 	{desc: &pb.SDLCService_ServiceDesc, capability: "sdlc", pick: func(s *grpcServers) any { return s.sdlc }},
@@ -650,13 +668,26 @@ func (m *Module) bind() (*grpcServers, error) {
 	// capability services above, with the SAME nil-gating
 	// pkg/server/lifecycle.go applies on the legacy transport.
 	//
-	// KeyManagement, DEKManagement, Crypto, CertificateService, TrustService,
-	// AttestationService, and PIVService are deliberately NOT bound here: see
-	// the package doc comment (Phase 3 of the login-plane plan) — go-xkms's
-	// own ServiceModule now serves that canonical surface on this same
-	// unified server, and quicbaas's legacy gRPC transport is unaffected.
+	// CertificateService, TrustService, AttestationService, and PIVService
+	// are deliberately NOT bound here: see the package doc comment (Phase 3
+	// of the login-plane plan) — go-xkms's own ServiceModule serves that
+	// canonical surface on this same unified server.
 	if secretsSvc := svc.Secrets(); secretsSvc != nil {
 		built.secretsManagement = grpcapi.NewSecretsServer(secretsSvc, m.log)
+	}
+
+	// KeyManagement, DEKManagement and Crypto: the K1 operational stopgap
+	// (#1817), nil-gated exactly as pkg/server/lifecycle.go gates them on the
+	// legacy transport. See the package doc comment for their retirement.
+	if kmsMgr := svc.KMSManager(); kmsMgr != nil {
+		kmsSvc := svc.KMS()
+		built.keyManagement = grpcapi.NewKMSServerWithService(kmsMgr, kmsSvc, m.log)
+		if kmsSvc != nil {
+			built.dekManagement = grpcapi.NewDEKServer(kmsSvc, m.log)
+		}
+	}
+	if cryptoSvc := svc.Crypto(); cryptoSvc != nil {
+		built.crypto = grpcapi.NewCryptoServer(cryptoSvc, m.log)
 	}
 
 	// The registry, agent catalog and SDLC services are quicbaas-native, so
