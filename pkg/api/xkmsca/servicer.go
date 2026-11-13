@@ -1,5 +1,3 @@
-//go:build rest
-
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
@@ -13,7 +11,8 @@
 // 2. Commercial License
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
-package rest
+// Package xkmsca adapts the embedded go-xkms TrustedCA to go-xkms's transport CAService, so every quicbaas transport that serves the CA verbs (REST, MCP) goes through one adapter.
+package xkmsca
 
 import (
 	"context"
@@ -72,6 +71,16 @@ func newXKMSCAServicer(ca xkmssdk.TrustedCA, spiffeTrustDomain string) *xkmsCASe
 		return nil
 	}
 	return &xkmsCAServicer{ca: ca, spiffeTrustDomain: spiffeTrustDomain}
+}
+
+// New wraps ca in the go-xkms CAService adapter. spiffeTrustDomain is the
+// operator's SPIFFE trust domain; empty turns off SPIFFE SAN stamping.
+// It returns nil when ca is nil, so a caller can skip wiring the CA verbs.
+func New(ca xkmssdk.TrustedCA, spiffeTrustDomain string) xkmstransport.CAService {
+	if ca == nil {
+		return nil
+	}
+	return newXKMSCAServicer(ca, spiffeTrustDomain)
 }
 
 // GetCABundle returns the CA bundle as PEM bytes plus individual DER

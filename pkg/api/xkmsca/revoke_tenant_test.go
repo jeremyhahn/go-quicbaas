@@ -1,6 +1,4 @@
-//go:build rest
-
-package rest
+package xkmsca
 
 import (
 	"context"
