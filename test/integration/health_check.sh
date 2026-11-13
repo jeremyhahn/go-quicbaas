@@ -60,7 +60,7 @@ piv_login() {
     response=$(curl -s --connect-timeout "${MAX_RETRIES}" --max-time "${MAX_RETRIES}" \
         --cacert "${PIV_CA}" --cert "${PIV_CERT}" --key "${PIV_KEY}" \
         -X POST -w '\n%{http_code}' \
-        "${node_url}/api/v1/auth/login/piv" 2>/dev/null) || rc=$?
+        "${node_url}/api/v1/iam/login/piv" 2>/dev/null) || rc=$?
     if [ "$rc" = "28" ]; then
         echo "✗ PIV login failed on ${node_name} (${node_url}): no answer within ${MAX_RETRIES}s" >&2
         return 1

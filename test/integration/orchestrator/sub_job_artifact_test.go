@@ -67,7 +67,7 @@ func startParentJob(t *testing.T, ctx context.Context, tenantID, leadAgentID str
 // allowed to spawn a child job, and that the child ID is recorded on the
 // parent's ChildJobIDs list.
 func TestSpawnChildJob_LeadCanSpawn(t *testing.T) {
-	tenantID := "tenant-spawn-" + uniqueSuffix()
+	tenantID := newTenant(t, "tenant-spawn-")
 	ctx := tenantCtx(tenantID)
 
 	leadAgent := registerOnlineAgent(t, ctx, tenantID, "lead-"+uniqueSuffix(), "ollama", nil)
@@ -96,7 +96,7 @@ func TestSpawnChildJob_LeadCanSpawn(t *testing.T) {
 // TestSpawnChildJob_NonLeadRejected verifies that an agent that is not the
 // parent's lead is rejected with *NotLeadOfParentError.
 func TestSpawnChildJob_NonLeadRejected(t *testing.T) {
-	tenantID := "tenant-spawn-noLead-" + uniqueSuffix()
+	tenantID := newTenant(t, "tenant-spawn-nolead-")
 	ctx := tenantCtx(tenantID)
 
 	leadAgent := registerOnlineAgent(t, ctx, tenantID, "lead-"+uniqueSuffix(), "ollama", nil)

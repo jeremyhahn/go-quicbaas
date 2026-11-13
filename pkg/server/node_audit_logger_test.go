@@ -15,6 +15,7 @@ package server
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -204,6 +205,15 @@ func TestNodeAuditLogger_GetEvent_FoundAndNotFound(t *testing.T) {
 	_, err = l.GetEvent(context.Background(), "t1", "nonexistent")
 	var notFound *AuditEventNotFoundError
 	assert.ErrorAs(t, err, &notFound)
+}
+
+func TestNodeAuditLogger_AuditEventNotFound_MatchesIAMSentinel(t *testing.T) {
+	assert.True(t, errors.Is(&AuditEventNotFoundError{EventID: "x"}, iam.ErrAuditEventNotFound))
+
+	l := newTestNodeAuditLogger()
+	_, err := l.GetEvent(context.Background(), "t1", "nonexistent")
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, iam.ErrAuditEventNotFound))
 }
 
 func TestNodeAuditLogger_DeleteOlderThan_IsNoop(t *testing.T) {

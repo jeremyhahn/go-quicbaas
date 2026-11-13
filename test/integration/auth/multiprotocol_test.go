@@ -240,10 +240,15 @@ func getOrCreateTestCredentials(t *testing.T, ctx context.Context, httpEndpoint 
 		}, nil
 	}
 
-	// Register the app the way a production caller does: as the admin of a
-	// tenant the system admin provisioned, whose bearer binds that tenant.
+	// Registering an OAuth app for a tenant is a system-tenant operation
+	// (tenants:create), so the fixture system admin registers it into the
+	// provisioned tenant.
 	tenant := provisionAuthTestTenant(t, httpEndpoint)
-	creds, err := createTestOAuthApp(ctx, httpEndpoint, tenant.TenantID, tenant.AdminBearer, "auth-integration-test-app")
+	systemBearer, err := helpers.AuthSystemAdminContext(ctx, httpEndpoint)
+	if err != nil {
+		return nil, fmt.Errorf("system admin bearer for app registration: %w", err)
+	}
+	creds, err := createTestOAuthApp(ctx, httpEndpoint, tenant.TenantID, systemBearer, "auth-integration-test-app")
 	if err != nil {
 		return nil, fmt.Errorf("test credentials not configured and auto-creation failed: %w (set QUICBAAS_TEST_CLIENT_ID and QUICBAAS_TEST_CLIENT_SECRET)", err)
 	}
@@ -296,10 +301,10 @@ func TestAuthMultiProtocol(t *testing.T) {
 	// convention yet, so this suite does not exercise it (deferred).
 }
 
-// TestRegisterAppRequiresBoundTenant proves the fixtures bind a tenant
-// without weakening the check (#164): registering an app needs a caller
-// bound to the tenant the path names. A request with no credential, and the
-// system admin's bearer, which is bound to the system tenant, are refused.
+// TestRegisterAppRequiresBoundTenant pins who may register an OAuth app for
+// a tenant: it is a system-tenant operation (tenants:create). A request with
+// no credential is unauthenticated, the tenant's own admin is refused, and the
+// system admin registers the app into the tenant the path names.
 func TestRegisterAppRequiresBoundTenant(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
@@ -313,26 +318,23 @@ func TestRegisterAppRequiresBoundTenant(t *testing.T) {
 	require.NoError(t, err, "system admin login")
 
 	cases := []struct {
-		name   string
-		bearer string
+		name    string
+		bearer  string
+		appName string
+		want    int
 	}{
-		{name: "no credential", bearer: ""},
-		{name: "system admin of another tenant", bearer: systemBearer},
+		{name: "no credential", bearer: "", appName: "anon-app", want: http.StatusUnauthorized},
+		{name: "tenant admin", bearer: tenant.AdminBearer, appName: "tenant-admin-app", want: http.StatusForbidden},
+		{name: "system admin", bearer: systemBearer, appName: "system-admin-app", want: http.StatusCreated},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			appName := fmt.Sprintf("unbound-app-%d", time.Now().UnixNano())
+			appName := fmt.Sprintf("%s-%d", tc.appName, time.Now().UnixNano())
 			status, body, err := postRegisterApp(ctx, httpEndpoint, tenant.TenantID, tc.bearer, appName)
 			require.NoError(t, err)
-			require.Equal(t, http.StatusForbidden, status, "body=%s", body)
+			require.Equal(t, tc.want, status, "body=%s", body)
 		})
 	}
-
-	// The tenant's own admin is bound to it and may register an app.
-	appName := fmt.Sprintf("bound-app-%d", time.Now().UnixNano())
-	status, body, err := postRegisterApp(ctx, httpEndpoint, tenant.TenantID, tenant.AdminBearer, appName)
-	require.NoError(t, err)
-	require.Equal(t, http.StatusCreated, status, "body=%s", body)
 }
 
 // testAuthProtocol runs the authorization test suite against a protocol.

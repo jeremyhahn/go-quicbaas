@@ -91,28 +91,35 @@ func (s *Server) buildMCPServer() (*mcpapi.Server, error) {
 // module's real MCP tools (pkg/apimodule RegisterMCP). It lazily constructs
 // the tool registry (buildMCPServer) on first use, once, and memoizes it —
 // every module tool call after that shares the SAME registry state. Returns
-// nil while the QuicBaaS facade is still composing — module tools answer a
-// tool error until then.
+// nil while the QuicBaaS facade is still composing, before IAM is attached,
+// or after a failed construction — module tools answer a tool error until a
+// later call builds it.
 func (s *Server) ModuleMCPServer() *mcpapi.Server {
 	s.mu.RLock()
 	composing := s.quicBaaSService == nil
 	s.mu.RUnlock()
-	if composing {
+	// As ModuleRESTServer: build nothing before IAM is attached, and never
+	// cache a failed build.
+	if composing || !s.iamReady.Load() {
 		return nil
 	}
 
-	s.moduleMCPOnce.Do(func() {
-		srv, err := s.buildMCPServer()
-		if err != nil {
-			s.logger.Errorf("module MCP binding: server construction failed: %v", err)
-			return
-		}
-		s.mu.Lock()
-		s.moduleMCP = srv
-		s.mu.Unlock()
-	})
-
+	s.moduleMCPMu.Lock()
+	defer s.moduleMCPMu.Unlock()
 	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return s.moduleMCP
+	built := s.moduleMCP
+	s.mu.RUnlock()
+	if built != nil {
+		return built
+	}
+	srv, err := s.buildMCPServer()
+	if err != nil {
+		// Not cached: the next module tool call tries again.
+		s.logger.Errorf("module MCP binding: server construction failed: %v", err)
+		return nil
+	}
+	s.mu.Lock()
+	s.moduleMCP = srv
+	s.mu.Unlock()
+	return srv
 }

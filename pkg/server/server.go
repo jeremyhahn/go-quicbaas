@@ -673,10 +673,14 @@ type Server struct {
 	// Unified-API-server module bindings (pkg/apimodule): lazily-constructed
 	// non-listening REST/MCP servers backing the module surfaces when the
 	// legacy listeners are disabled. See ModuleRESTServer / ModuleMCPServer.
-	moduleREST     *restapi.Server
-	moduleRESTOnce sync.Once
-	moduleMCP      *mcpapi.Server
-	moduleMCPOnce  sync.Once
+	// moduleRESTMu and moduleMCPMu serialise construction. A failed build is
+	// not cached: the next module request builds again, so a node whose first
+	// request arrived before its IAM state was usable recovers instead of
+	// serving that failure until restart.
+	moduleREST   *restapi.Server
+	moduleRESTMu sync.Mutex
+	moduleMCP    *mcpapi.Server
+	moduleMCPMu  sync.Mutex
 
 	// Health checking
 	health *HealthChecker

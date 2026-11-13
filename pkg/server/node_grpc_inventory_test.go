@@ -107,12 +107,12 @@ var unixOnlyServices = map[string]string{
 	"quicbaas.barrier.v1.Barrier":      "qrdb proxy plane",
 	"quicbaas.ceremony.v1.Ceremony":    "qrdb proxy plane",
 	"quicbaas.tenant.v1.TenantBarrier": "qrdb proxy plane",
-	"quicbaas.vector.v1.VectorDB":      "qrdb proxy plane",
-	"quicbaas.vector.v1.VectorAdmin":   "qrdb proxy plane",
+	// VectorDB and VectorAdmin are mounted: go-qrdb registers no
+	// quicbaas.vector.v1 name.
 	// go-xkms's own ServiceModule serves the canonical xkms.v1 surface on the
 	// node (pkg/apimodule TestModule_RegisterGRPC_ExcludesXKMSCanonicalSurface).
-	"quicbaas.kms.v1.KeyManagement":              "xkms canonical surface",
-	"quicbaas.kms.v1.DEKManagement":              "xkms canonical surface",
+	// KeyManagement and DEKManagement are mounted: the pinned go-xkms serves
+	// no DEK surface and no quicbaas.kms.v1 name.
 	"quicbaas.kms.v1.Crypto":                     "xkms canonical surface",
 	"quicbaas.certificate.v1.CertificateService": "xkms canonical surface",
 	"quicbaas.certificate.v1.TrustService":       "xkms canonical surface",

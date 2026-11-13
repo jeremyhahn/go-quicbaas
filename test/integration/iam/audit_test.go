@@ -280,8 +280,10 @@ func TestAuditEventQueryTimeRange(t *testing.T) {
 	userEvents := fmt.Sprintf("/api/v1/iam/audit?tenant_id=%s&event_type=user_management", tenantID)
 	before := auditBaseline(t, auditor, userEvents)
 
-	// Record the time before creating a user
-	beforeCreate := time.Now().Add(-1 * time.Second).UTC()
+	// Record the time before creating a user, in whole seconds: event
+	// timestamps are RFC3339, so one in the same second must not compare
+	// before it.
+	beforeCreate := time.Now().Add(-1 * time.Second).UTC().Truncate(time.Second)
 
 	// Create a user to generate audit events
 	email := generateUniqueEmail()
