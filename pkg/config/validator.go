@@ -963,11 +963,6 @@ func (v *Validator) validateSDLC(cfg *SDLCConfig) {
 		v.addError("sdlc.webhook.max_body", "must be positive; verification buffers the whole body, so an unbounded one is an unauthenticated memory sink")
 	}
 	v.validateSDLCPublicURL(cfg.Webhook.PublicURL)
-	for i, command := range cfg.VerificationCommands {
-		if strings.TrimSpace(command) == "" {
-			v.addError("sdlc.verification_commands["+strconv.Itoa(i)+"]", "must not be empty; an empty criterion runs the empty command")
-		}
-	}
 	for i, host := range cfg.RepoHosts {
 		if strings.TrimSpace(host) == "" {
 			v.addError("sdlc.repo_hosts["+strconv.Itoa(i)+"]", "must not be empty; an empty entry matches no host and hides a typo")

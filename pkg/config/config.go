@@ -861,8 +861,10 @@ type EmbeddedFleetNodeConfig struct {
 }
 
 // SDLCConfig configures the SDLC module of the Software Factory: which forge
-// hosts a bound project may live on, what a worker runs to verify its work,
-// and how a parked task's reason reaches its issue.
+// hosts a bound project may live on, how its sweeps are paced, and how a
+// parked task's reason reaches its issue. What a worker runs to verify its
+// work is the project binding's own verification list, admitted by the
+// allowlist orchestration.verification_commands; neither is configured here.
 //
 // The daemon does no clone, copy or worktree of its own: the worker's
 // container clones the project repository and the project's context
@@ -871,7 +873,7 @@ type EmbeddedFleetNodeConfig struct {
 // The generic knobs of a job — the attempt budget, the lease TTL, the stage
 // timeouts, the idle thresholds, the sweep interval — belong to the engine
 // and live under orchestration:. They are refused here BY NAME
-// (RemovedSDLCKeys) rather than silently ignored, so a configuration that
+// (RemovedKeys) rather than silently ignored, so a configuration that
 // still carries them fails to load with the key and its new home.
 type SDLCConfig struct {
 	// Enabled runs the SDLC module on this node.
@@ -886,18 +888,6 @@ type SDLCConfig struct {
 	// triggered issue; the next sweep sees the rest once the first page has
 	// been adopted and labelled in progress.
 	IssuePageLimit int `mapstructure:"issue_page_limit"`
-
-	// VerificationCommands is DECLARED AND UNREAD — see go-quicbaas#625.
-	//
-	// It described the validating-phase criteria of a canonical sdlc
-	// workflow that no longer exists (deleted by #596, replaced by the sdlc
-	// runner in #607). What the runner runs is the BINDING's own
-	// verification list, and what admits a command is the operator
-	// allowlist orchestration.verification_commands. Nothing reads this
-	// field; setting it has no effect.
-	//
-	// Default: make build, make test, make lint.
-	VerificationCommands []string `mapstructure:"verification_commands"`
 
 	// CheckoutRoot is where the worker's container finds its checkouts: the
 	// project at <root>/<project name> and each context repository beside
@@ -1230,10 +1220,10 @@ func BindSDLCSurfacingEnv(v *viper.Viper) {
 // the sweep this section paces would never start. That is a worse failure than a
 // dropped knob, because every other variable appears to work.
 //
-// THE SLICES ARE DELIBERATELY ABSENT. `verification_commands` and `repo_hosts`
-// are list configuration whose environment representation viper does not decode
-// into a []string reliably through Unmarshal, so binding them would advertise a
-// reachability that does not hold. They are file-only, said here rather than
+// THE SLICE IS DELIBERATELY ABSENT. `repo_hosts` is list configuration whose
+// environment representation viper does not decode into a []string reliably
+// through Unmarshal, so binding it would advertise a reachability that does
+// not hold. It is file-only, said here rather than
 // discovered, and the drift gate skips them by type for the same reason.
 var SDLCKeys = []string{
 	"sdlc.enabled",
@@ -1338,6 +1328,8 @@ var RemovedKeys = map[string]string{
 	"sdlc.worker_image.registry_token_file": "sdlc.worker_image.registry_token_secret and registry_token_tenant: " +
 		"the push token is a QuicBaaS tenant secret, never a plaintext file",
 	"sdlc.worktree_root": workerClonesItsOwnWorkspace,
+	"sdlc.verification_commands": "orchestration.verification_commands for the command allowlist; " +
+		"the project binding's verification list for the commands a project runs",
 }
 
 // agentReplacesTuple is where a backend/model tuple went: a reference to a

@@ -85,6 +85,24 @@ func TestLoad_RefusesTheDaemonSideWorkspaceKeys(t *testing.T) {
 	}
 }
 
+// TestLoad_RefusesSDLCVerificationCommands pins go-quicbaas#628: the key was
+// loaded, defaulted and validated and then read by nothing, so an operator who
+// set it got no error and no effect. It is refused by name now, and the
+// refusal names both places the setting actually lives.
+func TestLoad_RefusesSDLCVerificationCommands(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "quicbaas.yaml")
+	body := "sdlc:\n  enabled: true\n  verification_commands: [\"make build\", \"make test\"]\n"
+	require.NoError(t, os.WriteFile(path, []byte(body), 0o600))
+	_, err := NewLoader().Load(path)
+	require.Error(t, err)
+	var removed *RemovedKeyError
+	require.True(t, errors.As(err, &removed), "%v", err)
+	assert.Equal(t, "sdlc.verification_commands", removed.Key)
+	assert.True(t, errors.Is(err, ErrRemovedKey))
+	assert.Contains(t, err.Error(), "orchestration.verification_commands")
+	assert.Contains(t, err.Error(), "binding's verification list")
+}
+
 // nestedYAML renders a dotted key as the nested YAML that sets it.
 func nestedYAML(key, value string) string {
 	var b strings.Builder

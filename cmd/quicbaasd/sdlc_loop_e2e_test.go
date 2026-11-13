@@ -1098,7 +1098,6 @@ func startFactoryNode(t *testing.T, dataDir string, init bool, reapTTL time.Dura
 	// than guess an address no forge could reach.
 	cfg.SDLC.Webhook.PublicURL = "https://factory.e2e"
 	cfg.SDLC.AllowLocalRepos = true
-	cfg.SDLC.VerificationCommands = []string{"test -f WORK.md"}
 	cfg.SDLC.Surfacing.RetryInterval = 10 * time.Millisecond
 
 	srv, err := server.NewServer(cfg, server.WithSealPassphrase([]byte(f.secret)))

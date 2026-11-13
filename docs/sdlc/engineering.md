@@ -297,11 +297,9 @@ sdlc:
   # host:port). Empty refuses every repository.
   repo_hosts: ["git.example.com"]   # the deployment's own forge host
   allow_local_repos: false          # file:// and bare paths; test rigs only
-  # DECLARED AND UNREAD (issue #625). What the sdlc runner runs is the
-  # binding's own `verification` list, and what admits a command is the
-  # engine's ExecutionGuard allowlist below. This key is validated at load
-  # and then read by nothing; set orchestration.verification_commands.
-  verification_commands: ["make build", "make test", "make lint"]
+  # No verification list here: what the runner runs is the binding's own
+  # `verification` list, admitted by orchestration.verification_commands
+  # below. sdlc.verification_commands is a removed key and refuses startup.
   merge_attempts: 6                 # retries while the forge says not-ready; still not mergeable after = conflict
   issue_page_limit: 50              # issues per project sweep
   # Where the worker's container finds its checkouts: the project at
@@ -351,7 +349,7 @@ sdlc:
                                     # the module's own scalars are bound too, incl.
                                     # QUICBAAS_SDLC_ENABLED — an env-only
                                     # deployment must be able to switch it on.
-                                    # verification_commands and repo_hosts are
+                                    # repo_hosts is
                                     # file-only: viper will not decode an env
                                     # list into []string through Unmarshal.
   webhook:
