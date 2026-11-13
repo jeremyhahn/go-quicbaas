@@ -380,17 +380,15 @@ Examples:
   printf '%s' "$PP" | quicbaas barrier init --barrier-strategy passphrase --passphrase-stdin
   quicbaas barrier init --barrier-strategy none
   quicbaas barrier init --barrier-strategy passphrase --passphrase '<pp>' \
-                        --so-pin SO123 --user-pin USR123`,
+                        --so-pin-file so.pin --user-pin-file user.pin`,
 		RunE: runBarrierInitCommand,
 	}
 	cmd.Flags().StringVar(&barrierStrategy, "barrier-strategy", "passphrase",
 		"Barrier strategy: none | passphrase | shamir")
 	addPassphraseFlags(cmd, &barrierSecret,
 		"Master passphrase (required for passphrase and shamir)")
-	cmd.Flags().StringVar(&barrierSOPin, "so-pin", "",
-		"Security Officer PIN (optional; requires --user-pin)")
-	cmd.Flags().StringVar(&barrierUserPin, "user-pin", "",
-		"User PIN (optional; requires --so-pin)")
+	addPINFlags(cmd, "optional; both or neither; ",
+		soPINInput(&barrierSOPin), userPINInput(&barrierUserPin))
 	return cmd
 }
 
@@ -420,8 +418,18 @@ func runBarrierInitCommand(cmd *cobra.Command, _ []string) error {
 			"--passphrase is required when --barrier-strategy=%s%s",
 			barrierStrategy, passphraseSourcesHint)
 	}
-	if barrierStrategy == "none" && (barrierSOPin != "" || barrierUserPin != "") {
+	// As with the passphrase, "not allowed" keys off what the operator
+	// typed: a leftover QUICBAAS_SO_PIN must not fail --barrier-strategy=none.
+	if barrierStrategy == "none" && pinFlagsRequested(cmd) {
 		return formatError(&PINsNotAllowedError{Strategy: "none", Op: "init"})
+	}
+	if barrierStrategy != "none" {
+		release, err := resolvePINs(cmd, "barrier.init",
+			soPINInput(&barrierSOPin), userPINInput(&barrierUserPin))
+		if err != nil {
+			return formatError(err)
+		}
+		defer release()
 	}
 	if barrierUserPin != "" && barrierSOPin == "" {
 		return errors.Newf(errors.ErrInvalidInput, "barrier.init",
@@ -483,10 +491,8 @@ Example:
 		"Minimum shares required to unseal (M)")
 	cmd.Flags().IntVar(&barrierTotalShares, "total", 0,
 		"Total number of shares to generate (N)")
-	cmd.Flags().StringVar(&barrierSOPin, "so-pin", "",
-		"Security Officer PIN (optional; requires --user-pin)")
-	cmd.Flags().StringVar(&barrierUserPin, "user-pin", "",
-		"User PIN (optional; requires --so-pin)")
+	addPINFlags(cmd, "optional; both or neither; ",
+		soPINInput(&barrierSOPin), userPINInput(&barrierUserPin))
 	return cmd
 }
 
@@ -510,6 +516,12 @@ func runBarrierInitShamirCommand(cmd *cobra.Command, _ []string) error {
 	if barrierThreshold > barrierTotalShares {
 		return errors.Newf(errors.ErrInvalidInput, "barrier.init-shamir", "--threshold cannot exceed --total")
 	}
+	release, err := resolvePINs(cmd, "barrier.init-shamir",
+		soPINInput(&barrierSOPin), userPINInput(&barrierUserPin))
+	if err != nil {
+		return formatError(err)
+	}
+	defer release()
 	if barrierUserPin != "" && barrierSOPin == "" {
 		return errors.Newf(errors.ErrInvalidInput, "barrier.init-shamir",
 			"--user-pin requires --so-pin")
@@ -834,12 +846,11 @@ configured. --threshold and --total are paired and instruct the server
 to regenerate the share set with a new M/N.
 
 Examples:
-  quicbaas barrier rekey --so-pin SO123
+  printf '%s\n' "$SO_PIN" | quicbaas barrier rekey --so-pin-file -
   quicbaas barrier rekey --threshold 3 --total 5`,
 		RunE: runBarrierRekeyCommand,
 	}
-	cmd.Flags().StringVar(&barrierSOPin, "so-pin", "",
-		"Security Officer PIN (required when a PINBackend is configured)")
+	addPINFlags(cmd, "required when a PINBackend is configured; ", soPINInput(&barrierSOPin))
 	cmd.Flags().IntVar(&barrierThreshold, "threshold", 0,
 		"New Shamir threshold (paired with --total)")
 	cmd.Flags().IntVar(&barrierTotalShares, "total", 0,
@@ -862,6 +873,11 @@ func runBarrierRekeyCommand(cmd *cobra.Command, _ []string) error {
 		return errors.Newf(errors.ErrInvalidInput, "barrier.rekey",
 			"--total must be >= --threshold")
 	}
+	release, err := resolvePINs(cmd, "barrier.rekey", soPINInput(&barrierSOPin))
+	if err != nil {
+		return formatError(err)
+	}
+	defer release()
 
 	client, err := barrierClientFactory()
 	if err != nil {
@@ -915,15 +931,14 @@ a parallel KMS slot. Generation requires a Security Officer PIN when a
 PINBackend is configured.
 
 Example:
-  quicbaas barrier recovery generate --threshold 3 --total 5 --so-pin SO123`,
+  quicbaas barrier recovery generate --threshold 3 --total 5 --so-pin-file /run/secrets/so-pin`,
 		RunE: runBarrierRecoveryGenerateCommand,
 	}
 	cmd.Flags().IntVar(&barrierThreshold, "threshold", 0,
 		"Minimum keys required for recovery (M)")
 	cmd.Flags().IntVar(&barrierTotalShares, "total", 0,
 		"Total number of recovery keys (N)")
-	cmd.Flags().StringVar(&barrierSOPin, "so-pin", "",
-		"Security Officer PIN (required when a PINBackend is configured)")
+	addPINFlags(cmd, "required when a PINBackend is configured; ", soPINInput(&barrierSOPin))
 	return cmd
 }
 
@@ -937,6 +952,11 @@ func runBarrierRecoveryGenerateCommand(cmd *cobra.Command, _ []string) error {
 		return errors.Newf(errors.ErrInvalidInput, "barrier.recovery.generate",
 			"--total must be >= --threshold")
 	}
+	release, err := resolvePINs(cmd, "barrier.recovery.generate", soPINInput(&barrierSOPin))
+	if err != nil {
+		return formatError(err)
+	}
+	defer release()
 
 	client, err := barrierClientFactory()
 	if err != nil {
