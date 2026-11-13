@@ -24,6 +24,7 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 // jobLifecyclePolicy builds the operator's lifecycle policy from daemon
@@ -403,11 +404,19 @@ func (l *iamTenantLister) ListTenantIDs(ctx context.Context) ([]string, error) {
 // always exists: it is qrdb's reserved scope, not an IAM record. An ID IAM
 // would refuse as malformed names no tenant; any other failure is the tenant
 // directory failing to answer, and is returned as such.
+//
+// The lookup is bound to the system tenant. Tenant records are control-plane
+// records, written by the system admin into the system scope, while the
+// caller's context is usually bound to the very tenant being checked (a fleet
+// registration carries the registering tenant). Read in that tenant's own
+// scope, the record is never found (#1605). The IAM tenant key is the one the
+// routing store consults first (tenantFromAnyContext), so it also overrides an
+// orchestration tenant on the context.
 func (l *iamTenantLister) TenantExists(ctx context.Context, tenantID string) (bool, error) {
 	if qrdbsdk.IsSystemTenant(tenantID) {
 		return true, nil
 	}
-	_, err := l.tenants.GetTenant(ctx, tenantID)
+	_, err := l.tenants.GetTenant(tenantctx.WithSystem(ctx), tenantID)
 	switch {
 	case err == nil:
 		return true, nil
