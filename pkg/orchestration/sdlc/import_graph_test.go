@@ -54,7 +54,8 @@ func TestPackageTree_SoftwareFactoryUnderOrchestration(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(root, "go.mod")); err != nil {
 		t.Fatalf("module root %s has no go.mod: %v", root, err)
 	}
-	for _, gone := range []string{"pkg/orchestration/sdlc", "pkg/orchestration/fleet", "pkg/agent"} {
+	// The old paths are spelled from parts so a path rewrite cannot move them.
+	for _, gone := range []string{"pkg/" + "sdlc", "pkg/" + "fleet", "pkg/" + "agent"} {
 		if _, err := os.Stat(filepath.Join(root, gone)); !errors.Is(err, fs.ErrNotExist) {
 			t.Errorf("%s still exists (err=%v): the Software Factory's packages live under pkg/orchestration", gone, err)
 		}
