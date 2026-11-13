@@ -600,6 +600,20 @@ func (m *SigningKeyManager) AdoptPreviousFromXKMSBackend(storeType string) (bool
 	return true, nil
 }
 
+// AdoptDefaultBackendKey keeps the manager's pre-upgrade key from the process
+// default xkms backend as a previous key (AdoptPreviousFromXKMSBackend) when
+// the manager's own backend is another one, such as the replicated store. It
+// only reads the default backend; on the default backend itself, or when
+// there is no default backend, it does nothing.
+func (m *SigningKeyManager) AdoptDefaultBackendKey() error {
+	defaultName, err := xkms.DefaultBackendName()
+	if err != nil || defaultName == m.storeType {
+		return nil
+	}
+	_, err = m.AdoptPreviousFromXKMSBackend(defaultName)
+	return err
+}
+
 // rotationKID builds the fully-qualified xkms key reference used to address the
 // signing key for in-place rotation. The xkms key id format is
 // "backend:type:algo:keyname"; the backend (store type) segment must be present

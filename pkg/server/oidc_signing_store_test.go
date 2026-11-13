@@ -14,6 +14,7 @@
 package server
 
 import (
+	"context"
 	"crypto"
 	"crypto/ecdsa"
 	"crypto/rand"
@@ -210,4 +211,57 @@ func TestOIDCSigningStore_AdoptsExistingDefaultKey(t *testing.T) {
 		require.NoError(t, err)
 		require.Len(t, m.JWKS().Keys, 1)
 	})
+}
+
+// dedicatedOIDCSettings marks every tenant in its set as using a dedicated
+// signing key.
+type dedicatedOIDCSettings map[string]bool
+
+func (d dedicatedOIDCSettings) OIDCSettingsFor(_ context.Context, tenantID string) (*iam.TenantOIDCConfig, error) {
+	if !d[tenantID] {
+		return nil, nil
+	}
+	return &iam.TenantOIDCConfig{DedicatedSigningKey: true}, nil
+}
+
+func (d dedicatedOIDCSettings) DedicatedSigningTenants(context.Context) ([]string, error) {
+	ids := make([]string, 0, len(d))
+	for id := range d {
+		ids = append(ids, id)
+	}
+	return ids, nil
+}
+
+// TestOIDCSigningStore_TenantAdoptsExistingDefaultKey upgrades a node whose
+// dedicated tenant key lives in the default backend: the tenant's manager on
+// the replicated store keeps the pre-upgrade key, so a tenant token issued
+// before the upgrade still verifies.
+func TestOIDCSigningStore_TenantAdoptsExistingDefaultKey(t *testing.T) {
+	t.Cleanup(dbxkms.Reset)
+	const tenantID = "tenant-dedicated"
+
+	initOIDCSigningDefault(t)
+	old, err := iam.NewSigningKeyManagerFromXKMS(iam.OIDCSigningKeyCN, tenantID)
+	require.NoError(t, err)
+	oldKid, oldSigner, _ := old.Current()
+	digest := sha256.Sum256([]byte("pre-upgrade-tenant-token"))
+	sig, err := oldSigner.Sign(rand.Reader, digest[:], crypto.SHA256)
+	require.NoError(t, err)
+
+	registerOIDCSigningBackend(t, xkmssdk.NewStorageMemory())
+	global, err := newOIDCSigningKeyManager(oidcSigningBackendName)
+	require.NoError(t, err)
+	resolver, err := iam.NewTenantSigningKeyResolver(global, dedicatedOIDCSettings{tenantID: true})
+	require.NoError(t, err)
+
+	m, err := resolver.ManagerFor(context.Background(), tenantID)
+	require.NoError(t, err)
+	newKid, _, _ := m.Current()
+	require.NotEqual(t, oldKid, newKid)
+
+	pub, err := m.PublicForKID(oldKid)
+	require.NoError(t, err)
+	ecPub, ok := pub.(*ecdsa.PublicKey)
+	require.True(t, ok)
+	require.True(t, ecdsa.VerifyASN1(ecPub, digest[:], sig))
 }

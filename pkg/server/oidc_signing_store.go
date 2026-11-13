@@ -115,11 +115,7 @@ func newOIDCSigningKeyManager(storeType string) (*iam.SigningKeyManager, error) 
 	if err != nil {
 		return nil, err
 	}
-	defaultName, err := dbxkms.DefaultBackendName()
-	if err != nil || defaultName == storeType {
-		return m, nil
-	}
-	if _, err := m.AdoptPreviousFromXKMSBackend(defaultName); err != nil {
+	if err := m.AdoptDefaultBackendKey(); err != nil {
 		return nil, err
 	}
 	return m, nil
