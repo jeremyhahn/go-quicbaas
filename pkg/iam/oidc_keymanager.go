@@ -28,6 +28,7 @@ import (
 
 	"github.com/go-jose/go-jose/v4"
 	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
+	"github.com/jeremyhahn/go-xkms/sdk/go/transport"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/xkms"
 )
@@ -172,7 +173,7 @@ func es256KeyAttributes(cn, tenantID, storeType string) *xkmssdk.KeyAttributes {
 	return &xkmssdk.KeyAttributes{
 		CN:           cn,
 		TenantID:     tenantID,
-		StoreType:    xkmssdk.StoreType(storeType),
+		StoreType:    keyStoreType(storeType),
 		Backend:      storeType,
 		KeyType:      xkmssdk.KeyTypeSigning,
 		KeyAlgorithm: x509.ECDSA,
@@ -181,6 +182,52 @@ func es256KeyAttributes(cn, tenantID, storeType string) *xkmssdk.KeyAttributes {
 			Curve: elliptic.P256(),
 		},
 	}
+}
+
+// keyStoreType returns the store-type keyword for the backend registered as
+// name. A registered instance name that is not itself a keyword (such as the
+// replicated OIDC store) takes its key provider's type: go-xkms parses the
+// store type back out of a listed key's ID, and an instance name there reads
+// as "unknown", so rotation could not find the key's current version.
+func keyStoreType(name string) xkmssdk.StoreType {
+	st := xkmssdk.StoreType(name)
+	if st.IsValid() {
+		return st
+	}
+	b, err := xkmssdk.ServiceBackendFor(&xkmssdk.KeyAttributes{Backend: name})
+	if err != nil {
+		return st
+	}
+	return xkmssdk.StoreType(b.KeyProvider().Type())
+}
+
+// currentSigner returns the signer for the current version of the key attrs
+// names. xkms.CurrentSigner reads the key's version record under its store
+// type; a key on a registered instance whose name is not its store type has
+// its record under the instance name (go-xkms records rotations by backend
+// registry name), so it is read there.
+func currentSigner(ctx context.Context, attrs *xkmssdk.KeyAttributes) (crypto.Signer, error) {
+	if attrs.Backend == "" || attrs.Backend == string(attrs.StoreType) {
+		return xkms.CurrentSigner(ctx, attrs)
+	}
+	svc, err := xkmssdk.Get()
+	if err != nil {
+		return nil, err
+	}
+	store := svc.KeyVersionStore()
+	if store == nil {
+		return xkms.Signer(ctx, attrs)
+	}
+	rec, found, err := store.Load(ctx, attrs.TenantID, attrs.Backend, attrs.CN)
+	if err != nil {
+		return nil, err
+	}
+	if !found || rec.Current <= 1 {
+		return xkms.Signer(ctx, attrs)
+	}
+	current := *attrs
+	current.CN = xkmssdk.KeyVersionName(attrs.CN, rec.Current)
+	return xkms.Signer(ctx, &current)
 }
 
 // signerSource is the xkms surface loadSignerForAttrs drives. Tests replace
@@ -195,7 +242,7 @@ type signerSource struct {
 
 // xkmsSignerSource is the production source: the process xkms service.
 var xkmsSignerSource = signerSource{
-	current:        xkms.CurrentSigner,
+	current:        currentSigner,
 	generate:       xkms.GenerateKey,
 	signer:         xkms.Signer,
 	reloadAttempts: 10,
@@ -460,11 +507,21 @@ func (m *SigningKeyManager) Rotate() error {
 	// public key, hence a new derived kid -- and makes it current; earlier
 	// versions are kept. We then fetch the signer for the current version;
 	// backends may return a handle whose private key never leaves the device.
-	if _, err := xkms.RotateKey(context.Background(), m.rotationKID()); err != nil {
+	// The service API resolves registered backend instance names (such as
+	// the replicated OIDC store), which a parsed key ID string does not.
+	svc, err := xkmssdk.Get()
+	if err != nil {
+		return err
+	}
+	if _, err := svc.RotateKey(context.Background(), &transport.RotateKeyRequest{
+		Backend:  m.storeType,
+		KeyID:    m.cn,
+		TenantID: m.tenantID,
+	}); err != nil {
 		return err
 	}
 
-	signer, err := xkms.CurrentSigner(context.Background(), attrs)
+	signer, err := currentSigner(context.Background(), attrs)
 	if err != nil {
 		return err
 	}
@@ -490,6 +547,57 @@ func (m *SigningKeyManager) Rotate() error {
 		previous: previous,
 	})
 	return nil
+}
+
+// AdoptPreviousFromXKMSBackend keeps the manager's ES256 key from another
+// xkms backend (storeType) as a previous key: it is published in JWKS and
+// resolvable by PublicForKID through the overlap window, the same as the key
+// a Rotate replaces, while the current key keeps signing. An upgrade that moves the
+// signing key to a new backend uses it so tokens signed with the old key keep
+// verifying. It only reads the existing key and never creates one; when
+// storeType holds no such key it returns false and changes nothing.
+func (m *SigningKeyManager) AdoptPreviousFromXKMSBackend(storeType string) (bool, error) {
+	if storeType == "" {
+		return false, &OIDCConfigRequiredError{Field: "signing key store type"}
+	}
+	if m.cn == "" {
+		return false, &SigningKeyRotationUnsupportedError{}
+	}
+
+	m.rotateMu.Lock()
+	defer m.rotateMu.Unlock()
+
+	prev := m.load()
+	if prev == nil {
+		return false, &SigningKeyUnavailableError{}
+	}
+
+	signer, err := currentSigner(context.Background(), es256KeyAttributes(m.cn, m.tenantID, storeType))
+	if err != nil {
+		if errors.Is(err, xkmssdk.ErrKeyNotFound) || errors.Is(err, xkmssdk.ErrBackendKeyNotFound) {
+			return false, nil
+		}
+		return false, err
+	}
+	entry, err := newKeyEntry(signer, SigningAlgorithmES256)
+	if err != nil {
+		return false, err
+	}
+	if entry.kid == prev.current.kid {
+		return false, nil
+	}
+	for _, p := range prev.previous {
+		if p.kid == entry.kid {
+			return false, nil
+		}
+	}
+	previous := make([]keyEntry, 0, rotationOverlap)
+	previous = append(previous, entry)
+	for i := 0; i < len(prev.previous) && len(previous) < rotationOverlap; i++ {
+		previous = append(previous, prev.previous[i])
+	}
+	m.snap.Store(&keySnapshot{current: prev.current, previous: previous})
+	return true, nil
 }
 
 // rotationKID builds the fully-qualified xkms key reference used to address the

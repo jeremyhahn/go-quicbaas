@@ -34,6 +34,18 @@ import (
 // registered over kv, and the signing key manager built on it.
 func bootOIDCSigningNode(t *testing.T, kv xkmssdk.StorageBackend) *iam.SigningKeyManager {
 	t.Helper()
+	initOIDCSigningDefault(t)
+	registerOIDCSigningBackend(t, kv)
+
+	m, err := iam.NewSigningKeyManagerFromXKMSBackend(iam.OIDCSigningKeyCN, "", oidcSigningBackendName)
+	require.NoError(t, err)
+	return m
+}
+
+// initOIDCSigningDefault initializes xkms with an in-memory software default
+// backend and a key-version store, as the server wires them.
+func initOIDCSigningDefault(t *testing.T) {
+	t.Helper()
 	dbxkms.Reset()
 
 	log, err := logger.New(logger.LogConfig{Level: "error", Format: "json", Output: "stdout"})
@@ -47,19 +59,23 @@ func bootOIDCSigningNode(t *testing.T, kv xkmssdk.StorageBackend) *iam.SigningKe
 		CertStorage: xkmssdk.NewStorageMemory(),
 	})
 	require.NoError(t, err)
+	keyVersions, err := xkmssdk.NewKeyVersionStore(xkmssdk.NewStorageMemory())
+	require.NoError(t, err)
 	require.NoError(t, dbxkms.Initialize(&dbxkms.Config{
 		DefaultBackend: string(xkmssdk.StoreSoftware),
 		Backends:       map[string]xkmssdk.ServiceBackend{string(xkmssdk.StoreSoftware): def},
+		KeyVersions:    keyVersions,
 		Logger:         logger.NewAdapter(log),
 	}))
+}
 
+// registerOIDCSigningBackend registers the replicated OIDC signing backend
+// over kv.
+func registerOIDCSigningBackend(t *testing.T, kv xkmssdk.StorageBackend) {
+	t.Helper()
 	backend, err := newOIDCSigningServiceBackend(kv)
 	require.NoError(t, err)
 	require.NoError(t, dbxkms.RegisterBackend(oidcSigningBackendName, backend))
-
-	m, err := iam.NewSigningKeyManagerFromXKMSBackend(iam.OIDCSigningKeyCN, "", oidcSigningBackendName)
-	require.NoError(t, err)
-	return m
 }
 
 // TestOIDCSigningStore_PeerNodesShareOneKey proves a platform token signed on
@@ -108,4 +124,90 @@ func TestOIDCSigningStore_PeerNodesShareOneKey(t *testing.T) {
 			require.True(t, ecdsa.VerifyASN1(ecPub, digest[:], sig))
 		})
 	}
+}
+
+// TestOIDCSigningStore_RotateOnReplicatedBackend rotates the signing key on
+// the registered replicated backend: the current kid changes and the old kid
+// stays in JWKS through the overlap window.
+func TestOIDCSigningStore_RotateOnReplicatedBackend(t *testing.T) {
+	t.Cleanup(dbxkms.Reset)
+
+	m := bootOIDCSigningNode(t, xkmssdk.NewStorageMemory())
+	oldKid, _, _ := m.Current()
+
+	require.NoError(t, m.Rotate())
+
+	newKid, _, _ := m.Current()
+	require.NotEqual(t, oldKid, newKid)
+	require.Len(t, m.JWKS().Key(oldKid), 1)
+	require.Len(t, m.JWKS().Key(newKid), 1)
+}
+
+// TestOIDCSigningStore_KeepsNonSoftwareDefault checks the backend selection:
+// only a software default backend moves the key to the replicated store; a
+// TPM, PKCS#11 or cloud-KMS default stays in use.
+func TestOIDCSigningStore_KeepsNonSoftwareDefault(t *testing.T) {
+	const defaultName = "operator-default"
+	cases := []struct {
+		name        string
+		defaultType xkmssdk.BackendType
+		want        string
+	}{
+		{name: "software default", defaultType: xkmssdk.BackendTypeSoftware, want: oidcSigningBackendName},
+		{name: "pkcs11 default", defaultType: xkmssdk.BackendTypePKCS11, want: defaultName},
+		{name: "tpm2 default", defaultType: xkmssdk.BackendTypeTPM2, want: defaultName},
+		{name: "aws kms default", defaultType: xkmssdk.BackendTypeAWSKMS, want: defaultName},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			require.Equal(t, tc.want, selectOIDCSigningBackend(tc.defaultType, defaultName))
+		})
+	}
+
+	// The process default in the test setup is software.
+	t.Cleanup(dbxkms.Reset)
+	initOIDCSigningDefault(t)
+	defType, err := defaultBackendType()
+	require.NoError(t, err)
+	require.Equal(t, xkmssdk.BackendTypeSoftware, defType)
+}
+
+// TestOIDCSigningStore_AdoptsExistingDefaultKey upgrades a node whose OIDC
+// signing key lives in the default backend: the replicated manager keeps the
+// pre-upgrade key verify-only, so outstanding tokens still verify.
+func TestOIDCSigningStore_AdoptsExistingDefaultKey(t *testing.T) {
+	t.Cleanup(dbxkms.Reset)
+
+	t.Run("existing default key", func(t *testing.T) {
+		initOIDCSigningDefault(t)
+		old, err := iam.NewSigningKeyManagerFromXKMS(iam.OIDCSigningKeyCN, "")
+		require.NoError(t, err)
+		oldKid, oldSigner, _ := old.Current()
+
+		registerOIDCSigningBackend(t, xkmssdk.NewStorageMemory())
+		m, err := newOIDCSigningKeyManager(oidcSigningBackendName)
+		require.NoError(t, err)
+
+		newKid, _, _ := m.Current()
+		require.NotEqual(t, oldKid, newKid)
+		require.Len(t, m.JWKS().Key(oldKid), 1)
+		require.Len(t, m.JWKS().Key(newKid), 1)
+
+		digest := sha256.Sum256([]byte("pre-upgrade-token"))
+		sig, err := oldSigner.Sign(rand.Reader, digest[:], crypto.SHA256)
+		require.NoError(t, err)
+		pub, err := m.PublicForKID(oldKid)
+		require.NoError(t, err)
+		ecPub, ok := pub.(*ecdsa.PublicKey)
+		require.True(t, ok)
+		require.True(t, ecdsa.VerifyASN1(ecPub, digest[:], sig))
+	})
+
+	t.Run("no default key", func(t *testing.T) {
+		initOIDCSigningDefault(t)
+		registerOIDCSigningBackend(t, xkmssdk.NewStorageMemory())
+		m, err := newOIDCSigningKeyManager(oidcSigningBackendName)
+		require.NoError(t, err)
+		require.Len(t, m.JWKS().Keys, 1)
+	})
 }
