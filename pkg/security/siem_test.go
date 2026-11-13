@@ -19,9 +19,12 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/jeremyhahn/go-quicbaas/pkg/testutil/poll"
 
 	"bytes"
 	"context"
@@ -167,6 +170,7 @@ func TestSIEMExporter_SendNilEvent(t *testing.T) {
 
 func TestSIEMExporter_JSONFormat(t *testing.T) {
 	var receivedEvents []SIEMJSONEvent
+	var receivedMu sync.Mutex
 	var receivedCount atomic.Int64
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -189,7 +193,9 @@ func TestSIEMExporter_JSONFormat(t *testing.T) {
 				w.WriteHeader(http.StatusBadRequest)
 				return
 			}
+			receivedMu.Lock()
 			receivedEvents = append(receivedEvents, event)
+			receivedMu.Unlock()
 		}
 		receivedCount.Add(int64(len(lines)))
 		w.WriteHeader(http.StatusOK)
@@ -228,11 +234,11 @@ func TestSIEMExporter_JSONFormat(t *testing.T) {
 	err = exporter.Send(event)
 	require.NoError(t, err)
 
-	// Wait for flush
-	time.Sleep(200 * time.Millisecond)
+	poll.Until(t, 10*time.Second, func() bool { return receivedCount.Load() > 0 }, "the exporter flushes the event")
 
-	assert.Greater(t, receivedCount.Load(), int64(0))
-	if len(receivedEvents) > 0 {
+	receivedMu.Lock()
+	defer receivedMu.Unlock()
+	if assert.NotEmpty(t, receivedEvents) {
 		lastEvent := receivedEvents[len(receivedEvents)-1]
 		assert.Equal(t, "quicbaas", lastEvent.Source)
 		assert.Equal(t, "audit", lastEvent.EventType)
@@ -242,7 +248,7 @@ func TestSIEMExporter_JSONFormat(t *testing.T) {
 }
 
 func TestSIEMExporter_CEFFormat(t *testing.T) {
-	var receivedData string
+	var received atomic.Value // string: the last request body
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "text/plain", r.Header.Get("Content-Type"))
@@ -252,7 +258,7 @@ func TestSIEMExporter_CEFFormat(t *testing.T) {
 			w.WriteHeader(http.StatusBadRequest)
 			return
 		}
-		receivedData = string(body)
+		received.Store(string(body))
 		w.WriteHeader(http.StatusOK)
 	}))
 	defer server.Close()
@@ -288,8 +294,8 @@ func TestSIEMExporter_CEFFormat(t *testing.T) {
 	err = exporter.Send(event)
 	require.NoError(t, err)
 
-	// Wait for flush
-	time.Sleep(200 * time.Millisecond)
+	poll.Until(t, 10*time.Second, func() bool { return received.Load() != nil }, "the exporter flushes the event")
+	receivedData, _ := received.Load().(string)
 
 	// Verify CEF format
 	assert.Contains(t, receivedData, "CEF:0|TestVendor|TestProduct|2.0|")
@@ -299,7 +305,7 @@ func TestSIEMExporter_CEFFormat(t *testing.T) {
 }
 
 func TestSIEMExporter_LEEFFormat(t *testing.T) {
-	var receivedData string
+	var received atomic.Value // string: the last request body
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "text/plain", r.Header.Get("Content-Type"))
@@ -309,7 +315,7 @@ func TestSIEMExporter_LEEFFormat(t *testing.T) {
 			w.WriteHeader(http.StatusBadRequest)
 			return
 		}
-		receivedData = string(body)
+		received.Store(string(body))
 		w.WriteHeader(http.StatusOK)
 	}))
 	defer server.Close()
@@ -346,8 +352,8 @@ func TestSIEMExporter_LEEFFormat(t *testing.T) {
 	err = exporter.Send(event)
 	require.NoError(t, err)
 
-	// Wait for flush
-	time.Sleep(200 * time.Millisecond)
+	poll.Until(t, 10*time.Second, func() bool { return received.Load() != nil }, "the exporter flushes the event")
+	receivedData, _ := received.Load().(string)
 
 	// Verify LEEF format
 	assert.Contains(t, receivedData, "LEEF:2.0|TestVendor|TestProduct|3.0|")
@@ -428,18 +434,17 @@ func TestSIEMExporter_RetryOnFailure(t *testing.T) {
 	err = exporter.Send(event)
 	require.NoError(t, err)
 
-	// Wait for retries
-	time.Sleep(500 * time.Millisecond)
-
-	// Should have made 3 attempts
-	assert.GreaterOrEqual(t, requestCount.Load(), int32(3))
+	// Two refusals, then the third attempt succeeds.
+	poll.Until(t, 10*time.Second, func() bool { return requestCount.Load() >= 3 }, "the exporter retries until the third attempt")
+	poll.Until(t, 10*time.Second, func() bool { sent, _ := exporter.GetStats(); return sent >= 1 }, "the retried event counts as sent")
 }
 
 func TestSIEMExporter_CustomHeaders(t *testing.T) {
-	var receivedHeaders http.Header
+	var received atomic.Pointer[http.Header]
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		receivedHeaders = r.Header.Clone()
+		h := r.Header.Clone()
+		received.Store(&h)
 		w.WriteHeader(http.StatusOK)
 	}))
 	defer server.Close()
@@ -474,8 +479,8 @@ func TestSIEMExporter_CustomHeaders(t *testing.T) {
 	err = exporter.Send(event)
 	require.NoError(t, err)
 
-	// Wait for flush
-	time.Sleep(200 * time.Millisecond)
+	poll.Until(t, 10*time.Second, func() bool { return received.Load() != nil }, "the exporter flushes the event")
+	receivedHeaders := *received.Load()
 
 	assert.Equal(t, "Bearer test-token", receivedHeaders.Get("Authorization"))
 	assert.Equal(t, "custom-value", receivedHeaders.Get("X-Custom-Header"))
@@ -497,7 +502,7 @@ func TestSIEMExporter_BatchFlush(t *testing.T) {
 		Endpoint:      server.URL,
 		Format:        SIEMFormatJSON,
 		BatchSize:     5,
-		FlushInterval: 5 * time.Second, // Long interval to ensure batch size triggers flush
+		FlushInterval: time.Hour, // never fires in the test: only the batch size can flush
 	}
 
 	exporter, err := NewSIEMExporter(cfg, log)
@@ -518,10 +523,7 @@ func TestSIEMExporter_BatchFlush(t *testing.T) {
 		require.NoError(t, err)
 	}
 
-	// Wait for batch flush
-	time.Sleep(200 * time.Millisecond)
-
-	assert.Greater(t, receivedBatches.Load(), int32(0))
+	poll.Until(t, 10*time.Second, func() bool { return receivedBatches.Load() > 0 }, "a full batch flushes before the flush interval")
 }
 
 func TestSIEMExporter_GetStats(t *testing.T) {
@@ -558,8 +560,7 @@ func TestSIEMExporter_GetStats(t *testing.T) {
 		require.NoError(t, err)
 	}
 
-	// Wait for flush
-	time.Sleep(300 * time.Millisecond)
+	poll.Until(t, 10*time.Second, func() bool { sent, _ := exporter.GetStats(); return sent >= 3 }, "the three events are sent")
 
 	sent, errors := exporter.GetStats()
 	assert.GreaterOrEqual(t, sent, int64(3))
@@ -825,9 +826,29 @@ func TestAuditLogger_SIEMExporterIntegration(t *testing.T) {
 		err = al.siemExporter.Send(event)
 		assert.NoError(t, err)
 
-		// Wait for flush
-		time.Sleep(200 * time.Millisecond)
+		pollSIEMSent(t, al.siemExporter, 1)
 	}
+}
+
+// siemPending is the number of events the exporter holds for its next flush.
+func siemPending(s *SIEMExporter) int {
+	s.batchMu.Lock()
+	defer s.batchMu.Unlock()
+	return len(s.batch)
+}
+
+// pollSIEMPending waits until AuditLogger.Log's fire-and-forget goroutine has
+// handed an event to the exporter (it holds n events for its next flush).
+func pollSIEMPending(t *testing.T, s *SIEMExporter, n int) {
+	t.Helper()
+	require.NotNil(t, s, "the audit logger has a SIEM exporter")
+	poll.Until(t, 10*time.Second, func() bool { return siemPending(s) >= n }, "%d event(s) reach the SIEM exporter", n)
+}
+
+// pollSIEMSent waits until the exporter has delivered n events.
+func pollSIEMSent(t *testing.T, s *SIEMExporter, n int64) {
+	t.Helper()
+	poll.Until(t, 10*time.Second, func() bool { sent, _ := s.GetStats(); return sent >= n }, "the SIEM exporter delivers %d event(s)", n)
 }
 
 // TestAuditLogger_SendToSIEMIntegration tests the sendToSIEM function
@@ -856,8 +877,7 @@ func TestAuditLogger_SendToSIEMIntegration(t *testing.T) {
 	err = al.Log(context.Background(), event)
 	assert.NoError(t, err)
 
-	// Give goroutine time to execute
-	time.Sleep(50 * time.Millisecond)
+	pollSIEMPending(t, al.siemExporter, 1)
 }
 
 // TestAuditLogger_BothSyslogAndSIEM tests both outputs together
@@ -888,8 +908,7 @@ func TestAuditLogger_BothSyslogAndSIEM(t *testing.T) {
 	err = al.Log(context.Background(), event)
 	assert.NoError(t, err)
 
-	// Give goroutines time to execute
-	time.Sleep(100 * time.Millisecond)
+	pollSIEMPending(t, al.siemExporter, 1)
 }
 
 func TestLog_WithSIEMExporter(t *testing.T) {
@@ -1682,13 +1701,10 @@ func TestAuditLogger_SIEMExporter_Full(t *testing.T) {
 		err = al.siemExporter.Send(event)
 		assert.NoError(t, err)
 
-		// Wait for flush
-		time.Sleep(200 * time.Millisecond)
+		pollSIEMSent(t, al.siemExporter, 1)
 
-		// Get stats
-		sent, errs := al.siemExporter.GetStats()
-		assert.GreaterOrEqual(t, sent, int64(0))
-		assert.GreaterOrEqual(t, errs, int64(0))
+		_, errs := al.siemExporter.GetStats()
+		assert.Equal(t, int64(0), errs)
 	}
 }
 
@@ -2515,8 +2531,7 @@ func TestAuditLogger_Log_WithSIEMExporterConfigured(t *testing.T) {
 	err = al.Log(context.Background(), event)
 	require.NoError(t, err)
 
-	// Give time for async SIEM send
-	time.Sleep(50 * time.Millisecond)
+	pollSIEMPending(t, al.siemExporter, 1)
 }
 
 // Tests for mapCEFSeverity with all cases
@@ -2731,6 +2746,5 @@ func TestAuditLogger_SyslogAndSIEM(t *testing.T) {
 	err = al.Log(ctx, event)
 	assert.NoError(t, err)
 
-	// Give goroutines time to execute
-	time.Sleep(50 * time.Millisecond)
+	pollSIEMPending(t, al.siemExporter, 1)
 }
