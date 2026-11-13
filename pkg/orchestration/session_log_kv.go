@@ -49,8 +49,12 @@ import (
 // lock-free: the KV store handles concurrent access itself. The fan-out hub
 // is shared with the in-memory log so subscribe semantics are identical.
 type KVSessionEventLog struct {
-	kv        interfaces.KVStore
-	fanout    *sessionLogFanout
+	kv     interfaces.KVStore
+	fanout *sessionLogFanout
+
+	// creator is kv's create-if-absent capability, when it has one: the
+	// event write uses it so an append can never replace a stored event.
+	creator   guardedCreator
 	keyPrefix string // usually "sessions"
 
 	// Per-session append serialization so Sequence validation stays atomic
@@ -96,14 +100,40 @@ func NewKVSessionEventLog(cfg KVSessionEventLogConfig) (*KVSessionEventLog, erro
 	if prefix == "" {
 		prefix = "sessions"
 	}
-	return &KVSessionEventLog{
+	l := &KVSessionEventLog{
 		kv:               cfg.KVStore,
 		fanout:           newSessionLogFanout(),
 		keyPrefix:        prefix,
 		appendMus:        map[string]*sync.Mutex{},
 		retention:        cfg.Retention,
 		onRetentionError: cfg.OnRetentionError,
-	}, nil
+	}
+	// Asserted once, as NewAccountStore does: the capability is a static
+	// property of the injected store.
+	if creator, ok := cfg.KVStore.(guardedCreator); ok {
+		l.creator = creator
+	}
+	return l, nil
+}
+
+// writeEvent stores one event payload. Where the store can create-if-absent,
+// an occupied key is refused with ErrSessionLogGap rather than overwritten:
+// a sequence is written once, so finding it taken means the caller's view of
+// the tail was stale and the stored event must survive. A store without the
+// capability falls back to Put, guarded by LatestSequence's events-derived
+// tail.
+func (l *KVSessionEventLog) writeEvent(ctx context.Context, key string, payload []byte) error {
+	if l.creator == nil {
+		return l.kv.Put(ctx, key, payload)
+	}
+	stored, err := l.creator.PutIfAbsent(ctx, key, payload)
+	if err != nil {
+		return err
+	}
+	if !stored {
+		return ErrSessionLogGap
+	}
+	return nil
 }
 
 // Append implements SessionEventLog.
@@ -134,7 +164,10 @@ func (l *KVSessionEventLog) Append(ctx context.Context, event *SessionEvent) err
 		return &SessionLogAppendError{SessionID: event.SessionID, Sequence: event.Sequence, Cause: err}
 	}
 
-	if err := l.kv.Put(ctx, l.eventKey(event.TenantID, event.SessionID, event.Sequence), payload); err != nil {
+	if err := l.writeEvent(ctx, l.eventKey(event.TenantID, event.SessionID, event.Sequence), payload); err != nil {
+		if errors.Is(err, ErrSessionLogGap) {
+			return err
+		}
 		return &SessionLogAppendError{SessionID: event.SessionID, Sequence: event.Sequence, Cause: err}
 	}
 
@@ -149,7 +182,11 @@ func (l *KVSessionEventLog) Append(ctx context.Context, event *SessionEvent) err
 		meta.EventCount = event.Sequence // monotonic = dense, so count == latest
 		meta.LastActivity = event.Timestamp
 		l.applyRetention(ctx, meta, event)
-		_ = l.PutMeta(ctx, meta) // non-fatal on write failure; append itself succeeded
+		// Non-fatal on write failure: the event is durable, and LatestSequence
+		// derives the tail from the stored events (the meta value is only a
+		// starting hint), so a stale record cannot steer a later append onto
+		// this event's sequence. The next successful append repairs it.
+		_ = l.PutMeta(ctx, meta)
 	}
 
 	l.fanout.publish(event.TenantID, event.SessionID, event)
@@ -206,11 +243,15 @@ func (l *KVSessionEventLog) Range(ctx context.Context, tenantID, sessionID strin
 
 // LatestSequence implements SessionEventLog.
 func (l *KVSessionEventLog) LatestSequence(ctx context.Context, tenantID, sessionID string) (uint64, error) {
-	// Cheapest lookup: read the meta record and take its LatestSequence. On
-	// a fresh session with no meta yet, fall through to scanning the events
-	// prefix for a max key.
+	// The meta record's LatestSequence is a HINT, not the tail: Append rolls
+	// it forward in a second write after the event lands, and that write can
+	// fail. Trusting a stale hint would hand the next append a sequence that
+	// already holds an event, and the append would overwrite it (#200). So
+	// start at the hint and walk forward over occupied event keys; in the
+	// healthy case that costs one Exists. With no meta at all, scan the
+	// events prefix for the max key.
 	if meta, err := l.GetMeta(ctx, tenantID, sessionID); err == nil {
-		return meta.LatestSequence, nil
+		return l.tailFrom(ctx, tenantID, sessionID, meta.LatestSequence)
 	} else if !errors.Is(err, ErrSessionLogNotFound) {
 		return 0, err
 	}
@@ -228,6 +269,27 @@ func (l *KVSessionEventLog) LatestSequence(ctx context.Context, tenantID, sessio
 		return 0, err
 	}
 	return maxSeq, nil
+}
+
+// tailFrom returns the highest sequence of the contiguous run of stored events
+// that continues past hint: it probes hint+1, hint+2, … and stops at the first
+// unoccupied key. Sequences are dense (Append refuses gaps), so the first free
+// key after the hint is the true next slot.
+func (l *KVSessionEventLog) tailFrom(ctx context.Context, tenantID, sessionID string, hint uint64) (uint64, error) {
+	tail := hint
+	for {
+		occupied, err := l.kv.Exists(ctx, l.eventKey(tenantID, sessionID, tail+1))
+		if err != nil {
+			if qerrors.IsNotFound(err) {
+				return tail, nil
+			}
+			return 0, err
+		}
+		if !occupied {
+			return tail, nil
+		}
+		tail++
+	}
 }
 
 // Subscribe implements SessionEventLog.
