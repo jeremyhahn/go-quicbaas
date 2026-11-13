@@ -183,7 +183,7 @@ func TestCeremonyE2E_SealedDaemonServesTheCeremonyOverCLI(t *testing.T) {
 	// Officer registration must also be reachable while sealed: officers have
 	// to be enrolled BEFORE the split, and the barrier is sealed until after it.
 	csrPath := filepath.Join(t.TempDir(), "alice.csr")
-	if err := writeOfficerCSR(csrPath, "alice"); err != nil {
+	if _, err := writeOfficerCSR(csrPath, "alice"); err != nil {
 		t.Fatalf("generate officer CSR: %v", err)
 	}
 	certPath := filepath.Join(t.TempDir(), "alice.crt")
