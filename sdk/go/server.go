@@ -114,9 +114,6 @@ type MulticastDiscoveryConfig = config.MulticastDiscoveryConfig
 // MetricsConfig contains metrics and observability configuration.
 type MetricsConfig = config.MetricsConfig
 
-// CodecConfig contains codec-related configuration.
-type CodecConfig = config.CodecConfig
-
 // BackupConfig contains backup and restore configuration.
 type BackupConfig = config.BackupConfig
 

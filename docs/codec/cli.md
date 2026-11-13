@@ -1,6 +1,6 @@
 # Codec — CLI
 
-> **Status: NORMATIVE** · Last verified: 2026-08-19
+> **Status: NORMATIVE** · Last verified: 2026-11-13
 > Feature folder: `docs/codec/`.
 
 **No CLI surface.** `quicbaas` registers no `codec` command group — there is no
@@ -20,5 +20,5 @@ quicbaas data get users user1 --output json
 quicbaas iam user list --output yaml
 ```
 
-`engineering.md` documents the `codec:` configuration block and which codec each
-storage and transport path selects.
+There is no `codec:` configuration block either: the codec is go-qrdb's
+(`architecture.md`).
