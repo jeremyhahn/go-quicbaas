@@ -805,7 +805,7 @@ func TestRunKMSKeyImportCommand(t *testing.T) {
 			},
 			setupFlags: func() {
 				kmsMaterial = tmpFile.Name()
-				kmsAlgorithm = "AES-256-GCM"
+				kmsImportAlgorithm = "AES-256-GCM"
 				kmsDescription = "Imported test key"
 			},
 			args:         []string{"imported-key"},
@@ -831,7 +831,7 @@ func TestRunKMSKeyImportCommand(t *testing.T) {
 			},
 			setupFlags: func() {
 				kmsMaterial = "base64:" + base64.StdEncoding.EncodeToString(testKeyMaterial)
-				kmsAlgorithm = "AES-256-GCM"
+				kmsImportAlgorithm = "AES-256-GCM"
 			},
 			args:         []string{"imported-key"},
 			outputFormat: "json",
@@ -856,7 +856,7 @@ func TestRunKMSKeyImportCommand(t *testing.T) {
 			},
 			setupFlags: func() {
 				kmsMaterial = tmpFile.Name()
-				kmsAlgorithm = "AES-256-GCM"
+				kmsImportAlgorithm = "AES-256-GCM"
 			},
 			args:         []string{"imported-key"},
 			outputFormat: "",
@@ -869,7 +869,7 @@ func TestRunKMSKeyImportCommand(t *testing.T) {
 			},
 			setupFlags: func() {
 				kmsMaterial = "base64:invalid!!!"
-				kmsAlgorithm = "AES-256-GCM"
+				kmsImportAlgorithm = "AES-256-GCM"
 			},
 			args:          []string{"imported-key"},
 			outputFormat:  "table",
@@ -883,7 +883,7 @@ func TestRunKMSKeyImportCommand(t *testing.T) {
 			},
 			setupFlags: func() {
 				kmsMaterial = "/nonexistent/file.bin"
-				kmsAlgorithm = "AES-256-GCM"
+				kmsImportAlgorithm = "AES-256-GCM"
 			},
 			args:          []string{"imported-key"},
 			outputFormat:  "table",
@@ -897,7 +897,7 @@ func TestRunKMSKeyImportCommand(t *testing.T) {
 			},
 			setupFlags: func() {
 				kmsMaterial = tmpFile.Name()
-				kmsAlgorithm = "AES-256-GCM"
+				kmsImportAlgorithm = "AES-256-GCM"
 			},
 			args:          []string{"imported-key"},
 			outputFormat:  "table",
@@ -915,7 +915,7 @@ func TestRunKMSKeyImportCommand(t *testing.T) {
 			},
 			setupFlags: func() {
 				kmsMaterial = tmpFile.Name()
-				kmsAlgorithm = "AES-256-GCM"
+				kmsImportAlgorithm = "AES-256-GCM"
 			},
 			args:          []string{"imported-key"},
 			outputFormat:  "table",
@@ -965,7 +965,7 @@ func TestRunKMSKeyImportCommand(t *testing.T) {
 			// Cleanup
 			defer func() {
 				kmsMaterial = ""
-				kmsAlgorithm = ""
+				kmsImportAlgorithm = ""
 				kmsDescription = ""
 				kmsOutputFmt = ""
 			}()
@@ -5371,7 +5371,7 @@ func TestImportSendsThePKCS8KeyNotTheArmour(t *testing.T) {
 	defer func() {
 		kmsClientFactory = origFactory
 		kmsMaterial = ""
-		kmsAlgorithm = ""
+		kmsImportAlgorithm = ""
 		kmsDescription = ""
 		kmsOutputFmt = ""
 	}()
@@ -5417,4 +5417,29 @@ func TestImportSendsThePKCS8KeyNotTheArmour(t *testing.T) {
 		"the key must be described by what it is")
 	require.Equal(t, []service.KeyUsage{service.KeyUsageSign}, sent.Usage,
 		"a signing key imported as encrypt/decrypt cannot be used for what it is for")
+}
+
+// TestKMSKeyGenerateDefaultAlgorithmWithWholeTree pins #2212: with every kms
+// command registered, generate without --algorithm must run with its own
+// default, not the default of a later command bound to the same variable.
+func TestKMSKeyGenerateDefaultAlgorithmWithWholeTree(t *testing.T) {
+	root := newKMSCommand()
+	gen, _, err := root.Find([]string{"key", "generate"})
+	require.NoError(t, err)
+	require.Equal(t, "generate", gen.Name())
+	for _, path := range [][]string{{"key", "import"}, {"key", "unwrap"}} {
+		sub, _, err := root.Find(path)
+		require.NoError(t, err)
+		require.Equal(t, path[1], sub.Name(), "the %v command is registered in the same tree", path)
+	}
+
+	require.NoError(t, gen.ParseFlags([]string{"my-key"}))
+	require.False(t, gen.Flags().Changed("algorithm"))
+	got, err := gen.Flags().GetString("algorithm")
+	require.NoError(t, err)
+	require.Equal(t, "AES-256-GCM", got)
+	require.Equal(t, "AES-256-GCM", kmsAlgorithm, "the run path reads kmsAlgorithm")
+
+	_, err = createKeyAttributes("my-key", kmsAlgorithm, false)
+	require.NoError(t, err)
 }

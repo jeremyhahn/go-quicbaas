@@ -181,7 +181,7 @@ func TestSchedulerJobsMultiProtocol(t *testing.T) {
 				JobType:   scheduler.JobTypeRecurring,
 				Handler:   "noop",
 				Schedule:  "0 3 * * *",
-				OwnerType: scheduler.OwnerTypeSystem,
+				OwnerType: scheduler.OwnerTypeTenant,
 				Tags:      map[string]string{"suite": "placement"},
 			})
 			if err != nil {
