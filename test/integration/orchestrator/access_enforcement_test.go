@@ -26,12 +26,17 @@ import (
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
-// tenantCtx returns a background context tagged with the tenant ID expected
-// by the TenantGuard wired into the embedded orchestration AgentService.
+// tenantCtx returns a background context that calls as a caller bound to
+// tenantID: the orchestration key the TenantGuard wired into the embedded
+// AgentService reads, and go-qrdb's central key every transport binds from the
+// authenticated identity, without which a tenant lookup (the registration's
+// tenant_id check) refuses the call as tenant-less.
 func tenantCtx(tenantID string) context.Context {
-	return orchestration.ContextWithTenant(context.Background(), tenantID)
+	ctx := tenantctx.WithTenant(context.Background(), tenantID)
+	return orchestration.ContextWithTenant(ctx, tenantID)
 }
 
 // TestProjectAccessEnforcement_OnClaimTask validates that ClaimTask honours
