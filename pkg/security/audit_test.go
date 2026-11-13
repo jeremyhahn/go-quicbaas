@@ -40,6 +40,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/jeremyhahn/go-quicbaas/pkg/testutil/poll"
 )
 
 func TestNewAuditLogger(t *testing.T) {
@@ -1753,10 +1755,10 @@ func TestAuditLogger_CheckRotationEdgeCases(t *testing.T) {
 		al, err := NewAuditLogger(config, log)
 		require.NoError(t, err)
 
-		// Let ticker run briefly
-		time.Sleep(50 * time.Millisecond)
+		pollRotationWatchers(t, al, 1)
 
 		al.Close()
+		pollRotationWatchers(t, al, 0)
 	})
 
 	t.Run("checkRotation without file exits immediately", func(t *testing.T) {
@@ -1790,9 +1792,14 @@ func TestAuditLogger_CheckRotationEdgeCases(t *testing.T) {
 func TestAuditLogger_SendToSyslogIntegration(t *testing.T) {
 	logger := createTestLogger(t)
 
+	listener, err := net.ListenPacket("udp", "127.0.0.1:0")
+	require.NoError(t, err)
+	defer listener.Close()
+
 	cfg := &AuditConfig{
-		Enabled: true,
-		Syslog:  true,
+		Enabled:    true,
+		Syslog:     true,
+		SyslogAddr: listener.LocalAddr().String(),
 	}
 
 	al, err := NewAuditLogger(cfg, logger)
@@ -1811,8 +1818,7 @@ func TestAuditLogger_SendToSyslogIntegration(t *testing.T) {
 	err = al.Log(context.Background(), event)
 	assert.NoError(t, err)
 
-	// Give goroutine time to execute
-	time.Sleep(50 * time.Millisecond)
+	assert.Contains(t, readDatagram(t, listener), "action=read resource=test-resource")
 }
 
 // TestAuditLogger_RotationWithCompression tests rotation with compression enabled
@@ -1847,8 +1853,8 @@ func TestAuditLogger_RotationWithCompression(t *testing.T) {
 	al.mu.Unlock()
 	assert.NoError(t, err)
 
-	// Give goroutines time to execute
-	time.Sleep(100 * time.Millisecond)
+	// The compression and backup cleanup rotateIfNeeded started.
+	al.rotateWG.Wait()
 
 	// Check that backup was created
 	files, err := filepath.Glob(logFile + ".*")
@@ -4479,15 +4485,13 @@ func TestAuditLogger_CheckRotation_Coverage(t *testing.T) {
 		al, err := NewAuditLogger(cfg, log)
 		require.NoError(t, err)
 
-		// Give checkRotation goroutine time to start
-		time.Sleep(150 * time.Millisecond)
+		pollRotationWatchers(t, al, 1)
 
 		// Close to stop checkRotation
 		err = al.Close()
 		assert.NoError(t, err)
 
-		// Give time for goroutine to exit
-		time.Sleep(100 * time.Millisecond)
+		pollRotationWatchers(t, al, 0)
 	})
 
 	t.Run("without file path", func(t *testing.T) {
@@ -4501,8 +4505,8 @@ func TestAuditLogger_CheckRotation_Coverage(t *testing.T) {
 		al, err := NewAuditLogger(cfg, log)
 		require.NoError(t, err)
 
-		// Give time for any goroutines to start
-		time.Sleep(50 * time.Millisecond)
+		// Without a file there is no rotation watcher to start.
+		assert.Equal(t, int64(0), al.rotationWatchers.Load())
 
 		err = al.Close()
 		assert.NoError(t, err)
@@ -4534,8 +4538,17 @@ func TestAuditLogger_CheckRotation_Coverage(t *testing.T) {
 		require.NoError(t, err)
 		require.NoError(t, al.file.Sync())
 
-		// Wait for rotation check
-		time.Sleep(2 * time.Second)
+		// checkRotation's ticker fires once a minute; run the rotation it
+		// would run, then wait for the backup cleanup it starts.
+		al.mu.Lock()
+		err = al.rotateIfNeeded()
+		al.mu.Unlock()
+		require.NoError(t, err)
+		al.rotateWG.Wait()
+
+		backups, err := filepath.Glob(logFile + ".*")
+		require.NoError(t, err)
+		assert.Len(t, backups, 1, "the oversized log is rotated to one backup")
 
 		err = al.Close()
 		assert.NoError(t, err)
@@ -4878,10 +4891,29 @@ func TestAuditLogger_CheckRotation_Ticker(t *testing.T) {
 	al, err := NewAuditLogger(config, log)
 	require.NoError(t, err)
 
-	// Let it run for a bit to test the ticker path
-	time.Sleep(100 * time.Millisecond)
+	pollRotationWatchers(t, al, 1)
 
 	al.Close()
+	pollRotationWatchers(t, al, 0)
+}
+
+// pollRotationWatchers waits until the logger has n live checkRotation
+// goroutines: 1 once NewAuditLogger's watcher is running, 0 once Close has
+// stopped it.
+func pollRotationWatchers(t *testing.T, al *AuditLogger, n int64) {
+	t.Helper()
+	poll.Until(t, 10*time.Second, func() bool { return al.rotationWatchers.Load() == n }, "%d live checkRotation goroutine(s)", n)
+}
+
+// readDatagram reads one datagram from conn, failing the test when none
+// arrives within the bound.
+func readDatagram(t *testing.T, conn net.PacketConn) string {
+	t.Helper()
+	require.NoError(t, conn.SetReadDeadline(time.Now().Add(10*time.Second)))
+	buf := make([]byte, 64*1024)
+	n, _, err := conn.ReadFrom(buf)
+	require.NoError(t, err, "a syslog datagram arrives")
+	return string(buf[:n])
 }
 
 // ---------------------------------------------------------------------------
@@ -5893,7 +5925,6 @@ func TestSyslogExporter_SendRemote_WithWriteDeadlineError(t *testing.T) {
 
 	// Wait for server to close connection
 	connWg.Wait()
-	time.Sleep(50 * time.Millisecond)
 
 	event := &AuditEvent{
 		EventID:   "test",
@@ -6002,8 +6033,8 @@ func TestAuditLogger_Log_WithSyslogExporterConfigured(t *testing.T) {
 	err = al.Log(context.Background(), event)
 	require.NoError(t, err)
 
-	// Give time for async syslog send
-	time.Sleep(50 * time.Millisecond)
+	// Log hands the event to the syslog exporter in a goroutine.
+	assert.Contains(t, readDatagram(t, listener), "action=read")
 }
 
 // Tests for cleanupOldBackups - renamed
@@ -6151,9 +6182,7 @@ func TestAuditLogger_CompressFileAsync_Success(t *testing.T) {
 	// Call async compression
 	al.compressFileAsync(testFile, 5)
 
-	// Wait for async compression
-	time.Sleep(100 * time.Millisecond)
-
+	// compressFileAsync compresses synchronously; its caller supplies the goroutine.
 	// Verify compressed file exists
 	assert.FileExists(t, testFile+".gz")
 }
@@ -6177,9 +6206,6 @@ func TestAuditLogger_CompressFileAsync_NonExistentFile(t *testing.T) {
 
 	// Call async compression with non-existent file - should not panic
 	al.compressFileAsync("/nonexistent/path/file.log", 5)
-
-	// Wait for async compression attempt
-	time.Sleep(50 * time.Millisecond)
 }
 
 // ---------------------------------------------------------------------------
@@ -7438,7 +7464,6 @@ func TestAuditLogger_LogBackupOperation(t *testing.T) {
 	assert.NoError(t, err)
 
 	// Flush to ensure write
-	time.Sleep(20 * time.Millisecond)
 	err = al.Flush()
 	assert.NoError(t, err)
 
@@ -7595,12 +7620,18 @@ func TestAuditLogger_RotationNeeded(t *testing.T) {
 		assert.NoError(t, err)
 	}
 
-	// Give time for rotation check
-	time.Sleep(100 * time.Millisecond)
+	// checkRotation's ticker fires once a minute; run the rotation it would
+	// run, then wait for the compression and cleanup it starts.
+	require.NoError(t, al.Flush())
+	al.mu.Lock()
+	err = al.rotateIfNeeded()
+	al.mu.Unlock()
+	require.NoError(t, err)
+	al.rotateWG.Wait()
 
-	// Verify backup files exist
-	// Note: Rotation may or may not have happened depending on timing
-	// This test mainly ensures the code path doesn't panic
+	compressed, err := filepath.Glob(auditFile + ".*.gz")
+	require.NoError(t, err)
+	assert.NotEmpty(t, compressed, "the oversized log is rotated and compressed")
 }
 
 // TestAuditLogger_LogWithSigningError tests log signing error path.
@@ -7713,10 +7744,20 @@ func TestAuditLogger_CheckRotationWithoutFile(t *testing.T) {
 	al, err := NewAuditLogger(cfg, log)
 	require.NoError(t, err)
 
-	// Start check rotation (should return immediately since no file)
-	go al.checkRotation()
-
-	time.Sleep(50 * time.Millisecond)
+	// checkRotation returns at once when there is no file, without Close.
+	returned := make(chan struct{})
+	go func() {
+		al.checkRotation()
+		close(returned)
+	}()
+	poll.Until(t, 10*time.Second, func() bool {
+		select {
+		case <-returned:
+			return true
+		default:
+			return false
+		}
+	}, "checkRotation returns without a file")
 
 	al.Close()
 }
