@@ -1181,6 +1181,33 @@ type SDLCForge struct {
 
 	// RetryBackoff is the first wait between attempts; each retry doubles it.
 	RetryBackoff time.Duration `mapstructure:"retry_backoff"`
+
+	// TokenCommands maps a forge type ("github", "gitea") to the command the
+	// node runs for that forge's token. A binding of a type listed here takes
+	// its token from the command, never from its TokenSecretRef. This is
+	// node configuration only: no tenant, project or binding can name a
+	// command.
+	TokenCommands map[string]SDLCForgeTokenCommand `mapstructure:"token_commands"`
+}
+
+// SDLCForgeTokenCommand is one forge type's token command. It prints
+// {"token": "...", "expires_at": "<RFC 3339>"} on stdout.
+type SDLCForgeTokenCommand struct {
+	// Argv is the command and its words; Argv[0] is an absolute path. No
+	// shell runs it.
+	Argv []string `mapstructure:"argv"`
+
+	// AllowedBaseURLs are the forge API roots this command's token may be
+	// sent to. Required: a binding whose base_url is not listed is refused
+	// before the command runs.
+	AllowedBaseURLs []string `mapstructure:"allowed_base_urls"`
+
+	// RefreshBefore is how long before expires_at the command runs again.
+	// Zero takes 5m.
+	RefreshBefore time.Duration `mapstructure:"refresh_before"`
+
+	// Timeout bounds one run. Zero takes 30s.
+	Timeout time.Duration `mapstructure:"timeout"`
 }
 
 // SDLCSurfacing is the retry behind a parked task's comment on its issue.

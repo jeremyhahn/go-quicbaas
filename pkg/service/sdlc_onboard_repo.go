@@ -145,7 +145,12 @@ func (s *SDLCService) onboardSigningKey(ctx context.Context, o *repoOnboarding) 
 
 // onboardForgeToken checks the repository's forge token is stored. The
 // operator stores it: the forge user and token are made outside the module.
+// A forge type with a node token command has no secret to check.
 func (s *SDLCService) onboardForgeToken(ctx context.Context, o *repoOnboarding) error {
+	if _, ok := s.forgeTokens[o.like.Forge.Type]; ok {
+		o.record(sdlc.OnboardStepForgeToken, sdlc.OnboardUnchanged, "the forge token comes from the node's token command", "")
+		return nil
+	}
 	ref := sdlc.ForgeTokenRef(o.req.Repo)
 	token, err := requireSecretRef(ctx, s.secrets, o.tenantID, "forge.token_secret_ref", ref)
 	var notFound *quicbaaserrors.ReferenceNotFoundError

@@ -325,6 +325,24 @@ func TestOnboardRepo_MissingTokenIsAFindingAndBlocksTheProject(t *testing.T) {
 	}
 }
 
+func TestOnboardRepo_NodeTokenCommandNeedsNoForgeTokenSecret(t *testing.T) {
+	rig := newOnboardRig(t)
+	delete(rig.secrets.secrets, sdlc.ForgeTokenRef(onboardTestRepo))
+	rig.svc.forgeTokens = map[sdlc.ForgeType]sdlc.ForgeTokenSource{
+		rig.binding().Forge.Type: &sdlcFakeTokenSource{token: "web-token"},
+	}
+
+	report := rig.onboard(t, onboardRequest())
+
+	step := requireStep(t, report, sdlc.OnboardStepForgeToken, sdlc.OnboardUnchanged)
+	if !strings.Contains(step.Detail, "node's token command") {
+		t.Fatalf("detail = %q, want it to name the node's token command", step.Detail)
+	}
+	if rig.projects.created != 1 {
+		t.Fatalf("projects created = %d, want 1", rig.projects.created)
+	}
+}
+
 func TestOnboardRepo_MissingSigningKeyIsAFinding(t *testing.T) {
 	rig := newOnboardRig(t)
 	delete(rig.sshKeys.keys, onboardTestSigningKey)

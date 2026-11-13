@@ -252,6 +252,38 @@ func TestSDLCWebhookFailure_TellsAnAcceptedTriageFailureFromARefusal(t *testing.
 	}
 }
 
+func TestNewSDLCForgeTokenSources_OnePerConfiguredType(t *testing.T) {
+	sources, err := newSDLCForgeTokenSources(map[string]config.SDLCForgeTokenCommand{
+		"github": {Argv: []string{"/usr/local/bin/forge-mint", "--app", "pilot"}, AllowedBaseURLs: []string{"https://api.github.com"}},
+	})
+	if err != nil {
+		t.Fatalf("newSDLCForgeTokenSources: %v", err)
+	}
+	if len(sources) != 1 {
+		t.Fatalf("sources = %d, want 1", len(sources))
+	}
+	if _, ok := sources[sdlc.ForgeGitHub].(*sdlc.CommandTokenSource); !ok {
+		t.Fatalf("github source = %T, want *sdlc.CommandTokenSource", sources[sdlc.ForgeGitHub])
+	}
+}
+
+func TestNewSDLCForgeTokenSources_NoneIsNil(t *testing.T) {
+	sources, err := newSDLCForgeTokenSources(nil)
+	if err != nil || sources != nil {
+		t.Fatalf("newSDLCForgeTokenSources(nil) = %v, %v; want nil, nil", sources, err)
+	}
+}
+
+func TestNewSDLCForgeTokenSources_RefusesARelativeCommand(t *testing.T) {
+	_, err := newSDLCForgeTokenSources(map[string]config.SDLCForgeTokenCommand{
+		"gitea": {Argv: []string{"forge-mint"}, AllowedBaseURLs: []string{"https://gitea.example.test/api/v1"}},
+	})
+	var cfgErr *sdlc.ForgeTokenCommandConfigError
+	if !errors.As(err, &cfgErr) {
+		t.Fatalf("err = %v, want *sdlc.ForgeTokenCommandConfigError", err)
+	}
+}
+
 // runnerNames is what the registry holds, for a refusal that says what it
 // found instead of only what it wanted.
 func runnerNames() []string {
