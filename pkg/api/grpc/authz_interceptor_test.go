@@ -479,6 +479,25 @@ func TestAuthorizationInterceptor_IntegrationDataPlaneRole(t *testing.T) {
 	assert.Equal(t, codes.PermissionDenied, status.Code(err))
 }
 
+// TestAuthorizationInterceptor_BatchExecuteNeedsBatchExecute pins the
+// BatchExecute RPC to batch:execute (#1925): a bearer holding only that
+// permission is admitted, and one holding every KV verb but not it is refused.
+func TestAuthorizationInterceptor_BatchExecuteNeedsBatchExecute(t *testing.T) {
+	info := &grpc.UnaryServerInfo{FullMethod: "/quicbaas.v1.QuicBaaS/BatchExecute"}
+	handler := func(context.Context, interface{}) (interface{}, error) { return "served", nil }
+
+	only := UnaryAuthorizationInterceptor(&scopeSetAuthorizer{token: "batch", scp: map[string]bool{"batch:execute": true}})
+	resp, err := only(ctxWithBearer("batch"), nil, info, handler)
+	require.NoError(t, err, "batch:execute alone must authorize BatchExecute")
+	assert.Equal(t, "served", resp)
+
+	without := UnaryAuthorizationInterceptor(&scopeSetAuthorizer{token: "kv", scp: map[string]bool{
+		"kv:read": true, "kv:write": true, "kv:delete": true,
+	}})
+	_, err = without(ctxWithBearer("kv"), nil, info, handler)
+	assert.Equal(t, codes.PermissionDenied, status.Code(err), "a bearer without batch:execute must be refused")
+}
+
 // TestGRPCPermissions_EveryMethodMapped is a descriptor-exhaustive guard that
 // enumerates every method in every registered broker service descriptor and
 // asserts it is either mapped in grpcMethodPermissions or declared public in
