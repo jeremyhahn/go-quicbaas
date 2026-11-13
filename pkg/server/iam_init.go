@@ -437,7 +437,7 @@ func (s *Server) initializeIAMComponents() (service.IAMComponents, error) {
 	var signingKeyManager *iam.SigningKeyManager
 	storeType, err := s.oidcSigningStoreType()
 	if err == nil {
-		signingKeyManager, err = iam.NewSigningKeyManagerFromXKMSBackend(iam.OIDCSigningKeyCN, "", storeType)
+		signingKeyManager, err = newOIDCSigningKeyManager(storeType)
 	}
 	if err != nil {
 		s.logger.WithError(err).Warn("Failed to initialize xkms-backed OIDC signing key, OIDC provider will be unavailable")
