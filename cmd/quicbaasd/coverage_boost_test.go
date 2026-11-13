@@ -81,7 +81,9 @@ func TestRunInlineInit_NoneStrategy_DropsMarker(t *testing.T) {
 // again. The server used to leave its process-global xkms service registered,
 // so the next server in the process reused it: its OIDC signing key went
 // through the first server's key storage instead of its own, re-creating that
-// data dir when test cleanup had already removed it.
+// data dir when test cleanup had already removed it. The OIDC signing key is
+// now held on the replicated qrdb store, so the test proves the later server
+// finished its own init and left no node-local OIDC key file.
 func TestRunInlineInit_DoesNotWriteDataDirAfterShutdown(t *testing.T) {
 	requireTestTrustDomain(t)
 	runInit := func(dataDir string) {
@@ -101,8 +103,10 @@ func TestRunInlineInit_DoesNotWriteDataDirAfterShutdown(t *testing.T) {
 	runInit(second)
 	assert.Equal(t, before, snapshotDir(t, first),
 		"a later server must not write into a data dir whose server has shut down")
-	assert.FileExists(t, filepath.Join(second, "keys", "keys", "software:signing:oidc-signing:ecdsa.key"),
-		"the later server's OIDC signing key must live in its own data dir")
+	assert.FileExists(t, filepath.Join(second, initDoneMarkerName),
+		"the later server must complete its init in its own data dir")
+	assert.NoFileExists(t, filepath.Join(second, "keys", "keys", "software:signing:oidc-signing:ecdsa.key"),
+		"the OIDC signing key lives on the replicated store, not in a node-local key file")
 }
 
 // snapshotDir maps every path under root to its size and modification time.
