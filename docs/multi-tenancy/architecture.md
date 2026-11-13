@@ -295,7 +295,7 @@ embedding providers are consumed.
 ## Agent Session Log and State Encryption
 
 Agent session logs (`pkg/orchestration/KVSessionEventLog`) and persisted agent
-session records (`pkg/fleet/Runtime`) are stored as **plaintext JSON inside
+session records (`pkg/orchestration/fleet/Runtime`) are stored as **plaintext JSON inside
 qrdb**. All at-rest confidentiality is delegated to **qrdb's `StorageBarrier`**,
 which encrypts every byte written to the underlying store before it touches disk.
 

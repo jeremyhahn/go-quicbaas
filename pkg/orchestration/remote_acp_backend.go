@@ -36,7 +36,7 @@ import (
 )
 
 // =============================================================================
-// Remote ACP Backend — talks to a pkg/fleet daemon over FleetRuntime gRPC
+// Remote ACP Backend — talks to a pkg/orchestration/fleet daemon over FleetRuntime gRPC
 // =============================================================================
 
 // Remote backend sentinel errors.
@@ -241,7 +241,7 @@ type RemoteACPBackendDeps struct {
 }
 
 // RemoteACPBackend implements AgentBackend by forwarding calls to a remote
-// pkg/fleet daemon over the FleetRuntime gRPC service. One backend instance
+// pkg/orchestration/fleet daemon over the FleetRuntime gRPC service. One backend instance
 // is scoped to a single FleetNode; callers route to the right
 // registration via the BackendDispatcher's remote resolver.
 type RemoteACPBackend struct {
@@ -573,7 +573,7 @@ func (b *RemoteACPBackend) Spawn(ctx context.Context, req *SpawnRequest) (*Sessi
 		// when it released the credential to the daemon — but it could not tell
 		// which session the grant belonged to, because the release happens
 		// inside the daemon's resolution. The daemon reports it back here
-		// (pkg/fleet/account_grant.go). A grant that did not come back would be
+		// (pkg/orchestration/fleet/account_grant.go). A grant that did not come back would be
 		// a credential on a remote host that this control plane leased and could
 		// never revoke.
 		CredentialLeaseID: resp.GetCredentialLeaseId(),
@@ -816,7 +816,7 @@ func (b *RemoteACPBackend) Infer(ctx context.Context, req *InferRequest) (<-chan
 //
 // A DAEMON THAT NO LONGER HOLDS THE SESSION IS AN ANSWER, NOT A FAULT. The
 // daemon maps its own SessionNotFoundError onto codes.NotFound
-// (pkg/fleet.mapRuntimeError), and wrapping that indiscriminately in
+// (pkg/orchestration/fleet.mapRuntimeError), and wrapping that indiscriminately in
 // RemoteBackendRPCError erased the one distinction every liveness check needs:
 // the stall detector type-asserts for *SessionNotFoundError to tell "this
 // session is gone" from "this session could not be reached", and treated a

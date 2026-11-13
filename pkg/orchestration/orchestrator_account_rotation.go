@@ -238,7 +238,7 @@ func (s *agentServiceImpl) classifier() AccountLimitClassifier {
 //
 // EVERY TURN PATH, NOT ONLY THE ASYNCHRONOUS ONE. Rotation below answers an
 // operator's session by moving it; a job's runner answers by rolling its
-// worker (pkg/sdlc). Both need the same two things first: the account held
+// worker (pkg/orchestration/sdlc). Both need the same two things first: the account held
 // until the provider's stated reset, so no other spawn selects it in the
 // meantime, and an error that SAYS the account was refused, so the caller does
 // not have to re-derive it from a string. Doing it here, where the turn failed

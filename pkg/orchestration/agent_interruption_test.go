@@ -45,7 +45,7 @@ import (
 // refunded, a worker that crashes under a healthy agent is not.
 
 // agentShutdownStreamClose is what a draining agent answers a turn whose
-// worker's stream the shutdown closed: pkg/fleet's mapPromptError, Unavailable.
+// worker's stream the shutdown closed: pkg/orchestration/fleet's mapPromptError, Unavailable.
 func agentShutdownStreamClose() error {
 	return status.Error(codes.Unavailable, "agent: draining for shutdown: "+
 		(&ContainerStreamClosedError{ContainerID: "c0ffee", Image: "claude-code", Operation: "prompt"}).Error())
@@ -53,7 +53,7 @@ func agentShutdownStreamClose() error {
 
 // containerTransportLoss is what a HEALTHY agent answers a turn whose worker's
 // container stream closed with no exit status of the worker's own — the
-// container was killed or its pipe cut: pkg/fleet's mapPromptError,
+// container was killed or its pipe cut: pkg/orchestration/fleet's mapPromptError,
 // Unavailable, drain or no drain.
 func containerTransportLoss() error {
 	return status.Error(codes.Unavailable, "agent: the worker's container stream closed without a worker exit: "+

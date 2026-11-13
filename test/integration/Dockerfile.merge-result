@@ -1,7 +1,7 @@
 # QuicBaaS merge-result snapshot test runner.
 #
 # Runs the one suite that measures what the tree a verification judges
-# actually HOLDS (pkg/sdlc/merge_result_snapshot_integration_test.go,
+# actually HOLDS (pkg/orchestration/sdlc/merge_result_snapshot_integration_test.go,
 # go-quicbaas#982): `git add --all` staged into an index that starts EMPTY
 # silently drops every file the repository tracks despite an ignore rule, and
 # a double that records the argument vector sees an identical command either
@@ -66,7 +66,7 @@ COPY . .
 ENV CGO_ENABLED=0 \
     GO111MODULE=on \
     GOFLAGS=-mod=readonly
-RUN go test -tags integration -c -o /out/merge-result.test ./pkg/sdlc/
+RUN go test -tags integration -c -o /out/merge-result.test ./pkg/orchestration/sdlc/
 
 # ============================================================================
 # Stage 2: the runtime — git, and the suite that drives it
@@ -102,7 +102,7 @@ WORKDIR /tmp
 # ENTRYPOINT plus default arguments: `docker run <image>` runs the snapshot
 # suite, and `docker run <image> -test.run X` narrows it without a rebuild.
 #
-# The -test.run filter is not a convenience. pkg/sdlc's integration tag also
+# The -test.run filter is not a convenience. pkg/orchestration/sdlc's integration tag also
 # carries the LIVE Gitea forge suite (TestLive_*, forge_gitea_live_test.go),
 # which needs a server and a credential this container deliberately has
 # neither of; `make integration-test-forge-gitea` owns that one.

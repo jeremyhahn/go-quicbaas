@@ -17,7 +17,7 @@ it, over one generic prompt package.
 | set | owner | shipped content | sent to |
 |---|---|---|---|
 | `workflow` | `pkg/orchestration` | `pkg/orchestration/promptdefaults/workflow/*.md` | the lead, worker, reviewer and validator of a generic agent workflow |
-| `sdlc` | `pkg/sdlc` | `pkg/sdlc/promptdefaults/sdlc/*.md` | the worker driving one forge issue, and the person watching that issue |
+| `sdlc` | `pkg/orchestration/sdlc` | `pkg/orchestration/sdlc/promptdefaults/sdlc/*.md` | the worker driving one forge issue, and the person watching that issue |
 
 **The embedded files are the system tenant's set.** That is what the
 `promptdefaults/` directory name says and what each directory's `README.md`
@@ -32,13 +32,13 @@ pkg/orchestration/prompts/                      the generic package: spec, regis
 pkg/orchestration/prompt_set.go                 declares set "workflow"; //go:embed promptdefaults/workflow
 pkg/orchestration/promptdefaults/README.md      the editing rules
 pkg/orchestration/promptdefaults/workflow/*.md  28 prompts — the system tenant's defaults
-pkg/sdlc/prompt_set.go                          declares set "sdlc"; //go:embed promptdefaults/sdlc
-pkg/sdlc/promptdefaults/README.md               the editing rules
-pkg/sdlc/promptdefaults/sdlc/*.md               28 prompts — the system tenant's defaults
+pkg/orchestration/sdlc/prompt_set.go                          declares set "sdlc"; //go:embed promptdefaults/sdlc
+pkg/orchestration/sdlc/promptdefaults/README.md               the editing rules
+pkg/orchestration/sdlc/promptdefaults/sdlc/*.md               28 prompts — the system tenant's defaults
 ```
 
 The generic package never imports its parent, and `pkg/orchestration` never
-imports `pkg/sdlc`; both owners import `prompts`.
+imports `pkg/orchestration/sdlc`; both owners import `prompts`.
 
 ## The contract
 
@@ -78,7 +78,7 @@ instructions the engine cannot act on refuses to start.
 
 ### Markers come from the parser's own constants
 
-`pkg/sdlc/prompt_set.go`'s `workerCharterMarkers()` builds the charter's
+`pkg/orchestration/sdlc/prompt_set.go`'s `workerCharterMarkers()` builds the charter's
 markers from `TurnStopMarker` and **every key of `stopCodeOutcomes`** — the
 table `ClassifyTurn` dispatches on. A stop code added to that vocabulary is a
 code the charter must teach, and a charter that does not name it fails
@@ -166,9 +166,9 @@ launch refusal rather than a panic.
 
 **One prompt sits outside this machinery, and must be folded into it.** The
 triage charter is human-editable markdown embedded with its own `go:embed` —
-`pkg/sdlc/prompts/triage.md`, served by `sdlc.TriageCharter()` — rather than a
+`pkg/orchestration/sdlc/prompts/triage.md`, served by `sdlc.TriageCharter()` — rather than a
 registered spec, because it was written while this work was in flight.
-`pkg/sdlc` therefore has two prompt mechanisms where it should have one, and
+`pkg/orchestration/sdlc` therefore has two prompt mechanisms where it should have one, and
 **that duplication is tracked as #883**: the charter moves into the `sdlc` set
 and the private `embed.FS` is deleted. It was deliberately built as one charter
 behind one accessor so the migration is a rename rather than a rewrite. See
@@ -300,19 +300,19 @@ these deliberately did not become prompts:
 
 | what | where | why |
 |---|---|---|
-| `outcomeSpecs`' per-kind `headline` and `meaning` | `pkg/sdlc/outcome.go` | row data of the closed conclusion vocabulary, beside that row's label key and resumability — the same reason `turnVerdicts[…].Headline` stays there |
-| the outcome comment's field labels (`**Cause:**`, `**Attempt:**`, `**Labels:**`, …) | `pkg/sdlc/outcome.go` | labels over values; the comment's structure, not its message |
-| `renderFailures`' `### name` blocks | `pkg/sdlc/runner.go` | a loop over criteria with no prose in it |
-| `commentAttribution` (`— @author, timestamp`) | `pkg/sdlc/contract.go` | identifier and timestamp formatting |
-| `(finished <RFC3339>)`, `, classified as …`'s comma, `(none)` | `pkg/sdlc` | sub-clause punctuation and a placeholder token |
-| `PASSED`/`FAILED`, `required check`/`required checks` | `pkg/orchestration`, `pkg/sdlc` | vocabulary and plural agreement the engine owes the reader |
+| `outcomeSpecs`' per-kind `headline` and `meaning` | `pkg/orchestration/sdlc/outcome.go` | row data of the closed conclusion vocabulary, beside that row's label key and resumability — the same reason `turnVerdicts[…].Headline` stays there |
+| the outcome comment's field labels (`**Cause:**`, `**Attempt:**`, `**Labels:**`, …) | `pkg/orchestration/sdlc/outcome.go` | labels over values; the comment's structure, not its message |
+| `renderFailures`' `### name` blocks | `pkg/orchestration/sdlc/runner.go` | a loop over criteria with no prose in it |
+| `commentAttribution` (`— @author, timestamp`) | `pkg/orchestration/sdlc/contract.go` | identifier and timestamp formatting |
+| `(finished <RFC3339>)`, `, classified as …`'s comma, `(none)` | `pkg/orchestration/sdlc` | sub-clause punctuation and a placeholder token |
+| `PASSED`/`FAILED`, `required check`/`required checks` | `pkg/orchestration`, `pkg/orchestration/sdlc` | vocabulary and plural agreement the engine owes the reader |
 | `backendCapabilityNames`, the transcript delimiters | `pkg/orchestration` | capability vocabulary and structural fences |
-| redaction of a check's log excerpt | `pkg/sdlc/gate.go` | a scrub a prompt could be edited to skip is not a scrub |
+| redaction of a check's log excerpt | `pkg/orchestration/sdlc/gate.go` | a scrub a prompt could be edited to skip is not a scrub |
 
 ## Verification
 
 Byte equality is the acceptance test. `pkg/orchestration/testdata/prompts/*.golden`
-and `pkg/sdlc/testdata/prompts/*.golden` were written by the builders **before**
+and `pkg/orchestration/sdlc/testdata/prompts/*.golden` were written by the builders **before**
 a word moved, across the variable combinations each of them branches on — with
 and without a workspace, with and without an issue body, a discussion whose
 blank comments still renumber, one failed check against several, a redacted
@@ -323,7 +323,7 @@ different.
 ```
 go test ./pkg/orchestration/prompts/                              # 100% of statements
 go test ./pkg/orchestration/ -run 'Prompt'                        # workflow set + goldens
-go test ./pkg/sdlc/ -run 'Prompt|WorkerCharter'                   # sdlc set + goldens + marker coupling
+go test ./pkg/orchestration/sdlc/ -run 'Prompt|WorkerCharter'                   # sdlc set + goldens + marker coupling
 ```
 
 Regenerating a golden is `-update-prompt-golden`, and doing so is the explicit

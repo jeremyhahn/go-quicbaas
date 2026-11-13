@@ -755,7 +755,7 @@ func accountUsageToREST(u *orchestration.UsageReport) *AccountUsageRESTResponse 
 // envelope's fault_class when it has one.
 //
 // The class is what a fleet node daemon maps back onto the orchestration sentinel
-// (pkg/fleet AccountAPIError), so a release refused because the account's
+// (pkg/orchestration/fleet AccountAPIError), so a release refused because the account's
 // credential is missing is PARKED uncharged on a remote spawn exactly as it is
 // on an in-process one. A status code alone cannot say that: 409 also means a
 // revoked delivery grant, which is not a configuration fault.
@@ -801,7 +801,7 @@ func accountErrorStatus(err error) int {
 		// the daemon kept presenting that id, and an opaque server error gave it
 		// nothing to act on. Every spawn then failed until the process was
 		// restarted. A distinguishable status is what lets the daemon drop the
-		// stale grant and ask for a fresh one (pkg/fleet account_secrets.go).
+		// stale grant and ask for a fresh one (pkg/orchestration/fleet account_secrets.go).
 		return http.StatusConflict
 	case errors.As(err, &invalid):
 		return http.StatusBadRequest

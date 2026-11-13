@@ -30,7 +30,7 @@ import (
 	"time"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
-	"github.com/jeremyhahn/go-quicbaas/pkg/sdlc/gitsign"
+	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration/sdlc/gitsign"
 )
 
 // sessionConfig is a signing session whose certificate files live in dir.

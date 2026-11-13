@@ -12,7 +12,7 @@ rejects it). The daemon therefore keeps the image current by itself:
 once a day, and whenever an operator asks: from the CLI, the API, or the web
 UI's **Check for updates now** (Software Factory → Fleet → Worker image).
 
-Package: `pkg/sdlc/workerimage`. Issue: go-quicbaas#1021.
+Package: `pkg/orchestration/sdlc/workerimage`. Issue: go-quicbaas#1021.
 
 Besides the two agent CLIs and opencode, the image carries the verification
 toolchain CI reaches the same verdicts with (Go, golangci-lint, gosec,

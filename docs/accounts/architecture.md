@@ -524,8 +524,8 @@ RPC.** The daemon resolves it for itself:
 ```
 daemon spawn
   └─ orchestration.AccountResolver          ← the same resolver the control plane runs
-       ├─ orchestration.AccountStore        ← pkg/fleet: GET /api/v1/agent-accounts
-       ├─ orchestration.AccountTokenManager ← pkg/fleet: read-through credential store
+       ├─ orchestration.AccountStore        ← pkg/orchestration/fleet: GET /api/v1/agent-accounts
+       ├─ orchestration.AccountTokenManager ← pkg/orchestration/fleet: read-through credential store
        │    └─ POST /api/v1/agent-accounts/{id}/materialize
        └─ orchestration.AccountStrategyRegistry
             └─ GET /api/v1/agent-accounts/{id}/usage
@@ -612,7 +612,7 @@ conclusion never ran because its node was destroyed.
 | Path | Where the grant is issued | How the session learns it |
 | --- | --- | --- |
 | In-process spawn | `accountResolver.Resolve` | Directly: `ResolvedAccountCredential.LeaseID` |
-| Remote release to an enrolled daemon | `MaterializeAccountCredential` | The daemon reports it back on the spawn response (`pkg/fleet/account_grant.go`) |
+| Remote release to an enrolled daemon | `MaterializeAccountCredential` | The daemon reports it back on the spawn response (`pkg/orchestration/fleet/account_grant.go`) |
 
 A release that cannot obtain a grant fails, because a credential nothing can
 revoke is the state the mechanism exists to remove. A deployment with no lease
@@ -640,7 +640,7 @@ verbs it could implement.
   refusals.
 
 The daemon's read-through cache presents the grant it was released under on
-every refresh (`pkg/fleet/account_secrets.go`). Without that, every refresh
+every refresh (`pkg/orchestration/fleet/account_secrets.go`). Without that, every refresh
 would look like a first delivery and revocation would be unenforceable.
 
 **A daemon's grant is scoped `(tenant, project, account)`, not by job.** Its
@@ -681,7 +681,7 @@ kind, tenant, account, provider, project, job and agent. No field of an
 
 ### The daemon's own store
 
-`pkg/fleet` supplies an `interfaces.SecretsManager` whose reads are served from
+`pkg/orchestration/fleet` supplies an `interfaces.SecretsManager` whose reads are served from
 the release verb, and plugs it into the ordinary `AccountSecretStore`. Every
 write-ish method refuses with a typed error, because each one would otherwise
 mean the daemon believes it owns credential material it does not.
@@ -1261,7 +1261,7 @@ reports device telemetry, the turn is costed from the energy its device
 measurably drew.
 
 Every heartbeat carries one sample per device the daemon can read
-(`pkg/fleet/devicetelemetry.go`), each value with its provenance:
+(`pkg/orchestration/fleet/devicetelemetry.go`), each value with its provenance:
 
 | Device | Source (no cgo) | Signals |
 | --- | --- | --- |

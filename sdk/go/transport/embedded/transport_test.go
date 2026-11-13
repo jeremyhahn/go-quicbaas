@@ -31,7 +31,7 @@ import (
 
 	xkmsssh "github.com/jeremyhahn/go-xkms/sdk/go/client/ssh"
 
-	"github.com/jeremyhahn/go-quicbaas/pkg/sdlc"
+	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration/sdlc"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 	"github.com/jeremyhahn/go-quicbaas/pkg/watch"
 	healthclient "github.com/jeremyhahn/go-quicbaas/sdk/go/client/health"

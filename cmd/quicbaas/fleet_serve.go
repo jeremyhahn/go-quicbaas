@@ -29,16 +29,16 @@ import (
 	"github.com/spf13/cobra"
 	oauthpkg "golang.org/x/oauth2"
 
-	"github.com/jeremyhahn/go-quicbaas/pkg/fleet"
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
+	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration/fleet"
 )
 
 // =============================================================================
 // Fleet Serve Command Flags
 // =============================================================================
 //
-// Flag semantics mirror pkg/fleet.Config so the CLI and config-file paths
+// Flag semantics mirror pkg/orchestration/fleet.Config so the CLI and config-file paths
 // stay in lockstep: --config reads a fleet.Config YAML file, and every flag
 // set explicitly on the command line overrides the matching key in it (see
 // resolveServeConfig).
@@ -545,7 +545,7 @@ func buildFleetTLSConfig(cfg *fleet.Config) *tls.Config {
 	return tlsCfg
 }
 
-// oauth2TokenAdapter bridges pkg/fleet.TokenSource to
+// oauth2TokenAdapter bridges pkg/orchestration/fleet.TokenSource to
 // golang.org/x/oauth2.TokenSource. Keeps the event forwarder decoupled
 // from the HTTP heartbeat sender's token interface.
 type oauth2TokenAdapter struct {

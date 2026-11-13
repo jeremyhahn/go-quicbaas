@@ -31,7 +31,7 @@ import "context"
 // "a turn just touched the tree" — and nothing else. The implementation is the
 // SDLC runner's existing publisher, which commits signed and pushes INSIDE the
 // worker's container; there is no second git implementation and none on the
-// daemon. See pkg/sdlc/publish.go.
+// daemon. See pkg/orchestration/sdlc/publish.go.
 //
 // ASKING THE AGENT TO PUSH WOULD NOT BE THE SAME THING. An agent that is told
 // to push is an agent that may forget, may push the wrong ref, and costs tokens

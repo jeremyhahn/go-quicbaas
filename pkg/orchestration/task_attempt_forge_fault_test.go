@@ -25,7 +25,7 @@ import (
 //
 // The forge adapters live above this package, so these tests stand in for
 // their transport error with the one fact it carries across the boundary: it
-// unwraps to ErrForgeUnreachable. The adapter-side tests in pkg/sdlc prove the
+// unwraps to ErrForgeUnreachable. The adapter-side tests in pkg/orchestration/sdlc prove the
 // real errors do.
 
 // forgeTransportError is a stand-in for the adapter's unanswered-call error.

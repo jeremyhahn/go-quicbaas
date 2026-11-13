@@ -243,7 +243,7 @@ func DefaultConfig() *Config {
 			// The worker image refresh. On by default within the module, so
 			// a bound project's image keeps up with the agent CLIs its models
 			// need; local mode (no registry) until an operator names one. The
-			// intervals match pkg/sdlc/workerimage's defaults and a drift
+			// intervals match pkg/orchestration/sdlc/workerimage's defaults and a drift
 			// test pins them.
 			WorkerImage: SDLCWorkerImage{
 				Enabled:         true,

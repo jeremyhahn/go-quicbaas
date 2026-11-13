@@ -1098,7 +1098,7 @@ install: build ## Install the binary
 # pass sets neither, so nothing compiled the file. That is how the REST route
 # goldens froze a surface the shipped build does not serve (go#299), and how
 # `rest && !timeseries` survived after it. The inverse — turning a tag OFF in a
-# pass with no `!tag` file behind it — cost pkg/sdlc every test in the minimal
+# pass with no `!tag` file behind it — cost pkg/orchestration/sdlc every test in the minimal
 # pass (go#304).
 #
 # scripts/buildtagcover parses each constraint with go/build/constraint, the
@@ -1167,7 +1167,7 @@ TEST_TAGS := !integration $(strip $(BUILD_TAGS)) $(TEST_EXTRA_TAGS)
 # apply than to derive:
 #
 #   codec_json  NO file is gated !codec_json, so it does not belong. Turning
-#               it off bought no stub coverage and broke pkg/sdlc's DAO with
+#               it off bought no stub coverage and broke pkg/orchestration/sdlc's DAO with
 #               `codec "json" is not supported in this build` — go#304.
 #   quicbaas_*  TWO files each are gated on their negations, so they DO
 #               belong. An earlier attempt at this fix derived the set from
@@ -1181,7 +1181,7 @@ TEST_TAGS := !integration $(strip $(BUILD_TAGS)) $(TEST_EXTRA_TAGS)
 # pass still goes green -- go#299, and precisely what a hand list does the day
 # someone adds a new `!tag` file. Include a tag with no off side and the pass
 # turns off working code for no coverage: that was go#304, where the codec
-# tags were disabled, nothing was gained, and pkg/sdlc's DAO failed every test
+# tags were disabled, nothing was gained, and pkg/orchestration/sdlc's DAO failed every test
 # with `codec "json" is not supported in this build`.
 #
 # The first version of this fix WAS a literal list, and review found it
@@ -1886,7 +1886,7 @@ integration-test-sdk: integration-test-sdk-go integration-test-sdk-js ## Run ALL
 integration-test-forge-gitea: ## Run the live Gitea forge suite (needs FORGE_ITEST_* env)
 	@echo "$(BLUE)Running live Gitea forge integration tests...$(NC)"
 	@echo "$(YELLOW)Requires FORGE_ITEST_BASE_URL, _TOKEN, _OWNER, _REPO against a SCRATCH repo$(NC)"
-	$(GOTEST) -tags integration -count=1 -v -timeout=10m -run 'TestLive_' ./pkg/sdlc/
+	$(GOTEST) -tags integration -count=1 -v -timeout=10m -run 'TestLive_' ./pkg/orchestration/sdlc/
 	@echo "$(GREEN)✓ Live Gitea forge tests passed$(NC)"
 
 # The merge-result snapshot suite. It measures what the tree a verification
@@ -3276,7 +3276,7 @@ HARDWARE_VET_TAGS := pkcs11 gpu tpm2
 HARDWARE_VET_SCAN = git grep -lE '^//go:build(.*[ (&|])?(pkcs11|gpu|tpm2)([ )&|]|$$)' -- '*.go'
 
 # Every integration-tagged package is vetted; there is no exclusion list. The
-# last excluded packages (pkg/backup, pkg/server, pkg/storage/file; pkg/sdlc
+# last excluded packages (pkg/backup, pkg/server, pkg/storage/file; pkg/orchestration/sdlc
 # before them, go-quicbaas#982) left it with their fixes (go-quicbaas#690), so a
 # change that breaks one of them now fails this gate instead of rotting unseen.
 
@@ -3828,7 +3828,7 @@ endif
 # lock the nightly worker-image workflow builds from), and these pins are the
 # ones that MOVE. A manual build installs exactly CLAUDE_CODE_VERSION,
 # CODEX_VERSION and GEMINI_CLI_VERSION as the lock gives them; the daemon's
-# worker image refresh (pkg/sdlc/workerimage) rebuilds the same Dockerfile with
+# worker image refresh (pkg/orchestration/sdlc/workerimage) rebuilds the same Dockerfile with
 # whatever newer versions the npm registry publishes, gates the result and
 # rebinds projects to it. Override them on the command line to build a newer
 # image by hand:
@@ -4621,9 +4621,9 @@ test-acp: ## Run ACP/agent backend unit tests
 	@echo "$(GREEN)ACP unit tests passed$(NC)"
 
 .PHONY: test-fleet
-test-fleet: ## Run fleet node daemon unit tests (pkg/fleet/*)
+test-fleet: ## Run fleet node daemon unit tests (pkg/orchestration/fleet/*)
 	@echo "$(BLUE)Running fleet node daemon tests...$(NC)"
-	GOTOOLCHAIN=go$(GO_VERSION) $(GOTEST) -v -race -count=1 -tags 'rag mcp $(BUILD_TAGS)' ./pkg/fleet/...
+	GOTOOLCHAIN=go$(GO_VERSION) $(GOTEST) -v -race -count=1 -tags 'rag mcp $(BUILD_TAGS)' ./pkg/orchestration/fleet/...
 	@echo "$(GREEN)Fleet node daemon tests passed$(NC)"
 
 .PHONY: coverage-acp
@@ -4636,14 +4636,14 @@ coverage-acp: ## Generate coverage report for ACP package
 .PHONY: bench-fleet
 bench-fleet: ## Run fleet node daemon benchmarks
 	@echo "$(BLUE)Running fleet node daemon benchmarks...$(NC)"
-	GOTOOLCHAIN=go$(GO_VERSION) $(GOTEST) -bench=. -benchmem -benchtime=$(BENCHTIME) -run=^$$ -tags 'rag mcp $(BUILD_TAGS)' ./pkg/fleet/...
+	GOTOOLCHAIN=go$(GO_VERSION) $(GOTEST) -bench=. -benchmem -benchtime=$(BENCHTIME) -run=^$$ -tags 'rag mcp $(BUILD_TAGS)' ./pkg/orchestration/fleet/...
 	@echo "$(GREEN)Fleet node daemon benchmarks completed$(NC)"
 
 .PHONY: coverage-fleet
 coverage-fleet: ## Generate coverage report for the fleet node daemon package
 	@echo "$(BLUE)Generating fleet node daemon coverage report...$(NC)"
 	@mkdir -p $(COVERAGE_DIR)
-	GOTOOLCHAIN=go$(GO_VERSION) $(GOTEST) -v -race -count=1 -tags 'rag mcp $(BUILD_TAGS)' -coverprofile=$(COVERAGE_DIR)/coverage-fleet.out -covermode=atomic ./pkg/fleet/...
+	GOTOOLCHAIN=go$(GO_VERSION) $(GOTEST) -v -race -count=1 -tags 'rag mcp $(BUILD_TAGS)' -coverprofile=$(COVERAGE_DIR)/coverage-fleet.out -covermode=atomic ./pkg/orchestration/fleet/...
 	$(GOCMD) tool cover -html=$(COVERAGE_DIR)/coverage-fleet.out -o $(COVERAGE_DIR)/coverage-fleet.html
 	@echo "$(YELLOW)Coverage report: file://$(COVERAGE_DIR)/coverage-fleet.html$(NC)"
 	$(GOCMD) tool cover -func=$(COVERAGE_DIR)/coverage-fleet.out | grep total
@@ -5166,7 +5166,7 @@ test-dynamic-secrets: ## Run dynamic secrets + credential lease unit tests
 	@echo "$(BLUE)Running the service handler and the delivery-grant surface...$(NC)"
 	@$(GOTEST) -race -count=1 -tags '$(TEST_TAGS)' \
 		-run 'DynamicSecret|Lease|Grant|Materialize' \
-		./pkg/service/... ./pkg/server/... ./pkg/orchestration/... ./pkg/fleet/...
+		./pkg/service/... ./pkg/server/... ./pkg/orchestration/... ./pkg/orchestration/fleet/...
 	@echo "$(GREEN)✓ Dynamic secrets tests passed$(NC)"
 
 .PHONY: coverage-dynamic-secrets
@@ -5719,7 +5719,7 @@ deps-latest:
 	done; go mod tidy'
 
 # =============================================================================
-# Issue triage (pkg/sdlc triage runner)
+# Issue triage (pkg/orchestration/sdlc triage runner)
 # =============================================================================
 #
 # Triage is the front half of the factory loop: which issues are ready to be
@@ -5730,14 +5730,14 @@ deps-latest:
 .PHONY: test-sdlc
 test-sdlc: ## Run SDLC module unit tests (bindings, delivery, runner, triage)
 	@echo "$(BLUE)Running SDLC module tests...$(NC)"
-	GOTOOLCHAIN=go$(GO_VERSION) $(GOTEST) -race -count=1 -tags '$(TEST_TAGS)' ./pkg/sdlc/...
+	GOTOOLCHAIN=go$(GO_VERSION) $(GOTEST) -race -count=1 -tags '$(TEST_TAGS)' ./pkg/orchestration/sdlc/...
 	@echo "$(GREEN)SDLC module unit tests passed$(NC)"
 
 .PHONY: test-triage
 test-triage: ## Run issue-triage unit tests (verdict, prompt, runner, scheduler)
 	@echo "$(BLUE)Running issue triage tests...$(NC)"
 	GOTOOLCHAIN=go$(GO_VERSION) $(GOTEST) -race -count=1 -tags '$(TEST_TAGS)' \
-		-run 'Triage|TriageRunner|TriageScheduler|TriageSweep|WebhookIngest_Wakes' ./pkg/sdlc/...
+		-run 'Triage|TriageRunner|TriageScheduler|TriageSweep|WebhookIngest_Wakes' ./pkg/orchestration/sdlc/...
 	GOTOOLCHAIN=go$(GO_VERSION) $(GOTEST) -race -count=1 -tags '$(TEST_TAGS)' \
 		-run 'Triage' ./pkg/server/...
 	GOTOOLCHAIN=go$(GO_VERSION) $(GOTEST) -race -count=1 -tags '$(TEST_TAGS)' \
@@ -5748,7 +5748,7 @@ test-triage: ## Run issue-triage unit tests (verdict, prompt, runner, scheduler)
 coverage-sdlc: ## Generate coverage report for the SDLC module
 	@mkdir -p $(COVERAGE_DIR)
 	GOTOOLCHAIN=go$(GO_VERSION) $(GOTEST) -count=1 -tags '$(TEST_TAGS)' \
-		-coverprofile=$(COVERAGE_DIR)/coverage-sdlc.out -covermode=atomic ./pkg/sdlc/...
+		-coverprofile=$(COVERAGE_DIR)/coverage-sdlc.out -covermode=atomic ./pkg/orchestration/sdlc/...
 	$(GOCMD) tool cover -html=$(COVERAGE_DIR)/coverage-sdlc.out -o $(COVERAGE_DIR)/coverage-sdlc.html
 	$(GOCMD) tool cover -func=$(COVERAGE_DIR)/coverage-sdlc.out | grep total
 
@@ -5810,12 +5810,12 @@ integration-test-containerruntime: ## Run in-process container runtime integrati
 coverage-triage: ## Report coverage of the issue-triage sources specifically
 	@mkdir -p $(COVERAGE_DIR)
 	GOTOOLCHAIN=go$(GO_VERSION) $(GOTEST) -count=1 -tags '$(TEST_TAGS)' \
-		-coverprofile=$(COVERAGE_DIR)/coverage-triage.out -covermode=atomic ./pkg/sdlc/...
+		-coverprofile=$(COVERAGE_DIR)/coverage-triage.out -covermode=atomic ./pkg/orchestration/sdlc/...
 	$(GOCMD) tool cover -func=$(COVERAGE_DIR)/coverage-triage.out | grep -E 'triage_|^total'
 
 .PHONY: bench-sdlc
 bench-sdlc: ## Run SDLC module benchmarks
 	@echo "$(BLUE)Running SDLC module benchmarks...$(NC)"
 	GOTOOLCHAIN=go$(GO_VERSION) $(GOTEST) -bench=. -benchmem -benchtime=$(BENCHTIME) \
-		-run=^$$ -tags '$(TEST_TAGS)' ./pkg/sdlc/...
+		-run=^$$ -tags '$(TEST_TAGS)' ./pkg/orchestration/sdlc/...
 	@echo "$(GREEN)SDLC module benchmarks completed$(NC)"

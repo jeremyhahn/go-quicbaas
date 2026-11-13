@@ -32,7 +32,7 @@ says otherwise.
 | `service.AccountService` | `pkg/service/account_service.go` | Tenant-enforced CRUD, release, reservations |
 | `service.NewAccountSecretResolver` | `pkg/service/account_secret_ref.go:49` | Resolves in the account's tenant |
 | `materialize` | `pkg/service/account_materialize.go:301` | The release verb's body |
-| `agent.NewAccountPool` | `pkg/agent` | The daemon's resolver over `pkg/fleet` |
+| `agent.NewAccountPool` | `pkg/agent` | The daemon's resolver over `pkg/orchestration/fleet` |
 
 ### Spend and cost
 

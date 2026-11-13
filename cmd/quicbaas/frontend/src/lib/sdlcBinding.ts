@@ -164,7 +164,7 @@ export function profileStatusContext(rows: ReviewerProfileRow[], index: number):
 
 /**
  * validateReviewerProfiles returns the first reason the profiles cannot be
- * saved, or the empty string. It mirrors pkg/sdlc/reviewer_profiles.go: every
+ * saved, or the empty string. It mirrors pkg/orchestration/sdlc/reviewer_profiles.go: every
  * profile is its own forge identity, so names, logins and tokens are unique.
  */
 export function validateReviewerProfiles(rows: ReviewerProfileRow[]): string {
@@ -363,7 +363,7 @@ export function promptAppendTooLarge(text: string): boolean {
 /**
  * validateBindingForm returns the first reason the binding cannot be saved,
  * or the empty string when it can. The rules mirror the module's own
- * fail-closed validation (pkg/sdlc/binding.go) so a refusal is visible before
+ * fail-closed validation (pkg/orchestration/sdlc/binding.go) so a refusal is visible before
  * the round trip.
  */
 export function validateBindingForm(form: BindingFormState, availableForges: string[]): string {
@@ -428,7 +428,7 @@ export function validateBindingForm(form: BindingFormState, availableForges: str
 }
 
 /**
- * FORGE_LOGIN is the shape of a forge login, mirroring pkg/sdlc/ruling.go:
+ * FORGE_LOGIN is the shape of a forge login, mirroring pkg/orchestration/sdlc/ruling.go:
  * letters, digits, ".", "_" and "-", starting and ending with a letter or
  * digit, at most 40 characters.
  */

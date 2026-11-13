@@ -19,7 +19,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/jeremyhahn/go-quicbaas/pkg/sdlc"
+	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration/sdlc"
 )
 
 // TestSDLCWebhookPrefix_MatchesTheMountedRoute is a DRIFT GATE over the one

@@ -19,7 +19,7 @@ import (
 	"strings"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
-	"github.com/jeremyhahn/go-quicbaas/pkg/sdlc"
+	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration/sdlc"
 )
 
 // sdlcIssueFiledAction is the audit action of an operator filing an issue on

@@ -18,15 +18,15 @@ package main
 import (
 	"context"
 
-	"github.com/jeremyhahn/go-quicbaas/pkg/fleet/deploy"
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
+	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration/fleet/deploy"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 	orchestratorSDK "github.com/jeremyhahn/go-quicbaas/sdk/go/client/orchestrator"
 )
 
 // FleetDeployBinding exposes the agent-deploy workflow to the Wails
 // frontend. It delegates every Deploy call to the service layer built
-// on top of pkg/fleet/deploy primitives, with an SDK-backed orchestrator
+// on top of pkg/orchestration/fleet/deploy primitives, with an SDK-backed orchestrator
 // client wired in for the "wait for online" poll.
 //
 // The binding is deliberately thin: flag-to-spec translation and result

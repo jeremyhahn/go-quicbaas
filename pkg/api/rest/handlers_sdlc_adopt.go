@@ -22,7 +22,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	"github.com/jeremyhahn/go-quicbaas/pkg/sdlc"
+	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration/sdlc"
 )
 
 // =============================================================================

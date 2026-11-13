@@ -697,7 +697,7 @@ jobs:
   # DS-3161: a pull request whose every changed file is documentation runs
   # lint and CI Gate only. Documentation is docs/, changelog.d/, a top-level
   # *.md file and any README.md; a *.md file elsewhere can be a go:embed input
-  # (pkg/sdlc/prompts/triage.md) and is code. A push to main, a dispatch and
+  # (pkg/orchestration/sdlc/prompts/triage.md) and is code. A push to main, a dispatch and
   # a pull request with any other file run every stage.
   # v1.29.3 and v1.30: the schedule guard sets `verdict`: `run`, `refused` (a
   # workflow_dispatch off main, or a pull request from a checkpoint branch

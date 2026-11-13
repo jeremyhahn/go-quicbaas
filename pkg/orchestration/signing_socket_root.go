@@ -30,7 +30,7 @@ import (
 // =============================================================================
 //
 // Two processes bind per-session ssh-agent sockets for a container to mount:
-// the daemon, which serves the session's KMS-backed agent (pkg/sdlc), and a
+// the daemon, which serves the session's KMS-backed agent (pkg/orchestration/sdlc), and a
 // fleet node on another host, which serves the SAME agent relayed over its
 // FleetRuntime link (go-quicbaas#1013). Both bind under a sockets root of
 // their own, and both need the same two things from it: a root a socket can

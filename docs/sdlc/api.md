@@ -482,7 +482,7 @@ The "Needs You" inbox: every blocked task, plus environmental alerts, in one
 paged and faceted listing — see
 [user.md](user.md#unblocking-the-factory-the-attention-inbox) for the
 operator-facing walkthrough. Served by `sdlc.AttentionService`
-(`pkg/sdlc/attention_service.go`), which reads through the same task
+(`pkg/orchestration/sdlc/attention_service.go`), which reads through the same task
 service and forge credentials every other SDLC verb does.
 
 `GET /api/v1/orchestrator/attention` — natural order `status_changed_at`

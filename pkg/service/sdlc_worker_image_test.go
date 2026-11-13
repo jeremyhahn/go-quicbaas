@@ -18,7 +18,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/jeremyhahn/go-quicbaas/pkg/sdlc/workerimage"
+	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration/sdlc/workerimage"
 )
 
 func TestSDLCService_WorkerImageVerbs(t *testing.T) {

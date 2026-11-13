@@ -29,9 +29,9 @@ import (
 	"golang.org/x/crypto/ssh"
 
 	qberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
-	"github.com/jeremyhahn/go-quicbaas/pkg/fleet"
-	"github.com/jeremyhahn/go-quicbaas/pkg/fleet/deploy"
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
+	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration/fleet"
+	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration/fleet/deploy"
 	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 	orchestratorSDK "github.com/jeremyhahn/go-quicbaas/sdk/go/client/orchestrator"
 )

@@ -5,7 +5,7 @@ import (
 	"errors"
 	"testing"
 
-	pkgsdlc "github.com/jeremyhahn/go-quicbaas/pkg/sdlc"
+	pkgsdlc "github.com/jeremyhahn/go-quicbaas/pkg/orchestration/sdlc"
 	sdkerrors "github.com/jeremyhahn/go-quicbaas/sdk/go/errors"
 )
 

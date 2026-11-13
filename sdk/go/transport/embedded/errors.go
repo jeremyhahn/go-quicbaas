@@ -24,7 +24,7 @@ import (
 	pkgerrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
-	pkgsdlc "github.com/jeremyhahn/go-quicbaas/pkg/sdlc"
+	pkgsdlc "github.com/jeremyhahn/go-quicbaas/pkg/orchestration/sdlc"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/errors"
 	grpctransport "github.com/jeremyhahn/go-quicbaas/sdk/go/transport/grpc"

@@ -7,7 +7,7 @@
 
 Two gates stand between a forge issue and a running agent:
 
-- **readiness** (`pkg/sdlc/readiness.go`) decides whether an issue may become a
+- **readiness** (`pkg/orchestration/sdlc/readiness.go`) decides whether an issue may become a
   Task at all;
 - **admission** (`pkg/orchestration/admission.go`) decides how many of a
   project's Tasks may hold a job right now.
@@ -133,7 +133,7 @@ when this axis is wired.
 `pkg/orchestration/fleet_capacity.go` reduces two honest sources to one:
 
 - **the fleet itself** — every daemon reports `max_concurrent_jobs` on every
-  heartbeat (`pkg/fleet` `Config.MaxConcurrentJobs` → `FleetNodeObservation` →
+  heartbeat (`pkg/orchestration/fleet` `Config.MaxConcurrentJobs` → `FleetNodeObservation` →
   `FleetNode.MaxConcurrentJobs`), and the capacity is the sum over the
   daemons alive at that instant. It shrinks when a host is drained and grows when
   one is added, with nothing to keep in step by hand;
@@ -258,12 +258,12 @@ Two sources establish the claim:
   URL. Only the bound repository counts. A URL must also be on the bound forge:
   the repository's web address is read from the forge's own issue URLs, so
   `https://github.com/acme/api/issues/25` never claims Gitea's `acme/api#25`
-  (`pkg/sdlc/closing_refs.go`).
+  (`pkg/orchestration/sdlc/closing_refs.go`).
 - **the forge's own link.** A forge implementing `IssueLinkReader` is asked
   which pull requests it links to the issue as closing it. Gitea answers from
   the issue timeline: a `pull_ref` entry whose `ref_action` is `closes`. The read
   is per issue, so it runs only for an issue that nothing else has refused or
-  claimed (`pkg/sdlc/forge_links.go`, `forge_gitea_links.go`).
+  claimed (`pkg/orchestration/sdlc/forge_links.go`, `forge_gitea_links.go`).
 
 A skipped issue is recorded once on the platform audit trail as
 `sdlc:adoption_skipped`, naming the issue and the pull request.
@@ -276,7 +276,7 @@ been reopened or re-triggered because that fix was incomplete or reverted. The
 forge's link and the pull request's text both outlive the merge, and holding
 the issue for them would mean it is never adopted again. A listing or a link
 read the forge cannot answer adopts nothing from that project on that sweep
-(`pkg/sdlc/issue_source_claims.go`).
+(`pkg/orchestration/sdlc/issue_source_claims.go`).
 
 ### Declared dependencies
 

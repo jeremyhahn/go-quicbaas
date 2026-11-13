@@ -25,7 +25,7 @@ import (
 
 	"golang.org/x/crypto/ssh"
 
-	"github.com/jeremyhahn/go-quicbaas/pkg/fleet/deploy"
+	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration/fleet/deploy"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/test/sshfixture"
 )
 

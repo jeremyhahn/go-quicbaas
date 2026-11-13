@@ -6,7 +6,7 @@
 > [../software-factory/architecture.md](../software-factory/architecture.md).
 > Conflicts with this document are defects.
 
-`pkg/sdlc` is the **SDLC module of the Software Factory**: git-based delivery
+`pkg/orchestration/sdlc` is the **SDLC module of the Software Factory**: git-based delivery
 automation against a forge (Gitea, GitHub and GitLab). It turns a labelled forge issue into an orchestration Task, lets the
 engine run each attempt as a Job with one worker Session, publishes the result
 as a pull request, waits for an independent review and green checks on the
@@ -49,7 +49,7 @@ is the index of what was chosen and what was turned down.
 
 | Decision | Rejected alternative | Why |
 |---|---|---|
-| The module is a set of registrations into the engine's seams; it owns no loop, lease, budget or reaper ([the split](#the-split)) | An SDLC-specific scheduler beside the engine | Two leases and two reapers for one job disagree; `pkg/orchestration` never imports `pkg/sdlc`, and a test walks the import graph to keep it so |
+| The module is a set of registrations into the engine's seams; it owns no loop, lease, budget or reaper ([the split](#the-split)) | An SDLC-specific scheduler beside the engine | Two leases and two reapers for one job disagree; `pkg/orchestration` never imports `pkg/orchestration/sdlc`, and a test walks the import graph to keep it so |
 | An issue is driven by the `sdlc` `JobRunner` ([the seams](#the-seams)) | A canonical SDLC Workflow on the lead-driven control loop | A Workflow's one shape is decomposition: a live run turned one issue into nine work items |
 | The container commits, signs and pushes; the daemon opens the pull request ([the publish](#the-publish)) | Pushing from the daemon, or handing the container the key or the token | The private key stays in the KMS behind a per-attempt agent socket, and the token is read by a credential helper, so no secret reaches argv, the environment or a log |
 | An unsigned outgoing commit is refused ([the publish](#the-publish)) | Re-signing the worker's commits before the push | Re-signing rewrites the branch (go-quicbaas#1048) |
@@ -69,7 +69,7 @@ recovery are documented in [../orchestration/](../orchestration/) and
 
 ## The split
 
-| `pkg/orchestration` (generic, built once) | `pkg/sdlc` (git, the module) |
+| `pkg/orchestration` (generic, built once) | `pkg/orchestration/sdlc` (git, the module) |
 |---|---|
 | durable Job lease, heartbeat, supersession | forge adapters and SDLC strategies (`forge.go`, `forge_gitea.go`, `strategy.go`) |
 | attempt budget, environment-fault refund, `RetryNotBefore` | issue source (`issue_source.go`), webhooks (`webhook*.go`) |
@@ -92,7 +92,7 @@ renders onto the issue. See
 
 Nothing in the left column names git. Nothing in the right column has a
 loop, a lease, a reaper, a work item or a project record. `pkg/orchestration`
-never imports `pkg/sdlc` — `pkg/sdlc/import_graph_test.go` walks the
+never imports `pkg/orchestration/sdlc` — `pkg/orchestration/sdlc/import_graph_test.go` walks the
 engine's import graph and refuses the module in it.
 
 ## The seams
@@ -371,7 +371,7 @@ A park says **what would unblock it, in a form something can check.** Prose
 has one failure mode and it is total: nothing can evaluate it, so nothing
 re-examines the task, and the condition clears without the task moving.
 
-`pkg/sdlc/readmission.go` is the vocabulary. A condition is a value — a kind
+`pkg/orchestration/sdlc/readmission.go` is the vocabulary. A condition is a value — a kind
 from a closed set, a subject, a target — encoded as a marker inside
 `Task.BlockedReason` (`… unblock[kind=…;subject=…;target=…]`). It rides the
 reason field rather than a record of its own because the engine writes a
@@ -391,7 +391,7 @@ with neither is refused at `Validate`, because a permissive default would
 read downstream as "nothing to check", which is indistinguishable from a
 condition that has been met.
 
-`UnblockSweeper.SweepProject` (`pkg/sdlc/unblock_sweep.go`) re-examines every
+`UnblockSweeper.SweepProject` (`pkg/orchestration/sdlc/unblock_sweep.go`) re-examines every
 blocked task in a project and readmits the ones whose condition holds,
 through the engine's own readmission verb — `orchestration.AgentService`,
 never the task store underneath it. Only the service's verb ANNOUNCES the
@@ -426,7 +426,7 @@ it today. Where its cadence comes from is go-quicbaas#780.
 The container commits, signs and pushes; the daemon opens the pull request.
 Neither half can do the other's.
 
-`pkg/sdlc/publish.go` builds the argument vectors and runs each one through
+`pkg/orchestration/sdlc/publish.go` builds the argument vectors and runs each one through
 `JobRun.Exec` into the worker's session container, in the directory the
 CONTAINER calls its checkout (`/workspace/<project name>`, recorded on the
 `Delivery`):
@@ -496,7 +496,7 @@ publisher's commit and the train build's merge — receives the helper's
 environment. The socket, its mount-policy carve-out and the sockets root are
 unchanged; removing them is the next slice.
 
-`quicbaas-git-sign` (`cmd/quicbaas-git-sign`, logic in `pkg/sdlc/gitsign`) is
+`quicbaas-git-sign` (`cmd/quicbaas-git-sign`, logic in `pkg/orchestration/sdlc/gitsign`) is
 git's `gpg.ssh.program`:
 
 - **Invocation.** It accepts exactly `-Y sign -n git -f <public key file>
@@ -526,7 +526,7 @@ git's `gpg.ssh.program`:
 
 ### The forge-access seam
 
-`forgeAccess` (`pkg/sdlc/workspace.go`) is the **one** way any of the module's
+`forgeAccess` (`pkg/orchestration/sdlc/workspace.go`) is the **one** way any of the module's
 three runners gets a container to the forge. A runner states the project, the
 binding's forge, the branch plan, the workspace key and whether its container
 signs commits; the seam resolves the token, starts the ssh agent when one is
@@ -1409,7 +1409,7 @@ correctly.
 
 ### The forge seam
 
-`ForgeBackend` embeds `ForgeOnboarding` (`pkg/sdlc/forge_onboarding.go`):
+`ForgeBackend` embeds `ForgeOnboarding` (`pkg/orchestration/sdlc/forge_onboarding.go`):
 `Labels`, `EnsureLabels`, `Webhooks`, `DeleteWebhook`, `RepoFiles`,
 `BranchProtection`. Every one is stated in terms Gitea, GitHub and GitLab all
 have — a repository has labels, webhooks, a file tree and protected branches —
@@ -1426,7 +1426,7 @@ A pull request's discussion has its own operations, `CommentOnPullRequest`
 and `ListPullRequestComments`, beside the issue ones. Gitea and GitHub number
 issues and pull requests in one sequence and serve both discussions from the
 issue endpoints, which their adapters share through one embedded type
-(`sharedNumbering`, `pkg/sdlc/forge_shared_numbering.go`). GitLab numbers
+(`sharedNumbering`, `pkg/orchestration/sdlc/forge_shared_numbering.go`). GitLab numbers
 merge requests apart from issues, so an issue operation given a merge
 request's number would write on whatever issue shares it; its adapter serves
 the pull request operations from `/merge_requests/:iid/notes`. Code holding a
@@ -1462,7 +1462,7 @@ and the retry's create would have been refused as a duplicate.
 | labels (set, add, remove), close issue, delete branch, commit status, update/delete webhook | `write_timeout` | replayed like a read: each is idempotent on the forge and verified by the method's own read-back |
 | comment, create branch, submit review, rerun or cancel CI, create webhook, create label, mint/revoke token | `write_timeout` | **never repeated** — a second one is a second comment, verdict, pipeline, hook or credential; `ForgeWriteUnconfirmedError` |
 
-The table is `forgeWritePolicies` in `pkg/sdlc/forge_http_policy.go`, shared
+The table is `forgeWritePolicies` in `pkg/orchestration/sdlc/forge_http_policy.go`, shared
 by every REST adapter; a write missing from it takes the last row, and a test
 fails the build if any write in an adapter is unclassified. Only silence is
 retried: a status the forge itself returned (404, 409, 422, the forge's own
@@ -1519,7 +1519,7 @@ not answer must not hold a job goroutine or a reaper sweep open.
 ### The table
 
 `orchestration.TaskConclusionReasons()` is the closed vocabulary;
-`pkg/sdlc/outcome.go`'s `conclusionOutcomes` maps every member to what the
+`pkg/orchestration/sdlc/outcome.go`'s `conclusionOutcomes` maps every member to what the
 module writes. `TestConclusionOutcomes_CoverEveryReason` fails if a reason has
 no row — a conclusion the module cannot render is the defect itself.
 
@@ -1696,7 +1696,7 @@ There was also no liveness check from the forge's side: a node that died between
 concluding a task and posting its outcome left the label stuck with nobody
 watching. From the forge, an operator could not tell a live run from a corpse.
 
-`pkg/sdlc/label_reconcile.go` closes both. It runs **at boot and on a ticker**
+`pkg/orchestration/sdlc/label_reconcile.go` closes both. It runs **at boot and on a ticker**
 (`sdlc.label_reconcile.interval`, default 5m) with no operator verb — the state
 it repairs is by definition state nobody noticed, and the operator is the person
 the stale label is lying to. It is started at the tail of `startSDLC` and stopped

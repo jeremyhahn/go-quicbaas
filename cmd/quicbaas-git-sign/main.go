@@ -22,7 +22,7 @@ import (
 	"io"
 	"os"
 
-	"github.com/jeremyhahn/go-quicbaas/pkg/sdlc/gitsign"
+	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration/sdlc/gitsign"
 )
 
 func main() {

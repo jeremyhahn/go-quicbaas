@@ -20,7 +20,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/jeremyhahn/go-quicbaas/pkg/fleet"
+	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration/fleet"
 )
 
 // baseACPConfig returns a minimal valid ACP-backend config with the on-disk

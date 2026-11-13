@@ -830,7 +830,7 @@ func (s *Server) SetClusterSecretHandler(h http.HandlerFunc) {
 // Injected by the SDLC module at boot rather than constructed here, because the
 // handler needs the module's stores and secret resolution — none of
 // which the REST layer knows about, and all of which would tie this package to
-// pkg/sdlc if it built them.
+// pkg/orchestration/sdlc if it built them.
 func (s *Server) SetSDLCWebhookHandler(h http.HandlerFunc) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

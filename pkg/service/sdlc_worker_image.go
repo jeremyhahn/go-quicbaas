@@ -16,14 +16,14 @@ package service
 import (
 	"context"
 
-	"github.com/jeremyhahn/go-quicbaas/pkg/sdlc/workerimage"
+	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration/sdlc/workerimage"
 )
 
 // =============================================================================
 // The worker image — refresh on request, status, and the rebinding write
 // =============================================================================
 //
-// The refresh itself is pkg/sdlc/workerimage's; this is its service frontage.
+// The refresh itself is pkg/orchestration/sdlc/workerimage's; this is its service frontage.
 // Two verbs face the transports (RefreshWorkerImage, WorkerImageStatus) and
 // one faces the refresher (ReplaceBindingImage), so a promotion is a write
 // through this service — validated like every binding write — rather than an

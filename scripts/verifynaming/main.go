@@ -60,7 +60,7 @@ const retired = "fab" + "ric"
 const allowedInflection = "fab" + "ricat"
 
 // There is no allowlist for rule 1. Every tracked file is in scope, including
-// pkg/sdlc/, whose last occurrences went with the SDLC module rewrite.
+// pkg/orchestration/sdlc/, whose last occurrences went with the SDLC module rewrite.
 
 // sealIdentifiers are the Seal* identifiers rule 2 governs.
 var sealIdentifiers = regexp.MustCompile(`SealClient\b|SealManager\b|SealService\b|SealView\b|SealMode\b`)

@@ -54,7 +54,7 @@ const accountSecretPathPrefix = "orchestration/agent-accounts/"
 //
 // It is exported because a SecretsManager written specifically to back an
 // AccountSecretStore — the fleet node daemon's read-through materializing store
-// (pkg/fleet, go-quicbaas#734) — has to answer with the same key this store
+// (pkg/orchestration/fleet, go-quicbaas#734) — has to answer with the same key this store
 // asks for. Restating the literal there would make a rename silently return
 // "envelope present but empty" on the worker host.
 const AccountSecretDataKey = "credential"

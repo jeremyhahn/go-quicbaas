@@ -6,7 +6,7 @@
 > it is built not to repeat. Conflicts with this document are defects.
 
 QuicBaaS has always been able to *read* a verdict and *decide* on it —
-`pkg/sdlc/gate.go` is the whole merge gate as a pure function. What it could
+`pkg/orchestration/sdlc/gate.go` is the whole merge gate as a pure function. What it could
 not do was *write* one. This is that half: a reviewer agent selected from
 project configuration, a verdict posted to the forge bound to the head it
 judged, and a commit status that makes the verdict enforceable by the
@@ -42,7 +42,7 @@ head's pipeline has finished green, and it reads that from the forge too.
 
 ## When a review starts — after CI is green, never before
 
-`ReviewDispatcher.TriggerReview` (`pkg/sdlc/review_dispatch.go`) refuses on two
+`ReviewDispatcher.TriggerReview` (`pkg/orchestration/sdlc/review_dispatch.go`) refuses on two
 things and nothing else: **configuration** — a project that binds no reviewer
 will never produce a verdict, so a job for it exists only to fail — and **the
 pipeline**.
@@ -78,7 +78,7 @@ just passed would never be reviewed. A commit that heads no open pull request
 starts nothing, which is what most pushes are.
 
 **Green is defined once.** The gate is `ChecksGreenForReview`
-(`pkg/sdlc/gate.go`), which is `evaluateChecks` — the merge gate's own check
+(`pkg/orchestration/sdlc/gate.go`), which is `evaluateChecks` — the merge gate's own check
 half — over the same records. A second definition would eventually dispatch a
 reviewer onto a head the merge gate refuses, or withhold a review from a head
 it would land.
@@ -148,7 +148,7 @@ node, 2026-09-13: the `go-truststrap` repository had zero webhooks, and two
 finished pull requests sat with all six checks green and `mergeable: true`,
 permanently unmergeable.
 
-`ReviewSweeper` (`pkg/sdlc/review_sweep.go`) is the floor under that path. Per
+`ReviewSweeper` (`pkg/orchestration/sdlc/review_sweep.go`) is the floor under that path. Per
 bound project it lists the open pull requests and, for each, reads the head's
 commit statuses **once**:
 
@@ -224,7 +224,7 @@ project on one node-wide interval, `webhook` projects included.
 
 ## What the reviewer is told — CI already passed, review only
 
-The reviewer charter is `pkg/sdlc/promptdefaults/sdlc/reviewer_charter.md`
+The reviewer charter is `pkg/orchestration/sdlc/promptdefaults/sdlc/reviewer_charter.md`
 (markdown since #880, a Go constant before #927). It states plainly that
 build, lint, unit, integration, race and security have already run against this
 exact commit and passed, and that the reviewer's job is to read the diff — not
@@ -234,7 +234,7 @@ toolchain.
 That is now true by construction rather than by hope: the dispatcher above
 starts no review until the head is green. Both sentences are **declared
 markers** on the prompt specification (`reviewerCharterMarkers`,
-`pkg/sdlc/prompt_set.go`), so an edited charter that drops either is refused at
+`pkg/orchestration/sdlc/prompt_set.go`), so an edited charter that drops either is refused at
 registration — the same mechanism that stops the worker charter dropping a stop
 code. `ReviewerCIGreenMarker` and `ReviewerNoRerunMarker` name the literals.
 
@@ -244,7 +244,7 @@ nothing forbids it.
 
 ## Who reviews — project configuration, never a label
 
-`ProjectBinding.Reviewer` (`pkg/sdlc/review_config.go`):
+`ProjectBinding.Reviewer` (`pkg/orchestration/sdlc/review_config.go`):
 
 ```go
 type ReviewerConfig struct {
@@ -306,8 +306,8 @@ separately rather than bundled into one socket.
 A binding names one **default** reviewer (`reviewer`) and any number of
 **alternates** (`reviewers`). The default reviews every pull request. An
 alternate reviews one only when an **operator** has chosen it for that pull
-request. The code is in `pkg/sdlc/reviewer_profiles.go` and
-`pkg/sdlc/reviewer_override.go`.
+request. The code is in `pkg/orchestration/sdlc/reviewer_profiles.go` and
+`pkg/orchestration/sdlc/reviewer_override.go`.
 
 **Only a profile that counts toward merge can land a change, or hold one
 back.** `counts_toward_merge` is a pointer because its default depends on the

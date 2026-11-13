@@ -17,7 +17,7 @@
 //     SDLCForgesResponse                 forges / count
 //   pkg/api/rest/handlers_project.go
 //     ProjectRESTResponse                autonomous / context_repos / git_*
-//   pkg/sdlc/binding.go
+//   pkg/orchestration/sdlc/binding.go
 //     ProjectBinding                     forge / strategy / worker /
 //                                        verification / review /
 //                                        max_review_rounds / ranking

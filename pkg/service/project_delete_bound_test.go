@@ -22,7 +22,7 @@ import (
 	"testing"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
-	"github.com/jeremyhahn/go-quicbaas/pkg/sdlc"
+	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration/sdlc"
 )
 
 // boundDeleteRig is a managed-workspace project service whose deletes are

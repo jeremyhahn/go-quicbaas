@@ -21,7 +21,7 @@ import (
 	"google.golang.org/grpc/status"
 
 	pb "github.com/jeremyhahn/go-quicbaas/api/proto"
-	"github.com/jeremyhahn/go-quicbaas/pkg/sdlc/workerimage"
+	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration/sdlc/workerimage"
 )
 
 // GetWorkerImageStatus implements pb.SDLCServiceServer. A host verb: no

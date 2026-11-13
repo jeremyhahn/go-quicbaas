@@ -18,7 +18,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/jeremyhahn/go-quicbaas/pkg/sdlc"
+	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration/sdlc"
 	"github.com/jeremyhahn/go-quicbaas/pkg/testutil/giteafake"
 )
 

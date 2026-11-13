@@ -30,7 +30,7 @@ import (
 //
 // THIS IS THE ONE COPY. `make test-worker-image` runs these (through
 // ./deployments/agents/software-factory-worker/probe) and the daemon's
-// refresh gate runs these (pkg/sdlc/workerimage), so the image a person
+// refresh gate runs these (pkg/orchestration/sdlc/workerimage), so the image a person
 // certifies by hand and the image the factory promotes by itself pass the
 // same bar.
 //
@@ -124,7 +124,7 @@ const (
 	// EnvExpectedMemlockKiB is the locked-memory limit, in KiB as `ulimit -l`
 	// reports it, a Sandboxed probe must see. It is not set by ProbeEnv: this
 	// package holds no policy, so the probe runner derives it from the policy
-	// it launches the probe under (pkg/sdlc/workerimage).
+	// it launches the probe under (pkg/orchestration/sdlc/workerimage).
 	EnvExpectedMemlockKiB = "EXPECTED_MEMLOCK_KIB"
 )
 

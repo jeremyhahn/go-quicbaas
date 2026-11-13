@@ -23,8 +23,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jeremyhahn/go-quicbaas/pkg/fleet/deploy"
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
+	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration/fleet/deploy"
 	orchestratorSDK "github.com/jeremyhahn/go-quicbaas/sdk/go/client/orchestrator"
 	sdkerrors "github.com/jeremyhahn/go-quicbaas/sdk/go/errors"
 )

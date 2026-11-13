@@ -77,7 +77,7 @@ type turnAttributionKey struct{}
 // — a half-populated attribution there would produce a job total with no agent
 // breakdown. The CONSUMPTION LEDGER's chain has no agent level at all: it is
 // tenant/project/task/job/session/round, and a runner that prompts one session
-// directly (pkg/sdlc) has a job and no agent. Requiring the agent here would
+// directly (pkg/orchestration/sdlc) has a job and no agent. Requiring the agent here would
 // have dropped every one of those turns from the spend authority's record,
 // which is the population the cap exists to bound.
 func WithTurnAttribution(ctx context.Context, attribution TurnAttribution) context.Context {

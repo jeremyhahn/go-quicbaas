@@ -59,7 +59,7 @@ env:
   # tags so that one added behind a transport tag (rest, quic, mcp) is found.
   FUZZ_TAGS: 'hashicorpmetrics,local,raft,timeseries,qrdb_ts,vector,qrdb_vector,rag,rest,quic,mcp,quicbaas_mqtt,quicbaas_amqp,quicbaas_stomp,codec_json,codec_yaml,codec_toml,codec_msgpack,codec_bson,codec_cbor,codec_protobuf,gms_pure_go,canary,otel,l2_redis'  # CUSTOMIZE
   # The same set. ci.yml's Race Detector compiles untagged (plus codec_json
-  # for pkg/sdlc and pkg/service) because the tagged race build has known
+  # for pkg/orchestration/sdlc and pkg/service) because the tagged race build has known
   # sealed-window races; off the gate, those are exactly what this job is for.
   RACE_TAGS: 'hashicorpmetrics,local,raft,timeseries,qrdb_ts,vector,qrdb_vector,rag,rest,quic,mcp,quicbaas_mqtt,quicbaas_amqp,quicbaas_stomp,codec_json,codec_yaml,codec_toml,codec_msgpack,codec_bson,codec_cbor,codec_protobuf,gms_pure_go,canary,otel,l2_redis'  # CUSTOMIZE
   # The Race Detector's scope, root module only. sdk/go is its own module and

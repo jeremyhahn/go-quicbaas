@@ -32,7 +32,7 @@ import (
 // four, and the SDLC runner, which refuses a worker whose delivery could never
 // be committed inside a container, refuses every remote worker.
 //
-// pkg/fleet's wire contract drives this through a real daemon end to end. These
+// pkg/orchestration/fleet's wire contract drives this through a real daemon end to end. These
 // two pin the client-side mapping on its own, so a change that stops reading
 // the field fails here first, naming it.
 
@@ -176,7 +176,7 @@ func TestSpawnSession_RemoteDaemonsContainerReachesEveryRecord(t *testing.T) {
 
 			if resp.ContainerID != tc.containerID {
 				t.Errorf("SpawnSessionResponse.ContainerID = %q, want %q.\n"+
-					"This is the field pkg/sdlc/runner.go gates the worker on.",
+					"This is the field pkg/orchestration/sdlc/runner.go gates the worker on.",
 					resp.ContainerID, tc.containerID)
 			}
 

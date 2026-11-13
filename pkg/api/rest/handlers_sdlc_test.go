@@ -33,7 +33,7 @@ import (
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
-	"github.com/jeremyhahn/go-quicbaas/pkg/sdlc"
+	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration/sdlc"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 	"github.com/jeremyhahn/go-quicbaas/pkg/testutil/giteafake"
@@ -337,7 +337,7 @@ func TestSDLCBinding_PathParametersAreRequired(t *testing.T) {
 
 // TestSDLCForges_ListsRegisteredAdapters proves the endpoint reports what
 // this build can actually talk to. The gitea, github and gitlab adapters
-// register themselves from pkg/sdlc's init, so a rest test binary that imports
+// register themselves from pkg/orchestration/sdlc's init, so a rest test binary that imports
 // the module carries all three; an adapter nobody wrote (bitbucket) must be
 // absent rather than listed and failing later at NewForgeBackend.
 func TestSDLCForges_ListsRegisteredAdapters(t *testing.T) {

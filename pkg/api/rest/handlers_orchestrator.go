@@ -1799,7 +1799,7 @@ func isQBForbiddenError(err error) bool {
 
 // isGRPCPermissionDenied reports whether err carries a gRPC
 // codes.PermissionDenied status. A spawn dispatched to a remote fleet node daemon
-// is policy-checked a second time on that daemon (pkg/fleet Runtime.Spawn),
+// is policy-checked a second time on that daemon (pkg/orchestration/fleet Runtime.Spawn),
 // and its denial arrives here wrapped in a RemoteBackendRPCError that unwraps
 // to the grpc status error. Without this the last line of defence would answer
 // 500.
@@ -1851,7 +1851,7 @@ func isOrchNotFoundError(err error) bool {
 
 // isGRPCNotFound reports whether err carries a gRPC codes.NotFound status. The
 // remote fleet node daemon returns NotFound for an unknown session (see
-// pkg/fleet/spawn_server.go mapRuntimeError); RemoteACPBackend wraps it in a
+// pkg/orchestration/fleet/spawn_server.go mapRuntimeError); RemoteACPBackend wraps it in a
 // RemoteBackendRPCError that unwraps to the grpc status error, so
 // status.FromError on the chain recovers the code.
 func isGRPCNotFound(err error) bool {

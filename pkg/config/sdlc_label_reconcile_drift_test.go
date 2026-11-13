@@ -22,11 +22,11 @@ import (
 	"github.com/spf13/viper"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/config"
-	"github.com/jeremyhahn/go-quicbaas/pkg/sdlc"
+	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration/sdlc"
 )
 
 // An EXTERNAL test package for the reason the surfacing drift test is one:
-// pkg/sdlc reaches pkg/config through pkg/interfaces, so an in-package test
+// pkg/orchestration/sdlc reaches pkg/config through pkg/interfaces, so an in-package test
 // importing it would be a cycle.
 
 // TestSDLCLabelReconcile_ShippedDefaultsMatchTheEngine pins the two defaults

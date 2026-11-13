@@ -48,7 +48,7 @@ import (
 //
 // A worker host never sees a reference. The fleet node daemon receives the RESOLVED
 // envelope through the materialize verb, and its account wire shape carries no
-// reference field (pkg/fleet/account_client.go), so a daemon has neither the
+// reference field (pkg/orchestration/fleet/account_client.go), so a daemon has neither the
 // name nor any route to the store.
 // =============================================================================
 

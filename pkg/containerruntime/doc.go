@@ -21,7 +21,7 @@
 //
 // Where it runs:
 //
-//   - Only in the fleet node agent (the pkg/fleet daemon, `quicbaas fleet
+//   - Only in the fleet node agent (the pkg/orchestration/fleet daemon, `quicbaas fleet
 //     serve`), never in quicbaasd. quicbaasd stays CGO_ENABLED=0;
 //     TestDaemonNeverLinksContainerRuntime fails if the daemon links this
 //     package.

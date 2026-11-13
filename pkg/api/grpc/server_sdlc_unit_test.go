@@ -26,7 +26,7 @@ import (
 	pb "github.com/jeremyhahn/go-quicbaas/api/proto"
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
-	"github.com/jeremyhahn/go-quicbaas/pkg/sdlc"
+	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration/sdlc"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
@@ -276,7 +276,7 @@ func TestSDLCBindingConverters_CarryTheOnboardingBlock(t *testing.T) {
 // binding field that had no wire representation at all.
 //
 // WHAT THE GAP COST, MEASURED ON THE BURN-IN FLEET (2026-09-14): ReviewerConfig
-// existed in pkg/sdlc and in the REST body, but not in ProjectBinding.proto. So
+// existed in pkg/orchestration/sdlc and in the REST body, but not in ProjectBinding.proto. So
 // a reviewer could be configured over REST and nowhere else; `sdlc binding`
 // reported "reviewer: null" whether one was set or not; and because Bind
 // REPLACES the whole record, a rebind through gRPC silently erased the reviewer

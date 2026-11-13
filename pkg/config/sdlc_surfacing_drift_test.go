@@ -22,11 +22,11 @@ import (
 	"github.com/spf13/viper"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/config"
-	"github.com/jeremyhahn/go-quicbaas/pkg/sdlc"
+	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration/sdlc"
 )
 
 // An EXTERNAL test package, for the reason the stage-timeout drift test is one:
-// pkg/sdlc reaches pkg/config through pkg/interfaces and an in-package test
+// pkg/orchestration/sdlc reaches pkg/config through pkg/interfaces and an in-package test
 // importing it would be a cycle.
 
 // TestSDLCSurfacing_ShippedDefaultsMatchTheEngine pins the two defaults layers
@@ -66,7 +66,7 @@ func TestSDLCSurfacing_ShippedDefaultsMatchTheEngine(t *testing.T) {
 	}
 
 	// AND THE ACCEPTED RANGE MATCHES THE ENGINE'S OWN. pkg/config spells the
-	// bounds as literals because it cannot import pkg/sdlc; this is what stops
+	// bounds as literals because it cannot import pkg/orchestration/sdlc; this is what stops
 	// the two from separating, which would let the daemon accept a value its
 	// own engine refuses at construction.
 	if config.SDLCSurfacingMinPostTimeout != sdlc.MinPostTimeout {

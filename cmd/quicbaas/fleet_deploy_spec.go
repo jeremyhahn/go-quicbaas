@@ -26,7 +26,7 @@ import (
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/cli"
 	"github.com/jeremyhahn/go-quicbaas/pkg/config"
-	"github.com/jeremyhahn/go-quicbaas/pkg/fleet/deploy"
+	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration/fleet/deploy"
 )
 
 // The node-spec layer of `fleet deploy` and of the lifecycle commands

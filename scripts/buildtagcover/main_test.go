@@ -232,7 +232,7 @@ func TestCoverage_ALocalOnlyPassIsNotCIcoverage(t *testing.T) {
 // turn off for the stub half of the tree to compile. Getting it wrong is
 // silent in both directions: a missing tag leaves stubs compiled by nothing
 // (#299), and a spurious one turns off working code for no coverage, which is
-// what broke pkg/sdlc in the minimal pass (#304).
+// what broke pkg/orchestration/sdlc in the minimal pass (#304).
 func TestNegatedTagsIn(t *testing.T) {
 	cases := map[string][]string{
 		// The plain shapes.

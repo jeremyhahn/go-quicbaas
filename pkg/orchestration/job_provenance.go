@@ -44,7 +44,7 @@ import (
 //     every attempt but the last.
 //
 //   - PUBLISHED AS TASK ARTIFACTS — the branch, the head, the pull request and
-//     the review rounds. The module that runs the attempt (pkg/sdlc) publishes
+//     the review rounds. The module that runs the attempt (pkg/orchestration/sdlc) publishes
 //     them under the names below; this package READS them and never imports the
 //     module. That is what keeps a generic job page working for a runner this
 //     package has never heard of.

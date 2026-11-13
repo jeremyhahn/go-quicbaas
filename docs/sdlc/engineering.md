@@ -17,20 +17,20 @@ a file is edited.
 
 | Symbol | File | What it is |
 |---|---|---|
-| `sdlc.ProjectBinding` | `pkg/sdlc/binding.go` | The project's autonomous-development configuration. See [the fields](#the-project-binding) |
-| `sdlc.ForgeConfig` | `pkg/sdlc/binding.go` | The `forge:` half: type, API root, owner/repo, trigger label, label map, secret refs, pinned `SSHHostKey` |
-| `sdlc.ReviewPolicy` / `sdlc.RankingPolicy` | `pkg/sdlc/binding.go` | The review gate, and the project's contribution to dependency ranking |
+| `sdlc.ProjectBinding` | `pkg/orchestration/sdlc/binding.go` | The project's autonomous-development configuration. See [the fields](#the-project-binding) |
+| `sdlc.ForgeConfig` | `pkg/orchestration/sdlc/binding.go` | The `forge:` half: type, API root, owner/repo, trigger label, label map, secret refs, pinned `SSHHostKey` |
+| `sdlc.ReviewPolicy` / `sdlc.RankingPolicy` | `pkg/orchestration/sdlc/binding.go` | The review gate, and the project's contribution to dependency ranking |
 | `orchestration.AgentRef` | `pkg/orchestration` | The binding's `worker` and `triage` slots: an Agent or a pool, which carries the backend, the model and the image |
 | `sdlc.MergeTrainPolicy` / `sdlc.ClusteringPolicy` / `sdlc.OnboardingConfig` | `merge_train.go`, `triage_cluster.go`, `onboarding_config.go` | The binding's `merge_train`, `clustering` and `onboarding` blocks |
-| `sdlc.Delivery` | `pkg/sdlc/delivery.go` | What one attempt delivered: branch, base, target, head SHA, `DeliveryPullRequest`, `[]ReviewRecord`, `[]CheckRecord`, CI reruns and the last turn |
-| `sdlc.IssueSource` | `pkg/sdlc/issue_source.go` | The `forge_issue` `TaskSource`; `NewIssueSource(bindings, forges, clusters, pageLimit)` |
-| `sdlc.Hooks` | `pkg/sdlc/hooks.go` | The lifecycle moments; `NewHooks(HooksConfig)` |
-| `sdlc.SurfacePolicy` | `pkg/sdlc/blocked.go` | Retry attempts, interval and post timeout for surfacing a park to the issue |
-| `sdlc.UnblockCondition` / `sdlc.UnblockKind` | `pkg/sdlc/readmission.go` | The typed vocabulary a park is expressed in, and what a sweep can decide for itself |
-| `sdlc.DependencyAnalyzer` / `sdlc.DependencyManifest` | `pkg/sdlc/analyzer.go` | Blast-radius ranking inputs; `NewStaticManifestSource` for a declared graph |
-| `sdlc.WebhookRouteIndex` | `pkg/sdlc/webhook_index.go` | The system-plane index that routes an unauthenticated webhook to a tenant |
-| `sdlc.AttentionService` | `pkg/sdlc/attention_service.go` | The attention inbox: parked tasks that need a person, and their resolution |
-| `sdlc.IssueAdopter` | `pkg/sdlc/adopt.go` | Adopts an issue no task holds, optionally with its open pull request and an owner ruling |
+| `sdlc.Delivery` | `pkg/orchestration/sdlc/delivery.go` | What one attempt delivered: branch, base, target, head SHA, `DeliveryPullRequest`, `[]ReviewRecord`, `[]CheckRecord`, CI reruns and the last turn |
+| `sdlc.IssueSource` | `pkg/orchestration/sdlc/issue_source.go` | The `forge_issue` `TaskSource`; `NewIssueSource(bindings, forges, clusters, pageLimit)` |
+| `sdlc.Hooks` | `pkg/orchestration/sdlc/hooks.go` | The lifecycle moments; `NewHooks(HooksConfig)` |
+| `sdlc.SurfacePolicy` | `pkg/orchestration/sdlc/blocked.go` | Retry attempts, interval and post timeout for surfacing a park to the issue |
+| `sdlc.UnblockCondition` / `sdlc.UnblockKind` | `pkg/orchestration/sdlc/readmission.go` | The typed vocabulary a park is expressed in, and what a sweep can decide for itself |
+| `sdlc.DependencyAnalyzer` / `sdlc.DependencyManifest` | `pkg/orchestration/sdlc/analyzer.go` | Blast-radius ranking inputs; `NewStaticManifestSource` for a declared graph |
+| `sdlc.WebhookRouteIndex` | `pkg/orchestration/sdlc/webhook_index.go` | The system-plane index that routes an unauthenticated webhook to a tenant |
+| `sdlc.AttentionService` | `pkg/orchestration/sdlc/attention_service.go` | The attention inbox: parked tasks that need a person, and their resolution |
+| `sdlc.IssueAdopter` | `pkg/orchestration/sdlc/adopt.go` | Adopts an issue no task holds, optionally with its open pull request and an owner ruling |
 | `service.SDLCService` | `pkg/service/sdlc_service.go`, `sdlc_operator.go`, `sdlc_worker_image.go` | `Bind`, `Unbind`, `Binding`, `GetBinding`, `ListBindings`, `Onboard`, `Conformance`, `OpenWork`, `ReviewerSelection`, `SetReviewerOverride`, `ClearReviewerOverride`, `Delivery`, `AdoptIssue`, `Attention`, `FileIssue`, `Collaborators`, `WorkerImageStatus`, `RefreshWorkerImage`, `NudgeProject`, `ForgeFor`, `ForgeToken`, `WebhookSecret` |
 
 ## Invariants
@@ -92,7 +92,7 @@ A **binding** attaches an orchestration Project to a forge repository and is
 that project's autonomous-development configuration: which repository it
 delivers to, which SDLC it follows, which agent writes the code, what verifies
 the work, and how its pull requests are judged. It is `sdlc.ProjectBinding`
-(`pkg/sdlc/binding.go`), stored per tenant, and it is the only record the
+(`pkg/orchestration/sdlc/binding.go`), stored per tenant, and it is the only record the
 module owns besides the delivery.
 
 - The full wire shape, and every transport it travels on, is in
@@ -715,7 +715,7 @@ make build-worker-image WORKER_IMAGE_UID=997 WORKER_IMAGE_GID=997
 The image has **no meaningful entrypoint**, and does not need one: the spawn
 clears it and runs the agent binary as the container's command, and the clone
 is driven by the runner through the runtime's exec seam
-(`pkg/sdlc/checkout.go`) rather than by anything in the image.
+(`pkg/orchestration/sdlc/checkout.go`) rather than by anything in the image.
 
 ### The project side
 

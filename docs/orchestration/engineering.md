@@ -387,7 +387,7 @@ The in-repo job-less spawners decide it as follows:
 
 - the Signal bridge's chat spawn (`pkg/signalbridge/bot.go`) is kept: a chat
   session lives between the operator's messages until they close it;
-- the worker-image smoke test (`pkg/sdlc/workerimage/smoke.go`) is not: it
+- the worker-image smoke test (`pkg/orchestration/sdlc/workerimage/smoke.go`) is not: it
   is a probe, and an abandoned probe should be reaped;
 - the node's lead session (`pkg/server/lifecycle_agents.go`) needs no mark: it
   is excluded as the lead;
@@ -1658,7 +1658,7 @@ running.
 If the **remote daemon** restarts, its own in-process registry is lost and the
 prompt fails with `acp: session not found` from that host. Reconstituting a
 session on a remote daemon needs the same durable record and resume path inside
-`pkg/fleet`'s runtime; that is not implemented. Until it is, a remote daemon
+`pkg/orchestration/fleet`'s runtime; that is not implemented. Until it is, a remote daemon
 restart still ends its sessions.
 
 ### Related
@@ -3582,7 +3582,7 @@ The CLI flag is `--server` (it covers both planes — one process, one endpoint)
 
 | Term | Meaning | Examples |
 |------|---------|---------|
-| **QuicBaaS agent** (daemon) | The infrastructure daemon (`quicbaas fleet serve`) that runs on remote systems. Handles enrollment with the control plane, fleet heartbeat, and gRPC FleetRuntime service for spawn/prompt/status/close RPCs. Self-enrolls using OAuth2 Client Credentials, reuses pkg/orchestration backends (ACPBackend, OllamaBackend, ContainerRuntime), and enforces sandbox-first execution with tenant isolation. | `quicbaas fleet serve` CLI, `pkg/fleet/daemon.go`, FleetRuntime gRPC service on port 9091, heartbeat into fleet registry |
+| **QuicBaaS agent** (daemon) | The infrastructure daemon (`quicbaas fleet serve`) that runs on remote systems. Handles enrollment with the control plane, fleet heartbeat, and gRPC FleetRuntime service for spawn/prompt/status/close RPCs. Self-enrolls using OAuth2 Client Credentials, reuses pkg/orchestration backends (ACPBackend, OllamaBackend, ContainerRuntime), and enforces sandbox-first execution with tenant isolation. | `quicbaas fleet serve` CLI, `pkg/orchestration/fleet/daemon.go`, FleetRuntime gRPC service on port 9091, heartbeat into fleet registry |
 | **AI agent** / **orchestrated agent** | An AI coding tool (Claude Code, Codex, OpenCode) managed by the QuicBaaS orchestrator. Runs inside a container or on a developer machine. | Claude Code CLI, Codex CLI, OpenCode CLI |
 
 ### Why This Distinction Matters

@@ -20,7 +20,7 @@ import (
 	"testing"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
-	"github.com/jeremyhahn/go-quicbaas/pkg/sdlc"
+	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration/sdlc"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 	"github.com/jeremyhahn/go-quicbaas/pkg/testutil"
 )

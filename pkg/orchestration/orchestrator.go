@@ -2010,7 +2010,7 @@ func (s *agentServiceImpl) SpawnSession(ctx context.Context, req *SpawnSessionRe
 // names the daemon's own working directory, is never a host bind-mount source,
 // and is the one work-directory value the mount policy does not apply to.
 //
-// It is exported because the remote fleet node daemon (pkg/fleet) authorizes the
+// It is exported because the remote fleet node daemon (pkg/orchestration/fleet) authorizes the
 // same field against the same policy and must recognize the same sentinel; a
 // second copy of the literal in that package could drift from this one.
 const WorkDirCurrent = "."

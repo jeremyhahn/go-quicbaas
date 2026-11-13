@@ -22,7 +22,7 @@ import (
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
-	pkgsdlc "github.com/jeremyhahn/go-quicbaas/pkg/sdlc"
+	pkgsdlc "github.com/jeremyhahn/go-quicbaas/pkg/orchestration/sdlc"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 	"github.com/jeremyhahn/go-quicbaas/pkg/testutil/giteafake"
 	"github.com/jeremyhahn/go-quicbaas/pkg/testutil/qrdbnode"

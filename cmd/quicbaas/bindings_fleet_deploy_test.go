@@ -20,8 +20,8 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/jeremyhahn/go-quicbaas/pkg/fleet/deploy"
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
+	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration/fleet/deploy"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 	orchestratorSDK "github.com/jeremyhahn/go-quicbaas/sdk/go/client/orchestrator"
 )

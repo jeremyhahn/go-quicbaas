@@ -76,7 +76,7 @@ func TestDefaultDevClusterPorts(t *testing.T) {
 	})
 
 	// A fleet node agent co-located with a dev cluster node listens on 9091
-	// (pkg/fleet, `fleet serve --bind`), so no node may take it, and the gRPC
+	// (pkg/orchestration/fleet, `fleet serve --bind`), so no node may take it, and the gRPC
 	// ports of three nodes stay clear of every other default this repo binds.
 	t.Run("three nodes stay off the agent port and the server defaults", func(t *testing.T) {
 		const agentPort = 9091

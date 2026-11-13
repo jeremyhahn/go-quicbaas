@@ -13,7 +13,7 @@
 
 // Package server: embedded fleet node
 //
-// The embedded fleet node runs an in-process pkg/fleet Runtime alongside the
+// The embedded fleet node runs an in-process pkg/orchestration/fleet Runtime alongside the
 // quicbaasd orchestrator and registers it through the same fleet registry
 // that remote daemons use. Communication uses a bufconn.Listener so gRPC
 // call semantics are preserved without any network overhead.
@@ -46,12 +46,12 @@ import (
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/config"
-	"github.com/jeremyhahn/go-quicbaas/pkg/fleet"
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
 	"github.com/jeremyhahn/go-quicbaas/pkg/ollama"
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
+	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration/fleet"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 )
 
@@ -134,7 +134,7 @@ func (ea *embeddedFleetNode) stop(ctx context.Context) error {
 //
 // The embedded fleet node:
 //   - Issues a real mTLS cert from the local CA (first-class identity)
-//   - Boots a pkg/fleet Runtime with the configured backends
+//   - Boots a pkg/orchestration/fleet Runtime with the configured backends
 //   - Starts a GRPCSpawnServer on a bufconn.Listener (zero-network-overhead)
 //   - Registers in the fleet registry as FleetNodeKindEmbedded
 //   - Wires a ConnDialer into the remote resolver's backend pool so the

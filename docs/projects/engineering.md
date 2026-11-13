@@ -181,7 +181,7 @@ Unit tests run in memory: `make test-orchestration`, `make test-service`,
 | Store, name index, create race | `pkg/orchestration/project_store_test.go`, `project_create_race_test.go`, `project_store_tenant_context_test.go` |
 | Id | `pkg/orchestration/project_id_test.go` |
 | Matrix | `pkg/orchestration/project_authz_test.go`, `pkg/service/project_service_authz_test.go` |
-| Parking | `pkg/orchestration/project_park_test.go`, `pkg/service/project_park_test.go`, `pkg/sdlc/project_park_test.go` |
+| Parking | `pkg/orchestration/project_park_test.go`, `pkg/service/project_park_test.go`, `pkg/orchestration/sdlc/project_park_test.go` |
 | Git and signing history | `pkg/orchestration/project_git_test.go`, `project_git_retired_test.go`, `pkg/service/project_git_test.go`, `project_git_signing_test.go`, `project_signing_history_test.go`, `project_git_redaction_test.go` |
 | Service validation | `pkg/service/project_service_test.go`, `…_workflow_test.go`, `…_references_test.go`, `…_storage_test.go`, `…_session_rotation_test.go`, `…_autonomy_test.go`, `…_quota_test.go`, `…_tenant_store_test.go` |
 | Managed workspace | `pkg/service/project_provisioner_test.go` |

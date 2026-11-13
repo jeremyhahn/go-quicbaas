@@ -74,7 +74,7 @@ func (r *FleetHeartbeatReport) Observation() *FleetNodeObservation {
 	// observation is refused outright when it reports no backend at all
 	// (FleetNodeObservation.Validate), so a report carrying a capacity and no
 	// backends key would be rejected rather than reconciled — and there is
-	// no such report: pkg/fleet writes every field in one payload.
+	// no such report: pkg/orchestration/fleet writes every field in one payload.
 	observation := &FleetNodeObservation{
 		Backends:          append([]string{}, (*r.Backends)...),
 		MaxConcurrentJobs: r.MaxConcurrentJobs,

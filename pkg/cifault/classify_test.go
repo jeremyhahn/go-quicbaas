@@ -33,7 +33,7 @@ import (
 // trace back is a fixture nobody can re-derive.
 //
 // Sizes are deliberate: the classifier is handed a bounded tail in production
-// (pkg/sdlc reads at most DefaultChecksClassifyBytes per check), and a 43,787
+// (pkg/orchestration/sdlc reads at most DefaultChecksClassifyBytes per check), and a 43,787
 // line log committed to the tree would be a liability rather than evidence.
 
 // fixture reads one testdata log.
@@ -350,7 +350,7 @@ func TestClassify_FailureEvidenceVetoesVoid(t *testing.T) {
 
 	evidence := map[string]string{
 		"a failed go test":      "--- FAIL: TestSomethingReal (0.01s)",
-		"a failed package":      "FAIL\tgithub.com/jeremyhahn/go-quicbaas/pkg/fleet\t1.161s",
+		"a failed package":      "FAIL\tgithub.com/jeremyhahn/go-quicbaas/pkg/orchestration/fleet\t1.161s",
 		"a bare FAIL":           "FAIL",
 		"a panic":               "panic: runtime error: invalid memory address",
 		"a fatal runtime error": "fatal error: concurrent map writes",

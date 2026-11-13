@@ -235,10 +235,10 @@ conclusion, stall membership, and `JobContext.TaskID`/`Attempt`.
 | Runner | Shape | States |
 |---|---|---|
 | `workflow` (`ControlLoop`, registered by the engine's `init`) | a lead agent decomposes a description into a DAG of work items executed by workers | the engine's eleven non-terminal states, unchanged (thirteen with `completed`/`failed`) |
-| `sdlc` (`pkg/sdlc/runner.go`, registered by the module) | one issue, one branch, one worker; no lead, no decomposition | `initializing → executing → validating → reviewing → (re-delegating → executing \| completing) → cleanup`, plus `escalating`. Its recovery answers per state (`runnerResumeStates`); `escalating` resumes at `escalating` so the park is delivered before the job fails |
-| `triage` (`pkg/sdlc/triage_runner.go`, registered by the module) | the front half of the loop: which issues are ready to be worked, and marks them. Per **project**, not per task; one session for however many issues it judges | `initializing → executing → cleanup`. See [triage.md](../sdlc/triage.md) |
-| `merge_train` (`pkg/sdlc/merge_train_runner.go`, registered by the module) | one project's queue of approved changes: builds a train branch, runs CI once on it, bisects a red one, lands the verified prefix. Per **project**, off the worker budget; a container only while it builds | `initializing → executing → validating → completing → cleanup`, and `cleanup → initializing` while the queue holds more. `executing` resumes at `initializing` (the build is abandoned and redone under a new number); the others resume where they were. See [merge-train.md](../sdlc/merge-train.md) |
-| `review` (`pkg/sdlc/review_runner.go`, registered by the module) | one pull request, one head, one verdict; a reviewer that writes no code | `initializing → executing → completing → cleanup`. Every interrupted review resumes at `initializing`: the forge is the record, and the first step asks it whether this head already carries this reviewer's verdict |
+| `sdlc` (`pkg/orchestration/sdlc/runner.go`, registered by the module) | one issue, one branch, one worker; no lead, no decomposition | `initializing → executing → validating → reviewing → (re-delegating → executing \| completing) → cleanup`, plus `escalating`. Its recovery answers per state (`runnerResumeStates`); `escalating` resumes at `escalating` so the park is delivered before the job fails |
+| `triage` (`pkg/orchestration/sdlc/triage_runner.go`, registered by the module) | the front half of the loop: which issues are ready to be worked, and marks them. Per **project**, not per task; one session for however many issues it judges | `initializing → executing → cleanup`. See [triage.md](../sdlc/triage.md) |
+| `merge_train` (`pkg/orchestration/sdlc/merge_train_runner.go`, registered by the module) | one project's queue of approved changes: builds a train branch, runs CI once on it, bisects a red one, lands the verified prefix. Per **project**, off the worker budget; a container only while it builds | `initializing → executing → validating → completing → cleanup`, and `cleanup → initializing` while the queue holds more. `executing` resumes at `initializing` (the build is abandoned and redone under a new number); the others resume where they were. See [merge-train.md](../sdlc/merge-train.md) |
+| `review` (`pkg/orchestration/sdlc/review_runner.go`, registered by the module) | one pull request, one head, one verdict; a reviewer that writes no code | `initializing → executing → completing → cleanup`. Every interrupted review resumes at `initializing`: the forge is the record, and the first step asks it whether this head already carries this reviewer's verdict |
 
 `ControlLoop` does **not** itself implement `JobRunner` — its
 `Run(ctx, *JobConfig)` would collide — so `workflowRunner{}` is the stateless
@@ -348,7 +348,7 @@ the normal case, and the page links `agent_id` into the fleet.
 
 ### Delivery is read from artifacts, never from the module
 
-`pkg/orchestration` does not import `pkg/sdlc`. The git side of an attempt
+`pkg/orchestration` does not import `pkg/orchestration/sdlc`. The git side of an attempt
 reaches the job page because the module PUBLISHES it as Task artifacts under
 names the engine owns:
 
@@ -393,7 +393,7 @@ calls `Validators().RunPipeline` itself runs the gate and throws the answer
 away, which leaves the verification panel empty on exactly the runs a reader
 needs it for — a review-gate refusal and the redelegation that follows.
 
-The names are constants in `pkg/orchestration`, referenced by `pkg/sdlc`'s
+The names are constants in `pkg/orchestration`, referenced by `pkg/orchestration/sdlc`'s
 `Hooks.publish`, so a rename is a compile error rather than a page that
 quietly stops linking pull requests. (It quietly stopped once: the frontend
 filtered artifacts on `kind === 'pull_request'`, a kind the engine's own
@@ -426,7 +426,7 @@ functions; `JobDetailView.svelte` is their rendering.
 A record that names **no** runner is a workflow job — the engine's own reading
 of an empty `JobStatus.Runner`.
 
-**The worker's turn is split before it is shown.** `pkg/sdlc` records each
+**The worker's turn is split before it is shown.** `pkg/orchestration/sdlc` records each
 turn as `job.Audit("sdlc:agent_turn", turn.Describe())` (go-quicbaas#787), and
 `Describe` writes a header of `key=value` counts, a blank line, then the
 reply. The page splits at the FIRST blank line — the reply has blank lines of

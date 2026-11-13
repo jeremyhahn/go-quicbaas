@@ -303,7 +303,7 @@ func TestBoundedFaultReason(t *testing.T) {
 }
 
 // TestApplyConclusion_PersistsTheReasonADeathIsToldBy pins the contract every
-// later reader depends on, pkg/sdlc's reconciliation sweep included.
+// later reader depends on, pkg/orchestration/sdlc's reconciliation sweep included.
 //
 // applyDeath rests a reaped job whose budget is spent in the SAME shape an
 // explicit engine escalation leaves -- blocked/escalated, no fault class -- so

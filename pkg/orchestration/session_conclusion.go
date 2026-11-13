@@ -527,7 +527,7 @@ func (s *agentServiceImpl) concludeBackend(
 // its own and the scan below finds no other holder. A worker daemon's
 // credential cache is keyed by account by design — a burst of spawns onto one
 // account collapses onto one release, and therefore onto one grant
-// (pkg/fleet/account_grant.go) — so two concurrent sessions on that host can be
+// (pkg/orchestration/fleet/account_grant.go) — so two concurrent sessions on that host can be
 // serving under the same grant. Withdrawing it on the first conclusion would
 // refuse the other session's next refresh and break a job nobody ended, which
 // is a worse failure than the one the grant exists to prevent. So the last

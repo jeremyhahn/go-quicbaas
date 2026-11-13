@@ -37,8 +37,8 @@ import (
 	softwarefactoryworker "github.com/jeremyhahn/go-quicbaas/deployments/agents/software-factory-worker"
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
-	"github.com/jeremyhahn/go-quicbaas/pkg/sdlc"
-	"github.com/jeremyhahn/go-quicbaas/pkg/sdlc/workerimage"
+	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration/sdlc"
+	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration/sdlc/workerimage"
 )
 
 // =============================================================================

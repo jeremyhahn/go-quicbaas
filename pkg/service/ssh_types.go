@@ -19,7 +19,7 @@ import (
 
 	"golang.org/x/crypto/ssh"
 
-	"github.com/jeremyhahn/go-quicbaas/pkg/fleet/deploy"
+	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration/fleet/deploy"
 )
 
 // SSHSignerResolver resolves a named SSH key into an ssh.Signer. The

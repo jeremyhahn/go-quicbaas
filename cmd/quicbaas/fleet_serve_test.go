@@ -23,8 +23,8 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/jeremyhahn/go-quicbaas/pkg/fleet"
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
+	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration/fleet"
 )
 
 // TestStripURLScheme covers the URL-to-grpc-target normaliser used by

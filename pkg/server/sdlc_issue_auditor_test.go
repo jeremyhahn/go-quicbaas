@@ -19,7 +19,7 @@ import (
 	"testing"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
-	"github.com/jeremyhahn/go-quicbaas/pkg/sdlc"
+	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration/sdlc"
 )
 
 func TestSDLCIssueAuditor_RecordsAFilingWithItsActorAndIssue(t *testing.T) {

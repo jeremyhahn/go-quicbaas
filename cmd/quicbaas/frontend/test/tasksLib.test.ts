@@ -99,7 +99,7 @@ describe('pull request artifacts', () => {
   it('keeps the artifact the runner actually publishes: kind url, name pull_request', () => {
     // go-quicbaas#796: the filter used to test `kind === 'pull_request'`, a
     // kind the engine's artifact validator refuses, so a merged run's page
-    // linked nothing. These are the bytes pkg/sdlc publishes.
+    // linked nothing. These are the bytes pkg/orchestration/sdlc publishes.
     const prs = pullRequestArtifacts({
       output_artifacts: [
         { kind: 'commit', name: 'head', ref: { sha: 'abc', branch: 'issue/57' } },

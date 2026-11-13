@@ -1003,7 +1003,7 @@ type SDLCConfig struct {
 	TrainSweepInterval time.Duration `mapstructure:"train_sweep_interval"`
 
 	// WorkerImage configures the scheduled, gated refresh of the Software
-	// Factory worker image (pkg/sdlc/workerimage).
+	// Factory worker image (pkg/orchestration/sdlc/workerimage).
 	WorkerImage SDLCWorkerImage `mapstructure:"worker_image"`
 }
 
@@ -1199,7 +1199,7 @@ type SDLCSurfacing struct {
 // SDLCSurfacingMinPostTimeout and SDLCSurfacingMaxPostTimeout are the
 // accepted range of an explicit post_timeout. They mirror the module's own
 // bounds (sdlc.MinPostTimeout, sdlc.MaxPostTimeout); pkg/config cannot
-// import pkg/sdlc, and a drift test pins the pairs.
+// import pkg/orchestration/sdlc, and a drift test pins the pairs.
 const (
 	SDLCSurfacingMinPostTimeout = time.Millisecond
 	SDLCSurfacingMaxPostTimeout = 24 * time.Hour

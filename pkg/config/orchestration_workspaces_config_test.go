@@ -221,7 +221,7 @@ func TestOrchestrationConfig_SocketsRootIdentityIsTheAbsoluteDataDir(t *testing.
 func TestOrchestrationConfig_SocketsRootStaysUnderTheKernelsBudget(t *testing.T) {
 	// sun_path, the session directory the agent mints, the socket file and
 	// the two separators between them. Restated here rather than imported:
-	// pkg/sdlc imports this package, so the budget cannot be read back from
+	// pkg/orchestration/sdlc imports this package, so the budget cannot be read back from
 	// the consumer that enforces it.
 	const sunPath = 108
 	const longestSocketPath = sunPath - 1
@@ -257,7 +257,7 @@ func TestOrchestrationConfig_SocketsRootStaysUnderTheKernelsBudget(t *testing.T)
 // TestOrchestrationConfig_SocketsRootInstanceSegmentShape pins what the
 // segment is allowed to be: a fixed-width, path-safe name. A segment carrying
 // a separator or a variable width would break both the path arithmetic and
-// the sweep's name predicate in pkg/sdlc.
+// the sweep's name predicate in pkg/orchestration/sdlc.
 func TestOrchestrationConfig_SocketsRootInstanceSegmentShape(t *testing.T) {
 	t.Parallel()
 

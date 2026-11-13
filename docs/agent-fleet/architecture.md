@@ -19,10 +19,10 @@ folder owns the node side and the registry.
 |---|---|---|
 | Fleet registry | `pkg/orchestration/fleet_registry*.go` | Node records, status, last-seen, backends served |
 | Enrollment endpoint | `pkg/api/rest/handlers_fleet_enroll.go` | mTLS identity check, OAuth2 client minting, registry publish |
-| Node daemon | `pkg/fleet`, `cmd/quicbaas/fleet_serve.go` | Enrollment, heartbeat, the `FleetRuntime` gRPC service, sandboxed spawn |
-| Remote deploy | `pkg/fleet/deploy`, `pkg/service/fleet_deploy*.go`, `cmd/quicbaas/fleet_deploy*.go` | Node spec, preflight, SSH install, lifecycle |
+| Node daemon | `pkg/orchestration/fleet`, `cmd/quicbaas/fleet_serve.go` | Enrollment, heartbeat, the `FleetRuntime` gRPC service, sandboxed spawn |
+| Remote deploy | `pkg/orchestration/fleet/deploy`, `pkg/service/fleet_deploy*.go`, `cmd/quicbaas/fleet_deploy*.go` | Node spec, preflight, SSH install, lifecycle |
 | Embedded node | `pkg/server/embedded_fleet_node.go` | The same daemon, in the `quicbaasd` process |
-| Worker image refresh | `pkg/sdlc/workerimage` | The image sandboxed sessions run; see [worker-image.md](worker-image.md) |
+| Worker image refresh | `pkg/orchestration/sdlc/workerimage` | The image sandboxed sessions run; see [worker-image.md](worker-image.md) |
 
 ### The agent binary
 

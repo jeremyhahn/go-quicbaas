@@ -27,7 +27,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/cli"
-	"github.com/jeremyhahn/go-quicbaas/pkg/fleet/deploy"
+	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration/fleet/deploy"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 )
 
@@ -80,7 +80,7 @@ var (
 type FleetDeployServiceFactory func() (service.FleetDeployService, error)
 
 // fleetDeployServiceFactory is the production wiring: SSH primitives
-// from pkg/fleet/deploy + an SDK-backed fleet node lister.
+// from pkg/orchestration/fleet/deploy + an SDK-backed fleet node lister.
 var fleetDeployServiceFactory FleetDeployServiceFactory = createFleetDeployService
 
 // createFleetDeployService wires the SDK orchestrator client as the

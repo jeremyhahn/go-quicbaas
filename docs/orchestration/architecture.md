@@ -2838,7 +2838,7 @@ Orchestration agents do not currently have the service-account provisioning life
 
 `AgentIdentity` is populated by two different mechanisms today:
 
-1. **Fleet daemon enrollment** -- `pkg/fleet.ProductionEnroller.buildIdentity` builds an `AgentIdentity` from persisted enrollment credentials and the token exchange that follows. It fills `AgentID`, `ServiceAccountID`, `TenantID`, `Role`, `Scopes`, `ClientID`, and `ClientSecret`; `OIDCSubject` remains empty. Those credentials come from `POST /api/v1/fleet/enroll`, where the REST handler registers or rotates an OIDC application with `pkg/iam.AppManager.RegisterAgentApp`. The live `client_credentials` flow validates the presented secret through `pkg/iam` OIDC application storage (`ValidateClientSecret`) against the OIDC application store, not through `OrchestratorAuthService` service accounts.
+1. **Fleet daemon enrollment** -- `pkg/orchestration/fleet.ProductionEnroller.buildIdentity` builds an `AgentIdentity` from persisted enrollment credentials and the token exchange that follows. It fills `AgentID`, `ServiceAccountID`, `TenantID`, `Role`, `Scopes`, `ClientID`, and `ClientSecret`; `OIDCSubject` remains empty. Those credentials come from `POST /api/v1/fleet/enroll`, where the REST handler registers or rotates an OIDC application with `pkg/iam.AppManager.RegisterAgentApp`. The live `client_credentials` flow validates the presented secret through `pkg/iam` OIDC application storage (`ValidateClientSecret`) against the OIDC application store, not through `OrchestratorAuthService` service accounts.
 2. **Orchestration control loop attribution** -- `pkg/orchestration.ControlLoop.handleAssign` creates a role-keyed in-memory `AgentIdentity` when a job assigns work. It fills `AgentID` as `agent-<role>-<jobID>`, plus `TenantID`, `Role`, and `Scopes` from the workflow role. It leaves `ServiceAccountID`, `OIDCSubject`, `ClientID`, and `ClientSecret` empty. The control loop uses that record only for `turnAttribution`, so token usage is charged to a stable agent ID.
 
 Spawned session authorization does not come from the control-loop `AgentIdentity`. It comes from the qrdb user record written by `pkg/iam.IdentityStore.EnrollAgentSessionIdentity` for the session certificate, with qrdb's canonical SPKI thumbprint binding and `AgentSessionGrant()` permissions.
@@ -3203,7 +3203,7 @@ yet cross the fleet wire, so a remote turn's census is nil.
 | One-shot CLI (`--output-format json`) | text from the result object | nil |
 | remote_acp | whatever the daemon's backend kept | nil |
 
-The sdlc turn census (`pkg/sdlc/turn.go`) takes its tool count from
+The sdlc turn census (`pkg/orchestration/sdlc/turn.go`) takes its tool count from
 `PromptResponse.ToolUse`. When the census is nil, it counts the turn's
 `tool_use` blocks instead; a nil census with no `tool_use` block prints
 `tool_uses=unreported`. A turn whose tool use was not reported is never

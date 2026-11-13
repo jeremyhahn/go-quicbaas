@@ -22,8 +22,8 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/pkg/config"
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
-	"github.com/jeremyhahn/go-quicbaas/pkg/sdlc"
-	"github.com/jeremyhahn/go-quicbaas/pkg/sdlc/workerimage"
+	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration/sdlc"
+	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration/sdlc/workerimage"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 	"github.com/jeremyhahn/go-quicbaas/pkg/version"
 )
@@ -47,7 +47,7 @@ import (
 //   - Distribution to the rest of the fleet is the REGISTRY's job, not a
 //     build's: with sdlc.worker_image.registry set, the promoted image is
 //     pushed and bound by digest, and every agent running with --auto-pull
-//     fetches it before its first spawn of it (pkg/fleet, Runtime.ensureImage).
+//     fetches it before its first spawn of it (pkg/orchestration/fleet, Runtime.ensureImage).
 
 // sdlcWorkerImageLoop is the running refresh loop and the means to stop it.
 type sdlcWorkerImageLoop struct {

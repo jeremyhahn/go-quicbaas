@@ -22,7 +22,7 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
-	"github.com/jeremyhahn/go-quicbaas/pkg/sdlc"
+	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration/sdlc"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 	iamsdk "github.com/jeremyhahn/go-quicbaas/sdk/go/client/iam"
 	mcptransport "github.com/jeremyhahn/go-quicbaas/sdk/go/transport/mcp"

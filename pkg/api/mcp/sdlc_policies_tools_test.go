@@ -19,7 +19,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/jeremyhahn/go-quicbaas/pkg/sdlc"
+	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration/sdlc"
 )
 
 // TestSDLCTools_ARebindKeepsTheTrainAndClustering is the MCP half of the

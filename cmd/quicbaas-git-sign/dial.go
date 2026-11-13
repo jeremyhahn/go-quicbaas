@@ -22,7 +22,7 @@ import (
 	gossh "golang.org/x/crypto/ssh"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
-	"github.com/jeremyhahn/go-quicbaas/pkg/sdlc/gitsign"
+	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration/sdlc/gitsign"
 	sshclient "github.com/jeremyhahn/go-quicbaas/sdk/go/client/ssh"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/transport"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/transport/mcp"

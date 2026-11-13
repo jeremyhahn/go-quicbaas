@@ -16,14 +16,14 @@
 // built with, the labels it carries, the tag it is published under and the
 // probes it must pass.
 //
-// It exists so the daemon can rebuild the image by itself (pkg/sdlc/workerimage)
+// It exists so the daemon can rebuild the image by itself (pkg/orchestration/sdlc/workerimage)
 // from exactly what `make build-worker-image` builds, without a checkout of
 // this repository on the node: the Dockerfile is embedded, and the toolchain
 // pins are the repository's own (pkg/version/toolchain.mk, which the Makefile
 // includes and the binary embeds). There is no second copy of a pin anywhere.
 //
 // The package holds DATA and pure functions only. Driving an engine is
-// pkg/orchestration's; deciding when to rebuild is pkg/sdlc/workerimage's.
+// pkg/orchestration's; deciding when to rebuild is pkg/orchestration/sdlc/workerimage's.
 package softwarefactoryworker
 
 import (

@@ -25,7 +25,7 @@
 // a running node's prompts came from:
 //
 //	pkg/orchestration/promptdefaults/workflow/*.md   set "workflow", owned by the engine
-//	pkg/sdlc/promptdefaults/sdlc/*.md                set "sdlc",     owned by the SDLC module
+//	pkg/orchestration/sdlc/promptdefaults/sdlc/*.md                set "sdlc",     owned by the SDLC module
 //
 // Nothing in this package reads a file at runtime. A prompt's Default is
 // compiled in; a tenant's own copy lives in the store that is layered over

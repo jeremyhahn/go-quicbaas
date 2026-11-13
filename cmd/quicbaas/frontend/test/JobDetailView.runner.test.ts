@@ -101,7 +101,7 @@ function sdlcJob(over: Record<string, unknown> = {}): Record<string, unknown> {
       {
         timestamp: 8_000 * MS,
         type: 'sdlc:agent_turn',
-        // Verbatim pkg/sdlc AgentTurn.Describe output (#787): a header of
+        // Verbatim pkg/orchestration/sdlc AgentTurn.Describe output (#787): a header of
         // counts, a blank line, then the worker's own words.
         details:
           'attempt=3 round=1 elapsed=42.5s reply_bytes=812 tool_uses=4 stop_reason=end_turn ' +

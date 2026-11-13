@@ -41,7 +41,7 @@ tokens on code and judgement; every mechanical step is Go.
 | loop | what it does | where |
 |---|---|---|
 | inner | a state machine over **one** `JobRun` (initializing → decomposing → scheduling → assigning → executing → validating → reviewing → completing → cleanup); one iteration is one transition, and it never sees another job | `ControlLoop.RunJob`, `pkg/orchestration/control_loop.go` |
-| outer A | forge issues to Tasks: lists the open issues a project's sources report, stamps priority, adopts up to capacity in priority order | `TaskSourcePoller.Sweep`, `pkg/orchestration/task_source.go`; `IssueSource.Poll`, `pkg/sdlc/issue_source.go` |
+| outer A | forge issues to Tasks: lists the open issues a project's sources report, stamps priority, adopts up to capacity in priority order | `TaskSourcePoller.Sweep`, `pkg/orchestration/task_source.go`; `IssueSource.Poll`, `pkg/orchestration/sdlc/issue_source.go` |
 | outer B | Tasks to jobs: orders by priority, then age, then ID, and starts as many as admission allows; it retries whatever auto-spawn missed | `TaskDispatcher.Sweep`, `pkg/orchestration/task_dispatcher.go` |
 | maintenance | job-lease death, stall detection, session reconciliation | `agentServiceImpl.Sweep` (`job_admission.go`), `agentServiceImpl.SweepSessions` (`session_reconcile.go`) |
 
@@ -375,7 +375,7 @@ entrypoint and runs the agent binary as the container's command
 (`spawnContainerJSONRPC`), so an entrypoint that cloned would never run. The
 `sdlc` runner's `initializing` step drives the clone instead, as git commands
 exec'd into the container through `ContainerRuntime.Exec`
-(`pkg/sdlc/checkout.go`) — from the same spec written at the path below, which
+(`pkg/orchestration/sdlc/checkout.go`) — from the same spec written at the path below, which
 stays the one description of the checkout both sides act on.
 
 | Path in the container | What it is |
@@ -545,7 +545,7 @@ into a refusal the pre-flight makes for nothing.
 ### The pre-flight — the workspace is proved before anything is prompted
 
 After the clone and **before the first prompt**, the runner proves the checkout
-is the one the spec described (`pkg/sdlc/preflight.go`). Per repository — the
+is the one the spec described (`pkg/orchestration/sdlc/preflight.go`). Per repository — the
 project and every declared context repository — three facts, each a git probe
 whose exit status is the answer:
 
@@ -618,7 +618,7 @@ policy. So the container's identity exists only on the worker host, and the
 spawn response is the one place it can come home from.
 
 `SpawnSessionResponse.container_id` carries it. The daemon fills it from the
-session its backend returned (`pkg/fleet` `GRPCSpawnServer.Spawn`) and the
+session its backend returned (`pkg/orchestration/fleet` `GRPCSpawnServer.Spawn`) and the
 control plane reads it into the `Session` it builds
 (`RemoteACPBackend.Spawn`), from where the orchestrator copies it onto the live
 record, the durable record and its own `SpawnSessionResponse` — the same three

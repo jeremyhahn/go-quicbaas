@@ -16,7 +16,7 @@ train takes up to `max_size` of them, CI runs **once** on the stack, the
 project's reviewer reviews the stack as a whole, and the stack lands through
 one merge.
 
-The train is QuicBaaS's own (`pkg/sdlc/merge_train*.go`), not a forge
+The train is QuicBaaS's own (`pkg/orchestration/sdlc/merge_train*.go`), not a forge
 feature. Gitea has no merge queue, GitHub's is GitHub-only and GitLab's merge
 trains are a paid tier. Everything the train does is branches, pull requests,
 check runs, commit statuses and a merge call — verbs every forge adapter
@@ -403,7 +403,7 @@ keeps the comment as the record.
 
 ## Testing
 
-`go test -tags codec_json ./pkg/sdlc/ -run 'Train|MergeTrain'`:
+`go test -tags codec_json ./pkg/orchestration/sdlc/ -run 'Train|MergeTrain'`:
 
 - `merge_train_test.go` — the policy, the planner against every culprit
   position of trains up to eight long (and the probe count bound), the text,

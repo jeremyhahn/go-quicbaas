@@ -17,7 +17,7 @@ import (
 	"context"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
-	"github.com/jeremyhahn/go-quicbaas/pkg/sdlc"
+	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration/sdlc"
 )
 
 // sdlcAdoptionSkippedAction is the audit action of an issue the SDLC issue

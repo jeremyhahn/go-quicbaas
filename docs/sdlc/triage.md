@@ -37,7 +37,7 @@ envelope provides, so triage is a third `JobRunner` registered beside
 | | |
 |---|---|
 | Name | `triage` (`sdlc.TriageRunnerName`) |
-| Source | `pkg/sdlc/triage_runner.go` |
+| Source | `pkg/orchestration/sdlc/triage_runner.go` |
 | Registered by | `sdlcTriageForwarder` in `pkg/server/lifecycle_sdlc.go` |
 | Scope | one job per **project** (never per task) |
 | States | `initializing → executing → cleanup` |
@@ -75,7 +75,7 @@ property directly so it fails loudly the day somebody adds one and wires it in.
 ## The verdict is read from structure, never from prose
 
 The same rule, and the same shape, as the worker stop declaration in
-`pkg/sdlc/turn.go`: **the factory does not grep prose for a decision that costs
+`pkg/orchestration/sdlc/turn.go`: **the factory does not grep prose for a decision that costs
 something.** The agent ends its reply with a marker line and a code from a
 closed set, and nothing else is read.
 
@@ -301,7 +301,7 @@ makes the next stale. A backlog of small issues against one package paid all
 three once per issue. So triage batches at planning time: the issues a pass
 finds **ready** are admitted together, and related ones become ONE task, one
 branch and one pull request that closes every one of them
-(`pkg/sdlc/triage_cluster.go`, `triage_cluster_apply.go`).
+(`pkg/orchestration/sdlc/triage_cluster.go`, `triage_cluster_apply.go`).
 
 ### How related is decided — no model turn
 
@@ -504,7 +504,7 @@ judgement from a give-up: an OpenVINO turn reports each command it ran as a
 
 ## Where the prompt lives
 
-`pkg/sdlc/prompts/triage.md`, embedded with `go:embed` and served by
+`pkg/orchestration/sdlc/prompts/triage.md`, embedded with `go:embed` and served by
 `TriageCharter()`.
 
 **It is editable markdown, not a Go constant.** A triage agent's judgement is
@@ -518,10 +518,10 @@ for a generic prompt-set package with `system → tenant → project`
 inheritance, so a project can tune its own definition of "ready" —
 [prompt-sets.md](../software-factory/prompt-sets.md).
 
-When this landed, nothing under `pkg/orchestration` or `pkg/sdlc` implemented
+When this landed, nothing under `pkg/orchestration` or `pkg/orchestration/sdlc` implemented
 it. **#803 (scope 1 of 4) landed it in parallel, the same day**, bringing
 `pkg/orchestration/prompts` plus a per-owner set at
-`pkg/sdlc/promptdefaults/sdlc` with a spec registry, validator, renderer and
+`pkg/orchestration/sdlc/promptdefaults/sdlc` with a spec registry, validator, renderer and
 golden tests.
 
 So this charter **must move into that set** rather than remain a second way of
@@ -552,7 +552,7 @@ labels, the worker backend/model/image, the verification commands and the
 Triage clones whatever transport the project's `git.repo_url` names, so it needs
 whatever that transport is authenticated with: an https remote takes the forge
 token from the mounted token file, and an **ssh remote takes a client key and
-nothing else**. It gets both through `forgeAccess` (`pkg/sdlc/workspace.go`), the
+nothing else**. It gets both through `forgeAccess` (`pkg/orchestration/sdlc/workspace.go`), the
 one seam the delivery runner and the reviewer also use.
 
 Triage asks for `SigningScopeCheckout`. The agent serves the project's **access

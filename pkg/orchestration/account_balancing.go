@@ -40,7 +40,7 @@ import (
 // The leases looked like the obvious signal: one is written per credential
 // delivery and revoked when the session ends. But a worker daemon caches a
 // released credential per account and serves every session it spawns on that
-// account under the SAME grant (pkg/fleet/account_grant.go). So a daemon
+// account under the SAME grant (pkg/orchestration/fleet/account_grant.go). So a daemon
 // running three sessions on one account holds one lease, and a lease count
 // would undercount by exactly the concurrency this exists to measure. The
 // durable SessionRecord names the account every session was spawned on,

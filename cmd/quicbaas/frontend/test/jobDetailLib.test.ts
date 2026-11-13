@@ -218,7 +218,7 @@ describe('readmitAllowed', () => {
 });
 
 describe('parseAgentTurn', () => {
-  // The fixtures are what pkg/sdlc's AgentTurn.Describe writes (#787): a
+  // The fixtures are what pkg/orchestration/sdlc's AgentTurn.Describe writes (#787): a
   // single line of space-separated key=value counts, a blank line, then the
   // reply. Anything less faithful would be testing an invented format.
   const DESCRIBE_OUTPUT =

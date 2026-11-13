@@ -20,7 +20,7 @@ import (
 
 // HostMetrics is one fleet node's host-wide state at one heartbeat: CPU, load,
 // memory and the disk its work lives on. The daemon collects it
-// (pkg/fleet HostMetricsSampler) and reports it on the heartbeat
+// (pkg/orchestration/fleet HostMetricsSampler) and reports it on the heartbeat
 // (FleetNodeObservation.HostMetrics); the control plane keeps the latest
 // sample on the node's record and judges the node's health from it
 // (fleet_health.go).

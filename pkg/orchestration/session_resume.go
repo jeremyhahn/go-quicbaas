@@ -276,7 +276,7 @@ func (t *ReplayTranscript) PrimingMessage() string {
 // It is the part every reproduction of a session shares. PrimingMessage wraps
 // it for a process that is restored and must only acknowledge; a caller that
 // carries a conversation into a replacement session's next working prompt
-// wraps it in its own words (pkg/sdlc, go-quicbaas#997).
+// wraps it in its own words (pkg/orchestration/sdlc, go-quicbaas#997).
 func (t *ReplayTranscript) Render() string {
 	if t == nil {
 		return ""

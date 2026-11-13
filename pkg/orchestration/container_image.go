@@ -38,7 +38,7 @@ import (
 //
 // NONE OF THIS IS ON THE ContainerRuntime INTERFACE. The spawn path needs none
 // of it, and the one consumer that does — the Software Factory worker image
-// refresh (pkg/sdlc/workerimage) — names the narrow interface it needs. A
+// refresh (pkg/orchestration/sdlc/workerimage) — names the narrow interface it needs. A
 // remote fleet node's runtime therefore never grows a build surface.
 //
 // EVERY INVOCATION GOES THROUGH runImageCommand, a field for the same reason

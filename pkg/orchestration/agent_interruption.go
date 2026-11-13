@@ -34,7 +34,7 @@ import (
 //
 // THE AGENT IS THE ONLY PARTY THAT KNOWS IT IS SHUTTING DOWN, so it says so on
 // the one channel the control plane already reads: a turn that fails while the
-// agent drains is answered Unavailable rather than Internal (pkg/fleet,
+// agent drains is answered Unavailable rather than Internal (pkg/orchestration/fleet,
 // GRPCSpawnServer.Prompt). An agent that died outright cannot say anything, and
 // the transport answers for it with the same code. Either way the control
 // plane sees Unavailable — or Canceled on a stream its own caller did not
@@ -151,7 +151,7 @@ func wrapAgentInterruption(ctx context.Context, op, host, agentID string, rpcErr
 // isContainerTransportLoss reports whether err is a worker's container stream
 // that closed WITHOUT the worker's own non-zero exit — the container was
 // killed, its runtime failed, or its pipe was cut. A remote fleet node reports that
-// Unavailable (pkg/fleet, mapPromptError); this reads the same fact off a turn
+// Unavailable (pkg/orchestration/fleet, mapPromptError); this reads the same fact off a turn
 // whose backend ran in this process. A stream that closed with the worker's
 // non-zero exit is a crash, and is not matched here.
 func isContainerTransportLoss(err error) bool {

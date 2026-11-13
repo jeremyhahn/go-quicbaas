@@ -154,7 +154,7 @@ A project bound to a forge by the SDLC module has one repository:
 source issue as `owner/repo#number`. Before the SDLC runner acts on a task —
 on the hook path, at outcome reporting, in the unblock sweep and in the
 attention service — `ensureTaskSourceRepoMatchesBinding`
-(`pkg/sdlc/issue_source.go`) compares the two and refuses a mismatch with
+(`pkg/orchestration/sdlc/issue_source.go`) compares the two and refuses a mismatch with
 `TaskSourceRepoMismatchError` (`ErrTaskSourceRepoMismatch`), naming the task,
 the project, the binding's repository and the source's. A task can therefore
 never write to, label or close an issue in a repository its project is not
@@ -255,7 +255,7 @@ cannot substitute an identity.
 A key rotation must not orphan the commits the old key signed: the factory
 never rewrites a pushed branch. `CommitSigning.Retired` is the project's
 **trusted signing history** — the public half of each earlier key and the
-moment it was retired. The publisher (`VerifySigned`, `pkg/sdlc/publish.go`)
+moment it was retired. The publisher (`VerifySigned`, `pkg/orchestration/sdlc/publish.go`)
 accepts a commit when git reports a good signature and the signer is
 
 - the current key, for any commit; or
