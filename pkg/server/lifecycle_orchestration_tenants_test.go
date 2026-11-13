@@ -67,21 +67,38 @@ func TestIAMTenantLister_TenantExists(t *testing.T) {
 // finds no record.
 type catalogTenantManager struct {
 	iam.TenantManager
+	ids map[string]bool
 }
 
-func (catalogTenantManager) GetTenant(ctx context.Context, id string) (*iam.Tenant, error) {
-	if bound, ok := tenantctx.Lookup(ctx); !ok || !tenantctx.IsSystem(bound) {
+func (m catalogTenantManager) GetTenant(ctx context.Context, id string) (*iam.Tenant, error) {
+	if bound, ok := tenantctx.Lookup(ctx); !ok || !tenantctx.IsSystem(bound) || !m.ids[id] {
 		return nil, iam.NewTenantNotFoundError(id)
 	}
 	return &iam.Tenant{ID: id}, nil
 }
 
+// TestIAMTenantLister_TenantExistsReadsTheSystemCatalog is #1609: a caller
+// bound to a non-system tenant still finds the tenant IAM created, and an
+// unknown tenant is still absent.
 func TestIAMTenantLister_TenantExistsReadsTheSystemCatalog(t *testing.T) {
-	tenants := &iamTenantLister{tenants: catalogTenantManager{}}
+	tenants := &iamTenantLister{tenants: catalogTenantManager{ids: map[string]bool{"acme": true}}}
 	ctx := orchestration.ContextWithTenant(tenantctx.WithTenant(context.Background(), "acme"), "acme")
-	exists, err := tenants.TenantExists(ctx, "acme")
-	if err != nil || !exists {
-		t.Fatalf("TenantExists from inside the tenant = %v, %v; want the catalog record found", exists, err)
+
+	tests := []struct {
+		name     string
+		tenantID string
+		want     bool
+	}{
+		{"the caller's own tenant", "acme", true},
+		{"an unknown tenant", "globex", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := tenants.TenantExists(ctx, tt.tenantID)
+			if err != nil || got != tt.want {
+				t.Fatalf("TenantExists(%q) from inside tenant acme = %v, %v; want %v", tt.tenantID, got, err, tt.want)
+			}
+		})
 	}
 }
 
