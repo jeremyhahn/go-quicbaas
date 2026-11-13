@@ -20,8 +20,11 @@ import (
 	"crypto/sha256"
 	"crypto/x509"
 	"encoding/base64"
+	"errors"
+	"fmt"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/go-jose/go-jose/v4"
 	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
@@ -128,6 +131,24 @@ func (e *PublicKeyMarshalError) Unwrap() error {
 	return e.Cause
 }
 
+// SigningKeyReloadError is returned when another node created the shared
+// signing key first and its key could not be loaded after Attempts tries.
+type SigningKeyReloadError struct {
+	Attempts int
+	Conflict error
+	Cause    error
+}
+
+// Error implements the error interface.
+func (e *SigningKeyReloadError) Error() string {
+	return fmt.Sprintf("iam: signing key was created by another node but could not be loaded after %d attempts: %v", e.Attempts, e.Cause)
+}
+
+// Unwrap returns the create conflict and the last load error.
+func (e *SigningKeyReloadError) Unwrap() []error {
+	return []error{e.Conflict, e.Cause}
+}
+
 // computeKID derives a stable, deterministic key id from a public key. It is
 // the base64url (no padding) encoding of the SHA-256 digest of the key's
 // DER-encoded SubjectPublicKeyInfo (SPKI). Because it is a pure function of
@@ -162,30 +183,77 @@ func es256KeyAttributes(cn, tenantID, storeType string) *xkmssdk.KeyAttributes {
 	}
 }
 
+// signerSource is the xkms surface loadSignerForAttrs drives. Tests replace
+// it to simulate two nodes racing to create the shared key.
+type signerSource struct {
+	current        func(context.Context, *xkmssdk.KeyAttributes) (crypto.Signer, error)
+	generate       func(context.Context, *xkmssdk.KeyAttributes) (crypto.PrivateKey, error)
+	signer         func(context.Context, *xkmssdk.KeyAttributes) (crypto.Signer, error)
+	reloadAttempts int
+	reloadBackoff  time.Duration
+}
+
+// xkmsSignerSource is the production source: the process xkms service.
+var xkmsSignerSource = signerSource{
+	current:        xkms.CurrentSigner,
+	generate:       xkms.GenerateKey,
+	signer:         xkms.Signer,
+	reloadAttempts: 10,
+	reloadBackoff:  100 * time.Millisecond,
+}
+
 // loadSignerForAttrs performs get-or-create against xkms: it returns the
 // existing signer for attrs when the key is already present, otherwise it
 // generates the key and returns the new signer. This is idempotent across
 // restarts because xkms keystores persist key material; the first Signer call
-// succeeds for any previously created key.
+// succeeds for any previously created key. When another node wins the create
+// of the shared, replicated key, the loser's create fails with
+// ErrBackendKeyAlreadyExists and the winner's key is loaded instead.
 func loadSignerForAttrs(ctx context.Context, attrs *xkmssdk.KeyAttributes) (crypto.Signer, error) {
+	return xkmsSignerSource.load(ctx, attrs)
+}
+
+// load is the get-or-create of loadSignerForAttrs against this source.
+func (s signerSource) load(ctx context.Context, attrs *xkmssdk.KeyAttributes) (crypto.Signer, error) {
 	// The current version: after a rotation the key's live material is a
 	// later version, and a restart must sign with it, not with version 1.
-	signer, err := xkms.CurrentSigner(ctx, attrs)
+	signer, err := s.current(ctx, attrs)
 	if err == nil {
 		return signer, nil
 	}
 
 	// Generate on first boot (or when the key was removed). GenerateKey
 	// surfaces a real error if the backend cannot create the key.
-	if _, genErr := xkms.GenerateKey(ctx, attrs); genErr != nil {
+	_, genErr := s.generate(ctx, attrs)
+	if genErr == nil {
+		return s.signer(ctx, attrs)
+	}
+	if !errors.Is(genErr, xkmssdk.ErrBackendKeyAlreadyExists) {
 		return nil, genErr
 	}
+	return s.reloadCommitted(ctx, attrs, genErr)
+}
 
-	signer, err = xkms.Signer(ctx, attrs)
-	if err != nil {
-		return nil, err
+// reloadCommitted loads the key another node committed first, retrying while
+// the commit becomes visible on this node.
+func (s signerSource) reloadCommitted(ctx context.Context, attrs *xkmssdk.KeyAttributes, conflict error) (crypto.Signer, error) {
+	var lastErr error
+	for attempt := 1; attempt <= s.reloadAttempts; attempt++ {
+		signer, err := s.current(ctx, attrs)
+		if err == nil {
+			return signer, nil
+		}
+		lastErr = err
+		if attempt == s.reloadAttempts {
+			break
+		}
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(time.Duration(attempt) * s.reloadBackoff):
+		}
 	}
-	return signer, nil
+	return nil, &SigningKeyReloadError{Attempts: s.reloadAttempts, Conflict: conflict, Cause: lastErr}
 }
 
 // newKeyEntry derives the kid for a signer's public key and packages it as a
