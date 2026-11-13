@@ -24,6 +24,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/grpc"
 
 	kctypes "github.com/jeremyhahn/go-xkms/pkg/types"
 
@@ -60,7 +61,8 @@ func testGRPCGracePeriodWorkflow(t *testing.T, ctx context.Context) {
 	grpcEndpoints := getGRPCEndpoints()
 	tlsCfg1, tlsErr1 := helpers.IntegrationTLSConfig()
 	require.NoError(t, tlsErr1, "load integration TLS config")
-	grpcClient, err := grpcclient.NewClient(grpcEndpoints[0], grpcclient.WithTLSConfig(tlsCfg1))
+	grpcClient, err := grpcclient.NewClient(grpcEndpoints[0], grpcclient.WithTLSConfig(tlsCfg1),
+		grpcclient.WithDialOptions(grpc.WithPerRPCCredentials(helpers.TenantGRPCCredentials(t))))
 	require.NoError(t, err, "gRPC server must be available")
 	defer grpcClient.Close()
 
@@ -181,7 +183,8 @@ func testRESTGracePeriodWorkflow(t *testing.T, ctx context.Context) {
 	grpcEndpoints := getGRPCEndpoints()
 	tlsCfg2, tlsErr2 := helpers.IntegrationTLSConfig()
 	require.NoError(t, tlsErr2, "load integration TLS config")
-	grpcClient, err := grpcclient.NewClient(grpcEndpoints[0], grpcclient.WithTLSConfig(tlsCfg2))
+	grpcClient, err := grpcclient.NewClient(grpcEndpoints[0], grpcclient.WithTLSConfig(tlsCfg2),
+		grpcclient.WithDialOptions(grpc.WithPerRPCCredentials(helpers.TenantGRPCCredentials(t))))
 	require.NoError(t, err, "gRPC server must be available")
 	defer grpcClient.Close()
 
@@ -269,7 +272,8 @@ func TestGracePeriodJobCancellation(t *testing.T) {
 	grpcEndpoints := getGRPCEndpoints()
 	tlsCfg3, tlsErr3 := helpers.IntegrationTLSConfig()
 	require.NoError(t, tlsErr3, "load integration TLS config")
-	grpcClient, err := grpcclient.NewClient(grpcEndpoints[0], grpcclient.WithTLSConfig(tlsCfg3))
+	grpcClient, err := grpcclient.NewClient(grpcEndpoints[0], grpcclient.WithTLSConfig(tlsCfg3),
+		grpcclient.WithDialOptions(grpc.WithPerRPCCredentials(helpers.TenantGRPCCredentials(t))))
 	require.NoError(t, err, "must connect to gRPC server for cancellation test")
 	defer grpcClient.Close()
 
@@ -373,7 +377,8 @@ func TestMultipleGracePeriodRotations(t *testing.T) {
 	grpcEndpoints := getGRPCEndpoints()
 	tlsCfg4, tlsErr4 := helpers.IntegrationTLSConfig()
 	require.NoError(t, tlsErr4, "load integration TLS config")
-	grpcClient, err := grpcclient.NewClient(grpcEndpoints[0], grpcclient.WithTLSConfig(tlsCfg4))
+	grpcClient, err := grpcclient.NewClient(grpcEndpoints[0], grpcclient.WithTLSConfig(tlsCfg4),
+		grpcclient.WithDialOptions(grpc.WithPerRPCCredentials(helpers.TenantGRPCCredentials(t))))
 	require.NoError(t, err, "gRPC server must be available")
 	defer grpcClient.Close()
 
@@ -484,7 +489,8 @@ func TestGracePeriodWithEncryption(t *testing.T) {
 	grpcEndpoints := getGRPCEndpoints()
 	tlsCfg5, tlsErr5 := helpers.IntegrationTLSConfig()
 	require.NoError(t, tlsErr5, "load integration TLS config")
-	grpcClient, err := grpcclient.NewClient(grpcEndpoints[0], grpcclient.WithTLSConfig(tlsCfg5))
+	grpcClient, err := grpcclient.NewClient(grpcEndpoints[0], grpcclient.WithTLSConfig(tlsCfg5),
+		grpcclient.WithDialOptions(grpc.WithPerRPCCredentials(helpers.TenantGRPCCredentials(t))))
 	require.NoError(t, err, "gRPC server must be available")
 	defer grpcClient.Close()
 
