@@ -335,6 +335,7 @@ func (r *ToolRegistry) registerTools() {
 			"required": []string{"entityType"},
 		},
 	})
+	r.addEntityKVTools()
 
 	// Batch Operations
 	r.addTool(ToolDefinition{
@@ -1062,13 +1063,13 @@ func (r *ToolRegistry) ExecuteTool(ctx context.Context, name string, args map[st
 		return r.executeCryptoDecryptBatch(ctx, args)
 
 	// KV Operations
-	case "qrdb_put":
+	case "qrdb_put", "quicbaas_kv_put":
 		return r.executePut(ctx, args)
-	case "qrdb_get":
+	case "qrdb_get", "quicbaas_kv_get":
 		return r.executeGet(ctx, args)
-	case "qrdb_delete":
+	case "qrdb_delete", "quicbaas_kv_delete":
 		return r.executeDelete(ctx, args)
-	case "qrdb_list":
+	case "qrdb_list", "quicbaas_kv_list":
 		return r.executeList(ctx, args)
 
 	// Batch Operations
