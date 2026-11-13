@@ -847,6 +847,7 @@ func TestGetIAMService_NilIAMService(t *testing.T) {
 
 func TestExecuteIAMTool_Routes(t *testing.T) {
 	reg := newIAMTestRegistry(&mockIAMService{})
+	reg.SetRoleAssignmentAuthorizer(resolveTo(&rolesAssignAuthorizer{allow: true}))
 	ctx := tenantctx.WithTenant(context.Background(), "t1")
 
 	policyMap := map[string]interface{}{"name": "test-policy", "spec_yaml": "rules: []"}
@@ -937,7 +938,13 @@ func TestExecuteIAMTool_Routes(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result, err := reg.executeIAMTool(ctx, tt.toolName, tt.args)
+			callCtx := ctx
+			if _, ok := tt.args["roles"]; ok {
+				// A user write carrying roles needs an authenticated caller
+				// holding roles:assign (#2064).
+				callCtx = withCaller(ctx)
+			}
+			result, err := reg.executeIAMTool(callCtx, tt.toolName, tt.args)
 			require.NoError(t, err)
 			require.NotNil(t, result)
 		})
@@ -1706,7 +1713,8 @@ func TestExecuteIAMUserCreate_RolesForwarded(t *testing.T) {
 		"roles":     []interface{}{"role-a", "role-b"},
 	}
 
-	result, err := reg.executeIAMUserCreate(context.Background(), args)
+	reg.SetRoleAssignmentAuthorizer(resolveTo(&rolesAssignAuthorizer{allow: true}))
+	result, err := reg.executeIAMUserCreate(callerContext(), args)
 	require.NoError(t, err)
 	require.NotNil(t, result)
 	require.NotNil(t, captured)
@@ -1730,7 +1738,8 @@ func TestExecuteIAMUserCreate_UnknownRoleError(t *testing.T) {
 		"roles":     []interface{}{"no-such-role"},
 	}
 
-	result, err := reg.executeIAMUserCreate(context.Background(), args)
+	reg.SetRoleAssignmentAuthorizer(resolveTo(&rolesAssignAuthorizer{allow: true}))
+	result, err := reg.executeIAMUserCreate(callerContext(), args)
 	require.Error(t, err)
 	assert.Nil(t, result)
 	assert.True(t, dberrors.IsNotFound(err), "expected typed not-found, got %T: %v", err, err)
