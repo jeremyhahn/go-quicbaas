@@ -57,6 +57,10 @@ func (s *Server) startSealedRESTServer() error {
 		TLSEnabled:        s.config.Security.TLSEnabled,
 		TLSConfig:         clonedTLSConfig,
 		SPIFFETrustDomain: s.config.IAM.SPIFFETrustDomain,
+		// quicbaasd serves QUIC as REST over HTTP/3 on the UDP side of the
+		// REST port, as the full boot's unified server does, so a sealed
+		// node answers the allowlisted health routes over QUIC too.
+		HTTP3: clonedTLSConfig != nil,
 	}
 
 	restServer, err := newREST(s.sealedWindowFacade, restConfig, s.logger)
