@@ -559,11 +559,8 @@ func (o *Onboarder) ensureWebhook(
 			secret[i] = 0
 		}
 	}()
-	if len(secret) == 0 {
-		return false, "", &WebhookSecretMissingError{
-			ProjectID: binding.ProjectID,
-			Reason:    "the secret named by " + ref + " resolved empty",
-		}
+	if err := checkWebhookSecret(binding.ProjectID, ref, secret); err != nil {
+		return false, "", err
 	}
 
 	hookURL := o.WebhookURL(binding.ProjectID)

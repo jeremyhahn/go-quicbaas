@@ -254,7 +254,7 @@ func TestGiteaEnsureWebhook_IsIdempotentAgainstAStatefulForge(t *testing.T) {
 	}
 
 	for round := 1; round <= 2; round++ {
-		if err := backend.EnsureWebhook(context.Background(), testRepo, spec, []byte("s3cret")); err != nil {
+		if err := backend.EnsureWebhook(context.Background(), testRepo, spec, []byte("s3cret-webhook-key")); err != nil {
 			t.Fatalf("round %d: EnsureWebhook: %v", round, err)
 		}
 	}

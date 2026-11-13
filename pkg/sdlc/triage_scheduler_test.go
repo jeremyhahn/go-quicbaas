@@ -446,7 +446,7 @@ func newTriageWebhookIngestor(t *testing.T, store *Store, forge *fakeForge) *Web
 	ingestor, err := NewWebhookIngestor(
 		&staticWebhookRouter{tenantID: testTenant},
 		store,
-		&staticWebhookSecrets{secret: []byte("shhh")},
+		&staticWebhookSecrets{secret: []byte("shhh-webhook-key")},
 		&fakeForges{forge: forge},
 		&fakeNudger{},
 		nil, // no review trigger: this rig is about the triage wake alone

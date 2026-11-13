@@ -46,6 +46,8 @@ func TestTypedErrors_NameTheirSubjectAndUnwrap(t *testing.T) {
 		{&ForgeNotReadyError{Type: "gitea", Operation: "merge", Subject: "s"}, ErrForgeNotReady, "merge s"},
 		{&WebhookUnverifiedError{Type: "gitea", Reason: "hmac"}, ErrWebhookUnverified, "hmac"},
 		{&WebhookSecretMissingError{ProjectID: "p", Reason: "r"}, ErrWebhookSecretMissing, "project p"},
+		{&WebhookSecretTooShortError{ProjectID: "p", Ref: "wh", Length: 6}, ErrWebhookSecretTooShort, "wh is 6 bytes, want at least 14"},
+		{&WebhookSecretTooShortError{ProjectID: "p", Ref: "wh", Length: 6}, ErrWebhookSecretMissing, "project p cannot verify"},
 		{&WebhookRepoMismatchError{ProjectID: "p", Configured: RepoRef{Owner: "a", Repo: "b"}, Delivered: RepoRef{Owner: "c", Repo: "d"}}, ErrWebhookRepoMismatch, "a/b"},
 		{&TaskSourceRepoMismatchError{TaskID: "t", ProjectID: "p", Binding: RepoRef{Owner: "a", Repo: "b"}, Source: RepoRef{Owner: "c", Repo: "d"}}, ErrTaskSourceRepoMismatch, "task t in project p is bound to a/b"},
 		{&MergeNotReadyExhaustedError{Subject: "s", Attempts: 2, Last: errors.New("x")}, ErrMergeNotReadyExhausted, "2 attempt(s): x"},

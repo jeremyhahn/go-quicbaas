@@ -241,11 +241,8 @@ func (i *WebhookIngestor) Ingest(ctx context.Context, delivery WebhookDelivery) 
 		return nil, backendError("WebhookSecret", err)
 	}
 	defer secure.Wipe(secret)
-	if len(secret) == 0 {
-		return nil, &WebhookSecretMissingError{
-			ProjectID: binding.ProjectID,
-			Reason:    "the secret named by " + binding.Forge.WebhookSecretRef + " resolved empty",
-		}
+	if err := checkWebhookSecret(binding.ProjectID, binding.Forge.WebhookSecretRef, secret); err != nil {
+		return nil, err
 	}
 	forge, err := i.forges.ForgeFor(ctx, tenantID, binding.Forge)
 	if err != nil {

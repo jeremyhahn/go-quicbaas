@@ -72,7 +72,7 @@ func newWebhookRig(t *testing.T) *webhookRig {
 	}
 	forge := newFakeForge()
 	nudger := &fakeNudger{}
-	secrets := &staticSecrets{secrets: map[string][]byte{"wh": []byte("s3cret")}}
+	secrets := &staticSecrets{secrets: map[string][]byte{"wh": []byte("s3cret-webhook-key")}}
 	reviews := &fakeReviewTrigger{}
 	ingestor, err := NewWebhookIngestor(&staticRoutes{tenants: map[string]string{testProject: testTenant}}, store, secrets, &fakeForges{forge: forge}, nudger, reviews)
 	if err != nil {
@@ -156,8 +156,11 @@ func TestWebhookIngest_Refusals(t *testing.T) {
 		"bad signature": {func(r *webhookRig, _ *WebhookDelivery) {
 			r.forge.verifyErr = &WebhookUnverifiedError{Type: ForgeGitea, Reason: "hmac"}
 		}, ErrWebhookUnverified},
-		"empty secret":      {func(r *webhookRig, _ *WebhookDelivery) { r.secrets.secrets["wh"] = nil }, ErrWebhookSecretMissing},
-		"secret unreadable": {func(r *webhookRig, _ *WebhookDelivery) { r.secrets.err = errors.New("sealed") }, ErrBackend},
+		"empty secret": {func(r *webhookRig, _ *WebhookDelivery) { r.secrets.secrets["wh"] = nil }, ErrWebhookSecretMissing},
+		// A sub-112-bit key panics crypto/hmac under fips140=only: the
+		// ingestor refuses it as configuration before any forge verifies.
+		"secret under 112 bits": {func(r *webhookRig, _ *WebhookDelivery) { r.secrets.secrets["wh"] = []byte("s3cret") }, ErrWebhookSecretTooShort},
+		"secret unreadable":     {func(r *webhookRig, _ *WebhookDelivery) { r.secrets.err = errors.New("sealed") }, ErrBackend},
 		"repo mismatch": {func(r *webhookRig, _ *WebhookDelivery) {
 			r.forge.parseEvent = &ForgeEvent{Kind: EventIssueOpened, Repo: RepoRef{Owner: "other", Repo: "repo"}}
 		}, ErrWebhookRepoMismatch},

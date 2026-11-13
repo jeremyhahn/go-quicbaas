@@ -66,7 +66,7 @@ func (f *giteaForges) ForgeFor(context.Context, string, ForgeConfig) (ForgeBacke
 // zeroizes what it is given, and a shared slice would empty on the first pass
 // and make the second look like a missing secret.
 func onboardingSecrets() *staticSecrets {
-	return &staticSecrets{secrets: map[string][]byte{"wh": []byte("hmac")}}
+	return &staticSecrets{secrets: map[string][]byte{"wh": []byte("hmac-webhook-key")}}
 }
 
 // newOnboarderAgainstGitea wires an onboarder onto a fresh stateful Gitea.
@@ -371,6 +371,30 @@ func TestOnboard_RefusesAnEmptyWebhookSecret(t *testing.T) {
 	_, err = onboarder.Onboard(context.Background(), testTenant, onboardTestBinding())
 	if !errors.Is(err, ErrWebhookSecretMissing) {
 		t.Fatalf("error = %v, want ErrWebhookSecretMissing", err)
+	}
+	if got := gitea.HookURLs(); len(got) != 0 {
+		t.Errorf("hooks = %v, want none", got)
+	}
+}
+
+// TestOnboard_RefusesAShortWebhookSecret: a key under 112 bits makes
+// crypto/hmac panic under fips140=only on the first delivery, so it is
+// refused at configuration time with a typed error and no hook is created.
+func TestOnboard_RefusesAShortWebhookSecret(t *testing.T) {
+	backend, gitea := newStatefulGitea(t)
+	secrets := &staticSecrets{secrets: map[string][]byte{"wh": []byte("s3cret")}}
+	onboarder, err := NewOnboarder(&giteaForges{backend: backend}, secrets, onboardingHookBase)
+	if err != nil {
+		t.Fatalf("NewOnboarder: %v", err)
+	}
+
+	_, err = onboarder.Onboard(context.Background(), testTenant, onboardTestBinding())
+	var short *WebhookSecretTooShortError
+	if !errors.As(err, &short) || !errors.Is(err, ErrWebhookSecretTooShort) {
+		t.Fatalf("error = %v, want a WebhookSecretTooShortError", err)
+	}
+	if short.Length != 6 || strings.Contains(err.Error(), "s3cret") {
+		t.Errorf("error = %v: want the length 6 and never the secret's bytes", err)
 	}
 	if got := gitea.HookURLs(); len(got) != 0 {
 		t.Errorf("hooks = %v, want none", got)

@@ -53,6 +53,11 @@ func (g *GitHubBackend) VerifyWebhook(payload []byte, signature string, secret [
 	if len(secret) == 0 {
 		return &WebhookUnverifiedError{Type: ForgeGitHub, Reason: "no signing secret is configured"}
 	}
+	if len(secret) < MinWebhookSecretBytes {
+		// crypto/hmac panics on a sub-112-bit key under fips140=only: refuse
+		// it as unverifiable instead.
+		return &WebhookUnverifiedError{Type: ForgeGitHub, Reason: "the signing secret is shorter than 112 bits"}
+	}
 	if signature == "" {
 		return &WebhookUnverifiedError{Type: ForgeGitHub, Reason: "delivery carried no signature"}
 	}

@@ -26,7 +26,7 @@ import (
 )
 
 // githubWebhookSecret signs every delivery in these tests.
-var githubWebhookSecret = []byte("s3cret")
+var githubWebhookSecret = []byte("s3cret-webhook-key")
 
 // githubSign is the X-Hub-Signature-256 value GitHub sends for payload.
 func githubSign(payload, secret []byte) string {
@@ -54,14 +54,15 @@ func TestGitHubVerifyWebhook_RefusesEveryUnprovenDelivery(t *testing.T) {
 		signature string
 		secret    []byte
 	}{
-		"no secret":           {payload, valid, nil},
-		"no signature":        {payload, "", githubWebhookSecret},
-		"the legacy sha1":     {payload, "sha1=" + strings.TrimPrefix(valid, githubSignaturePrefix), githubWebhookSecret},
-		"not hex":             {payload, "sha256=zz", githubWebhookSecret},
-		"another secret":      {payload, githubSign(payload, []byte("other")), githubWebhookSecret},
-		"a tampered payload":  {[]byte(`{"action":"closed"}`), valid, githubWebhookSecret},
-		"a truncated digest":  {payload, valid[:len(valid)-2], githubWebhookSecret},
-		"an unprefixed match": {payload, strings.TrimPrefix(valid, githubSignaturePrefix), githubWebhookSecret},
+		"no secret":            {payload, valid, nil},
+		"no signature":         {payload, "", githubWebhookSecret},
+		"the legacy sha1":      {payload, "sha1=" + strings.TrimPrefix(valid, githubSignaturePrefix), githubWebhookSecret},
+		"not hex":              {payload, "sha256=zz", githubWebhookSecret},
+		"another secret":       {payload, githubSign(payload, []byte("other-webhook-key")), githubWebhookSecret},
+		"a tampered payload":   {[]byte(`{"action":"closed"}`), valid, githubWebhookSecret},
+		"a truncated digest":   {payload, valid[:len(valid)-2], githubWebhookSecret},
+		"an unprefixed match":  {payload, strings.TrimPrefix(valid, githubSignaturePrefix), githubWebhookSecret},
+		"a sub-112-bit secret": {payload, githubSignaturePrefix + shortKeySignature, []byte("s3cret")},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {

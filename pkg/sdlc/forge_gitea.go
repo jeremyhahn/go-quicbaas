@@ -2097,6 +2097,11 @@ func (g *GiteaBackend) VerifyWebhook(payload []byte, signature string, secret []
 	if len(secret) == 0 {
 		return &WebhookUnverifiedError{Type: ForgeGitea, Reason: "no signing secret is configured"}
 	}
+	if len(secret) < MinWebhookSecretBytes {
+		// crypto/hmac panics on a sub-112-bit key under fips140=only: refuse
+		// it as unverifiable instead.
+		return &WebhookUnverifiedError{Type: ForgeGitea, Reason: "the signing secret is shorter than 112 bits"}
+	}
 	if signature == "" {
 		return &WebhookUnverifiedError{Type: ForgeGitea, Reason: "delivery carried no signature"}
 	}

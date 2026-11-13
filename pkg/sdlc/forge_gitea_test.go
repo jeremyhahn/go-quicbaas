@@ -1413,12 +1413,17 @@ func signGitea(t *testing.T, payload, secret []byte) string {
 	return hex.EncodeToString(mac.Sum(nil))
 }
 
+// shortKeySignature is HMAC-SHA256 of {"action":"opened"} under the 6-byte
+// key "s3cret", precomputed: computing it in a test would panic under
+// GODEBUG=fips140=only, and the backends must refuse such a key, not sign.
+const shortKeySignature = "3ef76f8f67c2839504b3534592c6f42cabaa13dca21ed349ad19be2f2124b158"
+
 // TestVerifyWebhook_AcceptsOnlyAGenuineSignature covers the one delivery that
 // should be processed.
 func TestVerifyWebhook_AcceptsOnlyAGenuineSignature(t *testing.T) {
 	backend, _ := newGiteaFixture(t)
 	payload := []byte(`{"action":"opened"}`)
-	secret := []byte("s3cret")
+	secret := []byte("s3cret-webhook-key")
 
 	if err := backend.VerifyWebhook(payload, signGitea(t, payload, secret), secret); err != nil {
 		t.Fatalf("a genuine delivery was rejected: %v", err)
@@ -1436,7 +1441,7 @@ func TestVerifyWebhook_AcceptsOnlyAGenuineSignature(t *testing.T) {
 func TestVerifyWebhook_FailsClosedOnEveryUnverifiablePath(t *testing.T) {
 	backend, _ := newGiteaFixture(t)
 	payload := []byte(`{"action":"opened"}`)
-	secret := []byte("s3cret")
+	secret := []byte("s3cret-webhook-key")
 	genuine := signGitea(t, payload, secret)
 
 	cases := map[string]struct {
@@ -1448,8 +1453,11 @@ func TestVerifyWebhook_FailsClosedOnEveryUnverifiablePath(t *testing.T) {
 		"no signature sent":       {payload, "", secret},
 		"signature is not hex":    {payload, "not-hex-at-all", secret},
 		"signature of a lie":      {[]byte(`{"action":"tampered"}`), genuine, secret},
-		"signed by the wrong key": {payload, signGitea(t, payload, []byte("other")), secret},
+		"signed by the wrong key": {payload, signGitea(t, payload, []byte("other-webhook-key")), secret},
 		"truncated signature":     {payload, genuine[:len(genuine)-2], secret},
+		// HMAC-SHA256 of payload under the 6-byte key "s3cret", precomputed:
+		// signing it here would panic under fips140=only, which is the point.
+		"secret under 112 bits": {payload, shortKeySignature, []byte("s3cret")},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -1475,7 +1483,7 @@ func TestVerifyWebhook_NeverQuotesTheUnverifiedPayload(t *testing.T) {
 	marker := "ATTACKER-CONTROLLED-MARKER"
 	payload := []byte(`{"action":"` + marker + `"}`)
 
-	err := backend.VerifyWebhook(payload, "deadbeef", []byte("s3cret"))
+	err := backend.VerifyWebhook(payload, "deadbeef", []byte("s3cret-webhook-key"))
 	if err == nil {
 		t.Fatal("expected a refusal")
 	}
@@ -1731,7 +1739,7 @@ func TestEnsureWebhook_CreatesThenVerifiesByReadBack(t *testing.T) {
 	}
 
 	if err := backend.EnsureWebhook(context.Background(), testRepo,
-		WebhookSpec{URL: "http://module/hook", Events: []string{"issues"}}, []byte("s3cret")); err != nil {
+		WebhookSpec{URL: "http://module/hook", Events: []string{"issues"}}, []byte("s3cret-webhook-key")); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
@@ -1743,7 +1751,7 @@ func TestEnsureWebhook_ReportsADeliveryThatNeverAppeared(t *testing.T) {
 	fixture.respondJSON("POST /api/v1/repos/jeremyhahn/go-quicbaas/hooks", http.StatusCreated, nil)
 
 	err := backend.EnsureWebhook(context.Background(), testRepo,
-		WebhookSpec{URL: "http://module/hook", Events: []string{"issues"}}, []byte("s3cret"))
+		WebhookSpec{URL: "http://module/hook", Events: []string{"issues"}}, []byte("s3cret-webhook-key"))
 	if !errors.Is(err, ErrForgeWriteNotApplied) {
 		t.Fatalf("error = %v, want ErrForgeWriteNotApplied", err)
 	}
@@ -1858,7 +1866,7 @@ func TestEnsureWebhook_UpdatesTheExistingDeliveryRatherThanAddingASecond(t *test
 	}
 
 	if err := backend.EnsureWebhook(context.Background(), testRepo,
-		WebhookSpec{URL: "http://module/hook", Events: []string{"issues", "pull_request"}}, []byte("s3cret")); err != nil {
+		WebhookSpec{URL: "http://module/hook", Events: []string{"issues", "pull_request"}}, []byte("s3cret-webhook-key")); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	for _, req := range fixture.requests {
@@ -1881,7 +1889,7 @@ func TestEnsureWebhook_ReportsADeliveryLeftInactive(t *testing.T) {
 	fixture.respondJSON("PATCH /api/v1/repos/jeremyhahn/go-quicbaas/hooks/9", http.StatusOK, nil)
 
 	err := backend.EnsureWebhook(context.Background(), testRepo,
-		WebhookSpec{URL: "http://module/hook", Events: []string{"issues"}}, []byte("s3cret"))
+		WebhookSpec{URL: "http://module/hook", Events: []string{"issues"}}, []byte("s3cret-webhook-key"))
 	if !errors.Is(err, ErrForgeWriteNotApplied) {
 		t.Fatalf("error = %v, want ErrForgeWriteNotApplied", err)
 	}
@@ -2104,7 +2112,7 @@ func TestEnsureWebhook_RejectsASubscriptionNobodyAskedFor(t *testing.T) {
 	fixture.respondJSON("PATCH /api/v1/repos/jeremyhahn/go-quicbaas/hooks/9", http.StatusOK, nil)
 
 	err := backend.EnsureWebhook(context.Background(), testRepo,
-		WebhookSpec{URL: "http://module/hook", Events: []string{"issues"}}, []byte("s3cret"))
+		WebhookSpec{URL: "http://module/hook", Events: []string{"issues"}}, []byte("s3cret-webhook-key"))
 	if !errors.Is(err, ErrForgeWriteNotApplied) {
 		t.Fatalf("error = %v, want ErrForgeWriteNotApplied", err)
 	}
@@ -2129,7 +2137,7 @@ func TestEnsureWebhook_AcceptsGiteaSOwnFamilyExpansion(t *testing.T) {
 	fixture.respondJSON("PATCH /api/v1/repos/jeremyhahn/go-quicbaas/hooks/9", http.StatusOK, nil)
 
 	if err := backend.EnsureWebhook(context.Background(), testRepo,
-		WebhookSpec{URL: "http://module/hook", Events: []string{"issues"}}, []byte("s3cret")); err != nil {
+		WebhookSpec{URL: "http://module/hook", Events: []string{"issues"}}, []byte("s3cret-webhook-key")); err != nil {
 		t.Fatalf("gitea's own expansion was reported as a failed write: %v", err)
 	}
 }

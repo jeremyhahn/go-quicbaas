@@ -84,6 +84,12 @@ var (
 	// the named secret resolved empty.
 	ErrWebhookSecretMissing = errors.New("sdlc: no webhook verification secret is configured")
 
+	// ErrWebhookSecretTooShort indicates the named webhook secret is shorter
+	// than MinWebhookSecretBytes. Such a key is below the 112-bit HMAC floor
+	// FIPS 140-3 sets (crypto/hmac panics on it under GODEBUG=fips140=only),
+	// so the binding is refused before any signature is computed with it.
+	ErrWebhookSecretTooShort = errors.New("sdlc: webhook verification secret is shorter than 112 bits")
+
 	// ErrWebhookRepoMismatch indicates a delivery describes a repository other
 	// than the one the binding names.
 	// ErrWebhookRepoMismatch indicates a delivery describes a repository other
@@ -491,6 +497,45 @@ func (e *WebhookSecretMissingError) Error() string {
 
 // Unwrap returns the sentinel for errors.Is support.
 func (e *WebhookSecretMissingError) Unwrap() error { return ErrWebhookSecretMissing }
+
+// MinWebhookSecretBytes is the shortest webhook secret a binding may name:
+// 14 bytes is 112 bits, the HMAC key floor of FIPS 140-3. A shorter key
+// makes crypto/hmac panic under GODEBUG=fips140=only, so it is refused as
+// configuration rather than discovered as a panic on the first delivery.
+const MinWebhookSecretBytes = 14
+
+// WebhookSecretTooShortError reports a binding whose webhook secret is
+// shorter than MinWebhookSecretBytes. It matches ErrWebhookSecretTooShort
+// and, because such a binding cannot verify a delivery, ErrWebhookSecretMissing.
+type WebhookSecretTooShortError struct {
+	ProjectID string
+	Ref       string
+	Length    int
+}
+
+// Error implements the error interface. It names the secret's reference
+// and length, never its bytes.
+func (e *WebhookSecretTooShortError) Error() string {
+	return "sdlc: project " + e.ProjectID + " cannot verify webhook deliveries: the secret named by " + e.Ref +
+		" is " + strconv.Itoa(e.Length) + " bytes, want at least " + strconv.Itoa(MinWebhookSecretBytes)
+}
+
+// Unwrap returns the sentinels for errors.Is support.
+func (e *WebhookSecretTooShortError) Unwrap() []error {
+	return []error{ErrWebhookSecretTooShort, ErrWebhookSecretMissing}
+}
+
+// checkWebhookSecret refuses a webhook secret that is empty or shorter than
+// MinWebhookSecretBytes, with the typed error for each.
+func checkWebhookSecret(projectID, ref string, secret []byte) error {
+	if len(secret) == 0 {
+		return &WebhookSecretMissingError{ProjectID: projectID, Reason: "the secret named by " + ref + " resolved empty"}
+	}
+	if len(secret) < MinWebhookSecretBytes {
+		return &WebhookSecretTooShortError{ProjectID: projectID, Ref: ref, Length: len(secret)}
+	}
+	return nil
+}
 
 // WebhookRepoMismatchError reports a delivery about a repository the binding
 // does not name.
