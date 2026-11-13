@@ -44,7 +44,7 @@ existing shape:
 | `deployment/` | Operational guides — Kubernetes manifests, production checklist. Not a capability. |
 | `design/` | Working design documents and roadmaps for work that is planned, not built. A feature folder describes what exists. |
 | `identity-refactor/` | A cross-repo migration plan, still awaiting sign-off. |
-| `testing/` | Contributor guides for running the suites. |
+| `testing/` | Contributor guides for running the suites; `testing/tests-that-assert-the-bug.md` lists signs of a test that asserts a defect. |
 | `release/` | What must be true of the tree before it is published, and the gates that enforce it. |
 | `reference/` | A copy of each industry standard the code implements, with its index ([reference/README.md](reference/README.md)); handbook `software/conventions/documentation.md` §9. |
 
