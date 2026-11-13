@@ -186,6 +186,8 @@ import {
   type WorkflowPageParams,
 } from './page.js';
 import { QuicBaaSError, DeployNotSupportedError, McpError, TransportNotSupportedError } from './errors.js';
+import { unsupportedClient } from './unsupported.js';
+import type { PromptsClient } from './prompts.js';
 import { requireTLSForSOPIN } from './so_pin.js';
 
 
@@ -1341,8 +1343,11 @@ export class McpClient implements Client {
   readonly crypto: any = null;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   readonly dek: any = null;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  readonly prompts: any = null;
+  readonly prompts = unsupportedClient<PromptsClient>(
+    'mcp',
+    'prompts',
+    'the MCP server exposes no prompt tools; use the rest transport',
+  );
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   readonly dynamicSecrets: any = null;
   readonly barrier: BarrierClient;

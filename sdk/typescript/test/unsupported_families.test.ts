@@ -29,6 +29,7 @@ describe.each(transports)('$name transport — projects, sdlc and accounts', ({ 
       ['projects', 'createProject', c.projects.createProject({ tenant_id: 'tenant-a', name: 'api' })],
       ['sdlc', 'binding', c.sdlc.binding('tenant-a', 'proj-1')],
       ['accounts', 'listAccountsPage', c.accounts.listAccountsPage({ tenant_id: 'tenant-a' })],
+      ['prompts', 'listPrompts', c.prompts.listPrompts('sdlc')],
     ];
 
     for (const [family, method, call] of calls) {

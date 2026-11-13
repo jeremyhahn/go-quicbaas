@@ -125,6 +125,7 @@ import type { AccountsClient } from './accounts.js';
 import type { ProjectsClient } from './projects.js';
 import type { SdlcClient } from './sdlc.js';
 import { unsupportedClient } from './unsupported.js';
+import type { PromptsClient } from './prompts.js';
 
 // wailsUnsupported is why projects, sdlc and accounts refuse here: the
 // desktop app binds no Go struct for them (cmd/quicbaas/bindings_*.go binds
@@ -976,8 +977,7 @@ export class WailsClient implements Client {
   readonly crypto: any = null;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   readonly dek: any = null;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  readonly prompts: any = null;
+  readonly prompts = unsupportedClient<PromptsClient>('wails', 'prompts', wailsUnsupported);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   readonly dynamicSecrets: any = null;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any

@@ -36,6 +36,7 @@ import type { AccountsClient } from './accounts.js';
 import type { ProjectsClient } from './projects.js';
 import type { SdlcClient } from './sdlc.js';
 import { unsupportedClient } from './unsupported.js';
+import type { PromptsClient } from './prompts.js';
 import type {
   AgentBackendInfo,
   JobRunnerInfo,
@@ -384,8 +385,7 @@ export class QuicClient implements Client {
   readonly crypto: any = null;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   readonly dek: any = null;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  readonly prompts: any = null;
+  readonly prompts = unsupportedClient<PromptsClient>('quic', 'prompts', quicUnsupported);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   readonly dynamicSecrets: any = null;
   readonly barrier: BarrierClient;

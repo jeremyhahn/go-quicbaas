@@ -178,6 +178,18 @@ describe('McpClient.projects — arguments the tools do not read', () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it('prompts refuses without calling the server, naming the rest transport', async () => {
+    const err = await new McpClient(endpoint).prompts.listPrompts('sdlc').catch((e: unknown) => e);
+
+    expect(err).toBeInstanceOf(TransportNotSupportedError);
+    const refusal = err as TransportNotSupportedError;
+    expect(refusal.transport).toBe('mcp');
+    expect(refusal.family).toBe('prompts');
+    expect(refusal.method).toBe('listPrompts');
+    expect(refusal.reason).toContain('rest transport');
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it('accepts an empty metadata map on create, which asks for nothing', async () => {
     answer({ Project: wireProject });
     const client = new McpClient(endpoint);
