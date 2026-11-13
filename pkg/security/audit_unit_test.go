@@ -24,11 +24,14 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/jeremyhahn/go-quicbaas/pkg/testutil/poll"
 )
 
 func TestAuditLogger_CheckRotationGoroutine(t *testing.T) {
@@ -48,8 +51,7 @@ func TestAuditLogger_CheckRotationGoroutine(t *testing.T) {
 	require.NoError(t, err)
 	defer al.Close()
 
-	// Give checkRotation goroutine time to start
-	time.Sleep(100 * time.Millisecond)
+	pollRotationWatchers(t, al, 1)
 
 	// Write some data to trigger rotation check
 	ctx := context.Background()
@@ -181,8 +183,8 @@ func TestAuditLogger_RotateWithCompressionEnabled(t *testing.T) {
 
 	assert.NoError(t, err)
 
-	// Give compression goroutine time to run
-	time.Sleep(200 * time.Millisecond)
+	// The compression and backup cleanup rotateIfNeeded started.
+	al.rotateWG.Wait()
 }
 
 func TestAuditLogger_CleanupOldBackupsPlaceholder(t *testing.T) {
@@ -238,9 +240,9 @@ func TestAuditLogger_SendToSyslogPlaceholder(t *testing.T) {
 
 func TestAuditLogger_SIEMExporter(t *testing.T) {
 	// Create a test server to receive SIEM events
-	receivedEvents := 0
+	var receivedEvents atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		receivedEvents++
+		receivedEvents.Add(1)
 		w.WriteHeader(http.StatusOK)
 	}))
 	defer server.Close()
@@ -281,11 +283,7 @@ func TestAuditLogger_SIEMExporter(t *testing.T) {
 	err = al.siemExporter.Send(event)
 	require.NoError(t, err)
 
-	// Wait for flush
-	time.Sleep(200 * time.Millisecond)
-
-	// Verify event was received
-	assert.Greater(t, receivedEvents, 0)
+	poll.Until(t, 10*time.Second, func() bool { return receivedEvents.Load() > 0 }, "the SIEM endpoint receives the event")
 }
 
 func TestAuditLogger_CompressFile(t *testing.T) {
@@ -508,11 +506,8 @@ func TestAuditLogger_CompressFileAsync(t *testing.T) {
 	require.NoError(t, err)
 	defer al.Close()
 
-	// Call compressFileAsync - runs in background
+	// compressFileAsync compresses synchronously; its caller supplies the goroutine.
 	al.compressFileAsync(testFile, gzip.BestSpeed)
-
-	// Wait for async compression to complete
-	time.Sleep(100 * time.Millisecond)
 
 	// Verify compressed file was created
 	assert.FileExists(t, compressedFile)
@@ -611,8 +606,9 @@ func TestAuditLogger_LogWithBothSyslogAndSIEM(t *testing.T) {
 	err = al.Log(ctx, event)
 	require.NoError(t, err)
 
-	// Give goroutines time to execute
-	time.Sleep(200 * time.Millisecond)
+	// Log hands the event to the SIEM exporter in a goroutine; the batch
+	// (size 10) then flushes on its 100ms interval.
+	pollSIEMSent(t, al.siemExporter, 1)
 }
 
 func TestAuditLogger_VerifySignatureNotEnabled(t *testing.T) {
@@ -697,15 +693,13 @@ func TestAuditLogger_CheckRotationShutdown(t *testing.T) {
 	al, err := NewAuditLogger(cfg, log)
 	require.NoError(t, err)
 
-	// Give checkRotation goroutine time to start
-	time.Sleep(100 * time.Millisecond)
+	pollRotationWatchers(t, al, 1)
 
 	// Close should trigger shutdown of checkRotation
 	err = al.Close()
 	assert.NoError(t, err)
 
-	// Give time for goroutine to exit
-	time.Sleep(100 * time.Millisecond)
+	pollRotationWatchers(t, al, 0)
 }
 
 func TestAuditLogger_RotateIfNeededNilFile(t *testing.T) {
@@ -737,8 +731,8 @@ func TestAuditLogger_CheckRotationEmptyFile(t *testing.T) {
 	al, err := NewAuditLogger(cfg, log)
 	require.NoError(t, err)
 
-	// Start checkRotation and immediately close
-	time.Sleep(50 * time.Millisecond)
+	// Without a file there is no rotation watcher to start.
+	assert.Equal(t, int64(0), al.rotationWatchers.Load())
 	err = al.Close()
 	assert.NoError(t, err)
 }
