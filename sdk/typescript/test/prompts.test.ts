@@ -55,6 +55,13 @@ describe('RestPromptsClient', () => {
     expect(c.body).toBeUndefined();
   });
 
+  it('a job status carries the prompt versions the job ran with', async () => {
+    const ref = { set: 'sdlc', name: 'worker_charter', scope: 'project', scope_id: 'p1', version: 1, hash: 'abcdef0123' };
+    fetchMock.mockImplementationOnce(async () => jsonResponse(200, { job_id: 'j1', prompts: [ref] }));
+    const job = await client().orchestrator.getJobStatus('t1', 'j1');
+    expect(job.prompts).toEqual([ref]);
+  });
+
   it('listPrompts carries scope and project_id', async () => {
     await client().prompts.listPrompts('agents', { scope: 'project', project_id: 'p1' });
     expect(lastCall().url).toBe(`${B}/agents?scope=project&project_id=p1`);
