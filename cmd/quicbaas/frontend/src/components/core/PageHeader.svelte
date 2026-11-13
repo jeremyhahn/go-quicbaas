@@ -2,7 +2,6 @@
   PageHeader renders a page title, optional subtitle, optional icon, and an actions slot.
 -->
 <script lang="ts">
-  import type { Component } from 'svelte';
 
   let {
     title,
@@ -12,7 +11,9 @@
   }: {
     title: string;
     subtitle?: string;
-    icon?: Component<{ class?: string }>;
+    // Lucide icons are SvelteComponentTyped classes; use a permissive type.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    icon?: new (...args: any[]) => any;
     children?: import('svelte').Snippet;
   } = $props();
 </script>
