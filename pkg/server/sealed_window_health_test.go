@@ -18,7 +18,9 @@ package server_test
 import (
 	"context"
 	"crypto/tls"
+	"crypto/x509"
 	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -28,6 +30,7 @@ import (
 	"google.golang.org/grpc/credentials"
 
 	pb "github.com/jeremyhahn/go-quicbaas/api/proto"
+	"github.com/jeremyhahn/go-quicbaas/pkg/config"
 	"github.com/jeremyhahn/go-quicbaas/pkg/server"
 )
 
@@ -43,6 +46,7 @@ func TestSealedBoot_GRPCServesQuicBaaSHealth(t *testing.T) {
 	// The sealed-window gRPC server always serves TLS, the way the init
 	// matrix daemon does; the node issues its own server certificate.
 	cfg.Security.TLSEnabled = true
+	caFile := pinSealedBootCAFile(t, cfg)
 
 	srv, err := server.NewServer(cfg)
 	require.NoError(t, err)
@@ -63,12 +67,7 @@ func TestSealedBoot_GRPCServesQuicBaaSHealth(t *testing.T) {
 	require.Nil(t, srv.GetQRDBNodeClient(), "the node must still be sealed")
 
 	conn, err := ggrpc.NewClient("unix://"+socket,
-		ggrpc.WithTransportCredentials(credentials.NewTLS(&tls.Config{
-			MinVersion: tls.VersionTLS13,
-			// The node's self-issued certificate is not what this test
-			// pins; the registered service set is.
-			InsecureSkipVerify: true,
-		})))
+		ggrpc.WithTransportCredentials(credentials.NewTLS(sealedBootClientTLS(t, caFile))))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = conn.Close() })
 
@@ -82,4 +81,30 @@ func TestSealedBoot_GRPCServesQuicBaaSHealth(t *testing.T) {
 	// its data plane.
 	_, err = pb.NewQuicBaaSClient(conn).Get(ctx, &pb.GetRequest{EntityType: "sealed", Id: 1})
 	require.Error(t, err, "an off-allowlist QuicBaaS verb must stay refused while sealed")
+}
+
+// pinSealedBootCAFile points cfg's CA bundle path at a file in the test's
+// own temp dir before the server boots. A TLS-enabled node that issues its
+// own server certificate writes the issuing CA chain there.
+func pinSealedBootCAFile(t *testing.T, cfg *config.Config) string {
+	t.Helper()
+	caFile := filepath.Join(t.TempDir(), "ca-chain.crt")
+	cfg.Security.TLSCAFile = caFile
+	return caFile
+}
+
+// sealedBootClientTLS returns a client TLS config that verifies the node's
+// server certificate against the CA chain the node wrote to caFile. The
+// node's certificate always carries the "localhost" SAN.
+func sealedBootClientTLS(t *testing.T, caFile string) *tls.Config {
+	t.Helper()
+	caPEM, err := os.ReadFile(caFile)
+	require.NoError(t, err, "the node writes the CA chain that issued its server certificate")
+	roots := x509.NewCertPool()
+	require.True(t, roots.AppendCertsFromPEM(caPEM), "the CA chain parses")
+	return &tls.Config{
+		MinVersion: tls.VersionTLS13,
+		RootCAs:    roots,
+		ServerName: "localhost",
+	}
 }

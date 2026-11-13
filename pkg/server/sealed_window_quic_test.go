@@ -17,7 +17,6 @@ package server_test
 
 import (
 	"context"
-	"crypto/tls"
 	"fmt"
 	"net"
 	"net/http"
@@ -38,6 +37,7 @@ import (
 func TestSealedBoot_QUICServesHealth(t *testing.T) {
 	cfg := server.NewSealedBootTestConfig(t)
 	cfg.Security.TLSEnabled = true
+	caFile := pinSealedBootCAFile(t, cfg)
 
 	srv, err := server.NewServer(cfg)
 	require.NoError(t, err)
@@ -61,12 +61,7 @@ func TestSealedBoot_QUICServesHealth(t *testing.T) {
 	})
 	require.Nil(t, srv.GetQRDBNodeClient(), "the node must still be sealed")
 
-	h3 := &http3.Transport{TLSClientConfig: &tls.Config{
-		MinVersion: tls.VersionTLS13,
-		// The node's self-issued certificate is not what this test pins;
-		// the HTTP/3 listener is.
-		InsecureSkipVerify: true,
-	}}
+	h3 := &http3.Transport{TLSClientConfig: sealedBootClientTLS(t, caFile)}
 	t.Cleanup(func() { _ = h3.Close() })
 	client := &http.Client{Transport: h3, Timeout: 10 * time.Second}
 
