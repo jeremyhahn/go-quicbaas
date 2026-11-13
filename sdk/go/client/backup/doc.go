@@ -34,13 +34,16 @@
 //
 //	resp, err := client.Restore(ctx, &backup.RestoreRequest{
 //	    BackupID: "backup-123",
-//	    Source:   "s3://my-bucket/backups/backup-123",
 //	})
 //	if err != nil {
 //	    log.Fatal(err)
 //	}
+//	// The restore runs asynchronously: a running restore is not an
+//	// error, and Restored is set only once it has finished.
 //	if resp.Restored {
-//	    fmt.Printf("Restore completed in %v\n", resp.Duration)
+//	    fmt.Printf("Restore %s completed\n", resp.JobID)
+//	} else {
+//	    fmt.Printf("Restore %s is %s\n", resp.JobID, resp.Status)
 //	}
 //
 // # Listing Backups

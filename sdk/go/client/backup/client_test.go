@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/errors"
+	svc "github.com/jeremyhahn/go-quicbaas/sdk/go/service"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/transport"
 )
 
@@ -234,9 +235,8 @@ func TestClient_Create(t *testing.T) {
 func TestClient_Restore_Validation(t *testing.T) {
 	mockT := &mockTransport{
 		requestFn: func(ctx context.Context, service, method string, req interface{}) (interface{}, error) {
-			return &RestoreResponse{
-				Restored: true,
-				Duration: time.Second,
+			return &svc.RestoreBackupResponse{
+				Status: "completed",
 			}, nil
 		},
 	}
@@ -264,14 +264,14 @@ func TestClient_Restore_Validation(t *testing.T) {
 			wantErr: false,
 		},
 		{
-			name:    "valid request with source only",
+			name:    "source only is refused",
 			req:     &RestoreRequest{Source: "s3://bucket/backup"},
-			wantErr: false,
+			wantErr: true,
 		},
 		{
-			name:    "valid request with both",
+			name:    "backup ID with source is refused",
 			req:     &RestoreRequest{BackupID: "backup-123", Source: "s3://bucket/backup"},
-			wantErr: false,
+			wantErr: true,
 		},
 	}
 
@@ -310,9 +310,8 @@ func TestClient_Restore(t *testing.T) {
 					if method != "Restore" {
 						t.Errorf("expected method %q, got %q", "Restore", method)
 					}
-					return &RestoreResponse{
-						Restored: true,
-						Duration: 10 * time.Second,
+					return &svc.RestoreBackupResponse{
+						Status: "completed",
 					}, nil
 				},
 			},
@@ -324,9 +323,8 @@ func TestClient_Restore(t *testing.T) {
 			ctx:  context.Background(),
 			transport: &mockTransport{
 				requestFn: func(ctx context.Context, service, method string, req interface{}) (interface{}, error) {
-					return &RestoreResponse{
-						Restored: false,
-						Duration: 0,
+					return &svc.RestoreBackupResponse{
+						Status: "running",
 					}, nil
 				},
 			},
@@ -557,9 +555,9 @@ func TestBackupResponse_Fields(t *testing.T) {
 func TestRestoreResponse_Fields(t *testing.T) {
 	mockT := &mockTransport{
 		requestFn: func(ctx context.Context, service, method string, req interface{}) (interface{}, error) {
-			return &RestoreResponse{
-				Restored: true,
-				Duration: 45 * time.Second,
+			return &svc.RestoreBackupResponse{
+				JobID:  "restore-backup-123",
+				Status: "completed",
 			}, nil
 		},
 	}
@@ -573,8 +571,30 @@ func TestRestoreResponse_Fields(t *testing.T) {
 	if !resp.Restored {
 		t.Error("expected Restored to be true")
 	}
-	if resp.Duration != 45*time.Second {
-		t.Errorf("expected Duration=45s, got %v", resp.Duration)
+	if resp.JobID != "restore-backup-123" {
+		t.Errorf("expected JobID=restore-backup-123, got %q", resp.JobID)
+	}
+	if resp.Status != "completed" {
+		t.Errorf("expected Status=completed, got %q", resp.Status)
+	}
+}
+
+func TestRestoreResponse_RunningRestoreIsNotAnError(t *testing.T) {
+	client := NewClient(&mockTransport{
+		requestFn: func(ctx context.Context, service, method string, req interface{}) (interface{}, error) {
+			return &svc.RestoreBackupResponse{JobID: "restore-backup-123", Status: "running"}, nil
+		},
+	})
+
+	resp, err := client.Restore(context.Background(), &RestoreRequest{BackupID: "backup-123"})
+	if err != nil {
+		t.Fatalf("an accepted, running restore is not an error: %v", err)
+	}
+	if resp.Restored {
+		t.Error("a running restore must not report Restored")
+	}
+	if resp.Status != "running" {
+		t.Errorf("expected Status=running, got %q", resp.Status)
 	}
 }
 
@@ -660,13 +680,12 @@ func TestClient_Create_RequestValidation(t *testing.T) {
 }
 
 func TestClient_Restore_RequestValidation(t *testing.T) {
-	var capturedReq *RestoreRequest
+	var capturedReq *svc.RestoreBackupRequest
 	mockT := &mockTransport{
 		requestFn: func(ctx context.Context, service, method string, req interface{}) (interface{}, error) {
-			capturedReq = req.(*RestoreRequest)
-			return &RestoreResponse{
-				Restored: true,
-				Duration: time.Second,
+			capturedReq = req.(*svc.RestoreBackupRequest)
+			return &svc.RestoreBackupResponse{
+				Status: "completed",
 			}, nil
 		},
 	}
@@ -674,10 +693,7 @@ func TestClient_Restore_RequestValidation(t *testing.T) {
 	client := NewClient(mockT)
 	ctx := context.Background()
 
-	originalReq := &RestoreRequest{
-		BackupID: "backup-456",
-		Source:   "s3://my-bucket/backups/backup-456",
-	}
+	originalReq := &RestoreRequest{BackupID: "backup-456"}
 
 	_, err := client.Restore(ctx, originalReq)
 	if err != nil {
@@ -687,8 +703,23 @@ func TestClient_Restore_RequestValidation(t *testing.T) {
 	if capturedReq.BackupID != originalReq.BackupID {
 		t.Errorf("expected BackupID=%q, got %q", originalReq.BackupID, capturedReq.BackupID)
 	}
-	if capturedReq.Source != originalReq.Source {
-		t.Errorf("expected Source=%q, got %q", originalReq.Source, capturedReq.Source)
+}
+
+func TestClient_Restore_SourceRefusedBeforeCall(t *testing.T) {
+	called := false
+	client := NewClient(&mockTransport{
+		requestFn: func(ctx context.Context, service, method string, req interface{}) (interface{}, error) {
+			called = true
+			return &svc.RestoreBackupResponse{Status: "completed"}, nil
+		},
+	})
+
+	_, err := client.Restore(context.Background(), &RestoreRequest{BackupID: "backup-456", Source: "nightly"})
+	if !errors.IsInvalidInput(err) {
+		t.Fatalf("expected an invalid-input error, got %v", err)
+	}
+	if called {
+		t.Error("a source restore must be refused before any call")
 	}
 }
 
@@ -771,14 +802,14 @@ func TestValidateRestoreRequest(t *testing.T) {
 			wantErr: false,
 		},
 		{
-			name:    "source only",
+			name:    "source only is refused",
 			req:     &RestoreRequest{BackupID: "", Source: "/path/to/backup"},
-			wantErr: false,
+			wantErr: true,
 		},
 		{
-			name:    "both backup ID and source",
+			name:    "backup ID with source is refused",
 			req:     &RestoreRequest{BackupID: "backup-123", Source: "/path/to/backup"},
-			wantErr: false,
+			wantErr: true,
 		},
 	}
 
