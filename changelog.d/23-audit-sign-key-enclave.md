@@ -1,0 +1,3 @@
+### Security
+
+- The audit-log HMAC signing key is held only in protected memory. `security.AuditConfig.SignKey` is now a `*secret.SecretValue` (`sdk/go/secret`) instead of a `string`. The `sign_key` config key keeps its shape and takes a secret reference (`kms://…`, `credential://…`) that the config secrets processor seals into an enclave. The logger seals its own copy, opens it into mlocked memory only to compute each HMAC, and destroys it on `Close`. A reference that was never resolved is rejected with `AUDIT_SIGN_KEY_REQUIRED`. Go callers that set `SignKey` from a string must pass a resolved `SecretValue` (#23).
