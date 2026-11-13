@@ -345,7 +345,11 @@ func postLoginWithCert(ctx context.Context, baseURL string, certPEM, keyPEM []by
 		},
 	}
 
-	endpoint := baseURL + "/api/v1/auth/login/piv"
+	// A tenant-scoped cert login is served by quicbaas's OIDC-session
+	// PIVLogin at /api/v1/iam/login/piv (pkg/api/rest/routes_iam.go). On a
+	// composed node /api/v1/auth/login/piv belongs to xkms's module, which
+	// does not resolve a tenant-scoped user and rejects it with 401.
+	endpoint := baseURL + "/api/v1/iam/login/piv"
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, nil)
 	if err != nil {
 		return "", 0, &AuthError{Op: "build request", URL: endpoint, Cause: err}
