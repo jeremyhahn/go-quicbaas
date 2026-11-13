@@ -138,7 +138,17 @@ func NewTenantSigningKeyResolver(global *SigningKeyManager, settings TenantOIDCS
 			if global.storeType == "" {
 				return NewSigningKeyManagerFromXKMS(OIDCSigningKeyCN, tenantID)
 			}
-			return NewSigningKeyManagerFromXKMSBackend(OIDCSigningKeyCN, tenantID, global.storeType)
+			m, err := NewSigningKeyManagerFromXKMSBackend(OIDCSigningKeyCN, tenantID, global.storeType)
+			if err != nil {
+				return nil, err
+			}
+			// A tenant migrated to the replicated store keeps its
+			// pre-upgrade default-backend key, so its outstanding tokens
+			// keep verifying.
+			if err := m.AdoptDefaultBackendKey(); err != nil {
+				return nil, err
+			}
+			return m, nil
 		},
 	}, nil
 }
