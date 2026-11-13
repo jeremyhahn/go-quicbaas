@@ -19,7 +19,6 @@ import (
 	"errors"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -396,17 +395,20 @@ func TestBot_DoubleRun(t *testing.T) {
 	bot, signal, _, _ := newTestBot(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	var ran atomic.Bool
-	go func() {
-		ran.Store(true)
-		_ = bot.Run(ctx)
-	}()
-	waitFor(t, func() bool { return ran.Load() })
+	firstRun := make(chan error, 1)
+	go func() { firstRun <- bot.Run(ctx) }()
+	// Wait until the first Run counts as running, not merely until its
+	// goroutine started: otherwise the second Run below can win the race,
+	// and it then blocks on ctx, which is only cancelled on return.
+	waitFor(t, func() bool { return bot.running.Load() })
 	err := bot.Run(ctx)
 	if !IsKind(err, ErrKindConflict) {
 		t.Fatalf("want conflict got %v", err)
 	}
 	_ = bot.Stop()
+	if err := <-firstRun; err != nil {
+		t.Fatalf("first run: %v", err)
+	}
 	close(signal.in)
 }
 
