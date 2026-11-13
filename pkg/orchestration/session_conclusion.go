@@ -783,6 +783,40 @@ func (s *agentServiceImpl) concludeLog(
 	return reason, nil
 }
 
+// repairConcludedLog completes the log transition of a session whose durable
+// record is already CLOSED (#201).
+//
+// A CLOSED RECORD OVER A LOG THAT NEVER ENDED HAS NO OTHER WAY BACK. The
+// conclusion's retryability lives in the live record, and a closed record is
+// never reconstituted: LoadPersistedSessions skips it and CloseSession answers
+// success off it. A record written by a daemon that still closed the store
+// before the log, a writer that closed the record outside the conclusion path,
+// or a log write lost after the record closed all leave the gate ACTIVE (so an
+// ordinary append can still land after the session is over) or the gate shut
+// with no KindSessionClosed for an attacher to replay. So the two readers of a
+// closed record ask the log, and finish what it is missing.
+//
+// It is concludeLog itself, so the gate is shut before the ending is written
+// and an ending already there is never written twice. The ending carries the
+// record's own reason, because the record is the authority on why the session
+// ended; a record that names none is attributed to reconcile, which is what
+// this is. A record still live in memory is left alone: its own conclusion is
+// running and owns the ending.
+func (s *agentServiceImpl) repairConcludedLog(ctx context.Context, record *SessionRecord) error {
+	if s.sessionLog == nil || record == nil || record.Status != SessionStateClosed {
+		return nil
+	}
+	if _, live := s.liveSessionRecord(record.SessionID); live {
+		return nil
+	}
+	reason := record.ConclusionReason
+	if !reason.Valid() {
+		reason = ConcludedByReconcile
+	}
+	_, err := s.concludeLog(ctx, &sessionRecord{}, record.TenantID, record.SessionID, reason)
+	return err
+}
+
 // effectiveConclusionReason picks the attribution a conclusion carries onward.
 //
 // The reason already on the log wins, because the log's append is the one
