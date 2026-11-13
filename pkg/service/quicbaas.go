@@ -1942,6 +1942,14 @@ func (b *batchService) BatchExecute(ctx context.Context, req *BatchExecuteReques
 		return nil, b.batchExecuteFailure(err)
 	}
 
+	// The batch committed atomically: drop every key it wrote or deleted
+	// from the cache, as kvService.Put and Delete do.
+	if b.svc.cacheManager != nil {
+		for _, op := range ops {
+			_ = b.svc.cacheManager.Delete(context.Background(), string(op.Key))
+		}
+	}
+
 	if b.svc.metrics != nil {
 		b.svc.metrics.requestsTotal.With("BatchExecute", "success").Inc()
 	}

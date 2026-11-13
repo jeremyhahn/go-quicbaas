@@ -45,6 +45,31 @@ func TestBatchService_BatchExecute_MixedOpsOneCommit(t *testing.T) {
 	}, calls[0])
 }
 
+func TestBatchService_BatchExecute_InvalidatesCache(t *testing.T) {
+	mockQRDB := newSvcBoostMockQRDBProvider(nil, nil)
+	svc := createTestService(t, withQRDBClientProvider(mockQRDB))
+	defer svc.Close()
+
+	db := svc.(*quicBaaS)
+	cacheMock := newKVAuthCacheMock()
+	db.cacheManager = cacheMock
+	cacheMock.data["users:user-1"] = []byte("stale")
+	cacheMock.data["users:user-old"] = []byte("stale")
+
+	_, err := svc.BatchExecute(tenantctx.WithSystem(context.Background()), &BatchExecuteRequest{
+		Operations: []*BatchExecuteOperation{
+			{Type: BatchExecutePut, EntityType: "users", Key: "user-1", Value: []byte("Alice")},
+			{Type: BatchExecuteDelete, EntityType: "users", Key: "user-old"},
+			{Type: BatchExecutePut, EntityType: "orders", Key: "order-9", Value: []byte("{}")},
+		},
+	})
+	require.NoError(t, err)
+
+	require.NotContains(t, cacheMock.data, "users:user-1")
+	require.NotContains(t, cacheMock.data, "users:user-old")
+	require.NotContains(t, cacheMock.data, "orders:order-9")
+}
+
 // TestBatchService_BatchExecute_BadRequests checks that each malformed
 // request is refused as invalid input before anything reaches qrdb.
 func TestBatchService_BatchExecute_BadRequests(t *testing.T) {
