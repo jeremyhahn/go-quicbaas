@@ -8,6 +8,7 @@ exclude google.golang.org/genproto v0.0.0-20230410155749-daa745c078e1
 require (
 	cloud.google.com/go/kms v1.36.0 // held: v1.36.1 released 2026-10-28, under 7 days old (#1704)
 	connectrpc.com/connect v1.21.1
+	github.com/awnumar/memguard v0.23.0
 	github.com/aws/aws-sdk-go-v2 v1.47.5
 	github.com/aws/aws-sdk-go-v2/config v1.33.12 // held: v1.33.13 released 2026-10-30, under 7 days old (#1704)
 	github.com/aws/aws-sdk-go-v2/credentials v1.20.12 // held: v1.20.13 released 2026-10-30, under 7 days old (#1704)
@@ -118,7 +119,6 @@ require (
 	github.com/acarl005/stripansi v0.0.0-20180116102854-5a71ef0e047d // indirect
 	github.com/aperturerobotics/protobuf-go-lite v0.14.0 // indirect
 	github.com/awnumar/memcall v0.5.0 // indirect
-	github.com/awnumar/memguard v0.23.0 // indirect
 	github.com/aws/aws-sdk-go v1.55.8 // indirect
 	github.com/aws/aws-sdk-go-v2/feature/ec2/imds v1.20.5 // indirect
 	github.com/aws/aws-sdk-go-v2/internal/configsources v1.5.8 // indirect
