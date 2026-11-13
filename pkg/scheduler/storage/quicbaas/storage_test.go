@@ -764,6 +764,59 @@ func TestGetJobsDueForExecution_ScanError(t *testing.T) {
 	}
 }
 
+// A tenant-owned job lives in the tenant's namespace, yet the scheduler runs
+// it: the due scan must return it, and must stop returning it once deleted.
+func TestGetJobsDueForExecution_IncludesTenantJobs(t *testing.T) {
+	ctx := context.Background()
+	kv := newMockKVStore()
+	storage := NewStorage(kv)
+	now := time.Now()
+
+	tenantJob := createTestJob("tenant-due", scheduler.OwnerTypeTenant, "acme")
+	tenantJob.Status = scheduler.JobStatusPending
+	tenantJob.NextRun = now.Add(-time.Minute)
+	if err := storage.CreateJob(ctx, tenantJob); err != nil {
+		t.Fatalf("CreateJob: %v", err)
+	}
+
+	tenantFuture := createTestJob("tenant-future", scheduler.OwnerTypeTenant, "acme")
+	tenantFuture.Status = scheduler.JobStatusPending
+	tenantFuture.NextRun = now.Add(time.Hour)
+	if err := storage.CreateJob(ctx, tenantFuture); err != nil {
+		t.Fatalf("CreateJob: %v", err)
+	}
+
+	systemJob := createTestJob("system-due", scheduler.OwnerTypeSystem, "")
+	systemJob.Status = scheduler.JobStatusPending
+	systemJob.NextRun = now.Add(-time.Minute)
+	if err := storage.CreateJob(ctx, systemJob); err != nil {
+		t.Fatalf("CreateJob: %v", err)
+	}
+
+	dueJobs, err := storage.GetJobsDueForExecution(ctx, now, 100)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	names := map[string]bool{}
+	for _, j := range dueJobs {
+		names[j.Name] = true
+	}
+	if len(dueJobs) != 2 || !names["tenant-due"] || !names["system-due"] {
+		t.Fatalf("due jobs = %v, want tenant-due and system-due", names)
+	}
+
+	if err := storage.DeleteJob(ctx, tenantJob.ID, "acme"); err != nil {
+		t.Fatalf("DeleteJob: %v", err)
+	}
+	dueJobs, err = storage.GetJobsDueForExecution(ctx, now, 100)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(dueJobs) != 1 || dueJobs[0].Name != "system-due" {
+		t.Fatalf("after delete, due jobs = %d, want only system-due", len(dueJobs))
+	}
+}
+
 func TestSaveExecution_Success(t *testing.T) {
 	ctx := context.Background()
 	kv := newMockKVStore()
