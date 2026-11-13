@@ -580,7 +580,7 @@ func TestCreateSessionDeviceInfoVariationsFinal(t *testing.T) {
 		body := `{
 			"token_hash": "abc123",
 			"mfa_verified": true,
-			"ip_address": "192.168.1.1",
+			"ip_address": "192.0.2.1",
 			"user_agent": "TestAgent/1.0",
 			"device_info": {
 				"id": "device-001",

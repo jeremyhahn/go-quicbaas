@@ -49,9 +49,14 @@ import (
 func TestDPoPSenderConstrainedToken(t *testing.T) {
 	cluster := setupTestCluster(t)
 	defer cluster.Close()
+	// The tenant is created and deleted as the system admin, and the app is
+	// registered and deleted as the system admin acting in the URL's tenant.
+	// The token request, discovery and the JWKS fetch below are public
+	// ceremonies and go through cluster with no credential.
+	admin := cluster.asSystemAdmin()
 
-	tenantID := setupTenantForTests(t, cluster)
-	defer cluster.deleteJSON(fmt.Sprintf("/api/v1/tenants/%s", tenantID))
+	tenantID := setupTenantForTests(t, admin)
+	defer admin.deleteJSON(fmt.Sprintf("/api/v1/tenants/%s", tenantID))
 
 	// A confidential client for the client-credentials grant.
 	appReq := map[string]interface{}{
@@ -60,10 +65,10 @@ func TestDPoPSenderConstrainedToken(t *testing.T) {
 		"grant_types":   []string{"client_credentials"},
 	}
 	var app iam.Application
-	require.NoError(t, cluster.postJSON(fmt.Sprintf("/api/v1/tenants/%s/apps", tenantID), appReq, &app),
+	require.NoError(t, admin.postJSON(fmt.Sprintf("/api/v1/tenants/%s/apps", tenantID), appReq, &app),
 		"register client-credentials app")
 	require.NotEmpty(t, app.ClientID)
-	defer cluster.deleteJSON(fmt.Sprintf("/api/v1/tenants/%s/apps/%s", tenantID, app.ClientID))
+	defer admin.deleteJSON(fmt.Sprintf("/api/v1/tenants/%s/apps/%s", tenantID, app.ClientID))
 
 	// Resolve the issuer for the validator; fetch the JWKS from this cluster so
 	// the key source is guaranteed reachable regardless of the configured
