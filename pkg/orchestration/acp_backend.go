@@ -2677,10 +2677,7 @@ func (b *ACPBackend) Close(ctx context.Context, sessionID string) error {
 		// remove — Remove force-removes a container still running, so a Stop
 		// that fails is not fatal to the removal.
 		_ = b.containerRuntime.Stop(ctx, sess.containerID)
-		if err := b.containerRuntime.Remove(ctx, sess.containerID); err != nil {
-			return &ContainerStopError{ContainerID: sess.containerID, Cause: err}
-		}
-		return nil
+		return containerRemovalOutcome(sess.containerID, b.containerRuntime.Remove(ctx, sess.containerID))
 	}
 
 	// No transport: nothing to close.
