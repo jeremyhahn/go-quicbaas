@@ -454,6 +454,7 @@ func (tc *testCluster) getJSONExpectNotFound(path string) error {
 
 // postJSON performs a POST request with JSON body.
 // Includes retry logic for transient Raft errors.
+// A 204 No Content is success with nothing to decode; target is left untouched.
 func (tc *testCluster) postJSON(path string, body interface{}, target interface{}) error {
 	backoff := retryBackoff{delay: retryDelay}
 	var lastErr error
@@ -468,6 +469,11 @@ func (tc *testCluster) postJSON(path string, body interface{}, target interface{
 		if err != nil {
 			lastErr = err
 			continue
+		}
+
+		if resp.StatusCode == http.StatusNoContent {
+			resp.Body.Close()
+			return nil
 		}
 
 		if resp.StatusCode == http.StatusOK || resp.StatusCode == http.StatusCreated {
