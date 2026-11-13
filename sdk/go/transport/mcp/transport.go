@@ -530,6 +530,8 @@ func (t *Transport) doRequest(ctx context.Context, service, method string, reqBo
 		// that could never succeed -- a filtered listing came back as a
 		// required-field error instead of a session list.
 		arguments = applyTenantFromContext(ctx, t.convertToArguments(reqBody))
+	} else if isMCPKVService(service) {
+		arguments = t.kvArguments(method, reqBody)
 	} else {
 		// Convert request to tool arguments using generic conversion
 		arguments = t.convertToArguments(reqBody)
@@ -664,6 +666,12 @@ func (t *Transport) doRequest(ctx context.Context, service, method string, reqBo
 	// client accepts.
 	if isMCPDEKService(service) {
 		return transformDEKResponse(method, result)
+	}
+
+	// Decode the entity KV verbs into the service responses the KV client
+	// accepts.
+	if isMCPKVService(service) {
+		return transformKVResponse(method, result)
 	}
 
 	return result, nil
