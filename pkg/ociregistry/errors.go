@@ -13,7 +13,10 @@
 
 package ociregistry
 
-import "fmt"
+import (
+	"fmt"
+	"time"
+)
 
 // ErrAttestationRequired is returned when a client attempts to access
 // the registry without providing attestation evidence.
@@ -391,6 +394,16 @@ func (e ErrNilClient) Error() string {
 		return fmt.Sprintf("registry: %s client is nil", e.Client)
 	}
 	return "registry: client is nil"
+}
+
+// ErrObjectStoreTTL is returned when an object-store write asks for an
+// expiry: objects live until they are deleted.
+type ErrObjectStoreTTL struct {
+	TTL time.Duration
+}
+
+func (e ErrObjectStoreTTL) Error() string {
+	return fmt.Sprintf("registry: object storage does not expire objects (ttl %s)", e.TTL)
 }
 
 // ErrNilContext is returned when a nil context is provided.
