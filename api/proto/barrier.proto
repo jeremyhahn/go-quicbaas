@@ -143,6 +143,10 @@ message BarrierStatusResponse {
   bool hardware_backed = 3;
   // initialized_at is RFC3339 (UTC) or empty when never initialised.
   string initialized_at = 4;
+  // shamir_threshold and shamir_total carry go-qrdb's configured M-of-N
+  // quorum when the barrier uses the Shamir strategy; zero otherwise.
+  int32 shamir_threshold = 5;
+  int32 shamir_total = 6;
 }
 
 // BarrierShamirInitializeRequest initialises the barrier with Shamir secret sharing.

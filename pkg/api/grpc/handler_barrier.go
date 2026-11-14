@@ -187,10 +187,12 @@ func (s *BarrierServer) BarrierStatus(ctx context.Context, _ *emptypb.Empty) (*p
 		return nil, mapBarrierError(err)
 	}
 	return &pb.BarrierStatusResponse{
-		Sealed:         info.Sealed,
-		Strategy:       info.Strategy,
-		HardwareBacked: info.HardwareBacked,
-		InitializedAt:  info.InitializedAt,
+		Sealed:          info.Sealed,
+		Strategy:        info.Strategy,
+		HardwareBacked:  info.HardwareBacked,
+		InitializedAt:   info.InitializedAt,
+		ShamirThreshold: int32(info.ShamirThreshold),
+		ShamirTotal:     int32(info.ShamirTotal),
 	}, nil
 }
 

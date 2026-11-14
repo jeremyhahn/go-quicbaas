@@ -182,8 +182,12 @@ type BarrierStatusResponse struct {
 	HardwareBacked bool                   `protobuf:"varint,3,opt,name=hardware_backed,json=hardwareBacked,proto3" json:"hardware_backed,omitempty"`
 	// initialized_at is RFC3339 (UTC) or empty when never initialised.
 	InitializedAt string `protobuf:"bytes,4,opt,name=initialized_at,json=initializedAt,proto3" json:"initialized_at,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	// shamir_threshold and shamir_total carry go-qrdb's configured M-of-N
+	// quorum when the barrier uses the Shamir strategy; zero otherwise.
+	ShamirThreshold int32 `protobuf:"varint,5,opt,name=shamir_threshold,json=shamirThreshold,proto3" json:"shamir_threshold,omitempty"`
+	ShamirTotal     int32 `protobuf:"varint,6,opt,name=shamir_total,json=shamirTotal,proto3" json:"shamir_total,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
 }
 
 func (x *BarrierStatusResponse) Reset() {
@@ -242,6 +246,20 @@ func (x *BarrierStatusResponse) GetInitializedAt() string {
 		return x.InitializedAt
 	}
 	return ""
+}
+
+func (x *BarrierStatusResponse) GetShamirThreshold() int32 {
+	if x != nil {
+		return x.ShamirThreshold
+	}
+	return 0
+}
+
+func (x *BarrierStatusResponse) GetShamirTotal() int32 {
+	if x != nil {
+		return x.ShamirTotal
+	}
+	return 0
 }
 
 // BarrierShamirInitializeRequest initialises the barrier with Shamir secret sharing.
@@ -981,12 +999,14 @@ const file_api_proto_barrier_proto_rawDesc = "" +
 	"\x14BarrierUnsealRequest\x12\x16\n" +
 	"\x06secret\x18\x01 \x01(\fR\x06secret\"+\n" +
 	"\x12BarrierSealRequest\x12\x15\n" +
-	"\x06so_pin\x18\x01 \x01(\tR\x05soPin\"\x9b\x01\n" +
+	"\x06so_pin\x18\x01 \x01(\tR\x05soPin\"\xe9\x01\n" +
 	"\x15BarrierStatusResponse\x12\x16\n" +
 	"\x06sealed\x18\x01 \x01(\bR\x06sealed\x12\x1a\n" +
 	"\bstrategy\x18\x02 \x01(\tR\bstrategy\x12'\n" +
 	"\x0fhardware_backed\x18\x03 \x01(\bR\x0ehardwareBacked\x12%\n" +
-	"\x0einitialized_at\x18\x04 \x01(\tR\rinitializedAt\"y\n" +
+	"\x0einitialized_at\x18\x04 \x01(\tR\rinitializedAt\x12)\n" +
+	"\x10shamir_threshold\x18\x05 \x01(\x05R\x0fshamirThreshold\x12!\n" +
+	"\fshamir_total\x18\x06 \x01(\x05R\vshamirTotal\"y\n" +
 	"\x1eBarrierShamirInitializeRequest\x12\x16\n" +
 	"\x06secret\x18\x01 \x01(\fR\x06secret\x12\x1c\n" +
 	"\tthreshold\x18\x02 \x01(\x05R\tthreshold\x12!\n" +
