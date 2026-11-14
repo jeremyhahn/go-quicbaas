@@ -5,6 +5,9 @@ import (
 	"errors"
 	"sync"
 
+	ggrpc "google.golang.org/grpc"
+
+	grpcapi "github.com/jeremyhahn/go-quicbaas/pkg/api/grpc"
 	"github.com/jeremyhahn/go-quicbaas/pkg/cas"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 	"github.com/jeremyhahn/go-quicbaas/pkg/serviceplane"
@@ -54,4 +57,17 @@ func (s *Server) servicePlaneResolver(rt service.ServicePlaneRuntime) service.Se
 		plane = built
 		return plane, nil
 	}
+}
+
+// registerServicesService registers the service plane's gRPC service. It is
+// registered on every node, like the registry: a node with no
+// ServicePlaneRuntime answers FailedPrecondition from ServicesService, so the
+// gRPC surface stays symmetric with REST, QUIC, MCP and embedded.
+func (s *Server) registerServicesService(grpcServer *ggrpc.Server) {
+	if s.quicBaaSService == nil {
+		s.logger.Info("QuicBaaS service not available, skipping ServicesService gRPC registration")
+		return
+	}
+	grpcapi.RegisterServicesServiceServer(grpcServer, grpcapi.NewServicesServer(s.quicBaaSService.Services()))
+	s.logger.Info("Registered ServicesService gRPC service")
 }

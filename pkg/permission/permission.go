@@ -313,6 +313,29 @@ const (
 	ServiceRegistryRead qrdbsdk.Permission = "service_registry:read"
 )
 
+// Service plane permissions (#1687).
+//
+// A service is a signed manifest the plane launches in the caller's tenant.
+// The family is split by what a verb does to the tenant: deploy, redeploy and
+// undeploy change which signed code runs and which grants it holds; start,
+// stop, resume and restart only move a deployed service between its states;
+// get and list only read. Every transport encodes the same split
+// (pkg/api/grpc/authz_mapping.go, the REST frozen route table,
+// pkg/api/mcp/authz_qrdb.go).
+const (
+	// ServicesDeploy ("services:deploy") authorizes deploy, redeploy and
+	// undeploy of a signed manifest in the caller's tenant.
+	ServicesDeploy qrdbsdk.Permission = "services:deploy"
+
+	// ServicesControl ("services:control") authorizes start, stop, resume
+	// and restart of a deployed service in the caller's tenant.
+	ServicesControl qrdbsdk.Permission = "services:control"
+
+	// ServicesRead ("services:read") authorizes reading a service and
+	// listing the caller tenant's services. It mutates nothing.
+	ServicesRead qrdbsdk.Permission = "services:read"
+)
+
 // duty states which of FIPS 140-3 AS10.03's separated duties a contributed
 // permission belongs to. It is a distinct type from qrdbsdk.PermissionDuty for
 // one reason: qrdb's zero value, PermissionDutyUndeclared, is a legitimate
@@ -666,6 +689,37 @@ var contributions = []contribution{
 		// no part of the Security Officer's governance duties and touches no
 		// key, so nothing is declared to qrdb.
 		permission: ServiceRegistryRead,
+		scope:      scopeSelf,
+		roles: []string{
+			qrdbsdk.PermissionRoleAdmin,
+			qrdbsdk.PermissionRoleOperator,
+			qrdbsdk.PermissionRoleAuditor,
+		},
+		duty: dutyOutsideSecurityOfficer,
+	},
+	{
+		// services:deploy changes which signed code runs in the caller's
+		// tenant and which grants it holds. The plane verifies the manifest's
+		// signature against the node's keyring, so the permission adds no
+		// key duty; it is an operational write, Admin and Operator only.
+		permission: ServicesDeploy,
+		scope:      scopeSelf,
+		roles:      []string{qrdbsdk.PermissionRoleAdmin, qrdbsdk.PermissionRoleOperator},
+		duty:       dutyOutsideSecurityOfficer,
+	},
+	{
+		// services:control moves a deployed service between its states and
+		// never changes what runs: Admin and Operator.
+		permission: ServicesControl,
+		scope:      scopeSelf,
+		roles:      []string{qrdbsdk.PermissionRoleAdmin, qrdbsdk.PermissionRoleOperator},
+		duty:       dutyOutsideSecurityOfficer,
+	},
+	{
+		// services:read reveals the caller tenant's services and their
+		// state. Auditor holds it as read-only state visibility (FIPS 140-3
+		// AS10.10), beside Admin and Operator.
+		permission: ServicesRead,
 		scope:      scopeSelf,
 		roles: []string{
 			qrdbsdk.PermissionRoleAdmin,

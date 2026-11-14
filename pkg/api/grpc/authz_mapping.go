@@ -50,6 +50,7 @@ var brokerServiceDescs = []grpc.ServiceDesc{
 	pb.TrustService_ServiceDesc,
 	pb.AttestationService_ServiceDesc,
 	pb.RegistryService_ServiceDesc,
+	pb.ServicesService_ServiceDesc,
 	pb.FIDO2Service_ServiceDesc,
 	pb.PIVService_ServiceDesc,
 	pb.VectorDB_ServiceDesc,
@@ -519,6 +520,21 @@ var grpcMethodPermissions = map[string]methodPermission{
 	"/quicbaas.registry.v1.RegistryService/Deregister": {"service_registry", "register"},
 	"/quicbaas.registry.v1.RegistryService/Resolve":    {"service_registry", "read"},
 	"/quicbaas.registry.v1.RegistryService/Watch":      {"service_registry", "read"},
+
+	// ---- quicbaas.services.v1.ServicesService ----
+	//
+	// The service plane's own family (pkg/permission): deploy, redeploy and
+	// undeploy change which signed code runs and carry services:deploy; the
+	// state verbs carry services:control; get and list only read.
+	"/quicbaas.services.v1.ServicesService/Deploy":   {"services", "deploy"},
+	"/quicbaas.services.v1.ServicesService/Redeploy": {"services", "deploy"},
+	"/quicbaas.services.v1.ServicesService/Undeploy": {"services", "deploy"},
+	"/quicbaas.services.v1.ServicesService/Start":    {"services", "control"},
+	"/quicbaas.services.v1.ServicesService/Stop":     {"services", "control"},
+	"/quicbaas.services.v1.ServicesService/Resume":   {"services", "control"},
+	"/quicbaas.services.v1.ServicesService/Restart":  {"services", "control"},
+	"/quicbaas.services.v1.ServicesService/Get":      {"services", "read"},
+	"/quicbaas.services.v1.ServicesService/List":     {"services", "read"},
 
 	// The Verifier: reading endorsements and reference values, and appraising
 	// evidence against them, are reads (attestation:verify); storing or

@@ -396,6 +396,7 @@ type grpcServers struct {
 	agentCatalog       pb.AgentCatalogServiceServer
 	sdlc               pb.SDLCServiceServer
 	registry           pb.RegistryServiceServer
+	services           pb.ServicesServiceServer
 }
 
 // HostGRPCServers carries the gRPC servers the host builds from IAM state
@@ -477,6 +478,7 @@ var grpcRegistrations = []grpcRegistration{
 	{desc: &pb.AgentCatalogService_ServiceDesc, capability: "agent-catalog", pick: func(s *grpcServers) any { return s.agentCatalog }},
 	{desc: &pb.SDLCService_ServiceDesc, capability: "sdlc", pick: func(s *grpcServers) any { return s.sdlc }},
 	{desc: &pb.RegistryService_ServiceDesc, capability: "registry", pick: func(s *grpcServers) any { return s.registry }},
+	{desc: &pb.ServicesService_ServiceDesc, capability: "services", pick: func(s *grpcServers) any { return s.services }},
 	{desc: &iampb.FederationService_ServiceDesc, capability: "federation", hostPick: func(h HostGRPCServers) any { return h.Federation }},
 	{desc: &iampb.SessionService_ServiceDesc, capability: "session", hostPick: func(h HostGRPCServers) any { return h.Session }},
 }
@@ -719,6 +721,7 @@ func (m *Module) bind() (*grpcServers, error) {
 	// resolves its binding service per call and answers Unavailable while
 	// the module is disabled.
 	built.registry = grpcapi.NewRegistryServer(svc.Registry())
+	built.services = grpcapi.NewServicesServer(svc.Services())
 	built.sdlc = grpcapi.NewSDLCServer(svc, m.log)
 
 	if m.servers.CompareAndSwap(nil, built) {
