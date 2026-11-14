@@ -274,6 +274,39 @@ service OrchestratorService {
     rpc SetCostSettings(SetCostSettingsRequest) returns (CostSettingsResponse) {
         option (qrdb.v1.permission) = "cost_settings:write";
     }
+
+    // Fleet placement specs (go-quicbaas#1681): where a class of work may
+    // run across the fleet's hosts, and the read-only report of where it
+    // runs instead. An empty tenant_id is the caller's tenant; naming
+    // another is refused.
+
+    // DeclareFleetPlacementSpec creates or replaces a spec. The spec's
+    // generation is the one the caller read (zero to create); a stale one
+    // is ALREADY_EXISTS.
+    rpc DeclareFleetPlacementSpec(DeclareFleetPlacementSpecRequest) returns (FleetPlacementSpec) {
+        option (qrdb.v1.permission) = "placement:manage";
+    }
+
+    // GetFleetPlacementSpec returns one spec.
+    rpc GetFleetPlacementSpec(FleetPlacementSpecRequest) returns (FleetPlacementSpec) {
+        option (qrdb.v1.permission) = "placement:read";
+    }
+
+    // ListFleetPlacementSpecs returns a tenant's specs.
+    rpc ListFleetPlacementSpecs(ListFleetPlacementSpecsRequest) returns (ListFleetPlacementSpecsResponse) {
+        option (qrdb.v1.permission) = "placement:read";
+    }
+
+    // WithdrawFleetPlacementSpec removes a spec.
+    rpc WithdrawFleetPlacementSpec(FleetPlacementSpecRequest) returns (WithdrawFleetPlacementSpecResponse) {
+        option (qrdb.v1.permission) = "placement:manage";
+    }
+
+    // GetFleetPlacementDrift reports the spec's role work against the hosts
+    // it admits. A report that cannot be complete is FAILED_PRECONDITION.
+    rpc GetFleetPlacementDrift(FleetPlacementSpecRequest) returns (FleetPlacementDrift) {
+        option (qrdb.v1.permission) = "placement:read";
+    }
 }
 
 // =============================================================================
@@ -2514,4 +2547,90 @@ message CostSettingsResponse {
     string electricity_price_source = 6;
     // effective_engine_power_watts is every per-engine draw in force.
     map<string, double> effective_engine_power_watts = 7;
+}
+
+// FleetPlacementProfile is a role's resource profile: what admission divides
+// a host's measured room by. measured says whether it was observed or is the
+// seed.
+message FleetPlacementProfile {
+    double cpu_cores = 1;
+    int64 memory_bytes = 2;
+    bool measured = 3;
+    int64 sample_size = 4;
+    google.protobuf.Timestamp updated_at = 5;
+}
+
+// FleetPlacementSpec is where a role's work may run. It names its target by
+// host_count or by hosts, never both; required_capabilities must all be
+// present on a host. actuate false reports drift only.
+message FleetPlacementSpec {
+    string tenant_id = 1;
+    string name = 2;
+    string role = 3;
+    int64 host_count = 4;
+    repeated string hosts = 5;
+    FleetPlacementProfile profile = 6;
+    repeated string required_capabilities = 7;
+    bool actuate = 8;
+    uint64 generation = 9;
+}
+
+// DeclareFleetPlacementSpecRequest carries the spec to store.
+message DeclareFleetPlacementSpecRequest {
+    string tenant_id = 1;
+    FleetPlacementSpec spec = 2;
+}
+
+// FleetPlacementSpecRequest names one spec.
+message FleetPlacementSpecRequest {
+    string tenant_id = 1;
+    string name = 2;
+}
+
+// ListFleetPlacementSpecsRequest names the tenant whose specs to list.
+message ListFleetPlacementSpecsRequest {
+    string tenant_id = 1;
+}
+
+// ListFleetPlacementSpecsResponse is a tenant's specs.
+message ListFleetPlacementSpecsResponse {
+    repeated FleetPlacementSpec specs = 1;
+    int32 count = 2;
+}
+
+// WithdrawFleetPlacementSpecResponse confirms a spec was removed.
+message WithdrawFleetPlacementSpecResponse {
+    string name = 1;
+    bool withdrawn = 2;
+}
+
+// FleetPlacementRemedy is what would end a finding: an action, the host the
+// work leaves and the hosts it may go to.
+message FleetPlacementRemedy {
+    string action = 1;
+    string from = 2;
+    repeated string destinations = 3;
+}
+
+// FleetPlacementFinding is one way the fleet differs from a spec.
+message FleetPlacementFinding {
+    string kind = 1;
+    string field = 2;
+    string host = 3;
+    string work_id = 4;
+    repeated string missing = 5;
+    FleetPlacementRemedy remedy = 6;
+}
+
+// FleetPlacementDrift is the read-only report of a spec's role work against
+// the hosts it admits. observed_work is how much work was compared.
+message FleetPlacementDrift {
+    string tenant_id = 1;
+    string spec = 2;
+    string role = 3;
+    uint64 generation = 4;
+    string disposition = 5;
+    int64 observed_work = 6;
+    repeated string admissible_hosts = 7;
+    repeated FleetPlacementFinding findings = 8;
 }
