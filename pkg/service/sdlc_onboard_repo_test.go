@@ -90,8 +90,16 @@ type onboardRig struct {
 // key and forge token exist and the branch protection conforms.
 func newOnboardRig(t *testing.T) *onboardRig {
 	t.Helper()
-	rig := &onboardRig{sdlcServiceRig: newSDLCServiceRig(t), web: giteafake.New(t, "acme", onboardTestRepo)}
+	return newOnboardRigFrom(t, sdlcTestPublicURL, func(*sdlc.ProjectBinding) {})
+}
+
+// newOnboardRigFrom is newOnboardRig on a node whose public URL is publicURL,
+// with the template binding changed by edit before it is stored.
+func newOnboardRigFrom(t *testing.T, publicURL string, edit func(*sdlc.ProjectBinding)) *onboardRig {
+	t.Helper()
+	rig := &onboardRig{sdlcServiceRig: newSDLCServiceRigAt(t, publicURL), web: giteafake.New(t, "acme", onboardTestRepo)}
 	template := rig.binding()
+	edit(template)
 	template.Forge.BaseURL = rig.web.APIURL()
 	if err := rig.store.PutBinding(context.Background(), sdlcTestTenant, template); err != nil {
 		t.Fatal(err)
@@ -508,5 +516,31 @@ func TestSwapEmailLocalPart(t *testing.T) {
 	}
 	if got := swapEmailLocalPart("agent-api", "api", "web"); got != "agent-web" {
 		t.Fatalf("swapEmailLocalPart = %q, want agent-web", got)
+	}
+}
+
+// TestOnboardRepo_APollOnlyTemplateOnboardsOnANodeWithNoPublicURL: the copied
+// binding keeps the template's empty webhook reference, so no webhook secret
+// is generated, no delivery is provisioned, and onboarding completes on a node
+// that takes no deliveries.
+func TestOnboardRepo_APollOnlyTemplateOnboardsOnANodeWithNoPublicURL(t *testing.T) {
+	rig := newOnboardRigFrom(t, "", func(b *sdlc.ProjectBinding) { b.Forge.WebhookSecretRef = "" })
+
+	report := rig.onboard(t, onboardRequest())
+
+	requireStep(t, report, sdlc.OnboardStepWebhookSecret, sdlc.OnboardUnchanged)
+	requireStep(t, report, sdlc.OnboardStepBinding, sdlc.OnboardCreated)
+	if len(rig.secrets.ensured) != 0 {
+		t.Fatalf("generated %+v, want no webhook secret for a poll-only template", rig.secrets.ensured)
+	}
+	binding, err := rig.store.GetBinding(context.Background(), sdlcTestTenant, report.ProjectID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if binding.Forge.WebhookSecretRef != "" {
+		t.Fatalf("webhook secret ref = %q, want the template's empty one", binding.Forge.WebhookSecretRef)
+	}
+	if hooks := rig.web.HookURLs(); len(hooks) != 0 {
+		t.Fatalf("hooks = %v, want none for a poll-only repository", hooks)
 	}
 }

@@ -357,9 +357,11 @@ sdlc:
   webhook:
     max_body: 1048576               # bytes; the signature check buffers the body
     # THIS NODE's externally reachable ORIGIN: scheme, host, optional path.
-    # REQUIRED when the module is enabled and deliberately not defaulted:
+    # OPTIONAL and deliberately not defaulted. Without it the node is
+    # poll-only: it takes no webhook deliveries, and onboarding refuses a
+    # binding that names a webhook_secret_ref (go-quicbaas#2225). When set,
     # onboarding provisions forge webhooks pointing at
-    # <public_url>/api/v1/sdlc/webhook/<projectID>, and a guessed origin would
+    # <public_url>/api/v1/sdlc/webhook/<projectID>; a guessed origin would
     # provision every managed repository to deliver into the void and report
     # each one provisioned.
     #

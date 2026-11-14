@@ -170,7 +170,14 @@ func (s *SDLCService) onboardForgeToken(ctx context.Context, o *repoOnboarding) 
 
 // onboardWebhookSecret generates the repository's webhook HMAC key when it is
 // missing, in the tenant's own keyspace.
+//
+// A poll-only template names no webhook secret, and neither does the binding
+// copied from it, so no secret is generated for it.
 func (s *SDLCService) onboardWebhookSecret(ctx context.Context, o *repoOnboarding) error {
+	if o.pollOnly() {
+		o.record(sdlc.OnboardStepWebhookSecret, sdlc.OnboardUnchanged, "the template is poll-only; no webhook secret is needed", "")
+		return nil
+	}
 	ref := sdlc.WebhookSecretRef(o.req.Repo)
 	tenantCtx := tenantctx.WithTenant(ctx, o.tenantID)
 	_, err := s.secrets.GetSecret(tenantCtx, &GetSecretRequest{SecretID: ref})
@@ -504,6 +511,11 @@ func (o *repoOnboarding) createProjectRequest() (*CreateProjectRequest, error) {
 	return req, nil
 }
 
+// pollOnly reports whether the template binding declares no webhook delivery.
+func (o *repoOnboarding) pollOnly() bool {
+	return strings.TrimSpace(o.like.Forge.WebhookSecretRef) == ""
+}
+
 // bindingFor is the template's binding pointed at the repository: its own
 // project, repository and secrets, and the status contexts every onboarded
 // repository requires beside the template's.
@@ -515,7 +527,11 @@ func (o *repoOnboarding) bindingFor() *sdlc.ProjectBinding {
 	binding.ProjectID = o.project.ID
 	binding.Forge.Repo = o.req.Repo
 	binding.Forge.TokenSecretRef = sdlc.ForgeTokenRef(o.req.Repo)
-	binding.Forge.WebhookSecretRef = sdlc.WebhookSecretRef(o.req.Repo)
+	// A poll-only template stays poll-only: an empty webhook reference is the
+	// template's declaration, not a gap to fill.
+	if !o.pollOnly() {
+		binding.Forge.WebhookSecretRef = sdlc.WebhookSecretRef(o.req.Repo)
+	}
 	contexts := slices.Clone(o.like.Onboarding.StatusContexts())
 	for _, required := range sdlc.RepoOnboardStatusContexts {
 		if !slices.Contains(contexts, required) {

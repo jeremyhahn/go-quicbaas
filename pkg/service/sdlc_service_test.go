@@ -294,6 +294,13 @@ func sdlcTestBinding() *sdlc.ProjectBinding {
 
 func newSDLCServiceRig(t *testing.T) *sdlcServiceRig {
 	t.Helper()
+	return newSDLCServiceRigAt(t, sdlcTestPublicURL)
+}
+
+// newSDLCServiceRigAt is newSDLCServiceRig on a node whose public URL is
+// publicURL; empty is a node that takes no webhook deliveries.
+func newSDLCServiceRigAt(t *testing.T, publicURL string) *sdlcServiceRig {
+	t.Helper()
 	ensureSDLCSeams(t)
 	resolver := &sdlcMemoryResolver{}
 	store, err := sdlc.NewStore(resolver)
@@ -323,7 +330,7 @@ func newSDLCServiceRig(t *testing.T) *sdlcServiceRig {
 	svc, err := NewSDLCService(SDLCServiceConfig{
 		Store: store, Routes: routes, Projects: rig.projects, ProjectWriter: rig.projects,
 		Secrets: rig.secrets, Guard: guard, Verification: sdlcTestVerificationGuard(t),
-		WebhookPublicURL: sdlcTestPublicURL, Tasks: rig.agents,
+		WebhookPublicURL: publicURL, Tasks: rig.agents,
 		Auditor: rig.audit, Agents: rig.agentCatalog, SSHKeys: rig.sshKeys,
 	})
 	if err != nil {
@@ -574,9 +581,8 @@ func TestNewSDLCService_RefusesIncompleteWiring(t *testing.T) {
 		"secrets":        func(c *SDLCServiceConfig) { c.Secrets = nil },
 		"project writer": func(c *SDLCServiceConfig) { c.ProjectWriter = nil },
 		"tasks":          func(c *SDLCServiceConfig) { c.Tasks = nil },
-		// A node that cannot say where it lives would bind projects whose
-		// forge webhooks point nowhere, and report each one provisioned.
-		"public url":          func(c *SDLCServiceConfig) { c.WebhookPublicURL = "" },
+		// An EMPTY public URL is accepted: the node is poll-only (see
+		// TestNewSDLCService_AcceptsANodeWithNoPublicURL). A malformed one is not.
 		"relative public url": func(c *SDLCServiceConfig) { c.WebhookPublicURL = "/api" },
 		// A negative forge deadline would cancel every forge call before it
 		// was made; refused at construction rather than at the first sweep.
@@ -1275,5 +1281,15 @@ func TestSDLCService_OnboardRefusesABindingOffTheAllowlist(t *testing.T) {
 	var refused *sdlc.VerificationCommandRefusedError
 	if !errors.As(err, &refused) || refused.Command != "make lint-everything" {
 		t.Fatalf("Onboard = %v, want the refused command named", err)
+	}
+}
+
+// TestNewSDLCService_AcceptsANodeWithNoPublicURL: a node with no public URL
+// takes no webhook deliveries and onboards poll-only bindings, so it is a
+// configuration, not incomplete wiring.
+func TestNewSDLCService_AcceptsANodeWithNoPublicURL(t *testing.T) {
+	rig := newSDLCServiceRigAt(t, "")
+	if rig.svc == nil {
+		t.Fatal("no service built for a node with no public URL")
 	}
 }

@@ -1124,14 +1124,16 @@ type SDLCWebhook struct {
 	// forge delivers to: scheme and host, no path — e.g.
 	// "https://factory.example.com".
 	//
-	// REQUIRED WHEN THE MODULE IS ENABLED, and deliberately not defaulted.
-	// Onboarding a project provisions a webhook on the forge pointing at
-	// <public_url>/api/v1/sdlc/webhook/<projectID>, and "the webhook points
-	// at this node" is a property of the NODE rather than of any project.
-	// A guessed origin — the listen address, a loopback — would provision
-	// every managed repository to deliver into the void and report every one
-	// of them provisioned, which is the silent failure the whole onboarding
-	// surface exists to end.
+	// OPTIONAL, and deliberately not defaulted. Empty means this node takes
+	// no webhook deliveries: only poll-only bindings onboard, and a binding
+	// that names a webhook secret is refused at onboarding
+	// (go-quicbaas#2225). When set, onboarding provisions a webhook on the
+	// forge pointing at <public_url>/api/v1/sdlc/webhook/<projectID>, and
+	// "the webhook points at this node" is a property of the NODE rather
+	// than of any project. A guessed origin — the listen address, a
+	// loopback — would provision every managed repository to deliver into
+	// the void and report every one of them provisioned, which is the
+	// silent failure the whole onboarding surface exists to end.
 	PublicURL string `mapstructure:"public_url"`
 }
 

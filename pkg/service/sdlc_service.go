@@ -363,6 +363,13 @@ func (s *SDLCService) Bind(ctx context.Context, tenantID string, binding *sdlc.P
 	if err := s.checkRulers(ctx, tenantID, binding); err != nil {
 		return nil, err
 	}
+	// A binding that asks for deliveries this node cannot take is refused
+	// here, before the prior delivery is retired, autonomy is switched on or
+	// the binding is stored. Found only when the webhook is provisioned, the
+	// refusal would come back with the binding already active.
+	if err := s.onboarder.CheckDelivery(binding); err != nil {
+		return nil, err
+	}
 	if err := s.retirePriorDelivery(ctx, tenantID, binding); err != nil {
 		return nil, err
 	}

@@ -255,12 +255,13 @@ const WebhookPathPrefix = "/api/v1/sdlc/webhook/"
 
 // NewOnboarder wires the onboarder.
 //
-// hookBase is this NODE's externally reachable base URL, and it is required
-// for a reason worth stating: "the webhook points at this node" is a property
-// of the node, not of the project, and a per-project URL would let 28 bindings
-// disagree about where a delivery goes. An empty one is refused rather than
-// defaulted — guessing a public address would provision deliveries into the
-// void and report them provisioned.
+// hookBase is this NODE's externally reachable base URL: "the webhook points
+// at this node" is a property of the node, not of the project, and a
+// per-project URL would let 28 bindings disagree about where a delivery goes.
+// An empty one is allowed and never defaulted: the node takes no webhook
+// deliveries, only poll-only bindings onboard, and a binding that names a
+// webhook secret is refused (go-quicbaas#2225). Guessing a public address
+// would provision deliveries into the void and report them provisioned.
 func NewOnboarder(forges ForgeResolver, secrets WebhookSecretResolver, hookBase string) (*Onboarder, error) {
 	if forges == nil {
 		return nil, &InvalidInputError{Field: "forges", Message: "onboarding writes to the forge"}
@@ -301,10 +302,9 @@ func NewOnboarder(forges ForgeResolver, secrets WebhookSecretResolver, hookBase 
 func NormalizeWebhookPublicURL(raw string) (string, error) {
 	trimmed := strings.TrimRight(strings.TrimSpace(raw), "/")
 	if trimmed == "" {
-		return "", &InvalidInputError{
-			Field:   "webhook_public_url",
-			Message: "required; without this node's public base URL a provisioned delivery has nowhere to go",
-		}
+		// No public URL: this node takes no webhook deliveries, and only
+		// poll-only bindings onboard on it (go-quicbaas#2225).
+		return "", nil
 	}
 	parsed, err := url.Parse(trimmed)
 	if err != nil {
@@ -343,6 +343,24 @@ func NormalizeWebhookPublicURL(raw string) (string, error) {
 	return trimmed, nil
 }
 
+// CheckDelivery refuses a binding that asks for webhook deliveries this node
+// cannot take: it names a webhook secret and the node has no public URL.
+//
+// It is asked BEFORE anything is written. Bind retires the prior delivery,
+// switches autonomy on, records the route and stores the binding before it
+// onboards, and onboarding creates labels before it reaches the webhook; a
+// refusal found only there would leave the binding active behind an error
+// that says it was refused.
+func (o *Onboarder) CheckDelivery(binding *ProjectBinding) error {
+	if binding == nil {
+		return nil
+	}
+	if strings.TrimSpace(binding.Forge.WebhookSecretRef) != "" && o.hookBase == "" {
+		return &WebhookPublicURLMissingError{ProjectID: binding.ProjectID}
+	}
+	return nil
+}
+
 // WebhookURL is where this node expects one project's deliveries.
 func (o *Onboarder) WebhookURL(projectID string) string {
 	return o.hookBase + WebhookPathPrefix + url.PathEscape(projectID)
@@ -361,6 +379,10 @@ func (o *Onboarder) Onboard(ctx context.Context, tenantID string, binding *Proje
 		return nil, err
 	}
 	if err := binding.Validate(); err != nil {
+		return nil, err
+	}
+	// Refused before the labels are written, not after: see CheckDelivery.
+	if err := o.CheckDelivery(binding); err != nil {
 		return nil, err
 	}
 	forge, err := o.forges.ForgeFor(ctx, tenantID, binding.Forge)
@@ -403,6 +425,10 @@ func (o *Onboarder) Onboard(ctx context.Context, tenantID string, binding *Proje
 // configuration change. The webhook is different: left behind it delivers to a
 // node that no longer drives the project, which is a live wrong behaviour
 // rather than a stale display.
+//
+// A node with no public URL cannot rebuild the absolute URL it provisioned
+// before the URL was cleared, so it retires every delivery to this project's
+// ingress path on any host instead (go-quicbaas#2225).
 func (o *Onboarder) Offboard(ctx context.Context, tenantID string, binding *ProjectBinding) error {
 	if err := o.checkArgs(tenantID, binding); err != nil {
 		return err
@@ -410,6 +436,9 @@ func (o *Onboarder) Offboard(ctx context.Context, tenantID string, binding *Proj
 	forge, err := o.forges.ForgeFor(ctx, tenantID, binding.Forge)
 	if err != nil {
 		return err
+	}
+	if o.hookBase == "" {
+		return retireProjectDeliveries(ctx, forge, binding)
 	}
 	return forge.DeleteWebhook(ctx, binding.Repo(), o.WebhookURL(binding.ProjectID))
 }
@@ -548,6 +577,11 @@ func (o *Onboarder) ensureWebhook(
 	if ref == "" {
 		return false, "", nil
 	}
+	if o.hookBase == "" {
+		// The binding asks for deliveries this node cannot take. Refused
+		// rather than provisioned into the void and reported provisioned.
+		return false, "", &WebhookPublicURLMissingError{ProjectID: binding.ProjectID}
+	}
 	secret, err := o.secrets.WebhookSecret(ctx, tenantID, ref)
 	if err != nil {
 		return false, "", err
@@ -583,6 +617,18 @@ func (o *Onboarder) checkWebhook(ctx context.Context, forge ForgeBackend, bindin
 	if strings.TrimSpace(binding.Forge.WebhookSecretRef) == "" {
 		// Poll-only by declaration. Not a finding: see ensureWebhook.
 		report.add(CheckWebhook, StatusNotApplicable)
+		return
+	}
+	if o.hookBase == "" {
+		// The binding asks for deliveries a node with no public URL cannot
+		// take, so nothing can be conformant: see ensureWebhook.
+		report.add(CheckWebhook, StatusFail, ConformanceFinding{
+			Class:   ConformanceWebhookMissing,
+			Check:   CheckWebhook,
+			Subject: "sdlc.webhook.public_url",
+			Detail:  "the binding names a webhook secret, but this node has no sdlc.webhook.public_url and takes no deliveries",
+			Remedy:  "set sdlc.webhook.public_url, or drop the binding's webhook secret to make it poll-only",
+		})
 		return
 	}
 	hooks, err := forge.Webhooks(ctx, binding.Repo())
@@ -669,6 +715,25 @@ func isSDLCWebhookURL(hookURL, projectID string) bool {
 		return false
 	}
 	return strings.HasSuffix(strings.TrimRight(parsed.Path, "/"), WebhookPathPrefix+projectID)
+}
+
+// retireProjectDeliveries deletes every delivery on the binding's repository
+// that targets this project's SDLC ingress path, on whatever host. Deliveries
+// of other projects and hooks that are not SDLC deliveries are left alone.
+func retireProjectDeliveries(ctx context.Context, forge ForgeBackend, binding *ProjectBinding) error {
+	hooks, err := forge.Webhooks(ctx, binding.Repo())
+	if err != nil {
+		return err
+	}
+	for _, hook := range hooks {
+		if !isSDLCWebhookURL(hook.URL, binding.ProjectID) {
+			continue
+		}
+		if err := forge.DeleteWebhook(ctx, binding.Repo(), hook.URL); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // checkLabels reports every declared label the repository does not define.

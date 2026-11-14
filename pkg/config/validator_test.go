@@ -1401,3 +1401,46 @@ func TestValidateSDLC_RefusesTheZerosThatMeanNever(t *testing.T) {
 		})
 	}
 }
+
+// TestValidateSDLC_EmptyPublicURLMeansPollOnly proves an enabled module with
+// no public URL loads: the node takes no webhook deliveries and onboards only
+// poll-only bindings (go-quicbaas#2225).
+func TestValidateSDLC_EmptyPublicURLMeansPollOnly(t *testing.T) {
+	for name, public := range map[string]string{"absent": "", "blank": "   "} {
+		t.Run(name, func(t *testing.T) {
+			cfg := DefaultConfig()
+			tmp := t.TempDir()
+			cfg.Storage.DataDir = tmp
+			cfg.Storage.WALDir = filepath.Join(tmp, "wal")
+			cfg.SDLC.Enabled = true
+			cfg.SDLC.Webhook.PublicURL = public
+
+			err := Validate(cfg)
+			if err != nil {
+				assert.NotContains(t, err.Error(), "sdlc.webhook.public_url")
+			}
+		})
+	}
+}
+
+// TestValidateSDLC_MalformedPublicURLIsStillRefused proves that allowing an
+// empty public URL loosened nothing else: a set but malformed one is refused.
+func TestValidateSDLC_MalformedPublicURLIsStillRefused(t *testing.T) {
+	for name, public := range map[string]string{
+		"wrong scheme": "ftp://x",
+		"query":        "https://x?y=1",
+	} {
+		t.Run(name, func(t *testing.T) {
+			cfg := DefaultConfig()
+			tmp := t.TempDir()
+			cfg.Storage.DataDir = tmp
+			cfg.Storage.WALDir = filepath.Join(tmp, "wal")
+			cfg.SDLC.Enabled = true
+			cfg.SDLC.Webhook.PublicURL = public
+
+			err := Validate(cfg)
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "sdlc.webhook.public_url")
+		})
+	}
+}
