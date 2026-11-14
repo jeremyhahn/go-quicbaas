@@ -520,6 +520,43 @@ type BatchDeleteResponse struct {
 	Timestamp int64 `json:"timestamp"`
 }
 
+// BatchExecuteRequest represents a mixed batch of puts and deletes that
+// commits atomically.
+type BatchExecuteRequest struct {
+	// Operations is the list of operations to perform, in order
+	Operations []BatchExecuteOperation `json:"operations"`
+}
+
+// BatchExecuteOperation represents a single operation in a mixed batch.
+type BatchExecuteOperation struct {
+	// Type is the operation kind: "PUT" or "DELETE"
+	Type string `json:"type"`
+
+	// EntityType is the type/category of the entity
+	EntityType string `json:"entity_type"`
+
+	// Key is the entity key
+	Key string `json:"key"`
+
+	// Value is the data a put writes; a delete ignores it
+	Value []byte `json:"value,omitempty"`
+}
+
+// BatchExecuteResponse represents the response from a mixed batch.
+type BatchExecuteResponse struct {
+	// Success indicates if the batch operation succeeded
+	Success bool `json:"success"`
+
+	// Results is one result per operation, in request order
+	Results []BatchExecuteResult `json:"results"`
+}
+
+// BatchExecuteResult is the outcome of one operation in a mixed batch.
+type BatchExecuteResult struct {
+	// Success indicates if the operation succeeded
+	Success bool `json:"success"`
+}
+
 // =============================================================================
 // Key-Value (KV) Types - String Key Based Operations
 // =============================================================================

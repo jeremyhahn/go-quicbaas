@@ -325,6 +325,7 @@ func rawRouteSpecs() []RouteSpec {
 		{Method: "GET", Pattern: "/api/v1/barrier/status", Group: GroupAPI, Handler: func(s *Server) http.HandlerFunc { return s.HandleBarrierStatus }},
 		{Method: "POST", Pattern: "/api/v1/barrier/unseal", Group: GroupAPI, Handler: func(s *Server) http.HandlerFunc { return s.HandleBarrierUnseal }},
 		{Method: "POST", Pattern: "/api/v1/batch/delete", Group: GroupAPI, Handler: func(s *Server) http.HandlerFunc { return s.HandleBatchDelete }},
+		{Method: "POST", Pattern: "/api/v1/batch/execute", Group: GroupAPI, Handler: func(s *Server) http.HandlerFunc { return s.HandleBatchExecute }},
 		{Method: "POST", Pattern: "/api/v1/batch/get", Group: GroupAPI, Handler: func(s *Server) http.HandlerFunc { return s.HandleBatchGet }},
 		{Method: "POST", Pattern: "/api/v1/batch/put", Group: GroupAPI, Handler: func(s *Server) http.HandlerFunc { return s.HandleBatchPut }},
 		{Method: "POST", Pattern: "/api/v1/bootstrap/auto", Group: GroupAPI, Handler: func(s *Server) http.HandlerFunc { return s.HandleBootstrapAuto }},
