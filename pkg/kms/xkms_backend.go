@@ -64,6 +64,11 @@ type XKMSBackend struct {
 // any other type, so go-xkms could neither list nor export it (#1768).
 const symmetricKeyType = kctypes.KeyTypeSecret
 
+// SymmetricKeyType is the KeyType every QuicBaaS symmetric KMS key is made
+// under. Callers that build their own KeyAttributes for a symmetric key,
+// such as the crypto engine, use it so their keys match the service's (#1794).
+const SymmetricKeyType = symmetricKeyType
+
 // symmetricKeyTypeSegment is symmetricKeyType as the type segment of a
 // go-xkms kid ("backend:type:algo:keyname").
 var symmetricKeyTypeSegment = strings.ToLower(symmetricKeyType.String())
