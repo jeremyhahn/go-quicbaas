@@ -79,7 +79,7 @@ func (s *SchedulerServer) CreateJob(ctx context.Context, req *pb.CreateJobReques
 		TargetTenantID: req.TargetTenantId,
 		Type:           protoJobTypeToService(req.Type),
 		Schedule:       req.Schedule,
-		ExecuteAt:      time.Unix(req.ExecuteAt, 0),
+		ExecuteAt:      schedulerTimeFromUnix(req.ExecuteAt),
 		Delay:          time.Duration(req.DelaySeconds) * time.Second,
 		Handler:        req.Handler,
 		Payload:        req.Payload,
@@ -147,7 +147,7 @@ func (s *SchedulerServer) UpdateJob(ctx context.Context, req *pb.UpdateJobReques
 		Name:        req.Name,
 		Description: req.Description,
 		Schedule:    req.Schedule,
-		ExecuteAt:   time.Unix(req.ExecuteAt, 0),
+		ExecuteAt:   schedulerTimeFromUnix(req.ExecuteAt),
 		Handler:     req.Handler,
 		Payload:     req.Payload,
 		Priority:    req.Priority,
@@ -541,7 +541,7 @@ func serviceJobToProto(job *service.SchedulerJob) *pb.Job {
 		CreatedBy:      job.CreatedBy,
 		Type:           serviceJobTypeToProto(job.Type),
 		Schedule:       job.Schedule,
-		ExecuteAt:      job.ExecuteAt.Unix(),
+		ExecuteAt:      schedulerUnixFromTime(job.ExecuteAt),
 		DelaySeconds:   int64(job.Delay.Seconds()),
 		Handler:        job.Handler,
 		Payload:        job.Payload,
@@ -558,6 +558,24 @@ func serviceJobToProto(job *service.SchedulerJob) *pb.Job {
 		CreatedAt:      job.CreatedAt.Unix(),
 		UpdatedAt:      job.UpdatedAt.Unix(),
 	}
+}
+
+// schedulerTimeFromUnix maps a wire Unix second to a time.Time; 0, the
+// proto3 default for an absent field, maps to the zero time.Time ("not set").
+func schedulerTimeFromUnix(sec int64) time.Time {
+	if sec == 0 {
+		return time.Time{}
+	}
+	return time.Unix(sec, 0)
+}
+
+// schedulerUnixFromTime maps a time.Time to wire Unix seconds; the zero
+// time.Time ("not set") maps to 0.
+func schedulerUnixFromTime(t time.Time) int64 {
+	if t.IsZero() {
+		return 0
+	}
+	return t.Unix()
 }
 
 // serviceExecutionToProto converts service.SchedulerJobExecution to pb.JobExecution.
