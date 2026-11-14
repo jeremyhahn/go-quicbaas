@@ -66,7 +66,7 @@ const (
 // one of the Security() surface services routed through this handler.
 func isSecurityService(service string) bool {
 	switch trimRESTServicePrefix(service) {
-	case "ACME", "Trust", "FIDO2", "PIV", "Attestation":
+	case "ACME", "Trust", "FIDO2", "PIV", "Attestation", "TrustedCA":
 		return true
 	default:
 		return false
@@ -99,6 +99,8 @@ func (h *securityRESTHandler) handleRequest(ctx context.Context, service, method
 		return h.handleTrust(ctx, method, req)
 	case "Attestation":
 		return h.handleAttestation(ctx, method, req)
+	case "TrustedCA":
+		return h.handleTrustedCA(ctx, method, req)
 	default:
 		return nil, errors.NewUnimplemented("rest.security.handleRequest",
 			"unsupported security service: "+service)
