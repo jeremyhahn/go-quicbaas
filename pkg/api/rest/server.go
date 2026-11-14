@@ -184,11 +184,6 @@ type PIVClientCertConfig struct {
 	// Default: false (cert provided in POST body as PEM).
 	Enabled bool
 
-	// TrustedRootsFile is the path to a PEM-encoded file containing trusted CA
-	// certificates for PIV cert chain verification. When empty, the server-level
-	// TLSCAFile is used as a fallback. Required when Enabled is true.
-	TrustedRootsFile string
-
 	// TrustedIssuers is an optional list of issuer Subject DN strings that the
 	// certificate's issuing CA must match (case-insensitive per RFC 4514). When
 	// empty, any cert that validates against the CA pool is accepted.

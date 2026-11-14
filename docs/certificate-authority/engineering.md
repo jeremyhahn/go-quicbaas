@@ -150,6 +150,20 @@ Client certificates must:
 3. Not be expired or revoked
 4. Match the identity expected by the server (if CN/SAN verification is enabled)
 
+### One Client Trust-Anchor Set
+
+`security.tls_ca_file` is the only client trust-anchor set. The handshake's
+`ClientCAs` hold it, next to the platform CA, whether the server cert is the
+operator's own or self-issued. The same certificates anchor the RFC 8705
+`tls_client_auth` authenticator, PIV smartcard login and PIV invite
+activation, so a client the handshake accepts is one they accept too.
+
+- A configured `tls_ca_file` that cannot be read, or holds no certificate,
+  stops the boot with a `ClientTrustAnchorsError`.
+- The self-issued CA writes its chain only to the default path
+  (`<data_dir>/certs/ca-chain.crt`). It never overwrites an operator
+  `tls_ca_file`.
+
 ### Raft Inter-Node mTLS
 
 Secure cluster communication with mutual TLS:

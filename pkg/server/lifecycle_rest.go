@@ -86,12 +86,6 @@ func (s *Server) startRESTServer() error {
 
 	s.logger.Info("Initializing REST server (unified-server binding, no local listener)...")
 
-	// The unified listeners serve s.tlsConfig, so the operator and PIV CAs
-	// are composed into it once here, before any REST server is built.
-	if err := s.trustIAMClientCAs(); err != nil {
-		return err
-	}
-
 	restServer, err := s.buildRESTServer()
 	if err != nil {
 		return err
@@ -117,9 +111,9 @@ func (s *Server) startRESTServer() error {
 func (s *Server) buildRESTServer() (*restapi.Server, error) {
 	// Clone TLS config to avoid concurrent writes from HTTP/2 setup
 	// racing with other servers (QUIC, gRPC) that share s.tlsConfig.
-	// The operator and PIV client CAs are already in s.tlsConfig
-	// (trustIAMClientCAs, called once from startRESTServer), so the clone
-	// inherits them and nothing is appended here.
+	// The operator's client trust anchors are already in s.tlsConfig
+	// (appendClientTrustAnchors at TLS setup), so the clone inherits them
+	// and nothing is appended here.
 	clonedTLSConfig := cloneTLSConfig(s.serverTLSConfigRef())
 
 	// Create REST server configuration
@@ -153,7 +147,6 @@ func (s *Server) buildRESTServer() (*restapi.Server, error) {
 		// PIV login configuration: thread operator config into REST handler.
 		PIVClientCert: restapi.PIVClientCertConfig{
 			Enabled:                      s.config.IAM.PIVLogin.Enabled,
-			TrustedRootsFile:             s.config.IAM.PIVLogin.CAFile,
 			TrustedIssuers:               s.config.IAM.PIVLogin.TrustedIssuers,
 			AttestationCAFile:            s.config.IAM.PIVLogin.AttestationCAFile,
 			AttestationIntermediatesFile: s.config.IAM.PIVLogin.AttestationIntermediatesFile,

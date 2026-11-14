@@ -58,7 +58,6 @@ iam:
   # PIV smartcard login. See "PIV smartcard attestation" below.
   piv_login:
     enabled: false
-    ca_file: "/etc/quicbaasd/piv-ca.pem"
     attestation_ca_file: "/etc/quicbaasd/yubico-piv-attestation-ca.pem"
 
   auth:
@@ -1866,15 +1865,18 @@ compromised. Entries with no AAGUID (the U2F and UAF models) are skipped.
 
 The signed JWS is not verified here: this reads a file the operator placed on
 the node's disk, so the trust boundary is the filesystem, exactly as it is for
-`ca_file` and `attestation_roots_file`.
+`security.tls_ca_file` and `attestation_roots_file`.
 
 #### PIV smartcard attestation
+
+A PIV login certificate must chain to `security.tls_ca_file` or the platform
+CA: the same anchor set the TLS handshake verifies against. There is no
+separate PIV CA setting.
 
 ```yaml
 iam:
   piv_login:
     enabled: true
-    ca_file: "/etc/quicbaasd/piv-ca.pem"
     attestation_ca_file: "/etc/quicbaasd/yubico-piv-attestation-ca.pem"
     attestation_intermediates_file: ""   # optional vendor sub-CA bundle
     allow_unattested: false              # explicit downgrade; default false

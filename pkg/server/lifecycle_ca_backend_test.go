@@ -180,7 +180,6 @@ func TestInitializeCA_DefaultIsSoftware_NoRegression(t *testing.T) {
 	cfg.Security.TLSEnabled = true
 	cfg.Storage.DataDir = t.TempDir()
 	cfg.CA.KeysDir = filepath.Join(t.TempDir(), "ca-keys")
-	cfg.Security.TLSCAFile = filepath.Join(t.TempDir(), "ca-chain.crt")
 
 	srv, err := NewServer(cfg)
 	require.NoError(t, err)
@@ -204,7 +203,6 @@ func TestInitializeCA_ExplicitSoftwareHardwareDefaultStillSoftware(t *testing.T)
 	cfg.Security.TLSEnabled = true
 	cfg.Storage.DataDir = t.TempDir()
 	cfg.CA.KeysDir = filepath.Join(t.TempDir(), "ca-keys")
-	cfg.Security.TLSCAFile = filepath.Join(t.TempDir(), "ca-chain.crt")
 
 	cfg.Crypto.Backend = config.BackendTypeTPM2
 	cfg.Crypto.Subsystems.CA.Backend = config.BackendTypeSoftware
