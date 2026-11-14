@@ -102,6 +102,10 @@ type SchedulerEngine struct {
 	// to Running, so its outcome is concluded through the guard.
 	startedRuns sync.Map // uint64 -> RunConclusion
 
+	// remoteRuns holds, per job, the open run of a remote handler this node
+	// fired and is waiting on (see remote_handler.go).
+	remoteRuns sync.Map // uint64 -> *remoteWaiter
+
 	// concludedElsewhere counts outcomes dropped because another writer
 	// concluded the run first.
 	concludedElsewhere atomic.Uint64
@@ -1366,7 +1370,8 @@ func (s *SchedulerEngine) executeJob(ctx context.Context, job *Job, claimedFirin
 
 	// Get handler
 	handler, ok := s.getHandler(job.Handler)
-	if !ok {
+	remote := !ok && IsRemoteHandler(job.Handler)
+	if !ok && !remote {
 		s.handleJobFailure(storageCtx, job, HandlerNotFoundError{Handler: job.Handler})
 		return
 	}
@@ -1435,6 +1440,11 @@ func (s *SchedulerEngine) executeJob(ctx context.Context, job *Job, claimedFirin
 		return
 	}
 	s.noteRunStarted(job)
+	if remote {
+		// A remote worker runs this job: the execution waits for the
+		// result it reports (see remote_handler.go).
+		handler = s.remoteHandler(s.openRemoteRun(job))
+	}
 	lock.Unlock()
 
 	// Create execution record
