@@ -78,6 +78,11 @@ type SecurityService interface {
 	// AIA-driven root import.
 	Trust() TrustService
 
+	// TrustedCA re-exports the go-xkms CAService under go-xkms's own names
+	// and types (bundle, CA certificate, CSR signing, issuance, revocation,
+	// CRL). It is served by go-xkms's CA on the server (#1330).
+	TrustedCA() TrustedCAService
+
 	// Attestation exposes the standalone trusted-computing surface:
 	// verification of hardware attestation statements and certificate
 	// chains (composed from go-xkms pkg/attestation), the Tier 0 image
@@ -223,6 +228,9 @@ type securityService struct {
 	trustOnce sync.Once
 	trustSvc  TrustService
 
+	trustedCAOnce sync.Once
+	trustedCASvc  TrustedCAService
+
 	attestationOnce sync.Once
 	attestationSvc  AttestationService
 
@@ -265,6 +273,13 @@ func (s *securityService) Trust() TrustService {
 		s.trustSvc = newTrustService(s.c.transport)
 	})
 	return s.trustSvc
+}
+
+func (s *securityService) TrustedCA() TrustedCAService {
+	s.trustedCAOnce.Do(func() {
+		s.trustedCASvc = newTrustedCAService(s.c.transport)
+	})
+	return s.trustedCASvc
 }
 
 // Attestation returns the trusted-computing sub-service. The returned

@@ -26,6 +26,12 @@ on every transport, for go-trusted-platform ([SPEC](../SPEC.md) rows
 | Certificate | `Security().Certificate()` | `/api/v1/certificate` | `ca` |
 | ACME | `Security().ACME()` | `/api/v1/acme` | `acme` |
 | Trust | `Security().Trust()` | `/api/v1/trust` | `trust` |
+| go-xkms CA (`CAService`) | `Security().TrustedCA()` | `/api/v1/xkms/ca` | — |
+
+`Security().TrustedCA()` is the go-xkms `CAService` under go-xkms's own names
+and types (#1330). Today it is served on REST only: the server's MCP
+`xkms.ca.*` tools return "operation not supported", and gRPC, QUIC and Unix do
+not carry it yet.
 
 Issuance (Certificate, ACME) and acceptance (Trust) stay separate surfaces: a
 deployment can issue for its own nodes while accepting a different set of
