@@ -1338,7 +1338,17 @@ var RemovedKeys = map[string]string{
 	"sdlc.worker_image.registry_token_file": "sdlc.worker_image.registry_token_secret and registry_token_tenant: " +
 		"the push token is a QuicBaaS tenant secret, never a plaintext file",
 	"sdlc.worktree_root": workerClonesItsOwnWorkspace,
+	// The embedded qrdb node binds every API listener on server.host; a
+	// per-protocol override never reached a listener.
+	"server.rest.bind_address": serverHostBindsEveryListener,
+	"server.grpc.bind_address": serverHostBindsEveryListener,
+	"server.mcp.bind_address":  serverHostBindsEveryListener,
+	"server.unix.bind_address": serverHostBindsEveryListener,
 }
+
+// serverHostBindsEveryListener is where a per-protocol bind_address went.
+const serverHostBindsEveryListener = "server.host: the embedded node binds the REST, gRPC and MCP listeners " +
+	"on it; isolate a listener with a firewall or a separate node, not a per-protocol bind"
 
 // agentReplacesTuple is where a backend/model tuple went: a reference to a
 // tenant Agent or pool, which carries the backend, the model and the image.
@@ -2026,24 +2036,12 @@ type BackupConfig struct {
 type ServerGRPCConfig struct {
 	Enabled bool `mapstructure:"enabled"`
 	Port    int  `mapstructure:"port"`
-
-	// BindAddress optionally overrides Server.Host for the gRPC listener,
-	// allowing this protocol to bind to a private-ingress interface (SC-7)
-	// independently of the other listeners. Empty = use Server.Host
-	// (current behavior).
-	BindAddress string `mapstructure:"bind_address"`
 }
 
 // ServerRESTConfig contains REST/HTTP server configuration.
 type ServerRESTConfig struct {
 	Enabled bool `mapstructure:"enabled"`
 	Port    int  `mapstructure:"port"`
-
-	// BindAddress optionally overrides Server.Host for the REST listener,
-	// allowing this protocol to bind to a private-ingress interface (SC-7)
-	// independently of the other listeners. Empty = use Server.Host
-	// (current behavior).
-	BindAddress string `mapstructure:"bind_address"`
 
 	// RateLimit is the global per-source-IP request limit, in requests per
 	// second (the burst is the same size). Zero, which is also what an
@@ -2058,25 +2056,12 @@ type ServerMCPConfig struct {
 	Port                int                          `mapstructure:"port"`
 	Authorization       MCPAuthorizationConfig       `mapstructure:"authorization"`
 	DynamicRegistration MCPDynamicRegistrationConfig `mapstructure:"dynamic_registration"`
-
-	// BindAddress optionally overrides Server.Host for the MCP listener,
-	// allowing this protocol to bind to a private-ingress interface (SC-7)
-	// independently of the other listeners. Empty = use Server.Host
-	// (current behavior).
-	BindAddress string `mapstructure:"bind_address"`
 }
 
 // ServerUnixConfig contains Unix domain socket server configuration.
 type ServerUnixConfig struct {
 	Enabled bool   `mapstructure:"enabled"`
 	Socket  string `mapstructure:"socket"`
-
-	// BindAddress optionally overrides Server.Host for any network-facing
-	// component of the Unix transport. The Unix domain socket itself is
-	// addressed by Socket; this field exists for parity and is honored only
-	// when the transport binds a network address. Empty = use Server.Host
-	// (current behavior).
-	BindAddress string `mapstructure:"bind_address"`
 }
 
 // ServerConfig contains HTTP/gRPC/QUIC server configuration.
@@ -2105,8 +2090,7 @@ type ServerConfig struct {
 
 	// SealedBindHost is the listen host used by the sealed-window (pre-unseal
 	// ceremony / unseal) listeners on REST, gRPC, QUIC, and MCP. It is
-	// deliberately independent of Host and the per-protocol BindAddress
-	// overrides so a deployment that binds the full post-unseal API on
+	// deliberately independent of Host so a deployment that binds the full post-unseal API on
 	// 0.0.0.0 does not also expose the pre-unseal surface network-wide.
 	// Empty = "127.0.0.1" (loopback). Set to a routable address (for
 	// example "0.0.0.0") only when remote Shamir officers must reach the
@@ -2195,22 +2179,10 @@ type ServerACMEConfig struct {
 	AllowPrivateChallengeTargets bool `mapstructure:"allow_private_challenge_targets"`
 }
 
-// ResolveBindHost returns the listen host for a protocol listener: the
-// per-protocol override when non-empty, otherwise the shared Server.Host.
-// This keeps the default (empty override) behavior identical to binding all
-// listeners on Server.Host while allowing per-protocol private-ingress
-// isolation (SC-7) when an operator sets a bind_address.
-func (c *ServerConfig) ResolveBindHost(override string) string {
-	if override != "" {
-		return override
-	}
-	return c.Host
-}
-
 // ResolveSealedBindHost returns the listen host for the sealed-window
 // (pre-unseal) listeners: SealedBindHost when non-empty, otherwise the
-// loopback default DefaultSealedBindHost. Server.Host and the per-protocol
-// BindAddress overrides never apply while sealed — the ceremony/unseal
+// loopback default DefaultSealedBindHost. Server.Host never applies while
+// sealed — the ceremony/unseal
 // surface stays on loopback unless an operator explicitly opts in.
 func (c *ServerConfig) ResolveSealedBindHost() string {
 	if c.SealedBindHost != "" {

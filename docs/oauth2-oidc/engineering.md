@@ -308,15 +308,14 @@ application code:
   admin/audit APIs on the private listener.
 
 The network boundary itself remains **operator-enforced** (private subnet + SG /
-NACL); the application does not relocate the boundary into code. Two optional,
-backward-compatible config knobs support the posture without changing it when
-unset:
+NACL); the application does not relocate the boundary into code. An optional config
+knob supports the posture without changing it when unset:
 
-- **Per-protocol `bind_address`** (`server.{rest,grpc,quic,mcp,unix}.bind_address`)
-  overrides the shared `server.host` for that listener only, so privileged
-  protocols can bind a private interface independently of any public-facing one.
-  Empty (default) = use `server.host` for every listener (current behavior).
-  Resolved via `ServerConfig.ResolveBindHost`.
+- Every API listener (REST, gRPC, MCP) binds on the shared `server.host`; the
+  embedded node opens them all there. There is no per-protocol bind: a
+  `server.<protocol>.bind_address` key is refused at load (`RemovedKeys`), since
+  it never reached a listener. Keep a privileged protocol private with the
+  network boundary above, or by running it on a separate node.
 - **`security.require_mtls`** flips the server TLS client-auth posture from the
   default opportunistic `VerifyClientCertIfGiven` to strict
   `RequireAndVerifyClientCert`, rejecting any connection without a trusted client

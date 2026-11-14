@@ -464,9 +464,8 @@ func (s *Server) stopSealedTransports() error {
 // sealedListenAddress resolves the listen address for a sealed-window
 // listener: the dedicated sealed-phase bind host (loopback unless
 // Server.SealedBindHost opts into a routable address) joined with the
-// protocol port. Server.Host and the per-protocol BindAddress overrides
-// deliberately do not apply while sealed; they govern only the post-unseal
-// full-boot listeners.
+// protocol port. Server.Host deliberately does not apply
+// while sealed; it governs only the post-unseal full-boot listeners.
 func sealedListenAddress(cfg *config.Config, port int) string {
 	return net.JoinHostPort(cfg.Server.ResolveSealedBindHost(), strconv.Itoa(port))
 }

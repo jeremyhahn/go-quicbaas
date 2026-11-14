@@ -50,7 +50,7 @@ layers: `auto` selects among them.
 These routes are reachable **before** the barrier is unsealed, which is the
 whole point and also the security consideration. `ServerConfig.SealedBindHost`
 exists precisely for this: it binds the pre-unseal listeners independently of
-every other `bind_address`, defaulting to loopback.
+`server.host`, defaulting to loopback.
 
 Set it to a routable address **only** when remote Shamir officers must reach the
 ceremony during the sealed window. A deployment that binds its full API on

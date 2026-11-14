@@ -51,8 +51,9 @@ Almost all of hardening is configuration, not command line:
   `QUICBAAS_SECURITY_REQUIRE_AUTHZ`, `QUICBAAS_SECURITY_TLS_CLIENT_AUTH`,
   `QUICBAAS_SECURITY_INSECURE_DEV_MODE`, `QUICBAAS_SECURITY_LIVENESS_CACHE_TTL`
   are all in the explicit list `pkg/config/loader.go` reads.
-- `server.*.bind_address` — per-protocol ingress, so one listener can be private
-  while another is not.
+- `server.host` — the one bind host for every API listener. A per-protocol
+  `server.*.bind_address` is refused at load: the embedded node never honoured
+  it, so isolate a listener at the network boundary instead.
 - `server.sealed_bind_host` — the pre-unseal surface, bound independently and
   defaulting to loopback. See [`../bootstrap/user.md`](../bootstrap/user.md).
 - `raft.*` mTLS — `QUICBAAS_RAFT_MUTUAL_TLS` and its cert/key/CA companions.

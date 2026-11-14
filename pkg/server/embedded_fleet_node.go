@@ -565,10 +565,7 @@ func (s *Server) buildEmbeddedFleetNodeMCPResolver(hostname string, log interfac
 		return nil
 	}
 
-	host := strings.TrimSpace(s.config.Server.MCP.BindAddress)
-	if host == "" {
-		host = strings.TrimSpace(s.config.Server.Host)
-	}
+	host := strings.TrimSpace(s.config.Server.Host)
 	switch host {
 	case "", "0.0.0.0", "::", "[::]":
 		host = "127.0.0.1"

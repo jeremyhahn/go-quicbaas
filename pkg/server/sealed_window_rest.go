@@ -43,8 +43,8 @@ func (s *Server) startSealedRESTServer() error {
 	clonedTLSConfig := cloneTLSConfig(s.tlsConfig)
 
 	// One address for both the server config and Start: the sealed-phase
-	// bind host (loopback by default). Server.Host and REST.BindAddress do
-	// not apply to the pre-unseal surface.
+	// bind host (loopback by default). Server.Host does not
+	// apply to the pre-unseal surface.
 	address := sealedListenAddress(s.config, s.config.Server.REST.Port)
 
 	restConfig := &restapi.Config{
