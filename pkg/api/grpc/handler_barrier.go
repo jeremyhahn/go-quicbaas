@@ -226,6 +226,7 @@ func (s *BarrierServer) BarrierShamirInitialize(ctx context.Context, req *pb.Bar
 	return &pb.BarrierShamirInitializeResponse{
 		Threshold:   int32(info.Threshold),
 		TotalShares: int32(info.TotalShares),
+		ShareCount:  int32(info.ShareCount),
 	}, nil
 }
 
@@ -296,6 +297,7 @@ func (s *BarrierServer) BarrierRekey(ctx context.Context, req *pb.BarrierRekeyRe
 	return &pb.BarrierShamirInitializeResponse{
 		Threshold:   int32(info.Threshold),
 		TotalShares: int32(info.TotalShares),
+		ShareCount:  int32(info.ShareCount),
 	}, nil
 }
 
@@ -323,8 +325,9 @@ func (s *BarrierServer) BarrierRecoveryGenerate(ctx context.Context, req *pb.Bar
 	// Recovery shares are sealed to enrolled recovery officers and never
 	// returned; only the threshold/total metadata is reported.
 	return &pb.BarrierRecoveryKeysResponse{
-		Threshold: int32(info.Threshold),
-		Total:     int32(info.Total),
+		Threshold:  int32(info.Threshold),
+		Total:      int32(info.Total),
+		ShareCount: int32(info.ShareCount),
 	}, nil
 }
 

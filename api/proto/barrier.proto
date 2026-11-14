@@ -162,6 +162,8 @@ message BarrierShamirInitializeResponse {
   repeated string shares = 1;
   int32 threshold = 2;
   int32 total_shares = 3;
+  // share_count is go-qrdb's count of shares sealed to enrolled officers.
+  int32 share_count = 4;
 }
 
 // BarrierShamirUnsealShareRequest submits a single Shamir share.
@@ -198,6 +200,8 @@ message BarrierRecoveryKeysResponse {
   repeated string keys = 1;
   int32 threshold = 2;
   int32 total = 3;
+  // share_count is go-qrdb's count of recovery shares sealed to officers.
+  int32 share_count = 4;
 }
 
 // BarrierRecoveryRecoverRequest unseals the barrier using recovery keys.

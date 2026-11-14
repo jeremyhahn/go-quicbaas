@@ -326,10 +326,12 @@ func (x *BarrierShamirInitializeRequest) GetTotalShares() int32 {
 
 // BarrierShamirInitializeResponse returns the generated key shares.
 type BarrierShamirInitializeResponse struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Shares        []string               `protobuf:"bytes,1,rep,name=shares,proto3" json:"shares,omitempty"`
-	Threshold     int32                  `protobuf:"varint,2,opt,name=threshold,proto3" json:"threshold,omitempty"`
-	TotalShares   int32                  `protobuf:"varint,3,opt,name=total_shares,json=totalShares,proto3" json:"total_shares,omitempty"`
+	state       protoimpl.MessageState `protogen:"open.v1"`
+	Shares      []string               `protobuf:"bytes,1,rep,name=shares,proto3" json:"shares,omitempty"`
+	Threshold   int32                  `protobuf:"varint,2,opt,name=threshold,proto3" json:"threshold,omitempty"`
+	TotalShares int32                  `protobuf:"varint,3,opt,name=total_shares,json=totalShares,proto3" json:"total_shares,omitempty"`
+	// share_count is go-qrdb's count of shares sealed to enrolled officers.
+	ShareCount    int32 `protobuf:"varint,4,opt,name=share_count,json=shareCount,proto3" json:"share_count,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -381,6 +383,13 @@ func (x *BarrierShamirInitializeResponse) GetThreshold() int32 {
 func (x *BarrierShamirInitializeResponse) GetTotalShares() int32 {
 	if x != nil {
 		return x.TotalShares
+	}
+	return 0
+}
+
+func (x *BarrierShamirInitializeResponse) GetShareCount() int32 {
+	if x != nil {
+		return x.ShareCount
 	}
 	return 0
 }
@@ -644,10 +653,12 @@ func (x *BarrierRecoveryGenerateRequest) GetTotal() int32 {
 
 // BarrierRecoveryKeysResponse returns generated recovery keys.
 type BarrierRecoveryKeysResponse struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Keys          []string               `protobuf:"bytes,1,rep,name=keys,proto3" json:"keys,omitempty"`
-	Threshold     int32                  `protobuf:"varint,2,opt,name=threshold,proto3" json:"threshold,omitempty"`
-	Total         int32                  `protobuf:"varint,3,opt,name=total,proto3" json:"total,omitempty"`
+	state     protoimpl.MessageState `protogen:"open.v1"`
+	Keys      []string               `protobuf:"bytes,1,rep,name=keys,proto3" json:"keys,omitempty"`
+	Threshold int32                  `protobuf:"varint,2,opt,name=threshold,proto3" json:"threshold,omitempty"`
+	Total     int32                  `protobuf:"varint,3,opt,name=total,proto3" json:"total,omitempty"`
+	// share_count is go-qrdb's count of recovery shares sealed to officers.
+	ShareCount    int32 `protobuf:"varint,4,opt,name=share_count,json=shareCount,proto3" json:"share_count,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -699,6 +710,13 @@ func (x *BarrierRecoveryKeysResponse) GetThreshold() int32 {
 func (x *BarrierRecoveryKeysResponse) GetTotal() int32 {
 	if x != nil {
 		return x.Total
+	}
+	return 0
+}
+
+func (x *BarrierRecoveryKeysResponse) GetShareCount() int32 {
+	if x != nil {
+		return x.ShareCount
 	}
 	return 0
 }
@@ -1010,11 +1028,13 @@ const file_api_proto_barrier_proto_rawDesc = "" +
 	"\x1eBarrierShamirInitializeRequest\x12\x16\n" +
 	"\x06secret\x18\x01 \x01(\fR\x06secret\x12\x1c\n" +
 	"\tthreshold\x18\x02 \x01(\x05R\tthreshold\x12!\n" +
-	"\ftotal_shares\x18\x03 \x01(\x05R\vtotalShares\"z\n" +
+	"\ftotal_shares\x18\x03 \x01(\x05R\vtotalShares\"\x9b\x01\n" +
 	"\x1fBarrierShamirInitializeResponse\x12\x16\n" +
 	"\x06shares\x18\x01 \x03(\tR\x06shares\x12\x1c\n" +
 	"\tthreshold\x18\x02 \x01(\x05R\tthreshold\x12!\n" +
-	"\ftotal_shares\x18\x03 \x01(\x05R\vtotalShares\"7\n" +
+	"\ftotal_shares\x18\x03 \x01(\x05R\vtotalShares\x12\x1f\n" +
+	"\vshare_count\x18\x04 \x01(\x05R\n" +
+	"shareCount\"7\n" +
 	"\x1fBarrierShamirUnsealShareRequest\x12\x14\n" +
 	"\x05share\x18\x01 \x01(\tR\x05share\"x\n" +
 	" BarrierShamirUnsealShareResponse\x12\x1a\n" +
@@ -1028,11 +1048,13 @@ const file_api_proto_barrier_proto_rawDesc = "" +
 	"\x05total\x18\x02 \x01(\x05R\x05total\"T\n" +
 	"\x1eBarrierRecoveryGenerateRequest\x12\x1c\n" +
 	"\tthreshold\x18\x01 \x01(\x05R\tthreshold\x12\x14\n" +
-	"\x05total\x18\x02 \x01(\x05R\x05total\"e\n" +
+	"\x05total\x18\x02 \x01(\x05R\x05total\"\x86\x01\n" +
 	"\x1bBarrierRecoveryKeysResponse\x12\x12\n" +
 	"\x04keys\x18\x01 \x03(\tR\x04keys\x12\x1c\n" +
 	"\tthreshold\x18\x02 \x01(\x05R\tthreshold\x12\x14\n" +
-	"\x05total\x18\x03 \x01(\x05R\x05total\"3\n" +
+	"\x05total\x18\x03 \x01(\x05R\x05total\x12\x1f\n" +
+	"\vshare_count\x18\x04 \x01(\x05R\n" +
+	"shareCount\"3\n" +
 	"\x1dBarrierRecoveryRecoverRequest\x12\x12\n" +
 	"\x04keys\x18\x01 \x03(\tR\x04keys\"K\n" +
 	"\x1dBarrierRecoveryStatusResponse\x12*\n" +

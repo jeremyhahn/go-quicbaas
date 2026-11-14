@@ -542,6 +542,11 @@ func TestBarrierRekey_Success(t *testing.T) {
 	if resp.GetThreshold() != 2 || resp.GetTotalShares() != 3 {
 		t.Fatalf("unexpected response: %#v", resp)
 	}
+	// go-qrdb's BarrierRekeyResponse reports how many shares it sealed to
+	// officers; gRPC carries that count as REST and MCP do.
+	if resp.GetShareCount() != 3 {
+		t.Fatalf("share_count = %d, want go-qrdb's 3", resp.GetShareCount())
+	}
 	// Share-free contract: share material must never appear on the wire.
 	if len(resp.GetShares()) != 0 {
 		t.Fatalf("shares leaked on the wire: %#v", resp)
@@ -580,6 +585,11 @@ func TestBarrierRecoveryGenerate_Success(t *testing.T) {
 	}
 	if resp.GetThreshold() != 2 || resp.GetTotal() != 3 {
 		t.Fatalf("unexpected response: %#v", resp)
+	}
+	// go-qrdb's BarrierRecoveryKeysResponse reports how many recovery shares
+	// it sealed to officers; gRPC carries that count as REST and MCP do.
+	if resp.GetShareCount() != 3 {
+		t.Fatalf("share_count = %d, want go-qrdb's 3", resp.GetShareCount())
 	}
 	// Share-free contract: recovery key material must never appear on the wire.
 	if len(resp.GetKeys()) != 0 {

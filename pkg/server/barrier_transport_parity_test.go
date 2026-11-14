@@ -20,12 +20,14 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"google.golang.org/protobuf/types/known/emptypb"
 
 	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 
+	pb "github.com/jeremyhahn/go-quicbaas/api/proto"
 	grpcapi "github.com/jeremyhahn/go-quicbaas/pkg/api/grpc"
 	mcpapi "github.com/jeremyhahn/go-quicbaas/pkg/api/mcp"
 	restapi "github.com/jeremyhahn/go-quicbaas/pkg/api/rest"
@@ -242,6 +244,138 @@ func TestBarrierStatus_CarriesGoQrdbShamirQuorum(t *testing.T) {
 			t.Errorf("%s: barrier status = %+v, want go-qrdb's %+v", transport, decoded, *client.statusResp)
 		}
 	}
+}
+
+// barrierVerbOverREST POSTs body to one REST barrier handler and decodes the
+// 200 reply into out.
+func barrierVerbOverREST(t *testing.T, svc service.BarrierServicer, verb, path, body string, out any) {
+	t.Helper()
+
+	srv, err := restapi.NewServer(testutil.NewMockQuicBaaS(), restapi.DefaultConfig(), parityLogger(t))
+	if err != nil {
+		t.Fatalf("restapi.NewServer: %v", err)
+	}
+	srv.SetBarrierService(svc)
+	handlers := map[string]http.HandlerFunc{
+		"rekey":             srv.HandleBarrierRekey,
+		"recovery-generate": srv.HandleBarrierRecoveryGenerate,
+	}
+
+	rec := httptest.NewRecorder()
+	handlers[verb](rec, httptest.NewRequest(http.MethodPost, path, strings.NewReader(body)))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("REST %s: got %d %s, want 200", verb, rec.Code, rec.Body.String())
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), out); err != nil {
+		t.Fatalf("REST %s body: %v (%s)", verb, err, rec.Body.String())
+	}
+}
+
+// barrierVerbOverMCP calls one MCP barrier tool and decodes its result into out.
+func barrierVerbOverMCP(t *testing.T, svc service.BarrierServicer, tool string, args map[string]any, out any) {
+	t.Helper()
+
+	registry := mcpapi.NewToolRegistry(testutil.NewMockQuicBaaS(), parityLogger(t))
+	registry.SetBarrierService(svc)
+	result, err := registry.ExecuteTool(context.Background(), tool, args)
+	if err != nil {
+		t.Fatalf("MCP %s: %v", tool, err)
+	}
+	raw, err := json.Marshal(result)
+	if err != nil {
+		t.Fatalf("MCP %s result %T: %v", tool, result, err)
+	}
+	if err := json.Unmarshal(raw, out); err != nil {
+		t.Fatalf("MCP %s body: %v (%s)", tool, err, raw)
+	}
+}
+
+// TestBarrierRekeyAndRecovery_CarryGoQrdbShareCount pins rekey and recovery
+// key generation to go-qrdb's share-free responses on every transport: the
+// quorum and the count of shares go-qrdb sealed to officers, never the shares.
+func TestBarrierRekeyAndRecovery_CarryGoQrdbShareCount(t *testing.T) {
+	client := &stubBarrierClient{
+		rekeyResp:    &qrdbtransport.BarrierRekeyResponse{Threshold: 2, TotalShares: 3, ShareCount: 3},
+		recoveryResp: &qrdbtransport.BarrierRecoveryKeysResponse{Threshold: 3, Total: 5, ShareCount: 5},
+	}
+	svc := service.NewBarrierService(client)
+	ctx := context.Background()
+	grpcSrv := grpcapi.NewBarrierServer(svc, parityLogger(t))
+	qrdbSvc := newQRDBBarrierClientServicer(client)
+
+	t.Run("rekey", func(t *testing.T) {
+		answers := map[string]qrdbtransport.BarrierRekeyResponse{}
+
+		var rest qrdbtransport.BarrierRekeyResponse
+		barrierVerbOverREST(t, svc, "rekey", "/api/v1/barrier/rekey", `{"threshold":2,"total":3}`, &rest)
+		answers["rest"] = rest
+
+		g, err := grpcSrv.BarrierRekey(ctx, &pb.BarrierRekeyRequest{Threshold: 2, Total: 3})
+		if err != nil {
+			t.Fatalf("gRPC BarrierRekey: %v", err)
+		}
+		if len(g.GetShares()) != 0 {
+			t.Fatalf("grpc+unix: shares on the wire: %v", g.GetShares())
+		}
+		answers["grpc+unix"] = qrdbtransport.BarrierRekeyResponse{
+			Threshold: int(g.GetThreshold()), TotalShares: int(g.GetTotalShares()), ShareCount: int(g.GetShareCount()),
+		}
+
+		var mcp qrdbtransport.BarrierRekeyResponse
+		barrierVerbOverMCP(t, svc, "qrdb_barrier_rekey", map[string]any{"threshold": 2, "total": 3}, &mcp)
+		answers["mcp"] = mcp
+
+		q, err := qrdbSvc.BarrierRekey(ctx, 2, 3)
+		if err != nil {
+			t.Fatalf("qrdb BarrierServicer adapter BarrierRekey: %v", err)
+		}
+		answers["quic+embedded"] = qrdbtransport.BarrierRekeyResponse{
+			Threshold: q.Threshold, TotalShares: q.TotalShares, ShareCount: q.ShareCount,
+		}
+
+		for transport, got := range answers {
+			if got != *client.rekeyResp {
+				t.Errorf("%s: rekey = %+v, want go-qrdb's %+v", transport, got, *client.rekeyResp)
+			}
+		}
+	})
+
+	t.Run("recovery-generate", func(t *testing.T) {
+		answers := map[string]qrdbtransport.BarrierRecoveryKeysResponse{}
+
+		var rest qrdbtransport.BarrierRecoveryKeysResponse
+		barrierVerbOverREST(t, svc, "recovery-generate", "/api/v1/barrier/recovery/generate", `{"threshold":3,"total":5}`, &rest)
+		answers["rest"] = rest
+
+		g, err := grpcSrv.BarrierRecoveryGenerate(ctx, &pb.BarrierRecoveryGenerateRequest{Threshold: 3, Total: 5})
+		if err != nil {
+			t.Fatalf("gRPC BarrierRecoveryGenerate: %v", err)
+		}
+		if len(g.GetKeys()) != 0 {
+			t.Fatalf("grpc+unix: recovery keys on the wire: %v", g.GetKeys())
+		}
+		answers["grpc+unix"] = qrdbtransport.BarrierRecoveryKeysResponse{
+			Threshold: int(g.GetThreshold()), Total: int(g.GetTotal()), ShareCount: int(g.GetShareCount()),
+		}
+
+		var mcp qrdbtransport.BarrierRecoveryKeysResponse
+		barrierVerbOverMCP(t, svc, "qrdb_barrier_recovery_generate", map[string]any{"threshold": 3, "total": 5}, &mcp)
+		answers["mcp"] = mcp
+
+		q, err := qrdbSvc.BarrierGenerateRecoveryKeys(ctx, 3, 5)
+		if err != nil {
+			t.Fatalf("qrdb BarrierServicer adapter BarrierGenerateRecoveryKeys: %v", err)
+		}
+		answers["quic+embedded"] = qrdbtransport.BarrierRecoveryKeysResponse{
+			Threshold: q.Threshold, Total: q.Total, ShareCount: q.ShareCount,
+		}
+
+		for transport, got := range answers {
+			if got != *client.recoveryResp {
+				t.Errorf("%s: recovery generate = %+v, want go-qrdb's %+v", transport, got, *client.recoveryResp)
+			}
+		}
+	})
 }
 
 // TestBarrierStatus_SealedIsIdenticalOnEveryTransport is the same acceptance
