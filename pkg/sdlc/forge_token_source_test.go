@@ -13,7 +13,7 @@ import (
 const (
 	testForgeToken     = "tok-forge-source-value"
 	testStderrMarker   = "stderr-marker-text"
-	testForgeTokenArgv = "/usr/local/bin/forge-mint"
+	testForgeTokenArgv = "/usr/local/bin/token-helper"
 	testForgeBaseURL   = "https://api.github.com"
 )
 
@@ -54,7 +54,7 @@ func newTestTokenSource(t *testing.T, runner ForgeTokenRunner, clock *fakeTokenC
 	t.Helper()
 	s, err := NewCommandTokenSource(CommandTokenSourceConfig{
 		Argv:   []string{testForgeTokenArgv, "--app", "pilot"},
-		Env:    []string{ForgeTokenEnvType + "=github"},
+		Env:    []string{ForgeCommandEnvType + "=github"},
 		Runner: runner,
 		Clock:  clock.Now,
 	})
@@ -91,7 +91,7 @@ func TestCommandTokenSource_FirstCallRunsCommandWithEnv(t *testing.T) {
 		t.Fatalf("runner calls = %d, want 1", runner.calls.Load())
 	}
 	env := *runner.env.Load()
-	want := []string{ForgeTokenEnvType + "=github", ForgeTokenEnvBaseURL + "=" + testForgeBaseURL}
+	want := []string{ForgeCommandEnvType + "=github", ForgeCommandEnvBaseURL + "=" + testForgeBaseURL}
 	if strings.Join(env, "\n") != strings.Join(want, "\n") {
 		t.Fatalf("env = %v, want %v", env, want)
 	}
@@ -367,7 +367,7 @@ func TestNewCommandTokenSource_RefusesBadConfig(t *testing.T) {
 	}{
 		{"empty argv", CommandTokenSourceConfig{}, "argv"},
 		{"empty argv[0]", CommandTokenSourceConfig{Argv: []string{""}}, "argv"},
-		{"relative argv[0]", CommandTokenSourceConfig{Argv: []string{"bin/forge-mint"}}, "argv"},
+		{"relative argv[0]", CommandTokenSourceConfig{Argv: []string{"bin/token-helper"}}, "argv"},
 		{"negative refresh_before", CommandTokenSourceConfig{Argv: []string{testForgeTokenArgv}, RefreshBefore: -time.Second}, "refresh_before"},
 		{"negative timeout", CommandTokenSourceConfig{Argv: []string{testForgeTokenArgv}, Timeout: -time.Second}, "timeout"},
 	}

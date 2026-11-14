@@ -1052,7 +1052,7 @@ func TestSDLCService_ForgeTokenComesFromTheNodeCommandWithoutReadingTheSecret(t 
 func TestSDLCService_ForgeTokenSourceErrorIsReturnedTyped(t *testing.T) {
 	rig := newSDLCServiceRig(t)
 	cfg := rig.binding().Forge
-	sourceErr := &sdlc.ForgeTokenCommandError{Command: "/usr/local/bin/forge-mint", ExitCode: 1}
+	sourceErr := &sdlc.ForgeTokenCommandError{Command: "/usr/local/bin/token-helper", ExitCode: 1}
 	rig.svc.forgeTokens = map[sdlc.ForgeType]sdlc.ForgeTokenSource{cfg.Type: &sdlcFakeTokenSource{err: sourceErr}}
 
 	_, err := rig.svc.ForgeFor(context.Background(), sdlcTestTenant, cfg)

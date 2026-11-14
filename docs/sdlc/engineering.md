@@ -385,7 +385,7 @@ sdlc:
                                     #      QUICBAAS_SDLC_FORGE_HEAVY_WRITE_TIMEOUT)
     # token_commands:               # per forge type (github, gitea); optional
     #   github:
-    #     argv: ["/usr/local/bin/forge-mint", "--app", "factory"]
+    #     argv: ["/usr/local/bin/token-helper", "--app", "factory"]
     #     refresh_before: 5m        # run again this long before expires_at
     #     timeout: 30s              # one run
     #

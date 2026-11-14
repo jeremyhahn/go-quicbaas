@@ -23,8 +23,8 @@ const (
 // Environment variables a forge token command receives on top of the
 // daemon's own environment.
 const (
-	ForgeTokenEnvType    = "QUICBAAS_FORGE_TYPE"
-	ForgeTokenEnvBaseURL = "QUICBAAS_FORGE_BASE_URL"
+	ForgeCommandEnvType    = "QUICBAAS_FORGE_TYPE"
+	ForgeCommandEnvBaseURL = "QUICBAAS_FORGE_BASE_URL"
 )
 
 // ForgeTokenSource yields the token that authenticates calls to the forge at
@@ -45,7 +45,7 @@ type CommandTokenSourceConfig struct {
 	Argv []string
 
 	// Env is added to the daemon's environment, as "KEY=value" entries.
-	// ForgeTokenEnvBaseURL is added per call.
+	// ForgeCommandEnvBaseURL is added per call.
 	Env []string
 
 	// RefreshBefore is how long before expires_at the token is refreshed.
@@ -212,10 +212,18 @@ func (s *CommandTokenSource) ForgeToken(ctx context.Context, baseURL string) (st
 
 func (s *CommandTokenSource) entry(baseURL string) *commandTokenEntry {
 	if found, ok := s.entries.Load(baseURL); ok {
-		return found.(*commandTokenEntry)
+		if e, ok := found.(*commandTokenEntry); ok {
+			return e
+		}
 	}
-	found, _ := s.entries.LoadOrStore(baseURL, &commandTokenEntry{refresh: make(chan struct{}, 1)})
-	return found.(*commandTokenEntry)
+	fresh := &commandTokenEntry{refresh: make(chan struct{}, 1)}
+	found, _ := s.entries.LoadOrStore(baseURL, fresh)
+	e, ok := found.(*commandTokenEntry)
+	if !ok {
+		s.entries.Store(baseURL, fresh)
+		return fresh
+	}
+	return e
 }
 
 func (e *commandTokenEntry) fresh(now time.Time) (string, bool) {
@@ -231,7 +239,7 @@ func (s *CommandTokenSource) run(ctx context.Context, baseURL string) (*cachedFo
 	runCtx, cancel := context.WithTimeout(ctx, s.timeout)
 	defer cancel()
 
-	env := append(append([]string(nil), s.env...), ForgeTokenEnvBaseURL+"="+baseURL)
+	env := append(append([]string(nil), s.env...), ForgeCommandEnvBaseURL+"="+baseURL)
 	stdout, err := s.runner(runCtx, s.argv, env)
 	if err != nil {
 		if ctxErr := ctx.Err(); ctxErr != nil {

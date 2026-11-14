@@ -254,7 +254,7 @@ func TestSDLCWebhookFailure_TellsAnAcceptedTriageFailureFromARefusal(t *testing.
 
 func TestNewSDLCForgeTokenSources_OnePerConfiguredType(t *testing.T) {
 	sources, err := newSDLCForgeTokenSources(map[string]config.SDLCForgeTokenCommand{
-		"github": {Argv: []string{"/usr/local/bin/forge-mint", "--app", "pilot"}},
+		"github": {Argv: []string{"/usr/local/bin/token-helper", "--app", "pilot"}},
 	})
 	if err != nil {
 		t.Fatalf("newSDLCForgeTokenSources: %v", err)
@@ -276,7 +276,7 @@ func TestNewSDLCForgeTokenSources_NoneIsNil(t *testing.T) {
 
 func TestNewSDLCForgeTokenSources_RefusesARelativeCommand(t *testing.T) {
 	_, err := newSDLCForgeTokenSources(map[string]config.SDLCForgeTokenCommand{
-		"gitea": {Argv: []string{"forge-mint"}},
+		"gitea": {Argv: []string{"token-helper"}},
 	})
 	var cfgErr *sdlc.ForgeTokenCommandConfigError
 	if !errors.As(err, &cfgErr) {
