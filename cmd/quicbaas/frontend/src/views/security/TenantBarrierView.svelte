@@ -47,6 +47,7 @@
     TenantBarrierClient,
     TenantBarrierStatusResponse,
     IAMTenant,
+    BarrierEnableEncryptionRequest,
   } from '@quicbaas/sdk';
   import {
     BarrierStatusBadge,
@@ -228,12 +229,13 @@
     if (selectedTenantID === '') return;
     initing = true;
     try {
-      // Encode here, not in the picker: a barrier credential is base64 BYTES
-      // on the wire, and unseal below has always encoded. Forwarding the
-      // picker's plaintext meant a barrier initialized through this view could
-      // not be unsealed through it — and worse, a passphrase that happens to
-      // be valid base64 initialized silently with different bytes
-      // (go-quicbaas#988). Both paths now go through the one encoder.
+      // Encode here, not in the picker: a barrier credential is BYTES, which
+      // the SDK base64-encodes once onto the wire, and unseal below goes
+      // through the same encoder. Forwarding the picker's plaintext meant a
+      // barrier initialized through this view could not be unsealed through
+      // it (go-quicbaas#988); handing the SDK an already-base64 string sent
+      // all-zero bytes (go-quicbaas#2372). Both paths now send the typed
+      // text's UTF-8 bytes through the one encoder.
       const resp = await tb.tenantBarrierInit(
         selectedTenantID,
         encodeInitParams(params),
@@ -258,6 +260,72 @@
       });
     } finally {
       initing = false;
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Enable encryption — migrates a tenant's unencrypted (strategy none)
+  // barrier to a keyed one (POST /api/v1/tenants/{id}/barrier/enable-encryption).
+  // ---------------------------------------------------------------------------
+
+  let enableStrategy: 'passphrase' | 'shamir' = $state('passphrase');
+  let enableMechanism: 'swap' | 'inplace' = $state('swap');
+  let enableAvailability: 'online' | 'quiesced' = $state('online');
+  let enablePassphrase = $state('');
+  let enablePassphraseConfirm = $state('');
+  let enableThreshold = $state(2);
+  let enableTotal = $state(3);
+  let enableConfirming = $state(false);
+  let enabling = $state(false);
+
+  const enableValid = $derived(
+    enableStrategy === 'passphrase'
+      ? enablePassphrase !== '' && enablePassphrase === enablePassphraseConfirm
+      : Number.isInteger(enableThreshold) &&
+          Number.isInteger(enableTotal) &&
+          enableThreshold >= 1 &&
+          enableThreshold <= enableTotal,
+  );
+
+  const selectedTenantName = $derived(
+    tenants.find((t) => t.id === selectedTenantID)?.name ?? selectedTenantID,
+  );
+
+  async function handleEnableEncryption(): Promise<void> {
+    if (selectedTenantID === '' || !enableValid) return;
+    enabling = true;
+    const req: BarrierEnableEncryptionRequest = {
+      tenant_id: selectedTenantID,
+      strategy: enableStrategy,
+      mechanism: enableMechanism,
+      availability: enableAvailability,
+    };
+    if (enableStrategy === 'passphrase') {
+      // A barrier credential is BYTES: send the typed text's UTF-8 bytes, the
+      // way encodeInitParams encodes init's credential.
+      req.passphrase = new TextEncoder().encode(enablePassphrase);
+    } else {
+      req.shamir_threshold = enableThreshold;
+      req.shamir_total = enableTotal;
+    }
+    try {
+      const client = await getSDKClient();
+      await client.barrier.enableEncryption(req);
+      showToast({
+        message: `Encryption migration started for tenant ${selectedTenantName}`,
+        type: 'success',
+      });
+      await loadStatus();
+    } catch (e) {
+      showToast({
+        message: e instanceof Error ? e.message : 'Enable encryption failed',
+        type: 'error',
+      });
+    } finally {
+      enablePassphrase = '';
+      enablePassphraseConfirm = '';
+      enableConfirming = false;
+      enabling = false;
     }
   }
 
@@ -387,6 +455,113 @@
             <div class="alert alert-info text-sm" role="alert" data-testid="tenant-barrier-none">
               <span>This tenant has no encryption barrier (strategy: none).</span>
             </div>
+            <form
+              class="space-y-3"
+              aria-label="Enable encryption"
+              onsubmit={(e) => { e.preventDefault(); }}
+            >
+              <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
+                <label class="form-control">
+                  <span class="label-text text-xs">Strategy</span>
+                  <select class="select select-bordered select-sm" bind:value={enableStrategy}>
+                    <option value="passphrase">passphrase</option>
+                    <option value="shamir">shamir</option>
+                  </select>
+                </label>
+                <label class="form-control">
+                  <span class="label-text text-xs">Mechanism</span>
+                  <select class="select select-bordered select-sm" bind:value={enableMechanism}>
+                    <option value="swap">swap</option>
+                    <option value="inplace">inplace</option>
+                  </select>
+                </label>
+                <label class="form-control">
+                  <span class="label-text text-xs">Availability</span>
+                  <select class="select select-bordered select-sm" bind:value={enableAvailability}>
+                    <option value="online">online</option>
+                    <option value="quiesced">quiesced</option>
+                  </select>
+                </label>
+              </div>
+              {#if enableStrategy === 'passphrase'}
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  <label class="form-control">
+                    <span class="label-text text-xs">Passphrase</span>
+                    <input
+                      type="password"
+                      class="input input-bordered input-sm"
+                      autocomplete="new-password"
+                      bind:value={enablePassphrase}
+                    />
+                  </label>
+                  <label class="form-control">
+                    <span class="label-text text-xs">Confirm passphrase</span>
+                    <input
+                      type="password"
+                      class="input input-bordered input-sm"
+                      autocomplete="new-password"
+                      bind:value={enablePassphraseConfirm}
+                    />
+                  </label>
+                </div>
+              {:else}
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  <label class="form-control">
+                    <span class="label-text text-xs">Threshold</span>
+                    <input
+                      type="number"
+                      min="1"
+                      class="input input-bordered input-sm"
+                      bind:value={enableThreshold}
+                    />
+                  </label>
+                  <label class="form-control">
+                    <span class="label-text text-xs">Total shares</span>
+                    <input
+                      type="number"
+                      min="1"
+                      class="input input-bordered input-sm"
+                      bind:value={enableTotal}
+                    />
+                  </label>
+                </div>
+              {/if}
+              {#if enableConfirming}
+                <div class="alert alert-warning text-sm" data-testid="tenant-barrier-enable-confirm">
+                  <span>
+                    Enable encryption for tenant {selectedTenantName}? The tenant's
+                    barrier is re-encrypted with the new {enableStrategy} key.
+                  </span>
+                  <div class="flex gap-2">
+                    <button
+                      type="button"
+                      class="btn btn-ghost btn-sm"
+                      onclick={() => { enableConfirming = false; }}
+                      disabled={enabling}
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="button"
+                      class="btn btn-warning btn-sm"
+                      onclick={() => { void handleEnableEncryption(); }}
+                      disabled={enabling || !enableValid}
+                    >
+                      {enabling ? 'Starting...' : 'Confirm'}
+                    </button>
+                  </div>
+                </div>
+              {:else}
+                <button
+                  type="button"
+                  class="btn btn-primary btn-sm"
+                  onclick={() => { enableConfirming = true; }}
+                  disabled={!enableValid}
+                >
+                  Enable
+                </button>
+              {/if}
+            </form>
 
           {:else if barrierStatus.strategy === 'software'}
             {#if status.sealed}

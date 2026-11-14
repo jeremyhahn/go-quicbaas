@@ -37,16 +37,21 @@
 import { untrack } from 'svelte';
 import type {
   Artifact,
+  HealthCheckReport,
   JobAttemptRecord,
   JobDelivery,
+  JobMemory,
   JobStageRecord,
   JobVerificationResult,
   TaskBlockKind,
   TaskConclusionReason,
   TaskFaultOrigin,
+  Task,
+  TaskResult,
   TaskSource,
 } from '@quicbaas/sdk';
 import { getSDKClient } from './sdkClient.ts';
+import { toSessionInfo } from '../lib/sessions.ts';
 import {
   announceSessionScopeChange,
   authStore,
@@ -121,9 +126,9 @@ export interface WorkItem {
   fallback_backend?: string;
 }
 
-export interface JobMemory {
-  [key: string]: unknown;
-}
+// JobMemory is the SDK's: one declaration of the job's memory, not a looser
+// copy that the SDK's records will not assign into.
+export type { JobMemory };
 
 export interface JobConfig {
   tenant_id: string;
@@ -156,8 +161,8 @@ export interface JobStatus {
   error?: string;
   events?: JobAuditEvent[];
   work_items?: WorkItem[];
-  config?: JobConfig;
-  memory?: JobMemory;
+  config?: JobConfig | null;
+  memory?: JobMemory | null;
   workflow_name?: string;
   /** task_id is the Task this job is an attempt at; absent for lead-driven jobs. */
   task_id?: string;
@@ -244,58 +249,8 @@ export interface SessionInfo {
   job_id?: string;
 }
 
-export interface TaskResult {
-  success: boolean;
-  output?: string;
-  error?: string;
-}
-
-export interface Task {
-  id: string;
-  tenant_id: string;
-  team_name: string;
-  subject: string;
-  description: string;
-  status: TaskStatus;
-  assigned_to?: string;
-  created_by?: string;
-  dependencies?: string[];
-  blocks?: string[];
-  result?: TaskResult;
-  metadata?: Record<string, string>;
-  created_at: number;
-  updated_at: number;
-  claimed_at?: number;
-  completed_at?: number;
-  auto_spawn?: boolean;
-  spawned_job_id?: string;
-  spawned_at?: number;
-  // Generic Task model (stage 1a): provenance, attempt accounting, and the
-  // parked-on-a-person state. Absent on the wire until the server carries
-  // them; every view renders an absent field as an em-dash.
-  project_id?: string;
-  output_artifacts?: Artifact[];
-  input_artifacts?: Artifact[];
-  source?: TaskSource;
-  priority?: number;
-  attempts?: number;
-  attempt_budget?: number;
-  environment_faults?: number;
-  consecutive_environment_faults?: number;
-  retry_not_before?: number;
-  blocked_reason?: string;
-  block_kind?: TaskBlockKind;
-  status_changed_at?: number;
-  // Why the task stopped (go-quicbaas#947). charged_attempts, effective_budget,
-  // fault_class and fault_origin are derived by the server on every read.
-  question_attempts?: number;
-  block_fault_class?: string;
-  conclusion_reason?: TaskConclusionReason | string;
-  charged_attempts?: number;
-  effective_budget?: number;
-  fault_class?: string;
-  fault_origin?: TaskFaultOrigin;
-}
+// The store's task types are the SDK's, as the SDK client returns them.
+export type { Task, TaskResult };
 
 export interface BackendCapabilities {
   [key: string]: unknown;
@@ -313,11 +268,7 @@ export interface HealthStatus {
   message?: string;
 }
 
-export interface HealthCheckReport {
-  status: string;
-  timestamp: number;
-  checks?: Record<string, HealthStatus>;
-}
+export type { HealthCheckReport };
 
 // ---------------------------------------------------------------------------
 // Polling constants
@@ -958,7 +909,7 @@ async function _fetchSessions(): Promise<void> {
     const client = await getSDKClient();
     const resp = await client.orchestrator.listSessions({ tenantID });
     if (scope !== currentScope()) return;
-    setSessions(resp.sessions ?? []);
+    setSessions((resp.sessions ?? []).map(toSessionInfo));
   } catch {
     // Silently ignore.
   } finally {
@@ -1046,13 +997,7 @@ export async function loadSelectedJob(jobID: string): Promise<void> {
       selectedJob = {
         ...job,
         config: job.config ?? undefined,
-        // The store keeps its own looser copy of the job record, and its
-        // JobMemory is an open bag where the SDK's is the concrete four-field
-        // shape. TypeScript will not assign an interface into an
-        // index-signature type, so the one member that differs is converted
-        // here rather than casting the whole record through `unknown` — the
-        // same adoption `setJobs` performs for the list.
-        memory: (job.memory ?? undefined) as JobMemory | undefined,
+        memory: job.memory ?? undefined,
       };
     }
   } catch {

@@ -11,6 +11,7 @@ import type { CAClient } from './ca.js';
 import type { TrustClient } from './trust.js';
 import type { CryptoClient } from './crypto.js';
 import type { DEKClient } from './dek.js';
+import type { AttestationClient } from './attestation.js';
 import type { DynamicSecretsClient } from './dynamicsecrets.js';
 import type { AgentBackendInfo, JobRunnerInfo, AuthTokenResponse, DeployFleetNodeResult, DeployFleetNodeSpec, InferenceRequest, InferenceResponse, InferenceChunk, PublicKeyCredentialJSON, WebAuthnLoginChallenge, SSHKey, SSHScope, CreateSSHKeyRequest, ImportSSHKeyRequest, ListSSHKeysQuery, ListSSHKeysResponse, SSHPublicKey, SignRequest, SignResponse, AddSSHPinRequest, ListSSHPinsResponse, VerifySSHPinRequest, EmitAuthorizedRequest, EmitAuthorizedResponse, VerifyAuthorizedRequest, VerifyAuthorizedResponse, FleetNode, SessionStatusResponse, CloseSessionRequest, CloseSessionResponse, CreateKeyRequest, CreateKeyResponse, CreateTenantRequest, CreateTenantResponse, CreateTaskRequest, CreateTaskResponse, CreateUserRequest, CreateUserResponse, CreateWorkflowRequest, CreateWorkflowResponse, DecomposeTaskRequest, DecomposeTaskResponse, GetFleetNodeRequest, GetSecretResponse, GetSessionHistoryRequest, GetSessionConversationRequest, GetSessionConversationResponse, GetSpendReportRequest, GetSpendReportResponse, GetTenantSpendPolicyRequest, SetTenantSpendPolicyRequest, TenantSpendPolicy, GetCostSettingsRequest, SetCostSettingsRequest, CostSettings, WorkerImageStatus, GetSessionHistoryResponse, HealthCheckReport, IAMRole, IAMPolicy, IAMTenant, IAMUser, JobEvent, JobStatus, KMSDecryptRequest, KMSDecryptResponse, KMSEncryptRequest, KMSEncryptResponse, ListFleetNodesRequest, ListFleetNodesResponse, ListKeysResponse, ListPoliciesResponse, ListRolesResponse, ListSecretsResponse, ListSessionsRequest, ListSessionsResponse, ListTenantsResponse, ListUsersResponse, ListWorkflowsResponse, PromptSessionRequest, PromptSessionResponse, ReconcileRolesResponse, RegisterFleetNodeRequest, RegisterFleetNodeResponse, RemoveFleetNodeRequest, DisableFleetNodeRequest, DisableFleetNodeResponse, EnableFleetNodeRequest, EnableFleetNodeResponse, RekeyRequest, RekeyResponse, RotateKeyResponse, RotateRootKeyResponse, RotateSecretResponse, RotateSessionAccountRequest, RotateSessionAccountResponse, ListSecretVersionsResponse, SetDefaultKeyResponse, SealStatus, BarrierStatusResponse, BarrierInitRequest, BarrierUnsealRequest, BarrierSealRequest, BarrierShamirInitRequest, BarrierShamirInitResponse, BarrierUnsealShareRequest, BarrierUnsealShareResponse, BarrierUnsealSharesRequest, BarrierRekeyRequest, BarrierRekeyResponse, BarrierGenerateRecoveryKeysRequest, BarrierRecoveryKeysResponse, BarrierRecoverWithKeysRequest, BarrierHasRecoveryKeysResponse, BarrierGenerateRootTokenRequest, BarrierEnableEncryptionRequest, BarrierEnableEncryptionResponse, BarrierRootTokenResponse, TenantBarrierInitRequest, TenantBarrierInitResponse, TenantBarrierUnsealShareResponse, TenantBarrierStatusResponse, CeremonyInitializeRequest, CeremonyInitializeResponse, CeremonyStatusResponse, CeremonyClaimCertBeginRequest, CeremonyClaimCertBeginResponse, CeremonyClaimCertCompleteRequest, CeremonyClaimCertCompleteResponse, CeremonyClaimShareBeginRequest, CeremonyClaimShareBeginResponse, CeremonyClaimShareCompleteRequest, CeremonyClaimShareCompleteResponse, CeremonySignCSRRequest, CeremonySignCSRResponse, CeremonyEnrollExternalOfficerRequest, CeremonyEnrollExternalOfficerResponse, BootstrapBundleRequest, BootstrapBundleResponse, ClusterStatusResponse, SessionEventEnvelope, SessionInfo, SpawnSessionRequest, SpawnSessionResponse, ClaimTaskRequest, CompleteTaskRequest, DeleteTaskRequest, DeleteTaskResponse, StartJobRequest, StartJobResponse, StoreSecretRequest, SubscribeSessionEventsRequest, Task, UnsealRequest, UnsealResponse, WorkflowDefinition, AttentionItem, AttentionResolveRequest } from './types.js';
 export interface ConnectionClient {
@@ -210,6 +211,183 @@ export interface UpdateRoleRequest {
     description?: string;
     permissions?: string[];
 }
+export interface IAMAuditActor {
+    user_id?: string;
+    username?: string;
+    email?: string;
+    session_id?: string;
+    client_id?: string;
+    impersonating_user_id?: string;
+    impersonating_username?: string;
+    service_identity?: string;
+    jti?: string;
+    scopes?: string[];
+    roles?: string[];
+}
+export interface IAMAuditResource {
+    type: string;
+    id: string;
+    name?: string;
+}
+export interface IAMAuditEvent {
+    id: string;
+    tenant_id: string;
+    timestamp: string;
+    event_type: string;
+    category: string;
+    actor?: IAMAuditActor;
+    resource?: IAMAuditResource;
+    action: string;
+    outcome: string;
+    details?: Record<string, unknown>;
+    ip_address?: string;
+    user_agent?: string;
+    impersonation_session_id?: string;
+    correlation_id?: string;
+}
+export interface ListIAMAuditEventsOptions {
+    tenantID?: string;
+    eventType?: string;
+    category?: string;
+    outcome?: string;
+    actorID?: string;
+    resourceID?: string;
+    startTime?: string;
+    endTime?: string;
+    limit?: number;
+    offset?: number;
+}
+export interface ListIAMAuditEventsResponse {
+    events: IAMAuditEvent[];
+    total: number;
+    limit: number;
+    offset: number;
+}
+export interface RecordIAMAuditEventRequest {
+    tenant_id?: string;
+    event: IAMAuditEvent;
+    /** When true the server records the event asynchronously and returns an empty event_id. */
+    async?: boolean;
+}
+export interface RecordIAMAuditEventResponse {
+    event_id: string;
+}
+export interface DeleteIAMAuditEventsResponse {
+    deleted_count: number;
+    before: string;
+}
+export interface ImpersonationSession {
+    id: string;
+    admin_user_id: string;
+    admin_username?: string;
+    target_user_id: string;
+    target_username?: string;
+    tenant_id: string;
+    reason: string;
+    started_at: string;
+    expires_at: string;
+    /** Set once the session has ended. */
+    ended_at?: string;
+    operation_count: number;
+    audit_log_id: string;
+}
+export interface StartImpersonationRequest {
+    target_user_id: string;
+    tenant_id: string;
+    reason: string;
+    /** Go duration string such as `30m`; the server default applies when omitted. */
+    duration?: string;
+}
+export interface ListImpersonationsOptions {
+    /** Sends `active=true` when true; nothing otherwise. */
+    activeOnly?: boolean;
+    /** Only sessions started by this admin user. */
+    adminUserID?: string;
+}
+export interface ListImpersonationsResponse {
+    sessions: ImpersonationSession[];
+    total: number;
+}
+export type EndImpersonationResult = ImpersonationSession | {
+    status: 'impersonation_ended';
+};
+export interface ListUserImpersonationsResponse {
+    user_id: string;
+    sessions: ImpersonationSession[];
+}
+export type IAMProviderType = 'oidc' | 'saml' | 'oauth2' | 'ldap';
+export interface RegisterIAMProviderRequest {
+    /** Optional provider ID; the server generates one when omitted. */
+    id?: string;
+    name: string;
+    type: IAMProviderType;
+    enabled: boolean;
+    client_id: string;
+    client_secret: string;
+    /** Issuer URL (the response spells it `issuer_url`). */
+    issuer?: string;
+    auth_url?: string;
+    token_url?: string;
+    userinfo_url?: string;
+    jwks_url?: string;
+    scopes?: string[];
+    /** Claim mapping (the response spells it `claim_mappings`). */
+    claim_mapping?: Record<string, string>;
+    metadata?: Record<string, unknown>;
+}
+export interface UpdateIAMProviderRequest {
+    name?: string;
+    enabled?: boolean;
+    client_id?: string;
+    client_secret?: string;
+    /** Issuer URL (the response spells it `issuer_url`). */
+    issuer?: string;
+    auth_url?: string;
+    token_url?: string;
+    userinfo_url?: string;
+    jwks_url?: string;
+    scopes?: string[];
+    /** Claim mapping (the response spells it `claim_mappings`). */
+    claim_mapping?: Record<string, string>;
+    metadata?: Record<string, unknown>;
+}
+export interface IAMExternalProvider {
+    id: string;
+    tenant_id: string;
+    name: string;
+    type: IAMProviderType;
+    enabled: boolean;
+    client_id: string;
+    /** Always sent empty by the server; the secret is never returned. */
+    client_secret: string;
+    /** Issuer URL (requests spell it `issuer`). */
+    issuer_url: string;
+    auth_url?: string;
+    token_url?: string;
+    userinfo_url?: string;
+    jwks_url?: string;
+    scopes: string[];
+    /** Claim mappings (requests spell it `claim_mapping`). */
+    claim_mappings?: Record<string, unknown>;
+    auto_provision: boolean;
+    allow_linking: boolean;
+    default_roles?: string[];
+    default_scopes?: string[];
+    allowed_email_domains?: string[];
+    require_explicit_role_mapping?: boolean;
+    created: string;
+    updated: string;
+}
+export interface ListIAMProvidersResponse {
+    providers: IAMExternalProvider[];
+    limit: number;
+    offset: number;
+}
+export interface ListIAMProvidersOptions {
+    limit?: number;
+    offset?: number;
+    type?: IAMProviderType;
+}
 export interface CreatePolicyRequest {
     name: string;
     description?: string;
@@ -219,6 +397,482 @@ export interface UpdatePolicyRequest {
     description?: string;
     spec_yaml?: string;
 }
+export interface IAMSubject {
+    id: string;
+    name?: string;
+    email?: string;
+    tenant?: string;
+    tenant_id: string;
+    roles?: string[];
+    groups?: string[];
+    authenticated: boolean;
+    mfa_verified?: boolean;
+    mfa_timestamp?: string;
+    last_login?: string;
+}
+export interface IAMCheckRequest {
+    subject: IAMSubject;
+    action: string;
+    resource: string;
+}
+export interface IAMCheckResponse {
+    allowed: boolean;
+    matched_policy?: string;
+    matched_rule?: string;
+    reason?: string;
+}
+export interface IAMPolicyDocument {
+    apiVersion: string;
+    kind: string;
+    metadata: {
+        name: string;
+        tenant: string;
+        description?: string;
+        labels?: Record<string, string>;
+        priority?: number;
+        created?: string;
+        updated?: string;
+    };
+    spec: {
+        subjects: Record<string, unknown>;
+        variables?: Record<string, string>;
+        rules: unknown[];
+    };
+    load_error?: {
+        reason: string;
+        unknown_keys?: string[];
+    };
+}
+export interface IAMPolicyValidationResult {
+    valid: boolean;
+    errors?: string[];
+}
+export interface IAMPolicySimulationRequest {
+    policy: IAMPolicyDocument;
+    check_request: IAMCheckRequest;
+    include_trace?: boolean;
+}
+export interface IAMEvaluationStep {
+    step_number: number;
+    policy_name: string;
+    rule_name?: string;
+    action: string;
+    result: boolean;
+    details?: string;
+}
+export interface IAMPolicySimulationResult {
+    allowed: boolean;
+    matched_policy?: string;
+    matched_rule?: string;
+    evaluation_steps?: IAMEvaluationStep[];
+    reason?: string;
+}
+export interface IAMEffectivePermissionsRequest {
+    subject: IAMSubject;
+    resource_patterns: string[];
+    actions?: string[];
+    include_deny_details?: boolean;
+}
+export interface IAMPermissionSet {
+    allowed: string[];
+    denied?: string[];
+    sources?: Record<string, string[]>;
+}
+export interface IAMEffectivePermissionsResult {
+    subject: IAMSubject;
+    permissions: Record<string, IAMPermissionSet>;
+    total_policies_evaluated: number;
+}
+export type ConsentPurpose = 'marketing' | 'analytics' | 'personalization' | 'third_party' | 'data_processing' | 'data_retention' | 'functional';
+export type ConsentStatus = 'granted' | 'denied' | 'withdrawn' | 'pending';
+export interface UserConsent {
+    id: string;
+    user_id: string;
+    tenant_id: string;
+    purpose: ConsentPurpose;
+    status: ConsentStatus;
+    version: string;
+    granted_at?: string;
+    withdrawn_at?: string;
+    expires_at?: string;
+    ip_address?: string;
+    user_agent?: string;
+    metadata?: Record<string, string>;
+    created: string;
+    updated: string;
+}
+export interface GrantConsentRequest {
+    purpose: ConsentPurpose;
+    version: string;
+    expires_at?: string;
+    ip_address?: string;
+    user_agent?: string;
+}
+export interface WithdrawConsentRequest {
+    ip_address?: string;
+    user_agent?: string;
+}
+export type DataExportFormat = 'json' | 'csv' | 'xml';
+export type DataExportStatus = 'pending' | 'processing' | 'completed' | 'failed' | 'expired';
+export type DeletionStatus = 'pending' | 'processing' | 'completed' | 'failed' | 'cancelled';
+export interface RequestDataExportRequest {
+    format?: DataExportFormat;
+    requested_by?: string;
+    include_categories?: string[];
+    exclude_categories?: string[];
+}
+export interface DataExportRequest {
+    id: string;
+    user_id: string;
+    tenant_id: string;
+    requested_by: string;
+    format: DataExportFormat;
+    status: DataExportStatus;
+    include_categories?: string[];
+    exclude_categories?: string[];
+    requested_at: string;
+    started_at?: string;
+    completed_at?: string;
+    expires_at?: string;
+    download_url?: string;
+    file_size_bytes?: number;
+    error_message?: string;
+    metadata?: Record<string, string>;
+}
+export interface ExportMetadata {
+    export_id: string;
+    user_id: string;
+    tenant_id: string;
+    exported_at: string;
+    format: DataExportFormat;
+    categories: string[];
+    schema_version: string;
+}
+export interface UserDataExport {
+    export_metadata: ExportMetadata;
+    profile?: {
+        id: string;
+        email: string;
+        name: string;
+        attributes?: Record<string, string>;
+        created: string;
+        updated: string;
+        last_auth?: string;
+    };
+    sessions?: Array<{
+        id: string;
+        started_at: string;
+        expires_at: string;
+        last_active: string;
+        ip_address?: string;
+        user_agent?: string;
+        auth_method: string;
+        ended_at?: string;
+    }>;
+    consents?: Array<{
+        purpose: ConsentPurpose;
+        status: ConsentStatus;
+        version: string;
+        granted_at?: string;
+        withdrawn_at?: string;
+    }>;
+    roles?: Array<{
+        role_id: string;
+        role_name: string;
+        assigned_at: string;
+    }>;
+    audit_logs?: Array<{
+        timestamp: string;
+        action: string;
+        resource: string;
+        ip_address?: string;
+        success: boolean;
+    }>;
+    credentials?: Array<{
+        id: string;
+        type: string;
+        name?: string;
+        created_at: string;
+        last_used_at: string;
+        attestation?: string;
+        transports?: string[];
+    }>;
+    mfa_info?: {
+        enabled: boolean;
+        method: string;
+        enrolled_at?: string;
+        backup_codes_remaining: number;
+    };
+}
+export interface RequestDeletionRequest {
+    requested_by?: string;
+    reason?: string;
+    delete_categories?: string[];
+    preserve_categories?: string[];
+    grace_period_days?: number;
+}
+export interface DeletionSummary {
+    profile_deleted: boolean;
+    sessions_deleted: number;
+    audit_logs_anonymized: number;
+    consents_deleted: number;
+    credentials_deleted: number;
+    role_assignments_removed: number;
+    tokens_revoked: number;
+    additional_data?: Record<string, number>;
+}
+export interface DeletionRequest {
+    id: string;
+    user_id: string;
+    tenant_id: string;
+    requested_by: string;
+    reason?: string;
+    status: DeletionStatus;
+    delete_categories?: string[];
+    preserve_categories?: string[];
+    requested_at: string;
+    grace_period_ends_at?: string;
+    started_at?: string;
+    completed_at?: string;
+    cancelled_at?: string;
+    cancelled_by?: string;
+    deleted_data_summary?: DeletionSummary;
+    error_message?: string;
+    metadata?: Record<string, string>;
+}
+export interface IAMSessionDeviceInfo {
+    id: string;
+    name: string;
+    type: string;
+    fingerprint: string;
+    trusted: boolean;
+}
+export interface IAMSession {
+    id: string;
+    created: string;
+    last_active: string;
+    expires_at: string;
+    mfa_verified: boolean;
+    ip_address: string;
+    user_agent: string;
+    device_info: IAMSessionDeviceInfo | null;
+}
+export interface IAMApplication {
+    client_id: string;
+    name: string;
+    tenant_id: string;
+    client_secret?: string;
+    redirect_uris: string[];
+    resource_prefix?: string;
+    scopes?: string[];
+    default_audience?: string;
+    grant_types: string[];
+    response_types: string[];
+    token_endpoint_auth_method?: string;
+    mtls_cert_thumbprint?: string;
+    mtls_subject_dn?: string;
+    mtls_san_dns?: string;
+    created: string;
+    updated: string;
+}
+export interface RegisterIAMAppRequest {
+    name: string;
+    redirect_uris: string[];
+    resource_prefix?: string;
+    grant_types?: string[];
+    response_types?: string[];
+    pkce_required: boolean;
+    token_endpoint_auth_method?: string;
+}
+export interface UpdateIAMAppRequest {
+    name?: string;
+    redirect_uris?: string[];
+    grant_types?: string[];
+    response_types?: string[];
+    resource_prefix?: string;
+    default_audience?: string;
+    scopes?: string[];
+    token_endpoint_auth_method?: string;
+}
+export interface ListIAMAppsOptions {
+    limit?: number;
+    offset?: number;
+}
+export interface ListIAMAppsResponse {
+    applications: IAMApplication[];
+    apps: IAMApplication[];
+    limit: number;
+    offset: number;
+}
+export interface WebAuthnCredentialSummary {
+    id: string;
+    aaguid?: string;
+    attestation_type?: string;
+    transports?: string[];
+    sign_count: number;
+    backup_eligible: boolean;
+    backup_state: boolean;
+    clone_warning: boolean;
+}
+export interface ListWebAuthnCredentialsResponse {
+    credentials: WebAuthnCredentialSummary[];
+    total: number;
+}
+export interface DeleteWebAuthnCredentialsResponse {
+    deleted: number;
+}
+export interface CreateAccountLinkRequest {
+    provider_id: string;
+    external_id: string;
+    access_token?: string;
+}
+export interface AccountLink {
+    id: string;
+    user_id: string;
+    provider_id: string;
+    provider_name: string;
+    external_id: string;
+    email?: string;
+    metadata?: Record<string, unknown>;
+    created_at: string;
+    updated_at: string;
+}
+export interface FederatedIdentity {
+    id: string;
+    user_id: string;
+    tenant_id: string;
+    provider_id: string;
+    external_id: string;
+    external_email?: string;
+    external_name?: string;
+    claims?: Record<string, unknown>;
+    last_login: string;
+    created: string;
+    updated: string;
+}
+export interface ListAccountLinksOptions {
+    limit?: number;
+    offset?: number;
+}
+export interface ListAccountLinksResponse {
+    links: FederatedIdentity[];
+    limit: number;
+    offset: number;
+}
+export interface ListSessionsOptions {
+    user_id?: string;
+    tenant_id?: string;
+}
+export interface ListIAMSessionsResponse {
+    sessions: IAMSession[];
+}
+export interface RevokeAllSessionsOptions {
+    except?: string;
+    user_id?: string;
+    tenant_id?: string;
+}
+export interface RevokeOtherSessionsResponse {
+    message: string;
+    kept_session_id: string;
+}
+export interface MFAStatusResponse {
+    enabled: boolean;
+    method?: string;
+    enrolled_at?: string;
+    last_verified?: string;
+    backup_codes_total?: number;
+    backup_codes_remaining?: number;
+}
+export interface MFAEnrollResponse {
+    enrollment_id: string;
+    provisioning_uri: string;
+    secret: string;
+    expires_at: string;
+}
+export interface MFACompleteResponse {
+    success: boolean;
+}
+export interface MFAChallengeResponse {
+    challenge_id: string;
+    method: string;
+    expires_at: string;
+}
+export interface MFAVerifyResponse {
+    success: boolean;
+    token?: string;
+    backup_codes_remaining?: number;
+}
+export interface MFABackupCodesResponse {
+    codes: string[];
+}
+export interface MFABackupCodeStatusResponse {
+    total_codes: number;
+    remaining_codes: number;
+    generated_at?: string;
+}
+export interface TenantQuotas {
+    max_databases: number;
+    max_raft_groups: number;
+    max_replicas_per_group: number;
+    max_total_replicas: number;
+    max_collections: number;
+    max_keys: number;
+    max_storage_bytes: number;
+    max_database_size_bytes: number;
+    max_users: number;
+    max_roles: number;
+    max_certificates: number;
+    max_backups: number;
+    max_vector_dims: number;
+    max_ts_metrics: number;
+    max_dedicated_wal_groups: number;
+    system_barrier_quota: number;
+    current_databases?: number;
+    current_raft_groups?: number;
+    current_total_replicas?: number;
+    current_collections?: number;
+    current_keys?: number;
+    current_storage_bytes?: number;
+    current_database_size_bytes?: number;
+    current_users?: number;
+    current_roles?: number;
+    current_certificates?: number;
+    current_backups?: number;
+    current_vector_dims?: number;
+    current_ts_metrics?: number;
+    current_dedicated_wal_groups?: number;
+    current_system_barrier_bytes?: number;
+}
+export interface TenantEntitlements {
+    allowed_isolation_modes?: string[];
+    allow_dedicated_raft?: boolean;
+    allow_volume_storage?: boolean;
+    allow_system_managed_barrier?: boolean;
+    allow_dedicated_wal?: boolean;
+    allowed_barrier_modes?: string[];
+}
+export type TenantAdminEnrollment = 'cert' | 'invite';
+export interface ProvisionTenantRequest {
+    tenant_id: string;
+    name?: string;
+    isolation_type?: string;
+    admin_username?: string;
+    admin_enrollment?: TenantAdminEnrollment;
+    admin_csr_pem?: string;
+    invite_expiry_hours?: number;
+}
+export interface ProvisionTenantResponse {
+    tenant_id: string;
+    admin_user_id: string;
+    admin_username: string;
+    admin_role_id: string;
+    admin_pending: boolean;
+    admin_cert_pem?: string;
+    admin_cert_thumbprint?: string;
+    invite_token?: string;
+    invite_expires_at?: string;
+    timestamp: string;
+}
 export interface IAMClient {
     listUsers(tenantID: string): Promise<ListUsersResponse>;
     createUser(tenantID: string, req: CreateUserRequest): Promise<CreateUserResponse>;
@@ -226,23 +880,93 @@ export interface IAMClient {
     deleteUser(tenantID: string, userID: string): Promise<void>;
     assignRoleToUser(tenantID: string, userID: string, role: string): Promise<void>;
     revokeRoleFromUser(tenantID: string, userID: string, role: string): Promise<void>;
+    listSessions(opts?: ListSessionsOptions): Promise<ListIAMSessionsResponse>;
+    getSession(sessionID: string): Promise<IAMSession>;
+    revokeSession(sessionID: string): Promise<void>;
+    revokeAllSessions(opts?: RevokeAllSessionsOptions): Promise<void>;
+    revokeOtherSessions(keepSessionID: string): Promise<RevokeOtherSessionsResponse>;
+    listWebAuthnCredentials(tenantID: string, userID: string): Promise<ListWebAuthnCredentialsResponse>;
+    deleteAllWebAuthnCredentials(tenantID: string, userID: string): Promise<DeleteWebAuthnCredentialsResponse>;
+    deleteWebAuthnCredential(tenantID: string, userID: string, credentialID: string): Promise<void>;
+    createAccountLink(tenantID: string, userID: string, req: CreateAccountLinkRequest): Promise<AccountLink>;
+    listAccountLinks(tenantID: string, userID: string, opts?: ListAccountLinksOptions): Promise<ListAccountLinksResponse>;
+    deleteAccountLink(tenantID: string, userID: string, providerID: string): Promise<void>;
+    getMFAStatus(tenantID: string, userID: string): Promise<MFAStatusResponse>;
+    disableMFA(tenantID: string, userID: string): Promise<void>;
+    beginMFAEnrollment(tenantID: string, userID: string, method?: string): Promise<MFAEnrollResponse>;
+    completeMFAEnrollment(tenantID: string, userID: string, enrollmentID: string, code: string): Promise<MFACompleteResponse>;
+    cancelMFAEnrollment(tenantID: string, userID: string, enrollmentID: string): Promise<void>;
+    beginMFAChallenge(tenantID: string, userID: string, sessionToken: string): Promise<MFAChallengeResponse>;
+    verifyMFAChallenge(tenantID: string, userID: string, challengeID: string, code: string): Promise<MFAVerifyResponse>;
+    getBackupCodeStatus(tenantID: string, userID: string): Promise<MFABackupCodeStatusResponse>;
+    generateBackupCodes(tenantID: string, userID: string): Promise<MFABackupCodesResponse>;
     listTenants(): Promise<ListTenantsResponse>;
     createTenant(req: CreateTenantRequest): Promise<CreateTenantResponse>;
     updateTenant(tenantID: string, req: UpdateTenantRequest): Promise<IAMTenant>;
     deleteTenant(tenantID: string): Promise<void>;
+    getTenant(tenantID: string): Promise<IAMTenant>;
+    getUser(tenantID: string, userID: string): Promise<IAMUser>;
+    listUserSessions(tenantID: string, userID: string, limit?: number): Promise<ListIAMSessionsResponse>;
+    revokeAllUserSessions(tenantID: string, userID: string): Promise<void>;
+    listApps(tenantID: string, opts?: ListIAMAppsOptions): Promise<ListIAMAppsResponse>;
+    registerApp(tenantID: string, req: RegisterIAMAppRequest): Promise<IAMApplication>;
+    getApp(tenantID: string, clientID: string): Promise<IAMApplication>;
+    updateApp(tenantID: string, clientID: string, req: UpdateIAMAppRequest): Promise<IAMApplication>;
+    deleteApp(tenantID: string, clientID: string): Promise<void>;
+    rotateAppSecret(tenantID: string, clientID: string): Promise<IAMApplication>;
+    updateTenantQuotas(tenantID: string, quotas: TenantQuotas): Promise<void>;
+    updateTenantEntitlements(tenantID: string, entitlements: TenantEntitlements): Promise<void>;
+    provisionTenant(req: ProvisionTenantRequest): Promise<ProvisionTenantResponse>;
     listRoles(tenantID: string): Promise<ListRolesResponse>;
     createRole(tenantID: string, req: CreateRoleRequest): Promise<IAMRole>;
     updateRole(tenantID: string, roleID: string, req: UpdateRoleRequest): Promise<IAMRole>;
+    /** listAuditEvents returns one page of IAM audit events matching the filters. */
+    listAuditEvents(opts?: ListIAMAuditEventsOptions): Promise<ListIAMAuditEventsResponse>;
+    /** getAuditEvent returns one IAM audit event. */
+    getAuditEvent(eventID: string, tenantID?: string): Promise<IAMAuditEvent>;
+    /** recordAuditEvent records one IAM audit event (201); event_id is empty when async. */
+    recordAuditEvent(req: RecordIAMAuditEventRequest): Promise<RecordIAMAuditEventResponse>;
+    /** deleteAuditEventsBefore prunes IAM audit events older than `before` (RFC 3339). */
+    deleteAuditEventsBefore(before: string, tenantID?: string): Promise<DeleteIAMAuditEventsResponse>;
+    /** listImpersonations lists impersonation sessions, optionally only active ones or one admin's. */
+    listImpersonations(opts?: ListImpersonationsOptions): Promise<ListImpersonationsResponse>;
+    /** startImpersonation starts a session in which an admin acts as the target user. */
+    startImpersonation(req: StartImpersonationRequest): Promise<ImpersonationSession>;
+    /** endImpersonation ends a session; the result is the session or a bare status. */
+    endImpersonation(sessionID: string): Promise<EndImpersonationResult>;
+    /** listUserImpersonations lists the sessions that targeted one user. */
+    listUserImpersonations(userID: string): Promise<ListUserImpersonationsResponse>;
+    getRole(tenantID: string, roleID: string): Promise<IAMRole>;
+    registerProvider(tenantID: string, req: RegisterIAMProviderRequest): Promise<IAMExternalProvider>;
+    listProviders(tenantID: string, opts?: ListIAMProvidersOptions): Promise<ListIAMProvidersResponse>;
+    getProvider(tenantID: string, providerID: string): Promise<IAMExternalProvider>;
+    updateProvider(tenantID: string, providerID: string, req: UpdateIAMProviderRequest): Promise<IAMExternalProvider>;
+    deleteProvider(tenantID: string, providerID: string): Promise<void>;
     deleteRole(tenantID: string, roleID: string): Promise<void>;
     reconcileRoles(tenantID: string): Promise<ReconcileRolesResponse>;
     listPolicies(tenantID: string): Promise<ListPoliciesResponse>;
     createPolicy(tenantID: string, req: CreatePolicyRequest): Promise<IAMPolicy>;
     updatePolicy(tenantID: string, policyName: string, req: UpdatePolicyRequest): Promise<IAMPolicy>;
     deletePolicy(tenantID: string, policyName: string): Promise<void>;
+    getPolicy(tenantID: string, policyName: string): Promise<IAMPolicyDocument>;
+    validatePolicy(tenantID: string, req: CreatePolicyRequest, name?: string): Promise<IAMPolicyValidationResult>;
+    testPolicy(tenantID: string, req: IAMCheckRequest): Promise<IAMCheckResponse>;
+    simulatePolicy(tenantID: string, req: IAMPolicySimulationRequest): Promise<IAMPolicySimulationResult>;
+    getEffectivePermissions(tenantID: string, req: IAMEffectivePermissionsRequest): Promise<IAMEffectivePermissionsResult>;
     getInvite(tenantID: string, token: string): Promise<import('./types.js').InviteMetadata>;
     activateFIDO2Begin(tenantID: string, token: string): Promise<Record<string, unknown>>;
     activateFIDO2Finish(tenantID: string, token: string, credential: Record<string, unknown>): Promise<import('./types.js').ActivationResponse>;
     activatePIV(tenantID: string, token: string, certPEM: string): Promise<import('./types.js').ActivationResponse>;
+    grantConsent(tenantID: string, userID: string, req: GrantConsentRequest): Promise<UserConsent>;
+    listUserConsents(tenantID: string, userID: string): Promise<UserConsent[]>;
+    getConsent(tenantID: string, userID: string, purpose: ConsentPurpose): Promise<UserConsent>;
+    withdrawConsent(tenantID: string, userID: string, purpose: ConsentPurpose, req?: WithdrawConsentRequest): Promise<UserConsent>;
+    requestDataExport(tenantID: string, userID: string, req?: RequestDataExportRequest): Promise<DataExportRequest>;
+    getExportStatus(tenantID: string, userID: string, exportID: string): Promise<DataExportRequest>;
+    downloadExport(tenantID: string, userID: string, exportID: string): Promise<UserDataExport>;
+    requestDeletion(tenantID: string, userID: string, req?: RequestDeletionRequest): Promise<DeletionRequest>;
+    getDeletionStatus(tenantID: string, userID: string, deletionID: string): Promise<DeletionRequest>;
+    cancelDeletion(tenantID: string, userID: string, deletionID: string, cancelledBy?: string): Promise<DeletionRequest>;
 }
 export interface KMSClient {
     listKeys(limit?: number): Promise<ListKeysResponse>;
@@ -413,6 +1137,13 @@ export interface Client {
      * background re-encryption. Paths: /api/v1/kms/deks/*.
      */
     readonly dek: DEKClient;
+    /**
+     * Attestation verifier: endorsements (reference-value signers and AK
+     * roots) and signed CoRIM reference values.
+     * Paths: /api/v1/attestation/endorsements/* and
+     * /api/v1/attestation/reference-values/*.
+     */
+    readonly attestation: AttestationClient;
     /**
      * dynamicSecrets manages credential-generation roles, on-demand
      * short-lived credential minting, and lease renewal/revocation.

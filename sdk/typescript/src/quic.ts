@@ -385,6 +385,36 @@ export class QuicClient implements Client {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   readonly dek: any = null;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  readonly entities: any = null;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  readonly attestation: any = null;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  readonly prompts: any = null;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  readonly xkmsKeys: any = null;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  readonly piv: any = null;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  readonly xkms: any = null;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  readonly backups: any = null;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  readonly clusterNodes: any = null;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  readonly kmsAdmin: any = null;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  readonly objectStorageAdmin: any = null;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  readonly parameters: any = null;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  readonly vectorAdmin: any = null;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  readonly xkmsFido2: any = null;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  readonly registry: any = null;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  readonly cache: any = null;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   readonly dynamicSecrets: any = null;
   readonly barrier: BarrierClient;
   // Per-tenant barrier is a REST-only surface; non-REST transports stub it.

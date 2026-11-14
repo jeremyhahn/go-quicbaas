@@ -22,6 +22,21 @@ import type {
 } from './page.js';
 import type { RAGClient } from './rag.js';
 import type { EmbeddingsClient } from './embedding_sdk.js';
+import type {
+  VectorHealthResponse,
+  VectorClusterStatsResponse,
+  VectorHybridSearchRequest,
+  VectorHybridSearchResponse,
+  VectorMetadataSearchRequest,
+  VectorMetadataSearchResponse,
+} from './vector_search.js';
+import type {
+  ObjectsBatchPutOperation,
+  ObjectsBatchPutResponse,
+  ObjectsBatchGetOptions,
+  ObjectsBatchGetResponse,
+  ObjectsBatchDeleteResponse,
+} from './objects_batch.js';
 import type { MessagingClient } from './messaging_sdk.js';
 import type { SchedulerClient } from './scheduler_sdk.js';
 import type { ProjectsClient } from './projects.js';
@@ -32,6 +47,28 @@ import type { CAClient } from './ca.js';
 import type { TrustClient } from './trust.js';
 import type { CryptoClient } from './crypto.js';
 import type { DEKClient } from './dek.js';
+import type { AttestationClient } from './attestation.js';
+import type { PromptsClient } from './prompts.js';
+import type { XKMSKeysClient } from './xkms_keys.js';
+import type { PIVClient } from './piv.js';
+import type { XKMSClient } from './xkms.js';
+import type { BackupsClient } from './backups.js';
+import type { ClusterNodesClient } from './cluster_nodes.js';
+import type { EntitiesClient } from './entities.js';
+import type { KMSAdminClient } from './kms_admin.js';
+import type { ObjectStorageAdminClient } from './objectstorage_admin.js';
+import type { ParametersClient } from './parameters.js';
+import type { VectorAdminClient } from './vector_admin.js';
+import type { XKMSFIDO2Client } from './xkms_fido2.js';
+import type { RegistryClient } from './registry.js';
+import type {
+  TSBatchPoint,
+  TSWriteBatchResponse,
+  TSRetentionPolicy,
+  TSRetentionPolicyResponse,
+  TSSetRetentionPolicyResponse,
+} from './timeseries_admin.js';
+import type { CacheClient } from './cache.js';
 import type { DynamicSecretsClient } from './dynamicsecrets.js';
 
 import type {
@@ -63,6 +100,8 @@ import type {
   EmitAuthorizedResponse,
   VerifyAuthorizedRequest,
   VerifyAuthorizedResponse,
+  AddAuthorizedKeyRequest,
+  ListAuthorizedKeysRequest,
   FleetNode,
   SessionStatusResponse,
   CloseSessionRequest,
@@ -182,6 +221,16 @@ import type {
   BootstrapBundleRequest,
   BootstrapBundleResponse,
   ClusterStatusResponse,
+  ClusterLeaderResponse,
+  ShardLeaderResponse,
+  RebalanceRequest,
+  RebalanceResponse,
+  RebalanceStatusResponse,
+  RebalancePlanResponse,
+  MigrationRequest,
+  MigrationResponse,
+  MigrationStatusResponse,
+  CancelMigrationResponse,
   SessionEventEnvelope,
   SessionInfo,
   SpawnSessionRequest,
@@ -458,8 +507,8 @@ export interface OrchestratorClient {
   // Maps to POST /api/v1/orchestrator/attention/:taskID/resolve
   resolveAttention(req: AttentionResolveRequest): Promise<AttentionItem>;
 
-  // decomposeTask asks the orchestrator to decompose a task into sub-tasks.
-  // Maps to POST /api/v1/orchestrator/tasks/:taskID/decompose
+  // decomposeTask asks the orchestrator to split a free-text task into work items.
+  // Maps to POST /api/v1/orchestrator/tasks/decompose?tenant_id=<id>
   decomposeTask(req: DecomposeTaskRequest): Promise<DecomposeTaskResponse>;
 
   // registerFleetNode registers a new node with the fleet.
@@ -662,6 +711,68 @@ export interface VectorNamespace {
   created_at?: string;
 }
 
+// NamespaceInfo is the full description of one vector namespace.
+// Maps to GET /api/v1/vector/namespaces/{namespace}
+export interface NamespaceInfo {
+  namespace: string;
+  dimensions: number;
+  distance_metric: string;
+  precision?: string;
+  index_type: string;
+  index_params?: Record<string, string>;
+  vector_count: number;
+  indexed_count: number;
+  pending_count?: number;
+  storage_bytes: number;
+  index_bytes: number;
+  created_at?: string;
+  updated_at?: string;
+  last_index_build?: string;
+  shard_id?: number;
+  replication_factor?: number;
+  compression_enabled?: boolean;
+  metadata?: Record<string, string>;
+}
+
+// NamespaceStats is the usage statistics of one vector namespace.
+// Maps to GET /api/v1/vector/namespaces/{namespace}/stats
+export interface NamespaceStats {
+  namespace: string;
+  vector_count: number;
+  indexed_count: number;
+  storage_bytes: number;
+  index_bytes: number;
+  avg_search_latency_ms: number;
+  search_count: number;
+}
+
+// RebuildIndexRequest is the body of an index rebuild.
+export interface RebuildIndexRequest {
+  index_params?: Record<string, string>;
+  async: boolean;
+  timeout_ms?: number;
+}
+
+// RebuildIndexResponse answers an index rebuild (202 Accepted).
+export interface RebuildIndexResponse {
+  operation_id: string;
+  started: string;
+  estimated_duration_ms: number;
+}
+
+// IndexProgress is the progress of one index rebuild operation.
+export interface IndexProgress {
+  operation_id: string;
+  namespace: string;
+  vectors_indexed: number;
+  total_vectors: number;
+  percent_complete: number;
+  elapsed_time_ms: number;
+  estimated_remaining_ms: number;
+  status: string;
+  error_message?: string;
+}
+
 // VectorSearchResult is one result from a similarity search.
 export interface VectorSearchResult {
   id: string;
@@ -684,6 +795,22 @@ export interface VectorsClient {
   // Maps to DELETE /api/v1/vector/namespaces/{namespace}
   deleteNamespace(namespace: string): Promise<void>;
 
+  // getNamespace returns the full description of one namespace.
+  // Maps to GET /api/v1/vector/namespaces/{namespace}
+  getNamespace(namespace: string): Promise<NamespaceInfo>;
+
+  // getNamespaceStats returns the usage statistics of one namespace.
+  // Maps to GET /api/v1/vector/namespaces/{namespace}/stats
+  getNamespaceStats(namespace: string): Promise<NamespaceStats>;
+
+  // rebuildIndex starts a rebuild of the namespace's index.
+  // Maps to POST /api/v1/vector/namespaces/{namespace}/index/rebuild
+  rebuildIndex(namespace: string, req: RebuildIndexRequest): Promise<RebuildIndexResponse>;
+
+  // getIndexProgress returns the progress of one index rebuild.
+  // Maps to GET /api/v1/vector/namespaces/{namespace}/index/progress?operation_id=
+  getIndexProgress(namespace: string, operationID: string): Promise<IndexProgress>;
+
   // searchSimilar performs a similarity search in the given namespace.
   // Maps to POST /api/v1/vector/namespaces/{namespace}/search/similar
   searchSimilar(namespace: string, req: {
@@ -692,6 +819,22 @@ export interface VectorsClient {
     top_k?: number;
     filter?: Record<string, unknown>;
   }): Promise<VectorSearchResult[]>;
+
+  // health reports the vector store's health.
+  // Maps to GET /api/v1/vector/health
+  health(): Promise<VectorHealthResponse>;
+
+  // clusterStats reports cluster-wide vector statistics.
+  // Maps to GET /api/v1/vector/cluster/stats
+  clusterStats(): Promise<VectorClusterStatsResponse>;
+
+  // hybridSearch runs a similarity search narrowed by metadata filters.
+  // Maps to POST /api/v1/vector/hybrid-search
+  hybridSearch(req: VectorHybridSearchRequest): Promise<VectorHybridSearchResponse>;
+
+  // searchByMetadata finds vectors by their metadata alone.
+  // Maps to POST /api/v1/vector/search-by-metadata
+  searchByMetadata(req: VectorMetadataSearchRequest): Promise<VectorMetadataSearchResponse>;
 }
 
 // ---------------------------------------------------------------------------
@@ -736,6 +879,18 @@ export interface TimeSeriesClient {
   // deleteSeries deletes all data for a metric.
   // Maps to DELETE /api/v1/timeseries/series
   deleteSeries(metric: string): Promise<void>;
+
+  // writeBatch writes many data points in one request.
+  // Maps to POST /api/v1/timeseries/write-batch
+  writeBatch(points: TSBatchPoint[]): Promise<TSWriteBatchResponse>;
+
+  // getRetentionPolicy returns the retention policy of a metric.
+  // Maps to GET /api/v1/timeseries/retention/{metric}
+  getRetentionPolicy(metric: string): Promise<TSRetentionPolicyResponse>;
+
+  // setRetentionPolicy sets the retention policy of a metric.
+  // Maps to PUT /api/v1/timeseries/retention/{metric}
+  setRetentionPolicy(metric: string, policy: TSRetentionPolicy): Promise<TSSetRetentionPolicyResponse>;
 }
 
 // ---------------------------------------------------------------------------
@@ -775,6 +930,18 @@ export interface ObjectsClient {
   // deleteObject removes an object by key.
   // Maps to DELETE /api/v1/objects/{key}
   deleteObject(key: string): Promise<void>;
+
+  // batchPut stores several objects in one request.
+  // Maps to POST /api/v1/objects/batch
+  batchPut(objects: ObjectsBatchPutOperation[]): Promise<ObjectsBatchPutResponse>;
+
+  // batchGet reads several objects by key in one request.
+  // Maps to POST /api/v1/objects/batch/get
+  batchGet(keys: string[], opts?: ObjectsBatchGetOptions): Promise<ObjectsBatchGetResponse>;
+
+  // batchDelete removes several objects by key in one request.
+  // Maps to POST /api/v1/objects/batch/delete
+  batchDelete(keys: string[]): Promise<ObjectsBatchDeleteResponse>;
 }
 
 // ---------------------------------------------------------------------------
@@ -809,6 +976,233 @@ export interface UpdateRoleRequest {
   permissions?: string[];
 }
 
+// IAMAuditActor identifies who performed an audited IAM action.
+export interface IAMAuditActor {
+  user_id?: string;
+  username?: string;
+  email?: string;
+  session_id?: string;
+  client_id?: string;
+  impersonating_user_id?: string;
+  impersonating_username?: string;
+  service_identity?: string;
+  jti?: string;
+  scopes?: string[];
+  roles?: string[];
+}
+
+// IAMAuditResource identifies the resource an audited IAM action touched.
+export interface IAMAuditResource {
+  type: string;
+  id: string;
+  name?: string;
+}
+
+// IAMAuditEvent is one IAM audit log entry. `timestamp` is RFC 3339.
+export interface IAMAuditEvent {
+  id: string;
+  tenant_id: string;
+  timestamp: string;
+  event_type: string;
+  category: string;
+  actor?: IAMAuditActor;
+  resource?: IAMAuditResource;
+  action: string;
+  outcome: string;
+  details?: Record<string, unknown>;
+  ip_address?: string;
+  user_agent?: string;
+  impersonation_session_id?: string;
+  correlation_id?: string;
+}
+
+// ListIAMAuditEventsOptions filters and pages the IAM audit log. Fields are
+// sent as their snake_case query names; only set values are sent. Times are
+// RFC 3339.
+export interface ListIAMAuditEventsOptions {
+  tenantID?: string;
+  eventType?: string;
+  category?: string;
+  outcome?: string;
+  actorID?: string;
+  resourceID?: string;
+  startTime?: string;
+  endTime?: string;
+  limit?: number;
+  offset?: number;
+}
+
+// ListIAMAuditEventsResponse is one page of IAM audit events.
+export interface ListIAMAuditEventsResponse {
+  events: IAMAuditEvent[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
+// RecordIAMAuditEventRequest records one IAM audit event.
+export interface RecordIAMAuditEventRequest {
+  tenant_id?: string;
+  event: IAMAuditEvent;
+  /** When true the server records the event asynchronously and returns an empty event_id. */
+  async?: boolean;
+}
+
+// RecordIAMAuditEventResponse carries the recorded event's ID (empty when async).
+export interface RecordIAMAuditEventResponse {
+  event_id: string;
+}
+
+// DeleteIAMAuditEventsResponse reports how many events a prune removed.
+export interface DeleteIAMAuditEventsResponse {
+  deleted_count: number;
+  before: string;
+}
+
+// ImpersonationSession is one delegated-admin impersonation session.
+// User IDs travel as decimal strings so 64-bit IDs survive JSON; times are
+// RFC 3339 strings.
+export interface ImpersonationSession {
+  id: string;
+  admin_user_id: string;
+  admin_username?: string;
+  target_user_id: string;
+  target_username?: string;
+  tenant_id: string;
+  reason: string;
+  started_at: string;
+  expires_at: string;
+  /** Set once the session has ended. */
+  ended_at?: string;
+  operation_count: number;
+  audit_log_id: string;
+}
+
+// StartImpersonationRequest starts an impersonation session.
+export interface StartImpersonationRequest {
+  target_user_id: string;
+  tenant_id: string;
+  reason: string;
+  /** Go duration string such as `30m`; the server default applies when omitted. */
+  duration?: string;
+}
+
+// ListImpersonationsOptions filters listImpersonations; only set values are sent.
+export interface ListImpersonationsOptions {
+  /** Sends `active=true` when true; nothing otherwise. */
+  activeOnly?: boolean;
+  /** Only sessions started by this admin user. */
+  adminUserID?: string;
+}
+
+// ListImpersonationsResponse is the result of listImpersonations.
+export interface ListImpersonationsResponse {
+  sessions: ImpersonationSession[];
+  total: number;
+}
+
+// EndImpersonationResult is the ended session, or a bare status when the
+// server cannot reread the session after ending it.
+export type EndImpersonationResult = ImpersonationSession | { status: 'impersonation_ended' };
+
+// ListUserImpersonationsResponse is the result of listUserImpersonations.
+export interface ListUserImpersonationsResponse {
+  user_id: string;
+  sessions: ImpersonationSession[];
+}
+
+// IAMProviderType is the protocol of a tenant's external identity provider.
+export type IAMProviderType = 'oidc' | 'saml' | 'oauth2' | 'ldap';
+
+// RegisterIAMProviderRequest registers a federation provider for a tenant.
+// Wire spelling: requests send `issuer` and `claim_mapping`, while the
+// IAMExternalProvider response carries `issuer_url` and `claim_mappings`.
+// Each is mirrored here exactly as the server spells it.
+export interface RegisterIAMProviderRequest {
+  /** Optional provider ID; the server generates one when omitted. */
+  id?: string;
+  name: string;
+  type: IAMProviderType;
+  enabled: boolean;
+  client_id: string;
+  client_secret: string;
+  /** Issuer URL (the response spells it `issuer_url`). */
+  issuer?: string;
+  auth_url?: string;
+  token_url?: string;
+  userinfo_url?: string;
+  jwks_url?: string;
+  scopes?: string[];
+  /** Claim mapping (the response spells it `claim_mappings`). */
+  claim_mapping?: Record<string, string>;
+  metadata?: Record<string, unknown>;
+}
+
+// UpdateIAMProviderRequest holds a provider's updatable fields; omitted fields
+// are left unchanged. Like RegisterIAMProviderRequest it sends `issuer` and
+// `claim_mapping`, which the response spells `issuer_url` and `claim_mappings`.
+export interface UpdateIAMProviderRequest {
+  name?: string;
+  enabled?: boolean;
+  client_id?: string;
+  client_secret?: string;
+  /** Issuer URL (the response spells it `issuer_url`). */
+  issuer?: string;
+  auth_url?: string;
+  token_url?: string;
+  userinfo_url?: string;
+  jwks_url?: string;
+  scopes?: string[];
+  /** Claim mapping (the response spells it `claim_mappings`). */
+  claim_mapping?: Record<string, string>;
+  metadata?: Record<string, unknown>;
+}
+
+// IAMExternalProvider is a tenant's federation provider as the server returns
+// it. Times are RFC 3339 strings. It carries `issuer_url` and `claim_mappings`,
+// where the requests send `issuer` and `claim_mapping`.
+export interface IAMExternalProvider {
+  id: string;
+  tenant_id: string;
+  name: string;
+  type: IAMProviderType;
+  enabled: boolean;
+  client_id: string;
+  /** Always sent empty by the server; the secret is never returned. */
+  client_secret: string;
+  /** Issuer URL (requests spell it `issuer`). */
+  issuer_url: string;
+  auth_url?: string;
+  token_url?: string;
+  userinfo_url?: string;
+  jwks_url?: string;
+  scopes: string[];
+  /** Claim mappings (requests spell it `claim_mapping`). */
+  claim_mappings?: Record<string, unknown>;
+  auto_provision: boolean;
+  allow_linking: boolean;
+  default_roles?: string[];
+  default_scopes?: string[];
+  allowed_email_domains?: string[];
+  require_explicit_role_mapping?: boolean;
+  created: string;
+  updated: string;
+}
+
+// ListIAMProvidersResponse is one page of a tenant's federation providers.
+export interface ListIAMProvidersResponse {
+  providers: IAMExternalProvider[];
+  limit: number;
+  offset: number;
+}
+
+// ListIAMProvidersOptions pages and filters listProviders.
+export interface ListIAMProvidersOptions {
+  limit?: number;
+  offset?: number;
+  type?: IAMProviderType;
+}
+
 // CreatePolicyRequest defines a new ABAC policy.
 export interface CreatePolicyRequest {
   name: string;
@@ -822,8 +1216,638 @@ export interface UpdatePolicyRequest {
   spec_yaml?: string;
 }
 
+// IAMSubject is the principal a policy is evaluated for. Times are RFC 3339
+// strings.
+export interface IAMSubject {
+  id: string;
+  name?: string;
+  email?: string;
+  tenant?: string;
+  tenant_id: string;
+  roles?: string[];
+  groups?: string[];
+  authenticated: boolean;
+  mfa_verified?: boolean;
+  mfa_timestamp?: string;
+  last_login?: string;
+}
+
+// IAMCheckRequest asks whether a subject may perform an action on a resource.
+export interface IAMCheckRequest {
+  subject: IAMSubject;
+  action: string;
+  resource: string;
+}
+
+// IAMCheckResponse is the decision for an IAMCheckRequest.
+export interface IAMCheckResponse {
+  allowed: boolean;
+  matched_policy?: string;
+  matched_rule?: string;
+  reason?: string;
+}
+
+// IAMPolicyDocument is a stored policy document (not the IAMPolicy list
+// shape). Times are RFC 3339 strings.
+export interface IAMPolicyDocument {
+  apiVersion: string;
+  kind: string;
+  metadata: {
+    name: string;
+    tenant: string;
+    description?: string;
+    labels?: Record<string, string>;
+    priority?: number;
+    created?: string;
+    updated?: string;
+  };
+  spec: {
+    subjects: Record<string, unknown>;
+    variables?: Record<string, string>;
+    rules: unknown[];
+  };
+  load_error?: {
+    reason: string;
+    unknown_keys?: string[];
+  };
+}
+
+// IAMPolicyValidationResult is the validate route's answer; an invalid
+// policy is still a 200 with valid=false.
+export interface IAMPolicyValidationResult {
+  valid: boolean;
+  errors?: string[];
+}
+
+// IAMPolicySimulationRequest evaluates a policy that is not stored.
+export interface IAMPolicySimulationRequest {
+  policy: IAMPolicyDocument;
+  check_request: IAMCheckRequest;
+  include_trace?: boolean;
+}
+
+// IAMEvaluationStep is one step of a simulation trace.
+export interface IAMEvaluationStep {
+  step_number: number;
+  policy_name: string;
+  rule_name?: string;
+  action: string;
+  result: boolean;
+  details?: string;
+}
+
+// IAMPolicySimulationResult is the decision of a simulated policy.
+export interface IAMPolicySimulationResult {
+  allowed: boolean;
+  matched_policy?: string;
+  matched_rule?: string;
+  evaluation_steps?: IAMEvaluationStep[];
+  reason?: string;
+}
+
+// IAMEffectivePermissionsRequest asks what a subject may do on resources.
+export interface IAMEffectivePermissionsRequest {
+  subject: IAMSubject;
+  resource_patterns: string[];
+  actions?: string[];
+  include_deny_details?: boolean;
+}
+
+// IAMPermissionSet is the allowed and denied actions on one resource pattern.
+export interface IAMPermissionSet {
+  allowed: string[];
+  denied?: string[];
+  sources?: Record<string, string[]>;
+}
+
+// IAMEffectivePermissionsResult maps each resource pattern to its permissions.
+export interface IAMEffectivePermissionsResult {
+  subject: IAMSubject;
+  permissions: Record<string, IAMPermissionSet>;
+  total_policies_evaluated: number;
+}
+
 // IAMClient provides identity and access management operations.
 // Paths: /api/v1/tenants and /api/v1/iam
+// ConsentPurpose is what a GDPR consent is for (pkg/iam ConsentPurpose).
+export type ConsentPurpose =
+  | 'marketing'
+  | 'analytics'
+  | 'personalization'
+  | 'third_party'
+  | 'data_processing'
+  | 'data_retention'
+  | 'functional';
+
+// ConsentStatus is the state of a GDPR consent (pkg/iam ConsentStatus).
+export type ConsentStatus = 'granted' | 'denied' | 'withdrawn' | 'pending';
+
+// UserConsent is one GDPR consent record (pkg/iam Consent). user_id is a
+// string because the Go tag is `,string`; times are RFC 3339 strings.
+export interface UserConsent {
+  id: string;
+  user_id: string;
+  tenant_id: string;
+  purpose: ConsentPurpose;
+  status: ConsentStatus;
+  version: string;
+  granted_at?: string;
+  withdrawn_at?: string;
+  expires_at?: string;
+  ip_address?: string;
+  user_agent?: string;
+  metadata?: Record<string, string>;
+  created: string;
+  updated: string;
+}
+
+// GrantConsentRequest is the body of POST …/gdpr/consent.
+export interface GrantConsentRequest {
+  purpose: ConsentPurpose;
+  version: string;
+  // expires_at is an RFC 3339 timestamp; omitted, the consent never expires.
+  expires_at?: string;
+  ip_address?: string;
+  user_agent?: string;
+}
+
+// WithdrawConsentRequest is the body of PUT …/gdpr/consent/{purpose}/withdraw.
+export interface WithdrawConsentRequest {
+  ip_address?: string;
+  user_agent?: string;
+}
+
+// DataExportFormat is the format of a GDPR data export (pkg/iam DataExportFormat).
+export type DataExportFormat = 'json' | 'csv' | 'xml';
+
+// DataExportStatus is the state of a GDPR data export (pkg/iam DataExportStatus).
+export type DataExportStatus = 'pending' | 'processing' | 'completed' | 'failed' | 'expired';
+
+// DeletionStatus is the state of a GDPR deletion request (pkg/iam DeletionStatus).
+export type DeletionStatus = 'pending' | 'processing' | 'completed' | 'failed' | 'cancelled';
+
+// RequestDataExportRequest is the body of POST …/gdpr/export. format defaults
+// to json and requested_by to the user on the server.
+export interface RequestDataExportRequest {
+  format?: DataExportFormat;
+  requested_by?: string;
+  include_categories?: string[];
+  exclude_categories?: string[];
+}
+
+// DataExportRequest is one GDPR data export (pkg/iam DataExportRequest).
+// user_id and requested_by are decimal strings; times are RFC 3339 strings.
+export interface DataExportRequest {
+  id: string;
+  user_id: string;
+  tenant_id: string;
+  requested_by: string;
+  format: DataExportFormat;
+  status: DataExportStatus;
+  include_categories?: string[];
+  exclude_categories?: string[];
+  requested_at: string;
+  started_at?: string;
+  completed_at?: string;
+  expires_at?: string;
+  download_url?: string;
+  file_size_bytes?: number;
+  error_message?: string;
+  metadata?: Record<string, string>;
+}
+
+// ExportMetadata describes a generated export (pkg/iam ExportMetadata).
+export interface ExportMetadata {
+  export_id: string;
+  user_id: string;
+  tenant_id: string;
+  exported_at: string;
+  format: DataExportFormat;
+  categories: string[];
+  schema_version: string;
+}
+
+// UserDataExport is the JSON document GET …/gdpr/export/{export_id}/download
+// sends (pkg/iam UserDataExport).
+export interface UserDataExport {
+  export_metadata: ExportMetadata;
+  profile?: {
+    id: string;
+    email: string;
+    name: string;
+    attributes?: Record<string, string>;
+    created: string;
+    updated: string;
+    last_auth?: string;
+  };
+  sessions?: Array<{
+    id: string;
+    started_at: string;
+    expires_at: string;
+    last_active: string;
+    ip_address?: string;
+    user_agent?: string;
+    auth_method: string;
+    ended_at?: string;
+  }>;
+  consents?: Array<{
+    purpose: ConsentPurpose;
+    status: ConsentStatus;
+    version: string;
+    granted_at?: string;
+    withdrawn_at?: string;
+  }>;
+  roles?: Array<{ role_id: string; role_name: string; assigned_at: string }>;
+  audit_logs?: Array<{
+    timestamp: string;
+    action: string;
+    resource: string;
+    ip_address?: string;
+    success: boolean;
+  }>;
+  credentials?: Array<{
+    id: string;
+    type: string;
+    name?: string;
+    created_at: string;
+    last_used_at: string;
+    attestation?: string;
+    transports?: string[];
+  }>;
+  mfa_info?: {
+    enabled: boolean;
+    method: string;
+    enrolled_at?: string;
+    backup_codes_remaining: number;
+  };
+}
+
+// RequestDeletionRequest is the body of POST …/gdpr/deletion. requested_by
+// defaults to the user on the server.
+export interface RequestDeletionRequest {
+  requested_by?: string;
+  reason?: string;
+  delete_categories?: string[];
+  preserve_categories?: string[];
+  grace_period_days?: number;
+}
+
+// DeletionSummary counts what a completed deletion removed (pkg/iam DeletionSummary).
+export interface DeletionSummary {
+  profile_deleted: boolean;
+  sessions_deleted: number;
+  audit_logs_anonymized: number;
+  consents_deleted: number;
+  credentials_deleted: number;
+  role_assignments_removed: number;
+  tokens_revoked: number;
+  additional_data?: Record<string, number>;
+}
+
+// DeletionRequest is one GDPR deletion request (pkg/iam DeletionRequest).
+// user_id and requested_by are decimal strings; times are RFC 3339 strings.
+export interface DeletionRequest {
+  id: string;
+  user_id: string;
+  tenant_id: string;
+  requested_by: string;
+  reason?: string;
+  status: DeletionStatus;
+  delete_categories?: string[];
+  preserve_categories?: string[];
+  requested_at: string;
+  grace_period_ends_at?: string;
+  started_at?: string;
+  completed_at?: string;
+  cancelled_at?: string;
+  cancelled_by?: string;
+  deleted_data_summary?: DeletionSummary;
+  error_message?: string;
+  metadata?: Record<string, string>;
+}
+
+// IAMSessionDeviceInfo is the device a session was opened from, as the IAM
+// session handlers write it.
+export interface IAMSessionDeviceInfo {
+  id: string;
+  name: string;
+  type: string;
+  fingerprint: string;
+  trusted: boolean;
+}
+
+// IAMSession is one sanitized session of the authenticated caller. Times are
+// RFC 3339 strings.
+export interface IAMSession {
+  id: string;
+  created: string;
+  last_active: string;
+  expires_at: string;
+  mfa_verified: boolean;
+  ip_address: string;
+  user_agent: string;
+  device_info: IAMSessionDeviceInfo | null;
+}
+
+// IAMApplication is one OAuth application of a tenant. Times are RFC 3339.
+// client_secret is present only when the secret is issued (register, rotate).
+export interface IAMApplication {
+  client_id: string;
+  name: string;
+  tenant_id: string;
+  client_secret?: string;
+  redirect_uris: string[];
+  resource_prefix?: string;
+  scopes?: string[];
+  default_audience?: string;
+  grant_types: string[];
+  response_types: string[];
+  token_endpoint_auth_method?: string;
+  mtls_cert_thumbprint?: string;
+  mtls_subject_dn?: string;
+  mtls_san_dns?: string;
+  created: string;
+  updated: string;
+}
+
+// RegisterIAMAppRequest is the body of registerApp.
+export interface RegisterIAMAppRequest {
+  name: string;
+  redirect_uris: string[];
+  resource_prefix?: string;
+  grant_types?: string[];
+  response_types?: string[];
+  pkce_required: boolean;
+  token_endpoint_auth_method?: string;
+}
+
+// UpdateIAMAppRequest is the body of updateApp; omitted fields are left
+// unchanged. client_id is filled by updateApp from its argument.
+export interface UpdateIAMAppRequest {
+  name?: string;
+  redirect_uris?: string[];
+  grant_types?: string[];
+  response_types?: string[];
+  resource_prefix?: string;
+  default_audience?: string;
+  scopes?: string[];
+  token_endpoint_auth_method?: string;
+}
+
+// ListIAMAppsOptions pages listApps.
+export interface ListIAMAppsOptions {
+  limit?: number;
+  offset?: number;
+}
+
+// ListIAMAppsResponse is one page of a tenant's OAuth applications;
+// applications and apps carry the same list.
+export interface ListIAMAppsResponse {
+  applications: IAMApplication[];
+  apps: IAMApplication[];
+  limit: number;
+  offset: number;
+}
+
+// WebAuthnCredentialSummary is one WebAuthn credential of a tenant user.
+export interface WebAuthnCredentialSummary {
+  id: string;
+  aaguid?: string;
+  attestation_type?: string;
+  transports?: string[];
+  sign_count: number;
+  backup_eligible: boolean;
+  backup_state: boolean;
+  clone_warning: boolean;
+}
+
+// ListWebAuthnCredentialsResponse is the body of GET
+// /api/v1/tenants/{tenant_id}/users/{user_id}/webauthn/credentials/.
+export interface ListWebAuthnCredentialsResponse {
+  credentials: WebAuthnCredentialSummary[];
+  total: number;
+}
+
+// DeleteWebAuthnCredentialsResponse is the body of DELETE
+// /api/v1/tenants/{tenant_id}/users/{user_id}/webauthn/credentials/.
+export interface DeleteWebAuthnCredentialsResponse {
+  deleted: number;
+}
+
+// CreateAccountLinkRequest is the body of POST
+// /api/v1/tenants/{tenant_id}/users/{user_id}/links/.
+export interface CreateAccountLinkRequest {
+  provider_id: string;
+  external_id: string;
+  access_token?: string;
+}
+
+// AccountLink is the link POST .../links/ creates. Times are RFC 3339.
+export interface AccountLink {
+  id: string;
+  user_id: string;
+  provider_id: string;
+  provider_name: string;
+  external_id: string;
+  email?: string;
+  metadata?: Record<string, unknown>;
+  created_at: string;
+  updated_at: string;
+}
+
+// FederatedIdentity is one identity link GET .../links/ lists. Times are
+// RFC 3339.
+export interface FederatedIdentity {
+  id: string;
+  user_id: string;
+  tenant_id: string;
+  provider_id: string;
+  external_id: string;
+  external_email?: string;
+  external_name?: string;
+  claims?: Record<string, unknown>;
+  last_login: string;
+  created: string;
+  updated: string;
+}
+
+// ListAccountLinksOptions are the query parameters GET .../links/ reads.
+export interface ListAccountLinksOptions {
+  limit?: number;
+  offset?: number;
+}
+
+// ListAccountLinksResponse is the body of GET
+// /api/v1/tenants/{tenant_id}/users/{user_id}/links/.
+export interface ListAccountLinksResponse {
+  links: FederatedIdentity[];
+  limit: number;
+  offset: number;
+}
+
+// ListSessionsOptions are the query parameters GET /api/v1/iam/sessions
+// reads. The server lists the authenticated caller's sessions; a user_id or
+// tenant_id that does not match the caller is rejected with 403.
+export interface ListSessionsOptions {
+  user_id?: string;
+  tenant_id?: string;
+}
+
+// ListIAMSessionsResponse is the body of GET /api/v1/iam/sessions.
+export interface ListIAMSessionsResponse {
+  sessions: IAMSession[];
+}
+
+// RevokeAllSessionsOptions are the query parameters DELETE
+// /api/v1/iam/sessions reads. except keeps that one session of the caller.
+export interface RevokeAllSessionsOptions {
+  except?: string;
+  user_id?: string;
+  tenant_id?: string;
+}
+
+// RevokeOtherSessionsResponse is the body of POST
+// /api/v1/iam/sessions/revoke-others.
+export interface RevokeOtherSessionsResponse {
+  message: string;
+  kept_session_id: string;
+}
+
+// MFAStatusResponse is the body of GET
+// /api/v1/tenants/{tenant_id}/users/{user_id}/mfa/. Times are RFC 3339.
+export interface MFAStatusResponse {
+  enabled: boolean;
+  method?: string;
+  enrolled_at?: string;
+  last_verified?: string;
+  backup_codes_total?: number;
+  backup_codes_remaining?: number;
+}
+
+// MFAEnrollResponse is the body of POST .../mfa/enroll.
+export interface MFAEnrollResponse {
+  enrollment_id: string;
+  provisioning_uri: string;
+  secret: string;
+  expires_at: string;
+}
+
+// MFACompleteResponse is the body of POST .../mfa/verify.
+export interface MFACompleteResponse {
+  success: boolean;
+}
+
+// MFAChallengeResponse is the body of POST .../mfa/challenge.
+export interface MFAChallengeResponse {
+  challenge_id: string;
+  method: string;
+  expires_at: string;
+}
+
+// MFAVerifyResponse is the body of POST .../mfa/verify-challenge.
+export interface MFAVerifyResponse {
+  success: boolean;
+  token?: string;
+  backup_codes_remaining?: number;
+}
+
+// MFABackupCodesResponse is the body of POST .../mfa/backup-codes.
+export interface MFABackupCodesResponse {
+  codes: string[];
+}
+
+// MFABackupCodeStatusResponse is the body of GET .../mfa/backup-codes.
+export interface MFABackupCodeStatusResponse {
+  total_codes: number;
+  remaining_codes: number;
+  generated_at?: string;
+}
+
+// TenantQuotas is a tenant's resource limits (go-qrdb quota.Quotas), the
+// body of PATCH /api/v1/tenants/{tenantID}/quotas. The current_* fields are
+// read-only usage counters the server reports and ignores on write.
+export interface TenantQuotas {
+  max_databases: number;
+  max_raft_groups: number;
+  max_replicas_per_group: number;
+  max_total_replicas: number;
+  max_collections: number;
+  max_keys: number;
+  max_storage_bytes: number;
+  max_database_size_bytes: number;
+  max_users: number;
+  max_roles: number;
+  max_certificates: number;
+  max_backups: number;
+  max_vector_dims: number;
+  max_ts_metrics: number;
+  max_dedicated_wal_groups: number;
+  system_barrier_quota: number;
+  current_databases?: number;
+  current_raft_groups?: number;
+  current_total_replicas?: number;
+  current_collections?: number;
+  current_keys?: number;
+  current_storage_bytes?: number;
+  current_database_size_bytes?: number;
+  current_users?: number;
+  current_roles?: number;
+  current_certificates?: number;
+  current_backups?: number;
+  current_vector_dims?: number;
+  current_ts_metrics?: number;
+  current_dedicated_wal_groups?: number;
+  current_system_barrier_bytes?: number;
+}
+
+// TenantEntitlements is the feature set a tenant may use (go-qrdb
+// quota.Entitlements), the body of PATCH
+// /api/v1/tenants/{tenantID}/entitlements.
+export interface TenantEntitlements {
+  allowed_isolation_modes?: string[];
+  allow_dedicated_raft?: boolean;
+  allow_volume_storage?: boolean;
+  allow_system_managed_barrier?: boolean;
+  allow_dedicated_wal?: boolean;
+  allowed_barrier_modes?: string[];
+}
+
+// TenantAdminEnrollment is how a provisioned tenant's first admin enrolls:
+// with a CSR signed now ("cert", the default) or a one-time invite token.
+export type TenantAdminEnrollment = 'cert' | 'invite';
+
+// ProvisionTenantRequest is the body of POST
+// /api/v1/tenants/{tenantID}/provision.
+export interface ProvisionTenantRequest {
+  tenant_id: string;
+  name?: string;
+  // isolation_type: the server accepts only "prefix" today.
+  isolation_type?: string;
+  admin_username?: string;
+  admin_enrollment?: TenantAdminEnrollment;
+  // admin_csr_pem is required in cert mode and refused in invite mode.
+  admin_csr_pem?: string;
+  invite_expiry_hours?: number;
+}
+
+// ProvisionTenantResponse is returned by POST
+// /api/v1/tenants/{tenantID}/provision.
+export interface ProvisionTenantResponse {
+  tenant_id: string;
+  // admin_user_id is a uint64 the server encodes as a string.
+  admin_user_id: string;
+  admin_username: string;
+  admin_role_id: string;
+  // admin_pending is true in invite mode until the invite is redeemed.
+  admin_pending: boolean;
+  admin_cert_pem?: string;
+  admin_cert_thumbprint?: string;
+  invite_token?: string;
+  // invite_expires_at is an RFC 3339 timestamp.
+  invite_expires_at?: string;
+  timestamp: string;
+}
+
 export interface IAMClient {
   // listUsers returns all users within a tenant.
   // Maps to GET /api/v1/tenants/{tenantID}/users
@@ -849,6 +1873,101 @@ export interface IAMClient {
   // Maps to DELETE /api/v1/tenants/{tenantID}/users/{userID}/roles/{role}
   revokeRoleFromUser(tenantID: string, userID: string, role: string): Promise<void>;
 
+  // listSessions returns the authenticated caller's sessions.
+  // Maps to GET /api/v1/iam/sessions
+  listSessions(opts?: ListSessionsOptions): Promise<ListIAMSessionsResponse>;
+
+  // getSession returns one of the authenticated caller's sessions.
+  // Maps to GET /api/v1/iam/sessions/{id}
+  getSession(sessionID: string): Promise<IAMSession>;
+
+  // revokeSession revokes one of the authenticated caller's sessions.
+  // Maps to DELETE /api/v1/iam/sessions/{id}
+  revokeSession(sessionID: string): Promise<void>;
+
+  // revokeAllSessions revokes all the authenticated caller's sessions, except
+  // the one opts.except names.
+  // Maps to DELETE /api/v1/iam/sessions
+  revokeAllSessions(opts?: RevokeAllSessionsOptions): Promise<void>;
+
+  // revokeOtherSessions revokes every session of the authenticated caller
+  // except keepSessionID.
+  // Maps to POST /api/v1/iam/sessions/revoke-others
+  revokeOtherSessions(keepSessionID: string): Promise<RevokeOtherSessionsResponse>;
+
+  // listWebAuthnCredentials lists a tenant user's registered WebAuthn
+  // credentials.
+  // Maps to GET /api/v1/tenants/{tenant_id}/users/{user_id}/webauthn/credentials/
+  listWebAuthnCredentials(tenantID: string, userID: string): Promise<ListWebAuthnCredentialsResponse>;
+
+  // deleteAllWebAuthnCredentials removes every WebAuthn credential of a tenant
+  // user and returns how many were removed.
+  // Maps to DELETE /api/v1/tenants/{tenant_id}/users/{user_id}/webauthn/credentials/
+  deleteAllWebAuthnCredentials(tenantID: string, userID: string): Promise<DeleteWebAuthnCredentialsResponse>;
+
+  // deleteWebAuthnCredential removes one WebAuthn credential of a tenant user.
+  // Maps to DELETE /api/v1/tenants/{tenant_id}/users/{user_id}/webauthn/credentials/{credential_id}
+  deleteWebAuthnCredential(tenantID: string, userID: string, credentialID: string): Promise<void>;
+
+  // createAccountLink links a tenant user to an external identity provider
+  // account.
+  // Maps to POST /api/v1/tenants/{tenant_id}/users/{user_id}/links/
+  createAccountLink(tenantID: string, userID: string, req: CreateAccountLinkRequest): Promise<AccountLink>;
+
+  // listAccountLinks lists a tenant user's federated identity links.
+  // Maps to GET /api/v1/tenants/{tenant_id}/users/{user_id}/links/
+  listAccountLinks(tenantID: string, userID: string, opts?: ListAccountLinksOptions): Promise<ListAccountLinksResponse>;
+
+  // deleteAccountLink removes a tenant user's link to one identity provider.
+  // Maps to DELETE /api/v1/tenants/{tenant_id}/users/{user_id}/links/{provider_id}
+  deleteAccountLink(tenantID: string, userID: string, providerID: string): Promise<void>;
+
+  // getMFAStatus returns a tenant user's MFA status.
+  // Maps to GET /api/v1/tenants/{tenant_id}/users/{user_id}/mfa/
+  getMFAStatus(tenantID: string, userID: string): Promise<MFAStatusResponse>;
+
+  // disableMFA disables a tenant user's MFA.
+  // Maps to DELETE /api/v1/tenants/{tenant_id}/users/{user_id}/mfa/
+  disableMFA(tenantID: string, userID: string): Promise<void>;
+
+  // beginMFAEnrollment starts an MFA enrollment; method defaults to "totp".
+  // Maps to POST /api/v1/tenants/{tenant_id}/users/{user_id}/mfa/enroll
+  beginMFAEnrollment(tenantID: string, userID: string, method?: string): Promise<MFAEnrollResponse>;
+
+  // completeMFAEnrollment confirms an enrollment with a code.
+  // Maps to POST /api/v1/tenants/{tenant_id}/users/{user_id}/mfa/verify
+  completeMFAEnrollment(
+    tenantID: string,
+    userID: string,
+    enrollmentID: string,
+    code: string,
+  ): Promise<MFACompleteResponse>;
+
+  // cancelMFAEnrollment cancels a pending enrollment.
+  // Maps to DELETE /api/v1/tenants/{tenant_id}/users/{user_id}/mfa/enroll/{enrollment_id}
+  cancelMFAEnrollment(tenantID: string, userID: string, enrollmentID: string): Promise<void>;
+
+  // beginMFAChallenge starts an MFA challenge for a session token.
+  // Maps to POST /api/v1/tenants/{tenant_id}/users/{user_id}/mfa/challenge
+  beginMFAChallenge(tenantID: string, userID: string, sessionToken: string): Promise<MFAChallengeResponse>;
+
+  // verifyMFAChallenge answers a challenge with a code.
+  // Maps to POST /api/v1/tenants/{tenant_id}/users/{user_id}/mfa/verify-challenge
+  verifyMFAChallenge(
+    tenantID: string,
+    userID: string,
+    challengeID: string,
+    code: string,
+  ): Promise<MFAVerifyResponse>;
+
+  // getBackupCodeStatus returns how many backup codes remain.
+  // Maps to GET /api/v1/tenants/{tenant_id}/users/{user_id}/mfa/backup-codes
+  getBackupCodeStatus(tenantID: string, userID: string): Promise<MFABackupCodeStatusResponse>;
+
+  // generateBackupCodes generates a fresh set of backup codes.
+  // Maps to POST /api/v1/tenants/{tenant_id}/users/{user_id}/mfa/backup-codes
+  generateBackupCodes(tenantID: string, userID: string): Promise<MFABackupCodesResponse>;
+
   // listTenants returns all tenants.
   // Maps to GET /api/v1/tenants
   listTenants(): Promise<ListTenantsResponse>;
@@ -865,6 +1984,64 @@ export interface IAMClient {
   // Maps to DELETE /api/v1/tenants/{tenantID}
   deleteTenant(tenantID: string): Promise<void>;
 
+  // getTenant returns one tenant, in the same shape as a listTenants element.
+  // Maps to GET /api/v1/tenants/{tenantID}
+  getTenant(tenantID: string): Promise<IAMTenant>;
+
+  // getUser returns one user of a tenant, in the same shape as a listUsers element.
+  // Maps to GET /api/v1/tenants/{tenantID}/users/{userID}
+  getUser(tenantID: string, userID: string): Promise<IAMUser>;
+
+  // listUserSessions returns the sanitized sessions of one user of a tenant.
+  // It is the admin counterpart of the caller-scoped listSessions; limit is
+  // sent only when it is given and greater than zero.
+  // Maps to GET /api/v1/tenants/{tenantID}/users/{userID}/sessions[?limit=N]
+  listUserSessions(tenantID: string, userID: string, limit?: number): Promise<ListIAMSessionsResponse>;
+
+  // revokeAllUserSessions revokes every session of one user of a tenant.
+  // It is the admin counterpart of the caller-scoped revokeAllSessions.
+  // Maps to DELETE /api/v1/tenants/{tenantID}/users/{userID}/sessions
+  revokeAllUserSessions(tenantID: string, userID: string): Promise<void>;
+
+  // listApps lists a tenant's OAuth applications, one page at a time.
+  // Maps to GET /api/v1/tenants/{tenantID}/apps/?limit=&offset=
+  listApps(tenantID: string, opts?: ListIAMAppsOptions): Promise<ListIAMAppsResponse>;
+
+  // registerApp registers a new OAuth application in a tenant; the response
+  // carries its client_id and client_secret.
+  // Maps to POST /api/v1/tenants/{tenantID}/apps/ (201)
+  registerApp(tenantID: string, req: RegisterIAMAppRequest): Promise<IAMApplication>;
+
+  // getApp returns one OAuth application of a tenant.
+  // Maps to GET /api/v1/tenants/{tenantID}/apps/{clientID}
+  getApp(tenantID: string, clientID: string): Promise<IAMApplication>;
+
+  // updateApp changes an OAuth application; omitted fields are left unchanged.
+  // Maps to PUT /api/v1/tenants/{tenantID}/apps/{clientID}
+  updateApp(tenantID: string, clientID: string, req: UpdateIAMAppRequest): Promise<IAMApplication>;
+
+  // deleteApp removes an OAuth application from a tenant.
+  // Maps to DELETE /api/v1/tenants/{tenantID}/apps/{clientID} (204)
+  deleteApp(tenantID: string, clientID: string): Promise<void>;
+
+  // rotateAppSecret issues a new client secret for an OAuth application.
+  // The returned client_secret is shown once: store it, it cannot be read again.
+  // Maps to POST /api/v1/tenants/{tenantID}/apps/{clientID}/rotate-secret
+  rotateAppSecret(tenantID: string, clientID: string): Promise<IAMApplication>;
+
+  // updateTenantQuotas sets a tenant's resource limits.
+  // Maps to PATCH /api/v1/tenants/{tenantID}/quotas (204)
+  updateTenantQuotas(tenantID: string, quotas: TenantQuotas): Promise<void>;
+
+  // updateTenantEntitlements sets the features a tenant may use.
+  // Maps to PATCH /api/v1/tenants/{tenantID}/entitlements (204)
+  updateTenantEntitlements(tenantID: string, entitlements: TenantEntitlements): Promise<void>;
+
+  // provisionTenant creates a tenant with its first admin, enrolled by CSR
+  // or by invite token. The path segment is req.tenant_id.
+  // Maps to POST /api/v1/tenants/{tenantID}/provision (201)
+  provisionTenant(req: ProvisionTenantRequest): Promise<ProvisionTenantResponse>;
+
   // listRoles returns all roles within a tenant.
   // Maps to GET /api/v1/tenants/{tenantID}/roles
   listRoles(tenantID: string): Promise<ListRolesResponse>;
@@ -876,6 +2053,63 @@ export interface IAMClient {
   // updateRole updates a role's mutable fields.
   // Maps to PUT /api/v1/tenants/{tenantID}/roles/{roleID}
   updateRole(tenantID: string, roleID: string, req: UpdateRoleRequest): Promise<IAMRole>;
+
+  /** listAuditEvents returns one page of IAM audit events matching the filters. */
+  // Maps to GET /api/v1/iam/audit?tenant_id=&event_type=&category=&outcome=&actor_id=&resource_id=&start_time=&end_time=&limit=&offset=
+  listAuditEvents(opts?: ListIAMAuditEventsOptions): Promise<ListIAMAuditEventsResponse>;
+
+  /** getAuditEvent returns one IAM audit event. */
+  // Maps to GET /api/v1/iam/audit/{id}?tenant_id=
+  getAuditEvent(eventID: string, tenantID?: string): Promise<IAMAuditEvent>;
+
+  /** recordAuditEvent records one IAM audit event (201); event_id is empty when async. */
+  // Maps to POST /api/v1/iam/audit
+  recordAuditEvent(req: RecordIAMAuditEventRequest): Promise<RecordIAMAuditEventResponse>;
+
+  /** deleteAuditEventsBefore prunes IAM audit events older than `before` (RFC 3339). */
+  // Maps to DELETE /api/v1/iam/audit?before=&tenant_id=
+  deleteAuditEventsBefore(before: string, tenantID?: string): Promise<DeleteIAMAuditEventsResponse>;
+
+  /** listImpersonations lists impersonation sessions, optionally only active ones or one admin's. */
+  // Maps to GET /api/v1/admin/impersonation/?active=true&admin_user_id=
+  listImpersonations(opts?: ListImpersonationsOptions): Promise<ListImpersonationsResponse>;
+
+  /** startImpersonation starts a session in which an admin acts as the target user. */
+  // Maps to POST /api/v1/admin/impersonation/start
+  startImpersonation(req: StartImpersonationRequest): Promise<ImpersonationSession>;
+
+  /** endImpersonation ends a session; the result is the session or a bare status. */
+  // Maps to POST /api/v1/admin/impersonation/{sessionID}/end
+  endImpersonation(sessionID: string): Promise<EndImpersonationResult>;
+
+  /** listUserImpersonations lists the sessions that targeted one user. */
+  // Maps to GET /api/v1/admin/users/{userID}/impersonations
+  listUserImpersonations(userID: string): Promise<ListUserImpersonationsResponse>;
+
+  // getRole returns one role of a tenant.
+  // Maps to GET /api/v1/tenants/{tenantID}/roles/{roleID}
+  getRole(tenantID: string, roleID: string): Promise<IAMRole>;
+
+  // registerProvider registers a federation provider for a tenant (201).
+  // Maps to POST /api/v1/tenants/{tenantID}/providers/
+  registerProvider(tenantID: string, req: RegisterIAMProviderRequest): Promise<IAMExternalProvider>;
+
+  // listProviders returns one page of a tenant's federation providers,
+  // optionally filtered by type.
+  // Maps to GET /api/v1/tenants/{tenantID}/providers/?limit=&offset=&type=
+  listProviders(tenantID: string, opts?: ListIAMProvidersOptions): Promise<ListIAMProvidersResponse>;
+
+  // getProvider returns one federation provider of a tenant.
+  // Maps to GET /api/v1/tenants/{tenantID}/providers/{providerID}
+  getProvider(tenantID: string, providerID: string): Promise<IAMExternalProvider>;
+
+  // updateProvider updates a federation provider; omitted fields are left unchanged.
+  // Maps to PUT /api/v1/tenants/{tenantID}/providers/{providerID}
+  updateProvider(tenantID: string, providerID: string, req: UpdateIAMProviderRequest): Promise<IAMExternalProvider>;
+
+  // deleteProvider removes a federation provider from a tenant (204).
+  // Maps to DELETE /api/v1/tenants/{tenantID}/providers/{providerID}
+  deleteProvider(tenantID: string, providerID: string): Promise<void>;
 
   // deleteRole removes a role from a tenant.
   // Maps to DELETE /api/v1/tenants/{tenantID}/roles/{roleID}
@@ -904,6 +2138,27 @@ export interface IAMClient {
   // Maps to DELETE /api/v1/tenants/{tenantID}/policies/{policyName}
   deletePolicy(tenantID: string, policyName: string): Promise<void>;
 
+  // getPolicy returns a tenant's stored policy document.
+  // Maps to GET /api/v1/tenants/{tenantID}/policies/{policyName}
+  getPolicy(tenantID: string, policyName: string): Promise<IAMPolicyDocument>;
+
+  // validatePolicy checks a policy without storing it; an invalid policy
+  // resolves with valid=false.
+  // Maps to POST /api/v1/tenants/{tenantID}/policies/validate[?name=]
+  validatePolicy(tenantID: string, req: CreatePolicyRequest, name?: string): Promise<IAMPolicyValidationResult>;
+
+  // testPolicy evaluates a check against the tenant's stored policies.
+  // Maps to POST /api/v1/tenants/{tenantID}/policies/test
+  testPolicy(tenantID: string, req: IAMCheckRequest): Promise<IAMCheckResponse>;
+
+  // simulatePolicy evaluates a check against a policy that is not stored.
+  // Maps to POST /api/v1/tenants/{tenantID}/policies/simulate
+  simulatePolicy(tenantID: string, req: IAMPolicySimulationRequest): Promise<IAMPolicySimulationResult>;
+
+  // getEffectivePermissions returns what a subject may do on resource patterns.
+  // Maps to POST /api/v1/tenants/{tenantID}/policies/effective-permissions
+  getEffectivePermissions(tenantID: string, req: IAMEffectivePermissionsRequest): Promise<IAMEffectivePermissionsResult>;
+
   // getInvite returns publicly visible metadata for a pending invite.
   // Unauthenticated — use to populate the activation UI.
   // Maps to GET /api/v1/iam/{tenant_id}/invites/{token}
@@ -920,6 +2175,64 @@ export interface IAMClient {
   // activatePIV activates the user with a PIV X.509 certificate PEM block.
   // Maps to POST /api/v1/iam/{tenant_id}/invites/{token}/activate/piv
   activatePIV(tenantID: string, token: string, certPEM: string): Promise<import('./types.js').ActivationResponse>;
+
+  // grantConsent records the user's consent for a purpose.
+  // Maps to POST /api/v1/tenants/{tenant_id}/users/{user_id}/gdpr/consent
+  grantConsent(tenantID: string, userID: string, req: GrantConsentRequest): Promise<UserConsent>;
+
+  // listUserConsents returns every consent record of the user.
+  // Maps to GET /api/v1/tenants/{tenant_id}/users/{user_id}/gdpr/consents
+  listUserConsents(tenantID: string, userID: string): Promise<UserConsent[]>;
+
+  // getConsent returns the user's consent record for one purpose.
+  // Maps to GET /api/v1/tenants/{tenant_id}/users/{user_id}/gdpr/consent/{purpose}
+  getConsent(tenantID: string, userID: string, purpose: ConsentPurpose): Promise<UserConsent>;
+
+  // withdrawConsent withdraws the user's consent for one purpose.
+  // Maps to PUT /api/v1/tenants/{tenant_id}/users/{user_id}/gdpr/consent/{purpose}/withdraw
+  withdrawConsent(
+    tenantID: string,
+    userID: string,
+    purpose: ConsentPurpose,
+    req?: WithdrawConsentRequest,
+  ): Promise<UserConsent>;
+
+  // requestDataExport queues an export of the user's data.
+  // Maps to POST /api/v1/tenants/{tenant_id}/users/{user_id}/gdpr/export
+  requestDataExport(
+    tenantID: string,
+    userID: string,
+    req?: RequestDataExportRequest,
+  ): Promise<DataExportRequest>;
+
+  // getExportStatus returns one export request of the user.
+  // Maps to GET /api/v1/tenants/{tenant_id}/users/{user_id}/gdpr/export/{export_id}
+  getExportStatus(tenantID: string, userID: string, exportID: string): Promise<DataExportRequest>;
+
+  // downloadExport returns the generated export, which the server sends as JSON.
+  // Maps to GET /api/v1/tenants/{tenant_id}/users/{user_id}/gdpr/export/{export_id}/download
+  downloadExport(tenantID: string, userID: string, exportID: string): Promise<UserDataExport>;
+
+  // requestDeletion queues the deletion of the user's data.
+  // Maps to POST /api/v1/tenants/{tenant_id}/users/{user_id}/gdpr/deletion
+  requestDeletion(
+    tenantID: string,
+    userID: string,
+    req?: RequestDeletionRequest,
+  ): Promise<DeletionRequest>;
+
+  // getDeletionStatus returns one deletion request of the user.
+  // Maps to GET /api/v1/tenants/{tenant_id}/users/{user_id}/gdpr/deletion/{deletion_id}
+  getDeletionStatus(tenantID: string, userID: string, deletionID: string): Promise<DeletionRequest>;
+
+  // cancelDeletion cancels a pending deletion; cancelledBy defaults to the user.
+  // Maps to DELETE /api/v1/tenants/{tenant_id}/users/{user_id}/gdpr/deletion/{deletion_id}
+  cancelDeletion(
+    tenantID: string,
+    userID: string,
+    deletionID: string,
+    cancelledBy?: string,
+  ): Promise<DeletionRequest>;
 }
 
 // ---------------------------------------------------------------------------
@@ -1191,14 +2504,48 @@ export interface CeremonyClient {
 // supported trust bootstrap methods (auto, dane, noise, spki). The methods
 // are intended for first-contact use before TLS is available; each one
 // ClusterClient exposes the Raft cluster control plane. Mirrors the Go SDK
-// cluster.Client (sdk/go/client/cluster). Only the read surface the dashboards
-// need is implemented today; membership/rebalance writes are added when a UI
-// or caller requires them. Path: /api/v1/cluster.
+// cluster.Client (sdk/go/client/cluster). It reads the cluster status and
+// the cluster and shard leaders, and starts, tracks and cancels shard
+// migrations and rebalances. Path: /api/v1/cluster.
 export interface ClusterClient {
   // status returns the current cluster status (node id, leadership, shards,
   // health). In standalone (non-Raft) mode `shards` is empty and total_nodes
   // is 1. Maps to GET /api/v1/cluster/status.
   status(): Promise<ClusterStatusResponse>;
+
+  // leader returns the cluster's leader node; it rejects with a 503
+  // APIError when the cluster has no leader.
+  // Maps to GET /api/v1/cluster/leader.
+  leader(): Promise<ClusterLeaderResponse>;
+
+  // shardLeader returns the leader of one shard.
+  // Maps to GET /api/v1/cluster/leader/{shardID}.
+  shardLeader(shardID: number): Promise<ShardLeaderResponse>;
+
+  // startRebalance starts a shard rebalance; with no request the server's
+  // defaults apply. Maps to POST /api/v1/cluster/rebalance/.
+  startRebalance(req?: RebalanceRequest): Promise<RebalanceResponse>;
+
+  // rebalanceStatus returns the progress of a rebalance (the current one
+  // when operationID is omitted).
+  // Maps to GET /api/v1/cluster/rebalance/status[?operation_id=].
+  rebalanceStatus(operationID?: string): Promise<RebalanceStatusResponse>;
+
+  // rebalancePlan returns the plan a rebalance would follow.
+  // Maps to GET /api/v1/cluster/rebalance/plan.
+  rebalancePlan(): Promise<RebalancePlanResponse>;
+
+  // startMigration starts moving data from one shard to another.
+  // Maps to POST /api/v1/cluster/migrate/.
+  startMigration(req: MigrationRequest): Promise<MigrationResponse>;
+
+  // migrationStatus returns the progress of one migration.
+  // Maps to GET /api/v1/cluster/migrate/status?operation_id=.
+  migrationStatus(operationID: string): Promise<MigrationStatusResponse>;
+
+  // cancelMigration cancels one migration.
+  // Maps to DELETE /api/v1/cluster/migrate/?operation_id=.
+  cancelMigration(operationID: string): Promise<CancelMigrationResponse>;
 }
 
 // advertises a different verification mechanism. Paths: /api/v1/bootstrap.
@@ -1309,6 +2656,22 @@ export interface SSHAuthorizedKeysClient {
   // the given scope/owner. Returns the matching entry.
   // Maps to POST /api/v1/ssh/authorized/verify.
   verify(req: VerifyAuthorizedRequest): Promise<VerifyAuthorizedResponse>;
+
+  // add stores an authorized_keys entry under scope/owner/name.
+  // Maps to POST /api/v1/ssh/authorized/keys (201, empty body).
+  add(req: AddAuthorizedKeyRequest): Promise<void>;
+
+  // list returns the stored entries, optionally filtered by scope and owner.
+  // Maps to GET /api/v1/ssh/authorized/keys[?scope=&owner=].
+  list(req?: ListAuthorizedKeysRequest): Promise<SSHAuthorizedEntry[]>;
+
+  // get returns one stored entry.
+  // Maps to GET /api/v1/ssh/authorized/keys/{scope}/{owner}/{name}.
+  get(scope: SSHScope, owner: string, name: string): Promise<SSHAuthorizedEntry>;
+
+  // remove deletes one stored entry.
+  // Maps to DELETE /api/v1/ssh/authorized/keys/{scope}/{owner}/{name} (204).
+  remove(scope: SSHScope, owner: string, name: string): Promise<void>;
 }
 
 // SSHClient is the top-level SSH namespace exposed on the RestClient as
@@ -1378,6 +2741,92 @@ export interface Client {
    * background re-encryption. Paths: /api/v1/kms/deks/*.
    */
   readonly dek: DEKClient;
+
+  /**
+   * Backup management: create, list, restore, verify and delete backups.
+   * Maps to /api/v1/backups/* REST endpoints.
+   */
+  readonly backups: BackupsClient;
+  /**
+   * Attestation verifier: endorsements (reference-value signers and AK
+   * roots) and signed CoRIM reference values.
+   * Paths: /api/v1/attestation/endorsements/* and
+   * /api/v1/attestation/reference-values/*.
+   */
+  readonly attestation: AttestationClient;
+  /**
+   * prompts reads, overrides, diffs, resets and rolls back orchestrator
+   * prompts per layer (project, tenant, system). Paths: /api/v1/prompts/*.
+   */
+  readonly prompts: PromptsClient;
+  /**
+   * XKMS keys client: the xkms passthrough's key routes (generate, list,
+   * get, delete, rotate, encrypt, decrypt, sign, verify, key versions).
+   * Maps to /api/v1/xkms/keys/* REST endpoints.
+   */
+  readonly xkmsKeys: XKMSKeysClient;
+  /**
+   * PIV slots of an xkms backend: list slots, generate keys and CSRs, and
+   * store, read or delete slot certificates (/api/v1/xkms/piv/slots*).
+   * Null on transports that do not carry it.
+   */
+  readonly piv: PIVClient;
+  /**
+   * xkms drives the xkms passthrough routes (/api/v1/xkms/*): backends,
+   * health, seal and unseal, and stored certificates.
+   */
+  readonly xkms: XKMSClient;
+  /**
+   * Cluster node membership: list nodes, add, remove and replace them.
+   * Paths: /api/v1/cluster/nodes/*. Distinct from `cluster` (status).
+   */
+  readonly clusterNodes: ClusterNodesClient;
+  /**
+   * Generic entity operations: list, create, put, get and delete entities
+   * of any registered type (/api/v1/entities/*).
+   */
+  readonly entities: EntitiesClient;
+  /**
+   * KMS key administration: metadata, access policy and rotation policy of
+   * named keys. Paths: /api/v1/kms/keys/{name}/{metadata,policy,rotation-policy}.
+   */
+  readonly kmsAdmin: KMSAdminClient;
+  /**
+   * objectStorageAdmin manages object storage backends and reports storage
+   * stats, runs garbage collection and repairs objects. Paths:
+   * /api/v1/admin/object-backends/*, /api/v1/admin/storage/*,
+   * /api/v1/admin/objects/repair. Replies keep the Go field names.
+   */
+  readonly objectStorageAdmin: ObjectStorageAdminClient;
+  /**
+   * Parameter store client: read, write, list, tag search and batch
+   * operations on hierarchical parameters. Paths: /api/v1/parameters/*.
+   */
+  readonly parameters: ParametersClient;
+
+  /**
+   * Vector admin: cluster-wide stats, namespace compaction and JSON Lines
+   * export/import. Paths: /api/v1/vector/admin/*.
+   */
+  readonly vectorAdmin: VectorAdminClient;
+  /**
+   * xkmsFido2 registers and authenticates FIDO2 (WebAuthn) passkeys:
+   * begin/finish registration, begin adding a credential, and
+   * begin/finish authentication. Paths: /api/v1/xkms/fido2/*.
+   */
+  readonly xkmsFido2: XKMSFIDO2Client;
+
+  /**
+   * registry registers service instances under TTL leases, renews and
+   * revokes the leases, and resolves a service's live instances.
+   * Paths: /api/v1/registry/*.
+   */
+  readonly registry: RegistryClient;
+  /**
+   * cache reads the server's L1 cache statistics and configuration, clears
+   * the cache and updates its configuration. Paths: /api/v1/cache/*.
+   */
+  readonly cache: CacheClient;
   /**
    * dynamicSecrets manages credential-generation roles, on-demand
    * short-lived credential minting, and lease renewal/revocation.

@@ -421,4 +421,21 @@ describe('InferenceView', () => {
       expect(select.value).toBe('vllm');
     });
   });
+
+  it('renders the no-provider hint as text without a Settings link', async () => {
+    mockListBackends.mockResolvedValue([
+      { name: 'openai', type: 'openai', capabilities: { kind: 'api_inference' }, default_model: '' },
+    ]);
+    mockListBackendModels.mockResolvedValue([]);
+
+    render(InferenceView);
+
+    await waitFor(() => {
+      expect(
+        screen.getByText('No inference provider is registered for this backend on the daemon.'),
+      ).toBeInTheDocument();
+    });
+    expect(screen.queryByRole('button', { name: /settings/i })).toBeNull();
+    expect(screen.queryByText(/Inference Providers/)).toBeNull();
+  });
 });

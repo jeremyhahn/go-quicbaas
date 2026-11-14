@@ -342,7 +342,7 @@
         </button>
       </div>
     </div>
-    <div class="modal-backdrop" onclick={() => { channelToDelete = null; }}></div>
+    <div class="modal-backdrop" role="presentation" onclick={() => { channelToDelete = null; }}></div>
   </div>
 {/if}
 
@@ -404,7 +404,7 @@
         </button>
       </div>
     </div>
-    <div class="modal-backdrop" onclick={closeCreateDialog}></div>
+    <div class="modal-backdrop" role="presentation" onclick={closeCreateDialog}></div>
   </div>
 {/if}
 
@@ -454,6 +454,6 @@
         </button>
       </div>
     </div>
-    <div class="modal-backdrop" onclick={closePublishDialog}></div>
+    <div class="modal-backdrop" role="presentation" onclick={closePublishDialog}></div>
   </div>
 {/if}
