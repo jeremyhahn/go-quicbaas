@@ -82,6 +82,9 @@ var iamUnaryHandlers = map[string]handlerFunc{
 	// Policy Simulate (go-quicbaas#1564): the TestPolicy evaluation the gRPC
 	// and REST transports map Simulate onto.
 	"quicbaas.IAM.Policy/Simulate": handleIAMPolicySimulate,
+	// Policy GetEffectivePermissions (go-quicbaas#1568): the policy engine's
+	// GetEffectivePermissions, the evaluation the REST route serves.
+	"quicbaas.IAM.Policy/GetEffectivePermissions": handleIAMPolicyGetEffectivePermissions,
 
 	// App
 	"quicbaas.IAM.App/Register":     handleIAMAppRegister,
