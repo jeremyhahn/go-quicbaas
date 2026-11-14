@@ -154,7 +154,10 @@ import (
 // PLUS 8 for the prompt store's verbs (/api/v1/prompts/{set}[/{name}...],
 // handlers_prompt.go, go-quicbaas#805) under prompts:read, prompts:history
 // and prompts:write.
-const baseRouteTableSize = 672
+// PLUS 9 for the service plane (/api/v1/services, handlers_services.go,
+// #1687): list, deploy, redeploy, get, undeploy, start, stop, resume and
+// restart under services:read, services:deploy and services:control.
+const baseRouteTableSize = 681
 
 // TestRoutes_SurfaceGuard asserts the table's structural invariants: exact
 // size, absolute patterns, no duplicate method+pattern, and a handler binder
