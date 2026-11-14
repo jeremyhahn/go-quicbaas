@@ -704,7 +704,7 @@ func hashSecret(secret string) (string, error) {
 // must never reassign it.
 var verifySecret = compareSecretHash
 
-// timingEqualizerDigest is a PBKDF2 digest, at the current pbkdf2Iterations,
+// productionTimingEqualizerDigest is a PBKDF2 digest, at pbkdf2Iterations,
 // of a random value that was discarded when it was generated: no caller can
 // ever present a secret that matches it. AuthenticateServiceAccount compares
 // against it whenever the account has no usable digest, so every attempt pays
@@ -716,7 +716,13 @@ var verifySecret = compareSecretHash
 // exactly one request distinguishable.
 // TestTimingEqualizerDigest_MatchesCurrentParameters fails if pbkdf2Iterations
 // moves and this is not regenerated.
-const timingEqualizerDigest = "$pbkdf2-sha256$i=600000$sSoZG5u3qQzR+p1jRLT51w$R3hFF/POmVN1Wy4U3sqkMhlR0Cxrxs8movzMOVl2pxc"
+const productionTimingEqualizerDigest = "$pbkdf2-sha256$i=600000$sSoZG5u3qQzR+p1jRLT51w$R3hFF/POmVN1Wy4U3sqkMhlR0Cxrxs8movzMOVl2pxc"
+
+// timingEqualizerDigest is the equalizer this process compares against. It is
+// productionTimingEqualizerDigest in every production binary; only pkg/iam's
+// TestMain replaces it, with a digest at the lowered secretWorkFactor, so the
+// equalizer keeps costing exactly what a real verification costs (#721).
+var timingEqualizerDigest = productionTimingEqualizerDigest
 
 // isLegacySecretHash reports whether stored is not a digest this package
 // wrote. Accounts written before the KDF landed hold the hex-encoded client
