@@ -183,37 +183,29 @@ func TestSaveCert_Success(t *testing.T) {
 	assert.Equal(t, cert.Raw, raw)
 }
 
-func TestSaveCert_EmptyID(t *testing.T) {
-	ctx := context.Background()
-	store := newMockKVStore()
-	cs, err := NewKVStoreCertStorage(store)
-	require.NoError(t, err)
+func TestSaveCert_Errors(t *testing.T) {
+	tests := []struct {
+		name    string
+		id      string
+		cert    *x509.Certificate
+		failPut bool
+		wantErr error
+	}{
+		{name: "empty id", id: "", cert: generateTestCert(t, "test"), wantErr: ErrEmptyCertID},
+		{name: "nil cert", id: "cert-1", cert: nil, wantErr: ErrNilCertificate},
+		{name: "storage failure", id: "cert-1", cert: generateTestCert(t, "test"), failPut: true, wantErr: ErrStoragePut},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			store := newMockKVStore()
+			store.failPut = tt.failPut
+			cs, err := NewKVStoreCertStorage(store)
+			require.NoError(t, err)
 
-	cert := generateTestCert(t, "test")
-	err = cs.SaveCert(ctx, "", cert)
-	assert.ErrorIs(t, err, ErrEmptyCertID)
-}
-
-func TestSaveCert_NilCert(t *testing.T) {
-	ctx := context.Background()
-	store := newMockKVStore()
-	cs, err := NewKVStoreCertStorage(store)
-	require.NoError(t, err)
-
-	err = cs.SaveCert(ctx, "cert-1", nil)
-	assert.ErrorIs(t, err, ErrNilCertificate)
-}
-
-func TestSaveCert_StorageFailure(t *testing.T) {
-	ctx := context.Background()
-	store := newMockKVStore()
-	store.failPut = true
-	cs, err := NewKVStoreCertStorage(store)
-	require.NoError(t, err)
-
-	cert := generateTestCert(t, "test")
-	err = cs.SaveCert(ctx, "cert-1", cert)
-	assert.ErrorIs(t, err, ErrStoragePut)
+			err = cs.SaveCert(context.Background(), tt.id, tt.cert)
+			assert.ErrorIs(t, err, tt.wantErr)
+		})
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -236,42 +228,36 @@ func TestGetCert_Success(t *testing.T) {
 	assert.Equal(t, cert.Subject.CommonName, retrieved.Subject.CommonName)
 }
 
-func TestGetCert_NotFound(t *testing.T) {
-	ctx := context.Background()
-	store := newMockKVStore()
-	cs, err := NewKVStoreCertStorage(store)
-	require.NoError(t, err)
+func TestGetCert_Errors(t *testing.T) {
+	tests := []struct {
+		name    string
+		id      string
+		stored  map[string][]byte
+		wantErr error
+	}{
+		{name: "not found", id: "nonexistent", wantErr: ErrCertNotFound},
+		{name: "empty id", id: "", wantErr: ErrEmptyCertID},
+		{
+			name:    "corrupted data",
+			id:      "corrupt",
+			stored:  map[string][]byte{"certs/corrupt": []byte("not-a-valid-der-certificate")},
+			wantErr: ErrCertCorrupted,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			store := newMockKVStore()
+			for k, v := range tt.stored {
+				store.data[k] = v
+			}
+			cs, err := NewKVStoreCertStorage(store)
+			require.NoError(t, err)
 
-	retrieved, err := cs.GetCert(ctx, "nonexistent")
-	assert.Nil(t, retrieved)
-	assert.ErrorIs(t, err, ErrCertNotFound)
-}
-
-func TestGetCert_EmptyID(t *testing.T) {
-	ctx := context.Background()
-	store := newMockKVStore()
-	cs, err := NewKVStoreCertStorage(store)
-	require.NoError(t, err)
-
-	retrieved, err := cs.GetCert(ctx, "")
-	assert.Nil(t, retrieved)
-	assert.ErrorIs(t, err, ErrEmptyCertID)
-}
-
-func TestGetCert_CorruptedData(t *testing.T) {
-	ctx := context.Background()
-	store := newMockKVStore()
-	cs, err := NewKVStoreCertStorage(store)
-	require.NoError(t, err)
-
-	// Write garbage data directly to the store.
-	store.mu.Lock()
-	store.data["certs/corrupt"] = []byte("not-a-valid-der-certificate")
-	store.mu.Unlock()
-
-	retrieved, err := cs.GetCert(ctx, "corrupt")
-	assert.Nil(t, retrieved)
-	assert.ErrorIs(t, err, ErrCertCorrupted)
+			retrieved, err := cs.GetCert(context.Background(), tt.id)
+			assert.Nil(t, retrieved)
+			assert.ErrorIs(t, err, tt.wantErr)
+		})
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -297,25 +283,27 @@ func TestDeleteCert_Success(t *testing.T) {
 	assert.ErrorIs(t, err, ErrCertNotFound)
 }
 
-func TestDeleteCert_EmptyID(t *testing.T) {
-	ctx := context.Background()
-	store := newMockKVStore()
-	cs, err := NewKVStoreCertStorage(store)
-	require.NoError(t, err)
+func TestDeleteCert_Errors(t *testing.T) {
+	tests := []struct {
+		name    string
+		id      string
+		failDel bool
+		wantErr error
+	}{
+		{name: "empty id", id: "", wantErr: ErrEmptyCertID},
+		{name: "storage failure", id: "cert-1", failDel: true, wantErr: ErrStorageDelete},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			store := newMockKVStore()
+			store.failDel = tt.failDel
+			cs, err := NewKVStoreCertStorage(store)
+			require.NoError(t, err)
 
-	err = cs.DeleteCert(ctx, "")
-	assert.ErrorIs(t, err, ErrEmptyCertID)
-}
-
-func TestDeleteCert_StorageFailure(t *testing.T) {
-	ctx := context.Background()
-	store := newMockKVStore()
-	store.failDel = true
-	cs, err := NewKVStoreCertStorage(store)
-	require.NoError(t, err)
-
-	err = cs.DeleteCert(ctx, "cert-1")
-	assert.ErrorIs(t, err, ErrStorageDelete)
+			err = cs.DeleteCert(context.Background(), tt.id)
+			assert.ErrorIs(t, err, tt.wantErr)
+		})
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -341,51 +329,32 @@ func TestSaveCertChain_Success(t *testing.T) {
 	assert.True(t, ok)
 }
 
-func TestSaveCertChain_EmptyID(t *testing.T) {
-	ctx := context.Background()
-	store := newMockKVStore()
-	cs, err := NewKVStoreCertStorage(store)
-	require.NoError(t, err)
-
+func TestSaveCertChain_Errors(t *testing.T) {
 	cert := generateTestCert(t, "chain-cert")
-	err = cs.SaveCertChain(ctx, "", []*x509.Certificate{cert})
-	assert.ErrorIs(t, err, ErrEmptyCertID)
-}
+	tests := []struct {
+		name    string
+		id      string
+		chain   []*x509.Certificate
+		failPut bool
+		wantErr error
+	}{
+		{name: "empty id", id: "", chain: []*x509.Certificate{cert}, wantErr: ErrEmptyCertID},
+		{name: "nil chain", id: "chain-1", chain: nil, wantErr: ErrEmptyCertChain},
+		{name: "empty chain", id: "chain-1", chain: []*x509.Certificate{}, wantErr: ErrEmptyCertChain},
+		{name: "nil cert in chain", id: "chain-1", chain: []*x509.Certificate{cert, nil}, wantErr: ErrNilCertInChain},
+		{name: "storage failure", id: "chain-1", chain: []*x509.Certificate{cert}, failPut: true, wantErr: ErrStoragePut},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			store := newMockKVStore()
+			store.failPut = tt.failPut
+			cs, err := NewKVStoreCertStorage(store)
+			require.NoError(t, err)
 
-func TestSaveCertChain_EmptyChain(t *testing.T) {
-	ctx := context.Background()
-	store := newMockKVStore()
-	cs, err := NewKVStoreCertStorage(store)
-	require.NoError(t, err)
-
-	err = cs.SaveCertChain(ctx, "chain-1", nil)
-	assert.ErrorIs(t, err, ErrEmptyCertChain)
-
-	err = cs.SaveCertChain(ctx, "chain-1", []*x509.Certificate{})
-	assert.ErrorIs(t, err, ErrEmptyCertChain)
-}
-
-func TestSaveCertChain_NilCertInChain(t *testing.T) {
-	ctx := context.Background()
-	store := newMockKVStore()
-	cs, err := NewKVStoreCertStorage(store)
-	require.NoError(t, err)
-
-	cert := generateTestCert(t, "valid")
-	err = cs.SaveCertChain(ctx, "chain-1", []*x509.Certificate{cert, nil})
-	assert.ErrorIs(t, err, ErrNilCertInChain)
-}
-
-func TestSaveCertChain_StorageFailure(t *testing.T) {
-	ctx := context.Background()
-	store := newMockKVStore()
-	store.failPut = true
-	cs, err := NewKVStoreCertStorage(store)
-	require.NoError(t, err)
-
-	cert := generateTestCert(t, "chain-cert")
-	err = cs.SaveCertChain(ctx, "chain-1", []*x509.Certificate{cert})
-	assert.ErrorIs(t, err, ErrStoragePut)
+			err = cs.SaveCertChain(context.Background(), tt.id, tt.chain)
+			assert.ErrorIs(t, err, tt.wantErr)
+		})
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -414,98 +383,36 @@ func TestGetCertChain_Success(t *testing.T) {
 	assert.Equal(t, cert3.Raw, retrieved[2].Raw)
 }
 
-func TestGetCertChain_NotFound(t *testing.T) {
-	ctx := context.Background()
-	store := newMockKVStore()
-	cs, err := NewKVStoreCertStorage(store)
-	require.NoError(t, err)
+func TestGetCertChain_Errors(t *testing.T) {
+	tests := []struct {
+		name    string
+		id      string
+		stored  []byte
+		wantErr error
+	}{
+		{name: "not found", id: "nonexistent", wantErr: ErrCertChainNotFound},
+		{name: "empty id", id: "", wantErr: ErrEmptyCertID},
+		{name: "corrupted data", id: "corrupt", stored: []byte("bad-chain-data"), wantErr: ErrChainCorrupted},
+		// Only 2 bytes, less than the 4-byte length header.
+		{name: "truncated length header", id: "truncated", stored: []byte{0x00, 0x01}, wantErr: ErrChainCorrupted},
+		// A length header claiming 1000 bytes followed by only 2.
+		{name: "truncated cert data", id: "short", stored: []byte{0x00, 0x00, 0x03, 0xE8, 0xAA, 0xBB}, wantErr: ErrChainCorrupted},
+		{name: "zero length cert", id: "zerolen", stored: []byte{0x00, 0x00, 0x00, 0x00}, wantErr: ErrChainCorrupted},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			store := newMockKVStore()
+			if tt.stored != nil {
+				store.data["certs/chain/"+tt.id] = tt.stored
+			}
+			cs, err := NewKVStoreCertStorage(store)
+			require.NoError(t, err)
 
-	retrieved, err := cs.GetCertChain(ctx, "nonexistent")
-	assert.Nil(t, retrieved)
-	assert.ErrorIs(t, err, ErrCertChainNotFound)
-}
-
-func TestGetCertChain_EmptyID(t *testing.T) {
-	ctx := context.Background()
-	store := newMockKVStore()
-	cs, err := NewKVStoreCertStorage(store)
-	require.NoError(t, err)
-
-	retrieved, err := cs.GetCertChain(ctx, "")
-	assert.Nil(t, retrieved)
-	assert.ErrorIs(t, err, ErrEmptyCertID)
-}
-
-func TestGetCertChain_CorruptedData(t *testing.T) {
-	ctx := context.Background()
-	store := newMockKVStore()
-	cs, err := NewKVStoreCertStorage(store)
-	require.NoError(t, err)
-
-	// Write garbage data.
-	store.mu.Lock()
-	store.data["certs/chain/corrupt"] = []byte("bad-chain-data")
-	store.mu.Unlock()
-
-	retrieved, err := cs.GetCertChain(ctx, "corrupt")
-	assert.Nil(t, retrieved)
-	assert.ErrorIs(t, err, ErrChainCorrupted)
-}
-
-func TestGetCertChain_TruncatedLengthHeader(t *testing.T) {
-	ctx := context.Background()
-	store := newMockKVStore()
-	cs, err := NewKVStoreCertStorage(store)
-	require.NoError(t, err)
-
-	// Write only 2 bytes (less than the 4-byte length header).
-	store.mu.Lock()
-	store.data["certs/chain/truncated"] = []byte{0x00, 0x01}
-	store.mu.Unlock()
-
-	retrieved, err := cs.GetCertChain(ctx, "truncated")
-	assert.Nil(t, retrieved)
-	assert.ErrorIs(t, err, ErrChainCorrupted)
-}
-
-func TestGetCertChain_TruncatedCertData(t *testing.T) {
-	ctx := context.Background()
-	store := newMockKVStore()
-	cs, err := NewKVStoreCertStorage(store)
-	require.NoError(t, err)
-
-	// Write a length header claiming 1000 bytes but provide only 2.
-	data := make([]byte, 6)
-	data[0] = 0x00
-	data[1] = 0x00
-	data[2] = 0x03
-	data[3] = 0xE8 // 1000
-	data[4] = 0xAA
-	data[5] = 0xBB
-	store.mu.Lock()
-	store.data["certs/chain/short"] = data
-	store.mu.Unlock()
-
-	retrieved, err := cs.GetCertChain(ctx, "short")
-	assert.Nil(t, retrieved)
-	assert.ErrorIs(t, err, ErrChainCorrupted)
-}
-
-func TestGetCertChain_ZeroLengthCert(t *testing.T) {
-	ctx := context.Background()
-	store := newMockKVStore()
-	cs, err := NewKVStoreCertStorage(store)
-	require.NoError(t, err)
-
-	// Write a length header of zero.
-	data := []byte{0x00, 0x00, 0x00, 0x00}
-	store.mu.Lock()
-	store.data["certs/chain/zerolen"] = data
-	store.mu.Unlock()
-
-	retrieved, err := cs.GetCertChain(ctx, "zerolen")
-	assert.Nil(t, retrieved)
-	assert.ErrorIs(t, err, ErrChainCorrupted)
+			retrieved, err := cs.GetCertChain(context.Background(), tt.id)
+			assert.Nil(t, retrieved)
+			assert.ErrorIs(t, err, tt.wantErr)
+		})
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -567,94 +474,71 @@ func TestListCerts_StorageFailure(t *testing.T) {
 // CertExists tests
 // ---------------------------------------------------------------------------
 
-func TestCertExists_True(t *testing.T) {
-	ctx := context.Background()
-	store := newMockKVStore()
-	cs, err := NewKVStoreCertStorage(store)
-	require.NoError(t, err)
+func TestCertExists(t *testing.T) {
+	tests := []struct {
+		name       string
+		id         string
+		wantExists bool
+		wantErr    error
+	}{
+		{name: "exists", id: "exists-1", wantExists: true},
+		{name: "missing", id: "nonexistent", wantExists: false},
+		{name: "empty id", id: "", wantExists: false, wantErr: ErrEmptyCertID},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx := context.Background()
+			cs, err := NewKVStoreCertStorage(newMockKVStore())
+			require.NoError(t, err)
+			require.NoError(t, cs.SaveCert(ctx, "exists-1", generateTestCert(t, "exists-test")))
 
-	cert := generateTestCert(t, "exists-test")
-	err = cs.SaveCert(ctx, "exists-1", cert)
-	require.NoError(t, err)
-
-	exists, err := cs.CertExists(ctx, "exists-1")
-	require.NoError(t, err)
-	assert.True(t, exists)
-}
-
-func TestCertExists_False(t *testing.T) {
-	ctx := context.Background()
-	store := newMockKVStore()
-	cs, err := NewKVStoreCertStorage(store)
-	require.NoError(t, err)
-
-	exists, err := cs.CertExists(ctx, "nonexistent")
-	require.NoError(t, err)
-	assert.False(t, exists)
-}
-
-func TestCertExists_EmptyID(t *testing.T) {
-	ctx := context.Background()
-	store := newMockKVStore()
-	cs, err := NewKVStoreCertStorage(store)
-	require.NoError(t, err)
-
-	exists, err := cs.CertExists(ctx, "")
-	assert.False(t, exists)
-	assert.ErrorIs(t, err, ErrEmptyCertID)
+			exists, err := cs.CertExists(ctx, tt.id)
+			assert.ErrorIs(t, err, tt.wantErr)
+			assert.Equal(t, tt.wantExists, exists)
+		})
+	}
 }
 
 // ---------------------------------------------------------------------------
 // Close tests
 // ---------------------------------------------------------------------------
 
-func TestClose_Success(t *testing.T) {
-	store := newMockKVStore()
-	cs, err := NewKVStoreCertStorage(store)
-	require.NoError(t, err)
-
-	err = cs.Close()
-	assert.NoError(t, err)
-}
-
 func TestClose_Idempotent(t *testing.T) {
-	store := newMockKVStore()
-	cs, err := NewKVStoreCertStorage(store)
+	cs, err := NewKVStoreCertStorage(newMockKVStore())
 	require.NoError(t, err)
 
-	err = cs.Close()
-	assert.NoError(t, err)
-	err = cs.Close()
-	assert.NoError(t, err)
+	assert.NoError(t, cs.Close())
+	assert.NoError(t, cs.Close())
 }
 
 // ---------------------------------------------------------------------------
 // Encoding round-trip tests
 // ---------------------------------------------------------------------------
 
-func TestEncodeDecode_SingleCert(t *testing.T) {
-	cert := generateTestCert(t, "roundtrip-single")
-	chain := []*x509.Certificate{cert}
-
-	encoded := encodeCertChain(chain)
-	decoded, err := decodeCertChain(encoded)
-	require.NoError(t, err)
-	require.Len(t, decoded, 1)
-	assert.Equal(t, cert.Raw, decoded[0].Raw)
-}
-
-func TestEncodeDecode_MultipleCerts(t *testing.T) {
-	cert1 := generateTestCert(t, "roundtrip-1")
-	cert2 := generateTestCert(t, "roundtrip-2")
-	cert3 := generateTestCert(t, "roundtrip-3")
-	chain := []*x509.Certificate{cert1, cert2, cert3}
-
-	encoded := encodeCertChain(chain)
-	decoded, err := decodeCertChain(encoded)
-	require.NoError(t, err)
-	require.Len(t, decoded, 3)
-	for i, cert := range chain {
-		assert.Equal(t, cert.Raw, decoded[i].Raw)
+func TestEncodeDecode_RoundTrip(t *testing.T) {
+	tests := []struct {
+		name  string
+		chain []*x509.Certificate
+	}{
+		{name: "single cert", chain: []*x509.Certificate{generateTestCert(t, "roundtrip-single")}},
+		{
+			name: "multiple certs",
+			chain: []*x509.Certificate{
+				generateTestCert(t, "roundtrip-1"),
+				generateTestCert(t, "roundtrip-2"),
+				generateTestCert(t, "roundtrip-3"),
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			decoded, err := decodeCertChain(encodeCertChain(tt.chain))
+			require.NoError(t, err)
+			require.Len(t, decoded, len(tt.chain))
+			for i, cert := range tt.chain {
+				assert.Equal(t, cert.Raw, decoded[i].Raw)
+			}
+		})
 	}
 }
 
@@ -668,13 +552,9 @@ func TestDecodeCertChain_EmptyData(t *testing.T) {
 // NilCertInChainError tests
 // ---------------------------------------------------------------------------
 
-func TestNilCertInChainError_ErrorMessage(t *testing.T) {
+func TestNilCertInChainError(t *testing.T) {
 	err := &NilCertInChainError{Index: 2}
 	assert.Equal(t, ErrNilCertInChain.Error(), err.Error())
-}
-
-func TestNilCertInChainError_Is(t *testing.T) {
-	err := &NilCertInChainError{Index: 0}
 	assert.ErrorIs(t, err, ErrNilCertInChain)
 }
 

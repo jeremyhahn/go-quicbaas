@@ -159,6 +159,10 @@ func TestBackendStorage_RoleCRUD(t *testing.T) {
 	err = storage.UpdateRole(ctx, role)
 	require.NoError(t, err)
 
+	retrieved, err = storage.GetRole(ctx, role.TenantID, role.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "Updated Role", retrieved.Name)
+
 	// Delete
 	err = storage.DeleteRole(ctx, role.TenantID, role.ID)
 	require.NoError(t, err)
@@ -265,6 +269,8 @@ func TestBackendStorage_AuthCodeOperations(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, authCode.Code, retrieved.Code)
 	assert.Equal(t, authCode.ClientID, retrieved.ClientID)
+	assert.Equal(t, authCode.UserID, retrieved.UserID)
+	assert.Equal(t, authCode.Scope, retrieved.Scope)
 
 	// Delete
 	err = storage.DeleteAuthCode(ctx, authCode.Code)
@@ -388,31 +394,52 @@ func TestBackendStorage_QuotaOperations(t *testing.T) {
 
 func TestBackendStorage_NotFoundErrors(t *testing.T) {
 	ctx := context.Background()
-	kv := newMockKVStore()
-	storage := NewBackendStorage(kv)
+	storage := NewBackendStorage(newMockKVStore())
 
-	// Get nonexistent tenant
-	_, err := storage.GetTenant(ctx, "nonexistent")
-	assert.Error(t, err)
-	assert.True(t, dberrors.IsNotFound(err))
+	tests := []struct {
+		name string
+		call func() error
+	}{
+		{"GetTenant", func() error { _, err := storage.GetTenant(ctx, "missing"); return err }},
+		{"UpdateTenant", func() error { return storage.UpdateTenant(ctx, &Tenant{ID: "missing", Name: "Test"}) }},
+		{"DeleteTenant", func() error { return storage.DeleteTenant(ctx, "missing") }},
+		{"GetRole", func() error { _, err := storage.GetRole(ctx, "tenant", "missing"); return err }},
+		{"UpdateRole", func() error {
+			return storage.UpdateRole(ctx, &Role{ID: "missing", TenantID: "tenant", Name: "Missing"})
+		}},
+		{"DeleteRole", func() error { return storage.DeleteRole(ctx, "tenant", "missing") }},
+		{"GetApp", func() error { _, err := storage.GetApp(ctx, "missing"); return err }},
+		{"GetAppByTenant", func() error { _, err := storage.GetAppByTenant(ctx, "tenant", "missing"); return err }},
+		{"UpdateApp", func() error {
+			return storage.UpdateApp(ctx, &Application{ClientID: "missing", TenantID: "tenant", Name: "Missing"})
+		}},
+		{"DeleteApp", func() error { return storage.DeleteApp(ctx, "missing") }},
+		{"ValidateClientSecret", func() error { _, err := storage.ValidateClientSecret(ctx, "missing", "secret"); return err }},
+		{"GetPolicy", func() error { _, err := storage.GetPolicy(ctx, "tenant", "missing"); return err }},
+		{"UpdatePolicy", func() error {
+			return storage.UpdatePolicy(ctx, "tenant", &Policy{
+				APIVersion: "v1",
+				Kind:       "Policy",
+				Metadata:   PolicyMetadata{Name: "missing", Tenant: "tenant"},
+				Spec: PolicySpec{
+					Rules: []Rule{{Name: "r1", Effect: EffectAllow, Actions: []string{"read"}, Resources: []string{"*"}}},
+				},
+			})
+		}},
+		{"DeletePolicy", func() error { return storage.DeletePolicy(ctx, "tenant", "missing") }},
+		{"GetToken", func() error { _, err := storage.GetToken(ctx, "missing"); return err }},
+		{"GetTokenByValue", func() error { _, err := storage.GetTokenByValue(ctx, "missing"); return err }},
+		{"RevokeToken", func() error { return storage.RevokeToken(ctx, "missing") }},
+		{"GetAuthCode", func() error { _, err := storage.GetAuthCode(ctx, "missing"); return err }},
+	}
 
-	assert.Error(t, err)
-
-	// Get nonexistent role
-	_, err = storage.GetRole(ctx, "tenant", "nonexistent")
-	assert.Error(t, err)
-
-	// Get nonexistent app
-	_, err = storage.GetApp(ctx, "nonexistent")
-	assert.Error(t, err)
-
-	// Get nonexistent token
-	_, err = storage.GetToken(ctx, "nonexistent")
-	assert.Error(t, err)
-
-	// Get nonexistent policy
-	_, err = storage.GetPolicy(ctx, "tenant", "nonexistent")
-	assert.Error(t, err)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := tt.call()
+			require.Error(t, err)
+			assert.True(t, dberrors.IsNotFound(err), "want not-found, got %v", err)
+		})
+	}
 }
 
 // TestBackendStorage_ListOperations (user listing) was removed in phase C1-F:
@@ -521,106 +548,73 @@ func TestBackendStorage_DeleteTenantCascade(t *testing.T) {
 	assert.Error(t, err, "app should be deleted")
 }
 
-func TestBackendStorage_DeleteTenantCascade_NotFound(t *testing.T) {
-	ctx := context.Background()
-	kv := newMockKVStore()
-	storage := NewBackendStorage(kv)
-
-	// Try to delete non-existent tenant
-	err := storage.DeleteTenant(ctx, "nonexistent")
-	assert.Error(t, err, "should error for non-existent tenant")
-}
-
-// Benchmark tests. The CreateUser/GetUser benchmarks were removed in phase
-// C1-F (BackendStorage no longer persists users; qrdb owns the user record).
-func BenchmarkBackendStorage_JSONMarshal(b *testing.B) {
-	user := &User{
-		ID:       40050,
-		TenantID: "tenant-1",
-		Email:    "bench@example.com",
-		Name:     "Benchmark User",
-	}
-
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		_, _ = json.Marshal(user)
-	}
-}
-
 // =============================================================================
 // BatchProcessor - processPolicies additional edge cases
 // =============================================================================
 
 func TestBatchProcessor_ProcessPolicies_DryRunValidation(t *testing.T) {
-	storage := newMockBatchStorage()
-	tenantMgr := newMockTenantManager()
-	bp := NewIAMBatchProcessor(storage, tenantMgr)
+	tests := []struct {
+		name string
+		opts BatchOptions
+	}{
+		{name: "dry run", opts: BatchOptions{DryRun: true}},
+		{name: "validate only", opts: BatchOptions{ValidateOnly: true}},
+	}
 
-	ctx := context.Background()
-	tenantID := "test-tenant"
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			storage := &finalOpStorage{
+				mockBatchStorage: newMockBatchStorage(),
+				done:             make(chan BatchOperation, 1),
+			}
+			tenantMgr := newMockTenantManager()
+			bp := NewIAMBatchProcessor(storage, tenantMgr)
 
-	items := []PolicyImportItem{
-		{
-			Policy: &Policy{
-				APIVersion: "v1",
-				Kind:       "Policy",
-				Metadata:   PolicyMetadata{Name: "dry-run-test", Tenant: tenantID},
-				Spec: PolicySpec{
-					Rules: []Rule{{Name: "r1", Effect: EffectAllow, Actions: []string{"read"}, Resources: []string{"*"}}},
+			ctx := context.Background()
+			tenantID := "test-tenant"
+			items := []PolicyImportItem{
+				{
+					Policy: &Policy{
+						APIVersion: "v1",
+						Kind:       "Policy",
+						Metadata:   PolicyMetadata{Name: "no-write-test", Tenant: tenantID},
+						Spec: PolicySpec{
+							Rules: []Rule{{Name: "r1", Effect: EffectAllow, Actions: []string{"read"}, Resources: []string{"*"}}},
+						},
+					},
 				},
-			},
-		},
-	}
+			}
 
-	op, err := bp.ImportPolicies(ctx, tenantID, items, BatchOptions{
-		DryRun: true, // Dry run - don't actually create
-	})
-	if err != nil {
-		t.Fatalf("ImportPolicies failed: %v", err)
-	}
+			_, err := bp.ImportPolicies(ctx, tenantID, items, tt.opts)
+			require.NoError(t, err)
 
-	time.Sleep(200 * time.Millisecond)
+			var final BatchOperation
+			select {
+			case final = <-storage.done:
+			case <-time.After(10 * time.Second):
+				t.Fatal("timed out waiting for the import to finish")
+			}
 
-	saved, _ := storage.GetOperation(ctx, op.ID)
-	if saved.Progress.Succeeded != 1 {
-		t.Errorf("expected 1 success in dry run, got %d", saved.Progress.Succeeded)
+			assert.Equal(t, BatchStatusCompleted, final.Status)
+			assert.Equal(t, 1, final.Progress.Succeeded)
+			_, err = tenantMgr.GetPolicy(ctx, tenantID, "no-write-test")
+			assert.ErrorIs(t, err, ErrPolicyNotFound, "a no-write import must not create the policy")
+		})
 	}
 }
 
-func TestBatchProcessor_ProcessPolicies_ValidateOnlyMode(t *testing.T) {
-	storage := newMockBatchStorage()
-	tenantMgr := newMockTenantManager()
-	bp := NewIAMBatchProcessor(storage, tenantMgr)
+// finalOpStorage hands the test a copy of the operation once it is
+// finalized, so the test synchronizes on completion instead of sleeping.
+type finalOpStorage struct {
+	*mockBatchStorage
+	done chan BatchOperation
+}
 
-	ctx := context.Background()
-	tenantID := "test-tenant"
-
-	items := []PolicyImportItem{
-		{
-			Policy: &Policy{
-				APIVersion: "v1",
-				Kind:       "Policy",
-				Metadata:   PolicyMetadata{Name: "validate-only-test", Tenant: tenantID},
-				Spec: PolicySpec{
-					Rules: []Rule{{Name: "r1", Effect: EffectAllow, Actions: []string{"read"}, Resources: []string{"*"}}},
-				},
-			},
-		},
+func (s *finalOpStorage) UpdateOperation(ctx context.Context, op *BatchOperation) error {
+	if op.CompletedAt != nil {
+		s.done <- *op
 	}
-
-	op, err := bp.ImportPolicies(ctx, tenantID, items, BatchOptions{
-		ValidateOnly: true, // Only validate, don't create
-	})
-	if err != nil {
-		t.Fatalf("ImportPolicies failed: %v", err)
-	}
-
-	time.Sleep(200 * time.Millisecond)
-
-	saved, _ := storage.GetOperation(ctx, op.ID)
-	if saved.Progress.Succeeded != 1 {
-		t.Errorf("expected 1 success in validate-only mode, got %d", saved.Progress.Succeeded)
-	}
+	return s.mockBatchStorage.UpdateOperation(ctx, op)
 }
 
 func TestMemoryConsentStorage_DeleteConsent_ByPurpose(t *testing.T) {
@@ -1504,53 +1498,6 @@ func TestBackendStorage_IsTokenRevoked_NotFound(t *testing.T) {
 	}
 }
 
-func TestBackendStorage_DeleteExpiredTokens(t *testing.T) {
-	ctx := context.Background()
-	kv := newMockKVStore91()
-	storage := NewBackendStorage(kv)
-
-	// Store expired token
-	expiredToken := &Token{
-		JTI:       "expired-token-boost",
-		Subject:   "user-1",
-		TokenType: TokenTypeAccess,
-		Issued:    time.Now().Add(-2 * time.Hour),
-		Expires:   time.Now().Add(-1 * time.Hour), // Already expired
-	}
-	if err := storage.StoreToken(ctx, expiredToken); err != nil {
-		t.Fatalf("StoreToken (expired) failed: %v", err)
-	}
-
-	// Store valid token
-	validToken := &Token{
-		JTI:       "valid-token-boost",
-		Subject:   "user-1",
-		TokenType: TokenTypeAccess,
-		Issued:    time.Now(),
-		Expires:   time.Now().Add(1 * time.Hour), // Still valid
-	}
-	if err := storage.StoreToken(ctx, validToken); err != nil {
-		t.Fatalf("StoreToken (valid) failed: %v", err)
-	}
-
-	// Delete expired tokens
-	if err := storage.DeleteExpiredTokens(ctx); err != nil {
-		t.Fatalf("DeleteExpiredTokens failed: %v", err)
-	}
-
-	// Expired token should be gone
-	_, err := storage.GetToken(ctx, "expired-token-boost")
-	if err == nil {
-		t.Error("expected error for deleted expired token")
-	}
-
-	// Valid token should still exist
-	_, err = storage.GetToken(ctx, "valid-token-boost")
-	if err != nil {
-		t.Errorf("valid token should still exist: %v", err)
-	}
-}
-
 func TestBackendStorage_RevokeUserTokens(t *testing.T) {
 	ctx := context.Background()
 	kv := newMockKVStore91()
@@ -1605,126 +1552,6 @@ func TestBackendStorage_RevokeUserTokens(t *testing.T) {
 // =============================================================================
 // OIDC Provider - ValidateAccessToken coverage
 // =============================================================================
-
-func TestOIDCProvider_ValidateAccessToken_Success(t *testing.T) {
-	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
-	if err != nil {
-		t.Fatalf("failed to generate RSA key: %v", err)
-	}
-
-	config := &OIDCConfig{
-		Issuer:            "https://test.example.com",
-		SigningAlgorithm:  "RS256",
-		SigningKeyManager: testSigningKeyManager(t, privateKey, "RS256"),
-		AccessTokenTTL:    1 * time.Hour,
-		RefreshTokenTTL:   24 * time.Hour,
-		IDTokenTTL:        1 * time.Hour,
-		AuthCodeTTL:       10 * time.Minute,
-	}
-
-	appStorage := newMockAppStorage()
-	tokenStorage := newMockTokenStorage()
-	memStorage := NewMemoryStorage()
-
-	identityStore := NewIdentityStore(IdentityStoreOptions{
-		UserStorage: memStorage,
-		RoleStorage: memStorage,
-	})
-
-	deps := OIDCDependencies{
-		IdentityStore: identityStore,
-		AppStorage:    appStorage,
-		TokenStorage:  tokenStorage,
-	}
-
-	provider, err := NewOIDCProvider(config, deps)
-	if err != nil {
-		t.Fatalf("NewOIDCProvider failed: %v", err)
-	}
-
-	ctx := context.Background()
-
-	// Create Claims and generate token
-	now := time.Now()
-	claims := &Claims{
-		Issuer:    "https://test.example.com",
-		Subject:   "user-validate-1",
-		Audience:  []string{"https://test.example.com"},
-		ExpiresAt: NewUnixTime(now.Add(1 * time.Hour)),
-		IssuedAt:  NewUnixTime(now),
-		NotBefore: NewUnixTime(now),
-		JTI:       "validate-test-jti",
-		TenantID:  "tenant-1",
-		Roles:     []string{"admin"},
-		Groups:    []string{"developers"},
-		Email:     "test@example.com",
-		Name:      "Test User",
-		Scope:     "openid profile email",
-		ClientID:  "client-123",
-	}
-
-	// Generate token using the token service
-	tokenService := provider.tokenService
-	accessToken, err := tokenService.GenerateAccessToken(ctx, claims)
-	if err != nil {
-		t.Fatalf("GenerateAccessToken failed: %v", err)
-	}
-
-	// Validate the token
-	validatedClaims, err := provider.ValidateAccessToken(ctx, accessToken)
-	if err != nil {
-		t.Fatalf("ValidateAccessToken failed: %v", err)
-	}
-
-	if validatedClaims == nil {
-		t.Error("expected claims, got nil")
-	}
-	if validatedClaims.Subject != claims.Subject {
-		t.Errorf("expected subject %s, got %s", claims.Subject, validatedClaims.Subject)
-	}
-}
-
-func TestOIDCProvider_ValidateAccessToken_Invalid(t *testing.T) {
-	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
-	if err != nil {
-		t.Fatalf("failed to generate RSA key: %v", err)
-	}
-
-	config := &OIDCConfig{
-		Issuer:            "https://test.example.com",
-		SigningAlgorithm:  "RS256",
-		SigningKeyManager: testSigningKeyManager(t, privateKey, "RS256"),
-		AccessTokenTTL:    1 * time.Hour,
-	}
-
-	appStorage := newMockAppStorage()
-	tokenStorage := newMockTokenStorage()
-	memStorage := NewMemoryStorage()
-
-	identityStore := NewIdentityStore(IdentityStoreOptions{
-		UserStorage: memStorage,
-		RoleStorage: memStorage,
-	})
-
-	deps := OIDCDependencies{
-		IdentityStore: identityStore,
-		AppStorage:    appStorage,
-		TokenStorage:  tokenStorage,
-	}
-
-	provider, err := NewOIDCProvider(config, deps)
-	if err != nil {
-		t.Fatalf("NewOIDCProvider failed: %v", err)
-	}
-
-	ctx := context.Background()
-
-	// Validate invalid token
-	_, err = provider.ValidateAccessToken(ctx, "invalid-token-string")
-	if err == nil {
-		t.Error("expected error for invalid token")
-	}
-}
 
 // =============================================================================
 // OIDC Adapter - ValidateAccessToken coverage
@@ -1883,62 +1710,14 @@ func TestOIDCProviderAdapter_GetOAuthASMetadata_NilCheck(t *testing.T) {
 
 	adapter := NewOIDCProviderAdapter(provider)
 
-	// Get metadata - exercises the nil check path
-	metadata := adapter.GetOAuthASMetadata()
-	// The result depends on whether the provider has metadata configured
-	// We're primarily testing that this doesn't panic
-	_ = metadata
+	metadata, ok := adapter.GetOAuthASMetadata().(*OAuthASMetadata)
+	require.True(t, ok)
+	assert.Equal(t, config.Issuer, metadata.Issuer)
 }
 
 // =============================================================================
 // Storage Backend - UpdateSettings and GetSettings coverage
 // =============================================================================
-
-func TestBackendStorage_SettingsOperations(t *testing.T) {
-	ctx := context.Background()
-	kv := newMockKVStore91()
-	storage := NewBackendStorage(kv)
-
-	tenantID := "settings-test-tenant"
-
-	// Create tenant first
-	tenant := &Tenant{ID: tenantID, Name: "Settings Test Tenant"}
-	if err := storage.CreateTenant(ctx, tenant); err != nil {
-		t.Fatalf("CreateTenant failed: %v", err)
-	}
-
-	// Get settings (should return defaults or error)
-	_, err := storage.GetSettings(ctx, tenantID)
-	// This may return an error if no settings exist - that's OK
-	_ = err
-
-	// Update settings
-	settings := &TenantSettings{
-		MaxUsers:           100,
-		MFARequired:        true,
-		SessionTimeout:     30 * time.Minute,
-		SessionIdleTimeout: 15 * time.Minute,
-		TokenTTL:           1 * time.Hour,
-		RefreshTokenTTL:    24 * time.Hour,
-	}
-
-	if err := storage.UpdateSettings(ctx, tenantID, settings); err != nil {
-		t.Fatalf("UpdateSettings failed: %v", err)
-	}
-
-	// Get settings after update
-	retrieved, err := storage.GetSettings(ctx, tenantID)
-	if err != nil {
-		t.Fatalf("GetSettings (after update) failed: %v", err)
-	}
-
-	if retrieved.SessionTimeout != 30*time.Minute {
-		t.Errorf("expected SessionTimeout=30m, got %v", retrieved.SessionTimeout)
-	}
-	if !retrieved.MFARequired {
-		t.Error("expected MFARequired=true")
-	}
-}
 
 // =============================================================================
 // Storage Backend - List operations with pagination
@@ -1949,137 +1728,76 @@ func TestBackendStorage_SettingsOperations(t *testing.T) {
 
 func TestBackendStorage_ListRolesWithPagination(t *testing.T) {
 	ctx := context.Background()
-	kv := newMockKVStore91()
-	storage := NewBackendStorage(kv)
+	storage := NewBackendStorage(newMockKVStore91())
 
 	tenantID := "list-roles-tenant"
-
-	// Create multiple roles
 	for i := 0; i < 5; i++ {
 		role := &Role{
-			ID:       "role-" + string(rune('a'+i)),
+			ID:       fmt.Sprintf("role-%d", i),
 			TenantID: tenantID,
-			Name:     "Role " + string(rune('A'+i)),
+			Name:     fmt.Sprintf("Role %d", i),
 			Created:  time.Now(),
 			Updated:  time.Now(),
 		}
-		if err := storage.CreateRole(ctx, role); err != nil {
-			t.Fatalf("CreateRole failed: %v", err)
-		}
+		require.NoError(t, storage.CreateRole(ctx, role))
 	}
 
-	// List all roles
-	roles, err := storage.ListRoles(ctx, tenantID, ListOptions{})
-	if err != nil {
-		t.Fatalf("ListRoles failed: %v", err)
+	tests := []struct {
+		name string
+		opts ListOptions
+		want int
+	}{
+		{"all", ListOptions{}, 5},
+		{"offset beyond total", ListOptions{Offset: 100}, 0},
 	}
-
-	if len(roles) != 5 {
-		t.Errorf("expected 5 roles, got %d", len(roles))
-	}
-}
-
-func TestBackendStorage_ListPoliciesWithPagination(t *testing.T) {
-	ctx := context.Background()
-	kv := newMockKVStore91()
-	storage := NewBackendStorage(kv)
-
-	tenantID := "list-policies-tenant"
-
-	// Create multiple policies
-	for i := 0; i < 5; i++ {
-		policy := &Policy{
-			APIVersion: "v1",
-			Kind:       "Policy",
-			Metadata:   PolicyMetadata{Name: "policy-" + string(rune('a'+i)), Tenant: tenantID},
-			Spec: PolicySpec{
-				Rules: []Rule{{Name: "r1", Effect: EffectAllow, Actions: []string{"read"}, Resources: []string{"*"}}},
-			},
-		}
-		if err := storage.CreatePolicy(ctx, tenantID, policy); err != nil {
-			t.Fatalf("CreatePolicy failed: %v", err)
-		}
-	}
-
-	// List all policies
-	policies, err := storage.ListPolicies(ctx, tenantID, ListOptions{})
-	if err != nil {
-		t.Fatalf("ListPolicies failed: %v", err)
-	}
-
-	if len(policies) != 5 {
-		t.Errorf("expected 5 policies, got %d", len(policies))
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			roles, err := storage.ListRoles(ctx, tenantID, tt.opts)
+			require.NoError(t, err)
+			assert.Len(t, roles, tt.want)
+		})
 	}
 }
 
 func TestBackendStorage_ListAppsWithPagination(t *testing.T) {
 	ctx := context.Background()
-	kv := newMockKVStore91()
-	storage := NewBackendStorage(kv)
+	storage := NewBackendStorage(newMockKVStore91())
 
 	tenantID := "list-apps-tenant"
-
-	// Create multiple apps
 	for i := 0; i < 5; i++ {
 		app := &Application{
-			ClientID:     "client-" + string(rune('a'+i)),
+			ClientID:     fmt.Sprintf("client-%d", i),
 			TenantID:     tenantID,
-			Name:         "App " + string(rune('A'+i)),
-			ClientSecret: "secret-" + string(rune('a'+i)),
+			Name:         fmt.Sprintf("App %d", i),
+			ClientSecret: "secret",
 			RedirectURIs: []string{"https://example.com/callback"},
 			GrantTypes:   []string{"authorization_code"},
 			Created:      time.Now(),
 			Updated:      time.Now(),
 		}
-		if err := storage.CreateApp(ctx, app); err != nil {
-			t.Fatalf("CreateApp failed: %v", err)
-		}
+		require.NoError(t, storage.CreateApp(ctx, app))
 	}
 
-	// List all apps
-	apps, err := storage.ListApps(ctx, tenantID, ListOptions{})
-	if err != nil {
-		t.Fatalf("ListApps failed: %v", err)
+	tests := []struct {
+		name string
+		opts ListOptions
+		want int
+	}{
+		{"all", ListOptions{}, 5},
+		{"offset beyond total", ListOptions{Offset: 100}, 0},
 	}
-
-	if len(apps) != 5 {
-		t.Errorf("expected 5 apps, got %d", len(apps))
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			apps, err := storage.ListApps(ctx, tenantID, tt.opts)
+			require.NoError(t, err)
+			assert.Len(t, apps, tt.want)
+		})
 	}
 }
 
 // =============================================================================
 // Storage Backend - TenantExists and CountTenants
 // =============================================================================
-
-func TestBackendStorage_TenantExists(t *testing.T) {
-	ctx := context.Background()
-	kv := newMockKVStore91()
-	storage := NewBackendStorage(kv)
-
-	// Create a tenant
-	tenant := &Tenant{ID: "exists-test", Name: "Exists Test Tenant"}
-	if err := storage.CreateTenant(ctx, tenant); err != nil {
-		t.Fatalf("CreateTenant failed: %v", err)
-	}
-
-	// Should exist
-	exists, err := storage.TenantExists(ctx, "exists-test")
-	if err != nil {
-		t.Fatalf("TenantExists failed: %v", err)
-	}
-	if !exists {
-		t.Error("expected tenant to exist")
-	}
-
-	// Should not exist
-	exists, err = storage.TenantExists(ctx, "not-exists")
-	if err != nil {
-		t.Fatalf("TenantExists (not exists) failed: %v", err)
-	}
-	if exists {
-		t.Error("expected tenant to not exist")
-	}
-}
 
 func TestBackendStorage_CountTenants(t *testing.T) {
 	ctx := context.Background()
@@ -2108,39 +1826,6 @@ func TestBackendStorage_CountTenants(t *testing.T) {
 // =============================================================================
 // Storage Backend - GetAppByTenant
 // =============================================================================
-
-func TestBackendStorage_GetAppByTenant(t *testing.T) {
-	ctx := context.Background()
-	kv := newMockKVStore91()
-	storage := NewBackendStorage(kv)
-
-	tenantID := "app-tenant-test"
-
-	// Create an app
-	app := &Application{
-		ClientID:     "app-by-tenant-client",
-		TenantID:     tenantID,
-		Name:         "App By Tenant Test",
-		ClientSecret: "secret",
-		RedirectURIs: []string{"https://example.com/callback"},
-		GrantTypes:   []string{"authorization_code"},
-		Created:      time.Now(),
-		Updated:      time.Now(),
-	}
-	if err := storage.CreateApp(ctx, app); err != nil {
-		t.Fatalf("CreateApp failed: %v", err)
-	}
-
-	// Get app by tenant
-	retrieved, err := storage.GetAppByTenant(ctx, tenantID, app.ClientID)
-	if err != nil {
-		t.Fatalf("GetAppByTenant failed: %v", err)
-	}
-
-	if retrieved.ClientID != app.ClientID {
-		t.Errorf("expected ClientID %s, got %s", app.ClientID, retrieved.ClientID)
-	}
-}
 
 // =============================================================================
 // Storage Backend - ValidateClientSecret
@@ -2196,41 +1881,6 @@ func TestBackendStorage_ValidateClientSecret(t *testing.T) {
 // =============================================================================
 // Storage Backend - StoreAuthCode and GetAuthCode
 // =============================================================================
-
-func TestBackendStorage_AuthCodeOps_Boost(t *testing.T) {
-	ctx := context.Background()
-	kv := newMockKVStore91()
-	storage := NewBackendStorage(kv)
-
-	// Store auth code using AuthCodeData
-	code := &AuthCodeData{
-		Code:                "test-auth-code-boost-123",
-		ClientID:            "client-1",
-		UserID:              10001,
-		RedirectURI:         "https://example.com/callback",
-		Scope:               []string{"openid", "profile"},
-		CodeChallenge:       "challenge",
-		CodeChallengeMethod: "S256",
-		ExpiresAt:           time.Now().Add(10 * time.Minute),
-	}
-
-	if err := storage.StoreAuthCode(ctx, code); err != nil {
-		t.Fatalf("StoreAuthCode failed: %v", err)
-	}
-
-	// Get auth code
-	retrieved, err := storage.GetAuthCode(ctx, code.Code)
-	if err != nil {
-		t.Fatalf("GetAuthCode failed: %v", err)
-	}
-
-	if retrieved.Code != code.Code {
-		t.Errorf("expected Code %s, got %s", code.Code, retrieved.Code)
-	}
-	if retrieved.UserID != code.UserID {
-		t.Errorf("expected UserID %d, got %d", code.UserID, retrieved.UserID)
-	}
-}
 
 // =============================================================================
 // Storage Backend - GetTokenByValue
@@ -2288,84 +1938,9 @@ func TestBackendStorage_GetTokenByValue(t *testing.T) {
 // Storage Backend - DeleteTenant
 // =============================================================================
 
-func TestBackendStorage_DeleteTenant(t *testing.T) {
-	ctx := context.Background()
-	kv := newMockKVStore91()
-	storage := NewBackendStorage(kv)
-
-	// Create tenant
-	tenant := &Tenant{ID: "tenant-to-delete", Name: "Delete Tenant"}
-	if err := storage.CreateTenant(ctx, tenant); err != nil {
-		t.Fatalf("CreateTenant failed: %v", err)
-	}
-
-	// Delete tenant
-	if err := storage.DeleteTenant(ctx, "tenant-to-delete"); err != nil {
-		t.Fatalf("DeleteTenant failed: %v", err)
-	}
-
-	// Verify deleted
-	_, err := storage.GetTenant(ctx, "tenant-to-delete")
-	if err == nil {
-		t.Error("expected error for deleted tenant")
-	}
-}
-
-func TestBackendStorage_DeleteTenant_NotFound(t *testing.T) {
-	ctx := context.Background()
-	kv := newMockKVStore91()
-	storage := NewBackendStorage(kv)
-
-	// Delete non-existent tenant
-	err := storage.DeleteTenant(ctx, "non-existent-tenant")
-	if err == nil {
-		t.Error("expected error for non-existent tenant")
-	}
-}
-
 // =============================================================================
 // Storage Backend - UpdateTenant
 // =============================================================================
-
-func TestBackendStorage_UpdateTenant(t *testing.T) {
-	ctx := context.Background()
-	kv := newMockKVStore91()
-	storage := NewBackendStorage(kv)
-
-	// Create tenant
-	tenant := &Tenant{ID: "tenant-to-update", Name: "Original Name"}
-	if err := storage.CreateTenant(ctx, tenant); err != nil {
-		t.Fatalf("CreateTenant failed: %v", err)
-	}
-
-	// Update tenant
-	tenant.Name = "Updated Name"
-	if err := storage.UpdateTenant(ctx, tenant); err != nil {
-		t.Fatalf("UpdateTenant failed: %v", err)
-	}
-
-	// Verify updated
-	updated, err := storage.GetTenant(ctx, "tenant-to-update")
-	if err != nil {
-		t.Fatalf("GetTenant failed: %v", err)
-	}
-	if updated.Name != "Updated Name" {
-		t.Errorf("expected name 'Updated Name', got %s", updated.Name)
-	}
-}
-
-func TestBackendStorage_UpdateTenant_NotFound(t *testing.T) {
-	ctx := context.Background()
-	kv := newMockKVStore91()
-	storage := NewBackendStorage(kv)
-
-	// Update non-existent tenant
-	tenant := &Tenant{ID: "non-existent", Name: "Test"}
-	err := storage.UpdateTenant(ctx, tenant)
-	if err == nil {
-		t.Error("expected error for non-existent tenant")
-	}
-}
 
 // =============================================================================
 // Storage Backend - CreateUser_AlreadyExists
@@ -2378,82 +1953,13 @@ func TestBackendStorage_UpdateTenant_NotFound(t *testing.T) {
 // Storage Backend - DeleteAuthCode
 // =============================================================================
 
-func TestBackendStorage_DeleteAuthCode(t *testing.T) {
-	ctx := context.Background()
-	kv := newMockKVStore91()
-	storage := NewBackendStorage(kv)
-
-	code := &AuthCodeData{
-		Code:        "delete-auth-code",
-		ClientID:    "client-1",
-		UserID:      10001,
-		RedirectURI: "https://example.com/callback",
-		ExpiresAt:   time.Now().Add(10 * time.Minute),
-	}
-
-	if err := storage.StoreAuthCode(ctx, code); err != nil {
-		t.Fatalf("StoreAuthCode failed: %v", err)
-	}
-
-	// Delete auth code
-	if err := storage.DeleteAuthCode(ctx, code.Code); err != nil {
-		t.Fatalf("DeleteAuthCode failed: %v", err)
-	}
-
-	// Verify deleted
-	_, err := storage.GetAuthCode(ctx, code.Code)
-	if err == nil {
-		t.Error("expected error for deleted auth code")
-	}
-}
-
 // =============================================================================
 // Storage Backend - GetAppByTenant NotFound
 // =============================================================================
 
-func TestBackendStorage_GetAppByTenant_NotFound(t *testing.T) {
-	ctx := context.Background()
-	kv := newMockKVStore91()
-	storage := NewBackendStorage(kv)
-
-	_, err := storage.GetAppByTenant(ctx, "non-tenant", "non-client")
-	if err == nil {
-		t.Error("expected error for non-existent app by tenant")
-	}
-}
-
 // =============================================================================
 // Storage Backend - DeleteApp
 // =============================================================================
-
-func TestBackendStorage_DeleteApp(t *testing.T) {
-	ctx := context.Background()
-	kv := newMockKVStore91()
-	storage := NewBackendStorage(kv)
-
-	app := &Application{
-		ClientID:     "app-to-delete",
-		TenantID:     "delete-app-tenant",
-		Name:         "Delete App",
-		ClientSecret: "secret",
-		RedirectURIs: []string{"https://example.com/callback"},
-		GrantTypes:   []string{"authorization_code"},
-		Created:      time.Now(),
-		Updated:      time.Now(),
-	}
-	if err := storage.CreateApp(ctx, app); err != nil {
-		t.Fatalf("CreateApp failed: %v", err)
-	}
-
-	if err := storage.DeleteApp(ctx, app.ClientID); err != nil {
-		t.Fatalf("DeleteApp failed: %v", err)
-	}
-
-	_, err := storage.GetApp(ctx, app.ClientID)
-	if err == nil {
-		t.Error("expected error for deleted app")
-	}
-}
 
 // =============================================================================
 // Storage Backend - UpdateApp
@@ -2495,33 +2001,6 @@ func TestBackendStorage_UpdateApp(t *testing.T) {
 // =============================================================================
 // Storage Backend - ListTenants
 // =============================================================================
-
-func TestBackendStorage_ListTenants(t *testing.T) {
-	ctx := context.Background()
-	kv := newMockKVStore91()
-	storage := NewBackendStorage(kv)
-
-	// Create tenants
-	for i := 0; i < 3; i++ {
-		tenant := &Tenant{
-			ID:   fmt.Sprintf("list-tenant-%d", i),
-			Name: fmt.Sprintf("List Tenant %d", i),
-		}
-		if err := storage.CreateTenant(ctx, tenant); err != nil {
-			t.Fatalf("CreateTenant failed: %v", err)
-		}
-	}
-
-	// List tenants
-	tenants, err := storage.ListTenants(ctx, ListOptions{})
-	if err != nil {
-		t.Fatalf("ListTenants failed: %v", err)
-	}
-
-	if len(tenants) != 3 {
-		t.Errorf("expected 3 tenants, got %d", len(tenants))
-	}
-}
 
 // TestBackendStorage_ListTenants_ExcludesSubResources verifies that ListTenants
 // only returns actual tenant records, filtering out sub-resource keys such as
@@ -2622,233 +2101,62 @@ func TestBackendStorage_ListTenants_ExcludesSubResources_MultiTenant(t *testing.
 // Storage Backend - CreatePolicy and GetPolicy
 // =============================================================================
 
-func TestBackendStorage_PolicyOperations(t *testing.T) {
-	ctx := context.Background()
-	kv := newMockKVStore91()
-	storage := NewBackendStorage(kv)
-
-	tenantID := "policy-ops-tenant"
-
-	policy := &Policy{
-		APIVersion: "v1",
-		Kind:       "Policy",
-		Metadata:   PolicyMetadata{Name: "test-policy-ops", Tenant: tenantID},
-		Spec: PolicySpec{
-			Rules: []Rule{{Name: "r1", Effect: EffectAllow, Actions: []string{"read"}, Resources: []string{"*"}}},
-		},
-	}
-
-	if err := storage.CreatePolicy(ctx, tenantID, policy); err != nil {
-		t.Fatalf("CreatePolicy failed: %v", err)
-	}
-
-	retrieved, err := storage.GetPolicy(ctx, tenantID, "test-policy-ops")
-	if err != nil {
-		t.Fatalf("GetPolicy failed: %v", err)
-	}
-	if retrieved.Metadata.Name != "test-policy-ops" {
-		t.Errorf("expected name test-policy-ops, got %s", retrieved.Metadata.Name)
-	}
-}
-
-func TestBackendStorage_UpdatePolicy(t *testing.T) {
-	ctx := context.Background()
-	kv := newMockKVStore91()
-	storage := NewBackendStorage(kv)
-
-	tenantID := "update-policy-tenant"
-
-	policy := &Policy{
-		APIVersion: "v1",
-		Kind:       "Policy",
-		Metadata:   PolicyMetadata{Name: "update-me", Tenant: tenantID},
-		Spec: PolicySpec{
-			Rules: []Rule{{Name: "r1", Effect: EffectAllow, Actions: []string{"read"}, Resources: []string{"*"}}},
-		},
-	}
-
-	if err := storage.CreatePolicy(ctx, tenantID, policy); err != nil {
-		t.Fatalf("CreatePolicy failed: %v", err)
-	}
-
-	// Update
-	policy.Spec.Rules[0].Actions = []string{"read", "write"}
-	if err := storage.UpdatePolicy(ctx, tenantID, policy); err != nil {
-		t.Fatalf("UpdatePolicy failed: %v", err)
-	}
-
-	updated, _ := storage.GetPolicy(ctx, tenantID, "update-me")
-	if len(updated.Spec.Rules[0].Actions) != 2 {
-		t.Errorf("expected 2 actions, got %d", len(updated.Spec.Rules[0].Actions))
-	}
-}
-
-func TestBackendStorage_DeletePolicy(t *testing.T) {
-	ctx := context.Background()
-	kv := newMockKVStore91()
-	storage := NewBackendStorage(kv)
-
-	tenantID := "delete-policy-tenant"
-
-	policy := &Policy{
-		APIVersion: "v1",
-		Kind:       "Policy",
-		Metadata:   PolicyMetadata{Name: "delete-me", Tenant: tenantID},
-		Spec: PolicySpec{
-			Rules: []Rule{{Name: "r1", Effect: EffectAllow, Actions: []string{"read"}, Resources: []string{"*"}}},
-		},
-	}
-
-	if err := storage.CreatePolicy(ctx, tenantID, policy); err != nil {
-		t.Fatalf("CreatePolicy failed: %v", err)
-	}
-
-	if err := storage.DeletePolicy(ctx, tenantID, "delete-me"); err != nil {
-		t.Fatalf("DeletePolicy failed: %v", err)
-	}
-
-	_, err := storage.GetPolicy(ctx, tenantID, "delete-me")
-	if err == nil {
-		t.Error("expected error for deleted policy")
-	}
-}
-
 // =============================================================================
 // Storage Backend - UpdateRole and DeleteRole
 // =============================================================================
-
-func TestBackendStorage_UpdateRole(t *testing.T) {
-	ctx := context.Background()
-	kv := newMockKVStore91()
-	storage := NewBackendStorage(kv)
-
-	tenantID := "update-role-tenant"
-
-	role := &Role{
-		ID:       "update-role",
-		TenantID: tenantID,
-		Name:     "Original Role",
-		Created:  time.Now(),
-		Updated:  time.Now(),
-	}
-	if err := storage.CreateRole(ctx, role); err != nil {
-		t.Fatalf("CreateRole failed: %v", err)
-	}
-
-	role.Name = "Updated Role"
-	if err := storage.UpdateRole(ctx, role); err != nil {
-		t.Fatalf("UpdateRole failed: %v", err)
-	}
-
-	updated, _ := storage.GetRole(ctx, tenantID, "update-role")
-	if updated.Name != "Updated Role" {
-		t.Errorf("expected 'Updated Role', got %s", updated.Name)
-	}
-}
-
-func TestBackendStorage_DeleteRole(t *testing.T) {
-	ctx := context.Background()
-	kv := newMockKVStore91()
-	storage := NewBackendStorage(kv)
-
-	tenantID := "delete-role-tenant"
-
-	role := &Role{
-		ID:       "delete-role",
-		TenantID: tenantID,
-		Name:     "Delete Role",
-		Created:  time.Now(),
-		Updated:  time.Now(),
-	}
-	if err := storage.CreateRole(ctx, role); err != nil {
-		t.Fatalf("CreateRole failed: %v", err)
-	}
-
-	if err := storage.DeleteRole(ctx, tenantID, "delete-role"); err != nil {
-		t.Fatalf("DeleteRole failed: %v", err)
-	}
-
-	_, err := storage.GetRole(ctx, tenantID, "delete-role")
-	if err == nil {
-		t.Error("expected error for deleted role")
-	}
-}
 
 // =============================================================================
 // Additional tests to boost coverage past 91%
 // =============================================================================
 
 // Test CreatePolicy already exists error path
-func TestBackendStorage_CreatePolicy_AlreadyExists(t *testing.T) {
+func TestBackendStorage_AlreadyExistsErrors(t *testing.T) {
 	ctx := context.Background()
-	kv := newMockKVStore91()
-	storage := NewBackendStorage(kv)
+	storage := NewBackendStorage(newMockKVStore91())
 
-	tenantID := "dup-policy-tenant"
-
-	policy := &Policy{
-		APIVersion: "v1",
-		Kind:       "Policy",
-		Metadata:   PolicyMetadata{Name: "dup-policy", Tenant: tenantID},
-		Spec: PolicySpec{
-			Rules: []Rule{{Name: "r1", Effect: EffectAllow, Actions: []string{"read"}, Resources: []string{"*"}}},
-		},
+	tests := []struct {
+		name   string
+		create func() error
+	}{
+		{"CreateRole", func() error {
+			return storage.CreateRole(ctx, &Role{ID: "dup-role", TenantID: "tenant", Name: "Duplicate Role"})
+		}},
+		{"CreateApp", func() error {
+			return storage.CreateApp(ctx, &Application{
+				ClientID:     "dup-app",
+				TenantID:     "tenant",
+				Name:         "Duplicate App",
+				ClientSecret: "secret",
+				RedirectURIs: []string{"https://example.com/callback"},
+				GrantTypes:   []string{"authorization_code"},
+			})
+		}},
+		{"CreatePolicy", func() error {
+			return storage.CreatePolicy(ctx, "tenant", &Policy{
+				APIVersion: "v1",
+				Kind:       "Policy",
+				Metadata:   PolicyMetadata{Name: "dup-policy", Tenant: "tenant"},
+				Spec: PolicySpec{
+					Rules: []Rule{{Name: "r1", Effect: EffectAllow, Actions: []string{"read"}, Resources: []string{"*"}}},
+				},
+			})
+		}},
 	}
 
-	// Create first time
-	if err := storage.CreatePolicy(ctx, tenantID, policy); err != nil {
-		t.Fatalf("CreatePolicy (first) failed: %v", err)
-	}
-
-	// Create second time - should fail
-	err := storage.CreatePolicy(ctx, tenantID, policy)
-	if err == nil {
-		t.Error("expected error for duplicate policy")
-	}
-}
-
-// Test UpdatePolicy not found error path
-func TestBackendStorage_UpdatePolicy_NotFound(t *testing.T) {
-	ctx := context.Background()
-	kv := newMockKVStore91()
-	storage := NewBackendStorage(kv)
-
-	policy := &Policy{
-		APIVersion: "v1",
-		Kind:       "Policy",
-		Metadata:   PolicyMetadata{Name: "non-existent-policy", Tenant: "tenant"},
-		Spec: PolicySpec{
-			Rules: []Rule{{Name: "r1", Effect: EffectAllow, Actions: []string{"read"}, Resources: []string{"*"}}},
-		},
-	}
-
-	err := storage.UpdatePolicy(ctx, "tenant", policy)
-	if err == nil {
-		t.Error("expected error for non-existent policy")
-	}
-}
-
-// Test DeletePolicy not found error path
-func TestBackendStorage_DeletePolicy_NotFound(t *testing.T) {
-	ctx := context.Background()
-	kv := newMockKVStore91()
-	storage := NewBackendStorage(kv)
-
-	err := storage.DeletePolicy(ctx, "tenant", "non-existent-policy")
-	if err == nil {
-		t.Error("expected error for non-existent policy")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require.NoError(t, tt.create())
+			assert.Error(t, tt.create(), "second create must fail")
+		})
 	}
 }
 
 // Test ListPolicies with pagination offset and limit
 func TestBackendStorage_ListPolicies_WithOffsetAndLimit(t *testing.T) {
 	ctx := context.Background()
-	kv := newMockKVStore91()
-	storage := NewBackendStorage(kv)
+	storage := NewBackendStorage(newMockKVStore91())
 
 	tenantID := "paginated-policies-tenant"
-
-	// Create 10 policies
 	for i := 0; i < 10; i++ {
 		policy := &Policy{
 			APIVersion: "v1",
@@ -2858,29 +2166,24 @@ func TestBackendStorage_ListPolicies_WithOffsetAndLimit(t *testing.T) {
 				Rules: []Rule{{Name: "r1", Effect: EffectAllow, Actions: []string{"read"}, Resources: []string{"*"}}},
 			},
 		}
-		if err := storage.CreatePolicy(ctx, tenantID, policy); err != nil {
-			t.Fatalf("CreatePolicy failed: %v", err)
-		}
+		require.NoError(t, storage.CreatePolicy(ctx, tenantID, policy))
 	}
 
-	// List with offset and limit
-	policies, err := storage.ListPolicies(ctx, tenantID, ListOptions{Offset: 2, Limit: 3})
-	if err != nil {
-		t.Fatalf("ListPolicies failed: %v", err)
+	tests := []struct {
+		name string
+		opts ListOptions
+		want int
+	}{
+		{"all", ListOptions{}, 10},
+		{"offset and limit", ListOptions{Offset: 2, Limit: 3}, 3},
+		{"offset beyond total", ListOptions{Offset: 100}, 0},
 	}
-
-	if len(policies) != 3 {
-		t.Errorf("expected 3 policies, got %d", len(policies))
-	}
-
-	// List with offset beyond total
-	policies, err = storage.ListPolicies(ctx, tenantID, ListOptions{Offset: 100})
-	if err != nil {
-		t.Fatalf("ListPolicies (offset beyond) failed: %v", err)
-	}
-
-	if len(policies) != 0 {
-		t.Errorf("expected 0 policies with offset beyond total, got %d", len(policies))
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			policies, err := storage.ListPolicies(ctx, tenantID, tt.opts)
+			require.NoError(t, err)
+			assert.Len(t, policies, tt.want)
+		})
 	}
 }
 
@@ -2894,23 +2197,6 @@ func TestBackendStorage_RevokeUserTokens_NoTokens(t *testing.T) {
 	err := storage.RevokeUserTokens(ctx, "user-with-no-tokens")
 	if err != nil {
 		t.Fatalf("RevokeUserTokens (no tokens) failed: %v", err)
-	}
-}
-
-// Test GetQuota returns empty quota when not found (per implementation behavior)
-func TestBackendStorage_GetQuota_ReturnsEmptyWhenNotSet(t *testing.T) {
-	ctx := context.Background()
-	kv := newMockKVStore91()
-	storage := NewBackendStorage(kv)
-
-	// GetQuota returns empty quota (not error) when quota doesn't exist
-	quota, err := storage.GetQuota(ctx, "non-existent-tenant")
-	if err != nil {
-		t.Fatalf("GetQuota should not error: %v", err)
-	}
-	// Returns an empty quota
-	if quota == nil {
-		t.Error("expected empty quota, got nil")
 	}
 }
 
@@ -3000,182 +2286,9 @@ func TestBackendStorage_IncrementQuotaUsage_UnknownResourceIgnored(t *testing.T)
 	}
 }
 
-// Test UpdateRole not found
-func TestBackendStorage_UpdateRole_NotFound(t *testing.T) {
-	ctx := context.Background()
-	kv := newMockKVStore91()
-	storage := NewBackendStorage(kv)
-
-	role := &Role{
-		ID:       "non-existent-role",
-		TenantID: "tenant",
-		Name:     "Non-existent",
-	}
-
-	err := storage.UpdateRole(ctx, role)
-	if err == nil {
-		t.Error("expected error for non-existent role")
-	}
-}
-
-// Test DeleteRole not found
-func TestBackendStorage_DeleteRole_NotFound(t *testing.T) {
-	ctx := context.Background()
-	kv := newMockKVStore91()
-	storage := NewBackendStorage(kv)
-
-	err := storage.DeleteRole(ctx, "tenant", "non-existent-role")
-	if err == nil {
-		t.Error("expected error for non-existent role")
-	}
-}
-
 // Test UpdateUser not found
 // BackendStorage UpdateUser/DeleteUser not-found tests were removed in phase
 // C1-F: BackendStorage no longer persists users (qrdb owns the user record).
-
-// Test UpdateApp not found
-func TestBackendStorage_UpdateApp_NotFound(t *testing.T) {
-	ctx := context.Background()
-	kv := newMockKVStore91()
-	storage := NewBackendStorage(kv)
-
-	app := &Application{
-		ClientID: "non-existent-app",
-		TenantID: "tenant",
-		Name:     "Non-existent",
-	}
-
-	err := storage.UpdateApp(ctx, app)
-	if err == nil {
-		t.Error("expected error for non-existent app")
-	}
-}
-
-// Test DeleteApp not found
-func TestBackendStorage_DeleteApp_NotFound(t *testing.T) {
-	ctx := context.Background()
-	kv := newMockKVStore91()
-	storage := NewBackendStorage(kv)
-
-	err := storage.DeleteApp(ctx, "non-existent-app")
-	if err == nil {
-		t.Error("expected error for non-existent app")
-	}
-}
-
-// Test CreateTenant already exists
-func TestBackendStorage_CreateTenant_AlreadyExists(t *testing.T) {
-	ctx := context.Background()
-	kv := newMockKVStore91()
-	storage := NewBackendStorage(kv)
-
-	tenant := &Tenant{ID: "dup-tenant", Name: "Duplicate Tenant"}
-
-	// Create first time
-	if err := storage.CreateTenant(ctx, tenant); err != nil {
-		t.Fatalf("CreateTenant (first) failed: %v", err)
-	}
-
-	// Create second time - should fail
-	err := storage.CreateTenant(ctx, tenant)
-	if err == nil {
-		t.Error("expected error for duplicate tenant")
-	}
-}
-
-// Test CreateRole already exists
-func TestBackendStorage_CreateRole_AlreadyExists(t *testing.T) {
-	ctx := context.Background()
-	kv := newMockKVStore91()
-	storage := NewBackendStorage(kv)
-
-	role := &Role{
-		ID:       "dup-role",
-		TenantID: "tenant",
-		Name:     "Duplicate Role",
-		Created:  time.Now(),
-		Updated:  time.Now(),
-	}
-
-	// Create first time
-	if err := storage.CreateRole(ctx, role); err != nil {
-		t.Fatalf("CreateRole (first) failed: %v", err)
-	}
-
-	// Create second time - should fail
-	err := storage.CreateRole(ctx, role)
-	if err == nil {
-		t.Error("expected error for duplicate role")
-	}
-}
-
-// Test CreateApp already exists
-func TestBackendStorage_CreateApp_AlreadyExists(t *testing.T) {
-	ctx := context.Background()
-	kv := newMockKVStore91()
-	storage := NewBackendStorage(kv)
-
-	app := &Application{
-		ClientID:     "dup-app",
-		TenantID:     "tenant",
-		Name:         "Duplicate App",
-		ClientSecret: "secret",
-		RedirectURIs: []string{"https://example.com/callback"},
-		GrantTypes:   []string{"authorization_code"},
-		Created:      time.Now(),
-		Updated:      time.Now(),
-	}
-
-	// Create first time
-	if err := storage.CreateApp(ctx, app); err != nil {
-		t.Fatalf("CreateApp (first) failed: %v", err)
-	}
-
-	// Create second time - should fail
-	err := storage.CreateApp(ctx, app)
-	if err == nil {
-		t.Error("expected error for duplicate app")
-	}
-}
-
-// Test RevokeToken not found
-func TestBackendStorage_RevokeToken_NotFound(t *testing.T) {
-	ctx := context.Background()
-	kv := newMockKVStore91()
-	storage := NewBackendStorage(kv)
-
-	err := storage.RevokeToken(ctx, "non-existent-token")
-	if err == nil {
-		t.Error("expected error for non-existent token")
-	}
-}
-
-// Test GetToken not found
-func TestBackendStorage_GetToken_NotFound(t *testing.T) {
-	ctx := context.Background()
-	kv := newMockKVStore91()
-	storage := NewBackendStorage(kv)
-
-	_, err := storage.GetToken(ctx, "non-existent-token")
-	if err == nil {
-		t.Error("expected error for non-existent token")
-	}
-}
-
-// Test ValidateClientSecret for non-existent app
-func TestBackendStorage_ValidateClientSecret_NotFound(t *testing.T) {
-	t.Parallel()
-
-	ctx := context.Background()
-	kv := newMockKVStore91()
-	storage := NewBackendStorage(kv)
-
-	_, err := storage.ValidateClientSecret(ctx, "non-existent-app", "secret")
-	if err == nil {
-		t.Error("expected error for non-existent app")
-	}
-}
 
 // Test GetUserByEmail not found
 // TestBackendStorage_GetUserByEmail_NotFound and the BackendStorage ListUsers
@@ -3187,169 +2300,42 @@ func TestBackendStorage_ValidateClientSecret_NotFound(t *testing.T) {
 // Additional tests to boost coverage past 91%
 // =============================================================================
 
-// Test ListRoles with offset
-func TestBackendStorage_ListRoles_WithOffset(t *testing.T) {
-	ctx := context.Background()
-	kv := newMockKVStore91()
-	storage := NewBackendStorage(kv)
-
-	tenantID := "list-roles-offset-tenant"
-
-	// Create 5 roles
-	for i := 0; i < 5; i++ {
-		role := &Role{
-			ID:       fmt.Sprintf("role-offset-%d", i),
-			TenantID: tenantID,
-			Name:     fmt.Sprintf("Role Offset %d", i),
-			Created:  time.Now(),
-			Updated:  time.Now(),
-		}
-		if err := storage.CreateRole(ctx, role); err != nil {
-			t.Fatalf("CreateRole failed: %v", err)
-		}
-	}
-
-	// List with offset beyond total
-	roles, err := storage.ListRoles(ctx, tenantID, ListOptions{Offset: 100})
-	if err != nil {
-		t.Fatalf("ListRoles (offset beyond) failed: %v", err)
-	}
-	if len(roles) != 0 {
-		t.Errorf("expected 0 roles with offset beyond total, got %d", len(roles))
-	}
-}
-
-// Test ListApps with offset
-func TestBackendStorage_ListApps_WithOffset(t *testing.T) {
-	ctx := context.Background()
-	kv := newMockKVStore91()
-	storage := NewBackendStorage(kv)
-
-	tenantID := "list-apps-offset-tenant"
-
-	// Create 5 apps
-	for i := 0; i < 5; i++ {
-		app := &Application{
-			ClientID:     fmt.Sprintf("client-offset-%d", i),
-			TenantID:     tenantID,
-			Name:         fmt.Sprintf("App Offset %d", i),
-			ClientSecret: "secret",
-			RedirectURIs: []string{"https://example.com/callback"},
-			GrantTypes:   []string{"authorization_code"},
-			Created:      time.Now(),
-			Updated:      time.Now(),
-		}
-		if err := storage.CreateApp(ctx, app); err != nil {
-			t.Fatalf("CreateApp failed: %v", err)
-		}
-	}
-
-	// List with offset beyond total
-	apps, err := storage.ListApps(ctx, tenantID, ListOptions{Offset: 100})
-	if err != nil {
-		t.Fatalf("ListApps (offset beyond) failed: %v", err)
-	}
-	if len(apps) != 0 {
-		t.Errorf("expected 0 apps with offset beyond total, got %d", len(apps))
-	}
-}
-
 // Test ListTenants with pagination
 func TestBackendStorage_ListTenants_WithPagination(t *testing.T) {
 	ctx := context.Background()
-	kv := newMockKVStore91()
-	storage := NewBackendStorage(kv)
+	storage := NewBackendStorage(newMockKVStore91())
 
-	// Create 5 tenants
 	for i := 0; i < 5; i++ {
 		tenant := &Tenant{
 			ID:   fmt.Sprintf("tenant-pagination-%d", i),
 			Name: fmt.Sprintf("Tenant Pagination %d", i),
 		}
-		if err := storage.CreateTenant(ctx, tenant); err != nil {
-			t.Fatalf("CreateTenant failed: %v", err)
-		}
+		require.NoError(t, storage.CreateTenant(ctx, tenant))
 	}
 
-	// List with limit
-	tenants, err := storage.ListTenants(ctx, ListOptions{Limit: 2})
-	if err != nil {
-		t.Fatalf("ListTenants (limit) failed: %v", err)
+	tests := []struct {
+		name string
+		opts ListOptions
+		want int
+	}{
+		{"all", ListOptions{}, 5},
+		{"limit", ListOptions{Limit: 2}, 2},
+		{"offset", ListOptions{Offset: 3}, 2},
+		{"offset and limit", ListOptions{Offset: 1, Limit: 2}, 2},
+		{"offset beyond total", ListOptions{Offset: 100}, 0},
 	}
-	if len(tenants) != 2 {
-		t.Errorf("expected 2 tenants with limit, got %d", len(tenants))
-	}
-
-	// List with offset beyond total
-	tenants, err = storage.ListTenants(ctx, ListOptions{Offset: 100})
-	if err != nil {
-		t.Fatalf("ListTenants (offset beyond) failed: %v", err)
-	}
-	if len(tenants) != 0 {
-		t.Errorf("expected 0 tenants with offset beyond total, got %d", len(tenants))
-	}
-
-	// List with offset and limit
-	tenants, err = storage.ListTenants(ctx, ListOptions{Offset: 1, Limit: 2})
-	if err != nil {
-		t.Fatalf("ListTenants (offset + limit) failed: %v", err)
-	}
-	if len(tenants) != 2 {
-		t.Errorf("expected 2 tenants with offset + limit, got %d", len(tenants))
-	}
-}
-
-// Test GetPolicy not found
-func TestBackendStorage_GetPolicy_NotFound(t *testing.T) {
-	ctx := context.Background()
-	kv := newMockKVStore91()
-	storage := NewBackendStorage(kv)
-
-	_, err := storage.GetPolicy(ctx, "tenant", "non-existent-policy")
-	if err == nil {
-		t.Error("expected error for non-existent policy")
-	}
-}
-
-// Test GetRole not found
-func TestBackendStorage_GetRole_NotFound(t *testing.T) {
-	ctx := context.Background()
-	kv := newMockKVStore91()
-	storage := NewBackendStorage(kv)
-
-	_, err := storage.GetRole(ctx, "tenant", "non-existent-role")
-	if err == nil {
-		t.Error("expected error for non-existent role")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tenants, err := storage.ListTenants(ctx, tt.opts)
+			require.NoError(t, err)
+			assert.Len(t, tenants, tt.want)
+		})
 	}
 }
 
 // Test GetUser not found
 // TestBackendStorage_GetUser_NotFound was removed in phase C1-F: BackendStorage
 // no longer persists users (qrdb owns the user record).
-
-// Test GetApp not found
-func TestBackendStorage_GetApp_NotFound(t *testing.T) {
-	ctx := context.Background()
-	kv := newMockKVStore91()
-	storage := NewBackendStorage(kv)
-
-	_, err := storage.GetApp(ctx, "non-existent-app")
-	if err == nil {
-		t.Error("expected error for non-existent app")
-	}
-}
-
-// Test GetTenant not found
-func TestBackendStorage_GetTenant_NotFound(t *testing.T) {
-	ctx := context.Background()
-	kv := newMockKVStore91()
-	storage := NewBackendStorage(kv)
-
-	_, err := storage.GetTenant(ctx, "non-existent-tenant")
-	if err == nil {
-		t.Error("expected error for non-existent tenant")
-	}
-}
 
 // Test GetSettings returns empty when not set
 func TestBackendStorage_GetSettings_ReturnsEmptyWhenNotSet(t *testing.T) {
@@ -3364,221 +2350,6 @@ func TestBackendStorage_GetSettings_ReturnsEmptyWhenNotSet(t *testing.T) {
 	}
 	if settings == nil {
 		t.Error("expected empty settings, got nil")
-	}
-}
-
-// Test UpdateSettings for existing tenant
-func TestBackendStorage_UpdateSettings_Update(t *testing.T) {
-	ctx := context.Background()
-	kv := newMockKVStore91()
-	storage := NewBackendStorage(kv)
-
-	tenantID := "settings-update-tenant"
-
-	// Create tenant
-	tenant := &Tenant{ID: tenantID, Name: "Settings Update Tenant"}
-	if err := storage.CreateTenant(ctx, tenant); err != nil {
-		t.Fatalf("CreateTenant failed: %v", err)
-	}
-
-	// Set initial settings
-	settings1 := &TenantSettings{MFARequired: false, TokenTTL: 1 * time.Hour}
-	if err := storage.UpdateSettings(ctx, tenantID, settings1); err != nil {
-		t.Fatalf("UpdateSettings (initial) failed: %v", err)
-	}
-
-	// Update settings
-	settings2 := &TenantSettings{MFARequired: true, TokenTTL: 2 * time.Hour}
-	if err := storage.UpdateSettings(ctx, tenantID, settings2); err != nil {
-		t.Fatalf("UpdateSettings (update) failed: %v", err)
-	}
-
-	// Verify update
-	retrieved, _ := storage.GetSettings(ctx, tenantID)
-	if !retrieved.MFARequired {
-		t.Error("expected MFARequired=true")
-	}
-	if retrieved.TokenTTL != 2*time.Hour {
-		t.Errorf("expected TokenTTL=2h, got %v", retrieved.TokenTTL)
-	}
-}
-
-// Test UpdateQuota for existing tenant
-func TestBackendStorage_UpdateQuota_Update(t *testing.T) {
-	ctx := context.Background()
-	kv := newMockKVStore91()
-	storage := NewBackendStorage(kv)
-
-	tenantID := "quota-update-tenant"
-
-	// Create tenant
-	tenant := &Tenant{ID: tenantID, Name: "Quota Update Tenant"}
-	if err := storage.CreateTenant(ctx, tenant); err != nil {
-		t.Fatalf("CreateTenant failed: %v", err)
-	}
-
-	// Set initial BaaS-layer IAM quota (users are engine-level, owned by qrdb)
-	quota1 := &TenantQuota{MaxPolicies: 10, CurrentPolicies: 5}
-	if err := storage.UpdateQuota(ctx, tenantID, quota1); err != nil {
-		t.Fatalf("UpdateQuota (initial) failed: %v", err)
-	}
-
-	// Update quota
-	quota2 := &TenantQuota{MaxPolicies: 100, CurrentPolicies: 10}
-	if err := storage.UpdateQuota(ctx, tenantID, quota2); err != nil {
-		t.Fatalf("UpdateQuota (update) failed: %v", err)
-	}
-
-	// Verify update
-	retrieved, _ := storage.GetQuota(ctx, tenantID)
-	if retrieved.MaxPolicies != 100 {
-		t.Errorf("expected MaxPolicies=100, got %d", retrieved.MaxPolicies)
-	}
-	if retrieved.CurrentPolicies != 10 {
-		t.Errorf("expected CurrentPolicies=10, got %d", retrieved.CurrentPolicies)
-	}
-}
-
-// Test GetAuthCode not found
-func TestBackendStorage_GetAuthCode_NotFound(t *testing.T) {
-	ctx := context.Background()
-	kv := newMockKVStore91()
-	storage := NewBackendStorage(kv)
-
-	_, err := storage.GetAuthCode(ctx, "non-existent-code")
-	if err == nil {
-		t.Error("expected error for non-existent auth code")
-	}
-}
-
-// Test GetTokenByValue not found
-func TestBackendStorage_GetTokenByValue_NotFound(t *testing.T) {
-	ctx := context.Background()
-	kv := newMockKVStore91()
-	storage := NewBackendStorage(kv)
-
-	_, err := storage.GetTokenByValue(ctx, "non-existent-token-value")
-	if err == nil {
-		t.Error("expected error for non-existent token value")
-	}
-}
-
-// Test ListTokensByUser with multiple tokens
-func TestBackendStorage_ListTokensByUser_MultipleTokens(t *testing.T) {
-	ctx := context.Background()
-	kv := newMockKVStore91()
-	storage := NewBackendStorage(kv)
-
-	userID := "user-multiple-tokens"
-
-	// Store multiple tokens for the same user
-	for i := 0; i < 3; i++ {
-		token := &Token{
-			JTI:       fmt.Sprintf("token-multi-%d", i),
-			Subject:   userID,
-			ClientID:  "client-1",
-			TokenType: TokenTypeAccess,
-			Issued:    time.Now(),
-			Expires:   time.Now().Add(1 * time.Hour),
-		}
-		if err := storage.StoreToken(ctx, token); err != nil {
-			t.Fatalf("StoreToken failed: %v", err)
-		}
-	}
-
-	// Also store tokens for another user
-	for i := 0; i < 2; i++ {
-		token := &Token{
-			JTI:       fmt.Sprintf("token-other-%d", i),
-			Subject:   "other-user",
-			ClientID:  "client-1",
-			TokenType: TokenTypeAccess,
-			Issued:    time.Now(),
-			Expires:   time.Now().Add(1 * time.Hour),
-		}
-		if err := storage.StoreToken(ctx, token); err != nil {
-			t.Fatalf("StoreToken failed: %v", err)
-		}
-	}
-
-	// List tokens for target user
-	tokens, err := storage.ListTokensByUser(ctx, userID)
-	if err != nil {
-		t.Fatalf("ListTokensByUser failed: %v", err)
-	}
-	if len(tokens) != 3 {
-		t.Errorf("expected 3 tokens for user, got %d", len(tokens))
-	}
-}
-
-// Test DeleteExpiredTokens with no expired tokens
-func TestBackendStorage_DeleteExpiredTokens_NoExpired(t *testing.T) {
-	ctx := context.Background()
-	kv := newMockKVStore91()
-	storage := NewBackendStorage(kv)
-
-	// Store a valid token
-	token := &Token{
-		JTI:       "valid-token-no-expire",
-		Subject:   "user-1",
-		TokenType: TokenTypeAccess,
-		Issued:    time.Now(),
-		Expires:   time.Now().Add(1 * time.Hour),
-	}
-	if err := storage.StoreToken(ctx, token); err != nil {
-		t.Fatalf("StoreToken failed: %v", err)
-	}
-
-	// Delete expired tokens - should not affect the valid token
-	if err := storage.DeleteExpiredTokens(ctx); err != nil {
-		t.Fatalf("DeleteExpiredTokens failed: %v", err)
-	}
-
-	// Token should still exist
-	_, err := storage.GetToken(ctx, token.JTI)
-	if err != nil {
-		t.Errorf("valid token should still exist: %v", err)
-	}
-}
-
-// Test StoreAuthCode and DeleteAuthCode roundtrip
-func TestBackendStorage_AuthCode_Roundtrip(t *testing.T) {
-	ctx := context.Background()
-	kv := newMockKVStore91()
-	storage := NewBackendStorage(kv)
-
-	code := &AuthCodeData{
-		Code:        "auth-code-roundtrip",
-		ClientID:    "client-1",
-		UserID:      10001,
-		RedirectURI: "https://example.com/callback",
-		Scope:       []string{"openid"},
-		ExpiresAt:   time.Now().Add(10 * time.Minute),
-	}
-
-	// Store
-	if err := storage.StoreAuthCode(ctx, code); err != nil {
-		t.Fatalf("StoreAuthCode failed: %v", err)
-	}
-
-	// Get
-	retrieved, err := storage.GetAuthCode(ctx, code.Code)
-	if err != nil {
-		t.Fatalf("GetAuthCode failed: %v", err)
-	}
-	if retrieved.Code != code.Code {
-		t.Errorf("expected code %s, got %s", code.Code, retrieved.Code)
-	}
-
-	// Delete
-	if err := storage.DeleteAuthCode(ctx, code.Code); err != nil {
-		t.Fatalf("DeleteAuthCode failed: %v", err)
-	}
-
-	// Verify deleted
-	_, err = storage.GetAuthCode(ctx, code.Code)
-	if err == nil {
-		t.Error("expected error for deleted auth code")
 	}
 }
 
@@ -3799,65 +2570,7 @@ func TestBackendStorage_ListTokensByUser_MixedUsers(t *testing.T) {
 	}
 }
 
-// Test DeleteTenant cascade with sessions
-func TestBackendStorage_DeleteTenant_WithSessions(t *testing.T) {
-	ctx := context.Background()
-	kv := newMockKVStore91()
-	storage := NewBackendStorage(kv)
-
-	tenantID := "cascade-sessions-91"
-
-	// Create tenant
-	tenant := &Tenant{ID: tenantID, Name: "Session Test"}
-	if err := storage.CreateTenant(ctx, tenant); err != nil {
-		t.Fatalf("CreateTenant failed: %v", err)
-	}
-
-	// Delete tenant - verifies cascade works without errors
-	if err := storage.DeleteTenant(ctx, tenantID); err != nil {
-		t.Fatalf("DeleteTenant failed: %v", err)
-	}
-
-	// Verify tenant is gone
-	_, err := storage.GetTenant(ctx, tenantID)
-	if err == nil {
-		t.Error("tenant should be deleted")
-	}
-}
-
 // Test UpdateSettings with valid tenant
-
-// Test UpdateSettings with valid tenant
-func TestBackendStorage_UpdateSettings_ValidTenant91(t *testing.T) {
-	ctx := context.Background()
-	kv := newMockKVStore91()
-	storage := NewBackendStorage(kv)
-
-	tenantID := "settings-valid-91"
-
-	// Create tenant
-	tenant := &Tenant{ID: tenantID, Name: "Settings Test"}
-	if err := storage.CreateTenant(ctx, tenant); err != nil {
-		t.Fatalf("CreateTenant failed: %v", err)
-	}
-
-	// Update settings
-	settings := &TenantSettings{
-		MaxUsers: 100,
-	}
-	if err := storage.UpdateSettings(ctx, tenantID, settings); err != nil {
-		t.Fatalf("UpdateSettings failed: %v", err)
-	}
-
-	// Verify settings
-	retrieved, err := storage.GetSettings(ctx, tenantID)
-	if err != nil {
-		t.Fatalf("GetSettings failed: %v", err)
-	}
-	if retrieved.MaxUsers != 100 {
-		t.Errorf("expected MaxUsers 100, got %d", retrieved.MaxUsers)
-	}
-}
 
 // Test CreateApp index creation
 func TestBackendStorage_CreateApp_IndexCreation91(t *testing.T) {
@@ -3948,323 +2661,9 @@ func TestBackendStorage_DeleteApp_IndexCleanup91(t *testing.T) {
 // BackendStorage no longer persists or lists users (qrdb owns the user record).
 // User list pagination is covered by the MemoryStorage and qrdbadapter suites.
 
-// Test StoreAuthCode and retrieval
-func TestBackendStorage_StoreAuthCode_Roundtrip91(t *testing.T) {
-	ctx := context.Background()
-	kv := newMockKVStore91()
-	storage := NewBackendStorage(kv)
-
-	code := &AuthCodeData{
-		Code:        "auth-code-91-new",
-		ClientID:    "client-91-new",
-		UserID:      40050,
-		RedirectURI: "https://example.com/callback",
-		Scope:       []string{"openid", "profile"},
-		Nonce:       "nonce-91-new",
-		ExpiresAt:   time.Now().Add(10 * time.Minute),
-	}
-
-	// Store
-	if err := storage.StoreAuthCode(ctx, code); err != nil {
-		t.Fatalf("StoreAuthCode failed: %v", err)
-	}
-
-	// Retrieve
-	retrieved, err := storage.GetAuthCode(ctx, code.Code)
-	if err != nil {
-		t.Fatalf("GetAuthCode failed: %v", err)
-	}
-
-	if retrieved.Code != code.Code {
-		t.Errorf("expected code %s, got %s", code.Code, retrieved.Code)
-	}
-	if retrieved.ClientID != code.ClientID {
-		t.Errorf("expected clientID %s, got %s", code.ClientID, retrieved.ClientID)
-	}
-	if len(retrieved.Scope) != 2 {
-		t.Errorf("expected 2 scopes, got %d", len(retrieved.Scope))
-	}
-}
-
-// Test GetRole not found
-func TestBackendStorage_GetRole_NotFound91(t *testing.T) {
-	ctx := context.Background()
-	kv := newMockKVStore91()
-	storage := NewBackendStorage(kv)
-
-	_, err := storage.GetRole(ctx, "tenant", "non-existent-role")
-	if err == nil {
-		t.Error("expected error for non-existent role")
-	}
-}
-
-// Test UpdateRole
-func TestBackendStorage_UpdateRole_91(t *testing.T) {
-	ctx := context.Background()
-	kv := newMockKVStore91()
-	storage := NewBackendStorage(kv)
-
-	tenantID := "role-update-91"
-
-	// Create tenant
-	tenant := &Tenant{ID: tenantID, Name: "Test"}
-	if err := storage.CreateTenant(ctx, tenant); err != nil {
-		t.Fatalf("CreateTenant failed: %v", err)
-	}
-
-	// Create role
-	role := &Role{
-		ID:       "role-91",
-		TenantID: tenantID,
-		Name:     "Original Name",
-	}
-	if err := storage.CreateRole(ctx, role); err != nil {
-		t.Fatalf("CreateRole failed: %v", err)
-	}
-
-	// Update role
-	role.Name = "Updated Name"
-	if err := storage.UpdateRole(ctx, role); err != nil {
-		t.Fatalf("UpdateRole failed: %v", err)
-	}
-
-	// Verify
-	retrieved, err := storage.GetRole(ctx, tenantID, role.ID)
-	if err != nil {
-		t.Fatalf("GetRole failed: %v", err)
-	}
-	if retrieved.Name != "Updated Name" {
-		t.Errorf("expected 'Updated Name', got '%s'", retrieved.Name)
-	}
-}
-
-// Test DeleteRole
-func TestBackendStorage_DeleteRole_91(t *testing.T) {
-	ctx := context.Background()
-	kv := newMockKVStore91()
-	storage := NewBackendStorage(kv)
-
-	tenantID := "role-delete-91"
-
-	// Create tenant
-	tenant := &Tenant{ID: tenantID, Name: "Test"}
-	if err := storage.CreateTenant(ctx, tenant); err != nil {
-		t.Fatalf("CreateTenant failed: %v", err)
-	}
-
-	// Create role
-	role := &Role{
-		ID:       "role-delete-91",
-		TenantID: tenantID,
-		Name:     "To Delete",
-	}
-	if err := storage.CreateRole(ctx, role); err != nil {
-		t.Fatalf("CreateRole failed: %v", err)
-	}
-
-	// Delete role
-	if err := storage.DeleteRole(ctx, tenantID, role.ID); err != nil {
-		t.Fatalf("DeleteRole failed: %v", err)
-	}
-
-	// Verify deleted
-	_, err := storage.GetRole(ctx, tenantID, role.ID)
-	if err == nil {
-		t.Error("role should be deleted")
-	}
-}
-
-// Test UpdateApp
-func TestBackendStorage_UpdateApp_91(t *testing.T) {
-	ctx := context.Background()
-	kv := newMockKVStore91()
-	storage := NewBackendStorage(kv)
-
-	tenantID := "app-update-91"
-	clientID := "client-update-91"
-
-	// Create tenant
-	tenant := &Tenant{ID: tenantID, Name: "Test"}
-	if err := storage.CreateTenant(ctx, tenant); err != nil {
-		t.Fatalf("CreateTenant failed: %v", err)
-	}
-
-	// Create app
-	app := &Application{
-		ClientID: clientID,
-		Name:     "Original App",
-		TenantID: tenantID,
-	}
-	if err := storage.CreateApp(ctx, app); err != nil {
-		t.Fatalf("CreateApp failed: %v", err)
-	}
-
-	// Update app
-	app.Name = "Updated App"
-	if err := storage.UpdateApp(ctx, app); err != nil {
-		t.Fatalf("UpdateApp failed: %v", err)
-	}
-
-	// Verify
-	retrieved, err := storage.GetApp(ctx, clientID)
-	if err != nil {
-		t.Fatalf("GetApp failed: %v", err)
-	}
-	if retrieved.Name != "Updated App" {
-		t.Errorf("expected 'Updated App', got '%s'", retrieved.Name)
-	}
-}
-
-// Test UpdateTenant
-func TestBackendStorage_UpdateTenant_91(t *testing.T) {
-	ctx := context.Background()
-	kv := newMockKVStore91()
-	storage := NewBackendStorage(kv)
-
-	tenantID := "tenant-update-91"
-
-	// Create tenant
-	tenant := &Tenant{ID: tenantID, Name: "Original Tenant"}
-	if err := storage.CreateTenant(ctx, tenant); err != nil {
-		t.Fatalf("CreateTenant failed: %v", err)
-	}
-
-	// Update tenant
-	tenant.Name = "Updated Tenant"
-	if err := storage.UpdateTenant(ctx, tenant); err != nil {
-		t.Fatalf("UpdateTenant failed: %v", err)
-	}
-
-	// Verify
-	retrieved, err := storage.GetTenant(ctx, tenantID)
-	if err != nil {
-		t.Fatalf("GetTenant failed: %v", err)
-	}
-	if retrieved.Name != "Updated Tenant" {
-		t.Errorf("expected 'Updated Tenant', got '%s'", retrieved.Name)
-	}
-}
-
-// Test ListTenants pagination
-func TestBackendStorage_ListTenants_Pagination91(t *testing.T) {
-	ctx := context.Background()
-	kv := newMockKVStore91()
-	storage := NewBackendStorage(kv)
-
-	// Create tenants
-	for i := 0; i < 5; i++ {
-		tenant := &Tenant{
-			ID:   fmt.Sprintf("tenant-pagination-91-%d", i),
-			Name: fmt.Sprintf("Tenant %d", i),
-		}
-		if err := storage.CreateTenant(ctx, tenant); err != nil {
-			t.Fatalf("CreateTenant failed: %v", err)
-		}
-	}
-
-	// Test with limit
-	tenants, err := storage.ListTenants(ctx, ListOptions{Limit: 2})
-	if err != nil {
-		t.Fatalf("ListTenants failed: %v", err)
-	}
-	if len(tenants) != 2 {
-		t.Errorf("expected 2 tenants with limit, got %d", len(tenants))
-	}
-
-	// Test with offset
-	tenants, err = storage.ListTenants(ctx, ListOptions{Offset: 3})
-	if err != nil {
-		t.Fatalf("ListTenants failed: %v", err)
-	}
-	if len(tenants) != 2 {
-		t.Errorf("expected 2 tenants with offset 3, got %d", len(tenants))
-	}
-
-	// Test with offset beyond count
-	tenants, err = storage.ListTenants(ctx, ListOptions{Offset: 100})
-	if err != nil {
-		t.Fatalf("ListTenants failed: %v", err)
-	}
-	if len(tenants) != 0 {
-		t.Errorf("expected 0 tenants, got %d", len(tenants))
-	}
-}
-
 // =============================================================================
 // DeltaLog tests for cache_sync.go coverage
 // =============================================================================
-
-// Test DeltaLog GetSince with version too old
-func TestDeltaLog_GetSince_VersionTooOld91(t *testing.T) {
-	dl := NewDeltaLog(100)
-	tenantID := "test-tenant-91"
-
-	// Append some events with version starting at 10
-	for i := int64(10); i < 20; i++ {
-		event := &EnhancedPolicyChangeEvent{
-			TenantID: tenantID,
-			Version:  i,
-		}
-		if err := dl.Append(event); err != nil {
-			t.Fatalf("Append failed: %v", err)
-		}
-	}
-
-	// Try to get events since version 5 (before min)
-	_, err := dl.GetSince(tenantID, 5)
-	if err == nil {
-		t.Error("expected error for version too old")
-	}
-}
-
-// Test DeltaLog Size
-func TestDeltaLog_Size91(t *testing.T) {
-	dl := NewDeltaLog(100)
-
-	// Initially empty
-	if dl.Size() != 0 {
-		t.Errorf("expected size 0, got %d", dl.Size())
-	}
-
-	// Add some events
-	for i := 0; i < 5; i++ {
-		event := &EnhancedPolicyChangeEvent{
-			TenantID: "test",
-			Version:  int64(i),
-		}
-		if err := dl.Append(event); err != nil {
-			t.Fatalf("Append failed: %v", err)
-		}
-	}
-
-	if dl.Size() != 5 {
-		t.Errorf("expected size 5, got %d", dl.Size())
-	}
-}
-
-// Test DeltaLog Trim
-func TestDeltaLog_Trim91(t *testing.T) {
-	dl := NewDeltaLog(5) // Small buffer
-
-	// Append more than max entries
-	for i := 0; i < 10; i++ {
-		event := &EnhancedPolicyChangeEvent{
-			TenantID: "test",
-			Version:  int64(i),
-		}
-		if err := dl.Append(event); err != nil {
-			t.Fatalf("Append failed: %v", err)
-		}
-	}
-
-	// Trim should update min version
-	dl.Trim()
-
-	// After trim, size should be capped at maxEntries
-	if dl.Size() > 5 {
-		t.Errorf("expected size <= 5 after trim, got %d", dl.Size())
-	}
-}
 
 // Test DeltaLog GetMinVersion and GetMaxVersion
 func TestDeltaLog_VersionTracking91(t *testing.T) {
@@ -4291,81 +2690,5 @@ func TestDeltaLog_VersionTracking91(t *testing.T) {
 	}
 	if dl.GetMaxVersion() != 14 {
 		t.Errorf("expected max version 14, got %d", dl.GetMaxVersion())
-	}
-}
-
-// Test appendToTenantLog trimming - verifies that when we exceed maxEntries,
-// the log is trimmed and min version is updated
-func TestDeltaLog_TenantLogTrimming91(t *testing.T) {
-	dl := NewDeltaLog(10) // Small parent max
-
-	tenantID := "trim-tenant-91"
-
-	// Append more than maxEntries
-	for i := 0; i < 15; i++ {
-		event := &EnhancedPolicyChangeEvent{
-			TenantID: tenantID,
-			Version:  int64(i),
-		}
-		if err := dl.Append(event); err != nil {
-			t.Fatalf("Append failed: %v", err)
-		}
-	}
-
-	// After trimming, the minVersion should be updated
-	// We can only get events since a version >= minVersion
-	// GetSince with a version that's too old should fail or return error
-	// Let's request events since version 6 (which should be available)
-	events, err := dl.GetSince(tenantID, 6)
-	if err != nil {
-		t.Fatalf("GetSince (version 6) failed: %v", err)
-	}
-
-	// We should get events with version > 6 (i.e., 7-14 = 8 events max, but after trimming maybe less)
-	if events == nil {
-		t.Error("expected some events")
-	}
-}
-
-// Test DeltaLog GetSince for non-existent tenant
-func TestDeltaLog_GetSince_NoTenant91(t *testing.T) {
-	dl := NewDeltaLog(100)
-
-	events, err := dl.GetSince("non-existent-91", 0)
-	if err != nil {
-		t.Fatalf("GetSince should not error: %v", err)
-	}
-	if events != nil && len(events) > 0 {
-		t.Error("expected no events for non-existent tenant")
-	}
-}
-
-// Test DeltaLog Append with nil event
-func TestDeltaLog_Append_NilEvent91(t *testing.T) {
-	dl := NewDeltaLog(100)
-
-	err := dl.Append(nil)
-	if err == nil {
-		t.Error("expected error for nil event")
-	}
-}
-
-// Test NewDeltaLog with zero entries (uses default)
-func TestNewDeltaLog_ZeroEntries91(t *testing.T) {
-	dl := NewDeltaLog(0)
-
-	// Should use default of 10000
-	if dl.maxEntries != 10000 {
-		t.Errorf("expected maxEntries 10000, got %d", dl.maxEntries)
-	}
-}
-
-// Test NewDeltaLog with negative entries (uses default)
-func TestNewDeltaLog_NegativeEntries91(t *testing.T) {
-	dl := NewDeltaLog(-5)
-
-	// Should use default of 10000
-	if dl.maxEntries != 10000 {
-		t.Errorf("expected maxEntries 10000, got %d", dl.maxEntries)
 	}
 }

@@ -462,15 +462,6 @@ func TestInternalSecretsFetcher_Integration(t *testing.T) {
 	}
 }
 
-// TestInternalSecretsFetcher_ImplementsInterface tests that InternalSecretsFetcher
-// properly implements the SecretsFetcher interface.
-func TestInternalSecretsFetcher_ImplementsInterface(t *testing.T) {
-	store := newMockInternalSecretStore()
-	fetcher, err := NewInternalSecretsFetcher(store)
-	if err != nil {
-		t.Fatalf("NewInternalSecretsFetcher() failed: %v", err)
-	}
-
-	// Verify it implements SecretsFetcher
-	var _ SecretsFetcher = fetcher
-}
+// The fetcher must satisfy the SecretsFetcher interface the L2 Redis cache
+// reads its credentials through; the compiler checks it.
+var _ SecretsFetcher = (*InternalSecretsFetcher)(nil)

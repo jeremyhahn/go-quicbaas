@@ -545,27 +545,6 @@ var spawnResponseForANamedWorkspace = map[string]string{
 	"work_dir": "TestSpawnWireContract_ANamedWorkspaceIsProvisionedOnTheDaemon",
 }
 
-// spawnResponseSentinelValues is what each field of the response must carry for
-// the sentinel session the daemon's backend returns. Written out by name rather
-// than derived, so a mapping that changes shape has to be re-stated here by
-// somebody who looked at it.
-func spawnResponseSentinelValues(sentinel *orchestration.Session) map[string]string {
-	return map[string]string{
-		"session_id":       sentinel.ID,
-		"backend":          "acp",
-		"model":            sentinel.Model,
-		"container_id":     sentinel.ContainerID,
-		"account_id":       sentinel.AccountID,
-		"account_strategy": sentinel.AccountStrategy,
-		// The generation is an integer, not a string; like the timestamp it is
-		// checked separately below.
-		"account_generation": "",
-		// The timestamp is a message, not a string; it is checked separately
-		// against the session's CreatedAt below.
-		"timestamp": "",
-	}
-}
-
 // spawnSentinelResponse drives one real Spawn RPC against a daemon whose
 // backend returns sentinelSession, and returns the proto response as it came
 // off the wire.
@@ -592,60 +571,9 @@ func spawnSentinelResponse(t *testing.T, sentinel *orchestration.Session) *proto
 	return resp
 }
 
-// TestSpawnWireContract_SpawnSessionResponseCarriesEveryField is the table that
-// #740 would have failed. Each row is one field of the proto message, named
-// with the value the daemon must put in it.
-func TestSpawnWireContract_SpawnSessionResponseCarriesEveryField(t *testing.T) {
-	t.Parallel()
-
-	sentinel := sentinelSession("proj-sentinel", "/work")
-	resp := spawnSentinelResponse(t, sentinel)
-
-	got := map[string]string{
-		"session_id":         resp.GetSessionId(),
-		"backend":            resp.GetBackend(),
-		"model":              resp.GetModel(),
-		"container_id":       resp.GetContainerId(),
-		"account_id":         resp.GetAccountId(),
-		"account_strategy":   resp.GetAccountStrategy(),
-		"account_generation": "",
-		"timestamp":          "",
-	}
-
-	for name, want := range spawnResponseSentinelValues(sentinel) {
-		t.Run(name, func(t *testing.T) {
-			if got[name] != want {
-				t.Errorf("SpawnSessionResponse.%s = %q, want %q.\n"+
-					"The daemon is the only party that knows this; a response that drops it is a fact\n"+
-					"the control plane has no other way to recover.", name, got[name], want)
-			}
-		})
-	}
-
-	t.Run("timestamp", func(t *testing.T) {
-		if resp.GetTimestamp() == nil {
-			t.Fatal("SpawnSessionResponse.timestamp is nil")
-		}
-		if got := resp.GetTimestamp().AsTime().UnixNano(); got != sentinel.CreatedAt {
-			t.Errorf("SpawnSessionResponse.timestamp = %d, want %d", got, sentinel.CreatedAt)
-		}
-	})
-
-	// Which COPY of the account's credential the session materialized. The
-	// control plane compares it against the account's current generation before
-	// every prompt; a response that drops it puts remote sessions back on a
-	// timestamp comparison that cannot see a rotation landing mid-spawn
-	// (go-quicbaas#997).
-	t.Run("account_generation", func(t *testing.T) {
-		if got := resp.GetAccountGeneration(); got != sentinel.AccountGeneration {
-			t.Errorf("SpawnSessionResponse.account_generation = %d, want %d.\n"+
-				"The daemon is the only party that knows which credential copy it materialized.",
-				got, sentinel.AccountGeneration)
-		}
-	})
-}
-
-// TestSpawnWireContract_SpawnSessionResponseLeavesNoFieldUnset is the half that
+// TestSpawnWireContract_SpawnSessionResponseLeavesNoFieldUnset is the half of
+// the response contract TestSpawnWireContract_SessionSurvivesTheRemoteBoundary
+// cannot see: it
 // catches a field the day it is ADDED to the proto: it walks the message's own
 // descriptor, so a new field nobody filled in fails here rather than in a
 // burn-in months later.

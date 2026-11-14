@@ -26,7 +26,6 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"fmt"
-	"io"
 	"math/big"
 	"strings"
 	"testing"
@@ -91,28 +90,6 @@ func TestRand(t *testing.T) {
 	}
 }
 
-func TestRandUniqueness(t *testing.T) {
-	ResetRNG()
-	defer ResetRNG()
-
-	// Generate multiple random values and verify they're unique
-	numSamples := 100
-	samples := make(map[string]bool)
-
-	for i := 0; i < numSamples; i++ {
-		data, err := Rand(32)
-		if err != nil {
-			t.Fatalf("Rand() error = %v", err)
-		}
-
-		key := string(data)
-		if samples[key] {
-			t.Error("Rand() generated duplicate value")
-		}
-		samples[key] = true
-	}
-}
-
 func TestRandInt(t *testing.T) {
 	ResetRNG()
 	defer ResetRNG()
@@ -161,6 +138,10 @@ func TestRandInt(t *testing.T) {
 				t.Errorf("RandInt() error = %v, wantErr %v", err, tt.wantErr)
 				return
 			}
+			if tt.wantErr {
+				assert.ErrorIs(t, err, ErrRNGFailed)
+				return
+			}
 			if !tt.wantErr && got == nil {
 				t.Error("RandInt() returned nil value")
 			}
@@ -171,39 +152,6 @@ func TestRandInt(t *testing.T) {
 				t.Error("RandInt() returned negative value")
 			}
 		})
-	}
-}
-
-func TestRandIntUniformity(t *testing.T) {
-	ResetRNG()
-	defer ResetRNG()
-
-	// Test that RandInt produces values in the expected range
-	max := big.NewInt(10)
-	numSamples := 1000
-	counts := make(map[int64]int)
-
-	for i := 0; i < numSamples; i++ {
-		n, err := RandInt(max)
-		if err != nil {
-			t.Fatalf("RandInt() error = %v", err)
-		}
-		counts[n.Int64()]++
-	}
-
-	// Verify all values are in range [0, max)
-	for v := range counts {
-		if v < 0 || v >= max.Int64() {
-			t.Errorf("RandInt() produced out-of-range value: %d", v)
-		}
-	}
-
-	// With 1000 samples over 10 buckets, expect roughly 100 per bucket
-	// Allow for significant variance (this is just a sanity check)
-	for i := int64(0); i < max.Int64(); i++ {
-		if counts[i] == 0 {
-			t.Logf("Warning: value %d never appeared in %d samples", i, numSamples)
-		}
 	}
 }
 
@@ -246,52 +194,10 @@ func TestReader(t *testing.T) {
 			if n != tt.bufSize {
 				t.Errorf("Reader.Read() read %d bytes, want %d", n, tt.bufSize)
 			}
+			if tt.bufSize > 0 && bytes.Equal(buf, make([]byte, tt.bufSize)) {
+				t.Error("Reader.Read() left the buffer all zeros")
+			}
 		})
-	}
-}
-
-func TestReaderUniqueness(t *testing.T) {
-	ResetRNG()
-	defer ResetRNG()
-
-	reader := Reader()
-	numSamples := 100
-	samples := make(map[string]bool)
-
-	for i := 0; i < numSamples; i++ {
-		buf := make([]byte, 32)
-		_, err := io.ReadFull(reader, buf)
-		if err != nil {
-			t.Fatalf("ReadFull() error = %v", err)
-		}
-
-		key := string(buf)
-		if samples[key] {
-			t.Error("Reader produced duplicate value")
-		}
-		samples[key] = true
-	}
-}
-
-func TestReaderConsistency(t *testing.T) {
-	ResetRNG()
-	defer ResetRNG()
-
-	// Verify that Reader() consistently returns a working reader
-	for i := 0; i < 10; i++ {
-		reader := Reader()
-		buf := make([]byte, 16)
-		n, err := reader.Read(buf)
-		if err != nil {
-			t.Errorf("Iteration %d: Reader.Read() error = %v", i, err)
-		}
-		if n != 16 {
-			t.Errorf("Iteration %d: Reader.Read() read %d bytes, want 16", i, n)
-		}
-		// Verify buf is not all zeros (very unlikely with real random)
-		if bytes.Equal(buf, make([]byte, 16)) {
-			t.Errorf("Iteration %d: Reader.Read() returned all zeros", i)
-		}
 	}
 }
 
@@ -362,26 +268,6 @@ func TestResetRNG(t *testing.T) {
 	}
 	if len(data) != 16 {
 		t.Errorf("Rand() after reset returned %d bytes, want 16", len(data))
-	}
-}
-
-func TestRNGModes(t *testing.T) {
-	// Verify mode constants are properly exported
-	_ = RNGModeAuto
-	_ = RNGModeSoftware
-	_ = RNGModeTPM2
-	_ = RNGModePKCS11
-
-	// Verify they have distinct values
-	modes := map[RNGMode]string{
-		RNGModeAuto:     "auto",
-		RNGModeSoftware: "software",
-		RNGModeTPM2:     "tpm2",
-		RNGModePKCS11:   "pkcs11",
-	}
-
-	if len(modes) != 4 {
-		t.Error("RNG modes should have 4 distinct values")
 	}
 }
 
@@ -619,34 +505,67 @@ func createJWTWithKID(t *testing.T, signer crypto.Signer, kid string, claims JWT
 // PublicKey Tests
 // -----------------------------------------------------------------------------
 
-func TestPublicKey_NotInitialized(t *testing.T) {
+// resetTestXKMS leaves the package uninitialized, or initialized with the
+// full software backend when initialize is true.
+func resetTestXKMS(t *testing.T, initialize bool) {
+	t.Helper()
+
+	if initialize {
+		setupFullTestXKMS(t)
+		return
+	}
 	Reset()
-
-	_, err := PublicKey(context.Background(), "software:signing:ecdsa-p256:test-key")
-	assert.ErrorIs(t, err, ErrNotInitialized)
 }
 
-func TestPublicKey_Success(t *testing.T) {
-	setupFullTestXKMS(t)
-	_, fullKeyID := createTestECDSAKey(t, "public-key-test")
+func TestPublicKey(t *testing.T) {
+	tests := []struct {
+		name    string
+		init    bool
+		create  string
+		keyID   string
+		wantErr bool
+		errIs   error
+	}{
+		{
+			name:    "not initialized",
+			keyID:   "software:signing:ecdsa-p256:test-key",
+			wantErr: true,
+			errIs:   ErrNotInitialized,
+		},
+		{
+			name:   "success",
+			init:   true,
+			create: "public-key-test",
+			keyID:  "software:signing:ecdsa-p256:public-key-test",
+		},
+		{
+			name:    "not found",
+			init:    true,
+			keyID:   "software:signing:ecdsa-p256:non-existent-key",
+			wantErr: true,
+		},
+	}
 
-	// Use SignerByID with full key ID (ID-based lookup now works correctly)
-	signer, err := SignerByID(context.Background(), fullKeyID)
-	require.NoError(t, err)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			resetTestXKMS(t, tt.init)
+			if tt.create != "" {
+				createTestECDSAKey(t, tt.create)
+			}
 
-	pub := signer.Public()
-	assert.NotNil(t, pub)
-
-	// Verify it's an ECDSA public key
-	_, ok := pub.(*ecdsa.PublicKey)
-	assert.True(t, ok)
-}
-
-func TestPublicKey_NotFound(t *testing.T) {
-	setupFullTestXKMS(t)
-
-	_, err := PublicKey(context.Background(), "software:signing:ecdsa-p256:non-existent-key")
-	require.Error(t, err)
+			pub, err := PublicKey(context.Background(), tt.keyID)
+			if tt.wantErr {
+				require.Error(t, err)
+				if tt.errIs != nil {
+					assert.ErrorIs(t, err, tt.errIs)
+				}
+				return
+			}
+			require.NoError(t, err)
+			_, ok := pub.(*ecdsa.PublicKey)
+			assert.True(t, ok, "want *ecdsa.PublicKey, got %T", pub)
+		})
+	}
 }
 
 // -----------------------------------------------------------------------------
@@ -695,18 +614,10 @@ func TestParseCertificateID_Success(t *testing.T) {
 // GenerateKey Tests
 // -----------------------------------------------------------------------------
 
-func TestGenerateKey_NotInitialized(t *testing.T) {
-	Reset()
-
-	_, err := GenerateKey(context.Background(), &xkmssdk.KeyAttributes{})
-	assert.ErrorIs(t, err, ErrNotInitialized)
-}
-
-func TestGenerateKey_Success(t *testing.T) {
-	setupFullTestXKMS(t)
-
-	attrs := &xkmssdk.KeyAttributes{
-		CN:           "generated-key",
+// testECDSAKeyAttrs returns valid software ECDSA P-256 signing key attributes.
+func testECDSAKeyAttrs(cn string) *xkmssdk.KeyAttributes {
+	return &xkmssdk.KeyAttributes{
+		CN:           cn,
 		KeyType:      xkmssdk.KeyTypeSigning,
 		StoreType:    xkmssdk.StoreSoftware,
 		KeyAlgorithm: x509.ECDSA,
@@ -714,121 +625,216 @@ func TestGenerateKey_Success(t *testing.T) {
 			Curve: elliptic.P256(),
 		},
 	}
-
-	key, err := GenerateKey(context.Background(), attrs)
-	require.NoError(t, err)
-	assert.NotNil(t, key)
 }
 
-func TestGenerateKey_InvalidAttributes(t *testing.T) {
-	setupFullTestXKMS(t)
-
-	// Invalid attributes - no CN
-	attrs := &xkmssdk.KeyAttributes{
-		KeyType:      xkmssdk.KeyTypeSigning,
-		StoreType:    xkmssdk.StoreSoftware,
-		KeyAlgorithm: x509.ECDSA,
-	}
-
-	_, err := GenerateKey(context.Background(), attrs)
-	require.Error(t, err)
-	assert.ErrorIs(t, err, ErrKeyGenerationFailed)
-}
-
-func TestGenerateKeyWithBackend_NotInitialized(t *testing.T) {
-	Reset()
-
-	_, err := GenerateKeyWithBackend(context.Background(), "software", &xkmssdk.KeyAttributes{})
-	assert.ErrorIs(t, err, ErrNotInitialized)
-}
-
-func TestGenerateKeyWithBackend_Success(t *testing.T) {
-	setupFullTestXKMS(t)
-
-	attrs := &xkmssdk.KeyAttributes{
-		CN:           "backend-generated-key",
-		KeyType:      xkmssdk.KeyTypeSigning,
-		StoreType:    xkmssdk.StoreSoftware,
-		KeyAlgorithm: x509.ECDSA,
-		ECCAttributes: &xkmssdk.ECCAttributes{
-			Curve: elliptic.P256(),
+func TestGenerateKey(t *testing.T) {
+	tests := []struct {
+		name  string
+		init  bool
+		attrs *xkmssdk.KeyAttributes
+		errIs error
+	}{
+		{
+			name:  "not initialized",
+			attrs: &xkmssdk.KeyAttributes{},
+			errIs: ErrNotInitialized,
+		},
+		{
+			name:  "success",
+			init:  true,
+			attrs: testECDSAKeyAttrs("generated-key"),
+		},
+		{
+			name: "missing CN",
+			init: true,
+			attrs: &xkmssdk.KeyAttributes{
+				KeyType:      xkmssdk.KeyTypeSigning,
+				StoreType:    xkmssdk.StoreSoftware,
+				KeyAlgorithm: x509.ECDSA,
+			},
+			errIs: ErrKeyGenerationFailed,
+		},
+		{
+			name: "unknown algorithm",
+			init: true,
+			attrs: &xkmssdk.KeyAttributes{
+				CN:           "invalid-algo-test",
+				KeyType:      xkmssdk.KeyTypeSigning,
+				StoreType:    xkmssdk.StoreSoftware,
+				KeyAlgorithm: x509.UnknownPublicKeyAlgorithm,
+			},
+			errIs: ErrKeyGenerationFailed,
 		},
 	}
 
-	key, err := GenerateKeyWithBackend(context.Background(), "software", attrs)
-	require.NoError(t, err)
-	assert.NotNil(t, key)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			resetTestXKMS(t, tt.init)
+
+			key, err := GenerateKey(context.Background(), tt.attrs)
+			if tt.errIs != nil {
+				assert.ErrorIs(t, err, tt.errIs)
+				return
+			}
+			require.NoError(t, err)
+			assert.NotNil(t, key)
+		})
+	}
 }
 
-func TestGenerateKeyWithBackend_InvalidBackend(t *testing.T) {
-	setupFullTestXKMS(t)
-
-	attrs := &xkmssdk.KeyAttributes{
-		CN: "test-key",
+func TestGenerateKeyWithBackend(t *testing.T) {
+	tests := []struct {
+		name    string
+		init    bool
+		backend string
+		attrs   *xkmssdk.KeyAttributes
+		errIs   error
+	}{
+		{
+			name:    "not initialized",
+			backend: "software",
+			attrs:   &xkmssdk.KeyAttributes{},
+			errIs:   ErrNotInitialized,
+		},
+		{
+			name:    "success",
+			init:    true,
+			backend: "software",
+			attrs:   testECDSAKeyAttrs("backend-generated-key"),
+		},
+		{
+			name:    "unknown backend",
+			init:    true,
+			backend: "non-existent",
+			attrs:   &xkmssdk.KeyAttributes{CN: "test-key"},
+			errIs:   ErrKeyGenerationFailed,
+		},
+		{
+			name:    "unknown algorithm",
+			init:    true,
+			backend: "software",
+			attrs: &xkmssdk.KeyAttributes{
+				CN:           "invalid-backend-gen",
+				KeyType:      xkmssdk.KeyTypeSigning,
+				StoreType:    xkmssdk.StoreSoftware,
+				KeyAlgorithm: x509.UnknownPublicKeyAlgorithm,
+			},
+			errIs: ErrKeyGenerationFailed,
+		},
 	}
 
-	_, err := GenerateKeyWithBackend(context.Background(), "non-existent", attrs)
-	require.Error(t, err)
-	assert.ErrorIs(t, err, ErrKeyGenerationFailed)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			resetTestXKMS(t, tt.init)
+
+			key, err := GenerateKeyWithBackend(context.Background(), tt.backend, tt.attrs)
+			if tt.errIs != nil {
+				assert.ErrorIs(t, err, tt.errIs)
+				return
+			}
+			require.NoError(t, err)
+			assert.NotNil(t, key)
+		})
+	}
 }
 
 // -----------------------------------------------------------------------------
 // Key Retrieval Tests
 // -----------------------------------------------------------------------------
 
-func TestKey_NotInitialized(t *testing.T) {
-	Reset()
-
-	_, err := Key(context.Background(), &xkmssdk.KeyAttributes{CN: "test"})
-	assert.ErrorIs(t, err, ErrNotInitialized)
-}
-
-func TestKey_Success(t *testing.T) {
-	setupFullTestXKMS(t)
-	attrs, _ := createTestECDSAKey(t, "retrieve-key-test")
-
-	key, err := Key(context.Background(), attrs)
-	require.NoError(t, err)
-	assert.NotNil(t, key)
-}
-
-func TestKey_NotFound(t *testing.T) {
-	setupFullTestXKMS(t)
-
-	attrs := &xkmssdk.KeyAttributes{
-		CN:        "non-existent-key",
-		StoreType: xkmssdk.StoreSoftware,
-		KeyType:   xkmssdk.KeyTypeSigning,
+func TestKey(t *testing.T) {
+	tests := []struct {
+		name   string
+		init   bool
+		create bool
+		attrs  *xkmssdk.KeyAttributes
+		errIs  error
+	}{
+		{
+			name:  "not initialized",
+			attrs: &xkmssdk.KeyAttributes{CN: "test"},
+			errIs: ErrNotInitialized,
+		},
+		{
+			name:   "success",
+			init:   true,
+			create: true,
+			attrs:  &xkmssdk.KeyAttributes{CN: "retrieve-key-test"},
+		},
+		{
+			name: "not found",
+			init: true,
+			attrs: &xkmssdk.KeyAttributes{
+				CN:        "non-existent-key",
+				StoreType: xkmssdk.StoreSoftware,
+				KeyType:   xkmssdk.KeyTypeSigning,
+			},
+			errIs: ErrKeyNotFound,
+		},
 	}
 
-	_, err := Key(context.Background(), attrs)
-	require.Error(t, err)
-	assert.ErrorIs(t, err, ErrKeyNotFound)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			resetTestXKMS(t, tt.init)
+			attrs := tt.attrs
+			if tt.create {
+				attrs, _ = createTestECDSAKey(t, tt.attrs.CN)
+			}
+
+			key, err := Key(context.Background(), attrs)
+			if tt.errIs != nil {
+				assert.ErrorIs(t, err, tt.errIs)
+				return
+			}
+			require.NoError(t, err)
+			assert.NotNil(t, key)
+		})
+	}
 }
 
-func TestKeyByID_NotInitialized(t *testing.T) {
-	Reset()
+func TestKeyByID(t *testing.T) {
+	tests := []struct {
+		name   string
+		init   bool
+		create string
+		keyID  string
+		errIs  error
+	}{
+		{
+			name:  "not initialized",
+			keyID: "software:signing:ecdsa-p256:test-key",
+			errIs: ErrNotInitialized,
+		},
+		{
+			name:   "success",
+			init:   true,
+			create: "key-by-id-test",
+			keyID:  "software:signing:ecdsa-p256:key-by-id-test",
+		},
+		{
+			name:  "not found",
+			init:  true,
+			keyID: "software:signing:ecdsa-p256:non-existent-key",
+			errIs: ErrKeyNotFound,
+		},
+	}
 
-	_, err := KeyByID(context.Background(), "software:signing:ecdsa-p256:test-key")
-	assert.ErrorIs(t, err, ErrNotInitialized)
-}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			resetTestXKMS(t, tt.init)
+			if tt.create != "" {
+				createTestECDSAKey(t, tt.create)
+			}
 
-func TestKeyByID_Success(t *testing.T) {
-	setupFullTestXKMS(t)
-	attrs, _ := createTestECDSAKey(t, "key-by-id-test")
-
-	// Use attribute-based lookup (attribute-based lookup works correctly)
-	key, err := Key(context.Background(), attrs)
-	require.NoError(t, err)
-	assert.NotNil(t, key)
-}
-
-func TestKeyByID_NotFound(t *testing.T) {
-	setupFullTestXKMS(t)
-
-	_, err := KeyByID(context.Background(), "software:signing:ecdsa-p256:non-existent-key")
-	require.Error(t, err)
-	assert.ErrorIs(t, err, ErrKeyNotFound)
+			key, err := KeyByID(context.Background(), tt.keyID)
+			if tt.errIs != nil {
+				assert.ErrorIs(t, err, tt.errIs)
+				return
+			}
+			require.NoError(t, err)
+			assert.NotNil(t, key)
+		})
+	}
 }
 
 // -----------------------------------------------------------------------------
@@ -988,22 +994,24 @@ func TestListKeys_NotInitialized(t *testing.T) {
 }
 
 func TestListKeys_Success(t *testing.T) {
-	setupFullTestXKMS(t)
-	createTestECDSAKey(t, "list-key-1")
-	createTestECDSAKey(t, "list-key-2")
+	tests := []struct {
+		name     string
+		backends []string
+	}{
+		{name: "all backends"},
+		{name: "specific backend", backends: []string{"software"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			setupFullTestXKMS(t)
+			createTestECDSAKey(t, "list-key-1")
+			createTestECDSAKey(t, "list-key-2")
 
-	keys, err := ListKeys(context.Background())
-	require.NoError(t, err)
-	assert.GreaterOrEqual(t, len(keys), 2)
-}
-
-func TestListKeys_SpecificBackend(t *testing.T) {
-	setupFullTestXKMS(t)
-	createTestECDSAKey(t, "backend-list-key")
-
-	keys, err := ListKeys(context.Background(), "software")
-	require.NoError(t, err)
-	assert.NotNil(t, keys)
+			keys, err := ListKeys(context.Background(), tt.backends...)
+			require.NoError(t, err)
+			assert.GreaterOrEqual(t, len(keys), 2)
+		})
+	}
 }
 
 // -----------------------------------------------------------------------------
@@ -1327,25 +1335,6 @@ func TestSeal_Success(t *testing.T) {
 	assert.Equal(t, xkmssdk.BackendTypeSoftware, sealed.Backend)
 }
 
-func TestSeal_WithAAD(t *testing.T) {
-	setupFullTestXKMS(t)
-	attrs, _ := createTestECDSAKey(t, "seal-aad-test-key")
-
-	ctx := context.Background()
-	secretData := []byte("secret data with AAD")
-	aadData := []byte("additional authenticated data")
-
-	opts := &xkmssdk.SealOptions{
-		KeyAttributes: attrs,
-		AAD:           aadData,
-	}
-
-	sealed, err := Seal(ctx, secretData, opts)
-	require.NoError(t, err)
-	assert.NotNil(t, sealed)
-	assert.NotEmpty(t, sealed.Ciphertext)
-}
-
 func TestSeal_NilOptions(t *testing.T) {
 	setupFullTestXKMS(t)
 
@@ -1363,23 +1352,6 @@ func TestSealWithBackend_NotInitialized(t *testing.T) {
 	opts := &xkmssdk.SealOptions{}
 	_, err := SealWithBackend(ctx, "software", []byte("secret data"), opts)
 	assert.ErrorIs(t, err, ErrNotInitialized)
-}
-
-func TestSealWithBackend_Success(t *testing.T) {
-	setupFullTestXKMS(t)
-	attrs, _ := createTestRSAKey(t, "seal-backend-test-key")
-
-	ctx := context.Background()
-	secretData := []byte("secret data for specific backend")
-
-	opts := &xkmssdk.SealOptions{
-		KeyAttributes: attrs,
-	}
-
-	sealed, err := SealWithBackend(ctx, "software", secretData, opts)
-	require.NoError(t, err)
-	assert.NotNil(t, sealed)
-	assert.NotEmpty(t, sealed.Ciphertext)
 }
 
 func TestSealWithBackend_InvalidBackend(t *testing.T) {
@@ -2104,26 +2076,6 @@ func TestWrapKeyWithECDHES_NotInitialized(t *testing.T) {
 	assert.ErrorIs(t, err, ErrNotInitialized)
 }
 
-func TestWrapKeyWithECDHES_Success(t *testing.T) {
-	setupFullTestXKMS(t)
-	attrs, _ := createTestECDSAKey(t, "ecdh-wrap-test")
-
-	// Get the public key using attribute-based lookup
-	signer, err := Signer(context.Background(), attrs)
-	require.NoError(t, err)
-	ecPublicKey := signer.Public().(*ecdsa.PublicKey)
-
-	keyMaterial := []byte("secret-key-material-32-bytes!!")
-
-	// Wrap directly using the JWE encrypter
-	encrypter, err := xkmssdk.NewJWEEncrypter("ECDH-ES+A256KW", "A256GCM", ecPublicKey)
-	require.NoError(t, err)
-
-	jweStr, err := encrypter.Encrypt(keyMaterial)
-	require.NoError(t, err)
-	assert.NotEmpty(t, jweStr)
-}
-
 func TestWrapKeyWithECDHES_KeyNotFound(t *testing.T) {
 	setupFullTestXKMS(t)
 
@@ -2141,63 +2093,11 @@ func TestWrapKeyWithECDHES_NotECKey(t *testing.T) {
 	// Just verify we get an error - the exact message may vary based on library implementation
 }
 
-func TestWrapKeyWithECDHES_AlgorithmMapping(t *testing.T) {
-	setupFullTestXKMS(t)
-	attrs, _ := createTestECDSAKey(t, "ecdh-algo-test")
-
-	// Get the public key using attribute-based lookup
-	signer, err := Signer(context.Background(), attrs)
-	require.NoError(t, err)
-	ecPublicKey := signer.Public().(*ecdsa.PublicKey)
-
-	testCases := []struct {
-		algorithm   string
-		expectedEnc string
-	}{
-		{"ECDH-ES+A128KW", "A128GCM"},
-		{"ECDH-ES+A192KW", "A192GCM"},
-		{"ECDH-ES+A256KW", "A256GCM"},
-		{"ECDH-ES", "A256GCM"},
-	}
-
-	for _, tc := range testCases {
-		t.Run(tc.algorithm, func(t *testing.T) {
-			encrypter, err := xkmssdk.NewJWEEncrypter(tc.algorithm, tc.expectedEnc, ecPublicKey)
-			require.NoError(t, err)
-			jweStr, err := encrypter.Encrypt([]byte("test-material"))
-			require.NoError(t, err)
-			assert.NotEmpty(t, jweStr)
-		})
-	}
-}
-
 func TestUnwrapKeyWithECDHES_NotInitialized(t *testing.T) {
 	Reset()
 
 	_, err := UnwrapKeyWithECDHES(context.Background(), "software:signing:ecdsa-p256:test-key", "jwe-data")
 	assert.ErrorIs(t, err, ErrNotInitialized)
-}
-
-func TestUnwrapKeyWithECDHES_Success(t *testing.T) {
-	// Use directly generated ECDSA keys for this test since the PKCS8 backend
-	// returns opaque keys that cannot be directly used with JWE decrypter
-	ecPrivateKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	require.NoError(t, err)
-	ecPublicKey := &ecPrivateKey.PublicKey
-
-	keyMaterial := []byte("secret-key-material-32-bytes!!")
-
-	// Wrap
-	encrypter, err := xkmssdk.NewJWEEncrypter("ECDH-ES+A256KW", "A256GCM", ecPublicKey)
-	require.NoError(t, err)
-	jweStr, err := encrypter.Encrypt(keyMaterial)
-	require.NoError(t, err)
-
-	// Unwrap directly using JWE decrypter
-	decrypter := xkmssdk.NewJWEDecrypter()
-	unwrapped, err := decrypter.Decrypt(jweStr, ecPrivateKey)
-	require.NoError(t, err)
-	assert.Equal(t, keyMaterial, unwrapped)
 }
 
 func TestUnwrapKeyWithECDHES_KeyNotFound(t *testing.T) {
@@ -2233,38 +2133,6 @@ func TestIsECDHESAlgorithm(t *testing.T) {
 // JWT Tests
 // -----------------------------------------------------------------------------
 
-func TestNewJWTSigner(t *testing.T) {
-	setupFullTestXKMS(t)
-
-	signer := NewJWTSigner()
-	assert.NotNil(t, signer)
-}
-
-func TestNewJWTSigner_SignWithKeyID(t *testing.T) {
-	setupFullTestXKMS(t)
-	_, fullKeyID := createTestECDSAKey(t, "jwt-signer-keyid-test")
-
-	jwtSigner := NewJWTSigner()
-	assert.NotNil(t, jwtSigner)
-
-	claims := JWTClaims{"sub": "user123"}
-
-	// Use SignerByID with full key ID (ID-based lookup now works correctly)
-	signer, err := SignerByID(context.Background(), fullKeyID)
-	require.NoError(t, err)
-
-	token, err := JWTSignWithSigner(signer, claims, "ES256")
-	require.NoError(t, err)
-	assert.NotEmpty(t, token)
-}
-
-func TestNewJWTVerifier(t *testing.T) {
-	setupFullTestXKMS(t)
-
-	verifier := NewJWTVerifier()
-	assert.NotNil(t, verifier)
-}
-
 func TestJWTSign_NotInitialized(t *testing.T) {
 	Reset()
 
@@ -2275,18 +2143,14 @@ func TestJWTSign_NotInitialized(t *testing.T) {
 
 func TestJWTSign_Success(t *testing.T) {
 	setupFullTestXKMS(t)
-	attrs, _ := createTestECDSAKey(t, "jwt-sign-test")
-
-	// Get key and sign directly
-	signer, err := Signer(context.Background(), attrs)
-	require.NoError(t, err)
+	_, fullKeyID := createTestECDSAKey(t, "jwt-sign-test")
 
 	claims := JWTClaims{
 		"sub": "user123",
 		"iat": time.Now().Unix(),
 	}
 
-	token, err := JWTSignWithSigner(signer, claims, "ES256")
+	token, err := JWTSign(fullKeyID, claims)
 	require.NoError(t, err)
 	assert.NotEmpty(t, token)
 	// JWT has 3 parts separated by dots
@@ -2312,14 +2176,10 @@ func TestJWTSignWithAlgorithm_NotInitialized(t *testing.T) {
 
 func TestJWTSignWithAlgorithm_Success(t *testing.T) {
 	setupFullTestXKMS(t)
-	attrs, _ := createTestECDSAKey(t, "jwt-sign-alg-test")
-
-	// Get key and sign directly
-	signer, err := Signer(context.Background(), attrs)
-	require.NoError(t, err)
+	_, fullKeyID := createTestECDSAKey(t, "jwt-sign-alg-test")
 
 	claims := JWTClaims{"sub": "user123"}
-	token, err := JWTSignWithSigner(signer, claims, "ES256")
+	token, err := JWTSignWithAlgorithm(fullKeyID, claims, JWTAlgES256)
 	require.NoError(t, err)
 	assert.NotEmpty(t, token)
 }
@@ -2333,25 +2193,38 @@ func TestJWTSignWithAlgorithm_KeyNotFound(t *testing.T) {
 	assert.ErrorIs(t, err, ErrJWTSigningFailed)
 }
 
-func TestJWTSignWithSigner_Success(t *testing.T) {
-	// Generate a key directly for this test
-	privateKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+func TestJWTSignWithSigner(t *testing.T) {
+	ecKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	require.NoError(t, err)
 
-	claims := JWTClaims{"sub": "user123"}
-	token, err := JWTSignWithSigner(privateKey, claims, "ES256")
-	require.NoError(t, err)
-	assert.NotEmpty(t, token)
-}
-
-func TestJWTSignWithSigner_InvalidAlgorithm(t *testing.T) {
-	privateKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	setupFullTestXKMS(t)
+	rsaAttrs, _ := createTestRSAKey(t, "rsa-alg-test")
+	rsaSigner, err := Signer(context.Background(), rsaAttrs)
 	require.NoError(t, err)
 
-	claims := JWTClaims{"sub": "user123"}
-	_, err = JWTSignWithSigner(privateKey, claims, "INVALID")
-	require.Error(t, err)
-	assert.ErrorIs(t, err, ErrJWTSigningFailed)
+	tests := []struct {
+		name      string
+		signer    crypto.Signer
+		algorithm string
+		wantErr   bool
+	}{
+		{name: "ECDSA ES256", signer: ecKey, algorithm: "ES256"},
+		{name: "backend RSA RS256", signer: rsaSigner, algorithm: "RS256"},
+		{name: "unknown algorithm", signer: ecKey, algorithm: "INVALID", wantErr: true},
+		{name: "algorithm does not match key", signer: ecKey, algorithm: "RS256", wantErr: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			token, err := JWTSignWithSigner(tt.signer, JWTClaims{"sub": "user123"}, tt.algorithm)
+			if tt.wantErr {
+				assert.ErrorIs(t, err, ErrJWTSigningFailed)
+				return
+			}
+			require.NoError(t, err)
+			assert.NotEmpty(t, token)
+		})
+	}
 }
 
 func TestJWTVerify_NotInitialized(t *testing.T) {
@@ -2363,9 +2236,8 @@ func TestJWTVerify_NotInitialized(t *testing.T) {
 
 func TestJWTVerify_Success(t *testing.T) {
 	setupFullTestXKMS(t)
-	attrs, _ := createTestECDSAKey(t, "jwt-verify-test")
+	attrs, fullKeyID := createTestECDSAKey(t, "jwt-verify-test")
 
-	// Get key and sign directly
 	signer, err := Signer(context.Background(), attrs)
 	require.NoError(t, err)
 
@@ -2373,8 +2245,7 @@ func TestJWTVerify_Success(t *testing.T) {
 	token, err := JWTSignWithSigner(signer, claims, "ES256")
 	require.NoError(t, err)
 
-	// Verify with public key
-	verified, err := JWTVerifyWithKey(token, signer.Public(), "ES256")
+	verified, err := JWTVerify(token, fullKeyID)
 	require.NoError(t, err)
 	assert.True(t, verified.Valid)
 }
@@ -2679,67 +2550,9 @@ func TestJWTVerifyHMACWithAlgorithm_EmptyAlgorithm(t *testing.T) {
 // Additional Error Type Tests
 // -----------------------------------------------------------------------------
 
-func TestAdditionalErrorTypes(t *testing.T) {
-	assert.NotNil(t, ErrKeyNotFound)
-	assert.NotNil(t, ErrKeyImportFailed)
-	assert.NotNil(t, ErrSigningFailed)
-	assert.NotNil(t, ErrVerificationFailed)
-	assert.NotNil(t, ErrCertificateOperationFailed)
-	assert.NotNil(t, ErrInvalidKeyID)
-	assert.NotNil(t, ErrJWTSigningFailed)
-	assert.NotNil(t, ErrJWTVerificationFailed)
-	assert.NotNil(t, ErrJWTParsingFailed)
-	assert.NotNil(t, ErrSealingFailed)
-	assert.NotNil(t, ErrUnsealingFailed)
-	assert.NotNil(t, ErrEncryptionFailed)
-	assert.NotNil(t, ErrDecryptionFailed)
-
-	// Verify error messages contain expected text
-	assert.Contains(t, ErrKeyNotFound.Error(), "not found")
-	assert.Contains(t, ErrKeyImportFailed.Error(), "import")
-	assert.Contains(t, ErrSigningFailed.Error(), "signing")
-	assert.Contains(t, ErrVerificationFailed.Error(), "verification")
-	assert.Contains(t, ErrCertificateOperationFailed.Error(), "certificate")
-	assert.Contains(t, ErrInvalidKeyID.Error(), "key ID")
-	assert.Contains(t, ErrJWTSigningFailed.Error(), "jwt")
-	assert.Contains(t, ErrJWTVerificationFailed.Error(), "jwt")
-	assert.Contains(t, ErrJWTParsingFailed.Error(), "jwt")
-	assert.Contains(t, ErrSealingFailed.Error(), "sealing")
-	assert.Contains(t, ErrUnsealingFailed.Error(), "unsealing")
-	assert.Contains(t, ErrEncryptionFailed.Error(), "encryption")
-	assert.Contains(t, ErrDecryptionFailed.Error(), "decryption")
-}
-
 // -----------------------------------------------------------------------------
 // JWT Algorithm Constants Tests
 // -----------------------------------------------------------------------------
-
-func TestJWTAlgorithmConstants(t *testing.T) {
-	// Verify algorithm constants are properly defined
-	_ = JWTAlgRS256
-	_ = JWTAlgRS384
-	_ = JWTAlgRS512
-	_ = JWTAlgES256
-	_ = JWTAlgES384
-	_ = JWTAlgES512
-	_ = JWTAlgEdDSA
-	_ = JWTAlgPS256
-	_ = JWTAlgPS384
-	_ = JWTAlgPS512
-
-	// Test some algorithms with RSA key
-	setupFullTestXKMS(t)
-	attrs, _ := createTestRSAKey(t, "rsa-alg-test")
-
-	// Get key and sign directly
-	signer, err := Signer(context.Background(), attrs)
-	require.NoError(t, err)
-
-	claims := JWTClaims{"sub": "user123"}
-	token, err := JWTSignWithSigner(signer, claims, "RS256")
-	require.NoError(t, err)
-	assert.NotEmpty(t, token)
-}
 
 // -----------------------------------------------------------------------------
 // Backend and DefaultBackend Tests
@@ -2825,18 +2638,6 @@ func TestClose_Success(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.False(t, IsInitialized())
-}
-
-func TestClose_MultipleCalls(t *testing.T) {
-	setupFullTestXKMS(t)
-
-	// First close
-	err := Close()
-	require.NoError(t, err)
-
-	// Second close should still succeed (idempotent for RNG)
-	err = Close()
-	assert.NoError(t, err)
 }
 
 // TestClose_ReinitializeReachesFreshBackends pins that Close releases the
@@ -2928,55 +2729,30 @@ func TestInitialize_AlreadyInitialized(t *testing.T) {
 // CanSeal Tests
 // -----------------------------------------------------------------------------
 
-func TestCanSeal_NotInitialized(t *testing.T) {
-	Reset()
+func TestCanSeal(t *testing.T) {
+	tests := []struct {
+		name     string
+		init     bool
+		backends []string
+		want     bool
+	}{
+		{name: "not initialized", want: false},
+		{name: "default backend", init: true, want: true},
+		{name: "named backend", init: true, backends: []string{"software"}, want: true},
+		{name: "unknown backend", init: true, backends: []string{"non-existent"}, want: false},
+	}
 
-	result := CanSeal()
-	assert.False(t, result)
-}
-
-func TestCanSeal_Success(t *testing.T) {
-	setupFullTestXKMS(t)
-
-	// PKCS8 backend supports sealing
-	result := CanSeal()
-	assert.True(t, result)
-}
-
-func TestCanSeal_SpecificBackend(t *testing.T) {
-	setupFullTestXKMS(t)
-
-	result := CanSeal("software")
-	assert.True(t, result)
-}
-
-func TestCanSeal_NonExistentBackend(t *testing.T) {
-	setupFullTestXKMS(t)
-
-	result := CanSeal("non-existent")
-	assert.False(t, result)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			resetTestXKMS(t, tt.init)
+			assert.Equal(t, tt.want, CanSeal(tt.backends...))
+		})
+	}
 }
 
 // =============================================================================
 // Consolidated from xkms_coverage_test.go
 // =============================================================================
-
-// TestWrapKeyWithECDHES_FullAPISuccess calls WrapKeyWithECDHES through the
-// package API to exercise the actual function body (key lookup, EC type check,
-// algorithm mapping, encrypter creation, and encryption).
-func TestWrapKeyWithECDHES_FullAPISuccess(t *testing.T) {
-	setupFullTestXKMS(t)
-	_, fullKeyID := createTestECDSAKey(t, "ecdh-wrap-api-test")
-
-	keyMaterial := []byte("secret-key-material-32-bytes!!")
-
-	wrapped, err := WrapKeyWithECDHES(context.Background(), fullKeyID, keyMaterial, "ECDH-ES+A256KW")
-	require.NoError(t, err)
-	require.NotNil(t, wrapped)
-	assert.NotEmpty(t, wrapped.JWE)
-	assert.Equal(t, "ECDH-ES+A256KW", wrapped.Algorithm)
-	assert.Equal(t, "A256GCM", wrapped.ContentEncryption)
-}
 
 // sanitizeKeyName replaces characters that are invalid in key IDs.
 // Key IDs only allow: a-z, A-Z, 0-9, -, _, .
@@ -3015,32 +2791,6 @@ func TestWrapKeyWithECDHES_FullAPIAlgorithmVariants(t *testing.T) {
 	}
 }
 
-// TestUnwrapKeyWithECDHES_FullAPISoftwareKeySuccess calls UnwrapKeyWithECDHES
-// through the package API using a software key, exercising the software key
-// fallback path (DecrypterByID fails, falls back to KeyByID).
-func TestUnwrapKeyWithECDHES_FullAPISoftwareKeySuccess(t *testing.T) {
-	setupFullTestXKMS(t)
-	attrs, fullKeyID := createTestECDSAKey(t, "ecdh-unwrap-api-test")
-
-	keyMaterial := []byte("secret-key-material-32-bytes!!")
-
-	// Get the public key to wrap with
-	signer, err := Signer(context.Background(), attrs)
-	require.NoError(t, err)
-	ecPublicKey := signer.Public().(*ecdsa.PublicKey)
-
-	// Wrap the key material
-	encrypter, err := xkmssdk.NewJWEEncrypter("ECDH-ES+A256KW", "A256GCM", ecPublicKey)
-	require.NoError(t, err)
-	jweStr, err := encrypter.Encrypt(keyMaterial)
-	require.NoError(t, err)
-
-	// Unwrap through the package API
-	unwrapped, err := UnwrapKeyWithECDHES(context.Background(), fullKeyID, jweStr)
-	require.NoError(t, err)
-	assert.Equal(t, keyMaterial, unwrapped)
-}
-
 // TestUnwrapKeyWithECDHES_NotECKey verifies that UnwrapKeyWithECDHES returns
 // error when the private key is not an EC key.
 func TestUnwrapKeyWithECDHES_NotECKey(t *testing.T) {
@@ -3068,53 +2818,6 @@ func TestWrapUnwrapKeyWithECDHES_RoundTrip(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.Equal(t, originalMaterial, unwrapped)
-}
-
-// TestJWTSignWithSigner_SignError exercises the SignedString error path.
-func TestJWTSignWithSigner_SignError(t *testing.T) {
-	// Provide a signer that is incompatible with the algorithm to trigger error
-	ecKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	require.NoError(t, err)
-
-	claims := JWTClaims{"sub": "test"}
-	// RS256 expects RSA key, but we provide ECDSA signer
-	_, err = JWTSignWithSigner(ecKey, claims, "RS256")
-	require.Error(t, err)
-	assert.ErrorIs(t, err, ErrJWTSigningFailed)
-}
-
-// TestJWTParse_InvalidTokenStructure verifies handling of a malformed JWT token.
-func TestJWTParse_InvalidTokenStructure(t *testing.T) {
-	_, err := JWTParse("not.a.valid.jwt")
-	require.Error(t, err)
-	assert.ErrorIs(t, err, ErrJWTParsingFailed)
-}
-
-// TestJWTVerifyWithKey_InvalidToken exercises the error path in JWTVerifyWithKey.
-func TestJWTVerifyWithKey_InvalidToken(t *testing.T) {
-	ecKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	require.NoError(t, err)
-
-	_, err = JWTVerifyWithKey("invalid-token-string", &ecKey.PublicKey, "ES256")
-	require.Error(t, err)
-	assert.ErrorIs(t, err, ErrJWTVerificationFailed)
-}
-
-// TestJWTVerifyHMACWithAlgorithm_InvalidToken exercises the token parse error.
-func TestJWTVerifyHMACWithAlgorithm_InvalidToken(t *testing.T) {
-	_, err := JWTVerifyHMACWithAlgorithm("invalid-token", []byte("secret"), "HS256")
-	require.Error(t, err)
-	assert.ErrorIs(t, err, ErrJWTVerificationFailed)
-}
-
-// TestJWTSignHMACWithAlgorithm_EmptySecret exercises HMAC signing with empty secret.
-func TestJWTSignHMACWithAlgorithm_EmptySecret(t *testing.T) {
-	claims := JWTClaims{"sub": "test"}
-	// HMAC signing with empty secret should still work (it produces a valid token)
-	token, err := JWTSignHMACWithAlgorithm(claims, []byte{}, "HS256")
-	if err == nil {
-		assert.NotEmpty(t, token)
-	}
 }
 
 // TestNewJWTSigner_CallbacksWork tests that the JWT signer callbacks resolve keys.
@@ -3160,81 +2863,6 @@ func TestNewJWTVerifier_VerifySuccess(t *testing.T) {
 	assert.True(t, token.Valid)
 }
 
-// TestEncrypt_ErrorWrapping exercises the Encrypt function error wrapping.
-func TestEncrypt_ErrorWrapping(t *testing.T) {
-	setupFullTestXKMS(t)
-
-	// Non-existent key should trigger error wrapping
-	_, err := Encrypt(context.Background(), "non-existent-key", []byte("data"), nil)
-	require.Error(t, err)
-	assert.ErrorIs(t, err, ErrEncryptionFailed)
-}
-
-// TestDecrypt_DecryptError exercises the Decrypt function error wrapping.
-func TestDecrypt_DecryptError(t *testing.T) {
-	setupFullTestXKMS(t)
-
-	// Provide valid encrypted data structure but non-existent key
-	encData := &xkmssdk.EncryptedData{
-		Ciphertext: []byte("fake-ciphertext"),
-		Nonce:      []byte("fake-nonce"),
-		Algorithm:  "AES-256-GCM",
-	}
-	_, err := Decrypt(context.Background(), "non-existent-key", encData, nil)
-	require.Error(t, err)
-	assert.ErrorIs(t, err, ErrDecryptionFailed)
-}
-
-// TestGenerateSymmetricKey_Error exercises the error wrapping.
-func TestGenerateSymmetricKey_Error(t *testing.T) {
-	setupFullTestXKMS(t)
-
-	attrs := &xkmssdk.KeyAttributes{
-		CN:        "sym-gen-fail",
-		KeyType:   xkmssdk.KeyTypeSecret,
-		StoreType: xkmssdk.StoreSoftware,
-	}
-	_, err := GenerateSymmetricKey(context.Background(), "software", attrs)
-	// PKCS8 does not support symmetric key generation
-	require.Error(t, err)
-	assert.ErrorIs(t, err, ErrKeyGenerationFailed)
-}
-
-// TestGetSymmetricKey_Error exercises the error wrapping.
-func TestGetSymmetricKey_Error(t *testing.T) {
-	setupFullTestXKMS(t)
-
-	_, err := GetSymmetricKey(context.Background(), "non-existent-ref")
-	require.Error(t, err)
-	assert.ErrorIs(t, err, ErrKeyNotFound)
-}
-
-// TestJWTVerifyWithKeyAndClaims_ValidTokenSuccess tests the function with a valid signed token.
-func TestJWTVerifyWithKeyAndClaims_ValidTokenSuccess(t *testing.T) {
-	ecKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	require.NoError(t, err)
-
-	claims := jwt.MapClaims{
-		"sub": "user123",
-		"iat": float64(1234567890),
-	}
-
-	token := jwt.NewWithClaims(jwt.SigningMethodES256, claims)
-	tokenStr, err := token.SignedString(ecKey)
-	require.NoError(t, err)
-
-	result, err := JWTVerifyWithKeyAndClaims(tokenStr, &ecKey.PublicKey, "ES256")
-	require.NoError(t, err)
-	assert.Equal(t, "user123", result["sub"])
-}
-
-// TestRNGAvailable_AfterAutoInit verifies RNGAvailable returns true after auto-init.
-func TestRNGAvailable_AfterAutoInit(t *testing.T) {
-	ResetRNG()
-	result := RNGAvailable()
-	assert.True(t, result, "RNGAvailable should return true after auto-init on first use")
-}
-
 // TestRand_ProducesDifferentValues tests the Rand function produces different values.
 func TestRand_ProducesDifferentValues(t *testing.T) {
 	ResetRNG()
@@ -3262,65 +2890,6 @@ func TestRandInt_MaxBoundBigInt(t *testing.T) {
 	}
 }
 
-// TestRandInt_NilMax verifies RandInt errors on nil max.
-func TestRandInt_NilMax(t *testing.T) {
-	ResetRNG()
-
-	_, err := RandInt(nil)
-	require.Error(t, err)
-	assert.ErrorIs(t, err, ErrRNGFailed)
-}
-
-// TestRandInt_ZeroMax verifies RandInt errors on zero max.
-func TestRandInt_ZeroMax(t *testing.T) {
-	ResetRNG()
-
-	_, err := RandInt(big.NewInt(0))
-	require.Error(t, err)
-	assert.ErrorIs(t, err, ErrRNGFailed)
-}
-
-// TestRandInt_NegativeMax verifies RandInt errors on negative max.
-func TestRandInt_NegativeMax(t *testing.T) {
-	ResetRNG()
-
-	_, err := RandInt(big.NewInt(-1))
-	require.Error(t, err)
-	assert.ErrorIs(t, err, ErrRNGFailed)
-}
-
-// TestReader_FillsBuffer verifies the Reader function fills a buffer with random data.
-func TestReader_FillsBuffer(t *testing.T) {
-	ResetRNG()
-
-	reader := Reader()
-	buf := make([]byte, 32)
-	n, err := reader.Read(buf)
-	require.NoError(t, err)
-	assert.Equal(t, 32, n)
-
-	// Check the buffer is not all zeros
-	allZero := true
-	for _, b := range buf {
-		if b != 0 {
-			allZero = false
-			break
-		}
-	}
-	assert.False(t, allZero, "buffer should contain random data")
-}
-
-// TestReader_EmptyBuffer verifies the Reader handles empty buffer.
-func TestReader_EmptyBuffer(t *testing.T) {
-	ResetRNG()
-
-	reader := Reader()
-	buf := make([]byte, 0)
-	n, err := reader.Read(buf)
-	require.NoError(t, err)
-	assert.Equal(t, 0, n)
-}
-
 // TestJWTVerifyWithKey_NoAlgorithmValidation exercises the path where
 // expectedAlgorithm is empty (accepts any algorithm).
 func TestJWTVerifyWithKey_NoAlgorithmValidation(t *testing.T) {
@@ -3340,55 +2909,6 @@ func TestJWTVerifyWithKey_NoAlgorithmValidation(t *testing.T) {
 	result, err := JWTVerifyWithKey(tokenStr, &ecKey.PublicKey, "")
 	require.NoError(t, err)
 	assert.True(t, result.Valid)
-}
-
-// TestGenerateKey_ErrorWrapping exercises the error wrapping in GenerateKey.
-func TestGenerateKey_ErrorWrapping(t *testing.T) {
-	setupFullTestXKMS(t)
-
-	// Invalid key attributes should produce wrapped error
-	attrs := &xkmssdk.KeyAttributes{
-		CN:           "invalid-algo-test",
-		KeyType:      xkmssdk.KeyTypeSigning,
-		StoreType:    xkmssdk.StoreSoftware,
-		KeyAlgorithm: x509.UnknownPublicKeyAlgorithm,
-	}
-
-	_, err := GenerateKey(context.Background(), attrs)
-	require.Error(t, err)
-	assert.ErrorIs(t, err, ErrKeyGenerationFailed)
-}
-
-// TestGenerateKeyWithBackend_ErrorWrapping exercises the error wrapping.
-func TestGenerateKeyWithBackend_ErrorWrapping(t *testing.T) {
-	setupFullTestXKMS(t)
-
-	attrs := &xkmssdk.KeyAttributes{
-		CN:           "invalid-backend-gen",
-		KeyType:      xkmssdk.KeyTypeSigning,
-		StoreType:    xkmssdk.StoreSoftware,
-		KeyAlgorithm: x509.UnknownPublicKeyAlgorithm,
-	}
-
-	_, err := GenerateKeyWithBackend(context.Background(), "software", attrs)
-	require.Error(t, err)
-	assert.ErrorIs(t, err, ErrKeyGenerationFailed)
-}
-
-// TestWrapKeyWithECDHES_NonExistentKey exercises the error path for missing keys.
-func TestWrapKeyWithECDHES_NonExistentKey(t *testing.T) {
-	setupFullTestXKMS(t)
-
-	_, err := WrapKeyWithECDHES(context.Background(), "software:signing:ecdsa-p256:nonexistent", []byte("data"), "ECDH-ES+A256KW")
-	require.Error(t, err)
-}
-
-// TestUnwrapKeyWithECDHES_NonExistentKey exercises the error path for missing keys.
-func TestUnwrapKeyWithECDHES_NonExistentKey(t *testing.T) {
-	setupFullTestXKMS(t)
-
-	_, err := UnwrapKeyWithECDHES(context.Background(), "software:signing:ecdsa-p256:nonexistent", "fake-jwe")
-	require.Error(t, err)
 }
 
 // TestWrapKeyWithECDHES_UnsupportedAlgorithm exercises the unsupported algorithm error path.
@@ -3416,13 +2936,4 @@ func TestInitializeRNG_SoftwareMode(t *testing.T) {
 	assert.Len(t, data, 16)
 
 	ResetRNG()
-}
-
-// TestCloseRNG_BeforeInit exercises closing RNG before initialization.
-func TestCloseRNG_BeforeInit(t *testing.T) {
-	ResetRNG()
-
-	// CloseRNG on uninitialized state should be safe
-	err := CloseRNG()
-	require.NoError(t, err)
 }

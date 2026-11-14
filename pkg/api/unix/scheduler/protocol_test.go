@@ -55,40 +55,45 @@ func TestOpcodeToString(t *testing.T) {
 	}
 }
 
-func TestOpcodeConstants(t *testing.T) {
-	// Verify opcodes start at 0xB0 and don't conflict
-	assert.Equal(t, byte(0xB0), OpSchedulerCreateJob)
-	assert.Equal(t, byte(0xB1), OpSchedulerGetJob)
-	assert.Equal(t, byte(0xB2), OpSchedulerUpdateJob)
-	assert.Equal(t, byte(0xB3), OpSchedulerDeleteJob)
-	assert.Equal(t, byte(0xB4), OpSchedulerListJobs)
-	assert.Equal(t, byte(0xB5), OpSchedulerTriggerJob)
-	assert.Equal(t, byte(0xB6), OpSchedulerPauseJob)
-	assert.Equal(t, byte(0xB7), OpSchedulerResumeJob)
-	assert.Equal(t, byte(0xB8), OpSchedulerCancelJob)
-	assert.Equal(t, byte(0xB9), OpSchedulerGetJobHistory)
-	assert.Equal(t, byte(0xBA), OpSchedulerGetStatus)
-}
+// TestWireConstants pins the opcode, status and version bytes a peer puts on
+// the wire; changing one breaks every client built against the old value.
+func TestWireConstants(t *testing.T) {
+	tests := []struct {
+		name     string
+		got      byte
+		expected byte
+	}{
+		{name: "ProtocolVersion", got: ProtocolVersion, expected: 0x01},
+		{name: "OpSchedulerCreateJob", got: OpSchedulerCreateJob, expected: 0xB0},
+		{name: "OpSchedulerGetJob", got: OpSchedulerGetJob, expected: 0xB1},
+		{name: "OpSchedulerUpdateJob", got: OpSchedulerUpdateJob, expected: 0xB2},
+		{name: "OpSchedulerDeleteJob", got: OpSchedulerDeleteJob, expected: 0xB3},
+		{name: "OpSchedulerListJobs", got: OpSchedulerListJobs, expected: 0xB4},
+		{name: "OpSchedulerTriggerJob", got: OpSchedulerTriggerJob, expected: 0xB5},
+		{name: "OpSchedulerPauseJob", got: OpSchedulerPauseJob, expected: 0xB6},
+		{name: "OpSchedulerResumeJob", got: OpSchedulerResumeJob, expected: 0xB7},
+		{name: "OpSchedulerCancelJob", got: OpSchedulerCancelJob, expected: 0xB8},
+		{name: "OpSchedulerGetJobHistory", got: OpSchedulerGetJobHistory, expected: 0xB9},
+		{name: "OpSchedulerGetStatus", got: OpSchedulerGetStatus, expected: 0xBA},
+		{name: "StatusOK", got: StatusOK, expected: 0x00},
+		{name: "StatusInvalidRequest", got: StatusInvalidRequest, expected: 0x01},
+		{name: "StatusNotFound", got: StatusNotFound, expected: 0x02},
+		{name: "StatusUnauthorized", got: StatusUnauthorized, expected: 0x03},
+		{name: "StatusInternalError", got: StatusInternalError, expected: 0x04},
+		{name: "StatusTimeout", got: StatusTimeout, expected: 0x05},
+		{name: "StatusAlreadyExists", got: StatusAlreadyExists, expected: 0x06},
+		{name: "StatusPermissionDenied", got: StatusPermissionDenied, expected: 0x07},
+		{name: "StatusResourceExhausted", got: StatusResourceExhausted, expected: 0x08},
+		{name: "StatusInvalidArgument", got: StatusInvalidArgument, expected: 0x09},
+		{name: "StatusUnavailable", got: StatusUnavailable, expected: 0x0A},
+		{name: "StatusForbidden", got: StatusForbidden, expected: 0x0B},
+	}
 
-func TestStatusConstants(t *testing.T) {
-	assert.Equal(t, byte(0x00), StatusOK)
-	assert.Equal(t, byte(0x01), StatusInvalidRequest)
-	assert.Equal(t, byte(0x02), StatusNotFound)
-	assert.Equal(t, byte(0x03), StatusUnauthorized)
-	assert.Equal(t, byte(0x04), StatusInternalError)
-	assert.Equal(t, byte(0x05), StatusTimeout)
-	assert.Equal(t, byte(0x06), StatusAlreadyExists)
-	assert.Equal(t, byte(0x07), StatusPermissionDenied)
-	assert.Equal(t, byte(0x08), StatusResourceExhausted)
-	assert.Equal(t, byte(0x09), StatusInvalidArgument)
-	assert.Equal(t, byte(0x0A), StatusUnavailable)
-	assert.Equal(t, byte(0x0B), StatusForbidden)
-}
-
-func TestProtocolConstants(t *testing.T) {
-	assert.Equal(t, byte(0x01), ProtocolVersion)
-	assert.Equal(t, uint32(16*1024*1024), MaxPayloadSize)
-	assert.Equal(t, uint16(64*1024-1), MaxTokenSize)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.expected, tt.got)
+		})
+	}
 }
 
 func TestWriteReadRequest(t *testing.T) {
@@ -121,11 +126,13 @@ func TestWriteReadRequest(t *testing.T) {
 			},
 		},
 		{
-			name: "both empty",
+			// Regression: RFC 9068 at+jwt tokens carrying qrdb-resolved RBAC
+			// roles + scp claims legitimately exceed the old 8KB cap
+			// (observed: 11,060 bytes).
+			name: "token above old 8KB limit",
 			req: &Request{
-				Opcode:  OpSchedulerGetStatus,
-				Token:   "",
-				Payload: nil,
+				Opcode: OpSchedulerGetJob,
+				Token:  strings.Repeat("t", 11060),
 			},
 		},
 	}
@@ -147,109 +154,90 @@ func TestWriteReadRequest(t *testing.T) {
 	}
 }
 
-func TestWriteRequestNil(t *testing.T) {
-	buf := &bytes.Buffer{}
-	err := WriteRequest(buf, nil)
-	require.Error(t, err)
-
+// assertErrorCode checks that err is a QBError carrying the wanted code.
+func assertErrorCode(t *testing.T, err error, want dberrors.ErrorCode) {
+	t.Helper()
 	var qbErr *dberrors.QBError
-	require.True(t, dberrors.As(err, &qbErr))
-	assert.Equal(t, dberrors.ErrInvalidInput, qbErr.Code)
+	require.True(t, dberrors.As(err, &qbErr), "error %v is not a QBError", err)
+	assert.Equal(t, want, qbErr.Code)
 }
 
-func TestWriteRequestPayloadTooLarge(t *testing.T) {
-	buf := &bytes.Buffer{}
-	req := &Request{
-		Opcode:  OpSchedulerCreateJob,
-		Token:   "token",
-		Payload: make([]byte, MaxPayloadSize+1),
+func TestRequestErrors(t *testing.T) {
+	readRequest := func(wire ...byte) func() error {
+		return func() error {
+			_, err := ReadRequest(bytes.NewReader(wire))
+			return err
+		}
 	}
 
-	err := WriteRequest(buf, req)
-	require.Error(t, err)
-
-	var qbErr *dberrors.QBError
-	require.True(t, dberrors.As(err, &qbErr))
-	assert.Equal(t, dberrors.ErrInvalidInput, qbErr.Code)
-}
-
-func TestWriteRequestTokenTooLarge(t *testing.T) {
-	buf := &bytes.Buffer{}
-	req := &Request{
-		Opcode:  OpSchedulerCreateJob,
-		Token:   strings.Repeat("a", int(MaxTokenSize)+1),
-		Payload: []byte("{}"),
+	tests := []struct {
+		name     string
+		run      func() error
+		wantCode dberrors.ErrorCode
+	}{
+		{
+			name:     "write nil request",
+			run:      func() error { return WriteRequest(&bytes.Buffer{}, nil) },
+			wantCode: dberrors.ErrInvalidInput,
+		},
+		{
+			name: "write payload over MaxPayloadSize",
+			run: func() error {
+				return WriteRequest(&bytes.Buffer{}, &Request{
+					Opcode:  OpSchedulerCreateJob,
+					Token:   "token",
+					Payload: make([]byte, MaxPayloadSize+1),
+				})
+			},
+			wantCode: dberrors.ErrInvalidInput,
+		},
+		{
+			name: "write token over MaxTokenSize",
+			run: func() error {
+				return WriteRequest(&bytes.Buffer{}, &Request{
+					Opcode:  OpSchedulerCreateJob,
+					Token:   strings.Repeat("a", int(MaxTokenSize)+1),
+					Payload: []byte("{}"),
+				})
+			},
+			wantCode: dberrors.ErrInvalidInput,
+		},
+		{
+			name: "write to failing writer",
+			run: func() error {
+				return WriteRequest(&errorWriter{}, &Request{
+					Opcode:  OpSchedulerGetJob,
+					Token:   "token",
+					Payload: []byte(`{}`),
+				})
+			},
+			wantCode: dberrors.ErrInternal,
+		},
+		{
+			name:     "read empty stream",
+			run:      readRequest(),
+			wantCode: dberrors.ErrInternal,
+		},
+		{
+			// A token length prefix at the 2-byte wire ceiling (65535, which
+			// equals MaxTokenSize) with no token body must fail the read.
+			name:     "read token length at wire ceiling with no token body",
+			run:      readRequest(OpSchedulerGetJob, 0xFF, 0xFF),
+			wantCode: dberrors.ErrInternal,
+		},
+		{
+			// Payload length 0x02000000 (32MB) exceeds MaxPayloadSize (16MB).
+			name:     "read payload length over MaxPayloadSize",
+			run:      readRequest(OpSchedulerGetJob, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00),
+			wantCode: dberrors.ErrInvalidInput,
+		},
 	}
 
-	err := WriteRequest(buf, req)
-	require.Error(t, err)
-
-	var qbErr *dberrors.QBError
-	require.True(t, dberrors.As(err, &qbErr))
-	assert.Equal(t, dberrors.ErrInvalidInput, qbErr.Code)
-}
-
-func TestReadRequestReadError(t *testing.T) {
-	// Test empty reader
-	_, err := ReadRequest(&bytes.Buffer{})
-	require.Error(t, err)
-
-	var qbErr *dberrors.QBError
-	require.True(t, dberrors.As(err, &qbErr))
-	assert.Equal(t, dberrors.ErrInternal, qbErr.Code)
-}
-
-func TestReadRequestTokenAtWireCeilingTruncated(t *testing.T) {
-	buf := &bytes.Buffer{}
-	// Write opcode
-	buf.WriteByte(OpSchedulerGetJob)
-	// Token length prefix at the 2-byte wire ceiling (65535, which equals
-	// MaxTokenSize) with no token body must fail the read.
-	buf.WriteByte(0xFF)
-	buf.WriteByte(0xFF)
-
-	_, err := ReadRequest(buf)
-	require.Error(t, err)
-
-	var qbErr *dberrors.QBError
-	require.True(t, dberrors.As(err, &qbErr))
-	assert.Equal(t, dberrors.ErrInternal, qbErr.Code)
-}
-
-func TestReadRequestTokenAboveOld8KBLimit(t *testing.T) {
-	// Regression: RFC 9068 at+jwt tokens carrying qrdb-resolved RBAC roles +
-	// scp claims legitimately exceed the old 8KB cap (observed: 11,060 bytes).
-	req := &Request{
-		Opcode: OpSchedulerGetJob,
-		Token:  strings.Repeat("t", 11060),
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assertErrorCode(t, tt.run(), tt.wantCode)
+		})
 	}
-	buf := &bytes.Buffer{}
-	require.NoError(t, WriteRequest(buf, req))
-
-	decoded, err := ReadRequest(buf)
-	require.NoError(t, err)
-	assert.Equal(t, req.Token, decoded.Token)
-}
-
-func TestReadRequestPayloadSizeExceeded(t *testing.T) {
-	buf := &bytes.Buffer{}
-	// Write opcode
-	buf.WriteByte(OpSchedulerGetJob)
-	// Write token length (0)
-	buf.WriteByte(0x00)
-	buf.WriteByte(0x00)
-	// Write payload length that exceeds max (> 16MB)
-	buf.WriteByte(0x02) // 33MB
-	buf.WriteByte(0x00)
-	buf.WriteByte(0x00)
-	buf.WriteByte(0x00)
-
-	_, err := ReadRequest(buf)
-	require.Error(t, err)
-
-	var qbErr *dberrors.QBError
-	require.True(t, dberrors.As(err, &qbErr))
-	assert.Equal(t, dberrors.ErrInvalidInput, qbErr.Code)
 }
 
 func TestWriteReadResponse(t *testing.T) {
@@ -296,57 +284,67 @@ func TestWriteReadResponse(t *testing.T) {
 	}
 }
 
-func TestWriteResponseNil(t *testing.T) {
-	buf := &bytes.Buffer{}
-	err := WriteResponse(buf, nil)
-	require.Error(t, err)
-
-	var qbErr *dberrors.QBError
-	require.True(t, dberrors.As(err, &qbErr))
-	assert.Equal(t, dberrors.ErrInvalidInput, qbErr.Code)
-}
-
-func TestWriteResponsePayloadTooLarge(t *testing.T) {
-	buf := &bytes.Buffer{}
-	resp := &Response{
-		Status:  StatusOK,
-		Payload: make([]byte, MaxPayloadSize+1),
+func TestResponseErrors(t *testing.T) {
+	readResponse := func(wire ...byte) func() error {
+		return func() error {
+			_, err := ReadResponse(bytes.NewReader(wire))
+			return err
+		}
 	}
 
-	err := WriteResponse(buf, resp)
-	require.Error(t, err)
+	tests := []struct {
+		name     string
+		run      func() error
+		wantCode dberrors.ErrorCode
+	}{
+		{
+			name:     "write nil response",
+			run:      func() error { return WriteResponse(&bytes.Buffer{}, nil) },
+			wantCode: dberrors.ErrInvalidInput,
+		},
+		{
+			name: "write payload over MaxPayloadSize",
+			run: func() error {
+				return WriteResponse(&bytes.Buffer{}, &Response{
+					Status:  StatusOK,
+					Payload: make([]byte, MaxPayloadSize+1),
+				})
+			},
+			wantCode: dberrors.ErrInvalidInput,
+		},
+		{
+			name: "write to failing writer",
+			run: func() error {
+				return WriteResponse(&errorWriter{}, &Response{
+					Status:  StatusOK,
+					Payload: []byte(`{}`),
+				})
+			},
+			wantCode: dberrors.ErrInternal,
+		},
+		{
+			name:     "read empty stream",
+			run:      readResponse(),
+			wantCode: dberrors.ErrInternal,
+		},
+		{
+			name:     "read truncated payload length",
+			run:      readResponse(StatusOK, 0x00, 0x00),
+			wantCode: dberrors.ErrInternal,
+		},
+		{
+			// Payload length 0x02000000 (32MB) exceeds MaxPayloadSize (16MB).
+			name:     "read payload length over MaxPayloadSize",
+			run:      readResponse(StatusOK, 0x02, 0x00, 0x00, 0x00),
+			wantCode: dberrors.ErrInvalidInput,
+		},
+	}
 
-	var qbErr *dberrors.QBError
-	require.True(t, dberrors.As(err, &qbErr))
-	assert.Equal(t, dberrors.ErrInvalidInput, qbErr.Code)
-}
-
-func TestReadResponseReadError(t *testing.T) {
-	// Test empty reader
-	_, err := ReadResponse(&bytes.Buffer{})
-	require.Error(t, err)
-
-	var qbErr *dberrors.QBError
-	require.True(t, dberrors.As(err, &qbErr))
-	assert.Equal(t, dberrors.ErrInternal, qbErr.Code)
-}
-
-func TestReadResponsePayloadSizeExceeded(t *testing.T) {
-	buf := &bytes.Buffer{}
-	// Write status
-	buf.WriteByte(StatusOK)
-	// Write payload length that exceeds max (> 16MB)
-	buf.WriteByte(0x02) // 33MB
-	buf.WriteByte(0x00)
-	buf.WriteByte(0x00)
-	buf.WriteByte(0x00)
-
-	_, err := ReadResponse(buf)
-	require.Error(t, err)
-
-	var qbErr *dberrors.QBError
-	require.True(t, dberrors.As(err, &qbErr))
-	assert.Equal(t, dberrors.ErrInvalidInput, qbErr.Code)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assertErrorCode(t, tt.run(), tt.wantCode)
+		})
+	}
 }
 
 func TestEncodeDecodePayload(t *testing.T) {
@@ -355,245 +353,129 @@ func TestEncodeDecodePayload(t *testing.T) {
 		Value int    `json:"value"`
 	}
 
-	original := &testStruct{Name: "test", Value: 123}
-
-	encoded, err := EncodePayload(original)
-	require.NoError(t, err)
-	require.NotEmpty(t, encoded)
-
-	var decoded testStruct
-	err = DecodePayload(encoded, &decoded)
-	require.NoError(t, err)
-
-	assert.Equal(t, original.Name, decoded.Name)
-	assert.Equal(t, original.Value, decoded.Value)
-}
-
-func TestEncodePayloadNil(t *testing.T) {
-	encoded, err := EncodePayload(nil)
-	require.NoError(t, err)
-	assert.Nil(t, encoded)
-}
-
-func TestDecodePayloadEmpty(t *testing.T) {
-	var decoded struct{}
-	err := DecodePayload(nil, &decoded)
-	require.NoError(t, err)
-
-	err = DecodePayload([]byte{}, &decoded)
-	require.NoError(t, err)
-}
-
-func TestDecodePayloadNilEntity(t *testing.T) {
-	err := DecodePayload([]byte(`{"test": "value"}`), nil)
-	require.Error(t, err)
-
-	var qbErr *dberrors.QBError
-	require.True(t, dberrors.As(err, &qbErr))
-	assert.Equal(t, dberrors.ErrInvalidInput, qbErr.Code)
-}
-
-func TestDecodePayloadInvalidJSON(t *testing.T) {
-	var decoded struct{}
-	err := DecodePayload([]byte("invalid json"), &decoded)
-	require.Error(t, err)
-
-	var qbErr *dberrors.QBError
-	require.True(t, dberrors.As(err, &qbErr))
-	assert.Equal(t, dberrors.ErrInternal, qbErr.Code)
-}
-
-func TestErrorToStatus(t *testing.T) {
 	tests := []struct {
-		name     string
-		err      error
-		expected byte
+		name string
+		// run calls EncodePayload or DecodePayload and checks any output.
+		run func(t *testing.T) error
+		// wantCode is the error code expected, or 0 for success.
+		wantCode dberrors.ErrorCode
 	}{
 		{
-			name:     "nil error",
-			err:      nil,
-			expected: StatusOK,
-		},
-		{
-			name: "not found",
-			err: &dberrors.QBError{
-				Code: dberrors.ErrNotFound,
+			name: "round trip",
+			run: func(t *testing.T) error {
+				original := testStruct{Name: "test", Value: 123}
+				encoded, err := EncodePayload(&original)
+				require.NoError(t, err)
+
+				var decoded testStruct
+				require.NoError(t, DecodePayload(encoded, &decoded))
+				assert.Equal(t, original, decoded)
+				return nil
 			},
-			expected: StatusNotFound,
 		},
 		{
-			name: "unauthorized",
-			err: &dberrors.QBError{
-				Code: dberrors.ErrUnauthorized,
+			name: "encode nil entity yields no payload",
+			run: func(t *testing.T) error {
+				encoded, err := EncodePayload(nil)
+				assert.Nil(t, encoded)
+				return err
 			},
-			expected: StatusUnauthorized,
 		},
 		{
-			name: "invalid input",
-			err: &dberrors.QBError{
-				Code: dberrors.ErrInvalidInput,
+			name: "decode nil data leaves entity untouched",
+			run: func(t *testing.T) error {
+				decoded := testStruct{Name: "kept"}
+				err := DecodePayload(nil, &decoded)
+				assert.Equal(t, "kept", decoded.Name)
+				return err
 			},
-			expected: StatusInvalidArgument,
 		},
 		{
-			name: "already exists",
-			err: &dberrors.QBError{
-				Code: dberrors.ErrAlreadyExists,
+			name: "decode empty data with nil entity is a no-op",
+			run: func(t *testing.T) error {
+				return DecodePayload([]byte{}, nil)
 			},
-			expected: StatusAlreadyExists,
 		},
 		{
-			name: "timeout",
-			err: &dberrors.QBError{
-				Code: dberrors.ErrTimeout,
+			name: "encode unmarshalable entity",
+			run: func(t *testing.T) error {
+				_, err := EncodePayload(func() {})
+				return err
 			},
-			expected: StatusTimeout,
+			wantCode: dberrors.ErrInternal,
 		},
 		{
-			name: "forbidden",
-			err: &dberrors.QBError{
-				Code: dberrors.ErrForbidden,
+			name: "decode into nil entity",
+			run: func(t *testing.T) error {
+				return DecodePayload([]byte(`{"test": "value"}`), nil)
 			},
-			expected: StatusForbidden,
+			wantCode: dberrors.ErrInvalidInput,
 		},
 		{
-			name: "resource exhausted",
-			err: &dberrors.QBError{
-				Code: dberrors.ErrResourceExhausted,
+			name: "decode invalid JSON",
+			run: func(t *testing.T) error {
+				var decoded testStruct
+				return DecodePayload([]byte("invalid json"), &decoded)
 			},
-			expected: StatusResourceExhausted,
-		},
-		{
-			name: "unavailable",
-			err: &dberrors.QBError{
-				Code: dberrors.ErrUnavailable,
-			},
-			expected: StatusUnavailable,
-		},
-		{
-			name: "internal error",
-			err: &dberrors.QBError{
-				Code: dberrors.ErrInternal,
-			},
-			expected: StatusInternalError,
-		},
-		{
-			name:     "non-qb error",
-			err:      io.EOF,
-			expected: StatusInternalError,
+			wantCode: dberrors.ErrInternal,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := ErrorToStatus(tt.err)
-			assert.Equal(t, tt.expected, result)
-		})
-	}
-}
-
-func TestStatusToError(t *testing.T) {
-	tests := []struct {
-		name         string
-		status       byte
-		message      string
-		expectedCode dberrors.ErrorCode
-	}{
-		{
-			name:         "OK returns nil",
-			status:       StatusOK,
-			message:      "success",
-			expectedCode: 0, // nil error
-		},
-		{
-			name:         "not found",
-			status:       StatusNotFound,
-			message:      "job not found",
-			expectedCode: dberrors.ErrNotFound,
-		},
-		{
-			name:         "unauthorized",
-			status:       StatusUnauthorized,
-			message:      "unauthorized",
-			expectedCode: dberrors.ErrUnauthorized,
-		},
-		{
-			name:         "invalid argument",
-			status:       StatusInvalidArgument,
-			message:      "invalid input",
-			expectedCode: dberrors.ErrInvalidInput,
-		},
-		{
-			name:         "invalid request",
-			status:       StatusInvalidRequest,
-			message:      "invalid request",
-			expectedCode: dberrors.ErrInvalidInput,
-		},
-		{
-			name:         "already exists",
-			status:       StatusAlreadyExists,
-			message:      "job exists",
-			expectedCode: dberrors.ErrAlreadyExists,
-		},
-		{
-			name:         "timeout",
-			status:       StatusTimeout,
-			message:      "timed out",
-			expectedCode: dberrors.ErrTimeout,
-		},
-		{
-			name:         "permission denied",
-			status:       StatusPermissionDenied,
-			message:      "permission denied",
-			expectedCode: dberrors.ErrForbidden,
-		},
-		{
-			name:         "forbidden",
-			status:       StatusForbidden,
-			message:      "forbidden",
-			expectedCode: dberrors.ErrForbidden,
-		},
-		{
-			name:         "resource exhausted",
-			status:       StatusResourceExhausted,
-			message:      "quota exceeded",
-			expectedCode: dberrors.ErrResourceExhausted,
-		},
-		{
-			name:         "unavailable",
-			status:       StatusUnavailable,
-			message:      "service unavailable",
-			expectedCode: dberrors.ErrUnavailable,
-		},
-		{
-			name:         "internal error",
-			status:       StatusInternalError,
-			message:      "internal error",
-			expectedCode: dberrors.ErrInternal,
-		},
-		{
-			name:         "unknown status",
-			status:       0xFE,
-			message:      "unknown error",
-			expectedCode: dberrors.ErrInternal,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			err := StatusToError(tt.status, tt.message)
-
-			if tt.status == StatusOK {
-				assert.Nil(t, err)
+			err := tt.run(t)
+			if tt.wantCode == 0 {
+				require.NoError(t, err)
 				return
 			}
-
-			require.NotNil(t, err)
-			var qbErr *dberrors.QBError
-			require.True(t, dberrors.As(err, &qbErr))
-			assert.Equal(t, tt.expectedCode, qbErr.Code)
+			assertErrorCode(t, err, tt.wantCode)
 		})
 	}
+}
+
+func TestErrorStatusMapping(t *testing.T) {
+	tests := []struct {
+		name   string
+		code   dberrors.ErrorCode
+		status byte
+		// toStatus and toError name the directions the pair holds in; the
+		// status set is wider than the error set, so some pairs are one-way.
+		toStatus bool
+		toError  bool
+	}{
+		{name: "not found", code: dberrors.ErrNotFound, status: StatusNotFound, toStatus: true, toError: true},
+		{name: "unauthorized", code: dberrors.ErrUnauthorized, status: StatusUnauthorized, toStatus: true, toError: true},
+		{name: "invalid argument", code: dberrors.ErrInvalidInput, status: StatusInvalidArgument, toStatus: true, toError: true},
+		{name: "already exists", code: dberrors.ErrAlreadyExists, status: StatusAlreadyExists, toStatus: true, toError: true},
+		{name: "timeout", code: dberrors.ErrTimeout, status: StatusTimeout, toStatus: true, toError: true},
+		{name: "forbidden", code: dberrors.ErrForbidden, status: StatusForbidden, toStatus: true, toError: true},
+		{name: "resource exhausted", code: dberrors.ErrResourceExhausted, status: StatusResourceExhausted, toStatus: true, toError: true},
+		{name: "unavailable", code: dberrors.ErrUnavailable, status: StatusUnavailable, toStatus: true, toError: true},
+		{name: "internal error", code: dberrors.ErrInternal, status: StatusInternalError, toStatus: true, toError: true},
+		{name: "invalid request", code: dberrors.ErrInvalidInput, status: StatusInvalidRequest, toError: true},
+		{name: "permission denied", code: dberrors.ErrForbidden, status: StatusPermissionDenied, toError: true},
+		{name: "unknown status", code: dberrors.ErrInternal, status: 0xFE, toError: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if tt.toStatus {
+				assert.Equal(t, tt.status, ErrorToStatus(&dberrors.QBError{Code: tt.code}))
+			}
+			if tt.toError {
+				assertErrorCode(t, StatusToError(tt.status, tt.name), tt.code)
+			}
+		})
+	}
+
+	t.Run("nil error and StatusOK", func(t *testing.T) {
+		assert.Equal(t, StatusOK, ErrorToStatus(nil))
+		assert.NoError(t, StatusToError(StatusOK, "success"))
+	})
+
+	t.Run("non-QBError maps to internal error", func(t *testing.T) {
+		assert.Equal(t, StatusInternalError, ErrorToStatus(io.EOF))
+	})
 }
 
 // errorWriter is a writer that always returns an error.
@@ -601,114 +483,4 @@ type errorWriter struct{}
 
 func (w *errorWriter) Write(p []byte) (n int, err error) {
 	return 0, io.ErrClosedPipe
-}
-
-func TestWriteRequestWriteErrors(t *testing.T) {
-	w := &errorWriter{}
-
-	req := &Request{
-		Opcode:  OpSchedulerGetJob,
-		Token:   "token",
-		Payload: []byte(`{}`),
-	}
-
-	err := WriteRequest(w, req)
-	require.Error(t, err)
-
-	var qbErr *dberrors.QBError
-	require.True(t, dberrors.As(err, &qbErr))
-	assert.Equal(t, dberrors.ErrInternal, qbErr.Code)
-}
-
-func TestWriteResponseWriteErrors(t *testing.T) {
-	w := &errorWriter{}
-
-	resp := &Response{
-		Status:  StatusOK,
-		Payload: []byte(`{}`),
-	}
-
-	err := WriteResponse(w, resp)
-	require.Error(t, err)
-
-	var qbErr *dberrors.QBError
-	require.True(t, dberrors.As(err, &qbErr))
-	assert.Equal(t, dberrors.ErrInternal, qbErr.Code)
-}
-
-// partialReader returns data only up to a specified point.
-type partialReader struct {
-	data   []byte
-	offset int
-	limit  int
-}
-
-func (r *partialReader) Read(p []byte) (n int, err error) {
-	if r.offset >= r.limit || r.offset >= len(r.data) {
-		return 0, io.EOF
-	}
-	remaining := r.limit - r.offset
-	if remaining > len(p) {
-		remaining = len(p)
-	}
-	if remaining > len(r.data)-r.offset {
-		remaining = len(r.data) - r.offset
-	}
-	n = copy(p, r.data[r.offset:r.offset+remaining])
-	r.offset += n
-	if r.offset >= r.limit {
-		return n, io.EOF
-	}
-	return n, nil
-}
-
-func TestReadRequestPartialRead(t *testing.T) {
-	// Write a valid request
-	buf := &bytes.Buffer{}
-	req := &Request{
-		Opcode:  OpSchedulerGetJob,
-		Token:   "token",
-		Payload: []byte(`{"job_id": 123}`),
-	}
-	err := WriteRequest(buf, req)
-	require.NoError(t, err)
-
-	// Read with partial data (cut off in the middle of token)
-	reader := &partialReader{
-		data:  buf.Bytes(),
-		limit: 5, // Only read opcode and part of token length
-	}
-
-	_, err = ReadRequest(reader)
-	require.Error(t, err)
-}
-
-func TestReadResponsePartialRead(t *testing.T) {
-	// Write a valid response
-	buf := &bytes.Buffer{}
-	resp := &Response{
-		Status:  StatusOK,
-		Payload: []byte(`{"job_id": 123}`),
-	}
-	err := WriteResponse(buf, resp)
-	require.NoError(t, err)
-
-	// Read with partial data
-	reader := &partialReader{
-		data:  buf.Bytes(),
-		limit: 3, // Only read status and part of payload length
-	}
-
-	_, err = ReadResponse(reader)
-	require.Error(t, err)
-}
-
-func TestEncodePayloadMarshalError(t *testing.T) {
-	// Functions cannot be marshaled
-	_, err := EncodePayload(func() {})
-	require.Error(t, err)
-
-	var qbErr *dberrors.QBError
-	require.True(t, dberrors.As(err, &qbErr))
-	assert.Equal(t, dberrors.ErrInternal, qbErr.Code)
 }

@@ -16,6 +16,7 @@ package watch
 import (
 	"context"
 	"sync"
+	"sync/atomic"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -103,27 +104,8 @@ func TestGetPrefix(t *testing.T) {
 	}
 }
 
-// TestFnv1a verifies hash function distribution.
+// TestFnv1a verifies the shard hash is deterministic and separates keys.
 func TestFnv1a(t *testing.T) {
-	tests := []struct {
-		name string
-		key  []byte
-	}{
-		{name: "simple key", key: []byte("test")},
-		{name: "empty key", key: []byte{}},
-		{name: "long key", key: []byte("very-long-key-name-for-testing")},
-		{name: "numeric key", key: []byte("12345")},
-		{name: "path key", key: []byte("/config/server/port")},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			hash := fnv1a(tt.key)
-			// Hash should be in valid range [0, 255]
-			assert.LessOrEqual(t, hash, uint8(255))
-		})
-	}
-
 	// Verify same key produces same hash
 	key := []byte("test-key")
 	hash1 := fnv1a(key)
@@ -221,13 +203,6 @@ func TestMatchesRange(t *testing.T) {
 			expected: true,
 		},
 		{
-			name:     "prefix match - /config/db in /config/",
-			key:      []byte("/config/db"),
-			start:    []byte("/config/"),
-			end:      []byte("/config0"),
-			expected: true,
-		},
-		{
 			name:     "prefix no match - /data/x not in /config/",
 			key:      []byte("/data/x"),
 			start:    []byte("/config/"),
@@ -251,227 +226,132 @@ func TestMatchesRange(t *testing.T) {
 	}
 }
 
-// TestAddInternal_ExactWatch verifies exact key watch registration.
-func TestAddInternal_ExactWatch(t *testing.T) {
-	mgr := NewManager()
-	stream := newMockWatchStream()
-
-	key := []byte("test-key")
-	watch, err := mgr.addInternal(key, nil, 0, WatchFilters{}, stream, &watchOptions{}, true)
-
-	require.NoError(t, err)
-	require.NotNil(t, watch)
-
-	// Verify watch properties
-	assert.Equal(t, uint64(1), watch.ID)
-	assert.Equal(t, key, watch.Key)
-	assert.Nil(t, watch.RangeEnd)
-	assert.Equal(t, int64(0), watch.StartRev)
-	assert.NotNil(t, watch.Events)
-	assert.NotNil(t, watch.ctx)
-	assert.NotNil(t, watch.cancel)
-	assert.True(t, watch.skipDeliver)
-
-	// Verify watch was added to correct shard
-	shard := mgr.getShard(key)
-	shard.mu.RLock()
-	watches := shard.exactWatches[string(key)]
-	shard.mu.RUnlock()
-
-	require.Len(t, watches, 1)
-	assert.Equal(t, watch, watches[0])
-
-	// Verify watch count
-	assert.Equal(t, uint64(1), mgr.watchCount)
-}
-
-// TestAddInternal_PrefixWatch verifies prefix watch registration.
-func TestAddInternal_PrefixWatch(t *testing.T) {
-	mgr := NewManager()
-	stream := newMockWatchStream()
-
-	key := []byte("/config/")
-	rangeEnd := []byte("/config0")
-	watch, err := mgr.addInternal(key, rangeEnd, 0, WatchFilters{}, stream, &watchOptions{}, true)
-
-	require.NoError(t, err)
-	require.NotNil(t, watch)
-
-	// Verify watch properties
-	assert.Equal(t, uint64(1), watch.ID)
-	assert.Equal(t, key, watch.Key)
-	assert.Equal(t, rangeEnd, watch.RangeEnd)
-
-	// Verify watch was added to shard's prefix watches
-	shard := mgr.getShard(key)
-	shard.mu.RLock()
-	prefixWatches := shard.prefixWatches
-	shard.mu.RUnlock()
-
-	require.Len(t, prefixWatches, 1)
-	assert.Equal(t, watch, prefixWatches[0])
-
-	// Verify watch count
-	assert.Equal(t, uint64(1), mgr.watchCount)
-}
-
-// TestAddInternal_MultipleWatchesSameKey verifies multiple watches on same key.
-func TestAddInternal_MultipleWatchesSameKey(t *testing.T) {
-	mgr := NewManager()
-	stream := newMockWatchStream()
-
-	key := []byte("test-key")
-
-	// Add first watch
-	watch1, err := mgr.addInternal(key, nil, 0, WatchFilters{}, stream, &watchOptions{}, true)
-	require.NoError(t, err)
-	require.NotNil(t, watch1)
-
-	// Add second watch
-	watch2, err := mgr.addInternal(key, nil, 0, WatchFilters{}, stream, &watchOptions{}, true)
-	require.NoError(t, err)
-	require.NotNil(t, watch2)
-
-	// Verify unique IDs
-	assert.NotEqual(t, watch1.ID, watch2.ID)
-	assert.Equal(t, uint64(1), watch1.ID)
-	assert.Equal(t, uint64(2), watch2.ID)
-
-	// Verify both watches are in shard
-	shard := mgr.getShard(key)
-	shard.mu.RLock()
-	watches := shard.exactWatches[string(key)]
-	shard.mu.RUnlock()
-
-	require.Len(t, watches, 2)
-	assert.Equal(t, uint64(2), mgr.watchCount)
-}
-
-// TestAddInternal_WithFilters verifies filter configuration.
-func TestAddInternal_WithFilters(t *testing.T) {
-	mgr := NewManager()
-	stream := newMockWatchStream()
-
-	filters := WatchFilters{
-		NoPut:    true,
-		NoDelete: false,
+// TestAdd verifies that Add and addInternal register exact and prefix watches
+// in the key's shard with sequential IDs and the given filters.
+func TestAdd(t *testing.T) {
+	tests := []struct {
+		name     string
+		key      []byte
+		rangeEnd []byte
+		filters  WatchFilters
+		count    int
+		public   bool
+	}{
+		{name: "exact watch", key: []byte("test-key"), count: 1},
+		{name: "prefix watch", key: []byte("/config/"), rangeEnd: []byte("/config0"), count: 1},
+		{name: "multiple watches same key", key: []byte("test-key"), count: 2},
+		{name: "filters kept", key: []byte("key"), filters: WatchFilters{NoPut: true}, count: 1},
+		{name: "public Add starts delivery", key: []byte("key"), count: 1, public: true},
 	}
 
-	watch, err := mgr.addInternal([]byte("key"), nil, 0, filters, stream, &watchOptions{}, true)
-	require.NoError(t, err)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mgr := NewManager()
+			stream := newMockWatchStream()
 
-	assert.Equal(t, filters, watch.Filters)
+			var added []*Watch
+			for i := 0; i < tt.count; i++ {
+				var watch *Watch
+				var err error
+				if tt.public {
+					watch, err = mgr.Add(tt.key, tt.rangeEnd, 0, tt.filters, stream)
+				} else {
+					watch, err = mgr.addInternal(tt.key, tt.rangeEnd, 0, tt.filters, stream, &watchOptions{}, true)
+				}
+				require.NoError(t, err)
+				require.NotNil(t, watch)
+				added = append(added, watch)
+			}
+
+			for i, watch := range added {
+				assert.Equal(t, uint64(i+1), watch.ID)
+				assert.Equal(t, tt.key, watch.Key)
+				assert.Equal(t, tt.rangeEnd, watch.RangeEnd)
+				assert.Equal(t, int64(0), watch.StartRev)
+				assert.Equal(t, tt.filters, watch.Filters)
+				assert.NotNil(t, watch.Events)
+				assert.Equal(t, !tt.public, watch.skipDeliver)
+			}
+
+			shard := mgr.getShard(tt.key)
+			shard.mu.RLock()
+			registered := shard.exactWatches[string(tt.key)]
+			if tt.rangeEnd != nil {
+				registered = shard.prefixWatches
+			}
+			registered = append([]*Watch(nil), registered...)
+			shard.mu.RUnlock()
+
+			assert.Equal(t, added, registered)
+			assert.Equal(t, uint64(tt.count), atomic.LoadUint64(&mgr.watchCount))
+
+			if tt.public {
+				for _, watch := range added {
+					watch.cancel()
+				}
+			}
+		})
+	}
 }
 
-// TestAdd verifies public Add method.
-func TestAdd(t *testing.T) {
-	mgr := NewManager()
-	stream := newMockWatchStream()
+// TestRemove verifies that Remove drops only the named watch from its shard,
+// and that an unknown ID leaves every watch in place.
+func TestRemove(t *testing.T) {
+	tests := []struct {
+		name     string
+		key      []byte
+		rangeEnd []byte
+		count    int
+		remove   int // index into the added watches; -1 removes an unknown ID
+		wantLeft []int
+	}{
+		{name: "exact watch", key: []byte("test-key"), count: 1, remove: 0},
+		{name: "prefix watch", key: []byte("/config/"), rangeEnd: []byte("/config0"), count: 1, remove: 0},
+		{name: "one of multiple watches", key: []byte("test-key"), count: 3, remove: 1, wantLeft: []int{0, 2}},
+		{name: "unknown watch ID", key: []byte("test-key"), count: 1, remove: -1, wantLeft: []int{0}},
+	}
 
-	watch, err := mgr.Add([]byte("key"), nil, 0, WatchFilters{}, stream)
-	require.NoError(t, err)
-	require.NotNil(t, watch)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mgr := NewManager()
+			stream := newMockWatchStream()
 
-	// Verify skipDeliver is false (deliverEvents should start)
-	assert.False(t, watch.skipDeliver)
+			var added []*Watch
+			for i := 0; i < tt.count; i++ {
+				watch, err := mgr.addInternal(tt.key, tt.rangeEnd, 0, WatchFilters{}, stream, &watchOptions{}, true)
+				require.NoError(t, err)
+				added = append(added, watch)
+			}
 
-	// Clean up
-	watch.cancel()
-}
+			removeID := uint64(999)
+			if tt.remove >= 0 {
+				removeID = added[tt.remove].ID
+			}
+			mgr.Remove(removeID)
 
-// TestRemove_ExactWatch verifies removing exact watch.
-func TestRemove_ExactWatch(t *testing.T) {
-	mgr := NewManager()
-	stream := newMockWatchStream()
+			shard := mgr.getShard(tt.key)
+			shard.mu.RLock()
+			remaining := shard.exactWatches[string(tt.key)]
+			if tt.rangeEnd != nil {
+				remaining = shard.prefixWatches
+			}
+			var remainingIDs []uint64
+			for _, w := range remaining {
+				remainingIDs = append(remainingIDs, w.ID)
+			}
+			shard.mu.RUnlock()
 
-	key := []byte("test-key")
-	watch, err := mgr.addInternal(key, nil, 0, WatchFilters{}, stream, &watchOptions{}, true)
-	require.NoError(t, err)
-
-	// Verify watch exists
-	assert.Equal(t, uint64(1), mgr.watchCount)
-
-	// Remove watch
-	mgr.Remove(watch.ID)
-
-	// Verify watch removed
-	assert.Equal(t, uint64(0), mgr.watchCount)
-
-	// Verify shard is clean
-	shard := mgr.getShard(key)
-	shard.mu.RLock()
-	watches := shard.exactWatches[string(key)]
-	shard.mu.RUnlock()
-
-	assert.Len(t, watches, 0)
-}
-
-// TestRemove_PrefixWatch verifies removing prefix watch.
-func TestRemove_PrefixWatch(t *testing.T) {
-	mgr := NewManager()
-	stream := newMockWatchStream()
-
-	key := []byte("/config/")
-	rangeEnd := []byte("/config0")
-	watch, err := mgr.addInternal(key, rangeEnd, 0, WatchFilters{}, stream, &watchOptions{}, true)
-	require.NoError(t, err)
-
-	// Verify watch exists
-	assert.Equal(t, uint64(1), mgr.watchCount)
-
-	// Remove watch
-	mgr.Remove(watch.ID)
-
-	// Verify watch removed
-	assert.Equal(t, uint64(0), mgr.watchCount)
-
-	// Verify shard is clean
-	shard := mgr.getShard(key)
-	shard.mu.RLock()
-	prefixWatches := shard.prefixWatches
-	shard.mu.RUnlock()
-
-	assert.Len(t, prefixWatches, 0)
-}
-
-// TestRemove_NonExistentWatch verifies removing non-existent watch doesn't panic.
-func TestRemove_NonExistentWatch(t *testing.T) {
-	mgr := NewManager()
-
-	// Should not panic
-	assert.NotPanics(t, func() {
-		mgr.Remove(999)
-	})
-}
-
-// TestRemove_OneOfMultipleWatches verifies removing one watch leaves others.
-func TestRemove_OneOfMultipleWatches(t *testing.T) {
-	mgr := NewManager()
-	stream := newMockWatchStream()
-
-	key := []byte("test-key")
-
-	// Add three watches
-	watch1, _ := mgr.addInternal(key, nil, 0, WatchFilters{}, stream, &watchOptions{}, true)
-	watch2, _ := mgr.addInternal(key, nil, 0, WatchFilters{}, stream, &watchOptions{}, true)
-	watch3, _ := mgr.addInternal(key, nil, 0, WatchFilters{}, stream, &watchOptions{}, true)
-
-	assert.Equal(t, uint64(3), mgr.watchCount)
-
-	// Remove middle watch
-	mgr.Remove(watch2.ID)
-
-	assert.Equal(t, uint64(2), mgr.watchCount)
-
-	// Verify remaining watches
-	shard := mgr.getShard(key)
-	shard.mu.RLock()
-	watches := shard.exactWatches[string(key)]
-	shard.mu.RUnlock()
-
-	require.Len(t, watches, 2)
-	assert.Equal(t, watch1.ID, watches[0].ID)
-	assert.Equal(t, watch3.ID, watches[1].ID)
+			var wantIDs []uint64
+			for _, i := range tt.wantLeft {
+				wantIDs = append(wantIDs, added[i].ID)
+			}
+			assert.Equal(t, wantIDs, remainingIDs)
+			assert.Equal(t, uint64(len(tt.wantLeft)), atomic.LoadUint64(&mgr.watchCount))
+			if tt.remove >= 0 {
+				assert.Error(t, added[tt.remove].ctx.Err(), "removed watch context must be cancelled")
+			}
+		})
+	}
 }
 
 // TestSendEvent_WithFilters verifies event filtering.
@@ -560,163 +440,88 @@ func TestSendEvent_WithFilters(t *testing.T) {
 	}
 }
 
-// TestSendEvent_ContextCancelled verifies handling of cancelled context.
+// TestSendEvent_ContextCancelled verifies that sendEvent returns instead of
+// blocking when the watch's context is cancelled and its channel is full.
 func TestSendEvent_ContextCancelled(t *testing.T) {
 	mgr := NewManager()
 
 	ctx, cancel := context.WithCancel(context.Background())
-	cancel() // Cancel immediately
+	cancel()
 
+	// An unbuffered channel with no reader leaves ctx.Done as the only
+	// ready case, so sendEvent returns only through the cancellation path.
 	watch := &Watch{
-		ID:      1,
-		Filters: WatchFilters{},
-		Events:  make(chan *WatchEvent, 1),
-		ctx:     ctx,
-		cancel:  cancel,
+		ID:     1,
+		Events: make(chan *WatchEvent),
+		ctx:    ctx,
+		cancel: cancel,
 	}
 
-	event := &WatchEvent{
-		Type: PUT,
-		Kv: &KeyValue{
-			Key:   []byte("key"),
-			Value: []byte("value"),
-		},
+	mgr.sendEvent(watch, &WatchEvent{Type: PUT, Kv: &KeyValue{Key: []byte("key"), Value: []byte("value")}})
+}
+
+// TestNotify verifies that NotifyPut and NotifyDelete deliver events to exact
+// and prefix watches that match the key, and to no watch otherwise.
+func TestNotify(t *testing.T) {
+	tests := []struct {
+		name      string
+		watchKey  []byte // nil registers no watch
+		rangeEnd  []byte
+		delete    bool
+		key       []byte
+		value     []byte
+		prevValue []byte
+		revision  int64
+		wantEvent bool
+	}{
+		{name: "put with no watches", key: []byte("key"), value: []byte("value"), revision: 1},
+		{name: "delete with no watches", delete: true, key: []byte("key"), prevValue: []byte("prev-value"), revision: 1},
+		{name: "put exact match", watchKey: []byte("test-key"), key: []byte("test-key"), value: []byte("test-value"), revision: 1, wantEvent: true},
+		{name: "put prefix match", watchKey: []byte("/config/"), rangeEnd: getPrefix([]byte("/config/")), key: []byte("/config/server"), value: []byte("localhost"), revision: 1, wantEvent: true},
+		{name: "put no match", watchKey: []byte("key-a"), key: []byte("key-b"), value: []byte("value"), revision: 1},
+		{name: "delete exact match", watchKey: []byte("test-key"), delete: true, key: []byte("test-key"), prevValue: []byte("old-value"), revision: 2, wantEvent: true},
 	}
 
-	// Should not panic or block - this is the important guarantee
-	// The implementation uses a select, so there's a race:
-	// - It might send to channel (buffered, so doesn't block)
-	// - It might detect cancelled context first
-	// Both outcomes are acceptable as long as it doesn't block
-	assert.NotPanics(t, func() {
-		mgr.sendEvent(watch, event)
-	})
-}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mgr := NewManager()
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
 
-// TestNotifyPut_NoWatches verifies fast path when no watches exist.
-func TestNotifyPut_NoWatches(t *testing.T) {
-	mgr := NewManager()
+			var watch *Watch
+			if tt.watchKey != nil {
+				var err error
+				watch, err = mgr.addInternal(tt.watchKey, tt.rangeEnd, 0, WatchFilters{}, &mockWatchStream{ctx: ctx}, &watchOptions{}, true)
+				require.NoError(t, err)
+			}
 
-	// Should return immediately without error
-	assert.NotPanics(t, func() {
-		mgr.NotifyPut([]byte("key"), nil, []byte("value"), 1, 1)
-	})
+			if tt.delete {
+				mgr.NotifyDelete(tt.key, tt.prevValue, tt.revision, 1)
+			} else {
+				mgr.NotifyPut(tt.key, nil, tt.value, tt.revision, 1)
+			}
 
-	// Verify watchCount is still 0
-	assert.Equal(t, uint64(0), mgr.watchCount)
-}
-
-// TestNotifyDelete_NoWatches verifies fast path when no watches exist.
-func TestNotifyDelete_NoWatches(t *testing.T) {
-	mgr := NewManager()
-
-	// Should return immediately without error
-	assert.NotPanics(t, func() {
-		mgr.NotifyDelete([]byte("key"), []byte("prev-value"), 1, 1)
-	})
-
-	assert.Equal(t, uint64(0), mgr.watchCount)
-}
-
-// TestNotify_ExactMatch verifies exact key notification.
-func TestNotify_ExactMatch(t *testing.T) {
-	mgr := NewManager()
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	stream := &mockWatchStream{ctx: ctx}
-	watch, err := mgr.addInternal([]byte("test-key"), nil, 0, WatchFilters{}, stream, &watchOptions{}, true)
-	require.NoError(t, err)
-
-	// Notify PUT
-	mgr.NotifyPut([]byte("test-key"), nil, []byte("test-value"), 1, 1)
-
-	// Check event received
-	select {
-	case event := <-watch.Events:
-		assert.Equal(t, PUT, event.Type)
-		assert.Equal(t, []byte("test-key"), event.Kv.Key)
-		assert.Equal(t, []byte("test-value"), event.Kv.Value)
-		assert.Equal(t, int64(1), event.Revision)
-		assert.Equal(t, int64(1), event.Kv.ModRevision)
-	default:
-		t.Error("Expected event not received")
-	}
-}
-
-// TestNotify_PrefixMatch verifies prefix key notification.
-func TestNotify_PrefixMatch(t *testing.T) {
-	mgr := NewManager()
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	stream := &mockWatchStream{ctx: ctx}
-	prefix := []byte("/config/")
-	rangeEnd := getPrefix(prefix)
-
-	watch, err := mgr.addInternal(prefix, rangeEnd, 0, WatchFilters{}, stream, &watchOptions{}, true)
-	require.NoError(t, err)
-
-	// Notify PUT for key matching prefix
-	mgr.NotifyPut([]byte("/config/server"), nil, []byte("localhost"), 1, 1)
-
-	// Check event received
-	select {
-	case event := <-watch.Events:
-		assert.Equal(t, PUT, event.Type)
-		assert.Equal(t, []byte("/config/server"), event.Kv.Key)
-		assert.Equal(t, []byte("localhost"), event.Kv.Value)
-	default:
-		t.Error("Expected event not received")
-	}
-}
-
-// TestNotify_NoMatch verifies non-matching keys don't trigger events.
-func TestNotify_NoMatch(t *testing.T) {
-	mgr := NewManager()
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	stream := &mockWatchStream{ctx: ctx}
-	watch, err := mgr.addInternal([]byte("key-a"), nil, 0, WatchFilters{}, stream, &watchOptions{}, true)
-	require.NoError(t, err)
-
-	// Notify for different key
-	mgr.NotifyPut([]byte("key-b"), nil, []byte("value"), 1, 1)
-
-	// Should not receive event
-	select {
-	case <-watch.Events:
-		t.Error("Should not receive event for non-matching key")
-	default:
-		// Expected
-	}
-}
-
-// TestNotify_DeleteEvent verifies DELETE event handling.
-func TestNotify_DeleteEvent(t *testing.T) {
-	mgr := NewManager()
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	stream := &mockWatchStream{ctx: ctx}
-	watch, err := mgr.addInternal([]byte("test-key"), nil, 0, WatchFilters{}, stream, &watchOptions{}, true)
-	require.NoError(t, err)
-
-	// Notify DELETE
-	mgr.NotifyDelete([]byte("test-key"), []byte("old-value"), 2, 2)
-
-	// Check event received
-	select {
-	case event := <-watch.Events:
-		assert.Equal(t, DELETE, event.Type)
-		assert.Equal(t, []byte("test-key"), event.Kv.Key)
-		assert.Nil(t, event.Kv.Value) // DELETE events have nil value
-		assert.NotNil(t, event.PrevKv)
-		assert.Equal(t, []byte("old-value"), event.PrevKv.Value)
-		assert.Equal(t, int64(2), event.Revision)
-	default:
-		t.Error("Expected event not received")
+			if watch == nil {
+				return
+			}
+			select {
+			case event := <-watch.Events:
+				require.True(t, tt.wantEvent, "event delivered for a key the watch does not match")
+				assert.Equal(t, tt.key, event.Kv.Key)
+				assert.Equal(t, tt.value, event.Kv.Value)
+				assert.Equal(t, tt.revision, event.Revision)
+				if tt.delete {
+					assert.Equal(t, DELETE, event.Type)
+					require.NotNil(t, event.PrevKv)
+					assert.Equal(t, tt.prevValue, event.PrevKv.Value)
+				} else {
+					assert.Equal(t, PUT, event.Type)
+					assert.Equal(t, tt.revision, event.Kv.ModRevision)
+				}
+			default:
+				assert.False(t, tt.wantEvent, "expected event not received")
+			}
+		})
 	}
 }
 
@@ -830,37 +635,4 @@ func TestConcurrentAddRemove(t *testing.T) {
 
 	// Verify all watches removed
 	assert.Equal(t, uint64(0), mgr.watchCount)
-}
-
-// TestEventPool verifies event pooling reduces allocations.
-func TestEventPool(t *testing.T) {
-	mgr := NewManager()
-
-	// Get event from pool
-	event1 := mgr.eventPool.Get().(*WatchEvent)
-	require.NotNil(t, event1)
-
-	// Modify and return to pool
-	event1.Type = PUT
-	event1.Revision = 123
-	mgr.eventPool.Put(event1)
-
-	// Get another event - might be the same one (pool behavior)
-	event2 := mgr.eventPool.Get().(*WatchEvent)
-	require.NotNil(t, event2)
-
-	// Both should be valid WatchEvent instances
-	assert.IsType(t, &WatchEvent{}, event1)
-	assert.IsType(t, &WatchEvent{}, event2)
-}
-
-// TestWatchFilters verifies filter struct.
-func TestWatchFilters(t *testing.T) {
-	filters := WatchFilters{
-		NoPut:    true,
-		NoDelete: false,
-	}
-
-	assert.True(t, filters.NoPut)
-	assert.False(t, filters.NoDelete)
 }

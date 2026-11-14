@@ -54,27 +54,6 @@ func TestNewSessionManager(t *testing.T) {
 func TestSessionManager_Add(t *testing.T) {
 	sm := NewSessionManager()
 
-	session := NewSession("session-1", "echo", nil)
-	sm.Add(session)
-
-	if sm.Count() != 1 {
-		t.Errorf("Count() = %d, want 1", sm.Count())
-	}
-
-	// Verify session is retrievable
-	retrieved, exists := sm.Get("session-1")
-	if !exists {
-		t.Error("Session should exist after Add")
-	}
-
-	if retrieved.ID != session.ID {
-		t.Errorf("Retrieved session ID = %q, want %q", retrieved.ID, session.ID)
-	}
-}
-
-func TestSessionManager_AddMultiple(t *testing.T) {
-	sm := NewSessionManager()
-
 	// Add multiple sessions
 	for i := 0; i < 100; i++ {
 		session := NewSession(fmt.Sprintf("session-%d", i), "echo", nil)
@@ -124,52 +103,33 @@ func TestSessionManager_AddDuplicateID(t *testing.T) {
 }
 
 func TestSessionManager_Remove(t *testing.T) {
-	sm := NewSessionManager()
-
-	session := NewSession("session-1", "echo", nil)
-	sm.Add(session)
-
-	if sm.Count() != 1 {
-		t.Errorf("Count() = %d, want 1", sm.Count())
+	tests := []struct {
+		name      string
+		sessions  []string
+		removeID  string
+		wantCount uint64
+	}{
+		{name: "existing session", sessions: []string{"session-1"}, removeID: "session-1", wantCount: 0},
+		{name: "nonexistent session", sessions: []string{"session-1"}, removeID: "nonexistent", wantCount: 1},
+		{name: "empty manager", removeID: "nonexistent", wantCount: 0},
 	}
 
-	sm.Remove("session-1")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			sm := NewSessionManager()
+			for _, id := range tt.sessions {
+				sm.Add(NewSession(id, "echo", nil))
+			}
 
-	if sm.Count() != 0 {
-		t.Errorf("Count() = %d, want 0", sm.Count())
-	}
+			sm.Remove(tt.removeID)
 
-	// Verify session is no longer retrievable
-	_, exists := sm.Get("session-1")
-	if exists {
-		t.Error("Session should not exist after Remove")
-	}
-}
-
-func TestSessionManager_RemoveNonexistent(t *testing.T) {
-	sm := NewSessionManager()
-
-	// Add one session
-	session := NewSession("session-1", "echo", nil)
-	sm.Add(session)
-
-	// Try to remove a nonexistent session
-	sm.Remove("nonexistent")
-
-	// Count should remain unchanged
-	if sm.Count() != 1 {
-		t.Errorf("Count() = %d, want 1", sm.Count())
-	}
-}
-
-func TestSessionManager_RemoveEmpty(t *testing.T) {
-	sm := NewSessionManager()
-
-	// Remove from empty manager should not panic or error
-	sm.Remove("nonexistent")
-
-	if sm.Count() != 0 {
-		t.Errorf("Count() = %d, want 0", sm.Count())
+			if sm.Count() != tt.wantCount {
+				t.Errorf("Count() = %d, want %d", sm.Count(), tt.wantCount)
+			}
+			if _, exists := sm.Get(tt.removeID); exists {
+				t.Errorf("Get(%q) found a session after Remove", tt.removeID)
+			}
+		})
 	}
 }
 
@@ -199,16 +159,9 @@ func TestSessionManager_Get(t *testing.T) {
 	if retrieved.UserID != "user-1" {
 		t.Errorf("UserID = %q, want %q", retrieved.UserID, "user-1")
 	}
-}
 
-func TestSessionManager_GetNonexistent(t *testing.T) {
-	sm := NewSessionManager()
-
-	session := NewSession("session-1", "echo", nil)
-	sm.Add(session)
-
-	_, exists := sm.Get("session-2")
-	if exists {
+	// Get an ID the populated manager does not hold
+	if _, exists := sm.Get("session-2"); exists {
 		t.Error("Get for nonexistent session should return false")
 	}
 }
@@ -238,58 +191,34 @@ func TestSessionManager_Count(t *testing.T) {
 }
 
 func TestSessionManager_ForEach(t *testing.T) {
-	sm := NewSessionManager()
-
-	// Add sessions
-	for i := 0; i < 10; i++ {
-		session := NewSession(fmt.Sprintf("session-%d", i), "echo", nil)
-		session.UserID = fmt.Sprintf("user-%d", i)
-		sm.Add(session)
+	tests := []struct {
+		name      string
+		sessions  int
+		stopAfter int // 0 means the callback never stops the walk
+		wantVisit int
+	}{
+		{name: "visits every session", sessions: 10, wantVisit: 10},
+		{name: "stops when callback returns false", sessions: 100, stopAfter: 5, wantVisit: 5},
+		{name: "empty manager", sessions: 0, wantVisit: 0},
 	}
 
-	// Collect all session IDs
-	var ids []string
-	sm.ForEach(func(s *Session) bool {
-		ids = append(ids, s.ID)
-		return true
-	})
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			sm := NewSessionManager()
+			for i := 0; i < tt.sessions; i++ {
+				sm.Add(NewSession(fmt.Sprintf("session-%d", i), "echo", nil))
+			}
 
-	if len(ids) != 10 {
-		t.Errorf("ForEach visited %d sessions, want 10", len(ids))
-	}
-}
+			visited := make(map[string]bool)
+			sm.ForEach(func(s *Session) bool {
+				visited[s.ID] = true
+				return tt.stopAfter == 0 || len(visited) < tt.stopAfter
+			})
 
-func TestSessionManager_ForEachEarlyStop(t *testing.T) {
-	sm := NewSessionManager()
-
-	// Add sessions
-	for i := 0; i < 100; i++ {
-		sm.Add(NewSession(fmt.Sprintf("session-%d", i), "echo", nil))
-	}
-
-	// Stop after 5 sessions
-	count := 0
-	sm.ForEach(func(s *Session) bool {
-		count++
-		return count < 5
-	})
-
-	if count != 5 {
-		t.Errorf("ForEach visited %d sessions, want 5", count)
-	}
-}
-
-func TestSessionManager_ForEachEmpty(t *testing.T) {
-	sm := NewSessionManager()
-
-	count := 0
-	sm.ForEach(func(s *Session) bool {
-		count++
-		return true
-	})
-
-	if count != 0 {
-		t.Errorf("ForEach visited %d sessions, want 0", count)
+			if len(visited) != tt.wantVisit {
+				t.Errorf("ForEach visited %d sessions, want %d", len(visited), tt.wantVisit)
+			}
+		})
 	}
 }
 
@@ -303,6 +232,12 @@ func TestSessionManager_CloseAll(t *testing.T) {
 func sessionManagerCloseAll(t *testing.T) {
 	// Create a simple WebSocket server to get real connections
 	sm := NewSessionManager()
+
+	// CloseAll on an empty manager is a no-op
+	sm.CloseAll()
+	if sm.Count() != 0 {
+		t.Errorf("Count() after CloseAll on empty manager = %d, want 0", sm.Count())
+	}
 
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		conn, err := websocket.Accept(w, r, nil)
@@ -368,19 +303,12 @@ func sessionManagerCloseAll(t *testing.T) {
 	}
 }
 
-func TestSessionManager_CloseAllEmpty(t *testing.T) {
-	sm := NewSessionManager()
-
-	// Should not panic on empty manager
-	sm.CloseAll()
-
-	if sm.Count() != 0 {
-		t.Errorf("Count() = %d, want 0", sm.Count())
-	}
-}
-
 func TestSessionManager_GetByUserID(t *testing.T) {
 	sm := NewSessionManager()
+
+	if sessions := sm.GetByUserID("user-1"); len(sessions) != 0 {
+		t.Errorf("GetByUserID on empty manager returned %d sessions, want 0", len(sessions))
+	}
 
 	// Add sessions with different user IDs
 	for i := 0; i < 5; i++ {
@@ -414,17 +342,12 @@ func TestSessionManager_GetByUserID(t *testing.T) {
 	}
 }
 
-func TestSessionManager_GetByUserIDEmpty(t *testing.T) {
-	sm := NewSessionManager()
-
-	sessions := sm.GetByUserID("user-1")
-	if len(sessions) != 0 {
-		t.Errorf("GetByUserID on empty manager returned %d sessions, want 0", len(sessions))
-	}
-}
-
 func TestSessionManager_GetBySubprotocol(t *testing.T) {
 	sm := NewSessionManager()
+
+	if sessions := sm.GetBySubprotocol("echo"); len(sessions) != 0 {
+		t.Errorf("GetBySubprotocol on empty manager returned %d sessions, want 0", len(sessions))
+	}
 
 	// Add sessions with different subprotocols
 	for i := 0; i < 4; i++ {
@@ -464,17 +387,12 @@ func TestSessionManager_GetBySubprotocol(t *testing.T) {
 	}
 }
 
-func TestSessionManager_GetBySubprotocolEmpty(t *testing.T) {
-	sm := NewSessionManager()
-
-	sessions := sm.GetBySubprotocol("echo")
-	if len(sessions) != 0 {
-		t.Errorf("GetBySubprotocol on empty manager returned %d sessions, want 0", len(sessions))
-	}
-}
-
 func TestSessionManager_GetSubscribersForChannel(t *testing.T) {
 	sm := NewSessionManager()
+
+	if subs := sm.GetSubscribersForChannel("channel-a"); len(subs) != 0 {
+		t.Errorf("GetSubscribersForChannel on empty manager returned %d sessions, want 0", len(subs))
+	}
 
 	// Add sessions and subscribe some to channels
 	for i := 0; i < 10; i++ {
@@ -508,17 +426,16 @@ func TestSessionManager_GetSubscribersForChannel(t *testing.T) {
 	}
 }
 
-func TestSessionManager_GetSubscribersForChannelEmpty(t *testing.T) {
-	sm := NewSessionManager()
-
-	subs := sm.GetSubscribersForChannel("channel")
-	if len(subs) != 0 {
-		t.Errorf("GetSubscribersForChannel on empty manager returned %d sessions, want 0", len(subs))
-	}
-}
-
 func TestSessionManager_GetStats(t *testing.T) {
 	sm := NewSessionManager()
+
+	empty := sm.GetStats()
+	if empty.TotalSessions != 0 {
+		t.Errorf("empty TotalSessions = %d, want 0", empty.TotalSessions)
+	}
+	if len(empty.SessionsByProtocol) != 0 {
+		t.Errorf("empty SessionsByProtocol has %d entries, want 0", len(empty.SessionsByProtocol))
+	}
 
 	// Add sessions with different subprotocols
 	for i := 0; i < 5; i++ {
@@ -552,53 +469,45 @@ func TestSessionManager_GetStats(t *testing.T) {
 	}
 }
 
-func TestSessionManager_GetStatsEmpty(t *testing.T) {
-	sm := NewSessionManager()
-
-	stats := sm.GetStats()
-
-	if stats.TotalSessions != 0 {
-		t.Errorf("TotalSessions = %d, want 0", stats.TotalSessions)
-	}
-
-	if len(stats.SessionsByProtocol) != 0 {
-		t.Errorf("SessionsByProtocol has %d entries, want 0", len(stats.SessionsByProtocol))
-	}
-}
-
 func TestSessionManager_Sharding(t *testing.T) {
+	const sessions = 10000
 	sm := NewSessionManager()
 
-	// Add many sessions to test sharding
-	for i := 0; i < 1000; i++ {
+	for i := 0; i < sessions; i++ {
 		sm.Add(NewSession(fmt.Sprintf("session-%d", i), "echo", nil))
 	}
 
-	// Count sessions across all shards
+	// Count sessions per shard
+	shardCounts := make([]int, 256)
 	totalInShards := 0
 	for i := 0; i < 256; i++ {
 		sm.shards[i].mu.RLock()
-		totalInShards += len(sm.shards[i].sessions)
+		shardCounts[i] = len(sm.shards[i].sessions)
 		sm.shards[i].mu.RUnlock()
+		totalInShards += shardCounts[i]
 	}
 
-	if totalInShards != 1000 {
-		t.Errorf("Total sessions in shards = %d, want 1000", totalInShards)
+	if totalInShards != sessions {
+		t.Errorf("Total sessions in shards = %d, want %d", totalInShards, sessions)
 	}
 
-	// Verify sessions are distributed (not all in one shard)
-	nonEmptyShards := 0
-	for i := 0; i < 256; i++ {
-		sm.shards[i].mu.RLock()
-		if len(sm.shards[i].sessions) > 0 {
-			nonEmptyShards++
+	sort.Ints(shardCounts)
+
+	// Average is ~39 per shard; no shard should hold more than 5x average
+	average := sessions / 256
+	if max := shardCounts[255]; max > average*5 {
+		t.Errorf("Max shard count %d is more than 5x average %d", max, average)
+	}
+
+	// Allow some empty shards due to hash distribution
+	emptyCount := 0
+	for _, c := range shardCounts {
+		if c == 0 {
+			emptyCount++
 		}
-		sm.shards[i].mu.RUnlock()
 	}
-
-	// With 1000 sessions and 256 shards, we expect reasonable distribution
-	if nonEmptyShards < 100 {
-		t.Errorf("Only %d non-empty shards, expected better distribution", nonEmptyShards)
+	if emptyCount > 50 {
+		t.Errorf("%d empty shards, expected fewer", emptyCount)
 	}
 }
 
@@ -616,34 +525,21 @@ func TestFnv1aString(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			result := fnv1aString(tt.input)
-
-			// Result should be in range [0, 255]
-			if result > 255 {
-				t.Errorf("fnv1aString(%q) = %d, should be <= 255", tt.input, result)
-			}
-
-			// Same input should give same output
-			result2 := fnv1aString(tt.input)
-			if result != result2 {
+			if result2 := fnv1aString(tt.input); result != result2 {
 				t.Errorf("fnv1aString(%q) not deterministic: %d vs %d", tt.input, result, result2)
 			}
 		})
 	}
-}
 
-func TestFnv1aString_Consistency(t *testing.T) {
-	// Different strings should typically hash to different values
-	// (not guaranteed, but good for distribution)
-	hashes := make(map[uint8]int)
-	for i := 0; i < 1000; i++ {
-		hash := fnv1aString(fmt.Sprintf("session-%d", i))
-		hashes[hash]++
-	}
-
-	// Check that hashes are reasonably distributed
-	if len(hashes) < 50 {
-		t.Errorf("Only %d unique hashes for 1000 inputs, expected better distribution", len(hashes))
-	}
+	t.Run("distinct inputs spread across hashes", func(t *testing.T) {
+		hashes := make(map[uint8]int)
+		for i := 0; i < 1000; i++ {
+			hashes[fnv1aString(fmt.Sprintf("session-%d", i))]++
+		}
+		if len(hashes) < 50 {
+			t.Errorf("Only %d unique hashes for 1000 inputs, expected better distribution", len(hashes))
+		}
+	})
 }
 
 func TestSessionManager_ConcurrentAccess(t *testing.T) {
@@ -753,69 +649,4 @@ func TestSessionManager_ConcurrentGetByUserID(t *testing.T) {
 
 	wg.Wait()
 	// No race conditions should occur
-}
-
-func TestSessionStats(t *testing.T) {
-	stats := SessionStats{
-		TotalSessions: 100,
-		SessionsByProtocol: map[string]int{
-			"echo":  50,
-			"mqtt":  30,
-			"stomp": 20,
-		},
-	}
-
-	if stats.TotalSessions != 100 {
-		t.Errorf("TotalSessions = %d, want 100", stats.TotalSessions)
-	}
-
-	total := 0
-	for _, count := range stats.SessionsByProtocol {
-		total += count
-	}
-
-	if total != 100 {
-		t.Errorf("Sum of SessionsByProtocol = %d, want 100", total)
-	}
-}
-
-func TestSessionManager_ShardDistribution(t *testing.T) {
-	sm := NewSessionManager()
-
-	// Add sessions with sequential IDs
-	for i := 0; i < 10000; i++ {
-		sm.Add(NewSession(fmt.Sprintf("session-%d", i), "echo", nil))
-	}
-
-	// Count sessions per shard
-	shardCounts := make([]int, 256)
-	for i := 0; i < 256; i++ {
-		sm.shards[i].mu.RLock()
-		shardCounts[i] = len(sm.shards[i].sessions)
-		sm.shards[i].mu.RUnlock()
-	}
-
-	// Calculate statistics
-	sort.Ints(shardCounts)
-
-	max := shardCounts[255]
-
-	// With 10000 sessions and 256 shards, average is ~39 per shard
-	// Check that distribution is reasonable (no shard has more than 5x average)
-	average := 10000 / 256
-	if max > average*5 {
-		t.Errorf("Max shard count %d is more than 5x average %d", max, average)
-	}
-
-	// Count empty shards
-	emptyCount := 0
-	for _, c := range shardCounts {
-		if c == 0 {
-			emptyCount++
-		}
-	}
-	// Allow some empty shards due to hash distribution
-	if emptyCount > 50 {
-		t.Errorf("%d empty shards, expected fewer", emptyCount)
-	}
 }

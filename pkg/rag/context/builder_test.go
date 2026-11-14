@@ -18,26 +18,11 @@ package context
 import (
 	"encoding/json"
 	"encoding/xml"
+	"fmt"
+	"slices"
 	"strings"
 	"testing"
 )
-
-func TestNewBuilder(t *testing.T) {
-	builder := NewBuilder()
-
-	if builder == nil {
-		t.Fatal("NewBuilder() returned nil")
-	}
-}
-
-func TestNewBuilderWithConfig(t *testing.T) {
-	config := DefaultConfig().WithMaxTokens(5000)
-	builder := NewBuilderWithConfig(config)
-
-	if builder == nil {
-		t.Fatal("NewBuilderWithConfig() returned nil")
-	}
-}
 
 func TestBuilder_Build(t *testing.T) {
 	builder := NewBuilder()
@@ -112,54 +97,76 @@ func TestBuilder_BuildWithTemplate(t *testing.T) {
 func TestBuilder_EstimateTokens(t *testing.T) {
 	builder := NewBuilder()
 
-	results := []Result{
-		{Content: "short"},
-		{Content: "another short text"},
-		{Content: "and one more"},
+	tests := []struct {
+		name      string
+		results   []Result
+		minTokens int
+	}{
+		{
+			name: "results include formatting overhead",
+			results: []Result{
+				{Content: "short"},
+				{Content: "another short text"},
+				{Content: "and one more"},
+			},
+			minTokens: 200,
+		},
+		{
+			name:      "empty results keep header and footer overhead",
+			results:   []Result{},
+			minTokens: 100,
+		},
 	}
 
-	tokens := builder.EstimateTokens(results)
-
-	if tokens <= 0 {
-		t.Error("EstimateTokens() returned non-positive value")
-	}
-
-	// Should include overhead for formatting
-	if tokens < 200 {
-		t.Errorf("EstimateTokens() = %d, seems too low (should include overhead)", tokens)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tokens := builder.EstimateTokens(tt.results)
+			if tokens < tt.minTokens {
+				t.Errorf("EstimateTokens() = %d, want at least %d", tokens, tt.minTokens)
+			}
+		})
 	}
 }
 
 func TestBuilder_Build_MaxTokens(t *testing.T) {
-	builder := NewBuilder()
-
-	// Create results that exceed token limit
-	results := []Result{
-		{Content: strings.Repeat("word ", 500), FusionScore: 0.9, Metadata: Metadata{FilePath: "1.go"}},
-		{Content: strings.Repeat("word ", 500), FusionScore: 0.8, Metadata: Metadata{FilePath: "2.go"}},
-		{Content: strings.Repeat("word ", 500), FusionScore: 0.7, Metadata: Metadata{FilePath: "3.go"}},
+	tests := []struct {
+		name      string
+		strategy  TruncationStrategy
+		count     int
+		words     int
+		maxTokens int
+		limit     int // maxTokens plus the allowed variance
+	}{
+		{name: "default strategy, few large results", strategy: DefaultConfig().TruncationStrategy, count: 3, words: 500, maxTokens: 500, limit: 600},
+		{name: "smart strategy, many results", strategy: TruncationSmart, count: 20, words: 200, maxTokens: 1000, limit: 1200},
 	}
 
-	context, err := builder.Build(results, 500)
-	if err != nil {
-		t.Fatalf("Build() returned error: %v", err)
-	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			builder := NewBuilderWithConfig(DefaultConfig().WithTruncationStrategy(tt.strategy))
 
-	// Should truncate to fit
-	if context.Tokens > 600 { // Allow some variance
-		t.Errorf("Build() resulted in %d tokens, exceeds limit of 500", context.Tokens)
-	}
+			results := make([]Result, tt.count)
+			for i := range results {
+				results[i] = Result{
+					Content:     strings.Repeat("word ", tt.words),
+					FusionScore: float32(0.9 - float32(i)*0.01),
+					Metadata:    Metadata{FilePath: "test.go"},
+				}
+			}
 
-	// Should have fewer results than input
-	if len(context.Results) >= len(results) {
-		t.Logf("Warning: All results included despite token limit")
+			context, err := builder.Build(results, tt.maxTokens)
+			if err != nil {
+				t.Fatalf("Build() returned error: %v", err)
+			}
+
+			if context.Tokens > tt.limit {
+				t.Errorf("Build() resulted in %d tokens, exceeds limit of %d", context.Tokens, tt.maxTokens)
+			}
+		})
 	}
 }
 
 func TestBuilder_Build_Citations(t *testing.T) {
-	config := DefaultConfig().WithCitations(true)
-	builder := NewBuilderWithConfig(config)
-
 	results := []Result{
 		{
 			Content:     "content 1",
@@ -181,43 +188,41 @@ func TestBuilder_Build_Citations(t *testing.T) {
 		},
 	}
 
-	context, err := builder.Build(results, 8000)
-	if err != nil {
-		t.Fatalf("Build() returned error: %v", err)
-	}
+	for _, enabled := range []bool{true, false} {
+		t.Run(fmt.Sprintf("citations=%t", enabled), func(t *testing.T) {
+			builder := NewBuilderWithConfig(DefaultConfig().WithCitations(enabled))
 
-	if len(context.Citations) != len(context.Results) {
-		t.Errorf("Got %d citations, want %d (one per result)",
-			len(context.Citations), len(context.Results))
-	}
+			context, err := builder.Build(results, 8000)
+			if err != nil {
+				t.Fatalf("Build() returned error: %v", err)
+			}
 
-	// Verify citation details
-	for i, citation := range context.Citations {
-		if citation.Index != i+1 {
-			t.Errorf("Citation %d has index %d", i, citation.Index)
-		}
+			if !enabled {
+				if len(context.Citations) != 0 {
+					t.Errorf("Got %d citations, want 0", len(context.Citations))
+				}
+				return
+			}
 
-		if citation.FilePath == "" {
-			t.Errorf("Citation %d has empty file path", i)
-		}
-	}
-}
+			if len(context.Citations) != len(context.Results) {
+				t.Errorf("Got %d citations, want %d (one per result)",
+					len(context.Citations), len(context.Results))
+			}
 
-func TestBuilder_Build_NoCitations(t *testing.T) {
-	config := DefaultConfig().WithCitations(false)
-	builder := NewBuilderWithConfig(config)
+			for i, citation := range context.Citations {
+				if citation.Index != i+1 {
+					t.Errorf("Citation %d has index %d", i, citation.Index)
+				}
 
-	results := []Result{
-		{Content: "test", FusionScore: 0.9, Metadata: Metadata{FilePath: "test.go"}},
-	}
+				if citation.FilePath != context.Results[i].Metadata.FilePath {
+					t.Errorf("Citation %d has file path %q, want %q", i, citation.FilePath, context.Results[i].Metadata.FilePath)
+				}
 
-	context, err := builder.Build(results, 8000)
-	if err != nil {
-		t.Fatalf("Build() returned error: %v", err)
-	}
-
-	if len(context.Citations) != 0 {
-		t.Errorf("Got %d citations, want 0", len(context.Citations))
+				if citation.Score != context.Results[i].FusionScore {
+					t.Errorf("Citation %d has score %v, want %v", i, citation.Score, context.Results[i].FusionScore)
+				}
+			}
+		})
 	}
 }
 
@@ -274,64 +279,39 @@ func TestBuilder_Build_TruncationStrategies(t *testing.T) {
 	}
 }
 
-func TestBuilder_Build_EmptyResults(t *testing.T) {
+func TestBuilder_Build_EdgeInputs(t *testing.T) {
 	builder := NewBuilder()
-
-	context, err := builder.Build([]Result{}, 8000)
-	if err != nil {
-		t.Fatalf("Build() with empty results returned error: %v", err)
-	}
-
-	// Should handle gracefully
-	if context == nil {
-		t.Fatal("Build() returned nil context")
-	}
-}
-
-func TestBuilder_Build_ZeroMaxTokens(t *testing.T) {
-	builder := NewBuilder()
-
-	results := []Result{
+	oneResult := []Result{
 		{Content: "test", FusionScore: 0.9, Metadata: Metadata{FilePath: "test.go"}},
 	}
 
-	// Should use default max tokens
-	context, err := builder.Build(results, 0)
-	if err != nil {
-		t.Fatalf("Build() with zero maxTokens returned error: %v", err)
+	tests := []struct {
+		name        string
+		results     []Result
+		maxTokens   int
+		wantContent bool
+	}{
+		{name: "empty results", results: []Result{}, maxTokens: 8000},
+		// Zero and negative maxTokens fall back to the default limit.
+		{name: "zero maxTokens", results: oneResult, maxTokens: 0, wantContent: true},
+		{name: "negative maxTokens", results: oneResult, maxTokens: -100, wantContent: true},
 	}
 
-	if context.Content == "" {
-		t.Error("Build() returned empty content")
-	}
-}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			context, err := builder.Build(tt.results, tt.maxTokens)
+			if err != nil {
+				t.Fatalf("Build() returned error: %v", err)
+			}
 
-func TestBuilder_Build_NegativeMaxTokens(t *testing.T) {
-	builder := NewBuilder()
+			if context == nil {
+				t.Fatal("Build() returned nil context")
+			}
 
-	results := []Result{
-		{Content: "test", FusionScore: 0.9, Metadata: Metadata{FilePath: "test.go"}},
-	}
-
-	// Should use default max tokens
-	context, err := builder.Build(results, -100)
-	if err != nil {
-		t.Fatalf("Build() with negative maxTokens returned error: %v", err)
-	}
-
-	if context.Content == "" {
-		t.Error("Build() returned empty content")
-	}
-}
-
-func TestBuilder_EstimateTokens_Empty(t *testing.T) {
-	builder := NewBuilder()
-
-	tokens := builder.EstimateTokens([]Result{})
-
-	// Should at least have header/footer overhead
-	if tokens < 100 {
-		t.Errorf("EstimateTokens() for empty results = %d, expected at least 100", tokens)
+			if tt.wantContent && context.Content == "" {
+				t.Error("Build() returned empty content")
+			}
+		})
 	}
 }
 
@@ -423,80 +403,6 @@ func TestFilterEmptyResults(t *testing.T) {
 				}
 			}
 		})
-	}
-}
-
-func TestBuildCitations(t *testing.T) {
-	results := []Result{
-		{
-			Content:     "test 1",
-			FusionScore: 0.95,
-			Metadata: Metadata{
-				FilePath:  "file1.go",
-				StartLine: 10,
-				EndLine:   20,
-			},
-		},
-		{
-			Content:     "test 2",
-			FusionScore: 0.85,
-			Metadata: Metadata{
-				FilePath:  "file2.go",
-				StartLine: 30,
-				EndLine:   40,
-			},
-		},
-	}
-
-	citations := buildCitations(results)
-
-	if len(citations) != len(results) {
-		t.Errorf("buildCitations() returned %d citations, want %d",
-			len(citations), len(results))
-	}
-
-	for i, citation := range citations {
-		if citation.Index != i+1 {
-			t.Errorf("Citation %d has index %d, want %d", i, citation.Index, i+1)
-		}
-
-		if citation.FilePath != results[i].Metadata.FilePath {
-			t.Errorf("Citation %d has wrong file path", i)
-		}
-
-		if citation.Score != results[i].FusionScore {
-			t.Errorf("Citation %d has wrong score", i)
-		}
-	}
-}
-
-func TestBuilder_Build_Truncated(t *testing.T) {
-	config := DefaultConfig().WithTruncationStrategy(TruncationSmart)
-	builder := NewBuilderWithConfig(config)
-
-	// Create many large results
-	results := make([]Result, 20)
-	for i := range results {
-		results[i] = Result{
-			Content:     strings.Repeat("word ", 200),
-			FusionScore: float32(0.9 - float32(i)*0.01),
-			Metadata:    Metadata{FilePath: "test.go"},
-		}
-	}
-
-	context, err := builder.Build(results, 1000)
-	if err != nil {
-		t.Fatalf("Build() returned error: %v", err)
-	}
-
-	// Should have truncated
-	if len(context.Results) >= len(results) {
-		t.Logf("Warning: Expected truncation but got all results")
-	}
-
-	// Verify token limit respected
-	if context.Tokens > 1200 { // Allow some variance
-		t.Errorf("Context has %d tokens, exceeds limit", context.Tokens)
 	}
 }
 
@@ -682,152 +588,99 @@ func TestXMLRenderer_ValidOutput(t *testing.T) {
 	}
 }
 
-// TestSmartTruncate_FirstResultTooLarge tests when first result exceeds limit
-// This covers truncation.go:49-58 (the path where first result is truncated)
-func TestSmartTruncate_FirstResultTooLarge(t *testing.T) {
+func TestSmartTruncate_EdgeCases(t *testing.T) {
 	tokenizer := NewSimpleTokenizer()
 
-	// Create a single very large result
-	largeContent := strings.Repeat("word ", 2000)
-	results := []Result{
-		{Content: largeContent, FusionScore: 0.9},
+	tests := []struct {
+		name          string
+		content       string
+		maxTokens     int
+		wantTruncated bool
+	}{
+		// availableTokens = 500 - 200 = 300, so the first result's content is cut.
+		{name: "first result too large is truncated", content: strings.Repeat("word ", 2000), maxTokens: 500, wantTruncated: true},
+		{name: "result that fits is kept whole", content: strings.Repeat("word ", 100), maxTokens: 500},
 	}
 
-	// Set maxTokens to 500 (availableTokens = 500 - 200 = 300)
-	// This should trigger line 49-58 where first result is truncated
-	truncated := SmartTruncate(results, 500, tokenizer)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			truncated := SmartTruncate([]Result{{Content: tt.content, FusionScore: 0.9}}, tt.maxTokens, tokenizer)
+			if len(truncated) != 1 {
+				t.Fatalf("SmartTruncate() returned %d results, want 1", len(truncated))
+			}
 
-	// Should return 1 result
-	if len(truncated) != 1 {
-		t.Errorf("Expected 1 result, got %d", len(truncated))
-	}
-
-	// Content should be truncated (shorter than original)
-	if len(truncated) > 0 {
-		if len(truncated[0].Content) >= len(largeContent) {
-			t.Errorf("Content was not truncated: got %d, expected < %d",
-				len(truncated[0].Content), len(largeContent))
-		}
+			gotTruncated := len(truncated[0].Content) < len(tt.content)
+			if gotTruncated != tt.wantTruncated {
+				t.Errorf("SmartTruncate() content length %d of %d, want truncated=%t",
+					len(truncated[0].Content), len(tt.content), tt.wantTruncated)
+			}
+		})
 	}
 }
 
-// TestSmartTruncate_EmptyFallback tests the fallback path at line 64-69
-// This covers the case where no results fit and we need to add the first one
-func TestSmartTruncate_EmptyFallback(t *testing.T) {
+func TestTruncateContent_EdgeCases(t *testing.T) {
 	tokenizer := NewSimpleTokenizer()
 
-	// This test is tricky - we need a case where the loop completes without adding anything
-	// but that's actually hard to trigger because line 49-58 catches the first-too-large case
-	// So this path (64-69) is actually defensive code that may not be reachable in practice
-
-	// Create results
-	results := []Result{
-		{Content: strings.Repeat("word ", 100), FusionScore: 0.9},
+	tests := []struct {
+		name      string
+		content   string
+		maxTokens int
+		check     func(t *testing.T, content, result string)
+	}{
+		{
+			name:      "empty content",
+			content:   "",
+			maxTokens: 100,
+			check: func(t *testing.T, _, result string) {
+				if result != "" {
+					t.Errorf("TruncateContent() = %q, want empty string", result)
+				}
+			},
+		},
+		{
+			name:      "truncated content ends with ellipsis",
+			content:   "one two three four five six seven eight nine ten eleven twelve",
+			maxTokens: 5,
+			check: func(t *testing.T, content, result string) {
+				if len(result) >= len(content) {
+					t.Errorf("TruncateContent() = %q, want it shorter than the input", result)
+				}
+				if !strings.HasSuffix(result, "...") {
+					t.Errorf("TruncateContent() = %q, want a %q suffix", result, "...")
+				}
+			},
+		},
 	}
 
-	// Use a token limit that would hit the fallback
-	truncated := SmartTruncate(results, 500, tokenizer)
-
-	// Should return at least 1 result
-	if len(truncated) == 0 {
-		t.Error("Expected at least 1 result")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tt.check(t, tt.content, TruncateContent(tt.content, tt.maxTokens, tokenizer))
+		})
 	}
 }
 
-// TestTruncateContent_EmptyWords tests edge case with no words
-// This covers truncation.go:88-90
-func TestTruncateContent_EmptyWords(t *testing.T) {
+func TestFitResults_EdgeCases(t *testing.T) {
 	tokenizer := NewSimpleTokenizer()
 
-	// Empty content
-	result := TruncateContent("", 100, tokenizer)
-	if result != "" {
-		t.Errorf("Expected empty string, got %q", result)
-	}
-}
-
-// TestTruncateContent_BestFitZero tests when no words fit
-// This covers truncation.go:109-111 (return "..." when bestFit is 0)
-func TestTruncateContent_BestFitZero(t *testing.T) {
-	tokenizer := NewSimpleTokenizer()
-
-	// Create content where bestFit would be 0
-	// We need content that when split into words, even the first word doesn't fit
-	longWord := strings.Repeat("verylongword", 1000)
-
-	// Use very low token limit
-	result := TruncateContent(longWord, 2, tokenizer)
-
-	// With bestFit = 0, should return "..."
-	// Note: This depends on tokenizer behavior, may not always be "..."
-	if len(result) > 1000 {
-		t.Logf("Content not truncated to '...', got length %d", len(result))
-	}
-}
-
-// TestTruncateContent_AddEllipsis tests that ellipsis is added when truncated
-// This covers truncation.go:114-116
-func TestTruncateContent_AddEllipsis(t *testing.T) {
-	tokenizer := NewSimpleTokenizer()
-
-	// Content that will be truncated
-	content := "one two three four five six seven eight nine ten eleven twelve"
-	result := TruncateContent(content, 5, tokenizer)
-
-	// Should be truncated
-	if len(result) >= len(content) {
-		t.Error("Content should be truncated")
+	tests := []struct {
+		name      string
+		results   []Result
+		maxTokens int
+		want      []int
+	}{
+		{name: "empty results below overhead", results: []Result{}, maxTokens: 100, want: []int{}},
+		// maxTokens below the formatting overhead still keeps the first result.
+		{name: "limit below overhead keeps first", results: []Result{{Content: "test"}}, maxTokens: 100, want: []int{0}},
+		{name: "first result too large is kept", results: []Result{{Content: strings.Repeat("word ", 1000)}}, maxTokens: 300, want: []int{0}},
 	}
 
-	// If truncated, should have ellipsis
-	words := strings.Fields(content)
-	resultWords := strings.Fields(strings.TrimSuffix(result, "..."))
-
-	if len(resultWords) < len(words) {
-		// Was truncated, should have ...
-		if !strings.HasSuffix(result, "...") {
-			t.Error("Truncated content should end with '...'")
-		}
-	}
-}
-
-// TestFitResults_ZeroAvailableTokens tests edge case
-// This covers truncation.go:140-145
-func TestFitResults_ZeroAvailableTokens(t *testing.T) {
-	tokenizer := NewSimpleTokenizer()
-
-	// Empty results with low token limit
-	indices := FitResults([]Result{}, 100, tokenizer)
-	if len(indices) != 0 {
-		t.Errorf("Expected empty indices, got %v", indices)
-	}
-
-	// Results with very low token limit (negative after overhead)
-	results := []Result{{Content: "test"}}
-	indices = FitResults(results, 100, tokenizer)
-
-	// Should return at least first index
-	if len(indices) != 1 || indices[0] != 0 {
-		t.Errorf("Expected [0], got %v", indices)
-	}
-}
-
-// TestFitResults_FirstDoesntFit tests fallback at line 154-159
-// When first result doesn't fit, return [0] anyway
-func TestFitResults_FirstDoesntFit(t *testing.T) {
-	tokenizer := NewSimpleTokenizer()
-
-	// Create result that's too large
-	results := []Result{
-		{Content: strings.Repeat("word ", 1000)},
-	}
-
-	// Low token limit that won't fit first result
-	indices := FitResults(results, 300, tokenizer)
-
-	// Should still include first result (fallback at line 158)
-	if len(indices) != 1 || indices[0] != 0 {
-		t.Errorf("Expected [0], got %v", indices)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			indices := FitResults(tt.results, tt.maxTokens, tokenizer)
+			if !slices.Equal(indices, tt.want) {
+				t.Errorf("FitResults() = %v, want %v", indices, tt.want)
+			}
+		})
 	}
 }
 
@@ -882,53 +735,6 @@ func TestRenderers_ComplexMetadata(t *testing.T) {
 	}
 }
 
-// TestMarkdownRenderer_NoLanguage tests default language fallback
-// This covers templates.go:52-55
-func TestMarkdownRenderer_NoLanguage(t *testing.T) {
-	renderer := &MarkdownRenderer{}
-
-	results := []Result{
-		{
-			Content:     "content without language",
-			FusionScore: 0.9,
-			Metadata: Metadata{
-				FilePath: "/path/to/file.txt",
-				// No Language field set
-			},
-		},
-	}
-
-	output := renderer.Render(results, nil, false)
-
-	// Should default to "text" for code blocks
-	if !strings.Contains(output, "```text") {
-		t.Error("Expected default language 'text' in code block")
-	}
-}
-
-// TestPlainRenderer_NoStartLine tests line number handling
-func TestPlainRenderer_NoStartLine(t *testing.T) {
-	renderer := &PlainRenderer{}
-
-	results := []Result{
-		{
-			Content:     "content",
-			FusionScore: 0.9,
-			Metadata: Metadata{
-				FilePath: "/path/to/file.txt",
-				// StartLine is 0 (not set)
-			},
-		},
-	}
-
-	output := renderer.Render(results, nil, false)
-
-	// Should not include ":0" for missing line numbers
-	if strings.Contains(output, ":0-0") {
-		t.Error("Should not show :0-0 for missing line numbers")
-	}
-}
-
 // TestMarkdownRenderer_ConditionalMetadata tests conditional metadata rendering
 // Covers templates.go:37-47 (conditional metadata fields)
 func TestMarkdownRenderer_ConditionalMetadata(t *testing.T) {
@@ -945,7 +751,8 @@ func TestMarkdownRenderer_ConditionalMetadata(t *testing.T) {
 			metadata: Metadata{
 				FilePath: "/path/to/file.txt",
 			},
-			contains:    []string{"/path/to/file.txt"},
+			// A missing language defaults the code block to "text".
+			contains:    []string{"/path/to/file.txt", "```text"},
 			notContains: []string{"**Language:**", "**Function:**", "**Class:**"},
 		},
 		{
@@ -1010,9 +817,10 @@ func TestPlainRenderer_ConditionalMetadata(t *testing.T) {
 	renderer := &PlainRenderer{}
 
 	tests := []struct {
-		name     string
-		metadata Metadata
-		contains []string
+		name        string
+		metadata    Metadata
+		contains    []string
+		notContains []string
 	}{
 		{
 			name: "with all metadata",
@@ -1037,6 +845,8 @@ func TestPlainRenderer_ConditionalMetadata(t *testing.T) {
 			contains: []string{
 				"/path/to/file.txt",
 			},
+			// No ":0-0" when line numbers are unset.
+			notContains: []string{":0-0"},
 		},
 	}
 
@@ -1055,6 +865,12 @@ func TestPlainRenderer_ConditionalMetadata(t *testing.T) {
 			for _, expected := range tt.contains {
 				if !strings.Contains(output, expected) {
 					t.Errorf("Expected output to contain %q", expected)
+				}
+			}
+
+			for _, notExpected := range tt.notContains {
+				if strings.Contains(output, notExpected) {
+					t.Errorf("Expected output not to contain %q", notExpected)
 				}
 			}
 		})

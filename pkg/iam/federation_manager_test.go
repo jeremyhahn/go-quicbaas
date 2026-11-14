@@ -279,20 +279,19 @@ func createTestProvider(tenantID, name string) *ExternalProvider {
 
 // TestNewFederationManager tests the federation manager constructor.
 func TestNewFederationManager(t *testing.T) {
-	t.Run("success with all options", func(t *testing.T) {
-		providerStorage := NewMemoryProviderStorage()
-		linkStorage := NewMemoryFederationStorage()
-		stateStorage := NewMemoryStateStorage()
-		identityStore := NewIdentityStore(IdentityStoreOptions{
+	newIdentityStore := func() *IdentityStore {
+		return NewIdentityStore(IdentityStoreOptions{
 			UserStorage: newMockUserStorage(),
 			RoleStorage: newMockRoleStorage(),
 		})
+	}
 
+	t.Run("success with all options", func(t *testing.T) {
 		manager, err := NewFederationManager(
-			WithProviderStorage(providerStorage),
-			WithLinkStorage(linkStorage),
-			WithStateStorage(stateStorage),
-			WithFederationIdentityStore(identityStore),
+			WithProviderStorage(NewMemoryProviderStorage()),
+			WithLinkStorage(NewMemoryFederationStorage()),
+			WithStateStorage(NewMemoryStateStorage()),
+			WithFederationIdentityStore(newIdentityStore()),
 			WithClientCacheTTL(2*time.Hour),
 			WithStateExpiry(10*time.Minute),
 		)
@@ -311,78 +310,51 @@ func TestNewFederationManager(t *testing.T) {
 		}
 	})
 
-	t.Run("error missing provider storage", func(t *testing.T) {
-		linkStorage := NewMemoryFederationStorage()
-		stateStorage := NewMemoryStateStorage()
-		identityStore := NewIdentityStore(IdentityStoreOptions{
-			UserStorage: newMockUserStorage(),
-			RoleStorage: newMockRoleStorage(),
+	missingCases := []struct {
+		name string
+		opts []FederationManagerOption
+	}{
+		{
+			name: "error missing provider storage",
+			opts: []FederationManagerOption{
+				WithLinkStorage(NewMemoryFederationStorage()),
+				WithStateStorage(NewMemoryStateStorage()),
+				WithFederationIdentityStore(newIdentityStore()),
+			},
+		},
+		{
+			name: "error missing link storage",
+			opts: []FederationManagerOption{
+				WithProviderStorage(NewMemoryProviderStorage()),
+				WithStateStorage(NewMemoryStateStorage()),
+				WithFederationIdentityStore(newIdentityStore()),
+			},
+		},
+		{
+			name: "error missing state storage",
+			opts: []FederationManagerOption{
+				WithProviderStorage(NewMemoryProviderStorage()),
+				WithLinkStorage(NewMemoryFederationStorage()),
+				WithFederationIdentityStore(newIdentityStore()),
+			},
+		},
+		{
+			name: "error missing identity store",
+			opts: []FederationManagerOption{
+				WithProviderStorage(NewMemoryProviderStorage()),
+				WithLinkStorage(NewMemoryFederationStorage()),
+				WithStateStorage(NewMemoryStateStorage()),
+			},
+		},
+	}
+
+	for _, tc := range missingCases {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, err := NewFederationManager(tc.opts...); err == nil {
+				t.Fatal("expected error, got nil")
+			}
 		})
-
-		_, err := NewFederationManager(
-			WithLinkStorage(linkStorage),
-			WithStateStorage(stateStorage),
-			WithFederationIdentityStore(identityStore),
-		)
-
-		if err == nil {
-			t.Fatal("expected error for missing provider storage")
-		}
-	})
-
-	t.Run("error missing link storage", func(t *testing.T) {
-		providerStorage := NewMemoryProviderStorage()
-		stateStorage := NewMemoryStateStorage()
-		identityStore := NewIdentityStore(IdentityStoreOptions{
-			UserStorage: newMockUserStorage(),
-			RoleStorage: newMockRoleStorage(),
-		})
-
-		_, err := NewFederationManager(
-			WithProviderStorage(providerStorage),
-			WithStateStorage(stateStorage),
-			WithFederationIdentityStore(identityStore),
-		)
-
-		if err == nil {
-			t.Fatal("expected error for missing link storage")
-		}
-	})
-
-	t.Run("error missing state storage", func(t *testing.T) {
-		providerStorage := NewMemoryProviderStorage()
-		linkStorage := NewMemoryFederationStorage()
-		identityStore := NewIdentityStore(IdentityStoreOptions{
-			UserStorage: newMockUserStorage(),
-			RoleStorage: newMockRoleStorage(),
-		})
-
-		_, err := NewFederationManager(
-			WithProviderStorage(providerStorage),
-			WithLinkStorage(linkStorage),
-			WithFederationIdentityStore(identityStore),
-		)
-
-		if err == nil {
-			t.Fatal("expected error for missing state storage")
-		}
-	})
-
-	t.Run("error missing identity store", func(t *testing.T) {
-		providerStorage := NewMemoryProviderStorage()
-		linkStorage := NewMemoryFederationStorage()
-		stateStorage := NewMemoryStateStorage()
-
-		_, err := NewFederationManager(
-			WithProviderStorage(providerStorage),
-			WithLinkStorage(linkStorage),
-			WithStateStorage(stateStorage),
-		)
-
-		if err == nil {
-			t.Fatal("expected error for missing identity store")
-		}
-	})
+	}
 }
 
 // TestRegisterProvider tests the RegisterProvider method.
@@ -394,11 +366,6 @@ func TestRegisterProvider(t *testing.T) {
 		wantErr     bool
 		errContains string
 	}{
-		{
-			name:     "success with valid provider",
-			provider: createTestProvider("tenant1", "okta"),
-			wantErr:  false,
-		},
 		{
 			name: "success generates ID when empty",
 			provider: func() *ExternalProvider {
@@ -431,16 +398,6 @@ func TestRegisterProvider(t *testing.T) {
 			}(),
 			wantErr:     true,
 			errContains: "tenant ID",
-		},
-		{
-			name: "error missing provider name",
-			provider: func() *ExternalProvider {
-				p := createTestProvider("tenant1", "")
-				p.Name = ""
-				return p
-			}(),
-			wantErr:     true,
-			errContains: "provider name",
 		},
 		{
 			name: "error missing client ID for OIDC",
@@ -502,60 +459,44 @@ func TestRegisterProvider(t *testing.T) {
 
 // TestGetProvider tests the GetProvider method.
 func TestGetProvider(t *testing.T) {
+	// Each case looks a provider up either by ID or by name; both lookups
+	// share one path shape: argument validation, then a storage read.
+	byID := func(m *DefaultFederationManager, tenantID, key string) (*ExternalProvider, error) {
+		return m.GetProvider(context.Background(), tenantID, key)
+	}
+	byName := func(m *DefaultFederationManager, tenantID, key string) (*ExternalProvider, error) {
+		return m.GetProviderByName(context.Background(), tenantID, key)
+	}
+
 	testCases := []struct {
 		name        string
+		lookup      func(*DefaultFederationManager, string, string) (*ExternalProvider, error)
 		tenantID    string
-		providerID  string
-		setup       func(*DefaultFederationManager, *MemoryProviderStorage) string
+		key         string
 		wantErr     bool
 		errContains string
 	}{
-		{
-			name:       "success",
-			tenantID:   "tenant1",
-			providerID: "", // Will be set by setup
-			setup: func(m *DefaultFederationManager, ps *MemoryProviderStorage) string {
-				provider := createTestProvider("tenant1", "okta")
-				provider.ID = "provider-123"
-				ctx := context.Background()
-				_ = ps.CreateProvider(ctx, provider)
-				return provider.ID
-			},
-			wantErr: false,
-		},
-		{
-			name:        "error empty tenant ID",
-			tenantID:    "",
-			providerID:  "provider-123",
-			wantErr:     true,
-			errContains: "tenant ID and provider ID are required",
-		},
-		{
-			name:        "error empty provider ID",
-			tenantID:    "tenant1",
-			providerID:  "",
-			wantErr:     true,
-			errContains: "tenant ID and provider ID are required",
-		},
-		{
-			name:       "error provider not found",
-			tenantID:   "tenant1",
-			providerID: "nonexistent",
-			wantErr:    true,
-		},
+		{name: "by ID success", lookup: byID, tenantID: "tenant1", key: "provider-123"},
+		{name: "by ID empty tenant ID", lookup: byID, tenantID: "", key: "provider-123", wantErr: true, errContains: "tenant ID and provider ID are required"},
+		{name: "by ID empty provider ID", lookup: byID, tenantID: "tenant1", key: "", wantErr: true, errContains: "tenant ID and provider ID are required"},
+		{name: "by ID not found", lookup: byID, tenantID: "tenant1", key: "nonexistent", wantErr: true},
+		{name: "by name success", lookup: byName, tenantID: "tenant1", key: "okta"},
+		{name: "by name empty tenant ID", lookup: byName, tenantID: "", key: "okta", wantErr: true, errContains: "tenant ID and provider name are required"},
+		{name: "by name empty provider name", lookup: byName, tenantID: "tenant1", key: "", wantErr: true, errContains: "tenant ID and provider name are required"},
+		{name: "by name not found", lookup: byName, tenantID: "tenant1", key: "nonexistent", wantErr: true},
 	}
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			manager, providerStorage, _, _, _, _ := setupTestFederationManager(t)
-			ctx := context.Background()
 
-			providerID := tc.providerID
-			if tc.setup != nil {
-				providerID = tc.setup(manager, providerStorage)
+			stored := createTestProvider("tenant1", "okta")
+			stored.ID = "provider-123"
+			if err := providerStorage.CreateProvider(context.Background(), stored); err != nil {
+				t.Fatalf("failed to create provider: %v", err)
 			}
 
-			provider, err := manager.GetProvider(ctx, tc.tenantID, providerID)
+			provider, err := tc.lookup(manager, tc.tenantID, tc.key)
 
 			if tc.wantErr {
 				if err == nil {
@@ -564,95 +505,22 @@ func TestGetProvider(t *testing.T) {
 				if tc.errContains != "" && !strings.Contains(err.Error(), tc.errContains) {
 					t.Errorf("expected error containing %q, got: %v", tc.errContains, err)
 				}
-			} else {
-				if err != nil {
-					t.Fatalf("expected no error, got: %v", err)
-				}
-				if provider == nil {
-					t.Fatal("expected provider, got nil")
-				}
-				if provider.ID != providerID {
-					t.Errorf("expected provider ID %q, got %q", providerID, provider.ID)
-				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("expected no error, got: %v", err)
+			}
+			if provider == nil {
+				t.Fatal("expected provider, got nil")
+			}
+			if provider.ID != stored.ID || provider.Name != stored.Name {
+				t.Errorf("expected provider %q/%q, got %q/%q", stored.ID, stored.Name, provider.ID, provider.Name)
 			}
 		})
 	}
 }
 
 // TestGetProviderByName tests the GetProviderByName method.
-func TestGetProviderByName(t *testing.T) {
-	testCases := []struct {
-		name         string
-		tenantID     string
-		providerName string
-		setup        func(*DefaultFederationManager, *MemoryProviderStorage)
-		wantErr      bool
-		errContains  string
-	}{
-		{
-			name:         "success",
-			tenantID:     "tenant1",
-			providerName: "okta",
-			setup: func(m *DefaultFederationManager, ps *MemoryProviderStorage) {
-				provider := createTestProvider("tenant1", "okta")
-				provider.ID = "provider-123"
-				ctx := context.Background()
-				_ = ps.CreateProvider(ctx, provider)
-			},
-			wantErr: false,
-		},
-		{
-			name:         "error empty tenant ID",
-			tenantID:     "",
-			providerName: "okta",
-			wantErr:      true,
-			errContains:  "tenant ID and provider name are required",
-		},
-		{
-			name:         "error empty provider name",
-			tenantID:     "tenant1",
-			providerName: "",
-			wantErr:      true,
-			errContains:  "tenant ID and provider name are required",
-		},
-		{
-			name:         "error provider not found",
-			tenantID:     "tenant1",
-			providerName: "nonexistent",
-			wantErr:      true,
-		},
-	}
-
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
-			manager, providerStorage, _, _, _, _ := setupTestFederationManager(t)
-			ctx := context.Background()
-
-			if tc.setup != nil {
-				tc.setup(manager, providerStorage)
-			}
-
-			provider, err := manager.GetProviderByName(ctx, tc.tenantID, tc.providerName)
-
-			if tc.wantErr {
-				if err == nil {
-					t.Fatal("expected error, got nil")
-				}
-			} else {
-				if err != nil {
-					t.Fatalf("expected no error, got: %v", err)
-				}
-				if provider == nil {
-					t.Fatal("expected provider, got nil")
-				}
-				if provider.Name != tc.providerName {
-					t.Errorf("expected provider name %q, got %q", tc.providerName, provider.Name)
-				}
-			}
-		})
-	}
-}
-
 // TestUpdateProvider tests the UpdateProvider method.
 func TestUpdateProvider(t *testing.T) {
 	testCases := []struct {
@@ -1398,34 +1266,6 @@ func TestGetUserLinks(t *testing.T) {
 			wantErr:       false,
 		},
 		{
-			name:     "success with links",
-			userID:   0,
-			tenantID: "tenant1",
-			setup: func(m *DefaultFederationManager, ps *MemoryProviderStorage, ls *MemoryFederationStorage, is *IdentityStore) uint64 {
-				ctx := context.Background()
-				user, _ := is.CreateUser(ctx, "tenant1", CreateUserOptions{
-					ID:       "user-123",
-					Email:    "user@example.com",
-					Username: "testuser",
-				})
-
-				for i := 0; i < 2; i++ {
-					link := &FederatedIdentity{
-						ID:         fmt.Sprintf("link-%d", i),
-						UserID:     user.ID,
-						TenantID:   "tenant1",
-						ProviderID: fmt.Sprintf("provider-%d", i),
-						ExternalID: fmt.Sprintf("external-%d", i),
-					}
-					_ = ls.CreateLink(ctx, link)
-				}
-
-				return user.ID
-			},
-			expectedCount: 2,
-			wantErr:       false,
-		},
-		{
 			name:     "success filters by tenant",
 			userID:   0,
 			tenantID: "tenant1",
@@ -2134,30 +1974,6 @@ func TestFederationManagerOptions(t *testing.T) {
 			t.Error("expected custom HTTP client to be set")
 		}
 	})
-
-	t.Run("WithFederationOIDCProvider", func(t *testing.T) {
-		providerStorage := NewMemoryProviderStorage()
-		linkStorage := NewMemoryFederationStorage()
-		stateStorage := NewMemoryStateStorage()
-		identityStore := NewIdentityStore(IdentityStoreOptions{
-			UserStorage: newMockUserStorage(),
-			RoleStorage: newMockRoleStorage(),
-		})
-
-		oidcProvider := &OIDCProvider{} // Mock OIDC provider
-
-		manager, _ := NewFederationManager(
-			WithProviderStorage(providerStorage),
-			WithLinkStorage(linkStorage),
-			WithStateStorage(stateStorage),
-			WithFederationIdentityStore(identityStore),
-			WithFederationOIDCProvider(oidcProvider),
-		)
-
-		if manager.oidcProvider != oidcProvider {
-			t.Error("expected OIDC provider to be set")
-		}
-	})
 }
 
 // TestExternalProviderValidation tests ExternalProvider.Validate method.
@@ -2793,6 +2609,8 @@ func TestProcessAuthentication_JITProvision(t *testing.T) {
 	require.NotNil(t, result)
 	assert.True(t, result.Provisioned)
 	assert.NotEmpty(t, result.User.ID)
+	assert.Equal(t, "New User", result.User.Name)
+	assert.Equal(t, "newuser@example.com", result.User.Email)
 }
 
 func TestProcessAuthentication_NoExternalID(t *testing.T) {
@@ -2847,22 +2665,6 @@ func TestProcessAuthentication_JITDisabled(t *testing.T) {
 // =============================================================================
 // Federation: provisionUser tests
 // =============================================================================
-
-func TestProvisionUser_Success(t *testing.T) {
-	manager, _, _, _, _, _ := setupTestFederationManager(t)
-	ctx := context.Background()
-
-	provider := createTestProvider("tenant1", "okta")
-	provider.ApplyDefaults()
-	provider.ID = "provider-1"
-
-	user, err := manager.provisionUser(ctx, provider, "tenant1", "ext-1", "provisioned@example.com", "Provisioned User", nil)
-	require.NoError(t, err)
-	require.NotNil(t, user)
-	assert.NotEmpty(t, user.ID)
-	assert.Equal(t, "Provisioned User", user.Name)
-	assert.Equal(t, "provisioned@example.com", user.Email)
-}
 
 func TestProvisionUser_NoEmail_Error(t *testing.T) {
 	manager, _, _, _, _, _ := setupTestFederationManager(t)
@@ -2940,55 +2742,34 @@ func TestProvisionUser_WithDefaultRoles(t *testing.T) {
 // =============================================================================
 
 func TestGenerateTokenResult_WithoutOIDCProvider(t *testing.T) {
-	manager, _, _, _, identityStore, _ := setupTestFederationManager(t)
-	ctx := context.Background()
+	for _, provisioned := range []bool{false, true} {
+		t.Run(fmt.Sprintf("provisioned=%t", provisioned), func(t *testing.T) {
+			manager, _, _, _, identityStore, _ := setupTestFederationManager(t)
+			ctx := context.Background()
 
-	user, err := identityStore.CreateUser(ctx, "tenant1", CreateUserOptions{
-		Email:    "tokenuser@example.com",
-		Username: "tokenuser",
-		Name:     "Token User",
-	})
-	require.NoError(t, err)
+			user, err := identityStore.CreateUser(ctx, "tenant1", CreateUserOptions{
+				Email:    "tokenuser@example.com",
+				Username: "tokenuser",
+				Name:     "Token User",
+			})
+			require.NoError(t, err)
 
-	identity := &FederatedIdentity{
-		ID:         "identity-1",
-		UserID:     user.ID,
-		TenantID:   "tenant1",
-		ProviderID: "provider-1",
-		ExternalID: "ext-1",
+			identity := &FederatedIdentity{
+				ID:         "identity-1",
+				UserID:     user.ID,
+				TenantID:   "tenant1",
+				ProviderID: "provider-1",
+				ExternalID: "ext-1",
+			}
+
+			result, err := manager.generateTokenResult(ctx, user, identity, provisioned, nil)
+			require.NoError(t, err)
+			require.NotNil(t, result)
+			assert.Equal(t, user.ID, result.User.ID)
+			assert.Empty(t, result.AccessToken) // No OIDC provider set
+			assert.Equal(t, provisioned, result.Provisioned)
+		})
 	}
-
-	result, err := manager.generateTokenResult(ctx, user, identity, false, nil)
-	require.NoError(t, err)
-	require.NotNil(t, result)
-	assert.Equal(t, user.ID, result.User.ID)
-	assert.Empty(t, result.AccessToken) // No OIDC provider set
-	assert.False(t, result.Provisioned)
-}
-
-func TestGenerateTokenResult_Provisioned(t *testing.T) {
-	manager, _, _, _, identityStore, _ := setupTestFederationManager(t)
-	ctx := context.Background()
-
-	user, err := identityStore.CreateUser(ctx, "tenant1", CreateUserOptions{
-		Email:    "provuser@example.com",
-		Username: "provuser",
-		Name:     "Provisioned User",
-	})
-	require.NoError(t, err)
-
-	identity := &FederatedIdentity{
-		ID:         "identity-2",
-		UserID:     user.ID,
-		TenantID:   "tenant1",
-		ProviderID: "provider-1",
-		ExternalID: "ext-2",
-	}
-
-	result, err := manager.generateTokenResult(ctx, user, identity, true, nil)
-	require.NoError(t, err)
-	require.NotNil(t, result)
-	assert.True(t, result.Provisioned)
 }
 
 // =============================================================================

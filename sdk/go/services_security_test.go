@@ -162,60 +162,32 @@ func TestACMEServer_RegisterChallenge_Idempotent(t *testing.T) {
 	}
 }
 
-func TestACMEServer_Issue_InvalidInput(t *testing.T) {
-	srv := newACMEServer(&mockTransport{})
+func TestACMEServer_Issue_Errors(t *testing.T) {
 	csr := []byte("csr-bytes")
+	var nilCtx context.Context
 
 	tests := []struct {
-		name string
-		csr  []byte
-		typ  string
-		ctx  context.Context
+		name    string
+		ctx     context.Context
+		csr     []byte
+		typ     string
+		tr      *mockTransport
+		wantErr func(error) bool
 	}{
-		{"empty csr", nil, "http-01", context.Background()},
-		{"empty challenge type", csr, "", context.Background()},
-		{"nil context", csr, "http-01", nil},
+		{"empty csr", context.Background(), nil, "http-01", &mockTransport{}, sdkerrors.IsInvalidInput},
+		{"empty challenge type", context.Background(), csr, "", &mockTransport{}, sdkerrors.IsInvalidInput},
+		{"nil context", nilCtx, csr, "http-01", &mockTransport{}, sdkerrors.IsInvalidInput},
+		{"transport error", context.Background(), csr, "http-01", respondWith(nil, errBoom), isAnyError},
+		{"nil response", context.Background(), csr, "http-01", respondWith(nil, nil), isAnyError},
+		{"invalid response type", context.Background(), csr, "http-01", respondWith("not the right type", nil), isAnyError},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			_, err := srv.Issue(tc.ctx, tc.csr, tc.typ, "challenge-value")
-			if err == nil || !sdkerrors.IsInvalidInput(err) {
-				t.Errorf("expected InvalidInput, got %v", err)
+			_, err := newACMEServer(tc.tr).Issue(tc.ctx, tc.csr, tc.typ, "challenge-value")
+			if err == nil || !tc.wantErr(err) {
+				t.Errorf("unexpected error: %v", err)
 			}
 		})
-	}
-}
-
-func TestACMEServer_Issue_TransportError(t *testing.T) {
-	mt := &mockTransport{requestFn: func(context.Context, string, string, interface{}) (interface{}, error) {
-		return nil, errBoom
-	}}
-	srv := newACMEServer(mt)
-	_, err := srv.Issue(context.Background(), []byte("csr"), "http-01", "value")
-	if err == nil {
-		t.Fatal("expected transport error to propagate")
-	}
-}
-
-func TestACMEServer_Issue_NilResponse(t *testing.T) {
-	mt := &mockTransport{requestFn: func(context.Context, string, string, interface{}) (interface{}, error) {
-		return nil, nil
-	}}
-	srv := newACMEServer(mt)
-	_, err := srv.Issue(context.Background(), []byte("csr"), "http-01", "value")
-	if err == nil {
-		t.Fatal("expected error for nil response")
-	}
-}
-
-func TestACMEServer_Issue_InvalidResponseType(t *testing.T) {
-	mt := &mockTransport{requestFn: func(context.Context, string, string, interface{}) (interface{}, error) {
-		return "not the right type", nil
-	}}
-	srv := newACMEServer(mt)
-	_, err := srv.Issue(context.Background(), []byte("csr"), "http-01", "value")
-	if err == nil {
-		t.Fatal("expected invalid response type error")
 	}
 }
 
@@ -279,18 +251,40 @@ func TestACMEClient_NewOrder_HappyPath(t *testing.T) {
 	}
 }
 
-func TestACMEClient_NewOrder_NoIdentifiers(t *testing.T) {
-	touched := false
-	c := &acmeClientImpl{t: &mockTransport{requestFn: func(context.Context, string, string, interface{}) (interface{}, error) {
-		touched = true
-		return nil, nil
-	}}}
-	_, err := c.NewOrder(context.Background(), nil, "http-01")
-	if sdkerrors.Code(err) != sdkerrors.CodeInvalidInput {
-		t.Errorf("expected invalid input, got %v", err)
+// TestACMEClient_RejectsInvalidInputLocally checks that each client verb
+// rejects a missing argument before it reaches the transport.
+func TestACMEClient_RejectsInvalidInputLocally(t *testing.T) {
+	tests := []struct {
+		name string
+		call func(c *acmeClientImpl) error
+	}{
+		{"NewOrder without identifiers", func(c *acmeClientImpl) error {
+			_, err := c.NewOrder(context.Background(), nil, "http-01")
+			return err
+		}},
+		{"FinalizeOrder without CSR", func(c *acmeClientImpl) error {
+			_, err := c.FinalizeOrder(context.Background(), "url", nil)
+			return err
+		}},
+		{"Renew without URL", func(c *acmeClientImpl) error {
+			_, err := c.Renew(context.Background(), "")
+			return err
+		}},
 	}
-	if touched {
-		t.Error("must not touch the transport on validation failure")
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			touched := false
+			c := &acmeClientImpl{t: &mockTransport{requestFn: func(context.Context, string, string, interface{}) (interface{}, error) {
+				touched = true
+				return nil, nil
+			}}}
+			if err := tc.call(c); sdkerrors.Code(err) != sdkerrors.CodeInvalidInput {
+				t.Errorf("expected invalid input, got %v", err)
+			}
+			if touched {
+				t.Error("must not touch the transport on validation failure")
+			}
+		})
 	}
 }
 
@@ -320,21 +314,6 @@ func TestACMEClient_FinalizeOrder_HappyPath(t *testing.T) {
 	}
 }
 
-func TestACMEClient_FinalizeOrder_EmptyCSR(t *testing.T) {
-	touched := false
-	c := &acmeClientImpl{t: &mockTransport{requestFn: func(context.Context, string, string, interface{}) (interface{}, error) {
-		touched = true
-		return nil, nil
-	}}}
-	_, err := c.FinalizeOrder(context.Background(), "url", nil)
-	if sdkerrors.Code(err) != sdkerrors.CodeInvalidInput {
-		t.Errorf("expected invalid input, got %v", err)
-	}
-	if touched {
-		t.Error("must not touch the transport on validation failure")
-	}
-}
-
 func TestACMEClient_Renew_PropagatesTransportError(t *testing.T) {
 	wantErr := sdkerrors.NewInvalidInput("acme.Renew",
 		"renewal requires a fresh CSR via NewOrder/FinalizeOrder")
@@ -352,21 +331,6 @@ func TestACMEClient_Renew_PropagatesTransportError(t *testing.T) {
 	_, err := c.Renew(context.Background(), "ff")
 	if sdkerrors.Code(err) != sdkerrors.CodeInvalidInput {
 		t.Errorf("expected propagated invalid-input error, got %v", err)
-	}
-}
-
-func TestACMEClient_Renew_EmptyURL(t *testing.T) {
-	touched := false
-	c := &acmeClientImpl{t: &mockTransport{requestFn: func(context.Context, string, string, interface{}) (interface{}, error) {
-		touched = true
-		return nil, nil
-	}}}
-	_, err := c.Renew(context.Background(), "")
-	if sdkerrors.Code(err) != sdkerrors.CodeInvalidInput {
-		t.Errorf("expected invalid input, got %v", err)
-	}
-	if touched {
-		t.Error("must not touch the transport on validation failure")
 	}
 }
 
@@ -391,38 +355,31 @@ func TestNewACMEService_ReturnsBothClients(t *testing.T) {
 // trustServiceImpl tests
 // =============================================================================
 
-func TestTrust_PublishDANE_Validation(t *testing.T) {
-	s := &trustServiceImpl{t: &mockTransport{}}
+func TestTrust_PublishDANE_Errors(t *testing.T) {
 	cert := makeSelfSignedCert(t)
+	var nilCtx context.Context
 	tests := []struct {
-		name string
-		ctx  context.Context
-		host string
-		port int
-		c    *x509.Certificate
+		name    string
+		ctx     context.Context
+		host    string
+		port    int
+		c       *x509.Certificate
+		tr      *mockTransport
+		wantErr func(error) bool
 	}{
-		{"empty name", context.Background(), "", 443, cert},
-		{"non-positive port", context.Background(), "example.com", 0, cert},
-		{"nil cert", context.Background(), "example.com", 443, nil},
-		{"nil ctx", nil, "example.com", 443, cert},
+		{"empty name", context.Background(), "", 443, cert, &mockTransport{}, sdkerrors.IsInvalidInput},
+		{"non-positive port", context.Background(), "example.com", 0, cert, &mockTransport{}, sdkerrors.IsInvalidInput},
+		{"nil cert", context.Background(), "example.com", 443, nil, &mockTransport{}, sdkerrors.IsInvalidInput},
+		{"nil ctx", nilCtx, "example.com", 443, cert, &mockTransport{}, sdkerrors.IsInvalidInput},
+		{"transport error", context.Background(), "example.com", 443, cert, respondWith(nil, errBoom), isAnyError},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			err := s.PublishDANE(tc.ctx, tc.host, tc.port, tc.c)
-			if err == nil || !sdkerrors.IsInvalidInput(err) {
-				t.Errorf("expected InvalidInput, got %v", err)
+			s := &trustServiceImpl{t: tc.tr}
+			if err := s.PublishDANE(tc.ctx, tc.host, tc.port, tc.c); err == nil || !tc.wantErr(err) {
+				t.Errorf("unexpected error: %v", err)
 			}
 		})
-	}
-}
-
-func TestTrust_PublishDANE_TransportError(t *testing.T) {
-	s := &trustServiceImpl{t: &mockTransport{requestFn: func(context.Context, string, string, interface{}) (interface{}, error) {
-		return nil, errBoom
-	}}}
-	cert := makeSelfSignedCert(t)
-	if err := s.PublishDANE(context.Background(), "example.com", 443, cert); err == nil {
-		t.Fatal("expected error to propagate")
 	}
 }
 
@@ -444,91 +401,58 @@ func TestTrust_PublishDANE_HappyPath(t *testing.T) {
 	}
 }
 
-func TestTrust_CrossSignedRootPool_Validation(t *testing.T) {
-	s := &trustServiceImpl{t: &mockTransport{}}
-	if _, err := s.CrossSignedRootPool(nil); err == nil || !sdkerrors.IsInvalidInput(err) {
-		t.Errorf("expected InvalidInput, got %v", err)
-	}
-}
-
-func TestTrust_CrossSignedRootPool_TransportError(t *testing.T) {
-	s := &trustServiceImpl{t: &mockTransport{requestFn: func(context.Context, string, string, interface{}) (interface{}, error) {
-		return nil, errBoom
-	}}}
-	if _, err := s.CrossSignedRootPool(context.Background()); err == nil {
-		t.Fatal("expected error to propagate")
-	}
-}
-
-func TestTrust_CrossSignedRootPool_NilResponse_ReturnsEmptyPool(t *testing.T) {
-	s := &trustServiceImpl{t: &mockTransport{}}
-	pool, err := s.CrossSignedRootPool(context.Background())
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if pool == nil {
-		t.Fatal("expected non-nil pool")
-	}
-}
-
-func TestTrust_CrossSignedRootPool_InvalidResponseType(t *testing.T) {
-	s := &trustServiceImpl{t: &mockTransport{requestFn: func(context.Context, string, string, interface{}) (interface{}, error) {
-		return "wrong", nil
-	}}}
-	if _, err := s.CrossSignedRootPool(context.Background()); err == nil {
-		t.Fatal("expected error for invalid response type")
-	}
-}
-
-func TestTrust_CrossSignedRootPool_DecodesPEM(t *testing.T) {
+func TestTrust_CrossSignedRootPool(t *testing.T) {
 	cert := makeSelfSignedCert(t)
-	s := &trustServiceImpl{t: &mockTransport{requestFn: func(context.Context, string, string, interface{}) (interface{}, error) {
-		return &TrustCrossSignedRootPoolResponse{
-			RootPEMs: [][]byte{pemEncode(cert.Raw)},
-		}, nil
-	}}}
-	pool, err := s.CrossSignedRootPool(context.Background())
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if pool == nil {
-		t.Fatal("expected non-nil pool")
-	}
-}
-
-func TestTrust_CrossSignedRootPool_DecodesDER(t *testing.T) {
-	cert := makeSelfSignedCert(t)
-	s := &trustServiceImpl{t: &mockTransport{requestFn: func(context.Context, string, string, interface{}) (interface{}, error) {
-		return &TrustCrossSignedRootPoolResponse{
-			RootPEMs: [][]byte{cert.Raw}, // DER fallback
-		}, nil
-	}}}
-	pool, err := s.CrossSignedRootPool(context.Background())
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if pool == nil {
-		t.Fatal("expected non-nil pool")
-	}
-}
-
-func TestTrust_CrossSignedRootPool_BadPEM(t *testing.T) {
+	oneCertPool := x509.NewCertPool()
+	oneCertPool.AddCert(cert)
 	bogusPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: []byte("not a cert")})
-	s := &trustServiceImpl{t: &mockTransport{requestFn: func(context.Context, string, string, interface{}) (interface{}, error) {
-		return &TrustCrossSignedRootPoolResponse{RootPEMs: [][]byte{bogusPEM}}, nil
-	}}}
-	if _, err := s.CrossSignedRootPool(context.Background()); err == nil {
-		t.Fatal("expected error parsing invalid PEM cert")
+	var nilCtx context.Context
+
+	tests := []struct {
+		name     string
+		ctx      context.Context
+		tr       *mockTransport
+		wantPool *x509.CertPool
+		wantErr  func(error) bool
+	}{
+		{name: "nil context", ctx: nilCtx, tr: &mockTransport{}, wantErr: sdkerrors.IsInvalidInput},
+		{name: "transport error", ctx: context.Background(), tr: respondWith(nil, errBoom), wantErr: isAnyError},
+		{name: "nil response is an empty pool", ctx: context.Background(), tr: &mockTransport{}, wantPool: x509.NewCertPool()},
+		{name: "invalid response type", ctx: context.Background(), tr: respondWith("wrong", nil), wantErr: isAnyError},
+		{name: "decodes PEM", ctx: context.Background(), tr: respondWith(&TrustCrossSignedRootPoolResponse{RootPEMs: [][]byte{pemEncode(cert.Raw)}}, nil), wantPool: oneCertPool},
+		{name: "decodes DER fallback", ctx: context.Background(), tr: respondWith(&TrustCrossSignedRootPoolResponse{RootPEMs: [][]byte{cert.Raw}}, nil), wantPool: oneCertPool},
+		{name: "bad PEM certificate", ctx: context.Background(), tr: respondWith(&TrustCrossSignedRootPoolResponse{RootPEMs: [][]byte{bogusPEM}}, nil), wantErr: isAnyError},
+		{name: "bad DER certificate", ctx: context.Background(), tr: respondWith(&TrustCrossSignedRootPoolResponse{RootPEMs: [][]byte{[]byte("totally invalid")}}, nil), wantErr: isAnyError},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s := &trustServiceImpl{t: tt.tr}
+			pool, err := s.CrossSignedRootPool(tt.ctx)
+			if tt.wantErr != nil {
+				if err == nil || !tt.wantErr(err) {
+					t.Fatalf("unexpected error: %v", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if !pool.Equal(tt.wantPool) {
+				t.Error("pool does not hold the expected roots")
+			}
+		})
 	}
 }
 
-func TestTrust_CrossSignedRootPool_BadDER(t *testing.T) {
-	s := &trustServiceImpl{t: &mockTransport{requestFn: func(context.Context, string, string, interface{}) (interface{}, error) {
-		return &TrustCrossSignedRootPoolResponse{RootPEMs: [][]byte{[]byte("totally invalid")}}, nil
-	}}}
-	if _, err := s.CrossSignedRootPool(context.Background()); err == nil {
-		t.Fatal("expected error parsing invalid DER cert")
-	}
+// isAnyError accepts every non-nil error; table rows use it where the
+// verb's contract is only that the failure is reported.
+func isAnyError(err error) bool { return err != nil }
+
+// respondWith returns a transport whose every request answers resp, err.
+func respondWith(resp interface{}, err error) *mockTransport {
+	return &mockTransport{requestFn: func(context.Context, string, string, interface{}) (interface{}, error) {
+		return resp, err
+	}}
 }
 
 func TestTrust_CrossSignedRoots_ReturnsEachRootInOrder(t *testing.T) {
@@ -573,35 +497,28 @@ func TestTrust_CrossSignedRoots_NilResponse_ReturnsNoRoots(t *testing.T) {
 	}
 }
 
-func TestTrust_AutoImportAIA_Validation(t *testing.T) {
-	s := &trustServiceImpl{t: &mockTransport{}}
+func TestTrust_AutoImportAIA_Errors(t *testing.T) {
 	cert := makeSelfSignedCert(t)
+	var nilCtx context.Context
 	tests := []struct {
-		name  string
-		ctx   context.Context
-		chain []*x509.Certificate
+		name    string
+		ctx     context.Context
+		chain   []*x509.Certificate
+		tr      *mockTransport
+		wantErr func(error) bool
 	}{
-		{"empty chain", context.Background(), nil},
-		{"nil ctx", nil, []*x509.Certificate{cert}},
-		{"nil chain entry", context.Background(), []*x509.Certificate{cert, nil}},
+		{"empty chain", context.Background(), nil, &mockTransport{}, sdkerrors.IsInvalidInput},
+		{"nil ctx", nilCtx, []*x509.Certificate{cert}, &mockTransport{}, sdkerrors.IsInvalidInput},
+		{"nil chain entry", context.Background(), []*x509.Certificate{cert, nil}, &mockTransport{}, sdkerrors.IsInvalidInput},
+		{"transport error", context.Background(), []*x509.Certificate{cert}, respondWith(nil, errBoom), isAnyError},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			err := s.AutoImportAIA(tc.ctx, tc.chain)
-			if err == nil || !sdkerrors.IsInvalidInput(err) {
-				t.Errorf("expected InvalidInput, got %v", err)
+			s := &trustServiceImpl{t: tc.tr}
+			if err := s.AutoImportAIA(tc.ctx, tc.chain); err == nil || !tc.wantErr(err) {
+				t.Errorf("unexpected error: %v", err)
 			}
 		})
-	}
-}
-
-func TestTrust_AutoImportAIA_TransportError(t *testing.T) {
-	s := &trustServiceImpl{t: &mockTransport{requestFn: func(context.Context, string, string, interface{}) (interface{}, error) {
-		return nil, errBoom
-	}}}
-	cert := makeSelfSignedCert(t)
-	if err := s.AutoImportAIA(context.Background(), []*x509.Certificate{cert}); err == nil {
-		t.Fatal("expected error to propagate")
 	}
 }
 
@@ -624,13 +541,6 @@ func TestTrust_Bootstrap_ReturnsClient(t *testing.T) {
 	s := &trustServiceImpl{t: &mockTransport{}}
 	if s.Bootstrap() == nil {
 		t.Fatal("expected non-nil bootstrap client")
-	}
-}
-
-func TestNewTrustService_NonNil(t *testing.T) {
-	svc := newTrustService(&mockTransport{})
-	if svc == nil {
-		t.Fatal("expected non-nil TrustService")
 	}
 }
 
@@ -662,48 +572,29 @@ func TestTrustBootstrap_Fetch_ErrorPath(t *testing.T) {
 // certExtImpl tests
 // =============================================================================
 
-func TestCertExt_CrossSign_Validation(t *testing.T) {
-	c := &certExtImpl{t: &mockTransport{}}
+func TestCertExt_CrossSign_Errors(t *testing.T) {
+	var nilCtx context.Context
 	tests := []struct {
-		name string
-		root []byte
-		ctx  context.Context
+		name    string
+		ctx     context.Context
+		root    []byte
+		tr      *mockTransport
+		wantErr func(error) bool
 	}{
-		{"empty root", nil, context.Background()},
-		{"nil ctx", []byte("pem"), nil},
+		{"empty root", context.Background(), nil, &mockTransport{}, sdkerrors.IsInvalidInput},
+		{"nil ctx", nilCtx, []byte("pem"), &mockTransport{}, sdkerrors.IsInvalidInput},
+		{"transport error", context.Background(), []byte("p"), respondWith(nil, errBoom), isAnyError},
+		{"nil response", context.Background(), []byte("p"), &mockTransport{}, isAnyError},
+		{"invalid type", context.Background(), []byte("p"), respondWith("wrong", nil), isAnyError},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			if _, err := c.CrossSign(tc.ctx, tc.root); err == nil || !sdkerrors.IsInvalidInput(err) {
-				t.Errorf("expected InvalidInput, got %v", err)
+			c := &certExtImpl{t: tc.tr}
+			if _, err := c.CrossSign(tc.ctx, tc.root); err == nil || !tc.wantErr(err) {
+				t.Errorf("unexpected error: %v", err)
 			}
 		})
 	}
-}
-
-func TestCertExt_CrossSign_TransportAndType(t *testing.T) {
-	t.Run("transport error", func(t *testing.T) {
-		c := &certExtImpl{t: &mockTransport{requestFn: func(context.Context, string, string, interface{}) (interface{}, error) {
-			return nil, errBoom
-		}}}
-		if _, err := c.CrossSign(context.Background(), []byte("p")); err == nil {
-			t.Fatal("expected error")
-		}
-	})
-	t.Run("nil response", func(t *testing.T) {
-		c := &certExtImpl{t: &mockTransport{}}
-		if _, err := c.CrossSign(context.Background(), []byte("p")); err == nil {
-			t.Fatal("expected error")
-		}
-	})
-	t.Run("invalid type", func(t *testing.T) {
-		c := &certExtImpl{t: &mockTransport{requestFn: func(context.Context, string, string, interface{}) (interface{}, error) {
-			return "wrong", nil
-		}}}
-		if _, err := c.CrossSign(context.Background(), []byte("p")); err == nil {
-			t.Fatal("expected error")
-		}
-	})
 }
 
 func TestCertExt_CrossSign_HappyPath(t *testing.T) {
@@ -720,43 +611,29 @@ func TestCertExt_CrossSign_HappyPath(t *testing.T) {
 	}
 }
 
-func TestCertExt_Chain_Validation(t *testing.T) {
-	c := &certExtImpl{t: &mockTransport{}}
-	t.Run("empty pem", func(t *testing.T) {
-		if _, err := c.Chain(context.Background(), nil); err == nil || !sdkerrors.IsInvalidInput(err) {
-			t.Errorf("expected InvalidInput, got %v", err)
-		}
-	})
-	t.Run("nil ctx", func(t *testing.T) {
-		if _, err := c.Chain(nil, []byte("p")); err == nil || !sdkerrors.IsInvalidInput(err) {
-			t.Errorf("expected InvalidInput, got %v", err)
-		}
-	})
-}
-
-func TestCertExt_Chain_TransportAndType(t *testing.T) {
-	t.Run("transport error", func(t *testing.T) {
-		c := &certExtImpl{t: &mockTransport{requestFn: func(context.Context, string, string, interface{}) (interface{}, error) {
-			return nil, errBoom
-		}}}
-		if _, err := c.Chain(context.Background(), []byte("p")); err == nil {
-			t.Fatal("expected error")
-		}
-	})
-	t.Run("nil response", func(t *testing.T) {
-		c := &certExtImpl{t: &mockTransport{}}
-		if _, err := c.Chain(context.Background(), []byte("p")); err == nil {
-			t.Fatal("expected error")
-		}
-	})
-	t.Run("invalid type", func(t *testing.T) {
-		c := &certExtImpl{t: &mockTransport{requestFn: func(context.Context, string, string, interface{}) (interface{}, error) {
-			return 12, nil
-		}}}
-		if _, err := c.Chain(context.Background(), []byte("p")); err == nil {
-			t.Fatal("expected error")
-		}
-	})
+func TestCertExt_Chain_Errors(t *testing.T) {
+	var nilCtx context.Context
+	tests := []struct {
+		name    string
+		ctx     context.Context
+		pem     []byte
+		tr      *mockTransport
+		wantErr func(error) bool
+	}{
+		{"empty pem", context.Background(), nil, &mockTransport{}, sdkerrors.IsInvalidInput},
+		{"nil ctx", nilCtx, []byte("p"), &mockTransport{}, sdkerrors.IsInvalidInput},
+		{"transport error", context.Background(), []byte("p"), respondWith(nil, errBoom), isAnyError},
+		{"nil response", context.Background(), []byte("p"), &mockTransport{}, isAnyError},
+		{"invalid type", context.Background(), []byte("p"), respondWith(12, nil), isAnyError},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			c := &certExtImpl{t: tc.tr}
+			if _, err := c.Chain(tc.ctx, tc.pem); err == nil || !tc.wantErr(err) {
+				t.Errorf("unexpected error: %v", err)
+			}
+		})
+	}
 }
 
 func TestCertExt_Chain_HappyPath(t *testing.T) {
@@ -773,51 +650,32 @@ func TestCertExt_Chain_HappyPath(t *testing.T) {
 	}
 }
 
-func TestCertExt_IssueDeviceIdentity_Validation(t *testing.T) {
-	c := &certExtImpl{t: &mockTransport{}}
+func TestCertExt_IssueDeviceIdentity_Errors(t *testing.T) {
+	var nilCtx context.Context
+	valid := &DeviceIdentityRequest{Type: DeviceIdentityIDevID, DeviceID: "d-1"}
 	tests := []struct {
-		name string
-		req  *DeviceIdentityRequest
-		ctx  context.Context
+		name    string
+		ctx     context.Context
+		req     *DeviceIdentityRequest
+		tr      *mockTransport
+		wantErr func(error) bool
 	}{
-		{"nil req", nil, context.Background()},
-		{"empty type", &DeviceIdentityRequest{DeviceID: "d"}, context.Background()},
-		{"empty deviceid", &DeviceIdentityRequest{Type: DeviceIdentityEK}, context.Background()},
-		{"nil ctx", &DeviceIdentityRequest{Type: DeviceIdentityEK, DeviceID: "d"}, nil},
+		{"nil req", context.Background(), nil, &mockTransport{}, sdkerrors.IsInvalidInput},
+		{"empty type", context.Background(), &DeviceIdentityRequest{DeviceID: "d"}, &mockTransport{}, sdkerrors.IsInvalidInput},
+		{"empty deviceid", context.Background(), &DeviceIdentityRequest{Type: DeviceIdentityEK}, &mockTransport{}, sdkerrors.IsInvalidInput},
+		{"nil ctx", nilCtx, valid, &mockTransport{}, sdkerrors.IsInvalidInput},
+		{"transport error", context.Background(), valid, respondWith(nil, errBoom), isAnyError},
+		{"nil response", context.Background(), valid, &mockTransport{}, isAnyError},
+		{"invalid type", context.Background(), valid, respondWith("wrong", nil), isAnyError},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			if _, err := c.IssueDeviceIdentity(tc.ctx, tc.req); err == nil || !sdkerrors.IsInvalidInput(err) {
-				t.Errorf("expected InvalidInput, got %v", err)
+			c := &certExtImpl{t: tc.tr}
+			if _, err := c.IssueDeviceIdentity(tc.ctx, tc.req); err == nil || !tc.wantErr(err) {
+				t.Errorf("unexpected error: %v", err)
 			}
 		})
 	}
-}
-
-func TestCertExt_IssueDeviceIdentity_TransportAndType(t *testing.T) {
-	req := &DeviceIdentityRequest{Type: DeviceIdentityIDevID, DeviceID: "d-1"}
-	t.Run("transport error", func(t *testing.T) {
-		c := &certExtImpl{t: &mockTransport{requestFn: func(context.Context, string, string, interface{}) (interface{}, error) {
-			return nil, errBoom
-		}}}
-		if _, err := c.IssueDeviceIdentity(context.Background(), req); err == nil {
-			t.Fatal("expected error")
-		}
-	})
-	t.Run("nil response", func(t *testing.T) {
-		c := &certExtImpl{t: &mockTransport{}}
-		if _, err := c.IssueDeviceIdentity(context.Background(), req); err == nil {
-			t.Fatal("expected error")
-		}
-	})
-	t.Run("invalid type", func(t *testing.T) {
-		c := &certExtImpl{t: &mockTransport{requestFn: func(context.Context, string, string, interface{}) (interface{}, error) {
-			return "wrong", nil
-		}}}
-		if _, err := c.IssueDeviceIdentity(context.Background(), req); err == nil {
-			t.Fatal("expected error")
-		}
-	})
 }
 
 func TestCertExt_IssueDeviceIdentity_HappyPath(t *testing.T) {
@@ -834,60 +692,35 @@ func TestCertExt_IssueDeviceIdentity_HappyPath(t *testing.T) {
 	}
 }
 
-func TestNewCertificateExtensions_NonNil(t *testing.T) {
-	if newCertificateExtensions(&mockTransport{}) == nil {
-		t.Fatal("expected non-nil CertificateExtensions")
-	}
-}
-
 // =============================================================================
 // fido2TransportClient tests
 // =============================================================================
 
-func TestFIDO2_BeginRegistration_Validation(t *testing.T) {
-	c := &fido2TransportClient{t: &mockTransport{}}
+func TestFIDO2_BeginRegistration_Errors(t *testing.T) {
+	var nilCtx context.Context
+	valid := &FIDO2BeginRegistrationRequest{Email: "u"}
 	tests := []struct {
-		name string
-		req  *FIDO2BeginRegistrationRequest
-		ctx  context.Context
+		name    string
+		ctx     context.Context
+		req     *FIDO2BeginRegistrationRequest
+		tr      *mockTransport
+		wantErr func(error) bool
 	}{
-		{"nil req", nil, context.Background()},
-		{"empty username", &FIDO2BeginRegistrationRequest{}, context.Background()},
-		{"nil ctx", &FIDO2BeginRegistrationRequest{Email: "u"}, nil},
+		{"nil req", context.Background(), nil, &mockTransport{}, sdkerrors.IsInvalidInput},
+		{"empty username", context.Background(), &FIDO2BeginRegistrationRequest{}, &mockTransport{}, sdkerrors.IsInvalidInput},
+		{"nil ctx", nilCtx, valid, &mockTransport{}, sdkerrors.IsInvalidInput},
+		{"transport error", context.Background(), valid, respondWith(nil, errBoom), isAnyError},
+		{"nil response", context.Background(), valid, &mockTransport{}, isAnyError},
+		{"invalid type", context.Background(), valid, respondWith("wrong", nil), isAnyError},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			if _, err := c.BeginRegistration(tc.ctx, tc.req); err == nil || !sdkerrors.IsInvalidInput(err) {
-				t.Errorf("expected InvalidInput, got %v", err)
+			c := &fido2TransportClient{t: tc.tr}
+			if _, err := c.BeginRegistration(tc.ctx, tc.req); err == nil || !tc.wantErr(err) {
+				t.Errorf("unexpected error: %v", err)
 			}
 		})
 	}
-}
-
-func TestFIDO2_BeginRegistration_TransportAndType(t *testing.T) {
-	req := &FIDO2BeginRegistrationRequest{Email: "u"}
-	t.Run("transport error", func(t *testing.T) {
-		c := &fido2TransportClient{t: &mockTransport{requestFn: func(context.Context, string, string, interface{}) (interface{}, error) {
-			return nil, errBoom
-		}}}
-		if _, err := c.BeginRegistration(context.Background(), req); err == nil {
-			t.Fatal("expected error")
-		}
-	})
-	t.Run("nil response", func(t *testing.T) {
-		c := &fido2TransportClient{t: &mockTransport{}}
-		if _, err := c.BeginRegistration(context.Background(), req); err == nil {
-			t.Fatal("expected error")
-		}
-	})
-	t.Run("invalid type", func(t *testing.T) {
-		c := &fido2TransportClient{t: &mockTransport{requestFn: func(context.Context, string, string, interface{}) (interface{}, error) {
-			return "wrong", nil
-		}}}
-		if _, err := c.BeginRegistration(context.Background(), req); err == nil {
-			t.Fatal("expected error")
-		}
-	})
 }
 
 func TestFIDO2_BeginRegistration_HappyPath(t *testing.T) {
@@ -930,81 +763,54 @@ func TestFIDO2_BeginAddCredential_HappyPath(t *testing.T) {
 }
 
 func TestFIDO2_BeginAddCredential_Errors(t *testing.T) {
-	t.Run("nil context", func(t *testing.T) {
-		c := &fido2TransportClient{t: &mockTransport{}}
-		if _, err := c.BeginAddCredential(nil); err == nil || !sdkerrors.IsInvalidInput(err) {
-			t.Fatal("expected error")
-		}
-	})
-	t.Run("transport error", func(t *testing.T) {
-		c := &fido2TransportClient{t: &mockTransport{requestFn: func(context.Context, string, string, interface{}) (interface{}, error) {
-			return nil, errBoom
-		}}}
-		if _, err := c.BeginAddCredential(context.Background()); err == nil {
-			t.Fatal("expected error")
-		}
-	})
-	t.Run("nil response", func(t *testing.T) {
-		c := &fido2TransportClient{t: &mockTransport{}}
-		if _, err := c.BeginAddCredential(context.Background()); err == nil {
-			t.Fatal("expected error")
-		}
-	})
-	t.Run("invalid type", func(t *testing.T) {
-		c := &fido2TransportClient{t: &mockTransport{requestFn: func(context.Context, string, string, interface{}) (interface{}, error) {
-			return "wrong", nil
-		}}}
-		if _, err := c.BeginAddCredential(context.Background()); err == nil {
-			t.Fatal("expected error")
-		}
-	})
-}
-
-func TestFIDO2_FinishRegistration_Validation(t *testing.T) {
-	c := &fido2TransportClient{t: &mockTransport{}}
+	var nilCtx context.Context
 	tests := []struct {
-		name string
-		req  *FIDO2FinishRegistrationRequest
-		ctx  context.Context
+		name    string
+		ctx     context.Context
+		tr      *mockTransport
+		wantErr func(error) bool
 	}{
-		{"nil req", nil, context.Background()},
-		{"missing session", &FIDO2FinishRegistrationRequest{AttestationJSON: "{}"}, context.Background()},
-		{"missing attestation", &FIDO2FinishRegistrationRequest{SessionID: "s"}, context.Background()},
-		{"nil ctx", &FIDO2FinishRegistrationRequest{SessionID: "s", AttestationJSON: "{}"}, nil},
+		{"nil context", nilCtx, &mockTransport{}, sdkerrors.IsInvalidInput},
+		{"transport error", context.Background(), respondWith(nil, errBoom), isAnyError},
+		{"nil response", context.Background(), &mockTransport{}, isAnyError},
+		{"invalid type", context.Background(), respondWith("wrong", nil), isAnyError},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			if _, err := c.FinishRegistration(tc.ctx, tc.req); err == nil || !sdkerrors.IsInvalidInput(err) {
-				t.Errorf("expected InvalidInput, got %v", err)
+			c := &fido2TransportClient{t: tc.tr}
+			if _, err := c.BeginAddCredential(tc.ctx); err == nil || !tc.wantErr(err) {
+				t.Errorf("unexpected error: %v", err)
 			}
 		})
 	}
 }
 
-func TestFIDO2_FinishRegistration_TransportAndType(t *testing.T) {
-	req := &FIDO2FinishRegistrationRequest{SessionID: "s", AttestationJSON: "{}"}
-	t.Run("transport error", func(t *testing.T) {
-		c := &fido2TransportClient{t: &mockTransport{requestFn: func(context.Context, string, string, interface{}) (interface{}, error) {
-			return nil, errBoom
-		}}}
-		if _, err := c.FinishRegistration(context.Background(), req); err == nil {
-			t.Fatal("expected error")
-		}
-	})
-	t.Run("nil response", func(t *testing.T) {
-		c := &fido2TransportClient{t: &mockTransport{}}
-		if _, err := c.FinishRegistration(context.Background(), req); err == nil {
-			t.Fatal("expected error")
-		}
-	})
-	t.Run("invalid type", func(t *testing.T) {
-		c := &fido2TransportClient{t: &mockTransport{requestFn: func(context.Context, string, string, interface{}) (interface{}, error) {
-			return "wrong", nil
-		}}}
-		if _, err := c.FinishRegistration(context.Background(), req); err == nil {
-			t.Fatal("expected error")
-		}
-	})
+func TestFIDO2_FinishRegistration_Errors(t *testing.T) {
+	var nilCtx context.Context
+	valid := &FIDO2FinishRegistrationRequest{SessionID: "s", AttestationJSON: "{}"}
+	tests := []struct {
+		name    string
+		ctx     context.Context
+		req     *FIDO2FinishRegistrationRequest
+		tr      *mockTransport
+		wantErr func(error) bool
+	}{
+		{"nil req", context.Background(), nil, &mockTransport{}, sdkerrors.IsInvalidInput},
+		{"missing session", context.Background(), &FIDO2FinishRegistrationRequest{AttestationJSON: "{}"}, &mockTransport{}, sdkerrors.IsInvalidInput},
+		{"missing attestation", context.Background(), &FIDO2FinishRegistrationRequest{SessionID: "s"}, &mockTransport{}, sdkerrors.IsInvalidInput},
+		{"nil ctx", nilCtx, valid, &mockTransport{}, sdkerrors.IsInvalidInput},
+		{"transport error", context.Background(), valid, respondWith(nil, errBoom), isAnyError},
+		{"nil response", context.Background(), valid, &mockTransport{}, isAnyError},
+		{"invalid type", context.Background(), valid, respondWith("wrong", nil), isAnyError},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			c := &fido2TransportClient{t: tc.tr}
+			if _, err := c.FinishRegistration(tc.ctx, tc.req); err == nil || !tc.wantErr(err) {
+				t.Errorf("unexpected error: %v", err)
+			}
+		})
+	}
 }
 
 func TestFIDO2_FinishRegistration_HappyPath(t *testing.T) {
@@ -1021,50 +827,31 @@ func TestFIDO2_FinishRegistration_HappyPath(t *testing.T) {
 	}
 }
 
-func TestFIDO2_BeginAuthentication_Validation(t *testing.T) {
-	c := &fido2TransportClient{t: &mockTransport{}}
+func TestFIDO2_BeginAuthentication_Errors(t *testing.T) {
+	var nilCtx context.Context
+	valid := &FIDO2BeginAuthenticationRequest{Email: "u"}
 	tests := []struct {
-		name string
-		req  *FIDO2BeginAuthenticationRequest
-		ctx  context.Context
+		name    string
+		ctx     context.Context
+		req     *FIDO2BeginAuthenticationRequest
+		tr      *mockTransport
+		wantErr func(error) bool
 	}{
-		{"nil req", nil, context.Background()},
-		{"empty username", &FIDO2BeginAuthenticationRequest{}, context.Background()},
-		{"nil ctx", &FIDO2BeginAuthenticationRequest{Email: "u"}, nil},
+		{"nil req", context.Background(), nil, &mockTransport{}, sdkerrors.IsInvalidInput},
+		{"empty username", context.Background(), &FIDO2BeginAuthenticationRequest{}, &mockTransport{}, sdkerrors.IsInvalidInput},
+		{"nil ctx", nilCtx, valid, &mockTransport{}, sdkerrors.IsInvalidInput},
+		{"transport error", context.Background(), valid, respondWith(nil, errBoom), isAnyError},
+		{"nil response", context.Background(), valid, &mockTransport{}, isAnyError},
+		{"invalid type", context.Background(), valid, respondWith("wrong", nil), isAnyError},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			if _, err := c.BeginAuthentication(tc.ctx, tc.req); err == nil || !sdkerrors.IsInvalidInput(err) {
-				t.Errorf("expected InvalidInput, got %v", err)
+			c := &fido2TransportClient{t: tc.tr}
+			if _, err := c.BeginAuthentication(tc.ctx, tc.req); err == nil || !tc.wantErr(err) {
+				t.Errorf("unexpected error: %v", err)
 			}
 		})
 	}
-}
-
-func TestFIDO2_BeginAuthentication_TransportAndType(t *testing.T) {
-	req := &FIDO2BeginAuthenticationRequest{Email: "u"}
-	t.Run("transport error", func(t *testing.T) {
-		c := &fido2TransportClient{t: &mockTransport{requestFn: func(context.Context, string, string, interface{}) (interface{}, error) {
-			return nil, errBoom
-		}}}
-		if _, err := c.BeginAuthentication(context.Background(), req); err == nil {
-			t.Fatal("expected error")
-		}
-	})
-	t.Run("nil response", func(t *testing.T) {
-		c := &fido2TransportClient{t: &mockTransport{}}
-		if _, err := c.BeginAuthentication(context.Background(), req); err == nil {
-			t.Fatal("expected error")
-		}
-	})
-	t.Run("invalid type", func(t *testing.T) {
-		c := &fido2TransportClient{t: &mockTransport{requestFn: func(context.Context, string, string, interface{}) (interface{}, error) {
-			return "wrong", nil
-		}}}
-		if _, err := c.BeginAuthentication(context.Background(), req); err == nil {
-			t.Fatal("expected error")
-		}
-	})
 }
 
 func TestFIDO2_BeginAuthentication_HappyPath(t *testing.T) {
@@ -1081,51 +868,32 @@ func TestFIDO2_BeginAuthentication_HappyPath(t *testing.T) {
 	}
 }
 
-func TestFIDO2_FinishAuthentication_Validation(t *testing.T) {
-	c := &fido2TransportClient{t: &mockTransport{}}
+func TestFIDO2_FinishAuthentication_Errors(t *testing.T) {
+	var nilCtx context.Context
+	valid := &FIDO2FinishAuthenticationRequest{SessionID: "s", AssertionJSON: "{}"}
 	tests := []struct {
-		name string
-		req  *FIDO2FinishAuthenticationRequest
-		ctx  context.Context
+		name    string
+		ctx     context.Context
+		req     *FIDO2FinishAuthenticationRequest
+		tr      *mockTransport
+		wantErr func(error) bool
 	}{
-		{"nil req", nil, context.Background()},
-		{"missing session", &FIDO2FinishAuthenticationRequest{AssertionJSON: "{}"}, context.Background()},
-		{"missing assertion", &FIDO2FinishAuthenticationRequest{SessionID: "s"}, context.Background()},
-		{"nil ctx", &FIDO2FinishAuthenticationRequest{SessionID: "s", AssertionJSON: "{}"}, nil},
+		{"nil req", context.Background(), nil, &mockTransport{}, sdkerrors.IsInvalidInput},
+		{"missing session", context.Background(), &FIDO2FinishAuthenticationRequest{AssertionJSON: "{}"}, &mockTransport{}, sdkerrors.IsInvalidInput},
+		{"missing assertion", context.Background(), &FIDO2FinishAuthenticationRequest{SessionID: "s"}, &mockTransport{}, sdkerrors.IsInvalidInput},
+		{"nil ctx", nilCtx, valid, &mockTransport{}, sdkerrors.IsInvalidInput},
+		{"transport error", context.Background(), valid, respondWith(nil, errBoom), isAnyError},
+		{"nil response", context.Background(), valid, &mockTransport{}, isAnyError},
+		{"invalid type", context.Background(), valid, respondWith("wrong", nil), isAnyError},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			if _, err := c.FinishAuthentication(tc.ctx, tc.req); err == nil || !sdkerrors.IsInvalidInput(err) {
-				t.Errorf("expected InvalidInput, got %v", err)
+			c := &fido2TransportClient{t: tc.tr}
+			if _, err := c.FinishAuthentication(tc.ctx, tc.req); err == nil || !tc.wantErr(err) {
+				t.Errorf("unexpected error: %v", err)
 			}
 		})
 	}
-}
-
-func TestFIDO2_FinishAuthentication_TransportAndType(t *testing.T) {
-	req := &FIDO2FinishAuthenticationRequest{SessionID: "s", AssertionJSON: "{}"}
-	t.Run("transport error", func(t *testing.T) {
-		c := &fido2TransportClient{t: &mockTransport{requestFn: func(context.Context, string, string, interface{}) (interface{}, error) {
-			return nil, errBoom
-		}}}
-		if _, err := c.FinishAuthentication(context.Background(), req); err == nil {
-			t.Fatal("expected error")
-		}
-	})
-	t.Run("nil response", func(t *testing.T) {
-		c := &fido2TransportClient{t: &mockTransport{}}
-		if _, err := c.FinishAuthentication(context.Background(), req); err == nil {
-			t.Fatal("expected error")
-		}
-	})
-	t.Run("invalid type", func(t *testing.T) {
-		c := &fido2TransportClient{t: &mockTransport{requestFn: func(context.Context, string, string, interface{}) (interface{}, error) {
-			return "wrong", nil
-		}}}
-		if _, err := c.FinishAuthentication(context.Background(), req); err == nil {
-			t.Fatal("expected error")
-		}
-	})
 }
 
 func TestFIDO2_FinishAuthentication_HappyPath(t *testing.T) {
@@ -1146,29 +914,35 @@ func TestFIDO2_FinishAuthentication_HappyPath(t *testing.T) {
 // pivTransportClient tests
 // =============================================================================
 
-func TestPIV_ListPIVSlots_Validation(t *testing.T) {
-	c := &pivTransportClient{t: &mockTransport{}}
-	if _, err := c.ListPIVSlots(context.Background(), nil); err == nil || !sdkerrors.IsInvalidInput(err) {
-		t.Errorf("expected InvalidInput for nil req, got %v", err)
+func TestPIV_ListPIVSlots_Errors(t *testing.T) {
+	var nilCtx context.Context
+	valid := &PIVListSlotsRequest{Backend: "file"}
+	tests := []struct {
+		name    string
+		ctx     context.Context
+		req     *PIVListSlotsRequest
+		tr      *mockTransport
+		wantErr func(error) bool
+	}{
+		{"nil req", context.Background(), nil, &mockTransport{}, sdkerrors.IsInvalidInput},
+		{"nil ctx", nilCtx, valid, &mockTransport{}, sdkerrors.IsInvalidInput},
+		{"transport error", context.Background(), valid, respondWith(nil, errBoom), isAnyError},
+		{"invalid type", context.Background(), valid, respondWith("wrong", nil), isAnyError},
 	}
-	if _, err := c.ListPIVSlots(nil, &PIVListSlotsRequest{}); err == nil || !sdkerrors.IsInvalidInput(err) {
-		t.Errorf("expected InvalidInput for nil ctx, got %v", err)
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			c := &pivTransportClient{t: tc.tr}
+			if _, err := c.ListPIVSlots(tc.ctx, tc.req); err == nil || !tc.wantErr(err) {
+				t.Errorf("unexpected error: %v", err)
+			}
+		})
 	}
 }
 
-func TestPIV_ListPIVSlots_TransportAndType(t *testing.T) {
-	req := &PIVListSlotsRequest{Backend: "file"}
-	t.Run("transport error", func(t *testing.T) {
-		c := &pivTransportClient{t: &mockTransport{requestFn: func(context.Context, string, string, interface{}) (interface{}, error) {
-			return nil, errBoom
-		}}}
-		if _, err := c.ListPIVSlots(context.Background(), req); err == nil {
-			t.Fatal("expected error")
-		}
-	})
+func TestPIV_ListPIVSlots_HappyPath(t *testing.T) {
 	t.Run("nil response yields empty", func(t *testing.T) {
 		c := &pivTransportClient{t: &mockTransport{}}
-		got, err := c.ListPIVSlots(context.Background(), req)
+		got, err := c.ListPIVSlots(context.Background(), &PIVListSlotsRequest{Backend: "file"})
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -1176,17 +950,6 @@ func TestPIV_ListPIVSlots_TransportAndType(t *testing.T) {
 			t.Errorf("expected empty response, got %+v", got)
 		}
 	})
-	t.Run("invalid type", func(t *testing.T) {
-		c := &pivTransportClient{t: &mockTransport{requestFn: func(context.Context, string, string, interface{}) (interface{}, error) {
-			return "wrong", nil
-		}}}
-		if _, err := c.ListPIVSlots(context.Background(), req); err == nil {
-			t.Fatal("expected error")
-		}
-	})
-}
-
-func TestPIV_ListPIVSlots_HappyPath(t *testing.T) {
 	want := &PIVListSlotsResponse{Slots: []PIVSlotStatus{{Slot: "9a"}}}
 	var gotService, gotMethod string
 	c := &pivTransportClient{t: &mockTransport{requestFn: func(_ context.Context, service, method string, _ interface{}) (interface{}, error) {
@@ -1205,43 +968,31 @@ func TestPIV_ListPIVSlots_HappyPath(t *testing.T) {
 	}
 }
 
-func TestPIV_GetPIVCertificate_Validation(t *testing.T) {
-	c := &pivTransportClient{t: &mockTransport{}}
-	if _, err := c.GetPIVCertificate(context.Background(), nil); err == nil || !sdkerrors.IsInvalidInput(err) {
-		t.Errorf("expected InvalidInput for nil req, got %v", err)
+func TestPIV_GetPIVCertificate_Errors(t *testing.T) {
+	var nilCtx context.Context
+	valid := &PIVGetCertificateRequest{Slot: "9a"}
+	tests := []struct {
+		name    string
+		ctx     context.Context
+		req     *PIVGetCertificateRequest
+		tr      *mockTransport
+		wantErr func(error) bool
+	}{
+		{"nil req", context.Background(), nil, &mockTransport{}, sdkerrors.IsInvalidInput},
+		{"missing slot", context.Background(), &PIVGetCertificateRequest{}, &mockTransport{}, sdkerrors.IsInvalidInput},
+		{"nil ctx", nilCtx, valid, &mockTransport{}, sdkerrors.IsInvalidInput},
+		{"transport error", context.Background(), valid, respondWith(nil, errBoom), isAnyError},
+		{"nil response is not found", context.Background(), valid, &mockTransport{}, sdkerrors.IsNotFound},
+		{"invalid type", context.Background(), valid, respondWith("wrong", nil), isAnyError},
 	}
-	if _, err := c.GetPIVCertificate(context.Background(), &PIVGetCertificateRequest{}); err == nil || !sdkerrors.IsInvalidInput(err) {
-		t.Errorf("expected InvalidInput for missing slot, got %v", err)
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			c := &pivTransportClient{t: tc.tr}
+			if _, err := c.GetPIVCertificate(tc.ctx, tc.req); err == nil || !tc.wantErr(err) {
+				t.Errorf("unexpected error: %v", err)
+			}
+		})
 	}
-	if _, err := c.GetPIVCertificate(nil, &PIVGetCertificateRequest{Slot: "9a"}); err == nil || !sdkerrors.IsInvalidInput(err) {
-		t.Errorf("expected InvalidInput for nil ctx, got %v", err)
-	}
-}
-
-func TestPIV_GetPIVCertificate_TransportAndType(t *testing.T) {
-	req := &PIVGetCertificateRequest{Slot: "9a"}
-	t.Run("transport error", func(t *testing.T) {
-		c := &pivTransportClient{t: &mockTransport{requestFn: func(context.Context, string, string, interface{}) (interface{}, error) {
-			return nil, errBoom
-		}}}
-		if _, err := c.GetPIVCertificate(context.Background(), req); err == nil {
-			t.Fatal("expected error")
-		}
-	})
-	t.Run("nil response is not found", func(t *testing.T) {
-		c := &pivTransportClient{t: &mockTransport{}}
-		if _, err := c.GetPIVCertificate(context.Background(), req); err == nil || !sdkerrors.IsNotFound(err) {
-			t.Errorf("expected NotFound, got %v", err)
-		}
-	})
-	t.Run("invalid type", func(t *testing.T) {
-		c := &pivTransportClient{t: &mockTransport{requestFn: func(context.Context, string, string, interface{}) (interface{}, error) {
-			return "wrong", nil
-		}}}
-		if _, err := c.GetPIVCertificate(context.Background(), req); err == nil {
-			t.Fatal("expected error")
-		}
-	})
 }
 
 func TestPIV_GetPIVCertificate_HappyPath(t *testing.T) {
@@ -1327,43 +1078,31 @@ func TestPIV_DeletePIVCertificate_TransportPaths(t *testing.T) {
 	})
 }
 
-func TestPIV_GeneratePIVKey_Validation(t *testing.T) {
-	c := &pivTransportClient{t: &mockTransport{}}
-	if _, err := c.GeneratePIVKey(context.Background(), nil); err == nil || !sdkerrors.IsInvalidInput(err) {
-		t.Errorf("expected InvalidInput for nil req, got %v", err)
+func TestPIV_GeneratePIVKey_Errors(t *testing.T) {
+	var nilCtx context.Context
+	valid := &PIVGenerateKeyRequest{Slot: "9a", Algorithm: "ecdsap256"}
+	tests := []struct {
+		name    string
+		ctx     context.Context
+		req     *PIVGenerateKeyRequest
+		tr      *mockTransport
+		wantErr func(error) bool
+	}{
+		{"nil req", context.Background(), nil, &mockTransport{}, sdkerrors.IsInvalidInput},
+		{"missing slot", context.Background(), &PIVGenerateKeyRequest{}, &mockTransport{}, sdkerrors.IsInvalidInput},
+		{"nil ctx", nilCtx, valid, &mockTransport{}, sdkerrors.IsInvalidInput},
+		{"transport error", context.Background(), valid, respondWith(nil, errBoom), isAnyError},
+		{"nil response", context.Background(), valid, &mockTransport{}, isAnyError},
+		{"invalid type", context.Background(), valid, respondWith("wrong", nil), isAnyError},
 	}
-	if _, err := c.GeneratePIVKey(context.Background(), &PIVGenerateKeyRequest{}); err == nil || !sdkerrors.IsInvalidInput(err) {
-		t.Errorf("expected InvalidInput for missing slot, got %v", err)
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			c := &pivTransportClient{t: tc.tr}
+			if _, err := c.GeneratePIVKey(tc.ctx, tc.req); err == nil || !tc.wantErr(err) {
+				t.Errorf("unexpected error: %v", err)
+			}
+		})
 	}
-	if _, err := c.GeneratePIVKey(nil, &PIVGenerateKeyRequest{Slot: "9a"}); err == nil || !sdkerrors.IsInvalidInput(err) {
-		t.Errorf("expected InvalidInput for nil ctx, got %v", err)
-	}
-}
-
-func TestPIV_GeneratePIVKey_TransportAndType(t *testing.T) {
-	req := &PIVGenerateKeyRequest{Slot: "9a", Algorithm: "ecdsap256"}
-	t.Run("transport error", func(t *testing.T) {
-		c := &pivTransportClient{t: &mockTransport{requestFn: func(context.Context, string, string, interface{}) (interface{}, error) {
-			return nil, errBoom
-		}}}
-		if _, err := c.GeneratePIVKey(context.Background(), req); err == nil {
-			t.Fatal("expected error")
-		}
-	})
-	t.Run("nil response", func(t *testing.T) {
-		c := &pivTransportClient{t: &mockTransport{}}
-		if _, err := c.GeneratePIVKey(context.Background(), req); err == nil {
-			t.Fatal("expected error")
-		}
-	})
-	t.Run("invalid type", func(t *testing.T) {
-		c := &pivTransportClient{t: &mockTransport{requestFn: func(context.Context, string, string, interface{}) (interface{}, error) {
-			return "wrong", nil
-		}}}
-		if _, err := c.GeneratePIVKey(context.Background(), req); err == nil {
-			t.Fatal("expected error")
-		}
-	})
 }
 
 func TestPIV_GeneratePIVKey_HappyPath(t *testing.T) {
@@ -1466,7 +1205,7 @@ func TestPIV_GeneratePIVCSR_Paths(t *testing.T) {
 // =============================================================================
 
 func TestAuthFactors_Add_Validation(t *testing.T) {
-	c := &authFactorsImpl{t: &mockTransport{}}
+	var nilCtx context.Context
 	tests := []struct {
 		name string
 		req  *AuthFactorEnrollRequest
@@ -1475,10 +1214,16 @@ func TestAuthFactors_Add_Validation(t *testing.T) {
 		{"nil req", nil, context.Background()},
 		{"missing factor", &AuthFactorEnrollRequest{Subject: "s"}, context.Background()},
 		{"missing subject", &AuthFactorEnrollRequest{FactorName: "fido2"}, context.Background()},
-		{"nil ctx", &AuthFactorEnrollRequest{FactorName: "fido2", Subject: "s"}, nil},
+		{"nil ctx", &AuthFactorEnrollRequest{FactorName: "fido2", Subject: "s"}, nilCtx},
+		{"unsupported factor type", &AuthFactorEnrollRequest{FactorName: "totp", Subject: "s"}, context.Background()},
+		// fido2 without credential_id must fail closed: storing a fido2 factor
+		// without the credentialID lookup key would make it unresolvable at login.
+		{"fido2 without credential_id", &AuthFactorEnrollRequest{FactorName: "fido2", Subject: "s"}, context.Background()},
+		{"mtls without credential_sha256", &AuthFactorEnrollRequest{FactorName: "mtls", Subject: "s"}, context.Background()},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
+			c := newAuthFactorsImplNoStore()
 			if _, err := c.Add(tc.ctx, tc.req); err == nil || !sdkerrors.IsInvalidInput(err) {
 				t.Errorf("expected InvalidInput, got %v", err)
 			}
@@ -1512,46 +1257,23 @@ func TestAuthFactors_Add_FailsClosedWithoutStore(t *testing.T) {
 	}
 }
 
-func TestAuthFactors_Add_RejectsUnknownType(t *testing.T) {
-	c := newAuthFactorsImplNoStore()
-	if _, err := c.Add(context.Background(), &AuthFactorEnrollRequest{
-		FactorName: "totp", Subject: "s",
-	}); err == nil || !sdkerrors.IsInvalidInput(err) {
-		t.Fatalf("expected InvalidInput for unsupported factor type, got %v", err)
-	}
-}
-
-func TestAuthFactors_Add_FIDO2RequiresCredentialID(t *testing.T) {
-	c := newAuthFactorsImplNoStore()
-	// fido2 without credential_id must fail closed: storing a fido2 factor
-	// without the credentialID lookup key would make it unresolvable at login.
-	if _, err := c.Add(context.Background(), &AuthFactorEnrollRequest{
-		FactorName: "fido2", Subject: "s",
-	}); err == nil || !sdkerrors.IsInvalidInput(err) {
-		t.Fatalf("expected InvalidInput when fido2 credential_id is absent, got %v", err)
-	}
-}
-
-func TestAuthFactors_Add_MTLSRequiresCredentialSHA256(t *testing.T) {
-	c := newAuthFactorsImplNoStore()
-	if _, err := c.Add(context.Background(), &AuthFactorEnrollRequest{
-		FactorName: "mtls", Subject: "s",
-	}); err == nil || !sdkerrors.IsInvalidInput(err) {
-		t.Fatalf("expected InvalidInput when mtls credential_sha256 is absent, got %v", err)
-	}
-}
-
 func TestAuthFactors_List_Validation(t *testing.T) {
-	c := &authFactorsImpl{t: &mockTransport{}}
-	if _, err := c.List(nil, ""); err == nil || !sdkerrors.IsInvalidInput(err) {
-		t.Errorf("expected InvalidInput, got %v", err)
+	var nilCtx context.Context
+	tests := []struct {
+		name    string
+		ctx     context.Context
+		subject string
+	}{
+		{"nil ctx", nilCtx, "user-1"},
+		{"empty subject", context.Background(), ""},
 	}
-}
-
-func TestAuthFactors_List_RequiresSubject(t *testing.T) {
-	c := newAuthFactorsImplNoStore()
-	if _, err := c.List(context.Background(), ""); err == nil || !sdkerrors.IsInvalidInput(err) {
-		t.Fatalf("expected InvalidInput when subject is empty, got %v", err)
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			c := newAuthFactorsImplNoStore()
+			if _, err := c.List(tc.ctx, tc.subject); err == nil || !sdkerrors.IsInvalidInput(err) {
+				t.Errorf("expected InvalidInput, got %v", err)
+			}
+		})
 	}
 }
 
@@ -1584,7 +1306,7 @@ func TestAuthFactors_Remove_FailsClosedWithoutStore(t *testing.T) {
 }
 
 func TestAuthFactors_Rotate_Validation(t *testing.T) {
-	c := &authFactorsImpl{t: &mockTransport{}}
+	var nilCtx context.Context
 	tests := []struct {
 		name  string
 		oldID string
@@ -1594,24 +1316,17 @@ func TestAuthFactors_Rotate_Validation(t *testing.T) {
 		{"empty old id", "", &AuthFactorEnrollRequest{FactorName: "fido2"}, context.Background()},
 		{"nil new factor", "old", nil, context.Background()},
 		{"missing new factor name", "old", &AuthFactorEnrollRequest{}, context.Background()},
-		{"nil ctx", "old", &AuthFactorEnrollRequest{FactorName: "fido2"}, nil},
+		{"nil ctx", "old", &AuthFactorEnrollRequest{FactorName: "fido2"}, nilCtx},
+		// A new factor without a subject cannot resolve a uint64 user id.
+		{"missing new factor subject", "old", &AuthFactorEnrollRequest{FactorName: "fido2"}, context.Background()},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
+			c := newAuthFactorsImplNoStore()
 			if _, err := c.Rotate(tc.ctx, tc.oldID, tc.nf); err == nil || !sdkerrors.IsInvalidInput(err) {
 				t.Errorf("expected InvalidInput, got %v", err)
 			}
 		})
-	}
-}
-
-func TestAuthFactors_Rotate_RequiresNewSubject(t *testing.T) {
-	c := newAuthFactorsImplNoStore()
-	// A new factor without a subject cannot resolve a uint64 user id.
-	if _, err := c.Rotate(context.Background(), "old", &AuthFactorEnrollRequest{
-		FactorName: "fido2",
-	}); err == nil || !sdkerrors.IsInvalidInput(err) {
-		t.Fatalf("expected InvalidInput when new factor subject is empty, got %v", err)
 	}
 }
 
@@ -1680,59 +1395,31 @@ func TestAuthService_Accessors(t *testing.T) {
 // extendedSecurityService wiring tests (sync.Once paths in services.go)
 // =============================================================================
 
-func TestSecurity_ACME_Idempotent(t *testing.T) {
-	mt := &mockTransport{}
-	c := &client{transport: mt, opts: defaultOptions()}
-	sec := c.Security().(*securityService)
-	first := sec.ACME()
-	second := sec.ACME()
-	if first == nil || second == nil {
-		t.Fatal("ACME() must not return nil")
+// TestSecurity_SubServicesAreSingletons checks that each lazily built
+// Security() sub-service is non-nil and the same instance on every call.
+func TestSecurity_SubServicesAreSingletons(t *testing.T) {
+	tests := []struct {
+		name string
+		get  func(*securityService) interface{}
+	}{
+		{"ACME", func(s *securityService) interface{} { return s.ACME() }},
+		{"Trust", func(s *securityService) interface{} { return s.Trust() }},
+		{"CertificateExt", func(s *securityService) interface{} { return s.CertificateExt() }},
+		{"Auth", func(s *securityService) interface{} { return s.Auth() }},
 	}
-	if first != second {
-		t.Error("ACME() must return the same instance across calls (sync.Once)")
-	}
-}
-
-func TestSecurity_Trust_Idempotent(t *testing.T) {
-	mt := &mockTransport{}
-	c := &client{transport: mt, opts: defaultOptions()}
-	sec := c.Security().(*securityService)
-	first := sec.Trust()
-	second := sec.Trust()
-	if first == nil || second == nil {
-		t.Fatal("Trust() must not return nil")
-	}
-	if first != second {
-		t.Error("Trust() must return the same instance across calls (sync.Once)")
-	}
-}
-
-func TestSecurity_CertificateExt_Idempotent(t *testing.T) {
-	mt := &mockTransport{}
-	c := &client{transport: mt, opts: defaultOptions()}
-	sec := c.Security().(*securityService)
-	first := sec.CertificateExt()
-	second := sec.CertificateExt()
-	if first == nil || second == nil {
-		t.Fatal("CertificateExt() must not return nil")
-	}
-	if first != second {
-		t.Error("CertificateExt() must return the same instance across calls (sync.Once)")
-	}
-}
-
-func TestSecurity_Auth_Idempotent(t *testing.T) {
-	mt := &mockTransport{}
-	c := &client{transport: mt, opts: defaultOptions()}
-	sec := c.Security().(*securityService)
-	first := sec.Auth()
-	second := sec.Auth()
-	if first == nil || second == nil {
-		t.Fatal("Auth() must not return nil")
-	}
-	if first != second {
-		t.Error("Auth() must return the same instance across calls (sync.Once)")
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			c := &client{transport: &mockTransport{}, opts: defaultOptions()}
+			sec := c.Security().(*securityService)
+			first := tc.get(sec)
+			second := tc.get(sec)
+			if first == nil || second == nil {
+				t.Fatalf("%s() must not return nil", tc.name)
+			}
+			if first != second {
+				t.Errorf("%s() must return the same instance across calls (sync.Once)", tc.name)
+			}
+		})
 	}
 }
 

@@ -22,51 +22,46 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/transport"
 )
 
-func TestNew_NilConfig(t *testing.T) {
-	_, err := New(nil)
-	if err == nil {
-		t.Fatal("expected error for nil config")
+func TestNew_InvalidConfig(t *testing.T) {
+	tests := []struct {
+		name     string
+		cfg      *transport.Config
+		wantCode errors.ErrorCode
+	}{
+		{
+			name:     "nil config",
+			cfg:      nil,
+			wantCode: errors.CodeInvalidInput,
+		},
+		{
+			name:     "empty address",
+			cfg:      &transport.Config{},
+			wantCode: errors.CodeInvalidInput,
+		},
+		{
+			// TCP addresses require a TLS config.
+			name:     "tcp address without TLS",
+			cfg:      &transport.Config{Address: "localhost:50051", Timeout: 100 * time.Millisecond},
+			wantCode: errors.CodeConfiguration,
+		},
+		{
+			// Unix sockets require a TLS config as well.
+			name:     "unix socket without TLS",
+			cfg:      &transport.Config{Address: "/tmp/nonexistent.sock", Timeout: 100 * time.Millisecond},
+			wantCode: errors.CodeConfiguration,
+		},
 	}
-	if !errors.IsInvalidInput(err) {
-		t.Errorf("expected InvalidInput error, got %v", err)
-	}
-}
 
-func TestNew_EmptyAddress(t *testing.T) {
-	_, err := New(&transport.Config{})
-	if err == nil {
-		t.Fatal("expected error for empty address")
-	}
-	if !errors.IsInvalidInput(err) {
-		t.Errorf("expected InvalidInput error, got %v", err)
-	}
-}
-
-func TestNew_TCPAddressWithoutTLS(t *testing.T) {
-	// TCP address requires TLS config
-	cfg := &transport.Config{
-		Address: "localhost:50051",
-		Timeout: 100 * time.Millisecond,
-	}
-	_, err := New(cfg)
-	if err == nil {
-		t.Fatal("expected error for TCP without TLS")
-	}
-	// Should fail due to TLS requirement
-	if errors.Code(err) != errors.CodeConfiguration {
-		t.Errorf("expected Configuration error, got %v", errors.Code(err))
-	}
-}
-
-func TestNew_UnixSocketWithoutTLS(t *testing.T) {
-	// Unix sockets without TLS should fail due to TLS requirement
-	cfg := &transport.Config{
-		Address: "/tmp/nonexistent.sock",
-		Timeout: 100 * time.Millisecond,
-	}
-	_, err := New(cfg)
-	if err == nil {
-		t.Fatal("expected error for socket without TLS")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := New(tt.cfg)
+			if err == nil {
+				t.Fatal("expected error")
+			}
+			if got := errors.Code(err); got != tt.wantCode {
+				t.Errorf("error code = %v, want %v", got, tt.wantCode)
+			}
+		})
 	}
 }
 
@@ -100,96 +95,66 @@ func TestNew_WithPoolEnabled(t *testing.T) {
 }
 
 func TestBuildDialOptions_WithTLSConfig(t *testing.T) {
-	tr := &Transport{
-		cfg: &transport.Config{
-			Address:   "localhost:50051",
-			TLSConfig: &tls.Config{MinVersion: tls.VersionTLS13},
+	tlsCfg := &tls.Config{MinVersion: tls.VersionTLS13}
+	tests := []struct {
+		name    string
+		cfg     *transport.Config
+		minOpts int
+	}{
+		{
+			name:    "tls only",
+			cfg:     &transport.Config{Address: "localhost:50051", TLSConfig: tlsCfg},
+			minOpts: 1,
+		},
+		{
+			name: "tls with keepalive",
+			cfg: &transport.Config{
+				Address:          "localhost:50051",
+				TLSConfig:        tlsCfg,
+				KeepaliveTime:    10 * time.Second,
+				KeepaliveTimeout: 5 * time.Second,
+			},
+			minOpts: 2,
 		},
 	}
 
-	opts, err := tr.buildDialOptions()
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if len(opts) == 0 {
-		t.Error("expected dial options")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tr := &Transport{cfg: tt.cfg}
+
+			opts, err := tr.buildDialOptions()
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if len(opts) < tt.minOpts {
+				t.Errorf("got %d dial options, want at least %d", len(opts), tt.minOpts)
+			}
+		})
 	}
 }
 
-func TestBuildDialOptions_WithoutTLS(t *testing.T) {
-	tr := &Transport{
-		cfg: &transport.Config{
-			Address: "localhost:50051",
-		},
+func TestTransport_GetConn_Unavailable(t *testing.T) {
+	tests := []struct {
+		name   string
+		closed bool
+	}{
+		{name: "closed", closed: true},
+		{name: "no connection", closed: false},
 	}
 
-	_, err := tr.buildDialOptions()
-	if err == nil {
-		t.Fatal("expected error for missing TLS config")
-	}
-	if errors.Code(err) != errors.CodeConfiguration {
-		t.Errorf("expected Configuration error, got %v", errors.Code(err))
-	}
-}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tr := &Transport{}
+			tr.closed.Store(tt.closed)
 
-func TestBuildDialOptions_UnixSocketWithoutTLS(t *testing.T) {
-	tr := &Transport{
-		cfg: &transport.Config{
-			Address: "/var/run/socket.sock",
-		},
-	}
-
-	_, err := tr.buildDialOptions()
-	if err == nil {
-		t.Fatal("expected error for missing TLS config")
-	}
-	if errors.Code(err) != errors.CodeConfiguration {
-		t.Errorf("expected Configuration error, got %v", errors.Code(err))
-	}
-}
-
-func TestBuildDialOptions_WithKeepalive(t *testing.T) {
-	tr := &Transport{
-		cfg: &transport.Config{
-			Address:          "localhost:50051",
-			TLSConfig:        &tls.Config{MinVersion: tls.VersionTLS13},
-			KeepaliveTime:    10 * time.Second,
-			KeepaliveTimeout: 5 * time.Second,
-		},
-	}
-
-	opts, err := tr.buildDialOptions()
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	// Should include keepalive option
-	if len(opts) < 2 {
-		t.Error("expected multiple dial options including keepalive")
-	}
-}
-
-func TestTransport_GetConn_Closed(t *testing.T) {
-	tr := &Transport{}
-	tr.closed.Store(true)
-
-	_, err := tr.getConn()
-	if err == nil {
-		t.Fatal("expected error for closed transport")
-	}
-	if errors.Code(err) != errors.CodeConnection {
-		t.Errorf("expected Connection error, got %v", errors.Code(err))
-	}
-}
-
-func TestTransport_GetConn_NoConnection(t *testing.T) {
-	tr := &Transport{}
-
-	_, err := tr.getConn()
-	if err == nil {
-		t.Fatal("expected error for nil connection")
-	}
-	if errors.Code(err) != errors.CodeConnection {
-		t.Errorf("expected Connection error, got %v", errors.Code(err))
+			_, err := tr.getConn()
+			if err == nil {
+				t.Fatal("expected error")
+			}
+			if errors.Code(err) != errors.CodeConnection {
+				t.Errorf("expected Connection error, got %v", errors.Code(err))
+			}
+		})
 	}
 }
 
@@ -199,20 +164,24 @@ func TestTransport_ReturnConn_NoPool(t *testing.T) {
 	tr.returnConn(nil)
 }
 
-func TestTransport_Healthy_Closed(t *testing.T) {
-	tr := &Transport{}
-	tr.closed.Store(true)
-
-	if tr.Healthy() {
-		t.Error("expected unhealthy for closed transport")
+func TestTransport_Healthy_Unavailable(t *testing.T) {
+	tests := []struct {
+		name   string
+		closed bool
+	}{
+		{name: "closed", closed: true},
+		{name: "no connection", closed: false},
 	}
-}
 
-func TestTransport_Healthy_NoConnection(t *testing.T) {
-	tr := &Transport{}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tr := &Transport{}
+			tr.closed.Store(tt.closed)
 
-	if tr.Healthy() {
-		t.Error("expected unhealthy with nil connection")
+			if tr.Healthy() {
+				t.Error("expected unhealthy transport")
+			}
+		})
 	}
 }
 
@@ -233,181 +202,134 @@ func TestTransport_Conn_ReturnsStoredConnection(t *testing.T) {
 	}
 }
 
-func TestTransport_Close_AlreadyClosed(t *testing.T) {
-	tr := &Transport{}
-	tr.closed.Store(true)
-
-	err := tr.Close()
-	if err != nil {
-		t.Errorf("unexpected error: %v", err)
-	}
-}
-
-func TestTransport_Close_NoConnection(t *testing.T) {
-	tr := &Transport{}
-
-	err := tr.Close()
-	if err != nil {
-		t.Errorf("unexpected error: %v", err)
+func TestTransport_Close(t *testing.T) {
+	tests := []struct {
+		name   string
+		closed bool
+		pool   func() *Pool
+	}{
+		{name: "already closed", closed: true},
+		{name: "no connection"},
+		{name: "empty pool", pool: func() *Pool { return &Pool{healthStop: make(chan struct{})} }},
+		{name: "closed pool", pool: func() *Pool {
+			p := &Pool{healthStop: make(chan struct{}), cfg: &PoolConfig{MinSize: 1, MaxSize: 2}}
+			p.closed.Store(true)
+			return p
+		}},
 	}
 
-	if !tr.closed.Load() {
-		t.Error("expected transport to be marked closed")
-	}
-}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tr := &Transport{cfg: &transport.Config{}}
+			if tt.pool != nil {
+				tr.pool = tt.pool()
+			}
+			tr.closed.Store(tt.closed)
 
-func TestTransport_Close_WithPool(t *testing.T) {
-	// Create a transport with a mock pool scenario
-	tr := &Transport{
-		pool: &Pool{
-			healthStop: make(chan struct{}),
-		},
-	}
-
-	err := tr.Close()
-	if err != nil {
-		t.Errorf("unexpected error: %v", err)
-	}
-
-	if !tr.closed.Load() {
-		t.Error("expected transport to be marked closed")
-	}
-}
-
-func TestConvertGRPCError_NilError(t *testing.T) {
-	result := convertGRPCError(nil, "test")
-	if result != nil {
-		t.Error("expected nil result for nil error")
-	}
-}
-
-func TestConvertGRPCError_NonStatusError(t *testing.T) {
-	err := errors.NewInternal("test", "test error")
-	result := convertGRPCError(err, "op")
-
-	if result == nil {
-		t.Fatal("expected non-nil error")
-	}
-	if errors.Code(result) != errors.CodeUnknown {
-		t.Errorf("expected Unknown error code, got %v", errors.Code(result))
+			if err := tr.Close(); err != nil {
+				t.Errorf("unexpected error: %v", err)
+			}
+			if !tr.closed.Load() {
+				t.Error("expected transport to be marked closed")
+			}
+		})
 	}
 }
 
 func TestConvertGRPCError_AllCodes(t *testing.T) {
 	tests := []struct {
-		grpcCode     codes.Code
-		expectedCode errors.ErrorCode
+		name     string
+		err      error
+		wantNil  bool
+		wantCode errors.ErrorCode
 	}{
-		{codes.OK, errors.CodeUnknown}, // OK returns nil, but we test non-nil path
-		{codes.InvalidArgument, errors.CodeInvalidInput},
-		{codes.NotFound, errors.CodeNotFound},
-		{codes.AlreadyExists, errors.CodeAlreadyExists},
-		{codes.PermissionDenied, errors.CodeForbidden},
-		{codes.Unauthenticated, errors.CodeUnauthorized},
-		{codes.ResourceExhausted, errors.CodeResourceExhausted},
-		{codes.FailedPrecondition, errors.CodePreconditionFailed},
-		{codes.Aborted, errors.CodeConflict},
-		{codes.Unimplemented, errors.CodeUnimplemented},
-		{codes.Internal, errors.CodeInternal},
-		{codes.Unavailable, errors.CodeUnavailable},
-		{codes.DeadlineExceeded, errors.CodeTimeout},
-		{codes.Canceled, errors.CodeCanceled},
-		{codes.OutOfRange, errors.CodeInvalidInput},
-		{codes.DataLoss, errors.CodeInternal},
-		{codes.Unknown, errors.CodeUnknown},
-		{codes.Code(100), errors.CodeUnknown}, // not a gRPC code
+		{name: "nil error", err: nil, wantNil: true},
+		{name: "OK status", err: status.Error(codes.OK, "ok"), wantNil: true},
+		{name: "non-status error", err: errors.NewInternal("test", "test error"), wantCode: errors.CodeUnknown},
+		{name: "InvalidArgument", err: status.Error(codes.InvalidArgument, "e"), wantCode: errors.CodeInvalidInput},
+		{name: "NotFound", err: status.Error(codes.NotFound, "e"), wantCode: errors.CodeNotFound},
+		{name: "AlreadyExists", err: status.Error(codes.AlreadyExists, "e"), wantCode: errors.CodeAlreadyExists},
+		{name: "PermissionDenied", err: status.Error(codes.PermissionDenied, "e"), wantCode: errors.CodeForbidden},
+		{name: "Unauthenticated", err: status.Error(codes.Unauthenticated, "e"), wantCode: errors.CodeUnauthorized},
+		{name: "ResourceExhausted", err: status.Error(codes.ResourceExhausted, "e"), wantCode: errors.CodeResourceExhausted},
+		{name: "FailedPrecondition", err: status.Error(codes.FailedPrecondition, "e"), wantCode: errors.CodePreconditionFailed},
+		{name: "Aborted", err: status.Error(codes.Aborted, "e"), wantCode: errors.CodeConflict},
+		{name: "Unimplemented", err: status.Error(codes.Unimplemented, "e"), wantCode: errors.CodeUnimplemented},
+		{name: "Internal", err: status.Error(codes.Internal, "e"), wantCode: errors.CodeInternal},
+		{name: "Unavailable", err: status.Error(codes.Unavailable, "e"), wantCode: errors.CodeUnavailable},
+		{name: "DeadlineExceeded", err: status.Error(codes.DeadlineExceeded, "e"), wantCode: errors.CodeTimeout},
+		{name: "Canceled", err: status.Error(codes.Canceled, "e"), wantCode: errors.CodeCanceled},
+		{name: "OutOfRange", err: status.Error(codes.OutOfRange, "e"), wantCode: errors.CodeInvalidInput},
+		{name: "DataLoss", err: status.Error(codes.DataLoss, "e"), wantCode: errors.CodeInternal},
+		{name: "Unknown", err: status.Error(codes.Unknown, "e"), wantCode: errors.CodeUnknown},
+		{name: "not a gRPC code", err: status.Error(codes.Code(100), "e"), wantCode: errors.CodeUnknown},
 	}
 
 	for _, tt := range tests {
-		t.Run(tt.grpcCode.String(), func(t *testing.T) {
-			if tt.grpcCode == codes.OK {
-				// OK returns nil
-				err := status.Error(codes.OK, "ok")
-				result := convertGRPCError(err, "op")
+		t.Run(tt.name, func(t *testing.T) {
+			result := convertGRPCError(tt.err, "op")
+			if tt.wantNil {
 				if result != nil {
-					t.Error("expected nil for OK status")
+					t.Errorf("expected nil, got %v", result)
 				}
 				return
 			}
-
-			grpcErr := status.Error(tt.grpcCode, "test error")
-			result := convertGRPCError(grpcErr, "op")
-
 			if result == nil {
 				t.Fatal("expected non-nil error")
 			}
-			if errors.Code(result) != tt.expectedCode {
-				t.Errorf("expected %v, got %v", tt.expectedCode, errors.Code(result))
+			if errors.Code(result) != tt.wantCode {
+				t.Errorf("expected %v, got %v", tt.wantCode, errors.Code(result))
 			}
 		})
 	}
 }
 
-func TestIsRetryableError_QBError(t *testing.T) {
+func TestIsRetryableError(t *testing.T) {
 	tests := []struct {
+		name      string
 		err       error
 		retryable bool
 	}{
-		{errors.NewUnavailable("op", "msg"), true},
-		{errors.NewTimeout("op", "msg"), true},
-		{errors.NewResourceExhausted("op", "msg"), true},
-		{errors.NewNotFound("op", "msg"), false},
-		{errors.NewInvalidInput("op", "msg"), false},
+		{"sdk Unavailable", errors.NewUnavailable("op", "msg"), true},
+		{"sdk Timeout", errors.NewTimeout("op", "msg"), true},
+		{"sdk ResourceExhausted", errors.NewResourceExhausted("op", "msg"), true},
+		{"sdk NotFound", errors.NewNotFound("op", "msg"), false},
+		{"sdk InvalidInput", errors.NewInvalidInput("op", "msg"), false},
+		{"grpc Unavailable", status.Error(codes.Unavailable, "test"), true},
+		{"grpc DeadlineExceeded", status.Error(codes.DeadlineExceeded, "test"), true},
+		{"grpc ResourceExhausted", status.Error(codes.ResourceExhausted, "test"), true},
+		{"grpc NotFound", status.Error(codes.NotFound, "test"), false},
+		{"grpc InvalidArgument", status.Error(codes.InvalidArgument, "test"), false},
+		{"grpc Internal", status.Error(codes.Internal, "test"), false},
+		{"grpc PermissionDenied", status.Error(codes.PermissionDenied, "test"), false},
+		{"grpc Unimplemented", status.Error(codes.Unimplemented, "test"), false},
+		{"non-status error", context.DeadlineExceeded, false},
 	}
 
 	for _, tt := range tests {
-		t.Run(tt.err.Error(), func(t *testing.T) {
+		t.Run(tt.name, func(t *testing.T) {
 			if got := isRetryableError(tt.err); got != tt.retryable {
-				t.Errorf("expected retryable=%v, got %v", tt.retryable, got)
+				t.Errorf("isRetryableError(%v) = %v, want %v", tt.err, got, tt.retryable)
 			}
 		})
-	}
-}
-
-func TestIsRetryableError_GRPCStatus(t *testing.T) {
-	tests := []struct {
-		code      codes.Code
-		retryable bool
-	}{
-		{codes.Unavailable, true},
-		{codes.DeadlineExceeded, true},
-		{codes.ResourceExhausted, true},
-		{codes.NotFound, false},
-		{codes.InvalidArgument, false},
-		{codes.Internal, false},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.code.String(), func(t *testing.T) {
-			err := status.Error(tt.code, "test")
-			if got := isRetryableError(err); got != tt.retryable {
-				t.Errorf("expected retryable=%v, got %v", tt.retryable, got)
-			}
-		})
-	}
-}
-
-func TestIsRetryableError_NonStatusError(t *testing.T) {
-	err := context.DeadlineExceeded
-	if isRetryableError(err) {
-		t.Error("expected non-status error to not be retryable")
 	}
 }
 
 func TestMinDuration(t *testing.T) {
 	tests := []struct {
+		name     string
 		a, b     time.Duration
 		expected time.Duration
 	}{
-		{time.Second, 2 * time.Second, time.Second},
-		{2 * time.Second, time.Second, time.Second},
-		{time.Second, time.Second, time.Second},
-		{0, time.Second, 0},
-		{time.Second, 0, 0},
+		{"first smaller", time.Second, 2 * time.Second, time.Second},
+		{"second smaller", 2 * time.Second, time.Second, time.Second},
+		{"equal", time.Second, time.Second, time.Second},
+		{"first zero", 0, time.Second, 0},
+		{"second zero", time.Second, 0, 0},
 	}
 
 	for _, tt := range tests {
-		t.Run("", func(t *testing.T) {
+		t.Run(tt.name, func(t *testing.T) {
 			if got := minDuration(tt.a, tt.b); got != tt.expected {
 				t.Errorf("minDuration(%v, %v) = %v, expected %v", tt.a, tt.b, got, tt.expected)
 			}
@@ -434,57 +356,55 @@ func TestFactory_Create(t *testing.T) {
 	}
 }
 
-func TestStream_SendClosed(t *testing.T) {
-	s := &stream{}
-	s.closed.Store(true)
-
-	err := s.Send("test")
-	if err == nil {
-		t.Fatal("expected error for closed stream")
+func TestStream_Closed(t *testing.T) {
+	tests := []struct {
+		name string
+		op   func(s *stream) error
+	}{
+		{name: "send", op: func(s *stream) error { return s.Send("test") }},
+		{name: "recv", op: func(s *stream) error {
+			_, err := s.Recv()
+			return err
+		}},
 	}
-	if errors.Code(err) != errors.CodeConnection {
-		t.Errorf("expected Connection error, got %v", errors.Code(err))
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s := &stream{}
+			s.closed.Store(true)
+
+			err := tt.op(s)
+			if err == nil {
+				t.Fatal("expected error for closed stream")
+			}
+			if errors.Code(err) != errors.CodeConnection {
+				t.Errorf("expected Connection error, got %v", errors.Code(err))
+			}
+		})
 	}
 }
 
-func TestStream_RecvClosed(t *testing.T) {
-	s := &stream{}
-	s.closed.Store(true)
-
-	_, err := s.Recv()
-	if err == nil {
-		t.Fatal("expected error for closed stream")
-	}
-	if errors.Code(err) != errors.CodeConnection {
-		t.Errorf("expected Connection error, got %v", errors.Code(err))
-	}
-}
-
-func TestStream_CloseAlreadyClosed(t *testing.T) {
-	mockTransport := &Transport{}
-	s := &stream{
-		transport: mockTransport,
-	}
-	s.closed.Store(true)
-
-	err := s.Close()
-	if err != nil {
-		t.Errorf("unexpected error: %v", err)
-	}
-}
-
-func TestStream_CloseReturnsConnection(t *testing.T) {
-	mockTransport := &Transport{}
-	s := &stream{
-		transport: mockTransport,
+func TestStream_Close(t *testing.T) {
+	tests := []struct {
+		name   string
+		closed bool
+	}{
+		{name: "already closed", closed: true},
+		{name: "open", closed: false},
 	}
 
-	err := s.Close()
-	if err != nil {
-		t.Errorf("unexpected error: %v", err)
-	}
-	if !s.closed.Load() {
-		t.Error("expected stream to be marked closed")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s := &stream{transport: &Transport{}}
+			s.closed.Store(tt.closed)
+
+			if err := s.Close(); err != nil {
+				t.Errorf("unexpected error: %v", err)
+			}
+			if !s.closed.Load() {
+				t.Error("expected stream to be marked closed")
+			}
+		})
 	}
 }
 
@@ -564,63 +484,49 @@ func TestStream_CloseSend(t *testing.T) {
 	}
 }
 
-func TestTransport_Request_Closed(t *testing.T) {
-	tr := &Transport{
-		cfg: &transport.Config{
-			MaxRetries:   0,
-			RetryBackoff: time.Millisecond,
-		},
-	}
-	tr.closed.Store(true)
-
-	_, err := tr.Request(context.Background(), "service", "method", nil)
-	if err == nil {
-		t.Fatal("expected error for closed transport")
-	}
-}
-
-func TestTransport_RequestStream_Closed(t *testing.T) {
-	tr := &Transport{
-		cfg: &transport.Config{},
-	}
-	tr.closed.Store(true)
-
-	_, err := tr.RequestStream(context.Background(), "service", "method", nil)
-	if err == nil {
-		t.Fatal("expected error for closed transport")
-	}
-}
-
-func TestTransportConfig_Fields(t *testing.T) {
-	cfg := &transport.Config{
-		Address:            "localhost:50051",
-		Timeout:            5 * time.Second,
-		KeepaliveTime:      10 * time.Second,
-		KeepaliveTimeout:   5 * time.Second,
-		MaxRetries:         3,
-		RetryBackoff:       100 * time.Millisecond,
-		MaxRetryBackoff:    5 * time.Second,
-		PoolEnabled:        true,
-		PoolMinSize:        5,
-		PoolMaxSize:        50,
-		PoolMaxAge:         time.Hour,
-		PoolHealthInterval: 30 * time.Second,
+func TestTransport_Request_Unavailable(t *testing.T) {
+	tests := []struct {
+		name   string
+		closed bool
+		op     func(tr *Transport) error
+	}{
+		{name: "request closed", closed: true, op: func(tr *Transport) error {
+			_, err := tr.Request(context.Background(), "service", "method", nil)
+			return err
+		}},
+		{name: "request no connection", op: func(tr *Transport) error {
+			_, err := tr.Request(context.Background(), "service", "method", nil)
+			return err
+		}},
+		{name: "stream closed", closed: true, op: func(tr *Transport) error {
+			_, err := tr.RequestStream(context.Background(), "service", "method", nil)
+			return err
+		}},
+		{name: "stream no connection", op: func(tr *Transport) error {
+			_, err := tr.RequestStream(context.Background(), "service", "method", nil)
+			return err
+		}},
 	}
 
-	if cfg.Address != "localhost:50051" {
-		t.Error("Address not set correctly")
-	}
-	if cfg.Timeout != 5*time.Second {
-		t.Error("Timeout not set correctly")
-	}
-	if !cfg.PoolEnabled {
-		t.Error("PoolEnabled not set correctly")
-	}
-	if cfg.PoolMinSize != 5 {
-		t.Error("PoolMinSize not set correctly")
-	}
-	if cfg.PoolMaxSize != 50 {
-		t.Error("PoolMaxSize not set correctly")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tr := &Transport{
+				cfg: &transport.Config{
+					MaxRetries:      2,
+					RetryBackoff:    time.Millisecond,
+					MaxRetryBackoff: 10 * time.Millisecond,
+				},
+			}
+			tr.closed.Store(tt.closed)
+
+			err := tt.op(tr)
+			if err == nil {
+				t.Fatal("expected error")
+			}
+			if errors.Code(err) != errors.CodeConnection {
+				t.Errorf("expected Connection error, got %v", errors.Code(err))
+			}
+		})
 	}
 }
 
@@ -638,9 +544,8 @@ func TestStream_RecvSuccess(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	// The mock returns the message via pointer, check it was received
-	if msg == nil {
-		// OK - the mock implementation may not populate correctly, but path is covered
+	if msg != expectedMsg {
+		t.Errorf("Recv() = %v, want %q", msg, expectedMsg)
 	}
 }
 
@@ -654,198 +559,6 @@ func TestStream_SendSuccess(t *testing.T) {
 	err := s.Send("test-message")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
-	}
-}
-
-func TestPoolConfig_Fields(t *testing.T) {
-	cfg := &PoolConfig{
-		MinSize:        10,
-		MaxSize:        100,
-		MaxAge:         2 * time.Hour,
-		HealthInterval: time.Minute,
-	}
-
-	if cfg.MinSize != 10 {
-		t.Error("MinSize not set correctly")
-	}
-	if cfg.MaxSize != 100 {
-		t.Error("MaxSize not set correctly")
-	}
-	if cfg.MaxAge != 2*time.Hour {
-		t.Error("MaxAge not set correctly")
-	}
-	if cfg.HealthInterval != time.Minute {
-		t.Error("HealthInterval not set correctly")
-	}
-}
-
-// TestRequestWithRetry_SuccessOnFirstAttempt tests successful first attempt.
-func TestRequestWithRetry_SuccessOnFirstAttempt(t *testing.T) {
-	ts := newTestServer()
-	defer ts.stop()
-
-	cfg := &PoolConfig{
-		MinSize:        1,
-		MaxSize:        2,
-		MaxAge:         time.Hour,
-		HealthInterval: 0,
-	}
-
-	p, err := NewPool("bufnet", ts.dialOpts(), cfg)
-	if err != nil {
-		t.Fatalf("failed to create pool: %v", err)
-	}
-
-	tr := &Transport{
-		cfg: &transport.Config{
-			MaxRetries:      3,
-			RetryBackoff:    10 * time.Millisecond,
-			MaxRetryBackoff: 100 * time.Millisecond,
-			Timeout:         100 * time.Millisecond,
-		},
-		pool: p,
-	}
-	defer tr.Close()
-
-	// Request will fail because no service is registered, but retry logic is exercised
-	ctx := context.Background()
-	_, err = tr.requestWithRetry(ctx, "test.Service", "Method", nil)
-	if err == nil {
-		t.Fatal("expected error for non-existent service")
-	}
-}
-
-// TestRequestWithRetry_ContextCanceledDuringBackoff tests context canceled during backoff wait.
-func TestRequestWithRetry_ContextCanceledDuringBackoff(t *testing.T) {
-	ts := newTestServer()
-	defer ts.stop()
-
-	cfg := &PoolConfig{
-		MinSize:        1,
-		MaxSize:        2,
-		MaxAge:         time.Hour,
-		HealthInterval: 0,
-	}
-
-	p, err := NewPool("bufnet", ts.dialOpts(), cfg)
-	if err != nil {
-		t.Fatalf("failed to create pool: %v", err)
-	}
-
-	tr := &Transport{
-		cfg: &transport.Config{
-			MaxRetries:      10,
-			RetryBackoff:    500 * time.Millisecond, // Long backoff so we can cancel
-			MaxRetryBackoff: 1 * time.Second,
-			Timeout:         50 * time.Millisecond,
-		},
-		pool: p,
-	}
-	defer tr.Close()
-
-	ctx, cancel := context.WithCancel(context.Background())
-
-	var wg sync.WaitGroup
-	var resultErr error
-
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		_, resultErr = tr.requestWithRetry(ctx, "test.Service", "Method", nil)
-	}()
-
-	// Cancel after the first attempt's error but before retry completes
-	time.Sleep(100 * time.Millisecond)
-	cancel()
-
-	wg.Wait()
-
-	if resultErr == nil {
-		t.Fatal("expected error after context cancel")
-	}
-	// May be canceled error or the initial request error
-}
-
-// TestRequestWithRetry_ExhaustsRetries tests exhausting all retries.
-func TestRequestWithRetry_ExhaustsRetries(t *testing.T) {
-	ts := newTestServer()
-	defer ts.stop()
-
-	cfg := &PoolConfig{
-		MinSize:        1,
-		MaxSize:        2,
-		MaxAge:         time.Hour,
-		HealthInterval: 0,
-	}
-
-	p, err := NewPool("bufnet", ts.dialOpts(), cfg)
-	if err != nil {
-		t.Fatalf("failed to create pool: %v", err)
-	}
-
-	// Make the request retryable by using Unavailable error
-	// But since our mock server doesn't return Unavailable, this tests the non-retryable path
-	tr := &Transport{
-		cfg: &transport.Config{
-			MaxRetries:      2,
-			RetryBackoff:    time.Millisecond,
-			MaxRetryBackoff: 10 * time.Millisecond,
-			Timeout:         50 * time.Millisecond,
-		},
-		pool: p,
-	}
-	defer tr.Close()
-
-	start := time.Now()
-	ctx := context.Background()
-	_, err = tr.requestWithRetry(ctx, "test.Service", "Method", nil)
-	elapsed := time.Since(start)
-
-	if err == nil {
-		t.Fatal("expected error")
-	}
-
-	// Non-retryable errors should fail fast
-	if elapsed > 500*time.Millisecond {
-		t.Logf("request took %v, which is acceptable", elapsed)
-	}
-}
-
-// TestPool_GetCreatesConnectionOnDemand tests creating new connection when all are busy.
-func TestPool_GetCreatesConnectionOnDemand(t *testing.T) {
-	ts := newTestServer()
-	defer ts.stop()
-
-	cfg := &PoolConfig{
-		MinSize:        1,
-		MaxSize:        5,
-		MaxAge:         time.Hour,
-		HealthInterval: 0,
-	}
-
-	p, err := NewPool("bufnet", ts.dialOpts(), cfg)
-	if err != nil {
-		t.Fatalf("failed to create pool: %v", err)
-	}
-	defer p.Close()
-
-	// Get all connections, keeping them busy
-	var conns []*grpc.ClientConn
-	for i := 0; i < 3; i++ {
-		conn, err := p.Get()
-		if err != nil {
-			t.Fatalf("failed to get connection %d: %v", i, err)
-		}
-		conns = append(conns, conn)
-	}
-
-	if p.Size() != 3 {
-		t.Errorf("expected pool size 3, got %d", p.Size())
-	}
-
-	// Return all connections
-	for _, conn := range conns {
-		p.Put(conn)
 	}
 }
 
@@ -973,159 +686,6 @@ func TestPool_EnsureMinConnectionsAtMax(t *testing.T) {
 	}
 }
 
-// TestTransport_CloseWithPoolError tests close when pool close returns error.
-func TestTransport_CloseWithPoolError(t *testing.T) {
-	// Create a pool that's already closed to simulate close error scenario
-	p := &Pool{
-		healthStop: make(chan struct{}),
-		cfg: &PoolConfig{
-			MinSize: 1,
-			MaxSize: 2,
-		},
-	}
-	p.closed.Store(true)
-
-	tr := &Transport{
-		cfg:  &transport.Config{},
-		pool: p,
-	}
-
-	// Close should handle already-closed pool gracefully
-	err := tr.Close()
-	if err != nil {
-		// Pool was already closed, so no error expected
-		t.Logf("close returned: %v", err)
-	}
-
-	if !tr.closed.Load() {
-		t.Error("transport should be marked closed")
-	}
-}
-
-// TestRequestStream_SendMsgError tests RequestStream when initial SendMsg fails.
-func TestRequestStream_SendMsgError(t *testing.T) {
-	ts := newTestServer()
-	defer ts.stop()
-
-	cfg := &PoolConfig{
-		MinSize:        1,
-		MaxSize:        2,
-		MaxAge:         time.Hour,
-		HealthInterval: 0,
-	}
-
-	p, err := NewPool("bufnet", ts.dialOpts(), cfg)
-	if err != nil {
-		t.Fatalf("failed to create pool: %v", err)
-	}
-
-	tr := &Transport{
-		cfg: &transport.Config{
-			Timeout: 5 * time.Second,
-		},
-		pool: p,
-	}
-	defer tr.Close()
-
-	ctx := context.Background()
-	// RequestStream with non-nil req will try to send and may fail
-	stream, err := tr.RequestStream(ctx, "test.Service", "StreamMethod", "initial-request")
-	if stream != nil {
-		stream.Close()
-	}
-	// Just verify it doesn't panic - actual error depends on server behavior
-	_ = err
-}
-
-// TestConvertGRPCError_OKStatus tests convertGRPCError with OK status returns nil.
-func TestConvertGRPCError_OKStatus(t *testing.T) {
-	err := status.Error(codes.OK, "success")
-	result := convertGRPCError(err, "test")
-	if result != nil {
-		t.Errorf("expected nil for OK status, got: %v", result)
-	}
-}
-
-// TestMinDuration_Equal tests minDuration with equal values.
-func TestMinDuration_Equal(t *testing.T) {
-	result := minDuration(5*time.Second, 5*time.Second)
-	if result != 5*time.Second {
-		t.Errorf("expected 5s, got %v", result)
-	}
-}
-
-// TestMinDuration_FirstSmaller tests minDuration when first is smaller.
-func TestMinDuration_FirstSmaller(t *testing.T) {
-	result := minDuration(2*time.Second, 5*time.Second)
-	if result != 2*time.Second {
-		t.Errorf("expected 2s, got %v", result)
-	}
-}
-
-// TestMinDuration_SecondSmaller tests minDuration when second is smaller.
-func TestMinDuration_SecondSmaller(t *testing.T) {
-	result := minDuration(5*time.Second, 2*time.Second)
-	if result != 2*time.Second {
-		t.Errorf("expected 2s, got %v", result)
-	}
-}
-
-// mockUnhealthyClientStream implements grpc.ClientStream that simulates unhealthy stream.
-type mockUnhealthyClientStream struct {
-	grpc.ClientStream
-	closed bool
-}
-
-func (m *mockUnhealthyClientStream) SendMsg(msg interface{}) error {
-	if m.closed {
-		return status.Error(codes.Unavailable, "stream closed")
-	}
-	return status.Error(codes.Unavailable, "connection unavailable")
-}
-
-func (m *mockUnhealthyClientStream) RecvMsg(msg interface{}) error {
-	return status.Error(codes.Unavailable, "connection unavailable")
-}
-
-func (m *mockUnhealthyClientStream) CloseSend() error {
-	m.closed = true
-	return nil
-}
-
-// TestStream_SendUnavailable tests sending on unavailable stream.
-func TestStream_SendUnavailable(t *testing.T) {
-	mockCS := &mockUnhealthyClientStream{}
-	s := &stream{
-		stream:    mockCS,
-		transport: &Transport{},
-	}
-
-	err := s.Send("test")
-	if err == nil {
-		t.Fatal("expected error")
-	}
-	if errors.Code(err) != errors.CodeUnavailable {
-		t.Errorf("expected Unavailable error, got %v", errors.Code(err))
-	}
-}
-
-// TestStream_RecvUnavailable tests receiving on unavailable stream.
-func TestStream_RecvUnavailable(t *testing.T) {
-	mockCS := &mockUnhealthyClientStream{}
-	s := &stream{
-		stream:    mockCS,
-		transport: &Transport{},
-	}
-
-	_, err := s.Recv()
-	if err == nil {
-		t.Fatal("expected error")
-	}
-	if errors.Code(err) != errors.CodeUnavailable {
-		t.Errorf("expected Unavailable error, got %v", errors.Code(err))
-	}
-}
-
 // mockPooledConnServer provides a server for pooled connection tests.
 type mockPooledConnServer struct {
 	lis    *bufconn.Listener
@@ -1214,18 +774,23 @@ func TestPool_IsHealthyConnections(t *testing.T) {
 
 // TestPool_IsExpiredWithZeroMaxAge tests isExpired when MaxAge is zero.
 func TestPool_IsExpiredWithZeroMaxAge(t *testing.T) {
-	p := &Pool{
-		cfg: &PoolConfig{
-			MaxAge: 0, // Never expires
-		},
+	tests := []struct {
+		name   string
+		maxAge time.Duration
+	}{
+		{name: "zero max age", maxAge: 0},
+		{name: "negative max age", maxAge: -time.Hour},
 	}
 
-	pc := &pooledConn{
-		createdAt: time.Now().Add(-24 * time.Hour),
-	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p := &Pool{cfg: &PoolConfig{MaxAge: tt.maxAge}}
+			pc := &pooledConn{createdAt: time.Now().Add(-24 * time.Hour)}
 
-	if p.isExpired(pc) {
-		t.Error("expected not expired when MaxAge is 0")
+			if p.isExpired(pc) {
+				t.Errorf("expected not expired when MaxAge is %v", tt.maxAge)
+			}
+		})
 	}
 }
 
@@ -1259,22 +824,6 @@ func TestPool_PerformHealthCheckReplacement(t *testing.T) {
 	if p.Size() < cfg.MinSize {
 		t.Errorf("expected at least %d connections after health check, got %d",
 			cfg.MinSize, p.Size())
-	}
-}
-
-// TestTransport_RequestStreamNoConnection tests RequestStream with nil connection.
-func TestTransport_RequestStreamNoConnection(t *testing.T) {
-	tr := &Transport{
-		cfg: &transport.Config{},
-	}
-
-	ctx := context.Background()
-	_, err := tr.RequestStream(ctx, "service", "method", nil)
-	if err == nil {
-		t.Fatal("expected error for nil connection")
-	}
-	if errors.Code(err) != errors.CodeConnection {
-		t.Errorf("expected Connection error, got %v", errors.Code(err))
 	}
 }
 
@@ -1429,41 +978,6 @@ func TestPool_GetPoolExhausted(t *testing.T) {
 	}
 
 	p.Put(conn1)
-	p.Put(conn2)
-}
-
-// TestPool_PutReturnsConnection tests normal connection return.
-func TestPool_PutReturnsConnection(t *testing.T) {
-	ts := newTestServer()
-	defer ts.stop()
-
-	cfg := &PoolConfig{
-		MinSize:        1,
-		MaxSize:        2,
-		MaxAge:         time.Hour,
-		HealthInterval: 0,
-	}
-
-	p, err := NewPool("bufnet", ts.dialOpts(), cfg)
-	if err != nil {
-		t.Fatalf("failed to create pool: %v", err)
-	}
-	defer p.Close()
-
-	conn, err := p.Get()
-	if err != nil {
-		t.Fatalf("failed to get connection: %v", err)
-	}
-
-	p.Put(conn)
-
-	conn2, err := p.Get()
-	if err != nil {
-		t.Fatalf("failed to get connection again: %v", err)
-	}
-	if conn2 != conn {
-		t.Error("expected to reuse returned connection")
-	}
 	p.Put(conn2)
 }
 
@@ -1744,43 +1258,6 @@ func TestPool_ConcurrentAccess(t *testing.T) {
 	}
 }
 
-// TestTransport_ReturnConnWithPool tests returnConn with a pool.
-func TestTransport_ReturnConnWithPool(t *testing.T) {
-	ts := newTestServer()
-	defer ts.stop()
-
-	cfg := &PoolConfig{
-		MinSize:        1,
-		MaxSize:        2,
-		MaxAge:         time.Hour,
-		HealthInterval: 0,
-	}
-
-	p, err := NewPool("bufnet", ts.dialOpts(), cfg)
-	if err != nil {
-		t.Fatalf("failed to create pool: %v", err)
-	}
-
-	tr := &Transport{
-		cfg:  &transport.Config{},
-		pool: p,
-	}
-	defer tr.Close()
-
-	conn, err := tr.getConn()
-	if err != nil {
-		t.Fatalf("failed to get connection: %v", err)
-	}
-
-	tr.returnConn(conn)
-
-	conn2, err := tr.getConn()
-	if err != nil {
-		t.Fatalf("failed to get connection after return: %v", err)
-	}
-	tr.returnConn(conn2)
-}
-
 // TestTransport_GetConnWithPool tests getConn with a pool.
 func TestTransport_GetConnWithPool(t *testing.T) {
 	ts := newTestServer()
@@ -1842,38 +1319,6 @@ func TestTransport_HealthyWithPool(t *testing.T) {
 	}
 }
 
-// TestTransport_DoRequest tests the doRequest method.
-func TestTransport_DoRequest(t *testing.T) {
-	ts := newTestServer()
-	defer ts.stop()
-
-	cfg := &PoolConfig{
-		MinSize:        1,
-		MaxSize:        2,
-		MaxAge:         time.Hour,
-		HealthInterval: 0,
-	}
-
-	p, err := NewPool("bufnet", ts.dialOpts(), cfg)
-	if err != nil {
-		t.Fatalf("failed to create pool: %v", err)
-	}
-
-	tr := &Transport{
-		cfg: &transport.Config{
-			Timeout: 5 * time.Second,
-		},
-		pool: p,
-	}
-	defer tr.Close()
-
-	ctx := context.Background()
-	_, err = tr.doRequest(ctx, "test.Service", "Method", nil)
-	if err == nil {
-		t.Fatal("expected error for non-existent service")
-	}
-}
-
 // TestTransport_DoRequestNoTimeout tests doRequest without timeout.
 func TestTransport_DoRequestNoTimeout(t *testing.T) {
 	ts := newTestServer()
@@ -1905,69 +1350,6 @@ func TestTransport_DoRequestNoTimeout(t *testing.T) {
 	_, err = tr.doRequest(ctx, "test.Service", "Method", nil)
 	if err == nil {
 		t.Fatal("expected error for non-existent service")
-	}
-}
-
-// TestTransport_RequestWithRetry_NoConnection tests retry logic with no connection.
-func TestTransport_RequestWithRetry_NoConnection(t *testing.T) {
-	tr := &Transport{
-		cfg: &transport.Config{
-			MaxRetries:      2,
-			RetryBackoff:    time.Millisecond,
-			MaxRetryBackoff: 10 * time.Millisecond,
-			Timeout:         100 * time.Millisecond,
-		},
-	}
-
-	ctx := context.Background()
-	_, err := tr.requestWithRetry(ctx, "test.Service", "Method", nil)
-	if err == nil {
-		t.Fatal("expected error for nil connection")
-	}
-}
-
-// TestTransport_RequestWithRetry_ContextCanceled tests retry with canceled context.
-func TestTransport_RequestWithRetry_ContextCanceled(t *testing.T) {
-	ts := newTestServer()
-	defer ts.stop()
-
-	cfg := &PoolConfig{
-		MinSize:        1,
-		MaxSize:        2,
-		MaxAge:         time.Hour,
-		HealthInterval: 0,
-	}
-
-	p, err := NewPool("bufnet", ts.dialOpts(), cfg)
-	if err != nil {
-		t.Fatalf("failed to create pool: %v", err)
-	}
-
-	tr := &Transport{
-		cfg: &transport.Config{
-			MaxRetries:      5,
-			RetryBackoff:    50 * time.Millisecond,
-			MaxRetryBackoff: 100 * time.Millisecond,
-			Timeout:         100 * time.Millisecond,
-		},
-		pool: p,
-	}
-	defer tr.Close()
-
-	ctx, cancel := context.WithCancel(context.Background())
-
-	done := make(chan error, 1)
-	go func() {
-		_, err := tr.requestWithRetry(ctx, "test.Service", "Method", nil)
-		done <- err
-	}()
-
-	time.Sleep(20 * time.Millisecond)
-	cancel()
-
-	err = <-done
-	if err == nil {
-		t.Fatal("expected error after context cancel")
 	}
 }
 
@@ -2015,73 +1397,51 @@ func TestTransport_RequestWithRetry_NonRetryableError(t *testing.T) {
 
 // TestTransport_RequestStream tests the RequestStream method.
 func TestTransport_RequestStream(t *testing.T) {
-	ts := newTestServer()
-	defer ts.stop()
-
-	cfg := &PoolConfig{
-		MinSize:        1,
-		MaxSize:        2,
-		MaxAge:         time.Hour,
-		HealthInterval: 0,
+	tests := []struct {
+		name    string
+		req     interface{}
+		wantErr bool
+	}{
+		// Stream creation is lazy, so an unknown method still opens a stream.
+		{name: "no initial request", req: nil, wantErr: false},
+		// A non-proto initial request fails to marshal on SendMsg.
+		{name: "initial request send fails", req: "initial-request", wantErr: true},
 	}
 
-	p, err := NewPool("bufnet", ts.dialOpts(), cfg)
-	if err != nil {
-		t.Fatalf("failed to create pool: %v", err)
-	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ts := newTestServer()
+			defer ts.stop()
 
-	tr := &Transport{
-		cfg: &transport.Config{
-			Timeout: 5 * time.Second,
-		},
-		pool: p,
-	}
-	defer tr.Close()
+			p, err := NewPool("bufnet", ts.dialOpts(), &PoolConfig{MinSize: 1, MaxSize: 2, MaxAge: time.Hour})
+			if err != nil {
+				t.Fatalf("failed to create pool: %v", err)
+			}
 
-	ctx := context.Background()
-	stream, err := tr.RequestStream(ctx, "test.Service", "StreamMethod", nil)
-	// The RequestStream method may return a stream even for non-existent services
-	// (since stream creation is lazy). Just verify we get some response.
-	if stream != nil {
-		stream.Close()
-	}
-	// Just verify the call doesn't panic - actual error may come from using the stream
-	_ = err
-}
+			tr := &Transport{
+				cfg:  &transport.Config{Timeout: 5 * time.Second},
+				pool: p,
+			}
+			defer tr.Close()
 
-// TestTransport_RequestStreamWithInitialRequest tests RequestStream with initial request.
-func TestTransport_RequestStreamWithInitialRequest(t *testing.T) {
-	ts := newTestServer()
-	defer ts.stop()
-
-	cfg := &PoolConfig{
-		MinSize:        1,
-		MaxSize:        2,
-		MaxAge:         time.Hour,
-		HealthInterval: 0,
+			stream, err := tr.RequestStream(context.Background(), "test.Service", "StreamMethod", tt.req)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatal("expected error")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if stream == nil {
+				t.Fatal("expected non-nil stream")
+			}
+			if err := stream.Close(); err != nil {
+				t.Errorf("stream close: %v", err)
+			}
+		})
 	}
-
-	p, err := NewPool("bufnet", ts.dialOpts(), cfg)
-	if err != nil {
-		t.Fatalf("failed to create pool: %v", err)
-	}
-
-	tr := &Transport{
-		cfg: &transport.Config{
-			Timeout: 5 * time.Second,
-		},
-		pool: p,
-	}
-	defer tr.Close()
-
-	ctx := context.Background()
-	stream, err := tr.RequestStream(ctx, "test.Service", "StreamMethod", "initial-request")
-	// The RequestStream method may return a stream even for non-existent services
-	// Just verify we get some response.
-	if stream != nil {
-		stream.Close()
-	}
-	_ = err
 }
 
 // TestTransport_CloseWithPoolAndConn tests closing transport with both pool and conn.
@@ -2122,70 +1482,6 @@ func TestTransport_CloseWithPoolAndConn(t *testing.T) {
 	if !tr.closed.Load() {
 		t.Error("expected transport to be marked closed")
 	}
-}
-
-// TestPool_NegativeMaxAge tests that negative MaxAge never expires.
-func TestPool_NegativeMaxAge(t *testing.T) {
-	p := &Pool{
-		cfg: &PoolConfig{
-			MaxAge: -time.Hour,
-		},
-	}
-
-	pc := &pooledConn{
-		createdAt: time.Now().Add(-10 * time.Hour),
-	}
-
-	if p.isExpired(pc) {
-		t.Error("expected not expired when MaxAge is negative")
-	}
-}
-
-// TestPool_ReplaceConnectionFailure tests replacement when creation fails.
-//
-// Like TestPool_EnsureMinConnectionsFailure, the bufconn dialer can
-// hang under WithBlock after Close. The replacement attempt runs on
-// a goroutine with a deadline so a stuck dial doesn't hang the suite.
-func TestPool_ReplaceConnectionFailure(t *testing.T) {
-	t.Skip("Skipped: bufconn dialer hangs under WithBlock after listener close; covered by TestPool_ReplaceConnectionOldNotFound and TestPool_ReplaceConnection.")
-	ts := newTestServer()
-	defer ts.stop()
-
-	cfg := &PoolConfig{
-		MinSize:        1,
-		MaxSize:        2,
-		MaxAge:         time.Hour,
-		HealthInterval: 0,
-	}
-
-	p, err := NewPool("bufnet", ts.dialOpts(), cfg)
-	if err != nil {
-		t.Fatalf("failed to create pool: %v", err)
-	}
-
-	conn, err := p.Get()
-	if err != nil {
-		t.Fatalf("failed to get connection: %v", err)
-	}
-
-	ts.stop()
-
-	p.mu.Lock()
-	var oldPC *pooledConn
-	for _, pc := range p.connections {
-		if pc.conn == conn {
-			oldPC = pc
-			break
-		}
-	}
-	p.mu.Unlock()
-
-	if oldPC != nil {
-		p.replaceConnection(oldPC)
-		time.Sleep(100 * time.Millisecond)
-	}
-
-	p.Close()
 }
 
 // TestPool_ReplaceConnection_PoolFull tests replacement when pool is already full.
@@ -2265,89 +1561,6 @@ func TestTransport_Request(t *testing.T) {
 	_, err = tr.Request(ctx, "test.Service", "Method", nil)
 	if err == nil {
 		t.Fatal("expected error for non-existent service")
-	}
-}
-
-// TestIsRetryableError_WithGRPCStatus tests retryable check with gRPC status.
-func TestIsRetryableError_WithGRPCStatus(t *testing.T) {
-	tests := []struct {
-		name      string
-		code      codes.Code
-		retryable bool
-	}{
-		{"Unavailable", codes.Unavailable, true},
-		{"DeadlineExceeded", codes.DeadlineExceeded, true},
-		{"ResourceExhausted", codes.ResourceExhausted, true},
-		{"NotFound", codes.NotFound, false},
-		{"PermissionDenied", codes.PermissionDenied, false},
-		{"Unimplemented", codes.Unimplemented, false},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			grpcErr := status.Error(tt.code, "test error")
-			if got := isRetryableError(grpcErr); got != tt.retryable {
-				t.Errorf("isRetryableError(%v) = %v, want %v", tt.code, got, tt.retryable)
-			}
-		})
-	}
-}
-
-// TestPool_EnsureMinConnectionsMaxReached tests ensureMinConnections when max is reached.
-func TestPool_EnsureMinConnectionsMaxReached(t *testing.T) {
-	ts := newTestServer()
-	defer ts.stop()
-
-	cfg := &PoolConfig{
-		MinSize:        2,
-		MaxSize:        2,
-		MaxAge:         time.Hour,
-		HealthInterval: 0,
-	}
-
-	p, err := NewPool("bufnet", ts.dialOpts(), cfg)
-	if err != nil {
-		t.Fatalf("failed to create pool: %v", err)
-	}
-	defer p.Close()
-
-	if p.Size() != 2 {
-		t.Errorf("expected size 2, got %d", p.Size())
-	}
-
-	p.ensureMinConnections()
-
-	if p.Size() != 2 {
-		t.Errorf("expected size 2 after ensureMinConnections, got %d", p.Size())
-	}
-}
-
-// TestPool_PerformHealthCheckWithExpiredConnections tests health check with expired connections.
-func TestPool_PerformHealthCheckWithExpiredConnections(t *testing.T) {
-	ts := newTestServer()
-	defer ts.stop()
-
-	cfg := &PoolConfig{
-		MinSize:        1,
-		MaxSize:        3,
-		MaxAge:         1 * time.Millisecond,
-		HealthInterval: 0,
-	}
-
-	p, err := NewPool("bufnet", ts.dialOpts(), cfg)
-	if err != nil {
-		t.Fatalf("failed to create pool: %v", err)
-	}
-	defer p.Close()
-
-	time.Sleep(5 * time.Millisecond)
-
-	p.performHealthCheck()
-
-	time.Sleep(50 * time.Millisecond)
-
-	if p.Size() < cfg.MinSize {
-		t.Errorf("expected at least %d connections after health check, got %d", cfg.MinSize, p.Size())
 	}
 }
 

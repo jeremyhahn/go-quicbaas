@@ -364,16 +364,38 @@ func TestWatchBridgeOptions(t *testing.T) {
 		}
 	})
 
-	t.Run("WithBridgeBufferSize zero uses default", func(t *testing.T) {
-		bridge, err := NewWatchBridge(log, watchMgr, messagingSvc, clusterInfo, nil,
-			WithBridgeBufferSize(0))
+	t.Run("defaults", func(t *testing.T) {
+		bridge, err := NewWatchBridge(log, watchMgr, messagingSvc, clusterInfo, nil)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		if bridge.options.bufferSize != 1024 {
-			t.Errorf("expected default bufferSize 1024, got %d", bridge.options.bufferSize)
+		opts := bridge.options
+		if !opts.leaderOnly {
+			t.Error("expected leaderOnly to be true by default")
+		}
+		if opts.bufferSize != 1024 {
+			t.Errorf("expected bufferSize 1024, got %d", opts.bufferSize)
+		}
+		if opts.defaultChannelPrefix != "watch:" {
+			t.Errorf("expected defaultChannelPrefix 'watch:', got '%s'", opts.defaultChannelPrefix)
+		}
+		if !opts.autoCreateChannels {
+			t.Error("expected autoCreateChannels to be true by default")
 		}
 	})
+
+	for name, size := range map[string]int{"zero": 0, "negative": -1} {
+		t.Run("WithBridgeBufferSize "+name+" uses default", func(t *testing.T) {
+			bridge, err := NewWatchBridge(log, watchMgr, messagingSvc, clusterInfo, nil,
+				WithBridgeBufferSize(size))
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if bridge.options.bufferSize != 1024 {
+				t.Errorf("expected default bufferSize 1024, got %d", bridge.options.bufferSize)
+			}
+		})
+	}
 
 	t.Run("WithDefaultChannelPrefix", func(t *testing.T) {
 		bridge, err := NewWatchBridge(log, watchMgr, messagingSvc, clusterInfo, nil,
@@ -649,22 +671,45 @@ func TestWatchBridgeAddMapping(t *testing.T) {
 	messagingSvc := newMockMessagingService()
 	clusterInfo := newMockClusterInfo(true)
 
-	t.Run("add mapping when stopped", func(t *testing.T) {
-		bridge, err := NewWatchBridge(log, watchMgr, messagingSvc, clusterInfo, nil)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
+	addCases := []struct {
+		name       string
+		opts       []WatchBridgeOption
+		mapping    KeyChannelMapping
+		wantPrefix string
+	}{
+		{
+			name:       "default channel prefix",
+			opts:       []WatchBridgeOption{WithDefaultChannelPrefix("events:")},
+			mapping:    KeyChannelMapping{KeyPrefix: "/items/"},
+			wantPrefix: "events:/items/",
+		},
+		{
+			name:       "custom channel prefix",
+			mapping:    KeyChannelMapping{KeyPrefix: "/custom/", ChannelPrefix: "my:custom:prefix"},
+			wantPrefix: "my:custom:prefix",
+		},
+	}
+	for _, tc := range addCases {
+		t.Run("add mapping when stopped/"+tc.name, func(t *testing.T) {
+			bridge, err := NewWatchBridge(log, watchMgr, messagingSvc, clusterInfo, nil, tc.opts...)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
 
-		err = bridge.AddMapping(KeyChannelMapping{KeyPrefix: "/new/"})
-		if err != nil {
-			t.Fatalf("failed to add mapping: %v", err)
-		}
+			err = bridge.AddMapping(tc.mapping)
+			if err != nil {
+				t.Fatalf("failed to add mapping: %v", err)
+			}
 
-		mappings := bridge.GetMappings()
-		if len(mappings) != 1 {
-			t.Fatalf("expected 1 mapping, got %d", len(mappings))
-		}
-	})
+			mappings := bridge.GetMappings()
+			if len(mappings) != 1 {
+				t.Fatalf("expected 1 mapping, got %d", len(mappings))
+			}
+			if mappings[0].ChannelPrefix != tc.wantPrefix {
+				t.Errorf("expected channel prefix %q, got %q", tc.wantPrefix, mappings[0].ChannelPrefix)
+			}
+		})
+	}
 
 	t.Run("add mapping when running fails", func(t *testing.T) {
 		bridge, err := NewWatchBridge(log, watchMgr, messagingSvc, clusterInfo, nil)
@@ -1044,105 +1089,93 @@ func TestWatchEventPayload(t *testing.T) {
 func TestWatchBridgeErrorTypes(t *testing.T) {
 	t.Parallel()
 
-	t.Run("IsWatchBridgeNotRunning", func(t *testing.T) {
-		err := NewWatchBridgeNotRunningError("test", "operation")
-		if !IsWatchBridgeNotRunning(err) {
-			t.Error("expected true for WatchBridgeNotRunning error")
-		}
+	// qbCode builds a QBError that carries the code but wraps an untyped
+	// inner error, so only the code-matching branch can match it.
+	qbCode := func(code errors.ErrorCode) error {
+		return &errors.QBError{Code: code, Op: "test", Err: stderrors.New("generic inner error")}
+	}
+	// wrapped wraps a sentinel so errors.As finds no typed error but
+	// errors.Is still matches the sentinel.
+	wrapped := func(sentinel error) error {
+		return &errors.WrappedMessageError{Message: "wrapper", Cause: sentinel}
+	}
 
-		if IsWatchBridgeNotRunning(nil) {
-			t.Error("expected false for nil error")
-		}
+	predicates := []struct {
+		name    string
+		is      func(error) bool
+		matches map[string]error
+	}{
+		{
+			name: "IsWatchBridgeNotRunning",
+			is:   IsWatchBridgeNotRunning,
+			matches: map[string]error{
+				"constructor":      NewWatchBridgeNotRunningError("test", "operation"),
+				"direct type":      &WatchBridgeNotRunningError{Operation: "test"},
+				"wrapped sentinel": wrapped(ErrWatchBridgeNotRunning),
+				"QBError code":     qbCode(ErrCodeWatchBridgeNotRunning),
+			},
+		},
+		{
+			name: "IsWatchBridgeAlreadyRunning",
+			is:   IsWatchBridgeAlreadyRunning,
+			matches: map[string]error{
+				"constructor":      NewWatchBridgeAlreadyRunningError("test"),
+				"direct type":      &WatchBridgeAlreadyRunningError{},
+				"wrapped sentinel": wrapped(ErrWatchBridgeAlreadyRunning),
+				"QBError code":     qbCode(ErrCodeWatchBridgeAlreadyRunning),
+			},
+		},
+		{
+			name: "IsWatchBridgeNilManager",
+			is:   IsWatchBridgeNilManager,
+			matches: map[string]error{
+				"constructor":      NewWatchBridgeNilManagerError("test"),
+				"direct type":      &WatchBridgeNilManagerError{},
+				"wrapped sentinel": wrapped(ErrWatchBridgeNilManager),
+				"QBError code":     qbCode(ErrCodeWatchBridgeNilManager),
+			},
+		},
+		{
+			name: "IsWatchBridgeNilService",
+			is:   IsWatchBridgeNilService,
+			matches: map[string]error{
+				"constructor":      NewWatchBridgeNilServiceError("test"),
+				"direct type":      &WatchBridgeNilServiceError{},
+				"wrapped sentinel": wrapped(ErrWatchBridgeNilService),
+				"QBError code":     qbCode(ErrCodeWatchBridgeNilService),
+			},
+		},
+		{
+			name: "IsWatchBridgeInvalidMapping",
+			is:   IsWatchBridgeInvalidMapping,
+			matches: map[string]error{
+				"constructor":      NewWatchBridgeInvalidMappingError("test", "/prefix/", "reason"),
+				"direct type":      &WatchBridgeInvalidMappingError{KeyPrefix: "/test/", Reason: "bad"},
+				"wrapped sentinel": wrapped(ErrWatchBridgeInvalidMapping),
+				"QBError code":     qbCode(ErrCodeWatchBridgeInvalidMapping),
+			},
+		},
+	}
 
-		if IsWatchBridgeNotRunning(stderrors.New("other error")) {
-			t.Error("expected false for other error")
-		}
+	nonMatches := map[string]error{
+		"nil":   nil,
+		"other": stderrors.New("other error"),
+	}
 
-		directErr := &WatchBridgeNotRunningError{Operation: "test"}
-		if !IsWatchBridgeNotRunning(directErr) {
-			t.Error("expected true for direct error type")
-		}
-	})
-
-	t.Run("IsWatchBridgeAlreadyRunning", func(t *testing.T) {
-		err := NewWatchBridgeAlreadyRunningError("test")
-		if !IsWatchBridgeAlreadyRunning(err) {
-			t.Error("expected true for WatchBridgeAlreadyRunning error")
-		}
-
-		if IsWatchBridgeAlreadyRunning(nil) {
-			t.Error("expected false for nil error")
-		}
-
-		if IsWatchBridgeAlreadyRunning(stderrors.New("other error")) {
-			t.Error("expected false for other error")
-		}
-
-		directErr := &WatchBridgeAlreadyRunningError{}
-		if !IsWatchBridgeAlreadyRunning(directErr) {
-			t.Error("expected true for direct error type")
-		}
-	})
-
-	t.Run("IsWatchBridgeNilManager", func(t *testing.T) {
-		err := NewWatchBridgeNilManagerError("test")
-		if !IsWatchBridgeNilManager(err) {
-			t.Error("expected true for WatchBridgeNilManager error")
-		}
-
-		if IsWatchBridgeNilManager(nil) {
-			t.Error("expected false for nil error")
-		}
-
-		if IsWatchBridgeNilManager(stderrors.New("other error")) {
-			t.Error("expected false for other error")
-		}
-
-		directErr := &WatchBridgeNilManagerError{}
-		if !IsWatchBridgeNilManager(directErr) {
-			t.Error("expected true for direct error type")
-		}
-	})
-
-	t.Run("IsWatchBridgeNilService", func(t *testing.T) {
-		err := NewWatchBridgeNilServiceError("test")
-		if !IsWatchBridgeNilService(err) {
-			t.Error("expected true for WatchBridgeNilService error")
-		}
-
-		if IsWatchBridgeNilService(nil) {
-			t.Error("expected false for nil error")
-		}
-
-		if IsWatchBridgeNilService(stderrors.New("other error")) {
-			t.Error("expected false for other error")
-		}
-
-		directErr := &WatchBridgeNilServiceError{}
-		if !IsWatchBridgeNilService(directErr) {
-			t.Error("expected true for direct error type")
-		}
-	})
-
-	t.Run("IsWatchBridgeInvalidMapping", func(t *testing.T) {
-		err := NewWatchBridgeInvalidMappingError("test", "/prefix/", "reason")
-		if !IsWatchBridgeInvalidMapping(err) {
-			t.Error("expected true for WatchBridgeInvalidMapping error")
-		}
-
-		if IsWatchBridgeInvalidMapping(nil) {
-			t.Error("expected false for nil error")
-		}
-
-		if IsWatchBridgeInvalidMapping(stderrors.New("other error")) {
-			t.Error("expected false for other error")
-		}
-
-		directErr := &WatchBridgeInvalidMappingError{KeyPrefix: "/test/", Reason: "bad"}
-		if !IsWatchBridgeInvalidMapping(directErr) {
-			t.Error("expected true for direct error type")
-		}
-	})
+	for _, p := range predicates {
+		t.Run(p.name, func(t *testing.T) {
+			for input, err := range p.matches {
+				if !p.is(err) {
+					t.Errorf("%s: expected true", input)
+				}
+			}
+			for input, err := range nonMatches {
+				if p.is(err) {
+					t.Errorf("%s: expected false", input)
+				}
+			}
+		})
+	}
 
 	t.Run("error messages", func(t *testing.T) {
 		notRunningErr := &WatchBridgeNotRunningError{Operation: "publish"}
@@ -1475,31 +1508,6 @@ func TestWatchBridgeDeltaComputation(t *testing.T) {
 		}
 	})
 
-	t.Run("no delta for empty value", func(t *testing.T) {
-		mappings := []KeyChannelMapping{
-			{
-				KeyPrefix:  "/emptyval/",
-				EntityType: &TestEntity{},
-			},
-		}
-
-		bridge, err := NewWatchBridge(log, watchMgr, messagingSvc, clusterInfo, mappings)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-
-		// Test computeDelta directly with empty value
-		event := watch.Event{
-			Type:  watch.EventTypePut,
-			Key:   []byte("/emptyval/key"),
-			Value: []byte{},
-		}
-		delta := bridge.computeDelta(event, mappings[0])
-		if delta != nil {
-			t.Error("expected no delta for empty value")
-		}
-	})
-
 	t.Run("clears old values when not requested", func(t *testing.T) {
 		mappings := []KeyChannelMapping{
 			{
@@ -1554,48 +1562,6 @@ func TestWatchBridgeDeltaComputation(t *testing.T) {
 			}
 		}
 	})
-}
-
-// TestWatchBridgePublishError tests handling of publish errors.
-func TestWatchBridgePublishError(t *testing.T) {
-	t.Parallel()
-
-	log := testLogger(t)
-	watchMgr := watch.NewManager()
-	messagingSvc := newMockMessagingService()
-	messagingSvc.publishErr = stderrors.New("publish failed")
-	clusterInfo := newMockClusterInfo(true)
-
-	mappings := []KeyChannelMapping{
-		{KeyPrefix: "/error/"},
-	}
-
-	bridge, err := NewWatchBridge(log, watchMgr, messagingSvc, clusterInfo, mappings)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	ctx := context.Background()
-	err = bridge.Start(ctx)
-	if err != nil {
-		t.Fatalf("failed to start: %v", err)
-	}
-	defer func() {
-		stopCtx, cancel := context.WithTimeout(ctx, time.Second)
-		defer cancel()
-		_ = bridge.Stop(stopCtx)
-	}()
-
-	// Trigger a watch event
-	watchMgr.NotifyPut([]byte("/error/key1"), nil, []byte(`{"id": "1"}`), 1, 1)
-
-	// Give time for event processing
-	time.Sleep(200 * time.Millisecond)
-
-	stats := bridge.GetStats()
-	if stats.PublishErrors == 0 {
-		t.Error("expected publish errors to be recorded")
-	}
 }
 
 // TestWatchBridgeDeleteEvent tests DELETE event handling.
@@ -1752,59 +1718,6 @@ func BenchmarkWatchBridgeEventProcessing(b *testing.B) {
 // Consolidated from watch_bridge_coverage_test.go
 // =============================================================================
 
-// TestIsWatchBridgeNotRunning_SentinelError exercises the sentinel error matching
-// path in IsWatchBridgeNotRunning (the stderrors.Is fallback).
-func TestIsWatchBridgeNotRunning_SentinelError(t *testing.T) {
-	t.Parallel()
-
-	// Wrap the sentinel error so that errors.As does not match a typed error
-	// but errors.Is still matches the sentinel.
-	wrappedSentinel := &errors.WrappedMessageError{Message: "wrapper", Cause: ErrWatchBridgeNotRunning}
-	if !IsWatchBridgeNotRunning(wrappedSentinel) {
-		t.Error("expected true for wrapped sentinel ErrWatchBridgeNotRunning")
-	}
-}
-
-// TestIsWatchBridgeAlreadyRunning_SentinelError exercises the sentinel error matching path.
-func TestIsWatchBridgeAlreadyRunning_SentinelError(t *testing.T) {
-	t.Parallel()
-
-	wrappedSentinel := &errors.WrappedMessageError{Message: "wrapper", Cause: ErrWatchBridgeAlreadyRunning}
-	if !IsWatchBridgeAlreadyRunning(wrappedSentinel) {
-		t.Error("expected true for wrapped sentinel ErrWatchBridgeAlreadyRunning")
-	}
-}
-
-// TestIsWatchBridgeNilManager_SentinelError exercises the sentinel error matching path.
-func TestIsWatchBridgeNilManager_SentinelError(t *testing.T) {
-	t.Parallel()
-
-	wrappedSentinel := &errors.WrappedMessageError{Message: "wrapper", Cause: ErrWatchBridgeNilManager}
-	if !IsWatchBridgeNilManager(wrappedSentinel) {
-		t.Error("expected true for wrapped sentinel ErrWatchBridgeNilManager")
-	}
-}
-
-// TestIsWatchBridgeNilService_SentinelError exercises the sentinel error matching path.
-func TestIsWatchBridgeNilService_SentinelError(t *testing.T) {
-	t.Parallel()
-
-	wrappedSentinel := &errors.WrappedMessageError{Message: "wrapper", Cause: ErrWatchBridgeNilService}
-	if !IsWatchBridgeNilService(wrappedSentinel) {
-		t.Error("expected true for wrapped sentinel ErrWatchBridgeNilService")
-	}
-}
-
-// TestIsWatchBridgeInvalidMapping_SentinelError exercises the sentinel error matching path.
-func TestIsWatchBridgeInvalidMapping_SentinelError(t *testing.T) {
-	t.Parallel()
-
-	wrappedSentinel := &errors.WrappedMessageError{Message: "wrapper", Cause: ErrWatchBridgeInvalidMapping}
-	if !IsWatchBridgeInvalidMapping(wrappedSentinel) {
-		t.Error("expected true for wrapped sentinel ErrWatchBridgeInvalidMapping")
-	}
-}
-
 // TestWatchBridgeStartContextCancellation verifies Start returns context error
 // when context is cancelled during watch subscription setup.
 func TestWatchBridgeStartContextCancellation(t *testing.T) {
@@ -1835,36 +1748,6 @@ func TestWatchBridgeStartContextCancellation(t *testing.T) {
 		stopCtx, stopCancel := context.WithTimeout(context.Background(), time.Second)
 		defer stopCancel()
 		_ = bridge.Stop(stopCtx)
-	}
-}
-
-// TestWatchBridgeAddMappingDefaultChannelPrefix tests that AddMapping generates
-// the default channel prefix when ChannelPrefix is empty.
-func TestWatchBridgeAddMappingDefaultChannelPrefix(t *testing.T) {
-	t.Parallel()
-
-	log := testLoggerCov(t)
-	watchMgr := watch.NewManager()
-	messagingSvc := newMockMessagingService()
-
-	bridge, err := NewWatchBridge(log, watchMgr, messagingSvc, nil, nil,
-		WithDefaultChannelPrefix("events:"))
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	// Add a mapping with no ChannelPrefix - should use default
-	err = bridge.AddMapping(KeyChannelMapping{KeyPrefix: "/items/"})
-	if err != nil {
-		t.Fatalf("failed to add mapping: %v", err)
-	}
-
-	mappings := bridge.GetMappings()
-	if len(mappings) != 1 {
-		t.Fatalf("expected 1 mapping, got %d", len(mappings))
-	}
-	if mappings[0].ChannelPrefix != "events:/items/" {
-		t.Errorf("expected channel prefix 'events:/items/', got '%s'", mappings[0].ChannelPrefix)
 	}
 }
 
@@ -1903,102 +1786,52 @@ func TestWatchBridgeAutoCreateChannelCreationError(t *testing.T) {
 	_ = bridge.Stop(stopCtx)
 }
 
-// TestWatchBridgeComputeDeltaNilDeltaComputer verifies computeDelta returns nil
-// when the delta computer is nil.
-func TestWatchBridgeComputeDeltaNilDeltaComputer(t *testing.T) {
+// TestWatchBridgeComputeDeltaReturnsNil verifies computeDelta returns nil
+// for every input it cannot compute a delta from.
+func TestWatchBridgeComputeDeltaReturnsNil(t *testing.T) {
 	t.Parallel()
 
 	type TestEntity struct {
 		ID string `json:"id"`
 	}
 
-	log := testLoggerCov(t)
-	watchMgr := watch.NewManager()
-	messagingSvc := newMockMessagingService()
-
-	bridge, err := NewWatchBridge(log, watchMgr, messagingSvc, nil, nil)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	tests := []struct {
+		name        string
+		nilComputer bool
+		entityType  interface{}
+		value       []byte
+	}{
+		{name: "nil delta computer", nilComputer: true, entityType: &TestEntity{}, value: []byte(`{"id": "1"}`)},
+		{name: "nil entity type", entityType: nil, value: []byte(`{"id": "1"}`)},
+		{name: "empty value", entityType: &TestEntity{}, value: []byte{}},
+		{name: "invalid JSON", entityType: &TestEntity{}, value: []byte(`{not-valid-json`)},
 	}
 
-	// Nil deltaComputer returns nil
-	bridge.deltaComputer = nil
-	event := watch.Event{
-		Type:  watch.EventTypePut,
-		Key:   []byte("/test/key"),
-		Value: []byte(`{"id": "1"}`),
-	}
-	mapping := KeyChannelMapping{
-		KeyPrefix:  "/test/",
-		EntityType: &TestEntity{},
-	}
-	delta := bridge.computeDelta(event, mapping)
-	if delta != nil {
-		t.Error("expected nil delta when deltaComputer is nil")
-	}
-}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 
-// TestWatchBridgeComputeDeltaNilEntityType verifies computeDelta returns nil
-// when entity type is nil.
-func TestWatchBridgeComputeDeltaNilEntityType(t *testing.T) {
-	t.Parallel()
+			bridge, err := NewWatchBridge(testLoggerCov(t), watch.NewManager(), newMockMessagingService(), nil, nil)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if tc.nilComputer {
+				bridge.deltaComputer = nil
+			}
 
-	log := testLoggerCov(t)
-	watchMgr := watch.NewManager()
-	messagingSvc := newMockMessagingService()
-
-	bridge, err := NewWatchBridge(log, watchMgr, messagingSvc, nil, nil)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	event := watch.Event{
-		Type:  watch.EventTypePut,
-		Key:   []byte("/test/key"),
-		Value: []byte(`{"id": "1"}`),
-	}
-	mapping := KeyChannelMapping{
-		KeyPrefix:  "/test/",
-		EntityType: nil,
-	}
-	delta := bridge.computeDelta(event, mapping)
-	if delta != nil {
-		t.Error("expected nil delta when EntityType is nil")
-	}
-}
-
-// TestWatchBridgeComputeDeltaInvalidJSON verifies computeDelta handles invalid
-// JSON gracefully by returning nil.
-func TestWatchBridgeComputeDeltaInvalidJSON(t *testing.T) {
-	t.Parallel()
-
-	type TestEntity struct {
-		ID string `json:"id"`
-	}
-
-	log := testLoggerCov(t)
-	watchMgr := watch.NewManager()
-	messagingSvc := newMockMessagingService()
-	clusterInfo := newMockClusterInfo(true)
-
-	bridge, err := NewWatchBridge(log, watchMgr, messagingSvc, clusterInfo, nil)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	// Invalid JSON should cause ComputeBytes to fail, returning nil
-	event := watch.Event{
-		Type:  watch.EventTypePut,
-		Key:   []byte("/test/key"),
-		Value: []byte(`{not-valid-json`),
-	}
-	mapping := KeyChannelMapping{
-		KeyPrefix:  "/test/",
-		EntityType: &TestEntity{},
-	}
-	delta := bridge.computeDelta(event, mapping)
-	if delta != nil {
-		t.Error("expected nil delta for invalid JSON")
+			event := watch.Event{
+				Type:  watch.EventTypePut,
+				Key:   []byte("/test/key"),
+				Value: tc.value,
+			}
+			mapping := KeyChannelMapping{
+				KeyPrefix:  "/test/",
+				EntityType: tc.entityType,
+			}
+			if delta := bridge.computeDelta(event, mapping); delta != nil {
+				t.Errorf("expected nil delta, got %+v", delta)
+			}
+		})
 	}
 }
 
@@ -2030,160 +1863,18 @@ func TestWatchBridgeStopDuringStoppingState(t *testing.T) {
 	stopCtx, cancel := context.WithTimeout(ctx, time.Millisecond)
 	defer cancel()
 
-	// This will enter the "stopping" path and wait on wb.stopped, which times out
+	// This enters the "stopping" path and waits on wb.stopped, which never
+	// closes, so the context deadline must end the wait.
 	err = bridge.Stop(stopCtx)
-	// May or may not return error depending on timing; the important thing is
-	// it did not panic and the code path was exercised.
+	if !stderrors.Is(err, context.DeadlineExceeded) {
+		t.Errorf("expected context.DeadlineExceeded, got %v", err)
+	}
 
 	// Reset state and clean up properly
 	bridge.state.Store(int32(bridgeStateRunning))
 	cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), time.Second)
 	defer cleanupCancel()
 	_ = bridge.Stop(cleanupCtx)
-}
-
-// TestWatchBridgeAddMappingWithCustomChannelPrefix tests AddMapping with
-// an explicit ChannelPrefix.
-func TestWatchBridgeAddMappingWithCustomChannelPrefix(t *testing.T) {
-	t.Parallel()
-
-	log := testLoggerCov(t)
-	watchMgr := watch.NewManager()
-	messagingSvc := newMockMessagingService()
-
-	bridge, err := NewWatchBridge(log, watchMgr, messagingSvc, nil, nil)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	err = bridge.AddMapping(KeyChannelMapping{
-		KeyPrefix:     "/custom/",
-		ChannelPrefix: "my:custom:prefix",
-	})
-	if err != nil {
-		t.Fatalf("failed to add mapping: %v", err)
-	}
-
-	mappings := bridge.GetMappings()
-	if len(mappings) != 1 {
-		t.Fatalf("expected 1 mapping, got %d", len(mappings))
-	}
-	if mappings[0].ChannelPrefix != "my:custom:prefix" {
-		t.Errorf("expected channel prefix 'my:custom:prefix', got '%s'", mappings[0].ChannelPrefix)
-	}
-}
-
-// TestDefaultBridgeOptions verifies the default bridge options values.
-func TestDefaultBridgeOptions(t *testing.T) {
-	t.Parallel()
-
-	opts := defaultBridgeOptions()
-	if !opts.leaderOnly {
-		t.Error("expected leaderOnly to be true by default")
-	}
-	if opts.bufferSize != 1024 {
-		t.Errorf("expected bufferSize 1024, got %d", opts.bufferSize)
-	}
-	if opts.defaultChannelPrefix != "watch:" {
-		t.Errorf("expected defaultChannelPrefix 'watch:', got '%s'", opts.defaultChannelPrefix)
-	}
-	if !opts.autoCreateChannels {
-		t.Error("expected autoCreateChannels to be true by default")
-	}
-}
-
-// TestWithBridgeBufferSizeNegative verifies negative buffer size keeps default.
-func TestWithBridgeBufferSizeNegative(t *testing.T) {
-	t.Parallel()
-
-	log := testLoggerCov(t)
-	watchMgr := watch.NewManager()
-	messagingSvc := newMockMessagingService()
-
-	bridge, err := NewWatchBridge(log, watchMgr, messagingSvc, nil, nil,
-		WithBridgeBufferSize(-1))
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if bridge.options.bufferSize != 1024 {
-		t.Errorf("expected default bufferSize 1024, got %d", bridge.options.bufferSize)
-	}
-}
-
-// -----------------------------------------------------------------------------
-// QBError code matching branch for IsWatchBridge* functions
-// These exercise the middle branch (QBError with matching code but no typed inner error).
-// -----------------------------------------------------------------------------
-
-// TestIsWatchBridgeNotRunning_QBErrorCodeMatch tests the QBError code matching
-// branch where the error wraps a non-typed inner error.
-func TestIsWatchBridgeNotRunning_QBErrorCodeMatch(t *testing.T) {
-	t.Parallel()
-
-	qbErr := &errors.QBError{
-		Code: ErrCodeWatchBridgeNotRunning,
-		Op:   "test",
-		Err:  stderrors.New("generic inner error"),
-	}
-	if !IsWatchBridgeNotRunning(qbErr) {
-		t.Error("expected true for QBError with ErrCodeWatchBridgeNotRunning code")
-	}
-}
-
-// TestIsWatchBridgeAlreadyRunning_QBErrorCodeMatch tests the QBError code matching branch.
-func TestIsWatchBridgeAlreadyRunning_QBErrorCodeMatch(t *testing.T) {
-	t.Parallel()
-
-	qbErr := &errors.QBError{
-		Code: ErrCodeWatchBridgeAlreadyRunning,
-		Op:   "test",
-		Err:  stderrors.New("generic inner error"),
-	}
-	if !IsWatchBridgeAlreadyRunning(qbErr) {
-		t.Error("expected true for QBError with ErrCodeWatchBridgeAlreadyRunning code")
-	}
-}
-
-// TestIsWatchBridgeNilManager_QBErrorCodeMatch tests the QBError code matching branch.
-func TestIsWatchBridgeNilManager_QBErrorCodeMatch(t *testing.T) {
-	t.Parallel()
-
-	qbErr := &errors.QBError{
-		Code: ErrCodeWatchBridgeNilManager,
-		Op:   "test",
-		Err:  stderrors.New("generic inner error"),
-	}
-	if !IsWatchBridgeNilManager(qbErr) {
-		t.Error("expected true for QBError with ErrCodeWatchBridgeNilManager code")
-	}
-}
-
-// TestIsWatchBridgeNilService_QBErrorCodeMatch tests the QBError code matching branch.
-func TestIsWatchBridgeNilService_QBErrorCodeMatch(t *testing.T) {
-	t.Parallel()
-
-	qbErr := &errors.QBError{
-		Code: ErrCodeWatchBridgeNilService,
-		Op:   "test",
-		Err:  stderrors.New("generic inner error"),
-	}
-	if !IsWatchBridgeNilService(qbErr) {
-		t.Error("expected true for QBError with ErrCodeWatchBridgeNilService code")
-	}
-}
-
-// TestIsWatchBridgeInvalidMapping_QBErrorCodeMatch tests the QBError code matching branch.
-func TestIsWatchBridgeInvalidMapping_QBErrorCodeMatch(t *testing.T) {
-	t.Parallel()
-
-	qbErr := &errors.QBError{
-		Code: ErrCodeWatchBridgeInvalidMapping,
-		Op:   "test",
-		Err:  stderrors.New("generic inner error"),
-	}
-	if !IsWatchBridgeInvalidMapping(qbErr) {
-		t.Error("expected true for QBError with ErrCodeWatchBridgeInvalidMapping code")
-	}
 }
 
 // -----------------------------------------------------------------------------

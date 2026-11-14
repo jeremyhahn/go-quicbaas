@@ -354,37 +354,55 @@ func (m *mockObjectStorageService) BatchDeleteObjects(ctx context.Context, req *
 // Dispatch Registration Tests
 // =============================================================================
 
-func TestUnaryHandlers_ObjectStorageRegistered(t *testing.T) {
-	methods := []string{
-		"quicbaas.ObjectStorage/PutObject",
-		"quicbaas.ObjectStorage/GetObject",
-		"quicbaas.ObjectStorage/DeleteObject",
-		"quicbaas.ObjectStorage/HeadObject",
-		"quicbaas.ObjectStorage/ListObjects",
-		"quicbaas.ObjectStorage/ListByTag",
-		"quicbaas.ObjectStorage/ListByTenant",
-		"quicbaas.ObjectStorage/CopyObject",
-		"quicbaas.ObjectStorage/ReplicateObject",
-		"quicbaas.ObjectStorage/MigrateObject",
-		"quicbaas.ObjectStorage/ArchiveObject",
-		"quicbaas.ObjectStorage/RestoreObject",
-		"quicbaas.ObjectStorage/VerifyObject",
-		"quicbaas.ObjectStorage/SetObjectPolicy",
-		"quicbaas.ObjectStorage/GetObjectPolicy",
-		"quicbaas.ObjectStorage/ListBackends",
-		"quicbaas.ObjectStorage/GetBackendHealth",
-		"quicbaas.ObjectStorage/GetTenantUsage",
-		"quicbaas.ObjectStorage/GetTenantQuotas",
-		"quicbaas.ObjectStorage/SetTenantQuotas",
-		"quicbaas.ObjectStorage/BatchPutObjects",
-		"quicbaas.ObjectStorage/BatchGetObjects",
-		"quicbaas.ObjectStorage/BatchDeleteObjects",
-	}
+// objectStorageMethods lists every ObjectStorage method the embedded
+// transport serves; the guard tests below run each one.
+var objectStorageMethods = []string{
+	"PutObject", "GetObject", "DeleteObject", "HeadObject", "ListObjects",
+	"ListByTag", "ListByTenant", "CopyObject", "ReplicateObject",
+	"MigrateObject", "ArchiveObject", "RestoreObject", "VerifyObject",
+	"SetObjectPolicy", "GetObjectPolicy", "ListBackends", "GetBackendHealth",
+	"GetTenantUsage", "GetTenantQuotas", "SetTenantQuotas",
+	"BatchPutObjects", "BatchGetObjects", "BatchDeleteObjects",
+}
 
-	for _, method := range methods {
+func TestHandleObj_ServiceNotConfigured(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	t.Cleanup(cancel)
+
+	tr, err := New(&mockQuicBaaS{})
+	require.NoError(t, err)
+
+	for _, method := range objectStorageMethods {
 		t.Run(method, func(t *testing.T) {
-			_, ok := unaryHandlers[method]
-			assert.True(t, ok, "handler not registered for %s", method)
+			// The service check runs before the request type check, so
+			// any request reaches it.
+			resp, err := tr.Request(ctx, "quicbaas.ObjectStorage", method, "any-request")
+			assert.Nil(t, resp)
+
+			var svcErr *ServiceNotConfiguredError
+			require.ErrorAs(t, err, &svcErr)
+			assert.Equal(t, "ObjectStorage", svcErr.Service)
+		})
+	}
+}
+
+func TestHandleObj_InvalidRequestType(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	t.Cleanup(cancel)
+
+	mock := &mockQuicBaaS{objectStorageService: &mockObjectStorageService{}}
+	tr, err := New(mock)
+	require.NoError(t, err)
+
+	for _, method := range objectStorageMethods {
+		t.Run(method, func(t *testing.T) {
+			resp, err := tr.Request(ctx, "quicbaas.ObjectStorage", method, "not-a-request")
+			assert.Nil(t, resp)
+
+			var typeErr *InvalidRequestTypeError
+			require.ErrorAs(t, err, &typeErr)
+			assert.Equal(t, "quicbaas.ObjectStorage", typeErr.Service)
+			assert.Equal(t, method, typeErr.Method)
 		})
 	}
 }
@@ -419,47 +437,6 @@ func TestHandleObjPutObject_Success(t *testing.T) {
 	assert.Equal(t, uint64(1), putResp.ObjectID)
 	assert.Equal(t, int64(5), putResp.Size)
 	assert.Equal(t, "default", putResp.Backend)
-}
-
-func TestHandleObjPutObject_ServiceNotConfigured(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	t.Cleanup(cancel)
-
-	mock := &mockQuicBaaS{}
-	tr, err := New(mock)
-	require.NoError(t, err)
-
-	req := &objclient.PutObjectRequest{
-		Key:   "ns:test/object",
-		Value: []byte("hello"),
-	}
-
-	resp, err := tr.Request(ctx, "quicbaas.ObjectStorage", "PutObject", req)
-	assert.Nil(t, resp)
-	require.Error(t, err)
-
-	var svcErr *ServiceNotConfiguredError
-	assert.ErrorAs(t, err, &svcErr)
-	assert.Equal(t, "ObjectStorage", svcErr.Service)
-}
-
-func TestHandleObjPutObject_InvalidRequestType(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	t.Cleanup(cancel)
-
-	objMock := &mockObjectStorageService{}
-	mock := &mockQuicBaaS{objectStorageService: objMock}
-	tr, err := New(mock)
-	require.NoError(t, err)
-
-	resp, err := tr.Request(ctx, "quicbaas.ObjectStorage", "PutObject", "not-a-request")
-	assert.Nil(t, resp)
-	require.Error(t, err)
-
-	var typeErr *InvalidRequestTypeError
-	assert.ErrorAs(t, err, &typeErr)
-	assert.Equal(t, "quicbaas.ObjectStorage", typeErr.Service)
-	assert.Equal(t, "PutObject", typeErr.Method)
 }
 
 func TestHandleObjPutObject_WithPolicies(t *testing.T) {
@@ -536,41 +513,6 @@ func TestHandleObjGetObject_Success(t *testing.T) {
 	assert.Equal(t, []byte("test-data"), getResp.Value)
 }
 
-func TestHandleObjGetObject_ServiceNotConfigured(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	t.Cleanup(cancel)
-
-	mock := &mockQuicBaaS{}
-	tr, err := New(mock)
-	require.NoError(t, err)
-
-	req := &objclient.GetObjectRequest{Key: "ns:test/object"}
-
-	resp, err := tr.Request(ctx, "quicbaas.ObjectStorage", "GetObject", req)
-	assert.Nil(t, resp)
-	require.Error(t, err)
-
-	var svcErr *ServiceNotConfiguredError
-	assert.ErrorAs(t, err, &svcErr)
-}
-
-func TestHandleObjGetObject_InvalidRequestType(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	t.Cleanup(cancel)
-
-	objMock := &mockObjectStorageService{}
-	mock := &mockQuicBaaS{objectStorageService: objMock}
-	tr, err := New(mock)
-	require.NoError(t, err)
-
-	resp, err := tr.Request(ctx, "quicbaas.ObjectStorage", "GetObject", 42)
-	assert.Nil(t, resp)
-	require.Error(t, err)
-
-	var typeErr *InvalidRequestTypeError
-	assert.ErrorAs(t, err, &typeErr)
-}
-
 // =============================================================================
 // DeleteObject Handler Tests
 // =============================================================================
@@ -594,24 +536,6 @@ func TestHandleObjDeleteObject_Success(t *testing.T) {
 	require.True(t, ok)
 	assert.Equal(t, "ns:test/object", delResp.Key)
 	assert.True(t, delResp.Success)
-}
-
-func TestHandleObjDeleteObject_ServiceNotConfigured(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	t.Cleanup(cancel)
-
-	mock := &mockQuicBaaS{}
-	tr, err := New(mock)
-	require.NoError(t, err)
-
-	req := &objclient.DeleteObjectRequest{Key: "ns:test/object"}
-
-	resp, err := tr.Request(ctx, "quicbaas.ObjectStorage", "DeleteObject", req)
-	assert.Nil(t, resp)
-	require.Error(t, err)
-
-	var svcErr *ServiceNotConfiguredError
-	assert.ErrorAs(t, err, &svcErr)
 }
 
 // =============================================================================
@@ -639,23 +563,6 @@ func TestHandleObjHeadObject_Success(t *testing.T) {
 	assert.True(t, headResp.Exists)
 }
 
-func TestHandleObjHeadObject_InvalidRequestType(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	t.Cleanup(cancel)
-
-	objMock := &mockObjectStorageService{}
-	mock := &mockQuicBaaS{objectStorageService: objMock}
-	tr, err := New(mock)
-	require.NoError(t, err)
-
-	resp, err := tr.Request(ctx, "quicbaas.ObjectStorage", "HeadObject", 42)
-	assert.Nil(t, resp)
-	require.Error(t, err)
-
-	var typeErr *InvalidRequestTypeError
-	assert.ErrorAs(t, err, &typeErr)
-}
-
 // =============================================================================
 // ListObjects Handler Tests
 // =============================================================================
@@ -679,24 +586,6 @@ func TestHandleObjListObjects_Success(t *testing.T) {
 	require.True(t, ok)
 	assert.Len(t, listResp.Objects, 2)
 	assert.Equal(t, int64(2), listResp.TotalCount)
-}
-
-func TestHandleObjListObjects_ServiceNotConfigured(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	t.Cleanup(cancel)
-
-	mock := &mockQuicBaaS{}
-	tr, err := New(mock)
-	require.NoError(t, err)
-
-	req := &objclient.ListObjectsRequest{Prefix: "obj/"}
-
-	resp, err := tr.Request(ctx, "quicbaas.ObjectStorage", "ListObjects", req)
-	assert.Nil(t, resp)
-	require.Error(t, err)
-
-	var svcErr *ServiceNotConfiguredError
-	assert.ErrorAs(t, err, &svcErr)
 }
 
 // =============================================================================
@@ -724,23 +613,6 @@ func TestHandleObjCopyObject_Success(t *testing.T) {
 	copyResp, ok := resp.(*objclient.CopyObjectResponse)
 	require.True(t, ok)
 	assert.Equal(t, "ns:dst/obj", copyResp.Key)
-}
-
-func TestHandleObjCopyObject_InvalidRequestType(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	t.Cleanup(cancel)
-
-	objMock := &mockObjectStorageService{}
-	mock := &mockQuicBaaS{objectStorageService: objMock}
-	tr, err := New(mock)
-	require.NoError(t, err)
-
-	resp, err := tr.Request(ctx, "quicbaas.ObjectStorage", "CopyObject", "wrong")
-	assert.Nil(t, resp)
-	require.Error(t, err)
-
-	var typeErr *InvalidRequestTypeError
-	assert.ErrorAs(t, err, &typeErr)
 }
 
 // =============================================================================
@@ -773,24 +645,6 @@ func TestHandleObjReplicateObject_Success(t *testing.T) {
 	assert.True(t, repResp.Results["backup"].Success)
 }
 
-func TestHandleObjReplicateObject_ServiceNotConfigured(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	t.Cleanup(cancel)
-
-	mock := &mockQuicBaaS{}
-	tr, err := New(mock)
-	require.NoError(t, err)
-
-	req := &objclient.ReplicateObjectRequest{Key: "ns:rep/obj", Targets: []string{"backup"}}
-
-	resp, err := tr.Request(ctx, "quicbaas.ObjectStorage", "ReplicateObject", req)
-	assert.Nil(t, resp)
-	require.Error(t, err)
-
-	var svcErr *ServiceNotConfiguredError
-	assert.ErrorAs(t, err, &svcErr)
-}
-
 // =============================================================================
 // VerifyObject Handler Tests
 // =============================================================================
@@ -814,23 +668,6 @@ func TestHandleObjVerifyObject_Success(t *testing.T) {
 	require.True(t, ok)
 	assert.True(t, verResp.Valid)
 	assert.Contains(t, verResp.Results, "default")
-}
-
-func TestHandleObjVerifyObject_InvalidRequestType(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	t.Cleanup(cancel)
-
-	objMock := &mockObjectStorageService{}
-	mock := &mockQuicBaaS{objectStorageService: objMock}
-	tr, err := New(mock)
-	require.NoError(t, err)
-
-	resp, err := tr.Request(ctx, "quicbaas.ObjectStorage", "VerifyObject", 42)
-	assert.Nil(t, resp)
-	require.Error(t, err)
-
-	var typeErr *InvalidRequestTypeError
-	assert.ErrorAs(t, err, &typeErr)
 }
 
 // =============================================================================
@@ -859,24 +696,6 @@ func TestHandleObjGetObjectPolicy_Success(t *testing.T) {
 	assert.True(t, policyResp.ReplicationPolicy.Enabled)
 	assert.Equal(t, 2, policyResp.ReplicationPolicy.MinReplicas)
 	assert.Equal(t, objclient.ReplicationModeAsync, policyResp.ReplicationPolicy.Mode)
-}
-
-func TestHandleObjGetObjectPolicy_ServiceNotConfigured(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	t.Cleanup(cancel)
-
-	mock := &mockQuicBaaS{}
-	tr, err := New(mock)
-	require.NoError(t, err)
-
-	req := &objclient.GetObjectPolicyRequest{Key: "ns:policy/obj"}
-
-	resp, err := tr.Request(ctx, "quicbaas.ObjectStorage", "GetObjectPolicy", req)
-	assert.Nil(t, resp)
-	require.Error(t, err)
-
-	var svcErr *ServiceNotConfiguredError
-	assert.ErrorAs(t, err, &svcErr)
 }
 
 // =============================================================================
@@ -909,23 +728,6 @@ func TestHandleObjSetObjectPolicy_Success(t *testing.T) {
 	assert.True(t, setResp.Success)
 }
 
-func TestHandleObjSetObjectPolicy_InvalidRequestType(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	t.Cleanup(cancel)
-
-	objMock := &mockObjectStorageService{}
-	mock := &mockQuicBaaS{objectStorageService: objMock}
-	tr, err := New(mock)
-	require.NoError(t, err)
-
-	resp, err := tr.Request(ctx, "quicbaas.ObjectStorage", "SetObjectPolicy", "bad")
-	assert.Nil(t, resp)
-	require.Error(t, err)
-
-	var typeErr *InvalidRequestTypeError
-	assert.ErrorAs(t, err, &typeErr)
-}
-
 // =============================================================================
 // Tenant Usage/Quotas Handler Tests
 // =============================================================================
@@ -951,23 +753,6 @@ func TestHandleObjGetTenantUsage_Success(t *testing.T) {
 	assert.Equal(t, int64(42), usageResp.ObjectCount)
 }
 
-func TestHandleObjGetTenantUsage_InvalidRequestType(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	t.Cleanup(cancel)
-
-	objMock := &mockObjectStorageService{}
-	mock := &mockQuicBaaS{objectStorageService: objMock}
-	tr, err := New(mock)
-	require.NoError(t, err)
-
-	resp, err := tr.Request(ctx, "quicbaas.ObjectStorage", "GetTenantUsage", 42)
-	assert.Nil(t, resp)
-	require.Error(t, err)
-
-	var typeErr *InvalidRequestTypeError
-	assert.ErrorAs(t, err, &typeErr)
-}
-
 func TestHandleObjSetTenantQuotas_Success(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	t.Cleanup(cancel)
@@ -990,24 +775,6 @@ func TestHandleObjSetTenantQuotas_Success(t *testing.T) {
 	quotaResp, ok := resp.(*objclient.SetTenantQuotasResponse)
 	require.True(t, ok)
 	assert.Equal(t, "tenant-1", quotaResp.TenantID)
-}
-
-func TestHandleObjSetTenantQuotas_ServiceNotConfigured(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	t.Cleanup(cancel)
-
-	mock := &mockQuicBaaS{}
-	tr, err := New(mock)
-	require.NoError(t, err)
-
-	req := &objclient.SetTenantQuotasRequest{TenantID: "tenant-1"}
-
-	resp, err := tr.Request(ctx, "quicbaas.ObjectStorage", "SetTenantQuotas", req)
-	assert.Nil(t, resp)
-	require.Error(t, err)
-
-	var svcErr *ServiceNotConfiguredError
-	assert.ErrorAs(t, err, &svcErr)
 }
 
 // =============================================================================
@@ -1042,23 +809,6 @@ func TestHandleObjBatchPutObjects_Success(t *testing.T) {
 	assert.Len(t, batchResp.Results, 2)
 }
 
-func TestHandleObjBatchPutObjects_InvalidRequestType(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	t.Cleanup(cancel)
-
-	objMock := &mockObjectStorageService{}
-	mock := &mockQuicBaaS{objectStorageService: objMock}
-	tr, err := New(mock)
-	require.NoError(t, err)
-
-	resp, err := tr.Request(ctx, "quicbaas.ObjectStorage", "BatchPutObjects", "bad")
-	assert.Nil(t, resp)
-	require.Error(t, err)
-
-	var typeErr *InvalidRequestTypeError
-	assert.ErrorAs(t, err, &typeErr)
-}
-
 // =============================================================================
 // BatchGetObjects Handler Tests
 // =============================================================================
@@ -1086,24 +836,6 @@ func TestHandleObjBatchGetObjects_Success(t *testing.T) {
 	assert.Empty(t, batchResp.NotFound)
 }
 
-func TestHandleObjBatchGetObjects_ServiceNotConfigured(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	t.Cleanup(cancel)
-
-	mock := &mockQuicBaaS{}
-	tr, err := New(mock)
-	require.NoError(t, err)
-
-	req := &objclient.BatchGetObjectsRequest{Keys: []string{"ns:batch/1"}}
-
-	resp, err := tr.Request(ctx, "quicbaas.ObjectStorage", "BatchGetObjects", req)
-	assert.Nil(t, resp)
-	require.Error(t, err)
-
-	var svcErr *ServiceNotConfiguredError
-	assert.ErrorAs(t, err, &svcErr)
-}
-
 // =============================================================================
 // BatchDeleteObjects Handler Tests
 // =============================================================================
@@ -1129,23 +861,6 @@ func TestHandleObjBatchDeleteObjects_Success(t *testing.T) {
 	require.True(t, ok)
 	assert.Len(t, batchResp.DeletedKeys, 2)
 	assert.Empty(t, batchResp.FailedKeys)
-}
-
-func TestHandleObjBatchDeleteObjects_InvalidRequestType(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	t.Cleanup(cancel)
-
-	objMock := &mockObjectStorageService{}
-	mock := &mockQuicBaaS{objectStorageService: objMock}
-	tr, err := New(mock)
-	require.NoError(t, err)
-
-	resp, err := tr.Request(ctx, "quicbaas.ObjectStorage", "BatchDeleteObjects", "bad")
-	assert.Nil(t, resp)
-	require.Error(t, err)
-
-	var typeErr *InvalidRequestTypeError
-	assert.ErrorAs(t, err, &typeErr)
 }
 
 // =============================================================================
@@ -1179,23 +894,6 @@ func TestHandleObjMigrateObject_Success(t *testing.T) {
 	assert.True(t, migResp.DeletedFromSource)
 }
 
-func TestHandleObjMigrateObject_InvalidRequestType(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	t.Cleanup(cancel)
-
-	objMock := &mockObjectStorageService{}
-	mock := &mockQuicBaaS{objectStorageService: objMock}
-	tr, err := New(mock)
-	require.NoError(t, err)
-
-	resp, err := tr.Request(ctx, "quicbaas.ObjectStorage", "MigrateObject", 42)
-	assert.Nil(t, resp)
-	require.Error(t, err)
-
-	var typeErr *InvalidRequestTypeError
-	assert.ErrorAs(t, err, &typeErr)
-}
-
 // =============================================================================
 // ArchiveObject Handler Tests
 // =============================================================================
@@ -1223,24 +921,6 @@ func TestHandleObjArchiveObject_Success(t *testing.T) {
 	assert.Equal(t, "ns:archive/obj", archResp.Key)
 	assert.True(t, archResp.Success)
 	assert.Equal(t, "cold", archResp.ArchiveStore)
-}
-
-func TestHandleObjArchiveObject_ServiceNotConfigured(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	t.Cleanup(cancel)
-
-	mock := &mockQuicBaaS{}
-	tr, err := New(mock)
-	require.NoError(t, err)
-
-	req := &objclient.ArchiveObjectRequest{Key: "ns:archive/obj"}
-
-	resp, err := tr.Request(ctx, "quicbaas.ObjectStorage", "ArchiveObject", req)
-	assert.Nil(t, resp)
-	require.Error(t, err)
-
-	var svcErr *ServiceNotConfiguredError
-	assert.ErrorAs(t, err, &svcErr)
 }
 
 // =============================================================================
@@ -1271,23 +951,6 @@ func TestHandleObjRestoreObject_Success(t *testing.T) {
 	assert.True(t, restoreResp.Success)
 }
 
-func TestHandleObjRestoreObject_InvalidRequestType(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	t.Cleanup(cancel)
-
-	objMock := &mockObjectStorageService{}
-	mock := &mockQuicBaaS{objectStorageService: objMock}
-	tr, err := New(mock)
-	require.NoError(t, err)
-
-	resp, err := tr.Request(ctx, "quicbaas.ObjectStorage", "RestoreObject", "bad")
-	assert.Nil(t, resp)
-	require.Error(t, err)
-
-	var typeErr *InvalidRequestTypeError
-	assert.ErrorAs(t, err, &typeErr)
-}
-
 // =============================================================================
 // ListBackends Handler Tests
 // =============================================================================
@@ -1311,23 +974,6 @@ func TestHandleObjListBackends_Success(t *testing.T) {
 	require.True(t, ok)
 	assert.Len(t, listResp.Backends, 1)
 	assert.Equal(t, "default", listResp.Backends[0].Name)
-}
-
-func TestHandleObjListBackends_InvalidRequestType(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	t.Cleanup(cancel)
-
-	objMock := &mockObjectStorageService{}
-	mock := &mockQuicBaaS{objectStorageService: objMock}
-	tr, err := New(mock)
-	require.NoError(t, err)
-
-	resp, err := tr.Request(ctx, "quicbaas.ObjectStorage", "ListBackends", 42)
-	assert.Nil(t, resp)
-	require.Error(t, err)
-
-	var typeErr *InvalidRequestTypeError
-	assert.ErrorAs(t, err, &typeErr)
 }
 
 // =============================================================================
@@ -1355,24 +1001,6 @@ func TestHandleObjGetBackendHealth_Success(t *testing.T) {
 	assert.True(t, healthResp.Healthy)
 }
 
-func TestHandleObjGetBackendHealth_ServiceNotConfigured(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	t.Cleanup(cancel)
-
-	mock := &mockQuicBaaS{}
-	tr, err := New(mock)
-	require.NoError(t, err)
-
-	req := &objclient.GetBackendHealthRequest{Name: "default"}
-
-	resp, err := tr.Request(ctx, "quicbaas.ObjectStorage", "GetBackendHealth", req)
-	assert.Nil(t, resp)
-	require.Error(t, err)
-
-	var svcErr *ServiceNotConfiguredError
-	assert.ErrorAs(t, err, &svcErr)
-}
-
 // =============================================================================
 // ListByTag Handler Tests
 // =============================================================================
@@ -1395,23 +1023,6 @@ func TestHandleObjListByTag_Success(t *testing.T) {
 	tagResp, ok := resp.(*objclient.ListByTagResponse)
 	require.True(t, ok)
 	assert.Len(t, tagResp.Objects, 1)
-}
-
-func TestHandleObjListByTag_InvalidRequestType(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	t.Cleanup(cancel)
-
-	objMock := &mockObjectStorageService{}
-	mock := &mockQuicBaaS{objectStorageService: objMock}
-	tr, err := New(mock)
-	require.NoError(t, err)
-
-	resp, err := tr.Request(ctx, "quicbaas.ObjectStorage", "ListByTag", 42)
-	assert.Nil(t, resp)
-	require.Error(t, err)
-
-	var typeErr *InvalidRequestTypeError
-	assert.ErrorAs(t, err, &typeErr)
 }
 
 // =============================================================================
@@ -1438,24 +1049,6 @@ func TestHandleObjListByTenant_Success(t *testing.T) {
 	assert.Len(t, tenantResp.Objects, 1)
 }
 
-func TestHandleObjListByTenant_ServiceNotConfigured(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	t.Cleanup(cancel)
-
-	mock := &mockQuicBaaS{}
-	tr, err := New(mock)
-	require.NoError(t, err)
-
-	req := &objclient.ListByTenantRequest{TenantID: "tenant-1"}
-
-	resp, err := tr.Request(ctx, "quicbaas.ObjectStorage", "ListByTenant", req)
-	assert.Nil(t, resp)
-	require.Error(t, err)
-
-	var svcErr *ServiceNotConfiguredError
-	assert.ErrorAs(t, err, &svcErr)
-}
-
 // =============================================================================
 // GetTenantQuotas Handler Tests
 // =============================================================================
@@ -1479,21 +1072,4 @@ func TestHandleObjGetTenantQuotas_Success(t *testing.T) {
 	require.True(t, ok)
 	assert.Equal(t, "tenant-1", quotaResp.TenantID)
 	assert.Equal(t, int64(1073741824), quotaResp.MaxStorageBytes)
-}
-
-func TestHandleObjGetTenantQuotas_InvalidRequestType(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	t.Cleanup(cancel)
-
-	objMock := &mockObjectStorageService{}
-	mock := &mockQuicBaaS{objectStorageService: objMock}
-	tr, err := New(mock)
-	require.NoError(t, err)
-
-	resp, err := tr.Request(ctx, "quicbaas.ObjectStorage", "GetTenantQuotas", 42)
-	assert.Nil(t, resp)
-	require.Error(t, err)
-
-	var typeErr *InvalidRequestTypeError
-	assert.ErrorAs(t, err, &typeErr)
 }

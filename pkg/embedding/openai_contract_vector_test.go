@@ -141,37 +141,57 @@ func fixtureVector(i, dims int) []float32 {
 	return vec
 }
 
-func TestOpenAIProvider_Embed_CanceledContext(t *testing.T) {
-	cfg := openAIConfig()
-	p, _ := newTestOpenAIProvider(t, &cfg)
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
+func TestOpenAIProvider_Embed_Errors(t *testing.T) {
+	tests := []struct {
+		name string
+		// setup returns the context to embed with; it may stop the server.
+		setup func(t *testing.T, stopServer func()) context.Context
+		// want is the error the call must wrap; nil accepts any error.
+		want error
+	}{
+		{
+			name: "canceled context",
+			setup: func(t *testing.T, _ func()) context.Context {
+				ctx, cancel := context.WithCancel(context.Background())
+				cancel()
+				return ctx
+			},
+			want: context.Canceled,
+		},
+		{
+			name: "expired deadline",
+			setup: func(t *testing.T, _ func()) context.Context {
+				ctx, cancel := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
+				t.Cleanup(cancel)
+				return ctx
+			},
+			want: context.DeadlineExceeded,
+		},
+		{
+			name: "unreachable server",
+			setup: func(t *testing.T, stopServer func()) context.Context {
+				stopServer() // the listener is gone, so the dial is refused
+				return context.Background()
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			srv := openAIEmbeddingHandler(t, 4, nil)
+			cfg := openAIConfig()
+			cfg.APIURL = srv.URL
+			p, err := NewOpenAIProvider(cfg)
+			require.NoError(t, err)
+			t.Cleanup(func() { _ = p.Close() })
+			ctx := tt.setup(t, srv.Close)
 
-	_, err := p.Embed(ctx, "test")
-	require.ErrorIs(t, err, context.Canceled)
-}
-
-func TestOpenAIProvider_Embed_ExpiredDeadline(t *testing.T) {
-	cfg := openAIConfig()
-	p, _ := newTestOpenAIProvider(t, &cfg)
-	ctx, cancel := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
-	defer cancel()
-
-	_, err := p.Embed(ctx, "test")
-	require.ErrorIs(t, err, context.DeadlineExceeded)
-}
-
-func TestOpenAIProvider_Embed_UnreachableServer(t *testing.T) {
-	srv := openAIEmbeddingHandler(t, 4, nil)
-	cfg := openAIConfig()
-	cfg.APIURL = srv.URL
-	p, err := NewOpenAIProvider(cfg)
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = p.Close() })
-	srv.Close() // the listener is gone, so the dial is refused
-
-	_, err = p.Embed(context.Background(), "test")
-	require.Error(t, err)
+			_, err = p.Embed(ctx, "test")
+			require.Error(t, err)
+			if tt.want != nil {
+				require.ErrorIs(t, err, tt.want)
+			}
+		})
+	}
 }
 
 func TestManager_RegisterProvider_DuplicateRefused(t *testing.T) {
@@ -204,6 +224,15 @@ func TestManager_Embed_CacheHitSkipsProvider(t *testing.T) {
 	assert.Equal(t, uint64(1), stats.CacheHits)
 	assert.Equal(t, uint64(2), stats.CacheMisses)
 	assert.InDelta(t, 1.0/3.0, stats.CacheHitRate, 0.01)
+
+	// EmbedBatch goes to the provider directly; a repeat returns the same vectors.
+	texts := []string{"batch1", "batch2", "batch3"}
+	batch, err := m.EmbedBatch(ctx, texts)
+	require.NoError(t, err)
+	require.Len(t, batch, len(texts))
+	repeat, err := m.EmbedBatch(ctx, texts)
+	require.NoError(t, err)
+	assert.Equal(t, batch, repeat)
 }
 
 func TestManager_Embed_CacheCompressionIsLossless(t *testing.T) {
@@ -221,15 +250,4 @@ func TestManager_Embed_CacheCompressionIsLossless(t *testing.T) {
 			assert.Equal(t, int64(1), requests.Load())
 		})
 	}
-}
-
-func TestManager_EmbedBatch_RepeatReturnsSameVectors(t *testing.T) {
-	m, _ := newCachingManager(t, false)
-	texts := []string{"batch1", "batch2", "batch3"}
-
-	first, err := m.EmbedBatch(context.Background(), texts)
-	require.NoError(t, err)
-	second, err := m.EmbedBatch(context.Background(), texts)
-	require.NoError(t, err)
-	assert.Equal(t, first, second)
 }

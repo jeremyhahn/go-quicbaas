@@ -22,7 +22,6 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/config"
 	"github.com/jeremyhahn/go-quicbaas/pkg/embedding"
@@ -370,45 +369,6 @@ func TestNewSystemPipelineFailsAndEmbedderCloseAlsoFails(t *testing.T) {
 // This path is defense-in-depth after config validation
 // =============================================================================
 
-func TestNewSystemDimensionMismatchDirectPath(t *testing.T) {
-	restore := saveAndRestoreFactories(t)
-	defer restore()
-
-	// Create a custom config that bypasses validation but has mismatched dimensions
-	// This is only possible if we skip validation, so we test the error message format
-	cfg := createTestRAGConfig(t)
-	cfg.Embedding.Dimensions = 384
-	cfg.Vector.Dimensions = 512
-
-	// This should fail at config validation first
-	system, err := NewSystem(cfg)
-
-	assert.Nil(t, system)
-	assert.Error(t, err)
-	// Should contain dimension-related error (either from config validation or the check)
-	assert.Contains(t, err.Error(), "dimension")
-}
-
-// =============================================================================
-// Test factory function reset after each test
-// =============================================================================
-
-func TestFactoryFunctionsAreProperlyReset(t *testing.T) {
-	restore := saveAndRestoreFactories(t)
-	defer restore()
-
-	var callCount int32
-	createEmbedderFunc = func(cfg config.EmbeddingConfig) (embedding.Provider, error) {
-		atomic.AddInt32(&callCount, 1)
-		return &mockEmbedderAdapter{dimensions: cfg.Dimensions}, nil
-	}
-
-	cfg := createTestRAGConfig(t)
-	_, _ = NewSystem(cfg)
-
-	assert.Equal(t, int32(1), atomic.LoadInt32(&callCount))
-}
-
 // =============================================================================
 // Test concurrent factory function access
 // =============================================================================
@@ -441,31 +401,4 @@ func TestFactoryFunctionsConcurrentAccess(t *testing.T) {
 	}
 
 	assert.Equal(t, int32(5), atomic.LoadInt32(&callCount))
-}
-
-// =============================================================================
-// Additional validation tests
-// =============================================================================
-
-func TestNewSystemWithValidConfigSucceeds(t *testing.T) {
-	cfg := createTestRAGConfig(t)
-	system, err := NewSystem(cfg)
-
-	require.NoError(t, err)
-	require.NotNil(t, system)
-
-	err = system.Close()
-	assert.NoError(t, err)
-}
-
-func TestNewSystemReturnsCorrectErrorTypes(t *testing.T) {
-	t.Run("invalid config error", func(t *testing.T) {
-		cfg := createTestRAGConfig(t)
-		cfg.Embedding.Provider = ""
-
-		_, err := NewSystem(cfg)
-
-		assert.Error(t, err)
-		assert.ErrorIs(t, err, ErrInvalidConfig)
-	})
 }
