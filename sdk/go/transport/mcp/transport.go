@@ -383,6 +383,15 @@ func (t *Transport) doRequest(ctx context.Context, service, method string, reqBo
 	isDynamicSecrets := isMCPDynamicSecretsService(service)
 	isPIV := isMCPPIVService(service)
 	isFIDO2 := isMCPFIDO2Service(service)
+	isTrustedCA := isMCPTrustedCAService(service)
+
+	// The re-exported go-xkms CA is the closed xkms.ca.* tool set (#1330).
+	if isTrustedCA {
+		if _, ok := trustedCAToolName(method); !ok {
+			return nil, errors.NewUnimplemented("mcp.trustedca."+method,
+				"method not exposed by the CA MCP tool set")
+		}
+	}
 
 	// The PIV surface is a closed set of xkms.piv.* tools; a method with no
 	// tool fails fast with a typed Unimplemented naming the transport.
@@ -525,6 +534,11 @@ func (t *Transport) doRequest(ctx context.Context, service, method string, reqBo
 		if err != nil {
 			return nil, err
 		}
+	} else if isTrustedCA {
+		arguments, err = trustedCATransformRequest(method, reqBody)
+		if err != nil {
+			return nil, err
+		}
 	} else if isPIV {
 		// PIV requests are the go-xkms transport structs; their JSON tags
 		// are the tool argument names, so the transform is a round-trip.
@@ -579,6 +593,9 @@ func (t *Transport) doRequest(ctx context.Context, service, method string, reqBo
 
 	// Transform PIV and FIDO2 results into the go-xkms transport response
 	// types every other transport returns.
+	if isTrustedCA {
+		return trustedCATransformResponse(method, result)
+	}
 	if isPIV {
 		ph := newPIVMCPHandler()
 		return ph.transformResponse(method, result)
@@ -1071,6 +1088,11 @@ func ToolName(service, method string) string {
 
 	// PIV tools are the xkms compatibility set (xkms.piv.*) — dotted names
 	// the generic quicbaas_* derivation would never produce.
+	if isMCPTrustedCAService(service) {
+		if toolName, ok := trustedCAToolName(method); ok {
+			return toolName
+		}
+	}
 	if isMCPPIVService(service) {
 		if toolName, ok := pivToolName(method); ok {
 			return toolName
