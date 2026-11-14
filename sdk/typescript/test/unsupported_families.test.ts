@@ -1,7 +1,7 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// gRPC-Web, Unix and Wails cannot carry projects, sdlc or accounts today (see
+// gRPC-Web, Unix and Wails cannot carry projects, sdlc, accounts or prompts today (see
 // docs/software-factory/api.md for why). Each family is still an object of
 // its declared type whose every verb rejects with TransportNotSupportedError
 // naming the transport, the family, the verb and the reason — not a null that
@@ -29,6 +29,7 @@ describe.each(transports)('$name transport — projects, sdlc and accounts', ({ 
       ['projects', 'createProject', c.projects.createProject({ tenant_id: 'tenant-a', name: 'api' })],
       ['sdlc', 'binding', c.sdlc.binding('tenant-a', 'proj-1')],
       ['accounts', 'listAccountsPage', c.accounts.listAccountsPage({ tenant_id: 'tenant-a' })],
+      ['prompts', 'getEffectivePrompt', c.prompts.getEffectivePrompt({ set: 'sdlc', name: 'plan' })],
     ];
 
     for (const [family, method, call] of calls) {
