@@ -28,12 +28,9 @@ type Config struct {
 	// Examples: "*.tmp", "node_modules/", ".git/"
 	Exclude []string
 
-	// DebounceDelay is the time window for collecting rapid changes.
-	// Events for the same file within this window are deduplicated.
-	// Default: 100ms
-	DebounceDelay time.Duration
-
 	// BatchInterval is the interval at which batched events are emitted.
+	// It is the watcher's one coalescing window: events for the same path
+	// within an interval collapse to the last one.
 	// Setting this to 0 disables batching.
 	// Default: 1s
 	BatchInterval time.Duration
@@ -65,7 +62,6 @@ func DefaultConfig() Config {
 	return Config{
 		Paths:          []string{},
 		Exclude:        DefaultExclusions(),
-		DebounceDelay:  100 * time.Millisecond,
 		BatchInterval:  1 * time.Second,
 		IgnoreHidden:   true,
 		FollowSymlinks: false,
@@ -100,10 +96,6 @@ func DefaultExclusions() []string {
 func (c *Config) Validate() error {
 	if len(c.Paths) == 0 {
 		return ErrNoPaths
-	}
-
-	if c.DebounceDelay < 0 {
-		return ErrInvalidDebounceDelay
 	}
 
 	if c.BatchInterval < 0 {
