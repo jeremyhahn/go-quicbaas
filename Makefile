@@ -4676,7 +4676,7 @@ test-fleet-placement: ## Run fleet placement spec + drift unit tests (store, inv
 	GOTOOLCHAIN=go$(GO_VERSION) $(GOTEST) -race -count=1 -tags '$(BUILD_TAGS)' ./pkg/service/ ./pkg/server/ -run 'FleetPlacement'
 	GOTOOLCHAIN=go$(GO_VERSION) $(GOTEST) -race -count=1 -tags '$(BUILD_TAGS)' ./pkg/api/rest/ -run 'FleetPlacement|Routes|RouteSurface|FrozenPermission|Authz|RouteLookup'
 	GOTOOLCHAIN=go$(GO_VERSION) $(GOTEST) -race -count=1 -tags '$(BUILD_TAGS)' ./pkg/api/grpc/
-	cd sdk/go && GOTOOLCHAIN=go$(GO_VERSION) $(GOTEST) -race -count=1 ./client/orchestrator/ ./transport/rest/ ./transport/embedded/ -run 'FleetPlacement|Orchestrator'
+	cd sdk/go && GOTOOLCHAIN=go$(GO_VERSION) $(GOTEST) -race -count=1 ./client/orchestrator/ ./transport/rest/ ./transport/embedded/ ./transport/grpc/ -run 'FleetPlacement|Orchestrator'
 
 .PHONY: integration-test-placement
 integration-test-placement: ## Run scheduler placement + job integration tests over REST, gRPC, QUIC, Unix and MCP
