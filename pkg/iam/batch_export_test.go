@@ -515,19 +515,6 @@ func TestExportUsersWithFilters(t *testing.T) {
 			t.Errorf("expected 0 users, got %d", len(users))
 		}
 	})
-
-	t.Run("context cancellation", func(t *testing.T) {
-		bm, storage := setupTestBatchManager(t)
-		populateTestData(t, storage, tenantID)
-
-		ctx, cancel := context.WithCancel(context.Background())
-		cancel() // Cancel immediately
-
-		_, err := bm.ExportUsers(ctx, tenantID, ExportFilter{})
-		if err == nil {
-			t.Error("expected cancellation error")
-		}
-	})
 }
 
 // TestExportRolesWithFilters tests ExportRoles with various filter combinations.
@@ -567,72 +554,6 @@ func TestExportRolesWithFilters(t *testing.T) {
 			t.Errorf("expected 2 roles, got %d", len(roles))
 		}
 	})
-
-	t.Run("export roles with time filter", func(t *testing.T) {
-		bm, storage := setupTestBatchManager(t)
-		populateTestData(t, storage, tenantID)
-
-		ctx := context.Background()
-		oneHourAgo := time.Now().Add(-1 * time.Hour)
-		filter := ExportFilter{
-			CreatedAfter: &oneHourAgo,
-		}
-
-		roles, err := bm.ExportRoles(ctx, tenantID, filter)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-
-		if len(roles) == 0 {
-			t.Error("expected at least 1 role matching time filter")
-		}
-	})
-
-	t.Run("export roles with updated before filter", func(t *testing.T) {
-		bm, storage := setupTestBatchManager(t)
-		populateTestData(t, storage, tenantID)
-
-		ctx := context.Background()
-		twoMinutesAgo := time.Now().Add(-2 * time.Minute)
-		filter := ExportFilter{
-			UpdatedBefore: &twoMinutesAgo,
-		}
-
-		roles, err := bm.ExportRoles(ctx, tenantID, filter)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-
-		// Verify all returned roles were updated before the filter time
-		for _, role := range roles {
-			if role.Updated.After(twoMinutesAgo) {
-				t.Errorf("role %s was updated after the filter time", role.ID)
-			}
-		}
-	})
-
-	t.Run("export roles with updated after filter", func(t *testing.T) {
-		bm, storage := setupTestBatchManager(t)
-		populateTestData(t, storage, tenantID)
-
-		ctx := context.Background()
-		oneMinuteAgo := time.Now().Add(-1 * time.Minute)
-		filter := ExportFilter{
-			UpdatedAfter: &oneMinuteAgo,
-		}
-
-		roles, err := bm.ExportRoles(ctx, tenantID, filter)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-
-		// Verify all returned roles were updated after the filter time
-		for _, role := range roles {
-			if role.Updated.Before(oneMinuteAgo) {
-				t.Errorf("role %s was updated before the filter time", role.ID)
-			}
-		}
-	})
 }
 
 // TestExportPoliciesWithFilters tests ExportPolicies with various filter combinations.
@@ -670,50 +591,6 @@ func TestExportPoliciesWithFilters(t *testing.T) {
 
 		if len(policies) != 1 {
 			t.Errorf("expected 1 policy, got %d", len(policies))
-		}
-	})
-
-	t.Run("export policies with time filter", func(t *testing.T) {
-		bm, storage := setupTestBatchManager(t)
-		populateTestData(t, storage, tenantID)
-
-		ctx := context.Background()
-		oneHourAgo := time.Now().Add(-1 * time.Hour)
-		tomorrow := time.Now().Add(24 * time.Hour)
-		filter := ExportFilter{
-			CreatedAfter:  &oneHourAgo,
-			CreatedBefore: &tomorrow,
-		}
-
-		policies, err := bm.ExportPolicies(ctx, tenantID, filter)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-
-		if len(policies) == 0 {
-			t.Error("expected at least 1 policy matching time filter")
-		}
-	})
-
-	t.Run("export policies with updated time filter", func(t *testing.T) {
-		bm, storage := setupTestBatchManager(t)
-		populateTestData(t, storage, tenantID)
-
-		ctx := context.Background()
-		twoMinutesAgo := time.Now().Add(-2 * time.Minute)
-		tomorrow := time.Now().Add(24 * time.Hour)
-		filter := ExportFilter{
-			UpdatedAfter:  &twoMinutesAgo,
-			UpdatedBefore: &tomorrow,
-		}
-
-		policies, err := bm.ExportPolicies(ctx, tenantID, filter)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-
-		if len(policies) == 0 {
-			t.Error("expected at least 1 policy matching updated time filter")
 		}
 	})
 
@@ -889,32 +766,6 @@ func TestFilterMatchFunctions(t *testing.T) {
 					t.Errorf("expected %v, got %v", tt.expected, result)
 				}
 			})
-		}
-	})
-
-	t.Run("policyMatchesFilter with name filter", func(t *testing.T) {
-		policy := &Policy{
-			Metadata: PolicyMetadata{
-				Name:    "test-policy",
-				Created: now,
-				Updated: now,
-			},
-		}
-
-		// Should match - name in list
-		filter := ExportFilter{
-			PolicyNames: []string{"test-policy", "other-policy"},
-		}
-		if !bm.policyMatchesFilter(policy, filter) {
-			t.Error("policy should match name filter")
-		}
-
-		// Should not match - name not in list
-		filter = ExportFilter{
-			PolicyNames: []string{"other-policy"},
-		}
-		if bm.policyMatchesFilter(policy, filter) {
-			t.Error("policy should not match filter with wrong name")
 		}
 	})
 
@@ -1181,194 +1032,119 @@ func TestConvertToImportRequest(t *testing.T) {
 func TestExportWithContextCancellation(t *testing.T) {
 	tenantID := "test-tenant"
 
-	t.Run("cancel during roles export", func(t *testing.T) {
-		bm, storage := setupTestBatchManager(t)
-		populateTestData(t, storage, tenantID)
+	tests := []struct {
+		name   string
+		export func(bm *BatchManager, ctx context.Context) error
+	}{
+		{
+			name: "users",
+			export: func(bm *BatchManager, ctx context.Context) error {
+				_, err := bm.ExportUsers(ctx, tenantID, ExportFilter{})
+				return err
+			},
+		},
+		{
+			name: "roles",
+			export: func(bm *BatchManager, ctx context.Context) error {
+				_, err := bm.ExportRoles(ctx, tenantID, ExportFilter{})
+				return err
+			},
+		},
+		{
+			name: "policies",
+			export: func(bm *BatchManager, ctx context.Context) error {
+				_, err := bm.ExportPolicies(ctx, tenantID, ExportFilter{})
+				return err
+			},
+		},
+	}
 
-		ctx, cancel := context.WithCancel(context.Background())
-		cancel()
+	for _, tt := range tests {
+		t.Run("cancel during "+tt.name+" export", func(t *testing.T) {
+			bm, storage := setupTestBatchManager(t)
+			populateTestData(t, storage, tenantID)
 
-		_, err := bm.ExportRoles(ctx, tenantID, ExportFilter{})
-		if err == nil {
-			t.Error("expected cancellation error")
-		}
-	})
+			ctx, cancel := context.WithCancel(context.Background())
+			cancel()
 
-	t.Run("cancel during policies export", func(t *testing.T) {
-		bm, storage := setupTestBatchManager(t)
-		populateTestData(t, storage, tenantID)
-
-		ctx, cancel := context.WithCancel(context.Background())
-		cancel()
-
-		_, err := bm.ExportPolicies(ctx, tenantID, ExportFilter{})
-		if err == nil {
-			t.Error("expected cancellation error")
-		}
-	})
+			if err := tt.export(bm, ctx); err == nil {
+				t.Error("expected cancellation error")
+			}
+		})
+	}
 }
 
 // TestExportErrorCases tests various error scenarios.
 func TestExportErrorCases(t *testing.T) {
-	t.Run("export users with nil identity store", func(t *testing.T) {
-		bm := NewBatchManager(BatchManagerOptions{})
-		ctx := context.Background()
-
-		_, err := bm.ExportUsers(ctx, "tenant", ExportFilter{})
-		if err == nil {
-			t.Error("expected error for nil identity store")
-		}
-	})
-
-	t.Run("export roles with nil identity store", func(t *testing.T) {
-		bm := NewBatchManager(BatchManagerOptions{})
-		ctx := context.Background()
-
-		_, err := bm.ExportRoles(ctx, "tenant", ExportFilter{})
-		if err == nil {
-			t.Error("expected error for nil identity store")
-		}
-	})
-
-	t.Run("export policies with nil policy engine", func(t *testing.T) {
-		bm := NewBatchManager(BatchManagerOptions{})
-		ctx := context.Background()
-
-		_, err := bm.ExportPolicies(ctx, "tenant", ExportFilter{})
-		if err == nil {
-			t.Error("expected error for nil policy engine")
-		}
-	})
-
-	t.Run("export users with empty tenant ID", func(t *testing.T) {
+	unconfigured := func(t *testing.T) *BatchManager {
+		return NewBatchManager(BatchManagerOptions{})
+	}
+	configured := func(t *testing.T) *BatchManager {
 		bm, _ := setupTestBatchManager(t)
-		ctx := context.Background()
-
-		_, err := bm.ExportUsers(ctx, "", ExportFilter{})
-		if err == nil {
-			t.Error("expected validation error for empty tenant ID")
-		}
-	})
-
-	t.Run("export roles with empty tenant ID", func(t *testing.T) {
-		bm, _ := setupTestBatchManager(t)
-		ctx := context.Background()
-
-		_, err := bm.ExportRoles(ctx, "", ExportFilter{})
-		if err == nil {
-			t.Error("expected validation error for empty tenant ID")
-		}
-	})
-
-	t.Run("export policies with empty tenant ID", func(t *testing.T) {
-		bm, _ := setupTestBatchManager(t)
-		ctx := context.Background()
-
-		_, err := bm.ExportPolicies(ctx, "", ExportFilter{})
-		if err == nil {
-			t.Error("expected validation error for empty tenant ID")
-		}
-	})
-}
-
-// =============================================================================
-// BatchManager - ExportAll more coverage
-// =============================================================================
-
-func TestBatchManager_ExportAll_AllIncludes(t *testing.T) {
-	storage := NewMemoryStorage()
-
-	identityStore := NewIdentityStore(IdentityStoreOptions{
-		UserStorage: storage,
-		RoleStorage: storage,
-	})
-
-	policyEngine := NewPolicyEngine(PolicyEngineOptions{
-		Storage: storage,
-	})
-
-	bm := NewBatchManager(BatchManagerOptions{
-		IdentityStore: identityStore,
-		PolicyEngine:  policyEngine,
-	})
-
-	ctx := context.Background()
-	tenantID := "export-all-tenant"
-
-	// Create tenant
-	tenant := &Tenant{ID: tenantID, Name: "Export All Tenant", Created: time.Now()}
-	if err := storage.CreateTenant(ctx, tenant); err != nil {
-		t.Fatalf("CreateTenant failed: %v", err)
+		return bm
 	}
 
-	// Create some data
-	user := &User{ID: 21, TenantID: tenantID, Email: "user1@test.com", Name: "User One", Created: time.Now(), Updated: time.Now()}
-	if err := storage.CreateUser(ctx, user); err != nil {
-		t.Fatalf("CreateUser failed: %v", err)
+	tests := []struct {
+		name    string
+		manager func(t *testing.T) *BatchManager
+		export  func(bm *BatchManager, ctx context.Context) error
+	}{
+		{
+			name:    "export users with nil identity store",
+			manager: unconfigured,
+			export: func(bm *BatchManager, ctx context.Context) error {
+				_, err := bm.ExportUsers(ctx, "tenant", ExportFilter{})
+				return err
+			},
+		},
+		{
+			name:    "export roles with nil identity store",
+			manager: unconfigured,
+			export: func(bm *BatchManager, ctx context.Context) error {
+				_, err := bm.ExportRoles(ctx, "tenant", ExportFilter{})
+				return err
+			},
+		},
+		{
+			name:    "export policies with nil policy engine",
+			manager: unconfigured,
+			export: func(bm *BatchManager, ctx context.Context) error {
+				_, err := bm.ExportPolicies(ctx, "tenant", ExportFilter{})
+				return err
+			},
+		},
+		{
+			name:    "export users with empty tenant ID",
+			manager: configured,
+			export: func(bm *BatchManager, ctx context.Context) error {
+				_, err := bm.ExportUsers(ctx, "", ExportFilter{})
+				return err
+			},
+		},
+		{
+			name:    "export roles with empty tenant ID",
+			manager: configured,
+			export: func(bm *BatchManager, ctx context.Context) error {
+				_, err := bm.ExportRoles(ctx, "", ExportFilter{})
+				return err
+			},
+		},
+		{
+			name:    "export policies with empty tenant ID",
+			manager: configured,
+			export: func(bm *BatchManager, ctx context.Context) error {
+				_, err := bm.ExportPolicies(ctx, "", ExportFilter{})
+				return err
+			},
+		},
 	}
 
-	role := &Role{ID: "role-1", TenantID: tenantID, Name: "Role One", Created: time.Now(), Updated: time.Now()}
-	if err := storage.CreateRole(ctx, role); err != nil {
-		t.Fatalf("CreateRole failed: %v", err)
-	}
-
-	policy := &Policy{
-		APIVersion: "v1",
-		Kind:       "Policy",
-		Metadata:   PolicyMetadata{Name: "policy-1", Tenant: tenantID},
-		Spec:       PolicySpec{Rules: []Rule{{Name: "r1", Effect: EffectAllow, Actions: []string{"read"}, Resources: []string{"*"}}}},
-	}
-	if err := policyEngine.CreatePolicy(ctx, tenantID, policy); err != nil {
-		t.Fatalf("CreatePolicy failed: %v", err)
-	}
-
-	// Export all
-	result, err := bm.ExportAll(ctx, &BatchExportRequest{
-		TenantID:        tenantID,
-		IncludeUsers:    true,
-		IncludeRoles:    true,
-		IncludePolicies: true,
-	})
-	if err != nil {
-		t.Fatalf("ExportAll failed: %v", err)
-	}
-	if len(result.Users) != 1 {
-		t.Errorf("expected 1 user, got %d", len(result.Users))
-	}
-	if len(result.Roles) != 1 {
-		t.Errorf("expected 1 role, got %d", len(result.Roles))
-	}
-	if len(result.Policies) != 1 {
-		t.Errorf("expected 1 policy, got %d", len(result.Policies))
-	}
-}
-
-func TestBatchManager_ExportAll_ValidationError(t *testing.T) {
-	storage := NewMemoryStorage()
-
-	identityStore := NewIdentityStore(IdentityStoreOptions{
-		UserStorage: storage,
-		RoleStorage: storage,
-	})
-
-	policyEngine := NewPolicyEngine(PolicyEngineOptions{
-		Storage: storage,
-	})
-
-	bm := NewBatchManager(BatchManagerOptions{
-		IdentityStore: identityStore,
-		PolicyEngine:  policyEngine,
-	})
-
-	ctx := context.Background()
-
-	// Export with empty tenant ID should fail
-	_, err := bm.ExportAll(ctx, &BatchExportRequest{
-		TenantID:     "", // Missing tenant ID
-		IncludeUsers: true,
-	})
-	if err == nil {
-		t.Error("expected validation error for empty tenant ID")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if err := tt.export(tt.manager(t), context.Background()); err == nil {
+				t.Errorf("expected error: %s", tt.name)
+			}
+		})
 	}
 }
 
@@ -1446,93 +1222,52 @@ func TestBatchManager_ImportAll_NoItems(t *testing.T) {
 // AdminManager - CreateAssignment error paths
 // =============================================================================
 
-func TestAdminManager_CreateAssignment_InvalidRole(t *testing.T) {
-	adminStorage := NewMemoryAdminStorage()
-	impersonationStorage := NewMemoryImpersonationStorage()
+// newErrorPathAdminManager builds an AdminManager over in-memory storage
+// for the validation tests below.
+func newErrorPathAdminManager(t *testing.T) *AdminManager {
+	t.Helper()
 	auditLogger, err := NewAuditLogger(WithAuditStorage(NewMemoryAuditStorage()))
 	if err != nil {
 		t.Fatalf("NewAuditLogger failed: %v", err)
 	}
 
 	mgr, err := NewAdminManager(AdminManagerOptions{
-		AdminStorage:         adminStorage,
-		ImpersonationStorage: impersonationStorage,
+		AdminStorage:         NewMemoryAdminStorage(),
+		ImpersonationStorage: NewMemoryImpersonationStorage(),
 		AuditLogger:          auditLogger,
 	})
 	if err != nil {
 		t.Fatalf("NewAdminManager failed: %v", err)
 	}
-
-	ctx := context.Background()
-
-	// Create assignment with invalid role
-	_, err = mgr.CreateAssignment(ctx, CreateAdminAssignmentOptions{
-		UserID:    1,
-		AdminRole: AdminRole("invalid-role"), // Invalid role
-		GrantedBy: "admin-1",
-	})
-	if err == nil {
-		t.Error("expected error for invalid role")
-	}
+	return mgr
 }
 
-func TestAdminManager_CreateAssignment_MissingUserID(t *testing.T) {
-	adminStorage := NewMemoryAdminStorage()
-	impersonationStorage := NewMemoryImpersonationStorage()
-	auditLogger, err := NewAuditLogger(WithAuditStorage(NewMemoryAuditStorage()))
-	if err != nil {
-		t.Fatalf("NewAuditLogger failed: %v", err)
+func TestAdminManager_CreateAssignment_ValidationErrors(t *testing.T) {
+	tests := []struct {
+		name string
+		opts CreateAdminAssignmentOptions
+	}{
+		{
+			name: "invalid role",
+			opts: CreateAdminAssignmentOptions{UserID: 1, AdminRole: AdminRole("invalid-role"), GrantedBy: "admin-1"},
+		},
+		{
+			name: "missing user ID",
+			opts: CreateAdminAssignmentOptions{UserID: 0, AdminRole: AdminRoleTenantAdmin, GrantedBy: "admin-1"},
+		},
+		{
+			name: "missing granted by",
+			opts: CreateAdminAssignmentOptions{UserID: 1, AdminRole: AdminRoleTenantAdmin, GrantedBy: ""},
+		},
 	}
 
-	mgr, err := NewAdminManager(AdminManagerOptions{
-		AdminStorage:         adminStorage,
-		ImpersonationStorage: impersonationStorage,
-		AuditLogger:          auditLogger,
-	})
-	if err != nil {
-		t.Fatalf("NewAdminManager failed: %v", err)
-	}
-
-	ctx := context.Background()
-
-	// Create assignment with missing user ID
-	_, err = mgr.CreateAssignment(ctx, CreateAdminAssignmentOptions{
-		UserID:    0, // Missing user ID
-		AdminRole: AdminRoleTenantAdmin,
-		GrantedBy: "admin-1",
-	})
-	if err == nil {
-		t.Error("expected error for missing user ID")
-	}
-}
-
-func TestAdminManager_CreateAssignment_MissingGrantedBy(t *testing.T) {
-	adminStorage := NewMemoryAdminStorage()
-	impersonationStorage := NewMemoryImpersonationStorage()
-	auditLogger, err := NewAuditLogger(WithAuditStorage(NewMemoryAuditStorage()))
-	if err != nil {
-		t.Fatalf("NewAuditLogger failed: %v", err)
-	}
-
-	mgr, err := NewAdminManager(AdminManagerOptions{
-		AdminStorage:         adminStorage,
-		ImpersonationStorage: impersonationStorage,
-		AuditLogger:          auditLogger,
-	})
-	if err != nil {
-		t.Fatalf("NewAdminManager failed: %v", err)
-	}
-
-	ctx := context.Background()
-
-	// Create assignment with missing granted by
-	_, err = mgr.CreateAssignment(ctx, CreateAdminAssignmentOptions{
-		UserID:    1,
-		AdminRole: AdminRoleTenantAdmin,
-		GrantedBy: "", // Missing granted by
-	})
-	if err == nil {
-		t.Error("expected error for missing granted by")
+	mgr := newErrorPathAdminManager(t)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if _, err := mgr.CreateAssignment(context.Background(), tt.opts); err == nil {
+				t.Errorf("expected error for %s", tt.name)
+			}
+		})
 	}
 }
 
@@ -1540,91 +1275,46 @@ func TestAdminManager_CreateAssignment_MissingGrantedBy(t *testing.T) {
 // AdminManager - StartImpersonation error paths
 // =============================================================================
 
-// TestAdminManager_StartImpersonation_NoAuthenticatedCaller replaces the
-// former "missing admin_user_id" test: the actor is no longer a request
-// field but the authenticated principal in context (go-quicbaas#383), so
-// the failure mode is an unauthenticated caller, which fails closed.
-func TestAdminManager_StartImpersonation_NoAuthenticatedCaller(t *testing.T) {
-	adminStorage := NewMemoryAdminStorage()
-	impersonationStorage := NewMemoryImpersonationStorage()
-	auditLogger, err := NewAuditLogger(WithAuditStorage(NewMemoryAuditStorage()))
-	if err != nil {
-		t.Fatalf("NewAuditLogger failed: %v", err)
+// TestAdminManager_StartImpersonation_ValidationErrors covers the request
+// checks. The actor is no longer a request field but the authenticated
+// principal in context (go-quicbaas#383), so a caller with no subject in ctx
+// is refused with ErrImpersonationActorRequired: it fails closed.
+func TestAdminManager_StartImpersonation_ValidationErrors(t *testing.T) {
+	tests := []struct {
+		name    string
+		ctx     context.Context
+		opts    StartImpersonationOptions
+		wantErr error
+	}{
+		{
+			name:    "no authenticated caller",
+			ctx:     context.Background(),
+			opts:    StartImpersonationOptions{TargetUserID: 40021, TenantID: "tenant-1", Reason: "Testing"},
+			wantErr: ErrImpersonationActorRequired,
+		},
+		{
+			name: "missing target user ID",
+			ctx:  ctxWithActor(30021),
+			opts: StartImpersonationOptions{TargetUserID: 0, TenantID: "tenant-1", Reason: "Testing"},
+		},
+		{
+			name: "missing reason",
+			ctx:  ctxWithActor(30021),
+			opts: StartImpersonationOptions{TargetUserID: 40021, TenantID: "tenant-1", Reason: ""},
+		},
 	}
 
-	mgr, err := NewAdminManager(AdminManagerOptions{
-		AdminStorage:         adminStorage,
-		ImpersonationStorage: impersonationStorage,
-		AuditLogger:          auditLogger,
-	})
-	if err != nil {
-		t.Fatalf("NewAdminManager failed: %v", err)
-	}
-
-	// No subject bound into ctx: an unauthenticated caller.
-	ctx := context.Background()
-
-	_, err = mgr.StartImpersonation(ctx, &StartImpersonationOptions{
-		TargetUserID: 40021,
-		TenantID:     "tenant-1",
-		Reason:       "Testing",
-	})
-	if !errors.Is(err, ErrImpersonationActorRequired) {
-		t.Errorf("expected ErrImpersonationActorRequired for an unauthenticated caller, got %v", err)
-	}
-}
-
-func TestAdminManager_StartImpersonation_MissingTargetUserID(t *testing.T) {
-	adminStorage := NewMemoryAdminStorage()
-	impersonationStorage := NewMemoryImpersonationStorage()
-	auditLogger, err := NewAuditLogger(WithAuditStorage(NewMemoryAuditStorage()))
-	if err != nil {
-		t.Fatalf("NewAuditLogger failed: %v", err)
-	}
-
-	mgr, err := NewAdminManager(AdminManagerOptions{
-		AdminStorage:         adminStorage,
-		ImpersonationStorage: impersonationStorage,
-		AuditLogger:          auditLogger,
-	})
-	if err != nil {
-		t.Fatalf("NewAdminManager failed: %v", err)
-	}
-
-	_, err = mgr.StartImpersonation(ctxWithActor(30021), &StartImpersonationOptions{
-		TargetUserID: 0, // Missing
-		TenantID:     "tenant-1",
-		Reason:       "Testing",
-	})
-	if err == nil {
-		t.Error("expected error for missing target user ID")
-	}
-}
-
-func TestAdminManager_StartImpersonation_MissingReason(t *testing.T) {
-	adminStorage := NewMemoryAdminStorage()
-	impersonationStorage := NewMemoryImpersonationStorage()
-	auditLogger, err := NewAuditLogger(WithAuditStorage(NewMemoryAuditStorage()))
-	if err != nil {
-		t.Fatalf("NewAuditLogger failed: %v", err)
-	}
-
-	mgr, err := NewAdminManager(AdminManagerOptions{
-		AdminStorage:         adminStorage,
-		ImpersonationStorage: impersonationStorage,
-		AuditLogger:          auditLogger,
-	})
-	if err != nil {
-		t.Fatalf("NewAdminManager failed: %v", err)
-	}
-
-	_, err = mgr.StartImpersonation(ctxWithActor(30021), &StartImpersonationOptions{
-		TargetUserID: 40021,
-		TenantID:     "tenant-1",
-		Reason:       "", // Missing
-	})
-	if err == nil {
-		t.Error("expected error for missing reason")
+	mgr := newErrorPathAdminManager(t)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := mgr.StartImpersonation(tt.ctx, &tt.opts)
+			if err == nil {
+				t.Fatalf("expected error for %s", tt.name)
+			}
+			if tt.wantErr != nil && !errors.Is(err, tt.wantErr) {
+				t.Errorf("expected %v, got %v", tt.wantErr, err)
+			}
+		})
 	}
 }
 
@@ -1714,36 +1404,6 @@ func TestBatchManager_ImportRoles_WithPermissions(t *testing.T) {
 	}
 	if result.SuccessCount != 1 {
 		t.Errorf("expected 1 success, got %d", result.SuccessCount)
-	}
-}
-
-// =============================================================================
-// ExportUsers - context cancellation
-// =============================================================================
-
-func TestBatchManager_ExportUsers_ContextCanceled(t *testing.T) {
-	storage := NewMemoryStorage()
-
-	identityStore := NewIdentityStore(IdentityStoreOptions{
-		UserStorage: storage,
-		RoleStorage: storage,
-	})
-
-	policyEngine := NewPolicyEngine(PolicyEngineOptions{
-		Storage: storage,
-	})
-
-	bm := NewBatchManager(BatchManagerOptions{
-		IdentityStore: identityStore,
-		PolicyEngine:  policyEngine,
-	})
-
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-
-	_, err := bm.ExportUsers(ctx, "tenant-1", ExportFilter{})
-	if err == nil {
-		t.Error("expected error for canceled context")
 	}
 }
 

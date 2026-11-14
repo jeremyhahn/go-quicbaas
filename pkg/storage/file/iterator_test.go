@@ -26,16 +26,6 @@ import (
 // NewIterator() tests
 // -----------------------------------------------------------------------------
 
-func TestIterator_CreatesIterator(t *testing.T) {
-	store := createTestStorage(t)
-	defer store.Close()
-
-	iter := store.NewIterator(nil)
-
-	require.NotNil(t, iter)
-	assert.NoError(t, iter.Close())
-}
-
 func TestIterator_SeekToFirst_EmptyStorage(t *testing.T) {
 	store := createTestStorage(t)
 	defer store.Close()

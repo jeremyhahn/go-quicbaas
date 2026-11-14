@@ -44,38 +44,295 @@ func iamTenantUserTestInitLogger(t *testing.T) func() {
 	}
 }
 
-// =============================================================================
-// IAM Tenant Command Tests - Factory Error Paths
-// =============================================================================
-
-func TestIAMTenantCreateCommand_FactoryError(t *testing.T) {
-	cleanup := iamTenantUserTestInitLogger(t)
-	defer cleanup()
-
-	origFactory := iamClientFactory
-	defer func() { iamClientFactory = origFactory }()
-
-	iamClientFactory = func() (iam.Client, error) {
-		return nil, errors.New(errors.ErrUnavailable, "test", "connection failed")
-	}
-
-	cmd := newIAMTenantCreateCommand()
-	tenantName = "Test Tenant"
-
-	err := runIAMTenantCreateCommand(cmd, []string{"test-tenant"})
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "connection failed")
+// iamCommandCase is one IAM tenant or user command run with the given
+// arguments after setup has set its flags and globals.
+type iamCommandCase struct {
+	name        string
+	newCommand  func() *cobra.Command
+	run         func(*cobra.Command, []string) error
+	args        []string
+	setup       func(t *testing.T, cmd *cobra.Command)
+	wantErrText string
 }
 
-func TestIAMTenantCreateCommand_EmptyTenantID(t *testing.T) {
-	cleanup := iamTenantUserTestInitLogger(t)
-	defer cleanup()
+// withIAMCommandGlobals installs factory as the IAM client factory and
+// restores it, the logger and the package globals the commands read when
+// the test ends.
+func withIAMCommandGlobals(t *testing.T, factory func() (iam.Client, error)) {
+	t.Helper()
+	logCleanup := iamTenantUserTestInitLogger(t)
+	origFactory := iamClientFactory
+	origTenantID := globalTenantID
+	origTenantName := tenantName
+	origUserName := iamUserName
+	origForce := iamForce
+	origRole := iamUserRole
+	origRoleUserID := iamRoleUserID
+	t.Cleanup(func() {
+		iamClientFactory = origFactory
+		globalTenantID = origTenantID
+		tenantName = origTenantName
+		iamUserName = origUserName
+		iamForce = origForce
+		iamUserRole = origRole
+		iamRoleUserID = origRoleUserID
+		newIAMTenantProvisionCommand()
+		logCleanup()
+	})
+	iamClientFactory = factory
+}
 
-	cmd := newIAMTenantCreateCommand()
+func setIAMCommandFlag(name, value string) func(t *testing.T, cmd *cobra.Command) {
+	return func(t *testing.T, cmd *cobra.Command) {
+		require.NoError(t, cmd.Flags().Set(name, value))
+	}
+}
 
-	err := runIAMTenantCreateCommand(cmd, []string{""})
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "tenant ID is required")
+func setIAMUserTenant(tenantID string) func(t *testing.T, cmd *cobra.Command) {
+	return func(t *testing.T, cmd *cobra.Command) {
+		globalTenantID = tenantID
+	}
+}
+
+func setIAMRoleBinding(tenantID string) func(t *testing.T, cmd *cobra.Command) {
+	return func(t *testing.T, cmd *cobra.Command) {
+		globalTenantID = tenantID
+		iamUserRole = "admin"
+		iamRoleUserID = "user_abc123"
+	}
+}
+
+func runIAMCommandCases(t *testing.T, factory func() (iam.Client, error), cases []iamCommandCase) {
+	t.Helper()
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			withIAMCommandGlobals(t, factory)
+			cmd := tc.newCommand()
+			if tc.setup != nil {
+				tc.setup(t, cmd)
+			}
+
+			err := tc.run(cmd, tc.args)
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), tc.wantErrText)
+		})
+	}
+}
+
+// TestIAMTenantUserCommands_FactoryError checks that every command returns
+// the client factory's error once its arguments are valid.
+func TestIAMTenantUserCommands_FactoryError(t *testing.T) {
+	factory := func() (iam.Client, error) {
+		return nil, errors.New(errors.ErrUnavailable, "test", "connection failed")
+	}
+	cases := []iamCommandCase{
+		{
+			name:       "tenant create",
+			newCommand: newIAMTenantCreateCommand,
+			run:        runIAMTenantCreateCommand,
+			args:       []string{"test-tenant"},
+			setup:      func(t *testing.T, cmd *cobra.Command) { tenantName = "Test Tenant" },
+		},
+		{
+			name:       "tenant provision",
+			newCommand: newIAMTenantProvisionCommand,
+			run:        runIAMTenantProvisionCommand,
+			args:       []string{"acme"},
+			setup:      setIAMCommandFlag("admin-enrollment", "invite"),
+		},
+		{
+			name:       "tenant get",
+			newCommand: newIAMTenantGetCommand,
+			run:        runIAMTenantGetCommand,
+			args:       []string{"test-tenant"},
+		},
+		{
+			name:       "tenant update",
+			newCommand: newIAMTenantUpdateCommand,
+			run:        runIAMTenantUpdateCommand,
+			args:       []string{"test-tenant"},
+			setup:      setIAMCommandFlag("name", "New Name"),
+		},
+		{
+			name:       "tenant delete",
+			newCommand: newIAMTenantDeleteCommand,
+			run:        runIAMTenantDeleteCommand,
+			args:       []string{"test-tenant"},
+			setup:      func(t *testing.T, cmd *cobra.Command) { iamForce = true },
+		},
+		{
+			name:       "tenant list",
+			newCommand: newIAMTenantListCommand,
+			run:        runIAMTenantListCommand,
+			args:       []string{},
+		},
+		{
+			name:       "user create",
+			newCommand: newIAMUserCreateCommand,
+			run:        runIAMUserCreateCommand,
+			args:       []string{"testuser@example.com"},
+			setup: func(t *testing.T, cmd *cobra.Command) {
+				globalTenantID = "test-tenant"
+				iamUserName = "Test User"
+			},
+		},
+		{
+			name:       "user get",
+			newCommand: newIAMUserGetCommand,
+			run:        runIAMUserGetCommand,
+			args:       []string{"user_abc123"},
+			setup:      setIAMUserTenant("test-tenant"),
+		},
+		{
+			name:       "user update",
+			newCommand: newIAMUserUpdateCommand,
+			run:        runIAMUserUpdateCommand,
+			args:       []string{"user_abc123"},
+			setup: func(t *testing.T, cmd *cobra.Command) {
+				setIAMCommandFlag("name", "New Name")(t, cmd)
+				globalTenantID = "test-tenant"
+			},
+		},
+		{
+			name:       "user delete",
+			newCommand: newIAMUserDeleteCommand,
+			run:        runIAMUserDeleteCommand,
+			args:       []string{"user_abc123"},
+			setup: func(t *testing.T, cmd *cobra.Command) {
+				globalTenantID = "test-tenant"
+				iamForce = true
+			},
+		},
+		{
+			name:       "user list",
+			newCommand: newIAMUserListCommand,
+			run:        runIAMUserListCommand,
+			args:       []string{},
+			setup:      setIAMUserTenant("test-tenant"),
+		},
+		{
+			name:       "user role assign",
+			newCommand: newIAMUserRoleAssignCommand,
+			run:        runIAMUserRoleAssignCommand,
+			args:       []string{},
+			setup:      setIAMRoleBinding("test-tenant"),
+		},
+		{
+			name:       "user role revoke",
+			newCommand: newIAMUserRoleRevokeCommand,
+			run:        runIAMUserRoleRevokeCommand,
+			args:       []string{},
+			setup:      setIAMRoleBinding("test-tenant"),
+		},
+	}
+	for i := range cases {
+		cases[i].wantErrText = "connection failed"
+	}
+	runIAMCommandCases(t, factory, cases)
+}
+
+// TestIAMTenantUserCommands_InvalidArgs checks that every command rejects
+// invalid arguments before it asks the factory for a client.
+func TestIAMTenantUserCommands_InvalidArgs(t *testing.T) {
+	factory := func() (iam.Client, error) {
+		return nil, errors.New(errors.ErrInternal, "test", "factory called before validation")
+	}
+	runIAMCommandCases(t, factory, []iamCommandCase{
+		{
+			name:        "tenant create empty tenant ID",
+			newCommand:  newIAMTenantCreateCommand,
+			run:         runIAMTenantCreateCommand,
+			args:        []string{""},
+			wantErrText: "tenant ID is required",
+		},
+		{
+			name:        "tenant provision empty tenant ID",
+			newCommand:  newIAMTenantProvisionCommand,
+			run:         runIAMTenantProvisionCommand,
+			args:        []string{""},
+			wantErrText: "tenant ID is required",
+		},
+		{
+			name:        "tenant update no flags",
+			newCommand:  newIAMTenantUpdateCommand,
+			run:         runIAMTenantUpdateCommand,
+			args:        []string{"test-tenant"},
+			wantErrText: "at least one of",
+		},
+		{
+			name:       "user create missing tenant",
+			newCommand: newIAMUserCreateCommand,
+			run:        runIAMUserCreateCommand,
+			args:       []string{"testuser@example.com"},
+			setup: func(t *testing.T, cmd *cobra.Command) {
+				globalTenantID = ""
+				iamUserName = "Test User"
+			},
+			wantErrText: "--tenant flag is required",
+		},
+		{
+			name:        "user get missing tenant",
+			newCommand:  newIAMUserGetCommand,
+			run:         runIAMUserGetCommand,
+			args:        []string{"user_abc123"},
+			setup:       setIAMUserTenant(""),
+			wantErrText: "--tenant flag is required",
+		},
+		{
+			name:       "user update missing tenant",
+			newCommand: newIAMUserUpdateCommand,
+			run:        runIAMUserUpdateCommand,
+			args:       []string{"user_abc123"},
+			setup: func(t *testing.T, cmd *cobra.Command) {
+				setIAMCommandFlag("name", "New Name")(t, cmd)
+				globalTenantID = ""
+			},
+			wantErrText: "--tenant flag is required",
+		},
+		{
+			name:        "user update no flags",
+			newCommand:  newIAMUserUpdateCommand,
+			run:         runIAMUserUpdateCommand,
+			args:        []string{"user_abc123"},
+			setup:       setIAMUserTenant("test-tenant"),
+			wantErrText: "at least one of",
+		},
+		{
+			name:       "user delete missing tenant",
+			newCommand: newIAMUserDeleteCommand,
+			run:        runIAMUserDeleteCommand,
+			args:       []string{"user_abc123"},
+			setup: func(t *testing.T, cmd *cobra.Command) {
+				globalTenantID = ""
+				iamForce = true
+			},
+			wantErrText: "--tenant flag is required",
+		},
+		{
+			name:        "user list missing tenant",
+			newCommand:  newIAMUserListCommand,
+			run:         runIAMUserListCommand,
+			args:        []string{},
+			setup:       setIAMUserTenant(""),
+			wantErrText: "--tenant flag is required",
+		},
+		{
+			name:        "user role assign missing tenant",
+			newCommand:  newIAMUserRoleAssignCommand,
+			run:         runIAMUserRoleAssignCommand,
+			args:        []string{},
+			setup:       setIAMRoleBinding(""),
+			wantErrText: "--tenant flag is required",
+		},
+		{
+			name:        "user role revoke missing tenant",
+			newCommand:  newIAMUserRoleRevokeCommand,
+			run:         runIAMUserRoleRevokeCommand,
+			args:        []string{},
+			setup:       setIAMRoleBinding(""),
+			wantErrText: "--tenant flag is required",
+		},
+	})
 }
 
 // withTenantProvisionState resets the provision flags to their defaults,
@@ -339,493 +596,113 @@ func TestIAMTenantProvisionCommand_ServerError(t *testing.T) {
 	assert.Contains(t, err.Error(), "tenant already exists")
 }
 
-func TestIAMTenantProvisionCommand_FactoryError(t *testing.T) {
-	_, cmd := withTenantProvisionState(t)
-	require.NoError(t, cmd.Flags().Set("admin-enrollment", "invite"))
-	iamClientFactory = func() (iam.Client, error) {
-		return nil, errors.New(errors.ErrUnavailable, "test", "connection failed")
-	}
-
-	err := runIAMTenantProvisionCommand(cmd, []string{"acme"})
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "connection failed")
-}
-
-func TestIAMTenantProvisionCommand_EmptyTenantID(t *testing.T) {
-	_, cmd := withTenantProvisionState(t)
-
-	err := runIAMTenantProvisionCommand(cmd, []string{""})
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "tenant ID is required")
-}
-
-func TestIAMTenantGetCommand_FactoryError(t *testing.T) {
-	cleanup := iamTenantUserTestInitLogger(t)
-	defer cleanup()
-
-	origFactory := iamClientFactory
-	defer func() { iamClientFactory = origFactory }()
-
-	iamClientFactory = func() (iam.Client, error) {
-		return nil, errors.New(errors.ErrUnavailable, "test", "connection failed")
-	}
-
-	cmd := newIAMTenantGetCommand()
-
-	err := runIAMTenantGetCommand(cmd, []string{"test-tenant"})
-	assert.Error(t, err)
-}
-
-func TestIAMTenantUpdateCommand_FactoryError(t *testing.T) {
-	cleanup := iamTenantUserTestInitLogger(t)
-	defer cleanup()
-
-	origFactory := iamClientFactory
-	defer func() { iamClientFactory = origFactory }()
-
-	iamClientFactory = func() (iam.Client, error) {
-		return nil, errors.New(errors.ErrUnavailable, "test", "connection failed")
-	}
-
-	cmd := newIAMTenantUpdateCommand()
-	cmd.Flags().Set("name", "New Name")
-
-	err := runIAMTenantUpdateCommand(cmd, []string{"test-tenant"})
-	assert.Error(t, err)
-}
-
-func TestIAMTenantUpdateCommand_NoFlagsProvided(t *testing.T) {
-	cleanup := iamTenantUserTestInitLogger(t)
-	defer cleanup()
-
-	cmd := newIAMTenantUpdateCommand()
-
-	err := runIAMTenantUpdateCommand(cmd, []string{"test-tenant"})
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "at least one of")
-}
-
-func TestIAMTenantDeleteCommand_FactoryError(t *testing.T) {
-	cleanup := iamTenantUserTestInitLogger(t)
-	defer cleanup()
-
-	origFactory := iamClientFactory
-	defer func() { iamClientFactory = origFactory }()
-
-	iamClientFactory = func() (iam.Client, error) {
-		return nil, errors.New(errors.ErrUnavailable, "test", "connection failed")
-	}
-
-	cmd := newIAMTenantDeleteCommand()
-	iamForce = true
-
-	err := runIAMTenantDeleteCommand(cmd, []string{"test-tenant"})
-	assert.Error(t, err)
-}
-
-func TestIAMTenantListCommand_FactoryError(t *testing.T) {
-	cleanup := iamTenantUserTestInitLogger(t)
-	defer cleanup()
-
-	origFactory := iamClientFactory
-	defer func() { iamClientFactory = origFactory }()
-
-	iamClientFactory = func() (iam.Client, error) {
-		return nil, errors.New(errors.ErrUnavailable, "test", "connection failed")
-	}
-
-	cmd := newIAMTenantListCommand()
-
-	err := runIAMTenantListCommand(cmd, []string{})
-	assert.Error(t, err)
-}
-
-// =============================================================================
-// IAM User Command Tests - Factory Error Paths
-// =============================================================================
-
-func TestIAMUserCreateCommand_FactoryError(t *testing.T) {
-	cleanup := iamTenantUserTestInitLogger(t)
-	defer cleanup()
-
-	origFactory := iamClientFactory
-	defer func() { iamClientFactory = origFactory }()
-
-	iamClientFactory = func() (iam.Client, error) {
-		return nil, errors.New(errors.ErrUnavailable, "test", "connection failed")
-	}
-
-	cmd := newIAMUserCreateCommand()
-	globalTenantID = "test-tenant"
-	iamUserName = "Test User"
-
-	err := runIAMUserCreateCommand(cmd, []string{"testuser@example.com"})
-	assert.Error(t, err)
-}
-
-func TestIAMUserCreateCommand_MissingTenant(t *testing.T) {
-	cleanup := iamTenantUserTestInitLogger(t)
-	defer cleanup()
-
-	cmd := newIAMUserCreateCommand()
-	globalTenantID = ""
-	iamUserName = "Test User"
-
-	err := runIAMUserCreateCommand(cmd, []string{"testuser@example.com"})
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "--tenant flag is required")
-}
-
-func TestIAMUserGetCommand_FactoryError(t *testing.T) {
-	cleanup := iamTenantUserTestInitLogger(t)
-	defer cleanup()
-
-	origFactory := iamClientFactory
-	defer func() { iamClientFactory = origFactory }()
-
-	iamClientFactory = func() (iam.Client, error) {
-		return nil, errors.New(errors.ErrUnavailable, "test", "connection failed")
-	}
-
-	cmd := newIAMUserGetCommand()
-	globalTenantID = "test-tenant"
-
-	err := runIAMUserGetCommand(cmd, []string{"user_abc123"})
-	assert.Error(t, err)
-}
-
-func TestIAMUserGetCommand_MissingTenant(t *testing.T) {
-	cleanup := iamTenantUserTestInitLogger(t)
-	defer cleanup()
-
-	cmd := newIAMUserGetCommand()
-	globalTenantID = ""
-
-	err := runIAMUserGetCommand(cmd, []string{"user_abc123"})
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "--tenant flag is required")
-}
-
-func TestIAMUserUpdateCommand_FactoryError(t *testing.T) {
-	cleanup := iamTenantUserTestInitLogger(t)
-	defer cleanup()
-
-	origFactory := iamClientFactory
-	defer func() { iamClientFactory = origFactory }()
-
-	iamClientFactory = func() (iam.Client, error) {
-		return nil, errors.New(errors.ErrUnavailable, "test", "connection failed")
-	}
-
-	cmd := newIAMUserUpdateCommand()
-	cmd.Flags().Set("name", "New Name")
-	globalTenantID = "test-tenant"
-
-	err := runIAMUserUpdateCommand(cmd, []string{"user_abc123"})
-	assert.Error(t, err)
-}
-
-func TestIAMUserUpdateCommand_MissingTenant(t *testing.T) {
-	cleanup := iamTenantUserTestInitLogger(t)
-	defer cleanup()
-
-	cmd := newIAMUserUpdateCommand()
-	cmd.Flags().Set("name", "New Name")
-	globalTenantID = ""
-
-	err := runIAMUserUpdateCommand(cmd, []string{"user_abc123"})
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "--tenant flag is required")
-}
-
-func TestIAMUserUpdateCommand_NoFlagsProvided(t *testing.T) {
-	cleanup := iamTenantUserTestInitLogger(t)
-	defer cleanup()
-
-	cmd := newIAMUserUpdateCommand()
-	globalTenantID = "test-tenant"
-
-	err := runIAMUserUpdateCommand(cmd, []string{"user_abc123"})
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "at least one of")
-}
-
-func TestIAMUserDeleteCommand_FactoryError(t *testing.T) {
-	cleanup := iamTenantUserTestInitLogger(t)
-	defer cleanup()
-
-	origFactory := iamClientFactory
-	defer func() { iamClientFactory = origFactory }()
-
-	iamClientFactory = func() (iam.Client, error) {
-		return nil, errors.New(errors.ErrUnavailable, "test", "connection failed")
-	}
-
-	cmd := newIAMUserDeleteCommand()
-	globalTenantID = "test-tenant"
-	iamForce = true
-
-	err := runIAMUserDeleteCommand(cmd, []string{"user_abc123"})
-	assert.Error(t, err)
-}
-
-func TestIAMUserDeleteCommand_MissingTenant(t *testing.T) {
-	cleanup := iamTenantUserTestInitLogger(t)
-	defer cleanup()
-
-	cmd := newIAMUserDeleteCommand()
-	globalTenantID = ""
-	iamForce = true
-
-	err := runIAMUserDeleteCommand(cmd, []string{"user_abc123"})
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "--tenant flag is required")
-}
-
-func TestIAMUserListCommand_FactoryError(t *testing.T) {
-	cleanup := iamTenantUserTestInitLogger(t)
-	defer cleanup()
-
-	origFactory := iamClientFactory
-	defer func() { iamClientFactory = origFactory }()
-
-	iamClientFactory = func() (iam.Client, error) {
-		return nil, errors.New(errors.ErrUnavailable, "test", "connection failed")
-	}
-
-	cmd := newIAMUserListCommand()
-	globalTenantID = "test-tenant"
-
-	err := runIAMUserListCommand(cmd, []string{})
-	assert.Error(t, err)
-}
-
-func TestIAMUserListCommand_MissingTenant(t *testing.T) {
-	cleanup := iamTenantUserTestInitLogger(t)
-	defer cleanup()
-
-	cmd := newIAMUserListCommand()
-	globalTenantID = ""
-
-	err := runIAMUserListCommand(cmd, []string{})
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "--tenant flag is required")
-}
-
-// =============================================================================
-// IAM User Role Command Tests - Factory Error Paths
-// =============================================================================
-
-func TestIAMUserRoleAssignCommand_FactoryError(t *testing.T) {
-	cleanup := iamTenantUserTestInitLogger(t)
-	defer cleanup()
-
-	origFactory := iamClientFactory
-	defer func() { iamClientFactory = origFactory }()
-
-	iamClientFactory = func() (iam.Client, error) {
-		return nil, errors.New(errors.ErrUnavailable, "test", "connection failed")
-	}
-
-	cmd := newIAMUserRoleAssignCommand()
-	globalTenantID = "test-tenant"
-	iamUserRole = "admin"
-	iamRoleUserID = "user_abc123"
-
-	err := runIAMUserRoleAssignCommand(cmd, []string{})
-	assert.Error(t, err)
-}
-
-func TestIAMUserRoleAssignCommand_MissingTenant(t *testing.T) {
-	cleanup := iamTenantUserTestInitLogger(t)
-	defer cleanup()
-
-	cmd := newIAMUserRoleAssignCommand()
-	globalTenantID = ""
-	iamUserRole = "admin"
-	iamRoleUserID = "user_abc123"
-
-	err := runIAMUserRoleAssignCommand(cmd, []string{})
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "--tenant flag is required")
-}
-
-func TestIAMUserRoleRevokeCommand_FactoryError(t *testing.T) {
-	cleanup := iamTenantUserTestInitLogger(t)
-	defer cleanup()
-
-	origFactory := iamClientFactory
-	defer func() { iamClientFactory = origFactory }()
-
-	iamClientFactory = func() (iam.Client, error) {
-		return nil, errors.New(errors.ErrUnavailable, "test", "connection failed")
-	}
-
-	cmd := newIAMUserRoleRevokeCommand()
-	globalTenantID = "test-tenant"
-	iamUserRole = "admin"
-	iamRoleUserID = "user_abc123"
-
-	err := runIAMUserRoleRevokeCommand(cmd, []string{})
-	assert.Error(t, err)
-}
-
-func TestIAMUserRoleRevokeCommand_MissingTenant(t *testing.T) {
-	cleanup := iamTenantUserTestInitLogger(t)
-	defer cleanup()
-
-	cmd := newIAMUserRoleRevokeCommand()
-	globalTenantID = ""
-	iamUserRole = "admin"
-	iamRoleUserID = "user_abc123"
-
-	err := runIAMUserRoleRevokeCommand(cmd, []string{})
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "--tenant flag is required")
-}
-
 // =============================================================================
 // IAM Tenant Command Structure Tests
 // =============================================================================
 
-func TestNewIAMTenantCommand_FullStructure(t *testing.T) {
-	cmd := newIAMTenantCommand()
-	require.NotNil(t, cmd)
-	assert.Equal(t, "tenant", cmd.Use)
-	assert.NotEmpty(t, cmd.Short)
-	assert.NotEmpty(t, cmd.Long)
-
-	// Verify subcommands exist
-	expectedSubcmds := []string{"create", "provision", "get", "update", "delete", "list"}
-	for _, expected := range expectedSubcmds {
-		found := false
-		for _, sub := range cmd.Commands() {
-			if sub.Name() == expected {
-				found = true
-				break
-			}
-		}
-		assert.True(t, found, "Expected subcommand %s not found", expected)
+// TestNewIAMTenantUserCommands_Structure checks each command's use line,
+// subcommands and flags, and that the flags quicbaas does not offer are
+// absent.
+func TestNewIAMTenantUserCommands_Structure(t *testing.T) {
+	tests := []struct {
+		name         string
+		newCommand   func() *cobra.Command
+		wantUse      string
+		wantSubcmds  []string
+		wantFlags    []string
+		absentFlags  map[string]string
+		wantLongHelp bool
+	}{
+		{
+			name:         "tenant",
+			newCommand:   newIAMTenantCommand,
+			wantUse:      "tenant",
+			wantSubcmds:  []string{"create", "provision", "get", "update", "delete", "list"},
+			wantLongHelp: true,
+		},
+		{
+			name:       "tenant create",
+			newCommand: newIAMTenantCreateCommand,
+			wantUse:    "create",
+			wantFlags:  []string{"name", "max-users", "mfa-required"},
+		},
+		{
+			name:       "tenant update",
+			newCommand: newIAMTenantUpdateCommand,
+			wantUse:    "update",
+			wantFlags:  []string{"name", "max-users", "mfa-required"},
+		},
+		{
+			name:         "user",
+			newCommand:   newIAMUserCommand,
+			wantUse:      "user",
+			wantSubcmds:  []string{"create", "get", "update", "delete", "list", "role"},
+			wantLongHelp: true,
+		},
+		{
+			name:       "user create",
+			newCommand: newIAMUserCreateCommand,
+			wantUse:    "create",
+			wantFlags:  []string{"name", "roles", "role"},
+			absentFlags: map[string]string{
+				"groups":   "an account carries no group membership (go-quicbaas#1027)",
+				"password": "QuicBaaS uses invite-based FIDO2/PIV activation",
+			},
+		},
+		{
+			name:       "user update",
+			newCommand: newIAMUserUpdateCommand,
+			wantUse:    "update",
+			wantFlags:  []string{"name", "roles"},
+		},
+		{
+			name:        "user list",
+			newCommand:  newIAMUserListCommand,
+			wantUse:     "list",
+			wantFlags:   []string{"role"},
+			absentFlags: map[string]string{"group": "quicbaas keeps no groups, so there is no group filter"},
+		},
+		{
+			name:        "user role",
+			newCommand:  newIAMUserRoleCommand,
+			wantUse:     "role",
+			wantSubcmds: []string{"assign", "revoke"},
+		},
+		{
+			name:       "user role assign",
+			newCommand: newIAMUserRoleAssignCommand,
+			wantUse:    "assign",
+			wantFlags:  []string{"role", "user"},
+		},
+		{
+			name:       "user role revoke",
+			newCommand: newIAMUserRoleRevokeCommand,
+			wantUse:    "revoke",
+			wantFlags:  []string{"role", "user"},
+		},
 	}
-}
-
-func TestNewIAMTenantCreateCommand_Flags(t *testing.T) {
-	cmd := newIAMTenantCreateCommand()
-	require.NotNil(t, cmd)
-	assert.Contains(t, cmd.Use, "create")
-
-	// Check required flags exist
-	assert.NotNil(t, cmd.Flags().Lookup("name"))
-	assert.NotNil(t, cmd.Flags().Lookup("max-users"))
-	assert.NotNil(t, cmd.Flags().Lookup("mfa-required"))
-}
-
-func TestNewIAMTenantUpdateCommand_Flags(t *testing.T) {
-	cmd := newIAMTenantUpdateCommand()
-	require.NotNil(t, cmd)
-	assert.Contains(t, cmd.Use, "update")
-
-	// Check flags exist
-	assert.NotNil(t, cmd.Flags().Lookup("name"))
-	assert.NotNil(t, cmd.Flags().Lookup("max-users"))
-	assert.NotNil(t, cmd.Flags().Lookup("mfa-required"))
-}
-
-// =============================================================================
-// IAM User Command Structure Tests
-// =============================================================================
-
-func TestNewIAMUserCommand_FullStructure(t *testing.T) {
-	cmd := newIAMUserCommand()
-	require.NotNil(t, cmd)
-	assert.Equal(t, "user", cmd.Use)
-	assert.NotEmpty(t, cmd.Short)
-	assert.NotEmpty(t, cmd.Long)
-
-	// Verify subcommands exist
-	expectedSubcmds := []string{"create", "get", "update", "delete", "list", "role"}
-	for _, expected := range expectedSubcmds {
-		found := false
-		for _, sub := range cmd.Commands() {
-			if sub.Name() == expected {
-				found = true
-				break
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			cmd := tc.newCommand()
+			require.NotNil(t, cmd)
+			assert.Equal(t, tc.wantUse, cmd.Name())
+			assert.NotEmpty(t, cmd.Short)
+			if tc.wantLongHelp {
+				assert.NotEmpty(t, cmd.Long)
 			}
-		}
-		assert.True(t, found, "Expected subcommand %s not found", expected)
-	}
-}
 
-func TestNewIAMUserCreateCommand_Flags(t *testing.T) {
-	cmd := newIAMUserCreateCommand()
-	require.NotNil(t, cmd)
-	assert.Contains(t, cmd.Use, "create")
-
-	// Check flags exist. QuicBaaS is passwordless — no --password flag.
-	assert.NotNil(t, cmd.Flags().Lookup("name"))
-	assert.NotNil(t, cmd.Flags().Lookup("roles"))
-	assert.NotNil(t, cmd.Flags().Lookup("role"))
-	assert.Nil(t, cmd.Flags().Lookup("groups"), "--groups must not exist; an account carries no group membership (go-quicbaas#1027)")
-	assert.Nil(t, cmd.Flags().Lookup("password"), "--password flag must not exist; QuicBaaS uses invite-based FIDO2/PIV activation")
-}
-
-func TestNewIAMUserUpdateCommand_Flags(t *testing.T) {
-	cmd := newIAMUserUpdateCommand()
-	require.NotNil(t, cmd)
-	assert.Contains(t, cmd.Use, "update")
-
-	// Check flags exist
-	assert.NotNil(t, cmd.Flags().Lookup("name"))
-	assert.NotNil(t, cmd.Flags().Lookup("roles"))
-}
-
-func TestNewIAMUserListCommand_Flags(t *testing.T) {
-	cmd := newIAMUserListCommand()
-	require.NotNil(t, cmd)
-	assert.Equal(t, "list", cmd.Use)
-
-	// Check filter flags exist
-	assert.NotNil(t, cmd.Flags().Lookup("role"))
-	// quicbaas keeps no groups, so there is no group filter.
-	assert.Nil(t, cmd.Flags().Lookup("group"))
-}
-
-func TestNewIAMUserRoleCommand_Structure(t *testing.T) {
-	cmd := newIAMUserRoleCommand()
-	require.NotNil(t, cmd)
-	assert.Equal(t, "role", cmd.Use)
-	assert.NotEmpty(t, cmd.Short)
-
-	// Verify subcommands exist
-	expectedSubcmds := []string{"assign", "revoke"}
-	for _, expected := range expectedSubcmds {
-		found := false
-		for _, sub := range cmd.Commands() {
-			if sub.Name() == expected {
-				found = true
-				break
+			subcmds := make([]string, 0, len(cmd.Commands()))
+			for _, sub := range cmd.Commands() {
+				subcmds = append(subcmds, sub.Name())
 			}
-		}
-		assert.True(t, found, "Expected subcommand %s not found", expected)
+			assert.Subset(t, subcmds, tc.wantSubcmds)
+
+			for _, flag := range tc.wantFlags {
+				assert.NotNil(t, cmd.Flags().Lookup(flag), "flag --%s", flag)
+			}
+			for flag, reason := range tc.absentFlags {
+				assert.Nil(t, cmd.Flags().Lookup(flag), "--%s must not exist: %s", flag, reason)
+			}
+		})
 	}
-}
-
-func TestNewIAMUserRoleAssignCommand_Flags(t *testing.T) {
-	cmd := newIAMUserRoleAssignCommand()
-	require.NotNil(t, cmd)
-	assert.Equal(t, "assign", cmd.Use)
-
-	// Check required flags exist
-	assert.NotNil(t, cmd.Flags().Lookup("role"))
-	assert.NotNil(t, cmd.Flags().Lookup("user"))
-}
-
-func TestNewIAMUserRoleRevokeCommand_Flags(t *testing.T) {
-	cmd := newIAMUserRoleRevokeCommand()
-	require.NotNil(t, cmd)
-	assert.Equal(t, "revoke", cmd.Use)
-
-	// Check required flags exist
-	assert.NotNil(t, cmd.Flags().Lookup("role"))
-	assert.NotNil(t, cmd.Flags().Lookup("user"))
 }

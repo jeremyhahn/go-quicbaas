@@ -984,11 +984,8 @@ func TestWebSocketClient_HubBridge(t *testing.T) {
 		client := NewWebSocketClient(nil, conn, log)
 		client.hubClient = nil
 
-		// This should not panic - hubBridge checks for nil
-		go client.hubBridge()
-
-		// Give it a moment to run
-		time.Sleep(10 * time.Millisecond)
+		// hubBridge checks for nil and returns at once rather than panicking
+		client.hubBridge()
 	})
 
 	t.Run("stops when explicitly stopped", func(t *testing.T) {

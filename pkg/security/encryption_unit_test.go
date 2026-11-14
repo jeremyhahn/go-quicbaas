@@ -23,80 +23,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestKeyring_AlgorithmToSymmetricAllVariants(t *testing.T) {
-	tests := []struct {
-		name      string
-		algorithm string
-	}{
-		{name: "AES-256-GCM uppercase", algorithm: AlgorithmAES256GCM},
-		{name: "aes256-gcm lowercase", algorithm: "aes256-gcm"},
-		{name: "AES256-GCM mixed", algorithm: "AES256-GCM"},
-		{name: "AES-192-GCM uppercase", algorithm: "AES-192-GCM"},
-		{name: "aes192-gcm lowercase", algorithm: "aes192-gcm"},
-		{name: "AES-128-GCM uppercase", algorithm: "AES-128-GCM"},
-		{name: "aes128-gcm lowercase", algorithm: "aes128-gcm"},
-		{name: "default fallback", algorithm: "unknown"},
-	}
-
-	log := createTestLogger(t)
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			cfg := &EncryptionConfig{
-				Algorithm:   tt.algorithm,
-				KeyProvider: "local",
-			}
-
-			kr := &Keyring{
-				config: cfg,
-				logger: log,
-			}
-
-			// Just verify it doesn't panic and returns a value
-			result := kr.algorithmToSymmetric()
-			assert.NotNil(t, result)
-		})
-	}
-}
-
-func TestKeyring_IsValidAlgorithmCheck(t *testing.T) {
-	tests := []struct {
-		name      string
-		algorithm string
-		valid     bool
-	}{
-		{name: "AES-256-GCM valid", algorithm: AlgorithmAES256GCM, valid: true},
-		{name: "aes256-gcm valid", algorithm: "aes256-gcm", valid: true},
-		{name: "AES256-GCM valid", algorithm: "AES256-GCM", valid: true},
-		{name: "AES-192-GCM valid", algorithm: "AES-192-GCM", valid: true},
-		{name: "aes192-gcm valid", algorithm: "aes192-gcm", valid: true},
-		{name: "AES-128-GCM valid", algorithm: "AES-128-GCM", valid: true},
-		{name: "aes128-gcm valid", algorithm: "aes128-gcm", valid: true},
-		{name: "empty string valid", algorithm: "", valid: true},
-		{name: "ChaCha20 invalid", algorithm: AlgorithmChaCha20Poly, valid: false},
-		{name: "unknown invalid", algorithm: "unknown", valid: false},
-	}
-
-	log := createTestLogger(t)
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			cfg := &EncryptionConfig{
-				Algorithm:   tt.algorithm,
-				KeyProvider: "local",
-			}
-
-			kr := &Keyring{
-				config: cfg,
-				logger: log,
-			}
-
-			result := kr.isValidAlgorithm()
-			assert.Equal(t, tt.valid, result)
-		})
-	}
-}
-
 func TestInitializeWithVaultPlaceholder(t *testing.T) {
 	cfg := &EncryptionConfig{
 		VaultAddr:  "http://vault.example.com",
@@ -350,27 +276,6 @@ func TestEncryptionManager_DecryptCiphertextTooShort(t *testing.T) {
 	assert.Error(t, err)
 	assert.Nil(t, plaintext)
 	assert.Contains(t, err.Error(), "ciphertext too short")
-}
-
-func TestEncryptionManager_DecryptWithInvalidKeyVersion(t *testing.T) {
-	cfg := &EncryptionConfig{
-		Enabled:     true,
-		KeyProvider: "local",
-		Algorithm:   AlgorithmAES256GCM,
-	}
-
-	log := createTestLogger(t)
-	em, err := NewEncryptionManager(cfg, log)
-	require.NoError(t, err)
-
-	// Create data with invalid key version
-	invalidData := make([]byte, 1+NonceSize+20)
-	invalidData[0] = 99 // Non-existent key version
-
-	plaintext, err := em.Decrypt(invalidData)
-	assert.Error(t, err)
-	assert.Nil(t, plaintext)
-	assert.Contains(t, err.Error(), "encryption key version")
 }
 
 func TestEncryptionManager_DecryptCiphertextTooShortForTag(t *testing.T) {

@@ -14,366 +14,84 @@
 package interfaces
 
 import (
-	"context"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 )
 
-// mockAuthorizationProvider is a mock implementation for testing.
-type mockAuthorizationProvider struct {
-	authorizeFunc      func(ctx context.Context, req *AuthorizationRequest) (*AuthorizationDecision, error)
-	batchAuthorizeFunc func(ctx context.Context, reqs []*AuthorizationRequest) ([]*AuthorizationDecision, error)
-	providerType       string
-	closed             bool
-}
+// TestPermissionWireValues pins the resource and action strings policies store.
+func TestPermissionWireValues(t *testing.T) {
+	// Role policies store these strings, so a changed value silently
+	// revokes or widens every grant that names it.
+	tests := []struct {
+		got  string
+		want string
+	}{
+		{ResourceKeys, "keys"},
+		{ResourceTransactions, "transactions"},
+		{ResourceCluster, "cluster"},
+		{ResourceBackups, "backups"},
+		{ResourceUsers, "users"},
+		{ResourceRoles, "roles"},
+		{ResourceSecrets, "secrets"},
+		{ResourceKMS, "kms"},
+		{ResourceCrypto, "crypto"},
+		{ResourceSeal, "seal"},
+		{ResourceHealth, "health"},
+		{ResourceMetrics, "metrics"},
+		{ResourceWatch, "watch"},
+		{ResourceTimeseries, "timeseries"},
+		{ResourceVector, "vector"},
+		{ResourceAll, "*"},
+		{ResourceObjectStore, "objstore"},
+		{ResourceBucket, "bucket"},
+		{ResourceObject, "object"},
+		{ResourceCatalog, "catalog"},
+		{ResourceCertificate, "certificate"},
+		{ResourceIAM, "iam"},
+		{ResourceIAMTenant, "iam:tenant"},
+		{ResourceIAMUser, "iam:user"},
+		{ResourceIAMRole, "iam:role"},
+		{ResourceIAMPolicy, "iam:policy"},
+		{ResourceIAMApp, "iam:app"},
+		{ResourceParameters, "parameters"},
 
-func (m *mockAuthorizationProvider) Authorize(ctx context.Context, req *AuthorizationRequest) (*AuthorizationDecision, error) {
-	if m.authorizeFunc != nil {
-		return m.authorizeFunc(ctx, req)
-	}
-	return &AuthorizationDecision{Allowed: true, Provider: m.providerType}, nil
-}
-
-func (m *mockAuthorizationProvider) BatchAuthorize(ctx context.Context, reqs []*AuthorizationRequest) ([]*AuthorizationDecision, error) {
-	if m.batchAuthorizeFunc != nil {
-		return m.batchAuthorizeFunc(ctx, reqs)
-	}
-	decisions := make([]*AuthorizationDecision, len(reqs))
-	for i := range reqs {
-		decisions[i] = &AuthorizationDecision{Allowed: true, Provider: m.providerType}
-	}
-	return decisions, nil
-}
-
-func (m *mockAuthorizationProvider) GetProviderType() string {
-	if m.providerType == "" {
-		return "mock"
-	}
-	return m.providerType
-}
-
-func (m *mockAuthorizationProvider) Close() error {
-	m.closed = true
-	return nil
-}
-
-// Compile-time check that mockAuthorizationProvider implements AuthorizationProvider.
-var _ AuthorizationProvider = (*mockAuthorizationProvider)(nil)
-
-// TestSubjectStruct tests the Subject struct.
-func TestSubjectStruct(t *testing.T) {
-	t.Run("empty subject", func(t *testing.T) {
-		subject := Subject{}
-		assert.Empty(t, subject.ID)
-		assert.Empty(t, subject.Username)
-		assert.Empty(t, subject.TenantID)
-		assert.Empty(t, subject.Roles)
-		assert.Empty(t, subject.Groups)
-		assert.Nil(t, subject.Attributes)
-		assert.False(t, subject.Authenticated)
-	})
-
-	t.Run("fully populated subject", func(t *testing.T) {
-		subject := Subject{
-			ID:       "user-123",
-			Username: "alice",
-			TenantID: "tenant-abc",
-			Roles:    []string{"admin", "developer"},
-			Groups:   []string{"engineering", "platform"},
-			Attributes: map[string]interface{}{
-				"department":      "engineering",
-				"clearance_level": "secret",
-			},
-			Authenticated: true,
-		}
-
-		assert.Equal(t, "user-123", subject.ID)
-		assert.Equal(t, "alice", subject.Username)
-		assert.Equal(t, "tenant-abc", subject.TenantID)
-		assert.Equal(t, []string{"admin", "developer"}, subject.Roles)
-		assert.Equal(t, []string{"engineering", "platform"}, subject.Groups)
-		assert.Equal(t, "engineering", subject.Attributes["department"])
-		assert.Equal(t, "secret", subject.Attributes["clearance_level"])
-		assert.True(t, subject.Authenticated)
-	})
-}
-
-// TestAuthorizationRequestStruct tests the AuthorizationRequest struct.
-func TestAuthorizationRequestStruct(t *testing.T) {
-	t.Run("minimal request", func(t *testing.T) {
-		req := AuthorizationRequest{
-			Subject:  Subject{ID: "user-1"},
-			Resource: ResourceKeys,
-			Action:   ActionRead,
-		}
-
-		assert.Equal(t, "user-1", req.Subject.ID)
-		assert.Equal(t, ResourceKeys, req.Resource)
-		assert.Equal(t, ActionRead, req.Action)
-		assert.Nil(t, req.Context)
-	})
-
-	t.Run("full request with context", func(t *testing.T) {
-		req := AuthorizationRequest{
-			Subject: Subject{
-				ID:            "user-1",
-				Username:      "alice",
-				Roles:         []string{"readwrite"},
-				Authenticated: true,
-			},
-			Resource: ResourceSecrets,
-			Action:   ActionWrite,
-			Context: map[string]interface{}{
-				"ip_address": "192.0.2.100",
-				"user_agent": "quicbaas-cli/1.0",
-				"method":     "POST",
-				"path":       "/api/v1/secrets/db-password",
-			},
-		}
-
-		assert.Equal(t, "alice", req.Subject.Username)
-		assert.Equal(t, ResourceSecrets, req.Resource)
-		assert.Equal(t, ActionWrite, req.Action)
-		assert.Equal(t, "192.0.2.100", req.Context["ip_address"])
-	})
-}
-
-// TestAuthorizationDecisionStruct tests the AuthorizationDecision struct.
-func TestAuthorizationDecisionStruct(t *testing.T) {
-	t.Run("allow decision", func(t *testing.T) {
-		decision := AuthorizationDecision{
-			Allowed:          true,
-			Provider:         "rbac",
-			MatchedPolicy:    "admin",
-			DecisionID:       "dec-123",
-			EvaluationTimeNs: 500,
-		}
-
-		assert.True(t, decision.Allowed)
-		assert.Empty(t, decision.Reason)
-		assert.Equal(t, "rbac", decision.Provider)
-		assert.Equal(t, "admin", decision.MatchedPolicy)
-		assert.Equal(t, "dec-123", decision.DecisionID)
-		assert.Equal(t, int64(500), decision.EvaluationTimeNs)
-	})
-
-	t.Run("deny decision with reason", func(t *testing.T) {
-		decision := AuthorizationDecision{
-			Allowed:          false,
-			Reason:           "user does not have write permission on secrets",
-			Provider:         "abac",
-			MatchedPolicy:    "deny-external-access",
-			DecisionID:       "dec-456",
-			EvaluationTimeNs: 2500,
-		}
-
-		assert.False(t, decision.Allowed)
-		assert.Equal(t, "user does not have write permission on secrets", decision.Reason)
-		assert.Equal(t, "abac", decision.Provider)
-	})
-}
-
-// TestMockAuthorizationProvider tests the mock provider implementation.
-func TestMockAuthorizationProvider(t *testing.T) {
-	t.Run("default authorize returns allowed", func(t *testing.T) {
-		provider := &mockAuthorizationProvider{providerType: "test"}
-		req := &AuthorizationRequest{
-			Subject:  Subject{ID: "user-1"},
-			Resource: ResourceKeys,
-			Action:   ActionRead,
-		}
-
-		decision, err := provider.Authorize(context.Background(), req)
-		require.NoError(t, err)
-		assert.True(t, decision.Allowed)
-		assert.Equal(t, "test", decision.Provider)
-	})
-
-	t.Run("custom authorize function", func(t *testing.T) {
-		provider := &mockAuthorizationProvider{
-			authorizeFunc: func(ctx context.Context, req *AuthorizationRequest) (*AuthorizationDecision, error) {
-				if req.Action == ActionAdmin {
-					return &AuthorizationDecision{
-						Allowed: false,
-						Reason:  "admin access denied",
-					}, nil
-				}
-				return &AuthorizationDecision{Allowed: true}, nil
-			},
-		}
-
-		// Test allowed
-		req := &AuthorizationRequest{
-			Subject:  Subject{ID: "user-1"},
-			Resource: ResourceKeys,
-			Action:   ActionRead,
-		}
-		decision, err := provider.Authorize(context.Background(), req)
-		require.NoError(t, err)
-		assert.True(t, decision.Allowed)
-
-		// Test denied
-		req.Action = ActionAdmin
-		decision, err = provider.Authorize(context.Background(), req)
-		require.NoError(t, err)
-		assert.False(t, decision.Allowed)
-		assert.Equal(t, "admin access denied", decision.Reason)
-	})
-
-	t.Run("batch authorize", func(t *testing.T) {
-		provider := &mockAuthorizationProvider{providerType: "batch-test"}
-		reqs := []*AuthorizationRequest{
-			{Subject: Subject{ID: "user-1"}, Resource: ResourceKeys, Action: ActionRead},
-			{Subject: Subject{ID: "user-1"}, Resource: ResourceSecrets, Action: ActionWrite},
-			{Subject: Subject{ID: "user-1"}, Resource: ResourceCluster, Action: ActionAdmin},
-		}
-
-		decisions, err := provider.BatchAuthorize(context.Background(), reqs)
-		require.NoError(t, err)
-		require.Len(t, decisions, 3)
-		for _, d := range decisions {
-			assert.True(t, d.Allowed)
-			assert.Equal(t, "batch-test", d.Provider)
-		}
-	})
-
-	t.Run("get provider type", func(t *testing.T) {
-		provider := &mockAuthorizationProvider{providerType: "rbac"}
-		assert.Equal(t, "rbac", provider.GetProviderType())
-
-		provider2 := &mockAuthorizationProvider{}
-		assert.Equal(t, "mock", provider2.GetProviderType())
-	})
-
-	t.Run("close", func(t *testing.T) {
-		provider := &mockAuthorizationProvider{}
-		assert.False(t, provider.closed)
-
-		err := provider.Close()
-		require.NoError(t, err)
-		assert.True(t, provider.closed)
-	})
-}
-
-// TestResourceConstants tests that resource constants are defined correctly.
-func TestResourceConstants(t *testing.T) {
-	resources := []string{
-		ResourceKeys,
-		ResourceTransactions,
-		ResourceCluster,
-		ResourceBackups,
-		ResourceUsers,
-		ResourceRoles,
-		ResourceSecrets,
-		ResourceKMS,
-		ResourceCrypto,
-		ResourceSeal,
-		ResourceHealth,
-		ResourceMetrics,
-		ResourceWatch,
-		ResourceTimeseries,
-		ResourceVector,
-		ResourceAll,
+		{ActionRead, "read"},
+		{ActionWrite, "write"},
+		{ActionDelete, "delete"},
+		{ActionAdmin, "admin"},
+		{ActionAll, "*"},
+		{ActionVectorRead, "vector:read"},
+		{ActionVectorWrite, "vector:write"},
+		{ActionVectorDelete, "vector:delete"},
+		{ActionVectorAdmin, "vector:admin"},
+		{ActionVectorNamespace, "vector:namespace"},
+		{ActionVectorSearch, "vector:search"},
+		{ActionVectorStats, "vector:stats"},
+		{ActionObjectPut, "object:put"},
+		{ActionObjectGet, "object:get"},
+		{ActionObjectDelete, "object:delete"},
+		{ActionObjectList, "object:list"},
+		{ActionObjectReplicate, "object:replicate"},
+		{ActionObjectMigrate, "object:migrate"},
+		{ActionObjectArchive, "object:archive"},
+		{ActionObjectVerify, "object:verify"},
+		{ActionObjectSetPolicy, "object:set_policy"},
+		{ActionObjectSetACL, "object:set_acl"},
+		{ActionBucketCreate, "bucket:create"},
+		{ActionBucketDelete, "bucket:delete"},
+		{ActionBucketList, "bucket:list"},
+		{ActionBucketSetPolicy, "bucket:set_policy"},
+		{ActionParameterRead, "parameter:read"},
+		{ActionParameterWrite, "parameter:write"},
+		{ActionParameterDelete, "parameter:delete"},
+		{ActionParameterList, "parameter:list"},
+		{ActionParameterAdmin, "parameter:admin"},
 	}
 
-	// Verify all resources are non-empty and unique
-	seen := make(map[string]bool)
-	for _, r := range resources {
-		assert.NotEmpty(t, r, "resource constant should not be empty")
-		assert.False(t, seen[r], "resource %q appears more than once", r)
-		seen[r] = true
+	for _, tt := range tests {
+		assert.Equal(t, tt.want, tt.got)
 	}
-
-	// Verify specific values
-	assert.Equal(t, "keys", ResourceKeys)
-	assert.Equal(t, "secrets", ResourceSecrets)
-	assert.Equal(t, "*", ResourceAll)
-}
-
-// TestActionConstants tests that action constants are defined correctly.
-func TestActionConstants(t *testing.T) {
-	actions := []string{
-		ActionRead,
-		ActionWrite,
-		ActionDelete,
-		ActionAdmin,
-		ActionAll,
-	}
-
-	// Verify all actions are non-empty and unique
-	seen := make(map[string]bool)
-	for _, a := range actions {
-		assert.NotEmpty(t, a, "action constant should not be empty")
-		assert.False(t, seen[a], "action %q appears more than once", a)
-		seen[a] = true
-	}
-
-	// Verify specific values
-	assert.Equal(t, "read", ActionRead)
-	assert.Equal(t, "write", ActionWrite)
-	assert.Equal(t, "delete", ActionDelete)
-	assert.Equal(t, "admin", ActionAdmin)
-	assert.Equal(t, "*", ActionAll)
-}
-
-// TestContextCancellation tests that providers respect context cancellation.
-func TestContextCancellation(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel() // Cancel immediately
-
-	provider := &mockAuthorizationProvider{
-		authorizeFunc: func(ctx context.Context, req *AuthorizationRequest) (*AuthorizationDecision, error) {
-			// Check if context is cancelled
-			select {
-			case <-ctx.Done():
-				return nil, ctx.Err()
-			default:
-				return &AuthorizationDecision{Allowed: true}, nil
-			}
-		},
-	}
-
-	req := &AuthorizationRequest{
-		Subject:  Subject{ID: "user-1"},
-		Resource: ResourceKeys,
-		Action:   ActionRead,
-	}
-
-	_, err := provider.Authorize(ctx, req)
-	assert.Error(t, err)
-	assert.Equal(t, context.Canceled, err)
-}
-
-// TestVectorActionConstants tests that vector-specific action constants are defined correctly.
-func TestVectorActionConstants(t *testing.T) {
-	actions := []string{
-		ActionVectorRead,
-		ActionVectorWrite,
-		ActionVectorDelete,
-		ActionVectorAdmin,
-		ActionVectorNamespace,
-		ActionVectorSearch,
-		ActionVectorStats,
-	}
-
-	// Verify all actions are non-empty and unique
-	seen := make(map[string]bool)
-	for _, a := range actions {
-		assert.NotEmpty(t, a, "action constant should not be empty")
-		assert.False(t, seen[a], "action %q appears more than once", a)
-		seen[a] = true
-	}
-
-	// Verify specific values
-	assert.Equal(t, "vector:read", ActionVectorRead)
-	assert.Equal(t, "vector:write", ActionVectorWrite)
-	assert.Equal(t, "vector:delete", ActionVectorDelete)
-	assert.Equal(t, "vector:admin", ActionVectorAdmin)
-	assert.Equal(t, "vector:namespace", ActionVectorNamespace)
-	assert.Equal(t, "vector:search", ActionVectorSearch)
-	assert.Equal(t, "vector:stats", ActionVectorStats)
 }
 
 // TestVectorNamespaceResource tests the VectorNamespaceResource function.
@@ -477,6 +195,13 @@ func TestMatchesVectorNamespace(t *testing.T) {
 		{"prefix wildcard no match", "vector:namespace:prod-*", "dev-embeddings", false},
 		{"prefix wildcard partial name", "vector:namespace:embed*", "embeddings", true},
 		{"prefix wildcard no match short", "vector:namespace:prod-*", "pro", false},
+		{"prefix with underscore", "vector:namespace:test_*", "test_namespace", true},
+
+		// Edge inputs
+		{"namespace wildcard grants empty ns", "vector:namespace:*", "", true},
+		{"single char namespace", "vector:namespace:a", "a", true},
+		{"single char namespace no match", "vector:namespace:a", "b", false},
+		{"namespace with special chars", "vector:namespace:ns-with_special.chars", "ns-with_special.chars", true},
 
 		// Non-namespace resources
 		{"non-namespace resource", "keys", "embeddings", false},
@@ -489,12 +214,6 @@ func TestMatchesVectorNamespace(t *testing.T) {
 			assert.Equal(t, tt.expected, result, "permResource=%q, requestedNS=%q", tt.permResource, tt.requestedNS)
 		})
 	}
-}
-
-// TestVectorNamespaceConstants tests the namespace constants.
-func TestVectorNamespaceConstants(t *testing.T) {
-	assert.Equal(t, "vector:namespace:", ResourceVectorNamespacePrefix)
-	assert.Equal(t, "vector:namespace:*", ResourceVectorNamespaceWildcard)
 }
 
 // TestObjectBucketResource tests the ObjectBucketResource function.
@@ -603,6 +322,13 @@ func TestMatchesObjectBucket(t *testing.T) {
 		{"prefix wildcard partial name", "object:bucket:data*", "data-bucket", true},
 		{"prefix wildcard no match short", "object:bucket:prod-*", "pro", false},
 		{"prefix wildcard exact prefix", "object:bucket:prod-*", "prod-", true},
+		{"prefix with underscore", "object:bucket:test_*", "test_bucket", true},
+
+		// Edge inputs
+		{"bucket wildcard grants empty bucket", "object:bucket:*", "", true},
+		{"single char bucket", "object:bucket:a", "a", true},
+		{"single char bucket no match", "object:bucket:a", "b", false},
+		{"bucket with special chars", "object:bucket:bucket-with_special.chars", "bucket-with_special.chars", true},
 
 		// Non-bucket resources
 		{"keys resource", "keys", "my-bucket", false},
@@ -617,49 +343,6 @@ func TestMatchesObjectBucket(t *testing.T) {
 			assert.Equal(t, tt.expected, result, "permResource=%q, requestedBucket=%q", tt.permResource, tt.requestedBucket)
 		})
 	}
-}
-
-// TestObjectBucketConstants tests the object bucket constants.
-func TestObjectBucketConstants(t *testing.T) {
-	assert.Equal(t, "object:bucket:", ResourceObjectBucketPrefix)
-	assert.Equal(t, "object:bucket:*", ResourceObjectBucketWildcard)
-}
-
-// TestObjectActionConstants tests that object storage-specific action constants are defined correctly.
-func TestObjectActionConstants(t *testing.T) {
-	actions := []string{
-		ActionObjectPut,
-		ActionObjectGet,
-		ActionObjectDelete,
-		ActionObjectList,
-		ActionObjectReplicate,
-		ActionObjectMigrate,
-		ActionObjectArchive,
-		ActionObjectVerify,
-		ActionObjectSetPolicy,
-		ActionObjectSetACL,
-		ActionBucketCreate,
-		ActionBucketDelete,
-		ActionBucketList,
-		ActionBucketSetPolicy,
-	}
-
-	// Verify all actions are non-empty and unique
-	seen := make(map[string]bool)
-	for _, a := range actions {
-		assert.NotEmpty(t, a, "action constant should not be empty")
-		assert.False(t, seen[a], "action %q appears more than once", a)
-		seen[a] = true
-	}
-
-	// Verify specific values
-	assert.Equal(t, "object:put", ActionObjectPut)
-	assert.Equal(t, "object:get", ActionObjectGet)
-	assert.Equal(t, "object:delete", ActionObjectDelete)
-	assert.Equal(t, "object:list", ActionObjectList)
-	assert.Equal(t, "bucket:create", ActionBucketCreate)
-	assert.Equal(t, "bucket:delete", ActionBucketDelete)
-	assert.Equal(t, "bucket:list", ActionBucketList)
 }
 
 // TestParameterPathResource tests the ParameterPathResource function.
@@ -776,6 +459,15 @@ func TestMatchesParameterPath(t *testing.T) {
 		{"single-level wildcard exact prefix", "parameter:path:/app/*", "/app/", true},
 		// Test case where requested path is shorter than the wildcard prefix
 		{"single-level wildcard path shorter than prefix", "parameter:path:/app/config/*", "/app/", false},
+		{"single-level wildcard with very long prefix", "parameter:path:/very/long/prefix/*", "/short", false},
+		{"multi-level wildcard empty remaining", "parameter:path:/app/**", "/app/", true},
+		{"multi-level wildcard deep nested", "parameter:path:/**", "/a/b/c/d/e/f/g", true},
+
+		// Edge inputs
+		{"path wildcard grants empty path", "parameter:path:*", "", true},
+		{"single char path", "parameter:path:/a", "/a", true},
+		{"single char path no match", "parameter:path:/a", "/b", false},
+		{"path with special chars", "parameter:path:/app/config-v1.2", "/app/config-v1.2", true},
 
 		// Non-parameter resources
 		{"keys resource", "keys", "/app/config", false},
@@ -790,183 +482,4 @@ func TestMatchesParameterPath(t *testing.T) {
 			assert.Equal(t, tt.expected, result, "permResource=%q, requestedPath=%q", tt.permResource, tt.requestedPath)
 		})
 	}
-}
-
-// TestParameterPathConstants tests the parameter path constants.
-func TestParameterPathConstants(t *testing.T) {
-	assert.Equal(t, "parameter:path:", ResourceParameterPathPrefix)
-	assert.Equal(t, "parameter:path:*", ResourceParameterPathWildcard)
-}
-
-// TestParameterActionConstants tests that parameter-specific action constants are defined correctly.
-func TestParameterActionConstants(t *testing.T) {
-	actions := []string{
-		ActionParameterRead,
-		ActionParameterWrite,
-		ActionParameterDelete,
-		ActionParameterList,
-		ActionParameterAdmin,
-	}
-
-	// Verify all actions are non-empty and unique
-	seen := make(map[string]bool)
-	for _, a := range actions {
-		assert.NotEmpty(t, a, "action constant should not be empty")
-		assert.False(t, seen[a], "action %q appears more than once", a)
-		seen[a] = true
-	}
-
-	// Verify specific values
-	assert.Equal(t, "parameter:read", ActionParameterRead)
-	assert.Equal(t, "parameter:write", ActionParameterWrite)
-	assert.Equal(t, "parameter:delete", ActionParameterDelete)
-	assert.Equal(t, "parameter:list", ActionParameterList)
-	assert.Equal(t, "parameter:admin", ActionParameterAdmin)
-}
-
-// TestAdditionalResourceConstants tests additional resource constants.
-func TestAdditionalResourceConstants(t *testing.T) {
-	resources := map[string]string{
-		"ResourceObjectStore": ResourceObjectStore,
-		"ResourceBucket":      ResourceBucket,
-		"ResourceObject":      ResourceObject,
-		"ResourceCatalog":     ResourceCatalog,
-		"ResourceCertificate": ResourceCertificate,
-		"ResourceIAM":         ResourceIAM,
-		"ResourceIAMTenant":   ResourceIAMTenant,
-		"ResourceIAMUser":     ResourceIAMUser,
-		"ResourceIAMRole":     ResourceIAMRole,
-		"ResourceIAMPolicy":   ResourceIAMPolicy,
-		"ResourceIAMApp":      ResourceIAMApp,
-		"ResourceParameters":  ResourceParameters,
-	}
-
-	// Verify all resources are non-empty
-	for name, value := range resources {
-		assert.NotEmpty(t, value, "%s should not be empty", name)
-	}
-
-	// Verify specific values
-	assert.Equal(t, "objstore", ResourceObjectStore)
-	assert.Equal(t, "bucket", ResourceBucket)
-	assert.Equal(t, "object", ResourceObject)
-	assert.Equal(t, "catalog", ResourceCatalog)
-	assert.Equal(t, "certificate", ResourceCertificate)
-	assert.Equal(t, "iam", ResourceIAM)
-	assert.Equal(t, "iam:tenant", ResourceIAMTenant)
-	assert.Equal(t, "iam:user", ResourceIAMUser)
-	assert.Equal(t, "iam:role", ResourceIAMRole)
-	assert.Equal(t, "iam:policy", ResourceIAMPolicy)
-	assert.Equal(t, "iam:app", ResourceIAMApp)
-	assert.Equal(t, "parameters", ResourceParameters)
-}
-
-// TestMatchesVectorNamespaceEdgeCases tests edge cases for MatchesVectorNamespace.
-func TestMatchesVectorNamespaceEdgeCases(t *testing.T) {
-	tests := []struct {
-		name         string
-		permResource string
-		requestedNS  string
-		expected     bool
-	}{
-		{"empty wildcard pattern", "vector:namespace:*", "", true},
-		{"prefix wildcard with empty suffix", "vector:namespace:*", "anything", true},
-		{"single char namespace", "vector:namespace:a", "a", true},
-		{"single char namespace no match", "vector:namespace:a", "b", false},
-		{"namespace with special chars", "vector:namespace:ns-with_special.chars", "ns-with_special.chars", true},
-		{"prefix with underscore", "vector:namespace:test_*", "test_namespace", true},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := MatchesVectorNamespace(tt.permResource, tt.requestedNS)
-			assert.Equal(t, tt.expected, result)
-		})
-	}
-}
-
-// TestMatchesObjectBucketEdgeCases tests edge cases for MatchesObjectBucket.
-func TestMatchesObjectBucketEdgeCases(t *testing.T) {
-	tests := []struct {
-		name            string
-		permResource    string
-		requestedBucket string
-		expected        bool
-	}{
-		{"empty wildcard pattern", "object:bucket:*", "", true},
-		{"prefix wildcard with empty suffix", "object:bucket:*", "anything", true},
-		{"single char bucket", "object:bucket:a", "a", true},
-		{"single char bucket no match", "object:bucket:a", "b", false},
-		{"bucket with special chars", "object:bucket:bucket-with_special.chars", "bucket-with_special.chars", true},
-		{"prefix with underscore", "object:bucket:test_*", "test_bucket", true},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := MatchesObjectBucket(tt.permResource, tt.requestedBucket)
-			assert.Equal(t, tt.expected, result)
-		})
-	}
-}
-
-// TestMatchesParameterPathEdgeCases tests edge cases for MatchesParameterPath.
-func TestMatchesParameterPathEdgeCases(t *testing.T) {
-	tests := []struct {
-		name          string
-		permResource  string
-		requestedPath string
-		expected      bool
-	}{
-		{"empty path with wildcard", "parameter:path:*", "", true},
-		{"single char path", "parameter:path:/a", "/a", true},
-		{"single char path no match", "parameter:path:/a", "/b", false},
-		{"path with special chars", "parameter:path:/app/config-v1.2", "/app/config-v1.2", true},
-		{"multi-level wildcard empty remaining", "parameter:path:/app/**", "/app/", true},
-		{"single-level wildcard empty remaining", "parameter:path:/app/*", "/app/", true},
-		{"deep nested path with multi-level", "parameter:path:/**", "/a/b/c/d/e/f/g", true},
-		// Additional edge case for path shorter than prefix in single-level wildcard
-		{"single-level wildcard with very long prefix", "parameter:path:/very/long/prefix/*", "/short", false},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := MatchesParameterPath(tt.permResource, tt.requestedPath)
-			assert.Equal(t, tt.expected, result)
-		})
-	}
-}
-
-// TestBatchAuthorizeWithCustomFunction tests BatchAuthorize with a custom function.
-func TestBatchAuthorizeWithCustomFunction(t *testing.T) {
-	provider := &mockAuthorizationProvider{
-		batchAuthorizeFunc: func(ctx context.Context, reqs []*AuthorizationRequest) ([]*AuthorizationDecision, error) {
-			decisions := make([]*AuthorizationDecision, len(reqs))
-			for i, req := range reqs {
-				allowed := req.Action != ActionAdmin
-				decisions[i] = &AuthorizationDecision{
-					Allowed:  allowed,
-					Provider: "custom-batch",
-				}
-				if !allowed {
-					decisions[i].Reason = "admin access denied in batch"
-				}
-			}
-			return decisions, nil
-		},
-	}
-
-	reqs := []*AuthorizationRequest{
-		{Subject: Subject{ID: "user-1"}, Resource: ResourceKeys, Action: ActionRead},
-		{Subject: Subject{ID: "user-1"}, Resource: ResourceCluster, Action: ActionAdmin},
-		{Subject: Subject{ID: "user-1"}, Resource: ResourceSecrets, Action: ActionWrite},
-	}
-
-	decisions, err := provider.BatchAuthorize(context.Background(), reqs)
-	require.NoError(t, err)
-	require.Len(t, decisions, 3)
-
-	assert.True(t, decisions[0].Allowed)
-	assert.False(t, decisions[1].Allowed)
-	assert.Equal(t, "admin access denied in batch", decisions[1].Reason)
-	assert.True(t, decisions[2].Allowed)
 }

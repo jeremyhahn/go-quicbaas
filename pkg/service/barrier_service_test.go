@@ -15,7 +15,6 @@ package service_test
 
 import (
 	"context"
-	"errors"
 	"testing"
 	"time"
 
@@ -219,79 +218,285 @@ func TestBarrierService_NilClient_ReturnsMissingError(t *testing.T) {
 // BarrierStatus
 // =============================================================================
 
-func TestBarrierService_BarrierStatus_Success(t *testing.T) {
-	initAt := "2026-05-29T10:00:00Z"
-	mc := &mockBarrierClient{
-		statusResp: &transport.BarrierStatusResponse{
-			Sealed:         true,
-			Strategy:       "shamir",
-			HardwareBacked: true,
-			InitializedAt:  initAt,
+// TestBarrierService_Delegation checks, for every method that delegates to
+// the client, that a success maps each response field and that a client
+// error comes back verbatim with the zero result.
+func TestBarrierService_Delegation(t *testing.T) {
+	tests := []struct {
+		name    string
+		mock    *mockBarrierClient
+		call    func(svc *service.BarrierService) (any, error)
+		want    any
+		wantErr error
+	}{
+		{
+			name: "BarrierStatus success",
+			mock: &mockBarrierClient{statusResp: &transport.BarrierStatusResponse{
+				Sealed:         true,
+				Strategy:       "shamir",
+				HardwareBacked: true,
+				InitializedAt:  "2026-05-29T10:00:00Z",
+			}},
+			call: func(svc *service.BarrierService) (any, error) {
+				return svc.BarrierStatus(context.Background())
+			},
+			want: &service.BarrierStatusInfo{
+				Sealed:         true,
+				Strategy:       "shamir",
+				HardwareBacked: true,
+				InitializedAt:  time.Date(2026, 5, 29, 10, 0, 0, 0, time.UTC),
+			},
+		},
+		{
+			name: "BarrierStatus error",
+			mock: &mockBarrierClient{statusErr: errBarrierBackend},
+			call: func(svc *service.BarrierService) (any, error) {
+				return svc.BarrierStatus(context.Background())
+			},
+			want:    (*service.BarrierStatusInfo)(nil),
+			wantErr: errBarrierBackend,
+		},
+		{
+			// An unparseable timestamp leaves InitializedAt at its zero
+			// value rather than propagating a parse error.
+			name: "BarrierStatus unparseable timestamp ignored",
+			mock: &mockBarrierClient{statusResp: &transport.BarrierStatusResponse{
+				Strategy:      "passphrase",
+				InitializedAt: "not-a-timestamp",
+			}},
+			call: func(svc *service.BarrierService) (any, error) {
+				return svc.BarrierStatus(context.Background())
+			},
+			want: &service.BarrierStatusInfo{Strategy: "passphrase"},
+		},
+		{
+			name: "BarrierInitialize success",
+			mock: &mockBarrierClient{},
+			call: func(svc *service.BarrierService) (any, error) {
+				return nil, svc.BarrierInitialize(context.Background(), []byte("secret"))
+			},
+		},
+		{
+			name: "BarrierInitialize error",
+			mock: &mockBarrierClient{initErr: errBarrierBackend},
+			call: func(svc *service.BarrierService) (any, error) {
+				return nil, svc.BarrierInitialize(context.Background(), []byte("secret"))
+			},
+			wantErr: errBarrierBackend,
+		},
+		{
+			name: "BarrierUnseal success",
+			mock: &mockBarrierClient{},
+			call: func(svc *service.BarrierService) (any, error) {
+				return nil, svc.BarrierUnseal(context.Background(), []byte("secret"))
+			},
+		},
+		{
+			name: "BarrierUnseal error",
+			mock: &mockBarrierClient{unsealErr: errBarrierBackend},
+			call: func(svc *service.BarrierService) (any, error) {
+				return nil, svc.BarrierUnseal(context.Background(), []byte("secret"))
+			},
+			wantErr: errBarrierBackend,
+		},
+		{
+			name: "BarrierUnsealWithShares success",
+			mock: &mockBarrierClient{},
+			call: func(svc *service.BarrierService) (any, error) {
+				return nil, svc.BarrierUnsealWithShares(context.Background(), []string{"a", "b"})
+			},
+		},
+		{
+			name: "BarrierUnsealWithShares error",
+			mock: &mockBarrierClient{unsealSharesEr: errBarrierBackend},
+			call: func(svc *service.BarrierService) (any, error) {
+				return nil, svc.BarrierUnsealWithShares(context.Background(), []string{"a", "b"})
+			},
+			wantErr: errBarrierBackend,
+		},
+		{
+			name: "BarrierRecoverWithKeys success",
+			mock: &mockBarrierClient{},
+			call: func(svc *service.BarrierService) (any, error) {
+				return nil, svc.BarrierRecoverWithKeys(context.Background(), []string{"r1", "r2"})
+			},
+		},
+		{
+			name: "BarrierRecoverWithKeys error",
+			mock: &mockBarrierClient{recoverErr: errBarrierBackend},
+			call: func(svc *service.BarrierService) (any, error) {
+				return nil, svc.BarrierRecoverWithKeys(context.Background(), []string{"r1", "r2"})
+			},
+			wantErr: errBarrierBackend,
+		},
+		{
+			name: "BarrierDeleteRecoveryKeys success",
+			mock: &mockBarrierClient{},
+			call: func(svc *service.BarrierService) (any, error) {
+				return nil, svc.BarrierDeleteRecoveryKeys(context.Background())
+			},
+		},
+		{
+			name: "BarrierDeleteRecoveryKeys error",
+			mock: &mockBarrierClient{delRecoveryErr: errBarrierBackend},
+			call: func(svc *service.BarrierService) (any, error) {
+				return nil, svc.BarrierDeleteRecoveryKeys(context.Background())
+			},
+			wantErr: errBarrierBackend,
+		},
+		{
+			name: "BarrierInitializeShamir success",
+			mock: &mockBarrierClient{initShamirResp: &transport.BarrierInitializeShamirResponse{
+				Threshold:   2,
+				TotalShares: 3,
+				ShareCount:  3,
+			}},
+			call: func(svc *service.BarrierService) (any, error) {
+				return svc.BarrierInitializeShamir(context.Background(), []byte("secret"), 2, 3)
+			},
+			want: &service.ShamirInitInfo{Threshold: 2, TotalShares: 3, ShareCount: 3},
+		},
+		{
+			name: "BarrierInitializeShamir error",
+			mock: &mockBarrierClient{initShamirErr: errBarrierBackend},
+			call: func(svc *service.BarrierService) (any, error) {
+				return svc.BarrierInitializeShamir(context.Background(), []byte("secret"), 2, 3)
+			},
+			want:    (*service.ShamirInitInfo)(nil),
+			wantErr: errBarrierBackend,
+		},
+		{
+			name: "BarrierUnsealWithShare success",
+			mock: &mockBarrierClient{unsealShareRsp: &transport.BarrierUnsealShareResponse{
+				Required:  3,
+				Submitted: 1,
+				Complete:  false,
+			}},
+			call: func(svc *service.BarrierService) (any, error) {
+				return svc.BarrierUnsealWithShare(context.Background(), "share")
+			},
+			want: &service.UnsealShareProgress{Required: 3, Submitted: 1, Complete: false},
+		},
+		{
+			name: "BarrierUnsealWithShare error",
+			mock: &mockBarrierClient{unsealShareErr: errBarrierBackend},
+			call: func(svc *service.BarrierService) (any, error) {
+				return svc.BarrierUnsealWithShare(context.Background(), "share")
+			},
+			want:    (*service.UnsealShareProgress)(nil),
+			wantErr: errBarrierBackend,
+		},
+		{
+			name: "BarrierRekey success",
+			mock: &mockBarrierClient{rekeyResp: &transport.BarrierRekeyResponse{
+				Threshold:   2,
+				TotalShares: 2,
+				ShareCount:  2,
+			}},
+			call: func(svc *service.BarrierService) (any, error) {
+				return svc.BarrierRekey(context.Background(), 2, 2)
+			},
+			want: &service.ShamirInitInfo{Threshold: 2, TotalShares: 2, ShareCount: 2},
+		},
+		{
+			name: "BarrierRekey error",
+			mock: &mockBarrierClient{rekeyErr: errBarrierBackend},
+			call: func(svc *service.BarrierService) (any, error) {
+				return svc.BarrierRekey(context.Background(), 2, 2)
+			},
+			want:    (*service.ShamirInitInfo)(nil),
+			wantErr: errBarrierBackend,
+		},
+		{
+			name: "BarrierGenerateRecoveryKeys success",
+			mock: &mockBarrierClient{recoveryResp: &transport.BarrierRecoveryKeysResponse{
+				Threshold:  2,
+				Total:      3,
+				ShareCount: 3,
+			}},
+			call: func(svc *service.BarrierService) (any, error) {
+				return svc.BarrierGenerateRecoveryKeys(context.Background(), 2, 3)
+			},
+			want: &service.RecoveryKeysInfo{Threshold: 2, Total: 3, ShareCount: 3},
+		},
+		{
+			name: "BarrierGenerateRecoveryKeys error",
+			mock: &mockBarrierClient{recoveryErr: errBarrierBackend},
+			call: func(svc *service.BarrierService) (any, error) {
+				return svc.BarrierGenerateRecoveryKeys(context.Background(), 2, 3)
+			},
+			want:    (*service.RecoveryKeysInfo)(nil),
+			wantErr: errBarrierBackend,
+		},
+		{
+			name: "BarrierHasRecoveryKeys success",
+			mock: &mockBarrierClient{hasRecResp: &transport.BarrierHasRecoveryKeysResponse{HasKeys: true}},
+			call: func(svc *service.BarrierService) (any, error) {
+				return svc.BarrierHasRecoveryKeys(context.Background())
+			},
+			want: true,
+		},
+		{
+			name: "BarrierHasRecoveryKeys error",
+			mock: &mockBarrierClient{hasRecErr: errBarrierBackend},
+			call: func(svc *service.BarrierService) (any, error) {
+				return svc.BarrierHasRecoveryKeys(context.Background())
+			},
+			want:    false,
+			wantErr: errBarrierBackend,
+		},
+		{
+			name: "BarrierGenerateRootToken success",
+			mock: &mockBarrierClient{rootTokenResp: &transport.BarrierRootTokenResponse{
+				Token:     "root-token-hex",
+				CreatedAt: "2026-05-29T11:30:00Z",
+			}},
+			call: func(svc *service.BarrierService) (any, error) {
+				return svc.BarrierGenerateRootToken(context.Background(), []string{"s1", "s2"})
+			},
+			want: &service.RootTokenInfo{
+				Token:     "root-token-hex",
+				CreatedAt: time.Date(2026, 5, 29, 11, 30, 0, 0, time.UTC),
+			},
+		},
+		{
+			name: "BarrierGenerateRootToken error",
+			mock: &mockBarrierClient{rootTokenErr: errBarrierBackend},
+			call: func(svc *service.BarrierService) (any, error) {
+				return svc.BarrierGenerateRootToken(context.Background(), []string{"s1"})
+			},
+			want:    (*service.RootTokenInfo)(nil),
+			wantErr: errBarrierBackend,
+		},
+		{
+			name: "BarrierGenerateRootToken unparseable timestamp ignored",
+			mock: &mockBarrierClient{rootTokenResp: &transport.BarrierRootTokenResponse{
+				Token:     "root-token-hex",
+				CreatedAt: "garbage",
+			}},
+			call: func(svc *service.BarrierService) (any, error) {
+				return svc.BarrierGenerateRootToken(context.Background(), []string{"s1"})
+			},
+			want: &service.RootTokenInfo{Token: "root-token-hex"},
 		},
 	}
-	svc := service.NewBarrierService(mc)
 
-	info, err := svc.BarrierStatus(context.Background())
-	require.NoError(t, err)
-	require.NotNil(t, info)
-	assert.True(t, info.Sealed)
-	assert.Equal(t, "shamir", info.Strategy)
-	assert.True(t, info.HardwareBacked)
-
-	want, parseErr := time.Parse(time.RFC3339, initAt)
-	require.NoError(t, parseErr)
-	assert.True(t, info.InitializedAt.Equal(want))
-}
-
-func TestBarrierService_BarrierStatus_InvalidTimestampIgnored(t *testing.T) {
-	mc := &mockBarrierClient{
-		statusResp: &transport.BarrierStatusResponse{
-			Sealed:        false,
-			Strategy:      "passphrase",
-			InitializedAt: "not-a-timestamp",
-		},
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := tc.call(service.NewBarrierService(tc.mock))
+			if tc.wantErr != nil {
+				assert.ErrorIs(t, err, tc.wantErr)
+			} else {
+				require.NoError(t, err)
+			}
+			assert.Equal(t, tc.want, got)
+		})
 	}
-	svc := service.NewBarrierService(mc)
-
-	info, err := svc.BarrierStatus(context.Background())
-	require.NoError(t, err)
-	require.NotNil(t, info)
-	// An unparseable timestamp must leave InitializedAt at its zero value
-	// rather than propagating a parse error.
-	assert.True(t, info.InitializedAt.IsZero())
-}
-
-func TestBarrierService_BarrierStatus_Error(t *testing.T) {
-	mc := &mockBarrierClient{statusErr: errBarrierBackend}
-	svc := service.NewBarrierService(mc)
-
-	info, err := svc.BarrierStatus(context.Background())
-	require.Error(t, err)
-	assert.Nil(t, info)
-	assert.ErrorIs(t, err, errBarrierBackend)
 }
 
 // =============================================================================
 // BarrierInitialize / Unseal / Seal
 // =============================================================================
-
-func TestBarrierService_BarrierInitialize(t *testing.T) {
-	mc := &mockBarrierClient{}
-	svc := service.NewBarrierService(mc)
-	require.NoError(t, svc.BarrierInitialize(context.Background(), []byte("secret")))
-
-	mc.initErr = errBarrierBackend
-	assert.ErrorIs(t, svc.BarrierInitialize(context.Background(), []byte("secret")), errBarrierBackend)
-}
-
-func TestBarrierService_BarrierUnseal(t *testing.T) {
-	mc := &mockBarrierClient{}
-	svc := service.NewBarrierService(mc)
-	require.NoError(t, svc.BarrierUnseal(context.Background(), []byte("secret")))
-
-	mc.unsealErr = errBarrierBackend
-	assert.ErrorIs(t, svc.BarrierUnseal(context.Background(), []byte("secret")), errBarrierBackend)
-}
 
 func TestBarrierService_BarrierSeal(t *testing.T) {
 	mc := &mockBarrierClient{}
@@ -376,71 +581,6 @@ func TestBarrierService_SetPINBackend_NilClearsTheGate(t *testing.T) {
 // Shamir initialize / unseal
 // =============================================================================
 
-func TestBarrierService_BarrierInitializeShamir_Success(t *testing.T) {
-	mc := &mockBarrierClient{
-		initShamirResp: &transport.BarrierInitializeShamirResponse{
-			Threshold:   2,
-			TotalShares: 3,
-			ShareCount:  3,
-		},
-	}
-	svc := service.NewBarrierService(mc)
-
-	info, err := svc.BarrierInitializeShamir(context.Background(), []byte("secret"), 2, 3)
-	require.NoError(t, err)
-	require.NotNil(t, info)
-	assert.Equal(t, 2, info.Threshold)
-	assert.Equal(t, 3, info.TotalShares)
-	assert.Equal(t, 3, info.ShareCount)
-}
-
-func TestBarrierService_BarrierInitializeShamir_Error(t *testing.T) {
-	mc := &mockBarrierClient{initShamirErr: errBarrierBackend}
-	svc := service.NewBarrierService(mc)
-
-	info, err := svc.BarrierInitializeShamir(context.Background(), []byte("secret"), 2, 3)
-	require.Error(t, err)
-	assert.Nil(t, info)
-	assert.ErrorIs(t, err, errBarrierBackend)
-}
-
-func TestBarrierService_BarrierUnsealWithShare_Success(t *testing.T) {
-	mc := &mockBarrierClient{
-		unsealShareRsp: &transport.BarrierUnsealShareResponse{
-			Required:  3,
-			Submitted: 1,
-			Complete:  false,
-		},
-	}
-	svc := service.NewBarrierService(mc)
-
-	prog, err := svc.BarrierUnsealWithShare(context.Background(), "share")
-	require.NoError(t, err)
-	require.NotNil(t, prog)
-	assert.Equal(t, 3, prog.Required)
-	assert.Equal(t, 1, prog.Submitted)
-	assert.False(t, prog.Complete)
-}
-
-func TestBarrierService_BarrierUnsealWithShare_Error(t *testing.T) {
-	mc := &mockBarrierClient{unsealShareErr: errBarrierBackend}
-	svc := service.NewBarrierService(mc)
-
-	prog, err := svc.BarrierUnsealWithShare(context.Background(), "share")
-	require.Error(t, err)
-	assert.Nil(t, prog)
-	assert.ErrorIs(t, err, errBarrierBackend)
-}
-
-func TestBarrierService_BarrierUnsealWithShares(t *testing.T) {
-	mc := &mockBarrierClient{}
-	svc := service.NewBarrierService(mc)
-	require.NoError(t, svc.BarrierUnsealWithShares(context.Background(), []string{"a", "b"}))
-
-	mc.unsealSharesEr = errBarrierBackend
-	assert.ErrorIs(t, svc.BarrierUnsealWithShares(context.Background(), []string{"a", "b"}), errBarrierBackend)
-}
-
 // =============================================================================
 // Shamir share management
 // =============================================================================
@@ -449,160 +589,13 @@ func TestBarrierService_BarrierUnsealWithShares(t *testing.T) {
 // Rekey
 // =============================================================================
 
-func TestBarrierService_BarrierRekey_Success(t *testing.T) {
-	mc := &mockBarrierClient{
-		rekeyResp: &transport.BarrierRekeyResponse{
-			Threshold:   2,
-			TotalShares: 2,
-			ShareCount:  2,
-		},
-	}
-	svc := service.NewBarrierService(mc)
-
-	info, err := svc.BarrierRekey(context.Background(), 2, 2)
-	require.NoError(t, err)
-	require.NotNil(t, info)
-	assert.Equal(t, 2, info.Threshold)
-	assert.Equal(t, 2, info.TotalShares)
-	assert.Equal(t, 2, info.ShareCount)
-}
-
-func TestBarrierService_BarrierRekey_Error(t *testing.T) {
-	mc := &mockBarrierClient{rekeyErr: errBarrierBackend}
-	svc := service.NewBarrierService(mc)
-
-	info, err := svc.BarrierRekey(context.Background(), 2, 2)
-	require.Error(t, err)
-	assert.Nil(t, info)
-	assert.ErrorIs(t, err, errBarrierBackend)
-}
-
 // =============================================================================
 // Recovery keys
 // =============================================================================
-
-func TestBarrierService_BarrierGenerateRecoveryKeys_Success(t *testing.T) {
-	mc := &mockBarrierClient{
-		recoveryResp: &transport.BarrierRecoveryKeysResponse{
-			Threshold:  2,
-			Total:      3,
-			ShareCount: 3,
-		},
-	}
-	svc := service.NewBarrierService(mc)
-
-	info, err := svc.BarrierGenerateRecoveryKeys(context.Background(), 2, 3)
-	require.NoError(t, err)
-	require.NotNil(t, info)
-	assert.Equal(t, 2, info.Threshold)
-	assert.Equal(t, 3, info.Total)
-	assert.Equal(t, 3, info.ShareCount)
-}
-
-func TestBarrierService_BarrierGenerateRecoveryKeys_Error(t *testing.T) {
-	mc := &mockBarrierClient{recoveryErr: errBarrierBackend}
-	svc := service.NewBarrierService(mc)
-
-	info, err := svc.BarrierGenerateRecoveryKeys(context.Background(), 2, 3)
-	require.Error(t, err)
-	assert.Nil(t, info)
-	assert.ErrorIs(t, err, errBarrierBackend)
-}
-
-func TestBarrierService_BarrierRecoverWithKeys(t *testing.T) {
-	mc := &mockBarrierClient{}
-	svc := service.NewBarrierService(mc)
-	require.NoError(t, svc.BarrierRecoverWithKeys(context.Background(), []string{"r1", "r2"}))
-
-	mc.recoverErr = errBarrierBackend
-	assert.ErrorIs(t, svc.BarrierRecoverWithKeys(context.Background(), []string{"r1", "r2"}), errBarrierBackend)
-}
-
-func TestBarrierService_BarrierDeleteRecoveryKeys(t *testing.T) {
-	mc := &mockBarrierClient{}
-	svc := service.NewBarrierService(mc)
-	require.NoError(t, svc.BarrierDeleteRecoveryKeys(context.Background()))
-
-	mc.delRecoveryErr = errBarrierBackend
-	assert.ErrorIs(t, svc.BarrierDeleteRecoveryKeys(context.Background()), errBarrierBackend)
-}
-
-func TestBarrierService_BarrierHasRecoveryKeys_Success(t *testing.T) {
-	mc := &mockBarrierClient{
-		hasRecResp: &transport.BarrierHasRecoveryKeysResponse{HasKeys: true},
-	}
-	svc := service.NewBarrierService(mc)
-
-	has, err := svc.BarrierHasRecoveryKeys(context.Background())
-	require.NoError(t, err)
-	assert.True(t, has)
-}
-
-func TestBarrierService_BarrierHasRecoveryKeys_Error(t *testing.T) {
-	mc := &mockBarrierClient{hasRecErr: errBarrierBackend}
-	svc := service.NewBarrierService(mc)
-
-	has, err := svc.BarrierHasRecoveryKeys(context.Background())
-	require.Error(t, err)
-	assert.False(t, has)
-	assert.ErrorIs(t, err, errBarrierBackend)
-}
 
 // =============================================================================
 // Root token
 // =============================================================================
 
-func TestBarrierService_BarrierGenerateRootToken_Success(t *testing.T) {
-	createdAt := "2026-05-29T11:30:00Z"
-	mc := &mockBarrierClient{
-		rootTokenResp: &transport.BarrierRootTokenResponse{
-			Token:     "root-token-hex",
-			CreatedAt: createdAt,
-		},
-	}
-	svc := service.NewBarrierService(mc)
-
-	info, err := svc.BarrierGenerateRootToken(context.Background(), []string{"s1", "s2"})
-	require.NoError(t, err)
-	require.NotNil(t, info)
-	assert.Equal(t, "root-token-hex", info.Token)
-
-	want, parseErr := time.Parse(time.RFC3339, createdAt)
-	require.NoError(t, parseErr)
-	assert.True(t, info.CreatedAt.Equal(want))
-}
-
-func TestBarrierService_BarrierGenerateRootToken_InvalidTimestampIgnored(t *testing.T) {
-	mc := &mockBarrierClient{
-		rootTokenResp: &transport.BarrierRootTokenResponse{
-			Token:     "root-token-hex",
-			CreatedAt: "garbage",
-		},
-	}
-	svc := service.NewBarrierService(mc)
-
-	info, err := svc.BarrierGenerateRootToken(context.Background(), []string{"s1"})
-	require.NoError(t, err)
-	require.NotNil(t, info)
-	assert.Equal(t, "root-token-hex", info.Token)
-	assert.True(t, info.CreatedAt.IsZero())
-}
-
-func TestBarrierService_BarrierGenerateRootToken_Error(t *testing.T) {
-	mc := &mockBarrierClient{rootTokenErr: errBarrierBackend}
-	svc := service.NewBarrierService(mc)
-
-	info, err := svc.BarrierGenerateRootToken(context.Background(), []string{"s1"})
-	require.Error(t, err)
-	assert.Nil(t, info)
-	assert.ErrorIs(t, err, errBarrierBackend)
-}
-
 // Guard against the sentinel being accidentally reclassified as a wrapped
 // chain error; the facade returns it verbatim.
-func TestBarrierService_ErrorIsVerbatim(t *testing.T) {
-	mc := &mockBarrierClient{statusErr: errBarrierBackend}
-	svc := service.NewBarrierService(mc)
-	_, err := svc.BarrierStatus(context.Background())
-	assert.True(t, errors.Is(err, errBarrierBackend))
-}

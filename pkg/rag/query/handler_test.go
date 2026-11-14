@@ -19,6 +19,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"runtime"
 	"sync"
 	"testing"
 	"time"
@@ -189,48 +190,36 @@ func (m *mockSearcher) getCalls() int {
 	return m.calls
 }
 
-func TestNewHandler_Success(t *testing.T) {
-	embedder := newMockEmbedder()
-	searcher := newMockSearcher()
-	config := DefaultConfig()
+func TestNewHandler(t *testing.T) {
+	invalidConfig := DefaultConfig()
+	invalidConfig.CacheSize = -1
 
-	h, err := NewHandler(embedder, searcher, config)
-	require.NoError(t, err)
-	assert.NotNil(t, h)
+	tests := []struct {
+		name     string
+		embedder EmbeddingProvider
+		searcher VectorSearcher
+		config   Config
+		wantErr  error
+	}{
+		{name: "valid", embedder: newMockEmbedder(), searcher: newMockSearcher(), config: DefaultConfig()},
+		{name: "nil embedder", searcher: newMockSearcher(), config: DefaultConfig(), wantErr: ErrNilEmbedder},
+		{name: "nil searcher", embedder: newMockEmbedder(), config: DefaultConfig(), wantErr: ErrNilSearcher},
+		{name: "invalid config", embedder: newMockEmbedder(), searcher: newMockSearcher(), config: invalidConfig, wantErr: ErrInvalidOptions},
+	}
 
-	err = h.Close()
-	assert.NoError(t, err)
-}
-
-func TestNewHandler_NilEmbedder(t *testing.T) {
-	searcher := newMockSearcher()
-	config := DefaultConfig()
-
-	h, err := NewHandler(nil, searcher, config)
-	assert.Error(t, err)
-	assert.Nil(t, h)
-	assert.Contains(t, err.Error(), "embedder")
-}
-
-func TestNewHandler_NilSearcher(t *testing.T) {
-	embedder := newMockEmbedder()
-	config := DefaultConfig()
-
-	h, err := NewHandler(embedder, nil, config)
-	assert.Error(t, err)
-	assert.Nil(t, h)
-	assert.Contains(t, err.Error(), "searcher")
-}
-
-func TestNewHandler_InvalidConfig(t *testing.T) {
-	embedder := newMockEmbedder()
-	searcher := newMockSearcher()
-	config := DefaultConfig()
-	config.CacheSize = -1
-
-	h, err := NewHandler(embedder, searcher, config)
-	assert.Error(t, err)
-	assert.Nil(t, h)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			h, err := NewHandler(tt.embedder, tt.searcher, tt.config)
+			if tt.wantErr != nil {
+				assert.ErrorIs(t, err, tt.wantErr)
+				assert.Nil(t, h)
+				return
+			}
+			require.NoError(t, err)
+			require.NotNil(t, h)
+			assert.NoError(t, h.Close())
+		})
+	}
 }
 
 func TestHandler_Query_Success(t *testing.T) {
@@ -254,56 +243,52 @@ func TestHandler_Query_Success(t *testing.T) {
 	assert.False(t, response.CacheHit)
 }
 
-func TestHandler_Query_EmptyQuery(t *testing.T) {
-	embedder := newMockEmbedder()
-	searcher := newMockSearcher()
-	config := DefaultConfig()
+func TestHandler_Query_Errors(t *testing.T) {
+	canceled, cancel := context.WithCancel(context.Background())
+	cancel()
 
-	h, err := NewHandler(embedder, searcher, config)
-	require.NoError(t, err)
-	defer h.Close()
+	tests := []struct {
+		name         string
+		query        string
+		ctx          context.Context
+		embedErr     error
+		searchErr    error
+		embedLatency time.Duration
+		queryTimeout time.Duration
+		wantErr      error
+	}{
+		{name: "empty query", query: "", ctx: context.Background(), wantErr: ErrEmptyQuery},
+		{name: "embedding error", query: "test query", ctx: context.Background(), embedErr: errors.New("embedding failed"), wantErr: ErrEmbeddingFailed},
+		{name: "search error", query: "test query", ctx: context.Background(), searchErr: errors.New("search failed"), wantErr: ErrSearchFailed},
+		{name: "context canceled", query: "test query", ctx: canceled, embedLatency: 100 * time.Millisecond},
+		{name: "query timeout", query: "test query", ctx: context.Background(), embedLatency: 200 * time.Millisecond, queryTimeout: 50 * time.Millisecond},
+	}
 
-	ctx := context.Background()
-	response, err := h.Query(ctx, "", DefaultOptions())
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			embedder := newMockEmbedder()
+			embedder.setError(tt.embedErr)
+			embedder.setLatency(tt.embedLatency)
+			searcher := newMockSearcher()
+			searcher.setError(tt.searchErr)
+			config := DefaultConfig()
+			if tt.queryTimeout > 0 {
+				config.QueryTimeout = tt.queryTimeout
+			}
 
-	assert.Equal(t, ErrEmptyQuery, err)
-	assert.Nil(t, response)
-}
+			h, err := NewHandler(embedder, searcher, config)
+			require.NoError(t, err)
+			defer h.Close()
 
-func TestHandler_Query_EmbeddingError(t *testing.T) {
-	embedder := newMockEmbedder()
-	embedder.setError(errors.New("embedding failed"))
-	searcher := newMockSearcher()
-	config := DefaultConfig()
+			response, err := h.Query(tt.ctx, tt.query, DefaultOptions())
 
-	h, err := NewHandler(embedder, searcher, config)
-	require.NoError(t, err)
-	defer h.Close()
-
-	ctx := context.Background()
-	response, err := h.Query(ctx, "test query", DefaultOptions())
-
-	assert.Error(t, err)
-	assert.Nil(t, response)
-	assert.ErrorIs(t, err, ErrEmbeddingFailed)
-}
-
-func TestHandler_Query_SearchError(t *testing.T) {
-	embedder := newMockEmbedder()
-	searcher := newMockSearcher()
-	searcher.setError(errors.New("search failed"))
-	config := DefaultConfig()
-
-	h, err := NewHandler(embedder, searcher, config)
-	require.NoError(t, err)
-	defer h.Close()
-
-	ctx := context.Background()
-	response, err := h.Query(ctx, "test query", DefaultOptions())
-
-	assert.Error(t, err)
-	assert.Nil(t, response)
-	assert.ErrorIs(t, err, ErrSearchFailed)
+			require.Error(t, err)
+			assert.Nil(t, response)
+			if tt.wantErr != nil {
+				assert.ErrorIs(t, err, tt.wantErr)
+			}
+		})
+	}
 }
 
 func TestHandler_Query_CacheHit(t *testing.T) {
@@ -369,59 +354,50 @@ func TestHandler_Query_DifferentOptions(t *testing.T) {
 
 	ctx := context.Background()
 
-	// Query with different TopK values
-	opts1 := DefaultOptions()
-	opts1.TopK = 5
+	topK5 := DefaultOptions()
+	topK5.TopK = 5
 
-	opts2 := DefaultOptions()
-	opts2.TopK = 10
+	topK10 := DefaultOptions()
+	topK10.TopK = 10
 
-	response1, err := h.Query(ctx, "test query", opts1)
-	require.NoError(t, err)
+	filters := DefaultOptions()
+	filters.Filters = map[string]interface{}{
+		"key1": "value1",
+		"key2": 123,
+		"key3": true,
+		"key4": []string{"a", "b", "c"},
+	}
 
-	response2, err := h.Query(ctx, "test query", opts2)
-	require.NoError(t, err)
+	allOptions := Options{
+		TopK:          3,
+		MinScore:      0.7,
+		NProbe:        10,
+		IncludeSource: true,
+		Filters: map[string]interface{}{
+			"type": "code",
+		},
+	}
 
-	// Both should be cache misses (different options)
-	assert.False(t, response1.CacheHit)
-	assert.False(t, response2.CacheHit)
-}
+	// The same query with each set of options in turn: every one is a
+	// cache miss, because the options are part of the cache key.
+	tests := []struct {
+		name string
+		opts Options
+	}{
+		{name: "top k 5", opts: topK5},
+		{name: "top k 10", opts: topK10},
+		{name: "mixed-type filters", opts: filters},
+		{name: "all options", opts: allOptions},
+	}
 
-func TestHandler_Query_ContextCanceled(t *testing.T) {
-	embedder := newMockEmbedder()
-	embedder.setLatency(100 * time.Millisecond)
-	searcher := newMockSearcher()
-	config := DefaultConfig()
-
-	h, err := NewHandler(embedder, searcher, config)
-	require.NoError(t, err)
-	defer h.Close()
-
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel() // Cancel immediately
-
-	response, err := h.Query(ctx, "test query", DefaultOptions())
-
-	assert.Error(t, err)
-	assert.Nil(t, response)
-}
-
-func TestHandler_Query_Timeout(t *testing.T) {
-	embedder := newMockEmbedder()
-	embedder.setLatency(200 * time.Millisecond)
-	searcher := newMockSearcher()
-	config := DefaultConfig()
-	config.QueryTimeout = 50 * time.Millisecond
-
-	h, err := NewHandler(embedder, searcher, config)
-	require.NoError(t, err)
-	defer h.Close()
-
-	ctx := context.Background()
-	response, err := h.Query(ctx, "test query", DefaultOptions())
-
-	assert.Error(t, err)
-	assert.Nil(t, response)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			response, err := h.Query(ctx, "test query", tt.opts)
+			require.NoError(t, err)
+			assert.False(t, response.CacheHit)
+			assert.NotEmpty(t, response.Results)
+		})
+	}
 }
 
 func TestHandler_Query_ApplyDefaults(t *testing.T) {
@@ -445,36 +421,54 @@ func TestHandler_Query_ApplyDefaults(t *testing.T) {
 }
 
 func TestHandler_StreamQuery_Success(t *testing.T) {
-	embedder := newMockEmbedder()
-	searcher := newMockSearcher()
-	config := DefaultConfig()
-
-	h, err := NewHandler(embedder, searcher, config)
-	require.NoError(t, err)
-	defer h.Close()
-
-	ctx := context.Background()
-	ch, err := h.StreamQuery(ctx, "test query", DefaultOptions())
-	require.NoError(t, err)
-	require.NotNil(t, ch)
-
-	var chunks []StreamChunk
-	for chunk := range ch {
-		chunks = append(chunks, chunk)
+	tests := []struct {
+		name        string
+		results     []Result
+		wantResults int
+	}{
+		{name: "default results", wantResults: 2},
+		{name: "no results", results: []Result{}, wantResults: 0},
 	}
 
-	// Should have results + done chunk
-	assert.GreaterOrEqual(t, len(chunks), 2)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			embedder := newMockEmbedder()
+			searcher := newMockSearcher()
+			if tt.results != nil {
+				searcher.setResults(tt.results)
+			}
 
-	// Last chunk should be done
-	lastChunk := chunks[len(chunks)-1]
-	assert.True(t, lastChunk.Done)
+			h, err := NewHandler(embedder, searcher, DefaultConfig())
+			require.NoError(t, err)
+			defer h.Close()
+
+			ch, err := h.StreamQuery(context.Background(), "test query", DefaultOptions())
+			require.NoError(t, err)
+			require.NotNil(t, ch)
+
+			var chunks []StreamChunk
+			for chunk := range ch {
+				require.NoError(t, chunk.Error)
+				chunks = append(chunks, chunk)
+			}
+
+			// One chunk per result, then exactly one done chunk.
+			require.Len(t, chunks, tt.wantResults+1)
+			for _, chunk := range chunks[:tt.wantResults] {
+				assert.NotNil(t, chunk.Result)
+				assert.False(t, chunk.Done)
+			}
+			assert.True(t, chunks[tt.wantResults].Done)
+		})
+	}
 }
+
 func TestHandler_StreamQuery_Cancellation(t *testing.T) {
 	embedder := newMockEmbedder()
 	searcher := newMockSearcher()
 
-	// Create many results
+	// Many more results than the stream buffer holds, so the stream is
+	// still sending when the context is canceled.
 	manyResults := make([]Result, 100)
 	for i := range manyResults {
 		manyResults[i] = Result{
@@ -492,23 +486,27 @@ func TestHandler_StreamQuery_Cancellation(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	ch, err := h.StreamQuery(ctx, "test query", DefaultOptions())
+	opts := DefaultOptions()
+	opts.TopK = len(manyResults)
+	ch, err := h.StreamQuery(ctx, "test query", opts)
 	require.NoError(t, err)
 
-	// Read a few chunks then cancel
+	// Read two results, cancel, then drain the stream.
 	chunksRead := 0
+	var last StreamChunk
 	for chunk := range ch {
-		if chunk.Done || chunk.Error != nil {
-			break
+		last = chunk
+		if chunk.Result != nil {
+			chunksRead++
 		}
-		chunksRead++
-		if chunksRead >= 2 {
+		if chunksRead == 2 {
 			cancel()
 		}
 	}
 
-	// Should have read at least some chunks
-	assert.GreaterOrEqual(t, chunksRead, 1)
+	assert.Less(t, chunksRead, len(manyResults))
+	assert.False(t, last.Done)
+	assert.ErrorIs(t, last.Error, ErrContextCanceled)
 }
 
 func TestHandler_Close(t *testing.T) {
@@ -519,24 +517,10 @@ func TestHandler_Close(t *testing.T) {
 	h, err := NewHandler(embedder, searcher, config)
 	require.NoError(t, err)
 
-	err = h.Close()
-	assert.NoError(t, err)
+	require.NoError(t, h.Close())
 
 	// Second close should be safe
-	err = h.Close()
-	assert.NoError(t, err)
-}
-
-func TestHandler_ClosedHandler(t *testing.T) {
-	embedder := newMockEmbedder()
-	searcher := newMockSearcher()
-	config := DefaultConfig()
-
-	h, err := NewHandler(embedder, searcher, config)
-	require.NoError(t, err)
-
-	err = h.Close()
-	require.NoError(t, err)
+	assert.NoError(t, h.Close())
 
 	ctx := context.Background()
 
@@ -657,17 +641,17 @@ func BenchmarkHandler_QueryCached(b *testing.B) {
 	}
 }
 
-func TestHandler_StreamQuery_ContextCancelDuringStream(t *testing.T) {
+// TestHandler_StreamQuery_SlowConsumer tests that a consumer that does not
+// read until the stream buffer is full still receives every result.
+func TestHandler_StreamQuery_SlowConsumer(t *testing.T) {
 	embedder := newMockEmbedder()
 	searcher := newMockSearcher()
 
-	// Create several results to stream
-	manyResults := make([]Result, 10)
+	manyResults := make([]Result, 25)
 	for i := range manyResults {
 		manyResults[i] = Result{
-			ID:      string(rune('A' + i)),
-			Score:   0.9,
-			Content: "content",
+			ID:    fmt.Sprintf("id-%d", i),
+			Score: 0.9,
 		}
 	}
 	searcher.setResults(manyResults)
@@ -678,209 +662,28 @@ func TestHandler_StreamQuery_ContextCancelDuringStream(t *testing.T) {
 	require.NoError(t, err)
 	defer h.Close()
 
-	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
-	defer cancel()
-
-	ch, err := h.StreamQuery(ctx, "test query", DefaultOptions())
+	opts := DefaultOptions()
+	opts.TopK = len(manyResults)
+	ch, err := h.StreamQuery(context.Background(), "test query", opts)
 	require.NoError(t, err)
 
-	// Read slowly to allow timeout
-	receivedResults := 0
-	receivedError := false
-
-	for chunk := range ch {
-		if chunk.Result != nil {
-			receivedResults++
-			time.Sleep(10 * time.Millisecond) // Slow read to trigger timeout
-		}
-		if chunk.Error != nil {
-			receivedError = true
-		}
+	// Hold off reading until the producer has filled the buffer and blocks.
+	for len(ch) < cap(ch) {
+		runtime.Gosched()
 	}
 
-	// Should have either completed or received error
-	assert.True(t, receivedResults > 0 || receivedError)
-}
-
-// TestHandler_StreamQuery_SlowConsumer tests streaming with slow consumer.
-func TestHandler_StreamQuery_SlowConsumer(t *testing.T) {
-	embedder := newMockEmbedder()
-	searcher := newMockSearcher()
-
-	config := DefaultConfig()
-
-	h, err := NewHandler(embedder, searcher, config)
-	require.NoError(t, err)
-	defer h.Close()
-
-	ctx := context.Background()
-	ch, err := h.StreamQuery(ctx, "test query", DefaultOptions())
-	require.NoError(t, err)
-
-	// Consume slowly
 	count := 0
+	done := false
 	for chunk := range ch {
+		require.NoError(t, chunk.Error)
 		if chunk.Result != nil {
 			count++
 		}
-		time.Sleep(1 * time.Millisecond)
-	}
-
-	assert.Equal(t, 2, count)
-}
-
-// TestHandler_Query_ContextTimeout tests query with context timeout.
-func TestHandler_Query_ContextTimeout(t *testing.T) {
-	embedder := newMockEmbedder()
-	embedder.setLatency(200 * time.Millisecond)
-	searcher := newMockSearcher()
-
-	config := DefaultConfig()
-	config.QueryTimeout = 10 * time.Millisecond // Very short timeout
-
-	h, err := NewHandler(embedder, searcher, config)
-	require.NoError(t, err)
-	defer h.Close()
-
-	ctx := context.Background()
-	_, err = h.Query(ctx, "test query", DefaultOptions())
-
-	// Should timeout
-	assert.Error(t, err)
-}
-
-// TestHandler_Query_MultipleFilters tests query with multiple filters.
-func TestHandler_Query_MultipleFilters(t *testing.T) {
-	embedder := newMockEmbedder()
-	searcher := newMockSearcher()
-	config := DefaultConfig()
-
-	h, err := NewHandler(embedder, searcher, config)
-	require.NoError(t, err)
-	defer h.Close()
-
-	ctx := context.Background()
-
-	opts := DefaultOptions()
-	opts.Filters = map[string]interface{}{
-		"key1": "value1",
-		"key2": 123,
-		"key3": true,
-		"key4": []string{"a", "b", "c"},
-	}
-
-	response, err := h.Query(ctx, "test query", opts)
-	require.NoError(t, err)
-	assert.NotNil(t, response)
-}
-
-func TestHandler_Query_AllOptions(t *testing.T) {
-	embedder := newMockEmbedder()
-	searcher := newMockSearcher()
-	config := DefaultConfig()
-
-	h, err := NewHandler(embedder, searcher, config)
-	require.NoError(t, err)
-	defer h.Close()
-
-	ctx := context.Background()
-
-	// Specify all options
-	opts := Options{
-		TopK:          3,
-		MinScore:      0.7,
-		NProbe:        10,
-		IncludeSource: true,
-		Filters: map[string]interface{}{
-			"type": "code",
-		},
-	}
-
-	response, err := h.Query(ctx, "test query with all options", opts)
-	require.NoError(t, err)
-	assert.NotNil(t, response)
-	assert.NotEmpty(t, response.Results)
-}
-
-// TestHandler_StreamQuery_AllResultsStreamed tests that all results are streamed.
-func TestHandler_StreamQuery_AllResultsStreamed(t *testing.T) {
-	embedder := newMockEmbedder()
-	searcher := newMockSearcher()
-
-	config := DefaultConfig()
-
-	h, err := NewHandler(embedder, searcher, config)
-	require.NoError(t, err)
-	defer h.Close()
-
-	ctx := context.Background()
-	ch, err := h.StreamQuery(ctx, "test query", DefaultOptions())
-	require.NoError(t, err)
-
-	resultCount := 0
-	doneReceived := false
-
-	for chunk := range ch {
-		if chunk.Error != nil {
-			t.Fatalf("unexpected error: %v", chunk.Error)
-		}
-		if chunk.Result != nil {
-			resultCount++
-		}
 		if chunk.Done {
-			doneReceived = true
+			done = true
 		}
 	}
 
-	assert.Equal(t, 2, resultCount, "should receive all results")
-	assert.True(t, doneReceived, "should receive done signal")
-}
-
-// TestHandler_StreamQuery_NoResults tests streaming with no results.
-func TestHandler_StreamQuery_NoResults(t *testing.T) {
-	embedder := newMockEmbedder()
-	searcher := newMockSearcher()
-	searcher.setResults([]Result{}) // No results
-
-	config := DefaultConfig()
-
-	h, err := NewHandler(embedder, searcher, config)
-	require.NoError(t, err)
-	defer h.Close()
-
-	ctx := context.Background()
-	ch, err := h.StreamQuery(ctx, "test query", DefaultOptions())
-	require.NoError(t, err)
-
-	chunks := []StreamChunk{}
-	for chunk := range ch {
-		chunks = append(chunks, chunk)
-	}
-
-	// Should only have done chunk (no results to stream)
-	assert.Len(t, chunks, 1)
-	assert.True(t, chunks[0].Done)
-}
-
-// TestHandler_Query_WithFilters tests Query with filters.
-func TestHandler_Query_WithFilters(t *testing.T) {
-	embedder := newMockEmbedder()
-	searcher := newMockSearcher()
-	config := DefaultConfig()
-
-	h, err := NewHandler(embedder, searcher, config)
-	require.NoError(t, err)
-	defer h.Close()
-
-	ctx := context.Background()
-
-	opts := DefaultOptions()
-	opts.Filters = map[string]interface{}{
-		"category": "documentation",
-		"language": "go",
-	}
-
-	response, err := h.Query(ctx, "test query with filters", opts)
-	require.NoError(t, err)
-	assert.NotNil(t, response)
+	assert.Equal(t, len(manyResults), count)
+	assert.True(t, done)
 }

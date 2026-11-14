@@ -87,6 +87,51 @@ func TestNewTracer(t *testing.T) {
 			errContains: "exporter endpoint is required",
 		},
 		{
+			name: "missing endpoint for jaeger",
+			config: &Config{
+				Enabled:       true,
+				ServiceName:   "test-service",
+				ExporterType:  ExporterJaeger,
+				SamplingRatio: 1.0,
+			},
+			wantErr:     true,
+			errContains: "exporter endpoint is required",
+		},
+		{
+			name: "missing endpoint for zipkin",
+			config: &Config{
+				Enabled:       true,
+				ServiceName:   "test-service",
+				ExporterType:  ExporterZipkin,
+				SamplingRatio: 1.0,
+			},
+			wantErr:     true,
+			errContains: "exporter endpoint is required",
+		},
+		{
+			name: "unknown exporter type",
+			config: &Config{
+				Enabled:       true,
+				ServiceName:   "test-service",
+				ExporterType:  "unknown",
+				SamplingRatio: 1.0,
+			},
+			wantErr:     true,
+			errContains: "unknown exporter type",
+		},
+		{
+			name: "negative shutdown timeout",
+			config: &Config{
+				Enabled:         true,
+				ServiceName:     "test-service",
+				ExporterType:    ExporterStdout,
+				SamplingRatio:   1.0,
+				ShutdownTimeout: -1 * time.Second,
+			},
+			wantErr:     true,
+			errContains: "shutdown timeout cannot be negative",
+		},
+		{
 			name: "valid config - disabled",
 			config: &Config{
 				Enabled:       false,
@@ -148,6 +193,7 @@ func TestTracer_TraceRequest(t *testing.T) {
 		name          string
 		enabled       bool
 		operationName string
+		nilTracer     bool
 		attributes    []attribute.KeyValue
 		wantSpan      bool
 	}{
@@ -175,6 +221,12 @@ func TestTracer_TraceRequest(t *testing.T) {
 			attributes:    nil,
 			wantSpan:      false,
 		},
+		{
+			name:          "nil tracer",
+			nilTracer:     true,
+			operationName: "test.operation",
+			wantSpan:      false,
+		},
 	}
 
 	for _, tt := range tests {
@@ -197,6 +249,9 @@ func TestTracer_TraceRequest(t *testing.T) {
 			if !tt.enabled {
 				tracer.tracer = trace.NewNoopTracerProvider().Tracer("")
 			}
+			if tt.nilTracer {
+				tracer.tracer = nil
+			}
 
 			ctx := context.Background()
 			newCtx, finish := tracer.TraceRequest(ctx, tt.operationName, tt.attributes...)
@@ -204,9 +259,6 @@ func TestTracer_TraceRequest(t *testing.T) {
 
 			// Context should always be returned
 			assert.NotNil(t, newCtx)
-
-			// Simulate work
-			time.Sleep(1 * time.Millisecond)
 
 			// End span
 			finish()
@@ -240,76 +292,102 @@ func TestTracer_TraceRequest(t *testing.T) {
 }
 
 func TestTracer_StartSpan(t *testing.T) {
-	sr := tracetest.NewSpanRecorder()
-	provider := sdktrace.NewTracerProvider(
-		sdktrace.WithSpanProcessor(sr),
-	)
-
-	tracer := &Tracer{
-		config: &Config{
-			Enabled:     true,
-			ServiceName: "test-service",
-		},
-		provider: provider,
-		tracer:   provider.Tracer("test"),
+	tests := []struct {
+		name      string
+		nilTracer bool
+		wantSpans int
+	}{
+		{name: "enabled tracer records span", wantSpans: 1},
+		{name: "nil tracer returns no-op span", nilTracer: true, wantSpans: 0},
 	}
 
-	ctx := context.Background()
-	spanCtx, span := tracer.StartSpan(ctx, "test.span",
-		trace.WithAttributes(
-			attribute.String("test.key", "test.value"),
-		),
-	)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			sr := tracetest.NewSpanRecorder()
+			provider := sdktrace.NewTracerProvider(
+				sdktrace.WithSpanProcessor(sr),
+			)
 
-	assert.NotNil(t, spanCtx)
-	assert.NotNil(t, span)
+			tracer := &Tracer{
+				config: &Config{
+					Enabled:     !tt.nilTracer,
+					ServiceName: "test-service",
+				},
+				provider: provider,
+				tracer:   provider.Tracer("test"),
+			}
+			if tt.nilTracer {
+				tracer.tracer = nil
+			}
 
-	// Add some operations
-	span.SetAttributes(attribute.Int("test.count", 42))
-	span.AddEvent("test.event")
+			spanCtx, span := tracer.StartSpan(context.Background(), "test.span",
+				trace.WithAttributes(
+					attribute.String("test.key", "test.value"),
+				),
+			)
 
-	span.End()
+			assert.NotNil(t, spanCtx)
+			require.NotNil(t, span)
 
-	// Verify span
-	spans := sr.Ended()
-	require.Len(t, spans, 1)
-	assert.Equal(t, "test.span", spans[0].Name())
-	assert.Len(t, spans[0].Events(), 1)
-	assert.Equal(t, "test.event", spans[0].Events()[0].Name)
+			span.SetAttributes(attribute.Int("test.count", 42))
+			span.AddEvent("test.event")
+			span.End()
+
+			spans := sr.Ended()
+			require.Len(t, spans, tt.wantSpans)
+			if tt.wantSpans == 0 {
+				return
+			}
+			assert.Equal(t, "test.span", spans[0].Name())
+			assert.Len(t, spans[0].Events(), 1)
+			assert.Equal(t, "test.event", spans[0].Events()[0].Name)
+		})
+	}
 }
 
 func TestTracer_RecordError(t *testing.T) {
-	sr := tracetest.NewSpanRecorder()
-	provider := sdktrace.NewTracerProvider(
-		sdktrace.WithSpanProcessor(sr),
-	)
-
-	tracer := &Tracer{
-		config: &Config{
-			Enabled:     true,
-			ServiceName: "test-service",
-		},
-		provider: provider,
-		tracer:   provider.Tracer("test"),
+	tests := []struct {
+		name       string
+		err        error
+		wantEvents int
+	}{
+		{name: "error is recorded as exception event", err: errors.New("test error"), wantEvents: 1},
+		{name: "nil error records nothing", err: nil, wantEvents: 0},
 	}
 
-	ctx, span := tracer.StartSpan(context.Background(), "test.error")
-	testErr := errors.New("test error")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			sr := tracetest.NewSpanRecorder()
+			provider := sdktrace.NewTracerProvider(
+				sdktrace.WithSpanProcessor(sr),
+			)
 
-	// Record error
-	tracer.RecordError(ctx, testErr)
-	span.End()
+			tracer := &Tracer{
+				config: &Config{
+					Enabled:     true,
+					ServiceName: "test-service",
+				},
+				provider: provider,
+				tracer:   provider.Tracer("test"),
+			}
 
-	// Verify error was recorded
-	spans := sr.Ended()
-	require.Len(t, spans, 1)
+			ctx, span := tracer.StartSpan(context.Background(), "test.error")
+			tracer.RecordError(ctx, tt.err)
+			span.End()
 
-	events := spans[0].Events()
-	require.Len(t, events, 1)
-	assert.Equal(t, "exception", events[0].Name)
+			spans := sr.Ended()
+			require.Len(t, spans, 1)
 
-	// Check status
-	assert.Equal(t, codes.Unset, spans[0].Status().Code)
+			events := spans[0].Events()
+			require.Len(t, events, tt.wantEvents)
+			if tt.wantEvents > 0 {
+				assert.Equal(t, "exception", events[0].Name)
+			}
+
+			// RecordError does not set the span status
+			assert.Equal(t, codes.Unset, spans[0].Status().Code)
+		})
+	}
 }
 
 func TestTracer_ContextPropagation(t *testing.T) {
@@ -438,18 +516,9 @@ func TestTracer_Shutdown(t *testing.T) {
 	tests := []struct {
 		name    string
 		timeout time.Duration
-		wantErr bool
 	}{
-		{
-			name:    "successful shutdown",
-			timeout: 5 * time.Second,
-			wantErr: false,
-		},
-		{
-			name:    "shutdown with timeout",
-			timeout: 1 * time.Nanosecond,
-			wantErr: true, // May timeout
-		},
+		{name: "shutdown with timeout", timeout: 5 * time.Second},
+		{name: "shutdown without timeout", timeout: 0},
 	}
 
 	for _, tt := range tests {
@@ -457,28 +526,26 @@ func TestTracer_Shutdown(t *testing.T) {
 			tracer, err := NewTracer(&Config{
 				Enabled:         true,
 				ServiceName:     "test-service",
-				ExporterType:    ExporterStdout,
+				ExporterType:    ExporterNoop,
 				SamplingRatio:   1.0,
 				ShutdownTimeout: tt.timeout,
 			})
 			require.NoError(t, err)
 			require.NotNil(t, tracer)
 
-			// Create and end a span
 			ctx, span := tracer.StartSpan(context.Background(), "test.shutdown")
 			span.End()
 
-			// Shutdown
-			err = tracer.Shutdown(ctx)
-			if tt.wantErr && tt.timeout < time.Millisecond {
-				// Very short timeout may cause error, but not required
-				// Just verify no panic
-				t.Logf("Shutdown result: %v", err)
-			} else {
-				assert.NoError(t, err)
-			}
+			assert.NoError(t, tracer.Shutdown(ctx))
 		})
 	}
+
+	t.Run("nil shutdown func", func(t *testing.T) {
+		tracer := &Tracer{
+			config: &Config{ServiceName: "test-service"},
+		}
+		assert.NoError(t, tracer.Shutdown(context.Background()))
+	})
 }
 
 func TestTracer_IsEnabled(t *testing.T) {
@@ -541,65 +608,67 @@ func TestTracer_GetConfig(t *testing.T) {
 	assert.Equal(t, cfg.NodeID, gotCfg.NodeID)
 }
 
-func TestDBAttributes(t *testing.T) {
-	attrs := DBAttributes("get", "user:123", 1)
-
-	require.Len(t, attrs, 4)
-	assert.Equal(t, "db.system", string(attrs[0].Key))
-	assert.Equal(t, "quicbaas", attrs[0].Value.AsString())
-	assert.Equal(t, "db.operation", string(attrs[1].Key))
-	assert.Equal(t, "get", attrs[1].Value.AsString())
-	assert.Equal(t, "db.key", string(attrs[2].Key))
-	assert.Equal(t, "user:123", attrs[2].Value.AsString())
-	assert.Equal(t, "db.shard_id", string(attrs[3].Key))
-	assert.Equal(t, int64(1), attrs[3].Value.AsInt64())
-}
-
-func TestRaftAttributes(t *testing.T) {
-	attrs := RaftAttributes(1, 2, 100, 500)
-
-	require.Len(t, attrs, 4)
-	assert.Equal(t, "db.shard_id", string(attrs[0].Key))
-	assert.Equal(t, int64(1), attrs[0].Value.AsInt64())
-	assert.Equal(t, "db.node_id", string(attrs[1].Key))
-	assert.Equal(t, int64(2), attrs[1].Value.AsInt64())
-	assert.Equal(t, "raft.term", string(attrs[2].Key))
-	assert.Equal(t, int64(100), attrs[2].Value.AsInt64())
-	assert.Equal(t, "raft.log_index", string(attrs[3].Key))
-	assert.Equal(t, int64(500), attrs[3].Value.AsInt64())
-}
-
-// A uint64 past the int64 range saturates instead of wrapping negative, so a
-// trace never shows a negative shard, node, term or log index.
-func TestRaftAttributes_ClampsOutOfRangeValues(t *testing.T) {
-	attrs := RaftAttributes(math.MaxUint64, math.MaxUint64, math.MaxUint64, math.MaxUint64)
-
-	require.Len(t, attrs, 4)
-	for _, attr := range attrs {
-		assert.Equal(t, int64(math.MaxInt64), attr.Value.AsInt64(), string(attr.Key))
+func TestAttributeHelpers(t *testing.T) {
+	tests := []struct {
+		name  string
+		attrs []attribute.KeyValue
+		want  []attribute.KeyValue
+	}{
+		{
+			name:  "DBAttributes",
+			attrs: DBAttributes("get", "user:123", 1),
+			want: []attribute.KeyValue{
+				attribute.String("db.system", "quicbaas"),
+				attribute.String("db.operation", "get"),
+				attribute.String("db.key", "user:123"),
+				attribute.Int64("db.shard_id", 1),
+			},
+		},
+		{
+			name:  "RaftAttributes",
+			attrs: RaftAttributes(1, 2, 100, 500),
+			want: []attribute.KeyValue{
+				attribute.Int64("db.shard_id", 1),
+				attribute.Int64("db.node_id", 2),
+				attribute.Int64("raft.term", 100),
+				attribute.Int64("raft.log_index", 500),
+			},
+		},
+		{
+			// Values above math.MaxInt64 are clamped rather than wrapping negative.
+			name:  "RaftAttributes clamps out-of-range values",
+			attrs: RaftAttributes(math.MaxUint64, math.MaxUint64, math.MaxUint64, math.MaxUint64),
+			want: []attribute.KeyValue{
+				attribute.Int64("db.shard_id", math.MaxInt64),
+				attribute.Int64("db.node_id", math.MaxInt64),
+				attribute.Int64("raft.term", math.MaxInt64),
+				attribute.Int64("raft.log_index", math.MaxInt64),
+			},
+		},
+		{
+			name:  "TxnAttributes",
+			attrs: TxnAttributes("txn-123", 5),
+			want: []attribute.KeyValue{
+				attribute.String("txn.id", "txn-123"),
+				attribute.Int64("txn.operation_count", 5),
+			},
+		},
+		{
+			name:  "WatchAttributes",
+			attrs: WatchAttributes("watch-456", "/prefix/", 10),
+			want: []attribute.KeyValue{
+				attribute.String("watch.id", "watch-456"),
+				attribute.String("watch.key_prefix", "/prefix/"),
+				attribute.Int64("watch.event_count", 10),
+			},
+		},
 	}
-}
 
-func TestTxnAttributes(t *testing.T) {
-	attrs := TxnAttributes("txn-123", 5)
-
-	require.Len(t, attrs, 2)
-	assert.Equal(t, "txn.id", string(attrs[0].Key))
-	assert.Equal(t, "txn-123", attrs[0].Value.AsString())
-	assert.Equal(t, "txn.operation_count", string(attrs[1].Key))
-	assert.Equal(t, int64(5), attrs[1].Value.AsInt64())
-}
-
-func TestWatchAttributes(t *testing.T) {
-	attrs := WatchAttributes("watch-456", "/prefix/", 10)
-
-	require.Len(t, attrs, 3)
-	assert.Equal(t, "watch.id", string(attrs[0].Key))
-	assert.Equal(t, "watch-456", attrs[0].Value.AsString())
-	assert.Equal(t, "watch.key_prefix", string(attrs[1].Key))
-	assert.Equal(t, "/prefix/", attrs[1].Value.AsString())
-	assert.Equal(t, "watch.event_count", string(attrs[2].Key))
-	assert.Equal(t, int64(10), attrs[2].Value.AsInt64())
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, tt.attrs)
+		})
+	}
 }
 
 func TestSamplingBehavior(t *testing.T) {
@@ -762,118 +831,24 @@ func TestTracer_SpanFromContext(t *testing.T) {
 	})
 }
 
-func TestValidateConfig_EdgeCases(t *testing.T) {
-	tests := []struct {
-		name        string
-		config      *Config
-		wantErr     bool
-		errContains string
-	}{
-		{
-			name: "unknown exporter type",
-			config: &Config{
-				Enabled:       true,
-				ServiceName:   "test",
-				ExporterType:  "unknown",
-				SamplingRatio: 1.0,
-			},
-			wantErr:     true,
-			errContains: "unknown exporter type",
-		},
-		{
-			name: "negative shutdown timeout",
-			config: &Config{
-				Enabled:         true,
-				ServiceName:     "test",
-				ExporterType:    ExporterStdout,
-				SamplingRatio:   1.0,
-				ShutdownTimeout: -1 * time.Second,
-			},
-			wantErr:     true,
-			errContains: "shutdown timeout cannot be negative",
-		},
-		{
-			name: "missing endpoint for jaeger",
-			config: &Config{
-				Enabled:          true,
-				ServiceName:      "test",
-				ExporterType:     ExporterJaeger,
-				ExporterEndpoint: "",
-				SamplingRatio:    1.0,
-			},
-			wantErr:     true,
-			errContains: "exporter endpoint is required",
-		},
-		{
-			name: "missing endpoint for zipkin",
-			config: &Config{
-				Enabled:          true,
-				ServiceName:      "test",
-				ExporterType:     ExporterZipkin,
-				ExporterEndpoint: "",
-				SamplingRatio:    1.0,
-			},
-			wantErr:     true,
-			errContains: "exporter endpoint is required",
-		},
-		{
-			name: "valid noop exporter - no endpoint required",
-			config: &Config{
-				Enabled:       true,
-				ServiceName:   "test",
-				ExporterType:  ExporterNoop,
-				SamplingRatio: 1.0,
-			},
-			wantErr: false,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			err := validateConfig(tt.config)
-			if tt.wantErr {
-				assert.Error(t, err)
-				if tt.errContains != "" {
-					assert.Contains(t, err.Error(), tt.errContains)
-				}
-			} else {
-				assert.NoError(t, err)
-			}
-		})
-	}
-}
-
 func TestCreateSampler(t *testing.T) {
 	tests := []struct {
 		name  string
 		ratio float64
+		want  sdktrace.Sampler
 	}{
-		{
-			name:  "always sample",
-			ratio: 1.0,
-		},
-		{
-			name:  "never sample",
-			ratio: 0.0,
-		},
-		{
-			name:  "partial sample",
-			ratio: 0.5,
-		},
-		{
-			name:  "over 1.0 (treated as always)",
-			ratio: 1.5,
-		},
-		{
-			name:  "negative (treated as never)",
-			ratio: -0.5,
-		},
+		{name: "always sample", ratio: 1.0, want: sdktrace.AlwaysSample()},
+		{name: "never sample", ratio: 0.0, want: sdktrace.NeverSample()},
+		{name: "partial sample", ratio: 0.5, want: sdktrace.TraceIDRatioBased(0.5)},
+		{name: "over 1.0 (treated as always)", ratio: 1.5, want: sdktrace.AlwaysSample()},
+		{name: "negative (treated as never)", ratio: -0.5, want: sdktrace.NeverSample()},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			sampler := createSampler(tt.ratio)
-			assert.NotNil(t, sampler)
+			require.NotNil(t, sampler)
+			assert.Equal(t, tt.want.Description(), sampler.Description())
 		})
 	}
 }
@@ -890,138 +865,6 @@ func TestNoopExporter(t *testing.T) {
 		err := exporter.Shutdown(context.Background())
 		assert.NoError(t, err)
 	})
-}
-
-func TestTracer_RecordError_WithNilError(t *testing.T) {
-	sr := tracetest.NewSpanRecorder()
-	provider := sdktrace.NewTracerProvider(
-		sdktrace.WithSpanProcessor(sr),
-	)
-
-	tracer := &Tracer{
-		config: &Config{
-			Enabled:     true,
-			ServiceName: "test-service",
-		},
-		provider: provider,
-		tracer:   provider.Tracer("test"),
-	}
-
-	ctx, span := tracer.StartSpan(context.Background(), "test.nil-error")
-
-	// Record nil error - should not add error event
-	tracer.RecordError(ctx, nil)
-	span.End()
-
-	spans := sr.Ended()
-	require.Len(t, spans, 1)
-
-	// Verify no error events
-	events := spans[0].Events()
-	assert.Len(t, events, 0)
-}
-
-func TestTracer_Shutdown_WithNilShutdown(t *testing.T) {
-	tracer := &Tracer{
-		config: &Config{
-			Enabled:     false,
-			ServiceName: "test-service",
-		},
-		shutdown: nil,
-	}
-
-	err := tracer.Shutdown(context.Background())
-	assert.NoError(t, err)
-}
-
-func TestTracer_Shutdown_WithTimeout(t *testing.T) {
-	tracer, err := NewTracer(&Config{
-		Enabled:         true,
-		ServiceName:     "test-service",
-		ExporterType:    ExporterNoop,
-		SamplingRatio:   1.0,
-		ShutdownTimeout: 5 * time.Second,
-	})
-	require.NoError(t, err)
-
-	// Create and end a span
-	ctx, span := tracer.StartSpan(context.Background(), "test.shutdown")
-	span.End()
-
-	// Shutdown with timeout
-	err = tracer.Shutdown(ctx)
-	assert.NoError(t, err)
-}
-
-func TestTracer_Shutdown_WithoutTimeout(t *testing.T) {
-	tracer, err := NewTracer(&Config{
-		Enabled:         true,
-		ServiceName:     "test-service",
-		ExporterType:    ExporterNoop,
-		SamplingRatio:   1.0,
-		ShutdownTimeout: 0, // No timeout
-	})
-	require.NoError(t, err)
-
-	ctx, span := tracer.StartSpan(context.Background(), "test.shutdown-no-timeout")
-	span.End()
-
-	err = tracer.Shutdown(ctx)
-	assert.NoError(t, err)
-}
-
-func TestTracer_StartSpan_WithNilTracer(t *testing.T) {
-	tracer := &Tracer{
-		config: &Config{
-			Enabled:     false,
-			ServiceName: "test-service",
-		},
-		tracer: nil,
-	}
-
-	ctx, span := tracer.StartSpan(context.Background(), "test-span")
-	assert.NotNil(t, ctx)
-	assert.NotNil(t, span)
-}
-
-func TestTracer_TraceRequest_WithNilTracer(t *testing.T) {
-	tracer := &Tracer{
-		config: &Config{
-			Enabled:     false,
-			ServiceName: "test-service",
-		},
-		tracer: nil,
-	}
-
-	ctx, finish := tracer.TraceRequest(context.Background(), "test-operation")
-	assert.NotNil(t, ctx)
-	assert.NotNil(t, finish)
-	finish()
-}
-
-func TestNewTracer_WithResourceMerge(t *testing.T) {
-	tracer, err := NewTracer(&Config{
-		Enabled:        true,
-		ServiceName:    "test-service",
-		ServiceVersion: "2.0.0",
-		ExporterType:   ExporterNoop,
-		SamplingRatio:  1.0,
-		Environment:    "staging",
-		NodeID:         999,
-	})
-	require.NoError(t, err)
-	require.NotNil(t, tracer)
-	defer tracer.Shutdown(context.Background())
-
-	// Verify tracer is enabled
-	assert.True(t, tracer.IsEnabled())
-
-	// Verify config
-	cfg := tracer.GetConfig()
-	assert.Equal(t, "test-service", cfg.ServiceName)
-	assert.Equal(t, "2.0.0", cfg.ServiceVersion)
-	assert.Equal(t, "staging", cfg.Environment)
-	assert.Equal(t, uint64(999), cfg.NodeID)
 }
 
 func TestCreateExporter_AllTypes(t *testing.T) {
@@ -1133,9 +976,6 @@ func TestTracer_DisabledOperations(t *testing.T) {
 	require.NotNil(t, tracer)
 	defer tracer.Shutdown(context.Background())
 
-	// Verify disabled
-	assert.False(t, tracer.IsEnabled())
-
 	// All operations should work without panicking
 	ctx := context.Background()
 
@@ -1162,62 +1002,6 @@ func TestTracer_DisabledOperations(t *testing.T) {
 
 	// RecordError
 	tracer.RecordError(ctx, errors.New("test error"))
-}
-
-func TestAttributeHelpers(t *testing.T) {
-	t.Run("DBAttributes", func(t *testing.T) {
-		attrs := DBAttributes("put", "user:123", 1)
-		require.Len(t, attrs, 4)
-
-		// Verify all expected attributes
-		keys := make(map[string]bool)
-		for _, attr := range attrs {
-			keys[string(attr.Key)] = true
-		}
-		assert.True(t, keys["db.system"])
-		assert.True(t, keys["db.operation"])
-		assert.True(t, keys["db.key"])
-		assert.True(t, keys["db.shard_id"])
-	})
-
-	t.Run("RaftAttributes", func(t *testing.T) {
-		attrs := RaftAttributes(1, 100, 5, 1000)
-		require.Len(t, attrs, 4)
-
-		keys := make(map[string]bool)
-		for _, attr := range attrs {
-			keys[string(attr.Key)] = true
-		}
-		assert.True(t, keys["db.shard_id"])
-		assert.True(t, keys["db.node_id"])
-		assert.True(t, keys["raft.term"])
-		assert.True(t, keys["raft.log_index"])
-	})
-
-	t.Run("TxnAttributes", func(t *testing.T) {
-		attrs := TxnAttributes("txn-123", 10)
-		require.Len(t, attrs, 2)
-
-		keys := make(map[string]bool)
-		for _, attr := range attrs {
-			keys[string(attr.Key)] = true
-		}
-		assert.True(t, keys["txn.id"])
-		assert.True(t, keys["txn.operation_count"])
-	})
-
-	t.Run("WatchAttributes", func(t *testing.T) {
-		attrs := WatchAttributes("watch-456", "/prefix/", 5)
-		require.Len(t, attrs, 3)
-
-		keys := make(map[string]bool)
-		for _, attr := range attrs {
-			keys[string(attr.Key)] = true
-		}
-		assert.True(t, keys["watch.id"])
-		assert.True(t, keys["watch.key_prefix"])
-		assert.True(t, keys["watch.event_count"])
-	})
 }
 
 func BenchmarkTracer_CompleteOperation(b *testing.B) {

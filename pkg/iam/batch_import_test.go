@@ -349,46 +349,6 @@ func TestImportAll(t *testing.T) {
 		}
 	})
 
-	t.Run("context cancelled after roles import", func(t *testing.T) {
-		bm, _ := createTestBatchManager(t)
-		ctx, cancel := context.WithCancel(context.Background())
-
-		// Set up a request that will process roles, then we cancel
-		req := &BatchImportRequest{
-			TenantID: "test-tenant",
-			Roles: []*RoleImport{
-				{ID: "role1", Name: "Admin"},
-			},
-		}
-
-		// Start the import in a goroutine and cancel shortly after
-		resultChan := make(chan *BatchImportResult, 1)
-		errChan := make(chan error, 1)
-
-		go func() {
-			result, err := bm.ImportAll(ctx, req)
-			resultChan <- result
-			errChan <- err
-		}()
-
-		// Give a tiny bit of time for roles to process, then cancel
-		time.Sleep(5 * time.Millisecond)
-		cancel()
-
-		result := <-resultChan
-		err := <-errChan
-
-		// Either the import completed or was cancelled
-		if err != nil && !errors.Is(err, ErrBatchCanceled) {
-			// If cancelled, we should get ErrBatchCanceled
-			// If completed before cancel, no error
-			if !errors.Is(err, context.Canceled) {
-				t.Logf("Got error (expected in some race conditions): %v", err)
-			}
-		}
-		_ = result
-	})
-
 	t.Run("only roles in request", func(t *testing.T) {
 		bm, _ := createTestBatchManager(t)
 		ctx := context.Background()
@@ -640,29 +600,29 @@ func TestImportUsers(t *testing.T) {
 		}
 	})
 
-	t.Run("batch of multiple users", func(t *testing.T) {
+	t.Run("cancelled context", func(t *testing.T) {
 		bm, _ := createTestBatchManager(t)
-		ctx := context.Background()
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
 
-		// Create a few users to verify batch processing works
-		users := []*UserImport{
-			{ID: 1, Email: "user1@example.com", Username: "user1", Enabled: boolPtr(true)},
-			{ID: 2, Email: "user2@example.com", Username: "user2", Enabled: boolPtr(true)},
-			{ID: 3, Email: "user3@example.com", Username: "user3", Enabled: boolPtr(true)},
-			{ID: 30004, Email: "user4@example.com", Username: "user4", Enabled: boolPtr(true)},
-			{ID: 30005, Email: "user5@example.com", Username: "user5", Enabled: boolPtr(true)},
+		users := make([]*UserImport, 10)
+		for i := range users {
+			users[i] = &UserImport{
+				ID:       uint64(i) + 1,
+				Email:    fmt.Sprintf("user%d@example.com", i),
+				Username: fmt.Sprintf("user%d", i),
+			}
 		}
 
+		// Submission and result collection race the cancelled context, so
+		// the batch either stops with ErrBatchCanceled or reports per-item
+		// failures; it never returns another error or a nil result.
 		result, err := bm.ImportUsers(ctx, "test-tenant", users, BatchImportOptions{})
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
+		if err != nil && !errors.Is(err, ErrBatchCanceled) {
+			t.Errorf("expected ErrBatchCanceled or nil, got %v", err)
 		}
-
-		if result.TotalItems != 5 {
-			t.Errorf("expected 5 total items, got %d", result.TotalItems)
-		}
-		if result.SuccessCount != 5 {
-			t.Errorf("expected 5 successes, got %d", result.SuccessCount)
+		if result == nil {
+			t.Fatal("expected a result for a cancelled batch")
 		}
 	})
 }
@@ -700,28 +660,6 @@ func TestImportUser(t *testing.T) {
 		}
 	})
 
-	t.Run("dry run does not create", func(t *testing.T) {
-		bm, memStorage := createTestBatchManager(t)
-		ctx := context.Background()
-
-		user := &UserImport{
-			ID:       1,
-			Email:    "user1@example.com",
-			Username: "user1",
-		}
-
-		err := bm.importUser(ctx, "test-tenant", user, BatchImportOptions{DryRun: true})
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-
-		// Verify user was NOT created
-		_, err = memStorage.GetUser(ctx, "test-tenant", 1)
-		if err == nil {
-			t.Error("expected user not to be created in dry run")
-		}
-	})
-
 	t.Run("missing email error", func(t *testing.T) {
 		bm, _ := createTestBatchManager(t)
 		ctx := context.Background()
@@ -739,21 +677,6 @@ func TestImportUser(t *testing.T) {
 		var valErr *ValidationError
 		if !errors.As(err, &valErr) {
 			t.Errorf("expected ValidationError, got %T", err)
-		}
-	})
-
-	t.Run("missing username error", func(t *testing.T) {
-		bm, _ := createTestBatchManager(t)
-		ctx := context.Background()
-
-		user := &UserImport{
-			ID:    1,
-			Email: "user1@example.com",
-		}
-
-		err := bm.importUser(ctx, "test-tenant", user, BatchImportOptions{})
-		if err == nil {
-			t.Error("expected error for missing username")
 		}
 	})
 
@@ -858,8 +781,9 @@ func TestImportUser(t *testing.T) {
 		}
 
 		err := bm.importUser(ctx, "test-tenant", user, BatchImportOptions{})
-		if err == nil {
-			t.Error("expected error for nil identity store")
+		var qbErr *dberrors.QBError
+		if !errors.As(err, &qbErr) {
+			t.Errorf("expected QBError for nil identity store, got %T: %v", err, err)
 		}
 	})
 
@@ -936,7 +860,7 @@ func TestImportRoles(t *testing.T) {
 		}
 
 		roles := []*RoleImport{
-			{ID: "r1", Name: "New Name", Permissions: []string{"read", "write"}},
+			{ID: "r1", Name: "New Name", Description: "New description", Permissions: []string{"read", "write"}},
 		}
 
 		result, err := bm.ImportRoles(ctx, "test-tenant", roles, BatchImportOptions{UpdateExisting: true})
@@ -955,6 +879,9 @@ func TestImportRoles(t *testing.T) {
 		}
 		if role.Name != "New Name" {
 			t.Errorf("expected name 'New Name', got '%s'", role.Name)
+		}
+		if role.Description != "New description" {
+			t.Errorf("expected description 'New description', got '%s'", role.Description)
 		}
 	})
 
@@ -1019,26 +946,6 @@ func TestImportRoles(t *testing.T) {
 		})
 		if err == nil {
 			t.Error("expected error for invalid batch size")
-		}
-	})
-
-	t.Run("batch of multiple roles", func(t *testing.T) {
-		bm, _ := createTestBatchManager(t)
-		ctx := context.Background()
-
-		roles := []*RoleImport{
-			{ID: "r1", Name: "Role 1", Permissions: []string{"read"}},
-			{ID: "r2", Name: "Role 2", Permissions: []string{"write"}},
-			{ID: "r3", Name: "Role 3", Permissions: []string{"delete"}},
-		}
-
-		result, err := bm.ImportRoles(ctx, "test-tenant", roles, BatchImportOptions{})
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-
-		if result.SuccessCount != 3 {
-			t.Errorf("expected 3 successes, got %d", result.SuccessCount)
 		}
 	})
 }
@@ -1120,6 +1027,14 @@ func TestImportPolicies(t *testing.T) {
 
 		if result.SuccessCount != 1 {
 			t.Errorf("expected 1 success, got %d", result.SuccessCount)
+		}
+
+		updated, err := memStorage.GetPolicy(ctx, "test-tenant", "policy1")
+		if err != nil {
+			t.Fatalf("failed to get policy: %v", err)
+		}
+		if len(updated.Spec.Rules) != 1 || updated.Spec.Rules[0].Name != "new-rule" {
+			t.Errorf("expected the single rule 'new-rule', got %+v", updated.Spec.Rules)
 		}
 	})
 
@@ -1301,56 +1216,10 @@ func TestImportPolicies(t *testing.T) {
 			t.Error("expected error for invalid batch size")
 		}
 	})
-
-	t.Run("batch of multiple policies", func(t *testing.T) {
-		bm, _ := createTestBatchManager(t)
-		ctx := context.Background()
-
-		policies := []*PolicyImport{
-			{Name: "policy1", Rules: []Rule{{Name: "rule1", Effect: EffectAllow, Actions: []string{"read"}, Resources: []string{"*"}}}},
-			{Name: "policy2", Rules: []Rule{{Name: "rule2", Effect: EffectAllow, Actions: []string{"write"}, Resources: []string{"*"}}}},
-			{Name: "policy3", Rules: []Rule{{Name: "rule3", Effect: EffectAllow, Actions: []string{"delete"}, Resources: []string{"*"}}}},
-		}
-
-		result, err := bm.ImportPolicies(ctx, "test-tenant", policies, BatchImportOptions{})
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-
-		if result.SuccessCount != 3 {
-			t.Errorf("expected 3 successes, got %d", result.SuccessCount)
-		}
-	})
 }
 
 // TestImportRole tests the importRole function.
 func TestImportRole(t *testing.T) {
-	t.Run("successful import", func(t *testing.T) {
-		bm, memStorage := createTestBatchManager(t)
-		ctx := context.Background()
-
-		role := &RoleImport{
-			ID:          "r1",
-			Name:        "Admin",
-			Description: "Admin role",
-			Permissions: []string{"*"},
-		}
-
-		err := bm.importRole(ctx, "test-tenant", role, BatchImportOptions{})
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-
-		// Verify role was created
-		createdRole, err := memStorage.GetRole(ctx, "test-tenant", "r1")
-		if err != nil {
-			t.Fatalf("failed to get role: %v", err)
-		}
-		if createdRole.Name != "Admin" {
-			t.Errorf("expected name 'Admin', got '%s'", createdRole.Name)
-		}
-	})
-
 	t.Run("nil identity store error", func(t *testing.T) {
 		bm := NewBatchManager(BatchManagerOptions{})
 		ctx := context.Background()
@@ -1360,8 +1229,9 @@ func TestImportRole(t *testing.T) {
 		}
 
 		err := bm.importRole(ctx, "test-tenant", role, BatchImportOptions{})
-		if err == nil {
-			t.Error("expected error for nil identity store")
+		var qbErr *dberrors.QBError
+		if !errors.As(err, &qbErr) {
+			t.Errorf("expected QBError for nil identity store, got %T: %v", err, err)
 		}
 	})
 
@@ -1387,66 +1257,6 @@ func TestImportRole(t *testing.T) {
 		err := bm.importRole(ctx, "test-tenant", role, BatchImportOptions{UpdateExisting: false})
 		if err == nil {
 			t.Error("expected error for existing role")
-		}
-	})
-
-	t.Run("update existing role with all fields", func(t *testing.T) {
-		bm, memStorage := createTestBatchManager(t)
-		ctx := context.Background()
-
-		// Create existing role
-		existingRole := &Role{
-			ID:       "r1",
-			TenantID: "test-tenant",
-			Name:     "Old Name",
-		}
-		if err := memStorage.CreateRole(ctx, existingRole); err != nil {
-			t.Fatalf("failed to create role: %v", err)
-		}
-
-		role := &RoleImport{
-			ID:          "r1",
-			Name:        "New Name",
-			Description: "New description",
-			Permissions: []string{"read", "write"},
-		}
-
-		err := bm.importRole(ctx, "test-tenant", role, BatchImportOptions{UpdateExisting: true})
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-
-		// Verify update
-		updated, err := memStorage.GetRole(ctx, "test-tenant", "r1")
-		if err != nil {
-			t.Fatalf("failed to get role: %v", err)
-		}
-		if updated.Name != "New Name" {
-			t.Errorf("expected name 'New Name', got '%s'", updated.Name)
-		}
-		if updated.Description != "New description" {
-			t.Errorf("expected description 'New description', got '%s'", updated.Description)
-		}
-	})
-
-	t.Run("dry run mode", func(t *testing.T) {
-		bm, memStorage := createTestBatchManager(t)
-		ctx := context.Background()
-
-		role := &RoleImport{
-			ID:   "r1",
-			Name: "Admin",
-		}
-
-		err := bm.importRole(ctx, "test-tenant", role, BatchImportOptions{DryRun: true})
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-
-		// Verify role was NOT created
-		_, err = memStorage.GetRole(ctx, "test-tenant", "r1")
-		if err == nil {
-			t.Error("expected role not to be created in dry run")
 		}
 	})
 
@@ -1559,8 +1369,9 @@ func TestImportPolicy(t *testing.T) {
 		}
 
 		err := bm.importPolicy(ctx, "test-tenant", policyImport, BatchImportOptions{})
-		if err == nil {
-			t.Error("expected error for nil policy engine")
+		var qbErr *dberrors.QBError
+		if !errors.As(err, &qbErr) {
+			t.Errorf("expected QBError for nil policy engine, got %T: %v", err, err)
 		}
 	})
 
@@ -1578,140 +1389,6 @@ func TestImportPolicy(t *testing.T) {
 		err := bm.importPolicy(ctx, "test-tenant", policyImport, BatchImportOptions{})
 		if err == nil {
 			t.Error("expected error for invalid rule")
-		}
-	})
-
-	t.Run("dry run mode", func(t *testing.T) {
-		bm, memStorage := createTestBatchManager(t)
-		ctx := context.Background()
-
-		policyImport := &PolicyImport{
-			Name: "test-policy",
-			Rules: []Rule{
-				{Name: "rule1", Effect: EffectAllow, Actions: []string{"*"}, Resources: []string{"*"}},
-			},
-		}
-
-		err := bm.importPolicy(ctx, "test-tenant", policyImport, BatchImportOptions{DryRun: true})
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-
-		// Verify policy was NOT created
-		_, err = memStorage.GetPolicy(ctx, "test-tenant", "test-policy")
-		if err == nil {
-			t.Error("expected policy not to be created in dry run")
-		}
-	})
-
-	t.Run("update existing policy", func(t *testing.T) {
-		bm, memStorage := createTestBatchManager(t)
-		ctx := context.Background()
-
-		// Create existing policy
-		existingPolicy := &Policy{
-			APIVersion: "iam/v1",
-			Kind:       "Policy",
-			Metadata: PolicyMetadata{
-				Name:   "test-policy",
-				Tenant: "test-tenant",
-			},
-			Spec: PolicySpec{
-				Rules: []Rule{
-					{Name: "old-rule", Effect: EffectAllow, Actions: []string{"read"}, Resources: []string{"*"}},
-				},
-			},
-		}
-		if err := memStorage.CreatePolicy(ctx, "test-tenant", existingPolicy); err != nil {
-			t.Fatalf("failed to create policy: %v", err)
-		}
-
-		policyImport := &PolicyImport{
-			Name: "test-policy",
-			Rules: []Rule{
-				{Name: "new-rule", Effect: EffectAllow, Actions: []string{"*"}, Resources: []string{"*"}},
-			},
-		}
-
-		err := bm.importPolicy(ctx, "test-tenant", policyImport, BatchImportOptions{UpdateExisting: true})
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-
-		// Verify update
-		updated, err := memStorage.GetPolicy(ctx, "test-tenant", "test-policy")
-		if err != nil {
-			t.Fatalf("failed to get policy: %v", err)
-		}
-		if len(updated.Spec.Rules) != 1 || updated.Spec.Rules[0].Name != "new-rule" {
-			t.Errorf("expected rule name 'new-rule', got '%s'", updated.Spec.Rules[0].Name)
-		}
-	})
-
-	t.Run("policy already exists without update mode", func(t *testing.T) {
-		bm, memStorage := createTestBatchManager(t)
-		ctx := context.Background()
-
-		// Create existing policy
-		existingPolicy := &Policy{
-			APIVersion: "iam/v1",
-			Kind:       "Policy",
-			Metadata: PolicyMetadata{
-				Name:   "test-policy",
-				Tenant: "test-tenant",
-			},
-			Spec: PolicySpec{
-				Rules: []Rule{
-					{Name: "rule1", Effect: EffectAllow, Actions: []string{"*"}, Resources: []string{"*"}},
-				},
-			},
-		}
-		if err := memStorage.CreatePolicy(ctx, "test-tenant", existingPolicy); err != nil {
-			t.Fatalf("failed to create policy: %v", err)
-		}
-
-		policyImport := &PolicyImport{
-			Name: "test-policy",
-			Rules: []Rule{
-				{Name: "rule1", Effect: EffectAllow, Actions: []string{"*"}, Resources: []string{"*"}},
-			},
-		}
-
-		err := bm.importPolicy(ctx, "test-tenant", policyImport, BatchImportOptions{UpdateExisting: false})
-		if err == nil {
-			t.Error("expected error for existing policy")
-		}
-	})
-
-	t.Run("missing name error", func(t *testing.T) {
-		bm, _ := createTestBatchManager(t)
-		ctx := context.Background()
-
-		policyImport := &PolicyImport{
-			Name: "",
-			Rules: []Rule{
-				{Name: "rule1", Effect: EffectAllow, Actions: []string{"*"}, Resources: []string{"*"}},
-			},
-		}
-
-		err := bm.importPolicy(ctx, "test-tenant", policyImport, BatchImportOptions{})
-		if err == nil {
-			t.Error("expected error for missing name")
-		}
-	})
-
-	t.Run("missing rules error", func(t *testing.T) {
-		bm, _ := createTestBatchManager(t)
-		ctx := context.Background()
-
-		policyImport := &PolicyImport{
-			Name:  "test-policy",
-			Rules: []Rule{},
-		}
-
-		err := bm.importPolicy(ctx, "test-tenant", policyImport, BatchImportOptions{})
-		if err == nil {
-			t.Error("expected error for missing rules")
 		}
 	})
 }
@@ -1847,49 +1524,10 @@ func TestGetBatchSizeAndParallelism(t *testing.T) {
 			t.Errorf("expected 4, got %d", result)
 		}
 	})
-
-	t.Run("uses zero defaults gracefully", func(t *testing.T) {
-		bm := NewBatchManager(BatchManagerOptions{})
-
-		opts := BatchImportOptions{}
-		batchSize := bm.getBatchSize(opts)
-		parallelism := bm.getParallelism(opts)
-
-		// Should return default values from manager (which might be 0)
-		// This is a boundary test
-		_ = batchSize
-		_ = parallelism
-	})
 }
 
 // TestImportAllErrorPropagation tests error propagation in ImportAll
 func TestImportAllErrorPropagation(t *testing.T) {
-	t.Run("role error propagates without continue on error", func(t *testing.T) {
-		// Create manager without identity store to force errors
-		bm := NewBatchManager(BatchManagerOptions{
-			PolicyEngine: NewPolicyEngine(PolicyEngineOptions{}),
-			BatchSize:    10,
-			Parallelism:  2,
-		})
-		ctx := context.Background()
-
-		req := &BatchImportRequest{
-			TenantID: "test-tenant",
-			Roles: []*RoleImport{
-				{ID: "role1", Name: "Admin"},
-			},
-			Options: BatchImportOptions{
-				ContinueOnError: false,
-			},
-		}
-
-		result, _ := bm.ImportAll(ctx, req)
-		// Result should still be returned even with errors
-		if result == nil {
-			t.Error("expected result even on error")
-		}
-	})
-
 	t.Run("policy error propagates after all other resources succeed", func(t *testing.T) {
 		bm, _ := createTestBatchManager(t)
 		ctx := context.Background()
@@ -1914,133 +1552,6 @@ func TestImportAllErrorPropagation(t *testing.T) {
 		// All other resources should have succeeded
 		if result != nil && result.SuccessCount < 2 {
 			t.Error("expected at least 2 successes")
-		}
-	})
-}
-
-// TestWorkerPoolSubmissionFailure tests the worker pool submission failure path
-func TestWorkerPoolSubmissionFailure(t *testing.T) {
-	t.Run("user import with immediately cancelled context", func(t *testing.T) {
-		bm, _ := createTestBatchManager(t)
-		ctx, cancel := context.WithCancel(context.Background())
-		cancel() // Cancel immediately
-
-		users := make([]*UserImport, 10)
-		for i := 0; i < 10; i++ {
-			users[i] = &UserImport{
-				ID:       uint64(i) + 1,
-				Email:    fmt.Sprintf("user%d@example.com", i),
-				Username: fmt.Sprintf("user%d", i),
-			}
-		}
-
-		result, err := bm.ImportUsers(ctx, "test-tenant", users, BatchImportOptions{})
-		// Should handle cancellation gracefully
-		if err != nil && !errors.Is(err, ErrBatchCanceled) && !errors.Is(err, context.Canceled) {
-			t.Logf("Got error: %v", err)
-		}
-		_ = result
-	})
-}
-
-// TestErrAlreadyExistsHandling tests handling of ErrAlreadyExists errors
-func TestErrAlreadyExistsHandling(t *testing.T) {
-	t.Run("user already exists counts as skipped", func(t *testing.T) {
-		bm, memStorage := createTestBatchManager(t)
-		ctx := context.Background()
-
-		// Create existing user
-		existingUser := &User{
-			ID:       1,
-			Email:    "user1@example.com",
-			TenantID: "test-tenant",
-		}
-		if err := memStorage.CreateUser(ctx, existingUser); err != nil {
-			t.Fatalf("failed to create user: %v", err)
-		}
-
-		users := []*UserImport{
-			{ID: 1, Email: "user1@example.com", Username: "user1"},
-		}
-
-		result, err := bm.ImportUsers(ctx, "test-tenant", users, BatchImportOptions{
-			UpdateExisting: false,
-		})
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-
-		// The user should be skipped because it already exists
-		// and UpdateExisting is false
-		if result.FailureCount != 1 && result.SkippedCount != 1 {
-			t.Errorf("expected failure or skipped count of 1, got failure=%d, skipped=%d",
-				result.FailureCount, result.SkippedCount)
-		}
-	})
-}
-
-// TestQBErrorHandling tests proper handling of QBError types
-func TestQBErrorHandling(t *testing.T) {
-	t.Run("nil identity store returns QBError", func(t *testing.T) {
-		bm := NewBatchManager(BatchManagerOptions{})
-		ctx := context.Background()
-
-		user := &UserImport{
-			Email:    "test@example.com",
-			Username: "test",
-		}
-
-		err := bm.importUser(ctx, "test-tenant", user, BatchImportOptions{})
-		if err == nil {
-			t.Error("expected error for nil identity store")
-		}
-
-		var qbErr *dberrors.QBError
-		if !errors.As(err, &qbErr) {
-			t.Errorf("expected QBError, got %T: %v", err, err)
-		}
-	})
-
-	t.Run("nil identity store in importRole returns QBError", func(t *testing.T) {
-		bm := NewBatchManager(BatchManagerOptions{})
-		ctx := context.Background()
-
-		role := &RoleImport{
-			Name: "Test Role",
-		}
-
-		err := bm.importRole(ctx, "test-tenant", role, BatchImportOptions{})
-		if err == nil {
-			t.Error("expected error for nil identity store")
-		}
-
-		var qbErr *dberrors.QBError
-		if !errors.As(err, &qbErr) {
-			t.Errorf("expected QBError, got %T: %v", err, err)
-		}
-	})
-
-	t.Run("nil policy engine in importPolicy returns QBError", func(t *testing.T) {
-		bm := NewBatchManager(BatchManagerOptions{
-			IdentityStore: NewIdentityStore(IdentityStoreOptions{}),
-		})
-		ctx := context.Background()
-
-		policy := &PolicyImport{
-			Name: "test-policy",
-			Rules: []Rule{
-				{Name: "rule1", Effect: EffectAllow, Actions: []string{"*"}, Resources: []string{"*"}},
-			},
-		}
-
-		err := bm.importPolicy(ctx, "test-tenant", policy, BatchImportOptions{})
-		if err == nil {
-			t.Error("expected error for nil policy engine")
-		}
-
-		var qbErr *dberrors.QBError
-		if !errors.As(err, &qbErr) {
-			t.Errorf("expected QBError, got %T: %v", err, err)
 		}
 	})
 }
@@ -2084,44 +1595,6 @@ func TestBatchManager_ImportAll_ContextCancellation(t *testing.T) {
 	})
 	if err == nil {
 		t.Error("expected error for canceled context")
-	}
-}
-
-func TestBatchManager_ImportRoles_WithPermissionsExtra(t *testing.T) {
-	storage := NewMemoryStorage()
-
-	identityStore := NewIdentityStore(IdentityStoreOptions{
-		UserStorage: storage,
-		RoleStorage: storage,
-	})
-
-	policyEngine := NewPolicyEngine(PolicyEngineOptions{
-		Storage: storage,
-	})
-
-	bm := NewBatchManager(BatchManagerOptions{
-		IdentityStore: identityStore,
-		PolicyEngine:  policyEngine,
-	})
-
-	ctx := context.Background()
-	tenantID := "import-roles-perm-tenant"
-
-	tenant := &Tenant{ID: tenantID, Name: "Import Roles Perm Tenant", Created: time.Now()}
-	if err := storage.CreateTenant(ctx, tenant); err != nil {
-		t.Fatalf("CreateTenant failed: %v", err)
-	}
-
-	// Import roles with permissions
-	result, err := bm.ImportRoles(ctx, tenantID, []*RoleImport{
-		{ID: "admin-role", Name: "Admin Role", Permissions: []string{"read", "write", "delete"}},
-		{ID: "viewer-role", Name: "Viewer Role", Permissions: []string{"read"}},
-	}, BatchImportOptions{})
-	if err != nil {
-		t.Fatalf("ImportRoles failed: %v", err)
-	}
-	if result.SuccessCount != 2 {
-		t.Errorf("expected 2 successes, got %d", result.SuccessCount)
 	}
 }
 
@@ -2246,379 +1719,87 @@ func TestPolicyEngine_DeletePolicy_NotFound(t *testing.T) {
 }
 
 // =============================================================================
-// MemoryStorage - Additional edge cases
-// =============================================================================
-
-func TestMemoryStorage_CreateTenant_Duplicate(t *testing.T) {
-	storage := NewMemoryStorage()
-	ctx := context.Background()
-
-	tenant := &Tenant{ID: "dup-tenant", Name: "Duplicate Tenant", Created: time.Now()}
-
-	// Create first tenant
-	if err := storage.CreateTenant(ctx, tenant); err != nil {
-		t.Fatalf("First CreateTenant failed: %v", err)
-	}
-
-	// Try to create duplicate
-	err := storage.CreateTenant(ctx, tenant)
-	if err == nil {
-		t.Error("expected error for duplicate tenant")
-	}
-}
-
-func TestMemoryStorage_UpdateTenant_Success(t *testing.T) {
-	storage := NewMemoryStorage()
-	ctx := context.Background()
-
-	tenant := &Tenant{ID: "upd-tenant", Name: "Update Tenant", Created: time.Now(), Updated: time.Now()}
-	if err := storage.CreateTenant(ctx, tenant); err != nil {
-		t.Fatalf("CreateTenant failed: %v", err)
-	}
-
-	// Update tenant
-	tenant.Name = "Updated Tenant Name"
-	if err := storage.UpdateTenant(ctx, tenant); err != nil {
-		t.Fatalf("UpdateTenant failed: %v", err)
-	}
-
-	// Verify update
-	updated, err := storage.GetTenant(ctx, "upd-tenant")
-	if err != nil {
-		t.Fatalf("GetTenant failed: %v", err)
-	}
-	if updated.Name != "Updated Tenant Name" {
-		t.Errorf("expected name 'Updated Tenant Name', got '%s'", updated.Name)
-	}
-}
-
-func TestMemoryStorage_DeleteTenant_Success(t *testing.T) {
-	storage := NewMemoryStorage()
-	ctx := context.Background()
-
-	tenant := &Tenant{ID: "del-tenant", Name: "Delete Tenant", Created: time.Now()}
-	if err := storage.CreateTenant(ctx, tenant); err != nil {
-		t.Fatalf("CreateTenant failed: %v", err)
-	}
-
-	// Delete tenant
-	if err := storage.DeleteTenant(ctx, "del-tenant"); err != nil {
-		t.Fatalf("DeleteTenant failed: %v", err)
-	}
-
-	// Verify deletion
-	_, err := storage.GetTenant(ctx, "del-tenant")
-	if err == nil {
-		t.Error("expected error for deleted tenant")
-	}
-}
-
-func TestMemoryStorage_GetTenant_NotFound(t *testing.T) {
-	storage := NewMemoryStorage()
-	ctx := context.Background()
-
-	_, err := storage.GetTenant(ctx, "nonexistent-tenant")
-	if err == nil {
-		t.Error("expected error for nonexistent tenant")
-	}
-}
-
-// =============================================================================
 // MemoryStorage - ListTenants
 // =============================================================================
 
-func TestMemoryStorage_ListTenants_Empty(t *testing.T) {
-	storage := NewMemoryStorage()
-	ctx := context.Background()
-
-	tenants, err := storage.ListTenants(ctx, ListOptions{})
-	if err != nil {
-		t.Fatalf("ListTenants failed: %v", err)
-	}
-	if len(tenants) != 0 {
-		t.Errorf("expected 0 tenants, got %d", len(tenants))
-	}
-}
-
-func TestMemoryStorage_ListTenants_WithData(t *testing.T) {
-	storage := NewMemoryStorage()
-	ctx := context.Background()
-
-	// Create some tenants
-	for i := 0; i < 5; i++ {
-		tenant := &Tenant{
-			ID:      "list-tenant-" + string(rune('0'+i)),
-			Name:    "List Tenant " + string(rune('0'+i)),
-			Created: time.Now(),
-		}
-		if err := storage.CreateTenant(ctx, tenant); err != nil {
-			t.Fatalf("CreateTenant failed: %v", err)
-		}
+func TestMemoryStorage_ListTenants(t *testing.T) {
+	tests := []struct {
+		name    string
+		created int
+		opts    ListOptions
+		want    int
+	}{
+		{name: "empty", created: 0, opts: ListOptions{}, want: 0},
+		{name: "all", created: 5, opts: ListOptions{}, want: 5},
+		{name: "limit", created: 10, opts: ListOptions{Limit: 5}, want: 5},
 	}
 
-	tenants, err := storage.ListTenants(ctx, ListOptions{})
-	if err != nil {
-		t.Fatalf("ListTenants failed: %v", err)
-	}
-	if len(tenants) != 5 {
-		t.Errorf("expected 5 tenants, got %d", len(tenants))
-	}
-}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			storage := NewMemoryStorage()
+			ctx := context.Background()
 
-func TestMemoryStorage_ListTenants_WithLimit(t *testing.T) {
-	storage := NewMemoryStorage()
-	ctx := context.Background()
+			for i := 0; i < tt.created; i++ {
+				tenant := &Tenant{
+					ID:      "list-tenant-" + string(rune('0'+i)),
+					Name:    "List Tenant " + string(rune('0'+i)),
+					Created: time.Now(),
+				}
+				if err := storage.CreateTenant(ctx, tenant); err != nil {
+					t.Fatalf("CreateTenant failed: %v", err)
+				}
+			}
 
-	// Create some tenants
-	for i := 0; i < 10; i++ {
-		tenant := &Tenant{
-			ID:      "limit-tenant-" + string(rune('0'+i)),
-			Name:    "Limit Tenant " + string(rune('0'+i)),
-			Created: time.Now(),
-		}
-		if err := storage.CreateTenant(ctx, tenant); err != nil {
-			t.Fatalf("CreateTenant failed: %v", err)
-		}
-	}
-
-	tenants, err := storage.ListTenants(ctx, ListOptions{Limit: 5})
-	if err != nil {
-		t.Fatalf("ListTenants failed: %v", err)
-	}
-	if len(tenants) != 5 {
-		t.Errorf("expected 5 tenants, got %d", len(tenants))
+			tenants, err := storage.ListTenants(ctx, tt.opts)
+			if err != nil {
+				t.Fatalf("ListTenants failed: %v", err)
+			}
+			if len(tenants) != tt.want {
+				t.Errorf("expected %d tenants, got %d", tt.want, len(tenants))
+			}
+		})
 	}
 }
 
 // =============================================================================
-// MemoryStorage - CreateUser duplicate
+// MemoryStorage - duplicate creates
 // =============================================================================
 
-func TestMemoryStorage_CreateUser_Duplicate(t *testing.T) {
-	storage := NewMemoryStorage()
-	ctx := context.Background()
-
-	tenantID := "dup-user-tenant"
-	tenant := &Tenant{ID: tenantID, Name: "Dup User Tenant", Created: time.Now()}
-	if err := storage.CreateTenant(ctx, tenant); err != nil {
-		t.Fatalf("CreateTenant failed: %v", err)
-	}
-
-	user := &User{ID: 36, TenantID: tenantID, Email: "dup@test.com", Name: "Dup User", Created: time.Now(), Updated: time.Now()}
-
-	// Create first user
-	if err := storage.CreateUser(ctx, user); err != nil {
-		t.Fatalf("First CreateUser failed: %v", err)
-	}
-
-	// Try to create duplicate
-	err := storage.CreateUser(ctx, user)
-	if err == nil {
-		t.Error("expected error for duplicate user")
-	}
-}
-
-// =============================================================================
-// MemoryStorage - CreateRole duplicate
-// =============================================================================
-
-func TestMemoryStorage_CreateRole_Duplicate(t *testing.T) {
-	storage := NewMemoryStorage()
-	ctx := context.Background()
-
-	tenantID := "dup-role-tenant"
-	tenant := &Tenant{ID: tenantID, Name: "Dup Role Tenant", Created: time.Now()}
-	if err := storage.CreateTenant(ctx, tenant); err != nil {
-		t.Fatalf("CreateTenant failed: %v", err)
-	}
-
-	role := &Role{ID: "dup-role", TenantID: tenantID, Name: "Dup Role", Created: time.Now(), Updated: time.Now()}
-
-	// Create first role
-	if err := storage.CreateRole(ctx, role); err != nil {
-		t.Fatalf("First CreateRole failed: %v", err)
-	}
-
-	// Try to create duplicate
-	err := storage.CreateRole(ctx, role)
-	if err == nil {
-		t.Error("expected error for duplicate role")
-	}
-}
-
-// =============================================================================
-// BatchManager - ImportAll with timeout and context paths
-// =============================================================================
-
-func TestBatchManager_ImportAll_WithTimeout(t *testing.T) {
-	storage := NewMemoryStorage()
-
-	identityStore := NewIdentityStore(IdentityStoreOptions{
-		UserStorage: storage,
-		RoleStorage: storage,
-	})
-
-	policyEngine := NewPolicyEngine(PolicyEngineOptions{
-		Storage: storage,
-	})
-
-	bm := NewBatchManager(BatchManagerOptions{
-		IdentityStore: identityStore,
-		PolicyEngine:  policyEngine,
-	})
-
-	ctx := context.Background()
-	tenantID := "import-tenant"
-
-	// Create tenant
-	tenant := &Tenant{ID: tenantID, Name: "Import Tenant", Created: time.Now()}
-	if err := storage.CreateTenant(ctx, tenant); err != nil {
-		t.Fatalf("CreateTenant failed: %v", err)
-	}
-
-	// Import with timeout
-	result, err := bm.ImportAll(ctx, &BatchImportRequest{
-		TenantID: tenantID,
-		Users: []*UserImport{
-			{ID: 10001, Email: "user1@test.com", Name: "User One"},
-		},
-		Options: BatchImportOptions{
-			Timeout: 5 * time.Second,
-		},
-	})
-	if err != nil {
-		t.Fatalf("ImportAll failed: %v", err)
-	}
-	if result.TotalItems != 1 {
-		t.Errorf("expected 1 total item, got %d", result.TotalItems)
-	}
-}
-
-func TestBatchManager_ImportAll_WithRolesFirst(t *testing.T) {
-	storage := NewMemoryStorage()
-
-	identityStore := NewIdentityStore(IdentityStoreOptions{
-		UserStorage: storage,
-		RoleStorage: storage,
-	})
-
-	policyEngine := NewPolicyEngine(PolicyEngineOptions{
-		Storage: storage,
-	})
-
-	bm := NewBatchManager(BatchManagerOptions{
-		IdentityStore: identityStore,
-		PolicyEngine:  policyEngine,
-	})
-
-	ctx := context.Background()
-	tenantID := "import-tenant-2"
-
-	tenant := &Tenant{ID: tenantID, Name: "Import Tenant 2", Created: time.Now()}
-	if err := storage.CreateTenant(ctx, tenant); err != nil {
-		t.Fatalf("CreateTenant failed: %v", err)
-	}
-
-	result, err := bm.ImportAll(ctx, &BatchImportRequest{
-		TenantID: tenantID,
-		Roles: []*RoleImport{
-			{ID: "role-1", Name: "Test Role"},
-		},
-	})
-	if err != nil {
-		t.Fatalf("ImportAll failed: %v", err)
-	}
-	if result.TotalItems != 1 {
-		t.Errorf("expected 1 total item, got %d", result.TotalItems)
-	}
-}
-
-func TestBatchManager_ImportAll_WithPolicies(t *testing.T) {
-	storage := NewMemoryStorage()
-
-	identityStore := NewIdentityStore(IdentityStoreOptions{
-		UserStorage: storage,
-		RoleStorage: storage,
-	})
-
-	policyEngine := NewPolicyEngine(PolicyEngineOptions{
-		Storage: storage,
-	})
-
-	bm := NewBatchManager(BatchManagerOptions{
-		IdentityStore: identityStore,
-		PolicyEngine:  policyEngine,
-	})
-
-	ctx := context.Background()
-	tenantID := "import-tenant-3"
-
-	tenant := &Tenant{ID: tenantID, Name: "Import Tenant 3", Created: time.Now()}
-	if err := storage.CreateTenant(ctx, tenant); err != nil {
-		t.Fatalf("CreateTenant failed: %v", err)
-	}
-
-	result, err := bm.ImportAll(ctx, &BatchImportRequest{
-		TenantID: tenantID,
-		Policies: []*PolicyImport{
-			{
-				Name:     "test-policy",
-				Subjects: SubjectSelector{Users: []string{"user-1"}},
-				Rules:    []Rule{{Name: "r1", Effect: EffectAllow, Actions: []string{"read"}, Resources: []string{"*"}}},
+func TestMemoryStorage_Create_Duplicate(t *testing.T) {
+	const tenantID = "dup-tenant"
+	tests := []struct {
+		name   string
+		create func(ctx context.Context, storage *MemoryStorage) error
+	}{
+		{
+			name: "user",
+			create: func(ctx context.Context, storage *MemoryStorage) error {
+				return storage.CreateUser(ctx, &User{ID: 36, TenantID: tenantID, Email: "dup@test.com", Name: "Dup User", Created: time.Now(), Updated: time.Now()})
 			},
 		},
-	})
-	if err != nil {
-		t.Fatalf("ImportAll failed: %v", err)
-	}
-	if result.TotalItems != 1 {
-		t.Errorf("expected 1 total item, got %d", result.TotalItems)
-	}
-}
-
-// =============================================================================
-// BatchManager - ImportPolicies with inline rules
-// =============================================================================
-
-func TestBatchManager_ImportPolicies_WithInlineRules(t *testing.T) {
-	storage := NewMemoryStorage()
-
-	identityStore := NewIdentityStore(IdentityStoreOptions{
-		UserStorage: storage,
-		RoleStorage: storage,
-	})
-
-	policyEngine := NewPolicyEngine(PolicyEngineOptions{
-		Storage: storage,
-	})
-
-	bm := NewBatchManager(BatchManagerOptions{
-		IdentityStore: identityStore,
-		PolicyEngine:  policyEngine,
-	})
-
-	ctx := context.Background()
-	tenantID := "inline-policy-tenant"
-
-	tenant := &Tenant{ID: tenantID, Name: "Inline Policy Tenant", Created: time.Now()}
-	if err := storage.CreateTenant(ctx, tenant); err != nil {
-		t.Fatalf("CreateTenant failed: %v", err)
-	}
-
-	// Test importing policy with inline rules
-	result, err := bm.ImportPolicies(ctx, tenantID, []*PolicyImport{
 		{
-			Name:        "inline-policy",
-			Description: "Policy defined via inline fields",
-			Subjects:    SubjectSelector{Users: []string{"user-1"}},
-			Rules:       []Rule{{Name: "r1", Effect: EffectAllow, Actions: []string{"read"}, Resources: []string{"*"}}},
+			name: "role",
+			create: func(ctx context.Context, storage *MemoryStorage) error {
+				return storage.CreateRole(ctx, &Role{ID: "dup-role", TenantID: tenantID, Name: "Dup Role", Created: time.Now(), Updated: time.Now()})
+			},
 		},
-	}, BatchImportOptions{})
-	if err != nil {
-		t.Fatalf("ImportPolicies failed: %v", err)
 	}
-	if result.SuccessCount != 1 {
-		t.Errorf("expected 1 success, got %d (failed: %d)", result.SuccessCount, result.FailureCount)
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			storage := NewMemoryStorage()
+			ctx := context.Background()
+			if err := storage.CreateTenant(ctx, &Tenant{ID: tenantID, Name: "Dup Tenant", Created: time.Now()}); err != nil {
+				t.Fatalf("CreateTenant failed: %v", err)
+			}
+
+			if err := tt.create(ctx, storage); err != nil {
+				t.Fatalf("first create failed: %v", err)
+			}
+			if err := tt.create(ctx, storage); err == nil {
+				t.Errorf("expected error for duplicate %s", tt.name)
+			}
+		})
 	}
 }
 

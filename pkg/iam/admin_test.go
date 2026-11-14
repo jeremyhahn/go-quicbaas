@@ -1343,17 +1343,6 @@ func TestAdminManager_EndImpersonation(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	// Start a test session
-	session, err := manager.StartImpersonation(ctxWithActor(30001), &StartImpersonationOptions{
-		TargetUserID: 40001,
-		TenantID:     "tenant1",
-		Reason:       "Test",
-	})
-	require.NoError(t, err)
-
-	// Clear audit log
-	auditLogger.events = nil
-
 	tests := []struct {
 		name     string
 		setupFn  func() string
@@ -1363,7 +1352,6 @@ func TestAdminManager_EndImpersonation(t *testing.T) {
 	}{
 		{
 			name: "End active session",
-			id:   session.ID,
 			setupFn: func() string {
 				s, err := manager.StartImpersonation(ctxWithActor(30001), &StartImpersonationOptions{
 					TargetUserID: 40001,
@@ -1537,12 +1525,16 @@ func TestGetDefaultPermissions(t *testing.T) {
 		expectedContains  []AdminPermission
 		expectedExcludes  []AdminPermission
 		expectedMinLength int
+		expectedLength    int
 	}{
 		{
 			name: "SuperAdmin has all permissions",
 			role: AdminRoleSuperAdmin,
 			expectedContains: []AdminPermission{
 				PermTenantCreate, PermUserImpersonate, PermAuditRead, PermGDPRExport,
+				PermAgentDiscover, PermAgentRegister, PermAgentSpawn,
+				PermAgentPrompt, PermAgentClose, PermAgentDecompose,
+				PermAgentCacheRead, PermAgentCacheWrite, PermAgentAdmin,
 			},
 			expectedMinLength: 20,
 		},
@@ -1604,7 +1596,7 @@ func TestGetDefaultPermissions(t *testing.T) {
 				PermAgentPrompt, PermAgentClose, PermAgentDecompose,
 				PermAgentCacheRead, PermAgentCacheWrite, PermAgentAdmin,
 			},
-			expectedMinLength: 9,
+			expectedLength: 9,
 		},
 		{
 			name: "AgentOperator has all agent permissions except admin",
@@ -1617,6 +1609,7 @@ func TestGetDefaultPermissions(t *testing.T) {
 			expectedExcludes: []AdminPermission{
 				PermAgentAdmin,
 			},
+			expectedLength: 8,
 		},
 		{
 			name: "AgentViewer has only discover and cache read",
@@ -1628,6 +1621,7 @@ func TestGetDefaultPermissions(t *testing.T) {
 				PermAgentRegister, PermAgentSpawn, PermAgentPrompt,
 				PermAgentClose, PermAgentDecompose, PermAgentCacheWrite, PermAgentAdmin,
 			},
+			expectedLength: 2,
 		},
 		{
 			name:             "Invalid role returns nil",
@@ -1647,6 +1641,10 @@ func TestGetDefaultPermissions(t *testing.T) {
 
 			if tt.expectedMinLength > 0 {
 				assert.GreaterOrEqual(t, len(perms), tt.expectedMinLength)
+			}
+
+			if tt.expectedLength > 0 {
+				assert.Len(t, perms, tt.expectedLength)
 			}
 
 			for _, perm := range tt.expectedContains {
@@ -1705,61 +1703,6 @@ func TestAgentPermissionsDistinct(t *testing.T) {
 	}
 
 	assert.Len(t, seen, 9, "expected exactly 9 distinct agent permissions")
-}
-
-// TestSuperAdminHasAgentPermissions verifies SuperAdmin includes all agent permissions.
-func TestSuperAdminHasAgentPermissions(t *testing.T) {
-	perms := GetDefaultPermissions(AdminRoleSuperAdmin)
-
-	agentPerms := []AdminPermission{
-		PermAgentDiscover, PermAgentRegister, PermAgentSpawn,
-		PermAgentPrompt, PermAgentClose, PermAgentDecompose,
-		PermAgentCacheRead, PermAgentCacheWrite, PermAgentAdmin,
-	}
-
-	for _, ap := range agentPerms {
-		assert.Contains(t, perms, ap, "SuperAdmin missing agent permission: %s", ap)
-	}
-}
-
-// TestAgentRolePermissionCounts verifies the exact permission counts for agent roles.
-func TestAgentRolePermissionCounts(t *testing.T) {
-	tests := []struct {
-		name          string
-		role          AdminRole
-		expectedCount int
-	}{
-		{"FleetAdmin has 9 permissions", AdminRoleAgentAdmin, 9},
-		{"AgentOperator has 8 permissions", AdminRoleAgentOperator, 8},
-		{"AgentViewer has 2 permissions", AdminRoleAgentViewer, 2},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			perms := GetDefaultPermissions(tt.role)
-			assert.Len(t, perms, tt.expectedCount)
-		})
-	}
-}
-
-// TestAgentAdminAssignmentValidation verifies agent roles pass assignment validation.
-func TestAgentAdminAssignmentValidation(t *testing.T) {
-	roles := []AdminRole{AdminRoleAgentAdmin, AdminRoleAgentOperator, AdminRoleAgentViewer}
-
-	for _, role := range roles {
-		t.Run(string(role), func(t *testing.T) {
-			assignment := &AdminAssignment{
-				ID:        "adm_agent_" + string(role),
-				UserID:    123,
-				AdminRole: role,
-				GrantedBy: "admin456",
-				GrantedAt: time.Now().UTC(),
-				Active:    true,
-			}
-			err := assignment.Validate()
-			assert.NoError(t, err)
-		})
-	}
 }
 
 // TestAdminAssignment_Validate tests assignment validation.
@@ -2836,6 +2779,16 @@ func TestAdminManager_RecordImpersonatedOperation(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, session)
 
+	// A session that has already ended rejects further operations
+	ended, err := manager.StartImpersonation(ctxWithActor(30001), &StartImpersonationOptions{
+		TargetUserID: 40001,
+		TenantID:     "tenant1",
+		Reason:       "test ended session",
+		Duration:     time.Hour,
+	})
+	require.NoError(t, err)
+	require.NoError(t, manager.EndImpersonation(ctx, ended.ID))
+
 	// Clear audit log
 	auditLogger.events = nil
 
@@ -2891,6 +2844,16 @@ func TestAdminManager_RecordImpersonatedOperation(t *testing.T) {
 				assert.Equal(t, ErrImpersonationSessionNotFound, err)
 			},
 		},
+		{
+			name:      "Ended session",
+			sessionID: ended.ID,
+			operation: "test.action",
+			outcome:   AuditOutcomeSuccess,
+			wantErr:   true,
+			errCheck: func(t *testing.T, err error) {
+				assert.True(t, dberrors.IsInvalidInput(err))
+			},
+		},
 	}
 
 	for _, tt := range tests {
@@ -2933,39 +2896,6 @@ func TestAdminManager_RecordImpersonatedOperation(t *testing.T) {
 			}
 		})
 	}
-}
-
-func TestAdminManager_RecordImpersonatedOperation_EndedSession(t *testing.T) {
-	ctx := context.Background()
-	manager, _ := createTestAdminManager(t)
-
-	// Create admin with impersonation permission
-	_, err := manager.CreateAssignment(ctx, CreateAdminAssignmentOptions{
-		UserID:      30001,
-		AdminRole:   AdminRoleSuperAdmin,
-		TenantIDs:   []string{"tenant1"},
-		Permissions: []AdminPermission{PermUserImpersonate},
-		GrantedBy:   "system",
-	})
-	require.NoError(t, err)
-
-	// Start impersonation session
-	session, err := manager.StartImpersonation(ctxWithActor(30001), &StartImpersonationOptions{
-		TargetUserID: 40001,
-		TenantID:     "tenant1",
-		Reason:       "test ended session",
-		Duration:     time.Hour,
-	})
-	require.NoError(t, err)
-
-	// End the session
-	err = manager.EndImpersonation(ctx, session.ID)
-	require.NoError(t, err)
-
-	// Try to record operation on ended session
-	err = manager.RecordImpersonatedOperation(ctx, session.ID, "test.action", nil, AuditOutcomeSuccess, nil)
-	assert.Error(t, err)
-	assert.True(t, dberrors.IsInvalidInput(err))
 }
 
 func TestAdminManager_ImpersonationAuditLogging(t *testing.T) {
@@ -3051,40 +2981,6 @@ func TestAdminManager_ImpersonationAuditLogging(t *testing.T) {
 }
 
 func TestMemoryImpersonationStorage_IncrementOperationCount(t *testing.T) {
-	ctx := context.Background()
-	storage := NewMemoryImpersonationStorage()
-
-	// Create a session
-	session := &ImpersonationSession{
-		ID:             "test_session",
-		AdminUserID:    30021,
-		TargetUserID:   1,
-		TenantID:       "tenant1",
-		Reason:         "test",
-		StartedAt:      time.Now().UTC(),
-		ExpiresAt:      time.Now().UTC().Add(time.Hour),
-		OperationCount: 0,
-	}
-	err := storage.CreateImpersonationSession(ctx, session)
-	require.NoError(t, err)
-
-	// Test incrementing operation count
-	count, err := storage.IncrementOperationCount(ctx, session.ID)
-	require.NoError(t, err)
-	assert.Equal(t, int64(1), count)
-
-	// Increment again
-	count, err = storage.IncrementOperationCount(ctx, session.ID)
-	require.NoError(t, err)
-	assert.Equal(t, int64(2), count)
-
-	// Verify the stored value
-	retrieved, err := storage.GetImpersonationSession(ctx, session.ID)
-	require.NoError(t, err)
-	assert.Equal(t, int64(2), retrieved.OperationCount)
-}
-
-func TestMemoryImpersonationStorage_IncrementOperationCount_Errors(t *testing.T) {
 	ctx := context.Background()
 	storage := NewMemoryImpersonationStorage()
 

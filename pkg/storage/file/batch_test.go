@@ -26,15 +26,6 @@ import (
 // Batch() tests
 // -----------------------------------------------------------------------------
 
-func TestBatch_CreatesBatch(t *testing.T) {
-	storage := createTestStorage(t)
-	defer storage.Close()
-
-	batch := storage.Batch()
-
-	require.NotNil(t, batch)
-}
-
 func TestBatch_Set_AddsOperation(t *testing.T) {
 	storage := createTestStorage(t)
 	defer storage.Close()

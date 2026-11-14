@@ -59,72 +59,6 @@ func TestCreateSDKClientEmptyAddressError(t *testing.T) {
 	assert.Equal(t, ErrEmptyAddress, err)
 }
 
-func TestBuildSDKClientOptionsUnsupportedTransportType(t *testing.T) {
-	// Save and restore
-	origTransport := transport
-	defer func() { transport = origTransport }()
-
-	transport = "invalid-transport"
-
-	_, err := buildSDKClientOptions()
-	assert.Error(t, err)
-	var ute *UnsupportedTransportError
-	assert.ErrorAs(t, err, &ute)
-}
-
-func TestBuildSDKClientOptionsRESTTransport(t *testing.T) {
-	// Save and restore
-	origTransport := transport
-	defer func() { transport = origTransport }()
-
-	transport = "rest"
-
-	opts, err := buildSDKClientOptions()
-	assert.NoError(t, err)
-	assert.NotEmpty(t, opts)
-}
-
-func TestBuildSDKClientOptionsQUICTransport(t *testing.T) {
-	// Save and restore
-	origTransport := transport
-	defer func() { transport = origTransport }()
-
-	transport = "quic"
-
-	opts, err := buildSDKClientOptions()
-	assert.NoError(t, err)
-	assert.NotEmpty(t, opts)
-}
-
-func TestBuildSDKClientOptionsUnixTransport(t *testing.T) {
-	// Save and restore
-	origTransport := transport
-	origAddress := address
-	defer func() {
-		transport = origTransport
-		address = origAddress
-	}()
-
-	transport = "unix"
-	address = "/tmp/test.sock"
-
-	opts, err := buildSDKClientOptions()
-	assert.NoError(t, err)
-	assert.NotEmpty(t, opts)
-}
-
-func TestBuildSDKClientOptionsMCPTransport(t *testing.T) {
-	// Save and restore
-	origTransport := transport
-	defer func() { transport = origTransport }()
-
-	transport = "mcp"
-
-	opts, err := buildSDKClientOptions()
-	assert.NoError(t, err)
-	assert.NotEmpty(t, opts)
-}
-
 func TestGetSDKClientNilReturn(t *testing.T) {
 	// Save and restore
 	defer resetSDKClient()
@@ -147,29 +81,13 @@ func TestCloseSDKClientNoClientExists(t *testing.T) {
 // Cluster Status Command Output Format Tests
 // =============================================================================
 
-func TestClusterStatusCommandOutputFormats(t *testing.T) {
-	tests := []struct {
-		name         string
-		outputFormat string
-		expectError  bool
-	}{
-		{"json output", "json", false},
-		{"table output", "table", false},
-		{"invalid output", "invalid", true},
-	}
+func TestClusterStatusCommandOutputDefault(t *testing.T) {
+	cmd := newClusterStatusCommand()
+	require.NotNil(t, cmd)
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			cmd := newClusterStatusCommand()
-			require.NotNil(t, cmd)
-
-			// The actual execution requires a server connection, but we can
-			// test the command structure and flag defaults
-			outputFlag := cmd.Flags().Lookup("output")
-			require.NotNil(t, outputFlag)
-			assert.Equal(t, "table", outputFlag.DefValue)
-		})
-	}
+	outputFlag := cmd.Flags().Lookup("output")
+	require.NotNil(t, outputFlag)
+	assert.Equal(t, "table", outputFlag.DefValue)
 }
 
 // =============================================================================
@@ -214,49 +132,6 @@ func TestCacheWarmerDependenciesNilLoggerError(t *testing.T) {
 	_, _, _, err := initializeCacheWarmerDependencies()
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "logger not initialized")
-}
-
-// =============================================================================
-// Cache Command Nil Config Tests
-// =============================================================================
-
-func TestCacheConfigCommandNilConfigError(t *testing.T) {
-	// Save original values
-	origCfg := cfg
-	defer func() { cfg = origCfg }()
-
-	cfg = nil
-
-	cmd := newCacheConfigCommand()
-	cacheOutputFmt = "table"
-
-	err := cmd.RunE(cmd, []string{})
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "configuration not initialized")
-}
-
-// =============================================================================
-// Logger Adapter Tests
-// =============================================================================
-
-func TestLoggerAdapterNilInputFix(t *testing.T) {
-	// Test with nil logger
-	adapter := asInterfaceLogger(nil)
-	assert.NotNil(t, adapter) // Function wraps nil in adapter struct
-}
-
-func TestLoggerAdapterValidInput(t *testing.T) {
-	logConfig := logger.LogConfig{
-		Level:     "error",
-		Format:    "json",
-		Output:    "stderr",
-		Component: "test",
-	}
-	testLog, err := logger.New(logConfig)
-	require.NoError(t, err)
-
-	adapter := asInterfaceLogger(testLog)
-	assert.NotNil(t, adapter)
 }
 
 // =============================================================================
@@ -486,155 +361,93 @@ func captureStdoutOutput(fn func()) string {
 // Print Functions Coverage Tests
 // =============================================================================
 
-func TestClusterStatusJSONNilValues(t *testing.T) {
-	// Test with minimal status
-	status := map[string]interface{}{
-		"healthy": false,
+func TestPrintClusterStatusJSON_Inputs(t *testing.T) {
+	tests := []struct {
+		name         string
+		status       interface{}
+		wantContains []string
+	}{
+		{
+			name:         "minimal map",
+			status:       map[string]interface{}{"healthy": false},
+			wantContains: []string{"healthy"},
+		},
+		{
+			name: "map with nodes",
+			status: map[string]interface{}{
+				"healthy":  true,
+				"leader":   "node1",
+				"nodes":    []interface{}{"node1", "node2"},
+				"replicas": 2,
+			},
+			wantContains: []string{"healthy", "node1"},
+		},
+		{
+			name: "cluster status response",
+			status: &cli.ClusterStatusResponse{
+				Healthy:    true,
+				LeaderID:   1,
+				NodeCount:  3,
+				ReadyNodes: 3,
+				Nodes: []cli.NodeInfo{
+					{NodeID: 1, Address: "10.0.0.1:50051", IsLeader: true, IsHealthy: true},
+				},
+			},
+			wantContains: []string{"10.0.0.1:50051"},
+		},
 	}
-
-	output := captureStdoutOutput(func() {
-		err := printClusterStatusJSON(status)
-		assert.NoError(t, err)
-	})
-
-	assert.Contains(t, output, "healthy")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			output := captureStdoutOutput(func() {
+				assert.NoError(t, printClusterStatusJSON(tt.status))
+			})
+			for _, want := range tt.wantContains {
+				assert.Contains(t, output, want)
+			}
+		})
+	}
 }
 
 // =============================================================================
 // Additional Tests for Coverage Boost to 90%+
 // =============================================================================
 
-func TestBuildSDKClientOptionsWebsocketUnsupported(t *testing.T) {
-	// Save and restore
-	origTransport := transport
-	defer func() { transport = origTransport }()
-
-	transport = "websocket"
-
-	opts, err := buildSDKClientOptions()
-	assert.Error(t, err)
-	assert.Empty(t, opts)
-}
-
-func TestBuildSDKClientOptionsGRPCTransportOpt(t *testing.T) {
-	// Save and restore
-	origTransport := transport
-	defer func() { transport = origTransport }()
-
-	transport = "grpc"
-
-	opts, err := buildSDKClientOptions()
-	assert.NoError(t, err)
-	assert.NotEmpty(t, opts)
-}
-
-func TestBuildSDKClientOptionsEmptyDefaultsToGRPCOpt(t *testing.T) {
-	// Save and restore
-	origTransport := transport
-	defer func() { transport = origTransport }()
-
-	transport = ""
-
-	opts, err := buildSDKClientOptions()
-	assert.NoError(t, err)
-	assert.NotEmpty(t, opts)
-}
-
-// =============================================================================
-// Embedded Error Types Additional Tests
-// =============================================================================
-
-func TestEmbeddedPortErrorTypeValid(t *testing.T) {
-	err := &EmbeddedPortError{}
-	assert.Equal(t, "listener address is not a TCP address", err.Error())
-}
-
-func TestEmbeddedServerFailedErrorWithReasonValid(t *testing.T) {
-	err := &EmbeddedServerFailedError{Reason: "test failure reason"}
-	assert.Contains(t, err.Error(), "test failure reason")
-}
-
 // =============================================================================
 // Cache Enable/Disable Command Tests
 // =============================================================================
 
-func TestCacheEnableCommandNilConfig(t *testing.T) {
-	// Save original values
-	origCfg := cfg
-	defer func() { cfg = origCfg }()
-
-	cfg = nil
-
-	cmd := newCacheEnableCommand()
-	err := cmd.RunE(cmd, []string{"user"})
-	assert.Error(t, err)
-}
-
-func TestCacheDisableCommandNilConfig(t *testing.T) {
-	// Save original values
-	origCfg := cfg
-	defer func() { cfg = origCfg }()
-
-	cfg = nil
-
-	cmd := newCacheDisableCommand()
-	err := cmd.RunE(cmd, []string{"user"})
-	assert.Error(t, err)
-}
-
-func TestCacheStatsCommandNilConfig(t *testing.T) {
-	// Save original values
-	origCfg := cfg
-	defer func() { cfg = origCfg }()
-
-	cfg = nil
-
-	cmd := newCacheStatsCommand()
-	cacheOutputFmt = "table"
-	err := cmd.RunE(cmd, []string{})
-	assert.Error(t, err)
-}
-
-// =============================================================================
-// Client Error Type Tests
-// =============================================================================
-
-func TestUnsupportedTransportErrorMessageFormatOpt(t *testing.T) {
-	err := &UnsupportedTransportError{Transport: "tcp"}
-	msg := err.Error()
-	assert.Contains(t, msg, "tcp")
-	assert.Contains(t, msg, "unsupported transport")
-}
-
-func TestErrSDKClientClosedMessageValid(t *testing.T) {
-	assert.NotNil(t, ErrSDKClientClosed)
-	assert.Contains(t, ErrSDKClientClosed.Error(), "closed")
-}
-
-func TestErrEmptyAddressMessageValid(t *testing.T) {
-	assert.NotNil(t, ErrEmptyAddress)
-	assert.Contains(t, ErrEmptyAddress.Error(), "empty")
-}
-
-// =============================================================================
-// Print Cluster Status Tests
-// =============================================================================
-
-func TestPrintClusterStatusJSONWithNodesOpt(t *testing.T) {
-	status := map[string]interface{}{
-		"healthy":  true,
-		"leader":   "node1",
-		"nodes":    []interface{}{"node1", "node2"},
-		"replicas": 2,
+func TestCacheCommands_NilConfig(t *testing.T) {
+	tests := []struct {
+		name    string
+		factory func() *cobra.Command
+		args    []string
+		wantMsg string
+	}{
+		{name: "enable", factory: newCacheEnableCommand, args: []string{"user"}, wantMsg: "configuration not initialized"},
+		{name: "disable", factory: newCacheDisableCommand, args: []string{"user"}, wantMsg: "configuration not initialized"},
+		{name: "config", factory: newCacheConfigCommand, args: []string{}, wantMsg: "configuration not initialized"},
+		{name: "warm", factory: newCacheWarmCommand, args: []string{}, wantMsg: "configuration not initialized"},
+		{name: "stats", factory: newCacheStatsCommand, args: []string{}},
 	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			origCfg := cfg
+			origFmt := cacheOutputFmt
+			defer func() {
+				cfg = origCfg
+				cacheOutputFmt = origFmt
+			}()
+			cfg = nil
+			cacheOutputFmt = "table"
 
-	output := captureStdoutOutput(func() {
-		err := printClusterStatusJSON(status)
-		assert.NoError(t, err)
-	})
-
-	assert.Contains(t, output, "healthy")
-	assert.Contains(t, output, "node1")
+			cmd := tt.factory()
+			err := cmd.RunE(cmd, tt.args)
+			require.Error(t, err)
+			if tt.wantMsg != "" {
+				assert.Contains(t, err.Error(), tt.wantMsg)
+			}
+		})
+	}
 }
 
 // =============================================================================
@@ -659,119 +472,47 @@ func TestCreateSDKClientWithValidAddressOpt(t *testing.T) {
 }
 
 // =============================================================================
-// Initialize Cache Registry Tests
-// =============================================================================
-
-func TestInitializeCacheRegistryWithValidConfigOpt(t *testing.T) {
-	// Save original values
-	origCfg := cfg
-	origLog := log
-	defer func() {
-		cfg = origCfg
-		log = origLog
-	}()
-
-	cfg = &config.Config{
-		Cache: config.EnhancedCacheConfig{
-			Enabled:         true,
-			DefaultTTL:      5 * time.Minute,
-			MaxSize:         1000,
-			CleanupInterval: 1 * time.Minute,
-			Entities: map[string]config.EntityCacheConfig{
-				"user": {
-					Enabled: true,
-					TTL:     10 * time.Minute,
-					MaxSize: 500,
-				},
-			},
-		},
-	}
-
-	logConfig := logger.LogConfig{
-		Level:     "error",
-		Format:    "json",
-		Output:    "stderr",
-		Component: "test",
-	}
-	testLog, err := logger.New(logConfig)
-	require.NoError(t, err)
-	log = testLog
-
-	registry, err := initializeCacheRegistry()
-	assert.NoError(t, err)
-	assert.NotNil(t, registry)
-}
-
-func TestInitializeCacheRegistryNilConfigOpt(t *testing.T) {
-	// Save original values
-	origCfg := cfg
-	defer func() { cfg = origCfg }()
-
-	cfg = nil
-
-	_, err := initializeCacheRegistry()
-	assert.Error(t, err)
-}
-
-// =============================================================================
 // Object Storage Input Validation - Deeper Paths
 // =============================================================================
 
-func TestRunObjectPutCommand_ValidFileWithMetadata(t *testing.T) {
-	origFile := objectFile
-	origMeta := objectMetadata
-	origTags := objectTags
-	origFactory := objectStorageClientFactory
-	defer func() {
-		objectFile = origFile
-		objectMetadata = origMeta
-		objectTags = origTags
-		objectStorageClientFactory = origFactory
-	}()
-
-	tmpFile := t.TempDir() + "/test-data.txt"
-	require.NoError(t, os.WriteFile(tmpFile, []byte("test data"), 0o644))
-
-	objectFile = tmpFile
-	objectMetadata = `{"env":"test"}`
-	objectTags = nil
-
-	// Factory error after file/metadata parsing succeeds - exercises parsing paths
-	objectStorageClientFactory = func() (*grpc.Client, error) {
-		return nil, errors.New(errors.ErrUnavailable, "test", "no server")
+func TestRunObjectPutCommand_ParsesInputsBeforeConnecting(t *testing.T) {
+	tests := []struct {
+		name     string
+		metadata string
+		tags     map[string]string
+	}{
+		{name: "metadata", metadata: `{"env":"test"}`},
+		{name: "tags", tags: map[string]string{"env": "prod", "tier": "hot"}},
 	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			origFile := objectFile
+			origMeta := objectMetadata
+			origTags := objectTags
+			origFactory := objectStorageClientFactory
+			defer func() {
+				objectFile = origFile
+				objectMetadata = origMeta
+				objectTags = origTags
+				objectStorageClientFactory = origFactory
+			}()
 
-	cmd := newObjectPutCommand()
-	err := runObjectPutCommand(cmd, []string{"bucket/key"})
-	assert.Error(t, err) // Factory error, but file+metadata parsing was exercised
-}
+			tmpFile := t.TempDir() + "/test-data.txt"
+			require.NoError(t, os.WriteFile(tmpFile, []byte("test data"), 0o644))
 
-func TestRunObjectPutCommand_ValidFileWithTags(t *testing.T) {
-	origFile := objectFile
-	origMeta := objectMetadata
-	origTags := objectTags
-	origFactory := objectStorageClientFactory
-	defer func() {
-		objectFile = origFile
-		objectMetadata = origMeta
-		objectTags = origTags
-		objectStorageClientFactory = origFactory
-	}()
+			objectFile = tmpFile
+			objectMetadata = tt.metadata
+			objectTags = tt.tags
+			// The factory fails only after the file, metadata and tags parse.
+			objectStorageClientFactory = func() (*grpc.Client, error) {
+				return nil, errors.New(errors.ErrUnavailable, "test", "no server")
+			}
 
-	tmpFile := t.TempDir() + "/tagged-data.txt"
-	require.NoError(t, os.WriteFile(tmpFile, []byte("tagged content"), 0o644))
-
-	objectFile = tmpFile
-	objectMetadata = ""
-	objectTags = map[string]string{"env": "prod", "tier": "hot"}
-
-	objectStorageClientFactory = func() (*grpc.Client, error) {
-		return nil, errors.New(errors.ErrUnavailable, "test", "no server")
+			cmd := newObjectPutCommand()
+			err := runObjectPutCommand(cmd, []string{"bucket/key"})
+			assert.Error(t, err)
+		})
 	}
-
-	cmd := newObjectPutCommand()
-	err := runObjectPutCommand(cmd, []string{"bucket/tagged-key"})
-	assert.Error(t, err) // Factory error, but tag path was exercised
 }
 
 func TestRunObjectListByTagCommand_MalformedTagFilter(t *testing.T) {
@@ -922,162 +663,138 @@ func TestRunObjectReplicateCommand_CommaSeparatedDestinations(t *testing.T) {
 // Object Storage Format Edge Cases - SetPolicy
 // =============================================================================
 
-func TestFormatObjectSetPolicyResponse_YAMLFormat(t *testing.T) {
-	orig := objectOutputFormat
-	defer func() { objectOutputFormat = orig }()
-	objectOutputFormat = "yaml"
+func TestFormatObjectSetPolicyResponse(t *testing.T) {
+	tests := []struct {
+		name    string
+		format  string
+		resp    *pb.SetObjectPolicyResponse
+		wantErr bool
+	}{
+		{name: "yaml", format: "yaml", resp: &pb.SetObjectPolicyResponse{Key: "bucket/key", Version: 1}},
+		{name: "table", format: "table", resp: &pb.SetObjectPolicyResponse{Key: "bucket/key", Version: 3}},
+		{name: "bad format", format: "invalid-format", resp: &pb.SetObjectPolicyResponse{Key: "bucket/key"}, wantErr: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			orig := objectOutputFormat
+			defer func() { objectOutputFormat = orig }()
+			objectOutputFormat = tt.format
 
-	resp := &pb.SetObjectPolicyResponse{Key: "bucket/key", Version: 1}
-	err := formatObjectSetPolicyResponse(resp)
-	assert.NoError(t, err)
+			err := formatObjectSetPolicyResponse(tt.resp)
+			if tt.wantErr {
+				assert.Error(t, err)
+				return
+			}
+			assert.NoError(t, err)
+		})
+	}
 }
 
-func TestFormatObjectSetPolicyResponse_TableFormat(t *testing.T) {
-	orig := objectOutputFormat
-	defer func() { objectOutputFormat = orig }()
-	objectOutputFormat = "table"
-
-	resp := &pb.SetObjectPolicyResponse{Key: "bucket/key", Version: 3}
-	err := formatObjectSetPolicyResponse(resp)
-	assert.NoError(t, err)
-}
-
-func TestFormatObjectSetPolicyResponse_BadFormat(t *testing.T) {
-	orig := objectOutputFormat
-	defer func() { objectOutputFormat = orig }()
-	objectOutputFormat = "invalid-format"
-
-	resp := &pb.SetObjectPolicyResponse{Key: "bucket/key"}
-	err := formatObjectSetPolicyResponse(resp)
-	assert.Error(t, err)
-}
-
-// =============================================================================
-// Object Storage Format - Lifecycle Response Edge Cases
-// =============================================================================
-
-func TestFormatObjectLifecycleResponse_TableWithArchiveAndRetention(t *testing.T) {
-	orig := objectOutputFormat
-	defer func() { objectOutputFormat = orig }()
-	objectOutputFormat = "table"
-
-	resp := &pb.GetObjectPolicyResponse{
-		Key: "mybucket",
-		Policy: &pb.ObjectPolicy{
-			ArchivePolicy: &pb.ArchivePolicy{
-				Enabled:          true,
-				ArchiveAfterDays: 30,
-				TargetStore:      "cold-store",
-			},
-			RetentionPolicy: &pb.RetentionPolicy{
-				Enabled:       true,
-				RetentionDays: 365,
+func TestFormatObjectLifecycleResponse_Inputs(t *testing.T) {
+	tests := []struct {
+		name    string
+		format  string
+		resp    *pb.GetObjectPolicyResponse
+		wantErr bool
+	}{
+		{
+			name:   "table with archive and retention",
+			format: "table",
+			resp: &pb.GetObjectPolicyResponse{
+				Key: "mybucket",
+				Policy: &pb.ObjectPolicy{
+					ArchivePolicy: &pb.ArchivePolicy{
+						Enabled:          true,
+						ArchiveAfterDays: 30,
+						TargetStore:      "cold-store",
+					},
+					RetentionPolicy: &pb.RetentionPolicy{
+						Enabled:       true,
+						RetentionDays: 365,
+					},
+				},
 			},
 		},
+		{name: "table nil policy", format: "table", resp: &pb.GetObjectPolicyResponse{Key: "mybucket", Policy: nil}},
+		{name: "table empty policy", format: "table", resp: &pb.GetObjectPolicyResponse{Key: "mybucket", Policy: &pb.ObjectPolicy{}}},
+		{name: "bad format", format: "invalid-format", resp: &pb.GetObjectPolicyResponse{Key: "mybucket"}, wantErr: true},
 	}
-	err := formatObjectLifecycleResponse("mybucket", resp)
-	assert.NoError(t, err)
-}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			orig := objectOutputFormat
+			defer func() { objectOutputFormat = orig }()
+			objectOutputFormat = tt.format
 
-func TestFormatObjectLifecycleResponse_TableNilPolicy(t *testing.T) {
-	orig := objectOutputFormat
-	defer func() { objectOutputFormat = orig }()
-	objectOutputFormat = "table"
-
-	resp := &pb.GetObjectPolicyResponse{Key: "mybucket", Policy: nil}
-	err := formatObjectLifecycleResponse("mybucket", resp)
-	assert.NoError(t, err)
-}
-
-func TestFormatObjectLifecycleResponse_TableEmptyPolicy(t *testing.T) {
-	orig := objectOutputFormat
-	defer func() { objectOutputFormat = orig }()
-	objectOutputFormat = "table"
-
-	resp := &pb.GetObjectPolicyResponse{Key: "mybucket", Policy: &pb.ObjectPolicy{}}
-	err := formatObjectLifecycleResponse("mybucket", resp)
-	assert.NoError(t, err)
-}
-
-func TestFormatObjectLifecycleResponse_BadFormat(t *testing.T) {
-	orig := objectOutputFormat
-	defer func() { objectOutputFormat = orig }()
-	objectOutputFormat = "invalid-format"
-
-	resp := &pb.GetObjectPolicyResponse{Key: "mybucket"}
-	err := formatObjectLifecycleResponse("mybucket", resp)
-	assert.Error(t, err)
+			err := formatObjectLifecycleResponse("mybucket", tt.resp)
+			if tt.wantErr {
+				assert.Error(t, err)
+				return
+			}
+			assert.NoError(t, err)
+		})
+	}
 }
 
 // =============================================================================
 // Cluster Output Formatting
 // =============================================================================
 
-func TestPrintClusterStatusJSON_Success(t *testing.T) {
-	status := &cli.ClusterStatusResponse{
-		Healthy:    true,
-		LeaderID:   1,
-		NodeCount:  3,
-		ReadyNodes: 3,
-		Nodes: []cli.NodeInfo{
-			{NodeID: 1, Address: "10.0.0.1:50051", IsLeader: true, IsHealthy: true},
+func TestPrintClusterStatusTableCLI_Inputs(t *testing.T) {
+	tests := []struct {
+		name   string
+		status interface{}
+	}{
+		{
+			name: "healthy cluster",
+			status: &cli.ClusterStatusResponse{
+				Healthy:    true,
+				LeaderID:   1,
+				NodeCount:  2,
+				ReadyNodes: 2,
+				Nodes: []cli.NodeInfo{
+					{NodeID: 1, Address: "10.0.0.1:50051", IsLeader: true, IsHealthy: true, LastSeen: time.Now()},
+					{NodeID: 2, Address: "10.0.0.2:50051", IsLeader: false, IsHealthy: true},
+				},
+			},
 		},
-	}
-	err := printClusterStatusJSON(status)
-	assert.NoError(t, err)
-}
-
-func TestPrintClusterStatusTableCLI_HealthyCluster(t *testing.T) {
-	status := &cli.ClusterStatusResponse{
-		Healthy:    true,
-		LeaderID:   1,
-		NodeCount:  2,
-		ReadyNodes: 2,
-		Nodes: []cli.NodeInfo{
-			{NodeID: 1, Address: "10.0.0.1:50051", IsLeader: true, IsHealthy: true, LastSeen: time.Now()},
-			{NodeID: 2, Address: "10.0.0.2:50051", IsLeader: false, IsHealthy: true},
+		{
+			name: "unhealthy cluster",
+			status: &cli.ClusterStatusResponse{
+				Healthy:    false,
+				LeaderID:   0,
+				NodeCount:  2,
+				ReadyNodes: 1,
+				Nodes: []cli.NodeInfo{
+					{NodeID: 1, Address: "10.0.0.1:50051", IsLeader: false, IsHealthy: true},
+					{NodeID: 2, Address: "10.0.0.2:50051", IsLeader: false, IsHealthy: false},
+				},
+			},
 		},
-	}
-	err := printClusterStatusTableCLI(status)
-	assert.NoError(t, err)
-}
-
-func TestPrintClusterStatusTableCLI_UnhealthyCluster(t *testing.T) {
-	status := &cli.ClusterStatusResponse{
-		Healthy:    false,
-		LeaderID:   0,
-		NodeCount:  2,
-		ReadyNodes: 1,
-		Nodes: []cli.NodeInfo{
-			{NodeID: 1, Address: "10.0.0.1:50051", IsLeader: false, IsHealthy: true},
-			{NodeID: 2, Address: "10.0.0.2:50051", IsLeader: false, IsHealthy: false},
+		{
+			name: "raft group info",
+			status: &cli.ClusterStatusResponse{
+				Healthy:    true,
+				LeaderID:   1,
+				NodeCount:  3,
+				ReadyNodes: 3,
+				Nodes:      []cli.NodeInfo{},
+				RaftGroupInfo: []cli.RaftGroupInfo{
+					{LeaderID: 1, MemberCount: 3},
+					{LeaderID: 2, MemberCount: 3},
+				},
+			},
 		},
-	}
-	err := printClusterStatusTableCLI(status)
-	assert.NoError(t, err)
-}
-
-func TestPrintClusterStatusTableCLI_WithRaftGroupInfo(t *testing.T) {
-	status := &cli.ClusterStatusResponse{
-		Healthy:    true,
-		LeaderID:   1,
-		NodeCount:  3,
-		ReadyNodes: 3,
-		Nodes:      []cli.NodeInfo{},
-		RaftGroupInfo: []cli.RaftGroupInfo{
-			{LeaderID: 1, MemberCount: 3},
-			{LeaderID: 2, MemberCount: 3},
+		{
+			name:   "empty nodes",
+			status: &cli.ClusterStatusResponse{Healthy: true, LeaderID: 1, NodeCount: 0, ReadyNodes: 0, Nodes: []cli.NodeInfo{}},
 		},
+		{name: "non-status type falls back to json", status: map[string]string{"status": "ok"}},
 	}
-	err := printClusterStatusTableCLI(status)
-	assert.NoError(t, err)
-}
-
-func TestPrintClusterStatusTableCLI_FallbackToJSON(t *testing.T) {
-	// Pass a non-ClusterStatusResponse type - should fallback to JSON
-	status := map[string]string{"status": "ok"}
-	err := printClusterStatusTableCLI(status)
-	assert.NoError(t, err)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.NoError(t, printClusterStatusTableCLI(tt.status))
+		})
+	}
 }
 
 // =============================================================================
@@ -1123,39 +840,29 @@ func TestNewObjectStorageCommands_AllSubcommands(t *testing.T) {
 	}
 }
 
-func TestNewObjectMetadataUpdateCommandCreation(t *testing.T) {
-	cmd := newObjectMetadataUpdateCommand()
-	assert.NotNil(t, cmd)
-	assert.Equal(t, "update <bucket>/<key>", cmd.Use)
-}
-
-func TestNewObjectLifecycleSetCommandCreation(t *testing.T) {
-	cmd := newObjectLifecycleSetCommand()
-	assert.NotNil(t, cmd)
-	assert.Equal(t, "set <bucket>", cmd.Use)
-}
-
-func TestNewObjectReplicateCommandCreation(t *testing.T) {
-	cmd := newObjectReplicateCommand()
-	assert.NotNil(t, cmd)
-	assert.Equal(t, "replicate <bucket>/<key>", cmd.Use)
-}
-
-func TestNewObjectMigrateCommandCreation(t *testing.T) {
-	cmd := newObjectMigrateCommand()
-	assert.NotNil(t, cmd)
-	assert.Equal(t, "migrate <bucket>/<key>", cmd.Use)
+func TestNewObjectSubcommandUsage(t *testing.T) {
+	tests := []struct {
+		name    string
+		factory func() *cobra.Command
+		want    string
+	}{
+		{name: "metadata update", factory: newObjectMetadataUpdateCommand, want: "update <bucket>/<key>"},
+		{name: "lifecycle set", factory: newObjectLifecycleSetCommand, want: "set <bucket>"},
+		{name: "replicate", factory: newObjectReplicateCommand, want: "replicate <bucket>/<key>"},
+		{name: "migrate", factory: newObjectMigrateCommand, want: "migrate <bucket>/<key>"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cmd := tt.factory()
+			require.NotNil(t, cmd)
+			assert.Equal(t, tt.want, cmd.Use)
+		})
+	}
 }
 
 // =============================================================================
 // Embedded Server Helper
 // =============================================================================
-
-func TestShutdownEmbeddedServer_NilHolder(t *testing.T) {
-	embeddedServerHolder.Store(nil)
-	err := shutdownEmbeddedServer()
-	assert.NoError(t, err)
-}
 
 func TestEmbeddedServer_ShutdownWhenNotStarted(t *testing.T) {
 	es := &embeddedServer{}
@@ -1168,21 +875,8 @@ func TestEmbeddedServer_ShutdownWhenNotStarted(t *testing.T) {
 // Backup Storage - loadProfileCredentials Tests
 // =============================================================================
 
-func TestLoadProfileCredentials_FileNotFound(t *testing.T) {
-	flags := &BackupStorageFlags{StorageType: "s3"}
-	builder := NewBackupStorageBuilder(flags, "", "")
-	builder.credentialsFile = "/nonexistent/credentials.yaml"
-
-	creds, err := builder.loadProfileCredentials(context.Background())
-	assert.NoError(t, err)
-	assert.Nil(t, creds, "Should return nil when file doesn't exist")
-}
-
-func TestLoadProfileCredentials_ValidCredentialsFile(t *testing.T) {
-	tmpDir := t.TempDir()
-	credFile := filepath.Join(tmpDir, "credentials.yaml")
-
-	credContent := `
+func TestLoadProfileCredentials(t *testing.T) {
+	const twoProfiles = `
 default_profile: prod
 profiles:
   prod:
@@ -1197,198 +891,115 @@ profiles:
     bucket: dev-bucket
     region: us-west-2
 `
-	require.NoError(t, os.WriteFile(credFile, []byte(credContent), 0o600))
-
-	flags := &BackupStorageFlags{StorageType: "s3"}
-	builder := NewBackupStorageBuilder(flags, "", "")
-	builder.credentialsFile = credFile
-
-	creds, err := builder.loadProfileCredentials(context.Background())
-	require.NoError(t, err)
-	require.NotNil(t, creds)
-	assert.Equal(t, "s3", creds.Type)
-	assert.Equal(t, "production-bucket", creds.Bucket)
-	assert.Equal(t, "us-east-1", creds.Region)
-}
-
-func TestLoadProfileCredentials_SpecificProfile(t *testing.T) {
-	tmpDir := t.TempDir()
-	credFile := filepath.Join(tmpDir, "credentials.yaml")
-
-	credContent := `
-default_profile: prod
-profiles:
-  prod:
-    type: s3
-    bucket: production-bucket
-    region: us-east-1
-  dev:
-    type: s3
-    bucket: dev-bucket
-    region: us-west-2
-`
-	require.NoError(t, os.WriteFile(credFile, []byte(credContent), 0o600))
-
-	flags := &BackupStorageFlags{StorageType: "s3"}
-	builder := NewBackupStorageBuilder(flags, "", "dev")
-	builder.credentialsFile = credFile
-
-	creds, err := builder.loadProfileCredentials(context.Background())
-	require.NoError(t, err)
-	require.NotNil(t, creds)
-	assert.Equal(t, "dev-bucket", creds.Bucket)
-	assert.Equal(t, "us-west-2", creds.Region)
-}
-
-func TestLoadProfileCredentials_ProfileNotFound(t *testing.T) {
-	tmpDir := t.TempDir()
-	credFile := filepath.Join(tmpDir, "credentials.yaml")
-
-	credContent := `
-default_profile: prod
+	const noDefault = `
 profiles:
   prod:
     type: s3
     bucket: production-bucket
 `
-	require.NoError(t, os.WriteFile(credFile, []byte(credContent), 0o600))
+	tests := []struct {
+		name       string
+		content    string // written to a temp credentials file when non-empty
+		path       string // used as the credentials file when content is empty
+		profile    string
+		wantBucket string
+		wantRegion string
+		wantNil    bool
+		wantErr    string
+	}{
+		{name: "file not found", path: "/nonexistent/credentials.yaml", wantNil: true},
+		{name: "default path", path: "", wantNil: true},
+		{name: "default profile", content: twoProfiles, wantBucket: "production-bucket", wantRegion: "us-east-1"},
+		{name: "specific profile", content: twoProfiles, profile: "dev", wantBucket: "dev-bucket", wantRegion: "us-west-2"},
+		{name: "profile not found", content: twoProfiles, profile: "nonexistent", wantErr: "profile 'nonexistent' not found"},
+		{name: "no default profile", content: noDefault, wantErr: "no profile specified"},
+		{name: "invalid yaml", content: "not: valid: yaml:", wantErr: "failed to parse"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			credFile := tt.path
+			if tt.content != "" {
+				credFile = filepath.Join(t.TempDir(), "credentials.yaml")
+				require.NoError(t, os.WriteFile(credFile, []byte(tt.content), 0o600))
+			}
 
-	flags := &BackupStorageFlags{StorageType: "s3"}
-	builder := NewBackupStorageBuilder(flags, "", "nonexistent")
-	builder.credentialsFile = credFile
+			builder := NewBackupStorageBuilder(&BackupStorageFlags{StorageType: "s3"}, "", tt.profile)
+			builder.credentialsFile = credFile
 
-	creds, err := builder.loadProfileCredentials(context.Background())
-	assert.Error(t, err)
-	assert.Nil(t, creds)
-	assert.Contains(t, err.Error(), "profile 'nonexistent' not found")
+			creds, err := builder.loadProfileCredentials(context.Background())
+			if tt.wantErr != "" {
+				require.Error(t, err)
+				assert.Nil(t, creds)
+				assert.Contains(t, err.Error(), tt.wantErr)
+				return
+			}
+			require.NoError(t, err)
+			if tt.wantNil {
+				assert.Nil(t, creds)
+				return
+			}
+			require.NotNil(t, creds)
+			assert.Equal(t, "s3", creds.Type)
+			assert.Equal(t, tt.wantBucket, creds.Bucket)
+			assert.Equal(t, tt.wantRegion, creds.Region)
+		})
+	}
 }
 
-func TestLoadProfileCredentials_NoDefaultProfile(t *testing.T) {
-	tmpDir := t.TempDir()
-	credFile := filepath.Join(tmpDir, "credentials.yaml")
+func TestExpandEnvVars_Inputs(t *testing.T) {
+	t.Setenv("TEST_BUCKET_NAME", "my-test-bucket")
+	t.Setenv("TEST_ENV", "production")
 
-	credContent := `
-profiles:
-  prod:
-    type: s3
-    bucket: production-bucket
-`
-	require.NoError(t, os.WriteFile(credFile, []byte(credContent), 0o600))
-
-	flags := &BackupStorageFlags{StorageType: "s3"}
-	builder := NewBackupStorageBuilder(flags, "", "")
-	builder.credentialsFile = credFile
-
-	creds, err := builder.loadProfileCredentials(context.Background())
-	assert.Error(t, err)
-	assert.Nil(t, creds)
-	assert.Contains(t, err.Error(), "no profile specified")
-}
-
-func TestLoadProfileCredentials_InvalidYAML(t *testing.T) {
-	tmpDir := t.TempDir()
-	credFile := filepath.Join(tmpDir, "credentials.yaml")
-
-	require.NoError(t, os.WriteFile(credFile, []byte("not: valid: yaml:"), 0o600))
-
-	flags := &BackupStorageFlags{StorageType: "s3"}
-	builder := NewBackupStorageBuilder(flags, "", "")
-	builder.credentialsFile = credFile
-
-	creds, err := builder.loadProfileCredentials(context.Background())
-	assert.Error(t, err)
-	assert.Nil(t, creds)
-	assert.Contains(t, err.Error(), "failed to parse")
-}
-
-func TestLoadProfileCredentials_DefaultPath(t *testing.T) {
-	// Test that default path is used when credentialsFile is empty
-	flags := &BackupStorageFlags{StorageType: "s3"}
-	builder := NewBackupStorageBuilder(flags, "", "")
-	builder.credentialsFile = ""
-
-	// Since the default file likely doesn't exist, should return nil, nil
-	creds, err := builder.loadProfileCredentials(context.Background())
-	assert.NoError(t, err)
-	assert.Nil(t, creds)
-}
-
-// =============================================================================
-// Backup Storage - expandEnvVars Tests
-// =============================================================================
-
-func TestExpandEnvVars_BasicExpansion(t *testing.T) {
-	flags := &BackupStorageFlags{StorageType: "s3"}
-	builder := NewBackupStorageBuilder(flags, "", "")
-
-	os.Setenv("TEST_BUCKET_NAME", "my-test-bucket")
-	defer os.Unsetenv("TEST_BUCKET_NAME")
-
-	result := builder.expandEnvVars("${TEST_BUCKET_NAME}")
-	assert.Equal(t, "my-test-bucket", result)
-}
-
-func TestExpandEnvVars_MixedContent(t *testing.T) {
-	flags := &BackupStorageFlags{StorageType: "s3"}
-	builder := NewBackupStorageBuilder(flags, "", "")
-
-	os.Setenv("TEST_ENV", "production")
-	defer os.Unsetenv("TEST_ENV")
-
-	result := builder.expandEnvVars("backup-${TEST_ENV}-data")
-	assert.Equal(t, "backup-production-data", result)
-}
-
-func TestExpandEnvVars_UndefinedVariable(t *testing.T) {
-	flags := &BackupStorageFlags{StorageType: "s3"}
-	builder := NewBackupStorageBuilder(flags, "", "")
-
-	result := builder.expandEnvVars("${UNDEFINED_VAR_12345}")
-	assert.Equal(t, "", result)
+	tests := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{name: "basic expansion", in: "${TEST_BUCKET_NAME}", want: "my-test-bucket"},
+		{name: "mixed content", in: "backup-${TEST_ENV}-data", want: "backup-production-data"},
+		{name: "undefined variable", in: "${UNDEFINED_VAR_12345}", want: ""},
+	}
+	builder := NewBackupStorageBuilder(&BackupStorageFlags{StorageType: "s3"}, "", "")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, builder.expandEnvVars(tt.in))
+		})
+	}
 }
 
 // =============================================================================
 // createObjectStorageGRPCClient Tests - TLS Error Paths
 // =============================================================================
 
-func TestCreateObjectStorageGRPCClient_TLSEnabled_MissingCert(t *testing.T) {
-	origTLSEnabled := objectTLSEnabled
-	origTLSCert := objectTLSCert
-	origTLSKey := objectTLSKey
-	defer func() {
-		objectTLSEnabled = origTLSEnabled
-		objectTLSCert = origTLSCert
-		objectTLSKey = origTLSKey
-	}()
+func TestCreateObjectStorageGRPCClient_TLSEnabledMissingMaterial(t *testing.T) {
+	tests := []struct {
+		name string
+		cert string
+	}{
+		{name: "missing cert and key", cert: ""},
+		{name: "missing key", cert: "/path/to/cert.pem"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			origTLSEnabled := objectTLSEnabled
+			origTLSCert := objectTLSCert
+			origTLSKey := objectTLSKey
+			defer func() {
+				objectTLSEnabled = origTLSEnabled
+				objectTLSCert = origTLSCert
+				objectTLSKey = origTLSKey
+			}()
 
-	objectTLSEnabled = true
-	objectTLSCert = ""
-	objectTLSKey = ""
+			objectTLSEnabled = true
+			objectTLSCert = tt.cert
+			objectTLSKey = ""
 
-	client, err := createObjectStorageGRPCClient()
-	assert.Error(t, err)
-	assert.Nil(t, client)
-	assert.Contains(t, err.Error(), "TLS is required for gRPC connections")
-}
-
-func TestCreateObjectStorageGRPCClient_TLSEnabled_MissingKey(t *testing.T) {
-	origTLSEnabled := objectTLSEnabled
-	origTLSCert := objectTLSCert
-	origTLSKey := objectTLSKey
-	defer func() {
-		objectTLSEnabled = origTLSEnabled
-		objectTLSCert = origTLSCert
-		objectTLSKey = origTLSKey
-	}()
-
-	objectTLSEnabled = true
-	objectTLSCert = "/path/to/cert.pem"
-	objectTLSKey = ""
-
-	client, err := createObjectStorageGRPCClient()
-	assert.Error(t, err)
-	assert.Nil(t, client)
-	assert.Contains(t, err.Error(), "TLS is required for gRPC connections")
+			client, err := createObjectStorageGRPCClient()
+			require.Error(t, err)
+			assert.Nil(t, client)
+			assert.Contains(t, err.Error(), "TLS is required for gRPC connections")
+		})
+	}
 }
 
 // =============================================================================
@@ -1478,112 +1089,43 @@ func validCacheConfig() config.EnhancedCacheConfig {
 
 // upgrade.go coverage
 
-func TestRemaining91_RunUpgradeStart_DefaultAddress(t *testing.T) {
-	origAddr := upgradeServerAddress
-	origGlobal := address
-	origTimeout := globalTimeout
-	defer func() {
-		upgradeServerAddress = origAddr
-		address = origGlobal
-		globalTimeout = origTimeout
-	}()
+func TestRemaining91_RunUpgradeCommands_AddressResolution(t *testing.T) {
+	start := func(cmd *cobra.Command) error { return runUpgradeStart(cmd, []string{"v2.0.0"}) }
+	status := func(cmd *cobra.Command) error { return runUpgradeStatus(cmd, []string{}) }
 
-	upgradeServerAddress = ""
-	address = ""
-	globalTimeout = 1 * time.Second
+	tests := []struct {
+		name          string
+		factory       func() *cobra.Command
+		run           func(*cobra.Command) error
+		serverAddress string
+		globalAddress string
+	}{
+		{name: "start default address", factory: newUpgradeStartCommand, run: start},
+		{name: "start custom server address", factory: newUpgradeStartCommand, run: start, serverAddress: "localhost:19999"},
+		{name: "start falls back to global address", factory: newUpgradeStartCommand, run: start, globalAddress: "localhost:19998"},
+		{name: "status default address", factory: newUpgradeStatusCommand, run: status},
+		{name: "status custom server address", factory: newUpgradeStatusCommand, run: status, serverAddress: "localhost:19997"},
+		{name: "status falls back to global address", factory: newUpgradeStatusCommand, run: status, globalAddress: "localhost:19996"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			origAddr := upgradeServerAddress
+			origGlobal := address
+			origTimeout := globalTimeout
+			defer func() {
+				upgradeServerAddress = origAddr
+				address = origGlobal
+				globalTimeout = origTimeout
+			}()
 
-	cmd := newUpgradeStartCommand()
-	err := runUpgradeStart(cmd, []string{"v2.0.0"})
-	require.Error(t, err)
-}
+			upgradeServerAddress = tt.serverAddress
+			address = tt.globalAddress
+			globalTimeout = 1 * time.Second
 
-func TestRemaining91_RunUpgradeStart_CustomServerAddress(t *testing.T) {
-	origAddr := upgradeServerAddress
-	origTimeout := globalTimeout
-	defer func() {
-		upgradeServerAddress = origAddr
-		globalTimeout = origTimeout
-	}()
-
-	upgradeServerAddress = "localhost:19999"
-	globalTimeout = 1 * time.Second
-
-	cmd := newUpgradeStartCommand()
-	err := runUpgradeStart(cmd, []string{"v3.0.0"})
-	require.Error(t, err)
-}
-
-func TestRemaining91_RunUpgradeStart_FallbackToGlobalAddress(t *testing.T) {
-	origAddr := upgradeServerAddress
-	origGlobal := address
-	origTimeout := globalTimeout
-	defer func() {
-		upgradeServerAddress = origAddr
-		address = origGlobal
-		globalTimeout = origTimeout
-	}()
-
-	upgradeServerAddress = ""
-	address = "localhost:19998"
-	globalTimeout = 1 * time.Second
-
-	cmd := newUpgradeStartCommand()
-	err := runUpgradeStart(cmd, []string{"v2.1.0"})
-	require.Error(t, err)
-}
-
-func TestRemaining91_RunUpgradeStatus_DefaultAddress(t *testing.T) {
-	origAddr := upgradeServerAddress
-	origGlobal := address
-	origTimeout := globalTimeout
-	defer func() {
-		upgradeServerAddress = origAddr
-		address = origGlobal
-		globalTimeout = origTimeout
-	}()
-
-	upgradeServerAddress = ""
-	address = ""
-	globalTimeout = 1 * time.Second
-
-	cmd := newUpgradeStatusCommand()
-	err := runUpgradeStatus(cmd, []string{})
-	require.Error(t, err)
-}
-
-func TestRemaining91_RunUpgradeStatus_CustomAddress(t *testing.T) {
-	origAddr := upgradeServerAddress
-	origTimeout := globalTimeout
-	defer func() {
-		upgradeServerAddress = origAddr
-		globalTimeout = origTimeout
-	}()
-
-	upgradeServerAddress = "localhost:19997"
-	globalTimeout = 1 * time.Second
-
-	cmd := newUpgradeStatusCommand()
-	err := runUpgradeStatus(cmd, []string{})
-	require.Error(t, err)
-}
-
-func TestRemaining91_RunUpgradeStatus_FallbackToGlobalAddress(t *testing.T) {
-	origAddr := upgradeServerAddress
-	origGlobal := address
-	origTimeout := globalTimeout
-	defer func() {
-		upgradeServerAddress = origAddr
-		address = origGlobal
-		globalTimeout = origTimeout
-	}()
-
-	upgradeServerAddress = ""
-	address = "localhost:19996"
-	globalTimeout = 1 * time.Second
-
-	cmd := newUpgradeStatusCommand()
-	err := runUpgradeStatus(cmd, []string{})
-	require.Error(t, err)
+			// No server listens on any of these addresses.
+			require.Error(t, tt.run(tt.factory()))
+		})
+	}
 }
 
 func TestRemaining91_FollowUpgradeProgress_ContextCancelled(t *testing.T) {
@@ -1642,77 +1184,39 @@ func TestRemaining91_NewClusterStatusCommand_InvalidOutputFormat(t *testing.T) {
 
 // node.go coverage
 
-func TestRemaining91_RunNodeList_TableOutput(t *testing.T) {
-	origLog := log
-	origNodeMgr := currentNodeManager
-	origFmt := nodeOutputFormat
-	defer func() {
-		log = origLog
-		currentNodeManager = origNodeMgr
-		nodeOutputFormat = origFmt
-	}()
+func TestRemaining91_RunNodeList_OutputFormats(t *testing.T) {
+	tests := []struct {
+		format  string
+		wantErr bool
+	}{
+		{format: "table"},
+		{format: "json"},
+		{format: "xml", wantErr: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.format, func(t *testing.T) {
+			origLog := log
+			origNodeMgr := currentNodeManager
+			origFmt := nodeOutputFormat
+			defer func() {
+				log = origLog
+				currentNodeManager = origNodeMgr
+				nodeOutputFormat = origFmt
+			}()
 
-	log = createTestLoggerForRemaining91(t)
-	currentNodeManager = nil
+			log = createTestLoggerForRemaining91(t)
+			currentNodeManager = nil
 
-	cmd := newNodeListCommand()
-	nodeOutputFormat = "table"
-	err := runNodeList(cmd, []string{})
-	assert.NoError(t, err)
-}
-
-func TestRemaining91_RunNodeList_JSONOutput(t *testing.T) {
-	origLog := log
-	origNodeMgr := currentNodeManager
-	origFmt := nodeOutputFormat
-	defer func() {
-		log = origLog
-		currentNodeManager = origNodeMgr
-		nodeOutputFormat = origFmt
-	}()
-
-	log = createTestLoggerForRemaining91(t)
-	currentNodeManager = nil
-
-	cmd := newNodeListCommand()
-	nodeOutputFormat = "json"
-	err := runNodeList(cmd, []string{})
-	assert.NoError(t, err)
-}
-
-func TestRemaining91_RunNodeList_InvalidFormat(t *testing.T) {
-	origLog := log
-	origNodeMgr := currentNodeManager
-	origFmt := nodeOutputFormat
-	defer func() {
-		log = origLog
-		currentNodeManager = origNodeMgr
-		nodeOutputFormat = origFmt
-	}()
-
-	log = createTestLoggerForRemaining91(t)
-	currentNodeManager = nil
-
-	cmd := newNodeListCommand()
-	nodeOutputFormat = "xml"
-	err := runNodeList(cmd, []string{})
-	assert.Error(t, err)
-}
-
-func TestRemaining91_GetNodeManager_CreatesNew(t *testing.T) {
-	origLog := log
-	origNodeMgr := currentNodeManager
-	defer func() {
-		log = origLog
-		currentNodeManager = origNodeMgr
-	}()
-
-	log = createTestLoggerForRemaining91(t)
-	currentNodeManager = nil
-
-	mgr, err := getNodeManager()
-	require.NoError(t, err)
-	assert.NotNil(t, mgr)
+			cmd := newNodeListCommand()
+			nodeOutputFormat = tt.format
+			err := runNodeList(cmd, []string{})
+			if tt.wantErr {
+				assert.Error(t, err)
+				return
+			}
+			assert.NoError(t, err)
+		})
+	}
 }
 
 func TestRemaining91_GetNodeManager_ReturnsCached(t *testing.T) {
@@ -1728,6 +1232,7 @@ func TestRemaining91_GetNodeManager_ReturnsCached(t *testing.T) {
 
 	mgr1, err := getNodeManager()
 	require.NoError(t, err)
+	require.NotNil(t, mgr1)
 	mgr2, err := getNodeManager()
 	require.NoError(t, err)
 	assert.Equal(t, mgr1, mgr2)
@@ -1764,42 +1269,33 @@ func TestRemaining91_GetNodeManager_WithCustomFlags(t *testing.T) {
 	assert.NotNil(t, mgr)
 }
 
-func TestRemaining91_RunNodeAdd_Success(t *testing.T) {
-	origLog := log
-	origNodeMgr := currentNodeManager
-	origFmt := nodeOutputFormat
-	defer func() {
-		log = origLog
-		currentNodeManager = origNodeMgr
-		nodeOutputFormat = origFmt
-	}()
+func TestRemaining91_RunNodeAdd_OutputFormats(t *testing.T) {
+	tests := []struct {
+		format string
+		args   []string
+	}{
+		{format: "table", args: []string{"node-test-1", "10.0.0.1:50051"}},
+		{format: "json", args: []string{"node-test-2", "10.0.0.2:50051"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.format, func(t *testing.T) {
+			origLog := log
+			origNodeMgr := currentNodeManager
+			origFmt := nodeOutputFormat
+			defer func() {
+				log = origLog
+				currentNodeManager = origNodeMgr
+				nodeOutputFormat = origFmt
+			}()
 
-	log = createTestLoggerForRemaining91(t)
-	currentNodeManager = nil
+			log = createTestLoggerForRemaining91(t)
+			currentNodeManager = nil
 
-	addCmd := newNodeAddCommand()
-	nodeOutputFormat = "table"
-	err := runNodeAdd(addCmd, []string{"node-test-1", "10.0.0.1:50051"})
-	assert.NoError(t, err)
-}
-
-func TestRemaining91_RunNodeAdd_JSONOutput(t *testing.T) {
-	origLog := log
-	origNodeMgr := currentNodeManager
-	origFmt := nodeOutputFormat
-	defer func() {
-		log = origLog
-		currentNodeManager = origNodeMgr
-		nodeOutputFormat = origFmt
-	}()
-
-	log = createTestLoggerForRemaining91(t)
-	currentNodeManager = nil
-
-	addCmd := newNodeAddCommand()
-	nodeOutputFormat = "json"
-	err := runNodeAdd(addCmd, []string{"node-test-2", "10.0.0.2:50051"})
-	assert.NoError(t, err)
+			addCmd := newNodeAddCommand()
+			nodeOutputFormat = tt.format
+			assert.NoError(t, runNodeAdd(addCmd, tt.args))
+		})
+	}
 }
 
 func TestRemaining91_RunNodeRemove_Success(t *testing.T) {
@@ -1890,16 +1386,6 @@ func TestRemaining91_RunNodeReplace_NonExistentOld(t *testing.T) {
 
 // cache.go coverage
 
-func TestRemaining91_RunCacheWarmCommand_NilConfig(t *testing.T) {
-	origCfg := cfg
-	defer func() { cfg = origCfg }()
-	cfg = nil
-	cmd := newCacheWarmCommand()
-	err := runCacheWarmCommand(cmd, []string{})
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "configuration not initialized")
-}
-
 func TestRemaining91_RunCacheWarmCommand_NoPrefixes(t *testing.T) {
 	origCfg := cfg
 	origLog := log
@@ -1912,56 +1398,6 @@ func TestRemaining91_RunCacheWarmCommand_NoPrefixes(t *testing.T) {
 	err := runCacheWarmCommand(cmd, []string{})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "prefix")
-}
-
-func TestRemaining91_InitializeCacheWarmerDependencies_NilConfig(t *testing.T) {
-	origCfg := cfg
-	defer func() { cfg = origCfg }()
-	cfg = nil
-	_, _, _, err := initializeCacheWarmerDependencies()
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "configuration not initialized")
-}
-
-func TestRemaining91_InitializeCacheWarmerDependencies_NilLogger(t *testing.T) {
-	origCfg := cfg
-	origLog := log
-	defer func() { cfg = origCfg; log = origLog }()
-	cfg = &config.Config{Cache: validCacheConfig()}
-	log = nil
-	_, _, _, err := initializeCacheWarmerDependencies()
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "logger not initialized")
-}
-
-func TestRemaining91_RunCacheEnableCommand_NilConfig(t *testing.T) {
-	origCfg := cfg
-	defer func() { cfg = origCfg }()
-	cfg = nil
-	cmd := newCacheEnableCommand()
-	err := runCacheEnableCommand(cmd, []string{"users"})
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "configuration not initialized")
-}
-
-func TestRemaining91_RunCacheDisableCommand_NilConfig(t *testing.T) {
-	origCfg := cfg
-	defer func() { cfg = origCfg }()
-	cfg = nil
-	cmd := newCacheDisableCommand()
-	err := runCacheDisableCommand(cmd, []string{"users"})
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "configuration not initialized")
-}
-
-func TestRemaining91_RunCacheConfigCommand_NilConfig(t *testing.T) {
-	origCfg := cfg
-	defer func() { cfg = origCfg }()
-	cfg = nil
-	cmd := newCacheConfigCommand()
-	err := runCacheConfigCommand(cmd, []string{})
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "configuration not initialized")
 }
 
 func TestRemaining91_RunCacheConfigCommand_WithEntity(t *testing.T) {
@@ -2037,16 +1473,6 @@ func TestRemaining91_InitializeCacheRegistry_Success(t *testing.T) {
 
 // client.go coverage
 
-func TestRemaining91_CreateSDKClient_EmptyAddress(t *testing.T) {
-	origAddr := address
-	defer func() { address = origAddr; resetSDKClient() }()
-	resetSDKClient()
-	address = ""
-	client, err := createSDKClient()
-	assert.Nil(t, client)
-	require.Error(t, err)
-}
-
 func TestRemaining91_CreateSDKClient_ReturnsExisting(t *testing.T) {
 	defer func() { resetSDKClient() }()
 	resetSDKClient()
@@ -2056,67 +1482,6 @@ func TestRemaining91_CreateSDKClient_ReturnsExisting(t *testing.T) {
 	result, err := createSDKClient()
 	require.NoError(t, err)
 	assert.Same(t, mock, result)
-}
-
-func TestRemaining91_BuildSDKClientOptions_QUICTransport(t *testing.T) {
-	origT := transport
-	origTimeout := globalTimeout
-	defer func() { transport = origT; globalTimeout = origTimeout }()
-	transport = "quic"
-	globalTimeout = 5 * time.Second
-	opts, err := buildSDKClientOptions()
-	require.NoError(t, err)
-	assert.NotEmpty(t, opts)
-}
-
-func TestRemaining91_BuildSDKClientOptions_RESTTransport(t *testing.T) {
-	origT := transport
-	origTimeout := globalTimeout
-	defer func() { transport = origT; globalTimeout = origTimeout }()
-	transport = "rest"
-	globalTimeout = 5 * time.Second
-	opts, err := buildSDKClientOptions()
-	require.NoError(t, err)
-	assert.NotEmpty(t, opts)
-}
-
-func TestRemaining91_BuildSDKClientOptions_UnixTransport(t *testing.T) {
-	origT := transport
-	origAddr := address
-	origTimeout := globalTimeout
-	defer func() { transport = origT; address = origAddr; globalTimeout = origTimeout }()
-	transport = "unix"
-	address = "/tmp/test.sock"
-	globalTimeout = 5 * time.Second
-	opts, err := buildSDKClientOptions()
-	require.NoError(t, err)
-	assert.NotEmpty(t, opts)
-}
-
-func TestRemaining91_BuildSDKClientOptions_MCPTransport(t *testing.T) {
-	origT := transport
-	origTimeout := globalTimeout
-	defer func() { transport = origT; globalTimeout = origTimeout }()
-	transport = "mcp"
-	globalTimeout = 5 * time.Second
-	opts, err := buildSDKClientOptions()
-	require.NoError(t, err)
-	assert.NotEmpty(t, opts)
-}
-
-func TestRemaining91_BuildSDKClientOptions_UnsupportedTransport(t *testing.T) {
-	origT := transport
-	defer func() { transport = origT }()
-	transport = "bad_proto"
-	opts, err := buildSDKClientOptions()
-	assert.Nil(t, opts)
-	require.Error(t, err)
-}
-
-func TestRemaining91_CloseSDKClient_NilClient(t *testing.T) {
-	resetSDKClient()
-	err := closeSDKClient()
-	assert.NoError(t, err)
 }
 
 func TestRemaining91_BuildSDKClientOptions_ZeroTimeout(t *testing.T) {
@@ -2160,19 +1525,6 @@ func TestRemaining91_CreateOllamaClient_GRPCDefault(t *testing.T) {
 	address = "localhost:19993"
 	globalTimeout = 1 * time.Second
 	client, err := createOllamaClient()
-	if err == nil {
-		assert.NotNil(t, client)
-		client.Close()
-	}
-}
-
-func TestRemaining91_CreateOllamaGRPCClient_Success(t *testing.T) {
-	origAddr := address
-	origTimeout := globalTimeout
-	defer func() { address = origAddr; globalTimeout = origTimeout }()
-	address = "localhost:19992"
-	globalTimeout = 1 * time.Second
-	client, err := createOllamaGRPCClient()
 	if err == nil {
 		assert.NotNil(t, client)
 		client.Close()
@@ -2422,22 +1774,6 @@ func TestRemaining91_CreateSecretsGRPCClient_K8sAuthNoToken(t *testing.T) {
 
 // Cluster display helpers
 
-func TestRemaining91_PrintClusterStatusTableCLI_NotClusterStatusResponse(t *testing.T) {
-	err := printClusterStatusTableCLI(map[string]string{"foo": "bar"})
-	assert.NoError(t, err)
-}
-
-func TestRemaining91_PrintClusterStatusTableCLI_EmptyNodes(t *testing.T) {
-	status := &cli.ClusterStatusResponse{Healthy: true, LeaderID: 1, NodeCount: 0, ReadyNodes: 0, Nodes: []cli.NodeInfo{}}
-	err := printClusterStatusTableCLI(status)
-	assert.NoError(t, err)
-}
-
-func TestRemaining91_PrintClusterStatusJSON_Success(t *testing.T) {
-	err := printClusterStatusJSON(map[string]string{"status": "healthy"})
-	assert.NoError(t, err)
-}
-
 // Node display helpers
 
 func TestRemaining91_DisplayNodeState_InvalidFormat(t *testing.T) {
@@ -2449,315 +1785,256 @@ func TestRemaining91_DisplayNodeState_InvalidFormat(t *testing.T) {
 	assert.Error(t, err)
 }
 
-func TestRemaining91_DisplayNodeReplacementReport_InvalidFormat(t *testing.T) {
-	origFmt := nodeOutputFormat
-	defer func() { nodeOutputFormat = origFmt }()
-	nodeOutputFormat = "xml_invalid"
-	report := &NodeReplacementReport{OldNodeID: "old-1", NewNodeID: "new-1", Success: true}
-	err := displayNodeReplacementReport(report)
-	assert.Error(t, err)
-}
-
-func TestRemaining91_DisplayNodeReplacementReport_JSONFormat(t *testing.T) {
-	origFmt := nodeOutputFormat
-	defer func() { nodeOutputFormat = origFmt }()
-	nodeOutputFormat = "json"
-	now := time.Now()
-	report := &NodeReplacementReport{OldNodeID: "old-1", NewNodeID: "new-1", StartTime: now, EndTime: now.Add(time.Minute), Duration: time.Minute, KeysEvacuated: 100, BytesEvacuated: 4096, Success: true}
-	err := displayNodeReplacementReport(report)
-	assert.NoError(t, err)
-}
-
-func TestRemaining91_DisplayNodeReplacementReport_Removal(t *testing.T) {
-	origFmt := nodeOutputFormat
-	defer func() { nodeOutputFormat = origFmt }()
-	nodeOutputFormat = "table"
-	now := time.Now()
-	report := &NodeReplacementReport{OldNodeID: "removed-1", NewNodeID: "", StartTime: now, EndTime: now.Add(time.Minute), Duration: time.Minute, KeysEvacuated: 50, BytesEvacuated: 2048, Success: true}
-	err := displayNodeReplacementReport(report)
-	assert.NoError(t, err)
-}
-
-func TestRemaining91_DisplayNodeReplacementReport_WithErrors(t *testing.T) {
-	origFmt := nodeOutputFormat
-	defer func() { nodeOutputFormat = origFmt }()
-	nodeOutputFormat = "table"
+func TestRemaining91_DisplayNodeReplacementReport(t *testing.T) {
 	now := time.Now()
 	errs := make([]string, 7)
 	for i := range errs {
 		errs[i] = errors.Newf(errors.ErrInternal, "test", "error %d", i).Error()
 	}
-	report := &NodeReplacementReport{OldNodeID: "old-err", NewNodeID: "new-err", StartTime: now.Add(-time.Minute), EndTime: now.Add(time.Minute), Duration: 2 * time.Minute, KeysEvacuated: 200, BytesEvacuated: 8192, VerificationTime: 30 * time.Second, Success: false, Errors: errs}
-	err := displayNodeReplacementReport(report)
-	assert.NoError(t, err)
+
+	tests := []struct {
+		name    string
+		format  string
+		report  *NodeReplacementReport
+		wantErr bool
+	}{
+		{
+			name:    "invalid format",
+			format:  "xml_invalid",
+			report:  &NodeReplacementReport{OldNodeID: "old-1", NewNodeID: "new-1", Success: true},
+			wantErr: true,
+		},
+		{
+			name:   "json",
+			format: "json",
+			report: &NodeReplacementReport{OldNodeID: "old-1", NewNodeID: "new-1", StartTime: now, EndTime: now.Add(time.Minute), Duration: time.Minute, KeysEvacuated: 100, BytesEvacuated: 4096, Success: true},
+		},
+		{
+			name:   "table removal",
+			format: "table",
+			report: &NodeReplacementReport{OldNodeID: "removed-1", NewNodeID: "", StartTime: now, EndTime: now.Add(time.Minute), Duration: time.Minute, KeysEvacuated: 50, BytesEvacuated: 2048, Success: true},
+		},
+		{
+			name:   "table with errors",
+			format: "table",
+			report: &NodeReplacementReport{OldNodeID: "old-err", NewNodeID: "new-err", StartTime: now.Add(-time.Minute), EndTime: now.Add(time.Minute), Duration: 2 * time.Minute, KeysEvacuated: 200, BytesEvacuated: 8192, VerificationTime: 30 * time.Second, Success: false, Errors: errs},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			origFmt := nodeOutputFormat
+			defer func() { nodeOutputFormat = origFmt }()
+			nodeOutputFormat = tt.format
+
+			err := displayNodeReplacementReport(tt.report)
+			if tt.wantErr {
+				assert.Error(t, err)
+				return
+			}
+			assert.NoError(t, err)
+		})
+	}
 }
 
 // Cache enable/disable with valid config
 
-func TestRemaining91_RunCacheEnableCommand_Success(t *testing.T) {
-	origCfg := cfg
-	origLog := log
-	origFmt := cacheOutputFmt
-	defer func() { cfg = origCfg; log = origLog; cacheOutputFmt = origFmt }()
-	cfg = &config.Config{Cache: validCacheConfig()}
-	log = createTestLoggerForRemaining91(t)
-	cacheOutputFmt = "table"
-	cmd := newCacheEnableCommand()
-	err := runCacheEnableCommand(cmd, []string{"users"})
-	assert.NoError(t, err)
-}
-
-func TestRemaining91_RunCacheEnableCommand_InvalidFormat(t *testing.T) {
-	origCfg := cfg
-	origLog := log
-	origFmt := cacheOutputFmt
-	defer func() { cfg = origCfg; log = origLog; cacheOutputFmt = origFmt }()
-	cfg = &config.Config{Cache: validCacheConfig()}
-	log = createTestLoggerForRemaining91(t)
-	cacheOutputFmt = "xml"
-	cmd := newCacheEnableCommand()
-	err := runCacheEnableCommand(cmd, []string{"users"})
-	assert.Error(t, err)
-}
-
-func TestRemaining91_RunCacheDisableCommand_Success(t *testing.T) {
-	origCfg := cfg
-	origLog := log
-	origFmt := cacheOutputFmt
-	defer func() { cfg = origCfg; log = origLog; cacheOutputFmt = origFmt }()
-	cfg = &config.Config{Cache: validCacheConfig()}
-	log = createTestLoggerForRemaining91(t)
-	cacheOutputFmt = "json"
-	cmd := newCacheDisableCommand()
-	err := runCacheDisableCommand(cmd, []string{"users"})
-	assert.NoError(t, err)
-}
-
-func TestRemaining91_RunCacheDisableCommand_InvalidFormat(t *testing.T) {
-	origCfg := cfg
-	origLog := log
-	origFmt := cacheOutputFmt
-	defer func() { cfg = origCfg; log = origLog; cacheOutputFmt = origFmt }()
-	cfg = &config.Config{Cache: validCacheConfig()}
-	log = createTestLoggerForRemaining91(t)
-	cacheOutputFmt = "yaml_invalid"
-	cmd := newCacheDisableCommand()
-	err := runCacheDisableCommand(cmd, []string{"users"})
-	assert.Error(t, err)
-}
-
-func TestRemaining91_UnsupportedTransportError_String(t *testing.T) {
-	err := &UnsupportedTransportError{Transport: "ftp"}
-	assert.Contains(t, err.Error(), "unsupported transport")
-	assert.Contains(t, err.Error(), "ftp")
-}
-
-func TestDisplayRebalanceProgressSDK_JSON(t *testing.T) {
-	resp := &cluster.GetRebalanceProgressResponse{
-		OperationID:     "op-abc",
-		Status:          "in_progress",
-		PercentComplete: 45.5,
-		ShardsMoved:     5,
-		TotalShards:     10,
-		ElapsedTime:     int64(30 * time.Second),
+func TestRemaining91_RunCacheToggleCommands_OutputFormats(t *testing.T) {
+	tests := []struct {
+		name    string
+		factory func() *cobra.Command
+		run     func(*cobra.Command, []string) error
+		format  string
+		wantErr bool
+	}{
+		{name: "enable table", factory: newCacheEnableCommand, run: runCacheEnableCommand, format: "table"},
+		{name: "enable invalid format", factory: newCacheEnableCommand, run: runCacheEnableCommand, format: "xml", wantErr: true},
+		{name: "disable json", factory: newCacheDisableCommand, run: runCacheDisableCommand, format: "json"},
+		{name: "disable invalid format", factory: newCacheDisableCommand, run: runCacheDisableCommand, format: "yaml_invalid", wantErr: true},
 	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			origCfg := cfg
+			origLog := log
+			origFmt := cacheOutputFmt
+			defer func() { cfg = origCfg; log = origLog; cacheOutputFmt = origFmt }()
+			cfg = &config.Config{Cache: validCacheConfig()}
+			log = createTestLoggerForRemaining91(t)
+			cacheOutputFmt = tt.format
 
-	origStdout := os.Stdout
-	r, w, _ := os.Pipe()
-	os.Stdout = w
-
-	err := displayRebalanceProgressSDK(resp, "json")
-
-	w.Close()
-	os.Stdout = origStdout
-
-	var buf bytes.Buffer
-	buf.ReadFrom(r)
-
-	assert.NoError(t, err)
-	assert.Contains(t, buf.String(), "op-abc")
-}
-
-func TestDisplayRebalanceProgressSDK_Table(t *testing.T) {
-	resp := &cluster.GetRebalanceProgressResponse{
-		OperationID:     "op-xyz",
-		Status:          "completed",
-		PercentComplete: 100.0,
-		ShardsMoved:     10,
-		TotalShards:     10,
-		ElapsedTime:     int64(60 * time.Second),
+			err := tt.run(tt.factory(), []string{"users"})
+			if tt.wantErr {
+				assert.Error(t, err)
+				return
+			}
+			assert.NoError(t, err)
+		})
 	}
-
-	origStdout := os.Stdout
-	r, w, _ := os.Pipe()
-	os.Stdout = w
-
-	err := displayRebalanceProgressSDK(resp, "table")
-
-	w.Close()
-	os.Stdout = origStdout
-
-	var buf bytes.Buffer
-	buf.ReadFrom(r)
-
-	assert.NoError(t, err)
-	assert.Contains(t, buf.String(), "op-xyz")
 }
 
-func TestDisplayRebalanceProgressSDK_UnsupportedFormat(t *testing.T) {
-	resp := &cluster.GetRebalanceProgressResponse{}
-	err := displayRebalanceProgressSDK(resp, "xml")
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "unsupported")
+func TestDisplayRebalanceProgressSDK_Formats(t *testing.T) {
+	tests := []struct {
+		name         string
+		format       string
+		resp         *cluster.GetRebalanceProgressResponse
+		wantContains string
+		wantErr      bool
+	}{
+		{
+			name:   "json",
+			format: "json",
+			resp: &cluster.GetRebalanceProgressResponse{
+				OperationID:     "op-abc",
+				Status:          "in_progress",
+				PercentComplete: 45.5,
+				ShardsMoved:     5,
+				TotalShards:     10,
+				ElapsedTime:     int64(30 * time.Second),
+			},
+			wantContains: "op-abc",
+		},
+		{
+			name:   "table",
+			format: "table",
+			resp: &cluster.GetRebalanceProgressResponse{
+				OperationID:     "op-xyz",
+				Status:          "completed",
+				PercentComplete: 100.0,
+				ShardsMoved:     10,
+				TotalShards:     10,
+				ElapsedTime:     int64(60 * time.Second),
+			},
+			wantContains: "op-xyz",
+		},
+		{name: "unsupported format", format: "xml", resp: &cluster.GetRebalanceProgressResponse{}, wantErr: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var err error
+			output := captureStdoutOutput(func() {
+				err = displayRebalanceProgressSDK(tt.resp, tt.format)
+			})
+			if tt.wantErr {
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), "unsupported")
+				return
+			}
+			assert.NoError(t, err)
+			assert.Contains(t, output, tt.wantContains)
+		})
+	}
 }
 
-func TestDisplayRebalanceReport_UnsupportedFormat(t *testing.T) {
-	report := &RebalanceReport{}
-	err := displayRebalanceReport(report, "xml")
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "unsupported")
-}
-
-func TestDisplayRebalanceReport_JSON(t *testing.T) {
+func TestDisplayRebalanceReport_Formats(t *testing.T) {
 	now := time.Now()
-	report := &RebalanceReport{
-		StartTime:       now.Add(-10 * time.Minute),
-		EndTime:         now,
-		Duration:        10 * time.Minute,
-		MovesCompleted:  5,
-		MovesFailed:     0,
-		KeysRebalanced:  1000,
-		BytesRebalanced: 1024 * 1024,
-		ImbalanceBefore: 0.25,
-		ImbalanceAfter:  0.05,
-	}
-
-	origStdout := os.Stdout
-	r, w, _ := os.Pipe()
-	os.Stdout = w
-
-	err := displayRebalanceReport(report, "json")
-
-	w.Close()
-	os.Stdout = origStdout
-
-	var buf bytes.Buffer
-	buf.ReadFrom(r)
-
-	assert.NoError(t, err)
-	assert.Contains(t, buf.String(), "moves_completed")
-}
-
-func TestDisplayRebalanceReport_TableWithErrors(t *testing.T) {
-	now := time.Now()
-	report := &RebalanceReport{
-		StartTime:       now.Add(-5 * time.Minute),
-		EndTime:         now,
-		Duration:        5 * time.Minute,
-		MovesCompleted:  3,
-		MovesFailed:     2,
-		KeysRebalanced:  500,
-		BytesRebalanced: 512 * 1024,
-		ImbalanceBefore: 0.30,
-		ImbalanceAfter:  0.10,
-		Errors: []string{
-			"shard 1 timeout",
-			"shard 2 permission denied",
-			"shard 3 timeout",
-			"shard 4 timeout",
-			"shard 5 timeout",
-			"shard 6 timeout",
+	tests := []struct {
+		name         string
+		format       string
+		report       *RebalanceReport
+		wantContains []string
+		wantErr      bool
+	}{
+		{name: "unsupported format", format: "xml", report: &RebalanceReport{}, wantErr: true},
+		{
+			name:   "json",
+			format: "json",
+			report: &RebalanceReport{
+				StartTime:       now.Add(-10 * time.Minute),
+				EndTime:         now,
+				Duration:        10 * time.Minute,
+				MovesCompleted:  5,
+				MovesFailed:     0,
+				KeysRebalanced:  1000,
+				BytesRebalanced: 1024 * 1024,
+				ImbalanceBefore: 0.25,
+				ImbalanceAfter:  0.05,
+			},
+			wantContains: []string{"moves_completed"},
+		},
+		{
+			name:   "table with errors",
+			format: "table",
+			report: &RebalanceReport{
+				StartTime:       now.Add(-5 * time.Minute),
+				EndTime:         now,
+				Duration:        5 * time.Minute,
+				MovesCompleted:  3,
+				MovesFailed:     2,
+				KeysRebalanced:  500,
+				BytesRebalanced: 512 * 1024,
+				ImbalanceBefore: 0.30,
+				ImbalanceAfter:  0.10,
+				Errors: []string{
+					"shard 1 timeout",
+					"shard 2 permission denied",
+					"shard 3 timeout",
+					"shard 4 timeout",
+					"shard 5 timeout",
+					"shard 6 timeout",
+				},
+			},
+			wantContains: []string{"Warning", "more errors"},
+		},
+		{
+			name:   "table no moves",
+			format: "table",
+			report: &RebalanceReport{
+				StartTime:       now,
+				EndTime:         now,
+				Duration:        0,
+				MovesCompleted:  0,
+				ImbalanceBefore: 0.02,
+				ImbalanceAfter:  0.02,
+			},
+			wantContains: []string{"already balanced"},
 		},
 	}
-
-	origStdout := os.Stdout
-	r, w, _ := os.Pipe()
-	os.Stdout = w
-
-	err := displayRebalanceReport(report, "table")
-
-	w.Close()
-	os.Stdout = origStdout
-
-	var buf bytes.Buffer
-	buf.ReadFrom(r)
-
-	assert.NoError(t, err)
-	output := buf.String()
-	assert.Contains(t, output, "Warning")
-	assert.Contains(t, output, "more errors")
-}
-
-func TestDisplayRebalanceReport_TableNoMoves(t *testing.T) {
-	now := time.Now()
-	report := &RebalanceReport{
-		StartTime:       now,
-		EndTime:         now,
-		Duration:        0,
-		MovesCompleted:  0,
-		ImbalanceBefore: 0.02,
-		ImbalanceAfter:  0.02,
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var err error
+			output := captureStdoutOutput(func() {
+				err = displayRebalanceReport(tt.report, tt.format)
+			})
+			if tt.wantErr {
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), "unsupported")
+				return
+			}
+			assert.NoError(t, err)
+			for _, want := range tt.wantContains {
+				assert.Contains(t, output, want)
+			}
+		})
 	}
-
-	origStdout := os.Stdout
-	r, w, _ := os.Pipe()
-	os.Stdout = w
-
-	err := displayRebalanceReport(report, "table")
-
-	w.Close()
-	os.Stdout = origStdout
-
-	var buf bytes.Buffer
-	buf.ReadFrom(r)
-
-	assert.NoError(t, err)
-	assert.Contains(t, buf.String(), "already balanced")
 }
 
 // =============================================================================
 // Secrets Fetch - Additional Paths
 // =============================================================================
 
-func TestRunSecretsFetchCommand_FileFormatSuccess(t *testing.T) {
-	mock := &mockSecretsClientForCoverage{}
-	cleanup := setupSecretsMock(t, mock)
-	defer cleanup()
+func TestRunSecretsFetchCommand_Formats(t *testing.T) {
+	for _, format := range []string{"env", "json"} {
+		t.Run(format, func(t *testing.T) {
+			mock := &mockSecretsClientForCoverage{}
+			cleanup := setupSecretsMock(t, mock)
+			defer cleanup()
 
-	origFmt := fetchFormat
-	origFetchOutputDir := fetchOutputDir
-	origFmt2 := secretsOutputFmt
-	defer func() {
-		fetchFormat = origFmt
-		fetchOutputDir = origFetchOutputDir
-		secretsOutputFmt = origFmt2
-	}()
-	fetchFormat = "env"
-	fetchOutputDir = t.TempDir()
-	secretsOutputFmt = "table"
+			origFmt := fetchFormat
+			origFetchOutputDir := fetchOutputDir
+			origOutputFmt := secretsOutputFmt
+			defer func() {
+				fetchFormat = origFmt
+				fetchOutputDir = origFetchOutputDir
+				secretsOutputFmt = origOutputFmt
+			}()
+			fetchFormat = format
+			fetchOutputDir = t.TempDir()
+			secretsOutputFmt = "table"
 
-	cmd := &cobra.Command{}
-	err := runSecretsFetchCommand(cmd, []string{"apps/myapp/"})
-	assert.NoError(t, err)
-}
-
-func TestRunSecretsFetchCommand_JSONFormat(t *testing.T) {
-	mock := &mockSecretsClientForCoverage{}
-	cleanup := setupSecretsMock(t, mock)
-	defer cleanup()
-
-	origFmt := fetchFormat
-	origFetchOutputDir := fetchOutputDir
-	defer func() {
-		fetchFormat = origFmt
-		fetchOutputDir = origFetchOutputDir
-	}()
-	fetchFormat = "json"
-	fetchOutputDir = t.TempDir()
-
-	cmd := &cobra.Command{}
-	err := runSecretsFetchCommand(cmd, []string{"apps/myapp/"})
-	assert.NoError(t, err)
+			cmd := &cobra.Command{}
+			err := runSecretsFetchCommand(cmd, []string{"apps/myapp/"})
+			assert.NoError(t, err)
+		})
+	}
 }
 
 // =============================================================================
@@ -2818,32 +2095,22 @@ func TestRunSecretsPutCommand_JSONFormat(t *testing.T) {
 	assert.NoError(t, err)
 }
 
-func TestRunSecretsGetCommand_JSONFormat(t *testing.T) {
-	mock := &mockSecretsClientForCoverage{}
-	cleanup := setupSecretsMock(t, mock)
-	defer cleanup()
+func TestRunSecretsGetCommand_OutputFormats(t *testing.T) {
+	for _, format := range []string{"json", "yaml"} {
+		t.Run(format, func(t *testing.T) {
+			mock := &mockSecretsClientForCoverage{}
+			cleanup := setupSecretsMock(t, mock)
+			defer cleanup()
 
-	origFmt := secretsOutputFmt
-	defer func() { secretsOutputFmt = origFmt }()
-	secretsOutputFmt = "json"
+			origFmt := secretsOutputFmt
+			defer func() { secretsOutputFmt = origFmt }()
+			secretsOutputFmt = format
 
-	cmd := &cobra.Command{}
-	err := runSecretsGetCommand(cmd, []string{"db/prod"})
-	assert.NoError(t, err)
-}
-
-func TestRunSecretsGetCommand_YAMLFormat(t *testing.T) {
-	mock := &mockSecretsClientForCoverage{}
-	cleanup := setupSecretsMock(t, mock)
-	defer cleanup()
-
-	origFmt := secretsOutputFmt
-	defer func() { secretsOutputFmt = origFmt }()
-	secretsOutputFmt = "yaml"
-
-	cmd := &cobra.Command{}
-	err := runSecretsGetCommand(cmd, []string{"db/prod"})
-	assert.NoError(t, err)
+			cmd := &cobra.Command{}
+			err := runSecretsGetCommand(cmd, []string{"db/prod"})
+			assert.NoError(t, err)
+		})
+	}
 }
 
 func TestRunSecretsVersionsCommand_JSONFormat(t *testing.T) {
@@ -2909,24 +2176,24 @@ func TestNewRebalanceCommands_HasSubcommands(t *testing.T) {
 	assert.True(t, len(cmd.Commands()) >= 3)
 }
 
-func TestNewRebalanceStartCommand_HasFlags(t *testing.T) {
-	cmd := newRebalanceStartCommand()
-	require.NotNil(t, cmd)
-	assert.Equal(t, "start", cmd.Use)
-	assert.NotNil(t, cmd.Flags().Lookup("dry-run"))
-	assert.NotNil(t, cmd.Flags().Lookup("follow"))
-}
-
-func TestNewRebalanceStatusCommand_HasFlags(t *testing.T) {
-	cmd := newRebalanceStatusCommand()
-	require.NotNil(t, cmd)
-	assert.Equal(t, "status", cmd.Use)
-	assert.NotNil(t, cmd.Flags().Lookup("operation"))
-}
-
-func TestNewRebalancePlanCommand_HasFlags(t *testing.T) {
-	cmd := newRebalancePlanCommand()
-	require.NotNil(t, cmd)
-	assert.Equal(t, "plan", cmd.Use)
-	assert.NotNil(t, cmd.Flags().Lookup("output"))
+func TestNewRebalanceSubcommands_HaveFlags(t *testing.T) {
+	tests := []struct {
+		factory func() *cobra.Command
+		use     string
+		flags   []string
+	}{
+		{factory: newRebalanceStartCommand, use: "start", flags: []string{"dry-run", "follow"}},
+		{factory: newRebalanceStatusCommand, use: "status", flags: []string{"operation"}},
+		{factory: newRebalancePlanCommand, use: "plan", flags: []string{"output"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.use, func(t *testing.T) {
+			cmd := tt.factory()
+			require.NotNil(t, cmd)
+			assert.Equal(t, tt.use, cmd.Use)
+			for _, flag := range tt.flags {
+				assert.NotNil(t, cmd.Flags().Lookup(flag), "flag %s", flag)
+			}
+		})
+	}
 }

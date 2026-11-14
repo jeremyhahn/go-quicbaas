@@ -25,54 +25,72 @@ import (
 )
 
 func TestNew(t *testing.T) {
+	logFile := filepath.Join(t.TempDir(), "test.log")
+
 	tests := []struct {
 		name    string
 		config  LogConfig
 		wantErr bool
+		check   func(t *testing.T, logger *Logger)
 	}{
 		{
-			name: "valid json stdout config",
-			config: LogConfig{
-				Level:  "info",
-				Format: "json",
-				Output: "stdout",
-			},
-			wantErr: false,
+			name:   "valid json stdout config",
+			config: LogConfig{Level: "info", Format: "json", Output: "stdout"},
 		},
 		{
-			name: "valid console stderr config",
-			config: LogConfig{
-				Level:  "debug",
-				Format: "console",
-				Output: "stderr",
-			},
-			wantErr: false,
+			name:   "valid json stderr config",
+			config: LogConfig{Level: "warn", Format: "json", Output: "stderr"},
 		},
 		{
-			name: "invalid level",
-			config: LogConfig{
-				Level:  "invalid",
-				Format: "json",
-				Output: "stdout",
+			name:   "valid console stderr config",
+			config: LogConfig{Level: "debug", Format: "console", Output: "stderr"},
+		},
+		{
+			name:   "valid console stdout config without color",
+			config: LogConfig{Level: "debug", Format: "console", Output: "stdout", NoColor: true},
+		},
+		{
+			name:   "valid console stdout config with color",
+			config: LogConfig{Level: "debug", Format: "console", Output: "stdout"},
+			check:  func(t *testing.T, logger *Logger) { logger.Info("colored console output") },
+		},
+		{
+			name:   "valid config with component",
+			config: LogConfig{Level: "info", Format: "json", Output: "stdout", Component: "test-component"},
+		},
+		{
+			name:   "file output creates the file",
+			config: LogConfig{Level: "info", Format: "json", Output: "file", File: logFile},
+			check: func(t *testing.T, logger *Logger) {
+				logger.Info("test message")
+				if _, err := os.Stat(logFile); err != nil {
+					t.Errorf("log file not created: %v", err)
+				}
 			},
+		},
+		{
+			name:    "invalid level",
+			config:  LogConfig{Level: "invalid", Format: "json", Output: "stdout"},
 			wantErr: true,
 		},
 		{
-			name: "invalid format",
-			config: LogConfig{
-				Level:  "info",
-				Format: "invalid",
-				Output: "stdout",
-			},
+			name:    "invalid format",
+			config:  LogConfig{Level: "info", Format: "invalid", Output: "stdout"},
 			wantErr: true,
 		},
 		{
-			name: "file output without file path",
-			config: LogConfig{
-				Level:  "info",
-				Format: "json",
-				Output: "file",
-			},
+			name:    "unknown output",
+			config:  LogConfig{Level: "info", Format: "json", Output: "unknown"},
+			wantErr: true,
+		},
+		{
+			name:    "file output without file path",
+			config:  LogConfig{Level: "info", Format: "json", Output: "file"},
+			wantErr: true,
+		},
+		{
+			name:    "file output in unwritable directory",
+			config:  LogConfig{Level: "info", Format: "json", Output: "file", File: "/root/nonexistent/directory/test.log"},
 			wantErr: true,
 		},
 	}
@@ -81,11 +99,16 @@ func TestNew(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			logger, err := New(tt.config)
 			if (err != nil) != tt.wantErr {
-				t.Errorf("New() error = %v, wantErr %v", err, tt.wantErr)
+				t.Fatalf("New() error = %v, wantErr %v", err, tt.wantErr)
+			}
+			if tt.wantErr {
 				return
 			}
-			if !tt.wantErr && logger == nil {
-				t.Error("New() returned nil logger without error")
+			if logger == nil {
+				t.Fatal("New() returned nil logger without error")
+			}
+			if tt.check != nil {
+				tt.check(t, logger)
 			}
 		})
 	}
@@ -124,6 +147,12 @@ func TestLogger_WithFields(t *testing.T) {
 			t.Errorf("Field %s = %v, want %v", k, gotFields[k], v)
 		}
 	}
+
+	// GetFields returns a copy, so mutating it leaves the logger unchanged.
+	gotFields["extra"] = "value"
+	if len(newLogger.GetFields()) != len(fields) {
+		t.Error("GetFields() should return a copy, not the original map")
+	}
 }
 
 func TestLogger_WithField(t *testing.T) {
@@ -136,10 +165,11 @@ func TestLogger_WithField(t *testing.T) {
 		t.Fatalf("Failed to create logger: %v", err)
 	}
 
-	newLogger := logger.WithField("key", "value")
+	newLogger := logger.WithField("key1", "value1").WithField("key2", "value2")
 
-	if val, ok := newLogger.GetFields()["key"]; !ok || val != "value" {
-		t.Errorf("Field key = %v, want value", val)
+	fields := newLogger.GetFields()
+	if len(fields) != 2 || fields["key1"] != "value1" || fields["key2"] != "value2" {
+		t.Errorf("chained WithField() fields = %v, want key1=value1 key2=value2", fields)
 	}
 }
 
@@ -184,41 +214,6 @@ func TestLogger_SetLevel(t *testing.T) {
 	}
 }
 
-func TestLogger_GetFields(t *testing.T) {
-	logger, err := New(LogConfig{
-		Level:  "info",
-		Format: "json",
-		Output: "stdout",
-	})
-	if err != nil {
-		t.Fatalf("Failed to create logger: %v", err)
-	}
-
-	fields := map[string]interface{}{
-		"key1": "value1",
-		"key2": 123,
-	}
-
-	newLogger := logger.WithFields(fields)
-	gotFields := newLogger.GetFields()
-
-	if len(gotFields) != len(fields) {
-		t.Errorf("GetFields() returned %d fields, want %d", len(gotFields), len(fields))
-	}
-
-	for k, v := range fields {
-		if gotFields[k] != v {
-			t.Errorf("Field %s = %v, want %v", k, gotFields[k], v)
-		}
-	}
-
-	// Verify returned map is a copy
-	gotFields["key3"] = "value3"
-	if len(newLogger.GetFields()) != len(fields) {
-		t.Error("GetFields() should return a copy, not the original map")
-	}
-}
-
 func TestLogger_Clone(t *testing.T) {
 	logger, err := New(LogConfig{
 		Level:  "info",
@@ -244,24 +239,6 @@ func TestLogger_Clone(t *testing.T) {
 	}
 }
 
-func TestLogger_ToContext(t *testing.T) {
-	logger, err := New(LogConfig{
-		Level:  "info",
-		Format: "json",
-		Output: "stdout",
-	})
-	if err != nil {
-		t.Fatalf("Failed to create logger: %v", err)
-	}
-
-	ctx := logger.ToContext(context.Background())
-	retrieved := FromContext(ctx)
-
-	if retrieved == nil {
-		t.Error("FromContext() returned nil")
-	}
-}
-
 func TestFromContext(t *testing.T) {
 	t.Run("with logger in context", func(t *testing.T) {
 		logger, err := New(LogConfig{
@@ -276,8 +253,8 @@ func TestFromContext(t *testing.T) {
 		ctx := logger.ToContext(context.Background())
 		retrieved := FromContext(ctx)
 
-		if retrieved == nil {
-			t.Error("FromContext() returned nil")
+		if retrieved != logger {
+			t.Errorf("FromContext() = %p, want the logger stored by ToContext %p", retrieved, logger)
 		}
 	})
 
@@ -509,239 +486,64 @@ func TestLogger_LogMethods(t *testing.T) {
 // =============================================================================
 
 // TestNew_FileOutputError tests the New function with an invalid file path.
-func TestNew_FileOutputError(t *testing.T) {
-	// Try to create a logger with a file output in an unwritable directory
-	config := LogConfig{
-		Level:  "info",
-		Format: "json",
-		Output: "file",
-		File:   "/root/nonexistent/directory/test.log",
-	}
-
-	_, err := New(config)
-	if err == nil {
-		t.Error("New() should return error when file path is not writable")
-	}
-}
-
-// TestNew_FileOutputSuccess tests the New function with a valid file path.
-func TestNew_FileOutputSuccess(t *testing.T) {
-	// Create a temporary file path
-	tmpDir := t.TempDir()
-	logFile := filepath.Join(tmpDir, "test.log")
-
-	config := LogConfig{
-		Level:  "info",
-		Format: "json",
-		Output: "file",
-		File:   logFile,
-	}
-
-	logger, err := New(config)
-	if err != nil {
-		t.Errorf("New() error = %v, want nil", err)
-	}
-	if logger == nil {
-		t.Error("New() returned nil logger")
-	}
-
-	// Write a log message to ensure the file is created
-	logger.Info("test message")
-
-	// Check if file exists
-	if _, err := os.Stat(logFile); os.IsNotExist(err) {
-		t.Error("Log file was not created")
-	}
-}
-
-// TestNew_InvalidLevelFallback tests that New() falls back to info level for invalid levels.
-func TestNew_InvalidLevelFallback(t *testing.T) {
-	config := LogConfig{
-		Level:  "info",
-		Format: "json",
-		Output: "stdout",
-	}
-
-	logger, err := New(config)
-	if err != nil {
-		t.Fatalf("Failed to create logger: %v", err)
-	}
-
-	// The level parser will fall back to info level for unknown levels
-	// This tests the error handling path in parseLevel()
-	level := logger.GetLevel()
-	if level == "" {
-		t.Error("Logger level should be set")
-	}
-}
-
-// TestNew_ConsoleFormat tests the New function with console format.
-func TestNew_ConsoleFormat(t *testing.T) {
-	config := LogConfig{
-		Level:   "debug",
-		Format:  "console",
-		Output:  "stdout",
-		NoColor: true,
-	}
-
-	logger, err := New(config)
-	if err != nil {
-		t.Errorf("New() error = %v, want nil", err)
-	}
-	if logger == nil {
-		t.Error("New() returned nil logger")
-	}
-}
-
-// TestNew_WithComponent tests the New function with a component name.
-func TestNew_WithComponent(t *testing.T) {
-	config := LogConfig{
-		Level:     "info",
-		Format:    "json",
-		Output:    "stdout",
-		Component: "test-component",
-	}
-
-	logger, err := New(config)
-	if err != nil {
-		t.Errorf("New() error = %v, want nil", err)
-	}
-	if logger == nil {
-		t.Error("New() returned nil logger")
-	}
-
-	// Verify the logger was created with the component config.
-	// The component name is embedded in the logger's internal slog handler;
-	// creation success (no error, non-nil logger) is sufficient here.
-	_ = logger
-}
-
 // TestLogger_WithFieldChaining tests chaining WithField calls.
-func TestLogger_WithFieldChaining(t *testing.T) {
-	logger, err := New(LogConfig{
-		Level:  "info",
-		Format: "json",
-		Output: "stdout",
-	})
-	if err != nil {
-		t.Fatalf("Failed to create logger: %v", err)
-	}
-
-	// Chain multiple WithField calls
-	newLogger := logger.WithField("key1", "value1").WithField("key2", "value2")
-	if newLogger == nil {
-		t.Error("WithField chaining returned nil logger")
-	}
-
-	// Verify both fields are present
-	fields := newLogger.GetFields()
-	if len(fields) != 2 {
-		t.Errorf("Expected 2 fields, got %d", len(fields))
-	}
-}
-
 // TestLogger_Panic tests the Panic method.
 func TestLogger_Panic(t *testing.T) {
-	logger, err := New(LogConfig{
-		Level:  "info",
-		Format: "json",
-		Output: "stdout",
-	})
-	if err != nil {
-		t.Fatalf("Failed to create logger: %v", err)
+	tests := map[string]func(*Logger){
+		"Panic":  func(l *Logger) { l.Panic("panic test message") },
+		"Panicf": func(l *Logger) { l.Panicf("panic test %s %d", "formatted", 123) },
 	}
 
-	defer func() {
-		if r := recover(); r == nil {
-			t.Error("Panic() should have panicked")
-		}
-	}()
+	for name, logPanic := range tests {
+		t.Run(name, func(t *testing.T) {
+			logger, err := New(LogConfig{Level: "info", Format: "json", Output: "stdout"})
+			if err != nil {
+				t.Fatalf("Failed to create logger: %v", err)
+			}
 
-	logger.Panic("panic test message")
-}
+			defer func() {
+				if r := recover(); r == nil {
+					t.Errorf("%s() should have panicked", name)
+				}
+			}()
 
-// TestLogger_Panicf tests the Panicf method.
-func TestLogger_Panicf(t *testing.T) {
-	logger, err := New(LogConfig{
-		Level:  "info",
-		Format: "json",
-		Output: "stdout",
-	})
-	if err != nil {
-		t.Fatalf("Failed to create logger: %v", err)
+			logPanic(logger)
+		})
 	}
-
-	defer func() {
-		if r := recover(); r == nil {
-			t.Error("Panicf() should have panicked")
-		}
-	}()
-
-	logger.Panicf("panic test %s %d", "formatted", 123)
 }
 
-// TestLogger_Fatal tests the Fatal method using subprocess pattern.
 func TestLogger_Fatal(t *testing.T) {
-	if os.Getenv("BE_FATAL") == "1" {
-		logger, err := New(LogConfig{
-			Level:  "info",
-			Format: "json",
-			Output: "stdout",
-		})
+	tests := map[string]func(*Logger){
+		"Fatal":  func(l *Logger) { l.Fatal("fatal test message") },
+		"Fatalf": func(l *Logger) { l.Fatalf("fatal test %s %d", "formatted", 456) },
+	}
+
+	// In the subprocess, run only the case named by BE_FATAL; it must exit.
+	if name := os.Getenv("BE_FATAL"); name != "" {
+		logger, err := New(LogConfig{Level: "info", Format: "json", Output: "stdout"})
 		if err != nil {
 			panic(err)
 		}
-		logger.Fatal("fatal test message")
+		tests[name](logger)
 		return
 	}
 
-	// Run the test in a subprocess
-	cmd := exec.Command(os.Args[0], "-test.run=TestLogger_Fatal")
-	cmd.Env = append(os.Environ(), "BE_FATAL=1")
-	err := cmd.Run()
+	for name := range tests {
+		t.Run(name, func(t *testing.T) {
+			cmd := exec.Command(os.Args[0], "-test.run=^TestLogger_Fatal$")
+			cmd.Env = append(os.Environ(), "BE_FATAL="+name)
+			err := cmd.Run()
 
-	// Fatal should cause the process to exit with non-zero status
-	var e *exec.ExitError
-	if errors.As(err, &e) && !e.Success() {
-		// Expected behavior - process exited with non-zero status
-		return
-	}
-
-	t.Error("Fatal() should have caused process to exit with non-zero status")
-}
-
-// TestLogger_Fatalf tests the Fatalf method using subprocess pattern.
-func TestLogger_Fatalf(t *testing.T) {
-	if os.Getenv("BE_FATALF") == "1" {
-		logger, err := New(LogConfig{
-			Level:  "info",
-			Format: "json",
-			Output: "stdout",
+			var e *exec.ExitError
+			if !errors.As(err, &e) || e.Success() {
+				t.Errorf("%s() should have caused process to exit with non-zero status, err = %v", name, err)
+			}
 		})
-		if err != nil {
-			panic(err)
-		}
-		logger.Fatalf("fatal test %s %d", "formatted", 456)
-		return
 	}
-
-	// Run the test in a subprocess
-	cmd := exec.Command(os.Args[0], "-test.run=TestLogger_Fatalf")
-	cmd.Env = append(os.Environ(), "BE_FATALF=1")
-	err := cmd.Run()
-
-	// Fatalf should cause the process to exit with non-zero status
-	var e *exec.ExitError
-	if errors.As(err, &e) && !e.Success() {
-		// Expected behavior - process exited with non-zero status
-		return
-	}
-
-	t.Error("Fatalf() should have caused process to exit with non-zero status")
 }
 
 // TestWithContext_NilContext tests WithContext with a nil context.
-func TestWithContext_NilContext(t *testing.T) {
+func TestWithContext(t *testing.T) {
 	logger, err := New(LogConfig{
 		Level:  "info",
 		Format: "json",
@@ -751,88 +553,30 @@ func TestWithContext_NilContext(t *testing.T) {
 		t.Fatalf("Failed to create logger: %v", err)
 	}
 
-	// WithContext should create a background context if nil is passed
-	ctx := WithContext(nil, logger)
-	if ctx == nil {
-		t.Error("WithContext() should return a valid context even when passed nil")
-	}
-
-	// Verify we can retrieve the logger
-	retrieved := FromContext(ctx)
-	if retrieved == nil {
-		t.Error("Should be able to retrieve logger from context created with nil input")
-	}
-}
-
-// TestWithContext_ValidContext tests WithContext with a valid context.
-func TestWithContext_ValidContext(t *testing.T) {
-	logger, err := New(LogConfig{
-		Level:  "info",
-		Format: "json",
-		Output: "stdout",
+	t.Run("nil context falls back to background", func(t *testing.T) {
+		ctx := WithContext(nil, logger)
+		if ctx == nil {
+			t.Fatal("WithContext() should return a valid context even when passed nil")
+		}
+		if FromContext(ctx) != logger {
+			t.Error("Should be able to retrieve logger from context created with nil input")
+		}
 	})
-	if err != nil {
-		t.Fatalf("Failed to create logger: %v", err)
-	}
 
-	// Create a context with some values
-	ctx := context.Background()
-	ctx = context.WithValue(ctx, "test_key", "test_value")
+	t.Run("existing context values are preserved", func(t *testing.T) {
+		ctx := context.WithValue(context.Background(), "test_key", "test_value")
+		ctx = WithContext(ctx, logger)
 
-	// Add logger to context
-	ctx = WithContext(ctx, logger)
-
-	// Verify logger is in context
-	retrieved := FromContext(ctx)
-	if retrieved == nil {
-		t.Error("Should be able to retrieve logger from context")
-	}
-
-	// Verify original context values are preserved
-	if val := ctx.Value("test_key"); val != "test_value" {
-		t.Error("WithContext should preserve existing context values")
-	}
+		if FromContext(ctx) != logger {
+			t.Error("Should be able to retrieve logger from context")
+		}
+		if val := ctx.Value("test_key"); val != "test_value" {
+			t.Error("WithContext should preserve existing context values")
+		}
+	})
 }
 
 // TestNew_StderrOutput tests the New function with stderr output.
-func TestNew_StderrOutput(t *testing.T) {
-	config := LogConfig{
-		Level:  "warn",
-		Format: "json",
-		Output: "stderr",
-	}
-
-	logger, err := New(config)
-	if err != nil {
-		t.Errorf("New() error = %v, want nil", err)
-	}
-	if logger == nil {
-		t.Error("New() returned nil logger")
-	}
-
-	// Verify the logger works
-	logger.Warn("test warning")
-}
-
-// TestNew_DefaultOutput tests the New function with an unknown output (should default to stdout).
-func TestNew_DefaultOutput(t *testing.T) {
-	config := LogConfig{
-		Level:  "info",
-		Format: "json",
-		Output: "unknown",
-	}
-
-	// First validate to ensure it fails validation
-	if err := config.Validate(); err == nil {
-		t.Error("Validate() should fail for unknown output")
-	}
-
-	// For the New() function, we need to bypass validation to test the default case
-	// This would require directly calling New with an already-validated config
-	// Since validation happens inside New(), we can test the fallback behavior
-	// by looking at valid outputs
-}
-
 // TestLogger_AllLevels tests logger with all valid log levels.
 func TestLogger_AllLevels(t *testing.T) {
 	levels := []string{"trace", "debug", "info", "warn", "error"}
@@ -862,356 +606,125 @@ func TestLogger_AllLevels(t *testing.T) {
 }
 
 // TestNew_FileOutputWithDefaultFilename tests file output without specifying a filename.
-func TestNew_FileOutputWithDefaultFilename(t *testing.T) {
-	// Change to a temporary directory to avoid polluting the workspace
-	tmpDir := t.TempDir()
-	originalWd, err := os.Getwd()
-	if err != nil {
-		t.Fatalf("Failed to get working directory: %v", err)
-	}
-	defer os.Chdir(originalWd)
-
-	if err := os.Chdir(tmpDir); err != nil {
-		t.Fatalf("Failed to change to temp directory: %v", err)
-	}
-
-	config := LogConfig{
-		Level:  "info",
-		Format: "json",
-		Output: "file",
-		// File is intentionally empty to test the default
-		File: "",
-	}
-
-	// Bypass validation which requires File to be set
-	// We need to test the code path at lines 45-47 in logger.go
-	// This happens after validation, so we need to call the internal logic
-
-	// For now, let's test that providing an empty file with file output
-	// gets handled by the validation
-	if err := config.Validate(); err == nil {
-		t.Error("Validate() should fail when Output is 'file' but File is empty")
-	}
-}
-
 // TestLogger_ConsoleFormatWithColor tests console format without NoColor flag.
-func TestLogger_ConsoleFormatWithColor(t *testing.T) {
-	config := LogConfig{
-		Level:   "debug",
-		Format:  "console",
-		Output:  "stdout",
-		NoColor: false, // Enable color
-	}
-
-	logger, err := New(config)
-	if err != nil {
-		t.Errorf("New() error = %v, want nil", err)
-	}
-	if logger == nil {
-		t.Error("New() returned nil logger")
-	}
-
-	// Log a message to ensure it works
-	logger.Info("colored console output")
-}
-
 // TestLogger_WithAttrs tests the strongly-typed slog attributes method.
 func TestLogger_WithAttrs(t *testing.T) {
-	config := LogConfig{
-		Level:  "debug",
-		Format: "json",
-		Output: "stdout",
+	tests := []struct {
+		name  string
+		apply func(*Logger) *Logger
+		want  map[string]interface{}
+	}{
+		{
+			name: "several attrs in one call",
+			apply: func(l *Logger) *Logger {
+				return l.WithAttrs(
+					slog.String("service", "quicbaas"),
+					slog.Int("port", 8080),
+					slog.Bool("debug", true),
+				)
+			},
+			want: map[string]interface{}{"service": "quicbaas", "port": int64(8080), "debug": true},
+		},
+		{
+			name: "chained calls accumulate",
+			apply: func(l *Logger) *Logger {
+				return l.
+					WithAttrs(slog.String("service", "quicbaas")).
+					WithAttrs(slog.Int("version", 1)).
+					WithAttrs(slog.Bool("production", false))
+			},
+			want: map[string]interface{}{"service": "quicbaas", "version": int64(1), "production": false},
+		},
+		{
+			name:  "no attrs",
+			apply: func(l *Logger) *Logger { return l.WithAttrs() },
+			want:  map[string]interface{}{},
+		},
 	}
 
-	logger, err := New(config)
-	if err != nil {
-		t.Fatalf("New() error = %v", err)
-	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			logger, err := New(LogConfig{Level: "debug", Format: "json", Output: "stdout"})
+			if err != nil {
+				t.Fatalf("New() error = %v", err)
+			}
 
-	// Test WithAttrs with various slog attribute types
-	attrLogger := logger.WithAttrs(
-		slog.String("service", "quicbaas"),
-		slog.Int("port", 8080),
-		slog.Bool("debug", true),
-	)
+			attrLogger := tt.apply(logger)
+			if attrLogger == nil {
+				t.Fatal("WithAttrs() returned nil logger")
+			}
 
-	if attrLogger == nil {
-		t.Error("WithAttrs() returned nil logger")
-	}
-
-	// Verify fields are stored
-	fields := attrLogger.GetFields()
-	if fields["service"] != "quicbaas" {
-		t.Errorf("WithAttrs() service = %v, want quicbaas", fields["service"])
-	}
-	if fields["port"] != int64(8080) {
-		t.Errorf("WithAttrs() port = %v, want 8080", fields["port"])
-	}
-	if fields["debug"] != true {
-		t.Errorf("WithAttrs() debug = %v, want true", fields["debug"])
-	}
-}
-
-// TestLogger_InfoAttrs tests info logging with strongly-typed attributes.
-func TestLogger_InfoAttrs(t *testing.T) {
-	config := LogConfig{
-		Level:  "info",
-		Format: "json",
-		Output: "stdout",
-	}
-
-	logger, err := New(config)
-	if err != nil {
-		t.Fatalf("New() error = %v", err)
-	}
-
-	// Should not panic
-	logger.InfoAttrs("test message",
-		slog.String("key", "value"),
-		slog.Int("count", 42),
-		slog.Duration("elapsed", time.Second),
-	)
-}
-
-// TestLogger_DebugAttrs tests debug logging with strongly-typed attributes.
-func TestLogger_DebugAttrs(t *testing.T) {
-	config := LogConfig{
-		Level:  "debug",
-		Format: "json",
-		Output: "stdout",
-	}
-
-	logger, err := New(config)
-	if err != nil {
-		t.Fatalf("New() error = %v", err)
-	}
-
-	// Should not panic
-	logger.DebugAttrs("debug message",
-		slog.String("component", "test"),
-		slog.Int64("bytes", 1024),
-	)
-}
-
-// TestLogger_WarnAttrs tests warning logging with strongly-typed attributes.
-func TestLogger_WarnAttrs(t *testing.T) {
-	config := LogConfig{
-		Level:  "warn",
-		Format: "json",
-		Output: "stdout",
-	}
-
-	logger, err := New(config)
-	if err != nil {
-		t.Fatalf("New() error = %v", err)
-	}
-
-	// Should not panic
-	logger.WarnAttrs("warning message",
-		slog.String("reason", "test"),
-		slog.Float64("threshold", 0.95),
-	)
-}
-
-// TestLogger_ErrorAttrs tests error logging with strongly-typed attributes.
-func TestLogger_ErrorAttrs(t *testing.T) {
-	config := LogConfig{
-		Level:  "error",
-		Format: "json",
-		Output: "stdout",
-	}
-
-	logger, err := New(config)
-	if err != nil {
-		t.Fatalf("New() error = %v", err)
-	}
-
-	// Should not panic
-	logger.ErrorAttrs("error message",
-		slog.String("error_code", "E001"),
-		slog.Any("details", map[string]string{"key": "value"}),
-	)
-}
-
-// TestLogger_WithAttrsChaining tests chaining WithAttrs calls.
-func TestLogger_WithAttrsChaining(t *testing.T) {
-	config := LogConfig{
-		Level:  "debug",
-		Format: "json",
-		Output: "stdout",
-	}
-
-	logger, err := New(config)
-	if err != nil {
-		t.Fatalf("New() error = %v", err)
-	}
-
-	// Chain multiple WithAttrs calls
-	chainedLogger := logger.
-		WithAttrs(slog.String("service", "quicbaas")).
-		WithAttrs(slog.Int("version", 1)).
-		WithAttrs(slog.Bool("production", false))
-
-	fields := chainedLogger.GetFields()
-	if fields["service"] != "quicbaas" {
-		t.Errorf("chained WithAttrs() service = %v, want quicbaas", fields["service"])
-	}
-	if fields["version"] != int64(1) {
-		t.Errorf("chained WithAttrs() version = %v, want 1", fields["version"])
-	}
-	if fields["production"] != false {
-		t.Errorf("chained WithAttrs() production = %v, want false", fields["production"])
+			fields := attrLogger.GetFields()
+			if len(fields) != len(tt.want) {
+				t.Errorf("WithAttrs() fields = %v, want %v", fields, tt.want)
+			}
+			for key, want := range tt.want {
+				if fields[key] != want {
+					t.Errorf("WithAttrs() %s = %v, want %v", key, fields[key], want)
+				}
+			}
+		})
 	}
 }
 
-// TestLogger_WithAttrsEmpty tests WithAttrs with no attributes.
-func TestLogger_WithAttrsEmpty(t *testing.T) {
-	config := LogConfig{
-		Level:  "debug",
-		Format: "json",
-		Output: "stdout",
+func TestLogger_LevelAttrs(t *testing.T) {
+	tests := []struct {
+		level string
+		log   func(*Logger)
+	}{
+		{"debug", func(l *Logger) {
+			l.DebugAttrs("debug message", slog.String("component", "test"), slog.Int64("bytes", 1024))
+		}},
+		{"info", func(l *Logger) {
+			l.InfoAttrs("test message", slog.String("key", "value"), slog.Duration("elapsed", time.Second))
+		}},
+		{"warn", func(l *Logger) {
+			l.WarnAttrs("warning message", slog.String("reason", "test"), slog.Float64("threshold", 0.95))
+		}},
+		{"error", func(l *Logger) {
+			l.ErrorAttrs("error message", slog.Any("details", map[string]string{"key": "value"}))
+		}},
 	}
 
-	logger, err := New(config)
-	if err != nil {
-		t.Fatalf("New() error = %v", err)
+	for _, tt := range tests {
+		t.Run(tt.level, func(t *testing.T) {
+			logger, err := New(LogConfig{Level: tt.level, Format: "json", Output: "stdout"})
+			if err != nil {
+				t.Fatalf("New() error = %v", err)
+			}
+			tt.log(logger)
+		})
 	}
-
-	// Call WithAttrs with no attributes
-	emptyLogger := logger.WithAttrs()
-	if emptyLogger == nil {
-		t.Error("WithAttrs() with no args returned nil")
-	}
-
-	// Should still work
-	emptyLogger.Info("message without attrs")
 }
 
 // TestNewAdapter tests the NewAdapter function.
 func TestNewAdapter(t *testing.T) {
-	logger, err := New(LogConfig{
-		Level:  "info",
-		Format: "json",
-		Output: "stdout",
+	t.Run("wraps a logger", func(t *testing.T) {
+		logger, err := New(LogConfig{
+			Level:  "info",
+			Format: "json",
+			Output: "stdout",
+		})
+		if err != nil {
+			t.Fatalf("New() error = %v", err)
+		}
+
+		adapter, ok := NewAdapter(logger).(*LoggerAdapter)
+		if !ok || adapter == nil {
+			t.Fatal("NewAdapter() should return a non-nil *LoggerAdapter")
+		}
+		if adapter.Logger != logger {
+			t.Error("NewAdapter() should wrap the given logger")
+		}
 	})
-	if err != nil {
-		t.Fatalf("New() error = %v", err)
-	}
 
-	adapter := NewAdapter(logger)
-	if adapter == nil {
-		t.Error("NewAdapter() returned nil")
-	}
-
-	// Verify it implements interfaces.Logger
-	_, ok := adapter.(*LoggerAdapter)
-	if !ok {
-		t.Error("NewAdapter() should return *LoggerAdapter")
-	}
-}
-
-// TestNewAdapter_NilLogger tests NewAdapter with nil logger.
-func TestNewAdapter_NilLogger(t *testing.T) {
-	adapter := NewAdapter(nil)
-	if adapter != nil {
-		t.Error("NewAdapter(nil) should return nil")
-	}
-}
-
-// TestLoggerAdapter_WithField tests the WithField method of LoggerAdapter.
-func TestLoggerAdapter_WithField(t *testing.T) {
-	logger, err := New(LogConfig{
-		Level:  "info",
-		Format: "json",
-		Output: "stdout",
+	t.Run("nil logger", func(t *testing.T) {
+		if adapter := NewAdapter(nil); adapter != nil {
+			t.Error("NewAdapter(nil) should return nil")
+		}
 	})
-	if err != nil {
-		t.Fatalf("New() error = %v", err)
-	}
-
-	adapter := NewAdapter(logger)
-	result := adapter.WithField("key", "value")
-
-	if result == nil {
-		t.Error("WithField() returned nil")
-	}
-
-	// Verify it's still a LoggerAdapter
-	resultAdapter, ok := result.(*LoggerAdapter)
-	if !ok {
-		t.Error("WithField() should return *LoggerAdapter")
-	}
-
-	// Verify the field was added
-	fields := resultAdapter.GetFields()
-	if fields["key"] != "value" {
-		t.Errorf("WithField() key = %v, want 'value'", fields["key"])
-	}
 }
 
-// TestLoggerAdapter_WithFields tests the WithFields method of LoggerAdapter.
-func TestLoggerAdapter_WithFields(t *testing.T) {
-	logger, err := New(LogConfig{
-		Level:  "info",
-		Format: "json",
-		Output: "stdout",
-	})
-	if err != nil {
-		t.Fatalf("New() error = %v", err)
-	}
-
-	adapter := NewAdapter(logger)
-	fields := map[string]interface{}{
-		"key1": "value1",
-		"key2": 123,
-		"key3": true,
-	}
-	result := adapter.WithFields(fields)
-
-	if result == nil {
-		t.Error("WithFields() returned nil")
-	}
-
-	// Verify it's still a LoggerAdapter
-	resultAdapter, ok := result.(*LoggerAdapter)
-	if !ok {
-		t.Error("WithFields() should return *LoggerAdapter")
-	}
-
-	// Verify fields were added
-	resultFields := resultAdapter.GetFields()
-	if resultFields["key1"] != "value1" {
-		t.Errorf("WithFields() key1 = %v, want 'value1'", resultFields["key1"])
-	}
-}
-
-// TestLoggerAdapter_WithError tests the WithError method of LoggerAdapter.
-func TestLoggerAdapter_WithError(t *testing.T) {
-	logger, err := New(LogConfig{
-		Level:  "info",
-		Format: "json",
-		Output: "stdout",
-	})
-	if err != nil {
-		t.Fatalf("New() error = %v", err)
-	}
-
-	adapter := NewAdapter(logger)
-	testErr := errors.New("test error")
-	result := adapter.WithError(testErr)
-
-	if result == nil {
-		t.Error("WithError() returned nil")
-	}
-
-	// Verify it's still a LoggerAdapter
-	_, ok := result.(*LoggerAdapter)
-	if !ok {
-		t.Error("WithError() should return *LoggerAdapter")
-	}
-}
-
-// TestLoggerAdapter_Chaining tests method chaining on LoggerAdapter.
 func TestLoggerAdapter_Chaining(t *testing.T) {
 	logger, err := New(LogConfig{
 		Level:  "info",
@@ -1224,26 +737,20 @@ func TestLoggerAdapter_Chaining(t *testing.T) {
 
 	adapter := NewAdapter(logger)
 	result := adapter.
-		WithField("key1", "value1").
-		WithField("key2", "value2").
+		WithFields(map[string]interface{}{"key1": "value1", "key2": 123}).
+		WithField("key3", "value3").
 		WithError(errors.New("test error"))
 
-	if result == nil {
-		t.Error("Chained operations returned nil")
-	}
-
-	// Verify it's still a LoggerAdapter
 	resultAdapter, ok := result.(*LoggerAdapter)
-	if !ok {
-		t.Error("Chained operations should return *LoggerAdapter")
+	if !ok || resultAdapter == nil {
+		t.Fatal("Chained operations should return a non-nil *LoggerAdapter")
 	}
 
-	// Verify fields are present
 	fields := resultAdapter.GetFields()
-	if fields["key1"] != "value1" {
-		t.Errorf("Chained key1 = %v, want 'value1'", fields["key1"])
-	}
-	if fields["key2"] != "value2" {
-		t.Errorf("Chained key2 = %v, want 'value2'", fields["key2"])
+	want := map[string]interface{}{"key1": "value1", "key2": 123, "key3": "value3"}
+	for key, value := range want {
+		if fields[key] != value {
+			t.Errorf("Chained %s = %v, want %v", key, fields[key], value)
+		}
 	}
 }

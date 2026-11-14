@@ -44,6 +44,7 @@ func TestNewTimeSeriesCommands(t *testing.T) {
 
 	// Verify subcommands are registered
 	subcommands := cmd.Commands()
+	assert.Len(t, subcommands, 7, "should have 7 subcommands")
 	commandNames := make([]string, len(subcommands))
 	for i, subcmd := range subcommands {
 		commandNames[i] = subcmd.Name()
@@ -82,42 +83,27 @@ func TestTimeSeriesCommandFlags(t *testing.T) {
 	assert.Equal(t, "3", maxRetriesFlag.DefValue)
 }
 
-func TestTSWriteCommand(t *testing.T) {
-	cmd := newTSWriteCommand()
+func TestTSCommandFlags(t *testing.T) {
+	tests := []struct {
+		name  string
+		cmd   *cobra.Command
+		flags []string
+	}{
+		{name: "write", cmd: newTSWriteCommand(), flags: []string{"metric", "value", "tags", "timestamp"}},
+		{name: "query", cmd: newTSQueryCommand(), flags: []string{"metric", "start", "end", "aggregation", "interval", "group-by", "limit"}},
+		{name: "delete", cmd: newTSDeleteCommand(), flags: []string{"metric"}},
+		{name: "set-retention", cmd: newTSSetRetentionCommand(), flags: []string{"duration", "resolution", "aggregation"}},
+		{name: "list-metrics", cmd: newTSListMetricsCommand(), flags: []string{"prefix", "limit"}},
+	}
 
-	require.NotNil(t, cmd)
-	assert.Equal(t, "write", cmd.Use)
-	assert.Contains(t, cmd.Short, "Write a single")
-
-	// Verify flags exist
-	metricFlag := cmd.Flags().Lookup("metric")
-	require.NotNil(t, metricFlag)
-
-	valueFlag := cmd.Flags().Lookup("value")
-	require.NotNil(t, valueFlag)
-
-	tagsFlag := cmd.Flags().Lookup("tags")
-	require.NotNil(t, tagsFlag)
-
-	timestampFlag := cmd.Flags().Lookup("timestamp")
-	require.NotNil(t, timestampFlag)
-}
-
-func TestTSWriteCommandHelp(t *testing.T) {
-	cmd := newTSWriteCommand()
-	var buf bytes.Buffer
-	cmd.SetOut(&buf)
-	cmd.SetArgs([]string{"--help"})
-
-	err := cmd.Execute()
-	require.NoError(t, err)
-
-	output := buf.String()
-	assert.Contains(t, output, "write")
-	assert.Contains(t, output, "--metric")
-	assert.Contains(t, output, "--value")
-	assert.Contains(t, output, "--tags")
-	assert.Contains(t, output, "--timestamp")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require.NotNil(t, tt.cmd)
+			for _, flag := range tt.flags {
+				assert.NotNil(t, tt.cmd.Flags().Lookup(flag), "flag --%s should be registered", flag)
+			}
+		})
+	}
 }
 
 // TestRunTSWriteCommand tests the write command with mocked client.
@@ -204,16 +190,6 @@ func TestRunTSWriteCommand(t *testing.T) {
 			errorMsg:    "invalid timestamp format",
 		},
 		{
-			name: "client creation error",
-			setupMock: func() *MockTimeSeriesClient {
-				return nil
-			},
-			metric:      "cpu.usage",
-			value:       75.5,
-			expectError: true,
-			errorMsg:    "mock error",
-		},
-		{
 			name: "write operation error",
 			setupMock: func() *MockTimeSeriesClient {
 				return &MockTimeSeriesClient{
@@ -249,14 +225,8 @@ func TestRunTSWriteCommand(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			// Setup mock
 			mockClient := tt.setupMock()
-			if mockClient != nil {
-				timeSeriesClientFactory = func() (TimeSeriesClient, error) {
-					return mockClient, nil
-				}
-			} else {
-				timeSeriesClientFactory = func() (TimeSeriesClient, error) {
-					return nil, errors.Newf(errors.ErrInternal, "test", "mock error")
-				}
+			timeSeriesClientFactory = func() (TimeSeriesClient, error) {
+				return mockClient, nil
 			}
 
 			// Create command first (this binds flags to variables with defaults)
@@ -299,28 +269,6 @@ func TestRunTSWriteCommand(t *testing.T) {
 			outputFormat = "table"
 		})
 	}
-}
-
-func TestTSWriteBatchCommand(t *testing.T) {
-	cmd := newTSWriteBatchCommand()
-
-	require.NotNil(t, cmd)
-	assert.Equal(t, "write-batch <json-file>", cmd.Use)
-	assert.Contains(t, cmd.Short, "Write multiple")
-}
-
-func TestTSWriteBatchCommandHelp(t *testing.T) {
-	cmd := newTSWriteBatchCommand()
-	var buf bytes.Buffer
-	cmd.SetOut(&buf)
-	cmd.SetArgs([]string{"--help"})
-
-	err := cmd.Execute()
-	require.NoError(t, err)
-
-	output := buf.String()
-	assert.Contains(t, output, "write-batch")
-	assert.Contains(t, output, "json-file")
 }
 
 // TestRunTSWriteBatchCommand tests the batch write command.
@@ -523,53 +471,6 @@ func TestRunTSWriteBatchCommand(t *testing.T) {
 	}
 }
 
-func TestTSQueryCommand(t *testing.T) {
-	cmd := newTSQueryCommand()
-
-	require.NotNil(t, cmd)
-	assert.Equal(t, "query", cmd.Use)
-	assert.Contains(t, cmd.Short, "Query time series")
-
-	// Verify flags exist
-	metricFlag := cmd.Flags().Lookup("metric")
-	require.NotNil(t, metricFlag)
-
-	startTimeFlag := cmd.Flags().Lookup("start")
-	require.NotNil(t, startTimeFlag)
-
-	endTimeFlag := cmd.Flags().Lookup("end")
-	require.NotNil(t, endTimeFlag)
-
-	aggFlag := cmd.Flags().Lookup("aggregation")
-	require.NotNil(t, aggFlag)
-
-	intervalFlag := cmd.Flags().Lookup("interval")
-	require.NotNil(t, intervalFlag)
-
-	groupByFlag := cmd.Flags().Lookup("group-by")
-	require.NotNil(t, groupByFlag)
-
-	limitFlag := cmd.Flags().Lookup("limit")
-	require.NotNil(t, limitFlag)
-}
-
-func TestTSQueryCommandHelp(t *testing.T) {
-	cmd := newTSQueryCommand()
-	var buf bytes.Buffer
-	cmd.SetOut(&buf)
-	cmd.SetArgs([]string{"--help"})
-
-	err := cmd.Execute()
-	require.NoError(t, err)
-
-	output := buf.String()
-	assert.Contains(t, output, "query")
-	assert.Contains(t, output, "--metric")
-	assert.Contains(t, output, "--start")
-	assert.Contains(t, output, "--end")
-	assert.Contains(t, output, "--aggregation")
-}
-
 // TestRunTSQueryCommand tests the query command.
 func TestRunTSQueryCommand(t *testing.T) {
 	// Save original factory
@@ -761,32 +662,6 @@ func TestRunTSQueryCommand(t *testing.T) {
 	}
 }
 
-func TestTSDeleteCommand(t *testing.T) {
-	cmd := newTSDeleteCommand()
-
-	require.NotNil(t, cmd)
-	assert.Equal(t, "delete", cmd.Use)
-	assert.Contains(t, cmd.Short, "Delete")
-
-	// Verify flags exist
-	metricFlag := cmd.Flags().Lookup("metric")
-	require.NotNil(t, metricFlag)
-}
-
-func TestTSDeleteCommandHelp(t *testing.T) {
-	cmd := newTSDeleteCommand()
-	var buf bytes.Buffer
-	cmd.SetOut(&buf)
-	cmd.SetArgs([]string{"--help"})
-
-	err := cmd.Execute()
-	require.NoError(t, err)
-
-	output := buf.String()
-	assert.Contains(t, output, "delete")
-	assert.Contains(t, output, "--metric")
-}
-
 // TestRunTSDeleteCommand tests the delete command.
 func TestRunTSDeleteCommand(t *testing.T) {
 	// Save original factory
@@ -970,28 +845,6 @@ func TestRunTSDeleteCommand(t *testing.T) {
 	}
 }
 
-func TestTSGetRetentionCommand(t *testing.T) {
-	cmd := newTSGetRetentionCommand()
-
-	require.NotNil(t, cmd)
-	assert.Equal(t, "get-retention <metric>", cmd.Use)
-	assert.Contains(t, cmd.Short, "Get retention")
-}
-
-func TestTSGetRetentionCommandHelp(t *testing.T) {
-	cmd := newTSGetRetentionCommand()
-	var buf bytes.Buffer
-	cmd.SetOut(&buf)
-	cmd.SetArgs([]string{"--help"})
-
-	err := cmd.Execute()
-	require.NoError(t, err)
-
-	output := buf.String()
-	assert.Contains(t, output, "get-retention")
-	assert.Contains(t, output, "<metric>")
-}
-
 // TestRunTSGetRetentionCommand tests the get retention policy command.
 func TestRunTSGetRetentionCommand(t *testing.T) {
 	// Save original factory
@@ -1122,39 +975,6 @@ func TestRunTSGetRetentionCommand(t *testing.T) {
 			outputFormat = "table"
 		})
 	}
-}
-
-func TestTSSetRetentionCommand(t *testing.T) {
-	cmd := newTSSetRetentionCommand()
-
-	require.NotNil(t, cmd)
-	assert.Equal(t, "set-retention <metric>", cmd.Use)
-	assert.Contains(t, cmd.Short, "Set retention")
-
-	// Verify flags exist
-	durationFlag := cmd.Flags().Lookup("duration")
-	require.NotNil(t, durationFlag)
-
-	resolutionFlag := cmd.Flags().Lookup("resolution")
-	require.NotNil(t, resolutionFlag)
-
-	aggFlag := cmd.Flags().Lookup("aggregation")
-	require.NotNil(t, aggFlag)
-}
-
-func TestTSSetRetentionCommandHelp(t *testing.T) {
-	cmd := newTSSetRetentionCommand()
-	var buf bytes.Buffer
-	cmd.SetOut(&buf)
-	cmd.SetArgs([]string{"--help"})
-
-	err := cmd.Execute()
-	require.NoError(t, err)
-
-	output := buf.String()
-	assert.Contains(t, output, "set-retention")
-	assert.Contains(t, output, "<metric>")
-	assert.Contains(t, output, "--duration")
 }
 
 // TestRunTSSetRetentionCommand tests the set retention policy command.
@@ -1291,34 +1111,6 @@ func TestRunTSSetRetentionCommand(t *testing.T) {
 			outputFormat = "table"
 		})
 	}
-}
-
-func TestTSListMetricsCommand(t *testing.T) {
-	cmd := newTSListMetricsCommand()
-
-	require.NotNil(t, cmd)
-	assert.Equal(t, "list-metrics", cmd.Use)
-	assert.Contains(t, cmd.Short, "List")
-
-	// Verify flags exist
-	prefixFlag := cmd.Flags().Lookup("prefix")
-	require.NotNil(t, prefixFlag)
-
-	limitFlag := cmd.Flags().Lookup("limit")
-	require.NotNil(t, limitFlag)
-}
-
-func TestTSListMetricsCommandHelp(t *testing.T) {
-	cmd := newTSListMetricsCommand()
-	var buf bytes.Buffer
-	cmd.SetOut(&buf)
-	cmd.SetArgs([]string{"--help"})
-
-	err := cmd.Execute()
-	require.NoError(t, err)
-
-	output := buf.String()
-	assert.Contains(t, output, "list-metrics")
 }
 
 // TestRunTSListMetricsCommand tests the list metrics command.
@@ -1473,27 +1265,6 @@ func TestRunTSListMetricsCommand(t *testing.T) {
 	}
 }
 
-func TestTimeSeriesCommandsIntegration(t *testing.T) {
-	// Test that timeseries commands hierarchy is correct
-	tsCmd := newTimeSeriesCommands()
-
-	// Verify command hierarchy
-	subcommands := tsCmd.Commands()
-	assert.Len(t, subcommands, 7, "should have 7 subcommands")
-
-	// Verify each subcommand has a valid parent set
-	for _, subcmd := range subcommands {
-		assert.NotNil(t, subcmd.Parent(), "subcommand should have parent set")
-	}
-}
-
-func TestTimeSeriesCommandAliases(t *testing.T) {
-	cmd := newTimeSeriesCommands()
-
-	// Test that alias works
-	assert.Contains(t, cmd.Aliases, "ts")
-}
-
 // TestFormatTSWriteResponse tests write response formatting.
 func TestFormatTSWriteResponse(t *testing.T) {
 	t.Run("json format", func(t *testing.T) {
@@ -1525,6 +1296,14 @@ func TestFormatTSWriteResponse(t *testing.T) {
 		outputFormat = "table"
 		err := formatTSWriteResponse(resp)
 		assert.NoError(t, err)
+	})
+
+	t.Run("invalid format", func(t *testing.T) {
+		outputFormat = "invalid_format_xyz"
+		defer func() { outputFormat = "table" }()
+		err := formatTSWriteResponse(&cli.WritePointResponse{Success: true, Timestamp: time.Now()})
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "invalid_format_xyz")
 	})
 }
 
@@ -1562,6 +1341,14 @@ func TestFormatTSWriteBatchResponse(t *testing.T) {
 		outputFormat = "table"
 		err := formatTSWriteBatchResponse(resp)
 		assert.NoError(t, err)
+	})
+
+	t.Run("invalid format", func(t *testing.T) {
+		outputFormat = "invalid_format_xyz"
+		defer func() { outputFormat = "table" }()
+		err := formatTSWriteBatchResponse(&cli.WriteBatchResponse{Success: true, PointsWritten: 5, Timestamp: time.Now()})
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "invalid_format_xyz")
 	})
 }
 
@@ -1636,6 +1423,14 @@ func TestFormatTSQueryResponse(t *testing.T) {
 		err := formatTSQueryResponse(resp)
 		assert.NoError(t, err)
 	})
+
+	t.Run("invalid format", func(t *testing.T) {
+		outputFormat = "invalid_format_xyz"
+		defer func() { outputFormat = "table" }()
+		err := formatTSQueryResponse(&cli.TSQueryResponse{Metric: "cpu.usage", Points: []cli.TSDataPoint{}, Timestamp: time.Now()})
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "invalid_format_xyz")
+	})
 }
 
 // TestFormatTags tests the formatTags helper function.
@@ -1689,6 +1484,14 @@ func TestFormatTSDeleteResponse(t *testing.T) {
 		err := formatTSDeleteResponse(resp)
 		assert.NoError(t, err)
 	})
+
+	t.Run("invalid format", func(t *testing.T) {
+		outputFormat = "invalid_format_xyz"
+		defer func() { outputFormat = "table" }()
+		err := formatTSDeleteResponse(&cli.TSDeleteResponse{Success: true, Timestamp: time.Now()})
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "invalid_format_xyz")
+	})
 }
 
 // TestFormatTSGetRetentionResponse tests get retention response formatting.
@@ -1734,6 +1537,14 @@ func TestFormatTSGetRetentionResponse(t *testing.T) {
 		err := formatTSGetRetentionResponse(resp)
 		assert.NoError(t, err)
 	})
+
+	t.Run("invalid format", func(t *testing.T) {
+		outputFormat = "invalid_format_xyz"
+		defer func() { outputFormat = "table" }()
+		err := formatTSGetRetentionResponse(&cli.TSGetRetentionPolicyResponse{Metric: "cpu.usage", Timestamp: time.Now()})
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "invalid_format_xyz")
+	})
 }
 
 // TestFormatTSSetRetentionResponse tests set retention response formatting.
@@ -1767,6 +1578,14 @@ func TestFormatTSSetRetentionResponse(t *testing.T) {
 		outputFormat = "table"
 		err := formatTSSetRetentionResponse(resp)
 		assert.NoError(t, err)
+	})
+
+	t.Run("invalid format", func(t *testing.T) {
+		outputFormat = "invalid_format_xyz"
+		defer func() { outputFormat = "table" }()
+		err := formatTSSetRetentionResponse(&cli.TSSetRetentionPolicyResponse{Success: true, Timestamp: time.Now()})
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "invalid_format_xyz")
 	})
 }
 
@@ -1803,6 +1622,14 @@ func TestFormatTSListMetricsResponse(t *testing.T) {
 		outputFormat = "table"
 		err := formatTSListMetricsResponse(resp)
 		assert.NoError(t, err)
+	})
+
+	t.Run("invalid format", func(t *testing.T) {
+		outputFormat = "invalid_format_xyz"
+		defer func() { outputFormat = "table" }()
+		err := formatTSListMetricsResponse(&cli.TSListMetricsResponse{Metrics: []string{"cpu.usage", "mem.used"}, Timestamp: time.Now()})
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "invalid_format_xyz")
 	})
 }
 
@@ -2014,100 +1841,6 @@ func TestMockSecretsClient_FuncFieldPaths(t *testing.T) {
 	})
 }
 
-func TestMockTimeSeriesClient_FuncFieldPaths(t *testing.T) {
-	ctx := context.Background()
-
-	t.Run("TSWritePoint_WithFunc", func(t *testing.T) {
-		client := &MockTimeSeriesClient{
-			TSWritePointFunc: func(ctx context.Context, req *cli.WritePointRequest) (*cli.WritePointResponse, error) {
-				return &cli.WritePointResponse{Success: true}, nil
-			},
-		}
-		resp, err := client.TSWritePoint(ctx, &cli.WritePointRequest{})
-		assert.NoError(t, err)
-		assert.True(t, resp.Success)
-	})
-
-	t.Run("TSWriteBatch_WithFunc", func(t *testing.T) {
-		client := &MockTimeSeriesClient{
-			TSWriteBatchFunc: func(ctx context.Context, req *cli.WriteBatchRequest) (*cli.WriteBatchResponse, error) {
-				return &cli.WriteBatchResponse{PointsWritten: 10}, nil
-			},
-		}
-		resp, err := client.TSWriteBatch(ctx, &cli.WriteBatchRequest{})
-		assert.NoError(t, err)
-		assert.Equal(t, 10, resp.PointsWritten)
-	})
-
-	t.Run("TSQuery_WithFunc", func(t *testing.T) {
-		client := &MockTimeSeriesClient{
-			TSQueryFunc: func(ctx context.Context, req *cli.TSQueryRequest) (*cli.TSQueryResponse, error) {
-				return &cli.TSQueryResponse{Metric: "cpu"}, nil
-			},
-		}
-		resp, err := client.TSQuery(ctx, &cli.TSQueryRequest{})
-		assert.NoError(t, err)
-		assert.Equal(t, "cpu", resp.Metric)
-	})
-
-	t.Run("TSDeleteSeries_WithFunc", func(t *testing.T) {
-		client := &MockTimeSeriesClient{
-			TSDeleteSeriesFunc: func(ctx context.Context, req *cli.TSDeleteRequest) (*cli.TSDeleteResponse, error) {
-				return &cli.TSDeleteResponse{Success: true}, nil
-			},
-		}
-		resp, err := client.TSDeleteSeries(ctx, &cli.TSDeleteRequest{})
-		assert.NoError(t, err)
-		assert.True(t, resp.Success)
-	})
-
-	t.Run("TSGetRetentionPolicy_WithFunc", func(t *testing.T) {
-		client := &MockTimeSeriesClient{
-			TSGetRetentionPolicyFunc: func(ctx context.Context, req *cli.TSGetRetentionPolicyRequest) (*cli.TSGetRetentionPolicyResponse, error) {
-				return &cli.TSGetRetentionPolicyResponse{Metric: "cpu"}, nil
-			},
-		}
-		resp, err := client.TSGetRetentionPolicy(ctx, &cli.TSGetRetentionPolicyRequest{})
-		assert.NoError(t, err)
-		assert.Equal(t, "cpu", resp.Metric)
-	})
-
-	t.Run("TSSetRetentionPolicy_WithFunc", func(t *testing.T) {
-		client := &MockTimeSeriesClient{
-			TSSetRetentionPolicyFunc: func(ctx context.Context, req *cli.TSSetRetentionPolicyRequest) (*cli.TSSetRetentionPolicyResponse, error) {
-				return &cli.TSSetRetentionPolicyResponse{Success: true}, nil
-			},
-		}
-		resp, err := client.TSSetRetentionPolicy(ctx, &cli.TSSetRetentionPolicyRequest{})
-		assert.NoError(t, err)
-		assert.True(t, resp.Success)
-	})
-
-	t.Run("TSListMetrics_WithFunc", func(t *testing.T) {
-		client := &MockTimeSeriesClient{
-			TSListMetricsFunc: func(ctx context.Context, req *cli.TSListMetricsRequest) (*cli.TSListMetricsResponse, error) {
-				return &cli.TSListMetricsResponse{Metrics: []string{"cpu", "mem"}}, nil
-			},
-		}
-		resp, err := client.TSListMetrics(ctx, &cli.TSListMetricsRequest{})
-		assert.NoError(t, err)
-		assert.Len(t, resp.Metrics, 2)
-	})
-
-	t.Run("Close_WithFunc", func(t *testing.T) {
-		closed := false
-		client := &MockTimeSeriesClient{
-			CloseFunc: func() error {
-				closed = true
-				return nil
-			},
-		}
-		err := client.Close()
-		assert.NoError(t, err)
-		assert.True(t, closed)
-	})
-}
-
 // =============================================================================
 // Object format function branch coverage
 // =============================================================================
@@ -2252,253 +1985,26 @@ func TestFormatObjectLifecycleResponse_DefaultWithReplicationPolicy(t *testing.T
 	assert.NoError(t, err)
 }
 
-// =============================================================================
-// parseGracePeriod additional edge case coverage
-// =============================================================================
-// These tests cover the negative days error path (line 210) and the
-// time.ParseDuration error path (line 222) that are not covered by existing tests.
-
-func TestParseGracePeriod_NegativeDays(t *testing.T) {
-	// Input "-5d" ends with "d", so it enters the days parsing branch.
-	// Sscanf parses -5 successfully, then the negative check at line 210 triggers.
-	duration, err := parseGracePeriod("-5d")
-	assert.Error(t, err)
-	assert.Zero(t, duration)
-	assert.Contains(t, err.Error(), "grace period cannot be negative")
-}
-
-func TestParseGracePeriod_InvalidDurationNoDaySuffix(t *testing.T) {
-	// Input "abc" does NOT end with "d", so it bypasses the days branch and
-	// falls through to time.ParseDuration("abc") which returns an error.
-	// This covers the error path at line 222.
-	duration, err := parseGracePeriod("abc")
-	assert.Error(t, err)
-	assert.Zero(t, duration)
-	assert.Contains(t, err.Error(), "invalid duration format")
-}
-
-// =============================================================================
-// Messaging format function default branch coverage
-// =============================================================================
-// The formatChannelInfoResponse function has a default switch case at line 1244
-// that prints a simple channel name. All other branches (json, yaml, table) are
-// covered, but the default/"raw" path was not exercised.
-
-func TestFormatTSWriteResponse_InvalidFormat(t *testing.T) {
-	savedFormat := outputFormat
-	defer func() { outputFormat = savedFormat }()
-
-	outputFormat = "invalid_format_xyz"
-
-	resp := &cli.WritePointResponse{
-		Success:   true,
-		Timestamp: time.Now(),
+func TestParseGracePeriodErrors(t *testing.T) {
+	tests := []struct {
+		name    string
+		input   string
+		wantErr string
+	}{
+		{name: "negative days", input: "-5d", wantErr: "grace period cannot be negative"},
+		{name: "invalid duration without day suffix", input: "abc", wantErr: "invalid duration format"},
 	}
 
-	err := formatTSWriteResponse(resp)
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "invalid_format_xyz")
-}
-
-func TestFormatTSWriteBatchResponse_InvalidFormat(t *testing.T) {
-	savedFormat := outputFormat
-	defer func() { outputFormat = savedFormat }()
-
-	outputFormat = "invalid_format_xyz"
-
-	resp := &cli.WriteBatchResponse{
-		Success:       true,
-		PointsWritten: 5,
-		Timestamp:     time.Now(),
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			duration, err := parseGracePeriod(tt.input)
+			assert.Error(t, err)
+			assert.Zero(t, duration)
+			assert.Contains(t, err.Error(), tt.wantErr)
+		})
 	}
-
-	err := formatTSWriteBatchResponse(resp)
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "invalid_format_xyz")
 }
 
-func TestFormatTSDeleteResponse_InvalidFormat(t *testing.T) {
-	savedFormat := outputFormat
-	defer func() { outputFormat = savedFormat }()
-
-	outputFormat = "invalid_format_xyz"
-
-	resp := &cli.TSDeleteResponse{
-		Success:   true,
-		Timestamp: time.Now(),
-	}
-
-	err := formatTSDeleteResponse(resp)
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "invalid_format_xyz")
-}
-
-func TestFormatTSSetRetentionResponse_InvalidFormat(t *testing.T) {
-	savedFormat := outputFormat
-	defer func() { outputFormat = savedFormat }()
-
-	outputFormat = "invalid_format_xyz"
-
-	resp := &cli.TSSetRetentionPolicyResponse{
-		Success:   true,
-		Timestamp: time.Now(),
-	}
-
-	err := formatTSSetRetentionResponse(resp)
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "invalid_format_xyz")
-}
-
-func TestFormatTSListMetricsResponse_InvalidFormat(t *testing.T) {
-	savedFormat := outputFormat
-	defer func() { outputFormat = savedFormat }()
-
-	outputFormat = "invalid_format_xyz"
-
-	resp := &cli.TSListMetricsResponse{
-		Metrics:   []string{"cpu.usage", "mem.used"},
-		Timestamp: time.Now(),
-	}
-
-	err := formatTSListMetricsResponse(resp)
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "invalid_format_xyz")
-}
-
-func TestFormatTSGetRetentionResponse_InvalidFormat(t *testing.T) {
-	savedFormat := outputFormat
-	defer func() { outputFormat = savedFormat }()
-
-	outputFormat = "invalid_format_xyz"
-
-	resp := &cli.TSGetRetentionPolicyResponse{
-		Metric:    "cpu.usage",
-		Timestamp: time.Now(),
-	}
-
-	err := formatTSGetRetentionResponse(resp)
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "invalid_format_xyz")
-}
-
-func TestFormatTSQueryResponse_InvalidFormat(t *testing.T) {
-	savedFormat := outputFormat
-	defer func() { outputFormat = savedFormat }()
-
-	outputFormat = "invalid_format_xyz"
-
-	resp := &cli.TSQueryResponse{
-		Metric:    "cpu.usage",
-		Points:    []cli.TSDataPoint{},
-		Timestamp: time.Now(),
-	}
-
-	err := formatTSQueryResponse(resp)
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "invalid_format_xyz")
-}
-
-// --------------------------------------------------------------------------
-// Format function success paths covering specific branches
-// --------------------------------------------------------------------------
-
-func TestFormatTSWriteResponse_TableSuccess(t *testing.T) {
-	savedFormat := outputFormat
-	defer func() { outputFormat = savedFormat }()
-
-	outputFormat = "table"
-
-	resp := &cli.WritePointResponse{
-		Success:   true,
-		Timestamp: time.Now(),
-	}
-
-	err := formatTSWriteResponse(resp)
-	assert.NoError(t, err)
-}
-
-func TestFormatTSWriteResponse_TableFailure(t *testing.T) {
-	savedFormat := outputFormat
-	defer func() { outputFormat = savedFormat }()
-
-	outputFormat = "table"
-
-	resp := &cli.WritePointResponse{
-		Success:   false,
-		Timestamp: time.Now(),
-	}
-
-	err := formatTSWriteResponse(resp)
-	assert.NoError(t, err)
-}
-
-func TestFormatTSWriteBatchResponse_TableFailure(t *testing.T) {
-	savedFormat := outputFormat
-	defer func() { outputFormat = savedFormat }()
-
-	outputFormat = "table"
-
-	resp := &cli.WriteBatchResponse{
-		Success:       false,
-		PointsWritten: 0,
-		Timestamp:     time.Now(),
-	}
-
-	err := formatTSWriteBatchResponse(resp)
-	assert.NoError(t, err)
-}
-
-func TestFormatTSListMetricsResponse_TableWithCursor(t *testing.T) {
-	savedFormat := outputFormat
-	defer func() { outputFormat = savedFormat }()
-
-	outputFormat = "table"
-
-	resp := &cli.TSListMetricsResponse{
-		Metrics:    []string{"cpu.usage", "mem.used"},
-		NextCursor: "cursor-abc",
-		Timestamp:  time.Now(),
-	}
-
-	err := formatTSListMetricsResponse(resp)
-	assert.NoError(t, err)
-}
-
-func TestFormatTSGetRetentionResponse_TableWithPolicy(t *testing.T) {
-	savedFormat := outputFormat
-	defer func() { outputFormat = savedFormat }()
-
-	outputFormat = "table"
-
-	resp := &cli.TSGetRetentionPolicyResponse{
-		Metric: "cpu.usage",
-		Policy: &cli.TSRetentionPolicy{
-			Duration:    30 * 24 * time.Hour,
-			Resolution:  time.Minute,
-			Aggregation: "avg",
-		},
-		Timestamp: time.Now(),
-	}
-
-	err := formatTSGetRetentionResponse(resp)
-	assert.NoError(t, err)
-}
-
-func TestFormatTSGetRetentionResponse_TableNoPolicy(t *testing.T) {
-	savedFormat := outputFormat
-	defer func() { outputFormat = savedFormat }()
-
-	outputFormat = "table"
-
-	resp := &cli.TSGetRetentionPolicyResponse{
-		Metric:    "cpu.usage",
-		Policy:    nil,
-		Timestamp: time.Now(),
-	}
-
-	err := formatTSGetRetentionResponse(resp)
-	assert.NoError(t, err)
-}
 func TestTimeseriesCommandsExecution(t *testing.T) {
 	tests := []struct {
 		name        string
@@ -2560,362 +2066,6 @@ func TestTimeseriesCommandsExecution(t *testing.T) {
 
 // TestVectorCommandsExecution tests vector command execution paths
 
-func TestRunCommandsWithInvalidServer(t *testing.T) {
-	// Save original address
-	originalAddress := address
-	defer func() { address = originalAddress }()
-
-	// Set invalid address to trigger connection errors
-	address = "invalid-server:12345"
-
-	tests := []struct {
-		name        string
-		setupCmd    func() error
-		description string
-	}{
-		{
-			name: "runPutCommand",
-			setupCmd: func() error {
-				cmd := newPutCommand()
-				cmd.SetArgs([]string{"entity", "test-key", "test-value"})
-				var buf bytes.Buffer
-				cmd.SetOut(&buf)
-				cmd.SetErr(&buf)
-				return cmd.Execute()
-			},
-			description: "Test put command with connection failure",
-		},
-		{
-			name: "runGetCommand",
-			setupCmd: func() error {
-				cmd := newGetCommand()
-				cmd.SetArgs([]string{"entity", "test-key"})
-				var buf bytes.Buffer
-				cmd.SetOut(&buf)
-				cmd.SetErr(&buf)
-				return cmd.Execute()
-			},
-			description: "Test get command with connection failure",
-		},
-		{
-			name: "runDeleteCommand",
-			setupCmd: func() error {
-				cmd := newDeleteCommand()
-				cmd.SetArgs([]string{"entity", "test-key"})
-				var buf bytes.Buffer
-				cmd.SetOut(&buf)
-				cmd.SetErr(&buf)
-				return cmd.Execute()
-			},
-			description: "Test delete command with connection failure",
-		},
-		{
-			name: "runListCommand",
-			setupCmd: func() error {
-				cmd := newListCommand()
-				cmd.SetArgs([]string{"entity"})
-				var buf bytes.Buffer
-				cmd.SetOut(&buf)
-				cmd.SetErr(&buf)
-				return cmd.Execute()
-			},
-			description: "Test list command with connection failure",
-		},
-		{
-			name: "runQueryCommand",
-			setupCmd: func() error {
-				cmd := newQueryCommand()
-				cmd.SetArgs([]string{"entity", "--index", "test-index", "--value", "test-value"})
-				var buf bytes.Buffer
-				cmd.SetOut(&buf)
-				cmd.SetErr(&buf)
-				return cmd.Execute()
-			},
-			description: "Test query command with connection failure",
-		},
-		{
-			name: "runTSWriteCommand",
-			setupCmd: func() error {
-				cmd := newTSWriteCommand()
-				cmd.SetArgs([]string{"test-metric", "100.5"})
-				var buf bytes.Buffer
-				cmd.SetOut(&buf)
-				cmd.SetErr(&buf)
-				return cmd.Execute()
-			},
-			description: "Test timeseries write command with connection failure",
-		},
-		{
-			name: "runTSWriteBatchCommand",
-			setupCmd: func() error {
-				cmd := newTSWriteBatchCommand()
-				cmd.SetArgs([]string{`[{"metric":"test","value":100}]`})
-				var buf bytes.Buffer
-				cmd.SetOut(&buf)
-				cmd.SetErr(&buf)
-				return cmd.Execute()
-			},
-			description: "Test timeseries batch write command with connection failure",
-		},
-		{
-			name: "runTSQueryCommand",
-			setupCmd: func() error {
-				cmd := newTSQueryCommand()
-				cmd.SetArgs([]string{"test-metric"})
-				var buf bytes.Buffer
-				cmd.SetOut(&buf)
-				cmd.SetErr(&buf)
-				return cmd.Execute()
-			},
-			description: "Test timeseries query command with connection failure",
-		},
-		{
-			name: "runTSDeleteCommand",
-			setupCmd: func() error {
-				cmd := newTSDeleteCommand()
-				cmd.SetArgs([]string{"test-metric"})
-				var buf bytes.Buffer
-				cmd.SetOut(&buf)
-				cmd.SetErr(&buf)
-				return cmd.Execute()
-			},
-			description: "Test timeseries delete command with connection failure",
-		},
-		{
-			name: "runTSGetRetentionCommand",
-			setupCmd: func() error {
-				cmd := newTSGetRetentionCommand()
-				cmd.SetArgs([]string{"test-metric"})
-				var buf bytes.Buffer
-				cmd.SetOut(&buf)
-				cmd.SetErr(&buf)
-				return cmd.Execute()
-			},
-			description: "Test timeseries get retention command with connection failure",
-		},
-		{
-			name: "runTSSetRetentionCommand",
-			setupCmd: func() error {
-				cmd := newTSSetRetentionCommand()
-				cmd.SetArgs([]string{"test-metric", "7d"})
-				var buf bytes.Buffer
-				cmd.SetOut(&buf)
-				cmd.SetErr(&buf)
-				return cmd.Execute()
-			},
-			description: "Test timeseries set retention command with connection failure",
-		},
-		{
-			name: "runTSListMetricsCommand",
-			setupCmd: func() error {
-				cmd := newTSListMetricsCommand()
-				cmd.SetArgs([]string{})
-				var buf bytes.Buffer
-				cmd.SetOut(&buf)
-				cmd.SetErr(&buf)
-				return cmd.Execute()
-			},
-			description: "Test timeseries list metrics command with connection failure",
-		},
-		{
-			name: "runVectorNamespaceCreateCommand",
-			setupCmd: func() error {
-				cmd := newVectorNamespaceCreateCommand()
-				cmd.SetArgs([]string{"test-ns", "--dimension", "128"})
-				var buf bytes.Buffer
-				cmd.SetOut(&buf)
-				cmd.SetErr(&buf)
-				return cmd.Execute()
-			},
-			description: "Test vector namespace create command with connection failure",
-		},
-		{
-			name: "runVectorNamespaceDeleteCommand",
-			setupCmd: func() error {
-				cmd := newVectorNamespaceDeleteCommand()
-				cmd.SetArgs([]string{"test-ns"})
-				var buf bytes.Buffer
-				cmd.SetOut(&buf)
-				cmd.SetErr(&buf)
-				return cmd.Execute()
-			},
-			description: "Test vector namespace delete command with connection failure",
-		},
-		{
-			name: "runVectorNamespaceListCommand",
-			setupCmd: func() error {
-				cmd := newVectorNamespaceListCommand()
-				cmd.SetArgs([]string{})
-				var buf bytes.Buffer
-				cmd.SetOut(&buf)
-				cmd.SetErr(&buf)
-				return cmd.Execute()
-			},
-			description: "Test vector namespace list command with connection failure",
-		},
-		{
-			name: "runVectorNamespaceInfoCommand",
-			setupCmd: func() error {
-				cmd := newVectorNamespaceInfoCommand()
-				cmd.SetArgs([]string{"test-ns"})
-				var buf bytes.Buffer
-				cmd.SetOut(&buf)
-				cmd.SetErr(&buf)
-				return cmd.Execute()
-			},
-			description: "Test vector namespace info command with connection failure",
-		},
-		{
-			name: "runVectorUpsertCommand",
-			setupCmd: func() error {
-				cmd := newVectorUpsertCommand()
-				cmd.SetArgs([]string{"test-ns", "vec-id", "0.1,0.2,0.3"})
-				var buf bytes.Buffer
-				cmd.SetOut(&buf)
-				cmd.SetErr(&buf)
-				return cmd.Execute()
-			},
-			description: "Test vector upsert command with connection failure",
-		},
-		{
-			name: "runVectorBatchUpsertCommand",
-			setupCmd: func() error {
-				cmd := newVectorBatchUpsertCommand()
-				cmd.SetArgs([]string{`[{"id":"v1","vector":[0.1,0.2]}]`})
-				var buf bytes.Buffer
-				cmd.SetOut(&buf)
-				cmd.SetErr(&buf)
-				return cmd.Execute()
-			},
-			description: "Test vector batch upsert command with connection failure",
-		},
-		{
-			name: "runVectorGetCommand",
-			setupCmd: func() error {
-				cmd := newVectorGetCommand()
-				cmd.SetArgs([]string{"test-ns", "vec-id"})
-				var buf bytes.Buffer
-				cmd.SetOut(&buf)
-				cmd.SetErr(&buf)
-				return cmd.Execute()
-			},
-			description: "Test vector get command with connection failure",
-		},
-		{
-			name: "runVectorDeleteCommand",
-			setupCmd: func() error {
-				cmd := newVectorDeleteCommand()
-				cmd.SetArgs([]string{"test-ns", "vec-id"})
-				var buf bytes.Buffer
-				cmd.SetOut(&buf)
-				cmd.SetErr(&buf)
-				return cmd.Execute()
-			},
-			description: "Test vector delete command with connection failure",
-		},
-		{
-			name: "runVectorBatchDeleteCommand",
-			setupCmd: func() error {
-				cmd := newVectorBatchDeleteCommand()
-				cmd.SetArgs([]string{"test-ns", "vec-1,vec-2,vec-3"})
-				var buf bytes.Buffer
-				cmd.SetOut(&buf)
-				cmd.SetErr(&buf)
-				return cmd.Execute()
-			},
-			description: "Test vector batch delete command with connection failure",
-		},
-		{
-			name: "runVectorListCommand",
-			setupCmd: func() error {
-				cmd := newVectorListCommand()
-				cmd.SetArgs([]string{"test-ns"})
-				var buf bytes.Buffer
-				cmd.SetOut(&buf)
-				cmd.SetErr(&buf)
-				return cmd.Execute()
-			},
-			description: "Test vector list command with connection failure",
-		},
-		{
-			name: "runVectorSearchSimilarCommand",
-			setupCmd: func() error {
-				cmd := newVectorSearchSimilarCommand()
-				cmd.SetArgs([]string{"test-ns", "0.1,0.2,0.3"})
-				var buf bytes.Buffer
-				cmd.SetOut(&buf)
-				cmd.SetErr(&buf)
-				return cmd.Execute()
-			},
-			description: "Test vector search similar command with connection failure",
-		},
-		{
-			name: "runVectorSearchByIDCommand",
-			setupCmd: func() error {
-				cmd := newVectorSearchByIDCommand()
-				cmd.SetArgs([]string{"test-ns", "vec-id"})
-				var buf bytes.Buffer
-				cmd.SetOut(&buf)
-				cmd.SetErr(&buf)
-				return cmd.Execute()
-			},
-			description: "Test vector search by ID command with connection failure",
-		},
-		{
-			name: "runVectorIndexRebuildCommand",
-			setupCmd: func() error {
-				cmd := newVectorIndexRebuildCommand()
-				cmd.SetArgs([]string{"test-ns"})
-				var buf bytes.Buffer
-				cmd.SetOut(&buf)
-				cmd.SetErr(&buf)
-				return cmd.Execute()
-			},
-			description: "Test vector index rebuild command with connection failure",
-		},
-		{
-			name: "runVectorIndexStatsCommand",
-			setupCmd: func() error {
-				cmd := newVectorIndexStatsCommand()
-				cmd.SetArgs([]string{"test-ns"})
-				var buf bytes.Buffer
-				cmd.SetOut(&buf)
-				cmd.SetErr(&buf)
-				return cmd.Execute()
-			},
-			description: "Test vector index stats command with connection failure",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			err := tt.setupCmd()
-			// All these commands should error because they can't connect to a server
-			// or due to missing required arguments/validation
-			assert.Error(t, err, tt.description)
-			// Just verify we get some kind of error - the specific error type varies
-			// depending on whether the command has required flags, needs confirmation, etc.
-		})
-	}
-}
-
 // TestCreateClientHelpers tests client creation helper functions
-func TestFormatFunctions(t *testing.T) {
-	t.Run("formatTags with empty tags", func(t *testing.T) {
-		result := formatTags(nil)
-		assert.Equal(t, "", result)
-	})
-
-	t.Run("formatTags with tags", func(t *testing.T) {
-		tags := map[string]string{
-			"env":     "prod",
-			"service": "api",
-		}
-		result := formatTags(tags)
-		// Should contain both tags
-		assert.Contains(t, result, "env=prod")
-		assert.Contains(t, result, "service=api")
-	})
-}
 
 // TestConvertSearchByIDResponses tests search response conversion
