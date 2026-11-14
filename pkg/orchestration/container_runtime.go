@@ -24,6 +24,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 )
@@ -334,24 +335,41 @@ func (r *ExecContainerRuntime) Stop(ctx context.Context, containerID string) err
 
 	r.logger.Debugf("container stop: %s", truncateID(containerID))
 
-	cmd := exec.CommandContext(ctx, r.command, "stop", containerID)
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
-
-	if err := cmd.Run(); err != nil {
-		stderrStr := strings.TrimSpace(stderr.String())
-		if isNotFoundOutput(stderrStr) {
-			return &ContainerNotFoundError{ContainerID: containerID}
-		}
-		return &ContainerStopError{
-			ContainerID: containerID,
-			Cause:       &CommandError{Command: r.command, Op: "stop", Output: stderrStr},
-		}
+	result, err := r.imageRunner()(ctx, r.command, imageCommand{Args: []string{"stop", containerID}})
+	if err == nil && result.ExitCode == 0 {
+		return nil
 	}
-	return nil
+	stderrStr := strings.TrimSpace(result.Stderr)
+	if isNotFoundOutput(stderrStr) {
+		return &ContainerNotFoundError{ContainerID: containerID}
+	}
+	return &ContainerStopError{
+		ContainerID: containerID,
+		Cause:       &CommandError{Command: r.command, Op: "stop", Output: stderrStr},
+	}
 }
 
+// containerRemovalWaitBound bounds how long Remove waits for a removal the
+// daemon already has in progress to finish.
+const containerRemovalWaitBound = 30 * time.Second
+
+// containerRemovalPollInterval is how often Remove asks whether a container
+// whose removal is in progress is gone yet.
+const containerRemovalPollInterval = 250 * time.Millisecond
+
 // Remove removes a container (force removes if running).
+//
+// A container that is already gone is reported as ContainerNotFoundError,
+// which every caller treats as done.
+//
+// A REMOVAL ALREADY IN PROGRESS IS NOT A FAILURE. The interactive sandbox
+// runs `docker run -i --rm`; `rm -f` kills its process, and the exit fires
+// the daemon's own --rm removal, which races this one. The loser is told
+// "removal of container ... is already in progress" and exits non-zero —
+// the required-CLI sandbox's Close failed that way on every run
+// (go-quicbaas#1801). The container is going away, which is what Remove was
+// asked for: it waits, bounded, until the runtime no longer knows the
+// container, and only a container still there at the bound is a failure.
 func (r *ExecContainerRuntime) Remove(ctx context.Context, containerID string) error {
 	if containerID == "" {
 		return &InputValidationError{Field: "containerID", Message: "cannot be empty"}
@@ -359,21 +377,53 @@ func (r *ExecContainerRuntime) Remove(ctx context.Context, containerID string) e
 
 	r.logger.Debugf("container remove: %s", truncateID(containerID))
 
-	cmd := exec.CommandContext(ctx, r.command, "rm", "-f", containerID)
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
+	result, err := r.imageRunner()(ctx, r.command, imageCommand{Args: []string{"rm", "-f", containerID}})
+	if err == nil && result.ExitCode == 0 {
+		return nil
+	}
+	stderrStr := strings.TrimSpace(result.Stderr)
+	if isNotFoundOutput(stderrStr) {
+		return &ContainerNotFoundError{ContainerID: containerID}
+	}
+	if err == nil && isRemovalInProgressOutput(stderrStr) && r.waitContainerGone(ctx, containerID) {
+		return nil
+	}
+	return &ContainerStopError{
+		ContainerID: containerID,
+		Cause:       &CommandError{Command: r.command, Op: "rm", Output: stderrStr},
+	}
+}
 
-	if err := cmd.Run(); err != nil {
-		stderrStr := strings.TrimSpace(stderr.String())
-		if isNotFoundOutput(stderrStr) {
-			return &ContainerNotFoundError{ContainerID: containerID}
+// waitContainerGone polls the runtime until it no longer knows containerID,
+// bounded by containerRemovalWaitBound and ctx. It reports whether the
+// container was seen gone.
+func (r *ExecContainerRuntime) waitContainerGone(ctx context.Context, containerID string) bool {
+	waitCtx, cancel := context.WithTimeout(ctx, containerRemovalWaitBound)
+	defer cancel()
+	ticker := time.NewTicker(containerRemovalPollInterval)
+	defer ticker.Stop()
+	for {
+		result, err := r.imageRunner()(waitCtx, r.command, imageCommand{
+			Args: []string{"container", "inspect", "--format", "{{.Id}}", containerID},
+		})
+		if err == nil && result.ExitCode != 0 && isNotFoundOutput(result.Stderr) {
+			return true
 		}
-		return &ContainerStopError{
-			ContainerID: containerID,
-			Cause:       &CommandError{Command: r.command, Op: "rm", Output: stderrStr},
+		select {
+		case <-waitCtx.Done():
+			return false
+		case <-ticker.C:
 		}
 	}
-	return nil
+}
+
+// isRemovalInProgressOutput reports whether a runtime's stderr says the
+// container's removal is already under way — docker's "removal of container
+// X is already in progress", podman's "container X is being removed".
+func isRemovalInProgressOutput(stderr string) bool {
+	lower := strings.ToLower(stderr)
+	return (strings.Contains(lower, "removal of container") && strings.Contains(lower, "already in progress")) ||
+		strings.Contains(lower, "is being removed")
 }
 
 // Logs returns the container's stdout/stderr logs.

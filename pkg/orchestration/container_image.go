@@ -226,11 +226,20 @@ func (r *ExecContainerRuntime) BuildImage(ctx context.Context, spec *ImageBuildS
 	if err != nil {
 		return "", &ImageBuildError{Tags: spec.Tags, Cause: err}
 	}
-	imageID := strings.TrimSpace(string(id))
-	if imageID == "" {
+	if strings.TrimSpace(string(id)) == "" {
 		return "", &ImageBuildError{Tags: spec.Tags, Cause: errImageBuildNoID}
 	}
-	return imageID, nil
+	// The iidfile is the BUILDER's name for the image, which is not always
+	// the engine's: under docker's containerd image store BuildKit writes the
+	// config digest while the daemon keys the image by its manifest digest,
+	// so `docker tag <iid> ...` answers "No such image" (#1801). The ID this
+	// function returns is the one the engine resolves, read back from the
+	// tag the build just applied.
+	info, err := r.InspectImage(ctx, spec.Tags[0])
+	if err != nil {
+		return "", &ImageBuildError{Tags: spec.Tags, Cause: err}
+	}
+	return info.ID, nil
 }
 
 // errImageBuildNoID reports an engine that succeeded without naming the image
@@ -344,9 +353,11 @@ func (r *ExecContainerRuntime) TagImage(ctx context.Context, source, target stri
 		return &ImageTagError{Source: source, Target: target, Cause: err}
 	}
 	if result.ExitCode != 0 {
+		stderr := strings.TrimSpace(result.Stderr)
 		return &ImageTagError{
 			Source: source, Target: target,
-			Cause: &CommandError{Command: r.command, Op: "tag", Output: strings.TrimSpace(result.Stderr)},
+			EngineMessage: redactLimitSignal(stderr),
+			Cause:         &CommandError{Command: r.command, Op: "tag", Output: stderr},
 		}
 	}
 	return nil

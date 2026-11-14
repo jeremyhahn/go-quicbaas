@@ -12,7 +12,7 @@ The QuicBaaS IAM module includes comprehensive audit logging capabilities to tra
 - **Event Types**: Authentication, authorization, user/role/policy management, MFA, sessions, tenants, applications
 - **Categories**: Authentication, authorization, administration, security
 - **Outcomes**: Success, failure, denied
-- **Storage**: Thread-safe in-memory with configurable retention
+- **Storage**: go-qrdb's audit sink (docs/SPEC.md: "the audit sink is go-qrdb's") — an append-only, hash-chained, tamper-evident chain; no event is ever erased
 - **Async Logging**: Non-blocking logging for hot paths
 - **Query Capabilities**: Multi-criteria filtering, time ranges, pagination
 - **Tenant Isolation**: All events are tenant-scoped
@@ -105,13 +105,16 @@ for _, event := range events {
 }
 ```
 
-### Retention Management
+### Retention: Append-Only
+
+The audit chain is append-only. The node's logger delegates to go-qrdb's
+chain (`pkg/server/node_audit_logger.go`), and its `DeleteOlderThan` is a
+no-op that returns 0: "the chain is append-only and tamper-evident by
+design". No retention job, API call or administrator erases an event.
 
 ```go
-// Delete events older than 90 days
-cutoff := time.Now().AddDate(0, 0, -90)
+// Always (0, nil): nothing is deleted.
 count, err := logger.DeleteOlderThan(ctx, tenantID, cutoff)
-fmt.Printf("Deleted %d old audit events\n", count)
 ```
 
 ## REST API
@@ -168,7 +171,7 @@ Response:
 GET /api/v1/iam/audit/{event_id}?tenant_id=tenant-123
 ```
 
-### Delete Old Events
+### Delete Old Events (append-only: deletes nothing)
 
 ```http
 DELETE /api/v1/iam/audit?tenant_id=tenant-123&before=2025-09-23T00:00:00Z
@@ -176,6 +179,10 @@ Authorization: Bearer <admin_token>
 ```
 
 **Required Permission**: `audit:delete`
+
+The chain is append-only, so an authorized request erases no event and
+always answers `deleted_count: 0`. The endpoint stays so that a delete
+attempt is authorized and audited, and callers learn the contract.
 
 **Access Control**: This operation is restricted to administrators with the `audit:delete` permission. Only `super_admin` role holders have this permission by default. Tenant admins and audit admins do NOT have delete permissions to ensure audit trail integrity.
 
@@ -190,7 +197,7 @@ Authorization: Bearer <admin_token>
 Response:
 ```json
 {
-  "deleted_count": 5432,
+  "deleted_count": 0,
   "before": "2025-09-23T00:00:00Z"
 }
 ```
@@ -211,7 +218,7 @@ The audit system uses the following permissions for access control:
 |------------|-------------|---------------|
 | `audit:read` | Query and view audit events | `super_admin`, `tenant_admin`, `audit_admin`, `read_only` |
 | `audit:export` | Export audit events to external systems | `super_admin`, `audit_admin` |
-| `audit:delete` | Delete audit events (retention cleanup) | `super_admin` only |
+| `audit:delete` | Call the delete endpoint (append-only: erases nothing) | `super_admin` only |
 
 ### Why Delete is Restricted
 
@@ -262,6 +269,9 @@ tenant.Settings.AuditPolicy = &iam.AuditPolicy{
     LogPolicyChecks: true,
 }
 ```
+
+`retention_days` is policy metadata only: the chain is append-only, and no
+event is erased when it ages past the setting.
 
 ## Event Types
 
@@ -403,31 +413,30 @@ When limit is reached, oldest events are automatically evicted (FIFO).
 
 ### Compliance
 
-- Retention periods should comply with regulatory requirements
+- The append-only chain keeps every event, which meets any minimum retention period
 - Authentication events help with SOC 2, ISO 27001 compliance
 - Authorization events support principle of least privilege auditing
 - Administrative actions provide audit trail for governance
-- Delete operations are themselves audited before execution
+- Delete attempts are themselves audited, and erase nothing
 
 ### Data Protection
 
 - Consider encrypting audit events at rest
-- Implement secure deletion (overwrite, not just unlink)
-- Export to secure, append-only storage for long-term retention
-- Protect against tampering (cryptographic signing)
+- The chain is append-only and hash-chained, so tampering is evident
+- Export to a SIEM for analysis; the chain itself is never trimmed
 
 ## Best Practices
 
 1. **Log Consistently**: Use helper methods for consistent event structure
 2. **Include Context**: Add relevant details to the Details field
 3. **Use Async for Hot Paths**: Avoid blocking critical paths
-4. **Set Retention Policies**: Configure appropriate retention periods
+4. **Plan for Growth**: The chain is append-only, so size storage for every event
 5. **Monitor Storage**: Alert on storage growth or dropped events
-6. **Regular Cleanup**: Run retention cleanup jobs regularly
+6. **No Cleanup Jobs**: Nothing erases audit events; do not schedule retention cleanup
 7. **Secure Access**: Restrict audit log access to administrators
 8. **Export for Analysis**: Integrate with SIEM for security monitoring
 9. **Protect Delete Access**: Only grant `audit:delete` to trusted super admins
-10. **Audit the Auditors**: Monitor who accesses and deletes audit logs
+10. **Audit the Auditors**: Monitor who accesses audit logs and who attempts deletes
 
 ## Examples
 
@@ -487,10 +496,10 @@ logger.LogAdminAction(ctx, tenantID,
 )
 ```
 
-### Audit Deletion with Logging
+### Audited Delete Attempt
 
 ```go
-// Before deleting, log the action itself
+// Log the attempt itself
 logger.LogAdminAction(ctx, tenantID,
     &iam.AuditActor{UserID: adminID, Email: adminEmail},
     &iam.AuditResource{Type: "audit", ID: tenantID},
@@ -501,7 +510,7 @@ logger.LogAdminAction(ctx, tenantID,
     },
 )
 
-// Then perform the deletion
+// The chain is append-only: this is a no-op and count is always 0
 count, err := logger.DeleteOlderThan(ctx, tenantID, cutoffTime)
 ```
 
@@ -513,14 +522,12 @@ count, err := logger.DeleteOlderThan(ctx, tenantID, cutoffTime)
 - Async queue depth
 - Storage utilization
 - Query latency
-- Retention cleanup duration
 - Dropped events (when async queue full)
 
 ### Alerts
 
 - High async queue depth (> 80% capacity)
 - Storage approaching limits
-- Retention cleanup failures
 - Unusual event patterns (e.g., spike in failed logins)
 - Unauthorized audit delete attempts
 
@@ -535,10 +542,8 @@ count, err := logger.DeleteOlderThan(ctx, tenantID, cutoffTime)
 
 ### High Memory Usage
 
-- Reduce max events per tenant
-- Decrease retention period
-- Implement storage backend (vs in-memory)
-- Run cleanup more frequently
+- Reduce the async queue buffer size
+- Audit events live in go-qrdb's on-disk chain, not in process memory; look elsewhere for the growth
 
 ### Slow Queries
 

@@ -143,6 +143,54 @@ func TestModuleTools_ClassCounts(t *testing.T) {
 	}
 }
 
+// TestModuleTools_EntityKVToolsOnExistingKVPermissions proves a full node
+// lists quicbaas's entity KV tools under their quicbaas_kv_* names (the
+// qrdb_* names belong to go-qrdb's own key/value tools there), each on the
+// kv:* permission its qrdb_* twin already carries: no new permission, no
+// role widened.
+func TestModuleTools_EntityKVToolsOnExistingKVPermissions(t *testing.T) {
+	specs := make(map[string]ToolSpec)
+	for _, spec := range ModuleTools() {
+		specs[spec.Name] = spec
+	}
+	for _, verb := range []string{"put", "get", "delete", "list"} {
+		name := "quicbaas_kv_" + verb
+		spec, ok := specs[name]
+		if !ok {
+			t.Errorf("%s is not listed on the node", name)
+			continue
+		}
+		if spec.Public {
+			t.Errorf("%s must not be public", name)
+		}
+		if spec.Resource != "kv" || spec.Action != verb {
+			t.Errorf("%s permission = %s:%s, want kv:%s", name, spec.Resource, spec.Action, verb)
+		}
+		twinResource, twinAction, mapped := getToolQRDBPermission("qrdb_" + verb)
+		if !mapped || twinResource != spec.Resource || twinAction != spec.Action {
+			t.Errorf("%s permission %s:%s is not its qrdb_%s twin's %s:%s",
+				name, spec.Resource, spec.Action, verb, twinResource, twinAction)
+		}
+		if _, listed := specs["qrdb_"+verb]; listed {
+			t.Errorf("qrdb_%s must stay off the node (go-qrdb owns it)", verb)
+		}
+	}
+}
+
+// TestInvokeTool_EntityKVPutReachesEntityHandler proves quicbaas_kv_put runs
+// quicbaas's entity put handler: a call with undecodable data fails in the entity
+// handler's own base64 decoding, not with an unknown-tool error.
+func TestInvokeTool_EntityKVPutReachesEntityHandler(t *testing.T) {
+	srv := newModuleSupportMCPServer(t)
+	_, err := srv.InvokeTool(context.Background(), "quicbaas_kv_put", map[string]interface{}{
+		"entityType": "users", "id": float64(1), "data": "not base64!",
+	})
+	var invalid *UserToolInvalidArgumentError
+	if !errors.As(err, &invalid) || invalid.Arg != "data" {
+		t.Fatalf("expected the entity handler's *UserToolInvalidArgumentError on data, got %T: %v", err, err)
+	}
+}
+
 // TestToolName covers the sanitization rules.
 func TestToolName(t *testing.T) {
 	cases := map[string]string{
