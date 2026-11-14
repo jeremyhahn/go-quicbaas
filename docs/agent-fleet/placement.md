@@ -3,8 +3,8 @@
 > **Status: DESIGN** · Last verified: 2026-11-13
 > The design for SPEC row `declarative-placement` (go-quicbaas#28, row issue
 > #1681), built by salvaging the archived wp13 placement and wp14 actuation
-> work (go-quicbaas#761) onto today's fleet code. P0 and P1 (the spec, its
-> store and the host inventory) are built; the rest is not. Where a question needs the owner or the CA it is listed
+> work (go-quicbaas#761) onto today's fleet code. P0 to P2 (the spec, its
+> store, the host inventory and the drift report) are built; the rest is not. Where a question needs the owner or the CA it is listed
 > under [Open questions](#open-questions), not decided.
 
 Placement says **where a class of work may run**, reports where it actually
@@ -122,9 +122,14 @@ the credential cannot carry the role, however much room it has.
 3. the live work of the spec's class: on main, `SessionRecord` (tenant, session
    id, `HostAffinity`), which replaces the archive's `WorkLease`.
 
-Findings come from one closed set of kinds: `node_not_admitted`,
-`capability_missing`, `node_unregistered`, `node_unrecorded`,
-`spec_node_absent`, `no_admissible_node`, `workload_class_unclassified`. Each
+The session store has no role on a record yet (open question 2), so its
+adapter (`SessionWorkSource`) takes the caller's `SessionRoleFunc`.
+
+Findings come from one closed set of kinds: `host_not_admitted`,
+`capability_missing`, `host_unregistered`, `spec_host_absent`,
+`no_admissible_host`, `host_count_short` (fewer admissible hosts than
+`host_count`) and `role_unclassified`. The archive's `node_unrecorded` is
+gone: work with no recorded host is refused (below), not reported. Each
 finding carries a remedy (`relocate` with its admissible destinations,
 `no_candidate`, `operator_decision`) and the spec's disposition.
 
@@ -146,14 +151,14 @@ never mentions it.
   under-credits. Grouping records by `Host` happens in the adapter, before the
   reporter sees them, so an ordinary multi-daemon host never trips this. Only
   a broken adapter does.
-- **Unnameable work is refused** (`PlacementLeaseAmbiguousError`, to be renamed
-  for sessions). Two pieces of work the report cannot tell apart would produce
+- **Unnameable work is refused** (`PlacementWorkUnnameableError`, naming the
+  work and the field). Two pieces of work the report cannot tell apart would produce
   one finding that an actuator could apply to the wrong one. In the archive
   this was a lease with no tenant. On main a `SessionRecord` carries its
   tenant, so the rule becomes: work with no tenant, no id or no recorded host
-  is refused with the work named.
-- A spec whose class is not in the classification table reports
-  `workload_class_unclassified` and is never actuated.
+  is refused with the work named, as is an id seen twice.
+- A spec whose role is not in the classification table reports
+  `role_unclassified` and is never actuated.
 - An edit written against a stale generation is refused
   (`PlacementSpecStaleError`), not merged.
 
@@ -259,7 +264,7 @@ Each slice is one lane (≤ ~150 turns), lands green and leaves main shippable.
 |---|---|---|
 | P0 | **Landed.** Re-apply 3f7eb214: every `RequiredCapabilities` entry is a hard match in `matchFleetNodeForTask` (`persistent_sessions` stays backend-scoped) | Table test per capability. A regression test that a `docker` requirement no longer dispatches to an agent without it. `make test-orchestration` |
 | P1 | **Landed on the row branch** (`placement.go`, `placement_store.go`, `placement_inventory.go`; the lost-edit test runs on `NewMemoryTaskKV`'s guarded writes). `PlacementSpec` with `role` and `host_count` or `hosts`, a per-role `FleetJobProfile`, validation, tenant-scoped store with CAS generation, `FleetInventory` grouping by host, the refusal error types | Lost-edit test (two racing declares, one `PlacementSpecStaleError`), using `pkg/testutil/qrdbnode` under the consensus-arbitration carve-out. A control test feeding the same records through a one-for-one inventory (refused) and through the adapter (reported). `make test-orchestration` |
-| P2 | Read-only `DriftReporter` over specs, the inventory and `SessionRecord`, the field-coverage check, the unnameable-work refusal | One test per finding kind. Mutation checks that an unclassified field fails construction. Duplicate-host and tenantless-session refusals. `make test-orchestration` |
+| P2 | **Landed on the row branch** (`placement_drift.go`). Read-only `DriftReporter` over specs, the inventory and `SessionRecord`, the field-coverage check, the unnameable-work refusal | One test per finding kind. Mutation checks that an unclassified field fails construction. Duplicate-host and tenantless-session refusals. `make test-orchestration` |
 | P3a | `PlacementService` (declare/get/list/withdraw/drift), `placement:read`/`write` contributions, REST + gRPC + embedded + SDK client | Service tests with error paths. Authz table tests (denied without the permission, cross-tenant refused). `make test-service`, `test-api-rest`, `test-api-grpc` and the SDK client's package target |
 | P3b | The same verbs on QUIC, MCP, Unix and the CLI. Docs in `api.md` / `cli.md` | Per-transport handler tests. Parity test across transports. A new `integration-test-fleet-placement` E2E over every transport (CI runs it, since it needs Docker) |
 | P4 | `ConsentLedger` (raise/answer/get), `placement:consent`, list/answer verbs on all transports | Guarded-create race (one request, answer survives a re-raise). Generation change voids a grant. Unreadable ledger refuses. `By` taken from the subject |
