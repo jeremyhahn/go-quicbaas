@@ -346,7 +346,7 @@ func (r *Runtime) CreateContainer(ctx context.Context, config *ContainerConfig) 
 
 	r.logger.Info("creating container", "name", config.Name, "image", config.Image, "id", id)
 
-	bundleDir := filepath.Join(r.config.RunRoot, "bundles", id)
+	bundleDir := filepath.Join(r.bundlesDir(), id)
 	if err := os.MkdirAll(bundleDir, 0700); err != nil {
 		return nil, &RuntimeError{Operation: "create bundle", Err: err}
 	}
@@ -404,6 +404,12 @@ func (r *Runtime) configureContainer(id, bundleDir, rootfsDir string, config *Co
 	if err := os.WriteFile(filepath.Join(bundleDir, "config.json"), configData, 0600); err != nil {
 		return nil, &RuntimeError{Operation: "write config", Err: err}
 	}
+	createdAt := time.Now()
+	if err := writeContainerRecord(bundleDir, LeftoverContainer{
+		ID: id, Name: config.Name, Image: config.Image, CreatedAt: createdAt, Labels: config.Labels,
+	}); err != nil {
+		return nil, &RuntimeError{Operation: "write container record", Err: err}
+	}
 
 	if err := r.backends.engine.Create(id, oci); err != nil {
 		return nil, &RuntimeError{Operation: "create container", Err: err}
@@ -415,7 +421,7 @@ func (r *Runtime) configureContainer(id, bundleDir, rootfsDir string, config *Co
 		Image:     config.Image,
 		BundleDir: bundleDir,
 		State:     ContainerStateCreated,
-		CreatedAt: time.Now(),
+		CreatedAt: createdAt,
 		Config:    config,
 		init: processSpec{
 			Args: oci.Process.Args,

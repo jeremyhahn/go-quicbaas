@@ -69,6 +69,24 @@ func (j *JobRuntime) SweepOwned(ctx context.Context, owner string) (orchestratio
 		sweep.Removed = append(sweep.Removed, state.ID)
 		j.runtime.logger.Info("container sweep: removed an orphan left by a previous run", "id", state.ID, "owner", owner)
 	}
+
+	// The containers above are this process's. An agent that crashed or was
+	// killed left its own on disk, still running perhaps; this process never
+	// registered them, so only their bundle records name them.
+	leftovers, err := j.runtime.ListLeftovers()
+	if err != nil {
+		return sweep, &orchestration.ContainerSweepError{Owner: owner, Cause: err}
+	}
+	for _, leftover := range leftovers {
+		if leftover.Labels[orchestration.ContainerOwnerLabel] != owner {
+			continue
+		}
+		if err := j.runtime.ReclaimLeftover(leftover.ID); err != nil {
+			return sweep, &orchestration.ContainerSweepError{Owner: owner, ContainerID: leftover.ID, Cause: err}
+		}
+		sweep.Removed = append(sweep.Removed, leftover.ID)
+		j.runtime.logger.Info("container sweep: reclaimed an orphan left by an earlier agent", "id", leftover.ID, "owner", owner)
+	}
 	return sweep, nil
 }
 
