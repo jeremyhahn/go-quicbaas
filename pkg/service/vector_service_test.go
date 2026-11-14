@@ -2474,3 +2474,70 @@ func TestGetRebuildProgress_TenantNamespace(t *testing.T) {
 	_, err = svc.GetRebuildProgress(other, &GetRebuildProgressRequest{JobID: "jt"})
 	require.Error(t, err)
 }
+
+// TestPerformIndexRebuild_PagesWithVectors proves the rebuild asks storage for
+// the embeddings and advances the scan Offset page by page (#1868).
+func TestPerformIndexRebuild_PagesWithVectors(t *testing.T) {
+	svc, storage, _, _ := newVecSvcWithSDK(t, "test-ns", 2)
+	const total = 2500
+	var offsets []int
+	storage.scanNamespaceFn = func(_ context.Context, _ string, opts *interfaces.VectorScanOptions) ([]*interfaces.VectorValue, error) {
+		offsets = append(offsets, opts.Offset)
+		var out []*interfaces.VectorValue
+		for i := opts.Offset; i < total && len(out) < opts.Limit; i++ {
+			v := &interfaces.VectorValue{ID: uint64(i + 1)}
+			if opts.IncludeVectors {
+				v.Embedding = []float32{float32(i), 1}
+			}
+			out = append(out, v)
+		}
+		return out, nil
+	}
+	idx := newVecMockVectorIndex()
+	var inserted, empty int
+	idx.insertFn = func(_ uint64, emb []float32) error {
+		inserted++
+		if len(emb) == 0 {
+			empty++
+		}
+		return nil
+	}
+	svc.indexFactory = &vecMockVectorIndexFactory{createFn: func(*interfaces.VectorIndexConfig) (interfaces.VectorIndex, error) {
+		return idx, nil
+	}}
+	job := &RebuildJobState{JobID: "jp", Namespace: "test-ns", InProgress: true, TotalVectors: total, StartedAt: time.Now()}
+	svc.jobMu.Lock()
+	svc.rebuildJobs["jp"] = job
+	svc.jobMu.Unlock()
+
+	require.NoError(t, svc.performIndexRebuild(tenantctx.WithSystem(context.Background()), "jp", "test-ns", nil))
+	assert.Equal(t, []int{0, 1000, 2000}, offsets)
+	assert.Equal(t, total, inserted)
+	assert.Zero(t, empty, "the rebuild indexed vectors without their embeddings")
+}
+
+// TestGetCompactionProgress_TenantNamespace proves a caller sees only its own
+// tenant's compaction operations, by namespace and by operation ID (#2055).
+func TestGetCompactionProgress_TenantNamespace(t *testing.T) {
+	svc, _, _, _ := newVecSvcWithSDK(t, "test-ns", 128)
+	job := &CompactionJobState{OperationID: "op1", Namespace: vectorTenantScopedNamespace("acme-corp", "test-ns"), InProgress: true, StartedAt: time.Now()}
+	svc.jobMu.Lock()
+	svc.compactionJobs["op1"] = job
+	svc.jobMu.Unlock()
+
+	acme := tenantctx.WithTenant(context.Background(), "acme-corp")
+	resp, err := svc.GetCompactionProgress(acme, &GetCompactionProgressRequest{Namespace: "test-ns"})
+	require.NoError(t, err)
+	assert.Equal(t, "op1", resp.OperationID)
+	assert.Equal(t, "test-ns", resp.Namespace)
+
+	resp, err = svc.GetCompactionProgress(acme, &GetCompactionProgressRequest{OperationID: "op1"})
+	require.NoError(t, err)
+	assert.Equal(t, "test-ns", resp.Namespace)
+
+	other := tenantctx.WithTenant(context.Background(), "other-co")
+	_, err = svc.GetCompactionProgress(other, &GetCompactionProgressRequest{Namespace: "test-ns"})
+	require.Error(t, err)
+	_, err = svc.GetCompactionProgress(other, &GetCompactionProgressRequest{OperationID: "op1"})
+	require.Error(t, err)
+}

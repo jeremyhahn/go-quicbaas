@@ -1749,9 +1749,10 @@ func (v *vectorService) performIndexRebuild(ctx context.Context, jobID, namespac
 		}
 	}
 
-	// Scan all vectors and rebuild index
+	// Scan all vectors and rebuild index; the index needs the embeddings.
 	opts := &interfaces.VectorScanOptions{
-		Limit: 1000,
+		Limit:          1000,
+		IncludeVectors: true,
 	}
 
 	offset := 0
@@ -2460,12 +2461,27 @@ func (v *vectorService) GetCompactionProgress(ctx context.Context, req *GetCompa
 	}
 	v.mu.RUnlock()
 
+	// Jobs record the tenant-scoped namespace: a caller sees only its own
+	// tenant's operations (#2055).
+	tenantID, err := prepareTenantContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+	tenantPrefix := vectorTenantScopedNamespace(tenantID, "")
+	scoped := vectorTenantScopedNamespace(tenantID, req.Namespace)
+
 	v.jobMu.RLock()
 	defer v.jobMu.RUnlock()
 
-	// If operation ID provided, look for specific job
+	// If operation ID provided, look for specific job; a job of another
+	// tenant is reported as not found.
 	if req.OperationID != "" {
 		job, exists := v.compactionJobs[req.OperationID]
+		if exists {
+			job.mu.RLock()
+			exists = strings.HasPrefix(job.Namespace, tenantPrefix)
+			job.mu.RUnlock()
+		}
 		if !exists {
 			return nil, &qbErrors.QBError{
 				Code: qbErrors.ErrNotFound,
@@ -2498,7 +2514,7 @@ func (v *vectorService) GetCompactionProgress(ctx context.Context, req *GetCompa
 
 		return &GetCompactionProgressResponse{
 			OperationID:     job.OperationID,
-			Namespace:       job.Namespace,
+			Namespace:       vectorTenantStripNamespace(tenantID, job.Namespace),
 			BytesCompacted:  job.BytesCompacted,
 			TotalBytes:      job.TotalBytes,
 			PercentComplete: percentComplete,
@@ -2512,11 +2528,13 @@ func (v *vectorService) GetCompactionProgress(ctx context.Context, req *GetCompa
 	// Find the most recent job for the namespace
 	var latestJob *CompactionJobState
 	for _, job := range v.compactionJobs {
-		if job.Namespace == req.Namespace {
+		job.mu.RLock()
+		if job.Namespace == scoped {
 			if latestJob == nil || job.StartedAt.After(latestJob.StartedAt) {
 				latestJob = job
 			}
 		}
+		job.mu.RUnlock()
 	}
 
 	if latestJob == nil {
@@ -2551,7 +2569,7 @@ func (v *vectorService) GetCompactionProgress(ctx context.Context, req *GetCompa
 
 	return &GetCompactionProgressResponse{
 		OperationID:     latestJob.OperationID,
-		Namespace:       latestJob.Namespace,
+		Namespace:       vectorTenantStripNamespace(tenantID, latestJob.Namespace),
 		BytesCompacted:  latestJob.BytesCompacted,
 		TotalBytes:      latestJob.TotalBytes,
 		PercentComplete: percentComplete,

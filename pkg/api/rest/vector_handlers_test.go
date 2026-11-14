@@ -1873,27 +1873,65 @@ func TestHandleRebuildIndex(t *testing.T) {
 }
 
 func TestHandleGetIndexProgress(t *testing.T) {
+	notFound := &errors.QBError{Code: errors.ErrNotFound, Op: "progress", Err: &errors.MessageError{Message: "rebuild job not found"}}
 	tests := []struct {
 		name           string
 		namespace      string
 		queryParams    string
+		setupMock      func(*MockVectorService)
 		expectedStatus int
 		checkResponse  func(*testing.T, *httptest.ResponseRecorder)
 	}{
 		{
-			name:           "get index progress with operation ID",
-			namespace:      "test-ns",
-			queryParams:    "?operation_id=job-123",
+			name:        "the service's progress is returned",
+			namespace:   "test-ns",
+			queryParams: "?operation_id=job-123",
+			setupMock: func(m *MockVectorService) {
+				m.On("GetRebuildProgress", mock.Anything, mock.MatchedBy(func(req *service.GetRebuildProgressRequest) bool {
+					return req.JobID == "job-123" && req.Namespace == "test-ns"
+				})).Return(&service.GetRebuildProgressResponse{
+					JobID:            "job-123",
+					Namespace:        "test-ns",
+					Status:           "running",
+					VectorsProcessed: 40,
+					TotalVectors:     100,
+					PercentComplete:  40,
+				}, nil).Once()
+			},
 			expectedStatus: http.StatusOK,
 			checkResponse: func(t *testing.T, w *httptest.ResponseRecorder) {
 				var resp IndexProgressResponse
 				err := json.NewDecoder(w.Body).Decode(&resp)
 				require.NoError(t, err)
 				assert.Equal(t, "job-123", resp.OperationID)
-				assert.Equal(t, "in_progress", resp.Status)
+				assert.Equal(t, "running", resp.Status)
+				assert.Equal(t, int64(40), resp.VectorsIndexed)
+				assert.Equal(t, int64(100), resp.TotalVectors)
 				assert.Empty(t, resp.ErrorMessage)
 				assert.Equal(t, "test-ns", resp.Namespace)
 			},
+		},
+		{
+			name:        "a job of another tenant is not found",
+			namespace:   "test-ns",
+			queryParams: "?operation_id=job-other",
+			setupMock: func(m *MockVectorService) {
+				m.On("GetRebuildProgress", mock.Anything, mock.Anything).Return(nil, notFound).Once()
+			},
+			expectedStatus: http.StatusNotFound,
+		},
+		{
+			name:        "a job of another namespace is not found",
+			namespace:   "test-ns",
+			queryParams: "?operation_id=job-123",
+			setupMock: func(m *MockVectorService) {
+				m.On("GetRebuildProgress", mock.Anything, mock.Anything).Return(&service.GetRebuildProgressResponse{
+					JobID:     "job-123",
+					Namespace: "other-ns",
+					Status:    "running",
+				}, nil).Once()
+			},
+			expectedStatus: http.StatusNotFound,
 		},
 		{
 			name:           "missing operation ID",
@@ -1908,8 +1946,14 @@ func TestHandleGetIndexProgress(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			server, _, cleanup := setupMockServer(t)
+			server, mockSvc, cleanup := setupMockServer(t)
 			defer cleanup()
+
+			mockVectorSvc := &MockVectorService{}
+			mockSvc.VectorService = mockVectorSvc
+			if tt.setupMock != nil {
+				tt.setupMock(mockVectorSvc)
+			}
 
 			url := "/api/v1/vector/namespaces/" + tt.namespace + "/index/progress" + tt.queryParams
 			req := httptest.NewRequest(http.MethodGet, url, nil)
@@ -1921,6 +1965,7 @@ func TestHandleGetIndexProgress(t *testing.T) {
 			if tt.checkResponse != nil {
 				tt.checkResponse(t, w)
 			}
+			mockVectorSvc.AssertExpectations(t)
 		})
 	}
 }
@@ -2031,21 +2076,41 @@ func TestHandleCompactNamespace(t *testing.T) {
 	tests := []struct {
 		name           string
 		body           interface{}
+		setupMock      func(*MockVectorService)
 		expectedStatus int
 		checkResponse  func(*testing.T, *httptest.ResponseRecorder)
 	}{
 		{
-			name: "successful compaction request",
+			name: "the service's operation ID is returned",
 			body: map[string]interface{}{
 				"namespace": "test-ns",
+			},
+			setupMock: func(m *MockVectorService) {
+				m.On("CompactNamespace", mock.Anything, mock.MatchedBy(func(req *service.CompactNamespaceRequest) bool {
+					return req.Namespace == "test-ns" && req.Async
+				})).Return(&service.CompactNamespaceResponse{
+					OperationID: "op-42",
+					StartedAt:   time.Now().UnixNano(),
+				}, nil).Once()
 			},
 			expectedStatus: http.StatusAccepted,
 			checkResponse: func(t *testing.T, w *httptest.ResponseRecorder) {
 				var resp CompactNamespaceResponse
 				err := json.NewDecoder(w.Body).Decode(&resp)
 				require.NoError(t, err)
-				assert.NotEmpty(t, resp.OperationID)
+				assert.Equal(t, "op-42", resp.OperationID)
 			},
+		},
+		{
+			name: "a service error is answered",
+			body: map[string]interface{}{
+				"namespace": "missing-ns",
+			},
+			setupMock: func(m *MockVectorService) {
+				m.On("CompactNamespace", mock.Anything, mock.Anything).Return(nil,
+					&errors.QBError{Code: errors.ErrNotFound, Op: "compact", Err: &errors.MessageError{Message: "namespace not found"}}).Once()
+			},
+			expectedStatus: http.StatusNotFound,
 		},
 		{
 			name: "missing namespace",
@@ -2066,8 +2131,14 @@ func TestHandleCompactNamespace(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			server, _, cleanup := setupMockServer(t)
+			server, mockSvc, cleanup := setupMockServer(t)
 			defer cleanup()
+
+			mockVectorSvc := &MockVectorService{}
+			mockSvc.VectorService = mockVectorSvc
+			if tt.setupMock != nil {
+				tt.setupMock(mockVectorSvc)
+			}
 
 			var bodyBytes []byte
 			if str, ok := tt.body.(string); ok {
@@ -2086,6 +2157,7 @@ func TestHandleCompactNamespace(t *testing.T) {
 			if tt.checkResponse != nil {
 				tt.checkResponse(t, w)
 			}
+			mockVectorSvc.AssertExpectations(t)
 		})
 	}
 }
@@ -2094,19 +2166,45 @@ func TestHandleGetCompactionProgress(t *testing.T) {
 	tests := []struct {
 		name           string
 		queryParams    string
+		setupMock      func(*MockVectorService)
 		expectedStatus int
 		checkResponse  func(*testing.T, *httptest.ResponseRecorder)
 	}{
 		{
-			name:           "get compaction progress with operation ID",
-			queryParams:    "?operation_id=op-123",
+			name:        "the service's progress is returned",
+			queryParams: "?operation_id=op-123",
+			setupMock: func(m *MockVectorService) {
+				m.On("GetCompactionProgress", mock.Anything, mock.MatchedBy(func(req *service.GetCompactionProgressRequest) bool {
+					return req.OperationID == "op-123"
+				})).Return(&service.GetCompactionProgressResponse{
+					OperationID:     "op-123",
+					Namespace:       "test-ns",
+					BytesCompacted:  10,
+					TotalBytes:      20,
+					PercentComplete: 50,
+					InProgress:      true,
+					StartedAt:       time.Now().UnixNano(),
+				}, nil).Once()
+			},
 			expectedStatus: http.StatusOK,
 			checkResponse: func(t *testing.T, w *httptest.ResponseRecorder) {
 				var resp CompactionProgressResponse
 				err := json.NewDecoder(w.Body).Decode(&resp)
 				require.NoError(t, err)
 				assert.Equal(t, "op-123", resp.OperationID)
+				assert.Equal(t, "test-ns", resp.Namespace)
+				assert.Equal(t, "running", resp.Status)
+				assert.Equal(t, int64(10), resp.BytesCompacted)
 			},
+		},
+		{
+			name:        "an operation of another tenant is not found",
+			queryParams: "?operation_id=op-other",
+			setupMock: func(m *MockVectorService) {
+				m.On("GetCompactionProgress", mock.Anything, mock.Anything).Return(nil,
+					&errors.QBError{Code: errors.ErrNotFound, Op: "progress", Err: &errors.MessageError{Message: "compaction operation not found"}}).Once()
+			},
+			expectedStatus: http.StatusNotFound,
 		},
 		{
 			name:           "missing operation ID",
@@ -2120,8 +2218,14 @@ func TestHandleGetCompactionProgress(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			server, _, cleanup := setupMockServer(t)
+			server, mockSvc, cleanup := setupMockServer(t)
 			defer cleanup()
+
+			mockVectorSvc := &MockVectorService{}
+			mockSvc.VectorService = mockVectorSvc
+			if tt.setupMock != nil {
+				tt.setupMock(mockVectorSvc)
+			}
 
 			url := "/api/v1/vector/admin/compact/progress" + tt.queryParams
 			req := httptest.NewRequest(http.MethodGet, url, nil)
@@ -2133,6 +2237,7 @@ func TestHandleGetCompactionProgress(t *testing.T) {
 			if tt.checkResponse != nil {
 				tt.checkResponse(t, w)
 			}
+			mockVectorSvc.AssertExpectations(t)
 		})
 	}
 }

@@ -18,6 +18,7 @@ package server
 import (
 	"context"
 	"fmt"
+	"sort"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
@@ -194,17 +195,77 @@ func (n *nodeVectorStorage) ScanNamespace(ctx context.Context, namespace string,
 		IncludeVectors:  true,
 		IncludeMetadata: true,
 	}
+	offset, limit := 0, 0
 	if opts != nil {
 		req.Limit = opts.Limit
 		req.Cursor = opts.Cursor
 		req.IncludeVectors = opts.IncludeVectors
 		req.IncludeMetadata = opts.IncludeMetadata
+		offset, limit = opts.Offset, opts.Limit
 	}
-	resp, err := n.client.Vector().ListVectors(ctx, req)
+	if req.Cursor != "" || (offset <= 0 && limit <= 0) {
+		resp, err := n.client.Vector().ListVectors(ctx, req)
+		if err != nil {
+			return nil, err
+		}
+		return nodeVectorDataToInterface(resp.Vectors), nil
+	}
+
+	// qrdb pages by cursor only, and the order of one page is not stable
+	// from call to call. Offset paging (#1868) needs a stable order, so
+	// read the whole namespace, order it by ID, and cut the page from that.
+	all, err := n.listAllVectors(ctx, req)
 	if err != nil {
 		return nil, err
 	}
-	return nodeVectorDataToInterface(resp.Vectors), nil
+	if offset < 0 {
+		offset = 0
+	}
+	if offset >= len(all) {
+		return []*interfaces.VectorValue{}, nil
+	}
+	all = all[offset:]
+	if limit > 0 && limit < len(all) {
+		all = all[:limit]
+	}
+	return nodeVectorDataToInterface(all), nil
+}
+
+// nodeScanPageSize is the qrdb page size listAllVectors reads with.
+const nodeScanPageSize = 1000
+
+// listAllVectors follows qrdb's cursor through every page of a namespace and
+// returns its vectors once each, ordered by ID.
+func (n *nodeVectorStorage) listAllVectors(ctx context.Context, req *qrdbtransport.ListVectorsRequest) ([]*qrdbtransport.VectorData, error) {
+	page := *req
+	page.Limit = nodeScanPageSize
+	page.Cursor = ""
+	seen := make(map[uint64]struct{})
+	var all []*qrdbtransport.VectorData
+	for {
+		resp, err := n.client.Vector().ListVectors(ctx, &page)
+		if err != nil {
+			return nil, err
+		}
+		added := 0
+		for _, v := range resp.Vectors {
+			if v == nil {
+				continue
+			}
+			if _, dup := seen[v.ID]; dup {
+				continue
+			}
+			seen[v.ID] = struct{}{}
+			all = append(all, v)
+			added++
+		}
+		if resp.NextCursor == "" || resp.NextCursor == page.Cursor || added == 0 {
+			break
+		}
+		page.Cursor = resp.NextCursor
+	}
+	sort.Slice(all, func(i, j int) bool { return all[i].ID < all[j].ID })
+	return all, nil
 }
 
 // ScanByMultipleFilters scans vectors matching multiple metadata filters via the node transport.
