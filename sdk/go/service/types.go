@@ -107,6 +107,8 @@ type (
 
 	// CertificateService provides certificate operations.
 	CertificateService = pkgservice.CertificateService
+	// TrustedCAService is the go-xkms CAService the server composes (#1330).
+	TrustedCAService = pkgservice.TrustedCAService
 
 	// DynamicSecretsService handles dynamic credential generation.
 	DynamicSecretsService = pkgservice.DynamicSecretsService
