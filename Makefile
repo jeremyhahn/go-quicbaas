@@ -1562,6 +1562,16 @@ test-lean: check-insecure-tls check-build-tags check-local-keygen ## Run unit te
 	@echo "$(YELLOW)Build tags: $(LEAN_TEST_TAGS)$(NC)"
 	$(GOTEST) -p 2 -tags '$(LEAN_TEST_TAGS)' -timeout=10m ./pkg/... ./cmd/...
 
+INTEROP_LEGS := oidc http3 grpc mcp
+
+.PHONY: interop-test
+interop-test: $(addprefix interop-test-,$(INTEROP_LEGS)) ## Run every external-implementation interop leg (go-quicbaas#203)
+
+.PHONY: $(addprefix interop-test-,$(INTEROP_LEGS))
+$(addprefix interop-test-,$(INTEROP_LEGS)): interop-test-%: ## Run one interop leg: its baseline first, then its tests
+	@echo "$(BLUE)Running the $* interop leg...$(NC)"
+	INTEROP_TAGS='$(TEST_TAGS)' ./scripts/interop-legs.sh run $*
+
 .PHONY: test-tooling
 test-tooling: ## Run the unit tests of the repository tooling (scripts, build gates)
 	@echo "$(BLUE)Running the repository tooling unit tests...$(NC)"
