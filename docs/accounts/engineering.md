@@ -276,7 +276,8 @@ same turns.
 - builds the ledger over the tenant-routed orchestration KV, so entries live
   inside the owning tenant's barrier, and attaches the spend authority to both
   release paths (`WithSpendAuthority` on the resolver, `SetSpendAuthority` on
-  the account service);
+  the account service) and to every turn (`SetSpendAuthority` on the agent
+  service, asked in `runPromptTurn`);
 - wires the scope spend reader into admission (`:618`);
 - selects the job lease store, starts the sweep goroutine and registers the
   drain step.
