@@ -5,6 +5,7 @@ import (
 	"errors"
 	"sync"
 	"testing"
+	"time"
 )
 
 // concludingStorage is the mock store with the guarded run transition: the
@@ -162,6 +163,32 @@ func TestClusteredOutcome_LosesToARecoveryThatConcludedTheRun(t *testing.T) {
 	}
 	if executor.ConcludedElsewhere() != 1 {
 		t.Errorf("ConcludedElsewhere = %d, want 1", executor.ConcludedElsewhere())
+	}
+}
+
+// TestClusteredOutcome_ALosingOutcomeWritesNoHistory: an outcome that lost
+// the guard leaves the history alone too. Before, the job record was spared
+// but the late run still appended its own execution record beside the
+// recovery's, so one run read as two.
+func TestClusteredOutcome_ALosingOutcomeWritesNoHistory(t *testing.T) {
+	storage := newConcludingStorage()
+	executor := clusteredNode(t, storage, "node-1")
+	recoverer := clusteredNode(t, storage, "node-2")
+	job := seedRunningJob(t, storage.mockJobStorage, runningRecoveryJob())
+	executor.noteRunStarted(job)
+
+	if _, err := recoverer.RecoverAbandonedRun(context.Background(), job, goodAttestation()); err != nil {
+		t.Fatalf("RecoverAbandonedRun: %v", err)
+	}
+	exec := &JobExecution{JobID: job.ID, Status: JobStatusRunning, StartedAt: time.Now()}
+	executor.handleJobSuccess(context.Background(), copyJob(job), exec, &JobResult{Success: true})
+
+	executions, err := storage.GetExecutions(context.Background(), job.ID, "", 10)
+	if err != nil {
+		t.Fatalf("GetExecutions: %v", err)
+	}
+	if len(executions) != 1 {
+		t.Fatalf("history holds %d records for one run, want the recovery's 1", len(executions))
 	}
 }
 

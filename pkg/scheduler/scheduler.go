@@ -1573,7 +1573,10 @@ func (s *SchedulerEngine) handleInterruptedRun(ctx context.Context, job *Job, ex
 
 	s.logWarn("Job %d (%s) interrupted by scheduler shutdown; re-armed for %s",
 		job.ID, job.Name, job.NextRun)
-	s.persistJobOutcome(storageCtx, job)
+	if !s.persistJobOutcome(storageCtx, job) {
+		// Another writer concluded this run: its record and history stand.
+		return
+	}
 	if err := s.storage.SaveExecution(storageCtx, exec); err != nil {
 		s.storageErrors.Add(1)
 	}
@@ -1612,7 +1615,10 @@ func (s *SchedulerEngine) handleJobSuccess(ctx context.Context, job *Job, exec *
 
 	// Persist the outcome under the job's stripe lock so a concurrent
 	// cancel or delete cannot be clobbered by this write.
-	s.persistJobOutcome(storageCtx, job)
+	if !s.persistJobOutcome(storageCtx, job) {
+		// Another writer concluded this run: its record and history stand.
+		return
+	}
 	if err := s.storage.SaveExecution(storageCtx, exec); err != nil {
 		s.storageErrors.Add(1)
 	}
@@ -1631,7 +1637,11 @@ func (s *SchedulerEngine) handleJobSuccess(ctx context.Context, job *Job, exec *
 //
 // Writes remain best effort (errors are tracked via storageErrors),
 // matching the background-processing semantics of the callers.
-func (s *SchedulerEngine) persistJobOutcome(ctx context.Context, job *Job) {
+//
+// It reports whether this outcome concludes the run. False means another
+// writer concluded it (see concludeOwnRun), and the caller must write no
+// history either: the run's record and history are the winner's.
+func (s *SchedulerEngine) persistJobOutcome(ctx context.Context, job *Job) bool {
 	lock := s.jobLock(job.ID)
 	lock.Lock()
 	defer lock.Unlock()
@@ -1640,14 +1650,14 @@ func (s *SchedulerEngine) persistJobOutcome(ctx context.Context, job *Job) {
 	// a recovery on another node may have concluded this run as abandoned.
 	// The guard decides which conclusion stands, and a loss writes nothing.
 	if !s.concludeOwnRun(ctx, job) {
-		return
+		return false
 	}
 
 	current, getErr := s.storage.GetJob(ctx, job.ID, JobTenantID(job))
 	switch {
 	case isJobNotFound(getErr), getErr == nil && current == nil:
 		// Job was deleted concurrently; do not resurrect it.
-		return
+		return true
 	case getErr == nil && (current.Status == JobStatusCanceled || current.Status == JobStatusCompleted):
 		// Preserve the terminal status set by a concurrent transition.
 		job.Status = current.Status
@@ -1656,6 +1666,7 @@ func (s *SchedulerEngine) persistJobOutcome(ctx context.Context, job *Job) {
 	if err := s.storage.UpdateJob(ctx, job); err != nil {
 		s.storageErrors.Add(1)
 	}
+	return true
 }
 
 // applyRunFailure records one failed run on job and decides whether it retries.
@@ -1742,7 +1753,10 @@ func (s *SchedulerEngine) handleJobError(ctx context.Context, job *Job, exec *Jo
 
 	// Persist the outcome under the job's stripe lock so a concurrent
 	// cancel or delete cannot be clobbered by this write.
-	s.persistJobOutcome(storageCtx, job)
+	if !s.persistJobOutcome(storageCtx, job) {
+		// Another writer concluded this run: its record and history stand.
+		return
+	}
 	if storageErr := s.storage.SaveExecution(storageCtx, exec); storageErr != nil {
 		s.storageErrors.Add(1)
 	}
