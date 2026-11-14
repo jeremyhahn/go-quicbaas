@@ -19,7 +19,6 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
-	"slices"
 	"strconv"
 	"strings"
 
@@ -28,7 +27,6 @@ import (
 	qrdbnode "github.com/jeremyhahn/go-qrdb/sdk/go/node"
 	xkmslib "github.com/jeremyhahn/go-xkms/pkg/xkms"
 	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
-	"github.com/quic-go/quic-go/http3"
 
 	mcpapi "github.com/jeremyhahn/go-quicbaas/pkg/api/mcp"
 	restapi "github.com/jeremyhahn/go-quicbaas/pkg/api/rest"
@@ -506,24 +504,13 @@ func (s *Server) serverTLSConfigRef() *tls.Config {
 // serverTLSConfigRef via GetConfigForClient — failing closed with the typed
 // UnifiedTLSNotReadyError until the CA-backed configuration exists, and
 // picking up later certificate rotations without listener restarts.
-//
-// The same configuration serves the TCP transports and the REST server's
-// HTTP/3 (QUIC) listener. s.tlsConfig advertises h2 and http/1.1 for TCP;
-// a handshake that offers h3 is a QUIC one, and gets a clone advertising
-// exactly h3 — otherwise every HTTP/3 client fails with "tls: no
-// application protocol".
 func (s *Server) unifiedServerTLSConfig() *tls.Config {
 	return &tls.Config{
 		MinVersion: tls.VersionTLS13,
-		GetConfigForClient: func(hello *tls.ClientHelloInfo) (*tls.Config, error) {
+		GetConfigForClient: func(*tls.ClientHelloInfo) (*tls.Config, error) {
 			cfg := s.serverTLSConfigRef()
 			if cfg == nil {
 				return nil, &UnifiedTLSNotReadyError{}
-			}
-			if hello != nil && slices.Contains(hello.SupportedProtos, http3.NextProtoH3) {
-				h3 := cfg.Clone()
-				h3.NextProtos = []string{http3.NextProtoH3}
-				return h3, nil
 			}
 			return cfg, nil
 		},
