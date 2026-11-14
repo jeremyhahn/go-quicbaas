@@ -132,7 +132,23 @@ func NewTenantSigningKeyResolver(global *SigningKeyManager, settings TenantOIDCS
 		global:   global,
 		settings: settings,
 		build: func(tenantID string) (*SigningKeyManager, error) {
-			return NewSigningKeyManagerFromXKMS(OIDCSigningKeyCN, tenantID)
+			// Dedicated tenant keys live on the global key's backend (the
+			// replicated store on a cluster node); a from-signer global
+			// manager has no backend, so it falls back to the default.
+			if global.storeType == "" {
+				return NewSigningKeyManagerFromXKMS(OIDCSigningKeyCN, tenantID)
+			}
+			m, err := NewSigningKeyManagerFromXKMSBackend(OIDCSigningKeyCN, tenantID, global.storeType)
+			if err != nil {
+				return nil, err
+			}
+			// A tenant migrated to the replicated store keeps its
+			// pre-upgrade default-backend key, so its outstanding tokens
+			// keep verifying.
+			if err := m.AdoptDefaultBackendKey(); err != nil {
+				return nil, err
+			}
+			return m, nil
 		},
 	}, nil
 }
