@@ -21,7 +21,6 @@ import (
 	"errors"
 	"io"
 	"net/http"
-	"time"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
@@ -247,72 +246,11 @@ func readBarrierJSON(w http.ResponseWriter, r *http.Request, dst interface{}) bo
 	return true
 }
 
-// barrierTimeFormat is the ONE rendering every barrier timestamp uses on
-// every transport. It is RFC3339Nano, not RFC3339, because go-qrdb's own
-// qrdb.v1 gRPC barrier surface — which quicbaas's unix and gRPC transports
-// reach through the platform-shard servicer adapter — already renders
-// InitializedAt at nanosecond precision. Rendering the same instant at
-// second precision here made `barrier status` answer
-// "2026-08-25T04:40:05Z" over REST/MCP and "2026-08-25T04:40:05.727835519Z"
-// over unix/gRPC for one barrier: not a contradiction, but not
-// byte-comparable either, and go-quicbaas#405 requires an operator
-// diffing two transports to get the same answer.
-const barrierTimeFormat = time.RFC3339Nano
-
-// barrierStatusToResponse maps a BarrierStatusInfo to its JSON wire shape.
-func barrierStatusToResponse(info *service.BarrierStatusInfo) map[string]interface{} {
-	resp := map[string]interface{}{
-		"sealed":          info.Sealed,
-		"strategy":        info.Strategy,
-		"hardware_backed": info.HardwareBacked,
-	}
-	if !info.InitializedAt.IsZero() {
-		resp["initialized_at"] = info.InitializedAt.UTC().Format(barrierTimeFormat)
-	}
-	return resp
-}
-
-// shamirInitToResponse maps a ShamirInitInfo to its JSON wire shape. Share
-// material is never present; officers claim shares via the qrdb share-claim
-// flow.
-func shamirInitToResponse(info *service.ShamirInitInfo) map[string]interface{} {
-	return map[string]interface{}{
-		"threshold":    info.Threshold,
-		"total_shares": info.TotalShares,
-		"share_count":  info.ShareCount,
-	}
-}
-
-// unsealShareProgressToResponse maps an UnsealShareProgress to its JSON shape.
-func unsealShareProgressToResponse(p *service.UnsealShareProgress) map[string]interface{} {
-	return map[string]interface{}{
-		"required":  p.Required,
-		"submitted": p.Submitted,
-		"complete":  p.Complete,
-	}
-}
-
-// recoveryKeysToResponse maps a RecoveryKeysInfo to its JSON shape. Recovery
-// share material is never present; officers claim shares via the qrdb
-// recovery share-claim flow.
-func recoveryKeysToResponse(info *service.RecoveryKeysInfo) map[string]interface{} {
-	return map[string]interface{}{
-		"threshold":   info.Threshold,
-		"total":       info.Total,
-		"share_count": info.ShareCount,
-	}
-}
-
-// rootTokenToResponse maps a RootTokenInfo to its JSON shape.
-func rootTokenToResponse(info *service.RootTokenInfo) map[string]interface{} {
-	resp := map[string]interface{}{
-		"token": info.Token,
-	}
-	if !info.CreatedAt.IsZero() {
-		resp["created_at"] = info.CreatedAt.UTC().Format(barrierTimeFormat)
-	}
-	return resp
-}
+// Every barrier answer is go-qrdb's transport response written as it is: its
+// JSON tags are the wire shape, so REST serves byte for byte what go-qrdb's
+// own /v1/barrier serves, every field included (shamir_threshold and
+// shamir_total on status, too), and no local mapping can drop or reformat one
+// (#1559, go-quicbaas#405).
 
 // ---------------------------------------------------------------------------
 // Handlers
@@ -330,7 +268,7 @@ func (s *Server) HandleBarrierStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	RespondJSON(w, r, http.StatusOK, barrierStatusToResponse(info))
+	RespondJSON(w, r, http.StatusOK, info)
 }
 
 // HandleBarrierInitialize handles POST /api/v1/barrier/initialize.
@@ -422,7 +360,7 @@ func (s *Server) HandleBarrierShamirInitialize(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	RespondJSON(w, r, http.StatusOK, shamirInitToResponse(info))
+	RespondJSON(w, r, http.StatusOK, info)
 }
 
 // HandleBarrierShamirUnsealShare handles POST /api/v1/barrier/shamir/unseal-share.
@@ -446,7 +384,7 @@ func (s *Server) HandleBarrierShamirUnsealShare(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	RespondJSON(w, r, http.StatusOK, unsealShareProgressToResponse(progress))
+	RespondJSON(w, r, http.StatusOK, progress)
 }
 
 // HandleBarrierShamirUnsealShares handles POST /api/v1/barrier/shamir/unseal-shares.
@@ -501,7 +439,7 @@ func (s *Server) HandleBarrierRekey(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	RespondJSON(w, r, http.StatusOK, shamirInitToResponse(info))
+	RespondJSON(w, r, http.StatusOK, info)
 }
 
 // HandleBarrierRecoveryGenerate handles POST /api/v1/barrier/recovery/generate.
@@ -533,7 +471,7 @@ func (s *Server) HandleBarrierRecoveryGenerate(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	RespondJSON(w, r, http.StatusOK, recoveryKeysToResponse(info))
+	RespondJSON(w, r, http.StatusOK, info)
 }
 
 // HandleBarrierRecoveryRecover handles POST /api/v1/barrier/recovery/recover.
@@ -617,7 +555,7 @@ func (s *Server) HandleBarrierRootToken(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	RespondJSON(w, r, http.StatusOK, rootTokenToResponse(info))
+	RespondJSON(w, r, http.StatusOK, info)
 }
 
 // HandleBarrierEnableEncryption handles

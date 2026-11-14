@@ -26,6 +26,7 @@ import (
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
+	"github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 	dberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
@@ -40,27 +41,27 @@ import (
 // barrier behaviour.
 type fakeBarrierService struct {
 	// scripted return values
-	status          *service.BarrierStatusInfo
+	status          *transport.BarrierStatusResponse
 	statusErr       error
 	initErr         error
 	unsealErr       error
 	sealErr         error
 	soPIN           string
 	gotSealPIN      []byte
-	shamirInit      *service.ShamirInitInfo
+	shamirInit      *transport.BarrierInitializeShamirResponse
 	shamirInitErr   error
-	unsealShare     *service.UnsealShareProgress
+	unsealShare     *transport.BarrierUnsealShareResponse
 	unsealShareErr  error
 	unsealSharesErr error
-	rekey           *service.ShamirInitInfo
+	rekey           *transport.BarrierRekeyResponse
 	rekeyErr        error
-	recoveryKeys    *service.RecoveryKeysInfo
+	recoveryKeys    *transport.BarrierRecoveryKeysResponse
 	recoveryKeysErr error
 	recoverErr      error
 	deleteRecErr    error
 	hasRecoveryKeys bool
 	hasRecoveryErr  error
-	rootToken       *service.RootTokenInfo
+	rootToken       *transport.BarrierRootTokenResponse
 	rootTokenErr    error
 
 	enableEncryptionErr error
@@ -84,7 +85,7 @@ type fakeBarrierService struct {
 	gotEnableEncOpts     qrdbsdk.MigrationOptions
 }
 
-func (f *fakeBarrierService) BarrierStatus(_ context.Context) (*service.BarrierStatusInfo, error) {
+func (f *fakeBarrierService) BarrierStatus(_ context.Context) (*transport.BarrierStatusResponse, error) {
 	return f.status, f.statusErr
 }
 
@@ -109,14 +110,14 @@ func (f *fakeBarrierService) BarrierSeal(_ context.Context, req *service.Barrier
 	return f.sealErr
 }
 
-func (f *fakeBarrierService) BarrierInitializeShamir(_ context.Context, secret []byte, threshold, total int) (*service.ShamirInitInfo, error) {
+func (f *fakeBarrierService) BarrierInitializeShamir(_ context.Context, secret []byte, threshold, total int) (*transport.BarrierInitializeShamirResponse, error) {
 	f.gotShamirSecret = string(secret)
 	f.gotShamirThr = threshold
 	f.gotShamirTotal = total
 	return f.shamirInit, f.shamirInitErr
 }
 
-func (f *fakeBarrierService) BarrierUnsealWithShare(_ context.Context, share string) (*service.UnsealShareProgress, error) {
+func (f *fakeBarrierService) BarrierUnsealWithShare(_ context.Context, share string) (*transport.BarrierUnsealShareResponse, error) {
 	f.gotShare = share
 	return f.unsealShare, f.unsealShareErr
 }
@@ -126,13 +127,13 @@ func (f *fakeBarrierService) BarrierUnsealWithShares(_ context.Context, shares [
 	return f.unsealSharesErr
 }
 
-func (f *fakeBarrierService) BarrierRekey(_ context.Context, threshold, total int) (*service.ShamirInitInfo, error) {
+func (f *fakeBarrierService) BarrierRekey(_ context.Context, threshold, total int) (*transport.BarrierRekeyResponse, error) {
 	f.gotRekeyThr = threshold
 	f.gotRekeyTotal = total
 	return f.rekey, f.rekeyErr
 }
 
-func (f *fakeBarrierService) BarrierGenerateRecoveryKeys(_ context.Context, threshold, total int) (*service.RecoveryKeysInfo, error) {
+func (f *fakeBarrierService) BarrierGenerateRecoveryKeys(_ context.Context, threshold, total int) (*transport.BarrierRecoveryKeysResponse, error) {
 	f.gotRecGenThr = threshold
 	f.gotRecGenTotal = total
 	return f.recoveryKeys, f.recoveryKeysErr
@@ -151,7 +152,7 @@ func (f *fakeBarrierService) BarrierHasRecoveryKeys(_ context.Context) (bool, er
 	return f.hasRecoveryKeys, f.hasRecoveryErr
 }
 
-func (f *fakeBarrierService) BarrierGenerateRootToken(_ context.Context, shares []string) (*service.RootTokenInfo, error) {
+func (f *fakeBarrierService) BarrierGenerateRootToken(_ context.Context, shares []string) (*transport.BarrierRootTokenResponse, error) {
 	f.gotRootShares = append([]string(nil), shares...)
 	return f.rootToken, f.rootTokenErr
 }
@@ -255,28 +256,28 @@ func TestBarrierToolsRegistered(t *testing.T) {
 // TestBarrierToolsExecuteSuccess walks every barrier tool through a happy
 // path and verifies arguments + responses.
 func TestBarrierToolsExecuteSuccess(t *testing.T) {
-	now := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+	now := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC).Format(time.RFC3339)
 	fake := &fakeBarrierService{
-		status: &service.BarrierStatusInfo{
+		status: &transport.BarrierStatusResponse{
 			Sealed:         false,
 			Strategy:       "shamir",
 			HardwareBacked: true,
 			InitializedAt:  now,
 		},
-		shamirInit: &service.ShamirInitInfo{
+		shamirInit: &transport.BarrierInitializeShamirResponse{
 			Threshold:   2,
 			TotalShares: 3,
 			ShareCount:  3,
 		},
-		unsealShare: &service.UnsealShareProgress{Required: 2, Submitted: 1, Complete: false},
-		rekey:       &service.ShamirInitInfo{Threshold: 2, TotalShares: 2, ShareCount: 2},
-		recoveryKeys: &service.RecoveryKeysInfo{
+		unsealShare: &transport.BarrierUnsealShareResponse{Required: 2, Submitted: 1, Complete: false},
+		rekey:       &transport.BarrierRekeyResponse{Threshold: 2, TotalShares: 2, ShareCount: 2},
+		recoveryKeys: &transport.BarrierRecoveryKeysResponse{
 			Threshold:  2,
 			Total:      2,
 			ShareCount: 2,
 		},
 		hasRecoveryKeys: true,
-		rootToken:       &service.RootTokenInfo{Token: "tok-123", CreatedAt: now},
+		rootToken:       &transport.BarrierRootTokenResponse{Token: "tok-123", CreatedAt: now},
 	}
 	r := newBarrierTestRegistry(t, fake)
 	ctx := context.Background()
@@ -284,11 +285,8 @@ func TestBarrierToolsExecuteSuccess(t *testing.T) {
 	t.Run("status", func(t *testing.T) {
 		out, err := r.ExecuteTool(ctx, "qrdb_barrier_status", nil)
 		require.NoError(t, err)
-		m := out.(map[string]interface{})
-		assert.Equal(t, "shamir", m["strategy"])
-		assert.Equal(t, false, m["sealed"])
-		assert.Equal(t, true, m["hardware_backed"])
-		assert.Equal(t, "2026-01-01T12:00:00Z", m["initialized_at"])
+		// The tool answers with go-qrdb's response as it is (row #1650).
+		assert.Same(t, fake.status, out)
 	})
 
 	t.Run("initialize", func(t *testing.T) {
@@ -317,22 +315,15 @@ func TestBarrierToolsExecuteSuccess(t *testing.T) {
 			"total_shares": 3,
 		})
 		require.NoError(t, err)
-		m := out.(map[string]interface{})
-		assert.Equal(t, 2, m["threshold"])
-		assert.Equal(t, 3, m["total_shares"])
-		assert.Equal(t, 3, m["share_count"])
-		// Share-free contract: share material must never appear in tool output.
-		assert.NotContains(t, m, "shares")
+		// go-qrdb's response carries counts only, never share material.
+		assert.Same(t, fake.shamirInit, out)
 		assert.Equal(t, "boot", fake.gotShamirSecret)
 	})
 
 	t.Run("shamir_unseal_share", func(t *testing.T) {
 		out, err := r.ExecuteTool(ctx, "qrdb_barrier_shamir_unseal_share", map[string]interface{}{"share": "abc"})
 		require.NoError(t, err)
-		m := out.(map[string]interface{})
-		assert.Equal(t, 2, m["required"])
-		assert.Equal(t, 1, m["submitted"])
-		assert.Equal(t, false, m["complete"])
+		assert.Same(t, fake.unsealShare, out)
 		assert.Equal(t, "abc", fake.gotShare)
 	})
 
@@ -358,12 +349,8 @@ func TestBarrierToolsExecuteSuccess(t *testing.T) {
 			"total":     2,
 		})
 		require.NoError(t, err)
-		m := out.(map[string]interface{})
-		assert.Equal(t, 2, m["threshold"])
-		assert.Equal(t, 2, m["total_shares"])
-		assert.Equal(t, 2, m["share_count"])
-		// Share-free contract: share material must never appear in tool output.
-		assert.NotContains(t, m, "shares")
+		// go-qrdb's response carries counts only, never share material.
+		assert.Same(t, fake.rekey, out)
 		assert.Equal(t, 2, fake.gotRekeyThr)
 		assert.Equal(t, 2, fake.gotRekeyTotal)
 	})
@@ -374,12 +361,8 @@ func TestBarrierToolsExecuteSuccess(t *testing.T) {
 			"total":     2,
 		})
 		require.NoError(t, err)
-		m := out.(map[string]interface{})
-		assert.Equal(t, 2, m["threshold"])
-		assert.Equal(t, 2, m["total"])
-		assert.Equal(t, 2, m["share_count"])
-		// Share-free contract: recovery key material must never appear in tool output.
-		assert.NotContains(t, m, "keys")
+		// go-qrdb's response carries counts only, never recovery key material.
+		assert.Same(t, fake.recoveryKeys, out)
 		assert.Equal(t, 2, fake.gotRecGenThr)
 		assert.Equal(t, 2, fake.gotRecGenTotal)
 	})
@@ -408,9 +391,7 @@ func TestBarrierToolsExecuteSuccess(t *testing.T) {
 			"shares": []interface{}{"s1", "s2"},
 		})
 		require.NoError(t, err)
-		m := out.(map[string]interface{})
-		assert.Equal(t, "tok-123", m["token"])
-		assert.Equal(t, "2026-01-01T12:00:00Z", m["created_at"])
+		assert.Same(t, fake.rootToken, out)
 		assert.Equal(t, []string{"s1", "s2"}, fake.gotRootShares)
 	})
 
@@ -521,7 +502,7 @@ func TestBarrierToolsExecuteSeal_SOPIN(t *testing.T) {
 // TestBarrierToolsValidation covers required-argument and threshold checks.
 func TestBarrierToolsValidation(t *testing.T) {
 	r := newBarrierTestRegistry(t, &fakeBarrierService{
-		status: &service.BarrierStatusInfo{},
+		status: &transport.BarrierStatusResponse{},
 	})
 
 	type tc struct {
@@ -624,7 +605,7 @@ func TestBarrierToolsValidation(t *testing.T) {
 	// Governance tool validation: argument checks are only reached once the
 	// mcpTenantGovernancer is wired (otherwise the tool short-circuits with
 	// GovernanceServiceUnavailableError before inspecting args).
-	govRegistry := newBarrierTestRegistry(t, &fakeBarrierService{status: &service.BarrierStatusInfo{}})
+	govRegistry := newBarrierTestRegistry(t, &fakeBarrierService{status: &transport.BarrierStatusResponse{}})
 	govRegistry.SetTenantGovernance(&fakeGovernancer{})
 	govValidationCases := []tc{
 		{
@@ -692,7 +673,7 @@ func TestBarrierToolsUnavailable(t *testing.T) {
 func TestBarrierToolsPropagatesServiceError(t *testing.T) {
 	sentinel := stderrors.New("scripted-failure")
 	fake := &fakeBarrierService{
-		status:              &service.BarrierStatusInfo{},
+		status:              &transport.BarrierStatusResponse{},
 		statusErr:           sentinel,
 		initErr:             sentinel,
 		unsealErr:           sentinel,
@@ -789,7 +770,7 @@ func TestBarrierToolsErrorMessages(t *testing.T) {
 // rather than the unavailable error.
 func TestBarrierStatusWiredExecutes(t *testing.T) {
 	fake := &fakeBarrierService{
-		status: &service.BarrierStatusInfo{
+		status: &transport.BarrierStatusResponse{
 			Sealed:         false,
 			Strategy:       "passphrase",
 			HardwareBacked: false,
@@ -799,10 +780,7 @@ func TestBarrierStatusWiredExecutes(t *testing.T) {
 
 	out, err := r.ExecuteTool(context.Background(), "qrdb_barrier_status", nil)
 	require.NoError(t, err)
-	result, ok := out.(map[string]interface{})
-	require.Truef(t, ok, "expected map result, got %T", out)
-	assert.Equal(t, false, result["sealed"])
-	assert.Equal(t, "passphrase", result["strategy"])
+	assert.Same(t, fake.status, out)
 }
 
 // TestBarrierStatusUnavailableMapsToServiceUnavailable verifies that when the
@@ -827,11 +805,11 @@ func TestBarrierStatusUnavailableMapsToServiceUnavailable(t *testing.T) {
 // status call no longer produces any error to map.
 func TestBarrierStatusWiredMapsCleanly(t *testing.T) {
 	server, _ := newTestServer(t)
-	server.SetBarrierService(&fakeBarrierService{status: &service.BarrierStatusInfo{Strategy: "shamir"}})
+	server.SetBarrierService(&fakeBarrierService{status: &transport.BarrierStatusResponse{Strategy: "shamir"}})
 
 	out, err := server.tools.ExecuteTool(context.Background(), "qrdb_barrier_status", nil)
 	require.NoError(t, err)
-	result, ok := out.(map[string]interface{})
-	require.Truef(t, ok, "expected map result, got %T", out)
-	assert.Equal(t, "shamir", result["strategy"])
+	result, ok := out.(*transport.BarrierStatusResponse)
+	require.Truef(t, ok, "expected go-qrdb's status response, got %T", out)
+	assert.Equal(t, "shamir", result.Strategy)
 }

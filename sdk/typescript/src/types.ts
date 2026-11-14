@@ -2564,6 +2564,10 @@ export interface BarrierStatusResponse {
   hardware_backed: boolean;
   /** RFC3339 timestamp recorded when the barrier was first initialized. */
   initialized_at?: string;
+  /** Shamir quorum threshold (M of N); absent unless the strategy is Shamir. */
+  shamir_threshold?: number;
+  /** Shamir share total (N); absent unless the strategy is Shamir. */
+  shamir_total?: number;
 }
 
 // Wire note: a barrier credential is BYTES, not text. go-qrdb types every

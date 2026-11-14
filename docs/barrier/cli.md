@@ -274,15 +274,23 @@ The end-to-end guarantee — protected memory from the terminal to the barrier,
 with no plaintext string anywhere — therefore holds on every transport except
 MCP, and holds for the CLI's own handling of the passphrase in every case.
 
-**Still on argv.** `--so-pin`, `--user-pin` and `--share` remain
-argv-only and carry the same exposure, and are still held as plain Go
-strings ([#237](https://github.com/jeremyhahn/go-quicbaas/issues/237)).
+**Still on argv.** `--share` remains argv-capable and carries the same
+exposure, and shares are still held as plain Go strings ([#237](https://github.com/jeremyhahn/go-quicbaas/issues/237)).
 All three verbs that collect a share **quorum** — `barrier unseal-shares`,
 `barrier root-token` and `barrier recovery recover` — offer `--shares-file -`
 as the way off argv; `recovery recover` was the odd one out until
-[#227](https://github.com/jeremyhahn/go-quicbaas/issues/227). The PIN
-flags have no stdin path yet
-([#226](https://github.com/jeremyhahn/go-quicbaas/issues/226)), and
+[#227](https://github.com/jeremyhahn/go-quicbaas/issues/227). Since
+[#226](https://github.com/jeremyhahn/go-quicbaas/issues/226) every verb that
+sends a PIN on the request (`barrier init`, `init-shamir`, `rekey`,
+`recovery generate`, `init initialize`, `init sign-csr`) takes it, in
+precedence order, from `--so-pin-file` / `--user-pin-file` (a path, or `-`
+for stdin), then `QUICBAAS_SO_PIN` / `QUICBAAS_USER_PIN` (the variables
+`quicbaasd init` reads; `QUICBAAS_BARRIER_SO_PIN` is accepted for the SO
+PIN too), then the compatibility argv flag. One invocation may give stdin to
+one secret only: `--passphrase-stdin` with `--so-pin-file -`, or both PIN
+files as `-`, is refused. Each PIN is read into protected memory; the SDK
+request still carries it as a string. `barrier seal` keeps its
+`--so-pin-stdin` path ([#491](https://github.com/jeremyhahn/go-quicbaas/issues/491)), and
 `iam tenant barrier unseal-share` submits a single share and is still argv-only.
 
 ---

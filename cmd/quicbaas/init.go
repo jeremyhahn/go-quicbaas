@@ -539,15 +539,14 @@ printed to stdout (PEM).
 Example:
   quicbaas init sign-csr \
       --username carol \
-      --so-pin $SO_PIN \
+      --so-pin-file /run/secrets/so-pin \
       --csr carol.csr \
       --role officer`,
 		RunE: runInitSignCSRCommand,
 	}
 	cmd.Flags().StringVar(&initUsername, "username", "",
 		"Officer username (required)")
-	cmd.Flags().StringVar(&initSOPin, "so-pin", "",
-		"Security Officer PIN (required)")
+	addPINFlags(cmd, "required; ", soPINInput(&initSOPin))
 	cmd.Flags().StringVar(&initCSRPath, "csr", "",
 		"Path to the PEM-encoded CSR (required)")
 	cmd.Flags().StringVar(&initRole, "role", "",
@@ -560,8 +559,14 @@ func runInitSignCSRCommand(cmd *cobra.Command, _ []string) error {
 	if initUsername == "" {
 		return errors.Newf(errors.ErrInvalidInput, "init.sign-csr", "--username is required")
 	}
+	release, err := resolvePINs(cmd, "init.sign-csr", soPINInput(&initSOPin))
+	if err != nil {
+		return err
+	}
+	defer release()
 	if initSOPin == "" {
-		return errors.Newf(errors.ErrInvalidInput, "init.sign-csr", "--so-pin is required")
+		return errors.Newf(errors.ErrInvalidInput, "init.sign-csr",
+			"--so-pin is required (or --so-pin-file, or set "+soPINEnv+")")
 	}
 	if initCSRPath == "" {
 		return errors.Newf(errors.ErrInvalidInput, "init.sign-csr", "--csr is required")

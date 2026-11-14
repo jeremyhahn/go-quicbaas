@@ -187,10 +187,12 @@ func (s *BarrierServer) BarrierStatus(ctx context.Context, _ *emptypb.Empty) (*p
 		return nil, mapBarrierError(err)
 	}
 	return &pb.BarrierStatusResponse{
-		Sealed:         info.Sealed,
-		Strategy:       info.Strategy,
-		HardwareBacked: info.HardwareBacked,
-		InitializedAt:  formatTime(info.InitializedAt),
+		Sealed:          info.Sealed,
+		Strategy:        info.Strategy,
+		HardwareBacked:  info.HardwareBacked,
+		InitializedAt:   info.InitializedAt,
+		ShamirThreshold: int32(info.ShamirThreshold),
+		ShamirTotal:     int32(info.ShamirTotal),
 	}, nil
 }
 
@@ -384,7 +386,7 @@ func (s *BarrierServer) BarrierRootToken(ctx context.Context, req *pb.BarrierRoo
 	}
 	return &pb.BarrierRootTokenResponse{
 		Token:     info.Token,
-		CreatedAt: formatTime(info.CreatedAt),
+		CreatedAt: info.CreatedAt,
 	}, nil
 }
 

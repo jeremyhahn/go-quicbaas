@@ -114,10 +114,12 @@ func barrierStatusOverGRPC(t *testing.T, svc service.BarrierServicer) map[string
 		t.Fatalf("gRPC BarrierStatus: %v", err)
 	}
 	return map[string]any{
-		"sealed":          resp.GetSealed(),
-		"strategy":        resp.GetStrategy(),
-		"hardware_backed": resp.GetHardwareBacked(),
-		"initialized_at":  resp.GetInitializedAt(),
+		"sealed":           resp.GetSealed(),
+		"strategy":         resp.GetStrategy(),
+		"hardware_backed":  resp.GetHardwareBacked(),
+		"initialized_at":   resp.GetInitializedAt(),
+		"shamir_threshold": resp.GetShamirThreshold(),
+		"shamir_total":     resp.GetShamirTotal(),
 	}
 }
 
@@ -132,9 +134,13 @@ func barrierStatusOverMCP(t *testing.T, svc service.BarrierServicer) map[string]
 	if err != nil {
 		t.Fatalf("MCP qrdb_barrier_status: %v", err)
 	}
-	body, ok := result.(map[string]any)
-	if !ok {
-		t.Fatalf("MCP qrdb_barrier_status returned %T, want map[string]any", result)
+	raw, err := json.Marshal(result)
+	if err != nil {
+		t.Fatalf("MCP qrdb_barrier_status result %T: %v", result, err)
+	}
+	var body map[string]any
+	if err := json.Unmarshal(raw, &body); err != nil {
+		t.Fatalf("MCP qrdb_barrier_status body: %v (%s)", err, raw)
 	}
 	return body
 }
@@ -151,10 +157,12 @@ func barrierStatusOverQRDBServicer(t *testing.T, client qrdbtransport.BarrierCli
 		t.Fatalf("qrdb BarrierServicer adapter BarrierStatus: %v", err)
 	}
 	return map[string]any{
-		"sealed":          info.Sealed,
-		"strategy":        info.Strategy,
-		"hardware_backed": info.HardwareBacked,
-		"initialized_at":  info.InitializedAt.UTC().Format(qrdbBarrierParityTimeFormat),
+		"sealed":           info.Sealed,
+		"strategy":         info.Strategy,
+		"hardware_backed":  info.HardwareBacked,
+		"initialized_at":   info.InitializedAt.UTC().Format(qrdbBarrierParityTimeFormat),
+		"shamir_threshold": info.ShamirThreshold,
+		"shamir_total":     info.ShamirTotal,
 	}
 }
 
@@ -196,6 +204,42 @@ func TestBarrierStatus_IsIdenticalOnEveryTransport(t *testing.T) {
 			if gotValue != wantValue {
 				t.Errorf("%s: barrier status %q = %v, want %v", transport, field, gotValue, wantValue)
 			}
+		}
+	}
+}
+
+// TestBarrierStatus_CarriesGoQrdbShamirQuorum pins the re-export (row #1650):
+// every transport carries the Shamir quorum go-qrdb reports to the caller.
+// Before, REST and MCP's own status mapper, gRPC's BarrierStatusResponse and
+// the QUIC/embedded servicer adapter all dropped shamir_threshold and
+// shamir_total.
+func TestBarrierStatus_CarriesGoQrdbShamirQuorum(t *testing.T) {
+	client := &stubBarrierClient{statusResp: &qrdbtransport.BarrierStatusResponse{
+		Sealed:          true,
+		Strategy:        "shamir",
+		InitializedAt:   "2026-08-25T04:40:05Z",
+		ShamirThreshold: 2,
+		ShamirTotal:     3,
+	}}
+	svc := service.NewBarrierService(client)
+
+	answers := map[string]map[string]any{
+		"rest":          barrierStatusOverREST(t, svc),
+		"grpc+unix":     barrierStatusOverGRPC(t, svc),
+		"mcp":           barrierStatusOverMCP(t, svc),
+		"quic+embedded": barrierStatusOverQRDBServicer(t, client),
+	}
+	for transport, got := range answers {
+		raw, err := json.Marshal(got)
+		if err != nil {
+			t.Fatalf("%s: re-marshal status: %v", transport, err)
+		}
+		var decoded qrdbtransport.BarrierStatusResponse
+		if err := json.Unmarshal(raw, &decoded); err != nil {
+			t.Fatalf("%s: decode as go-qrdb status: %v", transport, err)
+		}
+		if decoded != *client.statusResp {
+			t.Errorf("%s: barrier status = %+v, want go-qrdb's %+v", transport, decoded, *client.statusResp)
 		}
 	}
 }
