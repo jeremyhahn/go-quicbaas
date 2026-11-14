@@ -130,7 +130,7 @@ quicbaas iam tenant barrier status --tenant acme-corp
 printf '%s' "$PP" | quicbaas iam tenant barrier init --tenant acme-corp \
     --strategy passphrase --passphrase-stdin
 printf '%s' "$PP" | quicbaas iam tenant barrier unseal --tenant acme-corp --passphrase-stdin
-quicbaas iam tenant barrier unseal-share --tenant acme-corp
+printf '%s' "$SHARE" | quicbaas iam tenant barrier unseal-share --tenant acme-corp --share-stdin
 quicbaas iam tenant barrier officer status --tenant acme-corp
 ```
 
