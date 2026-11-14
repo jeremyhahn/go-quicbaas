@@ -687,7 +687,7 @@ func TestExecuteIAMSessionTouch_Success(t *testing.T) {
 	}
 	reg := newSessionRegistry(t, mgr)
 
-	result, err := reg.executeIAMSessionTouch(context.Background(), map[string]interface{}{
+	result, err := reg.executeIAMSessionTouch(sessionCallerCtx(), map[string]interface{}{
 		"session_id": "sess-123",
 	})
 	require.NoError(t, err)
@@ -724,10 +724,53 @@ func TestExecuteIAMSessionTouch_UpdateActivityError(t *testing.T) {
 	}
 	reg := newSessionRegistry(t, mgr)
 
-	_, err := reg.executeIAMSessionTouch(context.Background(), map[string]interface{}{
+	_, err := reg.executeIAMSessionTouch(sessionCallerCtx(), map[string]interface{}{
 		"session_id": "sess-123",
 	})
 	assert.ErrorIs(t, err, iam.ErrSessionExpired)
+}
+
+// Touch checks owner and tenant like get and revoke: a caller cannot keep
+// another principal's session alive (go-quicbaas#1633).
+func TestExecuteIAMSessionTouch_RefusesForeignSession(t *testing.T) {
+	foreign := map[string]*iam.SessionExt{
+		"other user":   hashedSession("sess-x", 20002, sessionCallerTenant),
+		"other tenant": hashedSession("sess-x", 10001, "tenant-2"),
+	}
+	for name, session := range foreign {
+		t.Run(name, func(t *testing.T) {
+			mgr := &mockSessionManager{
+				getFn: func(_ context.Context, _ string) (*iam.SessionExt, error) {
+					return session, nil
+				},
+				updateActivityFn: func(_ context.Context, _ string) error {
+					t.Fatal("another principal's session must never be touched")
+					return nil
+				},
+			}
+			reg := newSessionRegistry(t, mgr)
+
+			_, err := reg.executeIAMSessionTouch(sessionCallerCtx(), map[string]interface{}{
+				"session_id": "sess-x",
+			})
+			requireForbidden(t, err)
+		})
+	}
+}
+
+func TestExecuteIAMSessionTouch_RefusesNoCaller(t *testing.T) {
+	mgr := &mockSessionManager{
+		updateActivityFn: func(_ context.Context, _ string) error {
+			t.Fatal("an anonymous caller must never touch a session")
+			return nil
+		},
+	}
+	reg := newSessionRegistry(t, mgr)
+
+	_, err := reg.executeIAMSessionTouch(context.Background(), map[string]interface{}{
+		"session_id": "sess-123",
+	})
+	require.Error(t, err)
 }
 
 // sessionCalls records what the session manager was asked to do.

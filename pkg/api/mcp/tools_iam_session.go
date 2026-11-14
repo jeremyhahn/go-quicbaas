@@ -348,9 +348,16 @@ func (r *ToolRegistry) executeIAMSessionTouch(ctx context.Context, args map[stri
 		return nil, err
 	}
 
+	// Ownership is checked before the touch, as for get and revoke: a caller
+	// must not keep alive a session it was never allowed to see.
+	session, err := r.callerSession(ctx, sessionMgr, sessionID, "mcp.iam.session.touch")
+	if err != nil {
+		return nil, err
+	}
+
 	// UpdateActivity stamps server time; it refuses and removes an expired
 	// session, and its error is returned unchanged.
-	if err := sessionMgr.UpdateActivity(ctx, sessionID); err != nil {
+	if err := sessionMgr.UpdateActivity(ctx, session.ID); err != nil {
 		return nil, err
 	}
 
