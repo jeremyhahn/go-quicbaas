@@ -296,4 +296,37 @@ func TestJobRuntime_RunImage(t *testing.T) {
 		assert.NotEmpty(t, doubles.engine.lastProcess().receivedSignals())
 		assert.Len(t, doubles.engine.destroyed, 1, "the hung run's container is removed")
 	})
+
+	// Port of TestRunImage_CompletedRunIsNotRemovedAgain: each completed run
+	// is removed exactly once, and two runs never share a container.
+	t.Run("CompletedRunIsNotRemovedAgain", func(t *testing.T) {
+		jr, doubles := newTestJobRuntime(t)
+		doubles.engine.initResult = &fakeResult{exitCode: 1}
+		for range 2 {
+			result, err := jr.RunImage(t.Context(), &orchestration.ImageRunSpec{Image: "alpine:latest", Command: []string{"false"}})
+			require.NoError(t, err)
+			assert.Equal(t, 1, result.ExitCode)
+		}
+		require.Len(t, doubles.engine.destroyed, 2, "a completed run was removed more or less than once")
+		assert.NotEqual(t, doubles.engine.destroyed[0], doubles.engine.destroyed[1], "two runs shared a container")
+		assert.Empty(t, doubles.engine.created, "a completed run's container outlived it")
+
+		states, err := jr.runtime.ListContainers(t.Context(), true)
+		require.NoError(t, err)
+		assert.Empty(t, states, "a completed run is still registered")
+	})
+
+	// Port of TestRunImage_FailedRemovalKeepsTheRunsError: a removal that
+	// fails does not replace the run's own failure.
+	t.Run("FailedRemovalKeepsTheRunsError", func(t *testing.T) {
+		jr, doubles := newTestJobRuntime(t)
+		doubles.engine.destroyErr = errTestBackend
+		ctx, cancel := context.WithTimeout(t.Context(), 50*time.Millisecond)
+		defer cancel()
+
+		_, err := jr.RunImage(ctx, &orchestration.ImageRunSpec{Image: "alpine:latest", Command: []string{"sleep", "60"}})
+		require.ErrorIs(t, err, context.DeadlineExceeded, "the run's error was lost")
+		assert.NotErrorIs(t, err, errTestBackend, "the removal's error replaced the run's")
+		assert.Empty(t, doubles.engine.destroyed, "the removal was refused, yet recorded")
+	})
 }
