@@ -80,15 +80,23 @@ var qrdbToolExactMapping = map[string]qrdbToolResource{
 	// and removed with them in issue #905.
 	// TestMCPPermissions_EveryMappedToolIsRegistered now makes that class of
 	// entry impossible to add back.
-	"quicbaas_query":        {"kv", "range"},
-	"quicbaas_scan_index":   {"index", "scan"},
-	"quicbaas_batch_get":    {"batch", "execute"},
-	"quicbaas_batch_put":    {"batch", "execute"},
-	"quicbaas_batch_delete": {"batch", "execute"},
-	"qrdb_get":              {"kv", "get"},
-	"qrdb_list":             {"kv", "list"},
-	"qrdb_put":              {"kv", "put"},
-	"qrdb_delete":           {"kv", "delete"},
+	"quicbaas_query":         {"kv", "range"},
+	"quicbaas_scan_index":    {"index", "scan"},
+	"quicbaas_batch_get":     {"batch", "execute"},
+	"quicbaas_batch_put":     {"batch", "execute"},
+	"quicbaas_batch_delete":  {"batch", "execute"},
+	"quicbaas_batch_execute": {"batch", "execute"},
+	"qrdb_get":               {"kv", "get"},
+	"qrdb_list":              {"kv", "list"},
+	"qrdb_put":               {"kv", "put"},
+	"qrdb_delete":            {"kv", "delete"},
+	"quicbaas_kv_get":        {"kv", "get"},
+	"quicbaas_kv_put":        {"kv", "put"},
+	"quicbaas_kv_delete":     {"kv", "delete"},
+
+	// KV conditional writes, in the keyspace qrdb_put writes.
+	"quicbaas_kv_compare_and_swap": {"kv", "put"},
+	"quicbaas_kv_put_if_absent":    {"kv", "put"},
 
 	// Transaction
 	"quicbaas_transaction": {"transaction", "execute"},

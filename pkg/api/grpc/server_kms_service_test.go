@@ -636,11 +636,11 @@ func TestProtoToKeyAttributes(t *testing.T) {
 		expectError       bool
 		expectedErrSubstr string
 	}{
-		{"aes_128_gcm", pb.KeyAlgorithm_KEY_ALG_AES_128_GCM, xkmssdk.KeyTypeEncryption, true, xkmssdk.SymmetricAES128GCM, false, 0, 0, nil, false, ""},
-		{"aes_192_gcm", pb.KeyAlgorithm_KEY_ALG_AES_192_GCM, xkmssdk.KeyTypeEncryption, true, xkmssdk.SymmetricAES192GCM, false, 0, 0, nil, false, ""},
-		{"aes_256_gcm", pb.KeyAlgorithm_KEY_ALG_AES_256_GCM, xkmssdk.KeyTypeEncryption, true, xkmssdk.SymmetricAES256GCM, false, 0, 0, nil, false, ""},
-		{"chacha20_poly1305", pb.KeyAlgorithm_KEY_ALG_CHACHA20_POLY1305, xkmssdk.KeyTypeEncryption, true, xkmssdk.SymmetricChaCha20Poly1305, false, 0, 0, nil, false, ""},
-		{"xchacha20_poly1305", pb.KeyAlgorithm_KEY_ALG_XCHACHA20_POLY1305, xkmssdk.KeyTypeEncryption, true, xkmssdk.SymmetricXChaCha20Poly1305, false, 0, 0, nil, false, ""},
+		{"aes_128_gcm", pb.KeyAlgorithm_KEY_ALG_AES_128_GCM, xkmssdk.KeyTypeSecret, true, xkmssdk.SymmetricAES128GCM, false, 0, 0, nil, false, ""},
+		{"aes_192_gcm", pb.KeyAlgorithm_KEY_ALG_AES_192_GCM, xkmssdk.KeyTypeSecret, true, xkmssdk.SymmetricAES192GCM, false, 0, 0, nil, false, ""},
+		{"aes_256_gcm", pb.KeyAlgorithm_KEY_ALG_AES_256_GCM, xkmssdk.KeyTypeSecret, true, xkmssdk.SymmetricAES256GCM, false, 0, 0, nil, false, ""},
+		{"chacha20_poly1305", pb.KeyAlgorithm_KEY_ALG_CHACHA20_POLY1305, xkmssdk.KeyTypeSecret, true, xkmssdk.SymmetricChaCha20Poly1305, false, 0, 0, nil, false, ""},
+		{"xchacha20_poly1305", pb.KeyAlgorithm_KEY_ALG_XCHACHA20_POLY1305, xkmssdk.KeyTypeSecret, true, xkmssdk.SymmetricXChaCha20Poly1305, false, 0, 0, nil, false, ""},
 		{"rsa_2048", pb.KeyAlgorithm_KEY_ALG_RSA_2048, xkmssdk.KeyTypeSigning, false, "", true, x509.RSA, 2048, nil, false, ""},
 		{"rsa_3072", pb.KeyAlgorithm_KEY_ALG_RSA_3072, xkmssdk.KeyTypeSigning, false, "", true, x509.RSA, 3072, nil, false, ""},
 		{"rsa_4096", pb.KeyAlgorithm_KEY_ALG_RSA_4096, xkmssdk.KeyTypeSigning, false, "", true, x509.RSA, 4096, nil, false, ""},

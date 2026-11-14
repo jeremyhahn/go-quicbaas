@@ -63,4 +63,6 @@
 //   - KeyUsageVerify: Key can be used for verification
 //   - KeyUsageWrap: Key can be used to wrap other keys
 //   - KeyUsageUnwrap: Key can be used to unwrap keys
+//   - KeyUsageGenerateMAC: Key can compute MACs (HMAC keys)
+//   - KeyUsageVerifyMAC: Key can verify MACs (HMAC keys)
 package kms

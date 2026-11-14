@@ -59,6 +59,51 @@ type PutResponse struct {
 	LeaderID uint64 `json:"leader_id,omitempty"`
 }
 
+// CompareAndSwapRequest atomically replaces an entity's value when its stored
+// value equals Expect. The entity must exist: an absent entity never matches,
+// even when Expect is empty. Use PutIfAbsentRequest to create an entity.
+type CompareAndSwapRequest struct {
+	// EntityType is the logical type/namespace for the entity.
+	EntityType string `json:"entity_type"`
+
+	// ID is the entity identifier within its type.
+	ID uint64 `json:"id,omitempty"`
+
+	// Expect is the value the entity must currently hold.
+	Expect []byte `json:"expect"`
+
+	// Set is the value stored when Expect matches.
+	Set []byte `json:"set"`
+
+	// ShardID optionally specifies which shard to target.
+	// If zero, defaults to shard 1.
+	ShardID uint64 `json:"shard_id,omitempty"`
+}
+
+// PutIfAbsentRequest atomically stores an entity only when it does not exist.
+type PutIfAbsentRequest struct {
+	// EntityType is the logical type/namespace for the entity.
+	EntityType string `json:"entity_type"`
+
+	// ID is the entity identifier within its type.
+	ID uint64 `json:"id,omitempty"`
+
+	// Data is the value stored when the entity is absent.
+	Data []byte `json:"data"`
+
+	// ShardID optionally specifies which shard to target.
+	// If zero, defaults to shard 1.
+	ShardID uint64 `json:"shard_id,omitempty"`
+}
+
+// ConditionalPutResponse reports the outcome of a conditional write
+// (CompareAndSwap or PutIfAbsent). A failed precondition is a normal outcome,
+// reported as Applied == false with no error.
+type ConditionalPutResponse struct {
+	// Applied is true when the precondition held and the write was stored.
+	Applied bool `json:"applied"`
+}
+
 // GetRequest represents a get operation request.
 // It contains parameters to retrieve a specific entity.
 type GetRequest struct {

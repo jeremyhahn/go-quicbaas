@@ -440,6 +440,21 @@ Examples:
 func runKMSKeyRotateCommand(cmd *cobra.Command, args []string) error {
 	keyName := args[0]
 
+	req := &service.RotateKeyRequest{
+		KeyID:            keyName,
+		RetainOldVersion: true,
+	}
+
+	// The grace period is validated before the client is built, so bad
+	// input is refused without dialing the server (#2111).
+	if kmsGracePeriod != "" {
+		gracePeriod, err := parseGracePeriod(kmsGracePeriod)
+		if err != nil {
+			return formatError(err)
+		}
+		req.GracePeriodSeconds = int64(gracePeriod.Seconds())
+	}
+
 	client, err := kmsClientFactory()
 	if err != nil {
 		return err
@@ -448,21 +463,6 @@ func runKMSKeyRotateCommand(cmd *cobra.Command, args []string) error {
 
 	ctx, cancel := stdcontext.WithTimeout(stdcontext.Background(), globalTimeout)
 	defer cancel()
-
-	req := &service.RotateKeyRequest{
-		KeyID:            keyName,
-		RetainOldVersion: true,
-	}
-
-	// Parse grace period if provided
-	if kmsGracePeriod != "" {
-		gracePeriod, err := parseGracePeriod(kmsGracePeriod)
-		if err != nil {
-			return formatError(err)
-		}
-		// GracePeriodSeconds field will be added to RotateKeyRequest when protobuf is regenerated.
-		_ = gracePeriod.Seconds() // Convert to seconds for future use
-	}
 
 	resp, err := client.KMSRotateKey(ctx, req)
 	if err != nil {
@@ -539,6 +539,7 @@ Examples:
 	cmd.Flags().StringVar(&kmsImportAlgorithm, "algorithm", "AES-256-GCM", "Key algorithm (required)")
 	cmd.Flags().StringVar(&kmsMaterial, "material", "", "Key material (base64 encoded) (required)")
 	cmd.Flags().StringVar(&kmsDescription, "description", "", "Key description")
+	cmd.Flags().BoolVar(&kmsExportable, "exportable", false, "Allow key export")
 
 	cmd.MarkFlagRequired("material")
 
@@ -710,13 +711,10 @@ func algorithmMatches(flag string, key any, actual x509.PublicKeyAlgorithm) bool
 func runKMSKeyImportCommand(cmd *cobra.Command, args []string) error {
 	keyName := args[0]
 
-	client, err := kmsClientFactory()
-	if err != nil {
-		return err
-	}
-	defer client.Close()
-
+	// The material is decoded and checked before the client is built, so
+	// bad input is refused without dialing the server (#2111).
 	var keyMaterial []byte
+	var err error
 	if strings.HasPrefix(kmsMaterial, "base64:") {
 		// Explicit base64-encoded material
 		keyMaterial, err = base64.StdEncoding.DecodeString(strings.TrimPrefix(kmsMaterial, "base64:"))
@@ -749,7 +747,7 @@ func runKMSKeyImportCommand(cmd *cobra.Command, args []string) error {
 	// Armoured material takes the ASYMMETRIC path. Routing on the material
 	// rather than on a flag is what makes the old trap unreachable: there is
 	// no longer a way to spell "store this private key as an AES key".
-	keyAttrs := &kctypes.KeyAttributes{CN: keyName}
+	keyAttrs := &kctypes.KeyAttributes{CN: keyName, Exportable: kmsExportable}
 	usage := []service.KeyUsage{service.KeyUsageEncrypt, service.KeyUsageDecrypt}
 
 	if kind := detectEncodedKeyMaterial(keyMaterial); kind != "" {
@@ -798,6 +796,12 @@ func runKMSKeyImportCommand(cmd *cobra.Command, args []string) error {
 		KeyMaterial:   keyMaterial,
 		Usage:         usage,
 	}
+
+	client, err := kmsClientFactory()
+	if err != nil {
+		return err
+	}
+	defer client.Close()
 
 	resp, err := client.KMSImportKey(ctx, req)
 	if err != nil {
@@ -1008,6 +1012,7 @@ Examples:
 	cmd.Flags().StringVar(&kmsWrappingKey, "wrapping-key", "", "Wrapping key (required)")
 	cmd.Flags().StringVar(&kmsMaterial, "material", "", "Wrapped key material (base64) (required)")
 	cmd.Flags().StringVar(&kmsUnwrapAlgorithm, "algorithm", "", "Target key algorithm (required)")
+	cmd.Flags().BoolVar(&kmsExportable, "exportable", false, "Allow key export")
 
 	cmd.MarkFlagRequired("wrapping-key")
 	cmd.MarkFlagRequired("material")
@@ -1039,6 +1044,7 @@ func runKMSKeyUnwrapCommand(cmd *cobra.Command, args []string) error {
 		WrappingKeyID: kmsWrappingKey,
 		WrappedKey:    wrappedKey,
 		Algorithm:     kmsUnwrapAlgorithm,
+		KeyAttributes: &kctypes.KeyAttributes{Exportable: kmsExportable},
 	}
 
 	resp, err := client.KMSUnwrapKey(ctx, req)

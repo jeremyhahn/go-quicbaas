@@ -290,15 +290,8 @@ const tenantKeyPrefix = "t:"
 func seedJobIDCounter(ctx context.Context, kv interfaces.KVStore) (uint64, error) {
 	var highest uint64
 	visit := func(key string, _ []byte) error {
-		// The marker must open a namespace segment ("__sys:" or
-		// "t:{tenant}:"), so a tenant's own key that merely contains the
-		// phrase is not read as a job.
-		i := strings.LastIndex(key, jobKeyMarker)
-		if i <= 0 || key[i-1] != ':' {
-			return nil
-		}
-		id, err := strconv.ParseUint(key[i+len(jobKeyMarker):], 10, 64)
-		if err != nil || id >= scheduler.SystemJobIDFloor {
+		_, id, ok := splitJobKey(key)
+		if !ok || id >= scheduler.SystemJobIDFloor {
 			return nil
 		}
 		if id > highest {
@@ -314,4 +307,37 @@ func seedJobIDCounter(ctx context.Context, kv interfaces.KVStore) (uint64, error
 		return 0, &scheduler.ErrStorageError{Op: "InitializeJobIDCounter.scan", Cause: err}
 	}
 	return highest, nil
+}
+
+// splitJobKey parses a job record key (keyForJob) into its namespace
+// ("__sys:" or "t:{tenant}:") and job ID. The marker must open a namespace
+// segment, so a tenant's own key that merely contains the phrase is not read
+// as a job.
+func splitJobKey(key string) (namespace string, id uint64, ok bool) {
+	i := strings.LastIndex(key, jobKeyMarker)
+	if i <= 0 || key[i-1] != ':' {
+		return "", 0, false
+	}
+	id, err := strconv.ParseUint(key[i+len(jobKeyMarker):], 10, 64)
+	if err != nil {
+		return "", 0, false
+	}
+	return key[:i], id, true
+}
+
+// splitTenantJobKey parses a tenant job record key ("t:{tenant}:scheduler/jobs/{id}").
+func splitTenantJobKey(key string) (tenantID string, id uint64, ok bool) {
+	namespace, id, ok := splitJobKey(key)
+	if !ok {
+		return "", 0, false
+	}
+	tenantID, ok = strings.CutPrefix(namespace, tenantKeyPrefix)
+	if !ok {
+		return "", 0, false
+	}
+	tenantID = strings.TrimSuffix(tenantID, ":")
+	if tenantID == "" {
+		return "", 0, false
+	}
+	return tenantID, id, true
 }

@@ -88,6 +88,22 @@ export class TransportNotSupportedError extends QuicBaaSError {
   }
 }
 
+// UnsupportedArgumentError is thrown before any call when a request sets an
+// argument the transport's backend cannot honour yet, so the option is
+// refused rather than forwarded and silently dropped. `argument` names the
+// field that was set.
+export class UnsupportedArgumentError extends QuicBaaSError {
+  readonly transport: string;
+  readonly argument: string;
+
+  constructor(transport: string, argument: string, message: string) {
+    super(message);
+    this.name = 'UnsupportedArgumentError';
+    this.transport = transport;
+    this.argument = argument;
+  }
+}
+
 /**
  * SOPINRequiresTLSError is thrown before any request is sent when a call
  * carries a Security Officer PIN and the endpoint is not https://. It

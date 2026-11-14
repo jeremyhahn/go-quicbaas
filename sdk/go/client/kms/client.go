@@ -176,6 +176,10 @@ const (
 	KeyUsageWrap
 	// KeyUsageUnwrap allows key unwrapping operations.
 	KeyUsageUnwrap
+	// KeyUsageGenerateMAC allows computing MACs (HMAC keys).
+	KeyUsageGenerateMAC
+	// KeyUsageVerifyMAC allows verifying MACs (HMAC keys).
+	KeyUsageVerifyMAC
 )
 
 // String returns the string representation of the key usage.
@@ -193,6 +197,10 @@ func (u KeyUsage) String() string {
 		return "WRAP"
 	case KeyUsageUnwrap:
 		return "UNWRAP"
+	case KeyUsageGenerateMAC:
+		return "GENERATE_MAC"
+	case KeyUsageVerifyMAC:
+		return "VERIFY_MAC"
 	default:
 		return "UNKNOWN"
 	}
@@ -282,6 +290,25 @@ const (
 	WrapAlgECDHESA256KW
 )
 
+// wrappingAlgorithmServiceNames maps each WrappingAlgorithm to the name the
+// KMS service uses for it.
+var wrappingAlgorithmServiceNames = map[WrappingAlgorithm]string{
+	WrapAlgAESKW:         "AES-KW",
+	WrapAlgAESKWP:        "AES-KWP",
+	WrapAlgAESGCM:        "AES-GCM",
+	WrapAlgRSAOAEPSHA256: "RSA-OAEP-SHA256",
+	WrapAlgRSAOAEPSHA384: "RSA-OAEP-SHA384",
+	WrapAlgRSAOAEPSHA512: "RSA-OAEP-SHA512",
+	WrapAlgECDHESA256KW:  "ECDH-ES+A256KW",
+}
+
+// ServiceName returns the name the KMS service uses for a, and false when a
+// is not a known wrapping algorithm.
+func (a WrappingAlgorithm) ServiceName() (string, bool) {
+	name, known := wrappingAlgorithmServiceNames[a]
+	return name, known
+}
+
 // GenerateKeyResponse is the response from key generation.
 type GenerateKeyResponse struct {
 	KeyID     string
@@ -344,6 +371,9 @@ type ImportKeyRequest struct {
 
 	// Usage specifies permitted operations.
 	Usage []KeyUsage
+
+	// Exportable allows the imported key to be exported (default false).
+	Exportable bool
 
 	// Tags are optional key-value metadata.
 	Tags map[string]string
@@ -559,6 +589,9 @@ type UnwrapKeyRequest struct {
 
 	// SourceVersion is the source key version for AAD verification.
 	SourceVersion int
+
+	// Exportable allows the unwrapped key to be exported again (default false).
+	Exportable bool
 }
 
 // UnwrapKeyResponse is the response from unwrapping a key.
@@ -1480,7 +1513,8 @@ func validateGenerateKeyRequest(req *GenerateKeyRequest) error {
 	for i, usage := range req.Usage {
 		switch usage {
 		case KeyUsageEncrypt, KeyUsageDecrypt, KeyUsageSign,
-			KeyUsageVerify, KeyUsageWrap, KeyUsageUnwrap:
+			KeyUsageVerify, KeyUsageWrap, KeyUsageUnwrap,
+			KeyUsageGenerateMAC, KeyUsageVerifyMAC:
 			// Valid usage
 		default:
 			return errors.NewInvalidInput("kms.GenerateKey", "invalid key usage").
@@ -1623,6 +1657,10 @@ func sdkUsageToServiceUsage(usage KeyUsage) service.KeyUsage {
 		return service.KeyUsageWrapKey
 	case KeyUsageUnwrap:
 		return service.KeyUsageWrapKey
+	case KeyUsageGenerateMAC:
+		return service.KeyUsageGenerateMAC
+	case KeyUsageVerifyMAC:
+		return service.KeyUsageVerifyMAC
 	default:
 		return service.KeyUsageEncrypt
 	}
@@ -1641,6 +1679,10 @@ func serviceUsageToSDKUsage(usage service.KeyUsage) KeyUsage {
 		return KeyUsageVerify
 	case service.KeyUsageWrapKey:
 		return KeyUsageWrap
+	case service.KeyUsageGenerateMAC:
+		return KeyUsageGenerateMAC
+	case service.KeyUsageVerifyMAC:
+		return KeyUsageVerifyMAC
 	default:
 		return KeyUsageEncrypt
 	}

@@ -257,6 +257,18 @@ func newKMSService(kmsManager interfaces.KMSManager, logger interfaces.Logger) *
 	return svc
 }
 
+// DefaultKeyType returns the KeyType a key with these attributes is generated
+// under: KeyTypeSecret for a symmetric key, KeyTypeSigning otherwise.
+// go-xkms's symmetric provider lists only "secret" keys as symmetric, with
+// their stored Exportable flag; it skips a symmetric key of any other type,
+// so go-xkms could not export it.
+func DefaultKeyType(attrs *kctypes.KeyAttributes) kctypes.KeyType {
+	if attrs.SymmetricAlgorithm != "" {
+		return kctypes.KeyTypeSecret
+	}
+	return kctypes.KeyTypeSigning
+}
+
 // SetScheduler sets the scheduler for scheduling grace period jobs.
 // This must be called after both KMS and Scheduler services are initialized
 // to avoid circular dependencies.
@@ -483,18 +495,18 @@ func (k *kmsServiceImpl) GenerateKey(ctx context.Context, req *GenerateKeyReques
 	}
 	attrs.CN = keyID
 
+	// go-xkms enforces exportability from its own key record, which it writes
+	// once, from these attributes, at generation; the quicbaas metadata below
+	// only mirrors it.
+	attrs.Exportable = req.Exportable
+
 	// Set default KeyType if not specified.
 	// This is required by go-xkms for key generation.
 	// When requests come via JSON (e.g., QUIC protocol), the KeyType may be
 	// the zero value if not explicitly set in the request.
 	var zeroKeyType kctypes.KeyType
 	if attrs.KeyType == zeroKeyType {
-		// Determine KeyType based on algorithm: symmetric = encryption, asymmetric = signing
-		if attrs.SymmetricAlgorithm != "" {
-			attrs.KeyType = kctypes.KeyTypeEncryption
-		} else {
-			attrs.KeyType = kctypes.KeyTypeSigning
-		}
+		attrs.KeyType = DefaultKeyType(attrs)
 	}
 
 	// Call KMS manager to generate key
@@ -649,8 +661,9 @@ func (k *kmsServiceImpl) ImportKey(ctx context.Context, req *ImportKeyRequest) (
 	// Get algorithm string from attributes
 	algorithm := attrsToAlgorithm(req.KeyAttributes)
 
-	// Call KMS manager to import key
-	keyMetadata, err := k.kmsManager.ImportKey(ctx, keyID, req.KeyMaterial, algorithm)
+	// Call KMS manager to import key. go-xkms records Exportable at import and
+	// enforces it on export; the quicbaas metadata below only mirrors it.
+	keyMetadata, err := k.kmsManager.ImportKey(ctx, keyID, req.KeyMaterial, algorithm, req.KeyAttributes.Exportable)
 	if err != nil {
 		if k.metrics != nil {
 			k.metrics.errorsByType.With("kms_error", "import_key").Inc()
@@ -1178,17 +1191,27 @@ func (k *kmsServiceImpl) RotateKey(ctx context.Context, req *RotateKeyRequest) (
 		// same ID GetKey, UpdateKeyStatus and ListKeyVersions read it under.
 		payload := fmt.Sprintf(`{"key_id":%q,"version":%d}`, scopedKeyID, resp.OldVersion)
 
+		// A tenant's grace job is that tenant's own job, filed in its
+		// namespace, so the tenant that rotated the key can read and cancel
+		// the job ID it is handed. The system tenant's stays delegated.
+		ownerType, ownerID := SchedulerOwnerTypeDelegated, ""
+		if engineTenant := schedulerEngineTenant(tenantID); engineTenant != "" {
+			ownerType, ownerID = SchedulerOwnerTypeTenant, engineTenant
+		}
+
 		job := &SchedulerJob{
-			Name:        fmt.Sprintf("kms-grace-%s-v%d", scopedKeyID, resp.OldVersion),
-			Description: fmt.Sprintf("Disable key %s version %d after grace period", req.KeyID, resp.OldVersion),
-			OwnerType:   SchedulerOwnerTypeDelegated,
-			Type:        SchedulerJobTypeOneShot,
-			ExecuteAt:   gracePeriodDisableAt,
-			Handler:     "kms.grace_period",
-			Payload:     []byte(payload),
-			Status:      SchedulerJobStatusPending,
-			CreatedAt:   time.Now(),
-			UpdatedAt:   time.Now(),
+			Name:           fmt.Sprintf("kms-grace-%s-v%d", scopedKeyID, resp.OldVersion),
+			Description:    fmt.Sprintf("Disable key %s version %d after grace period", req.KeyID, resp.OldVersion),
+			OwnerType:      ownerType,
+			OwnerID:        ownerID,
+			TargetTenantID: ownerID,
+			Type:           SchedulerJobTypeOneShot,
+			ExecuteAt:      gracePeriodDisableAt,
+			Handler:        "kms.grace_period",
+			Payload:        []byte(payload),
+			Status:         SchedulerJobStatusPending,
+			CreatedAt:      time.Now(),
+			UpdatedAt:      time.Now(),
 		}
 
 		if err := k.scheduler.ScheduleJob(ctx, job); err != nil {

@@ -928,6 +928,8 @@ func TestHandleImportKeyKMSManagerNilBoost(t *testing.T) {
 	server, mockService, cleanup := setupMockServer(t)
 	defer cleanup()
 
+	// The manager fallback runs only when no KMS service is set.
+	mockService.DisableKMS = true
 	mockService.On("KMSManager").Return(nil)
 
 	body := `{"key_material":"dGVzdA==","wrapping_key_id":"wrap-key"}`
@@ -945,6 +947,8 @@ func TestHandleImportKeyWrongReturnTypeBoost(t *testing.T) {
 	server, mockService, cleanup := setupMockServer(t)
 	defer cleanup()
 
+	// The manager fallback runs only when no KMS service is set.
+	mockService.DisableKMS = true
 	mockKMSMgr := &MockKMSManager{}
 	mockKMSMgr.On("ImportKey", mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return("wrong-type", nil).Once()
 	mockService.On("KMSManager").Return(mockKMSMgr)
