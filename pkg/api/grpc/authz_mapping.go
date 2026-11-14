@@ -269,7 +269,7 @@ var grpcMethodPermissions = map[string]methodPermission{
 	// the owner, not a wiring change; it is tracked separately. Until then it
 	// stays unmapped and default-denied.
 	// Mirrors REST POST /api/v1/iam/users/{user_id}/approve (users:enable).
-	"/quicbaas.iam.v1.IAMService/ApproveUser":               {"users", "enable"},
+	"/quicbaas.iam.v1.IAMService/ApproveUser": {"users", "enable"},
 	// User create and update take the grants their REST twins require
 	// (POST and PUT /api/v1/iam/users), so the roles:assign argument check
 	// in authz_interceptor.go is reached on a write that carries roles

@@ -242,10 +242,25 @@ func requireUserUpdateArguments(req interface{}) []string {
 	return append(perms, "users:disable")
 }
 
+// requireUserCreateArguments is requireRolesAssign plus the attributes rule.
+// A user's attributes feed ABAC, so setting them at create is an
+// authorization write like setting roles, as for UpdateUser, and needs
+// roles:assign (asked once when the request carries both). Without it a
+// caller holding only users:create could create a user whose attributes
+// match a privileged ABAC policy.
+func requireUserCreateArguments(req interface{}) []string {
+	perms := requireRolesAssign(req)
+	create, ok := req.(*iampb.CreateUserRequest)
+	if ok && len(create.GetAttributes()) > 0 && len(perms) == 0 {
+		perms = append(perms, roleAssignmentPermission)
+	}
+	return perms
+}
+
 // grpcArgumentPermissions maps a full method name to the permissions its
 // request arguments demand on top of the method's own permission.
 var grpcArgumentPermissions = map[string]func(req interface{}) []string{
-	iampb.IAMService_CreateUser_FullMethodName: requireRolesAssign,
+	iampb.IAMService_CreateUser_FullMethodName: requireUserCreateArguments,
 	iampb.IAMService_UpdateUser_FullMethodName: requireUserUpdateArguments,
 }
 
