@@ -45,3 +45,6 @@ func (s *Server) stopOllama() error {
 func (s *Server) registerOllamaService(grpcServer *ggrpc.Server) {
 	// Ollama requires RAG build tag
 }
+
+// registerRAGService is a no-op when RAG support is not compiled.
+func (s *Server) registerRAGService(grpcServer *ggrpc.Server) {}

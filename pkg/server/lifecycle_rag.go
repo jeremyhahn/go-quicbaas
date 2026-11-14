@@ -264,3 +264,14 @@ func (s *Server) registerOllamaService(grpcServer *ggrpc.Server) {
 	pb.RegisterOllamaServiceServer(grpcServer, ollamaServer)
 	s.logger.Info("Registered Ollama gRPC service")
 }
+
+// registerRAGService registers quicbaas.rag.v1.RAGService over the one RAG
+// service REST and MCP call (#1611). Its backends are looked up per call, so a
+// node without Ollama or vector answers Unavailable, as REST and MCP do.
+func (s *Server) registerRAGService(grpcServer *ggrpc.Server) {
+	if s.quicBaaSService == nil {
+		return
+	}
+	pb.RegisterRAGServiceServer(grpcServer, grpcapi.NewRAGServer(s.quicBaaSService, s.logger))
+	s.logger.Info("Registered RAG gRPC service")
+}

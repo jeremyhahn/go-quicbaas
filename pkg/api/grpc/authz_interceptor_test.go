@@ -104,6 +104,9 @@ func TestGRPCResourceAndAction_Mapped(t *testing.T) {
 		{"/quicbaas.project.v1.ProjectService/GetProjectByName", "project", "read"},
 		{"/quicbaas.ollama.v1.OllamaService/Embed", "ollama", "embed"},
 		{"/quicbaas.ollama.v1.OllamaService/GetModelInfo", "ollama", "model_info"},
+		// RAG takes rag:query, as on REST and MCP (#1611).
+		{"/quicbaas.rag.v1.RAGService/Query", "rag", "query"},
+		{"/quicbaas.rag.v1.RAGService/BuildContext", "rag", "query"},
 		// Embedding mirrors REST /api/v1/embedding and the MCP embedding tools.
 		{"/quicbaas.embedding.v1.EmbeddingService/EmbeddingGenerate", "embedding", "embed"},
 		{"/quicbaas.embedding.v1.EmbeddingService/EmbeddingBatchGenerate", "embedding", "embed"},
@@ -129,10 +132,9 @@ func TestGRPCResourceAndAction_Mapped(t *testing.T) {
 
 func TestGRPCResourceAndAction_Unmapped(t *testing.T) {
 	// Surfaces with no qrdb permission family must be unmapped (default-deny).
-	// Agent runtime and RAG remain unregistered after Stage 0.5.
+	// Agent runtime remains unregistered after Stage 0.5.
 	for _, m := range []string{
 		"/quicbaas.fleet.v1.FleetRuntime/DoThing",
-		"/quicbaas.rag.v1.RAGService/Query",
 		"/quicbaas.unknown.v1.Mystery/DoThing",
 	} {
 		_, _, ok := grpcResourceAndAction(m)
