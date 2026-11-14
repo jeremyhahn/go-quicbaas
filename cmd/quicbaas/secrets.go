@@ -16,6 +16,7 @@ package main
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -23,6 +24,7 @@ import (
 	"strings"
 	"text/tabwriter"
 	"time"
+	"unicode/utf8"
 
 	"github.com/spf13/cobra"
 
@@ -665,8 +667,8 @@ func formatSecretsGetResponse(resp *service.GetSecretResponse, format string, w 
 	}
 
 	var dataMap map[string]interface{}
-	if err := json.Unmarshal(resp.Data, &dataMap); err != nil {
-		return errors.Wrapf(err, errors.ErrInternal, "secrets.get", "failed to unmarshal secret data")
+	if err := json.Unmarshal(resp.Data, &dataMap); err != nil || dataMap == nil {
+		return formatRawSecretsGetResponse(resp, outputFormat, w)
 	}
 
 	switch outputFormat {
@@ -697,6 +699,48 @@ func formatSecretsGetResponse(resp *service.GetSecretResponse, format string, w 
 			fmt.Fprintf(w, "%s=%v\n", k, v)
 		}
 		return nil
+	}
+}
+
+// formatRawSecretsGetResponse prints a secret whose data is not a JSON object:
+// the raw bytes `secrets put --from-stdin` or `--from-file` stored (#143).
+// The default format writes the bytes verbatim, so `secrets get` round-trips
+// what `secrets put --from-file` read. JSON carries the value as "data" when it
+// is valid UTF-8 and as "data_base64" otherwise; the table shows a binary value
+// by its size only.
+func formatRawSecretsGetResponse(resp *service.GetSecretResponse, outputFormat cli.OutputFormat, w io.Writer) error {
+	text := utf8.Valid(resp.Data)
+	switch outputFormat {
+	case cli.OutputFormatJSON:
+		output := map[string]interface{}{
+			"secret_id": resp.SecretID,
+			"version":   resp.Version,
+			"created":   resp.CreatedAt.Format(time.RFC3339),
+		}
+		if text {
+			output["data"] = string(resp.Data)
+		} else {
+			output["data_base64"] = base64.StdEncoding.EncodeToString(resp.Data)
+		}
+		encoder := json.NewEncoder(w)
+		encoder.SetIndent("", "  ")
+		return encoder.Encode(output)
+
+	case cli.OutputFormatTable:
+		tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
+		fmt.Fprintf(tw, "Secret ID:\t%s\n", resp.SecretID)
+		fmt.Fprintf(tw, "Version:\t%d\n", resp.Version)
+		fmt.Fprintf(tw, "Created:\t%s\n", resp.CreatedAt.Format(time.RFC3339))
+		if text {
+			fmt.Fprintf(tw, "\nData:\n%s\n", resp.Data)
+		} else {
+			fmt.Fprintf(tw, "\nData:\t(%d bytes, binary)\n", len(resp.Data))
+		}
+		return tw.Flush()
+
+	default:
+		_, err := w.Write(resp.Data)
+		return err
 	}
 }
 

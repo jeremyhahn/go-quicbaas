@@ -2719,15 +2719,35 @@ func TestFormatSecretsGetResponse_AllFormats(t *testing.T) {
 	}
 }
 
-func TestFormatSecretsGetResponse_InvalidData(t *testing.T) {
-	resp := &service.GetSecretResponse{
-		SecretID: "test/secret",
-		Data:     []byte(`not-json`),
-	}
+// A raw-byte secret (#143: `secrets put --from-file`) reads back verbatim
+// instead of failing to unmarshal as a JSON object.
+func TestFormatSecretsGetResponse_RawDataDefaultIsVerbatim(t *testing.T) {
+	raw := []byte("whsec_not-json\n\x00tail")
+	resp := &service.GetSecretResponse{SecretID: "forge/webhook_hmac", Data: raw}
 	var buf bytes.Buffer
-	err := formatSecretsGetResponse(resp, "json", &buf)
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "unmarshal")
+	require.NoError(t, formatSecretsGetResponse(resp, "", &buf))
+	assert.Equal(t, raw, buf.Bytes())
+}
+
+func TestFormatSecretsGetResponse_RawDataJSON(t *testing.T) {
+	var text bytes.Buffer
+	require.NoError(t, formatSecretsGetResponse(&service.GetSecretResponse{SecretID: "s", Data: []byte(`not-json`)}, "json", &text))
+	var got map[string]interface{}
+	require.NoError(t, json.Unmarshal(text.Bytes(), &got))
+	assert.Equal(t, "not-json", got["data"])
+
+	var bin bytes.Buffer
+	require.NoError(t, formatSecretsGetResponse(&service.GetSecretResponse{SecretID: "s", Data: []byte{0xff, 0x00, 0xfe}}, "json", &bin))
+	got = nil
+	require.NoError(t, json.Unmarshal(bin.Bytes(), &got))
+	assert.Equal(t, "/wD+", got["data_base64"])
+	assert.NotContains(t, got, "data")
+}
+
+func TestFormatSecretsGetResponse_RawDataTable(t *testing.T) {
+	var buf bytes.Buffer
+	require.NoError(t, formatSecretsGetResponse(&service.GetSecretResponse{SecretID: "s", Data: []byte{0xff, 0x00}}, "table", &buf))
+	assert.Contains(t, buf.String(), "(2 bytes, binary)")
 }
 
 func TestFormatSecretsListResponse_AllFormats(t *testing.T) {

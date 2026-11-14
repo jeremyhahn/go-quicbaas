@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`secrets get` reads a raw-byte secret back verbatim (#143).** A value
+  stored with `secrets put --from-stdin` or `--from-file` is not a JSON
+  object; `secrets get` now writes its bytes unchanged instead of failing to
+  unmarshal it (`-o json` carries it as `data`, or `data_base64` when it is
+  not UTF-8). An integration case stores and reads one on every transport.
 - **Secrets rotation policies are performed, not only stored (#726).** The
   `secrets.rotation` scheduler system job (every 5 minutes by default,
   `Config.SecretsRotationScanInterval`) writes each secret whose policy's

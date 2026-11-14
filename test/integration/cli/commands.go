@@ -505,6 +505,19 @@ func SecretsStoreCommand(path, value string) CommandDef {
 	}
 }
 
+// SecretsPutFromFileCommand stores the raw bytes of file as the secret (#143).
+func SecretsPutFromFileCommand(path, file string) CommandDef {
+	return CommandDef{
+		Name:           fmt.Sprintf("secrets put %s --from-file", path),
+		Args:           []string{"secrets", "put", path, "--from-file", file},
+		ExpectSuccess:  true,
+		ExpectOutput:   []string{path},
+		Timeout:        10 * time.Second,
+		RequiresUnseal: true,
+		SkipTransports: secretsTransportsToSkip,
+	}
+}
+
 // SecretsGetCommand returns a command to get a secret.
 // Secrets operations are supported via gRPC, Unix, and MCP transports.
 func SecretsGetCommand(path string, version int) CommandDef {

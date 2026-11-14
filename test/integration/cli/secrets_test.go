@@ -16,7 +16,12 @@
 package cli
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // =============================================================================
@@ -65,6 +70,30 @@ func TestSecretsGet(t *testing.T) {
 		// Cleanup
 		cleanup := SecretsDeleteCommand(secretPath, true)
 		runner.Run(cleanup)
+	})
+}
+
+// TestSecretsPutRawFromFile proves #143 end to end on every transport: a
+// file's raw bytes (not KEY=VALUE JSON) stored with `secrets put --from-file`
+// read back verbatim with `secrets get`.
+func TestSecretsPutRawFromFile(t *testing.T) {
+	RunForAllTransports(t, "SecretsPutRawFromFile", func(t *testing.T, runner *TestRunner) {
+		secretPath := UniqueKey("raw-secret")
+		raw := "whsec_raw-webhook-hmac-key:not=json\n"
+		file := filepath.Join(t.TempDir(), "hmac.key")
+		require.NoError(t, os.WriteFile(file, []byte(raw), 0o600))
+
+		put := SecretsPutFromFileCommand(secretPath, file)
+		if runner.IsSkipped(put) {
+			return
+		}
+		runner.RunAndAssert(put)
+
+		stdout, stderr, err := runner.Run(SecretsGetCommand(secretPath, 0))
+		require.NoError(t, err, "secrets get: %s", stderr)
+		assert.Equal(t, raw, stdout, "the raw bytes read back verbatim")
+
+		runner.Run(SecretsDeleteCommand(secretPath, true))
 	})
 }
 
