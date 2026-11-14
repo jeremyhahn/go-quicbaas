@@ -240,6 +240,24 @@ type Client interface {
 	// SetCostSettings replaces a tenant's runtime cost settings; settings
 	// that override nothing restore the configuration.
 	SetCostSettings(ctx context.Context, req *SetCostSettingsRequest) (*CostSettings, error)
+
+	// DeclareFleetPlacementSpec creates or replaces a fleet placement spec:
+	// where a class of work may run across the fleet's hosts.
+	// go-quicbaas#1681.
+	DeclareFleetPlacementSpec(ctx context.Context, req *DeclareFleetPlacementSpecRequest) (*FleetPlacementSpec, error)
+
+	// GetFleetPlacementSpec returns one fleet placement spec.
+	GetFleetPlacementSpec(ctx context.Context, req *FleetPlacementSpecRequest) (*FleetPlacementSpec, error)
+
+	// ListFleetPlacementSpecs returns a tenant's fleet placement specs.
+	ListFleetPlacementSpecs(ctx context.Context, req *ListFleetPlacementSpecsRequest) (*ListFleetPlacementSpecsResponse, error)
+
+	// WithdrawFleetPlacementSpec removes a fleet placement spec.
+	WithdrawFleetPlacementSpec(ctx context.Context, req *FleetPlacementSpecRequest) (*WithdrawFleetPlacementSpecResponse, error)
+
+	// GetFleetPlacementDrift reports where a spec's role work runs against
+	// the hosts the spec admits. Read-only.
+	GetFleetPlacementDrift(ctx context.Context, req *FleetPlacementSpecRequest) (*FleetPlacementDrift, error)
 }
 
 // GetSessionHistoryRequest pages through historical session events.
