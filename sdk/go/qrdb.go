@@ -129,6 +129,36 @@ type QRDBTenantClient = qrdbtransport.TenantClient
 // QRDBDEKClient is a re-export of the qrdb DEKClient interface.
 type QRDBDEKClient = qrdbtransport.DEKClient
 
+// QRDBTenantDEKRequest is a re-export of the qrdb TenantDEKRequest type.
+type QRDBTenantDEKRequest = qrdbtransport.TenantDEKRequest
+
+// QRDBTenantDEKRetireRequest is a re-export of the qrdb TenantDEKRetireRequest type.
+type QRDBTenantDEKRetireRequest = qrdbtransport.TenantDEKRetireRequest
+
+// QRDBTenantDEKVersion is a re-export of the qrdb TenantDEKVersion type.
+type QRDBTenantDEKVersion = qrdbtransport.TenantDEKVersion
+
+// QRDBTenantDEKStatusResponse is a re-export of the qrdb TenantDEKStatusResponse type.
+type QRDBTenantDEKStatusResponse = qrdbtransport.TenantDEKStatusResponse
+
+// QRDBTenantDEKEncryptRequest is a re-export of the qrdb TenantDEKEncryptRequest type.
+type QRDBTenantDEKEncryptRequest = qrdbtransport.TenantDEKEncryptRequest
+
+// QRDBTenantDEKEncryptResponse is a re-export of the qrdb TenantDEKEncryptResponse type.
+type QRDBTenantDEKEncryptResponse = qrdbtransport.TenantDEKEncryptResponse
+
+// QRDBTenantDEKDecryptRequest is a re-export of the qrdb TenantDEKDecryptRequest type.
+type QRDBTenantDEKDecryptRequest = qrdbtransport.TenantDEKDecryptRequest
+
+// QRDBTenantDEKDecryptResponse is a re-export of the qrdb TenantDEKDecryptResponse type.
+type QRDBTenantDEKDecryptResponse = qrdbtransport.TenantDEKDecryptResponse
+
+// QRDBTenantDEKRewrapRequest is a re-export of the qrdb TenantDEKRewrapRequest type.
+type QRDBTenantDEKRewrapRequest = qrdbtransport.TenantDEKRewrapRequest
+
+// QRDBTenantDEKRewrapResponse is a re-export of the qrdb TenantDEKRewrapResponse type.
+type QRDBTenantDEKRewrapResponse = qrdbtransport.TenantDEKRewrapResponse
+
 // QRDBIndexClient is a re-export of the qrdb IndexClient interface.
 type QRDBIndexClient = qrdbtransport.IndexClient
 
@@ -697,6 +727,9 @@ func (c *client) buildQRDBEmbeddedClient() (*qrdbsdk.Client, error) {
 	}
 	if s.Credential != nil {
 		embOpts = append(embOpts, qrdbembedded.WithCredentialService(s.Credential))
+	}
+	if s.DEK != nil {
+		embOpts = append(embOpts, qrdbembedded.WithDEKService(s.DEK))
 	}
 	if s.Tenant != nil {
 		embOpts = append(embOpts, qrdbembedded.WithTenantService(s.Tenant))

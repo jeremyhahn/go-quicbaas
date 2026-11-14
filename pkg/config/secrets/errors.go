@@ -87,6 +87,10 @@ type ResolutionFailedError struct {
 
 	// Reason is the reason for the failure
 	Reason string
+
+	// Cause is the underlying error that made the resolution fail (the KMS
+	// client's error, or the context's error); nil when there is none
+	Cause error
 }
 
 // Error implements the error interface.
@@ -95,6 +99,11 @@ func (e *ResolutionFailedError) Error() string {
 		return "failed to resolve secret URI \"" + e.URI + "\": " + e.Reason
 	}
 	return "failed to resolve secret URI \"" + e.URI + "\""
+}
+
+// Unwrap returns the underlying error for errors.Is and errors.As support.
+func (e *ResolutionFailedError) Unwrap() error {
+	return e.Cause
 }
 
 // RemoteConnectionFailedError represents an error when connection to remote KMS fails.
@@ -226,6 +235,7 @@ func NewResolutionFailedError(op, uri, reason string, cause error) *dberrors.QBE
 		Err: &ResolutionFailedError{
 			URI:    uri,
 			Reason: reason,
+			Cause:  cause,
 		},
 		Context: map[string]interface{}{
 			"uri":    uri,

@@ -775,6 +775,20 @@ func testDEKSafety(t *testing.T, ctx context.Context, protocol dekProtocol, pref
 		t.Logf("[%s] Set safety limits for DEK: %s", protocol.Name(), path)
 	})
 
+	// Rotation is the interlock's remedy, not one of the uses it caps: a DEK
+	// under safety limits rotates, and its new version's usage starts at zero.
+	t.Run("rotate under safety limits resets usage", func(t *testing.T) {
+		rotated, err := protocol.RotateDEK(ctx, &service.RotateDEKRequest{Path: path})
+		require.NoError(t, err, "RotateDEK under safety limits failed for %s", protocol.Name())
+		assert.Equal(t, rotated.OldVersion+1, rotated.NewVersion)
+
+		status, err := protocol.GetDEKStatus(ctx, &service.GetDEKStatusRequest{Path: path})
+		require.NoError(t, err, "GetDEKStatus failed for %s", protocol.Name())
+		require.NotNil(t, status.DEK)
+		assert.Equal(t, rotated.NewVersion, status.DEK.Version)
+		assert.Zero(t, status.DEK.UsageCount, "rotation starts the new version's usage at zero")
+	})
+
 	t.Run("clear safety limits", func(t *testing.T) {
 		clearSafetyReq := &service.ClearDEKSafetyRequest{Path: path}
 		resp, err := protocol.ClearDEKSafety(ctx, clearSafetyReq)

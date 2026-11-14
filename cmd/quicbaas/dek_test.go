@@ -215,7 +215,7 @@ func TestNewDEKCommand_VerbTree(t *testing.T) {
 
 	want := []string{
 		"create", "get", "list", "rotate", "delete", "status",
-		"set-default", "set-safety", "clear-safety", "reencrypt", "reencrypt-progress",
+		"set-default", "set-safety", "clear-safety", "reencrypt", "reencrypt-progress", "tenant",
 	}
 	got := make(map[string]bool, len(cmd.Commands()))
 	for _, c := range cmd.Commands() {
@@ -236,6 +236,9 @@ func TestNewDEKCommand_PathVerbsRequireExactlyOneArg(t *testing.T) {
 		switch c.Name() {
 		case "list":
 			require.NoError(t, c.Args(c, nil), "list must take no positional args")
+			assert.Error(t, c.Args(c, []string{"extra"}))
+		case "tenant":
+			require.NoError(t, c.Args(c, nil), "tenant is a group with no positional args")
 			assert.Error(t, c.Args(c, []string{"extra"}))
 		default:
 			assert.Error(t, c.Args(c, nil), "%s must require a path", c.Name())
