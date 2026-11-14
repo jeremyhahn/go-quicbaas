@@ -110,21 +110,27 @@ func (i *oidcSessionIssuer) SetAuthFactorClient(c qrdbtransport.UserAuthFactorCl
 // It never DERIVES: the values come from the stored record and nothing else. A
 // login cannot manufacture assurance it did not prove, which is the invariant
 // #385 established for refresh.
-func (i *oidcSessionIssuer) attestationFor(ctx context.Context, identity *qrdbsdk.Identity) (level, aaguid string) {
+func (i *oidcSessionIssuer) attestationFor(ctx context.Context, identity *qrdbsdk.Identity) (level, aaguid string, userID uint64) {
 	reader := i.factors.Load()
 	if reader == nil || identity.Metadata == nil {
-		return "", ""
+		return "", "", 0
 	}
 	factorID := identity.Metadata[factorIDMetadataKey]
 	if factorID == "" {
-		return "", ""
+		return "", "", 0
 	}
-	resp, err := reader.get(ctx, &qrdbtransport.AuthFactorGetRequest{FactorID: factorID})
-	if err != nil || resp == nil || resp.Factor.Metadata == nil {
-		return "", ""
+	// A factor is enrolled in its tenant, so it is read in the login's tenant:
+	// a factor of another tenant is not found and names no user.
+	tenantCtx := qrdbsdk.ContextWithTenant(ctx, identity.TenantID)
+	resp, err := reader.get(tenantCtx, &qrdbtransport.AuthFactorGetRequest{FactorID: factorID})
+	// A record without attestation metadata still names its owner: reading a
+	// nil map yields "" for the attestation, never a dropped user id.
+	if err != nil || resp == nil {
+		return "", "", 0
 	}
 	return resp.Factor.Metadata[iam.AuthFactorMetadataAttestLevel],
-		resp.Factor.Metadata[iam.AuthFactorMetadataAttestAAGUID]
+		resp.Factor.Metadata[iam.AuthFactorMetadataAttestAAGUID],
+		resp.Factor.UserID
 }
 
 // Compile-time check that oidcSessionIssuer satisfies the qrdb interface.
@@ -153,7 +159,9 @@ func (i *oidcSessionIssuer) Issue(ctx context.Context, identity *qrdbsdk.Identit
 	// the REGISTERING session it did not have on any subsequent login with the
 	// same key — while the evidence sat in the factor record, written and never
 	// read.
-	session.AttestLevel, session.AttestAAGUID = i.attestationFor(ctx, identity)
+	// The same record names the user go-qrdb bound to the factor, which is how
+	// the session resolves its principal (ruling 254 option 1).
+	session.AttestLevel, session.AttestAAGUID, session.UserID = i.attestationFor(ctx, identity)
 	// A DPoP proof presented on the login-finish request (threaded on the context
 	// by the transport handler) sender-constrains the session bearer via cnf.jkt.
 	// qrdb passes the caller's context here unchanged, so no ceremony signature
