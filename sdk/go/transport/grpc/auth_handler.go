@@ -85,11 +85,10 @@ var authVerbs = map[string]authVerb{
 	"RevokeSession":           (*authHandler).handleRevokeSession,
 	"GetJWKS":                 refuseAuthVerb("GetJWKS", "the server has no gRPC RPC for the JWKS"),
 	"GetOpenIDConfiguration":  refuseAuthVerb("GetOpenIDConfiguration", "the server has no gRPC RPC for the OpenID configuration"),
-	// The session RPCs take a tenant and user ID and, with no user, act on
-	// the whole tenant; the SDK verbs mean the caller's own sessions, whose
-	// user ID the client cannot learn.
-	"ListSessions":      refuseAuthVerb("ListSessions", "the gRPC RPC is tenant-scoped, not scoped to the caller"),
-	"RevokeAllSessions": refuseAuthVerb("RevokeAllSessions", "the gRPC RPC is tenant-scoped, not scoped to the caller"),
+	// The SDK verbs mean the caller's own sessions; the RPCs, sent with no
+	// tenant and no user, act on exactly those (#1842).
+	"ListSessions":      (*authHandler).handleListSessions,
+	"RevokeAllSessions": (*authHandler).handleRevokeAllSessions,
 }
 
 // handleLogin is the retired legacy username/password login verb. The locked

@@ -15,6 +15,7 @@ package grpc
 
 import (
 	"context"
+	"errors"
 	"strconv"
 	"time"
 
@@ -89,6 +90,47 @@ func (s *SessionServer) sessionCaller(ctx context.Context) (string, uint64, erro
 
 // callerUserID checks an optional user_id against the caller: it may name
 // only the caller, and an empty one means the caller.
+// callerSessionScope resolves the tenant and user a caller-scoped session verb
+// (ListSessions, RevokeAllSessions) acts on. An omitted tenant_id is the
+// caller's own tenant, so a client that knows only its credential can name its
+// own sessions; a named tenant must be the caller's. The user is always the
+// caller: user 0 never reaches the session service, where it would read as
+// the whole tenant (#1842).
+func (s *SessionServer) callerSessionScope(ctx context.Context, tenantID, requestedUser string) (string, uint64, error) {
+	if tenantID != "" {
+		if err := requireCallerTenant(ctx, "grpc.Session", tenantID); err != nil {
+			return "", 0, err
+		}
+	}
+	callerTenant, callerID, err := s.sessionCaller(ctx)
+	if err != nil {
+		return "", 0, err
+	}
+	if callerID == 0 {
+		return "", 0, status.Error(codes.PermissionDenied, "caller is not a user")
+	}
+	if tenantID == "" {
+		tenantID = callerTenant
+	}
+	userID, err := callerUserID(requestedUser, callerID)
+	if err != nil {
+		return "", 0, err
+	}
+	return tenantID, userID, nil
+}
+
+// ErrSessionScopeRequired is returned by a session service asked to list or
+// revoke sessions with no tenant or with user 0. Neither is a wildcard: a
+// session verb acts on one user's sessions in one tenant (#1842).
+var ErrSessionScopeRequired = errors.New("session verbs need a tenant and a user: user 0 is not the whole tenant")
+
+func requireSessionScope(tenantID string, userID uint64) error {
+	if tenantID == "" || userID == 0 {
+		return ErrSessionScopeRequired
+	}
+	return nil
+}
+
 func callerUserID(requested string, callerID uint64) (uint64, error) {
 	userID, err := parseOptionalUserID("user_id", requested)
 	if err != nil {
@@ -120,22 +162,12 @@ func (s *SessionServer) ownedSession(ctx context.Context, sessionID string) (*ia
 
 // ListSessions lists sessions for a tenant/user.
 func (s *SessionServer) ListSessions(ctx context.Context, req *iampb.ListSessionsRequest) (*iampb.ListSessionsResponse, error) {
-	if req.TenantId == "" {
-		return nil, status.Error(codes.InvalidArgument, "tenant_id is required")
-	}
-	if err := requireCallerTenant(ctx, "grpc.Session", req.TenantId); err != nil {
-		return nil, err
-	}
-	_, callerID, err := s.sessionCaller(ctx)
-	if err != nil {
-		return nil, err
-	}
-	userID, err := callerUserID(req.UserId, callerID)
+	tenantID, userID, err := s.callerSessionScope(ctx, req.TenantId, req.UserId)
 	if err != nil {
 		return nil, err
 	}
 
-	sessions, total, err := s.sessionService.ListSessions(ctx, req.TenantId, userID, int(req.Limit), int(req.Offset))
+	sessions, total, err := s.sessionService.ListSessions(ctx, tenantID, userID, int(req.Limit), int(req.Offset))
 	if err != nil {
 		s.logger.WithError(err).Error("Failed to list sessions")
 		return nil, status.Errorf(codes.Internal, "failed to list sessions: %v", err)
@@ -187,22 +219,12 @@ func (s *SessionServer) RevokeSession(ctx context.Context, req *iampb.RevokeSess
 
 // RevokeAllSessions revokes all sessions for a user/tenant.
 func (s *SessionServer) RevokeAllSessions(ctx context.Context, req *iampb.RevokeAllSessionsRequest) (*iampb.RevokeAllSessionsResponse, error) {
-	if req.TenantId == "" {
-		return nil, status.Error(codes.InvalidArgument, "tenant_id is required")
-	}
-	if err := requireCallerTenant(ctx, "grpc.Session", req.TenantId); err != nil {
-		return nil, err
-	}
-	_, callerID, err := s.sessionCaller(ctx)
-	if err != nil {
-		return nil, err
-	}
-	userID, err := callerUserID(req.UserId, callerID)
+	tenantID, userID, err := s.callerSessionScope(ctx, req.TenantId, req.UserId)
 	if err != nil {
 		return nil, err
 	}
 
-	count, err := s.sessionService.RevokeAllSessions(ctx, req.TenantId, userID)
+	count, err := s.sessionService.RevokeAllSessions(ctx, tenantID, userID)
 	if err != nil {
 		s.logger.WithError(err).Error("Failed to revoke all sessions")
 		return nil, status.Errorf(codes.Internal, "failed to revoke all sessions: %v", err)
@@ -271,6 +293,9 @@ func NewSessionServiceAdapter(sessionStorage iam.SessionStorage) *SessionService
 
 // ListSessions lists sessions for a tenant/user.
 func (a *SessionServiceAdapter) ListSessions(ctx context.Context, tenantID string, userID uint64, limit, offset int) ([]*iam.Session, int, error) {
+	if err := requireSessionScope(tenantID, userID); err != nil {
+		return nil, 0, err
+	}
 	sessions, err := a.sessionStorage.GetSessionsByUser(ctx, tenantID, userID)
 	if err != nil {
 		return nil, 0, err
@@ -301,6 +326,9 @@ func (a *SessionServiceAdapter) RevokeSession(ctx context.Context, sessionID str
 
 // RevokeAllSessions revokes all sessions for a user/tenant.
 func (a *SessionServiceAdapter) RevokeAllSessions(ctx context.Context, tenantID string, userID uint64) (int, error) {
+	if err := requireSessionScope(tenantID, userID); err != nil {
+		return 0, err
+	}
 	sessions, err := a.sessionStorage.GetSessionsByUser(ctx, tenantID, userID)
 	if err != nil {
 		return 0, err
@@ -358,9 +386,12 @@ func NewMemorySessionService() *MemorySessionService {
 
 // ListSessions lists all sessions.
 func (m *MemorySessionService) ListSessions(ctx context.Context, tenantID string, userID uint64, limit, offset int) ([]*iam.Session, int, error) {
+	if err := requireSessionScope(tenantID, userID); err != nil {
+		return nil, 0, err
+	}
 	var result []*iam.Session
 	for _, s := range m.sessions {
-		if (tenantID == "" || s.TenantID == tenantID) && (userID == 0 || s.UserID == userID) {
+		if s.TenantID == tenantID && s.UserID == userID {
 			result = append(result, s)
 		}
 	}
@@ -394,9 +425,12 @@ func (m *MemorySessionService) RevokeSession(ctx context.Context, sessionID stri
 
 // RevokeAllSessions revokes all sessions for a tenant/user.
 func (m *MemorySessionService) RevokeAllSessions(ctx context.Context, tenantID string, userID uint64) (int, error) {
+	if err := requireSessionScope(tenantID, userID); err != nil {
+		return 0, err
+	}
 	count := 0
 	for id, s := range m.sessions {
-		if (tenantID == "" || s.TenantID == tenantID) && (userID == 0 || s.UserID == userID) {
+		if s.TenantID == tenantID && s.UserID == userID {
 			delete(m.sessions, id)
 			count++
 		}

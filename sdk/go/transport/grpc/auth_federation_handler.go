@@ -190,18 +190,49 @@ func (h *authHandler) handleGetSession(ctx context.Context, req interface{}) (in
 		return nil, convertGRPCError(err, op)
 	}
 
-	return &service.AuthSession{
-		ID:          resp.GetId(),
-		UserID:      resp.GetUserId(),
-		TenantID:    resp.GetTenantId(),
-		CreatedAt:   convertTimestampFromProto(resp.GetCreatedAt()),
-		LastActive:  convertTimestampFromProto(resp.GetLastActive()),
-		ExpiresAt:   convertTimestampFromProto(resp.GetExpiresAt()),
-		MFAVerified: resp.GetMfaVerified(),
-		IPAddress:   resp.GetIpAddress(),
-		UserAgent:   resp.GetUserAgent(),
-		DeviceInfo:  resp.GetDeviceInfo(),
-	}, nil
+	session := authSessionFromProto(resp)
+	return &session, nil
+}
+
+func authSessionFromProto(s *iampb.Session) service.AuthSession {
+	return service.AuthSession{
+		ID:          s.GetId(),
+		UserID:      s.GetUserId(),
+		TenantID:    s.GetTenantId(),
+		CreatedAt:   convertTimestampFromProto(s.GetCreatedAt()),
+		LastActive:  convertTimestampFromProto(s.GetLastActive()),
+		ExpiresAt:   convertTimestampFromProto(s.GetExpiresAt()),
+		MFAVerified: s.GetMfaVerified(),
+		IPAddress:   s.GetIpAddress(),
+		UserAgent:   s.GetUserAgent(),
+		DeviceInfo:  s.GetDeviceInfo(),
+	}
+}
+
+// handleListSessions lists the caller's own sessions. The request names no
+// tenant and no user: the server reads both from the caller's credential, so
+// the RPC is scoped to the caller, never to the tenant (#1842).
+func (h *authHandler) handleListSessions(ctx context.Context, _ interface{}) (interface{}, error) {
+	const op = "authHandler.handleListSessions"
+	resp, err := iampb.NewSessionServiceClient(h.conn).ListSessions(ctx, &iampb.ListSessionsRequest{})
+	if err != nil {
+		return nil, convertGRPCError(err, op)
+	}
+	sessions := make([]service.AuthSession, 0, len(resp.GetSessions()))
+	for _, s := range resp.GetSessions() {
+		sessions = append(sessions, authSessionFromProto(s))
+	}
+	return &service.AuthListSessionsResponse{Sessions: sessions}, nil
+}
+
+// handleRevokeAllSessions revokes the caller's own sessions, scoped the same
+// way as handleListSessions.
+func (h *authHandler) handleRevokeAllSessions(ctx context.Context, _ interface{}) (interface{}, error) {
+	const op = "authHandler.handleRevokeAllSessions"
+	if _, err := iampb.NewSessionServiceClient(h.conn).RevokeAllSessions(ctx, &iampb.RevokeAllSessionsRequest{}); err != nil {
+		return nil, convertGRPCError(err, op)
+	}
+	return nil, nil
 }
 
 func (h *authHandler) handleRevokeSession(ctx context.Context, req interface{}) (interface{}, error) {
