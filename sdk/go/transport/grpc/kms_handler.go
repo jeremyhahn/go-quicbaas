@@ -775,6 +775,10 @@ func sdkUsageToService(usage kmsclient.KeyUsage) service.KeyUsage {
 		return service.KeyUsageVerify
 	case kmsclient.KeyUsageWrap, kmsclient.KeyUsageUnwrap:
 		return service.KeyUsageWrapKey
+	case kmsclient.KeyUsageGenerateMAC:
+		return service.KeyUsageGenerateMAC
+	case kmsclient.KeyUsageVerifyMAC:
+		return service.KeyUsageVerifyMAC
 	default:
 		return service.KeyUsageEncrypt
 	}

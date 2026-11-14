@@ -1120,6 +1120,10 @@ func kmsUsageToString(u kmsclient.KeyUsage) string {
 		return string(service.KeyUsageWrapKey)
 	case kmsclient.KeyUsageUnwrap:
 		return string(service.KeyUsageWrapKey)
+	case kmsclient.KeyUsageGenerateMAC:
+		return string(service.KeyUsageGenerateMAC)
+	case kmsclient.KeyUsageVerifyMAC:
+		return string(service.KeyUsageVerifyMAC)
 	default:
 		return ""
 	}

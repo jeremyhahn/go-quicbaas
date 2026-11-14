@@ -456,6 +456,9 @@ const (
 	KeyUsageVerify  = kms.KeyUsageVerify
 	KeyUsageWrap    = kms.KeyUsageWrap
 	KeyUsageUnwrap  = kms.KeyUsageUnwrap
+
+	KeyUsageGenerateMAC = kms.KeyUsageGenerateMAC
+	KeyUsageVerifyMAC   = kms.KeyUsageVerifyMAC
 )
 
 // KMS extended type aliases
