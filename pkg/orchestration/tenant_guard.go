@@ -30,9 +30,6 @@ var (
 	// ErrTenantRequired indicates tenant ID is missing from context.
 	ErrTenantRequired = errors.New("orchestration: tenant ID required")
 
-	// ErrSuperAdminBlocked indicates a SuperAdmin tried to access orchestration data.
-	ErrSuperAdminBlocked = errors.New("orchestration: super admin access blocked for orchestration")
-
 	// ErrInvalidTenantPrefix indicates a key does not have a valid tenant prefix.
 	ErrInvalidTenantPrefix = errors.New("orchestration: invalid tenant prefix")
 )
@@ -68,21 +65,6 @@ func (e *TenantRequiredError) Unwrap() error {
 	return ErrTenantRequired
 }
 
-// SuperAdminBlockedError indicates a SuperAdmin tried to access orchestration data.
-type SuperAdminBlockedError struct {
-	Operation string
-}
-
-// Error implements the error interface.
-func (e *SuperAdminBlockedError) Error() string {
-	return ErrSuperAdminBlocked.Error() + ": " + e.Operation
-}
-
-// Unwrap returns the sentinel error for errors.Is support.
-func (e *SuperAdminBlockedError) Unwrap() error {
-	return ErrSuperAdminBlocked
-}
-
 // InvalidTenantPrefixError indicates a key has an invalid or cross-tenant prefix.
 type InvalidTenantPrefixError struct {
 	Key      string
@@ -102,9 +84,6 @@ func (e *InvalidTenantPrefixError) Unwrap() error {
 // tenantContextKey is a context key for the tenant ID.
 // This is local to the orchestration package to avoid IAM build tag dependency.
 type tenantContextKey struct{}
-
-// superAdminContextKey is a context key for super admin status.
-type superAdminContextKey struct{}
 
 // TenantFromContext extracts the tenant ID from the orchestration context.
 func TenantFromContext(ctx context.Context) string {
@@ -149,21 +128,6 @@ func ContextWithTenant(ctx context.Context, tenantID string) context.Context {
 	return context.WithValue(ctx, tenantContextKey{}, tenantID)
 }
 
-// IsSuperAdmin checks if the context indicates a super admin.
-func IsSuperAdmin(ctx context.Context) bool {
-	if v := ctx.Value(superAdminContextKey{}); v != nil {
-		if isAdmin, ok := v.(bool); ok {
-			return isAdmin
-		}
-	}
-	return false
-}
-
-// ContextWithSuperAdmin returns a new context with the super admin flag set.
-func ContextWithSuperAdmin(ctx context.Context, isAdmin bool) context.Context {
-	return context.WithValue(ctx, superAdminContextKey{}, isAdmin)
-}
-
 // TenantGuard enforces strict tenant isolation for all orchestration operations.
 // Unlike other QuicBaaS services, SuperAdmin CANNOT access LLM agent data
 // across tenants. This is enforced at code level, not policy level.
@@ -180,16 +144,9 @@ func NewTenantGuard(logger interfaces.Logger) *TenantGuard {
 // Returns an error if:
 //   - Tenant ID is empty (unauthenticated)
 //   - Target tenant differs from requesting tenant (cross-tenant access)
-//   - The request has SuperAdmin context (SuperAdmin is blocked for orchestration)
 func (g *TenantGuard) ValidateTenantAccess(ctx context.Context, targetTenantID string) error {
 	if err := ctx.Err(); err != nil {
 		return err
-	}
-
-	// Block SuperAdmin access for orchestration operations
-	if IsSuperAdmin(ctx) {
-		g.logger.Warnf("super admin access blocked for orchestration: target=%s", targetTenantID)
-		return &SuperAdminBlockedError{Operation: "ValidateTenantAccess"}
 	}
 
 	requestingTenant := TenantFromContext(ctx)
@@ -229,12 +186,6 @@ func authorizeCallerTarget(ctx context.Context, op, tenantID string) error {
 	return err
 }
 
-// IsSuperAdminBlocked returns true always for orchestration operations.
-// This function exists to make the policy explicit and testable.
-func (g *TenantGuard) IsSuperAdminBlocked() bool {
-	return true
-}
-
 // EnforceTenantPrefix ensures a KV key is prefixed with the tenant ID.
 // Prevents agents from accessing data outside their tenant namespace.
 // If the key already has the correct tenant prefix, it is returned as-is.
@@ -243,11 +194,6 @@ func (g *TenantGuard) IsSuperAdminBlocked() bool {
 func (g *TenantGuard) EnforceTenantPrefix(ctx context.Context, key string) (string, error) {
 	if err := ctx.Err(); err != nil {
 		return "", err
-	}
-
-	// Block SuperAdmin
-	if IsSuperAdmin(ctx) {
-		return "", &SuperAdminBlockedError{Operation: "EnforceTenantPrefix"}
 	}
 
 	tenantID := TenantFromContext(ctx)
