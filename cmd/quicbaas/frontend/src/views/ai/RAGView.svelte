@@ -26,7 +26,7 @@
   import { getSDKClient } from '../../stores/sdkClient.ts';
   import { showToast } from '../../stores/toast.svelte.ts';
   import type { RAGQueryResponse, RAGCitation, RAGDocument, RAGDocumentID } from '@quicbaas/sdk';
-  import { Brain, Plus, Search, X, FileText, BookOpen, Trash2, RotateCw, RefreshCw } from 'lucide-svelte';
+  import { Brain, Plus, Search, X, FileText, BookOpen, Trash2, RotateCw, RefreshCw, Eye } from 'lucide-svelte';
   import { formatDateTime } from '../../lib/time.ts';
 
   // ---------------------------------------------------------------------------
@@ -160,6 +160,42 @@
     } finally {
       deletingDoc = null;
     }
+  }
+
+  // ---------------------------------------------------------------------------
+  // View document dialog state (GET /api/v1/rag/documents/{id})
+  // ---------------------------------------------------------------------------
+
+  let viewingDocId: RAGDocumentID | null = $state(null);
+  let viewDoc = $state<RAGDocument | null>(null);
+  let viewLoading = $state(false);
+  let viewError = $state('');
+
+  async function viewDocument(doc: RAGDocument): Promise<void> {
+    viewingDocId = doc.id;
+    viewDoc = null;
+    viewError = '';
+    viewLoading = true;
+    try {
+      const client = await getSDKClient();
+      viewDoc = await client.rag.getDocument(doc.id);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      viewError = `Failed to load document: ${msg}`;
+    } finally {
+      viewLoading = false;
+    }
+  }
+
+  function closeViewDialog(): void {
+    viewingDocId = null;
+    viewDoc = null;
+    viewError = '';
+  }
+
+  function formatMetadata(metadata: Record<string, unknown> | undefined): string {
+    if (!metadata || Object.keys(metadata).length === 0) return '';
+    return JSON.stringify(metadata, null, 2);
   }
 
   async function reindexDocument(doc: RAGDocument): Promise<void> {
@@ -412,6 +448,15 @@
                   <div class="flex gap-1">
                     <button
                       class="btn btn-ghost btn-xs"
+                      disabled={viewLoading && viewingDocId === doc.id}
+                      onclick={() => void viewDocument(doc)}
+                      title={`View document #${doc.id}`}
+                      aria-label={`View document #${doc.id}`}
+                    >
+                      <Eye class="h-3 w-3" />
+                    </button>
+                    <button
+                      class="btn btn-ghost btn-xs"
                       disabled={reindexingDoc === doc.id}
                       onclick={() => void reindexDocument(doc)}
                       title={`Reindex document #${doc.id}`}
@@ -442,6 +487,54 @@
 
   </div>
 </div>
+
+<!-- View Document Dialog -->
+{#if viewingDocId !== null}
+  <div class="modal modal-open" role="dialog" aria-modal="true" aria-label="View Document">
+    <div class="modal-box w-full max-w-2xl">
+      <div class="mb-4 flex items-center justify-between">
+        <h3 class="text-base font-semibold">Document #{viewingDocId}</h3>
+        <button class="btn btn-ghost btn-square btn-sm" onclick={closeViewDialog} aria-label="Close document">
+          <X class="h-4 w-4" />
+        </button>
+      </div>
+
+      {#if viewLoading}
+        <div class="flex items-center gap-2 text-sm text-base-content/60" data-testid="rag-doc-loading">
+          <span class="loading loading-spinner loading-xs"></span>
+          Loading document…
+        </div>
+      {:else if viewError}
+        <div class="alert alert-error text-sm">{viewError}</div>
+      {:else if viewDoc}
+        <dl class="grid grid-cols-[auto_1fr] gap-x-4 gap-y-2 text-sm">
+          <dt class="text-base-content/50">ID</dt>
+          <dd class="font-mono text-xs" data-testid="rag-doc-id">{viewDoc.id}</dd>
+          <dt class="text-base-content/50">Namespace</dt>
+          <dd data-testid="rag-doc-namespace">{viewDoc.namespace}</dd>
+          <dt class="text-base-content/50">Timestamp</dt>
+          <dd class="text-xs">{formatDateTime(viewDoc.timestamp)}</dd>
+        </dl>
+        <div class="mt-4">
+          <p class="mb-2 text-xs font-semibold uppercase tracking-wider text-base-content/40">Metadata</p>
+          {#if formatMetadata(viewDoc.metadata)}
+            <pre class="max-h-48 overflow-y-auto rounded-lg bg-base-300 p-3 text-xs whitespace-pre-wrap" data-testid="rag-doc-metadata">{formatMetadata(viewDoc.metadata)}</pre>
+          {:else}
+            <p class="text-xs text-base-content/40">—</p>
+          {/if}
+        </div>
+        <div class="mt-4">
+          <p class="mb-2 text-xs font-semibold uppercase tracking-wider text-base-content/40">Content</p>
+          <pre class="max-h-96 overflow-y-auto rounded-lg bg-base-300 p-4 text-sm whitespace-pre-wrap" data-testid="rag-doc-content">{viewDoc.content ?? ''}</pre>
+        </div>
+      {/if}
+
+      <div class="modal-action">
+        <button class="btn btn-ghost" onclick={closeViewDialog}>Close</button>
+      </div>
+    </div>
+  </div>
+{/if}
 
 <!-- Ingest Document Dialog -->
 {#if showIngestDialog}
@@ -509,6 +602,6 @@
         </button>
       </div>
     </div>
-    <div class="modal-backdrop" onclick={closeIngestDialog}></div>
+    <div class="modal-backdrop" role="presentation" onclick={closeIngestDialog}></div>
   </div>
 {/if}

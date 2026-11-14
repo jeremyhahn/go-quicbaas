@@ -21,7 +21,7 @@ import { render, screen, fireEvent, waitFor } from '@testing-library/svelte';
 
 // Define the session shapes inside vi.hoisted so they are available when
 // vi.mock factories are evaluated (factories are hoisted before top-level consts).
-const { sessions, mockJobs } = vi.hoisted(() => {
+const { sessions, mockJobs, mockTenant } = vi.hoisted(() => {
   const active = {
     session_id: 'sess-aaa-bbb-ccc-111',
     backend: 'claude',
@@ -29,7 +29,6 @@ const { sessions, mockJobs } = vi.hoisted(() => {
     created_at: 1700000000,
     last_active: 1700001000,
     model: 'claude-3-5-sonnet',
-    tenant_id: 'default',
   };
   const closed = {
     ...active,
@@ -42,13 +41,16 @@ const { sessions, mockJobs } = vi.hoisted(() => {
     { job_id: 'job-worker', runner: 'sdlc' },
     { job_id: 'job-reviewer', runner: 'review' },
   ];
-  return { sessions: { active, closed }, mockJobs };
+  // The console's active tenant, which the session views show: the session
+  // JSON carries no tenant of its own.
+  const mockTenant = { id: 'default' };
+  return { sessions: { active, closed }, mockJobs, mockTenant };
 });
 
 vi.mock('../src/stores/orchestrator.svelte.ts', () => ({
   orchestratorStore: {
     get jobs() { return mockJobs; },
-    get activeTenantID() { return 'default'; },
+    get activeTenantID() { return mockTenant.id; },
   },
   loadJobs: vi.fn().mockResolvedValue(undefined),
 }));
@@ -212,6 +214,27 @@ describe('SessionDetail — active session', () => {
     // "default" appears in the metadata aside.
     const tenantEls = screen.getAllByText('default');
     expect(tenantEls.length).toBeGreaterThan(0);
+  });
+
+  it("shows the console's active tenant, not one from the session", () => {
+    mockTenant.id = 'tenant-acme';
+    try {
+      render(SessionDetail, { props: { session: activeSession } });
+      expect(screen.getAllByText('tenant-acme').length).toBeGreaterThan(0);
+      expect(screen.getAllByText('Tenant').length).toBeGreaterThan(0);
+    } finally {
+      mockTenant.id = 'default';
+    }
+  });
+
+  it('shows no Tenant line when the console has no active tenant', () => {
+    mockTenant.id = '';
+    try {
+      render(SessionDetail, { props: { session: activeSession } });
+      expect(screen.queryByText('Tenant')).toBeNull();
+    } finally {
+      mockTenant.id = 'default';
+    }
   });
 
   it('Prompt modal opens when Prompt button is clicked', async () => {

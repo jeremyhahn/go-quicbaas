@@ -109,6 +109,8 @@ import type {
   EmitAuthorizedResponse,
   VerifyAuthorizedRequest,
   VerifyAuthorizedResponse,
+  AddAuthorizedKeyRequest,
+  ListAuthorizedKeysRequest,
   CreateSSHKeyRequest,
   ImportSSHKeyRequest,
   SignRequest,
@@ -294,6 +296,18 @@ class WailsAuthorizedKeysClient implements SSHAuthorizedKeysClient {
     throw new Error('wails: ssh.authorized not available — use REST transport');
   }
   async verify(_req: VerifyAuthorizedRequest): Promise<VerifyAuthorizedResponse> {
+    throw new Error('wails: ssh.authorized not available — use REST transport');
+  }
+  async add(_req: AddAuthorizedKeyRequest): Promise<void> {
+    throw new Error('wails: ssh.authorized not available — use REST transport');
+  }
+  async list(_req?: ListAuthorizedKeysRequest): Promise<SSHAuthorizedEntry[]> {
+    throw new Error('wails: ssh.authorized not available — use REST transport');
+  }
+  async get(_scope: SSHScope, _owner: string, _name: string): Promise<SSHAuthorizedEntry> {
+    throw new Error('wails: ssh.authorized not available — use REST transport');
+  }
+  async remove(_scope: SSHScope, _owner: string, _name: string): Promise<void> {
     throw new Error('wails: ssh.authorized not available — use REST transport');
   }
 }
@@ -976,6 +990,36 @@ export class WailsClient implements Client {
   readonly crypto: any = null;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   readonly dek: any = null;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  readonly entities: any = null;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  readonly attestation: any = null;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  readonly prompts: any = null;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  readonly xkmsKeys: any = null;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  readonly piv: any = null;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  readonly xkms: any = null;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  readonly backups: any = null;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  readonly clusterNodes: any = null;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  readonly kmsAdmin: any = null;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  readonly objectStorageAdmin: any = null;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  readonly parameters: any = null;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  readonly vectorAdmin: any = null;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  readonly xkmsFido2: any = null;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  readonly registry: any = null;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  readonly cache: any = null;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   readonly dynamicSecrets: any = null;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any

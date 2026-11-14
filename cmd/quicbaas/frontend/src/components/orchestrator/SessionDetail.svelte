@@ -21,6 +21,7 @@
   import type { SessionStatusResponse, RotateSessionAccountResponse } from '@quicbaas/sdk';
   import { sessionStore, openSession, closeActiveSession, requestCloseSession } from '../../stores/sessionStore.svelte.ts';
   import { routeJobDetail } from '../../stores/router.svelte.ts';
+  import { orchestratorStore } from '../../stores/orchestrator.svelte.ts';
   import { getSDKClient } from '../../stores/sdkClient.ts';
   import EventStream from './EventStream.svelte';
   import SessionConversation from './SessionConversation.svelte';
@@ -49,6 +50,10 @@
   let promptText = $state('');
   let prompting = $state(false);
   let metadataOpen = $state(true); // collapsible on narrow viewports
+
+  // Sessions run in the console's active tenant; the session JSON carries no
+  // tenant of its own, so the Tenant line reads the store's.
+  const tenantID = $derived(orchestratorStore.activeTenantID);
 
   // Which view of the transcript the body shows. The conversation leads:
   // the raw event log was the page's only content for long enough that a
@@ -554,10 +559,10 @@
           Session Info
         </div>
         <div class="space-y-3 text-xs">
-          {#if session.tenant_id}
+          {#if tenantID}
             <div>
               <div class="text-base-content/40">Tenant</div>
-              <div class="font-mono break-all">{session.tenant_id}</div>
+              <div class="font-mono break-all">{tenantID}</div>
             </div>
           {/if}
           {#if model !== ''}
@@ -607,8 +612,8 @@
     {#if metadataOpen}
       <div class="sm:hidden w-full shrink-0 border-t border-base-300/50 bg-base-200/30 px-4 py-2">
         <div class="flex flex-wrap gap-4 text-xs">
-          {#if session.tenant_id}
-            <span>Tenant: <span class="font-mono">{session.tenant_id}</span></span>
+          {#if tenantID}
+            <span>Tenant: <span class="font-mono">{tenantID}</span></span>
           {/if}
           {#if model !== ''}
             <span>Model: <span class="font-mono">{model}</span></span>

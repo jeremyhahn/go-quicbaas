@@ -17,7 +17,7 @@
   IAMView renders a tabbed operator console for Identity and Access Management.
 
   Tabs:
-    Users     — user table for a tenant: create / edit / disable / delete / assign role.
+    Users     — user table for a tenant: create / edit / disable / delete / assign role / GDPR consents.
     Tenants   — tenant list: create / edit / delete.
     Roles     — role list per tenant: create / edit / delete.
     Policies  — ABAC policy list per tenant: create / edit / delete.
@@ -42,8 +42,20 @@
     UpdateRoleRequest,
     CreatePolicyRequest,
     UpdatePolicyRequest,
+    ConsentPurpose,
+    UserConsent,
+    IAMSession,
+    MFAStatusResponse,
+    DataExportRequest,
+    DeletionRequest,
+    WebAuthnCredentialSummary,
+    ProvisionTenantRequest,
+    ProvisionTenantResponse,
+    TenantAdminEnrollment,
+    MFAEnrollResponse,
+    FederatedIdentity,
   } from '@quicbaas/sdk';
-  import { ShieldCheck, UserPlus, Pencil, Trash2, UserCheck, ToggleLeft, RefreshCw } from 'lucide-svelte';
+  import { ShieldCheck, UserPlus, Pencil, Trash2, UserCheck, ToggleLeft, RefreshCw, FileCheck, MonitorSmartphone, KeyRound, Database, Fingerprint, Link2 } from 'lucide-svelte';
   import EmptyState from '../../components/core/EmptyState.svelte';
   import { routerStore, routeIAMTab } from '../../stores/router.svelte.ts';
   import { formatDateTime } from '../../lib/time.ts';
@@ -209,6 +221,109 @@
   let assignRoleID = $state('');
   let assignRoleError: string | null = $state(null);
   let assigningRole = $state(false);
+  // The role UUIDs the user holds, as shown in the dialog; a revoke removes
+  // its role from this list without mutating the users-table row.
+  let userRoleIDs: string[] = $state([]);
+  // The role UUID whose revoke is in flight, if any.
+  let revokingRoleID: string | null = $state(null);
+
+  // ---------------------------------------------------------------------------
+  // Consents dialog state
+  // ---------------------------------------------------------------------------
+
+  const consentPurposes: ConsentPurpose[] = [
+    'marketing',
+    'analytics',
+    'personalization',
+    'third_party',
+    'data_processing',
+    'data_retention',
+    'functional',
+  ];
+
+  let userForConsents: IAMUser | null = $state(null);
+  let userConsents: UserConsent[] = $state([]);
+  let consentsLoading = $state(false);
+  let consentsError: string | null = $state(null);
+  let grantPurpose: ConsentPurpose | '' = $state('');
+  let grantVersion = $state('');
+  let grantingConsent = $state(false);
+  // The purpose whose withdraw is in flight, if any.
+  let withdrawingPurpose: ConsentPurpose | null = $state(null);
+
+  // ---------------------------------------------------------------------------
+  // Data requests (GDPR export / deletion) dialog state
+  // ---------------------------------------------------------------------------
+
+  let userForDataRequests: IAMUser | null = $state(null);
+  let dataRequestsError: string | null = $state(null);
+  let exportIDInput = $state('');
+  let exportRequest: DataExportRequest | null = $state(null);
+  let exportBusy = $state(false);
+  let deletionReason = $state('');
+  let deletionIDInput = $state('');
+  let deletionRequest: DeletionRequest | null = $state(null);
+  let deletionBusy = $state(false);
+  // The request-deletion confirmation is open.
+  let confirmRequestDeletion = $state(false);
+  // The server has no list route: the ids created this session, per user, newest last.
+  const createdExportIDs = new Map<string, string[]>();
+  const createdDeletionIDs = new Map<string, string[]>();
+
+  // ---------------------------------------------------------------------------
+  // Sessions dialog state
+  // ---------------------------------------------------------------------------
+
+  let userForSessions: IAMUser | null = $state(null);
+  let userSessions: IAMSession[] = $state([]);
+  let sessionsLoading = $state(false);
+  let sessionsError: string | null = $state(null);
+  // The revoke-all confirmation is open.
+  let confirmRevokeSessions = $state(false);
+  let revokingSessions = $state(false);
+
+  // ---------------------------------------------------------------------------
+  // MFA dialog state
+  // ---------------------------------------------------------------------------
+
+  let userForMFA: IAMUser | null = $state(null);
+  let mfaStatus: MFAStatusResponse | null = $state(null);
+  let mfaLoading = $state(false);
+  let mfaError: string | null = $state(null);
+  // Set while the Disable MFA confirmation is shown.
+  let confirmDisableMFA = $state(false);
+  let disablingMFA = $state(false);
+  // TOTP enrollment in progress, and the backup codes shown once after a regenerate.
+  let mfaEnrollment: MFAEnrollResponse | null = $state(null);
+  let mfaEnrollCode = $state('');
+  let mfaBusy = $state(false);
+  let confirmRegenerateCodes = $state(false);
+  let mfaBackupCodes: string[] | null = $state(null);
+
+  // ---------------------------------------------------------------------------
+  // Passkeys (WebAuthn credentials) dialog state
+  // ---------------------------------------------------------------------------
+
+  let userForPasskeys: IAMUser | null = $state(null);
+  let passkeys: WebAuthnCredentialSummary[] | null = $state(null);
+  let passkeysLoading = $state(false);
+  let passkeysError: string | null = $state(null);
+  // Set while the Remove confirmation for one credential is shown.
+  let confirmRemovePasskey: WebAuthnCredentialSummary | null = $state(null);
+  // Set while the Remove all confirmation is shown.
+  let confirmRemoveAllPasskeys = $state(false);
+  let removingPasskeys = $state(false);
+
+  // Linked accounts (federated identities) dialog state.
+  let userForLinks: IAMUser | null = $state(null);
+  let accountLinks: FederatedIdentity[] | null = $state(null);
+  let linksLoading = $state(false);
+  let linksError: string | null = $state(null);
+  let linkToRemove: FederatedIdentity | null = $state(null);
+  let unlinking = $state(false);
+  let newLinkProviderID = $state('');
+  let newLinkExternalID = $state('');
+  let linking = $state(false);
 
   // ---------------------------------------------------------------------------
   // Create Tenant dialog state
@@ -219,6 +334,23 @@
   let newTenantDesc = $state('');
   let createTenantError: string | null = $state(null);
   let creatingTenant = $state(false);
+
+  // ---------------------------------------------------------------------------
+  // Provision Tenant dialog state
+  // ---------------------------------------------------------------------------
+
+  let showProvisionTenant = $state(false);
+  let provTenantID = $state('');
+  let provTenantName = $state('');
+  let provAdminUsername = $state('');
+  let provEnrollment: TenantAdminEnrollment = $state('invite');
+  let provCsrPem = $state('');
+  let provInviteExpiry = $state('');
+  let provisionTenantError: string | null = $state(null);
+  let provisioningTenant = $state(false);
+  // The provisioning result; holds the one-time invite token or certificate
+  // until the result dialog closes.
+  let provisionResult: ProvisionTenantResponse | null = $state(null);
 
   // ---------------------------------------------------------------------------
   // Edit Tenant dialog state
@@ -499,6 +631,8 @@
 
   function openAssignRole(user: IAMUser): void {
     userForRole = user;
+    userRoleIDs = [...(user.roles ?? [])];
+    revokingRoleID = null;
     assignRoleID = '';
     assignRoleError = null;
     // Populate the roles dropdown if it hasn't been loaded yet (the roles
@@ -531,6 +665,662 @@
     }
   }
 
+  /** The role's name, resolved as the Users table does; the UUID if unknown. */
+  function roleNameOf(roleID: string): string {
+    return roles.find((r) => r.id === roleID)?.name ?? roleID;
+  }
+
+  async function revokeRole(roleID: string): Promise<void> {
+    if (!userForRole) return;
+    const user = userForRole;
+    assignRoleError = null;
+    revokingRoleID = roleID;
+    try {
+      const client = await getSDKClient();
+      // The server's {role} path parameter is the role ID (UUID), not its name.
+      await client.iam.revokeRoleFromUser(selectedTenantID, user.id, roleID);
+      showToast({ message: `Role "${roleNameOf(roleID)}" revoked from "${user.username}"`, type: 'success' });
+      userRoleIDs = userRoleIDs.filter((id) => id !== roleID);
+      void loadUsers();
+    } catch (e) {
+      assignRoleError = e instanceof Error ? e.message : 'Failed to revoke role';
+    } finally {
+      revokingRoleID = null;
+    }
+  }
+
+  async function loadUserConsents(user: IAMUser): Promise<void> {
+    consentsLoading = true;
+    try {
+      const client = await getSDKClient();
+      const list = await client.iam.listUserConsents(selectedTenantID, user.id);
+      // Drop a response that lands after the dialog closed or moved to another user.
+      if (userForConsents?.id === user.id) {
+        userConsents = list ?? [];
+      }
+    } catch (e) {
+      if (userForConsents?.id === user.id) {
+        consentsError = e instanceof Error ? e.message : 'Failed to load consents';
+      }
+    } finally {
+      consentsLoading = false;
+    }
+  }
+
+  function openConsents(user: IAMUser): void {
+    userForConsents = user;
+    userConsents = [];
+    consentsError = null;
+    grantPurpose = '';
+    grantVersion = '';
+    withdrawingPurpose = null;
+    void loadUserConsents(user);
+  }
+
+  function closeConsents(): void {
+    userForConsents = null;
+    consentsError = null;
+  }
+
+  function rememberID(store: Map<string, string[]>, userID: string, id: string): void {
+    const ids = store.get(userID) ?? [];
+    if (!ids.includes(id)) ids.push(id);
+    store.set(userID, ids);
+  }
+
+  function newestID(store: Map<string, string[]>, userID: string): string {
+    return store.get(userID)?.at(-1) ?? '';
+  }
+
+  function openDataRequests(user: IAMUser): void {
+    userForDataRequests = user;
+    dataRequestsError = null;
+    exportRequest = null;
+    deletionRequest = null;
+    exportBusy = false;
+    deletionBusy = false;
+    deletionReason = '';
+    confirmRequestDeletion = false;
+    exportIDInput = newestID(createdExportIDs, user.id);
+    deletionIDInput = newestID(createdDeletionIDs, user.id);
+  }
+
+  function closeDataRequests(): void {
+    userForDataRequests = null;
+    dataRequestsError = null;
+    confirmRequestDeletion = false;
+  }
+
+  function dataRequestErr(e: unknown, fallback: string): string {
+    return e instanceof Error ? e.message : fallback;
+  }
+
+  async function submitRequestExport(): Promise<void> {
+    if (!userForDataRequests) return;
+    const user = userForDataRequests;
+    dataRequestsError = null;
+    exportBusy = true;
+    try {
+      const client = await getSDKClient();
+      const req = await client.iam.requestDataExport(selectedTenantID, user.id);
+      rememberID(createdExportIDs, user.id, req.id);
+      if (userForDataRequests?.id === user.id) {
+        exportRequest = req;
+        exportIDInput = req.id;
+      }
+      showToast({ message: `Data export requested for "${user.username}"`, type: 'success' });
+    } catch (e) {
+      if (userForDataRequests?.id === user.id) dataRequestsError = dataRequestErr(e, 'Failed to request export');
+    } finally {
+      exportBusy = false;
+    }
+  }
+
+  async function checkExportStatus(): Promise<void> {
+    if (!userForDataRequests) return;
+    const user = userForDataRequests;
+    const id = exportIDInput.trim();
+    if (!id) return;
+    dataRequestsError = null;
+    exportBusy = true;
+    try {
+      const client = await getSDKClient();
+      const req = await client.iam.getExportStatus(selectedTenantID, user.id, id);
+      if (userForDataRequests?.id === user.id) exportRequest = req;
+    } catch (e) {
+      if (userForDataRequests?.id === user.id) dataRequestsError = dataRequestErr(e, 'Failed to check export status');
+    } finally {
+      exportBusy = false;
+    }
+  }
+
+  async function downloadDataExport(): Promise<void> {
+    if (!userForDataRequests || !exportRequest) return;
+    const user = userForDataRequests;
+    const id = exportRequest.id;
+    dataRequestsError = null;
+    exportBusy = true;
+    try {
+      const client = await getSDKClient();
+      const data = await client.iam.downloadExport(selectedTenantID, user.id, id);
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `export-${id}.json`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      if (userForDataRequests?.id === user.id) dataRequestsError = dataRequestErr(e, 'Failed to download export');
+    } finally {
+      exportBusy = false;
+    }
+  }
+
+  async function submitRequestDeletion(): Promise<void> {
+    if (!userForDataRequests) return;
+    const user = userForDataRequests;
+    dataRequestsError = null;
+    deletionBusy = true;
+    try {
+      const client = await getSDKClient();
+      const reason = deletionReason.trim();
+      const req = await client.iam.requestDeletion(selectedTenantID, user.id, reason ? { reason } : undefined);
+      rememberID(createdDeletionIDs, user.id, req.id);
+      if (userForDataRequests?.id === user.id) {
+        deletionRequest = req;
+        deletionIDInput = req.id;
+        deletionReason = '';
+      }
+      showToast({ message: `Data deletion requested for "${user.username}"`, type: 'success' });
+    } catch (e) {
+      if (userForDataRequests?.id === user.id) dataRequestsError = dataRequestErr(e, 'Failed to request deletion');
+    } finally {
+      confirmRequestDeletion = false;
+      deletionBusy = false;
+    }
+  }
+
+  async function checkDeletionStatus(): Promise<void> {
+    if (!userForDataRequests) return;
+    const user = userForDataRequests;
+    const id = deletionIDInput.trim();
+    if (!id) return;
+    dataRequestsError = null;
+    deletionBusy = true;
+    try {
+      const client = await getSDKClient();
+      const req = await client.iam.getDeletionStatus(selectedTenantID, user.id, id);
+      if (userForDataRequests?.id === user.id) deletionRequest = req;
+    } catch (e) {
+      if (userForDataRequests?.id === user.id) dataRequestsError = dataRequestErr(e, 'Failed to check deletion status');
+    } finally {
+      deletionBusy = false;
+    }
+  }
+
+  async function submitCancelDeletion(): Promise<void> {
+    if (!userForDataRequests || !deletionRequest) return;
+    const user = userForDataRequests;
+    const id = deletionRequest.id;
+    dataRequestsError = null;
+    deletionBusy = true;
+    try {
+      const client = await getSDKClient();
+      const req = await client.iam.cancelDeletion(selectedTenantID, user.id, id);
+      if (userForDataRequests?.id === user.id) deletionRequest = req;
+      showToast({ message: `Data deletion cancelled for "${user.username}"`, type: 'success' });
+    } catch (e) {
+      if (userForDataRequests?.id === user.id) dataRequestsError = dataRequestErr(e, 'Failed to cancel deletion');
+    } finally {
+      deletionBusy = false;
+    }
+  }
+
+  async function loadUserMFA(user: IAMUser): Promise<void> {
+    mfaLoading = true;
+    try {
+      const client = await getSDKClient();
+      const status = await client.iam.getMFAStatus(selectedTenantID, user.id);
+      // Drop a response that lands after the dialog closed or moved to another user.
+      if (userForMFA?.id === user.id) {
+        mfaStatus = status;
+      }
+    } catch (e) {
+      if (userForMFA?.id === user.id) {
+        mfaError = e instanceof Error ? e.message : 'Failed to load MFA status';
+      }
+    } finally {
+      mfaLoading = false;
+    }
+  }
+
+  function openMFA(user: IAMUser): void {
+    userForMFA = user;
+    mfaStatus = null;
+    mfaError = null;
+    confirmDisableMFA = false;
+    disablingMFA = false;
+    mfaEnrollment = null;
+    mfaEnrollCode = '';
+    mfaBusy = false;
+    confirmRegenerateCodes = false;
+    mfaBackupCodes = null;
+    void loadUserMFA(user);
+  }
+
+  function closeMFA(): void {
+    const user = userForMFA;
+    const enrollment = mfaEnrollment;
+    userForMFA = null;
+    mfaError = null;
+    confirmDisableMFA = false;
+    confirmRegenerateCodes = false;
+    mfaEnrollment = null;
+    mfaEnrollCode = '';
+    mfaBackupCodes = null;
+    if (user && enrollment) {
+      // An enrollment left open when the dialog closes is cancelled on the server.
+      const tenantID = selectedTenantID;
+      void getSDKClient()
+        .then((client) => client.iam.cancelMFAEnrollment(tenantID, user.id, enrollment.enrollment_id))
+        .catch(() => undefined);
+    }
+  }
+
+  async function submitBeginEnrollment(): Promise<void> {
+    if (!userForMFA) return;
+    const user = userForMFA;
+    mfaError = null;
+    mfaBusy = true;
+    try {
+      const client = await getSDKClient();
+      const enrollment = await client.iam.beginMFAEnrollment(selectedTenantID, user.id, 'totp');
+      if (userForMFA?.id === user.id) {
+        mfaEnrollment = enrollment;
+        mfaEnrollCode = '';
+      }
+    } catch (e) {
+      if (userForMFA?.id === user.id) {
+        mfaError = e instanceof Error ? e.message : 'Failed to begin MFA enrollment';
+      }
+    } finally {
+      mfaBusy = false;
+    }
+  }
+
+  async function submitCompleteEnrollment(): Promise<void> {
+    if (!userForMFA || !mfaEnrollment) return;
+    const user = userForMFA;
+    const enrollment = mfaEnrollment;
+    mfaError = null;
+    const code = mfaEnrollCode.trim();
+    if (!/^\d{6}$/.test(code)) {
+      mfaError = 'Enter the 6-digit code from the authenticator';
+      return;
+    }
+    mfaBusy = true;
+    try {
+      const client = await getSDKClient();
+      const res = await client.iam.completeMFAEnrollment(selectedTenantID, user.id, enrollment.enrollment_id, code);
+      if (userForMFA?.id !== user.id) return;
+      if (!res.success) {
+        mfaError = 'The verification code was not accepted';
+        return;
+      }
+      showToast({ message: `TOTP enrolled for "${user.username}"`, type: 'success' });
+      mfaEnrollment = null;
+      mfaEnrollCode = '';
+      await loadUserMFA(user);
+    } catch (e) {
+      if (userForMFA?.id === user.id) {
+        mfaError = e instanceof Error ? e.message : 'Failed to verify MFA enrollment';
+      }
+    } finally {
+      mfaBusy = false;
+    }
+  }
+
+  async function submitCancelEnrollment(): Promise<void> {
+    if (!userForMFA || !mfaEnrollment) return;
+    const user = userForMFA;
+    const enrollment = mfaEnrollment;
+    mfaError = null;
+    mfaBusy = true;
+    try {
+      const client = await getSDKClient();
+      await client.iam.cancelMFAEnrollment(selectedTenantID, user.id, enrollment.enrollment_id);
+      if (userForMFA?.id === user.id) {
+        mfaEnrollment = null;
+        mfaEnrollCode = '';
+      }
+    } catch (e) {
+      if (userForMFA?.id === user.id) {
+        mfaError = e instanceof Error ? e.message : 'Failed to cancel MFA enrollment';
+      }
+    } finally {
+      mfaBusy = false;
+    }
+  }
+
+  async function submitRegenerateBackupCodes(): Promise<void> {
+    if (!userForMFA) return;
+    const user = userForMFA;
+    mfaError = null;
+    mfaBusy = true;
+    try {
+      const client = await getSDKClient();
+      const res = await client.iam.generateBackupCodes(selectedTenantID, user.id);
+      confirmRegenerateCodes = false;
+      if (userForMFA?.id !== user.id) return;
+      mfaBackupCodes = res.codes ?? [];
+      showToast({ message: `Backup codes regenerated for "${user.username}"`, type: 'success' });
+      await loadUserMFA(user);
+    } catch (e) {
+      confirmRegenerateCodes = false;
+      if (userForMFA?.id === user.id) {
+        mfaError = e instanceof Error ? e.message : 'Failed to regenerate backup codes';
+      }
+    } finally {
+      mfaBusy = false;
+    }
+  }
+
+  async function submitDisableMFA(): Promise<void> {
+    if (!userForMFA) return;
+    const user = userForMFA;
+    mfaError = null;
+    disablingMFA = true;
+    try {
+      const client = await getSDKClient();
+      await client.iam.disableMFA(selectedTenantID, user.id);
+      showToast({ message: `MFA disabled for "${user.username}"`, type: 'success' });
+      confirmDisableMFA = false;
+      if (userForMFA?.id === user.id) {
+        await loadUserMFA(user);
+      }
+    } catch (e) {
+      confirmDisableMFA = false;
+      if (userForMFA?.id === user.id) {
+        mfaError = e instanceof Error ? e.message : 'Failed to disable MFA';
+      }
+    } finally {
+      disablingMFA = false;
+    }
+  }
+
+  async function loadUserPasskeys(user: IAMUser): Promise<void> {
+    passkeysLoading = true;
+    try {
+      const client = await getSDKClient();
+      const result = await client.iam.listWebAuthnCredentials(selectedTenantID, user.id);
+      // Drop a response that lands after the dialog closed or moved to another user.
+      if (userForPasskeys?.id === user.id) {
+        passkeys = result.credentials ?? [];
+      }
+    } catch (e) {
+      if (userForPasskeys?.id === user.id) {
+        passkeysError = e instanceof Error ? e.message : 'Failed to load passkeys';
+      }
+    } finally {
+      passkeysLoading = false;
+    }
+  }
+
+  function openPasskeys(user: IAMUser): void {
+    userForPasskeys = user;
+    passkeys = null;
+    passkeysError = null;
+    confirmRemovePasskey = null;
+    confirmRemoveAllPasskeys = false;
+    removingPasskeys = false;
+    void loadUserPasskeys(user);
+  }
+
+  function closePasskeys(): void {
+    userForPasskeys = null;
+    passkeysError = null;
+    confirmRemovePasskey = null;
+    confirmRemoveAllPasskeys = false;
+  }
+
+  /** shortCredentialID keeps the head of a long credential id for the table. */
+  function shortCredentialID(id: string): string {
+    return id.length > 16 ? `${id.slice(0, 12)}…` : id;
+  }
+
+  async function submitRemovePasskey(): Promise<void> {
+    if (!userForPasskeys || !confirmRemovePasskey) return;
+    const user = userForPasskeys;
+    const credential = confirmRemovePasskey;
+    passkeysError = null;
+    removingPasskeys = true;
+    try {
+      const client = await getSDKClient();
+      await client.iam.deleteWebAuthnCredential(selectedTenantID, user.id, credential.id);
+      showToast({ message: `Passkey removed from "${user.username}"`, type: 'success' });
+      confirmRemovePasskey = null;
+      if (userForPasskeys?.id === user.id) {
+        await loadUserPasskeys(user);
+      }
+    } catch (e) {
+      confirmRemovePasskey = null;
+      if (userForPasskeys?.id === user.id) {
+        passkeysError = e instanceof Error ? e.message : 'Failed to remove passkey';
+      }
+    } finally {
+      removingPasskeys = false;
+    }
+  }
+
+  async function submitRemoveAllPasskeys(): Promise<void> {
+    if (!userForPasskeys) return;
+    const user = userForPasskeys;
+    passkeysError = null;
+    removingPasskeys = true;
+    try {
+      const client = await getSDKClient();
+      const result = await client.iam.deleteAllWebAuthnCredentials(selectedTenantID, user.id);
+      showToast({ message: `${result.deleted} passkey(s) removed from "${user.username}"`, type: 'success' });
+      confirmRemoveAllPasskeys = false;
+      if (userForPasskeys?.id === user.id) {
+        await loadUserPasskeys(user);
+      }
+    } catch (e) {
+      confirmRemoveAllPasskeys = false;
+      if (userForPasskeys?.id === user.id) {
+        passkeysError = e instanceof Error ? e.message : 'Failed to remove passkeys';
+      }
+    } finally {
+      removingPasskeys = false;
+    }
+  }
+
+  async function loadAccountLinks(user: IAMUser): Promise<void> {
+    linksLoading = true;
+    try {
+      const client = await getSDKClient();
+      const resp = await client.iam.listAccountLinks(selectedTenantID, user.id);
+      // Drop a response that lands after the dialog closed or moved to another user.
+      if (userForLinks?.id === user.id) {
+        accountLinks = resp.links ?? [];
+      }
+    } catch (e) {
+      if (userForLinks?.id === user.id) {
+        linksError = e instanceof Error ? e.message : 'Failed to load linked accounts';
+      }
+    } finally {
+      linksLoading = false;
+    }
+  }
+
+  function openAccountLinks(user: IAMUser): void {
+    userForLinks = user;
+    accountLinks = null;
+    linksError = null;
+    linkToRemove = null;
+    unlinking = false;
+    linking = false;
+    newLinkProviderID = '';
+    newLinkExternalID = '';
+    void loadAccountLinks(user);
+  }
+
+  function closeAccountLinks(): void {
+    userForLinks = null;
+    linksError = null;
+    linkToRemove = null;
+  }
+
+  async function submitUnlink(): Promise<void> {
+    if (!userForLinks || !linkToRemove) return;
+    const user = userForLinks;
+    const providerID = linkToRemove.provider_id;
+    linksError = null;
+    unlinking = true;
+    try {
+      const client = await getSDKClient();
+      await client.iam.deleteAccountLink(selectedTenantID, user.id, providerID);
+      showToast({ message: `Unlinked "${providerID}" from "${user.username}"`, type: 'success' });
+      linkToRemove = null;
+      if (userForLinks?.id === user.id) {
+        await loadAccountLinks(user);
+      }
+    } catch (e) {
+      linkToRemove = null;
+      if (userForLinks?.id === user.id) {
+        linksError = e instanceof Error ? e.message : 'Failed to unlink account';
+      }
+    } finally {
+      unlinking = false;
+    }
+  }
+
+  async function submitLink(): Promise<void> {
+    if (!userForLinks) return;
+    const user = userForLinks;
+    const providerID = newLinkProviderID.trim();
+    const externalID = newLinkExternalID.trim();
+    linksError = null;
+    if (!providerID || !externalID) {
+      linksError = 'A provider id and an external id are required';
+      return;
+    }
+    linking = true;
+    try {
+      const client = await getSDKClient();
+      await client.iam.createAccountLink(selectedTenantID, user.id, { provider_id: providerID, external_id: externalID });
+      showToast({ message: `Linked "${providerID}" to "${user.username}"`, type: 'success' });
+      if (userForLinks?.id === user.id) {
+        newLinkProviderID = '';
+        newLinkExternalID = '';
+        await loadAccountLinks(user);
+      }
+    } catch (e) {
+      if (userForLinks?.id === user.id) {
+        linksError = e instanceof Error ? e.message : 'Failed to link account';
+      }
+    } finally {
+      linking = false;
+    }
+  }
+
+  async function submitGrantConsent(): Promise<void> {
+    if (!userForConsents) return;
+    const user = userForConsents;
+    consentsError = null;
+    const version = grantVersion.trim();
+    if (!grantPurpose || !version) {
+      consentsError = 'A purpose and a version are required';
+      return;
+    }
+    const purpose = grantPurpose;
+    grantingConsent = true;
+    try {
+      const client = await getSDKClient();
+      await client.iam.grantConsent(selectedTenantID, user.id, { purpose, version });
+      showToast({ message: `Consent "${purpose}" granted for "${user.username}"`, type: 'success' });
+      grantPurpose = '';
+      grantVersion = '';
+      await loadUserConsents(user);
+    } catch (e) {
+      consentsError = e instanceof Error ? e.message : 'Failed to grant consent';
+    } finally {
+      grantingConsent = false;
+    }
+  }
+
+  async function withdrawUserConsent(purpose: ConsentPurpose): Promise<void> {
+    if (!userForConsents) return;
+    const user = userForConsents;
+    consentsError = null;
+    withdrawingPurpose = purpose;
+    try {
+      const client = await getSDKClient();
+      await client.iam.withdrawConsent(selectedTenantID, user.id, purpose);
+      showToast({ message: `Consent "${purpose}" withdrawn for "${user.username}"`, type: 'success' });
+      await loadUserConsents(user);
+    } catch (e) {
+      consentsError = e instanceof Error ? e.message : 'Failed to withdraw consent';
+    } finally {
+      withdrawingPurpose = null;
+    }
+  }
+
+  async function loadUserSessions(user: IAMUser): Promise<void> {
+    sessionsLoading = true;
+    try {
+      const client = await getSDKClient();
+      const resp = await client.iam.listUserSessions(selectedTenantID, user.id);
+      // Drop a response that lands after the dialog closed or moved to another user.
+      if (userForSessions?.id === user.id) {
+        userSessions = resp?.sessions ?? [];
+      }
+    } catch (e) {
+      if (userForSessions?.id === user.id) {
+        sessionsError = e instanceof Error ? e.message : 'Failed to load sessions';
+      }
+    } finally {
+      sessionsLoading = false;
+    }
+  }
+
+  function openSessions(user: IAMUser): void {
+    userForSessions = user;
+    userSessions = [];
+    sessionsError = null;
+    confirmRevokeSessions = false;
+    revokingSessions = false;
+    void loadUserSessions(user);
+  }
+
+  function closeSessions(): void {
+    userForSessions = null;
+    sessionsError = null;
+    confirmRevokeSessions = false;
+  }
+
+  async function confirmRevokeAllSessions(): Promise<void> {
+    if (!userForSessions) return;
+    const user = userForSessions;
+    sessionsError = null;
+    revokingSessions = true;
+    try {
+      const client = await getSDKClient();
+      await client.iam.revokeAllUserSessions(selectedTenantID, user.id);
+      showToast({ message: `All sessions of "${user.username}" revoked`, type: 'success' });
+      confirmRevokeSessions = false;
+      await loadUserSessions(user);
+    } catch (e) {
+      confirmRevokeSessions = false;
+      sessionsError = e instanceof Error ? e.message : 'Failed to revoke sessions';
+    } finally {
+      revokingSessions = false;
+    }
+  }
+
   // ---------------------------------------------------------------------------
   // Create tenant
   // ---------------------------------------------------------------------------
@@ -554,6 +1344,84 @@
       createTenantError = e instanceof Error ? e.message : 'Failed to create tenant';
     } finally {
       creatingTenant = false;
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Provision tenant (tenant + first admin by invite or CSR)
+  // ---------------------------------------------------------------------------
+
+  function openProvisionTenant(): void {
+    provTenantID = '';
+    provTenantName = '';
+    provAdminUsername = '';
+    provEnrollment = 'invite';
+    provCsrPem = '';
+    provInviteExpiry = '';
+    provisionTenantError = null;
+    showProvisionTenant = true;
+  }
+
+  function closeProvisionTenant(): void {
+    showProvisionTenant = false;
+    provisionTenantError = null;
+    provCsrPem = '';
+  }
+
+  async function submitProvisionTenant(): Promise<void> {
+    provisionTenantError = null;
+    const tenantID = provTenantID.trim();
+    if (!tenantID) {
+      provisionTenantError = 'Tenant ID is required';
+      return;
+    }
+    const req: ProvisionTenantRequest = { tenant_id: tenantID, admin_enrollment: provEnrollment };
+    const name = provTenantName.trim();
+    if (name) req.name = name;
+    const adminUsername = provAdminUsername.trim();
+    if (adminUsername) req.admin_username = adminUsername;
+    if (provEnrollment === 'cert') {
+      const csr = provCsrPem.trim();
+      if (!csr) {
+        provisionTenantError = 'Admin CSR PEM is required for certificate enrollment';
+        return;
+      }
+      req.admin_csr_pem = csr;
+    } else {
+      const expiry = String(provInviteExpiry).trim();
+      if (expiry) {
+        if (!/^\d+$/.test(expiry) || Number(expiry) <= 0) {
+          provisionTenantError = 'Invite expiry must be a positive whole number of hours';
+          return;
+        }
+        req.invite_expiry_hours = Number(expiry);
+      }
+    }
+    provisioningTenant = true;
+    try {
+      const client = await getSDKClient();
+      provisionResult = await client.iam.provisionTenant(req);
+      showToast({ message: `Tenant "${tenantID}" provisioned`, type: 'success' });
+      closeProvisionTenant();
+    } catch (e) {
+      provisionTenantError = e instanceof Error ? e.message : 'Failed to provision tenant';
+    } finally {
+      provisioningTenant = false;
+    }
+  }
+
+  function closeProvisionResult(): void {
+    provisionResult = null;
+    void loadTenants();
+  }
+
+  async function copyProvisionSecret(value: string | undefined, what: string): Promise<void> {
+    if (!value) return;
+    try {
+      await navigator.clipboard.writeText(value);
+      showToast({ message: `${what} copied`, type: 'success' });
+    } catch {
+      showToast({ message: `Could not copy the ${what.toLowerCase()}`, type: 'error' });
     }
   }
 
@@ -849,6 +1717,13 @@
       >
         + Create Tenant
       </button>
+      <button
+        class="btn btn-ghost btn-sm"
+        onclick={openProvisionTenant}
+        aria-label="Provision tenant"
+      >
+        + Provision Tenant
+      </button>
     {:else if activeTab === 'roles'}
       <button
         class="btn btn-ghost btn-sm"
@@ -988,6 +1863,54 @@
                   onclick={() => openAssignRole(user)}
                 >
                   <UserCheck class="h-3 w-3" />
+                </button>
+                <button
+                  class="btn btn-ghost btn-xs"
+                  title={`Consents of ${user.username}`}
+                  aria-label={`Consents of ${user.username}`}
+                  onclick={() => openConsents(user)}
+                >
+                  <FileCheck class="h-3 w-3" />
+                </button>
+                <button
+                  class="btn btn-ghost btn-xs"
+                  title={`Data requests for ${user.username}`}
+                  aria-label={`Data requests for ${user.username}`}
+                  onclick={() => openDataRequests(user)}
+                >
+                  <Database class="h-3 w-3" />
+                </button>
+                <button
+                  class="btn btn-ghost btn-xs"
+                  title="Sessions"
+                  aria-label={`Sessions of ${user.username}`}
+                  onclick={() => openSessions(user)}
+                >
+                  <MonitorSmartphone class="h-3 w-3" />
+                </button>
+                <button
+                  class="btn btn-ghost btn-xs"
+                  title="MFA"
+                  aria-label={`MFA of ${user.username}`}
+                  onclick={() => openMFA(user)}
+                >
+                  <KeyRound class="h-3 w-3" />
+                </button>
+                <button
+                  class="btn btn-ghost btn-xs"
+                  title="Passkeys"
+                  aria-label={`Passkeys of ${user.username}`}
+                  onclick={() => openPasskeys(user)}
+                >
+                  <Fingerprint class="h-3 w-3" />
+                </button>
+                <button
+                  class="btn btn-ghost btn-xs"
+                  title="Linked accounts"
+                  aria-label={`Linked accounts of ${user.username}`}
+                  onclick={() => openAccountLinks(user)}
+                >
+                  <Link2 class="h-3 w-3" />
                 </button>
                 <button
                   class="btn btn-ghost btn-xs text-error"
@@ -1275,9 +2198,26 @@
 {#if userForRole}
   <div class="modal modal-open" role="dialog" aria-modal="true" aria-label="Assign role dialog">
     <div class="modal-box max-w-sm">
-      <h3 class="text-base font-semibold mb-4">Assign Role to <span class="font-mono text-primary">{userForRole.username}</span></h3>
+      <h3 class="text-base font-semibold mb-4">Roles of <span class="font-mono text-primary">{userForRole.username}</span></h3>
       {#if assignRoleError}
         <div class="alert alert-error text-sm mb-3" role="alert">{assignRoleError}</div>
+      {/if}
+      {#if userRoleIDs.length === 0}
+        <p class="text-sm text-base-content/50 mb-3">No roles assigned</p>
+      {:else}
+        <ul class="mb-3 flex flex-col gap-1" aria-label="Current roles">
+          {#each userRoleIDs as roleID (roleID)}
+            <li class="flex items-center justify-between gap-2">
+              <span class="badge badge-sm badge-ghost">{roleNameOf(roleID)}</span>
+              <button
+                class="btn btn-ghost btn-xs text-error"
+                aria-label={`Revoke role ${roleNameOf(roleID)} from ${userForRole.username}`}
+                disabled={revokingRoleID === roleID}
+                onclick={() => revokeRole(roleID)}
+              >{revokingRoleID === roleID ? 'Revoking…' : 'Revoke'}</button>
+            </li>
+          {/each}
+        </ul>
       {/if}
       <div class="form-control">
         <label class="label label-text" for="assign-role-select">Role</label>
@@ -1307,6 +2247,545 @@
 {/if}
 
 <!-- =========================================================================
+     CONSENTS DIALOG
+     ========================================================================= -->
+{#if userForConsents}
+  <div class="modal modal-open" role="dialog" aria-modal="true" aria-label="Consents dialog">
+    <div class="modal-box max-w-lg">
+      <h3 class="text-base font-semibold mb-4">Consents of <span class="font-mono text-primary">{userForConsents.username}</span></h3>
+      {#if consentsError}
+        <div class="alert alert-error text-sm mb-3" role="alert">{consentsError}</div>
+      {/if}
+      {#if consentsLoading && userConsents.length === 0}
+        <div class="flex items-center gap-2 py-2 mb-3">
+          <span class="loading loading-spinner loading-xs"></span>
+          <span class="text-sm text-base-content/50">Loading consents…</span>
+        </div>
+      {:else if userConsents.length === 0}
+        <p class="text-sm text-base-content/50 mb-3">No consents recorded</p>
+      {:else}
+        <table class="table table-xs mb-3" aria-label="User consents">
+          <thead>
+            <tr><th>Purpose</th><th>Status</th><th>Version</th><th>Granted / withdrawn</th><th><span class="sr-only">Actions</span></th></tr>
+          </thead>
+          <tbody>
+            {#each userConsents as c (c.purpose)}
+              <tr>
+                <td class="font-mono">{c.purpose}</td>
+                <td><span class="badge badge-xs {c.status === 'granted' ? 'badge-success' : 'badge-ghost'}">{c.status}</span></td>
+                <td class="font-mono">{c.version}</td>
+                <td class="text-xs text-base-content/50">{c.status === 'withdrawn' && c.withdrawn_at ? formatDateTime(c.withdrawn_at) : c.granted_at ? formatDateTime(c.granted_at) : '—'}</td>
+                <td>
+                  {#if c.status === 'granted'}
+                    <button
+                      class="btn btn-ghost btn-xs text-error"
+                      aria-label={`Withdraw consent ${c.purpose} of ${userForConsents.username}`}
+                      disabled={withdrawingPurpose === c.purpose}
+                      onclick={() => withdrawUserConsent(c.purpose)}
+                    >{withdrawingPurpose === c.purpose ? 'Withdrawing…' : 'Withdraw'}</button>
+                  {/if}
+                </td>
+              </tr>
+            {/each}
+          </tbody>
+        </table>
+      {/if}
+      <div class="grid grid-cols-2 gap-2">
+        <div class="form-control">
+          <label class="label label-text" for="grant-consent-purpose">Purpose</label>
+          <select id="grant-consent-purpose" class="select select-bordered select-sm" bind:value={grantPurpose}>
+            <option value="">— select a purpose —</option>
+            {#each consentPurposes as p (p)}
+              <option value={p}>{p}</option>
+            {/each}
+          </select>
+        </div>
+        <div class="form-control">
+          <label class="label label-text" for="grant-consent-version">Version</label>
+          <input id="grant-consent-version" class="input input-bordered input-sm" type="text" placeholder="e.g. 2026-01" bind:value={grantVersion} />
+        </div>
+      </div>
+      <div class="modal-action">
+        <button class="btn btn-ghost btn-sm" onclick={closeConsents}>Close</button>
+        <button class="btn btn-primary btn-sm" disabled={grantingConsent || !grantPurpose || !grantVersion.trim()} onclick={submitGrantConsent}>{grantingConsent ? 'Granting…' : 'Grant'}</button>
+      </div>
+    </div>
+    <div class="modal-backdrop" role="none" onclick={closeConsents} onkeydown={closeConsents}></div>
+  </div>
+{/if}
+
+<!-- =========================================================================
+     DATA REQUESTS DIALOG (GDPR export / deletion)
+     ========================================================================= -->
+{#if userForDataRequests}
+  <div class="modal modal-open" role="dialog" aria-modal="true" aria-label="Data requests dialog">
+    <div class="modal-box max-w-xl">
+      <h3 class="text-base font-semibold mb-4">Data requests of <span class="font-mono text-primary">{userForDataRequests.username}</span></h3>
+      {#if dataRequestsError}
+        <div class="alert alert-error text-sm mb-3" role="alert">{dataRequestsError}</div>
+      {/if}
+
+      <section aria-label="Data export" class="mb-4">
+        <h4 class="text-sm font-semibold mb-2">Export</h4>
+        <div class="flex items-end gap-2 mb-2">
+          <button class="btn btn-primary btn-sm" disabled={exportBusy} onclick={submitRequestExport}>Request export</button>
+          <div class="form-control flex-1">
+            <label class="label label-text" for="data-export-id">Export ID</label>
+            <input id="data-export-id" class="input input-bordered input-sm font-mono" type="text" bind:value={exportIDInput} />
+          </div>
+          <button class="btn btn-ghost btn-sm" aria-label="Check export status" disabled={exportBusy || !exportIDInput.trim()} onclick={checkExportStatus}>Check status</button>
+        </div>
+        {#if exportRequest}
+          <table class="table table-xs mb-2" aria-label="Data export request">
+            <tbody>
+              <tr><th>ID</th><td class="font-mono">{exportRequest.id}</td></tr>
+              <tr><th>Status</th><td>{exportRequest.status}</td></tr>
+              <tr><th>Requested</th><td>{exportRequest.requested_at ? formatDateTime(exportRequest.requested_at) : '—'}</td></tr>
+              <tr><th>Completed</th><td>{exportRequest.completed_at ? formatDateTime(exportRequest.completed_at) : '—'}</td></tr>
+              <tr><th>Expires</th><td>{exportRequest.expires_at ? formatDateTime(exportRequest.expires_at) : '—'}</td></tr>
+              {#if exportRequest.error_message}
+                <tr><th>Error</th><td class="text-error">{exportRequest.error_message}</td></tr>
+              {/if}
+            </tbody>
+          </table>
+          {#if exportRequest.status === 'completed'}
+            <button class="btn btn-ghost btn-sm" disabled={exportBusy} onclick={downloadDataExport}>Download</button>
+          {/if}
+        {/if}
+      </section>
+
+      <section aria-label="Data deletion">
+        <h4 class="text-sm font-semibold mb-2">Deletion</h4>
+        <div class="flex items-end gap-2 mb-2">
+          <div class="form-control flex-1">
+            <label class="label label-text" for="data-deletion-reason">Reason</label>
+            <input id="data-deletion-reason" class="input input-bordered input-sm" type="text" bind:value={deletionReason} />
+          </div>
+          <button class="btn btn-error btn-sm" disabled={deletionBusy} onclick={() => { confirmRequestDeletion = true; }}>Request deletion</button>
+        </div>
+        <div class="flex items-end gap-2 mb-2">
+          <div class="form-control flex-1">
+            <label class="label label-text" for="data-deletion-id">Deletion ID</label>
+            <input id="data-deletion-id" class="input input-bordered input-sm font-mono" type="text" bind:value={deletionIDInput} />
+          </div>
+          <button class="btn btn-ghost btn-sm" aria-label="Check deletion status" disabled={deletionBusy || !deletionIDInput.trim()} onclick={checkDeletionStatus}>Check status</button>
+        </div>
+        {#if deletionRequest}
+          <table class="table table-xs mb-2" aria-label="Data deletion request">
+            <tbody>
+              <tr><th>ID</th><td class="font-mono">{deletionRequest.id}</td></tr>
+              <tr><th>Status</th><td>{deletionRequest.status}</td></tr>
+              <tr><th>Reason</th><td>{deletionRequest.reason || '—'}</td></tr>
+              <tr><th>Requested</th><td>{deletionRequest.requested_at ? formatDateTime(deletionRequest.requested_at) : '—'}</td></tr>
+              <tr><th>Grace period ends</th><td>{deletionRequest.grace_period_ends_at ? formatDateTime(deletionRequest.grace_period_ends_at) : '—'}</td></tr>
+              <tr><th>Cancelled</th><td>{deletionRequest.cancelled_at ? formatDateTime(deletionRequest.cancelled_at) : '—'}</td></tr>
+              {#if deletionRequest.error_message}
+                <tr><th>Error</th><td class="text-error">{deletionRequest.error_message}</td></tr>
+              {/if}
+            </tbody>
+          </table>
+          {#if deletionRequest.status === 'pending'}
+            <button class="btn btn-ghost btn-sm text-error" disabled={deletionBusy} onclick={submitCancelDeletion}>Cancel deletion</button>
+          {/if}
+        {/if}
+      </section>
+
+      <div class="modal-action">
+        <button class="btn btn-ghost btn-sm" onclick={closeDataRequests}>Close</button>
+      </div>
+    </div>
+    <div class="modal-backdrop" role="none" onclick={closeDataRequests} onkeydown={closeDataRequests}></div>
+  </div>
+  {#if confirmRequestDeletion}
+    <div class="modal modal-open" role="dialog" aria-modal="true" aria-label="Request deletion confirmation">
+      <div class="modal-box max-w-sm">
+        <h3 class="text-base font-semibold mb-2">Request Data Deletion?</h3>
+        <p class="text-sm text-base-content/70">
+          The data of <span class="font-mono font-semibold">{userForDataRequests.username}</span> will be deleted after the grace period, unless the request is cancelled before it ends.
+        </p>
+        <div class="modal-action">
+          <button class="btn btn-ghost btn-sm" onclick={() => { confirmRequestDeletion = false; }}>Cancel</button>
+          <button class="btn btn-error btn-sm" disabled={deletionBusy} onclick={submitRequestDeletion}>{deletionBusy ? 'Requesting…' : 'Request'}</button>
+        </div>
+      </div>
+      <div class="modal-backdrop" role="none" onclick={() => { confirmRequestDeletion = false; }} onkeydown={() => { confirmRequestDeletion = false; }}></div>
+    </div>
+  {/if}
+{/if}
+
+<!-- =========================================================================
+     SESSIONS DIALOG
+     ========================================================================= -->
+{#if userForSessions}
+  <div class="modal modal-open" role="dialog" aria-modal="true" aria-label="Sessions dialog">
+    <div class="modal-box max-w-3xl">
+      <h3 class="text-base font-semibold mb-4">Sessions of <span class="font-mono text-primary">{userForSessions.username}</span></h3>
+      {#if sessionsError}
+        <div class="alert alert-error text-sm mb-3" role="alert">{sessionsError}</div>
+      {/if}
+      {#if sessionsLoading && userSessions.length === 0}
+        <div class="flex items-center gap-2 py-2 mb-3">
+          <span class="loading loading-spinner loading-xs"></span>
+          <span class="text-sm text-base-content/50">Loading sessions…</span>
+        </div>
+      {:else if userSessions.length === 0}
+        <p class="text-sm text-base-content/50 mb-3">No active sessions</p>
+      {:else}
+        <div class="overflow-x-auto mb-3">
+          <table class="table table-xs" aria-label="User sessions">
+            <thead>
+              <tr><th>Created</th><th>Last active</th><th>Expires</th><th>IP address</th><th>User agent</th><th>MFA</th><th>Device</th></tr>
+            </thead>
+            <tbody>
+              {#each userSessions as s (s.id)}
+                <tr>
+                  <td class="text-xs">{formatDateTime(s.created)}</td>
+                  <td class="text-xs">{formatDateTime(s.last_active)}</td>
+                  <td class="text-xs">{formatDateTime(s.expires_at)}</td>
+                  <td class="font-mono text-xs">{s.ip_address || '—'}</td>
+                  <td class="text-xs max-w-xs truncate" title={s.user_agent}>{s.user_agent || '—'}</td>
+                  <td><span class="badge badge-xs {s.mfa_verified ? 'badge-success' : 'badge-ghost'}">{s.mfa_verified ? 'verified' : 'no'}</span></td>
+                  <td class="text-xs">{s.device_info?.name || '—'}</td>
+                </tr>
+              {/each}
+            </tbody>
+          </table>
+        </div>
+      {/if}
+      <div class="modal-action">
+        <button class="btn btn-ghost btn-sm" onclick={closeSessions}>Close</button>
+        <button class="btn btn-error btn-sm" disabled={revokingSessions || userSessions.length === 0} onclick={() => { confirmRevokeSessions = true; }}>Revoke all sessions</button>
+      </div>
+    </div>
+    <div class="modal-backdrop" role="none" onclick={closeSessions} onkeydown={closeSessions}></div>
+  </div>
+  {#if confirmRevokeSessions}
+    <div class="modal modal-open" role="dialog" aria-modal="true" aria-label="Revoke sessions confirmation">
+      <div class="modal-box max-w-sm">
+        <h3 class="text-base font-semibold mb-2">Revoke All Sessions?</h3>
+        <p class="text-sm text-base-content/70">
+          Sign <span class="font-mono font-semibold">{userForSessions.username}</span> out of every session? They must sign in again.
+        </p>
+        <div class="modal-action">
+          <button class="btn btn-ghost btn-sm" onclick={() => { confirmRevokeSessions = false; }}>Cancel</button>
+          <button class="btn btn-error btn-sm" disabled={revokingSessions} onclick={confirmRevokeAllSessions}>{revokingSessions ? 'Revoking…' : 'Revoke'}</button>
+        </div>
+      </div>
+      <div class="modal-backdrop" role="none" onclick={() => { confirmRevokeSessions = false; }} onkeydown={() => { confirmRevokeSessions = false; }}></div>
+    </div>
+  {/if}
+{/if}
+
+<!-- =========================================================================
+     MFA DIALOG
+     ========================================================================= -->
+{#if userForMFA}
+  <div class="modal modal-open" role="dialog" aria-modal="true" aria-label="MFA dialog">
+    <div class="modal-box max-w-md">
+      <h3 class="text-base font-semibold mb-4">MFA of <span class="font-mono text-primary">{userForMFA.username}</span></h3>
+      {#if mfaError}
+        <div class="alert alert-error text-sm mb-3" role="alert">{mfaError}</div>
+      {/if}
+      {#if mfaLoading && !mfaStatus}
+        <div class="flex items-center gap-2 py-2 mb-3">
+          <span class="loading loading-spinner loading-xs"></span>
+          <span class="text-sm text-base-content/50">Loading MFA status…</span>
+        </div>
+      {:else if mfaStatus}
+        <table class="table table-xs mb-3" aria-label="MFA status">
+          <tbody>
+            <tr>
+              <th>Status</th>
+              <td><span class="badge badge-xs {mfaStatus.enabled ? 'badge-success' : 'badge-ghost'}">{mfaStatus.enabled ? 'Enabled' : 'Disabled'}</span></td>
+            </tr>
+            {#if mfaStatus.method}
+              <tr><th>Method</th><td class="font-mono">{mfaStatus.method}</td></tr>
+            {/if}
+            {#if mfaStatus.enrolled_at}
+              <tr><th>Enrolled</th><td class="text-xs">{formatDateTime(mfaStatus.enrolled_at)}</td></tr>
+            {/if}
+            {#if mfaStatus.last_verified}
+              <tr><th>Last verified</th><td class="text-xs">{formatDateTime(mfaStatus.last_verified)}</td></tr>
+            {/if}
+            {#if mfaStatus.backup_codes_remaining !== undefined || mfaStatus.backup_codes_total !== undefined}
+              <tr>
+                <th>Backup codes</th>
+                <td class="font-mono">{mfaStatus.backup_codes_remaining ?? '—'}{mfaStatus.backup_codes_total !== undefined ? ` of ${mfaStatus.backup_codes_total}` : ''} remaining</td>
+              </tr>
+            {/if}
+          </tbody>
+        </table>
+      {/if}
+      {#if mfaEnrollment}
+        <section class="space-y-2 mb-3" aria-label="TOTP enrollment">
+          <p class="text-sm text-base-content/70">Add this secret to an authenticator app, then enter the code it shows.</p>
+          <div>
+            <div class="text-xs text-base-content/50">Secret</div>
+            <code class="font-mono text-sm break-all select-all" data-testid="mfa-secret">{mfaEnrollment.secret}</code>
+          </div>
+          <div>
+            <div class="text-xs text-base-content/50">Provisioning URI</div>
+            <code class="font-mono text-xs break-all select-all" data-testid="mfa-provisioning-uri">{mfaEnrollment.provisioning_uri}</code>
+          </div>
+          {#if mfaEnrollment.expires_at}
+            <div class="text-xs text-base-content/50">Expires {formatDateTime(mfaEnrollment.expires_at)}</div>
+          {/if}
+          <div class="form-control">
+            <label class="label label-text" for="mfa-enroll-code">Verification code</label>
+            <input id="mfa-enroll-code" class="input input-bordered input-sm font-mono" type="text" inputmode="numeric" autocomplete="one-time-code" maxlength="6" pattern={'\\d{6}'} placeholder="123456" bind:value={mfaEnrollCode} />
+          </div>
+        </section>
+      {/if}
+      {#if mfaBackupCodes}
+        <section class="mb-3" aria-label="New backup codes">
+          <p class="text-sm text-warning mb-2">These codes are shown only once. Store them somewhere safe.</p>
+          <ul class="font-mono text-sm select-all grid grid-cols-2 gap-1" aria-label="Backup codes">
+            {#each mfaBackupCodes as code (code)}
+              <li>{code}</li>
+            {/each}
+          </ul>
+        </section>
+      {/if}
+      <div class="modal-action">
+        <button class="btn btn-ghost btn-sm" onclick={closeMFA}>Close</button>
+        {#if mfaEnrollment}
+          <button class="btn btn-ghost btn-sm" disabled={mfaBusy} onclick={submitCancelEnrollment}>Cancel enrollment</button>
+          <button class="btn btn-primary btn-sm" disabled={mfaBusy} onclick={submitCompleteEnrollment}>Verify</button>
+        {:else if mfaStatus?.enabled}
+          <button class="btn btn-warning btn-sm" disabled={mfaBusy} onclick={() => { confirmRegenerateCodes = true; }}>Regenerate backup codes</button>
+          <button class="btn btn-error btn-sm" disabled={disablingMFA} onclick={() => { confirmDisableMFA = true; }}>Disable MFA</button>
+        {:else if mfaStatus}
+          <button class="btn btn-primary btn-sm" disabled={mfaBusy} onclick={submitBeginEnrollment}>Enroll TOTP</button>
+        {/if}
+      </div>
+    </div>
+    <div class="modal-backdrop" role="none" onclick={closeMFA} onkeydown={closeMFA}></div>
+  </div>
+{/if}
+
+{#if userForMFA && confirmDisableMFA}
+  <div class="modal modal-open" role="dialog" aria-modal="true" aria-label="Disable MFA confirmation">
+    <div class="modal-box max-w-sm">
+      <h3 class="text-base font-semibold mb-2">Disable MFA?</h3>
+      <p class="text-sm text-base-content/70">
+        Disable MFA for <span class="font-mono font-semibold">{userForMFA.username}</span>? The user must enroll again to restore it.
+      </p>
+      <div class="modal-action">
+        <button class="btn btn-ghost btn-sm" onclick={() => { confirmDisableMFA = false; }}>Cancel</button>
+        <button class="btn btn-error btn-sm" disabled={disablingMFA} onclick={submitDisableMFA}>{disablingMFA ? 'Disabling…' : 'Disable'}</button>
+      </div>
+    </div>
+    <div class="modal-backdrop" role="none" onclick={() => { confirmDisableMFA = false; }} onkeydown={() => { confirmDisableMFA = false; }}></div>
+  </div>
+{/if}
+
+{#if userForMFA && confirmRegenerateCodes}
+  <div class="modal modal-open" role="dialog" aria-modal="true" aria-label="Regenerate backup codes confirmation">
+    <div class="modal-box max-w-sm">
+      <h3 class="text-base font-semibold mb-2">Regenerate backup codes?</h3>
+      <p class="text-sm text-base-content/70">
+        Generate new backup codes for <span class="font-mono font-semibold">{userForMFA.username}</span>? The old codes stop working.
+      </p>
+      <div class="modal-action">
+        <button class="btn btn-ghost btn-sm" onclick={() => { confirmRegenerateCodes = false; }}>Cancel</button>
+        <button class="btn btn-warning btn-sm" disabled={mfaBusy} onclick={submitRegenerateBackupCodes}>{mfaBusy ? 'Generating…' : 'Regenerate'}</button>
+      </div>
+    </div>
+    <div class="modal-backdrop" role="none" onclick={() => { confirmRegenerateCodes = false; }} onkeydown={() => { confirmRegenerateCodes = false; }}></div>
+  </div>
+{/if}
+
+<!-- =========================================================================
+     PASSKEYS DIALOG
+     ========================================================================= -->
+{#if userForPasskeys}
+  <div class="modal modal-open" role="dialog" aria-modal="true" aria-label="Passkeys dialog">
+    <div class="modal-box max-w-3xl">
+      <h3 class="text-base font-semibold mb-4">Passkeys of <span class="font-mono text-primary">{userForPasskeys.username}</span></h3>
+      {#if passkeysError}
+        <div class="alert alert-error text-sm mb-3" role="alert">{passkeysError}</div>
+      {/if}
+      {#if passkeysLoading && !passkeys}
+        <div class="flex items-center gap-2 py-2 mb-3">
+          <span class="loading loading-spinner loading-xs"></span>
+          <span class="text-sm text-base-content/50">Loading passkeys…</span>
+        </div>
+      {:else if passkeys && passkeys.length === 0}
+        <p class="text-sm text-base-content/50 mb-3">No passkeys registered.</p>
+      {:else if passkeys}
+        <div class="overflow-x-auto mb-3">
+          <table class="table table-xs" aria-label="Passkeys">
+            <thead>
+              <tr>
+                <th>ID</th>
+                <th>AAGUID</th>
+                <th>Attestation</th>
+                <th>Transports</th>
+                <th>Sign count</th>
+                <th>Backup eligible</th>
+                <th>Backup state</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              {#each passkeys as credential (credential.id)}
+                <tr>
+                  <td class="font-mono" title={credential.id}>
+                    {shortCredentialID(credential.id)}
+                    {#if credential.clone_warning}
+                      <span class="badge badge-xs badge-warning ml-1" title="The authenticator's sign count went backwards: it may be cloned">Clone warning</span>
+                    {/if}
+                  </td>
+                  <td class="font-mono">{credential.aaguid || '—'}</td>
+                  <td>{credential.attestation_type || '—'}</td>
+                  <td>{credential.transports && credential.transports.length > 0 ? credential.transports.join(', ') : '—'}</td>
+                  <td class="font-mono">{credential.sign_count}</td>
+                  <td>{credential.backup_eligible ? 'Yes' : 'No'}</td>
+                  <td>{credential.backup_state ? 'Yes' : 'No'}</td>
+                  <td>
+                    <button
+                      class="btn btn-ghost btn-xs text-error"
+                      aria-label={`Remove passkey ${credential.id}`}
+                      disabled={removingPasskeys}
+                      onclick={() => { confirmRemovePasskey = credential; }}
+                    >Remove</button>
+                  </td>
+                </tr>
+              {/each}
+            </tbody>
+          </table>
+        </div>
+      {/if}
+      <div class="modal-action">
+        <button class="btn btn-ghost btn-sm" onclick={closePasskeys}>Close</button>
+        {#if passkeys && passkeys.length > 0}
+          <button class="btn btn-error btn-sm" disabled={removingPasskeys} onclick={() => { confirmRemoveAllPasskeys = true; }}>Remove all</button>
+        {/if}
+      </div>
+    </div>
+    <div class="modal-backdrop" role="none" onclick={closePasskeys} onkeydown={closePasskeys}></div>
+  </div>
+{/if}
+
+{#if userForPasskeys && confirmRemovePasskey}
+  <div class="modal modal-open" role="dialog" aria-modal="true" aria-label="Remove passkey confirmation">
+    <div class="modal-box max-w-sm">
+      <h3 class="text-base font-semibold mb-2">Remove passkey?</h3>
+      <p class="text-sm text-base-content/70">
+        Remove passkey <span class="font-mono font-semibold" title={confirmRemovePasskey.id}>{shortCredentialID(confirmRemovePasskey.id)}</span> from <span class="font-mono font-semibold">{userForPasskeys.username}</span>? The user can no longer sign in with it.
+      </p>
+      <div class="modal-action">
+        <button class="btn btn-ghost btn-sm" onclick={() => { confirmRemovePasskey = null; }}>Cancel</button>
+        <button class="btn btn-error btn-sm" disabled={removingPasskeys} onclick={submitRemovePasskey}>{removingPasskeys ? 'Removing…' : 'Remove'}</button>
+      </div>
+    </div>
+    <div class="modal-backdrop" role="none" onclick={() => { confirmRemovePasskey = null; }} onkeydown={() => { confirmRemovePasskey = null; }}></div>
+  </div>
+{/if}
+
+{#if userForPasskeys && confirmRemoveAllPasskeys}
+  <div class="modal modal-open" role="dialog" aria-modal="true" aria-label="Remove all passkeys confirmation">
+    <div class="modal-box max-w-sm">
+      <h3 class="text-base font-semibold mb-2">Remove all passkeys?</h3>
+      <p class="text-sm text-base-content/70">
+        Remove every passkey of <span class="font-mono font-semibold">{userForPasskeys.username}</span>? The user must register again to sign in with a passkey.
+      </p>
+      <div class="modal-action">
+        <button class="btn btn-ghost btn-sm" onclick={() => { confirmRemoveAllPasskeys = false; }}>Cancel</button>
+        <button class="btn btn-error btn-sm" disabled={removingPasskeys} onclick={submitRemoveAllPasskeys}>{removingPasskeys ? 'Removing…' : 'Remove all'}</button>
+      </div>
+    </div>
+    <div class="modal-backdrop" role="none" onclick={() => { confirmRemoveAllPasskeys = false; }} onkeydown={() => { confirmRemoveAllPasskeys = false; }}></div>
+  </div>
+{/if}
+
+<!-- =========================================================================
+     LINKED ACCOUNTS DIALOG
+     ========================================================================= -->
+{#if userForLinks}
+  <div class="modal modal-open" role="dialog" aria-modal="true" aria-label="Linked accounts dialog">
+    <div class="modal-box max-w-3xl">
+      <h3 class="text-base font-semibold mb-4">Linked accounts of <span class="font-mono text-primary">{userForLinks.username}</span></h3>
+      {#if linksError}
+        <div class="alert alert-error text-sm mb-3" role="alert">{linksError}</div>
+      {/if}
+      {#if linksLoading && !accountLinks}
+        <div class="flex items-center gap-2 py-2 mb-3">
+          <span class="loading loading-spinner loading-xs"></span>
+          <span class="text-sm text-base-content/50">Loading linked accounts…</span>
+        </div>
+      {:else if accountLinks && accountLinks.length === 0}
+        <p class="text-sm text-base-content/50 py-2 mb-3">No linked accounts</p>
+      {:else if accountLinks}
+        <table class="table table-xs mb-3" aria-label="Linked accounts">
+          <thead>
+            <tr><th>Provider</th><th>External ID</th><th>Email or name</th><th>Last login</th><th>Created</th><th></th></tr>
+          </thead>
+          <tbody>
+            {#each accountLinks as link (link.id)}
+              <tr>
+                <td class="font-mono">{link.provider_id}</td>
+                <td class="font-mono">{link.external_id}</td>
+                <td>{link.external_email || link.external_name || '—'}</td>
+                <td class="text-xs">{formatDateTime(link.last_login)}</td>
+                <td class="text-xs">{formatDateTime(link.created)}</td>
+                <td>
+                  <button
+                    class="btn btn-ghost btn-xs text-error"
+                    aria-label={`Unlink ${link.provider_id}`}
+                    disabled={unlinking}
+                    onclick={() => { linkToRemove = link; }}
+                  >Unlink</button>
+                </td>
+              </tr>
+            {/each}
+          </tbody>
+        </table>
+      {/if}
+      <form
+        class="flex flex-wrap items-end gap-2 mb-1"
+        aria-label="Link account form"
+        onsubmit={(e) => { e.preventDefault(); void submitLink(); }}
+      >
+        <div class="form-control">
+          <label class="label label-text" for="link-provider-id">Provider ID</label>
+          <input id="link-provider-id" class="input input-bordered input-sm" type="text" bind:value={newLinkProviderID} />
+        </div>
+        <div class="form-control">
+          <label class="label label-text" for="link-external-id">External ID</label>
+          <input id="link-external-id" class="input input-bordered input-sm" type="text" bind:value={newLinkExternalID} />
+        </div>
+        <button
+          class="btn btn-primary btn-sm"
+          type="submit"
+          disabled={linking || !newLinkProviderID.trim() || !newLinkExternalID.trim()}
+        >{linking ? 'Linking…' : 'Link account'}</button>
+      </form>
+      <div class="modal-action">
+        <button class="btn btn-ghost btn-sm" onclick={closeAccountLinks}>Close</button>
+      </div>
+    </div>
+    <div class="modal-backdrop" role="none" onclick={closeAccountLinks} onkeydown={closeAccountLinks}></div>
+  </div>
+{/if}
+
+{#if userForLinks && linkToRemove}
+  <div class="modal modal-open" role="dialog" aria-modal="true" aria-label="Unlink account confirmation">
+    <div class="modal-box max-w-sm">
+      <h3 class="text-base font-semibold mb-2">Unlink account?</h3>
+      <p class="text-sm text-base-content/70">
+        Unlink <span class="font-mono font-semibold">{linkToRemove.provider_id}</span> from <span class="font-mono font-semibold">{userForLinks.username}</span>?
+      </p>
+      <div class="modal-action">
+        <button class="btn btn-ghost btn-sm" onclick={() => { linkToRemove = null; }}>Cancel</button>
+        <button class="btn btn-error btn-sm" disabled={unlinking} onclick={submitUnlink}>{unlinking ? 'Unlinking…' : 'Unlink'}</button>
+      </div>
+    </div>
+    <div class="modal-backdrop" role="none" onclick={() => { linkToRemove = null; }} onkeydown={() => { linkToRemove = null; }}></div>
+  </div>
+{/if}
+
+<!-- =========================================================================
      CREATE TENANT DIALOG
      ========================================================================= -->
 {#if showCreateTenant}
@@ -1332,6 +2811,103 @@
       </div>
     </div>
     <div class="modal-backdrop" role="none" onclick={() => { showCreateTenant = false; }} onkeydown={() => { showCreateTenant = false; }}></div>
+  </div>
+{/if}
+
+<!-- =========================================================================
+     PROVISION TENANT DIALOG
+     ========================================================================= -->
+{#if showProvisionTenant}
+  <div class="modal modal-open" role="dialog" aria-modal="true" aria-label="Provision tenant dialog">
+    <div class="modal-box max-w-md">
+      <h3 class="text-base font-semibold mb-4">Provision Tenant</h3>
+      {#if provisionTenantError}
+        <div class="alert alert-error text-sm mb-3" role="alert">{provisionTenantError}</div>
+      {/if}
+      <div class="space-y-3">
+        <div class="form-control">
+          <label class="label label-text" for="prov-tenant-id">Tenant ID</label>
+          <input id="prov-tenant-id" class="input input-bordered input-sm" type="text" placeholder="acme" bind:value={provTenantID} />
+        </div>
+        <div class="form-control">
+          <label class="label label-text" for="prov-tenant-name">Name</label>
+          <input id="prov-tenant-name" class="input input-bordered input-sm" type="text" placeholder="Optional display name" bind:value={provTenantName} />
+        </div>
+        <div class="form-control">
+          <label class="label label-text" for="prov-admin-username">Admin username</label>
+          <input id="prov-admin-username" class="input input-bordered input-sm" type="text" placeholder="Optional; the server picks a default" bind:value={provAdminUsername} />
+        </div>
+        <fieldset class="form-control">
+          <legend class="label label-text">Admin enrollment</legend>
+          <label class="label cursor-pointer justify-start gap-2">
+            <input type="radio" class="radio radio-sm" name="prov-enrollment" value="invite" bind:group={provEnrollment} />
+            <span class="label-text">Invite</span>
+          </label>
+          <label class="label cursor-pointer justify-start gap-2">
+            <input type="radio" class="radio radio-sm" name="prov-enrollment" value="cert" bind:group={provEnrollment} />
+            <span class="label-text">Certificate (CSR)</span>
+          </label>
+        </fieldset>
+        {#if provEnrollment === 'cert'}
+          <div class="form-control">
+            <label class="label label-text" for="prov-csr-pem">Admin CSR PEM</label>
+            <textarea id="prov-csr-pem" class="textarea textarea-bordered textarea-sm font-mono text-xs" rows="6" placeholder="-----BEGIN CERTIFICATE REQUEST-----" bind:value={provCsrPem}></textarea>
+          </div>
+        {:else}
+          <div class="form-control">
+            <label class="label label-text" for="prov-invite-expiry">Invite expiry (hours)</label>
+            <input id="prov-invite-expiry" class="input input-bordered input-sm" type="text" inputmode="numeric" placeholder="Optional; server default" bind:value={provInviteExpiry} />
+          </div>
+        {/if}
+      </div>
+      <div class="modal-action">
+        <button class="btn btn-ghost btn-sm" onclick={closeProvisionTenant}>Cancel</button>
+        <button class="btn btn-primary btn-sm" disabled={provisioningTenant} onclick={submitProvisionTenant}>{provisioningTenant ? 'Provisioning…' : 'Provision'}</button>
+      </div>
+    </div>
+    <div class="modal-backdrop" role="none" onclick={closeProvisionTenant} onkeydown={closeProvisionTenant}></div>
+  </div>
+{/if}
+
+<!-- =========================================================================
+     PROVISION TENANT RESULT DIALOG
+     ========================================================================= -->
+{#if provisionResult}
+  <div class="modal modal-open" role="dialog" aria-modal="true" aria-label="Tenant provisioned dialog">
+    <div class="modal-box max-w-lg">
+      <h3 class="text-base font-semibold mb-4">Tenant Provisioned</h3>
+      <dl class="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-sm">
+        <dt class="font-medium">Tenant ID</dt><dd class="font-mono">{provisionResult.tenant_id}</dd>
+        <dt class="font-medium">Admin username</dt><dd class="font-mono">{provisionResult.admin_username}</dd>
+        <dt class="font-medium">Admin user ID</dt><dd class="font-mono">{provisionResult.admin_user_id}</dd>
+        <dt class="font-medium">Admin role ID</dt><dd class="font-mono">{provisionResult.admin_role_id}</dd>
+        <dt class="font-medium">Pending</dt><dd>{provisionResult.admin_pending ? 'Yes' : 'No'}</dd>
+      </dl>
+      {#if provisionResult.invite_token}
+        <div class="mt-4 space-y-2">
+          <div class="alert alert-warning text-sm">This invite token is shown once. Copy it now and send it to the admin.</div>
+          <label class="label label-text" for="prov-invite-token">Invite token</label>
+          <textarea id="prov-invite-token" class="textarea textarea-bordered textarea-sm font-mono text-xs w-full" rows="3" readonly value={provisionResult.invite_token}></textarea>
+          <button class="btn btn-ghost btn-xs" aria-label="Copy invite token" onclick={() => copyProvisionSecret(provisionResult?.invite_token, 'Invite token')}>Copy</button>
+          {#if provisionResult.invite_expires_at}
+            <p class="text-xs">Expires {formatDateTime(provisionResult.invite_expires_at)}</p>
+          {/if}
+        </div>
+      {/if}
+      {#if provisionResult.admin_cert_pem}
+        <div class="mt-4 space-y-2">
+          <label class="label label-text" for="prov-admin-cert">Admin certificate</label>
+          <textarea id="prov-admin-cert" class="textarea textarea-bordered textarea-sm font-mono text-xs w-full" rows="6" readonly value={provisionResult.admin_cert_pem}></textarea>
+          <button class="btn btn-ghost btn-xs" aria-label="Copy certificate" onclick={() => copyProvisionSecret(provisionResult?.admin_cert_pem, 'Certificate')}>Copy</button>
+          {#if provisionResult.admin_cert_thumbprint}
+            <p class="text-xs">Thumbprint <span class="font-mono">{provisionResult.admin_cert_thumbprint}</span></p>
+          {/if}
+        </div>
+      {/if}
+      <div class="modal-action">
+        <button class="btn btn-primary btn-sm" onclick={closeProvisionResult}>Done</button>
+      </div>
+    </div>
   </div>
 {/if}
 

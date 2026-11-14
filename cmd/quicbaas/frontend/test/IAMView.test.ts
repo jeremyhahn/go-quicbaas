@@ -386,6 +386,921 @@ describe('IAMView', () => {
   });
 
   // -------------------------------------------------------------------------
+  // #2372: the Roles dialog lists the user's roles and revokes them.
+  // -------------------------------------------------------------------------
+
+  describe('Roles dialog — revoke', () => {
+    function stubRevoke(
+      revokeRoleFromUser: ReturnType<typeof vi.fn>,
+      users: IAMUser[] = mockUsers,
+    ): ReturnType<typeof vi.fn> {
+      const listUsers = vi.fn().mockResolvedValue({ users, count: users.length });
+      mockGetSDKClient.mockResolvedValue({
+        iam: {
+          listUsers,
+          listTenants: vi.fn().mockResolvedValue({ tenants: mockTenants, count: 1 }),
+          listRoles: vi.fn().mockResolvedValue({ roles: mockRoles, count: 2 }),
+          listPolicies: vi.fn().mockResolvedValue({ policies: mockPolicies, count: 1 }),
+          assignRoleToUser: vi.fn().mockResolvedValue(undefined),
+          revokeRoleFromUser,
+        },
+      });
+      return listUsers;
+    }
+
+    async function openRolesDialog(username: string): Promise<HTMLElement> {
+      render(IAMView);
+      const open = await screen.findByRole('button', { name: `Assign role to ${username}` });
+      await fireEvent.click(open);
+      return screen.getByRole('dialog', { name: /Assign role dialog/i });
+    }
+
+    it('lists the user\'s roles by name', async () => {
+      stubRevoke(vi.fn().mockResolvedValue(undefined));
+      const dialog = await openRolesDialog('alice');
+      expect(dialog.querySelector('h3')?.textContent).toBe('Roles of alice');
+      const list = screen.getByRole('list', { name: 'Current roles' });
+      expect(list.textContent).toContain('admin');
+      expect(list.textContent).not.toContain('role-1');
+      expect(screen.getByRole('button', { name: 'Revoke role admin from alice' })).toBeInTheDocument();
+    });
+
+    it('revokes the role by its UUID and shows the success toast', async () => {
+      const revoke = vi.fn().mockResolvedValue(undefined);
+      const listUsers = stubRevoke(revoke);
+      await openRolesDialog('alice');
+      const callsBefore = listUsers.mock.calls.length;
+      await fireEvent.click(screen.getByRole('button', { name: 'Revoke role admin from alice' }));
+
+      await waitFor(() => {
+        expect(revoke).toHaveBeenCalledWith('acme', 'user-1', 'role-1');
+        expect(mockShowToast).toHaveBeenCalledWith({ message: 'Role "admin" revoked from "alice"', type: 'success' });
+        expect(screen.queryByRole('button', { name: 'Revoke role admin from alice' })).not.toBeInTheDocument();
+        expect(listUsers.mock.calls.length).toBeGreaterThan(callsBefore);
+      });
+    });
+
+    it('shows the error and keeps the role when the revoke is rejected', async () => {
+      stubRevoke(vi.fn().mockRejectedValue(new Error('revoke denied')));
+      const dialog = await openRolesDialog('alice');
+      await fireEvent.click(screen.getByRole('button', { name: 'Revoke role admin from alice' }));
+
+      await waitFor(() => {
+        expect(dialog.querySelector('[role="alert"]')?.textContent).toBe('revoke denied');
+      });
+      const button = screen.getByRole('button', { name: 'Revoke role admin from alice' });
+      expect(button).not.toBeDisabled();
+      expect(mockShowToast).not.toHaveBeenCalled();
+    });
+
+    it('shows "No roles assigned" for a user with no roles', async () => {
+      stubRevoke(vi.fn(), [{ ...mockUsers[0], roles: [] }]);
+      const dialog = await openRolesDialog('alice');
+      expect(dialog.textContent).toContain('No roles assigned');
+      expect(screen.queryByRole('button', { name: /^Revoke role/ })).not.toBeInTheDocument();
+    });
+  });
+
+  describe('Consents dialog', () => {
+    const granted = {
+      id: 'c-1', user_id: 'user-1', tenant_id: 'acme', purpose: 'marketing', status: 'granted',
+      version: 'v1', granted_at: '2026-01-02T03:04:05Z', created: '2026-01-02T03:04:05Z', updated: '2026-01-02T03:04:05Z',
+    };
+    const withdrawn = {
+      id: 'c-2', user_id: 'user-1', tenant_id: 'acme', purpose: 'analytics', status: 'withdrawn',
+      version: 'v2', granted_at: '2026-01-01T00:00:00Z', withdrawn_at: '2026-02-01T00:00:00Z',
+      created: '2026-01-01T00:00:00Z', updated: '2026-02-01T00:00:00Z',
+    };
+
+    function stubConsents(overrides: Record<string, ReturnType<typeof vi.fn>>): void {
+      mockGetSDKClient.mockResolvedValue({
+        iam: {
+          listUsers: vi.fn().mockResolvedValue({ users: mockUsers, count: mockUsers.length }),
+          listTenants: vi.fn().mockResolvedValue({ tenants: mockTenants, count: 1 }),
+          listRoles: vi.fn().mockResolvedValue({ roles: mockRoles, count: 2 }),
+          listPolicies: vi.fn().mockResolvedValue({ policies: mockPolicies, count: 1 }),
+          listUserConsents: vi.fn().mockResolvedValue([granted, withdrawn]),
+          grantConsent: vi.fn().mockResolvedValue(granted),
+          withdrawConsent: vi.fn().mockResolvedValue({ ...granted, status: 'withdrawn' }),
+          ...overrides,
+        },
+      });
+    }
+
+    async function openConsentsDialog(username: string): Promise<HTMLElement> {
+      render(IAMView);
+      const open = await screen.findByRole('button', { name: `Consents of ${username}` });
+      await fireEvent.click(open);
+      return screen.getByRole('dialog', { name: /Consents dialog/i });
+    }
+
+    it('opens from the user row and lists the user\'s consents', async () => {
+      const list = vi.fn().mockResolvedValue([granted, withdrawn]);
+      stubConsents({ listUserConsents: list });
+      const dialog = await openConsentsDialog('alice');
+      expect(dialog.querySelector('h3')?.textContent).toBe('Consents of alice');
+      const table = await screen.findByRole('table', { name: 'User consents' });
+      expect(list).toHaveBeenCalledWith('acme', 'user-1');
+      expect(table.textContent).toContain('marketing');
+      expect(table.textContent).toContain('granted');
+      expect(table.textContent).toContain('v1');
+      expect(table.textContent).toContain('analytics');
+      expect(table.textContent).toContain('withdrawn');
+      expect(screen.getByRole('button', { name: 'Withdraw consent marketing of alice' })).toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: 'Withdraw consent analytics of alice' })).not.toBeInTheDocument();
+    });
+
+    it('shows "No consents recorded" for a user with none', async () => {
+      stubConsents({ listUserConsents: vi.fn().mockResolvedValue([]) });
+      const dialog = await openConsentsDialog('alice');
+      await waitFor(() => expect(dialog.textContent).toContain('No consents recorded'));
+    });
+
+    it('grants a consent with the purpose and version, toasts and reloads', async () => {
+      const list = vi.fn().mockResolvedValue([]);
+      const grant = vi.fn().mockResolvedValue(granted);
+      stubConsents({ listUserConsents: list, grantConsent: grant });
+      await openConsentsDialog('alice');
+      await waitFor(() => expect(list).toHaveBeenCalledTimes(1));
+      await fireEvent.change(screen.getByLabelText('Purpose'), { target: { value: 'marketing' } });
+      await fireEvent.input(screen.getByLabelText('Version'), { target: { value: 'v1' } });
+      await fireEvent.click(screen.getByRole('button', { name: 'Grant' }));
+
+      await waitFor(() => {
+        expect(grant).toHaveBeenCalledWith('acme', 'user-1', { purpose: 'marketing', version: 'v1' });
+        expect(mockShowToast).toHaveBeenCalledWith({ message: 'Consent "marketing" granted for "alice"', type: 'success' });
+        expect(list).toHaveBeenCalledTimes(2);
+      });
+    });
+
+    it('withdraws a granted consent by its purpose, toasts and reloads', async () => {
+      const list = vi.fn().mockResolvedValue([granted]);
+      const withdraw = vi.fn().mockResolvedValue({ ...granted, status: 'withdrawn' });
+      stubConsents({ listUserConsents: list, withdrawConsent: withdraw });
+      await openConsentsDialog('alice');
+      await fireEvent.click(await screen.findByRole('button', { name: 'Withdraw consent marketing of alice' }));
+
+      await waitFor(() => {
+        expect(withdraw).toHaveBeenCalledWith('acme', 'user-1', 'marketing');
+        expect(mockShowToast).toHaveBeenCalledWith({ message: 'Consent "marketing" withdrawn for "alice"', type: 'success' });
+        expect(list).toHaveBeenCalledTimes(2);
+      });
+    });
+
+    it('shows the SDK error in the dialog when the withdraw is rejected', async () => {
+      stubConsents({
+        listUserConsents: vi.fn().mockResolvedValue([granted]),
+        withdrawConsent: vi.fn().mockRejectedValue(new Error('withdraw denied')),
+      });
+      const dialog = await openConsentsDialog('alice');
+      await fireEvent.click(await screen.findByRole('button', { name: 'Withdraw consent marketing of alice' }));
+
+      await waitFor(() => {
+        expect(dialog.querySelector('[role="alert"]')?.textContent).toBe('withdraw denied');
+      });
+      expect(mockShowToast).not.toHaveBeenCalled();
+    });
+
+    it('shows the SDK error in the dialog when the list fails', async () => {
+      stubConsents({ listUserConsents: vi.fn().mockRejectedValue(new Error('consents unavailable')) });
+      const dialog = await openConsentsDialog('alice');
+      await waitFor(() => {
+        expect(dialog.querySelector('[role="alert"]')?.textContent).toBe('consents unavailable');
+      });
+    });
+  });
+
+  describe('Data requests', () => {
+    const exportPending = { id: 'exp-1', status: 'pending', format: 'json', requested_at: '2026-01-02T03:04:05Z' };
+    const exportDone = { ...exportPending, status: 'completed', completed_at: '2026-01-02T04:00:00Z', expires_at: '2026-01-09T04:00:00Z' };
+    const deletionPending = {
+      id: 'del-1', status: 'pending', reason: 'leaving', requested_at: '2026-01-02T03:04:05Z',
+      grace_period_ends_at: '2026-02-01T03:04:05Z',
+    };
+
+    function stubDataRequests(overrides: Record<string, ReturnType<typeof vi.fn>>): void {
+      mockGetSDKClient.mockResolvedValue({
+        iam: {
+          listUsers: vi.fn().mockResolvedValue({ users: mockUsers, count: mockUsers.length }),
+          listTenants: vi.fn().mockResolvedValue({ tenants: mockTenants, count: 1 }),
+          listRoles: vi.fn().mockResolvedValue({ roles: mockRoles, count: 2 }),
+          listPolicies: vi.fn().mockResolvedValue({ policies: mockPolicies, count: 1 }),
+          requestDataExport: vi.fn().mockResolvedValue(exportPending),
+          getExportStatus: vi.fn().mockResolvedValue(exportDone),
+          downloadExport: vi.fn().mockResolvedValue({ user: { id: 'user-1' } }),
+          requestDeletion: vi.fn().mockResolvedValue(deletionPending),
+          getDeletionStatus: vi.fn().mockResolvedValue(deletionPending),
+          cancelDeletion: vi.fn().mockResolvedValue({ ...deletionPending, status: 'cancelled', cancelled_at: '2026-01-03T00:00:00Z' }),
+          ...overrides,
+        },
+      });
+    }
+
+    async function openDataRequestsDialog(username: string): Promise<HTMLElement> {
+      render(IAMView);
+      const open = await screen.findByRole('button', { name: `Data requests for ${username}` });
+      await fireEvent.click(open);
+      return screen.getByRole('dialog', { name: /Data requests dialog/i });
+    }
+
+    it('opens from the user row for that user', async () => {
+      stubDataRequests({});
+      const dialog = await openDataRequestsDialog('alice');
+      expect(dialog.querySelector('h3')?.textContent).toBe('Data requests of alice');
+      expect(screen.getByRole('button', { name: 'Request export' })).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'Request deletion' })).toBeInTheDocument();
+    });
+
+    it('requests an export with no options and shows its status and id', async () => {
+      const request = vi.fn().mockResolvedValue(exportPending);
+      stubDataRequests({ requestDataExport: request });
+      await openDataRequestsDialog('alice');
+      await fireEvent.click(screen.getByRole('button', { name: 'Request export' }));
+
+      const table = await screen.findByRole('table', { name: 'Data export request' });
+      expect(request).toHaveBeenCalledWith('acme', 'user-1');
+      expect(table.textContent).toContain('exp-1');
+      expect(table.textContent).toContain('pending');
+      expect((screen.getByLabelText('Export ID') as HTMLInputElement).value).toBe('exp-1');
+      expect(screen.queryByRole('button', { name: 'Download' })).not.toBeInTheDocument();
+    });
+
+    it('checks the status of the typed export id and downloads a completed export', async () => {
+      const status = vi.fn().mockResolvedValue(exportDone);
+      const download = vi.fn().mockResolvedValue({ user: { id: 'user-1' } });
+      stubDataRequests({ getExportStatus: status, downloadExport: download });
+      const createURL = vi.fn().mockReturnValue('blob:export');
+      const revokeURL = vi.fn();
+      Object.defineProperty(URL, 'createObjectURL', { value: createURL, configurable: true, writable: true });
+      Object.defineProperty(URL, 'revokeObjectURL', { value: revokeURL, configurable: true, writable: true });
+      const click = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {});
+      try {
+        await openDataRequestsDialog('alice');
+        await fireEvent.input(screen.getByLabelText('Export ID'), { target: { value: 'exp-1' } });
+        await fireEvent.click(screen.getByRole('button', { name: 'Check export status' }));
+
+        const table = await screen.findByRole('table', { name: 'Data export request' });
+        expect(status).toHaveBeenCalledWith('acme', 'user-1', 'exp-1');
+        expect(table.textContent).toContain('completed');
+
+        await fireEvent.click(screen.getByRole('button', { name: 'Download' }));
+        await waitFor(() => {
+          expect(download).toHaveBeenCalledWith('acme', 'user-1', 'exp-1');
+          expect(createURL).toHaveBeenCalledTimes(1);
+          expect(click).toHaveBeenCalledTimes(1);
+        });
+        expect(createURL.mock.calls[0][0]).toBeInstanceOf(Blob);
+        expect((click.mock.instances[0] as unknown as HTMLAnchorElement).download).toBe('export-exp-1.json');
+        expect(revokeURL).toHaveBeenCalledWith('blob:export');
+      } finally {
+        click.mockRestore();
+      }
+    });
+
+    it('requests a deletion with the reason only after the confirmation', async () => {
+      const request = vi.fn().mockResolvedValue(deletionPending);
+      stubDataRequests({ requestDeletion: request });
+      await openDataRequestsDialog('alice');
+      await fireEvent.input(screen.getByLabelText('Reason'), { target: { value: 'leaving' } });
+      await fireEvent.click(screen.getByRole('button', { name: 'Request deletion' }));
+
+      const confirm = screen.getByRole('dialog', { name: 'Request deletion confirmation' });
+      expect(confirm.textContent).toContain('will be deleted after the grace period');
+      expect(request).not.toHaveBeenCalled();
+
+      await fireEvent.click(screen.getByRole('button', { name: 'Request' }));
+      const table = await screen.findByRole('table', { name: 'Data deletion request' });
+      expect(request).toHaveBeenCalledWith('acme', 'user-1', { reason: 'leaving' });
+      expect(table.textContent).toContain('del-1');
+      expect(table.textContent).toContain('leaving');
+      expect((screen.getByLabelText('Deletion ID') as HTMLInputElement).value).toBe('del-1');
+      expect(screen.queryByRole('dialog', { name: 'Request deletion confirmation' })).not.toBeInTheDocument();
+    });
+
+    it('checks a deletion status and cancels a pending deletion', async () => {
+      const status = vi.fn().mockResolvedValue(deletionPending);
+      const cancel = vi.fn().mockResolvedValue({ ...deletionPending, status: 'cancelled', cancelled_at: '2026-01-03T00:00:00Z' });
+      stubDataRequests({ getDeletionStatus: status, cancelDeletion: cancel });
+      await openDataRequestsDialog('alice');
+      await fireEvent.input(screen.getByLabelText('Deletion ID'), { target: { value: 'del-1' } });
+      await fireEvent.click(screen.getByRole('button', { name: 'Check deletion status' }));
+      await waitFor(() => expect(status).toHaveBeenCalledWith('acme', 'user-1', 'del-1'));
+
+      await fireEvent.click(await screen.findByRole('button', { name: 'Cancel deletion' }));
+      await waitFor(() => {
+        expect(cancel).toHaveBeenCalledWith('acme', 'user-1', 'del-1');
+        expect(screen.getByRole('table', { name: 'Data deletion request' }).textContent).toContain('cancelled');
+      });
+      expect(screen.queryByRole('button', { name: 'Cancel deletion' })).not.toBeInTheDocument();
+    });
+
+    it('shows the SDK error in the dialog alert', async () => {
+      stubDataRequests({ requestDataExport: vi.fn().mockRejectedValue(new Error('export denied')) });
+      const dialog = await openDataRequestsDialog('alice');
+      await fireEvent.click(screen.getByRole('button', { name: 'Request export' }));
+      await waitFor(() => {
+        expect(dialog.querySelector('[role="alert"]')?.textContent).toBe('export denied');
+      });
+    });
+  });
+
+  describe('Sessions dialog', () => {
+    const session = {
+      id: 's-1', created: '2026-01-02T03:04:05Z', last_active: '2026-01-03T03:04:05Z',
+      expires_at: '2026-02-02T03:04:05Z', mfa_verified: true, ip_address: '203.0.113.7',
+      user_agent: 'Mozilla/5.0 TestBrowser',
+      device_info: { id: 'd-1', name: 'Work laptop', type: 'desktop', fingerprint: 'fp', trusted: true },
+    };
+
+    function stubSessions(overrides: Record<string, ReturnType<typeof vi.fn>>): void {
+      mockGetSDKClient.mockResolvedValue({
+        iam: {
+          listUsers: vi.fn().mockResolvedValue({ users: mockUsers, count: mockUsers.length }),
+          listTenants: vi.fn().mockResolvedValue({ tenants: mockTenants, count: 1 }),
+          listRoles: vi.fn().mockResolvedValue({ roles: mockRoles, count: 2 }),
+          listPolicies: vi.fn().mockResolvedValue({ policies: mockPolicies, count: 1 }),
+          listUserSessions: vi.fn().mockResolvedValue({ sessions: [session] }),
+          revokeAllUserSessions: vi.fn().mockResolvedValue(undefined),
+          ...overrides,
+        },
+      });
+    }
+
+    async function openSessionsDialog(username: string): Promise<HTMLElement> {
+      render(IAMView);
+      const open = await screen.findByRole('button', { name: `Sessions of ${username}` });
+      await fireEvent.click(open);
+      return screen.getByRole('dialog', { name: /Sessions dialog/i });
+    }
+
+    it('opens from the user row and lists the user\'s sessions', async () => {
+      const list = vi.fn().mockResolvedValue({ sessions: [session] });
+      stubSessions({ listUserSessions: list });
+      const dialog = await openSessionsDialog('alice');
+      expect(dialog.querySelector('h3')?.textContent).toBe('Sessions of alice');
+      const table = await screen.findByRole('table', { name: 'User sessions' });
+      expect(list).toHaveBeenCalledWith('acme', 'user-1');
+      expect(table.textContent).toContain('203.0.113.7');
+      expect(table.textContent).toContain('Mozilla/5.0 TestBrowser');
+      expect(table.textContent).toContain('verified');
+      expect(table.textContent).toContain('Work laptop');
+    });
+
+    it('shows "No active sessions" for a user with none', async () => {
+      stubSessions({ listUserSessions: vi.fn().mockResolvedValue({ sessions: [] }) });
+      const dialog = await openSessionsDialog('alice');
+      await waitFor(() => expect(dialog.textContent).toContain('No active sessions'));
+    });
+
+    it('revokes all sessions after confirmation, toasts and reloads', async () => {
+      const list = vi.fn().mockResolvedValue({ sessions: [session] });
+      const revoke = vi.fn().mockResolvedValue(undefined);
+      stubSessions({ listUserSessions: list, revokeAllUserSessions: revoke });
+      await openSessionsDialog('alice');
+      await screen.findByRole('table', { name: 'User sessions' });
+      await fireEvent.click(screen.getByRole('button', { name: 'Revoke all sessions' }));
+      expect(revoke).not.toHaveBeenCalled();
+      screen.getByRole('dialog', { name: 'Revoke sessions confirmation' });
+      await fireEvent.click(screen.getByRole('button', { name: 'Revoke' }));
+
+      await waitFor(() => {
+        expect(revoke).toHaveBeenCalledWith('acme', 'user-1');
+        expect(mockShowToast).toHaveBeenCalledWith({ message: 'All sessions of "alice" revoked', type: 'success' });
+        expect(list).toHaveBeenCalledTimes(2);
+      });
+      expect(screen.queryByRole('dialog', { name: 'Revoke sessions confirmation' })).not.toBeInTheDocument();
+    });
+
+    it('shows the SDK error in the dialog when the list fails', async () => {
+      stubSessions({ listUserSessions: vi.fn().mockRejectedValue(new Error('sessions unavailable')) });
+      const dialog = await openSessionsDialog('alice');
+      await waitFor(() => {
+        expect(dialog.querySelector('[role="alert"]')?.textContent).toBe('sessions unavailable');
+      });
+    });
+
+    it('shows the SDK error in the dialog when the revoke is rejected', async () => {
+      stubSessions({ revokeAllUserSessions: vi.fn().mockRejectedValue(new Error('revoke denied')) });
+      const dialog = await openSessionsDialog('alice');
+      await screen.findByRole('table', { name: 'User sessions' });
+      await fireEvent.click(screen.getByRole('button', { name: 'Revoke all sessions' }));
+      await fireEvent.click(screen.getByRole('button', { name: 'Revoke' }));
+      await waitFor(() => {
+        expect(dialog.querySelector('[role="alert"]')?.textContent).toBe('revoke denied');
+      });
+      expect(mockShowToast).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('MFA dialog', () => {
+    const enabled = {
+      enabled: true,
+      method: 'totp',
+      enrolled_at: '2026-01-02T03:04:05Z',
+      last_verified: '2026-02-03T04:05:06Z',
+      backup_codes_total: 10,
+      backup_codes_remaining: 7,
+    };
+    const disabled = { enabled: false };
+
+    function stubMFA(overrides: Record<string, ReturnType<typeof vi.fn>>): void {
+      mockGetSDKClient.mockResolvedValue({
+        iam: {
+          listUsers: vi.fn().mockResolvedValue({ users: mockUsers, count: mockUsers.length }),
+          listTenants: vi.fn().mockResolvedValue({ tenants: mockTenants, count: 1 }),
+          listRoles: vi.fn().mockResolvedValue({ roles: mockRoles, count: 2 }),
+          listPolicies: vi.fn().mockResolvedValue({ policies: mockPolicies, count: 1 }),
+          getMFAStatus: vi.fn().mockResolvedValue(enabled),
+          disableMFA: vi.fn().mockResolvedValue(undefined),
+          ...overrides,
+        },
+      });
+    }
+
+    async function openMFADialog(username: string): Promise<HTMLElement> {
+      render(IAMView);
+      const open = await screen.findByRole('button', { name: `MFA of ${username}` });
+      await fireEvent.click(open);
+      return screen.getByRole('dialog', { name: /^MFA dialog$/ });
+    }
+
+    it('opens from the user row and shows every status field', async () => {
+      const get = vi.fn().mockResolvedValue(enabled);
+      stubMFA({ getMFAStatus: get });
+      const dialog = await openMFADialog('alice');
+      expect(dialog.querySelector('h3')?.textContent).toBe('MFA of alice');
+      const table = await screen.findByRole('table', { name: 'MFA status' });
+      expect(get).toHaveBeenCalledWith('acme', 'user-1');
+      expect(table.textContent).toContain('Enabled');
+      expect(table.textContent).toContain('totp');
+      expect(table.textContent).toContain('Enrolled');
+      expect(table.textContent).toContain('Last verified');
+      expect(table.textContent).toContain('7 of 10 remaining');
+      expect(screen.getByRole('button', { name: 'Disable MFA' })).toBeInTheDocument();
+    });
+
+    it('hides the Disable button when MFA is off', async () => {
+      stubMFA({ getMFAStatus: vi.fn().mockResolvedValue(disabled) });
+      await openMFADialog('alice');
+      const table = await screen.findByRole('table', { name: 'MFA status' });
+      expect(table.textContent).toContain('Disabled');
+      expect(table.textContent).not.toContain('Method');
+      expect(screen.queryByRole('button', { name: 'Disable MFA' })).not.toBeInTheDocument();
+    });
+
+    it('disables MFA after confirmation, toasts and reloads', async () => {
+      const get = vi.fn().mockResolvedValueOnce(enabled).mockResolvedValue(disabled);
+      const disable = vi.fn().mockResolvedValue(undefined);
+      stubMFA({ getMFAStatus: get, disableMFA: disable });
+      await openMFADialog('alice');
+      await fireEvent.click(await screen.findByRole('button', { name: 'Disable MFA' }));
+      expect(disable).not.toHaveBeenCalled();
+      const confirm = screen.getByRole('dialog', { name: 'Disable MFA confirmation' });
+      const confirmButton = Array.from(confirm.querySelectorAll('button')).find((b) => b.textContent === 'Disable');
+      expect(confirmButton).toBeDefined();
+      if (confirmButton) await fireEvent.click(confirmButton);
+
+      await waitFor(() => {
+        expect(disable).toHaveBeenCalledWith('acme', 'user-1');
+        expect(mockShowToast).toHaveBeenCalledWith({ message: 'MFA disabled for "alice"', type: 'success' });
+        expect(get).toHaveBeenCalledTimes(2);
+      });
+      await waitFor(() => {
+        expect(screen.queryByRole('button', { name: 'Disable MFA' })).not.toBeInTheDocument();
+      });
+      expect(screen.queryByRole('dialog', { name: 'Disable MFA confirmation' })).not.toBeInTheDocument();
+    });
+
+    it('shows the SDK error in the dialog when the status load fails', async () => {
+      stubMFA({ getMFAStatus: vi.fn().mockRejectedValue(new Error('mfa unavailable')) });
+      const dialog = await openMFADialog('alice');
+      await waitFor(() => {
+        expect(dialog.querySelector('[role="alert"]')?.textContent).toBe('mfa unavailable');
+      });
+    });
+
+    it('shows the SDK error in the dialog when the disable is rejected', async () => {
+      stubMFA({ disableMFA: vi.fn().mockRejectedValue(new Error('disable denied')) });
+      const dialog = await openMFADialog('alice');
+      await fireEvent.click(await screen.findByRole('button', { name: 'Disable MFA' }));
+      const confirm = screen.getByRole('dialog', { name: 'Disable MFA confirmation' });
+      const confirmButton = Array.from(confirm.querySelectorAll('button')).find((b) => b.textContent === 'Disable');
+      if (confirmButton) await fireEvent.click(confirmButton);
+      await waitFor(() => {
+        expect(dialog.querySelector('[role="alert"]')?.textContent).toBe('disable denied');
+      });
+      expect(mockShowToast).not.toHaveBeenCalled();
+    });
+
+    const enrollment = {
+      enrollment_id: 'enr-1',
+      provisioning_uri: 'otpauth://totp/quicbaas:alice?secret=JBSWY3DPEHPK3PXP',
+      secret: 'JBSWY3DPEHPK3PXP',
+      expires_at: '2026-01-02T03:14:05Z',
+    };
+
+    async function beginEnrollment(): Promise<HTMLElement> {
+      const dialog = await openMFADialog('alice');
+      await fireEvent.click(await screen.findByRole('button', { name: 'Enroll TOTP' }));
+      await screen.findByRole('region', { name: 'TOTP enrollment' });
+      return dialog;
+    }
+
+    it('enrolls TOTP: begins, shows the secret, verifies, toasts and reloads', async () => {
+      const get = vi.fn().mockResolvedValueOnce(disabled).mockResolvedValue(enabled);
+      const begin = vi.fn().mockResolvedValue(enrollment);
+      const complete = vi.fn().mockResolvedValue({ success: true });
+      stubMFA({ getMFAStatus: get, beginMFAEnrollment: begin, completeMFAEnrollment: complete });
+      await beginEnrollment();
+      expect(begin).toHaveBeenCalledWith('acme', 'user-1', 'totp');
+      expect(screen.getByTestId('mfa-secret').textContent).toBe(enrollment.secret);
+      expect(screen.getByTestId('mfa-provisioning-uri').textContent).toBe(enrollment.provisioning_uri);
+      await fireEvent.input(screen.getByLabelText('Verification code'), { target: { value: '123456' } });
+      await fireEvent.click(screen.getByRole('button', { name: 'Verify' }));
+      await waitFor(() => {
+        expect(complete).toHaveBeenCalledWith('acme', 'user-1', 'enr-1', '123456');
+        expect(mockShowToast).toHaveBeenCalledWith({ message: 'TOTP enrolled for "alice"', type: 'success' });
+        expect(get).toHaveBeenCalledTimes(2);
+      });
+      await waitFor(() => {
+        expect(screen.queryByRole('region', { name: 'TOTP enrollment' })).not.toBeInTheDocument();
+        expect(screen.getByRole('button', { name: 'Disable MFA' })).toBeInTheDocument();
+      });
+    });
+
+    it('keeps the enrollment open with an alert when the code is not accepted', async () => {
+      const complete = vi.fn().mockResolvedValue({ success: false });
+      stubMFA({
+        getMFAStatus: vi.fn().mockResolvedValue(disabled),
+        beginMFAEnrollment: vi.fn().mockResolvedValue(enrollment),
+        completeMFAEnrollment: complete,
+      });
+      const dialog = await beginEnrollment();
+      await fireEvent.input(screen.getByLabelText('Verification code'), { target: { value: '000000' } });
+      await fireEvent.click(screen.getByRole('button', { name: 'Verify' }));
+      await waitFor(() => {
+        expect(dialog.querySelector('[role="alert"]')?.textContent).toBe('The verification code was not accepted');
+      });
+      expect(screen.getByRole('region', { name: 'TOTP enrollment' })).toBeInTheDocument();
+      expect(mockShowToast).not.toHaveBeenCalled();
+    });
+
+    it('cancels the open enrollment by its id and returns to the status', async () => {
+      const cancel = vi.fn().mockResolvedValue(undefined);
+      stubMFA({
+        getMFAStatus: vi.fn().mockResolvedValue(disabled),
+        beginMFAEnrollment: vi.fn().mockResolvedValue(enrollment),
+        cancelMFAEnrollment: cancel,
+      });
+      await beginEnrollment();
+      await fireEvent.click(screen.getByRole('button', { name: 'Cancel enrollment' }));
+      await waitFor(() => {
+        expect(cancel).toHaveBeenCalledWith('acme', 'user-1', 'enr-1');
+        expect(screen.queryByRole('region', { name: 'TOTP enrollment' })).not.toBeInTheDocument();
+      });
+      expect(screen.getByRole('button', { name: 'Enroll TOTP' })).toBeInTheDocument();
+    });
+
+    it('cancels an open enrollment when the dialog closes', async () => {
+      const cancel = vi.fn().mockResolvedValue(undefined);
+      stubMFA({
+        getMFAStatus: vi.fn().mockResolvedValue(disabled),
+        beginMFAEnrollment: vi.fn().mockResolvedValue(enrollment),
+        cancelMFAEnrollment: cancel,
+      });
+      await beginEnrollment();
+      await fireEvent.click(screen.getByRole('button', { name: 'Close' }));
+      await waitFor(() => {
+        expect(cancel).toHaveBeenCalledWith('acme', 'user-1', 'enr-1');
+      });
+      expect(screen.queryByRole('dialog', { name: /^MFA dialog$/ })).not.toBeInTheDocument();
+    });
+
+    it('regenerates backup codes after confirmation and lists them once', async () => {
+      const get = vi.fn().mockResolvedValue(enabled);
+      const generate = vi.fn().mockResolvedValue({ codes: ['aaaa-1111', 'bbbb-2222'] });
+      stubMFA({ getMFAStatus: get, generateBackupCodes: generate });
+      await openMFADialog('alice');
+      await fireEvent.click(await screen.findByRole('button', { name: 'Regenerate backup codes' }));
+      expect(generate).not.toHaveBeenCalled();
+      const confirm = screen.getByRole('dialog', { name: 'Regenerate backup codes confirmation' });
+      expect(confirm.textContent).toContain('The old codes stop working');
+      const confirmButton = Array.from(confirm.querySelectorAll('button')).find((b) => b.textContent === 'Regenerate');
+      expect(confirmButton).toBeDefined();
+      if (confirmButton) await fireEvent.click(confirmButton);
+      const list = await screen.findByRole('list', { name: 'Backup codes' });
+      expect(generate).toHaveBeenCalledWith('acme', 'user-1');
+      expect(Array.from(list.querySelectorAll('li')).map((li) => li.textContent)).toEqual(['aaaa-1111', 'bbbb-2222']);
+      expect(screen.getByText(/shown only once/)).toBeInTheDocument();
+      await waitFor(() => {
+        expect(get).toHaveBeenCalledTimes(2);
+      });
+      expect(screen.queryByRole('dialog', { name: 'Regenerate backup codes confirmation' })).not.toBeInTheDocument();
+    });
+
+    it('shows the SDK error in the dialog when the enrollment begin is rejected', async () => {
+      stubMFA({
+        getMFAStatus: vi.fn().mockResolvedValue(disabled),
+        beginMFAEnrollment: vi.fn().mockRejectedValue(new Error('enroll denied')),
+      });
+      const dialog = await openMFADialog('alice');
+      await fireEvent.click(await screen.findByRole('button', { name: 'Enroll TOTP' }));
+      await waitFor(() => {
+        expect(dialog.querySelector('[role="alert"]')?.textContent).toBe('enroll denied');
+      });
+      expect(screen.queryByRole('region', { name: 'TOTP enrollment' })).not.toBeInTheDocument();
+    });
+  });
+
+  describe('Passkeys', () => {
+    const credentials = [
+      {
+        id: 'cred-aaaaaaaaaaaaaaaaaaaa-1',
+        aaguid: 'aaguid-1',
+        attestation_type: 'packed',
+        transports: ['usb', 'nfc'],
+        sign_count: 42,
+        backup_eligible: true,
+        backup_state: false,
+        clone_warning: true,
+      },
+      {
+        id: 'cred-2',
+        sign_count: 3,
+        backup_eligible: false,
+        backup_state: false,
+        clone_warning: false,
+      },
+    ];
+
+    function stubPasskeys(overrides: Record<string, ReturnType<typeof vi.fn>>): void {
+      mockGetSDKClient.mockResolvedValue({
+        iam: {
+          listUsers: vi.fn().mockResolvedValue({ users: mockUsers, count: mockUsers.length }),
+          listTenants: vi.fn().mockResolvedValue({ tenants: mockTenants, count: 1 }),
+          listRoles: vi.fn().mockResolvedValue({ roles: mockRoles, count: 2 }),
+          listPolicies: vi.fn().mockResolvedValue({ policies: mockPolicies, count: 1 }),
+          listWebAuthnCredentials: vi.fn().mockResolvedValue({ credentials, total: credentials.length }),
+          deleteWebAuthnCredential: vi.fn().mockResolvedValue(undefined),
+          deleteAllWebAuthnCredentials: vi.fn().mockResolvedValue({ deleted: 2 }),
+          ...overrides,
+        },
+      });
+    }
+
+    async function openPasskeysDialog(username: string): Promise<HTMLElement> {
+      render(IAMView);
+      const open = await screen.findByRole('button', { name: `Passkeys of ${username}` });
+      await fireEvent.click(open);
+      return screen.getByRole('dialog', { name: 'Passkeys dialog' });
+    }
+
+    function buttonIn(dialogName: string, text: string): HTMLButtonElement | undefined {
+      const dialog = screen.getByRole('dialog', { name: dialogName });
+      return Array.from(dialog.querySelectorAll('button')).find((b) => b.textContent === text);
+    }
+
+    it("lists the user's credentials with every field", async () => {
+      const list = vi.fn().mockResolvedValue({ credentials, total: 2 });
+      stubPasskeys({ listWebAuthnCredentials: list });
+      const dialog = await openPasskeysDialog('alice');
+      expect(dialog.querySelector('h3')?.textContent).toBe('Passkeys of alice');
+      const table = await screen.findByRole('table', { name: 'Passkeys' });
+      expect(list).toHaveBeenCalledWith('acme', 'user-1');
+      expect(table.querySelector('[title="cred-aaaaaaaaaaaaaaaaaaaa-1"]')).not.toBeNull();
+      expect(table.textContent).toContain('aaguid-1');
+      expect(table.textContent).toContain('packed');
+      expect(table.textContent).toContain('usb, nfc');
+      expect(table.textContent).toContain('42');
+      expect(table.textContent).toContain('Yes');
+      expect(table.textContent).toContain('No');
+      expect(table.textContent).toContain('cred-2');
+    });
+
+    it('shows the clone warning badge only on a flagged credential', async () => {
+      stubPasskeys({});
+      await openPasskeysDialog('alice');
+      const table = await screen.findByRole('table', { name: 'Passkeys' });
+      const rows = table.querySelectorAll('tbody tr');
+      expect(rows[0].textContent).toContain('Clone warning');
+      expect(rows[1].textContent).not.toContain('Clone warning');
+    });
+
+    it('shows the empty state when the user has no passkeys', async () => {
+      stubPasskeys({ listWebAuthnCredentials: vi.fn().mockResolvedValue({ credentials: [], total: 0 }) });
+      const dialog = await openPasskeysDialog('alice');
+      await waitFor(() => {
+        expect(dialog.textContent).toContain('No passkeys registered.');
+      });
+      expect(screen.queryByRole('button', { name: 'Remove all' })).not.toBeInTheDocument();
+    });
+
+    it('removes one credential only after confirmation, then reloads', async () => {
+      const list = vi.fn().mockResolvedValue({ credentials, total: 2 });
+      const remove = vi.fn().mockResolvedValue(undefined);
+      stubPasskeys({ listWebAuthnCredentials: list, deleteWebAuthnCredential: remove });
+      await openPasskeysDialog('alice');
+      await fireEvent.click(await screen.findByRole('button', { name: 'Remove passkey cred-2' }));
+      expect(remove).not.toHaveBeenCalled();
+      const confirmButton = buttonIn('Remove passkey confirmation', 'Remove');
+      expect(confirmButton).toBeDefined();
+      if (confirmButton) await fireEvent.click(confirmButton);
+      await waitFor(() => {
+        expect(remove).toHaveBeenCalledWith('acme', 'user-1', 'cred-2');
+        expect(list).toHaveBeenCalledTimes(2);
+      });
+      expect(remove).toHaveBeenCalledTimes(1);
+      expect(screen.queryByRole('dialog', { name: 'Remove passkey confirmation' })).not.toBeInTheDocument();
+    });
+
+    it('removes all credentials after confirmation, toasts the count and reloads', async () => {
+      const list = vi.fn().mockResolvedValueOnce({ credentials, total: 2 }).mockResolvedValue({ credentials: [], total: 0 });
+      const removeAll = vi.fn().mockResolvedValue({ deleted: 2 });
+      stubPasskeys({ listWebAuthnCredentials: list, deleteAllWebAuthnCredentials: removeAll });
+      const dialog = await openPasskeysDialog('alice');
+      await fireEvent.click(await screen.findByRole('button', { name: 'Remove all' }));
+      expect(removeAll).not.toHaveBeenCalled();
+      const confirmButton = buttonIn('Remove all passkeys confirmation', 'Remove all');
+      expect(confirmButton).toBeDefined();
+      if (confirmButton) await fireEvent.click(confirmButton);
+      await waitFor(() => {
+        expect(removeAll).toHaveBeenCalledWith('acme', 'user-1');
+        expect(mockShowToast).toHaveBeenCalledWith({ message: '2 passkey(s) removed from "alice"', type: 'success' });
+        expect(list).toHaveBeenCalledTimes(2);
+      });
+      await waitFor(() => {
+        expect(dialog.textContent).toContain('No passkeys registered.');
+      });
+    });
+
+    it('calls nothing when a confirmation is cancelled', async () => {
+      const remove = vi.fn().mockResolvedValue(undefined);
+      const removeAll = vi.fn().mockResolvedValue({ deleted: 2 });
+      stubPasskeys({ deleteWebAuthnCredential: remove, deleteAllWebAuthnCredentials: removeAll });
+      await openPasskeysDialog('alice');
+      await fireEvent.click(await screen.findByRole('button', { name: 'Remove passkey cred-2' }));
+      const cancel = buttonIn('Remove passkey confirmation', 'Cancel');
+      if (cancel) await fireEvent.click(cancel);
+      expect(screen.queryByRole('dialog', { name: 'Remove passkey confirmation' })).not.toBeInTheDocument();
+      await fireEvent.click(screen.getByRole('button', { name: 'Remove all' }));
+      const cancelAll = buttonIn('Remove all passkeys confirmation', 'Cancel');
+      if (cancelAll) await fireEvent.click(cancelAll);
+      expect(screen.queryByRole('dialog', { name: 'Remove all passkeys confirmation' })).not.toBeInTheDocument();
+      expect(remove).not.toHaveBeenCalled();
+      expect(removeAll).not.toHaveBeenCalled();
+    });
+
+    it('shows the SDK error in the dialog when the list fails', async () => {
+      stubPasskeys({ listWebAuthnCredentials: vi.fn().mockRejectedValue(new Error('webauthn unavailable')) });
+      const dialog = await openPasskeysDialog('alice');
+      await waitFor(() => {
+        expect(dialog.querySelector('[role="alert"]')?.textContent).toBe('webauthn unavailable');
+      });
+    });
+
+    it('shows the SDK error in the dialog when a remove is rejected', async () => {
+      stubPasskeys({ deleteWebAuthnCredential: vi.fn().mockRejectedValue(new Error('remove denied')) });
+      const dialog = await openPasskeysDialog('alice');
+      await fireEvent.click(await screen.findByRole('button', { name: 'Remove passkey cred-2' }));
+      const confirmButton = buttonIn('Remove passkey confirmation', 'Remove');
+      if (confirmButton) await fireEvent.click(confirmButton);
+      await waitFor(() => {
+        expect(dialog.querySelector('[role="alert"]')?.textContent).toBe('remove denied');
+      });
+      expect(mockShowToast).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('Linked accounts dialog', () => {
+    const links = [
+      {
+        id: 'fi-1',
+        user_id: 'user-1',
+        tenant_id: 'acme',
+        provider_id: 'oidc/google',
+        external_id: 'g-123',
+        external_email: 'alice@gmail.com',
+        last_login: '2026-03-04T05:06:07Z',
+        created: '2026-01-02T03:04:05Z',
+        updated: '2026-01-02T03:04:05Z',
+      },
+      {
+        id: 'fi-2',
+        user_id: 'user-1',
+        tenant_id: 'acme',
+        provider_id: 'github',
+        external_id: 'gh-9',
+        external_name: 'Alice GH',
+        last_login: '2026-03-05T05:06:07Z',
+        created: '2026-01-03T03:04:05Z',
+        updated: '2026-01-03T03:04:05Z',
+      },
+    ];
+
+    function stubLinks(overrides: Record<string, ReturnType<typeof vi.fn>>): void {
+      mockGetSDKClient.mockResolvedValue({
+        iam: {
+          listUsers: vi.fn().mockResolvedValue({ users: mockUsers, count: mockUsers.length }),
+          listTenants: vi.fn().mockResolvedValue({ tenants: mockTenants, count: 1 }),
+          listRoles: vi.fn().mockResolvedValue({ roles: mockRoles, count: 2 }),
+          listPolicies: vi.fn().mockResolvedValue({ policies: mockPolicies, count: 1 }),
+          listAccountLinks: vi.fn().mockResolvedValue({ links, limit: 50, offset: 0 }),
+          createAccountLink: vi.fn().mockResolvedValue({}),
+          deleteAccountLink: vi.fn().mockResolvedValue(undefined),
+          ...overrides,
+        },
+      });
+    }
+
+    async function openLinksDialog(username: string): Promise<HTMLElement> {
+      render(IAMView);
+      const open = await screen.findByRole('button', { name: `Linked accounts of ${username}` });
+      await fireEvent.click(open);
+      return screen.getByRole('dialog', { name: 'Linked accounts dialog' });
+    }
+
+    it('lists the user\'s linked accounts', async () => {
+      const list = vi.fn().mockResolvedValue({ links, limit: 50, offset: 0 });
+      stubLinks({ listAccountLinks: list });
+      const dialog = await openLinksDialog('alice');
+      expect(dialog.querySelector('h3')?.textContent).toBe('Linked accounts of alice');
+      const table = await screen.findByRole('table', { name: 'Linked accounts' });
+      expect(list).toHaveBeenCalledWith('acme', 'user-1');
+      expect(table.querySelectorAll('tbody tr')).toHaveLength(2);
+      expect(table.textContent).toContain('oidc/google');
+      expect(table.textContent).toContain('g-123');
+      expect(table.textContent).toContain('alice@gmail.com');
+      expect(table.textContent).toContain('Alice GH');
+    });
+
+    it('shows the empty state', async () => {
+      stubLinks({ listAccountLinks: vi.fn().mockResolvedValue({ links: [], limit: 50, offset: 0 }) });
+      const dialog = await openLinksDialog('alice');
+      await waitFor(() => {
+        expect(dialog.textContent).toContain('No linked accounts');
+      });
+      expect(screen.queryByRole('table', { name: 'Linked accounts' })).not.toBeInTheDocument();
+    });
+
+    it('unlinks after a confirmation naming the provider, then reloads', async () => {
+      const list = vi.fn().mockResolvedValueOnce({ links, limit: 50, offset: 0 })
+        .mockResolvedValue({ links: [links[1]], limit: 50, offset: 0 });
+      const del = vi.fn().mockResolvedValue(undefined);
+      stubLinks({ listAccountLinks: list, deleteAccountLink: del });
+      await openLinksDialog('alice');
+      await fireEvent.click(await screen.findByRole('button', { name: 'Unlink oidc/google' }));
+      expect(del).not.toHaveBeenCalled();
+      const confirm = screen.getByRole('dialog', { name: 'Unlink account confirmation' });
+      expect(confirm.textContent).toContain('oidc/google');
+      const confirmButton = Array.from(confirm.querySelectorAll('button')).find((b) => b.textContent === 'Unlink');
+      expect(confirmButton).toBeDefined();
+      if (confirmButton) await fireEvent.click(confirmButton);
+
+      await waitFor(() => {
+        expect(del).toHaveBeenCalledWith('acme', 'user-1', 'oidc/google');
+        expect(mockShowToast).toHaveBeenCalledWith({ message: 'Unlinked "oidc/google" from "alice"', type: 'success' });
+        expect(list).toHaveBeenCalledTimes(2);
+      });
+      await waitFor(() => {
+        expect(screen.queryByRole('button', { name: 'Unlink oidc/google' })).not.toBeInTheDocument();
+      });
+      expect(screen.queryByRole('dialog', { name: 'Unlink account confirmation' })).not.toBeInTheDocument();
+    });
+
+    it('links an account with both fields, toasts and reloads', async () => {
+      const list = vi.fn().mockResolvedValue({ links: [], limit: 50, offset: 0 });
+      const create = vi.fn().mockResolvedValue({});
+      stubLinks({ listAccountLinks: list, createAccountLink: create });
+      const dialog = await openLinksDialog('alice');
+      await waitFor(() => {
+        expect(dialog.textContent).toContain('No linked accounts');
+      });
+      const submit = screen.getByRole('button', { name: 'Link account' });
+      expect(submit).toBeDisabled();
+      await fireEvent.input(screen.getByLabelText('Provider ID'), { target: { value: 'github' } });
+      expect(submit).toBeDisabled();
+      await fireEvent.input(screen.getByLabelText('External ID'), { target: { value: 'gh-42' } });
+      expect(submit).not.toBeDisabled();
+      await fireEvent.click(submit);
+
+      await waitFor(() => {
+        expect(create).toHaveBeenCalledWith('acme', 'user-1', { provider_id: 'github', external_id: 'gh-42' });
+        expect(mockShowToast).toHaveBeenCalledWith({ message: 'Linked "github" to "alice"', type: 'success' });
+        expect(list).toHaveBeenCalledTimes(2);
+      });
+    });
+
+    it('shows the SDK error in the dialog when the list load fails', async () => {
+      stubLinks({ listAccountLinks: vi.fn().mockRejectedValue(new Error('links unavailable')) });
+      const dialog = await openLinksDialog('alice');
+      await waitFor(() => {
+        expect(dialog.querySelector('[role="alert"]')?.textContent).toBe('links unavailable');
+      });
+      expect(mockShowToast).not.toHaveBeenCalled();
+    });
+  });
+
+  // -------------------------------------------------------------------------
   // Issue #573: built-in roles are seeded once and never reconciled, so a
   // permission rename in the server build strands every existing tenant. The
   // Roles tab must surface that drift and offer the repair.
@@ -466,5 +1381,121 @@ describe('IAMView', () => {
       );
       expect(createdCells.length).toBeGreaterThan(0);
     });
+  });
+});
+
+describe('Provision tenant', () => {
+  let provisionTenant: ReturnType<typeof vi.fn>;
+  let listTenants: ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    setAuthenticated({ access_token: sessionToken('acme') });
+    provisionTenant = vi.fn().mockResolvedValue({
+      tenant_id: 'globex',
+      admin_user_id: 'usr_admin',
+      admin_username: 'root',
+      admin_role_id: 'role_admin',
+      admin_pending: true,
+      invite_token: 'inv-secret-token',
+      invite_expires_at: '2026-11-13T00:00:00Z',
+      timestamp: '2026-11-12T00:00:00Z',
+    });
+    listTenants = vi.fn().mockResolvedValue({ tenants: mockTenants, count: 1 });
+    mockGetSDKClient.mockResolvedValue({
+      iam: {
+        listUsers: vi.fn().mockResolvedValue({ users: mockUsers, count: 2 }),
+        listTenants,
+        listRoles: vi.fn().mockResolvedValue({ roles: mockRoles, count: 1 }),
+        listPolicies: vi.fn().mockResolvedValue({ policies: mockPolicies, count: 1 }),
+        createTenant: vi.fn(),
+        provisionTenant,
+      },
+    });
+  });
+
+  afterEach(() => {
+    routeIAMTab('users');
+    setUnauthenticated();
+  });
+
+  async function openDialog(): Promise<void> {
+    render(IAMView);
+    await fireEvent.click(screen.getByRole('tab', { name: /Tenants/i }));
+    await fireEvent.click(await screen.findByRole('button', { name: 'Provision tenant' }));
+    await screen.findByRole('dialog', { name: 'Provision tenant dialog' });
+  }
+
+  async function submit(): Promise<void> {
+    await fireEvent.click(screen.getByRole('button', { name: 'Provision' }));
+  }
+
+  it('sends the invite-mode fields and never a CSR', async () => {
+    await openDialog();
+    await fireEvent.input(screen.getByLabelText('Tenant ID'), { target: { value: 'globex' } });
+    await fireEvent.input(screen.getByLabelText('Name'), { target: { value: 'Globex' } });
+    await fireEvent.input(screen.getByLabelText('Admin username'), { target: { value: 'root' } });
+    await fireEvent.input(screen.getByLabelText('Invite expiry (hours)'), { target: { value: '48' } });
+    await submit();
+    await waitFor(() => expect(provisionTenant).toHaveBeenCalledTimes(1));
+    const req = provisionTenant.mock.calls[0][0];
+    expect(req).toEqual({
+      tenant_id: 'globex',
+      name: 'Globex',
+      admin_username: 'root',
+      admin_enrollment: 'invite',
+      invite_expiry_hours: 48,
+    });
+    expect(req).not.toHaveProperty('admin_csr_pem');
+    expect(req).not.toHaveProperty('isolation_type');
+  });
+
+  it('requires the CSR in cert mode and sends it', async () => {
+    await openDialog();
+    await fireEvent.input(screen.getByLabelText('Tenant ID'), { target: { value: 'globex' } });
+    await fireEvent.click(screen.getByLabelText('Certificate (CSR)'));
+    await submit();
+    expect(await screen.findByRole('alert')).toHaveTextContent(/CSR PEM is required/);
+    expect(provisionTenant).not.toHaveBeenCalled();
+    const csr = '-----BEGIN CERTIFICATE REQUEST-----\nabc\n-----END CERTIFICATE REQUEST-----';
+    await fireEvent.input(screen.getByLabelText('Admin CSR PEM'), { target: { value: csr } });
+    await submit();
+    await waitFor(() => expect(provisionTenant).toHaveBeenCalledTimes(1));
+    const req = provisionTenant.mock.calls[0][0];
+    expect(req).toEqual({ tenant_id: 'globex', admin_enrollment: 'cert', admin_csr_pem: csr });
+    expect(req).not.toHaveProperty('invite_expiry_hours');
+  });
+
+  it('calls nothing without a tenant id', async () => {
+    await openDialog();
+    await submit();
+    expect(await screen.findByRole('alert')).toHaveTextContent('Tenant ID is required');
+    expect(provisionTenant).not.toHaveBeenCalled();
+  });
+
+  it('shows the invite token once, clears it on close and reloads the list', async () => {
+    await openDialog();
+    await fireEvent.input(screen.getByLabelText('Tenant ID'), { target: { value: 'globex' } });
+    await submit();
+    const result = await screen.findByRole('dialog', { name: 'Tenant provisioned dialog' });
+    expect(result).toHaveTextContent('usr_admin');
+    expect(result).toHaveTextContent('role_admin');
+    expect(result).toHaveTextContent(/shown once/);
+    expect(screen.getByLabelText('Invite token')).toHaveValue('inv-secret-token');
+    expect(screen.getByRole('button', { name: 'Copy invite token' })).toBeInTheDocument();
+    const loadsBefore = listTenants.mock.calls.length;
+    await fireEvent.click(screen.getByRole('button', { name: 'Done' }));
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Tenant provisioned dialog' })).toBeNull());
+    expect(screen.queryByDisplayValue('inv-secret-token')).toBeNull();
+    await waitFor(() => expect(listTenants.mock.calls.length).toBeGreaterThan(loadsBefore));
+  });
+
+  it('shows an SDK error in the alert', async () => {
+    provisionTenant.mockRejectedValue(new Error('tenant already exists'));
+    await openDialog();
+    await fireEvent.input(screen.getByLabelText('Tenant ID'), { target: { value: 'globex' } });
+    await submit();
+    expect(await screen.findByRole('alert')).toHaveTextContent('tenant already exists');
+    expect(screen.getByRole('dialog', { name: 'Provision tenant dialog' })).toBeInTheDocument();
   });
 });

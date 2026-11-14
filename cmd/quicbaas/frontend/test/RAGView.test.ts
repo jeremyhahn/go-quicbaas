@@ -184,3 +184,91 @@ describe('RAGView', () => {
     });
   });
 });
+
+describe('RAGView document view', () => {
+  const mockListDocuments = vi.fn();
+  const mockGetDocument = vi.fn();
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockListDocuments.mockResolvedValue({
+      documents: [{ id: 42, namespace: 'docs', content: 'short preview', timestamp: 1700000000 }],
+      total: 1,
+    });
+    mockGetDocument.mockResolvedValue({
+      id: 42,
+      namespace: 'docs',
+      content: 'The full document body.',
+      metadata: { source: 'handbook.md' },
+      timestamp: 1700000000,
+    });
+    vi.mocked(getSDKClient).mockResolvedValue({
+      rag: {
+        query: mockQuery,
+        buildContext: mockBuildContext,
+        listDocuments: mockListDocuments,
+        getDocument: mockGetDocument,
+      },
+    } as never);
+  });
+
+  async function listDocs(): Promise<void> {
+    render(RAGView);
+    const inputs = screen.getAllByPlaceholderText('e.g. docs');
+    // The second "e.g. docs" input belongs to the Documents panel.
+    await fireEvent.input(inputs[1], { target: { value: 'docs' } });
+    await fireEvent.click(screen.getByRole('button', { name: /List documents/i }));
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'View document #42' })).toBeInTheDocument();
+    });
+  }
+
+  it('the View button calls client.rag.getDocument with the id', async () => {
+    await listDocs();
+    await fireEvent.click(screen.getByRole('button', { name: 'View document #42' }));
+    await waitFor(() => {
+      expect(mockGetDocument).toHaveBeenCalledWith(42);
+    });
+  });
+
+  it('the dialog shows the document id, namespace, metadata and content', async () => {
+    await listDocs();
+    await fireEvent.click(screen.getByRole('button', { name: 'View document #42' }));
+    const dialog = await screen.findByRole('dialog', { name: /View Document/i });
+    await waitFor(() => {
+      expect(dialog.querySelector('[data-testid="rag-doc-content"]')?.textContent).toBe(
+        'The full document body.',
+      );
+    });
+    expect(dialog.querySelector('[data-testid="rag-doc-id"]')?.textContent).toBe('42');
+    expect(dialog.querySelector('[data-testid="rag-doc-namespace"]')?.textContent).toBe('docs');
+    expect(dialog.querySelector('[data-testid="rag-doc-metadata"]')?.textContent).toContain('handbook.md');
+  });
+
+  it('shows a loading state while the document loads', async () => {
+    mockGetDocument.mockReturnValueOnce(new Promise(() => {}));
+    await listDocs();
+    await fireEvent.click(screen.getByRole('button', { name: 'View document #42' }));
+    const dialog = await screen.findByRole('dialog', { name: /View Document/i });
+    expect(dialog.querySelector('[data-testid="rag-doc-loading"]')).not.toBeNull();
+  });
+
+  it('shows the error when getDocument fails', async () => {
+    mockGetDocument.mockRejectedValueOnce(new Error('document not found'));
+    await listDocs();
+    await fireEvent.click(screen.getByRole('button', { name: 'View document #42' }));
+    await waitFor(() => {
+      expect(screen.getByText(/Failed to load document: document not found/)).toBeInTheDocument();
+    });
+  });
+
+  it('the Close button closes the dialog', async () => {
+    await listDocs();
+    await fireEvent.click(screen.getByRole('button', { name: 'View document #42' }));
+    await screen.findByRole('dialog', { name: /View Document/i });
+    await fireEvent.click(screen.getByRole('button', { name: /Close document/i }));
+    await waitFor(() => {
+      expect(screen.queryByRole('dialog', { name: /View Document/i })).toBeNull();
+    });
+  });
+});

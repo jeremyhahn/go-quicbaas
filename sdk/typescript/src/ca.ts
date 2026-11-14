@@ -177,6 +177,75 @@ export interface IsRevokedResponse {
 // CAClient interface
 // ---------------------------------------------------------------------------
 
+/** XKMSCABundleOptions filters GET /api/v1/xkms/ca/bundle. */
+export interface XKMSCABundleOptions {
+  store_type?: string;
+  algorithm?: string;
+}
+
+/** XKMSCABundle is the xkms CA trust bundle. `certificates` are base64 DER. */
+export interface XKMSCABundle {
+  bundle_pem: string;
+  certificates: string[];
+  content_type: string;
+}
+
+/** XKMSCACertificate is the xkms CA certificate with its parsed metadata. */
+export interface XKMSCACertificate {
+  certificate_pem: string;
+  subject: string;
+  issuer: string;
+  serial_number: string;
+  not_before: string;
+  not_after: string;
+  is_ca: boolean;
+}
+
+/** XKMSCASignCSRRequest is the body of POST /api/v1/xkms/ca/sign. `csr_pem` is PEM text; the attestation fields are base64. */
+export interface XKMSCASignCSRRequest {
+  csr_pem: string;
+  profile?: string;
+  validity_days?: number;
+  tenant_id?: string;
+  attestation_format?: string;
+  attestation_chain?: string[];
+  attestation_data?: string;
+  attestation_sig?: string;
+  attestation_nonce?: string;
+}
+
+/** XKMSCASignCSRResponse is the answer of POST /api/v1/xkms/ca/sign. */
+export interface XKMSCASignCSRResponse {
+  certificate_pem: string;
+  chain_pem: string;
+  serial_number: string;
+}
+
+/** XKMSCAIssueRequest is the body of POST /api/v1/xkms/ca/issue. */
+export interface XKMSCAIssueRequest {
+  profile: string;
+  common_name: string;
+  organization?: string;
+  sans?: string[];
+  validity_days?: number;
+  algorithm?: string;
+  tenant_id?: string;
+}
+
+/** XKMSCAIssueResponse is the answer of POST /api/v1/xkms/ca/issue. */
+export interface XKMSCAIssueResponse {
+  certificate_pem: string;
+  chain_pem: string;
+  private_key_pem?: string;
+  serial_number: string;
+}
+
+/** XKMSCARevokeResponse is the answer of POST /api/v1/xkms/ca/revoke. */
+export interface XKMSCARevokeResponse {
+  success: boolean;
+  message?: string;
+}
+
 /**
  * CAClient exposes certificate authority administration operations.
  * Maps to /api/v1/certificate/* and /api/v1/xkms/ca/* REST endpoints.
@@ -211,4 +280,19 @@ export interface CAClient {
 
   /** isRevoked checks a single serial number's revocation status. GET /api/v1/xkms/ca/revoked/{serial} */
   isRevoked(serialNumber: string): Promise<IsRevokedResponse>;
+
+  /** xkmsGetCABundle returns the xkms CA trust bundle. GET /api/v1/xkms/ca/bundle */
+  xkmsGetCABundle(opts?: XKMSCABundleOptions): Promise<XKMSCABundle>;
+
+  /** xkmsGetCACertificate returns the xkms CA certificate. GET /api/v1/xkms/ca/cert */
+  xkmsGetCACertificate(identity?: string): Promise<XKMSCACertificate>;
+
+  /** xkmsSignCSR signs a CSR with the xkms CA. POST /api/v1/xkms/ca/sign */
+  xkmsSignCSR(req: XKMSCASignCSRRequest): Promise<XKMSCASignCSRResponse>;
+
+  /** xkmsIssueCertificate mints a certificate and key with the xkms CA. POST /api/v1/xkms/ca/issue */
+  xkmsIssueCertificate(req: XKMSCAIssueRequest): Promise<XKMSCAIssueResponse>;
+
+  /** xkmsRevokeCertificate revokes a certificate with an RFC 5280 reason code. POST /api/v1/xkms/ca/revoke */
+  xkmsRevokeCertificate(serialNumber: string, reason: number, tenantId?: string): Promise<XKMSCARevokeResponse>;
 }
