@@ -58,14 +58,71 @@ func argAfter(args []string, flag string) string {
 	return args[i+1]
 }
 
-func TestBuildImage_PassesDockerfileOnStdinAndReadsTheIIDFile(t *testing.T) {
-	const imageID = "sha256:" + "ab12cd34ef56ab12cd34ef56ab12cd34ef56ab12cd34ef56ab12cd34ef56ab12"
-	engine := &fakeImageEngine{answer: func(args []string) (imageCommandResult, error) {
-		if err := os.WriteFile(argAfter(args, "--iidfile"), []byte(imageID+"\n"), 0o600); err != nil {
-			return imageCommandResult{}, err
+// builtImageEngine answers a build by writing iid to its --iidfile and an
+// inspect with engineID, the ID the engine itself keys the image by.
+func builtImageEngine(iid, engineID string) func([]string) (imageCommandResult, error) {
+	return func(args []string) (imageCommandResult, error) {
+		switch args[0] {
+		case "build":
+			if err := os.WriteFile(argAfter(args, "--iidfile"), []byte(iid+"\n"), 0o600); err != nil {
+				return imageCommandResult{}, err
+			}
+			return imageCommandResult{}, nil
+		case "image":
+			return imageCommandResult{Stdout: `[{"Id":"` + engineID + `","Config":{"Labels":null}}]`}, nil
+		case "tag":
+			if args[1] != engineID {
+				return imageCommandResult{ExitCode: 1, Stderr: "Error response from daemon: No such image: " + args[1]}, nil
+			}
 		}
 		return imageCommandResult{}, nil
+	}
+}
+
+// TestBuildImage_ReturnsTheIDTheEngineTagsBy reproduces #1801: under docker's
+// containerd image store the iidfile names the config digest, the daemon
+// keys the image by another digest, and tagging by the iidfile's ID answered
+// "No such image". BuildImage returns the engine's ID, which TagImage accepts.
+func TestBuildImage_ReturnsTheIDTheEngineTagsBy(t *testing.T) {
+	const configDigest = "sha256:" + "207b2e88207b2e88207b2e88207b2e88207b2e88207b2e88207b2e88207b2e88"
+	const engineID = "sha256:" + "9f0e1d2c9f0e1d2c9f0e1d2c9f0e1d2c9f0e1d2c9f0e1d2c9f0e1d2c9f0e1d2c"
+	engine := &fakeImageEngine{answer: builtImageEngine(configDigest, engineID)}
+	rt := newImageTestRuntime(t, RuntimeDocker, engine)
+
+	if err := rt.TagImage(t.Context(), configDigest, "localhost:32786/it/w:1"); !errors.Is(err, ErrImageTag) {
+		t.Fatalf("the fake must refuse the builder's ID, got %v", err)
+	}
+	id, err := rt.BuildImage(t.Context(), &ImageBuildSpec{Dockerfile: []byte("FROM a"), Tags: []string{"w:local"}})
+	if err != nil {
+		t.Fatalf("BuildImage: %v", err)
+	}
+	if id != engineID {
+		t.Fatalf("image ID = %q, want the engine's %q", id, engineID)
+	}
+	if got := strings.Join(engine.calls[len(engine.calls)-1].Args, " "); got != "image inspect w:local" {
+		t.Fatalf("the ID must be read back from the build's tag, last argv %q", got)
+	}
+	if err := rt.TagImage(t.Context(), id, "localhost:32786/it/w:1"); err != nil {
+		t.Fatalf("TagImage by the returned ID: %v", err)
+	}
+}
+
+func TestBuildImage_InspectFailureIsABuildError(t *testing.T) {
+	engine := &fakeImageEngine{answer: func(args []string) (imageCommandResult, error) {
+		if args[0] == "image" {
+			return imageCommandResult{ExitCode: 1, Stderr: "Error: No such image: t"}, nil
+		}
+		return builtImageEngine("sha256:1", "sha256:1")(args)
 	}}
+	_, err := newImageTestRuntime(t, RuntimeDocker, engine).BuildImage(t.Context(), &ImageBuildSpec{Dockerfile: []byte("FROM a"), Tags: []string{"t"}})
+	if !errors.Is(err, ErrImageBuild) || !errors.Is(err, ErrImageNotFound) {
+		t.Fatalf("err = %v, want ErrImageBuild wrapping ErrImageNotFound", err)
+	}
+}
+
+func TestBuildImage_PassesDockerfileOnStdinAndReadsTheIIDFile(t *testing.T) {
+	const imageID = "sha256:" + "ab12cd34ef56ab12cd34ef56ab12cd34ef56ab12cd34ef56ab12cd34ef56ab12"
+	engine := &fakeImageEngine{answer: builtImageEngine(imageID, imageID)}
 	rt := newImageTestRuntime(t, RuntimeDocker, engine)
 
 	got, err := rt.BuildImage(t.Context(), &ImageBuildSpec{
@@ -235,6 +292,32 @@ func TestTagImage(t *testing.T) {
 	}})
 	if err := failing.TagImage(t.Context(), "s", "t"); !errors.Is(err, ErrImageTag) {
 		t.Fatalf("err = %v, want ErrImageTag", err)
+	}
+}
+
+// TestTagImage_ErrorCarriesTheEnginesRedactedStderr pins that a refused tag
+// says why (#1801 withheld "114 bytes of output") without printing a
+// credential the engine echoed.
+func TestTagImage_ErrorCarriesTheEnginesRedactedStderr(t *testing.T) {
+	const source = "sha256:" + "207b2e88207b2e88207b2e88207b2e88207b2e88207b2e88207b2e88207b2e88"
+	stderr := "Error response from daemon: No such image: " + source
+	rt := newImageTestRuntime(t, RuntimeDocker, &fakeImageEngine{answer: func([]string) (imageCommandResult, error) {
+		return imageCommandResult{ExitCode: 1, Stderr: stderr + "\nBearer abcdefghijklmnopqrstuvwxyz\n"}, nil
+	}})
+	err := rt.TagImage(t.Context(), source, "localhost:32786/it/w:1")
+	var tagErr *ImageTagError
+	if !errors.As(err, &tagErr) || !errors.Is(err, ErrImageTag) {
+		t.Fatalf("err = %v, want an ImageTagError", err)
+	}
+	if !strings.Contains(err.Error(), stderr) {
+		t.Fatalf("the error must carry the engine's reason, got %q", err.Error())
+	}
+	if strings.Contains(err.Error(), "abcdefghijklmnopqrstuvwxyz") {
+		t.Fatalf("a credential-shaped string must be redacted, got %q", err.Error())
+	}
+	var cmdErr *CommandError
+	if !errors.As(err, &cmdErr) || !strings.Contains(cmdErr.Output, "abcdefghijklmnopqrstuvwxyz") {
+		t.Fatalf("the raw output must stay on CommandError.Output, got %v", err)
 	}
 }
 
