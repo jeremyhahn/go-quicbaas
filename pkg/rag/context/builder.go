@@ -83,19 +83,21 @@ func (b *builder) BuildWithTemplate(results []Result, template Template, maxToke
 		maxTokens = b.config.DefaultMaxTokens
 	}
 
-	// Limit results to max per chunk
+	// Limit results to max per chunk. Results dropped here are a
+	// truncation too, whatever the strategy, so the caller learns of them.
+	truncated := false
 	if len(results) > b.config.MaxResultsPerChunk {
 		results = results[:b.config.MaxResultsPerChunk]
+		truncated = true
 	}
 
 	// Apply truncation strategy
-	truncated := false
 	originalCount := len(results)
 
 	switch b.config.TruncationStrategy {
 	case TruncationSmart:
 		results = SmartTruncate(results, maxTokens, b.tokenizer)
-		truncated = len(results) < originalCount
+		truncated = truncated || len(results) < originalCount
 
 	case TruncationHard:
 		// Calculate how many results fit

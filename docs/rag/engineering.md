@@ -121,7 +121,7 @@ type ContextConfig struct {
 | `DefaultTemplate` | Output format | markdown |
 | `TruncationStrategy` | Truncation method | smart |
 | `IncludeCitations` | Source citations | true |
-| `MaxResultsPerChunk` | Results per chunk | 10 |
+| `MaxResultsPerChunk` | Results per chunk; results past it are dropped and `Truncated` is set | 10 |
 | `TokenMultiplier` | Estimation factor | 1.3 |
 
 ### Pipeline Configuration
