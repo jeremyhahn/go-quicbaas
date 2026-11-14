@@ -64,6 +64,10 @@ const (
 	// EndorsementImageSigner anchors container image signatures: a CA
 	// certificate the signer chain of an ImageSignature must terminate at.
 	EndorsementImageSigner EndorsementKind = "image-signer"
+
+	// EndorsementManifestSigner anchors the signed cluster manifest: a CA
+	// certificate the manifest signer's chain must terminate at.
+	EndorsementManifestSigner EndorsementKind = "manifest-signer"
 )
 
 // endorsementKinds is the closed set of kinds.
@@ -71,6 +75,7 @@ var endorsementKinds = map[EndorsementKind]bool{
 	EndorsementReferenceSigner: true,
 	EndorsementAKRoot:          true,
 	EndorsementImageSigner:     true,
+	EndorsementManifestSigner:  true,
 }
 
 // Appraisal check names.
@@ -474,13 +479,13 @@ func (s *attestationService) PutEndorsement(ctx context.Context, req *PutEndorse
 // validateEndorsement checks the kind and that the anchor material parses.
 func validateEndorsement(req *PutEndorsementRequest) error {
 	if !endorsementKinds[req.Kind] {
-		return &EndorsementInvalidError{Reason: "kind must be reference-signer, ak-root or image-signer"}
+		return &EndorsementInvalidError{Reason: "kind must be reference-signer, ak-root, image-signer or manifest-signer"}
 	}
 	hasCert, hasKey := len(req.CertificatePEM) > 0, len(req.PublicKeyPEM) > 0
 	if hasCert == hasKey {
 		return &EndorsementInvalidError{Reason: "exactly one of certificate_pem and public_key_pem is required"}
 	}
-	if (req.Kind == EndorsementAKRoot || req.Kind == EndorsementImageSigner) && !hasCert {
+	if (req.Kind == EndorsementAKRoot || req.Kind == EndorsementImageSigner || req.Kind == EndorsementManifestSigner) && !hasCert {
 		return &EndorsementInvalidError{Reason: "an " + string(req.Kind) + " endorsement is a CA certificate"}
 	}
 	if hasCert {

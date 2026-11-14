@@ -67,8 +67,8 @@ func (e *Envelope) PAE() []byte { return PAE(e.PayloadType, e.Payload) }
 // Signed is a signed provenance envelope and the chain of the key that
 // signed it, leaf first, as stored in the registry.
 type Signed struct {
-	Envelope       Envelope
-	SignerChainPEM [][]byte
+	Envelope       Envelope `json:"envelope"`
+	SignerChainPEM [][]byte `json:"signerChain"`
 }
 
 // ErrUnsigned is returned for an envelope with no signature.
@@ -78,8 +78,8 @@ var ErrUnsigned = errors.New("provenance: the envelope has no signature")
 // certificate chain (leaf first) is chain. The signature is over the
 // SHA-256 of the PAE.
 func Sign(stmt *Statement, signer crypto.Signer, chain []*x509.Certificate) (*Signed, error) {
-	if stmt == nil || signer == nil || len(chain) == 0 {
-		return nil, errors.New("provenance: a statement, a signer and its certificate chain are required")
+	if stmt == nil {
+		return nil, errors.New("provenance: a statement is required")
 	}
 	if err := stmt.Validate(); err != nil {
 		return nil, err
@@ -88,7 +88,18 @@ func Sign(stmt *Statement, signer crypto.Signer, chain []*x509.Certificate) (*Si
 	if err != nil {
 		return nil, fmt.Errorf("provenance: encode statement: %w", err)
 	}
-	digest := sha256.Sum256(PAE(PayloadTypeInToto, payload))
+	return SignPayload(PayloadTypeInToto, payload, signer, chain)
+}
+
+// SignPayload signs payload of payloadType as a DSSE envelope with signer,
+// whose certificate chain (leaf first) is chain: an ECDSA or RSA signature
+// over the SHA-256 of the envelope's PAE. The key ID is the SHA-256 of the
+// leaf certificate.
+func SignPayload(payloadType string, payload []byte, signer crypto.Signer, chain []*x509.Certificate) (*Signed, error) {
+	if payloadType == "" || signer == nil || len(chain) == 0 {
+		return nil, errors.New("provenance: a payload type, a signer and its certificate chain are required")
+	}
+	digest := sha256.Sum256(PAE(payloadType, payload))
 	sig, err := signer.Sign(rand.Reader, digest[:], crypto.SHA256)
 	if err != nil {
 		return nil, fmt.Errorf("provenance: sign: %w", err)
@@ -100,7 +111,7 @@ func Sign(stmt *Statement, signer crypto.Signer, chain []*x509.Certificate) (*Si
 	keyID := sha256.Sum256(chain[0].Raw)
 	return &Signed{
 		Envelope: Envelope{
-			PayloadType: PayloadTypeInToto,
+			PayloadType: payloadType,
 			Payload:     payload,
 			Signatures:  []Signature{{KeyID: fmt.Sprintf("sha256:%x", keyID), Sig: sig}},
 		},

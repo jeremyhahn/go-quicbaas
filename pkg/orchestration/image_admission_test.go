@@ -46,6 +46,23 @@ func (rejectingProvenanceVerifier) VerifyImageProvenance(context.Context, *Conta
 	return errors.New("no provenance referrer")
 }
 
+// listingManifest lists testDigest as a release.
+type listingManifest struct{}
+
+func (listingManifest) CheckRelease(_ context.Context, spec *ContainerSpec) error {
+	if spec.ResolvedImageDigest() != testDigest {
+		return errors.New("the release is not listed")
+	}
+	return nil
+}
+
+// emptyManifest lists no release.
+type emptyManifest struct{}
+
+func (emptyManifest) CheckRelease(context.Context, *ContainerSpec) error {
+	return errors.New("the release is not listed")
+}
+
 // rejectingImageVerifier refuses every signature.
 type rejectingImageVerifier struct{}
 
@@ -153,6 +170,30 @@ func TestTPMAttestingRuntime_DefaultDeny(t *testing.T) {
 		rt.provenance = nil
 		if _, err := rt.Run(t.Context(), measuredTestSpec("a")); !errors.Is(err, ErrImageProvenance) {
 			t.Fatalf("error %v does not wrap ErrImageProvenance", err)
+		}
+		refused(t, rt, base, tpm, before)
+	})
+
+	t.Run("SignedImageNotInClusterManifestIsRefused", func(t *testing.T) {
+		tpm := newFakeHostTPM()
+		before := tpm.pcr(uint32(MeasurementPCRDefault))
+		rt, base := newAttestingTestRuntime(t, tpm, reference)
+		WithClusterManifest(emptyManifest{})(rt)
+		_, err := rt.Run(t.Context(), measuredTestSpec("a"))
+		var listErr *ReleaseNotListedError
+		if !errors.Is(err, ErrReleaseNotListed) || !errors.As(err, &listErr) || listErr.ImageDigest != testDigest {
+			t.Fatalf("error %v is not a ReleaseNotListedError for %s", err, testDigest)
+		}
+		refused(t, rt, base, tpm, before)
+	})
+
+	t.Run("SignedImageWithoutClusterManifestIsRefused", func(t *testing.T) {
+		tpm := newFakeHostTPM()
+		before := tpm.pcr(uint32(MeasurementPCRDefault))
+		rt, base := newAttestingTestRuntime(t, tpm, reference)
+		rt.manifest = nil
+		if _, err := rt.Run(t.Context(), measuredTestSpec("a")); !errors.Is(err, ErrReleaseNotListed) {
+			t.Fatalf("error %v does not wrap ErrReleaseNotListed", err)
 		}
 		refused(t, rt, base, tpm, before)
 	})

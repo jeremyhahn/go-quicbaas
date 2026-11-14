@@ -14,7 +14,8 @@ import (
 // carries software-factory provenance. The signature is ImageSignature on
 // the spec; an ImageVerifier (the Verifier's, built on go-xkms) judges it
 // against the image-signer endorsements, and a ProvenanceVerifier checks
-// the image's signed DSSE provenance referrer. An
+// the image's signed DSSE provenance referrer, and the image must be a
+// release listed in the signed ClusterManifest. An
 // image without a signature runs only under an allow-unsigned grant from
 // the runtime's UnsignedImagePolicy. The grant's name is folded into the
 // launch policy, so it changes the policy digest, the launch measurement and
@@ -148,6 +149,45 @@ var errNoImageVerifier = errors.New("no image verifier is configured")
 // with no ProvenanceVerifier.
 var errNoProvenanceVerifier = errors.New("no provenance verifier is configured")
 
+// ClusterManifest is the signed cluster manifest a measured launch checks:
+// the list of service releases (image and digest) the cluster may run.
+// CheckRelease returns nil only when the spec's pinned image is listed in a
+// manifest whose signature verifies.
+type ClusterManifest interface {
+	CheckRelease(ctx context.Context, spec *ContainerSpec) error
+}
+
+// WithClusterManifest sets the signed cluster manifest a measured launch's
+// image must be listed in. Without one, no signed image can be admitted.
+func WithClusterManifest(m ClusterManifest) TPMAttestingOption {
+	return func(r *TPMAttestingRuntime) { r.manifest = m }
+}
+
+// ErrReleaseNotListed is returned when a measured launch's signed image is
+// not a release listed in the signed cluster manifest.
+var ErrReleaseNotListed = errors.New("image is not a release listed in the signed cluster manifest")
+
+// ReleaseNotListedError reports a signed image refused because the signed
+// cluster manifest does not list it.
+type ReleaseNotListedError struct {
+	Image       string
+	ImageDigest string
+	Cause       error
+}
+
+func (e *ReleaseNotListedError) Error() string {
+	return fmt.Sprintf("launch of %s (%s) refused: %v: %v", e.Image, e.ImageDigest, ErrReleaseNotListed, e.Cause)
+}
+
+// Unwrap returns ErrReleaseNotListed and the cause.
+func (e *ReleaseNotListedError) Unwrap() []error {
+	return []error{ErrReleaseNotListed, e.Cause}
+}
+
+// errNoClusterManifest is the cause when a signed image meets a runtime with
+// no ClusterManifest.
+var errNoClusterManifest = errors.New("no signed cluster manifest is configured")
+
 // admitImage applies default deny to a measured launch and returns the
 // launch policy it runs under: the spec's policy, plus the allow-unsigned
 // grant when one admitted an unsigned image.
@@ -171,6 +211,13 @@ func (r *TPMAttestingRuntime) admitImage(ctx context.Context, spec *ContainerSpe
 		}
 		if cause != nil {
 			return LaunchPolicy{}, &ImageProvenanceError{Image: spec.Image, ImageDigest: digest, Cause: cause}
+		}
+		cause = errNoClusterManifest
+		if r.manifest != nil {
+			cause = r.manifest.CheckRelease(ctx, spec)
+		}
+		if cause != nil {
+			return LaunchPolicy{}, &ReleaseNotListedError{Image: spec.Image, ImageDigest: digest, Cause: cause}
 		}
 		return policy, nil
 	}

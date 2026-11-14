@@ -492,7 +492,7 @@ func newAttestingTestRuntimeDigests(t *testing.T, tpm HostTPM, reference []attes
 	}
 	base := &recordingRuntime{}
 	appraiser := NewTestHostAppraiser(t, akRoot, reference)
-	rt, err := NewTPMAttestingRuntime(base, tpm, appraiser, newContainerTestLogger(t), WithImageVerifier(acceptingImageVerifier{}), WithProvenanceVerifier(acceptingProvenanceVerifier{}))
+	rt, err := NewTPMAttestingRuntime(base, tpm, appraiser, newContainerTestLogger(t), WithImageVerifier(acceptingImageVerifier{}), WithProvenanceVerifier(acceptingProvenanceVerifier{}), WithClusterManifest(listingManifest{}))
 	if err != nil {
 		t.Fatalf("NewTPMAttestingRuntime: %v", err)
 	}

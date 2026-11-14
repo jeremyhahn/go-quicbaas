@@ -338,6 +338,21 @@ var WithProvenanceVerifier = pkgorch.WithProvenanceVerifier
 // that verifies.
 var ErrImageProvenance = pkgorch.ErrImageProvenance
 
+// ClusterManifest is the signed cluster manifest a measured launch's image
+// must be listed in.
+type ClusterManifest = pkgorch.ClusterManifest
+
+// ReleaseNotListedError reports a signed image the cluster manifest does
+// not list.
+type ReleaseNotListedError = pkgorch.ReleaseNotListedError
+
+// WithClusterManifest sets the runtime's ClusterManifest.
+var WithClusterManifest = pkgorch.WithClusterManifest
+
+// ErrReleaseNotListed is the refusal of a signed image the signed cluster
+// manifest does not list.
+var ErrReleaseNotListed = pkgorch.ErrReleaseNotListed
+
 // ErrImageUnsigned and ErrImageSignatureRejected are the default-deny
 // refusals of a measured launch.
 var (
@@ -641,6 +656,7 @@ var (
 	_ func(*ContainerSpec, LaunchPolicy) ([]byte, error)                                                          = LaunchMeasurementUnder
 	_ func(ImageVerifier) TPMAttestingOption                                                                      = WithImageVerifier
 	_ func(ProvenanceVerifier) TPMAttestingOption                                                                 = WithProvenanceVerifier
+	_ func(ClusterManifest) TPMAttestingOption                                                                    = WithClusterManifest
 	_ func(UnsignedImagePolicy) TPMAttestingOption                                                                = WithUnsignedImagePolicy
 	_ UnsignedImagePolicy                                                                                         = UnsignedImageGrants(nil)
 	_ func(Logger) (*ExecContainerRuntime, error)                                                                 = NewExecContainerRuntime

@@ -57,7 +57,14 @@ func (v *imageVerifier) VerifyImageSignature(ctx context.Context, sig *orchestra
 // with the go-xkms attestation verifier. algName is the signature
 // algorithm's name; empty takes the leaf's.
 func (s *attestationService) verifyImageSigner(ctx context.Context, chainPEM [][]byte, algName string, signature, data []byte) error {
-	signers, err := s.loadEndorsements(ctx, s.store, EndorsementImageSigner)
+	return s.verifyEndorsedSigner(ctx, EndorsementImageSigner, chainPEM, algName, signature, data)
+}
+
+// verifyEndorsedSigner checks with the go-xkms attestation verifier that
+// the signer chain chainPEM (leaf first) terminates at the tenant's
+// endorsements of kind and that its leaf signed data.
+func (s *attestationService) verifyEndorsedSigner(ctx context.Context, kind EndorsementKind, chainPEM [][]byte, algName string, signature, data []byte) error {
+	signers, err := s.loadEndorsements(ctx, s.store, kind)
 	if err != nil {
 		return err
 	}
@@ -73,7 +80,7 @@ func (s *attestationService) verifyImageSigner(ctx context.Context, chainPEM [][
 		roots = append(roots, cert)
 	}
 	if len(roots) == 0 {
-		return stderrors.New("no image-signer endorsement is stored; image signatures are never trusted on first use")
+		return fmt.Errorf("no %s endorsement is stored; signatures are never trusted on first use", kind)
 	}
 
 	chain, err := parseCertChainPEM(chainPEM, "ImageVerifier.verifyImageSigner")

@@ -264,6 +264,7 @@ type TPMAttestingRuntime struct {
 	unsigned UnsignedImagePolicy
 	// provenance checks a signed image's software-factory provenance.
 	provenance ProvenanceVerifier
+	manifest   ClusterManifest
 }
 
 // MeasurementLog returns the node measurement log of this runtime.

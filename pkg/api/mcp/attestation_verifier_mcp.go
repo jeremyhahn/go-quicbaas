@@ -38,7 +38,7 @@ var (
 			Type: "object",
 			Properties: map[string]Property{
 				"name":            {Type: "string", Description: "Endorsement name (no '/')"},
-				"kind":            {Type: "string", Description: "reference-signer, ak-root or image-signer"},
+				"kind":            {Type: "string", Description: "reference-signer, ak-root, image-signer or manifest-signer"},
 				"certificate_pem": {Type: "string", Description: "PEM CA certificate (exactly one of certificate_pem and public_key_pem)"},
 				"public_key_pem":  {Type: "string", Description: "PEM PKIX public key, reference-signer only"},
 			},
@@ -53,7 +53,7 @@ var (
 		InputSchema: InputSchema{
 			Type: "object",
 			Properties: map[string]Property{
-				"kind": {Type: "string", Description: "reference-signer, ak-root or image-signer; empty lists all"},
+				"kind": {Type: "string", Description: "reference-signer, ak-root, image-signer or manifest-signer; empty lists all"},
 			},
 		},
 	}

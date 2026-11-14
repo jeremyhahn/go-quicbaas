@@ -1699,8 +1699,23 @@ OCI referrers API, checks each fetched manifest and blob against its digest,
 anchors the envelope's signer at the `image-signer` endorsements, checks the
 signature over the DSSE PAE with the go-xkms attestation verifier, and
 requires the statement to cover the launched digest and, when a builder list
-is configured, to name an accepted SLSA builder. An allow-unsigned grant
-admits an image without either a signature or provenance.
+is configured, to name an accepted SLSA builder.
+
+A signed image must also be a release listed in the signed cluster manifest:
+the runtime's `ClusterManifest` (`WithClusterManifest`) must list the image's
+repository at the launched digest. Without one, or when the image is not
+listed, the launch fails with `ErrReleaseNotListed`. The Verifier's is
+`service.ClusterManifests`: one current manifest per tenant, a DSSE envelope
+(payload type `application/vnd.quicbaas.cluster-manifest.v1+json`, made by
+`service.SignClusterManifest`) stored in the Verifier's go-qrdb store. `Put`
+anchors the signer at the tenant's `manifest-signer` endorsements (CA
+certificates) with the go-xkms attestation verifier and refuses a version
+that does not advance the stored one, so an old manifest cannot be replayed.
+The signature is checked again each time the manifest is read, so a record
+altered in the store lists nothing.
+
+An allow-unsigned grant admits an image without a signature, provenance or a
+cluster-manifest listing.
 
 PCR 16 (`MeasurementPCRDefault`) is the default target. It is the TCG PC Client
 "debug" register: resettable, not consumed by firmware or the bootloader, and

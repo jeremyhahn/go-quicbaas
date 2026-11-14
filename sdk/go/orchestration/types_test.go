@@ -180,6 +180,10 @@ func TestDefaultDenyAcrossBoundary(t *testing.T) {
 	if !errors.Is(refused, sdkorch.ErrImageProvenance) {
 		t.Fatal("ImageProvenanceError must wrap ErrImageProvenance")
 	}
+	refused = &sdkorch.ReleaseNotListedError{Image: spec.Image, ImageDigest: testDigest, Cause: errors.New("not listed")}
+	if !errors.Is(refused, sdkorch.ErrReleaseNotListed) {
+		t.Fatal("ReleaseNotListedError must wrap ErrReleaseNotListed")
+	}
 }
 
 // TestTrustResolutionRoundTrip exercises the trust axis through the aliases,
