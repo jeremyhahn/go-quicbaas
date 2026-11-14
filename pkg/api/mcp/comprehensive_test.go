@@ -48,6 +48,7 @@ type mockService struct {
 	trustSvc       service.TrustService
 	attestationSvc service.AttestationService
 	registrySvc    service.RegistryService
+	servicesSvc    service.ServicesService
 	pivSvc         service.PIVService
 	fido2Svc       service.FIDO2Service
 
@@ -505,6 +506,10 @@ func (m *mockService) Attestation() service.AttestationService {
 
 func (m *mockService) Registry() service.RegistryService {
 	return m.registrySvc
+}
+
+func (m *mockService) Services() service.ServicesService {
+	return m.servicesSvc
 }
 
 func (m *mockService) PIV() service.PIVService {

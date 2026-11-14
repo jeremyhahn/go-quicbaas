@@ -36,13 +36,30 @@ func TestDeploy_RefusesAnUnverifiedManifest(t *testing.T) {
 	f := newFixture(t)
 	sm := f.sign(t, validManifest())
 	sm.Payload = []byte(strings.Replace(string(sm.Payload), `"operator"`, `"admin"`, 1))
-	_, err := f.plane.Deploy(ctx, sm)
+	_, err := f.plane.Deploy(ctx, "acme", sm)
 	wantErr(t, err, ErrSignature)
 	if _, err := f.plane.Get(ctx, "acme", "web"); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("an unverified manifest was stored: %v", err)
 	}
 	if f.ledger.String() != "" || len(f.launcher.calls) != 0 {
 		t.Fatal("an unverified manifest was granted or launched")
+	}
+}
+
+func TestDeploy_RefusesAManifestForAnotherTenant(t *testing.T) {
+	f := newFixture(t)
+	sm := f.sign(t, validManifest())
+	for _, tenant := range []string{"", "acme2"} {
+		_, err := f.plane.Deploy(ctx, tenant, sm)
+		wantErr(t, err, ErrTenant)
+		_, err = f.plane.Redeploy(ctx, tenant, sm)
+		wantErr(t, err, ErrTenant)
+	}
+	if _, err := f.plane.Get(ctx, "acme", "web"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("a manifest deployed outside its tenant was stored: %v", err)
+	}
+	if f.ledger.String() != "" || len(f.launcher.calls) != 0 {
+		t.Fatal("a manifest for another tenant was granted or launched")
 	}
 }
 
@@ -55,7 +72,7 @@ func TestDeploy_TheNameIsTakenOnce(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			_, errs[i] = f.plane.Deploy(ctx, sm)
+			_, errs[i] = f.plane.Deploy(ctx, "acme", sm)
 		}()
 	}
 	wg.Wait()
@@ -75,7 +92,7 @@ func TestDeploy_TheNameIsTakenOnce(t *testing.T) {
 func TestDeploy_AFailedGrantRevokesTheMadeOnesAndReleasesTheName(t *testing.T) {
 	f := newFixture(t)
 	f.grants[GrantRBAC].fail = errors.New("role store down")
-	_, err := f.plane.Deploy(ctx, f.sign(t, validManifest()))
+	_, err := f.plane.Deploy(ctx, "acme", f.sign(t, validManifest()))
 	wantErr(t, err, ErrGrant)
 	want := "grant identity prior=,grant certificate prior=,grant name prior=," +
 		"revoke name:web:operator,revoke certificate:web:operator,revoke identity:web:operator"
@@ -86,7 +103,7 @@ func TestDeploy_AFailedGrantRevokesTheMadeOnesAndReleasesTheName(t *testing.T) {
 		t.Fatal("launched without its grants")
 	}
 	f.grants[GrantRBAC].fail = nil
-	if _, err := f.plane.Deploy(ctx, f.sign(t, validManifest())); err != nil {
+	if _, err := f.plane.Deploy(ctx, "acme", f.sign(t, validManifest())); err != nil {
 		t.Fatalf("the name was not released: %v", err)
 	}
 }
@@ -94,7 +111,7 @@ func TestDeploy_AFailedGrantRevokesTheMadeOnesAndReleasesTheName(t *testing.T) {
 func TestDeploy_AFailedLaunchHaltsAndResumeRecovers(t *testing.T) {
 	f := newFixture(t)
 	f.launcher.launchErr = errors.New("image pull failed")
-	_, err := f.plane.Deploy(ctx, f.sign(t, validManifest()))
+	_, err := f.plane.Deploy(ctx, "acme", f.sign(t, validManifest()))
 	wantErr(t, err, ErrLaunch)
 	svc, _ := f.plane.Get(ctx, "acme", "web")
 	if svc.State != StateHalted || svc.Reason != "image pull failed" || len(svc.Grants) != len(GrantKinds) {
@@ -140,7 +157,7 @@ func TestRedeploy_ReplacesTheManifestAndReappliesGrants(t *testing.T) {
 	m := validManifest()
 	m.Role = "user"
 	m.Image.Digest = "sha256:" + strings.Repeat("cd", 32)
-	svc, err := f.plane.Redeploy(ctx, f.sign(t, m))
+	svc, err := f.plane.Redeploy(ctx, "acme", f.sign(t, m))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -152,7 +169,7 @@ func TestRedeploy_ReplacesTheManifestAndReappliesGrants(t *testing.T) {
 	}
 	other := validManifest()
 	other.Name = "api"
-	_, err = f.plane.Redeploy(ctx, f.sign(t, other))
+	_, err = f.plane.Redeploy(ctx, "acme", f.sign(t, other))
 	wantErr(t, err, ErrNotFound)
 }
 
@@ -186,11 +203,14 @@ func TestUndeploy_AFailedRevokeKeepsTheServiceHalted(t *testing.T) {
 func TestVerbs_TheStateMachine(t *testing.T) {
 	verbs := map[Verb]func(f *fixture) error{
 		VerbUndeploy: func(f *fixture) error { return f.plane.Undeploy(ctx, "acme", "web") },
-		VerbRedeploy: func(f *fixture) error { _, err := f.plane.Redeploy(ctx, f.sign(t, validManifest())); return err },
-		VerbStart:    func(f *fixture) error { _, err := f.plane.Start(ctx, "acme", "web"); return err },
-		VerbStop:     func(f *fixture) error { _, err := f.plane.Stop(ctx, "acme", "web"); return err },
-		VerbResume:   func(f *fixture) error { _, err := f.plane.Resume(ctx, "acme", "web"); return err },
-		VerbRestart:  func(f *fixture) error { _, err := f.plane.Restart(ctx, "acme", "web"); return err },
+		VerbRedeploy: func(f *fixture) error {
+			_, err := f.plane.Redeploy(ctx, "acme", f.sign(t, validManifest()))
+			return err
+		},
+		VerbStart:   func(f *fixture) error { _, err := f.plane.Start(ctx, "acme", "web"); return err },
+		VerbStop:    func(f *fixture) error { _, err := f.plane.Stop(ctx, "acme", "web"); return err },
+		VerbResume:  func(f *fixture) error { _, err := f.plane.Resume(ctx, "acme", "web"); return err },
+		VerbRestart: func(f *fixture) error { _, err := f.plane.Restart(ctx, "acme", "web"); return err },
 	}
 	into := map[State]func(f *fixture){
 		StateRunning: func(*fixture) {},
@@ -269,7 +289,7 @@ func TestList_IsScopedToTheTenant(t *testing.T) {
 	f.deploy(t, "api")
 	other := validManifest()
 	other.Tenant = "acme2"
-	if _, err := f.plane.Deploy(ctx, f.sign(t, other)); err != nil {
+	if _, err := f.plane.Deploy(ctx, "acme2", f.sign(t, other)); err != nil {
 		t.Fatal(err)
 	}
 	got, err := f.plane.List(ctx, "acme")

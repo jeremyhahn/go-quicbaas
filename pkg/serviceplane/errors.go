@@ -27,6 +27,9 @@ var (
 	ErrStore = errors.New("serviceplane: store unavailable")
 	// ErrConfig marks a Plane or Store built without a required part.
 	ErrConfig = errors.New("serviceplane: incomplete configuration")
+	// ErrTenant marks a verified manifest whose tenant is not the one the
+	// caller acts in, or a verb called with no tenant.
+	ErrTenant = errors.New("serviceplane: manifest is for another tenant")
 )
 
 // ManifestError names the manifest field that failed validation.

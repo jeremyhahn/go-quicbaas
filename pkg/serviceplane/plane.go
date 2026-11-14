@@ -114,8 +114,8 @@ func (p *Plane) List(ctx context.Context, tenant string) ([]*Service, error) {
 // certificate, registered name, RBAC and secrets, and launches it. A failed
 // grant revokes the ones made and releases the name; a failed launch leaves
 // the service deployed and halted.
-func (p *Plane) Deploy(ctx context.Context, sm *SignedManifest) (*Service, error) {
-	m, err := p.verify(VerbDeploy, sm)
+func (p *Plane) Deploy(ctx context.Context, tenant string, sm *SignedManifest) (*Service, error) {
+	m, err := p.verify(VerbDeploy, tenant, sm)
 	if err != nil {
 		return nil, err
 	}
@@ -141,8 +141,8 @@ func (p *Plane) Deploy(ctx context.Context, sm *SignedManifest) (*Service, error
 
 // Redeploy replaces a deployed service's manifest with sm, re-applies its
 // grants for the new manifest and launches it.
-func (p *Plane) Redeploy(ctx context.Context, sm *SignedManifest) (*Service, error) {
-	m, err := p.verify(VerbRedeploy, sm)
+func (p *Plane) Redeploy(ctx context.Context, tenant string, sm *SignedManifest) (*Service, error) {
+	m, err := p.verify(VerbRedeploy, tenant, sm)
 	if err != nil {
 		return nil, err
 	}
@@ -251,10 +251,15 @@ func (p *Plane) relaunch(ctx context.Context, verb Verb, tenant, name string, re
 }
 
 // verify checks sm's signature and that the signer's manifest is valid.
-func (p *Plane) verify(verb Verb, sm *SignedManifest) (*Manifest, error) {
+func (p *Plane) verify(verb Verb, tenant string, sm *SignedManifest) (*Manifest, error) {
 	m, err := p.verifier.Verify(sm)
 	if err != nil {
-		return nil, &ServiceError{Op: string(verb), Sentinel: ErrSignature, Cause: err}
+		return nil, &ServiceError{Op: string(verb), Tenant: tenant, Sentinel: ErrSignature, Cause: err}
+	}
+	// The tenant is read from the verified payload only: a claim in an
+	// unverified payload decides nothing.
+	if tenant == "" || m.Tenant != tenant {
+		return nil, &ServiceError{Op: string(verb), Tenant: tenant, Name: m.Name, Sentinel: ErrTenant}
 	}
 	return m, nil
 }

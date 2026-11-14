@@ -2075,6 +2075,9 @@ func (s *Server) startService() error {
 		builder = builder.WithContainerAttestor(s.opts.containerAttestor)
 		s.logger.Info("Container attestor attached to service builder")
 	}
+	if s.opts.servicePlane != nil {
+		builder = builder.WithServicePlane(s.servicePlaneResolver(*s.opts.servicePlane))
+	}
 
 	// Wire the Certificate Authority into the service builder so the
 	// CertificateService inside QuicBaaS can issue and revoke certificates

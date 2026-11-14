@@ -156,7 +156,7 @@ func (f *fixture) deploy(t *testing.T, name string) *Service {
 	t.Helper()
 	m := validManifest()
 	m.Name = name
-	svc, err := f.plane.Deploy(context.Background(), f.sign(t, m))
+	svc, err := f.plane.Deploy(context.Background(), "acme", f.sign(t, m))
 	if err != nil {
 		t.Fatalf("deploy %s: %v", name, err)
 	}
