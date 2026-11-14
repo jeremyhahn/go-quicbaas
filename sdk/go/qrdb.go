@@ -132,6 +132,22 @@ type QRDBDEKClient = qrdbtransport.DEKClient
 // QRDBIndexClient is a re-export of the qrdb IndexClient interface.
 type QRDBIndexClient = qrdbtransport.IndexClient
 
+// QRDBDataService re-exports go-qrdb's data services: KV, batch,
+// transaction, MVCC, collection and index. Each accessor returns the go-qrdb
+// client itself (by alias), carried on the transport the QuicBaaS client was
+// built with; go-quicbaas wraps none of them. The go-qrdb SDK client
+// (*QRDBClient) satisfies it.
+type QRDBDataService interface {
+	KV() QRDBKVClient
+	Batch() QRDBBatchClient
+	Transaction() QRDBTransactionClient
+	MVCC() QRDBMVCCClient
+	Collections() QRDBCollectionClient
+	Index() QRDBIndexClient
+}
+
+var _ QRDBDataService = (*QRDBClient)(nil)
+
 // =============================================================================
 // QRDB Seal Store Request/Response Re-exports
 // =============================================================================
