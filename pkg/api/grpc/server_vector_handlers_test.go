@@ -1732,6 +1732,31 @@ func TestGetClusterStats_ClusterStatusError(t *testing.T) {
 	mockSvc.AssertExpectations(t)
 }
 
+// TestGetClusterStats_UnknownNodeAddressIsNotLoopback proves the node stats do
+// not advertise a hardcoded address: with no configured address and no
+// cluster entry for this node, the address is reported empty, not
+// "localhost", which a remote reader would dial as its own loopback.
+func TestGetClusterStats_UnknownNodeAddressIsNotLoopback(t *testing.T) {
+	srv, mockSvc := newMockTestServer(t)
+	srv.address = ""
+
+	mockSvc.On("ClusterStatus", mock.Anything, mock.Anything).
+		Return(&service.ClusterStatusResponse{
+			Nodes: []*service.NodeInfo{{NodeID: 99, Address: "node99:5000"}},
+		}, nil)
+	mockSvc.On("ListNamespaces", mock.Anything, mock.Anything).
+		Return(&service.ListNamespacesResponse{Namespaces: []*service.NamespaceInfo{}}, nil)
+
+	resp, err := srv.GetClusterStats(tenantctx.WithSystem(context.Background()), &pb.GetClusterStatsRequest{
+		IncludeNodes: true,
+	})
+
+	require.NoError(t, err)
+	require.Len(t, resp.NodeStats, 1)
+	assert.Empty(t, resp.NodeStats[0].Address, "an unknown node address must not be reported as a literal")
+	mockSvc.AssertExpectations(t)
+}
+
 // =============================================================================
 // CompactNamespace Tests
 // =============================================================================
