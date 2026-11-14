@@ -99,6 +99,66 @@ func TestTenantFromPeerCert_SPIFFESAN(t *testing.T) {
 	}
 }
 
+// The subject OU carries the tenant (#1388): a certificate whose OU names the
+// SAN's tenant resolves to it.
+func TestTenantFromPeerCert_OUAgreesWithSAN(t *testing.T) {
+	cert := spiffeLeaf(t, "spiffe://example.com/tenant/tenant-acme/user/alice")
+	cert.Subject.OrganizationalUnit = []string{"tenant-acme"}
+
+	got, err := TenantFromPeerCert(context.Background(), cert, "example.com", nil, RealmHints{})
+	if err != nil {
+		t.Fatalf("derive: %v", err)
+	}
+	if got != "tenant-acme" {
+		t.Fatalf("tenant = %q, want tenant-acme", got)
+	}
+}
+
+// An OU naming another tenant than the SAN fails closed, without consulting
+// home-realm discovery: the two carriers must agree (go-qrdb#777).
+func TestTenantFromPeerCert_OUDisagreesWithSAN(t *testing.T) {
+	cert := spiffeLeaf(t, "spiffe://example.com/tenant/tenant-acme/user/alice")
+	cert.Subject.OrganizationalUnit = []string{"tenant-other"}
+	hrd := &stubResolver{byHost: map[string]string{"acme.example.com": "tenant-hrd"}}
+
+	got, err := TenantFromPeerCert(context.Background(), cert, "example.com", hrd, RealmHints{SNIHost: "acme.example.com"})
+	if err == nil {
+		t.Fatalf("tenant = %q, want a refusal", got)
+	}
+	var mismatch *CertOUTenantMismatchError
+	if !errors.As(err, &mismatch) {
+		t.Fatalf("err = %v, want *CertOUTenantMismatchError", err)
+	}
+	if mismatch.OU != "tenant-other" || mismatch.Tenant != "tenant-acme" {
+		t.Fatalf("mismatch = %+v", mismatch)
+	}
+	var unresolved *TenantUnresolvedError
+	if !errors.As(err, &unresolved) {
+		t.Fatalf("err = %v, want *TenantUnresolvedError", err)
+	}
+}
+
+func TestCheckCertOUTenant(t *testing.T) {
+	cert := spiffeLeaf(t, "spiffe://example.com/tenant/tenant-acme/svc/agent-1")
+	if err := CheckCertOUTenant(cert, "tenant-acme"); err != nil {
+		t.Fatalf("no OU: %v", err)
+	}
+	cert.Subject.OrganizationalUnit = []string{" tenant-acme "}
+	if got := TenantFromSubjectOU(cert); got != "tenant-acme" {
+		t.Fatalf("TenantFromSubjectOU = %q", got)
+	}
+	if err := CheckCertOUTenant(cert, "tenant-acme"); err != nil {
+		t.Fatalf("agreeing OU: %v", err)
+	}
+	cert.Subject.OrganizationalUnit = []string{"agents"}
+	if err := CheckCertOUTenant(cert, "tenant-acme"); err == nil || err.Error() == "" {
+		t.Fatalf("OU=agents: err = %v, want a mismatch", err)
+	}
+	if got := TenantFromSubjectOU(nil); got != "" {
+		t.Fatalf("nil cert: %q", got)
+	}
+}
+
 // A cert with no SPIFFE SAN falls through to HRD, which resolves via the host.
 func TestTenantFromPeerCert_NoSANHRDHint(t *testing.T) {
 	cert := spiffeLeaf(t, "") // no SPIFFE SAN

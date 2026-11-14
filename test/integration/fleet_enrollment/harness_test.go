@@ -53,9 +53,6 @@ import (
 const (
 	enrollTenant = "automatethethings"
 	enrollAgent  = "agent-agent-04"
-	// fleetRegistrarOU is the Organizational Unit the register endpoint
-	// requires on an agent certificate.
-	fleetRegistrarOU = "agents"
 )
 
 // -----------------------------------------------------------------------------
@@ -412,8 +409,8 @@ func (m *enrollmentTenants) GetTenant(_ context.Context, id string) (*iam.Tenant
 func (m *enrollmentTenants) CheckQuota(_ context.Context, _, _ string) error { return nil }
 
 // agentCertificate mints the certificate the deploy service issues: the tenant
-// on Organization, OU=agents, ClientAuth EKU, and the tenant-scoped SPIFFE SAN
-// go-qrdb derives the identity's tenant from.
+// on Organization and OU (#1388), ClientAuth EKU, and the tenant-scoped SPIFFE
+// SAN of kind svc go-qrdb derives the identity's tenant from.
 func agentCertificate(t *testing.T, tenantID, commonName string) *x509.Certificate {
 	t.Helper()
 
@@ -424,7 +421,7 @@ func agentCertificate(t *testing.T, tenantID, commonName string) *x509.Certifica
 	require.NoError(t, err)
 
 	spiffeID, err := url.Parse("spiffe://burnin.example.internal/tenant/" +
-		tenantID + "/user/" + commonName)
+		tenantID + "/svc/" + commonName)
 	require.NoError(t, err)
 
 	tmpl := &x509.Certificate{
@@ -432,7 +429,7 @@ func agentCertificate(t *testing.T, tenantID, commonName string) *x509.Certifica
 		Subject: pkix.Name{
 			CommonName:         commonName,
 			Organization:       []string{tenantID},
-			OrganizationalUnit: []string{fleetRegistrarOU},
+			OrganizationalUnit: []string{tenantID},
 		},
 		NotBefore:   time.Now().Add(-time.Hour),
 		NotAfter:    time.Now().Add(24 * time.Hour),

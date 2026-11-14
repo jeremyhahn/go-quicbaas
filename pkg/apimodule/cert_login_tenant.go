@@ -17,6 +17,7 @@ import (
 	"net/http"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 )
 
 // XKMSCertLoginRoutes are the public go-xkms routes whose credential is the
@@ -157,6 +158,12 @@ func (m *certLoginTenantModule) bindCertTenant(next http.HandlerFunc) http.Handl
 		}
 		if tenantID == "" {
 			next(w, r)
+			return
+		}
+		// The subject OU carries the tenant too, and must agree with the
+		// SAN (#1388, go-qrdb#777).
+		if err := iam.CheckCertOUTenant(leaf, tenantID); err != nil {
+			http.Error(w, "authentication failed", http.StatusUnauthorized)
 			return
 		}
 		ctx := qrdbsdk.ContextWithTenant(r.Context(), qrdbsdk.NormalizeTenantID(tenantID))

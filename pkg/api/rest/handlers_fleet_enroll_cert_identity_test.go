@@ -63,7 +63,7 @@ func agentSPIFFEPeerCert(t *testing.T, certOrg, spiffeTenant, commonName string)
 	require.NoError(t, err)
 
 	spiffeID, err := url.Parse("spiffe://burnin.example.internal/tenant/" +
-		spiffeTenant + "/user/" + commonName)
+		spiffeTenant + "/svc/" + commonName)
 	require.NoError(t, err)
 
 	tmpl := &x509.Certificate{
@@ -71,7 +71,7 @@ func agentSPIFFEPeerCert(t *testing.T, certOrg, spiffeTenant, commonName string)
 		Subject: pkix.Name{
 			CommonName:         commonName,
 			Organization:       []string{certOrg},
-			OrganizationalUnit: []string{fleetRegistrarOU},
+			OrganizationalUnit: []string{certOrg},
 		},
 		NotBefore:   time.Now().Add(-time.Hour),
 		NotAfter:    time.Now().Add(24 * time.Hour),
@@ -153,7 +153,7 @@ func TestHandleAgentRegister_EnrollmentIsIdempotent(t *testing.T) {
 func TestHandleAgentRegister_RefusesACertificateThatAuthenticatesElsewhere(t *testing.T) {
 	f := newAgentOAuthFixture(t)
 
-	// The Organization claim says the registering tenant (so the existing
+	// The OU claim says the registering tenant (so the existing
 	// cross-check passes) while the SPIFFE SAN — the value go-qrdb actually
 	// authenticates with — names another.
 	cert := agentSPIFFEPeerCert(t, agentOAuthTestTenant, "other-tenant", "agent-agent-04")
@@ -165,6 +165,35 @@ func TestHandleAgentRegister_RefusesACertificateThatAuthenticatesElsewhere(t *te
 	users, err := f.identity.ListUsers(context.Background(), agentOAuthTestTenant, iam.ListOptions{})
 	require.NoError(t, err)
 	require.Empty(t, users, "a refused registration must enroll no identity")
+}
+
+// The agent role is the SPIFFE SAN's kind (#1388, ruling 62(a)): a user's
+// certificate for the registering tenant cannot register a fleet node.
+func TestHandleAgentRegister_RefusesAUserKindCertificate(t *testing.T) {
+	f := newAgentOAuthFixture(t)
+
+	cert := agentSPIFFEPeerCert(t, agentOAuthTestTenant, agentOAuthTestTenant, "agent-agent-05")
+	cert.URIs[0].Path = "/tenant/" + agentOAuthTestTenant + "/user/agent-agent-05"
+
+	w := f.postRegister(t, cert)
+	require.Equal(t, http.StatusForbidden, w.Code, "register body: %s", w.Body.String())
+	require.Contains(t, w.Body.String(), `kind \"user\"`)
+
+	users, err := f.identity.ListUsers(context.Background(), agentOAuthTestTenant, iam.ListOptions{})
+	require.NoError(t, err)
+	require.Empty(t, users, "a refused registration must enroll no identity")
+}
+
+// The subject OU carries the tenant (#1388): the old OU=agents role stamp
+// names no tenant, so a certificate carrying it is refused.
+func TestHandleAgentRegister_RefusesTheOldAgentsOU(t *testing.T) {
+	f := newAgentOAuthFixture(t)
+
+	cert := agentSPIFFEPeerCert(t, "agents", agentOAuthTestTenant, "agent-agent-06")
+
+	w := f.postRegister(t, cert)
+	require.Equal(t, http.StatusForbidden, w.Code, "register body: %s", w.Body.String())
+	require.Contains(t, w.Body.String(), "tenant_mismatch")
 }
 
 // TestHandleAgentRegister_FailsClosedWithoutAnIdentityStore proves the

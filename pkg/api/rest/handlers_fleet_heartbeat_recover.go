@@ -104,10 +104,11 @@ func NewIAMHeartbeatRecoverer(deps IAMHeartbeatRecovererDeps) (*IAMHeartbeatReco
 
 // Recover walks the recovery decision tree:
 //
-//  1. Extract & validate the mTLS peer certificate (OU=fleet nodes stamp +
-//     ClientAuth EKU). Missing/invalid → return false.
-//  2. Read the certificate tenant from Subject.Organization. Missing or
-//     not matching the supplied tenantID → return false.
+//  1. Extract & validate the mTLS peer certificate (ClientAuth EKU).
+//     Missing/invalid → return false.
+//  2. Read the certificate tenant from the subject OU (#1388). Missing,
+//     not matching the supplied tenantID, or disagreeing with the SPIFFE
+//     SAN (tenant, or a kind other than svc) → return false.
 //  3. Derive the canonical AgentID from (certTenant, cert CN) via
 //     iam.FleetNodeAppName. Mismatch with the supplied nodeID → return
 //     false (defence: a stolen cert for one daemon must not heartbeat
@@ -140,6 +141,16 @@ func (h *IAMHeartbeatRecoverer) Recover(ctx context.Context, r *http.Request, te
 		h.logger.Warnf("agent heartbeat recover: cert tenant=%q does not match request tenant=%q for agent=%s",
 			certTenant, tenantID, nodeID)
 		return false
+	}
+	// The SPIFFE SAN must name the OU's tenant and the agent kind (#1388,
+	// ruling 62(a)). A certificate with no tenant SAN is the one enrolment
+	// tolerates (warned there); recovery tolerates it too.
+	if err := assertCertAuthenticatesInto(peer, certTenant); err != nil {
+		var noTenantSAN *FleetNodeCertNoSPIFFETenantError
+		if !errors.As(err, &noTenantSAN) {
+			h.logger.Warnf("agent heartbeat recover: %v: agent=%s tenant=%s", err, nodeID, tenantID)
+			return false
+		}
 	}
 
 	expected := iam.FleetNodeAppName(certTenant, peer.Subject.CommonName)
@@ -194,16 +205,8 @@ func validateRecoveryPeerCert(peer *x509.Certificate) (*x509.Certificate, error)
 	if peer == nil {
 		return nil, ErrHeartbeatRecoverNoPeerCert
 	}
-	hasOU := false
-	for _, ou := range peer.Subject.OrganizationalUnit {
-		if ou == fleetRegistrarOU {
-			hasOU = true
-			break
-		}
-	}
-	if !hasOU {
-		return nil, ErrHeartbeatRecoverInvalidPeerOU
-	}
+	// The subject OU carries the tenant (#1388), not a role stamp: Recover
+	// reads it, and checks the SPIFFE SAN's tenant and kind against it.
 	hasClientAuth := false
 	for _, usage := range peer.ExtKeyUsage {
 		if usage == x509.ExtKeyUsageClientAuth {
@@ -362,10 +365,6 @@ var ErrHeartbeatRecoverNoLogger = errors.New("agent heartbeat recover: logger re
 // ErrHeartbeatRecoverNoPeerCert indicates the request did not present
 // any mTLS peer certificate; recovery cannot authenticate the fleet node.
 var ErrHeartbeatRecoverNoPeerCert = errors.New("agent heartbeat recover: missing mTLS peer certificate")
-
-// ErrHeartbeatRecoverInvalidPeerOU indicates the peer cert is missing
-// the canonical "agents" OU stamp.
-var ErrHeartbeatRecoverInvalidPeerOU = errors.New("agent heartbeat recover: peer certificate missing required OU=agents stamp")
 
 // ErrHeartbeatRecoverInvalidPeerEKU indicates the peer cert is missing
 // the ClientAuth Extended Key Usage.

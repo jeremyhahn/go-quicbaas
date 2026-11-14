@@ -99,7 +99,7 @@ func agentSessionPeerCert(t *testing.T, tenantID, commonName string) *x509.Certi
 		Subject: pkix.Name{
 			CommonName:         commonName,
 			Organization:       []string{tenantID},
-			OrganizationalUnit: []string{"agents"},
+			OrganizationalUnit: []string{tenantID},
 		},
 		NotBefore:   time.Now().Add(-time.Minute),
 		NotAfter:    time.Now().Add(24 * time.Hour),

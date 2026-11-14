@@ -62,17 +62,17 @@ type FleetNodeCertificateSubject struct {
 	// identifier, which the server consumes as the daemon's tenant claim.
 	Organization string
 
-	// OrganizationalUnit sets the X.509 OU= value. Empty falls back to
-	// "agents" — the server rejects certificates that are not stamped with
-	// this OU (defence-in-depth against operator misuse of a client cert
-	// that was minted for another purpose).
+	// OrganizationalUnit sets the X.509 OU= value. Empty falls back to the
+	// tenant identifier: the subject OU carries the tenant on every layer
+	// (#1388), and the register handler reads the tenant from it and refuses
+	// an OU that disagrees with the request or the SPIFFE SAN.
 	OrganizationalUnit string
 }
 
 // FleetNodeCertificateRequest captures the inputs to IssueFleetNodeCertificate.
 type FleetNodeCertificateRequest struct {
 	// TenantID is the tenant the daemon serves. Required. Encoded into the
-	// certificate's Organization field so the server can extract the tenant
+	// certificate's OU (and Organization) fields so the server can extract the tenant
 	// claim from the mTLS peer certificate.
 	TenantID string
 
@@ -99,12 +99,10 @@ type FleetNodeCertificateRequest struct {
 	// spiffe://<trust-domain>/tenant/<TenantID>/svc/<CommonName>.
 	//
 	// That SAN is not decoration: go-qrdb derives an mTLS identity's TENANT
-	// from it and falls back to the first Subject OU when it is absent
-	// (go-qrdb pkg/auth MTLSAuthenticator.TenantFromCert). Every fleet node
-	// certificate carries OU=fleet nodes, so a certificate issued without the SAN
-	// authenticates into a phantom tenant literally named "agents" -- no
-	// enrollment in the real tenant can ever authorize it. A caller that needs
-	// the issued identity to hold authority MUST set this.
+	// from it, and the OU (the tenant too) must agree with it (go-qrdb#777).
+	// Its kind, svc, is what marks the certificate as an agent's (ruling
+	// 62(a)). A caller that needs the issued identity to hold authority MUST
+	// set this.
 	//
 	// Empty omits the SAN, which is correct only for a certificate used purely
 	// as a TLS credential and never as an authorization principal.
@@ -169,13 +167,6 @@ type FleetNodeCertIssuer interface {
 // deploy-service UX (operators should not have to re-deploy every week).
 const DefaultFleetNodeCertValidityDays = 365
 
-// DefaultFleetNodeCertOU is the Organizational Unit stamped on fleet node certs when
-// the caller does not override it. The control plane's register handler requires
-// this OU and rejects any other value — a belt-and-braces check that the
-// certificate was minted for fleet node authentication and not repurposed from a
-// cert the same CA issued for a different role.
-const DefaultFleetNodeCertOU = "agents"
-
 // XKMSFleetNodeCertIssuer implements FleetNodeCertIssuer on top of the server-
 // embedded xkmssdk.TrustedCA. The CA is injected through the constructor so
 // unit tests can substitute a stub without touching disk.
@@ -215,9 +206,11 @@ func (i *XKMSFleetNodeCertIssuer) IssueFleetNodeCertificate(ctx context.Context,
 		org = req.TenantID
 	}
 
+	// The subject OU carries the tenant on every layer (#1388, owner
+	// ruling f518455), and must agree with the SPIFFE SAN (go-qrdb#777).
 	ou := strings.TrimSpace(req.Subject.OrganizationalUnit)
 	if ou == "" {
-		ou = DefaultFleetNodeCertOU
+		ou = req.TenantID
 	}
 
 	validity := req.ValidityDays
@@ -431,13 +424,14 @@ func (i *SDKFleetNodeCertIssuer) IssueFleetNodeCertificate(ctx context.Context, 
 	}
 
 	// The OU is load-bearing, not decorative: the control plane's fleet node
-	// register handler accepts DefaultFleetNodeCertOU and nothing else. The
-	// IssueCertificate path this issuer used to take could not carry it at all
-	// -- xkmstransport.IssueCertificateRequest has no OU field -- so a
-	// certificate obtained that way was unusable even when it was issued.
+	// register handler reads the tenant from it. The IssueCertificate path
+	// this issuer used to take could not carry it at all --
+	// xkmstransport.IssueCertificateRequest has no OU field.
+	// The subject OU carries the tenant on every layer (#1388, owner
+	// ruling f518455), and must agree with the SPIFFE SAN (go-qrdb#777).
 	ou := strings.TrimSpace(req.Subject.OrganizationalUnit)
 	if ou == "" {
-		ou = DefaultFleetNodeCertOU
+		ou = req.TenantID
 	}
 
 	validity := req.ValidityDays

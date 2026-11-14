@@ -271,7 +271,7 @@ func agentRegisterTestPeerCert(t *testing.T, tenantID, cn string) *x509.Certific
 		Subject: pkix.Name{
 			CommonName:         cn,
 			Organization:       []string{tenantID},
-			OrganizationalUnit: []string{fleetRegistrarOU},
+			OrganizationalUnit: []string{tenantID},
 		},
 		ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
 	}

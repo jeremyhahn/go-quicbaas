@@ -27,6 +27,7 @@ import (
 	"time"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 	"google.golang.org/grpc"
 )
 
@@ -120,6 +121,28 @@ func TestTenantContextFromVerifiedPeer_ForeignTrustDomainFails(t *testing.T) {
 	_, err := TenantContextFromVerifiedPeer(ctx, tenantInterceptorTrustDomain)
 	if !errors.Is(err, qrdbsdk.ErrInvalidClientCertificate) {
 		t.Fatalf("err = %v, want ErrInvalidClientCertificate", err)
+	}
+}
+
+// The subject OU carries the tenant (#1388): an OU naming the SAN's tenant
+// binds it, and an OU naming another tenant is refused.
+func TestTenantContextFromVerifiedPeer_OUMustAgreeWithSAN(t *testing.T) {
+	agree := tenantClientCert(t, tenantInterceptorTrustDomain, "tenant-a")
+	agree.Subject.OrganizationalUnit = []string{"tenant-a"}
+	got, err := TenantContextFromVerifiedPeer(mtlsPeerContext(agree), tenantInterceptorTrustDomain)
+	if err != nil {
+		t.Fatalf("agreeing OU: %v", err)
+	}
+	if tenant, _ := qrdbsdk.TenantFromContext(got); tenant != "tenant-a" {
+		t.Fatalf("tenant = %q, want tenant-a", tenant)
+	}
+
+	disagree := tenantClientCert(t, tenantInterceptorTrustDomain, "tenant-a")
+	disagree.Subject.OrganizationalUnit = []string{"tenant-b"}
+	_, err = TenantContextFromVerifiedPeer(mtlsPeerContext(disagree), tenantInterceptorTrustDomain)
+	var mismatch *iam.CertOUTenantMismatchError
+	if !errors.As(err, &mismatch) {
+		t.Fatalf("disagreeing OU: err = %v, want *iam.CertOUTenantMismatchError", err)
 	}
 }
 
