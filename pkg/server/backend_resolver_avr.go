@@ -20,7 +20,6 @@ import (
 
 	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
 	tfw "github.com/jeremyhahn/trusted-firmware/sdk/go"
-	"github.com/jeremyhahn/trusted-firmware/sdk/go/serialport"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/config"
 )
@@ -32,13 +31,28 @@ import (
 // adapter is composed here, in QuicBaaS, and passed into go-xkms as the KMS
 // ServiceBackend; go-trusted-platform and xkey never import it.
 //
-// The backend is tag-free: it needs no cgo and no vendor library, only the
-// serial port named by kms.avr.device. The device holds one fixed identity
-// key, so it serves Signer/GetKey for that key and has no CA StoreType.
+// The backend is tag-free: it needs no cgo and no vendor library. The device
+// holds one fixed identity key, so it serves Signer/GetKey for that key and has
+// no CA StoreType.
+//
+// The serial transport is composed by the daemon, not here: pkg/server is
+// linked into the QuicBaaS SDK (its embedded server), and the SDK's consumers
+// (go-trusted-platform) must not link a device transport. cmd/quicbaasd calls
+// SetAVRPortOpener with trusted-firmware's serialport.Open; without it the avr
+// backend fails with errAVRNoTransport.
 
-// openAVRPort opens the device's serial port. A test seam: tests substitute a
-// fake device.
-var openAVRPort = serialport.Open
+// AVRPortOpener opens a trusted-firmware device's serial port at a baud rate.
+type AVRPortOpener func(path string, baud int) (io.ReadWriteCloser, error)
+
+// openAVRPort is the composed serial-port opener; nil until the daemon sets it.
+var openAVRPort AVRPortOpener
+
+// SetAVRPortOpener composes the serial transport of the avr backend. The
+// daemon calls it once at start-up, before the KMS backend is resolved.
+func SetAVRPortOpener(open AVRPortOpener) { openAVRPort = open }
+
+// errAVRNoTransport is returned when no serial transport is composed.
+var errAVRNoTransport = errors.New("the avr backend has no serial transport: this binary does not compose one (quicbaasd does)")
 
 // errAVRNoDevice is returned when the avr backend is built without a port.
 var errAVRNoDevice = errors.New("kms.avr.device is required for the avr backend")
@@ -67,6 +81,9 @@ func buildAVRServiceBackend(cfg *config.Config, _ BackendSpec, _ xkmssdk.Storage
 	baud := ac.Baud
 	if baud == 0 {
 		baud = config.DefaultAVRBaud
+	}
+	if openAVRPort == nil {
+		return nil, &BackendConstructError{Backend: config.BackendTypeAVR, Cause: errAVRNoTransport}
 	}
 	port, err := openAVRPort(ac.Device, baud)
 	if err != nil {
