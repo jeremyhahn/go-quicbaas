@@ -413,6 +413,11 @@ func (t *Transport) doRequest(ctx context.Context, service, method string, req i
 	if isRegistryService(service) {
 		return handleRegistryRequest(ctx, conn, method, req)
 	}
+	// The service plane (#1687): SDK structs to the generated
+	// ServicesService types. This branch also serves the Unix transport.
+	if isServicesService(service) {
+		return handleServicesRequest(ctx, conn, method, req)
+	}
 
 	// Peer object transfer. Its SDK types are plain Go structs, converted to
 	// the generated ObjectTransferService proto types. This branch also

@@ -358,6 +358,11 @@ func (t *Transport) Request(ctx context.Context, service, method string, req int
 	if isRegistryService(service) {
 		return t.handleRegistryRequest(ctx, method, req)
 	}
+	// The service plane (#1687): its routes carry the service name in the
+	// path.
+	if isServicesService(service) {
+		return t.handleServicesRequest(ctx, method, req)
+	}
 
 	// Route Async().Scheduler() — jobs and workload placement — through the
 	// scheduler adapter, which reaches the /api/v1/scheduler routes in
