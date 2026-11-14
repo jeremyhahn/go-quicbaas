@@ -154,9 +154,13 @@ type fakeEngine struct {
 
 	created   map[string]*ociConfig
 	destroyed []string
-	starts    []processSpec
-	execs     []processSpec
-	processes []*fakeProcess
+
+	// reclaimErr fails Reclaim; reclaimed records the containers reclaimed.
+	reclaimErr error
+	reclaimed  []string
+	starts     []processSpec
+	execs      []processSpec
+	processes  []*fakeProcess
 }
 
 func newFakeEngine() *fakeEngine {
@@ -246,6 +250,16 @@ func (e *fakeEngine) Destroy(id string) error {
 	}
 	delete(e.created, id)
 	e.destroyed = append(e.destroyed, id)
+	return nil
+}
+
+func (e *fakeEngine) Reclaim(id string) error {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.reclaimErr != nil {
+		return e.reclaimErr
+	}
+	e.reclaimed = append(e.reclaimed, id)
 	return nil
 }
 

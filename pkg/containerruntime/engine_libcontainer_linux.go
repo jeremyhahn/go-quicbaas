@@ -18,10 +18,12 @@ package containerruntime
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"sync"
 	"syscall"
+	"time"
 
 	"github.com/opencontainers/runc/libcontainer"
 	"github.com/opencontainers/runc/libcontainer/specconv"
@@ -102,6 +104,45 @@ func (e *libcontainerEngine) Destroy(id string) error {
 	delete(e.containers, id)
 	e.mu.Unlock()
 	return nil
+}
+
+// reclaimPoll and reclaimTimeout bound how long Reclaim waits for a killed
+// leftover container to stop. This process is not its parent, so it can only
+// poll the container's status.
+const (
+	reclaimPoll    = 50 * time.Millisecond
+	reclaimTimeout = 10 * time.Second
+)
+
+// Reclaim loads a container an earlier process left in the state directory,
+// kills it if it still runs, and destroys it, as `runc delete --force` does.
+func (e *libcontainerEngine) Reclaim(id string) error {
+	container, err := libcontainer.Load(e.root, id)
+	if errors.Is(err, libcontainer.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+
+	deadline := time.Now().Add(reclaimTimeout)
+	for {
+		status, err := container.Status()
+		if err != nil {
+			return err
+		}
+		if status == libcontainer.Stopped {
+			break
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("container %s is still %s %s after SIGKILL", id, status, reclaimTimeout)
+		}
+		if err := container.Signal(unix.SIGKILL); err != nil && !errors.Is(err, libcontainer.ErrNotRunning) {
+			return err
+		}
+		time.Sleep(reclaimPoll)
+	}
+	return container.Destroy()
 }
 
 // container returns a registered container.

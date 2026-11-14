@@ -76,6 +76,12 @@ type containerEngine interface {
 
 	// Destroy removes a stopped container's state.
 	Destroy(id string) error
+
+	// Reclaim kills and removes a container that an earlier process of the
+	// runtime created under the same state directory and never destroyed.
+	// Nothing of it is registered in this process. A container the engine
+	// no longer knows is already reclaimed.
+	Reclaim(id string) error
 }
 
 // imageRecord is an image held in local storage.
