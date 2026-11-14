@@ -427,13 +427,18 @@ func (s *Server) initializeIAMComponents() (service.IAMComponents, error) {
 	}
 
 	// Create the OIDC provider with an xkms/KMS/HSM-backed ES256 signing key.
-	// The key manager performs get-or-create against xkms (the key persists in
-	// the configured keystore across restarts), derives a stable kid from the
+	// The key manager performs get-or-create against the replicated,
+	// barrier-encrypted qrdb store (oidcSigningStoreType), so every node signs
+	// and verifies platform tokens with one key and one kid; it derives a stable kid from the
 	// key's public SPKI, and supports rotation with a JWKS overlap window.
 	// If xkms is unavailable or the key cannot be built we log a warning and
 	// leave the OIDC provider nil (graceful degradation) rather than panic.
 	var oidcProvider *iam.OIDCProvider
-	signingKeyManager, err := iam.NewSigningKeyManagerFromXKMS(iam.OIDCSigningKeyCN, "")
+	var signingKeyManager *iam.SigningKeyManager
+	storeType, err := s.oidcSigningStoreType()
+	if err == nil {
+		signingKeyManager, err = newOIDCSigningKeyManager(storeType)
+	}
 	if err != nil {
 		s.logger.WithError(err).Warn("Failed to initialize xkms-backed OIDC signing key, OIDC provider will be unavailable")
 	} else {
@@ -996,7 +1001,7 @@ func (s *Server) firstBootBootstrap(ctx context.Context, c *iamComponents) error
 	adminTenantID := qrdbsdk.SystemTenantID
 	user := users.CreatedUser()
 	if user == nil {
-		adminEmail := "admin@" + adminTenantID + ".qrdb.local"
+		adminEmail := users.EmailFor("admin", adminTenantID)
 		user, err = c.identityStore.GetUserByEmail(ctx, adminTenantID, adminEmail)
 		if err != nil {
 			return &FirstBootBootstrapError{Op: "lookup bootstrap admin user", Cause: err}
@@ -1211,7 +1216,7 @@ func reportUnusableAdministrators(ctx context.Context, c *iamComponents, assignm
 // the tenant/roles/admin without issuing a certificate — the admin then
 // enrolls through the PIV path or a later ceremony.
 func (s *Server) firstBootDependencies(c *iamComponents) (*qrdbsdk.FirstBootDependencies, *qrdbadapter.UserAdapter, error) {
-	users := qrdbadapter.WrapUser(c.identityStore)
+	users := qrdbadapter.WrapUser(c.identityStore).WithAdminEmail(s.config.IAM.BootstrapAdminEmail)
 	roles := qrdbadapter.WrapRole(c.identityStore)
 	deps := &qrdbsdk.FirstBootDependencies{
 		Tenants: qrdbadapter.WrapTenant(c.tenantManager),

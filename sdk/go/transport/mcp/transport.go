@@ -530,6 +530,8 @@ func (t *Transport) doRequest(ctx context.Context, service, method string, reqBo
 		// that could never succeed -- a filtered listing came back as a
 		// required-field error instead of a session list.
 		arguments = applyTenantFromContext(ctx, t.convertToArguments(reqBody))
+	} else if isMCPKVService(service) {
+		arguments = t.kvArguments(method, reqBody)
 	} else {
 		// Convert request to tool arguments using generic conversion
 		arguments = t.convertToArguments(reqBody)
@@ -664,6 +666,12 @@ func (t *Transport) doRequest(ctx context.Context, service, method string, reqBo
 	// client accepts.
 	if isMCPDEKService(service) {
 		return transformDEKResponse(method, result)
+	}
+
+	// Decode the entity KV verbs into the service responses the KV client
+	// accepts.
+	if isMCPKVService(service) {
+		return transformKVResponse(method, result)
 	}
 
 	return result, nil
@@ -1101,11 +1109,15 @@ func ToolName(service, method string) string {
 	// All tool names use snake_case: quicbaas_<service>_<method_in_snake_case>
 	switch serviceName {
 	case "KV":
-		// Core KV operations are qrdb-mirror tools (canonical qrdb_*).
-		// Quicbaas-specific methods (ListEntityTypes, Watch, etc.) keep
-		// the quicbaas_ prefix.
+		// Core KV operations reach quicbaas's entity tools
+		// (entityType/id/data) under their quicbaas_kv_* names: on a full
+		// node the qrdb_* names are go-qrdb's own key/value tools, which
+		// take key/value (CA ruling 574). Quicbaas-specific methods
+		// (ListEntityTypes, Watch, etc.) keep the quicbaas_ prefix.
 		switch method {
-		case "Put", "Get", "Delete", "List", "Scan":
+		case "Put", "Get", "Delete", "List":
+			return "quicbaas_kv_" + strings.ToLower(method)
+		case "Scan":
 			return "qrdb_" + strings.ToLower(method)
 		default:
 			return "quicbaas_" + strings.ToLower(method)

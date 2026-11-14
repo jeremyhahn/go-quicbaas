@@ -326,6 +326,34 @@ func TestFirstBootBootstrap_NoCAStillCreatesAdmin(t *testing.T) {
 	assert.Len(t, assignments, 1)
 }
 
+// TestFirstBootBootstrap_ConfiguredAdminEmail (#1827): iam.bootstrap_admin_email
+// names the bootstrap admin's address in place of the synthetic
+// admin@system.qrdb.local, and a re-entered first boot resolves the admin
+// by the same configured address.
+func TestFirstBootBootstrap_ConfiguredAdminEmail(t *testing.T) {
+	const configured = "platform-ops@acme.example"
+
+	srv := withTempServer(t)
+	srv.config.IAM.BootstrapAdminEmail = configured
+
+	c := buildTestIAMComponents(t)
+	var banner adminEnrollmentBanner
+	restore := captureFirstBootBanner(t, &banner)
+	defer restore()
+
+	ctx := context.Background()
+	require.NoError(t, srv.firstBootBootstrap(ctx, c))
+
+	admin, err := c.identityStore.GetUserByEmail(ctx, qrdbsdk.SystemTenantID, configured)
+	require.NoError(t, err, "the bootstrap admin must carry the configured address")
+	assert.Equal(t, "admin", admin.Username)
+	_, err = c.identityStore.GetUserByEmail(ctx, qrdbsdk.SystemTenantID, bootstrapAdminEmail)
+	assert.Error(t, err, "the synthetic default must not be used when an address is configured")
+
+	require.NoError(t, srv.firstBootBootstrap(ctx, c), "a re-entered first boot must find the configured admin")
+	assert.Equal(t, admin.ID, srv.bootstrapAdminUserID)
+}
+
 // TestFirstBootBootstrap_NoDataDirRefusesToWriteAdminBundle covers the
 // fail-closed guard: with storage.data_dir unset, filepath.Join would produce
 // the relative path "admin" and drop the admin PRIVATE KEY into the process
