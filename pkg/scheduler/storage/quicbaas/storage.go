@@ -81,6 +81,11 @@ type ClusteredStorage struct {
 	// keep passing their own tests.
 	writer *cas.Writer
 
+	// conclusions performs the guarded write that decides which writer
+	// concludes a run (scheduler.RunConcluder, go-quicbaas#105). Separate
+	// from writer only so its failures carry their own error vocabulary.
+	conclusions *cas.Writer
+
 	// marks reads a job's current claim mark for the advance guard, and
 	// deletes it when the job goes away.
 	marks ClaimReader
@@ -137,13 +142,20 @@ func NewClusteredStorage(kv interfaces.KVStore, claims ClaimTransactor, marks Cl
 	if err != nil {
 		return nil, scheduler.ClaimUnsupportedError{Backend: typeName(kv)}
 	}
+	conclusions, err := cas.NewWriter(claims, marks, func(op string, cause error) error {
+		return &scheduler.ErrStorageError{Op: "ConcludeRun." + op, Cause: cause}
+	})
+	if err != nil {
+		return nil, scheduler.ClaimUnsupportedError{Backend: typeName(kv)}
+	}
 	return &ClusteredStorage{
 		Storage: &Storage{
 			kv:  kv,
 			ids: &clusterJobIDs{kv: kv, reader: marks, writer: idWriter},
 		},
-		writer: writer,
-		marks:  marks,
+		writer:      writer,
+		conclusions: conclusions,
+		marks:       marks,
 	}, nil
 }
 

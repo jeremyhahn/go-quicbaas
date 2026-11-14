@@ -93,6 +93,19 @@ type SchedulerEngine struct {
 	// arbitrate and never consults it.
 	claims FiringClaimer
 
+	// concluder guards the conclusion of a run across nodes (#105). It is
+	// set when a clustered engine's storage provides it, and nil otherwise;
+	// a clustered engine without it refuses abandoned-run recovery.
+	concluder RunConcluder
+
+	// startedRuns holds, per job, the identity of the run this node moved
+	// to Running, so its outcome is concluded through the guard.
+	startedRuns sync.Map // uint64 -> RunConclusion
+
+	// concludedElsewhere counts outcomes dropped because another writer
+	// concluded the run first.
+	concludedElsewhere atomic.Uint64
+
 	// Map-based dispatch for O(1) handler lookup
 	handlers   map[string]JobHandler
 	handlersMu sync.RWMutex
@@ -254,7 +267,11 @@ func NewWithClustering(config *SchedulerConfig, storage JobStorage, nodeID strin
 	if !ok {
 		return nil, ClaimUnsupportedError{Backend: fmt.Sprintf("%T", storage)}
 	}
-	return newEngine(config, storage, nodeID, leader, claimer), nil
+	engine := newEngine(config, storage, nodeID, leader, claimer)
+	if concluder, ok := storage.(RunConcluder); ok {
+		engine.concluder = concluder
+	}
+	return engine, nil
 }
 
 // newEngine is the shared constructor behind New and NewWithClustering.
@@ -1417,6 +1434,7 @@ func (s *SchedulerEngine) executeJob(ctx context.Context, job *Job, claimedFirin
 		s.storageErrors.Add(1)
 		return
 	}
+	s.noteRunStarted(job)
 	lock.Unlock()
 
 	// Create execution record
@@ -1617,6 +1635,13 @@ func (s *SchedulerEngine) persistJobOutcome(ctx context.Context, job *Job) {
 	lock := s.jobLock(job.ID)
 	lock.Lock()
 	defer lock.Unlock()
+
+	// On a clustered engine the stripe lock is this node's exclusivity only:
+	// a recovery on another node may have concluded this run as abandoned.
+	// The guard decides which conclusion stands, and a loss writes nothing.
+	if !s.concludeOwnRun(ctx, job) {
+		return
+	}
 
 	current, getErr := s.storage.GetJob(ctx, job.ID, JobTenantID(job))
 	switch {

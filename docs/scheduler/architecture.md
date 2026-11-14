@@ -256,6 +256,14 @@ resume that skips a missed firing, and a system job re-armed at install. A run
 abandoned by a dead node (`RecoverAbandonedRun`) spends the budget exactly like
 a handler error. `LastError` keeps the last failure after a reset.
 
+On a clustered engine a run is concluded through a guarded write: the
+clustered store keeps one forward-only conclusion mark per job, swapped by
+compare-and-swap on the transaction plane that decides firings. The executing
+node and any recovering node must win it before writing the run's outcome, so
+exactly one of them concludes the run; the loser writes nothing (a recovery
+gets the `concluded_elsewhere` refusal). A clustered store without this guard
+refuses recovery with `RecoveryUnsupportedClusteredError`.
+
 A recurring job resumed after its scheduled run passed is rescheduled to the
 schedule's next occurrence strictly after the resume — never from `LastRun`,
 which for a long pause is an instant already in the past and would fire the job
