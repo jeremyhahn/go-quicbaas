@@ -25,6 +25,7 @@ import (
 	"time"
 
 	api "github.com/jeremyhahn/go-quicbaas/pkg/api"
+	"github.com/jeremyhahn/go-quicbaas/pkg/api/xkmsca"
 	qberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
@@ -65,6 +66,12 @@ type ToolRegistry struct {
 	// case the tenant barrier dispatcher returns
 	// TenantBarrierServiceUnavailableError.
 	tenantBarrierSvc service.TenantBarrierServicer
+
+	// caSvc backs the xkms.ca.* tools: the same xkmsca adapter around the
+	// embedded TrustedCA that the REST /api/v1/xkms/ca/* routes serve
+	// through (go-quicbaas#1631). nil until the CA is wired; the tools then
+	// return a service-unavailable error.
+	caSvc xkmsca.Servicer
 
 	// tenantGovernance backs qrdb_tenant_update_quotas and
 	// qrdb_tenant_update_entitlements. Wired post-construction via
@@ -893,6 +900,12 @@ func (r *ToolRegistry) SetCeremonyService(svc service.CeremonyServicer) {
 // then return TenantBarrierServiceUnavailableError.
 func (r *ToolRegistry) SetTenantBarrierService(svc service.TenantBarrierServicer) {
 	r.tenantBarrierSvc = svc
+}
+
+// SetCAService wires the xkms CA servicer behind the xkms.ca.* tools.
+// Passing nil takes them offline (service-unavailable).
+func (r *ToolRegistry) SetCAService(svc xkmsca.Servicer) {
+	r.caSvc = svc
 }
 
 // SetTenantGovernance installs the mcpTenantGovernancer used by the

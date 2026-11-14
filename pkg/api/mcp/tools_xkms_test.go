@@ -15,6 +15,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	dberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
@@ -636,9 +637,9 @@ func TestXKMSPIVHandlersNotInitialized(t *testing.T) {
 // CA Handler Tests - xkms not initialized
 // =============================================================================
 
-// TestTrustedCAHandlersNotInitialized verifies CA handlers return errors when
-// xkms is not initialized.
-func TestTrustedCAHandlersNotInitialized(t *testing.T) {
+// TestTrustedCAHandlersUnavailableWithoutCA verifies CA handlers fail closed
+// with a service-unavailable error when no CA is wired.
+func TestTrustedCAHandlersUnavailableWithoutCA(t *testing.T) {
 	log := newTestLogger(t)
 	svc := newMinimalMockService()
 	registry := NewToolRegistry(svc, log)
@@ -690,8 +691,9 @@ func TestTrustedCAHandlersNotInitialized(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			_, err := tt.handler(ctx, tt.args)
 			require.Error(t, err)
-			var initErr *XKMSNotInitializedError
-			assert.ErrorAs(t, err, &initErr)
+			var qbErr *dberrors.QBError
+			require.ErrorAs(t, err, &qbErr)
+			assert.Equal(t, dberrors.ErrUnavailable, qbErr.Code, "with no CA wired the CA tools are unavailable")
 		})
 	}
 }
