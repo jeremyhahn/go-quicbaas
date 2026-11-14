@@ -849,5 +849,9 @@ The service layer serves both calls as `service.RemoteRunService`, in the
 caller's tenant only. In the Go SDK, `scheduler.NewWorker` takes a
 `RemoteRunClient` and a function per `remote:` handler. It polls, runs each
 open run once with its context ending at the run's deadline, and reports the
-result: a returned error or a panic fails the run. Today the embedded transport serves
-the two calls; the network transports are the next step.
+result: a returned error or a panic fails the run. Every transport serves the
+two calls: gRPC and Unix (`ListRemoteRuns`, `CompleteRemoteRun`), REST and QUIC
+(`GET /api/v1/scheduler/remote-runs`, `POST .../remote-runs/complete`), MCP
+(`quicbaas_scheduler_list_remote_runs`, `_complete_remote_run`) and embedded,
+under `scheduler:read` and `scheduler:trigger`. Run times travel with
+nanoseconds, so a reported run matches the started one exactly.

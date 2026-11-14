@@ -55,17 +55,19 @@ round-trips these fields over every transport, MCP included: the SDK MCP handler
 sends the argument keys the `quicbaas_scheduler_*` tools read and decodes their
 results through the same `pkg/service` types the tools return.
 
-MCP tools: `quicbaas_scheduler_cancel_job`, `quicbaas_scheduler_cordon_node`, `quicbaas_scheduler_create_job`, `quicbaas_scheduler_delete_job`, `quicbaas_scheduler_deregister_node`, `quicbaas_scheduler_drain_node`, `quicbaas_scheduler_get_job`, `quicbaas_scheduler_get_node`, `quicbaas_scheduler_get_placement`, `quicbaas_scheduler_job_history`, `quicbaas_scheduler_list_jobs`, `quicbaas_scheduler_list_nodes`, `quicbaas_scheduler_list_placements`, `quicbaas_scheduler_pause_job`, `quicbaas_scheduler_place`, `quicbaas_scheduler_register_node`, `quicbaas_scheduler_release`, `quicbaas_scheduler_renew_node`, `quicbaas_scheduler_resume_job`, `quicbaas_scheduler_status`, `quicbaas_scheduler_trigger_job`, `quicbaas_scheduler_uncordon_node`, `quicbaas_scheduler_update_job`
+MCP tools: `quicbaas_scheduler_cancel_job`, `quicbaas_scheduler_complete_remote_run`, `quicbaas_scheduler_cordon_node`, `quicbaas_scheduler_create_job`, `quicbaas_scheduler_delete_job`, `quicbaas_scheduler_deregister_node`, `quicbaas_scheduler_drain_node`, `quicbaas_scheduler_get_job`, `quicbaas_scheduler_get_node`, `quicbaas_scheduler_get_placement`, `quicbaas_scheduler_job_history`, `quicbaas_scheduler_list_jobs`, `quicbaas_scheduler_list_nodes`, `quicbaas_scheduler_list_placements`, `quicbaas_scheduler_list_remote_runs`, `quicbaas_scheduler_pause_job`, `quicbaas_scheduler_place`, `quicbaas_scheduler_register_node`, `quicbaas_scheduler_release`, `quicbaas_scheduler_renew_node`, `quicbaas_scheduler_resume_job`, `quicbaas_scheduler_status`, `quicbaas_scheduler_trigger_job`, `quicbaas_scheduler_uncordon_node`, `quicbaas_scheduler_update_job`
 
 | SDK method | REST route (transport) | Served? | gRPC | MCP | Embedded | Permission |
 |---|---|---|---|---|---|---|
 | `CancelJob` | `POST /api/v1/scheduler/jobs/{id}/cancel` | yes | yes | yes | yes | `scheduler:cancel` |
+| `CompleteRemoteRun` | `POST /api/v1/scheduler/remote-runs/complete` | yes | yes | yes | yes | `scheduler:trigger` |
 | `CreateJob` | `POST /api/v1/scheduler/jobs` | yes | yes | yes | yes | `scheduler:create` |
 | `DeleteJob` | `DELETE /api/v1/scheduler/jobs/{id}` | yes | yes | yes | yes | `scheduler:delete` |
 | `GetJob` | `GET /api/v1/scheduler/jobs/{id}` | yes | yes | yes | yes | `scheduler:read` |
 | `GetJobHistory` | `GET /api/v1/scheduler/jobs/{id}/history` | yes | yes | yes | yes | `scheduler:history` |
 | `GetStatus` | `GET /api/v1/scheduler/status` | yes | yes | yes | yes | `scheduler:status` |
 | `ListJobs` | `GET /api/v1/scheduler/jobs` | yes | yes | yes | yes | `scheduler:list` |
+| `ListRemoteRuns` | `GET /api/v1/scheduler/remote-runs` | yes | yes | yes | yes | `scheduler:read` |
 | `PauseJob` | `POST /api/v1/scheduler/jobs/{id}/pause` | yes | yes | yes | yes | `scheduler:pause` |
 | `ResumeJob` | `POST /api/v1/scheduler/jobs/{id}/resume` | yes | yes | yes | yes | `scheduler:resume` |
 | `TriggerJob` | `POST /api/v1/scheduler/jobs/{id}/trigger` | yes | yes | yes | yes | `scheduler:trigger` |
