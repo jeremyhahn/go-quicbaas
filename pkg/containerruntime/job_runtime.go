@@ -308,9 +308,6 @@ func jobContainerConfig(spec *orchestration.ContainerSpec) (*ContainerConfig, er
 	if spec.GPUEnabled {
 		return nil, &orchestration.InputValidationError{Field: "gpu_enabled", Message: ErrJobSpecUnsupported.Error()}
 	}
-	if len(spec.Ulimits) > 0 {
-		return nil, &orchestration.InputValidationError{Field: "ulimits", Message: ErrJobSpecUnsupported.Error()}
-	}
 
 	name := spec.Name
 	if name == "" {
@@ -338,6 +335,9 @@ func jobContainerConfig(spec *orchestration.ContainerSpec) (*ContainerConfig, er
 	}
 	if spec.MemoryBytes > 0 || spec.PidsLimit > 0 {
 		config.Resources = &ResourceLimits{MemoryLimit: spec.MemoryBytes, PidsLimit: spec.PidsLimit}
+	}
+	for _, u := range spec.Ulimits {
+		config.Ulimits = append(config.Ulimits, Ulimit{Name: u.Name, Soft: u.Soft, Hard: u.Hard})
 	}
 	for _, m := range spec.Mounts {
 		mount := Mount{Source: m.Source, Target: m.Target, Type: m.Type, ReadOnly: m.ReadOnly}

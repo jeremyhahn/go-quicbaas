@@ -19,6 +19,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -66,16 +67,24 @@ func TestGenerateOCIConfig_PrivilegedKeepsAllCapabilities(t *testing.T) {
 	assert.False(t, oci.Process.NoNewPrivileges)
 }
 
-func TestStopProcess_SignalFailure(t *testing.T) {
+func TestStopProcess_AFinishedProcessWaitsForItsExitRecord(t *testing.T) {
 	process := newFakeProcess(42)
 	process.exit(0)
 
-	// The process is gone but its exit has not been observed yet.
-	err := stopProcess(context.Background(), process, make(chan struct{}), 0)
-	var runtimeErr *RuntimeError
-	require.ErrorAs(t, err, &runtimeErr)
-	assert.Equal(t, "signal SIGTERM", runtimeErr.Operation)
-	require.ErrorIs(t, err, os.ErrProcessDone)
+	// The process is gone but its exit has not been recorded yet: the stop
+	// waits for the record rather than failing on the signal.
+	exited := make(chan struct{})
+	go func() {
+		time.Sleep(10 * time.Millisecond)
+		close(exited)
+	}()
+	require.NoError(t, stopProcess(context.Background(), process, exited, 0))
+
+	// A record that never comes ends with the caller's context.
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+	defer cancel()
+	err := stopProcess(ctx, process, make(chan struct{}), 0)
+	require.ErrorIs(t, err, context.DeadlineExceeded)
 }
 
 func TestStopProcess_AlreadyExited(t *testing.T) {

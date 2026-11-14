@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"maps"
 	"math"
 	"os"
 	"path/filepath"
@@ -322,6 +323,7 @@ func (r *Runtime) CreateContainer(ctx context.Context, config *ContainerConfig) 
 	if err := verifyPinnedDigest(config.Image, image.Digests); err != nil {
 		return nil, NewImageError(config.Image, "create", err)
 	}
+	config = withImageDefaults(config, image.Config)
 
 	// Generate container ID
 	id := r.generateContainerID()
@@ -508,11 +510,14 @@ type ociLinuxDevice struct {
 func (r *Runtime) generateOCIConfig(config *ContainerConfig, rootfsPath string) *ociConfig {
 	// Build environment variables
 	var env []string
-	env = append(env,
-		"PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
-		"TERM=xterm")
-	for k, v := range config.Environment {
-		env = append(env, k+"="+v)
+	if _, ok := config.Environment["PATH"]; !ok {
+		env = append(env, "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin")
+	}
+	if _, ok := config.Environment["TERM"]; !ok {
+		env = append(env, "TERM=xterm")
+	}
+	for _, k := range slices.Sorted(maps.Keys(config.Environment)) {
+		env = append(env, k+"="+config.Environment[k])
 	}
 
 	// Build args
@@ -535,6 +540,7 @@ func (r *Runtime) generateOCIConfig(config *ContainerConfig, rootfsPath string) 
 			Args:            args,
 			Env:             env,
 			Cwd:             cwd,
+			Rlimits:         ociRlimits(config.Ulimits),
 			NoNewPrivileges: !config.Privileged,
 		},
 		Root: &ociRoot{
@@ -873,6 +879,10 @@ func stopProcess(ctx context.Context, process containerProcess, exited <-chan st
 	}
 
 	if err := process.Signal(syscall.SIGTERM); err != nil {
+		if errors.Is(err, os.ErrProcessDone) {
+			// It exited before its exit was recorded; wait for the record.
+			return awaitExited(ctx, exited)
+		}
 		return &RuntimeError{Operation: "signal SIGTERM", Err: err}
 	}
 
@@ -887,10 +897,14 @@ func stopProcess(ctx context.Context, process containerProcess, exited <-chan st
 	case <-timer.C:
 	}
 
-	if err := process.Signal(syscall.SIGKILL); err != nil {
+	if err := process.Signal(syscall.SIGKILL); err != nil && !errors.Is(err, os.ErrProcessDone) {
 		return &RuntimeError{Operation: "signal SIGKILL", Err: err}
 	}
+	return awaitExited(ctx, exited)
+}
 
+// awaitExited waits for a container's exit to be recorded, or for ctx.
+func awaitExited(ctx context.Context, exited <-chan struct{}) error {
 	select {
 	case <-exited:
 		return nil

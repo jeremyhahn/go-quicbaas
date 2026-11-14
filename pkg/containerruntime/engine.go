@@ -85,6 +85,21 @@ type imageRecord struct {
 	Digests []string
 	Size    int64
 	Created time.Time
+
+	// Config is what the image's OCI configuration gives a container that
+	// leaves it unset.
+	Config imageConfig
+}
+
+// imageConfig is the part of an image's OCI configuration a container
+// inherits when its own configuration leaves it unset.
+type imageConfig struct {
+	Entrypoint []string
+	Cmd        []string
+	Env        []string
+	WorkingDir string
+	User       string
+	Labels     map[string]string
 }
 
 // imageStore pulls, inspects and removes images in local storage.

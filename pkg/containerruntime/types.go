@@ -13,7 +13,10 @@
 
 package containerruntime
 
-import "time"
+import (
+	"strconv"
+	"time"
+)
 
 // ContainerState represents the lifecycle state of a container.
 type ContainerState string
@@ -139,6 +142,10 @@ type ContainerConfig struct {
 	// Resources specifies resource limits
 	Resources *ResourceLimits `json:"resources,omitempty" yaml:"resources,omitempty"`
 
+	// Ulimits are the init process's resource limits (setrlimit), which
+	// every process in the container inherits.
+	Ulimits []Ulimit `json:"ulimits,omitempty" yaml:"ulimits,omitempty"`
+
 	// TPMAccess enables mounting /dev/tpm0 into the container
 	TPMAccess bool `json:"tpm_access" yaml:"tpm_access"`
 
@@ -210,6 +217,12 @@ func (c *ContainerConfig) Validate() error {
 	if c.Resources != nil {
 		if err := c.Resources.Validate(); err != nil {
 			return err
+		}
+	}
+
+	for i, u := range c.Ulimits {
+		if err := u.Validate(); err != nil {
+			return NewConfigValidationError("ulimits["+strconv.Itoa(i)+"]", err.Error())
 		}
 	}
 

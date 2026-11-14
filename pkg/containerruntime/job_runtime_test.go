@@ -180,11 +180,6 @@ func TestJobRuntime_RunFailures(t *testing.T) {
 		requireInputValidation(t, err, "gpu_enabled")
 		require.ErrorContains(t, err, ErrJobSpecUnsupported.Error())
 
-		_, err = jr.Run(t.Context(), &orchestration.ContainerSpec{
-			Image:   "alpine:latest",
-			Ulimits: []orchestration.ContainerUlimit{{Name: "nofile", Soft: 1, Hard: 1}},
-		})
-		requireInputValidation(t, err, "ulimits")
 	})
 
 	t.Run("BadPortIsRefused", func(t *testing.T) {
@@ -199,6 +194,29 @@ func TestJobRuntime_RunFailures(t *testing.T) {
 		var pullErr *orchestration.ContainerImagePullError
 		require.ErrorAs(t, jr.Pull(t.Context(), "busybox:latest"), &pullErr)
 	})
+}
+
+func TestJobRuntime_RunAppliesUlimits(t *testing.T) {
+	jr, doubles := newTestJobRuntime(t)
+	id, err := jr.Run(t.Context(), &orchestration.ContainerSpec{
+		Image:   "alpine:latest",
+		Ulimits: []orchestration.ContainerUlimit{{Name: "nofile", Soft: 1024, Hard: 4096}},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, []ociRlimit{{Type: "RLIMIT_NOFILE", Soft: 1024, Hard: 4096}}, doubles.engine.created[id].Process.Rlimits)
+
+	for _, bad := range []orchestration.ContainerUlimit{
+		{Name: "bogus", Soft: 1, Hard: 1},
+		{Name: "nofile", Soft: 2, Hard: 1},
+		{Name: "nofile", Soft: -1, Hard: 1},
+	} {
+		_, err := jr.Run(t.Context(), &orchestration.ContainerSpec{
+			Image:   "alpine:latest",
+			Ulimits: []orchestration.ContainerUlimit{bad},
+		})
+		var validErr *orchestration.InputValidationError
+		require.ErrorAs(t, err, &validErr, "%+v", bad)
+	}
 }
 
 func TestParsePortMapping(t *testing.T) {

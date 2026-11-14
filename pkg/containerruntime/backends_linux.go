@@ -146,12 +146,46 @@ func (s *storageImageStore) Inspect(ctx context.Context, ref string) (imageRecor
 		digests = append(digests, image.Digest.String())
 	}
 
+	config, err := s.imageConfig(ctx, image.ID)
+	if err != nil {
+		return imageRecord{}, err
+	}
+
 	return imageRecord{
 		ID:      image.ID,
 		Names:   image.Names,
 		Digests: digests,
 		Size:    size,
 		Created: image.Created,
+		Config:  config,
+	}, nil
+}
+
+// imageConfig reads the stored image's OCI configuration.
+func (s *storageImageStore) imageConfig(ctx context.Context, id string) (config imageConfig, err error) {
+	ref, err := istorage.Transport.NewStoreReference(s.store, nil, id)
+	if err != nil {
+		return imageConfig{}, err
+	}
+	image, err := ref.NewImage(ctx, &s.system)
+	if err != nil {
+		return imageConfig{}, err
+	}
+	defer func() {
+		err = errors.Join(err, image.Close())
+	}()
+
+	oci, err := image.OCIConfig(ctx)
+	if err != nil {
+		return imageConfig{}, err
+	}
+	return imageConfig{
+		Entrypoint: oci.Config.Entrypoint,
+		Cmd:        oci.Config.Cmd,
+		Env:        oci.Config.Env,
+		WorkingDir: oci.Config.WorkingDir,
+		User:       oci.Config.User,
+		Labels:     oci.Config.Labels,
 	}, nil
 }
 
