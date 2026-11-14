@@ -2043,10 +2043,20 @@ func (r *ToolRegistry) handleXKMSFIDO2FinishAuthentication(ctx context.Context, 
 // CA Tool Handlers
 // =============================================================================
 
+// trustedCAGate is the readiness check of the xkms.ca.* tools. A wired CA
+// is its own handle, as on the REST /api/v1/xkms/ca/* routes, so the global
+// xkms service gate applies only when none is wired.
+func (r *ToolRegistry) trustedCAGate() error {
+	if r.caSvc != nil {
+		return nil
+	}
+	return ensureXKMSInitialized()
+}
+
 // trustedCA returns the go-xkms CA the xkms.ca.* tools serve, or the typed
 // "operation not supported" error when the server wired none (#1330).
 func (r *ToolRegistry) trustedCA(op string) (transport.CAService, error) {
-	if err := ensureXKMSInitialized(); err != nil {
+	if err := r.trustedCAGate(); err != nil {
 		return nil, err
 	}
 	if r.caSvc == nil {
@@ -2082,7 +2092,7 @@ func (r *ToolRegistry) handleTrustedCAGetCert(ctx context.Context, args map[stri
 
 // handleTrustedCASignCSR signs a certificate signing request.
 func (r *ToolRegistry) handleTrustedCASignCSR(ctx context.Context, args map[string]interface{}) (interface{}, error) {
-	if err := ensureXKMSInitialized(); err != nil {
+	if err := r.trustedCAGate(); err != nil {
 		return nil, err
 	}
 	csrPEM := getString(args, "csr_pem")
@@ -2103,7 +2113,7 @@ func (r *ToolRegistry) handleTrustedCASignCSR(ctx context.Context, args map[stri
 
 // handleTrustedCAIssueCert issues a new certificate.
 func (r *ToolRegistry) handleTrustedCAIssueCert(ctx context.Context, args map[string]interface{}) (interface{}, error) {
-	if err := ensureXKMSInitialized(); err != nil {
+	if err := r.trustedCAGate(); err != nil {
 		return nil, err
 	}
 	profile := getString(args, "profile")
@@ -2131,7 +2141,7 @@ func (r *ToolRegistry) handleTrustedCAIssueCert(ctx context.Context, args map[st
 
 // handleTrustedCARevokeCert revokes a certificate by serial number.
 func (r *ToolRegistry) handleTrustedCARevokeCert(ctx context.Context, args map[string]interface{}) (interface{}, error) {
-	if err := ensureXKMSInitialized(); err != nil {
+	if err := r.trustedCAGate(); err != nil {
 		return nil, err
 	}
 	serialNumber := getString(args, "serial_number")
@@ -2160,7 +2170,7 @@ func (r *ToolRegistry) handleTrustedCAGenerateCRL(ctx context.Context, args map[
 
 // handleTrustedCAIsRevoked checks if a certificate is revoked.
 func (r *ToolRegistry) handleTrustedCAIsRevoked(ctx context.Context, args map[string]interface{}) (interface{}, error) {
-	if err := ensureXKMSInitialized(); err != nil {
+	if err := r.trustedCAGate(); err != nil {
 		return nil, err
 	}
 	serialNumber := getString(args, "serial_number")
