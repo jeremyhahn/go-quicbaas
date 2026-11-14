@@ -399,23 +399,29 @@ func TestPolicySyncer_ContextCancellation(t *testing.T) {
 		t.Error("Syncer should be running")
 	}
 
-	// Cancel context
+	// Cancelling the context ends the sync loop, and IsRunning must say so
+	// (#49): it used to stay true until Stop, long after the loop returned.
 	cancel()
+	waitFor(t, "IsRunning to report false after the context was cancelled", func() bool {
+		return !syncer.IsRunning()
+	})
 
-	// The sleep that stood here asserted nothing either, and it CANNOT be
-	// converted into the obvious assertion: IsRunning tracks Start/Stop (the
-	// `running` flag is cleared only by Stop), not the sync goroutine's
-	// liveness, so it stays true after the context is cancelled even though
-	// the goroutine has returned. Polling for !IsRunning() here times out
-	// against correct-as-written code.
-	//
-	// So this test does not currently prove what its name claims. Asserting
-	// the real property means changing what the syncer reports, which is
-	// production behaviour and outside a test-hygiene change; recorded rather
-	// than quietly widened.
-
-	// Clean up
+	// Stop on a syncer whose loop already ended is a no-op, not a hang.
 	syncer.Stop()
+
+	// And it can be started again with a live context.
+	restart, cancelRestart := context.WithCancel(context.Background())
+	defer cancelRestart()
+	if err := syncer.Start(restart); err != nil {
+		t.Fatalf("Start() after cancellation error = %v", err)
+	}
+	if !syncer.IsRunning() {
+		t.Error("Syncer should be running again after a restart")
+	}
+	syncer.Stop()
+	if syncer.IsRunning() {
+		t.Error("Syncer should not be running after Stop")
+	}
 }
 
 // Benchmark tests
