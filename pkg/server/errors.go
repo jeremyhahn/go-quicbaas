@@ -50,17 +50,9 @@ var (
 	// ErrShardedClientClosed indicates ForShard was called after Close.
 	ErrShardedClientClosed = errors.New("sharded client is closed")
 
-	// ErrUnsupportedTransport indicates the configured qrdb transport type is not recognized.
-	ErrUnsupportedTransport = errors.New("unsupported qrdb transport type")
-
-	// ErrTransportCreationFailed indicates the qrdb SDK transport could not be created.
-	ErrTransportCreationFailed = errors.New("qrdb transport creation failed")
-
-	// ErrNetworkTransportMissingAddress indicates a network transport was configured without an address.
-	ErrNetworkTransportMissingAddress = errors.New("address is required for network qrdb transport")
-
-	// ErrUnixTransportMissingSocket indicates a unix transport was configured without a socket path.
-	ErrUnixTransportMissingSocket = errors.New("unix socket path is required for unix qrdb transport")
+	// ErrShardedClientNoNode indicates ForShard was called on a ShardedClient
+	// with no embedded qrdb node client attached.
+	ErrShardedClientNoNode = errors.New("sharded client has no embedded qrdb node client")
 
 	// ErrQRDBClientNotInitialized indicates GetKVStore was called before the
 	// qrdb SDK client was initialized. This is a programming error: the SDK
@@ -201,66 +193,21 @@ func (e *ShardedClientClosedError) Unwrap() error {
 	return ErrShardedClientClosed
 }
 
-// UnsupportedTransportError is returned when the configured qrdb transport
-// type is not a recognized transport name.
-type UnsupportedTransportError struct {
-	Transport string
+// ShardedClientNoNodeError is returned when ForShard is called on a
+// ShardedClient that has no embedded qrdb node client. go-qrdb under
+// go-quicbaas is embedded only, so there is no other client to return.
+type ShardedClientNoNodeError struct {
+	ShardID uint64
 }
 
 // Error implements the error interface.
-func (e *UnsupportedTransportError) Error() string {
-	return "unsupported qrdb transport type: " + e.Transport
+func (e *ShardedClientNoNodeError) Error() string {
+	return "sharded client has no embedded qrdb node client for shard " + strconv.FormatUint(e.ShardID, 10)
 }
 
 // Unwrap returns the sentinel error for errors.Is support.
-func (e *UnsupportedTransportError) Unwrap() error {
-	return ErrUnsupportedTransport
-}
-
-// TransportCreationError is returned when a qrdb SDK transport fails to initialize.
-type TransportCreationError struct {
-	Transport string
-	Cause     error
-}
-
-// Error implements the error interface.
-func (e *TransportCreationError) Error() string {
-	return "qrdb " + e.Transport + " transport creation failed: " + e.Cause.Error()
-}
-
-// Unwrap returns the sentinel error for errors.Is support.
-func (e *TransportCreationError) Unwrap() error {
-	return ErrTransportCreationFailed
-}
-
-// NetworkTransportMissingAddressError is returned when a network-based
-// transport (gRPC, REST, QUIC, MCP) is configured without a target address.
-type NetworkTransportMissingAddressError struct {
-	Transport string
-}
-
-// Error implements the error interface.
-func (e *NetworkTransportMissingAddressError) Error() string {
-	return "address is required for " + e.Transport + " qrdb transport"
-}
-
-// Unwrap returns the sentinel error for errors.Is support.
-func (e *NetworkTransportMissingAddressError) Unwrap() error {
-	return ErrNetworkTransportMissingAddress
-}
-
-// UnixTransportMissingSocketError is returned when the unix transport is
-// configured without a socket path.
-type UnixTransportMissingSocketError struct{}
-
-// Error implements the error interface.
-func (e *UnixTransportMissingSocketError) Error() string {
-	return "unix socket path is required for unix qrdb transport"
-}
-
-// Unwrap returns the sentinel error for errors.Is support.
-func (e *UnixTransportMissingSocketError) Unwrap() error {
-	return ErrUnixTransportMissingSocket
+func (e *ShardedClientNoNodeError) Unwrap() error {
+	return ErrShardedClientNoNode
 }
 
 // QRDBClientNotInitializedError is returned (as a panic) when GetKVStore
