@@ -460,19 +460,29 @@ func handleIAMUserList(ctx context.Context, svc service.QuicBaaS, req interface{
 		return nil, err
 	}
 	tenantID, _ := iamRequestField(req, "TenantID")
-	limit := 0
-	if r, ok := req.(*iamsdk.ListUsersRequest); ok {
-		limit = r.PageSize
+	sdkReq, _ := iamRequestStructPtr(req, "Request").(*iamsdk.ListUsersRequest)
+	if sdkReq == nil {
+		sdkReq, _ = req.(*iamsdk.ListUsersRequest)
 	}
-	users, err := store.ListUsers(ctx, tenantID, iam.ListOptions{Limit: limit})
+	var pageSize int
+	var pageToken string
+	if sdkReq != nil {
+		pageSize, pageToken = sdkReq.PageSize, sdkReq.PageToken
+	}
+	pg, err := newIAMListPage("quicbaas.IAM.User", pageSize, pageToken)
 	if err != nil {
 		return nil, err
 	}
-	out := &iamsdk.ListUsersResponse{Users: make([]iamsdk.User, 0, len(users))}
-	for _, u := range users {
-		out.Users = append(out.Users, *userToSDK(u))
+	users, err := store.ListUsers(ctx, tenantID, pg.options())
+	if err != nil {
+		return nil, err
 	}
-	return out, nil
+	users, pagination := trimIAMListPage(pg, users)
+	resp := &iamsdk.ListUsersResponse{Users: make([]iamsdk.User, 0, len(users)), Pagination: pagination}
+	for _, u := range users {
+		resp.Users = append(resp.Users, *userToSDK(u))
+	}
+	return resp, nil
 }
 
 func userToSDK(u *iam.User) *iamsdk.User {
@@ -555,15 +565,25 @@ func handleIAMRoleList(ctx context.Context, svc service.QuicBaaS, req interface{
 		return nil, err
 	}
 	tenantID, _ := iamRequestField(req, "TenantID")
-	limit := 0
-	if r, ok := req.(*iamsdk.ListRolesRequest); ok {
-		limit = r.PageSize
+	sdkReq, _ := iamRequestStructPtr(req, "Request").(*iamsdk.ListRolesRequest)
+	if sdkReq == nil {
+		sdkReq, _ = req.(*iamsdk.ListRolesRequest)
 	}
-	roles, err := store.ListRoles(ctx, tenantID, iam.ListOptions{Limit: limit})
+	var pageSize int
+	var pageToken string
+	if sdkReq != nil {
+		pageSize, pageToken = sdkReq.PageSize, sdkReq.PageToken
+	}
+	pg, err := newIAMListPage("quicbaas.IAM.Role", pageSize, pageToken)
 	if err != nil {
 		return nil, err
 	}
-	out := &iamsdk.ListRolesResponse{Roles: make([]iamsdk.Role, 0, len(roles))}
+	roles, err := store.ListRoles(ctx, tenantID, pg.options())
+	if err != nil {
+		return nil, err
+	}
+	roles, pagination := trimIAMListPage(pg, roles)
+	out := &iamsdk.ListRolesResponse{Roles: make([]iamsdk.Role, 0, len(roles)), Pagination: pagination}
 	for _, r := range roles {
 		out.Roles = append(out.Roles, iamsdk.Role{
 			ID:                 r.ID,
@@ -789,6 +809,53 @@ func iamRequestStructPtr(req interface{}, fieldName string) interface{} {
 		return nil
 	}
 	return f.Interface()
+}
+
+// iamListPage is one page of an IAM User or Role list: the client's page
+// size and the offset its page token names.
+type iamListPage struct {
+	size   int
+	offset int
+}
+
+// newIAMListPage reads the client's page size and page token. The token is
+// the decimal offset of the page's first item, as the handler hands it back
+// in NextPageToken; anything else is refused.
+func newIAMListPage(service string, pageSize int, pageToken string) (iamListPage, error) {
+	pg := iamListPage{size: pageSize}
+	if pageSize < 0 {
+		pg.size = 0
+	}
+	if pageToken != "" {
+		offset, err := strconv.Atoi(pageToken)
+		if err != nil || offset < 0 {
+			return iamListPage{}, &InvalidPageTokenError{Service: service, Method: "List", Value: pageToken}
+		}
+		pg.offset = offset
+	}
+	return pg, nil
+}
+
+// options asks the store for one item more than the page holds, so the
+// handler knows whether a next page exists without returning an empty one.
+func (pg iamListPage) options() iam.ListOptions {
+	opts := iam.ListOptions{Offset: pg.offset}
+	if pg.size > 0 {
+		opts.Limit = pg.size + 1
+	}
+	return opts
+}
+
+// trimIAMListPage cuts the store's result to the page and reports whether
+// more items follow, with the token that names the next page.
+func trimIAMListPage[T any](pg iamListPage, items []T) ([]T, iamsdk.PaginationInfo) {
+	info := iamsdk.PaginationInfo{PageSize: pg.size}
+	if pg.size > 0 && len(items) > pg.size {
+		items = items[:pg.size]
+		info.HasMore = true
+		info.NextPageToken = strconv.Itoa(pg.offset + pg.size)
+	}
+	return items, info
 }
 
 // sdkPolicyFromInternal converts the internal iam.Policy (apiVersion + spec
