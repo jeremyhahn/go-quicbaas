@@ -200,19 +200,26 @@ type ContainerAttestation struct {
 
 // LaunchMeasurement returns the byte string extended into the measurement PCR
 // for a spec. It binds the pinned image digest, the deterministic
-// configuration digest and the operator trust label into one newline-free,
+// configuration digest, the launch policy digest (LaunchPolicyDigest) and the
+// operator trust label into one newline-free,
 // field-separated record so a verifier can reconstruct it from the spec alone.
 func LaunchMeasurement(spec *ContainerSpec) ([]byte, error) {
 	configDigest, err := ContainerConfigDigest(spec)
 	if err != nil {
 		return nil, err
 	}
+	policyDigest, err := LaunchPolicyDigest(spec)
+	if err != nil {
+		return nil, err
+	}
 	var buf bytes.Buffer
-	buf.WriteString("quicbaas-container-launch/v1")
+	buf.WriteString("quicbaas-container-launch/v2")
 	buf.WriteByte(0)
 	buf.WriteString(spec.ResolvedImageDigest())
 	buf.WriteByte(0)
 	buf.WriteString(configDigest)
+	buf.WriteByte(0)
+	buf.WriteString(policyDigest)
 	buf.WriteByte(0)
 	buf.WriteString(spec.TrustLabel)
 	return buf.Bytes(), nil
@@ -233,6 +240,15 @@ type TPMAttestingRuntime struct {
 	tpm       HostTPM
 	appraiser HostAppraiser
 	logger    interfaces.Logger
+
+	// log is the node measurement log: one entry per measured launch,
+	// recorded in the same step as the PCR extend.
+	log *MeasurementLog
+}
+
+// MeasurementLog returns the node measurement log of this runtime.
+func (r *TPMAttestingRuntime) MeasurementLog() *MeasurementLog {
+	return r.log
 }
 
 // Compile-time interface check.
@@ -259,7 +275,7 @@ func NewTPMAttestingRuntime(base ContainerRuntime, tpm HostTPM, appraiser HostAp
 	if logger == nil {
 		return nil, &InputValidationError{Field: "logger", Message: "cannot be nil"}
 	}
-	return &TPMAttestingRuntime{ContainerRuntime: base, tpm: tpm, appraiser: appraiser, logger: logger}, nil
+	return &TPMAttestingRuntime{ContainerRuntime: base, tpm: tpm, appraiser: appraiser, logger: logger, log: NewMeasurementLog()}, nil
 }
 
 // TrustCapabilities reports the tiers this runtime can satisfy. Digest
@@ -294,7 +310,8 @@ func (r *TPMAttestingRuntime) RunInteractive(ctx context.Context, spec *Containe
 }
 
 // measureLaunch extends the launch measurement into the spec's measurement
-// PCR. It is a no-op below TrustLevelMeasured, so Tier 0 and Tier 1 launches
+// PCR and records it in the node measurement log; a failed extend records
+// nothing and the launch is refused. It is a no-op below TrustLevelMeasured, so Tier 0 and Tier 1 launches
 // leave the TPM untouched.
 func (r *TPMAttestingRuntime) measureLaunch(spec *ContainerSpec) error {
 	if spec == nil {
@@ -312,9 +329,30 @@ func (r *TPMAttestingRuntime) measureLaunch(spec *ContainerSpec) error {
 		return err
 	}
 
+	configDigest, err := ContainerConfigDigest(spec)
+	if err != nil {
+		return err
+	}
+	policyDigest, err := LaunchPolicyDigest(spec)
+	if err != nil {
+		return err
+	}
+
 	pcr := spec.EffectiveMeasurementPCR()
 	bank := spec.EffectiveMeasurementBank()
-	if err := r.tpm.ExtendPCR(pcr, bank, measurement); err != nil {
+	entry := MeasurementLogEntry{
+		Image:        spec.Image,
+		ImageDigest:  spec.ResolvedImageDigest(),
+		ConfigDigest: configDigest,
+		PolicyDigest: policyDigest,
+		TrustLabel:   spec.TrustLabel,
+		PCR:          pcr,
+		Bank:         bank,
+		Measurement:  measurement,
+	}
+	if _, err := r.log.record(entry, func() error {
+		return r.tpm.ExtendPCR(pcr, bank, measurement)
+	}); err != nil {
 		return &ContainerMeasurementError{
 			Image: spec.Image,
 			PCR:   pcr,

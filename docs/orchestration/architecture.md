@@ -1631,8 +1631,20 @@ The measurement is a newline-free, NUL-separated record so a verifier can
 reconstruct it from the spec alone:
 
 ```
-"quicbaas-container-launch/v1" \0 <imageDigest> \0 <configDigest> \0 <trustLabel>
+"quicbaas-container-launch/v2" \0 <imageDigest> \0 <configDigest> \0 <policyDigest> \0 <trustLabel>
 ```
+
+`<policyDigest>` is `LaunchPolicyDigest`: the SHA-256 of the `LaunchPolicy`
+the launch ran under (trust level, measurement PCR and bank), so one image and
+configuration launched under two policies carries two measured identities.
+
+The runtime records each measured launch in the node measurement log
+(`MeasurementLog`) in the same step as the extend: an entry is appended only
+when the extend succeeds, under one lock, so the log's order is the extend
+order. Each entry carries the image digest, config digest, policy digest,
+register, bank and the exact bytes extended, and chains to its predecessor by
+SHA-256. `VerifyMeasurementLog` checks the chain; `ReplayMeasurementLog`
+recomputes the register from zero, which is the value the node quotes.
 
 PCR 16 (`MeasurementPCRDefault`) is the default target. It is the TCG PC Client
 "debug" register: resettable, not consumed by firmware or the bootloader, and
