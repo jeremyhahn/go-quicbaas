@@ -153,6 +153,21 @@ type ContainerSpec = pkgorch.ContainerSpec
 // measured.
 type ContainerMount = pkgorch.ContainerMount
 
+// ContainerDevice is a host device node passed into a broker-class container.
+type ContainerDevice = pkgorch.ContainerDevice
+
+// PrivilegeClassBroker is the privilege class that may carry devices: the
+// boot node and its NBD export, which reach raw volumes through them.
+const PrivilegeClassBroker = pkgorch.PrivilegeClassBroker
+
+// ErrDevicePassthroughDenied reports devices or a raw volume outside the
+// broker class.
+var ErrDevicePassthroughDenied = pkgorch.ErrDevicePassthroughDenied
+
+// ContainerDevices returns the device passthrough for the raw volumes among
+// the attached ones.
+var ContainerDevices = pkgorch.ContainerDevices
+
 // ContainerUlimit is one per-process resource limit inside a container
 // (ContainerSpec.Ulimits, emitted as --ulimit name=soft:hard). Ulimits
 // participate in ContainerConfigDigest, sorted by name.

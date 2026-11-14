@@ -213,6 +213,16 @@ type ContainerSpec struct {
 	// for CapAdd.
 	CapDrop []string `json:"cap_drop,omitempty"`
 
+	// PrivilegeClass names the service privilege class the container runs
+	// in. Empty is the ordinary class; PrivilegeClassBroker is the only other
+	// and the only one Validate lets carry Devices. Measured.
+	PrivilegeClass string `json:"privilege_class,omitempty"`
+
+	// Devices are host device nodes passed into the container (--device),
+	// broker class only. A VolumeRuntime fills them from raw volume claims.
+	// Measured.
+	Devices []ContainerDevice `json:"devices,omitempty"`
+
 	// --- Trust dimension (see container_trust.go and trust_policy.go) ---
 
 	// ImageDigest pins the container to an immutable OCI content digest in
@@ -328,6 +338,9 @@ func (s *ContainerSpec) Validate() error {
 	}
 	if len(s.Volumes) > 0 {
 		return fmt.Errorf("%w: %d volume claim(s) not attached: the spec needs a VolumeRuntime", ErrVolumeUnsupported, len(s.Volumes))
+	}
+	if err := s.validatePrivilegeClass(); err != nil {
+		return err
 	}
 	if err := validateUlimits(s.Ulimits); err != nil {
 		return err

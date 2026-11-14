@@ -643,6 +643,9 @@ func (s *ContainerSpec) PrivilegeRunArgs() []string {
 	for _, u := range sortedUlimits(s.Ulimits) {
 		args = append(args, "--ulimit", u.RunArg())
 	}
+	for _, d := range s.Devices {
+		args = append(args, "--device", d.RunArg())
+	}
 	return args
 }
 

@@ -197,15 +197,51 @@ func TestVolumeRuntimePassesSpecsWithoutVolumes(t *testing.T) {
 	}
 }
 
-func TestVolumeRuntimeRefusesRawClaims(t *testing.T) {
+func rawSpec(class string) *ContainerSpec {
+	return &ContainerSpec{Name: "nbd", Image: "registry.example.com/nbd:1", PrivilegeClass: class,
+		Volumes: []VolumeClaim{
+			{Name: "root", SizeBytes: 1 << 30, Target: "/dev/vol/root"},
+			{Name: "seed", SizeBytes: 1 << 20, Target: "/dev/vol/seed", ReadOnly: true},
+		}}
+}
+
+// A raw claim outside the broker class is refused before the provider or the
+// runtime sees it.
+func TestVolumeRuntimeRefusesRawClaimsOutsideBroker(t *testing.T) {
 	vr, inner, prov, _ := newTestVolumeRuntime(t)
-	spec := &ContainerSpec{Name: "raw", Image: "registry.example.com/r:1",
-		Volumes: []VolumeClaim{{Name: "disk", SizeBytes: 1 << 20}}}
-	if _, err := vr.Run(context.Background(), spec); !errors.Is(err, ErrVolumeUnsupported) {
-		t.Errorf("Run(raw) = %v, want ErrVolumeUnsupported", err)
+	if _, err := vr.Run(context.Background(), rawSpec("")); !errors.Is(err, ErrDevicePassthroughDenied) {
+		t.Errorf("Run(raw, ordinary class) = %v, want ErrDevicePassthroughDenied", err)
 	}
 	if len(inner.specs) != 0 || len(prov.calls) != 0 {
 		t.Errorf("a refused raw claim reached the provider or runtime")
+	}
+}
+
+// A broker spec's raw claims are attached and handed to the runtime as
+// devices at their targets, and the resolved spec validates.
+func TestVolumeRuntimePassesRawClaimsToBroker(t *testing.T) {
+	vr, inner, prov, _ := newTestVolumeRuntime(t)
+	id, err := vr.Run(context.Background(), rawSpec(PrivilegeClassBroker))
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if got := countCalls(prov.calls, "mount "); got != 0 {
+		t.Errorf("raw volumes were mounted: %v", prov.calls)
+	}
+	vols := vr.Attached(id)
+	if len(vols) != 2 {
+		t.Fatalf("Attached = %d volumes, want 2", len(vols))
+	}
+	ran := inner.specs[0]
+	want := []ContainerDevice{
+		{HostPath: vols[0].DevicePath, ContainerPath: "/dev/vol/root", Permissions: "rw"},
+		{HostPath: vols[1].DevicePath, ContainerPath: "/dev/vol/seed", Permissions: "r"},
+	}
+	if !reflect.DeepEqual(ran.Devices, want) || len(ran.Mounts) != 0 {
+		t.Errorf("devices = %+v, mounts = %+v; want devices %+v", ran.Devices, ran.Mounts, want)
+	}
+	if err := ran.Validate(); err != nil {
+		t.Errorf("resolved broker spec: Validate = %v", err)
 	}
 }
 

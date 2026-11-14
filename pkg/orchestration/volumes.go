@@ -22,6 +22,7 @@ import (
 	"path"
 	"path/filepath"
 	"regexp"
+	"strings"
 
 	bscommon "github.com/jeremyhahn/go-blockstore/pkg/common"
 	bsfactory "github.com/jeremyhahn/go-blockstore/pkg/factory"
@@ -101,7 +102,8 @@ var volumeNamePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9_.-]{0,62}$`)
 //
 // A claim with FSType is mounted on the host and reaches the container as a
 // bind mount at Target. A claim without FSType is a raw block device: the
-// attacher reports its device path and the claim carries no Target.
+// attacher reports its device path, and a broker-class launch passes it
+// through as a device at Target (or at the host's device path).
 type VolumeClaim struct {
 	// Name identifies the volume. The attacher looks the volume up under this
 	// name and provisions it when it does not exist, so a relaunch reattaches
@@ -116,8 +118,8 @@ type VolumeClaim struct {
 	// Empty means a raw block device.
 	FSType string `json:"fs_type,omitempty"`
 
-	// Target is the absolute path inside the container. Required with FSType,
-	// rejected without it.
+	// Target is the absolute path inside the container: the mount point with
+	// FSType (required), the device node's path without it (optional).
 	Target string `json:"target,omitempty"`
 
 	// ReadOnly mounts the volume read-only.
@@ -145,8 +147,11 @@ func (c VolumeClaim) Validate() error {
 		return fmt.Errorf("%w: volume %q: replicas must not be negative", ErrVolumeClaim, c.Name)
 	}
 	if c.FSType == "" {
-		if c.Target != "" {
-			return fmt.Errorf("%w: volume %q: a raw volume (no fs_type) takes no target", ErrVolumeClaim, c.Name)
+		// A raw volume's target is the device node's path in the container
+		// (optional: empty keeps the host's device path). It lands in a
+		// colon-separated --device value, so a colon is refused.
+		if c.Target != "" && (!path.IsAbs(c.Target) || path.Clean(c.Target) != c.Target || c.Target == "/" || strings.Contains(c.Target, ":")) {
+			return fmt.Errorf("%w: volume %q: raw target %q must be a clean absolute device path", ErrVolumeClaim, c.Name, c.Target)
 		}
 		return nil
 	}

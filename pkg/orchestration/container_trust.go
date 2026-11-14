@@ -397,6 +397,14 @@ func ContainerConfigDigest(spec *ContainerSpec) (string, error) {
 		w.number("ulimit.soft", u.Soft)
 		w.number("ulimit.hard", u.Hard)
 	}
+	// Written only when set, so every spec without them keeps its digest.
+	if spec.PrivilegeClass != "" || len(spec.Devices) > 0 {
+		w.field("privilege_class", spec.PrivilegeClass)
+		w.count("devices", len(spec.Devices))
+		for _, d := range spec.Devices {
+			w.field("device", d.RunArg())
+		}
+	}
 	w.slice("entrypoint", spec.Entrypoint)
 	w.slice("command", spec.Command)
 	w.slice("args", spec.Args)

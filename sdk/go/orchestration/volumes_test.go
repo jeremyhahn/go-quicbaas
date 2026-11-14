@@ -49,6 +49,26 @@ func TestVolumeTypesCrossBoundary(t *testing.T) {
 }
 
 // TestVolumeErrorsCrossBoundary: the SDK's sentinels are the server's.
+// A broker-class SDK spec carries devices through to the server's Validate;
+// the ordinary class is refused with the same sentinel on both sides.
+func TestDevicePassthroughCrossBoundary(t *testing.T) {
+	devs := sdkorch.ContainerDevices([]sdkorch.AttachedVolume{
+		{Claim: sdkorch.VolumeClaim{Name: "root", Target: "/dev/vol/root"}, DevicePath: "/dev/nbd0"},
+	})
+	want := []sdkorch.ContainerDevice{{HostPath: "/dev/nbd0", ContainerPath: "/dev/vol/root", Permissions: "rw"}}
+	if !reflect.DeepEqual(devs, want) {
+		t.Fatalf("ContainerDevices = %+v, want %+v", devs, want)
+	}
+	spec := &sdkorch.ContainerSpec{Image: "registry.example.com/nbd:1", PrivilegeClass: sdkorch.PrivilegeClassBroker, Devices: devs}
+	if err := spec.Validate(); err != nil {
+		t.Fatalf("broker spec: Validate = %v", err)
+	}
+	spec.PrivilegeClass = ""
+	if err := spec.Validate(); !errors.Is(err, sdkorch.ErrDevicePassthroughDenied) || !errors.Is(err, pkgorch.ErrDevicePassthroughDenied) {
+		t.Errorf("ordinary class: Validate = %v, want ErrDevicePassthroughDenied", err)
+	}
+}
+
 func TestVolumeErrorsCrossBoundary(t *testing.T) {
 	err := sdkorch.VolumeClaim{Name: "data", SizeBytes: 0}.Validate()
 	if !errors.Is(err, sdkorch.ErrVolumeClaim) || !errors.Is(err, pkgorch.ErrVolumeClaim) {

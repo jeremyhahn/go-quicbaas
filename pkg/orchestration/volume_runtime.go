@@ -18,8 +18,9 @@ import (
 // the resolved mounts: the launch measurement covers where each volume is
 // mounted, not just that one was asked for.
 //
-// Raw claims (no FSType) need device passthrough and are refused with
-// ErrVolumeUnsupported.
+// Raw claims (no FSType) are passed through as devices at their Target, which
+// only a PrivilegeClassBroker spec may have; any other spec's raw claim is
+// refused with ErrDevicePassthroughDenied before anything is provisioned.
 type VolumeRuntime struct {
 	ContainerRuntime
 
@@ -107,8 +108,9 @@ func (r *VolumeRuntime) Attached(containerID string) []AttachedVolume {
 
 func (r *VolumeRuntime) attach(ctx context.Context, spec *ContainerSpec) (*ContainerSpec, []AttachedVolume, error) {
 	for _, c := range spec.Volumes {
-		if c.FSType == "" {
-			return nil, nil, fmt.Errorf("%w: volume %q: a raw volume needs device passthrough", ErrVolumeUnsupported, c.Name)
+		if c.FSType == "" && spec.PrivilegeClass != PrivilegeClassBroker {
+			return nil, nil, fmt.Errorf("%w: volume %q: a raw volume is passed through as a device, which only the %q class may have",
+				ErrDevicePassthroughDenied, c.Name, PrivilegeClassBroker)
 		}
 	}
 	vols, err := r.attacher.Attach(ctx, spec.Volumes)
@@ -118,6 +120,9 @@ func (r *VolumeRuntime) attach(ctx context.Context, spec *ContainerSpec) (*Conta
 	resolved := *spec
 	resolved.Volumes = nil
 	resolved.Mounts = append(append([]ContainerMount(nil), spec.Mounts...), ContainerMounts(vols)...)
+	if devs := ContainerDevices(vols); len(devs) > 0 {
+		resolved.Devices = append(append([]ContainerDevice(nil), spec.Devices...), devs...)
+	}
 	return &resolved, vols, nil
 }
 
