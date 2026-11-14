@@ -24,18 +24,21 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/jeremyhahn/go-quicbaas/pkg/testutil/poll"
 )
 
 func TestAuditLogger_SIEMExporter(t *testing.T) {
 	// Create a test server to receive SIEM events
-	receivedEvents := 0
+	var receivedEvents atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		receivedEvents++
+		receivedEvents.Add(1)
 		w.WriteHeader(http.StatusOK)
 	}))
 	defer server.Close()
@@ -76,11 +79,7 @@ func TestAuditLogger_SIEMExporter(t *testing.T) {
 	err = al.siemExporter.Send(event)
 	require.NoError(t, err)
 
-	// Wait for flush
-	time.Sleep(200 * time.Millisecond)
-
-	// Verify event was received
-	assert.Greater(t, receivedEvents, 0)
+	poll.Until(t, 10*time.Second, func() bool { return receivedEvents.Load() > 0 }, "the SIEM endpoint receives the event")
 }
 
 func TestAuditLogger_CompressFile(t *testing.T) {
