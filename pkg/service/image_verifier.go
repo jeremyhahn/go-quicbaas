@@ -46,7 +46,18 @@ func (v *imageVerifier) VerifyImageSignature(ctx context.Context, sig *orchestra
 	if err := sig.Validate(); err != nil {
 		return err
 	}
-	signers, err := v.svc.loadEndorsements(ctx, v.svc.store, EndorsementImageSigner)
+	if err := v.svc.verifyImageSigner(ctx, sig.SignerChainPEM, sig.SignatureAlgorithm, sig.Signature, []byte(sig.Digest)); err != nil {
+		return fmt.Errorf("signature over %s: %w", sig.Digest, err)
+	}
+	return nil
+}
+
+// verifyImageSigner checks that chainPEM (leaf first) terminates at one of
+// the tenant's image-signer endorsements and that its leaf signed data,
+// with the go-xkms attestation verifier. algName is the signature
+// algorithm's name; empty takes the leaf's.
+func (s *attestationService) verifyImageSigner(ctx context.Context, chainPEM [][]byte, algName string, signature, data []byte) error {
+	signers, err := s.loadEndorsements(ctx, s.store, EndorsementImageSigner)
 	if err != nil {
 		return err
 	}
@@ -65,16 +76,16 @@ func (v *imageVerifier) VerifyImageSignature(ctx context.Context, sig *orchestra
 		return stderrors.New("no image-signer endorsement is stored; image signatures are never trusted on first use")
 	}
 
-	chain, err := parseCertChainPEM(sig.SignerChainPEM, "ImageVerifier.VerifyImageSignature")
+	chain, err := parseCertChainPEM(chainPEM, "ImageVerifier.verifyImageSigner")
 	if err != nil {
 		return err
 	}
 	leaf := chain[0]
 	sigAlg := leaf.SignatureAlgorithm
-	if sig.SignatureAlgorithm != "" {
-		parsed, ok := signatureAlgorithmByName[sig.SignatureAlgorithm]
+	if algName != "" {
+		parsed, ok := signatureAlgorithmByName[algName]
 		if !ok {
-			return fmt.Errorf("unsupported signature algorithm %q", sig.SignatureAlgorithm)
+			return fmt.Errorf("unsupported signature algorithm %q", algName)
 		}
 		sigAlg = parsed
 	}
@@ -82,10 +93,10 @@ func (v *imageVerifier) VerifyImageSignature(ctx context.Context, sig *orchestra
 		Format:                "image-signature",
 		AttestingKeyAlgorithm: leaf.PublicKeyAlgorithm,
 		AttestingKeyPublic:    leaf.PublicKey,
-		Signature:             sig.Signature,
+		Signature:             signature,
 		SignatureAlgorithm:    sigAlg,
 		CertificateChain:      chain,
-		AttestationData:       []byte(sig.Digest),
+		AttestationData:       data,
 	}
 	verifier := xkmsattestation.NewVerifier(roots)
 	opts := xkmsattestation.DefaultVerifyOptions()
@@ -94,7 +105,7 @@ func (v *imageVerifier) VerifyImageSignature(ctx context.Context, sig *orchestra
 		return fmt.Errorf("signer chain: %w", err)
 	}
 	if err := verifier.VerifySignature(stmt, opts); err != nil {
-		return fmt.Errorf("signature over %s: %w", sig.Digest, err)
+		return err
 	}
 	return nil
 }

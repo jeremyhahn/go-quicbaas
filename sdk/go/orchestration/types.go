@@ -324,6 +324,20 @@ var WithImageVerifier = pkgorch.WithImageVerifier
 // WithUnsignedImagePolicy sets the runtime's allow-unsigned policy.
 var WithUnsignedImagePolicy = pkgorch.WithUnsignedImagePolicy
 
+// ProvenanceVerifier checks a signed image's software-factory provenance
+// (a signed DSSE referrer) at a measured launch.
+type ProvenanceVerifier = pkgorch.ProvenanceVerifier
+
+// ImageProvenanceError reports a signed image refused for its provenance.
+type ImageProvenanceError = pkgorch.ImageProvenanceError
+
+// WithProvenanceVerifier sets the runtime's ProvenanceVerifier.
+var WithProvenanceVerifier = pkgorch.WithProvenanceVerifier
+
+// ErrImageProvenance is the refusal of a signed image without provenance
+// that verifies.
+var ErrImageProvenance = pkgorch.ErrImageProvenance
+
 // ErrImageUnsigned and ErrImageSignatureRejected are the default-deny
 // refusals of a measured launch.
 var (
@@ -626,6 +640,7 @@ var (
 	_ func(ContainerRuntime, HostTPM, HostAppraiser, Logger, ...TPMAttestingOption) (*TPMAttestingRuntime, error) = NewTPMAttestingRuntime
 	_ func(*ContainerSpec, LaunchPolicy) ([]byte, error)                                                          = LaunchMeasurementUnder
 	_ func(ImageVerifier) TPMAttestingOption                                                                      = WithImageVerifier
+	_ func(ProvenanceVerifier) TPMAttestingOption                                                                 = WithProvenanceVerifier
 	_ func(UnsignedImagePolicy) TPMAttestingOption                                                                = WithUnsignedImagePolicy
 	_ UnsignedImagePolicy                                                                                         = UnsignedImageGrants(nil)
 	_ func(Logger) (*ExecContainerRuntime, error)                                                                 = NewExecContainerRuntime

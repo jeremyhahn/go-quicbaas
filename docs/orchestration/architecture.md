@@ -1685,6 +1685,23 @@ which must be CA certificates, and checks the leaf's signature over the
 image digest with the go-xkms attestation verifier. With no `image-signer`
 endorsement stored, no signature verifies; there is no trust on first use.
 
+A signed image must also carry software-factory provenance. The factory
+(`sdlc.PublishImageProvenance`) builds an in-toto statement with a SLSA v1
+provenance predicate for the image digest, signs it as a DSSE envelope with
+its go-xkms image-signing key, and pushes it to the registry as an OCI
+referrer of the image (`pkg/provenance`: artifact type
+`application/vnd.dsse.envelope.v1+json`, layers the envelope and the signer's
+PEM chain). At launch the runtime's `ProvenanceVerifier`
+(`WithProvenanceVerifier`) must accept it; without one, or when it refuses,
+the launch fails with `ErrImageProvenance`. The Verifier's is
+`service.NewProvenanceVerifier`: it reads the image's referrers through the
+OCI referrers API, checks each fetched manifest and blob against its digest,
+anchors the envelope's signer at the `image-signer` endorsements, checks the
+signature over the DSSE PAE with the go-xkms attestation verifier, and
+requires the statement to cover the launched digest and, when a builder list
+is configured, to name an accepted SLSA builder. An allow-unsigned grant
+admits an image without either a signature or provenance.
+
 PCR 16 (`MeasurementPCRDefault`) is the default target. It is the TCG PC Client
 "debug" register: resettable, not consumed by firmware or the bootloader, and
 the conventional home for application-supplied measurements, so extending it

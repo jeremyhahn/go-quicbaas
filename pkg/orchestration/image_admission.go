@@ -10,9 +10,11 @@ import (
 // Launch admission: default deny
 // =============================================================================
 //
-// A measured launch runs only an image whose signature verifies. The
-// signature is ImageSignature on the spec; an ImageVerifier (the Verifier's,
-// built on go-xkms) judges it against the image-signer endorsements. An
+// A measured launch runs only an image whose signature verifies and that
+// carries software-factory provenance. The signature is ImageSignature on
+// the spec; an ImageVerifier (the Verifier's, built on go-xkms) judges it
+// against the image-signer endorsements, and a ProvenanceVerifier checks
+// the image's signed DSSE provenance referrer. An
 // image without a signature runs only under an allow-unsigned grant from
 // the runtime's UnsignedImagePolicy. The grant's name is folded into the
 // launch policy, so it changes the policy digest, the launch measurement and
@@ -24,6 +26,14 @@ import (
 // verifier trusts.
 type ImageVerifier interface {
 	VerifyImageSignature(ctx context.Context, sig *ImageSignature) error
+}
+
+// ProvenanceVerifier checks that a signed image carries software-factory
+// provenance: a signed DSSE in-toto statement, stored as a registry
+// referrer of the image, whose SLSA provenance covers the image digest. It
+// returns nil only when such provenance verifies.
+type ProvenanceVerifier interface {
+	VerifyImageProvenance(ctx context.Context, spec *ContainerSpec) error
 }
 
 // UnsignedImagePolicy decides whether a spec may launch an unsigned image.
@@ -57,6 +67,12 @@ type TPMAttestingOption func(*TPMAttestingRuntime)
 // is checked with. Without one, no signed image can be admitted.
 func WithImageVerifier(v ImageVerifier) TPMAttestingOption {
 	return func(r *TPMAttestingRuntime) { r.images = v }
+}
+
+// WithProvenanceVerifier sets the verifier a measured launch's image
+// provenance is checked with. Without one, no signed image can be admitted.
+func WithProvenanceVerifier(v ProvenanceVerifier) TPMAttestingOption {
+	return func(r *TPMAttestingRuntime) { r.provenance = v }
 }
 
 // WithUnsignedImagePolicy sets the policy that may grant an unsigned image
@@ -104,9 +120,33 @@ func (e *ImageSignatureRejectedError) Unwrap() []error {
 	return []error{ErrImageSignatureRejected, e.Cause}
 }
 
+// ErrImageProvenance is returned when a measured launch's signed image
+// carries no software-factory provenance that verifies.
+var ErrImageProvenance = errors.New("image provenance missing or rejected")
+
+// ImageProvenanceError reports a signed image refused for its provenance.
+type ImageProvenanceError struct {
+	Image       string
+	ImageDigest string
+	Cause       error
+}
+
+func (e *ImageProvenanceError) Error() string {
+	return fmt.Sprintf("launch of %s (%s) refused: %v: %v", e.Image, e.ImageDigest, ErrImageProvenance, e.Cause)
+}
+
+// Unwrap returns ErrImageProvenance and the cause.
+func (e *ImageProvenanceError) Unwrap() []error {
+	return []error{ErrImageProvenance, e.Cause}
+}
+
 // errNoImageVerifier is the cause when a signed image meets a runtime with
 // no ImageVerifier.
 var errNoImageVerifier = errors.New("no image verifier is configured")
+
+// errNoProvenanceVerifier is the cause when a signed image meets a runtime
+// with no ProvenanceVerifier.
+var errNoProvenanceVerifier = errors.New("no provenance verifier is configured")
 
 // admitImage applies default deny to a measured launch and returns the
 // launch policy it runs under: the spec's policy, plus the allow-unsigned
@@ -124,6 +164,13 @@ func (r *TPMAttestingRuntime) admitImage(ctx context.Context, spec *ContainerSpe
 		}
 		if cause != nil {
 			return LaunchPolicy{}, &ImageSignatureRejectedError{Image: spec.Image, ImageDigest: digest, Cause: cause}
+		}
+		cause = errNoProvenanceVerifier
+		if r.provenance != nil {
+			cause = r.provenance.VerifyImageProvenance(ctx, spec)
+		}
+		if cause != nil {
+			return LaunchPolicy{}, &ImageProvenanceError{Image: spec.Image, ImageDigest: digest, Cause: cause}
 		}
 		return policy, nil
 	}

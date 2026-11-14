@@ -29,6 +29,23 @@ func (acceptingImageVerifier) VerifyImageSignature(_ context.Context, sig *Image
 	return nil
 }
 
+// acceptingProvenanceVerifier admits provenance for testDigest.
+type acceptingProvenanceVerifier struct{}
+
+func (acceptingProvenanceVerifier) VerifyImageProvenance(_ context.Context, spec *ContainerSpec) error {
+	if spec.ResolvedImageDigest() != testDigest {
+		return errors.New("no provenance covers the image")
+	}
+	return nil
+}
+
+// rejectingProvenanceVerifier finds no provenance.
+type rejectingProvenanceVerifier struct{}
+
+func (rejectingProvenanceVerifier) VerifyImageProvenance(context.Context, *ContainerSpec) error {
+	return errors.New("no provenance referrer")
+}
+
 // rejectingImageVerifier refuses every signature.
 type rejectingImageVerifier struct{}
 
@@ -112,6 +129,30 @@ func TestTPMAttestingRuntime_DefaultDeny(t *testing.T) {
 		rt.images = nil
 		if _, err := rt.Run(t.Context(), measuredTestSpec("a")); !errors.Is(err, ErrImageSignatureRejected) {
 			t.Fatalf("error %v does not wrap ErrImageSignatureRejected", err)
+		}
+		refused(t, rt, base, tpm, before)
+	})
+
+	t.Run("SignedImageWithoutProvenanceIsRefused", func(t *testing.T) {
+		tpm := newFakeHostTPM()
+		before := tpm.pcr(uint32(MeasurementPCRDefault))
+		rt, base := newAttestingTestRuntime(t, tpm, reference)
+		WithProvenanceVerifier(rejectingProvenanceVerifier{})(rt)
+		_, err := rt.Run(t.Context(), measuredTestSpec("a"))
+		var provErr *ImageProvenanceError
+		if !errors.Is(err, ErrImageProvenance) || !errors.As(err, &provErr) || provErr.ImageDigest != testDigest {
+			t.Fatalf("error %v is not an ImageProvenanceError for %s", err, testDigest)
+		}
+		refused(t, rt, base, tpm, before)
+	})
+
+	t.Run("SignedImageWithoutProvenanceVerifierIsRefused", func(t *testing.T) {
+		tpm := newFakeHostTPM()
+		before := tpm.pcr(uint32(MeasurementPCRDefault))
+		rt, base := newAttestingTestRuntime(t, tpm, reference)
+		rt.provenance = nil
+		if _, err := rt.Run(t.Context(), measuredTestSpec("a")); !errors.Is(err, ErrImageProvenance) {
+			t.Fatalf("error %v does not wrap ErrImageProvenance", err)
 		}
 		refused(t, rt, base, tpm, before)
 	})

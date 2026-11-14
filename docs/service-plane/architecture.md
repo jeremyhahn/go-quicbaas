@@ -253,7 +253,10 @@ agent at startup.
 held in go-qrdb.
 
 **Provenance.** The software factory (`pkg/sdlc`) emits SLSA provenance. It is
-signed through go-xkms image signing and stored as a DSSE referrer.
+signed through go-xkms image signing and stored as a DSSE referrer
+(`pkg/provenance`, `sdlc.PublishImageProvenance`). A measured launch admits
+a signed image only when that referrer verifies against the `image-signer`
+endorsements (`service.NewProvenanceVerifier`).
 
 **Default deny.** A digest runs only if it is signed, carries provenance and is
 listed in the reference values. Each tenant or service may have an audited

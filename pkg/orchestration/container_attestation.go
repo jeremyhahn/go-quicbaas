@@ -262,6 +262,8 @@ type TPMAttestingRuntime struct {
 	// refuses the launches it would have admitted (default deny).
 	images   ImageVerifier
 	unsigned UnsignedImagePolicy
+	// provenance checks a signed image's software-factory provenance.
+	provenance ProvenanceVerifier
 }
 
 // MeasurementLog returns the node measurement log of this runtime.

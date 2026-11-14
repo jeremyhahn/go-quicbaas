@@ -72,7 +72,7 @@ func readSimulatorPCRs(t *testing.T, sim *tpmsim.Simulator) map[uint32][]byte {
 func newSimulatorRuntime(t *testing.T, sim *tpmsim.Simulator, akRoot *attestationtest.Authority, reference map[uint32][]byte) *TPMAttestingRuntime {
 	t.Helper()
 	rt, err := NewTPMAttestingRuntime(&recordingRuntime{}, sim.TPM, NewTestHostAppraiser(t, akRoot, attestationtest.SHA256Digests(reference)), newContainerTestLogger(t),
-		WithImageVerifier(acceptingImageVerifier{}))
+		WithImageVerifier(acceptingImageVerifier{}), WithProvenanceVerifier(acceptingProvenanceVerifier{}))
 	if err != nil {
 		t.Fatalf("NewTPMAttestingRuntime: %v", err)
 	}
