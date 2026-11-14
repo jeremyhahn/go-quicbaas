@@ -413,7 +413,7 @@ var frozenRoutePermissions = map[string]frozenPermission{
 	"POST /api/v1/bootstrap/noise":                                                     {auth: RouteAuthPermission, resource: "trust", action: "write"},
 	"POST /api/v1/bootstrap/spki":                                                      {auth: RouteAuthPermission, resource: "trust", action: "write"},
 	"POST /api/v1/cache/clear":                                                         {auth: RouteAuthPermission, resource: "admin", action: "capabilities"},
-	"POST /api/v1/certificate/chain":                                                   {auth: RouteAuthPermission, resource: "certs", action: "generate"},
+	"POST /api/v1/certificate/chain":                                                   {auth: RouteAuthPermission, resource: "trust", action: "write"},
 	"POST /api/v1/certificate/cross-sign":                                              {auth: RouteAuthPermission, resource: "ca", action: "create"},
 	"POST /api/v1/certificate/device-identity":                                         {auth: RouteAuthPermission, resource: "certs", action: "generate"},
 	"POST /api/v1/certificate/issue":                                                   {auth: RouteAuthPermission, resource: "certs", action: "generate"},

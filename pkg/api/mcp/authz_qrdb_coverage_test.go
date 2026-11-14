@@ -327,7 +327,7 @@ func TestMCPPermissions_CertificateToolsMatchGRPC(t *testing.T) {
 		// The certificate EXTENSION tools, pinned alongside so the two halves
 		// of the surface cannot drift apart again.
 		"quicbaas_certificate_cross_sign":            {"ca", "create"},
-		"quicbaas_certificate_chain":                 {"certs", "generate"},
+		"quicbaas_certificate_chain":                 {"trust", "write"},
 		"quicbaas_certificate_issue_device_identity": {"certs", "generate"},
 	}
 

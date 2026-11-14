@@ -491,8 +491,10 @@ var grpcMethodPermissions = map[string]methodPermission{
 	// IssueDeviceIdentity mints TCG EK / AK / IEEE 802.1AR IDevID
 	// certificates. Those are END-ENTITY certificates, so they stay in the
 	// leaf-issuance family: certs:generate.
-	"/quicbaas.certificate.v1.CertificateService/CrossSign":           {"ca", "create"},
-	"/quicbaas.certificate.v1.CertificateService/Chain":               {"certs", "generate"},
+	"/quicbaas.certificate.v1.CertificateService/CrossSign": {"ca", "create"},
+	// Chain's AIA walk fetches and imports issuer certificates, the mutation
+	// TrustService/AutoImportAIA performs, so it takes the same trust:write.
+	"/quicbaas.certificate.v1.CertificateService/Chain":               {"trust", "write"},
 	"/quicbaas.certificate.v1.CertificateService/IssueDeviceIdentity": {"certs", "generate"},
 
 	// ---- quicbaas.attestation.v1.AttestationService ----

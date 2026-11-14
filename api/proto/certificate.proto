@@ -62,7 +62,7 @@ service CertificateService {
   // Authority Information Access extension. The chain is ordered issuer-first
   // and root-last and excludes the leaf.
   rpc Chain(CertificateChainRequest) returns (CertificateChainResponse) {
-      option (qrdb.v1.permission) = "certs:generate";
+      option (qrdb.v1.permission) = "trust:write";
   }
 
   // IssueDeviceIdentity issues a TCG device identity certificate: an

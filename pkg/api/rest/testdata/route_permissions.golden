@@ -370,7 +370,7 @@ POST /api/v1/bootstrap/dane permission trust:write
 POST /api/v1/bootstrap/noise permission trust:write
 POST /api/v1/bootstrap/spki permission trust:write
 POST /api/v1/cache/clear permission admin:capabilities
-POST /api/v1/certificate/chain permission certs:generate
+POST /api/v1/certificate/chain permission trust:write
 POST /api/v1/certificate/cross-sign permission ca:create
 POST /api/v1/certificate/device-identity permission certs:generate
 POST /api/v1/certificate/issue permission certs:generate

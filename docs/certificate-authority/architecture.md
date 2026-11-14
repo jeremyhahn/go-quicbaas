@@ -55,6 +55,11 @@ and `acme`). The replacement re-exports the go-xkms `CAService`,
 
 - **`certs:read` and `certs:generate` are separate.** A service that needs the
   CA bundle to verify peers does not need the ability to mint identities.
+- **Writing trust state takes `trust:write`, not `certs:generate`.** The
+  certificate `Chain` walk imports the issuers it fetches over AIA, so it is
+  gated like AIA auto-import and DANE publish: `trust:write` on gRPC, REST
+  (`POST /api/v1/certificate/chain`) and MCP (`quicbaas_certificate_chain`,
+  `quicbaas_trust_auto_import_aia`, `quicbaas_trust_publish_dane`) (#2070).
 - **Issuance fails closed when the barrier is sealed.** It does not fall back
   to a software key and does not queue.
 

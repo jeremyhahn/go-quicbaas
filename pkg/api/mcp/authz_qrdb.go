@@ -465,10 +465,10 @@ var qrdbToolExactMapping = map[string]qrdbToolResource{
 	// than leaf issuance, so it authorizes with ca:create. The AIA chain walk
 	// fetches and imports issuer certificates, the same mutation
 	// quicbaas_trust_auto_import_aia performs, so it carries the same
-	// write-strength verb. Device identity issuance mints END-ENTITY TCG
+	// trust:write. Device identity issuance mints END-ENTITY TCG
 	// EK / AK / IDevID certificates and stays on certs:generate.
 	"quicbaas_certificate_cross_sign":            {"ca", "create"},
-	"quicbaas_certificate_chain":                 {"certs", "generate"},
+	"quicbaas_certificate_chain":                 {"trust", "write"},
 	"quicbaas_certificate_issue_device_identity": {"certs", "generate"},
 
 	// Ollama -> ollama
@@ -892,8 +892,10 @@ var qrdbToolPrefixMapping = map[string]qrdbToolResource{
 	"quicbaas_attestation_appraise_quote":          {"attestation", "verify"},
 
 	"quicbaas_trust_cross_signed_root_pool": {"certs", "read"},
-	"quicbaas_trust_auto_import_aia":        {"certs", "generate"},
-	"quicbaas_trust_publish_dane":           {"certs", "generate"},
+	// AIA auto-import and DANE publish write trust state: trust:write, as
+	// TrustService/AutoImportAIA and /PublishDANE on gRPC and REST.
+	"quicbaas_trust_auto_import_aia": {"trust", "write"},
+	"quicbaas_trust_publish_dane":    {"trust", "write"},
 
 	// Timeseries
 	"quicbaas_timeseries_query":  {"timeseries", "query"},
