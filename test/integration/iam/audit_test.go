@@ -17,7 +17,6 @@
 package iam_test
 
 import (
-	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -391,13 +390,8 @@ func TestAuditEventDelete(t *testing.T) {
 	cluster := setupTestCluster(t)
 	defer cluster.Close()
 
-	// The tenant is provisioned through its admin, the principal that must
-	// be authorized for audit:delete in the tenant; the helper deletes the
-	// tenant when t ends.
-	// The auditor in the same tenant holds audit:read but not audit:delete.
-	tenantID := generateUniqueTenantID()
-	tenantAdmin := cluster.asTenantAdmin(t, tenantID)
-	auditor := cluster.asTenantAuditor(t, tenantID)
+	tenantID, auditor := setupTenantForAuditTests(t, cluster)
+	defer cleanupAuditTests(cluster, tenantID)
 
 	userEvents := fmt.Sprintf("/api/v1/iam/audit?tenant_id=%s&event_type=user_management", tenantID)
 	before := auditBaseline(t, auditor, userEvents)
@@ -441,21 +435,20 @@ func TestAuditEventDelete(t *testing.T) {
 	require.Equal(t, http.StatusForbidden, refusedResp.StatusCode,
 		"an auditor without audit:delete should be refused: %s", refusedBody)
 
-	// The tenant admin must be authorized for audit:delete here. The
-	// audit log is append-only (go-qrdb's hash-chained audit sink), so an
-	// authorized delete erases nothing and reports deleted_count 0.
-	deleteResp, err := tenantAdmin.doHTTPRequest(http.MethodDelete, deletePath, nil)
-	require.NoError(t, err, "Should send the tenant admin's audit delete")
-	deleteBody, _ := io.ReadAll(deleteResp.Body)
-	deleteResp.Body.Close()
-	require.Equal(t, http.StatusOK, deleteResp.StatusCode,
-		"the tenant admin's audit delete should be authorized: %s", deleteBody)
-	var deleted struct {
-		DeletedCount *int `json:"deleted_count"`
-	}
-	require.NoError(t, json.Unmarshal(deleteBody, &deleted), "audit delete response")
-	require.NotNil(t, deleted.DeletedCount, "the audit delete response should carry deleted_count: %s", deleteBody)
-	assert.Zero(t, *deleted.DeletedCount, "the append-only audit chain should delete nothing")
+	// The first-boot super_admin holds audit:delete (pkg/server/iam_init.go),
+	// but its assignment is scoped to the system tenant, and the delete is
+	// tenant-scoped to the caller's own tenant (iam.ResolveRequestTenant)
+	// BEFORE the permission check. So the server refuses it on tenant scope:
+	// no principal can reach another tenant's audit chain, and the
+	// survival check below holds against both refusals.
+	superResp, err := cluster.asSystemAdmin().doHTTPRequest(http.MethodDelete, deletePath, nil)
+	require.NoError(t, err, "Should send the super_admin's audit delete")
+	superBody, _ := io.ReadAll(superResp.Body)
+	superResp.Body.Close()
+	require.Equal(t, http.StatusForbidden, superResp.StatusCode,
+		"the super_admin's delete of another tenant's chain should be refused: %s", superBody)
+	assert.Contains(t, string(superBody), "may not access tenant "+tenantID,
+		"the super_admin should be refused on tenant scope, not on permission")
 
 	// Every event read before the delete is still in the chain after it.
 	// The count may grow: each authorized request, these reads and the
