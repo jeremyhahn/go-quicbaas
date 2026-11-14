@@ -16,7 +16,6 @@ package service
 import (
 	"context"
 	"errors"
-	"time"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/jeremyhahn/go-qrdb/sdk/go/transport"
@@ -47,7 +46,7 @@ import (
 // SDK layer; semantics match go-qrdb exactly.
 type BarrierServicer interface {
 	// BarrierStatus returns the current barrier state.
-	BarrierStatus(ctx context.Context) (*BarrierStatusInfo, error)
+	BarrierStatus(ctx context.Context) (*transport.BarrierStatusResponse, error)
 
 	// BarrierInitialize initialises the barrier with a single passphrase. The
 	// caller owns secret and may wipe it as soon as the call returns; nothing
@@ -65,22 +64,22 @@ type BarrierServicer interface {
 
 	// BarrierInitializeShamir initialises the barrier with Shamir secret
 	// sharing and returns the generated shares.
-	BarrierInitializeShamir(ctx context.Context, secret []byte, threshold, total int) (*ShamirInitInfo, error)
+	BarrierInitializeShamir(ctx context.Context, secret []byte, threshold, total int) (*transport.BarrierInitializeShamirResponse, error)
 
 	// BarrierUnsealWithShare submits a single Shamir share toward the unseal
 	// quorum.
-	BarrierUnsealWithShare(ctx context.Context, share string) (*UnsealShareProgress, error)
+	BarrierUnsealWithShare(ctx context.Context, share string) (*transport.BarrierUnsealShareResponse, error)
 
 	// BarrierUnsealWithShares unseals the barrier using a complete set of
 	// Shamir shares in a single call.
 	BarrierUnsealWithShares(ctx context.Context, shares []string) error
 
 	// BarrierRekey generates new Shamir shares for the existing root key.
-	BarrierRekey(ctx context.Context, threshold, total int) (*ShamirInitInfo, error)
+	BarrierRekey(ctx context.Context, threshold, total int) (*transport.BarrierRekeyResponse, error)
 
 	// BarrierGenerateRecoveryKeys generates recovery shares for disaster
 	// recovery.
-	BarrierGenerateRecoveryKeys(ctx context.Context, threshold, total int) (*RecoveryKeysInfo, error)
+	BarrierGenerateRecoveryKeys(ctx context.Context, threshold, total int) (*transport.BarrierRecoveryKeysResponse, error)
 
 	// BarrierRecoverWithKeys unseals the barrier using recovery shares.
 	BarrierRecoverWithKeys(ctx context.Context, keys []string) error
@@ -93,7 +92,7 @@ type BarrierServicer interface {
 
 	// BarrierGenerateRootToken creates a new root token by proving knowledge
 	// of the master key through Shamir shares.
-	BarrierGenerateRootToken(ctx context.Context, shares []string) (*RootTokenInfo, error)
+	BarrierGenerateRootToken(ctx context.Context, shares []string) (*transport.BarrierRootTokenResponse, error)
 
 	// EnableEncryption migrates a barrier from none-strategy to a keyed
 	// strategy in place. An empty tenantID targets the system barrier;
@@ -103,72 +102,9 @@ type BarrierServicer interface {
 	EnableEncryption(ctx context.Context, tenantID string, opts qrdbsdk.MigrationOptions) error
 }
 
-// BarrierStatusInfo describes the current state of the storage barrier.
-// Mirrors go-qrdb's service.BarrierStatusInfo so the REST handlers can
-// shape responses identically across both daemons.
-type BarrierStatusInfo struct {
-	// Sealed is true when the barrier is in sealed state.
-	Sealed bool
-
-	// Strategy identifies which sealing strategy protects the root key.
-	Strategy string
-
-	// HardwareBacked is true when the active strategy uses dedicated
-	// cryptographic hardware.
-	HardwareBacked bool
-
-	// InitializedAt records when the barrier was first initialised.
-	InitializedAt time.Time
-}
-
-// ShamirInitInfo contains the output of a Shamir initialisation or rekey.
-// Share material is never present here; Security Officers retrieve their
-// shares via the qrdb share-claim flow using their mTLS certificate.
-type ShamirInitInfo struct {
-	// Threshold is the minimum number of shares required for reconstruction.
-	Threshold int
-
-	// TotalShares is the total number of shares generated.
-	TotalShares int
-
-	// ShareCount is the number of shares successfully sealed to officer enclaves.
-	ShareCount int
-}
-
-// UnsealShareProgress reports the current state of quorum-based unsealing.
-type UnsealShareProgress struct {
-	// Required is the minimum number of shares needed to unseal.
-	Required int
-
-	// Submitted is the number of shares provided so far.
-	Submitted int
-
-	// Complete is true when the quorum threshold has been met.
-	Complete bool
-}
-
-// RecoveryKeysInfo contains the output of recovery key generation. Recovery
-// share material is never present here; recovery officers retrieve their
-// shares via the qrdb recovery share-claim flow.
-type RecoveryKeysInfo struct {
-	// Threshold is the minimum number of keys required for recovery.
-	Threshold int
-
-	// Total is the total number of keys generated.
-	Total int
-
-	// ShareCount is the number of recovery shares successfully sealed to officer enclaves.
-	ShareCount int
-}
-
-// RootTokenInfo represents a generated root token.
-type RootTokenInfo struct {
-	// Token is the hex-encoded root token value.
-	Token string
-
-	// CreatedAt records when the token was generated.
-	CreatedAt time.Time
-}
+// The facade has no result types of its own (#1559): every verb answers with
+// go-qrdb's transport response, unchanged, so each transport shapes the same
+// fields go-qrdb serves and none is dropped or reformatted on the way.
 
 // BarrierServiceMissingError signals that the barrier facade was constructed
 // without an underlying go-qrdb BarrierClient. The error is returned from
@@ -223,7 +159,7 @@ func NewBarrierService(client transport.BarrierClient) *BarrierService {
 }
 
 // BarrierStatus returns the current barrier status.
-func (s *BarrierService) BarrierStatus(ctx context.Context) (*BarrierStatusInfo, error) {
+func (s *BarrierService) BarrierStatus(ctx context.Context) (*transport.BarrierStatusResponse, error) {
 	if s.client == nil {
 		return nil, &BarrierServiceMissingError{}
 	}
@@ -231,18 +167,7 @@ func (s *BarrierService) BarrierStatus(ctx context.Context) (*BarrierStatusInfo,
 	if err != nil {
 		return nil, err
 	}
-	info := &BarrierStatusInfo{
-		Sealed:         resp.Sealed,
-		Strategy:       resp.Strategy,
-		HardwareBacked: resp.HardwareBacked,
-	}
-	if resp.InitializedAt != "" {
-		// The qrdb wire format is RFC3339; parse defensively.
-		if t, parseErr := time.Parse(time.RFC3339, resp.InitializedAt); parseErr == nil {
-			info.InitializedAt = t
-		}
-	}
-	return info, nil
+	return resp, nil
 }
 
 // BarrierInitialize initialises the barrier with a passphrase. For
@@ -340,7 +265,7 @@ func VerifyBarrierSealSOPIN(backend qrdbsdk.PINBackend, soPIN []byte) error {
 }
 
 // BarrierInitializeShamir initialises the barrier with Shamir secret sharing.
-func (s *BarrierService) BarrierInitializeShamir(ctx context.Context, secret []byte, threshold, total int) (*ShamirInitInfo, error) {
+func (s *BarrierService) BarrierInitializeShamir(ctx context.Context, secret []byte, threshold, total int) (*transport.BarrierInitializeShamirResponse, error) {
 	if s.client == nil {
 		return nil, &BarrierServiceMissingError{}
 	}
@@ -352,15 +277,11 @@ func (s *BarrierService) BarrierInitializeShamir(ctx context.Context, secret []b
 	if err != nil {
 		return nil, err
 	}
-	return &ShamirInitInfo{
-		Threshold:   resp.Threshold,
-		TotalShares: resp.TotalShares,
-		ShareCount:  resp.ShareCount,
-	}, nil
+	return resp, nil
 }
 
 // BarrierUnsealWithShare submits a single Shamir share.
-func (s *BarrierService) BarrierUnsealWithShare(ctx context.Context, share string) (*UnsealShareProgress, error) {
+func (s *BarrierService) BarrierUnsealWithShare(ctx context.Context, share string) (*transport.BarrierUnsealShareResponse, error) {
 	if s.client == nil {
 		return nil, &BarrierServiceMissingError{}
 	}
@@ -368,11 +289,7 @@ func (s *BarrierService) BarrierUnsealWithShare(ctx context.Context, share strin
 	if err != nil {
 		return nil, err
 	}
-	return &UnsealShareProgress{
-		Required:  resp.Required,
-		Submitted: resp.Submitted,
-		Complete:  resp.Complete,
-	}, nil
+	return resp, nil
 }
 
 // BarrierUnsealWithShares unseals the barrier using a complete set of shares.
@@ -384,7 +301,7 @@ func (s *BarrierService) BarrierUnsealWithShares(ctx context.Context, shares []s
 }
 
 // BarrierRekey generates new Shamir shares for the existing root key.
-func (s *BarrierService) BarrierRekey(ctx context.Context, threshold, total int) (*ShamirInitInfo, error) {
+func (s *BarrierService) BarrierRekey(ctx context.Context, threshold, total int) (*transport.BarrierRekeyResponse, error) {
 	if s.client == nil {
 		return nil, &BarrierServiceMissingError{}
 	}
@@ -395,15 +312,11 @@ func (s *BarrierService) BarrierRekey(ctx context.Context, threshold, total int)
 	if err != nil {
 		return nil, err
 	}
-	return &ShamirInitInfo{
-		Threshold:   resp.Threshold,
-		TotalShares: resp.TotalShares,
-		ShareCount:  resp.ShareCount,
-	}, nil
+	return resp, nil
 }
 
 // BarrierGenerateRecoveryKeys generates recovery shares.
-func (s *BarrierService) BarrierGenerateRecoveryKeys(ctx context.Context, threshold, total int) (*RecoveryKeysInfo, error) {
+func (s *BarrierService) BarrierGenerateRecoveryKeys(ctx context.Context, threshold, total int) (*transport.BarrierRecoveryKeysResponse, error) {
 	if s.client == nil {
 		return nil, &BarrierServiceMissingError{}
 	}
@@ -414,11 +327,7 @@ func (s *BarrierService) BarrierGenerateRecoveryKeys(ctx context.Context, thresh
 	if err != nil {
 		return nil, err
 	}
-	return &RecoveryKeysInfo{
-		Threshold:  resp.Threshold,
-		Total:      resp.Total,
-		ShareCount: resp.ShareCount,
-	}, nil
+	return resp, nil
 }
 
 // BarrierRecoverWithKeys unseals the barrier using recovery shares.
@@ -450,7 +359,7 @@ func (s *BarrierService) BarrierHasRecoveryKeys(ctx context.Context) (bool, erro
 }
 
 // BarrierGenerateRootToken creates a new root token from Shamir shares.
-func (s *BarrierService) BarrierGenerateRootToken(ctx context.Context, shares []string) (*RootTokenInfo, error) {
+func (s *BarrierService) BarrierGenerateRootToken(ctx context.Context, shares []string) (*transport.BarrierRootTokenResponse, error) {
 	if s.client == nil {
 		return nil, &BarrierServiceMissingError{}
 	}
@@ -458,13 +367,7 @@ func (s *BarrierService) BarrierGenerateRootToken(ctx context.Context, shares []
 	if err != nil {
 		return nil, err
 	}
-	info := &RootTokenInfo{Token: resp.Token}
-	if resp.CreatedAt != "" {
-		if t, parseErr := time.Parse(time.RFC3339, resp.CreatedAt); parseErr == nil {
-			info.CreatedAt = t
-		}
-	}
-	return info, nil
+	return resp, nil
 }
 
 // SetMigrator installs the EncryptionMigrator used by EnableEncryption.

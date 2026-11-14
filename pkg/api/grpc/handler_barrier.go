@@ -190,7 +190,7 @@ func (s *BarrierServer) BarrierStatus(ctx context.Context, _ *emptypb.Empty) (*p
 		Sealed:         info.Sealed,
 		Strategy:       info.Strategy,
 		HardwareBacked: info.HardwareBacked,
-		InitializedAt:  formatTime(info.InitializedAt),
+		InitializedAt:  info.InitializedAt,
 	}, nil
 }
 
@@ -384,7 +384,7 @@ func (s *BarrierServer) BarrierRootToken(ctx context.Context, req *pb.BarrierRoo
 	}
 	return &pb.BarrierRootTokenResponse{
 		Token:     info.Token,
-		CreatedAt: formatTime(info.CreatedAt),
+		CreatedAt: info.CreatedAt,
 	}, nil
 }
 
