@@ -212,6 +212,28 @@ is mapped onto the same permission in each of the three tables:
 its metadata is `read`. The two rotation-policy verbs have no REST route of
 their own and take read / write of the policy sub-resource on the same family.
 
+### Rotation policies are performed
+
+`SetRotationPolicy` writes the policy into the secret's metadata
+(`rotation_enabled`, `rotation_interval`, `rotation_next`,
+`rotation_retain_versions`). The `secrets.rotation` scheduler system job
+(`pkg/scheduler/handlers/secrets_rotation.go`, `pkg/service/secrets_rotation.go`)
+performs it: every scan interval (`Config.SecretsRotationScanInterval`, default
+5 minutes, a whole number of seconds) the job lists every tenant's secrets and,
+for each enabled policy whose `rotation_next` has passed:
+
+- writes the current value as a new version, under the owning tenant's context
+  as that tenant's own `RotateSecret` would, so the backend encrypts it afresh;
+- records `rotation_reason=scheduled` and `rotation_last` on the new version;
+- advances `rotation_next` by whole intervals past now, so a scan that missed
+  several periods rotates once and keeps the cadence.
+
+It is a system job, so a cluster performs each due rotation exactly once. A
+secret that cannot be read (deleted or disabled) is not rotated; a failed
+rotation is counted, logged and stays due for the next scan. The job keeps the
+secret's value: a new value comes from `RotateSecret`. `rotation_retain_versions`
+is stored; version retention is the backend's `max_versions`.
+
 The tables live in `pkg/api/rest/routes_permissions_generated.go`,
 `pkg/api/grpc/authz_mapping.go` (plus the `(qrdb.v1.permission)` annotations in
 `api/proto/kms.proto`, which qrdb's unified-server interceptor enforces) and
