@@ -997,8 +997,6 @@ func (m *cov90MockClosingQRDBProvider) ForShard(_ uint64) (*qrdbsdk.Client, erro
 	return nil, stderrors.New("not implemented")
 }
 
-func (m *cov90MockClosingQRDBProvider) IsEmbedded() bool { return true }
-
 type svcBoostUser struct {
 	id       string
 	username string

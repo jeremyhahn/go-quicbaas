@@ -200,9 +200,7 @@ func TestCovPush_StartDatabases_WithService(t *testing.T) {
 	srv.config.Databases.DataDir = filepath.Join(t.TempDir(), "databases")
 	srv.quicBaaSService = testutil.NewMockQuicBaaS()
 
-	srv.qrdbClient = NewShardedClient(nil,
-		WithStorageConfig(&srv.config.Storage),
-	)
+	srv.qrdbClient = newDetachedShardedClient()
 
 	err = srv.startDatabases()
 	assert.NoError(t, err)
@@ -219,9 +217,7 @@ func TestCovPush_StartDatabases_DefaultDataDir(t *testing.T) {
 	srv.config.Storage.DataDir = t.TempDir()
 	srv.quicBaaSService = testutil.NewMockQuicBaaS()
 
-	srv.qrdbClient = NewShardedClient(nil,
-		WithStorageConfig(&srv.config.Storage),
-	)
+	srv.qrdbClient = newDetachedShardedClient()
 
 	err = srv.startDatabases()
 	assert.NoError(t, err)

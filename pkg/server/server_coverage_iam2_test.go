@@ -381,7 +381,7 @@ func TestMemoryKVStore_ScanCallbackErrorAborts(t *testing.T) {
 // =============================================================================
 
 func TestShardedClient_ClosedReturnsTypedError(t *testing.T) {
-	sc := NewShardedClient(nil)
+	sc := newDetachedShardedClient()
 	require.NoError(t, sc.Close())
 
 	t.Run("ForShard", func(t *testing.T) {
