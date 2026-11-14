@@ -37,6 +37,7 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 	kmsclient "github.com/jeremyhahn/go-quicbaas/sdk/go/client/kms"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/errors"
+	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
 )
 
 // kmsServicePrefix is the gRPC-style service identifier the SDK uses to route
@@ -347,6 +348,21 @@ type kmsSetRotationPolicyRequest struct {
 // =============================================================================
 
 func (h *kmsRESTHandler) handleGenerateKey(ctx context.Context, req interface{}) (interface{}, error) {
+	if r, ok := req.(*service.GenerateKeyRequest); ok && r != nil {
+		body := &kmsGenerateKeyRequest{
+			Name:        r.Name,
+			Description: r.Description,
+			KeyAttributes: &kmsKeyAttributesRequest{
+				Algorithm:          string(service.KeyAlgorithmFromAttributes(r.KeyAttributes)),
+				KeyUsage:           kmsServiceUsagesToStrings(r.Usage),
+				Exportable:         r.Exportable || (r.KeyAttributes != nil && r.KeyAttributes.Exportable),
+				DeletionProtection: r.DeletionProtection,
+			},
+			Tags:  r.Tags,
+			Owner: r.Owner,
+		}
+		return h.postGenerateKey(ctx, body)
+	}
 	r, ok := req.(*kmsclient.GenerateKeyRequest)
 	if !ok || r == nil {
 		return nil, errors.NewInvalidInput("rest.kms.GenerateKey", "request is required")
@@ -363,6 +379,12 @@ func (h *kmsRESTHandler) handleGenerateKey(ctx context.Context, req interface{})
 		Tags:  r.Tags,
 		Owner: r.Owner,
 	}
+	return h.postGenerateKey(ctx, body)
+}
+
+// postGenerateKey sends a GenerateKey body to the REST server and maps the
+// reply to the service response.
+func (h *kmsRESTHandler) postGenerateKey(ctx context.Context, body *kmsGenerateKeyRequest) (*service.GenerateKeyResponse, error) {
 	var wire kmsGenerateKeyWire
 	if err := h.transport.doJSONRequest(ctx, http.MethodPost, "/api/v1/kms/keys", body, &wire); err != nil {
 		return nil, err
@@ -371,6 +393,22 @@ func (h *kmsRESTHandler) handleGenerateKey(ctx context.Context, req interface{})
 }
 
 func (h *kmsRESTHandler) handleImportKey(ctx context.Context, req interface{}) (interface{}, error) {
+	if r, ok := req.(*service.ImportKeyRequest); ok && r != nil {
+		body := &kmsImportKeyRequest{
+			KeyMaterial:   r.KeyMaterial,
+			WrappingKeyID: r.WrappingKeyID,
+			Name:          r.Name,
+			Description:   r.Description,
+			Tags:          r.Tags,
+			KeyAttributes: &kmsKeyAttributesRequest{
+				Algorithm:          string(service.KeyAlgorithmFromAttributes(r.KeyAttributes)),
+				KeyUsage:           kmsServiceUsagesToStrings(r.Usage),
+				Exportable:         r.KeyAttributes != nil && r.KeyAttributes.Exportable,
+				DeletionProtection: r.DeletionProtection,
+			},
+		}
+		return h.postImportKey(ctx, body)
+	}
 	r, ok := req.(*kmsclient.ImportKeyRequest)
 	if !ok || r == nil {
 		return nil, errors.NewInvalidInput("rest.kms.ImportKey", "request is required")
@@ -382,10 +420,17 @@ func (h *kmsRESTHandler) handleImportKey(ctx context.Context, req interface{}) (
 		Description:   r.Description,
 		Tags:          r.Tags,
 		KeyAttributes: &kmsKeyAttributesRequest{
-			Algorithm: r.Algorithm.String(),
-			KeyUsage:  kmsUsagesToStrings(r.Usage),
+			Algorithm:  r.Algorithm.String(),
+			KeyUsage:   kmsUsagesToStrings(r.Usage),
+			Exportable: r.Exportable,
 		},
 	}
+	return h.postImportKey(ctx, body)
+}
+
+// postImportKey sends an ImportKey body to the REST server and maps the reply
+// to the service response.
+func (h *kmsRESTHandler) postImportKey(ctx context.Context, body *kmsImportKeyRequest) (*service.ImportKeyResponse, error) {
 	var wire kmsGenerateKeyWire
 	if err := h.transport.doJSONRequest(ctx, http.MethodPost, "/api/v1/kms/keys/import", body, &wire); err != nil {
 		return nil, err
@@ -470,6 +515,12 @@ func (h *kmsRESTHandler) handleDeleteKey(ctx context.Context, req interface{}) (
 }
 
 func (h *kmsRESTHandler) handleExportKey(ctx context.Context, req interface{}) (interface{}, error) {
+	if r, ok := req.(*service.ExportKeyRequest); ok && r != nil {
+		if r.KeyID == "" {
+			return nil, errors.NewInvalidInput("rest.kms.ExportKey", "key ID is required")
+		}
+		return h.postExportKey(ctx, r)
+	}
 	r, ok := req.(*kmsclient.ExportKeyRequest)
 	if !ok || r == nil {
 		return nil, errors.NewInvalidInput("rest.kms.ExportKey", "request is required")
@@ -484,7 +535,13 @@ func (h *kmsRESTHandler) handleExportKey(ctx context.Context, req interface{}) (
 		Format:            r.Format.String(),
 		Version:           uint64(r.Version),
 	}
-	endpoint := "/api/v1/kms/keys/" + url.PathEscape(r.KeyID) + "/export"
+	return h.postExportKey(ctx, body)
+}
+
+// postExportKey sends an ExportKey body to the REST server and maps the reply
+// to the service response.
+func (h *kmsRESTHandler) postExportKey(ctx context.Context, body *service.ExportKeyRequest) (*service.ExportKeyResponse, error) {
+	endpoint := "/api/v1/kms/keys/" + url.PathEscape(body.KeyID) + "/export"
 	var wire kmsExportKeyWire
 	if err := h.transport.doJSONRequest(ctx, http.MethodPost, endpoint, body, &wire); err != nil {
 		return nil, err
@@ -501,6 +558,12 @@ func (h *kmsRESTHandler) handleExportKey(ctx context.Context, req interface{}) (
 }
 
 func (h *kmsRESTHandler) handleUnwrapKey(ctx context.Context, req interface{}) (interface{}, error) {
+	if r, ok := req.(*service.UnwrapKeyRequest); ok && r != nil {
+		if len(r.WrappedKey) == 0 {
+			return nil, errors.NewInvalidInput("rest.kms.UnwrapKey", "wrapped material is required")
+		}
+		return h.postUnwrapKey(ctx, r)
+	}
 	r, ok := req.(*kmsclient.UnwrapKeyRequest)
 	if !ok || r == nil {
 		return nil, errors.NewInvalidInput("rest.kms.UnwrapKey", "request is required")
@@ -518,6 +581,15 @@ func (h *kmsRESTHandler) handleUnwrapKey(ctx context.Context, req interface{}) (
 		SourceVersion:     uint64(r.SourceVersion),
 		Name:              r.Name,
 	}
+	if r.Exportable {
+		body.KeyAttributes = &xkmssdk.KeyAttributes{Exportable: true}
+	}
+	return h.postUnwrapKey(ctx, body)
+}
+
+// postUnwrapKey sends an UnwrapKey body to the REST server and maps the reply
+// to the service response.
+func (h *kmsRESTHandler) postUnwrapKey(ctx context.Context, body *service.UnwrapKeyRequest) (*service.UnwrapKeyResponse, error) {
 	var wire kmsUnwrapKeyWire
 	if err := h.transport.doJSONRequest(ctx, http.MethodPost, "/api/v1/kms/keys/unwrap", body, &wire); err != nil {
 		return nil, err
@@ -533,6 +605,12 @@ func (h *kmsRESTHandler) handleUnwrapKey(ctx context.Context, req interface{}) (
 }
 
 func (h *kmsRESTHandler) handleUpdateKeyStatus(ctx context.Context, req interface{}) (interface{}, error) {
+	if r, ok := req.(*service.UpdateKeyStatusRequest); ok && r != nil {
+		if r.KeyID == "" {
+			return nil, errors.NewInvalidInput("rest.kms.UpdateKeyStatus", "key ID is required")
+		}
+		return h.putKeyStatus(ctx, r.KeyID, string(r.Status))
+	}
 	r, ok := req.(*kmsclient.UpdateKeyStatusRequest)
 	if !ok || r == nil {
 		return nil, errors.NewInvalidInput("rest.kms.UpdateKeyStatus", "request is required")
@@ -540,8 +618,14 @@ func (h *kmsRESTHandler) handleUpdateKeyStatus(ctx context.Context, req interfac
 	if r.KeyID == "" {
 		return nil, errors.NewInvalidInput("rest.kms.UpdateKeyStatus", "key ID is required")
 	}
-	body := &kmsUpdateKeyStatusRequest{Status: kmsStatusToString(r.Status)}
-	endpoint := "/api/v1/kms/keys/" + url.PathEscape(r.KeyID) + "/status"
+	return h.putKeyStatus(ctx, r.KeyID, kmsStatusToString(r.Status))
+}
+
+// putKeyStatus sends a status change for keyID to the REST server and maps
+// the reply to the service response.
+func (h *kmsRESTHandler) putKeyStatus(ctx context.Context, keyID, status string) (*service.UpdateKeyStatusResponse, error) {
+	body := &kmsUpdateKeyStatusRequest{Status: status}
+	endpoint := "/api/v1/kms/keys/" + url.PathEscape(keyID) + "/status"
 	var wire kmsUpdateKeyStatusWire
 	if err := h.transport.doJSONRequest(ctx, http.MethodPut, endpoint, body, &wire); err != nil {
 		return nil, err
@@ -1012,6 +1096,16 @@ func kmsUsagesToStrings(usages []kmsclient.KeyUsage) []string {
 	return out
 }
 
+// kmsServiceUsagesToStrings converts service key usages to their wire strings.
+// Service usages already use the server's lowercase convention.
+func kmsServiceUsagesToStrings(usages []service.KeyUsage) []string {
+	out := make([]string, 0, len(usages))
+	for _, u := range usages {
+		out = append(out, string(u))
+	}
+	return out
+}
+
 func kmsUsageToString(u kmsclient.KeyUsage) string {
 	switch u {
 	case kmsclient.KeyUsageEncrypt:
@@ -1051,22 +1145,9 @@ func kmsStatusToString(s kmsclient.KeyStatus) string {
 // accepts. ECDH-ES uses the RFC 7518 §4.6 name ECDH-ES+A256KW, as the gRPC
 // transport does. An unknown value maps to "", which the service refuses.
 func kmsWrappingAlgToString(a kmsclient.WrappingAlgorithm) string {
-	switch a {
-	case kmsclient.WrapAlgAESKW:
-		return "AES-KW"
-	case kmsclient.WrapAlgAESKWP:
-		return "AES-KWP"
-	case kmsclient.WrapAlgAESGCM:
-		return "AES-GCM"
-	case kmsclient.WrapAlgRSAOAEPSHA256:
-		return "RSA-OAEP-SHA256"
-	case kmsclient.WrapAlgRSAOAEPSHA384:
-		return "RSA-OAEP-SHA384"
-	case kmsclient.WrapAlgRSAOAEPSHA512:
-		return "RSA-OAEP-SHA512"
-	case kmsclient.WrapAlgECDHESA256KW:
-		return "ECDH-ES+A256KW"
-	default:
+	name, known := a.ServiceName()
+	if !known {
 		return ""
 	}
+	return name
 }

@@ -489,6 +489,12 @@ type mockKVClientForCoverage struct{}
 func (m *mockKVClientForCoverage) Put(ctx context.Context, req *PutRequest) (*PutResponse, error) {
 	return nil, nil
 }
+func (m *mockKVClientForCoverage) CompareAndSwap(ctx context.Context, req *CompareAndSwapRequest) (bool, error) {
+	return false, nil
+}
+func (m *mockKVClientForCoverage) PutIfAbsent(ctx context.Context, req *PutIfAbsentRequest) (bool, error) {
+	return false, nil
+}
 func (m *mockKVClientForCoverage) Get(ctx context.Context, req *GetRequest) (*GetResponse, error) {
 	return nil, nil
 }

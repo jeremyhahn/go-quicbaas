@@ -13,7 +13,8 @@
 
 package embedded
 
-// Policy Simulate and PEP CheckBatch handlers (go-quicbaas#1564).
+// Policy Simulate and PEP Check and CheckBatch handlers (go-quicbaas#1564,
+// go-quicbaas#1814).
 //
 // Both route to the policy engine the other transports already call: the
 // gRPC and REST transports map Simulate onto the TestPolicy RPC, which
@@ -86,6 +87,73 @@ func handleIAMPolicySimulate(ctx context.Context, svc service.QuicBaaS, req inte
 	return resp, nil
 }
 
+// handleIAMPEPCheck evaluates the client's single check through the policy
+// engine, in the tenant the call is bound to, as CheckBatch does for each
+// of its checks. The client sends the check wrapped in its Request field; a
+// check naming another tenant is refused before the engine is called.
+func handleIAMPEPCheck(ctx context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error) {
+	pe, err := policyEngineFor(ctx, svc)
+	if err != nil {
+		return nil, err
+	}
+	r, ok := iamRequestStructPtr(req, "Request").(*iamsdk.CheckRequest)
+	if !ok || r == nil {
+		return nil, NewInvalidRequestTypeError(pepServiceName, "Check",
+			"*iam.CheckRequest", typeNameOf(req))
+	}
+	check, err := pepCheckFor(ctx, pepServiceName+"/Check", r)
+	if err != nil {
+		return nil, err
+	}
+	decision, err := pe.Evaluate(ctx, check)
+	if err != nil {
+		return nil, err
+	}
+	resp := pepCheckResponse(decision)
+	return &resp, nil
+}
+
+// pepCheckFor converts one client check to the policy engine's, bound to
+// the tenant the call acts in; a check naming another tenant is refused.
+func pepCheckFor(ctx context.Context, op string, r *iamsdk.CheckRequest) (*iam.CheckRequest, error) {
+	requested := r.TenantID
+	if requested == "" {
+		requested = r.Subject.TenantID
+	}
+	tenantID, err := tenantctx.Target(ctx, op, requested)
+	if err != nil {
+		return nil, err
+	}
+	return &iam.CheckRequest{
+		Subject: iam.Subject{
+			ID:         r.Subject.ID,
+			TenantID:   tenantID,
+			Roles:      r.Subject.Roles,
+			Groups:     r.Subject.Groups,
+			Attributes: r.Subject.Attributes,
+		},
+		Action:   r.Action,
+		Resource: r.Resource,
+		Context:  r.Context,
+	}, nil
+}
+
+// pepCheckResponse converts the policy engine's decision to the client's.
+func pepCheckResponse(decision *iam.CheckResponse) iamsdk.CheckResponse {
+	result := iamsdk.CheckResponse{
+		Allowed:          decision.Allowed,
+		Effect:           iamsdk.EffectDeny,
+		MatchedPolicy:    decision.MatchedPolicy,
+		MatchedRule:      decision.MatchedRule,
+		EvaluationTimeNs: decision.EvaluationTimeNs,
+		Reason:           decision.Reason,
+	}
+	if decision.Allowed {
+		result.Effect = iamsdk.EffectAllow
+	}
+	return result
+}
+
 // handleIAMPEPCheckBatch evaluates every check of the batch through the
 // policy engine, in request order, stopping after the first denial when the
 // batch sets StopOnDeny. Each check acts in the tenant the call is
@@ -103,27 +171,12 @@ func handleIAMPEPCheckBatch(ctx context.Context, svc service.QuicBaaS, req inter
 	}
 
 	checks := make([]*iam.CheckRequest, 0, len(batch.Requests))
-	for _, r := range batch.Requests {
-		requested := r.TenantID
-		if requested == "" {
-			requested = r.Subject.TenantID
-		}
-		tenantID, err := tenantctx.Target(ctx, pepServiceName+"/CheckBatch", requested)
+	for i := range batch.Requests {
+		check, err := pepCheckFor(ctx, pepServiceName+"/CheckBatch", &batch.Requests[i])
 		if err != nil {
 			return nil, err
 		}
-		checks = append(checks, &iam.CheckRequest{
-			Subject: iam.Subject{
-				ID:         r.Subject.ID,
-				TenantID:   tenantID,
-				Roles:      r.Subject.Roles,
-				Groups:     r.Subject.Groups,
-				Attributes: r.Subject.Attributes,
-			},
-			Action:   r.Action,
-			Resource: r.Resource,
-			Context:  r.Context,
-		})
+		checks = append(checks, check)
 	}
 
 	resp := &iamsdk.CheckBatchResponse{
@@ -135,16 +188,8 @@ func handleIAMPEPCheckBatch(ctx context.Context, svc service.QuicBaaS, req inter
 		if err != nil {
 			return nil, err
 		}
-		result := iamsdk.CheckResponse{
-			Allowed:          decision.Allowed,
-			Effect:           iamsdk.EffectDeny,
-			MatchedPolicy:    decision.MatchedPolicy,
-			MatchedRule:      decision.MatchedRule,
-			EvaluationTimeNs: decision.EvaluationTimeNs,
-			Reason:           decision.Reason,
-		}
+		result := pepCheckResponse(decision)
 		if decision.Allowed {
-			result.Effect = iamsdk.EffectAllow
 			resp.AllowedCount++
 		} else {
 			resp.AllAllowed = false

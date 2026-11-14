@@ -103,6 +103,14 @@ func (m *mockService) Put(ctx context.Context, req *service.PutRequest) (*servic
 	return &service.PutResponse{ID: req.ID, Version: 1, Timestamp: time.Now().Unix()}, nil
 }
 
+func (m *mockService) CompareAndSwap(_ context.Context, _ *service.CompareAndSwapRequest) (*service.ConditionalPutResponse, error) {
+	return &service.ConditionalPutResponse{}, nil
+}
+
+func (m *mockService) PutIfAbsent(_ context.Context, _ *service.PutIfAbsentRequest) (*service.ConditionalPutResponse, error) {
+	return &service.ConditionalPutResponse{}, nil
+}
+
 func (m *mockService) Get(ctx context.Context, req *service.GetRequest) (*service.GetResponse, error) {
 	if m.getFunc != nil {
 		return m.getFunc(ctx, req)
@@ -144,6 +152,10 @@ func (m *mockService) BatchGet(ctx context.Context, req *service.BatchGetRequest
 }
 
 func (m *mockService) BatchDelete(ctx context.Context, req *service.BatchDeleteRequest) (*service.BatchDeleteResponse, error) {
+	return nil, nil
+}
+
+func (m *mockService) BatchExecute(ctx context.Context, req *service.BatchExecuteRequest) (*service.BatchExecuteResponse, error) {
 	return nil, nil
 }
 

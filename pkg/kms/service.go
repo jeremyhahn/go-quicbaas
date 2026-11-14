@@ -318,7 +318,7 @@ func (s *KMSService) GenerateKey(ctx context.Context, attrs *kctypes.KeyAttribut
 //
 // In multi-backend mode, the backend is selected based on key ID structure
 // or algorithm routing.
-func (s *KMSService) ImportKey(ctx context.Context, keyID string, material []byte, algorithm string) (interface{}, error) {
+func (s *KMSService) ImportKey(ctx context.Context, keyID string, material []byte, algorithm string, exportable bool) (interface{}, error) {
 	// Use default algorithm if none specified
 	if algorithm == "" {
 		algorithm = s.defaultAlgorithm
@@ -365,7 +365,9 @@ func (s *KMSService) ImportKey(ctx context.Context, keyID string, material []byt
 	}
 
 	// Import key via backend
-	metadata, err := backend.ImportKey(ctx, keyID, material, algorithm, nil)
+	metadata, err := backend.ImportKey(ctx, keyID, material, algorithm, map[string]interface{}{
+		"exportable": exportable,
+	})
 	if err != nil {
 		return nil, &errors.QBError{
 			Code: errors.ErrInternal,

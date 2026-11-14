@@ -612,51 +612,41 @@ func mcpArgsToKeyAttributes(args map[string]interface{}) *kctypes.KeyAttributes 
 	switch {
 	case strings.Contains(upper, "AES-128") || strings.Contains(upper, "AES128"):
 		attrs.SymmetricAlgorithm = kctypes.SymmetricAES128GCM
-		attrs.KeyType = kctypes.KeyTypeEncryption
 	case strings.Contains(upper, "AES-192") || strings.Contains(upper, "AES192"):
 		attrs.SymmetricAlgorithm = kctypes.SymmetricAES192GCM
-		attrs.KeyType = kctypes.KeyTypeEncryption
 	case strings.Contains(upper, "AES-256") || strings.Contains(upper, "AES256"):
 		attrs.SymmetricAlgorithm = kctypes.SymmetricAES256GCM
-		attrs.KeyType = kctypes.KeyTypeEncryption
 	case strings.Contains(upper, "XCHACHA20"):
 		attrs.SymmetricAlgorithm = kctypes.SymmetricXChaCha20Poly1305
-		attrs.KeyType = kctypes.KeyTypeEncryption
 	case strings.Contains(upper, "CHACHA20"):
 		attrs.SymmetricAlgorithm = kctypes.SymmetricChaCha20Poly1305
-		attrs.KeyType = kctypes.KeyTypeEncryption
 	case strings.Contains(upper, "RSA-2048") || strings.Contains(upper, "RSA2048"):
 		attrs.KeyAlgorithm = x509.RSA
 		attrs.RSAAttributes = &kctypes.RSAAttributes{KeySize: 2048}
-		attrs.KeyType = kctypes.KeyTypeSigning
 	case strings.Contains(upper, "RSA-3072") || strings.Contains(upper, "RSA3072"):
 		attrs.KeyAlgorithm = x509.RSA
 		attrs.RSAAttributes = &kctypes.RSAAttributes{KeySize: 3072}
-		attrs.KeyType = kctypes.KeyTypeSigning
 	case strings.Contains(upper, "RSA-4096") || strings.Contains(upper, "RSA4096"):
 		attrs.KeyAlgorithm = x509.RSA
 		attrs.RSAAttributes = &kctypes.RSAAttributes{KeySize: 4096}
-		attrs.KeyType = kctypes.KeyTypeSigning
 	case strings.Contains(upper, "ECDSA-P256") || upper == "P256":
 		attrs.KeyAlgorithm = x509.ECDSA
 		attrs.ECCAttributes = &kctypes.ECCAttributes{Curve: elliptic.P256()}
-		attrs.KeyType = kctypes.KeyTypeSigning
 	case strings.Contains(upper, "ECDSA-P384") || upper == "P384":
 		attrs.KeyAlgorithm = x509.ECDSA
 		attrs.ECCAttributes = &kctypes.ECCAttributes{Curve: elliptic.P384()}
-		attrs.KeyType = kctypes.KeyTypeSigning
 	case strings.Contains(upper, "ECDSA-P521") || upper == "P521":
 		attrs.KeyAlgorithm = x509.ECDSA
 		attrs.ECCAttributes = &kctypes.ECCAttributes{Curve: elliptic.P521()}
-		attrs.KeyType = kctypes.KeyTypeSigning
 	case strings.Contains(upper, "ED25519"):
 		attrs.KeyAlgorithm = x509.Ed25519
-		attrs.KeyType = kctypes.KeyTypeSigning
 	default:
 		// Default to AES-256-GCM for unknown algorithms
 		attrs.SymmetricAlgorithm = kctypes.SymmetricAES256GCM
-		attrs.KeyType = kctypes.KeyTypeEncryption
 	}
+
+	// The KMS service's rule: symmetric keys are secret, asymmetric keys sign.
+	attrs.KeyType = service.DefaultKeyType(attrs)
 
 	return attrs
 }
@@ -917,7 +907,7 @@ func (r *ToolRegistry) executeKMSImportKey(ctx context.Context, args map[string]
 	name := getString(args, "name")
 	keyID := name
 
-	result, err := kmsMgr.ImportKey(ctx, keyID, keyMaterial, algorithm)
+	result, err := kmsMgr.ImportKey(ctx, keyID, keyMaterial, algorithm, getBool(args, "exportable"))
 	if err != nil {
 		return nil, err
 	}

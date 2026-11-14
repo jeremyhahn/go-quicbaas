@@ -58,6 +58,21 @@ type XKMSBackend struct {
 }
 
 // XKMSBackendConfig configures the XKMSBackend.
+// symmetricKeyType is the KeyType every symmetric key is generated and
+// addressed under. go-xkms's symmetric provider lists only "secret" keys as
+// symmetric, with their stored Exportable flag, and skips a symmetric key of
+// any other type, so go-xkms could neither list nor export it (#1768).
+const symmetricKeyType = kctypes.KeyTypeSecret
+
+// symmetricKeyTypeSegment is symmetricKeyType as the type segment of a
+// go-xkms kid ("backend:type:algo:keyname").
+var symmetricKeyTypeSegment = strings.ToLower(symmetricKeyType.String())
+
+// legacySymmetricKeyTypeSegment is the kid type segment symmetric keys were
+// stored under before symmetricKeyType (#1768). Lookups fall back to it so
+// keys and rotated versions made before the change stay reachable.
+const legacySymmetricKeyTypeSegment = "encryption"
+
 type XKMSBackendConfig struct {
 	// BackendType is the type of go-xkms backend to use.
 	// Use config.BackendType constants (e.g., config.BackendTypeSoftware).
@@ -200,7 +215,11 @@ func (kb *XKMSBackend) CreateKey(ctx context.Context, attrs *kctypes.KeyAttribut
 
 	// Generate key using go-xkms
 	if isSymmetric {
-		// Generate symmetric key
+		if kb.legacySymmetricKeyExists(ctx, attrs.CN, kb.attrsToAlgorithmString(attrs)) {
+			return nil, api.NewAlreadyExistsError("XKMSBackend.CreateKey", "key", attrs.CN)
+		}
+		// Generate symmetric key under the type every lookup here addresses.
+		attrs.KeyType = symmetricKeyType
 		_, err := xkms.GenerateSymmetricKey(ctx, string(kb.backendType), attrs)
 		if err != nil {
 			return nil, api.NewSymmetricKeyGenerationError("XKMSBackend.CreateKey", err)
@@ -249,8 +268,11 @@ func (kb *XKMSBackend) ImportKey(ctx context.Context, keyID string, material []b
 		return nil, ErrKeyMaterialEmpty
 	}
 
-	// Build key attributes for the imported key
+	// Build key attributes for the imported key. go-xkms records Exportable
+	// from these attributes at import and enforces it on export, so the flag
+	// has to reach it here; the metadata below only mirrors it (#1779).
 	attrs := kb.algorithmToKeyAttributes(keyID, algorithm)
+	attrs.Exportable = options["exportable"] == true
 
 	// Symmetric and asymmetric import are ONE operation. The algorithm rides on
 	// attrs, and go-xkms interprets the material accordingly: raw bytes for a
@@ -266,6 +288,10 @@ func (kb *XKMSBackend) ImportKey(ctx context.Context, keyID string, material []b
 		kind = "asymmetric"
 	}
 
+	if kind == "symmetric" && kb.legacySymmetricKeyExists(ctx, keyID, algorithm) {
+		return nil, api.NewAlreadyExistsError("XKMSBackend.ImportKey", "key", keyID)
+	}
+
 	if err := xkms.ImportKeyMaterial(ctx, string(kb.backendType), attrs, material); err != nil {
 		return nil, api.NewKeyImportError("XKMSBackend.ImportKey", kind, err)
 	}
@@ -273,22 +299,18 @@ func (kb *XKMSBackend) ImportKey(ctx context.Context, keyID string, material []b
 	// Build metadata
 	now := time.Now()
 	meta := &KeyMetadata{
-		KeyID:     keyID,
-		Algorithm: algorithm,
-		State:     KeyStateEnabled,
-		Version:   1,
-		Created:   now,
-		Updated:   now,
+		KeyID:      keyID,
+		Algorithm:  algorithm,
+		State:      KeyStateEnabled,
+		Version:    1,
+		Exportable: attrs.Exportable,
+		Created:    now,
+		Updated:    now,
 	}
 
 	// Extract options if provided
-	if options != nil {
-		if desc, ok := options["description"].(string); ok {
-			meta.Description = desc
-		}
-		if exp, ok := options["exportable"].(bool); ok {
-			meta.Exportable = exp
-		}
+	if desc, ok := options["description"].(string); ok {
+		meta.Description = desc
 	}
 
 	// Cache metadata
@@ -349,11 +371,14 @@ func (kb *XKMSBackend) GetKeyMetadata(ctx context.Context, keyID string) (*KeyMe
 			{"CHACHA20-POLY1305", "chacha20-poly1305"},
 		}
 
+	symmetricLookup:
 		for _, sf := range symmetricFormats {
-			kid := fmt.Sprintf("%s:encryption:%s:%s", kb.backendType, sf.format, keyID)
-			if _, err := xkms.GetSymmetricKey(ctx, kid); err == nil {
-				foundAlgorithm = sf.algo
-				break
+			for _, segment := range []string{symmetricKeyTypeSegment, legacySymmetricKeyTypeSegment} {
+				kid := fmt.Sprintf("%s:%s:%s:%s", kb.backendType, segment, sf.format, keyID)
+				if _, err := xkms.GetSymmetricKey(ctx, kid); err == nil {
+					foundAlgorithm = sf.algo
+					break symmetricLookup
+				}
 			}
 		}
 	}
@@ -611,13 +636,13 @@ func (kb *XKMSBackend) DeleteKey(ctx context.Context, keyID string) error {
 		attrs = &kctypes.KeyAttributes{
 			CN:                 keyID,
 			StoreType:          kctypes.StoreType(string(kb.backendType)),
-			KeyType:            kctypes.KeyTypeEncryption,
+			KeyType:            symmetricKeyType,
 			SymmetricAlgorithm: kctypes.SymmetricAES256GCM,
 		}
 	}
 
 	// Delete from go-xkms using attributes
-	if err := xkms.DeleteKey(ctx, attrs); err != nil {
+	if err := kb.deleteWithLegacyFallback(ctx, attrs); err != nil {
 		if stderrors.Is(err, xkms.ErrKeyNotFound) {
 			return ErrKeyNotFound
 		}
@@ -625,10 +650,10 @@ func (kb *XKMSBackend) DeleteKey(ctx context.Context, keyID string) error {
 		defaultAttrs := &kctypes.KeyAttributes{
 			CN:                 keyID,
 			StoreType:          kctypes.StoreType(string(kb.backendType)),
-			KeyType:            kctypes.KeyTypeEncryption,
+			KeyType:            symmetricKeyType,
 			SymmetricAlgorithm: kctypes.SymmetricAES256GCM,
 		}
-		if err2 := xkms.DeleteKey(ctx, defaultAttrs); err2 != nil {
+		if err2 := kb.deleteWithLegacyFallback(ctx, defaultAttrs); err2 != nil {
 			if stderrors.Is(err2, xkms.ErrKeyNotFound) {
 				return ErrKeyNotFound
 			}
@@ -653,11 +678,61 @@ func (kb *XKMSBackend) formatKeyID(keyID string) string {
 }
 
 // buildFullKeyID constructs the full key ID format expected by go-xkms for crypto operations.
-// Format: "backend:type:algo:keyname" (e.g., "software:encryption:aes256-gcm:my-key").
+// Format: "backend:type:algo:keyname" (e.g., "software:secret:aes256-gcm:my-key").
 func (kb *XKMSBackend) buildFullKeyID(keyID string, algorithm string) string {
 	// Map algorithm to go-xkms format
 	algoFormat := kb.algorithmToKeyIDFormat(algorithm)
-	return fmt.Sprintf("%s:encryption:%s:%s", kb.backendType, algoFormat, keyID)
+	return fmt.Sprintf("%s:%s:%s:%s", kb.backendType, symmetricKeyTypeSegment, algoFormat, keyID)
+}
+
+// resolveSymmetricKID returns the go-xkms kid a symmetric key is stored
+// under. It prefers the current secret-typed kid and falls back to the legacy
+// encryption-typed kid (legacySymmetricKeyTypeSegment) so keys and rotated
+// versions made before #1768 stay usable. When neither exists it returns the
+// secret-typed kid, so the caller's error names the current form.
+func (kb *XKMSBackend) resolveSymmetricKID(ctx context.Context, keyID, algorithm string) string {
+	kid := kb.buildFullKeyID(keyID, algorithm)
+	if _, err := xkms.GetSymmetricKey(ctx, kid); err == nil {
+		return kid
+	}
+	legacyKID := fmt.Sprintf("%s:%s:%s:%s", kb.backendType, legacySymmetricKeyTypeSegment, kb.algorithmToKeyIDFormat(algorithm), keyID)
+	if _, err := xkms.GetSymmetricKey(ctx, legacyKID); err == nil {
+		return legacyKID
+	}
+	return kid
+}
+
+// legacySymmetricKeyExists reports whether a symmetric key named keyID is
+// stored under the pre-#1768 encryption-typed kid. go-xkms checks existence
+// only at the secret-typed kid a new key is generated or imported under, so
+// without this check a new key would shadow the legacy key of the same name
+// and old ciphertext would stop decrypting.
+func (kb *XKMSBackend) legacySymmetricKeyExists(ctx context.Context, keyID, algorithm string) bool {
+	legacyKID := fmt.Sprintf("%s:%s:%s:%s", kb.backendType, legacySymmetricKeyTypeSegment, kb.algorithmToKeyIDFormat(algorithm), keyID)
+	_, err := xkms.GetSymmetricKey(ctx, legacyKID)
+	return err == nil
+}
+
+// deleteWithLegacyFallback deletes the key attrs names. When a symmetric key
+// is not found under symmetricKeyType it retries once under the legacy
+// KeyTypeEncryption, so a key made before #1768 can still be deleted.
+func (kb *XKMSBackend) deleteWithLegacyFallback(ctx context.Context, attrs *kctypes.KeyAttributes) error {
+	err := xkms.DeleteKey(ctx, attrs)
+	if err == nil || !isKeyNotFound(err) || attrs.KeyType != symmetricKeyType {
+		return err
+	}
+	legacyAttrs := *attrs
+	legacyAttrs.KeyType = kctypes.KeyTypeEncryption
+	return xkms.DeleteKey(ctx, &legacyAttrs)
+}
+
+// isKeyNotFound reports whether err is a key-not-found error from this
+// package's xkms layer or from the go-xkms SDK backend beneath it. The SDK's
+// delete wraps its not-found in an *xkms.ErrKeyOperation that does not unwrap
+// to a sentinel, so its message is matched as well.
+func isKeyNotFound(err error) bool {
+	return stderrors.Is(err, xkms.ErrKeyNotFound) || stderrors.Is(err, kctypes.ErrKeyNotFound) ||
+		strings.Contains(err.Error(), "key not found")
 }
 
 // buildSigningKeyID constructs the full key ID format for signing operations.
@@ -740,7 +815,7 @@ func (kb *XKMSBackend) Encrypt(ctx context.Context, keyID string, plaintext, aad
 
 	// Build the full key ID with algorithm info for go-xkms
 	// Format: "backend:type:algo:keyname"
-	kid := kb.buildFullKeyID(actualKeyID, meta.Algorithm)
+	kid := kb.resolveSymmetricKID(ctx, actualKeyID, meta.Algorithm)
 
 	// Use go-xkms encrypt
 	opts := &kctypes.EncryptOptions{
@@ -806,7 +881,7 @@ func (kb *XKMSBackend) Decrypt(ctx context.Context, keyID string, ciphertext, aa
 
 	// Build the full key ID with algorithm info for go-xkms
 	// Format: "backend:type:algo:keyname"
-	kid := kb.buildFullKeyID(actualKeyID, meta.Algorithm)
+	kid := kb.resolveSymmetricKID(ctx, actualKeyID, meta.Algorithm)
 
 	// Use go-xkms decrypt
 	opts := &kctypes.DecryptOptions{
@@ -981,7 +1056,7 @@ func (kb *XKMSBackend) algorithmToKeyAttributes(keyID, algorithm string) *kctype
 	attrs := &kctypes.KeyAttributes{
 		CN:        keyID,
 		StoreType: kctypes.StoreType(string(kb.backendType)),
-		KeyType:   kctypes.KeyTypeEncryption,
+		KeyType:   symmetricKeyType,
 	}
 
 	alg := strings.ToUpper(algorithm)

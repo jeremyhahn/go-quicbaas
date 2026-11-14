@@ -18,6 +18,8 @@ package server
 import (
 	"time"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+
 	restapi "github.com/jeremyhahn/go-quicbaas/pkg/api/rest"
 	"github.com/jeremyhahn/go-quicbaas/pkg/api/sealedwindow"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
@@ -57,6 +59,10 @@ func (s *Server) startSealedRESTServer() error {
 		TLSEnabled:        s.config.Security.TLSEnabled,
 		TLSConfig:         clonedTLSConfig,
 		SPIFFETrustDomain: s.config.IAM.SPIFFETrustDomain,
+		// quicbaasd serves QUIC as REST over HTTP/3 on the UDP side of the
+		// REST port, as the full boot's unified server does, so a sealed
+		// node answers the allowlisted health routes over QUIC too.
+		HTTP3: clonedTLSConfig != nil,
 	}
 
 	restServer, err := newREST(s.sealedWindowFacade, restConfig, s.logger)
@@ -85,6 +91,14 @@ func (s *Server) startSealedRESTServer() error {
 	// replaces it.
 	restServer.SetSealedWindowGate(constantSealedProbe{}, s.OperationalProbe(),
 		sealedwindow.RESTAllowlist())
+
+	// Allowlisted routes quicbaas does not serve natively (officer
+	// registration, the ceremony flows) are served by qrdb's sealed REST
+	// surface over the node's OWN seal services, the same instances the
+	// sealed gRPC qrdb.v1 service is registered with.
+	restServer.SetSealedWindowHandler(qrdbsdk.NewSealedWindowHandler(
+		s.qrdbBarrierServicer(), s.qrdbCeremonyServicer(), s.qrdbCredentialServicer(),
+		qrdbsdk.NewSealedWindowListenerProbe(constantSealedProbe{}, s.qrdbCeremonyServicer())))
 
 	if err := restServer.Start(address); err != nil {
 		return &SealedWindowBootError{Stage: "sealed rest listener", Cause: err}

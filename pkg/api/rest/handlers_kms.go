@@ -624,6 +624,67 @@ func (s *Server) HandleImportKey(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Route through the service layer, which scopes the key name to the
+	// caller's tenant.
+	if kmsSvc := s.service.KMS(); kmsSvc != nil {
+		keyID := req.Name
+		if keyID == "" {
+			keyID = fmt.Sprintf("key-import-%d", time.Now().UnixNano())
+		}
+
+		attrReq := req.KeyAttributes
+		if attrReq == nil {
+			attrReq = &KeyAttributesRequest{Algorithm: "AES-256-GCM"}
+		}
+		attrs, err := keyAttributesRequestToXKMS(keyID, attrReq)
+		if err != nil {
+			RespondBadRequest(w, r, err.Error())
+			return
+		}
+
+		var usage []service.KeyUsage
+		if req.KeyAttributes != nil && len(req.KeyAttributes.KeyUsage) > 0 {
+			usage = make([]service.KeyUsage, len(req.KeyAttributes.KeyUsage))
+			for i, u := range req.KeyAttributes.KeyUsage {
+				usage[i] = service.KeyUsage(u)
+			}
+		}
+
+		svcResp, err := kmsSvc.ImportKey(ctx, &service.ImportKeyRequest{
+			KeyMaterial:        req.KeyMaterial,
+			WrappingKeyID:      req.WrappingKeyID,
+			KeyAttributes:      attrs,
+			Name:               keyID,
+			Description:        req.Description,
+			Usage:              usage,
+			DeletionProtection: attrReq.DeletionProtection,
+			Tags:               req.Tags,
+		})
+		if err != nil {
+			s.handleKMSError(w, r, err)
+			return
+		}
+
+		key, err := svcKeyHandleToResponse(svcResp.Key)
+		if err != nil {
+			s.handleServiceError(w, r, err)
+			return
+		}
+		metadata, err := svcMetadataToRESTResponse(svcResp.Metadata)
+		if err != nil {
+			s.handleServiceError(w, r, err)
+			return
+		}
+
+		RespondJSON(w, r, http.StatusCreated, &GenerateKeyRESTResponse{
+			Key:       key,
+			Metadata:  metadata,
+			Timestamp: svcResp.Timestamp.Unix(),
+		})
+		return
+	}
+
+	// Fallback: call KMS manager directly (no tenant isolation)
 	kmsMgr := s.service.KMSManager()
 	if kmsMgr == nil {
 		RespondError(w, r, http.StatusInternalServerError, ErrKMSServiceUnavailable)
@@ -643,7 +704,8 @@ func (s *Server) HandleImportKey(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Call KMS manager to import key
-	result, err := kmsMgr.ImportKey(ctx, keyID, req.KeyMaterial, algorithm)
+	exportable := req.KeyAttributes != nil && req.KeyAttributes.Exportable
+	result, err := kmsMgr.ImportKey(ctx, keyID, req.KeyMaterial, algorithm, exportable)
 	if err != nil {
 		s.handleKMSError(w, r, err)
 		return
@@ -1997,51 +2059,42 @@ func keyAttributesRequestToXKMS(keyID string, req *KeyAttributesRequest) (*kctyp
 	switch {
 	case strings.Contains(algorithm, "AES-128") || strings.Contains(algorithm, "AES128"):
 		attrs.SymmetricAlgorithm = kctypes.SymmetricAES128GCM
-		attrs.KeyType = kctypes.KeyTypeEncryption
 	case strings.Contains(algorithm, "AES-192") || strings.Contains(algorithm, "AES192"):
 		attrs.SymmetricAlgorithm = kctypes.SymmetricAES192GCM
-		attrs.KeyType = kctypes.KeyTypeEncryption
 	case strings.Contains(algorithm, "AES-256") || strings.Contains(algorithm, "AES256"):
 		attrs.SymmetricAlgorithm = kctypes.SymmetricAES256GCM
-		attrs.KeyType = kctypes.KeyTypeEncryption
 	case strings.Contains(algorithm, "XCHACHA20"):
 		attrs.SymmetricAlgorithm = kctypes.SymmetricXChaCha20Poly1305
-		attrs.KeyType = kctypes.KeyTypeEncryption
 	case strings.Contains(algorithm, "CHACHA20"):
 		attrs.SymmetricAlgorithm = kctypes.SymmetricChaCha20Poly1305
-		attrs.KeyType = kctypes.KeyTypeEncryption
 	case strings.Contains(algorithm, "RSA-2048") || strings.Contains(algorithm, "RSA2048"):
 		attrs.KeyAlgorithm = x509.RSA
 		attrs.RSAAttributes = &kctypes.RSAAttributes{KeySize: 2048}
-		attrs.KeyType = kctypes.KeyTypeSigning
 	case strings.Contains(algorithm, "RSA-3072") || strings.Contains(algorithm, "RSA3072"):
 		attrs.KeyAlgorithm = x509.RSA
 		attrs.RSAAttributes = &kctypes.RSAAttributes{KeySize: 3072}
-		attrs.KeyType = kctypes.KeyTypeSigning
 	case strings.Contains(algorithm, "RSA-4096") || strings.Contains(algorithm, "RSA4096"):
 		attrs.KeyAlgorithm = x509.RSA
 		attrs.RSAAttributes = &kctypes.RSAAttributes{KeySize: 4096}
-		attrs.KeyType = kctypes.KeyTypeSigning
 	case strings.Contains(algorithm, "P256") || strings.Contains(algorithm, "ECDSA-P256"):
 		attrs.KeyAlgorithm = x509.ECDSA
 		attrs.ECCAttributes = &kctypes.ECCAttributes{Curve: elliptic.P256()}
-		attrs.KeyType = kctypes.KeyTypeSigning
 	case strings.Contains(algorithm, "P384") || strings.Contains(algorithm, "ECDSA-P384"):
 		attrs.KeyAlgorithm = x509.ECDSA
 		attrs.ECCAttributes = &kctypes.ECCAttributes{Curve: elliptic.P384()}
-		attrs.KeyType = kctypes.KeyTypeSigning
 	case strings.Contains(algorithm, "P521") || strings.Contains(algorithm, "ECDSA-P521"):
 		attrs.KeyAlgorithm = x509.ECDSA
 		attrs.ECCAttributes = &kctypes.ECCAttributes{Curve: elliptic.P521()}
-		attrs.KeyType = kctypes.KeyTypeSigning
 	case strings.Contains(algorithm, "ED25519"):
 		attrs.KeyAlgorithm = x509.Ed25519
-		attrs.KeyType = kctypes.KeyTypeSigning
 	default:
 		// Default to AES-256-GCM for unknown algorithms
 		attrs.SymmetricAlgorithm = kctypes.SymmetricAES256GCM
-		attrs.KeyType = kctypes.KeyTypeEncryption
 	}
+
+	// The request carries no key type: the KMS service's rule applies, so
+	// symmetric keys are secret and asymmetric keys sign.
+	attrs.KeyType = service.DefaultKeyType(attrs)
 
 	return attrs, nil
 }

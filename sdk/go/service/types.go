@@ -327,6 +327,9 @@ const (
 type (
 	PutRequest              = pkgservice.PutRequest
 	PutResponse             = pkgservice.PutResponse
+	CompareAndSwapRequest   = pkgservice.CompareAndSwapRequest
+	PutIfAbsentRequest      = pkgservice.PutIfAbsentRequest
+	ConditionalPutResponse  = pkgservice.ConditionalPutResponse
 	GetRequest              = pkgservice.GetRequest
 	GetResponse             = pkgservice.GetResponse
 	DeleteRequest           = pkgservice.DeleteRequest
@@ -353,12 +356,23 @@ type (
 // =============================================================================
 
 type (
-	BatchPutRequest     = pkgservice.BatchPutRequest
-	BatchPutResponse    = pkgservice.BatchPutResponse
-	BatchGetRequest     = pkgservice.BatchGetRequest
-	BatchGetResponse    = pkgservice.BatchGetResponse
-	BatchDeleteRequest  = pkgservice.BatchDeleteRequest
-	BatchDeleteResponse = pkgservice.BatchDeleteResponse
+	BatchPutRequest       = pkgservice.BatchPutRequest
+	BatchPutResponse      = pkgservice.BatchPutResponse
+	BatchGetRequest       = pkgservice.BatchGetRequest
+	BatchGetResponse      = pkgservice.BatchGetResponse
+	BatchDeleteRequest    = pkgservice.BatchDeleteRequest
+	BatchDeleteResponse   = pkgservice.BatchDeleteResponse
+	BatchExecuteRequest   = pkgservice.BatchExecuteRequest
+	BatchExecuteOperation = pkgservice.BatchExecuteOperation
+	BatchExecuteResponse  = pkgservice.BatchExecuteResponse
+	BatchExecuteResult    = pkgservice.BatchExecuteResult
+	BatchExecuteOpType    = pkgservice.BatchExecuteOpType
+)
+
+// Batch execute operation types.
+const (
+	BatchExecutePut    = pkgservice.BatchExecutePut
+	BatchExecuteDelete = pkgservice.BatchExecuteDelete
 )
 
 // =============================================================================

@@ -91,6 +91,8 @@ var daemonAccountRoutes = []accountRoute{
 	{http.MethodPost, "/api/v1/agent-accounts/{id}/reservations"},
 	{http.MethodDelete, "/api/v1/agent-accounts/{id}/reservations/{rid}"},
 	{http.MethodPost, "/api/v1/agent-accounts/{id}/materialize"},
+	{http.MethodPost, "/api/v1/agent-accounts/{id}/reservations"},
+	{http.MethodDelete, "/api/v1/agent-accounts/{id}/reservations/{rid}"},
 }
 
 // adminAccountRoutes are the writes a tenant admin makes against the
@@ -186,6 +188,7 @@ func (f *enrollmentFixture) adminEdge(t *testing.T) *httptest.Server {
 	if f.admin != nil {
 		return f.admin
 	}
+	quicbaaspermission.Register()
 
 	// The built-in role's grants are read from qrdb's registry below, so the
 	// go-quicbaas permissions must be in it first — the same call

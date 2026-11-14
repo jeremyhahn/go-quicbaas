@@ -967,6 +967,91 @@ func (k *kvService) Put(ctx context.Context, req *PutRequest) (*PutResponse, err
 	return resp, nil
 }
 
+// CompareAndSwap replaces an existing entity's value when it equals
+// req.Expect. qrdb evaluates the precondition in one transaction, so racing
+// callers cannot both win.
+func (k *kvService) CompareAndSwap(ctx context.Context, req *CompareAndSwapRequest) (*ConditionalPutResponse, error) {
+	if req == nil {
+		return nil, &errors.QBError{Code: errors.ErrInvalidInput, Op: "service.CompareAndSwap", Err: &api.NilInputError{Name: "request"}}
+	}
+	// A nil Expect would mean "absent" to qrdb; this verb only swaps an
+	// existing entity, so nil is normalized to the empty value.
+	expect := req.Expect
+	if expect == nil {
+		expect = []byte{}
+	}
+	return k.conditionalPut(ctx, "CompareAndSwap", req.EntityType, req.ID, req.ShardID, expect, req.Set)
+}
+
+// PutIfAbsent stores an entity only when it does not exist. It is qrdb's
+// CompareAndSwap with a nil expect, whose precondition is that the key's
+// create-revision is 0.
+func (k *kvService) PutIfAbsent(ctx context.Context, req *PutIfAbsentRequest) (*ConditionalPutResponse, error) {
+	if req == nil {
+		return nil, &errors.QBError{Code: errors.ErrInvalidInput, Op: "service.PutIfAbsent", Err: &api.NilInputError{Name: "request"}}
+	}
+	return k.conditionalPut(ctx, "PutIfAbsent", req.EntityType, req.ID, req.ShardID, nil, req.Data)
+}
+
+// conditionalPut builds the tenant-aware key for the entity and delegates the
+// conditional write to qrdb's Coordinator.CompareAndSwap.
+func (k *kvService) conditionalPut(ctx context.Context, method, entityType string, id, shardID uint64, expect, set []byte) (*ConditionalPutResponse, error) {
+	op := "service." + method
+	start := time.Now()
+	if k.svc.metrics != nil {
+		k.svc.metrics.activeRequests.Inc()
+		defer func() {
+			k.svc.metrics.activeRequests.Dec()
+			k.svc.metrics.requestDuration.With(method).Observe(time.Since(start).Seconds())
+		}()
+	}
+
+	if entityType == "" {
+		k.countRequest(method, "invalid")
+		return nil, &errors.QBError{Code: errors.ErrInvalidInput, Op: op, Err: &api.RequiredFieldError{Field: "entity type"}}
+	}
+	if err := contextError(ctx, op); err != nil {
+		return nil, err
+	}
+	if shardID == 0 {
+		shardID = 1
+	}
+
+	key, err := k.svc.keyspaceResolver.BuildKey(ctx, entityType, id)
+	if err != nil {
+		k.countRequest(method, "invalid")
+		return nil, err
+	}
+	client, err := k.svc.qrdbForShard(shardID)
+	if err != nil {
+		k.countRequest(method, "error")
+		return nil, &errors.QBError{Code: errors.ErrRaft, Op: op, Err: err}
+	}
+	coordinator, err := client.Coordination()
+	if err != nil {
+		k.countRequest(method, "error")
+		return nil, &errors.QBError{Code: errors.ErrRaft, Op: op, Err: err}
+	}
+	applied, err := coordinator.CompareAndSwap(ctx, string(key), expect, set)
+	if err != nil {
+		k.countRequest(method, "error")
+		return nil, &errors.QBError{Code: errors.ErrRaft, Op: op, Err: err}
+	}
+
+	k.countRequest(method, "success")
+	if applied && k.svc.cacheManager != nil {
+		_ = k.svc.cacheManager.Set(context.Background(), string(key), set)
+	}
+	return &ConditionalPutResponse{Applied: applied}, nil
+}
+
+// countRequest records one request outcome when metrics are enabled.
+func (k *kvService) countRequest(method, outcome string) {
+	if k.svc.metrics != nil {
+		k.svc.metrics.requestsTotal.With(method, outcome).Inc()
+	}
+}
+
 func (k *kvService) Get(ctx context.Context, req *GetRequest) (*GetResponse, error) {
 	start := time.Now()
 	if k.svc.metrics != nil {
@@ -1898,6 +1983,136 @@ func (b *batchService) BatchDelete(ctx context.Context, req *BatchDeleteRequest)
 	}
 
 	return resp, nil
+}
+
+// batchExecuteOpTypes maps a BatchExecuteOpType to the qrdb operation it
+// commits as.
+var batchExecuteOpTypes = map[BatchExecuteOpType]qrdbtransport.OpType{
+	BatchExecutePut:    qrdbtransport.OpPut,
+	BatchExecuteDelete: qrdbtransport.OpDelete,
+}
+
+// BatchExecute commits a mixed batch of puts and deletes as one qrdb atomic
+// batch, so every operation lands at a single revision. Unlike
+// BatchPut and BatchDelete the batch is never split into sub-batches: a
+// split would commit at several revisions and break all-or-nothing.
+func (b *batchService) BatchExecute(ctx context.Context, req *BatchExecuteRequest) (*BatchExecuteResponse, error) {
+	start := time.Now()
+	if b.svc.metrics != nil {
+		b.svc.metrics.activeRequests.Inc()
+		defer func() {
+			b.svc.metrics.activeRequests.Dec()
+			b.svc.metrics.requestDuration.With("BatchExecute").Observe(time.Since(start).Seconds())
+		}()
+	}
+
+	ops, err := b.batchExecuteOps(ctx, req)
+	if err != nil {
+		if b.svc.metrics != nil {
+			b.svc.metrics.requestsTotal.With("BatchExecute", "invalid").Inc()
+		}
+		return nil, err
+	}
+
+	shardID := req.ShardID
+	if shardID == 0 {
+		shardID = 1
+	}
+	client, err := b.svc.qrdbForShard(shardID)
+	if err != nil {
+		return nil, b.batchExecuteFailure(err)
+	}
+	result, err := client.Batch().ExecuteBatch(ctx, ops)
+	if err != nil {
+		return nil, b.batchExecuteFailure(err)
+	}
+
+	if b.svc.metrics != nil {
+		b.svc.metrics.requestsTotal.With("BatchExecute", "success").Inc()
+	}
+	return batchExecuteResponse(result, len(ops)), nil
+}
+
+// batchExecuteFailure counts and wraps a BatchExecute commit failure.
+func (b *batchService) batchExecuteFailure(err error) error {
+	if b.svc.metrics != nil {
+		b.svc.metrics.requestsTotal.With("BatchExecute", "error").Inc()
+		b.svc.metrics.errorsByType.With("raft_error").Inc()
+	}
+	return &errors.QBError{
+		Code: errors.ErrRaft,
+		Op:   "service.BatchExecute",
+		Err:  err,
+	}
+}
+
+// batchExecuteOps validates a BatchExecuteRequest and builds its qrdb
+// operations, each key placed in its entity type's keyspace.
+func (b *batchService) batchExecuteOps(ctx context.Context, req *BatchExecuteRequest) ([]qrdbtransport.Op, error) {
+	if req == nil {
+		return nil, &errors.QBError{
+			Code: errors.ErrInvalidInput,
+			Op:   "service.BatchExecute",
+			Err:  &api.NilInputError{Name: "request"},
+		}
+	}
+	if len(req.Operations) == 0 {
+		return nil, &errors.QBError{
+			Code: errors.ErrInvalidInput,
+			Op:   "service.BatchExecute",
+			Err:  &api.EmptyCollectionError{Field: "batch"},
+		}
+	}
+
+	ops := make([]qrdbtransport.Op, len(req.Operations))
+	for i, op := range req.Operations {
+		if op == nil {
+			return nil, batchExecuteItemError(i, "operation is required")
+		}
+		opType, ok := batchExecuteOpTypes[op.Type]
+		if !ok {
+			return nil, batchExecuteItemError(i, "unknown operation type")
+		}
+		if op.Key == "" {
+			return nil, batchExecuteItemError(i, "key is required")
+		}
+		prefix, err := b.svc.keyspaceResolver.BuildPrefix(ctx, op.EntityType)
+		if err != nil {
+			return nil, &errors.QBError{
+				Code: errors.ErrInvalidInput,
+				Op:   "service.BatchExecute",
+				Err:  &api.OperationFailedError{Operation: "validate entity type " + op.EntityType, Cause: err},
+			}
+		}
+		ops[i] = qrdbtransport.Op{
+			Type: opType,
+			Key:  append(prefix, op.Key...),
+		}
+		if opType == qrdbtransport.OpPut {
+			ops[i].Value = op.Value
+		}
+	}
+	return ops, nil
+}
+
+// batchExecuteItemError refuses the operation at index of a BatchExecute.
+func batchExecuteItemError(index int, message string) error {
+	return &errors.QBError{
+		Code: errors.ErrInvalidInput,
+		Op:   "service.BatchExecute",
+		Err:  &api.BatchItemValidationError{Index: index, Message: message},
+	}
+}
+
+// batchExecuteResponse converts the qrdb batch result into one result per
+// requested operation.
+func batchExecuteResponse(result *qrdbtransport.BatchResponse, count int) *BatchExecuteResponse {
+	resp := &BatchExecuteResponse{Results: make([]*BatchExecuteResult, count)}
+	for i := range resp.Results {
+		succeeded := result != nil && i < len(result.Responses) && result.Responses[i].Succeeded
+		resp.Results[i] = &BatchExecuteResult{Succeeded: succeeded}
+	}
+	return resp
 }
 
 // =============================================================================
@@ -4571,6 +4786,14 @@ func (s *quicBaaS) Put(ctx context.Context, req *PutRequest) (*PutResponse, erro
 	return s.kvService.Put(ctx, req)
 }
 
+func (s *quicBaaS) CompareAndSwap(ctx context.Context, req *CompareAndSwapRequest) (*ConditionalPutResponse, error) {
+	return s.kvService.CompareAndSwap(ctx, req)
+}
+
+func (s *quicBaaS) PutIfAbsent(ctx context.Context, req *PutIfAbsentRequest) (*ConditionalPutResponse, error) {
+	return s.kvService.PutIfAbsent(ctx, req)
+}
+
 func (s *quicBaaS) Get(ctx context.Context, req *GetRequest) (*GetResponse, error) {
 	return s.kvService.Get(ctx, req)
 }
@@ -4601,6 +4824,11 @@ func (s *quicBaaS) BatchGet(ctx context.Context, req *BatchGetRequest) (*BatchGe
 
 func (s *quicBaaS) BatchDelete(ctx context.Context, req *BatchDeleteRequest) (*BatchDeleteResponse, error) {
 	return s.batchService.BatchDelete(ctx, req)
+}
+
+// BatchExecute delegates to the batch service.
+func (s *quicBaaS) BatchExecute(ctx context.Context, req *BatchExecuteRequest) (*BatchExecuteResponse, error) {
+	return s.batchService.BatchExecute(ctx, req)
 }
 
 func (s *quicBaaS) Transaction(ctx context.Context, req *TransactionRequest) (*TransactionResponse, error) {
