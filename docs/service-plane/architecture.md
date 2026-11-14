@@ -122,6 +122,21 @@ scoped to a tenant, with CAS-arbitrated writes. The manifest holds:
 on REST, gRPC, QUIC, MCP, Unix and embedded, and in the SDK as
 `SDK().Compute().Services()`.
 
+**Built: the core.** `pkg/serviceplane` holds the model and the rules the
+service serves: the `Manifest` and its validation (the role is a go-qrdb
+built-in role other than `so`), `Sign` and the `Keyring` verifier (Ed25519,
+ECDSA P-256 and P-384, over a domain-separated payload kept as signed), the
+tenant-scoped `Store` whose writes go through a `Guard` (go-qrdb's
+`cas.Writer`), and the `Plane`. Each verb on a deployed service first claims
+it by a guarded swap to `transitioning`, so of two racing nodes one acts.
+Legal transitions: `start` from stopped, `stop` from running, `resume` from
+halted, `restart` from running or halted, and `undeploy` and `redeploy` from
+any settled state. A failed launch, halt or revoke leaves the service
+`halted` with the reason. The five grants come in through one `Grant` per
+kind, in the order identity, certificate, name, RBAC, secrets; a failed grant
+on deploy revokes the grants already made and releases the name. Plan:
+[docs/plans/1687.md](../plans/1687.md).
+
 **On deploy, the platform grants the service:**
 
 - a workload identity: an x509-svid from go-xkms,
