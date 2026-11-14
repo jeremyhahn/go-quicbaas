@@ -14817,7 +14817,7 @@ const file_api_proto_iam_iam_proto_rawDesc = "" +
 	"\aDisable\x12\".quicbaas.iam.v1.DisableMFARequest\x1a#.quicbaas.iam.v1.DisableMFAResponse\x12p\n" +
 	"\x13GenerateBackupCodes\x12+.quicbaas.iam.v1.GenerateBackupCodesRequest\x1a,.quicbaas.iam.v1.GenerateBackupCodesResponse\x12g\n" +
 	"\x10VerifyBackupCode\x12(.quicbaas.iam.v1.VerifyBackupCodeRequest\x1a).quicbaas.iam.v1.VerifyBackupCodeResponse\x12p\n" +
-	"\x13GetBackupCodeStatus\x12+.quicbaas.iam.v1.GetBackupCodeStatusRequest\x1a,.quicbaas.iam.v1.GetBackupCodeStatusResponse2\x88\t\n" +
+	"\x13GetBackupCodeStatus\x12+.quicbaas.iam.v1.GetBackupCodeStatusRequest\x1a,.quicbaas.iam.v1.GetBackupCodeStatusResponse2\x82\t\n" +
 	"\x11FederationService\x12o\n" +
 	"\x0eCreateProvider\x12&.quicbaas.iam.v1.CreateProviderRequest\x1a!.quicbaas.iam.v1.ExternalProvider\"\x12\xc2\xf3\x18\x0etenants:create\x12g\n" +
 	"\vGetProvider\x12#.quicbaas.iam.v1.GetProviderRequest\x1a!.quicbaas.iam.v1.ExternalProvider\"\x10\xc2\xf3\x18\ftenants:read\x12o\n" +
@@ -14825,10 +14825,11 @@ const file_api_proto_iam_iam_proto_rawDesc = "" +
 	"\x0eDeleteProvider\x12&.quicbaas.iam.v1.DeleteProviderRequest\x1a'.quicbaas.iam.v1.DeleteProviderResponse\"\x12\xc2\xf3\x18\x0etenants:delete\x12p\n" +
 	"\rListProviders\x12%.quicbaas.iam.v1.ListProvidersRequest\x1a&.quicbaas.iam.v1.ListProvidersResponse\"\x10\xc2\xf3\x18\ftenants:read\x12p\n" +
 	"\x13BeginFederatedLogin\x12+.quicbaas.iam.v1.BeginFederatedLoginRequest\x1a,.quicbaas.iam.v1.BeginFederatedLoginResponse\x12|\n" +
-	"\x17HandleFederatedCallback\x12/.quicbaas.iam.v1.HandleFederatedCallbackRequest\x1a0.quicbaas.iam.v1.HandleFederatedCallbackResponse\x12l\n" +
-	"\vLinkAccount\x12#.quicbaas.iam.v1.LinkAccountRequest\x1a$.quicbaas.iam.v1.LinkAccountResponse\"\x12\xc2\xf3\x18\x0etenants:create\x12r\n" +
-	"\rUnlinkAccount\x12%.quicbaas.iam.v1.UnlinkAccountRequest\x1a&.quicbaas.iam.v1.UnlinkAccountResponse\"\x12\xc2\xf3\x18\x0etenants:delete\x12m\n" +
-	"\fGetUserLinks\x12$.quicbaas.iam.v1.GetUserLinksRequest\x1a%.quicbaas.iam.v1.GetUserLinksResponse\"\x10\xc2\xf3\x18\ftenants:read2\xce\x04\n" +
+	"\x17HandleFederatedCallback\x12/.quicbaas.iam.v1.HandleFederatedCallbackRequest\x1a0.quicbaas.iam.v1.HandleFederatedCallbackResponse\x12j\n" +
+	"\vLinkAccount\x12#.quicbaas.iam.v1.LinkAccountRequest\x1a$.quicbaas.iam.v1.LinkAccountResponse\"\x10\xc2\xf3\x18\fusers:update\x12p\n" +
+	"\rUnlinkAccount\x12%.quicbaas.iam.v1.UnlinkAccountRequest\x1a&.quicbaas.iam.v1.UnlinkAccountResponse\"\x10\xc2\xf3\x18\fusers:update\x12k\n" +
+	"\fGetUserLinks\x12$.quicbaas.iam.v1.GetUserLinksRequest\x1a%.quicbaas.iam.v1.GetUserLinksResponse\"\x0e\xc2\xf3\x18\n" +
+	"users:read2\xce\x04\n" +
 	"\x0eSessionService\x12k\n" +
 	"\fListSessions\x12$.quicbaas.iam.v1.ListSessionsRequest\x1a%.quicbaas.iam.v1.ListSessionsResponse\"\x0e\xc2\xf3\x18\n" +
 	"users:read\x12Z\n" +
