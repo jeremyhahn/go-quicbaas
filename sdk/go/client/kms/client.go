@@ -176,6 +176,10 @@ const (
 	KeyUsageWrap
 	// KeyUsageUnwrap allows key unwrapping operations.
 	KeyUsageUnwrap
+	// KeyUsageGenerateMAC allows computing MACs (HMAC keys).
+	KeyUsageGenerateMAC
+	// KeyUsageVerifyMAC allows verifying MACs (HMAC keys).
+	KeyUsageVerifyMAC
 )
 
 // String returns the string representation of the key usage.
@@ -193,6 +197,10 @@ func (u KeyUsage) String() string {
 		return "WRAP"
 	case KeyUsageUnwrap:
 		return "UNWRAP"
+	case KeyUsageGenerateMAC:
+		return "GENERATE_MAC"
+	case KeyUsageVerifyMAC:
+		return "VERIFY_MAC"
 	default:
 		return "UNKNOWN"
 	}
@@ -1505,7 +1513,8 @@ func validateGenerateKeyRequest(req *GenerateKeyRequest) error {
 	for i, usage := range req.Usage {
 		switch usage {
 		case KeyUsageEncrypt, KeyUsageDecrypt, KeyUsageSign,
-			KeyUsageVerify, KeyUsageWrap, KeyUsageUnwrap:
+			KeyUsageVerify, KeyUsageWrap, KeyUsageUnwrap,
+			KeyUsageGenerateMAC, KeyUsageVerifyMAC:
 			// Valid usage
 		default:
 			return errors.NewInvalidInput("kms.GenerateKey", "invalid key usage").
@@ -1648,6 +1657,10 @@ func sdkUsageToServiceUsage(usage KeyUsage) service.KeyUsage {
 		return service.KeyUsageWrapKey
 	case KeyUsageUnwrap:
 		return service.KeyUsageWrapKey
+	case KeyUsageGenerateMAC:
+		return service.KeyUsageGenerateMAC
+	case KeyUsageVerifyMAC:
+		return service.KeyUsageVerifyMAC
 	default:
 		return service.KeyUsageEncrypt
 	}
@@ -1666,6 +1679,10 @@ func serviceUsageToSDKUsage(usage service.KeyUsage) KeyUsage {
 		return KeyUsageVerify
 	case service.KeyUsageWrapKey:
 		return KeyUsageWrap
+	case service.KeyUsageGenerateMAC:
+		return KeyUsageGenerateMAC
+	case service.KeyUsageVerifyMAC:
+		return KeyUsageVerifyMAC
 	default:
 		return KeyUsageEncrypt
 	}

@@ -156,6 +156,9 @@ var kmsWireUsages = map[kmsclient.KeyUsage]service.KeyUsage{
 	kmsclient.KeyUsageVerify:  service.KeyUsageVerify,
 	kmsclient.KeyUsageWrap:    service.KeyUsageWrapKey,
 	kmsclient.KeyUsageUnwrap:  service.KeyUsageWrapKey,
+
+	kmsclient.KeyUsageGenerateMAC: service.KeyUsageGenerateMAC,
+	kmsclient.KeyUsageVerifyMAC:   service.KeyUsageVerifyMAC,
 }
 
 // invertKMSMap returns the inverse of a one-to-one lookup map.
