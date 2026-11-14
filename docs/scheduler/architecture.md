@@ -820,3 +820,27 @@ non-draining node gets its placement back with `existing: true`. A workload on
 a dead or draining node is refused (`PlacementConflictError`); the caller
 releases it and places it again. `DrainNode` cordons and marks a node draining
 and returns its placements; it releases nothing.
+
+## Remote handlers
+
+A handler registers in-process, so a client that reaches the scheduler over
+the wire has nothing to register on. A job whose handler is named
+`remote:<name>` is run by a worker that **pulls** its runs instead
+(go-quicbaas#1955). The engine fires it as any job, with the same firing
+claim, `Running` transition and timeout, and then waits for the run's result:
+
+- `ListRemoteRuns(tenant, handlers)` returns the open runs of the named
+  handlers from the job store, so a worker may ask any node. Each run carries
+  its `RemoteRunRef` (job, firing, running transition), payload and deadline.
+- `CompleteRemoteRun(ref, result, err)` reports one run. On the firing node the
+  waiting execution records it as a local handler's outcome. On another node
+  of a cluster it is concluded through the run guard (`RunConcluder`) and
+  recorded there; the firing node's timeout then loses the guard and writes
+  nothing. A standalone engine accepts only runs it is waiting on.
+- A result for another run of the job, after the deadline or after the run was
+  concluded is refused with `ErrRemoteRunNotOpen` and records nothing.
+
+Limits: when the result lands on another node, the firing node still waits
+out the timeout before it can fire the job again. Workers polling the same
+handler name may each run a firing, though only one outcome is recorded, so
+give each worker its own handler name (for example, one per node).
