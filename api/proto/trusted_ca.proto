@@ -1,0 +1,159 @@
+// QuicBaaS Trusted CA Protocol Buffer Definitions v1
+//
+// The trusted CA surface (quicbaas.TrustedCA) is the go-xkms CAService
+// contract verbatim: the request and response messages carry the xkms
+// transport wire shapes field-for-field. The server delegates every RPC to
+// the go-xkms CA adapter the REST /api/v1/xkms/ca/* routes and the MCP
+// xkms.ca.* tools serve (pkg/service TrustedCAService); QuicBaaS adds no CA
+// logic of its own (#1330).
+//
+// Copyright (c) 2026 Jeremy Hahn
+// Copyright (c) 2026 Automate The Things, LLC
+
+syntax = "proto3";
+
+package quicbaas.trustedca.v1;
+
+option go_package = "github.com/jeremyhahn/go-quicbaas/api/proto;proto";
+
+import "pkg/api/grpc/proto/qrdbv1/authz.proto";
+
+// =============================================================================
+// Trusted CA Service
+// =============================================================================
+
+// TrustedCAService exposes the go-xkms CAService through gRPC. The
+// permissions match the MCP xkms.ca.* tools.
+service TrustedCAService {
+  // GetCABundle returns the CA certificate chain.
+  rpc GetCABundle(TrustedCAGetCABundleRequest) returns (TrustedCAGetCABundleResponse) {
+      option (qrdb.v1.permission) = "ca:read";
+  }
+
+  // GetCACertificate returns the issuing CA certificate.
+  rpc GetCACertificate(TrustedCAGetCACertificateRequest) returns (TrustedCAGetCACertificateResponse) {
+      option (qrdb.v1.permission) = "ca:read";
+  }
+
+  // SignCSR signs a PKCS#10 certificate signing request.
+  rpc SignCSR(TrustedCASignCSRRequest) returns (TrustedCASignCSRResponse) {
+      option (qrdb.v1.permission) = "certs:generate";
+  }
+
+  // IssueCertificate generates a key pair in the CA keystore and issues a
+  // certificate for it.
+  rpc IssueCertificate(TrustedCAIssueCertificateRequest) returns (TrustedCAIssueCertificateResponse) {
+      option (qrdb.v1.permission) = "certs:generate";
+  }
+
+  // RevokeCertificate revokes a certificate by serial number.
+  rpc RevokeCertificate(TrustedCARevokeCertificateRequest) returns (TrustedCARevokeCertificateResponse) {
+      option (qrdb.v1.permission) = "certs:revoke";
+  }
+
+  // GenerateCRL produces a signed CRL of the revoked certificates.
+  rpc GenerateCRL(TrustedCAGenerateCRLRequest) returns (TrustedCAGenerateCRLResponse) {
+      option (qrdb.v1.permission) = "certs:revoke";
+  }
+
+  // IsRevoked reports whether a serial number is revoked.
+  rpc IsRevoked(TrustedCAIsRevokedRequest) returns (TrustedCAIsRevokedResponse) {
+      option (qrdb.v1.permission) = "certs:read";
+  }
+}
+
+// =============================================================================
+// Messages (go-xkms pkg/api/transport CA wire shapes)
+// =============================================================================
+
+message TrustedCAGetCABundleRequest {
+  string store_type = 1;
+  string algorithm = 2;
+  string tenant_id = 3;
+}
+
+message TrustedCAGetCABundleResponse {
+  bytes bundle_pem = 1;
+  repeated bytes certificates = 2;
+  string content_type = 3;
+}
+
+message TrustedCAGetCACertificateRequest {
+  string identity = 1;
+  string tenant_id = 2;
+}
+
+message TrustedCAGetCACertificateResponse {
+  bytes certificate_pem = 1;
+  string subject = 2;
+  string issuer = 3;
+  string serial_number = 4;
+  string not_before = 5;
+  string not_after = 6;
+  bool is_ca = 7;
+}
+
+message TrustedCASignCSRRequest {
+  bytes csr_pem = 1;
+  string profile = 2;
+  int32 validity_days = 3;
+  string tenant_id = 4;
+  string attestation_format = 5;
+  repeated bytes attestation_chain = 6;
+  bytes attestation_data = 7;
+  bytes attestation_sig = 8;
+  bytes attestation_nonce = 9;
+}
+
+message TrustedCASignCSRResponse {
+  bytes certificate_pem = 1;
+  bytes chain_pem = 2;
+  string serial_number = 3;
+}
+
+message TrustedCAIssueCertificateRequest {
+  string profile = 1;
+  string common_name = 2;
+  string organization = 3;
+  repeated string sans = 4;
+  int32 validity_days = 5;
+  string algorithm = 6;
+  string tenant_id = 7;
+}
+
+message TrustedCAIssueCertificateResponse {
+  bytes certificate_pem = 1;
+  bytes chain_pem = 2;
+  bytes private_key_pem = 3;
+  string serial_number = 4;
+}
+
+message TrustedCARevokeCertificateRequest {
+  string serial_number = 1;
+  int32 reason = 2;
+  string tenant_id = 3;
+}
+
+message TrustedCARevokeCertificateResponse {
+  bool success = 1;
+  string message = 2;
+}
+
+message TrustedCAGenerateCRLRequest {
+  string tenant_id = 1;
+}
+
+message TrustedCAGenerateCRLResponse {
+  bytes crl_pem = 1;
+}
+
+message TrustedCAIsRevokedRequest {
+  string serial_number = 1;
+  string tenant_id = 2;
+}
+
+message TrustedCAIsRevokedResponse {
+  bool revoked = 1;
+  int32 reason = 2;
+  string message = 3;
+}

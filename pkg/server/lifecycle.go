@@ -2608,6 +2608,7 @@ func (s *Server) startGRPCServer() error {
 	// QUIC/MCP/Unix/embedded transports.
 	s.registerFIDO2Service(grpcServer, quicbaasService)
 	s.registerPIVService(grpcServer, quicbaasService)
+	s.registerTrustedCAService(grpcServer, quicbaasService)
 
 	// Register Barrier and Ceremony gRPC services. The handlers delegate to
 	// the embedded go-qrdb instance via the QuicBaaS service facade, keeping

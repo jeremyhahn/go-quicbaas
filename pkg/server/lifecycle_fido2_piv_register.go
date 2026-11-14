@@ -49,3 +49,16 @@ func (s *Server) registerPIVService(grpcServer *ggrpc.Server, quicbaasService *g
 	grpcapi.RegisterPIVServiceServer(grpcServer, quicbaasService)
 	s.logger.Info("Registered PIVService gRPC service")
 }
+
+// registerTrustedCAService registers the TrustedCAService gRPC handlers, the
+// gRPC and Unix side of the re-exported go-xkms CAService (#1330). There is
+// no availability gate: each verb answers Unimplemented until the server
+// wires the go-xkms CA (wireTrustedCA).
+func (s *Server) registerTrustedCAService(grpcServer *ggrpc.Server, quicbaasService *grpcapi.Server) {
+	if s.quicBaaSService == nil {
+		s.logger.Info("QuicBaaS service not available, skipping TrustedCAService gRPC registration")
+		return
+	}
+	grpcapi.RegisterTrustedCAServiceServer(grpcServer, quicbaasService)
+	s.logger.Info("Registered TrustedCAService gRPC service")
+}

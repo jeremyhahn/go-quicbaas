@@ -52,6 +52,7 @@ var brokerServiceDescs = []grpc.ServiceDesc{
 	pb.RegistryService_ServiceDesc,
 	pb.FIDO2Service_ServiceDesc,
 	pb.PIVService_ServiceDesc,
+	pb.TrustedCAService_ServiceDesc,
 	pb.VectorDB_ServiceDesc,
 	pb.VectorAdmin_ServiceDesc,
 	pb.ObjectStorageService_ServiceDesc,
@@ -574,6 +575,18 @@ var grpcMethodPermissions = map[string]methodPermission{
 	"/quicbaas.piv.v1.PIVService/DeletePIVCertificate": {"piv", "delete"},
 	"/quicbaas.piv.v1.PIVService/GeneratePIVKey":       {"piv", "write"},
 	"/quicbaas.piv.v1.PIVService/GeneratePIVCSR":       {"piv", "use"},
+
+	// ---- quicbaas.trustedca.v1.TrustedCAService ----
+	//
+	// The re-exported go-xkms CAService (#1330): the same permissions the
+	// MCP xkms.ca.* tools enforce (pkg/api/mcp authz_qrdb.go).
+	"/quicbaas.trustedca.v1.TrustedCAService/GetCABundle":       {"ca", "read"},
+	"/quicbaas.trustedca.v1.TrustedCAService/GetCACertificate":  {"ca", "read"},
+	"/quicbaas.trustedca.v1.TrustedCAService/IsRevoked":         {"certs", "read"},
+	"/quicbaas.trustedca.v1.TrustedCAService/SignCSR":           {"certs", "generate"},
+	"/quicbaas.trustedca.v1.TrustedCAService/IssueCertificate":  {"certs", "generate"},
+	"/quicbaas.trustedca.v1.TrustedCAService/RevokeCertificate": {"certs", "revoke"},
+	"/quicbaas.trustedca.v1.TrustedCAService/GenerateCRL":       {"certs", "revoke"},
 
 	// ---- quicbaas.barrier.v1.Barrier (system barrier lifecycle) ----
 	"/quicbaas.barrier.v1.Barrier/BarrierStatus":             {"tenant_barrier", "status"},

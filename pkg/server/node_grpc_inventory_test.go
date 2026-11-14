@@ -118,6 +118,8 @@ var unixOnlyServices = map[string]string{
 	"quicbaas.certificate.v1.TrustService":       "xkms canonical surface",
 	"quicbaas.attestation.v1.AttestationService": "xkms canonical surface",
 	"quicbaas.piv.v1.PIVService":                 "xkms canonical surface",
+	// The node serves the go-xkms CA verbs on xkms.v1.KeystoreService (#1330).
+	"quicbaas.trustedca.v1.TrustedCAService": "xkms canonical surface",
 }
 
 // serviceNames returns the sorted names of the services registered on gs.

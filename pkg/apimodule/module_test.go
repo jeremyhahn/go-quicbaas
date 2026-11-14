@@ -280,6 +280,7 @@ func TestModule_RegisterGRPC_ExcludesXKMSCanonicalSurface(t *testing.T) {
 		pb.TrustService_ServiceDesc.ServiceName,
 		pb.AttestationService_ServiceDesc.ServiceName,
 		pb.PIVService_ServiceDesc.ServiceName,
+		pb.TrustedCAService_ServiceDesc.ServiceName,
 	}
 	for _, name := range excluded {
 		_, ok := info[name]
