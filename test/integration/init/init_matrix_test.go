@@ -128,16 +128,22 @@ func runMatrixCell(t *testing.T, binary, cliBinary, strategy, transport string) 
 	// Phase 2: start daemon + wait for transport readiness.
 	ports := allocPortBundle(t, transport, dataDir)
 	daemon := startDaemon(t, binary, dataDir, strategy, transport, ports)
-	// CA ruling 576: a sealed node does not serve MCP at all. The shamir_mcp
-	// cell therefore waits for the sealed window on REST, proves MCP is
-	// absent, unseals through the officer ceremony, and only then waits for
-	// MCP, which the full boot starts.
-	sealedMCP := strategy == "shamir" && transport == "mcp"
-	if sealedMCP {
+	// The sealed window serves REST and gRPC only: CA ruling 576 keeps MCP
+	// off a sealed node, and the sealed QUIC listener left with the unified
+	// login plane. The shamir_mcp and shamir_quic cells therefore wait for
+	// the sealed window on REST, prove their transport is absent, unseal
+	// through the officer ceremony, and only then wait for the transport,
+	// which the full boot starts.
+	sealedOnlyAfterUnseal := strategy == "shamir" && (transport == "mcp" || transport == "quic")
+	if sealedOnlyAfterUnseal {
 		if err := waitForTransportReady(ctx, t, daemon, "rest", ports, dataDir); err != nil {
 			t.Fatalf("the sealed shamir node's REST window never became ready: %v", err)
 		}
-		requireMCPRefusedWhileSealed(t, ports)
+		if transport == "mcp" {
+			requireMCPRefusedWhileSealed(t, ports)
+		} else {
+			requireQUICRefusedWhileSealed(ctx, t, ports)
+		}
 		unsealShamirByCeremony(ctx, t, cliBinary, ports, dataDir)
 	}
 	if err := waitForTransportReady(ctx, t, daemon, transport, ports, dataDir); err != nil {
@@ -167,7 +173,7 @@ func runMatrixCell(t *testing.T, binary, cliBinary, strategy, transport string) 
 		token = loginFirstBootAdmin(ctx, t, cliBinary, transport, ports, dataDir, strategy)
 	}
 	verifySDKLivenessOverTransport(t, transport, ports, dataDir, token)
-	if sealedMCP {
+	if sealedOnlyAfterUnseal && transport == "mcp" {
 		// The unsealed node serves data over MCP with the administrator's
 		// session, exactly as every TestBackendMatrix MCP cell does.
 		verifyDataRoundTrip(ctx, t, cliBinary, transport, ports, dataDir, strategy)

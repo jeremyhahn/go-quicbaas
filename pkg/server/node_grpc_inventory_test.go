@@ -113,9 +113,10 @@ var unixOnlyServices = map[string]string{
 	// node (pkg/apimodule TestModule_RegisterGRPC_ExcludesXKMSCanonicalSurface).
 	// KeyManagement, DEKManagement and Crypto are mounted: the pinned
 	// go-xkms serves no DEK surface and no quicbaas.kms.v1 name.
+	// AttestationService is mounted: the pinned go-xkms serves no
+	// endorsement or reference-values RPC.
 	"quicbaas.certificate.v1.CertificateService": "xkms canonical surface",
 	"quicbaas.certificate.v1.TrustService":       "xkms canonical surface",
-	"quicbaas.attestation.v1.AttestationService": "xkms canonical surface",
 	"quicbaas.piv.v1.PIVService":                 "xkms canonical surface",
 }
 
