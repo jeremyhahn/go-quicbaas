@@ -4669,6 +4669,13 @@ integration-test-iam: ## Run IAM integration tests
 	@echo "$(BLUE)Running IAM integration tests...$(NC)"
 	@QUICBAAS_TEST_FILTER="./test/integration/iam/..." WITH_RAFT=1 WITH_REST=1 WITH_QUIC=1 WITH_MCP=1 $(MAKE) integration-test
 
+.PHONY: test-fleet-placement
+test-fleet-placement: ## Run fleet placement spec + drift unit tests (store, inventory, report, service, server binding, REST, route tables)
+	@echo "$(BLUE)Running fleet placement unit tests...$(NC)"
+	GOTOOLCHAIN=go$(GO_VERSION) $(GOTEST) -race -count=1 -tags '$(BUILD_TAGS)' ./pkg/orchestration/ -run 'Placement|Drift|FleetInventory|SessionWorkSource'
+	GOTOOLCHAIN=go$(GO_VERSION) $(GOTEST) -race -count=1 -tags '$(BUILD_TAGS)' ./pkg/service/ ./pkg/server/ -run 'FleetPlacement'
+	GOTOOLCHAIN=go$(GO_VERSION) $(GOTEST) -race -count=1 -tags '$(BUILD_TAGS)' ./pkg/api/rest/ -run 'FleetPlacement|Routes|RouteSurface|FrozenPermission|Authz|RouteLookup'
+
 .PHONY: integration-test-placement
 integration-test-placement: ## Run scheduler placement + job integration tests over REST, gRPC, QUIC, Unix and MCP
 	@echo "$(BLUE)Running scheduler placement integration tests...$(NC)"

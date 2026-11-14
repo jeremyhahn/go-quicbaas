@@ -23,6 +23,7 @@ DELETE /api/v1/kv/{type}/{key} permission kv:delete
 DELETE /api/v1/messaging/channels/{name} permission messaging:channel_delete
 DELETE /api/v1/messaging/subscribe/{id} permission messaging:unsubscribe
 DELETE /api/v1/objects/* permission objstore:delete
+DELETE /api/v1/fleet/placements/{name} permission placement:manage
 DELETE /api/v1/fleet/{nodeID} permission orchestrator:close
 DELETE /api/v1/orchestrator/jobs/{jobID} permission orchestrator:close
 DELETE /api/v1/orchestrator/sessions/{sessionID} permission orchestrator:close
@@ -167,6 +168,9 @@ GET /api/v1/ollama/health permission ollama:health
 GET /api/v1/ollama/models permission ollama:model_list
 GET /api/v1/ollama/models/{model} permission ollama:model_info
 GET /api/v1/fleet permission orchestrator:status
+GET /api/v1/fleet/placements permission placement:read
+GET /api/v1/fleet/placements/{name} permission placement:read
+GET /api/v1/fleet/placements/{name}/drift permission placement:read
 GET /api/v1/fleet/{nodeID} permission orchestrator:status
 GET /api/v1/fleet/{nodeID}/backends/{backendName}/models permission orchestrator:backend_list
 GET /api/v1/orchestrator/attention permission orchestrator:status
@@ -623,6 +627,7 @@ PUT /api/v1/cluster/nodes/{nodeId}/replace permission admin:add_member
 PUT /api/v1/embedding/providers/default permission embedding:list_models
 PUT /api/v1/embedding/providers/{name}/status permission embedding:list_models
 PUT /api/v1/entities/{type}/{id} permission kv:put
+PUT /api/v1/fleet/placements/{name} permission placement:manage
 PUT /api/v1/kms/deks/* permission keys:create
 PUT /api/v1/kms/deks/default permission keys:create
 PUT /api/v1/kms/keys/{name}/default permission keys:create

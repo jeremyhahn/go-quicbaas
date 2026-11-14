@@ -26,6 +26,7 @@ DELETE /api/v1/messaging/channels/{name}
 DELETE /api/v1/messaging/subscribe/{id}
 DELETE /api/v1/metrics/
 DELETE /api/v1/objects/*
+DELETE /api/v1/fleet/placements/{name}
 DELETE /api/v1/fleet/{nodeID}
 DELETE /api/v1/orchestrator/jobs/{jobID}
 DELETE /api/v1/orchestrator/sessions/{sessionID}
@@ -170,6 +171,9 @@ GET /api/v1/ollama/health
 GET /api/v1/ollama/models
 GET /api/v1/ollama/models/{model}
 GET /api/v1/fleet
+GET /api/v1/fleet/placements
+GET /api/v1/fleet/placements/{name}
+GET /api/v1/fleet/placements/{name}/drift
 GET /api/v1/fleet/{nodeID}
 GET /api/v1/fleet/{nodeID}/backends/{backendName}/models
 GET /api/v1/orchestrator/attention
@@ -632,6 +636,7 @@ PUT /api/v1/cluster/nodes/{nodeId}/replace
 PUT /api/v1/embedding/providers/default
 PUT /api/v1/embedding/providers/{name}/status
 PUT /api/v1/entities/{type}/{id}
+PUT /api/v1/fleet/placements/{name}
 PUT /api/v1/kms/deks/*
 PUT /api/v1/kms/deks/default
 PUT /api/v1/kms/keys/{name}/default
