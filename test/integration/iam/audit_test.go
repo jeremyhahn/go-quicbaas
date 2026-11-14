@@ -17,7 +17,10 @@
 package iam_test
 
 import (
+	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
 	"net/url"
 	"testing"
 	"time"
@@ -411,30 +414,49 @@ func TestAuditEventDelete(t *testing.T) {
 	// Wait for the three user creation events to become queryable
 	waitForAuditEvents(t, auditor, userEvents, before+3)
 
-	// Get initial count of events
+	// Read every event in the tenant's chain before the delete. The limit
+	// is the endpoint's maximum so the ID set is the whole chain.
+	allEvents := fmt.Sprintf("/api/v1/iam/audit?tenant_id=%s&limit=1000", tenantID)
 	var beforeResp AuditQueryResponse
-	err := auditor.getJSON(fmt.Sprintf("/api/v1/iam/audit?tenant_id=%s", tenantID), &beforeResp)
-	require.NoError(t, err, "Should query events before delete")
-	initialCount := beforeResp.Total
+	require.NoError(t, auditor.getJSON(allEvents, &beforeResp), "Should query events before delete")
+	require.Len(t, beforeResp.Events, beforeResp.Total, "the before read should hold the whole chain")
+	require.NotEmpty(t, beforeResp.Events, "the chain should hold the user creation events")
 
-	// Delete events older than a future timestamp (should delete all)
+	// Send the audit delete the API serves: DELETE /api/v1/iam/audit with a
+	// future cut-off, which names every event in the chain. The audit log is
+	// append-only (go-qrdb's audit chain), so the delete never erases an
+	// event: the auditor, who holds no audit:delete grant, is refused, and
+	// a granted caller deletes nothing.
 	futureTime := time.Now().Add(1 * time.Hour).UTC()
-	beforeParam := url.QueryEscape(futureTime.Format(time.RFC3339))
-	var deleteResp map[string]interface{}
-	err = auditor.getJSON(fmt.Sprintf("/api/v1/iam/audit?tenant_id=%s&before=%s", tenantID, beforeParam), &deleteResp)
+	deletePath := fmt.Sprintf("/api/v1/iam/audit?tenant_id=%s&before=%s",
+		tenantID, url.QueryEscape(futureTime.Format(time.RFC3339)))
+	deleteResp, err := auditor.doHTTPRequest(http.MethodDelete, deletePath, nil)
+	require.NoError(t, err, "Should send the audit delete")
+	deleteBody, _ := io.ReadAll(deleteResp.Body)
+	deleteResp.Body.Close()
+	require.Contains(t, []int{http.StatusOK, http.StatusForbidden}, deleteResp.StatusCode,
+		"the audit delete should answer 200 or 403, got %d: %s", deleteResp.StatusCode, deleteBody)
+	if deleteResp.StatusCode == http.StatusOK {
+		var deleted struct {
+			DeletedCount int `json:"deleted_count"`
+		}
+		require.NoError(t, json.Unmarshal(deleteBody, &deleted), "audit delete response")
+		assert.Zero(t, deleted.DeletedCount, "the append-only audit chain should delete nothing")
+	}
 
-	// If the delete endpoint is properly implemented, we should make a DELETE request
-	// For now, let's test the endpoint exists and handles the request
-	// Note: The actual deletion would need a deleteJSON call with query params
-
-	// Query events after attempting delete to verify functionality
-	// (This test validates the endpoint exists and can be called)
+	// Every event read before the delete is still in the chain after it.
+	// The count may grow: each authorized request, these reads and the
+	// delete included, appends its authorization decision to the chain.
 	var afterResp AuditQueryResponse
-	err = auditor.getJSON(fmt.Sprintf("/api/v1/iam/audit?tenant_id=%s", tenantID), &afterResp)
-	require.NoError(t, err, "Should query events after delete attempt")
-
-	// The count should remain the same or be less depending on whether delete was executed
-	assert.GreaterOrEqual(t, initialCount, afterResp.Total, "Event count should not increase")
+	require.NoError(t, auditor.getJSON(allEvents, &afterResp), "Should query events after delete")
+	afterIDs := make(map[string]bool, len(afterResp.Events))
+	for _, ev := range afterResp.Events {
+		afterIDs[ev.ID] = true
+	}
+	for _, ev := range beforeResp.Events {
+		assert.True(t, afterIDs[ev.ID], "audit event %s should survive the delete", ev.ID)
+	}
+	assert.GreaterOrEqual(t, afterResp.Total, beforeResp.Total, "the audit delete should not reduce the event count")
 }
 
 // TestAuditEventTenantIsolation tests that audit events are properly isolated between tenants.

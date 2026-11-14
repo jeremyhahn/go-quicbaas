@@ -155,9 +155,9 @@ func TestModule_LifecycleNoOps(t *testing.T) {
 // all seven broker capability services, the five quicbaas-native broker
 // data-plane services (ParameterStore, DynamicSecretsService,
 // ObjectStorageService, ObjectStorageAdmin, OllamaService), PromptService,
-// SecretsManagement, and KeyManagement plus DEKManagement (quicbaas-native
-// because the pinned go-xkms serves no DEK surface and no quicbaas.kms.v1
-// name — Crypto/CertificateService/TrustService/AttestationService/
+// SecretsManagement, KeyManagement, DEKManagement and Crypto
+// (quicbaas-native because the pinned go-xkms serves no DEK surface and no
+// quicbaas.kms.v1 name — CertificateService/TrustService/AttestationService/
 // PIVService moved to go-xkms's own ServiceModule, Phase 3
 // of the login-plane plan; see module.go's package doc and
 // TestModule_RegisterGRPC_ExcludesXKMSCanonicalSurface), each with a method
@@ -192,6 +192,7 @@ func TestModule_RegisterGRPC_RegistersFullGRPCSurface(t *testing.T) {
 		&pb.SecretsManagement_ServiceDesc,
 		&pb.KeyManagement_ServiceDesc,
 		&pb.DEKManagement_ServiceDesc,
+		&pb.Crypto_ServiceDesc,
 		&pb.VectorDB_ServiceDesc,
 		&pb.VectorAdmin_ServiceDesc,
 		&pb.PromptService_ServiceDesc,
@@ -202,7 +203,7 @@ func TestModule_RegisterGRPC_RegistersFullGRPCSurface(t *testing.T) {
 		&iampb.SessionService_ServiceDesc,
 	}
 	info := server.GetServiceInfo()
-	require.Len(t, info, len(generated), "exactly the twenty-six quicbaas-native and broker services must be registered")
+	require.Len(t, info, len(generated), "exactly the twenty-seven quicbaas-native and broker services must be registered")
 
 	for _, desc := range generated {
 		svcInfo, ok := info[desc.ServiceName]
@@ -252,7 +253,7 @@ func TestModule_RegisterGRPC_ExcludesProxyPlanes(t *testing.T) {
 	}
 }
 
-// TestModule_RegisterGRPC_ExcludesXKMSCanonicalSurface proves Crypto,
+// TestModule_RegisterGRPC_ExcludesXKMSCanonicalSurface proves
 // CertificateService, TrustService, AttestationService, and PIVService stay
 // OFF the quicbaas module's surface (Phase 3 of the
 // login-plane plan, corrective to the prior design documented in
@@ -261,10 +262,10 @@ func TestModule_RegisterGRPC_ExcludesProxyPlanes(t *testing.T) {
 // as its canonical xkms.v1 KeystoreService surface on this same unified
 // server — registering both would double-register a redundant proto
 // surface, exactly the failure mode go-qrdb's route/service-collision guard
-// exists to catch. SecretsManagement, KeyManagement, and DEKManagement are
-// deliberately absent from this exclusion list: they are quicbaas-native on
-// the node, the latter two because the pinned go-xkms serves no DEK surface
-// and no quicbaas.kms.v1 name (see
+// exists to catch. SecretsManagement, KeyManagement, DEKManagement and
+// Crypto are deliberately absent from this exclusion list: they are
+// quicbaas-native on the node, because the pinned go-xkms serves no DEK
+// surface and no quicbaas.kms.v1 name (see
 // TestModule_RegisterGRPC_RegistersFullGRPCSurface).
 func TestModule_RegisterGRPC_ExcludesXKMSCanonicalSurface(t *testing.T) {
 	m, err := NewModule(func() service.QuicBaaS { return nil }, testLogger(t))
@@ -275,7 +276,6 @@ func TestModule_RegisterGRPC_ExcludesXKMSCanonicalSurface(t *testing.T) {
 	info := server.GetServiceInfo()
 
 	excluded := []string{
-		pb.Crypto_ServiceDesc.ServiceName,
 		pb.CertificateService_ServiceDesc.ServiceName,
 		pb.TrustService_ServiceDesc.ServiceName,
 		pb.AttestationService_ServiceDesc.ServiceName,
@@ -686,6 +686,59 @@ func TestModule_Secrets_LateBinding(t *testing.T) {
 	})
 	_, err = client.GetSecret(ctx, &pb.GetSecretRequest{SecretId: "app-db-password"})
 	require.NoError(t, err, "the late-bound SecretsService must serve without re-registration")
+}
+
+// TestModule_Crypto_LateBinding proves the node serves
+// quicbaas.kms.v1.Crypto, nil-gated on the facade's Crypto() exactly as
+// pkg/server/lifecycle.go gates it on the legacy transport: Unavailable
+// before composition and while no crypto service is composed, then served
+// by the composed CryptoService without re-registration. Before the module
+// registered Crypto, every call answered Unimplemented (the CLI's kms
+// encrypt/decrypt).
+func TestModule_Crypto_LateBinding(t *testing.T) {
+	var svc atomic.Pointer[mocks.MockQuicBaaS]
+	m, err := NewModule(func() service.QuicBaaS {
+		if composed := svc.Load(); composed != nil {
+			return composed
+		}
+		return nil
+	}, testLogger(t))
+	require.NoError(t, err)
+
+	client := pb.NewCryptoClient(startBufconnModule(t, m))
+	ctx := context.Background()
+	req := &pb.CryptoEncryptRequest{KeyId: "app-key", Plaintext: []byte("hello")}
+
+	_, err = client.Encrypt(ctx, req)
+	requireUnavailable(t, err, "the node's gRPC service")
+
+	var gotKeyID string
+	svc.Store(&mocks.MockQuicBaaS{
+		CryptoServiceFunc: func() service.CryptoService {
+			return &mocks.MockCryptoService{
+				EncryptFunc: func(_ context.Context, r *service.EncryptRequest) (*service.EncryptResponse, error) {
+					gotKeyID = r.KeyID
+					return &service.EncryptResponse{KeyID: r.KeyID, KeyVersion: 1, Ciphertext: []byte("sealed")}, nil
+				},
+			}
+		},
+	})
+	resp, err := client.Encrypt(ctx, req)
+	require.NoError(t, err, "the late-bound CryptoService must serve without re-registration")
+	assert.Equal(t, "app-key", gotKeyID)
+	assert.Equal(t, []byte("sealed"), resp.GetCiphertext())
+}
+
+// TestModule_Crypto_DisabledAnswersUnavailable proves a composed facade
+// without a crypto service leaves Crypto answering Unavailable, never
+// Unimplemented and never a nil dereference.
+func TestModule_Crypto_DisabledAnswersUnavailable(t *testing.T) {
+	m, err := NewModule(func() service.QuicBaaS { return &mocks.MockQuicBaaS{} }, testLogger(t))
+	require.NoError(t, err)
+
+	client := pb.NewCryptoClient(startBufconnModule(t, m))
+	_, err = client.Encrypt(context.Background(), &pb.CryptoEncryptRequest{KeyId: "app-key", Plaintext: []byte("x")})
+	requireUnavailable(t, err, "the node's gRPC service")
 }
 
 // TestModule_OllamaService_LateBinding proves OllamaService answers
