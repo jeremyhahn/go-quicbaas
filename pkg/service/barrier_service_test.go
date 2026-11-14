@@ -17,7 +17,6 @@ import (
 	"context"
 	"errors"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -238,27 +237,8 @@ func TestBarrierService_BarrierStatus_Success(t *testing.T) {
 	assert.Equal(t, "shamir", info.Strategy)
 	assert.True(t, info.HardwareBacked)
 
-	want, parseErr := time.Parse(time.RFC3339, initAt)
-	require.NoError(t, parseErr)
-	assert.True(t, info.InitializedAt.Equal(want))
-}
-
-func TestBarrierService_BarrierStatus_InvalidTimestampIgnored(t *testing.T) {
-	mc := &mockBarrierClient{
-		statusResp: &transport.BarrierStatusResponse{
-			Sealed:        false,
-			Strategy:      "passphrase",
-			InitializedAt: "not-a-timestamp",
-		},
-	}
-	svc := service.NewBarrierService(mc)
-
-	info, err := svc.BarrierStatus(context.Background())
-	require.NoError(t, err)
-	require.NotNil(t, info)
-	// An unparseable timestamp must leave InitializedAt at its zero value
-	// rather than propagating a parse error.
-	assert.True(t, info.InitializedAt.IsZero())
+	// The facade answers with go-qrdb's response as it is (row #1650).
+	assert.Same(t, mc.statusResp, info)
 }
 
 func TestBarrierService_BarrierStatus_Error(t *testing.T) {
@@ -567,25 +547,7 @@ func TestBarrierService_BarrierGenerateRootToken_Success(t *testing.T) {
 	require.NotNil(t, info)
 	assert.Equal(t, "root-token-hex", info.Token)
 
-	want, parseErr := time.Parse(time.RFC3339, createdAt)
-	require.NoError(t, parseErr)
-	assert.True(t, info.CreatedAt.Equal(want))
-}
-
-func TestBarrierService_BarrierGenerateRootToken_InvalidTimestampIgnored(t *testing.T) {
-	mc := &mockBarrierClient{
-		rootTokenResp: &transport.BarrierRootTokenResponse{
-			Token:     "root-token-hex",
-			CreatedAt: "garbage",
-		},
-	}
-	svc := service.NewBarrierService(mc)
-
-	info, err := svc.BarrierGenerateRootToken(context.Background(), []string{"s1"})
-	require.NoError(t, err)
-	require.NotNil(t, info)
-	assert.Equal(t, "root-token-hex", info.Token)
-	assert.True(t, info.CreatedAt.IsZero())
+	assert.Same(t, mc.rootTokenResp, info)
 }
 
 func TestBarrierService_BarrierGenerateRootToken_Error(t *testing.T) {

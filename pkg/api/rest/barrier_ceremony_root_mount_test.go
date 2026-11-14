@@ -20,7 +20,7 @@ import (
 	"net/http"
 	"testing"
 
-	"github.com/jeremyhahn/go-quicbaas/pkg/service"
+	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 )
 
 // The quicbaas SDK's go-qrdb sub-client requests barrier and ceremony verbs
@@ -37,9 +37,9 @@ import (
 func TestBarrierRootMount_StatusRoutesToHandler(t *testing.T) {
 	called := false
 	svc := &fakeBarrierService{
-		statusFn: func(ctx context.Context) (*service.BarrierStatusInfo, error) {
+		statusFn: func(ctx context.Context) (*qrdbtransport.BarrierStatusResponse, error) {
 			called = true
-			return &service.BarrierStatusInfo{Sealed: true, Strategy: "shamir"}, nil
+			return &qrdbtransport.BarrierStatusResponse{Sealed: true, Strategy: "shamir"}, nil
 		},
 	}
 	s := barrierServer(t, svc)

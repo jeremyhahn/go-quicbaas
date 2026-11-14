@@ -27,6 +27,7 @@ import (
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
+	"github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 	pb "github.com/jeremyhahn/go-quicbaas/api/proto"
 	dberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
@@ -41,29 +42,29 @@ import (
 // method dispatches to an injected closure when set, otherwise it returns
 // zero values.
 type mockBarrierService struct {
-	statusFn            func(ctx context.Context) (*service.BarrierStatusInfo, error)
+	statusFn            func(ctx context.Context) (*transport.BarrierStatusResponse, error)
 	initFn              func(ctx context.Context, secret []byte) error
 	unsealFn            func(ctx context.Context, secret []byte) error
 	sealFn              func(ctx context.Context, req *service.BarrierSealRequest) error
-	initShamirFn        func(ctx context.Context, secret []byte, threshold, total int) (*service.ShamirInitInfo, error)
-	unsealShareFn       func(ctx context.Context, share string) (*service.UnsealShareProgress, error)
+	initShamirFn        func(ctx context.Context, secret []byte, threshold, total int) (*transport.BarrierInitializeShamirResponse, error)
+	unsealShareFn       func(ctx context.Context, share string) (*transport.BarrierUnsealShareResponse, error)
 	unsealSharesFn      func(ctx context.Context, shares []string) error
-	rekeyFn             func(ctx context.Context, threshold, total int) (*service.ShamirInitInfo, error)
-	generateRecoveryFn  func(ctx context.Context, threshold, total int) (*service.RecoveryKeysInfo, error)
+	rekeyFn             func(ctx context.Context, threshold, total int) (*transport.BarrierRekeyResponse, error)
+	generateRecoveryFn  func(ctx context.Context, threshold, total int) (*transport.BarrierRecoveryKeysResponse, error)
 	recoverWithKeysFn   func(ctx context.Context, keys []string) error
 	deleteRecoveryFn    func(ctx context.Context) error
 	hasRecoveryFn       func(ctx context.Context) (bool, error)
-	generateRootTokenFn func(ctx context.Context, shares []string) (*service.RootTokenInfo, error)
+	generateRootTokenFn func(ctx context.Context, shares []string) (*transport.BarrierRootTokenResponse, error)
 	enableEncryptionFn  func(ctx context.Context, tenantID string, opts qrdbsdk.MigrationOptions) error
 }
 
 var _ service.BarrierServicer = (*mockBarrierService)(nil)
 
-func (m *mockBarrierService) BarrierStatus(ctx context.Context) (*service.BarrierStatusInfo, error) {
+func (m *mockBarrierService) BarrierStatus(ctx context.Context) (*transport.BarrierStatusResponse, error) {
 	if m.statusFn != nil {
 		return m.statusFn(ctx)
 	}
-	return &service.BarrierStatusInfo{}, nil
+	return &transport.BarrierStatusResponse{}, nil
 }
 
 func (m *mockBarrierService) BarrierInitialize(ctx context.Context, secret []byte) error {
@@ -87,18 +88,18 @@ func (m *mockBarrierService) BarrierSeal(ctx context.Context, req *service.Barri
 	return nil
 }
 
-func (m *mockBarrierService) BarrierInitializeShamir(ctx context.Context, secret []byte, threshold, total int) (*service.ShamirInitInfo, error) {
+func (m *mockBarrierService) BarrierInitializeShamir(ctx context.Context, secret []byte, threshold, total int) (*transport.BarrierInitializeShamirResponse, error) {
 	if m.initShamirFn != nil {
 		return m.initShamirFn(ctx, secret, threshold, total)
 	}
-	return &service.ShamirInitInfo{Threshold: threshold, TotalShares: total}, nil
+	return &transport.BarrierInitializeShamirResponse{Threshold: threshold, TotalShares: total}, nil
 }
 
-func (m *mockBarrierService) BarrierUnsealWithShare(ctx context.Context, share string) (*service.UnsealShareProgress, error) {
+func (m *mockBarrierService) BarrierUnsealWithShare(ctx context.Context, share string) (*transport.BarrierUnsealShareResponse, error) {
 	if m.unsealShareFn != nil {
 		return m.unsealShareFn(ctx, share)
 	}
-	return &service.UnsealShareProgress{}, nil
+	return &transport.BarrierUnsealShareResponse{}, nil
 }
 
 func (m *mockBarrierService) BarrierUnsealWithShares(ctx context.Context, shares []string) error {
@@ -108,18 +109,18 @@ func (m *mockBarrierService) BarrierUnsealWithShares(ctx context.Context, shares
 	return nil
 }
 
-func (m *mockBarrierService) BarrierRekey(ctx context.Context, threshold, total int) (*service.ShamirInitInfo, error) {
+func (m *mockBarrierService) BarrierRekey(ctx context.Context, threshold, total int) (*transport.BarrierRekeyResponse, error) {
 	if m.rekeyFn != nil {
 		return m.rekeyFn(ctx, threshold, total)
 	}
-	return &service.ShamirInitInfo{Threshold: threshold, TotalShares: total}, nil
+	return &transport.BarrierRekeyResponse{Threshold: threshold, TotalShares: total}, nil
 }
 
-func (m *mockBarrierService) BarrierGenerateRecoveryKeys(ctx context.Context, threshold, total int) (*service.RecoveryKeysInfo, error) {
+func (m *mockBarrierService) BarrierGenerateRecoveryKeys(ctx context.Context, threshold, total int) (*transport.BarrierRecoveryKeysResponse, error) {
 	if m.generateRecoveryFn != nil {
 		return m.generateRecoveryFn(ctx, threshold, total)
 	}
-	return &service.RecoveryKeysInfo{Threshold: threshold, Total: total}, nil
+	return &transport.BarrierRecoveryKeysResponse{Threshold: threshold, Total: total}, nil
 }
 
 func (m *mockBarrierService) BarrierRecoverWithKeys(ctx context.Context, keys []string) error {
@@ -143,11 +144,11 @@ func (m *mockBarrierService) BarrierHasRecoveryKeys(ctx context.Context) (bool, 
 	return false, nil
 }
 
-func (m *mockBarrierService) BarrierGenerateRootToken(ctx context.Context, shares []string) (*service.RootTokenInfo, error) {
+func (m *mockBarrierService) BarrierGenerateRootToken(ctx context.Context, shares []string) (*transport.BarrierRootTokenResponse, error) {
 	if m.generateRootTokenFn != nil {
 		return m.generateRootTokenFn(ctx, shares)
 	}
-	return &service.RootTokenInfo{}, nil
+	return &transport.BarrierRootTokenResponse{}, nil
 }
 
 func (m *mockBarrierService) EnableEncryption(ctx context.Context, tenantID string, opts qrdbsdk.MigrationOptions) error {
@@ -246,10 +247,10 @@ func TestMapBarrierError_GenericErrorMapsViaToGRPCError(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestBarrierStatus_Success(t *testing.T) {
-	initAt := time.Date(2025, 1, 2, 3, 4, 5, 0, time.UTC)
+	initAt := time.Date(2025, 1, 2, 3, 4, 5, 0, time.UTC).Format(time.RFC3339)
 	mock := &mockBarrierService{
-		statusFn: func(ctx context.Context) (*service.BarrierStatusInfo, error) {
-			return &service.BarrierStatusInfo{
+		statusFn: func(ctx context.Context) (*transport.BarrierStatusResponse, error) {
+			return &transport.BarrierStatusResponse{
 				Sealed:         true,
 				Strategy:       "shamir",
 				HardwareBacked: true,
@@ -265,14 +266,14 @@ func TestBarrierStatus_Success(t *testing.T) {
 	if !resp.GetSealed() || resp.GetStrategy() != "shamir" || !resp.GetHardwareBacked() {
 		t.Fatalf("unexpected response: %#v", resp)
 	}
-	if resp.GetInitializedAt() != initAt.UTC().Format(time.RFC3339) {
+	if resp.GetInitializedAt() != initAt {
 		t.Fatalf("unexpected initialized_at: %s", resp.GetInitializedAt())
 	}
 }
 
 func TestBarrierStatus_FacadeErrorBubblesUp(t *testing.T) {
 	mock := &mockBarrierService{
-		statusFn: func(ctx context.Context) (*service.BarrierStatusInfo, error) {
+		statusFn: func(ctx context.Context) (*transport.BarrierStatusResponse, error) {
 			return nil, stderrors.New("disk failure")
 		},
 	}
@@ -407,8 +408,8 @@ func TestBarrierSeal_SOPIN(t *testing.T) {
 
 func TestBarrierShamirInitialize_Success(t *testing.T) {
 	mock := &mockBarrierService{
-		initShamirFn: func(_ context.Context, secret []byte, threshold, total int) (*service.ShamirInitInfo, error) {
-			return &service.ShamirInitInfo{
+		initShamirFn: func(_ context.Context, secret []byte, threshold, total int) (*transport.BarrierInitializeShamirResponse, error) {
+			return &transport.BarrierInitializeShamirResponse{
 				Threshold:   threshold,
 				TotalShares: total,
 				ShareCount:  total,
@@ -463,8 +464,8 @@ func TestBarrierShamirInitialize_ValidationErrors(t *testing.T) {
 
 func TestBarrierShamirUnsealShare_Success(t *testing.T) {
 	mock := &mockBarrierService{
-		unsealShareFn: func(_ context.Context, share string) (*service.UnsealShareProgress, error) {
-			return &service.UnsealShareProgress{Required: 3, Submitted: 1, Complete: false}, nil
+		unsealShareFn: func(_ context.Context, share string) (*transport.BarrierUnsealShareResponse, error) {
+			return &transport.BarrierUnsealShareResponse{Required: 3, Submitted: 1, Complete: false}, nil
 		},
 	}
 	srv := newTestBarrierServer(mock)
@@ -529,8 +530,8 @@ func TestBarrierShamirUnsealShares_NilRequest(t *testing.T) {
 
 func TestBarrierRekey_Success(t *testing.T) {
 	mock := &mockBarrierService{
-		rekeyFn: func(_ context.Context, threshold, total int) (*service.ShamirInitInfo, error) {
-			return &service.ShamirInitInfo{Threshold: threshold, TotalShares: total, ShareCount: total}, nil
+		rekeyFn: func(_ context.Context, threshold, total int) (*transport.BarrierRekeyResponse, error) {
+			return &transport.BarrierRekeyResponse{Threshold: threshold, TotalShares: total, ShareCount: total}, nil
 		},
 	}
 	srv := newTestBarrierServer(mock)
@@ -568,8 +569,8 @@ func TestBarrierRekey_ValidationErrors(t *testing.T) {
 
 func TestBarrierRecoveryGenerate_Success(t *testing.T) {
 	mock := &mockBarrierService{
-		generateRecoveryFn: func(_ context.Context, threshold, total int) (*service.RecoveryKeysInfo, error) {
-			return &service.RecoveryKeysInfo{Threshold: threshold, Total: total, ShareCount: total}, nil
+		generateRecoveryFn: func(_ context.Context, threshold, total int) (*transport.BarrierRecoveryKeysResponse, error) {
+			return &transport.BarrierRecoveryKeysResponse{Threshold: threshold, Total: total, ShareCount: total}, nil
 		},
 	}
 	srv := newTestBarrierServer(mock)
@@ -679,10 +680,10 @@ func TestBarrierRecoveryStatus_FacadeError(t *testing.T) {
 }
 
 func TestBarrierRootToken_Success(t *testing.T) {
-	created := time.Date(2025, 5, 6, 7, 8, 9, 0, time.UTC)
+	created := time.Date(2025, 5, 6, 7, 8, 9, 0, time.UTC).Format(time.RFC3339)
 	mock := &mockBarrierService{
-		generateRootTokenFn: func(_ context.Context, shares []string) (*service.RootTokenInfo, error) {
-			return &service.RootTokenInfo{Token: "tok", CreatedAt: created}, nil
+		generateRootTokenFn: func(_ context.Context, shares []string) (*transport.BarrierRootTokenResponse, error) {
+			return &transport.BarrierRootTokenResponse{Token: "tok", CreatedAt: created}, nil
 		},
 	}
 	srv := newTestBarrierServer(mock)
@@ -693,7 +694,7 @@ func TestBarrierRootToken_Success(t *testing.T) {
 	if resp.GetToken() != "tok" {
 		t.Fatalf("expected token 'tok', got %q", resp.GetToken())
 	}
-	if resp.GetCreatedAt() != created.UTC().Format(time.RFC3339) {
+	if resp.GetCreatedAt() != created {
 		t.Fatalf("unexpected created_at: %s", resp.GetCreatedAt())
 	}
 }
@@ -808,7 +809,7 @@ func TestBarrier_AllHandlersReturnUnavailableWhenUnwired(t *testing.T) {
 // surfaced as codes.Unavailable rather than a generic Internal status.
 func TestBarrier_MissingErrorFromFacadeMapsToUnavailable(t *testing.T) {
 	mock := &mockBarrierService{
-		statusFn: func(_ context.Context) (*service.BarrierStatusInfo, error) {
+		statusFn: func(_ context.Context) (*transport.BarrierStatusResponse, error) {
 			return nil, &service.BarrierServiceMissingError{}
 		},
 	}
@@ -877,9 +878,9 @@ func TestBarrierCredentialRPCs_NonUTF8SecretReachesServiceIntact(t *testing.T) {
 			record(secret)
 			return nil
 		},
-		initShamirFn: func(_ context.Context, secret []byte, threshold, total int) (*service.ShamirInitInfo, error) {
+		initShamirFn: func(_ context.Context, secret []byte, threshold, total int) (*transport.BarrierInitializeShamirResponse, error) {
 			record(secret)
-			return &service.ShamirInitInfo{Threshold: threshold, TotalShares: total}, nil
+			return &transport.BarrierInitializeShamirResponse{Threshold: threshold, TotalShares: total}, nil
 		},
 	}
 	srv := newTestBarrierServer(mock)
