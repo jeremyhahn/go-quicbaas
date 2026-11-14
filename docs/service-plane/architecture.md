@@ -140,7 +140,8 @@ on deploy revokes the grants already made and releases the name. Plan:
 **On deploy, the platform grants the service:**
 
 - a workload identity: an x509-svid from go-xkms,
-  `spiffe://<tenant>/...`, where the tenant is the SPIFFE trust domain;
+  `spiffe://<trust domain>/tenant/<tenant>/svc/<name>`, the platform form
+  every workload logs in with;
 - a certificate through the re-exported go-xkms ACME;
 - a name in `pkg/registry`;
 - RBAC grants from the built-in role;
@@ -148,13 +149,17 @@ on deploy revokes the grants already made and releases the name. Plan:
 
 **Built: the grants.** `pkg/serviceplane/grants` implements the five over
 go-xkms, the registry, IAM and secrets; `grants.All` builds them in plane
-order. The identity is `spiffe://<tenant>/svc/<name>`; its x509-svid
+order. The identity is
+`spiffe://<trust domain>/tenant/<tenant>/svc/<name>`, under the operator
+trust domain `grants.Config.TrustDomain` (`iam.spiffe_trust_domain`), so the
+SVID passes `TenantFromCert` like any workload's. Its x509-svid
 (`ProfileNameX509SVID`) and the ACME leaf for `<name>.<tenant>.<domain>`
-are issued from a fresh P-256 key, and certificate and key are stored under
+are issued as the tenant's from a fresh P-256 key, and certificate and key are stored under
 `services/<name>/svid` and `services/<name>/tls`. The name is a registry
 lease, RBAC binds the manifest's role to the identity, and the secrets grant
 binds `services/<name>/` to it. A redeploy keeps every grant whose ref still
-fits the manifest; undeploy revokes the certificates and destroys what was
+fits the manifest; an SVID under another ID is reissued and the old one
+revoked; undeploy revokes the certificates and destroys what was
 stored. Not built: the `RoleBinder` over go-qrdb IAM for SPIFFE principals,
 and the server wiring that passes `grants.All` as the plane's grants.
 

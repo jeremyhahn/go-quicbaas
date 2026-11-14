@@ -15,7 +15,8 @@
 // serviceplane.Grant per kind, each over the subsystem that owns it:
 //
 //   - identity: an X.509-SVID from the go-xkms CA under the x509-svid
-//     profile, spiffe://<tenant>/svc/<name>;
+//     profile, spiffe://<trust domain>/tenant/<tenant>/svc/<name>, recorded
+//     as the tenant's;
 //   - certificate: a TLS leaf for the registered name from the same CA under
 //     the ACME leaf profile, the profile go-xkms ACME issues under;
 //   - name: a registration in pkg/registry;
@@ -40,10 +41,12 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/registry"
@@ -83,10 +86,22 @@ type RoleBinder interface {
 	RevokeRole(ctx context.Context, tenantID, principal, role string) error
 }
 
-// SPIFFEID is the workload identity of a service: the tenant is the trust
-// domain.
-func SPIFFEID(m *serviceplane.Manifest) string {
-	return "spiffe://" + m.Tenant + "/svc/" + m.Name
+// SPIFFEID is the workload identity of a service, in the platform's
+// tenant-scoped form spiffe://<trust domain>/tenant/<tenant>/svc/<name>: the
+// form the go-xkms CA stamps and go-qrdb's mTLS login derives the tenant from,
+// so the service authenticates with its SVID as itself, in its own tenant.
+// The trust domain is the operator's (iam.spiffe_trust_domain).
+func SPIFFEID(trustDomain string, m *serviceplane.Manifest) string {
+	return "spiffe://" + trustDomain + "/tenant/" + m.Tenant + "/" + qrdbsdk.SpiffeKindService + "/" + m.Name
+}
+
+// workloadID answers the service's SPIFFE ID, refusing a grant built without
+// a trust domain.
+func workloadID(kind serviceplane.GrantKind, trustDomain string, m *serviceplane.Manifest) (string, error) {
+	if trustDomain == "" {
+		return "", &ConfigError{Kind: kind, Reason: "no SPIFFE trust domain"}
+	}
+	return SPIFFEID(trustDomain, m), nil
 }
 
 // SecretPrefix is the service's secret namespace.
@@ -113,6 +128,8 @@ func tenantCtx(ctx context.Context, m *serviceplane.Manifest) context.Context {
 type Identity struct {
 	CA      CA
 	Secrets SecretStore
+	// TrustDomain is the operator's SPIFFE trust domain.
+	TrustDomain string
 	// Validity is the SVID lifetime; zero takes the profile's default.
 	Validity time.Duration
 }
@@ -120,20 +137,32 @@ type Identity struct {
 // Kind answers identity.
 func (*Identity) Kind() serviceplane.GrantKind { return serviceplane.GrantIdentity }
 
-// Grant issues the SVID and keeps it with its key. Its reference is
-// <spiffe id>#<hex serial>.
+// Grant issues the SVID, recorded as the tenant's, and keeps it with its
+// key. Its reference is <spiffe id>#<hex serial>; a prior reference for
+// another identity, as one made under another trust domain, is replaced.
 func (g *Identity) Grant(ctx context.Context, m *serviceplane.Manifest, prior string) (string, error) {
-	id := SPIFFEID(m)
+	id, err := workloadID(serviceplane.GrantIdentity, g.TrustDomain, m)
+	if err != nil {
+		return "", err
+	}
 	if strings.HasPrefix(prior, id+"#") {
 		return prior, nil
 	}
 	serial, err := issue(tenantCtx(ctx, m), g.CA, g.Secrets, svidPath(m), id, &xkmssdk.TrustedCASignOptions{
 		Profile:  xkmssdk.ProfileNameX509SVID,
 		Validity: g.Validity,
+		TenantID: m.Tenant,
 		SANS:     &xkmssdk.TrustedCASubjectAlternativeNames{URIs: []string{id}},
 	})
 	if err != nil {
 		return "", fmt.Errorf("identity %s: %w", id, err)
+	}
+	// The new SVID took the prior one's place in the store; revoke the prior.
+	if _, old, ok := strings.Cut(prior, "#"); ok {
+		if err := revokeSerial(tenantCtx(ctx, m), g.CA, serviceplane.GrantIdentity, old); err != nil {
+			return "", errors.Join(fmt.Errorf("identity %s: revoke the prior SVID: %w", id, err),
+				revokeSerial(tenantCtx(ctx, m), g.CA, serviceplane.GrantIdentity, serial))
+		}
 	}
 	return id + "#" + serial, nil
 }
@@ -177,8 +206,9 @@ func (g *Certificate) Grant(ctx context.Context, m *serviceplane.Manifest, prior
 	}
 	dns := g.DNSName(m)
 	serial, err := issue(tenantCtx(ctx, m), g.CA, g.Secrets, tlsPath(m), dns, &xkmssdk.TrustedCASignOptions{
-		Profile: xkmssdk.ProfileNameACMELeaf,
-		SANS:    &xkmssdk.TrustedCASubjectAlternativeNames{DNS: []string{dns}},
+		Profile:  xkmssdk.ProfileNameACMELeaf,
+		TenantID: m.Tenant,
+		SANS:     &xkmssdk.TrustedCASubjectAlternativeNames{DNS: []string{dns}},
 	})
 	if err != nil {
 		return "", fmt.Errorf("certificate %s: %w", dns, err)
@@ -223,11 +253,19 @@ func issue(ctx context.Context, ca CA, store SecretStore, path, cn string, opts 
 
 // withdraw revokes a serial and destroys the kept credential.
 func withdraw(ctx context.Context, ca CA, store SecretStore, path string, kind serviceplane.GrantKind, hexSerial string) error {
+	if _, ok := new(big.Int).SetString(hexSerial, 16); !ok {
+		return &RefError{Kind: kind, Ref: hexSerial}
+	}
+	return errors.Join(revokeSerial(ctx, ca, kind, hexSerial), store.Destroy(ctx, path))
+}
+
+// revokeSerial revokes the certificate with the hex serial.
+func revokeSerial(ctx context.Context, ca CA, kind serviceplane.GrantKind, hexSerial string) error {
 	serial, ok := new(big.Int).SetString(hexSerial, 16)
 	if !ok {
 		return &RefError{Kind: kind, Ref: hexSerial}
 	}
-	return errors.Join(ca.Revoke(ctx, serial, reasonCessation), store.Destroy(ctx, path))
+	return ca.Revoke(ctx, serial, reasonCessation)
 }
 
 // ---------------------------------------------------------------------------
@@ -241,6 +279,8 @@ type Name struct {
 	TTL time.Duration
 	// Domain is the zone the name's address is under, as Certificate.Domain.
 	Domain string
+	// TrustDomain is the operator's SPIFFE trust domain.
+	TrustDomain string
 }
 
 // Kind answers name.
@@ -255,13 +295,17 @@ func (g *Name) Grant(ctx context.Context, m *serviceplane.Manifest, prior string
 	if g.Domain == "" {
 		return "", &ConfigError{Kind: serviceplane.GrantName, Reason: "no domain"}
 	}
+	id, err := workloadID(serviceplane.GrantName, g.TrustDomain, m)
+	if err != nil {
+		return "", err
+	}
 	addr := m.Name + "." + m.Tenant + "." + g.Domain
 	if len(m.Ports) > 0 {
 		addr += ":" + strconv.Itoa(int(m.Ports[0].Port))
 	}
 	lease, err := g.Registry.Register(tenantCtx(ctx, m), registry.ServiceInstance{
 		ID: m.Name, Service: m.Name, Address: addr,
-		Metadata: map[string]string{"spiffe_id": SPIFFEID(m)},
+		Metadata: map[string]string{"spiffe_id": id},
 	}, g.TTL)
 	if err != nil {
 		return "", fmt.Errorf("name %s: %w", m.Name, err)
@@ -287,7 +331,11 @@ func (g *Name) Revoke(ctx context.Context, m *serviceplane.Manifest, ref string)
 // rbac
 
 // RBAC binds the manifest's built-in role to the workload identity.
-type RBAC struct{ Roles RoleBinder }
+type RBAC struct {
+	Roles RoleBinder
+	// TrustDomain is the operator's SPIFFE trust domain.
+	TrustDomain string
+}
 
 // Kind answers rbac.
 func (*RBAC) Kind() serviceplane.GrantKind { return serviceplane.GrantRBAC }
@@ -295,7 +343,10 @@ func (*RBAC) Kind() serviceplane.GrantKind { return serviceplane.GrantRBAC }
 // Grant binds the role. Its reference is <role>@<spiffe id>. A redeploy
 // that changes the role binds the new one and unbinds the prior.
 func (g *RBAC) Grant(ctx context.Context, m *serviceplane.Manifest, prior string) (string, error) {
-	id := SPIFFEID(m)
+	id, err := workloadID(serviceplane.GrantRBAC, g.TrustDomain, m)
+	if err != nil {
+		return "", err
+	}
 	ref := m.Role + "@" + id
 	if prior == ref {
 		return ref, nil
@@ -330,7 +381,11 @@ func (g *RBAC) revoke(ctx context.Context, m *serviceplane.Manifest, ref string)
 
 // Secrets binds the service's secret namespace to its workload identity:
 // the binding record names the one principal that may read under it.
-type Secrets struct{ Secrets SecretStore }
+type Secrets struct {
+	Secrets SecretStore
+	// TrustDomain is the operator's SPIFFE trust domain.
+	TrustDomain string
+}
 
 // Kind answers secrets.
 func (*Secrets) Kind() serviceplane.GrantKind { return serviceplane.GrantSecrets }
@@ -340,8 +395,11 @@ func (g *Secrets) Grant(ctx context.Context, m *serviceplane.Manifest, prior str
 	if prior != "" {
 		return prior, nil
 	}
-	id := SPIFFEID(m)
-	err := g.Secrets.Store(tenantCtx(ctx, m), bindingPath(m),
+	id, err := workloadID(serviceplane.GrantSecrets, g.TrustDomain, m)
+	if err != nil {
+		return "", err
+	}
+	err = g.Secrets.Store(tenantCtx(ctx, m), bindingPath(m),
 		map[string][]byte{"spiffe_id": []byte(id)},
 		map[string]string{"bound_to": id, "namespace": SecretPrefix(m)})
 	if err != nil {
@@ -365,6 +423,9 @@ type Config struct {
 	Roles    RoleBinder
 	// Domain is the zone service names live under.
 	Domain string
+	// TrustDomain is the operator's SPIFFE trust domain, the one the go-xkms
+	// CA issues under and go-qrdb login pins (iam.spiffe_trust_domain).
+	TrustDomain string
 	// SVIDValidity and NameTTL are optional.
 	SVIDValidity time.Duration
 	NameTTL      time.Duration
@@ -385,13 +446,30 @@ func All(c Config) ([]serviceplane.Grant, error) {
 	case c.Domain == "":
 		return nil, &ConfigError{Reason: "no domain"}
 	}
+	if err := validTrustDomain(c.TrustDomain); err != nil {
+		return nil, err
+	}
+	td := c.TrustDomain
 	return []serviceplane.Grant{
-		&Identity{CA: c.CA, Secrets: c.Secrets, Validity: c.SVIDValidity},
+		&Identity{CA: c.CA, Secrets: c.Secrets, TrustDomain: td, Validity: c.SVIDValidity},
 		&Certificate{CA: c.CA, Secrets: c.Secrets, Domain: c.Domain},
-		&Name{Registry: c.Registry, TTL: c.NameTTL, Domain: c.Domain},
-		&RBAC{Roles: c.Roles},
-		&Secrets{Secrets: c.Secrets},
+		&Name{Registry: c.Registry, TTL: c.NameTTL, Domain: c.Domain, TrustDomain: td},
+		&RBAC{Roles: c.Roles, TrustDomain: td},
+		&Secrets{Secrets: c.Secrets, TrustDomain: td},
 	}, nil
+}
+
+// validTrustDomain refuses a trust domain a SPIFFE ID cannot carry as its
+// bare host: empty, or one with a path, port, user or other part.
+func validTrustDomain(td string) error {
+	if td == "" {
+		return &ConfigError{Reason: "no SPIFFE trust domain"}
+	}
+	u, err := url.Parse("spiffe://" + td)
+	if err != nil || u.Host != td || u.Port() != "" || u.Path != "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" {
+		return &ConfigError{Reason: fmt.Sprintf("SPIFFE trust domain %q is not a bare host", td)}
+	}
+	return nil
 }
 
 // RefError reports a grant reference that grant kind never made.

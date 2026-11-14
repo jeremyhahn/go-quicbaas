@@ -22,6 +22,7 @@ import (
 	"sync"
 	"testing"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -59,6 +60,9 @@ func (r *roles) RevokeRole(_ context.Context, tenant, principal, role string) er
 	return nil
 }
 
+// trustDomain is the operator trust domain the tests issue under.
+const trustDomain = "quicbaas.test"
+
 type env struct {
 	ca      xkmssdk.TrustedCA
 	secrets *secrets.Manager
@@ -77,7 +81,7 @@ func newEnv(t *testing.T) *env {
 		reg:     registry.New(registrytest.NewMemoryBackend()),
 		roles:   &roles{bound: map[string]string{}},
 	}
-	e.grants, err = All(Config{CA: e.ca, Secrets: e.secrets, Registry: e.reg, Roles: e.roles, Domain: "svc.example"})
+	e.grants, err = All(Config{CA: e.ca, Secrets: e.secrets, Registry: e.reg, Roles: e.roles, Domain: "svc.example", TrustDomain: trustDomain})
 	require.NoError(t, err)
 	return e
 }
@@ -118,15 +122,22 @@ func TestIdentity_IssuesAnX509SVIDAndRevokesIt(t *testing.T) {
 
 	ref, err := g.Grant(ctx, m, "")
 	require.NoError(t, err)
-	require.True(t, strings.HasPrefix(ref, "spiffe://acme/svc/web#"), ref)
+	require.True(t, strings.HasPrefix(ref, "spiffe://quicbaas.test/tenant/acme/svc/web#"), ref)
 
 	cert := e.kept(t, "acme", "services/web/svid")
 	require.Len(t, cert.URIs, 1)
-	assert.Equal(t, "spiffe://acme/svc/web", cert.URIs[0].String(), "the SVID carries the one SPIFFE ID")
+	assert.Equal(t, "spiffe://quicbaas.test/tenant/acme/svc/web", cert.URIs[0].String(), "the SVID carries the one SPIFFE ID")
 	assert.Empty(t, cert.DNSNames)
 	assert.Contains(t, cert.ExtKeyUsage, x509.ExtKeyUsageClientAuth)
 	assert.Contains(t, cert.ExtKeyUsage, x509.ExtKeyUsageServerAuth)
 	assert.Equal(t, cert.SerialNumber.Text(16), strings.SplitN(ref, "#", 2)[1])
+
+	// The SVID logs in the way every platform workload does.
+	id, err := qrdbsdk.TenantFromCert(cert, trustDomain)
+	require.NoError(t, err, "the SVID passes the platform login rule")
+	assert.Equal(t, "acme", id.TenantID)
+	assert.Equal(t, qrdbsdk.SpiffeKindService, id.Kind)
+	assert.Equal(t, "web", id.Name)
 
 	again, err := g.Grant(ctx, m, ref)
 	require.NoError(t, err)
@@ -139,6 +150,41 @@ func TestIdentity_IssuesAnX509SVIDAndRevokesIt(t *testing.T) {
 
 	var bad *RefError
 	assert.ErrorAs(t, g.Revoke(ctx, m, "no-serial"), &bad)
+}
+
+func TestIdentity_ReissuesAnSVIDUnderAnotherIDAndRevokesTheOld(t *testing.T) {
+	e := newEnv(t)
+	m := serviceplanetest.Manifest("acme", "web")
+	g := e.grant(serviceplane.GrantIdentity)
+	ctx := context.Background()
+
+	first, err := g.Grant(ctx, m, "")
+	require.NoError(t, err)
+	old := e.kept(t, "acme", "services/web/svid")
+
+	// A ref from before the platform SPIFFE form names another identity.
+	legacy := "spiffe://acme/svc/web#" + strings.SplitN(first, "#", 2)[1]
+	ref, err := g.Grant(ctx, m, legacy)
+	require.NoError(t, err)
+	assert.NotEqual(t, first, ref, "a new SVID is issued")
+	assert.True(t, strings.HasPrefix(ref, SPIFFEID(trustDomain, m)+"#"), ref)
+	assert.True(t, e.revoked(t, old), "the SVID under the old ID is revoked")
+	assert.False(t, e.revoked(t, e.kept(t, "acme", "services/web/svid")))
+}
+
+func TestGrants_RefuseAnEmptyTrustDomain(t *testing.T) {
+	e := newEnv(t)
+	m := serviceplanetest.Manifest("acme", "web")
+	ctx := context.Background()
+	for name, g := range map[string]serviceplane.Grant{
+		"identity": &Identity{CA: e.ca, Secrets: e.secrets},
+		"rbac":     &RBAC{Roles: e.roles},
+		"secrets":  &Secrets{Secrets: e.secrets},
+	} {
+		_, err := g.Grant(ctx, m, "")
+		var cfg *ConfigError
+		assert.ErrorAs(t, err, &cfg, name)
+	}
 }
 
 func TestCertificate_IssuesTheRegisteredNamesLeaf(t *testing.T) {
@@ -174,7 +220,7 @@ func TestName_RegistersInTheTenantsRegistry(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, got, 1)
 	assert.True(t, strings.HasPrefix(got[0].Address, "web.acme.svc.example"), got[0].Address)
-	assert.Equal(t, "spiffe://acme/svc/web", got[0].Metadata["spiffe_id"])
+	assert.Equal(t, "spiffe://quicbaas.test/tenant/acme/svc/web", got[0].Metadata["spiffe_id"])
 
 	other, _, err := e.reg.Resolve(tenantctx.WithTenant(ctx, "globex"), "web")
 	require.NoError(t, err)
@@ -195,16 +241,16 @@ func TestRBAC_BindsTheBuiltInRoleToTheIdentity(t *testing.T) {
 
 	ref, err := g.Grant(ctx, m, "")
 	require.NoError(t, err)
-	assert.Equal(t, m.Role+"@spiffe://acme/svc/web", ref)
-	assert.Contains(t, e.roles.bound, "acme|spiffe://acme/svc/web|"+m.Role)
+	assert.Equal(t, m.Role+"@spiffe://quicbaas.test/tenant/acme/svc/web", ref)
+	assert.Contains(t, e.roles.bound, "acme|spiffe://quicbaas.test/tenant/acme/svc/web|"+m.Role)
 
 	moved := *m
 	moved.Role = "auditor"
 	ref2, err := g.Grant(ctx, &moved, ref)
 	require.NoError(t, err)
-	assert.Equal(t, "auditor@spiffe://acme/svc/web", ref2)
-	assert.Contains(t, e.roles.bound, "acme|spiffe://acme/svc/web|auditor")
-	assert.NotContains(t, e.roles.bound, "acme|spiffe://acme/svc/web|"+m.Role, "a role change unbinds the prior role")
+	assert.Equal(t, "auditor@spiffe://quicbaas.test/tenant/acme/svc/web", ref2)
+	assert.Contains(t, e.roles.bound, "acme|spiffe://quicbaas.test/tenant/acme/svc/web|auditor")
+	assert.NotContains(t, e.roles.bound, "acme|spiffe://quicbaas.test/tenant/acme/svc/web|"+m.Role, "a role change unbinds the prior role")
 
 	require.NoError(t, g.Revoke(ctx, &moved, ref2))
 	assert.Empty(t, e.roles.bound)
@@ -222,8 +268,8 @@ func TestSecrets_BindsTheNamespaceToTheIdentity(t *testing.T) {
 	assert.Equal(t, "services/web/", ref)
 	data, meta, err := e.secrets.Get(acme, "services/web/binding")
 	require.NoError(t, err)
-	assert.Equal(t, "spiffe://acme/svc/web", string(data["spiffe_id"]))
-	assert.Equal(t, "spiffe://acme/svc/web", meta["bound_to"])
+	assert.Equal(t, "spiffe://quicbaas.test/tenant/acme/svc/web", string(data["spiffe_id"]))
+	assert.Equal(t, "spiffe://quicbaas.test/tenant/acme/svc/web", meta["bound_to"])
 
 	require.NoError(t, g.Revoke(ctx, m, ref))
 	_, _, err = e.secrets.Get(acme, "services/web/binding")
@@ -232,13 +278,19 @@ func TestSecrets_BindsTheNamespaceToTheIdentity(t *testing.T) {
 
 func TestAll_RequiresEveryDependency(t *testing.T) {
 	e := newEnv(t)
-	full := Config{CA: e.ca, Secrets: e.secrets, Registry: e.reg, Roles: e.roles, Domain: "d"}
+	full := Config{CA: e.ca, Secrets: e.secrets, Registry: e.reg, Roles: e.roles, Domain: "d", TrustDomain: trustDomain}
+	without := func(mutate func(*Config)) Config { c := full; mutate(&c); return c }
 	for name, c := range map[string]Config{
-		"ca":       {Secrets: full.Secrets, Registry: full.Registry, Roles: full.Roles, Domain: "d"},
-		"secrets":  {CA: full.CA, Registry: full.Registry, Roles: full.Roles, Domain: "d"},
-		"registry": {CA: full.CA, Secrets: full.Secrets, Roles: full.Roles, Domain: "d"},
-		"roles":    {CA: full.CA, Secrets: full.Secrets, Registry: full.Registry, Domain: "d"},
-		"domain":   {CA: full.CA, Secrets: full.Secrets, Registry: full.Registry, Roles: full.Roles},
+		"ca":                 without(func(c *Config) { c.CA = nil }),
+		"secrets":            without(func(c *Config) { c.Secrets = nil }),
+		"registry":           without(func(c *Config) { c.Registry = nil }),
+		"roles":              without(func(c *Config) { c.Roles = nil }),
+		"domain":             without(func(c *Config) { c.Domain = "" }),
+		"trust domain":       without(func(c *Config) { c.TrustDomain = "" }),
+		"trust domain path":  without(func(c *Config) { c.TrustDomain = "quicbaas.test/x" }),
+		"trust domain port":  without(func(c *Config) { c.TrustDomain = "quicbaas.test:8443" }),
+		"trust domain user":  without(func(c *Config) { c.TrustDomain = "u@quicbaas.test" }),
+		"trust domain query": without(func(c *Config) { c.TrustDomain = "quicbaas.test?x" }),
 	} {
 		_, err := All(c)
 		var cfg *ConfigError
