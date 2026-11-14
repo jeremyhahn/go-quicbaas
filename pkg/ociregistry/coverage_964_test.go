@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-trusted-platform.
+// This file is part of go-quicbaas.
 //
-// go-trusted-platform is dual-licensed:
+// go-quicbaas is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -35,6 +35,31 @@ func ociTestManifest() []byte {
 		},
 		"layers": []
 	}`)
+}
+
+func TestReferenceHelpers964(t *testing.T) {
+	splits := []struct {
+		ref, repo, tag string
+		oci            bool
+	}{
+		{"apps/web:v1", "apps/web", "v1", false},
+		{"apps/web", "apps/web", "", false},
+		{"alpine:sha256:" + repeat64("a"), "alpine:sha256", repeat64("a"), false},
+		{"host:5000/apps/web", "host:5000/apps/web", "", true},
+	}
+	for _, s := range splits {
+		repo, tag := splitOCIRef(s.ref)
+		if repo != s.repo || tag != s.tag {
+			t.Errorf("splitOCIRef(%q) = (%q, %q), want (%q, %q)", s.ref, repo, tag, s.repo, s.tag)
+		}
+	}
+
+	if got := refJoin("alpine", ""); got != "alpine" {
+		t.Errorf("refJoin without reference = %q, want alpine", got)
+	}
+	if got := refJoin("alpine", "3.20"); got != "alpine:3.20" {
+		t.Errorf("refJoin = %q, want alpine:3.20", got)
+	}
 }
 
 func TestOCIDistBackend964_RefusesWithoutStorage(t *testing.T) {
