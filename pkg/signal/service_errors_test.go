@@ -118,7 +118,7 @@ var _ qrdbtransport.KVClient = (*faultyKVClient)(nil)
 func newFaultyService(t *testing.T, kv *faultyKVClient) SignalService {
 	t.Helper()
 	log := newTestLogger(t)
-	return NewSignalService(kv, log, &SignalConfig{Enabled: true})
+	return NewSignalService(kv, newMapTxn(kv.data), log, &SignalConfig{Enabled: true})
 }
 
 func TestSignalService_Start_LoadConfigsError(t *testing.T) {

@@ -124,6 +124,7 @@ func newSignalStores(kv signalstore.KVClient, maxDevices int) *signalStores {
 // instance serves all tenants using context-based routing.
 type signalService struct {
 	kvClient   qrdbtransport.KVClient
+	txnClient  qrdbtransport.TransactionClient
 	logger     *logger.Logger
 	cfg        *SignalConfig
 	mu         sync.RWMutex
@@ -131,14 +132,18 @@ type signalService struct {
 }
 
 // NewSignalService creates a new multi-tenant Signal service backed by the
-// given base KV client. The service is not started until Start is called.
+// given base KV client and the transaction client of the same go-qrdb
+// database (one-time pre-key consumption is an atomic compare-and-delete).
+// The service is not started until Start is called.
 func NewSignalService(
 	kvClient qrdbtransport.KVClient,
+	txnClient qrdbtransport.TransactionClient,
 	log *logger.Logger,
 	cfg *SignalConfig,
 ) SignalService {
 	return &signalService{
 		kvClient:   kvClient,
+		txnClient:  txnClient,
 		logger:     log.WithField("component", "signal"),
 		cfg:        cfg,
 		tenantCfgs: make(map[string]*SignalTenantConfig),
@@ -429,12 +434,11 @@ func (s *signalService) getTenantStores(ctx context.Context) (*signalStores, *Si
 		return nil, nil, &SignalNotEnabledError{TenantID: tenantID}
 	}
 
-	tenantKV, err := qrdbtransport.WithTenant(s.kvClient, tenantID)
+	adapter, err := NewTenantKVAdapter(s.kvClient, s.txnClient, tenantID)
 	if err != nil {
 		return nil, nil, err
 	}
 
-	adapter := NewKVAdapter(tenantKV)
 	stores := newSignalStores(adapter, tenantCfg.MaxDevices)
 	return stores, tenantCfg, nil
 }
