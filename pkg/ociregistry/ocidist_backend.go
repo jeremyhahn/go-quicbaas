@@ -87,6 +87,7 @@ func (r *Registry) PutManifest(ctx context.Context, name, reference, mediaType s
 		return "", err
 	}
 	manifest.Reference = ref
+	manifest.ContentSize = int64(len(content))
 	if err := r.storage.StoreManifest(ctx, ref, manifest); err != nil {
 		return "", err
 	}
@@ -219,6 +220,69 @@ func (r *Registry) ListTags(ctx context.Context, name string) ([]string, error) 
 	}
 	sort.Strings(tags)
 	return tags, nil
+}
+
+// ListReferrers returns a descriptor for each manifest in repository
+// name whose subject is digest (OCI distribution spec 1.1, referrers
+// API). A non-empty artifactType keeps only the referrers of that
+// type. Each manifest is stored once under its digest, so only those
+// digest-keyed copies are considered and no referrer is listed twice.
+// A subject with no referrers yields an empty list, not an error.
+func (r *Registry) ListReferrers(ctx context.Context, name, digest, artifactType string) ([]Descriptor, error) {
+	if err := r.checkState(); err != nil {
+		return nil, err
+	}
+	if r.storage == nil {
+		return nil, ErrStorageNotConfigured{Op: "ListReferrers"}
+	}
+	out := []Descriptor{}
+	cursor := ""
+	for {
+		res, err := r.storage.ListManifests(ctx, ListOptions{
+			Limit:  500,
+			Cursor: cursor,
+		})
+		if err != nil {
+			return nil, err
+		}
+		for i := range res.Manifests {
+			m := &res.Manifests[i]
+			if m.Subject == nil || m.Subject.Digest != digest {
+				continue
+			}
+			repo, hex := splitOCIRef(m.Reference)
+			if repo != name+":sha256" || !isHex64(hex) {
+				continue
+			}
+			desc := Descriptor{
+				MediaType:    m.MediaType,
+				Digest:       "sha256:" + hex,
+				Size:         m.ContentSize,
+				Annotations:  m.Annotations,
+				ArtifactType: referrerArtifactType(m),
+			}
+			if artifactType != "" && desc.ArtifactType != artifactType {
+				continue
+			}
+			out = append(out, desc)
+		}
+		if !res.HasMore || res.NextCursor == "" || res.NextCursor == cursor {
+			break
+		}
+		cursor = res.NextCursor
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Digest < out[j].Digest })
+	return out, nil
+}
+
+// referrerArtifactType is the artifact type the referrers API reports
+// for m: its artifactType, or else its config's media type, as the
+// OCI distribution spec 1.1 directs.
+func referrerArtifactType(m *ImageManifest) string {
+	if m.ArtifactType != "" {
+		return m.ArtifactType
+	}
+	return m.Config.MediaType
 }
 
 // refJoin joins (name, tag) into the colon-delimited form used by

@@ -30,6 +30,8 @@ import (
 	"time"
 
 	"github.com/gorilla/mux"
+
+	"github.com/jeremyhahn/go-quicbaas/pkg/ociregistry"
 )
 
 // OCIDistHandlers implements the OCI Distribution Spec at /v2/. The
@@ -198,6 +200,11 @@ type OCIDistBackend interface {
 	ListRepositories(ctx context.Context, limit int) ([]string, error)
 	// ListTags enumerates tags within a repository.
 	ListTags(ctx context.Context, name string) ([]string, error)
+	// ListReferrers returns the descriptors of the manifests in
+	// repository name whose subject is digest, keeping only those of
+	// artifactType when it is non-empty. No referrers is an empty
+	// list, not an error.
+	ListReferrers(ctx context.Context, name, digest, artifactType string) ([]ociregistry.Descriptor, error)
 }
 
 // uploadSession tracks a blob upload-in-progress. The spec uses a
@@ -259,6 +266,7 @@ func (h *OCIDistHandlers) registerRoutes(parent *mux.Router, gates OCIDistGates)
 	v2.Handle("/", read(h.versionCheck)).Methods("GET")
 	v2.Handle("/_catalog", read(h.catalog)).Methods("GET")
 	v2.Handle("/{name:.+}/tags/list", read(h.listTags)).Methods("GET")
+	v2.Handle("/{name:.+}/referrers/{digest}", read(h.listReferrers)).Methods("GET")
 	v2.Handle("/{name:.+}/manifests/{reference}", read(h.headManifest)).Methods("HEAD")
 	v2.Handle("/{name:.+}/manifests/{reference}", read(h.getManifest)).Methods("GET")
 	v2.Handle("/{name:.+}/manifests/{reference}", write(h.putManifest)).Methods("PUT")
@@ -296,6 +304,71 @@ func (h *OCIDistHandlers) listTags(w http.ResponseWriter, r *http.Request) {
 		"name": name,
 		"tags": tags,
 	})
+}
+
+// imageIndexMediaType is the media type of the referrers response.
+const imageIndexMediaType = "application/vnd.oci.image.index.v1+json"
+
+// referrersIndex is the image index the referrers API answers with.
+type referrersIndex struct {
+	SchemaVersion int                      `json:"schemaVersion"`
+	MediaType     string                   `json:"mediaType"`
+	Manifests     []ociregistry.Descriptor `json:"manifests"`
+}
+
+// listReferrers serves GET /v2/<name>/referrers/<digest> (OCI
+// distribution spec 1.1): an image index of the manifests whose
+// subject is digest. The artifactType query parameter filters the
+// list, and the OCI-Filters-Applied header says the filter was
+// applied. A subject with no referrers is a 200 with an empty index.
+func (h *OCIDistHandlers) listReferrers(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	digest := vars["digest"]
+	if !validDigest(digest) {
+		writeOCIError(w, http.StatusBadRequest, "DIGEST_INVALID", "referrers: invalid digest "+digest)
+		return
+	}
+	artifactType := r.URL.Query().Get("artifactType")
+	refs, err := h.backend.ListReferrers(r.Context(), vars["name"], digest, artifactType)
+	if err != nil {
+		h.logger.Error("oci: list referrers", "name", vars["name"], "digest", digest, "error", err)
+		writeOCIError(w, http.StatusInternalServerError, "UNKNOWN", err.Error())
+		return
+	}
+	if refs == nil {
+		refs = []ociregistry.Descriptor{}
+	}
+	if artifactType != "" {
+		w.Header().Set("OCI-Filters-Applied", "artifactType")
+	}
+	body, err := json.Marshal(referrersIndex{
+		SchemaVersion: 2,
+		MediaType:     imageIndexMediaType,
+		Manifests:     refs,
+	})
+	if err != nil {
+		writeOCIError(w, http.StatusInternalServerError, "UNKNOWN", err.Error())
+		return
+	}
+	w.Header().Set("Content-Type", imageIndexMediaType)
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(body)
+}
+
+// validDigest reports whether d is a sha256 digest: "sha256:"
+// followed by 64 lowercase hex characters.
+func validDigest(d string) bool {
+	hexPart, ok := strings.CutPrefix(d, "sha256:")
+	if !ok || len(hexPart) != 64 {
+		return false
+	}
+	for i := 0; i < len(hexPart); i++ {
+		c := hexPart[i]
+		if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
+			return false
+		}
+	}
+	return true
 }
 
 func (h *OCIDistHandlers) headManifest(w http.ResponseWriter, r *http.Request) {

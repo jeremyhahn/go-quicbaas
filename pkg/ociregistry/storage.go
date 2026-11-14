@@ -48,6 +48,18 @@ type ImageManifest struct {
 	// Annotations are optional annotations.
 	Annotations map[string]string `json:"annotations,omitempty"`
 
+	// ArtifactType is the artifact's type when the manifest is an
+	// artifact rather than an image (OCI image spec 1.1).
+	ArtifactType string `json:"artifactType,omitempty"`
+
+	// Subject is the manifest this one refers to (a signature, an
+	// SBOM, an attestation); the referrers API lists manifests by it.
+	Subject *Descriptor `json:"subject,omitempty"`
+
+	// ContentSize is the size of the manifest as pushed, recorded so
+	// the referrers API can describe the manifest without its bytes.
+	ContentSize int64 `json:"contentSize,omitempty"`
+
 	// Reference is the image reference (repository:tag or digest).
 	Reference string `json:"reference,omitempty"`
 
@@ -71,6 +83,10 @@ type Descriptor struct {
 
 	// Annotations are optional annotations.
 	Annotations map[string]string `json:"annotations,omitempty"`
+
+	// ArtifactType is the referenced artifact's type; set on the
+	// descriptors the referrers API returns.
+	ArtifactType string `json:"artifactType,omitempty"`
 }
 
 // ListOptions configures manifest listing behavior.

@@ -31,6 +31,8 @@ import (
 	"github.com/gorilla/mux"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/jeremyhahn/go-quicbaas/pkg/ociregistry"
 )
 
 // fakeOCIBackend is an in-memory OCIDistBackend for handler tests.
@@ -141,6 +143,40 @@ func (f *fakeOCIBackend) ListTags(_ context.Context, name string) ([]string, err
 	}
 	if len(out) == 0 {
 		return nil, &MessageError{Msg: "name unknown"}
+	}
+	return out, nil
+}
+
+func (f *fakeOCIBackend) ListReferrers(_ context.Context, name, digest, artifactType string) ([]ociregistry.Descriptor, error) {
+	if f.failList != nil {
+		return nil, f.failList
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	seen := map[string]bool{}
+	var out []ociregistry.Descriptor
+	for k, m := range f.manifests {
+		n, _, _ := strings.Cut(k, ":")
+		if n != name {
+			continue
+		}
+		var parsed ociregistry.ImageManifest
+		if err := json.Unmarshal(m.content, &parsed); err != nil {
+			continue
+		}
+		if parsed.Subject == nil || parsed.Subject.Digest != digest {
+			continue
+		}
+		at := parsed.ArtifactType
+		if at == "" {
+			at = parsed.Config.MediaType
+		}
+		d := manifestDigest(m.content)
+		if seen[d] || (artifactType != "" && at != artifactType) {
+			continue
+		}
+		seen[d] = true
+		out = append(out, ociregistry.Descriptor{MediaType: m.mediaType, Digest: d, Size: int64(len(m.content)), ArtifactType: at})
 	}
 	return out, nil
 }
