@@ -243,6 +243,13 @@ var WithDANEPublisher = server.WithDANEPublisher
 // not-configured error across every transport.
 var WithContainerAttestor = server.WithContainerAttestor
 
+// WithMeasuredLaunch returns a ServerOption that fills the container
+// attestor seam with QuicBaaS's measured-launch runtime, extending through
+// the host's HostTPM under default deny (signature, provenance and the
+// signed cluster manifest, or an audited allow-unsigned grant). It and
+// WithContainerAttestor are exclusive.
+var WithMeasuredLaunch = server.WithMeasuredLaunch
+
 // WithAttestationTrustAnchors returns a ServerOption that sets the root
 // certificates every Security().Attestation() verification is anchored
 // against. Callers may still supply additional per-request anchors in the

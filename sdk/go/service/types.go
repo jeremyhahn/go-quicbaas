@@ -1318,6 +1318,23 @@ var NewHostAppraiser = pkgservice.NewHostAppraiser
 // already hold a runtime value.
 var NewRuntimeContainerAttestor = pkgservice.NewRuntimeContainerAttestor
 
+// MeasuredLaunchConfig is what a host supplies for measured container
+// launches (WithMeasuredLaunch): its HostTPM, the runtime, the provenance
+// source and builders, and the audited allow-unsigned policy.
+type MeasuredLaunchConfig = pkgservice.MeasuredLaunchConfig
+
+// NewMeasuredLaunchRuntime builds the measured-launch runtime over an
+// attestation store, with the Verifier's appraisal, image verification,
+// provenance verification and signed cluster manifest wired in.
+var NewMeasuredLaunchRuntime = pkgservice.NewMeasuredLaunchRuntime
+
+// ErrMeasuredLaunchConfig and ErrMeasuredLaunchWithAttestor are the
+// measured-launch configuration errors.
+var (
+	ErrMeasuredLaunchConfig       = pkgservice.ErrMeasuredLaunchConfig
+	ErrMeasuredLaunchWithAttestor = pkgservice.ErrMeasuredLaunchWithAttestor
+)
+
 // Typed sentinel errors returned by the attestation service.
 var (
 	// ErrAttestationNilRequest is returned when a request is nil.

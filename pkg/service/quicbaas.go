@@ -616,10 +616,15 @@ func newQuicBaaS(b *serviceBuilder) (QuicBaaS, error) {
 	// application registers a ContainerAttestor. Constructing it
 	// unconditionally means Security().Attestation() never returns nil and
 	// every transport can route to it.
-	svc.attestationService = NewAttestationService(b.attestationTrustAnchors, b.containerAttestor,
-		WithAttestationStore(NewQRDBAttestationStore(func() (*qrdbsdk.Client, error) {
-			return svc.qrdbForShard(attestationShardID)
-		})))
+	attestationStore := NewQRDBAttestationStore(func() (*qrdbsdk.Client, error) {
+		return svc.qrdbForShard(attestationShardID)
+	})
+	containerAttestor, attestorErr := b.resolveContainerAttestor(attestationStore, logger)
+	if attestorErr != nil {
+		return nil, &errors.QBError{Code: errors.ErrInvalidInput, Op: "service.newQuicBaaS", Err: attestorErr}
+	}
+	svc.attestationService = NewAttestationService(b.attestationTrustAnchors, containerAttestor,
+		WithAttestationStore(attestationStore))
 
 	// The service registry is always wired. It resolves the platform shard's
 	// qrdb client per call, so a server whose store is not up yet answers

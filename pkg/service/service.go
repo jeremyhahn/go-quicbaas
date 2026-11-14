@@ -1728,6 +1728,12 @@ type ServiceBuilder interface {
 	// returns a typed not-configured error.
 	WithContainerAttestor(attestor ContainerAttestor) ServiceBuilder
 
+	// WithMeasuredLaunch fills the container attestor seam with the
+	// measured-launch runtime (NewMeasuredLaunchRuntime) over the
+	// Verifier's own store, extending through the host's HostTPM. It and
+	// WithContainerAttestor are exclusive.
+	WithMeasuredLaunch(cfg MeasuredLaunchConfig) ServiceBuilder
+
 	// WithAttestationTrustAnchors sets the root certificates every
 	// attestation verification is anchored against. When unset, only the
 	// per-request anchors supplied in the verify options apply.
@@ -1811,6 +1817,7 @@ type serviceBuilder struct {
 	caService                 interface{}
 	danePublisher             DANEPublisher
 	containerAttestor         ContainerAttestor
+	measuredLaunch            *MeasuredLaunchConfig
 	attestationTrustAnchors   []*x509.Certificate
 	acmeService               ACMEServicer
 	catalogManager            catalog.CatalogManager
@@ -1917,6 +1924,11 @@ func (b *serviceBuilder) WithDANEPublisher(publisher DANEPublisher) ServiceBuild
 
 func (b *serviceBuilder) WithContainerAttestor(attestor ContainerAttestor) ServiceBuilder {
 	b.containerAttestor = attestor
+	return b
+}
+
+func (b *serviceBuilder) WithMeasuredLaunch(cfg MeasuredLaunchConfig) ServiceBuilder {
+	b.measuredLaunch = &cfg
 	return b
 }
 

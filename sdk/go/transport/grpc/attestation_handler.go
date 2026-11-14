@@ -183,6 +183,28 @@ func (h *attestationHandler) handleAttestContainer(ctx context.Context, client p
 		MeasurementPCR:    int(pbResp.MeasurementPcr),
 		MeasurementBank:   pbResp.MeasurementBank,
 		LaunchMeasurement: pbResp.LaunchMeasurement,
+		PCRBank:           pbResp.PcrBank,
+	}
+	for _, e := range pbResp.MeasurementLog {
+		entry := attestationclient.MeasurementLogEntry{
+			Sequence:      e.Sequence,
+			Kind:          e.Kind,
+			Base:          e.Base,
+			Image:         e.Image,
+			ImageDigest:   e.ImageDigest,
+			ConfigDigest:  e.ConfigDigest,
+			PolicyDigest:  e.PolicyDigest,
+			TrustLabel:    e.TrustLabel,
+			AllowUnsigned: e.AllowUnsigned,
+			PCR:           int(e.Pcr),
+			Bank:          e.Bank,
+			Measurement:   e.Measurement,
+			Chain:         e.Chain,
+		}
+		if e.RecordedAt != nil {
+			entry.RecordedAt = e.RecordedAt.AsTime().UTC().Format(time.RFC3339Nano)
+		}
+		resp.MeasurementLog = append(resp.MeasurementLog, entry)
 	}
 	if pbResp.AttestedAt != nil {
 		resp.AttestedAt = pbResp.AttestedAt.AsTime().UTC().Format(time.RFC3339Nano)

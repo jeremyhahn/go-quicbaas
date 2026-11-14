@@ -1849,8 +1849,14 @@ Two seams exist for it to fill:
   seam exactly: QuicBaaS declares the interface, ships a nil default, and returns
   `ErrAttestationNoAttestor` until an embedder registers one.
   `NewRuntimeContainerAttestor` fills the seam with the standalone tiers for
-  deployments that do not need a fleet. Implementations **must** fail closed: a
-  host that cannot prove its state returns an error, never an unattested success.
+  deployments that do not need a fleet. `quicbaas.WithMeasuredLaunch` fills
+  it with the measured-launch runtime instead (`service.NewMeasuredLaunchRuntime`):
+  the host supplies its `HostTPM` and runtime, and the Verifier's appraiser,
+  image verifier, provenance verifier and signed cluster manifest run over the
+  server's go-qrdb attestation store, default deny. The two options are
+  exclusive. The response carries the quoted PCR bank and the node measurement
+  log. Implementations **must** fail closed: a host that cannot prove its state
+  returns an error, never an unattested success.
 
 ### The Orthogonal Sandbox Axis
 

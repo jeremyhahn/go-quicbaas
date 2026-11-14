@@ -163,6 +163,29 @@ func attestContainerWireResponse(svcResp *service.AttestContainerResponse) *atte
 		MeasurementPCR:    svcResp.MeasurementPCR,
 		MeasurementBank:   svcResp.MeasurementBank,
 		LaunchMeasurement: svcResp.LaunchMeasurement,
+		PCRBank:           svcResp.PCRBank,
+	}
+	for i := range svcResp.MeasurementLog {
+		e := &svcResp.MeasurementLog[i]
+		entry := attestationclient.MeasurementLogEntry{
+			Sequence:      e.Sequence,
+			Kind:          e.Kind,
+			Base:          e.Base,
+			Image:         e.Image,
+			ImageDigest:   e.ImageDigest,
+			ConfigDigest:  e.ConfigDigest,
+			PolicyDigest:  e.PolicyDigest,
+			TrustLabel:    e.TrustLabel,
+			AllowUnsigned: e.AllowUnsigned,
+			PCR:           e.PCR,
+			Bank:          e.Bank,
+			Measurement:   e.Measurement,
+			Chain:         e.Chain,
+		}
+		if !e.RecordedAt.IsZero() {
+			entry.RecordedAt = e.RecordedAt.UTC().Format(time.RFC3339Nano)
+		}
+		resp.MeasurementLog = append(resp.MeasurementLog, entry)
 	}
 	if !svcResp.AttestedAt.IsZero() {
 		resp.AttestedAt = svcResp.AttestedAt.UTC().Format(time.RFC3339Nano)

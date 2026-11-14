@@ -102,6 +102,7 @@ type serverOptions struct {
 	// attestation with continuous re-attestation and quarantine. When nil,
 	// AttestContainer returns a typed not-configured error.
 	containerAttestor service.ContainerAttestor
+	measuredLaunch    *service.MeasuredLaunchConfig
 
 	// attestationTrustAnchors are the root certificates every attestation
 	// verification is anchored against. When empty, only the per-request
@@ -188,6 +189,21 @@ func WithDANEPublisher(publisher dane.DANEPublisher) ServerOption {
 // WithDANEPublisher uses.
 func WithContainerAttestor(attestor service.ContainerAttestor) ServerOption {
 	return func(o *serverOptions) { o.containerAttestor = attestor }
+}
+
+// WithMeasuredLaunch returns a ServerOption that fills the container
+// attestor seam with QuicBaaS's measured-launch runtime
+// (service.NewMeasuredLaunchRuntime): each launch is measured into the node
+// measurement log and extended through cfg.TPM, the HostTPM the host
+// supplies (go-trusted-platform implements it), and is admitted only under
+// default deny — a verified image signature, verified provenance and a
+// listing in the signed cluster manifest, or an audited allow-unsigned
+// grant. The Verifier's appraisal, endorsements and cluster manifest are
+// read from the server's own attestation store. It and
+// WithContainerAttestor are exclusive: the server refuses to start with
+// both.
+func WithMeasuredLaunch(cfg service.MeasuredLaunchConfig) ServerOption {
+	return func(o *serverOptions) { o.measuredLaunch = &cfg }
 }
 
 // WithAttestationTrustAnchors returns a ServerOption that sets the root
