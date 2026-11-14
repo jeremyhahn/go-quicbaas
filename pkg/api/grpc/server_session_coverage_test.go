@@ -48,38 +48,40 @@ func TestMemorySessionService_ListSessions_Filtering(t *testing.T) {
 	svc.AddSession(&iam.Session{ID: "s1", TenantID: "t1", UserID: 30001, Created: now, LastActivity: now, Expires: now.Add(time.Hour)})
 	svc.AddSession(&iam.Session{ID: "s2", TenantID: "t1", UserID: 30002, Created: now, LastActivity: now, Expires: now.Add(time.Hour)})
 	svc.AddSession(&iam.Session{ID: "s3", TenantID: "t2", UserID: 30001, Created: now, LastActivity: now, Expires: now.Add(time.Hour)})
+	svc.AddSession(&iam.Session{ID: "s4", TenantID: "t1", UserID: 30001, Created: now, LastActivity: now, Expires: now.Add(time.Hour)})
+	svc.AddSession(&iam.Session{ID: "s5", TenantID: "t1", UserID: 30001, Created: now, LastActivity: now, Expires: now.Add(time.Hour)})
 
-	t.Run("filters_by_tenant", func(t *testing.T) {
-		sessions, total, err := svc.ListSessions(callerContext("t1"), "t1", 0, 0, 0)
-		require.NoError(t, err)
-		assert.Equal(t, 2, total)
-		assert.Len(t, sessions, 2)
+	t.Run("refuses_an_empty_tenant", func(t *testing.T) {
+		_, _, err := svc.ListSessions(callerContext("t1"), "", 30001, 0, 0)
+		require.ErrorIs(t, err, ErrSessionScopeRequired)
+	})
+	t.Run("refuses_user_zero_as_the_whole_tenant", func(t *testing.T) {
+		_, _, err := svc.ListSessions(callerContext("t1"), "t1", 0, 0, 0)
+		require.ErrorIs(t, err, ErrSessionScopeRequired)
 	})
 	t.Run("filters_by_tenant_and_user", func(t *testing.T) {
 		sessions, total, err := svc.ListSessions(callerContext("t1"), "t1", 30001, 0, 0)
 		require.NoError(t, err)
-		assert.Equal(t, 1, total)
-		assert.Len(t, sessions, 1)
-	})
-	t.Run("returns_all_when_no_filter", func(t *testing.T) {
-		sessions, total, err := svc.ListSessions(callerContext("t1"), "", 0, 0, 0)
-		require.NoError(t, err)
 		assert.Equal(t, 3, total)
 		assert.Len(t, sessions, 3)
+		for _, s := range sessions {
+			assert.Equal(t, "t1", s.TenantID)
+			assert.Equal(t, uint64(30001), s.UserID)
+		}
 	})
 	t.Run("applies_pagination_with_limit", func(t *testing.T) {
-		sessions, total, err := svc.ListSessions(callerContext("t1"), "", 0, 1, 0)
+		sessions, total, err := svc.ListSessions(callerContext("t1"), "t1", 30001, 1, 0)
 		require.NoError(t, err)
 		assert.Equal(t, 3, total)
 		assert.Len(t, sessions, 1)
 	})
 	t.Run("applies_pagination_with_offset", func(t *testing.T) {
-		sessions, _, err := svc.ListSessions(callerContext("t1"), "", 0, 0, 2)
+		sessions, _, err := svc.ListSessions(callerContext("t1"), "t1", 30001, 0, 2)
 		require.NoError(t, err)
 		assert.Len(t, sessions, 1)
 	})
 	t.Run("offset_beyond_results_returns_empty", func(t *testing.T) {
-		sessions, _, err := svc.ListSessions(callerContext("t1"), "", 0, 0, 100)
+		sessions, _, err := svc.ListSessions(callerContext("t1"), "t1", 30001, 0, 100)
 		require.NoError(t, err)
 		assert.Empty(t, sessions)
 	})
@@ -231,13 +233,29 @@ func TestSessionServerCoverage_RevokeOtherSessions_Success(t *testing.T) {
 // SessionServer Validation Tests (empty required fields)
 // =============================================================================
 
+// An empty tenant_id scopes the list to the caller's tenant and own
+// sessions: it never reads as every session of the tenant (#1842).
 func TestSessionServerCoverage_ListSessions_EmptyTenantId(t *testing.T) {
+	server, _ := sessionOwnershipFixture(t)
+	resp, err := server.ListSessions(sessionCallerContext("t1", "alice"), &iampb.ListSessionsRequest{})
+	require.NoError(t, err)
+	ids := make([]string, 0, len(resp.Sessions))
+	for _, s := range resp.Sessions {
+		ids = append(ids, s.Id)
+	}
+	assert.ElementsMatch(t, []string{ownSessionID, ownSecondSessionID}, ids)
+}
+
+// A caller whose account resolves to user 0 is refused rather than read as
+// the whole tenant (#1842).
+func TestSessionServerCoverage_ListSessions_UserZeroCallerRefused(t *testing.T) {
 	server := NewSessionServer(NewMemorySessionService(), userIDCallerAccounts{}, newTestSessionLogger())
-	_, err := server.ListSessions(callerContext("t1"), &iampb.ListSessionsRequest{})
+	_, err := server.ListSessions(sessionOwnerContext("t1", 0), &iampb.ListSessionsRequest{})
 	require.Error(t, err)
-	st, ok := status.FromError(err)
-	require.True(t, ok)
-	assert.Equal(t, codes.InvalidArgument, st.Code())
+	assert.Equal(t, codes.PermissionDenied, status.Code(err))
+	_, err = server.RevokeAllSessions(sessionOwnerContext("t1", 0), &iampb.RevokeAllSessionsRequest{})
+	require.Error(t, err)
+	assert.Equal(t, codes.PermissionDenied, status.Code(err))
 }
 
 func TestSessionServerCoverage_GetSession_EmptySessionId(t *testing.T) {
@@ -258,13 +276,14 @@ func TestSessionServerCoverage_RevokeSession_EmptySessionId(t *testing.T) {
 	assert.Equal(t, codes.InvalidArgument, st.Code())
 }
 
+// An empty tenant_id revokes only the caller's own sessions in its tenant
+// (#1842).
 func TestSessionServerCoverage_RevokeAllSessions_EmptyTenantId(t *testing.T) {
-	server := NewSessionServer(NewMemorySessionService(), userIDCallerAccounts{}, newTestSessionLogger())
-	_, err := server.RevokeAllSessions(callerContext("t1"), &iampb.RevokeAllSessionsRequest{})
-	require.Error(t, err)
-	st, ok := status.FromError(err)
-	require.True(t, ok)
-	assert.Equal(t, codes.InvalidArgument, st.Code())
+	server, storage := sessionOwnershipFixture(t)
+	resp, err := server.RevokeAllSessions(sessionCallerContext("t1", "alice"), &iampb.RevokeAllSessionsRequest{})
+	require.NoError(t, err)
+	assert.Equal(t, int32(2), resp.RevokedCount)
+	requireSessionKept(t, storage, otherUserSessionID, otherTenantSessionID)
 }
 
 func TestSessionServerCoverage_RevokeOtherSessions_EmptyTenantId(t *testing.T) {

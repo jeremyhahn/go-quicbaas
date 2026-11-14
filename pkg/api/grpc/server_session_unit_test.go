@@ -105,14 +105,16 @@ func TestSessionServer_ListSessions(t *testing.T) {
 		assert.LessOrEqual(t, int32(len(resp.Sessions)), int32(1))
 	})
 
-	t.Run("error missing tenant_id", func(t *testing.T) {
+	t.Run("empty tenant_id takes the caller's tenant", func(t *testing.T) {
 		resp, err := srv.ListSessions(ctx, &iampb.ListSessionsRequest{
 			TenantId: "",
 		})
 
-		require.Error(t, err)
-		assert.Nil(t, resp)
-		assert.Equal(t, codes.InvalidArgument, status.Code(err))
+		require.NoError(t, err)
+		for _, s := range resp.Sessions {
+			assert.Equal(t, "tenant1", s.TenantId)
+			assert.Equal(t, "20001", s.UserId)
+		}
 	})
 }
 
@@ -216,14 +218,14 @@ func TestSessionServer_RevokeAllSessions(t *testing.T) {
 		assert.NotNil(t, resp)
 	})
 
-	t.Run("error missing tenant_id", func(t *testing.T) {
+	t.Run("empty tenant_id without an authenticated caller", func(t *testing.T) {
 		resp, err := srv.RevokeAllSessions(ctx, &iampb.RevokeAllSessionsRequest{
 			TenantId: "",
 		})
 
 		require.Error(t, err)
 		assert.Nil(t, resp)
-		assert.Equal(t, codes.InvalidArgument, status.Code(err))
+		assert.Equal(t, codes.Unauthenticated, status.Code(err))
 	})
 }
 
@@ -350,14 +352,12 @@ func TestMemorySessionService(t *testing.T) {
 		svc.CreateTestSession("t1", 30002)
 		svc.CreateTestSession("t2", 30001)
 
-		// Filter by tenant
-		sessions, total, err := svc.ListSessions(ctx, "t1", 0, 10, 0)
-		require.NoError(t, err)
-		assert.Equal(t, 2, total)
-		assert.Len(t, sessions, 2)
+		// A tenant without a user is not a scope (#1842)
+		_, _, err := svc.ListSessions(ctx, "t1", 0, 10, 0)
+		require.ErrorIs(t, err, ErrSessionScopeRequired)
 
 		// Filter by tenant and user
-		sessions, total, err = svc.ListSessions(ctx, "t1", 30001, 10, 0)
+		sessions, total, err := svc.ListSessions(ctx, "t1", 30001, 10, 0)
 		require.NoError(t, err)
 		assert.Equal(t, 1, total)
 		assert.Len(t, sessions, 1)
@@ -374,12 +374,12 @@ func TestMemorySessionService(t *testing.T) {
 		}
 
 		// Test limit
-		sessions, _, err := svc.ListSessions(ctx, "pag-tenant", 0, 2, 0)
+		sessions, _, err := svc.ListSessions(ctx, "pag-tenant", 50008, 2, 0)
 		require.NoError(t, err)
 		assert.Len(t, sessions, 2)
 
 		// Test offset beyond range
-		sessions, total, err := svc.ListSessions(ctx, "pag-tenant", 0, 10, 100)
+		sessions, total, err := svc.ListSessions(ctx, "pag-tenant", 50008, 10, 100)
 		require.NoError(t, err)
 		assert.Len(t, sessions, 0)
 		assert.Equal(t, 5, total)
@@ -399,15 +399,22 @@ func TestMemorySessionService(t *testing.T) {
 	t.Run("RevokeAllSessions", func(t *testing.T) {
 		svc := NewMemorySessionService()
 		svc.CreateTestSession("all-tenant", 50010)
+		svc.AddSession(&iam.Session{ID: "all-second", TenantID: "all-tenant", UserID: 50010})
 		svc.CreateTestSession("all-tenant", 50011)
-		svc.CreateTestSession("other-tenant", 50012)
+		svc.CreateTestSession("other-tenant", 50010)
 
-		count, err := svc.RevokeAllSessions(ctx, "all-tenant", 0)
+		// User 0 never reads as every user of the tenant (#1842)
+		_, err := svc.RevokeAllSessions(ctx, "all-tenant", 0)
+		require.ErrorIs(t, err, ErrSessionScopeRequired)
+
+		count, err := svc.RevokeAllSessions(ctx, "all-tenant", 50010)
 		require.NoError(t, err)
 		assert.Equal(t, 2, count)
 
-		// Verify other tenant's session still exists
-		sessions, _, _ := svc.ListSessions(ctx, "other-tenant", 0, 10, 0)
+		// Another user's and another tenant's sessions remain
+		sessions, _, _ := svc.ListSessions(ctx, "all-tenant", 50011, 10, 0)
+		assert.Len(t, sessions, 1)
+		sessions, _, _ = svc.ListSessions(ctx, "other-tenant", 50010, 10, 0)
 		assert.Len(t, sessions, 1)
 	})
 
@@ -470,13 +477,17 @@ func TestSessionServer_ListSessions_Success(t *testing.T) {
 	assert.GreaterOrEqual(t, int(resp.Total), 1)
 }
 
+// An empty tenant_id takes the caller's tenant and own sessions (#1842).
 func TestSessionServer_ListSessions_EmptyTenantID(t *testing.T) {
 	srv, _ := newTestSessionServer(t)
-	_, err := srv.ListSessions(sessionOwnerContext("tenant-1", 10001), &iampb.ListSessionsRequest{
+	resp, err := srv.ListSessions(sessionOwnerContext("tenant-1", 10001), &iampb.ListSessionsRequest{
 		TenantId: "",
 	})
-	require.Error(t, err)
-	assert.Equal(t, codes.InvalidArgument, status.Code(err))
+	require.NoError(t, err)
+	for _, s := range resp.Sessions {
+		assert.Equal(t, "tenant-1", s.TenantId)
+		assert.Equal(t, "10001", s.UserId)
+	}
 }
 
 func TestSessionServer_ListSessions_FilterByUser(t *testing.T) {
@@ -572,13 +583,13 @@ func TestSessionServer_RevokeAllSessions_Success(t *testing.T) {
 	assert.GreaterOrEqual(t, resp.RevokedCount, int32(1))
 }
 
+// An empty tenant_id revokes the caller's own sessions in its tenant (#1842).
 func TestSessionServer_RevokeAllSessions_EmptyTenantID(t *testing.T) {
 	srv, _ := newTestSessionServer(t)
 	_, err := srv.RevokeAllSessions(sessionOwnerContext("tenant-1", 10001), &iampb.RevokeAllSessionsRequest{
 		TenantId: "",
 	})
-	require.Error(t, err)
-	assert.Equal(t, codes.InvalidArgument, status.Code(err))
+	require.NoError(t, err)
 }
 
 func TestSessionServer_RevokeOtherSessions_Success(t *testing.T) {
@@ -709,10 +720,14 @@ func TestMemorySessionService_ListSessions_AllForTenant(t *testing.T) {
 		Expires:  time.Now().Add(time.Hour),
 	})
 
-	sessions, total, err := svc.ListSessions(context.Background(), "tenant-1", 0, 0, 0)
+	// User 0 is not "every user of the tenant" (#1842)
+	_, _, err := svc.ListSessions(context.Background(), "tenant-1", 0, 0, 0)
+	require.ErrorIs(t, err, ErrSessionScopeRequired)
+
+	sessions, total, err := svc.ListSessions(context.Background(), "tenant-1", 10002, 0, 0)
 	require.NoError(t, err)
-	assert.Equal(t, 2, total)
-	assert.Len(t, sessions, 2)
+	assert.Equal(t, 1, total)
+	assert.Len(t, sessions, 1)
 }
 
 func TestMemorySessionService_ListSessions_WithPagination(t *testing.T) {
@@ -766,7 +781,7 @@ func TestMemorySessionService_RevokeAllSessions(t *testing.T) {
 	assert.Equal(t, 2, count)
 
 	// Verify tenant-2 session remains
-	sessions, _, err := svc.ListSessions(context.Background(), "tenant-2", 0, 0, 0)
+	sessions, _, err := svc.ListSessions(context.Background(), "tenant-2", 10001, 0, 0)
 	require.NoError(t, err)
 	assert.Len(t, sessions, 1)
 }
