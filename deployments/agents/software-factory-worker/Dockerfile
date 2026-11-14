@@ -240,7 +240,8 @@ FROM debian:trixie-slim
 # WebKit; jq is what release scripts run in a worker need, starting with
 # go-enclave's release.sh (go-quicbaas#1431); the headless JDK, at the
 # OPENJDK_MAJOR pin (toolchain.mk), is the Java a Kotlin or Java project builds
-# with (go-quicbaas#1746).
+# with (go-quicbaas#1746). gcovr is the coverage report trusted-firmware's
+# `make test` runs (go-quicbaas#1829).
 ARG OPENJDK_MAJOR
 RUN set -eux; \
     if [ -z "${OPENJDK_MAJOR}" ]; then \
@@ -277,6 +278,7 @@ RUN set -eux; \
         ruby-bundler \
         libicu76 \
         "openjdk-${OPENJDK_MAJOR}-jdk-headless" \
+        gcovr \
         jq; \
     rm -rf /var/lib/apt/lists/*; \
     java -version 2>&1 | head -1 | grep -qF "\"${OPENJDK_MAJOR}."
@@ -1296,6 +1298,10 @@ RUN set -eux; \
 # ever removed more than it added fails the build instead of shipping an image
 # without it.
 RUN jq --version
+
+# GCOVR SURVIVES THE PROOF. trusted-firmware's make test runs it
+# (go-quicbaas#1829), so it is asserted after the proof layer like jq.
+RUN gcovr --version
 
 # A SIGNED COMMIT SUCCEEDS AS THIS UID. This is the regression that would break
 # publishing silently, so the build proves it.

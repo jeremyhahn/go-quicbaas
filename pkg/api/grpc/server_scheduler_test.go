@@ -2169,3 +2169,75 @@ func TestSchedulerServer_EdgeCases(t *testing.T) {
 		assert.Equal(t, int64(600000), resp.Executions[0].DurationMs)
 	})
 }
+
+// TestSchedulerServer_UpdateJob_AbsentExecuteAtIsUnset checks that an update
+// without execute_at hands the service the zero time, not 1970, so the engine
+// leaves ExecuteAt and NextRun as they are.
+func TestSchedulerServer_UpdateJob_AbsentExecuteAtIsUnset(t *testing.T) {
+	var got time.Time
+	called := false
+	mockSvc := &mockSchedulerService{
+		updateJobFunc: func(ctx context.Context, req *service.UpdateSchedulerJobRequest) (*service.UpdateSchedulerJobResponse, error) {
+			called = true
+			got = req.ExecuteAt
+			return &service.UpdateSchedulerJobResponse{
+				Job: &service.SchedulerJob{ID: req.JobID, Name: req.Name},
+			}, nil
+		},
+	}
+	server := newTestSchedulerServer(mockSvc)
+
+	resp, err := server.UpdateJob(context.Background(), &pb.UpdateJobRequest{JobId: 1, Name: "renamed"})
+	require.NoError(t, err)
+	require.NotNil(t, resp)
+	require.True(t, called)
+	assert.True(t, got.IsZero(), "absent execute_at must be the zero time, got %v", got)
+	assert.Equal(t, int64(0), resp.Job.ExecuteAt)
+}
+
+// TestSchedulerServer_CreateJob_AbsentExecuteAtIsUnset checks that a one-shot
+// create without execute_at hands the service the zero time, so the engine's
+// one-shot check refuses it instead of running it at once.
+func TestSchedulerServer_CreateJob_AbsentExecuteAtIsUnset(t *testing.T) {
+	var got time.Time
+	called := false
+	mockSvc := &mockSchedulerService{
+		createJobFunc: func(ctx context.Context, req *service.CreateSchedulerJobRequest) (*service.CreateSchedulerJobResponse, error) {
+			called = true
+			got = req.ExecuteAt
+			return &service.CreateSchedulerJobResponse{
+				Job: &service.SchedulerJob{ID: 1, Name: req.Name, Type: req.Type},
+			}, nil
+		},
+	}
+	server := newTestSchedulerServer(mockSvc)
+
+	_, err := server.CreateJob(context.Background(), &pb.CreateJobRequest{
+		Name:    "one-shot",
+		Type:    pb.JobType_JOB_TYPE_ONE_SHOT,
+		Handler: "test.handler",
+	})
+	require.NoError(t, err)
+	require.True(t, called)
+	assert.True(t, got.IsZero(), "absent execute_at must be the zero time, got %v", got)
+}
+
+// TestSchedulerServer_JobToProto_ZeroExecuteAt checks that an unset ExecuteAt
+// goes on the wire as 0, and a set one keeps its Unix seconds.
+func TestSchedulerServer_JobToProto_ZeroExecuteAt(t *testing.T) {
+	unset := serviceJobToProto(&service.SchedulerJob{ID: 1})
+	require.NotNil(t, unset)
+	assert.Equal(t, int64(0), unset.ExecuteAt)
+
+	set := serviceJobToProto(&service.SchedulerJob{ID: 2, ExecuteAt: time.Unix(1700000000, 0)})
+	require.NotNil(t, set)
+	assert.Equal(t, int64(1700000000), set.ExecuteAt)
+}
+
+// TestSchedulerTimeFromUnix checks the wire-to-time mapping both ways.
+func TestSchedulerTimeFromUnix(t *testing.T) {
+	assert.True(t, schedulerTimeFromUnix(0).IsZero())
+	assert.True(t, schedulerTimeFromUnix(1700000000).Equal(time.Unix(1700000000, 0)))
+	assert.Equal(t, int64(0), schedulerUnixFromTime(time.Time{}))
+	assert.Equal(t, int64(1700000000), schedulerUnixFromTime(time.Unix(1700000000, 0)))
+}

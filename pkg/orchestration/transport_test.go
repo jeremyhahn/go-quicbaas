@@ -15,11 +15,14 @@ package orchestration
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"io"
 	"os"
+	"os/exec"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -524,6 +527,40 @@ func TestNewStdioTransport_WithCat(t *testing.T) {
 	// Verify double close is safe
 	if err := transport.Close(); err != nil {
 		t.Fatalf("second Close() error = %v", err)
+	}
+}
+
+// TestNewStdioTransport_WritesNothingToStderr re-runs itself as a child
+// process that starts, closes and reaps a transport, and requires that the
+// child wrote no "[transport]" trace to its stderr: StdioTransport is library
+// code and must not print to the embedding process's stderr.
+func TestNewStdioTransport_WritesNothingToStderr(t *testing.T) {
+	if os.Getenv("QB_STDIO_STDERR_CHILD") == "1" {
+		tr, err := NewStdioTransport("cat", nil, "", nil)
+		if err != nil {
+			t.Fatalf("NewStdioTransport(cat) error = %v", err)
+		}
+		if err := tr.Close(); err != nil {
+			t.Fatalf("Close() error = %v", err)
+		}
+		select {
+		case <-tr.readDone:
+		case <-time.After(5 * time.Second):
+			t.Fatal("readLoop did not exit within 5s of Close")
+		}
+		return
+	}
+
+	cmd := exec.Command(os.Args[0], "-test.run=^TestNewStdioTransport_WritesNothingToStderr$", "-test.count=1")
+	cmd.Env = append(os.Environ(), "QB_STDIO_STDERR_CHILD=1")
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("child run error = %v\nstdout:\n%s\nstderr:\n%s", err, stdout.String(), stderr.String())
+	}
+	if strings.Contains(stderr.String(), "[transport]") {
+		t.Fatalf("StdioTransport wrote a trace to stderr:\n%s", stderr.String())
 	}
 }
 

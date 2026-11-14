@@ -658,6 +658,9 @@ func (e *TaskInvalidStateError) Unwrap() error {
 type TaskStoreError struct {
 	Sentinel error
 	Message  string
+	// Cause is the underlying failure, when there is one; nil for a refusal
+	// that is only the sentinel.
+	Cause error
 }
 
 // Error implements the error interface.
@@ -668,9 +671,13 @@ func (e *TaskStoreError) Error() string {
 	return e.Sentinel.Error()
 }
 
-// Unwrap returns the sentinel error for errors.Is support.
-func (e *TaskStoreError) Unwrap() error {
-	return e.Sentinel
+// Unwrap returns the sentinel and, when there is one, the cause, so errors.Is
+// and errors.As reach both the sentinel and the cause.
+func (e *TaskStoreError) Unwrap() []error {
+	if e.Cause == nil {
+		return []error{e.Sentinel}
+	}
+	return []error{e.Sentinel, e.Cause}
 }
 
 // ErrTaskListingIncomplete indicates a task listing met records it could not
