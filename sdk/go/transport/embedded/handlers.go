@@ -543,6 +543,55 @@ func handleGetRetentionPolicy(ctx context.Context, svc service.QuicBaaS, req int
 	return svc.GetRetentionPolicy(ctx, r)
 }
 
+// handleTSSetRetention serves the SDK's typed SetRetentionRequest
+// (sdk/go/client/timeseries) through the service's SetRetentionPolicy.
+func handleTSSetRetention(ctx context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error) {
+	r, ok := req.(*timeseries.SetRetentionRequest)
+	if !ok || r == nil {
+		return nil, NewInvalidRequestTypeError("quicbaas.TimeSeries", "SetRetention", "*timeseries.SetRetentionRequest", typeNameOf(req))
+	}
+	if _, err := svc.SetRetentionPolicy(ctx, &service.TSSetRetentionPolicyRequest{
+		Metric: r.Metric,
+		Policy: &service.TSRetentionPolicy{
+			Duration:    r.Policy.Duration,
+			Resolution:  r.Policy.Resolution,
+			Aggregation: r.Policy.Aggregation.WireName(),
+		},
+	}); err != nil {
+		return nil, err
+	}
+	return nil, nil
+}
+
+// handleTSGetRetention serves the SDK's typed GetRetentionRequest through
+// the service's GetRetentionPolicy and returns the policy typed; a metric
+// without a policy has a nil Policy.
+func handleTSGetRetention(ctx context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error) {
+	r, ok := req.(*timeseries.GetRetentionRequest)
+	if !ok || r == nil {
+		return nil, NewInvalidRequestTypeError("quicbaas.TimeSeries", "GetRetention", "*timeseries.GetRetentionRequest", typeNameOf(req))
+	}
+	resp, err := svc.GetRetentionPolicy(ctx, &service.TSGetRetentionPolicyRequest{Metric: r.Metric})
+	if err != nil {
+		return nil, err
+	}
+	out := &timeseries.GetRetentionResponse{Metric: r.Metric}
+	if resp == nil {
+		return out, nil
+	}
+	if resp.Metric != "" {
+		out.Metric = resp.Metric
+	}
+	if p := resp.Policy; p != nil {
+		out.Policy = &timeseries.RetentionPolicy{
+			Duration:    p.Duration,
+			Resolution:  p.Resolution,
+			Aggregation: timeseries.ParseAggregateFunction(p.Aggregation),
+		}
+	}
+	return out, nil
+}
+
 func handleSetRetentionPolicy(ctx context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error) {
 	r, ok := req.(*service.TSSetRetentionPolicyRequest)
 	if !ok {

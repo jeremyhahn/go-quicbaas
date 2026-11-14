@@ -50,6 +50,10 @@ func (h *timeseriesHandler) transformRequest(method string, req interface{}) (ma
 		return h.transformSetRetentionPolicy(req)
 	case "ListMetrics", "TSListMetrics":
 		return h.transformListMetrics(req)
+	case "SetRetention":
+		return h.transformSetRetention(req)
+	case "GetRetention":
+		return h.transformGetRetention(req)
 	default:
 		// Fall back to generic conversion
 		return h.transport.convertToArguments(req), nil
@@ -73,6 +77,10 @@ func (h *timeseriesHandler) transformResponse(method string, resp interface{}) (
 		return h.transformSetRetentionPolicyResponse(resp)
 	case "ListMetrics", "TSListMetrics":
 		return h.transformListMetricsResponse(resp)
+	case "SetRetention":
+		return nil, nil
+	case "GetRetention":
+		return h.transformGetRetentionResponse(resp)
 	default:
 		return resp, nil
 	}
@@ -478,6 +486,54 @@ func (h *timeseriesHandler) transformListMetricsResponse(resp interface{}) (inte
 	}, nil
 }
 
+// transformSetRetention turns the SDK's typed SetRetentionRequest into the
+// arguments of the server's qrdb_ts_set_retention_policy tool: whole
+// seconds and the lower-case aggregation name.
+func (h *timeseriesHandler) transformSetRetention(req interface{}) (map[string]interface{}, error) {
+	r, ok := req.(*timeseries.SetRetentionRequest)
+	if !ok || r == nil {
+		return nil, errors.NewInvalidInput("mcp.timeseries.SetRetention", "invalid request type")
+	}
+	args := map[string]interface{}{
+		"metric":           r.Metric,
+		"duration_seconds": int64(r.Policy.Duration / time.Second),
+	}
+	if r.Policy.Resolution > 0 {
+		args["resolution_seconds"] = int64(r.Policy.Resolution / time.Second)
+	}
+	if name := r.Policy.Aggregation.WireName(); name != "" {
+		args["aggregation"] = name
+	}
+	return args, nil
+}
+
+// transformGetRetention turns the SDK's typed GetRetentionRequest into the
+// arguments of the server's qrdb_ts_get_retention_policy tool.
+func (h *timeseriesHandler) transformGetRetention(req interface{}) (map[string]interface{}, error) {
+	r, ok := req.(*timeseries.GetRetentionRequest)
+	if !ok || r == nil {
+		return nil, errors.NewInvalidInput("mcp.timeseries.GetRetention", "invalid request type")
+	}
+	return map[string]interface{}{"metric": r.Metric}, nil
+}
+
+// transformGetRetentionResponse decodes the qrdb_ts_get_retention_policy
+// result, the server's TSGetRetentionPolicyResponse as JSON:
+// {"metric", "policy": {"duration": <ns>, "resolution": <ns>,
+// "aggregation"}}. A result without a policy has a nil Policy.
+func (h *timeseriesHandler) transformGetRetentionResponse(resp interface{}) (interface{}, error) {
+	m, _ := resp.(map[string]interface{})
+	out := &timeseries.GetRetentionResponse{Metric: tsGetString(m, "metric")}
+	if p, ok := m["policy"].(map[string]interface{}); ok && p != nil {
+		out.Policy = &timeseries.RetentionPolicy{
+			Duration:    time.Duration(tsGetInt64(p, "duration")),
+			Resolution:  time.Duration(tsGetInt64(p, "resolution")),
+			Aggregation: timeseries.ParseAggregateFunction(tsGetString(p, "aggregation")),
+		}
+	}
+	return out, nil
+}
+
 // Helper functions
 
 func tsGetString(m map[string]interface{}, key string) string {
@@ -547,7 +603,9 @@ func mapTimeseriesMethodToTool(method string) string {
 	timeseriesToolMap := map[string]string{
 		// SDK client methods
 		"Write": "qrdb_ts_write_point",
-		"Query": "qrdb_ts_query",
+		"Query":        "qrdb_ts_query",
+		"SetRetention": "qrdb_ts_set_retention_policy",
+		"GetRetention": "qrdb_ts_get_retention_policy",
 		// CLI interface methods
 		"TSWritePoint":         "qrdb_ts_write_point",
 		"TSWriteBatch":         "qrdb_ts_write_batch",

@@ -22,6 +22,7 @@ package rest
 import (
 	"context"
 	"net/http"
+	"net/url"
 	"time"
 
 	timeseriesclient "github.com/jeremyhahn/go-quicbaas/sdk/go/client/timeseries"
@@ -62,6 +63,10 @@ func (h *timeseriesRESTHandler) handleRequest(ctx context.Context, method string
 		return h.handleWrite(ctx, req)
 	case "Query":
 		return h.handleQuery(ctx, req)
+	case "SetRetention":
+		return h.handleSetRetention(ctx, req)
+	case "GetRetention":
+		return h.handleGetRetention(ctx, req)
 	default:
 		return h.transport.requestWithRetry(ctx, timeseriesServicePrefix, method, req)
 	}
@@ -158,6 +163,73 @@ func (h *timeseriesRESTHandler) handleQuery(ctx context.Context, req interface{}
 			Timestamp: p.Timestamp,
 			Value:     p.Value,
 		})
+	}
+	return out, nil
+}
+
+// timeseriesRetentionPolicyWire is the server's TSRetentionPolicy JSON
+// (pkg/api/rest/timeseries_types.go): whole seconds, lower-case aggregation.
+type timeseriesRetentionPolicyWire struct {
+	DurationSec   int64  `json:"duration_seconds"`
+	ResolutionSec int64  `json:"resolution_seconds,omitempty"`
+	Aggregation   string `json:"aggregation,omitempty"`
+}
+
+// timeseriesSetRetentionWire is the body of PUT
+// /api/v1/timeseries/retention/{metric}.
+type timeseriesSetRetentionWire struct {
+	Policy *timeseriesRetentionPolicyWire `json:"policy"`
+}
+
+// timeseriesGetRetentionWire is the body GET
+// /api/v1/timeseries/retention/{metric} answers with.
+type timeseriesGetRetentionWire struct {
+	Metric string                         `json:"metric"`
+	Policy *timeseriesRetentionPolicyWire `json:"policy,omitempty"`
+}
+
+func timeseriesRetentionPath(metric string) string {
+	return "/api/v1/timeseries/retention/" + url.PathEscape(metric)
+}
+
+func (h *timeseriesRESTHandler) handleSetRetention(ctx context.Context, req interface{}) (interface{}, error) {
+	r, ok := req.(*timeseriesclient.SetRetentionRequest)
+	if !ok || r == nil {
+		return nil, errors.NewInvalidInput("rest.timeseries.SetRetention", "request is required")
+	}
+	if r.Metric == "" {
+		return nil, errors.NewInvalidInput("rest.timeseries.SetRetention", "metric is required")
+	}
+	body := &timeseriesSetRetentionWire{Policy: &timeseriesRetentionPolicyWire{
+		DurationSec:   int64(r.Policy.Duration / time.Second),
+		ResolutionSec: int64(r.Policy.Resolution / time.Second),
+		Aggregation:   r.Policy.Aggregation.WireName(),
+	}}
+	if err := h.transport.doJSONRequest(ctx, http.MethodPut, timeseriesRetentionPath(r.Metric), body, nil); err != nil {
+		return nil, err
+	}
+	return nil, nil
+}
+
+func (h *timeseriesRESTHandler) handleGetRetention(ctx context.Context, req interface{}) (interface{}, error) {
+	r, ok := req.(*timeseriesclient.GetRetentionRequest)
+	if !ok || r == nil {
+		return nil, errors.NewInvalidInput("rest.timeseries.GetRetention", "request is required")
+	}
+	if r.Metric == "" {
+		return nil, errors.NewInvalidInput("rest.timeseries.GetRetention", "metric is required")
+	}
+	var wire timeseriesGetRetentionWire
+	if err := h.transport.doJSONRequest(ctx, http.MethodGet, timeseriesRetentionPath(r.Metric), nil, &wire); err != nil {
+		return nil, err
+	}
+	out := &timeseriesclient.GetRetentionResponse{Metric: r.Metric}
+	if wire.Policy != nil {
+		out.Policy = &timeseriesclient.RetentionPolicy{
+			Duration:    time.Duration(wire.Policy.DurationSec) * time.Second,
+			Resolution:  time.Duration(wire.Policy.ResolutionSec) * time.Second,
+			Aggregation: timeseriesclient.ParseAggregateFunction(wire.Policy.Aggregation),
+		}
 	}
 	return out, nil
 }

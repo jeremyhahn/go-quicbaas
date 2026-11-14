@@ -15,6 +15,7 @@ package timeseries
 
 import (
 	"context"
+	"strings"
 	"time"
 
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/errors"
@@ -127,6 +128,81 @@ type Client interface {
 
 	// Query queries time-series data with optional aggregation.
 	Query(ctx context.Context, req *QueryRequest) (*QueryResponse, error)
+
+	// SetRetention sets the retention policy of a metric: how long its
+	// points are kept, and how they are downsampled.
+	SetRetention(ctx context.Context, req *SetRetentionRequest) error
+
+	// GetRetention returns the retention policy of a metric. Policy is
+	// nil when the metric has none.
+	GetRetention(ctx context.Context, req *GetRetentionRequest) (*GetRetentionResponse, error)
+}
+
+// RetentionPolicy is how long a metric's points are kept, and how they are
+// downsampled.
+type RetentionPolicy struct {
+	// Duration is how long points are kept (required, whole seconds).
+	Duration time.Duration
+
+	// Resolution is the bucket size points are downsampled to. Zero keeps
+	// raw points.
+	Resolution time.Duration
+
+	// Aggregation is the downsampling function. AggregateNone keeps raw
+	// points.
+	Aggregation AggregateFunction
+}
+
+// SetRetentionRequest sets the retention policy of a metric.
+type SetRetentionRequest struct {
+	// Metric is the metric name (required).
+	Metric string
+
+	// Policy is the retention policy to set.
+	Policy RetentionPolicy
+}
+
+// GetRetentionRequest asks for the retention policy of a metric.
+type GetRetentionRequest struct {
+	// Metric is the metric name (required).
+	Metric string
+}
+
+// GetRetentionResponse carries a metric's retention policy.
+type GetRetentionResponse struct {
+	// Metric is the metric name.
+	Metric string
+
+	// Policy is the metric's retention policy, nil when it has none.
+	Policy *RetentionPolicy
+}
+
+// ParseAggregateFunction maps a wire aggregation name ("sum", "AVG", ...)
+// to its AggregateFunction. An empty or unknown name is AggregateNone.
+func ParseAggregateFunction(name string) AggregateFunction {
+	switch strings.ToUpper(name) {
+	case "SUM":
+		return AggregateSum
+	case "AVG":
+		return AggregateAvg
+	case "MIN":
+		return AggregateMin
+	case "MAX":
+		return AggregateMax
+	case "COUNT":
+		return AggregateCount
+	default:
+		return AggregateNone
+	}
+}
+
+// WireName is the aggregation name the server's retention API takes:
+// lower case, empty for AggregateNone.
+func (f AggregateFunction) WireName() string {
+	if f == AggregateNone || !f.Valid() {
+		return ""
+	}
+	return strings.ToLower(f.String())
 }
 
 // client implements the Client interface.
@@ -218,6 +294,61 @@ func validateQueryRequest(req *QueryRequest) error {
 	}
 	if req.Aggregate != AggregateNone && req.Interval <= 0 {
 		return errors.NewInvalidInput("timeseries.Query", "interval is required when using aggregation")
+	}
+	return nil
+}
+
+// SetRetention sets the retention policy of a metric.
+func (c *client) SetRetention(ctx context.Context, req *SetRetentionRequest) error {
+	if err := validateSetRetentionRequest(req); err != nil {
+		return err
+	}
+	_, err := c.transport.Request(ctx, serviceName, "SetRetention", req)
+	return err
+}
+
+// GetRetention returns the retention policy of a metric.
+func (c *client) GetRetention(ctx context.Context, req *GetRetentionRequest) (*GetRetentionResponse, error) {
+	if req == nil {
+		return nil, errors.NewInvalidInput("timeseries.GetRetention", "request is required")
+	}
+	if req.Metric == "" {
+		return nil, errors.NewInvalidInput("timeseries.GetRetention", "metric name is required")
+	}
+	resp, err := c.transport.Request(ctx, serviceName, "GetRetention", req)
+	if err != nil {
+		return nil, err
+	}
+	if resp == nil {
+		return &GetRetentionResponse{Metric: req.Metric}, nil
+	}
+	out, ok := resp.(*GetRetentionResponse)
+	if !ok {
+		return nil, errors.NewInternal("timeseries.GetRetention", "invalid response type")
+	}
+	return out, nil
+}
+
+func validateSetRetentionRequest(req *SetRetentionRequest) error {
+	const op = "timeseries.SetRetention"
+	if req == nil {
+		return errors.NewInvalidInput(op, "request is required")
+	}
+	if req.Metric == "" {
+		return errors.NewInvalidInput(op, "metric name is required")
+	}
+	p := req.Policy
+	if p.Duration < time.Second || p.Duration%time.Second != 0 {
+		return errors.NewInvalidInput(op, "duration must be a positive whole number of seconds")
+	}
+	if p.Resolution < 0 || p.Resolution%time.Second != 0 {
+		return errors.NewInvalidInput(op, "resolution must be a whole number of seconds")
+	}
+	if !p.Aggregation.Valid() {
+		return errors.NewInvalidInput(op, "invalid aggregate function")
+	}
+	if p.Aggregation != AggregateNone && p.Resolution == 0 {
+		return errors.NewInvalidInput(op, "resolution is required when downsampling with an aggregate")
 	}
 	return nil
 }
