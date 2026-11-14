@@ -4,11 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -23,8 +26,8 @@ const (
 // Environment variables a forge token command receives on top of the
 // daemon's own environment.
 const (
-	ForgeCommandEnvType    = "QUICBAAS_FORGE_TYPE"
-	ForgeCommandEnvBaseURL = "QUICBAAS_FORGE_BASE_URL"
+	ForgeCommandEnvType    = "QUICBAAS_FORGE_TYPE"     //nolint:gosec // G101: environment variable names, not credentials
+	ForgeCommandEnvBaseURL = "QUICBAAS_FORGE_BASE_URL" //nolint:gosec // G101: environment variable names, not credentials
 )
 
 // ForgeTokenSource yields the token that authenticates calls to the forge at
@@ -56,6 +59,12 @@ type CommandTokenSourceConfig struct {
 	// DefaultForgeTokenTimeout.
 	Timeout time.Duration
 
+	// AllowedBaseURLs are the forge API base URLs the command may be run
+	// for. ForgeToken refuses any other base URL before the command runs,
+	// so the node's credential is never minted for, or sent to, a host a
+	// binding chose. Required.
+	AllowedBaseURLs []string
+
 	// Runner runs the command. Nil runs it with exec.CommandContext.
 	Runner ForgeTokenRunner
 
@@ -74,6 +83,9 @@ type CommandTokenSource struct {
 	timeout       time.Duration
 	runner        ForgeTokenRunner
 	clock         func() time.Time
+
+	// allowed holds the normalized AllowedBaseURLs.
+	allowed map[string]bool
 
 	// entries maps a base URL to its *commandTokenEntry.
 	entries sync.Map
@@ -143,6 +155,31 @@ func (e *ForgeTokenOutputError) Error() string {
 	return "forge token command " + e.Command + " printed unusable output: " + e.Reason
 }
 
+// ForgeTokenOriginError reports a base URL outside the command's
+// AllowedBaseURLs. The command was not run.
+type ForgeTokenOriginError struct {
+	BaseURL string
+}
+
+func (e *ForgeTokenOriginError) Error() string {
+	return "forge token command: base URL " + e.BaseURL + " is not one of the node's allowed forge API origins"
+}
+
+// normalizeForgeBaseURL is the form base URLs are compared in: scheme and
+// host lower-cased, no trailing slash. ok is false for anything that is not
+// an absolute http(s) URL without credentials, query or fragment.
+func normalizeForgeBaseURL(raw string) (string, bool) {
+	u, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" || u.Opaque != "" {
+		return "", false
+	}
+	scheme := strings.ToLower(u.Scheme)
+	if scheme != "https" && scheme != "http" {
+		return "", false
+	}
+	return scheme + "://" + strings.ToLower(u.Host) + strings.TrimRight(u.EscapedPath(), "/"), true
+}
+
 // NewCommandTokenSource validates cfg and builds the source.
 func NewCommandTokenSource(cfg CommandTokenSourceConfig) (*CommandTokenSource, error) {
 	if len(cfg.Argv) == 0 || cfg.Argv[0] == "" {
@@ -157,7 +194,19 @@ func NewCommandTokenSource(cfg CommandTokenSourceConfig) (*CommandTokenSource, e
 	if cfg.Timeout < 0 {
 		return nil, &ForgeTokenCommandConfigError{Field: "timeout", Reason: "must not be negative"}
 	}
+	if len(cfg.AllowedBaseURLs) == 0 {
+		return nil, &ForgeTokenCommandConfigError{Field: "allowed_base_urls", Reason: "must name the forge API origins the command may be run for"}
+	}
+	allowed := make(map[string]bool, len(cfg.AllowedBaseURLs))
+	for _, raw := range cfg.AllowedBaseURLs {
+		norm, ok := normalizeForgeBaseURL(raw)
+		if !ok {
+			return nil, &ForgeTokenCommandConfigError{Field: "allowed_base_urls", Reason: "must hold absolute http(s) URLs with no credentials, query or fragment"}
+		}
+		allowed[norm] = true
+	}
 	s := &CommandTokenSource{
+		allowed:       allowed,
 		argv:          append([]string(nil), cfg.Argv...),
 		env:           append([]string(nil), cfg.Env...),
 		refreshBefore: cfg.RefreshBefore,
@@ -187,7 +236,14 @@ func (s *CommandTokenSource) ForgeToken(ctx context.Context, baseURL string) (st
 	if err := ctx.Err(); err != nil {
 		return "", err
 	}
-	entry := s.entry(baseURL)
+	norm, ok := normalizeForgeBaseURL(baseURL)
+	if !ok || !s.allowed[norm] {
+		return "", &ForgeTokenOriginError{BaseURL: baseURL}
+	}
+	entry, err := s.entry(baseURL)
+	if err != nil {
+		return "", err
+	}
 	if token, ok := entry.fresh(s.clock()); ok {
 		return token, nil
 	}
@@ -210,20 +266,20 @@ func (s *CommandTokenSource) ForgeToken(ctx context.Context, baseURL string) (st
 	return cached.token, nil
 }
 
-func (s *CommandTokenSource) entry(baseURL string) *commandTokenEntry {
+func (s *CommandTokenSource) entry(baseURL string) (*commandTokenEntry, error) {
 	if found, ok := s.entries.Load(baseURL); ok {
-		if e, ok := found.(*commandTokenEntry); ok {
-			return e
+		entry, ok := found.(*commandTokenEntry)
+		if !ok {
+			return nil, fmt.Errorf("sdlc: forge token entry for %q has type %T", baseURL, found)
 		}
+		return entry, nil
 	}
-	fresh := &commandTokenEntry{refresh: make(chan struct{}, 1)}
-	found, _ := s.entries.LoadOrStore(baseURL, fresh)
-	e, ok := found.(*commandTokenEntry)
+	found, _ := s.entries.LoadOrStore(baseURL, &commandTokenEntry{refresh: make(chan struct{}, 1)})
+	entry, ok := found.(*commandTokenEntry)
 	if !ok {
-		s.entries.Store(baseURL, fresh)
-		return fresh
+		return nil, fmt.Errorf("sdlc: forge token entry for %q has type %T", baseURL, found)
 	}
-	return e
+	return entry, nil
 }
 
 func (e *commandTokenEntry) fresh(now time.Time) (string, bool) {

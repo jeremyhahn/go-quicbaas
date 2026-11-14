@@ -89,8 +89,34 @@ func registerTestReviewValidator(t *testing.T) {
 // The embedded interface is nil: every method the runner does not use panics
 // rather than answering, so a runner that reached for the fleet, the registry
 // or a second backend fails the test loudly instead of being quietly served.
+// operatorPolicy is the lifecycle policy a fake agent service answers for,
+// as the daemon's does (orchestration.JobLifecyclePolicyProvider): a job reads
+// the operator's command allowlist from the service its sessions run on.
+type operatorPolicy struct {
+	policy atomic.Pointer[orchestration.JobLifecyclePolicy]
+}
+
+func (p *operatorPolicy) JobLifecyclePolicy() orchestration.JobLifecyclePolicy {
+	if policy := p.policy.Load(); policy != nil {
+		return *policy
+	}
+	return orchestration.JobLifecyclePolicy{}
+}
+
+// admit makes guard the operator's command allowlist.
+func (p *operatorPolicy) admit(guard orchestration.ExecutionGuard) {
+	p.policy.Store(&orchestration.JobLifecyclePolicy{Guard: guard})
+}
+
+// guardedAgents is an agent service whose operator allowlist a test sets.
+type guardedAgents interface {
+	orchestration.AgentService
+	admit(guard orchestration.ExecutionGuard)
+}
+
 type fakeAgents struct {
 	orchestration.AgentService
+	operatorPolicy
 
 	mu      sync.Mutex
 	spawns  []*orchestration.SpawnSessionRequest
@@ -674,6 +700,11 @@ func (r *runnerRig) buildJob(t *testing.T, resumed *orchestration.JobStatus, sta
 	if r.agentService != nil {
 		agents = r.agentService
 	}
+	guarded, ok := agents.(guardedAgents)
+	if !ok {
+		t.Fatalf("agent service %T cannot answer for the operator's policy", agents)
+	}
+	guarded.admit(guard)
 	return orchestration.NewJobRun(orchestration.JobRunConfig{
 		JobID:      "job-1",
 		Runner:     JobRunnerName,
@@ -684,7 +715,6 @@ func (r *runnerRig) buildJob(t *testing.T, resumed *orchestration.JobStatus, sta
 		Resumed:    resumed,
 		Agents:     agents,
 		Logger:     logger.NewAdapter(base),
-		Policy:     &orchestration.JobLifecyclePolicy{Guard: guard},
 		AuditFn: func(eventType, details string) {
 			r.auditMu.Lock()
 			r.audits = append(r.audits, orchestration.JobAuditEvent{Type: eventType, Details: details})

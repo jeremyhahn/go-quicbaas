@@ -2083,6 +2083,19 @@ const (
 	GiteaDeliveryHeader = "X-Gitea-Delivery"
 )
 
+// MinWebhookSecretBytes is the shortest webhook secret an HMAC-signing
+// adapter accepts: 14 bytes, the 112-bit HMAC key floor of NIST SP 800-131A
+// that Go's FIPS 140-only mode enforces by panicking in crypto/hmac. The floor
+// holds in every mode, so a secret behaves the same whether or not the build
+// runs in FIPS mode, and a short one is refused when the webhook is configured
+// rather than discovered at the first delivery.
+const MinWebhookSecretBytes = 14
+
+// shortWebhookSecretReason explains a refusal of a secret below
+// MinWebhookSecretBytes, both when a webhook is configured and when a delivery
+// is verified.
+const shortWebhookSecretReason = "the signing secret is shorter than the 112-bit HMAC key floor"
+
 // VerifyWebhook authenticates a delivery, fail-closed and in constant time.
 //
 // HMAC-SHA256 over the exact bytes received, compared with hmac.Equal so the
@@ -2090,12 +2103,15 @@ const (
 //
 // Every refusal path returns the SAME error shape and quotes nothing from the
 // payload: at this point the payload is attacker-controlled, and echoing it
-// into a log is an injection surface. An empty secret or signature is a
-// refusal, never a bypass — a misconfigured deployment must not silently accept
+// into a log is an injection surface. An empty secret or signature, or a
+// secret below MinWebhookSecretBytes, is a refusal, never a bypass or a panic — a misconfigured deployment must not silently accept
 // unsigned deliveries.
 func (g *GiteaBackend) VerifyWebhook(payload []byte, signature string, secret []byte) error {
 	if len(secret) == 0 {
 		return &WebhookUnverifiedError{Type: ForgeGitea, Reason: "no signing secret is configured"}
+	}
+	if len(secret) < MinWebhookSecretBytes {
+		return &WebhookUnverifiedError{Type: ForgeGitea, Reason: shortWebhookSecretReason}
 	}
 	if signature == "" {
 		return &WebhookUnverifiedError{Type: ForgeGitea, Reason: "delivery carried no signature"}
@@ -2252,6 +2268,9 @@ func (g *GiteaBackend) EnsureWebhook(ctx context.Context, repo RepoRef, spec Web
 			Field:   "secret",
 			Message: "an unsigned webhook cannot be verified, and an unverifiable delivery is discarded",
 		}
+	}
+	if len(secret) < MinWebhookSecretBytes {
+		return &InvalidInputError{Field: "secret", Message: shortWebhookSecretReason}
 	}
 
 	var existing []giteaHook

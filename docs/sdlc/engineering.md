@@ -151,7 +151,7 @@ the field. The rules for composing these blocks are in
 | `trigger_label` | yes | The label an OPEN issue must carry before the module adopts it as a Task. Compared exactly, case-sensitively. |
 | `labels` | no | The module's label keys mapped to the forge labels that display them. Display output only. |
 | `token_secret_ref` | yes | Names the tenant secret holding the forge API token. The value never enters this record. |
-| `webhook_secret_ref` | when `discovery` is `webhook` | Names the tenant secret holding the webhook HMAC key. Without it no delivery verifies, so the project is discovered by the periodic passes alone; a `webhook` binding, which runs none, is refused without it. |
+| `webhook_secret_ref` | when `discovery` is `webhook` | Names the tenant secret holding the webhook HMAC key. For Gitea and GitHub the key must be at least 14 bytes (112 bits, the NIST SP 800-131A HMAC floor that FIPS 140-only mode enforces); a shorter one is refused when the webhook is provisioned and every delivery under it fails verification. Without it no delivery verifies, so the project is discovered by the periodic passes alone; a `webhook` binding, which runs none, is refused without it. |
 | `ssh_host_key` | for an ssh checkout | The forge's own SSH **host public key**, pinned. See below. |
 
 The binding also carries an `onboarding:` block, outside `forge:`, declaring
@@ -388,10 +388,14 @@ sdlc:
     #     argv: ["/usr/local/bin/token-helper", "--app", "factory"]
     #     refresh_before: 5m        # run again this long before expires_at
     #     timeout: 30s              # one run
+    #     allowed_base_urls: ["https://api.github.com"]   # required
     #
     # A token command is node configuration only: no tenant, project or binding
     # can name one, and a binding of a listed forge type never reads its
-    # token_secret_ref. The command runs without a shell, with the daemon's
+    # token_secret_ref. The command runs only for a binding whose base URL is one
+    # of allowed_base_urls; any other is refused before the command runs, so a
+    # binding cannot send the node's credential to a host it chose. A reviewer
+    # with its own token_secret_ref keeps that identity. The command runs without a shell, with the daemon's
     # environment plus QUICBAAS_FORGE_TYPE and QUICBAAS_FORGE_BASE_URL, and
     # prints one JSON object on stdout: {"token": "...", "expires_at":
     # "<RFC 3339>"}. The token is cached per forge base URL and the command runs

@@ -15,6 +15,8 @@ const (
 	testStderrMarker   = "stderr-marker-text"
 	testForgeTokenArgv = "/usr/local/bin/token-helper"
 	testForgeBaseURL   = "https://api.github.com"
+
+	testForgeEnterpriseURL = "https://github.example.test/api/v3"
 )
 
 var testTokenEpoch = time.Date(2026, 11, 7, 12, 0, 0, 0, time.UTC)
@@ -53,10 +55,11 @@ func (r *countingRunner) run(_ context.Context, _, env []string) ([]byte, error)
 func newTestTokenSource(t *testing.T, runner ForgeTokenRunner, clock *fakeTokenClock) *CommandTokenSource {
 	t.Helper()
 	s, err := NewCommandTokenSource(CommandTokenSourceConfig{
-		Argv:   []string{testForgeTokenArgv, "--app", "pilot"},
-		Env:    []string{ForgeCommandEnvType + "=github"},
-		Runner: runner,
-		Clock:  clock.Now,
+		Argv:            []string{testForgeTokenArgv, "--app", "pilot"},
+		Env:             []string{ForgeCommandEnvType + "=github"},
+		Runner:          runner,
+		Clock:           clock.Now,
+		AllowedBaseURLs: []string{testForgeBaseURL, testForgeEnterpriseURL},
 	})
 	if err != nil {
 		t.Fatalf("NewCommandTokenSource: %v", err)
@@ -131,7 +134,7 @@ func TestCommandTokenSource_CachesPerBaseURL(t *testing.T) {
 	s := newTestTokenSource(t, runner.run, clock)
 	ctx := context.Background()
 
-	for _, baseURL := range []string{testForgeBaseURL, "https://github.example.test/api/v3", testForgeBaseURL} {
+	for _, baseURL := range []string{testForgeBaseURL, testForgeEnterpriseURL, testForgeBaseURL} {
 		if _, err := s.ForgeToken(ctx, baseURL); err != nil {
 			t.Fatalf("ForgeToken(%s): %v", baseURL, err)
 		}
@@ -218,9 +221,10 @@ func TestCommandTokenSource_TimeoutIsTyped(t *testing.T) {
 		return nil, errors.New(testStderrMarker)
 	}
 	s, err := NewCommandTokenSource(CommandTokenSourceConfig{
-		Argv:    []string{testForgeTokenArgv},
-		Timeout: time.Millisecond,
-		Runner:  runner,
+		Argv:            []string{testForgeTokenArgv},
+		Timeout:         time.Millisecond,
+		Runner:          runner,
+		AllowedBaseURLs: []string{testForgeBaseURL},
 	})
 	if err != nil {
 		t.Fatalf("NewCommandTokenSource: %v", err)
@@ -346,7 +350,7 @@ func TestRunForgeTokenCommand_TimeoutBoundsInheritedPipes(t *testing.T) {
 }
 
 func TestNewCommandTokenSource_Defaults(t *testing.T) {
-	s, err := NewCommandTokenSource(CommandTokenSourceConfig{Argv: []string{testForgeTokenArgv}})
+	s, err := NewCommandTokenSource(CommandTokenSourceConfig{Argv: []string{testForgeTokenArgv}, AllowedBaseURLs: []string{testForgeBaseURL}})
 	if err != nil {
 		t.Fatalf("NewCommandTokenSource: %v", err)
 	}
@@ -370,6 +374,9 @@ func TestNewCommandTokenSource_RefusesBadConfig(t *testing.T) {
 		{"relative argv[0]", CommandTokenSourceConfig{Argv: []string{"bin/token-helper"}}, "argv"},
 		{"negative refresh_before", CommandTokenSourceConfig{Argv: []string{testForgeTokenArgv}, RefreshBefore: -time.Second}, "refresh_before"},
 		{"negative timeout", CommandTokenSourceConfig{Argv: []string{testForgeTokenArgv}, Timeout: -time.Second}, "timeout"},
+		{"no allowed base URLs", CommandTokenSourceConfig{Argv: []string{testForgeTokenArgv}}, "allowed_base_urls"},
+		{"allowed base URL with credentials", CommandTokenSourceConfig{Argv: []string{testForgeTokenArgv}, AllowedBaseURLs: []string{"https://u:p@api.github.com"}}, "allowed_base_urls"},
+		{"allowed base URL not http", CommandTokenSourceConfig{Argv: []string{testForgeTokenArgv}, AllowedBaseURLs: []string{"file:///etc"}}, "allowed_base_urls"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -382,5 +389,40 @@ func TestNewCommandTokenSource_RefusesBadConfig(t *testing.T) {
 				t.Fatalf("field = %q, want %q", cfgErr.Field, tc.field)
 			}
 		})
+	}
+}
+
+func TestCommandTokenSource_RefusesABaseURLOutsideTheAllowedOrigins(t *testing.T) {
+	runner := &countingRunner{stdout: tokenOutput(testForgeToken, testTokenEpoch.Add(time.Hour))}
+	s := newTestTokenSource(t, runner.run, newFakeTokenClock())
+
+	for _, baseURL := range []string{
+		"https://attacker.example.test",
+		"https://api.github.com.attacker.example.test",
+		"http://api.github.com",
+		"https://api.github.com/other",
+		"https://user@api.github.com",
+		"not a url",
+	} {
+		_, err := s.ForgeToken(context.Background(), baseURL)
+		var originErr *ForgeTokenOriginError
+		if !errors.As(err, &originErr) {
+			t.Fatalf("ForgeToken(%q) err = %v, want *ForgeTokenOriginError", baseURL, err)
+		}
+		assertNoLeak(t, err)
+	}
+	if n := runner.calls.Load(); n != 0 {
+		t.Fatalf("the command ran %d times for refused base URLs, want 0", n)
+	}
+}
+
+func TestCommandTokenSource_AllowedOriginsCompareNormalized(t *testing.T) {
+	runner := &countingRunner{stdout: tokenOutput(testForgeToken, testTokenEpoch.Add(time.Hour))}
+	s := newTestTokenSource(t, runner.run, newFakeTokenClock())
+
+	for _, baseURL := range []string{"https://API.GitHub.com/", testForgeEnterpriseURL + "/"} {
+		if _, err := s.ForgeToken(context.Background(), baseURL); err != nil {
+			t.Fatalf("ForgeToken(%q): %v", baseURL, err)
+		}
 	}
 }
