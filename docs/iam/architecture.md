@@ -853,6 +853,32 @@ The WebAuthn ceremony policy keys (`assurance`, `resident_key_requirement`,
 | `auth login` returns `UNAUTHORIZED` at finish | No fido2 factor is enrolled for the credential in the qrdb auth-factor store | Enroll with `quicbaas auth factor add --type fido2` |
 | `auth login --method mtls` returns `UNAUTHORIZED` at finish | The certificate is not enrolled as an mtls factor — it was never bound, or the binding predates the write-through | Re-run the binding (`auth.bootstrap_admin_piv_cert_path` on first boot, or the SO-cert init ceremony), or enroll explicitly with `quicbaas auth factor add --type mtls --cert <path>` |
 
+### A downstream daemon's REST plane
+
+A daemon built on go-quicbaas, such as go-trusted-platform's (go-trusted-platform#644), authenticates and authorises its REST plane through `sdk/go` and keeps no auth model, route guard or token format of its own (owner ruling 133). Its users log in to go-quicbaas (WebAuthn, PIV or mTLS) and present the platform access token that go-quicbaas issues. The daemon mounts the guard from `sdk/go/platformtoken` on each route:
+
+```go
+v, _ := platformtoken.NewValidator(platformtoken.Options{
+    Issuer:      "https://quicbaas.example.com",
+    Audience:    "go-trusted-platform",
+    JWKSURL:     "https://quicbaas.example.com/.well-known/jwks.json",
+    ReplayCache: dpop.NewMemoryReplayCache(nil),
+    // The default (hybrid) mode asks go-quicbaas whether the token is still live.
+    LivenessChecker: platformtoken.NewIntrospectionLivenessChecker(
+        "https://quicbaas.example.com/oauth2/introspect", nil),
+})
+mux.Handle("GET /v1/keys", v.Middleware("keys:get")(keysHandler))
+
+func keysHandler(w http.ResponseWriter, r *http.Request) {
+    p, _ := platformtoken.FromContext(r.Context()) // p.TenantID, p.Subject, p.UserID
+    ...
+}
+```
+
+The guard reads the token from `Authorization: Bearer` or `Authorization: DPoP`. It verifies the signature against the issuer's JWKS and checks `iss`, `aud`, `exp` and the `at+jwt` type. It then verifies the DPoP proof of a DPoP-bound token against the request's method and URL, requires the client certificate an mTLS-bound token names (`cnf` `x5t#S256`, RFC 8705, the binding a PIV or device-certificate login carries), and requires the route's permission among the token's granted scopes. Last, it runs the liveness check the validator's mode asks for. The tenant and the user the daemon acts for are the token's; a tenant or user named in the request is never read. A refusal is 401 with a `Bearer` challenge (no or bad credential, or a binding not met), 403 `insufficient_scope`, or 503 when the guard cannot decide. A router without net/http middleware calls `v.AuthorizeRequest(r, permission)` instead.
+
+The permission check is the scope match in `platformtoken/authz.go`, a local matcher that SPEC departures D5 and D8 list for replacement by go-qrdb's permission matcher once it is re-exported. The guard makes that decision in one place, `AuthorizeRequest`, so the daemon's code does not change when the matcher does. Login through the SDK for a non-system tenant waits on go-quicbaas#1816.
+
 ### References
 
 - [FIDO2 / WebAuthn Spec](https://www.w3.org/TR/webauthn-2/)
