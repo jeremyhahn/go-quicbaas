@@ -17,6 +17,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -192,12 +193,6 @@ func TestJobRuntime_RunFailures(t *testing.T) {
 		requireInputValidation(t, err, "")
 	})
 
-	t.Run("InteractiveIsNotServedYet", func(t *testing.T) {
-		jr, _ := newTestJobRuntime(t)
-		_, err := jr.RunInteractive(t.Context(), &orchestration.ContainerSpec{Image: "alpine:latest"})
-		require.ErrorIs(t, err, ErrJobSpecUnsupported)
-	})
-
 	t.Run("PullFailureIsTyped", func(t *testing.T) {
 		jr, doubles := newTestJobRuntime(t)
 		doubles.images.pullErr = errTestBackend
@@ -347,4 +342,70 @@ func TestJobRuntime_IsAvailable(t *testing.T) {
 	require.NoError(t, rt.Close())
 	assert.False(t, jr.IsAvailable())
 	assert.False(t, errors.Is(nil, ErrJobSpecUnsupported))
+}
+
+func TestJobRuntime_RunInteractive_StreamsStdoutAndReportsExit(t *testing.T) {
+	jr, doubles := newTestJobRuntime(t)
+	doubles.engine.initResult = &fakeResult{stdout: "{\"jsonrpc\":\"2.0\"}\n", stderr: "noise", exitCode: 7}
+
+	proc, err := jr.RunInteractive(t.Context(), &orchestration.ContainerSpec{
+		Image: "alpine:latest",
+		Env:   map[string]string{"TOKEN": "secret"},
+	})
+	require.NoError(t, err)
+	assert.NotEmpty(t, proc.ContainerID)
+	assert.Nil(t, proc.Cleanup, "the environment never lands in a file")
+
+	start := doubles.engine.lastStart()
+	assert.IsType(t, &os.File{}, start.Stdin, "stdin is a pipe the init process inherits")
+	assert.IsType(t, &os.File{}, start.Stdout, "stdout is a pipe, not the log file")
+	assert.Contains(t, start.Env, "TOKEN=secret")
+
+	out, err := io.ReadAll(proc.Stdout)
+	require.NoError(t, err)
+	assert.Equal(t, "{\"jsonrpc\":\"2.0\"}\n", string(out), "stdout carries only the entrypoint's output")
+
+	exit := proc.Wait(t.Context())
+	assert.Equal(t, orchestration.ContainerExit{Known: true, Code: 7}, exit)
+	assert.Equal(t, exit, proc.Wait(t.Context()), "Wait is safe to call again")
+
+	_, err = jr.IsRunning(t.Context(), proc.ContainerID)
+	require.ErrorIs(t, err, orchestration.ErrContainerNotFound, "an exited interactive container is removed")
+	require.NoError(t, proc.Stdin.Close())
+	require.NoError(t, proc.Stdout.Close())
+}
+
+func TestJobRuntime_RunInteractive_ContextEndKillsAndRemoves(t *testing.T) {
+	jr, doubles := newTestJobRuntime(t)
+	ctx, cancel := context.WithCancel(t.Context())
+
+	proc, err := jr.RunInteractive(ctx, &orchestration.ContainerSpec{Image: "alpine:latest"})
+	require.NoError(t, err)
+	running, err := jr.IsRunning(t.Context(), proc.ContainerID)
+	require.NoError(t, err)
+	require.True(t, running, "the container outlives RunInteractive until its context ends")
+
+	expired, expire := context.WithCancel(t.Context())
+	expire()
+	assert.Equal(t, orchestration.ContainerExit{}, proc.Wait(expired), "Wait gives up when its own ctx ends")
+
+	cancel()
+	assert.Equal(t, orchestration.ContainerExit{}, proc.Wait(t.Context()), "a killed container has no exit of its own")
+	assert.NotEmpty(t, doubles.engine.lastProcess().receivedSignals(), "the container was signalled")
+	_, err = jr.IsRunning(t.Context(), proc.ContainerID)
+	require.ErrorIs(t, err, orchestration.ErrContainerNotFound)
+	require.NoError(t, proc.Stdin.Close())
+	require.NoError(t, proc.Stdout.Close())
+}
+
+func TestJobRuntime_RunInteractive_StartFailure(t *testing.T) {
+	jr, doubles := newTestJobRuntime(t)
+	doubles.engine.startErr = errTestBackend
+
+	proc, err := jr.RunInteractive(t.Context(), &orchestration.ContainerSpec{Image: "alpine:latest"})
+	assert.Nil(t, proc)
+	var startErr *orchestration.ContainerStartError
+	require.ErrorAs(t, err, &startErr)
+	require.ErrorIs(t, err, errTestBackend)
+	assert.Len(t, doubles.engine.destroyed, 1, "the created container is removed")
 }

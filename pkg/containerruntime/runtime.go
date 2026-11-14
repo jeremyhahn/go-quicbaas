@@ -20,6 +20,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"math"
 	"os"
@@ -706,7 +707,54 @@ func removeString(slice []string, s string) []string {
 
 // StartContainer starts a container's init process. Its stdout and stderr
 // go to stdout.log and stderr.log in the container's bundle.
-func (r *Runtime) StartContainer(ctx context.Context, id string) error {
+func (r *Runtime) StartContainer(_ context.Context, id string) error {
+	return r.startInit(id, nil)
+}
+
+// AttachedIO is the standard input and output of a container started with
+// StartAttached.
+type AttachedIO struct {
+	// Stdin feeds the init process's standard input. Close it to send EOF.
+	Stdin io.WriteCloser
+
+	// Stdout reads the init process's standard output. It reaches EOF once
+	// the process, and everything in the container that inherited it, has
+	// closed it.
+	Stdout io.ReadCloser
+}
+
+// StartAttached runs a created container's init process with its standard
+// input and output on pipes the caller holds, instead of on the container's
+// log files. Standard error still goes to the log. The caller closes both
+// ends it is given.
+func (r *Runtime) StartAttached(_ context.Context, id string) (*AttachedIO, error) {
+	stdinR, stdinW, err := os.Pipe()
+	if err != nil {
+		return nil, NewContainerError(id, "start", err)
+	}
+	stdoutR, stdoutW, err := os.Pipe()
+	if err != nil {
+		return nil, NewContainerError(id, "start", errors.Join(err, stdinR.Close(), stdinW.Close()))
+	}
+
+	err = r.startInit(id, func(init *processSpec) {
+		init.Stdin = stdinR
+		init.Stdout = stdoutW
+	})
+	// The init process holds its own copies of the child ends now. The
+	// runtime's copies would keep the caller from ever seeing EOF.
+	if closeErr := errors.Join(stdinR.Close(), stdoutW.Close()); closeErr != nil {
+		r.logger.Warn("failed to close the child ends of the attached pipes", "id", id, "error", closeErr)
+	}
+	if err != nil {
+		return nil, errors.Join(err, stdinW.Close(), stdoutR.Close())
+	}
+	return &AttachedIO{Stdin: stdinW, Stdout: stdoutR}, nil
+}
+
+// startInit runs a created container's init process. attach, when set,
+// replaces the log files on the init process's standard streams.
+func (r *Runtime) startInit(id string, attach func(init *processSpec)) error {
 	state, err := r.lookupContainer(id)
 	if err != nil {
 		return err
@@ -732,6 +780,9 @@ func (r *Runtime) StartContainer(ctx context.Context, id string) error {
 	init := state.init
 	init.Stdout = logs.stdout
 	init.Stderr = logs.stderr
+	if attach != nil {
+		attach(&init)
+	}
 
 	process, err := r.backends.engine.Start(state.ID, init)
 	if err != nil {

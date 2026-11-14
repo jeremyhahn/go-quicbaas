@@ -63,6 +63,15 @@ func NewJobRuntime(runtime *Runtime) *JobRuntime {
 // starts a detached container. It returns the container ID. A pinned spec is
 // launched by digest, and the stored image must resolve to that digest.
 func (j *JobRuntime) Run(ctx context.Context, spec *orchestration.ContainerSpec) (string, error) {
+	return j.launch(ctx, spec, func(id string) error {
+		return j.runtime.StartContainer(ctx, id)
+	})
+}
+
+// launch creates the container spec describes, pulling its image when the
+// store lacks it, and runs start on it. A container whose start fails is
+// removed.
+func (j *JobRuntime) launch(ctx context.Context, spec *orchestration.ContainerSpec, start func(id string) error) (string, error) {
 	config, err := jobContainerConfig(spec)
 	if err != nil {
 		return "", err
@@ -75,8 +84,8 @@ func (j *JobRuntime) Run(ctx context.Context, spec *orchestration.ContainerSpec)
 	if err != nil {
 		return "", &orchestration.ContainerStartError{Image: spec.Image, Cause: err}
 	}
-	if err := j.runtime.StartContainer(ctx, state.ID); err != nil {
-		if rmErr := j.runtime.RemoveContainer(ctx, state.ID, true); rmErr != nil {
+	if err := start(state.ID); err != nil {
+		if rmErr := j.runtime.RemoveContainer(context.WithoutCancel(ctx), state.ID, true); rmErr != nil {
 			err = errors.Join(err, rmErr)
 		}
 		return "", &orchestration.ContainerStartError{Image: spec.Image, Cause: err}
@@ -87,13 +96,76 @@ func (j *JobRuntime) Run(ctx context.Context, spec *orchestration.ContainerSpec)
 // RunInteractive is not served by the in-process runtime yet: the init
 // process's stdio is wired to the container log files. The spec is still
 // validated, so a refusal for a bad or unpinned spec is the same as Run's.
-func (j *JobRuntime) RunInteractive(_ context.Context, spec *orchestration.ContainerSpec) (*orchestration.InteractiveProcess, error) {
-	if _, err := jobContainerConfig(spec); err != nil {
+// RunInteractive starts a container whose entrypoint's standard input and
+// output are the returned process's pipes, as `run -i --rm` does. The
+// container is bound to ctx: when ctx ends it is killed. It is removed once
+// it exits. The environment never leaves the process, so Cleanup is nil.
+func (j *JobRuntime) RunInteractive(ctx context.Context, spec *orchestration.ContainerSpec) (*orchestration.InteractiveProcess, error) {
+	var attached *AttachedIO
+	id, err := j.launch(ctx, spec, func(id string) error {
+		var startErr error
+		attached, startErr = j.runtime.StartAttached(ctx, id)
+		return startErr
+	})
+	if err != nil {
 		return nil, err
 	}
-	return nil, &orchestration.ContainerStartError{
-		Image: spec.Image,
-		Cause: errors.Join(ErrJobSpecUnsupported, errors.New("interactive containers")),
+
+	session := &interactiveSession{runtime: j.runtime, id: id, done: make(chan struct{})}
+	go session.supervise(ctx)
+	return &orchestration.InteractiveProcess{
+		ContainerID: id,
+		Stdin:       attached.Stdin,
+		Stdout:      attached.Stdout,
+		Wait:        session.wait,
+	}, nil
+}
+
+// interactiveSession supervises one RunInteractive container: it kills the
+// container when the launch context ends, removes it once it exits, and
+// records how it ended.
+type interactiveSession struct {
+	runtime *Runtime
+	id      string
+
+	// done is closed once exit is set and the container is removed.
+	done chan struct{}
+	exit orchestration.ContainerExit
+}
+
+func (s *interactiveSession) supervise(ctx context.Context) {
+	defer close(s.done)
+	background := context.WithoutCancel(ctx)
+
+	exited := make(chan orchestration.ContainerExit, 1)
+	go func() {
+		code, err := s.runtime.WaitContainer(background, s.id)
+		exited <- orchestration.ContainerExit{Known: err == nil && code >= 0, Code: int(code)}
+	}()
+
+	select {
+	case s.exit = <-exited:
+	case <-ctx.Done():
+		// The runtime killed it, so it has no exit of its own to report.
+		if err := s.runtime.StopContainer(background, s.id, 0); err != nil {
+			s.runtime.logger.Warn("failed to kill interactive container", "id", s.id, "error", err)
+		}
+		<-exited
+	}
+
+	if err := s.runtime.RemoveContainer(background, s.id, true); err != nil {
+		s.runtime.logger.Warn("failed to remove interactive container", "id", s.id, "error", err)
+	}
+}
+
+// wait reports how the container ended: an unknown exit when ctx ends first,
+// or when the runtime killed the container because its launch context ended.
+func (s *interactiveSession) wait(ctx context.Context) orchestration.ContainerExit {
+	select {
+	case <-s.done:
+		return s.exit
+	case <-ctx.Done():
+		return orchestration.ContainerExit{}
 	}
 }
 
