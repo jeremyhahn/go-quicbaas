@@ -520,11 +520,40 @@ func handleWriteBatch(ctx context.Context, svc service.QuicBaaS, req interface{}
 }
 
 func handleTSQuery(ctx context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error) {
-	r, ok := req.(*service.TSQueryRequest)
-	if !ok {
-		return nil, NewInvalidRequestTypeError("quicbaas.TimeSeries", "Query", "*service.TSQueryRequest", typeNameOf(req))
+	switch r := req.(type) {
+	case *timeseries.QueryRequest:
+		if r == nil {
+			break
+		}
+		in := &service.TSQueryRequest{
+			Metric:    r.Metric,
+			Tags:      r.Tags,
+			StartTime: r.Start,
+			EndTime:   r.End,
+		}
+		if r.Aggregate != timeseries.AggregateNone {
+			in.Aggregation = r.Aggregate.String()
+			in.IntervalSec = int64(r.Interval.Seconds())
+		}
+		resp, err := svc.TSQuery(ctx, in)
+		if err != nil {
+			return nil, err
+		}
+		out := &timeseries.QueryResponse{Series: []timeseries.Point{}}
+		if resp != nil {
+			for _, p := range resp.Points {
+				if p != nil {
+					out.Series = append(out.Series, timeseries.Point{Timestamp: p.Timestamp, Value: p.Value})
+				}
+			}
+		}
+		return out, nil
+	case *service.TSQueryRequest:
+		if r != nil {
+			return svc.TSQuery(ctx, r)
+		}
 	}
-	return svc.TSQuery(ctx, r)
+	return nil, NewInvalidRequestTypeError("quicbaas.TimeSeries", "Query", "*timeseries.QueryRequest", typeNameOf(req))
 }
 
 func handleDeleteSeries(ctx context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error) {
