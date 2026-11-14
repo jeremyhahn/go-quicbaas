@@ -563,6 +563,10 @@ POST /api/v1/xkms/ca/crl
 POST /api/v1/xkms/ca/issue
 POST /api/v1/xkms/ca/revoke
 POST /api/v1/xkms/ca/sign
+POST /api/v1/xkms/ca/tcg/ak
+POST /api/v1/xkms/ca/tcg/ek
+POST /api/v1/xkms/ca/tcg/enroll
+POST /api/v1/xkms/ca/tcg/sign-csr
 POST /api/v1/xkms/certs
 POST /api/v1/xkms/fido2/authenticate/begin
 POST /api/v1/xkms/fido2/authenticate/finish

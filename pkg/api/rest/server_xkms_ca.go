@@ -34,6 +34,10 @@ type caHandlerSet interface {
 	HandleRevokeCertificate(w http.ResponseWriter, r *http.Request)
 	HandleGenerateCRL(w http.ResponseWriter, r *http.Request)
 	HandleIsRevoked(w http.ResponseWriter, r *http.Request)
+	HandleIssueEKCertificate(w http.ResponseWriter, r *http.Request)
+	HandleIssueAKCertificate(w http.ResponseWriter, r *http.Request)
+	HandleSignTCGCSR(w http.ResponseWriter, r *http.Request)
+	HandleEnrollDevice(w http.ResponseWriter, r *http.Request)
 }
 
 // Compile-time assertion that go-xkms's *CAHandlers satisfies the

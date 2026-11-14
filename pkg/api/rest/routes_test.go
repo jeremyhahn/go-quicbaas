@@ -157,8 +157,9 @@ import (
 // (POST /api/v1/batch/execute) that the SDK gRPC and REST batch calls reach.
 // PLUS 2 for the KV conditional writes
 // (/api/v1/kv/{type}/{key}/compare-and-swap and /put-if-absent,
-// go-quicbaas#2029) under kv:put.
-const baseRouteTableSize = 675
+// go-quicbaas#2029) under kv:put. 679 adds the four go-xkms TCG CA routes
+// (/api/v1/xkms/ca/tcg/{ak,ek,enroll,sign-csr}, #1330) under certs:generate.
+const baseRouteTableSize = 679
 
 // TestRoutes_SurfaceGuard asserts the table's structural invariants: exact
 // size, absolute patterns, no duplicate method+pattern, and a handler binder

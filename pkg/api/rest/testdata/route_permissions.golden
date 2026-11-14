@@ -555,6 +555,10 @@ POST /api/v1/xkms/ca/crl permission certs:revoke
 POST /api/v1/xkms/ca/issue permission certs:generate
 POST /api/v1/xkms/ca/revoke permission certs:revoke
 POST /api/v1/xkms/ca/sign permission certs:generate
+POST /api/v1/xkms/ca/tcg/ak permission certs:generate
+POST /api/v1/xkms/ca/tcg/ek permission certs:generate
+POST /api/v1/xkms/ca/tcg/enroll permission certs:generate
+POST /api/v1/xkms/ca/tcg/sign-csr permission certs:generate
 POST /api/v1/xkms/certs permission certs:generate
 POST /api/v1/xkms/fido2/authenticate/begin permission user_authfactors:get
 POST /api/v1/xkms/fido2/authenticate/finish permission user_authfactors:get

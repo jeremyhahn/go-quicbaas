@@ -1445,6 +1445,37 @@ func (s *Server) HandleXKMSIsRevoked(w http.ResponseWriter, r *http.Request) {
 	h.HandleIsRevoked(w, r)
 }
 
+// xkmsCAHandle serves one go-xkms CA handler, answering 503 until a CA is
+// wired.
+func (s *Server) xkmsCAHandle(w http.ResponseWriter, r *http.Request, serve func(caHandlerSet, http.ResponseWriter, *http.Request)) {
+	h := s.caHandlers()
+	if h == nil {
+		respondXKMSError(w, http.StatusServiceUnavailable, &XKMSCANotConfiguredError{})
+		return
+	}
+	serve(h, w, r)
+}
+
+// HandleXKMSIssueEKCertificate handles POST /api/v1/xkms/ca/tcg/ek (#1330).
+func (s *Server) HandleXKMSIssueEKCertificate(w http.ResponseWriter, r *http.Request) {
+	s.xkmsCAHandle(w, r, caHandlerSet.HandleIssueEKCertificate)
+}
+
+// HandleXKMSIssueAKCertificate handles POST /api/v1/xkms/ca/tcg/ak (#1330).
+func (s *Server) HandleXKMSIssueAKCertificate(w http.ResponseWriter, r *http.Request) {
+	s.xkmsCAHandle(w, r, caHandlerSet.HandleIssueAKCertificate)
+}
+
+// HandleXKMSSignTCGCSR handles POST /api/v1/xkms/ca/tcg/sign-csr (#1330).
+func (s *Server) HandleXKMSSignTCGCSR(w http.ResponseWriter, r *http.Request) {
+	s.xkmsCAHandle(w, r, caHandlerSet.HandleSignTCGCSR)
+}
+
+// HandleXKMSEnrollDevice handles POST /api/v1/xkms/ca/tcg/enroll (#1330).
+func (s *Server) HandleXKMSEnrollDevice(w http.ResponseWriter, r *http.Request) {
+	s.xkmsCAHandle(w, r, caHandlerSet.HandleEnrollDevice)
+}
+
 // XKMSCANotConfiguredError is returned when a CA endpoint is hit before
 // the embedded TrustedCA has been wired to the REST server. Operators
 // see this briefly during startup; once the CA completes initialization
