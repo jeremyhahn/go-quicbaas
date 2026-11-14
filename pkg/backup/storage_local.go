@@ -215,12 +215,49 @@ func NewStorageBackend(config *Config) (common.Storage, error) {
 	factoryType := backendType
 
 	// Create storage using go-objstore factory
-	storage, err := factory.NewStorage(factoryType, config.StorageConfig)
+	storage, err := factory.NewStorage(factoryType, objstoreSettings(config.StorageConfig))
 	if err != nil {
 		return nil, api.NewOperationFailedError("create storage backend", err)
 	}
 
 	return storage, nil
+}
+
+// objstoreKeyAliases maps the snake_case keys QuicBaaS backup configs use
+// (docs/backup-restore, the CLI, the integration suite) to the camelCase keys
+// go-objstore's backends read.
+var objstoreKeyAliases = map[string][]string{
+	"accessKey":        {"access_key", "access_key_id"},
+	"secretKey":        {"secret_key", "secret_access_key"},
+	"useSSL":           {"use_ssl"},
+	"forcePathStyle":   {"use_path_style", "force_path_style"},
+	"accountName":      {"account_name"},
+	"accountKey":       {"account_key"},
+	"containerName":    {"container", "container_name"},
+	"sasToken":         {"sas_token"},
+	"connectionString": {"connection_string"},
+}
+
+// objstoreSettings returns a copy of settings with each go-objstore key set
+// from its first non-empty snake_case alias. An explicit go-objstore key
+// wins; settings itself is not modified.
+func objstoreSettings(settings map[string]string) map[string]string {
+	out := make(map[string]string, len(settings))
+	for k, v := range settings {
+		out[k] = v
+	}
+	for key, aliases := range objstoreKeyAliases {
+		if out[key] != "" {
+			continue
+		}
+		for _, alias := range aliases {
+			if v := settings[alias]; v != "" {
+				out[key] = v
+				break
+			}
+		}
+	}
+	return out
 }
 
 // MockStorage implements both common.Storage and the backup-specific StorageBackend interface for testing.
