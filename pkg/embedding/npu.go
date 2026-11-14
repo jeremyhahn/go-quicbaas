@@ -33,9 +33,6 @@ import (
 // the model's own max_position_embeddings and not a device restriction. Text
 // beyond that limit must be chunked on any device, and the sidecar does so.
 const (
-	// DefaultNPUURL is the sidecar endpoint assumed when none is configured.
-	DefaultNPUURL = "http://127.0.0.1:8077"
-
 	// DefaultNPUModel is the embedding model the sidecar serves by default.
 	DefaultNPUModel = "all-MiniLM-L6-v2"
 
@@ -74,7 +71,8 @@ type SecretResolver interface {
 // speaks HTTP to an OpenVINO sidecar that owns the device; nothing in this
 // process links against a vendor SDK.
 type NPUConfig struct {
-	// BaseURL is the sidecar endpoint. Defaults to DefaultNPUURL.
+	// BaseURL is the sidecar endpoint. It is required: there is no default
+	// address, and NewNPUProvider refuses an empty one.
 	BaseURL string
 
 	// Model names the model the sidecar should serve. Defaults to
@@ -116,7 +114,6 @@ type NPUConfig struct {
 // DefaultNPUConfig returns the default NPU configuration.
 func DefaultNPUConfig() NPUConfig {
 	return NPUConfig{
-		BaseURL:      DefaultNPUURL,
 		Model:        DefaultNPUModel,
 		Dimensions:   DefaultNPUDimensions,
 		MaxTokens:    DefaultNPUMaxTokens,
@@ -127,9 +124,6 @@ func DefaultNPUConfig() NPUConfig {
 
 // withDefaults returns a copy of cfg with unset fields filled in.
 func (c NPUConfig) withDefaults() NPUConfig {
-	if c.BaseURL == "" {
-		c.BaseURL = DefaultNPUURL
-	}
 	if c.Model == "" {
 		c.Model = DefaultNPUModel
 	}
