@@ -129,6 +129,30 @@ type QRDBTenantClient = qrdbtransport.TenantClient
 // QRDBDEKClient is a re-export of the qrdb DEKClient interface.
 type QRDBDEKClient = qrdbtransport.DEKClient
 
+// QRDBEmbeddingClient is a re-export of go-qrdb's EmbeddingClient interface:
+// go-qrdb's embedding service (Embed, BatchEmbed, ListEmbeddingModels).
+// Reach it through AI().QRDBEmbedding().
+type QRDBEmbeddingClient = qrdbtransport.EmbeddingClient
+
+// QRDBEmbedRequest is a re-export of the qrdb EmbedRequest type.
+type QRDBEmbedRequest = qrdbtransport.EmbedRequest
+
+// QRDBEmbedResponse is a re-export of the qrdb EmbedResponse type.
+type QRDBEmbedResponse = qrdbtransport.EmbedResponse
+
+// QRDBBatchEmbedRequest is a re-export of the qrdb BatchEmbedRequest type.
+type QRDBBatchEmbedRequest = qrdbtransport.BatchEmbedRequest
+
+// QRDBBatchEmbedResponse is a re-export of the qrdb BatchEmbedResponse type.
+type QRDBBatchEmbedResponse = qrdbtransport.BatchEmbedResponse
+
+// QRDBListEmbeddingModelsResponse is a re-export of the qrdb
+// ListEmbeddingModelsResponse type.
+type QRDBListEmbeddingModelsResponse = qrdbtransport.ListEmbeddingModelsResponse
+
+// QRDBEmbeddingModelInfo is a re-export of the qrdb EmbeddingModelInfo type.
+type QRDBEmbeddingModelInfo = qrdbtransport.EmbeddingModelInfo
+
 // QRDBIndexClient is a re-export of the qrdb IndexClient interface.
 type QRDBIndexClient = qrdbtransport.IndexClient
 
@@ -735,4 +759,22 @@ func (c *client) DataStore() (QRDBKVStore, error) {
 		return nil, err
 	}
 	return qrdb.KVStore(), nil
+}
+
+// qrdbEmbedding returns go-qrdb's embedding service client from the qrdb
+// sub-client. It errors when the qrdb client cannot be built, or when the
+// active qrdb transport has no embedding surface.
+func (c *client) qrdbEmbedding() (QRDBEmbeddingClient, error) {
+	qrdb, err := c.qrdbClient()
+	if err != nil {
+		return nil, err
+	}
+	if qrdb == nil {
+		return nil, sdkerrors.NewUnavailable("qrdbEmbedding", "the qrdb client is not configured")
+	}
+	ec := qrdb.Embedding()
+	if ec == nil {
+		return nil, sdkerrors.NewUnavailable("qrdbEmbedding", "the qrdb transport does not serve the embedding service")
+	}
+	return ec, nil
 }
