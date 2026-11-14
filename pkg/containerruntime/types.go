@@ -202,14 +202,14 @@ func (c *ContainerConfig) Validate() error {
 	// Validate mounts
 	for i, m := range c.Mounts {
 		if err := m.Validate(); err != nil {
-			return NewConfigValidationError("mounts["+string(rune('0'+i))+"]", err.Error())
+			return NewConfigValidationError("mounts["+strconv.Itoa(i)+"]", err.Error())
 		}
 	}
 
 	// Validate ports
 	for i, p := range c.Ports {
 		if err := p.Validate(); err != nil {
-			return NewConfigValidationError("ports["+string(rune('0'+i))+"]", err.Error())
+			return NewConfigValidationError("ports["+strconv.Itoa(i)+"]", err.Error())
 		}
 	}
 
