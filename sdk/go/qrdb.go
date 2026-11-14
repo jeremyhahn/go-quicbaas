@@ -728,6 +728,9 @@ func (c *client) buildQRDBEmbeddedClient() (*qrdbsdk.Client, error) {
 	if s.Credential != nil {
 		embOpts = append(embOpts, qrdbembedded.WithCredentialService(s.Credential))
 	}
+	if s.DEK != nil {
+		embOpts = append(embOpts, qrdbembedded.WithDEKService(s.DEK))
+	}
 	if s.Tenant != nil {
 		embOpts = append(embOpts, qrdbembedded.WithTenantService(s.Tenant))
 	}
