@@ -95,10 +95,6 @@ var sdkCallsWithoutMCPTool = map[sdkCall]string{
 	{"quicbaas.Auth", "HandleFederatedCallback"}: gapAmbiguous + "quicbaas_iam_federation_handlecallback",
 	{"quicbaas.Auth", "ListProviders"}:           gapAmbiguous + "quicbaas_iam_federation_listproviders",
 	{"quicbaas.Auth", "GetProvider"}:             gapAmbiguous + "quicbaas_iam_federation_getprovider",
-	{"quicbaas.Auth", "GetSession"}:              gapAmbiguous + "quicbaas_iam_session_get",
-	{"quicbaas.Auth", "ListSessions"}:            gapAmbiguous + "quicbaas_iam_session_list",
-	{"quicbaas.Auth", "RevokeSession"}:           gapAmbiguous + "quicbaas_iam_session_revoke",
-	{"quicbaas.Auth", "RevokeAllSessions"}:       gapAmbiguous + "quicbaas_iam_session_revoke_all",
 
 	// --- Batch / Query / Transaction --------------------------------------
 	{"quicbaas.Batch", "Execute"}:       gapNoTool,
