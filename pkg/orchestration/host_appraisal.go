@@ -75,6 +75,15 @@ type HostEvidence struct {
 	// launch, not the boot chain. The boot event log does not record them,
 	// so its replay leaves them out; the reference values judge them.
 	LaunchPCRs []uint32
+
+	// PCRBank names the bank PCRs were quoted in ("sha256", ...).
+	PCRBank string
+
+	// LaunchLog is the node measurement log of a measured launch. When it
+	// is non-nil the Verifier replays it (ReplayMeasurementLog) for every
+	// LaunchPCRs register in PCRBank and refuses evidence whose quoted
+	// value the log does not reproduce. Nil below the measured tier.
+	LaunchLog []MeasurementLogEntry
 }
 
 // HostAppraisal is the Verifier's verdict on a HostEvidence.

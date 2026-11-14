@@ -1644,7 +1644,26 @@ when the extend succeeds, under one lock, so the log's order is the extend
 order. Each entry carries the image digest, config digest, policy digest,
 register, bank and the exact bytes extended, and chains to its predecessor by
 SHA-256. `VerifyMeasurementLog` checks the chain; `ReplayMeasurementLog`
-recomputes the register from zero, which is the value the node quotes.
+recomputes the register, which is the value the node quotes.
+
+The first time the log uses a register it reads the register and appends an
+`anchor` entry holding that value ahead of the launch. A node agent that
+restarts finds the application PCR already extended by launches its new log
+never saw; replay starts from the anchor instead of zero, and the signed
+reference values still judge the quoted value itself. An anchor after the
+register's first launch is refused.
+
+`Attest` carries the log in `ContainerAttestation.MeasurementLog` and hands
+it to the Verifier in `HostEvidence.LaunchLog` with the quoted bank. The
+Verifier (`service.NewHostAppraiser`, the `AppraiseQuote` path) runs a
+`launch-log` check: for every launch register it replays the log and
+compares the result with the quoted PCR. A broken chain, a launch register
+missing from the quote, or a register that does not replay to its quoted
+value fails the appraisal as forged; a divergence is reported as a
+`PCRDivergence`, so the error unwraps to `ErrPCRMismatch`. An extend the log
+did not record therefore fails even when the reference values admit the
+final register value. The log is held in memory; evidence below the
+measured tier carries none and is not replayed.
 
 PCR 16 (`MeasurementPCRDefault`) is the default target. It is the TCG PC Client
 "debug" register: resettable, not consumed by firmware or the bootloader, and

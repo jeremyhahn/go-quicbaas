@@ -14,6 +14,7 @@
 package orchestration_test
 
 import (
+	"bytes"
 	"errors"
 	"testing"
 
@@ -87,6 +88,50 @@ func TestConfigDigestMatchesUpstream(t *testing.T) {
 	}
 	if len(measurement) == 0 {
 		t.Error("LaunchMeasurement returned an empty measurement")
+	}
+}
+
+// TestMeasurementLogAcrossBoundary checks that a log built and chained
+// through the SDK verifies and replays the same through the upstream package.
+func TestMeasurementLogAcrossBoundary(t *testing.T) {
+	spec := &sdkorch.ContainerSpec{
+		Image:       "registry.example.com/agent",
+		ImageDigest: testDigest,
+		TrustLabel:  "approved-agent",
+	}
+	policy, err := sdkorch.LaunchPolicyDigest(spec)
+	if err != nil {
+		t.Fatalf("LaunchPolicyDigest: %v", err)
+	}
+	upstreamPolicy, err := pkgorch.LaunchPolicyDigest(spec)
+	if err != nil || policy != upstreamPolicy {
+		t.Fatalf("policy digest diverged: sdk %q, pkg %q (%v)", policy, upstreamPolicy, err)
+	}
+	measurement, err := sdkorch.LaunchMeasurement(spec)
+	if err != nil {
+		t.Fatalf("LaunchMeasurement: %v", err)
+	}
+
+	log := sdkorch.ChainMeasurementLog([]sdkorch.MeasurementLogEntry{
+		{Kind: sdkorch.MeasurementLogAnchor, Base: make([]byte, 32), PCR: 16, Bank: "sha256"},
+		{Kind: sdkorch.MeasurementLogLaunch, PolicyDigest: policy, PCR: 16, Bank: "sha256", Measurement: measurement},
+	})
+	if err := pkgorch.VerifyMeasurementLog(log); err != nil {
+		t.Fatalf("upstream rejected an SDK-chained log: %v", err)
+	}
+	viaSDK, err := sdkorch.ReplayMeasurementLog(log, 16, "sha256")
+	if err != nil {
+		t.Fatalf("ReplayMeasurementLog: %v", err)
+	}
+	viaPkg, err := pkgorch.ReplayMeasurementLog(log, 16, "sha256")
+	if err != nil || !bytes.Equal(viaSDK, viaPkg) {
+		t.Fatalf("replay diverged: sdk %x, pkg %x (%v)", viaSDK, viaPkg, err)
+	}
+
+	log[1].Measurement = []byte("forged")
+	var logErr *sdkorch.MeasurementLogError
+	if err := sdkorch.VerifyMeasurementLog(log); !errors.As(err, &logErr) {
+		t.Fatalf("a tampered log must fail with MeasurementLogError, got %v", err)
 	}
 }
 

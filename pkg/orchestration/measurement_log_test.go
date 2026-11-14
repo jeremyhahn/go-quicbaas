@@ -87,11 +87,16 @@ func TestTPMAttestingRuntime_MeasurementLog(t *testing.T) {
 		}
 
 		entries := rt.MeasurementLog().Entries()
-		if len(entries) != len(specs) {
-			t.Fatalf("log has %d entries, want %d", len(entries), len(specs))
+		if len(entries) != len(specs)+1 {
+			t.Fatalf("log has %d entries, want an anchor and %d launches", len(entries), len(specs))
+		}
+		if anchor := entries[0]; anchor.Kind != MeasurementLogAnchor || anchor.PCR != MeasurementPCRDefault ||
+			!bytes.Equal(anchor.Base, make([]byte, sha256.Size)) {
+			t.Fatalf("entry 0 = %+v, want the zero anchor of the application PCR", anchor)
 		}
 		for i, spec := range specs {
-			e := entries[i]
+			e := entries[i+1]
+			i := i + 1
 			configDigest, _ := ContainerConfigDigest(spec)
 			policyDigest, _ := LaunchPolicyDigest(spec)
 			measurement, _ := LaunchMeasurement(spec)
@@ -151,7 +156,7 @@ func TestVerifyMeasurementLog(t *testing.T) {
 		if _, err := log.record(MeasurementLogEntry{
 			ImageDigest: testDigest, TrustLabel: label, PCR: MeasurementPCRDefault,
 			Bank: DefaultMeasurementBank, Measurement: measurement,
-		}, func() error { return nil }); err != nil {
+		}, func() ([]byte, error) { return make([]byte, sha256.Size), nil }, func() error { return nil }); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -181,7 +186,7 @@ func TestVerifyMeasurementLog(t *testing.T) {
 
 	t.Run("EntriesAreCopies", func(t *testing.T) {
 		copied := log.Entries()
-		copied[0].Measurement[0] ^= 0xFF
+		copied[1].Measurement[0] ^= 0xFF
 		if err := VerifyMeasurementLog(log.Entries()); err != nil {
 			t.Fatalf("mutating a returned entry changed the log: %v", err)
 		}
@@ -197,6 +202,120 @@ func TestVerifyMeasurementLog(t *testing.T) {
 		}
 		if _, err := ReplayMeasurementLog(entries, MeasurementPCRDefault, "sha1"); err == nil {
 			t.Fatal("expected sha1 to be refused")
+		}
+	})
+
+	t.Run("AnchorAfterFirstUseIsRefused", func(t *testing.T) {
+		// A second anchor would reset the replay and hide every launch
+		// before it, so it is refused even when correctly chained.
+		late := NewMeasurementLog()
+		late.mu.Lock()
+		for _, e := range entries {
+			e.Sequence, e.Chain = 0, ""
+			late.appendLocked(e)
+		}
+		late.appendLocked(MeasurementLogEntry{
+			Kind: MeasurementLogAnchor, Base: make([]byte, sha256.Size),
+			PCR: MeasurementPCRDefault, Bank: DefaultMeasurementBank,
+		})
+		late.mu.Unlock()
+		var logErr *MeasurementLogError
+		if _, err := ReplayMeasurementLog(late.Entries(), MeasurementPCRDefault, DefaultMeasurementBank); !errors.As(err, &logErr) {
+			t.Fatalf("expected *MeasurementLogError, got %v", err)
+		}
+	})
+}
+
+// TestTPMAttestingRuntime_AttestReplaysMeasurementLog proves the Verifier
+// replays the node measurement log against the quoted launch register: the
+// reference values admit the quoted value in both cases, so only the log
+// replay can tell an explained register from an unexplained one.
+func TestTPMAttestingRuntime_AttestReplaysMeasurementLog(t *testing.T) {
+	spec := measuredTestSpec("prod-agent")
+	measurement, err := LaunchMeasurement(spec)
+	if err != nil {
+		t.Fatalf("LaunchMeasurement: %v", err)
+	}
+	zero := make([]byte, sha256.Size)
+	launched := expectedExtend(zero, measurement)
+
+	t.Run("LoggedLaunchReplays", func(t *testing.T) {
+		tpm := newFakeHostTPM()
+		rt, _ := newAttestingTestRuntime(t, tpm, map[uint32][]byte{
+			7:                             zero,
+			uint32(MeasurementPCRDefault): launched,
+		})
+		if _, err := rt.Run(t.Context(), spec); err != nil {
+			t.Fatalf("Run: %v", err)
+		}
+		evidence, err := rt.Attest(t.Context(), spec, "container-1")
+		if err != nil {
+			t.Fatalf("Attest: %v", err)
+		}
+		if len(evidence.MeasurementLog) != 2 {
+			t.Fatalf("evidence carries %d log entries, want an anchor and a launch", len(evidence.MeasurementLog))
+		}
+		replayed, err := ReplayMeasurementLog(evidence.MeasurementLog, MeasurementPCRDefault, evidence.PCRBank)
+		if err != nil {
+			t.Fatalf("ReplayMeasurementLog: %v", err)
+		}
+		if !bytes.Equal(replayed, evidence.PCRs[uint32(MeasurementPCRDefault)]) {
+			t.Fatal("the evidence's log must replay to its quoted launch PCR")
+		}
+	})
+
+	t.Run("RegisterInUseAtStartIsAnchored", func(t *testing.T) {
+		// A node agent that restarts finds the application PCR already
+		// extended: the log anchors at that value and replays from it.
+		tpm := newFakeHostTPM()
+		before := bytes.Repeat([]byte{0x5A}, sha256.Size)
+		tpm.setPCR(uint32(MeasurementPCRDefault), before)
+		rt, _ := newAttestingTestRuntime(t, tpm, map[uint32][]byte{
+			7:                             zero,
+			uint32(MeasurementPCRDefault): expectedExtend(before, measurement),
+		})
+		if _, err := rt.Run(t.Context(), spec); err != nil {
+			t.Fatalf("Run: %v", err)
+		}
+		evidence, err := rt.Attest(t.Context(), spec, "container-1")
+		if err != nil {
+			t.Fatalf("Attest: %v", err)
+		}
+		if !bytes.Equal(evidence.MeasurementLog[0].Base, before) {
+			t.Fatalf("anchor base = %x, want %x", evidence.MeasurementLog[0].Base, before)
+		}
+	})
+
+	t.Run("UnloggedExtendIsRefused", func(t *testing.T) {
+		tpm := newFakeHostTPM()
+		rogue := []byte("an extend the node measurement log never recorded")
+		rt, _ := newAttestingTestRuntime(t, tpm, map[uint32][]byte{
+			7:                             zero,
+			uint32(MeasurementPCRDefault): expectedExtend(launched, rogue),
+		})
+		if _, err := rt.Run(t.Context(), spec); err != nil {
+			t.Fatalf("Run: %v", err)
+		}
+		if err := tpm.ExtendPCR(MeasurementPCRDefault, DefaultMeasurementBank, rogue); err != nil {
+			t.Fatal(err)
+		}
+
+		_, err := rt.Attest(t.Context(), spec, "container-1")
+		var appraisal *HostAppraisalError
+		if !errors.As(err, &appraisal) {
+			t.Fatalf("expected *HostAppraisalError, got %T (%v)", err, err)
+		}
+		if !appraisal.CryptographicFailure || !errors.Is(err, ErrPCRMismatch) {
+			t.Fatalf("an unexplained launch register is a forged PCR, got %v", err)
+		}
+		var logFailure bool
+		for _, failure := range appraisal.Failures {
+			if failure.Check == "launch-log" {
+				logFailure = true
+			}
+		}
+		if !logFailure {
+			t.Fatalf("expected a launch-log failure, got %+v", appraisal.Failures)
 		}
 	})
 }

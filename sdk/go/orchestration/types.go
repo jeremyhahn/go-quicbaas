@@ -239,6 +239,46 @@ type ContainerAttestation = pkgorch.ContainerAttestation
 // for a spec, binding image digest, configuration digest and trust label.
 var LaunchMeasurement = pkgorch.LaunchMeasurement
 
+// LaunchPolicy is the policy a measured launch ran under; its digest is the
+// policy hash bound into LaunchMeasurement.
+type LaunchPolicy = pkgorch.LaunchPolicy
+
+// LaunchPolicyOf returns the launch policy a spec runs under.
+var LaunchPolicyOf = pkgorch.LaunchPolicyOf
+
+// LaunchPolicyDigest returns the policy hash of a spec's launch.
+var LaunchPolicyDigest = pkgorch.LaunchPolicyDigest
+
+// MeasurementLog is the node's append-only, hash-chained log of measured
+// launches; TPMAttestingRuntime.MeasurementLog returns the runtime's log.
+type MeasurementLog = pkgorch.MeasurementLog
+
+// MeasurementLogEntry is one entry of a MeasurementLog. A measured
+// ContainerAttestation carries the node's entries in MeasurementLog.
+type MeasurementLogEntry = pkgorch.MeasurementLogEntry
+
+// MeasurementLogError reports a log that fails verification or replay.
+type MeasurementLogError = pkgorch.MeasurementLogError
+
+// Measurement log entry kinds.
+const (
+	MeasurementLogLaunch = pkgorch.MeasurementLogLaunch
+	MeasurementLogAnchor = pkgorch.MeasurementLogAnchor
+)
+
+// NewMeasurementLog returns an empty node measurement log.
+var NewMeasurementLog = pkgorch.NewMeasurementLog
+
+// ChainMeasurementLog numbers and chains entries as a node's log does.
+var ChainMeasurementLog = pkgorch.ChainMeasurementLog
+
+// VerifyMeasurementLog checks a log's numbering and hash chain.
+var VerifyMeasurementLog = pkgorch.VerifyMeasurementLog
+
+// ReplayMeasurementLog verifies a log and returns the value it replays to
+// for one PCR register; the Verifier compares it with the quoted value.
+var ReplayMeasurementLog = pkgorch.ReplayMeasurementLog
+
 // AttestingContainerRuntime is the trusted-computing seam: a ContainerRuntime
 // that can additionally prove what it launched and where. Callers detect it
 // with a type assertion rather than requiring every runtime to carry a TPM.
@@ -544,6 +584,9 @@ var (
 	_ func(string) string                                                                  = ImageRepository
 	_ func(*ContainerSpec) (string, error)                                                 = ContainerConfigDigest
 	_ func(*ContainerSpec) ([]byte, error)                                                 = LaunchMeasurement
+	_ func(*ContainerSpec) (string, error)                                                 = LaunchPolicyDigest
+	_ func([]MeasurementLogEntry) error                                                    = VerifyMeasurementLog
+	_ func([]MeasurementLogEntry, int, string) ([]byte, error)                             = ReplayMeasurementLog
 	_ func(ContainerRuntime, HostTPM, HostAppraiser, Logger) (*TPMAttestingRuntime, error) = NewTPMAttestingRuntime
 	_ func(Logger) (*ExecContainerRuntime, error)                                          = NewExecContainerRuntime
 	_ func(string, Logger) (*ExecContainerRuntime, error)                                  = NewExecContainerRuntimeWithCommand

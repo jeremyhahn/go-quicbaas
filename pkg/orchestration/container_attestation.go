@@ -194,6 +194,10 @@ type ContainerAttestation struct {
 	// value to confirm the measurement corresponds to this configuration.
 	LaunchMeasurement []byte `json:"launch_measurement,omitempty"`
 
+	// MeasurementLog is the node measurement log the Verifier replayed
+	// against the quoted MeasurementPCR. Empty below the measured tier.
+	MeasurementLog []MeasurementLogEntry `json:"measurement_log,omitempty"`
+
 	// AttestedAt is when the quote was taken.
 	AttestedAt time.Time `json:"attested_at"`
 }
@@ -350,7 +354,22 @@ func (r *TPMAttestingRuntime) measureLaunch(spec *ContainerSpec) error {
 		Bank:         bank,
 		Measurement:  measurement,
 	}
-	if _, err := r.log.record(entry, func() error {
+	readBase := func() ([]byte, error) {
+		banks, err := r.tpm.ReadPCRs([]uint{uint(pcr)})
+		if err != nil {
+			return nil, err
+		}
+		values, err := flattenPCRBanks(banks, bank)
+		if err != nil {
+			return nil, err
+		}
+		value, ok := values[uint32(pcr)]
+		if !ok {
+			return nil, &PCRBankUnavailableError{Requested: bank}
+		}
+		return value, nil
+	}
+	if _, err := r.log.record(entry, readBase, func() error {
 		return r.tpm.ExtendPCR(pcr, bank, measurement)
 	}); err != nil {
 		return &ContainerMeasurementError{
@@ -446,7 +465,16 @@ func (r *TPMAttestingRuntime) Attest(ctx context.Context, spec *ContainerSpec, c
 		return nil, err
 	}
 
-	if err := r.appraise(ctx, spec, nonce, quote, bound); err != nil {
+	// A measured launch's evidence carries the node measurement log, read
+	// after the quote: the log only grows, so every extend the quote covers
+	// is in it, and a launch between the quote and this read appears as an
+	// extra entry the Verifier's replay refuses rather than hides.
+	var launchLog []MeasurementLogEntry
+	if measured {
+		launchLog = r.log.Entries()
+	}
+
+	if err := r.appraise(ctx, spec, nonce, quote, bound, launchLog); err != nil {
 		return nil, err
 	}
 
@@ -475,6 +503,7 @@ func (r *TPMAttestingRuntime) Attest(ctx context.Context, spec *ContainerSpec, c
 		}
 		attestation.MeasurementPCR = spec.EffectiveMeasurementPCR()
 		attestation.LaunchMeasurement = measurement
+		attestation.MeasurementLog = launchLog
 	}
 
 	return attestation, nil
@@ -504,12 +533,14 @@ func quotePCRIndices(reference []uint32, spec *ContainerSpec, measured bool) []u
 
 // appraise hands the bound evidence to the Verifier and turns anything short
 // of a verified appraisal into a HostAppraisalError.
-func (r *TPMAttestingRuntime) appraise(ctx context.Context, spec *ContainerSpec, nonce []byte, quote xkmstpm2.Quote, bound *boundPCRs) error {
+func (r *TPMAttestingRuntime) appraise(ctx context.Context, spec *ContainerSpec, nonce []byte, quote xkmstpm2.Quote, bound *boundPCRs, launchLog []MeasurementLogEntry) error {
 	akCert, err := r.tpm.IAKCertificate()
 	if err != nil {
 		return &ContainerQuoteError{Image: spec.Image, Cause: err}
 	}
 	appraisal, err := r.appraiser.AppraiseHost(ctx, &HostEvidence{
+		PCRBank:         bound.bank,
+		LaunchLog:       launchLog,
 		ReferenceValues: spec.ReferenceValues,
 		AKCertificate:   akCert,
 		Nonce:           nonce,

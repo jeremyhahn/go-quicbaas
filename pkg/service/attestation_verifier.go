@@ -74,6 +74,10 @@ const (
 	AppraisalCheckQuote         = "quote"
 	AppraisalCheckEventLog      = "event-log"
 	AppraisalCheckBaseline      = "baseline"
+
+	// AppraisalCheckLaunchLog replays a measured launch's node measurement
+	// log against the quoted launch registers.
+	AppraisalCheckLaunchLog = "launch-log"
 )
 
 // AppraisalOutcome is one check's result.

@@ -81,6 +81,14 @@ type MeasurementLogEntry struct {
 	// Sequence is the entry's 0-based position in the log.
 	Sequence uint64 `json:"sequence"`
 
+	// Kind is MeasurementLogLaunch for a measured launch, or
+	// MeasurementLogAnchor for the value a register held when the log first
+	// used it. An anchor carries Base and no launch fields.
+	Kind string `json:"kind"`
+
+	// Base is the register's value at the anchor, before any logged extend.
+	Base []byte `json:"base,omitempty"`
+
 	// Image is the reference the caller asked for.
 	Image string `json:"image"`
 
@@ -111,6 +119,18 @@ type MeasurementLogEntry struct {
 	// entry's content; the first entry chains from 32 zero bytes.
 	Chain string `json:"chain"`
 }
+
+// Measurement log entry kinds.
+const (
+	// MeasurementLogLaunch is a measured container launch.
+	MeasurementLogLaunch = "launch"
+
+	// MeasurementLogAnchor records the value a register held when the log
+	// first extended it: a node agent that restarts finds the application
+	// PCR already extended by launches its new log never saw. Replay starts
+	// from the anchor; the reference values still judge the quoted value.
+	MeasurementLogAnchor = "anchor"
+)
 
 // MeasurementLogError reports a log that fails verification or replay.
 type MeasurementLogError struct {
@@ -145,7 +165,7 @@ func chainDigest(prev []byte, e *MeasurementLogEntry) []byte {
 	h.Write([]byte{0})
 	h.Write(prev)
 	for _, field := range []string{
-		fmt.Sprintf("%d", e.Sequence), e.Image, e.ImageDigest, e.ConfigDigest,
+		fmt.Sprintf("%d", e.Sequence), e.Kind, hex.EncodeToString(e.Base), e.Image, e.ImageDigest, e.ConfigDigest,
 		e.PolicyDigest, e.TrustLabel, fmt.Sprintf("%d", e.PCR), e.Bank,
 	} {
 		h.Write([]byte{0})
@@ -158,27 +178,61 @@ func chainDigest(prev []byte, e *MeasurementLogEntry) []byte {
 
 // record runs extend and, only if it succeeds, appends entry to the log.
 // Both happen under the log's lock, so the log's order is the order of the
-// extends and a failed extend leaves no entry.
-func (l *MeasurementLog) record(entry MeasurementLogEntry, extend func() error) (MeasurementLogEntry, error) {
+// extends and a failed extend leaves no entry. The first time the log uses
+// entry's register, readBase supplies the register's current value, which
+// is appended as an anchor ahead of the launch.
+func (l *MeasurementLog) record(entry MeasurementLogEntry, readBase func() ([]byte, error), extend func() error) (MeasurementLogEntry, error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
+
+	var anchor *MeasurementLogEntry
+	if !l.usesRegister(entry.PCR, entry.Bank) {
+		base, err := readBase()
+		if err != nil {
+			return MeasurementLogEntry{}, err
+		}
+		anchor = &MeasurementLogEntry{
+			Kind: MeasurementLogAnchor,
+			Base: append([]byte(nil), base...),
+			PCR:  entry.PCR,
+			Bank: entry.Bank,
+		}
+	}
 	if err := extend(); err != nil {
 		return MeasurementLogEntry{}, err
 	}
+	if anchor != nil {
+		l.appendLocked(*anchor)
+	}
+	entry.Kind = MeasurementLogLaunch
+	entry.Measurement = append([]byte(nil), entry.Measurement...)
+	return l.appendLocked(entry), nil
+}
+
+// usesRegister reports whether the log already holds an entry for a
+// register. The caller holds l.mu.
+func (l *MeasurementLog) usesRegister(pcr int, bank string) bool {
+	for i := range l.entries {
+		if l.entries[i].PCR == pcr && l.entries[i].Bank == bank {
+			return true
+		}
+	}
+	return false
+}
+
+// appendLocked numbers, timestamps and chains entry onto the log. The
+// caller holds l.mu.
+func (l *MeasurementLog) appendLocked(entry MeasurementLogEntry) MeasurementLogEntry {
 	prev := make([]byte, sha256.Size)
 	if n := len(l.entries); n > 0 {
-		decoded, err := hex.DecodeString(l.entries[n-1].Chain)
-		if err != nil {
-			return MeasurementLogEntry{}, &MeasurementLogError{Sequence: uint64(n - 1), Reason: "chain is not hex"}
-		}
-		prev = decoded
+		// Chains this log wrote are always hex.
+		prev, _ = hex.DecodeString(l.entries[n-1].Chain)
 	}
 	entry.Sequence = uint64(len(l.entries))
-	entry.Measurement = append([]byte(nil), entry.Measurement...)
 	entry.RecordedAt = time.Now().UTC()
 	entry.Chain = hex.EncodeToString(chainDigest(prev, &entry))
 	l.entries = append(l.entries, entry)
-	return entry, nil
+	return entry
 }
 
 // Entries returns a copy of the log's entries in order.
@@ -188,7 +242,26 @@ func (l *MeasurementLog) Entries() []MeasurementLogEntry {
 	out := make([]MeasurementLogEntry, len(l.entries))
 	for i, e := range l.entries {
 		e.Measurement = append([]byte(nil), e.Measurement...)
+		e.Base = append([]byte(nil), e.Base...)
 		out[i] = e
+	}
+	return out
+}
+
+// ChainMeasurementLog returns a copy of entries numbered from 0 and chained
+// as a node's log chains them. It is for building a log outside a running
+// node, such as a fixture or an import; it does not judge the entries.
+func ChainMeasurementLog(entries []MeasurementLogEntry) []MeasurementLogEntry {
+	out := make([]MeasurementLogEntry, len(entries))
+	prev := make([]byte, sha256.Size)
+	for i, e := range entries {
+		e.Sequence = uint64(i)
+		e.Measurement = append([]byte(nil), e.Measurement...)
+		e.Base = append([]byte(nil), e.Base...)
+		chain := chainDigest(prev, &e)
+		e.Chain = hex.EncodeToString(chain)
+		out[i] = e
+		prev = chain
 	}
 	return out
 }
@@ -226,9 +299,10 @@ func pcrBankHash(bank string) (func() hash.Hash, error) {
 }
 
 // ReplayMeasurementLog verifies entries and returns the value the PCR at
-// pcr in bank holds after a reset to zero and every entry for that register
-// is extended in order: PCR = H(PCR || H(measurement)), as
-// HostTPM.ExtendPCR does.
+// pcr in bank holds after every entry for that register is applied in
+// order. The register starts at zero, or at the Base of its anchor, which
+// must precede every launch on it; each launch extends it as
+// HostTPM.ExtendPCR does: PCR = H(PCR || H(measurement)).
 func ReplayMeasurementLog(entries []MeasurementLogEntry, pcr int, bank string) ([]byte, error) {
 	newHash, err := pcrBankHash(bank)
 	if err != nil {
@@ -238,18 +312,33 @@ func ReplayMeasurementLog(entries []MeasurementLogEntry, pcr int, bank string) (
 		return nil, err
 	}
 	value := make([]byte, newHash().Size())
+	started := false
 	for i := range entries {
 		e := &entries[i]
 		if e.PCR != pcr || e.Bank != bank {
 			continue
 		}
-		h := newHash()
-		h.Write(e.Measurement)
-		digest := h.Sum(nil)
-		h = newHash()
-		h.Write(value)
-		h.Write(digest)
-		value = h.Sum(nil)
+		switch e.Kind {
+		case MeasurementLogAnchor:
+			if started {
+				return nil, &MeasurementLogError{Sequence: e.Sequence, Reason: "anchor after the register was first used"}
+			}
+			if len(e.Base) != len(value) {
+				return nil, &MeasurementLogError{Sequence: e.Sequence, Reason: "anchor base is not a " + bank + " digest"}
+			}
+			value = append([]byte(nil), e.Base...)
+		case MeasurementLogLaunch:
+			h := newHash()
+			h.Write(e.Measurement)
+			digest := h.Sum(nil)
+			h = newHash()
+			h.Write(value)
+			h.Write(digest)
+			value = h.Sum(nil)
+		default:
+			return nil, &MeasurementLogError{Sequence: e.Sequence, Reason: fmt.Sprintf("unknown entry kind %q", e.Kind)}
+		}
+		started = true
 	}
 	return value, nil
 }
