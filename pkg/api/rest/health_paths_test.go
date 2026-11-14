@@ -97,3 +97,27 @@ func TestHealthPath_UnservedPathIsReported(t *testing.T) {
 		t.Fatalf("unservedHealthPaths = %q, want [\"/v1/health/live\"]", missing)
 	}
 }
+
+// kubernetesProbePath matches the httpGet path of a Kubernetes probe.
+var kubernetesProbePath = regexp.MustCompile(`(?m)^\s+path:\s*(/\S*)\s*$`)
+
+// The StatefulSet's startup, liveness and readiness probes hit REST routes the
+// node serves (go-quicbaas#1696): a probe on an unserved path fails every
+// pod, and the cluster never becomes ready.
+func TestHealthPath_KubernetesProbesHitServedRoutes(t *testing.T) {
+	const file = "../../../deployments/kubernetes/statefulset.yaml"
+	manifest, err := os.ReadFile(file)
+	if err != nil {
+		t.Fatalf("read %s: %v", file, err)
+	}
+	served := servedGETPaths()
+	probes := kubernetesProbePath.FindAllSubmatch(manifest, -1)
+	if len(probes) < 3 {
+		t.Fatalf("%s has %d probe paths, want the startup, liveness and readiness probes", file, len(probes))
+	}
+	for _, m := range probes {
+		if _, ok := served[string(m[1])]; !ok {
+			t.Errorf("%s: probe path %q is not a REST route", file, m[1])
+		}
+	}
+}

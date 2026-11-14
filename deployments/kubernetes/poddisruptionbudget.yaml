@@ -1,0 +1,12 @@
+# Two of three nodes are a Raft quorum: a voluntary disruption (a node drain,
+# a cluster upgrade) may take at most one node away at a time.
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: quicbaas
+spec:
+  minAvailable: 2
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: quicbaas
+      app.kubernetes.io/component: node

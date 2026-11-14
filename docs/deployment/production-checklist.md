@@ -330,46 +330,48 @@ raft:
 - [ ] Snapshot entries tuned for write volume
 - [ ] All nodes have consistent Raft configuration
 
-### 3.3 Cluster Discovery Configuration
+### 3.3 Cluster Membership Configuration
 
-**Static Discovery:**
-
-```yaml
-discovery:
-  methods:
-    - type: static
-      peers:
-        - "1:node1.example.com:63000"
-        - "2:node2.example.com:63000"
-        - "3:node3.example.com:63000"
-cluster:
-  min_quorum: 2
-```
-
-**DNS Discovery:**
+The three nodes of a cluster bootstrap one Raft group from the same member
+list, in `id=host:port` form; each node names itself with `node_id` and the
+address it advertises with `raft_address`. Raft runs over QUIC (UDP) with
+mutual TLS, so every node carries its own certificate from one cluster CA.
 
 ```yaml
-discovery:
-  methods:
-    - type: dns
-      srv_record: "_quicbaas._tcp.example.com"
-      refresh_interval: 30s
+raft:
+  node_id: 1                     # 2 and 3 on the other nodes
+  deployment_id: 1               # the same on every node of the cluster
+  raft_address: "node1.example.com:63000"
+  join_addresses:
+    - "1=node1.example.com:63000"
+    - "2=node2.example.com:63000"
+    - "3=node3.example.com:63000"
+  mutual_tls: true
+  tls_ca_file: /etc/quicbaas/raft-tls/ca.crt
+  tls_cert_file: /etc/quicbaas/raft-tls/node1.crt
+  tls_key_file: /etc/quicbaas/raft-tls/node1.key
 ```
 
-**Kubernetes Discovery:**
+A node added to a running cluster starts with `raft.join: true` and is added
+through the leader; it never bootstraps.
 
-```yaml
-discovery:
-  methods:
-    - type: kubernetes
-      namespace: quicbaas
-      service: quicbaas-headless
-      refresh_interval: 30s
-```
+- [ ] Every node runs the same go-quicbaas release tag
+- [ ] `deployment_id` identical, and `node_id` unique, on every node
+- [ ] `join_addresses` identical on every node and lists all three members
+- [ ] UDP 63000 open between the nodes only
+- [ ] Per-node Raft certificates issued by one cluster CA
 
-- [ ] Discovery method selected and configured
-- [ ] All nodes discoverable via chosen method
-- [ ] Minimum quorum configured correctly
+### 3.3a Kubernetes
+
+`deployments/kubernetes` is the cluster as a kustomization
+([kubernetes.md](kubernetes.md) is the guide):
+
+- [ ] `kustomization.yaml` pins `ghcr.io/jeremyhahn/quicbaasd` to the release tag
+- [ ] Secrets `quicbaas-raft-tls` (CA and one certificate per pod) and `quicbaas-seal` created first
+- [ ] The three pods land on three distinct nodes (required anti-affinity)
+- [ ] The PodDisruptionBudget (`minAvailable: 2`) is in place before any node drain
+- [ ] The StorageClass behind the `data` claims is SSD-backed with `reclaimPolicy: Retain`
+- [ ] `kubectl -n quicbaas get pods` shows three ready pods before clients are pointed at the `quicbaas` Service
 
 ### 3.4 Load Balancer Setup
 

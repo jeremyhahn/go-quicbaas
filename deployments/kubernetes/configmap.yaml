@@ -1,0 +1,55 @@
+# The node configuration every replica shares. What differs per replica
+# (node ID, advertised Raft address, its Raft certificate) is derived from the
+# pod's ordinal by the StatefulSet's start command, the same QUICBAAS_RAFT_*
+# environment overrides test/integration/docker-compose.cluster.yml sets per
+# container.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: quicbaas-config
+data:
+  quicbaas.yaml: |
+    logging:
+      level: info
+      format: json
+
+    server:
+      mode: cluster
+      host: 0.0.0.0
+      rest:
+        enabled: true
+        port: 8080
+      grpc:
+        enabled: true
+        port: 50051
+      unix:
+        enabled: false
+      shards:
+        - 1
+
+    # REST and gRPC always serve TLS (the loader refuses to turn it off), here
+    # with the certificate of Secret quicbaas-server-tls.
+    security:
+      tls_cert_file: /etc/quicbaas/server-tls/tls.crt
+      tls_key_file: /etc/quicbaas/server-tls/tls.key
+
+    raft:
+      # Every node of one cluster shares one deployment ID.
+      deployment_id: 1
+      # Raft runs over QUIC with mutual TLS between the nodes.
+      mutual_tls: true
+      tls_ca_file: /etc/quicbaas/raft-tls/ca.crt
+      election_rtt: 10
+      heartbeat_rtt: 1
+      rtt_millisecond: 200
+
+    storage:
+      backend: pebble
+      data_dir: /data
+
+    seal:
+      enabled: true
+      strategy: passphrase
+
+    auth:
+      enabled: true

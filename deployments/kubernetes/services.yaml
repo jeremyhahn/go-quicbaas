@@ -1,0 +1,38 @@
+# quicbaas-raft is the StatefulSet's governing headless Service: it gives each
+# replica the stable name quicbaas-<ordinal>.quicbaas-raft.<namespace>.svc that
+# the Raft peers address one another by. It publishes pods before they are
+# ready, because a node is not ready until the Raft group has formed, and the
+# group cannot form until the peers can resolve one another.
+apiVersion: v1
+kind: Service
+metadata:
+  name: quicbaas-raft
+spec:
+  clusterIP: None
+  publishNotReadyAddresses: true
+  selector:
+    app.kubernetes.io/name: quicbaas
+    app.kubernetes.io/component: node
+  ports:
+    - name: raft
+      port: 63000
+      protocol: UDP
+---
+# quicbaas is the client Service: REST and gRPC, ready nodes only.
+apiVersion: v1
+kind: Service
+metadata:
+  name: quicbaas
+spec:
+  selector:
+    app.kubernetes.io/name: quicbaas
+    app.kubernetes.io/component: node
+  ports:
+    - name: rest
+      port: 8080
+      targetPort: rest
+      protocol: TCP
+    - name: grpc
+      port: 50051
+      targetPort: grpc
+      protocol: TCP

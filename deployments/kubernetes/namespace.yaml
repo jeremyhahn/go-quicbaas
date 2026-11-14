@@ -1,0 +1,8 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: quicbaas
+  labels:
+    # The pods run as a non-root user with no privilege escalation and every
+    # capability dropped, which the restricted Pod Security Standard admits.
+    pod-security.kubernetes.io/enforce: restricted
