@@ -14,12 +14,12 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
-// kvBackendError is a sentinel returned by faultyKVClient when a method is
+// errKVBackend is a sentinel returned by faultyKVClient when a method is
 // configured to fail. It lets the error-path tests assert exact propagation.
-var kvBackendError = errors.New("signal-test: kv backend failure")
+var errKVBackend = errors.New("signal-test: kv backend failure")
 
 // faultyKVClient wraps an in-memory map and lets individual operations be
-// forced to return kvBackendError. It is used to exercise the error branches
+// forced to return errKVBackend. It is used to exercise the error branches
 // of the signal service that the happy-path serviceTestKVClient cannot reach.
 type faultyKVClient struct {
 	data map[string][]byte
@@ -44,7 +44,7 @@ func newFaultyKVClient() *faultyKVClient {
 
 func (c *faultyKVClient) Put(_ context.Context, key string, value []byte, _ ...qrdbtransport.WriteOption) error {
 	if c.failPut {
-		return kvBackendError
+		return errKVBackend
 	}
 	cp := make([]byte, len(value))
 	copy(cp, value)
@@ -54,7 +54,7 @@ func (c *faultyKVClient) Put(_ context.Context, key string, value []byte, _ ...q
 
 func (c *faultyKVClient) Get(_ context.Context, key string, _ ...qrdbtransport.ReadOption) ([]byte, error) {
 	if c.failGet {
-		return nil, kvBackendError
+		return nil, errKVBackend
 	}
 	if c.corruptKeys[key] {
 		return []byte("{not-valid-json"), nil
@@ -70,7 +70,7 @@ func (c *faultyKVClient) Get(_ context.Context, key string, _ ...qrdbtransport.R
 
 func (c *faultyKVClient) Delete(_ context.Context, key string, _ ...qrdbtransport.WriteOption) error {
 	if c.failDelete {
-		return kvBackendError
+		return errKVBackend
 	}
 	if _, ok := c.data[key]; !ok {
 		return &qrdbtransport.KeyNotFoundError{Key: key}
@@ -81,7 +81,7 @@ func (c *faultyKVClient) Delete(_ context.Context, key string, _ ...qrdbtranspor
 
 func (c *faultyKVClient) List(_ context.Context, prefix string, _ ...qrdbtransport.ReadOption) ([]string, error) {
 	if c.failList {
-		return nil, kvBackendError
+		return nil, errKVBackend
 	}
 	var result []string
 	for k := range c.data {
@@ -95,7 +95,7 @@ func (c *faultyKVClient) List(_ context.Context, prefix string, _ ...qrdbtranspo
 
 func (c *faultyKVClient) Scan(_ context.Context, prefix string, _ ...qrdbtransport.ReadOption) (map[string][]byte, error) {
 	if c.failScan {
-		return nil, kvBackendError
+		return nil, errKVBackend
 	}
 	result := make(map[string][]byte)
 	for k, v := range c.data {
@@ -127,7 +127,7 @@ func TestSignalService_Start_LoadConfigsError(t *testing.T) {
 	svc := newFaultyService(t, kv)
 
 	err := svc.Start(context.Background())
-	if !errors.Is(err, kvBackendError) {
+	if !errors.Is(err, errKVBackend) {
 		t.Fatalf("expected kv backend error from Start, got %v", err)
 	}
 }
@@ -189,7 +189,7 @@ func TestSignalService_ProvisionTenant_PutError(t *testing.T) {
 
 	cfg := &SignalTenantConfig{Enabled: true}
 	err := svc.ProvisionTenant(context.Background(), "tenant-put", cfg)
-	if !errors.Is(err, kvBackendError) {
+	if !errors.Is(err, errKVBackend) {
 		t.Fatalf("expected kv backend error from ProvisionTenant, got %v", err)
 	}
 
@@ -210,7 +210,7 @@ func TestSignalService_DeprovisionTenant_DeleteError(t *testing.T) {
 
 	kv.failDelete = true
 	err := svc.DeprovisionTenant(context.Background(), "tenant-del")
-	if !errors.Is(err, kvBackendError) {
+	if !errors.Is(err, errKVBackend) {
 		t.Fatalf("expected kv backend error from DeprovisionTenant, got %v", err)
 	}
 
@@ -233,7 +233,7 @@ func TestSignalService_RegisterAccount_CountError(t *testing.T) {
 	kv.failList = true // countAccounts -> tenantKV.List fails
 
 	_, err := svc.RegisterAccount(ctx, &RegisterRequest{Number: "+15555550100"})
-	if !errors.Is(err, kvBackendError) {
+	if !errors.Is(err, errKVBackend) {
 		t.Fatalf("expected kv backend error from RegisterAccount count path, got %v", err)
 	}
 }
