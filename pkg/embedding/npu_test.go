@@ -755,10 +755,24 @@ func TestNPUProviderContract(t *testing.T) {
 	}
 }
 
-func TestNPUConfigDefaultsApplied(t *testing.T) {
+// TestNPUConfigWithoutEndpointIsRefused proves there is no hardcoded sidecar
+// address: a config naming no endpoint is refused, not pointed at loopback.
+func TestNPUConfigWithoutEndpointIsRefused(t *testing.T) {
 	p, err := NewNPUProvider(context.Background(), NPUConfig{})
+	if err == nil {
+		_ = p.Close()
+		t.Fatalf("NewNPUProvider with no endpoint = %q, want a refusal", p.BaseURL())
+	}
+	if !errors.Is(err, ErrNPUEndpointRequired) {
+		t.Fatalf("NewNPUProvider err = %v, want ErrNPUEndpointRequired", err)
+	}
+}
+
+func TestNPUConfigDefaultsApplied(t *testing.T) {
+	const endpoint = "http://npu.test:8077"
+	p, err := NewNPUProvider(context.Background(), NPUConfig{BaseURL: endpoint})
 	if err != nil {
-		t.Fatalf("NewNPUProvider with a zero config: unexpected error: %v", err)
+		t.Fatalf("NewNPUProvider with only an endpoint: unexpected error: %v", err)
 	}
 	t.Cleanup(func() {
 		if closeErr := p.Close(); closeErr != nil {
@@ -766,8 +780,8 @@ func TestNPUConfigDefaultsApplied(t *testing.T) {
 		}
 	})
 
-	if got := p.BaseURL(); got != DefaultNPUURL {
-		t.Errorf("BaseURL() = %q, want %q", got, DefaultNPUURL)
+	if got := p.BaseURL(); got != endpoint {
+		t.Errorf("BaseURL() = %q, want %q", got, endpoint)
 	}
 	if got := p.Dimensions(); got != DefaultNPUDimensions {
 		t.Errorf("Dimensions() = %d, want %d", got, DefaultNPUDimensions)
@@ -800,8 +814,8 @@ func TestNPUConfigTrimsTrailingSlash(t *testing.T) {
 
 func TestDefaultNPUConfigValues(t *testing.T) {
 	cfg := DefaultNPUConfig()
-	if cfg.BaseURL != DefaultNPUURL {
-		t.Errorf("BaseURL = %q, want %q", cfg.BaseURL, DefaultNPUURL)
+	if cfg.BaseURL != "" {
+		t.Errorf("BaseURL = %q, want none: the endpoint comes from config", cfg.BaseURL)
 	}
 	if cfg.Model != DefaultNPUModel {
 		t.Errorf("Model = %q, want %q", cfg.Model, DefaultNPUModel)
@@ -872,6 +886,7 @@ func TestNPUProviderResolvesSecretRefAndSendsBearer(t *testing.T) {
 
 func TestNPUProviderSecretRefWithoutResolver(t *testing.T) {
 	cfg := DefaultNPUConfig()
+	cfg.BaseURL = "http://npu.test:8077"
 	cfg.APIKeyRef = inference.SecretRef{Engine: "secrets", Path: "p", Key: "k"}
 
 	_, err := NewNPUProvider(context.Background(), cfg)
@@ -892,6 +907,7 @@ func TestNPUProviderSecretRefWithoutResolver(t *testing.T) {
 
 func TestNPUProviderSecretResolutionFailure(t *testing.T) {
 	cfg := DefaultNPUConfig()
+	cfg.BaseURL = "http://npu.test:8077"
 	cfg.APIKeyRef = inference.SecretRef{Engine: "secrets", Path: "missing", Key: "k"}
 	cfg.Secrets = &staticResolver{err: ErrInvalidCredentials}
 
