@@ -69,6 +69,20 @@ requirement is enforced at the point of issuance in the server, so it also
 applies to `quicbaasd start` against a data dir with no init marker and to
 embedded/library consumers that never invoke the CLI.
 
+## Optional: `iam.bootstrap_admin_email`
+
+First boot creates the platform admin (`admin` in the `system` tenant) with the
+synthetic address `admin@system.qrdb.local` unless the configuration names one:
+
+```yaml
+iam:
+  bootstrap_admin_email: platform-ops@example.test
+```
+
+The address applies to the system-tenant admin only; tenant admins keep their
+own provisioning path. A re-entered first boot looks the admin up by the same
+key, so set it before the first start and leave it in place afterwards.
+
 ## init persists state (gap-2 change)
 
 Prior to Phase 10 gap-2, `quicbaasd init` was a validate-and-print

@@ -1001,7 +1001,7 @@ func (s *Server) firstBootBootstrap(ctx context.Context, c *iamComponents) error
 	adminTenantID := qrdbsdk.SystemTenantID
 	user := users.CreatedUser()
 	if user == nil {
-		adminEmail := "admin@" + adminTenantID + ".qrdb.local"
+		adminEmail := users.EmailFor("admin", adminTenantID)
 		user, err = c.identityStore.GetUserByEmail(ctx, adminTenantID, adminEmail)
 		if err != nil {
 			return &FirstBootBootstrapError{Op: "lookup bootstrap admin user", Cause: err}
@@ -1216,7 +1216,7 @@ func reportUnusableAdministrators(ctx context.Context, c *iamComponents, assignm
 // the tenant/roles/admin without issuing a certificate — the admin then
 // enrolls through the PIV path or a later ceremony.
 func (s *Server) firstBootDependencies(c *iamComponents) (*qrdbsdk.FirstBootDependencies, *qrdbadapter.UserAdapter, error) {
-	users := qrdbadapter.WrapUser(c.identityStore)
+	users := qrdbadapter.WrapUser(c.identityStore).WithAdminEmail(s.config.IAM.BootstrapAdminEmail)
 	roles := qrdbadapter.WrapRole(c.identityStore)
 	deps := &qrdbsdk.FirstBootDependencies{
 		Tenants: qrdbadapter.WrapTenant(c.tenantManager),

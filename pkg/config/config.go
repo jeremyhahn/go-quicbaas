@@ -448,6 +448,12 @@ type IAMConfig struct {
 	// on home-realm discovery. This value is also propagated to the embedded
 	// qrdb mTLS authenticator and the xkms CA at startup.
 	SPIFFETrustDomain string `mapstructure:"spiffe_trust_domain"`
+
+	// BootstrapAdminEmail is the address first boot gives the platform
+	// admin it creates in the system tenant (#1827). Empty keeps the
+	// synthetic default, admin@system.qrdb.local. It is read at first boot
+	// and on a re-entered first boot, so set it before the first start.
+	BootstrapAdminEmail string `mapstructure:"bootstrap_admin_email"`
 }
 
 // Config represents the complete QuicBaaS configuration.

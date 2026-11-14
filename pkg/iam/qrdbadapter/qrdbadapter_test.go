@@ -171,6 +171,22 @@ func TestSyntheticEmail_FormatStable(t *testing.T) {
 	}
 }
 
+// TestUserAdapter_EmailFor_ConfiguredAdminAddress (#1827): a configured
+// address applies to the system tenant only; elsewhere, and when unset, the
+// synthetic address stays.
+func TestUserAdapter_EmailFor_ConfiguredAdminAddress(t *testing.T) {
+	a := WrapUser(nil).WithAdminEmail(" ops@acme.example ")
+	if got := a.EmailFor("admin", qrdbsdk.SystemTenantID); got != "ops@acme.example" {
+		t.Fatalf("EmailFor(system) = %q, want the configured address", got)
+	}
+	if got := a.EmailFor("admin", "acme"); got != "admin@acme.qrdb.local" {
+		t.Fatalf("EmailFor(acme) = %q, want the synthetic address", got)
+	}
+	if got := WrapUser(nil).EmailFor("admin", qrdbsdk.SystemTenantID); got != "admin@system.qrdb.local" {
+		t.Fatalf("EmailFor unset = %q, want the default admin@system.qrdb.local", got)
+	}
+}
+
 func TestConvertPermissions_Roundtrip(t *testing.T) {
 	in := []qrdbsdk.Permission{qrdbsdk.Permission("read:users"), qrdbsdk.Permission("write:roles")}
 	got := convertPermissions(in)
