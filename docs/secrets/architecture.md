@@ -141,6 +141,36 @@ version entry it reserved, and leaves the winner's write in place; retrying
 re-reads the pointer. On a store without these verbs the pointer write is
 unconditional, so run exactly one writer process per shared store.
 
+**Across nodes.** The server's store (`pkg/server/kv_store.go`) carries the
+guarded verbs whenever go-qrdb's KV client offers them
+(`transport.GuardedKVClient`) and forwards them to go-qrdb, which decides
+each condition inside the replicated store. Every node of a cluster writes
+through that one store, so the arbitration above is cluster-wide: writers on
+different nodes racing on one secret each get a distinct version or
+`ErrWriteConflict`, never a lost or shared version.
+`TestKVBackend_TwoNodesArbitrateConcurrentWrites` races writers on two
+backends sharing one arbitrating store and checks exactly that, and that
+both nodes then read the same history.
+
+## Two implementations: go-qrdb's barrier and QuicBaaS's own backend
+
+Secret storage has two implementations today, and this is deliberate and
+bounded:
+
+- **go-qrdb's barrier and credentials** own encryption at rest, and the
+  secret references and dynamic secrets that resolve through them
+  ([engineering.md](engineering.md), [dynamic-secrets.md](dynamic-secrets.md)).
+- **QuicBaaS's own encrypted secrets backend** (`pkg/secrets`:
+  `EncryptedBackend`, the encryptor and its DEKs `dek:global`,
+  `dek:tenant:<id>` and `dek:tenant:<id>:db:<name>`) is a parallel
+  implementation of the same job. It stays, and keeps working as described
+  in this document, until the owner rules its removal; removing it is not
+  part of the `secrets` SPEC row.
+
+Until then, new secret capabilities go to go-qrdb's side, not to the
+parallel backend; changes to the parallel backend are fixes to what it
+already does.
+
 ## Security Model
 
 ### Defense in Depth
