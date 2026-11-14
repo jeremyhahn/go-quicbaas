@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Secrets rotation policies are performed, not only stored (#726).** The
+  `secrets.rotation` scheduler system job (every 5 minutes by default,
+  `Config.SecretsRotationScanInterval`) writes each secret whose policy's
+  `next_rotation` has passed as a new version (`rotation_reason=scheduled`)
+  and advances `next_rotation` by the interval. Before, `SetRotationPolicy`
+  wrote the policy into metadata and nothing acted on it.
+
 ### Changed
 
 - **Module-credential and live-forge variables use forge-neutral names.**

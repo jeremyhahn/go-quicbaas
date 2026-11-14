@@ -1451,7 +1451,10 @@ Rotate a secret to a new value.
 
 ### quicbaas_secrets_set_rotation_policy
 
-Configure automatic rotation for a secret.
+Configure automatic rotation for a secret. The `secrets.rotation` scheduler
+system job performs the policy: when `next_rotation` passes, it writes the
+value as a new version (`rotation_reason=scheduled`) and advances
+`next_rotation` by the interval (see [architecture.md](architecture.md#rotation-policies-are-performed)).
 
 **Input Schema:**
 

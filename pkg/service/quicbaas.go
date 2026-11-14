@@ -591,7 +591,15 @@ func newQuicBaaS(b *serviceBuilder) (QuicBaaS, error) {
 	// Initialize Secrets service if secrets manager is provided
 	if b.secretsManager != nil {
 		if secretsMgr, ok := b.secretsManager.(interfaces.SecretsManager); ok {
-			svc.secretsService = newSecretsService(secretsMgr, logger)
+			secretsImpl := newSecretsService(secretsMgr, logger)
+			svc.secretsService = secretsImpl
+			// Rotation policies are performed by a scheduler system job,
+			// so a cluster rotates each due secret exactly once.
+			if engine, ok := svc.schedulerEngine.(*scheduler.SchedulerEngine); ok && engine != nil {
+				if err := registerSecretsRotation(engine, secretsImpl, b.config.SecretsRotationScanInterval); err != nil {
+					return nil, err
+				}
+			}
 		}
 	}
 
