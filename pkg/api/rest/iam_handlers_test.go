@@ -549,8 +549,9 @@ func TestIAMHandler_CreateUser_GroupsIsNotAUserField(t *testing.T) {
 
 	ctx := context.Background()
 	_ = memStorage.CreateTenant(ctx, &iam.Tenant{ID: "tenant1", Name: "Tenant 1"})
+	require.NoError(t, memStorage.CreateRole(ctx, &iam.Role{ID: "role-member", TenantID: "tenant1", Name: "member"}))
 
-	body := `{"email": "withgroups@example.com", "username": "withgroups", "name": "With Groups", "groups": ["group-ops"]}`
+	body := `{"email": "withgroups@example.com", "username": "withgroups", "name": "With Groups", "groups": ["group-ops"], "roles": ["role-member"]}`
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/tenants/tenant1/users", bytes.NewReader([]byte(body)))
 	req.Header.Set("Content-Type", "application/json")
 	req = withChiParams(req, map[string]string{"tenant_id": "tenant1"})
@@ -571,8 +572,9 @@ func TestIAMHandler_CreateUser_Success(t *testing.T) {
 
 	ctx := context.Background()
 	_ = memStorage.CreateTenant(ctx, &iam.Tenant{ID: "tenant1", Name: "Tenant 1"})
+	require.NoError(t, memStorage.CreateRole(ctx, &iam.Role{ID: "role-member", TenantID: "tenant1", Name: "member"}))
 
-	body := `{"email": "newuser@example.com", "username": "newuser", "name": "New User"}`
+	body := `{"email": "newuser@example.com", "username": "newuser", "name": "New User", "roles": ["role-member"]}`
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/tenants/tenant1/users", bytes.NewReader([]byte(body)))
 	req.Header.Set("Content-Type", "application/json")
 	req = withChiParams(req, map[string]string{"tenant_id": "tenant1"})
@@ -595,8 +597,9 @@ func TestIAMHandler_CreateUser_ResponseShape(t *testing.T) {
 
 	ctx := context.Background()
 	_ = memStorage.CreateTenant(ctx, &iam.Tenant{ID: "tenant1", Name: "Tenant 1"})
+	require.NoError(t, memStorage.CreateRole(ctx, &iam.Role{ID: "role-member", TenantID: "tenant1", Name: "member"}))
 
-	body := `{"email": "shape@example.com", "username": "shape-user", "name": "Shape Test User"}`
+	body := `{"email": "shape@example.com", "username": "shape-user", "name": "Shape Test User", "roles": ["role-member"]}`
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/tenants/tenant1/users", bytes.NewReader([]byte(body)))
 	req.Header.Set("Content-Type", "application/json")
 	req = withChiParams(req, map[string]string{"tenant_id": "tenant1"})

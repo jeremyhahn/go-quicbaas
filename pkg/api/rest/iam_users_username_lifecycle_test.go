@@ -72,7 +72,7 @@ func TestREST_CreateUserKeepsUsernameAndDisplayNameApart(t *testing.T) {
 	defer cleanup()
 
 	w := postUser(t, handler, "acme",
-		`{"email":"carol@acme.com","username":"carol","name":"Carol Danvers","lifecycle":"active"}`)
+		`{"email":"carol@acme.com","username":"carol","name":"Carol Danvers","lifecycle":"active","roles":["role-member"]}`)
 	require.Equal(t, http.StatusCreated, w.Code, "CreateUser failed: %s", w.Body.String())
 
 	var created map[string]interface{}
@@ -97,7 +97,7 @@ func TestREST_UpdateUserChangesUsernameAndDisplayNameIndependently(t *testing.T)
 	defer cleanup()
 
 	w := postUser(t, handler, "acme",
-		`{"email":"dave@acme.com","username":"dave","name":"Dave One","lifecycle":"active"}`)
+		`{"email":"dave@acme.com","username":"dave","name":"Dave One","lifecycle":"active","roles":["role-member"]}`)
 	require.Equal(t, http.StatusCreated, w.Code, "CreateUser failed: %s", w.Body.String())
 	var created map[string]interface{}
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &created))
@@ -128,7 +128,7 @@ func TestREST_UpdateUserRefusesTheDeletingLifecycle(t *testing.T) {
 	defer cleanup()
 
 	w := postUser(t, handler, "acme",
-		`{"email":"erin@acme.com","username":"erin","name":"Erin","lifecycle":"active"}`)
+		`{"email":"erin@acme.com","username":"erin","name":"Erin","lifecycle":"active","roles":["role-member"]}`)
 	require.Equal(t, http.StatusCreated, w.Code, "CreateUser failed: %s", w.Body.String())
 	var created map[string]interface{}
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &created))
@@ -156,7 +156,7 @@ func TestREST_UpdateUserStillAcceptsALegitimateLifecycle(t *testing.T) {
 	defer cleanup()
 
 	w := postUser(t, handler, "acme",
-		`{"email":"finn@acme.com","username":"finn","name":"Finn","lifecycle":"active"}`)
+		`{"email":"finn@acme.com","username":"finn","name":"Finn","lifecycle":"active","roles":["role-member"]}`)
 	require.Equal(t, http.StatusCreated, w.Code, "CreateUser failed: %s", w.Body.String())
 	var created map[string]interface{}
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &created))

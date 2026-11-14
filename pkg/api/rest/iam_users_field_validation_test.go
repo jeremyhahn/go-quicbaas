@@ -59,7 +59,7 @@ func TestREST_UpdateUserRefusesAnEmailShapedNameWith400(t *testing.T) {
 	handler, _, cleanup := setupUserReadHandler(t)
 	defer cleanup()
 
-	w := postUser(t, handler, "acme", `{"email":"dana@acme.com","username":"dana","name":"Dana"}`)
+	w := postUser(t, handler, "acme", `{"email":"dana@acme.com","username":"dana","name":"Dana","roles":["role-member"]}`)
 	require.Equal(t, http.StatusCreated, w.Code, "CreateUser failed: %s", w.Body.String())
 	var created map[string]interface{}
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &created))
@@ -102,10 +102,10 @@ func TestREST_PendingCreateWithoutInviteStoreIsUnavailable(t *testing.T) {
 	handler, cleanup := setupUserHandlerWithoutInviteStore(t)
 	defer cleanup()
 
-	w := postUser(t, handler, "acme", `{"email":"bob@acme.com","username":"bob"}`)
+	w := postUser(t, handler, "acme", `{"email":"bob@acme.com","username":"bob","roles":["role-member"]}`)
 	assert.Equal(t, http.StatusServiceUnavailable, w.Code, "body: %s", w.Body.String())
 
-	w = postUser(t, handler, "acme", `{"email":"bob@acme.com","username":"bob","lifecycle":"active"}`)
+	w = postUser(t, handler, "acme", `{"email":"bob@acme.com","username":"bob","lifecycle":"active","roles":["role-member"]}`)
 	assert.Equal(t, http.StatusCreated, w.Code, "the refused pending create left a user behind: %s", w.Body.String())
 }
 

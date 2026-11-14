@@ -164,8 +164,9 @@ func TestInvite_RESTCreatedInviteLandsInSameStore(t *testing.T) {
 
 	ctx := context.Background()
 	require.NoError(t, memStorage.CreateTenant(ctx, &iam.Tenant{ID: "tenant-rest", Name: "Rest"}))
+	require.NoError(t, memStorage.CreateRole(ctx, &iam.Role{ID: "role-member", TenantID: "tenant-rest", Name: "member"}))
 
-	body := `{"email":"rest@example.com","username":"restuser","name":"Rest User","auth_methods":["webauthn"]}`
+	body := `{"email":"rest@example.com","username":"restuser","name":"Rest User","auth_methods":["webauthn"],"roles":["role-member"]}`
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/tenants/tenant-rest/users",
 		bytes.NewReader([]byte(body)))
 	req.Header.Set("Content-Type", "application/json")

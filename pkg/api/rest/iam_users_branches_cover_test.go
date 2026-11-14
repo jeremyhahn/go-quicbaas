@@ -38,9 +38,10 @@ func TestCreateUser_ForwardedHostAndCappedExpiry(t *testing.T) {
 
 	ctx := context.Background()
 	require.NoError(t, memStorage.CreateTenant(ctx, &iam.Tenant{ID: "tenant1", Name: "Tenant 1"}))
+	require.NoError(t, memStorage.CreateRole(ctx, &iam.Role{ID: "role-member", TenantID: "tenant1", Name: "member"}))
 
 	// invite_expiry_hours > 168 must be clamped; auth_methods omitted defaults.
-	body := `{"email":"fwd@example.com","username":"fwduser","name":"Fwd User","invite_expiry_hours":1000}`
+	body := `{"email":"fwd@example.com","username":"fwduser","name":"Fwd User","invite_expiry_hours":1000,"roles":["role-member"]}`
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/tenants/tenant1/users", bytes.NewReader([]byte(body)))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Forwarded-Host", "public.example.com")
