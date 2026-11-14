@@ -17,6 +17,7 @@
 package mcp
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
@@ -284,7 +285,7 @@ func (r *ToolRegistry) registerTools() {
 			"type": "object",
 			"properties": map[string]interface{}{
 				"entityType": map[string]interface{}{"type": "string", "description": "Entity type"},
-				"id":         map[string]interface{}{"type": "integer", "description": "Entity ID"},
+				"id":         map[string]interface{}{"type": []string{"integer", "string"}, "description": "Entity ID; a decimal string carries an ID above 2^53 exactly"},
 				"data":       map[string]interface{}{"type": "string", "description": "Base64-encoded (standard) data; the value alias is decoded the same way"},
 				"shardID":    map[string]interface{}{"type": "integer", "description": "Target shard ID"},
 			},
@@ -298,7 +299,7 @@ func (r *ToolRegistry) registerTools() {
 			"type": "object",
 			"properties": map[string]interface{}{
 				"entityType": map[string]interface{}{"type": "string", "description": "Entity type"},
-				"id":         map[string]interface{}{"type": "integer", "description": "Entity ID"},
+				"id":         map[string]interface{}{"type": []string{"integer", "string"}, "description": "Entity ID; a decimal string carries an ID above 2^53 exactly"},
 				"shardID":    map[string]interface{}{"type": "integer", "description": "Target shard ID"},
 			},
 			"required": []string{"entityType", "id"},
@@ -311,7 +312,7 @@ func (r *ToolRegistry) registerTools() {
 			"type": "object",
 			"properties": map[string]interface{}{
 				"entityType": map[string]interface{}{"type": "string", "description": "Entity type"},
-				"id":         map[string]interface{}{"type": "integer", "description": "Entity ID"},
+				"id":         map[string]interface{}{"type": []string{"integer", "string"}, "description": "Entity ID; a decimal string carries an ID above 2^53 exactly"},
 				"shardID":    map[string]interface{}{"type": "integer", "description": "Target shard ID"},
 			},
 			"required": []string{"entityType", "id"},
@@ -1653,14 +1654,29 @@ func getStringMap(args map[string]interface{}, key string) map[string]string {
 
 // Helper function to marshal result to JSON-compatible format.
 func marshalResult(v interface{}) (interface{}, error) {
+	return marshalResultNumbers(v, false)
+}
+
+// marshalEntityResult is marshalResult for the entity KV tools: numbers
+// decode as json.Number, so a uint64 entity ID above 2^53 keeps its exact
+// token when the result is encoded for the caller.
+func marshalEntityResult(v interface{}) (interface{}, error) {
+	return marshalResultNumbers(v, true)
+}
+
+func marshalResultNumbers(v interface{}, exact bool) (interface{}, error) {
 	// Convert to JSON and back to get JSON-compatible types
 	data, err := json.Marshal(v)
 	if err != nil {
 		return nil, err
 	}
 
+	dec := json.NewDecoder(bytes.NewReader(data))
+	if exact {
+		dec.UseNumber()
+	}
 	var result interface{}
-	if err := json.Unmarshal(data, &result); err != nil {
+	if err := dec.Decode(&result); err != nil {
 		return nil, err
 	}
 
@@ -1702,7 +1718,7 @@ func (r *ToolRegistry) executePut(ctx context.Context, args map[string]interface
 	if err != nil {
 		return nil, err
 	}
-	return marshalResult(resp)
+	return marshalEntityResult(resp)
 }
 
 // decodePutData decodes the data argument of the KV put tools (qrdb_put and
@@ -1733,7 +1749,7 @@ func (r *ToolRegistry) executeGet(ctx context.Context, args map[string]interface
 	if err != nil {
 		return nil, err
 	}
-	return marshalResult(resp)
+	return marshalEntityResult(resp)
 }
 
 func (r *ToolRegistry) executeDelete(ctx context.Context, args map[string]interface{}) (interface{}, error) {
@@ -1753,7 +1769,7 @@ func (r *ToolRegistry) executeDelete(ctx context.Context, args map[string]interf
 	if err != nil {
 		return nil, err
 	}
-	return marshalResult(resp)
+	return marshalEntityResult(resp)
 }
 
 func (r *ToolRegistry) executeList(ctx context.Context, args map[string]interface{}) (interface{}, error) {
