@@ -210,7 +210,13 @@ func buildQRDBConfig(cfg *config.Config, clusterMode bool) (*qrdbsdk.DaemonConfi
 	// module surfaces answer Unavailable until quicbaasd finishes composing
 	// the QuicBaaS facade.
 	if cfg.NetworkServing() {
-		qcfg.Server.Host = cfg.Server.Host
+		// The node has one host for every listener; a per-protocol
+		// bind_address becomes it (validation refuses overrides that differ).
+		if host, _, ok := cfg.Server.NodeListenHost(); ok {
+			qcfg.Server.Host = host
+		} else {
+			qcfg.Server.Host = cfg.Server.Host
+		}
 		qcfg.Server.AdminPort = cfg.Server.REST.Port
 		qcfg.Server.GRPCPort = cfg.Server.GRPC.Port
 		qcfg.Protocols.REST = cfg.Server.REST.Enabled

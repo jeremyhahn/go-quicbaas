@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/spf13/viper"
@@ -2145,6 +2146,46 @@ func (c *ServerConfig) ResolveBindHost(override string) string {
 		return override
 	}
 	return c.Host
+}
+
+// NodeListenHost returns the one host the embedded qrdb node binds its REST,
+// gRPC and MCP listeners on. The pinned go-qrdb has no per-protocol host: every
+// listener joins Server.Host with its port. So a per-protocol bind_address is
+// honoured by becoming the node's host, and the enabled protocols must agree on
+// it. When two enabled protocols resolve to different hosts, NodeListenHost
+// returns the config key of the first one that disagrees, and ok is false:
+// binding one of them on the other's interface would put a listener the
+// operator kept on private ingress (SC-7) onto another interface.
+func (c *ServerConfig) NodeListenHost() (host, conflictKey string, ok bool) {
+	type listener struct {
+		enabled  bool
+		override string
+		key      string
+	}
+	listeners := []listener{
+		{c.REST.Enabled, c.REST.BindAddress, "server.rest.bind_address"},
+		{c.GRPC.Enabled, c.GRPC.BindAddress, "server.grpc.bind_address"},
+		{c.MCP.Enabled, c.MCP.BindAddress, "server.mcp.bind_address"},
+	}
+	resolved := ""
+	set := false
+	for _, l := range listeners {
+		if !l.enabled {
+			continue
+		}
+		h := c.ResolveBindHost(strings.TrimSpace(l.override))
+		if !set {
+			resolved, set = h, true
+			continue
+		}
+		if h != resolved {
+			return "", l.key, false
+		}
+	}
+	if !set {
+		return c.Host, "", true
+	}
+	return resolved, "", true
 }
 
 // ResolveSealedBindHost returns the listen host for the sealed-window
