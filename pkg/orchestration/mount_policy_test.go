@@ -321,7 +321,14 @@ type socketsRootFixture struct {
 func newSocketsRootFixture(t *testing.T) socketsRootFixture {
 	t.Helper()
 	base := newMountPolicyFixture(t)
-	root := filepath.Join(t.TempDir(), "s")
+	// A short /tmp parent keeps the socket path under the 108-byte
+	// sockaddr_un limit when the runner's TMPDIR is long.
+	parent, err := os.MkdirTemp("/tmp", "msr")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(parent) })
+	root := filepath.Join(parent, "s")
 	if err := os.Mkdir(root, 0o700); err != nil {
 		t.Fatal(err)
 	}
