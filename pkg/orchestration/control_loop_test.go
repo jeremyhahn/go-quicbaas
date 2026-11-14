@@ -2309,13 +2309,6 @@ func TestResolveBackendForMode(t *testing.T) {
 			want:     "ollama",
 		},
 		{
-			name:     "canned mode uses workflow role",
-			workflow: workflow(WorkflowModeCanned, AgentRoleSpec{Role: "worker", Backend: "ollama"}),
-			item:     &WorkItem{RequiredRole: "worker"},
-			backends: newTestBackends(),
-			want:     "ollama",
-		},
-		{
 			name:     "autonomous mode uses item backend",
 			workflow: workflow(WorkflowModeAutonomous, AgentRoleSpec{Role: "worker", Backend: "ollama"}),
 			item:     &WorkItem{Backend: "claude"},

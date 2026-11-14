@@ -879,7 +879,7 @@ export type CommunicationTopology = 'hub_and_spoke' | 'hybrid' | 'peer_to_peer';
 export type WorkspaceIsolation = 'shared' | 'worktree';
 
 // WorkflowMode defines the operational mode for an orchestration workflow.
-export type WorkflowMode = 'canned' | 'constrained' | 'autonomous';
+export type WorkflowMode = 'constrained' | 'autonomous';
 
 // AgentRoleSpec defines a single agent role within a workflow.
 // Mirrors orchestration.AgentRoleSpec.

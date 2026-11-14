@@ -4,7 +4,7 @@
  * Tests for the six-step WorkflowWizard component:
  *   1. Stepper advances only when the current step is valid.
  *   2. Step 1 rejects empty name and names already in the workflow list.
- *   3. Step 2 rejects canned/constrained when no agent has role="lead".
+ *   3. Step 2 rejects constrained mode when no agent has role="lead".
  *   4. Step 6 generated YAML payload round-trips through JSON.parse(JSON.stringify).
  *   5. Submit calls client.orchestrator.createWorkflow; on 4xx the wizard stays
  *      on the Review step and shows the error inline.
@@ -175,13 +175,13 @@ describe('WorkflowWizard — step 2 agent lead validation', () => {
     await waitFor(() => screen.getByText(/Add your first agent/i));
   }
 
-  it('keeps Continue disabled on step 2 when no agents added (canned mode)', async () => {
+  it('keeps Continue disabled on step 2 when no agents added (constrained mode)', async () => {
     render(WorkflowWizard, { props: makeProps() });
     await reachStep2();
     expect(screen.getByRole('button', { name: /Continue/i })).toBeDisabled();
   });
 
-  it('shows lead-required warning when mode is canned and no lead role', async () => {
+  it('shows lead-required warning when mode is constrained$!2 and no lead role', async () => {
     render(WorkflowWizard, { props: makeProps() });
     await reachStep2();
 
@@ -194,12 +194,12 @@ describe('WorkflowWizard — step 2 agent lead validation', () => {
     await fireEvent.input(roleInputs[0]!, { target: { value: 'worker' } });
 
     await waitFor(() => {
-      expect(screen.getByText(/canned and constrained modes require/i)).toBeInTheDocument();
+      expect(screen.getByText(/constrained mode requires/i)).toBeInTheDocument();
     });
     expect(screen.getByRole('button', { name: /Continue/i })).toBeDisabled();
   });
 
-  it('enables Continue when an agent with role="lead" is present in canned mode', async () => {
+  it('enables Continue when an agent with role="lead" is present in constrained mode', async () => {
     render(WorkflowWizard, { props: makeProps() });
     await reachStep2();
 
@@ -263,7 +263,7 @@ describe('WorkflowWizard — step 6 YAML round-trip', () => {
     const def: WorkflowDefinition = {
       name: 'round-trip-wf',
       description: 'test',
-      mode: 'canned',
+      mode: 'constrained',
       agents: [{
         role: 'lead',
         backend: 'ollama',
@@ -473,7 +473,7 @@ describe('WorkflowWizard — submit behaviour', () => {
       expect(onComplete).toHaveBeenCalledOnce();
       const [def] = onComplete.mock.calls[0] as [WorkflowDefinition];
       expect(def.name).toBe('submit-test-wf');
-      expect(def.mode).toBe('canned');
+      expect(def.mode).toBe('constrained');
       expect(def.agents).toHaveLength(1);
     });
   });

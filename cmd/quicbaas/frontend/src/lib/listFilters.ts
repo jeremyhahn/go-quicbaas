@@ -96,7 +96,7 @@ export const RUNNER_OPTIONS: readonly FilterOption[] = [
 ];
 
 /** A workflow's operational mode (WorkflowMode in the SDK's types). */
-export const WORKFLOW_MODES: readonly string[] = ['canned', 'constrained', 'autonomous'];
+export const WORKFLOW_MODES: readonly string[] = ['constrained', 'autonomous'];
 
 /** Whether a task asked for immediate dispatch or waits to be claimed. */
 export const DISPATCH_OPTIONS: readonly FilterOption[] = [
