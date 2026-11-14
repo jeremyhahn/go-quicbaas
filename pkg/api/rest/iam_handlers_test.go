@@ -906,6 +906,38 @@ func TestIAMHandler_CreateUser_WithRoles(t *testing.T) {
 	assert.Equal(t, []string{"role-auditor"}, stored.Roles)
 }
 
+// A user with no roles would authenticate into an authorization vacuum, so
+// the create is refused with 400 and nothing is written (#75).
+func TestIAMHandler_CreateUser_NoRolesRefused(t *testing.T) {
+	_, _, memStorage, handler, cleanup := setupIAMTestServer(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	_ = memStorage.CreateTenant(ctx, &iam.Tenant{ID: "tenant1", Name: "Tenant 1"})
+
+	for name, roles := range map[string]string{
+		"omitted": ``,
+		"empty":   `, "roles": []`,
+		"blank":   `, "roles": ["", "  "]`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			email := "noroles-" + name + "@example.com"
+			body := `{"email": "` + email + `", "username": "noroles` + name + `"` + roles + `}`
+			req := httptest.NewRequest(http.MethodPost, "/api/v1/tenants/tenant1/users", bytes.NewReader([]byte(body)))
+			req.Header.Set("Content-Type", "application/json")
+			req = withChiParams(req, map[string]string{"tenant_id": "tenant1"})
+			w := httptest.NewRecorder()
+
+			handler.CreateUser(w, req)
+			require.Equal(t, http.StatusBadRequest, w.Code, "body: %s", w.Body.String())
+			assert.Contains(t, w.Body.String(), "at least one role is required")
+
+			_, err := memStorage.GetUserByEmail(ctx, "tenant1", email)
+			assert.Error(t, err, "a refused create must write no user")
+		})
+	}
+}
+
 // TestIAMHandler_CreateUser_UnknownRole_NotFoundNoUser proves the REST
 // transport inherits the validate-before-create contract: an unknown role
 // reference returns 404 and NO user record is written (retry-safe).
