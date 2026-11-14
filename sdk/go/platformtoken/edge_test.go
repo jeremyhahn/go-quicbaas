@@ -165,8 +165,8 @@ func TestAuthorize_RolesAndConfirmation(t *testing.T) {
 	c.Subject = "user-1"
 	c.TenantID = "tenant-1"
 	az := Authorize(c)
-	if !az.HasRole("admin") || az.HasRole("nope") {
-		t.Fatal("HasRole mismatch")
+	if len(az.Roles) != 1 || az.Roles[0] != "admin" {
+		t.Fatal("roles claim not projected")
 	}
 	if az.TenantID != "tenant-1" || az.Subject != "user-1" {
 		t.Fatal("subject/tenant not projected")

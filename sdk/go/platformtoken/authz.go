@@ -105,16 +105,6 @@ func (a *AuthorizedContext) HasAnyScope(scopes ...string) bool {
 	return false
 }
 
-// HasRole reports whether the supplemental roles claim contains role.
-func (a *AuthorizedContext) HasRole(role string) bool {
-	for _, r := range a.Roles {
-		if r == role {
-			return true
-		}
-	}
-	return false
-}
-
 // RequireScope enforces that the context was granted scope, returning a typed
 // ScopeDeniedError (which the caller maps to 403) when it was not. This is the
 // scope -> RBAC enforcement helper downstream services call per protected
@@ -124,17 +114,4 @@ func (a *AuthorizedContext) RequireScope(scope string) error {
 		return nil
 	}
 	return &ScopeDeniedError{Required: scope}
-}
-
-// RequireAnyScope enforces that at least one of scopes was granted. It returns
-// a ScopeDeniedError naming the first required scope when none match.
-func (a *AuthorizedContext) RequireAnyScope(scopes ...string) error {
-	if a.HasAnyScope(scopes...) {
-		return nil
-	}
-	required := ""
-	if len(scopes) > 0 {
-		required = scopes[0]
-	}
-	return &ScopeDeniedError{Required: required}
 }

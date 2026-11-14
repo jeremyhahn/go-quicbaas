@@ -118,7 +118,6 @@ Device onboarding and OTA activate / confirm are permissions in go-qrdb's vocabu
 | D5 | Local wildcard permission matchers | `sdk/go/platformtoken/authz.go`, `pkg/orchestration/agent_identity.go`, `pkg/fleet/spawn_server.go` | *Seam*: go-qrdb's permission matcher, not re-exported at the pinned tag |
 | D6 | `agent:runtime:*` permissions used but never registered | `pkg/orchestration/agent_identity.go`, `pkg/iam/fleet_registrar.go` | `RegisterPermissions`, and `RegisterPermissionRoleGrant` for the roles that carry them |
 | D7 | Local copies of go-qrdb's role, binding and permission types | `pkg/iam/types.go`, `pkg/iam/webauthn_attestation.go` | `Role`, `RoleBinding`, `Permission` |
-| D8 | Dead authorization code | `pkg/iam/inheritance.go`, `pkg/iam/ownership.go`, `pkg/catalog/acl.go`, `sdk/go/platformtoken/authz.go` | Nothing: deleted |
 | D9 | Local agent role IDs | `pkg/iam/agent_cert_identity.go` | `SystemRoleID` / `ResolveSystemRoleID` for a role go-qrdb defines |
 | D10 | Data-plane permission strings written as literals | `pkg/api/rest/routes_permissions_generated.go`, `pkg/api/mcp/authz_qrdb.go` | go-qrdb's exported `Permission*` constants; a string with no constant is a *seam* |
 

@@ -102,11 +102,12 @@ claims, err = v.ValidateWithDPoP(ctx, bearer, dpopProof, r.Method, requestURI, r
 `platformtoken.Authorize(claims) *AuthorizedContext` projects validated claims into the
 identity a service authorizes on:
 
-- `AuthorizedContext.RequireScope("app.read")` / `RequireAnyScope(...)` — returns
+- `AuthorizedContext.RequireScope("app.read")` — returns
   `ScopeDeniedError` (map to 403) when the scope is absent. This is the scope→RBAC gate.
 - `AuthorizedContext.TenantID` — the value a service sets as its RLS tenant
   (e.g. `app.current_tenant`).
-- `Subject`, `Roles`, `Confirmation` — for audit and supplemental RBAC.
+- `Subject`, `Roles`, `Confirmation` — for audit; a role is judged by go-qrdb's
+  `Authorizer`, never by the token context itself.
 
 **Scope catalog convention:** scopes are `<svc>.<verb>`, e.g. `app.read`, `app.admin`. A
 token with no `<svc>.*` scope is denied.
