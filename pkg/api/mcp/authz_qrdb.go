@@ -72,6 +72,18 @@ var qrdbToolExactMapping = map[string]qrdbToolResource{
 	"quicbaas_registry_resolve":    {"service_registry", "read"},
 	"quicbaas_registry_watch":      {"service_registry", "read"},
 
+	// Service plane (#1687): the same services:* permissions as gRPC and
+	// the REST frozen route table.
+	"quicbaas_services_deploy":   {"services", "deploy"},
+	"quicbaas_services_redeploy": {"services", "deploy"},
+	"quicbaas_services_undeploy": {"services", "deploy"},
+	"quicbaas_services_start":    {"services", "control"},
+	"quicbaas_services_stop":     {"services", "control"},
+	"quicbaas_services_resume":   {"services", "control"},
+	"quicbaas_services_restart":  {"services", "control"},
+	"quicbaas_services_get":      {"services", "read"},
+	"quicbaas_services_list":     {"services", "read"},
+
 	// KV. The quicbaas_ names here are the ones the registry actually
 	// registers; the quicbaas_get / quicbaas_put / quicbaas_set /
 	// quicbaas_scan / quicbaas_list / quicbaas_delete aliases that used to sit
