@@ -929,7 +929,14 @@ func (m *mockSDKClientWithVector) TenantMgmt() (quicbaas.QRDBTenantClient, error
 func (m *mockSDKClientWithVector) CustodianGroup() (quicbaas.QRDBCustodianGroupClient, error) {
 	return nil, nil
 }
-func (m *mockSDKClientWithVector) Share() (quicbaas.QRDBShareClient, error) { return nil, nil }
+func (m *mockSDKClientWithVector) Share() (quicbaas.QRDBShareClient, error)          { return nil, nil }
+func (m *mockSDKClientWithVector) QRDBCluster() (*quicbaas.QRDBClusterClient, error) { return nil, nil }
+func (m *mockSDKClientWithVector) QRDBMembership() (quicbaas.QRDBMembershipClient, error) {
+	return nil, nil
+}
+func (m *mockSDKClientWithVector) QRDBRebalance() (quicbaas.QRDBRebalanceClient, error) {
+	return nil, nil
+}
 func (m *mockSDKClientWithVector) DataStore() (quicbaas.QRDBKVStore, error) { return nil, nil }
 
 func (m *mockSDKClientWithVector) Vector() quicbaas.VectorClient {
@@ -1313,12 +1320,19 @@ func (m *testSDKClientForVector) TenantMgmt() (quicbaas.QRDBTenantClient, error)
 func (m *testSDKClientForVector) CustodianGroup() (quicbaas.QRDBCustodianGroupClient, error) {
 	return nil, nil
 }
-func (m *testSDKClientForVector) Share() (quicbaas.QRDBShareClient, error) { return nil, nil }
-func (m *testSDKClientForVector) Project() quicbaas.ProjectClient          { return nil }
-func (m *testSDKClientForVector) SDLC() quicbaas.SDLCClient                { return nil }
-func (m *testSDKClientForVector) Prompts() quicbaas.PromptsClient          { return nil }
-func (m *testSDKClientForVector) Agents() quicbaas.AgentsClient            { return nil }
-func (m *testSDKClientForVector) Account() quicbaas.AccountClient          { return nil }
+func (m *testSDKClientForVector) Share() (quicbaas.QRDBShareClient, error)          { return nil, nil }
+func (m *testSDKClientForVector) QRDBCluster() (*quicbaas.QRDBClusterClient, error) { return nil, nil }
+func (m *testSDKClientForVector) QRDBMembership() (quicbaas.QRDBMembershipClient, error) {
+	return nil, nil
+}
+func (m *testSDKClientForVector) QRDBRebalance() (quicbaas.QRDBRebalanceClient, error) {
+	return nil, nil
+}
+func (m *testSDKClientForVector) Project() quicbaas.ProjectClient { return nil }
+func (m *testSDKClientForVector) SDLC() quicbaas.SDLCClient       { return nil }
+func (m *testSDKClientForVector) Prompts() quicbaas.PromptsClient { return nil }
+func (m *testSDKClientForVector) Agents() quicbaas.AgentsClient   { return nil }
+func (m *testSDKClientForVector) Account() quicbaas.AccountClient { return nil }
 
 func (m *testSDKClientForVector) Orchestrator() quicbaas.OrchestratorClient { return nil }
 
