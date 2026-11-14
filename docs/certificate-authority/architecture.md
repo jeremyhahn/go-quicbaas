@@ -33,7 +33,9 @@ and types (#1330). It is served on REST (`/api/v1/xkms/ca/*`), MCP
 (`xkms.ca.*`), the embedded transport, and gRPC on the Unix socket
 (`quicbaas.trustedca.v1.TrustedCAService`). One go-xkms CA adapter backs all of
 them. The node's TCP gRPC listener carries the same CA verbs on go-xkms's
-canonical `xkms.v1.KeystoreService`. QUIC does not carry it yet.
+canonical `xkms.v1.KeystoreService`. QUIC carries it as REST over HTTP/3: the
+SDK QUIC transport is the REST client, and the node's unified REST/HTTP3
+listener serves the same `/api/v1/xkms/ca/*` routes.
 
 Issuance (Certificate, ACME) and acceptance (Trust) stay separate surfaces: a
 deployment can issue for its own nodes while accepting a different set of
