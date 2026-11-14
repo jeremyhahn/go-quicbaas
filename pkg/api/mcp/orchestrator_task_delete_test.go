@@ -37,6 +37,22 @@ func TestRegisterAgentTools_TaskDeleteToolRegistered(t *testing.T) {
 	assert.True(t, isAgentTool("quicbaas_orchestrator_task_delete"), "tool not routed to the agent dispatcher")
 }
 
+// TestExecuteAgentTool_TaskDeleteCarriesAgentPrincipal proves the tool's
+// agent_id reaches the service as the acting fleet node (#640).
+func TestExecuteAgentTool_TaskDeleteCarriesAgentPrincipal(t *testing.T) {
+	t.Parallel()
+	var gotAgent string
+	svc := &mockAgentService{deleteTaskFn: func(ctx context.Context, _, _ string) error {
+		gotAgent = orchestration.ActingAgentFromContext(ctx)
+		return nil
+	}}
+	ctx := tenantctx.WithTenant(context.Background(), "t1")
+	_, err := newFleetRegistry(t, svc).executeAgentTool(ctx, "quicbaas_orchestrator_task_delete",
+		map[string]interface{}{"task_id": "task-1", "agent_id": "node-7"})
+	require.NoError(t, err)
+	assert.Equal(t, "node-7", gotAgent)
+}
+
 func TestExecuteAgentTool_TaskDelete(t *testing.T) {
 	t.Parallel()
 	t.Run("happy path", func(t *testing.T) {

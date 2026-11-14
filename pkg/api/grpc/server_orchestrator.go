@@ -597,7 +597,8 @@ func (s *OrchestratorServer) DeleteTask(ctx context.Context, req *pb.DeleteTaskR
 		return nil, err
 	}
 
-	if err := s.agentSvc.DeleteTask(tenantCtx, tenantID, req.GetTaskId()); err != nil {
+	deleteCtx := orchestration.WithActingAgent(tenantCtx, req.GetAgentId())
+	if err := s.agentSvc.DeleteTask(deleteCtx, tenantID, req.GetTaskId()); err != nil {
 		return nil, convertOrchestratorError(err)
 	}
 

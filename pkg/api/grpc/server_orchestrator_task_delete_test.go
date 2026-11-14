@@ -46,6 +46,25 @@ func TestOrchestratorGRPC_DeleteTask_Success(t *testing.T) {
 	assert.Equal(t, "task-1", gotTask)
 }
 
+// TestOrchestratorGRPC_DeleteTask_CarriesAgentPrincipal proves the request's
+// agent_id reaches the service as the acting fleet node, so the per-project
+// role matrix can gate the delete (#640).
+func TestOrchestratorGRPC_DeleteTask_CarriesAgentPrincipal(t *testing.T) {
+	var gotAgent string
+	agentSvc := &grpcTestAgentService{
+		deleteTaskFunc: func(ctx context.Context, _, _ string) error {
+			gotAgent = orchestration.ActingAgentFromContext(ctx)
+			return nil
+		},
+	}
+	server := NewOrchestratorServer(agentSvc, createOrchestratorGRPCTestLogger())
+
+	_, err := server.DeleteTask(tenantctx.WithTenant(context.Background(), "tenant-1"),
+		&pb.DeleteTaskRequest{TenantId: "tenant-1", TaskId: "task-1", AgentId: "node-7"})
+	require.NoError(t, err)
+	assert.Equal(t, "node-7", gotAgent)
+}
+
 func TestOrchestratorGRPC_DeleteTask_Errors(t *testing.T) {
 	t.Run("missing task id", func(t *testing.T) {
 		server := NewOrchestratorServer(&grpcTestAgentService{}, createOrchestratorGRPCTestLogger())

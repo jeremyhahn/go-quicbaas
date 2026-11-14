@@ -65,6 +65,10 @@ func (s *agentServiceImpl) DeleteTask(ctx context.Context, tenantID, taskID stri
 		return &AgentServiceError{Sentinel: ErrTaskIDRequired}
 	}
 
+	if err := s.authorizeActingAgentDelete(ctx, tenantID, taskID); err != nil {
+		return err
+	}
+
 	if err := s.refuseLeasedTask(ctx, tenantID, taskID); err != nil {
 		return err
 	}
@@ -139,4 +143,42 @@ func (s *agentServiceImpl) refuseLeasedTask(ctx context.Context, tenantID, taskI
 		}
 	}
 	return nil
+}
+
+// actingAgentKey is the context key naming the fleet node a write is done for.
+type actingAgentKey struct{}
+
+// WithActingAgent names the fleet node a task write is done on behalf of, so
+// the per-project role matrix can gate writes whose signature names no node
+// (DeleteTask). An empty agentID leaves ctx unchanged.
+func WithActingAgent(ctx context.Context, agentID string) context.Context {
+	if agentID == "" {
+		return ctx
+	}
+	return context.WithValue(ctx, actingAgentKey{}, agentID)
+}
+
+// ActingAgentFromContext returns the fleet node WithActingAgent named, or "".
+func ActingAgentFromContext(ctx context.Context) string {
+	if ctx == nil {
+		return ""
+	}
+	v, _ := ctx.Value(actingAgentKey{}).(string)
+	return v
+}
+
+// authorizeActingAgentDelete refuses a delete done for a fleet node unless the
+// task's project grants that node the lead role: removing a project's work is
+// a lead's right, not a worker's. A delete that names no node is gated by
+// tenant RBAC alone, as before.
+func (s *agentServiceImpl) authorizeActingAgentDelete(ctx context.Context, tenantID, taskID string) error {
+	agentID := ActingAgentFromContext(ctx)
+	if agentID == "" || s.projectAuthz == nil {
+		return nil
+	}
+	task, err := s.taskStore.GetTask(ctx, tenantID, taskID)
+	if err != nil {
+		return err
+	}
+	return s.authorizeFleetNodeForProject(ctx, tenantID, task.ProjectID, agentID, ProjectRoleLead)
 }

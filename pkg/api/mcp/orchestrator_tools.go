@@ -1337,6 +1337,10 @@ func (r *ToolRegistry) registerAgentTools() {
 					"type":        "string",
 					"description": "ID of the task. Required.",
 				},
+				"agent_id": map[string]interface{}{
+					"type":        "string",
+					"description": "Fleet node the delete is done for. Optional; when set, the task's project must grant it the lead role.",
+				},
 			},
 			"required": []string{"task_id"},
 		},
@@ -2530,6 +2534,9 @@ func (r *ToolRegistry) executeOrchestratorTaskDelete(ctx context.Context, args m
 		return nil, err
 	}
 
+	// agent_id names the fleet node the delete is done for; the task's
+	// project then must grant it the lead role (#640).
+	ctx = orchestration.WithActingAgent(ctx, getString(args, "agent_id"))
 	if err := agentSvc.DeleteTask(ctx, tenantID, taskID); err != nil {
 		return nil, err
 	}
