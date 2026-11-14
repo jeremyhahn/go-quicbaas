@@ -844,3 +844,10 @@ Limits: when the result lands on another node, the firing node still waits
 out the timeout before it can fire the job again. Workers polling the same
 handler name may each run a firing, though only one outcome is recorded, so
 give each worker its own handler name (for example, one per node).
+
+The service layer serves both calls as `service.RemoteRunService`, in the
+caller's tenant only. In the Go SDK, `scheduler.NewWorker` takes a
+`RemoteRunClient` and a function per `remote:` handler. It polls, runs each
+open run once with its context ending at the run's deadline, and reports the
+result: a returned error or a panic fails the run. Today the embedded transport serves
+the two calls; the network transports are the next step.
