@@ -1,6 +1,6 @@
 # Codec — API
 
-> **Status: NORMATIVE** · Last verified: 2026-08-19
+> **Status: NORMATIVE** · Last verified: 2026-11-13
 > Feature folder: `docs/codec/`.
 
 **No API surface of its own.** There is no `quicbaas.Codec` service: the SDK
@@ -30,6 +30,7 @@ transport model.
 
 ## Internal surface
 
-`architecture.md` and `engineering.md` document the codec registry and the
-`codec:` configuration block — the Go-level API that the storage and transport
-layers use. Those are internal seams, not a caller-facing API.
+None either. The codec is go-qrdb's and is reached only through the embedded
+node: go-quicbaas has no `codec:` configuration block, no `CodecConfig` type
+and no REST codec negotiation (`architecture.md`). `pkg/codec` is a parallel
+package with no importers, kept until the owner rules it removed.

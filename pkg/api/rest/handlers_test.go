@@ -8196,62 +8196,6 @@ func TestNewPhase4Handler_QA90(t *testing.T) {
 	assert.Nil(t, handler.cacheMgr)
 }
 
-func TestDetectPreferredCodec_QA90(t *testing.T) {
-	tests := []struct {
-		name      string
-		acceptHdr string
-		query     string
-		expected  string
-	}{
-		{
-			name:      "msgpack from accept header",
-			acceptHdr: "application/msgpack",
-			expected:  "msgpack",
-		},
-		{
-			name:      "yaml from accept header",
-			acceptHdr: "application/yaml",
-			expected:  "yaml",
-		},
-		{
-			name:      "json from accept header",
-			acceptHdr: "application/json",
-			expected:  "json",
-		},
-		{
-			name:      "json matches first in list",
-			acceptHdr: "text/html, application/msgpack, application/json",
-			expected:  "json",
-		},
-		{
-			name:      "default to json for unknown",
-			acceptHdr: "text/html",
-			expected:  "json",
-		},
-		{
-			name:     "query param overrides",
-			query:    "codec=msgpack",
-			expected: "msgpack",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			url := "/test"
-			if tt.query != "" {
-				url = "/test?" + tt.query
-			}
-			req := httptest.NewRequest(http.MethodGet, url, nil)
-			if tt.acceptHdr != "" {
-				req.Header.Set("Accept", tt.acceptHdr)
-			}
-
-			result := detectPreferredCodec(req)
-			assert.Equal(t, tt.expected, result)
-		})
-	}
-}
-
 func TestConversionHelpers_QA90(t *testing.T) {
 	t.Run("convertInterfaceMapToString", func(t *testing.T) {
 		input := map[string]interface{}{
