@@ -379,6 +379,16 @@ func (s *Server) ModuleRESTServer() *restapi.Server {
 	return srv
 }
 
+// trustedCAService returns the go-xkms CA adapter the REST /api/v1/xkms/ca/*
+// routes and the MCP xkms.ca.* tools serve, for the embedded transport's
+// Security().TrustedCA() (#1330). It returns nil before a CA is adopted.
+func (s *Server) trustedCAService() service.TrustedCAService {
+	if s.xkmsCA == nil {
+		return nil
+	}
+	return restapi.NewXKMSCAService(s.xkmsCA, s.config.IAM.SPIFFETrustDomain)
+}
+
 // cloneTLSConfig returns a clone of cfg, or nil if cfg is nil.
 // It explicitly sets NextProtos to HTTP/1.1 only to prevent Go's automatic
 // HTTP/2 enablement, which causes "tls: bad record MAC" errors when clients

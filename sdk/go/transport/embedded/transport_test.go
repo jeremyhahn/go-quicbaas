@@ -473,6 +473,7 @@ func (m *mockQuicBaaS) Trust() service.TrustService                   { return n
 func (m *mockQuicBaaS) Attestation() service.AttestationService       { return nil }
 func (m *mockQuicBaaS) Registry() service.RegistryService             { return nil }
 func (m *mockQuicBaaS) PIV() service.PIVService                       { return nil }
+func (m *mockQuicBaaS) TrustedCA() service.TrustedCAService           { return nil }
 func (m *mockQuicBaaS) FIDO2() service.FIDO2Service                   { return nil }
 func (m *mockQuicBaaS) ACME() service.ACMEServicer                    { return nil }
 func (m *mockQuicBaaS) DynamicSecrets() service.DynamicSecretsService { return nil }

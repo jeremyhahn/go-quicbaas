@@ -814,6 +814,29 @@ func (s *Server) adoptCA(ca xkmssdk.TrustedCA) {
 	if s.caAdapter != nil {
 		s.caAdapter.SetCA(ca)
 	}
+	s.wireTrustedCA()
+}
+
+// wireTrustedCA hands the QuicBaaS facade the go-xkms CA adapter the REST
+// and MCP transports serve, so the embedded transport's
+// Security().TrustedCA() reaches the same CA (#1330). It runs both when the
+// CA is adopted and when the facade is built, whichever comes second wins.
+func (s *Server) wireTrustedCA() {
+	s.mu.RLock()
+	svc := s.quicBaaSService
+	s.mu.RUnlock()
+	if svc == nil || s.xkmsCA == nil {
+		return
+	}
+	ca := s.trustedCAService()
+	if ca == nil {
+		return
+	}
+	if setter, ok := svc.(interface {
+		SetTrustedCA(service.TrustedCAService)
+	}); ok {
+		setter.SetTrustedCA(ca)
+	}
 }
 
 // issueTLSCertFromExternalCA configures TLS using the externally injected CA.
@@ -2157,6 +2180,7 @@ func (s *Server) startService() error {
 	s.mu.Lock()
 	s.quicBaaSService = svc
 	s.mu.Unlock()
+	s.wireTrustedCA()
 	s.logger.Info("QuicBaaS facade initialized")
 
 	// Wire the unified secret resolver registry (built unconditionally by

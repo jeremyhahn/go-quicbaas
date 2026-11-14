@@ -325,6 +325,16 @@ var unaryHandlers = map[string]handlerFunc{
 	"quicbaas.Trust/AutoImportAIA":       handleTrustAutoImportAIA,
 	"quicbaas.Trust/PublishDANE":         handleTrustPublishDANE,
 
+	// TrustedCA: the re-exported go-xkms CAService
+	// (Security().TrustedCA()), xkms wire types verbatim (#1330).
+	"quicbaas.TrustedCA/GetCABundle":       handleTrustedCAGetCABundle,
+	"quicbaas.TrustedCA/GetCACertificate":  handleTrustedCAGetCACertificate,
+	"quicbaas.TrustedCA/SignCSR":           handleTrustedCASignCSR,
+	"quicbaas.TrustedCA/IssueCertificate":  handleTrustedCAIssueCertificate,
+	"quicbaas.TrustedCA/RevokeCertificate": handleTrustedCARevokeCertificate,
+	"quicbaas.TrustedCA/GenerateCRL":       handleTrustedCAGenerateCRL,
+	"quicbaas.TrustedCA/IsRevoked":         handleTrustedCAIsRevoked,
+
 	// PIV: the backend-scoped go-xkms PIV surface
 	// (Security().Auth().PIV()), xkms wire types verbatim.
 	"quicbaas.PIV/ListPIVSlots":         handlePIVListSlots,

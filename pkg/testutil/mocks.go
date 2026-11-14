@@ -606,6 +606,9 @@ func (m *MockQuicBaaS) Registry() service.RegistryService {
 }
 
 // PIV returns PIVSvc when set, otherwise nil.
+// TrustedCA reports no go-xkms CA wired.
+func (m *MockQuicBaaS) TrustedCA() service.TrustedCAService { return nil }
+
 func (m *MockQuicBaaS) PIV() service.PIVService {
 	return m.PIVSvc
 }

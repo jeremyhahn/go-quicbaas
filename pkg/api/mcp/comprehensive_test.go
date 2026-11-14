@@ -519,6 +519,8 @@ func (m *mockService) Registry() service.RegistryService {
 	return m.registrySvc
 }
 
+func (m *mockService) TrustedCA() service.TrustedCAService { return nil }
+
 func (m *mockService) PIV() service.PIVService {
 	return m.pivSvc
 }

@@ -129,6 +129,9 @@ type QRDBClientProvider interface {
 // quicBaaS is the concrete implementation of QuicBaaS.
 // It orchestrates all backend components and applies cross-cutting concerns.
 type quicBaaS struct {
+	// trustedCA is the go-xkms CA the server wires after loading it (#1330).
+	trustedCA trustedCAHolder
+
 	// Configuration
 	config *ServiceConfig
 

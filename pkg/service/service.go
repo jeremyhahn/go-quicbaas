@@ -136,6 +136,11 @@ type QuicBaaS interface {
 	// report the not-initialized case.
 	PIV() PIVService
 
+	// TrustedCA returns the go-xkms CA the server composes, re-exported as
+	// Security().TrustedCA() (#1330). It is nil until the server loads its
+	// CA.
+	TrustedCA() TrustedCAService
+
 	// FIDO2 returns the tenant-scoped WebAuthn ceremony composition
 	// service surfaced under Security().Auth().FIDO2(). Always
 	// configured: it resolves the per-tenant xkms relying-party service
