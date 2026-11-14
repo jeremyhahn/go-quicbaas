@@ -220,6 +220,13 @@ var NewServer = server.NewServer
 // CA for TLS certificate operations.
 var WithCA = server.WithCA
 
+// WithSPIFFETrustDomain returns a ServerOption that sets the node's SPIFFE
+// trust domain, overriding iam.spiffe_trust_domain. NewServer validates the
+// name with go-xkms's SPIFFE rules (errors.Is matches the sdk/go/xkms/spiffe
+// ErrTrustDomain* sentinels) and leaves the caller's config unmodified;
+// Server.SPIFFETrustDomain reports the name in effect.
+var WithSPIFFETrustDomain = server.WithSPIFFETrustDomain
+
 // WithTLSCertificate returns a ServerOption that provides a pre-issued TLS
 // certificate, skipping certificate issuance from the CA.
 var WithTLSCertificate = server.WithTLSCertificate

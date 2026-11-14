@@ -19,6 +19,7 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"fmt"
 	"io"
 	"net"
 	"sync"
@@ -34,6 +35,7 @@ import (
 	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
 	clustercasdk "github.com/jeremyhahn/go-xkms/sdk/go/clusterca"
 	dane "github.com/jeremyhahn/go-xkms/sdk/go/dane"
+	xkmsspiffe "github.com/jeremyhahn/go-xkms/sdk/go/spiffe"
 
 	api "github.com/jeremyhahn/go-quicbaas/pkg/api"
 	grpcapi "github.com/jeremyhahn/go-quicbaas/pkg/api/grpc"
@@ -114,6 +116,10 @@ type serverOptions struct {
 	// go-xkms's, so one node serves all three across gRPC, unix, REST and
 	// MCP under a single authorizer. See module_host.go.
 	hostModules []qrdbsdk.ServiceModule
+
+	// spiffeTrustDomain, when set by WithSPIFFETrustDomain, overrides
+	// iam.spiffe_trust_domain for this node.
+	spiffeTrustDomain *string
 }
 
 // ServerOption configures optional behavior on the Server during construction.
@@ -125,6 +131,19 @@ type ServerOption func(*serverOptions)
 // been initialized (Load or Init called) before being passed here.
 func WithCA(ca xkmssdk.TrustedCA) ServerOption {
 	return func(o *serverOptions) { o.externalCA = ca }
+}
+
+// WithSPIFFETrustDomain sets the SPIFFE trust domain this node issues and
+// accepts identities in, overriding iam.spiffe_trust_domain. NewServer
+// validates it with go-xkms's SPIFFE rules and refuses an invalid name; the
+// caller's config is not modified.
+func WithSPIFFETrustDomain(trustDomain string) ServerOption {
+	return func(o *serverOptions) { o.spiffeTrustDomain = &trustDomain }
+}
+
+// SPIFFETrustDomain reports the SPIFFE trust domain this node runs in.
+func (s *Server) SPIFFETrustDomain() string {
+	return s.config.IAM.SPIFFETrustDomain
 }
 
 // WithTLSCertificate returns a ServerOption that provides a pre-issued TLS
@@ -782,6 +801,23 @@ func NewServer(cfg *config.Config, opts ...ServerOption) (*Server, error) {
 			Op:   "server.NewServer",
 			Err:  err,
 		}
+	}
+
+	// A trust domain set through the SDK (WithSPIFFETrustDomain) passes
+	// go-xkms's SPIFFE validation and lands on this node's own copy of the
+	// config, so the caller's config is left as it was.
+	if options.spiffeTrustDomain != nil {
+		td, err := xkmsspiffe.ParseTrustDomain(*options.spiffeTrustDomain)
+		if err != nil {
+			return nil, &errors.QBError{
+				Code: errors.ErrInvalidInput,
+				Op:   "server.NewServer",
+				Err:  fmt.Errorf("WithSPIFFETrustDomain(%q): %w", *options.spiffeTrustDomain, err),
+			}
+		}
+		own := *cfg
+		own.IAM.SPIFFETrustDomain = td.Name()
+		cfg = &own
 	}
 
 	// Initialize logger from config
