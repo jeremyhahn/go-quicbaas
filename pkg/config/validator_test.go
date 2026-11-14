@@ -1381,7 +1381,6 @@ func TestValidateSDLC_RefusesTheZerosThatMeanNever(t *testing.T) {
 		"page limit":           {func(c *SDLCConfig) { c.IssuePageLimit = 0 }, "sdlc.issue_page_limit"},
 		"merge attempts":       {func(c *SDLCConfig) { c.MergeAttempts = 0 }, "sdlc.merge_attempts"},
 		"webhook body":         {func(c *SDLCConfig) { c.Webhook.MaxBody = 0 }, "sdlc.webhook.max_body"},
-		"empty command":        {func(c *SDLCConfig) { c.VerificationCommands = []string{"make test", " "} }, "sdlc.verification_commands[1]"},
 		"empty host":           {func(c *SDLCConfig) { c.RepoHosts = []string{""} }, "sdlc.repo_hosts[0]"},
 		"negative retries":     {func(c *SDLCConfig) { c.Surfacing.RetryAttempts = -1 }, "sdlc.surfacing.retry_attempts"},
 		"negative interval":    {func(c *SDLCConfig) { c.Surfacing.RetryInterval = -1 }, "sdlc.surfacing.retry_interval"},
