@@ -20,30 +20,30 @@ import (
 
 	"google.golang.org/grpc"
 
-	pb "github.com/jeremyhahn/go-quicbaas/api/proto"
+	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
+
+	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 	kmsclient "github.com/jeremyhahn/go-quicbaas/sdk/go/client/kms"
 )
 
-// generateRecordingKMSServer keeps the whole GenerateKey request it received
-// so a test can assert every field the SDK put on the wire.
+// generateRecordingKMSServer is the go-xkms xkms.v1 KeystoreService the node
+// serves for KMS keys. It keeps the whole GenerateKey request it received so a
+// test can assert every field the SDK put on the wire.
 type generateRecordingKMSServer struct {
-	pb.UnimplementedKeyManagementServer
-	got *pb.GenerateKeyRequest
+	xkmssdk.ProtoUnimplementedKeystoreServiceServer
+	got *xkmssdk.ProtoGenerateKeyRequest
 }
 
-func (s *generateRecordingKMSServer) GenerateKey(_ context.Context, req *pb.GenerateKeyRequest) (*pb.GenerateKeyResponse, error) {
+func (s *generateRecordingKMSServer) GenerateKey(_ context.Context, req *xkmssdk.ProtoGenerateKeyRequest) (*xkmssdk.ProtoGenerateKeyResponse, error) {
 	s.got = req
-	return &pb.GenerateKeyResponse{
-		Key:      &pb.KeyHandle{KeyId: "key-m", Version: 1, Algorithm: pb.KeyAlgorithm_KEY_ALG_AES_256_GCM},
-		Metadata: &pb.KeyMetadata{KeyId: "key-m", Name: req.Name, Algorithm: pb.KeyAlgorithm_KEY_ALG_AES_256_GCM, Version: 1},
-	}, nil
+	return &xkmssdk.ProtoGenerateKeyResponse{KeyId: req.GetKeyId(), KeyType: req.GetKeyType()}, nil
 }
 
 func newGenerateRecordingKMSHandler(t *testing.T) (*kmsHandler, *generateRecordingKMSServer) {
 	t.Helper()
 	fake := &generateRecordingKMSServer{}
 	srv := newHandlerServer(t, func(s *grpc.Server) {
-		pb.RegisterKeyManagementServer(s, fake)
+		xkmssdk.ProtoRegisterKeystoreServiceServer(s, fake)
 	})
 	h, err := newKMSHandler(srv.dial(t))
 	if err != nil {
@@ -52,10 +52,12 @@ func newGenerateRecordingKMSHandler(t *testing.T) (*kmsHandler, *generateRecordi
 	return h, fake
 }
 
+// xkms.v1 GenerateKey carries no description, tags or owner, so the handler
+// returns the caller's values on the response metadata.
 func TestKMSHandler_GenerateKey_CarriesDescriptionTagsOwner(t *testing.T) {
 	h, fake := newGenerateRecordingKMSHandler(t)
 
-	_, err := h.handleRequest(context.Background(), "quicbaas.KMS", "GenerateKey",
+	resp, err := h.handleRequest(context.Background(), "quicbaas.KMS", "GenerateKey",
 		&kmsclient.GenerateKeyRequest{
 			Name:        "key-m",
 			Algorithm:   kmsclient.AlgorithmAES256GCM,
@@ -69,14 +71,27 @@ func TestKMSHandler_GenerateKey_CarriesDescriptionTagsOwner(t *testing.T) {
 	if fake.got == nil {
 		t.Fatal("server received no GenerateKey request")
 	}
-	if fake.got.Description != "d" {
-		t.Errorf("description = %q, want %q", fake.got.Description, "d")
+	if fake.got.GetKeyId() != "key-m" {
+		t.Errorf("key id = %q, want %q", fake.got.GetKeyId(), "key-m")
 	}
-	if !reflect.DeepEqual(fake.got.Tags, map[string]string{"env": "prod"}) {
-		t.Errorf("tags = %v, want env=prod", fake.got.Tags)
+	if fake.got.GetAlgorithm() != "aes256-gcm" {
+		t.Errorf("algorithm = %q, want %q", fake.got.GetAlgorithm(), "aes256-gcm")
 	}
-	if fake.got.Owner != "svc-a" {
-		t.Errorf("owner = %q, want %q", fake.got.Owner, "svc-a")
+	gen, ok := resp.(*service.GenerateKeyResponse)
+	if !ok {
+		t.Fatalf("response type = %T, want *service.GenerateKeyResponse", resp)
+	}
+	if gen.Metadata == nil {
+		t.Fatal("response metadata is nil")
+	}
+	if gen.Metadata.Description != "d" {
+		t.Errorf("description = %q, want %q", gen.Metadata.Description, "d")
+	}
+	if !reflect.DeepEqual(gen.Metadata.Tags, map[string]string{"env": "prod"}) {
+		t.Errorf("tags = %v, want env=prod", gen.Metadata.Tags)
+	}
+	if gen.Metadata.Owner != "svc-a" {
+		t.Errorf("owner = %q, want %q", gen.Metadata.Owner, "svc-a")
 	}
 }
 
