@@ -375,8 +375,8 @@ through the leader; it never bootstraps.
 
 ### 3.4 Load Balancer Setup
 
-- [ ] Layer 4 (TCP) load balancer configured for gRPC (port 9090)
-- [ ] Layer 7 (HTTP) load balancer configured for REST (port 8080)
+- [ ] Layer 4 (TCP) load balancer configured for gRPC (`server.grpc.port`, 9091 by default)
+- [ ] Layer 7 (HTTP) load balancer configured for REST (`server.rest.port`, 8081 by default)
 - [ ] Health checks configured for each endpoint
 - [ ] Session affinity disabled (stateless protocols)
 - [ ] Connection draining enabled for graceful shutdown
@@ -887,8 +887,13 @@ server:
   # Sealed-window (pre-unseal ceremony/unseal) listeners default to loopback;
   # opt in to "0.0.0.0" only for remote Shamir officer ceremonies.
   sealed_bind_host: "127.0.0.1"
-  port: 8080
-  grpc_port: 9090
+  mode: cluster
+  rest:
+    enabled: true
+    port: 8081
+  grpc:
+    enabled: true
+    port: 9091
   max_connections: 1000
 
 raft:
@@ -896,8 +901,16 @@ raft:
   rtt_millisecond: 200
   election_rtt: 10
   heartbeat_rtt: 1
+  deployment_id: 1  # The same on every node
   raft_address: "node1.example.com:63000"  # Change per node
+  join_addresses:
+    - "1=node1.example.com:63000"
+    - "2=node2.example.com:63000"
+    - "3=node3.example.com:63000"
   mutual_tls: true
+  tls_ca_file: /etc/quicbaas/certs/ca.crt
+  tls_cert_file: /etc/quicbaas/certs/node1.crt  # Change per node
+  tls_key_file: /etc/quicbaas/certs/node1.key   # Change per node
 
 storage:
   data_dir: /var/lib/quicbaas/data
@@ -915,14 +928,6 @@ security:
     rbac:
       enabled: true
       allow_anonymous: false
-
-discovery:
-  methods:
-    - type: static
-      peers:
-        - "1:node1.example.com:63000"
-        - "2:node2.example.com:63000"
-        - "3:node3.example.com:63000"
 
 backup:
   enabled: true
