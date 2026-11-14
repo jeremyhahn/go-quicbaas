@@ -18,6 +18,7 @@ import (
 	"encoding/json"
 	"time"
 
+	"github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 	"github.com/jeremyhahn/go-quicbaas/pkg/scheduler"
 	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
@@ -92,6 +93,10 @@ func (a *SchedulerAdapter) CreateJob(ctx context.Context, req *CreateSchedulerJo
 		return nil, err
 	}
 
+	if err := schedulerRefuseInternalHandler("CreateJob", req.Handler); err != nil {
+		return nil, err
+	}
+
 	// Convert request to scheduler.Job
 	job := &scheduler.Job{
 		Name:           req.Name,
@@ -151,6 +156,25 @@ func (a *SchedulerAdapter) UpdateJob(ctx context.Context, req *UpdateSchedulerJo
 	tenantID, err := schedulerTenantResolveID(ctx, "UpdateJob", req.TenantID)
 	if err != nil {
 		return nil, err
+	}
+
+	// A job run by an internal handler (a KMS grace job) is written only by
+	// the service that owns the handler: its handler and payload are not
+	// user-editable, and no job is turned into one.
+	if err := schedulerRefuseInternalHandler("UpdateJob", req.Handler); err != nil {
+		return nil, err
+	}
+	if req.Handler != "" || len(req.Payload) > 0 {
+		current, err := a.scheduler.GetJobWithTenant(ctx, req.JobID, tenantID)
+		if err != nil {
+			return nil, err
+		}
+		if err := schedulerTenantEnforceAccess(tenantID, current.TargetTenantID, "UpdateJob"); err != nil {
+			return nil, err
+		}
+		if err := schedulerRefuseInternalHandler("UpdateJob", current.Handler); err != nil {
+			return nil, err
+		}
 	}
 
 	// Convert request to scheduler.JobUpdateParams
@@ -225,6 +249,14 @@ func (a *SchedulerAdapter) ListJobs(ctx context.Context, req *ListSchedulerJobsR
 		Labels:         req.Labels,
 		Limit:          req.Limit,
 		Cursor:         req.Cursor,
+	}
+
+	// A tenant caller's own jobs are filed in its namespace (CreateJob's
+	// default owner), so a listing that names no system or delegated owner
+	// reads that namespace.
+	if tenantID != "" && query.OwnerID == "" &&
+		(req.OwnerType == "" || req.OwnerType == SchedulerOwnerTypeTenant) {
+		query.OwnerID = tenantID
 	}
 
 	// Scope query to tenant in multi-tenant mode
@@ -480,6 +512,22 @@ func (a *SchedulerAdapter) convertToServiceJob(job *scheduler.Job) *SchedulerJob
 type gracePeriodPayload struct {
 	KeyID   string `json:"key_id"`
 	Version uint64 `json:"version"`
+}
+
+// schedulerInternalHandlers are the handlers whose jobs only their owning
+// service creates and writes (KMSService.RotateKey files kms.grace_period).
+var schedulerInternalHandlers = map[string]bool{
+	"kms.grace_period": true,
+}
+
+// schedulerRefuseInternalHandler refuses a scheduler API write that names, or
+// would edit a job of, an internal handler.
+func schedulerRefuseInternalHandler(operation, handler string) error {
+	if !schedulerInternalHandlers[handler] {
+		return nil
+	}
+	return NewError(errors.ErrForbidden, "scheduler."+operation,
+		"jobs of handler "+handler+" are written only by the service that owns it")
 }
 
 // GetCompletedGracePeriodVersions queries the Raft-replicated scheduler storage
