@@ -17,8 +17,14 @@ import (
 
 // Type aliases
 type (
-	IssuedCertificate      = xkmssdk.TrustedCAIssuedCertificate
-	Params                 = xkmssdk.TrustedCAParams
+	IssuedCertificate = xkmssdk.TrustedCAIssuedCertificate
+	Params            = xkmssdk.TrustedCAParams
+	// RevocationStore is the type of Params.RevocationStore: the durable
+	// go-xkms storage backend the CA persists revocations and its CRL in, so
+	// both survive restarts and replicate. Required: the CA has no in-memory
+	// or object-store fallback. Open one with go-xkms's OpenDatastore, or
+	// implement it (sdk/go/xkms/storage.Backend is the same type).
+	RevocationStore        = xkmssdk.StorageBackend
 	RevokeOptions          = xkmssdk.RevokeOptions
 	SignOptions            = xkmssdk.TrustedCASignOptions
 	TCGCA                  = xkmssdk.TCGCA
