@@ -62,10 +62,10 @@ const sdkLivenessTimeout = 10 * time.Second
 // CA chain into the SDK's TLS trust store. Without that, every TLS
 // transport (rest / quic / mcp / grpc) fails handshake against the
 // self-signed daemon cert.
-func verifySDKLivenessOverTransport(t *testing.T, transport string, ports PortBundle, dataDir string) {
+func verifySDKLivenessOverTransport(t *testing.T, transport string, ports PortBundle, dataDir, adminToken string) {
 	t.Helper()
 
-	client, err := newSDKClient(transport, ports, dataDir)
+	client, err := newSDKClient(transport, ports, dataDir, adminToken)
 	if err != nil {
 		t.Fatalf("construct SDK client for transport %q: %v", transport, err)
 	}
@@ -167,7 +167,12 @@ func isMapHealthyByAlive(m map[string]interface{}) bool {
 // auto-generated CA chain so the SDK accepts the self-signed server
 // cert; CLAUDE.md bans WithInsecure so explicit CA trust is the only
 // supported path.
-func newSDKClient(transport string, ports PortBundle, dataDir string) (quicbaas.Client, error) {
+//
+// adminToken is the first-boot administrator's session token. The MCP client
+// presents it on initialize, which go-qrdb's MCP server refuses without a
+// credential (CA ruling 571); the other transports serve Health.Liveness
+// publicly and are dialled without it.
+func newSDKClient(transport string, ports PortBundle, dataDir, adminToken string) (quicbaas.Client, error) {
 	tlsCfg, err := loadDaemonCATLSConfig(dataDir)
 	if err != nil {
 		return nil, err
@@ -199,6 +204,7 @@ func newSDKClient(transport string, ports PortBundle, dataDir string) (quicbaas.
 		address := fmt.Sprintf("https://127.0.0.1:%d/mcp", ports.MCP)
 		return quicbaas.NewClient(address,
 			quicbaas.WithMCP(),
+			quicbaas.WithMCPAuthToken(adminToken),
 			quicbaas.WithTLSConfig(tlsCfg),
 		)
 	case "unix":

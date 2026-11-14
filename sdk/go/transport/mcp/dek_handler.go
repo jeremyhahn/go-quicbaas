@@ -6,11 +6,9 @@
 package mcp
 
 import (
-	"encoding/json"
 	"strings"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
-	"github.com/jeremyhahn/go-quicbaas/sdk/go/errors"
 )
 
 // dekResultDecoder decodes a DEK tool result into the service response type
@@ -58,14 +56,5 @@ func transformDEKResponse(method string, result interface{}) (interface{}, error
 
 // decodeDEKResult re-encodes a tool result and decodes it into out.
 func decodeDEKResult(method string, result, out interface{}) error {
-	data, err := json.Marshal(result)
-	if err != nil {
-		return errors.Wrap(err, errors.CodeInternal,
-			"mcp.dek."+method, "failed to re-encode tool result")
-	}
-	if err := json.Unmarshal(data, out); err != nil {
-		return errors.Wrap(err, errors.CodeInternal,
-			"mcp.dek."+method, "failed to decode tool result")
-	}
-	return nil
+	return decodeToolResult("mcp.dek."+method, result, out)
 }

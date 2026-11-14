@@ -19,6 +19,7 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"errors"
 	"net"
 	"net/http"
 	"os"
@@ -29,6 +30,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
+	"github.com/quic-go/quic-go/http3"
 
 	api "github.com/jeremyhahn/go-quicbaas/pkg/api"
 	"github.com/jeremyhahn/go-quicbaas/pkg/api/rest/ui"
@@ -124,6 +126,10 @@ type Config struct {
 	// When set, the server uses this config directly instead of loading
 	// certificates from TLSCertFile/TLSKeyFile.
 	TLSConfig *tls.Config
+
+	// HTTP3 also serves the router as REST over HTTP/3 on the UDP side of
+	// the listen address (quicbaasd's QUIC transport). It needs TLS.
+	HTTP3 bool
 
 	// PIVClientCert controls PIV certificate-based activation (default: disabled).
 	PIVClientCert PIVClientCertConfig
@@ -312,6 +318,9 @@ type Server struct {
 	// It is created in Start and may be wrapped by a limitListener.
 	listener net.Listener
 
+	// http3Server serves the router over HTTP/3 when Config.HTTP3 is set.
+	http3Server *http3.Server
+
 	// pivAttestation verifies that a PIV login certificate chains to an
 	// operator-configured smartcard attestation CA. It is built once from
 	// config on the first PIV login — the trust anchors cannot change without
@@ -344,6 +353,13 @@ type Server struct {
 	// reachable.
 	sealedProbe     qrdbsdk.SealedWindowProbe
 	sealedAllowlist []string
+
+	// sealedWindowHandler is qrdb's sealed REST surface
+	// (rest.NewSealedWindowHandler) over the node's own seal services. When
+	// set, setupRouter mounts it on every allowlisted route the native
+	// router does not serve, so the sealed listener answers its whole
+	// allowlist with the handlers the unix and gRPC windows serve.
+	sealedWindowHandler http.Handler
 
 	// sealedBypass is the shared sealed-window authentication-bypass
 	// predicate (probe + canonical-table lookup), derived by
@@ -578,6 +594,11 @@ func (s *Server) setupRouter() {
 	r.Get("/", func(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/docs/", http.StatusMovedPermanently)
 	})
+
+	// The sealed window's allowlisted routes with no native handler are
+	// served by qrdb's sealed REST surface (last, so nothing native is
+	// shadowed).
+	s.mountSealedWindowRoutes(r)
 
 	s.router = r
 }
@@ -1022,6 +1043,13 @@ func (s *Server) Start(address string) error {
 			Info("Connection limit enforced on REST listener")
 	}
 
+	if s.config.HTTP3 {
+		if err := s.startHTTP3(address); err != nil {
+			_ = ln.Close()
+			return err
+		}
+	}
+
 	s.listener = ln
 	s.started = true
 
@@ -1104,6 +1132,31 @@ func (s *Server) buildTLSConfig() (*tls.Config, error) {
 	return tlsConfig, nil
 }
 
+// startHTTP3 serves the router as REST over HTTP/3 on the UDP side of
+// address, with the TCP listener's TLS configuration. Called from Start with
+// s.mu held.
+func (s *Server) startHTTP3(address string) error {
+	if s.server.TLSConfig == nil {
+		return api.NewConfigurationError("rest.Server.Start", "HTTP/3 requires TLS", nil)
+	}
+	pc, err := net.ListenPacket("udp", address)
+	if err != nil {
+		return api.NewOperationFailedError("listen on udp "+address, err)
+	}
+	h3 := &http3.Server{
+		Handler:   s.router,
+		TLSConfig: http3.ConfigureTLSConfig(s.server.TLSConfig.Clone()),
+	}
+	s.http3Server = h3
+	s.logger.WithField("address", address).Info("Starting REST API server over HTTP/3")
+	go func() {
+		if err := h3.Serve(pc); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			s.logger.WithError(err).Error("REST API HTTP/3 server error")
+		}
+	}()
+	return nil
+}
+
 // Shutdown gracefully shuts down the server.
 func (s *Server) Shutdown(ctx context.Context) error {
 	s.mu.Lock()
@@ -1121,6 +1174,12 @@ func (s *Server) Shutdown(ctx context.Context) error {
 	// so an operator who was attached at shutdown is recorded as having left
 	// rather than lingering in the transcript forever.
 	s.sessionPresence.Close()
+
+	if s.http3Server != nil {
+		if err := s.http3Server.Shutdown(ctx); err != nil {
+			return api.NewOperationFailedError("shutdown HTTP/3 server", err)
+		}
+	}
 
 	if s.server != nil {
 		if err := s.server.Shutdown(ctx); err != nil {

@@ -1178,17 +1178,27 @@ func (k *kmsServiceImpl) RotateKey(ctx context.Context, req *RotateKeyRequest) (
 		// same ID GetKey, UpdateKeyStatus and ListKeyVersions read it under.
 		payload := fmt.Sprintf(`{"key_id":%q,"version":%d}`, scopedKeyID, resp.OldVersion)
 
+		// A tenant's grace job is that tenant's own job, filed in its
+		// namespace, so the tenant that rotated the key can read and cancel
+		// the job ID it is handed. The system tenant's stays delegated.
+		ownerType, ownerID := SchedulerOwnerTypeDelegated, ""
+		if engineTenant := schedulerEngineTenant(tenantID); engineTenant != "" {
+			ownerType, ownerID = SchedulerOwnerTypeTenant, engineTenant
+		}
+
 		job := &SchedulerJob{
-			Name:        fmt.Sprintf("kms-grace-%s-v%d", scopedKeyID, resp.OldVersion),
-			Description: fmt.Sprintf("Disable key %s version %d after grace period", req.KeyID, resp.OldVersion),
-			OwnerType:   SchedulerOwnerTypeDelegated,
-			Type:        SchedulerJobTypeOneShot,
-			ExecuteAt:   gracePeriodDisableAt,
-			Handler:     "kms.grace_period",
-			Payload:     []byte(payload),
-			Status:      SchedulerJobStatusPending,
-			CreatedAt:   time.Now(),
-			UpdatedAt:   time.Now(),
+			Name:           fmt.Sprintf("kms-grace-%s-v%d", scopedKeyID, resp.OldVersion),
+			Description:    fmt.Sprintf("Disable key %s version %d after grace period", req.KeyID, resp.OldVersion),
+			OwnerType:      ownerType,
+			OwnerID:        ownerID,
+			TargetTenantID: ownerID,
+			Type:           SchedulerJobTypeOneShot,
+			ExecuteAt:      gracePeriodDisableAt,
+			Handler:        "kms.grace_period",
+			Payload:        []byte(payload),
+			Status:         SchedulerJobStatusPending,
+			CreatedAt:      time.Now(),
+			UpdatedAt:      time.Now(),
 		}
 
 		if err := k.scheduler.ScheduleJob(ctx, job); err != nil {
