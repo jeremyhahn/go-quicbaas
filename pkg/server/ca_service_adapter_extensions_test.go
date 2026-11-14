@@ -27,6 +27,7 @@ package server
 
 import (
 	"context"
+	"crypto"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -42,8 +43,10 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 	"github.com/jeremyhahn/go-quicbaas/pkg/testutil/xkmsca"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
 	xkmstransport "github.com/jeremyhahn/go-xkms/sdk/go/transport"
 )
@@ -342,6 +345,78 @@ func TestIssueDeviceIdentityCert_EK_RealCA(t *testing.T) {
 	require.NoError(t, cert.CheckSignatureFrom(caCert),
 		"the EK certificate must be signed by the real CA")
 	assert.False(t, issued.NotAfter.IsZero())
+}
+
+// TestCertificateService_IssueDeviceIdentity_SystemTenantRealCA drives a
+// system-tenant device identity from the service facade through the
+// production adapter onto a real go-xkms CA (Codex 7420 P1 4, #1893). The
+// pinned XKMS TCG issuers stamp the request's tenant into the certificate and
+// refuse none, so the facade must name the literal system tenant, not the
+// services' "" platform scope, and the adapter must forward it to the CA.
+func TestCertificateService_IssueDeviceIdentity_SystemTenantRealCA(t *testing.T) {
+	cases := []struct {
+		name string
+		req  *service.IssueDeviceIdentityRequest
+	}{
+		{"EK", &service.IssueDeviceIdentityRequest{
+			Type:     service.DeviceIdentityTypeEK,
+			DeviceID: "device-ek-system",
+			EKPub:    newPKIXPublicKeyPEM(t),
+		}},
+		{"AK", &service.IssueDeviceIdentityRequest{
+			Type:     service.DeviceIdentityTypeAK,
+			DeviceID: "device-ak-system",
+			AKPub:    newPKIXPublicKeyPEM(t),
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			realCA := newRealSoftwareCA(t)
+			recorder := &tenantRecordingCA{TrustedCA: realCA, tcg: realCA.(tcgIssuer)}
+			adapter, err := newCAServiceAdapter(recorder)
+			require.NoError(t, err)
+			certs := service.NewCertificateService(adapter)
+
+			resp, err := certs.IssueDeviceIdentity(tenantctx.WithSystem(context.Background()), tc.req)
+			require.NoError(t, err)
+
+			block, _ := pem.Decode(resp.CertificatePEM)
+			require.NotNil(t, block)
+			cert, err := x509.ParseCertificate(block.Bytes)
+			require.NoError(t, err)
+			caCert, err := realCA.CACertificate()
+			require.NoError(t, err)
+			require.NoError(t, cert.CheckSignatureFrom(caCert),
+				"the device certificate must be signed by the real CA")
+
+			require.Len(t, recorder.tenants, 1, "exactly one TCG issuance must reach the CA")
+			assert.Equal(t, qrdbsdk.SystemTenantID, recorder.tenants[0],
+				"the CA must be asked to issue in the literal system tenant")
+		})
+	}
+}
+
+// tenantRecordingCA is a real CA that records the tenant of every TCG
+// issuance request it is handed, so a test can see what the CA stamps.
+type tenantRecordingCA struct {
+	xkmssdk.TrustedCA
+	tcg     tcgIssuer
+	tenants []string
+}
+
+func (r *tenantRecordingCA) IssueEKCertificate(ctx context.Context, req *xkmssdk.TrustedCACertificateRequest, pub crypto.PublicKey) (*x509.Certificate, error) {
+	r.tenants = append(r.tenants, req.TenantID)
+	return r.tcg.IssueEKCertificate(ctx, req, pub)
+}
+
+func (r *tenantRecordingCA) IssueAKCertificate(ctx context.Context, req *xkmssdk.TrustedCACertificateRequest, pub crypto.PublicKey) (*x509.Certificate, error) {
+	r.tenants = append(r.tenants, req.TenantID)
+	return r.tcg.IssueAKCertificate(ctx, req, pub)
+}
+
+func (r *tenantRecordingCA) SignTCGCSRIDevID(ctx context.Context, csr *xkmssdk.TCG_CSR_IDEVID, req *xkmssdk.TrustedCACertificateRequest) ([]byte, []byte, error) {
+	r.tenants = append(r.tenants, req.TenantID)
+	return r.tcg.SignTCGCSRIDevID(ctx, csr, req)
 }
 
 // bundleFailingTCGCA pairs the fakeTrustedCA double, whose CABundle read

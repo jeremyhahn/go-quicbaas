@@ -262,7 +262,8 @@ func TestCertificateService_IssueDeviceIdentity_IsConfinedToTheCallerTenant(t *t
 	_, err = newExtService(t, systemStub).IssueDeviceIdentity(systemTenantCtx(), systemReq)
 	require.NoError(t, err, "the system tenant still issues device identities")
 	require.NotNil(t, systemStub.issuedReq)
-	assert.Empty(t, systemStub.issuedReq.TenantID)
+	assert.Equal(t, tenantctx.SystemTenantID, systemStub.issuedReq.TenantID,
+		"the CA stamps the tenant it is given and refuses none, so the literal system tenant is named, not \"\" (#1893)")
 
 	for name, ctx := range map[string]context.Context{
 		"system caller":  systemTenantCtx(),
