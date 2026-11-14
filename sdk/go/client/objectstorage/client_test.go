@@ -3006,7 +3006,7 @@ func TestStreamGetReader_ReadAll_RecvFailure(t *testing.T) {
 	}
 }
 
-func TestStreamGetReader_ReadAfterEOF(t *testing.T) {
+func TestStreamGetReader_ReadAfterEOF_BufferedLastChunk(t *testing.T) {
 	stream := chunkStream(errStreamBroken,
 		&ObjectChunk{Data: []byte("hi"), TotalSize: 2, IsLast: true},
 	)
