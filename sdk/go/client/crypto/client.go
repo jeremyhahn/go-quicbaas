@@ -89,6 +89,9 @@ type DecryptRequest struct {
 	KeyID      string
 	Ciphertext []byte
 	Context    []byte // Optional AAD (must match encryption)
+	// KeyVersion optionally names the key version to decrypt with, as
+	// reported by EncryptResponse.KeyVersion; zero lets the server pick.
+	KeyVersion int
 }
 
 // DecryptResponse is the response from decryption.
@@ -379,6 +382,7 @@ func (c *client) Decrypt(ctx context.Context, req *DecryptRequest) (*DecryptResp
 		KeyID:      req.KeyID,
 		Ciphertext: req.Ciphertext,
 		Context:    req.Context,
+		KeyVersion: uint64(req.KeyVersion),
 	}
 
 	resp, err := c.transport.Request(ctx, serviceName, "Decrypt", svcReq)
@@ -919,6 +923,9 @@ func validateDecryptRequest(req *DecryptRequest) error {
 	}
 	if len(req.Ciphertext) == 0 {
 		return errors.NewInvalidInput("crypto.Decrypt", "ciphertext is required")
+	}
+	if req.KeyVersion < 0 {
+		return errors.NewInvalidInput("crypto.Decrypt", "key version must not be negative")
 	}
 	return nil
 }
