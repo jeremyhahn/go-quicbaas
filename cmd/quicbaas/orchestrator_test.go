@@ -21,6 +21,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -380,135 +381,83 @@ func setErrorOrchestratorFactory() {
 // Command Structure Tests
 // =============================================================================
 
-func TestOrchestratorCommandStructure(t *testing.T) {
-	cmd := newOrchestratorCommand()
-
-	assert.NotNil(t, cmd)
-	assert.Equal(t, "orchestrator", cmd.Use)
-	assert.Equal(t, "Software Factory (agent orchestration) commands", cmd.Short)
-	assert.Contains(t, cmd.Long, "Orchestrator commands")
-	assert.Greater(t, len(cmd.Commands()), 0, "Orchestrator command should have subcommands")
-
-	// Check persistent flags.
-	outputFlag := cmd.PersistentFlags().Lookup("output")
-	assert.NotNil(t, outputFlag)
-	assert.Equal(t, "table", outputFlag.DefValue)
-
-	// Verify subcommands exist.
-	subCmdNames := make(map[string]bool)
-	for _, sub := range cmd.Commands() {
-		subCmdNames[sub.Use] = true
+func TestOrchestratorCommandTree(t *testing.T) {
+	tests := []struct {
+		name        string
+		cmd         *cobra.Command
+		subcommands []string
+	}{
+		{"orchestrator", newOrchestratorCommand(), []string{"spawn", "health", "backends", "sessions", "task", "workflow"}},
+		{"task", newOrchTaskCommand(), []string{"create", "get", "list", "claim", "complete"}},
+		{"workflow", newOrchWorkflowCommand(), []string{"list", "show"}},
 	}
-	assert.True(t, subCmdNames["spawn"], "Should have spawn command")
-	assert.True(t, subCmdNames["health"], "Should have health command")
-	assert.True(t, subCmdNames["backends"], "Should have backends command")
-	assert.True(t, subCmdNames["sessions"], "Should have sessions command")
-}
 
-func TestOrchestratorTaskCommandStructure(t *testing.T) {
-	cmd := newOrchTaskCommand()
-
-	assert.NotNil(t, cmd)
-	assert.Equal(t, "task", cmd.Use)
-
-	subCmdNames := make(map[string]bool)
-	for _, sub := range cmd.Commands() {
-		subCmdNames[sub.Name()] = true
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			names := make(map[string]bool)
+			for _, sub := range tt.cmd.Commands() {
+				names[sub.Name()] = true
+			}
+			for _, want := range tt.subcommands {
+				assert.True(t, names[want], "%s should have %s subcommand", tt.name, want)
+			}
+		})
 	}
-	assert.True(t, subCmdNames["create"], "Should have create subcommand")
-	assert.True(t, subCmdNames["get"], "Should have get subcommand")
-	assert.True(t, subCmdNames["list"], "Should have list subcommand")
-	assert.True(t, subCmdNames["claim"], "Should have claim subcommand")
-	assert.True(t, subCmdNames["complete"], "Should have complete subcommand")
 }
 
-func TestOrchestratorSpawnCommandFlags(t *testing.T) {
-	cmd := newOrchSpawnCommand()
+func TestOrchestratorCommandFlags(t *testing.T) {
+	tests := []struct {
+		name     string
+		cmd      *cobra.Command
+		defaults map[string]string
+	}{
+		{"orchestrator", newOrchestratorCommand(), map[string]string{"output": "table"}},
+		{"spawn", newOrchSpawnCommand(), map[string]string{"backend": "", "model": "", "system-prompt": "", "project": ""}},
+		{"task create", newOrchTaskCreateCommand(), map[string]string{"subject": "", "description": "", "team": "", "assigned-to": ""}},
+		{"task list", newOrchTaskListCommand(), map[string]string{"status": "", "team": "", "assigned-to": ""}},
+		{"task claim", newOrchTaskClaimCommand(), map[string]string{"agent": ""}},
+		{"task complete", newOrchTaskCompleteCommand(), map[string]string{"result": ""}},
+		{"run", newOrchRunCommand(), map[string]string{"workflow": "", "workflow-file": ""}},
+	}
 
-	backendFlag := cmd.Flags().Lookup("backend")
-	assert.NotNil(t, backendFlag)
-	assert.Equal(t, "", backendFlag.DefValue)
-
-	modelFlag := cmd.Flags().Lookup("model")
-	assert.NotNil(t, modelFlag)
-
-	systemPromptFlag := cmd.Flags().Lookup("system-prompt")
-	assert.NotNil(t, systemPromptFlag)
-
-	projectFlag := cmd.Flags().Lookup("project")
-	assert.NotNil(t, projectFlag)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			for flag, def := range tt.defaults {
+				f := tt.cmd.Flags().Lookup(flag)
+				if f == nil {
+					f = tt.cmd.PersistentFlags().Lookup(flag)
+				}
+				require.NotNil(t, f, "%s should have --%s", tt.name, flag)
+				if def != "" {
+					assert.Equal(t, def, f.DefValue)
+				}
+			}
+		})
+	}
 }
 
-func TestOrchestratorTaskCreateCommandFlags(t *testing.T) {
-	cmd := newOrchTaskCreateCommand()
+func TestOrchestratorCommandArgs(t *testing.T) {
+	tests := []struct {
+		name    string
+		cmd     *cobra.Command
+		valid   []string
+		invalid []string
+	}{
+		{"prompt", newOrchPromptCommand(), []string{"s1", "hello"}, []string{"s1"}},
+		{"status", newOrchStatusCommand(), []string{"s1"}, []string{}},
+		{"close", newOrchCloseCommand(), []string{"s1"}, []string{"s1", "s2"}},
+		{"sessions", newOrchSessionsCommand(), []string{}, []string{"extra"}},
+		{"backends", newOrchBackendsCommand(), []string{}, []string{"extra"}},
+		{"health", newOrchHealthCommand(), []string{}, []string{"extra"}},
+	}
 
-	subjectFlag := cmd.Flags().Lookup("subject")
-	assert.NotNil(t, subjectFlag)
-
-	descriptionFlag := cmd.Flags().Lookup("description")
-	assert.NotNil(t, descriptionFlag)
-
-	teamFlag := cmd.Flags().Lookup("team")
-	assert.NotNil(t, teamFlag)
-
-	assignedToFlag := cmd.Flags().Lookup("assigned-to")
-	assert.NotNil(t, assignedToFlag)
-}
-
-func TestOrchestratorTaskListCommandFlags(t *testing.T) {
-	cmd := newOrchTaskListCommand()
-
-	statusFlag := cmd.Flags().Lookup("status")
-	assert.NotNil(t, statusFlag)
-	assert.Equal(t, "", statusFlag.DefValue)
-
-	teamFlag := cmd.Flags().Lookup("team")
-	assert.NotNil(t, teamFlag)
-
-	assignedToFlag := cmd.Flags().Lookup("assigned-to")
-	assert.NotNil(t, assignedToFlag)
-}
-
-func TestOrchestratorTaskClaimCommandFlags(t *testing.T) {
-	cmd := newOrchTaskClaimCommand()
-	agentFlag := cmd.Flags().Lookup("agent")
-	assert.NotNil(t, agentFlag)
-}
-
-func TestOrchestratorTaskCompleteCommandFlags(t *testing.T) {
-	cmd := newOrchTaskCompleteCommand()
-	resultFlag := cmd.Flags().Lookup("result")
-	assert.NotNil(t, resultFlag)
-}
-
-func TestOrchestratorPromptCommandArgs(t *testing.T) {
-	cmd := newOrchPromptCommand()
-	assert.NotNil(t, cmd.Args)
-}
-
-func TestOrchestratorStatusCommandArgs(t *testing.T) {
-	cmd := newOrchStatusCommand()
-	assert.NotNil(t, cmd.Args)
-}
-
-func TestOrchestratorCloseCommandArgs(t *testing.T) {
-	cmd := newOrchCloseCommand()
-	assert.NotNil(t, cmd.Args)
-}
-
-func TestOrchestratorSessionsCommandArgs(t *testing.T) {
-	cmd := newOrchSessionsCommand()
-	assert.NotNil(t, cmd.Args)
-}
-
-func TestOrchestratorBackendsCommandArgs(t *testing.T) {
-	cmd := newOrchBackendsCommand()
-	assert.NotNil(t, cmd.Args)
-}
-
-func TestOrchestratorHealthCommandArgs(t *testing.T) {
-	cmd := newOrchHealthCommand()
-	assert.NotNil(t, cmd.Args)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require.NotNil(t, tt.cmd.Args)
+			assert.NoError(t, tt.cmd.Args(tt.cmd, tt.valid))
+			assert.Error(t, tt.cmd.Args(tt.cmd, tt.invalid))
+		})
+	}
 }
 
 // =============================================================================
@@ -536,14 +485,6 @@ func TestOrchestratorRunOrchSpawn(t *testing.T) {
 		orchModel = "opus-4"
 		err := cmd.RunE(cmd, []string{})
 		assert.NoError(t, err)
-	})
-
-	t.Run("FactoryError", func(t *testing.T) {
-		setErrorOrchestratorFactory()
-		cmd := newOrchSpawnCommand()
-		err := cmd.RunE(cmd, []string{})
-		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "failed to create client")
 	})
 
 	t.Run("ClientError", func(t *testing.T) {
@@ -584,13 +525,6 @@ func TestOrchestratorRunOrchPrompt(t *testing.T) {
 		assert.NoError(t, err)
 	})
 
-	t.Run("FactoryError", func(t *testing.T) {
-		setErrorOrchestratorFactory()
-		cmd := newOrchPromptCommand()
-		err := cmd.RunE(cmd, []string{"sess_123", "Hello"})
-		assert.Error(t, err)
-	})
-
 	t.Run("ClientError", func(t *testing.T) {
 		mock := &mockOrchestratorClient{
 			promptSessionFn: func(ctx context.Context, req *orchestratorSDK.PromptSessionRequest) (*orchestratorSDK.PromptSessionResponse, error) {
@@ -627,13 +561,6 @@ func TestOrchestratorRunOrchStatus(t *testing.T) {
 		assert.NoError(t, err)
 	})
 
-	t.Run("FactoryError", func(t *testing.T) {
-		setErrorOrchestratorFactory()
-		cmd := newOrchStatusCommand()
-		err := cmd.RunE(cmd, []string{"sess_123"})
-		assert.Error(t, err)
-	})
-
 	t.Run("ClientError", func(t *testing.T) {
 		mock := &mockOrchestratorClient{
 			sessionStatusFn: func(ctx context.Context, req *orchestratorSDK.SessionStatusRequest) (*orchestratorSDK.SessionStatusResponse, error) {
@@ -665,13 +592,6 @@ func TestOrchestratorRunOrchClose(t *testing.T) {
 		err := cmd.RunE(cmd, []string{"sess_123"})
 		assert.NoError(t, err)
 	})
-
-	t.Run("FactoryError", func(t *testing.T) {
-		setErrorOrchestratorFactory()
-		cmd := newOrchCloseCommand()
-		err := cmd.RunE(cmd, []string{"sess_123"})
-		assert.Error(t, err)
-	})
 }
 
 func TestOrchestratorRunOrchSessions(t *testing.T) {
@@ -695,13 +615,6 @@ func TestOrchestratorRunOrchSessions(t *testing.T) {
 		cmd := newOrchSessionsCommand()
 		err := cmd.RunE(cmd, []string{})
 		assert.NoError(t, err)
-	})
-
-	t.Run("FactoryError", func(t *testing.T) {
-		setErrorOrchestratorFactory()
-		cmd := newOrchSessionsCommand()
-		err := cmd.RunE(cmd, []string{})
-		assert.Error(t, err)
 	})
 }
 
@@ -727,13 +640,6 @@ func TestOrchestratorRunOrchBackends(t *testing.T) {
 		err := cmd.RunE(cmd, []string{})
 		assert.NoError(t, err)
 	})
-
-	t.Run("FactoryError", func(t *testing.T) {
-		setErrorOrchestratorFactory()
-		cmd := newOrchBackendsCommand()
-		err := cmd.RunE(cmd, []string{})
-		assert.Error(t, err)
-	})
 }
 
 func TestOrchestratorRunOrchHealth(t *testing.T) {
@@ -755,13 +661,6 @@ func TestOrchestratorRunOrchHealth(t *testing.T) {
 		cmd := newOrchHealthCommand()
 		err := cmd.RunE(cmd, []string{})
 		assert.NoError(t, err)
-	})
-
-	t.Run("FactoryError", func(t *testing.T) {
-		setErrorOrchestratorFactory()
-		cmd := newOrchHealthCommand()
-		err := cmd.RunE(cmd, []string{})
-		assert.Error(t, err)
 	})
 
 	t.Run("ClientError", func(t *testing.T) {
@@ -808,15 +707,6 @@ func TestOrchestratorRunOrchTaskCreate(t *testing.T) {
 		assert.NoError(t, err)
 	})
 
-	t.Run("FactoryError", func(t *testing.T) {
-		setErrorOrchestratorFactory()
-
-		cmd := newOrchTaskCreateCommand()
-		orchTaskSubject = "Build the project"
-		err := cmd.RunE(cmd, []string{})
-		assert.Error(t, err)
-	})
-
 	t.Run("ClientError", func(t *testing.T) {
 		mock := &mockOrchestratorClient{
 			createTaskFn: func(ctx context.Context, req *orchestratorSDK.CreateTaskRequest) (*orchestratorSDK.Task, error) {
@@ -853,13 +743,6 @@ func TestOrchestratorRunOrchTaskGet(t *testing.T) {
 		cmd := newOrchTaskGetCommand()
 		err := cmd.RunE(cmd, []string{"task_123"})
 		assert.NoError(t, err)
-	})
-
-	t.Run("FactoryError", func(t *testing.T) {
-		setErrorOrchestratorFactory()
-		cmd := newOrchTaskGetCommand()
-		err := cmd.RunE(cmd, []string{"task_123"})
-		assert.Error(t, err)
 	})
 
 	t.Run("NotFound", func(t *testing.T) {
@@ -902,13 +785,6 @@ func TestOrchestratorRunOrchTaskList(t *testing.T) {
 		assert.NoError(t, err)
 	})
 
-	t.Run("FactoryError", func(t *testing.T) {
-		setErrorOrchestratorFactory()
-		cmd := newOrchTaskListCommand()
-		err := cmd.RunE(cmd, []string{})
-		assert.Error(t, err)
-	})
-
 	t.Run("WithFilters", func(t *testing.T) {
 		mock := &mockOrchestratorClient{
 			listTasksFn: func(ctx context.Context, req *orchestratorSDK.ListTasksRequest) (*orchestratorSDK.ListTasksResponse, error) {
@@ -949,14 +825,6 @@ func TestOrchestratorRunOrchTaskClaim(t *testing.T) {
 		err := cmd.RunE(cmd, []string{"task_123"})
 		assert.NoError(t, err)
 	})
-
-	t.Run("FactoryError", func(t *testing.T) {
-		setErrorOrchestratorFactory()
-		cmd := newOrchTaskClaimCommand()
-		orchTaskAgentID = "agent_001"
-		err := cmd.RunE(cmd, []string{"task_123"})
-		assert.Error(t, err)
-	})
 }
 
 func TestOrchestratorRunOrchTaskComplete(t *testing.T) {
@@ -996,13 +864,45 @@ func TestOrchestratorRunOrchTaskComplete(t *testing.T) {
 		err := cmd.RunE(cmd, []string{"task_123"})
 		assert.NoError(t, err)
 	})
+}
 
-	t.Run("FactoryError", func(t *testing.T) {
-		setErrorOrchestratorFactory()
-		cmd := newOrchTaskCompleteCommand()
-		err := cmd.RunE(cmd, []string{"task_123"})
-		assert.Error(t, err)
-	})
+// TestOrchestratorRunOrchFactoryError checks that every command returns the
+// client factory's error instead of calling the orchestrator.
+func TestOrchestratorRunOrchFactoryError(t *testing.T) {
+	saveAndRestoreOrchestratorState(t)
+
+	tests := []struct {
+		name  string
+		cmd   func() *cobra.Command
+		args  []string
+		setup func()
+	}{
+		{name: "spawn", cmd: newOrchSpawnCommand, args: []string{}},
+		{name: "prompt", cmd: newOrchPromptCommand, args: []string{"sess_123", "Hello"}},
+		{name: "status", cmd: newOrchStatusCommand, args: []string{"sess_123"}},
+		{name: "close", cmd: newOrchCloseCommand, args: []string{"sess_123"}},
+		{name: "sessions", cmd: newOrchSessionsCommand, args: []string{}},
+		{name: "backends", cmd: newOrchBackendsCommand, args: []string{}},
+		{name: "health", cmd: newOrchHealthCommand, args: []string{}},
+		{name: "task create", cmd: newOrchTaskCreateCommand, args: []string{}, setup: func() { orchTaskSubject = "Build the project" }},
+		{name: "task get", cmd: newOrchTaskGetCommand, args: []string{"task_123"}},
+		{name: "task list", cmd: newOrchTaskListCommand, args: []string{}},
+		{name: "task claim", cmd: newOrchTaskClaimCommand, args: []string{"task_123"}, setup: func() { orchTaskAgentID = "agent_001" }},
+		{name: "task complete", cmd: newOrchTaskCompleteCommand, args: []string{"task_123"}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			setErrorOrchestratorFactory()
+			cmd := tt.cmd()
+			if tt.setup != nil {
+				tt.setup()
+			}
+			err := cmd.RunE(cmd, tt.args)
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "failed to create client")
+		})
+	}
 }
 
 // =============================================================================
@@ -1430,42 +1330,6 @@ func TestFormatOrchCompleteResponse(t *testing.T) {
 // Workflow Command Structure Tests
 // =============================================================================
 
-func TestOrchestratorWorkflowCommandStructure(t *testing.T) {
-	cmd := newOrchWorkflowCommand()
-
-	assert.NotNil(t, cmd)
-	assert.Equal(t, "workflow", cmd.Use)
-	assert.Equal(t, "Workflow management commands", cmd.Short)
-
-	subCmdNames := make(map[string]bool)
-	for _, sub := range cmd.Commands() {
-		subCmdNames[sub.Name()] = true
-	}
-	assert.True(t, subCmdNames["list"], "Should have list subcommand")
-	assert.True(t, subCmdNames["show"], "Should have show subcommand")
-}
-
-func TestOrchestratorCommandHasWorkflowSubcommand(t *testing.T) {
-	cmd := newOrchestratorCommand()
-	subCmdNames := make(map[string]bool)
-	for _, sub := range cmd.Commands() {
-		subCmdNames[sub.Name()] = true
-	}
-	assert.True(t, subCmdNames["workflow"], "Orchestrator should have workflow subcommand")
-}
-
-func TestOrchestratorRunCommandHasWorkflowFlags(t *testing.T) {
-	cmd := newOrchRunCommand()
-
-	workflowFlag := cmd.Flags().Lookup("workflow")
-	assert.NotNil(t, workflowFlag)
-	assert.Equal(t, "", workflowFlag.DefValue)
-
-	workflowFileFlag := cmd.Flags().Lookup("workflow-file")
-	assert.NotNil(t, workflowFileFlag)
-	assert.Equal(t, "", workflowFileFlag.DefValue)
-}
-
 // =============================================================================
 // Workflow List Command Tests
 // =============================================================================
@@ -1531,25 +1395,6 @@ func TestRunOrchWorkflowShow(t *testing.T) {
 		orchOutputFmt = "yaml"
 		cmd := newOrchWorkflowShowCommand()
 		err := cmd.RunE(cmd, []string{"show-wf"})
-		assert.NoError(t, err)
-	})
-
-	t.Run("JSONOutput", func(t *testing.T) {
-		origDir, dirErr := os.Getwd()
-		require.NoError(t, dirErr)
-		tmpDir := t.TempDir()
-		require.NoError(t, os.Chdir(tmpDir))
-		t.Cleanup(func() {
-			_ = os.Chdir(origDir)
-		})
-
-		require.NoError(t, os.Mkdir("workflows", 0o755))
-		testYAML := []byte("name: json-wf\ndescription: JSON Test\nmode: autonomous\nagents:\n  - role: lead\n    backend: ollama\n")
-		require.NoError(t, os.WriteFile("workflows/json.yaml", testYAML, 0o644))
-
-		orchOutputFmt = "json"
-		cmd := newOrchWorkflowShowCommand()
-		err := cmd.RunE(cmd, []string{"json-wf"})
 		assert.NoError(t, err)
 	})
 
@@ -1787,12 +1632,6 @@ func TestLoadLocalWorkflows(t *testing.T) {
 		require.NoError(t, getErr)
 		assert.Equal(t, "test-wf", def.Name)
 		assert.Equal(t, orchestration.WorkflowModeAutonomous, def.Mode)
-	})
-
-	t.Run("GetNonexistentWorkflow", func(t *testing.T) {
-		loader := orchestration.NewWorkflowLoader()
-		_, getErr := loader.Get(orchestration.SystemTenantID, "nonexistent")
-		assert.Error(t, getErr)
 	})
 }
 

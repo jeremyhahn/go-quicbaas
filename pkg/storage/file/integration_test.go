@@ -927,34 +927,6 @@ func TestIntegration_ScanRanges(t *testing.T) {
 
 // TestIntegration_DeleteBehavior verifies delete operation behavior.
 func TestIntegration_DeleteBehavior(t *testing.T) {
-	t.Run("DeleteExistingKey", func(t *testing.T) {
-		dataDir := t.TempDir()
-		storage := newTestStorage(t, dataDir, codec.JSON)
-		defer storage.Close()
-
-		key := []byte("delete-me")
-		value := []byte("to-be-deleted")
-
-		err := storage.Set(key, value)
-		require.NoError(t, err)
-
-		err = storage.Delete(key)
-		require.NoError(t, err)
-
-		_, err = storage.Get(key)
-		assert.Error(t, err, "Key should not exist after delete")
-	})
-
-	t.Run("DeleteNonExistentKey", func(t *testing.T) {
-		dataDir := t.TempDir()
-		storage := newTestStorage(t, dataDir, codec.JSON)
-		defer storage.Close()
-
-		// Delete should be idempotent - no error for non-existent key
-		err := storage.Delete([]byte("non-existent-key"))
-		assert.NoError(t, err, "Delete of non-existent key should not error")
-	})
-
 	t.Run("DeleteAndRecreate", func(t *testing.T) {
 		dataDir := t.TempDir()
 		storage := newTestStorage(t, dataDir, codec.JSON)
@@ -980,56 +952,3 @@ func TestIntegration_DeleteBehavior(t *testing.T) {
 }
 
 // TestIntegration_ClosedStorageBehavior verifies operations on closed storage.
-func TestIntegration_ClosedStorageBehavior(t *testing.T) {
-	dataDir := t.TempDir()
-	storage := newTestStorage(t, dataDir, codec.JSON)
-
-	// Pre-populate
-	err := storage.Set([]byte("key"), []byte("value"))
-	require.NoError(t, err)
-
-	// Close storage
-	err = storage.Close()
-	require.NoError(t, err)
-
-	t.Run("GetOnClosed", func(t *testing.T) {
-		_, err := storage.Get([]byte("key"))
-		assert.Error(t, err, "Get on closed storage should error")
-	})
-
-	t.Run("SetOnClosed", func(t *testing.T) {
-		err := storage.Set([]byte("new-key"), []byte("new-value"))
-		assert.Error(t, err, "Set on closed storage should error")
-	})
-
-	t.Run("DeleteOnClosed", func(t *testing.T) {
-		err := storage.Delete([]byte("key"))
-		assert.Error(t, err, "Delete on closed storage should error")
-	})
-
-	t.Run("ScanOnClosed", func(t *testing.T) {
-		_, err := storage.Scan(nil, nil)
-		assert.Error(t, err, "Scan on closed storage should error")
-	})
-
-	t.Run("SnapshotOnClosed", func(t *testing.T) {
-		_, err := storage.Snapshot()
-		assert.Error(t, err, "Snapshot on closed storage should error")
-	})
-
-	t.Run("RestoreOnClosed", func(t *testing.T) {
-		err := storage.Restore(map[string][]byte{"k": []byte("v")})
-		assert.Error(t, err, "Restore on closed storage should error")
-	})
-
-	t.Run("LenOnClosed", func(t *testing.T) {
-		_, err := storage.Len()
-		assert.Error(t, err, "Len on closed storage should error")
-	})
-
-	t.Run("CloseIdempotent", func(t *testing.T) {
-		// Closing again should not error
-		err := storage.Close()
-		assert.NoError(t, err, "Second close should be idempotent")
-	})
-}

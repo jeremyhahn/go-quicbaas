@@ -140,66 +140,81 @@ func createTestJob(name string, ownerType scheduler.OwnerType, ownerID string) *
 	}
 }
 
-func TestNewStorage(t *testing.T) {
-	kv := newMockKVStore()
-	storage := NewStorage(kv)
-
-	if storage == nil {
-		t.Fatal("expected non-nil storage")
-	}
-	if storage.kv != kv {
-		t.Error("expected KVStore to be set")
-	}
-}
-
 func TestCreateJob_Success(t *testing.T) {
-	ctx := context.Background()
-	kv := newMockKVStore()
-	storage := NewStorage(kv)
-
-	job := createTestJob("test-job", scheduler.OwnerTypeSystem, "")
-
-	err := storage.CreateJob(ctx, job)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	tests := []struct {
+		name           string
+		ownerType      scheduler.OwnerType
+		ownerID        string
+		targetTenantID string
+		// getTenantID is the keyspace the job must be readable from.
+		getTenantID string
+	}{
+		{name: "system job", ownerType: scheduler.OwnerTypeSystem},
+		{name: "tenant job", ownerType: scheduler.OwnerTypeTenant, ownerID: "tenant-123", getTenantID: "tenant-123"},
+		// Delegated jobs live in the system keyspace.
+		{name: "delegated job", ownerType: scheduler.OwnerTypeDelegated, targetTenantID: "target-tenant"},
 	}
 
-	// Verify job was assigned an ID
-	if job.ID == 0 {
-		t.Error("expected job ID to be assigned")
-	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx := context.Background()
+			storage := NewStorage(newMockKVStore())
 
-	// Verify timestamps were set
-	if job.CreatedAt.IsZero() {
-		t.Error("expected CreatedAt to be set")
-	}
-	if job.UpdatedAt.IsZero() {
-		t.Error("expected UpdatedAt to be set")
-	}
+			job := createTestJob("test-job", tt.ownerType, tt.ownerID)
+			job.TargetTenantID = tt.targetTenantID
 
-	// Verify job was stored
-	retrieved, err := storage.GetJob(ctx, job.ID, "")
-	if err != nil {
-		t.Fatalf("failed to retrieve job: %v", err)
-	}
-	if retrieved.Name != job.Name {
-		t.Errorf("expected name %s, got %s", job.Name, retrieved.Name)
+			if err := storage.CreateJob(ctx, job); err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if job.ID == 0 {
+				t.Error("expected job ID to be assigned")
+			}
+			if job.CreatedAt.IsZero() {
+				t.Error("expected CreatedAt to be set")
+			}
+			if job.UpdatedAt.IsZero() {
+				t.Error("expected UpdatedAt to be set")
+			}
+
+			retrieved, err := storage.GetJob(ctx, job.ID, tt.getTenantID)
+			if err != nil {
+				t.Fatalf("failed to retrieve job: %v", err)
+			}
+			if retrieved.Name != job.Name {
+				t.Errorf("expected name %s, got %s", job.Name, retrieved.Name)
+			}
+			if retrieved.OwnerID != tt.ownerID {
+				t.Errorf("expected owner ID %q, got %q", tt.ownerID, retrieved.OwnerID)
+			}
+			if retrieved.TargetTenantID != tt.targetTenantID {
+				t.Errorf("expected target tenant ID %q, got %q", tt.targetTenantID, retrieved.TargetTenantID)
+			}
+		})
 	}
 }
 
-func TestCreateJob_NilJob(t *testing.T) {
-	ctx := context.Background()
-	kv := newMockKVStore()
-	storage := NewStorage(kv)
-
-	err := storage.CreateJob(ctx, nil)
-	if err == nil {
-		t.Fatal("expected error for nil job")
+func TestStorage_NilInput(t *testing.T) {
+	tests := []struct {
+		name string
+		call func(ctx context.Context, s *Storage) error
+	}{
+		{"CreateJob", func(ctx context.Context, s *Storage) error { return s.CreateJob(ctx, nil) }},
+		{"UpdateJob", func(ctx context.Context, s *Storage) error { return s.UpdateJob(ctx, nil) }},
+		{"SaveExecution", func(ctx context.Context, s *Storage) error { return s.SaveExecution(ctx, nil) }},
 	}
 
-	var storageErr *scheduler.ErrStorageError
-	if !errors.As(err, &storageErr) {
-		t.Fatalf("expected ErrStorageError, got %T", err)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := tt.call(context.Background(), NewStorage(newMockKVStore()))
+			if err == nil {
+				t.Fatal("expected error for nil input")
+			}
+
+			var storageErr *scheduler.ErrStorageError
+			if !errors.As(err, &storageErr) {
+				t.Fatalf("expected ErrStorageError, got %T", err)
+			}
+		})
 	}
 }
 
@@ -222,67 +237,82 @@ func TestCreateJob_WithExistingID(t *testing.T) {
 	}
 }
 
-func TestCreateJob_TenantJob(t *testing.T) {
-	ctx := context.Background()
-	kv := newMockKVStore()
-	storage := NewStorage(kv)
-
-	job := createTestJob("tenant-job", scheduler.OwnerTypeTenant, "tenant-123")
-
-	err := storage.CreateJob(ctx, job)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+func TestStorage_StoreFaults(t *testing.T) {
+	storeErr := errors.New("storage unavailable")
+	execution := func() *scheduler.JobExecution {
+		return &scheduler.JobExecution{JobID: 1, Status: scheduler.JobStatusCompleted, StartedAt: time.Now()}
 	}
 
-	// Verify job was stored in tenant keyspace
-	retrieved, err := storage.GetJob(ctx, job.ID, "tenant-123")
-	if err != nil {
-		t.Fatalf("failed to retrieve tenant job: %v", err)
+	tests := []struct {
+		name   string
+		inject func(kv *mockKVStore)
+		call   func(ctx context.Context, s *Storage) error
+	}{
+		{
+			name:   "CreateJob put",
+			inject: func(kv *mockKVStore) { kv.putErr = storeErr },
+			call: func(ctx context.Context, s *Storage) error {
+				return s.CreateJob(ctx, createTestJob("test-job", scheduler.OwnerTypeSystem, ""))
+			},
+		},
+		{
+			name:   "UpdateJob put",
+			inject: func(kv *mockKVStore) { kv.putErr = storeErr },
+			call: func(ctx context.Context, s *Storage) error {
+				return s.UpdateJob(ctx, createTestJob("test-job", scheduler.OwnerTypeSystem, ""))
+			},
+		},
+		{
+			name:   "DeleteJob delete",
+			inject: func(kv *mockKVStore) { kv.deleteErr = storeErr },
+			call:   func(ctx context.Context, s *Storage) error { return s.DeleteJob(ctx, 1, "") },
+		},
+		{
+			name:   "ListJobs scan",
+			inject: func(kv *mockKVStore) { kv.scanErr = storeErr },
+			call: func(ctx context.Context, s *Storage) error {
+				_, _, err := s.ListJobs(ctx, nil)
+				return err
+			},
+		},
+		{
+			name:   "GetJobsDueForExecution scan",
+			inject: func(kv *mockKVStore) { kv.scanErr = storeErr },
+			call: func(ctx context.Context, s *Storage) error {
+				_, err := s.GetJobsDueForExecution(ctx, time.Now(), 10)
+				return err
+			},
+		},
+		{
+			name:   "SaveExecution put",
+			inject: func(kv *mockKVStore) { kv.putErr = storeErr },
+			call:   func(ctx context.Context, s *Storage) error { return s.SaveExecution(ctx, execution()) },
+		},
+		{
+			name:   "GetExecutions scan",
+			inject: func(kv *mockKVStore) { kv.scanErr = storeErr },
+			call: func(ctx context.Context, s *Storage) error {
+				_, err := s.GetExecutions(ctx, 1, "", 10)
+				return err
+			},
+		},
 	}
-	if retrieved.OwnerID != "tenant-123" {
-		t.Errorf("expected owner ID tenant-123, got %s", retrieved.OwnerID)
-	}
-}
 
-func TestCreateJob_DelegatedJob(t *testing.T) {
-	ctx := context.Background()
-	kv := newMockKVStore()
-	storage := NewStorage(kv)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			kv := newMockKVStore()
+			tt.inject(kv)
 
-	job := createTestJob("delegated-job", scheduler.OwnerTypeDelegated, "")
-	job.TargetTenantID = "target-tenant"
+			err := tt.call(context.Background(), NewStorage(kv))
+			if !errors.Is(err, storeErr) {
+				t.Fatalf("expected the store error, got %v", err)
+			}
 
-	err := storage.CreateJob(ctx, job)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	// Delegated jobs should be stored in system keyspace
-	retrieved, err := storage.GetJob(ctx, job.ID, "")
-	if err != nil {
-		t.Fatalf("failed to retrieve delegated job: %v", err)
-	}
-	if retrieved.TargetTenantID != "target-tenant" {
-		t.Errorf("expected target tenant ID target-tenant, got %s", retrieved.TargetTenantID)
-	}
-}
-
-func TestCreateJob_PutError(t *testing.T) {
-	ctx := context.Background()
-	kv := newMockKVStore()
-	kv.putErr = errors.New("storage unavailable")
-	storage := NewStorage(kv)
-
-	job := createTestJob("test-job", scheduler.OwnerTypeSystem, "")
-
-	err := storage.CreateJob(ctx, job)
-	if err == nil {
-		t.Fatal("expected error")
-	}
-
-	var storageErr *scheduler.ErrStorageError
-	if !errors.As(err, &storageErr) {
-		t.Fatalf("expected ErrStorageError, got %T", err)
+			var storageErr *scheduler.ErrStorageError
+			if !errors.As(err, &storageErr) {
+				t.Fatalf("expected ErrStorageError, got %T", err)
+			}
+		})
 	}
 }
 
@@ -375,14 +405,12 @@ func TestUpdateJob_Success(t *testing.T) {
 		t.Fatalf("failed to create job: %v", err)
 	}
 
-	originalUpdatedAt := job.UpdatedAt
+	// Backdate UpdatedAt so the refresh is observable without waiting.
+	originalUpdatedAt := job.UpdatedAt.Add(-time.Hour)
+	job.UpdatedAt = originalUpdatedAt
 
-	// Update the job
 	job.Name = "updated-job"
 	job.Status = scheduler.JobStatusRunning
-
-	// Small delay to ensure timestamp changes
-	time.Sleep(time.Millisecond)
 
 	err = storage.UpdateJob(ctx, job)
 	if err != nil {
@@ -404,43 +432,6 @@ func TestUpdateJob_Success(t *testing.T) {
 	}
 	if retrieved.Status != scheduler.JobStatusRunning {
 		t.Errorf("expected status Running, got %s", retrieved.Status)
-	}
-}
-
-func TestUpdateJob_NilJob(t *testing.T) {
-	ctx := context.Background()
-	kv := newMockKVStore()
-	storage := NewStorage(kv)
-
-	err := storage.UpdateJob(ctx, nil)
-	if err == nil {
-		t.Fatal("expected error for nil job")
-	}
-
-	var storageErr *scheduler.ErrStorageError
-	if !errors.As(err, &storageErr) {
-		t.Fatalf("expected ErrStorageError, got %T", err)
-	}
-}
-
-func TestUpdateJob_PutError(t *testing.T) {
-	ctx := context.Background()
-	kv := newMockKVStore()
-	storage := NewStorage(kv)
-
-	job := createTestJob("test-job", scheduler.OwnerTypeSystem, "")
-	err := storage.CreateJob(ctx, job)
-	if err != nil {
-		t.Fatalf("failed to create job: %v", err)
-	}
-
-	// Inject error for update
-	kv.putErr = errors.New("storage unavailable")
-
-	job.Name = "updated"
-	err = storage.UpdateJob(ctx, job)
-	if err == nil {
-		t.Fatal("expected error")
 	}
 }
 
@@ -467,18 +458,6 @@ func TestDeleteJob_Success(t *testing.T) {
 	}
 }
 
-func TestDeleteJob_DeleteError(t *testing.T) {
-	ctx := context.Background()
-	kv := newMockKVStore()
-	kv.deleteErr = errors.New("storage unavailable")
-	storage := NewStorage(kv)
-
-	err := storage.DeleteJob(ctx, 1, "")
-	if err == nil {
-		t.Fatal("expected error")
-	}
-}
-
 func TestListJobs_Empty(t *testing.T) {
 	ctx := context.Background()
 	kv := newMockKVStore()
@@ -496,110 +475,83 @@ func TestListJobs_Empty(t *testing.T) {
 	}
 }
 
-func TestListJobs_FilterByStatus(t *testing.T) {
-	ctx := context.Background()
-	kv := newMockKVStore()
-	storage := NewStorage(kv)
-
-	// Create jobs with different statuses
-	job1 := createTestJob("pending-job", scheduler.OwnerTypeSystem, "")
-	job1.Status = scheduler.JobStatusPending
-	storage.CreateJob(ctx, job1)
-
-	job2 := createTestJob("running-job", scheduler.OwnerTypeSystem, "")
-	job2.Status = scheduler.JobStatusRunning
-	storage.CreateJob(ctx, job2)
-
-	job3 := createTestJob("completed-job", scheduler.OwnerTypeSystem, "")
-	job3.Status = scheduler.JobStatusCompleted
-	storage.CreateJob(ctx, job3)
-
-	// Filter by pending status
-	query := &scheduler.JobQuery{Status: scheduler.JobStatusPending}
-	jobs, _, err := storage.ListJobs(ctx, query)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+func TestListJobs_Filters(t *testing.T) {
+	type jobSpec struct {
+		name   string
+		owner  scheduler.OwnerType
+		mutate func(job *scheduler.Job)
 	}
-	if len(jobs) != 1 {
-		t.Errorf("expected 1 pending job, got %d", len(jobs))
+
+	tests := []struct {
+		name     string
+		jobs     []jobSpec
+		query    *scheduler.JobQuery
+		wantName string
+	}{
+		{
+			name: "status",
+			jobs: []jobSpec{
+				{"pending-job", scheduler.OwnerTypeSystem, func(j *scheduler.Job) { j.Status = scheduler.JobStatusPending }},
+				{"running-job", scheduler.OwnerTypeSystem, func(j *scheduler.Job) { j.Status = scheduler.JobStatusRunning }},
+				{"completed-job", scheduler.OwnerTypeSystem, func(j *scheduler.Job) { j.Status = scheduler.JobStatusCompleted }},
+			},
+			query:    &scheduler.JobQuery{Status: scheduler.JobStatusPending},
+			wantName: "pending-job",
+		},
+		{
+			name: "handler",
+			jobs: []jobSpec{
+				{"job-1", scheduler.OwnerTypeSystem, func(j *scheduler.Job) { j.Handler = "handler-a" }},
+				{"job-2", scheduler.OwnerTypeSystem, func(j *scheduler.Job) { j.Handler = "handler-b" }},
+			},
+			query:    &scheduler.JobQuery{Handler: "handler-a"},
+			wantName: "job-1",
+		},
+		{
+			name: "labels",
+			jobs: []jobSpec{
+				{"job-1", scheduler.OwnerTypeSystem, func(j *scheduler.Job) { j.Labels = map[string]string{"env": "prod", "tier": "frontend"} }},
+				{"job-2", scheduler.OwnerTypeSystem, func(j *scheduler.Job) { j.Labels = map[string]string{"env": "prod", "tier": "backend"} }},
+				{"job-3", scheduler.OwnerTypeSystem, func(j *scheduler.Job) { j.Labels = map[string]string{"env": "dev"} }},
+			},
+			query:    &scheduler.JobQuery{Labels: map[string]string{"env": "prod", "tier": "backend"}},
+			wantName: "job-2",
+		},
+		{
+			name: "target tenant",
+			jobs: []jobSpec{
+				{"job-1", scheduler.OwnerTypeDelegated, func(j *scheduler.Job) { j.TargetTenantID = "tenant-A" }},
+				{"job-2", scheduler.OwnerTypeDelegated, func(j *scheduler.Job) { j.TargetTenantID = "tenant-B" }},
+			},
+			query:    &scheduler.JobQuery{TargetTenantID: "tenant-A"},
+			wantName: "job-1",
+		},
 	}
-	if jobs[0].Status != scheduler.JobStatusPending {
-		t.Errorf("expected pending status, got %s", jobs[0].Status)
-	}
-}
 
-func TestListJobs_FilterByHandler(t *testing.T) {
-	ctx := context.Background()
-	kv := newMockKVStore()
-	storage := NewStorage(kv)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx := context.Background()
+			storage := NewStorage(newMockKVStore())
 
-	job1 := createTestJob("job-1", scheduler.OwnerTypeSystem, "")
-	job1.Handler = "handler-a"
-	storage.CreateJob(ctx, job1)
+			for _, spec := range tt.jobs {
+				job := createTestJob(spec.name, spec.owner, "")
+				spec.mutate(job)
+				if err := storage.CreateJob(ctx, job); err != nil {
+					t.Fatalf("failed to create job %s: %v", spec.name, err)
+				}
+			}
 
-	job2 := createTestJob("job-2", scheduler.OwnerTypeSystem, "")
-	job2.Handler = "handler-b"
-	storage.CreateJob(ctx, job2)
-
-	query := &scheduler.JobQuery{Handler: "handler-a"}
-	jobs, _, err := storage.ListJobs(ctx, query)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if len(jobs) != 1 {
-		t.Errorf("expected 1 job with handler-a, got %d", len(jobs))
-	}
-}
-
-func TestListJobs_FilterByLabels(t *testing.T) {
-	ctx := context.Background()
-	kv := newMockKVStore()
-	storage := NewStorage(kv)
-
-	job1 := createTestJob("job-1", scheduler.OwnerTypeSystem, "")
-	job1.Labels = map[string]string{"env": "prod", "tier": "frontend"}
-	storage.CreateJob(ctx, job1)
-
-	job2 := createTestJob("job-2", scheduler.OwnerTypeSystem, "")
-	job2.Labels = map[string]string{"env": "prod", "tier": "backend"}
-	storage.CreateJob(ctx, job2)
-
-	job3 := createTestJob("job-3", scheduler.OwnerTypeSystem, "")
-	job3.Labels = map[string]string{"env": "dev"}
-	storage.CreateJob(ctx, job3)
-
-	query := &scheduler.JobQuery{
-		Labels: map[string]string{"env": "prod", "tier": "backend"},
-	}
-	jobs, _, err := storage.ListJobs(ctx, query)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if len(jobs) != 1 {
-		t.Errorf("expected 1 job matching labels, got %d", len(jobs))
-	}
-}
-
-func TestListJobs_FilterByTargetTenantID(t *testing.T) {
-	ctx := context.Background()
-	kv := newMockKVStore()
-	storage := NewStorage(kv)
-
-	job1 := createTestJob("job-1", scheduler.OwnerTypeDelegated, "")
-	job1.TargetTenantID = "tenant-A"
-	storage.CreateJob(ctx, job1)
-
-	job2 := createTestJob("job-2", scheduler.OwnerTypeDelegated, "")
-	job2.TargetTenantID = "tenant-B"
-	storage.CreateJob(ctx, job2)
-
-	query := &scheduler.JobQuery{TargetTenantID: "tenant-A"}
-	jobs, _, err := storage.ListJobs(ctx, query)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if len(jobs) != 1 {
-		t.Errorf("expected 1 job for tenant-A, got %d", len(jobs))
+			jobs, _, err := storage.ListJobs(ctx, tt.query)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if len(jobs) != 1 {
+				t.Fatalf("expected 1 job, got %d", len(jobs))
+			}
+			if jobs[0].Name != tt.wantName {
+				t.Errorf("expected job %s, got %s", tt.wantName, jobs[0].Name)
+			}
+		})
 	}
 }
 
@@ -655,18 +607,6 @@ func TestListJobs_TenantJobs(t *testing.T) {
 	}
 }
 
-func TestListJobs_ScanError(t *testing.T) {
-	ctx := context.Background()
-	kv := newMockKVStore()
-	kv.scanErr = errors.New("storage unavailable")
-	storage := NewStorage(kv)
-
-	_, _, err := storage.ListJobs(ctx, nil)
-	if err == nil {
-		t.Fatal("expected error")
-	}
-}
-
 func TestGetJobsDueForExecution_Success(t *testing.T) {
 	ctx := context.Background()
 	kv := newMockKVStore()
@@ -706,61 +646,39 @@ func TestGetJobsDueForExecution_Success(t *testing.T) {
 }
 
 func TestGetJobsDueForExecution_Limit(t *testing.T) {
-	ctx := context.Background()
-	kv := newMockKVStore()
-	storage := NewStorage(kv)
-
-	now := time.Now()
-
-	// Create multiple due jobs
-	for i := 0; i < 10; i++ {
-		job := createTestJob("due-job", scheduler.OwnerTypeSystem, "")
-		job.Status = scheduler.JobStatusPending
-		job.NextRun = now.Add(-time.Hour)
-		storage.CreateJob(ctx, job)
+	tests := []struct {
+		name    string
+		dueJobs int
+		limit   int
+		want    int
+	}{
+		{name: "explicit limit", dueJobs: 10, limit: 5, want: 5},
+		{name: "zero limit defaults to 100", dueJobs: 101, limit: 0, want: 100},
 	}
 
-	dueJobs, err := storage.GetJobsDueForExecution(ctx, now, 5)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx := context.Background()
+			storage := NewStorage(newMockKVStore())
+			now := time.Now()
 
-	if len(dueJobs) != 5 {
-		t.Errorf("expected 5 due jobs with limit, got %d", len(dueJobs))
-	}
-}
+			for i := 0; i < tt.dueJobs; i++ {
+				job := createTestJob("due-job", scheduler.OwnerTypeSystem, "")
+				job.Status = scheduler.JobStatusPending
+				job.NextRun = now.Add(-time.Hour)
+				if err := storage.CreateJob(ctx, job); err != nil {
+					t.Fatalf("failed to create job: %v", err)
+				}
+			}
 
-func TestGetJobsDueForExecution_DefaultLimit(t *testing.T) {
-	ctx := context.Background()
-	kv := newMockKVStore()
-	storage := NewStorage(kv)
-
-	// Create a due job
-	job := createTestJob("due-job", scheduler.OwnerTypeSystem, "")
-	job.Status = scheduler.JobStatusPending
-	job.NextRun = time.Now().Add(-time.Hour)
-	storage.CreateJob(ctx, job)
-
-	// Use 0 limit (should default to 100)
-	dueJobs, err := storage.GetJobsDueForExecution(ctx, time.Now(), 0)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	if len(dueJobs) != 1 {
-		t.Errorf("expected 1 due job, got %d", len(dueJobs))
-	}
-}
-
-func TestGetJobsDueForExecution_ScanError(t *testing.T) {
-	ctx := context.Background()
-	kv := newMockKVStore()
-	kv.scanErr = errors.New("storage unavailable")
-	storage := NewStorage(kv)
-
-	_, err := storage.GetJobsDueForExecution(ctx, time.Now(), 10)
-	if err == nil {
-		t.Fatal("expected error")
+			dueJobs, err := storage.GetJobsDueForExecution(ctx, now, tt.limit)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if len(dueJobs) != tt.want {
+				t.Errorf("expected %d due jobs, got %d", tt.want, len(dueJobs))
+			}
+		})
 	}
 }
 
@@ -812,87 +730,41 @@ func TestSaveExecution_WithExistingID(t *testing.T) {
 	}
 }
 
-func TestSaveExecution_NilExecution(t *testing.T) {
-	ctx := context.Background()
-	kv := newMockKVStore()
-	storage := NewStorage(kv)
-
-	err := storage.SaveExecution(ctx, nil)
-	if err == nil {
-		t.Fatal("expected error for nil execution")
-	}
-
-	var storageErr *scheduler.ErrStorageError
-	if !errors.As(err, &storageErr) {
-		t.Fatalf("expected ErrStorageError, got %T", err)
-	}
-}
-
-func TestSaveExecution_PutError(t *testing.T) {
-	ctx := context.Background()
-	kv := newMockKVStore()
-	kv.putErr = errors.New("storage unavailable")
-	storage := NewStorage(kv)
-
-	exec := &scheduler.JobExecution{
-		JobID:     1,
-		Status:    scheduler.JobStatusCompleted,
-		StartedAt: time.Now(),
-	}
-
-	err := storage.SaveExecution(ctx, exec)
-	if err == nil {
-		t.Fatal("expected error")
-	}
-}
-
 func TestGetExecutions_Success(t *testing.T) {
-	ctx := context.Background()
-	kv := newMockKVStore()
-	storage := NewStorage(kv)
-
-	// Save multiple executions for the same job
-	for i := 0; i < 5; i++ {
-		exec := &scheduler.JobExecution{
-			JobID:     1,
-			Status:    scheduler.JobStatusCompleted,
-			StartedAt: time.Now(),
-		}
-		storage.SaveExecution(ctx, exec)
+	tests := []struct {
+		name  string
+		saved int
+		limit int
+		want  int
+	}{
+		{name: "fewer than limit", saved: 5, limit: 10, want: 5},
+		{name: "limit caps result", saved: 10, limit: 5, want: 5},
 	}
 
-	executions, err := storage.GetExecutions(ctx, 1, "", 10)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx := context.Background()
+			storage := NewStorage(newMockKVStore())
 
-	if len(executions) != 5 {
-		t.Errorf("expected 5 executions, got %d", len(executions))
-	}
-}
+			for i := 0; i < tt.saved; i++ {
+				exec := &scheduler.JobExecution{
+					JobID:     1,
+					Status:    scheduler.JobStatusCompleted,
+					StartedAt: time.Now(),
+				}
+				if err := storage.SaveExecution(ctx, exec); err != nil {
+					t.Fatalf("failed to save execution: %v", err)
+				}
+			}
 
-func TestGetExecutions_Limit(t *testing.T) {
-	ctx := context.Background()
-	kv := newMockKVStore()
-	storage := NewStorage(kv)
-
-	// Save multiple executions
-	for i := 0; i < 10; i++ {
-		exec := &scheduler.JobExecution{
-			JobID:     1,
-			Status:    scheduler.JobStatusCompleted,
-			StartedAt: time.Now(),
-		}
-		storage.SaveExecution(ctx, exec)
-	}
-
-	executions, err := storage.GetExecutions(ctx, 1, "", 5)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	if len(executions) != 5 {
-		t.Errorf("expected 5 executions with limit, got %d", len(executions))
+			executions, err := storage.GetExecutions(ctx, 1, "", tt.limit)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if len(executions) != tt.want {
+				t.Errorf("expected %d executions, got %d", tt.want, len(executions))
+			}
+		})
 	}
 }
 

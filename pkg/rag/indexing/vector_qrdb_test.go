@@ -295,94 +295,52 @@ func makeVec(dims int, val float32) []float32 {
 // Construction tests
 // ---------------------------------------------------------------------------
 
-func TestNewQRDBVectorIndex_Success(t *testing.T) {
-	idx, _ := newTestQRDBIndex(t, 64)
-	if idx == nil {
-		t.Fatal("expected non-nil index")
+func TestNewQRDBVectorIndex(t *testing.T) {
+	tests := []struct {
+		name      string
+		nilClient bool
+		namespace string
+		dimension int
+		// existing pre-creates the namespace so the constructor must treat
+		// "already exists" as success.
+		existing  bool
+		createErr error
+		wantErr   any
+	}{
+		{name: "success", namespace: "ns", dimension: 64},
+		{name: "namespace already exists", namespace: "ns", dimension: 32, existing: true},
+		{name: "nil client", nilClient: true, namespace: "ns", dimension: 16, wantErr: new(*QRDBVectorClientNilError)},
+		{name: "empty namespace", namespace: "", dimension: 16, wantErr: new(*QRDBVectorNamespaceEmptyError)},
+		{name: "zero dimension", namespace: "ns", dimension: 0, wantErr: new(*rag.VectorIndexConfigError)},
+		{name: "create namespace fails", namespace: "ns", dimension: 32, createErr: errors.New("storage full"), wantErr: new(*QRDBVectorCreateNamespaceError)},
 	}
-	if !idx.IsTrained() {
-		t.Fatal("newly created index should be trained")
-	}
-}
-
-func TestNewQRDBVectorIndex_NilClient(t *testing.T) {
-	cfg := qrdbVectorIndexConfig{
-		Client:    nil,
-		Namespace: "ns",
-		Dimension: 16,
-	}
-	_, err := newQRDBVectorIndex(context.Background(), cfg)
-	if err == nil {
-		t.Fatal("expected error for nil client")
-	}
-	var nilErr *QRDBVectorClientNilError
-	if !errors.As(err, &nilErr) {
-		t.Fatalf("expected QRDBVectorClientNilError, got %T", err)
-	}
-}
-
-func TestNewQRDBVectorIndex_EmptyNamespace(t *testing.T) {
-	client := newMockVectorClient()
-	cfg := qrdbVectorIndexConfig{
-		Client:    client,
-		Namespace: "",
-		Dimension: 16,
-	}
-	_, err := newQRDBVectorIndex(context.Background(), cfg)
-	if err == nil {
-		t.Fatal("expected error for empty namespace")
-	}
-	var nsErr *QRDBVectorNamespaceEmptyError
-	if !errors.As(err, &nsErr) {
-		t.Fatalf("expected QRDBVectorNamespaceEmptyError, got %T", err)
-	}
-}
-
-func TestNewQRDBVectorIndex_ZeroDimension(t *testing.T) {
-	client := newMockVectorClient()
-	cfg := qrdbVectorIndexConfig{
-		Client:    client,
-		Namespace: "ns",
-		Dimension: 0,
-	}
-	_, err := newQRDBVectorIndex(context.Background(), cfg)
-	if err == nil {
-		t.Fatal("expected error for zero dimension")
-	}
-}
-
-func TestNewQRDBVectorIndex_NamespaceAlreadyExists(t *testing.T) {
-	client := newMockVectorClient()
-	cfg := qrdbVectorIndexConfig{
-		Client:    client,
-		Namespace: "ns",
-		Dimension: 32,
-	}
-	// First creation succeeds.
-	if _, err := newQRDBVectorIndex(context.Background(), cfg); err != nil {
-		t.Fatalf("first creation should succeed: %v", err)
-	}
-	// Second creation on same namespace must also succeed (idempotent).
-	if _, err := newQRDBVectorIndex(context.Background(), cfg); err != nil {
-		t.Fatalf("second creation on existing namespace should succeed: %v", err)
-	}
-}
-
-func TestNewQRDBVectorIndex_CreateNamespacePropagatesError(t *testing.T) {
-	client := newMockVectorClient()
-	client.createNamespaceErr = errors.New("storage full")
-	cfg := qrdbVectorIndexConfig{
-		Client:    client,
-		Namespace: "ns",
-		Dimension: 32,
-	}
-	_, err := newQRDBVectorIndex(context.Background(), cfg)
-	if err == nil {
-		t.Fatal("expected error when CreateNamespace fails")
-	}
-	var createErr *QRDBVectorCreateNamespaceError
-	if !errors.As(err, &createErr) {
-		t.Fatalf("expected QRDBVectorCreateNamespaceError, got %T", err)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := qrdbVectorIndexConfig{Namespace: tt.namespace, Dimension: tt.dimension}
+			if !tt.nilClient {
+				client := newMockVectorClient()
+				client.createNamespaceErr = tt.createErr
+				cfg.Client = client
+			}
+			if tt.existing {
+				if _, err := newQRDBVectorIndex(context.Background(), cfg); err != nil {
+					t.Fatalf("first creation should succeed: %v", err)
+				}
+			}
+			idx, err := newQRDBVectorIndex(context.Background(), cfg)
+			if tt.wantErr != nil {
+				if !errors.As(err, tt.wantErr) {
+					t.Fatalf("expected %T, got %T (%v)", tt.wantErr, err, err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if !idx.IsTrained() {
+				t.Fatal("newly created index should be trained")
+			}
+		})
 	}
 }
 
@@ -390,18 +348,18 @@ func TestNewQRDBVectorIndex_CreateNamespacePropagatesError(t *testing.T) {
 // Tenant isolation tests
 // ---------------------------------------------------------------------------
 
-func TestPhysicalNamespace_WithTenant(t *testing.T) {
-	got := physicalNamespace("acme", "embeddings")
-	want := "acme:embeddings"
-	if got != want {
-		t.Fatalf("physicalNamespace(%q, %q) = %q, want %q", "acme", "embeddings", got, want)
+func TestPhysicalNamespace(t *testing.T) {
+	tests := []struct {
+		tenantID string
+		want     string
+	}{
+		{tenantID: "acme", want: "acme:embeddings"},
+		{tenantID: "", want: "embeddings"},
 	}
-}
-
-func TestPhysicalNamespace_NoTenant(t *testing.T) {
-	got := physicalNamespace("", "embeddings")
-	if got != "embeddings" {
-		t.Fatalf("expected %q, got %q", "embeddings", got)
+	for _, tt := range tests {
+		if got := physicalNamespace(tt.tenantID, "embeddings"); got != tt.want {
+			t.Fatalf("physicalNamespace(%q, %q) = %q, want %q", tt.tenantID, "embeddings", got, tt.want)
+		}
 	}
 }
 
@@ -443,17 +401,25 @@ func TestQRDBVectorIndex_TenantIsolation(t *testing.T) {
 // Train / IsTrained
 // ---------------------------------------------------------------------------
 
-func TestQRDBVectorIndex_Train_IsNoOp(t *testing.T) {
-	idx, _ := newTestQRDBIndex(t, 16)
-	if !idx.IsTrained() {
-		t.Fatal("should be trained from construction")
+func TestQRDBVectorIndex_NoOps(t *testing.T) {
+	tests := []struct {
+		name string
+		op   func(idx rag.VectorIndex) error
+	}{
+		{name: "Train", op: func(idx rag.VectorIndex) error { return idx.Train([][]float32{{1, 2, 3, 4}}) }},
+		{name: "Save", op: func(idx rag.VectorIndex) error { return idx.Save("/some/path") }},
+		{name: "Load", op: func(idx rag.VectorIndex) error { return idx.Load("/some/path") }},
 	}
-	// Train should always succeed.
-	if err := idx.Train([][]float32{{1, 2, 3, 4}}); err != nil {
-		t.Fatalf("Train failed: %v", err)
-	}
-	if !idx.IsTrained() {
-		t.Fatal("should remain trained after Train()")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			idx, _ := newTestQRDBIndex(t, 16)
+			if err := tt.op(idx); err != nil {
+				t.Fatalf("%s should be a no-op, got error: %v", tt.name, err)
+			}
+			if !idx.IsTrained() {
+				t.Fatalf("should remain trained after %s", tt.name)
+			}
+		})
 	}
 }
 
@@ -461,63 +427,18 @@ func TestQRDBVectorIndex_Train_IsNoOp(t *testing.T) {
 // Add / Size / Remove
 // ---------------------------------------------------------------------------
 
-func TestQRDBVectorIndex_AddAndSize(t *testing.T) {
+func TestQRDBVectorIndex_AddRemoveSize(t *testing.T) {
 	idx, _ := newTestQRDBIndex(t, 8)
 
 	if idx.Size() != 0 {
 		t.Fatalf("empty index should have size 0, got %d", idx.Size())
 	}
-
-	vec := makeVec(8, 0.5)
-	if err := idx.Add("chunk-1", vec, map[string]interface{}{"lang": "go"}); err != nil {
+	if err := idx.Add("v1", makeVec(8, 0.3), map[string]interface{}{"lang": "go"}); err != nil {
 		t.Fatalf("Add failed: %v", err)
 	}
 	if idx.Size() != 1 {
-		t.Fatalf("expected size 1, got %d", idx.Size())
+		t.Fatalf("expected size 1 after Add, got %d", idx.Size())
 	}
-}
-
-func TestQRDBVectorIndex_Add_DimensionMismatch(t *testing.T) {
-	idx, _ := newTestQRDBIndex(t, 8)
-	err := idx.Add("v1", makeVec(4, 0.5), nil)
-	if err == nil {
-		t.Fatal("expected dimension mismatch error")
-	}
-	var dimErr *rag.VectorDimensionError
-	if !errors.As(err, &dimErr) {
-		t.Fatalf("expected VectorDimensionError, got %T", err)
-	}
-}
-
-func TestQRDBVectorIndex_Add_UpsertError(t *testing.T) {
-	dims := 4
-	client := newMockVectorClient()
-	client.upsertErr = errors.New("connection refused")
-	cfg := qrdbVectorIndexConfig{Client: client, Namespace: "ns", Dimension: dims}
-	idx, err := newQRDBVectorIndex(context.Background(), cfg)
-	if err != nil {
-		t.Fatalf("construction failed: %v", err)
-	}
-	err = idx.Add("v1", makeVec(dims, 0.1), nil)
-	if err == nil {
-		t.Fatal("expected upsert error")
-	}
-	var upsertErr *QRDBVectorUpsertError
-	if !errors.As(err, &upsertErr) {
-		t.Fatalf("expected QRDBVectorUpsertError, got %T", err)
-	}
-}
-
-func TestQRDBVectorIndex_Remove_Success(t *testing.T) {
-	idx, _ := newTestQRDBIndex(t, 8)
-
-	if err := idx.Add("v1", makeVec(8, 0.3), nil); err != nil {
-		t.Fatalf("Add failed: %v", err)
-	}
-	if idx.Size() != 1 {
-		t.Fatalf("expected size 1 after Add")
-	}
-
 	if err := idx.Remove("v1"); err != nil {
 		t.Fatalf("Remove failed: %v", err)
 	}
@@ -526,22 +447,71 @@ func TestQRDBVectorIndex_Remove_Success(t *testing.T) {
 	}
 }
 
-func TestQRDBVectorIndex_Remove_Error(t *testing.T) {
-	dims := 4
-	client := newMockVectorClient()
-	cfg := qrdbVectorIndexConfig{Client: client, Namespace: "ns", Dimension: dims}
-	idx, err := newQRDBVectorIndex(context.Background(), cfg)
-	if err != nil {
-		t.Fatalf("construction failed: %v", err)
+func TestQRDBVectorIndex_DimensionMismatch(t *testing.T) {
+	tests := []struct {
+		name string
+		op   func(idx rag.VectorIndex) error
+	}{
+		{name: "Add", op: func(idx rag.VectorIndex) error { return idx.Add("v1", makeVec(4, 0.5), nil) }},
+		{name: "Search", op: func(idx rag.VectorIndex) error {
+			_, err := idx.Search(makeVec(4, 0.5), 5, 0)
+			return err
+		}},
 	}
-	client.deleteErr = errors.New("disk full")
-	err = idx.Remove("v1")
-	if err == nil {
-		t.Fatal("expected delete error")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			idx, _ := newTestQRDBIndex(t, 8)
+			var dimErr *rag.VectorDimensionError
+			if err := tt.op(idx); !errors.As(err, &dimErr) {
+				t.Fatalf("expected VectorDimensionError, got %T (%v)", err, err)
+			}
+		})
 	}
-	var delErr *QRDBVectorDeleteError
-	if !errors.As(err, &delErr) {
-		t.Fatalf("expected QRDBVectorDeleteError, got %T", err)
+}
+
+func TestQRDBVectorIndex_ClientErrors(t *testing.T) {
+	const dims = 4
+	tests := []struct {
+		name    string
+		inject  func(client *mockVectorClient)
+		op      func(idx rag.VectorIndex) error
+		wantErr any
+	}{
+		{
+			name:    "Add upsert fails",
+			inject:  func(c *mockVectorClient) { c.upsertErr = errors.New("connection refused") },
+			op:      func(idx rag.VectorIndex) error { return idx.Add("v1", makeVec(dims, 0.1), nil) },
+			wantErr: new(*QRDBVectorUpsertError),
+		},
+		{
+			name:    "Remove delete fails",
+			inject:  func(c *mockVectorClient) { c.deleteErr = errors.New("disk full") },
+			op:      func(idx rag.VectorIndex) error { return idx.Remove("v1") },
+			wantErr: new(*QRDBVectorDeleteError),
+		},
+		{
+			name:   "Search fails",
+			inject: func(c *mockVectorClient) { c.searchErr = errors.New("index unavailable") },
+			op: func(idx rag.VectorIndex) error {
+				_, err := idx.Search(makeVec(dims, 0.5), 5, 0)
+				return err
+			},
+			wantErr: new(*QRDBVectorSearchError),
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			client := newMockVectorClient()
+			cfg := qrdbVectorIndexConfig{Client: client, Namespace: "ns", Dimension: dims}
+			idx, err := newQRDBVectorIndex(context.Background(), cfg)
+			if err != nil {
+				t.Fatalf("construction failed: %v", err)
+			}
+			tt.inject(client)
+			if err := tt.op(idx); !errors.As(err, tt.wantErr) {
+				t.Fatalf("expected %T, got %T (%v)", tt.wantErr, err, err)
+			}
+		})
 	}
 }
 
@@ -581,37 +551,6 @@ func TestQRDBVectorIndex_Search_Success(t *testing.T) {
 	}
 }
 
-func TestQRDBVectorIndex_Search_DimensionMismatch(t *testing.T) {
-	idx, _ := newTestQRDBIndex(t, 8)
-	_, err := idx.Search(makeVec(4, 0.5), 5, 0)
-	if err == nil {
-		t.Fatal("expected dimension mismatch error")
-	}
-	var dimErr *rag.VectorDimensionError
-	if !errors.As(err, &dimErr) {
-		t.Fatalf("expected VectorDimensionError, got %T", err)
-	}
-}
-
-func TestQRDBVectorIndex_Search_Error(t *testing.T) {
-	dims := 4
-	client := newMockVectorClient()
-	cfg := qrdbVectorIndexConfig{Client: client, Namespace: "ns", Dimension: dims}
-	idx, err := newQRDBVectorIndex(context.Background(), cfg)
-	if err != nil {
-		t.Fatalf("construction failed: %v", err)
-	}
-	client.searchErr = errors.New("index unavailable")
-	_, err = idx.Search(makeVec(dims, 0.5), 5, 0)
-	if err == nil {
-		t.Fatal("expected search error")
-	}
-	var searchErr *QRDBVectorSearchError
-	if !errors.As(err, &searchErr) {
-		t.Fatalf("expected QRDBVectorSearchError, got %T", err)
-	}
-}
-
 func TestQRDBVectorIndex_Search_EmptyNamespace(t *testing.T) {
 	idx, _ := newTestQRDBIndex(t, 4)
 	results, err := idx.Search(makeVec(4, 0.5), 5, 0)
@@ -626,20 +565,6 @@ func TestQRDBVectorIndex_Search_EmptyNamespace(t *testing.T) {
 // ---------------------------------------------------------------------------
 // Save / Load (no-ops)
 // ---------------------------------------------------------------------------
-
-func TestQRDBVectorIndex_Save_IsNoOp(t *testing.T) {
-	idx, _ := newTestQRDBIndex(t, 8)
-	if err := idx.Save("/some/path"); err != nil {
-		t.Fatalf("Save should be a no-op, got error: %v", err)
-	}
-}
-
-func TestQRDBVectorIndex_Load_IsNoOp(t *testing.T) {
-	idx, _ := newTestQRDBIndex(t, 8)
-	if err := idx.Load("/some/path"); err != nil {
-		t.Fatalf("Load should be a no-op, got error: %v", err)
-	}
-}
 
 // ---------------------------------------------------------------------------
 // Size with error from GetNamespaceInfo
@@ -663,16 +588,6 @@ func TestQRDBVectorIndex_Size_ReturnsZeroOnError(t *testing.T) {
 // ---------------------------------------------------------------------------
 // stringToUint64 stability
 // ---------------------------------------------------------------------------
-
-func TestStringToUint64_Stability(t *testing.T) {
-	// Same input always produces the same output.
-	id := "rag-ns:abc123:0"
-	first := stringToUint64(id)
-	second := stringToUint64(id)
-	if first != second {
-		t.Fatalf("stringToUint64 should be deterministic: %d != %d", first, second)
-	}
-}
 
 // TestStringToUint64_PinnedValue pins the FNV-1a 64 id of a known vector ID.
 // The id is the persisted vector key, so the algorithm must never change.
@@ -719,77 +634,48 @@ func TestRagIDFromMetadata_FallbackToNumericID(t *testing.T) {
 // NewVectorIndexFromConfig with qrdb type
 // ---------------------------------------------------------------------------
 
-func TestNewVectorIndexFromConfig_QRDBType_Success(t *testing.T) {
-	client := newMockVectorClient()
-	cfg := IndexingConfig{
-		IndexType: "qrdb",
-		Namespace: "rag",
-		Enabled:   true,
+func TestNewVectorIndexFromConfig_QRDB(t *testing.T) {
+	tests := []struct {
+		name       string
+		indexType  string
+		withClient bool
+		tenantID   string
+		wantQRDB   bool
+		wantErr    any
+	}{
+		{name: "qrdb with client", indexType: "qrdb", withClient: true, tenantID: "acme", wantQRDB: true},
+		{name: "qrdb without client", indexType: "qrdb", wantErr: new(*QRDBVectorClientNilError)},
+		{name: "auto without client falls back to memory", indexType: "auto"},
+		{name: "auto with client uses qrdb", indexType: "auto", withClient: true, wantQRDB: true},
+		{name: "hnsw with client uses qrdb", indexType: "hnsw", withClient: true, wantQRDB: true},
 	}
-	idx, err := NewVectorIndexFromConfig(cfg, 16,
-		WithVectorClient(client),
-		WithTenantID("acme"),
-	)
-	if err != nil {
-		t.Fatalf("expected success, got error: %v", err)
-	}
-	if idx == nil {
-		t.Fatal("expected non-nil index")
-	}
-}
-
-func TestNewVectorIndexFromConfig_QRDBType_NilClient(t *testing.T) {
-	cfg := IndexingConfig{
-		IndexType: "qrdb",
-		Namespace: "rag",
-		Enabled:   true,
-	}
-	_, err := NewVectorIndexFromConfig(cfg, 16) // no WithVectorClient
-	if err == nil {
-		t.Fatal("expected error when no VectorClient is provided for qrdb type")
-	}
-	var nilErr *QRDBVectorClientNilError
-	if !errors.As(err, &nilErr) {
-		t.Fatalf("expected QRDBVectorClientNilError, got %T: %v", err, err)
-	}
-}
-
-func TestNewVectorIndexFromConfig_AutoType_FallsBackToMemory_WithoutClient(t *testing.T) {
-	cfg := IndexingConfig{IndexType: "auto", Namespace: "rag", Enabled: true}
-	idx, err := NewVectorIndexFromConfig(cfg, 16) // no client → memory fallback
-	if err != nil {
-		t.Fatalf("auto without client should fall back to memory: %v", err)
-	}
-	if idx == nil {
-		t.Fatal("expected non-nil index")
-	}
-}
-
-func TestNewVectorIndexFromConfig_AutoType_UsesQRDB_WithClient(t *testing.T) {
-	client := newMockVectorClient()
-	cfg := IndexingConfig{IndexType: "auto", Namespace: "rag", Enabled: true}
-	idx, err := NewVectorIndexFromConfig(cfg, 16, WithVectorClient(client))
-	if err != nil {
-		t.Fatalf("auto with client should succeed: %v", err)
-	}
-	if idx == nil {
-		t.Fatal("expected non-nil index")
-	}
-	// The returned index should be backed by qrdb.
-	if _, ok := idx.(*qrdbVectorIndex); !ok {
-		t.Fatalf("expected *qrdbVectorIndex, got %T", idx)
-	}
-}
-
-func TestNewVectorIndexFromConfig_HNSWType_UsesQRDB_WithClient(t *testing.T) {
-	client := newMockVectorClient()
-	cfg := IndexingConfig{IndexType: "hnsw", Namespace: "rag", Enabled: true}
-	idx, err := NewVectorIndexFromConfig(cfg, 16, WithVectorClient(client))
-	if err != nil {
-		t.Fatalf("hnsw with client should succeed: %v", err)
-	}
-	if _, ok := idx.(*qrdbVectorIndex); !ok {
-		t.Fatalf("expected *qrdbVectorIndex, got %T", idx)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var opts []VectorIndexOption
+			if tt.withClient {
+				opts = append(opts, WithVectorClient(newMockVectorClient()))
+			}
+			if tt.tenantID != "" {
+				opts = append(opts, WithTenantID(tt.tenantID))
+			}
+			cfg := IndexingConfig{IndexType: tt.indexType, Namespace: "rag", Enabled: true}
+			idx, err := NewVectorIndexFromConfig(cfg, 16, opts...)
+			if tt.wantErr != nil {
+				if !errors.As(err, tt.wantErr) {
+					t.Fatalf("expected %T, got %T: %v", tt.wantErr, err, err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if idx == nil {
+				t.Fatal("expected non-nil index")
+			}
+			if _, isQRDB := idx.(*qrdbVectorIndex); isQRDB != tt.wantQRDB {
+				t.Fatalf("qrdb-backed = %v, want %v (got %T)", isQRDB, tt.wantQRDB, idx)
+			}
+		})
 	}
 }
 
@@ -797,48 +683,29 @@ func TestNewVectorIndexFromConfig_HNSWType_UsesQRDB_WithClient(t *testing.T) {
 // Error type messages
 // ---------------------------------------------------------------------------
 
-func TestQRDBVectorClientNilError_Message(t *testing.T) {
-	err := &QRDBVectorClientNilError{}
-	if err.Error() == "" {
-		t.Fatal("error message must not be empty")
+func TestQRDBVectorErrors(t *testing.T) {
+	cause := errors.New("cause")
+	tests := []struct {
+		name string
+		err  error
+		// cause is nil for errors that wrap nothing.
+		cause error
+	}{
+		{name: "client nil", err: &QRDBVectorClientNilError{}},
+		{name: "namespace empty", err: &QRDBVectorNamespaceEmptyError{}},
+		{name: "create namespace", err: &QRDBVectorCreateNamespaceError{Namespace: "ns", Cause: cause}, cause: cause},
+		{name: "upsert", err: &QRDBVectorUpsertError{ID: "v1", Cause: cause}, cause: cause},
+		{name: "search", err: &QRDBVectorSearchError{Cause: cause}, cause: cause},
+		{name: "delete", err: &QRDBVectorDeleteError{ID: "v1", Cause: cause}, cause: cause},
 	}
-}
-
-func TestQRDBVectorNamespaceEmptyError_Message(t *testing.T) {
-	err := &QRDBVectorNamespaceEmptyError{}
-	if err.Error() == "" {
-		t.Fatal("error message must not be empty")
-	}
-}
-
-func TestQRDBVectorCreateNamespaceError_Unwrap(t *testing.T) {
-	cause := errors.New("disk full")
-	err := &QRDBVectorCreateNamespaceError{Namespace: "ns", Cause: cause}
-	if !errors.Is(err, cause) {
-		t.Fatal("Unwrap should return cause")
-	}
-}
-
-func TestQRDBVectorUpsertError_Unwrap(t *testing.T) {
-	cause := errors.New("timeout")
-	err := &QRDBVectorUpsertError{ID: "v1", Cause: cause}
-	if !errors.Is(err, cause) {
-		t.Fatal("Unwrap should return cause")
-	}
-}
-
-func TestQRDBVectorSearchError_Unwrap(t *testing.T) {
-	cause := errors.New("search failed")
-	err := &QRDBVectorSearchError{Cause: cause}
-	if !errors.Is(err, cause) {
-		t.Fatal("Unwrap should return cause")
-	}
-}
-
-func TestQRDBVectorDeleteError_Unwrap(t *testing.T) {
-	cause := errors.New("not found")
-	err := &QRDBVectorDeleteError{ID: "v1", Cause: cause}
-	if !errors.Is(err, cause) {
-		t.Fatal("Unwrap should return cause")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if tt.err.Error() == "" {
+				t.Fatal("error message must not be empty")
+			}
+			if tt.cause != nil && !errors.Is(tt.err, tt.cause) {
+				t.Fatal("Unwrap should return cause")
+			}
+		})
 	}
 }

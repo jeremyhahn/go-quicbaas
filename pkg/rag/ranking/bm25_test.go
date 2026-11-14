@@ -156,6 +156,69 @@ func TestBM25_ScoreWithMetadata(t *testing.T) {
 			},
 			expectBoosted: true,
 		},
+		{
+			name:     "all four boosts",
+			query:    "auth handler security go",
+			document: "authentication handler implementation",
+			metadata: map[string]interface{}{
+				"function_name": "auth_handler",
+				"file_path":     "/pkg/auth/handler.go",
+				"tags":          []string{"security"},
+				"language":      "go",
+			},
+			expectBoosted: true,
+		},
+		{
+			name:          "empty metadata map is ignored",
+			query:         "test query",
+			document:      "test document content",
+			metadata:      map[string]interface{}{},
+			expectBoosted: false,
+		},
+		{
+			name:     "empty string values are ignored",
+			query:    "test",
+			document: "test content",
+			metadata: map[string]interface{}{
+				"function_name": "",
+				"file_path":     "",
+				"language":      "",
+			},
+			expectBoosted: false,
+		},
+		{
+			name:     "wrong value types are ignored",
+			query:    "test",
+			document: "test content",
+			metadata: map[string]interface{}{
+				"function_name": 123,
+				"file_path":     []int{1, 2, 3},
+				"tags":          "not-a-slice",
+				"language":      map[string]string{},
+			},
+			expectBoosted: false,
+		},
+		{
+			name:     "empty tags slice is ignored",
+			query:    "test",
+			document: "test content",
+			metadata: map[string]interface{}{
+				"tags": []string{},
+			},
+			expectBoosted: false,
+		},
+		{
+			name:     "metadata with no matches",
+			query:    "database",
+			document: "user interface",
+			metadata: map[string]interface{}{
+				"function_name": "render_ui",
+				"file_path":     "/pkg/ui/render.go",
+				"tags":          []string{"ui", "frontend"},
+				"language":      "go",
+			},
+			expectBoosted: false,
+		},
 	}
 
 	for _, tt := range tests {
@@ -166,6 +229,8 @@ func TestBM25_ScoreWithMetadata(t *testing.T) {
 			if tt.expectBoosted {
 				assert.Greater(t, boostedScore, baselineScore,
 					"expected boosted score (%.4f) to be higher than baseline (%.4f)", boostedScore, baselineScore)
+			} else {
+				assert.Equal(t, baselineScore, boostedScore)
 			}
 
 			assert.GreaterOrEqual(t, boostedScore, float32(0.0), "score should not be negative")
@@ -313,33 +378,6 @@ func TestBM25_ScoreConsistency(t *testing.T) {
 	assert.Equal(t, score2, score3)
 }
 
-func TestBM25_ParameterSensitivity(t *testing.T) {
-	query := "database connection"
-	document := "database connection pool implementation with timeout handling"
-
-	// Test different k1 values - note: BM25 doesn't use avgDocLen parameter
-	bm25_k1_1 := NewBM25(1.0, 0.75)
-	bm25_k1_2 := NewBM25(2.0, 0.75)
-
-	score_k1_1 := bm25_k1_1.Score(query, document, 100)
-	score_k1_2 := bm25_k1_2.Score(query, document, 100)
-
-	// Scores should be positive
-	assert.Greater(t, score_k1_1, float32(0.0))
-	assert.Greater(t, score_k1_2, float32(0.0))
-
-	// Test different b values
-	bm25_b_0 := NewBM25(1.2, 0.0)
-	bm25_b_1 := NewBM25(1.2, 1.0)
-
-	score_b_0 := bm25_b_0.Score(query, document, 100)
-	score_b_1 := bm25_b_1.Score(query, document, 100)
-
-	// Scores should be positive
-	assert.Greater(t, score_b_0, float32(0.0))
-	assert.Greater(t, score_b_1, float32(0.0))
-}
-
 func BenchmarkBM25_Score(b *testing.B) {
 	bm25 := NewBM25(1.2, 0.75)
 	query := "authentication token validation"
@@ -439,6 +477,41 @@ func TestHybridRanker_RankWithMetadata_AllPaths(t *testing.T) {
 			wantErr: nil,
 			checkResults: func(t *testing.T, results []ScoredResult) {
 				assert.LessOrEqual(t, len(results), 1)
+				for _, r := range results {
+					assert.Greater(t, r.RerankScore, float32(0.0))
+				}
+			},
+		},
+		{
+			name: "reranker failure falls back to BM25 scores",
+			config: Config{
+				BM25K1:        1.2,
+				BM25B:         0.75,
+				EnableRerank:  true,
+				RerankTopK:    2,
+				VectorWeight:  0.7,
+				KeywordWeight: 0.3,
+				RRFK:          60,
+			},
+			reranker: &failingRerankerImpl{},
+			results: []Result{
+				{ID: "doc1", Content: "authentication handler implementation"},
+				{ID: "doc2", Content: "authentication database connection"},
+				{ID: "doc3", Content: "authentication api server"},
+			},
+			query:   "authentication",
+			wantErr: nil,
+			checkResults: func(t *testing.T, results []ScoredResult) {
+				assert.Len(t, results, 3)
+				hasPositiveScore := false
+				for _, r := range results {
+					if r.KeywordScore > 0 {
+						hasPositiveScore = true
+					}
+					assert.Equal(t, r.KeywordScore, r.FinalScore)
+					assert.Equal(t, float32(0.0), r.RerankScore)
+				}
+				assert.True(t, hasPositiveScore, "at least one result should have positive score")
 			},
 		},
 		{
@@ -536,6 +609,7 @@ func TestHybridRanker_RankHybrid_AllPaths(t *testing.T) {
 	tests := []struct {
 		name           string
 		config         Config
+		reranker       Reranker
 		vectorResults  []Result
 		keywordResults []Result
 		query          string
@@ -585,11 +659,119 @@ func TestHybridRanker_RankHybrid_AllPaths(t *testing.T) {
 				assert.Len(t, results, 2)
 			},
 		},
+		{
+			name: "reranking with topK less than fused results",
+			config: Config{
+				BM25K1:        1.2,
+				BM25B:         0.75,
+				EnableRerank:  true,
+				RerankTopK:    2,
+				VectorWeight:  0.7,
+				KeywordWeight: 0.3,
+				RRFK:          60,
+			},
+			vectorResults: []Result{
+				{ID: "doc1", Content: "vector1", VectorScore: 0.9},
+				{ID: "doc2", Content: "vector2", VectorScore: 0.8},
+			},
+			keywordResults: []Result{
+				{ID: "doc3", Content: "keyword1", KeywordScore: 0.7},
+				{ID: "doc4", Content: "keyword2", KeywordScore: 0.6},
+			},
+			query: "test",
+			checkResults: func(t *testing.T, results []ScoredResult) {
+				assert.LessOrEqual(t, len(results), 2)
+			},
+		},
+		{
+			name: "reranker failure falls back to fused results",
+			config: Config{
+				BM25K1:        1.2,
+				BM25B:         0.75,
+				EnableRerank:  true,
+				RerankTopK:    2,
+				VectorWeight:  0.7,
+				KeywordWeight: 0.3,
+				RRFK:          60,
+			},
+			reranker: &failingRerankerImpl{},
+			vectorResults: []Result{
+				{ID: "doc1", Content: "auth", VectorScore: 0.9},
+			},
+			keywordResults: []Result{
+				{ID: "doc2", Content: "db"},
+			},
+			query: "test",
+			checkResults: func(t *testing.T, results []ScoredResult) {
+				assert.Len(t, results, 2)
+				for _, r := range results {
+					assert.Equal(t, float32(0.0), r.RerankScore)
+				}
+			},
+		},
+		{
+			name: "pre-scored keyword results keep their scores",
+			config: Config{
+				BM25K1:        1.2,
+				BM25B:         0.75,
+				EnableRerank:  false,
+				VectorWeight:  0.7,
+				KeywordWeight: 0.3,
+				RRFK:          60,
+			},
+			vectorResults: []Result{
+				{ID: "doc1", Content: "auth handler", VectorScore: 0.9},
+				{ID: "doc2", Content: "db connection", VectorScore: 0.8},
+			},
+			keywordResults: []Result{
+				{ID: "doc2", Content: "db connection", KeywordScore: 5.5},
+				{ID: "doc3", Content: "api server", KeywordScore: 3.2},
+			},
+			query: "database",
+			checkResults: func(t *testing.T, results []ScoredResult) {
+				assert.Len(t, results, 3)
+				for _, r := range results {
+					assert.Greater(t, r.FinalScore, float32(0.0))
+				}
+			},
+		},
+		{
+			name: "zero keyword score is computed with BM25",
+			config: Config{
+				BM25K1:        1.2,
+				BM25B:         0.75,
+				EnableRerank:  false,
+				VectorWeight:  0.7,
+				KeywordWeight: 0.3,
+				RRFK:          60,
+			},
+			vectorResults: []Result{
+				{ID: "doc1", Content: "vector content", VectorScore: 0.9},
+			},
+			keywordResults: []Result{
+				{ID: "doc2", Content: "keyword content", KeywordScore: 0},
+			},
+			query: "content",
+			checkResults: func(t *testing.T, results []ScoredResult) {
+				var doc2Found bool
+				for _, r := range results {
+					if r.ID == "doc2" {
+						doc2Found = true
+						assert.Greater(t, r.KeywordScore, float32(0.0))
+					}
+				}
+				assert.True(t, doc2Found)
+			},
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			ranker := NewHybridRanker(tt.config, NewSimpleReranker())
+			reranker := tt.reranker
+			if reranker == nil {
+				reranker = NewSimpleReranker()
+			}
+			ranker := NewHybridRanker(tt.config, reranker)
 			results, err := ranker.RankHybrid(tt.vectorResults, tt.keywordResults, tt.query)
 
 			require.NoError(t, err)
@@ -598,385 +780,6 @@ func TestHybridRanker_RankHybrid_AllPaths(t *testing.T) {
 			}
 		})
 	}
-}
-
-// TestBM25_ScoreWithMetadata_ComprehensiveMetadataTests tests all metadata paths
-func TestBM25_ScoreWithMetadata_ComprehensiveMetadataTests(t *testing.T) {
-	bm25 := NewBM25(1.2, 0.75)
-
-	tests := []struct {
-		name     string
-		query    string
-		document string
-		metadata map[string]interface{}
-		check    func(t *testing.T, score float32)
-	}{
-		{
-			name:     "nil metadata",
-			query:    "test query",
-			document: "test document content",
-			metadata: nil,
-			check: func(t *testing.T, score float32) {
-				assert.Greater(t, score, float32(0.0))
-			},
-		},
-		{
-			name:     "empty metadata map",
-			query:    "test query",
-			document: "test document content",
-			metadata: map[string]interface{}{},
-			check: func(t *testing.T, score float32) {
-				assert.Greater(t, score, float32(0.0))
-			},
-		},
-		{
-			name:     "metadata with empty string values",
-			query:    "test",
-			document: "test content",
-			metadata: map[string]interface{}{
-				"function_name": "",
-				"file_path":     "",
-				"language":      "",
-			},
-			check: func(t *testing.T, score float32) {
-				assert.Greater(t, score, float32(0.0))
-			},
-		},
-		{
-			name:     "metadata with wrong types",
-			query:    "test",
-			document: "test content",
-			metadata: map[string]interface{}{
-				"function_name": 123,
-				"file_path":     []int{1, 2, 3},
-				"tags":          "not-a-slice",
-				"language":      map[string]string{},
-			},
-			check: func(t *testing.T, score float32) {
-				assert.Greater(t, score, float32(0.0))
-			},
-		},
-		{
-			name:     "metadata with all boosts applied",
-			query:    "test auth security go",
-			document: "test authentication security implementation",
-			metadata: map[string]interface{}{
-				"function_name": "test_auth",
-				"file_path":     "/test/security.go",
-				"tags":          []string{"security"},
-				"language":      "go",
-			},
-			check: func(t *testing.T, score float32) {
-				assert.Greater(t, score, float32(0.0))
-			},
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			score := bm25.ScoreWithMetadata(tt.query, tt.document, tt.metadata)
-			tt.check(t, score)
-		})
-	}
-}
-
-func TestBM25_ScoreWithMetadata_EdgeCases(t *testing.T) {
-	bm25 := NewBM25(1.2, 0.75)
-
-	tests := []struct {
-		name     string
-		query    string
-		document string
-		metadata map[string]interface{}
-		wantZero bool
-	}{
-		{
-			name:     "empty function name in metadata",
-			query:    "authenticate",
-			document: "authentication handler",
-			metadata: map[string]interface{}{
-				"function_name": "",
-			},
-			wantZero: false,
-		},
-		{
-			name:     "empty file path in metadata",
-			query:    "handler",
-			document: "authentication handler",
-			metadata: map[string]interface{}{
-				"file_path": "",
-			},
-			wantZero: false,
-		},
-		{
-			name:     "empty language in metadata",
-			query:    "code",
-			document: "some code implementation",
-			metadata: map[string]interface{}{
-				"language": "",
-			},
-			wantZero: false,
-		},
-		{
-			name:     "non-string function name",
-			query:    "test",
-			document: "test function",
-			metadata: map[string]interface{}{
-				"function_name": 123, // Not a string
-			},
-			wantZero: false,
-		},
-		{
-			name:     "non-string file path",
-			query:    "test",
-			document: "test file",
-			metadata: map[string]interface{}{
-				"file_path": []string{"not", "a", "string"},
-			},
-			wantZero: false,
-		},
-		{
-			name:     "non-string-slice tags",
-			query:    "security",
-			document: "security feature",
-			metadata: map[string]interface{}{
-				"tags": "not-a-slice",
-			},
-			wantZero: false,
-		},
-		{
-			name:     "non-string language",
-			query:    "golang",
-			document: "golang implementation",
-			metadata: map[string]interface{}{
-				"language": 123,
-			},
-			wantZero: false,
-		},
-		{
-			name:     "metadata with no matches",
-			query:    "database",
-			document: "user interface",
-			metadata: map[string]interface{}{
-				"function_name": "render_ui",
-				"file_path":     "/pkg/ui/render.go",
-				"tags":          []string{"ui", "frontend"},
-				"language":      "go",
-			},
-			wantZero: false,
-		},
-		{
-			name:     "empty tags slice",
-			query:    "test",
-			document: "test content",
-			metadata: map[string]interface{}{
-				"tags": []string{},
-			},
-			wantZero: false,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			score := bm25.ScoreWithMetadata(tt.query, tt.document, tt.metadata)
-			if tt.wantZero {
-				assert.Equal(t, float32(0.0), score)
-			} else {
-				assert.GreaterOrEqual(t, score, float32(0.0))
-			}
-		})
-	}
-}
-
-// TestWeightedFusion_Fuse_HighScores tests normalization of high BM25 scores
-func TestWeightedFusion_Fuse_HighScores(t *testing.T) {
-	wf := NewWeightedFusion(0.7, 0.3)
-
-	tests := []struct {
-		name           string
-		vectorResults  []Result
-		keywordResults []Result
-		expectedMax    float32
-	}{
-		{
-			name: "very high BM25 score normalization",
-			vectorResults: []Result{
-				{ID: "doc1", VectorScore: 0.8},
-			},
-			keywordResults: []Result{
-				{ID: "doc1", KeywordScore: 25.0}, // High BM25 score > 10
-			},
-			expectedMax: 1.0,
-		},
-		{
-			name: "BM25 score exactly at boundary",
-			vectorResults: []Result{
-				{ID: "doc1", VectorScore: 0.9},
-			},
-			keywordResults: []Result{
-				{ID: "doc1", KeywordScore: 10.0},
-			},
-			expectedMax: 1.0,
-		},
-		{
-			name: "BM25 score just above 1.0",
-			vectorResults: []Result{
-				{ID: "doc1", VectorScore: 0.5},
-			},
-			keywordResults: []Result{
-				{ID: "doc1", KeywordScore: 1.5},
-			},
-			expectedMax: 1.0,
-		},
-		{
-			name:          "keyword only with high score",
-			vectorResults: []Result{},
-			keywordResults: []Result{
-				{ID: "doc1", KeywordScore: 20.0},
-			},
-			expectedMax: 1.0,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			results := wf.Fuse(tt.vectorResults, tt.keywordResults)
-			require.Len(t, results, 1)
-			assert.LessOrEqual(t, results[0].FinalScore, tt.expectedMax)
-			assert.GreaterOrEqual(t, results[0].FinalScore, float32(0.0))
-		})
-	}
-}
-
-// TestHybridRanker_RankWithMetadata_RerankingFailure tests reranking failure path
-func TestHybridRanker_RankWithMetadata_RerankingFailure(t *testing.T) {
-	config := DefaultConfig()
-	config.EnableRerank = true
-	config.RerankTopK = 2
-
-	// Create a reranker that always fails
-	failingReranker := &failingRerankerImpl{}
-	ranker := NewHybridRanker(config, failingReranker)
-
-	results := []Result{
-		{ID: "doc1", Content: "authentication handler implementation"},
-		{ID: "doc2", Content: "authentication database connection"},
-		{ID: "doc3", Content: "authentication api server"},
-	}
-
-	scored, err := ranker.RankWithMetadata(results, "authentication", nil)
-
-	// Should not return error, should fall back to BM25 scores
-	require.NoError(t, err)
-	assert.Len(t, scored, 3)
-
-	// Verify scores are set (at least some should have positive scores)
-	hasPositiveScore := false
-	for i := range scored {
-		assert.GreaterOrEqual(t, scored[i].KeywordScore, float32(0.0))
-		if scored[i].KeywordScore > 0 {
-			hasPositiveScore = true
-		}
-		assert.Equal(t, scored[i].KeywordScore, scored[i].FinalScore)
-	}
-	assert.True(t, hasPositiveScore, "at least one result should have positive score")
-}
-
-// TestHybridRanker_RankHybrid_PreScoredKeywords tests path where keyword score already set
-func TestHybridRanker_RankHybrid_PreScoredKeywords(t *testing.T) {
-	config := DefaultConfig()
-	config.EnableRerank = false
-	ranker := NewHybridRanker(config, NewSimpleReranker())
-
-	vectorResults := []Result{
-		{ID: "doc1", Content: "auth handler", VectorScore: 0.9},
-		{ID: "doc2", Content: "db connection", VectorScore: 0.8},
-	}
-
-	// Keyword results with pre-set scores (non-zero)
-	keywordResults := []Result{
-		{ID: "doc2", Content: "db connection", KeywordScore: 5.5},
-		{ID: "doc3", Content: "api server", KeywordScore: 3.2},
-	}
-
-	results, err := ranker.RankHybrid(vectorResults, keywordResults, "database")
-
-	require.NoError(t, err)
-	assert.Len(t, results, 3)
-
-	// Verify that keyword scores were not recalculated (they were already set)
-	// The pre-set scores should be preserved in the fusion
-	for _, result := range results {
-		assert.Greater(t, result.FinalScore, float32(0.0))
-	}
-}
-
-// TestHybridRanker_RankHybrid_RerankingFailure tests reranking failure in hybrid path
-func TestHybridRanker_RankHybrid_RerankingFailure(t *testing.T) {
-	config := DefaultConfig()
-	config.EnableRerank = true
-	config.RerankTopK = 2
-
-	failingReranker := &failingRerankerImpl{}
-	ranker := NewHybridRanker(config, failingReranker)
-
-	vectorResults := []Result{
-		{ID: "doc1", Content: "auth", VectorScore: 0.9},
-	}
-
-	keywordResults := []Result{
-		{ID: "doc2", Content: "db", KeywordScore: 0},
-	}
-
-	results, err := ranker.RankHybrid(vectorResults, keywordResults, "test")
-
-	// Should not error, should fall back to fused results
-	require.NoError(t, err)
-	assert.NotEmpty(t, results)
-}
-
-// TestHybridRanker_RankWithMetadata_TopKGreaterThanResults tests topK boundary
-func TestHybridRanker_RankWithMetadata_TopKGreaterThanResults(t *testing.T) {
-	config := DefaultConfig()
-	config.EnableRerank = true
-	config.RerankTopK = 100 // Much larger than result set
-
-	reranker := NewSimpleReranker()
-	ranker := NewHybridRanker(config, reranker)
-
-	results := []Result{
-		{ID: "doc1", Content: "test content"},
-		{ID: "doc2", Content: "more content"},
-	}
-
-	scored, err := ranker.RankWithMetadata(results, "test", nil)
-
-	require.NoError(t, err)
-	// Should get all results, not limited by topK
-	assert.Len(t, scored, 2)
-}
-
-// TestHybridRanker_RankHybrid_TopKGreaterThanResults tests topK boundary in hybrid
-func TestHybridRanker_RankHybrid_TopKGreaterThanResults(t *testing.T) {
-	config := DefaultConfig()
-	config.EnableRerank = true
-	config.RerankTopK = 100
-
-	reranker := NewSimpleReranker()
-	ranker := NewHybridRanker(config, reranker)
-
-	vectorResults := []Result{
-		{ID: "doc1", Content: "content", VectorScore: 0.9},
-	}
-
-	keywordResults := []Result{
-		{ID: "doc2", Content: "content"},
-	}
-
-	results, err := ranker.RankHybrid(vectorResults, keywordResults, "test")
-
-	require.NoError(t, err)
-	assert.Len(t, results, 2)
 }
 
 // TestSimilarityReranker_Rerank_EmbeddingGenerationFailure tests partial embedding failures
@@ -1077,51 +880,6 @@ func (p *partialFailEmbedder) Close() error {
 	return nil
 }
 
-// TestWeightedFusion_Fuse_VectorScoreGreaterThanOne tests vector score normalization
-func TestWeightedFusion_Fuse_VectorScoreGreaterThanOne(t *testing.T) {
-	wf := NewWeightedFusion(0.7, 0.3)
-
-	vectorResults := []Result{
-		{ID: "doc1", VectorScore: 1.5}, // > 1.0, should be normalized
-	}
-
-	results := wf.Fuse(vectorResults, []Result{})
-
-	require.Len(t, results, 1)
-	// Score should be normalized to max 1.0, then weighted
-	assert.LessOrEqual(t, results[0].FinalScore, float32(0.7)) // 1.0 * 0.7
-	assert.Greater(t, results[0].FinalScore, float32(0.0))
-}
-
-// TestHybridRanker_RankHybrid_KeywordScoreZero tests keyword scoring when score is 0
-func TestHybridRanker_RankHybrid_KeywordScoreZero(t *testing.T) {
-	config := DefaultConfig()
-	ranker := NewHybridRanker(config, NewSimpleReranker())
-
-	vectorResults := []Result{
-		{ID: "doc1", Content: "vector content", VectorScore: 0.9},
-	}
-
-	keywordResults := []Result{
-		{ID: "doc2", Content: "keyword content", KeywordScore: 0}, // Zero score
-	}
-
-	results, err := ranker.RankHybrid(vectorResults, keywordResults, "content")
-
-	require.NoError(t, err)
-	assert.NotEmpty(t, results)
-
-	// doc2 should have a non-zero keyword score after BM25 scoring
-	var doc2Found bool
-	for _, result := range results {
-		if result.ID == "doc2" {
-			doc2Found = true
-			assert.Greater(t, result.KeywordScore, float32(0.0))
-		}
-	}
-	assert.True(t, doc2Found)
-}
-
 func TestBM25_ScoreWithMetadata_TokenizeEdgeCases(t *testing.T) {
 	bm25 := NewBM25(1.2, 0.75)
 
@@ -1164,81 +922,6 @@ func TestBM25_ScoreWithMetadata_TokenizeEdgeCases(t *testing.T) {
 			assert.Equal(t, float32(0.0), score)
 		})
 	}
-}
-
-// TestHybridRanker_RankWithMetadata_ExactTopKBoundary tests exact topK boundary condition
-func TestHybridRanker_RankWithMetadata_ExactTopKBoundary(t *testing.T) {
-	config := DefaultConfig()
-	config.EnableRerank = true
-	config.RerankTopK = 3 // Exact same as result count
-
-	reranker := NewSimpleReranker()
-	ranker := NewHybridRanker(config, reranker)
-
-	results := []Result{
-		{ID: "doc1", Content: "test content one"},
-		{ID: "doc2", Content: "test content two"},
-		{ID: "doc3", Content: "test content three"},
-	}
-
-	scored, err := ranker.RankWithMetadata(results, "test", nil)
-
-	require.NoError(t, err)
-	// When topK equals result count, should get all results
-	assert.Len(t, scored, 3)
-}
-
-// TestHybridRanker_RankHybrid_ExactTopKBoundary tests exact topK boundary in hybrid mode
-func TestHybridRanker_RankHybrid_ExactTopKBoundary(t *testing.T) {
-	config := DefaultConfig()
-	config.EnableRerank = true
-	config.RerankTopK = 2 // Exact same as fused result count
-
-	reranker := NewSimpleReranker()
-	ranker := NewHybridRanker(config, reranker)
-
-	vectorResults := []Result{
-		{ID: "doc1", Content: "content", VectorScore: 0.9},
-	}
-
-	keywordResults := []Result{
-		{ID: "doc2", Content: "content", KeywordScore: 0.8},
-	}
-
-	results, err := ranker.RankHybrid(vectorResults, keywordResults, "test")
-
-	require.NoError(t, err)
-	assert.Len(t, results, 2)
-}
-
-// TestWeightedFusion_Fuse_AllEdgeCases tests remaining edge cases
-func TestWeightedFusion_Fuse_AllEdgeCases(t *testing.T) {
-	wf := NewWeightedFusion(0.7, 0.3)
-
-	// Test with keyword score = 1.0 exactly (boundary condition)
-	vectorResults := []Result{
-		{ID: "doc1", VectorScore: 0.5},
-	}
-
-	keywordResults := []Result{
-		{ID: "doc1", KeywordScore: 1.0}, // Exactly 1.0, should not normalize
-	}
-
-	results := wf.Fuse(vectorResults, keywordResults)
-
-	require.Len(t, results, 1)
-	// Expected: (0.5 * 0.7) + (1.0 * 0.3) = 0.35 + 0.3 = 0.65
-	assert.InDelta(t, 0.65, results[0].FinalScore, 0.01)
-}
-
-// TestBM25_Score_DirectCall tests direct Score method call
-func TestBM25_Score_DirectCall(t *testing.T) {
-	bm25 := NewBM25(1.2, 0.75)
-
-	// Test Score method which calls ScoreWithMetadata with nil metadata
-	score := bm25.Score("test query", "test document content", 100)
-
-	assert.Greater(t, score, float32(0.0))
 }
 
 // TestHybridRanker_Rank_DirectCall tests direct Rank method call
@@ -1373,6 +1056,59 @@ func TestWeightedFusion_Fuse_ScoreNormalizationEdgeCases(t *testing.T) {
 				assert.InDelta(t, 0.3, results[0].FinalScore, 0.01)
 			},
 		},
+		{
+			name: "keyword score exactly 1.0 is not normalized",
+			vectorResults: []Result{
+				{ID: "doc1", VectorScore: 0.5},
+			},
+			keywordResults: []Result{
+				{ID: "doc1", KeywordScore: 1.0},
+			},
+			checkFn: func(t *testing.T, results []ScoredResult) {
+				require.Len(t, results, 1)
+				// Expected: (0.5 * 0.7) + (1.0 * 0.3) = 0.35 + 0.3 = 0.65
+				assert.InDelta(t, 0.65, results[0].FinalScore, 0.01)
+			},
+		},
+		{
+			name: "keyword score exactly at 10.0 boundary",
+			vectorResults: []Result{
+				{ID: "doc1", VectorScore: 0.9},
+			},
+			keywordResults: []Result{
+				{ID: "doc1", KeywordScore: 10.0},
+			},
+			checkFn: func(t *testing.T, results []ScoredResult) {
+				require.Len(t, results, 1)
+				// Expected: (0.9 * 0.7) + (1.0 * 0.3) = 0.63 + 0.3 = 0.93
+				assert.InDelta(t, 0.93, results[0].FinalScore, 0.01)
+			},
+		},
+		{
+			name:          "keyword only with high score",
+			vectorResults: []Result{},
+			keywordResults: []Result{
+				{ID: "doc1", KeywordScore: 20.0},
+			},
+			checkFn: func(t *testing.T, results []ScoredResult) {
+				require.Len(t, results, 1)
+				// Expected: 20/10 = 2.0, clamped to 1.0, then (1.0 * 0.3) = 0.3
+				assert.InDelta(t, 0.3, results[0].FinalScore, 0.01)
+			},
+		},
+		{
+			name: "vector score above 1.0 is normalized",
+			vectorResults: []Result{
+				{ID: "doc1", VectorScore: 1.5},
+			},
+			keywordResults: []Result{},
+			checkFn: func(t *testing.T, results []ScoredResult) {
+				require.Len(t, results, 1)
+				// Normalized to at most 1.0, then weighted: <= 1.0 * 0.7
+				assert.LessOrEqual(t, results[0].FinalScore, float32(0.7))
+				assert.Greater(t, results[0].FinalScore, float32(0.0))
+			},
+		},
 	}
 
 	for _, tt := range tests {
@@ -1381,59 +1117,6 @@ func TestWeightedFusion_Fuse_ScoreNormalizationEdgeCases(t *testing.T) {
 			tt.checkFn(t, results)
 		})
 	}
-}
-
-// TestHybridRanker_RankWithMetadata_RerankTopKClamp tests topK clamping
-func TestHybridRanker_RankWithMetadata_RerankTopKClamp(t *testing.T) {
-	config := DefaultConfig()
-	config.EnableRerank = true
-	config.RerankTopK = 2 // Smaller than result set
-
-	reranker := NewSimpleReranker()
-	ranker := NewHybridRanker(config, reranker)
-
-	results := []Result{
-		{ID: "doc1", Content: "test content one"},
-		{ID: "doc2", Content: "test content two"},
-		{ID: "doc3", Content: "test content three"},
-	}
-
-	scored, err := ranker.RankWithMetadata(results, "test", nil)
-
-	require.NoError(t, err)
-	// Should be clamped to topK
-	assert.LessOrEqual(t, len(scored), config.RerankTopK)
-
-	// Verify all results have rerank scores
-	for _, result := range scored {
-		assert.Greater(t, result.RerankScore, float32(0.0))
-	}
-}
-
-// TestHybridRanker_RankHybrid_RerankTopKClamp tests topK clamping in hybrid mode
-func TestHybridRanker_RankHybrid_RerankTopKClamp(t *testing.T) {
-	config := DefaultConfig()
-	config.EnableRerank = true
-	config.RerankTopK = 2
-
-	reranker := NewSimpleReranker()
-	ranker := NewHybridRanker(config, reranker)
-
-	vectorResults := []Result{
-		{ID: "doc1", Content: "vector1", VectorScore: 0.9},
-		{ID: "doc2", Content: "vector2", VectorScore: 0.8},
-	}
-
-	keywordResults := []Result{
-		{ID: "doc3", Content: "keyword1", KeywordScore: 0.7},
-		{ID: "doc4", Content: "keyword2", KeywordScore: 0.6},
-	}
-
-	results, err := ranker.RankHybrid(vectorResults, keywordResults, "test")
-
-	require.NoError(t, err)
-	// Should be clamped to topK after fusion
-	assert.LessOrEqual(t, len(results), config.RerankTopK)
 }
 
 // TestSimilarityReranker_Rerank_TopKClamp tests topK is properly applied
@@ -1467,66 +1150,4 @@ func TestSimilarityReranker_Rerank_TopKClamp(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.Len(t, reranked, 3, "should return exactly topK results")
-}
-
-// TestBM25_ScoreWithMetadata_AllBoosts tests all boost paths combined
-func TestBM25_ScoreWithMetadata_AllBoosts(t *testing.T) {
-	bm25 := NewBM25(1.2, 0.75)
-
-	// Test with all possible boost types
-	query := "auth handler security go"
-	document := "authentication handler implementation"
-
-	tests := []struct {
-		name      string
-		metadata  map[string]interface{}
-		wantBoost bool
-	}{
-		{
-			name: "all boosts active",
-			metadata: map[string]interface{}{
-				"function_name": "auth_handler",
-				"file_path":     "/pkg/auth/handler.go",
-				"tags":          []string{"security"},
-				"language":      "go",
-			},
-			wantBoost: true,
-		},
-		{
-			name: "function and language boost",
-			metadata: map[string]interface{}{
-				"function_name": "authenticate",
-				"language":      "go",
-			},
-			wantBoost: true,
-		},
-		{
-			name: "filepath and tags boost",
-			metadata: map[string]interface{}{
-				"file_path": "/pkg/auth/security.go",
-				"tags":      []string{"security"},
-			},
-			wantBoost: true,
-		},
-		{
-			name: "only language boost",
-			metadata: map[string]interface{}{
-				"language": "go",
-			},
-			wantBoost: true,
-		},
-	}
-
-	baselineScore := bm25.ScoreWithMetadata(query, document, nil)
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			boostedScore := bm25.ScoreWithMetadata(query, document, tt.metadata)
-
-			if tt.wantBoost {
-				assert.Greater(t, boostedScore, baselineScore,
-					"expected boosted score to be higher than baseline")
-			}
-		})
-	}
 }

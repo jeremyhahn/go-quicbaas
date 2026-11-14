@@ -161,6 +161,8 @@ func TestMaterializingSecrets_RefusesAForeignPath(t *testing.T) {
 		var unsupported *AccountSecretsUnsupportedPathError
 		if !errors.As(err, &unsupported) {
 			t.Errorf("Get(%q) error = %v (%T), want *AccountSecretsUnsupportedPathError", path, err, err)
+		} else if !strings.Contains(unsupported.Error(), path) {
+			t.Errorf("unsupported-path refusal %q does not name the path %q", unsupported.Error(), path)
 		}
 	}
 	if central.releaseCount("acct-1") != 0 {
@@ -218,6 +220,9 @@ func TestMaterializingSecrets_RefusesEveryWrite(t *testing.T) {
 			if !strings.Contains(readOnly.Error(), "control plane") {
 				t.Errorf("refusal %q does not say who owns the credential", readOnly.Error())
 			}
+			if !strings.Contains(readOnly.Error(), tc.method) || !strings.Contains(readOnly.Error(), "orchestration/") {
+				t.Errorf("refusal %q is missing the method or the path", readOnly.Error())
+			}
 		})
 	}
 }
@@ -270,17 +275,26 @@ func TestMaterializingSecrets_CloseDropsEveryEnvelope(t *testing.T) {
 	secrets, cache := newTestMaterializingSecrets(t, central)
 	ctx := context.Background()
 
+	entries := make([]*cachedAccountCredential, 0, 2)
 	for _, id := range []string{"acct-1", "acct-2"} {
 		if _, _, err := secrets.Get(ctx, accountPath(t, "tenant-a", id)); err != nil {
 			t.Fatalf("Get(%s) error = %v", id, err)
 		}
+		entry, ok := cache.lookup(id, time.Now().UTC())
+		if !ok {
+			t.Fatalf("test setup: the release of %s was not cached", id)
+		}
+		entries = append(entries, entry)
 	}
 	if err := secrets.Close(); err != nil {
 		t.Fatalf("Close() error = %v", err)
 	}
-	for _, id := range []string{"acct-1", "acct-2"} {
+	for i, id := range []string{"acct-1", "acct-2"} {
 		if _, ok := cache.lookup(id, time.Now().UTC()); ok {
 			t.Errorf("Close() left %s cached", id)
+		}
+		if got := entries[i].secret.Bytes(); got != nil {
+			t.Errorf("%s buffer still readable after Close: %q", id, got)
 		}
 	}
 }
@@ -412,19 +426,6 @@ func TestAccountCredentialCache_LookupRespectsFreshness(t *testing.T) {
 	}
 }
 
-// TestAccountSecretsErrors_AreLegible covers the error strings, which are what
-// an operator actually reads when a worker host refuses a spawn.
-func TestAccountSecretsErrors_AreLegible(t *testing.T) {
-	readOnly := (&AccountSecretsReadOnlyError{Method: "Store", Path: "orchestration/agent-accounts/t/a"}).Error()
-	if !strings.Contains(readOnly, "Store") || !strings.Contains(readOnly, "agent-accounts") {
-		t.Errorf("read-only refusal %q is missing the method or the path", readOnly)
-	}
-	unsupported := (&AccountSecretsUnsupportedPathError{Path: "elsewhere"}).Error()
-	if !strings.Contains(unsupported, "elsewhere") {
-		t.Errorf("unsupported-path refusal %q does not name the path", unsupported)
-	}
-}
-
 // =============================================================================
 // Secure-memory hardening (go-quicbaas#757)
 //
@@ -492,27 +493,6 @@ func TestCachedAccountCredential_StoreWipesTheReplaced(t *testing.T) {
 	body, ok := replacement.copyOut()
 	if !ok || !bytes.Contains(body, []byte(`"new"`)) {
 		t.Errorf("replacement not served: body=%q ok=%t", body, ok)
-	}
-}
-
-// TestMaterializingSecrets_CloseWipesEveryBuffer proves a stopped daemon leaves
-// no credential plaintext behind in secure memory.
-func TestMaterializingSecrets_CloseWipesEveryBuffer(t *testing.T) {
-	cache := &accountCredentialCache{}
-	entries := make([]*cachedAccountCredential, 0, 2)
-	for _, id := range []string{"acct-1", "acct-2"} {
-		e := mustCachedCredential(t, []byte(`{"access_token":"t-`+id+`"}`), time.Time{}, time.Now().UTC().Add(time.Hour))
-		cache.store(id, e)
-		entries = append(entries, e)
-	}
-	store := newMaterializingSecrets(nil, cache, nil)
-	if err := store.Close(); err != nil {
-		t.Fatalf("Close() error = %v", err)
-	}
-	for i, e := range entries {
-		if got := e.secret.Bytes(); got != nil {
-			t.Errorf("entry %d buffer still readable after Close: %q", i, got)
-		}
 	}
 }
 

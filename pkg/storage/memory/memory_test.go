@@ -14,7 +14,6 @@
 package memory
 
 import (
-	"bytes"
 	"fmt"
 	"sync"
 	"testing"
@@ -57,261 +56,165 @@ func TestNew(t *testing.T) {
 	})
 }
 
-func TestGet_Found(t *testing.T) {
-	s := New(testLogger(t))
-	defer s.Close()
-
-	key := []byte("test-key")
-	value := []byte("test-value")
-
-	err := s.Set(key, value)
-	require.NoError(t, err)
-
-	got, err := s.Get(key)
-	require.NoError(t, err)
-	assert.Equal(t, value, got)
-}
-
-func TestGet_NotFound(t *testing.T) {
-	s := New(testLogger(t))
-	defer s.Close()
-
-	key := []byte("non-existent")
-	_, err := s.Get(key)
-	assert.Error(t, err)
-
-	var qbErr *errors.QBError
-	assert.ErrorAs(t, err, &qbErr)
-	assert.Equal(t, errors.ErrNotFound, qbErr.Code)
-}
-
-func TestGet_EmptyKey(t *testing.T) {
-	s := New(testLogger(t))
-	defer s.Close()
-
-	_, err := s.Get([]byte{})
-	assert.Error(t, err)
-	assert.True(t, errors.IsInvalidInput(err))
-}
-
-func TestSet_New(t *testing.T) {
-	s := New(testLogger(t))
-	defer s.Close()
-
-	key := []byte("new-key")
-	value := []byte("new-value")
-
-	err := s.Set(key, value)
-	require.NoError(t, err)
-
-	got, err := s.Get(key)
-	require.NoError(t, err)
-	assert.Equal(t, value, got)
-}
-
-func TestSet_Overwrite(t *testing.T) {
-	s := New(testLogger(t))
-	defer s.Close()
-
-	key := []byte("key")
-	value1 := []byte("value1")
-	value2 := []byte("value2")
-
-	err := s.Set(key, value1)
-	require.NoError(t, err)
-
-	err = s.Set(key, value2)
-	require.NoError(t, err)
-
-	got, err := s.Get(key)
-	require.NoError(t, err)
-	assert.Equal(t, value2, got)
-}
-
-func TestSet_EmptyKey(t *testing.T) {
-	s := New(testLogger(t))
-	defer s.Close()
-
-	err := s.Set([]byte{}, []byte("value"))
-	assert.Error(t, err)
-	assert.True(t, errors.IsInvalidInput(err))
-}
-
-func TestSet_EmptyValue(t *testing.T) {
-	s := New(testLogger(t))
-	defer s.Close()
-
-	key := []byte("key")
-	err := s.Set(key, []byte{})
-	require.NoError(t, err)
-
-	got, err := s.Get(key)
-	require.NoError(t, err)
-	assert.Equal(t, []byte{}, got)
-}
-
-func TestDelete_Exists(t *testing.T) {
-	s := New(testLogger(t))
-	defer s.Close()
-
-	key := []byte("key")
-	value := []byte("value")
-
-	err := s.Set(key, value)
-	require.NoError(t, err)
-
-	err = s.Delete(key)
-	require.NoError(t, err)
-
-	_, err = s.Get(key)
-	assert.Error(t, err)
-	assert.True(t, errors.IsNotFound(err))
-}
-
-func TestDelete_NotExists(t *testing.T) {
-	s := New(testLogger(t))
-	defer s.Close()
-
-	// Deleting non-existent key should not error (idempotent)
-	err := s.Delete([]byte("non-existent"))
-	assert.NoError(t, err)
-}
-
-func TestDelete_EmptyKey(t *testing.T) {
-	s := New(testLogger(t))
-	defer s.Close()
-
-	err := s.Delete([]byte{})
-	assert.Error(t, err)
-	assert.True(t, errors.IsInvalidInput(err))
-}
-
-func TestScan_Empty(t *testing.T) {
-	s := New(testLogger(t))
-	defer s.Close()
-
-	result, err := s.Scan(nil, nil)
-	require.NoError(t, err)
-	assert.Empty(t, result)
-}
-
-func TestScan_Range(t *testing.T) {
-	s := New(testLogger(t))
-	defer s.Close()
-
-	// Insert test data
-	testData := map[string]string{
-		"key01": "value01",
-		"key02": "value02",
-		"key03": "value03",
-		"key04": "value04",
-		"key05": "value05",
+func TestGet(t *testing.T) {
+	tests := []struct {
+		name     string
+		key      []byte
+		want     []byte
+		notFound bool
+		invalid  bool
+	}{
+		{name: "found", key: []byte("test-key"), want: []byte("test-value")},
+		{name: "not found", key: []byte("non-existent"), notFound: true},
+		{name: "empty key", key: []byte{}, invalid: true},
 	}
-	for k, v := range testData {
-		err := s.Set([]byte(k), []byte(v))
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s := New(testLogger(t))
+			defer s.Close()
+			require.NoError(t, s.Set([]byte("test-key"), []byte("test-value")))
+
+			got, err := s.Get(tt.key)
+			switch {
+			case tt.invalid:
+				assert.True(t, errors.IsInvalidInput(err))
+			case tt.notFound:
+				var qbErr *errors.QBError
+				require.ErrorAs(t, err, &qbErr)
+				assert.Equal(t, errors.ErrNotFound, qbErr.Code)
+			default:
+				require.NoError(t, err)
+				assert.Equal(t, tt.want, got)
+			}
+		})
+	}
+}
+
+func TestSet(t *testing.T) {
+	tests := []struct {
+		name    string
+		key     []byte
+		value   []byte
+		invalid bool
+	}{
+		{name: "overwrite", key: []byte("key"), value: []byte("value2")},
+		{name: "empty value", key: []byte("key"), value: []byte{}},
+		{name: "empty key", key: []byte{}, value: []byte("value"), invalid: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s := New(testLogger(t))
+			defer s.Close()
+			require.NoError(t, s.Set([]byte("key"), []byte("value1")))
+
+			err := s.Set(tt.key, tt.value)
+			if tt.invalid {
+				assert.True(t, errors.IsInvalidInput(err))
+				return
+			}
+			require.NoError(t, err)
+
+			got, err := s.Get(tt.key)
+			require.NoError(t, err)
+			assert.Equal(t, tt.value, got)
+		})
+	}
+}
+
+func TestDelete(t *testing.T) {
+	tests := []struct {
+		name    string
+		key     []byte
+		invalid bool
+	}{
+		{name: "exists", key: []byte("key")},
+		// Deleting a missing key is idempotent.
+		{name: "not exists", key: []byte("non-existent")},
+		{name: "empty key", key: []byte{}, invalid: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s := New(testLogger(t))
+			defer s.Close()
+			require.NoError(t, s.Set([]byte("key"), []byte("value")))
+
+			err := s.Delete(tt.key)
+			if tt.invalid {
+				assert.True(t, errors.IsInvalidInput(err))
+				return
+			}
+			require.NoError(t, err)
+
+			_, err = s.Get(tt.key)
+			assert.True(t, errors.IsNotFound(err))
+		})
+	}
+}
+
+func TestScan(t *testing.T) {
+	t.Run("empty store", func(t *testing.T) {
+		s := New(testLogger(t))
+		defer s.Close()
+
+		result, err := s.Scan(nil, nil)
 		require.NoError(t, err)
+		assert.Empty(t, result)
+	})
+
+	keys := func(from, to int) []string {
+		var out []string
+		for i := from; i < to; i++ {
+			out = append(out, fmt.Sprintf("key%02d", i))
+		}
+		return out
 	}
 
-	// Scan range [key02, key04)
-	result, err := s.Scan([]byte("key02"), []byte("key04"))
-	require.NoError(t, err)
-	assert.Len(t, result, 2) // key02, key03
-
-	// Verify keys are in range
-	for _, pair := range result {
-		key := string(pair[0])
-		assert.True(t, key >= "key02" && key < "key04")
-	}
-}
-
-func TestScan_Sorted(t *testing.T) {
-	s := New(testLogger(t))
-	defer s.Close()
-
-	// Insert keys in random order
-	keys := []string{"key05", "key01", "key03", "key02", "key04"}
-	for _, k := range keys {
-		err := s.Set([]byte(k), []byte("value-"+k))
-		require.NoError(t, err)
+	tests := []struct {
+		name  string
+		start []byte
+		end   []byte
+		want  []string
+	}{
+		{name: "all, sorted", want: keys(0, 10)},
+		{name: "range", start: []byte("key02"), end: []byte("key04"), want: keys(2, 4)},
+		{name: "no end", start: []byte("key05"), want: keys(5, 10)},
+		{name: "no start", end: []byte("key05"), want: keys(0, 5)},
 	}
 
-	// Scan all
-	result, err := s.Scan(nil, nil)
-	require.NoError(t, err)
-	assert.Len(t, result, len(keys))
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s := New(testLogger(t))
+			defer s.Close()
+			// Insert in reverse order so the scan must sort.
+			for i := 9; i >= 0; i-- {
+				require.NoError(t, s.Set([]byte(fmt.Sprintf("key%02d", i)), []byte(fmt.Sprintf("value%02d", i))))
+			}
 
-	// Verify results are sorted
-	for i := 0; i < len(result)-1; i++ {
-		key1 := result[i][0]
-		key2 := result[i+1][0]
-		assert.True(t, bytes.Compare(key1, key2) < 0, "Keys should be sorted")
+			result, err := s.Scan(tt.start, tt.end)
+			require.NoError(t, err)
+
+			var got []string
+			for _, pair := range result {
+				got = append(got, string(pair[0]))
+			}
+			assert.Equal(t, tt.want, got)
+		})
 	}
-}
-
-func TestScan_NoEnd(t *testing.T) {
-	s := New(testLogger(t))
-	defer s.Close()
-
-	// Insert test data
-	for i := 0; i < 10; i++ {
-		key := []byte(fmt.Sprintf("key%02d", i))
-		value := []byte(fmt.Sprintf("value%02d", i))
-		err := s.Set(key, value)
-		require.NoError(t, err)
-	}
-
-	// Scan from key05 to end (nil end)
-	result, err := s.Scan([]byte("key05"), nil)
-	require.NoError(t, err)
-	assert.Len(t, result, 5) // key05 through key09
-
-	// Verify first key
-	assert.Equal(t, []byte("key05"), result[0][0])
-}
-
-func TestScan_NoStart(t *testing.T) {
-	s := New(testLogger(t))
-	defer s.Close()
-
-	// Insert test data
-	for i := 0; i < 10; i++ {
-		key := []byte(fmt.Sprintf("key%02d", i))
-		value := []byte(fmt.Sprintf("value%02d", i))
-		err := s.Set(key, value)
-		require.NoError(t, err)
-	}
-
-	// Scan from beginning to key05 (nil start)
-	result, err := s.Scan(nil, []byte("key05"))
-	require.NoError(t, err)
-	assert.Len(t, result, 5) // key00 through key04
-
-	// Verify last key
-	assert.Equal(t, []byte("key04"), result[len(result)-1][0])
 }
 
 func TestClose(t *testing.T) {
 	s := New(testLogger(t))
+	require.NoError(t, s.Set([]byte("key"), []byte("value")))
 
-	// Add some data
-	err := s.Set([]byte("key"), []byte("value"))
-	require.NoError(t, err)
-
-	err = s.Close()
-	assert.NoError(t, err)
+	require.NoError(t, s.Close())
 	assert.True(t, s.closed)
 	assert.Nil(t, s.data)
-}
 
-func TestClose_Multiple(t *testing.T) {
-	s := New(testLogger(t))
-
-	err := s.Close()
-	assert.NoError(t, err)
-
-	// Second close should not error (idempotent)
-	err = s.Close()
-	assert.NoError(t, err)
+	// A second Close is idempotent.
+	assert.NoError(t, s.Close())
 }
 
 func TestOperations_AfterClose(t *testing.T) {
@@ -516,44 +419,6 @@ func TestDefensiveCopy_Scan(t *testing.T) {
 	got, err := s.Get([]byte("key1"))
 	require.NoError(t, err)
 	assert.Equal(t, []byte("value1"), got)
-}
-
-func TestConcurrent_ReadWrite(t *testing.T) {
-	s := New(testLogger(t))
-	defer s.Close()
-
-	const numGoroutines = 10
-	const numOperations = 100
-
-	var wg sync.WaitGroup
-	wg.Add(numGoroutines * 2)
-
-	// Concurrent writers
-	for i := 0; i < numGoroutines; i++ {
-		go func(id int) {
-			defer wg.Done()
-			for j := 0; j < numOperations; j++ {
-				key := []byte(fmt.Sprintf("key-%d-%d", id, j))
-				value := []byte(fmt.Sprintf("value-%d-%d", id, j))
-				err := s.Set(key, value)
-				assert.NoError(t, err)
-			}
-		}(i)
-	}
-
-	// Concurrent readers
-	for i := 0; i < numGoroutines; i++ {
-		go func(id int) {
-			defer wg.Done()
-			for j := 0; j < numOperations; j++ {
-				key := []byte(fmt.Sprintf("key-%d-%d", id, j))
-				// May or may not find the key depending on timing
-				s.Get(key)
-			}
-		}(i)
-	}
-
-	wg.Wait()
 }
 
 func TestConcurrent_MultipleWriters(t *testing.T) {

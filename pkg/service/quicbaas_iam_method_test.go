@@ -190,27 +190,37 @@ func TestIAMServiceWrapper_CreateTenant_WithID(t *testing.T) {
 	assert.Equal(t, "custom-id", resp.Tenant.ID)
 }
 
-func TestIAMServiceWrapper_CreateTenant_ManagerUnavailable(t *testing.T) {
-	provider := &mockIAMServiceProvider{tenantMgr: nil}
-	wrapper := &iamServiceWrapper{provider: provider}
-
-	resp, err := wrapper.CreateTenant(context.Background(), &CreateTenantRequest{Name: "t"})
-
-	require.Error(t, err)
-	assert.Nil(t, resp)
-	assert.Contains(t, err.Error(), "tenant manager not available")
+// requireUnavailable asserts that err is the typed ErrUnavailable a wrapper
+// method returns when the IAM dependency it needs is not configured.
+func requireUnavailable(t *testing.T, err error, want string) {
+	t.Helper()
+	var qe *dberrors.QBError
+	require.ErrorAs(t, err, &qe)
+	assert.Equal(t, dberrors.ErrUnavailable, qe.Code)
+	assert.Contains(t, err.Error(), want)
 }
 
-func TestIAMServiceWrapper_CreateTenant_ProviderError(t *testing.T) {
-	provider := &mockIAMServiceProvider{
-		tenantMgrErr: &testIAMError{msg: "provider failed"},
+func TestIAMServiceWrapper_TenantManagerUnavailable(t *testing.T) {
+	wrapper := &iamServiceWrapper{provider: &mockIAMServiceProvider{tenantMgr: nil}}
+	ctx := context.Background()
+
+	tests := []struct {
+		name string
+		call func() (any, error)
+	}{
+		{"CreateTenant", func() (any, error) { return wrapper.CreateTenant(ctx, &CreateTenantRequest{Name: "t"}) }},
+		{"GetTenant", func() (any, error) { return wrapper.GetTenant(ctx, &GetTenantRequest{ID: "t-1"}) }},
+		{"UpdateTenant", func() (any, error) { return wrapper.UpdateTenant(ctx, &UpdateTenantRequest{ID: "t-1"}) }},
+		{"DeleteTenant", func() (any, error) { return wrapper.DeleteTenant(ctx, &DeleteTenantRequest{ID: "t-1"}) }},
+		{"ListTenants", func() (any, error) { return wrapper.ListTenants(ctx, &ListTenantsRequest{}) }},
 	}
-	wrapper := &iamServiceWrapper{provider: provider}
-
-	resp, err := wrapper.CreateTenant(context.Background(), &CreateTenantRequest{Name: "t"})
-
-	require.Error(t, err)
-	assert.Nil(t, resp)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			resp, err := tt.call()
+			requireUnavailable(t, err, "tenant manager not available")
+			assert.Nil(t, resp)
+		})
+	}
 }
 
 func TestIAMServiceWrapper_GetTenant_Success(t *testing.T) {
@@ -223,17 +233,6 @@ func TestIAMServiceWrapper_GetTenant_Success(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, resp)
 	assert.Equal(t, "t-1", resp.Tenant.ID)
-}
-
-func TestIAMServiceWrapper_GetTenant_ManagerUnavailable(t *testing.T) {
-	provider := &mockIAMServiceProvider{tenantMgr: nil}
-	wrapper := &iamServiceWrapper{provider: provider}
-
-	resp, err := wrapper.GetTenant(context.Background(), &GetTenantRequest{ID: "t-1"})
-
-	require.Error(t, err)
-	assert.Nil(t, resp)
-	assert.Contains(t, err.Error(), "tenant manager not available")
 }
 
 func TestIAMServiceWrapper_UpdateTenant_Success(t *testing.T) {
@@ -252,16 +251,6 @@ func TestIAMServiceWrapper_UpdateTenant_Success(t *testing.T) {
 	assert.Equal(t, "t-1", resp.Tenant.ID)
 }
 
-func TestIAMServiceWrapper_UpdateTenant_ManagerUnavailable(t *testing.T) {
-	provider := &mockIAMServiceProvider{tenantMgr: nil}
-	wrapper := &iamServiceWrapper{provider: provider}
-
-	resp, err := wrapper.UpdateTenant(context.Background(), &UpdateTenantRequest{ID: "t-1"})
-
-	require.Error(t, err)
-	assert.Nil(t, resp)
-}
-
 func TestIAMServiceWrapper_DeleteTenant_Success(t *testing.T) {
 	mockTM := &mockTenantManager{}
 	provider := &mockIAMServiceProvider{tenantMgr: mockTM}
@@ -272,16 +261,6 @@ func TestIAMServiceWrapper_DeleteTenant_Success(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, resp)
 	assert.True(t, resp.Deleted)
-}
-
-func TestIAMServiceWrapper_DeleteTenant_ManagerUnavailable(t *testing.T) {
-	provider := &mockIAMServiceProvider{tenantMgr: nil}
-	wrapper := &iamServiceWrapper{provider: provider}
-
-	resp, err := wrapper.DeleteTenant(context.Background(), &DeleteTenantRequest{ID: "t-1"})
-
-	require.Error(t, err)
-	assert.Nil(t, resp)
 }
 
 func TestIAMServiceWrapper_ListTenants_Success(t *testing.T) {
@@ -296,423 +275,196 @@ func TestIAMServiceWrapper_ListTenants_Success(t *testing.T) {
 	assert.Equal(t, int64(1), resp.TotalCount)
 }
 
-func TestIAMServiceWrapper_ListTenants_ManagerUnavailable(t *testing.T) {
-	provider := &mockIAMServiceProvider{tenantMgr: nil}
-	wrapper := &iamServiceWrapper{provider: provider}
-
-	resp, err := wrapper.ListTenants(context.Background(), &ListTenantsRequest{})
-
-	require.Error(t, err)
-	assert.Nil(t, resp)
-}
-
-func TestIAMServiceWrapper_CreateUser_IdentityStoreUnavailable(t *testing.T) {
-	provider := &mockIAMServiceProvider{identityStore: nil}
-	wrapper := &iamServiceWrapper{provider: provider}
-
-	resp, err := wrapper.CreateUser(context.Background(), &IAMCreateUserRequest{
-		TenantID: "t-1",
-		Email:    "user@example.com",
-	})
-
-	require.Error(t, err)
-	assert.Nil(t, resp)
-	assert.Contains(t, err.Error(), "identity store not available")
-}
-
-func TestIAMServiceWrapper_CreateUser_ProviderError(t *testing.T) {
-	provider := &mockIAMServiceProvider{
-		identityStoreErr: &testIAMError{msg: "identity store error"},
-	}
-	wrapper := &iamServiceWrapper{provider: provider}
-
-	resp, err := wrapper.CreateUser(context.Background(), &IAMCreateUserRequest{
-		TenantID: "t-1",
-		Email:    "user@example.com",
-	})
-
-	require.Error(t, err)
-	assert.Nil(t, resp)
-}
-
-func TestIAMServiceWrapper_GetUser_IdentityStoreUnavailable(t *testing.T) {
-	provider := &mockIAMServiceProvider{identityStore: nil}
-	wrapper := &iamServiceWrapper{provider: provider}
-
-	resp, err := wrapper.GetUser(context.Background(), &IAMGetUserRequest{
-		TenantID: "t-1",
-		UserID:   10001,
-	})
-
-	require.Error(t, err)
-	assert.Nil(t, resp)
-	assert.Contains(t, err.Error(), "identity store not available")
-}
-
-func TestIAMServiceWrapper_UpdateUser_IdentityStoreUnavailable(t *testing.T) {
-	provider := &mockIAMServiceProvider{identityStore: nil}
-	wrapper := &iamServiceWrapper{provider: provider}
-
-	resp, err := wrapper.UpdateUser(context.Background(), &IAMUpdateUserRequest{
-		TenantID: "t-1",
-		UserID:   10001,
-	})
-
-	require.Error(t, err)
-	assert.Nil(t, resp)
-	assert.Contains(t, err.Error(), "identity store not available")
-}
-
-// The request is judged before the wiring: with no identity store, a
-// malformed create is refused for its field, not as an unavailable store
-// (#335).
-func TestIAMServiceWrapper_CreateUser_MalformedEmailBeatsMissingIdentityStore(t *testing.T) {
+// With no identity store every user and role method returns the typed
+// ErrUnavailable. The malformed-email rows prove the request is judged
+// before the wiring: it is refused for its field, not as an unavailable
+// store (#335).
+func TestIAMServiceWrapper_IdentityStoreUnavailable(t *testing.T) {
 	wrapper := &iamServiceWrapper{provider: &mockIAMServiceProvider{identityStore: nil}}
+	ctx := context.Background()
+	malformed := "not-an-email"
 
-	resp, err := wrapper.CreateUser(context.Background(), &IAMCreateUserRequest{
-		TenantID: "t-1",
-		Email:    "not-an-email",
-		Name:     "Sam",
-	})
-
-	require.Error(t, err)
-	assert.Nil(t, resp)
-	var verr *iam.ValidationError
-	require.ErrorAs(t, err, &verr)
-	assert.Equal(t, "email", verr.Field)
-}
-
-func TestIAMServiceWrapper_UpdateUser_MalformedEmailBeatsMissingIdentityStore(t *testing.T) {
-	wrapper := &iamServiceWrapper{provider: &mockIAMServiceProvider{identityStore: nil}}
-	email := "not-an-email"
-
-	resp, err := wrapper.UpdateUser(context.Background(), &IAMUpdateUserRequest{
-		TenantID: "t-1",
-		UserID:   10001,
-		Email:    &email,
-	})
-
-	require.Error(t, err)
-	assert.Nil(t, resp)
-	var verr *iam.ValidationError
-	require.ErrorAs(t, err, &verr)
-	assert.Equal(t, "email", verr.Field)
-}
-
-func TestIAMServiceWrapper_DeleteUser_IdentityStoreUnavailable(t *testing.T) {
-	provider := &mockIAMServiceProvider{identityStore: nil}
-	wrapper := &iamServiceWrapper{provider: provider}
-
-	resp, err := wrapper.DeleteUser(context.Background(), &IAMDeleteUserRequest{
-		TenantID: "t-1",
-		UserID:   10001,
-	})
-
-	require.Error(t, err)
-	assert.Nil(t, resp)
-}
-
-func TestIAMServiceWrapper_ListUsers_IdentityStoreUnavailable(t *testing.T) {
-	provider := &mockIAMServiceProvider{identityStore: nil}
-	wrapper := &iamServiceWrapper{provider: provider}
-
-	resp, err := wrapper.ListUsers(context.Background(), &IAMListUsersRequest{
-		TenantID: "t-1",
-	})
-
-	require.Error(t, err)
-	assert.Nil(t, resp)
-}
-
-func TestIAMServiceWrapper_CreateRole_IdentityStoreUnavailable(t *testing.T) {
-	provider := &mockIAMServiceProvider{identityStore: nil}
-	wrapper := &iamServiceWrapper{provider: provider}
-
-	resp, err := wrapper.CreateRole(context.Background(), &IAMCreateRoleRequest{
-		TenantID: "t-1",
-		Name:     "admin",
-	})
-
-	require.Error(t, err)
-	assert.Nil(t, resp)
-}
-
-func TestIAMServiceWrapper_GetRole_IdentityStoreUnavailable(t *testing.T) {
-	provider := &mockIAMServiceProvider{identityStore: nil}
-	wrapper := &iamServiceWrapper{provider: provider}
-
-	resp, err := wrapper.GetRole(context.Background(), &IAMGetRoleRequest{
-		TenantID: "t-1",
-		RoleID:   "r-1",
-	})
-
-	require.Error(t, err)
-	assert.Nil(t, resp)
-}
-
-func TestIAMServiceWrapper_UpdateRole_IdentityStoreUnavailable(t *testing.T) {
-	provider := &mockIAMServiceProvider{identityStore: nil}
-	wrapper := &iamServiceWrapper{provider: provider}
-
-	resp, err := wrapper.UpdateRole(context.Background(), &IAMUpdateRoleRequest{
-		TenantID: "t-1",
-		RoleID:   "r-1",
-	})
-
-	require.Error(t, err)
-	assert.Nil(t, resp)
-}
-
-func TestIAMServiceWrapper_DeleteRole_IdentityStoreUnavailable(t *testing.T) {
-	provider := &mockIAMServiceProvider{identityStore: nil}
-	wrapper := &iamServiceWrapper{provider: provider}
-
-	resp, err := wrapper.DeleteRole(context.Background(), &IAMDeleteRoleRequest{
-		TenantID: "t-1",
-		RoleID:   "r-1",
-	})
-
-	require.Error(t, err)
-	assert.Nil(t, resp)
-}
-
-func TestIAMServiceWrapper_ListRoles_IdentityStoreUnavailable(t *testing.T) {
-	provider := &mockIAMServiceProvider{identityStore: nil}
-	wrapper := &iamServiceWrapper{provider: provider}
-
-	resp, err := wrapper.ListRoles(context.Background(), &IAMListRolesRequest{
-		TenantID: "t-1",
-	})
-
-	require.Error(t, err)
-	assert.Nil(t, resp)
-}
-
-func TestIAMServiceWrapper_AssignRole_ReturnsNotSupported(t *testing.T) {
-	provider := &mockIAMServiceProvider{}
-	wrapper := &iamServiceWrapper{provider: provider}
-
-	resp, err := wrapper.AssignRole(context.Background(), &AssignRoleRequest{
-		Username: "user1",
-		RoleName: "admin",
-	})
-
-	require.NoError(t, err)
-	require.NotNil(t, resp)
-	assert.False(t, resp.Success)
-	assert.Contains(t, resp.Message, "IAM AssignRole requires TenantID")
-}
-
-func TestIAMServiceWrapper_RevokeRole_ReturnsNotSupported(t *testing.T) {
-	provider := &mockIAMServiceProvider{}
-	wrapper := &iamServiceWrapper{provider: provider}
-
-	resp, err := wrapper.RevokeRole(context.Background(), &RevokeRoleRequest{
-		Username: "user1",
-		RoleName: "admin",
-	})
-
-	require.NoError(t, err)
-	require.NotNil(t, resp)
-	assert.False(t, resp.Success)
-	assert.Contains(t, resp.Message, "IAM RevokeRole requires TenantID")
-}
-
-func TestIAMServiceWrapper_RegisterApp_AppManagerUnavailable(t *testing.T) {
-	provider := &mockIAMServiceProvider{appMgr: nil}
-	wrapper := &iamServiceWrapper{provider: provider}
-
-	resp, err := wrapper.RegisterApp(context.Background(), &RegisterAppRequest{
-		TenantID: "t-1",
-		Name:     "my-app",
-	})
-
-	require.Error(t, err)
-	assert.Nil(t, resp)
-	assert.Contains(t, err.Error(), "app manager not available")
-}
-
-func TestIAMServiceWrapper_RegisterApp_ProviderError(t *testing.T) {
-	provider := &mockIAMServiceProvider{
-		appMgrErr: &testIAMError{msg: "app manager error"},
+	tests := []struct {
+		name string
+		call func() (any, error)
+		// wantField, when set, is the field a ValidationError must name
+		// instead of the unavailable store.
+		wantField string
+	}{
+		{name: "CreateUser", call: func() (any, error) {
+			return wrapper.CreateUser(ctx, &IAMCreateUserRequest{TenantID: "t-1", Email: "user@example.com"})
+		}},
+		{name: "GetUser", call: func() (any, error) {
+			return wrapper.GetUser(ctx, &IAMGetUserRequest{TenantID: "t-1", UserID: 10001})
+		}},
+		{name: "UpdateUser", call: func() (any, error) {
+			return wrapper.UpdateUser(ctx, &IAMUpdateUserRequest{TenantID: "t-1", UserID: 10001})
+		}},
+		{name: "DeleteUser", call: func() (any, error) {
+			return wrapper.DeleteUser(ctx, &IAMDeleteUserRequest{TenantID: "t-1", UserID: 10001})
+		}},
+		{name: "ListUsers", call: func() (any, error) {
+			return wrapper.ListUsers(ctx, &IAMListUsersRequest{TenantID: "t-1"})
+		}},
+		{name: "CreateRole", call: func() (any, error) {
+			return wrapper.CreateRole(ctx, &IAMCreateRoleRequest{TenantID: "t-1", Name: "admin"})
+		}},
+		{name: "GetRole", call: func() (any, error) {
+			return wrapper.GetRole(ctx, &IAMGetRoleRequest{TenantID: "t-1", RoleID: "r-1"})
+		}},
+		{name: "UpdateRole", call: func() (any, error) {
+			return wrapper.UpdateRole(ctx, &IAMUpdateRoleRequest{TenantID: "t-1", RoleID: "r-1"})
+		}},
+		{name: "DeleteRole", call: func() (any, error) {
+			return wrapper.DeleteRole(ctx, &IAMDeleteRoleRequest{TenantID: "t-1", RoleID: "r-1"})
+		}},
+		{name: "ListRoles", call: func() (any, error) {
+			return wrapper.ListRoles(ctx, &IAMListRolesRequest{TenantID: "t-1"})
+		}},
+		{name: "CreateUser_MalformedEmailBeatsMissingIdentityStore", wantField: "email", call: func() (any, error) {
+			return wrapper.CreateUser(ctx, &IAMCreateUserRequest{TenantID: "t-1", Email: malformed, Name: "Sam"})
+		}},
+		{name: "UpdateUser_MalformedEmailBeatsMissingIdentityStore", wantField: "email", call: func() (any, error) {
+			return wrapper.UpdateUser(ctx, &IAMUpdateUserRequest{TenantID: "t-1", UserID: 10001, Email: &malformed})
+		}},
 	}
-	wrapper := &iamServiceWrapper{provider: provider}
-
-	resp, err := wrapper.RegisterApp(context.Background(), &RegisterAppRequest{
-		TenantID: "t-1",
-		Name:     "my-app",
-	})
-
-	require.Error(t, err)
-	assert.Nil(t, resp)
-}
-
-func TestIAMServiceWrapper_GetApp_AppManagerUnavailable(t *testing.T) {
-	provider := &mockIAMServiceProvider{appMgr: nil}
-	wrapper := &iamServiceWrapper{provider: provider}
-
-	resp, err := wrapper.GetApp(context.Background(), &GetAppRequest{ClientID: "client-1"})
-
-	require.Error(t, err)
-	assert.Nil(t, resp)
-}
-
-func TestIAMServiceWrapper_UpdateApp_AppManagerUnavailable(t *testing.T) {
-	provider := &mockIAMServiceProvider{appMgr: nil}
-	wrapper := &iamServiceWrapper{provider: provider}
-
-	resp, err := wrapper.UpdateApp(context.Background(), &UpdateAppRequest{ClientID: "client-1"})
-
-	require.Error(t, err)
-	assert.Nil(t, resp)
-}
-
-func TestIAMServiceWrapper_DeleteApp_AppManagerUnavailable(t *testing.T) {
-	provider := &mockIAMServiceProvider{appMgr: nil}
-	wrapper := &iamServiceWrapper{provider: provider}
-
-	resp, err := wrapper.DeleteApp(context.Background(), &DeleteAppRequest{ClientID: "client-1"})
-
-	require.Error(t, err)
-	assert.Nil(t, resp)
-}
-
-func TestIAMServiceWrapper_ListApps_AppManagerUnavailable(t *testing.T) {
-	provider := &mockIAMServiceProvider{appMgr: nil}
-	wrapper := &iamServiceWrapper{provider: provider}
-
-	resp, err := wrapper.ListApps(context.Background(), &ListAppsRequest{TenantID: "t-1"})
-
-	require.Error(t, err)
-	assert.Nil(t, resp)
-}
-
-func TestIAMServiceWrapper_RotateAppSecret_AppManagerUnavailable(t *testing.T) {
-	provider := &mockIAMServiceProvider{appMgr: nil}
-	wrapper := &iamServiceWrapper{provider: provider}
-
-	resp, err := wrapper.RotateAppSecret(context.Background(), &RotateAppSecretRequest{ClientID: "client-1"})
-
-	require.Error(t, err)
-	assert.Nil(t, resp)
-}
-
-func TestIAMServiceWrapper_CreatePolicy_PolicyEngineUnavailable(t *testing.T) {
-	provider := &mockIAMServiceProvider{policyEngine: nil}
-	wrapper := &iamServiceWrapper{provider: provider}
-
-	resp, err := wrapper.CreatePolicy(context.Background(), &CreatePolicyRequest{
-		TenantID: "t-1",
-		Policy:   testPolicy("test-policy"),
-	})
-
-	require.Error(t, err)
-	assert.Nil(t, resp)
-	assert.Contains(t, err.Error(), "policy engine not available")
-}
-
-func TestIAMServiceWrapper_CreatePolicy_ProviderError(t *testing.T) {
-	provider := &mockIAMServiceProvider{
-		policyEngineErr: &testIAMError{msg: "policy engine error"},
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			resp, err := tt.call()
+			assert.Nil(t, resp)
+			if tt.wantField == "" {
+				requireUnavailable(t, err, "identity store not available")
+				return
+			}
+			var verr *iam.ValidationError
+			require.ErrorAs(t, err, &verr)
+			assert.Equal(t, tt.wantField, verr.Field)
+		})
 	}
-	wrapper := &iamServiceWrapper{provider: provider}
-
-	resp, err := wrapper.CreatePolicy(context.Background(), &CreatePolicyRequest{
-		TenantID: "t-1",
-		Policy:   testPolicy("test-policy"),
-	})
-
-	require.Error(t, err)
-	assert.Nil(t, resp)
 }
 
-func TestIAMServiceWrapper_GetPolicy_PolicyEngineUnavailable(t *testing.T) {
-	provider := &mockIAMServiceProvider{policyEngine: nil}
-	wrapper := &iamServiceWrapper{provider: provider}
+// AssignRole and RevokeRole without a TenantID answer with an unsuccessful
+// response, not an error.
+func TestIAMServiceWrapper_RoleBindingWithoutTenantNotSupported(t *testing.T) {
+	wrapper := &iamServiceWrapper{provider: &mockIAMServiceProvider{}}
+	ctx := context.Background()
 
-	resp, err := wrapper.GetPolicy(context.Background(), &GetPolicyRequest{
-		TenantID: "t-1",
-		Name:     "test-policy",
+	t.Run("AssignRole", func(t *testing.T) {
+		resp, err := wrapper.AssignRole(ctx, &AssignRoleRequest{Username: "user1", RoleName: "admin"})
+		require.NoError(t, err)
+		require.NotNil(t, resp)
+		assert.False(t, resp.Success)
+		assert.Contains(t, resp.Message, "IAM AssignRole requires TenantID")
 	})
-
-	require.Error(t, err)
-	assert.Nil(t, resp)
+	t.Run("RevokeRole", func(t *testing.T) {
+		resp, err := wrapper.RevokeRole(ctx, &RevokeRoleRequest{Username: "user1", RoleName: "admin"})
+		require.NoError(t, err)
+		require.NotNil(t, resp)
+		assert.False(t, resp.Success)
+		assert.Contains(t, resp.Message, "IAM RevokeRole requires TenantID")
+	})
 }
 
-func TestIAMServiceWrapper_UpdatePolicy_PolicyEngineUnavailable(t *testing.T) {
-	provider := &mockIAMServiceProvider{policyEngine: nil}
-	wrapper := &iamServiceWrapper{provider: provider}
+func TestIAMServiceWrapper_AppManagerUnavailable(t *testing.T) {
+	wrapper := &iamServiceWrapper{provider: &mockIAMServiceProvider{appMgr: nil}}
+	ctx := context.Background()
 
-	resp, err := wrapper.UpdatePolicy(context.Background(), &UpdatePolicyRequest{
-		TenantID: "t-1",
-		Policy:   testPolicy("test-policy"),
-	})
-
-	require.Error(t, err)
-	assert.Nil(t, resp)
-}
-
-func TestIAMServiceWrapper_DeletePolicy_PolicyEngineUnavailable(t *testing.T) {
-	provider := &mockIAMServiceProvider{policyEngine: nil}
-	wrapper := &iamServiceWrapper{provider: provider}
-
-	resp, err := wrapper.DeletePolicy(context.Background(), &DeletePolicyRequest{
-		TenantID: "t-1",
-		Name:     "test-policy",
-	})
-
-	require.Error(t, err)
-	assert.Nil(t, resp)
-}
-
-func TestIAMServiceWrapper_ListPolicies_PolicyEngineUnavailable(t *testing.T) {
-	provider := &mockIAMServiceProvider{policyEngine: nil}
-	wrapper := &iamServiceWrapper{provider: provider}
-
-	resp, err := wrapper.ListPolicies(context.Background(), &ListPoliciesRequest{
-		TenantID: "t-1",
-	})
-
-	require.Error(t, err)
-	assert.Nil(t, resp)
-}
-
-func TestIAMServiceWrapper_ValidatePolicy_PolicyEngineUnavailable(t *testing.T) {
-	provider := &mockIAMServiceProvider{policyEngine: nil}
-	wrapper := &iamServiceWrapper{provider: provider}
-
-	resp, err := wrapper.ValidatePolicy(context.Background(), &ValidatePolicyRequest{
-		Policy: testPolicy("test-policy"),
-	})
-
-	require.Error(t, err)
-	assert.Nil(t, resp)
-}
-
-func TestIAMServiceWrapper_TestPolicy_PolicyEngineUnavailable(t *testing.T) {
-	provider := &mockIAMServiceProvider{policyEngine: nil}
-	wrapper := &iamServiceWrapper{provider: provider}
-
-	resp, err := wrapper.TestPolicy(context.Background(), &TestPolicyRequest{
-		Check: &iam.CheckRequest{},
-	})
-
-	require.Error(t, err)
-	assert.Nil(t, resp)
-}
-
-func TestIAMServiceWrapper_TestPolicy_ProviderError(t *testing.T) {
-	provider := &mockIAMServiceProvider{
-		policyEngineErr: &testIAMError{msg: "policy engine error"},
+	tests := []struct {
+		name string
+		call func() (any, error)
+	}{
+		{"RegisterApp", func() (any, error) {
+			return wrapper.RegisterApp(ctx, &RegisterAppRequest{TenantID: "t-1", Name: "my-app"})
+		}},
+		{"GetApp", func() (any, error) { return wrapper.GetApp(ctx, &GetAppRequest{ClientID: "client-1"}) }},
+		{"UpdateApp", func() (any, error) { return wrapper.UpdateApp(ctx, &UpdateAppRequest{ClientID: "client-1"}) }},
+		{"DeleteApp", func() (any, error) { return wrapper.DeleteApp(ctx, &DeleteAppRequest{ClientID: "client-1"}) }},
+		{"ListApps", func() (any, error) { return wrapper.ListApps(ctx, &ListAppsRequest{TenantID: "t-1"}) }},
+		{"RotateAppSecret", func() (any, error) {
+			return wrapper.RotateAppSecret(ctx, &RotateAppSecretRequest{ClientID: "client-1"})
+		}},
 	}
-	wrapper := &iamServiceWrapper{provider: provider}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			resp, err := tt.call()
+			requireUnavailable(t, err, "app manager not available")
+			assert.Nil(t, resp)
+		})
+	}
+}
 
-	resp, err := wrapper.TestPolicy(context.Background(), &TestPolicyRequest{
-		Check: &iam.CheckRequest{},
-	})
+func TestIAMServiceWrapper_PolicyEngineUnavailable(t *testing.T) {
+	wrapper := &iamServiceWrapper{provider: &mockIAMServiceProvider{policyEngine: nil}}
+	ctx := context.Background()
 
-	require.Error(t, err)
-	assert.Nil(t, resp)
+	tests := []struct {
+		name string
+		call func() (any, error)
+	}{
+		{"CreatePolicy", func() (any, error) {
+			return wrapper.CreatePolicy(ctx, &CreatePolicyRequest{TenantID: "t-1", Policy: testPolicy("test-policy")})
+		}},
+		{"GetPolicy", func() (any, error) {
+			return wrapper.GetPolicy(ctx, &GetPolicyRequest{TenantID: "t-1", Name: "test-policy"})
+		}},
+		{"UpdatePolicy", func() (any, error) {
+			return wrapper.UpdatePolicy(ctx, &UpdatePolicyRequest{TenantID: "t-1", Policy: testPolicy("test-policy")})
+		}},
+		{"DeletePolicy", func() (any, error) {
+			return wrapper.DeletePolicy(ctx, &DeletePolicyRequest{TenantID: "t-1", Name: "test-policy"})
+		}},
+		{"ListPolicies", func() (any, error) { return wrapper.ListPolicies(ctx, &ListPoliciesRequest{TenantID: "t-1"}) }},
+		{"ValidatePolicy", func() (any, error) {
+			return wrapper.ValidatePolicy(ctx, &ValidatePolicyRequest{Policy: testPolicy("test-policy")})
+		}},
+		{"TestPolicy", func() (any, error) {
+			return wrapper.TestPolicy(ctx, &TestPolicyRequest{Check: &iam.CheckRequest{}})
+		}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			resp, err := tt.call()
+			requireUnavailable(t, err, "policy engine not available")
+			assert.Nil(t, resp)
+		})
+	}
+}
+
+// A provider that fails to hand out a dependency fails the call with that
+// error, whichever dependency the method needs.
+func TestIAMServiceWrapper_ProviderError(t *testing.T) {
+	ctx := context.Background()
+	failing := &testIAMError{msg: "provider failed"}
+
+	tests := []struct {
+		name     string
+		provider *mockIAMServiceProvider
+		call     func(w *iamServiceWrapper) (any, error)
+	}{
+		{"CreateTenant", &mockIAMServiceProvider{tenantMgrErr: failing}, func(w *iamServiceWrapper) (any, error) {
+			return w.CreateTenant(ctx, &CreateTenantRequest{Name: "t"})
+		}},
+		{"CreateUser", &mockIAMServiceProvider{identityStoreErr: failing}, func(w *iamServiceWrapper) (any, error) {
+			return w.CreateUser(ctx, &IAMCreateUserRequest{TenantID: "t-1", Email: "user@example.com"})
+		}},
+		{"RegisterApp", &mockIAMServiceProvider{appMgrErr: failing}, func(w *iamServiceWrapper) (any, error) {
+			return w.RegisterApp(ctx, &RegisterAppRequest{TenantID: "t-1", Name: "my-app"})
+		}},
+		{"CreatePolicy", &mockIAMServiceProvider{policyEngineErr: failing}, func(w *iamServiceWrapper) (any, error) {
+			return w.CreatePolicy(ctx, &CreatePolicyRequest{TenantID: "t-1", Policy: testPolicy("test-policy")})
+		}},
+		{"TestPolicy", &mockIAMServiceProvider{policyEngineErr: failing}, func(w *iamServiceWrapper) (any, error) {
+			return w.TestPolicy(ctx, &TestPolicyRequest{Check: &iam.CheckRequest{}})
+		}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			resp, err := tt.call(&iamServiceWrapper{provider: tt.provider})
+			var got *testIAMError
+			require.ErrorAs(t, err, &got)
+			assert.Nil(t, resp)
+		})
+	}
 }
 
 func (e *testIAMError) Error() string {

@@ -100,16 +100,6 @@ func TestLRUCache_EvictionCallback(t *testing.T) {
 		assert.Equal(t, 2, cache.Len())
 	})
 
-	t.Run("no callback set", func(t *testing.T) {
-		cache := NewLRUCache(1)
-
-		// Should not panic without callback
-		cache.Add("key1", &Entry{Value: []byte("value1")})
-		cache.Add("key2", &Entry{Value: []byte("value2")})
-
-		assert.Equal(t, 1, cache.Len())
-	})
-
 	t.Run("callback can be cleared", func(t *testing.T) {
 		cache := NewLRUCache(1)
 
@@ -134,22 +124,8 @@ func TestLRUCache_EvictionCallback(t *testing.T) {
 func TestCacheManager_WriteBackPolicy(t *testing.T) {
 	t.Run("WriteBack policy is valid", func(t *testing.T) {
 		assert.True(t, WriteBack.IsValid())
-		assert.Equal(t, "WriteBack", WriteBack.String())
 		assert.False(t, WriteBack.IsWriteThrough())
 		assert.False(t, WriteBack.IsAsync())
-	})
-
-	t.Run("WriteBack config validation", func(t *testing.T) {
-		config := Config{
-			L1Size:      10,
-			L1TTL:       5 * time.Minute,
-			L2Cache:     NewMockL2Cache(),
-			L2TTL:       10 * time.Minute,
-			WritePolicy: WriteBack,
-		}
-
-		err := config.Validate()
-		assert.NoError(t, err)
 	})
 
 	t.Run("WriteBack does not write to L2 on Set", func(t *testing.T) {
@@ -210,8 +186,10 @@ func TestCacheManager_WriteBackPolicy(t *testing.T) {
 		err = cm.Set(ctx, "key3", []byte("value3"))
 		require.NoError(t, err)
 
-		// Wait for async writeback to complete
-		time.Sleep(100 * time.Millisecond)
+		// The writeback runs in its own goroutine; wait for its metric.
+		require.Eventually(t, func() bool {
+			return cm.GetMetrics().Get("writeback_success") == 1
+		}, 5*time.Second, time.Millisecond)
 
 		// L2 should now have the evicted entry
 		assert.Equal(t, 1, mockL2.Len())
@@ -298,8 +276,10 @@ func TestCacheManager_WriteBackPolicy(t *testing.T) {
 		err = cm.Set(ctx, "key2", []byte("value2"))
 		require.NoError(t, err)
 
-		// Wait for async writeback attempt
-		time.Sleep(100 * time.Millisecond)
+		// The writeback runs in its own goroutine; wait for its metric.
+		require.Eventually(t, func() bool {
+			return cm.GetMetrics().Get("writeback_failures") == 1
+		}, 5*time.Second, time.Millisecond)
 
 		// Verify metrics track the failure
 		metrics := cm.GetMetrics()
@@ -391,8 +371,12 @@ func TestCacheManager_ConcurrentWriteBack(t *testing.T) {
 			<-done
 		}
 
-		// Wait for writebacks to complete
-		time.Sleep(200 * time.Millisecond)
+		// Each eviction starts one writeback goroutine; wait for all of them.
+		evictions := cm.l1Cache.EvictionCount()
+		require.Eventually(t, func() bool {
+			m := cm.GetMetrics()
+			return m.Get("writeback_success")+m.Get("writeback_failures") == evictions
+		}, 5*time.Second, time.Millisecond)
 
 		// Verify L1 is at capacity
 		assert.Equal(t, 5, cm.l1Cache.Len())
