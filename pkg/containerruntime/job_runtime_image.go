@@ -115,6 +115,21 @@ func (j *JobRuntime) InspectImage(ctx context.Context, image string) (*orchestra
 	return &orchestration.ImageInfo{ID: id, Labels: labels, RepoDigests: repoDigests(record)}, nil
 }
 
+// TagImage gives the stored image source, a reference or a "sha256:" ID, the
+// name target as well, as `docker tag` does, in-process.
+func (j *JobRuntime) TagImage(ctx context.Context, source, target string) error {
+	if strings.TrimSpace(source) == "" {
+		return &orchestration.InputValidationError{Field: "source", Message: "cannot be empty"}
+	}
+	if strings.TrimSpace(target) == "" {
+		return &orchestration.InputValidationError{Field: "target", Message: "cannot be empty"}
+	}
+	if err := j.runtime.backends.images.Tag(ctx, source, target); err != nil {
+		return &orchestration.ImageTagError{Source: source, Target: target, Cause: err}
+	}
+	return nil
+}
+
 // repoDigests pairs each repository the image is named by with each manifest
 // digest it is stored under, as "repository@sha256:<hex>".
 func repoDigests(record imageRecord) []string {

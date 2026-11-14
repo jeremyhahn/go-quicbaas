@@ -121,6 +121,11 @@ type imageStore interface {
 	// Remove deletes the stored image ref names. With force, an image that
 	// is not stored is not an error.
 	Remove(ctx context.Context, ref string, force bool) error
+
+	// Tag gives the stored image source, a reference or a "sha256:" ID,
+	// the name target as well, moving the name off any image that held it.
+	// A source that is not stored is an error matching ErrImageNotFound.
+	Tag(ctx context.Context, source, target string) error
 }
 
 // rootfsStore unpacks an image's layers into a container root filesystem.

@@ -133,6 +133,46 @@ func TestJobRuntime_InspectImage(t *testing.T) {
 	})
 }
 
+// TagImage is the in-process `docker tag`: the stored image takes the target
+// name, whether the source names it by reference or by ID. Ported from the
+// exec runtime's TestTagImage.
+func TestJobRuntime_TagImage(t *testing.T) {
+	t.Run("ByReference", func(t *testing.T) {
+		jr, doubles := newTestJobRuntime(t)
+		doubles.images.images["alpine:latest"] = testImageRecord("docker.io/library/alpine:latest", nil)
+
+		require.NoError(t, jr.TagImage(t.Context(), "alpine:latest", "reg/o/w:1"))
+		info, err := jr.InspectImage(t.Context(), "reg/o/w:1")
+		require.NoError(t, err)
+		assert.NotEmpty(t, info.ID)
+	})
+
+	t.Run("ByID", func(t *testing.T) {
+		jr, doubles := newTestJobRuntime(t)
+		record := testImageRecord("docker.io/library/alpine:latest", nil)
+		record.ID = strings.Repeat("d", 64)
+		doubles.images.images["alpine:latest"] = record
+
+		require.NoError(t, jr.TagImage(t.Context(), "sha256:"+record.ID, "reg/o/w:1"))
+		info, err := jr.InspectImage(t.Context(), "reg/o/w:1")
+		require.NoError(t, err)
+		assert.Equal(t, "sha256:"+record.ID, info.ID)
+	})
+
+	t.Run("Validation", func(t *testing.T) {
+		jr, _ := newTestJobRuntime(t)
+		requireInputValidation(t, jr.TagImage(t.Context(), " ", "t"), "source")
+		requireInputValidation(t, jr.TagImage(t.Context(), "s", ""), "target")
+	})
+
+	t.Run("AMissingSourceIsATagError", func(t *testing.T) {
+		jr, _ := newTestJobRuntime(t)
+		err := jr.TagImage(t.Context(), "missing:latest", "reg/o/w:1")
+		require.ErrorIs(t, err, orchestration.ErrImageTag)
+		require.ErrorIs(t, err, ErrImageNotFound)
+	})
+}
+
 func TestImageRepository(t *testing.T) {
 	for name, want := range map[string]string{
 		"alpine":                                    "alpine",

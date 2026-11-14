@@ -19,6 +19,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -73,6 +74,27 @@ func TestStorageImageStore_RemoveOfAMissingImage(t *testing.T) {
 	require.NoError(t, b.images.Remove(context.Background(), "alpine:latest", true))
 	err := b.images.Remove(context.Background(), "alpine:latest", false)
 	require.ErrorIs(t, err, ErrImageNotFound)
+}
+
+func TestStorageImageStore_Tag(t *testing.T) {
+	ctx := context.Background()
+	b := newStorageBackends(t)
+	images, ok := b.images.(*storageImageStore)
+	require.True(t, ok)
+	stored, err := images.store.CreateImage("", []string{"docker.io/library/alpine:latest"}, "", "", nil)
+	require.NoError(t, err)
+
+	require.NoError(t, images.Tag(ctx, "alpine:latest", "reg.example/o/w:1"))
+	require.NoError(t, images.Tag(ctx, "sha256:"+stored.ID, "reg.example/o/w:2"))
+	got, err := images.store.Image(stored.ID)
+	require.NoError(t, err)
+	require.ElementsMatch(t, []string{
+		"docker.io/library/alpine:latest", "reg.example/o/w:1", "reg.example/o/w:2",
+	}, got.Names)
+
+	require.ErrorIs(t, images.Tag(ctx, "missing:latest", "reg.example/o/w:3"), ErrImageNotFound)
+	require.ErrorIs(t, images.Tag(ctx, "sha256:"+strings.Repeat("e", 64), "reg.example/o/w:3"), ErrImageNotFound)
+	require.Error(t, images.Tag(ctx, "alpine:latest", "Not A Reference"))
 }
 
 func TestStorageImageStore_PullHonoursTheSignaturePolicy(t *testing.T) {

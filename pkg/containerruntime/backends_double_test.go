@@ -20,6 +20,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"syscall"
 	"testing"
@@ -341,6 +342,26 @@ func (s *fakeImages) Remove(ctx context.Context, ref string, force bool) error {
 		return ErrImageNotFound
 	}
 	delete(s.images, ref)
+	return nil
+}
+
+func (s *fakeImages) Tag(ctx context.Context, source, target string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	record, ok := s.images[source]
+	if !ok {
+		id := strings.TrimPrefix(source, "sha256:")
+		for _, candidate := range s.images {
+			if candidate.ID != "" && candidate.ID == id {
+				record, ok = candidate, true
+				break
+			}
+		}
+	}
+	if !ok {
+		return ErrImageNotFound
+	}
+	s.images[target] = record
 	return nil
 }
 
