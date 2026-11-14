@@ -74,6 +74,18 @@ func newXKMSCAServicer(ca xkmssdk.TrustedCA, spiffeTrustDomain string) *xkmsCASe
 	return &xkmsCAServicer{ca: ca, spiffeTrustDomain: spiffeTrustDomain}
 }
 
+// NewXKMSCAService returns the go-xkms CAService adapter the REST
+// /api/v1/xkms/ca/* routes serve, so the server's other transports (MCP
+// xkms.ca.*) serve the same go-xkms CA with the same tenant and SPIFFE rules
+// (#1330). It returns nil when ca is nil.
+func NewXKMSCAService(ca xkmssdk.TrustedCA, spiffeTrustDomain string) xkmstransport.CAService {
+	s := newXKMSCAServicer(ca, spiffeTrustDomain)
+	if s == nil {
+		return nil
+	}
+	return s
+}
+
 // GetCABundle returns the CA bundle as PEM bytes plus individual DER
 // certificates, matching the go-xkms REST contract.
 func (a *xkmsCAServicer) GetCABundle(_ context.Context, _ *xkmstransport.GetCABundleRequest) (*xkmstransport.GetCABundleResponse, error) {

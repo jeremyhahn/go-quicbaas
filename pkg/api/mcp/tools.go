@@ -32,6 +32,7 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/pkg/util/id"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+	xkmstransport "github.com/jeremyhahn/go-xkms/sdk/go/transport"
 )
 
 // ToolRegistry manages MCP tools and their execution.
@@ -45,6 +46,9 @@ type ToolRegistry struct {
 	// is online; nil during early boot and unit tests, in which case the
 	// barrier dispatcher returns BarrierServiceUnavailableError.
 	barrierSvc service.BarrierServicer
+	// caSvc is the go-xkms CA the xkms.ca.* tools serve (#1330); nil until
+	// SetCAService, when those tools report "operation not supported".
+	caSvc xkmstransport.CAService
 
 	// ceremonySvc backs every quicbaas_ceremony_* tool. Wired
 	// post-construction via SetCeremonyService once the qrdb SDK
@@ -934,6 +938,11 @@ func (r *ToolRegistry) ListTools() []ToolDefinition {
 // then return BarrierServiceUnavailableError.
 func (r *ToolRegistry) SetBarrierService(svc service.BarrierServicer) {
 	r.barrierSvc = svc
+}
+
+// SetCAService wires the go-xkms CA the xkms.ca.* tools serve (#1330).
+func (r *ToolRegistry) SetCAService(svc xkmstransport.CAService) {
+	r.caSvc = svc
 }
 
 // SetCeremonyService installs the CeremonyServicer used by every
