@@ -141,11 +141,11 @@ var orchestratorMCPTransforms = map[string]orchestratorMCPTransform{
 	"GetCostSettings": decodeMCPCostSettings,
 	"SetCostSettings": decodeMCPCostSettings,
 
-	"DeclareFleetPlacementSpec":  decodeMCPInto[orchestrator.FleetPlacementSpec],
-	"GetFleetPlacementSpec":      decodeMCPInto[orchestrator.FleetPlacementSpec],
-	"ListFleetPlacementSpecs":    decodeMCPInto[orchestrator.ListFleetPlacementSpecsResponse],
-	"WithdrawFleetPlacementSpec": decodeMCPInto[orchestrator.WithdrawFleetPlacementSpecResponse],
-	"GetFleetPlacementDrift":     decodeMCPInto[orchestrator.FleetPlacementDrift],
+	"DeclareFleetPlacementSpec":  decodeMCPPlacement[orchestrator.FleetPlacementSpec],
+	"GetFleetPlacementSpec":      decodeMCPPlacement[orchestrator.FleetPlacementSpec],
+	"ListFleetPlacementSpecs":    decodeMCPPlacement[orchestrator.ListFleetPlacementSpecsResponse],
+	"WithdrawFleetPlacementSpec": decodeMCPPlacement[orchestrator.WithdrawFleetPlacementSpecResponse],
+	"GetFleetPlacementDrift":     decodeMCPPlacement[orchestrator.FleetPlacementDrift],
 
 	"FleetNodeHeartbeat": decodeMCPFleetNodeHeartbeat,
 	"GetFleetNode":       decodeMCPGetFleetNode,
@@ -725,9 +725,9 @@ func decodeMCPCostSettings(raw []byte) (interface{}, error) {
 	return &out, nil
 }
 
-// decodeMCPInto decodes a tool result into a T, for the fleet placement
+// decodeMCPPlacement decodes a tool result into a T, for the fleet placement
 // results whose JSON names match the server's (go-quicbaas#1681).
-func decodeMCPInto[T any](raw []byte) (interface{}, error) {
+func decodeMCPPlacement[T any](raw []byte) (interface{}, error) {
 	var out T
 	if err := json.Unmarshal(raw, &out); err != nil {
 		return nil, errors.Wrap(err, errors.CodeInternal,
