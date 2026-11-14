@@ -110,10 +110,10 @@ func (f *fakeAVRDevice) portClosed() bool {
 }
 
 // withAVRPort substitutes the serial-port opener for the test.
-func withAVRPort(t *testing.T, open func(path string, baud int) (io.ReadWriteCloser, error)) {
+func withAVRPort(t *testing.T, open AVRPortOpener) {
 	t.Helper()
 	prev := openAVRPort
-	openAVRPort = open
+	SetAVRPortOpener(open)
 	t.Cleanup(func() { openAVRPort = prev })
 }
 
@@ -176,8 +176,12 @@ func TestBackendResolver_AVRConstructErrors(t *testing.T) {
 	silent := newFakeAVRDevice(t, true)
 	cases := map[string]struct {
 		cfg  func() *config.Config
-		open func(string, int) (io.ReadWriteCloser, error)
+		open AVRPortOpener
 	}{
+		"no transport composed": {
+			cfg:  avrConfig,
+			open: nil,
+		},
 		"no device": {
 			cfg: func() *config.Config { c := avrConfig(); c.KMS.AVR.Device = ""; return c },
 			open: func(string, int) (io.ReadWriteCloser, error) {

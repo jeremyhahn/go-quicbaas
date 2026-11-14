@@ -254,6 +254,18 @@ so an absent or silent device fails startup with a `BackendConstructError`)
 and closes the port when the backend closes. The device holds one fixed
 identity key, so it signs with that key and has no CA `StoreType`.
 
+The serial transport is composed in `cmd/quicbaasd`
+([`device_transports.go`](../../cmd/quicbaasd/device_transports.go) calls
+`server.SetAVRPortOpener(serialport.Open)`), not in `pkg/server`. The QuicBaaS
+SDK links `pkg/server` as its embedded server, so its consumer,
+go-trusted-platform, would otherwise link the device transport too. It reaches
+device-backed keys through the SDK's KMS client instead. A binary that
+composes no transport fails `avr` with a `BackendConstructError`.
+`sdk/go/device_adapter_isolation_test.go` proves the SDK's dependency graph
+carries no device transport. go-xkms's own SDK re-exports its AVR backend and
+the trusted-firmware protocol package; that is go-xkms's graph, not a QuicBaaS
+composition.
+
 ```yaml
 kms:
   enabled: true
