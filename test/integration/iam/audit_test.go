@@ -423,26 +423,33 @@ func TestAuditEventDelete(t *testing.T) {
 	require.NotEmpty(t, beforeResp.Events, "the chain should hold the user creation events")
 
 	// Send the audit delete the API serves: DELETE /api/v1/iam/audit with a
-	// future cut-off, which names every event in the chain. The audit log is
-	// append-only (go-qrdb's audit chain), so the delete never erases an
-	// event: the auditor, who holds no audit:delete grant, is refused, and
-	// a granted caller deletes nothing.
+	// future cut-off, which names every event in the chain.
 	futureTime := time.Now().Add(1 * time.Hour).UTC()
 	deletePath := fmt.Sprintf("/api/v1/iam/audit?tenant_id=%s&before=%s",
 		tenantID, url.QueryEscape(futureTime.Format(time.RFC3339)))
-	deleteResp, err := auditor.doHTTPRequest(http.MethodDelete, deletePath, nil)
-	require.NoError(t, err, "Should send the audit delete")
-	deleteBody, _ := io.ReadAll(deleteResp.Body)
-	deleteResp.Body.Close()
-	require.Contains(t, []int{http.StatusOK, http.StatusForbidden}, deleteResp.StatusCode,
-		"the audit delete should answer 200 or 403, got %d: %s", deleteResp.StatusCode, deleteBody)
-	if deleteResp.StatusCode == http.StatusOK {
-		var deleted struct {
-			DeletedCount int `json:"deleted_count"`
-		}
-		require.NoError(t, json.Unmarshal(deleteBody, &deleted), "audit delete response")
-		assert.Zero(t, deleted.DeletedCount, "the append-only audit chain should delete nothing")
-	}
+
+	// The auditor holds no audit:delete grant and is refused.
+	refusedResp, err := auditor.doHTTPRequest(http.MethodDelete, deletePath, nil)
+	require.NoError(t, err, "Should send the auditor's audit delete")
+	refusedBody, _ := io.ReadAll(refusedResp.Body)
+	refusedResp.Body.Close()
+	require.Equal(t, http.StatusForbidden, refusedResp.StatusCode,
+		"an auditor without audit:delete should be refused: %s", refusedBody)
+
+	// The first-boot super_admin holds audit:delete (pkg/server/iam_init.go),
+	// but its assignment is scoped to the system tenant, and the delete is
+	// tenant-scoped to the caller's own tenant (iam.ResolveRequestTenant)
+	// BEFORE the permission check. So the server refuses it on tenant scope:
+	// no principal can reach another tenant's audit chain, and the
+	// survival check below holds against both refusals.
+	superResp, err := cluster.asSystemAdmin().doHTTPRequest(http.MethodDelete, deletePath, nil)
+	require.NoError(t, err, "Should send the super_admin's audit delete")
+	superBody, _ := io.ReadAll(superResp.Body)
+	superResp.Body.Close()
+	require.Equal(t, http.StatusForbidden, superResp.StatusCode,
+		"the super_admin's delete of another tenant's chain should be refused: %s", superBody)
+	assert.Contains(t, string(superBody), "may not access tenant "+tenantID,
+		"the super_admin should be refused on tenant scope, not on permission")
 
 	// Every event read before the delete is still in the chain after it.
 	// The count may grow: each authorized request, these reads and the
@@ -457,6 +464,59 @@ func TestAuditEventDelete(t *testing.T) {
 		assert.True(t, afterIDs[ev.ID], "audit event %s should survive the delete", ev.ID)
 	}
 	assert.GreaterOrEqual(t, afterResp.Total, beforeResp.Total, "the audit delete should not reduce the event count")
+
+	// The authorized path: the first-boot super_admin deletes from its OWN
+	// (system) tenant's chain. With no tenant_id the delete resolves to the
+	// caller's tenant (iam.ResolveRequestTenant), and the super_admin's
+	// system-scoped assignment holds audit:delete, so the server runs the
+	// delete. The chain is append-only, so it erases nothing.
+	systemAdmin := cluster.asSystemAdmin()
+	// Events at or before the cut-off are already written, so the set read
+	// with it is stable while the chain grows with these requests.
+	readCutoff := time.Now().Add(-time.Second).UTC().Truncate(time.Second)
+	systemBefore := systemAuditEventIDs(t, systemAdmin, readCutoff)
+	require.NotEmpty(t, systemBefore, "the system chain should hold events before the delete")
+
+	systemDeletePath := "/api/v1/iam/audit?before=" + url.QueryEscape(futureTime.Format(time.RFC3339))
+	systemResp, err := systemAdmin.doHTTPRequest(http.MethodDelete, systemDeletePath, nil)
+	require.NoError(t, err, "Should send the super_admin's system-chain audit delete")
+	systemBody, _ := io.ReadAll(systemResp.Body)
+	systemResp.Body.Close()
+	require.Equal(t, http.StatusOK, systemResp.StatusCode,
+		"the super_admin's delete of its own chain should be authorized: %s", systemBody)
+	var systemDeleted struct {
+		DeletedCount *int `json:"deleted_count"`
+	}
+	require.NoError(t, json.Unmarshal(systemBody, &systemDeleted), "system audit delete response")
+	require.NotNil(t, systemDeleted.DeletedCount,
+		"the audit delete response should carry deleted_count: %s", systemBody)
+	assert.Zero(t, *systemDeleted.DeletedCount, "the append-only audit chain should delete nothing")
+
+	systemAfter := systemAuditEventIDs(t, systemAdmin, readCutoff)
+	for id := range systemBefore {
+		assert.True(t, systemAfter[id], "system audit event %s should survive the delete", id)
+	}
+}
+
+// systemAuditEventIDs reads, page by page, the IDs of every event in the
+// caller's own (system) tenant chain up to cutoff. The cut-off is in the
+// past, so the set does not move between pages or between reads.
+func systemAuditEventIDs(t *testing.T, systemAdmin *testCluster, cutoff time.Time) map[string]bool {
+	t.Helper()
+	const pageSize = 1000
+	ids := make(map[string]bool)
+	for offset := 0; ; offset += pageSize {
+		path := fmt.Sprintf("/api/v1/iam/audit?end_time=%s&limit=%d&offset=%d",
+			url.QueryEscape(cutoff.Format(time.RFC3339)), pageSize, offset)
+		var page AuditQueryResponse
+		require.NoError(t, systemAdmin.getJSON(path, &page), "Should query the system audit chain")
+		for _, ev := range page.Events {
+			ids[ev.ID] = true
+		}
+		if len(page.Events) < pageSize || offset+pageSize >= page.Total {
+			return ids
+		}
+	}
 }
 
 // TestAuditEventTenantIsolation tests that audit events are properly isolated between tenants.
