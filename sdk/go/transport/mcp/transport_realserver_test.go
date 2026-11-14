@@ -99,8 +99,8 @@ func TestTransport_Request_KVPutReachesEntityTool(t *testing.T) {
 		if args["entity_type"] != "users" {
 			t.Errorf("entity_type = %v, want users", args["entity_type"])
 		}
-		if args["id"] != float64(7) {
-			t.Errorf("id = %v, want 7", args["id"])
+		if args["id"] != "7" {
+			t.Errorf("id = %v, want the decimal string 7", args["id"])
 		}
 		if args["data"] != "dGVzdA==" {
 			t.Errorf("data = %v, want base64 of \"test\"", args["data"])

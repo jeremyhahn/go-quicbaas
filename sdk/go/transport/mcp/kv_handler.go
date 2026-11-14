@@ -39,8 +39,17 @@ type kvListToolResult struct {
 // the tools read; List's paging fields are renamed to the pageSize and
 // pageToken names the list tool reads.
 func (t *Transport) kvArguments(method string, req interface{}) map[string]interface{} {
-	args := t.convertToArguments(req)
-	if method != "List" || args == nil {
+	args := toolArguments(req, true)
+	if args == nil {
+		return nil
+	}
+	// The server's MCP layer decodes tool arguments with plain
+	// encoding/json, so a numeric id above 2^53 would round there; the
+	// entity tools parse a decimal-string id exactly.
+	if id, ok := args["id"].(json.Number); ok {
+		args["id"] = id.String()
+	}
+	if method != "List" {
 		return args
 	}
 	if v, ok := args["page_size"]; ok {
