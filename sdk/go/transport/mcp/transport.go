@@ -666,6 +666,12 @@ func (t *Transport) doRequest(ctx context.Context, service, method string, reqBo
 		return transformDEKResponse(method, result)
 	}
 
+	// Decode the restore job status into the service response the backup
+	// client accepts.
+	if isMCPBackupService(service) {
+		return transformBackupResponse(method, result)
+	}
+
 	return result, nil
 }
 

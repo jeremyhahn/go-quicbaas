@@ -18,11 +18,15 @@ import (
 	"time"
 
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/errors"
+	"github.com/jeremyhahn/go-quicbaas/sdk/go/service"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/transport"
 )
 
 const (
 	serviceName = "quicbaas.Backup"
+
+	// restoreCompleted is the status the service reports for a finished restore.
+	restoreCompleted = "completed"
 )
 
 // Client provides backup and restore operations.
@@ -30,7 +34,9 @@ type Client interface {
 	// Create initiates a new backup operation.
 	Create(ctx context.Context, req *BackupRequest) (*BackupResponse, error)
 
-	// Restore restores data from a backup.
+	// Restore starts a restore of the backup named by BackupID and returns
+	// the job id and status the service reports. A running restore is not
+	// an error; Restored is set only once the restore has finished.
 	Restore(ctx context.Context, req *RestoreRequest) (*RestoreResponse, error)
 
 	// List returns all available backups.
@@ -54,13 +60,27 @@ type BackupResponse struct {
 
 // RestoreRequest is a request to restore from a backup.
 type RestoreRequest struct {
+	// BackupID identifies the backup to restore. It is required.
 	BackupID string
-	Source   string
+	// Source names an external location to restore from. The backup
+	// service restores only by backup ID and no transport carries a
+	// source, so Restore refuses any request that sets Source with an
+	// invalid-input error before it calls the server.
+	Source string
 }
 
 // RestoreResponse is the response from restoring a backup.
 type RestoreResponse struct {
+	// Restored is true only when the service reports the restore as
+	// finished (status "completed"). An accepted restore that is still
+	// running is not an error: Restored is false and Status and JobID say
+	// where it stands.
 	Restored bool
+	// JobID identifies the restore job, as the service reports it.
+	JobID string
+	// Status is the restore job's status, as the service reports it.
+	Status string
+	// Duration is always zero: the service reports no restore duration.
 	Duration time.Duration
 }
 
@@ -132,7 +152,7 @@ func (c *client) Restore(ctx context.Context, req *RestoreRequest) (*RestoreResp
 		return nil, err
 	}
 
-	resp, err := c.transport.Request(ctx, serviceName, "Restore", req)
+	resp, err := c.transport.Request(ctx, serviceName, "Restore", &service.RestoreBackupRequest{BackupID: req.BackupID})
 	if err != nil {
 		return nil, err
 	}
@@ -141,12 +161,16 @@ func (c *client) Restore(ctx context.Context, req *RestoreRequest) (*RestoreResp
 		return nil, errors.NewInternal("backup.Restore", "nil response from server")
 	}
 
-	restoreResp, ok := resp.(*RestoreResponse)
+	restoreResp, ok := resp.(*service.RestoreBackupResponse)
 	if !ok {
 		return nil, errors.NewInternal("backup.Restore", "invalid response type")
 	}
 
-	return restoreResp, nil
+	return &RestoreResponse{
+		Restored: restoreResp.Status == restoreCompleted,
+		JobID:    restoreResp.JobID,
+		Status:   restoreResp.Status,
+	}, nil
 }
 
 // List returns all available backups.
@@ -188,8 +212,11 @@ func validateRestoreRequest(req *RestoreRequest) error {
 	if req == nil {
 		return errors.NewInvalidInput("backup.Restore", "request is required")
 	}
-	if req.BackupID == "" && req.Source == "" {
-		return errors.NewInvalidInput("backup.Restore", "backup ID or source is required")
+	if req.Source != "" {
+		return errors.NewInvalidInput("backup.Restore", "restore from a source is not supported; set backup ID")
+	}
+	if req.BackupID == "" {
+		return errors.NewInvalidInput("backup.Restore", "backup ID is required")
 	}
 	return nil
 }
