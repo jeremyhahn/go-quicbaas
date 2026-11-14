@@ -51,3 +51,14 @@ func TestSchedulerTransportParity_Jobs(t *testing.T) {
 		})
 	}
 }
+
+// TestSchedulerTransportParity_RemoteRuns is go-quicbaas#1955: a worker lists
+// and completes its remote runs over every transport, not only in process.
+func TestSchedulerTransportParity_RemoteRuns(t *testing.T) {
+	jobs := schedulertest.New()
+	for name, tr := range schedulerParityTransports(t, jobs) {
+		t.Run(name, func(t *testing.T) {
+			schedulertest.RunRemoteRunConformance(t, scheduler.NewRemoteRunClient(tr), jobs)
+		})
+	}
+}

@@ -337,6 +337,30 @@ func (h *schedulerRESTHandler) GetJobHistory(ctx context.Context, req *service.G
 	return &out, nil
 }
 
+// ListRemoteRuns calls GET /api/v1/scheduler/remote-runs?handler=...
+// (go-quicbaas#1955).
+func (h *schedulerRESTHandler) ListRemoteRuns(ctx context.Context, req *service.ListRemoteRunsRequest) (*service.ListRemoteRunsResponse, error) {
+	query := schedulerTenantQuery(req.TenantID)
+	if query == nil {
+		query = url.Values{}
+	}
+	query["handler"] = req.Handlers
+	var out service.ListRemoteRunsResponse
+	if err := h.call(ctx, "ListRemoteRuns", "", query, nil, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// CompleteRemoteRun calls POST /api/v1/scheduler/remote-runs/complete.
+func (h *schedulerRESTHandler) CompleteRemoteRun(ctx context.Context, req *service.CompleteRemoteRunRequest) (*service.CompleteRemoteRunResponse, error) {
+	var out service.CompleteRemoteRunResponse
+	if err := h.call(ctx, "CompleteRemoteRun", "", schedulerTenantQuery(req.TenantID), req, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
 // GetStatus calls GET /api/v1/scheduler/status.
 func (h *schedulerRESTHandler) GetStatus(ctx context.Context) (*service.GetSchedulerStatusResponse, error) {
 	var out service.GetSchedulerStatusResponse

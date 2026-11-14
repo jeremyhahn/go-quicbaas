@@ -2146,6 +2146,378 @@ func (x *GetSchedulerStatusResponse) GetTimestamp() int64 {
 	return 0
 }
 
+// RemoteRunRef names one run. The times are Unix nanoseconds: the scheduler
+// matches a reported run to the run it started exactly.
+type RemoteRunRef struct {
+	state             protoimpl.MessageState `protogen:"open.v1"`
+	JobId             uint64                 `protobuf:"varint,1,opt,name=job_id,json=jobId,proto3" json:"job_id,omitempty"`
+	FiringUnixNano    int64                  `protobuf:"varint,2,opt,name=firing_unix_nano,json=firingUnixNano,proto3" json:"firing_unix_nano,omitempty"`
+	StartedAtUnixNano int64                  `protobuf:"varint,3,opt,name=started_at_unix_nano,json=startedAtUnixNano,proto3" json:"started_at_unix_nano,omitempty"`
+	unknownFields     protoimpl.UnknownFields
+	sizeCache         protoimpl.SizeCache
+}
+
+func (x *RemoteRunRef) Reset() {
+	*x = RemoteRunRef{}
+	mi := &file_api_proto_scheduler_proto_msgTypes[25]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RemoteRunRef) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RemoteRunRef) ProtoMessage() {}
+
+func (x *RemoteRunRef) ProtoReflect() protoreflect.Message {
+	mi := &file_api_proto_scheduler_proto_msgTypes[25]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RemoteRunRef.ProtoReflect.Descriptor instead.
+func (*RemoteRunRef) Descriptor() ([]byte, []int) {
+	return file_api_proto_scheduler_proto_rawDescGZIP(), []int{25}
+}
+
+func (x *RemoteRunRef) GetJobId() uint64 {
+	if x != nil {
+		return x.JobId
+	}
+	return 0
+}
+
+func (x *RemoteRunRef) GetFiringUnixNano() int64 {
+	if x != nil {
+		return x.FiringUnixNano
+	}
+	return 0
+}
+
+func (x *RemoteRunRef) GetStartedAtUnixNano() int64 {
+	if x != nil {
+		return x.StartedAtUnixNano
+	}
+	return 0
+}
+
+type RemoteRun struct {
+	state            protoimpl.MessageState `protogen:"open.v1"`
+	Run              *RemoteRunRef          `protobuf:"bytes,1,opt,name=run,proto3" json:"run,omitempty"`
+	Name             string                 `protobuf:"bytes,2,opt,name=name,proto3" json:"name,omitempty"`
+	Handler          string                 `protobuf:"bytes,3,opt,name=handler,proto3" json:"handler,omitempty"`
+	Payload          []byte                 `protobuf:"bytes,4,opt,name=payload,proto3" json:"payload,omitempty"`
+	DeadlineUnixNano int64                  `protobuf:"varint,5,opt,name=deadline_unix_nano,json=deadlineUnixNano,proto3" json:"deadline_unix_nano,omitempty"` // the scheduler stops waiting at this time
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
+}
+
+func (x *RemoteRun) Reset() {
+	*x = RemoteRun{}
+	mi := &file_api_proto_scheduler_proto_msgTypes[26]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RemoteRun) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RemoteRun) ProtoMessage() {}
+
+func (x *RemoteRun) ProtoReflect() protoreflect.Message {
+	mi := &file_api_proto_scheduler_proto_msgTypes[26]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RemoteRun.ProtoReflect.Descriptor instead.
+func (*RemoteRun) Descriptor() ([]byte, []int) {
+	return file_api_proto_scheduler_proto_rawDescGZIP(), []int{26}
+}
+
+func (x *RemoteRun) GetRun() *RemoteRunRef {
+	if x != nil {
+		return x.Run
+	}
+	return nil
+}
+
+func (x *RemoteRun) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+func (x *RemoteRun) GetHandler() string {
+	if x != nil {
+		return x.Handler
+	}
+	return ""
+}
+
+func (x *RemoteRun) GetPayload() []byte {
+	if x != nil {
+		return x.Payload
+	}
+	return nil
+}
+
+func (x *RemoteRun) GetDeadlineUnixNano() int64 {
+	if x != nil {
+		return x.DeadlineUnixNano
+	}
+	return 0
+}
+
+type ListRemoteRunsRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Handlers      []string               `protobuf:"bytes,1,rep,name=handlers,proto3" json:"handlers,omitempty"` // each carries the "remote:" prefix
+	TenantId      string                 `protobuf:"bytes,2,opt,name=tenant_id,json=tenantId,proto3" json:"tenant_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ListRemoteRunsRequest) Reset() {
+	*x = ListRemoteRunsRequest{}
+	mi := &file_api_proto_scheduler_proto_msgTypes[27]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ListRemoteRunsRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ListRemoteRunsRequest) ProtoMessage() {}
+
+func (x *ListRemoteRunsRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_api_proto_scheduler_proto_msgTypes[27]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ListRemoteRunsRequest.ProtoReflect.Descriptor instead.
+func (*ListRemoteRunsRequest) Descriptor() ([]byte, []int) {
+	return file_api_proto_scheduler_proto_rawDescGZIP(), []int{27}
+}
+
+func (x *ListRemoteRunsRequest) GetHandlers() []string {
+	if x != nil {
+		return x.Handlers
+	}
+	return nil
+}
+
+func (x *ListRemoteRunsRequest) GetTenantId() string {
+	if x != nil {
+		return x.TenantId
+	}
+	return ""
+}
+
+type ListRemoteRunsResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Runs          []*RemoteRun           `protobuf:"bytes,1,rep,name=runs,proto3" json:"runs,omitempty"`
+	Timestamp     int64                  `protobuf:"varint,2,opt,name=timestamp,proto3" json:"timestamp,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ListRemoteRunsResponse) Reset() {
+	*x = ListRemoteRunsResponse{}
+	mi := &file_api_proto_scheduler_proto_msgTypes[28]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ListRemoteRunsResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ListRemoteRunsResponse) ProtoMessage() {}
+
+func (x *ListRemoteRunsResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_api_proto_scheduler_proto_msgTypes[28]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ListRemoteRunsResponse.ProtoReflect.Descriptor instead.
+func (*ListRemoteRunsResponse) Descriptor() ([]byte, []int) {
+	return file_api_proto_scheduler_proto_rawDescGZIP(), []int{28}
+}
+
+func (x *ListRemoteRunsResponse) GetRuns() []*RemoteRun {
+	if x != nil {
+		return x.Runs
+	}
+	return nil
+}
+
+func (x *ListRemoteRunsResponse) GetTimestamp() int64 {
+	if x != nil {
+		return x.Timestamp
+	}
+	return 0
+}
+
+// CompleteRemoteRunRequest reports one run: a non-empty error fails it;
+// otherwise message and output are its result.
+type CompleteRemoteRunRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Run           *RemoteRunRef          `protobuf:"bytes,1,opt,name=run,proto3" json:"run,omitempty"`
+	Message       string                 `protobuf:"bytes,2,opt,name=message,proto3" json:"message,omitempty"`
+	Output        []byte                 `protobuf:"bytes,3,opt,name=output,proto3" json:"output,omitempty"`
+	Error         string                 `protobuf:"bytes,4,opt,name=error,proto3" json:"error,omitempty"`
+	TenantId      string                 `protobuf:"bytes,5,opt,name=tenant_id,json=tenantId,proto3" json:"tenant_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CompleteRemoteRunRequest) Reset() {
+	*x = CompleteRemoteRunRequest{}
+	mi := &file_api_proto_scheduler_proto_msgTypes[29]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CompleteRemoteRunRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CompleteRemoteRunRequest) ProtoMessage() {}
+
+func (x *CompleteRemoteRunRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_api_proto_scheduler_proto_msgTypes[29]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CompleteRemoteRunRequest.ProtoReflect.Descriptor instead.
+func (*CompleteRemoteRunRequest) Descriptor() ([]byte, []int) {
+	return file_api_proto_scheduler_proto_rawDescGZIP(), []int{29}
+}
+
+func (x *CompleteRemoteRunRequest) GetRun() *RemoteRunRef {
+	if x != nil {
+		return x.Run
+	}
+	return nil
+}
+
+func (x *CompleteRemoteRunRequest) GetMessage() string {
+	if x != nil {
+		return x.Message
+	}
+	return ""
+}
+
+func (x *CompleteRemoteRunRequest) GetOutput() []byte {
+	if x != nil {
+		return x.Output
+	}
+	return nil
+}
+
+func (x *CompleteRemoteRunRequest) GetError() string {
+	if x != nil {
+		return x.Error
+	}
+	return ""
+}
+
+func (x *CompleteRemoteRunRequest) GetTenantId() string {
+	if x != nil {
+		return x.TenantId
+	}
+	return ""
+}
+
+type CompleteRemoteRunResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	JobId         uint64                 `protobuf:"varint,1,opt,name=job_id,json=jobId,proto3" json:"job_id,omitempty"`
+	Timestamp     int64                  `protobuf:"varint,2,opt,name=timestamp,proto3" json:"timestamp,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CompleteRemoteRunResponse) Reset() {
+	*x = CompleteRemoteRunResponse{}
+	mi := &file_api_proto_scheduler_proto_msgTypes[30]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CompleteRemoteRunResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CompleteRemoteRunResponse) ProtoMessage() {}
+
+func (x *CompleteRemoteRunResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_api_proto_scheduler_proto_msgTypes[30]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CompleteRemoteRunResponse.ProtoReflect.Descriptor instead.
+func (*CompleteRemoteRunResponse) Descriptor() ([]byte, []int) {
+	return file_api_proto_scheduler_proto_rawDescGZIP(), []int{30}
+}
+
+func (x *CompleteRemoteRunResponse) GetJobId() uint64 {
+	if x != nil {
+		return x.JobId
+	}
+	return 0
+}
+
+func (x *CompleteRemoteRunResponse) GetTimestamp() int64 {
+	if x != nil {
+		return x.Timestamp
+	}
+	return 0
+}
+
 // PlacementNodeFacts are the caller-supplied facts a node registers.
 type PlacementNodeFacts struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
@@ -2158,7 +2530,7 @@ type PlacementNodeFacts struct {
 
 func (x *PlacementNodeFacts) Reset() {
 	*x = PlacementNodeFacts{}
-	mi := &file_api_proto_scheduler_proto_msgTypes[25]
+	mi := &file_api_proto_scheduler_proto_msgTypes[31]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2170,7 +2542,7 @@ func (x *PlacementNodeFacts) String() string {
 func (*PlacementNodeFacts) ProtoMessage() {}
 
 func (x *PlacementNodeFacts) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_scheduler_proto_msgTypes[25]
+	mi := &file_api_proto_scheduler_proto_msgTypes[31]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2183,7 +2555,7 @@ func (x *PlacementNodeFacts) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PlacementNodeFacts.ProtoReflect.Descriptor instead.
 func (*PlacementNodeFacts) Descriptor() ([]byte, []int) {
-	return file_api_proto_scheduler_proto_rawDescGZIP(), []int{25}
+	return file_api_proto_scheduler_proto_rawDescGZIP(), []int{31}
 }
 
 func (x *PlacementNodeFacts) GetNodeId() string {
@@ -2218,7 +2590,7 @@ type PlacementNodeStatus struct {
 
 func (x *PlacementNodeStatus) Reset() {
 	*x = PlacementNodeStatus{}
-	mi := &file_api_proto_scheduler_proto_msgTypes[26]
+	mi := &file_api_proto_scheduler_proto_msgTypes[32]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2230,7 +2602,7 @@ func (x *PlacementNodeStatus) String() string {
 func (*PlacementNodeStatus) ProtoMessage() {}
 
 func (x *PlacementNodeStatus) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_scheduler_proto_msgTypes[26]
+	mi := &file_api_proto_scheduler_proto_msgTypes[32]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2243,7 +2615,7 @@ func (x *PlacementNodeStatus) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PlacementNodeStatus.ProtoReflect.Descriptor instead.
 func (*PlacementNodeStatus) Descriptor() ([]byte, []int) {
-	return file_api_proto_scheduler_proto_rawDescGZIP(), []int{26}
+	return file_api_proto_scheduler_proto_rawDescGZIP(), []int{32}
 }
 
 func (x *PlacementNodeStatus) GetUnschedulable() bool {
@@ -2276,7 +2648,7 @@ type PlacementNodeInfo struct {
 
 func (x *PlacementNodeInfo) Reset() {
 	*x = PlacementNodeInfo{}
-	mi := &file_api_proto_scheduler_proto_msgTypes[27]
+	mi := &file_api_proto_scheduler_proto_msgTypes[33]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2288,7 +2660,7 @@ func (x *PlacementNodeInfo) String() string {
 func (*PlacementNodeInfo) ProtoMessage() {}
 
 func (x *PlacementNodeInfo) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_scheduler_proto_msgTypes[27]
+	mi := &file_api_proto_scheduler_proto_msgTypes[33]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2301,7 +2673,7 @@ func (x *PlacementNodeInfo) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PlacementNodeInfo.ProtoReflect.Descriptor instead.
 func (*PlacementNodeInfo) Descriptor() ([]byte, []int) {
-	return file_api_proto_scheduler_proto_rawDescGZIP(), []int{27}
+	return file_api_proto_scheduler_proto_rawDescGZIP(), []int{33}
 }
 
 func (x *PlacementNodeInfo) GetFacts() *PlacementNodeFacts {
@@ -2363,7 +2735,7 @@ type RegisterPlacementNodeRequest struct {
 
 func (x *RegisterPlacementNodeRequest) Reset() {
 	*x = RegisterPlacementNodeRequest{}
-	mi := &file_api_proto_scheduler_proto_msgTypes[28]
+	mi := &file_api_proto_scheduler_proto_msgTypes[34]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2375,7 +2747,7 @@ func (x *RegisterPlacementNodeRequest) String() string {
 func (*RegisterPlacementNodeRequest) ProtoMessage() {}
 
 func (x *RegisterPlacementNodeRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_scheduler_proto_msgTypes[28]
+	mi := &file_api_proto_scheduler_proto_msgTypes[34]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2388,7 +2760,7 @@ func (x *RegisterPlacementNodeRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RegisterPlacementNodeRequest.ProtoReflect.Descriptor instead.
 func (*RegisterPlacementNodeRequest) Descriptor() ([]byte, []int) {
-	return file_api_proto_scheduler_proto_rawDescGZIP(), []int{28}
+	return file_api_proto_scheduler_proto_rawDescGZIP(), []int{34}
 }
 
 func (x *RegisterPlacementNodeRequest) GetFacts() *PlacementNodeFacts {
@@ -2414,7 +2786,7 @@ type PlacementNodeRequest struct {
 
 func (x *PlacementNodeRequest) Reset() {
 	*x = PlacementNodeRequest{}
-	mi := &file_api_proto_scheduler_proto_msgTypes[29]
+	mi := &file_api_proto_scheduler_proto_msgTypes[35]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2426,7 +2798,7 @@ func (x *PlacementNodeRequest) String() string {
 func (*PlacementNodeRequest) ProtoMessage() {}
 
 func (x *PlacementNodeRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_scheduler_proto_msgTypes[29]
+	mi := &file_api_proto_scheduler_proto_msgTypes[35]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2439,7 +2811,7 @@ func (x *PlacementNodeRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PlacementNodeRequest.ProtoReflect.Descriptor instead.
 func (*PlacementNodeRequest) Descriptor() ([]byte, []int) {
-	return file_api_proto_scheduler_proto_rawDescGZIP(), []int{29}
+	return file_api_proto_scheduler_proto_rawDescGZIP(), []int{35}
 }
 
 func (x *PlacementNodeRequest) GetNodeId() string {
@@ -2458,7 +2830,7 @@ type PlacementNodeResponse struct {
 
 func (x *PlacementNodeResponse) Reset() {
 	*x = PlacementNodeResponse{}
-	mi := &file_api_proto_scheduler_proto_msgTypes[30]
+	mi := &file_api_proto_scheduler_proto_msgTypes[36]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2470,7 +2842,7 @@ func (x *PlacementNodeResponse) String() string {
 func (*PlacementNodeResponse) ProtoMessage() {}
 
 func (x *PlacementNodeResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_scheduler_proto_msgTypes[30]
+	mi := &file_api_proto_scheduler_proto_msgTypes[36]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2483,7 +2855,7 @@ func (x *PlacementNodeResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PlacementNodeResponse.ProtoReflect.Descriptor instead.
 func (*PlacementNodeResponse) Descriptor() ([]byte, []int) {
-	return file_api_proto_scheduler_proto_rawDescGZIP(), []int{30}
+	return file_api_proto_scheduler_proto_rawDescGZIP(), []int{36}
 }
 
 func (x *PlacementNodeResponse) GetNode() *PlacementNodeInfo {
@@ -2503,7 +2875,7 @@ type RenewPlacementNodeResponse struct {
 
 func (x *RenewPlacementNodeResponse) Reset() {
 	*x = RenewPlacementNodeResponse{}
-	mi := &file_api_proto_scheduler_proto_msgTypes[31]
+	mi := &file_api_proto_scheduler_proto_msgTypes[37]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2515,7 +2887,7 @@ func (x *RenewPlacementNodeResponse) String() string {
 func (*RenewPlacementNodeResponse) ProtoMessage() {}
 
 func (x *RenewPlacementNodeResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_scheduler_proto_msgTypes[31]
+	mi := &file_api_proto_scheduler_proto_msgTypes[37]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2528,7 +2900,7 @@ func (x *RenewPlacementNodeResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RenewPlacementNodeResponse.ProtoReflect.Descriptor instead.
 func (*RenewPlacementNodeResponse) Descriptor() ([]byte, []int) {
-	return file_api_proto_scheduler_proto_rawDescGZIP(), []int{31}
+	return file_api_proto_scheduler_proto_rawDescGZIP(), []int{37}
 }
 
 func (x *RenewPlacementNodeResponse) GetNodeId() string {
@@ -2555,7 +2927,7 @@ type DeregisterPlacementNodeResponse struct {
 
 func (x *DeregisterPlacementNodeResponse) Reset() {
 	*x = DeregisterPlacementNodeResponse{}
-	mi := &file_api_proto_scheduler_proto_msgTypes[32]
+	mi := &file_api_proto_scheduler_proto_msgTypes[38]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2567,7 +2939,7 @@ func (x *DeregisterPlacementNodeResponse) String() string {
 func (*DeregisterPlacementNodeResponse) ProtoMessage() {}
 
 func (x *DeregisterPlacementNodeResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_scheduler_proto_msgTypes[32]
+	mi := &file_api_proto_scheduler_proto_msgTypes[38]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2580,7 +2952,7 @@ func (x *DeregisterPlacementNodeResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DeregisterPlacementNodeResponse.ProtoReflect.Descriptor instead.
 func (*DeregisterPlacementNodeResponse) Descriptor() ([]byte, []int) {
-	return file_api_proto_scheduler_proto_rawDescGZIP(), []int{32}
+	return file_api_proto_scheduler_proto_rawDescGZIP(), []int{38}
 }
 
 func (x *DeregisterPlacementNodeResponse) GetNodeId() string {
@@ -2605,7 +2977,7 @@ type ListPlacementNodesRequest struct {
 
 func (x *ListPlacementNodesRequest) Reset() {
 	*x = ListPlacementNodesRequest{}
-	mi := &file_api_proto_scheduler_proto_msgTypes[33]
+	mi := &file_api_proto_scheduler_proto_msgTypes[39]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2617,7 +2989,7 @@ func (x *ListPlacementNodesRequest) String() string {
 func (*ListPlacementNodesRequest) ProtoMessage() {}
 
 func (x *ListPlacementNodesRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_scheduler_proto_msgTypes[33]
+	mi := &file_api_proto_scheduler_proto_msgTypes[39]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2630,7 +3002,7 @@ func (x *ListPlacementNodesRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListPlacementNodesRequest.ProtoReflect.Descriptor instead.
 func (*ListPlacementNodesRequest) Descriptor() ([]byte, []int) {
-	return file_api_proto_scheduler_proto_rawDescGZIP(), []int{33}
+	return file_api_proto_scheduler_proto_rawDescGZIP(), []int{39}
 }
 
 type ListPlacementNodesResponse struct {
@@ -2642,7 +3014,7 @@ type ListPlacementNodesResponse struct {
 
 func (x *ListPlacementNodesResponse) Reset() {
 	*x = ListPlacementNodesResponse{}
-	mi := &file_api_proto_scheduler_proto_msgTypes[34]
+	mi := &file_api_proto_scheduler_proto_msgTypes[40]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2654,7 +3026,7 @@ func (x *ListPlacementNodesResponse) String() string {
 func (*ListPlacementNodesResponse) ProtoMessage() {}
 
 func (x *ListPlacementNodesResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_scheduler_proto_msgTypes[34]
+	mi := &file_api_proto_scheduler_proto_msgTypes[40]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2667,7 +3039,7 @@ func (x *ListPlacementNodesResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListPlacementNodesResponse.ProtoReflect.Descriptor instead.
 func (*ListPlacementNodesResponse) Descriptor() ([]byte, []int) {
-	return file_api_proto_scheduler_proto_rawDescGZIP(), []int{34}
+	return file_api_proto_scheduler_proto_rawDescGZIP(), []int{40}
 }
 
 func (x *ListPlacementNodesResponse) GetNodes() []*PlacementNodeInfo {
@@ -2687,7 +3059,7 @@ type DrainPlacementNodeResponse struct {
 
 func (x *DrainPlacementNodeResponse) Reset() {
 	*x = DrainPlacementNodeResponse{}
-	mi := &file_api_proto_scheduler_proto_msgTypes[35]
+	mi := &file_api_proto_scheduler_proto_msgTypes[41]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2699,7 +3071,7 @@ func (x *DrainPlacementNodeResponse) String() string {
 func (*DrainPlacementNodeResponse) ProtoMessage() {}
 
 func (x *DrainPlacementNodeResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_scheduler_proto_msgTypes[35]
+	mi := &file_api_proto_scheduler_proto_msgTypes[41]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2712,7 +3084,7 @@ func (x *DrainPlacementNodeResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DrainPlacementNodeResponse.ProtoReflect.Descriptor instead.
 func (*DrainPlacementNodeResponse) Descriptor() ([]byte, []int) {
-	return file_api_proto_scheduler_proto_rawDescGZIP(), []int{35}
+	return file_api_proto_scheduler_proto_rawDescGZIP(), []int{41}
 }
 
 func (x *DrainPlacementNodeResponse) GetNodeId() string {
@@ -2742,7 +3114,7 @@ type PlacementConstraint struct {
 
 func (x *PlacementConstraint) Reset() {
 	*x = PlacementConstraint{}
-	mi := &file_api_proto_scheduler_proto_msgTypes[36]
+	mi := &file_api_proto_scheduler_proto_msgTypes[42]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2754,7 +3126,7 @@ func (x *PlacementConstraint) String() string {
 func (*PlacementConstraint) ProtoMessage() {}
 
 func (x *PlacementConstraint) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_scheduler_proto_msgTypes[36]
+	mi := &file_api_proto_scheduler_proto_msgTypes[42]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2767,7 +3139,7 @@ func (x *PlacementConstraint) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PlacementConstraint.ProtoReflect.Descriptor instead.
 func (*PlacementConstraint) Descriptor() ([]byte, []int) {
-	return file_api_proto_scheduler_proto_rawDescGZIP(), []int{36}
+	return file_api_proto_scheduler_proto_rawDescGZIP(), []int{42}
 }
 
 func (x *PlacementConstraint) GetKey() string {
@@ -2802,7 +3174,7 @@ type PlacementAffinityTerm struct {
 
 func (x *PlacementAffinityTerm) Reset() {
 	*x = PlacementAffinityTerm{}
-	mi := &file_api_proto_scheduler_proto_msgTypes[37]
+	mi := &file_api_proto_scheduler_proto_msgTypes[43]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2814,7 +3186,7 @@ func (x *PlacementAffinityTerm) String() string {
 func (*PlacementAffinityTerm) ProtoMessage() {}
 
 func (x *PlacementAffinityTerm) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_scheduler_proto_msgTypes[37]
+	mi := &file_api_proto_scheduler_proto_msgTypes[43]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2827,7 +3199,7 @@ func (x *PlacementAffinityTerm) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PlacementAffinityTerm.ProtoReflect.Descriptor instead.
 func (*PlacementAffinityTerm) Descriptor() ([]byte, []int) {
-	return file_api_proto_scheduler_proto_rawDescGZIP(), []int{37}
+	return file_api_proto_scheduler_proto_rawDescGZIP(), []int{43}
 }
 
 func (x *PlacementAffinityTerm) GetGroup() string {
@@ -2862,7 +3234,7 @@ type PlacementSpreadConstraint struct {
 
 func (x *PlacementSpreadConstraint) Reset() {
 	*x = PlacementSpreadConstraint{}
-	mi := &file_api_proto_scheduler_proto_msgTypes[38]
+	mi := &file_api_proto_scheduler_proto_msgTypes[44]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2874,7 +3246,7 @@ func (x *PlacementSpreadConstraint) String() string {
 func (*PlacementSpreadConstraint) ProtoMessage() {}
 
 func (x *PlacementSpreadConstraint) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_scheduler_proto_msgTypes[38]
+	mi := &file_api_proto_scheduler_proto_msgTypes[44]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2887,7 +3259,7 @@ func (x *PlacementSpreadConstraint) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PlacementSpreadConstraint.ProtoReflect.Descriptor instead.
 func (*PlacementSpreadConstraint) Descriptor() ([]byte, []int) {
-	return file_api_proto_scheduler_proto_rawDescGZIP(), []int{38}
+	return file_api_proto_scheduler_proto_rawDescGZIP(), []int{44}
 }
 
 func (x *PlacementSpreadConstraint) GetTopologyKey() string {
@@ -2930,7 +3302,7 @@ type PlaceWorkloadRequest struct {
 
 func (x *PlaceWorkloadRequest) Reset() {
 	*x = PlaceWorkloadRequest{}
-	mi := &file_api_proto_scheduler_proto_msgTypes[39]
+	mi := &file_api_proto_scheduler_proto_msgTypes[45]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2942,7 +3314,7 @@ func (x *PlaceWorkloadRequest) String() string {
 func (*PlaceWorkloadRequest) ProtoMessage() {}
 
 func (x *PlaceWorkloadRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_scheduler_proto_msgTypes[39]
+	mi := &file_api_proto_scheduler_proto_msgTypes[45]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2955,7 +3327,7 @@ func (x *PlaceWorkloadRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PlaceWorkloadRequest.ProtoReflect.Descriptor instead.
 func (*PlaceWorkloadRequest) Descriptor() ([]byte, []int) {
-	return file_api_proto_scheduler_proto_rawDescGZIP(), []int{39}
+	return file_api_proto_scheduler_proto_rawDescGZIP(), []int{45}
 }
 
 func (x *PlaceWorkloadRequest) GetWorkloadId() string {
@@ -3039,7 +3411,7 @@ type PlacementRecord struct {
 
 func (x *PlacementRecord) Reset() {
 	*x = PlacementRecord{}
-	mi := &file_api_proto_scheduler_proto_msgTypes[40]
+	mi := &file_api_proto_scheduler_proto_msgTypes[46]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3051,7 +3423,7 @@ func (x *PlacementRecord) String() string {
 func (*PlacementRecord) ProtoMessage() {}
 
 func (x *PlacementRecord) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_scheduler_proto_msgTypes[40]
+	mi := &file_api_proto_scheduler_proto_msgTypes[46]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3064,7 +3436,7 @@ func (x *PlacementRecord) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PlacementRecord.ProtoReflect.Descriptor instead.
 func (*PlacementRecord) Descriptor() ([]byte, []int) {
-	return file_api_proto_scheduler_proto_rawDescGZIP(), []int{40}
+	return file_api_proto_scheduler_proto_rawDescGZIP(), []int{46}
 }
 
 func (x *PlacementRecord) GetWorkloadId() string {
@@ -3133,7 +3505,7 @@ type PlaceWorkloadResponse struct {
 
 func (x *PlaceWorkloadResponse) Reset() {
 	*x = PlaceWorkloadResponse{}
-	mi := &file_api_proto_scheduler_proto_msgTypes[41]
+	mi := &file_api_proto_scheduler_proto_msgTypes[47]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3145,7 +3517,7 @@ func (x *PlaceWorkloadResponse) String() string {
 func (*PlaceWorkloadResponse) ProtoMessage() {}
 
 func (x *PlaceWorkloadResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_scheduler_proto_msgTypes[41]
+	mi := &file_api_proto_scheduler_proto_msgTypes[47]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3158,7 +3530,7 @@ func (x *PlaceWorkloadResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PlaceWorkloadResponse.ProtoReflect.Descriptor instead.
 func (*PlaceWorkloadResponse) Descriptor() ([]byte, []int) {
-	return file_api_proto_scheduler_proto_rawDescGZIP(), []int{41}
+	return file_api_proto_scheduler_proto_rawDescGZIP(), []int{47}
 }
 
 func (x *PlaceWorkloadResponse) GetPlacement() *PlacementRecord {
@@ -3184,7 +3556,7 @@ type ReleaseWorkloadRequest struct {
 
 func (x *ReleaseWorkloadRequest) Reset() {
 	*x = ReleaseWorkloadRequest{}
-	mi := &file_api_proto_scheduler_proto_msgTypes[42]
+	mi := &file_api_proto_scheduler_proto_msgTypes[48]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3196,7 +3568,7 @@ func (x *ReleaseWorkloadRequest) String() string {
 func (*ReleaseWorkloadRequest) ProtoMessage() {}
 
 func (x *ReleaseWorkloadRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_scheduler_proto_msgTypes[42]
+	mi := &file_api_proto_scheduler_proto_msgTypes[48]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3209,7 +3581,7 @@ func (x *ReleaseWorkloadRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ReleaseWorkloadRequest.ProtoReflect.Descriptor instead.
 func (*ReleaseWorkloadRequest) Descriptor() ([]byte, []int) {
-	return file_api_proto_scheduler_proto_rawDescGZIP(), []int{42}
+	return file_api_proto_scheduler_proto_rawDescGZIP(), []int{48}
 }
 
 func (x *ReleaseWorkloadRequest) GetWorkloadId() string {
@@ -3229,7 +3601,7 @@ type ReleaseWorkloadResponse struct {
 
 func (x *ReleaseWorkloadResponse) Reset() {
 	*x = ReleaseWorkloadResponse{}
-	mi := &file_api_proto_scheduler_proto_msgTypes[43]
+	mi := &file_api_proto_scheduler_proto_msgTypes[49]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3241,7 +3613,7 @@ func (x *ReleaseWorkloadResponse) String() string {
 func (*ReleaseWorkloadResponse) ProtoMessage() {}
 
 func (x *ReleaseWorkloadResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_scheduler_proto_msgTypes[43]
+	mi := &file_api_proto_scheduler_proto_msgTypes[49]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3254,7 +3626,7 @@ func (x *ReleaseWorkloadResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ReleaseWorkloadResponse.ProtoReflect.Descriptor instead.
 func (*ReleaseWorkloadResponse) Descriptor() ([]byte, []int) {
-	return file_api_proto_scheduler_proto_rawDescGZIP(), []int{43}
+	return file_api_proto_scheduler_proto_rawDescGZIP(), []int{49}
 }
 
 func (x *ReleaseWorkloadResponse) GetWorkloadId() string {
@@ -3280,7 +3652,7 @@ type GetPlacementRequest struct {
 
 func (x *GetPlacementRequest) Reset() {
 	*x = GetPlacementRequest{}
-	mi := &file_api_proto_scheduler_proto_msgTypes[44]
+	mi := &file_api_proto_scheduler_proto_msgTypes[50]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3292,7 +3664,7 @@ func (x *GetPlacementRequest) String() string {
 func (*GetPlacementRequest) ProtoMessage() {}
 
 func (x *GetPlacementRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_scheduler_proto_msgTypes[44]
+	mi := &file_api_proto_scheduler_proto_msgTypes[50]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3305,7 +3677,7 @@ func (x *GetPlacementRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetPlacementRequest.ProtoReflect.Descriptor instead.
 func (*GetPlacementRequest) Descriptor() ([]byte, []int) {
-	return file_api_proto_scheduler_proto_rawDescGZIP(), []int{44}
+	return file_api_proto_scheduler_proto_rawDescGZIP(), []int{50}
 }
 
 func (x *GetPlacementRequest) GetWorkloadId() string {
@@ -3324,7 +3696,7 @@ type GetPlacementResponse struct {
 
 func (x *GetPlacementResponse) Reset() {
 	*x = GetPlacementResponse{}
-	mi := &file_api_proto_scheduler_proto_msgTypes[45]
+	mi := &file_api_proto_scheduler_proto_msgTypes[51]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3336,7 +3708,7 @@ func (x *GetPlacementResponse) String() string {
 func (*GetPlacementResponse) ProtoMessage() {}
 
 func (x *GetPlacementResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_scheduler_proto_msgTypes[45]
+	mi := &file_api_proto_scheduler_proto_msgTypes[51]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3349,7 +3721,7 @@ func (x *GetPlacementResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetPlacementResponse.ProtoReflect.Descriptor instead.
 func (*GetPlacementResponse) Descriptor() ([]byte, []int) {
-	return file_api_proto_scheduler_proto_rawDescGZIP(), []int{45}
+	return file_api_proto_scheduler_proto_rawDescGZIP(), []int{51}
 }
 
 func (x *GetPlacementResponse) GetPlacement() *PlacementRecord {
@@ -3369,7 +3741,7 @@ type ListPlacementsRequest struct {
 
 func (x *ListPlacementsRequest) Reset() {
 	*x = ListPlacementsRequest{}
-	mi := &file_api_proto_scheduler_proto_msgTypes[46]
+	mi := &file_api_proto_scheduler_proto_msgTypes[52]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3381,7 +3753,7 @@ func (x *ListPlacementsRequest) String() string {
 func (*ListPlacementsRequest) ProtoMessage() {}
 
 func (x *ListPlacementsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_scheduler_proto_msgTypes[46]
+	mi := &file_api_proto_scheduler_proto_msgTypes[52]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3394,7 +3766,7 @@ func (x *ListPlacementsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListPlacementsRequest.ProtoReflect.Descriptor instead.
 func (*ListPlacementsRequest) Descriptor() ([]byte, []int) {
-	return file_api_proto_scheduler_proto_rawDescGZIP(), []int{46}
+	return file_api_proto_scheduler_proto_rawDescGZIP(), []int{52}
 }
 
 func (x *ListPlacementsRequest) GetNodeId() string {
@@ -3420,7 +3792,7 @@ type ListPlacementsResponse struct {
 
 func (x *ListPlacementsResponse) Reset() {
 	*x = ListPlacementsResponse{}
-	mi := &file_api_proto_scheduler_proto_msgTypes[47]
+	mi := &file_api_proto_scheduler_proto_msgTypes[53]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3432,7 +3804,7 @@ func (x *ListPlacementsResponse) String() string {
 func (*ListPlacementsResponse) ProtoMessage() {}
 
 func (x *ListPlacementsResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_scheduler_proto_msgTypes[47]
+	mi := &file_api_proto_scheduler_proto_msgTypes[53]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3445,7 +3817,7 @@ func (x *ListPlacementsResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListPlacementsResponse.ProtoReflect.Descriptor instead.
 func (*ListPlacementsResponse) Descriptor() ([]byte, []int) {
-	return file_api_proto_scheduler_proto_rawDescGZIP(), []int{47}
+	return file_api_proto_scheduler_proto_rawDescGZIP(), []int{53}
 }
 
 func (x *ListPlacementsResponse) GetPlacements() []*PlacementRecord {
@@ -3656,7 +4028,32 @@ const file_api_proto_scheduler_proto_rawDesc = "" +
 	"\x1aGetSchedulerStatusResponse\x12\x18\n" +
 	"\arunning\x18\x01 \x01(\bR\arunning\x12;\n" +
 	"\x05stats\x18\x02 \x01(\v2%.quicbaas.scheduler.v1.SchedulerStatsR\x05stats\x12\x1c\n" +
-	"\ttimestamp\x18\x03 \x01(\x03R\ttimestamp\"\xc9\x02\n" +
+	"\ttimestamp\x18\x03 \x01(\x03R\ttimestamp\"\x80\x01\n" +
+	"\fRemoteRunRef\x12\x15\n" +
+	"\x06job_id\x18\x01 \x01(\x04R\x05jobId\x12(\n" +
+	"\x10firing_unix_nano\x18\x02 \x01(\x03R\x0efiringUnixNano\x12/\n" +
+	"\x14started_at_unix_nano\x18\x03 \x01(\x03R\x11startedAtUnixNano\"\xb8\x01\n" +
+	"\tRemoteRun\x125\n" +
+	"\x03run\x18\x01 \x01(\v2#.quicbaas.scheduler.v1.RemoteRunRefR\x03run\x12\x12\n" +
+	"\x04name\x18\x02 \x01(\tR\x04name\x12\x18\n" +
+	"\ahandler\x18\x03 \x01(\tR\ahandler\x12\x18\n" +
+	"\apayload\x18\x04 \x01(\fR\apayload\x12,\n" +
+	"\x12deadline_unix_nano\x18\x05 \x01(\x03R\x10deadlineUnixNano\"P\n" +
+	"\x15ListRemoteRunsRequest\x12\x1a\n" +
+	"\bhandlers\x18\x01 \x03(\tR\bhandlers\x12\x1b\n" +
+	"\ttenant_id\x18\x02 \x01(\tR\btenantId\"l\n" +
+	"\x16ListRemoteRunsResponse\x124\n" +
+	"\x04runs\x18\x01 \x03(\v2 .quicbaas.scheduler.v1.RemoteRunR\x04runs\x12\x1c\n" +
+	"\ttimestamp\x18\x02 \x01(\x03R\ttimestamp\"\xb6\x01\n" +
+	"\x18CompleteRemoteRunRequest\x125\n" +
+	"\x03run\x18\x01 \x01(\v2#.quicbaas.scheduler.v1.RemoteRunRefR\x03run\x12\x18\n" +
+	"\amessage\x18\x02 \x01(\tR\amessage\x12\x16\n" +
+	"\x06output\x18\x03 \x01(\fR\x06output\x12\x14\n" +
+	"\x05error\x18\x04 \x01(\tR\x05error\x12\x1b\n" +
+	"\ttenant_id\x18\x05 \x01(\tR\btenantId\"P\n" +
+	"\x19CompleteRemoteRunResponse\x12\x15\n" +
+	"\x06job_id\x18\x01 \x01(\x04R\x05jobId\x12\x1c\n" +
+	"\ttimestamp\x18\x02 \x01(\x03R\ttimestamp\"\xc9\x02\n" +
 	"\x12PlacementNodeFacts\x12\x17\n" +
 	"\anode_id\x18\x01 \x01(\tR\x06nodeId\x12S\n" +
 	"\bcapacity\x18\x02 \x03(\v27.quicbaas.scheduler.v1.PlacementNodeFacts.CapacityEntryR\bcapacity\x12M\n" +
@@ -3790,7 +4187,7 @@ const file_api_proto_scheduler_proto_rawDesc = "" +
 	"\x16OWNER_TYPE_UNSPECIFIED\x10\x00\x12\x15\n" +
 	"\x11OWNER_TYPE_SYSTEM\x10\x01\x12\x15\n" +
 	"\x11OWNER_TYPE_TENANT\x10\x02\x12\x18\n" +
-	"\x14OWNER_TYPE_DELEGATED\x10\x032\xd8\x16\n" +
+	"\x14OWNER_TYPE_DELEGATED\x10\x032\xec\x18\n" +
 	"\x10SchedulerService\x12t\n" +
 	"\tCreateJob\x12'.quicbaas.scheduler.v1.CreateJobRequest\x1a(.quicbaas.scheduler.v1.CreateJobResponse\"\x14\xc2\xf3\x18\x10scheduler:create\x12i\n" +
 	"\x06GetJob\x12$.quicbaas.scheduler.v1.GetJobRequest\x1a%.quicbaas.scheduler.v1.GetJobResponse\"\x12\xc2\xf3\x18\x0escheduler:read\x12t\n" +
@@ -3803,7 +4200,9 @@ const file_api_proto_scheduler_proto_rawDesc = "" +
 	"\tResumeJob\x12'.quicbaas.scheduler.v1.ResumeJobRequest\x1a(.quicbaas.scheduler.v1.ResumeJobResponse\"\x14\xc2\xf3\x18\x10scheduler:resume\x12t\n" +
 	"\tCancelJob\x12'.quicbaas.scheduler.v1.CancelJobRequest\x1a(.quicbaas.scheduler.v1.CancelJobResponse\"\x14\xc2\xf3\x18\x10scheduler:cancel\x12\x81\x01\n" +
 	"\rGetJobHistory\x12+.quicbaas.scheduler.v1.GetJobHistoryRequest\x1a,.quicbaas.scheduler.v1.GetJobHistoryResponse\"\x15\xc2\xf3\x18\x11scheduler:history\x12\x8f\x01\n" +
-	"\x12GetSchedulerStatus\x120.quicbaas.scheduler.v1.GetSchedulerStatusRequest\x1a1.quicbaas.scheduler.v1.GetSchedulerStatusResponse\"\x14\xc2\xf3\x18\x10scheduler:status\x12\x87\x01\n" +
+	"\x12GetSchedulerStatus\x120.quicbaas.scheduler.v1.GetSchedulerStatusRequest\x1a1.quicbaas.scheduler.v1.GetSchedulerStatusResponse\"\x14\xc2\xf3\x18\x10scheduler:status\x12\x81\x01\n" +
+	"\x0eListRemoteRuns\x12,.quicbaas.scheduler.v1.ListRemoteRunsRequest\x1a-.quicbaas.scheduler.v1.ListRemoteRunsResponse\"\x12\xc2\xf3\x18\x0escheduler:read\x12\x8d\x01\n" +
+	"\x11CompleteRemoteRun\x12/.quicbaas.scheduler.v1.CompleteRemoteRunRequest\x1a0.quicbaas.scheduler.v1.CompleteRemoteRunResponse\"\x15\xc2\xf3\x18\x11scheduler:trigger\x12\x87\x01\n" +
 	"\fRegisterNode\x123.quicbaas.scheduler.v1.RegisterPlacementNodeRequest\x1a,.quicbaas.scheduler.v1.PlacementNodeResponse\"\x14\xc2\xf3\x18\x10placement:manage\x12\x81\x01\n" +
 	"\tRenewNode\x12+.quicbaas.scheduler.v1.PlacementNodeRequest\x1a1.quicbaas.scheduler.v1.RenewPlacementNodeResponse\"\x14\xc2\xf3\x18\x10placement:manage\x12\x8b\x01\n" +
 	"\x0eDeregisterNode\x12+.quicbaas.scheduler.v1.PlacementNodeRequest\x1a6.quicbaas.scheduler.v1.DeregisterPlacementNodeResponse\"\x14\xc2\xf3\x18\x10placement:manage\x12x\n" +
@@ -3831,7 +4230,7 @@ func file_api_proto_scheduler_proto_rawDescGZIP() []byte {
 }
 
 var file_api_proto_scheduler_proto_enumTypes = make([]protoimpl.EnumInfo, 3)
-var file_api_proto_scheduler_proto_msgTypes = make([]protoimpl.MessageInfo, 59)
+var file_api_proto_scheduler_proto_msgTypes = make([]protoimpl.MessageInfo, 65)
 var file_api_proto_scheduler_proto_goTypes = []any{
 	(JobType)(0),                            // 0: quicbaas.scheduler.v1.JobType
 	(JobStatus)(0),                          // 1: quicbaas.scheduler.v1.JobStatus
@@ -3861,57 +4260,63 @@ var file_api_proto_scheduler_proto_goTypes = []any{
 	(*GetJobHistoryResponse)(nil),           // 25: quicbaas.scheduler.v1.GetJobHistoryResponse
 	(*GetSchedulerStatusRequest)(nil),       // 26: quicbaas.scheduler.v1.GetSchedulerStatusRequest
 	(*GetSchedulerStatusResponse)(nil),      // 27: quicbaas.scheduler.v1.GetSchedulerStatusResponse
-	(*PlacementNodeFacts)(nil),              // 28: quicbaas.scheduler.v1.PlacementNodeFacts
-	(*PlacementNodeStatus)(nil),             // 29: quicbaas.scheduler.v1.PlacementNodeStatus
-	(*PlacementNodeInfo)(nil),               // 30: quicbaas.scheduler.v1.PlacementNodeInfo
-	(*RegisterPlacementNodeRequest)(nil),    // 31: quicbaas.scheduler.v1.RegisterPlacementNodeRequest
-	(*PlacementNodeRequest)(nil),            // 32: quicbaas.scheduler.v1.PlacementNodeRequest
-	(*PlacementNodeResponse)(nil),           // 33: quicbaas.scheduler.v1.PlacementNodeResponse
-	(*RenewPlacementNodeResponse)(nil),      // 34: quicbaas.scheduler.v1.RenewPlacementNodeResponse
-	(*DeregisterPlacementNodeResponse)(nil), // 35: quicbaas.scheduler.v1.DeregisterPlacementNodeResponse
-	(*ListPlacementNodesRequest)(nil),       // 36: quicbaas.scheduler.v1.ListPlacementNodesRequest
-	(*ListPlacementNodesResponse)(nil),      // 37: quicbaas.scheduler.v1.ListPlacementNodesResponse
-	(*DrainPlacementNodeResponse)(nil),      // 38: quicbaas.scheduler.v1.DrainPlacementNodeResponse
-	(*PlacementConstraint)(nil),             // 39: quicbaas.scheduler.v1.PlacementConstraint
-	(*PlacementAffinityTerm)(nil),           // 40: quicbaas.scheduler.v1.PlacementAffinityTerm
-	(*PlacementSpreadConstraint)(nil),       // 41: quicbaas.scheduler.v1.PlacementSpreadConstraint
-	(*PlaceWorkloadRequest)(nil),            // 42: quicbaas.scheduler.v1.PlaceWorkloadRequest
-	(*PlacementRecord)(nil),                 // 43: quicbaas.scheduler.v1.PlacementRecord
-	(*PlaceWorkloadResponse)(nil),           // 44: quicbaas.scheduler.v1.PlaceWorkloadResponse
-	(*ReleaseWorkloadRequest)(nil),          // 45: quicbaas.scheduler.v1.ReleaseWorkloadRequest
-	(*ReleaseWorkloadResponse)(nil),         // 46: quicbaas.scheduler.v1.ReleaseWorkloadResponse
-	(*GetPlacementRequest)(nil),             // 47: quicbaas.scheduler.v1.GetPlacementRequest
-	(*GetPlacementResponse)(nil),            // 48: quicbaas.scheduler.v1.GetPlacementResponse
-	(*ListPlacementsRequest)(nil),           // 49: quicbaas.scheduler.v1.ListPlacementsRequest
-	(*ListPlacementsResponse)(nil),          // 50: quicbaas.scheduler.v1.ListPlacementsResponse
-	nil,                                     // 51: quicbaas.scheduler.v1.Job.LabelsEntry
-	nil,                                     // 52: quicbaas.scheduler.v1.CreateJobRequest.LabelsEntry
-	nil,                                     // 53: quicbaas.scheduler.v1.UpdateJobRequest.LabelsEntry
-	nil,                                     // 54: quicbaas.scheduler.v1.ListJobsRequest.LabelsEntry
-	nil,                                     // 55: quicbaas.scheduler.v1.PlacementNodeFacts.CapacityEntry
-	nil,                                     // 56: quicbaas.scheduler.v1.PlacementNodeFacts.LabelsEntry
-	nil,                                     // 57: quicbaas.scheduler.v1.PlacementNodeInfo.AllocatedEntry
-	nil,                                     // 58: quicbaas.scheduler.v1.PlaceWorkloadRequest.LabelsEntry
-	nil,                                     // 59: quicbaas.scheduler.v1.PlaceWorkloadRequest.ResourcesEntry
-	nil,                                     // 60: quicbaas.scheduler.v1.PlacementRecord.ResourcesEntry
-	nil,                                     // 61: quicbaas.scheduler.v1.PlacementRecord.LabelsEntry
+	(*RemoteRunRef)(nil),                    // 28: quicbaas.scheduler.v1.RemoteRunRef
+	(*RemoteRun)(nil),                       // 29: quicbaas.scheduler.v1.RemoteRun
+	(*ListRemoteRunsRequest)(nil),           // 30: quicbaas.scheduler.v1.ListRemoteRunsRequest
+	(*ListRemoteRunsResponse)(nil),          // 31: quicbaas.scheduler.v1.ListRemoteRunsResponse
+	(*CompleteRemoteRunRequest)(nil),        // 32: quicbaas.scheduler.v1.CompleteRemoteRunRequest
+	(*CompleteRemoteRunResponse)(nil),       // 33: quicbaas.scheduler.v1.CompleteRemoteRunResponse
+	(*PlacementNodeFacts)(nil),              // 34: quicbaas.scheduler.v1.PlacementNodeFacts
+	(*PlacementNodeStatus)(nil),             // 35: quicbaas.scheduler.v1.PlacementNodeStatus
+	(*PlacementNodeInfo)(nil),               // 36: quicbaas.scheduler.v1.PlacementNodeInfo
+	(*RegisterPlacementNodeRequest)(nil),    // 37: quicbaas.scheduler.v1.RegisterPlacementNodeRequest
+	(*PlacementNodeRequest)(nil),            // 38: quicbaas.scheduler.v1.PlacementNodeRequest
+	(*PlacementNodeResponse)(nil),           // 39: quicbaas.scheduler.v1.PlacementNodeResponse
+	(*RenewPlacementNodeResponse)(nil),      // 40: quicbaas.scheduler.v1.RenewPlacementNodeResponse
+	(*DeregisterPlacementNodeResponse)(nil), // 41: quicbaas.scheduler.v1.DeregisterPlacementNodeResponse
+	(*ListPlacementNodesRequest)(nil),       // 42: quicbaas.scheduler.v1.ListPlacementNodesRequest
+	(*ListPlacementNodesResponse)(nil),      // 43: quicbaas.scheduler.v1.ListPlacementNodesResponse
+	(*DrainPlacementNodeResponse)(nil),      // 44: quicbaas.scheduler.v1.DrainPlacementNodeResponse
+	(*PlacementConstraint)(nil),             // 45: quicbaas.scheduler.v1.PlacementConstraint
+	(*PlacementAffinityTerm)(nil),           // 46: quicbaas.scheduler.v1.PlacementAffinityTerm
+	(*PlacementSpreadConstraint)(nil),       // 47: quicbaas.scheduler.v1.PlacementSpreadConstraint
+	(*PlaceWorkloadRequest)(nil),            // 48: quicbaas.scheduler.v1.PlaceWorkloadRequest
+	(*PlacementRecord)(nil),                 // 49: quicbaas.scheduler.v1.PlacementRecord
+	(*PlaceWorkloadResponse)(nil),           // 50: quicbaas.scheduler.v1.PlaceWorkloadResponse
+	(*ReleaseWorkloadRequest)(nil),          // 51: quicbaas.scheduler.v1.ReleaseWorkloadRequest
+	(*ReleaseWorkloadResponse)(nil),         // 52: quicbaas.scheduler.v1.ReleaseWorkloadResponse
+	(*GetPlacementRequest)(nil),             // 53: quicbaas.scheduler.v1.GetPlacementRequest
+	(*GetPlacementResponse)(nil),            // 54: quicbaas.scheduler.v1.GetPlacementResponse
+	(*ListPlacementsRequest)(nil),           // 55: quicbaas.scheduler.v1.ListPlacementsRequest
+	(*ListPlacementsResponse)(nil),          // 56: quicbaas.scheduler.v1.ListPlacementsResponse
+	nil,                                     // 57: quicbaas.scheduler.v1.Job.LabelsEntry
+	nil,                                     // 58: quicbaas.scheduler.v1.CreateJobRequest.LabelsEntry
+	nil,                                     // 59: quicbaas.scheduler.v1.UpdateJobRequest.LabelsEntry
+	nil,                                     // 60: quicbaas.scheduler.v1.ListJobsRequest.LabelsEntry
+	nil,                                     // 61: quicbaas.scheduler.v1.PlacementNodeFacts.CapacityEntry
+	nil,                                     // 62: quicbaas.scheduler.v1.PlacementNodeFacts.LabelsEntry
+	nil,                                     // 63: quicbaas.scheduler.v1.PlacementNodeInfo.AllocatedEntry
+	nil,                                     // 64: quicbaas.scheduler.v1.PlaceWorkloadRequest.LabelsEntry
+	nil,                                     // 65: quicbaas.scheduler.v1.PlaceWorkloadRequest.ResourcesEntry
+	nil,                                     // 66: quicbaas.scheduler.v1.PlacementRecord.ResourcesEntry
+	nil,                                     // 67: quicbaas.scheduler.v1.PlacementRecord.LabelsEntry
 }
 var file_api_proto_scheduler_proto_depIdxs = []int32{
 	2,  // 0: quicbaas.scheduler.v1.Job.owner_type:type_name -> quicbaas.scheduler.v1.OwnerType
 	0,  // 1: quicbaas.scheduler.v1.Job.type:type_name -> quicbaas.scheduler.v1.JobType
 	1,  // 2: quicbaas.scheduler.v1.Job.status:type_name -> quicbaas.scheduler.v1.JobStatus
-	51, // 3: quicbaas.scheduler.v1.Job.labels:type_name -> quicbaas.scheduler.v1.Job.LabelsEntry
+	57, // 3: quicbaas.scheduler.v1.Job.labels:type_name -> quicbaas.scheduler.v1.Job.LabelsEntry
 	1,  // 4: quicbaas.scheduler.v1.JobExecution.status:type_name -> quicbaas.scheduler.v1.JobStatus
 	2,  // 5: quicbaas.scheduler.v1.CreateJobRequest.owner_type:type_name -> quicbaas.scheduler.v1.OwnerType
 	0,  // 6: quicbaas.scheduler.v1.CreateJobRequest.type:type_name -> quicbaas.scheduler.v1.JobType
-	52, // 7: quicbaas.scheduler.v1.CreateJobRequest.labels:type_name -> quicbaas.scheduler.v1.CreateJobRequest.LabelsEntry
+	58, // 7: quicbaas.scheduler.v1.CreateJobRequest.labels:type_name -> quicbaas.scheduler.v1.CreateJobRequest.LabelsEntry
 	3,  // 8: quicbaas.scheduler.v1.CreateJobResponse.job:type_name -> quicbaas.scheduler.v1.Job
 	3,  // 9: quicbaas.scheduler.v1.GetJobResponse.job:type_name -> quicbaas.scheduler.v1.Job
-	53, // 10: quicbaas.scheduler.v1.UpdateJobRequest.labels:type_name -> quicbaas.scheduler.v1.UpdateJobRequest.LabelsEntry
+	59, // 10: quicbaas.scheduler.v1.UpdateJobRequest.labels:type_name -> quicbaas.scheduler.v1.UpdateJobRequest.LabelsEntry
 	3,  // 11: quicbaas.scheduler.v1.UpdateJobResponse.job:type_name -> quicbaas.scheduler.v1.Job
 	2,  // 12: quicbaas.scheduler.v1.ListJobsRequest.owner_type:type_name -> quicbaas.scheduler.v1.OwnerType
 	1,  // 13: quicbaas.scheduler.v1.ListJobsRequest.status:type_name -> quicbaas.scheduler.v1.JobStatus
-	54, // 14: quicbaas.scheduler.v1.ListJobsRequest.labels:type_name -> quicbaas.scheduler.v1.ListJobsRequest.LabelsEntry
+	60, // 14: quicbaas.scheduler.v1.ListJobsRequest.labels:type_name -> quicbaas.scheduler.v1.ListJobsRequest.LabelsEntry
 	3,  // 15: quicbaas.scheduler.v1.ListJobsResponse.jobs:type_name -> quicbaas.scheduler.v1.Job
 	1,  // 16: quicbaas.scheduler.v1.TriggerJobResponse.status:type_name -> quicbaas.scheduler.v1.JobStatus
 	1,  // 17: quicbaas.scheduler.v1.PauseJobResponse.old_status:type_name -> quicbaas.scheduler.v1.JobStatus
@@ -3922,77 +4327,84 @@ var file_api_proto_scheduler_proto_depIdxs = []int32{
 	1,  // 22: quicbaas.scheduler.v1.CancelJobResponse.new_status:type_name -> quicbaas.scheduler.v1.JobStatus
 	4,  // 23: quicbaas.scheduler.v1.GetJobHistoryResponse.executions:type_name -> quicbaas.scheduler.v1.JobExecution
 	5,  // 24: quicbaas.scheduler.v1.GetSchedulerStatusResponse.stats:type_name -> quicbaas.scheduler.v1.SchedulerStats
-	55, // 25: quicbaas.scheduler.v1.PlacementNodeFacts.capacity:type_name -> quicbaas.scheduler.v1.PlacementNodeFacts.CapacityEntry
-	56, // 26: quicbaas.scheduler.v1.PlacementNodeFacts.labels:type_name -> quicbaas.scheduler.v1.PlacementNodeFacts.LabelsEntry
-	28, // 27: quicbaas.scheduler.v1.PlacementNodeInfo.facts:type_name -> quicbaas.scheduler.v1.PlacementNodeFacts
-	29, // 28: quicbaas.scheduler.v1.PlacementNodeInfo.status:type_name -> quicbaas.scheduler.v1.PlacementNodeStatus
-	57, // 29: quicbaas.scheduler.v1.PlacementNodeInfo.allocated:type_name -> quicbaas.scheduler.v1.PlacementNodeInfo.AllocatedEntry
-	28, // 30: quicbaas.scheduler.v1.RegisterPlacementNodeRequest.facts:type_name -> quicbaas.scheduler.v1.PlacementNodeFacts
-	30, // 31: quicbaas.scheduler.v1.PlacementNodeResponse.node:type_name -> quicbaas.scheduler.v1.PlacementNodeInfo
-	30, // 32: quicbaas.scheduler.v1.ListPlacementNodesResponse.nodes:type_name -> quicbaas.scheduler.v1.PlacementNodeInfo
-	43, // 33: quicbaas.scheduler.v1.DrainPlacementNodeResponse.placements:type_name -> quicbaas.scheduler.v1.PlacementRecord
-	58, // 34: quicbaas.scheduler.v1.PlaceWorkloadRequest.labels:type_name -> quicbaas.scheduler.v1.PlaceWorkloadRequest.LabelsEntry
-	59, // 35: quicbaas.scheduler.v1.PlaceWorkloadRequest.resources:type_name -> quicbaas.scheduler.v1.PlaceWorkloadRequest.ResourcesEntry
-	39, // 36: quicbaas.scheduler.v1.PlaceWorkloadRequest.constraints:type_name -> quicbaas.scheduler.v1.PlacementConstraint
-	40, // 37: quicbaas.scheduler.v1.PlaceWorkloadRequest.affinity:type_name -> quicbaas.scheduler.v1.PlacementAffinityTerm
-	40, // 38: quicbaas.scheduler.v1.PlaceWorkloadRequest.anti_affinity:type_name -> quicbaas.scheduler.v1.PlacementAffinityTerm
-	41, // 39: quicbaas.scheduler.v1.PlaceWorkloadRequest.spread:type_name -> quicbaas.scheduler.v1.PlacementSpreadConstraint
-	60, // 40: quicbaas.scheduler.v1.PlacementRecord.resources:type_name -> quicbaas.scheduler.v1.PlacementRecord.ResourcesEntry
-	61, // 41: quicbaas.scheduler.v1.PlacementRecord.labels:type_name -> quicbaas.scheduler.v1.PlacementRecord.LabelsEntry
-	43, // 42: quicbaas.scheduler.v1.PlaceWorkloadResponse.placement:type_name -> quicbaas.scheduler.v1.PlacementRecord
-	43, // 43: quicbaas.scheduler.v1.GetPlacementResponse.placement:type_name -> quicbaas.scheduler.v1.PlacementRecord
-	43, // 44: quicbaas.scheduler.v1.ListPlacementsResponse.placements:type_name -> quicbaas.scheduler.v1.PlacementRecord
-	6,  // 45: quicbaas.scheduler.v1.SchedulerService.CreateJob:input_type -> quicbaas.scheduler.v1.CreateJobRequest
-	8,  // 46: quicbaas.scheduler.v1.SchedulerService.GetJob:input_type -> quicbaas.scheduler.v1.GetJobRequest
-	10, // 47: quicbaas.scheduler.v1.SchedulerService.UpdateJob:input_type -> quicbaas.scheduler.v1.UpdateJobRequest
-	12, // 48: quicbaas.scheduler.v1.SchedulerService.DeleteJob:input_type -> quicbaas.scheduler.v1.DeleteJobRequest
-	14, // 49: quicbaas.scheduler.v1.SchedulerService.ListJobs:input_type -> quicbaas.scheduler.v1.ListJobsRequest
-	16, // 50: quicbaas.scheduler.v1.SchedulerService.TriggerJob:input_type -> quicbaas.scheduler.v1.TriggerJobRequest
-	18, // 51: quicbaas.scheduler.v1.SchedulerService.PauseJob:input_type -> quicbaas.scheduler.v1.PauseJobRequest
-	20, // 52: quicbaas.scheduler.v1.SchedulerService.ResumeJob:input_type -> quicbaas.scheduler.v1.ResumeJobRequest
-	22, // 53: quicbaas.scheduler.v1.SchedulerService.CancelJob:input_type -> quicbaas.scheduler.v1.CancelJobRequest
-	24, // 54: quicbaas.scheduler.v1.SchedulerService.GetJobHistory:input_type -> quicbaas.scheduler.v1.GetJobHistoryRequest
-	26, // 55: quicbaas.scheduler.v1.SchedulerService.GetSchedulerStatus:input_type -> quicbaas.scheduler.v1.GetSchedulerStatusRequest
-	31, // 56: quicbaas.scheduler.v1.SchedulerService.RegisterNode:input_type -> quicbaas.scheduler.v1.RegisterPlacementNodeRequest
-	32, // 57: quicbaas.scheduler.v1.SchedulerService.RenewNode:input_type -> quicbaas.scheduler.v1.PlacementNodeRequest
-	32, // 58: quicbaas.scheduler.v1.SchedulerService.DeregisterNode:input_type -> quicbaas.scheduler.v1.PlacementNodeRequest
-	32, // 59: quicbaas.scheduler.v1.SchedulerService.GetNode:input_type -> quicbaas.scheduler.v1.PlacementNodeRequest
-	36, // 60: quicbaas.scheduler.v1.SchedulerService.ListNodes:input_type -> quicbaas.scheduler.v1.ListPlacementNodesRequest
-	32, // 61: quicbaas.scheduler.v1.SchedulerService.CordonNode:input_type -> quicbaas.scheduler.v1.PlacementNodeRequest
-	32, // 62: quicbaas.scheduler.v1.SchedulerService.UncordonNode:input_type -> quicbaas.scheduler.v1.PlacementNodeRequest
-	32, // 63: quicbaas.scheduler.v1.SchedulerService.DrainNode:input_type -> quicbaas.scheduler.v1.PlacementNodeRequest
-	42, // 64: quicbaas.scheduler.v1.SchedulerService.Place:input_type -> quicbaas.scheduler.v1.PlaceWorkloadRequest
-	45, // 65: quicbaas.scheduler.v1.SchedulerService.Release:input_type -> quicbaas.scheduler.v1.ReleaseWorkloadRequest
-	47, // 66: quicbaas.scheduler.v1.SchedulerService.GetPlacement:input_type -> quicbaas.scheduler.v1.GetPlacementRequest
-	49, // 67: quicbaas.scheduler.v1.SchedulerService.ListPlacements:input_type -> quicbaas.scheduler.v1.ListPlacementsRequest
-	7,  // 68: quicbaas.scheduler.v1.SchedulerService.CreateJob:output_type -> quicbaas.scheduler.v1.CreateJobResponse
-	9,  // 69: quicbaas.scheduler.v1.SchedulerService.GetJob:output_type -> quicbaas.scheduler.v1.GetJobResponse
-	11, // 70: quicbaas.scheduler.v1.SchedulerService.UpdateJob:output_type -> quicbaas.scheduler.v1.UpdateJobResponse
-	13, // 71: quicbaas.scheduler.v1.SchedulerService.DeleteJob:output_type -> quicbaas.scheduler.v1.DeleteJobResponse
-	15, // 72: quicbaas.scheduler.v1.SchedulerService.ListJobs:output_type -> quicbaas.scheduler.v1.ListJobsResponse
-	17, // 73: quicbaas.scheduler.v1.SchedulerService.TriggerJob:output_type -> quicbaas.scheduler.v1.TriggerJobResponse
-	19, // 74: quicbaas.scheduler.v1.SchedulerService.PauseJob:output_type -> quicbaas.scheduler.v1.PauseJobResponse
-	21, // 75: quicbaas.scheduler.v1.SchedulerService.ResumeJob:output_type -> quicbaas.scheduler.v1.ResumeJobResponse
-	23, // 76: quicbaas.scheduler.v1.SchedulerService.CancelJob:output_type -> quicbaas.scheduler.v1.CancelJobResponse
-	25, // 77: quicbaas.scheduler.v1.SchedulerService.GetJobHistory:output_type -> quicbaas.scheduler.v1.GetJobHistoryResponse
-	27, // 78: quicbaas.scheduler.v1.SchedulerService.GetSchedulerStatus:output_type -> quicbaas.scheduler.v1.GetSchedulerStatusResponse
-	33, // 79: quicbaas.scheduler.v1.SchedulerService.RegisterNode:output_type -> quicbaas.scheduler.v1.PlacementNodeResponse
-	34, // 80: quicbaas.scheduler.v1.SchedulerService.RenewNode:output_type -> quicbaas.scheduler.v1.RenewPlacementNodeResponse
-	35, // 81: quicbaas.scheduler.v1.SchedulerService.DeregisterNode:output_type -> quicbaas.scheduler.v1.DeregisterPlacementNodeResponse
-	33, // 82: quicbaas.scheduler.v1.SchedulerService.GetNode:output_type -> quicbaas.scheduler.v1.PlacementNodeResponse
-	37, // 83: quicbaas.scheduler.v1.SchedulerService.ListNodes:output_type -> quicbaas.scheduler.v1.ListPlacementNodesResponse
-	33, // 84: quicbaas.scheduler.v1.SchedulerService.CordonNode:output_type -> quicbaas.scheduler.v1.PlacementNodeResponse
-	33, // 85: quicbaas.scheduler.v1.SchedulerService.UncordonNode:output_type -> quicbaas.scheduler.v1.PlacementNodeResponse
-	38, // 86: quicbaas.scheduler.v1.SchedulerService.DrainNode:output_type -> quicbaas.scheduler.v1.DrainPlacementNodeResponse
-	44, // 87: quicbaas.scheduler.v1.SchedulerService.Place:output_type -> quicbaas.scheduler.v1.PlaceWorkloadResponse
-	46, // 88: quicbaas.scheduler.v1.SchedulerService.Release:output_type -> quicbaas.scheduler.v1.ReleaseWorkloadResponse
-	48, // 89: quicbaas.scheduler.v1.SchedulerService.GetPlacement:output_type -> quicbaas.scheduler.v1.GetPlacementResponse
-	50, // 90: quicbaas.scheduler.v1.SchedulerService.ListPlacements:output_type -> quicbaas.scheduler.v1.ListPlacementsResponse
-	68, // [68:91] is the sub-list for method output_type
-	45, // [45:68] is the sub-list for method input_type
-	45, // [45:45] is the sub-list for extension type_name
-	45, // [45:45] is the sub-list for extension extendee
-	0,  // [0:45] is the sub-list for field type_name
+	28, // 25: quicbaas.scheduler.v1.RemoteRun.run:type_name -> quicbaas.scheduler.v1.RemoteRunRef
+	29, // 26: quicbaas.scheduler.v1.ListRemoteRunsResponse.runs:type_name -> quicbaas.scheduler.v1.RemoteRun
+	28, // 27: quicbaas.scheduler.v1.CompleteRemoteRunRequest.run:type_name -> quicbaas.scheduler.v1.RemoteRunRef
+	61, // 28: quicbaas.scheduler.v1.PlacementNodeFacts.capacity:type_name -> quicbaas.scheduler.v1.PlacementNodeFacts.CapacityEntry
+	62, // 29: quicbaas.scheduler.v1.PlacementNodeFacts.labels:type_name -> quicbaas.scheduler.v1.PlacementNodeFacts.LabelsEntry
+	34, // 30: quicbaas.scheduler.v1.PlacementNodeInfo.facts:type_name -> quicbaas.scheduler.v1.PlacementNodeFacts
+	35, // 31: quicbaas.scheduler.v1.PlacementNodeInfo.status:type_name -> quicbaas.scheduler.v1.PlacementNodeStatus
+	63, // 32: quicbaas.scheduler.v1.PlacementNodeInfo.allocated:type_name -> quicbaas.scheduler.v1.PlacementNodeInfo.AllocatedEntry
+	34, // 33: quicbaas.scheduler.v1.RegisterPlacementNodeRequest.facts:type_name -> quicbaas.scheduler.v1.PlacementNodeFacts
+	36, // 34: quicbaas.scheduler.v1.PlacementNodeResponse.node:type_name -> quicbaas.scheduler.v1.PlacementNodeInfo
+	36, // 35: quicbaas.scheduler.v1.ListPlacementNodesResponse.nodes:type_name -> quicbaas.scheduler.v1.PlacementNodeInfo
+	49, // 36: quicbaas.scheduler.v1.DrainPlacementNodeResponse.placements:type_name -> quicbaas.scheduler.v1.PlacementRecord
+	64, // 37: quicbaas.scheduler.v1.PlaceWorkloadRequest.labels:type_name -> quicbaas.scheduler.v1.PlaceWorkloadRequest.LabelsEntry
+	65, // 38: quicbaas.scheduler.v1.PlaceWorkloadRequest.resources:type_name -> quicbaas.scheduler.v1.PlaceWorkloadRequest.ResourcesEntry
+	45, // 39: quicbaas.scheduler.v1.PlaceWorkloadRequest.constraints:type_name -> quicbaas.scheduler.v1.PlacementConstraint
+	46, // 40: quicbaas.scheduler.v1.PlaceWorkloadRequest.affinity:type_name -> quicbaas.scheduler.v1.PlacementAffinityTerm
+	46, // 41: quicbaas.scheduler.v1.PlaceWorkloadRequest.anti_affinity:type_name -> quicbaas.scheduler.v1.PlacementAffinityTerm
+	47, // 42: quicbaas.scheduler.v1.PlaceWorkloadRequest.spread:type_name -> quicbaas.scheduler.v1.PlacementSpreadConstraint
+	66, // 43: quicbaas.scheduler.v1.PlacementRecord.resources:type_name -> quicbaas.scheduler.v1.PlacementRecord.ResourcesEntry
+	67, // 44: quicbaas.scheduler.v1.PlacementRecord.labels:type_name -> quicbaas.scheduler.v1.PlacementRecord.LabelsEntry
+	49, // 45: quicbaas.scheduler.v1.PlaceWorkloadResponse.placement:type_name -> quicbaas.scheduler.v1.PlacementRecord
+	49, // 46: quicbaas.scheduler.v1.GetPlacementResponse.placement:type_name -> quicbaas.scheduler.v1.PlacementRecord
+	49, // 47: quicbaas.scheduler.v1.ListPlacementsResponse.placements:type_name -> quicbaas.scheduler.v1.PlacementRecord
+	6,  // 48: quicbaas.scheduler.v1.SchedulerService.CreateJob:input_type -> quicbaas.scheduler.v1.CreateJobRequest
+	8,  // 49: quicbaas.scheduler.v1.SchedulerService.GetJob:input_type -> quicbaas.scheduler.v1.GetJobRequest
+	10, // 50: quicbaas.scheduler.v1.SchedulerService.UpdateJob:input_type -> quicbaas.scheduler.v1.UpdateJobRequest
+	12, // 51: quicbaas.scheduler.v1.SchedulerService.DeleteJob:input_type -> quicbaas.scheduler.v1.DeleteJobRequest
+	14, // 52: quicbaas.scheduler.v1.SchedulerService.ListJobs:input_type -> quicbaas.scheduler.v1.ListJobsRequest
+	16, // 53: quicbaas.scheduler.v1.SchedulerService.TriggerJob:input_type -> quicbaas.scheduler.v1.TriggerJobRequest
+	18, // 54: quicbaas.scheduler.v1.SchedulerService.PauseJob:input_type -> quicbaas.scheduler.v1.PauseJobRequest
+	20, // 55: quicbaas.scheduler.v1.SchedulerService.ResumeJob:input_type -> quicbaas.scheduler.v1.ResumeJobRequest
+	22, // 56: quicbaas.scheduler.v1.SchedulerService.CancelJob:input_type -> quicbaas.scheduler.v1.CancelJobRequest
+	24, // 57: quicbaas.scheduler.v1.SchedulerService.GetJobHistory:input_type -> quicbaas.scheduler.v1.GetJobHistoryRequest
+	26, // 58: quicbaas.scheduler.v1.SchedulerService.GetSchedulerStatus:input_type -> quicbaas.scheduler.v1.GetSchedulerStatusRequest
+	30, // 59: quicbaas.scheduler.v1.SchedulerService.ListRemoteRuns:input_type -> quicbaas.scheduler.v1.ListRemoteRunsRequest
+	32, // 60: quicbaas.scheduler.v1.SchedulerService.CompleteRemoteRun:input_type -> quicbaas.scheduler.v1.CompleteRemoteRunRequest
+	37, // 61: quicbaas.scheduler.v1.SchedulerService.RegisterNode:input_type -> quicbaas.scheduler.v1.RegisterPlacementNodeRequest
+	38, // 62: quicbaas.scheduler.v1.SchedulerService.RenewNode:input_type -> quicbaas.scheduler.v1.PlacementNodeRequest
+	38, // 63: quicbaas.scheduler.v1.SchedulerService.DeregisterNode:input_type -> quicbaas.scheduler.v1.PlacementNodeRequest
+	38, // 64: quicbaas.scheduler.v1.SchedulerService.GetNode:input_type -> quicbaas.scheduler.v1.PlacementNodeRequest
+	42, // 65: quicbaas.scheduler.v1.SchedulerService.ListNodes:input_type -> quicbaas.scheduler.v1.ListPlacementNodesRequest
+	38, // 66: quicbaas.scheduler.v1.SchedulerService.CordonNode:input_type -> quicbaas.scheduler.v1.PlacementNodeRequest
+	38, // 67: quicbaas.scheduler.v1.SchedulerService.UncordonNode:input_type -> quicbaas.scheduler.v1.PlacementNodeRequest
+	38, // 68: quicbaas.scheduler.v1.SchedulerService.DrainNode:input_type -> quicbaas.scheduler.v1.PlacementNodeRequest
+	48, // 69: quicbaas.scheduler.v1.SchedulerService.Place:input_type -> quicbaas.scheduler.v1.PlaceWorkloadRequest
+	51, // 70: quicbaas.scheduler.v1.SchedulerService.Release:input_type -> quicbaas.scheduler.v1.ReleaseWorkloadRequest
+	53, // 71: quicbaas.scheduler.v1.SchedulerService.GetPlacement:input_type -> quicbaas.scheduler.v1.GetPlacementRequest
+	55, // 72: quicbaas.scheduler.v1.SchedulerService.ListPlacements:input_type -> quicbaas.scheduler.v1.ListPlacementsRequest
+	7,  // 73: quicbaas.scheduler.v1.SchedulerService.CreateJob:output_type -> quicbaas.scheduler.v1.CreateJobResponse
+	9,  // 74: quicbaas.scheduler.v1.SchedulerService.GetJob:output_type -> quicbaas.scheduler.v1.GetJobResponse
+	11, // 75: quicbaas.scheduler.v1.SchedulerService.UpdateJob:output_type -> quicbaas.scheduler.v1.UpdateJobResponse
+	13, // 76: quicbaas.scheduler.v1.SchedulerService.DeleteJob:output_type -> quicbaas.scheduler.v1.DeleteJobResponse
+	15, // 77: quicbaas.scheduler.v1.SchedulerService.ListJobs:output_type -> quicbaas.scheduler.v1.ListJobsResponse
+	17, // 78: quicbaas.scheduler.v1.SchedulerService.TriggerJob:output_type -> quicbaas.scheduler.v1.TriggerJobResponse
+	19, // 79: quicbaas.scheduler.v1.SchedulerService.PauseJob:output_type -> quicbaas.scheduler.v1.PauseJobResponse
+	21, // 80: quicbaas.scheduler.v1.SchedulerService.ResumeJob:output_type -> quicbaas.scheduler.v1.ResumeJobResponse
+	23, // 81: quicbaas.scheduler.v1.SchedulerService.CancelJob:output_type -> quicbaas.scheduler.v1.CancelJobResponse
+	25, // 82: quicbaas.scheduler.v1.SchedulerService.GetJobHistory:output_type -> quicbaas.scheduler.v1.GetJobHistoryResponse
+	27, // 83: quicbaas.scheduler.v1.SchedulerService.GetSchedulerStatus:output_type -> quicbaas.scheduler.v1.GetSchedulerStatusResponse
+	31, // 84: quicbaas.scheduler.v1.SchedulerService.ListRemoteRuns:output_type -> quicbaas.scheduler.v1.ListRemoteRunsResponse
+	33, // 85: quicbaas.scheduler.v1.SchedulerService.CompleteRemoteRun:output_type -> quicbaas.scheduler.v1.CompleteRemoteRunResponse
+	39, // 86: quicbaas.scheduler.v1.SchedulerService.RegisterNode:output_type -> quicbaas.scheduler.v1.PlacementNodeResponse
+	40, // 87: quicbaas.scheduler.v1.SchedulerService.RenewNode:output_type -> quicbaas.scheduler.v1.RenewPlacementNodeResponse
+	41, // 88: quicbaas.scheduler.v1.SchedulerService.DeregisterNode:output_type -> quicbaas.scheduler.v1.DeregisterPlacementNodeResponse
+	39, // 89: quicbaas.scheduler.v1.SchedulerService.GetNode:output_type -> quicbaas.scheduler.v1.PlacementNodeResponse
+	43, // 90: quicbaas.scheduler.v1.SchedulerService.ListNodes:output_type -> quicbaas.scheduler.v1.ListPlacementNodesResponse
+	39, // 91: quicbaas.scheduler.v1.SchedulerService.CordonNode:output_type -> quicbaas.scheduler.v1.PlacementNodeResponse
+	39, // 92: quicbaas.scheduler.v1.SchedulerService.UncordonNode:output_type -> quicbaas.scheduler.v1.PlacementNodeResponse
+	44, // 93: quicbaas.scheduler.v1.SchedulerService.DrainNode:output_type -> quicbaas.scheduler.v1.DrainPlacementNodeResponse
+	50, // 94: quicbaas.scheduler.v1.SchedulerService.Place:output_type -> quicbaas.scheduler.v1.PlaceWorkloadResponse
+	52, // 95: quicbaas.scheduler.v1.SchedulerService.Release:output_type -> quicbaas.scheduler.v1.ReleaseWorkloadResponse
+	54, // 96: quicbaas.scheduler.v1.SchedulerService.GetPlacement:output_type -> quicbaas.scheduler.v1.GetPlacementResponse
+	56, // 97: quicbaas.scheduler.v1.SchedulerService.ListPlacements:output_type -> quicbaas.scheduler.v1.ListPlacementsResponse
+	73, // [73:98] is the sub-list for method output_type
+	48, // [48:73] is the sub-list for method input_type
+	48, // [48:48] is the sub-list for extension type_name
+	48, // [48:48] is the sub-list for extension extendee
+	0,  // [0:48] is the sub-list for field type_name
 }
 
 func init() { file_api_proto_scheduler_proto_init() }
@@ -4006,7 +4418,7 @@ func file_api_proto_scheduler_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_api_proto_scheduler_proto_rawDesc), len(file_api_proto_scheduler_proto_rawDesc)),
 			NumEnums:      3,
-			NumMessages:   59,
+			NumMessages:   65,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

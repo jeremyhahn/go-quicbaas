@@ -454,6 +454,7 @@ func TestSchedulerTransformResponseRejectsMismatchedResults(t *testing.T) {
 	h := newSchedulerHandler()
 	bad := map[string]interface{}{
 		"job": "not-an-object", "jobs": "x", "job_id": "x", "executions": "x", "stats": "x",
+		"runs": "x",
 	}
 	for method := range schedulerJobResults {
 		if _, err := h.transformResponse(method, nil, bad); err == nil {

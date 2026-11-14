@@ -330,6 +330,9 @@ var qrdbToolExactMapping = map[string]qrdbToolResource{
 	"quicbaas_scheduler_job_history": {"scheduler", "history"},
 	"quicbaas_scheduler_status":      {"scheduler", "status"},
 
+	"quicbaas_scheduler_list_remote_runs":    {"scheduler", "read"},
+	"quicbaas_scheduler_complete_remote_run": {"scheduler", "trigger"},
+
 	// Workload placement carries its own "placement" family (qrdb owns
 	// "scheduler"), with the same read / place / manage split as the gRPC
 	// and REST tables.

@@ -683,3 +683,5 @@ POST /api/v1/scheduler/placements
 GET /api/v1/scheduler/placements
 GET /api/v1/scheduler/placements/{id}
 DELETE /api/v1/scheduler/placements/{id}
+GET /api/v1/scheduler/remote-runs
+POST /api/v1/scheduler/remote-runs/complete

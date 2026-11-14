@@ -36,6 +36,8 @@ const (
 	SchedulerService_CancelJob_FullMethodName          = "/quicbaas.scheduler.v1.SchedulerService/CancelJob"
 	SchedulerService_GetJobHistory_FullMethodName      = "/quicbaas.scheduler.v1.SchedulerService/GetJobHistory"
 	SchedulerService_GetSchedulerStatus_FullMethodName = "/quicbaas.scheduler.v1.SchedulerService/GetSchedulerStatus"
+	SchedulerService_ListRemoteRuns_FullMethodName     = "/quicbaas.scheduler.v1.SchedulerService/ListRemoteRuns"
+	SchedulerService_CompleteRemoteRun_FullMethodName  = "/quicbaas.scheduler.v1.SchedulerService/CompleteRemoteRun"
 	SchedulerService_RegisterNode_FullMethodName       = "/quicbaas.scheduler.v1.SchedulerService/RegisterNode"
 	SchedulerService_RenewNode_FullMethodName          = "/quicbaas.scheduler.v1.SchedulerService/RenewNode"
 	SchedulerService_DeregisterNode_FullMethodName     = "/quicbaas.scheduler.v1.SchedulerService/DeregisterNode"
@@ -68,6 +70,11 @@ type SchedulerServiceClient interface {
 	// History and Status
 	GetJobHistory(ctx context.Context, in *GetJobHistoryRequest, opts ...grpc.CallOption) (*GetJobHistoryResponse, error)
 	GetSchedulerStatus(ctx context.Context, in *GetSchedulerStatusRequest, opts ...grpc.CallOption) (*GetSchedulerStatusResponse, error)
+	// Remote handlers (go-quicbaas#1955): a job whose handler is named
+	// "remote:<name>" runs in a client's worker, which lists its open runs
+	// and reports each result.
+	ListRemoteRuns(ctx context.Context, in *ListRemoteRunsRequest, opts ...grpc.CallOption) (*ListRemoteRunsResponse, error)
+	CompleteRemoteRun(ctx context.Context, in *CompleteRemoteRunRequest, opts ...grpc.CallOption) (*CompleteRemoteRunResponse, error)
 	// RegisterNode registers or refreshes a node's facts under a lease.
 	RegisterNode(ctx context.Context, in *RegisterPlacementNodeRequest, opts ...grpc.CallOption) (*PlacementNodeResponse, error)
 	// RenewNode heartbeats a node's lease.
@@ -212,6 +219,26 @@ func (c *schedulerServiceClient) GetSchedulerStatus(ctx context.Context, in *Get
 	return out, nil
 }
 
+func (c *schedulerServiceClient) ListRemoteRuns(ctx context.Context, in *ListRemoteRunsRequest, opts ...grpc.CallOption) (*ListRemoteRunsResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListRemoteRunsResponse)
+	err := c.cc.Invoke(ctx, SchedulerService_ListRemoteRuns_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *schedulerServiceClient) CompleteRemoteRun(ctx context.Context, in *CompleteRemoteRunRequest, opts ...grpc.CallOption) (*CompleteRemoteRunResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(CompleteRemoteRunResponse)
+	err := c.cc.Invoke(ctx, SchedulerService_CompleteRemoteRun_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *schedulerServiceClient) RegisterNode(ctx context.Context, in *RegisterPlacementNodeRequest, opts ...grpc.CallOption) (*PlacementNodeResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(PlacementNodeResponse)
@@ -350,6 +377,11 @@ type SchedulerServiceServer interface {
 	// History and Status
 	GetJobHistory(context.Context, *GetJobHistoryRequest) (*GetJobHistoryResponse, error)
 	GetSchedulerStatus(context.Context, *GetSchedulerStatusRequest) (*GetSchedulerStatusResponse, error)
+	// Remote handlers (go-quicbaas#1955): a job whose handler is named
+	// "remote:<name>" runs in a client's worker, which lists its open runs
+	// and reports each result.
+	ListRemoteRuns(context.Context, *ListRemoteRunsRequest) (*ListRemoteRunsResponse, error)
+	CompleteRemoteRun(context.Context, *CompleteRemoteRunRequest) (*CompleteRemoteRunResponse, error)
 	// RegisterNode registers or refreshes a node's facts under a lease.
 	RegisterNode(context.Context, *RegisterPlacementNodeRequest) (*PlacementNodeResponse, error)
 	// RenewNode heartbeats a node's lease.
@@ -415,6 +447,12 @@ func (UnimplementedSchedulerServiceServer) GetJobHistory(context.Context, *GetJo
 }
 func (UnimplementedSchedulerServiceServer) GetSchedulerStatus(context.Context, *GetSchedulerStatusRequest) (*GetSchedulerStatusResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method GetSchedulerStatus not implemented")
+}
+func (UnimplementedSchedulerServiceServer) ListRemoteRuns(context.Context, *ListRemoteRunsRequest) (*ListRemoteRunsResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ListRemoteRuns not implemented")
+}
+func (UnimplementedSchedulerServiceServer) CompleteRemoteRun(context.Context, *CompleteRemoteRunRequest) (*CompleteRemoteRunResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method CompleteRemoteRun not implemented")
 }
 func (UnimplementedSchedulerServiceServer) RegisterNode(context.Context, *RegisterPlacementNodeRequest) (*PlacementNodeResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method RegisterNode not implemented")
@@ -666,6 +704,42 @@ func _SchedulerService_GetSchedulerStatus_Handler(srv interface{}, ctx context.C
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(SchedulerServiceServer).GetSchedulerStatus(ctx, req.(*GetSchedulerStatusRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _SchedulerService_ListRemoteRuns_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListRemoteRunsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(SchedulerServiceServer).ListRemoteRuns(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: SchedulerService_ListRemoteRuns_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(SchedulerServiceServer).ListRemoteRuns(ctx, req.(*ListRemoteRunsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _SchedulerService_CompleteRemoteRun_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(CompleteRemoteRunRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(SchedulerServiceServer).CompleteRemoteRun(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: SchedulerService_CompleteRemoteRun_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(SchedulerServiceServer).CompleteRemoteRun(ctx, req.(*CompleteRemoteRunRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -936,6 +1010,14 @@ var SchedulerService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "GetSchedulerStatus",
 			Handler:    _SchedulerService_GetSchedulerStatus_Handler,
+		},
+		{
+			MethodName: "ListRemoteRuns",
+			Handler:    _SchedulerService_ListRemoteRuns_Handler,
+		},
+		{
+			MethodName: "CompleteRemoteRun",
+			Handler:    _SchedulerService_CompleteRemoteRun_Handler,
 		},
 		{
 			MethodName: "RegisterNode",
