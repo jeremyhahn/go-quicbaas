@@ -97,6 +97,35 @@ func TestTimeseriesGetRetention_ToolArgumentsAndResult(t *testing.T) {
 	}
 }
 
+// TestTimeseriesGetRetentionPolicy_ReadsServerPolicy proves the untyped
+// GetRetentionPolicy reader takes the server's nested policy (durations in
+// ns) and reports whole seconds, and still reads the older top-level fields.
+func TestTimeseriesGetRetentionPolicy_ReadsServerPolicy(t *testing.T) {
+	h := newTSHandler(t)
+	for name, in := range map[string]map[string]interface{}{
+		"server policy": {
+			"metric": "cpu",
+			"policy": map[string]interface{}{
+				"duration":    float64(24 * time.Hour),
+				"resolution":  float64(5 * time.Minute),
+				"aggregation": "max",
+			},
+		},
+		"top-level seconds": {
+			"metric": "cpu", "duration_seconds": float64(86400), "resolution_seconds": float64(300), "aggregation": "max",
+		},
+	} {
+		out, err := h.transformResponse("GetRetentionPolicy", in)
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		p := out.(map[string]interface{})["policy"].(map[string]interface{})
+		if p["duration"] != int64(86400) || p["resolution"] != int64(300) || p["aggregation"] != "max" {
+			t.Errorf("%s: policy = %v, want 86400s, 300s, max", name, p)
+		}
+	}
+}
+
 func TestTimeseriesRetention_WrongRequestTypeIsInvalidInput(t *testing.T) {
 	h := newTSHandler(t)
 	for _, method := range []string{"SetRetention", "GetRetention"} {

@@ -433,12 +433,24 @@ func (h *timeseriesHandler) transformGetRetentionPolicyResponse(resp interface{}
 		return resp, nil
 	}
 
+	// The server's qrdb_ts_get_retention_policy result is the service's
+	// TSGetRetentionPolicyResponse: a nested policy with durations in
+	// nanoseconds. Older results carried top-level *_seconds fields.
+	duration := tsGetInt64(m, "duration_seconds")
+	resolution := tsGetInt64(m, "resolution_seconds")
+	aggregation := tsGetString(m, "aggregation")
+	if p, ok := m["policy"].(map[string]interface{}); ok {
+		duration = int64(time.Duration(tsGetInt64(p, "duration")) / time.Second)
+		resolution = int64(time.Duration(tsGetInt64(p, "resolution")) / time.Second)
+		aggregation = tsGetString(p, "aggregation")
+	}
+
 	return map[string]interface{}{
 		"metric": tsGetString(m, "metric"),
 		"policy": map[string]interface{}{
-			"duration":    tsGetInt64(m, "duration_seconds"),
-			"resolution":  tsGetInt64(m, "resolution_seconds"),
-			"aggregation": tsGetString(m, "aggregation"),
+			"duration":    duration,
+			"resolution":  resolution,
+			"aggregation": aggregation,
 		},
 		"timestamp": tsGetTime(m, "timestamp"),
 	}, nil
@@ -602,7 +614,7 @@ func isMCPTimeseriesService(service string) bool {
 func mapTimeseriesMethodToTool(method string) string {
 	timeseriesToolMap := map[string]string{
 		// SDK client methods
-		"Write": "qrdb_ts_write_point",
+		"Write":        "qrdb_ts_write_point",
 		"Query":        "qrdb_ts_query",
 		"SetRetention": "qrdb_ts_set_retention_policy",
 		"GetRetention": "qrdb_ts_get_retention_policy",
