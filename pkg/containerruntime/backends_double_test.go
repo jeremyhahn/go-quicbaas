@@ -26,6 +26,8 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+
+	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
 )
 
 // testImageDigest is the digest the image double reports for every image.
@@ -292,6 +294,18 @@ type fakeImages struct {
 
 	images map[string]imageRecord
 	pulls  []string
+
+	// pushErr fails every push; pushDigest is the digest a push reports.
+	pushErr    error
+	pushDigest string
+	// pushes records each pushed reference and the auth it carried.
+	pushes []fakePush
+}
+
+// fakePush is one push the fake image store took.
+type fakePush struct {
+	ref  string
+	auth *orchestration.RegistryAuth
 }
 
 func newFakeImages(refs ...string) *fakeImages {
@@ -363,6 +377,19 @@ func (s *fakeImages) Tag(ctx context.Context, source, target string) error {
 	}
 	s.images[target] = record
 	return nil
+}
+
+func (s *fakeImages) Push(ctx context.Context, ref string, auth *orchestration.RegistryAuth) (string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.images[ref]; !ok {
+		return "", ErrImageNotFound
+	}
+	s.pushes = append(s.pushes, fakePush{ref: ref, auth: auth})
+	if s.pushErr != nil {
+		return "", s.pushErr
+	}
+	return s.pushDigest, nil
 }
 
 // fakeRootfs is a rootfsStore that makes each container's rootfs a directory

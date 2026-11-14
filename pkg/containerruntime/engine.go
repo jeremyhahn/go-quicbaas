@@ -18,6 +18,8 @@ import (
 	"io"
 	"os"
 	"time"
+
+	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
 )
 
 // The Runtime drives three in-process backends through the narrow interfaces
@@ -126,6 +128,11 @@ type imageStore interface {
 	// the name target as well, moving the name off any image that held it.
 	// A source that is not stored is an error matching ErrImageNotFound.
 	Tag(ctx context.Context, source, target string) error
+
+	// Push copies the stored image ref to the registry it names, signing in
+	// with auth when it is set, and returns the pushed manifest's digest. An
+	// image that is not stored is an error matching ErrImageNotFound.
+	Push(ctx context.Context, ref string, auth *orchestration.RegistryAuth) (string, error)
 }
 
 // rootfsStore unpacks an image's layers into a container root filesystem.

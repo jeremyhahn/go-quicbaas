@@ -130,6 +130,23 @@ func (j *JobRuntime) TagImage(ctx context.Context, source, target string) error 
 	return nil
 }
 
+// PushImage copies the stored image to the registry its reference names,
+// in-process, signing in with auth when it is set, and returns the digest
+// of the manifest the registry holds. Any failure is an ImagePushError.
+func (j *JobRuntime) PushImage(ctx context.Context, image string, auth *orchestration.RegistryAuth) (string, error) {
+	if strings.TrimSpace(image) == "" {
+		return "", &orchestration.InputValidationError{Field: "image", Message: "cannot be empty"}
+	}
+	digest, err := j.runtime.backends.images.Push(ctx, image, auth)
+	if err != nil {
+		return "", &orchestration.ImagePushError{Image: image, Cause: err}
+	}
+	if err := orchestration.ValidateImageDigest(digest); err != nil {
+		return "", &orchestration.ImagePushError{Image: image, Cause: err}
+	}
+	return digest, nil
+}
+
 // repoDigests pairs each repository the image is named by with each manifest
 // digest it is stored under, as "repository@sha256:<hex>".
 func repoDigests(record imageRecord) []string {

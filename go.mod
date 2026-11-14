@@ -22,6 +22,7 @@ require (
 	github.com/go-jose/go-jose/v4 v4.1.6 // held: v4.1.7 released 2026-10-30, under 7 days old (#1704)
 	github.com/go-webauthn/webauthn v0.17.4 // held: v0.18.2 is not in the lane module cache (#1597)
 	github.com/golang-jwt/jwt/v5 v5.3.1
+	github.com/google/go-containerregistry v0.21.6
 	github.com/google/go-tpm v0.9.8
 	github.com/google/uuid v1.6.0
 	github.com/hashicorp/go-msgpack/v2 v2.1.5
@@ -164,6 +165,7 @@ require (
 	github.com/cyberphone/json-canonicalization v0.0.0-20241213102144-19d51d7fe467 // indirect
 	github.com/decred/dcrd/dcrec/secp256k1/v4 v4.4.1 // indirect
 	github.com/distribution/reference v0.6.0 // indirect
+	github.com/docker/cli v29.6.2+incompatible // indirect
 	github.com/docker/distribution v2.8.3+incompatible // indirect
 	github.com/docker/docker-credential-helpers v0.9.8 // indirect
 	github.com/docker/go-connections v0.8.1 // indirect
@@ -196,7 +198,6 @@ require (
 	github.com/gogo/protobuf v1.3.2 // indirect
 	github.com/golang/protobuf v1.5.4 // indirect
 	github.com/golang/snappy v1.0.0 // indirect
-	github.com/google/go-containerregistry v0.21.6 // indirect
 	github.com/google/go-intervals v0.0.2 // indirect
 	github.com/google/go-tpm-tools v0.4.10 // indirect
 	github.com/google/jsonschema-go v0.4.3 // indirect

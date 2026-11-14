@@ -25,10 +25,13 @@ import (
 	"go.podman.io/image/v5/copy"
 	"go.podman.io/image/v5/docker"
 	"go.podman.io/image/v5/docker/reference"
+	"go.podman.io/image/v5/manifest"
 	"go.podman.io/image/v5/signature"
 	istorage "go.podman.io/image/v5/storage"
 	"go.podman.io/image/v5/types"
 	"go.podman.io/storage"
+
+	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
 )
 
 // newDefaultBackends builds the production backends: libcontainer state
@@ -100,31 +103,82 @@ func (s *storageImageStore) Pull(ctx context.Context, ref string) (record imageR
 		return imageRecord{}, err
 	}
 
+	if _, err := s.copyImage(ctx, destination, source, s.systemFor(named)); err != nil {
+		return imageRecord{}, err
+	}
+
+	return s.Inspect(ctx, ref)
+}
+
+// Push copies the stored image ref to the registry it names, signing in
+// with auth when it is set, and returns the digest of the manifest the
+// registry now holds. An image that is not stored is an error matching
+// ErrImageNotFound.
+func (s *storageImageStore) Push(ctx context.Context, ref string, auth *orchestration.RegistryAuth) (string, error) {
+	named, err := normalizeImageReference(ref)
+	if err != nil {
+		return "", err
+	}
+	if _, err := s.resolve(ref); err != nil {
+		return "", err
+	}
+
+	source, err := istorage.Transport.ParseStoreReference(s.store, named.String())
+	if err != nil {
+		return "", err
+	}
+	destination, err := docker.ParseReference("//" + named.String())
+	if err != nil {
+		return "", err
+	}
+
+	system := s.systemFor(named)
+	if auth != nil {
+		system.DockerAuthConfig = &types.DockerAuthConfig{
+			Username: auth.Username,
+			Password: string(auth.Secret),
+		}
+	}
+	written, err := s.copyImage(ctx, destination, source, system)
+	if err != nil {
+		return "", err
+	}
+	digest, err := manifest.Digest(written)
+	if err != nil {
+		return "", err
+	}
+	return digest.String(), nil
+}
+
+// systemFor returns the system context for talking to the registry named
+// carries, without TLS verification when that registry is insecure.
+func (s *storageImageStore) systemFor(named reference.Named) types.SystemContext {
 	system := s.system
 	if slices.Contains(s.insecureRegistries, reference.Domain(named)) {
 		system.DockerInsecureSkipTLSVerify = types.NewOptionalBool(true)
 	}
+	return system
+}
 
+// copyImage copies source to destination under the signature policy and
+// returns the manifest written to destination.
+func (s *storageImageStore) copyImage(ctx context.Context, destination, source types.ImageReference, system types.SystemContext) (written []byte, err error) {
 	policy, err := signature.DefaultPolicy(&system)
 	if err != nil {
-		return imageRecord{}, err
+		return nil, err
 	}
 	policyContext, err := signature.NewPolicyContext(policy)
 	if err != nil {
-		return imageRecord{}, err
+		return nil, err
 	}
 	defer func() {
 		err = errors.Join(err, policyContext.Destroy())
 	}()
 
-	if _, err := copy.Image(ctx, policyContext, destination, source, &copy.Options{
+	return copy.Image(ctx, policyContext, destination, source, &copy.Options{
 		SourceCtx:      &system,
 		DestinationCtx: &system,
-	}); err != nil {
-		return imageRecord{}, err
-	}
-
-	return s.Inspect(ctx, ref)
+	})
 }
 
 // Inspect returns the stored image ref names.

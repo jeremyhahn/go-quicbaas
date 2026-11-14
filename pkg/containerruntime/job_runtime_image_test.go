@@ -15,6 +15,7 @@ package containerruntime
 
 import (
 	"context"
+	"errors"
 	"io"
 	"strings"
 	"testing"
@@ -170,6 +171,51 @@ func TestJobRuntime_TagImage(t *testing.T) {
 		err := jr.TagImage(t.Context(), "missing:latest", "reg/o/w:1")
 		require.ErrorIs(t, err, orchestration.ErrImageTag)
 		require.ErrorIs(t, err, ErrImageNotFound)
+	})
+}
+
+func TestJobRuntime_PushImage(t *testing.T) {
+	digest := "sha256:" + strings.Repeat("a", 64)
+
+	t.Run("ReturnsTheDigestAndPassesTheAuth", func(t *testing.T) {
+		jr, doubles := newTestJobRuntime(t)
+		doubles.images.images["reg/o/w:1"] = testImageRecord("reg/o/w:1", nil)
+		doubles.images.pushDigest = digest
+		auth := &orchestration.RegistryAuth{Username: "u", Secret: []byte("s")}
+
+		got, err := jr.PushImage(t.Context(), "reg/o/w:1", auth)
+		require.NoError(t, err)
+		assert.Equal(t, digest, got)
+		require.Equal(t, []fakePush{{ref: "reg/o/w:1", auth: auth}}, doubles.images.pushes)
+	})
+
+	t.Run("Validation", func(t *testing.T) {
+		jr, _ := newTestJobRuntime(t)
+		_, err := jr.PushImage(t.Context(), " ", nil)
+		requireInputValidation(t, err, "image")
+	})
+
+	t.Run("AMissingImageIsAPushError", func(t *testing.T) {
+		jr, _ := newTestJobRuntime(t)
+		_, err := jr.PushImage(t.Context(), "reg/o/w:1", nil)
+		require.ErrorIs(t, err, orchestration.ErrImagePush)
+		require.ErrorIs(t, err, ErrImageNotFound)
+	})
+
+	t.Run("ARegistryFailureIsAPushError", func(t *testing.T) {
+		jr, doubles := newTestJobRuntime(t)
+		doubles.images.images["reg/o/w:1"] = testImageRecord("reg/o/w:1", nil)
+		doubles.images.pushErr = errors.New("denied")
+		_, err := jr.PushImage(t.Context(), "reg/o/w:1", nil)
+		require.ErrorIs(t, err, orchestration.ErrImagePush)
+	})
+
+	t.Run("AnInvalidDigestIsAPushError", func(t *testing.T) {
+		jr, doubles := newTestJobRuntime(t)
+		doubles.images.images["reg/o/w:1"] = testImageRecord("reg/o/w:1", nil)
+		doubles.images.pushDigest = "not-a-digest"
+		_, err := jr.PushImage(t.Context(), "reg/o/w:1", nil)
+		require.ErrorIs(t, err, orchestration.ErrImagePush)
 	})
 }
 
