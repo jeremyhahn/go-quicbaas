@@ -427,13 +427,18 @@ func (s *Server) initializeIAMComponents() (service.IAMComponents, error) {
 	}
 
 	// Create the OIDC provider with an xkms/KMS/HSM-backed ES256 signing key.
-	// The key manager performs get-or-create against xkms (the key persists in
-	// the configured keystore across restarts), derives a stable kid from the
+	// The key manager performs get-or-create against the replicated,
+	// barrier-encrypted qrdb store (oidcSigningStoreType), so every node signs
+	// and verifies platform tokens with one key and one kid; it derives a stable kid from the
 	// key's public SPKI, and supports rotation with a JWKS overlap window.
 	// If xkms is unavailable or the key cannot be built we log a warning and
 	// leave the OIDC provider nil (graceful degradation) rather than panic.
 	var oidcProvider *iam.OIDCProvider
-	signingKeyManager, err := iam.NewSigningKeyManagerFromXKMS(iam.OIDCSigningKeyCN, "")
+	var signingKeyManager *iam.SigningKeyManager
+	storeType, err := s.oidcSigningStoreType()
+	if err == nil {
+		signingKeyManager, err = newOIDCSigningKeyManager(storeType)
+	}
 	if err != nil {
 		s.logger.WithError(err).Warn("Failed to initialize xkms-backed OIDC signing key, OIDC provider will be unavailable")
 	} else {

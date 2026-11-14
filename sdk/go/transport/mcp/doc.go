@@ -31,9 +31,9 @@
 // quicbaas_ prefix.
 //
 // Examples:
-//   - "quicbaas.KV/Put" -> "qrdb_put"
-//   - "quicbaas.KV/Get" -> "qrdb_get"
-//   - "quicbaas.KV/Delete" -> "qrdb_delete"
+//   - "quicbaas.KV/Put" -> "quicbaas_kv_put"
+//   - "quicbaas.KV/Get" -> "quicbaas_kv_get"
+//   - "quicbaas.KV/Delete" -> "quicbaas_kv_delete"
 //   - "quicbaas.Cluster/Status" -> "quicbaas_cluster_status"
 //   - "quicbaas.Health/Check" -> "qrdb_health"
 //   - "quicbaas.KMS/GenerateKey" -> "quicbaas_kms_generate_key"

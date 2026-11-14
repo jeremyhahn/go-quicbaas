@@ -348,6 +348,9 @@ rag:
         timeout: 30
 ```
 
+`api_url` is required for `npu`: there is no default sidecar address, and an
+entry without one is refused with `ErrNPUEndpointRequired`.
+
 **The `additional` entry is not optional.** Only the configured default used to be
 registered, so without it `npu` exists in the binary and is unreachable: both
 selection paths below fail with provider-not-found. A provider listed here is

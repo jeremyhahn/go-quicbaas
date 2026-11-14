@@ -157,6 +157,12 @@ type Client interface {
 	CustodianGroup() (QRDBCustodianGroupClient, error)
 	Share() (QRDBShareClient, error)
 
+	// go-qrdb's cluster, membership and rebalance services (SPEC row
+	// `cluster`, #1649), over the lazily built qrdb sub-client.
+	QRDBCluster() (*QRDBClusterClient, error)
+	QRDBMembership() (QRDBMembershipClient, error)
+	QRDBRebalance() (QRDBRebalanceClient, error)
+
 	// Registry returns the service registry client: lease-based
 	// service-instance endpoints (register, renew, deregister, resolve,
 	// watch), served by the server on every transport and scoped to the

@@ -29,6 +29,9 @@
 package init
 
 import (
+	"crypto"
+	"crypto/x509"
+	"encoding/pem"
 	"os"
 
 	dbxkms "github.com/jeremyhahn/go-quicbaas/pkg/xkms"
@@ -69,21 +72,36 @@ func (e *OfficerMaterialError) Unwrap() error { return e.Cause }
 // The daemon's loader verifies the CSR's self-signature, so the request has to
 // be genuinely signed by the key it names — which it is: CreateCSRWithKey signs
 // with the crypto.Signer it is handed.
-func writeOfficerCSR(path, username string) error {
+func writeOfficerCSR(path, username string) (crypto.Signer, error) {
 	signer, _, err := dbxkms.GenerateRequesterKey(dbxkms.KeyAlgorithmECDSAP256)
 	if err != nil {
-		return &OfficerMaterialError{Op: "generate key", Username: username, Cause: err}
+		return nil, &OfficerMaterialError{Op: "generate key", Username: username, Cause: err}
 	}
 
 	csrPEM, err := xkmssdk.CreateCSRWithKey(&xkmssdk.TrustedCACertificateRequest{
 		Subject: xkmssdk.TrustedCASubject{CommonName: username},
 	}, signer)
 	if err != nil {
-		return &OfficerMaterialError{Op: "create csr", Username: username, Cause: err}
+		return nil, &OfficerMaterialError{Op: "create csr", Username: username, Cause: err}
 	}
 
 	if err := os.WriteFile(path, csrPEM, 0o600); err != nil {
-		return &OfficerMaterialError{Op: "write", Username: username, Path: path, Cause: err}
+		return nil, &OfficerMaterialError{Op: "write", Username: username, Path: path, Cause: err}
+	}
+	return signer, nil
+}
+
+// writeOfficerKey writes the officer's private key as PKCS#8 PEM, the form
+// `quicbaas init claim-cert --csr-key` and `init claim-share --tls-key` read
+// to sign the ceremony's nonces.
+func writeOfficerKey(path, username string, signer crypto.Signer) error {
+	der, err := x509.MarshalPKCS8PrivateKey(signer)
+	if err != nil {
+		return &OfficerMaterialError{Op: "marshal key", Username: username, Cause: err}
+	}
+	keyPEM := pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: der})
+	if err := os.WriteFile(path, keyPEM, 0o600); err != nil {
+		return &OfficerMaterialError{Op: "write key", Username: username, Path: path, Cause: err}
 	}
 	return nil
 }

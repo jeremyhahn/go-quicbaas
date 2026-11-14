@@ -27,6 +27,7 @@ import (
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	qrdbembedded "github.com/jeremyhahn/go-qrdb/sdk/go/transport/embedded"
 
+	pb "github.com/jeremyhahn/go-quicbaas/api/proto"
 	grpcapi "github.com/jeremyhahn/go-quicbaas/pkg/api/grpc"
 	"github.com/jeremyhahn/go-quicbaas/pkg/api/sealedwindow"
 	"github.com/jeremyhahn/go-quicbaas/pkg/config"
@@ -374,6 +375,17 @@ func (s *Server) startSealedGRPCServer() error {
 	s.registerBarrierCeremonyServices(grpcServer)
 	s.registerQRDBService(grpcServer)
 
+	// quicbaas.v1.QuicBaaS over the sealed-window facade: its Health verb is
+	// on the sealed-window allowlist, so a sealed node answers liveness on
+	// every gRPC listener; the interceptor above keeps every other verb
+	// refused until unseal, when the full boot registers the operational
+	// service.
+	quicbaasService, err := newGRPCAPI(s.sealedWindowFacade, s.logger, s.config.Raft.NodeID, s.config.Server.Host)
+	if err != nil {
+		return &SealedWindowBootError{Stage: "sealed quicbaas grpc service", Cause: err}
+	}
+	pb.RegisterQuicBaaSServer(grpcServer, quicbaasService)
+
 	s.grpcServer = grpcServer
 
 	listenersStarted := 0
@@ -452,9 +464,8 @@ func (s *Server) stopSealedTransports() error {
 // sealedListenAddress resolves the listen address for a sealed-window
 // listener: the dedicated sealed-phase bind host (loopback unless
 // Server.SealedBindHost opts into a routable address) joined with the
-// protocol port. Server.Host and the per-protocol BindAddress overrides
-// deliberately do not apply while sealed; they govern only the post-unseal
-// full-boot listeners.
+// protocol port. Server.Host deliberately does not apply
+// while sealed; it governs only the post-unseal full-boot listeners.
 func sealedListenAddress(cfg *config.Config, port int) string {
 	return net.JoinHostPort(cfg.Server.ResolveSealedBindHost(), strconv.Itoa(port))
 }

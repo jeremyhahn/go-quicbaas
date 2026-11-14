@@ -283,7 +283,6 @@ type SecretResolver interface {
 // NPU provider defaults, mirrored from npu.go so that configuration code can
 // reference them in any build.
 const (
-	DefaultNPUURL          = "http://127.0.0.1:8077"
 	DefaultNPUModel        = "all-MiniLM-L6-v2"
 	DefaultNPUDimensions   = 384
 	DefaultNPUMaxTokens    = 512
@@ -296,7 +295,6 @@ var DefaultNPUTimeout = 30 * time.Second
 // DefaultNPUConfig returns the default NPU configuration.
 func DefaultNPUConfig() NPUConfig {
 	return NPUConfig{
-		BaseURL:      DefaultNPUURL,
 		Model:        DefaultNPUModel,
 		Dimensions:   DefaultNPUDimensions,
 		MaxTokens:    DefaultNPUMaxTokens,

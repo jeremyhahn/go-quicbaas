@@ -18,6 +18,8 @@ package server
 import (
 	"time"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+
 	restapi "github.com/jeremyhahn/go-quicbaas/pkg/api/rest"
 	"github.com/jeremyhahn/go-quicbaas/pkg/api/sealedwindow"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
@@ -41,8 +43,8 @@ func (s *Server) startSealedRESTServer() error {
 	clonedTLSConfig := cloneTLSConfig(s.tlsConfig)
 
 	// One address for both the server config and Start: the sealed-phase
-	// bind host (loopback by default). Server.Host and REST.BindAddress do
-	// not apply to the pre-unseal surface.
+	// bind host (loopback by default). Server.Host does not
+	// apply to the pre-unseal surface.
 	address := sealedListenAddress(s.config, s.config.Server.REST.Port)
 
 	restConfig := &restapi.Config{
@@ -85,6 +87,14 @@ func (s *Server) startSealedRESTServer() error {
 	// replaces it.
 	restServer.SetSealedWindowGate(constantSealedProbe{}, s.OperationalProbe(),
 		sealedwindow.RESTAllowlist())
+
+	// Allowlisted routes quicbaas does not serve natively (officer
+	// registration, the ceremony flows) are served by qrdb's sealed REST
+	// surface over the node's OWN seal services, the same instances the
+	// sealed gRPC qrdb.v1 service is registered with.
+	restServer.SetSealedWindowHandler(qrdbsdk.NewSealedWindowHandler(
+		s.qrdbBarrierServicer(), s.qrdbCeremonyServicer(), s.qrdbCredentialServicer(),
+		qrdbsdk.NewSealedWindowListenerProbe(constantSealedProbe{}, s.qrdbCeremonyServicer())))
 
 	if err := restServer.Start(address); err != nil {
 		return &SealedWindowBootError{Stage: "sealed rest listener", Cause: err}

@@ -172,7 +172,7 @@ When `barrier.enabled: true`, the daemon:
    `server.sealed_bind_host` (default `127.0.0.1`), not `server.host`;
    remote Shamir officer ceremonies require an explicit opt-in via
    `QUICBAAS_SERVER_SEALED_BIND_HOST=0.0.0.0`. Post-unseal listeners
-   keep the normal `server.host` / `bind_address` resolution.
+   keep binding on `server.host`.
 5. After unseal, opens the data-plane Pebble through the encrypting
    `vfs.FS`, builds the full service graph, and starts the multi-protocol
    server.

@@ -1765,14 +1765,12 @@ func (s *Server) GetClusterStats(ctx context.Context, req *pb.GetClusterStatsReq
 	// Get actual QPS from the QPS tracker
 	currentQPS := s.QPS()
 
-	// Get node address - prefer from cluster status, fall back to configured address
+	// Node address: the configured address, else this node's entry in the
+	// cluster status. Unknown stays empty: a literal would name the reader's
+	// own loopback, not this node.
 	nodeAddress := s.address
 	if nodeAddress == "" {
-		if addr, ok := nodeAddresses[s.nodeID]; ok && addr != "" {
-			nodeAddress = addr
-		} else {
-			nodeAddress = "localhost"
-		}
+		nodeAddress = nodeAddresses[s.nodeID]
 	}
 
 	nodeStats := make([]*pb.NodeStats, 0)
