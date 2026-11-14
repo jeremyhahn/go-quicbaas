@@ -43,6 +43,11 @@ const (
 	ContainerRuntimeDocker ContainerRuntimeSelector = "docker"
 	ContainerRuntimePodman ContainerRuntimeSelector = "podman"
 	ContainerRuntimeNone   ContainerRuntimeSelector = "none"
+
+	// ContainerRuntimeInProcess is pkg/containerruntime: runc libcontainer
+	// in this process, with no runtime binary and no daemon socket. Only an
+	// agent built for linux with cgo has it (see SetInProcessContainerRuntime).
+	ContainerRuntimeInProcess ContainerRuntimeSelector = "libcontainer"
 )
 
 // Config captures everything needed to start a daemon. Validate() must be
@@ -339,7 +344,7 @@ func (c *Config) Validate() error {
 		return err
 	}
 	switch c.ContainerRuntime {
-	case "", ContainerRuntimeAuto, ContainerRuntimeDocker, ContainerRuntimePodman, ContainerRuntimeNone:
+	case "", ContainerRuntimeAuto, ContainerRuntimeDocker, ContainerRuntimePodman, ContainerRuntimeNone, ContainerRuntimeInProcess:
 		// ok
 	default:
 		return &SentinelDetailError{Sentinel: ErrConfigUnknownRuntime, Detail: fmt.Sprintf("%q", c.ContainerRuntime)}

@@ -22,6 +22,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
@@ -134,7 +135,7 @@ Examples:
 	cmd.Flags().StringSliceVar(&serveSandboxCapAdd, "sandbox-cap-add", nil, "Capabilities given back to sandboxed containers after --cap-drop ALL; comma-separated or repeatable. Empty keeps the default CHOWN,DAC_OVERRIDE,FOWNER,SETGID,SETUID (what sudo and apk need); a value REPLACES that set. ALL is refused.")
 	cmd.Flags().Int64Var(&serveSandboxPidsLimit, "sandbox-pids-limit", 0, fmt.Sprintf("Maximum processes plus threads in a sandboxed container (--pids-limit). Zero takes the default %d.", orchestration.DefaultSandboxPidsLimit))
 	cmd.Flags().StringSliceVar(&serveSandboxUlimits, "sandbox-ulimit", nil, fmt.Sprintf("Resource limit for sandboxed containers as name=soft[:hard]; comma-separated or repeatable. The default is memlock=%d (4 GiB, what the CI runners give); an entry naming memlock replaces it.", orchestration.DefaultSandboxMemlockBytes))
-	cmd.Flags().StringVar(&serveContainerRT, "container-runtime", "auto", "OCI runtime: docker | podman | auto | none")
+	cmd.Flags().StringVar(&serveContainerRT, "container-runtime", "auto", "Container runtime: libcontainer (in-process, linux with cgo) | docker | podman | auto | none. auto takes libcontainer when this build has it and it starts, then a detected engine.")
 	cmd.Flags().StringVar(&serveOllamaBaseURL, "ollama-url", "", "Base URL of the ollama server the \"ollama\" backend uses, without /v1 (default http://127.0.0.1:11434).")
 	cmd.Flags().StringVar(&serveOpenVINOURL, "openvino-url", "", "OpenVINO Model Server base URL, without /v3 (e.g. http://gpu-host:9000). Registers the \"openvino\" backend; empty leaves it unregistered.")
 	cmd.Flags().StringVar(&serveOpenVINOModel, "openvino-model", "", "Model the OpenVINO server serves, e.g. qwen3-8b.")
@@ -373,6 +374,10 @@ func runFleetServe(cmd *cobra.Command, args []string) error {
 	return waitForSignalAndStop(daemon)
 }
 
+// inProcessRuntimeDirName is the in-process container runtime's state
+// directory under the agent's work dir.
+const inProcessRuntimeDirName = "containers"
+
 // buildFleetRuntime constructs the daemon's Runtime over the supplied
 // backends, resolving --container-runtime into the engine that will host
 // sandboxed sessions. Without that resolution the runtime holds no engine and
@@ -383,7 +388,9 @@ func runFleetServe(cmd *cobra.Command, args []string) error {
 // usable engine — live in fleet.NewRuntime, so this path and the embedded
 // fleet node enforce one rule rather than two.
 func buildFleetRuntime(cfg *fleet.Config, backends map[string]orchestration.AgentBackend, logger interfaces.Logger) (*fleet.Runtime, error) {
-	containerRuntime, rtErr := fleet.ResolveContainerRuntime(cfg.EffectiveContainerRuntime(), logger)
+	// The in-process runtime keeps its state under this agent's own work dir,
+	// so two agents never share a runtime's state.
+	containerRuntime, rtErr := fleet.ResolveContainerRuntimeIn(cfg.EffectiveContainerRuntime(), filepath.Join(cfg.WorkDir, inProcessRuntimeDirName), logger)
 	if rtErr != nil {
 		return nil, rtErr
 	}

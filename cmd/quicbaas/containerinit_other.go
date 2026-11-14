@@ -21,3 +21,7 @@ package main
 func runContainerInit() bool {
 	return false
 }
+
+// registerInProcessContainerRuntime registers nothing: without linux and cgo
+// there is no in-process runtime, and the "libcontainer" selector says so.
+func registerInProcessContainerRuntime() {}

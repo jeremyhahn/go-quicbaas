@@ -155,10 +155,19 @@ per-container metrics, with their tests. It was moved from go-trusted-platform
   daemon, never in `quicbaasd`. `quicbaasd` stays `CGO_ENABLED=0`, and
   `TestDaemonNeverLinksContainerRuntime` fails if the daemon links the
   package.
-- **Its job wiring comes later.** Only the agent's container init entry
-  point imports it today; the node daemon and the embedded node still launch
-  containers through `ExecContainerRuntime` in `pkg/orchestration`, which is
-  removed once the agent runs jobs through this package.
+- **The agent runs jobs through it.** `containerruntime.JobRuntime` serves
+  `orchestration.ContainerRuntime` in-process. The agent's `main` registers
+  it with `fleet.SetInProcessContainerRuntime`; `pkg/fleet` never imports
+  the package, because `quicbaasd` links `pkg/fleet`. `--container-runtime
+  libcontainer` selects it, and is an error on a binary without it or a host
+  where it cannot start. `auto` takes it when it starts and otherwise falls
+  back to a detected engine through `ExecContainerRuntime`, which is removed
+  in a later slice of row #1682. Its state lives under
+  `<work-dir>/containers`, and the work-dir lock keeps a second agent off
+  that directory.
+- **FIPS is unaffected.** `TestFIPSModuleUnaffectedByTheRuntime` re-executes
+  a cgo binary that links the runtime with `GODEBUG=fips140=on` and checks
+  that the Go-native module is enabled.
 - **Everything runs in-process.** runc `libcontainer` creates, starts,
   signals and destroys containers; `go.podman.io/image/v5` pulls images,
   honouring the signature policy and digest pins; `go.podman.io/storage`

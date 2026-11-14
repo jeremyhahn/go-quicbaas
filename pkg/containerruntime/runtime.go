@@ -99,6 +99,22 @@ func DefaultRuntimeConfig() *RuntimeConfig {
 	}
 }
 
+// RuntimeConfigUnder is a configuration that keeps every directory of the
+// runtime under root, so two runtimes given different roots share nothing:
+// not container state, not run state, not images.
+func RuntimeConfigUnder(root string) *RuntimeConfig {
+	root = filepath.Clean(root)
+	return &RuntimeConfig{
+		Root:            filepath.Join(root, "state"),
+		RunRoot:         filepath.Join(root, "run"),
+		TmpDir:          filepath.Join(root, "tmp"),
+		GraphDriverName: "overlay",
+		StaticDir:       filepath.Join(root, "static"),
+		VolumePath:      filepath.Join(root, "volumes"),
+		ImageStorePath:  filepath.Join(root, "images"),
+	}
+}
+
 // Validate validates the runtime configuration.
 func (c *RuntimeConfig) Validate() error {
 	if c.Root == "" {
