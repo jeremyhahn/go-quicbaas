@@ -37,6 +37,7 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 	kmsclient "github.com/jeremyhahn/go-quicbaas/sdk/go/client/kms"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/errors"
+	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
 )
 
 // kmsServicePrefix is the gRPC-style service identifier the SDK uses to route
@@ -382,8 +383,9 @@ func (h *kmsRESTHandler) handleImportKey(ctx context.Context, req interface{}) (
 		Description:   r.Description,
 		Tags:          r.Tags,
 		KeyAttributes: &kmsKeyAttributesRequest{
-			Algorithm: r.Algorithm.String(),
-			KeyUsage:  kmsUsagesToStrings(r.Usage),
+			Algorithm:  r.Algorithm.String(),
+			KeyUsage:   kmsUsagesToStrings(r.Usage),
+			Exportable: r.Exportable,
 		},
 	}
 	var wire kmsGenerateKeyWire
@@ -517,6 +519,9 @@ func (h *kmsRESTHandler) handleUnwrapKey(ctx context.Context, req interface{}) (
 		SourceKeyID:       r.SourceKeyID,
 		SourceVersion:     uint64(r.SourceVersion),
 		Name:              r.Name,
+	}
+	if r.Exportable {
+		body.KeyAttributes = &xkmssdk.KeyAttributes{Exportable: true}
 	}
 	var wire kmsUnwrapKeyWire
 	if err := h.transport.doJSONRequest(ctx, http.MethodPost, "/api/v1/kms/keys/unwrap", body, &wire); err != nil {
@@ -1051,22 +1056,9 @@ func kmsStatusToString(s kmsclient.KeyStatus) string {
 // accepts. ECDH-ES uses the RFC 7518 §4.6 name ECDH-ES+A256KW, as the gRPC
 // transport does. An unknown value maps to "", which the service refuses.
 func kmsWrappingAlgToString(a kmsclient.WrappingAlgorithm) string {
-	switch a {
-	case kmsclient.WrapAlgAESKW:
-		return "AES-KW"
-	case kmsclient.WrapAlgAESKWP:
-		return "AES-KWP"
-	case kmsclient.WrapAlgAESGCM:
-		return "AES-GCM"
-	case kmsclient.WrapAlgRSAOAEPSHA256:
-		return "RSA-OAEP-SHA256"
-	case kmsclient.WrapAlgRSAOAEPSHA384:
-		return "RSA-OAEP-SHA384"
-	case kmsclient.WrapAlgRSAOAEPSHA512:
-		return "RSA-OAEP-SHA512"
-	case kmsclient.WrapAlgECDHESA256KW:
-		return "ECDH-ES+A256KW"
-	default:
+	name, known := a.ServiceName()
+	if !known {
 		return ""
 	}
+	return name
 }

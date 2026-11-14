@@ -166,13 +166,15 @@ func (h *kmsHandler) handleImportKey(ctx context.Context, req interface{}) (inte
 		return nil, errors.NewInvalidInput("kmsHandler.handleImportKey",
 			"invalid request type, expected *kms.ImportKeyRequest")
 	}
+	attrs := sdkAlgToKeyAttributes(sdkReq.Algorithm)
+	attrs.Exportable = sdkReq.Exportable
 	return h.client.KMSImportKey(ctx, &service.ImportKeyRequest{
 		KeyMaterial:   sdkReq.KeyMaterial,
 		WrappingKeyID: sdkReq.WrappingKeyID,
 		Name:          sdkReq.Name,
 		Description:   sdkReq.Description,
 		Usage:         sdkUsagesToService(sdkReq.Usage),
-		KeyAttributes: sdkAlgToKeyAttributes(sdkReq.Algorithm),
+		KeyAttributes: attrs,
 		Tags:          sdkReq.Tags,
 	})
 }
@@ -417,6 +419,7 @@ func (h *kmsHandler) handleUnwrapKey(ctx context.Context, req interface{}) (inte
 		Name:              sdkReq.Name,
 		SourceKeyID:       sdkReq.SourceKeyID,
 		SourceVersion:     uint64(sdkReq.SourceVersion),
+		KeyAttributes:     &xkmssdk.KeyAttributes{Exportable: sdkReq.Exportable},
 	})
 }
 
@@ -806,24 +809,11 @@ func sdkAlgToServiceString(alg kmsclient.KeyAlgorithm) string {
 // sdkWrappingAlgToService converts an SDK WrappingAlgorithm to the service
 // wrapping-algorithm string understood by the pkg/api/grpc converters.
 func sdkWrappingAlgToService(alg kmsclient.WrappingAlgorithm) string {
-	switch alg {
-	case kmsclient.WrapAlgAESKW:
-		return "AES-KW"
-	case kmsclient.WrapAlgAESKWP:
-		return "AES-KWP"
-	case kmsclient.WrapAlgAESGCM:
-		return "AES-GCM"
-	case kmsclient.WrapAlgRSAOAEPSHA256:
-		return "RSA-OAEP-SHA256"
-	case kmsclient.WrapAlgRSAOAEPSHA384:
-		return "RSA-OAEP-SHA384"
-	case kmsclient.WrapAlgRSAOAEPSHA512:
-		return "RSA-OAEP-SHA512"
-	case kmsclient.WrapAlgECDHESA256KW:
-		return "ECDH-ES+A256KW"
-	default:
+	name, known := alg.ServiceName()
+	if !known {
 		return ""
 	}
+	return name
 }
 
 // sdkExportFormatToService converts an SDK ExportFormat to the service

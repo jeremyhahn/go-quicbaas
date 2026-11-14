@@ -721,6 +721,42 @@ func TestClientKMSUnwrapKey_Error(t *testing.T) {
 	assert.Nil(t, resp)
 }
 
+func TestClientKMSUnwrapKey_SendsExportable(t *testing.T) {
+	tests := []struct {
+		name  string
+		attrs *xkmssdk.KeyAttributes
+		want  bool
+	}{
+		{name: "exportable", attrs: &xkmssdk.KeyAttributes{Exportable: true}, want: true},
+		{name: "not exportable", attrs: &xkmssdk.KeyAttributes{}, want: false},
+		{name: "no attributes", attrs: nil, want: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var got *pb.UnwrapKeyRequest
+			kmsServer := &extendedKMSServer{
+				unwrapKeyFunc: func(ctx context.Context, req *pb.UnwrapKeyRequest) (*pb.UnwrapKeyResponse, error) {
+					got = req
+					return &pb.UnwrapKeyResponse{Key: &pb.KeyHandle{KeyId: req.KeyId}}, nil
+				},
+			}
+			client, server := setupConnectedExtendedKMSClient(t, kmsServer)
+			defer server.Stop()
+			defer client.conn.Close()
+
+			_, err := client.KMSUnwrapKey(context.Background(), &service.UnwrapKeyRequest{
+				KeyID:         "new-key",
+				WrappedKey:    []byte("wrapped-key-material"),
+				WrappingKeyID: "wrapper-key",
+				KeyAttributes: tt.attrs,
+			})
+			require.NoError(t, err)
+			require.NotNil(t, got)
+			assert.Equal(t, tt.want, got.Exportable)
+		})
+	}
+}
+
 func TestClientKMSSetKeySafety_NilRequest(t *testing.T) {
 	client := &Client{}
 

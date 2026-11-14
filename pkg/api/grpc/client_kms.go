@@ -494,6 +494,7 @@ func (c *Client) KMSUnwrapKey(ctx context.Context, req *service.UnwrapKeyRequest
 		Name:              req.Name,
 		SourceKeyId:       req.SourceKeyID,
 		SourceVersion:     req.SourceVersion,
+		Exportable:        req.KeyAttributes != nil && req.KeyAttributes.Exportable,
 	}
 
 	pbResp, err := kmsClient.UnwrapKey(ctx, pbReq)

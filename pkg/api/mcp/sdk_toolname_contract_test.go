@@ -101,7 +101,6 @@ var sdkCallsWithoutMCPTool = map[sdkCall]string{
 	{"quicbaas.Auth", "RevokeAllSessions"}:       gapAmbiguous + "quicbaas_iam_session_revoke_all",
 
 	// --- Batch / Query / Transaction --------------------------------------
-	{"quicbaas.Batch", "Execute"}:       gapNoTool,
 	{"quicbaas.Query", "Execute"}:       gapNameDrift + "quicbaas_query",
 	{"quicbaas.Transaction", "Execute"}: gapNameDrift + "quicbaas_transaction",
 

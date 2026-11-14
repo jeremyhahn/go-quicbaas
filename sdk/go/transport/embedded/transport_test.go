@@ -106,6 +106,8 @@ type mockQuicBaaS struct {
 	clusterStatusFunc     func(ctx context.Context, req *service.ClusterStatusRequest) (*service.ClusterStatusResponse, error)
 	writePointFunc        func(ctx context.Context, req *service.WritePointRequest) (*service.WritePointResponse, error)
 	putFunc               func(ctx context.Context, req *service.PutRequest) (*service.PutResponse, error)
+	compareAndSwapFunc    func(ctx context.Context, req *service.CompareAndSwapRequest) (*service.ConditionalPutResponse, error)
+	putIfAbsentFunc       func(ctx context.Context, req *service.PutIfAbsentRequest) (*service.ConditionalPutResponse, error)
 	getFunc               func(ctx context.Context, req *service.GetRequest) (*service.GetResponse, error)
 	deleteFunc            func(ctx context.Context, req *service.DeleteRequest) (*service.DeleteResponse, error)
 	listFunc              func(ctx context.Context, req *service.ListRequest, stream chan<- *service.ListResponse) error
@@ -114,6 +116,7 @@ type mockQuicBaaS struct {
 	batchPutFunc          func(ctx context.Context, req *service.BatchPutRequest) (*service.BatchPutResponse, error)
 	batchGetFunc          func(ctx context.Context, req *service.BatchGetRequest) (*service.BatchGetResponse, error)
 	batchDeleteFunc       func(ctx context.Context, req *service.BatchDeleteRequest) (*service.BatchDeleteResponse, error)
+	batchExecuteFunc      func(ctx context.Context, req *service.BatchExecuteRequest) (*service.BatchExecuteResponse, error)
 	transactionFunc       func(ctx context.Context, req *service.TransactionRequest) (*service.TransactionResponse, error)
 	healthFunc            func(ctx context.Context, req *service.HealthRequest) (*service.HealthResponse, error)
 	livenessFunc          func(ctx context.Context, req *service.LivenessRequest) (*service.LivenessResponse, error)
@@ -135,6 +138,20 @@ func (m *mockQuicBaaS) Put(ctx context.Context, req *service.PutRequest) (*servi
 		return m.putFunc(ctx, req)
 	}
 	return &service.PutResponse{ID: req.ID, Version: 1}, nil
+}
+
+func (m *mockQuicBaaS) CompareAndSwap(ctx context.Context, req *service.CompareAndSwapRequest) (*service.ConditionalPutResponse, error) {
+	if m.compareAndSwapFunc != nil {
+		return m.compareAndSwapFunc(ctx, req)
+	}
+	return &service.ConditionalPutResponse{}, nil
+}
+
+func (m *mockQuicBaaS) PutIfAbsent(ctx context.Context, req *service.PutIfAbsentRequest) (*service.ConditionalPutResponse, error) {
+	if m.putIfAbsentFunc != nil {
+		return m.putIfAbsentFunc(ctx, req)
+	}
+	return &service.ConditionalPutResponse{}, nil
 }
 
 func (m *mockQuicBaaS) Get(ctx context.Context, req *service.GetRequest) (*service.GetResponse, error) {
@@ -197,6 +214,13 @@ func (m *mockQuicBaaS) BatchDelete(ctx context.Context, req *service.BatchDelete
 		return m.batchDeleteFunc(ctx, req)
 	}
 	return &service.BatchDeleteResponse{}, nil
+}
+
+func (m *mockQuicBaaS) BatchExecute(ctx context.Context, req *service.BatchExecuteRequest) (*service.BatchExecuteResponse, error) {
+	if m.batchExecuteFunc != nil {
+		return m.batchExecuteFunc(ctx, req)
+	}
+	return &service.BatchExecuteResponse{}, nil
 }
 
 // Transaction operations

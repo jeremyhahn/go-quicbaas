@@ -1103,6 +1103,36 @@ func TestSchedulerServer_ListJobs(t *testing.T) {
 	}
 }
 
+func TestSchedulerServer_ListJobs_OwnerTypeScope(t *testing.T) {
+	tests := []struct {
+		name      string
+		ownerType pb.OwnerType
+		want      service.SchedulerOwnerType
+	}{
+		{name: "unspecified_lists_every_scope", ownerType: pb.OwnerType_OWNER_TYPE_UNSPECIFIED, want: ""},
+		{name: "system_stays_system", ownerType: pb.OwnerType_OWNER_TYPE_SYSTEM, want: service.SchedulerOwnerTypeSystem},
+		{name: "tenant_stays_tenant", ownerType: pb.OwnerType_OWNER_TYPE_TENANT, want: service.SchedulerOwnerTypeTenant},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			var got *service.ListSchedulerJobsRequest
+			mockSvc := &mockSchedulerService{
+				listJobsFunc: func(ctx context.Context, req *service.ListSchedulerJobsRequest) (*service.ListSchedulerJobsResponse, error) {
+					got = req
+					return &service.ListSchedulerJobsResponse{Timestamp: time.Now()}, nil
+				},
+			}
+			server := newTestSchedulerServer(mockSvc)
+
+			_, err := server.ListJobs(context.Background(), &pb.ListJobsRequest{OwnerType: tc.ownerType})
+			require.NoError(t, err)
+			require.NotNil(t, got)
+			assert.Equal(t, tc.want, got.OwnerType)
+		})
+	}
+}
+
 // =============================================================================
 // TriggerJob Tests
 // =============================================================================

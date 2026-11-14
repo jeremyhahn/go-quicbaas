@@ -138,6 +138,111 @@ func TestClient_Put_Success(t *testing.T) {
 	}
 }
 
+func TestClient_CompareAndSwap_ReportsApplied(t *testing.T) {
+	for _, applied := range []bool{true, false} {
+		var gotMethod string
+		mockT := &mockTransport{
+			requestFn: func(ctx context.Context, svc, method string, req interface{}) (interface{}, error) {
+				gotMethod = method
+				return &service.ConditionalPutResponse{Applied: applied}, nil
+			},
+		}
+		client := NewClient(mockT)
+
+		got, err := client.CompareAndSwap(context.Background(), &service.CompareAndSwapRequest{
+			EntityType: "users",
+			ID:         1,
+			Expect:     []byte("old"),
+			Set:        []byte("new"),
+		})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if got != applied {
+			t.Errorf("expected applied %v, got %v", applied, got)
+		}
+		if gotMethod != "CompareAndSwap" {
+			t.Errorf("expected method CompareAndSwap, got %q", gotMethod)
+		}
+	}
+}
+
+func TestClient_PutIfAbsent_ReportsApplied(t *testing.T) {
+	for _, applied := range []bool{true, false} {
+		var gotMethod string
+		mockT := &mockTransport{
+			requestFn: func(ctx context.Context, svc, method string, req interface{}) (interface{}, error) {
+				gotMethod = method
+				return &service.ConditionalPutResponse{Applied: applied}, nil
+			},
+		}
+		client := NewClient(mockT)
+
+		got, err := client.PutIfAbsent(context.Background(), &service.PutIfAbsentRequest{
+			EntityType: "users",
+			ID:         1,
+			Data:       []byte("data"),
+		})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if got != applied {
+			t.Errorf("expected applied %v, got %v", applied, got)
+		}
+		if gotMethod != "PutIfAbsent" {
+			t.Errorf("expected method PutIfAbsent, got %q", gotMethod)
+		}
+	}
+}
+
+func TestClient_CompareAndSwap_PutIfAbsent_Validation(t *testing.T) {
+	client := NewClient(&mockTransport{})
+	ctx := context.Background()
+
+	calls := map[string]func() (bool, error){
+		"CompareAndSwap nil":     func() (bool, error) { return client.CompareAndSwap(ctx, nil) },
+		"CompareAndSwap no type": func() (bool, error) { return client.CompareAndSwap(ctx, &service.CompareAndSwapRequest{ID: 1}) },
+		"PutIfAbsent nil":        func() (bool, error) { return client.PutIfAbsent(ctx, nil) },
+		"PutIfAbsent no type":    func() (bool, error) { return client.PutIfAbsent(ctx, &service.PutIfAbsentRequest{ID: 1}) },
+	}
+	for name, call := range calls {
+		t.Run(name, func(t *testing.T) {
+			applied, err := call()
+			if err == nil {
+				t.Fatal("expected error")
+			}
+			if applied {
+				t.Error("expected applied false on error")
+			}
+		})
+	}
+}
+
+func TestClient_CompareAndSwap_PutIfAbsent_BadResponse(t *testing.T) {
+	responses := map[string]interface{}{
+		"nil response": nil,
+		"wrong type":   &service.PutResponse{},
+	}
+	for name, resp := range responses {
+		t.Run(name, func(t *testing.T) {
+			mockT := &mockTransport{
+				requestFn: func(ctx context.Context, svc, method string, req interface{}) (interface{}, error) {
+					return resp, nil
+				},
+			}
+			client := NewClient(mockT)
+			ctx := context.Background()
+
+			if _, err := client.CompareAndSwap(ctx, &service.CompareAndSwapRequest{EntityType: "users", ID: 1}); err == nil {
+				t.Error("CompareAndSwap: expected error")
+			}
+			if _, err := client.PutIfAbsent(ctx, &service.PutIfAbsentRequest{EntityType: "users", ID: 1}); err == nil {
+				t.Error("PutIfAbsent: expected error")
+			}
+		})
+	}
+}
+
 func TestClient_Put_NilResponse(t *testing.T) {
 	mockT := &mockTransport{
 		requestFn: func(ctx context.Context, svc, method string, req interface{}) (interface{}, error) {
