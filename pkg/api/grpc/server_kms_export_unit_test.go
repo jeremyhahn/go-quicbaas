@@ -15,9 +15,11 @@ package grpc
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
+	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc/codes"
@@ -413,6 +415,101 @@ func TestKMSServer_UnwrapKey(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestKMSServer_GenerateKey_KeyType checks that the key type reaching the KMS
+// service is the service's default for the requested algorithm, since KeySpec
+// carries no key type of its own.
+func TestKMSServer_GenerateKey_KeyType(t *testing.T) {
+	tests := []struct {
+		name      string
+		algorithm pb.KeyAlgorithm
+		wantType  xkmssdk.KeyType
+	}{
+		{"symmetric_key_is_secret", pb.KeyAlgorithm_KEY_ALG_AES_256_GCM, xkmssdk.KeyTypeSecret},
+		{"asymmetric_key_signs", pb.KeyAlgorithm_KEY_ALG_ECDSA_P256, xkmssdk.KeyTypeSigning},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			srv, mockSvc, _ := createTestKMSServerWithSafetyService(t)
+			var got *service.GenerateKeyRequest
+			mockSvc.generateKeyFn = func(ctx context.Context, req *service.GenerateKeyRequest) (*service.GenerateKeyResponse, error) {
+				got = req
+				return &service.GenerateKeyResponse{}, nil
+			}
+
+			_, err := srv.GenerateKey(context.Background(), &pb.GenerateKeyRequest{
+				Name:    "typed-key",
+				KeySpec: &pb.KeySpec{Algorithm: tt.algorithm},
+			})
+			require.NoError(t, err)
+			require.NotNil(t, got)
+			require.NotNil(t, got.KeyAttributes)
+			assert.Equal(t, tt.wantType, got.KeyAttributes.KeyType)
+		})
+	}
+
+	t.Run("unspecified_algorithm_never_reaches_the_service", func(t *testing.T) {
+		srv, mockSvc, _ := createTestKMSServerWithSafetyService(t)
+		called := false
+		mockSvc.generateKeyFn = func(ctx context.Context, req *service.GenerateKeyRequest) (*service.GenerateKeyResponse, error) {
+			called = true
+			return &service.GenerateKeyResponse{}, nil
+		}
+
+		_, err := srv.GenerateKey(context.Background(), &pb.GenerateKeyRequest{
+			Name:    "typed-key",
+			KeySpec: &pb.KeySpec{Algorithm: pb.KeyAlgorithm_KEY_ALG_UNSPECIFIED},
+		})
+		require.Error(t, err)
+		st, ok := status.FromError(err)
+		require.True(t, ok)
+		assert.Equal(t, codes.InvalidArgument, st.Code())
+		assert.False(t, called)
+	})
+}
+
+func TestKMSServer_UnwrapKey_Exportable(t *testing.T) {
+	for _, exportable := range []bool{true, false} {
+		t.Run(fmt.Sprintf("exportable_%t", exportable), func(t *testing.T) {
+			srv, mockSvc, _ := createTestKMSServerWithSafetyService(t)
+			var got *service.UnwrapKeyRequest
+			mockSvc.unwrapKeyFn = func(ctx context.Context, req *service.UnwrapKeyRequest) (*service.UnwrapKeyResponse, error) {
+				got = req
+				return &service.UnwrapKeyResponse{KeyID: req.KeyID}, nil
+			}
+
+			_, err := srv.UnwrapKey(context.Background(), &pb.UnwrapKeyRequest{
+				KeyId:           "unwrapped-key",
+				WrappingKeyId:   "wrapping-key",
+				WrappedMaterial: []byte("wrapped"),
+				Exportable:      exportable,
+			})
+			require.NoError(t, err)
+			require.NotNil(t, got)
+			require.NotNil(t, got.KeyAttributes)
+			assert.Equal(t, exportable, got.KeyAttributes.Exportable)
+		})
+	}
+
+	t.Run("missing_wrapping_key_never_reaches_the_service", func(t *testing.T) {
+		srv, mockSvc, _ := createTestKMSServerWithSafetyService(t)
+		called := false
+		mockSvc.unwrapKeyFn = func(ctx context.Context, req *service.UnwrapKeyRequest) (*service.UnwrapKeyResponse, error) {
+			called = true
+			return &service.UnwrapKeyResponse{}, nil
+		}
+
+		_, err := srv.UnwrapKey(context.Background(), &pb.UnwrapKeyRequest{
+			KeyId:           "unwrapped-key",
+			WrappedMaterial: []byte("wrapped"),
+			Exportable:      true,
+		})
+		require.Error(t, err)
+		assert.Equal(t, codes.InvalidArgument, status.Code(err))
+		assert.False(t, called, "the KMS service must not be called")
+	})
 }
 
 // =============================================================================

@@ -100,6 +100,9 @@ func (c *mcpKMSClient) KMSImportKey(ctx context.Context, req *service.ImportKeyR
 		} else {
 			args["algorithm"] = req.KeyAttributes.KeyAlgorithm.String()
 		}
+		if req.KeyAttributes.Exportable {
+			args["exportable"] = true
+		}
 	}
 
 	result, err := c.callTool(ctx, "quicbaas_kms_import_key", args)
@@ -260,6 +263,9 @@ func (c *mcpKMSClient) KMSUnwrapKey(ctx context.Context, req *service.UnwrapKeyR
 	}
 	if req.Name != "" {
 		args["name"] = req.Name
+	}
+	if req.KeyAttributes != nil && req.KeyAttributes.Exportable {
+		args["exportable"] = true
 	}
 
 	result, err := c.callTool(ctx, "quicbaas_kms_unwrap_key", args)

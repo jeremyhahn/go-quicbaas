@@ -1309,6 +1309,7 @@ func (s *KMSServer) UnwrapKey(ctx context.Context, req *pb.UnwrapKeyRequest) (*p
 		Name:              req.Name,
 		SourceKeyID:       req.SourceKeyId,
 		SourceVersion:     req.SourceVersion,
+		KeyAttributes:     &kctypes.KeyAttributes{Exportable: req.Exportable},
 	}
 
 	resp, err := s.kmsSvc.UnwrapKey(ctx, svcReq)
@@ -1585,51 +1586,43 @@ func protoToKeyAttributes(keyID string, req *pb.GenerateKeyRequest) (*kctypes.Ke
 	switch req.KeySpec.Algorithm {
 	case pb.KeyAlgorithm_KEY_ALG_AES_128_GCM:
 		attrs.SymmetricAlgorithm = kctypes.SymmetricAES128GCM
-		attrs.KeyType = kctypes.KeyTypeEncryption
 	case pb.KeyAlgorithm_KEY_ALG_AES_192_GCM:
 		attrs.SymmetricAlgorithm = kctypes.SymmetricAES192GCM
-		attrs.KeyType = kctypes.KeyTypeEncryption
 	case pb.KeyAlgorithm_KEY_ALG_AES_256_GCM:
 		attrs.SymmetricAlgorithm = kctypes.SymmetricAES256GCM
-		attrs.KeyType = kctypes.KeyTypeEncryption
 	case pb.KeyAlgorithm_KEY_ALG_CHACHA20_POLY1305:
 		attrs.SymmetricAlgorithm = kctypes.SymmetricChaCha20Poly1305
-		attrs.KeyType = kctypes.KeyTypeEncryption
 	case pb.KeyAlgorithm_KEY_ALG_XCHACHA20_POLY1305:
 		attrs.SymmetricAlgorithm = kctypes.SymmetricXChaCha20Poly1305
-		attrs.KeyType = kctypes.KeyTypeEncryption
 	case pb.KeyAlgorithm_KEY_ALG_RSA_2048:
 		attrs.KeyAlgorithm = x509.RSA
 		attrs.RSAAttributes = &kctypes.RSAAttributes{KeySize: 2048}
-		attrs.KeyType = kctypes.KeyTypeSigning
 	case pb.KeyAlgorithm_KEY_ALG_RSA_3072:
 		attrs.KeyAlgorithm = x509.RSA
 		attrs.RSAAttributes = &kctypes.RSAAttributes{KeySize: 3072}
-		attrs.KeyType = kctypes.KeyTypeSigning
 	case pb.KeyAlgorithm_KEY_ALG_RSA_4096:
 		attrs.KeyAlgorithm = x509.RSA
 		attrs.RSAAttributes = &kctypes.RSAAttributes{KeySize: 4096}
-		attrs.KeyType = kctypes.KeyTypeSigning
 	case pb.KeyAlgorithm_KEY_ALG_ECDSA_P256:
 		attrs.KeyAlgorithm = x509.ECDSA
 		attrs.ECCAttributes = &kctypes.ECCAttributes{Curve: elliptic.P256()}
-		attrs.KeyType = kctypes.KeyTypeSigning
 	case pb.KeyAlgorithm_KEY_ALG_ECDSA_P384:
 		attrs.KeyAlgorithm = x509.ECDSA
 		attrs.ECCAttributes = &kctypes.ECCAttributes{Curve: elliptic.P384()}
-		attrs.KeyType = kctypes.KeyTypeSigning
 	case pb.KeyAlgorithm_KEY_ALG_ECDSA_P521:
 		attrs.KeyAlgorithm = x509.ECDSA
 		attrs.ECCAttributes = &kctypes.ECCAttributes{Curve: elliptic.P521()}
-		attrs.KeyType = kctypes.KeyTypeSigning
 	case pb.KeyAlgorithm_KEY_ALG_ED25519:
 		attrs.KeyAlgorithm = x509.Ed25519
-		attrs.KeyType = kctypes.KeyTypeSigning
 	case pb.KeyAlgorithm_KEY_ALG_UNSPECIFIED:
 		return nil, api.NewRequiredFieldError("key algorithm")
 	default:
 		return nil, api.NewInvalidFormatMessageError("key algorithm", "unsupported key algorithm: "+req.KeySpec.Algorithm.String())
 	}
+
+	// KeySpec carries no key type: the KMS service's rule applies, so
+	// symmetric keys are secret and asymmetric keys sign.
+	attrs.KeyType = service.DefaultKeyType(attrs)
 
 	return attrs, nil
 }

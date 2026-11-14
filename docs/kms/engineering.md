@@ -57,6 +57,28 @@ start** — it is never silently downgraded to software. Build tags are in
 
 ---
 
+## Key Exportability
+
+go-xkms decides whether a key can be exported. It records the `Exportable`
+attribute in its own key record when the key is created, and refuses export of
+a key recorded as not exportable with `ErrBackendKeyNotExportable`. The
+`Exportable` flag in the quicbaas key metadata only mirrors that record.
+
+Every path that creates a key therefore passes the flag to go-xkms:
+
+| Operation | Source of the flag | Path to go-xkms |
+|---|---|---|
+| `GenerateKey` | `GenerateKeyRequest.Exportable` | copied into the `KeyAttributes` passed to `KMSManager.GenerateKey` |
+| `ImportKey` | `ImportKeyRequest.KeyAttributes.Exportable` | `KMSManager.ImportKey(..., exportable)` → backend option `exportable` → `XKMSBackend.ImportKey` sets `KeyAttributes.Exportable` before the go-xkms import |
+| `UnwrapKey` | `UnwrapKeyRequest.KeyAttributes.Exportable` (absent means not exportable) | the same import path as `ImportKey` |
+
+The REST, gRPC and MCP import handlers that call `KMSManager.ImportKey`
+directly pass the request's flag the same way. Imported and unwrapped
+symmetric keys are stored as `KeyTypeSecret`, the type generated symmetric
+keys use, so they encrypt and decrypt like generated keys.
+
+---
+
 ## Crypto Backend Selection — BackendResolver
 
 Every backend is a go-xkms backend and behaves as go-xkms documents it (for

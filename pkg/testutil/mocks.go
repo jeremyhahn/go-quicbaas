@@ -150,6 +150,18 @@ func (m *MockQuicBaaS) Put(ctx context.Context, req *service.PutRequest) (*servi
 	return resp, args.Error(1)
 }
 
+func (m *MockQuicBaaS) CompareAndSwap(ctx context.Context, req *service.CompareAndSwapRequest) (*service.ConditionalPutResponse, error) {
+	args := m.Called(ctx, req)
+	resp, _ := args.Get(0).(*service.ConditionalPutResponse)
+	return resp, args.Error(1)
+}
+
+func (m *MockQuicBaaS) PutIfAbsent(ctx context.Context, req *service.PutIfAbsentRequest) (*service.ConditionalPutResponse, error) {
+	args := m.Called(ctx, req)
+	resp, _ := args.Get(0).(*service.ConditionalPutResponse)
+	return resp, args.Error(1)
+}
+
 func (m *MockQuicBaaS) Get(ctx context.Context, req *service.GetRequest) (*service.GetResponse, error) {
 	args := m.Called(ctx, req)
 	resp, _ := args.Get(0).(*service.GetResponse)
@@ -197,6 +209,12 @@ func (m *MockQuicBaaS) BatchGet(ctx context.Context, req *service.BatchGetReques
 func (m *MockQuicBaaS) BatchDelete(ctx context.Context, req *service.BatchDeleteRequest) (*service.BatchDeleteResponse, error) {
 	args := m.Called(ctx, req)
 	resp, _ := args.Get(0).(*service.BatchDeleteResponse)
+	return resp, args.Error(1)
+}
+
+func (m *MockQuicBaaS) BatchExecute(ctx context.Context, req *service.BatchExecuteRequest) (*service.BatchExecuteResponse, error) {
+	args := m.Called(ctx, req)
+	resp, _ := args.Get(0).(*service.BatchExecuteResponse)
 	return resp, args.Error(1)
 }
 

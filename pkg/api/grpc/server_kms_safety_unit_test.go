@@ -38,6 +38,14 @@ type mockKMSServiceForSafety struct {
 	safetyReportFn   func(ctx context.Context, req *service.SafetyReportRequest) (*service.SafetyReportResponse, error)
 	exportKeyFn      func(ctx context.Context, req *service.ExportKeyRequest) (*service.ExportKeyResponse, error)
 	unwrapKeyFn      func(ctx context.Context, req *service.UnwrapKeyRequest) (*service.UnwrapKeyResponse, error)
+	generateKeyFn    func(ctx context.Context, req *service.GenerateKeyRequest) (*service.GenerateKeyResponse, error)
+}
+
+func (m *mockKMSServiceForSafety) GenerateKey(ctx context.Context, req *service.GenerateKeyRequest) (*service.GenerateKeyResponse, error) {
+	if m.generateKeyFn != nil {
+		return m.generateKeyFn(ctx, req)
+	}
+	return nil, nil
 }
 
 func (m *mockKMSServiceForSafety) SetKeySafety(ctx context.Context, req *service.SetKeySafetyRequest) (*service.SetKeySafetyResponse, error) {

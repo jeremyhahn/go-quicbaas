@@ -40,15 +40,18 @@ type Transport struct {
 var unaryHandlers = map[string]handlerFunc{
 	// KV operations
 	"quicbaas.KV/Put":             handlePut,
+	"quicbaas.KV/CompareAndSwap":  handleCompareAndSwap,
+	"quicbaas.KV/PutIfAbsent":     handlePutIfAbsent,
 	"quicbaas.KV/Get":             handleGet,
 	"quicbaas.KV/Delete":          handleDelete,
 	"quicbaas.KV/List":            handleList,
 	"quicbaas.KV/ListEntityTypes": handleListEntityTypes,
 
 	// Batch operations
-	"quicbaas.Batch/Put":    handleBatchPut,
-	"quicbaas.Batch/Get":    handleBatchGet,
-	"quicbaas.Batch/Delete": handleBatchDelete,
+	"quicbaas.Batch/Put":     handleBatchPut,
+	"quicbaas.Batch/Get":     handleBatchGet,
+	"quicbaas.Batch/Delete":  handleBatchDelete,
+	"quicbaas.Batch/Execute": handleBatchExecute,
 
 	// Transaction operations
 	"quicbaas.Transaction/Execute": handleTransaction,

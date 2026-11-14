@@ -88,8 +88,9 @@ type KMSManager interface {
 
 	// ImportKey imports an existing key into the KMS.
 	// material contains the raw key bytes (will be encrypted at rest).
+	// exportable is recorded by the crypto backend, which enforces it on export.
 	// Returns key metadata.
-	ImportKey(ctx context.Context, keyID string, material []byte, algorithm string) (interface{}, error)
+	ImportKey(ctx context.Context, keyID string, material []byte, algorithm string, exportable bool) (interface{}, error)
 
 	// GetKey retrieves key metadata by ID.
 	// Never returns raw key material.

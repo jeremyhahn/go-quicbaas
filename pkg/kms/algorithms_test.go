@@ -1995,7 +1995,7 @@ func TestCoveragePush_ImportKey_EmptyKeyID(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	_, err = service.ImportKey(ctx, "", []byte("material"), AlgAES256GCM)
+	_, err = service.ImportKey(ctx, "", []byte("material"), AlgAES256GCM, false)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "keyID cannot be empty")
 }
@@ -2011,7 +2011,7 @@ func TestCoveragePush_ImportKey_EmptyMaterial(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	_, err = service.ImportKey(ctx, "test-key", []byte{}, AlgAES256GCM)
+	_, err = service.ImportKey(ctx, "test-key", []byte{}, AlgAES256GCM, false)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "key material cannot be empty")
 }
@@ -2027,7 +2027,7 @@ func TestCoveragePush_ImportKey_InvalidAlgorithm(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	_, err = service.ImportKey(ctx, "test-key", []byte("material"), "INVALID-ALG")
+	_, err = service.ImportKey(ctx, "test-key", []byte("material"), "INVALID-ALG", false)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "unsupported algorithm")
 }
@@ -2045,7 +2045,7 @@ func TestCoveragePush_ImportKey_ContextCancelled(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	_, err = service.ImportKey(ctx, "test-key", []byte("material"), AlgAES256GCM)
+	_, err = service.ImportKey(ctx, "test-key", []byte("material"), AlgAES256GCM, false)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "context canceled")
 }
@@ -2063,7 +2063,7 @@ func TestCoveragePush_ImportKey_BackendError(t *testing.T) {
 
 	backend.SetError("ImportKey", errors.New("import failed"))
 
-	_, err = service.ImportKey(ctx, "test-key", []byte("material"), AlgAES256GCM)
+	_, err = service.ImportKey(ctx, "test-key", []byte("material"), AlgAES256GCM, false)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "import failed")
 }
@@ -2079,7 +2079,7 @@ func TestCoveragePush_ImportKey_DefaultAlgorithm(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	result, err := service.ImportKey(ctx, "test-key", []byte("material"), "")
+	result, err := service.ImportKey(ctx, "test-key", []byte("material"), "", false)
 	require.NoError(t, err)
 	assert.NotNil(t, result)
 }
@@ -2097,7 +2097,7 @@ func TestCoveragePush_ImportKey_WithLogger(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	result, err := service.ImportKey(ctx, "test-key", []byte("material"), AlgAES256GCM)
+	result, err := service.ImportKey(ctx, "test-key", []byte("material"), AlgAES256GCM, false)
 	require.NoError(t, err)
 	assert.NotNil(t, result)
 }
@@ -4491,7 +4491,7 @@ func TestCoveragePush_ImportKey_BackendRoutingError(t *testing.T) {
 	registry.backends = make(map[string]*BackendInfo)
 	registry.mu.Unlock()
 
-	_, err = service.ImportKey(ctx, "test-key", []byte("material"), AlgAES256GCM)
+	_, err = service.ImportKey(ctx, "test-key", []byte("material"), AlgAES256GCM, false)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to route to backend")
 }
@@ -6415,7 +6415,7 @@ func TestKMSService_ImportKey_CanceledContext_Coverage(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	_, err = svc.ImportKey(ctx, "import-cov", []byte("material"), AlgAES256GCM)
+	_, err = svc.ImportKey(ctx, "import-cov", []byte("material"), AlgAES256GCM, false)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "context canceled")
 }

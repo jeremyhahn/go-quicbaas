@@ -291,6 +291,23 @@ func (t *Transport) doRequest(ctx context.Context, service, method string, reqBo
 		}
 	}
 
+	// KV Put/Get/Delete are served by quicbaas's quicbaas_kv_* tools, which
+	// call the KV service; a request that is not the typed SDK struct keeps
+	// the generic path.
+	if verb, ok := kvVerbs[method]; ok && isMCPKVService(service) {
+		if args, typed := verb.args(reqBody); typed {
+			return t.requestKV(ctx, verb, args)
+		}
+	}
+
+	// KV conditional writes go to qrdb's guarded tools, which answer with a
+	// single boolean decision.
+	if isMCPKVService(service) {
+		if verb, ok := kvConditionalVerbs[method]; ok {
+			return t.requestKVConditional(ctx, toolName, verb, reqBody)
+		}
+	}
+
 	// The Agents catalog is a closed set of tools with typed answers.
 	if isMCPAgentsService(service) {
 		return t.requestAgents(ctx, method, reqBody)
@@ -328,6 +345,12 @@ func (t *Transport) doRequest(ctx context.Context, service, method string, reqBo
 	// generic path below.
 	if verb, ok := ollamaVerbs[method]; ok && isMCPOllamaService(service) {
 		return t.requestToolVerb(ctx, "mcp.ollama."+method, verb, reqBody)
+	}
+
+	// Batch Execute decodes into the client type; the rest keep the generic
+	// path below.
+	if verb, ok := batchVerbs[method]; ok && isMCPBatchService(service) {
+		return t.requestToolVerb(ctx, "mcp.batch."+method, verb, reqBody)
 	}
 
 	// These KMS verbs decode into the client types; the rest keep the
@@ -915,6 +938,16 @@ func (t *Transport) ensureRawTransport(ctx context.Context) (mcptransport.Interf
 
 // callTool invokes an MCP tool via the negotiated mcpClient session.
 func (t *Transport) callTool(ctx context.Context, name string, arguments map[string]interface{}) (interface{}, error) {
+	result, err := t.callToolResult(ctx, name, arguments)
+	if err != nil {
+		return nil, err
+	}
+	return t.extractContent(result.Content)
+}
+
+// callToolResult calls a tool and returns its raw result, converting a
+// transport failure or a tool error into an SDK error.
+func (t *Transport) callToolResult(ctx context.Context, name string, arguments map[string]interface{}) (*mcp.CallToolResult, error) {
 	result, err := t.mcpClient.CallTool(ctx, mcp.CallToolRequest{
 		Params: mcp.CallToolParams{
 			Name:      name,
@@ -931,9 +964,7 @@ func (t *Transport) callTool(ctx context.Context, name string, arguments map[str
 	}
 
 	t.lastHealth.Store(time.Now().UnixNano())
-
-	// Extract result from content
-	return t.extractContent(result.Content)
+	return result, nil
 }
 
 // sendRPC forwards a caller-owned JSON-RPC 2.0 request verbatim over the
@@ -1107,6 +1138,10 @@ func ToolName(service, method string) string {
 		switch method {
 		case "Put", "Get", "Delete", "List", "Scan":
 			return "qrdb_" + strings.ToLower(method)
+		case "CompareAndSwap", "PutIfAbsent":
+			// quicbaas's conditional tools, which name the entity as
+			// qrdb_put does and so act on the record it wrote.
+			return "quicbaas_kv_" + camelToSnake(method)
 		default:
 			return "quicbaas_" + strings.ToLower(method)
 		}

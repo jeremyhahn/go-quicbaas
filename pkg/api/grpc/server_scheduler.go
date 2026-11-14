@@ -206,7 +206,7 @@ func (s *SchedulerServer) ListJobs(ctx context.Context, req *pb.ListJobsRequest)
 	s.logger.Debug("Processing ListJobs request")
 
 	svcReq := &service.ListSchedulerJobsRequest{
-		OwnerType:      protoOwnerTypeToService(req.OwnerType),
+		OwnerType:      protoJobScopeToService(req.OwnerType),
 		OwnerID:        req.OwnerId,
 		TargetTenantID: req.TargetTenantId,
 		Status:         protoJobStatusToService(req.Status),
@@ -437,6 +437,16 @@ func protoOwnerTypeToService(ot pb.OwnerType) service.SchedulerOwnerType {
 	default:
 		return service.SchedulerOwnerTypeSystem
 	}
+}
+
+// protoJobScopeToService maps a list filter's owner type. Unlike
+// protoOwnerTypeToService, an unspecified owner type stays unset so the
+// listing spans system and tenant jobs, as it does over REST.
+func protoJobScopeToService(ot pb.OwnerType) service.SchedulerOwnerType {
+	if ot == pb.OwnerType_OWNER_TYPE_UNSPECIFIED {
+		return ""
+	}
+	return protoOwnerTypeToService(ot)
 }
 
 // protoJobTypeToService converts pb.JobType to service.SchedulerJobType.

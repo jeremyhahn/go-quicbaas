@@ -81,6 +81,8 @@ func TestGRPCResourceAndAction_Mapped(t *testing.T) {
 	}{
 		{"/quicbaas.v1.QuicBaaS/Put", "kv", "put"},
 		{"/quicbaas.v1.QuicBaaS/Get", "kv", "get"},
+		{"/quicbaas.v1.QuicBaaS/CompareAndSwap", "kv", "put"},
+		{"/quicbaas.v1.QuicBaaS/PutIfAbsent", "kv", "put"},
 		{"/quicbaas.v1.QuicBaaS/CreateRole", "roles", "create"},
 		{"/quicbaas.kms.v1.Crypto/Sign", "keys", "sign"},
 		{"/quicbaas.barrier.v1.Barrier/BarrierStatus", "tenant_barrier", "status"},

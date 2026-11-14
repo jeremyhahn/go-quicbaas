@@ -257,6 +257,18 @@ func newKMSService(kmsManager interfaces.KMSManager, logger interfaces.Logger) *
 	return svc
 }
 
+// DefaultKeyType returns the KeyType a key with these attributes is generated
+// under: KeyTypeSecret for a symmetric key, KeyTypeSigning otherwise.
+// go-xkms's symmetric provider lists only "secret" keys as symmetric, with
+// their stored Exportable flag; it skips a symmetric key of any other type,
+// so go-xkms could not export it.
+func DefaultKeyType(attrs *kctypes.KeyAttributes) kctypes.KeyType {
+	if attrs.SymmetricAlgorithm != "" {
+		return kctypes.KeyTypeSecret
+	}
+	return kctypes.KeyTypeSigning
+}
+
 // SetScheduler sets the scheduler for scheduling grace period jobs.
 // This must be called after both KMS and Scheduler services are initialized
 // to avoid circular dependencies.
@@ -494,15 +506,7 @@ func (k *kmsServiceImpl) GenerateKey(ctx context.Context, req *GenerateKeyReques
 	// the zero value if not explicitly set in the request.
 	var zeroKeyType kctypes.KeyType
 	if attrs.KeyType == zeroKeyType {
-		// Determine KeyType based on algorithm: symmetric = secret, asymmetric = signing.
-		// go-xkms's symmetric provider lists only "secret" keys as symmetric,
-		// with their stored Exportable flag; it skips a symmetric key of any
-		// other type, so go-xkms could not export it.
-		if attrs.SymmetricAlgorithm != "" {
-			attrs.KeyType = kctypes.KeyTypeSecret
-		} else {
-			attrs.KeyType = kctypes.KeyTypeSigning
-		}
+		attrs.KeyType = DefaultKeyType(attrs)
 	}
 
 	// Call KMS manager to generate key
@@ -657,8 +661,9 @@ func (k *kmsServiceImpl) ImportKey(ctx context.Context, req *ImportKeyRequest) (
 	// Get algorithm string from attributes
 	algorithm := attrsToAlgorithm(req.KeyAttributes)
 
-	// Call KMS manager to import key
-	keyMetadata, err := k.kmsManager.ImportKey(ctx, keyID, req.KeyMaterial, algorithm)
+	// Call KMS manager to import key. go-xkms records Exportable at import and
+	// enforces it on export; the quicbaas metadata below only mirrors it.
+	keyMetadata, err := k.kmsManager.ImportKey(ctx, keyID, req.KeyMaterial, algorithm, req.KeyAttributes.Exportable)
 	if err != nil {
 		if k.metrics != nil {
 			k.metrics.errorsByType.With("kms_error", "import_key").Inc()

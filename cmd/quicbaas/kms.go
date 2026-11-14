@@ -539,6 +539,7 @@ Examples:
 	cmd.Flags().StringVar(&kmsImportAlgorithm, "algorithm", "AES-256-GCM", "Key algorithm (required)")
 	cmd.Flags().StringVar(&kmsMaterial, "material", "", "Key material (base64 encoded) (required)")
 	cmd.Flags().StringVar(&kmsDescription, "description", "", "Key description")
+	cmd.Flags().BoolVar(&kmsExportable, "exportable", false, "Allow key export")
 
 	cmd.MarkFlagRequired("material")
 
@@ -749,7 +750,7 @@ func runKMSKeyImportCommand(cmd *cobra.Command, args []string) error {
 	// Armoured material takes the ASYMMETRIC path. Routing on the material
 	// rather than on a flag is what makes the old trap unreachable: there is
 	// no longer a way to spell "store this private key as an AES key".
-	keyAttrs := &kctypes.KeyAttributes{CN: keyName}
+	keyAttrs := &kctypes.KeyAttributes{CN: keyName, Exportable: kmsExportable}
 	usage := []service.KeyUsage{service.KeyUsageEncrypt, service.KeyUsageDecrypt}
 
 	if kind := detectEncodedKeyMaterial(keyMaterial); kind != "" {
@@ -1008,6 +1009,7 @@ Examples:
 	cmd.Flags().StringVar(&kmsWrappingKey, "wrapping-key", "", "Wrapping key (required)")
 	cmd.Flags().StringVar(&kmsMaterial, "material", "", "Wrapped key material (base64) (required)")
 	cmd.Flags().StringVar(&kmsUnwrapAlgorithm, "algorithm", "", "Target key algorithm (required)")
+	cmd.Flags().BoolVar(&kmsExportable, "exportable", false, "Allow key export")
 
 	cmd.MarkFlagRequired("wrapping-key")
 	cmd.MarkFlagRequired("material")
@@ -1039,6 +1041,7 @@ func runKMSKeyUnwrapCommand(cmd *cobra.Command, args []string) error {
 		WrappingKeyID: kmsWrappingKey,
 		WrappedKey:    wrappedKey,
 		Algorithm:     kmsUnwrapAlgorithm,
+		KeyAttributes: &kctypes.KeyAttributes{Exportable: kmsExportable},
 	}
 
 	resp, err := client.KMSUnwrapKey(ctx, req)
