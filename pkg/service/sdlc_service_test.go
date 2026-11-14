@@ -1006,6 +1006,97 @@ func TestSDLCService_UnbindSurvivesAnUnresolvableForgeToken(t *testing.T) {
 	}
 }
 
+// sdlcFakeTokenSource is a sdlc.ForgeTokenSource that returns a fixed token
+// or error and records the base URLs it was asked for.
+type sdlcFakeTokenSource struct {
+	token    string
+	err      error
+	baseURLs []string
+}
+
+func (f *sdlcFakeTokenSource) ForgeToken(_ context.Context, baseURL string) (string, error) {
+	f.baseURLs = append(f.baseURLs, baseURL)
+	return f.token, f.err
+}
+
+func TestSDLCService_ForgeTokenComesFromTheNodeCommandWithoutReadingTheSecret(t *testing.T) {
+	rig := newSDLCServiceRig(t)
+	source := &sdlcFakeTokenSource{token: "command-token"}
+	cfg := rig.binding().Forge
+	rig.svc.forgeTokens = map[sdlc.ForgeType]sdlc.ForgeTokenSource{cfg.Type: source}
+	// Any secret read fails, so a token that comes back came from the source.
+	rig.secrets.err = errors.New("the secret must not be read")
+	ctx := context.Background()
+
+	token, err := rig.svc.ForgeToken(ctx, sdlcTestTenant, cfg)
+	if err != nil {
+		t.Fatalf("ForgeToken: %v", err)
+	}
+	if string(token) != "command-token" {
+		t.Fatal("ForgeToken did not return the command's token")
+	}
+	if _, err := rig.svc.ForgeFor(ctx, sdlcTestTenant, cfg); err != nil {
+		t.Fatalf("ForgeFor: %v", err)
+	}
+	if len(source.baseURLs) != 2 || source.baseURLs[0] != cfg.BaseURL {
+		t.Fatalf("source asked for %v, want the binding's base URL twice", source.baseURLs)
+	}
+}
+
+func TestSDLCService_ForgeTokenSourceErrorIsReturnedTyped(t *testing.T) {
+	rig := newSDLCServiceRig(t)
+	cfg := rig.binding().Forge
+	sourceErr := &sdlc.ForgeTokenCommandError{Command: "/usr/local/bin/forge-mint", ExitCode: 1}
+	rig.svc.forgeTokens = map[sdlc.ForgeType]sdlc.ForgeTokenSource{cfg.Type: &sdlcFakeTokenSource{err: sourceErr}}
+
+	_, err := rig.svc.ForgeFor(context.Background(), sdlcTestTenant, cfg)
+	var cmdErr *sdlc.ForgeTokenCommandError
+	if !errors.As(err, &cmdErr) {
+		t.Fatalf("ForgeFor err = %v, want *sdlc.ForgeTokenCommandError", err)
+	}
+}
+
+func TestSDLCService_ForgeTokenOfAnotherTypeStillReadsTheSecret(t *testing.T) {
+	rig := newSDLCServiceRig(t)
+	cfg := rig.binding().Forge
+	other := sdlc.ForgeGitHub
+	if cfg.Type == sdlc.ForgeGitHub {
+		other = sdlc.ForgeGitea
+	}
+	source := &sdlcFakeTokenSource{token: "command-token"}
+	rig.svc.forgeTokens = map[sdlc.ForgeType]sdlc.ForgeTokenSource{other: source}
+	rig.secrets.err = errors.New("secret read refused")
+
+	if _, err := rig.svc.ForgeToken(context.Background(), sdlcTestTenant, cfg); err == nil {
+		t.Fatal("ForgeToken must read the binding's secret when its type has no command")
+	}
+	if len(source.baseURLs) != 0 {
+		t.Fatal("a source for another forge type was asked for a token")
+	}
+}
+
+func TestSDLCService_ReviewerTokenIsTheReviewersSecretEvenWithANodeCommand(t *testing.T) {
+	// The node's command acts as the node's account, which may be the PR's
+	// author: a reviewer acting through it would approve its own change.
+	rig := newSDLCServiceRig(t)
+	cfg := rig.binding().Forge
+	source := &sdlcFakeTokenSource{token: "command-token"}
+	rig.svc.forgeTokens = map[sdlc.ForgeType]sdlc.ForgeTokenSource{cfg.Type: source}
+	rig.secrets.secrets["reviewer-tok"] = []byte("reviewer-token")
+
+	got, err := rig.svc.ForgeToken(context.Background(), sdlcTestTenant,
+		sdlc.ReviewerConfig{TokenSecretRef: "reviewer-tok"}.ForgeConfigFor(cfg))
+	if err != nil {
+		t.Fatalf("ForgeToken: %v", err)
+	}
+	if string(got) != "reviewer-token" {
+		t.Fatalf("token = %q, want the reviewer's secret", got)
+	}
+	if len(source.baseURLs) != 0 {
+		t.Fatal("the node's token command was asked for the reviewer's token")
+	}
+}
+
 // TestSDLCService_UnbindStillRefusesATransientForgeFailure is the other half,
 // and the reason the fix is narrow rather than a blanket "ignore offboarding".
 //
