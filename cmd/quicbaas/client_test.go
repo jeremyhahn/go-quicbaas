@@ -95,7 +95,9 @@ func (m *mockClient) Search() quicbaas.SearchService                        { re
 func (m *mockClient) Storage() quicbaas.StorageService                      { return nil }
 func (m *mockClient) Async() quicbaas.AsyncService                          { return nil }
 func (m *mockClient) AI() quicbaas.AIService                                { return nil }
-func (m *mockClient) DataStore() (quicbaas.QRDBKVStore, error)              { return nil, nil }
+func (m *mockClient) QRDBData() (quicbaas.QRDBDataService, error)           { return nil, nil }
+
+func (m *mockClient) DataStore() (quicbaas.QRDBKVStore, error) { return nil, nil }
 
 func (m *mockClient) BarrierCeremonyMgmt() quicbaas.BarrierCeremonyService       { return nil }
 func (m *mockClient) TenantMgmtService() quicbaas.TenantService                  { return nil }

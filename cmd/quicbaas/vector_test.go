@@ -929,7 +929,9 @@ func (m *mockSDKClientWithVector) TenantMgmt() (quicbaas.QRDBTenantClient, error
 func (m *mockSDKClientWithVector) CustodianGroup() (quicbaas.QRDBCustodianGroupClient, error) {
 	return nil, nil
 }
-func (m *mockSDKClientWithVector) Share() (quicbaas.QRDBShareClient, error) { return nil, nil }
+func (m *mockSDKClientWithVector) Share() (quicbaas.QRDBShareClient, error)    { return nil, nil }
+func (m *mockSDKClientWithVector) QRDBData() (quicbaas.QRDBDataService, error) { return nil, nil }
+
 func (m *mockSDKClientWithVector) DataStore() (quicbaas.QRDBKVStore, error) { return nil, nil }
 
 func (m *mockSDKClientWithVector) Vector() quicbaas.VectorClient {
@@ -1297,6 +1299,8 @@ func (m *testSDKClientForVector) Storage() quicbaas.StorageService { return nil 
 func (m *testSDKClientForVector) Async() quicbaas.AsyncService { return nil }
 
 func (m *testSDKClientForVector) AI() quicbaas.AIService { return nil }
+
+func (m *testSDKClientForVector) QRDBData() (quicbaas.QRDBDataService, error) { return nil, nil }
 
 func (m *testSDKClientForVector) DataStore() (quicbaas.QRDBKVStore, error) { return nil, nil }
 
