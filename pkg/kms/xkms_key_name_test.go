@@ -83,21 +83,75 @@ func TestXKMSKeyName_IsInjectiveAndKeepsValidNames(t *testing.T) {
 }
 
 // TestXKMSKeyName_EveryValidNameMapsToItself pins the upgrade contract: a
-// name go-xkms accepts is the go-xkms name, always, including one that
-// starts with the encoding's prefix, and ListKeys reads it back unchanged.
+// name go-xkms accepts that is not spelled as an encoded output is the
+// go-xkms name, including one that starts with the encoding's prefix, and
+// ListKeys reads it back unchanged.
 func TestXKMSKeyName_EveryValidNameMapsToItself(t *testing.T) {
 	for _, id := range []string{
-		"qbx.production", "qbx.", "qbx.YS9i", "qbx.cHJvZA", "qbx.production.sign", "qbx-x", "QBX.prod",
+		"qbx.production", "qbx.", "qbx.cHJvZA", "qbx.production.sign", "qbx-x", "QBX.prod",
 	} {
 		require.NoError(t, validation.ValidateKeyID(id), "fixture %q must be a valid go-xkms name", id)
 		require.Equal(t, id, xkmsKeyName(id), "a valid name maps to itself")
-		if id == "qbx.YS9i" {
-			// The one shape that is ambiguous by construction: the
-			// canonical encoding of the rejected ID "a/b". See xkmsKeyName.
-			continue
-		}
 		require.Equal(t, id, keyIDFromXKMSName(id), "ListKeys reads a literal name unchanged")
 	}
+}
+
+// TestXKMSKeyName_EncodedOutputsAreReserved: an ID spelled as an encoded
+// output is itself encoded, so a literal ID never shares a go-xkms name with
+// a tenant-scoped one.
+func TestXKMSKeyName_EncodedOutputsAreReserved(t *testing.T) {
+	tenantName := xkmsKeyName("tenant/acme/k")
+	require.NoError(t, validation.ValidateKeyID(tenantName))
+	require.NotEqual(t, tenantName, xkmsKeyName(tenantName),
+		"the literal ID %q must not resolve to tenant acme's key", tenantName)
+	require.Equal(t, tenantName, keyIDFromXKMSName(xkmsKeyName(tenantName)), "the escaped literal round-trips")
+	require.Equal(t, "tenant/acme/k", keyIDFromXKMSName(tenantName))
+
+	// Every level of nesting stays distinct and round-trips.
+	seen := map[string]string{}
+	id := "a/b"
+	for i := 0; i < 4; i++ {
+		name := xkmsKeyName(id)
+		require.NoError(t, validation.ValidateKeyID(name))
+		if prev, ok := seen[name]; ok {
+			t.Fatalf("%q and %q map to the same go-xkms name %q", prev, id, name)
+		}
+		seen[name] = id
+		require.Equal(t, id, keyIDFromXKMSName(name))
+		id = name
+	}
+}
+
+// TestXKMSBackend_LiteralEncodedNameIsNotTheTenantKey is the isolation
+// regression: a system key whose literal ID is the encoding of a tenant's
+// key ID is a different go-xkms key, so the tenant cannot address it.
+func TestXKMSBackend_LiteralEncodedNameIsNotTheTenantKey(t *testing.T) {
+	cleanup := initXKMSForTest(t)
+	defer cleanup()
+
+	backend := newRealXKMSBackendForTest(t)
+	ctx := context.Background()
+
+	const tenantKeyID = "tenant/acme/k"
+	systemKeyID := xkmsKeyName(tenantKeyID)
+	_, err := backend.CreateKey(ctx, backend.algorithmToKeyAttributes(systemKeyID, AlgAES256GCM))
+	require.NoError(t, err)
+
+	_, err = backend.GetKeyMetadata(ctx, tenantKeyID)
+	require.ErrorIs(t, err, ErrKeyNotFound, "the tenant ID must not resolve to the system key")
+	_, err = backend.Encrypt(ctx, tenantKeyID, []byte("secret"), nil)
+	require.Error(t, err, "the tenant ID must not encrypt under the system key")
+
+	keys, _, err := backend.ListKeys(ctx, "", 0)
+	require.NoError(t, err)
+	var listed []string
+	for _, k := range keys {
+		listed = append(listed, k.KeyID)
+	}
+	require.Contains(t, listed, systemKeyID, "the system key lists under its own ID")
+	require.NotContains(t, listed, tenantKeyID)
+
+	require.NoError(t, backend.DeleteKey(ctx, systemKeyID))
 }
 
 // TestXKMSKeyName_DecodesOnlyEncodedOutputs: keyIDFromXKMSName decodes a name
