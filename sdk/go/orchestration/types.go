@@ -307,6 +307,80 @@ const (
 	RuntimePodman = pkgorch.RuntimePodman
 )
 
+// Volumes: go-blockstore block volumes for workloads. go-blockstore supplies
+// the volumes; a consumer such as go-trusted-platform's NBD export takes the
+// claims and attached volumes through these aliases and adds the transport.
+
+// VolumeProvider is go-blockstore's volume lifecycle surface: provision,
+// grow-only resize, attach to a device path, mount, release.
+type VolumeProvider = pkgorch.VolumeProvider
+
+// ReplicatedVolumeProvider adds promote/demote for replicated volumes.
+type ReplicatedVolumeProvider = pkgorch.ReplicatedVolumeProvider
+
+// VolumeSpec is what a provider provisions.
+type VolumeSpec = pkgorch.VolumeSpec
+
+// Volume is a provisioned volume.
+type Volume = pkgorch.Volume
+
+// VolumeStatus is a volume's observed state.
+type VolumeStatus = pkgorch.VolumeStatus
+
+// VolumeAttachInfo is the result of attaching a volume to a node.
+type VolumeAttachInfo = pkgorch.VolumeAttachInfo
+
+// VolumeMountOptions controls how a provider mounts a volume.
+type VolumeMountOptions = pkgorch.VolumeMountOptions
+
+// VolumeNodeID names the node a volume is attached to.
+type VolumeNodeID = pkgorch.VolumeNodeID
+
+// VolumeClaim is a workload's request for one block volume.
+type VolumeClaim = pkgorch.VolumeClaim
+
+// AttachedVolume is a claim attached on a node: its device path and, for a
+// filesystem claim, its host mount.
+type AttachedVolume = pkgorch.AttachedVolume
+
+// VolumeAttacher attaches workload volumes on one node.
+type VolumeAttacher = pkgorch.VolumeAttacher
+
+var (
+	// NewVolumeProvider constructs a named go-blockstore provider.
+	NewVolumeProvider = pkgorch.NewVolumeProvider
+
+	// NewVolumeAttacher returns an attacher for one node.
+	NewVolumeAttacher = pkgorch.NewVolumeAttacher
+
+	// ContainerMounts returns the bind mounts of attached filesystem volumes.
+	ContainerMounts = pkgorch.ContainerMounts
+)
+
+// Volume sentinels, shared with pkg/orchestration and go-blockstore.
+var (
+	ErrVolumeNotFound        = pkgorch.ErrVolumeNotFound
+	ErrVolumeAlreadyExists   = pkgorch.ErrVolumeAlreadyExists
+	ErrVolumeNotAttached     = pkgorch.ErrVolumeNotAttached
+	ErrVolumeUnsupported     = pkgorch.ErrVolumeUnsupported
+	ErrVolumeInvalidArgument = pkgorch.ErrVolumeInvalidArgument
+	ErrVolumeShrink          = pkgorch.ErrVolumeShrink
+	ErrVolumeClaim           = pkgorch.ErrVolumeClaim
+)
+
+// Volume signatures and aliases, checked in both directions.
+var (
+	_ func(string, map[string]string) (VolumeProvider, error)             = NewVolumeProvider
+	_ func(VolumeProvider, VolumeNodeID, string) (*VolumeAttacher, error) = NewVolumeAttacher
+	_ func([]AttachedVolume) []ContainerMount                             = ContainerMounts
+	_ pkgorch.VolumeProvider                                              = (VolumeProvider)(nil)
+	_ VolumeProvider                                                      = (pkgorch.VolumeProvider)(nil)
+	_ *pkgorch.VolumeClaim                                                = (*VolumeClaim)(nil)
+	_ *VolumeClaim                                                        = (*pkgorch.VolumeClaim)(nil)
+	_ *pkgorch.AttachedVolume                                             = (*AttachedVolume)(nil)
+	_ *AttachedVolume                                                     = (*pkgorch.AttachedVolume)(nil)
+)
+
 // NewExecContainerRuntime creates a runtime that auto-detects docker or
 // podman, preferring docker.
 var NewExecContainerRuntime = pkgorch.NewExecContainerRuntime

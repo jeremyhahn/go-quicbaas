@@ -366,6 +366,8 @@ github.com/jackc/puddle/v2 v2.2.2 h1:PR8nw+E/1w0GLuRFSmiioY6UooMp6KJv0/61nB7icHo
 github.com/jackc/puddle/v2 v2.2.2/go.mod h1:vriiEXHvEE654aYKXXjOvZM39qJ0q+azkZFrfEOc3H4=
 github.com/jeremyhahn/go-auth v0.4.0-alpha h1:Q163JRXvLQHt77Txa4xSqh+L/pkfLPQI8DI3XWvkvIM=
 github.com/jeremyhahn/go-auth v0.4.0-alpha/go.mod h1:bBeRoamLAXwAJzf6CcWKPVd9wF+T8rFCWexv25Vfnbg=
+github.com/jeremyhahn/go-blockstore v0.4.0-alpha h1:wU0HufbvCxspJ6nK1yEWI/aCZMJil/ci5JemIT202Ks=
+github.com/jeremyhahn/go-blockstore v0.4.0-alpha/go.mod h1:lwyIw/msQc0Yslm2XfsMNKFEvloAgPvCS16Xo3sa8Hw=
 github.com/jeremyhahn/go-codec v1.5.1-alpha h1:XglYDVdpXbZmdOQbchouptw5vlPKaBD/ZlrH3tH8qDs=
 github.com/jeremyhahn/go-codec v1.5.1-alpha/go.mod h1:hIVpkPvrNnxTlnw8wBf56A6h+TOYTLuT7ItJc1UaG8o=
 github.com/jeremyhahn/go-enclave v0.6.1-alpha h1:iSerl9hJbM+WrdC6lixklrDJF6E+Mtr2UVyDSbzDEF8=
