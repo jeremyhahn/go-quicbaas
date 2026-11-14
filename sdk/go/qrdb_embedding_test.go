@@ -71,6 +71,27 @@ func TestQRDBEmbedding_ParallelToOwnService(t *testing.T) {
 	assert.NotNil(t, ec)
 }
 
+// The two services are independent: a qrdb sub-client that fails to build
+// leaves QuicBaaS's own Embedding() working, and QuicBaaS's own client is not
+// go-qrdb's (neither wraps the other).
+func TestQRDBEmbedding_ParallelServicesAreIndependent(t *testing.T) {
+	c, err := NewClient("localhost:8080", WithREST())
+	require.NoError(t, err)
+
+	own := c.AI().Embedding()
+	require.NotNil(t, own)
+	_, ownIsQRDB := any(own).(QRDBEmbeddingClient)
+	assert.False(t, ownIsQRDB, "QuicBaaS's own embedding client must not be go-qrdb's")
+
+	cc := c.(*client)
+	cc.qrdb.once.Do(func() {})
+	cc.qrdb.err = assert.AnError
+
+	_, err = c.AI().QRDBEmbedding()
+	require.ErrorIs(t, err, assert.AnError)
+	assert.Same(t, own, c.AI().Embedding(), "QuicBaaS's own service survives a qrdb build failure")
+}
+
 // A qrdb client that fails to build surfaces its error from the accessor.
 func TestQRDBEmbedding_PropagatesQRDBClientError(t *testing.T) {
 	c, err := NewClient("localhost:8080", WithREST())
