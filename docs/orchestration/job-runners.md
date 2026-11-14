@@ -13,8 +13,8 @@ in each — is a **`JobRunner`**'s.
 This corrects what this documentation used to say. "A delivery pipeline is a
 Workflow" was false: the engine's one loop is a **lead agent decomposing a
 description into a DAG of work items executed by workers**, `handleDecompose`
-runs unconditionally, and a `canned` or `constrained` workflow is refused at
-validation without a `lead` role. A live run turned one Gitea issue into nine
+runs unconditionally, and a `constrained` workflow is refused at validation
+without a `lead` role (there is no `canned` mode: validation refuses it, #622). A live run turned one Gitea issue into nine
 work items in seven waves and the worker never saw the issue text.
 
 A delivery pipeline is a different shape — no lead, no decomposition, one

@@ -321,6 +321,15 @@ type taskStore struct {
 	// first adopter's cleanup.
 	releaser guardedDeleter
 
+	// swapper is kv's guarded-edit capability. When kv has it, every write of
+	// an existing task record (mutate) commits through it against the exact
+	// bytes that write read, so the store itself — go-qrdb's compare-and-swap,
+	// arbitrated in its state machine — decides between two NODES writing one
+	// record (#722). recordMu below only orders writers inside one process.
+	// Nil for a store that cannot decide a guarded edit; such a store is
+	// process-local by construction and keeps the plain write.
+	swapper guardedSwapper
+
 	// inlineLimit is the maximum artifact size, in bytes, embedded directly in
 	// a task record. Larger artifacts are written to their own key.
 	inlineLimit int64
@@ -367,6 +376,9 @@ func NewTaskStore(kv interfaces.KVStore, arbiter TaskClaimArbiter, opts ...Store
 	}
 	if releaser, ok := kv.(guardedDeleter); ok {
 		store.releaser = releaser
+	}
+	if swapper, ok := kv.(guardedSwapper); ok {
+		store.swapper = swapper
 	}
 	return store
 }
@@ -590,20 +602,27 @@ func (s *taskStore) ready() error {
 
 // load reads and decodes one task record.
 func (s *taskStore) load(ctx context.Context, key, tenantID, taskID string) (*Task, error) {
+	task, _, err := s.loadRecord(ctx, key, tenantID, taskID)
+	return task, err
+}
+
+// loadRecord reads and decodes one task record, and returns the stored bytes
+// too: a guarded write swaps against exactly them.
+func (s *taskStore) loadRecord(ctx context.Context, key, tenantID, taskID string) (*Task, []byte, error) {
 	data, err := s.kv.Get(ctx, key)
 	if err != nil {
 		if qerrors.IsNotFound(err) {
-			return nil, &TaskNotFoundError{TenantID: tenantID, TaskID: taskID}
+			return nil, nil, &TaskNotFoundError{TenantID: tenantID, TaskID: taskID}
 		}
-		return nil, backendError("failed to read task", err)
+		return nil, nil, backendError("failed to read task", err)
 	}
 	if data == nil {
-		return nil, &TaskNotFoundError{TenantID: tenantID, TaskID: taskID}
+		return nil, nil, &TaskNotFoundError{TenantID: tenantID, TaskID: taskID}
 	}
 
 	var task Task
 	if err := json.Unmarshal(data, &task); err != nil {
-		return nil, &TaskStoreError{
+		return nil, nil, &TaskStoreError{
 			Sentinel: ErrTaskStoreMarshal,
 			Message:  "failed to unmarshal task: " + err.Error(),
 		}
@@ -614,10 +633,10 @@ func (s *taskStore) load(ctx context.Context, key, tenantID, taskID string) (*Ta
 	// corrupted or bypassed. Report it as absent rather than returning another
 	// tenant's task to this caller.
 	if task.TenantID != tenantID {
-		return nil, &TaskNotFoundError{TenantID: tenantID, TaskID: taskID}
+		return nil, nil, &TaskNotFoundError{TenantID: tenantID, TaskID: taskID}
 	}
 
-	return &task, nil
+	return &task, data, nil
 }
 
 // marshalTask encodes one task record for storage.
@@ -686,22 +705,65 @@ func (s *taskStore) mutate(ctx context.Context, tenantID, taskID string, apply t
 	unlock := s.recordMu.lock(key)
 	defer unlock()
 
-	current, err := s.load(ctx, key, tenantID, taskID)
-	if err != nil {
-		return err
+	if s.swapper == nil {
+		current, err := s.load(ctx, key, tenantID, taskID)
+		if err != nil {
+			return err
+		}
+		now := time.Now().UnixNano()
+		next, err := apply(current, now)
+		if err != nil {
+			return err
+		}
+		next.UpdatedAt = now
+		next.Version = current.Version + 1
+		return s.writeRecord(ctx, key, next)
 	}
 
-	now := time.Now().UnixNano()
-	next, err := apply(current, now)
-	if err != nil {
-		return err
+	// A lost swap means another node committed this record between our read
+	// and our write. Re-read and re-apply: the transition is decided against
+	// the record as it now stands, so a second claim of a task another node
+	// has claimed is refused by the record itself (#722).
+	for attempt := 0; attempt < maxTaskSwapAttempts; attempt++ {
+		current, raw, err := s.loadRecord(ctx, key, tenantID, taskID)
+		if err != nil {
+			return err
+		}
+		now := time.Now().UnixNano()
+		next, err := apply(current, now)
+		if err != nil {
+			return err
+		}
+		// A mutator may return the caller's own record (update does), and
+		// stamping it bumps the Version the caller's guard reads. A lost swap
+		// must give the guard back the version it was asked about, or the
+		// retry would compare the bumped version and pass.
+		version, updatedAt := next.Version, next.UpdatedAt
+		next.UpdatedAt = now
+		next.Version = current.Version + 1
+		data, err := marshalTask(next)
+		if err != nil {
+			return err
+		}
+		swapped, err := s.swapper.CompareAndSwap(ctx, key, raw, data)
+		if err != nil {
+			return backendError("failed to write task", err)
+		}
+		if swapped {
+			return nil
+		}
+		next.Version, next.UpdatedAt = version, updatedAt
 	}
-
-	next.UpdatedAt = now
-	next.Version = current.Version + 1
-
-	return s.writeRecord(ctx, key, next)
+	return &TaskStoreError{
+		Sentinel: ErrTaskStoreBackend,
+		Message:  "task record kept changing under the write; gave up after retries",
+	}
 }
+
+// maxTaskSwapAttempts bounds mutate's compare-and-swap retry. Each loss means
+// another writer committed; the bound only stops a pathological store from
+// spinning here for ever.
+const maxTaskSwapAttempts = 8
 
 // =============================================================================
 // CreateTask
