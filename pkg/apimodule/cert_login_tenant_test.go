@@ -139,6 +139,18 @@ func TestCertLoginTenantModule_RefusesAForeignTrustDomain(t *testing.T) {
 	assert.NotContains(t, rec.Body.String(), "acme")
 }
 
+// The subject OU carries the tenant (#1388): an OU naming a tenant other
+// than the SAN's is refused.
+func TestCertLoginTenantModule_RefusesAnOUNamingAnotherTenant(t *testing.T) {
+	router := certLoginRouter(t, fixtureTrustDomain)
+	state := verifiedLeaf(t, "spiffe://"+fixtureTrustDomain+"/tenant/acme/user/admin")
+	state.VerifiedChains[0][0].Subject.OrganizationalUnit = []string{"globex"}
+
+	rec := serveCertLogin(router, certLoginRoute, state)
+
+	assert.Equal(t, http.StatusUnauthorized, rec.Code)
+}
+
 func TestCertLoginTenantModule_RefusesARevokedCertificate(t *testing.T) {
 	tenantSAN := "spiffe://" + fixtureTrustDomain + "/tenant/acme/user/admin"
 	for _, trustDomain := range []string{fixtureTrustDomain, ""} {

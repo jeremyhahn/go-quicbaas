@@ -33,10 +33,13 @@ func TestPIVInvite_ActivatedCertLogsInThroughXKMS(t *testing.T) {
 	require.NoError(t, os.WriteFile(caPath, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: root.Raw}), 0o600))
 
 	srv, components, _ := newIntegrationLikeNode(t, func(s *Server) {
-		s.config.IAM.PIVLogin.CAFile = caPath
+		// The PIV CA is in the one client trust-anchor set,
+		// security.tls_ca_file (#1321).
+		s.config.Security.TLSCAFile = caPath
+		require.NoError(t, s.loadOperatorClientTrustAnchors())
 	})
 	activator := components.GetPIVActivator()
-	require.NotNil(t, activator, "PIV activation must be enabled by the CA file")
+	require.NotNil(t, activator, "PIV activation must be enabled by security.tls_ca_file")
 
 	user, err := components.GetIdentityStore().CreateUser(ctx, qrdbsdk.SystemTenantID, iam.CreateUserOptions{
 		Email:       "piv-invitee@example.com",

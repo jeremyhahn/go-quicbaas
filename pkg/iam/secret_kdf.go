@@ -124,6 +124,19 @@ const (
 	pbkdf2KeyLength = 32
 )
 
+// secretWorkFactor is the one work factor this process issues and verifies
+// at. Every production binary runs at pbkdf2Iterations: nothing outside this
+// package's own test binary writes it — there is no flag, option or
+// environment variable — so a stored digest is never verified at a weaker
+// factor in a server. pkg/iam's TestMain (secret_kdf_workfactor_test.go)
+// lowers it, together with timingEqualizerDigest, so the unit tier does not
+// pay a deliberately expensive KDF in every client-secret test (#721).
+//
+// It is still ONE accepted value per process, not a per-digest one, so the
+// non-enumeration property described on pbkdf2Iterations holds at whatever
+// factor the process runs.
+var secretWorkFactor = pbkdf2Iterations
+
 // secretHashEncoding is unpadded base64, keeping the '$'-delimited digest free
 // of '=' so the field stays a single unambiguous token.
 var secretHashEncoding = base64.RawStdEncoding
@@ -201,19 +214,25 @@ type secretDigest struct {
 // usable credential. The plaintext secret exists only in the value handed back
 // to the caller at creation and rotation.
 func deriveSecretHash(secret string) (string, error) {
+	return deriveSecretHashAt(secret, secretWorkFactor)
+}
+
+// deriveSecretHashAt is deriveSecretHash at an explicit work factor. Only
+// deriveSecretHash and the tests that prove the production factor call it.
+func deriveSecretHashAt(secret string, iterations int) (string, error) {
 	salt := make([]byte, pbkdf2SaltLength)
 	if _, err := rand.Read(salt); err != nil {
 		return "", &SecretHashError{Err: err}
 	}
 
-	key, err := deriveKey(secret, salt, pbkdf2Iterations)
+	key, err := deriveKey(secret, salt, iterations)
 	if err != nil {
 		return "", &SecretHashError{Err: err}
 	}
 	defer key.Destroy()
 
 	return formatSecretHash(&secretDigest{
-		iterations: pbkdf2Iterations,
+		iterations: iterations,
 		salt:       salt,
 		//secure:unborrowed injected-interface formatSecretHash consumes the derived key immediately before key.Destroy runs.
 		key: key.Bytes(),
@@ -309,6 +328,13 @@ func formatSecretHash(digest *secretDigest) string {
 // parse is not treated as a digest at all, so a pre-KDF record can never be
 // mistaken for one.
 func parseSecretHash(stored string) (*secretDigest, error) {
+	return parseSecretHashAt(stored, secretWorkFactor)
+}
+
+// parseSecretHashAt is parseSecretHash accepting exactly the given work
+// factor. Only parseSecretHash and the tests that prove the production
+// factor call it.
+func parseSecretHashAt(stored string, workFactor int) (*secretDigest, error) {
 	// A conforming digest is "", "pbkdf2-sha256", "i=<n>", salt, key once
 	// split on '$' — the leading empty field comes from the leading '$'.
 	fields := strings.Split(stored, "$")
@@ -333,7 +359,7 @@ func parseSecretHash(stored string) (*secretDigest, error) {
 	// verification the same price: a cheaper stored digest would answer faster
 	// than the equalizer and leak that the client exists, and a dearer one
 	// would let a tampered record decide how long a request worker is held.
-	if iterations != pbkdf2Iterations {
+	if iterations != workFactor {
 		return nil, &SecretHashMalformedError{Reason: "iteration count is not the accepted work factor"}
 	}
 
@@ -369,7 +395,14 @@ func parseSecretHash(stored string) (*secretDigest, error) {
 // the KDF, and is reported as a mismatch. The comparison itself is constant
 // time.
 func compareSecretHash(stored, secret string) bool {
-	digest, err := parseSecretHash(stored)
+	return compareSecretHashAt(stored, secret, secretWorkFactor)
+}
+
+// compareSecretHashAt is compareSecretHash accepting exactly the given work
+// factor. Only compareSecretHash and the tests that prove the production
+// factor call it.
+func compareSecretHashAt(stored, secret string, workFactor int) bool {
+	digest, err := parseSecretHashAt(stored, workFactor)
 	if err != nil {
 		return false
 	}

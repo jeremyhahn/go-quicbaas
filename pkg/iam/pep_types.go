@@ -14,6 +14,7 @@
 package iam
 
 import (
+	"context"
 	"time"
 )
 
@@ -136,11 +137,11 @@ type PEPStats struct {
 // IAMClient represents a client for communicating with the IAM server.
 // This interface allows for different implementations (gRPC, HTTP, etc.).
 type IAMClient interface {
-	// FetchPolicies fetches all policies for a tenant
-	FetchPolicies(tenantID string, patterns []string) ([]*Policy, error)
+	// FetchPolicies fetches all policies for a tenant; ctx bounds the call
+	FetchPolicies(ctx context.Context, tenantID string, patterns []string) ([]*Policy, error)
 
-	// Subscribe subscribes to policy updates for a tenant
-	Subscribe(tenantID string, patterns []string) (<-chan *PolicyUpdate, error)
+	// Subscribe subscribes to policy updates for a tenant; ctx bounds the call
+	Subscribe(ctx context.Context, tenantID string, patterns []string) (<-chan *PolicyUpdate, error)
 
 	// Close closes the client connection
 	Close() error

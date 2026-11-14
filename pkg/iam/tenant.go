@@ -244,12 +244,13 @@ func (m *DefaultTenantManager) CreateTenant(ctx context.Context, opts CreateTena
 	// Create tenant object
 	now := time.Now()
 	tenant := &Tenant{
-		ID:       tenantID,
-		Name:     opts.Name,
-		Settings: settings,
-		Quotas:   quotas,
-		Created:  now,
-		Updated:  now,
+		ID:               tenantID,
+		Name:             opts.Name,
+		Settings:         settings,
+		Quotas:           quotas,
+		Created:          now,
+		Updated:          now,
+		SelfRegistration: opts.SelfRegistration,
 	}
 
 	// Engine-side provisioning: create the tenant in the qrdb engine FIRST
@@ -411,6 +412,10 @@ func (m *DefaultTenantManager) UpdateTenant(ctx context.Context, id string, opts
 
 	if opts.Quotas != nil {
 		tenant.Quotas = *opts.Quotas
+	}
+
+	if opts.FinishSelfRegistration {
+		tenant.SelfRegistration = nil
 	}
 
 	tenant.Updated = time.Now()

@@ -99,7 +99,7 @@ func agentSessionPeerCert(t *testing.T, tenantID, commonName string) *x509.Certi
 		Subject: pkix.Name{
 			CommonName:         commonName,
 			Organization:       []string{tenantID},
-			OrganizationalUnit: []string{"agents"},
+			OrganizationalUnit: []string{tenantID},
 		},
 		NotBefore:   time.Now().Add(-time.Minute),
 		NotAfter:    time.Now().Add(24 * time.Hour),
@@ -205,8 +205,9 @@ func agentSessionCallContext(
 
 // TestAgentSession_EnrolledCertificateHoldsExactlyItsFloor proves the fix end to
 // end through go-qrdb's own pipeline, and proves its bound in the same pass: the
-// session is admitted on the four tools its floor names and REFUSED on every
-// other permissioned tool in the real table.
+// session is admitted on the four tools its floor names and on the
+// quicbaas_kv_get / quicbaas_kv_put aliases of the same kv scopes, and REFUSED
+// on every other permissioned tool in the real table.
 func TestAgentSession_EnrolledCertificateHoldsExactlyItsFloor(t *testing.T) {
 	cert := agentSessionPeerCert(t, agentSessionTenant, agentSessionCN)
 	am := agentSessionMiddleware(map[string]*user.User{
@@ -235,6 +236,8 @@ func TestAgentSession_EnrolledCertificateHoldsExactlyItsFloor(t *testing.T) {
 		qrdbGetTool:                       true,
 		qrdbPutTool:                       true,
 		qrdbListTool:                      true,
+		"quicbaas_kv_get":                 true,
+		"quicbaas_kv_put":                 true,
 	}
 	for tool := range allowed {
 		if _, covered := registry.Lookup(tool); !covered {

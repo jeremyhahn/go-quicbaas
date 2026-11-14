@@ -29,6 +29,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/pem"
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -79,7 +80,7 @@ func assertPlatformCATrusted(t *testing.T, srv *Server, pool *x509.CertPool) {
 // newClientCATestServer builds a server wired for the internal-CA TLS path with
 // the requested full-mTLS posture, then runs initializeCA so s.tlsConfig is the
 // real OpaqueKey-backed config the REST/gRPC/QUIC/MCP listeners share.
-func newClientCATestServer(t *testing.T, tlsClientAuth bool) *Server {
+func newClientCATestServer(t *testing.T, tlsClientAuth bool, operatorCAFile string) *Server {
 	t.Helper()
 
 	cfg := createFTConfig(t)
@@ -87,7 +88,9 @@ func newClientCATestServer(t *testing.T, tlsClientAuth bool) *Server {
 	cfg.Security.TLSClientAuth = tlsClientAuth
 	cfg.Storage.DataDir = t.TempDir()
 	cfg.CA.KeysDir = filepath.Join(t.TempDir(), "ca-keys")
-	cfg.Security.TLSCAFile = filepath.Join(t.TempDir(), "ca-chain.crt")
+	// An empty operatorCAFile leaves security.tls_ca_file to default to the
+	// server's own chain under the data dir.
+	cfg.Security.TLSCAFile = operatorCAFile
 
 	srv, err := NewServer(cfg)
 	require.NoError(t, err)
@@ -103,7 +106,7 @@ func newClientCATestServer(t *testing.T, tlsClientAuth bool) *Server {
 func TestInitializeCA_ClientCAsTrustPlatform_OptionalMTLS(t *testing.T) {
 	t.Parallel()
 
-	srv := newClientCATestServer(t, false)
+	srv := newClientCATestServer(t, false, "")
 
 	assertPlatformCATrusted(t, srv, srv.tlsConfig.ClientCAs)
 	require.Equal(t, tls.VerifyClientCertIfGiven, srv.tlsConfig.ClientAuth,
@@ -117,7 +120,7 @@ func TestInitializeCA_ClientCAsTrustPlatform_OptionalMTLS(t *testing.T) {
 func TestInitializeCA_ClientCAsTrustPlatform_FullMTLS(t *testing.T) {
 	t.Parallel()
 
-	srv := newClientCATestServer(t, true)
+	srv := newClientCATestServer(t, true, "")
 
 	assertPlatformCATrusted(t, srv, srv.tlsConfig.ClientCAs)
 	require.Equal(t, tls.RequireAndVerifyClientCert, srv.tlsConfig.ClientAuth,
@@ -130,23 +133,143 @@ func TestInitializeCA_ClientCAsTrustPlatform_FullMTLS(t *testing.T) {
 func TestAppendPlatformClientCAs_PreservesOperatorPool(t *testing.T) {
 	t.Parallel()
 
-	srv := newClientCATestServer(t, true)
-
-	// Seed a distinct operator client-CA into a fresh pool, then append.
-	operatorCA := buildSelfSignedTLSCert(t)
-	operatorLeaf, err := x509.ParseCertificate(operatorCA.Certificate[0])
+	operator := newTestAnchorCA(t, "operator CA")
+	operatorCAFile := operator.writePEM(t)
+	before, err := os.ReadFile(operatorCAFile)
 	require.NoError(t, err)
 
-	pool := x509.NewCertPool()
-	pool.AddCert(operatorLeaf)
-
-	tlsConfig := &tls.Config{ClientCAs: pool}
-	require.NoError(t, srv.appendPlatformClientCAs(tlsConfig))
+	srv := newClientCATestServer(t, true, operatorCAFile)
 
 	// Operator CA is still trusted...
-	_, verifyErr := operatorLeaf.Verify(x509.VerifyOptions{Roots: tlsConfig.ClientCAs})
+	_, verifyErr := operator.cert.Verify(x509.VerifyOptions{Roots: srv.tlsConfig.ClientCAs})
 	require.NoError(t, verifyErr, "operator client CA must be preserved")
 	// ...and the platform CA was appended alongside it.
-	assertPlatformCATrusted(t, srv, tlsConfig.ClientCAs)
-	require.Equal(t, tls.RequireAndVerifyClientCert, tlsConfig.ClientAuth)
+	assertPlatformCATrusted(t, srv, srv.tlsConfig.ClientCAs)
+	require.Equal(t, tls.RequireAndVerifyClientCert, srv.tlsConfig.ClientAuth)
+
+	after, err := os.ReadFile(operatorCAFile)
+	require.NoError(t, err)
+	require.Equal(t, before, after, "the self-issued boot must never overwrite an operator tls_ca_file")
+}
+
+// TestInitializeCA_OperatorTLSCAFileUnchanged_OptionalMTLS asserts the
+// opportunistic-mTLS self-issued boot leaves an operator tls_ca_file
+// byte-identical while still trusting it in the handshake.
+func TestInitializeCA_OperatorTLSCAFileUnchanged_OptionalMTLS(t *testing.T) {
+	t.Parallel()
+
+	operator := newTestAnchorCA(t, "operator CA")
+	operatorCAFile := operator.writePEM(t)
+	before, err := os.ReadFile(operatorCAFile)
+	require.NoError(t, err)
+
+	srv := newClientCATestServer(t, false, operatorCAFile)
+
+	after, err := os.ReadFile(operatorCAFile)
+	require.NoError(t, err)
+	require.Equal(t, before, after, "the self-issued boot must never overwrite an operator tls_ca_file")
+	_, verifyErr := operator.cert.Verify(x509.VerifyOptions{Roots: srv.tlsConfig.ClientCAs})
+	require.NoError(t, verifyErr)
+	assertPlatformCATrusted(t, srv, srv.tlsConfig.ClientCAs)
+}
+
+// serverHandshake runs one TLS handshake against the unified listener config
+// and returns the number of client chains the server verified, with the
+// server side's handshake error. A nil clientCert sends no certificate.
+func serverHandshake(t *testing.T, srv *Server, clientCert *tls.Certificate) (int, error) {
+	t.Helper()
+
+	listener, err := tls.Listen("tcp", "127.0.0.1:0", srv.unifiedServerTLSConfig())
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, listener.Close()) })
+
+	type handshakeResult struct {
+		verifiedChains int
+		err            error
+	}
+	result := make(chan handshakeResult, 1)
+	go func() {
+		conn, acceptErr := listener.Accept()
+		if acceptErr != nil {
+			result <- handshakeResult{err: acceptErr}
+			return
+		}
+		defer conn.Close()
+		tlsConn := conn.(*tls.Conn)
+		handshakeErr := tlsConn.Handshake()
+		result <- handshakeResult{
+			verifiedChains: len(tlsConn.ConnectionState().VerifiedChains),
+			err:            handshakeErr,
+		}
+	}()
+
+	caBundle, err := srv.xkmsCA.CABundle()
+	require.NoError(t, err)
+	serverRoots := x509.NewCertPool()
+	require.True(t, serverRoots.AppendCertsFromPEM(caBundle), "platform CA bundle must parse")
+
+	clientConfig := &tls.Config{
+		MinVersion: tls.VersionTLS13,
+		RootCAs:    serverRoots,
+		// Present the certificate even when its issuer is not among the
+		// server's acceptable CAs, so the server's verification is exercised.
+		GetClientCertificate: func(*tls.CertificateRequestInfo) (*tls.Certificate, error) {
+			if clientCert == nil {
+				return &tls.Certificate{}, nil
+			}
+			return clientCert, nil
+		},
+	}
+	conn, err := tls.Dial("tcp", listener.Addr().String(), clientConfig)
+	if err == nil {
+		defer conn.Close()
+	}
+	got := <-result
+	return got.verifiedChains, got.err
+}
+
+func TestUnifiedHandshake_AcceptsTLSCAFileClientCert(t *testing.T) {
+	t.Parallel()
+
+	operator := newTestAnchorCA(t, "operator CA")
+	srv := newClientCATestServer(t, false, operator.writePEM(t))
+	client := operator.issueClient(t, "agent")
+
+	verified, err := serverHandshake(t, srv, &client)
+	require.NoError(t, err, "a client cert from security.tls_ca_file must pass the handshake")
+	require.Positive(t, verified, "the server must verify the client chain")
+}
+
+func TestUnifiedHandshake_RefusesUnlistedCA(t *testing.T) {
+	t.Parallel()
+
+	operator := newTestAnchorCA(t, "operator CA")
+	unlisted := newTestAnchorCA(t, "unlisted CA")
+	srv := newClientCATestServer(t, false, operator.writePEM(t))
+	client := unlisted.issueClient(t, "agent")
+
+	_, err := serverHandshake(t, srv, &client)
+	require.Error(t, err, "a client cert from an unlisted CA must fail the handshake")
+}
+
+func TestUnifiedHandshake_RequireMTLSRefusesNoCert(t *testing.T) {
+	t.Parallel()
+
+	operator := newTestAnchorCA(t, "operator CA")
+	cfg := createFTConfig(t)
+	cfg.Security.TLSEnabled = true
+	cfg.Security.RequireMTLS = true
+	cfg.Storage.DataDir = t.TempDir()
+	cfg.CA.KeysDir = filepath.Join(t.TempDir(), "ca-keys")
+	cfg.Security.TLSCAFile = operator.writePEM(t)
+	srv, err := NewServer(cfg)
+	require.NoError(t, err)
+	require.NoError(t, srv.initializeCA())
+
+	_, err = serverHandshake(t, srv, nil)
+	require.Error(t, err, "RequireMTLS must refuse a client that presents no certificate")
+	client := operator.issueClient(t, "agent")
+	verified, err := serverHandshake(t, srv, &client)
+	require.NoError(t, err)
+	require.Positive(t, verified)
 }

@@ -2843,8 +2843,27 @@ export interface BarrierEnableEncryptionResponse {
 export interface CeremonyOfficer {
   /** Unique username for the officer. */
   username: string;
+  /** Holder role: "so" (the server default) or "custodian". */
+  role?: string;
   /** PEM-encoded CSR submitted by the officer. */
   csr_pem: string;
+  /** KEM of a separate share-envelope recipient key. */
+  encryption_kem?: string;
+  /** Base64 share-envelope recipient public key; the certificate key when absent. */
+  encryption_key?: string;
+  /** Additional authentication factors to enrol ("mtls" is always enrolled). */
+  factors?: HolderFactorEnrolment[];
+  /** Factor fixed at enrolment under the designated factor policy; "mtls" when empty. */
+  designated?: string;
+}
+
+// HolderFactorEnrolment enrols one authentication factor for a share holder.
+// Mirrors transport.HolderFactorEnrolment.
+export interface HolderFactorEnrolment {
+  /** Factor name registered on the server. */
+  name: string;
+  /** The factor's own enrolment parameters. */
+  params?: Record<string, unknown>;
 }
 
 // CeremonyInitializeRequest holds the parameters for initializing the

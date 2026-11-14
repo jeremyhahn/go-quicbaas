@@ -45,7 +45,7 @@ func TestWireIAMMTLSAuthenticators_FullWiring(t *testing.T) {
 	srv.config.Server.REST.Enabled = true
 	srv.config.Server.REST.Port = getFreePort(t)
 
-	srv.config.IAM.MTLS.TLSClientAuthCAFile = pkiCA
+	srv.config.Security.TLSCAFile = pkiCA
 	srv.config.IAM.MTLS.TPMEKRootsFile = tpmRoots
 	srv.config.IAM.MTLS.XKeyRootsFile = xkeyRoots
 
@@ -67,59 +67,14 @@ func TestWireIAMMTLSAuthenticators_BadPKICAFile(t *testing.T) {
 	srv.config.Server.Embedded = false
 	srv.config.Server.REST.Enabled = true
 	srv.config.Server.REST.Port = getFreePort(t)
-	// A path that does not exist makes loadCertPool fail.
-	srv.config.IAM.MTLS.TLSClientAuthCAFile = filepath.Join(t.TempDir(), "missing-pki.pem")
+	// A security.tls_ca_file that does not exist is a typed boot error.
+	srv.config.Security.TLSCAFile = filepath.Join(t.TempDir(), "missing-pki.pem")
 
 	err := srv.initialize()
-	require.Error(t, err, "a missing PKI CA file must abort initialize via the REST start path")
+	var anchorsErr *ClientTrustAnchorsError
+	require.ErrorAs(t, err, &anchorsErr, "a missing tls_ca_file must abort initialize")
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	assert.NoError(t, srv.Shutdown(ctx))
-}
-
-// TestStartRESTServer_TT_PIVLoginCAAppend covers the PIV-login client-CA append
-// branch of startRESTServer: with IAM PIV login enabled and a valid CA bundle
-// the REST listener's TLS config is extended with the PIV client CAs.
-func TestStartRESTServer_TT_PIVLoginCAAppend(t *testing.T) {
-	saveAndRestoreSeams(t)
-
-	dir := t.TempDir()
-	pivCA, _ := writeCertPEM(t, dir, "piv-login")
-
-	srv := withTempServer(t)
-	srv.config.Server.Embedded = false
-	srv.config.Security.TLSEnabled = true
-	srv.config.Server.REST.Enabled = true
-	srv.config.Server.REST.Port = getFreePort(t)
-	srv.config.IAM.PIVLogin.Enabled = true
-	srv.config.IAM.PIVLogin.CAFile = pivCA
-
-	require.NoError(t, srv.initialize(), "REST init with PIV login CA append must succeed")
-	require.NotNil(t, srv.restServer)
-
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-	require.NoError(t, srv.Shutdown(ctx))
-}
-
-// TestStartRESTServer_TT_PIVLoginMissingCAFile covers the error branch when PIV
-// login is enabled but the configured CA file is missing.
-func TestStartRESTServer_TT_PIVLoginMissingCAFile(t *testing.T) {
-	saveAndRestoreSeams(t)
-
-	srv := withTempServer(t)
-	srv.config.Server.Embedded = false
-	srv.config.Security.TLSEnabled = true
-	srv.config.Server.REST.Enabled = true
-	srv.config.Server.REST.Port = getFreePort(t)
-	srv.config.IAM.PIVLogin.Enabled = true
-	srv.config.IAM.PIVLogin.CAFile = "/proc/quicbaas-no-such/piv-ca.pem"
-
-	err := srv.initialize()
-	require.Error(t, err, "a missing PIV CA file must abort REST startup")
-
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-	_ = srv.Shutdown(ctx)
 }

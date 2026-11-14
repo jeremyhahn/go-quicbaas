@@ -4550,11 +4550,11 @@ integration-bench: ## Run integration benchmarks
 # IAM is always compiled (no build tag), so these targets use the standard
 # test tag set.
 .PHONY: test-iam
-# pkg/iam's secret tests each derive PBKDF2-SHA256 at the production 600,000
-# iterations, which the race detector slows down a lot. Most of them run in
-# parallel, but on a small runner the package can still pass go test's
-# default 10m timeout.
-IAM_RACE_TIMEOUT := 30m
+# pkg/iam's test binary issues and verifies client secrets at a lowered
+# PBKDF2 work factor (secret_kdf_workfactor_test.go, #721); only the tests
+# about the production factor pay 600,000 iterations. The race pass took
+# 48s on 2026-11-13 (570s before), so it runs in go test's ordinary 10m.
+IAM_RACE_TIMEOUT := 10m
 
 test-iam: ## Run IAM unit tests
 	go test -v -race -count=1 -timeout=$(IAM_RACE_TIMEOUT) -tags '$(IAM_TEST_TAGS)' ./pkg/iam/...

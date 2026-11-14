@@ -321,7 +321,15 @@ type socketsRootFixture struct {
 func newSocketsRootFixture(t *testing.T) socketsRootFixture {
 	t.Helper()
 	base := newMountPolicyFixture(t)
-	root := filepath.Join(t.TempDir(), "s")
+	// A unix socket address must fit the kernel's sun_path field, and
+	// t.TempDir() carries $TMPDIR and the test's name, so the root the socket
+	// is bound under is a short directory of its own.
+	short, err := os.MkdirTemp("/tmp", "mp")
+	if err != nil {
+		t.Fatalf("sockets root: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(short) })
+	root := filepath.Join(short, "s")
 	if err := os.Mkdir(root, 0o700); err != nil {
 		t.Fatal(err)
 	}

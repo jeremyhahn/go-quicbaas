@@ -17,6 +17,8 @@ import (
 	"context"
 	"crypto/x509"
 	"errors"
+	"fmt"
+	"strings"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 )
@@ -71,6 +73,10 @@ func TenantFromPeerCert(ctx context.Context, cert *x509.Certificate, trustDomain
 		id, err := qrdbsdk.TenantFromCert(cert, trustDomain)
 		switch {
 		case err == nil:
+			// The subject OU carries the tenant too, and must agree.
+			if ouErr := CheckCertOUTenant(cert, id.TenantID); ouErr != nil {
+				return "", &TenantUnresolvedError{Cause: ouErr}
+			}
 			return id.TenantID, nil
 		case errors.Is(err, qrdbsdk.ErrSpiffeNoTenantID):
 			// No SPIFFE SAN on this cert: fall through to HRD (covers external
@@ -98,4 +104,43 @@ func TenantFromPeerCert(ctx context.Context, cert *x509.Certificate, trustDomain
 		cause = qrdbsdk.ErrSpiffeNoTenantID
 	}
 	return "", &TenantUnresolvedError{Cause: cause}
+}
+
+// TenantFromSubjectOU returns the tenant a certificate's subject OU carries:
+// the first OU value, trimmed, or "" when the certificate has none.
+//
+// The subject OU carries the tenant on every layer (owner ruling, rulings.md
+// f518455): go-qrdb, go-xkms and this project all stamp it, and go-qrdb reads
+// it (go-qrdb#777).
+func TenantFromSubjectOU(cert *x509.Certificate) string {
+	if cert == nil || len(cert.Subject.OrganizationalUnit) == 0 {
+		return ""
+	}
+	return strings.TrimSpace(cert.Subject.OrganizationalUnit[0])
+}
+
+// CertOUTenantMismatchError reports a certificate whose subject OU names a
+// tenant other than the one its SPIFFE SAN names. Such a certificate names no
+// tenant: the two carriers must agree (go-qrdb#777).
+type CertOUTenantMismatchError struct {
+	// OU is the tenant the subject OU names.
+	OU string
+	// Tenant is the tenant the SPIFFE SAN names.
+	Tenant string
+}
+
+func (e *CertOUTenantMismatchError) Error() string {
+	return fmt.Sprintf("certificate subject OU names tenant %q but its SPIFFE SAN names tenant %q", e.OU, e.Tenant)
+}
+
+// CheckCertOUTenant refuses a certificate whose subject OU names a tenant
+// other than tenant, the tenant resolved from its SPIFFE SAN. A certificate
+// with no OU passes: it was issued before the OU carried the tenant, and its
+// SAN alone still names one.
+func CheckCertOUTenant(cert *x509.Certificate, tenant string) error {
+	ou := TenantFromSubjectOU(cert)
+	if ou == "" || qrdbsdk.NormalizeTenantID(ou) == qrdbsdk.NormalizeTenantID(tenant) {
+		return nil
+	}
+	return &CertOUTenantMismatchError{OU: ou, Tenant: tenant}
 }

@@ -140,8 +140,8 @@ func seedSessionUser(t *testing.T, users *iam.MemoryStorage, tenantID, username 
 	// the tenant and username produced a string that is not one.
 	err := users.CreateUser(context.Background(), &iam.User{
 		TenantID: tenantID,
-		// The session subject is the tenant-scoped qrdb USERNAME, so the handle
-		// is the field the resolve runs through; Name is presentation only.
+		// The session subject is the email (go-quicbaas#377); the username is
+		// the RBAC handle and Name is presentation only.
 		Username:  username,
 		Name:      username,
 		Email:     username + "@example.test",
@@ -165,7 +165,7 @@ func TestOIDCSessionIssuer_IssueResolveRoundTrip(t *testing.T) {
 	// The roles reaching the bearer come from the seeded record, not from this
 	// identity: qrdb's factor-resolved principal carries none.
 	identity := &qrdbauth.Identity{
-		Subject:  "user-42",
+		Subject:  "user-42@example.test",
 		TenantID: "acme",
 		Metadata: map[string]string{authMethodMetadataKey: "piv"},
 	}
@@ -185,7 +185,7 @@ func TestOIDCSessionIssuer_IssueResolveRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Resolve: %v", err)
 	}
-	if resolved.Subject != "user-42" || resolved.TenantID != "acme" {
+	if resolved.Subject != "user-42@example.test" || resolved.TenantID != "acme" {
 		t.Fatalf("resolved identity wrong: %+v", resolved)
 	}
 	if len(resolved.Roles) != 2 {
@@ -201,8 +201,8 @@ func TestOIDCSessionIssuer_IssueResolveRoundTrip(t *testing.T) {
 		t.Fatalf("GetUserByUsername: %v", err)
 	}
 	subject := auth.SubjectFromIdentity(resolved)
-	if subject.IDKind != interfaces.SubjectIDUsername || subject.UserID != seeded.ID {
-		t.Fatalf("resolved subject %+v, want username kind with UserID %d", subject, seeded.ID)
+	if subject.IDKind != interfaces.SubjectIDEmail || subject.UserID != seeded.ID {
+		t.Fatalf("resolved subject %+v, want email kind with UserID %d", subject, seeded.ID)
 	}
 }
 
@@ -221,20 +221,21 @@ func TestOIDCSessionIssuer_ResolveNamesAccountByVerifiedUserID(t *testing.T) {
 	// A second account whose username is the first account's id in decimal.
 	adminID := strconv.FormatUint(admin.ID, 10)
 	seedSessionUser(t, users, "acme", adminID, []string{"reader"})
-	numeric, err := users.GetUserByUsername(ctx, "acme", adminID)
-	if err != nil {
-		t.Fatalf("GetUserByUsername(%s): %v", adminID, err)
-	}
 	issuer := newOIDCSessionIssuer()
 	issuer.SetProvider(provider)
+
+	// Email is the only subject login key (go-quicbaas#377): the numeric
+	// username names nobody, so it can neither log in nor shadow the admin.
+	if _, _, err := issuer.Issue(ctx, &qrdbauth.Identity{Subject: adminID, TenantID: "acme"}); err == nil {
+		t.Fatalf("a numeric username subject %q issued a bearer", adminID)
+	}
 
 	cases := map[string]struct {
 		sub      string
 		wantKind interfaces.SubjectIDKind
 		wantUser uint64
 	}{
-		"numeric username": {sub: adminID, wantKind: interfaces.SubjectIDUsername, wantUser: numeric.ID},
-		"email":            {sub: "admin@example.test", wantKind: interfaces.SubjectIDEmail, wantUser: admin.ID},
+		"email": {sub: "admin@example.test", wantKind: interfaces.SubjectIDEmail, wantUser: admin.ID},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -262,7 +263,7 @@ func TestOIDCSessionIssuer_IssueWithoutMetadata(t *testing.T) {
 	issuer := newOIDCSessionIssuer()
 	issuer.SetProvider(provider)
 
-	token, _, err := issuer.Issue(context.Background(), &qrdbauth.Identity{Subject: "u", TenantID: "system"})
+	token, _, err := issuer.Issue(context.Background(), &qrdbauth.Identity{Subject: "u@example.test", TenantID: "system"})
 	if err != nil {
 		t.Fatalf("Issue: %v", err)
 	}
@@ -287,7 +288,7 @@ func TestOIDCSessionIssuer_IssueWithDPoPFromContext(t *testing.T) {
 		Method: "POST",
 		URI:    "https://issuer.test/login",
 	})
-	if _, _, err := issuer.Issue(ctx, &qrdbauth.Identity{Subject: "u", TenantID: "t"}); err == nil {
+	if _, _, err := issuer.Issue(ctx, &qrdbauth.Identity{Subject: "u@example.test", TenantID: "t"}); err == nil {
 		t.Fatal("Issue with invalid DPoP proof should fail closed")
 	}
 }
@@ -300,7 +301,7 @@ func TestOIDCSessionIssuer_Revoke(t *testing.T) {
 	issuer.SetProvider(provider)
 	ctx := context.Background()
 
-	token, _, err := issuer.Issue(ctx, &qrdbauth.Identity{Subject: "u", TenantID: "system"})
+	token, _, err := issuer.Issue(ctx, &qrdbauth.Identity{Subject: "u@example.test", TenantID: "system"})
 	if err != nil {
 		t.Fatalf("Issue: %v", err)
 	}

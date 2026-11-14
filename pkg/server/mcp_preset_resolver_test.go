@@ -282,8 +282,9 @@ func TestAgentMCPPresetResolver_Resolve_EnrollsTheSessionPrincipal(t *testing.T)
 	if req.Subject.Organization != "tenant-7" {
 		t.Errorf("cert O= = %q, want tenant-7", req.Subject.Organization)
 	}
-	if req.Subject.OrganizationalUnit != service.DefaultFleetNodeCertOU {
-		t.Errorf("cert OU = %q, want %q", req.Subject.OrganizationalUnit, service.DefaultFleetNodeCertOU)
+	// No OU override: the issuer stamps the tenant in the OU (#1388).
+	if req.Subject.OrganizationalUnit != "" {
+		t.Errorf("cert OU = %q, want no override", req.Subject.OrganizationalUnit)
 	}
 	if req.Subject.CommonName != "agent-ses-xyz" {
 		t.Errorf("cert CN = %q, want agent-ses-xyz", req.Subject.CommonName)

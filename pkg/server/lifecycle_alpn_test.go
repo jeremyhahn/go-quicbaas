@@ -44,7 +44,6 @@ func TestInitializeCA_AdvertisesGRPCALPN(t *testing.T) {
 	cfg.Security.TLSEnabled = true
 	cfg.Storage.DataDir = t.TempDir()
 	cfg.CA.KeysDir = filepath.Join(t.TempDir(), "ca-keys")
-	cfg.Security.TLSCAFile = filepath.Join(t.TempDir(), "ca-chain.crt")
 
 	srv, err := NewServer(cfg)
 	require.NoError(t, err)
