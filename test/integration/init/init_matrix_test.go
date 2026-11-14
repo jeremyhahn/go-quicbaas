@@ -87,12 +87,13 @@ var matrixTransports = []string{"rest", "grpc", "quic", "mcp", "unix"}
 func TestCanonicalInit_Matrix(t *testing.T) {
 	requireIntegrationGate(t)
 	binary := resolveDaemonBinary(t)
+	cliBinary := resolveCLIBinary(t)
 
 	for _, strategy := range matrixStrategies {
 		for _, transport := range matrixTransports {
 			strategy, transport := strategy, transport
 			t.Run(matrixSubtestName(strategy, transport), func(t *testing.T) {
-				runMatrixCell(t, binary, strategy, transport)
+				runMatrixCell(t, binary, cliBinary, strategy, transport)
 			})
 		}
 	}
@@ -106,7 +107,7 @@ func matrixSubtestName(strategy, transport string) string {
 
 // runMatrixCell is the per-(strategy, transport) integration body. The
 // body is intentionally linear so a failure points to exactly one phase.
-func runMatrixCell(t *testing.T, binary, strategy, transport string) {
+func runMatrixCell(t *testing.T, binary, cliBinary, strategy, transport string) {
 	t.Helper()
 
 	dataDir := t.TempDir()
@@ -127,6 +128,18 @@ func runMatrixCell(t *testing.T, binary, strategy, transport string) {
 	// Phase 2: start daemon + wait for transport readiness.
 	ports := allocPortBundle(t, transport, dataDir)
 	daemon := startDaemon(t, binary, dataDir, strategy, transport, ports)
+	// CA ruling 576: a sealed node does not serve MCP at all. The shamir_mcp
+	// cell therefore waits for the sealed window on REST, proves MCP is
+	// absent, unseals through the officer ceremony, and only then waits for
+	// MCP, which the full boot starts.
+	sealedMCP := strategy == "shamir" && transport == "mcp"
+	if sealedMCP {
+		if err := waitForTransportReady(ctx, t, daemon, "rest", ports, dataDir); err != nil {
+			t.Fatalf("the sealed shamir node's REST window never became ready: %v", err)
+		}
+		requireMCPRefusedWhileSealed(t, ports)
+		unsealShamirByCeremony(ctx, t, cliBinary, ports, dataDir)
+	}
 	if err := waitForTransportReady(ctx, t, daemon, transport, ports, dataDir); err != nil {
 		t.Fatalf("transport %q for strategy %q never became ready: %v",
 			transport, strategy, err)
@@ -139,13 +152,26 @@ func runMatrixCell(t *testing.T, binary, strategy, transport string) {
 	requireFileExists(t, caChainPath(dataDir), "platform CA chain (ca-chain.crt)")
 	requireFileExists(t, serverCertPath(dataDir), "platform server cert (server.crt)")
 
-	// Phase 4: SDK reaches the daemon over this transport. Health.Liveness
-	// is the cheapest cross-transport SDK call (no auth required) and is
-	// wired across every supported transport. A successful response proves
+	// Phase 4: SDK reaches the daemon over this transport, as the
+	// administrator first boot issued. Health.Liveness is the cheapest
+	// cross-transport SDK call and is wired across every supported transport;
+	// MCP refuses an uncredentialed initialize (CA ruling 571), so an MCP
+	// cell logs in first; the other transports serve it publicly, which is
+	// what lets a sealed shamir node (no administrator until its officers
+	// unseal it) answer here. A successful response proves
 	// the SDK transport stack lines up with the daemon's listener for this
 	// cell — a regression here would silently break every downstream SDK
 	// caller without firing in the raw-socket probes above.
-	verifySDKLivenessOverTransport(t, transport, ports, dataDir)
+	var token string
+	if transport == "mcp" {
+		token = loginFirstBootAdmin(ctx, t, cliBinary, transport, ports, dataDir, strategy)
+	}
+	verifySDKLivenessOverTransport(t, transport, ports, dataDir, token)
+	if sealedMCP {
+		// The unsealed node serves data over MCP with the administrator's
+		// session, exactly as every TestBackendMatrix MCP cell does.
+		verifyDataRoundTrip(ctx, t, cliBinary, transport, ports, dataDir, strategy)
+	}
 
 	// Phase 5: cross-strategy invariants on the marker (e.g. credential
 	// strategy default = "barrier"). assertInitDoneMarker already covered
