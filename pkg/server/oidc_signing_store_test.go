@@ -25,6 +25,7 @@ import (
 
 	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
 
+	"github.com/jeremyhahn/go-quicbaas/pkg/config"
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
 	dbxkms "github.com/jeremyhahn/go-quicbaas/pkg/xkms"
@@ -47,6 +48,15 @@ func bootOIDCSigningNode(t *testing.T, kv xkmssdk.StorageBackend) *iam.SigningKe
 // backend and a key-version store, as the server wires them.
 func initOIDCSigningDefault(t *testing.T) {
 	t.Helper()
+	keyVersions, err := xkmssdk.NewKeyVersionStore(xkmssdk.NewStorageMemory())
+	require.NoError(t, err)
+	initOIDCSigningDefaultWith(t, keyVersions)
+}
+
+// initOIDCSigningDefaultWith initializes the process-global xkms service with
+// a node-local software default backend and the key-version store keyVersions.
+func initOIDCSigningDefaultWith(t *testing.T, keyVersions *xkmssdk.KeyVersionStore) {
+	t.Helper()
 	dbxkms.Reset()
 
 	log, err := logger.New(logger.LogConfig{Level: "error", Format: "json", Output: "stdout"})
@@ -59,8 +69,6 @@ func initOIDCSigningDefault(t *testing.T) {
 		Backend:     local,
 		CertStorage: xkmssdk.NewStorageMemory(),
 	})
-	require.NoError(t, err)
-	keyVersions, err := xkmssdk.NewKeyVersionStore(xkmssdk.NewStorageMemory())
 	require.NoError(t, err)
 	require.NoError(t, dbxkms.Initialize(&dbxkms.Config{
 		DefaultBackend: string(xkmssdk.StoreSoftware),
@@ -142,6 +150,43 @@ func TestOIDCSigningStore_RotateOnReplicatedBackend(t *testing.T) {
 	require.NotEqual(t, oldKid, newKid)
 	require.Len(t, m.JWKS().Key(oldKid), 1)
 	require.Len(t, m.JWKS().Key(newKid), 1)
+}
+
+// bootOIDCSigningServer boots one node's OIDC signing key the way the server
+// wires it: the xkms service gets the node's own key-version store
+// (Server.keyVersionStore, node-local without a data dir) and the
+// "oidc-replicated" backend goes on the shared replicated KV kv.
+func bootOIDCSigningServer(t *testing.T, s *Server, kv xkmssdk.StorageBackend) *iam.SigningKeyManager {
+	t.Helper()
+	keyVersions, err := s.keyVersionStore()
+	require.NoError(t, err)
+	initOIDCSigningDefaultWith(t, keyVersions)
+	require.NoError(t, s.useReplicatedOIDCSigningStore(kv))
+
+	m, err := iam.NewSigningKeyManagerFromXKMSBackend(iam.OIDCSigningKeyCN, "", oidcSigningBackendName)
+	require.NoError(t, err)
+	return m
+}
+
+// A rotation on one node reaches its peer: the peer's fresh manager signs
+// with the rotated key, because the key-version record of the replicated
+// OIDC key is replicated with the key.
+func TestOIDCSigningStore_RotationReachesPeerNode(t *testing.T) {
+	t.Cleanup(dbxkms.Reset)
+	kv := xkmssdk.NewStorageMemory()
+
+	nodeA := &Server{config: &config.Config{}}
+	a := bootOIDCSigningServer(t, nodeA, kv)
+	oldKid, _, _ := a.Current()
+	require.NoError(t, a.Rotate())
+	rotatedKid, _, _ := a.Current()
+	require.NotEqual(t, oldKid, rotatedKid)
+
+	nodeB := &Server{config: &config.Config{}}
+	b := bootOIDCSigningServer(t, nodeB, kv)
+	kidB, _, _ := b.Current()
+	require.Equal(t, rotatedKid, kidB)
+	require.Len(t, b.JWKS().Key(rotatedKid), 1)
 }
 
 // TestOIDCSigningStore_KeepsNonSoftwareDefault checks the backend selection:

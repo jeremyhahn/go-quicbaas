@@ -14,7 +14,10 @@
 package server
 
 import (
+	"context"
 	"slices"
+	"strings"
+	"sync"
 
 	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
 
@@ -70,16 +73,151 @@ func (s *Server) oidcSigningStoreType() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	backend, err := newOIDCSigningServiceBackend(xkmssdk.NewQRDBStorageBackend(shardClient.KV()))
-	if err != nil {
+	if err := s.useReplicatedOIDCSigningStore(xkmssdk.NewQRDBStorageBackend(shardClient.KV())); err != nil {
 		return "", err
+	}
+	return oidcSigningBackendName, nil
+}
+
+// useReplicatedOIDCSigningStore puts the OIDC signing key on the replicated
+// shard KV kv: it registers the "oidc-replicated" backend over kv (once per
+// process), and sends that backend's key-version records to kv too, so a
+// rotation on one node is the current version on every node.
+func (s *Server) useReplicatedOIDCSigningStore(kv xkmssdk.StorageBackend) error {
+	backend, err := newOIDCSigningServiceBackend(kv)
+	if err != nil {
+		return err
+	}
+	versions, err := xkmssdk.NewStoragePrefixBackend(kv, oidcSigningVersionsPrefix)
+	if err != nil {
+		return err
+	}
+	if _, err := s.keyVersionStore(); err != nil {
+		return err
+	}
+	if s.xkmsKeyVersionRouter != nil {
+		s.xkmsKeyVersionRouter.setReplicated(versions)
 	}
 	if !slices.Contains(dbxkms.Backends(), oidcSigningBackendName) {
 		if err := registerXKMSBackendFn(oidcSigningBackendName, backend); err != nil {
-			return "", err
+			return err
 		}
 	}
-	return oidcSigningBackendName, nil
+	return nil
+}
+
+// oidcSigningVersionsPrefix namespaces the replicated OIDC signing key's
+// key-version records on the replicated shard KV.
+const oidcSigningVersionsPrefix = "oidc-signing-versions/"
+
+// oidcSigningVersionSegment is the path segment of every key-version record
+// of the "oidc-replicated" backend: xkms keys a record as
+// {tenant}/key-versions/<backend>/<keyID>.
+const oidcSigningVersionSegment = "/key-versions/" + oidcSigningBackendName + "/"
+
+// keyVersionRouter is the storage of the node's key-version records. Every
+// record stays on the node-local store, except the "oidc-replicated"
+// backend's: once the replicated store is set, those go to it, so every node
+// of the cluster reads one record for the one replicated key.
+type keyVersionRouter struct {
+	local xkmssdk.StorageBackend
+
+	mu         sync.RWMutex
+	replicated xkmssdk.StorageBackend
+}
+
+var _ xkmssdk.StorageBackend = (*keyVersionRouter)(nil)
+
+func newKeyVersionRouter(local xkmssdk.StorageBackend) *keyVersionRouter {
+	return &keyVersionRouter{local: local}
+}
+
+// setReplicated sends the "oidc-replicated" records to replicated.
+func (r *keyVersionRouter) setReplicated(replicated xkmssdk.StorageBackend) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.replicated = replicated
+}
+
+func (r *keyVersionRouter) replicatedStore() xkmssdk.StorageBackend {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.replicated
+}
+
+// route returns the store the record at key lives on.
+func (r *keyVersionRouter) route(key string) xkmssdk.StorageBackend {
+	if strings.Contains(key, oidcSigningVersionSegment) {
+		if replicated := r.replicatedStore(); replicated != nil {
+			return replicated
+		}
+	}
+	return r.local
+}
+
+func (r *keyVersionRouter) Get(ctx context.Context, key string) ([]byte, error) {
+	return r.route(key).Get(ctx, key)
+}
+
+func (r *keyVersionRouter) Put(ctx context.Context, key string, value []byte) error {
+	return r.route(key).Put(ctx, key, value)
+}
+
+func (r *keyVersionRouter) PutIfAbsent(ctx context.Context, key string, value []byte) (bool, error) {
+	return r.route(key).PutIfAbsent(ctx, key, value)
+}
+
+func (r *keyVersionRouter) Delete(ctx context.Context, key string) error {
+	return r.route(key).Delete(ctx, key)
+}
+
+func (r *keyVersionRouter) Exists(ctx context.Context, key string) (bool, error) {
+	return r.route(key).Exists(ctx, key)
+}
+
+// List lists the keys under prefix on both stores: the node-local records,
+// then the replicated ones.
+func (r *keyVersionRouter) List(ctx context.Context, prefix string) ([]string, error) {
+	keys, err := r.local.List(ctx, prefix)
+	if err != nil {
+		return nil, err
+	}
+	replicated := r.replicatedStore()
+	if replicated == nil {
+		return keys, nil
+	}
+	keys = slices.DeleteFunc(keys, func(k string) bool {
+		return strings.Contains(k, oidcSigningVersionSegment)
+	})
+	more, err := replicated.List(ctx, prefix)
+	if err != nil {
+		return nil, err
+	}
+	return append(keys, more...), nil
+}
+
+// Scan visits the records under prefix on both stores: the node-local
+// records, then the replicated ones.
+func (r *keyVersionRouter) Scan(ctx context.Context, prefix string, fn func(key string, value []byte) error) error {
+	replicated := r.replicatedStore()
+	if err := r.local.Scan(ctx, prefix, func(key string, value []byte) error {
+		if replicated != nil && strings.Contains(key, oidcSigningVersionSegment) {
+			return nil
+		}
+		return fn(key, value)
+	}); err != nil {
+		return err
+	}
+	if replicated == nil {
+		return nil
+	}
+	return replicated.Scan(ctx, prefix, fn)
+}
+
+// Close closes the node-local store. The replicated store belongs to the
+// shard client and closes with it.
+func (r *keyVersionRouter) Close() error {
+	return r.local.Close()
 }
 
 // selectOIDCSigningBackend picks the OIDC signing backend from the process

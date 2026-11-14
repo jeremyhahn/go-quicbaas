@@ -2847,10 +2847,12 @@ func (s *Server) keyVersionStore() (*xkmssdk.KeyVersionStore, error) {
 	if err != nil {
 		return nil, err
 	}
-	store, err := xkmssdk.NewKeyVersionStore(backend)
+	router := newKeyVersionRouter(backend)
+	store, err := xkmssdk.NewKeyVersionStore(router)
 	if err != nil {
 		return nil, err
 	}
+	s.xkmsKeyVersionRouter = router
 	s.xkmsKeyVersions = store
 	return store, nil
 }
