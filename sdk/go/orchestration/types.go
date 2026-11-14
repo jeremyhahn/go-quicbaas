@@ -168,6 +168,41 @@ var ErrDevicePassthroughDenied = pkgorch.ErrDevicePassthroughDenied
 // the attached ones.
 var ContainerDevices = pkgorch.ContainerDevices
 
+// Coordination for replicated volumes: go-blockstore's common.Coordinator and
+// HA controller, with the two coordinators go-quicbaas supplies.
+type (
+	// VolumeCoordinator is the lease, KV and watch primitive replicated
+	// volumes elect their primary with.
+	VolumeCoordinator = pkgorch.VolumeCoordinator
+	// VolumeLease is a held lease from a VolumeCoordinator.
+	VolumeLease = pkgorch.VolumeLease
+	// VolumeCoordinatorEvent is one change delivered by VolumeCoordinator.Watch.
+	VolumeCoordinatorEvent = pkgorch.VolumeCoordinatorEvent
+	// VolumeHAConfig configures the HA controller.
+	VolumeHAConfig = pkgorch.VolumeHAConfig
+	// VolumeHAController elects the primary of each replicated volume.
+	VolumeHAController = pkgorch.VolumeHAController
+	// QRDBVolumeCoordinator coordinates over a raft-mode go-qrdb, across nodes.
+	QRDBVolumeCoordinator = pkgorch.QRDBVolumeCoordinator
+	// LocalVolumeCoordinator coordinates within one process, for a
+	// single-node deployment.
+	LocalVolumeCoordinator = pkgorch.LocalVolumeCoordinator
+)
+
+// ErrVolumeLeaseHeld is returned by AcquireLease when another holder owns
+// the key.
+var ErrVolumeLeaseHeld = pkgorch.ErrVolumeLeaseHeld
+
+var (
+	// NewVolumeHAController returns the HA controller for a replicated
+	// provider, electing through a coordinator.
+	NewVolumeHAController = pkgorch.NewVolumeHAController
+	// NewQRDBVolumeCoordinator adapts a connected go-qrdb client.
+	NewQRDBVolumeCoordinator = pkgorch.NewQRDBVolumeCoordinator
+	// NewLocalVolumeCoordinator returns an in-process coordinator.
+	NewLocalVolumeCoordinator = pkgorch.NewLocalVolumeCoordinator
+)
+
 // ContainerUlimit is one per-process resource limit inside a container
 // (ContainerSpec.Ulimits, emitted as --ulimit name=soft:hard). Ulimits
 // participate in ContainerConfigDigest, sorted by name.
