@@ -165,6 +165,7 @@ func toLibcontainerProcess(spec processSpec, init bool) *libcontainer.Process {
 		process.AdditionalGroups = append(process.AdditionalGroups, int(gid))
 	}
 	if !spec.TTY {
+		process.Stdin = spec.Stdin
 		process.Stdout = spec.Stdout
 		process.Stderr = spec.Stderr
 	}

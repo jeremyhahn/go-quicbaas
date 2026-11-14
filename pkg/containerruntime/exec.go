@@ -17,7 +17,9 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"io"
 	"slices"
+	"syscall"
 )
 
 // ErrExecCommandRequired is returned when an exec request carries no command.
@@ -43,6 +45,11 @@ type ExecOptions struct {
 	// TTY allocates a pseudo-terminal for the process. When set on a buffered
 	// Exec the combined output is returned on the result's Stdout.
 	TTY bool
+
+	// Stdin is fed to a buffered exec's standard input. Nil leaves it
+	// closed, which is what a non-interactive command should see. It is
+	// ignored when TTY is set.
+	Stdin io.Reader
 }
 
 // Executor is the capability of running a command inside a running container.
@@ -78,7 +85,7 @@ func (r *Runtime) Exec(ctx context.Context, id string, opts ExecOptions) (*ExecR
 	if opts.TTY {
 		result, err = r.execTTY(ctx, state, opts)
 	} else {
-		result, err = r.execBuffered(state, opts)
+		result, err = r.execBuffered(ctx, state, opts)
 	}
 	if err != nil {
 		return nil, NewContainerError(id, "exec", err)
@@ -88,7 +95,7 @@ func (r *Runtime) Exec(ctx context.Context, id string, opts ExecOptions) (*ExecR
 
 // execBuffered runs an exec process with its stdout and stderr captured
 // separately.
-func (r *Runtime) execBuffered(state *containerState, opts ExecOptions) (*ExecResult, error) {
+func (r *Runtime) execBuffered(ctx context.Context, state *containerState, opts ExecOptions) (*ExecResult, error) {
 	var stdout, stderr bytes.Buffer
 	spec := execProcessSpec(state, opts)
 	spec.Stdout = &stdout
@@ -98,7 +105,28 @@ func (r *Runtime) execBuffered(state *containerState, opts ExecOptions) (*ExecRe
 	if err != nil {
 		return nil, err
 	}
-	exitCode, err := process.Wait()
+
+	type exit struct {
+		code int
+		err  error
+	}
+	done := make(chan exit, 1)
+	go func() {
+		code, err := process.Wait()
+		done <- exit{code: code, err: err}
+	}()
+
+	var exited exit
+	select {
+	case exited = <-done:
+	case <-ctx.Done():
+		// A cancelled exec is killed and reaped; its exit status is not the
+		// command's answer, so the cancellation is what is reported.
+		killErr := process.Signal(syscall.SIGKILL)
+		<-done
+		return nil, errors.Join(ctx.Err(), killErr)
+	}
+	exitCode, err := exited.code, exited.err
 	if err != nil {
 		return nil, err
 	}
@@ -156,5 +184,7 @@ func execProcessSpec(state *containerState, opts ExecOptions) processSpec {
 		Cwd:  cwd,
 		User: state.init.User,
 		TTY:  opts.TTY,
+
+		Stdin: opts.Stdin,
 	}
 }

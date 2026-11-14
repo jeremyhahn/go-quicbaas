@@ -39,6 +39,9 @@ type processSpec struct {
 	// containerProcess.Console. Stdout and Stderr are unused when it is set.
 	TTY bool
 
+	// Stdin feeds the process's standard input. Nil leaves it closed. It is
+	// unused when TTY is set.
+	Stdin  io.Reader
 	Stdout io.Writer
 	Stderr io.Writer
 }
