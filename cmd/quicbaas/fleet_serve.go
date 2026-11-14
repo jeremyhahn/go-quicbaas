@@ -387,6 +387,13 @@ func buildFleetRuntime(cfg *fleet.Config, backends map[string]orchestration.Agen
 	if rtErr != nil {
 		return nil, rtErr
 	}
+	// Workload volumes (go-quicbaas#1683): with a provider configured, every
+	// launch attaches the spec's go-blockstore volumes first. Outermost, so
+	// the volumes' bind mounts are what the launch measures.
+	containerRuntime, rtErr = fleet.WrapVolumeRuntime(cfg.Volumes, containerRuntime)
+	if rtErr != nil {
+		return nil, rtErr
+	}
 	// A BACKEND THAT RUNS ITS OWN CONTAINERS NEEDS THE RUNTIME TOO, and this
 	// is the only place it exists. The CLI backends are handed one by
 	// fleet.Runtime when it spawns them; the openvino backend is not a CLI --

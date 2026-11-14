@@ -15,6 +15,7 @@ package orchestration
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"strconv"
 	"strings"
@@ -257,6 +258,14 @@ type ContainerSpec struct {
 	// launch: sha256, sha384 or sha512. Empty resolves to sha256. sha1 is
 	// refused: the Verifier does not appraise a SHA-1 quote.
 	MeasurementBank string `json:"measurement_bank,omitempty"`
+
+	// Volumes are go-blockstore block volumes the workload claims. Only a
+	// VolumeRuntime can honour them: it attaches each claim on the node and
+	// hands the runtime it wraps a copy with the volumes resolved into bind
+	// Mounts (which is what ContainerConfigDigest measures). Any other
+	// runtime refuses a spec that still carries volumes, through Validate,
+	// rather than launch the workload without its storage.
+	Volumes []VolumeClaim `json:"volumes,omitempty"`
 }
 
 // ContainerMount defines a mount between host and container.
@@ -316,6 +325,9 @@ func (s *ContainerSpec) Validate() error {
 	}
 	if s.PidsLimit < 0 {
 		return &InputValidationError{Field: "pids_limit", Message: "cannot be negative"}
+	}
+	if len(s.Volumes) > 0 {
+		return fmt.Errorf("%w: %d volume claim(s) not attached: the spec needs a VolumeRuntime", ErrVolumeUnsupported, len(s.Volumes))
 	}
 	if err := validateUlimits(s.Ulimits); err != nil {
 		return err
