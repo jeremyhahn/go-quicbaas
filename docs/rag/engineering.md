@@ -309,6 +309,12 @@ This makes re-indexing cheap: only changed files are re-processed.
 | Markdown | `MarkdownChunker` | Header-based sections, preserves code blocks |
 | Other | `TextChunker` | Sentence/paragraph-aware splitting with configurable overlap |
 
+`chunk_max_tokens` caps Markdown chunks (at a target of a quarter of the
+cap) and text chunks. Go is the exception: a function is always one
+chunk, so a function longer than `chunk_max_tokens` is kept whole, and
+its chunk metadata gets `too_large: "true"` and its `token_count`.
+`chunk_overlap` applies only to `TextChunker`.
+
 ### IndexingService
 
 The service coordinates the watcher and pipeline:
