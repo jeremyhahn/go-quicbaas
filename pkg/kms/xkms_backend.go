@@ -398,23 +398,16 @@ func (kb *XKMSBackend) GetKeyMetadata(ctx context.Context, keyID string) (*KeyMe
 		}
 	}
 
-	// If still not found, try legacy lookup methods
+	// Not under a probed format: find the key by name in the backend's key
+	// list, which carries its algorithm. A name-only Signer or
+	// GetSymmetricKey lookup is never answered by the software backend, so
+	// it reported such keys missing (#2125).
 	if foundAlgorithm == "" {
-		attrs := &kctypes.KeyAttributes{
-			CN:        xkmsName,
-			StoreType: kctypes.StoreType(string(kb.backendType)),
+		attrs, err := kb.findKeyAttributesByName(ctx, xkmsName)
+		if err != nil {
+			return nil, err
 		}
-
-		// Try to get signer with just CN
-		if _, err := xkms.Signer(ctx, attrs); err != nil {
-			// Try symmetric key by ID
-			if _, err := xkms.GetSymmetricKey(ctx, xkmsName); err != nil {
-				return nil, ErrKeyNotFound
-			}
-			foundAlgorithm = "AES-256-GCM" // Default for symmetric
-		} else {
-			foundAlgorithm = "RSA-4096" // Default for signing
-		}
+		foundAlgorithm = kb.attrsToAlgorithmString(attrs)
 	}
 
 	// Key exists but we don't have metadata - create minimal metadata
@@ -432,6 +425,21 @@ func (kb *XKMSBackend) GetKeyMetadata(ctx context.Context, keyID string) (*KeyMe
 	kb.mu.Unlock()
 
 	return meta, nil
+}
+
+// findKeyAttributesByName returns the attributes of the key go-xkms holds
+// on this backend under the CN name, or ErrKeyNotFound.
+func (kb *XKMSBackend) findKeyAttributesByName(ctx context.Context, name string) (*kctypes.KeyAttributes, error) {
+	keys, err := xkms.ListKeys(ctx, string(kb.backendType))
+	if err != nil {
+		return nil, ErrKeyNotFound
+	}
+	for _, attrs := range keys {
+		if attrs != nil && attrs.CN == name {
+			return attrs, nil
+		}
+	}
+	return nil, ErrKeyNotFound
 }
 
 // ListKeys lists keys matching the prefix.
