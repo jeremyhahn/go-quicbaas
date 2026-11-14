@@ -82,12 +82,25 @@ func (e *ImageNotFoundError) Unwrap() error { return ErrImageNotFound }
 type ImageTagError struct {
 	Source string
 	Target string
-	Cause  error
+
+	// EngineMessage is the engine's stderr with credential-shaped text
+	// redacted, whitespace collapsed and the length bounded
+	// (redactLimitSignal). It IS rendered: a tag prints only the engine's
+	// reason, and a tag failure whose reason is withheld cannot be diagnosed
+	// (#1801, "114 bytes of output withheld"). The raw bytes stay on the
+	// CommandError cause.
+	EngineMessage string
+
+	Cause error
 }
 
 // Error implements the error interface.
 func (e *ImageTagError) Error() string {
-	return withCause(ErrImageTag.Error()+": "+e.Source+" -> "+e.Target, e.Cause)
+	msg := withCause(ErrImageTag.Error()+": "+e.Source+" -> "+e.Target, e.Cause)
+	if e.EngineMessage != "" {
+		msg += ": " + e.EngineMessage
+	}
+	return msg
 }
 
 // Unwrap returns the sentinel and the cause for errors.Is/As.

@@ -17,6 +17,7 @@ package helpers
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strconv"
 	"sync/atomic"
@@ -71,6 +72,12 @@ func WaitForLeaderElection(t *testing.T, cluster *TestCluster, timeout time.Dura
 		node, client, err := cluster.FindLeader(findCtx)
 		cancel()
 
+		// A refused status will be refused again: stop now rather than
+		// wait out the timeout with the refusal hidden.
+		var refused *ClusterStatusRefusedError
+		if errors.As(err, &refused) {
+			return false, &FinalPollError{Cause: err}
+		}
 		if err != nil || node == nil {
 			return false, err
 		}

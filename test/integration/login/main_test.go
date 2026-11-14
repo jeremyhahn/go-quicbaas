@@ -346,10 +346,10 @@ func newLoginClient(t *testing.T, tr loginTransport, tlsCfg *tls.Config, extra .
 		if len(endpoints) == 0 {
 			return nil, fmt.Errorf("login-test: no QUIC endpoints")
 		}
-		quicCfg := tlsCfg.Clone()
-		quicCfg.NextProtos = []string{"quicbaas-quic"}
+		// The node's QUIC listener serves HTTP/3 and accepts only ALPN "h3";
+		// the QUIC transport offers it when the caller's config names none.
 		return quicbaas.NewClient(endpoints[0],
-			append(opts, quicbaas.WithQUIC(), quicbaas.WithTLSConfig(quicCfg))...)
+			append(opts, quicbaas.WithQUIC(), quicbaas.WithTLSConfig(tlsCfg))...)
 	case transportUnix:
 		socket := helpers.GetUnixSocketPath()
 		if socket == "" {
