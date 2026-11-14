@@ -229,6 +229,39 @@ officer CSR signatures, and the CA bundle / SPKI pin the operator
 verifies. Leave it nil and every CA-dependent ceremony verb fails
 closed — there is no fallback.
 
+## Device backend adapters (SPEC row hardware-backend-composition)
+
+A device backend adapter is a go-xkms backend for a piece of hardware.
+QuicBaaS composes it, and only QuicBaaS: the resolver in
+[`pkg/server/backend_resolver.go`](../../pkg/server/backend_resolver.go)
+turns the configured `kms.backend` (or `crypto.backend`) into the
+`xkmssdk.ServiceBackend` that `startKMS` passes into go-xkms. Each adapter
+is one `backend_resolver_<type>.go` file whose `init()` registers its
+factory; a configured type with no registered factory is a
+`BackendNotCompiledError`, never a silent software fallback.
+go-trusted-platform and xkey never import an adapter: they reach the keys
+it holds through the QuicBaaS SDK.
+
+| Adapter | Backend | go-xkms package | Config | File |
+|---------|---------|-----------------|--------|------|
+| trusted-firmware device | `avr` | `pkg/backend/avr` (`xkmssdk.NewAVRBackend`) | `kms.avr.device` (serial port, required), `kms.avr.baud` (default 115200), `kms.avr.key_cn`, `kms.avr.request_timeout` | [`backend_resolver_avr.go`](../../pkg/server/backend_resolver_avr.go) |
+| SE052F secure element | — | not yet in go-xkms | — | — |
+| i.MX 95 (EdgeLock enclave) | — | not yet in go-xkms | — | — |
+
+The `avr` factory is tag-free. It opens the serial port, connects go-xkms's
+AVR backend to the trusted-firmware device on it (construction reads CAPS,
+so an absent or silent device fails startup with a `BackendConstructError`)
+and closes the port when the backend closes. The device holds one fixed
+identity key, so it signs with that key and has no CA `StoreType`.
+
+```yaml
+kms:
+  enabled: true
+  backend: avr
+  avr:
+    device: /dev/ttyUSB0
+```
+
 ## Phase B: standalone mode embeds the real qrdb engine
 
 Since Phase B of the unified-engine refactor, **standalone mode** (the
