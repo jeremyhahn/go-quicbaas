@@ -12,6 +12,7 @@ func measuredTestSpec(label string) *ContainerSpec {
 	return &ContainerSpec{
 		Image:           "alpine@" + testDigest,
 		TrustLevel:      TrustLevelMeasured,
+		ImageSignature:  testImageSignature(),
 		TrustLabel:      label,
 		ReferenceValues: "golden",
 	}

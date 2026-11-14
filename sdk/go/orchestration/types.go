@@ -295,6 +295,42 @@ type TPMAttestingRuntime = pkgorch.TPMAttestingRuntime
 // required.
 var NewTPMAttestingRuntime = pkgorch.NewTPMAttestingRuntime
 
+// LaunchMeasurementUnder is LaunchMeasurement under an explicit launch
+// policy, such as one carrying an allow-unsigned grant.
+var LaunchMeasurementUnder = pkgorch.LaunchMeasurementUnder
+
+// TPMAttestingOption configures a TPMAttestingRuntime.
+type TPMAttestingOption = pkgorch.TPMAttestingOption
+
+// ImageVerifier verifies a measured launch's image signature (default deny).
+type ImageVerifier = pkgorch.ImageVerifier
+
+// UnsignedImagePolicy may grant an unsigned image a measured launch; the
+// grant is folded into the launch policy and recorded in the log.
+type UnsignedImagePolicy = pkgorch.UnsignedImagePolicy
+
+// UnsignedImageGrants is an UnsignedImagePolicy keyed by trust label.
+type UnsignedImageGrants = pkgorch.UnsignedImageGrants
+
+// ImageUnsignedError reports an unsigned image refused at launch.
+type ImageUnsignedError = pkgorch.ImageUnsignedError
+
+// ImageSignatureRejectedError reports an image signature that did not verify.
+type ImageSignatureRejectedError = pkgorch.ImageSignatureRejectedError
+
+// WithImageVerifier sets the runtime's ImageVerifier.
+var WithImageVerifier = pkgorch.WithImageVerifier
+
+// WithUnsignedImagePolicy sets the runtime's allow-unsigned policy.
+var WithUnsignedImagePolicy = pkgorch.WithUnsignedImagePolicy
+
+// ErrImageUnsigned and ErrImageSignatureRejected are the default-deny
+// refusals of a measured launch.
+var (
+	ErrImageUnsigned          = pkgorch.ErrImageUnsigned
+	ErrImageSignatureRejected = pkgorch.ErrImageSignatureRejected
+)
+
 // HostAppraiser is the seam through which a TPMAttestingRuntime hands bound
 // host evidence to the Verifier, which appraises it against reference values
 // stored by name.
@@ -576,20 +612,24 @@ var (
 // Function signatures. A var alias silently absorbs an upstream signature
 // change; these assertions do not.
 var (
-	_ func(string) (TrustLevel, error)                                                     = ParseTrustLevel
-	_ func(string) (TrustPolicy, error)                                                    = ParseTrustPolicy
-	_ func(TrustLevel, TrustPolicy, *TrustPolicy, TrustCapabilities) (TrustLevel, error)   = ResolveTrustLevel
-	_ func(string) error                                                                   = ValidateImageDigest
-	_ func(string) (string, string, bool)                                                  = SplitImageReference
-	_ func(string) string                                                                  = ImageRepository
-	_ func(*ContainerSpec) (string, error)                                                 = ContainerConfigDigest
-	_ func(*ContainerSpec) ([]byte, error)                                                 = LaunchMeasurement
-	_ func(*ContainerSpec) (string, error)                                                 = LaunchPolicyDigest
-	_ func([]MeasurementLogEntry) error                                                    = VerifyMeasurementLog
-	_ func([]MeasurementLogEntry, int, string) ([]byte, error)                             = ReplayMeasurementLog
-	_ func(ContainerRuntime, HostTPM, HostAppraiser, Logger) (*TPMAttestingRuntime, error) = NewTPMAttestingRuntime
-	_ func(Logger) (*ExecContainerRuntime, error)                                          = NewExecContainerRuntime
-	_ func(string, Logger) (*ExecContainerRuntime, error)                                  = NewExecContainerRuntimeWithCommand
+	_ func(string) (TrustLevel, error)                                                                            = ParseTrustLevel
+	_ func(string) (TrustPolicy, error)                                                                           = ParseTrustPolicy
+	_ func(TrustLevel, TrustPolicy, *TrustPolicy, TrustCapabilities) (TrustLevel, error)                          = ResolveTrustLevel
+	_ func(string) error                                                                                          = ValidateImageDigest
+	_ func(string) (string, string, bool)                                                                         = SplitImageReference
+	_ func(string) string                                                                                         = ImageRepository
+	_ func(*ContainerSpec) (string, error)                                                                        = ContainerConfigDigest
+	_ func(*ContainerSpec) ([]byte, error)                                                                        = LaunchMeasurement
+	_ func(*ContainerSpec) (string, error)                                                                        = LaunchPolicyDigest
+	_ func([]MeasurementLogEntry) error                                                                           = VerifyMeasurementLog
+	_ func([]MeasurementLogEntry, int, string) ([]byte, error)                                                    = ReplayMeasurementLog
+	_ func(ContainerRuntime, HostTPM, HostAppraiser, Logger, ...TPMAttestingOption) (*TPMAttestingRuntime, error) = NewTPMAttestingRuntime
+	_ func(*ContainerSpec, LaunchPolicy) ([]byte, error)                                                          = LaunchMeasurementUnder
+	_ func(ImageVerifier) TPMAttestingOption                                                                      = WithImageVerifier
+	_ func(UnsignedImagePolicy) TPMAttestingOption                                                                = WithUnsignedImagePolicy
+	_ UnsignedImagePolicy                                                                                         = UnsignedImageGrants(nil)
+	_ func(Logger) (*ExecContainerRuntime, error)                                                                 = NewExecContainerRuntime
+	_ func(string, Logger) (*ExecContainerRuntime, error)                                                         = NewExecContainerRuntimeWithCommand
 )
 
 // Errors alias in both directions, so errors.As with either spelling matches

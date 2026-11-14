@@ -29,6 +29,11 @@ type LaunchPolicy struct {
 
 	// MeasurementBank is the PCR bank the measurement is extended into.
 	MeasurementBank string `json:"measurement_bank"`
+
+	// AllowUnsigned names the allow-unsigned grant that admitted an
+	// unsigned image; empty for a signed image. It is omitted when empty,
+	// so a signed launch's digest does not depend on the field existing.
+	AllowUnsigned string `json:"allow_unsigned,omitempty"`
 }
 
 // launchPolicyDomain separates the policy digest from every other digest the
@@ -104,6 +109,11 @@ type MeasurementLogEntry struct {
 	// TrustLabel is the operator-assigned workload identity.
 	TrustLabel string `json:"trust_label,omitempty"`
 
+	// AllowUnsigned names the allow-unsigned grant that admitted an
+	// unsigned image; empty for a signed launch. It is the audit record of
+	// the grant, and PolicyDigest commits to it as well.
+	AllowUnsigned string `json:"allow_unsigned,omitempty"`
+
 	// PCR and Bank name the register the measurement was extended into.
 	PCR  int    `json:"pcr"`
 	Bank string `json:"bank"`
@@ -166,7 +176,7 @@ func chainDigest(prev []byte, e *MeasurementLogEntry) []byte {
 	h.Write(prev)
 	for _, field := range []string{
 		fmt.Sprintf("%d", e.Sequence), e.Kind, hex.EncodeToString(e.Base), e.Image, e.ImageDigest, e.ConfigDigest,
-		e.PolicyDigest, e.TrustLabel, fmt.Sprintf("%d", e.PCR), e.Bank,
+		e.PolicyDigest, e.TrustLabel, e.AllowUnsigned, fmt.Sprintf("%d", e.PCR), e.Bank,
 	} {
 		h.Write([]byte{0})
 		h.Write([]byte(field))

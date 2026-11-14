@@ -135,6 +135,49 @@ func TestMeasurementLogAcrossBoundary(t *testing.T) {
 	}
 }
 
+func TestDefaultDenyAcrossBoundary(t *testing.T) {
+	spec := &sdkorch.ContainerSpec{
+		Image:       "registry.example.com/agent",
+		ImageDigest: testDigest,
+		TrustLabel:  "legacy",
+	}
+	grants := sdkorch.UnsignedImageGrants{"legacy": "tenant-a/legacy-ci"}
+	grant, ok := grants.AllowUnsigned(t.Context(), spec)
+	if !ok || grant != "tenant-a/legacy-ci" {
+		t.Fatalf("AllowUnsigned = %q, %v", grant, ok)
+	}
+
+	policy, err := sdkorch.LaunchPolicyOf(spec)
+	if err != nil {
+		t.Fatalf("LaunchPolicyOf: %v", err)
+	}
+	signed, err := sdkorch.LaunchMeasurementUnder(spec, policy)
+	if err != nil {
+		t.Fatalf("LaunchMeasurementUnder: %v", err)
+	}
+	policy.AllowUnsigned = grant
+	viaSDK, err := sdkorch.LaunchMeasurementUnder(spec, policy)
+	if err != nil {
+		t.Fatalf("LaunchMeasurementUnder: %v", err)
+	}
+	viaPkg, err := pkgorch.LaunchMeasurementUnder(spec, policy)
+	if err != nil || !bytes.Equal(viaSDK, viaPkg) {
+		t.Fatalf("granted measurement diverged: sdk %x, pkg %x (%v)", viaSDK, viaPkg, err)
+	}
+	if bytes.Equal(signed, viaSDK) {
+		t.Fatal("an allow-unsigned grant must change the launch measurement")
+	}
+
+	var refused error = &sdkorch.ImageUnsignedError{Image: spec.Image, ImageDigest: testDigest}
+	if !errors.Is(refused, sdkorch.ErrImageUnsigned) {
+		t.Fatal("ImageUnsignedError must wrap ErrImageUnsigned")
+	}
+	refused = &sdkorch.ImageSignatureRejectedError{Image: spec.Image, ImageDigest: testDigest, Cause: errors.New("untrusted signer")}
+	if !errors.Is(refused, sdkorch.ErrImageSignatureRejected) {
+		t.Fatal("ImageSignatureRejectedError must wrap ErrImageSignatureRejected")
+	}
+}
+
 // TestTrustResolutionRoundTrip exercises the trust axis through the aliases,
 // covering both the permitted and the denied path.
 func TestTrustResolutionRoundTrip(t *testing.T) {

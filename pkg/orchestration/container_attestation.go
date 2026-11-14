@@ -208,14 +208,22 @@ type ContainerAttestation struct {
 // operator trust label into one newline-free,
 // field-separated record so a verifier can reconstruct it from the spec alone.
 func LaunchMeasurement(spec *ContainerSpec) ([]byte, error) {
+	policy, err := LaunchPolicyOf(spec)
+	if err != nil {
+		return nil, err
+	}
+	return LaunchMeasurementUnder(spec, policy)
+}
+
+// LaunchMeasurementUnder returns the launch measurement of spec run under
+// policy. LaunchMeasurement uses the spec's own policy; a launch an
+// allow-unsigned grant admitted runs under that policy plus the grant.
+func LaunchMeasurementUnder(spec *ContainerSpec, policy LaunchPolicy) ([]byte, error) {
 	configDigest, err := ContainerConfigDigest(spec)
 	if err != nil {
 		return nil, err
 	}
-	policyDigest, err := LaunchPolicyDigest(spec)
-	if err != nil {
-		return nil, err
-	}
+	policyDigest := policy.Digest()
 	var buf bytes.Buffer
 	buf.WriteString("quicbaas-container-launch/v2")
 	buf.WriteByte(0)
@@ -248,6 +256,12 @@ type TPMAttestingRuntime struct {
 	// log is the node measurement log: one entry per measured launch,
 	// recorded in the same step as the PCR extend.
 	log *MeasurementLog
+
+	// images verifies a measured launch's image signature; unsigned may
+	// grant an unsigned image a measured launch. Either may be nil, which
+	// refuses the launches it would have admitted (default deny).
+	images   ImageVerifier
+	unsigned UnsignedImagePolicy
 }
 
 // MeasurementLog returns the node measurement log of this runtime.
@@ -266,7 +280,7 @@ var _ AttestingContainerRuntime = (*TPMAttestingRuntime)(nil)
 // with no TPM or no appraiser would silently degrade to Tier 0 while
 // advertising more, which is exactly the failure mode deny-by-default exists
 // to prevent.
-func NewTPMAttestingRuntime(base ContainerRuntime, tpm HostTPM, appraiser HostAppraiser, logger interfaces.Logger) (*TPMAttestingRuntime, error) {
+func NewTPMAttestingRuntime(base ContainerRuntime, tpm HostTPM, appraiser HostAppraiser, logger interfaces.Logger, opts ...TPMAttestingOption) (*TPMAttestingRuntime, error) {
 	if base == nil {
 		return nil, &InputValidationError{Field: "base", Message: "cannot be nil"}
 	}
@@ -279,7 +293,11 @@ func NewTPMAttestingRuntime(base ContainerRuntime, tpm HostTPM, appraiser HostAp
 	if logger == nil {
 		return nil, &InputValidationError{Field: "logger", Message: "cannot be nil"}
 	}
-	return &TPMAttestingRuntime{ContainerRuntime: base, tpm: tpm, appraiser: appraiser, logger: logger, log: NewMeasurementLog()}, nil
+	r := &TPMAttestingRuntime{ContainerRuntime: base, tpm: tpm, appraiser: appraiser, logger: logger, log: NewMeasurementLog()}
+	for _, opt := range opts {
+		opt(r)
+	}
+	return r, nil
 }
 
 // TrustCapabilities reports the tiers this runtime can satisfy. Digest
@@ -298,7 +316,7 @@ func (r *TPMAttestingRuntime) TrustCapabilities() TrustCapabilities {
 // starts: a measurement taken afterwards would not be a measured launch, it
 // would be an assertion that something already running was approved.
 func (r *TPMAttestingRuntime) Run(ctx context.Context, spec *ContainerSpec) (string, error) {
-	if err := r.measureLaunch(spec); err != nil {
+	if err := r.measureLaunch(ctx, spec); err != nil {
 		return "", err
 	}
 	return r.ContainerRuntime.Run(ctx, spec)
@@ -307,7 +325,7 @@ func (r *TPMAttestingRuntime) Run(ctx context.Context, spec *ContainerSpec) (str
 // RunInteractive performs a measured launch when the spec asks for one, then
 // delegates to the base runtime.
 func (r *TPMAttestingRuntime) RunInteractive(ctx context.Context, spec *ContainerSpec) (*InteractiveProcess, error) {
-	if err := r.measureLaunch(spec); err != nil {
+	if err := r.measureLaunch(ctx, spec); err != nil {
 		return nil, err
 	}
 	return r.ContainerRuntime.RunInteractive(ctx, spec)
@@ -317,7 +335,7 @@ func (r *TPMAttestingRuntime) RunInteractive(ctx context.Context, spec *Containe
 // PCR and records it in the node measurement log; a failed extend records
 // nothing and the launch is refused. It is a no-op below TrustLevelMeasured, so Tier 0 and Tier 1 launches
 // leave the TPM untouched.
-func (r *TPMAttestingRuntime) measureLaunch(spec *ContainerSpec) error {
+func (r *TPMAttestingRuntime) measureLaunch(ctx context.Context, spec *ContainerSpec) error {
 	if spec == nil {
 		return &InputValidationError{Field: "spec", Message: "cannot be nil"}
 	}
@@ -328,7 +346,11 @@ func (r *TPMAttestingRuntime) measureLaunch(spec *ContainerSpec) error {
 		return nil
 	}
 
-	measurement, err := LaunchMeasurement(spec)
+	policy, err := r.admitImage(ctx, spec)
+	if err != nil {
+		return err
+	}
+	measurement, err := LaunchMeasurementUnder(spec, policy)
 	if err != nil {
 		return err
 	}
@@ -337,22 +359,20 @@ func (r *TPMAttestingRuntime) measureLaunch(spec *ContainerSpec) error {
 	if err != nil {
 		return err
 	}
-	policyDigest, err := LaunchPolicyDigest(spec)
-	if err != nil {
-		return err
-	}
+	policyDigest := policy.Digest()
 
 	pcr := spec.EffectiveMeasurementPCR()
 	bank := spec.EffectiveMeasurementBank()
 	entry := MeasurementLogEntry{
-		Image:        spec.Image,
-		ImageDigest:  spec.ResolvedImageDigest(),
-		ConfigDigest: configDigest,
-		PolicyDigest: policyDigest,
-		TrustLabel:   spec.TrustLabel,
-		PCR:          pcr,
-		Bank:         bank,
-		Measurement:  measurement,
+		Image:         spec.Image,
+		ImageDigest:   spec.ResolvedImageDigest(),
+		ConfigDigest:  configDigest,
+		PolicyDigest:  policyDigest,
+		TrustLabel:    spec.TrustLabel,
+		AllowUnsigned: policy.AllowUnsigned,
+		PCR:           pcr,
+		Bank:          bank,
+		Measurement:   measurement,
 	}
 	readBase := func() ([]byte, error) {
 		banks, err := r.tpm.ReadPCRs([]uint{uint(pcr)})

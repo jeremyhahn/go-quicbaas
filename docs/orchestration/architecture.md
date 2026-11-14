@@ -1665,6 +1665,26 @@ did not record therefore fails even when the reference values admit the
 final register value. The log is held in memory; evidence below the
 measured tier carries none and is not replayed.
 
+A measured launch is default deny. Before anything is measured,
+`TPMAttestingRuntime` admits the image: a spec carrying an `ImageSignature`
+is checked with the runtime's `ImageVerifier` (`WithImageVerifier`), and a
+spec without one launches only when the runtime's `UnsignedImagePolicy`
+(`WithUnsignedImagePolicy`, for example `UnsignedImageGrants` keyed by trust
+label) grants it. Anything else is refused with `ErrImageUnsigned` or
+`ErrImageSignatureRejected`; a signed image on a runtime with no verifier is
+refused too. A refused launch extends no PCR and adds no log entry. An
+allow-unsigned grant is never silent: its name goes into
+`LaunchPolicy.AllowUnsigned`, so it changes the policy digest, the launch
+measurement and the PCR (`LaunchMeasurementUnder`); it is recorded and
+chained in the launch's log entry; and the runtime logs an `AUDIT` warning.
+Signed launches leave the field empty, so their policy digest is unchanged.
+
+The Verifier's image verifier is `service.NewImageVerifier`. It anchors the
+signer chain (leaf to root) at the tenant's `image-signer` endorsements,
+which must be CA certificates, and checks the leaf's signature over the
+image digest with the go-xkms attestation verifier. With no `image-signer`
+endorsement stored, no signature verifies; there is no trust on first use.
+
 PCR 16 (`MeasurementPCRDefault`) is the default target. It is the TCG PC Client
 "debug" register: resettable, not consumed by firmware or the bootloader, and
 the conventional home for application-supplied measurements, so extending it
