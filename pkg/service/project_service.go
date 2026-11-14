@@ -663,6 +663,33 @@ func (s *projectServiceImpl) refuseBound(ctx context.Context, tenantID, projectI
 	return &ProjectBindingCheckError{TenantID: tenantID, ProjectID: projectID, Cause: err}
 }
 
+// ProjectDeleteFence is the delete's half of the fence that closes the window
+// between its binding check and the delete (go-quicbaas#1303). The SDLC store
+// implements it beside the bindings; a binding reader without it gets the
+// unfenced check.
+type ProjectDeleteFence interface {
+	FenceProjectDelete(ctx context.Context, tenantID, projectID string) (string, error)
+	ClearProjectDeleteFence(ctx context.Context, tenantID, projectID, token string) error
+}
+
+// fenceDelete places the delete fence and returns what clears it. A fence
+// that cannot be placed refuses the delete, as an unreadable binding store
+// does. The clear runs detached from the request's cancellation: a fence left
+// behind blocks binds of the project until it goes stale.
+func (s *projectServiceImpl) fenceDelete(ctx context.Context, tenantID, projectID string) (func(), error) {
+	fence, ok := s.bindings.(ProjectDeleteFence)
+	if !ok || fence == nil {
+		return func() {}, nil
+	}
+	token, err := fence.FenceProjectDelete(ctx, tenantID, projectID)
+	if err != nil {
+		return nil, &ProjectBindingCheckError{TenantID: tenantID, ProjectID: projectID, Cause: err}
+	}
+	return func() {
+		_ = fence.ClearProjectDeleteFence(context.WithoutCancel(ctx), tenantID, projectID, token)
+	}, nil
+}
+
 // validateDefaultLead refuses a default lead the tenant does not define, or
 // an Agent that does not declare the lead role.
 func (s *projectServiceImpl) validateDefaultLead(ctx context.Context, tenantID string, ref orchestration.AgentRef) error {
@@ -1242,6 +1269,14 @@ func (s *projectServiceImpl) DeleteProject(ctx context.Context, req *DeleteProje
 	if err != nil {
 		return nil, s.convertStoreError(err)
 	}
+
+	// Fenced BEFORE the binding check, so a bind that commits after the check
+	// sees the fence and withdraws (go-quicbaas#1303).
+	release, err := s.fenceDelete(ctx, req.TenantID, req.ProjectID)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
 
 	// Refused before the teardown, so a refused delete leaves the managed
 	// workspace intact.

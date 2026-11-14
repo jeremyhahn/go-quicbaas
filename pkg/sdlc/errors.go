@@ -179,6 +179,24 @@ func (e *VersionConflictError) Error() string {
 // Unwrap returns the sentinel for errors.Is support.
 func (e *VersionConflictError) Unwrap() error { return ErrVersionConflict }
 
+// ProjectDeletingError refuses a bind of a project whose delete is in flight
+// (go-quicbaas#1303). The bind's binding is withdrawn before this returns, so
+// nothing is left on a project about to be deleted. It is a version conflict:
+// retrying after the delete settles either binds a project that survived, or
+// finds the project gone.
+type ProjectDeletingError struct {
+	TenantID  string
+	ProjectID string
+}
+
+// Error implements the error interface.
+func (e *ProjectDeletingError) Error() string {
+	return "sdlc: project " + e.ProjectID + " is being deleted; the bind was withdrawn, retry once the delete settles"
+}
+
+// Unwrap returns the sentinel for errors.Is support.
+func (e *ProjectDeletingError) Unwrap() error { return ErrVersionConflict }
+
 // InvalidInputError reports a caller-supplied value that was refused.
 type InvalidInputError struct {
 	Field   string

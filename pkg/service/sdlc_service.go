@@ -367,8 +367,21 @@ func (s *SDLCService) Bind(ctx context.Context, tenantID string, binding *sdlc.P
 	if err := s.routes.Record(ctx, binding.ProjectID, tenantID); err != nil {
 		return nil, err
 	}
+	// A REBIND IS NOT FENCED. A binding was held throughout, so a delete's
+	// binding check sees one whatever the interleaving and refuses. Only a
+	// fresh bind can slip behind a delete's check (go-quicbaas#1303).
+	_, priorErr := s.store.GetBinding(ctx, tenantID, binding.ProjectID)
+	fresh := errors.Is(priorErr, sdlc.ErrNotFound)
+	if priorErr != nil && !fresh {
+		return nil, priorErr
+	}
 	if err := s.store.PutBinding(ctx, tenantID, binding); err != nil {
 		return nil, err
+	}
+	if fresh {
+		if err := s.withdrawIfDeleting(ctx, tenantID, binding.ProjectID); err != nil {
+			return nil, err
+		}
 	}
 	s.warnSystemTenantBind(tenantID, binding.ProjectID)
 	// PROVISIONED LAST, AND THE ORDER IS DELIBERATE. The route index and the
@@ -385,6 +398,29 @@ func (s *SDLCService) Bind(ctx context.Context, tenantID string, binding *sdlc.P
 		return nil, err
 	}
 	return binding, nil
+}
+
+// withdrawIfDeleting is the bind's half of the delete fence
+// (sdlc.Store.FenceProjectDelete): read only after the fresh binding is
+// written. A fence held means a delete may have checked for a binding before
+// this one landed, so the binding and its route are withdrawn and the bind is
+// refused. If the fence cannot be read, the binding is withdrawn as well: a
+// bind that cannot rule out the delete must not stand behind it.
+func (s *SDLCService) withdrawIfDeleting(ctx context.Context, tenantID, projectID string) error {
+	fenced, err := s.store.ProjectDeleteFenced(ctx, tenantID, projectID)
+	if err == nil && !fenced {
+		return nil
+	}
+	if delErr := s.store.DeleteBinding(ctx, tenantID, projectID); delErr != nil {
+		return delErr
+	}
+	if fgErr := s.routes.Forget(ctx, projectID, tenantID); fgErr != nil {
+		return fgErr
+	}
+	if err != nil {
+		return err
+	}
+	return &sdlc.ProjectDeletingError{TenantID: tenantID, ProjectID: projectID}
 }
 
 // checkReviewerSecrets refuses a binding that names a reviewer profile whose

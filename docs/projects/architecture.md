@@ -104,8 +104,19 @@ binding reader is wired on every node with a tenant store resolver, whether
 or not the SDLC module is enabled. A node without a resolver has no binding
 store, so no binding can exist, and the delete goes ahead.
 
-Known gap: the check and the delete are separate writes. A bind that commits
-between them leaves a binding on a deleted project.
+The check and the delete are separate writes, so a delete **fences** the
+project first (go-quicbaas#1303). It writes a delete fence into the tenant's
+SDLC store, beside the bindings, then checks for a binding, then tears down
+and deletes, then clears the fence, whether it deleted or refused. A fresh bind
+reads the fence after it writes its binding. If a fence is there, the bind
+withdraws its binding and route and returns `sdlc.ProjectDeletingError`, a
+version conflict (`409`). Each side writes its own mark and then reads the
+other's, so at least one of them sees the other: a delete and a bind can both
+refuse, and a retry settles it, but they never both succeed. A rebind is not
+withdrawn: a binding was held the whole time, so the delete's check sees it
+and refuses. A fence a crashed delete leaves behind stops holding after
+`sdlc.DeleteFenceTTL` (10 minutes). A fence that cannot be written refuses
+the delete with `ProjectBindingCheckError`.
 
 ## Identity: id, name and source repository
 
