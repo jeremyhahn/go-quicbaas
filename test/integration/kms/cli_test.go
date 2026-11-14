@@ -117,26 +117,37 @@ func newCLITestContext(t *testing.T, protocol, address string) *cliTestContext {
 // The system admin is the suite's interim principal for these commands: the
 // tests ran with no credential before. A narrower tenant session for the KMS
 // commands is planned.
-func (c *cliTestContext) sessionEnv() []string {
+//
+// It never calls FailNow: c.t is the parent test, and run may be called from
+// a subtest's goroutine. A login or token-save failure marks c.t failed with
+// Errorf and is returned, so the caller's own test stops on it.
+func (c *cliTestContext) sessionEnv() ([]string, error) {
 	c.t.Helper()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
 	bearer, expiresAt, err := helpers.AuthPIVSession(ctx, getRESTEndpoints()[0], "", "", "")
-	require.NoError(c.t, err, "PIV login for the CLI bearer failed")
+	if err != nil {
+		c.t.Errorf("PIV login for the CLI bearer failed: %v", err)
+		return nil, fmt.Errorf("CLI session: %w", err)
+	}
 
 	tokenPath := filepath.Join(c.home, ".quicbaas", "token")
-	require.NoError(c.t, clitoken.SaveToken(tokenPath, &clitoken.TokenData{
+	if err := clitoken.SaveToken(tokenPath, &clitoken.TokenData{
 		AccessToken: bearer,
 		ExpiresAt:   expiresAt,
 		TokenType:   "Bearer",
-	}), "persist the CLI bearer")
+	}); err != nil {
+		c.t.Errorf("persist the CLI bearer: %v", err)
+		return nil, fmt.Errorf("CLI session: %w", err)
+	}
 
-	return append(os.Environ(), "HOME="+c.home)
+	return append(os.Environ(), "HOME="+c.home), nil
 }
 
 // run executes a CLI command with the configured protocol and address.
+// A CLI session failure is returned before the process starts.
 func (c *cliTestContext) run(args ...string) (string, error) {
 	c.t.Helper()
 
@@ -149,7 +160,10 @@ func (c *cliTestContext) run(args ...string) (string, error) {
 	}
 	fullArgs = append(fullArgs, args...)
 
-	env := c.sessionEnv()
+	env, err := c.sessionEnv()
+	if err != nil {
+		return "", err
+	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), c.timeout)
 	defer cancel()
@@ -160,7 +174,7 @@ func (c *cliTestContext) run(args ...string) (string, error) {
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 
-	err := cmd.Run()
+	err = cmd.Run()
 
 	c.t.Logf("[%s] %s %s", c.protocol, c.binary, strings.Join(fullArgs, " "))
 	if stdout.Len() > 0 {
@@ -178,6 +192,8 @@ func (c *cliTestContext) run(args ...string) (string, error) {
 }
 
 // runExpectError executes a CLI command expecting it to fail.
+// A CLI session failure is returned before the process starts; sessionEnv
+// has already failed the test, so an expected-error check cannot hide it.
 func (c *cliTestContext) runExpectError(args ...string) (string, error) {
 	c.t.Helper()
 
@@ -189,7 +205,10 @@ func (c *cliTestContext) runExpectError(args ...string) (string, error) {
 	}
 	fullArgs = append(fullArgs, args...)
 
-	env := c.sessionEnv()
+	env, err := c.sessionEnv()
+	if err != nil {
+		return "", err
+	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), c.timeout)
 	defer cancel()
@@ -200,7 +219,7 @@ func (c *cliTestContext) runExpectError(args ...string) (string, error) {
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 
-	err := cmd.Run()
+	err = cmd.Run()
 
 	c.t.Logf("[%s] %s %s", c.protocol, c.binary, strings.Join(fullArgs, " "))
 	if stdout.Len() > 0 {
