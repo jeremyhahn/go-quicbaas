@@ -124,6 +124,9 @@ runs test-iam "-tags '$IAM_TEST_TAGS'" ./pkg/iam/...
 runs test-rag "-tags '$TEST_TAGS' ./pkg/rag/..." \
 	"-tags '$TEST_TAGS' -run \"TestHandleRAG\" ./pkg/api/rest/..." \
 	"-tags '$TEST_TAGS' -run \"TestRAG\" ./pkg/api/mcp/..."
+# test-sdk-go must run the qrdb_vector-tagged re-export of go-qrdb's RAG
+# client (sdk/go/qrdb_rag.go, #1672): untagged, it never compiles.
+runs test-sdk-go "-tags qrdb_vector -run 'QRDBRAG' ."
 expect bench-iam-dpop pkg/iam/dpop "$IAM_TEST_TAGS"
 expect coverage-iam-dpop pkg/iam/dpop "$IAM_TEST_TAGS"
 expect test-iam-dpop pkg/iam/dpop "$IAM_TEST_TAGS"

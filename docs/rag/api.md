@@ -42,6 +42,28 @@ MCP tools: `quicbaas_rag_build_context`, `quicbaas_rag_query`
 | `BuildContext` | `POST /api/v1/rag/context` | yes | yes | MISSING | MISSING | `rag:query` |
 | `Query` | `POST /api/v1/rag/query` | yes | yes | MISSING | MISSING | `rag:query` |
 
+### go-qrdb's RAG service — `quicbaas.QRDBRAG(c)` (`qrdb_vector` builds)
+
+`sdk/go` re-exports go-qrdb's own RAG client (`sdk/go/qrdb_rag.go`): the
+interface as `QRDBRAGClient`, and its request and response types as
+`QRDBRAGIngestRequest`, `QRDBRAGQueryRequest`, `QRDBRAGDeleteDocumentRequest`,
+`QRDBRAGListDocumentsRequest` and their responses. They are aliases, so they
+are go-qrdb's types and not copies. `quicbaas.QRDBRAG(c)` returns the client.
+It runs over the qrdb sub-client, which uses the same transport and address
+as `c`. It returns an error if that sub-client cannot be built, or if its
+transport does not implement go-qrdb's RAG service.
+
+| Method | Does |
+|---|---|
+| `RAGIngestDocument` | chunks (`fixed`, `sentence`, `paragraph`), embeds and stores a document |
+| `RAGQuery` | embeds the query and returns the nearest passages of a namespace |
+| `RAGDeleteDocument` | removes a document, its chunk vectors and KV entries |
+| `RAGListDocuments` | pages through a namespace's ingested documents |
+
+go-qrdb builds its RAG client only under the `qrdb_vector` tag, so the
+re-export does too. `quicbaas.RAG` (above, `Client.RAG()`) is still QuicBaaS's
+own pipeline. It is the parallel implementation the SPEC row keeps until the
+owner retires it.
 
 ## Overview
 

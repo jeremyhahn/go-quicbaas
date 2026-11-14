@@ -5089,6 +5089,9 @@ test-sdk-go: ## Run Go SDK unit tests (excludes integration tests)
 	@echo "$(BLUE)Running Go SDK unit tests...$(NC)"
 	@cd sdk/go || exit 1; $(call go_packages,./...,/test/); \
 	CGO_ENABLED=1 go test -v -race -count=1 $$pkgs
+	@# go-qrdb builds its RAG client only under qrdb_vector, so the SDK's
+	@# re-export of it (qrdb_rag.go, SPEC row rag #1672) needs a tagged pass.
+	cd sdk/go && CGO_ENABLED=1 go test -race -count=1 -tags qrdb_vector -run 'QRDBRAG' .
 	@echo "$(GREEN)✓ Go SDK unit tests passed$(NC)"
 
 .PHONY: test-sdk-go-coverage
