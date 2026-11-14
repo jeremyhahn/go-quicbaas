@@ -235,7 +235,7 @@ func (a *caServiceAdapter) IssueCertificate(
 		return nil, err
 	}
 
-	opts := a.signOptionsWithSPIFFE(req.Profile, req.ValidityDays, req.TenantID)
+	opts := a.signOptionsWithSPIFFE(req.Profile, req.ValidityDays, req.TenantID, req.CommonName)
 
 	cert, err := a.getCA().SignCSR(ctx, csrPEM, opts)
 	if err != nil {
@@ -277,7 +277,7 @@ func (a *caServiceAdapter) IssueCertificate(
 // (single-domain / pre-broker mode). Returns nil only when profile, validity
 // and tenant are all empty, so the CA applies its own profile defaults
 // unchanged.
-func (a *caServiceAdapter) signOptionsWithSPIFFE(profile string, validityDays int, tenantID string) *xkmssdk.TrustedCASignOptions {
+func (a *caServiceAdapter) signOptionsWithSPIFFE(profile string, validityDays int, tenantID, commonName string) *xkmssdk.TrustedCASignOptions {
 	if profile == "" && validityDays <= 0 && tenantID == "" {
 		return nil
 	}
@@ -290,6 +290,9 @@ func (a *caServiceAdapter) signOptionsWithSPIFFE(profile string, validityDays in
 	if trustDomain != "" && tenantID != "" {
 		opts.SPIFFETrustDomain = trustDomain
 		opts.SPIFFEKind = service.SPIFFEKindForProfile(profile)
+		// The subject CN is kept as requested; the SAN's workload name is
+		// derived from it as a valid SPIFFE path segment (#1894).
+		opts.SPIFFEName = service.SPIFFEWorkloadName(commonName)
 	}
 	return opts
 }
@@ -306,7 +309,7 @@ func (a *caServiceAdapter) SignCSR(
 		return nil, ErrCAServiceAdapterInvalidPEM
 	}
 
-	opts := a.signOptionsWithSPIFFE(req.Profile, req.ValidityDays, req.TenantID)
+	opts := a.signOptionsWithSPIFFE(req.Profile, req.ValidityDays, req.TenantID, service.CSRCommonName(req.CSRPEM))
 
 	cert, err := a.getCA().SignCSR(ctx, req.CSRPEM, opts)
 	if err != nil {

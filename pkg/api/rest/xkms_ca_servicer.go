@@ -145,7 +145,7 @@ func (a *xkmsCAServicer) SignCSR(ctx context.Context, req *xkmstransport.SignCSR
 	if err != nil {
 		return nil, err
 	}
-	opts := a.signOptionsWithSPIFFE(req.Profile, req.ValidityDays, tenantID)
+	opts := a.signOptionsWithSPIFFE(req.Profile, req.ValidityDays, tenantID, service.CSRCommonName(req.CSRPEM))
 
 	cert, err := a.ca.SignCSR(ctx, req.CSRPEM, opts)
 	if err != nil {
@@ -187,6 +187,9 @@ func (a *xkmsCAServicer) applyKeypairSPIFFE(certReq *xkmssdk.TrustedCACertificat
 	}
 	certReq.SPIFFETrustDomain = a.spiffeTrustDomain
 	certReq.SPIFFEKind = service.SPIFFEKindForProfile(profile)
+	// The subject CN is kept as requested; the SAN's workload name is derived
+	// from it as a valid SPIFFE path segment (#1894).
+	certReq.SPIFFEName = service.SPIFFEWorkloadName(certReq.Subject.CommonName)
 }
 
 // signOptionsWithSPIFFE builds the TrustedCASignOptions for a CSR signing
@@ -194,7 +197,7 @@ func (a *xkmsCAServicer) applyKeypairSPIFFE(certReq *xkmssdk.TrustedCACertificat
 // request tenant, and the SPIFFE workload kind derived from the certificate
 // profile. When the trust domain or tenant is empty the CA omits the SPIFFE
 // SAN (single-domain / pre-broker mode).
-func (a *xkmsCAServicer) signOptionsWithSPIFFE(profile string, validityDays int, tenantID string) *xkmssdk.TrustedCASignOptions {
+func (a *xkmsCAServicer) signOptionsWithSPIFFE(profile string, validityDays int, tenantID, commonName string) *xkmssdk.TrustedCASignOptions {
 	opts := &xkmssdk.TrustedCASignOptions{
 		Profile:      profile,
 		ValidityDays: validityDays,
@@ -203,6 +206,7 @@ func (a *xkmsCAServicer) signOptionsWithSPIFFE(profile string, validityDays int,
 	if a.spiffeTrustDomain != "" && tenantID != "" {
 		opts.SPIFFETrustDomain = a.spiffeTrustDomain
 		opts.SPIFFEKind = service.SPIFFEKindForProfile(profile)
+		opts.SPIFFEName = service.SPIFFEWorkloadName(commonName)
 	}
 	return opts
 }
