@@ -2886,6 +2886,15 @@ func (s *agentServiceImpl) CloseSession(ctx context.Context, req *CloseSessionRe
 			return nil, err
 		}
 		if record.Status == SessionStateClosed {
+			// Satisfied only once the log agrees: a closed record over a log
+			// that never ended is finished here rather than reported as done
+			// (#201).
+			if record.TenantID == "" {
+				record.TenantID = tenantID
+			}
+			if repairErr := s.repairConcludedLog(ctx, record); repairErr != nil {
+				return nil, repairErr
+			}
 			return &CloseSessionResponse{
 				SessionID: req.SessionID,
 				Timestamp: time.Now().UnixNano(),
