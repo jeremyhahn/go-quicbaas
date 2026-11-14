@@ -1,3 +1,5 @@
+//go:build rest
+
 // Copyright (c) 2026 Jeremy Hahn
 // SPDX-License-Identifier: AGPL-3.0-only
 
