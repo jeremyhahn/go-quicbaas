@@ -33,14 +33,24 @@ Every row below is derived from source, not from prose. The columns mean:
 
 ### `quicbaas.RAG` — SDK package `sdk/go/client/rag`
 
-Dedicated transport handlers: rest=yes, grpc=yes, mcp=no; embedded routes registered: 0; MCP tools registered server-side: 2.
+Dedicated transport handlers: rest=yes, grpc=yes, mcp=no; embedded routes registered: 2 (`rag` builds); MCP tools registered server-side: 2.
 
 MCP tools: `quicbaas_rag_build_context`, `quicbaas_rag_query`
 
 | SDK method | REST route (transport) | Served? | gRPC | MCP | Embedded | Permission |
 |---|---|---|---|---|---|---|
-| `BuildContext` | `POST /api/v1/rag/context` | yes | yes | MISSING | MISSING | `rag:query` |
-| `Query` | `POST /api/v1/rag/query` | yes | yes | MISSING | MISSING | `rag:query` |
+| `BuildContext` | `POST /api/v1/rag/context` | yes | yes | MISSING | yes | `rag:query` |
+| `Query` | `POST /api/v1/rag/query` | yes | yes | MISSING | yes | `rag:query` |
+
+One service, every transport (#1611): `pkg/rag/ragservice` holds the only
+`Query` and `BuildContext`. The REST handlers, the server-side MCP tools,
+the node's gRPC `quicbaas.rag.v1.RAGService` (`pkg/api/grpc/server_rag.go`,
+registered by `registerRAGService`, authorized as `rag:query`) and the
+embedded routes `quicbaas.RAG/Query` and `quicbaas.RAG/BuildContext`
+(`sdk/go/transport/embedded/handlers_rag.go`) only convert their own types
+and call it. Its typed errors come back as invalid input (no query, no
+namespace, no results) or unavailable (Ollama or the vector store not
+configured), on every transport.
 
 ### go-qrdb's RAG service — `quicbaas.QRDBRAG(c)` (`qrdb_vector` builds)
 
