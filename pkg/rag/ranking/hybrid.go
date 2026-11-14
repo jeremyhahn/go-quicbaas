@@ -29,7 +29,7 @@ type HybridRanker struct {
 func NewHybridRanker(config Config, reranker Reranker) *HybridRanker {
 	return &HybridRanker{
 		bm25:     NewBM25(config.BM25K1, config.BM25B),
-		rrf:      NewRRF(config.RRFK),
+		rrf:      NewWeightedRRF(config.RRFK, config.VectorWeight, config.KeywordWeight),
 		reranker: reranker,
 		config:   config,
 	}

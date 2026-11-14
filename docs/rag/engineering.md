@@ -96,6 +96,12 @@ type RankingConfig struct {
 | `RerankTopK` | Rerank candidates | 50 |
 | `RRFK` | RRF smoothing constant | 60 |
 
+Hybrid fusion is weighted RRF. A result at 0-based rank `r` in the vector
+list scores `VectorWeight / (RRFK + r)`, and at rank `r` in the keyword
+list `KeywordWeight / (RRFK + r)`. A result in both lists gets the sum.
+When both weights are 0, both lists count as 1. Equal scores are ordered
+by result ID, so the same input always ranks the same way.
+
 ### Context Configuration
 
 ```go
