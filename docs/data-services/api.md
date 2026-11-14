@@ -31,6 +31,24 @@ Every row below is derived from source, not from prose. The columns mean:
 - **Permission** — `resource:action` from
   `pkg/api/rest/routes_permissions_generated.go`.
 
+### go-qrdb's data services — `Client.QRDBData()`
+
+`Client.QRDBData()` returns `QRDBDataService`, whose accessors are go-qrdb's
+own clients by alias, carried on the transport the QuicBaaS client was built
+with (the embedded go-qrdb node when it is built `WithEmbeddedQRDB`):
+
+| Accessor | Returns (alias of go-qrdb `sdk/go/transport`) |
+|---|---|
+| `KV()` | `QRDBKVClient` (`KVClient`) |
+| `Batch()` | `QRDBBatchClient` (`BatchClient`) |
+| `Transaction()` | `QRDBTransactionClient` (`TransactionClient`) |
+| `MVCC()` | `QRDBMVCCClient` (`MVCCClient`) |
+| `Collections()` | `QRDBCollectionClient` (`CollectionClient`) |
+| `Index()` | `QRDBIndexClient` (`IndexClient`) |
+
+go-quicbaas wraps none of them; the go-qrdb SDK client (`*QRDBClient`) is
+the service. Permissions are go-qrdb's.
+
 ### `quicbaas.KV` — SDK package `sdk/go/client/kv`
 
 Dedicated transport handlers: rest=yes, grpc=yes, mcp=no; embedded routes registered: 6; MCP tools registered server-side: 0.

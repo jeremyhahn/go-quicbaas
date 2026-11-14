@@ -2599,6 +2599,10 @@ func (m *mockSDKClientForClusterCovPlusTest) Search() quicbaas.SearchService    
 func (m *mockSDKClientForClusterCovPlusTest) Storage() quicbaas.StorageService   { return nil }
 func (m *mockSDKClientForClusterCovPlusTest) Async() quicbaas.AsyncService       { return nil }
 func (m *mockSDKClientForClusterCovPlusTest) AI() quicbaas.AIService             { return nil }
+func (m *mockSDKClientForClusterCovPlusTest) QRDBData() (quicbaas.QRDBDataService, error) {
+	return nil, nil
+}
+
 func (m *mockSDKClientForClusterCovPlusTest) DataStore() (quicbaas.QRDBKVStore, error) {
 	return nil, nil
 }

@@ -752,3 +752,13 @@ func (c *client) DataStore() (QRDBKVStore, error) {
 	}
 	return qrdb.KVStore(), nil
 }
+
+// QRDBData returns go-qrdb's data services through the go-qrdb SDK client
+// this client carries; go-quicbaas wraps none of them.
+func (c *client) QRDBData() (QRDBDataService, error) {
+	qrdb, err := c.qrdbClient()
+	if err != nil {
+		return nil, err
+	}
+	return qrdb, nil
+}
