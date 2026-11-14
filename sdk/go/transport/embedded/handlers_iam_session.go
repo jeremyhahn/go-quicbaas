@@ -69,7 +69,7 @@ func sessionManagerFor(ctx context.Context, svc service.QuicBaaS) (service.Sessi
 // denied rather than served, so a caller cannot read or revoke a session by
 // guessing its id.
 func requireSessionOwner(subject interfaces.Subject, s *iam.SessionExt, method string) error {
-	if s == nil || strconv.FormatUint(s.UserID, 10) != subject.ID || s.TenantID != subject.TenantID {
+	if !s.OwnedBy(subject.ID, subject.TenantID) {
 		return NewPermissionDeniedError("quicbaas.IAM.Session", method, "access denied")
 	}
 	return nil

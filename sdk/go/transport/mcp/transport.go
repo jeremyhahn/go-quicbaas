@@ -1194,6 +1194,9 @@ func ToolName(service, method string) string {
 		}
 		return "quicbaas_rbac_" + camelToSnake(method)
 	case "Auth":
+		if toolName, ok := authSessionTools[method]; ok {
+			return toolName
+		}
 		switch method {
 		case "BeginLogin":
 			return "quicbaas_login_begin"
