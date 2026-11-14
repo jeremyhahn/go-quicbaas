@@ -14,12 +14,12 @@
 package iam_test
 
 import (
-	"strings"
 	"testing"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
+	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
 	quicbaaspermission "github.com/jeremyhahn/go-quicbaas/pkg/permission"
 )
 
@@ -45,6 +45,23 @@ func TestAgentRuntimeGrant_MatchesTheContributedVocabulary(t *testing.T) {
 	}
 }
 
+// TestAgentRuntimeScopes_MatchTheContributedVocabulary pins the agent
+// runtime verbs the spawn server checks to the ones pkg/permission
+// registers (SPEC Authorization clean-up D6).
+func TestAgentRuntimeScopes_MatchTheContributedVocabulary(t *testing.T) {
+	pairs := map[string]qrdbsdk.Permission{
+		orchestration.AgentScopeRuntimeSpawn:  quicbaaspermission.AgentRuntimeSpawn,
+		orchestration.AgentScopeRuntimePrompt: quicbaaspermission.AgentRuntimePrompt,
+		orchestration.AgentScopeRuntimeStatus: quicbaaspermission.AgentRuntimeStatus,
+		orchestration.AgentScopeRuntimeInfer:  quicbaaspermission.AgentRuntimeInfer,
+	}
+	for scope, perm := range pairs {
+		if scope != string(perm) {
+			t.Errorf("orchestration spells %q, permission spells %q; the two must agree", scope, perm)
+		}
+	}
+}
+
 // TestAgentRuntimeGrant_IsRegisteredVocabulary asserts every permission the
 // grant names is one qrdb's registry admits after QuicBaaS contributes its own.
 // A role cannot hold an unregistered permission — qrdb's role store rejects it
@@ -52,13 +69,10 @@ func TestAgentRuntimeGrant_MatchesTheContributedVocabulary(t *testing.T) {
 func TestAgentRuntimeGrant_IsRegisteredVocabulary(t *testing.T) {
 	quicbaaspermission.Register()
 
-	for _, granted := range iam.FleetRuntimeGrant() {
-		// The service-surface scopes (agent:runtime:*) are the daemon's OWN
-		// spawn-server vocabulary, checked in-process by GRPCSpawnServer and
-		// never presented to qrdb's PDP, so they are not registry members.
-		if strings.HasPrefix(granted, "agent:runtime:") {
-			continue
-		}
+	// The agent:runtime:* verbs are registry members too (SPEC
+	// Authorization clean-up D6), so the whole grant is checked, plus the
+	// infer verb the spawn server also demands.
+	for _, granted := range append(iam.FleetRuntimeGrant(), orchestration.FleetRuntimeScopes()...) {
 		if !qrdbsdk.IsPermissionRegistered(qrdbsdk.Permission(granted)) {
 			t.Errorf("agent runtime grant names %q, which no registry defines; "+
 				"a role cannot hold it and every route it guards is unreachable", granted)
