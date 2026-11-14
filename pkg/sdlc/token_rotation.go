@@ -211,10 +211,11 @@ func RotationTokenName(purpose string, slot uint64) string {
 // name, and overwrite the single intent record — the per-instance defect
 // the work-item stripe registry was cured of on the same branch family.
 // ACROSS processes nothing here arbitrates: the secrets store port carries
-// no guarded write, so the boundary is the process — which is exactly what
-// the module's boot enforces (startSDLC refuses cluster-like modes; nothing
-// constructs a rotator outside that host) — until the storage-level
-// compare-and-swap work lands (go-quicbaas#105).
+// no guarded write, so the boundary is the process. The sdlc module itself
+// runs on cluster-like nodes (its guarded writes go through the transaction
+// plane, see sdlcTransactor), but no host constructs a rotator: wiring one on
+// a cluster-like node needs a guarded secrets write first, or two nodes can
+// rotate the same path at once.
 type TokenRotator struct {
 	lifecycle ForgeTokenLifecycle
 	store     TokenSecretStore
