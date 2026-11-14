@@ -357,46 +357,16 @@ func (a *IAMServiceAdapter) UpdateUser(ctx context.Context, user *iam.User) (*ia
 	if user.Lifecycle != "" {
 		opts.Lifecycle = &user.Lifecycle
 	}
+	// The replacement set goes to UpdateUser in one write: it resolves every
+	// role id before writing anything, so a missing role leaves the old set.
+	if len(user.Roles) > 0 {
+		opts.Roles = &user.Roles
+	}
 
 	updated, err := a.identityStore.UpdateUser(ctx, user.TenantID, user.ID, opts)
 	if err != nil {
 		return nil, err
 	}
-
-	// Update roles if provided - get current roles first
-	currentUser, err := a.identityStore.GetUser(ctx, user.TenantID, user.ID)
-	if err != nil {
-		return nil, err
-	}
-
-	// Simple update: if roles are different, update them
-	if len(user.Roles) > 0 {
-		// Remove old roles not in new set
-		roleMap := make(map[string]bool)
-		for _, r := range user.Roles {
-			roleMap[r] = true
-		}
-		for _, oldRole := range currentUser.Roles {
-			if !roleMap[oldRole] {
-				if err := a.identityStore.RevokeRole(ctx, user.TenantID, user.ID, oldRole); err != nil {
-					return nil, err
-				}
-			}
-		}
-		// Add new roles not in old set
-		oldRoleMap := make(map[string]bool)
-		for _, r := range currentUser.Roles {
-			oldRoleMap[r] = true
-		}
-		for _, newRole := range user.Roles {
-			if !oldRoleMap[newRole] {
-				if err := a.identityStore.AssignRole(ctx, user.TenantID, user.ID, newRole); err != nil {
-					return nil, err
-				}
-			}
-		}
-	}
-
 	return updated, nil
 }
 

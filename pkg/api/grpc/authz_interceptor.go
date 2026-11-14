@@ -22,8 +22,10 @@ import (
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 
+	iampb "github.com/jeremyhahn/go-quicbaas/api/proto/iam"
 	"github.com/jeremyhahn/go-quicbaas/pkg/api/sealedwindow"
 	"github.com/jeremyhahn/go-quicbaas/pkg/auth"
+	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/platformtoken"
@@ -190,8 +192,91 @@ func UnaryAuthorizationInterceptor(authorizer GRPCValidatorAuthorizer, opts ...A
 		if err != nil {
 			return nil, err
 		}
+		if err := authorizeGRPCArguments(ctx, info.FullMethod, req, authorizer); err != nil {
+			return nil, err
+		}
 		return handler(authedCtx, req)
 	}
+}
+
+// roleAssignmentPermission is the permission the AssignRole verb declares.
+const roleAssignmentPermission = "roles:assign"
+
+// rolesCarrier is a request that can carry a roles list.
+type rolesCarrier interface {
+	GetRoles() []string
+}
+
+// requireRolesAssign asks for roles:assign when the request carries roles. A
+// user create or update that sets roles assigns them as surely as AssignRole
+// does: without this, a caller holding only users:update could write the
+// tenant Admin role into its own account. proto3 repeated fields have no
+// presence, so an empty list means the request sets no roles.
+func requireRolesAssign(req interface{}) []string {
+	carrier, ok := req.(rolesCarrier)
+	if !ok || len(carrier.GetRoles()) == 0 {
+		return nil
+	}
+	return []string{roleAssignmentPermission}
+}
+
+// requireUserUpdateArguments is requireRolesAssign plus the attributes and
+// lifecycle rules. A user's attributes feed ABAC, so writing them is an
+// authorization write like writing roles and needs roles:assign (asked once
+// when the request carries both). Moving a user to "active" needs
+// users:enable and to any other lifecycle users:disable, as REST's approve
+// and reject routes declare, so users:update alone cannot approve or suspend
+// a user.
+func requireUserUpdateArguments(req interface{}) []string {
+	perms := requireRolesAssign(req)
+	update, ok := req.(*iampb.UpdateUserRequest)
+	if ok && len(update.GetAttributes()) > 0 && len(perms) == 0 {
+		perms = append(perms, roleAssignmentPermission)
+	}
+	if !ok || update.GetLifecycle() == "" {
+		return perms
+	}
+	if update.GetLifecycle() == string(iam.LifecycleActive) {
+		return append(perms, "users:enable")
+	}
+	return append(perms, "users:disable")
+}
+
+// grpcArgumentPermissions maps a full method name to the permissions its
+// request arguments demand on top of the method's own permission.
+var grpcArgumentPermissions = map[string]func(req interface{}) []string{
+	iampb.IAMService_CreateUser_FullMethodName: requireRolesAssign,
+	iampb.IAMService_UpdateUser_FullMethodName: requireUserUpdateArguments,
+}
+
+// grpcArgumentPermissionsFor returns the extra permissions req demands for
+// fullMethod, or nil when the method has none.
+func grpcArgumentPermissionsFor(fullMethod string, req interface{}) []string {
+	permissionsFor, ok := grpcArgumentPermissions[fullMethod]
+	if !ok {
+		return nil
+	}
+	return permissionsFor(req)
+}
+
+// authorizeGRPCArguments checks each argument-dependent permission of the
+// request, after the method's own permission was granted. It fails closed: a
+// missing token is refused, and any denial maps through validatorGRPCStatus.
+func authorizeGRPCArguments(ctx context.Context, fullMethod string, req interface{}, authorizer GRPCValidatorAuthorizer) error {
+	perms := grpcArgumentPermissionsFor(fullMethod, req)
+	if len(perms) == 0 {
+		return nil
+	}
+	token := bearerFromContext(ctx)
+	if token == "" {
+		return status.Error(codes.Unauthenticated, (&MissingTokenError{Method: fullMethod}).Error())
+	}
+	for _, perm := range perms {
+		if _, err := authorizer.Authorize(ctx, token, perm, "", "", ""); err != nil {
+			return validatorGRPCStatus(err)
+		}
+	}
+	return nil
 }
 
 // StreamAuthorizationInterceptor is the streaming counterpart of
