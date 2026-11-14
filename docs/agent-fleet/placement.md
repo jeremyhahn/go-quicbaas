@@ -2,9 +2,9 @@
 
 > **Status: DESIGN** · Last verified: 2026-11-13
 > The design for SPEC row `declarative-placement` (go-quicbaas#28, row issue
-> #1677), built by salvaging the archived wp13 placement and wp14 actuation
-> work (go-quicbaas#761) onto today's fleet code. Nothing
-> here is built yet. Where a question needs the owner or the CA it is listed
+> #1681), built by salvaging the archived wp13 placement and wp14 actuation
+> work (go-quicbaas#761) onto today's fleet code. P0 and P1 (the spec, its
+> store and the host inventory) are built; the rest is not. Where a question needs the owner or the CA it is listed
 > under [Open questions](#open-questions), not decided.
 
 Placement says **where a class of work may run**, reports where it actually
@@ -20,7 +20,7 @@ A `PlacementSpec` places a workload class onto **hosts**:
 | Field | Meaning |
 |---|---|
 | `name` | Identifies the spec within its tenant |
-| `workload_class` | What it places (see [classes](#actuation)) |
+| `role` | What it places (see [classes](#actuation)); the archive's `workload_class` |
 | `hosts` | The admissible hosts; empty means any host that passes the capability check |
 | `required_capabilities` | All must be present on a host. A hard match, never a score |
 | `actuate` | False: report drift only. True: the actuator may move work |
@@ -63,7 +63,7 @@ names its target in one of two ways, and never both:
 
 | Field | Meaning |
 |---|---|
-| `role` | The workload class the spec places: `agent`, `ci`, `review`, … (the `workload_class` above, under the owner's word) |
+| `role` | The workload class the spec places: `agent`, `ci`, `review`, … (the owner's word for the archive's `workload_class`) |
 | `host_count` | How many admissible hosts carry the role. The actuator picks them, ordered by measured room |
 | `hosts` | The named hosts that carry the role. A count is then implied by the list |
 
@@ -258,7 +258,7 @@ Each slice is one lane (≤ ~150 turns), lands green and leaves main shippable.
 | # | Slice | Tests and verification |
 |---|---|---|
 | P0 | **Landed.** Re-apply 3f7eb214: every `RequiredCapabilities` entry is a hard match in `matchFleetNodeForTask` (`persistent_sessions` stays backend-scoped) | Table test per capability. A regression test that a `docker` requirement no longer dispatches to an agent without it. `make test-orchestration` |
-| P1 | `PlacementSpec` with `role` and `host_count` or `hosts`, a per-role `FleetJobProfile`, validation, tenant-scoped store with CAS generation, `FleetInventory` grouping by host, the refusal error types | Lost-edit test (two racing declares, one `PlacementSpecStaleError`), using `pkg/testutil/qrdbnode` under the consensus-arbitration carve-out. A control test feeding the same records through a one-for-one inventory (refused) and through the adapter (reported). `make test-orchestration` |
+| P1 | **Landed on the row branch** (`placement.go`, `placement_store.go`, `placement_inventory.go`; the lost-edit test runs on `NewMemoryTaskKV`'s guarded writes). `PlacementSpec` with `role` and `host_count` or `hosts`, a per-role `FleetJobProfile`, validation, tenant-scoped store with CAS generation, `FleetInventory` grouping by host, the refusal error types | Lost-edit test (two racing declares, one `PlacementSpecStaleError`), using `pkg/testutil/qrdbnode` under the consensus-arbitration carve-out. A control test feeding the same records through a one-for-one inventory (refused) and through the adapter (reported). `make test-orchestration` |
 | P2 | Read-only `DriftReporter` over specs, the inventory and `SessionRecord`, the field-coverage check, the unnameable-work refusal | One test per finding kind. Mutation checks that an unclassified field fails construction. Duplicate-host and tenantless-session refusals. `make test-orchestration` |
 | P3a | `PlacementService` (declare/get/list/withdraw/drift), `placement:read`/`write` contributions, REST + gRPC + embedded + SDK client | Service tests with error paths. Authz table tests (denied without the permission, cross-tenant refused). `make test-service`, `test-api-rest`, `test-api-grpc` and the SDK client's package target |
 | P3b | The same verbs on QUIC, MCP, Unix and the CLI. Docs in `api.md` / `cli.md` | Per-transport handler tests. Parity test across transports. A new `integration-test-fleet-placement` E2E over every transport (CI runs it, since it needs Docker) |

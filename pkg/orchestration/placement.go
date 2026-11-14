@@ -30,12 +30,22 @@ type PlacementSpec struct {
 	// Name identifies the spec within its tenant.
 	Name string `json:"name"`
 
-	// WorkloadClass is the class of work the spec places.
-	WorkloadClass string `json:"workload_class"`
+	// Role is the workload class the spec places: agent, ci, review, ...
+	Role string `json:"role"`
 
-	// Hosts are the admissible hosts. Empty means any host that passes the
-	// capability check.
+	// HostCount is how many admissible hosts carry the role; the actuator
+	// picks them by measured room. A spec names its target by HostCount or
+	// by Hosts, never both.
+	HostCount int `json:"host_count,omitempty"`
+
+	// Hosts are the named hosts that carry the role. Empty with a zero
+	// HostCount means any host that passes the capability check, which a
+	// spec may only say when it has RequiredCapabilities to check.
 	Hosts []string `json:"hosts,omitempty"`
+
+	// Profile is the role's resource profile, which admission divides a
+	// host's measured room by. Nil means the fleet's default profile.
+	Profile *FleetJobProfile `json:"profile,omitempty"`
 
 	// RequiredCapabilities must ALL be present on a host: a hard match,
 	// never a score.
@@ -61,13 +71,33 @@ func (s *PlacementSpec) Validate() error {
 	if err := validateKeySegment("name", s.Name); err != nil {
 		return &PlacementSpecInvalidError{Name: s.Name, Field: "name", Reason: err.Error()}
 	}
-	if strings.TrimSpace(s.WorkloadClass) == "" {
-		return &PlacementSpecInvalidError{Name: s.Name, Field: "workload_class", Reason: "must not be empty"}
+	if strings.TrimSpace(s.Role) == "" {
+		return &PlacementSpecInvalidError{Name: s.Name, Field: "role", Reason: "must not be empty"}
 	}
 	if err := validatePlacementList(s.Name, "hosts", s.Hosts); err != nil {
 		return err
 	}
-	return validatePlacementList(s.Name, "required_capabilities", s.RequiredCapabilities)
+	if err := validatePlacementList(s.Name, "required_capabilities", s.RequiredCapabilities); err != nil {
+		return err
+	}
+	switch {
+	case s.HostCount < 0:
+		return &PlacementSpecInvalidError{Name: s.Name, Field: "host_count", Reason: "must not be negative"}
+	case s.HostCount > 0 && len(s.Hosts) > 0:
+		return &PlacementSpecInvalidError{
+			Name: s.Name, Field: "host_count", Reason: "and hosts are both set; name the target one way",
+		}
+	case s.HostCount == 0 && len(s.Hosts) == 0 && len(s.RequiredCapabilities) == 0:
+		return &PlacementSpecInvalidError{
+			Name: s.Name, Field: "host_count", Reason: "hosts and required_capabilities are all unset; the spec places nothing",
+		}
+	}
+	if s.Profile != nil {
+		if err := s.Profile.Validate(); err != nil {
+			return &PlacementSpecInvalidError{Name: s.Name, Field: "profile", Reason: err.Error()}
+		}
+	}
+	return nil
 }
 
 func validatePlacementList(name, field string, values []string) error {
@@ -94,6 +124,10 @@ func (s *PlacementSpec) clone() *PlacementSpec {
 	out := *s
 	out.Hosts = append([]string(nil), s.Hosts...)
 	out.RequiredCapabilities = append([]string(nil), s.RequiredCapabilities...)
+	if s.Profile != nil {
+		profile := *s.Profile
+		out.Profile = &profile
+	}
 	return &out
 }
 
