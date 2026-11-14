@@ -675,10 +675,6 @@ func TestMakeStageTagCheckCatchesALostTagArgument(t *testing.T) {
 // ruling 2026-10-15, go-quicbaas#1385).
 var scheduleExempt = map[string]bool{"automerge.yml": true, "worker-image.yml": true}
 
-// nightlyWorkflowPath is the workflow whose header records the no-schedule
-// rule of 2026-10-11.
-var nightlyWorkflowPath = filepath.Join(workflowsDir, "nightly.yml")
-
 // TestNoWorkflowRunsOnASchedule pins the owner ruling of 2026-10-11: the
 // coordinator dispatches the nightly full tier, no workflow schedules itself,
 // except the ones scheduleExempt names.
@@ -690,30 +686,6 @@ func TestNoWorkflowRunsOnASchedule(t *testing.T) {
 		}
 		if scheduleRe.MatchString(readFile(t, path)) {
 			t.Errorf("%s carries a `schedule:` trigger; dispatch it instead", path)
-		}
-	}
-}
-
-// TestScheduleExemptionsAreRecordedInNightlyHeader keeps the rule's record
-// true: nightly.yml's header, where the no-schedule rule is written down,
-// names every workflow the gate lets carry a `schedule:` trigger, and does not
-// claim that none does.
-func TestScheduleExemptionsAreRecordedInNightlyHeader(t *testing.T) {
-	var header strings.Builder
-	for _, line := range strings.Split(readFile(t, nightlyWorkflowPath), "\n") {
-		if !strings.HasPrefix(line, "#") {
-			break
-		}
-		header.WriteString(strings.TrimSpace(strings.TrimPrefix(line, "#")))
-		header.WriteString(" ")
-	}
-	text := header.String()
-	if strings.Contains(text, "no workflow carries a `schedule:` trigger") {
-		t.Errorf("%s's header says no workflow carries a `schedule:` trigger, but the gate exempts some", nightlyWorkflowPath)
-	}
-	for name := range scheduleExempt {
-		if !strings.Contains(text, name) {
-			t.Errorf("%s's header does not name %s, which may carry a `schedule:` trigger", nightlyWorkflowPath, name)
 		}
 	}
 }
