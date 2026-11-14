@@ -540,6 +540,18 @@ behind. A node with no invite store refuses pending creates as unavailable.
 `invite_url` is omitted when the server has no origin to build it under, as
 in-process, or when the issuer is an IP literal.
 
+The tenant and the user of an invitation come from the authenticated
+principal and the invite record, never from a request body (owner ruling 133,
+go-quicbaas#1832, #1836). The invite is created in the tenant the caller is
+authenticated in. Over gRPC, a `tenant_id` field that names another tenant is
+refused. Over REST, the URL tenant must be the caller's own (the system
+administrator's IAM routes act in the tenant the URL names), and a
+`tenant_id` or user id in the body is ignored. Either way, the user and its
+invite get the caller's tenant and a store-assigned id. Accepting an invite is the
+invitee's first login: the invitee has no credential yet, so the invite token
+is the credential. It resolves only in the tenant that issued it, and the
+user it activates is the one the invite record names.
+
 #### 2. Invite URL Sent to User
 
 Admin or system sends user an invite URL:
