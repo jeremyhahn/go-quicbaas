@@ -71,6 +71,8 @@ type tokenClaims struct {
 	exp time.Time
 	iat time.Time
 	jkt string
+	// x5t is the RFC 8705 cnf "x5t#S256" mTLS certificate binding.
+	x5t string
 	// typ overrides the JOSE "typ" header. Empty defaults to the RFC 9068
 	// access-token media type "at+jwt"; the sentinel "-" omits the header
 	// entirely (to exercise the missing-typ rejection).
@@ -95,6 +97,9 @@ func (k *issuerKey) sign(t *testing.T, tc tokenClaims) string {
 	}
 	if tc.jkt != "" {
 		m["cnf"] = map[string]interface{}{"jkt": tc.jkt}
+	}
+	if tc.x5t != "" {
+		m["cnf"] = map[string]interface{}{"x5t#S256": tc.x5t}
 	}
 	tok := jwt.NewWithClaims(jwt.SigningMethodES256, m)
 	tok.Header["kid"] = k.kid

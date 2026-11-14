@@ -136,3 +136,14 @@ type ScopeDeniedError struct {
 func (e *ScopeDeniedError) Error() string {
 	return fmt.Sprintf("platformtoken: required scope %q not granted", e.Required)
 }
+
+// CertificateBindingError indicates an mTLS-bound token (cnf x5t#S256, RFC
+// 8705) arrived without the client certificate it is bound to.
+type CertificateBindingError struct {
+	// Detail describes the mismatch.
+	Detail string
+}
+
+func (e *CertificateBindingError) Error() string {
+	return fmt.Sprintf("platformtoken: certificate-bound token: %s", e.Detail)
+}
