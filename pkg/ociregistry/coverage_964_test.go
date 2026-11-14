@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-trusted-platform.
+// This file is part of go-quicbaas.
 //
-// go-trusted-platform is dual-licensed:
+// go-quicbaas is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -11,19 +11,16 @@
 // 2. Commercial License
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
-package registry
+package ociregistry
 
 import (
 	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
-	"io"
 	"strings"
 	"testing"
 	"time"
-
-	grpcapi "github.com/jeremyhahn/go-trusted-platform/pkg/api/grpc"
 )
 
 // ociTestManifest is a minimal OCI image manifest the /v2/ backend accepts.
@@ -40,124 +37,6 @@ func ociTestManifest() []byte {
 	}`)
 }
 
-func TestGRPCAdapter964_PushPullStreamListDeleteLifecycle(t *testing.T) {
-	reg := newTestRegistry(t)
-	a := NewGRPCAdapter(reg)
-	ctx := context.Background()
-
-	meta := &grpcapi.RegistryPushMetadata{Repository: "apps/web", Tag: "v1"}
-	if _, err := a.Push(ctx, &grpcapi.RegistryPushRequest{Metadata: meta, Data: pushEnvelope(t, []byte("layer"))}); err != nil {
-		t.Fatalf("Push: %v", err)
-	}
-
-	stream, err := a.PullStream(ctx, &grpcapi.RegistryPullRequest{Repository: "apps/web", Reference: "v1"})
-	if err != nil {
-		t.Fatalf("PullStream: %v", err)
-	}
-	data, err := io.ReadAll(stream.Reader)
-	if err != nil {
-		t.Fatalf("read stream: %v", err)
-	}
-	if int64(len(data)) != stream.TotalSize {
-		t.Errorf("stream carried %d bytes, TotalSize = %d", len(data), stream.TotalSize)
-	}
-	var pulled Image
-	if err := json.Unmarshal(data, &pulled); err != nil {
-		t.Fatalf("decode stream: %v", err)
-	}
-	if len(pulled.Layers) != 1 || !bytes.Equal(pulled.Layers[0].Content, []byte("layer")) {
-		t.Errorf("streamed layers = %+v, want the one pushed layer", pulled.Layers)
-	}
-
-	// The OCI /v2/ path stores a digest-keyed copy beside the tag; List
-	// must show the image once.
-	if _, err := reg.PutManifest(ctx, "alpine", "3.20", "application/vnd.oci.image.manifest.v1+json", ociTestManifest()); err != nil {
-		t.Fatalf("PutManifest: %v", err)
-	}
-	list, err := a.List(ctx, &grpcapi.RegistryListRequest{})
-	if err != nil {
-		t.Fatalf("List: %v", err)
-	}
-	rows := map[string]int{}
-	for _, art := range list.Artifacts {
-		rows[art.Repository+":"+art.Tag]++
-		if isHex64(art.Tag) {
-			t.Errorf("List shows the digest-keyed copy %s:%s", art.Repository, art.Tag)
-		}
-	}
-	if rows["apps/web:v1"] != 1 || rows["alpine:3.20"] != 1 {
-		t.Errorf("List rows = %v, want apps/web:v1 and alpine:3.20 once each", rows)
-	}
-	if int(list.Total) != len(list.Artifacts) {
-		t.Errorf("Total = %d, want %d", list.Total, len(list.Artifacts))
-	}
-
-	del, err := a.Delete(ctx, &grpcapi.RegistryDeleteRequest{Repository: "apps/web", Reference: "v1"})
-	if err != nil {
-		t.Fatalf("Delete: %v", err)
-	}
-	if del.Timestamp.IsZero() {
-		t.Error("Delete returned a zero timestamp")
-	}
-	_, err = a.Pull(ctx, &grpcapi.RegistryPullRequest{Repository: "apps/web", Reference: "v1"})
-	var notFound grpcapi.ErrArtifactNotFound
-	if !errors.As(err, &notFound) {
-		t.Fatalf("Pull after Delete error = %v, want ErrArtifactNotFound", err)
-	}
-}
-
-func TestGRPCAdapter964_DeleteOfAnAbsentImageIsNotFound(t *testing.T) {
-	a := NewGRPCAdapter(newTestRegistry(t))
-	_, err := a.Delete(context.Background(), &grpcapi.RegistryDeleteRequest{Repository: "apps/none", Reference: "v1"})
-	var notFound grpcapi.ErrArtifactNotFound
-	if !errors.As(err, &notFound) {
-		t.Fatalf("Delete error = %v, want ErrArtifactNotFound", err)
-	}
-	if notFound.Repository != "apps/none" || notFound.Reference != "v1" {
-		t.Errorf("ErrArtifactNotFound = %+v, want apps/none v1", notFound)
-	}
-}
-
-func TestGRPCAdapter964_RequestsWithoutAReferenceAreRefused(t *testing.T) {
-	a := NewGRPCAdapter(newTestRegistry(t))
-	ctx := context.Background()
-	tests := []struct {
-		name string
-		call func() error
-		want error
-	}{
-		{"Push nil request", func() error { _, err := a.Push(ctx, nil); return err }, grpcapi.ErrMissingPushMetadata{}},
-		{"Push without metadata", func() error {
-			_, err := a.Push(ctx, &grpcapi.RegistryPushRequest{Data: []byte("{}")})
-			return err
-		}, grpcapi.ErrMissingPushMetadata{}},
-		{"PullStream nil request", func() error { _, err := a.PullStream(ctx, nil); return err }, grpcapi.ErrMissingReference{}},
-		{"Delete nil request", func() error { _, err := a.Delete(ctx, nil); return err }, grpcapi.ErrMissingReference{}},
-		{"Delete empty reference", func() error {
-			_, err := a.Delete(ctx, &grpcapi.RegistryDeleteRequest{})
-			return err
-		}, grpcapi.ErrMissingReference{}},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if err := tt.call(); !errors.Is(err, tt.want) {
-				t.Fatalf("error = %v, want %T", err, tt.want)
-			}
-		})
-	}
-}
-
-func TestGRPCAdapter964_ListOfAClosedRegistryFails(t *testing.T) {
-	reg := newTestRegistry(t)
-	a := NewGRPCAdapter(reg)
-	if err := reg.Close(); err != nil {
-		t.Fatalf("Close: %v", err)
-	}
-	if _, err := a.List(context.Background(), nil); !errors.As(err, &ErrRegistryClosed{}) {
-		t.Fatalf("List error = %v, want ErrRegistryClosed", err)
-	}
-}
-
 func TestReferenceHelpers964(t *testing.T) {
 	splits := []struct {
 		ref, repo, tag string
@@ -172,32 +51,6 @@ func TestReferenceHelpers964(t *testing.T) {
 		repo, tag := splitOCIRef(s.ref)
 		if repo != s.repo || tag != s.tag {
 			t.Errorf("splitOCIRef(%q) = (%q, %q), want (%q, %q)", s.ref, repo, tag, s.repo, s.tag)
-		}
-		if s.oci {
-			continue
-		}
-		repo, tag = splitRef(s.ref)
-		if repo != s.repo || tag != s.tag {
-			t.Errorf("splitRef(%q) = (%q, %q), want (%q, %q)", s.ref, repo, tag, s.repo, s.tag)
-		}
-	}
-
-	sentinels := map[string]bool{"alpine:sha256": true, "sha256": false, "": false, "alpine:sha512": false}
-	for in, want := range sentinels {
-		if got := endsWithSha256Sentinel(in); got != want {
-			t.Errorf("endsWithSha256Sentinel(%q) = %v, want %v", in, got, want)
-		}
-	}
-
-	refs := []struct{ repo, tag, digest, want string }{
-		{"apps/web", "v1", "", "apps/web:v1"},
-		{"apps/web", "v1", "sha256:abc", "sha256:abc"},
-		{"", "apps/web:v1", "", "apps/web:v1"},
-		{"apps/web", "", "", "apps/web"},
-	}
-	for _, r := range refs {
-		if got := refOf(r.repo, r.tag, r.digest); got != r.want {
-			t.Errorf("refOf(%q, %q, %q) = %q, want %q", r.repo, r.tag, r.digest, got, r.want)
 		}
 	}
 
