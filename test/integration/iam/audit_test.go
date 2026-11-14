@@ -17,6 +17,7 @@
 package iam_test
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -463,6 +464,59 @@ func TestAuditEventDelete(t *testing.T) {
 		assert.True(t, afterIDs[ev.ID], "audit event %s should survive the delete", ev.ID)
 	}
 	assert.GreaterOrEqual(t, afterResp.Total, beforeResp.Total, "the audit delete should not reduce the event count")
+
+	// The authorized path: the first-boot super_admin deletes from its OWN
+	// (system) tenant's chain. With no tenant_id the delete resolves to the
+	// caller's tenant (iam.ResolveRequestTenant), and the super_admin's
+	// system-scoped assignment holds audit:delete, so the server runs the
+	// delete. The chain is append-only, so it erases nothing.
+	systemAdmin := cluster.asSystemAdmin()
+	// Events at or before the cut-off are already written, so the set read
+	// with it is stable while the chain grows with these requests.
+	readCutoff := time.Now().Add(-time.Second).UTC().Truncate(time.Second)
+	systemBefore := systemAuditEventIDs(t, systemAdmin, readCutoff)
+	require.NotEmpty(t, systemBefore, "the system chain should hold events before the delete")
+
+	systemDeletePath := "/api/v1/iam/audit?before=" + url.QueryEscape(futureTime.Format(time.RFC3339))
+	systemResp, err := systemAdmin.doHTTPRequest(http.MethodDelete, systemDeletePath, nil)
+	require.NoError(t, err, "Should send the super_admin's system-chain audit delete")
+	systemBody, _ := io.ReadAll(systemResp.Body)
+	systemResp.Body.Close()
+	require.Equal(t, http.StatusOK, systemResp.StatusCode,
+		"the super_admin's delete of its own chain should be authorized: %s", systemBody)
+	var systemDeleted struct {
+		DeletedCount *int `json:"deleted_count"`
+	}
+	require.NoError(t, json.Unmarshal(systemBody, &systemDeleted), "system audit delete response")
+	require.NotNil(t, systemDeleted.DeletedCount,
+		"the audit delete response should carry deleted_count: %s", systemBody)
+	assert.Zero(t, *systemDeleted.DeletedCount, "the append-only audit chain should delete nothing")
+
+	systemAfter := systemAuditEventIDs(t, systemAdmin, readCutoff)
+	for id := range systemBefore {
+		assert.True(t, systemAfter[id], "system audit event %s should survive the delete", id)
+	}
+}
+
+// systemAuditEventIDs reads, page by page, the IDs of every event in the
+// caller's own (system) tenant chain up to cutoff. The cut-off is in the
+// past, so the set does not move between pages or between reads.
+func systemAuditEventIDs(t *testing.T, systemAdmin *testCluster, cutoff time.Time) map[string]bool {
+	t.Helper()
+	const pageSize = 1000
+	ids := make(map[string]bool)
+	for offset := 0; ; offset += pageSize {
+		path := fmt.Sprintf("/api/v1/iam/audit?end_time=%s&limit=%d&offset=%d",
+			url.QueryEscape(cutoff.Format(time.RFC3339)), pageSize, offset)
+		var page AuditQueryResponse
+		require.NoError(t, systemAdmin.getJSON(path, &page), "Should query the system audit chain")
+		for _, ev := range page.Events {
+			ids[ev.ID] = true
+		}
+		if len(page.Events) < pageSize || offset+pageSize >= page.Total {
+			return ids
+		}
+	}
 }
 
 // TestAuditEventTenantIsolation tests that audit events are properly isolated between tenants.
