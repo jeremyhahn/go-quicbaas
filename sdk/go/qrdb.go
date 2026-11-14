@@ -111,6 +111,24 @@ type QRDBCredentialClient = qrdbtransport.CredentialClient
 // QRDBBackupClient is a re-export of the qrdb BackupClient interface.
 type QRDBBackupClient = qrdbtransport.BackupClient
 
+// QRDBBackupRequest is a re-export of the qrdb BackupRequest type
+// (QRDBBackupClient.CreateBackup).
+type QRDBBackupRequest = qrdbtransport.BackupRequest
+
+// QRDBBackupInfo is a re-export of the qrdb BackupInfo type.
+type QRDBBackupInfo = qrdbtransport.BackupInfo
+
+// QRDBRestoreRequest is a re-export of the qrdb RestoreRequest type
+// (QRDBBackupClient.RestoreBackup).
+type QRDBRestoreRequest = qrdbtransport.RestoreRequest
+
+// QRDBRestoreResult is a re-export of the qrdb RestoreResult type.
+type QRDBRestoreResult = qrdbtransport.RestoreResult
+
+// QRDBVerifyResult is a re-export of the qrdb VerifyResult type
+// (QRDBBackupClient.VerifyBackup).
+type QRDBVerifyResult = qrdbtransport.VerifyResult
+
 // QRDBRebalanceClient is a re-export of the qrdb RebalanceClient interface.
 type QRDBRebalanceClient = qrdbtransport.RebalanceClient
 
@@ -485,6 +503,24 @@ func (c *client) qrdbClient() (*QRDBClient, error) {
 	return c.qrdb.client, c.qrdb.err
 }
 
+// QRDBBackup returns go-qrdb's own backup service (BackupClient: create,
+// list, get, delete, restore and verify backups), re-exported through the
+// SDK. The QRDB client is lazily initialized on first call. It returns an
+// Unimplemented error when the active QRDB transport carries no backup
+// service, so a caller never receives a nil client.
+func (c *client) QRDBBackup() (QRDBBackupClient, error) {
+	qrdb, err := c.qrdbClient()
+	if err != nil {
+		return nil, err
+	}
+	b := qrdb.Backup()
+	if b == nil {
+		return nil, sdkerrors.NewUnimplemented("QRDBBackup",
+			"the QRDB transport does not provide the backup service")
+	}
+	return b, nil
+}
+
 // buildQRDBClient constructs the qrdb transport and client from the
 // existing clientOptions.
 //
@@ -715,6 +751,9 @@ func (c *client) buildQRDBEmbeddedClient() (*qrdbsdk.Client, error) {
 	}
 	if s.User != nil {
 		embOpts = append(embOpts, qrdbembedded.WithUserService(s.User))
+	}
+	if s.Backup != nil {
+		embOpts = append(embOpts, qrdbembedded.WithBackupService(s.Backup))
 	}
 
 	t, err := qrdbembedded.New(s.KV, s.Admin, embOpts...)

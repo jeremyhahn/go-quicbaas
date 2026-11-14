@@ -41,5 +41,16 @@ Dedicated transport handlers: rest=yes, grpc=no, mcp=no; embedded routes registe
 | `List` | `GET /api/v1/backups` | yes | MISSING | MISSING | yes | `backup:list` |
 | `Restore` | `POST /api/v1/backups/{id}/restore` | yes | MISSING | MISSING | yes | `backup:create` |
 
+### go-qrdb's backup service — `Storage().QRDBBackup()`
+
+`sdk/go` re-exports go-qrdb's `BackupClient` as `quicbaas.QRDBBackupClient`
+(with `QRDBBackupRequest`, `QRDBBackupInfo`, `QRDBRestoreRequest`,
+`QRDBRestoreResult` and `QRDBVerifyResult`). `client.Storage().QRDBBackup()`
+returns it over the client's QRDB transport (`sdk/go/qrdb.go`): `CreateBackup`,
+`ListBackups`, `GetBackup`, `DeleteBackup`, `RestoreBackup` and `VerifyBackup`
+go to the qrdb node's backup service. On the embedded transport, pass the
+service as `QRDBEmbeddedServicers.Backup`; a QRDB transport without the backup
+service returns an `Unimplemented` error, never a nil client.
+
 
 

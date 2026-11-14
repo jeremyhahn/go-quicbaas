@@ -14,8 +14,14 @@
 package quicbaas
 
 import (
+	qrdbservice "github.com/jeremyhahn/go-qrdb/pkg/service"
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 )
+
+// QRDBBackupServicer is a re-export of the qrdb service.BackupServicer
+// interface. Required to enable Storage().QRDBBackup() (go-qrdb's
+// BackupClient) through the embedded transport.
+type QRDBBackupServicer = qrdbservice.BackupServicer
 
 // =============================================================================
 // QRDB Embedded Servicer Type Re-exports
@@ -167,4 +173,9 @@ type QRDBEmbeddedServicers struct {
 	// can resolve a subject (tenant + username) to a uint64 user id and
 	// enroll the factor for that exact user. Optional otherwise.
 	User QRDBUserServicer
+
+	// Backup exposes go-qrdb's backup service (create, list, get, delete,
+	// restore, verify). Must be non-nil for Storage().QRDBBackup() calls to
+	// succeed against the embedded transport. Optional otherwise.
+	Backup QRDBBackupServicer
 }
