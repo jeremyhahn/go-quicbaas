@@ -1019,6 +1019,9 @@ func (s *Server) firstBootBootstrap(ctx context.Context, c *iamComponents) error
 	// incomplete and the next boot retries the whole (idempotent) sequence
 	// rather than leaving a privileged admin who cannot log in. Every remaining
 	// step now shares that ordering — see grantFirstBootSuperAdmin.
+	if err := s.reissueAdminCredentialOnReEntry(ctx, c, deps, adminTenantID, user.ID, result); err != nil {
+		return err
+	}
 	if err := s.enrollFirstBootAdminCert(ctx, c, adminTenantID, user.ID, result); err != nil {
 		return err
 	}
@@ -1330,6 +1333,60 @@ var ErrEmptyAdminCSR = errors.New("first-boot: configured admin CSR file is empt
 // enrollFirstBootAdminCert enrolls the certificate first-boot issued as an mtls
 // login factor. It is a no-op when no certificate was issued (no CA wired, or
 // an idempotent re-run where the admin already existed).
+// reissueAdminCredentialOnReEntry is the #64 ruling: reissue. qrdb's
+// idempotent first boot issues no certificate for an admin that already
+// exists, so a re-entered bootstrap (an earlier boot created the admin but
+// never completed) holds no credential to deliver; the certificate bound by
+// that earlier boot has a private key nobody received. Persisting pending
+// key material across boots was the rejected alternative: it would keep an
+// undelivered private key at rest. Instead the re-entry issues a fresh
+// credential through the same path first boot chose — CSR-sign when the
+// operator supplied a CSR, generate-and-distribute otherwise — binds its
+// SPKI thumbprint in place of the undelivered one, and fills result so the
+// enrollment and delivery steps that follow treat it as this run's issue.
+//
+// It does nothing when there is no CA, when this run created the admin, or
+// when first boot already issued a certificate.
+func (s *Server) reissueAdminCredentialOnReEntry(
+	ctx context.Context,
+	c *iamComponents,
+	deps *qrdbsdk.FirstBootDependencies,
+	tenantID string,
+	userID uint64,
+	result *qrdbsdk.FirstBootResult,
+) error {
+	if deps == nil || deps.CA == nil || result == nil || result.AdminCreated || len(result.AdminCertPEM) > 0 {
+		return nil
+	}
+	const subject = "admin"
+	var certPEM, keyPEM []byte
+	var err error
+	if len(deps.AdminCSRPEM) > 0 && deps.Signer != nil {
+		certPEM, err = deps.Signer.SignAdminCSR(ctx, tenantID, subject, deps.AdminCSRPEM)
+	} else {
+		certPEM, keyPEM, err = deps.CA.GenerateAdminCert(ctx, tenantID, subject)
+	}
+	if err != nil {
+		return &FirstBootBootstrapError{Op: "reissue admin certificate", Cause: err}
+	}
+	cert, err := parseCertLoginPEM(certPEM)
+	if err != nil {
+		return &FirstBootBootstrapError{Op: "parse reissued admin certificate", Cause: err}
+	}
+	thumbprint := qrdbsdk.ComputeSPKIThumbprint(cert)
+	if _, err := c.identityStore.UpdateUser(ctx, tenantID, userID, iam.UpdateUserOptions{
+		SPKICertThumbprint: &thumbprint,
+	}); err != nil {
+		return &FirstBootBootstrapError{Op: "bind reissued admin certificate", Cause: err}
+	}
+	result.AdminCertPEM = certPEM
+	result.AdminKeyPEM = keyPEM
+	result.AdminCertThumbprint = thumbprint
+	s.logger.Warnf("First-boot re-entry: admin %d existed without a delivered credential; reissued its certificate (SPKI thumbprint %s)",
+		userID, thumbprint)
+	return nil
+}
+
 func (s *Server) enrollFirstBootAdminCert(
 	ctx context.Context,
 	c *iamComponents,

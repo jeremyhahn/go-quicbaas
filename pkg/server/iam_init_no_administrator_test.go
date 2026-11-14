@@ -18,6 +18,7 @@ package server
 import (
 	"context"
 	"errors"
+	"os"
 	"strings"
 	"testing"
 
@@ -279,7 +280,7 @@ func TestAdminBundleNotDeliveredError_SaysWhatToDo(t *testing.T) {
 	for _, want := range []string{
 		"no private key",        // what is missing
 		"bound certificate",     // why it matters — the cert is live without its key
-		"wipe and re-bootstrap", // the ruled remedy while reissue does not exist
+		"wipe and re-bootstrap", // the remedy when even a reissue delivered nothing
 	} {
 		assert.Contains(t, err.Error(), want, "the message omits %q", want)
 	}
@@ -529,7 +530,12 @@ func TestFirstBootBootstrap_ReEntersAfterAPostGrantFailureCannotHappen(t *testin
 // key for a certificate that is already bound to them, so the retry must refuse
 // rather than grant the assignment and let the next boot report a healthy server
 // with an administrator who cannot log in.
-func TestFirstBootBootstrap_ReEntryWithoutAReissuedCertRefuses(t *testing.T) {
+func TestFirstBootBootstrap_ReEntryReissuesTheAdminCredential(t *testing.T) {
+	// #64: qrdb's idempotent first boot issues no certificate for an admin
+	// that already exists, so a re-entered bootstrap used to have nothing to
+	// deliver. The ruling is reissue: the re-entry issues a fresh admin
+	// credential, binds its SPKI in place of the undelivered one, and
+	// delivers it before the grant.
 	srv := withTempServer(t)
 	srv.config.Auth.AllowPasswordAuth = false
 	srv.config.Auth.InsecureDevMode = false
@@ -545,26 +551,40 @@ func TestFirstBootBootstrap_ReEntryWithoutAReissuedCertRefuses(t *testing.T) {
 	// Boot 1 completes, which is what makes the admin user exist.
 	require.NoError(t, srv.firstBootBootstrap(ctx, c))
 	require.NotEmpty(t, banner.CertPath, "boot 1 must have delivered a bundle")
+	firstCert, err := os.ReadFile(banner.CertPath)
+	require.NoError(t, err)
+	admin, err := c.identityStore.GetUser(ctx, qrdbsdk.SystemTenantID, srv.bootstrapAdminUserID)
+	require.NoError(t, err)
+	firstThumb := admin.SPKIThumbprint()
+	require.NotEmpty(t, firstThumb)
 
 	// Now destroy the grant, exactly as an operator deleting the assignment (or a
 	// boot that failed before writing it) leaves the store. The user survives, so
-	// qrdb's first-boot has nothing to reissue.
+	// qrdb's first-boot itself has nothing to reissue.
 	assignments, err := c.adminManager.ListAssignments(ctx, iam.ListAdminAssignmentsOptions{})
 	require.NoError(t, err)
 	require.Len(t, assignments, 1)
 	require.NoError(t, c.adminManager.DeleteAssignment(ctx, assignments[0].ID))
+	banner = adminEnrollmentBanner{}
 
-	err = srv.firstBootBootstrap(ctx, c)
-	require.Error(t, err, "a re-entry that can deliver no credential must refuse")
-	assert.ErrorIs(t, err, ErrAdminBundleNotDelivered,
-		"the refusal must name the undelivered bundle so the operator knows the remedy")
-	assert.ErrorIs(t, err, ErrFirstBootBootstrap)
+	require.NoError(t, srv.firstBootBootstrap(ctx, c), "a re-entered first boot must deliver a credential")
+	require.NotEmpty(t, banner.CertPath, "the re-entry must deliver the reissued bundle")
+	require.NotEmpty(t, banner.KeyPath, "the reissued bundle carries its private key")
+	secondCert, err := os.ReadFile(banner.CertPath)
+	require.NoError(t, err)
+	assert.NotEqual(t, firstCert, secondCert, "the delivered certificate must be the reissued one")
+
+	admin, err = c.identityStore.GetUser(ctx, qrdbsdk.SystemTenantID, srv.bootstrapAdminUserID)
+	require.NoError(t, err)
+	cert, err := parseCertLoginPEM(secondCert)
+	require.NoError(t, err)
+	assert.Equal(t, qrdbsdk.ComputeSPKIThumbprint(cert), admin.SPKIThumbprint(),
+		"the admin must be bound to the reissued certificate")
+	assert.NotEqual(t, firstThumb, admin.SPKIThumbprint())
 
 	after, err := c.adminManager.ListAssignments(ctx, iam.ListAdminAssignmentsOptions{ActiveOnly: true})
 	require.NoError(t, err)
-	assert.Empty(t, after,
-		"the refused re-entry granted an assignment anyway, which would let the "+
-			"NEXT boot start a server whose administrator has no private key")
+	assert.Len(t, after, 1, "a delivered re-entry completes with the grant")
 }
 
 // TestFirstBootBootstrap_CALessReEntryStillCompletes is the counterpart that
