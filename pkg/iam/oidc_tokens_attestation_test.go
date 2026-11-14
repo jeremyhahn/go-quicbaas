@@ -282,6 +282,43 @@ func TestIssueHardwareTokens_AccessTokenCarriesTheAttestation(t *testing.T) {
 	}
 }
 
+// acr and amr are ID-token claims (OIDC Core §2): the access token of a
+// hardware-attested login carries neither, while its ID token carries both.
+func TestIssueHardwareTokens_AcrAmrOnIDTokenOnly(t *testing.T) {
+	service, privateKey := createTestTokenService(t)
+
+	set, err := service.IssueHardwareTokens(context.Background(), HardwareTokenOptions{
+		User:        attestationTestUser(),
+		AMR:         []string{"webauthn", "hwk"},
+		ACR:         ACRHardwareAttested,
+		Attestation: testHardwareAttestation("cb69481e8ff7403993ec0a2729a154a8"),
+	})
+	if err != nil {
+		t.Fatalf("proven hardware was refused: %v", err)
+	}
+
+	access, err := xkms.JWTVerifyWithKeyAndClaims(set.AccessToken, &privateKey.PublicKey, "RS256")
+	if err != nil {
+		t.Fatalf("verify access token: %v", err)
+	}
+	for _, name := range []string{"acr", "amr"} {
+		if got, ok := access[name]; ok {
+			t.Errorf("access token carries %s = %v, want no such claim", name, got)
+		}
+	}
+
+	id, err := xkms.JWTVerifyWithKeyAndClaims(set.IDToken, &privateKey.PublicKey, "RS256")
+	if err != nil {
+		t.Fatalf("verify ID token: %v", err)
+	}
+	if got := id["acr"]; got != ACRHardwareAttested {
+		t.Errorf("ID token acr = %v, want %q", got, ACRHardwareAttested)
+	}
+	if _, ok := id["amr"]; !ok {
+		t.Error("ID token carries no amr claim")
+	}
+}
+
 // TestIssueHardwareTokens_AccessTokenOmitsAnAbsentAttestation is the
 // fail-closed half: a login that proved nothing must leave the claim absent on
 // the bearer rather than emitting an empty string, so a policy reading
