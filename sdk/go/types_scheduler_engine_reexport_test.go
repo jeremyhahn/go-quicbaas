@@ -111,6 +111,8 @@ func TestEveryEngineMethodTypeIsReachableThroughTheSDK(t *testing.T) {
 		reflect.TypeOf(OwnerType("")):             "OwnerType",
 		reflect.TypeOf(JobHandler(nil)):           "JobHandler",
 		reflect.TypeOf(AbandonedRunAttestation{}): "AbandonedRunAttestation",
+		reflect.TypeOf(RemoteRun{}):               "RemoteRun",
+		reflect.TypeOf(RemoteRunRef{}):            "RemoteRunRef",
 	}
 
 	enginePkg := reflect.TypeOf(SchedulerEngine{}).PkgPath()

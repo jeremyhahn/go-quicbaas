@@ -64,6 +64,15 @@ type (
 	// fields are std types, so a consumer constructs it through this alias
 	// without importing go-quicbaas/pkg/scheduler.
 	AbandonedRunAttestation = schedengine.AbandonedRunAttestation
+
+	// RemoteRun is an open run of a job whose handler a remote worker
+	// executes (a "remote:" handler, go-quicbaas#1955), as
+	// SchedulerEngine.ListRemoteRuns returns it.
+	RemoteRun = schedengine.RemoteRun
+
+	// RemoteRunRef names one remote run, for
+	// SchedulerEngine.CompleteRemoteRun.
+	RemoteRunRef = schedengine.RemoteRunRef
 )
 
 // Scheduler engine constants.
