@@ -33,8 +33,15 @@ const trustedCAServiceName = "quicbaas.TrustedCA"
 // isMCPTrustedCAService reports whether the service name targets the
 // re-exported go-xkms CA.
 func isMCPTrustedCAService(service string) bool {
-	return strings.HasPrefix(service, trustedCAServiceName) || service == "TrustedCA"
+	return strings.HasPrefix(service, trustedCAServiceName) || service == "TrustedCA" ||
+		service == tcgCAServiceName || service == "TCGCA"
 }
+
+// tcgCAServiceName is the transport service name of the re-exported go-xkms
+// TCGCAService (Security().TCGCA()). Its verbs are the xkms.ca.tcg.* tools
+// and share this handler's tables: no TCG method name is a CA method name
+// (#1330).
+const tcgCAServiceName = "quicbaas.TCGCA"
 
 // trustedCAMethodTools maps go-xkms CAService methods to the server's
 // xkms.ca.* tool names.
@@ -46,6 +53,11 @@ var trustedCAMethodTools = map[string]string{
 	"RevokeCertificate": "xkms.ca.revokeCert",
 	"GenerateCRL":       "xkms.ca.generateCRL",
 	"IsRevoked":         "xkms.ca.isRevoked",
+	// go-xkms TCGCAService.
+	"IssueEKCertificate": "xkms.ca.tcg.issueEKCert",
+	"IssueAKCertificate": "xkms.ca.tcg.issueAKCert",
+	"SignTCGCSR":         "xkms.ca.tcg.signCSR",
+	"EnrollDevice":       "xkms.ca.tcg.enroll",
 }
 
 // trustedCAToolName returns the MCP tool name for a CAService method and
@@ -64,6 +76,16 @@ var trustedCARequestTypes = map[string]func(interface{}) bool{
 	"RevokeCertificate": func(r interface{}) bool { v, ok := r.(*xkmstransport.RevokeCertificateRequest); return ok && v != nil },
 	"GenerateCRL":       func(r interface{}) bool { v, ok := r.(*xkmstransport.GenerateCRLRequest); return ok && v != nil },
 	"IsRevoked":         func(r interface{}) bool { v, ok := r.(*xkmstransport.IsRevokedRequest); return ok && v != nil },
+	"IssueEKCertificate": func(r interface{}) bool {
+		v, ok := r.(*xkmstransport.IssueEKCertificateRequest)
+		return ok && v != nil
+	},
+	"IssueAKCertificate": func(r interface{}) bool {
+		v, ok := r.(*xkmstransport.IssueAKCertificateRequest)
+		return ok && v != nil
+	},
+	"SignTCGCSR":   func(r interface{}) bool { v, ok := r.(*xkmstransport.SignTCGCSRRequest); return ok && v != nil },
+	"EnrollDevice": func(r interface{}) bool { v, ok := r.(*xkmstransport.EnrollDeviceRequest); return ok && v != nil },
 }
 
 // trustedCATransformRequest converts a go-xkms CA request into the xkms.ca.*
@@ -94,13 +116,17 @@ func trustedCATransformRequest(method string, req interface{}) (map[string]inter
 
 // trustedCAResponseTypes builds each method's go-xkms response value.
 var trustedCAResponseTypes = map[string]func() interface{}{
-	"GetCABundle":       func() interface{} { return &xkmstransport.GetCABundleResponse{} },
-	"GetCACertificate":  func() interface{} { return &xkmstransport.GetCACertificateResponse{} },
-	"SignCSR":           func() interface{} { return &xkmstransport.SignCSRResponse{} },
-	"IssueCertificate":  func() interface{} { return &xkmstransport.IssueCertificateResponse{} },
-	"RevokeCertificate": func() interface{} { return &xkmstransport.RevokeCertificateResponse{} },
-	"GenerateCRL":       func() interface{} { return &xkmstransport.GenerateCRLResponse{} },
-	"IsRevoked":         func() interface{} { return &xkmstransport.IsRevokedResponse{} },
+	"GetCABundle":        func() interface{} { return &xkmstransport.GetCABundleResponse{} },
+	"GetCACertificate":   func() interface{} { return &xkmstransport.GetCACertificateResponse{} },
+	"SignCSR":            func() interface{} { return &xkmstransport.SignCSRResponse{} },
+	"IssueCertificate":   func() interface{} { return &xkmstransport.IssueCertificateResponse{} },
+	"RevokeCertificate":  func() interface{} { return &xkmstransport.RevokeCertificateResponse{} },
+	"GenerateCRL":        func() interface{} { return &xkmstransport.GenerateCRLResponse{} },
+	"IsRevoked":          func() interface{} { return &xkmstransport.IsRevokedResponse{} },
+	"IssueEKCertificate": func() interface{} { return &xkmstransport.IssueEKCertificateResponse{} },
+	"IssueAKCertificate": func() interface{} { return &xkmstransport.IssueAKCertificateResponse{} },
+	"SignTCGCSR":         func() interface{} { return &xkmstransport.SignTCGCSRResponse{} },
+	"EnrollDevice":       func() interface{} { return &xkmstransport.EnrollDeviceResponse{} },
 }
 
 // trustedCATransformResponse decodes an xkms.ca.* tool result (the server's

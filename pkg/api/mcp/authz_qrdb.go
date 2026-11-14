@@ -834,6 +834,12 @@ var qrdbToolExactMapping = map[string]qrdbToolResource{
 	"xkms.ca.issueCert":   {"certs", "generate"},
 	"xkms.ca.revokeCert":  {"certs", "revoke"},
 	"xkms.ca.generateCRL": {"certs", "revoke"},
+	// go-xkms TCGCAService (#1330): the same certs:generate as the REST
+	// /api/v1/xkms/ca/tcg/* routes.
+	"xkms.ca.tcg.issueEKCert": {"certs", "generate"},
+	"xkms.ca.tcg.issueAKCert": {"certs", "generate"},
+	"xkms.ca.tcg.signCSR":     {"certs", "generate"},
+	"xkms.ca.tcg.enroll":      {"certs", "generate"},
 
 	"xkms.piv.listSlots":   {"piv", "read"},
 	"xkms.piv.getCert":     {"piv", "read"},

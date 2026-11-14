@@ -130,6 +130,11 @@ func (r *ToolRegistry) initXKMSHandlers() map[string]XKMSToolHandler {
 		"xkms.ca.revokeCert":  r.handleTrustedCARevokeCert,
 		"xkms.ca.generateCRL": r.handleTrustedCAGenerateCRL,
 		"xkms.ca.isRevoked":   r.handleTrustedCAIsRevoked,
+		// go-xkms TCGCAService (#1330), tools_xkms_tcg.go.
+		"xkms.ca.tcg.issueEKCert": r.handleTCGCAIssueEKCert,
+		"xkms.ca.tcg.issueAKCert": r.handleTCGCAIssueAKCert,
+		"xkms.ca.tcg.signCSR":     r.handleTCGCASignCSR,
+		"xkms.ca.tcg.enroll":      r.handleTCGCAEnroll,
 
 		// PIN operations
 		"xkms.pin.setSO":         r.handleXKMSPINSetSO,
@@ -167,6 +172,7 @@ func (r *ToolRegistry) registerXKMSTools() {
 	r.registerXKMSCoreTools()
 	r.registerXKMSPIVTools()
 	r.registerTrustedCATools()
+	r.registerTCGCATools()
 	r.registerXKMSPINTools()
 }
 

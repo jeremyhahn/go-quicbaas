@@ -31,7 +31,36 @@ func TestMapToToolName_TrustedCA(t *testing.T) {
 			t.Errorf("mapToToolName(%q) = %q, want %q", method, got, want)
 		}
 	}
-	assert.Len(t, trustedCAMethodTools, 7)
+	// The 7 go-xkms CAService verbs and the 4 TCGCAService verbs (#1330).
+	assert.Len(t, trustedCAMethodTools, 11)
+	for _, method := range []string{"IssueEKCertificate", "IssueAKCertificate", "SignTCGCSR", "EnrollDevice"} {
+		if got, want := tr.mapToToolName(tcgCAServiceName, method), trustedCAMethodTools[method]; got != want {
+			t.Errorf("mapToToolName(TCGCA, %q) = %q, want %q", method, got, want)
+		}
+	}
+}
+
+// TestTCGCAEnrollDevice_OverMCP pins Security().TCGCA() on MCP: EnrollDevice
+// calls xkms.ca.tcg.enroll with the packed CSR as base64 and decodes the
+// go-xkms response (#1330).
+func TestTCGCAEnrollDevice_OverMCP(t *testing.T) {
+	tr, cleanup := newFakeMCPServer(t, mcpToolExpectation{
+		wantTool: "xkms.ca.tcg.enroll",
+		assertArgs: func(t *testing.T, args map[string]interface{}) {
+			assert.Equal(t, "dev-1", args["common_name"])
+			assert.Equal(t, "Q1NS", args["packed_csr"])
+		},
+		result: map[string]interface{}{"iak_cert_der": "SUFL", "credential_blob": "QkxPQg=="},
+	})
+	defer cleanup()
+
+	resp, err := tr.Request(context.Background(), tcgCAServiceName, "EnrollDevice",
+		&xkmstransport.EnrollDeviceRequest{CommonName: "dev-1", PackedCSR: []byte("CSR")})
+	require.NoError(t, err)
+	out, ok := resp.(*xkmstransport.EnrollDeviceResponse)
+	require.True(t, ok, "got %T", resp)
+	assert.Equal(t, "IAK", string(out.IAKCertDER))
+	assert.Equal(t, "BLOB", string(out.CredentialBlob))
 }
 
 // TestTrustedCASignCSR_OverMCP drives Security().TrustedCA().SignCSR's wire
