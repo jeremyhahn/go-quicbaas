@@ -205,6 +205,7 @@ const toolchainProbe = `git --version; ssh -V; go version; make --version | head
 grep --version | head -1; cryptsetup --version
 pkg-config --exists webkit2gtk-4.1 || { echo "webkit2gtk-4.1 dev headers missing: make build cannot link the client"; exit 1; }
 case "$(npm config get omit)" in dev*) echo "npm omits devDependencies: NODE_ENV must not be production"; exit 1;; esac
+node -e "process.exit(typeof localStorage === 'undefined' ? 0 : 1)" || { echo "node defines a global localStorage that shadows jsdom's: NODE_OPTIONS must carry --no-experimental-webstorage"; exit 1; }
 claude --version | grep -qF "$EXPECTED_CLAUDE_CODE_VERSION" || { echo "claude is not $EXPECTED_CLAUDE_CODE_VERSION: $(claude --version)"; exit 1; }
 codex --version | grep -qF "$EXPECTED_CODEX_VERSION" || { echo "codex is not $EXPECTED_CODEX_VERSION: $(codex --version)"; exit 1; }
 gemini --version | grep -qF "$EXPECTED_GEMINI_CLI_VERSION" || { echo "gemini is not $EXPECTED_GEMINI_CLI_VERSION: $(gemini --version)"; exit 1; }
