@@ -16,6 +16,7 @@
 package rest
 
 import (
+	"encoding/base64"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -135,4 +136,34 @@ func TestKMSHandlers_TenantBGetsNotFoundForTenantAKey(t *testing.T) {
 			})
 		}
 	}
+}
+
+// TestKMSHandlers_ImportKeyIsTenantScoped pins that REST import goes through
+// the tenant-scoped KMS service: the importing tenant reaches the key by its
+// name, and another tenant gets not found for the same name.
+func TestKMSHandlers_ImportKeyIsTenantScoped(t *testing.T) {
+	server, mockService, cleanup := setupMockServer(t)
+	defer cleanup()
+	mockService.KMSService = kmstenant.NewService(t)
+
+	material := base64.StdEncoding.EncodeToString(make([]byte, 32))
+	body := `{"key_material":"` + material + `","wrapping_key_id":"wrap-1","name":"imported-key","key_attributes":{"algorithm":"AES-256-GCM"}}`
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/kms/keys/import", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	kmsTenantRouter(server, kmstenant.OtherTenant).ServeHTTP(w, req)
+	require.Equal(t, http.StatusCreated, w.Code, "body: %s", w.Body.String())
+
+	get := func(tenant string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/kms/keys/imported-key", nil)
+		w := httptest.NewRecorder()
+		kmsTenantRouter(server, tenant).ServeHTTP(w, req)
+		return w
+	}
+
+	w = get(kmstenant.OtherTenant)
+	require.Less(t, w.Code, http.StatusMultipleChoices, "importing tenant: %s", w.Body.String())
+
+	w = get(kmstenant.OwnerTenant)
+	require.Equal(t, http.StatusNotFound, w.Code, "other tenant: %s", w.Body.String())
 }
