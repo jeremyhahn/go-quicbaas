@@ -82,6 +82,7 @@ func (s *Server) buildMCPServer() (*mcpapi.Server, error) {
 	// calls fail closed with the typed QRDBUserServiceUnavailableError.
 	mcpServer.SetUserService(newQRDBUserServicerProxy(s))
 	mcpServer.SetUserAuthFactorService(newQRDBUserAuthFactorServicerProxy(s))
+	mcpServer.SetRoleAssignmentAuthorizer(s.capturedNodeAuthorizer)
 	s.logger.Info("User and UserAuthFactor services wired into MCP server")
 
 	return mcpServer, nil

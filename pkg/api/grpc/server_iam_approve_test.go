@@ -134,6 +134,6 @@ func TestApproveUser_Authorization(t *testing.T) {
 		})
 	}
 
-	_, mapped := grpcMethodPermissions["/quicbaas.iam.v1.IAMService/UpdateUser"]
-	assert.False(t, mapped, "UpdateUser stays unmapped; approving goes through ApproveUser")
+	assert.Equal(t, methodPermission{"users", "update"}, grpcMethodPermissions["/quicbaas.iam.v1.IAMService/UpdateUser"],
+		"UpdateUser takes users:update, never users:enable; approving goes through ApproveUser")
 }
