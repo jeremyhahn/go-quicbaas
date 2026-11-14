@@ -132,6 +132,14 @@ type IdentityService interface {
 type SearchService interface {
 	Vector() VectorClient
 	TimeSeries() TimeSeriesClient
+
+	// QRDBTimeSeries returns go-qrdb's own time-series client
+	// (QRDBTimeSeriesClient, a re-export of go-qrdb's TimeSeriesClient):
+	// write, query, aggregate, delete and retention straight against the
+	// go-qrdb node, over the transport the client was built with. The
+	// go-qrdb client is built lazily on first use; its build error is
+	// returned here.
+	QRDBTimeSeries() (QRDBTimeSeriesClient, error)
 }
 
 // StorageService provides object storage, backup, and parameter store operations.
@@ -346,6 +354,10 @@ type searchService struct {
 func (s *searchService) Vector() VectorClient         { return s.c.Vector() }
 func (s *searchService) TimeSeries() TimeSeriesClient { return s.c.TimeSeries() }
 
+func (s *searchService) QRDBTimeSeries() (QRDBTimeSeriesClient, error) {
+	return s.c.qrdbTimeSeries()
+}
+
 // storageService delegates StorageService methods to the underlying client.
 type storageService struct {
 	c *client
@@ -526,6 +538,16 @@ func (c *client) Share() (QRDBShareClient, error) {
 		return nil, err
 	}
 	return qrdbClient.Shares(), nil
+}
+
+// qrdbTimeSeries returns go-qrdb's TimeSeriesClient from the lazily built
+// go-qrdb client. Search().QRDBTimeSeries() is its public entry point.
+func (c *client) qrdbTimeSeries() (QRDBTimeSeriesClient, error) {
+	qrdbClient, err := c.qrdbClient()
+	if err != nil {
+		return nil, err
+	}
+	return qrdbClient.TimeSeries(), nil
 }
 
 // =============================================================================

@@ -31,6 +31,19 @@ Every row below is derived from source, not from prose. The columns mean:
 - **Permission** — `resource:action` from
   `pkg/api/rest/routes_permissions_generated.go`.
 
+### `Search().QRDBTimeSeries()` — go-qrdb's own client, re-exported
+
+`Search().QRDBTimeSeries()` returns `QRDBTimeSeriesClient`, a type alias of
+go-qrdb's `transport.TimeSeriesClient` (`sdk/go/qrdb.go`). It is go-qrdb's
+client itself, built lazily over the transport the QuicBaaS client was built
+with, and talks straight to the go-qrdb node: `TSWrite`, `TSWriteBatch`,
+`TSWritePoint`, `TSQuery`, `TSRichQuery`, `TSAggregate`, `TSDeleteSeries`,
+`TSGetRetention`, `TSSetRetention` and `TSListMetrics`. Over REST they map to
+go-qrdb's `/v1/ts/*` routes (`/ts/write`, `/ts/query`,
+`/ts/series/{metric}/retention`, ...). A go-qrdb client that cannot be built
+(for example the embedded transport without go-qrdb servicers) is returned as
+an error. Test: `sdk/go/qrdb_timeseries_reexport_test.go`.
+
 ### `quicbaas.TimeSeries` — SDK package `sdk/go/client/timeseries`
 
 Dedicated transport handlers: rest=yes, grpc=no, mcp=yes; embedded routes registered: 8; MCP tools registered server-side: 7.
