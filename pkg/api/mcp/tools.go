@@ -407,6 +407,31 @@ func (r *ToolRegistry) registerTools() {
 		},
 	})
 
+	r.addTool(ToolDefinition{
+		Name:        "quicbaas_batch_execute",
+		Description: "Commit a mixed batch of puts and deletes atomically",
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"operations": map[string]interface{}{
+					"type": "array",
+					"items": map[string]interface{}{
+						"type": "object",
+						"properties": map[string]interface{}{
+							"type":        map[string]interface{}{"type": "string", "enum": []string{"PUT", "DELETE"}},
+							"entity_type": map[string]interface{}{"type": "string"},
+							"key":         map[string]interface{}{"type": "string"},
+							"value":       map[string]interface{}{"type": "string", "description": "Base64-encoded (standard) data a put writes; a delete ignores it"},
+						},
+						"required": []string{"type", "entity_type", "key"},
+					},
+				},
+				"shardID": map[string]interface{}{"type": "integer"},
+			},
+			"required": []string{"operations"},
+		},
+	})
+
 	// Transaction Operations
 	r.addTool(ToolDefinition{
 		Name:        "quicbaas_transaction",
@@ -1078,6 +1103,8 @@ func (r *ToolRegistry) ExecuteTool(ctx context.Context, name string, args map[st
 		return r.executeBatchGet(ctx, args)
 	case "quicbaas_batch_delete":
 		return r.executeBatchDelete(ctx, args)
+	case "quicbaas_batch_execute":
+		return r.executeBatchExecute(ctx, args)
 
 	// Transaction Operations
 	case "quicbaas_transaction":
@@ -1992,6 +2019,96 @@ func (r *ToolRegistry) executeBatchDelete(ctx context.Context, args map[string]i
 	}
 
 	return marshalResult(resp)
+}
+
+// batchExecuteOpTypes maps the operation type strings quicbaas_batch_execute
+// accepts to the service operation kinds, matching the REST batch endpoint.
+var batchExecuteOpTypes = map[string]service.BatchExecuteOpType{
+	"PUT":    service.BatchExecutePut,
+	"DELETE": service.BatchExecuteDelete,
+}
+
+// executeBatchExecute commits a mixed batch of puts and deletes atomically.
+func (r *ToolRegistry) executeBatchExecute(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+	ops, err := parseBatchOperationsArray(args)
+	if err != nil {
+		return nil, err
+	}
+
+	operations := make([]*service.BatchExecuteOperation, 0, len(ops))
+	for i, op := range ops {
+		opMap, ok := op.(map[string]interface{})
+		if !ok {
+			return nil, &BatchOperationParseError{
+				Index:   i,
+				Field:   "operation",
+				Message: "expected object",
+			}
+		}
+
+		opType, ok := batchExecuteOpTypes[getString(opMap, "type")]
+		if !ok {
+			return nil, &BatchOperationParseError{
+				Index:   i,
+				Field:   "type",
+				Message: "type must be PUT or DELETE",
+			}
+		}
+
+		entityType := getStringAlt(opMap, "entityType", "entity_type")
+		if entityType == "" {
+			return nil, &BatchOperationParseError{
+				Index:   i,
+				Field:   "entityType",
+				Message: "entity_type is required",
+			}
+		}
+
+		key := getString(opMap, "key")
+		if key == "" {
+			return nil, &BatchOperationParseError{
+				Index:   i,
+				Field:   "key",
+				Message: "key is required",
+			}
+		}
+
+		var value []byte
+		if data := getString(opMap, "value"); data != "" {
+			value, err = decodePutData(data)
+			if err != nil {
+				return nil, &BatchOperationParseError{
+					Index:   i,
+					Field:   "value",
+					Message: "value must be base64-encoded",
+				}
+			}
+		}
+
+		operations = append(operations, &service.BatchExecuteOperation{
+			Type:       opType,
+			EntityType: entityType,
+			Key:        key,
+			Value:      value,
+		})
+	}
+
+	resp, err := r.service.BatchExecute(ctx, &service.BatchExecuteRequest{
+		Operations: operations,
+		ShardID:    getUint64(args, "shardID"),
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	results := make([]map[string]interface{}, len(resp.Results))
+	for i, result := range resp.Results {
+		results[i] = map[string]interface{}{"success": result.Succeeded}
+	}
+	return marshalResult(map[string]interface{}{
+		"success": true,
+		"results": results,
+	})
 }
 
 // parseBatchOperationsArray extracts and validates the "operations" array from batch tool args.

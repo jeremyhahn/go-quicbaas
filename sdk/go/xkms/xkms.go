@@ -220,6 +220,7 @@ var (
 	DecodePCRs                        = xkmssdk.DecodePCRs
 	DefaultTPMConfig                  = xkmssdk.DefaultTPMConfig
 	DiscoverPlatformAttributes        = xkmssdk.DiscoverPlatformAttributes
+	EKAttributesFromConfig            = xkmssdk.EKAttributesFromConfig
 	EncodePubKeyPEM                   = xkmssdk.EncodePubKeyPEM
 	ErrCertNotFound                   = xkmssdk.ErrCertNotFound
 	ErrInvalidKeyAlgorithm            = xkmssdk.ErrInvalidKeyAlgorithm
@@ -259,6 +260,7 @@ var (
 	ParseStoreType                    = xkmssdk.ParseStoreType
 	ResetPIV                          = xkmssdk.ResetPIV
 	RSASRKTemplate                    = xkmssdk.RSASRKTemplate
+	SRKAttributesFromConfig           = xkmssdk.SRKAttributesFromConfig
 	ServiceClose                      = xkmssdk.ServiceClose
 	ServiceDeleteKey                  = xkmssdk.ServiceDeleteKey
 	ServiceDeleteKeyByID              = xkmssdk.ServiceDeleteKeyByID

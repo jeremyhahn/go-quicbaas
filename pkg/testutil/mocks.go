@@ -200,6 +200,12 @@ func (m *MockQuicBaaS) BatchDelete(ctx context.Context, req *service.BatchDelete
 	return resp, args.Error(1)
 }
 
+func (m *MockQuicBaaS) BatchExecute(ctx context.Context, req *service.BatchExecuteRequest) (*service.BatchExecuteResponse, error) {
+	args := m.Called(ctx, req)
+	resp, _ := args.Get(0).(*service.BatchExecuteResponse)
+	return resp, args.Error(1)
+}
+
 // =============================================================================
 // Transaction Service Methods (part of service.QuicBaaS)
 // =============================================================================

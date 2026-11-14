@@ -405,6 +405,7 @@ var frozenRoutePermissions = map[string]frozenPermission{
 	"POST /api/v1/barrier/shamir/unseal-shares":                                        {auth: RouteAuthPermission, resource: "barrier", action: "unseal-share"},
 	"POST /api/v1/barrier/unseal":                                                      {auth: RouteAuthPermission, resource: "tenant_barrier", action: "unseal"},
 	"POST /api/v1/batch/delete":                                                        {auth: RouteAuthPermission, resource: "batch", action: "execute"},
+	"POST /api/v1/batch/execute":                                                       {auth: RouteAuthPermission, resource: "batch", action: "execute"},
 	"POST /api/v1/batch/get":                                                           {auth: RouteAuthPermission, resource: "batch", action: "execute"},
 	"POST /api/v1/batch/put":                                                           {auth: RouteAuthPermission, resource: "batch", action: "execute"},
 	"POST /api/v1/bootstrap/auto":                                                      {auth: RouteAuthPermission, resource: "trust", action: "write"},

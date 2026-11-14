@@ -80,15 +80,16 @@ var qrdbToolExactMapping = map[string]qrdbToolResource{
 	// and removed with them in issue #905.
 	// TestMCPPermissions_EveryMappedToolIsRegistered now makes that class of
 	// entry impossible to add back.
-	"quicbaas_query":        {"kv", "range"},
-	"quicbaas_scan_index":   {"index", "scan"},
-	"quicbaas_batch_get":    {"batch", "execute"},
-	"quicbaas_batch_put":    {"batch", "execute"},
-	"quicbaas_batch_delete": {"batch", "execute"},
-	"qrdb_get":              {"kv", "get"},
-	"qrdb_list":             {"kv", "list"},
-	"qrdb_put":              {"kv", "put"},
-	"qrdb_delete":           {"kv", "delete"},
+	"quicbaas_query":         {"kv", "range"},
+	"quicbaas_scan_index":    {"index", "scan"},
+	"quicbaas_batch_get":     {"batch", "execute"},
+	"quicbaas_batch_put":     {"batch", "execute"},
+	"quicbaas_batch_delete":  {"batch", "execute"},
+	"quicbaas_batch_execute": {"batch", "execute"},
+	"qrdb_get":               {"kv", "get"},
+	"qrdb_list":              {"kv", "list"},
+	"qrdb_put":               {"kv", "put"},
+	"qrdb_delete":            {"kv", "delete"},
 
 	// Transaction
 	"quicbaas_transaction": {"transaction", "execute"},
