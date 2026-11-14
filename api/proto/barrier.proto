@@ -157,9 +157,12 @@ message BarrierShamirInitializeRequest {
   int32 total_shares = 3;
 }
 
-// BarrierShamirInitializeResponse returns the generated key shares.
+// BarrierShamirInitializeResponse is go-qrdb's share-free answer: each share
+// is sealed to an enrolled officer and claimed through the share-claim flow,
+// never returned here.
 message BarrierShamirInitializeResponse {
-  repeated string shares = 1;
+  reserved 1;
+  reserved "shares";
   int32 threshold = 2;
   int32 total_shares = 3;
   // share_count is go-qrdb's count of shares sealed to enrolled officers.
@@ -195,9 +198,11 @@ message BarrierRecoveryGenerateRequest {
   int32 total = 2;
 }
 
-// BarrierRecoveryKeysResponse returns generated recovery keys.
+// BarrierRecoveryKeysResponse is go-qrdb's share-free answer: each recovery
+// share is sealed to an enrolled recovery officer, never returned here.
 message BarrierRecoveryKeysResponse {
-  repeated string keys = 1;
+  reserved 1;
+  reserved "keys";
   int32 threshold = 2;
   int32 total = 3;
   // share_count is go-qrdb's count of recovery shares sealed to officers.

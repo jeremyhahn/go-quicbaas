@@ -428,10 +428,8 @@ func TestBarrierShamirInitialize_Success(t *testing.T) {
 	if resp.GetThreshold() != 2 || resp.GetTotalShares() != 3 {
 		t.Fatalf("unexpected response: %#v", resp)
 	}
-	// Share-free contract: share material must never appear on the wire.
-	if len(resp.GetShares()) != 0 {
-		t.Fatalf("shares leaked on the wire: %#v", resp)
-	}
+	// Share-free contract: the response declares no share field at all
+	// (api/proto TestBarrierShareFreeResponses_DeclareNoShareMaterial).
 }
 
 func TestBarrierShamirInitialize_NilRequest(t *testing.T) {
@@ -547,10 +545,8 @@ func TestBarrierRekey_Success(t *testing.T) {
 	if resp.GetShareCount() != 3 {
 		t.Fatalf("share_count = %d, want go-qrdb's 3", resp.GetShareCount())
 	}
-	// Share-free contract: share material must never appear on the wire.
-	if len(resp.GetShares()) != 0 {
-		t.Fatalf("shares leaked on the wire: %#v", resp)
-	}
+	// Share-free contract: the response declares no share field at all
+	// (api/proto TestBarrierShareFreeResponses_DeclareNoShareMaterial).
 }
 
 func TestBarrierRekey_ValidationErrors(t *testing.T) {
@@ -591,10 +587,8 @@ func TestBarrierRecoveryGenerate_Success(t *testing.T) {
 	if resp.GetShareCount() != 3 {
 		t.Fatalf("share_count = %d, want go-qrdb's 3", resp.GetShareCount())
 	}
-	// Share-free contract: recovery key material must never appear on the wire.
-	if len(resp.GetKeys()) != 0 {
-		t.Fatalf("recovery keys leaked on the wire: %#v", resp)
-	}
+	// Share-free contract: the response declares no share field at all
+	// (api/proto TestBarrierShareFreeResponses_DeclareNoShareMaterial).
 }
 
 func TestBarrierRecoveryGenerate_ValidationErrors(t *testing.T) {

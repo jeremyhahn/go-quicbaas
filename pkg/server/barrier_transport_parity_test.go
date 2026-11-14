@@ -22,6 +22,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"google.golang.org/protobuf/types/known/emptypb"
 
@@ -259,6 +260,8 @@ func barrierVerbOverREST(t *testing.T, svc service.BarrierServicer, verb, path, 
 	handlers := map[string]http.HandlerFunc{
 		"rekey":             srv.HandleBarrierRekey,
 		"recovery-generate": srv.HandleBarrierRecoveryGenerate,
+		"unseal-share":      srv.HandleBarrierShamirUnsealShare,
+		"root-token":        srv.HandleBarrierRootToken,
 	}
 
 	rec := httptest.NewRecorder()
@@ -314,9 +317,6 @@ func TestBarrierRekeyAndRecovery_CarryGoQrdbShareCount(t *testing.T) {
 		if err != nil {
 			t.Fatalf("gRPC BarrierRekey: %v", err)
 		}
-		if len(g.GetShares()) != 0 {
-			t.Fatalf("grpc+unix: shares on the wire: %v", g.GetShares())
-		}
 		answers["grpc+unix"] = qrdbtransport.BarrierRekeyResponse{
 			Threshold: int(g.GetThreshold()), TotalShares: int(g.GetTotalShares()), ShareCount: int(g.GetShareCount()),
 		}
@@ -351,9 +351,6 @@ func TestBarrierRekeyAndRecovery_CarryGoQrdbShareCount(t *testing.T) {
 		if err != nil {
 			t.Fatalf("gRPC BarrierRecoveryGenerate: %v", err)
 		}
-		if len(g.GetKeys()) != 0 {
-			t.Fatalf("grpc+unix: recovery keys on the wire: %v", g.GetKeys())
-		}
 		answers["grpc+unix"] = qrdbtransport.BarrierRecoveryKeysResponse{
 			Threshold: int(g.GetThreshold()), Total: int(g.GetTotal()), ShareCount: int(g.GetShareCount()),
 		}
@@ -373,6 +370,87 @@ func TestBarrierRekeyAndRecovery_CarryGoQrdbShareCount(t *testing.T) {
 		for transport, got := range answers {
 			if got != *client.recoveryResp {
 				t.Errorf("%s: recovery generate = %+v, want go-qrdb's %+v", transport, got, *client.recoveryResp)
+			}
+		}
+	})
+}
+
+// TestBarrierUnsealShareAndRootToken_CarryGoQrdbResponses pins the two
+// remaining answer-bearing share verbs to go-qrdb's responses on every
+// transport: unseal-share reports go-qrdb's quorum progress, root-token
+// go-qrdb's token and creation time.
+func TestBarrierUnsealShareAndRootToken_CarryGoQrdbResponses(t *testing.T) {
+	client := &stubBarrierClient{
+		shareResp:     &qrdbtransport.BarrierUnsealShareResponse{Required: 3, Submitted: 2, Complete: false},
+		rootTokenResp: &qrdbtransport.BarrierRootTokenResponse{Token: "hvs.root-1650", CreatedAt: "2026-08-25T04:40:05Z"},
+	}
+	svc := service.NewBarrierService(client)
+	ctx := context.Background()
+	grpcSrv := grpcapi.NewBarrierServer(svc, parityLogger(t))
+	qrdbSvc := newQRDBBarrierClientServicer(client)
+
+	t.Run("unseal-share", func(t *testing.T) {
+		answers := map[string]qrdbtransport.BarrierUnsealShareResponse{}
+
+		var rest qrdbtransport.BarrierUnsealShareResponse
+		barrierVerbOverREST(t, svc, "unseal-share", "/api/v1/barrier/shamir/unseal-share", `{"share":"s1"}`, &rest)
+		answers["rest"] = rest
+
+		g, err := grpcSrv.BarrierShamirUnsealShare(ctx, &pb.BarrierShamirUnsealShareRequest{Share: "s1"})
+		if err != nil {
+			t.Fatalf("gRPC BarrierShamirUnsealShare: %v", err)
+		}
+		answers["grpc+unix"] = qrdbtransport.BarrierUnsealShareResponse{
+			Required: int(g.GetRequired()), Submitted: int(g.GetSubmitted()), Complete: g.GetComplete(),
+		}
+
+		var mcp qrdbtransport.BarrierUnsealShareResponse
+		barrierVerbOverMCP(t, svc, "qrdb_barrier_shamir_unseal_share", map[string]any{"share": "s1"}, &mcp)
+		answers["mcp"] = mcp
+
+		q, err := qrdbSvc.BarrierUnsealWithShare(ctx, "s1")
+		if err != nil {
+			t.Fatalf("qrdb BarrierServicer adapter BarrierUnsealWithShare: %v", err)
+		}
+		answers["quic+embedded"] = qrdbtransport.BarrierUnsealShareResponse{
+			Required: q.Required, Submitted: q.Submitted, Complete: q.Complete,
+		}
+
+		for transport, got := range answers {
+			if got != *client.shareResp {
+				t.Errorf("%s: unseal-share = %+v, want go-qrdb's %+v", transport, got, *client.shareResp)
+			}
+		}
+	})
+
+	t.Run("root-token", func(t *testing.T) {
+		answers := map[string]qrdbtransport.BarrierRootTokenResponse{}
+
+		var rest qrdbtransport.BarrierRootTokenResponse
+		barrierVerbOverREST(t, svc, "root-token", "/api/v1/barrier/root-token", `{"shares":["s1","s2"]}`, &rest)
+		answers["rest"] = rest
+
+		g, err := grpcSrv.BarrierRootToken(ctx, &pb.BarrierRootTokenRequest{Shares: []string{"s1", "s2"}})
+		if err != nil {
+			t.Fatalf("gRPC BarrierRootToken: %v", err)
+		}
+		answers["grpc+unix"] = qrdbtransport.BarrierRootTokenResponse{Token: g.GetToken(), CreatedAt: g.GetCreatedAt()}
+
+		var mcp qrdbtransport.BarrierRootTokenResponse
+		barrierVerbOverMCP(t, svc, "qrdb_barrier_root_token", map[string]any{"shares": []any{"s1", "s2"}}, &mcp)
+		answers["mcp"] = mcp
+
+		q, err := qrdbSvc.BarrierGenerateRootToken(ctx, []string{"s1", "s2"})
+		if err != nil {
+			t.Fatalf("qrdb BarrierServicer adapter BarrierGenerateRootToken: %v", err)
+		}
+		answers["quic+embedded"] = qrdbtransport.BarrierRootTokenResponse{
+			Token: q.Token, CreatedAt: q.CreatedAt.UTC().Format(time.RFC3339),
+		}
+
+		for transport, got := range answers {
+			if got != *client.rootTokenResp {
+				t.Errorf("%s: root-token = %+v, want go-qrdb's %+v", transport, got, *client.rootTokenResp)
 			}
 		}
 	})
