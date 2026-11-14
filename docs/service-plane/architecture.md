@@ -1,6 +1,6 @@
 # Trusted service plane: architecture
 
-> **Status: NORMATIVE** · Last verified: 2026-10-15
+> **Status: NORMATIVE** · Last verified: 2026-11-14
 > The design for the SPEC rows `container-runtime`, `services`, `oci-registry`,
 > `measured-launch` and `service-policy`. All five are planned; the parts
 > already built are noted where they appear.
@@ -146,6 +146,18 @@ on deploy revokes the grants already made and releases the name. Plan:
 - RBAC grants from the built-in role;
 - secrets bound to the identity.
 
+**Built: the grants.** `pkg/serviceplane/grants` implements the five over
+go-xkms, the registry, IAM and secrets; `grants.All` builds them in plane
+order. The identity is `spiffe://<tenant>/svc/<name>`; its x509-svid
+(`ProfileNameX509SVID`) and the ACME leaf for `<name>.<tenant>.<domain>`
+are issued from a fresh P-256 key, and certificate and key are stored under
+`services/<name>/svid` and `services/<name>/tls`. The name is a registry
+lease, RBAC binds the manifest's role to the identity, and the secrets grant
+binds `services/<name>/` to it. A redeploy keeps every grant whose ref still
+fits the manifest; undeploy revokes the certificates and destroys what was
+stored. Not built: the `RoleBinder` over go-qrdb IAM for SPIFFE principals,
+and the server wiring that passes `grants.All` as the plane's grants.
+
 **Placement** reuses `pkg/scheduler/placement`. `FleetDeployService`, the SSH
 install of the daemon itself, stays as node bootstrap. Its verbs are not
 service verbs.
@@ -173,6 +185,22 @@ type Strategy interface {
 
 `ABSwitch` is the first strategy. `BlueGreen` and `Canary` are later
 strategies on the same interface; there is never a second controller.
+
+**Built: the release and the controller.** `serviceplane.Release` is signed
+by `SignRelease` and checked by `Keyring.VerifyRelease`, under a domain that
+differs from the manifest's, so neither signature verifies as the other.
+`pkg/serviceplane/rollout` holds the A/B `Slots` record per service, the
+`Strategy` interface (`Name`, `Plan(slots, target)`, `Step`, `Rollback`),
+`ABSwitch` over a `SlotRuntime`, an `Appraiser` and a `NameSwitch`, and the
+`Controller`. The controller acts only while its `scheduler.LeaderChecker`
+says it leads, and refuses a release that is forged, for another tenant, or
+of kind `node`. It claims the service by writing the rollout into the slot
+record through the `Guard`, and writes each phase against the record it
+read; a controller that finds a rollout in flight refuses, and one whose
+write loses stops. `Resume` lets a new leader take over a rollout in flight.
+A failed step rolls back (`rolled_back`); a failed rollback is recorded as
+`failed`. Not built: slot runtime, appraiser and name switch backed by the
+container runtime, the Verifier and the registry.
 
 ### Boot node, NBD and the deployer
 
