@@ -825,9 +825,18 @@ The WebAuthn ceremony policy keys (`assurance`, `resident_key_requirement`,
 > `Origin` header). In the stock dev setup (`server.host: 127.0.0.1`, REST port
 > 18080) this yields `rp_id: localhost` and `rp_origins: [https://localhost:18080]`
 > — loopback IPs are canonicalised to `localhost` because a WebAuthn RP ID must
-> be a domain, not an IP literal. If `server.host` is an explicit routable IP
-> literal and no explicit `rp_id` is set, WebAuthn initialisation fails closed
-> with a clear validation error. Explicit `rp_id` / `rp_origins` always win.
+> be a domain, not an IP literal.
+>
+> **A node reached by IP address needs an explicit `rp_id`.** If `server.host`
+> is a routable IP literal (a LAN address such as `192.168.1.50`, or an IPv6
+> address other than `::` / `::1`) and `iam.webauthn.rp_id` is not set,
+> configuration validation refuses the configuration at load, before any
+> listener starts, with an error on `iam.webauthn.rp_id`. A browser rejects
+> an IP address as an RP ID, so the derived default could only fail at
+> login. Set `rp_id` to the domain name clients use to reach the node, and
+> `rp_origins` to its origin (for example `rp_id: pilot.example.lan`,
+> `rp_origins: ["https://pilot.example.lan:18080"]`), or set `server.host`
+> to a hostname. Explicit `rp_id` / `rp_origins` always win.
 
 ### Troubleshooting
 

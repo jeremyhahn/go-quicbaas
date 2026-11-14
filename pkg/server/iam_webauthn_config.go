@@ -35,11 +35,7 @@ func issuerURLFromConfig(cfg *config.Config) string {
 		scheme = "https"
 	}
 
-	host := cfg.Server.Host
-	switch host {
-	case "", "0.0.0.0", "::", "127.0.0.1", "::1", "localhost":
-		host = "localhost"
-	}
+	host := config.WebAuthnIssuerHost(cfg.Server.Host)
 
 	port := cfg.Server.REST.Port
 	if port == 0 {
