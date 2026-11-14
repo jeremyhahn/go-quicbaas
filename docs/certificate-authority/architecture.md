@@ -29,9 +29,11 @@ on every transport, for go-trusted-platform ([SPEC](../SPEC.md) rows
 | go-xkms CA (`CAService`) | `Security().TrustedCA()` | `/api/v1/xkms/ca` | — |
 
 `Security().TrustedCA()` is the go-xkms `CAService` under go-xkms's own names
-and types (#1330). Today it is served on REST (`/api/v1/xkms/ca/*`) and MCP
-(`xkms.ca.*`), both backed by one go-xkms CA adapter. gRPC, QUIC, Unix and the
-embedded transport do not carry it yet.
+and types (#1330). It is served on REST (`/api/v1/xkms/ca/*`), MCP
+(`xkms.ca.*`), the embedded transport, and gRPC on the Unix socket
+(`quicbaas.trustedca.v1.TrustedCAService`). One go-xkms CA adapter backs all of
+them. The node's TCP gRPC listener carries the same CA verbs on go-xkms's
+canonical `xkms.v1.KeystoreService`. QUIC does not carry it yet.
 
 Issuance (Certificate, ACME) and acceptance (Trust) stay separate surfaces: a
 deployment can issue for its own nodes while accepting a different set of

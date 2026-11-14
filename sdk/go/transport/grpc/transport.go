@@ -443,6 +443,13 @@ func (t *Transport) doRequest(ctx context.Context, service, method string, req i
 		return handler.handleRequest(ctx, service, method, req)
 	}
 
+	// The re-exported go-xkms CAService (Security().TrustedCA()) converts its
+	// go-xkms wire structs to the TrustedCAService proto types, as PIV does
+	// (#1330). This branch also serves the Unix transport.
+	if isTrustedCAService(service) {
+		return newTrustedCAHandler(conn).handleRequest(ctx, service, method, req)
+	}
+
 	// Check if this is an Operations service request and route through the
 	// operations handler. The SDK operations client uses plain Go structs which
 	// don't implement proto.Message, so we need to convert them to the generated
