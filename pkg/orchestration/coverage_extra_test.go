@@ -661,7 +661,9 @@ func TestKVSessionEventLog_Errors(t *testing.T) {
 			call:          func(l *KVSessionEventLog) error { return l.Append(ctx, newPromptEvent("", "s", 1, "x")) },
 			wantAppendErr: true},
 		{name: "Append/put error",
-			fault:         func(kv *faultKVStore) { kv.putErr = kvDown },
+			// The event write is guarded (create-if-absent) on a store that
+			// offers it, so fault both write paths.
+			fault:         func(kv *faultKVStore) { kv.putErr = kvDown; kv.putIfAbsentErr = kvDown },
 			call:          func(l *KVSessionEventLog) error { return l.Append(ctx, newPromptEvent("t", "s", 1, "x")) },
 			wantAppendErr: true},
 		{name: "PutMeta/nil meta",
