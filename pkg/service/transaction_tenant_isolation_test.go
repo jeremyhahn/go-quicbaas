@@ -1,6 +1,7 @@
 package service
 
 import (
+	"bytes"
 	"context"
 	"sync"
 	"testing"
@@ -52,6 +53,103 @@ func (t *kvMapTransport) ExecuteBatch(ctx context.Context, ops []transport.Op, o
 	}
 	t.storeMu.Unlock()
 	return t.svcBoostMockTransport.ExecuteBatch(ctx, ops, opts...)
+}
+
+// ExecuteTransaction evaluates the compares against the map and applies the
+// selected branch, as qrdb does: a present key has version 1, an absent key
+// version 0, and a Get of an absent key returns no Kvs. Every request is
+// recorded in txCalls; compare and Get keys count as reads, writes as
+// batched writes.
+func (t *kvMapTransport) ExecuteTransaction(_ context.Context, req *transport.TransactionRequest, _ ...transport.WriteOption) (*transport.TransactionResponse, error) {
+	t.svcBoostMockTransport.mu.Lock()
+	t.svcBoostMockTransport.txCalls = append(t.svcBoostMockTransport.txCalls, req)
+	t.svcBoostMockTransport.mu.Unlock()
+
+	t.storeMu.Lock()
+	defer t.storeMu.Unlock()
+	succeeded := true
+	for _, cmp := range req.Compares {
+		t.getKeys = append(t.getKeys, string(cmp.Key))
+		if !kvMapCompare(t.store, cmp) {
+			succeeded = false
+			break
+		}
+	}
+	ops := req.SuccessOps
+	if !succeeded {
+		ops = req.FailureOps
+	}
+	resp := &transport.TransactionResponse{Succeeded: succeeded, Responses: make([]transport.OpResponse, 0, len(ops))}
+	for _, op := range ops {
+		result := transport.OpResponse{Succeeded: true}
+		switch op.Type {
+		case transport.OpGet:
+			t.getKeys = append(t.getKeys, string(op.Key))
+			if value, ok := t.store[string(op.Key)]; ok {
+				result.Kvs = []*transport.MVCCKeyValue{{Key: op.Key, Value: value, Version: 1}}
+			}
+		case transport.OpPut:
+			t.batchOps++
+			t.store[string(op.Key)] = op.Value
+		case transport.OpDelete:
+			t.batchOps++
+			delete(t.store, string(op.Key))
+		}
+		resp.Responses = append(resp.Responses, result)
+	}
+	return resp, nil
+}
+
+// txKeys returns the first key of each recorded transaction's success branch.
+func (t *kvMapTransport) txKeys() []string {
+	t.svcBoostMockTransport.mu.Lock()
+	defer t.svcBoostMockTransport.mu.Unlock()
+	keys := make([]string, 0, len(t.svcBoostMockTransport.txCalls))
+	for _, call := range t.svcBoostMockTransport.txCalls {
+		if len(call.SuccessOps) > 0 {
+			keys = append(keys, string(call.SuccessOps[0].Key))
+		}
+	}
+	return keys
+}
+
+// kvMapCompare evaluates one qrdb compare against the map.
+func kvMapCompare(store map[string][]byte, cmp transport.Compare) bool {
+	value, present := store[string(cmp.Key)]
+	order := 0
+	switch cmp.Target {
+	case transport.CompareVersion:
+		var version int64
+		if present {
+			version = 1
+		}
+		order = cmpInt64(version, cmp.Version)
+	case transport.CompareValue:
+		order = bytes.Compare(value, cmp.Value)
+	default:
+		return false
+	}
+	switch cmp.Result {
+	case transport.CompareEqual:
+		return order == 0
+	case transport.CompareNotEqual:
+		return order != 0
+	case transport.CompareGreater:
+		return order > 0
+	case transport.CompareLess:
+		return order < 0
+	}
+	return false
+}
+
+func cmpInt64(a, b int64) int {
+	switch {
+	case a < b:
+		return -1
+	case a > b:
+		return 1
+	}
+	return 0
 }
 
 // accessCount reports how many reads and batched writes reached the store.
@@ -123,7 +221,11 @@ func getUserData(t *testing.T, svc QuicBaaS, ctx context.Context) []byte {
 	t.Helper()
 	resp := runTxn(t, svc, ctx, getUser())
 	require.Len(t, resp.Responses, 1)
-	require.True(t, resp.Responses[0].Success)
+	if !resp.Responses[0].Success {
+		// A Get of an absent key is an unsuccessful not-found operation.
+		assert.Contains(t, resp.Responses[0].Error, "not found")
+		return nil
+	}
 	return resp.Responses[0].Data
 }
 
@@ -181,12 +283,9 @@ func TestTransactionService_Transaction_TenantIsolation(t *testing.T) {
 		runTxn(t, svc, ctxA, putUser(dataA))
 		runTxn(t, svc, ctxB, putUser(dataB))
 
-		kv.mu.Lock()
-		calls := kv.batchCalls
-		kv.mu.Unlock()
-		require.Len(t, calls, 2)
-		keyA := string(calls[0][0].Key)
-		keyB := string(calls[1][0].Key)
+		keys := kv.txKeys()
+		require.Len(t, keys, 2)
+		keyA, keyB := keys[0], keys[1]
 		assert.NotEqual(t, keyA, keyB)
 		assert.Contains(t, keyA, "tenant-a")
 		assert.Contains(t, keyB, "tenant-b")
