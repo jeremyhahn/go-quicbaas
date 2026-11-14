@@ -51,7 +51,7 @@ services:
     networks:
       - cluster-network
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8080/v1/health/live"]
+      test: ["CMD", "curl", "-f", "http://localhost:8080/api/v1/health/live"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -118,7 +118,7 @@ services:
       node1:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8080/v1/health/live"]
+      test: ["CMD", "curl", "-f", "http://localhost:8080/api/v1/health/live"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -187,7 +187,7 @@ services:
       node2:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8080/v1/health/live"]
+      test: ["CMD", "curl", "-f", "http://localhost:8080/api/v1/health/live"]
       interval: 10s
       timeout: 5s
       retries: 5
