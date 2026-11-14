@@ -887,9 +887,10 @@ func Validate(cfg *Config) error {
 // validateSDLCPublicURL refuses a node that could onboard a project into the
 // void.
 //
-// Onboarding provisions a forge webhook pointing at this node's public
-// origin. An absent or malformed one is refused AT LOAD rather than at the
-// first onboarding, because the alternative is twenty-eight repositories
+// The value is OPTIONAL: an empty one means this node takes no webhook
+// deliveries, and only poll-only bindings onboard on it (go-quicbaas#2225).
+// A non-empty but malformed one is refused AT LOAD rather than at the first
+// onboarding, because the alternative is twenty-eight repositories
 // configured to deliver somewhere that does not answer, each reported
 // provisioned.
 func (v *Validator) validateSDLCPublicURL(public string) {
@@ -904,12 +905,13 @@ func (v *Validator) validateSDLCPublicURL(public string) {
 // drift test pin it against the module's own refusal
 // (sdlc.NormalizeWebhookPublicURL). pkg/config cannot import pkg/sdlc, so the
 // rule is stated twice and the drift test is what keeps the two the same.
+//
+// An empty (all-space) value is valid: it means the node takes no webhook
+// deliveries, so only poll-only bindings onboard (go-quicbaas#2225).
 func ValidateSDLCWebhookPublicURL(public string) error {
 	trimmed := strings.TrimSpace(public)
 	if trimmed == "" {
-		return &SDLCWebhookPublicURLError{
-			Reason: "required when the module is enabled; onboarding provisions forge webhooks pointing at this node, and it cannot guess the node's public origin",
-		}
+		return nil
 	}
 	parsed, err := url.Parse(trimmed)
 	switch {
@@ -1084,5 +1086,30 @@ func (v *Validator) validateSDLCForge(cfg *SDLCForge) {
 		if field.negative {
 			v.addError(field.key, "must not be negative; zero takes the default")
 		}
+	}
+	for forgeType, command := range cfg.TokenCommands {
+		v.validateSDLCForgeTokenCommand("sdlc.forge.token_commands."+forgeType, forgeType, command)
+	}
+}
+
+// sdlcTokenCommandForgeTypes are the forge types a token command may serve.
+var sdlcTokenCommandForgeTypes = map[string]bool{"github": true, "gitea": true}
+
+func (v *Validator) validateSDLCForgeTokenCommand(key, forgeType string, cmd SDLCForgeTokenCommand) {
+	if !sdlcTokenCommandForgeTypes[forgeType] {
+		v.addError(key, "is not a forge type with a token command; use github or gitea")
+		return
+	}
+	switch {
+	case len(cmd.Argv) == 0 || cmd.Argv[0] == "":
+		v.addError(key+".argv", "must name a command")
+	case !filepath.IsAbs(cmd.Argv[0]):
+		v.addError(key+".argv", "must start with an absolute path; no shell runs it")
+	}
+	if cmd.RefreshBefore < 0 {
+		v.addError(key+".refresh_before", "must not be negative; zero takes 5m")
+	}
+	if cmd.Timeout < 0 {
+		v.addError(key+".timeout", "must not be negative; zero takes 30s")
 	}
 }

@@ -279,9 +279,12 @@ func validEndpointRoot(endpoint string) bool {
 // rather than a second port: ForgeResolver already resolves whichever token a
 // ForgeConfig names, so handing it this config gives an adapter authenticated
 // as the reviewer without anything else in the module learning that two
-// identities exist.
+// identities exist. It also marks the config as the reviewer's identity, so a
+// node token command, which acts as the node's own account, never stands in
+// for the reviewer's secret.
 func (r ReviewerConfig) ForgeConfigFor(forge ForgeConfig) ForgeConfig {
 	forge.TokenSecretRef = r.TokenSecretRef
+	forge.ReviewerIdentity = true
 	return forge
 }
 

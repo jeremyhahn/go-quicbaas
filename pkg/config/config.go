@@ -1124,14 +1124,16 @@ type SDLCWebhook struct {
 	// forge delivers to: scheme and host, no path — e.g.
 	// "https://factory.example.com".
 	//
-	// REQUIRED WHEN THE MODULE IS ENABLED, and deliberately not defaulted.
-	// Onboarding a project provisions a webhook on the forge pointing at
-	// <public_url>/api/v1/sdlc/webhook/<projectID>, and "the webhook points
-	// at this node" is a property of the NODE rather than of any project.
-	// A guessed origin — the listen address, a loopback — would provision
-	// every managed repository to deliver into the void and report every one
-	// of them provisioned, which is the silent failure the whole onboarding
-	// surface exists to end.
+	// OPTIONAL, and deliberately not defaulted. Empty means this node takes
+	// no webhook deliveries: only poll-only bindings onboard, and a binding
+	// that names a webhook secret is refused at onboarding
+	// (go-quicbaas#2225). When set, onboarding provisions a webhook on the
+	// forge pointing at <public_url>/api/v1/sdlc/webhook/<projectID>, and
+	// "the webhook points at this node" is a property of the NODE rather
+	// than of any project. A guessed origin — the listen address, a
+	// loopback — would provision every managed repository to deliver into
+	// the void and report every one of them provisioned, which is the
+	// silent failure the whole onboarding surface exists to end.
 	PublicURL string `mapstructure:"public_url"`
 }
 
@@ -1181,6 +1183,28 @@ type SDLCForge struct {
 
 	// RetryBackoff is the first wait between attempts; each retry doubles it.
 	RetryBackoff time.Duration `mapstructure:"retry_backoff"`
+
+	// TokenCommands maps a forge type ("github", "gitea") to the command the
+	// node runs for that forge's token. A binding of a type listed here takes
+	// its token from the command, never from its TokenSecretRef. This is
+	// node configuration only: no tenant, project or binding can name a
+	// command.
+	TokenCommands map[string]SDLCForgeTokenCommand `mapstructure:"token_commands"`
+}
+
+// SDLCForgeTokenCommand is one forge type's token command. It prints
+// {"token": "...", "expires_at": "<RFC 3339>"} on stdout.
+type SDLCForgeTokenCommand struct {
+	// Argv is the command and its words; Argv[0] is an absolute path. No
+	// shell runs it.
+	Argv []string `mapstructure:"argv"`
+
+	// RefreshBefore is how long before expires_at the command runs again.
+	// Zero takes 5m.
+	RefreshBefore time.Duration `mapstructure:"refresh_before"`
+
+	// Timeout bounds one run. Zero takes 30s.
+	Timeout time.Duration `mapstructure:"timeout"`
 }
 
 // SDLCSurfacing is the retry behind a parked task's comment on its issue.
