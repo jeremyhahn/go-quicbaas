@@ -33,8 +33,9 @@ import (
 // =============================================================================
 //
 // THE BUILD RUNS ON THE DAEMON'S HOST, through the daemon's own container
-// engine (Server.orchContainerRuntime, the same ExecContainerRuntime the
-// orchestration service spawns sandboxes with), and not behind the agent RPC.
+// engine (Server.orchContainerRuntime, an ExecContainerRuntime kept for image
+// builds alone; sessions run on the co-located agent), and not behind the
+// agent RPC.
 // Three facts decide it:
 //
 //   - Worker images are not built anywhere else today: `make
