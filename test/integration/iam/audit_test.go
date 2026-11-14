@@ -391,8 +391,13 @@ func TestAuditEventDelete(t *testing.T) {
 	cluster := setupTestCluster(t)
 	defer cluster.Close()
 
-	tenantID, auditor := setupTenantForAuditTests(t, cluster)
-	defer cleanupAuditTests(cluster, tenantID)
+	// The tenant is provisioned through its admin, the principal that must
+	// be authorized for audit:delete in the tenant; the helper deletes the
+	// tenant when t ends.
+	// The auditor in the same tenant holds audit:read but not audit:delete.
+	tenantID := generateUniqueTenantID()
+	tenantAdmin := cluster.asTenantAdmin(t, tenantID)
+	auditor := cluster.asTenantAuditor(t, tenantID)
 
 	userEvents := fmt.Sprintf("/api/v1/iam/audit?tenant_id=%s&event_type=user_management", tenantID)
 	before := auditBaseline(t, auditor, userEvents)
@@ -423,26 +428,34 @@ func TestAuditEventDelete(t *testing.T) {
 	require.NotEmpty(t, beforeResp.Events, "the chain should hold the user creation events")
 
 	// Send the audit delete the API serves: DELETE /api/v1/iam/audit with a
-	// future cut-off, which names every event in the chain. The audit log is
-	// append-only (go-qrdb's audit chain), so the delete never erases an
-	// event: the auditor, who holds no audit:delete grant, is refused, and
-	// a granted caller deletes nothing.
+	// future cut-off, which names every event in the chain.
 	futureTime := time.Now().Add(1 * time.Hour).UTC()
 	deletePath := fmt.Sprintf("/api/v1/iam/audit?tenant_id=%s&before=%s",
 		tenantID, url.QueryEscape(futureTime.Format(time.RFC3339)))
-	deleteResp, err := auditor.doHTTPRequest(http.MethodDelete, deletePath, nil)
-	require.NoError(t, err, "Should send the audit delete")
+
+	// The auditor holds no audit:delete grant and is refused.
+	refusedResp, err := auditor.doHTTPRequest(http.MethodDelete, deletePath, nil)
+	require.NoError(t, err, "Should send the auditor's audit delete")
+	refusedBody, _ := io.ReadAll(refusedResp.Body)
+	refusedResp.Body.Close()
+	require.Equal(t, http.StatusForbidden, refusedResp.StatusCode,
+		"an auditor without audit:delete should be refused: %s", refusedBody)
+
+	// The tenant admin must be authorized for audit:delete here. The
+	// audit log is append-only (go-qrdb's hash-chained audit sink), so an
+	// authorized delete erases nothing and reports deleted_count 0.
+	deleteResp, err := tenantAdmin.doHTTPRequest(http.MethodDelete, deletePath, nil)
+	require.NoError(t, err, "Should send the tenant admin's audit delete")
 	deleteBody, _ := io.ReadAll(deleteResp.Body)
 	deleteResp.Body.Close()
-	require.Contains(t, []int{http.StatusOK, http.StatusForbidden}, deleteResp.StatusCode,
-		"the audit delete should answer 200 or 403, got %d: %s", deleteResp.StatusCode, deleteBody)
-	if deleteResp.StatusCode == http.StatusOK {
-		var deleted struct {
-			DeletedCount int `json:"deleted_count"`
-		}
-		require.NoError(t, json.Unmarshal(deleteBody, &deleted), "audit delete response")
-		assert.Zero(t, deleted.DeletedCount, "the append-only audit chain should delete nothing")
+	require.Equal(t, http.StatusOK, deleteResp.StatusCode,
+		"the tenant admin's audit delete should be authorized: %s", deleteBody)
+	var deleted struct {
+		DeletedCount *int `json:"deleted_count"`
 	}
+	require.NoError(t, json.Unmarshal(deleteBody, &deleted), "audit delete response")
+	require.NotNil(t, deleted.DeletedCount, "the audit delete response should carry deleted_count: %s", deleteBody)
+	assert.Zero(t, *deleted.DeletedCount, "the append-only audit chain should delete nothing")
 
 	// Every event read before the delete is still in the chain after it.
 	// The count may grow: each authorized request, these reads and the
