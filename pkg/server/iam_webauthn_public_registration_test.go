@@ -19,69 +19,39 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/pkg/config"
 )
 
-// The operator's iam.self_service_registration.enabled decision is what
-// authorises a WebAuthn ceremony to CREATE an account for an unknown email.
-// go-xkms v0.9.2-alpha closed that by default (v0.9.1 created the account
-// implicitly and its own config test asserted "a nil Config must read as
-// open"), so quicbaas must map the decision explicitly. Leaving it unmapped
-// disables self-service registration on a node that has it switched on —
-// silently, because the failure is a 403 from the ceremony rather than a
-// startup error.
-//
-// Both relying parties on a composed node are covered, because a node that
-// opened one lane and closed the other would put the two registration
-// surfaces back into disagreement.
+// A WebAuthn ceremony never creates an account (ruling 189, #482).
+// Self-service registration creates the account in the broker and the
+// ceremony only binds a credential to it. quicbaas used to forward the
+// operator's iam.self_service_registration.enabled decision as go-xkms's
+// AllowPublicRegistration, so a ceremony created the account itself — with the
+// email as its username — and the broker's own create then collided on the
+// email. quicbaas's own relying party is covered in pkg/iam
+// (TestXKMSWebAuthnConfig_PublicRegistrationClosed).
 
-// TestWebAuthnFactoryConfig_CarriesTheSelfServiceDecision covers quicbaas's
-// own per-tenant relying party.
-func TestWebAuthnFactoryConfig_CarriesTheSelfServiceDecision(t *testing.T) {
-	for _, allow := range []bool{true, false} {
-		got, err := webauthnFactoryConfigFromOperator(
-			config.IAMWebAuthnConfig{}, "localhost", "https://localhost:18443", allow)
-		if err != nil {
-			t.Fatalf("resolve operator config (allow=%v): %v", allow, err)
-		}
-		if got.AllowPublicRegistration != allow {
-			t.Errorf("AllowPublicRegistration = %v, want %v", got.AllowPublicRegistration, allow)
-		}
-	}
-}
-
-// TestModuleWebAuthnConfig_CarriesTheSelfServiceDecision covers the composed
+// TestModuleWebAuthnConfig_PublicRegistrationClosed covers the composed
 // go-xkms module's relying party, which serves the /api/v1/webauthn/sdk/*
-// ceremony `xkey auth register` drives.
-func TestModuleWebAuthnConfig_CarriesTheSelfServiceDecision(t *testing.T) {
-	for _, allow := range []bool{true, false} {
-		forwarded := quicbaasWebAuthnConfigToXKMS(
-			config.IAMWebAuthnConfig{RPID: "localhost", RPOrigins: []string{"https://localhost:18443"}},
-			allow)
-		if forwarded.AllowPublicRegistration == nil {
-			t.Fatalf("AllowPublicRegistration is nil for allow=%v; go-xkms reads an unset "+
-				"value as closed, so the operator's decision would be discarded", allow)
-		}
-		if *forwarded.AllowPublicRegistration != allow {
-			t.Errorf("AllowPublicRegistration = %v, want %v", *forwarded.AllowPublicRegistration, allow)
-		}
+// ceremony `xkey auth register` drives: it is closed, and closed explicitly
+// rather than left to go-xkms's nil default.
+func TestModuleWebAuthnConfig_PublicRegistrationClosed(t *testing.T) {
+	forwarded := quicbaasWebAuthnConfigToXKMS(
+		config.IAMWebAuthnConfig{RPID: "localhost", RPOrigins: []string{"https://localhost:18443"}})
+	if forwarded.AllowPublicRegistration == nil {
+		t.Fatal("AllowPublicRegistration is nil; quicbaas must write the closed setting explicitly")
+	}
+	if *forwarded.AllowPublicRegistration {
+		t.Error("AllowPublicRegistration = true; a ceremony must never create an account")
 	}
 }
 
-// TestBothRelyingPartiesAgreeOnPublicRegistration is the invariant the two
-// tests above exist to protect: one operator decision, the same answer on
-// both ceremony surfaces.
-func TestBothRelyingPartiesAgreeOnPublicRegistration(t *testing.T) {
-	operator := config.IAMWebAuthnConfig{RPID: "localhost", RPOrigins: []string{"https://localhost:18443"}}
-	for _, allow := range []bool{true, false} {
-		own, err := webauthnFactoryConfigFromOperator(operator, "localhost", "https://localhost:18443", allow)
-		if err != nil {
-			t.Fatalf("resolve operator config (allow=%v): %v", allow, err)
-		}
-		module := quicbaasWebAuthnConfigToXKMS(operator, allow)
-		if module.AllowPublicRegistration == nil {
-			t.Fatalf("module relying party discarded the decision (allow=%v)", allow)
-		}
-		if own.AllowPublicRegistration != *module.AllowPublicRegistration {
-			t.Errorf("relying parties disagree: quicbaas=%v module=%v (operator said %v)",
-				own.AllowPublicRegistration, *module.AllowPublicRegistration, allow)
-		}
+// TestModuleWebAuthnConfig_UnconfiguredIsClosed: a host with no WebAuthn
+// section leaves the module's surface unmounted, and the setting still reads
+// closed should anything mount it.
+func TestModuleWebAuthnConfig_UnconfiguredIsClosed(t *testing.T) {
+	forwarded := quicbaasWebAuthnConfigToXKMS(config.IAMWebAuthnConfig{})
+	if forwarded.Enabled {
+		t.Error("an unconfigured WebAuthn section must leave the module surface unmounted")
+	}
+	if forwarded.AllowPublicRegistration == nil || *forwarded.AllowPublicRegistration {
+		t.Error("AllowPublicRegistration must be an explicit false")
 	}
 }

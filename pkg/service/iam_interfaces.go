@@ -100,8 +100,9 @@ type WebAuthnManager interface {
 	// FinishInviteRegistration completes the ceremony BeginInviteRegistration
 	// opened. go-xkms binds the credential only while the account is still
 	// pending; the ordinary FinishRegistration refuses a pending account, so
-	// it cannot close an invitation ceremony.
-	FinishInviteRegistration(ctx context.Context, tenantID, email string, credential map[string]interface{}) error
+	// it cannot close an invitation ceremony. The result reports what the
+	// ceremony proved about the authenticator, as FinishRegistration's does.
+	FinishInviteRegistration(ctx context.Context, tenantID, email string, credential map[string]interface{}) (*iam.AttestationResult, error)
 
 	// FinishRegistration completes the ceremony and returns what the assurance
 	// gate PROVED about the authenticator.

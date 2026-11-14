@@ -64,9 +64,9 @@ func (m *recordingWebAuthnManager) BeginInviteRegistration(_ context.Context, _,
 	return map[string]interface{}{"challenge": "c"}, nil
 }
 
-func (m *recordingWebAuthnManager) FinishInviteRegistration(_ context.Context, _, email string, _ map[string]interface{}) error {
+func (m *recordingWebAuthnManager) FinishInviteRegistration(_ context.Context, _, email string, _ map[string]interface{}) (*iam.AttestationResult, error) {
 	m.finishEmail = email
-	return m.finishErr
+	return nil, m.finishErr
 }
 
 // fixedInviteStore returns one record from Lookup whatever it holds, and

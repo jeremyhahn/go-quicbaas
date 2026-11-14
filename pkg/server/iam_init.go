@@ -519,15 +519,11 @@ func (s *Server) initializeIAMComponents() (service.IAMComponents, error) {
 			// above: a relying party missing an RP ID or an origin accepts no
 			// ceremony, and a node that boots with one presents a WebAuthn
 			// surface that silently rejects every registration.
-			// The relying party may create an account for an unknown email
-			// only when the operator has switched self-service registration
-			// on: that is the surface that registers one
-			// (iam_register_self.go). go-xkms v0.9.2-alpha closed this by
-			// default, so it has to be mapped rather than left to the
-			// library's default.
+			// The relying party never creates an account: self-service
+			// registration creates it in the broker and the ceremony only
+			// binds a credential (ruling 189, #482).
 			resolvedWebAuthn, resolveErr := webauthnFactoryConfigFromOperator(
-				s.config.IAM.WebAuthn, issuerRPID, issuerRPOrigin,
-				s.config.IAM.SelfServiceRegistration.Enabled)
+				s.config.IAM.WebAuthn, issuerRPID, issuerRPOrigin)
 			if resolveErr != nil {
 				return nil, &IAMComponentInitError{Component: "WebAuthn relying-party configuration", Cause: resolveErr}
 			}
