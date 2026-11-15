@@ -1342,6 +1342,25 @@ var NewMeasurementLogStore = pkgservice.NewMeasurementLogStore
 // a store or a node name.
 var ErrMeasurementLogStoreConfig = pkgservice.ErrMeasurementLogStoreConfig
 
+// GoldenPCR is one golden PCR value in one bank.
+type GoldenPCR = pkgservice.GoldenPCR
+
+// GoldenValues is a set of go-trusted-platform golden PCR values to import
+// into the go-xkms reference-values store.
+type GoldenValues = pkgservice.GoldenValues
+
+// GoldenValuesProfile is the default CoRIM profile of imported golden values.
+const GoldenValuesProfile = pkgservice.GoldenValuesProfile
+
+// ErrGoldenValues is returned for golden values that cannot be signed.
+var ErrGoldenValues = pkgservice.ErrGoldenValues
+
+// SignGoldenValues signs golden values as a COSE_Sign1 CoRIM.
+var SignGoldenValues = pkgservice.SignGoldenValues
+
+// ImportGoldenValues signs golden values and stores them as reference values.
+var ImportGoldenValues = pkgservice.ImportGoldenValues
+
 // NewMeasuredLaunchRuntime builds the measured-launch runtime over an
 // attestation store, with the Verifier's appraisal, image verification,
 // provenance verification and signed cluster manifest wired in.
