@@ -55,18 +55,33 @@ var ErrMeasuredLaunchWithAttestor = stderrors.New("measured launch and a contain
 // resolveContainerAttestor returns the attestor behind AttestContainer:
 // the measured-launch runtime over store when WithMeasuredLaunch was set,
 // else the application's own attestor (or none).
-func (b *serviceBuilder) resolveContainerAttestor(store AttestationStore, logger interfaces.Logger) (ContainerAttestor, error) {
+func (b *serviceBuilder) resolveContainerAttestor(store AttestationStore, logger interfaces.Logger) (ContainerAttestor, *orchestration.TPMAttestingRuntime, error) {
 	if b.measuredLaunch == nil {
-		return b.containerAttestor, nil
+		return b.containerAttestor, nil, nil
 	}
 	if b.containerAttestor != nil {
-		return nil, ErrMeasuredLaunchWithAttestor
+		return nil, nil, ErrMeasuredLaunchWithAttestor
 	}
 	rt, err := NewMeasuredLaunchRuntime(store, *b.measuredLaunch, logger)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	return NewRuntimeContainerAttestor(rt), nil
+	return NewRuntimeContainerAttestor(rt), rt, nil
+}
+
+// MeasuredLaunchRuntime returns the measured-launch runtime the service
+// built for WithMeasuredLaunch, so the server's orchestration sandbox
+// launches through the same instance as AttestContainer: a second runtime
+// over the same TPM and node measurement log would extend the PCR behind
+// the first one's log and break replay. It returns nil for a nil q, for any
+// other QuicBaaS implementation, and for a service built without
+// WithMeasuredLaunch.
+func MeasuredLaunchRuntime(q QuicBaaS) *orchestration.TPMAttestingRuntime {
+	svc, ok := q.(*quicBaaS)
+	if !ok || svc == nil {
+		return nil
+	}
+	return svc.measuredLaunchRuntime
 }
 
 // NewMeasuredLaunchRuntime returns the measured-launch runtime for a host:

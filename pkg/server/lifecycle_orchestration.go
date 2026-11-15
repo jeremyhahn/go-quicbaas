@@ -516,7 +516,16 @@ func (s *Server) startOrchestration() error {
 		containerRuntime, rtErr := orchestration.NewExecContainerRuntime(logAdapter)
 		if rtErr == nil {
 			s.orchContainerRuntime = containerRuntime
-			wirer.SetContainerRuntime(containerRuntime)
+			// The sandbox launches through the attestation service's own
+			// measured-launch runtime when there is one: a second instance
+			// over the same TPM and node measurement log would break replay.
+			// The sweep, the reaper and the worker-image build keep the exec
+			// engine.
+			sandboxRuntime := sandboxContainerRuntime(containerRuntime, service.MeasuredLaunchRuntime(s.Service()))
+			if sandboxRuntime != orchestration.ContainerRuntime(containerRuntime) {
+				s.logger.Info("Orchestration sandbox launches through the measured-launch runtime")
+			}
+			wirer.SetContainerRuntime(sandboxRuntime)
 			s.logger.Info("Container runtime attached to orchestration service")
 
 			// The shared per-tenant Go cache is the daemon's own mount, so no
@@ -538,7 +547,7 @@ func (s *Server) startOrchestration() error {
 			for _, name := range []string{"claude", "codex", "opencode"} {
 				if b, ok := backends[name]; ok {
 					if acpBackend, ok := b.(*orchestration.ACPBackend); ok {
-						acpBackend.SetContainerRuntime(containerRuntime)
+						acpBackend.SetContainerRuntime(sandboxRuntime)
 						acpBackend.SetSandboxOwner(owner)
 						acpBackend.SetGoBuildCache(goCache)
 					}
@@ -1190,6 +1199,18 @@ func orchestratorContainerOwner(dataDir string) (string, error) {
 		return "", &ServerCauseError{Message: "orchestration: container owner from data dir", Cause: err}
 	}
 	return "orchestrator:" + abs, nil
+}
+
+// sandboxContainerRuntime returns the runtime the orchestration sandbox (the
+// agent service and the ACP backends) launches through: the node's
+// measured-launch runtime when the service built one, else base. The
+// pointer is checked explicitly so a nil *TPMAttestingRuntime never becomes
+// a non-nil ContainerRuntime.
+func sandboxContainerRuntime(base *orchestration.ExecContainerRuntime, measured *orchestration.TPMAttestingRuntime) orchestration.ContainerRuntime {
+	if measured != nil {
+		return measured
+	}
+	return base
 }
 
 // startContainerReaper runs the container reaper over the orchestrator's own

@@ -139,32 +139,54 @@ func TestResolveContainerAttestor(t *testing.T) {
 	own := NewRuntimeContainerAttestor(&evidenceRuntime{})
 
 	b := &serviceBuilder{containerAttestor: own}
-	if got, err := b.resolveContainerAttestor(store, quietLogger{}); err != nil || got != own {
-		t.Fatalf("without measured launch the application's attestor is kept: %v, %v", got, err)
+	if got, rt, err := b.resolveContainerAttestor(store, quietLogger{}); err != nil || got != own || rt != nil {
+		t.Fatalf("without measured launch the application's attestor is kept and no runtime is built: %v, %v, %v", got, rt, err)
 	}
 
 	cfg := MeasuredLaunchConfig{TPM: untouchedTPM{t: t}, Runtime: unstartedRuntime{t: t}}
 	b = &serviceBuilder{containerAttestor: own, measuredLaunch: &cfg}
-	if _, err := b.resolveContainerAttestor(store, quietLogger{}); !stderrors.Is(err, ErrMeasuredLaunchWithAttestor) {
+	if _, _, err := b.resolveContainerAttestor(store, quietLogger{}); !stderrors.Is(err, ErrMeasuredLaunchWithAttestor) {
 		t.Fatalf("both set: %v", err)
 	}
 
 	b = &serviceBuilder{measuredLaunch: &cfg}
-	got, err := b.resolveContainerAttestor(store, quietLogger{})
+	got, rt, err := b.resolveContainerAttestor(store, quietLogger{})
 	if err != nil {
 		t.Fatal(err)
+	}
+	if rt == nil {
+		t.Fatal("measured launch must return the runtime it built")
 	}
 	ra, ok := got.(*runtimeContainerAttestor)
 	if !ok {
 		t.Fatalf("attestor is %T", got)
 	}
-	if _, ok := ra.rt.(*orchestration.TPMAttestingRuntime); !ok {
-		t.Fatalf("measured launch must attest through the TPM runtime, got %T", ra.rt)
+	if p, ok := ra.rt.(*orchestration.TPMAttestingRuntime); !ok || p != rt {
+		t.Fatalf("the attestor must attest through the returned runtime, got %T", ra.rt)
 	}
 
 	b = &serviceBuilder{measuredLaunch: &MeasuredLaunchConfig{Runtime: cfg.Runtime}}
-	if _, err := b.resolveContainerAttestor(store, quietLogger{}); err != ErrMeasuredLaunchConfig {
+	if _, _, err := b.resolveContainerAttestor(store, quietLogger{}); err != ErrMeasuredLaunchConfig {
 		t.Fatalf("no TPM: %v", err)
+	}
+}
+
+// TestMeasuredLaunchRuntime proves the server reaches the service's own
+// measured-launch runtime, and nothing when there is none.
+func TestMeasuredLaunchRuntime(t *testing.T) {
+	if got := MeasuredLaunchRuntime(nil); got != nil {
+		t.Fatalf("nil QuicBaaS: %v", got)
+	}
+	if got := MeasuredLaunchRuntime(&quicBaaS{}); got != nil {
+		t.Fatalf("service without measured launch: %v", got)
+	}
+	cfg := MeasuredLaunchConfig{TPM: untouchedTPM{t: t}, Runtime: unstartedRuntime{t: t}}
+	rt, err := NewMeasuredLaunchRuntime(attestationtest.NewMemoryStore(), cfg, quietLogger{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := MeasuredLaunchRuntime(&quicBaaS{measuredLaunchRuntime: rt}); got != rt {
+		t.Fatalf("MeasuredLaunchRuntime = %p, want the service's runtime %p", got, rt)
 	}
 }
 
