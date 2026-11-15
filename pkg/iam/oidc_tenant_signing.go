@@ -287,6 +287,26 @@ func (r *TenantSigningKeyResolver) JWKS(ctx context.Context) *jose.JSONWebKeySet
 	return out
 }
 
+// heldPublicForKID returns kid's key from the global manager or a dedicated
+// manager this resolver has built, as each holds it now (an adopted
+// pre-upgrade key past its cutoff is not held), or nil.
+func (r *TenantSigningKeyResolver) heldPublicForKID(kid string) crypto.PublicKey {
+	if pub, err := r.global.publicForKID(kid); err == nil {
+		return pub
+	}
+	var found crypto.PublicKey
+	r.managers.Range(func(_, v any) bool {
+		if mgr, ok := v.(*SigningKeyManager); ok {
+			if pub, err := mgr.publicForKID(kid); err == nil {
+				found = pub
+				return false
+			}
+		}
+		return true
+	})
+	return found
+}
+
 // PublicForKID returns the public key for kid from the aggregated key set
 // (the global key and every dedicated tenant key). A kid none of them
 // publishes may name a key a peer sharing the backend has just rotated in,
