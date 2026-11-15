@@ -69,6 +69,12 @@ type mockOrchestratorClient struct {
 	inferenceFn          func(ctx context.Context, req *orchestratorSDK.InferenceRequest) (*orchestratorSDK.InferenceResponse, error)
 	inferenceStreamFn    func(ctx context.Context, req *orchestratorSDK.InferenceRequest) (<-chan *orchestratorSDK.InferenceChunk, error)
 	closeFn              func() error
+
+	declareFleetPlacementSpecFn  func(ctx context.Context, req *orchestratorSDK.DeclareFleetPlacementSpecRequest) (*orchestratorSDK.FleetPlacementSpec, error)
+	getFleetPlacementSpecFn      func(ctx context.Context, req *orchestratorSDK.FleetPlacementSpecRequest) (*orchestratorSDK.FleetPlacementSpec, error)
+	listFleetPlacementSpecsFn    func(ctx context.Context, req *orchestratorSDK.ListFleetPlacementSpecsRequest) (*orchestratorSDK.ListFleetPlacementSpecsResponse, error)
+	withdrawFleetPlacementSpecFn func(ctx context.Context, req *orchestratorSDK.FleetPlacementSpecRequest) (*orchestratorSDK.WithdrawFleetPlacementSpecResponse, error)
+	getFleetPlacementDriftFn     func(ctx context.Context, req *orchestratorSDK.FleetPlacementSpecRequest) (*orchestratorSDK.FleetPlacementDrift, error)
 }
 
 func (m *mockOrchestratorClient) Health(ctx context.Context) (*orchestratorSDK.HealthCheckReport, error) {
@@ -292,6 +298,41 @@ func (m *mockOrchestratorClient) Close() error {
 		return m.closeFn()
 	}
 	return nil
+}
+
+func (m *mockOrchestratorClient) DeclareFleetPlacementSpec(ctx context.Context, req *orchestratorSDK.DeclareFleetPlacementSpecRequest) (*orchestratorSDK.FleetPlacementSpec, error) {
+	if m.declareFleetPlacementSpecFn != nil {
+		return m.declareFleetPlacementSpecFn(ctx, req)
+	}
+	return nil, nil
+}
+
+func (m *mockOrchestratorClient) GetFleetPlacementSpec(ctx context.Context, req *orchestratorSDK.FleetPlacementSpecRequest) (*orchestratorSDK.FleetPlacementSpec, error) {
+	if m.getFleetPlacementSpecFn != nil {
+		return m.getFleetPlacementSpecFn(ctx, req)
+	}
+	return nil, nil
+}
+
+func (m *mockOrchestratorClient) ListFleetPlacementSpecs(ctx context.Context, req *orchestratorSDK.ListFleetPlacementSpecsRequest) (*orchestratorSDK.ListFleetPlacementSpecsResponse, error) {
+	if m.listFleetPlacementSpecsFn != nil {
+		return m.listFleetPlacementSpecsFn(ctx, req)
+	}
+	return nil, nil
+}
+
+func (m *mockOrchestratorClient) WithdrawFleetPlacementSpec(ctx context.Context, req *orchestratorSDK.FleetPlacementSpecRequest) (*orchestratorSDK.WithdrawFleetPlacementSpecResponse, error) {
+	if m.withdrawFleetPlacementSpecFn != nil {
+		return m.withdrawFleetPlacementSpecFn(ctx, req)
+	}
+	return nil, nil
+}
+
+func (m *mockOrchestratorClient) GetFleetPlacementDrift(ctx context.Context, req *orchestratorSDK.FleetPlacementSpecRequest) (*orchestratorSDK.FleetPlacementDrift, error) {
+	if m.getFleetPlacementDriftFn != nil {
+		return m.getFleetPlacementDriftFn(ctx, req)
+	}
+	return nil, nil
 }
 
 var _ OrchestratorClient = (*mockOrchestratorClient)(nil)

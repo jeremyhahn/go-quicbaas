@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 	"text/tabwriter"
 
@@ -122,7 +123,7 @@ func withFleetPlacement(fn func(context.Context, fleetPlacementClient) (interfac
 func fleetPlacementSpecFromFlags(cmd *cobra.Command, name string) (*orchestratorSDK.FleetPlacementSpec, error) {
 	spec := &orchestratorSDK.FleetPlacementSpec{}
 	if placementFile != "" {
-		data, err := os.ReadFile(placementFile) //nolint:gosec // the operator names the file
+		data, err := os.ReadFile(filepath.Clean(placementFile))
 		if err != nil {
 			return nil, errors.Wrap(err, errors.ErrInvalidInput, "fleet placement: read --file")
 		}

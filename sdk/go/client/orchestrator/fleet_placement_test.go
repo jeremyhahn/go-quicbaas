@@ -53,8 +53,8 @@ func TestFleetPlacement_RefusesBeforeTheTransport(t *testing.T) {
 	_, cases["get no name"] = c.GetFleetPlacementSpec(ctx, &FleetPlacementSpecRequest{})
 	_, cases["withdraw nil"] = c.WithdrawFleetPlacementSpec(ctx, nil)
 	_, cases["drift no name"] = c.GetFleetPlacementDrift(ctx, &FleetPlacementSpecRequest{})
-	//nolint:staticcheck // a nil context is the case under test
-	_, cases["nil context"] = c.ListFleetPlacementSpecs(nil, nil)
+	var nilCtx context.Context
+	_, cases["nil context"] = c.ListFleetPlacementSpecs(nilCtx, nil)
 	for name, err := range cases {
 		if !errors.IsInvalidInput(err) {
 			t.Errorf("%s = %v, want invalid input", name, err)

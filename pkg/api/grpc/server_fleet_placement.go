@@ -89,7 +89,7 @@ func (s *OrchestratorServer) ListFleetPlacementSpecs(ctx context.Context, req *p
 	for _, spec := range specs {
 		out.Specs = append(out.Specs, fleetPlacementSpecToProto(spec))
 	}
-	out.Count = int32(len(out.Specs)) //nolint:gosec // a tenant's spec count is far below 2^31
+	out.Count = pageInt32(len(out.Specs))
 	return out, nil
 }
 
