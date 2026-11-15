@@ -21,6 +21,7 @@ import (
 	"crypto/x509"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/jeremyhahn/go-xkms/pkg/attestation/evidence"
@@ -265,6 +266,14 @@ type TPMAttestingRuntime struct {
 	// provenance checks a signed image's software-factory provenance.
 	provenance ProvenanceVerifier
 	manifest   ClusterManifest
+
+	// logStore persists the node measurement log (WithMeasurementLogStore);
+	// nil keeps it in memory only. logRestore guards the one restore of the
+	// stored log; logSave orders the saves.
+	logStore   MeasurementLogStore
+	logRestore sync.Mutex
+	logLoaded  bool
+	logSave    sync.Mutex
 }
 
 // MeasurementLog returns the node measurement log of this runtime.
@@ -377,20 +386,9 @@ func (r *TPMAttestingRuntime) measureLaunch(ctx context.Context, spec *Container
 		Bank:          bank,
 		Measurement:   measurement,
 	}
-	readBase := func() ([]byte, error) {
-		banks, err := r.tpm.ReadPCRs([]uint{uint(pcr)})
-		if err != nil {
-			return nil, err
-		}
-		values, err := flattenPCRBanks(banks, bank)
-		if err != nil {
-			return nil, err
-		}
-		value, ok := values[uint32(pcr)]
-		if !ok {
-			return nil, &PCRBankUnavailableError{Requested: bank}
-		}
-		return value, nil
+	readBase := func() ([]byte, error) { return r.readRegister(pcr, bank) }
+	if err := r.restoreMeasurementLog(ctx); err != nil {
+		return &ContainerMeasurementError{Image: spec.Image, PCR: pcr, Bank: bank, Cause: err}
 	}
 	if _, err := r.log.record(entry, readBase, func() error {
 		return r.tpm.ExtendPCR(pcr, bank, measurement)
@@ -401,6 +399,13 @@ func (r *TPMAttestingRuntime) measureLaunch(ctx context.Context, spec *Container
 			Bank:  bank,
 			Cause: err,
 		}
+	}
+	if err := r.saveMeasurementLog(ctx); err != nil {
+		// The PCR is extended and the in-memory log holds the entry, so
+		// the evidence still replays; the stored log is behind the PCR
+		// until the next save and is dropped by a restore that finds it
+		// no longer replays. The container is not started.
+		return &ContainerMeasurementError{Image: spec.Image, PCR: pcr, Bank: bank, Cause: err}
 	}
 
 	r.logger.Infof("measured launch: extended PCR %d (%s) for %s",
@@ -437,6 +442,11 @@ func (r *TPMAttestingRuntime) Attest(ctx context.Context, spec *ContainerSpec, c
 		return nil, &InputValidationError{Field: "spec", Message: "cannot be nil"}
 	}
 	if err := spec.Validate(); err != nil {
+		return nil, err
+	}
+	// A restarted node agent's evidence carries the log it measured before
+	// the restart.
+	if err := r.restoreMeasurementLog(ctx); err != nil {
 		return nil, err
 	}
 	if !spec.TrustLevel.RequiresHostTPM() {

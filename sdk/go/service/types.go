@@ -1331,6 +1331,17 @@ type ProvenanceSource = pkgservice.ProvenanceSource
 // pinned to a digest.
 type Release = pkgservice.Release
 
+// MeasurementLogStore keeps a node's measurement log in the Verifier's
+// go-qrdb store; NewMeasurementLogStore returns it for one node.
+type MeasurementLogStore = pkgservice.MeasurementLogStore
+
+// NewMeasurementLogStore returns the measurement log store of a node.
+var NewMeasurementLogStore = pkgservice.NewMeasurementLogStore
+
+// ErrMeasurementLogStoreConfig is returned by NewMeasurementLogStore without
+// a store or a node name.
+var ErrMeasurementLogStoreConfig = pkgservice.ErrMeasurementLogStoreConfig
+
 // NewMeasuredLaunchRuntime builds the measured-launch runtime over an
 // attestation store, with the Verifier's appraisal, image verification,
 // provenance verification and signed cluster manifest wired in.

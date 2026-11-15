@@ -3,6 +3,7 @@ package service
 import (
 	stderrors "errors"
 	"fmt"
+	"os"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
@@ -32,6 +33,14 @@ type MeasuredLaunchConfig struct {
 	// Unsigned is the audited allow-unsigned policy. Nil is default deny:
 	// every unsigned image is refused.
 	Unsigned orchestration.UnsignedImagePolicy
+
+	// Node names this host's measurement log record in the store. Empty
+	// selects the host name.
+	Node string
+
+	// LogStore persists the node measurement log. Nil selects the
+	// Verifier's go-qrdb store (NewMeasurementLogStore) under Node.
+	LogStore orchestration.MeasurementLogStore
 }
 
 // ErrMeasuredLaunchConfig is returned by NewMeasuredLaunchRuntime when the
@@ -105,5 +114,18 @@ func NewMeasuredLaunchRuntime(store AttestationStore, cfg MeasuredLaunchConfig, 
 	if cfg.Unsigned != nil {
 		runtimeOpts = append(runtimeOpts, orchestration.WithUnsignedImagePolicy(cfg.Unsigned))
 	}
+	logStore := cfg.LogStore
+	if logStore == nil {
+		node := cfg.Node
+		if node == "" {
+			if node, err = os.Hostname(); err != nil {
+				return nil, fmt.Errorf("measured launch: node name: %w", err)
+			}
+		}
+		if logStore, err = NewMeasurementLogStore(store, node); err != nil {
+			return nil, err
+		}
+	}
+	runtimeOpts = append(runtimeOpts, orchestration.WithMeasurementLogStore(logStore))
 	return orchestration.NewTPMAttestingRuntime(base, cfg.TPM, appraiser, logger, runtimeOpts...)
 }

@@ -279,6 +279,14 @@ var VerifyMeasurementLog = pkgorch.VerifyMeasurementLog
 // for one PCR register; the Verifier compares it with the quoted value.
 var ReplayMeasurementLog = pkgorch.ReplayMeasurementLog
 
+// MeasurementLogStore persists a node's measurement log across agent
+// restarts; WithMeasurementLogStore attaches one to the attesting runtime.
+type MeasurementLogStore = pkgorch.MeasurementLogStore
+
+// WithMeasurementLogStore persists the node measurement log: written before
+// each measured launch returns, restored only while it replays to the TPM.
+var WithMeasurementLogStore = pkgorch.WithMeasurementLogStore
+
 // AttestingContainerRuntime is the trusted-computing seam: a ContainerRuntime
 // that can additionally prove what it launched and where. Callers detect it
 // with a type assertion rather than requiring every runtime to carry a TPM.
