@@ -242,7 +242,7 @@ func (h *IAMHandler) DeleteOldAuditEvents(w http.ResponseWriter, r *http.Request
 
 	// Tenant scoping mirrors ListAuditEvents/GetAuditEvent
 	// (iam.ResolveRequestTenant): the caller's own tenant only — no
-	// caller identity lifts it. This runs BEFORE the audit:delete
+	// caller identity lifts it. This runs BEFORE the audit_events:delete
 	// permission check below so a caller targeting another tenant never
 	// reaches storage, exactly like the read path.
 	tenantID, err := iam.ResolveRequestTenant(ctx, query.Get("tenant_id"))
@@ -266,7 +266,7 @@ func (h *IAMHandler) DeleteOldAuditEvents(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	// Authorization check - only admins with audit:delete permission can
+	// Authorization check - only admins with audit_events:delete permission can
 	// delete audit events. The principal is the canonical Subject injected
 	// by the authz middleware chain (injectPrincipal); the former
 	// ContextKeyUser read had no producer on the production middleware
@@ -297,8 +297,8 @@ func (h *IAMHandler) DeleteOldAuditEvents(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	// Check that the user holds audit:delete on the target tenant. The
-	// route already requires audit:delete; this check against the resolved
+	// Check that the user holds audit_events:delete on the target tenant. The
+	// route already requires audit_events:delete; this check against the resolved
 	// tenant is defence in depth.
 	checkResp, err := manager.CheckPermission(ctx, &iam.AdminCheckRequest{
 		UserID:       subject.UserID,

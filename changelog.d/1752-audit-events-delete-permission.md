@@ -1,0 +1,3 @@
+### Security
+
+- Deleting audit events now requires `audit_events:delete` on REST `DELETE /api/v1/iam/audit`, the MCP `quicbaas_iam_audit_delete` tool and the embedded transport, instead of `audit:delete`. go-qrdb owns the `audit` permission family and declares no scope for a delete verb, so the old route permission was refused for every caller, the super_admin included. The new permission sits in QuicBaaS's own `audit_events` family, next to `audit_events:record`. It has self scope and is granted to Admin only; an `audit:query` grant is still refused (#1752). An assignment that names `audit:delete` explicitly must be re-granted as `audit_events:delete`.

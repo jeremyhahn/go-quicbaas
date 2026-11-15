@@ -245,7 +245,7 @@ func auditCtx() context.Context {
 	return transport.ContextWithTenant(context.Background(), auditTenant)
 }
 
-// auditAdminCtx binds an authenticated subject; grant gives it audit:delete
+// auditAdminCtx binds an authenticated subject; grant gives it audit_events:delete
 // in the audit tenant.
 func auditAdminCtx(t *testing.T, mgr *iam.AdminManager, grant bool) context.Context {
 	t.Helper()
@@ -384,7 +384,7 @@ func TestIAMAuditDelete_Refused(t *testing.T) {
 		ctx  func(t *testing.T, mgr *iam.AdminManager) context.Context
 	}{
 		{"no subject bound", func(*testing.T, *iam.AdminManager) context.Context { return auditCtx() }},
-		{"subject without audit:delete", func(t *testing.T, mgr *iam.AdminManager) context.Context {
+		{"subject without audit_events:delete", func(t *testing.T, mgr *iam.AdminManager) context.Context {
 			return auditAdminCtx(t, mgr, false)
 		}},
 	}

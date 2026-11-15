@@ -48,7 +48,7 @@ func (e *TenantScopeMismatchError) Error() string {
 // every audit query to the caller's own tenant), and no surface
 // routed through this helper is gated on one — the REST PEP maps the
 // audit routes onto the self-scoped audit:query / audit:read /
-// audit_events:record (plus the handler-level audit:delete check), and
+// audit_events:record (plus the handler-level audit_events:delete check), and
 // the gRPC AuditService methods are unmapped, which is default-deny under
 // RequireAuthz. A tenant's audit chain is tenant data, and the platform
 // operator holds no implicit right to it — the same operator-isolation

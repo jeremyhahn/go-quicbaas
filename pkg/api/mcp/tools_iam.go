@@ -2695,9 +2695,9 @@ func auditDeleteEventTypeCount(args map[string]interface{}) int {
 	}
 }
 
-// requireAuditDeletePermission requires audit:delete on tenantID for the
+// requireAuditDeletePermission requires audit_events:delete on tenantID for the
 // authenticated subject, as REST DeleteOldAuditEvents and the embedded
-// transport do. The tool's route permission is also audit:delete; this
+// transport do. The tool's route permission is also audit_events:delete; this
 // second check, against the target tenant, is defence in depth. It fails
 // closed when no authenticated subject is bound.
 func (r *ToolRegistry) requireAuditDeletePermission(ctx context.Context, tenantID string) error {

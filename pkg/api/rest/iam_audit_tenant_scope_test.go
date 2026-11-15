@@ -144,11 +144,11 @@ func TestGetAuditEvent_TenantScoping(t *testing.T) {
 }
 
 // TestDeleteOldAuditEvents_TenantScoping proves DELETE enforces the SAME
-// tenant-scoping rule as the read path, running BEFORE the audit:delete
+// tenant-scoping rule as the read path, running BEFORE the audit_events:delete
 // admin-permission check: ANY cross-tenant request — system-tenant caller
 // included — is rejected 403 without ever reaching requireSubject or the
 // AdminManager permission check, and a same-tenant request with the
-// audit:delete grant still succeeds exactly as
+// audit_events:delete grant still succeeds exactly as
 // TestDeleteOldAuditEvents_Success already proves for the ungated case.
 func TestDeleteOldAuditEvents_TenantScoping(t *testing.T) {
 	t.Run("cross-tenant request from a non-system caller is rejected before auth/permission checks", func(t *testing.T) {
@@ -168,7 +168,7 @@ func TestDeleteOldAuditEvents_TenantScoping(t *testing.T) {
 		require.Equal(t, http.StatusForbidden, w.Code, "body: %s", w.Body.String())
 	})
 
-	t.Run("system-tenant caller is denied another tenant's chain even with an audit:delete grant (#356)", func(t *testing.T) {
+	t.Run("system-tenant caller is denied another tenant's chain even with an audit_events:delete grant (#356)", func(t *testing.T) {
 		handler, admin, cleanup := setupAuditDeleteHandler(t)
 		defer cleanup()
 
@@ -195,7 +195,7 @@ func TestDeleteOldAuditEvents_TenantScoping(t *testing.T) {
 		require.Equal(t, http.StatusForbidden, w.Code, "body: %s", w.Body.String())
 	})
 
-	t.Run("system-tenant caller with the audit:delete grant may still prune its own system chain", func(t *testing.T) {
+	t.Run("system-tenant caller with the audit_events:delete grant may still prune its own system chain", func(t *testing.T) {
 		handler, admin, cleanup := setupAuditDeleteHandler(t)
 		defer cleanup()
 

@@ -26,6 +26,8 @@ import (
 	"github.com/jeremyhahn/go-qrdb/pkg/auth/rbac"
 	"github.com/jeremyhahn/go-qrdb/pkg/permission"
 	"github.com/jeremyhahn/go-qrdb/pkg/tenant"
+
+	quicbaaspermission "github.com/jeremyhahn/go-quicbaas/pkg/permission"
 )
 
 // authorizeAuditDeleteRoute runs go-qrdb's real RBAC authorizer for the
@@ -33,6 +35,9 @@ import (
 // only granted, in the principal's own tenant.
 func authorizeAuditDeleteRoute(t *testing.T, granted permission.Permission) error {
 	t.Helper()
+	// The server registers QuicBaaS's permission vocabulary (scopes
+	// included) with go-qrdb at startup; do the same here.
+	quicbaaspermission.Register()
 	resource, action, ok := getToolQRDBPermission("quicbaas_iam_audit_delete")
 	require.True(t, ok, "quicbaas_iam_audit_delete has no route permission")
 
@@ -43,15 +48,16 @@ func authorizeAuditDeleteRoute(t *testing.T, granted permission.Permission) erro
 }
 
 // TestAuditDeleteRoute_RequiresAuditDelete pins issue #1748: pruning audit
-// history is a delete, so the route permission is audit:delete, the same
-// verb REST gates DELETE /api/v1/iam/audit on.
+// history is a delete, so the route permission is audit_events:delete, the
+// same verb REST gates DELETE /api/v1/iam/audit on (QuicBaaS's own family:
+// go-qrdb owns "audit", #1752).
 func TestAuditDeleteRoute_RequiresAuditDelete(t *testing.T) {
 	resource, action, ok := getToolQRDBPermission("quicbaas_iam_audit_delete")
 	require.True(t, ok)
-	assert.Equal(t, "audit", resource)
+	assert.Equal(t, "audit_events", resource)
 	assert.Equal(t, "delete", action)
 
-	assert.NoError(t, authorizeAuditDeleteRoute(t, "audit:delete"))
+	assert.NoError(t, authorizeAuditDeleteRoute(t, "audit_events:delete"))
 }
 
 // TestAuditDeleteRoute_QueryOnlyRefused proves a principal that may only

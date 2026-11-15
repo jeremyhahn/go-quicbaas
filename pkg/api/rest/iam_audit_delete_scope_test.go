@@ -43,7 +43,7 @@ func (l *deleteRecordingAuditLogger) DeleteOlderThan(_ context.Context, _ string
 }
 
 // newAuditDeleteScopeHandler returns a handler whose caller (user 70001)
-// holds audit:delete on tenant1, so only the scope refusal can stop a delete.
+// holds audit_events:delete on tenant1, so only the scope refusal can stop a delete.
 func newAuditDeleteScopeHandler(t *testing.T) (*IAMHandler, *deleteRecordingAuditLogger) {
 	t.Helper()
 	admin := newTestAdminManager(t)
