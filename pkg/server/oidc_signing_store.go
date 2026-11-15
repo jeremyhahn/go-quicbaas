@@ -17,6 +17,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"regexp"
 	"slices"
 	"strings"
 	"sync"
@@ -35,7 +36,7 @@ const oidcSigningBackendName = "oidc-replicated"
 // newOIDCSigningServiceBackend builds the xkms software backend for the OIDC
 // signing keys over kv: keys and certificates under their own prefixes.
 func newOIDCSigningServiceBackend(kv xkmssdk.StorageBackend) (xkmssdk.ServiceBackend, error) {
-	keys, err := xkmssdk.NewStoragePrefixBackend(kv, "oidc-signing-keys/")
+	keys, err := newOIDCKeyMaterialStore(kv)
 	if err != nil {
 		return nil, err
 	}
@@ -48,6 +49,95 @@ func newOIDCSigningServiceBackend(kv xkmssdk.StorageBackend) (xkmssdk.ServiceBac
 		return nil, err
 	}
 	return xkmssdk.NewServiceBackend(&xkmssdk.ServiceBackendConfig{Backend: sw, CertStorage: certs})
+}
+
+// oidcSigningKeysPrefix is the prefix of the replicated kv under which the
+// software backend of oidc-replicated keeps its key material.
+const oidcSigningKeysPrefix = "oidc-signing-keys/"
+
+// newOIDCKeyMaterialStore returns the key storage of oidc-replicated: the
+// oidcSigningKeysPrefix of kv, with every write of key material gated by the
+// rotation fence the context carries, whichever entry point started it.
+func newOIDCKeyMaterialStore(kv xkmssdk.StorageBackend) (*oidcKeyMaterialStore, error) {
+	keys, err := xkmssdk.NewStoragePrefixBackend(kv, oidcSigningKeysPrefix)
+	if err != nil {
+		return nil, err
+	}
+	guarded, err := guardedOIDCStore(keys)
+	if err != nil {
+		return nil, err
+	}
+	return &oidcKeyMaterialStore{oidcGuardedKV: guarded}, nil
+}
+
+// oidcKeyMaterialStore is the key storage of oidc-replicated. Without the
+// rotation fence in the context only the first creation of the signing key
+// passes: a Put or PutIfAbsent of a name that is absent and is not a
+// rotation version. A Put over existing material, any write of a version
+// ("K--v<n>"), and a Delete are refused with *OIDCRotationUnfencedError.
+type oidcKeyMaterialStore struct {
+	oidcGuardedKV
+}
+
+// oidcKeyVersionName matches a storage name that holds a rotation version of
+// a key, "K--v<n>", which only a fenced rotation creates.
+var oidcKeyVersionName = regexp.MustCompile(`--v[0-9]+`)
+
+// Put writes key material: under the rotation fence as asked, and without it
+// only as the first creation of a key that is not a rotation version.
+func (s *oidcKeyMaterialStore) Put(ctx context.Context, key string, value []byte) error {
+	if _, ok := oidcFenceFrom(ctx); ok {
+		return s.oidcGuardedKV.Put(ctx, key, value)
+	}
+	if oidcKeyVersionName.MatchString(key) {
+		return &OIDCRotationUnfencedError{Key: key, Op: "put"}
+	}
+	created, err := s.oidcGuardedKV.PutIfAbsent(ctx, key, value)
+	if err != nil {
+		return err
+	}
+	if !created {
+		return &OIDCRotationUnfencedError{Key: key, Op: "put"}
+	}
+	return nil
+}
+
+// PutIfAbsent creates key material; without the rotation fence a rotation
+// version is refused.
+func (s *oidcKeyMaterialStore) PutIfAbsent(ctx context.Context, key string, value []byte) (bool, error) {
+	if _, ok := oidcFenceFrom(ctx); !ok && oidcKeyVersionName.MatchString(key) {
+		return false, &OIDCRotationUnfencedError{Key: key, Op: "put"}
+	}
+	return s.oidcGuardedKV.PutIfAbsent(ctx, key, value)
+}
+
+// Delete removes key material under the rotation fence.
+func (s *oidcKeyMaterialStore) Delete(ctx context.Context, key string) error {
+	if _, ok := oidcFenceFrom(ctx); !ok {
+		return &OIDCRotationUnfencedError{Key: key, Op: "delete"}
+	}
+	return s.oidcGuardedKV.Delete(ctx, key)
+}
+
+// oidcFenceFrom returns the rotation fence ctx carries, if any.
+func oidcFenceFrom(ctx context.Context) (*oidcVersionFence, bool) {
+	fence, ok := ctx.Value(oidcVersionFenceKey{}).(*oidcVersionFence)
+	return fence, ok && fence != nil
+}
+
+// OIDCRotationUnfencedError reports a write of oidc-replicated rotation state
+// (the version record or key material) made without the rotation lease's
+// fence in its context: an entry point that did not take the lease, such as
+// a go-xkms rotate route, cannot change the shared signing key.
+type OIDCRotationUnfencedError struct {
+	Key string
+	Op  string
+}
+
+// Error describes the refused write.
+func (e *OIDCRotationUnfencedError) Error() string {
+	return "server: " + e.Op + " of oidc signing key state " + e.Key +
+		" refused: it is not made under the rotation lease; rotate the OIDC signing key through the signing key manager"
 }
 
 // oidcSigningStoreType returns the xkms backend name the OIDC signing key
@@ -172,10 +262,19 @@ func (r *keyVersionRouter) Get(ctx context.Context, key string) ([]byte, error) 
 }
 
 func (r *keyVersionRouter) Put(ctx context.Context, key string, value []byte) error {
-	if fence, ok := ctx.Value(oidcVersionFenceKey{}).(*oidcVersionFence); ok && fence.key == key {
+	if fence, ok := oidcFenceFrom(ctx); ok && fence.key == key {
 		return fence.commit(ctx, value)
 	}
+	if r.replicatedRecord(key) {
+		return &OIDCRotationUnfencedError{Key: key, Op: "put"}
+	}
 	return r.route(key).Put(ctx, key, value)
+}
+
+// replicatedRecord reports whether key is an oidc-replicated version record
+// kept in the replicated store, which only the rotation fence may change.
+func (r *keyVersionRouter) replicatedRecord(key string) bool {
+	return strings.Contains(key, oidcSigningVersionSegment) && r.replicatedStore() != nil
 }
 
 func (r *keyVersionRouter) PutIfAbsent(ctx context.Context, key string, value []byte) (bool, error) {
@@ -183,6 +282,9 @@ func (r *keyVersionRouter) PutIfAbsent(ctx context.Context, key string, value []
 }
 
 func (r *keyVersionRouter) Delete(ctx context.Context, key string) error {
+	if fence, ok := oidcFenceFrom(ctx); r.replicatedRecord(key) && (!ok || fence.key != key) {
+		return &OIDCRotationUnfencedError{Key: key, Op: "delete"}
+	}
 	return r.route(key).Delete(ctx, key)
 }
 
