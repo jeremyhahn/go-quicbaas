@@ -102,6 +102,10 @@ type SigningKeyManager struct {
 	// lastRefresh is when the snapshot was last checked against the key's
 	// version record, in Unix nanoseconds.
 	lastRefresh atomic.Int64
+
+	// lastUnknownKIDRefresh is when a token naming a kid the manager did
+	// not hold last re-read the version record, in Unix nanoseconds.
+	lastUnknownKIDRefresh atomic.Int64
 }
 
 // RotationLock serializes rotations of one signing key across every node that
@@ -666,10 +670,32 @@ func (m *SigningKeyManager) PublicForKID(kid string) (crypto.PublicKey, error) {
 	pub, err := m.publicForKID(kid)
 	if errors.As(err, new(*UnknownKeyIDError)) {
 		// The key may have been rotated on another node sharing the backend.
-		m.maybeRefresh(unknownKIDRefreshInterval)
+		m.refreshForUnknownKID()
 		return m.publicForKID(kid)
 	}
 	return pub, err
+}
+
+// refreshForUnknownKID re-reads the key's version record for a token naming
+// a kid the manager does not hold: a peer may have just rotated the key and
+// signed with its new version. It runs at most once per
+// unknownKIDRefreshInterval however recently the routine refresh ran, so a
+// token from a fresh rotation verifies at once and a flood of unknown kids
+// costs one read per interval.
+func (m *SigningKeyManager) refreshForUnknownKID() {
+	if !m.versioned() {
+		return
+	}
+	last := m.lastUnknownKIDRefresh.Load()
+	now := time.Now().UnixNano()
+	if time.Duration(now-last) < unknownKIDRefreshInterval || !m.lastUnknownKIDRefresh.CompareAndSwap(last, now) {
+		return
+	}
+	if !m.rotateMu.TryLock() {
+		return
+	}
+	defer m.rotateMu.Unlock()
+	_ = m.refreshLocked(context.Background())
 }
 
 // publicForKID looks kid up in the manager's snapshot.

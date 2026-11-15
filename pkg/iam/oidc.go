@@ -970,10 +970,10 @@ func (p *OIDCProvider) resolveVerificationKey(tokenString string) (crypto.Public
 	if p.config.TenantSigningKeys != nil {
 		kid, _ := xkms.JWTExtractKID(tokenString)
 		if kid != "" {
-			if pub := publicForKIDInJWKS(p.config.TenantSigningKeys.JWKS(context.Background()), kid); pub != nil {
-				return pub, nil
-			}
-			return nil, &UnknownKeyIDError{KID: kid}
+			// A kid the aggregate does not publish goes through the
+			// rate-limited refresh before it is unknown: a peer may have
+			// just rotated and signed with the new key.
+			return p.config.TenantSigningKeys.PublicForKID(context.Background(), kid)
 		}
 		_, signer, _ := p.config.TenantSigningKeys.Global().Current()
 		if signer != nil {

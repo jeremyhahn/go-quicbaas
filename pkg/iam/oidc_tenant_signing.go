@@ -15,6 +15,8 @@ package iam
 
 import (
 	"context"
+	"crypto"
+	"errors"
 	"sync"
 
 	"github.com/go-jose/go-jose/v4"
@@ -283,6 +285,35 @@ func (r *TenantSigningKeyResolver) JWKS(ctx context.Context) *jose.JSONWebKeySet
 	})
 
 	return out
+}
+
+// PublicForKID returns the public key for kid from the aggregated key set
+// (the global key and every dedicated tenant key). A kid none of them
+// publishes may name a key a peer sharing the backend has just rotated in,
+// so each manager is then asked through its refresh-aware lookup, which
+// re-reads its version record at most once per unknownKIDRefreshInterval;
+// only then is the kid an UnknownKeyIDError.
+func (r *TenantSigningKeyResolver) PublicForKID(ctx context.Context, kid string) (crypto.PublicKey, error) {
+	if pub := publicForKIDInJWKS(r.JWKS(ctx), kid); pub != nil {
+		return pub, nil
+	}
+	managers := []*SigningKeyManager{r.global}
+	r.managers.Range(func(_, v any) bool {
+		if mgr, ok := v.(*SigningKeyManager); ok {
+			managers = append(managers, mgr)
+		}
+		return true
+	})
+	for _, mgr := range managers {
+		pub, err := mgr.PublicForKID(kid)
+		if err == nil {
+			return pub, nil
+		}
+		if !errors.As(err, new(*UnknownKeyIDError)) {
+			return nil, err
+		}
+	}
+	return nil, &UnknownKeyIDError{KID: kid}
 }
 
 // TenantSigningKeyUnavailableError is returned when a dedicated tenant's signing
