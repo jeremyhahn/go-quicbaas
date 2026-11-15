@@ -81,7 +81,10 @@ func NewImageStatement(name, digest string, pred *SLSAProvenance) (*Statement, e
 		PredicateType: PredicateTypeSLSAv1,
 		Predicate:     raw,
 	}
-	return stmt, stmt.Validate()
+	if err := stmt.Validate(); err != nil {
+		return nil, err
+	}
+	return stmt, nil
 }
 
 // Validate checks the statement is an in-toto v1 statement with SLSA v1

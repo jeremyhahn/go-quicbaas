@@ -93,7 +93,7 @@ func (r *Registry) Push(ctx context.Context, repository, imageDigest string, sig
 	if err != nil {
 		return "", err
 	}
-	resp.Body.Close()
+	_ = resp.Body.Close()
 	if resp.StatusCode != http.StatusCreated {
 		return "", &RegistryError{Op: "push manifest", Status: resp.StatusCode}
 	}
@@ -167,7 +167,7 @@ func (r *Registry) head(ctx context.Context, repository, imageDigest string) (oc
 	if err != nil {
 		return ocispec.Descriptor{}, err
 	}
-	resp.Body.Close()
+	_ = resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		return ocispec.Descriptor{}, &RegistryError{Op: "find image " + d.String(), Status: resp.StatusCode}
 	}
@@ -179,7 +179,7 @@ func (r *Registry) putBlob(ctx context.Context, repository string, d digest.Dige
 	if err != nil {
 		return err
 	}
-	resp.Body.Close()
+	_ = resp.Body.Close()
 	if resp.StatusCode != http.StatusAccepted {
 		return &RegistryError{Op: "start upload", Status: resp.StatusCode}
 	}
@@ -194,7 +194,7 @@ func (r *Registry) putBlob(ctx context.Context, repository string, d digest.Dige
 	if err != nil {
 		return err
 	}
-	resp.Body.Close()
+	_ = resp.Body.Close()
 	if resp.StatusCode != http.StatusCreated {
 		return &RegistryError{Op: "upload blob", Status: resp.StatusCode}
 	}

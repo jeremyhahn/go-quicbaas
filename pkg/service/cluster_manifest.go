@@ -9,9 +9,10 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/opencontainers/go-digest"
+
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
 	"github.com/jeremyhahn/go-quicbaas/pkg/provenance"
-	"github.com/opencontainers/go-digest"
 )
 
 // PayloadTypeClusterManifest is the DSSE payload type of a signed cluster
