@@ -61,6 +61,20 @@ type QRDBMVCCClient = qrdbtransport.MVCCClient
 // QRDBTransactionClient is a re-export of the qrdb TransactionClient interface.
 type QRDBTransactionClient = qrdbtransport.TransactionClient
 
+// QRDBAuditClient is a re-export of go-qrdb's audit service, the
+// AuditClient interface (SPEC row audit-logging, #1659): events emitted
+// through it land in go-qrdb's audit sink, not a QuicBaaS parallel store.
+type QRDBAuditClient = qrdbtransport.AuditClient
+
+// QRDBAuditEvent is a re-export of the qrdb AuditEvent type.
+type QRDBAuditEvent = qrdbtransport.AuditEvent
+
+// QRDBAuditFilter is a re-export of the qrdb AuditFilter type.
+type QRDBAuditFilter = qrdbtransport.AuditFilter
+
+// QRDBAuditPage is a re-export of the qrdb AuditPage type.
+type QRDBAuditPage = qrdbtransport.AuditPage
+
 // QRDBBatchClient is a re-export of the qrdb BatchClient interface.
 type QRDBBatchClient = qrdbtransport.BatchClient
 
