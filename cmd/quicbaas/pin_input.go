@@ -105,6 +105,7 @@ func resolvePINs(cmd *cobra.Command, op string, inputs ...pinInput) (func(), err
 		}
 		bufs = append(bufs, buf)
 		var s string
+		//secure:unwiped injected-interface the PIN target is a cobra string flag whose consumers send it as a string request field.
 		_ = buf.WithBytes(func(b []byte) error { s = string(b); return nil })
 		*in.target = s
 	}
