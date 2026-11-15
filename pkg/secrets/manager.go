@@ -233,6 +233,43 @@ func (m *Manager) StoreVersion(ctx context.Context, path string, data map[string
 	return version, nil
 }
 
+// StoreVersionIfCurrent stores a new version only while expected is the
+// secret's current, undeleted version (ConditionalVersionedBackend). A stale
+// expectation is ErrWriteConflict; a backend that cannot condition its write
+// refuses with ErrConditionalWriteUnsupported rather than writing blind.
+func (m *Manager) StoreVersionIfCurrent(ctx context.Context, path string, expected int, data map[string][]byte, metadata map[string]string) (int, error) {
+	if err := validateStoreArgs(ctx, "Manager.StoreVersionIfCurrent", path, data); err != nil {
+		return 0, err
+	}
+
+	backend, ok := m.backend.(ConditionalVersionedBackend)
+	if !ok {
+		return 0, &errors.QBError{
+			Code: errors.ErrInternal,
+			Op:   "Manager.StoreVersionIfCurrent",
+			Err:  ErrConditionalWriteUnsupported,
+		}
+	}
+	version, err := backend.StoreVersionIfCurrent(ctx, path, expected, data, metadata)
+	if err != nil {
+		return 0, &errors.QBError{
+			Code: errors.ErrInternal,
+			Op:   "Manager.StoreVersionIfCurrent",
+			Err:  err,
+		}
+	}
+
+	if m.logger != nil {
+		m.logger.WithFields(map[string]interface{}{
+			"path":     path,
+			"version":  version,
+			"replaced": expected,
+		}).Info("Secret stored")
+	}
+
+	return version, nil
+}
+
 // StoreVersionWithOptions saves a secret as StoreWithOptions does and
 // returns the version the backend assigned to this write. A backend that
 // applies options (BackendWithOptions) cannot report that version, so it

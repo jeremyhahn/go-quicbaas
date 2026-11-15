@@ -193,6 +193,25 @@ func (b *KVBackend) Store(ctx context.Context, path string, data map[string][]by
 // StoreVersion saves a secret as Store does and returns the version it
 // allocated and published.
 func (b *KVBackend) StoreVersion(ctx context.Context, path string, data map[string][]byte, metadata map[string]string) (int, error) {
+	return b.storeVersion(ctx, path, -1, data, metadata)
+}
+
+// StoreVersionIfCurrent stores a new version only while expected is the
+// path's current, undeleted version; otherwise it stores nothing and returns
+// ErrWriteConflict wrapping a *StaleVersionError. The check and the
+// publication are one storage-level decision: the pointer is published with
+// CompareAndSwap against the pointer the check read, so a write by any node
+// between them refuses this one.
+func (b *KVBackend) StoreVersionIfCurrent(ctx context.Context, path string, expected int, data map[string][]byte, metadata map[string]string) (int, error) {
+	if expected <= 0 {
+		return 0, &SecretsSentinelCauseError{Sentinel: ErrWriteConflict, Cause: &StaleVersionError{Expected: expected}}
+	}
+	return b.storeVersion(ctx, path, expected, data, metadata)
+}
+
+// storeVersion is StoreVersion, conditional on the current version when
+// expected is positive.
+func (b *KVBackend) storeVersion(ctx context.Context, path string, expected int, data map[string][]byte, metadata map[string]string) (int, error) {
 	if path == "" {
 		return 0, ErrInvalidPath
 	}
@@ -207,6 +226,10 @@ func (b *KVBackend) StoreVersion(ctx context.Context, path string, data map[stri
 	cur, observedRaw, err := b.loadCurrentRaw(ctx, path)
 	if err != nil {
 		return 0, err
+	}
+	if expected > 0 && (cur.Version != expected || cur.Deleted) {
+		return 0, &SecretsSentinelCauseError{Sentinel: ErrWriteConflict,
+			Cause: &StaleVersionError{Expected: expected, Current: cur.Version, Deleted: cur.Deleted}}
 	}
 
 	now := time.Now()

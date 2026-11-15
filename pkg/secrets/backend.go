@@ -19,6 +19,7 @@ package secrets
 import (
 	"context"
 	"errors"
+	"strconv"
 	"time"
 )
 
@@ -70,6 +71,19 @@ type VersionedBackend interface {
 	// StoreVersion saves a secret as Store does and returns the version
 	// the backend assigned to this write.
 	StoreVersion(ctx context.Context, path string, data map[string][]byte, metadata map[string]string) (int, error)
+}
+
+// ConditionalVersionedBackend is a VersionedBackend whose write can be made
+// conditional on the version it supersedes, so a writer acting on what it
+// read (scheduled rotation) never overwrites a newer write, a policy change
+// or a delete that landed in between.
+type ConditionalVersionedBackend interface {
+	VersionedBackend
+
+	// StoreVersionIfCurrent stores a new version only while expected is the
+	// path's current, undeleted version. Otherwise it stores nothing and
+	// returns ErrWriteConflict wrapping a *StaleVersionError.
+	StoreVersionIfCurrent(ctx context.Context, path string, expected int, data map[string][]byte, metadata map[string]string) (int, error)
 }
 
 // SecretEntry represents a secret with its data and metadata.
@@ -133,6 +147,11 @@ var (
 	// ErrVersionNotReported indicates the backend cannot report the
 	// version it assigned to a write (see VersionedBackend).
 	ErrVersionNotReported = errors.New("secrets: backend does not report the version it assigned")
+
+	// ErrConditionalWriteUnsupported indicates the backend cannot make a
+	// write conditional on the version it supersedes (see
+	// ConditionalVersionedBackend).
+	ErrConditionalWriteUnsupported = errors.New("secrets: backend cannot condition a write on the current version")
 
 	// ErrVersionNotFound indicates the requested version does not exist.
 	ErrVersionNotFound = errors.New("secrets: version not found")
@@ -248,4 +267,29 @@ func (e *PointerConflictError) Error() string {
 		return "another writer published this path's first pointer"
 	}
 	return "another writer moved this path's pointer after it was read"
+}
+
+// StaleVersionError is the cause of the ErrWriteConflict a conditional write
+// returns when the secret is no longer at the version the writer read.
+type StaleVersionError struct {
+	// Expected is the version the writer read.
+	Expected int
+	// Current is the version the path is at now (0: absent).
+	Current int
+	// Deleted is true when the path has been deleted since.
+	Deleted bool
+}
+
+// Error implements the error interface.
+func (e *StaleVersionError) Error() string {
+	switch {
+	case e.Expected <= 0:
+		return "a conditional write needs the version it supersedes"
+	case e.Deleted:
+		return "the secret was deleted after version " + strconv.Itoa(e.Expected) + " was read"
+	case e.Current == 0:
+		return "the secret no longer exists"
+	default:
+		return "the secret moved from version " + strconv.Itoa(e.Expected) + " to " + strconv.Itoa(e.Current) + " after it was read"
+	}
 }

@@ -54,6 +54,22 @@ func (mb *MemoryBackend) Store(ctx context.Context, path string, data map[string
 // StoreVersion saves a secret as Store does and returns the version it
 // assigned.
 func (mb *MemoryBackend) StoreVersion(ctx context.Context, path string, data map[string][]byte, metadata map[string]string) (int, error) {
+	return mb.storeVersion(ctx, path, -1, data, metadata)
+}
+
+// StoreVersionIfCurrent stores a new version only while expected is the
+// path's current, undeleted version; otherwise it stores nothing and returns
+// ErrWriteConflict wrapping a *StaleVersionError.
+func (mb *MemoryBackend) StoreVersionIfCurrent(ctx context.Context, path string, expected int, data map[string][]byte, metadata map[string]string) (int, error) {
+	if expected <= 0 {
+		return 0, &SecretsSentinelCauseError{Sentinel: ErrWriteConflict, Cause: &StaleVersionError{Expected: expected}}
+	}
+	return mb.storeVersion(ctx, path, expected, data, metadata)
+}
+
+// storeVersion is StoreVersion, conditional on the current version when
+// expected is positive.
+func (mb *MemoryBackend) storeVersion(ctx context.Context, path string, expected int, data map[string][]byte, metadata map[string]string) (int, error) {
 	if err := ctx.Err(); err != nil {
 		return 0, err
 	}
@@ -67,6 +83,17 @@ func (mb *MemoryBackend) StoreVersion(ctx context.Context, path string, data map
 
 	mb.mu.Lock()
 	defer mb.mu.Unlock()
+
+	if expected > 0 {
+		current, deleted := 0, false
+		if s, ok := mb.secrets[path]; ok {
+			current, deleted = len(s.versions), s.deleted
+		}
+		if current != expected || deleted {
+			return 0, &SecretsSentinelCauseError{Sentinel: ErrWriteConflict,
+				Cause: &StaleVersionError{Expected: expected, Current: current, Deleted: deleted}}
+		}
+	}
 
 	// Create deep copy of data
 	dataCopy := make(map[string][]byte, len(data))
