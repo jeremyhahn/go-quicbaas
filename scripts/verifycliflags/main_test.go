@@ -290,12 +290,11 @@ func TestFlagSetOfRefusesABinaryThatAdvertisesNoFlags(t *testing.T) {
 
 func TestRunRefusesATreeItCannotBuildFrom(t *testing.T) {
 	// The shell gate discarded the build error and exited 0 here.
-	// The root is a module that cannot provide the package, and the go
-	// command may neither fetch it nor fall back to GOPATH, a workspace or
-	// a newer toolchain: with -mod=mod and a reachable proxy, an empty
-	// directory let go run download the package and the build succeed.
+	// The root is a module that cannot provide the package, and the
+	// environment forbids every way the go tool could fetch it, so the build
+	// fails the same way whatever Go environment the test inherits.
 	root := t.TempDir()
-	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module fixture\n\ngo 1.22\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module fixture\n\ngo 1.22\n"), 0o600); err != nil {
 		t.Fatalf("write the fixture go.mod: %v", err)
 	}
 	t.Setenv("GO111MODULE", "on")
