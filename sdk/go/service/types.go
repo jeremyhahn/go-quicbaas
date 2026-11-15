@@ -1361,6 +1361,24 @@ var SignGoldenValues = pkgservice.SignGoldenValues
 // ImportGoldenValues signs golden values and stores them as reference values.
 var ImportGoldenValues = pkgservice.ImportGoldenValues
 
+// AttestationResults reads the attestation results the Verifier records in
+// go-qrdb, the latest appraisal per attestation key and tenant.
+type AttestationResults = pkgservice.AttestationResults
+
+// AttestationResultRecord is the latest appraisal of one attesting key.
+type AttestationResultRecord = pkgservice.AttestationResultRecord
+
+// NewAttestationResults returns the attestation results kept in a store.
+var NewAttestationResults = pkgservice.NewAttestationResults
+
+// ErrAttestationResultsConfig is returned by NewAttestationResults without
+// a store.
+var ErrAttestationResultsConfig = pkgservice.ErrAttestationResultsConfig
+
+// AttestationSubject returns the subject an attestation key's results are
+// recorded under.
+var AttestationSubject = pkgservice.AttestationSubject
+
 // NewMeasuredLaunchRuntime builds the measured-launch runtime over an
 // attestation store, with the Verifier's appraisal, image verification,
 // provenance verification and signed cluster manifest wired in.

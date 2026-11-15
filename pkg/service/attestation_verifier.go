@@ -870,6 +870,11 @@ func (s *attestationService) appraiseQuote(ctx context.Context, req *AppraiseQuo
 			result.Verified = false
 		}
 	}
+	// The result is the go-xkms attestation result: it is recorded before
+	// it is returned, so a reported appraisal is never missing from it.
+	if err := recordAttestationResult(ctx, store, req.AKCertificatePEM, result); err != nil {
+		return nil, nil, verifierError(op, errors.ErrUnavailable, err)
+	}
 	return result, divergences, nil
 }
 
