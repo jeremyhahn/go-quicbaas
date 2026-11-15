@@ -361,11 +361,53 @@ func DeleteKeyByID(ctx context.Context, kid string) error {
 // through Config.KeyVersions; without one it returns
 // xkmssdk.ErrKeyVersionsNotConfigured.
 func RotateKey(ctx context.Context, kid string) (crypto.PrivateKey, error) {
+	if err := CheckHostedRotation(kid); err != nil {
+		return nil, err
+	}
 	if err := checkInitialized(); err != nil {
 		return nil, err
 	}
 
 	return xkmssdk.ServiceRotateKey(ctx, kid)
+}
+
+// OIDCSigningBackendName is the registered xkms backend instance that holds
+// the platform's cluster-replicated OIDC signing keys.
+const OIDCSigningBackendName = "oidc-replicated"
+
+// OIDCSigningKeyRotationRefusedError reports a hosted rotation (the REST and
+// MCP xkms handlers, or this package's RotateKey) of a key in the platform
+// OIDC signing backend. Those keys rotate only through
+// iam.SigningKeyManager.Rotate, which serialises rotations across the nodes
+// sharing the backend; a hosted rotation would bypass that and could replace
+// a version a peer is signing with.
+type OIDCSigningKeyRotationRefusedError struct {
+	// KID is the key ID the caller asked to rotate.
+	KID string
+}
+
+// Error implements error.
+func (e *OIDCSigningKeyRotationRefusedError) Error() string {
+	return "xkms: hosted rotation of " + strings.ToLower(e.KID) + " refused: keys in backend " +
+		OIDCSigningBackendName + " are platform oidc signing keys and rotate only through the oidc signing key manager"
+}
+
+// ErrorCode classifies the refusal as forbidden, so every transport answers
+// it as permission denied.
+func (e *OIDCSigningKeyRotationRefusedError) ErrorCode() dberrors.ErrorCode {
+	return dberrors.ErrForbidden
+}
+
+// CheckHostedRotation returns *OIDCSigningKeyRotationRefusedError when kid
+// ("backend:type:algo:keyname", or a bare key name for the default backend)
+// names a key in the platform OIDC signing backend, and nil otherwise. Every
+// hosted rotation entry point calls it before it reaches xkms.
+func CheckHostedRotation(kid string) error {
+	backend, _, found := strings.Cut(kid, ":")
+	if found && strings.EqualFold(strings.TrimSpace(backend), OIDCSigningBackendName) {
+		return &OIDCSigningKeyRotationRefusedError{KID: kid}
+	}
+	return nil
 }
 
 // ListKeys lists all keys across all backends or from a specific backend.

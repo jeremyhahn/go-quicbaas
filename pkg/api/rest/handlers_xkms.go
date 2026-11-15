@@ -38,6 +38,7 @@ import (
 
 	qberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
+	dbxkms "github.com/jeremyhahn/go-quicbaas/pkg/xkms"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
@@ -432,6 +433,13 @@ func (s *Server) HandleXKMSRotateKey(w http.ResponseWriter, r *http.Request) {
 		respondXKMSError(w, http.StatusBadRequest, &XKMSInvalidRequestError{
 			Detail: "key id is required",
 		})
+		return
+	}
+
+	// Platform OIDC signing keys rotate only through the OIDC signing key
+	// manager, which serialises rotations across the nodes sharing them.
+	if err := dbxkms.CheckHostedRotation(keyID); err != nil {
+		respondXKMSError(w, http.StatusForbidden, err)
 		return
 	}
 
