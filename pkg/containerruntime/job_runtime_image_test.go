@@ -65,7 +65,7 @@ func TestWithImageDefaults(t *testing.T) {
 		got := withImageDefaults(&ContainerConfig{Entrypoint: []string{}, Command: []string{"agent", "--acp"}}, image)
 		assert.Equal(t, []string{"agent", "--acp"}, got.Command)
 
-		spec := &orchestration.ContainerSpec{Image: "alpine:latest", Entrypoint: []string{}, Command: []string{"agent"}}
+		spec := &orchestration.ContainerSpec{Network: "none", Image: "alpine:latest", Entrypoint: []string{}, Command: []string{"agent"}}
 		config, err := jobContainerConfig(spec)
 		require.NoError(t, err)
 		require.NotNil(t, config.Entrypoint, "the job adapter lost the explicit clear")
@@ -108,7 +108,7 @@ func TestJobRuntime_RunUsesTheImageConfiguration(t *testing.T) {
 	}
 	doubles.images.images["alpine:latest"] = record
 
-	id, err := jr.Run(t.Context(), &orchestration.ContainerSpec{Image: "alpine:latest", Env: map[string]string{"TOKEN": "x"}})
+	id, err := jr.Run(t.Context(), &orchestration.ContainerSpec{Network: "none", Image: "alpine:latest", Env: map[string]string{"TOKEN": "x"}})
 	require.NoError(t, err)
 
 	process := doubles.engine.created[id].Process
@@ -251,7 +251,7 @@ func TestImageRepository(t *testing.T) {
 
 func runOwned(t *testing.T, jr *JobRuntime, owner string) string {
 	t.Helper()
-	spec := &orchestration.ContainerSpec{Image: "alpine:latest"}
+	spec := &orchestration.ContainerSpec{Network: "none", Image: "alpine:latest"}
 	if owner != "" {
 		spec.Labels = map[string]string{orchestration.ContainerOwnerLabel: owner}
 	}
@@ -341,7 +341,7 @@ func TestJobRuntime_RunImage(t *testing.T) {
 	t.Run("NoStdinLeavesItClosed", func(t *testing.T) {
 		jr, doubles := newTestJobRuntime(t)
 		doubles.engine.initResult = &fakeResult{}
-		_, err := jr.RunImage(t.Context(), &orchestration.ImageRunSpec{Image: "alpine:latest", Command: []string{"true"}})
+		_, err := jr.RunImage(t.Context(), &orchestration.ImageRunSpec{Image: "alpine:latest", NetworkNone: true, Command: []string{"true"}})
 		require.NoError(t, err)
 		assert.Nil(t, doubles.engine.lastStart().Stdin)
 	})
@@ -354,7 +354,7 @@ func TestJobRuntime_RunImage(t *testing.T) {
 		doubles.engine.destroyErr = errTestBackend
 		id := ""
 		_, err := jr.RunImage(t.Context(), &orchestration.ImageRunSpec{
-			Image:    "alpine:latest",
+			Image: "alpine:latest", NetworkNone: true,
 			Command:  []string{"true"},
 			Security: &orchestration.SandboxSecurity{Ulimits: []orchestration.ContainerUlimit{{Name: "nofile", Soft: 64, Hard: 64}}},
 		})
@@ -375,13 +375,13 @@ func TestJobRuntime_RunImage(t *testing.T) {
 		_, err = jr.RunImage(t.Context(), &orchestration.ImageRunSpec{Image: "alpine:latest"})
 		requireInputValidation(t, err, "command")
 		_, err = jr.RunImage(t.Context(), &orchestration.ImageRunSpec{
-			Image: "alpine:latest", Command: []string{"true"}, Mounts: []orchestration.ContainerMount{{}},
+			Image: "alpine:latest", NetworkNone: true, Command: []string{"true"}, Mounts: []orchestration.ContainerMount{{}},
 		})
 		requireInputValidation(t, err, "mounts[0]")
 		assert.Empty(t, doubles.engine.created, "nothing is created for a refused run")
 
 		doubles.engine.startErr = errTestBackend
-		_, err = jr.RunImage(t.Context(), &orchestration.ImageRunSpec{Image: "alpine:latest", Command: []string{"true"}})
+		_, err = jr.RunImage(t.Context(), &orchestration.ImageRunSpec{Image: "alpine:latest", NetworkNone: true, Command: []string{"true"}})
 		var startErr *orchestration.ContainerStartError
 		require.ErrorAs(t, err, &startErr)
 		require.ErrorIs(t, err, errTestBackend)
@@ -392,7 +392,7 @@ func TestJobRuntime_RunImage(t *testing.T) {
 		ctx, cancel := context.WithTimeout(t.Context(), 50*time.Millisecond)
 		defer cancel()
 
-		result, err := jr.RunImage(ctx, &orchestration.ImageRunSpec{Image: "alpine:latest", Command: []string{"sleep", "60"}})
+		result, err := jr.RunImage(ctx, &orchestration.ImageRunSpec{Image: "alpine:latest", NetworkNone: true, Command: []string{"sleep", "60"}})
 		assert.Nil(t, result)
 		var startErr *orchestration.ContainerStartError
 		require.ErrorAs(t, err, &startErr)
@@ -407,7 +407,7 @@ func TestJobRuntime_RunImage(t *testing.T) {
 		jr, doubles := newTestJobRuntime(t)
 		doubles.engine.initResult = &fakeResult{exitCode: 1}
 		for range 2 {
-			result, err := jr.RunImage(t.Context(), &orchestration.ImageRunSpec{Image: "alpine:latest", Command: []string{"false"}})
+			result, err := jr.RunImage(t.Context(), &orchestration.ImageRunSpec{Image: "alpine:latest", NetworkNone: true, Command: []string{"false"}})
 			require.NoError(t, err)
 			assert.Equal(t, 1, result.ExitCode)
 		}
@@ -428,7 +428,7 @@ func TestJobRuntime_RunImage(t *testing.T) {
 		ctx, cancel := context.WithTimeout(t.Context(), 50*time.Millisecond)
 		defer cancel()
 
-		_, err := jr.RunImage(ctx, &orchestration.ImageRunSpec{Image: "alpine:latest", Command: []string{"sleep", "60"}})
+		_, err := jr.RunImage(ctx, &orchestration.ImageRunSpec{Image: "alpine:latest", NetworkNone: true, Command: []string{"sleep", "60"}})
 		require.ErrorIs(t, err, context.DeadlineExceeded, "the run's error was lost")
 		assert.NotErrorIs(t, err, errTestBackend, "the removal's error replaced the run's")
 		assert.Empty(t, doubles.engine.destroyed, "the removal was refused, yet recorded")

@@ -179,21 +179,26 @@ func resolveNoContainerRuntime(logger interfaces.Logger, _ containerRuntimeFacto
 // resolveDetectedContainerRuntime implements "auto": first engine found wins,
 // none found is a runtime-less daemon rather than a failure.
 func resolveDetectedContainerRuntime(logger interfaces.Logger, factory containerRuntimeFactory) (orchestration.ContainerRuntime, error) {
+	// A detected engine comes first: the in-process runtime has no bridge
+	// network yet (a job gets the host's network or none), so the ordinary
+	// sandboxed job, which needs outbound connectivity through a bridge,
+	// runs on an engine wherever there is one.
+	rt, detectErr := factory.detect(logger)
+	if detectErr == nil {
+		logger.Infof("container runtime: %s (available)", containerRuntimeName(rt))
+		return rt, nil
+	}
 	if factory.inProcess != nil {
 		rt, err := factory.inProcess(logger)
 		if err == nil {
-			logger.Infof("container runtime: libcontainer (in-process)")
+			logger.Infof("container runtime: libcontainer (in-process; no engine detected: %v)", detectErr)
 			return rt, nil
 		}
-		logger.Infof("container runtime: libcontainer unavailable, detecting an engine (%v)", err)
-	}
-	rt, err := factory.detect(logger)
-	if err != nil {
-		logger.Infof("container runtime: none (auto-detection found no engine: %v)", err)
+		logger.Infof("container runtime: none (no engine detected: %v; libcontainer unavailable: %v)", detectErr, err)
 		return nil, nil
 	}
-	logger.Infof("container runtime: %s (available)", containerRuntimeName(rt))
-	return rt, nil
+	logger.Infof("container runtime: none (auto-detection found no engine: %v)", detectErr)
+	return nil, nil
 }
 
 // resolveInProcessContainerRuntime is the "libcontainer" selector: the

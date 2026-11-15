@@ -152,7 +152,8 @@ func TestReclaimLeftover_RefusesAPathOrAContainerOfItsOwn(t *testing.T) {
 func runSession(t *testing.T, jr *JobRuntime, owner, session string) string {
 	t.Helper()
 	id, err := jr.Run(t.Context(), &orchestration.ContainerSpec{
-		Image: "alpine:latest",
+		Network: "none",
+		Image:   "alpine:latest",
 		Labels: map[string]string{
 			orchestration.ContainerOwnerLabel:   owner,
 			orchestration.ContainerSessionLabel: session,

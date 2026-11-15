@@ -375,10 +375,23 @@ func jobContainerConfig(spec *orchestration.ContainerSpec) (*ContainerConfig, er
 		}
 		config.Mounts = append(config.Mounts, mount)
 	}
+	if err := jobNetwork(config.NetworkMode); err != nil {
+		return nil, err
+	}
 	for i, p := range spec.Ports {
+		field := "ports[" + strconv.Itoa(i) + "]"
 		port, err := parsePortMapping(p)
 		if err != nil {
-			return nil, &orchestration.InputValidationError{Field: "ports[" + strconv.Itoa(i) + "]", Message: err.Error()}
+			return nil, &orchestration.InputValidationError{Field: field, Message: err.Error()}
+		}
+		// On the host's network a container's port is the host's port; a
+		// mapping to another one, or a port of a container with no network,
+		// could not be published.
+		if config.NetworkMode != NetworkModeHost {
+			return nil, &orchestration.InputValidationError{Field: field, Message: "a port can be published only on the host network: " + ErrJobSpecUnsupported.Error()}
+		}
+		if port.HostPort != 0 && port.HostPort != port.ContainerPort {
+			return nil, &orchestration.InputValidationError{Field: field, Message: "the host network cannot map a port to another: " + ErrJobSpecUnsupported.Error()}
 		}
 		config.Ports = append(config.Ports, port)
 	}
@@ -386,6 +399,32 @@ func jobContainerConfig(spec *orchestration.ContainerSpec) (*ContainerConfig, er
 		return nil, &orchestration.InputValidationError{Field: "spec", Message: err.Error()}
 	}
 	return config, nil
+}
+
+// Network modes a job's container can have.
+const (
+	// NetworkModeHost shares the host's network namespace, with the host's
+	// resolv.conf and hosts.
+	NetworkModeHost = "host"
+	// NetworkModeNone gives the container a network namespace of its own,
+	// with only a loopback interface.
+	NetworkModeNone = "none"
+)
+
+// jobNetwork refuses a network mode the runtime cannot give a job. There is
+// no bridge yet: a bridged job (the default) is refused rather than run with
+// no network, which would leave an agent unable to reach its provider.
+func jobNetwork(mode string) error {
+	switch mode {
+	case NetworkModeHost, NetworkModeNone:
+		return nil
+	case "":
+		mode = string(orchestration.SandboxNetworkDefault)
+	}
+	return &orchestration.InputValidationError{
+		Field:   "network",
+		Message: "network " + mode + " needs a bridge, which the in-process runtime does not have: " + ErrJobSpecUnsupported.Error(),
+	}
 }
 
 // parsePortMapping parses the "[hostIP:]host:container[/proto]" form of a

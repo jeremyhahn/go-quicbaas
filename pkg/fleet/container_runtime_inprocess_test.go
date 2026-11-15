@@ -107,7 +107,9 @@ func TestResolveContainerRuntime_NeverBuildsTheInProcessRuntime(t *testing.T) {
 	}
 }
 
-func TestResolveContainerRuntime_AutoPrefersTheInProcessRuntime(t *testing.T) {
+// Until the in-process runtime has a bridge network, auto keeps a detected
+// engine, which gives the ordinary sandboxed job its outbound connectivity.
+func TestResolveContainerRuntime_AutoPrefersADetectedEngine(t *testing.T) {
 	registerInProcess(t, nil)
 	recorder := &recordingRuntimeFactory{available: []string{"docker"}}
 
@@ -115,11 +117,32 @@ func TestResolveContainerRuntime_AutoPrefersTheInProcessRuntime(t *testing.T) {
 	if err != nil {
 		t.Fatalf("resolve auto: %v", err)
 	}
-	if _, ok := rt.(*inProcessRuntime); !ok {
-		t.Fatalf("auto must take the in-process runtime, got %T", rt)
+	named, ok := rt.(*namedContainerRuntime)
+	if !ok || named.command != "docker" {
+		t.Fatalf("auto must keep the detected engine, got %T %+v", rt, rt)
 	}
-	if recorder.detectCalls != 0 {
-		t.Fatalf("auto probed for an engine %d times with the in-process runtime available", recorder.detectCalls)
+}
+
+func TestResolveContainerRuntime_AutoTakesTheInProcessRuntimeWithoutAnEngine(t *testing.T) {
+	registerInProcess(t, nil)
+	recorder := &recordingRuntimeFactory{}
+
+	rt, err := resolveContainerRuntime(ContainerRuntimeAuto, newSignalLogger(t, ""), recorder.factory().withInProcess(t.TempDir()))
+	if err != nil {
+		t.Fatalf("resolve auto: %v", err)
+	}
+	if _, ok := rt.(*inProcessRuntime); !ok {
+		t.Fatalf("auto must take the in-process runtime when no engine is detected, got %T", rt)
+	}
+}
+
+func TestResolveContainerRuntime_AutoWithNeitherIsNone(t *testing.T) {
+	registerInProcess(t, errors.New("not root"))
+	recorder := &recordingRuntimeFactory{}
+
+	rt, err := resolveContainerRuntime(ContainerRuntimeAuto, newSignalLogger(t, ""), recorder.factory().withInProcess(t.TempDir()))
+	if err != nil || rt != nil {
+		t.Fatalf("resolve auto = %T, %v; want nil, nil", rt, err)
 	}
 }
 

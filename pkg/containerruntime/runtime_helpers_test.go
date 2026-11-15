@@ -47,7 +47,8 @@ func TestGenerateOCIConfig_UserMounts(t *testing.T) {
 // a typed one, and an untyped one, which defaults to bind.
 func TestJobContainerConfig_HostMountsAreBound(t *testing.T) {
 	config, err := jobContainerConfig(&orchestration.ContainerSpec{
-		Image: "alpine:latest",
+		Network: "none",
+		Image:   "alpine:latest",
 		Mounts: []orchestration.ContainerMount{
 			{Source: "/srv/workspace", Target: "/workspace"},
 			{Source: "/srv/creds", Target: "/home/agent/.creds", Type: "bind", ReadOnly: true},
@@ -69,7 +70,7 @@ func TestJobContainerConfig_HostMountsAreBound(t *testing.T) {
 // The sandbox policy drops ALL and adds back its set: the OCI configuration
 // carries exactly that set, and nothing inheritable or ambient.
 func TestGenerateOCIConfig_SandboxDropsAllCapabilities(t *testing.T) {
-	spec := &orchestration.ContainerSpec{Image: "alpine:latest", User: "1000:1000"}
+	spec := &orchestration.ContainerSpec{Network: "none", Image: "alpine:latest", User: "1000:1000"}
 	require.NoError(t, orchestration.SandboxSecurity{}.Apply(spec))
 	config, err := jobContainerConfig(spec)
 	require.NoError(t, err)

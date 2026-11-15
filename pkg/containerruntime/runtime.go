@@ -610,6 +610,15 @@ func (r *Runtime) generateOCIConfig(config *ContainerConfig, rootfsPath string) 
 		{Destination: "/sys/fs/cgroup", Type: "cgroup", Source: "cgroup", Options: []string{"nosuid", "noexec", "nodev", "relatime", "ro"}},
 	}
 
+	// The host network: no network namespace of its own, and the host's name
+	// resolution, as `docker run --network host` gives.
+	if config.NetworkMode == NetworkModeHost {
+		oci.Linux.Namespaces = slices.DeleteFunc(oci.Linux.Namespaces, func(ns ociNamespace) bool { return ns.Type == "network" })
+		for _, file := range []string{"/etc/resolv.conf", "/etc/hosts"} {
+			oci.Mounts = append(oci.Mounts, ociMount{Destination: file, Type: "bind", Source: file, Options: []string{"rbind", "ro"}})
+		}
+	}
+
 	// Add user-specified mounts
 	for _, m := range config.Mounts {
 		opts := slices.Clone(m.Options)
