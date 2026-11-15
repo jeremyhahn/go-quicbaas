@@ -29,11 +29,11 @@ import (
 
 // The environment variables the live GitHub suites read.
 const (
-	EnvToken         = "GITHUB_ITEST_TOKEN"
-	EnvReviewerToken = "GITHUB_ITEST_REVIEWER_TOKEN"
-	EnvOwner         = "GITHUB_ITEST_OWNER"
-	EnvRepo          = "GITHUB_ITEST_REPO"
-	EnvBaseURL       = "GITHUB_ITEST_BASE_URL"
+	EnvAuth         = "GITHUB_ITEST_TOKEN"
+	EnvReviewerAuth = "GITHUB_ITEST_REVIEWER_TOKEN"
+	EnvOwner        = "GITHUB_ITEST_OWNER"
+	EnvRepo         = "GITHUB_ITEST_REPO"
+	EnvBaseURL      = "GITHUB_ITEST_BASE_URL"
 )
 
 // DefaultBaseURL is the GitHub REST API root used when GITHUB_ITEST_BASE_URL
@@ -82,18 +82,18 @@ func (e *MissingEnvError) Error() string {
 // caller fails the test on it, it never skips.
 func LoadEnv() (Env, error) {
 	env := Env{
-		Token:         os.Getenv(EnvToken),
-		ReviewerToken: os.Getenv(EnvReviewerToken),
+		Token:         os.Getenv(EnvAuth),
+		ReviewerToken: os.Getenv(EnvReviewerAuth),
 		Owner:         os.Getenv(EnvOwner),
 		Repo:          os.Getenv(EnvRepo),
 		BaseURL:       strings.TrimRight(os.Getenv(EnvBaseURL), "/"),
 	}
 	missing := make([]string, 0, 4)
 	if env.Token == "" {
-		missing = append(missing, EnvToken)
+		missing = append(missing, EnvAuth)
 	}
 	if env.ReviewerToken == "" {
-		missing = append(missing, EnvReviewerToken)
+		missing = append(missing, EnvReviewerAuth)
 	}
 	if env.Owner == "" {
 		missing = append(missing, EnvOwner)

@@ -26,8 +26,8 @@ const (
 // Environment variables a forge token command receives on top of the
 // daemon's own environment.
 const (
-	ForgeCommandEnvType    = "QUICBAAS_FORGE_TYPE"     //nolint:gosec // G101: environment variable names, not credentials
-	ForgeCommandEnvBaseURL = "QUICBAAS_FORGE_BASE_URL" //nolint:gosec // G101: environment variable names, not credentials
+	ForgeCommandEnvType    = "QUICBAAS_FORGE_TYPE"
+	ForgeCommandEnvBaseURL = "QUICBAAS_FORGE_BASE_URL"
 )
 
 // ForgeTokenSource yields the token that authenticates calls to the forge at

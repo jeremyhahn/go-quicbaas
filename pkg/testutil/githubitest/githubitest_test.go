@@ -97,7 +97,7 @@ func (f *fakeGitHub) only(t *testing.T) recorded {
 }
 
 func TestLoadEnv_NamesEveryMissingVariable(t *testing.T) {
-	for _, name := range []string{EnvToken, EnvReviewerToken, EnvOwner, EnvRepo, EnvBaseURL} {
+	for _, name := range []string{EnvAuth, EnvReviewerAuth, EnvOwner, EnvRepo, EnvBaseURL} {
 		t.Setenv(name, "")
 	}
 	_, err := LoadEnv()
@@ -105,7 +105,7 @@ func TestLoadEnv_NamesEveryMissingVariable(t *testing.T) {
 	if !errors.As(err, &missing) {
 		t.Fatalf("LoadEnv error = %v, want *MissingEnvError", err)
 	}
-	for _, name := range []string{EnvToken, EnvReviewerToken, EnvOwner, EnvRepo} {
+	for _, name := range []string{EnvAuth, EnvReviewerAuth, EnvOwner, EnvRepo} {
 		if !strings.Contains(err.Error(), name) {
 			t.Errorf("error %q does not name %s", err, name)
 		}
@@ -116,8 +116,8 @@ func TestLoadEnv_NamesEveryMissingVariable(t *testing.T) {
 }
 
 func TestLoadEnv_NamesOnlyTheMissingOne(t *testing.T) {
-	t.Setenv(EnvToken, testToken)
-	t.Setenv(EnvReviewerToken, testReviewer)
+	t.Setenv(EnvAuth, testToken)
+	t.Setenv(EnvReviewerAuth, testReviewer)
 	t.Setenv(EnvOwner, "acme")
 	t.Setenv(EnvRepo, "")
 	_, err := LoadEnv()
@@ -134,8 +134,8 @@ func TestLoadEnv_NamesOnlyTheMissingOne(t *testing.T) {
 }
 
 func TestLoadEnv_ReturnsEnvWhenSet(t *testing.T) {
-	t.Setenv(EnvToken, testToken)
-	t.Setenv(EnvReviewerToken, testReviewer)
+	t.Setenv(EnvAuth, testToken)
+	t.Setenv(EnvReviewerAuth, testReviewer)
 	t.Setenv(EnvOwner, "acme")
 	t.Setenv(EnvRepo, "scratch")
 	t.Setenv(EnvBaseURL, "")
