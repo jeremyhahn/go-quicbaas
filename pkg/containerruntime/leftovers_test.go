@@ -19,10 +19,12 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
 )
 
@@ -145,3 +147,101 @@ func TestReclaimLeftover_RefusesAPathOrAContainerOfItsOwn(t *testing.T) {
 	assert.Empty(t, doubles.engine.reclaimed)
 	assert.True(t, bundleExists(t, jr, own))
 }
+
+// runSession runs a container owned by owner for session.
+func runSession(t *testing.T, jr *JobRuntime, owner, session string) string {
+	t.Helper()
+	id, err := jr.Run(t.Context(), &orchestration.ContainerSpec{
+		Image: "alpine:latest",
+		Labels: map[string]string{
+			orchestration.ContainerOwnerLabel:   owner,
+			orchestration.ContainerSessionLabel: session,
+			orchestration.ContainerJobLabel:     "job-" + session,
+			orchestration.ContainerTenantLabel:  "tenant-a",
+		},
+	})
+	require.NoError(t, err)
+	return id
+}
+
+func TestJobRuntime_ListOwned(t *testing.T) {
+	before, doubles := newTestJobRuntime(t)
+	leftover := runSession(t, before, "agent-a", "s-old")
+	runSession(t, before, "agent-b", "s-other")
+
+	after, _ := restartedJobRuntime(t, before, doubles)
+	own := runSession(t, after, "agent-a", "s-new")
+
+	owned, err := after.ListOwned(t.Context(), " agent-a ")
+	require.NoError(t, err)
+	require.Len(t, owned, 2, "this process's container and the leftover, and nothing of another owner")
+	byID := map[string]orchestration.OwnedContainer{}
+	for _, c := range owned {
+		byID[c.ID] = c
+		assert.False(t, c.CreatedAt.IsZero(), "the reaper cannot age a container without a creation time")
+	}
+	assert.Equal(t, "s-old", byID[leftover].SessionID)
+	assert.Equal(t, "job-s-old", byID[leftover].JobID)
+	assert.Equal(t, "tenant-a", byID[leftover].TenantID)
+	assert.Equal(t, "s-new", byID[own].SessionID)
+
+	_, err = after.ListOwned(t.Context(), " ")
+	requireInputValidation(t, err, "owner")
+}
+
+// The running agent's reaper works on a JobRuntime: it removes this process's
+// unheld containers and reclaims those an earlier agent left, through Remove.
+func TestJobRuntime_ServesTheContainerReaper(t *testing.T) {
+	before, doubles := newTestJobRuntime(t)
+	leftover := runSession(t, before, "agent-a", "s-old")
+
+	after, engine := restartedJobRuntime(t, before, doubles)
+	unheld := runSession(t, after, "agent-a", "s-gone")
+	held := runSession(t, after, "agent-a", "s-live")
+
+	var lister orchestration.OwnedContainerLister = after
+	reaper, err := orchestration.NewContainerReaper(orchestration.ContainerReaperConfig{
+		Runtime: lister,
+		Owner:   "agent-a",
+		Live:    func(session string) bool { return session == "s-live" },
+		Grace:   time.Minute,
+		Now:     func() time.Time { return time.Now().Add(time.Hour) },
+		Logger:  discardLogger{},
+	})
+	require.NoError(t, err)
+
+	sweep, err := reaper.Reap(t.Context())
+	require.NoError(t, err)
+	assert.ElementsMatch(t, []string{leftover, unheld}, sweep.Removed)
+	assert.Equal(t, []string{leftover}, engine.reclaimed, "the leftover is reclaimed through the engine")
+	assert.False(t, bundleExists(t, after, leftover))
+
+	running, err := after.IsRunning(t.Context(), held)
+	require.NoError(t, err)
+	assert.True(t, running, "a held session's container was reaped")
+
+	again, err := reaper.Reap(t.Context())
+	require.NoError(t, err)
+	assert.Empty(t, again.Removed)
+	var notFound *orchestration.ContainerNotFoundError
+	require.ErrorAs(t, after.Remove(t.Context(), leftover), &notFound)
+}
+
+// discardLogger is an interfaces.Logger that drops everything.
+type discardLogger struct{}
+
+func (discardLogger) Debug(string, ...any)                              {}
+func (discardLogger) Debugf(string, ...interface{})                     {}
+func (discardLogger) Info(string, ...any)                               {}
+func (discardLogger) Infof(string, ...interface{})                      {}
+func (discardLogger) Warn(string, ...any)                               {}
+func (discardLogger) Warnf(string, ...interface{})                      {}
+func (discardLogger) Error(string, ...any)                              {}
+func (discardLogger) Errorf(string, ...interface{})                     {}
+func (discardLogger) Fatal(string)                                      {}
+func (discardLogger) Fatalf(string, ...interface{})                     {}
+func (l discardLogger) WithField(string, interface{}) interfaces.Logger { return l }
+func (l discardLogger) WithFields(map[string]interface{}) interfaces.Logger {
+	return l
+}
+func (l discardLogger) WithError(error) interfaces.Logger { return l }

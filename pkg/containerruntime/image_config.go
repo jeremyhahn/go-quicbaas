@@ -22,9 +22,10 @@ import (
 // withImageDefaults returns a copy of config with what it leaves unset taken
 // from the image's configuration, as `docker run` does:
 //
-//   - the process is the entrypoint followed by the command. An unset
+//   - the process is the entrypoint followed by the command. An unset (nil)
 //     entrypoint is the image's, and then an unset command is the image's
-//     too; a set entrypoint drops the image's command;
+//     too; a set entrypoint, including an explicitly empty one that clears
+//     the image's, drops the image's command;
 //   - the image's environment is the base the container's overrides;
 //   - an unset working directory or user is the image's;
 //   - the image's labels are the base the container's labels override.
@@ -35,7 +36,7 @@ func withImageDefaults(config *ContainerConfig, image imageConfig) *ContainerCon
 	resolved := *config
 
 	entrypoint, cmd := config.Entrypoint, config.Command
-	if len(entrypoint) == 0 {
+	if entrypoint == nil {
 		entrypoint = image.Entrypoint
 		if len(cmd) == 0 {
 			cmd = image.Cmd

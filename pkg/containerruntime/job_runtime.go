@@ -231,13 +231,37 @@ func (j *JobRuntime) Remove(ctx context.Context, containerID string) error {
 	if containerID == "" {
 		return &orchestration.InputValidationError{Field: "containerID", Message: "cannot be empty"}
 	}
-	if err := j.runtime.RemoveContainer(ctx, containerID, true); err != nil {
-		if errors.Is(err, ErrContainerNotFound) {
+	err := j.runtime.RemoveContainer(ctx, containerID, true)
+	if errors.Is(err, ErrContainerNotFound) {
+		// A container an earlier agent left is not registered in this
+		// process; only its bundle record names it. The reaper removes those
+		// through here too.
+		reclaimed, reclaimErr := j.reclaimLeftover(containerID)
+		if reclaimErr != nil {
+			return &orchestration.ContainerStopError{ContainerID: containerID, Cause: reclaimErr}
+		}
+		if !reclaimed {
 			return &orchestration.ContainerNotFoundError{ContainerID: containerID}
 		}
+		return nil
+	}
+	if err != nil {
 		return &orchestration.ContainerStopError{ContainerID: containerID, Cause: err}
 	}
 	return nil
+}
+
+// reclaimLeftover reclaims the leftover container id, reporting false when no
+// bundle record names it.
+func (j *JobRuntime) reclaimLeftover(id string) (bool, error) {
+	leftovers, err := j.runtime.ListLeftovers()
+	if err != nil {
+		return false, err
+	}
+	if !slices.ContainsFunc(leftovers, func(l LeftoverContainer) bool { return l.ID == id }) {
+		return false, nil
+	}
+	return true, j.runtime.ReclaimLeftover(id)
 }
 
 // Logs returns what the container wrote, stdout then stderr.

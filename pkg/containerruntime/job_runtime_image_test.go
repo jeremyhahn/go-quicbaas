@@ -59,6 +59,24 @@ func TestWithImageDefaults(t *testing.T) {
 		assert.Equal(t, []string{"/bin/sh", "-c"}, got.Command)
 	})
 
+	// ACPBackend clears the image's entrypoint with Entrypoint: []string{} so
+	// that its command runs directly; only a nil entrypoint is inherited.
+	t.Run("AnExplicitlyEmptyEntrypointClearsTheImages", func(t *testing.T) {
+		got := withImageDefaults(&ContainerConfig{Entrypoint: []string{}, Command: []string{"agent", "--acp"}}, image)
+		assert.Equal(t, []string{"agent", "--acp"}, got.Command)
+
+		spec := &orchestration.ContainerSpec{Image: "alpine:latest", Entrypoint: []string{}, Command: []string{"agent"}}
+		config, err := jobContainerConfig(spec)
+		require.NoError(t, err)
+		require.NotNil(t, config.Entrypoint, "the job adapter lost the explicit clear")
+		assert.Equal(t, []string{"agent"}, withImageDefaults(config, image).Command)
+
+		spec.Entrypoint = nil
+		config, err = jobContainerConfig(spec)
+		require.NoError(t, err)
+		assert.Equal(t, []string{"/entry", "agent"}, withImageDefaults(config, image).Command)
+	})
+
 	t.Run("SetFieldsWin", func(t *testing.T) {
 		got := withImageDefaults(&ContainerConfig{
 			WorkDir: "/srv",
