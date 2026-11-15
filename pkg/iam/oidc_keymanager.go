@@ -106,6 +106,11 @@ type SigningKeyManager struct {
 	// lastUnknownKIDRefresh is when a token naming a kid the manager did
 	// not hold last re-read the version record, in Unix nanoseconds.
 	lastUnknownKIDRefresh atomic.Int64
+
+	// unknownKIDMu guards unknownKIDFlight, which is closed when the
+	// unknown-kid refresh in flight completes (nil when none is).
+	unknownKIDMu     sync.Mutex
+	unknownKIDFlight chan struct{}
 }
 
 // RotationLock serializes rotations of one signing key across every node that
@@ -681,19 +686,37 @@ func (m *SigningKeyManager) PublicForKID(kid string) (crypto.PublicKey, error) {
 // signed with its new version. It runs at most once per
 // unknownKIDRefreshInterval however recently the routine refresh ran, so a
 // token from a fresh rotation verifies at once and a flood of unknown kids
-// costs one read per interval.
+// costs one read per interval. A miss arriving while that refresh is in
+// flight waits for it to complete, so concurrent tokens under the same new
+// kid all see the re-read version record.
 func (m *SigningKeyManager) refreshForUnknownKID() {
 	if !m.versioned() {
 		return
 	}
-	last := m.lastUnknownKIDRefresh.Load()
+	m.unknownKIDMu.Lock()
+	if flight := m.unknownKIDFlight; flight != nil {
+		m.unknownKIDMu.Unlock()
+		<-flight
+		return
+	}
 	now := time.Now().UnixNano()
-	if time.Duration(now-last) < unknownKIDRefreshInterval || !m.lastUnknownKIDRefresh.CompareAndSwap(last, now) {
+	if time.Duration(now-m.lastUnknownKIDRefresh.Load()) < unknownKIDRefreshInterval {
+		m.unknownKIDMu.Unlock()
 		return
 	}
-	if !m.rotateMu.TryLock() {
-		return
-	}
+	m.lastUnknownKIDRefresh.Store(now)
+	flight := make(chan struct{})
+	m.unknownKIDFlight = flight
+	m.unknownKIDMu.Unlock()
+	defer func() {
+		m.unknownKIDMu.Lock()
+		m.unknownKIDFlight = nil
+		m.unknownKIDMu.Unlock()
+		close(flight)
+	}()
+	// A rotation or refresh holding rotateMu re-reads the record itself;
+	// waiting for it keeps this miss from failing while it runs.
+	m.rotateMu.Lock()
 	defer m.rotateMu.Unlock()
 	_ = m.refreshLocked(context.Background())
 }

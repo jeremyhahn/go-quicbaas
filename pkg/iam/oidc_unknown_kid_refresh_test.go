@@ -3,6 +3,8 @@ package iam
 import (
 	"context"
 	"errors"
+	"runtime"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -17,15 +19,20 @@ import (
 // these tests share; its versions are recorded, as on a cluster node.
 const sharedSigningBackend = "shared-signing"
 
-// countingStorage counts the reads of the key-version records.
+// countingStorage counts the reads of the key-version records and, while a
+// gate is set, holds each read until the gate is closed.
 type countingStorage struct {
 	xkmssdk.StorageBackend
 	gets atomic.Int64
+	gate atomic.Pointer[chan struct{}]
 }
 
-// Get counts the read and delegates it.
+// Get counts the read, waits on any gate, and delegates it.
 func (s *countingStorage) Get(ctx context.Context, key string) ([]byte, error) {
 	s.gets.Add(1)
+	if gate := s.gate.Load(); gate != nil {
+		<-*gate
+	}
 	return s.StorageBackend.Get(ctx, key)
 }
 
@@ -235,5 +242,68 @@ func TestOIDCProvider_UnknownKIDFloodIsRateLimited(t *testing.T) {
 	windows := int64(elapsed/unknownKIDRefreshInterval) + 1 + int64(elapsed/signingKeyRefreshInterval) + 1
 	if got, limit := records.gets.Load(), perRefresh*windows; got > limit {
 		t.Fatalf("%d unknown kids in %v read the version records %d times, want at most %d", flood, elapsed, got, limit)
+	}
+}
+
+// TestSigningKeyManager_ConcurrentMissesShareTheInFlightRefresh proves
+// concurrent lookups of a peer's freshly rotated kid wait on the one
+// in-flight unknown-kid refresh rather than failing while it runs: with the
+// version-record read held, every lookup succeeds once it completes, the
+// records are read for one refresh only, and a later miss stays
+// rate-limited.
+func TestSigningKeyManager_ConcurrentMissesShareTheInFlightRefresh(t *testing.T) {
+	records := setupSharedSigningXKMS(t)
+	a, b := newSharedSigningNode(t, ""), newSharedSigningNode(t, "")
+	records.gets.Store(0)
+	if err := b.global.Refresh(); err != nil {
+		t.Fatalf("B refresh: %v", err)
+	}
+	perRefresh := records.gets.Load()
+	if perRefresh == 0 {
+		t.Fatal("a refresh reads no version record")
+	}
+	if err := a.global.Rotate(); err != nil {
+		t.Fatalf("A rotate: %v", err)
+	}
+	kid, _, _ := a.global.Current()
+
+	gate := make(chan struct{})
+	records.gets.Store(0)
+	records.gate.Store(&gate)
+	const lookups = 16
+	var started sync.WaitGroup
+	started.Add(lookups)
+	errs := make(chan error, lookups)
+	for range lookups {
+		go func() {
+			started.Done()
+			_, err := b.global.PublicForKID(kid)
+			errs <- err
+		}()
+	}
+	started.Wait()
+	for records.gets.Load() == 0 {
+		runtime.Gosched()
+	}
+	// Give the other lookups time to reach the in-flight refresh.
+	time.Sleep(20 * time.Millisecond)
+	records.gate.Store(nil)
+	close(gate)
+	for range lookups {
+		if err := <-errs; err != nil {
+			t.Errorf("lookup during the in-flight refresh: %v", err)
+		}
+	}
+	if got := records.gets.Load(); got != perRefresh {
+		t.Fatalf("%d concurrent lookups read the version records %d times, want one refresh's %d", lookups, got, perRefresh)
+	}
+
+	_, err := b.global.PublicForKID("never-issued-kid")
+	var unknown *UnknownKeyIDError
+	if !errors.As(err, &unknown) {
+		t.Fatalf("later miss: got %v, want UnknownKeyIDError", err)
+	}
+	if got := records.gets.Load(); got != perRefresh {
+		t.Fatalf("a miss right after the refresh read the version records again (%d reads, want %d)", got, perRefresh)
 	}
 }
