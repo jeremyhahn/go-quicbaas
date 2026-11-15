@@ -23,6 +23,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
 )
 
 func TestGenerateOCIConfig_UserMounts(t *testing.T) {
@@ -38,7 +40,73 @@ func TestGenerateOCIConfig_UserMounts(t *testing.T) {
 	assert.Equal(t, ociMount{Destination: "/srv/data", Type: "bind", Source: "/data", Options: []string{"rbind"}}, data)
 	config := oci.Mounts[len(oci.Mounts)-1]
 	assert.Equal(t, "/etc/app", config.Destination)
-	assert.Equal(t, []string{"ro"}, config.Options)
+	assert.Equal(t, []string{"rbind", "ro"}, config.Options, "a bind mount without a bind option would not be bound")
+}
+
+// A job's host mounts reach libcontainer as bind mounts that request MS_BIND:
+// a typed one, and an untyped one, which defaults to bind.
+func TestJobContainerConfig_HostMountsAreBound(t *testing.T) {
+	config, err := jobContainerConfig(&orchestration.ContainerSpec{
+		Image: "alpine:latest",
+		Mounts: []orchestration.ContainerMount{
+			{Source: "/srv/workspace", Target: "/workspace"},
+			{Source: "/srv/creds", Target: "/home/agent/.creds", Type: "bind", ReadOnly: true},
+			{Target: "/tmp", Type: "tmpfs", TmpfsSizeBytes: 1024},
+		},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "bind", config.Mounts[0].Type, "an untyped host mount stayed untyped")
+
+	rt := newTestRuntime(t)
+	mounts := rt.generateOCIConfig(config, "/rootfs").Mounts
+	mounts = mounts[len(mounts)-3:]
+	assert.Equal(t, ociMount{Destination: "/workspace", Type: "bind", Source: "/srv/workspace", Options: []string{"rbind"}}, mounts[0])
+	assert.Equal(t, ociMount{Destination: "/home/agent/.creds", Type: "bind", Source: "/srv/creds", Options: []string{"rbind", "ro"}}, mounts[1])
+	assert.Equal(t, "tmpfs", mounts[2].Type)
+	assert.NotContains(t, mounts[2].Options, "rbind")
+}
+
+// The sandbox policy drops ALL and adds back its set: the OCI configuration
+// carries exactly that set, and nothing inheritable or ambient.
+func TestGenerateOCIConfig_SandboxDropsAllCapabilities(t *testing.T) {
+	spec := &orchestration.ContainerSpec{Image: "alpine:latest", User: "1000:1000"}
+	require.NoError(t, orchestration.SandboxSecurity{}.Apply(spec))
+	config, err := jobContainerConfig(spec)
+	require.NoError(t, err)
+
+	rt := newTestRuntime(t)
+	oci := rt.generateOCIConfig(config, "/rootfs")
+	want := []string{"CAP_CHOWN", "CAP_DAC_OVERRIDE", "CAP_FOWNER", "CAP_SETGID", "CAP_SETUID"}
+	caps := oci.Process.Capabilities
+	assert.ElementsMatch(t, want, caps.Bounding)
+	assert.ElementsMatch(t, want, caps.Effective)
+	assert.ElementsMatch(t, want, caps.Permitted)
+	assert.Empty(t, caps.Inheritable)
+	assert.Empty(t, caps.Ambient)
+	for _, gone := range []string{"CAP_NET_RAW", "CAP_MKNOD", "CAP_SETFCAP", "CAP_KILL"} {
+		assert.NotContains(t, caps.Bounding, gone)
+	}
+
+	// A non-root worker keeps sudo: no_new_privs is clear, and the bounding
+	// set a setuid-root sudo gains holds SETUID and SETGID.
+	assert.False(t, oci.Process.NoNewPrivileges, "no_new_privs would stop a setuid sudo")
+	assert.Equal(t, "1000:1000", config.User)
+}
+
+func TestCapabilitySet(t *testing.T) {
+	defaults := []string{"CAP_CHOWN", "CAP_KILL", "CAP_NET_RAW"}
+	assert.Equal(t, []string{"CAP_CHOWN", "CAP_KILL", "CAP_NET_RAW"}, capabilitySet(defaults, nil, nil))
+	assert.Equal(t, []string{"CAP_SETUID"}, capabilitySet(defaults, []string{"setuid"}, []string{"all"}))
+	assert.Equal(t, []string{"CAP_CHOWN", "CAP_SYS_ADMIN"}, capabilitySet(defaults, []string{"SYS_ADMIN", "CAP_CHOWN"}, []string{"KILL", "CAP_NET_RAW"}))
+	assert.Empty(t, capabilitySet(defaults, nil, []string{"ALL"}))
+	assert.Equal(t, []string{"CAP_CHOWN", "CAP_KILL", "CAP_NET_RAW"}, defaults, "the defaults were changed")
+}
+
+func TestGenerateOCIConfig_NoNewPrivilegesIsExplicit(t *testing.T) {
+	rt := newTestRuntime(t)
+	assert.True(t, rt.generateOCIConfig(&ContainerConfig{}, "/rootfs").Process.NoNewPrivileges)
+	assert.False(t, rt.generateOCIConfig(&ContainerConfig{AllowNewPrivileges: true}, "/rootfs").Process.NoNewPrivileges)
+	assert.False(t, rt.generateOCIConfig(&ContainerConfig{Privileged: true}, "/rootfs").Process.NoNewPrivileges)
 }
 
 func TestGenerateOCIConfig_CapabilityChanges(t *testing.T) {

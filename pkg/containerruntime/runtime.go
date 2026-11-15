@@ -563,7 +563,7 @@ func (r *Runtime) generateOCIConfig(config *ContainerConfig, rootfsPath string) 
 			Env:             env,
 			Cwd:             cwd,
 			Rlimits:         ociRlimits(config.Ulimits),
-			NoNewPrivileges: !config.Privileged,
+			NoNewPrivileges: !config.Privileged && !config.AllowNewPrivileges,
 		},
 		Root: &ociRoot{
 			Path:     rootfsPath,
@@ -612,13 +612,22 @@ func (r *Runtime) generateOCIConfig(config *ContainerConfig, rootfsPath string) 
 
 	// Add user-specified mounts
 	for _, m := range config.Mounts {
-		opts := m.Options
+		opts := slices.Clone(m.Options)
+		mountType := m.Type
+		if mountType == "" {
+			mountType = "bind"
+		}
+		// The OCI type "bind" alone asks the kernel for nothing: MS_BIND
+		// comes from the bind or rbind option.
+		if mountType == "bind" && !slices.Contains(opts, "bind") && !slices.Contains(opts, "rbind") {
+			opts = append(opts, "rbind")
+		}
 		if m.ReadOnly {
 			opts = append(opts, "ro")
 		}
 		oci.Mounts = append(oci.Mounts, ociMount{
 			Destination: m.Target,
-			Type:        m.Type,
+			Type:        mountType,
 			Source:      m.Source,
 			Options:     opts,
 		})
@@ -688,34 +697,14 @@ func (r *Runtime) generateOCIConfig(config *ContainerConfig, rootfsPath string) 
 			"CAP_KILL",
 			"CAP_AUDIT_WRITE",
 		}
+		caps := capabilitySet(defaultCaps, config.CapAdd, config.CapDrop)
+		// Inheritable and Ambient stay empty, as Docker and Podman leave them
+		// since CVE-2022-24769: a capability in them survives an exec of an
+		// unprivileged program, beyond what CapAdd grants the container.
 		oci.Process.Capabilities = &ociCapabilities{
-			Bounding:    defaultCaps,
-			Effective:   defaultCaps,
-			Inheritable: defaultCaps,
-			Permitted:   defaultCaps,
-			Ambient:     defaultCaps,
-		}
-
-		// Add extra capabilities
-		for _, cap := range config.CapAdd {
-			capName := cap
-			if !strings.HasPrefix(capName, "CAP_") {
-				capName = "CAP_" + capName
-			}
-			oci.Process.Capabilities.Bounding = append(oci.Process.Capabilities.Bounding, capName)
-			oci.Process.Capabilities.Effective = append(oci.Process.Capabilities.Effective, capName)
-			oci.Process.Capabilities.Permitted = append(oci.Process.Capabilities.Permitted, capName)
-		}
-
-		// Remove dropped capabilities
-		for _, cap := range config.CapDrop {
-			capName := cap
-			if !strings.HasPrefix(capName, "CAP_") {
-				capName = "CAP_" + capName
-			}
-			oci.Process.Capabilities.Bounding = removeString(oci.Process.Capabilities.Bounding, capName)
-			oci.Process.Capabilities.Effective = removeString(oci.Process.Capabilities.Effective, capName)
-			oci.Process.Capabilities.Permitted = removeString(oci.Process.Capabilities.Permitted, capName)
+			Bounding:  caps,
+			Effective: slices.Clone(caps),
+			Permitted: slices.Clone(caps),
 		}
 	}
 
@@ -731,6 +720,39 @@ func removeString(slice []string, s string) []string {
 		}
 	}
 	return result
+}
+
+// capabilitySet is the container's capability set: the defaults less the
+// dropped ones, then the added ones, as `docker run --cap-drop --cap-add`
+// resolves them. A drop of ALL removes every default, so that only the
+// added capabilities remain. Names are
+// taken with or without the CAP_ prefix, in any case.
+func capabilitySet(defaults, add, drop []string) []string {
+	caps := slices.Clone(defaults)
+	for _, name := range drop {
+		capName := capabilityName(name)
+		if capName == "CAP_ALL" {
+			caps = nil
+			continue
+		}
+		caps = removeString(caps, capName)
+	}
+	for _, name := range add {
+		capName := capabilityName(name)
+		if !slices.Contains(caps, capName) {
+			caps = append(caps, capName)
+		}
+	}
+	return caps
+}
+
+// capabilityName is name upper-cased with the CAP_ prefix.
+func capabilityName(name string) string {
+	name = strings.ToUpper(strings.TrimSpace(name))
+	if !strings.HasPrefix(name, "CAP_") {
+		name = "CAP_" + name
+	}
+	return name
 }
 
 // StartContainer starts a container's init process. Its stdout and stderr
