@@ -96,17 +96,17 @@ func TestOIDCRotationLock_ExpiredLeaseTakeoverHasOneWinner(t *testing.T) {
 			<-aDone
 		}
 	}
-	lock := newOIDCRotationLock(kv)
+	lock := newOIDCRotationLock(kv, kv)
 
 	aErr, bErr := make(chan error, 1), make(chan error, 1)
 	go func() {
-		_, err := lock(ctx, "", cn)
+		_, _, err := lock(ctx, "", cn)
 		aErr <- err
 		close(aDone)
 	}()
 	<-aObserved
 	go func() {
-		_, err := lock(ctx, "", cn)
+		_, _, err := lock(ctx, "", cn)
 		bErr <- err
 	}()
 
@@ -126,9 +126,9 @@ func TestOIDCRotationLock_ReleaseKeepsNewHoldersLease(t *testing.T) {
 	cn := iam.OIDCSigningKeyCN
 	key := oidcRotationLeasePrefix + "system/" + cn
 	kv := &leaseRaceKV{StorageBackend: inner}
-	lock := newOIDCRotationLock(kv)
+	lock := newOIDCRotationLock(kv, kv)
 
-	unlock, err := lock(ctx, "", cn)
+	_, unlock, err := lock(ctx, "", cn)
 	require.NoError(t, err)
 	other := []byte(time.Now().Add(time.Minute).UTC().Format(time.RFC3339Nano) + " other")
 	kv.beforeRemove = func(k string) {

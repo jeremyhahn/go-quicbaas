@@ -254,15 +254,15 @@ func TestOIDCSigningStore_TwoNodeRotationRestartAndPeerRotation(t *testing.T) {
 func TestOIDCRotationLock(t *testing.T) {
 	ctx := context.Background()
 	kv := guardedMemoryKV(t)
-	lock := newOIDCRotationLock(kv)
+	lock := newOIDCRotationLock(kv, kv)
 	cn := iam.OIDCSigningKeyCN
 
-	unlock, err := lock(ctx, "", cn)
+	_, unlock, err := lock(ctx, "", cn)
 	require.NoError(t, err)
 	acquired := make(chan func(), 1)
 	failed := make(chan error, 1)
 	go func() {
-		u, err := lock(ctx, "", cn)
+		_, u, err := lock(ctx, "", cn)
 		if err != nil {
 			failed <- err
 			return
@@ -288,19 +288,19 @@ func TestOIDCRotationLock(t *testing.T) {
 
 	stale := time.Now().Add(-time.Second).UTC().Format(time.RFC3339Nano) + " stale"
 	require.NoError(t, kv.Put(ctx, oidcRotationLeasePrefix+"system/"+cn, []byte(stale)))
-	u, err := lock(ctx, "", cn)
+	_, u, err := lock(ctx, "", cn)
 	require.NoError(t, err)
 	u()
 
 	wait := oidcRotationLeaseWait
 	oidcRotationLeaseWait = 100 * time.Millisecond
 	t.Cleanup(func() { oidcRotationLeaseWait = wait })
-	held, err := lock(ctx, "tenant-a", cn)
+	_, held, err := lock(ctx, "tenant-a", cn)
 	require.NoError(t, err)
-	_, err = lock(ctx, "tenant-a", cn)
+	_, _, err = lock(ctx, "tenant-a", cn)
 	require.ErrorAs(t, err, new(*OIDCRotationBusyError))
 	held()
-	u, err = lock(ctx, "tenant-a", cn)
+	_, u, err = lock(ctx, "tenant-a", cn)
 	require.NoError(t, err)
 	u()
 }

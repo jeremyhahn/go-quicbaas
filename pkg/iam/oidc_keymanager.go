@@ -97,8 +97,9 @@ type SigningKeyManager struct {
 
 // RotationLock serializes rotations of one signing key across every node that
 // shares the key's backend. It returns once the caller holds the key's
-// rotation, with the function that releases it.
-type RotationLock func(ctx context.Context, tenantID, cn string) (unlock func(), err error)
+// rotation, with a context derived from ctx that the rotation runs under and
+// that is canceled when the hold is lost, and the function that releases it.
+type RotationLock func(ctx context.Context, tenantID, cn string) (lockCtx context.Context, unlock func(), err error)
 
 // rotationLocks maps a backend name to the RotationLock its keys rotate under.
 var rotationLocks sync.Map
@@ -686,11 +687,13 @@ func (m *SigningKeyManager) Rotate() error {
 	// version record the last rotation left: a node rotating from a stale
 	// record would take another node's version for an orphan and replace it.
 	if lock, ok := rotationLockFor(m.storeType); ok {
-		unlock, err := lock(ctx, m.tenantID, m.cn)
+		lockCtx, unlock, err := lock(ctx, m.tenantID, m.cn)
 		if err != nil {
 			return err
 		}
 		defer unlock()
+		// The rotation runs under the lease: a lost lease cancels it.
+		ctx = lockCtx
 	}
 	if m.versioned() {
 		if err := m.refreshLocked(ctx); err != nil {
@@ -701,6 +704,9 @@ func (m *SigningKeyManager) Rotate() error {
 
 	svc, err := xkmssdk.Get()
 	if err != nil {
+		return err
+	}
+	if err := ctx.Err(); err != nil {
 		return err
 	}
 	if _, err := svc.RotateKey(ctx, &transport.RotateKeyRequest{

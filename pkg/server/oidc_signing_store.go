@@ -105,7 +105,11 @@ func (s *Server) useReplicatedOIDCSigningStore(kv xkmssdk.StorageBackend) error 
 	if s.xkmsKeyVersionRouter != nil {
 		s.xkmsKeyVersionRouter.setReplicated(versions)
 	}
-	iam.SetRotationLock(oidcSigningBackendName, newOIDCRotationLock(guarded))
+	guardedVersions, err := guardedOIDCStore(versions)
+	if err != nil {
+		return err
+	}
+	iam.SetRotationLock(oidcSigningBackendName, newOIDCRotationLock(guarded, guardedVersions))
 	if !slices.Contains(dbxkms.Backends(), oidcSigningBackendName) {
 		if err := registerXKMSBackendFn(oidcSigningBackendName, backend); err != nil {
 			return err
@@ -168,6 +172,9 @@ func (r *keyVersionRouter) Get(ctx context.Context, key string) ([]byte, error) 
 }
 
 func (r *keyVersionRouter) Put(ctx context.Context, key string, value []byte) error {
+	if fence, ok := ctx.Value(oidcVersionFenceKey{}).(*oidcVersionFence); ok && fence.key == key {
+		return fence.commit(ctx, value)
+	}
 	return r.route(key).Put(ctx, key, value)
 }
 
@@ -340,8 +347,8 @@ func guardedOIDCStore(kv xkmssdk.StorageBackend) (oidcGuardedKV, error) {
 	return guarded, nil
 }
 
-func newOIDCRotationLock(kv oidcGuardedKV) iam.RotationLock {
-	return func(ctx context.Context, tenantID, cn string) (func(), error) {
+func newOIDCRotationLock(kv, versions oidcGuardedKV) iam.RotationLock {
+	return func(ctx context.Context, tenantID, cn string) (context.Context, func(), error) {
 		tenant := tenantID
 		if tenant == "" {
 			tenant = "system"
@@ -349,22 +356,19 @@ func newOIDCRotationLock(kv oidcGuardedKV) iam.RotationLock {
 		key := oidcRotationLeasePrefix + tenant + "/" + cn
 		nonce := make([]byte, 16)
 		if _, err := rand.Read(nonce); err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		owner := hex.EncodeToString(nonce)
 		deadline := time.Now().Add(oidcRotationLeaseWait)
+		ttl := oidcRotationLeaseTTL
 		for {
-			value := []byte(time.Now().Add(oidcRotationLeaseTTL).UTC().Format(time.RFC3339Nano) + " " + owner)
+			value := oidcRotationLeaseValue(owner, ttl)
 			ok, err := kv.PutIfAbsent(ctx, key, value)
 			if err != nil {
-				return nil, err
+				return nil, nil, err
 			}
 			if ok {
-				// The release removes this holder's own value only: a lease
-				// that moved to another holder stays in place.
-				return func() {
-					_, _ = kv.CompareAndDelete(context.Background(), key, value)
-				}, nil
+				return holdOIDCRotationLease(ctx, kv, versions, key, tenant+oidcSigningVersionSegment+cn, owner, value, ttl)
 			}
 			// An expired lease is removed only while it still holds the
 			// value observed here, so of two nodes taking over the same
@@ -372,20 +376,153 @@ func newOIDCRotationLock(kv oidcGuardedKV) iam.RotationLock {
 			// taken; either way the loop retries the create.
 			if held, err := kv.Get(ctx, key); err == nil && oidcRotationLeaseExpired(held) {
 				if _, err := kv.CompareAndDelete(ctx, key, held); err != nil {
-					return nil, err
+					return nil, nil, err
 				}
 				continue
 			}
 			if time.Now().After(deadline) {
-				return nil, &OIDCRotationBusyError{Key: key, Wait: oidcRotationLeaseWait}
+				return nil, nil, &OIDCRotationBusyError{Key: key, Wait: oidcRotationLeaseWait}
 			}
 			select {
 			case <-ctx.Done():
-				return nil, ctx.Err()
+				return nil, nil, ctx.Err()
 			case <-time.After(oidcRotationLeasePoll):
 			}
 		}
 	}
+}
+
+// oidcRotationLeaseValue is a lease value for owner that expires ttl from
+// now.
+func oidcRotationLeaseValue(owner string, ttl time.Duration) []byte {
+	return []byte(time.Now().Add(ttl).UTC().Format(time.RFC3339Nano) + " " + owner)
+}
+
+// oidcRotationLeaseAcquiredHook runs once a lease is taken and the version
+// record it fences has been read; tests use it to pause a holder.
+var oidcRotationLeaseAcquiredHook = func() {}
+
+// oidcRotationLeaseRenewHook runs before each renewal of a held lease; tests
+// use it to stop a holder's renewals.
+var oidcRotationLeaseRenewHook = func(context.Context) {}
+
+// holdOIDCRotationLease starts holding the lease just taken at key with
+// value. It reads the version record at record, the value the holder's
+// commit must still find, and returns a context derived from ctx that
+// carries the commit fence and is canceled when a renewal fails or is
+// refused, with the release that stops the renewals and removes this
+// holder's own lease value only.
+func holdOIDCRotationLease(ctx context.Context, kv, versions oidcGuardedKV, key, record, owner string, value []byte, ttl time.Duration) (context.Context, func(), error) {
+	fence := &oidcVersionFence{key: record, store: versions}
+	current, err := versions.Get(ctx, record)
+	if err == nil {
+		fence.expected, fence.present = current, true
+	} else if exists, existsErr := versions.Exists(ctx, record); existsErr != nil || exists {
+		_, _ = kv.CompareAndDelete(context.Background(), key, value)
+		if existsErr != nil {
+			return nil, nil, existsErr
+		}
+		return nil, nil, err
+	}
+	oidcRotationLeaseAcquiredHook()
+
+	leaseCtx, cancel := context.WithCancel(context.WithValue(ctx, oidcVersionFenceKey{}, fence))
+	var (
+		mu      sync.Mutex
+		held    = value
+		stopped bool
+		done    = make(chan struct{})
+	)
+	go func() {
+		ticker := time.NewTicker(ttl / 3)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-done:
+				return
+			case <-ticker.C:
+			}
+			oidcRotationLeaseRenewHook(leaseCtx)
+			mu.Lock()
+			if stopped {
+				mu.Unlock()
+				return
+			}
+			next := oidcRotationLeaseValue(owner, ttl)
+			swapped, _, err := kv.CompareAndSwap(context.Background(), key, held, next)
+			if err != nil || !swapped {
+				cancel()
+				mu.Unlock()
+				return
+			}
+			held = next
+			mu.Unlock()
+		}
+	}()
+	var once sync.Once
+	unlock := func() {
+		once.Do(func() {
+			mu.Lock()
+			defer mu.Unlock()
+			stopped = true
+			close(done)
+			cancel()
+			_, _ = kv.CompareAndDelete(context.Background(), key, held)
+		})
+	}
+	return leaseCtx, unlock, nil
+}
+
+// oidcVersionFenceKey is the context key of a held lease's commit fence.
+type oidcVersionFenceKey struct{}
+
+// oidcVersionFence fences the commit of one version record: while its lease
+// is held, a write of the record succeeds only from the value the holder
+// last read or wrote.
+type oidcVersionFence struct {
+	key      string
+	store    oidcGuardedKV
+	mu       sync.Mutex
+	expected []byte
+	present  bool
+}
+
+// commit writes value to the record from the expected value and advances the
+// expected value; a record another holder changed is left as it is.
+func (f *oidcVersionFence) commit(ctx context.Context, value []byte) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var (
+		ok  bool
+		err error
+	)
+	if f.present {
+		ok, _, err = f.store.CompareAndSwap(ctx, f.key, f.expected, value)
+	} else {
+		ok, err = f.store.PutIfAbsent(ctx, f.key, value)
+	}
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return &OIDCRotationFencedError{Key: f.key}
+	}
+	f.expected, f.present = slices.Clone(value), true
+	return nil
+}
+
+// OIDCRotationFencedError reports a version-record commit refused because
+// the record changed after its writer took the rotation lease: the lease
+// expired and another node rotated the key, so the stale holder writes
+// nothing.
+type OIDCRotationFencedError struct {
+	Key string
+}
+
+// Error describes the fenced commit.
+func (e *OIDCRotationFencedError) Error() string {
+	return "server: oidc signing key version record " + e.Key +
+		" changed since the rotation lease was taken; the stale holder's commit is refused"
 }
 
 // oidcRotationLeaseExpired reports whether a stored lease value is past its
