@@ -440,6 +440,8 @@ func holdOIDCRotationLease(ctx context.Context, kv, versions oidcGuardedKV, key,
 			select {
 			case <-done:
 				return
+			case <-leaseCtx.Done():
+				return
 			case <-ticker.C:
 			}
 			oidcRotationLeaseRenewHook(leaseCtx)
@@ -449,7 +451,9 @@ func holdOIDCRotationLease(ctx context.Context, kv, versions oidcGuardedKV, key,
 				return
 			}
 			next := oidcRotationLeaseValue(owner, ttl)
-			swapped, _, err := kv.CompareAndSwap(context.Background(), key, held, next)
+			renewCtx, cancelRenew := context.WithTimeout(leaseCtx, ttl/3)
+			swapped, _, err := kv.CompareAndSwap(renewCtx, key, held, next)
+			cancelRenew()
 			if err != nil || !swapped {
 				cancel()
 				mu.Unlock()
