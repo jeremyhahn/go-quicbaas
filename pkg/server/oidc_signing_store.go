@@ -14,7 +14,6 @@
 package server
 
 import (
-	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
@@ -88,6 +87,10 @@ func (s *Server) oidcSigningStoreType() (string, error) {
 // process), and sends that backend's key-version records to kv too, so a
 // rotation on one node is the current version on every node.
 func (s *Server) useReplicatedOIDCSigningStore(kv xkmssdk.StorageBackend) error {
+	guarded, err := guardedOIDCStore(kv)
+	if err != nil {
+		return err
+	}
 	backend, err := newOIDCSigningServiceBackend(kv)
 	if err != nil {
 		return err
@@ -102,7 +105,7 @@ func (s *Server) useReplicatedOIDCSigningStore(kv xkmssdk.StorageBackend) error 
 	if s.xkmsKeyVersionRouter != nil {
 		s.xkmsKeyVersionRouter.setReplicated(versions)
 	}
-	iam.SetRotationLock(oidcSigningBackendName, newOIDCRotationLock(kv))
+	iam.SetRotationLock(oidcSigningBackendName, newOIDCRotationLock(guarded))
 	if !slices.Contains(dbxkms.Backends(), oidcSigningBackendName) {
 		if err := registerXKMSBackendFn(oidcSigningBackendName, backend); err != nil {
 			return err
@@ -297,7 +300,47 @@ func (e *OIDCRotationBusyError) Error() string {
 // signing backend: a lease on kv every node shares. A node holds a key's
 // lease from reading its version record until the rotated version is
 // recorded; a lease past its expiry is taken over.
-func newOIDCRotationLock(kv xkmssdk.StorageBackend) iam.RotationLock {
+// oidcGuardedKV is a replicated store with the guarded writes the rotation
+// lease and the fenced version-record commit rely on: a delete and a swap
+// conditioned on the value the caller last observed, evaluated where the
+// store serialises writes.
+type oidcGuardedKV interface {
+	xkmssdk.StorageBackend
+	CompareAndDelete(ctx context.Context, key string, expected []byte) (bool, error)
+	CompareAndSwap(ctx context.Context, key string, expected, newValue []byte) (bool, []byte, error)
+}
+
+// OIDCSigningStoreGuardedWritesError reports a replicated OIDC signing store
+// that lacks a guarded write the cluster rotation needs. Without it a node
+// could remove a lease or overwrite a version record another node has just
+// written, so the store is refused rather than used unguarded.
+type OIDCSigningStoreGuardedWritesError struct {
+	// Missing names the verb the store does not offer.
+	Missing string
+}
+
+// Error implements error.
+func (e *OIDCSigningStoreGuardedWritesError) Error() string {
+	return "server: replicated oidc signing store lacks " + e.Missing +
+		"; the rotation lease and the version-record commit need guarded writes"
+}
+
+// guardedOIDCStore returns kv as an oidcGuardedKV, or
+// *OIDCSigningStoreGuardedWritesError naming the first verb it lacks.
+func guardedOIDCStore(kv xkmssdk.StorageBackend) (oidcGuardedKV, error) {
+	if _, ok := kv.(interface {
+		CompareAndDelete(ctx context.Context, key string, expected []byte) (bool, error)
+	}); !ok {
+		return nil, &OIDCSigningStoreGuardedWritesError{Missing: "CompareAndDelete"}
+	}
+	guarded, ok := kv.(oidcGuardedKV)
+	if !ok {
+		return nil, &OIDCSigningStoreGuardedWritesError{Missing: "CompareAndSwap"}
+	}
+	return guarded, nil
+}
+
+func newOIDCRotationLock(kv oidcGuardedKV) iam.RotationLock {
 	return func(ctx context.Context, tenantID, cn string) (func(), error) {
 		tenant := tenantID
 		if tenant == "" {
@@ -317,14 +360,18 @@ func newOIDCRotationLock(kv xkmssdk.StorageBackend) iam.RotationLock {
 				return nil, err
 			}
 			if ok {
+				// The release removes this holder's own value only: a lease
+				// that moved to another holder stays in place.
 				return func() {
-					if held, err := kv.Get(context.Background(), key); err == nil && bytes.Equal(held, value) {
-						_ = kv.Delete(context.Background(), key)
-					}
+					_, _ = kv.CompareAndDelete(context.Background(), key, value)
 				}, nil
 			}
+			// An expired lease is removed only while it still holds the
+			// value observed here, so of two nodes taking over the same
+			// lease the second cannot remove the lease the first has just
+			// taken; either way the loop retries the create.
 			if held, err := kv.Get(ctx, key); err == nil && oidcRotationLeaseExpired(held) {
-				if err := kv.Delete(ctx, key); err != nil {
+				if _, err := kv.CompareAndDelete(ctx, key, held); err != nil {
 					return nil, err
 				}
 				continue

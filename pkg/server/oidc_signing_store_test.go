@@ -253,7 +253,7 @@ func TestOIDCSigningStore_TwoNodeRotationRestartAndPeerRotation(t *testing.T) {
 // expired lease and refuses a rotation whose lease stays held.
 func TestOIDCRotationLock(t *testing.T) {
 	ctx := context.Background()
-	kv := xkmssdk.NewStorageMemory()
+	kv := guardedMemoryKV(t)
 	lock := newOIDCRotationLock(kv)
 	cn := iam.OIDCSigningKeyCN
 
