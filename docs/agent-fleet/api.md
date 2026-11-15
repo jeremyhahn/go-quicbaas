@@ -146,6 +146,14 @@ see [worker-image.md](worker-image.md).
 | `quicbaas_fleet_disable` | `orchestrator:agent_remove` |
 | `quicbaas_fleet_enable` | `orchestrator:agent_register` |
 | `project_grant_fleet_node`, `project_revoke_fleet_node` | project grants |
+| `quicbaas_fleet_placement_declare` | `placement:manage` |
+| `quicbaas_fleet_placement_get`, `quicbaas_fleet_placement_list` | `placement:read` |
+| `quicbaas_fleet_placement_withdraw` | `placement:manage` |
+| `quicbaas_fleet_placement_drift` | `placement:read` |
+
+The placement tools take `tenant_id` (optional, as on REST) and `name`;
+declare also takes `spec`, the REST body. Their results are the REST
+responses.
 
 `quicbaas_fleet_list` takes the same `status`, `backend` (membership), `host`
 and `node_type` filters as `GET /api/v1/fleet`, paged per
