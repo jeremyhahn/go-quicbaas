@@ -119,7 +119,6 @@ func TestJobRuntime_Lifecycle(t *testing.T) {
 		Env:         map[string]string{"B": "2", "A": "1"},
 		MemoryBytes: 64 << 20,
 		PidsLimit:   32,
-		Ports:       []string{"127.0.0.1:8080:80/udp"},
 	})
 	require.NoError(t, err)
 	assert.Empty(t, doubles.images.pulls, "a stored image is not pulled again")

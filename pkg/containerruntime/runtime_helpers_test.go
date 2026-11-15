@@ -18,6 +18,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 	"time"
 
@@ -65,6 +66,51 @@ func TestJobContainerConfig_HostMountsAreBound(t *testing.T) {
 	assert.Equal(t, ociMount{Destination: "/home/agent/.creds", Type: "bind", Source: "/srv/creds", Options: []string{"rbind", "ro"}}, mounts[1])
 	assert.Equal(t, "tmpfs", mounts[2].Type)
 	assert.NotContains(t, mounts[2].Options, "rbind")
+}
+
+func TestJobContainerConfig_Network(t *testing.T) {
+	for _, network := range []string{"", "bridge", "custom-net"} {
+		t.Run("Refuses"+network, func(t *testing.T) {
+			_, err := jobContainerConfig(&orchestration.ContainerSpec{Network: network, Image: "alpine:latest"})
+			var invalid *orchestration.InputValidationError
+			require.ErrorAs(t, err, &invalid)
+			assert.Equal(t, "network", invalid.Field)
+			assert.ErrorContains(t, err, ErrJobSpecUnsupported.Error())
+		})
+	}
+
+	t.Run("NoneKeepsItsOwnNamespace", func(t *testing.T) {
+		config, err := jobContainerConfig(&orchestration.ContainerSpec{Network: "none", Image: "alpine:latest"})
+		require.NoError(t, err)
+		oci := newTestRuntime(t).generateOCIConfig(config, "/rootfs")
+		assert.True(t, slices.ContainsFunc(oci.Linux.Namespaces, func(ns ociNamespace) bool { return ns.Type == "network" }))
+		assert.False(t, slices.ContainsFunc(oci.Mounts, func(m ociMount) bool { return m.Destination == "/etc/resolv.conf" }))
+	})
+
+	t.Run("HostSharesTheHostNetwork", func(t *testing.T) {
+		config, err := jobContainerConfig(&orchestration.ContainerSpec{Network: "host", Image: "alpine:latest", Ports: []string{"8080:8080", "127.0.0.1:53:53/udp"}})
+		require.NoError(t, err)
+		oci := newTestRuntime(t).generateOCIConfig(config, "/rootfs")
+		assert.False(t, slices.ContainsFunc(oci.Linux.Namespaces, func(ns ociNamespace) bool { return ns.Type == "network" }))
+		for _, file := range []string{"/etc/resolv.conf", "/etc/hosts"} {
+			assert.Contains(t, oci.Mounts, ociMount{Destination: file, Type: "bind", Source: file, Options: []string{"rbind", "ro"}})
+		}
+	})
+
+	t.Run("PortsNeedTheHostNetwork", func(t *testing.T) {
+		_, err := jobContainerConfig(&orchestration.ContainerSpec{Network: "none", Image: "alpine:latest", Ports: []string{"127.0.0.1:8080:80/udp"}})
+		var invalid *orchestration.InputValidationError
+		require.ErrorAs(t, err, &invalid)
+		assert.Equal(t, "ports[0]", invalid.Field)
+		assert.ErrorContains(t, err, ErrJobSpecUnsupported.Error())
+	})
+
+	t.Run("AHostPortCannotBeRemapped", func(t *testing.T) {
+		_, err := jobContainerConfig(&orchestration.ContainerSpec{Network: "host", Image: "alpine:latest", Ports: []string{"8080:80"}})
+		var invalid *orchestration.InputValidationError
+		require.ErrorAs(t, err, &invalid)
+		assert.Equal(t, "ports[0]", invalid.Field)
+	})
 }
 
 // The sandbox policy drops ALL and adds back its set: the OCI configuration
