@@ -80,9 +80,23 @@ type oidcKeyMaterialStore struct {
 	oidcGuardedKV
 }
 
-// oidcKeyVersionName matches a storage name that holds a rotation version of
-// a key, "K--v<n>", which only a fenced rotation creates.
-var oidcKeyVersionName = regexp.MustCompile(`--v[0-9]+`)
+// oidcKeyVersionSuffix is the reserved suffix a rotation version adds to a
+// key's common name, "CN--v<n>", which only a fenced rotation creates.
+var oidcKeyVersionSuffix = regexp.MustCompile(`--v[0-9]+$`)
+
+// oidcKeyNamesVersion reports whether a key-material storage name, laid out
+// "[tenant:]store:type:CN:algorithm[.ext]", holds a rotation version. Only
+// its common-name segment is read, so a tenant id shaped like a version
+// ("tenant--v2") does not make the tenant's first key one; a name with no
+// segments is its own common name.
+func oidcKeyNamesVersion(key string) bool {
+	segments := strings.Split(key, ":")
+	cn := segments[0]
+	if len(segments) >= 2 {
+		cn = segments[len(segments)-2]
+	}
+	return oidcKeyVersionSuffix.MatchString(cn)
+}
 
 // Put writes key material. Under the rotation fence it writes from the bytes
 // this holder observed or wrote under key in this rotation (CompareAndSwap),
@@ -93,7 +107,7 @@ func (s *oidcKeyMaterialStore) Put(ctx context.Context, key string, value []byte
 	if fence, ok := oidcFenceFrom(ctx); ok {
 		return fence.putMaterial(ctx, s.oidcGuardedKV, key, value)
 	}
-	if oidcKeyVersionName.MatchString(key) {
+	if oidcKeyNamesVersion(key) {
 		return &OIDCRotationUnfencedError{Key: key, Op: "put"}
 	}
 	created, err := s.oidcGuardedKV.PutIfAbsent(ctx, key, value)
@@ -109,7 +123,7 @@ func (s *oidcKeyMaterialStore) Put(ctx context.Context, key string, value []byte
 // PutIfAbsent creates key material; without the rotation fence a rotation
 // version is refused.
 func (s *oidcKeyMaterialStore) PutIfAbsent(ctx context.Context, key string, value []byte) (bool, error) {
-	if _, ok := oidcFenceFrom(ctx); !ok && oidcKeyVersionName.MatchString(key) {
+	if _, ok := oidcFenceFrom(ctx); !ok && oidcKeyNamesVersion(key) {
 		return false, &OIDCRotationUnfencedError{Key: key, Op: "put"}
 	}
 	return s.oidcGuardedKV.PutIfAbsent(ctx, key, value)
