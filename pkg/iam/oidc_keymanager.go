@@ -114,6 +114,14 @@ func SetRotationLock(backend string, lock RotationLock) {
 	rotationLocks.Store(backend, lock)
 }
 
+// rotationLockFor returns the RotationLock SetRotationLock set for backend,
+// and false when the backend has none.
+func rotationLockFor(backend string) (RotationLock, bool) {
+	v, _ := rotationLocks.Load(backend)
+	rl, ok := v.(RotationLock)
+	return rl, ok
+}
+
 // signingKeyRefreshInterval is how often Current and JWKS re-read the key's
 // version record, so a rotation another node made reaches this one.
 const signingKeyRefreshInterval = time.Second
@@ -677,8 +685,8 @@ func (m *SigningKeyManager) Rotate() error {
 	// Nodes sharing the backend rotate the key one at a time, each from the
 	// version record the last rotation left: a node rotating from a stale
 	// record would take another node's version for an orphan and replace it.
-	if lock, ok := rotationLocks.Load(m.storeType); ok {
-		unlock, err := lock.(RotationLock)(ctx, m.tenantID, m.cn)
+	if lock, ok := rotationLockFor(m.storeType); ok {
+		unlock, err := lock(ctx, m.tenantID, m.cn)
 		if err != nil {
 			return err
 		}

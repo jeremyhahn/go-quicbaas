@@ -14,6 +14,7 @@
 package server
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
@@ -317,7 +318,7 @@ func newOIDCRotationLock(kv xkmssdk.StorageBackend) iam.RotationLock {
 			}
 			if ok {
 				return func() {
-					if held, err := kv.Get(context.Background(), key); err == nil && string(held) == string(value) {
+					if held, err := kv.Get(context.Background(), key); err == nil && bytes.Equal(held, value) {
 						_ = kv.Delete(context.Background(), key)
 					}
 				}, nil
