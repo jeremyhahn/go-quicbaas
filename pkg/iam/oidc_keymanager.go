@@ -57,6 +57,11 @@ type keyEntry struct {
 type keySnapshot struct {
 	current  keyEntry
 	previous []keyEntry
+	// adopted holds the keys adopted from another backend (the pre-upgrade
+	// key AdoptPreviousFromXKMSBackend keeps). They only verify: they are
+	// published and resolvable by kid but never sign, and they sit outside
+	// the rotation overlap, so no rotation or refresh pushes them out.
+	adopted []keyEntry
 	// version is the current version of the key's version record the
 	// snapshot was built from; 0 when it was not built from one.
 	version uint32
@@ -514,7 +519,7 @@ func (m *SigningKeyManager) refreshLocked(ctx context.Context) error {
 		}
 		previous = append(previous, e)
 	}
-	m.snap.Store(&keySnapshot{current: current, previous: previous, version: rec.Current})
+	m.snap.Store(&keySnapshot{current: current, previous: previous, adopted: prev.adopted, version: rec.Current})
 	return nil
 }
 
@@ -623,6 +628,11 @@ func (m *SigningKeyManager) publicForKID(kid string) (crypto.PublicKey, error) {
 			return snap.previous[i].pub, nil
 		}
 	}
+	for i := range snap.adopted {
+		if snap.adopted[i].kid == kid {
+			return snap.adopted[i].pub, nil
+		}
+	}
 	return nil, &UnknownKeyIDError{KID: kid}
 }
 
@@ -636,18 +646,18 @@ func (m *SigningKeyManager) JWKS() *jose.JSONWebKeySet {
 		return &jose.JSONWebKeySet{}
 	}
 
-	keys := make([]jose.JSONWebKey, 0, 1+len(snap.previous))
+	keys := make([]jose.JSONWebKey, 0, 1+len(snap.previous)+len(snap.adopted))
 	keys = append(keys, jose.JSONWebKey{
 		Key:       snap.current.pub,
 		KeyID:     snap.current.kid,
 		Algorithm: snap.current.alg,
 		Use:       "sig",
 	})
-	for i := range snap.previous {
+	for _, e := range slices.Concat(snap.previous, snap.adopted) {
 		keys = append(keys, jose.JSONWebKey{
-			Key:       snap.previous[i].pub,
-			KeyID:     snap.previous[i].kid,
-			Algorithm: snap.previous[i].alg,
+			Key:       e.pub,
+			KeyID:     e.kid,
+			Algorithm: e.alg,
 			Use:       "sig",
 		})
 	}
@@ -750,14 +760,16 @@ func (m *SigningKeyManager) Rotate() error {
 	m.snap.Store(&keySnapshot{
 		current:  newEntry,
 		previous: previous,
+		adopted:  prev.adopted,
 	})
 	return nil
 }
 
 // AdoptPreviousFromXKMSBackend keeps the manager's ES256 key from another
-// xkms backend (storeType) as a previous key: it is published in JWKS and
-// resolvable by PublicForKID through the overlap window, the same as the key
-// a Rotate replaces, while the current key keeps signing. An upgrade that moves the
+// xkms backend (storeType) as a verification-only key: it is published in
+// JWKS and resolvable by PublicForKID but never signs, and it is kept beside
+// the rotation overlap, so later rotations and refreshes neither push it out
+// nor lose the versions the overlap holds. An upgrade that moves the
 // signing key to a new backend uses it so tokens signed with the old key keep
 // verifying. It only reads the existing key and never creates one; when
 // storeType holds no such key it returns false and changes nothing.
@@ -791,22 +803,21 @@ func (m *SigningKeyManager) AdoptPreviousFromXKMSBackend(storeType string) (bool
 	if entry.kid == prev.current.kid {
 		return false, nil
 	}
-	for _, p := range prev.previous {
-		if p.kid == entry.kid {
-			return false, nil
-		}
+	sameKID := func(p keyEntry) bool { return p.kid == entry.kid }
+	if slices.ContainsFunc(prev.previous, sameKID) || slices.ContainsFunc(prev.adopted, sameKID) {
+		return false, nil
 	}
-	previous := make([]keyEntry, 0, rotationOverlap)
-	previous = append(previous, entry)
-	for i := 0; i < len(prev.previous) && len(previous) < rotationOverlap; i++ {
-		previous = append(previous, prev.previous[i])
-	}
-	m.snap.Store(&keySnapshot{current: prev.current, previous: previous, version: prev.version})
+	// The adopted key verifies beside the rotation overlap rather than in
+	// it: the versions the record keeps stay in the overlap, and the
+	// snapshot's version is unchanged, so a later refresh still rebuilds
+	// the overlap from the record.
+	adopted := append(slices.Clone(prev.adopted), entry)
+	m.snap.Store(&keySnapshot{current: prev.current, previous: prev.previous, adopted: adopted, version: prev.version})
 	return true, nil
 }
 
 // AdoptDefaultBackendKey keeps the manager's pre-upgrade key from the process
-// default xkms backend as a previous key (AdoptPreviousFromXKMSBackend) when
+// default xkms backend as a verification-only key (AdoptPreviousFromXKMSBackend) when
 // the manager's own backend is another one, such as the replicated store. It
 // only reads the default backend; on the default backend itself, or when
 // there is no default backend, it does nothing.
