@@ -44,10 +44,7 @@ GOTEST := $(GOCMD) test
 GOGET := $(GOCMD) get
 GOMOD := $(GOCMD) mod
 GOFMT ?= gofmt
-# Recursive (=), so `go env` runs only when a lint recipe expands it, not on
-# every make invocation: CI hosts that run make without Go on PATH (the
-# integration image job) printed "go: command not found" at parse time.
-GOLINT = $(shell go env GOPATH)/bin/golangci-lint
+GOLINT := $(shell go env GOPATH)/bin/golangci-lint
 # GOLANGCI_VERSION, GOSEC_VERSION, GOVULNCHECK_VERSION, ACTIONLINT_VERSION,
 # SHELLCHECK_VERSION (with its tarball digests), SERENA_VERSION, GOPLS_VERSION,
 # GO_TOOL_DEPENDENCY_FLOORS (what gopls and gosec are built with),
