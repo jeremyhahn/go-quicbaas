@@ -25,6 +25,7 @@ import (
 
 	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
 
+	"github.com/jeremyhahn/go-quicbaas/pkg/config"
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 	dbxkms "github.com/jeremyhahn/go-quicbaas/pkg/xkms"
 )
@@ -249,6 +250,11 @@ func (s *Server) useReplicatedOIDCSigningStore(kv xkmssdk.StorageBackend) error 
 		return err
 	}
 	iam.SetRotationLock(oidcSigningBackendName, newOIDCRotationLock(guarded, guardedVersions))
+	iam.SetAdoptionCutoffs(oidcSigningBackendName, &oidcAdoptionCutoffs{
+		store:    guarded,
+		lifetime: oidcSignedTokenLifetime(&s.config.Auth),
+		now:      oidcAdoptionNow,
+	})
 	if !slices.Contains(dbxkms.Backends(), oidcSigningBackendName) {
 		if err := registerXKMSBackendFn(oidcSigningBackendName, backend); err != nil {
 			return err
@@ -423,6 +429,76 @@ func newOIDCSigningKeyManager(storeType string) (*iam.SigningKeyManager, error) 
 		return nil, err
 	}
 	return m, nil
+}
+
+// oidcAdoptionCutoffPrefix is the replicated KV prefix of the cutoffs after
+// which an adopted pre-upgrade OIDC signing key stops verifying.
+const oidcAdoptionCutoffPrefix = "oidc-signing-adoption/"
+
+// oidcAdoptionNow is the clock adoption cutoffs are recorded and checked
+// against.
+var oidcAdoptionNow = time.Now
+
+// oidcSignedTokenLifetime is the longest lifetime of any token the OIDC
+// signing key signs: the access token (the authorization-code, refresh and
+// service-account grants all mint it with the access TTL) and the ID token.
+// The refresh token is an opaque stored credential, not a signed JWT, and
+// the provider signs no logout token.
+func oidcSignedTokenLifetime(auth *config.AuthConfig) time.Duration {
+	return max(auth.OIDCAccessTokenTTL(), auth.OIDCIDTokenTTL())
+}
+
+// oidcAdoptionCutoffs is the iam.AdoptionCutoffs of the replicated OIDC
+// signing store: one create-if-absent record per adopted key in the
+// replicated KV, so every node ends the key's trust at the same instant.
+type oidcAdoptionCutoffs struct {
+	store    oidcGuardedKV
+	lifetime time.Duration
+	now      func() time.Time
+}
+
+// Cutoff implements iam.AdoptionCutoffs.
+func (c *oidcAdoptionCutoffs) Cutoff(ctx context.Context, tenantID, cn, kid string) (time.Time, error) {
+	tenant := tenantID
+	if tenant == "" {
+		tenant = "system"
+	}
+	key := oidcAdoptionCutoffPrefix + tenant + "/" + cn + "/" + kid
+	proposed := c.now().Add(c.lifetime).UTC().Format(time.RFC3339Nano)
+	if _, err := c.store.PutIfAbsent(ctx, key, []byte(proposed)); err != nil {
+		return time.Time{}, err
+	}
+	recorded, err := c.store.Get(ctx, key)
+	if err != nil {
+		return time.Time{}, err
+	}
+	until, err := time.Parse(time.RFC3339Nano, string(recorded))
+	if err != nil {
+		return time.Time{}, &OIDCAdoptionCutoffRecordError{Key: key, Cause: err}
+	}
+	return until, nil
+}
+
+// Now implements iam.AdoptionCutoffs.
+func (c *oidcAdoptionCutoffs) Now() time.Time {
+	return c.now()
+}
+
+// OIDCAdoptionCutoffRecordError reports an adoption cutoff record in the
+// replicated OIDC signing store that does not parse as a time.
+type OIDCAdoptionCutoffRecordError struct {
+	Key   string
+	Cause error
+}
+
+// Error implements error.
+func (e *OIDCAdoptionCutoffRecordError) Error() string {
+	return "server: oidc signing key adoption cutoff " + e.Key + " is not a time: " + e.Cause.Error()
+}
+
+// Unwrap returns the parse error.
+func (e *OIDCAdoptionCutoffRecordError) Unwrap() error {
+	return e.Cause
 }
 
 // oidcRotationLeasePrefix is the replicated KV prefix of the leases that

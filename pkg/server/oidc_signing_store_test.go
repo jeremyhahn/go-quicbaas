@@ -97,6 +97,11 @@ func registerOIDCSigningBackend(t *testing.T, kv xkmssdk.StorageBackend) {
 	guardedVersions, err := guardedOIDCStore(versions)
 	require.NoError(t, err)
 	iam.SetRotationLock(oidcSigningBackendName, newOIDCRotationLock(guarded, guardedVersions))
+	iam.SetAdoptionCutoffs(oidcSigningBackendName, &oidcAdoptionCutoffs{
+		store:    guarded,
+		lifetime: oidcSignedTokenLifetime(&config.AuthConfig{}),
+		now:      oidcAdoptionNow,
+	})
 }
 
 // TestOIDCSigningStore_PeerNodesShareOneKey proves a platform token signed on

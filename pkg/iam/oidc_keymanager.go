@@ -49,6 +49,9 @@ type keyEntry struct {
 	signer crypto.Signer
 	pub    crypto.PublicKey
 	alg    string
+	// until is when an adopted key stops verifying; zero for the keys of
+	// the manager's own version record.
+	until time.Time
 }
 
 // keySnapshot is an immutable view of the active key set. Reads load it
@@ -60,7 +63,8 @@ type keySnapshot struct {
 	// adopted holds the keys adopted from another backend (the pre-upgrade
 	// key AdoptPreviousFromXKMSBackend keeps). They only verify: they are
 	// published and resolvable by kid but never sign, and they sit outside
-	// the rotation overlap, so no rotation or refresh pushes them out.
+	// the rotation overlap, so no rotation pushes them out; each verifies
+	// until its cutoff (keyEntry.until), and a refresh after it drops it.
 	adopted []keyEntry
 	// version is the current version of the key's version record the
 	// snapshot was built from; 0 when it was not built from one.
@@ -126,6 +130,55 @@ func rotationLockFor(backend string) (RotationLock, bool) {
 	v, _ := rotationLocks.Load(backend)
 	rl, ok := v.(RotationLock)
 	return rl, ok
+}
+
+// AdoptionCutoffs is the cluster-wide record of when a key adopted from
+// another backend (the pre-upgrade key AdoptPreviousFromXKMSBackend keeps)
+// stops verifying. Every node sharing a backend reads the same cutoff, so
+// the adopted key leaves verification and the JWKS at one instant across
+// the cluster, and a node started after that instant never adopts it again.
+type AdoptionCutoffs interface {
+	// Cutoff returns the cutoff recorded for the adopted key kid of the
+	// (tenantID, cn) signing key. When none is recorded yet it records the
+	// adoption time plus the longest lifetime of any token the key signs,
+	// create-if-absent, and returns whichever cutoff the store holds.
+	Cutoff(ctx context.Context, tenantID, cn, kid string) (time.Time, error)
+	// Now is the clock cutoffs are recorded and checked against.
+	Now() time.Time
+}
+
+// adoptionCutoffs holds the AdoptionCutoffs registered per backend name.
+var adoptionCutoffs sync.Map // map[backend]AdoptionCutoffs
+
+// SetAdoptionCutoffs registers the cutoff record of the keys adopted by
+// signing key managers on backend; a nil c removes it. A manager on a
+// backend with no cutoff record refuses to adopt a key, since nothing would
+// end its trust.
+func SetAdoptionCutoffs(backend string, c AdoptionCutoffs) {
+	if c == nil {
+		adoptionCutoffs.Delete(backend)
+		return
+	}
+	adoptionCutoffs.Store(backend, c)
+}
+
+// adoptionCutoffsFor returns the AdoptionCutoffs registered for backend.
+func adoptionCutoffsFor(backend string) (AdoptionCutoffs, bool) {
+	v, _ := adoptionCutoffs.Load(backend)
+	c, ok := v.(AdoptionCutoffs)
+	return c, ok
+}
+
+// AdoptionCutoffUnavailableError reports an adoption refused because the
+// manager's backend has no AdoptionCutoffs registered: an adopted key with
+// no cutoff would verify forever.
+type AdoptionCutoffUnavailableError struct {
+	Backend string
+}
+
+// Error implements error.
+func (e *AdoptionCutoffUnavailableError) Error() string {
+	return "iam: no adoption cutoff record is registered for signing key backend " + e.Backend + "; a key adopted there would never stop verifying"
 }
 
 // signingKeyRefreshInterval is how often Current and JWKS re-read the key's
@@ -473,6 +526,11 @@ func (m *SigningKeyManager) refreshLocked(ctx context.Context) error {
 	if prev == nil {
 		return &SigningKeyUnavailableError{}
 	}
+	// An adopted key past its cutoff leaves the snapshot.
+	if live := m.liveAdopted(prev.adopted); len(live) != len(prev.adopted) {
+		prev = &keySnapshot{current: prev.current, previous: prev.previous, adopted: live, version: prev.version}
+		m.snap.Store(prev)
+	}
 	svc, err := xkmssdk.Get()
 	if err != nil {
 		return err
@@ -628,12 +686,33 @@ func (m *SigningKeyManager) publicForKID(kid string) (crypto.PublicKey, error) {
 			return snap.previous[i].pub, nil
 		}
 	}
-	for i := range snap.adopted {
-		if snap.adopted[i].kid == kid {
-			return snap.adopted[i].pub, nil
+	for _, e := range m.liveAdopted(snap.adopted) {
+		if e.kid == kid {
+			return e.pub, nil
 		}
 	}
 	return nil, &UnknownKeyIDError{KID: kid}
+}
+
+// liveAdopted returns the adopted keys still before their cutoff on the
+// backend's AdoptionCutoffs clock. With no cutoff record registered no
+// adopted key is live.
+func (m *SigningKeyManager) liveAdopted(adopted []keyEntry) []keyEntry {
+	if len(adopted) == 0 {
+		return adopted
+	}
+	cutoffs, ok := adoptionCutoffsFor(m.storeType)
+	if !ok {
+		return nil
+	}
+	now := cutoffs.Now()
+	live := make([]keyEntry, 0, len(adopted))
+	for _, e := range adopted {
+		if now.Before(e.until) {
+			live = append(live, e)
+		}
+	}
+	return live
 }
 
 // JWKS returns the JSON Web Key Set the OIDC provider publishes: one entry per
@@ -653,7 +732,7 @@ func (m *SigningKeyManager) JWKS() *jose.JSONWebKeySet {
 		Algorithm: snap.current.alg,
 		Use:       "sig",
 	})
-	for _, e := range slices.Concat(snap.previous, snap.adopted) {
+	for _, e := range slices.Concat(snap.previous, m.liveAdopted(snap.adopted)) {
 		keys = append(keys, jose.JSONWebKey{
 			Key:       e.pub,
 			KeyID:     e.kid,
@@ -769,7 +848,8 @@ func (m *SigningKeyManager) Rotate() error {
 // xkms backend (storeType) as a verification-only key: it is published in
 // JWKS and resolvable by PublicForKID but never signs, and it is kept beside
 // the rotation overlap, so later rotations and refreshes neither push it out
-// nor lose the versions the overlap holds. An upgrade that moves the
+// nor lose the versions the overlap holds. It verifies until the backend's
+// AdoptionCutoffs cutoff for it, and is not adopted after it. An upgrade that moves the
 // signing key to a new backend uses it so tokens signed with the old key keep
 // verifying. It only reads the existing key and never creates one; when
 // storeType holds no such key it returns false and changes nothing.
@@ -807,6 +887,20 @@ func (m *SigningKeyManager) AdoptPreviousFromXKMSBackend(storeType string) (bool
 	if slices.ContainsFunc(prev.previous, sameKID) || slices.ContainsFunc(prev.adopted, sameKID) {
 		return false, nil
 	}
+	// The adopted key verifies only until the cluster's cutoff for it: a
+	// node starting after the cutoff does not adopt it again.
+	cutoffs, ok := adoptionCutoffsFor(m.storeType)
+	if !ok {
+		return false, &AdoptionCutoffUnavailableError{Backend: m.storeType}
+	}
+	until, err := cutoffs.Cutoff(context.Background(), m.tenantID, m.cn, entry.kid)
+	if err != nil {
+		return false, err
+	}
+	if !cutoffs.Now().Before(until) {
+		return false, nil
+	}
+	entry.until = until
 	// The adopted key verifies beside the rotation overlap rather than in
 	// it: the versions the record keeps stay in the overlap, and the
 	// snapshot's version is unchanged, so a later refresh still rebuilds
