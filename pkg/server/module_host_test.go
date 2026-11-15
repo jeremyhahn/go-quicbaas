@@ -223,8 +223,8 @@ func TestAssertNoHostModuleRouteConflicts_CollidingRouteFailsConstruction(t *tes
 	require.ErrorAs(t, err, &conflict)
 	assert.Equal(t, http.MethodGet, conflict.Method)
 	assert.Equal(t, "/api/v1/shared", conflict.Pattern)
-	assert.Equal(t, "platform", conflict.Owner, "the first claimant owns the route")
-	assert.Equal(t, "fleet", conflict.Module, "the second claimant is reported as the offender")
+	assert.Equal(t, "fleet", conflict.Owner, "the claimant whose name sorts first owns the route")
+	assert.Equal(t, "platform", conflict.Module, "the other claimant is reported as the offender")
 	assert.Contains(t, err.Error(), "/api/v1/shared")
 }
 
