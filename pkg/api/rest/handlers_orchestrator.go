@@ -500,9 +500,6 @@ func (s *Server) HandleOrchestratorDeleteTask(w http.ResponseWriter, r *http.Req
 
 	tenantID := r.URL.Query().Get("tenant_id")
 	ctx = orchestration.ContextWithTenant(ctx, tenantID)
-	// agent_id names the fleet node the delete is done for; the task's
-	// project then must grant it the lead role (#640).
-	ctx = orchestration.WithActingAgent(ctx, r.URL.Query().Get("agent_id"))
 
 	if err := agentSvc.DeleteTask(ctx, tenantID, taskID); err != nil {
 		handleOrchestratorError(w, r, err)

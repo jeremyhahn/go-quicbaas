@@ -1122,9 +1122,6 @@ message ReadmitTaskResponse {
 message DeleteTaskRequest {
     string tenant_id = 1;
     string task_id = 2;
-    // agent_id names the fleet node the delete is done for; when set, the
-    // task's project must grant it the lead role (#640).
-    string agent_id = 3;
 }
 
 message DeleteTaskResponse {

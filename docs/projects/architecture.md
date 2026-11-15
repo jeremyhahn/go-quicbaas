@@ -234,11 +234,8 @@ through `ProjectAuthz`, so they cannot drift apart:
 never answer "allowed".
 
 The matrix is keyed on a fleet node id, so it applies only where a write names
-one. `DeleteTask` takes an optional `agent_id` (gRPC field, REST query
-parameter, MCP argument): when set, the task's project must grant that node
-`lead`, since removing a project's work is a lead's right (#640). A delete
-that names no node, like `BlockTask`, `ReadmitTask` and `CompleteTask`, is
-gated by tenant RBAC alone. Revoking a node's role writes
+one. `DeleteTask`, `BlockTask`, `ReadmitTask` and `CompleteTask` carry no node
+principal and are gated by tenant RBAC alone. Revoking a node's role writes
 `denied` rather than removing the entry, so a revoke on a project with an
 empty matrix also makes the matrix non-empty and closes the project to every
 unlisted node.

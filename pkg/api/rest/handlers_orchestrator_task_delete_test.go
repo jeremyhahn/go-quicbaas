@@ -51,26 +51,6 @@ func TestOrchestratorDeleteTask_Success(t *testing.T) {
 	assert.Equal(t, "task-1", gotTask)
 }
 
-// TestOrchestratorDeleteTask_CarriesAgentPrincipal proves the agent_id query
-// parameter reaches the service as the acting fleet node (#640).
-func TestOrchestratorDeleteTask_CarriesAgentPrincipal(t *testing.T) {
-	server, agentSvc, cleanup := setupOrchestratorMockServer(t)
-	defer cleanup()
-
-	var gotAgent string
-	agentSvc.deleteTaskFunc = func(ctx context.Context, _, _ string) error {
-		gotAgent = orchestration.ActingAgentFromContext(ctx)
-		return nil
-	}
-
-	rec := httptest.NewRecorder()
-	server.HandleOrchestratorDeleteTask(rec, taskLifecycleRequest(t,
-		http.MethodDelete, "/api/v1/orchestrator/tasks/task-1?tenant_id=t1&agent_id=node-7", "task-1", nil))
-
-	assert.Equal(t, http.StatusOK, rec.Code)
-	assert.Equal(t, "node-7", gotAgent)
-}
-
 func TestOrchestratorDeleteTask_Errors(t *testing.T) {
 	t.Run("missing task id", func(t *testing.T) {
 		server, _, cleanup := setupOrchestratorMockServer(t)

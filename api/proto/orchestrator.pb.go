@@ -4650,12 +4650,9 @@ func (x *ReadmitTaskResponse) GetTimestamp() *timestamppb.Timestamp {
 // DeleteTask removes a task, its artifacts, its claim mark and its source
 // reservation. Refused while a job holds a live lease on the task.
 type DeleteTaskRequest struct {
-	state    protoimpl.MessageState `protogen:"open.v1"`
-	TenantId string                 `protobuf:"bytes,1,opt,name=tenant_id,json=tenantId,proto3" json:"tenant_id,omitempty"`
-	TaskId   string                 `protobuf:"bytes,2,opt,name=task_id,json=taskId,proto3" json:"task_id,omitempty"`
-	// agent_id names the fleet node the delete is done for; when set, the
-	// task's project must grant it the lead role (#640).
-	AgentId       string `protobuf:"bytes,3,opt,name=agent_id,json=agentId,proto3" json:"agent_id,omitempty"`
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	TenantId      string                 `protobuf:"bytes,1,opt,name=tenant_id,json=tenantId,proto3" json:"tenant_id,omitempty"`
+	TaskId        string                 `protobuf:"bytes,2,opt,name=task_id,json=taskId,proto3" json:"task_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -4700,13 +4697,6 @@ func (x *DeleteTaskRequest) GetTenantId() string {
 func (x *DeleteTaskRequest) GetTaskId() string {
 	if x != nil {
 		return x.TaskId
-	}
-	return ""
-}
-
-func (x *DeleteTaskRequest) GetAgentId() string {
-	if x != nil {
-		return x.AgentId
 	}
 	return ""
 }
@@ -13916,11 +13906,10 @@ const file_api_proto_orchestrator_proto_rawDesc = "" +
 	"\n" +
 	"readmitted\x18\x02 \x01(\bR\n" +
 	"readmitted\x128\n" +
-	"\ttimestamp\x18\x03 \x01(\v2\x1a.google.protobuf.TimestampR\ttimestamp\"d\n" +
+	"\ttimestamp\x18\x03 \x01(\v2\x1a.google.protobuf.TimestampR\ttimestamp\"I\n" +
 	"\x11DeleteTaskRequest\x12\x1b\n" +
 	"\ttenant_id\x18\x01 \x01(\tR\btenantId\x12\x17\n" +
-	"\atask_id\x18\x02 \x01(\tR\x06taskId\x12\x19\n" +
-	"\bagent_id\x18\x03 \x01(\tR\aagentId\"\x81\x01\n" +
+	"\atask_id\x18\x02 \x01(\tR\x06taskId\"\x81\x01\n" +
 	"\x12DeleteTaskResponse\x12\x17\n" +
 	"\atask_id\x18\x01 \x01(\tR\x06taskId\x12\x18\n" +
 	"\adeleted\x18\x02 \x01(\bR\adeleted\x128\n" +
