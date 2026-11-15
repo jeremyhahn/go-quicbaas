@@ -111,9 +111,10 @@ var execContainerRuntimeFactory = containerRuntimeFactory{
 //     and under "required" NewRuntime refuses to start on the operator's behalf.
 //   - "libcontainer" is the in-process runtime. A binary without one, or one
 //     that cannot start here, is an error: the operator asked for it by name.
-//   - "auto" (and the empty selector) take the in-process runtime when this
-//     binary has one and it starts, then the first engine detection finds,
-//     and resolve to no runtime when the host has none.
+//   - "auto" (and the empty selector) take the first engine detection finds;
+//     with none, the in-process runtime when this binary has one and it
+//     starts (it has no bridge network yet, so an ordinary sandboxed job
+//     needs an engine); and no runtime when neither is available.
 //   - "none" resolves to no runtime without probing anything.
 //
 // ResolveContainerRuntime resolves without a state directory, so its
