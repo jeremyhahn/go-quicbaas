@@ -70,6 +70,16 @@ transport does not implement go-qrdb's RAG service.
 | `RAGDeleteDocument` | removes a document, its chunk vectors and KV entries |
 | `RAGListDocuments` | pages through a namespace's ingested documents |
 
+**Which node serves it.** Over REST the client calls go-qrdb's routes:
+`POST /v1/rag/ingest`, `POST /v1/rag/query`, `POST /v1/rag/documents/delete`
+and `GET /v1/rag/documents` (`TestQRDBRAG_RESTCallsGoQRDBRoutes` pins them).
+A QuicBaaS node serves none of them. Its REST RAG routes are QuicBaaS's own
+`/api/v1/rag/*`, and on gRPC it serves `quicbaas.rag.v1.RAGService`. Its
+`qrdb.v1.QRDBService` gets no RAG servicer, because go-qrdb's SDK exports no
+RAG register option (v0.30.1-alpha). So point `c` at a go-qrdb node's address
+to use `QRDBRAG`. Calls through a QuicBaaS node fail with not found or
+unimplemented. go-qrdb's embedded transport has no RAG service either.
+
 go-qrdb builds its RAG client only under the `qrdb_vector` tag, so the
 re-export does too. `quicbaas.RAG` (above, `Client.RAG()`) is still QuicBaaS's
 own pipeline. It is the parallel implementation the SPEC row keeps until the
