@@ -242,7 +242,24 @@ func runSecretsGetCommand(cmd *cobra.Command, args []string) error {
 		return formatError(err)
 	}
 
-	return formatSecretsGetResponse(resp, secretsOutputFmt, os.Stdout)
+	format := secretsGetOutputFormat(resp, secretsOutputFmt, cmd.Flags().Changed("output"))
+	return formatSecretsGetResponse(resp, format, cmd.OutOrStdout())
+}
+
+// secretsGetOutputFormat is the format `secrets get` prints in. An --output
+// the caller gave wins. Without one, a raw value (not a JSON object: what
+// `secrets put --from-file` or `--from-stdin` stored) prints verbatim, so
+// `secrets get` round-trips the bytes (#143); a key-value secret keeps the
+// flag's table default.
+func secretsGetOutputFormat(resp *service.GetSecretResponse, format string, explicit bool) string {
+	if explicit {
+		return format
+	}
+	var dataMap map[string]interface{}
+	if err := json.Unmarshal(resp.Data, &dataMap); err != nil || dataMap == nil {
+		return string(cli.OutputFormatRaw)
+	}
+	return format
 }
 
 // newSecretsListCommand creates the secrets list command.

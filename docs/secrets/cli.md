@@ -161,6 +161,10 @@ quicbaas secrets get database/prod --version 2
 quicbaas secrets get database/prod --output json
 ```
 
+A secret stored from raw bytes (`secrets put --from-file` or `--from-stdin`)
+prints verbatim when `--output` is not given, so `secrets get` round-trips the
+file; `--output table` or `--output json` still format it.
+
 ### Output
 
 **Default format:**

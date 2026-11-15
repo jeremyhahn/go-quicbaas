@@ -1178,6 +1178,15 @@ func (s *secretsService) SetRotationPolicy(ctx context.Context, req *SetRotation
 	// Store rotation policy in metadata
 	metadata["rotation_enabled"] = fmt.Sprintf("%t", req.Policy.Enabled)
 	metadata["rotation_interval"] = req.Policy.Interval.String()
+	if req.Policy.Enabled && req.Policy.NextRotation.IsZero() {
+		// The caller named no deadline (MCP declares none): the service
+		// schedules the first one interval from now.
+		policy := *req.Policy
+		policy.NextRotation = time.Now().UTC().Truncate(time.Second).Add(policy.Interval)
+		scheduled := *req
+		scheduled.Policy = &policy
+		req = &scheduled
+	}
 	metadata["rotation_next"] = req.Policy.NextRotation.Format(time.RFC3339)
 	metadata["rotation_retain_versions"] = fmt.Sprintf("%d", req.Policy.RetainVersions)
 

@@ -120,6 +120,89 @@ func TestSecretsService_RotateDueSecretsCountsFailures(t *testing.T) {
 	assert.Equal(t, 1, result.Failed)
 }
 
+// interleavingSecretsManager runs before just ahead of each conditional
+// write: a tenant's write landing between the scan's read and its write.
+type interleavingSecretsManager struct {
+	*secrets.Manager
+	before func()
+}
+
+func (m *interleavingSecretsManager) StoreVersionIfCurrent(ctx context.Context, path string, expected int, data map[string][]byte, metadata map[string]string) (int, error) {
+	m.before()
+	return m.Manager.StoreVersionIfCurrent(ctx, path, expected, data, metadata)
+}
+
+// TestSecretsService_RotationLosesToAnInterleavedWrite: a scheduled rotation
+// supersedes only the version it read. An update, a policy disable or a
+// delete that lands between the read and the write wins; the rotation
+// stores nothing and counts a failure.
+func TestSecretsService_RotationLosesToAnInterleavedWrite(t *testing.T) {
+	t.Parallel()
+	const path = "tenant/acme/db/due"
+	sys := tenantctx.WithSystem(context.Background())
+
+	cases := []struct {
+		name  string
+		write func(t *testing.T, svc *secretsService, mgr *secrets.Manager)
+		check func(t *testing.T, svc *secretsService, mgr *secrets.Manager)
+	}{
+		{
+			name: "update",
+			write: func(t *testing.T, _ *secretsService, mgr *secrets.Manager) {
+				require.NoError(t, mgr.Store(sys, path, map[string][]byte{"data": []byte("updated")}, map[string]string{}))
+			},
+			check: func(t *testing.T, _ *secretsService, mgr *secrets.Manager) {
+				data, meta, err := mgr.Get(sys, path)
+				require.NoError(t, err)
+				assert.Equal(t, []byte("updated"), data["data"], "the update is not overwritten")
+				assert.Empty(t, meta["rotation_reason"])
+			},
+		},
+		{
+			name: "disable",
+			write: func(t *testing.T, svc *secretsService, _ *secrets.Manager) {
+				_, err := svc.SetRotationPolicy(tenantctx.WithTenant(context.Background(), "acme"),
+					&SetRotationPolicyRequest{SecretID: "db/due", Policy: &SecretRotationPolicy{Enabled: false, Interval: time.Hour}})
+				require.NoError(t, err)
+			},
+			check: func(t *testing.T, svc *secretsService, _ *secrets.Manager) {
+				got, err := svc.GetRotationPolicy(tenantctx.WithTenant(context.Background(), "acme"), &GetRotationPolicyRequest{SecretID: "db/due"})
+				require.NoError(t, err)
+				assert.False(t, got.Policy.Enabled, "the disable is not overwritten")
+			},
+		},
+		{
+			name: "delete",
+			write: func(t *testing.T, _ *secretsService, mgr *secrets.Manager) {
+				require.NoError(t, mgr.Delete(sys, path))
+			},
+			check: func(t *testing.T, _ *secretsService, mgr *secrets.Manager) {
+				_, _, err := mgr.Get(sys, path)
+				assert.Error(t, err, "the deleted secret is not revived")
+			},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			mgr, err := secrets.NewManager(&secrets.ManagerOptions{Backend: secrets.NewMemoryBackend()})
+			require.NoError(t, err)
+			wrapped := &interleavingSecretsManager{Manager: mgr}
+			svc := newSecretsService(wrapped, newMockLogger())
+			storeWithPolicy(t, svc, tenantctx.WithTenant(context.Background(), "acme"), "db/due",
+				&SecretRotationPolicy{Enabled: true, Interval: time.Hour, NextRotation: time.Now().Add(-time.Hour).UTC()})
+			wrapped.before = func() { tc.write(t, svc, mgr) }
+
+			result, err := svc.RotateDueSecrets(context.Background())
+			require.NoError(t, err)
+			assert.Equal(t, 1, result.Due)
+			assert.Equal(t, 0, result.Rotated)
+			assert.Equal(t, 1, result.Failed)
+			tc.check(t, svc, mgr)
+		})
+	}
+}
+
 type listFailingSecretsManager struct {
 	interfaces.SecretsManager
 	err error
@@ -154,6 +237,7 @@ func TestNextSecretRotation(t *testing.T) {
 		{"exactly due", now, now.Add(time.Hour)},
 		{"missed periods", now.Add(-150 * time.Minute), now.Add(30 * time.Minute)},
 		{"on a boundary", now.Add(-2 * time.Hour), now.Add(time.Hour)},
+		{"never scheduled", time.Time{}, now.Add(time.Hour)},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -162,6 +246,41 @@ func TestNextSecretRotation(t *testing.T) {
 			assert.True(t, got.After(now))
 		})
 	}
+}
+
+// TestSecretsService_RotationPolicyWithoutDeadline: the MCP tool declares no
+// next_rotation, so an enabled policy arrives with a zero deadline. The
+// service schedules the first one interval out, and a secret already stored
+// with an enabled policy and no deadline is due on the next scan.
+func TestSecretsService_RotationPolicyWithoutDeadline(t *testing.T) {
+	t.Parallel()
+	svc, mgr := newRotationTestService(t)
+	acme := tenantctx.WithTenant(context.Background(), "acme")
+	before := time.Now().UTC().Truncate(time.Second)
+
+	storeWithPolicy(t, svc, acme, "db/mcp", &SecretRotationPolicy{Enabled: true, Interval: time.Hour})
+	got, err := svc.GetRotationPolicy(acme, &GetRotationPolicyRequest{SecretID: "db/mcp"})
+	require.NoError(t, err)
+	next := got.Policy.NextRotation.UTC()
+	assert.False(t, next.Before(before.Add(time.Hour)), "the first deadline is one interval out, got %s", next)
+	assert.False(t, next.After(time.Now().UTC().Add(time.Hour)), "the first deadline is one interval out, got %s", next)
+
+	// A secret stored with an enabled policy and no deadline at all.
+	sys := tenantctx.WithSystem(context.Background())
+	require.NoError(t, mgr.Store(sys, "tenant/acme/db/legacy",
+		map[string][]byte{"data": []byte("x")},
+		map[string]string{"rotation_enabled": "true", "rotation_interval": "1h", "rotation_next": time.Time{}.Format(time.RFC3339)}))
+
+	result, err := svc.RotateDueSecrets(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, 1, result.Due, "only the secret without a deadline is due")
+	assert.Equal(t, 1, result.Rotated)
+
+	_, meta, err := mgr.Get(sys, "tenant/acme/db/legacy")
+	require.NoError(t, err)
+	scheduled, err := time.Parse(time.RFC3339, meta["rotation_next"])
+	require.NoError(t, err)
+	assert.True(t, scheduled.After(time.Now().UTC()), "the rotation schedules the next deadline, got %s", scheduled)
 }
 
 func TestSecretsRotationWriteContext(t *testing.T) {

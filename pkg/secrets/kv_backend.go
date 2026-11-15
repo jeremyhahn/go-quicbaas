@@ -115,6 +115,11 @@ const (
 //	_qb/secrets/<path>/v/<N>     → kvEntry (version N data)
 type KVBackend struct {
 	store KVStoreWriter
+
+	// writeLocks replaces the process-wide kvWriteLocks when set: a test
+	// gives each backend its own stripes, as two processes would have, so
+	// only the store's guarded writes arbitrate between them.
+	writeLocks *[32]sync.Mutex
 }
 
 // kvWriteLocks serialises writes per secret path, PROCESS-WIDE. Package-level
@@ -138,6 +143,15 @@ var kvWriteLocks [32]sync.Mutex
 // two stripes.
 func lockKVPath(path string) *sync.Mutex {
 	return &kvWriteLocks[id.HashString(path)%uint64(len(kvWriteLocks))]
+}
+
+// lockPath returns the write lock this backend takes for a path: the
+// process-wide stripe, or the backend's own when writeLocks is set.
+func (b *KVBackend) lockPath(path string) *sync.Mutex {
+	if b.writeLocks == nil {
+		return lockKVPath(path)
+	}
+	return &b.writeLocks[id.HashString(path)%uint64(len(b.writeLocks))]
 }
 
 // nextVersionNumber allocates the next version for a path: one past the
@@ -219,7 +233,7 @@ func (b *KVBackend) storeVersion(ctx context.Context, path string, expected int,
 		return 0, ErrEmptyData
 	}
 
-	lock := lockKVPath(path)
+	lock := b.lockPath(path)
 	lock.Lock()
 	defer lock.Unlock()
 
@@ -363,7 +377,7 @@ func (b *KVBackend) Delete(ctx context.Context, path string) error {
 	if path == "" {
 		return ErrInvalidPath
 	}
-	lock := lockKVPath(path)
+	lock := b.lockPath(path)
 	lock.Lock()
 	defer lock.Unlock()
 
@@ -414,7 +428,7 @@ func (b *KVBackend) Destroy(ctx context.Context, path string) error {
 	if path == "" {
 		return ErrInvalidPath
 	}
-	lock := lockKVPath(path)
+	lock := b.lockPath(path)
 	lock.Lock()
 	defer lock.Unlock()
 
@@ -529,7 +543,7 @@ func (b *KVBackend) Rollback(ctx context.Context, path string, version int) erro
 	if version <= 0 {
 		return ErrVersionMustBePositive
 	}
-	lock := lockKVPath(path)
+	lock := b.lockPath(path)
 	lock.Lock()
 	defer lock.Unlock()
 

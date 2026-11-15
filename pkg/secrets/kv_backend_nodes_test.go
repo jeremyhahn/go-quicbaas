@@ -34,7 +34,13 @@ import (
 // newest acknowledged one.
 func TestKVBackend_TwoNodesArbitrateConcurrentWrites(t *testing.T) {
 	store := newInMemKV()
+	// Each node has its own write locks, as two processes would: the
+	// process-wide stripes would serialise the writers before the store
+	// saw them, and only the store's guarded writes must arbitrate here.
 	nodes := []*KVBackend{NewKVBackend(store), NewKVBackend(store)}
+	for _, node := range nodes {
+		node.writeLocks = new([32]sync.Mutex)
+	}
 	ctx := context.Background()
 	const path = "nodes/shared"
 	require.NoError(t, nodes[0].Store(ctx, path, map[string][]byte{"k": []byte("seed")}, nil))

@@ -258,6 +258,13 @@ for each enabled policy whose `rotation_next` has passed:
 - advances `rotation_next` by whole intervals past now, so a scan that missed
   several periods rotates once and keeps the cadence.
 
+The write is conditional on the version the scan read
+(`StoreVersionIfCurrent`): an update, a policy change or a delete that lands
+between the read and the write wins, and the rotation stores nothing. A policy
+enabled without a `rotation_next` (the MCP tool declares none) gets its first
+deadline one interval out; an enabled policy with no deadline at all is due on
+the next scan, which schedules one.
+
 It is a system job, so a cluster performs each due rotation exactly once. A
 secret that cannot be read (deleted or disabled) is not rotated; a failed
 rotation is counted, logged and stays due for the next scan. The job keeps the

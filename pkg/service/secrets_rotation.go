@@ -121,7 +121,9 @@ func secretRotationDue(metadata map[string]string, now time.Time) bool {
 	}
 	next, err := time.Parse(time.RFC3339, metadata[secretRotationNextKey])
 	if err != nil || next.IsZero() {
-		return false
+		// An enabled policy with no deadline (one set before the service
+		// scheduled the first) is due: the rotation schedules the next.
+		return true
 	}
 	return !next.After(now)
 }
@@ -145,6 +147,10 @@ func secretsRotationWriteContext(sysCtx context.Context, scopedPath string) cont
 // next rotation advanced by whole intervals until it is in the future, so a
 // scan that missed several periods rotates once and keeps the cadence.
 func nextSecretRotation(previous time.Time, interval time.Duration, now time.Time) time.Time {
+	if previous.IsZero() {
+		// No deadline was ever scheduled: the cadence starts now.
+		return now.Add(interval)
+	}
 	next := previous.Add(interval)
 	if !next.After(now) {
 		missed := now.Sub(previous) / interval
@@ -158,17 +164,29 @@ func (s *secretsService) rotateDueSecret(ctx context.Context, path string, data 
 	if err != nil || interval <= 0 {
 		return &SecretRotationIntervalError{Path: path, Interval: metadata[secretRotationIntervalKey]}
 	}
+	read, err := strconv.Atoi(metadata[secretVersionKey])
+	if err != nil || read <= 0 {
+		return &SecretVersionNotReportedError{Operation: "rotation read", SecretID: path}
+	}
+	storer, ok := s.secretsManager.(secretsConditionalStorer)
+	if !ok {
+		return &SecretVersionNotReportedError{Operation: "rotation write", SecretID: path}
+	}
 	previous, _ := time.Parse(time.RFC3339, metadata[secretRotationNextKey])
 
 	newMetadata := make(map[string]string, len(metadata)+2)
 	for k, v := range metadata {
 		newMetadata[k] = v
 	}
+	delete(newMetadata, secretVersionKey)
 	newMetadata[secretRotationReasonKey] = secretRotationScheduled
 	newMetadata[secretRotationLastKey] = now.Format(time.RFC3339)
 	newMetadata[secretRotationNextKey] = nextSecretRotation(previous, interval, now).Format(time.RFC3339)
 
-	newVersion, err := s.storeSecretVersion(ctx, path, path, data, newMetadata, nil)
+	// The write holds only while the secret is still at the version this
+	// scan read: an update, a policy change or a delete that lands between
+	// the read and the write wins, and the rotation stores nothing.
+	newVersion, err := storer.StoreVersionIfCurrent(ctx, path, read, data, newMetadata)
 	if err != nil {
 		return err
 	}
@@ -183,4 +201,10 @@ func (s *secretsService) rotateDueSecret(ctx context.Context, path string, data 
 		}).Info("Secret rotated by its rotation policy")
 	}
 	return nil
+}
+
+// secretsConditionalStorer is the secrets manager's write conditional on
+// the version it supersedes (secrets.Manager.StoreVersionIfCurrent).
+type secretsConditionalStorer interface {
+	StoreVersionIfCurrent(ctx context.Context, path string, expected int, data map[string][]byte, metadata map[string]string) (int, error)
 }

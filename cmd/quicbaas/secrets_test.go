@@ -2729,6 +2729,52 @@ func TestFormatSecretsGetResponse_RawDataDefaultIsVerbatim(t *testing.T) {
 	assert.Equal(t, raw, buf.Bytes())
 }
 
+// TestSecretsGetCommand_DefaultOutputPrintsRawVerbatim: `secrets get` with
+// no --output prints a raw value's bytes verbatim, though the flag's default
+// is table; an explicit --output still wins, and a key-value secret keeps
+// the table default.
+func TestSecretsGetCommand_DefaultOutputPrintsRawVerbatim(t *testing.T) {
+	raw := []byte("whsec_not-json\n\x00tail")
+	keyValue := []byte(`{"user":"app"}`)
+	tests := []struct {
+		name  string
+		data  []byte
+		args  []string
+		check func(t *testing.T, out []byte)
+	}{
+		{"raw, no --output", raw, nil, func(t *testing.T, out []byte) {
+			assert.Equal(t, raw, out)
+		}},
+		{"raw, --output table", raw, []string{"--output", "table"}, func(t *testing.T, out []byte) {
+			assert.Contains(t, string(out), "Secret ID:")
+		}},
+		{"key-value, no --output", keyValue, nil, func(t *testing.T, out []byte) {
+			assert.Contains(t, string(out), "Secret ID:")
+			assert.Contains(t, string(out), "user:")
+		}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			origFactory, origFmt := secretsClientFactory, secretsOutputFmt
+			t.Cleanup(func() { secretsClientFactory, secretsOutputFmt = origFactory, origFmt })
+			secretsClientFactory = func() (SecretsClient, error) {
+				return &MockSecretsClient{
+					GetSecretFunc: func(ctx context.Context, req *service.GetSecretRequest) (*service.GetSecretResponse, error) {
+						return &service.GetSecretResponse{SecretID: req.SecretID, Version: 1, Data: tc.data, CreatedAt: time.Now()}, nil
+					},
+				}, nil
+			}
+
+			cmd := newSecretsCommand()
+			var out bytes.Buffer
+			cmd.SetOut(&out)
+			cmd.SetArgs(append([]string{"get", "forge/webhook_hmac"}, tc.args...))
+			require.NoError(t, cmd.Execute())
+			tc.check(t, out.Bytes())
+		})
+	}
+}
+
 func TestFormatSecretsGetResponse_RawDataJSON(t *testing.T) {
 	var text bytes.Buffer
 	require.NoError(t, formatSecretsGetResponse(&service.GetSecretResponse{SecretID: "s", Data: []byte(`not-json`)}, "json", &text))
