@@ -1323,6 +1323,14 @@ var NewRuntimeContainerAttestor = pkgservice.NewRuntimeContainerAttestor
 // source and builders, and the audited allow-unsigned policy.
 type MeasuredLaunchConfig = pkgservice.MeasuredLaunchConfig
 
+// ProvenanceSource fetches the software-factory provenance referrers of an
+// image (MeasuredLaunchConfig.Provenance).
+type ProvenanceSource = pkgservice.ProvenanceSource
+
+// Release is one service release a signed cluster manifest lists: an image
+// pinned to a digest.
+type Release = pkgservice.Release
+
 // NewMeasuredLaunchRuntime builds the measured-launch runtime over an
 // attestation store, with the Verifier's appraisal, image verification,
 // provenance verification and signed cluster manifest wired in.
