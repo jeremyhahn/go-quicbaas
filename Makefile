@@ -4681,7 +4681,7 @@ test-fleet-placement: ## Run fleet placement spec + drift unit tests (store, inv
 	cd sdk/go && GOTOOLCHAIN=go$(GO_VERSION) $(GOTEST) -race -count=1 ./client/orchestrator/ ./transport/rest/ ./transport/embedded/ ./transport/grpc/ ./transport/mcp/ ./transport/quic/ ./transport/unix/ -run 'FleetPlacement|Orchestrator'
 
 .PHONY: integration-test-placement
-integration-test-placement: ## Run scheduler placement + job integration tests over REST, gRPC, QUIC, Unix and MCP
+integration-test-placement: ## Run scheduler placement, fleet placement spec + job integration tests over REST, gRPC, QUIC, Unix and MCP
 	@echo "$(BLUE)Running scheduler placement integration tests...$(NC)"
 	@QUICBAAS_TEST_FILTER="./test/integration/placement/..." WITH_RAFT=1 WITH_REST=1 WITH_QUIC=1 WITH_MCP=1 $(MAKE) integration-test
 
