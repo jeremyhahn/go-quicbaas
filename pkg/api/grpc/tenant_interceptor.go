@@ -18,8 +18,9 @@ import (
 	"crypto/x509"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
-	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 	"google.golang.org/grpc"
+
+	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 )
 
 // tenantContextFromClientCert applies qrdb's canonical certificate-to-tenant

@@ -168,7 +168,6 @@ func (bm *BatchManager) ImportUsers(ctx context.Context, tenantID string, users 
 			}
 			for j, u := range users[i:end] {
 				idx := i + j
-				u := u
 				if wp.submit(workerJob{
 					index:    idx,
 					itemType: "user",
@@ -406,7 +405,6 @@ func (bm *BatchManager) ImportRoles(ctx context.Context, tenantID string, roles 
 			}
 			for j, r := range roles[i:end] {
 				idx := i + j
-				r := r
 				if wp.submit(workerJob{
 					index:    idx,
 					itemType: "role",
@@ -574,7 +572,6 @@ func (bm *BatchManager) ImportPolicies(ctx context.Context, tenantID string, pol
 			}
 			for j, p := range policies[i:end] {
 				idx := i + j
-				p := p
 				if wp.submit(workerJob{
 					index:    idx,
 					itemType: "policy",
