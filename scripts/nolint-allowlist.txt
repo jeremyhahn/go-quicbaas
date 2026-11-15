@@ -7,7 +7,6 @@ pkg/sdlc/forge_credential.go:gosec
 pkg/service/fido2_add_credential.go:gosec
 pkg/service/project_git.go:gosec
 pkg/signalbridge/http_transport.go:bodyclose
-pkg/testutil/poll/poll.go:forbidigo
 scripts/verifycliflags/main.go:gosec
 scripts/verifygomodauth/main.go:gosec
 test/integration/certfixture/set.go:gosec

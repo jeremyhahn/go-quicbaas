@@ -47,7 +47,7 @@ func Wait(timeout time.Duration, cond func() bool) bool {
 		if left := time.Until(deadline); left < wait {
 			wait = left
 		}
-		time.Sleep(wait) //nolint:forbidigo // the one sanctioned sleep: the poll interval
+		time.Sleep(wait) // the one sanctioned sleep: the poll interval
 	}
 }
 
