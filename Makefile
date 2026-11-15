@@ -4677,6 +4677,7 @@ test-fleet-placement: ## Run fleet placement spec + drift unit tests (store, inv
 	GOTOOLCHAIN=go$(GO_VERSION) $(GOTEST) -race -count=1 -tags '$(BUILD_TAGS)' ./pkg/api/rest/ -run 'FleetPlacement|Routes|RouteSurface|FrozenPermission|Authz|RouteLookup'
 	GOTOOLCHAIN=go$(GO_VERSION) $(GOTEST) -race -count=1 -tags '$(BUILD_TAGS)' ./pkg/api/grpc/
 	GOTOOLCHAIN=go$(GO_VERSION) $(GOTEST) -race -count=1 -tags '$(BUILD_TAGS)' ./pkg/api/mcp/ -run 'FleetPlacement|Authz|Permission'
+	GOTOOLCHAIN=go$(GO_VERSION) $(GOTEST) -race -count=1 -tags '$(BUILD_TAGS)' ./cmd/quicbaas/ -run 'FleetPlacement'
 	cd sdk/go && GOTOOLCHAIN=go$(GO_VERSION) $(GOTEST) -race -count=1 ./client/orchestrator/ ./transport/rest/ ./transport/embedded/ ./transport/grpc/ ./transport/mcp/ -run 'FleetPlacement|Orchestrator'
 
 .PHONY: integration-test-placement

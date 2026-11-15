@@ -833,6 +833,29 @@ func (c *sdkOrchestratorClient) InferenceStream(ctx context.Context, req *orches
 }
 
 // Close closes the underlying SDK client.
+// The fleet placement verbs (go-quicbaas#1681), the fleetPlacementClient
+// surface the fleet placement commands assert.
+
+func (c *sdkOrchestratorClient) DeclareFleetPlacementSpec(ctx context.Context, req *orchestratorSDK.DeclareFleetPlacementSpecRequest) (*orchestratorSDK.FleetPlacementSpec, error) {
+	return c.sdk.Orchestrator().DeclareFleetPlacementSpec(ctx, req)
+}
+
+func (c *sdkOrchestratorClient) GetFleetPlacementSpec(ctx context.Context, req *orchestratorSDK.FleetPlacementSpecRequest) (*orchestratorSDK.FleetPlacementSpec, error) {
+	return c.sdk.Orchestrator().GetFleetPlacementSpec(ctx, req)
+}
+
+func (c *sdkOrchestratorClient) ListFleetPlacementSpecs(ctx context.Context, req *orchestratorSDK.ListFleetPlacementSpecsRequest) (*orchestratorSDK.ListFleetPlacementSpecsResponse, error) {
+	return c.sdk.Orchestrator().ListFleetPlacementSpecs(ctx, req)
+}
+
+func (c *sdkOrchestratorClient) WithdrawFleetPlacementSpec(ctx context.Context, req *orchestratorSDK.FleetPlacementSpecRequest) (*orchestratorSDK.WithdrawFleetPlacementSpecResponse, error) {
+	return c.sdk.Orchestrator().WithdrawFleetPlacementSpec(ctx, req)
+}
+
+func (c *sdkOrchestratorClient) GetFleetPlacementDrift(ctx context.Context, req *orchestratorSDK.FleetPlacementSpecRequest) (*orchestratorSDK.FleetPlacementDrift, error) {
+	return c.sdk.Orchestrator().GetFleetPlacementDrift(ctx, req)
+}
+
 func (c *sdkOrchestratorClient) GetCostSettings(ctx context.Context, req *orchestratorSDK.GetCostSettingsRequest) (*orchestratorSDK.CostSettings, error) {
 	return c.sdk.Orchestrator().GetCostSettings(ctx, req)
 }
