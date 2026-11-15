@@ -429,6 +429,12 @@ func TestBarrierShamirInitialize_Success(t *testing.T) {
 	if resp.GetThreshold() != 2 || resp.GetTotalShares() != 3 {
 		t.Fatalf("unexpected response: %#v", resp)
 	}
+	// go-qrdb's BarrierInitializeShamirResponse reports how many shares it
+	// sealed to officers; gRPC carries that count as REST and MCP do.
+	wire := overTheWire(t, resp)
+	if wire.GetShareCount() != 3 {
+		t.Fatalf("share_count = %d, want go-qrdb's 3", wire.GetShareCount())
+	}
 	// Share-free contract: the response declares no share field at all
 	// (api/proto TestBarrierShareFreeResponses_DeclareNoShareMaterial).
 }

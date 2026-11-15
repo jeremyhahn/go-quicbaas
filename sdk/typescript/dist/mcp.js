@@ -631,7 +631,7 @@ export class McpBarrierClient {
             threshold: req.threshold,
             total_shares: req.total_shares,
         });
-        return { shares: reply.shares ?? [], threshold: reply.threshold ?? 0, total_shares: reply.total_shares ?? 0 };
+        return { threshold: reply.threshold ?? 0, total_shares: reply.total_shares ?? 0, share_count: reply.share_count ?? 0 };
     }
     async unsealWithShare(req) {
         return this.session.callTool('qrdb_barrier_shamir_unseal_share', { share: req.share });
@@ -645,7 +645,7 @@ export class McpBarrierClient {
             threshold: req.threshold,
             total: req.total,
         });
-        return { shares: reply.shares ?? [], threshold: reply.threshold ?? 0, total_shares: reply.total_shares ?? 0 };
+        return { threshold: reply.threshold ?? 0, total_shares: reply.total_shares ?? 0, share_count: reply.share_count ?? 0 };
     }
     // The recovery tool reports the quorum but never the recovery keys.
     async generateRecoveryKeys(req) {
@@ -653,7 +653,7 @@ export class McpBarrierClient {
             threshold: req.threshold,
             total: req.total,
         });
-        return { keys: reply.keys ?? [], threshold: reply.threshold ?? 0, total: reply.total ?? 0 };
+        return { threshold: reply.threshold ?? 0, total: reply.total ?? 0, share_count: reply.share_count ?? 0 };
     }
     async recoverWithKeys(req) {
         await this.session.callTool('qrdb_barrier_recovery_recover', { keys: req.keys });
