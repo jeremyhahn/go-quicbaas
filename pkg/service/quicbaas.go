@@ -2170,7 +2170,6 @@ func qrdbCompare(cmp *CompareCondition, keyOf keyBuilder) (qrdbtransport.Compare
 // transactionOpTypes maps service operation types to qrdb operation types.
 var transactionOpTypes = map[TransactionOpType]qrdbtransport.OpType{
 	TransactionOpTypePut:    qrdbtransport.OpPut,
-	TransactionOpTypeGet:    qrdbtransport.OpGet,
 	TransactionOpTypeDelete: qrdbtransport.OpDelete,
 }
 
@@ -2180,6 +2179,9 @@ func qrdbTransactionOps(ops []*TransactionOp, keyOf keyBuilder) ([]qrdbtransport
 	for _, op := range ops {
 		if op == nil {
 			return nil, &api.NilInputError{Name: "transaction operation"}
+		}
+		if op.OpType == TransactionOpTypeGet {
+			return nil, &api.InvalidInputError{Message: "a transaction cannot carry a get: the pinned go-qrdb transaction encoder supports only put and delete; read with a KV get"}
 		}
 		opType, ok := transactionOpTypes[op.OpType]
 		if !ok {
@@ -2199,8 +2201,7 @@ func qrdbTransactionOps(ops []*TransactionOp, keyOf keyBuilder) ([]qrdbtransport
 }
 
 // transactionOpResponses pairs the executed branch with qrdb's per-operation
-// results, which arrive in the branch's order. A Get of an absent key is
-// reported as an unsuccessful operation with a not-found error.
+// results, which arrive in the branch's order.
 func transactionOpResponses(ops []*TransactionOp, results []qrdbtransport.OpResponse) []*TransactionOpResponse {
 	timestamp := time.Now().UnixNano()
 	responses := make([]*TransactionOpResponse, 0, len(ops))
@@ -2211,15 +2212,6 @@ func transactionOpResponses(ops []*TransactionOp, results []qrdbtransport.OpResp
 			ID:         op.ID,
 			Success:    i < len(results) && results[i].Succeeded,
 			Timestamp:  timestamp,
-		}
-		if op.OpType == TransactionOpTypeGet && resp.Success {
-			if len(results[i].Kvs) == 0 {
-				resp.Success = false
-				resp.Error = (&api.NotFoundError{Resource: op.EntityType, ID: fmt.Sprintf("%d", op.ID)}).Error()
-			} else {
-				resp.Data = results[i].Kvs[0].Value
-				resp.Version = 1
-			}
 		}
 		responses = append(responses, resp)
 	}

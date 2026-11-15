@@ -3,6 +3,7 @@ package service
 import (
 	"bytes"
 	"context"
+	"errors"
 	"sync"
 	"testing"
 
@@ -84,10 +85,10 @@ func (t *kvMapTransport) ExecuteTransaction(_ context.Context, req *transport.Tr
 		result := transport.OpResponse{Succeeded: true}
 		switch op.Type {
 		case transport.OpGet:
-			t.getKeys = append(t.getKeys, string(op.Key))
-			if value, ok := t.store[string(op.Key)]; ok {
-				result.Kvs = []*transport.MVCCKeyValue{{Key: op.Key, Value: value, Version: 1}}
-			}
+			// go-qrdb's transaction encoder encodes only Put and Delete, and
+			// refuses a Get with UnsupportedTransactionOpError, which the SDK
+			// does not re-export.
+			return nil, errors.New("unsupported transaction op: get")
 		case transport.OpPut:
 			t.batchOps++
 			t.store[string(op.Key)] = op.Value
@@ -178,14 +179,6 @@ func putUser(data string) *TransactionRequest {
 	}
 }
 
-func getUser() *TransactionRequest {
-	return &TransactionRequest{
-		Success: []*TransactionOp{
-			{OpType: TransactionOpTypeGet, EntityType: "user", ID: 1},
-		},
-	}
-}
-
 func deleteUser() *TransactionRequest {
 	return &TransactionRequest{
 		Success: []*TransactionOp{
@@ -201,10 +194,10 @@ func existsGuard() *TransactionRequest {
 			{EntityType: "user", ID: 1, Target: CompareTargetExists, Operator: CompareOperatorEqual},
 		},
 		Success: []*TransactionOp{
-			{OpType: TransactionOpTypeGet, EntityType: "user", ID: 1},
+			{OpType: TransactionOpTypePut, EntityType: "user", ID: 3, Data: []byte(`{}`)},
 		},
 		Failure: []*TransactionOp{
-			{OpType: TransactionOpTypeGet, EntityType: "user", ID: 2},
+			{OpType: TransactionOpTypePut, EntityType: "user", ID: 4, Data: []byte(`{}`)},
 		},
 	}
 }
@@ -219,14 +212,16 @@ func runTxn(t *testing.T, svc QuicBaaS, ctx context.Context, req *TransactionReq
 
 func getUserData(t *testing.T, svc QuicBaaS, ctx context.Context) []byte {
 	t.Helper()
-	resp := runTxn(t, svc, ctx, getUser())
-	require.Len(t, resp.Responses, 1)
-	if !resp.Responses[0].Success {
-		// A Get of an absent key is an unsuccessful not-found operation.
-		assert.Contains(t, resp.Responses[0].Error, "not found")
+	// A transaction cannot carry a Get, so the read goes through the KV verb.
+	resp, err := svc.Get(ctx, &GetRequest{EntityType: "user", ID: 1})
+	if err != nil {
+		assert.Contains(t, err.Error(), "not found")
 		return nil
 	}
-	return resp.Responses[0].Data
+	if resp == nil || len(resp.Data) == 0 {
+		return nil
+	}
+	return resp.Data
 }
 
 func TestTransactionService_Transaction_TenantIsolation(t *testing.T) {
@@ -250,13 +245,12 @@ func TestTransactionService_Transaction_TenantIsolation(t *testing.T) {
 		respA := runTxn(t, svc, ctxA, existsGuard())
 		assert.True(t, respA.Succeeded)
 		require.Len(t, respA.Responses, 1)
-		assert.EqualValues(t, (1), respA.Responses[0].ID)
-		assert.Equal(t, dataA, string(respA.Responses[0].Data))
+		assert.EqualValues(t, (3), respA.Responses[0].ID)
 
 		respB := runTxn(t, svc, ctxB, existsGuard())
 		assert.False(t, respB.Succeeded)
 		require.Len(t, respB.Responses, 1)
-		assert.EqualValues(t, (2), respB.Responses[0].ID)
+		assert.EqualValues(t, (4), respB.Responses[0].ID)
 	})
 
 	t.Run("put in B does not change A's value", func(t *testing.T) {
@@ -310,4 +304,36 @@ func TestTransactionService_Transaction_UnboundContextRefused(t *testing.T) {
 	reads, writes := kv.accessCount()
 	assert.Zero(t, reads, "an unbound context must not read the store")
 	assert.Zero(t, writes, "an unbound context must not write the store")
+}
+
+// The pinned go-qrdb transaction encoder encodes only Put and Delete, so a
+// transaction carrying a Get, in either branch, is refused before qrdb is
+// called.
+func TestTransactionService_Transaction_GetRefused(t *testing.T) {
+	ctx := tenantctx.WithTenant(context.Background(), "tenant-a")
+	get := &TransactionOp{OpType: TransactionOpTypeGet, EntityType: "user", ID: 1}
+	put := &TransactionOp{OpType: TransactionOpTypePut, EntityType: "user", ID: 2, Data: []byte(`{}`)}
+	cases := map[string]*TransactionRequest{
+		"get in success": {Success: []*TransactionOp{get}},
+		"get only in failure": {
+			Compare: []*CompareCondition{
+				{EntityType: "user", ID: 1, Target: CompareTargetExists, Operator: CompareOperatorNotEqual},
+			},
+			Success: []*TransactionOp{put},
+			Failure: []*TransactionOp{get},
+		},
+	}
+	for name, req := range cases {
+		t.Run(name, func(t *testing.T) {
+			svc, kv := newKVMapTestService(t)
+
+			resp, err := svc.Transaction(ctx, req)
+			require.Error(t, err)
+			assert.Nil(t, resp)
+
+			reads, writes := kv.accessCount()
+			assert.Zero(t, reads, "a refused transaction must not read the store")
+			assert.Zero(t, writes, "a refused transaction must not write the store")
+		})
+	}
 }

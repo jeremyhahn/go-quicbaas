@@ -676,12 +676,7 @@ func TestTransactionService_Transaction_Success(t *testing.T) {
 }
 
 func TestTransactionService_Transaction_GetOperation(t *testing.T) {
-	mockRaft := &mockRaftNode{
-		syncReadFn: func(ctx context.Context, shardID uint64, query interface{}) (interface{}, error) {
-			return []byte(`{"id":1,"name":"test"}`), nil
-		},
-	}
-	svc := createTestService(t, withMockRaftNode(mockRaft))
+	svc := createTestService(t)
 	defer svc.Close()
 
 	req := &TransactionRequest{
@@ -694,10 +689,12 @@ func TestTransactionService_Transaction_GetOperation(t *testing.T) {
 		},
 	}
 
+	// The pinned go-qrdb transaction encoder encodes only Put and Delete, so
+	// a Get is refused before qrdb is called.
 	resp, err := svc.Transaction(tenantctx.WithSystem(context.Background()), req)
-	require.NoError(t, err)
-	require.NotNil(t, resp)
-	assert.True(t, resp.Succeeded)
+	require.Error(t, err)
+	assert.Nil(t, resp)
+	assert.Contains(t, err.Error(), "a transaction cannot carry a get")
 }
 
 func TestTransactionService_Transaction_DeleteOperation(t *testing.T) {
@@ -805,7 +802,6 @@ func TestTransactionService_Transaction_UsesTenantKeyspace(t *testing.T) {
 			{EntityType: "user", ID: 1, Target: CompareTargetExists, Operator: CompareOperatorEqual},
 		},
 		Success: []*TransactionOp{
-			{OpType: TransactionOpTypeGet, EntityType: "user", ID: 1},
 			{OpType: TransactionOpTypePut, EntityType: "user", ID: 1, Data: []byte(`{"counter":2}`)},
 			{OpType: TransactionOpTypeDelete, EntityType: "user", ID: 2},
 		},
@@ -823,10 +819,9 @@ func TestTransactionService_Transaction_UsesTenantKeyspace(t *testing.T) {
 	require.Len(t, calls, 1)
 	require.Len(t, calls[0].Compares, 1)
 	assert.Equal(t, "__t:beta-inc:user:1", string(calls[0].Compares[0].Key))
-	require.Len(t, calls[0].SuccessOps, 3)
+	require.Len(t, calls[0].SuccessOps, 2)
 	assert.Equal(t, "__t:beta-inc:user:1", string(calls[0].SuccessOps[0].Key))
-	assert.Equal(t, "__t:beta-inc:user:1", string(calls[0].SuccessOps[1].Key))
-	assert.Equal(t, "__t:beta-inc:user:2", string(calls[0].SuccessOps[2].Key))
+	assert.Equal(t, "__t:beta-inc:user:2", string(calls[0].SuccessOps[1].Key))
 }
 
 func TestTransactionService_Transaction_InvalidEntityTypeRejected(t *testing.T) {
@@ -871,9 +866,10 @@ func TestTransactionService_Transaction_FailedComparison(t *testing.T) {
 		},
 		Failure: []*TransactionOp{
 			{
-				OpType:     TransactionOpTypeGet,
+				OpType:     TransactionOpTypePut,
 				EntityType: "user",
-				ID:         1,
+				ID:         2,
+				Data:       []byte(`{"name":"else"}`),
 			},
 		},
 	}
@@ -883,7 +879,8 @@ func TestTransactionService_Transaction_FailedComparison(t *testing.T) {
 	require.NotNil(t, resp)
 	assert.False(t, resp.Succeeded)
 	require.Len(t, resp.Responses, 1)
-	assert.Equal(t, []byte(`{"id":1,"name":"test"}`), resp.Responses[0].Data, "the Failure branch's Get runs, the Put does not")
+	assert.EqualValues(t, 2, resp.Responses[0].ID, "the Failure branch's Put runs, the Success branch's does not")
+	assert.Equal(t, []byte(`{"id":1,"name":"test"}`), tr.data["user:1"])
 }
 
 func TestTransactionService_Transaction_NilRequest(t *testing.T) {
@@ -5916,29 +5913,6 @@ func TestTransactionService_Transaction_UnsupportedCompareTarget(t *testing.T) {
 	resp, err := svc.Transaction(tenantctx.WithSystem(context.Background()), req)
 	require.Error(t, err)
 	require.Nil(t, resp)
-}
-
-func TestTransactionService_Transaction_GetOperationError(t *testing.T) {
-	getErr := stderrors.New("read failed")
-	qrdbProvider := newSvcBoostMockQRDBProviderWithGet(nil, getErr)
-	svc := createTestService(t, withQRDBClientProvider(qrdbProvider))
-	defer svc.Close()
-
-	req := &TransactionRequest{
-		Success: []*TransactionOp{
-			{
-				OpType:     TransactionOpTypeGet,
-				EntityType: "user",
-				ID:         1,
-			},
-		},
-	}
-
-	resp, err := svc.Transaction(tenantctx.WithSystem(context.Background()), req)
-	require.NoError(t, err) // Transaction succeeds but operation has error
-	require.NotNil(t, resp)
-	assert.Len(t, resp.Responses, 1)
-	assert.False(t, resp.Responses[0].Success)
 }
 
 func TestBackupService_CreateBackup_Error(t *testing.T) {

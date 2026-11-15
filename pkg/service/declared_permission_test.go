@@ -193,7 +193,7 @@ func compareAndWrite() *TransactionRequest {
 		}},
 		Success: []*TransactionOp{
 			{OpType: TransactionOpTypePut, EntityType: "user", ID: 1, Data: []byte("v2")},
-			{OpType: TransactionOpTypeGet, EntityType: "user", ID: 1},
+			{OpType: TransactionOpTypePut, EntityType: "user", ID: 3, Data: []byte("v3")},
 		},
 		Failure: []*TransactionOp{
 			{OpType: TransactionOpTypePut, EntityType: "user", ID: 2, Data: []byte("else")},
