@@ -178,7 +178,9 @@ func (p *OIDCProvider) GetJWKS() *jose.JSONWebKeySet {
 // PublicKeyForKID returns the key the provider trusts now for kid, resolved
 // from its signing key managers at each call, so a key past its trust (an
 // adopted pre-upgrade key past its cutoff) is never returned. A kid no
-// manager holds is reported with *UnknownKeyIDError.
+// manager holds sends each manager to re-read its version record (at most
+// once per unknownKIDRefreshInterval), so a peer's rotation is seen at once;
+// a kid still unheld is reported with *UnknownKeyIDError.
 func (p *OIDCProvider) PublicKeyForKID(ctx context.Context, kid string) (crypto.PublicKey, error) {
 	r, km := p.config.TenantSigningKeys, p.config.SigningKeyManager
 	if r == nil && km == nil {
@@ -188,20 +190,12 @@ func (p *OIDCProvider) PublicKeyForKID(ctx context.Context, kid string) (crypto.
 		if pub := r.heldPublicForKID(kid); pub != nil {
 			return pub, nil
 		}
-		// A kid no built manager holds: the live set builds a dedicated
-		// tenant's manager and refreshes at the routine pace.
-		if pub := publicForKIDInJWKS(r.JWKS(ctx), kid); pub != nil {
-			return pub, nil
-		}
-		return nil, &UnknownKeyIDError{KID: kid}
+		// A kid no built manager holds may name a key a peer sharing the
+		// backend has just rotated in: the refresh-aware lookup builds any
+		// dedicated tenant's manager and re-reads the version records.
+		return r.PublicForKID(ctx, kid)
 	}
-	if pub, err := km.publicForKID(kid); err == nil {
-		return pub, nil
-	}
-	if pub := publicForKIDInJWKS(km.JWKS(), kid); pub != nil {
-		return pub, nil
-	}
-	return nil, &UnknownKeyIDError{KID: kid}
+	return km.PublicForKID(kid)
 }
 
 // Issuer returns the configured OIDC issuer URL (the iss this provider stamps on

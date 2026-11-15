@@ -47,7 +47,11 @@ func newPlatformBearerNode(t *testing.T, tenantID string) *platformBearerNode {
 	t.Helper()
 	global, err := newOIDCSigningKeyManager(oidcSigningBackendName)
 	require.NoError(t, err)
-	resolver, err := iam.NewTenantSigningKeyResolver(global, dedicatedOIDCSettings{tenantID: tenantID != ""})
+	settings := dedicatedOIDCSettings{}
+	if tenantID != "" {
+		settings[tenantID] = true
+	}
+	resolver, err := iam.NewTenantSigningKeyResolver(global, settings)
 	require.NoError(t, err)
 	backend := iam.NewBackendStorage(kvstore.NewMemory())
 	provider, err := iam.NewOIDCProvider(&iam.OIDCConfig{
@@ -138,6 +142,39 @@ func TestPlatformValidator_AdoptedKeyStopsAtCutoff(t *testing.T) {
 				require.ErrorAs(t, err, &unknown, "%s at the cutoff plus epsilon", side)
 				require.Equal(t, lKid, unknown.KID, side)
 			}
+		})
+	}
+}
+
+// TestPlatformValidator_PeerRotationAcceptedAtOnce proves the bearer path's
+// miss reaches the unknown-kid refresh: node B has just refreshed (so its
+// routine refresh is throttled), node A rotates and issues a token under the
+// new kid, and B's platform validator accepts it at once, for the global and
+// a dedicated tenant key.
+func TestPlatformValidator_PeerRotationAcceptedAtOnce(t *testing.T) {
+	t.Cleanup(dbxkms.Reset)
+	for name, tenantID := range map[string]string{"global key": "", "dedicated tenant key": "tenant-dedicated"} {
+		t.Run(name, func(t *testing.T) {
+			initOIDCSigningDefault(t)
+			registerOIDCSigningBackend(t, xkmssdk.NewStorageMemory())
+			mintTenant := tenantID
+			if mintTenant == "" {
+				mintTenant = "ordinary-tenant"
+			}
+			a, b := newPlatformBearerNode(t, tenantID), newPlatformBearerNode(t, tenantID)
+			// A first rotation versions the key, so B's refresh below
+			// reads the version record (and throttles its routine pace).
+			require.NoError(t, a.manager(t, mintTenant).Rotate())
+			oldKid, oldSigner, _ := a.manager(t, mintTenant).Current()
+			require.NoError(t, b.manager(t, mintTenant).Refresh())
+			_, err := b.validator.ValidatePlatformToken(context.Background(), signPlatformAccessToken(t, oldSigner, oldKid))
+			require.NoError(t, err, "b before the rotation")
+
+			require.NoError(t, a.manager(t, mintTenant).Rotate())
+			newKid, newSigner, _ := a.manager(t, mintTenant).Current()
+			require.NotEqual(t, oldKid, newKid)
+			_, err = b.validator.ValidatePlatformToken(context.Background(), signPlatformAccessToken(t, newSigner, newKid))
+			require.NoError(t, err, "b right after a's rotation")
 		})
 	}
 }
