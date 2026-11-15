@@ -86,6 +86,9 @@ func registerOIDCSigningBackend(t *testing.T, kv xkmssdk.StorageBackend) {
 	backend, err := newOIDCSigningServiceBackend(kv)
 	require.NoError(t, err)
 	require.NoError(t, dbxkms.RegisterBackend(oidcSigningBackendName, backend))
+	// A backend registered alone rotates without the cluster lease; a lease
+	// an earlier test's server left may sit on a KV that is closed.
+	iam.SetRotationLock(oidcSigningBackendName, nil)
 }
 
 // TestOIDCSigningStore_PeerNodesShareOneKey proves a platform token signed on
