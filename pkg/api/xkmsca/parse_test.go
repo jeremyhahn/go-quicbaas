@@ -17,8 +17,9 @@ import (
 	"errors"
 	"testing"
 
-	testca "github.com/jeremyhahn/go-quicbaas/pkg/testutil/xkmsca"
 	xkmstransport "github.com/jeremyhahn/go-xkms/sdk/go/transport"
+
+	testca "github.com/jeremyhahn/go-quicbaas/pkg/testutil/xkmsca"
 )
 
 // TestXKMSCAServicer_ParseSANs verifies SAN prefix parsing covers DNS,

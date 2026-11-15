@@ -48,12 +48,6 @@ func newTestNodeBackedClient(t *testing.T) *ShardedClient {
 	return newNodeBackedShardedClient(node)
 }
 
-// newDetachedShardedClient returns a ShardedClient with no embedded node
-// client attached, for tests that exercise server wiring without a node.
-func newDetachedShardedClient() *ShardedClient {
-	return &ShardedClient{}
-}
-
 // TestShardedClient_ForShard_NoNodeReturnsTypedError verifies that a
 // ShardedClient with no embedded node client refuses every shard: there is no
 // network transport to fall back to.
