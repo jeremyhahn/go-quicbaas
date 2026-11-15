@@ -162,7 +162,8 @@ func (h *IAMHandler) CreateUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if len(req.Roles) > 0 && !h.authorizeRoleAssignment(w, r, tenantID) {
+	if (len(req.Roles) > 0 || len(req.Attributes) > 0) &&
+		!h.authorizeUserWrite(w, r, tenantID, roleAssignmentResource, roleAssignmentAction) {
 		return
 	}
 
@@ -420,7 +421,20 @@ func (h *IAMHandler) UpdateUser(w http.ResponseWriter, r *http.Request) {
 	// on top of the route's users:update, even when it equals the roles the
 	// user holds now: an equality exemption decided on an earlier read would
 	// let a concurrent revocation be undone by this write (Codex 8269).
-	if req.Roles != nil && !h.authorizeRoleAssignment(w, r, tenantID) {
+	if (req.Roles != nil || req.Attributes != nil) &&
+		!h.authorizeUserWrite(w, r, tenantID, roleAssignmentResource, roleAssignmentAction) {
+		return
+	}
+	// Enabling or disabling the account is a lifecycle change, which gRPC and
+	// the approve and reject routes gate on users:enable and users:disable.
+	enables := (req.Enabled != nil && *req.Enabled) ||
+		(req.Lifecycle != nil && *req.Lifecycle == iam.LifecycleActive)
+	disables := (req.Enabled != nil && !*req.Enabled) ||
+		(req.Lifecycle != nil && *req.Lifecycle != "" && *req.Lifecycle != iam.LifecycleActive)
+	if enables && !h.authorizeUserWrite(w, r, tenantID, "users", "enable") {
+		return
+	}
+	if disables && !h.authorizeUserWrite(w, r, tenantID, "users", "disable") {
 		return
 	}
 
@@ -459,14 +473,17 @@ const (
 	roleAssignmentAction   = "assign"
 )
 
-// authorizeRoleAssignment reports whether the caller may assign roles in
-// tenantID, and answers the request when it may not. A user create or update
-// that carries roles assigns them as surely as AssignRole does, so it needs
-// the same roles:assign: without it, a caller holding only users:update could
-// write the tenant Admin role into its own account (Codex 8243). The decision
-// is go-qrdb's RBAC authorizer's, the one the route permissions use. It fails
-// closed: with no authorizer wired, a role-bearing request is refused.
-func (h *IAMHandler) authorizeRoleAssignment(w http.ResponseWriter, r *http.Request, tenantID string) bool {
+// authorizeUserWrite reports whether the caller holds resource:action in
+// tenantID, and answers the request when it does not. A user create or update
+// that carries roles or attributes assigns them as surely as AssignRole does,
+// so it needs the same roles:assign: without it, a caller holding only
+// users:update could write the tenant Admin role into its own account (Codex
+// 8243), or the attributes ABAC decides on. An update that enables or
+// disables the account needs users:enable or users:disable, as gRPC and the
+// approve and reject routes ask. The decision is go-qrdb's RBAC authorizer's,
+// the one the route permissions use. It fails closed: with no authorizer
+// wired, the request is refused.
+func (h *IAMHandler) authorizeUserWrite(w http.ResponseWriter, r *http.Request, tenantID, resource, action string) bool {
 	identity := qrdbsdk.IdentityFromContext(r.Context())
 	if identity == nil {
 		RespondError(w, r, http.StatusUnauthorized, &UnauthorizedError{Message: "authentication required"})
@@ -475,14 +492,14 @@ func (h *IAMHandler) authorizeRoleAssignment(w http.ResponseWriter, r *http.Requ
 	authz := h.server.barrierScopeAuthorizer()
 	if authz == nil {
 		RespondError(w, r, http.StatusForbidden, &ForbiddenError{
-			Reason: "roles:assign cannot be checked: no authorizer is configured",
+			Reason: resource + ":" + action + " cannot be checked: no authorizer is configured",
 		})
 		return false
 	}
 	ctx := qrdbsdk.ContextWithTenant(r.Context(), tenantID)
-	if err := authz.Authorize(ctx, identity, roleAssignmentResource, roleAssignmentAction); err != nil {
+	if err := authz.Authorize(ctx, identity, resource, action); err != nil {
 		RespondError(w, r, http.StatusForbidden, &ForbiddenError{
-			Reason: roleAssignmentResource + ":" + roleAssignmentAction + " is required to set a user's roles",
+			Reason: resource + ":" + action + " is required for this user change",
 		})
 		return false
 	}

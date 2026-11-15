@@ -145,6 +145,69 @@ func TestCreateUser_RolesWithoutRolesAssignIsForbidden(t *testing.T) {
 	assert.Error(t, err, "a caller without roles:assign created a user holding the Admin role")
 }
 
+// Attributes feed ABAC, so writing them is as much an assignment as writing
+// roles: an update carrying only attributes asks roles:assign.
+func TestUpdateUser_AttributesWithoutRolesAssignIsForbidden(t *testing.T) {
+	f := newRoleAssignFixture(t, true)
+	before, err := f.identity.GetUser(context.Background(), "acme", f.user.ID)
+	require.NoError(t, err)
+
+	w := f.updateUser(`{"attributes":{"clearance":"top"}}`)
+
+	assert.Equal(t, http.StatusForbidden, w.Code, w.Body.String())
+	after, err := f.identity.GetUser(context.Background(), "acme", f.user.ID)
+	require.NoError(t, err)
+	assert.Equal(t, before, after, "a caller without roles:assign wrote the user's attributes")
+	decisions := f.authz.made()
+	require.Len(t, decisions, 1)
+	assert.Equal(t, scopeDecision{tenant: "acme", resource: "roles", action: "assign"}, decisions[0])
+}
+
+func TestCreateUser_AttributesWithoutRolesAssignIsForbidden(t *testing.T) {
+	f := newRoleAssignFixture(t, true)
+
+	w := f.createUser(`{"email":"eve@acme.com","username":"eve","attributes":{"clearance":"top"}}`)
+
+	assert.Equal(t, http.StatusForbidden, w.Code, w.Body.String())
+	_, err := f.identity.GetUserByEmail(context.Background(), "acme", "eve@acme.com")
+	assert.Error(t, err, "a caller without roles:assign created a user carrying attributes")
+	decisions := f.authz.made()
+	require.Len(t, decisions, 1)
+	assert.Equal(t, scopeDecision{tenant: "acme", resource: "roles", action: "assign"}, decisions[0])
+}
+
+// Enabling or disabling an account through UpdateUser asks users:enable or
+// users:disable, as gRPC and the approve and reject routes do.
+func TestUpdateUser_LifecycleChangeWithoutPermissionIsForbidden(t *testing.T) {
+	cases := []struct {
+		name   string
+		body   string
+		action string
+	}{
+		{name: "enabled true", body: `{"enabled":true}`, action: "enable"},
+		{name: "lifecycle active", body: `{"lifecycle":"active"}`, action: "enable"},
+		{name: "enabled false", body: `{"enabled":false}`, action: "disable"},
+		{name: "lifecycle suspended", body: `{"lifecycle":"suspended"}`, action: "disable"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newRoleAssignFixture(t, true)
+			before, err := f.identity.GetUser(context.Background(), "acme", f.user.ID)
+			require.NoError(t, err)
+
+			w := f.updateUser(tc.body)
+
+			assert.Equal(t, http.StatusForbidden, w.Code, w.Body.String())
+			after, err := f.identity.GetUser(context.Background(), "acme", f.user.ID)
+			require.NoError(t, err)
+			assert.Equal(t, before, after, "a caller without users:%s changed the account's state", tc.action)
+			decisions := f.authz.made()
+			require.Len(t, decisions, 1)
+			assert.Equal(t, scopeDecision{tenant: "acme", resource: "users", action: tc.action}, decisions[0])
+		})
+	}
+}
+
 func TestUserRoles_UnwiredAuthorizerIsForbidden(t *testing.T) {
 	f := newRoleAssignFixture(t, false)
 	f.handler.server.SetBarrierScopeAuthorizer(nil)
