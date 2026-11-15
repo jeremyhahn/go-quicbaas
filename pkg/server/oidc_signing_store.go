@@ -83,11 +83,14 @@ type oidcKeyMaterialStore struct {
 // a key, "K--v<n>", which only a fenced rotation creates.
 var oidcKeyVersionName = regexp.MustCompile(`--v[0-9]+`)
 
-// Put writes key material: under the rotation fence as asked, and without it
-// only as the first creation of a key that is not a rotation version.
+// Put writes key material. Under the rotation fence it writes from the bytes
+// this holder observed or wrote under key in this rotation (CompareAndSwap),
+// or creates an absent key (PutIfAbsent); material that changed meanwhile is
+// left as it is and *OIDCRotationFencedError returned. Without the fence it
+// passes only as the first creation of a key that is not a rotation version.
 func (s *oidcKeyMaterialStore) Put(ctx context.Context, key string, value []byte) error {
-	if _, ok := oidcFenceFrom(ctx); ok {
-		return s.oidcGuardedKV.Put(ctx, key, value)
+	if fence, ok := oidcFenceFrom(ctx); ok {
+		return fence.putMaterial(ctx, s.oidcGuardedKV, key, value)
 	}
 	if oidcKeyVersionName.MatchString(key) {
 		return &OIDCRotationUnfencedError{Key: key, Op: "put"}
@@ -111,12 +114,58 @@ func (s *oidcKeyMaterialStore) PutIfAbsent(ctx context.Context, key string, valu
 	return s.oidcGuardedKV.PutIfAbsent(ctx, key, value)
 }
 
-// Delete removes key material under the rotation fence.
+// Delete removes key material under the rotation fence, and only the bytes
+// this holder observed or wrote under key in this rotation
+// (CompareAndDelete): a stale holder's cleanup cannot remove a key a peer
+// has written since. Material the holder neither observed nor wrote, or that
+// changed meanwhile, is left as it is and *OIDCRotationFencedError returned.
 func (s *oidcKeyMaterialStore) Delete(ctx context.Context, key string) error {
-	if _, ok := oidcFenceFrom(ctx); !ok {
+	fence, ok := oidcFenceFrom(ctx)
+	if !ok {
 		return &OIDCRotationUnfencedError{Key: key, Op: "delete"}
 	}
-	return s.oidcGuardedKV.Delete(ctx, key)
+	return fence.deleteMaterial(ctx, s.oidcGuardedKV, key)
+}
+
+// Get reads key material; under the rotation fence the bytes read are what
+// a later fenced write or delete of key starts from.
+func (s *oidcKeyMaterialStore) Get(ctx context.Context, key string) ([]byte, error) {
+	value, err := s.oidcGuardedKV.Get(ctx, key)
+	if fence, ok := oidcFenceFrom(ctx); ok && err == nil {
+		fence.observeMaterial(key, value)
+	}
+	return value, err
+}
+
+// List lists key material; under the rotation fence each listed key's bytes
+// are observed, so the rotation that finds an interrupted rotation's key can
+// remove exactly what it found.
+func (s *oidcKeyMaterialStore) List(ctx context.Context, prefix string) ([]string, error) {
+	keys, err := s.oidcGuardedKV.List(ctx, prefix)
+	if err != nil {
+		return nil, err
+	}
+	if fence, ok := oidcFenceFrom(ctx); ok {
+		for _, key := range keys {
+			if value, getErr := s.oidcGuardedKV.Get(ctx, key); getErr == nil {
+				fence.observeMaterial(key, value)
+			}
+		}
+	}
+	return keys, nil
+}
+
+// Scan visits key material; under the rotation fence each visited value is
+// observed.
+func (s *oidcKeyMaterialStore) Scan(ctx context.Context, prefix string, fn func(key string, value []byte) error) error {
+	fence, ok := oidcFenceFrom(ctx)
+	if !ok {
+		return s.oidcGuardedKV.Scan(ctx, prefix, fn)
+	}
+	return s.oidcGuardedKV.Scan(ctx, prefix, func(key string, value []byte) error {
+		fence.observeMaterial(key, value)
+		return fn(key, value)
+	})
 }
 
 // oidcFenceFrom returns the rotation fence ctx carries, if any.
@@ -591,6 +640,83 @@ type oidcVersionFence struct {
 	mu       sync.Mutex
 	expected []byte
 	present  bool
+
+	// materialMu guards material: per key-material name, the bytes this
+	// holder observed or wrote under it in this rotation.
+	materialMu sync.Mutex
+	material   map[string]oidcMaterial
+}
+
+// oidcMaterial is what one rotation knows of one key-material name: the
+// bytes it holds, whether it is present, and whether this holder wrote it.
+// A name the holder wrote is not re-observed: what it wrote is what its
+// cleanup may remove.
+type oidcMaterial struct {
+	value   []byte
+	present bool
+	written bool
+}
+
+// observeMaterial records value as read under key, unless this holder wrote
+// key in this rotation.
+func (f *oidcVersionFence) observeMaterial(key string, value []byte) {
+	f.materialMu.Lock()
+	defer f.materialMu.Unlock()
+	if f.material == nil {
+		f.material = make(map[string]oidcMaterial)
+	}
+	if f.material[key].written {
+		return
+	}
+	f.material[key] = oidcMaterial{value: slices.Clone(value), present: true}
+}
+
+// putMaterial writes value under key from what this holder knows of key: a
+// CompareAndSwap from the bytes it observed or wrote, or a PutIfAbsent.
+func (f *oidcVersionFence) putMaterial(ctx context.Context, kv oidcGuardedKV, key string, value []byte) error {
+	f.materialMu.Lock()
+	defer f.materialMu.Unlock()
+	known := f.material[key]
+	var (
+		ok  bool
+		err error
+	)
+	if known.present {
+		ok, _, err = kv.CompareAndSwap(ctx, key, known.value, value)
+	} else {
+		ok, err = kv.PutIfAbsent(ctx, key, value)
+	}
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return &OIDCRotationFencedError{Key: key}
+	}
+	if f.material == nil {
+		f.material = make(map[string]oidcMaterial)
+	}
+	f.material[key] = oidcMaterial{value: slices.Clone(value), present: true, written: true}
+	return nil
+}
+
+// deleteMaterial removes key only while it holds the bytes this holder
+// observed or wrote under it (CompareAndDelete).
+func (f *oidcVersionFence) deleteMaterial(ctx context.Context, kv oidcGuardedKV, key string) error {
+	f.materialMu.Lock()
+	defer f.materialMu.Unlock()
+	known := f.material[key]
+	if !known.present {
+		return &OIDCRotationFencedError{Key: key}
+	}
+	ok, err := kv.CompareAndDelete(ctx, key, known.value)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return &OIDCRotationFencedError{Key: key}
+	}
+	f.material[key] = oidcMaterial{written: known.written}
+	return nil
 }
 
 // commit writes value to the record from the expected value and advances the
@@ -617,18 +743,19 @@ func (f *oidcVersionFence) commit(ctx context.Context, value []byte) error {
 	return nil
 }
 
-// OIDCRotationFencedError reports a version-record commit refused because
-// the record changed after its writer took the rotation lease: the lease
-// expired and another node rotated the key, so the stale holder writes
-// nothing.
+// OIDCRotationFencedError reports a write under the rotation lease refused
+// because the state it would change is not what its holder saw: the version
+// record, or key material, changed after the holder read or wrote it (the
+// lease expired and another node rotated the key), or the holder deletes key
+// material it never saw. The stale holder changes nothing.
 type OIDCRotationFencedError struct {
 	Key string
 }
 
 // Error describes the fenced commit.
 func (e *OIDCRotationFencedError) Error() string {
-	return "server: oidc signing key version record " + e.Key +
-		" changed since the rotation lease was taken; the stale holder's commit is refused"
+	return "server: oidc signing key state " + e.Key +
+		" changed since the rotation lease was taken, or was never seen under it; the holder's write is refused"
 }
 
 // oidcRotationLeaseExpired reports whether a stored lease value is past its
