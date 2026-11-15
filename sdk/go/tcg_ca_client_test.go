@@ -76,8 +76,8 @@ func TestTCGCA_RejectsBadInput(t *testing.T) {
 	if _, err := newTCGCAService(&mockTransport{}).EnrollDevice(ctx, nil); err == nil {
 		t.Error("nil request accepted")
 	}
-	//nolint:staticcheck // a nil context is the case under test
-	if _, err := newTCGCAService(&mockTransport{}).EnrollDevice(nil, &xkmstransport.EnrollDeviceRequest{}); err == nil {
+	var nilCtx context.Context // a nil context is the case under test
+	if _, err := newTCGCAService(&mockTransport{}).EnrollDevice(nilCtx, &xkmstransport.EnrollDeviceRequest{}); err == nil {
 		t.Error("nil context accepted")
 	}
 	if _, err := newTCGCAService(nil).IssueEKCertificate(ctx, &xkmstransport.IssueEKCertificateRequest{}); err == nil {

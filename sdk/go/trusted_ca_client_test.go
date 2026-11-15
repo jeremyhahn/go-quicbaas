@@ -104,8 +104,8 @@ func TestTrustedCA_RejectsBadInput(t *testing.T) {
 	if _, err := ca.IsRevoked(ctx, nil); err == nil {
 		t.Error("nil request accepted")
 	}
-	//nolint:staticcheck // a nil context is the case under test
-	if _, err := ca.GetCABundle(nil, &xkmstransport.GetCABundleRequest{}); err == nil {
+	var nilCtx context.Context // a nil context is the case under test
+	if _, err := ca.GetCABundle(nilCtx, &xkmstransport.GetCABundleRequest{}); err == nil {
 		t.Error("nil context accepted")
 	}
 	if calls != 0 {
