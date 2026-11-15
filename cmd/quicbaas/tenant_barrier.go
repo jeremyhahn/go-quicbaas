@@ -427,8 +427,8 @@ func runTenantBarrierUnsealShareCommand(cmd *cobra.Command, _ []string) error {
 
 	progress, err := client.TenantBarrierUnsealShare(ctx, &qrdbtransport.TenantBarrierUnsealShareRequest{
 		TenantID: tenantBarrierTenantID,
-		//secure:unborrowed injected-interface the go-qrdb transport request carries the share as a string; the copy is unwipeable (#237).
-		Share: string(share.Bytes()),
+		//secure:unwiped injected-interface the go-qrdb TenantBarrierUnsealShareRequest.Share field is a string, so the copy is unwipeable (#237).
+		Share: string(share.Bytes()), //secure:unborrowed injected-interface the protected share is opened only for the unseal-share call.
 	})
 	if err != nil {
 		return formatError(err)
