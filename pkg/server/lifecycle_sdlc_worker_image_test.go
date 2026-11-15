@@ -15,6 +15,10 @@ package server
 
 import (
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/x509"
 	"errors"
 	"io"
 	"log/slog"
@@ -25,6 +29,7 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/pkg/config"
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
+	"github.com/jeremyhahn/go-quicbaas/pkg/provenance"
 	"github.com/jeremyhahn/go-quicbaas/pkg/sdlc/workerimage"
 )
 
@@ -149,7 +154,7 @@ func (nopObserver) ObserveRefresh(workerimage.Outcome, time.Time) {}
 func TestNewSDLCWorkerImageRefresher(t *testing.T) {
 	good := config.Default().SDLC.WorkerImage
 	if _, err := newSDLCWorkerImageRefresher(good, workerImageTestPins(), workerImageTestDeps(),
-		fakeAgentService{}, fakeProjectReader{}, nil); err != nil {
+		fakeAgentService{}, fakeProjectReader{}, nil, nil); err != nil {
 		t.Fatalf("the shipped configuration must assemble: %v", err)
 	}
 
@@ -166,14 +171,61 @@ func TestNewSDLCWorkerImageRefresher(t *testing.T) {
 			cfg := good
 			mutate(&cfg)
 			if _, err := newSDLCWorkerImageRefresher(cfg, workerImageTestPins(), workerImageTestDeps(),
-				fakeAgentService{}, fakeProjectReader{}, nil); !errors.Is(err, workerimage.ErrInvalidConfig) {
+				fakeAgentService{}, fakeProjectReader{}, nil, nil); !errors.Is(err, workerimage.ErrInvalidConfig) {
 				t.Fatalf("err = %v, want ErrInvalidConfig", err)
 			}
 		})
 	}
 	if _, err := newSDLCWorkerImageRefresher(good, workerImageTestPins(), workerImageTestDeps(),
-		nil, fakeProjectReader{}, nil); !errors.Is(err, workerimage.ErrInvalidConfig) {
+		nil, fakeProjectReader{}, nil, nil); !errors.Is(err, workerimage.ErrInvalidConfig) {
 		t.Fatalf("a smoker with no orchestrator must be refused, got %v", err)
+	}
+}
+
+// nopProvenancePublisher stands in for the registry's referrers API.
+type nopProvenancePublisher struct{}
+
+func (nopProvenancePublisher) Push(context.Context, string, string, *provenance.Signed) (string, error) {
+	return "sha256:referrer", nil
+}
+
+func testFactoryProvenance(t *testing.T) workerimage.Provenance {
+	t.Helper()
+	// local-keygen-ok: stands in for the factory's go-xkms image-signing key.
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return workerimage.Provenance{Publisher: nopProvenancePublisher{}, Signer: key,
+		Chain: []*x509.Certificate{{}}, BuilderID: "https://factory.example.com"}
+}
+
+// TestWithFactoryProvenance_ReachesTheRefresher proves the option is
+// recorded and handed to the worker-image refresher, which refuses it
+// without a registry to publish the referrer to.
+func TestWithFactoryProvenance_ReachesTheRefresher(t *testing.T) {
+	p := testFactoryProvenance(t)
+	srv, err := NewServer(config.Default(), WithFactoryProvenance(p))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if srv.opts.factoryProvenance == nil || srv.opts.factoryProvenance.BuilderID != p.BuilderID {
+		t.Fatalf("WithFactoryProvenance must record the configuration, got %+v", srv.opts.factoryProvenance)
+	}
+	if srv, err = NewServer(config.Default()); err != nil || srv.opts.factoryProvenance != nil {
+		t.Fatalf("factoryProvenance must be nil without the option: %+v, %v", srv.opts.factoryProvenance, err)
+	}
+
+	cfg := config.Default().SDLC.WorkerImage
+	cfg.Registry = ""
+	if _, err := newSDLCWorkerImageRefresher(cfg, workerImageTestPins(), workerImageTestDeps(),
+		fakeAgentService{}, fakeProjectReader{}, nil, &p); !errors.Is(err, workerimage.ErrInvalidConfig) {
+		t.Fatalf("provenance with no registry: err = %v, want ErrInvalidConfig", err)
+	}
+	cfg.Registry = "reg.example:3000/o/worker"
+	if _, err := newSDLCWorkerImageRefresher(cfg, workerImageTestPins(), workerImageTestDeps(),
+		fakeAgentService{}, fakeProjectReader{}, nil, &p); err != nil {
+		t.Fatalf("provenance with a registry must assemble: %v", err)
 	}
 }
 
@@ -197,13 +249,13 @@ func TestNewSDLCWorkerImageRefresher_TheCredentialIsATenantSecret(t *testing.T) 
 	cfg := config.Default().SDLC.WorkerImage
 	withWorkerImageSecretCredential(&cfg)
 	if _, err := newSDLCWorkerImageRefresher(cfg, workerImageTestPins(), workerImageTestDeps(),
-		fakeAgentService{}, fakeProjectReader{}, stubSecretResolver{}); err != nil {
+		fakeAgentService{}, fakeProjectReader{}, stubSecretResolver{}, nil); err != nil {
 		t.Fatalf("a registry with a secret-backed credential must assemble: %v", err)
 	}
 
 	cfg.RegistryTokenSecret = "tenant/automatethethings/sdlc/registry/worker-image/token"
 	_, err := newSDLCWorkerImageRefresher(cfg, workerImageTestPins(), workerImageTestDeps(),
-		fakeAgentService{}, fakeProjectReader{}, stubSecretResolver{})
+		fakeAgentService{}, fakeProjectReader{}, stubSecretResolver{}, nil)
 	var invalid *workerimage.InvalidConfigError
 	if !errors.As(err, &invalid) || invalid.Field != "registry_token_secret" {
 		t.Fatalf("err = %v, want the storage-path reference refused at startup", err)
