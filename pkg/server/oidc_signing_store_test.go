@@ -20,6 +20,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -187,6 +188,118 @@ func TestOIDCSigningStore_RotationReachesPeerNode(t *testing.T) {
 	kidB, _, _ := b.Current()
 	require.Equal(t, rotatedKid, kidB)
 	require.Len(t, b.JWKS().Key(rotatedKid), 1)
+}
+
+// TestOIDCSigningStore_TwoNodeRotationRestartAndPeerRotation rotates the
+// shared OIDC key on node A, checks node B's running manager verifies A's new
+// tokens, restarts A, then rotates from B: the restarted A still verifies the
+// version before its rotation, B's rotation makes a new version without
+// replacing A's, and A picks B's rotation up without a restart.
+func TestOIDCSigningStore_TwoNodeRotationRestartAndPeerRotation(t *testing.T) {
+	t.Cleanup(dbxkms.Reset)
+	kv := xkmssdk.NewStorageMemory()
+	verifies := func(m *iam.SigningKeyManager, kid string) func() bool {
+		return func() bool {
+			_, err := m.PublicForKID(kid)
+			return err == nil
+		}
+	}
+
+	a := bootOIDCSigningServer(t, &Server{config: &config.Config{}}, kv)
+	b := bootOIDCSigningServer(t, &Server{config: &config.Config{}}, kv)
+	v1, _, _ := a.Current()
+	kidB, _, _ := b.Current()
+	require.Equal(t, v1, kidB)
+
+	// A rotates; B's running manager verifies A's new tokens.
+	require.NoError(t, a.Rotate())
+	v2, _, _ := a.Current()
+	require.NotEqual(t, v1, v2)
+	require.Eventually(t, verifies(b, v2), 5*time.Second, 20*time.Millisecond)
+	v2Pub, err := a.PublicForKID(v2)
+	require.NoError(t, err)
+
+	// A restarts: it signs with v2 and still verifies its v1 tokens.
+	a = bootOIDCSigningServer(t, &Server{config: &config.Config{}}, kv)
+	kidA, _, _ := a.Current()
+	require.Equal(t, v2, kidA)
+	_, err = a.PublicForKID(v1)
+	require.NoError(t, err)
+	require.Len(t, a.JWKS().Key(v1), 1)
+
+	// B rotates from the record A left: a third version, and A's v2 kept.
+	require.NoError(t, b.Rotate())
+	v3, _, _ := b.Current()
+	require.NotEqual(t, v1, v3)
+	require.NotEqual(t, v2, v3)
+	require.Eventually(t, verifies(a, v3), 5*time.Second, 20*time.Millisecond)
+	pub, err := a.PublicForKID(v2)
+	require.NoError(t, err)
+	require.True(t, v2Pub.(*ecdsa.PublicKey).Equal(pub))
+
+	// A node booted now loads v3 as current and A's original v2 material.
+	c := bootOIDCSigningServer(t, &Server{config: &config.Config{}}, kv)
+	kidC, _, _ := c.Current()
+	require.Equal(t, v3, kidC)
+	pub, err = c.PublicForKID(v2)
+	require.NoError(t, err)
+	require.True(t, v2Pub.(*ecdsa.PublicKey).Equal(pub))
+}
+
+// TestOIDCRotationLock serializes two rotations of one key, takes over an
+// expired lease and refuses a rotation whose lease stays held.
+func TestOIDCRotationLock(t *testing.T) {
+	ctx := context.Background()
+	kv := xkmssdk.NewStorageMemory()
+	lock := newOIDCRotationLock(kv)
+	cn := iam.OIDCSigningKeyCN
+
+	unlock, err := lock(ctx, "", cn)
+	require.NoError(t, err)
+	acquired := make(chan func(), 1)
+	failed := make(chan error, 1)
+	go func() {
+		u, err := lock(ctx, "", cn)
+		if err != nil {
+			failed <- err
+			return
+		}
+		acquired <- u
+	}()
+	select {
+	case <-acquired:
+		t.Fatal("second rotation acquired the lease while the first held it")
+	case err := <-failed:
+		t.Fatalf("second rotation: %v", err)
+	case <-time.After(200 * time.Millisecond):
+	}
+	unlock()
+	select {
+	case u := <-acquired:
+		u()
+	case err := <-failed:
+		t.Fatalf("second rotation: %v", err)
+	case <-time.After(5 * time.Second):
+		t.Fatal("second rotation did not acquire the released lease")
+	}
+
+	stale := time.Now().Add(-time.Second).UTC().Format(time.RFC3339Nano) + " stale"
+	require.NoError(t, kv.Put(ctx, oidcRotationLeasePrefix+"system/"+cn, []byte(stale)))
+	u, err := lock(ctx, "", cn)
+	require.NoError(t, err)
+	u()
+
+	wait := oidcRotationLeaseWait
+	oidcRotationLeaseWait = 100 * time.Millisecond
+	t.Cleanup(func() { oidcRotationLeaseWait = wait })
+	held, err := lock(ctx, "tenant-a", cn)
+	require.NoError(t, err)
+	_, err = lock(ctx, "tenant-a", cn)
+	require.ErrorAs(t, err, new(*OIDCRotationBusyError))
+	held()
+	u, err = lock(ctx, "tenant-a", cn)
+	require.NoError(t, err)
+	u()
 }
 
 // TestOIDCSigningStore_KeepsNonSoftwareDefault checks the backend selection:

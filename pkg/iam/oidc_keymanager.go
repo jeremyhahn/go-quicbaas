@@ -22,6 +22,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -56,6 +57,9 @@ type keyEntry struct {
 type keySnapshot struct {
 	current  keyEntry
 	previous []keyEntry
+	// version is the current version of the key's version record the
+	// snapshot was built from; 0 when it was not built from one.
+	version uint32
 }
 
 // rotationOverlap is the number of superseded keys kept resolvable after a
@@ -85,7 +89,38 @@ type SigningKeyManager struct {
 	snap atomic.Pointer[keySnapshot]
 
 	rotateMu sync.Mutex
+
+	// lastRefresh is when the snapshot was last checked against the key's
+	// version record, in Unix nanoseconds.
+	lastRefresh atomic.Int64
 }
+
+// RotationLock serializes rotations of one signing key across every node that
+// shares the key's backend. It returns once the caller holds the key's
+// rotation, with the function that releases it.
+type RotationLock func(ctx context.Context, tenantID, cn string) (unlock func(), err error)
+
+// rotationLocks maps a backend name to the RotationLock its keys rotate under.
+var rotationLocks sync.Map
+
+// SetRotationLock makes every rotation of a signing key on backend hold lock,
+// so two nodes sharing the backend never rotate one key at once. A nil lock
+// removes the backend's lock.
+func SetRotationLock(backend string, lock RotationLock) {
+	if lock == nil {
+		rotationLocks.Delete(backend)
+		return
+	}
+	rotationLocks.Store(backend, lock)
+}
+
+// signingKeyRefreshInterval is how often Current and JWKS re-read the key's
+// version record, so a rotation another node made reaches this one.
+const signingKeyRefreshInterval = time.Second
+
+// unknownKIDRefreshInterval is how often a token naming a key ID this manager
+// does not hold may re-read the key's version record.
+const unknownKIDRefreshInterval = 100 * time.Millisecond
 
 // UnknownKeyIDError is returned when a token references a kid that is neither
 // the current key nor a retained previous key.
@@ -367,7 +402,122 @@ func NewSigningKeyManagerFromXKMSBackend(cn, tenantID, storeType string) (*Signi
 		storeType: storeType,
 	}
 	m.snap.Store(&keySnapshot{current: entry})
+	// A key rotated before this node started keeps its earlier version
+	// verifiable: the snapshot takes every version the record holds.
+	if err := m.Refresh(); err != nil {
+		return nil, err
+	}
 	return m, nil
+}
+
+// versioned reports whether the manager's key lives on a registered backend
+// instance whose versions the xkms service records, so the snapshot can be
+// rebuilt from the key's version record.
+func (m *SigningKeyManager) versioned() bool {
+	if m.cn == "" {
+		return false
+	}
+	attrs := es256KeyAttributes(m.cn, m.tenantID, m.storeType)
+	return attrs.Backend != "" && attrs.Backend != string(attrs.StoreType)
+}
+
+// Refresh rebuilds the manager's keys from the key's version record when the
+// record's current version differs from the one the manager holds: another
+// node sharing the backend may have rotated the key. The record's current
+// version becomes current and its newest other enabled versions, then the
+// keys the manager held, fill the verification overlap.
+func (m *SigningKeyManager) Refresh() error {
+	if !m.versioned() {
+		return nil
+	}
+	m.rotateMu.Lock()
+	defer m.rotateMu.Unlock()
+	return m.refreshLocked(context.Background())
+}
+
+// maybeRefresh runs Refresh when the record was last read more than every
+// ago and no rotation or refresh is under way. A failed refresh keeps the
+// keys the manager holds.
+func (m *SigningKeyManager) maybeRefresh(every time.Duration) {
+	if !m.versioned() {
+		return
+	}
+	if time.Since(time.Unix(0, m.lastRefresh.Load())) < every {
+		return
+	}
+	if !m.rotateMu.TryLock() {
+		return
+	}
+	defer m.rotateMu.Unlock()
+	_ = m.refreshLocked(context.Background())
+}
+
+// refreshLocked is Refresh with rotateMu held.
+func (m *SigningKeyManager) refreshLocked(ctx context.Context) error {
+	m.lastRefresh.Store(time.Now().UnixNano())
+	prev := m.load()
+	if prev == nil {
+		return &SigningKeyUnavailableError{}
+	}
+	svc, err := xkmssdk.Get()
+	if err != nil {
+		return err
+	}
+	store := svc.KeyVersionStore()
+	if store == nil {
+		return nil
+	}
+	attrs := es256KeyAttributes(m.cn, m.tenantID, m.storeType)
+	rec, found, err := store.Load(ctx, attrs.TenantID, attrs.Backend, attrs.CN)
+	if err != nil {
+		return err
+	}
+	if !found || rec.Current == prev.version {
+		return nil
+	}
+	current, err := versionEntry(ctx, attrs, rec.Current)
+	if err != nil {
+		return err
+	}
+	candidates := make([]keyEntry, 0, rotationOverlap+1+len(prev.previous))
+	for _, n := range rec.Enabled() {
+		if len(candidates) == rotationOverlap {
+			break
+		}
+		if n == rec.Current {
+			continue
+		}
+		e, err := versionEntry(ctx, attrs, n)
+		if err != nil {
+			return err
+		}
+		candidates = append(candidates, e)
+	}
+	candidates = append(candidates, prev.current)
+	candidates = append(candidates, prev.previous...)
+	previous := make([]keyEntry, 0, rotationOverlap)
+	for _, e := range candidates {
+		if len(previous) == rotationOverlap {
+			break
+		}
+		if e.kid == current.kid || slices.ContainsFunc(previous, func(p keyEntry) bool { return p.kid == e.kid }) {
+			continue
+		}
+		previous = append(previous, e)
+	}
+	m.snap.Store(&keySnapshot{current: current, previous: previous, version: rec.Current})
+	return nil
+}
+
+// versionEntry loads version n of the key attrs name.
+func versionEntry(ctx context.Context, attrs *xkmssdk.KeyAttributes, n uint32) (keyEntry, error) {
+	a := *attrs
+	a.CN = xkmssdk.KeyVersionName(attrs.CN, n)
+	signer, err := xkms.Signer(ctx, &a)
+	if err != nil {
+		return keyEntry{}, err
+	}
+	return newKeyEntry(signer, SigningAlgorithmES256)
 }
 
 // NewSigningKeyManagerFromSigner returns a key manager whose only key is the
@@ -401,6 +551,7 @@ func (m *SigningKeyManager) load() *keySnapshot {
 // Current returns the kid, signer, and algorithm of the key tokens are
 // currently signed with.
 func (m *SigningKeyManager) Current() (kid string, signer crypto.Signer, alg string) {
+	m.maybeRefresh(signingKeyRefreshInterval)
 	snap := m.load()
 	if snap == nil {
 		return "", nil, ""
@@ -440,6 +591,17 @@ func (m *SigningKeyManager) SignerForKID(kid string) (crypto.Signer, error) {
 // key and any retained previous keys. It returns UnknownKeyIDError when no key
 // matches.
 func (m *SigningKeyManager) PublicForKID(kid string) (crypto.PublicKey, error) {
+	pub, err := m.publicForKID(kid)
+	if errors.As(err, new(*UnknownKeyIDError)) {
+		// The key may have been rotated on another node sharing the backend.
+		m.maybeRefresh(unknownKIDRefreshInterval)
+		return m.publicForKID(kid)
+	}
+	return pub, err
+}
+
+// publicForKID looks kid up in the manager's snapshot.
+func (m *SigningKeyManager) publicForKID(kid string) (crypto.PublicKey, error) {
 	snap := m.load()
 	if snap == nil {
 		return nil, &SigningKeyUnavailableError{}
@@ -459,6 +621,7 @@ func (m *SigningKeyManager) PublicForKID(kid string) (crypto.PublicKey, error) {
 // active kid (current first, then retained previous keys), each with Use "sig",
 // its algorithm, and KeyID set to the derived kid.
 func (m *SigningKeyManager) JWKS() *jose.JSONWebKeySet {
+	m.maybeRefresh(signingKeyRefreshInterval)
 	snap := m.load()
 	if snap == nil {
 		return &jose.JSONWebKeySet{}
@@ -509,11 +672,30 @@ func (m *SigningKeyManager) Rotate() error {
 	// backends may return a handle whose private key never leaves the device.
 	// The service API resolves registered backend instance names (such as
 	// the replicated OIDC store), which a parsed key ID string does not.
+	ctx := context.Background()
+
+	// Nodes sharing the backend rotate the key one at a time, each from the
+	// version record the last rotation left: a node rotating from a stale
+	// record would take another node's version for an orphan and replace it.
+	if lock, ok := rotationLocks.Load(m.storeType); ok {
+		unlock, err := lock.(RotationLock)(ctx, m.tenantID, m.cn)
+		if err != nil {
+			return err
+		}
+		defer unlock()
+	}
+	if m.versioned() {
+		if err := m.refreshLocked(ctx); err != nil {
+			return err
+		}
+		prev = m.load()
+	}
+
 	svc, err := xkmssdk.Get()
 	if err != nil {
 		return err
 	}
-	if _, err := svc.RotateKey(context.Background(), &transport.RotateKeyRequest{
+	if _, err := svc.RotateKey(ctx, &transport.RotateKeyRequest{
 		Backend:  m.storeType,
 		KeyID:    m.cn,
 		TenantID: m.tenantID,
@@ -521,7 +703,16 @@ func (m *SigningKeyManager) Rotate() error {
 		return err
 	}
 
-	signer, err := currentSigner(context.Background(), attrs)
+	if m.versioned() {
+		if err := m.refreshLocked(ctx); err != nil {
+			return err
+		}
+		if m.load() != prev {
+			return nil
+		}
+	}
+
+	signer, err := currentSigner(ctx, attrs)
 	if err != nil {
 		return err
 	}
@@ -596,7 +787,7 @@ func (m *SigningKeyManager) AdoptPreviousFromXKMSBackend(storeType string) (bool
 	for i := 0; i < len(prev.previous) && len(previous) < rotationOverlap; i++ {
 		previous = append(previous, prev.previous[i])
 	}
-	m.snap.Store(&keySnapshot{current: prev.current, previous: previous})
+	m.snap.Store(&keySnapshot{current: prev.current, previous: previous, version: prev.version})
 	return true, nil
 }
 

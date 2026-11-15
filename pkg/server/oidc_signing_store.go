@@ -15,9 +15,12 @@ package server
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"slices"
 	"strings"
 	"sync"
+	"time"
 
 	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
 
@@ -98,6 +101,7 @@ func (s *Server) useReplicatedOIDCSigningStore(kv xkmssdk.StorageBackend) error 
 	if s.xkmsKeyVersionRouter != nil {
 		s.xkmsKeyVersionRouter.setReplicated(versions)
 	}
+	iam.SetRotationLock(oidcSigningBackendName, newOIDCRotationLock(kv))
 	if !slices.Contains(dbxkms.Backends(), oidcSigningBackendName) {
 		if err := registerXKMSBackendFn(oidcSigningBackendName, backend); err != nil {
 			return err
@@ -257,4 +261,90 @@ func newOIDCSigningKeyManager(storeType string) (*iam.SigningKeyManager, error) 
 		return nil, err
 	}
 	return m, nil
+}
+
+// oidcRotationLeasePrefix is the replicated KV prefix of the leases that
+// serialize OIDC signing key rotations across the cluster.
+const oidcRotationLeasePrefix = "oidc-signing-rotation/"
+
+// oidcRotationLeaseTTL is how long a rotation lease is held before another
+// node may take it over, so a node that dies mid-rotation does not block the
+// key's rotations for ever.
+var oidcRotationLeaseTTL = 30 * time.Second
+
+// oidcRotationLeaseWait is how long a rotation waits for another node's
+// rotation of the same key to finish.
+var oidcRotationLeaseWait = time.Minute
+
+// oidcRotationLeasePoll is how often a waiting rotation retries the lease.
+const oidcRotationLeasePoll = 50 * time.Millisecond
+
+// OIDCRotationBusyError reports a rotation of an OIDC signing key that could
+// not start because another node held the key's rotation lease throughout
+// the wait.
+type OIDCRotationBusyError struct {
+	Key  string
+	Wait time.Duration
+}
+
+// Error implements the error interface.
+func (e *OIDCRotationBusyError) Error() string {
+	return "server: OIDC signing key rotation lease " + e.Key + " still held after " + e.Wait.String()
+}
+
+// newOIDCRotationLock returns the iam.RotationLock of the replicated OIDC
+// signing backend: a lease on kv every node shares. A node holds a key's
+// lease from reading its version record until the rotated version is
+// recorded; a lease past its expiry is taken over.
+func newOIDCRotationLock(kv xkmssdk.StorageBackend) iam.RotationLock {
+	return func(ctx context.Context, tenantID, cn string) (func(), error) {
+		tenant := tenantID
+		if tenant == "" {
+			tenant = "system"
+		}
+		key := oidcRotationLeasePrefix + tenant + "/" + cn
+		nonce := make([]byte, 16)
+		if _, err := rand.Read(nonce); err != nil {
+			return nil, err
+		}
+		owner := hex.EncodeToString(nonce)
+		deadline := time.Now().Add(oidcRotationLeaseWait)
+		for {
+			value := []byte(time.Now().Add(oidcRotationLeaseTTL).UTC().Format(time.RFC3339Nano) + " " + owner)
+			ok, err := kv.PutIfAbsent(ctx, key, value)
+			if err != nil {
+				return nil, err
+			}
+			if ok {
+				return func() {
+					if held, err := kv.Get(context.Background(), key); err == nil && string(held) == string(value) {
+						_ = kv.Delete(context.Background(), key)
+					}
+				}, nil
+			}
+			if held, err := kv.Get(ctx, key); err == nil && oidcRotationLeaseExpired(held) {
+				if err := kv.Delete(ctx, key); err != nil {
+					return nil, err
+				}
+				continue
+			}
+			if time.Now().After(deadline) {
+				return nil, &OIDCRotationBusyError{Key: key, Wait: oidcRotationLeaseWait}
+			}
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-time.After(oidcRotationLeasePoll):
+			}
+		}
+	}
+}
+
+// oidcRotationLeaseExpired reports whether a stored lease value is past its
+// expiry. A value that does not parse is treated as expired, so it cannot
+// block rotations.
+func oidcRotationLeaseExpired(value []byte) bool {
+	expiry, _, _ := strings.Cut(string(value), " ")
+	t, err := time.Parse(time.RFC3339Nano, expiry)
+	return err != nil || time.Now().After(t)
 }
