@@ -1699,8 +1699,12 @@ func (r *ToolRegistry) executePut(ctx context.Context, args map[string]interface
 	entityType := getStringAlt(args, "entityType", "entity_type")
 
 	// Support both numeric id and string key parameters
-	// If string key is provided, hash it to uint64 ID
-	id := getIDOrHashKey(entityType, args)
+	// If string key is provided, hash it to uint64 ID. A malformed or
+	// overflowing id is refused before the service is called.
+	id, err := idOrHashKeyArg(entityType, args)
+	if err != nil {
+		return nil, err
+	}
 
 	// Support both data and its value alias; both carry base64.
 	data, err := decodePutData(getStringAlt(args, "data", "value"))
@@ -1737,8 +1741,12 @@ func (r *ToolRegistry) executeGet(ctx context.Context, args map[string]interface
 	entityType := getStringAlt(args, "entityType", "entity_type")
 
 	// Support both numeric id and string key parameters
-	// If string key is provided, hash it to uint64 ID
-	id := getIDOrHashKey(entityType, args)
+	// If string key is provided, hash it to uint64 ID. A malformed or
+	// overflowing id is refused before the service is called.
+	id, err := idOrHashKeyArg(entityType, args)
+	if err != nil {
+		return nil, err
+	}
 
 	req := &service.GetRequest{
 		EntityType: entityType,
@@ -1757,8 +1765,12 @@ func (r *ToolRegistry) executeDelete(ctx context.Context, args map[string]interf
 	entityType := getStringAlt(args, "entityType", "entity_type")
 
 	// Support both numeric id and string key parameters
-	// If string key is provided, hash it to uint64 ID
-	id := getIDOrHashKey(entityType, args)
+	// If string key is provided, hash it to uint64 ID. A malformed or
+	// overflowing id is refused before the service is called.
+	id, err := idOrHashKeyArg(entityType, args)
+	if err != nil {
+		return nil, err
+	}
 
 	req := &service.DeleteRequest{
 		EntityType: entityType,
