@@ -532,13 +532,13 @@ func (s *Storage) GetJobsDueForExecution(ctx context.Context, before time.Time, 
 	return dueJobs, nil
 }
 
-// SaveExecution stores a job execution record.
 // executionIDAt derives an execution ID from t in Unix nanoseconds. A time
 // before the epoch has no unsigned ID and is refused.
 func executionIDAt(t time.Time) (uint64, error) {
 	return conv.SafeInt64ToUint64(t.UnixNano())
 }
 
+// SaveExecution stores a job execution record.
 func (s *Storage) SaveExecution(ctx context.Context, exec *scheduler.JobExecution) error {
 	if exec == nil {
 		return &scheduler.ErrStorageError{Op: "SaveExecution", Cause: ErrNilExecution}
@@ -557,9 +557,10 @@ func (s *Storage) SaveExecution(ctx context.Context, exec *scheduler.JobExecutio
 		return &scheduler.ErrStorageError{Op: "SaveExecution.marshal", Cause: err}
 	}
 
-	// Determine tenant ID from job ownership if we need to store in tenant keyspace
-	// For now, store in system keyspace
-	key := keyForExecution(exec, "")
+	// A tenant-owned job's executions live in that tenant's keyspace, where
+	// GetExecutions reads tenant history; system and delegated runs stay in
+	// the system keyspace.
+	key := keyForExecution(exec, exec.TenantID)
 
 	if err := s.kv.Put(ctx, key, data); err != nil {
 		return &scheduler.ErrStorageError{Op: "SaveExecution.put", Cause: err}
