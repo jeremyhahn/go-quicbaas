@@ -7,8 +7,9 @@ import (
 	stderrors "errors"
 	"testing"
 
-	testca "github.com/jeremyhahn/go-quicbaas/pkg/testutil/xkmsca"
 	xkmstransport "github.com/jeremyhahn/go-xkms/sdk/go/transport"
+
+	testca "github.com/jeremyhahn/go-quicbaas/pkg/testutil/xkmsca"
 )
 
 // TestXKMSCAServicer_SignCSRRefusesAttestation pins that a CSR carrying an
