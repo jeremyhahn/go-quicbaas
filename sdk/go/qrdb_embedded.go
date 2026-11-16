@@ -167,4 +167,11 @@ type QRDBEmbeddedServicers struct {
 	// can resolve a subject (tenant + username) to a uint64 user id and
 	// enroll the factor for that exact user. Optional otherwise.
 	User QRDBUserServicer
+
+	// Data is the embedded node's own go-qrdb client, whose embedded
+	// transport carries the node's service registry, so all six data
+	// services (KV, batch, transaction, MVCC, collection, index) reach the
+	// node. QRDBData() returns it. Optional: when nil, QRDBData() returns this
+	// client's own go-qrdb client, whose embedded transport serves KV only.
+	Data QRDBDataService
 }

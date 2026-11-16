@@ -73,6 +73,13 @@ func buildEmbeddedQRDBServicers(es *embeddedServer) (quicbaas.QRDBEmbeddedServic
 		Admin: admin,
 	}
 
+	// The node's own client serves QRDBData() with its service registry.
+	// The nil check keeps a nil *Client out of the interface, where it
+	// would not compare equal to nil.
+	if nc := es.server.GetQRDBNodeClient(); nc != nil {
+		servicers.Data = nc
+	}
+
 	// Wire the user store and the unified-login UserAuthFactor service
 	// INSTANCE from the node. Enrollment of user-login factors
 	// (Security().Auth().Factors().Add) resolves the caller's subject to a

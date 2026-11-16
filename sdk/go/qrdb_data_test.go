@@ -19,7 +19,10 @@ import (
 	"sync"
 	"testing"
 
+	qrdbservice "github.com/jeremyhahn/go-qrdb/pkg/service"
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
+	qrdbembedded "github.com/jeremyhahn/go-qrdb/sdk/go/transport/embedded"
 
 	sdkerrors "github.com/jeremyhahn/go-quicbaas/sdk/go/errors"
 )
@@ -154,5 +157,156 @@ func TestQRDBData_PropagatesQRDBInitError(t *testing.T) {
 	}
 	if data != nil {
 		t.Errorf("QRDBData() = %#v alongside error %v, want a nil service", data, err)
+	}
+}
+
+// The reached* servicers below stand in for the embedded node's data
+// services. Each embeds its go-qrdb interface (nil) and overrides only the
+// method the probe reaches, so a call landing anywhere else fails loudly
+// with a nil-pointer panic.
+
+type reachedBatchService struct {
+	qrdbservice.BatchServicer
+	reached bool
+}
+
+func (s *reachedBatchService) Execute(_ context.Context, ops []qrdbservice.Op) ([]qrdbservice.OpResponse, error) {
+	s.reached = true
+	return make([]qrdbservice.OpResponse, len(ops)), nil
+}
+
+func (s *reachedBatchService) ExecuteWithMode(ctx context.Context, ops []qrdbservice.Op, _ qrdbsdk.WriteMode) ([]qrdbservice.OpResponse, error) {
+	return s.Execute(ctx, ops)
+}
+
+type reachedTransactionService struct {
+	qrdbservice.TransactionServicer
+	reached bool
+}
+
+func (s *reachedTransactionService) Execute(_ context.Context, _ []qrdbservice.Compare, _, _ []qrdbservice.Op) (*qrdbservice.TransactionResponse, error) {
+	s.reached = true
+	return &qrdbservice.TransactionResponse{Succeeded: true}, nil
+}
+
+func (s *reachedTransactionService) ExecuteWithMode(ctx context.Context, compares []qrdbservice.Compare, successOps, failureOps []qrdbservice.Op, _ qrdbsdk.WriteMode) (*qrdbservice.TransactionResponse, error) {
+	return s.Execute(ctx, compares, successOps, failureOps)
+}
+
+type reachedMVCCService struct {
+	qrdbservice.MVCCKVServicer
+}
+
+func (reachedMVCCService) CurrentRevision(context.Context) (int64, error) {
+	return 1652, nil
+}
+
+type reachedCollectionService struct {
+	qrdbservice.CollectionServicer
+	database string
+}
+
+func (s *reachedCollectionService) ListCollections(_ context.Context, req *qrdbservice.ListCollectionsRequest) (*qrdbservice.ListCollectionsResponse, error) {
+	s.database = req.Database
+	return &qrdbservice.ListCollectionsResponse{}, nil
+}
+
+type reachedIndexService struct {
+	qrdbservice.IndexServicer
+	reached bool
+}
+
+func (s *reachedIndexService) ListIndexes(context.Context) ([]string, error) {
+	s.reached = true
+	return []string{"row1652_idx"}, nil
+}
+
+// TestQRDBData_EveryAccessorReachesEmbeddedNode proves that, when the client
+// carries the embedded node's own go-qrdb client in
+// QRDBEmbeddedServicers.Data, QRDBData() returns it on any transport
+// selection, and each of the six data services reaches the node.
+func TestQRDBData_EveryAccessorReachesEmbeddedNode(t *testing.T) {
+	kv := &recordingKVService{}
+	batch := &reachedBatchService{}
+	txn := &reachedTransactionService{}
+	coll := &reachedCollectionService{}
+	idx := &reachedIndexService{}
+	tr, err := qrdbembedded.New(kv, stubAdminService{},
+		qrdbembedded.WithBatchService(batch),
+		qrdbembedded.WithTransactionService(txn),
+		qrdbembedded.WithMVCCService(reachedMVCCService{}),
+		qrdbembedded.WithCollectionService(coll),
+		qrdbembedded.WithIndexService(idx),
+	)
+	if err != nil {
+		t.Fatalf("embedded.New: %v", err)
+	}
+	node, err := qrdbsdk.NewClient(tr)
+	if err != nil {
+		t.Fatalf("qrdbsdk.NewClient: %v", err)
+	}
+	c := buildEmbeddedQRDBClient(t, QRDBEmbeddedServicers{
+		KV:    kv,
+		Admin: stubAdminService{},
+		Data:  node,
+	})
+
+	probe := func(t *testing.T) {
+		batch.reached, txn.reached, idx.reached, coll.database = false, false, false, ""
+		ctx := context.Background()
+
+		data, err := c.QRDBData()
+		if err != nil {
+			t.Fatalf("QRDBData(): %v", err)
+		}
+		if got, ok := data.(*qrdbsdk.Client); !ok || got != node {
+			t.Fatalf("QRDBData() = %T, want the embedded node's own client", data)
+		}
+
+		put := qrdbtransport.Op{Type: qrdbtransport.OpPut, Key: []byte("row1652/k"), Value: []byte("v")}
+		if err := data.KV().Put(ctx, "row1652/k", []byte("v")); err != nil {
+			t.Errorf("KV().Put: %v", err)
+		}
+		if _, err := data.Batch().ExecuteBatch(ctx, []qrdbtransport.Op{put}); err != nil || !batch.reached {
+			t.Errorf("Batch().ExecuteBatch: err %v, reached node %v", err, batch.reached)
+		}
+		if _, err := data.Transaction().ExecuteTransaction(ctx, &qrdbtransport.TransactionRequest{SuccessOps: []qrdbtransport.Op{put}}); err != nil || !txn.reached {
+			t.Errorf("Transaction().ExecuteTransaction: err %v, reached node %v", err, txn.reached)
+		}
+		if rev, err := data.MVCC().CurrentRevision(ctx); err != nil || rev != 1652 {
+			t.Errorf("MVCC().CurrentRevision = %d, %v, want 1652", rev, err)
+		}
+		if _, err := data.Collections().ListCollections(ctx, "row1652db"); err != nil || coll.database != "row1652db" {
+			t.Errorf("Collections().ListCollections: err %v, node saw database %q", err, coll.database)
+		}
+		if _, err := data.Index().IndexList(ctx); err != nil || !idx.reached {
+			t.Errorf("Index().IndexList: err %v, reached node %v", err, idx.reached)
+		}
+	}
+
+	t.Run("DefaultTransport", probe)
+	t.Run("EmbeddedTransport", func(t *testing.T) {
+		c.opts.transportType = TransportEmbedded
+		probe(t)
+	})
+}
+
+// TestQRDBData_CollectionsFailClosedWithoutNodeClient proves that, without
+// the node's own client, QRDBData() still returns this client's go-qrdb
+// client, whose embedded transport serves KV only: a collection call fails
+// instead of reaching an unwired service.
+func TestQRDBData_CollectionsFailClosedWithoutNodeClient(t *testing.T) {
+	c := buildEmbeddedQRDBClient(t, QRDBEmbeddedServicers{
+		KV:    &recordingKVService{},
+		Admin: stubAdminService{},
+	})
+	c.opts.transportType = TransportEmbedded
+
+	data, err := c.QRDBData()
+	if err != nil {
+		t.Fatalf("QRDBData(): %v", err)
+	}
+	if _, err := data.Collections().ListCollections(context.Background(), "row1652db"); err == nil {
+		t.Fatal("Collections().ListCollections succeeded without the node's client, want an error")
 	}
 }

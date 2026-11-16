@@ -753,9 +753,16 @@ func (c *client) DataStore() (QRDBKVStore, error) {
 	return qrdb.KVStore(), nil
 }
 
-// QRDBData returns go-qrdb's data services through the go-qrdb SDK client
-// this client carries; go-quicbaas wraps none of them.
+// QRDBData returns go-qrdb's data services through a go-qrdb SDK client;
+// go-quicbaas wraps none of them. When the client carries
+// QRDBEmbeddedServicers.Data (the embedded node's own client, whose
+// transport carries the node's service registry) it returns that, so every
+// data service reaches the node. Otherwise it returns the go-qrdb SDK client
+// this client carries.
 func (c *client) QRDBData() (QRDBDataService, error) {
+	if c.opts.embeddedQRDB != nil && c.opts.embeddedQRDB.Data != nil {
+		return c.opts.embeddedQRDB.Data, nil
+	}
 	qrdb, err := c.qrdbClient()
 	if err != nil {
 		return nil, err

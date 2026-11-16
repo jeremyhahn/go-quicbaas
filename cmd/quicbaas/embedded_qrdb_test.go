@@ -14,9 +14,11 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"testing"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -98,6 +100,18 @@ func TestBuildEmbeddedQRDBServicers_EndToEnd(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, servicers.KV, "WithEmbeddedQRDB requires non-nil KV")
 	require.NotNil(t, servicers.Admin, "WithEmbeddedQRDB requires non-nil Admin")
+	require.NotNil(t, servicers.Data, "QRDBData() needs the node's own client")
+	nodeClient, ok := servicers.Data.(*qrdbsdk.Client)
+	require.True(t, ok, "servicers.Data is %T, want the node's *qrdbsdk.Client", servicers.Data)
+	assert.Same(t, es.server.GetQRDBNodeClient(), nodeClient)
+
+	// Isolation probes on the real node: the node's client must refuse an
+	// absent database and an unknown tenant.
+	ctx := context.Background()
+	_, err = servicers.Data.Collections().ListCollections(ctx, "row1652-no-such-db")
+	assert.Error(t, err, "an absent database must be refused")
+	_, err = servicers.Data.Collections().ListCollections(qrdbsdk.ContextWithTenant(ctx, "row1652-no-such-tenant"), "row1652db")
+	assert.Error(t, err, "an unknown tenant must be refused")
 
 	// The bootstrap ceremony services should be wired on a healthy first
 	// boot. If they are not, the CLI's first-boot SDK path falls back to
