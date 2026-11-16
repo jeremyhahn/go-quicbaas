@@ -1423,6 +1423,7 @@ func (s *SchedulerEngine) executeJob(ctx context.Context, job *Job, claimedFirin
 	// Create execution record
 	exec := &JobExecution{
 		JobID:     job.ID,
+		TenantID:  JobTenantID(job),
 		Status:    JobStatusRunning,
 		StartedAt: time.Now(),
 	}
