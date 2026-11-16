@@ -207,15 +207,17 @@ func (c *ContainerConfig) Validate() error {
 	}
 
 	// Validate mounts
-	for i, m := range c.Mounts {
-		if err := m.Validate(); err != nil {
+	// Validate in place: Validate defaults an untyped mount to a bind mount
+	// and a port to tcp, and the container is built from what it settles.
+	for i := range c.Mounts {
+		if err := c.Mounts[i].Validate(); err != nil {
 			return NewConfigValidationError("mounts["+strconv.Itoa(i)+"]", err.Error())
 		}
 	}
 
 	// Validate ports
-	for i, p := range c.Ports {
-		if err := p.Validate(); err != nil {
+	for i := range c.Ports {
+		if err := c.Ports[i].Validate(); err != nil {
 			return NewConfigValidationError("ports["+strconv.Itoa(i)+"]", err.Error())
 		}
 	}

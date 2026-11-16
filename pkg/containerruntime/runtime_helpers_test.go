@@ -40,7 +40,7 @@ func TestGenerateOCIConfig_UserMounts(t *testing.T) {
 	assert.Equal(t, ociMount{Destination: "/srv/data", Type: "bind", Source: "/data", Options: []string{"rbind"}}, data)
 	config := oci.Mounts[len(oci.Mounts)-1]
 	assert.Equal(t, "/etc/app", config.Destination)
-	assert.Equal(t, []string{"ro"}, config.Options)
+	assert.Equal(t, []string{"rbind", "ro", "rro"}, config.Options, "a read-only bind mount must be bound, recursively read-only")
 }
 
 func TestGenerateOCIConfig_CapabilityChanges(t *testing.T) {
@@ -261,4 +261,56 @@ func TestGenerateOCIConfig_NoNewPrivilegesIsExplicit(t *testing.T) {
 	assert.True(t, rt.generateOCIConfig(&ContainerConfig{}, "/rootfs").Process.NoNewPrivileges)
 	assert.False(t, rt.generateOCIConfig(&ContainerConfig{AllowNewPrivileges: true}, "/rootfs").Process.NoNewPrivileges)
 	assert.False(t, rt.generateOCIConfig(&ContainerConfig{Privileged: true}, "/rootfs").Process.NoNewPrivileges)
+}
+
+func TestJobContainerConfig_HostMountsAreBound(t *testing.T) {
+	config, err := jobContainerConfig(&orchestration.ContainerSpec{
+		Image: "alpine:latest",
+		Mounts: []orchestration.ContainerMount{
+			{Source: "/srv/workspace", Target: "/workspace"},
+			{Source: "/srv/creds", Target: "/home/agent/.creds", Type: "bind", ReadOnly: true},
+			{Target: "/tmp", Type: "tmpfs", TmpfsSizeBytes: 1024},
+		},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "bind", config.Mounts[0].Type, "an untyped host mount stayed untyped")
+
+	mounts := newTestRuntime(t).generateOCIConfig(config, "/rootfs").Mounts
+	require.GreaterOrEqual(t, len(mounts), 3)
+	mounts = mounts[len(mounts)-3:]
+	assert.Equal(t, ociMount{Destination: "/workspace", Type: "bind", Source: "/srv/workspace", Options: []string{"rbind"}}, mounts[0])
+	assert.Equal(t, ociMount{Destination: "/home/agent/.creds", Type: "bind", Source: "/srv/creds", Options: []string{"rbind", "ro", "rro"}}, mounts[1])
+	assert.Equal(t, "tmpfs", mounts[2].Type)
+	assert.NotContains(t, mounts[2].Options, "rbind")
+}
+
+func TestGenerateOCIConfig_ReadOnlyRbindIsRecursive(t *testing.T) {
+	tests := []struct {
+		name  string
+		mount Mount
+		want  []string
+	}{
+		{name: "ReadOnlyWithNoOptions", mount: Mount{ReadOnly: true}, want: []string{"rbind", "ro", "rro"}},
+		{name: "RoOptionOnAnRbind", mount: Mount{Options: []string{"rbind", "ro"}}, want: []string{"rbind", "ro", "rro"}},
+		{name: "ReadOnlyBindIsNotRecursive", mount: Mount{Options: []string{"bind"}, ReadOnly: true}, want: []string{"bind", "ro"}},
+		{name: "WritableRbind", mount: Mount{Options: []string{"rbind"}}, want: []string{"rbind"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m := tt.mount
+			m.Type, m.Source, m.Target = "bind", "/srv/data", "/data"
+			mounts := newTestRuntime(t).generateOCIConfig(&ContainerConfig{Mounts: []Mount{m}}, "/rootfs").Mounts
+			assert.Equal(t, tt.want, mounts[len(mounts)-1].Options)
+		})
+	}
+}
+
+func TestGenerateOCIConfig_MountOptionsAreNotShared(t *testing.T) {
+	config := &ContainerConfig{Mounts: []Mount{{Type: "bind", Source: "/a", Target: "/b", Options: make([]string, 1, 4), ReadOnly: true}}}
+	config.Mounts[0].Options[0] = "rbind"
+	rt := newTestRuntime(t)
+	rt.generateOCIConfig(config, "/rootfs")
+	mounts := rt.generateOCIConfig(config, "/rootfs").Mounts
+	assert.Equal(t, []string{"rbind"}, config.Mounts[0].Options, "the caller's mount options were changed")
+	assert.Equal(t, []string{"rbind", "ro", "rro"}, mounts[len(mounts)-1].Options)
 }

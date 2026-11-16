@@ -612,13 +612,28 @@ func (r *Runtime) generateOCIConfig(config *ContainerConfig, rootfsPath string) 
 
 	// Add user-specified mounts
 	for _, m := range config.Mounts {
-		opts := m.Options
+		opts := slices.Clone(m.Options)
+		mountType := m.Type
+		if mountType == "" {
+			mountType = "bind"
+		}
+		// The OCI type "bind" alone asks the kernel for nothing: MS_BIND
+		// comes from the bind or rbind option.
+		if mountType == "bind" && !slices.Contains(opts, "bind") && !slices.Contains(opts, "rbind") {
+			opts = append(opts, "rbind")
+		}
 		if m.ReadOnly {
 			opts = append(opts, "ro")
 		}
+		// ro covers only the top of an rbind, so rro makes every submount
+		// read-only too, and runc refuses the container where the kernel
+		// cannot do that.
+		if slices.Contains(opts, "rbind") && slices.Contains(opts, "ro") && !slices.Contains(opts, "rro") {
+			opts = append(opts, "rro")
+		}
 		oci.Mounts = append(oci.Mounts, ociMount{
 			Destination: m.Target,
-			Type:        m.Type,
+			Type:        mountType,
 			Source:      m.Source,
 			Options:     opts,
 		})
