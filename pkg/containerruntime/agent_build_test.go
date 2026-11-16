@@ -61,7 +61,7 @@ const fipsChildEnv = "QUICBAAS_CONTAINERRUNTIME_FIPS_CHILD"
 func TestFIPSModuleUnaffectedByTheRuntime(t *testing.T) {
 	if os.Getenv(fipsChildEnv) == "1" {
 		sum := sha256.Sum256([]byte("abc"))
-		fmt.Printf("fips140.Enabled=%t sha256=%x\n", fips140.Enabled(), sum)
+		fmt.Fprintf(os.Stdout, "fips140.Enabled=%t sha256=%x\n", fips140.Enabled(), sum)
 		return
 	}
 

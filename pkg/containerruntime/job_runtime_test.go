@@ -179,7 +179,6 @@ func TestJobRuntime_RunFailures(t *testing.T) {
 		_, err := jr.Run(t.Context(), &orchestration.ContainerSpec{Image: "alpine:latest", GPUEnabled: true})
 		requireInputValidation(t, err, "gpu_enabled")
 		require.ErrorContains(t, err, ErrJobSpecUnsupported.Error())
-
 	})
 
 	t.Run("BadPortIsRefused", func(t *testing.T) {
