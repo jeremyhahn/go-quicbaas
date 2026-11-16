@@ -14,6 +14,7 @@
 package server
 
 import (
+	"context"
 	"fmt"
 	"net"
 	"os"
@@ -145,11 +146,6 @@ func createTestConfig(t *testing.T) *config.Config {
 
 // cleanupTestData removes test data directory.
 func cleanupTestData(t *testing.T, cfg *config.Config) {
-	// A test that starts the CA or KMS without Shutdown leaves the global
-	// xkms service on the data dir removed below; release it, so a later
-	// test's KMS key-name scan does not list a deleted store.
-	_ = dbxkms.Close()
-
 	// The parent of the data dir is the temp dir createTestConfig made.
 	tempDir := filepath.Dir(cfg.Storage.DataDir)
 
@@ -169,6 +165,26 @@ func cleanupTestData(t *testing.T, cfg *config.Config) {
 
 	if err := os.RemoveAll(tempDir); err != nil {
 		t.Logf("Warning: failed to cleanup test data: %v", err)
+	}
+
+	releaseXKMSOnRemovedDir(tempDir)
+}
+
+// releaseXKMSOnRemovedDir closes the global xkms service when it is bound to
+// a key store under dir, which the caller has just removed. A test that starts
+// the CA or KMS without Shutdown leaves the service on its own data dir, and a
+// later test's KMS key-name scan would list that deleted store. A service
+// bound to another test's live store, which a parallel test may be using, is
+// left open.
+func releaseXKMSOnRemovedDir(dir string) {
+	if !dbxkms.IsInitialized() {
+		return
+	}
+	for _, backend := range dbxkms.Backends() {
+		if _, err := dbxkms.ListKeys(context.Background(), backend); err != nil && strings.Contains(err.Error(), dir) {
+			_ = dbxkms.Close()
+			return
+		}
 	}
 }
 
