@@ -54,8 +54,13 @@ func NewKVAdapter(inner qrdbtransport.KVClient) signalstore.KVClient {
 
 // NewTenantKVAdapter creates an adapter over base scoped to tenantID: plain
 // operations go through a go-qrdb TenantKVClient and DeleteIfPresent through
-// txn, with the same "{tenantID}/" key prefix.
+// txn, with the same "{tenantID}/" key prefix. A nil txn is refused with
+// ErrNoTransactions: one-time pre-keys must never be consumed without an
+// atomic compare-and-delete.
 func NewTenantKVAdapter(base qrdbtransport.KVClient, txn qrdbtransport.TransactionClient, tenantID string) (signalstore.KVClient, error) {
+	if txn == nil {
+		return nil, ErrNoTransactions
+	}
 	tenantKV, err := qrdbtransport.WithTenant(base, tenantID)
 	if err != nil {
 		return nil, err

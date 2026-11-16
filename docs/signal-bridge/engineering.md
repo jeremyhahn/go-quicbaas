@@ -166,8 +166,13 @@ go build -tags quicbaas_signal ./cmd/...
 The `SignalService` is created and started as part of the QuicBaaS server
 lifecycle:
 
+`kvClient` and `txnClient` are the KV and transaction clients of the same
+go-qrdb database: one-time pre-keys are consumed with an atomic
+compare-and-delete through `txnClient`, and a nil `txnClient` is refused
+(`signal.ErrNoTransactions`).
+
 ```go
-svc := signal.NewSignalService(kvClient, log, &signal.SignalConfig{
+svc := signal.NewSignalService(kvClient, txnClient, log, &signal.SignalConfig{
     Enabled: true,
 })
 if err := svc.Start(ctx); err != nil {

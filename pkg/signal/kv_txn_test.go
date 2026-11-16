@@ -179,4 +179,8 @@ func TestTenantKVAdapter_DeleteIfPresent_Errors(t *testing.T) {
 	if _, err := NewTenantKVAdapter(base, txn, ""); err == nil {
 		t.Fatal("empty tenant ID must be refused")
 	}
+
+	if _, err := NewTenantKVAdapter(base, nil, "t1"); !errors.Is(err, ErrNoTransactions) {
+		t.Fatalf("nil transaction client: want ErrNoTransactions, got %v", err)
+	}
 }

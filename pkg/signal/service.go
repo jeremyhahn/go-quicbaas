@@ -103,6 +103,10 @@ type signalStores struct {
 	messages *messages.MessagesManager
 	keys     *keys.KeysManager
 	profiles profiles.ProfileStore
+
+	// preKeyTakes sees every one-time pre-key take of the request's keys
+	// manager, whose GetPreKeys swallows take failures.
+	preKeyTakes *preKeyTakeGuard
 }
 
 // newSignalStores creates the full set of go-signal managers backed by the
@@ -110,13 +114,14 @@ type signalStores struct {
 func newSignalStores(kv signalstore.KVClient, maxDevices int) *signalStores {
 	accountStore := accounts.NewKVAccountStore(kv)
 	messageStore := messages.NewKVMessageStore(kv)
-	keyStore := keys.NewKVPreKeyStore(kv)
+	keyStore := newPreKeyTakeGuard(keys.NewKVPreKeyStore(kv))
 	profileStore := profiles.NewKVProfileStore(kv)
 	return &signalStores{
-		accounts: accounts.NewAccountsManager(accountStore, maxDevices),
-		messages: messages.NewMessagesManager(messageStore),
-		keys:     keys.NewKeysManager(keyStore),
-		profiles: profileStore,
+		accounts:    accounts.NewAccountsManager(accountStore, maxDevices),
+		messages:    messages.NewMessagesManager(messageStore),
+		keys:        keys.NewKeysManager(keyStore),
+		profiles:    profileStore,
+		preKeyTakes: keyStore,
 	}
 }
 
@@ -320,13 +325,22 @@ func (s *signalService) StorePreKeys(ctx context.Context, accountUUID string, de
 }
 
 // GetPreKeys retrieves the pre-key bundle for a device within the tenant
-// extracted from ctx.
+// extracted from ctx. A one-time pre-key take that fails for any reason other
+// than exhaustion fails the call: the bundle is never returned without a
+// one-time key the device still has.
 func (s *signalService) GetPreKeys(ctx context.Context, accountUUID string, deviceID uint64) (*keys.PreKeyResponseItem, error) {
 	stores, _, err := s.getTenantStores(ctx)
 	if err != nil {
 		return nil, err
 	}
-	return stores.keys.GetPreKeys(ctx, accountUUID, deviceID)
+	item, err := stores.keys.GetPreKeys(ctx, accountUUID, deviceID)
+	if err != nil {
+		return nil, err
+	}
+	if takeErr := stores.preKeyTakes.Err(); takeErr != nil {
+		return nil, takeErr
+	}
+	return item, nil
 }
 
 // ProvisionTenant initializes Signal for a new tenant by storing its
