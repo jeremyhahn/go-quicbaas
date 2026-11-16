@@ -1201,6 +1201,7 @@ func (s *Server) startKMS() error {
 		Logger:              logAdapter,
 		EnabledBackends:     s.config.KMS.EnabledBackends,
 		HealthCheckInterval: 30,
+		KeyNameStore:        keyStorage,
 	})
 	if err != nil {
 		return api.NewOperationFailedError("create backend factory", err)

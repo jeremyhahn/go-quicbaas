@@ -28,6 +28,7 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/pkg/config"
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
 	"github.com/jeremyhahn/go-quicbaas/pkg/testutil/netport"
+	dbxkms "github.com/jeremyhahn/go-quicbaas/pkg/xkms"
 )
 
 // testTrustDomain is the SPIFFE trust domain these tests configure. First-boot
@@ -144,6 +145,11 @@ func createTestConfig(t *testing.T) *config.Config {
 
 // cleanupTestData removes test data directory.
 func cleanupTestData(t *testing.T, cfg *config.Config) {
+	// A test that starts the CA or KMS without Shutdown leaves the global
+	// xkms service on the data dir removed below; release it, so a later
+	// test's KMS key-name scan does not list a deleted store.
+	_ = dbxkms.Close()
+
 	// The parent of the data dir is the temp dir createTestConfig made.
 	tempDir := filepath.Dir(cfg.Storage.DataDir)
 

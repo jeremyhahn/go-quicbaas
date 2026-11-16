@@ -47,8 +47,12 @@ var xkmsEncoding = base64.RawURLEncoding.Strict()
 // Migration: before this mapping, every go-xkms name was the literal service
 // ID. A stored literal keeps working unless it is spelled as an encoded
 // output (its payload is the canonical base64url of an ID that needs
-// encoding); such a name now reads as the ID it encodes. An operator must
-// re-import any such key under a name outside that shape before upgrading;
+// encoding); such a name would now read as the ID it encodes.
+// BackendFactory.InitializeFromXKMS therefore refuses to open a key store
+// that holds such a name and carries no mapping marker
+// (LegacyXKMSKeyNamesError lists the names); the operator re-imports each
+// listed key under a name outside that shape. The first clean open writes the
+// marker, and later opens skip the scan.
 // TestXKMSKeyName_EncodedOutputsAreReserved pins the shape.
 func xkmsKeyName(keyID string) string {
 	if !xkmsNeedsEncoding(keyID) {
