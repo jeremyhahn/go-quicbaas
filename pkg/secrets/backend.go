@@ -17,6 +17,7 @@
 package secrets
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"strconv"
@@ -80,10 +81,64 @@ type VersionedBackend interface {
 type ConditionalVersionedBackend interface {
 	VersionedBackend
 
-	// StoreVersionIfCurrent stores a new version only while expected is the
-	// path's current, undeleted version. Otherwise it stores nothing and
-	// returns ErrWriteConflict wrapping a *StaleVersionError.
-	StoreVersionIfCurrent(ctx context.Context, path string, expected int, data map[string][]byte, metadata map[string]string) (int, error)
+	// StoreVersionIfCurrent stores a new version only while the path's
+	// current, undeleted record is the one read: expected.Version, holding
+	// expected's data and metadata. Otherwise it stores nothing and returns
+	// ErrWriteConflict wrapping a *StaleVersionError.
+	StoreVersionIfCurrent(ctx context.Context, path string, expected ReadVersion, data map[string][]byte, metadata map[string]string) (int, error)
+}
+
+// ReadVersion is the record a conditional write supersedes, as its writer
+// read it. The version number alone does not name a record: Destroy lets a
+// path's versions restart at 1, so a secret destroyed and recreated up to
+// the same number would satisfy a number-only check with another record's
+// contents. A conditional write therefore also requires the current record
+// to hold the data and metadata read (the reported "version" key aside).
+type ReadVersion struct {
+	Version  int
+	Data     map[string][]byte
+	Metadata map[string]string
+}
+
+// holds reports whether a stored record has the data and metadata read.
+func (r ReadVersion) holds(data map[string][]byte, metadata map[string]string) bool {
+	if len(data) != len(r.Data) {
+		return false
+	}
+	for k, v := range r.Data {
+		stored, ok := data[k]
+		if !ok || !bytes.Equal(stored, v) {
+			return false
+		}
+	}
+	return metadataEqualIgnoringVersion(r.Metadata, metadata)
+}
+
+func metadataEqualIgnoringVersion(a, b map[string]string) bool {
+	count := func(m map[string]string) int {
+		n := len(m)
+		if _, ok := m["version"]; ok {
+			n--
+		}
+		return n
+	}
+	if count(a) != count(b) {
+		return false
+	}
+	for k, v := range a {
+		if k == "version" {
+			continue
+		}
+		if stored, ok := b[k]; !ok || stored != v {
+			return false
+		}
+	}
+	return true
+}
+
+func staleReadError(expected ReadVersion, current int, deleted, replaced bool) error {
+	return &SecretsSentinelCauseError{Sentinel: ErrWriteConflict,
+		Cause: &StaleVersionError{Expected: expected.Version, Current: current, Deleted: deleted, Replaced: replaced}}
 }
 
 // SecretEntry represents a secret with its data and metadata.
@@ -278,6 +333,9 @@ type StaleVersionError struct {
 	Current int
 	// Deleted is true when the path has been deleted since.
 	Deleted bool
+	// Replaced is true when the path is at Expected again but holds another
+	// record: it was destroyed and recreated after the read.
+	Replaced bool
 }
 
 // Error implements the error interface.
@@ -287,6 +345,8 @@ func (e *StaleVersionError) Error() string {
 		return "a conditional write needs the version it supersedes"
 	case e.Deleted:
 		return "the secret was deleted after version " + strconv.Itoa(e.Expected) + " was read"
+	case e.Replaced:
+		return "the secret was destroyed and recreated after version " + strconv.Itoa(e.Expected) + " was read"
 	case e.Current == 0:
 		return "the secret no longer exists"
 	default:

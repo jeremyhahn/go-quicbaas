@@ -234,10 +234,10 @@ func (m *Manager) StoreVersion(ctx context.Context, path string, data map[string
 }
 
 // StoreVersionIfCurrent stores a new version only while expected is the
-// secret's current, undeleted version (ConditionalVersionedBackend). A stale
+// secret's current, undeleted record (ConditionalVersionedBackend). A stale
 // expectation is ErrWriteConflict; a backend that cannot condition its write
 // refuses with ErrConditionalWriteUnsupported rather than writing blind.
-func (m *Manager) StoreVersionIfCurrent(ctx context.Context, path string, expected int, data map[string][]byte, metadata map[string]string) (int, error) {
+func (m *Manager) StoreVersionIfCurrent(ctx context.Context, path string, expected ReadVersion, data map[string][]byte, metadata map[string]string) (int, error) {
 	if err := validateStoreArgs(ctx, "Manager.StoreVersionIfCurrent", path, data); err != nil {
 		return 0, err
 	}
@@ -263,7 +263,7 @@ func (m *Manager) StoreVersionIfCurrent(ctx context.Context, path string, expect
 		m.logger.WithFields(map[string]interface{}{
 			"path":     path,
 			"version":  version,
-			"replaced": expected,
+			"replaced": expected.Version,
 		}).Info("Secret stored")
 	}
 

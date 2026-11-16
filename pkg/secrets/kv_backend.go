@@ -15,6 +15,8 @@ package secrets
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -49,6 +51,21 @@ type kvCurrentEntry struct {
 	Version   int        `json:"version"`
 	Deleted   bool       `json:"deleted"`
 	DeletedAt *time.Time `json:"deleted_at,omitempty"`
+	// Generation names the path's lifetime: drawn when the pointer is first
+	// published and carried by every later write, so a path destroyed and
+	// recreated to the same version has another pointer, and a guarded
+	// write that observed the old lifetime loses its CAS. Pointers written
+	// before it existed carry none, which a recreation also changes.
+	Generation string `json:"generation,omitempty"`
+}
+
+// newPointerGeneration draws a fresh path lifetime for kvCurrentEntry.
+func newPointerGeneration() (string, error) {
+	var b [16]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return "", &SecretsCauseError{Message: "draw pointer generation", Cause: err}
+	}
+	return hex.EncodeToString(b[:]), nil
 }
 
 // KVStoreWriter is the subset of the qrdb KVStore interface needed by KVBackend.
@@ -207,7 +224,7 @@ func (b *KVBackend) Store(ctx context.Context, path string, data map[string][]by
 // StoreVersion saves a secret as Store does and returns the version it
 // allocated and published.
 func (b *KVBackend) StoreVersion(ctx context.Context, path string, data map[string][]byte, metadata map[string]string) (int, error) {
-	return b.storeVersion(ctx, path, -1, data, metadata)
+	return b.storeVersion(ctx, path, nil, data, metadata)
 }
 
 // StoreVersionIfCurrent stores a new version only while expected is the
@@ -216,16 +233,16 @@ func (b *KVBackend) StoreVersion(ctx context.Context, path string, data map[stri
 // publication are one storage-level decision: the pointer is published with
 // CompareAndSwap against the pointer the check read, so a write by any node
 // between them refuses this one.
-func (b *KVBackend) StoreVersionIfCurrent(ctx context.Context, path string, expected int, data map[string][]byte, metadata map[string]string) (int, error) {
-	if expected <= 0 {
-		return 0, &SecretsSentinelCauseError{Sentinel: ErrWriteConflict, Cause: &StaleVersionError{Expected: expected}}
+func (b *KVBackend) StoreVersionIfCurrent(ctx context.Context, path string, expected ReadVersion, data map[string][]byte, metadata map[string]string) (int, error) {
+	if expected.Version <= 0 {
+		return 0, staleReadError(expected, 0, false, false)
 	}
-	return b.storeVersion(ctx, path, expected, data, metadata)
+	return b.storeVersion(ctx, path, &expected, data, metadata)
 }
 
 // storeVersion is StoreVersion, conditional on the current version when
 // expected is positive.
-func (b *KVBackend) storeVersion(ctx context.Context, path string, expected int, data map[string][]byte, metadata map[string]string) (int, error) {
+func (b *KVBackend) storeVersion(ctx context.Context, path string, expected *ReadVersion, data map[string][]byte, metadata map[string]string) (int, error) {
 	if path == "" {
 		return 0, ErrInvalidPath
 	}
@@ -241,9 +258,32 @@ func (b *KVBackend) storeVersion(ctx context.Context, path string, expected int,
 	if err != nil {
 		return 0, err
 	}
-	if expected > 0 && (cur.Version != expected || cur.Deleted) {
-		return 0, &SecretsSentinelCauseError{Sentinel: ErrWriteConflict,
-			Cause: &StaleVersionError{Expected: expected, Current: cur.Version, Deleted: cur.Deleted}}
+	if expected != nil {
+		if cur.Version != expected.Version || cur.Deleted {
+			return 0, staleReadError(*expected, cur.Version, cur.Deleted, false)
+		}
+		// The number matched; the record must be the one read. A destroyed
+		// and recreated path restarts its numbering, and only the content
+		// tells the two records apart here. The pointer's generation, which
+		// a recreation renews, carries the check to the CAS below: a
+		// destroy and recreate after this read changes the pointer's bytes.
+		storedData, storedMetadata, getErr := b.getVersion(ctx, path, cur.Version)
+		if getErr != nil {
+			if errors.Is(getErr, ErrVersionNotFound) || errors.Is(getErr, ErrVersionDestroyed) {
+				return 0, staleReadError(*expected, cur.Version, false, true)
+			}
+			return 0, getErr
+		}
+		if !expected.holds(storedData, storedMetadata) {
+			return 0, staleReadError(*expected, cur.Version, false, true)
+		}
+	}
+	if observedRaw == nil {
+		generation, genErr := newPointerGeneration()
+		if genErr != nil {
+			return 0, genErr
+		}
+		cur.Generation = generation
 	}
 
 	now := time.Now()

@@ -245,19 +245,32 @@ func (eb *EncryptedBackend) StoreWithAlgorithm(ctx context.Context, path string,
 // If opts is nil or opts.KeyIdentifier is empty, uses the default key identifier.
 // If opts.TenantID is set and KeyIdentifier is empty, uses "dek:tenant:{tenantID}".
 func (eb *EncryptedBackend) StoreWithOptions(ctx context.Context, path string, data map[string][]byte, metadata map[string]string, opts *StoreOptions) error {
-	_, err := eb.storeVersion(ctx, path, data, metadata, opts)
+	_, err := eb.storeVersion(ctx, path, nil, data, metadata, opts)
 	return err
 }
 
 // StoreVersion saves a secret as Store does and returns the version it
 // assigned.
 func (eb *EncryptedBackend) StoreVersion(ctx context.Context, path string, data map[string][]byte, metadata map[string]string) (int, error) {
-	return eb.storeVersion(ctx, path, data, metadata, nil)
+	return eb.storeVersion(ctx, path, nil, data, metadata, nil)
+}
+
+// StoreVersionIfCurrent implements ConditionalVersionedBackend: it stores a
+// new version only while the path's current record is the one read. Within
+// the process the backend's lock holds the check and the write together;
+// on a store that can arbitrate (CompareAndSwap), the write is also
+// conditional on the exact bytes checked, so a writer in another process
+// that lands between them refuses this one.
+func (eb *EncryptedBackend) StoreVersionIfCurrent(ctx context.Context, path string, expected ReadVersion, data map[string][]byte, metadata map[string]string) (int, error) {
+	if expected.Version <= 0 {
+		return 0, staleReadError(expected, 0, false, false)
+	}
+	return eb.storeVersion(ctx, path, &expected, data, metadata, nil)
 }
 
 // storeVersion encrypts and saves a secret under opts and returns the
 // version it assigned.
-func (eb *EncryptedBackend) storeVersion(ctx context.Context, path string, data map[string][]byte, metadata map[string]string, opts *StoreOptions) (int, error) {
+func (eb *EncryptedBackend) storeVersion(ctx context.Context, path string, expected *ReadVersion, data map[string][]byte, metadata map[string]string, opts *StoreOptions) (int, error) {
 	if path == "" {
 		return 0, ErrInvalidPath
 	}
@@ -315,9 +328,14 @@ func (eb *EncryptedBackend) storeVersion(ctx context.Context, path string, data 
 	}
 
 	// Load existing versions or create new
-	versions, err := eb.loadVersions(ctx, path)
+	versions, observedRaw, err := eb.loadVersionsRaw(ctx, path)
 	if err != nil && !errors.Is(err, ErrSecretNotFound) {
 		return 0, &SecretsCauseError{Message: "failed to load existing versions", Cause: err}
+	}
+	if expected != nil {
+		if err := eb.checkReadVersion(ctx, versions, *expected); err != nil {
+			return 0, err
+		}
 	}
 	if versions == nil {
 		versions = &secretVersions{
@@ -348,7 +366,11 @@ func (eb *EncryptedBackend) storeVersion(ctx context.Context, path string, data 
 	versions.Deleted = false
 
 	// Save to storage
-	if err := eb.saveVersions(ctx, path, versions); err != nil {
+	if expected != nil {
+		if err := eb.saveVersionsIfUnchanged(ctx, path, versions, observedRaw, *expected); err != nil {
+			return 0, err
+		}
+	} else if err := eb.saveVersions(ctx, path, versions); err != nil {
 		return 0, &SecretsCauseError{Message: "failed to save secret", Cause: err}
 	}
 
@@ -693,6 +715,65 @@ func unmarshalWiped(buf []byte, dst any) error {
 
 // loadVersions loads all versions of a secret from storage.
 func (eb *EncryptedBackend) loadVersions(ctx context.Context, path string) (*secretVersions, error) {
+	versions, _, err := eb.loadVersionsRaw(ctx, path)
+	return versions, err
+}
+
+// checkReadVersion refuses a conditional write unless the path's current
+// record is the one read: the number, undeleted, and (because Destroy lets
+// the numbering restart) the same data and metadata.
+func (eb *EncryptedBackend) checkReadVersion(ctx context.Context, versions *secretVersions, expected ReadVersion) error {
+	if versions == nil || len(versions.Versions) == 0 {
+		return staleReadError(expected, 0, false, false)
+	}
+	current := len(versions.Versions)
+	last := versions.Versions[current-1]
+	if current != expected.Version || versions.Deleted || last.Deleted {
+		return staleReadError(expected, current, versions.Deleted || last.Deleted, false)
+	}
+	data, err := eb.decryptEntry(ctx, last)
+	if err != nil {
+		return &SecretsSentinelCauseError{Sentinel: ErrDecryptionFailed, Cause: err}
+	}
+	defer func() {
+		for _, v := range data {
+			clear(v)
+		}
+	}()
+	if !expected.holds(data, last.Metadata) {
+		return staleReadError(expected, current, false, true)
+	}
+	return nil
+}
+
+// saveVersionsIfUnchanged writes versions only while the stored record is
+// still the bytes the check read (observedRaw; nil: absent). A store that
+// cannot arbitrate gets the plain write, held only by the backend's lock.
+func (eb *EncryptedBackend) saveVersionsIfUnchanged(ctx context.Context, path string, versions *secretVersions, observedRaw []byte, expected ReadVersion) error {
+	g, guarded := eb.store.(guardedKVStore)
+	if !guarded || observedRaw == nil {
+		if err := eb.saveVersions(ctx, path, versions); err != nil {
+			return &SecretsCauseError{Message: "failed to save secret", Cause: err}
+		}
+		return nil
+	}
+	raw, err := json.Marshal(versions)
+	if err != nil {
+		return ErrSerializationFailed
+	}
+	stored, err := g.CompareAndSwap(ctx, secretKey(path), observedRaw, raw)
+	if err != nil {
+		return &SecretsCauseError{Message: "failed to save secret", Cause: err}
+	}
+	if !stored {
+		return staleReadError(expected, 0, false, true)
+	}
+	return nil
+}
+
+// loadVersionsRaw is loadVersions that also returns the stored bytes (nil
+// when the path is absent), for a write conditional on them.
+func (eb *EncryptedBackend) loadVersionsRaw(ctx context.Context, path string) (*secretVersions, []byte, error) {
 	data, err := eb.store.Get(ctx, secretKey(path))
 	if err != nil {
 		// ABSENCE AND OUTAGE STAY DISTINCT. The KVStore contract reports a
@@ -703,17 +784,17 @@ func (eb *EncryptedBackend) loadVersions(ctx context.Context, path string) (*sec
 		// ordinary (the documented contract) fail open under an outage.
 		var qbErr *dberrors.QBError
 		if ok := dberrors.As(err, &qbErr); ok && qbErr.Code == dberrors.ErrNotFound {
-			return nil, ErrSecretNotFound
+			return nil, nil, ErrSecretNotFound
 		}
-		return nil, &SecretsSentinelCauseError{Sentinel: ErrBackendUnavailable, Cause: err}
+		return nil, nil, &SecretsSentinelCauseError{Sentinel: ErrBackendUnavailable, Cause: err}
 	}
 
 	var versions secretVersions
 	if err := json.Unmarshal(data, &versions); err != nil {
-		return nil, ErrDeserializationFailed
+		return nil, nil, ErrDeserializationFailed
 	}
 
-	return &versions, nil
+	return &versions, data, nil
 }
 
 // saveVersions saves all versions of a secret to storage.

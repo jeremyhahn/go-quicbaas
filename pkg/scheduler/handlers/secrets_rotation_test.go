@@ -36,13 +36,13 @@ func (s stubSecretsRotator) RotateDueSecrets(context.Context) (*SecretsRotationR
 }
 
 func TestSecretsRotationHandler_ReportsTheScan(t *testing.T) {
-	h := NewSecretsRotationHandler(stubSecretsRotator{result: &SecretsRotationResult{Due: 3, Rotated: 2, Failed: 1}})
+	h := NewSecretsRotationHandler(stubSecretsRotator{result: &SecretsRotationResult{Due: 3, Rotated: 2, Failed: 1, Unreadable: 4}})
 
 	result, err := h.Handler()(context.Background(), &scheduler.Job{ID: SecretsRotationJobID})
 
 	require.NoError(t, err)
 	assert.True(t, result.Success)
-	assert.Equal(t, "rotated 2 of 3 due secrets, 1 failed", result.Message)
+	assert.Equal(t, "rotated 2 of 3 due secrets, 1 failed, 4 unreadable", result.Message)
 	assert.Equal(t, HandlerSecretsRotation, h.Name())
 }
 

@@ -127,7 +127,7 @@ type interleavingSecretsManager struct {
 	before func()
 }
 
-func (m *interleavingSecretsManager) StoreVersionIfCurrent(ctx context.Context, path string, expected int, data map[string][]byte, metadata map[string]string) (int, error) {
+func (m *interleavingSecretsManager) StoreVersionIfCurrent(ctx context.Context, path string, expected secrets.ReadVersion, data map[string][]byte, metadata map[string]string) (int, error) {
 	m.before()
 	return m.Manager.StoreVersionIfCurrent(ctx, path, expected, data, metadata)
 }

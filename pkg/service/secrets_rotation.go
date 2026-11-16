@@ -15,6 +15,7 @@ package service
 
 import (
 	"context"
+	stderrors "errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -23,6 +24,7 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/pkg/auth"
 	"github.com/jeremyhahn/go-quicbaas/pkg/scheduler"
 	schedulerhandlers "github.com/jeremyhahn/go-quicbaas/pkg/scheduler/handlers"
+	"github.com/jeremyhahn/go-quicbaas/pkg/secrets"
 	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
@@ -92,6 +94,23 @@ func (s *secretsService) RotateDueSecrets(ctx context.Context) (*schedulerhandle
 	for _, path := range paths {
 		data, metadata, err := s.secretsManager.Get(sysCtx, path)
 		if err != nil {
+			// A secret deleted since the list is not due. Any other
+			// failure leaves its rotation unknown: count it and say which.
+			if stderrors.Is(err, secrets.ErrSecretNotFound) || stderrors.Is(err, secrets.ErrSecretDeleted) {
+				continue
+			}
+			result.Unreadable++
+			if s.logger != nil {
+				s.logger.WithFields(map[string]interface{}{
+					"secret_id": path,
+					"error":     err.Error(),
+				}).Warn("Scheduled secret rotation could not read the secret")
+			}
+			continue
+		}
+		// A disabled secret is not rotated: GetSecret refuses it, and
+		// the scan reads beneath that check.
+		if metadata["status"] == string(SecretStatusDisabled) {
 			continue
 		}
 		if !secretRotationDue(metadata, now) {
@@ -184,9 +203,11 @@ func (s *secretsService) rotateDueSecret(ctx context.Context, path string, data 
 	newMetadata[secretRotationNextKey] = nextSecretRotation(previous, interval, now).Format(time.RFC3339)
 
 	// The write holds only while the secret is still at the version this
-	// scan read: an update, a policy change or a delete that lands between
-	// the read and the write wins, and the rotation stores nothing.
-	newVersion, err := storer.StoreVersionIfCurrent(ctx, path, read, data, newMetadata)
+	// scan read: an update, a policy change, a delete or a destroy and
+	// recreation that lands between the read and the write wins, and the
+	// rotation stores nothing.
+	expected := secrets.ReadVersion{Version: read, Data: data, Metadata: metadata}
+	newVersion, err := storer.StoreVersionIfCurrent(ctx, path, expected, data, newMetadata)
 	if err != nil {
 		return err
 	}
@@ -206,5 +227,5 @@ func (s *secretsService) rotateDueSecret(ctx context.Context, path string, data 
 // secretsConditionalStorer is the secrets manager's write conditional on
 // the version it supersedes (secrets.Manager.StoreVersionIfCurrent).
 type secretsConditionalStorer interface {
-	StoreVersionIfCurrent(ctx context.Context, path string, expected int, data map[string][]byte, metadata map[string]string) (int, error)
+	StoreVersionIfCurrent(ctx context.Context, path string, expected secrets.ReadVersion, data map[string][]byte, metadata map[string]string) (int, error)
 }

@@ -54,22 +54,22 @@ func (mb *MemoryBackend) Store(ctx context.Context, path string, data map[string
 // StoreVersion saves a secret as Store does and returns the version it
 // assigned.
 func (mb *MemoryBackend) StoreVersion(ctx context.Context, path string, data map[string][]byte, metadata map[string]string) (int, error) {
-	return mb.storeVersion(ctx, path, -1, data, metadata)
+	return mb.storeVersion(ctx, path, nil, data, metadata)
 }
 
 // StoreVersionIfCurrent stores a new version only while expected is the
 // path's current, undeleted version; otherwise it stores nothing and returns
 // ErrWriteConflict wrapping a *StaleVersionError.
-func (mb *MemoryBackend) StoreVersionIfCurrent(ctx context.Context, path string, expected int, data map[string][]byte, metadata map[string]string) (int, error) {
-	if expected <= 0 {
-		return 0, &SecretsSentinelCauseError{Sentinel: ErrWriteConflict, Cause: &StaleVersionError{Expected: expected}}
+func (mb *MemoryBackend) StoreVersionIfCurrent(ctx context.Context, path string, expected ReadVersion, data map[string][]byte, metadata map[string]string) (int, error) {
+	if expected.Version <= 0 {
+		return 0, staleReadError(expected, 0, false, false)
 	}
-	return mb.storeVersion(ctx, path, expected, data, metadata)
+	return mb.storeVersion(ctx, path, &expected, data, metadata)
 }
 
 // storeVersion is StoreVersion, conditional on the current version when
 // expected is positive.
-func (mb *MemoryBackend) storeVersion(ctx context.Context, path string, expected int, data map[string][]byte, metadata map[string]string) (int, error) {
+func (mb *MemoryBackend) storeVersion(ctx context.Context, path string, expected *ReadVersion, data map[string][]byte, metadata map[string]string) (int, error) {
 	if err := ctx.Err(); err != nil {
 		return 0, err
 	}
@@ -84,14 +84,19 @@ func (mb *MemoryBackend) storeVersion(ctx context.Context, path string, expected
 	mb.mu.Lock()
 	defer mb.mu.Unlock()
 
-	if expected > 0 {
+	if expected != nil {
 		current, deleted := 0, false
-		if s, ok := mb.secrets[path]; ok {
+		s, ok := mb.secrets[path]
+		if ok {
 			current, deleted = len(s.versions), s.deleted
 		}
-		if current != expected || deleted {
-			return 0, &SecretsSentinelCauseError{Sentinel: ErrWriteConflict,
-				Cause: &StaleVersionError{Expected: expected, Current: current, Deleted: deleted}}
+		if current != expected.Version || deleted {
+			return 0, staleReadError(*expected, current, deleted, false)
+		}
+		// Destroy restarts the count: the record at the number must be the
+		// one read, not a recreation's.
+		if last := s.versions[current-1]; last.Deleted || !expected.holds(last.Data, last.Metadata) {
+			return 0, staleReadError(*expected, current, false, true)
 		}
 	}
 

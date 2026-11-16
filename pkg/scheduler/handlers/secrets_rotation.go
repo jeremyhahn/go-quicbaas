@@ -41,6 +41,10 @@ type SecretsRotationResult struct {
 	// Failed is the number of due secrets whose rotation failed. They stay
 	// due and are retried by the next scan.
 	Failed int
+	// Unreadable is the number of listed secrets the scan could not read
+	// (a storage or decryption failure, not a delete): whether they were
+	// due is unknown, and the next scan reads them again.
+	Unreadable int
 }
 
 // SecretsRotator performs the due secrets rotation policies.
@@ -77,8 +81,8 @@ func (h *SecretsRotationHandler) Handle(ctx context.Context, job *scheduler.Job)
 	}
 	return &scheduler.JobResult{
 		Success: true,
-		Message: fmt.Sprintf("rotated %d of %d due secrets, %d failed",
-			result.Rotated, result.Due, result.Failed),
+		Message: fmt.Sprintf("rotated %d of %d due secrets, %d failed, %d unreadable",
+			result.Rotated, result.Due, result.Failed, result.Unreadable),
 	}, nil
 }
 
