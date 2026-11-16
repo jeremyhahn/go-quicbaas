@@ -157,7 +157,8 @@ func TestModule_LifecycleNoOps(t *testing.T) {
 // ObjectStorageService, ObjectStorageAdmin, OllamaService), PromptService,
 // SecretsManagement, KeyManagement, DEKManagement and Crypto
 // (quicbaas-native because the pinned go-xkms serves no DEK surface and no
-// quicbaas.kms.v1 name — CertificateService/TrustService/AttestationService/
+// quicbaas.kms.v1 name), and AttestationService (quicbaas-native because the
+// pinned go-xkms serves no Verifier RPCs — CertificateService/TrustService/
 // PIVService moved to go-xkms's own ServiceModule, Phase 3
 // of the login-plane plan; see module.go's package doc and
 // TestModule_RegisterGRPC_ExcludesXKMSCanonicalSurface), each with a method
@@ -193,6 +194,7 @@ func TestModule_RegisterGRPC_RegistersFullGRPCSurface(t *testing.T) {
 		&pb.KeyManagement_ServiceDesc,
 		&pb.DEKManagement_ServiceDesc,
 		&pb.Crypto_ServiceDesc,
+		&pb.AttestationService_ServiceDesc,
 		&pb.VectorDB_ServiceDesc,
 		&pb.VectorAdmin_ServiceDesc,
 		&pb.PromptService_ServiceDesc,
@@ -254,7 +256,7 @@ func TestModule_RegisterGRPC_ExcludesProxyPlanes(t *testing.T) {
 }
 
 // TestModule_RegisterGRPC_ExcludesXKMSCanonicalSurface proves
-// CertificateService, TrustService, AttestationService, and PIVService stay
+// CertificateService, TrustService, and PIVService stay
 // OFF the quicbaas module's surface (Phase 3 of the
 // login-plane plan, corrective to the prior design documented in
 // module.go's package doc): they were quicbaas.v1 wrappers over the SAME
@@ -262,10 +264,12 @@ func TestModule_RegisterGRPC_ExcludesProxyPlanes(t *testing.T) {
 // as its canonical xkms.v1 KeystoreService surface on this same unified
 // server — registering both would double-register a redundant proto
 // surface, exactly the failure mode go-qrdb's route/service-collision guard
-// exists to catch. SecretsManagement, KeyManagement, DEKManagement and
-// Crypto are deliberately absent from this exclusion list: they are
-// quicbaas-native on the node, because the pinned go-xkms serves no DEK
-// surface and no quicbaas.kms.v1 name (see
+// exists to catch. SecretsManagement, KeyManagement, DEKManagement, Crypto
+// and AttestationService are deliberately absent from this exclusion list:
+// they are quicbaas-native on the node, KeyManagement, DEKManagement and
+// Crypto because the pinned go-xkms serves no DEK surface and no
+// quicbaas.kms.v1 name, and AttestationService because it serves no
+// Verifier RPCs (see
 // TestModule_RegisterGRPC_RegistersFullGRPCSurface).
 func TestModule_RegisterGRPC_ExcludesXKMSCanonicalSurface(t *testing.T) {
 	m, err := NewModule(func() service.QuicBaaS { return nil }, testLogger(t))
@@ -278,7 +282,6 @@ func TestModule_RegisterGRPC_ExcludesXKMSCanonicalSurface(t *testing.T) {
 	excluded := []string{
 		pb.CertificateService_ServiceDesc.ServiceName,
 		pb.TrustService_ServiceDesc.ServiceName,
-		pb.AttestationService_ServiceDesc.ServiceName,
 		pb.PIVService_ServiceDesc.ServiceName,
 	}
 	for _, name := range excluded {
