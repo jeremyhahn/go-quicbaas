@@ -22,7 +22,7 @@ func TestOIDCSigningStore_UnfencedWritesAreRefused(t *testing.T) {
 	versions, err := xkmssdk.NewStoragePrefixBackend(kv, oidcSigningVersionsPrefix)
 	require.NoError(t, err)
 	router := newKeyVersionRouter(xkmssdk.NewStorageMemory())
-	router.setReplicated(versions)
+	router.setReplicated(versions, tx)
 	keys, err := newOIDCKeyMaterialStore(kv, tx)
 	require.NoError(t, err)
 
@@ -33,7 +33,15 @@ func TestOIDCSigningStore_UnfencedWritesAreRefused(t *testing.T) {
 	ok, err = keys.PutIfAbsent(ctx, "k", []byte("m1"))
 	require.NoError(t, err)
 	require.True(t, ok, "first creation of key material passes")
-	require.NoError(t, keys.Put(context.WithValue(ctx, oidcVersionFenceKey{}, &oidcVersionFence{key: record}), "k--v2", []byte("m2")))
+	guarded, err := guardedOIDCStore(kv)
+	require.NoError(t, err)
+	guardedVersions, err := guardedOIDCStore(versions)
+	require.NoError(t, err)
+	lock := newOIDCRotationLock(guarded, guardedVersions)
+	planted, release, err := lock(ctx, "", iam.OIDCSigningKeyCN)
+	require.NoError(t, err)
+	require.NoError(t, keys.Put(planted, "k--v2", []byte("m2")))
+	release()
 	before := snapshotKV(t, kv)
 
 	var unfenced *OIDCRotationUnfencedError
@@ -59,10 +67,9 @@ func TestOIDCSigningStore_UnfencedWritesAreRefused(t *testing.T) {
 	require.NoError(t, router.Put(ctx, "system/key-versions/software/other", []byte("x")))
 
 	// Under the fence the rotation's writes pass.
-	guardedVersions, err := guardedOIDCStore(versions)
+	fenced, unlock, err := lock(ctx, "", iam.OIDCSigningKeyCN)
 	require.NoError(t, err)
-	fence := &oidcVersionFence{key: record, store: guardedVersions, expected: []byte("r1"), present: true}
-	fenced := context.WithValue(ctx, oidcVersionFenceKey{}, fence)
+	t.Cleanup(unlock)
 	require.NoError(t, keys.Put(fenced, "k--v3", []byte("m3")))
 	require.NoError(t, router.Put(fenced, record, []byte("r2")))
 	got, err = versions.Get(ctx, record)

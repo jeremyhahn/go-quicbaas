@@ -73,7 +73,7 @@ func TestOIDCSigningStore_StaleHolderCleanupKeepsPeerKey(t *testing.T) {
 	afterB := snapshotKV(t, kv)
 
 	router := newKeyVersionRouter(xkmssdk.NewStorageMemory())
-	router.setReplicated(versions)
+	router.setReplicated(versions, tx)
 	record := "system" + oidcSigningVersionSegment + iam.OIDCSigningKeyCN
 	var fenced *OIDCRotationFencedError
 	require.ErrorAs(t, router.Put(ctxA, record, []byte("node A's record")), &fenced)

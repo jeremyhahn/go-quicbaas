@@ -106,14 +106,15 @@ func oidcKeyNamesVersion(key string) bool {
 	return oidcKeyVersionSuffix.MatchString(cn)
 }
 
-// Put writes key material. Under the rotation fence it writes from the bytes
-// this holder observed or wrote under key in this rotation (CompareAndSwap),
-// or creates an absent key (PutIfAbsent); material that changed meanwhile is
-// left as it is and *OIDCRotationFencedError returned. Without the fence it
+// Put writes key material. Under the rotation fence it writes in one
+// transaction with the rotation lease, from the bytes this holder observed
+// or wrote under key in this rotation, or into an absent key; material that
+// changed meanwhile, or a lease another holder took over, is left as it is
+// and *OIDCRotationFencedError returned. Without the fence it
 // passes only as the first creation of a key that is not a rotation version.
 func (s *oidcKeyMaterialStore) Put(ctx context.Context, key string, value []byte) error {
 	if fence, ok := oidcFenceFrom(ctx); ok {
-		return fence.putMaterial(ctx, s.oidcGuardedKV, key, value)
+		return fence.putMaterial(ctx, s.tx, key, oidcSigningKeysPrefix+key, value)
 	}
 	if oidcKeyNamesVersion(key) {
 		return &OIDCRotationUnfencedError{Key: key, Op: "put"}
@@ -128,10 +129,15 @@ func (s *oidcKeyMaterialStore) Put(ctx context.Context, key string, value []byte
 	return nil
 }
 
-// PutIfAbsent creates key material; without the rotation fence a rotation
-// version is refused.
+// PutIfAbsent creates key material. Under the rotation fence the creation
+// runs in one transaction with the rotation lease, and a lease another
+// holder took over returns *OIDCRotationFencedError; without the fence a
+// rotation version is refused.
 func (s *oidcKeyMaterialStore) PutIfAbsent(ctx context.Context, key string, value []byte) (bool, error) {
-	if _, ok := oidcFenceFrom(ctx); !ok && oidcKeyNamesVersion(key) {
+	if fence, ok := oidcFenceFrom(ctx); ok {
+		return fence.createMaterial(ctx, s.tx, key, oidcSigningKeysPrefix+key, value)
+	}
+	if oidcKeyNamesVersion(key) {
 		return false, &OIDCRotationUnfencedError{Key: key, Op: "put"}
 	}
 	return s.oidcGuardedKV.PutIfAbsent(ctx, key, value)
@@ -265,7 +271,7 @@ func (s *Server) useReplicatedOIDCSigningStore(kv xkmssdk.StorageBackend, tx tra
 		return err
 	}
 	if s.xkmsKeyVersionRouter != nil {
-		s.xkmsKeyVersionRouter.setReplicated(versions)
+		s.xkmsKeyVersionRouter.setReplicated(versions, tx)
 	}
 	guardedVersions, err := guardedOIDCStore(versions)
 	if err != nil {
@@ -303,6 +309,10 @@ type keyVersionRouter struct {
 
 	mu         sync.RWMutex
 	replicated xkmssdk.StorageBackend
+	// replicatedTx is replicated's transaction plane: a fenced commit of an
+	// "oidc-replicated" record runs on it in one transaction with the
+	// rotation lease.
+	replicatedTx transport.TransactionClient
 }
 
 var _ xkmssdk.StorageBackend = (*keyVersionRouter)(nil)
@@ -311,17 +321,25 @@ func newKeyVersionRouter(local xkmssdk.StorageBackend) *keyVersionRouter {
 	return &keyVersionRouter{local: local}
 }
 
-// setReplicated sends the "oidc-replicated" records to replicated.
-func (r *keyVersionRouter) setReplicated(replicated xkmssdk.StorageBackend) {
+// setReplicated sends the "oidc-replicated" records to replicated, whose
+// fenced commits run as transactions on tx.
+func (r *keyVersionRouter) setReplicated(replicated xkmssdk.StorageBackend, tx transport.TransactionClient) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.replicated = replicated
+	r.replicatedTx = tx
 }
 
 func (r *keyVersionRouter) replicatedStore() xkmssdk.StorageBackend {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	return r.replicated
+}
+
+func (r *keyVersionRouter) replicatedTransactions() transport.TransactionClient {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.replicatedTx
 }
 
 // route returns the store the record at key lives on.
@@ -340,7 +358,7 @@ func (r *keyVersionRouter) Get(ctx context.Context, key string) ([]byte, error) 
 
 func (r *keyVersionRouter) Put(ctx context.Context, key string, value []byte) error {
 	if fence, ok := oidcFenceFrom(ctx); ok && fence.key == key {
-		return fence.commit(ctx, value)
+		return fence.commit(ctx, r.replicatedTransactions(), value)
 	}
 	if r.replicatedRecord(key) {
 		return &OIDCRotationUnfencedError{Key: key, Op: "put"}
@@ -557,7 +575,7 @@ func (e *OIDCRotationBusyError) Error() string {
 // lease from reading its version record until the rotated version is
 // recorded; a lease past its expiry is taken over.
 // oidcGuardedKV is a replicated store with the guarded writes the rotation
-// lease and the fenced version-record commit rely on: a delete and a swap
+// lease relies on: a delete and a swap
 // conditioned on the value the caller last observed, evaluated where the
 // store serialises writes.
 type oidcGuardedKV interface {
@@ -582,15 +600,16 @@ func (e *OIDCSigningStoreGuardedWritesError) Error() string {
 }
 
 // OIDCSigningStoreTransactionsError reports a replicated OIDC signing store
-// without a transaction plane. A fenced delete of key material must check
-// the lease, the version record and the bytes in one transaction; a
-// bytes-only delete would let a stale holder remove a successor's key.
+// without a transaction plane. Every fenced write (the version-record
+// commit, and a put, creation or delete of key material) must check the
+// rotation lease in the same transaction as its own condition; without it a
+// stale holder could write over, record or remove its successor's state.
 type OIDCSigningStoreTransactionsError struct{}
 
 // Error implements error.
 func (e *OIDCSigningStoreTransactionsError) Error() string {
 	return "server: replicated oidc signing store lacks a transaction client; " +
-		"a fenced key-material delete needs one transaction over the lease, the version record and the bytes"
+		"every fenced write needs one transaction over the rotation lease and its own condition"
 }
 
 // guardedOIDCStore returns kv as an oidcGuardedKV, or
@@ -676,7 +695,6 @@ var oidcRotationLeaseRenewHook = func(context.Context) {}
 func holdOIDCRotationLease(ctx context.Context, kv, versions oidcGuardedKV, key, record, owner string, value []byte, ttl time.Duration) (context.Context, func(), error) {
 	fence := &oidcVersionFence{
 		key:       record,
-		store:     versions,
 		recordKey: oidcSigningVersionsPrefix + record,
 		leaseKey:  key,
 		lease:     value,
@@ -747,7 +765,6 @@ type oidcVersionFenceKey struct{}
 // last read or wrote.
 type oidcVersionFence struct {
 	key      string
-	store    oidcGuardedKV
 	mu       sync.Mutex
 	expected []byte
 	present  bool
@@ -759,9 +776,8 @@ type oidcVersionFence struct {
 	leaseKey  string
 
 	// leaseMu guards lease, the lease value this holder last wrote, and
-	// stopped, set once the holder released the lease. A renewal and a
-	// material delete both hold it, so a delete compares the value the
-	// store holds.
+	// stopped, set once the holder released the lease. A renewal and every
+	// fenced write hold it, so a write compares the value the store holds.
 	leaseMu sync.Mutex
 	lease   []byte
 	stopped bool
@@ -796,32 +812,118 @@ func (f *oidcVersionFence) observeMaterial(key string, value []byte) {
 	f.material[key] = oidcMaterial{value: slices.Clone(value), present: true}
 }
 
-// putMaterial writes value under key from what this holder knows of key: a
-// CompareAndSwap from the bytes it observed or wrote, or a PutIfAbsent.
-func (f *oidcVersionFence) putMaterial(ctx context.Context, kv oidcGuardedKV, key string, value []byte) error {
+// oidcKeyCompare is the condition that key still holds value, or, when
+// present is false, that key is still absent.
+func oidcKeyCompare(key string, value []byte, present bool) transport.Compare {
+	if !present {
+		return transport.Compare{Key: []byte(key), Target: transport.CompareCreateRevision, Result: transport.CompareEqual}
+	}
+	return transport.Compare{Key: []byte(key), Target: transport.CompareValue, Result: transport.CompareEqual, Value: value}
+}
+
+// recordCompare is the condition that the version record still holds the
+// value this fence expects, or is still absent. The caller holds f.mu.
+func (f *oidcVersionFence) recordCompare() transport.Compare {
+	return oidcKeyCompare(f.recordKey, f.expected, f.present)
+}
+
+// leasedWrite runs op as one transaction on tx that commits only while the
+// lease key still holds this holder's current lease value and every one of
+// conds holds, and reports whether it committed. A fence that never took a
+// lease, or whose lease was released, commits nothing.
+func (f *oidcVersionFence) leasedWrite(ctx context.Context, tx transport.TransactionClient, op transport.Op, conds ...transport.Compare) (bool, error) {
+	f.leaseMu.Lock()
+	defer f.leaseMu.Unlock()
+	if f.stopped || f.leaseKey == "" || f.recordKey == "" {
+		return false, nil
+	}
+	if tx == nil {
+		return false, &OIDCSigningStoreTransactionsError{}
+	}
+	resp, err := tx.ExecuteTransaction(ctx, &transport.TransactionRequest{
+		Compares:   append([]transport.Compare{oidcKeyCompare(f.leaseKey, f.lease, true)}, conds...),
+		SuccessOps: []transport.Op{op},
+	})
+	if err != nil {
+		return false, err
+	}
+	return resp != nil && resp.Succeeded, nil
+}
+
+// holdsLease reports whether the lease key still holds this holder's lease
+// value, as a compare-only transaction on tx. Only this holder writes its
+// own lease value, and a lease taken over never returns to it, so a lease
+// held now was held at every earlier write of this holder too.
+func (f *oidcVersionFence) holdsLease(ctx context.Context, tx transport.TransactionClient) (bool, error) {
+	f.leaseMu.Lock()
+	defer f.leaseMu.Unlock()
+	if f.stopped || f.leaseKey == "" || tx == nil {
+		return false, nil
+	}
+	resp, err := tx.ExecuteTransaction(ctx, &transport.TransactionRequest{
+		Compares: []transport.Compare{oidcKeyCompare(f.leaseKey, f.lease, true)},
+	})
+	if err != nil {
+		return false, err
+	}
+	return resp != nil && resp.Succeeded, nil
+}
+
+// putMaterial writes value under key, stored as storeKey, in one
+// transaction that holds only while the lease is still this holder's and
+// key still holds the bytes this holder observed or wrote under it, or is
+// still absent when it knows none.
+func (f *oidcVersionFence) putMaterial(ctx context.Context, tx transport.TransactionClient, key, storeKey string, value []byte) error {
 	f.materialMu.Lock()
 	defer f.materialMu.Unlock()
 	known := f.material[key]
-	var (
-		ok  bool
-		err error
-	)
-	if known.present {
-		ok, _, err = kv.CompareAndSwap(ctx, key, known.value, value)
-	} else {
-		ok, err = kv.PutIfAbsent(ctx, key, value)
-	}
+	committed, err := f.leasedWrite(ctx, tx,
+		transport.Op{Type: transport.OpPut, Key: []byte(storeKey), Value: value},
+		oidcKeyCompare(storeKey, known.value, known.present))
 	if err != nil {
 		return err
 	}
-	if !ok {
+	if !committed {
 		return &OIDCRotationFencedError{Key: key}
 	}
+	f.wroteMaterial(key, value)
+	return nil
+}
+
+// createMaterial creates key, stored as storeKey, in one transaction that
+// holds only while the lease is still this holder's and key is absent. Key
+// material that already exists is reported as not created; a lease that is
+// no longer this holder's refuses the write with the fenced error.
+func (f *oidcVersionFence) createMaterial(ctx context.Context, tx transport.TransactionClient, key, storeKey string, value []byte) (bool, error) {
+	f.materialMu.Lock()
+	defer f.materialMu.Unlock()
+	committed, err := f.leasedWrite(ctx, tx,
+		transport.Op{Type: transport.OpPut, Key: []byte(storeKey), Value: value},
+		oidcKeyCompare(storeKey, nil, false))
+	if err != nil {
+		return false, err
+	}
+	if !committed {
+		held, err := f.holdsLease(ctx, tx)
+		if err != nil {
+			return false, err
+		}
+		if held {
+			return false, nil
+		}
+		return false, &OIDCRotationFencedError{Key: key}
+	}
+	f.wroteMaterial(key, value)
+	return true, nil
+}
+
+// wroteMaterial records value as written under key by this holder. The
+// caller holds f.materialMu.
+func (f *oidcVersionFence) wroteMaterial(key string, value []byte) {
 	if f.material == nil {
 		f.material = make(map[string]oidcMaterial)
 	}
 	f.material[key] = oidcMaterial{value: slices.Clone(value), present: true, written: true}
-	return nil
 }
 
 // deleteMaterial removes key, stored as storeKey, in one transaction that
@@ -839,62 +941,36 @@ func (f *oidcVersionFence) deleteMaterial(ctx context.Context, tx transport.Tran
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	record := transport.Compare{
-		Key:    []byte(f.recordKey),
-		Target: transport.CompareCreateRevision,
-		Result: transport.CompareEqual,
-	}
-	if f.present {
-		record = transport.Compare{
-			Key:    []byte(f.recordKey),
-			Target: transport.CompareValue,
-			Result: transport.CompareEqual,
-			Value:  f.expected,
-		}
-	}
-	f.leaseMu.Lock()
-	defer f.leaseMu.Unlock()
-	// A fence that never took a lease, or whose lease has been released,
-	// holds nothing the transaction could compare against.
-	if f.stopped || f.leaseKey == "" || f.recordKey == "" {
-		return &OIDCRotationFencedError{Key: key}
-	}
-	resp, err := tx.ExecuteTransaction(ctx, &transport.TransactionRequest{
-		Compares: []transport.Compare{
-			{Key: []byte(f.leaseKey), Target: transport.CompareValue, Result: transport.CompareEqual, Value: f.lease},
-			record,
-			{Key: []byte(storeKey), Target: transport.CompareValue, Result: transport.CompareEqual, Value: known.value},
-		},
-		SuccessOps: []transport.Op{{Type: transport.OpDelete, Key: []byte(storeKey)}},
-	})
+	committed, err := f.leasedWrite(ctx, tx,
+		transport.Op{Type: transport.OpDelete, Key: []byte(storeKey)},
+		f.recordCompare(),
+		oidcKeyCompare(storeKey, known.value, true))
 	if err != nil {
 		return err
 	}
-	if resp == nil || !resp.Succeeded {
+	if !committed {
 		return &OIDCRotationFencedError{Key: key}
 	}
 	f.material[key] = oidcMaterial{written: known.written}
 	return nil
 }
 
-// commit writes value to the record from the expected value and advances the
-// expected value; a record another holder changed is left as it is.
-func (f *oidcVersionFence) commit(ctx context.Context, value []byte) error {
+// commit writes value to the record in one transaction on tx that holds
+// only while the lease is still this holder's and the record still holds
+// the expected value (or is still absent), then advances the expected
+// value. A record another holder changed, or a lease another holder took
+// over, is left as it is: a stale holder cannot record material its
+// successor has already removed.
+func (f *oidcVersionFence) commit(ctx context.Context, tx transport.TransactionClient, value []byte) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	var (
-		ok  bool
-		err error
-	)
-	if f.present {
-		ok, _, err = f.store.CompareAndSwap(ctx, f.key, f.expected, value)
-	} else {
-		ok, err = f.store.PutIfAbsent(ctx, f.key, value)
-	}
+	committed, err := f.leasedWrite(ctx, tx,
+		transport.Op{Type: transport.OpPut, Key: []byte(f.recordKey), Value: value},
+		f.recordCompare())
 	if err != nil {
 		return err
 	}
-	if !ok {
+	if !committed {
 		return &OIDCRotationFencedError{Key: f.key}
 	}
 	f.expected, f.present = slices.Clone(value), true
