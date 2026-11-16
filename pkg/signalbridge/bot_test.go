@@ -19,7 +19,6 @@ import (
 	"errors"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -396,17 +395,24 @@ func TestBot_DoubleRun(t *testing.T) {
 	bot, signal, _, _ := newTestBot(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	var ran atomic.Bool
+	done := make(chan error, 1)
 	go func() {
-		ran.Store(true)
-		_ = bot.Run(ctx)
+		done <- bot.Run(ctx)
 	}()
-	waitFor(t, func() bool { return ran.Load() })
+	waitFor(t, func() bool { return bot.running.Load() })
 	err := bot.Run(ctx)
 	if !IsKind(err, ErrKindConflict) {
 		t.Fatalf("want conflict got %v", err)
 	}
 	_ = bot.Stop()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("first Run returned %v, want nil", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("first Run did not return after Stop")
+	}
 	close(signal.in)
 }
 
