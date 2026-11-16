@@ -330,14 +330,15 @@ func (s *storageRootfsStore) Create(ctx context.Context, containerID, imageID st
 
 // Remove unmounts and deletes a container layer.
 func (s *storageRootfsStore) Remove(containerID string) error {
-	// A reclaim retried after a removal that got this far finds nothing left.
-	if _, err := s.store.Unmount(containerID, true); err != nil {
-		if errors.Is(err, storage.ErrContainerUnknown) {
-			return nil
-		}
+	// A reclaim retried after a removal that got this far finds the layer or
+	// the container already gone, and that counts as removed. A missing layer
+	// does not end the removal: the container record may outlive it.
+	if _, err := s.store.Unmount(containerID, true); err != nil &&
+		!errors.Is(err, storage.ErrContainerUnknown) && !errors.Is(err, storage.ErrLayerUnknown) {
 		return err
 	}
-	if err := s.store.DeleteContainer(containerID); err != nil && !errors.Is(err, storage.ErrContainerUnknown) {
+	if err := s.store.DeleteContainer(containerID); err != nil &&
+		!errors.Is(err, storage.ErrNotAContainer) && !errors.Is(err, storage.ErrContainerUnknown) {
 		return err
 	}
 	return nil

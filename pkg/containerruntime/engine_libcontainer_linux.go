@@ -26,6 +26,7 @@ import (
 	"time"
 
 	"github.com/opencontainers/runc/libcontainer"
+	"github.com/opencontainers/runc/libcontainer/configs"
 	"github.com/opencontainers/runc/libcontainer/specconv"
 	"github.com/opencontainers/runc/libcontainer/utils"
 	specs "github.com/opencontainers/runtime-spec/specs-go"
@@ -65,6 +66,14 @@ func (e *libcontainerEngine) Create(id string, oci *ociConfig) error {
 	if err != nil {
 		return err
 	}
+	// specconv leaves the rlimits to its caller (runc's CLI sets them
+	// itself), and exec'd processes inherit config.Rlimits.
+	if spec.Process != nil {
+		config.Rlimits, err = libcontainerRlimits(spec.Process.Rlimits)
+		if err != nil {
+			return err
+		}
+	}
 
 	container, err := libcontainer.Create(e.root, id, config)
 	if err != nil {
@@ -78,6 +87,41 @@ func (e *libcontainerEngine) Create(id string, oci *ociConfig) error {
 	e.containers[id] = container
 	e.mu.Unlock()
 	return nil
+}
+
+// libcontainerRlimitTypes maps the OCI rlimit types of ulimitResources to
+// their kernel resources, as runc's rlimit_linux.go does.
+var libcontainerRlimitTypes = map[string]int{
+	"RLIMIT_AS":         unix.RLIMIT_AS,
+	"RLIMIT_CORE":       unix.RLIMIT_CORE,
+	"RLIMIT_CPU":        unix.RLIMIT_CPU,
+	"RLIMIT_DATA":       unix.RLIMIT_DATA,
+	"RLIMIT_FSIZE":      unix.RLIMIT_FSIZE,
+	"RLIMIT_LOCKS":      unix.RLIMIT_LOCKS,
+	"RLIMIT_MEMLOCK":    unix.RLIMIT_MEMLOCK,
+	"RLIMIT_MSGQUEUE":   unix.RLIMIT_MSGQUEUE,
+	"RLIMIT_NICE":       unix.RLIMIT_NICE,
+	"RLIMIT_NOFILE":     unix.RLIMIT_NOFILE,
+	"RLIMIT_NPROC":      unix.RLIMIT_NPROC,
+	"RLIMIT_RSS":        unix.RLIMIT_RSS,
+	"RLIMIT_RTPRIO":     unix.RLIMIT_RTPRIO,
+	"RLIMIT_RTTIME":     unix.RLIMIT_RTTIME,
+	"RLIMIT_SIGPENDING": unix.RLIMIT_SIGPENDING,
+	"RLIMIT_STACK":      unix.RLIMIT_STACK,
+}
+
+// libcontainerRlimits converts OCI rlimits to libcontainer's, refusing a
+// type it does not know rather than dropping it.
+func libcontainerRlimits(rlimits []specs.POSIXRlimit) ([]configs.Rlimit, error) {
+	var out []configs.Rlimit
+	for _, rl := range rlimits {
+		resource, ok := libcontainerRlimitTypes[rl.Type]
+		if !ok {
+			return nil, fmt.Errorf("unknown rlimit type %q", rl.Type)
+		}
+		out = append(out, configs.Rlimit{Type: resource, Hard: rl.Hard, Soft: rl.Soft})
+	}
+	return out, nil
 }
 
 // Start runs the container's init process.

@@ -53,6 +53,9 @@ type fakeProcess struct {
 	// ignoreSIGTERM keeps the process running through SIGTERM, so only
 	// SIGKILL stops it.
 	ignoreSIGTERM bool
+	// survivesSIGKILL keeps the process running through SIGKILL, as a child
+	// left behind holding the output open does.
+	survivesSIGKILL bool
 
 	mu       sync.Mutex
 	signals  []os.Signal
@@ -95,6 +98,9 @@ func (p *fakeProcess) Signal(sig os.Signal) error {
 	p.mu.Unlock()
 
 	if sig == syscall.SIGTERM && p.ignoreSIGTERM {
+		return nil
+	}
+	if sig == syscall.SIGKILL && p.survivesSIGKILL {
 		return nil
 	}
 	if s, ok := sig.(syscall.Signal); ok {
@@ -149,6 +155,8 @@ type fakeEngine struct {
 	initResult *fakeResult
 	// ignoreSIGTERM makes init processes survive SIGTERM.
 	ignoreSIGTERM bool
+	// execSurvivesSIGKILL makes exec processes survive SIGKILL.
+	execSurvivesSIGKILL bool
 	// execResult is what every exec process writes and exits with.
 	execResult fakeResult
 	// execBlocks makes exec processes run, with a silent terminal, until
@@ -215,6 +223,7 @@ func (e *fakeEngine) Exec(id string, spec processSpec) (containerProcess, error)
 	e.execs = append(e.execs, spec)
 
 	process := newFakeProcess(2000 + len(e.execs))
+	process.survivesSIGKILL = e.execSurvivesSIGKILL
 	if e.execBlocks {
 		reader, writer := io.Pipe()
 		process.console = &silentConsole{reader: reader, writer: writer}

@@ -16,6 +16,7 @@ package containerruntime
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -112,6 +113,32 @@ func TestRuntimeExec_TTYContextCancelled(t *testing.T) {
 
 	_, err := rt.Exec(ctx, id, ExecOptions{Command: []string{"/bin/sh"}, TTY: true})
 	require.ErrorIs(t, err, context.Canceled)
+}
+
+func TestRuntimeExec_CancelReturnsWhenTheProcessOutlivesSIGKILL(t *testing.T) {
+	grace := execKillGrace
+	execKillGrace = 50 * time.Millisecond
+	t.Cleanup(func() { execKillGrace = grace })
+
+	rt, doubles := newTestRuntimeWithBackends(t)
+	id := createTestContainer(t, rt, "exec-outlives-kill")
+	doubles.engine.execBlocks = true
+	doubles.engine.execSurvivesSIGKILL = true
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	errc := make(chan error, 1)
+	go func() {
+		_, err := rt.Exec(ctx, id, ExecOptions{Command: []string{"/bin/sh"}})
+		errc <- err
+	}()
+	select {
+	case err := <-errc:
+		require.ErrorIs(t, err, context.Canceled)
+	case <-time.After(time.Second):
+		t.Fatal("Exec did not return after the kill grace")
+	}
 }
 
 func TestRuntimeExec_MissingContainer(t *testing.T) {

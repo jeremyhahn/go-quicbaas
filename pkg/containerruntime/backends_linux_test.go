@@ -174,10 +174,12 @@ func TestStorageRootfsStore_CreateFromAMissingImage(t *testing.T) {
 	require.Error(t, err)
 }
 
-func TestStorageRootfsStore_RemoveOfAMissingContainer(t *testing.T) {
+func TestStorageRootfsStore_RemoveIsIdempotent(t *testing.T) {
 	b := newStorageBackends(t)
 
-	require.Error(t, b.rootfs.Remove("no-such-container"))
+	// A retried reclaim finds nothing left, and that counts as removed.
+	require.NoError(t, b.rootfs.Remove("no-such-container"))
+	require.NoError(t, b.rootfs.Remove("no-such-container"))
 }
 
 func TestNormalizeImageReference(t *testing.T) {

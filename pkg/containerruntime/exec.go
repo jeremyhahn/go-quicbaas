@@ -20,6 +20,7 @@ import (
 	"io"
 	"slices"
 	"syscall"
+	"time"
 )
 
 // ErrExecCommandRequired is returned when an exec request carries no command.
@@ -95,6 +96,11 @@ func (r *Runtime) Exec(ctx context.Context, id string, opts ExecOptions) (*ExecR
 
 // execBuffered runs an exec process with its stdout and stderr captured
 // separately.
+// execKillGrace bounds the wait for a cancelled exec's exit: a child the
+// exec left behind can hold its output open past SIGKILL. The result's
+// buffers are never read on that path, so the wait may outlive the call.
+var execKillGrace = 5 * time.Second
+
 func (r *Runtime) execBuffered(ctx context.Context, state *containerState, opts ExecOptions) (*ExecResult, error) {
 	var stdout, stderr bytes.Buffer
 	spec := execProcessSpec(state, opts)
@@ -123,7 +129,10 @@ func (r *Runtime) execBuffered(ctx context.Context, state *containerState, opts 
 		// A cancelled exec is killed and reaped; its exit status is not the
 		// command's answer, so the cancellation is what is reported.
 		killErr := process.Signal(syscall.SIGKILL)
-		<-done
+		select {
+		case <-done:
+		case <-time.After(execKillGrace):
+		}
 		return nil, errors.Join(ctx.Err(), killErr)
 	}
 	exitCode, err := exited.code, exited.err
