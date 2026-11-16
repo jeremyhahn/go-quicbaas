@@ -35,7 +35,9 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -93,6 +95,44 @@ func verifySDKLivenessOverTransport(t *testing.T, transport string, ports PortBu
 		t.Fatalf("Health.Liveness over %q: nil response", transport)
 	}
 	assertLivenessResponseHealthy(t, transport, resp)
+}
+
+// verifySealedMCPWindow is the SDK phase of a shamir MCP cell. A shamir init
+// only records the M-of-N parameters, so the daemon boots SEALED with no
+// administrator: first boot issues none until the officers' ceremony unseals
+// it (cmd/quicbaasd init_runtime_test.go). There is no credential to log in
+// with, and MCP refuses an uncredentialed session (CA ruling 571), so the
+// cell proves the sealed window instead: no administrator certificate exists,
+// the MCP listener completed its TLS handshake in the readiness probe, and an
+// SDK client without a credential is refused rather than served.
+func verifySealedMCPWindow(t *testing.T, ports PortBundle, dataDir string) {
+	t.Helper()
+
+	adminCert := filepath.Join(dataDir, "admin", "admin.crt")
+	if _, err := os.Stat(adminCert); err == nil {
+		t.Fatalf("sealed shamir node issued an administrator certificate (%s) before its ceremony", adminCert)
+	} else if !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("stat %s: %v", adminCert, err)
+	}
+
+	client, err := newSDKClient("mcp", ports, dataDir, "")
+	if err != nil {
+		t.Logf("uncredentialed MCP client refused at construction on the sealed node: %v", err)
+		return
+	}
+	defer func() {
+		if closeErr := client.Close(); closeErr != nil {
+			t.Logf("SDK client Close: %v", closeErr)
+		}
+	}()
+
+	ctx, cancel := context.WithTimeout(context.Background(), sdkLivenessTimeout)
+	defer cancel()
+	if _, err := client.Transport().Request(ctx, "quicbaas.Health", "Liveness", struct{}{}); err == nil {
+		t.Fatal("sealed shamir node served an uncredentialed MCP session; MCP must refuse it")
+	} else {
+		t.Logf("uncredentialed MCP call refused on the sealed node: %v", err)
+	}
 }
 
 // assertLivenessResponseHealthy normalises the Health.Liveness response

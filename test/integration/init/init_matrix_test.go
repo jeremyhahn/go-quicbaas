@@ -146,15 +146,20 @@ func runMatrixCell(t *testing.T, binary, cliBinary, strategy, transport string) 
 	// MCP refuses an uncredentialed initialize (CA ruling 571), so an MCP
 	// cell logs in first; the other transports serve it publicly, which is
 	// what lets a sealed shamir node (no administrator until its officers
-	// unseal it) answer here. A successful response proves
+	// unseal it) answer here. A sealed shamir MCP cell has no administrator
+	// to log in as, so it proves the sealed window instead. A successful response proves
 	// the SDK transport stack lines up with the daemon's listener for this
 	// cell — a regression here would silently break every downstream SDK
 	// caller without firing in the raw-socket probes above.
-	var token string
-	if transport == "mcp" {
-		token = loginFirstBootAdmin(ctx, t, cliBinary, transport, ports, dataDir, strategy)
+	switch {
+	case transport == "mcp" && strategy == "shamir":
+		verifySealedMCPWindow(t, ports, dataDir)
+	case transport == "mcp":
+		token := loginFirstBootAdmin(ctx, t, cliBinary, transport, ports, dataDir, strategy)
+		verifySDKLivenessOverTransport(t, transport, ports, dataDir, token)
+	default:
+		verifySDKLivenessOverTransport(t, transport, ports, dataDir, "")
 	}
-	verifySDKLivenessOverTransport(t, transport, ports, dataDir, token)
 
 	// Phase 5: cross-strategy invariants on the marker (e.g. credential
 	// strategy default = "barrier"). assertInitDoneMarker already covered
