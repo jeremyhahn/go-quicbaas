@@ -82,7 +82,7 @@ func TestOIDCSigningStore_StaleHolderDeleteKeepsSuccessorsCommittedKey(t *testin
 // Each of the three preconditions of a fenced material delete refuses it on
 // its own: the lease, the version record (present or absent) and the bytes.
 func TestOIDCKeyMaterialStore_FencedDeleteChecksLeaseRecordAndBytes(t *testing.T) {
-	const name = "oidc-test-material"
+	name := oidcSystemKey("", "oidc-test-material")
 	record := "system" + oidcSigningVersionSegment + iam.OIDCSigningKeyCN
 	leaseKey := oidcRotationLeasePrefix + "system/" + iam.OIDCSigningKeyCN
 	observed := []byte("observed bytes")

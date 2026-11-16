@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"github.com/jeremyhahn/go-qrdb/sdk/go/transport"
+	"github.com/jeremyhahn/go-xkms/pkg/keyversion"
 	xkmsstorage "github.com/jeremyhahn/go-xkms/pkg/storage"
 	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
 
@@ -121,6 +122,9 @@ func oidcKeyNamesVersion(key string) bool {
 // passes only as the first creation of a key that is not a rotation version.
 func (s *oidcKeyMaterialStore) Put(ctx context.Context, key string, value []byte) error {
 	if fence, ok := oidcFenceFrom(ctx); ok {
+		if !fence.ownsMaterial(key) {
+			return &OIDCRotationFencedError{Key: key}
+		}
 		return fence.putMaterial(ctx, s.tx, key, oidcSigningKeysPrefix+key, value, s.current(key))
 	}
 	if oidcKeyNamesVersion(key) {
@@ -157,6 +161,9 @@ func (s *oidcKeyMaterialStore) current(key string) func(context.Context) ([]byte
 // rotation version is refused.
 func (s *oidcKeyMaterialStore) PutIfAbsent(ctx context.Context, key string, value []byte) (bool, error) {
 	if fence, ok := oidcFenceFrom(ctx); ok {
+		if !fence.ownsMaterial(key) {
+			return false, &OIDCRotationFencedError{Key: key}
+		}
 		return fence.createMaterial(ctx, s.tx, key, oidcSigningKeysPrefix+key, value)
 	}
 	if oidcKeyNamesVersion(key) {
@@ -174,6 +181,9 @@ func (s *oidcKeyMaterialStore) Delete(ctx context.Context, key string) error {
 	fence, ok := oidcFenceFrom(ctx)
 	if !ok {
 		return &OIDCRotationUnfencedError{Key: key, Op: "delete"}
+	}
+	if !fence.ownsMaterial(key) {
+		return &OIDCRotationFencedError{Key: key}
 	}
 	if err := oidcMaterialDeleteHook(key); err != nil {
 		return err
@@ -677,7 +687,7 @@ func newOIDCRotationLock(kv, versions oidcGuardedKV) iam.RotationLock {
 				return nil, nil, err
 			}
 			if ok {
-				return holdOIDCRotationLease(ctx, kv, versions, key, tenant+oidcSigningVersionSegment+cn, owner, value, ttl)
+				return holdOIDCRotationLease(ctx, kv, versions, key, tenant, cn, owner, value, ttl)
 			}
 			// An expired lease is removed only while it still holds the
 			// value observed here, so of two nodes taking over the same
@@ -720,13 +730,17 @@ var oidcRotationLeaseRenewHook = func(context.Context) {}
 // commit must still find, and returns a context derived from ctx that
 // carries the commit fence and is canceled when a renewal fails or is
 // refused, with the release that stops the renewals and removes this
-// holder's own lease value only.
-func holdOIDCRotationLease(ctx context.Context, kv, versions oidcGuardedKV, key, record, owner string, value []byte, ttl time.Duration) (context.Context, func(), error) {
+// holder's own lease value only. The fence owns the key material of tenant
+// ("system" for the system key) and cn only.
+func holdOIDCRotationLease(ctx context.Context, kv, versions oidcGuardedKV, key, tenant, cn, owner string, value []byte, ttl time.Duration) (context.Context, func(), error) {
+	record := tenant + oidcSigningVersionSegment + cn
 	fence := &oidcVersionFence{
 		key:       record,
 		recordKey: oidcSigningVersionsPrefix + record,
 		leaseKey:  key,
 		lease:     value,
+		tenant:    tenant,
+		cn:        cn,
 	}
 	current, err := versions.Get(ctx, record)
 	if err == nil {
@@ -804,6 +818,12 @@ type oidcVersionFence struct {
 	recordKey string
 	leaseKey  string
 
+	// tenant and cn name the key this fence rotates: tenant is the tenant
+	// ID, or "system" for the system key. A fenced write or delete of key
+	// material outside that key's paths is refused (ownsMaterial).
+	tenant string
+	cn     string
+
 	// leaseMu guards lease, the lease value this holder last wrote, and
 	// stopped, set once the holder released the lease. A renewal and every
 	// fenced write hold it, so a write compares the value the store holds.
@@ -825,6 +845,40 @@ type oidcMaterial struct {
 	value   []byte
 	present bool
 	written bool
+}
+
+// oidcKeyBlobPrefix and oidcKeyBlobSuffix frame a key ID in its blob's
+// path, as xkmsstorage.KeyPath names it.
+var oidcKeyBlobPrefix, oidcKeyBlobSuffix, _ = strings.Cut(xkmsstorage.KeyPath("\x00"), "\x00")
+
+// oidcSystemKeyIDSegments is the number of ":"-separated segments of a
+// system key's ID (store:type:cn:algorithm); a tenant's key ID carries the
+// tenant ID before them.
+const oidcSystemKeyIDSegments = 4
+
+// ownsMaterial reports whether key, a key-material name, is a blob or
+// metadata record of the key this fence rotates: a version of f.cn owned
+// by f.tenant. Every other name, another tenant's key above all, is
+// outside the fence.
+func (f *oidcVersionFence) ownsMaterial(key string) bool {
+	id, ok := strings.CutPrefix(key, oidcKeyMetadataPrefix)
+	if !ok {
+		rest, blob := strings.CutPrefix(key, oidcKeyBlobPrefix)
+		if !blob {
+			return false
+		}
+		if id, ok = strings.CutSuffix(rest, oidcKeyBlobSuffix); !ok {
+			return false
+		}
+	}
+	segments := strings.Split(id, ":")
+	switch {
+	case f.tenant == "system" && len(segments) == oidcSystemKeyIDSegments:
+	case f.tenant != "system" && len(segments) == oidcSystemKeyIDSegments+1 && segments[0] == f.tenant:
+	default:
+		return false
+	}
+	return f.cn != "" && keyversion.BaseKeyID(segments[len(segments)-2]) == f.cn
 }
 
 // observeMaterial records value as read under key, unless this holder wrote

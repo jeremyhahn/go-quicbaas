@@ -94,18 +94,18 @@ func TestOIDCSigningStore_StaleHolderRecordCommitAfterSuccessorCleanup(t *testin
 	require.NoError(t, r.versions.Put(context.Background(), r.record, []byte("r1")))
 
 	ctxA := r.hold(t)
-	require.NoError(t, r.keys.Put(ctxA, "k--v2", []byte("a2")))
+	require.NoError(t, r.keys.Put(ctxA, oidcSystemKey("v2", "k"), []byte("a2")))
 
 	ctxB := r.takeOver(t)
-	got, err := r.keys.Get(ctxB, "k--v2")
+	got, err := r.keys.Get(ctxB, oidcSystemKey("v2", "k"))
 	require.NoError(t, err)
 	require.Equal(t, []byte("a2"), got)
-	require.NoError(t, r.keys.Delete(ctxB, "k--v2"))
+	require.NoError(t, r.keys.Delete(ctxB, oidcSystemKey("v2", "k")))
 
 	var fenced *OIDCRotationFencedError
 	require.ErrorAs(t, r.router.Put(ctxA, r.record, []byte("r2")), &fenced)
 	require.Equal(t, []byte("r1"), r.value(t, oidcSigningVersionsPrefix+r.record), "the stale holder's record commit landed")
-	require.Nil(t, r.value(t, oidcSigningKeysPrefix+"k--v2"))
+	require.Nil(t, r.value(t, oidcSigningKeysPrefix+oidcSystemKey("v2", "k")))
 }
 
 // Every write the fence guards needs the lease in the same transaction:
@@ -130,37 +130,37 @@ func TestOIDCSigningStore_FencedWritesNeedTheLease(t *testing.T) {
 		{
 			name: "material overwrite by Put",
 			write: func(_ *testing.T, r *oidcLeasedWriteRig, ctx context.Context) error {
-				return r.keys.Put(ctx, "k", []byte("a1"))
+				return r.keys.Put(ctx, oidcSystemKey("", "k"), []byte("a1"))
 			},
-			key:    func(*oidcLeasedWriteRig) string { return oidcSigningKeysPrefix + "k" },
+			key:    func(*oidcLeasedWriteRig) string { return oidcSigningKeysPrefix + oidcSystemKey("", "k") },
 			before: []byte("m1"), after: []byte("a1"),
 		},
 		{
 			name: "material creation by Put",
 			write: func(_ *testing.T, r *oidcLeasedWriteRig, ctx context.Context) error {
-				return r.keys.Put(ctx, "k--v2", []byte("a2"))
+				return r.keys.Put(ctx, oidcSystemKey("v2", "k"), []byte("a2"))
 			},
-			key:   func(*oidcLeasedWriteRig) string { return oidcSigningKeysPrefix + "k--v2" },
+			key:   func(*oidcLeasedWriteRig) string { return oidcSigningKeysPrefix + oidcSystemKey("v2", "k") },
 			after: []byte("a2"),
 		},
 		{
 			name: "material creation by PutIfAbsent",
 			write: func(t *testing.T, r *oidcLeasedWriteRig, ctx context.Context) error {
-				created, err := r.keys.PutIfAbsent(ctx, "k--v2", []byte("a2"))
+				created, err := r.keys.PutIfAbsent(ctx, oidcSystemKey("v2", "k"), []byte("a2"))
 				if err == nil {
 					require.True(t, created)
 				}
 				return err
 			},
-			key:   func(*oidcLeasedWriteRig) string { return oidcSigningKeysPrefix + "k--v2" },
+			key:   func(*oidcLeasedWriteRig) string { return oidcSigningKeysPrefix + oidcSystemKey("v2", "k") },
 			after: []byte("a2"),
 		},
 		{
 			name: "material delete",
 			write: func(_ *testing.T, r *oidcLeasedWriteRig, ctx context.Context) error {
-				return r.keys.Delete(ctx, "k")
+				return r.keys.Delete(ctx, oidcSystemKey("", "k"))
 			},
-			key:    func(*oidcLeasedWriteRig) string { return oidcSigningKeysPrefix + "k" },
+			key:    func(*oidcLeasedWriteRig) string { return oidcSigningKeysPrefix + oidcSystemKey("", "k") },
 			before: []byte("m1"),
 		},
 	} {
@@ -172,9 +172,9 @@ func TestOIDCSigningStore_FencedWritesNeedTheLease(t *testing.T) {
 			t.Run(name, func(t *testing.T) {
 				r := newOIDCLeasedWriteRig(t)
 				require.NoError(t, r.versions.Put(context.Background(), r.record, []byte("r1")))
-				require.NoError(t, r.kv.Put(context.Background(), oidcSigningKeysPrefix+"k", []byte("m1")))
+				require.NoError(t, r.kv.Put(context.Background(), oidcSigningKeysPrefix+oidcSystemKey("", "k"), []byte("m1")))
 				ctxA := r.hold(t)
-				got, err := r.keys.Get(ctxA, "k")
+				got, err := r.keys.Get(ctxA, oidcSystemKey("", "k"))
 				require.NoError(t, err)
 				require.Equal(t, []byte("m1"), got)
 				if !takenOver {
@@ -195,10 +195,10 @@ func TestOIDCSigningStore_FencedWritesNeedTheLease(t *testing.T) {
 // created and leaves the bytes, while its writer holds the lease.
 func TestOIDCSigningStore_FencedPutIfAbsentOfExistingMaterial(t *testing.T) {
 	r := newOIDCLeasedWriteRig(t)
-	require.NoError(t, r.kv.Put(context.Background(), oidcSigningKeysPrefix+"k--v2", []byte("peer")))
+	require.NoError(t, r.kv.Put(context.Background(), oidcSigningKeysPrefix+oidcSystemKey("v2", "k"), []byte("peer")))
 	ctx := r.hold(t)
-	created, err := r.keys.PutIfAbsent(ctx, "k--v2", []byte("mine"))
+	created, err := r.keys.PutIfAbsent(ctx, oidcSystemKey("v2", "k"), []byte("mine"))
 	require.NoError(t, err)
 	require.False(t, created)
-	require.Equal(t, []byte("peer"), r.value(t, oidcSigningKeysPrefix+"k--v2"))
+	require.Equal(t, []byte("peer"), r.value(t, oidcSigningKeysPrefix+oidcSystemKey("v2", "k")))
 }

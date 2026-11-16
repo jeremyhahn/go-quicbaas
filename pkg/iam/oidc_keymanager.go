@@ -916,7 +916,8 @@ func (m *SigningKeyManager) Rotate() error {
 	ctx := context.Background()
 
 	// A system rotation must name the system-owned key exactly; it is
-	// checked before the lease is taken, so a refusal writes nothing.
+	// checked before the lease is taken, so a refusal writes nothing, and
+	// again once the lease is held.
 	if isSystemTenant(m.tenantID) {
 		if err := m.requireExactSystemKey(ctx); err != nil {
 			return err
@@ -934,6 +935,14 @@ func (m *SigningKeyManager) Rotate() error {
 		defer unlock()
 		// The rotation runs under the lease: a lost lease cancels it.
 		ctx = lockCtx
+	}
+	// A tenant's dedicated key created while this rotation waited for
+	// its lease holds no lease this one excludes: the check is made again
+	// under the lease, before anything is written.
+	if isSystemTenant(m.tenantID) {
+		if err := m.requireExactSystemKey(ctx); err != nil {
+			return err
+		}
 	}
 	if m.versioned() {
 		if err := m.refreshLocked(ctx); err != nil {
