@@ -224,6 +224,9 @@ func (kb *XKMSBackend) CreateKey(ctx context.Context, attrs *kctypes.KeyAttribut
 	if isSymmetric {
 		// Generate symmetric key under the type every lookup here addresses.
 		attrs.KeyType = symmetricKeyType
+		if err := kb.refuseLegacySymmetricShadow(ctx, attrs.CN, kb.attrsToAlgorithmString(attrs)); err != nil {
+			return nil, api.NewSymmetricKeyGenerationError("XKMSBackend.CreateKey", err)
+		}
 		_, err := xkms.GenerateSymmetricKey(ctx, string(kb.backendType), attrs)
 		if err != nil {
 			return nil, api.NewSymmetricKeyGenerationError("XKMSBackend.CreateKey", err)
@@ -290,6 +293,8 @@ func (kb *XKMSBackend) ImportKey(ctx context.Context, keyID string, material []b
 	kind := "symmetric"
 	if !kb.isSymmetricAlgorithm(algorithm) {
 		kind = "asymmetric"
+	} else if err := kb.refuseLegacySymmetricShadow(ctx, keyID, algorithm); err != nil {
+		return nil, api.NewKeyImportError("XKMSBackend.ImportKey", kind, err)
 	}
 
 	if err := xkms.ImportKeyMaterial(ctx, string(kb.backendType), attrs, material); err != nil {
@@ -513,6 +518,14 @@ func (kb *XKMSBackend) RotateKey(ctx context.Context, keyID string) (*KeyMetadat
 	// Calculate new version
 	oldVersion := meta.Version
 	newVersion := oldVersion + 1
+	// A version rotated in under legacySymmetricKeyType is never written
+	// again under the current type: that would shadow it and the data it
+	// encrypted, so rotation moves past every version the legacy type holds.
+	if kb.isSymmetricAlgorithm(meta.Algorithm) {
+		for kb.holdsLegacySymmetricKey(ctx, kb.buildVersionedKeyID(keyID, newVersion), meta.Algorithm) {
+			newVersion++
+		}
+	}
 
 	// Build attributes for the new versioned key
 	versionedKeyID := kb.buildVersionedKeyID(keyID, newVersion)
@@ -714,11 +727,35 @@ func (kb *XKMSBackend) resolveSymmetricKeyID(ctx context.Context, keyID string, 
 	if _, err := xkms.GetSymmetricKey(ctx, kid); err == nil {
 		return kid
 	}
-	legacy := fmt.Sprintf("%s:%s:%s:%s", kb.backendType, legacySymmetricKeyTypeSegment, kb.algorithmToKeyIDFormat(algorithm), keyID)
-	if _, err := xkms.GetSymmetricKey(ctx, legacy); err == nil {
-		return legacy
+	if kb.holdsLegacySymmetricKey(ctx, keyID, algorithm) {
+		return kb.legacySymmetricKeyID(keyID, algorithm)
 	}
 	return kid
+}
+
+// legacySymmetricKeyID is buildFullKeyID under legacySymmetricKeyType.
+func (kb *XKMSBackend) legacySymmetricKeyID(keyID string, algorithm string) string {
+	return fmt.Sprintf("%s:%s:%s:%s", kb.backendType, legacySymmetricKeyTypeSegment, kb.algorithmToKeyIDFormat(algorithm), keyID)
+}
+
+// holdsLegacySymmetricKey reports whether go-xkms holds keyID under
+// legacySymmetricKeyType. go-xkms's storage ID includes the KeyType, so it
+// would store a new key of the same name under symmetricKeyType beside it,
+// and resolveSymmetricKeyID, which prefers the current type, would then
+// shadow the legacy key and the data it encrypted.
+func (kb *XKMSBackend) holdsLegacySymmetricKey(ctx context.Context, keyID string, algorithm string) bool {
+	_, err := xkms.GetSymmetricKey(ctx, kb.legacySymmetricKeyID(keyID, algorithm))
+	return err == nil
+}
+
+// refuseLegacySymmetricShadow refuses to write a symmetric key named keyID
+// when go-xkms holds that name under legacySymmetricKeyType, as go-xkms
+// refused a duplicate before the type changed.
+func (kb *XKMSBackend) refuseLegacySymmetricShadow(ctx context.Context, keyID string, algorithm string) error {
+	if kb.holdsLegacySymmetricKey(ctx, keyID, algorithm) {
+		return fmt.Errorf("%w: %q is held under the legacy symmetric key type", ErrKeyAlreadyExists, keyID)
+	}
+	return nil
 }
 
 // buildSigningKeyID constructs the full key ID format for signing operations.

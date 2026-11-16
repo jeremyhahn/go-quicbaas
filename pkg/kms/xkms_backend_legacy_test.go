@@ -98,3 +98,59 @@ func TestXKMSBackend_ALegacyRotatedVersionStillDecryptsAfterTheUpgrade(t *testin
 	require.NoError(t, err, "data a legacy rotated version encrypted must still decrypt")
 	require.Equal(t, plaintext, decrypted)
 }
+
+// A new key never shadows a legacy key of the same name: create and import
+// are refused, as go-xkms refused a duplicate before the type changed, and
+// the legacy key still decrypts what it encrypted.
+func TestXKMSBackend_ANewKeyNeverShadowsALegacyKey(t *testing.T) {
+	cleanup := initXKMSForTest(t)
+	defer cleanup()
+	backend, err := NewXKMSBackend(&XKMSBackendConfig{BackendType: config.BackendTypeSoftware, Logger: &mockLogger{}})
+	require.NoError(t, err)
+	ctx := context.Background()
+
+	plaintext := []byte("encrypted before the upgrade")
+	ciphertext := seedLegacySymmetricKey(t, backend, "held-key", 1, plaintext)
+
+	_, err = backend.CreateKey(ctx, &xkmssdk.KeyAttributes{CN: "held-key", SymmetricAlgorithm: xkmssdk.SymmetricAES256GCM})
+	require.ErrorIs(t, err, ErrKeyAlreadyExists, "create must not shadow the legacy key")
+	_, err = backend.ImportKey(ctx, "held-key", make([]byte, 32), "AES-256-GCM", nil)
+	require.ErrorIs(t, err, ErrKeyAlreadyExists, "import must not shadow the legacy key")
+
+	decrypted, err := backend.Decrypt(ctx, "held-key", ciphertext, nil)
+	require.NoError(t, err, "the legacy key must still decrypt its data")
+	require.Equal(t, plaintext, decrypted)
+
+	// A name the legacy type does not hold is still created.
+	_, err = backend.CreateKey(ctx, &xkmssdk.KeyAttributes{CN: "fresh-key", SymmetricAlgorithm: xkmssdk.SymmetricAES256GCM})
+	require.NoError(t, err)
+}
+
+// Rotation moves past a version the legacy type holds instead of writing the
+// same version under the current type, so data that version encrypted still
+// decrypts.
+func TestXKMSBackend_RotationNeverShadowsALegacyVersion(t *testing.T) {
+	cleanup := initXKMSForTest(t)
+	defer cleanup()
+	backend, err := NewXKMSBackend(&XKMSBackendConfig{BackendType: config.BackendTypeSoftware, Logger: &mockLogger{}})
+	require.NoError(t, err)
+	ctx := context.Background()
+
+	seedLegacySymmetricKey(t, backend, "rotating-key", 1, []byte("v1"))
+	plaintext := []byte("encrypted by legacy version 2")
+	ciphertext := seedLegacySymmetricKey(t, backend, backend.buildVersionedKeyID("rotating-key", 2), 2, plaintext)
+
+	_, err = backend.GetKeyMetadata(ctx, "rotating-key")
+	require.NoError(t, err)
+	backend.mu.Lock()
+	backend.metadata["rotating-key"].Version = 1
+	backend.mu.Unlock()
+
+	meta, err := backend.RotateKey(ctx, "rotating-key")
+	require.NoError(t, err)
+	require.Equal(t, 3, meta.Version, "rotation must skip the version the legacy type holds")
+
+	decrypted, err := backend.Decrypt(ctx, "rotating-key", ciphertext, nil)
+	require.NoError(t, err, "data legacy version 2 encrypted must still decrypt")
+	require.Equal(t, plaintext, decrypted)
+}
