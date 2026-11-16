@@ -265,7 +265,7 @@ func (eb *EncryptedBackend) StoreVersionIfCurrent(ctx context.Context, path stri
 	if expected.Version <= 0 {
 		return 0, staleReadError(expected, 0, false, false)
 	}
-	if _, guarded := eb.store.(guardedKVStore); !guarded {
+	if _, guarded := eb.store.(casKVStore); !guarded {
 		return 0, errUnguardedConditionalWrite()
 	}
 	return eb.storeVersion(ctx, path, &expected, data, metadata, nil)
@@ -324,8 +324,11 @@ func (eb *EncryptedBackend) storeVersion(ctx context.Context, path string, expec
 		// not re-encrypted under the backend's default key.
 		if opts == nil {
 			last := versions.Versions[len(versions.Versions)-1]
+			// The read path's key: KeyIdentifier, or a legacy record's KeyID.
 			if last.KeyIdentifier != "" {
 				keyIdentifier = last.KeyIdentifier
+			} else if last.KeyID != "" {
+				keyIdentifier = last.KeyID
 			}
 			if last.Algorithm != "" {
 				algorithm = last.Algorithm
@@ -766,7 +769,7 @@ func (eb *EncryptedBackend) checkReadVersion(ctx context.Context, versions *secr
 // still the bytes the check read (observedRaw; nil: absent). A store that
 // cannot arbitrate gets the plain write, held only by the backend's lock.
 func (eb *EncryptedBackend) saveVersionsIfUnchanged(ctx context.Context, path string, versions *secretVersions, observedRaw []byte, expected ReadVersion) error {
-	g, guarded := eb.store.(guardedKVStore)
+	g, guarded := eb.store.(casKVStore)
 	if !guarded {
 		return errUnguardedConditionalWrite()
 	}

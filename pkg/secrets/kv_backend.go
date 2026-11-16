@@ -100,6 +100,14 @@ type guardedKVStore interface {
 	CompareAndSwap(ctx context.Context, key string, expected, next []byte) (bool, error)
 }
 
+// casKVStore is the one guarded verb a conditional write over a single
+// record needs (the EncryptedBackend keeps a path's versions in one key):
+// a compare-and-swap the storage engine evaluates for every process sharing
+// the store. pkg/kvstore.Store offers it without the other guarded verbs.
+type casKVStore interface {
+	CompareAndSwap(ctx context.Context, key string, expected, next []byte) (bool, error)
+}
+
 const (
 	// kvBackendKeyPrefix is the root prefix for all secrets in the KV store.
 	kvBackendKeyPrefix = "_qb/secrets/"
