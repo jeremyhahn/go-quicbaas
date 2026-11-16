@@ -26,7 +26,6 @@ import (
 	"io"
 	"net"
 	"sync"
-	"time"
 
 	"github.com/jeremyhahn/go-objstore/pkg/common"
 	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
