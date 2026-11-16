@@ -136,6 +136,16 @@ func metadataEqualIgnoringVersion(a, b map[string]string) bool {
 	return true
 }
 
+// errUnguardedConditionalWrite refuses a conditional write on a store that
+// cannot compare-and-swap. A backend's lock covers only its own instance:
+// another instance on the same store could update, disable or delete the
+// secret between the check and an unconditional put, which would overwrite
+// that change or revive the deleted secret.
+func errUnguardedConditionalWrite() error {
+	return &SecretsSentinelCauseError{Sentinel: ErrConditionalWriteUnsupported,
+		Cause: errors.New("the backing store has no compare-and-swap to arbitrate the write")}
+}
+
 func staleReadError(expected ReadVersion, current int, deleted, replaced bool) error {
 	return &SecretsSentinelCauseError{Sentinel: ErrWriteConflict,
 		Cause: &StaleVersionError{Expected: expected.Version, Current: current, Deleted: deleted, Replaced: replaced}}

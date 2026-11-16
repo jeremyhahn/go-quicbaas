@@ -265,6 +265,9 @@ func (eb *EncryptedBackend) StoreVersionIfCurrent(ctx context.Context, path stri
 	if expected.Version <= 0 {
 		return 0, staleReadError(expected, 0, false, false)
 	}
+	if _, guarded := eb.store.(guardedKVStore); !guarded {
+		return 0, errUnguardedConditionalWrite()
+	}
 	return eb.storeVersion(ctx, path, &expected, data, metadata, nil)
 }
 
@@ -306,6 +309,30 @@ func (eb *EncryptedBackend) storeVersion(ctx context.Context, path string, expec
 		}
 	}
 
+	// Load existing versions or create new
+	versions, observedRaw, err := eb.loadVersionsRaw(ctx, path)
+	if err != nil && !errors.Is(err, ErrSecretNotFound) {
+		return 0, &SecretsCauseError{Message: "failed to load existing versions", Cause: err}
+	}
+	if expected != nil {
+		if err := eb.checkReadVersion(ctx, versions, *expected); err != nil {
+			return 0, err
+		}
+		// A conditional write supersedes the record read (a scheduled
+		// rotation): without explicit options it keeps that record's key and
+		// algorithm, so a secret stored under a tenant DEK or an HSM key is
+		// not re-encrypted under the backend's default key.
+		if opts == nil {
+			last := versions.Versions[len(versions.Versions)-1]
+			if last.KeyIdentifier != "" {
+				keyIdentifier = last.KeyIdentifier
+			}
+			if last.Algorithm != "" {
+				algorithm = last.Algorithm
+			}
+		}
+	}
+
 	// Validate algorithm
 	if !isValidAlgorithm(algorithm) {
 		return 0, ErrUnsupportedAlgorithm
@@ -325,17 +352,6 @@ func (eb *EncryptedBackend) storeVersion(ctx context.Context, path string, expec
 	blob, err := eb.encryptor.Encrypt(ctx, keyIdentifier, plaintext, encryptOpts)
 	if err != nil {
 		return 0, &SecretsSentinelCauseError{Sentinel: ErrEncryptionFailed, Cause: err}
-	}
-
-	// Load existing versions or create new
-	versions, observedRaw, err := eb.loadVersionsRaw(ctx, path)
-	if err != nil && !errors.Is(err, ErrSecretNotFound) {
-		return 0, &SecretsCauseError{Message: "failed to load existing versions", Cause: err}
-	}
-	if expected != nil {
-		if err := eb.checkReadVersion(ctx, versions, *expected); err != nil {
-			return 0, err
-		}
 	}
 	if versions == nil {
 		versions = &secretVersions{
@@ -751,11 +767,12 @@ func (eb *EncryptedBackend) checkReadVersion(ctx context.Context, versions *secr
 // cannot arbitrate gets the plain write, held only by the backend's lock.
 func (eb *EncryptedBackend) saveVersionsIfUnchanged(ctx context.Context, path string, versions *secretVersions, observedRaw []byte, expected ReadVersion) error {
 	g, guarded := eb.store.(guardedKVStore)
-	if !guarded || observedRaw == nil {
-		if err := eb.saveVersions(ctx, path, versions); err != nil {
-			return &SecretsCauseError{Message: "failed to save secret", Cause: err}
-		}
-		return nil
+	if !guarded {
+		return errUnguardedConditionalWrite()
+	}
+	if observedRaw == nil {
+		// checkReadVersion refuses an absent record; nothing to publish over.
+		return staleReadError(expected, 0, false, false)
 	}
 	raw, err := json.Marshal(versions)
 	if err != nil {

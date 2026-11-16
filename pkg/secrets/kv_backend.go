@@ -237,6 +237,9 @@ func (b *KVBackend) StoreVersionIfCurrent(ctx context.Context, path string, expe
 	if expected.Version <= 0 {
 		return 0, staleReadError(expected, 0, false, false)
 	}
+	if _, guarded := b.store.(guardedKVStore); !guarded {
+		return 0, errUnguardedConditionalWrite()
+	}
 	return b.storeVersion(ctx, path, &expected, data, metadata)
 }
 
