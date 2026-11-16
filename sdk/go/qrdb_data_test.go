@@ -15,10 +15,13 @@ package quicbaas
 
 import (
 	"context"
+	"strings"
 	"sync"
 	"testing"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+
+	sdkerrors "github.com/jeremyhahn/go-quicbaas/sdk/go/errors"
 )
 
 // recordingKVService is a go-qrdb KV servicer that stores what it is given,
@@ -135,14 +138,21 @@ func TestQRDBData_KVReachesEmbeddedNode(t *testing.T) {
 }
 
 // TestQRDBData_PropagatesQRDBInitError proves QRDBData reports the go-qrdb
-// client's construction error instead of returning a nil service.
+// client's construction error and returns no service: TransportEmbedded
+// without WithEmbeddedQRDB cannot build a go-qrdb client.
 func TestQRDBData_PropagatesQRDBInitError(t *testing.T) {
 	c := &client{opts: defaultOptions(), address: "embedded://local"}
-	c.opts.transportType = TransportType(999)
-	c.address = ""
+	c.opts.transportType = TransportEmbedded
+	c.opts.embeddedQRDB = nil
 
 	data, err := c.QRDBData()
-	if err == nil && data == nil {
-		t.Fatal("QRDBData() returned neither a service nor an error")
+	if err == nil {
+		t.Fatal("QRDBData() returned no error for TransportEmbedded without WithEmbeddedQRDB")
+	}
+	if !sdkerrors.IsInvalidInput(err) || !strings.Contains(err.Error(), "WithEmbeddedQRDB") {
+		t.Errorf("QRDBData() error = %v, want the go-qrdb client's WithEmbeddedQRDB construction error", err)
+	}
+	if data != nil {
+		t.Errorf("QRDBData() = %#v alongside error %v, want a nil service", data, err)
 	}
 }
