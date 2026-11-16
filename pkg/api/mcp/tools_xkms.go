@@ -669,6 +669,14 @@ func (r *ToolRegistry) registerTrustedCATools() {
 				"csr_pem":       map[string]interface{}{"type": "string", "description": "PEM-encoded PKCS#10 CSR"},
 				"profile":       map[string]interface{}{"type": "string", "description": "Certificate profile (server, client, idevid)"},
 				"validity_days": map[string]interface{}{"type": "integer", "description": "Override default validity in days"},
+				"tenant_id":     map[string]interface{}{"type": "string", "description": "Tenant to scope the operation to"},
+				// Attestation proof (go-xkms SignCSRRequest): the CA verifies
+				// it or refuses the request; it is never ignored.
+				"attestation_format": map[string]interface{}{"type": "string", "description": "Attestation format (tpm2, yubikey-piv)"},
+				"attestation_chain":  map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}, "description": "Base64 DER attestation certificate chain"},
+				"attestation_data":   map[string]interface{}{"type": "string", "description": "Base64 attestation evidence"},
+				"attestation_sig":    map[string]interface{}{"type": "string", "description": "Base64 signature over the attestation data"},
+				"attestation_nonce":  map[string]interface{}{"type": "string", "description": "Base64 freshness nonce"},
 			},
 			"required": []string{"csr_pem"},
 		},
@@ -2109,12 +2117,38 @@ func (r *ToolRegistry) handleTrustedCASignCSR(ctx context.Context, args map[stri
 	if err != nil {
 		return nil, err
 	}
-	return ca.SignCSR(ctx, &transport.SignCSRRequest{
-		CSRPEM:       []byte(csrPEM),
-		Profile:      getString(args, "profile"),
-		ValidityDays: getInt(args, "validity_days"),
-		TenantID:     getString(args, "tenant_id"),
-	})
+	req := &transport.SignCSRRequest{
+		CSRPEM:            []byte(csrPEM),
+		Profile:           getString(args, "profile"),
+		ValidityDays:      getInt(args, "validity_days"),
+		TenantID:          getString(args, "tenant_id"),
+		AttestationFormat: getString(args, "attestation_format"),
+	}
+	// The attestation proof is carried to the CA, which verifies it or
+	// refuses the request; it is never dropped. The SDK sends go-xkms's
+	// JSON encoding of the request: byte fields as base64 strings.
+	for _, f := range []struct {
+		key string
+		dst *[]byte
+	}{
+		{"attestation_data", &req.AttestationData},
+		{"attestation_sig", &req.AttestationSig},
+		{"attestation_nonce", &req.AttestationNonce},
+	} {
+		b, decErr := decodeBase64Arg(args, f.key)
+		if decErr != nil {
+			return nil, api.NewInvalidBase64Error(f.key, decErr)
+		}
+		*f.dst = b
+	}
+	for _, s := range getStringSlice(args, "attestation_chain") {
+		b, decErr := base64.StdEncoding.DecodeString(s)
+		if decErr != nil {
+			return nil, api.NewInvalidBase64Error("attestation_chain", decErr)
+		}
+		req.AttestationChain = append(req.AttestationChain, b)
+	}
+	return ca.SignCSR(ctx, req)
 }
 
 // handleTrustedCAIssueCert issues a new certificate.

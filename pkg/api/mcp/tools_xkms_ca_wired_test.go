@@ -90,6 +90,19 @@ func TestTrustedCAHandlersServeTheWiredCA(t *testing.T) {
 		{"SignCSR", registry.handleTrustedCASignCSR,
 			map[string]interface{}{"csr_pem": "PEM", "profile": "server", "validity_days": float64(30)},
 			&xkmstransport.SignCSRRequest{CSRPEM: []byte("PEM"), Profile: "server", ValidityDays: 30}},
+		// The attestation proof reaches the CA (which verifies or refuses
+		// it), in go-xkms's JSON encoding: bytes as base64.
+		{"SignCSRAttested", registry.handleTrustedCASignCSR,
+			map[string]interface{}{
+				"csr_pem": "PEM", "tenant_id": "t1", "attestation_format": "tpm2",
+				"attestation_chain": []interface{}{"AQI="}, "attestation_data": "AwQ=",
+				"attestation_sig": "BQY=", "attestation_nonce": "Bwg=",
+			},
+			&xkmstransport.SignCSRRequest{
+				CSRPEM: []byte("PEM"), TenantID: "t1", AttestationFormat: "tpm2",
+				AttestationChain: [][]byte{{1, 2}}, AttestationData: []byte{3, 4},
+				AttestationSig: []byte{5, 6}, AttestationNonce: []byte{7, 8},
+			}},
 		{"IssueCert", registry.handleTrustedCAIssueCert,
 			map[string]interface{}{"profile": "server", "common_name": "node-1", "organization": "o", "sans": []interface{}{"node-1"}, "algorithm": "ed25519"},
 			&xkmstransport.IssueCertificateRequest{CommonName: "node-1", Profile: "server", Organization: "o", SANs: []string{"node-1"}, Algorithm: "ed25519"}},
@@ -122,6 +135,11 @@ func TestTrustedCAHandlersServeTheWiredCA(t *testing.T) {
 	// The required arguments are still checked before the CA is reached.
 	ca.got = nil
 	_, err = registry.handleTrustedCAIsRevoked(ctx, map[string]interface{}{})
+	require.Error(t, err)
+	assert.Nil(t, ca.got)
+
+	// A malformed attestation proof is refused, never signed without it.
+	_, err = registry.handleTrustedCASignCSR(ctx, map[string]interface{}{"csr_pem": "PEM", "attestation_data": "!!"})
 	require.Error(t, err)
 	assert.Nil(t, ca.got)
 }

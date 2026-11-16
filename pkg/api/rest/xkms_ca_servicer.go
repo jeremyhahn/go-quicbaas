@@ -152,6 +152,13 @@ func (a *xkmsCAServicer) SignCSR(ctx context.Context, req *xkmstransport.SignCSR
 	if len(req.CSRPEM) == 0 {
 		return nil, ErrXKMSCAMissingCSR
 	}
+	// go-xkms's XKMSService.SignCSR verifies a supplied attestation proof
+	// and refuses one it has no verifier for. This facade has no
+	// attestation verifier, so a request that carries a proof is refused,
+	// never signed as if the proof were absent.
+	if SignCSRCarriesAttestation(req) {
+		return nil, ErrXKMSCAAttestationUnsupported
+	}
 
 	tenantID, err := a.resolveTenant(ctx, "sign csr", req.TenantID)
 	if err != nil {
@@ -459,6 +466,18 @@ var ErrXKMSCANilRequest = errors.New("xkms ca: request is required")
 
 // ErrXKMSCAMissingCSR is returned when SignCSR is called with empty CSR PEM.
 var ErrXKMSCAMissingCSR = errors.New("xkms ca: csr pem is required")
+
+// ErrXKMSCAAttestationUnsupported is returned when SignCSR is called with
+// an attestation proof: the node's CA facade has no attestation verifier,
+// so it refuses the request instead of signing without verifying it.
+var ErrXKMSCAAttestationUnsupported = errors.New("xkms ca: csr attestation is not supported by this CA")
+
+// SignCSRCarriesAttestation reports whether req carries any of go-xkms's
+// attestation fields.
+func SignCSRCarriesAttestation(req *xkmstransport.SignCSRRequest) bool {
+	return req != nil && (req.AttestationFormat != "" || len(req.AttestationChain) > 0 ||
+		len(req.AttestationData) > 0 || len(req.AttestationSig) > 0 || len(req.AttestationNonce) > 0)
+}
 
 // ErrXKMSCAMissingCommonName is returned when IssueCertificate is called
 // without a common name.

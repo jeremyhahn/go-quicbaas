@@ -58,6 +58,16 @@ func TestTrustedCA_RoutesToXKMSCAMount(t *testing.T) {
 		{"GetCACertificate", &xkmstransport.GetCACertificateRequest{Identity: "root"}, http.MethodGet, "/api/v1/xkms/ca/cert", "identity=root", nil},
 		{"SignCSR", &xkmstransport.SignCSRRequest{CSRPEM: []byte("CSR"), Profile: "server", TenantID: "t1"}, http.MethodPost, "/api/v1/xkms/ca/sign", "",
 			map[string]interface{}{"csr_pem": []byte("CSR"), "profile": "server", "tenant_id": "t1"}},
+		// The attestation proof travels to the node, which verifies or
+		// refuses it: the SDK never drops it.
+		{"SignCSR", &xkmstransport.SignCSRRequest{
+			CSRPEM: []byte("CSR"), AttestationFormat: "tpm2", AttestationChain: [][]byte{{1, 2}},
+			AttestationData: []byte{3}, AttestationSig: []byte{4}, AttestationNonce: []byte{5},
+		}, http.MethodPost, "/api/v1/xkms/ca/sign", "",
+			map[string]interface{}{
+				"csr_pem": []byte("CSR"), "attestation_format": "tpm2", "attestation_chain": [][]byte{{1, 2}},
+				"attestation_data": []byte{3}, "attestation_sig": []byte{4}, "attestation_nonce": []byte{5},
+			}},
 		{"IssueCertificate", &xkmstransport.IssueCertificateRequest{CommonName: "node-1", Profile: "server", SANs: []string{"node-1"}}, http.MethodPost, "/api/v1/xkms/ca/issue", "",
 			map[string]interface{}{"common_name": "node-1", "profile": "server", "sans": []interface{}{"node-1"}}},
 		{"RevokeCertificate", &xkmstransport.RevokeCertificateRequest{SerialNumber: "0a", Reason: 1}, http.MethodPost, "/api/v1/xkms/ca/revoke", "",

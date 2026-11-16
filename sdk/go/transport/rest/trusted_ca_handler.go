@@ -73,6 +73,23 @@ func (h *securityRESTHandler) handleTrustedCA(ctx context.Context, method string
 		if r.TenantID != "" {
 			body["tenant_id"] = r.TenantID
 		}
+		// The attestation proof travels to the node, which verifies it or
+		// refuses the request; it is never dropped.
+		if r.AttestationFormat != "" {
+			body["attestation_format"] = r.AttestationFormat
+		}
+		if len(r.AttestationChain) > 0 {
+			body["attestation_chain"] = r.AttestationChain
+		}
+		if len(r.AttestationData) > 0 {
+			body["attestation_data"] = r.AttestationData
+		}
+		if len(r.AttestationSig) > 0 {
+			body["attestation_sig"] = r.AttestationSig
+		}
+		if len(r.AttestationNonce) > 0 {
+			body["attestation_nonce"] = r.AttestationNonce
+		}
 		return trustedCADo[xkmstransport.SignCSRResponse](ctx, h, op, http.MethodPost, trustedCAPathPrefix+"/sign", body)
 	case "IssueCertificate":
 		r, ok := req.(*xkmstransport.IssueCertificateRequest)
