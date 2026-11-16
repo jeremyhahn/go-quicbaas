@@ -32,6 +32,27 @@ func pruneBackends(t *testing.T) map[string]interface {
 type pruneHookKV struct {
 	*inMemKV
 	onCompareAndDelete func()
+	// onScan runs once, before the next Scan reads anything.
+	onScan func()
+	// onGet runs once, before the first Get of onGetKey.
+	onGetKey string
+	onGet    func()
+}
+
+func (k *pruneHookKV) Scan(ctx context.Context, prefix string, fn func(key string, value []byte) error) error {
+	if hook := k.onScan; hook != nil {
+		k.onScan = nil
+		hook()
+	}
+	return k.inMemKV.Scan(ctx, prefix, fn)
+}
+
+func (k *pruneHookKV) Get(ctx context.Context, key string) ([]byte, error) {
+	if hook := k.onGet; hook != nil && key == k.onGetKey {
+		k.onGet, k.onGetKey = nil, ""
+		hook()
+	}
+	return k.inMemKV.Get(ctx, key)
 }
 
 func (k *pruneHookKV) CompareAndDelete(ctx context.Context, key string, expected []byte) (bool, error) {
@@ -124,6 +145,126 @@ func TestEncryptedBackend_PruneLosesToADeleteOnAnotherInstance(t *testing.T) {
 	assert.Zero(t, removed, "the prune lost to the delete")
 	_, _, err = pruner.Get(ctx, "app/s")
 	require.ErrorIs(t, err, ErrSecretDeleted, "the delete is not reverted")
+}
+
+// TestKVBackend_PruneSparesASecretRecreatedBeforeTheScan: node A reads the
+// pointer (version 3, so versions 1 and 2 are doomed), then node B destroys
+// the secret and recreates version 1 before A's scan. The scan captures B's
+// new version 1 under A's stale ceiling; the pointer's changed lifetime makes
+// A delete nothing, so B's acknowledged secret keeps its data.
+func TestKVBackend_PruneSparesASecretRecreatedBeforeTheScan(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	store := &pruneHookKV{inMemKV: newInMemKV()}
+	nodeA, nodeB := NewKVBackend(store), NewKVBackend(store)
+	nodeA.writeLocks = new([32]sync.Mutex)
+	nodeB.writeLocks = new([32]sync.Mutex)
+	const path = "nodes/recreated-early"
+	for i := 1; i <= 3; i++ {
+		_, err := nodeA.StoreVersion(ctx, path, map[string][]byte{"k": []byte(fmt.Sprintf("old%d", i))}, nil)
+		require.NoError(t, err)
+	}
+
+	store.onScan = func() {
+		require.NoError(t, nodeB.Destroy(ctx, path))
+		require.NoError(t, nodeB.Store(ctx, path, map[string][]byte{"k": []byte("new")}, nil))
+	}
+	removed, err := nodeA.PruneVersions(ctx, path, 1)
+	require.NoError(t, err)
+	assert.Zero(t, removed, "the scan belongs to another lifetime; nothing is deleted")
+
+	for name, node := range map[string]*KVBackend{"A": nodeA, "B": nodeB} {
+		data, _, err := node.Get(ctx, path)
+		require.NoError(t, err, "node %s reads the recreated secret", name)
+		assert.Equal(t, "new", string(data["k"]))
+	}
+}
+
+// TestEncryptedBackend_StaleWriterCannotRestoreAPrunedVersion: a writer on
+// one instance loads the unpruned history and is paused before publishing;
+// another instance prunes it. The writer's publication is refused, it
+// reloads the pruned history and applies itself to that, so the destroyed
+// versions stay destroyed and the write still lands.
+func TestEncryptedBackend_StaleWriterCannotRestoreAPrunedVersion(t *testing.T) {
+	t.Parallel()
+	writers := map[string]func(ctx context.Context, eb *EncryptedBackend) error{
+		"store": func(ctx context.Context, eb *EncryptedBackend) error {
+			return eb.Store(ctx, "app/s", map[string][]byte{"k": []byte("v4")}, nil)
+		},
+		"delete": func(ctx context.Context, eb *EncryptedBackend) error {
+			return eb.Delete(ctx, "app/s")
+		},
+		"rollback": func(ctx context.Context, eb *EncryptedBackend) error {
+			return eb.Rollback(ctx, "app/s", 3)
+		},
+	}
+	for name, write := range writers {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			ctx := context.Background()
+			store := newGuardedMockKV()
+			enc := newTestMockSecretsEncryptor()
+			writer := newGuardedEncryptedBackend(t, store, enc)
+			pruner := newGuardedEncryptedBackend(t, store, enc)
+			for i := 1; i <= 3; i++ {
+				_, err := writer.StoreVersion(ctx, "app/s", map[string][]byte{"k": []byte(fmt.Sprintf("v%d", i))}, nil)
+				require.NoError(t, err)
+			}
+
+			store.onCAS = func() {
+				removed, err := pruner.PruneVersions(ctx, "app/s", 1)
+				require.NoError(t, err)
+				require.Equal(t, 2, removed)
+			}
+			require.NoError(t, write(ctx, writer))
+
+			for v := 1; v <= 2; v++ {
+				_, _, err := writer.GetVersion(ctx, "app/s", v)
+				require.ErrorIs(t, err, ErrVersionDestroyed, "pruned version %d stays destroyed", v)
+			}
+			versions, err := writer.ListVersions(ctx, "app/s")
+			require.NoError(t, err)
+			switch name {
+			case "store", "rollback":
+				assert.Len(t, versions, 4, "the write landed on the pruned history")
+			case "delete":
+				_, _, err := writer.Get(ctx, "app/s")
+				require.ErrorIs(t, err, ErrSecretDeleted, "the delete landed on the pruned history")
+			}
+		})
+	}
+}
+
+// TestManager_GetSurvivesAWriteThatPrunesTheVersionItRead: with max_versions
+// 1, a reader on node A reads the pointer (version 1); before it reads that
+// version, node B's Manager writes version 2 and prunes version 1. The read
+// follows the moved pointer instead of failing on a secret that existed
+// throughout. An explicit read of the pruned version is still not found.
+func TestManager_GetSurvivesAWriteThatPrunesTheVersionItRead(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	store := &pruneHookKV{inMemKV: newInMemKV()}
+	backendA, backendB := NewKVBackend(store), NewKVBackend(store)
+	backendA.writeLocks = new([32]sync.Mutex)
+	backendB.writeLocks = new([32]sync.Mutex)
+	managerA, err := NewManager(&ManagerOptions{Backend: backendA, MaxVersions: 1})
+	require.NoError(t, err)
+	managerB, err := NewManager(&ManagerOptions{Backend: backendB, MaxVersions: 1})
+	require.NoError(t, err)
+	const path = "nodes/read-during-prune"
+	require.NoError(t, managerA.Store(ctx, path, map[string][]byte{"k": []byte("one")}, nil))
+
+	store.onGetKey = versionKey(path, 1)
+	store.onGet = func() {
+		require.NoError(t, managerB.Store(ctx, path, map[string][]byte{"k": []byte("two")}, nil))
+	}
+	data, metadata, err := managerA.Get(ctx, path)
+	require.NoError(t, err, "the secret existed throughout")
+	assert.Equal(t, "two", string(data["k"]))
+	assert.Equal(t, "2", metadata["version"])
+
+	_, _, err = backendA.GetVersion(ctx, path, 1)
+	require.ErrorIs(t, err, ErrVersionNotFound, "an explicit read of a pruned version is not retried")
 }
 
 // liveVersions lists the version numbers of path that still hold data.

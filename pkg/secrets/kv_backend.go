@@ -393,6 +393,22 @@ func (b *KVBackend) PruneVersions(ctx context.Context, path string, keep int) (i
 	}); err != nil {
 		return 0, &SecretsCauseError{Message: "prune versions: enumerate keyspace", Cause: err}
 	}
+	// THE SCAN MUST BELONG TO THE LIFETIME THE CEILING WAS READ IN. Another
+	// node can destroy the path and recreate version 1 between loadCurrent
+	// and the scan; the scan then captures the new lifetime's records under
+	// the old ceiling, and a compare-and-delete against those very bytes
+	// would succeed. The pointer is read again after the scan: a changed
+	// generation (or a destroyed path) means the scan may hold another
+	// lifetime's records, so this prune deletes nothing. A recreation after
+	// this check replaces the records, so the scanned bytes no longer match
+	// and every delete below is refused.
+	after, err := b.loadCurrent(ctx, path)
+	if err != nil {
+		return 0, err
+	}
+	if after.Version == 0 || after.Generation != cur.Generation || after.Version < cur.Version {
+		return 0, nil
+	}
 	pruned := 0
 	for _, d := range doomed {
 		// A refused delete means the record changed since the scan (a
@@ -446,18 +462,37 @@ func (b *KVBackend) Get(ctx context.Context, path string) (map[string][]byte, ma
 	if path == "" {
 		return nil, nil, ErrInvalidPath
 	}
-	cur, err := b.loadCurrent(ctx, path)
-	if err != nil {
-		return nil, nil, err
+	// A current read is two store reads, the pointer and then its version.
+	// A concurrent write on any node can publish a newer version and prune
+	// the one the pointer named in between, so a missing version under a
+	// pointer that has since moved is retried against the new pointer; the
+	// secret existed throughout. A missing version under an unmoved pointer
+	// is reported as it is. GetVersion keeps its exact-version semantics.
+	for attempt := 1; ; attempt++ {
+		cur, err := b.loadCurrent(ctx, path)
+		if err != nil {
+			return nil, nil, err
+		}
+		if cur.Version == 0 {
+			return nil, nil, ErrSecretNotFound
+		}
+		if cur.Deleted {
+			return nil, nil, ErrSecretDeleted
+		}
+		data, metadata, err := b.getVersion(ctx, path, cur.Version)
+		if !errors.Is(err, ErrVersionNotFound) || attempt >= currentReadAttempts {
+			return data, metadata, err
+		}
+		now, reloadErr := b.loadCurrent(ctx, path)
+		if reloadErr != nil || (now.Version == cur.Version && now.Generation == cur.Generation) {
+			return data, metadata, err
+		}
 	}
-	if cur.Version == 0 {
-		return nil, nil, ErrSecretNotFound
-	}
-	if cur.Deleted {
-		return nil, nil, ErrSecretDeleted
-	}
-	return b.getVersion(ctx, path, cur.Version)
 }
+
+// currentReadAttempts bounds how often Get follows a pointer that moved while
+// a concurrent prune removed the version it named.
+const currentReadAttempts = 4
 
 // GetVersion retrieves a specific version of a secret.
 func (b *KVBackend) GetVersion(ctx context.Context, path string, version int) (map[string][]byte, map[string]string, error) {
