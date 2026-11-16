@@ -216,6 +216,16 @@ func (r *ExecContainerRuntime) BuildImage(ctx context.Context, spec *ImageBuildS
 	if err != nil {
 		return "", &ImageBuildError{Tags: spec.Tags, Cause: err}
 	}
+	// The engine can apply buildRef and still fail the command (cancelled
+	// after export, an iidfile it could not write), so the cleanup is
+	// registered before the build runs. A successful build removes buildRef
+	// itself, under buildTagMu, and marks it removed.
+	removed := false
+	defer func() {
+		if !removed {
+			r.removeBuildRef(ctx, buildRef)
+		}
+	}()
 
 	args := buildImageArgs(spec, iidFile, contextDir, buildRef)
 	r.logger.Infof("container build: %s %s", r.command, strings.Join(spec.Tags, " "))
@@ -237,7 +247,10 @@ func (r *ExecContainerRuntime) BuildImage(ctx context.Context, spec *ImageBuildS
 	// returned stays a local image even after a later build takes the tags.
 	buildTagMu.Lock()
 	defer buildTagMu.Unlock()
-	defer r.removeBuildRef(ctx, buildRef)
+	defer func() {
+		removed = true
+		r.removeBuildRef(ctx, buildRef)
+	}()
 	id, err := os.ReadFile(iidFile) // #nosec G304 -- a path this function created under its own temp dir.
 	if err != nil {
 		return "", &ImageBuildError{Tags: spec.Tags, Cause: err}
@@ -326,8 +339,10 @@ func newBuildRef() (string, error) {
 // removeBuildRef untags the temporary reference a build applied. On success
 // the image keeps the spec's tags BuildImage applied under buildTagMu, so the
 // removal only untags; on a failed build the image may go with it, which is
-// what an untagged failed build should do. A failure is logged and never
-// fails the build. The caller holds buildTagMu.
+// what an untagged failed build should do. Its context is its own, bounded
+// by oneShotCleanupTimeout, so it runs after the caller's is cancelled. A
+// failure is logged and never fails the build. A successful build calls it
+// holding buildTagMu.
 func (r *ExecContainerRuntime) removeBuildRef(parent context.Context, ref string) {
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(parent), oneShotCleanupTimeout)
 	defer cancel()
@@ -335,9 +350,12 @@ func (r *ExecContainerRuntime) removeBuildRef(parent context.Context, ref string
 	switch {
 	case err != nil:
 		r.logger.Warnf("container build: remove temporary tag %s: %v", ref, err)
+	case result.ExitCode != 0 && isImageNotFoundOutput(result.Stderr):
+		// A build that failed before it tagged: nothing to remove.
 	case result.ExitCode != 0:
-		r.logger.Warnf("container build: remove temporary tag %s exited %d: %s",
-			ref, result.ExitCode, strings.TrimSpace(result.Stderr))
+		// The engine's text is not logged: stderr can carry credentials.
+		r.logger.Warnf("container build: remove temporary tag %s exited %d (%d bytes of output withheld)",
+			ref, result.ExitCode, len(result.Stderr))
 	}
 }
 
@@ -398,6 +416,29 @@ func isImageNotFoundOutput(stderr string) bool {
 	return strings.Contains(lower, "no such image") || strings.Contains(lower, "image not known")
 }
 
+// tagFailureReasons maps a lower-cased fragment of an engine's tag refusal
+// to the fixed phrase ImageTagError renders, in match order.
+var tagFailureReasons = []struct{ fragment, reason string }{
+	{"no such image", "no such image"},
+	{"image not known", "no such image"},
+	{"invalid reference format", "invalid reference format"},
+	{"permission denied", "permission denied"},
+	{"cannot connect to the docker daemon", "engine unreachable"},
+	{"connection refused", "engine unreachable"},
+}
+
+// classifyTagFailure returns the fixed phrase for the engine's stderr, or ""
+// when none matches. It never returns engine text.
+func classifyTagFailure(stderr string) string {
+	lower := strings.ToLower(stderr)
+	for _, c := range tagFailureReasons {
+		if strings.Contains(lower, c.fragment) {
+			return c.reason
+		}
+	}
+	return ""
+}
+
 // TagImage adds target as a reference to the image source names.
 func (r *ExecContainerRuntime) TagImage(ctx context.Context, source, target string) error {
 	if strings.TrimSpace(source) == "" {
@@ -414,8 +455,8 @@ func (r *ExecContainerRuntime) TagImage(ctx context.Context, source, target stri
 		stderr := strings.TrimSpace(result.Stderr)
 		return &ImageTagError{
 			Source: source, Target: target,
-			EngineMessage: redactLimitSignal(stderr),
-			Cause:         &CommandError{Command: r.command, Op: "tag", Output: stderr},
+			Reason: classifyTagFailure(stderr),
+			Cause:  &CommandError{Command: r.command, Op: "tag", Output: stderr},
 		}
 	}
 	return nil

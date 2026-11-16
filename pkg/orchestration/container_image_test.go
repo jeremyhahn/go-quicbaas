@@ -355,10 +355,10 @@ func TestTagImage(t *testing.T) {
 	}
 }
 
-// TestTagImage_ErrorCarriesTheEnginesRedactedStderr pins that a refused tag
+// TestTagImage_ErrorCarriesTheEnginesClassifiedReason pins that a refused tag
 // says why (#1801 withheld "114 bytes of output") without printing a
 // credential the engine echoed.
-func TestTagImage_ErrorCarriesTheEnginesRedactedStderr(t *testing.T) {
+func TestTagImage_ErrorCarriesTheEnginesClassifiedReason(t *testing.T) {
 	const source = "sha256:" + "207b2e88207b2e88207b2e88207b2e88207b2e88207b2e88207b2e88207b2e88"
 	stderr := "Error response from daemon: No such image: " + source
 	rt := newImageTestRuntime(t, RuntimeDocker, &fakeImageEngine{answer: func([]string) (imageCommandResult, error) {
@@ -369,14 +369,47 @@ func TestTagImage_ErrorCarriesTheEnginesRedactedStderr(t *testing.T) {
 	if !errors.As(err, &tagErr) || !errors.Is(err, ErrImageTag) {
 		t.Fatalf("err = %v, want an ImageTagError", err)
 	}
-	if !strings.Contains(err.Error(), stderr) {
-		t.Fatalf("the error must carry the engine's reason, got %q", err.Error())
+	if !strings.HasSuffix(err.Error(), ": no such image") || tagErr.Reason != "no such image" {
+		t.Fatalf("the error must carry the engine's classified reason, got %q", err.Error())
+	}
+	if strings.Contains(err.Error(), "Error response from daemon") {
+		t.Fatalf("no engine text may be rendered, got %q", err.Error())
 	}
 	if strings.Contains(err.Error(), "abcdefghijklmnopqrstuvwxyz") {
 		t.Fatalf("a credential-shaped string must be redacted, got %q", err.Error())
 	}
 	var cmdErr *CommandError
 	if !errors.As(err, &cmdErr) || !strings.Contains(cmdErr.Output, "abcdefghijklmnopqrstuvwxyz") {
+		t.Fatalf("the raw output must stay on CommandError.Output, got %v", err)
+	}
+}
+
+// TestTagImage_ErrorRendersNoCredentialFromTheEnginesStderr: the engine's
+// stderr can carry any credential shape, so Error() renders none of it; the
+// raw bytes stay on CommandError.Output, which is never rendered.
+func TestTagImage_ErrorRendersNoCredentialFromTheEnginesStderr(t *testing.T) {
+	secrets := []string{"dXNlcjpwYXNz", "user:secret", "secret@registry.example", "hunter2"}
+	stderr := "Error response from daemon: No such image: x\n" +
+		"Authorization: Basic dXNlcjpwYXNz\n" +
+		"pull https://user:secret@registry.example/w:1\n" +
+		"token=hunter2\n"
+	rt := newImageTestRuntime(t, RuntimeDocker, &fakeImageEngine{answer: func([]string) (imageCommandResult, error) {
+		return imageCommandResult{ExitCode: 1, Stderr: stderr}, nil
+	}})
+	err := rt.TagImage(t.Context(), "x", "localhost:32786/it/w:1")
+	if !errors.Is(err, ErrImageTag) {
+		t.Fatalf("err = %v, want ErrImageTag", err)
+	}
+	for _, secret := range secrets {
+		if strings.Contains(err.Error(), secret) {
+			t.Errorf("err.Error() renders %q: %q", secret, err.Error())
+		}
+	}
+	if !strings.Contains(err.Error(), "no such image") {
+		t.Errorf("the error must name the classified reason, got %q", err.Error())
+	}
+	var cmdErr *CommandError
+	if !errors.As(err, &cmdErr) || cmdErr.Output != strings.TrimSpace(stderr) {
 		t.Fatalf("the raw output must stay on CommandError.Output, got %v", err)
 	}
 }

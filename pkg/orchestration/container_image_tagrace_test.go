@@ -15,6 +15,7 @@ package orchestration
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -184,5 +185,49 @@ func TestBuildImage_ConcurrentBuildOfTheSameTagKeepsTheReturnedImage(t *testing.
 	}
 	if _, _, images := engine.state(); images[idB] {
 		t.Fatalf("removing %s's last tag must delete it in the model", idB)
+	}
+}
+
+// TestBuildImage_FailedBuildAfterTaggingRemovesTheTemporaryTag: an engine can
+// export and tag the image and still fail the command (a cancelled build, a
+// failed iidfile write). The temporary tag must not outlive the build.
+func TestBuildImage_FailedBuildAfterTaggingRemovesTheTemporaryTag(t *testing.T) {
+	cases := map[string]func(args []string) (imageCommandResult, error){
+		"runner error": func([]string) (imageCommandResult, error) {
+			return imageCommandResult{}, context.Canceled
+		},
+		"non-zero exit": func([]string) (imageCommandResult, error) {
+			return imageCommandResult{ExitCode: 1, Stderr: "ERROR: failed to write iidfile"}, nil
+		},
+	}
+	for name, fail := range cases {
+		t.Run(name, func(t *testing.T) {
+			engine := newTagStoreEngine()
+			run := func(ctx context.Context, command string, cmd imageCommand) (imageCommandResult, error) {
+				result, err := engine.run(ctx, command, cmd)
+				if err == nil && cmd.Args[0] == "build" {
+					return fail(cmd.Args)
+				}
+				return result, err
+			}
+			rt := &ExecContainerRuntime{command: RuntimeDocker, logger: newContainerTestLogger(t), runImageCommand: run}
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			engine.after = func(args []string) {
+				if args[0] == "build" {
+					cancel() // the caller's context is gone by cleanup time
+				}
+			}
+			_, err := rt.BuildImage(ctx, &ImageBuildSpec{Dockerfile: []byte("FROM a"), Tags: []string{"w:local"}})
+			if !errors.Is(err, ErrImageBuild) {
+				t.Fatalf("err = %v, want ErrImageBuild", err)
+			}
+			_, tags, _ := engine.state()
+			for ref := range tags {
+				if strings.HasPrefix(ref, buildTempRepository+":") {
+					t.Errorf("temporary tag %s outlived the failed build", ref)
+				}
+			}
+		})
 	}
 }
