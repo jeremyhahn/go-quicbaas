@@ -16,6 +16,8 @@ package kms
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"testing"
 
 	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
@@ -111,4 +113,45 @@ func TestInitializeFromXKMS_FreshStoreWritesMarkerAndAcceptsEncodedKeys(t *testi
 	require.NoError(t, err)
 	require.Len(t, keys, 1)
 	require.Equal(t, "tenant/acme/k", keys[0].KeyID)
+}
+
+// TestCheckXKMSKeyNames_RemovedKeyDirHoldsNoKeys runs the scan over a file
+// key store whose directory is gone: a missing directory holds no keys, so
+// the scan passes and marks the store instead of failing the open.
+func TestCheckXKMSKeyNames_RemovedKeyDirHoldsNoKeys(t *testing.T) {
+	ctx := context.Background()
+
+	dbxkms.Reset()
+	t.Cleanup(dbxkms.Reset)
+
+	keyDir := filepath.Join(t.TempDir(), "ca-keys")
+	fileStorage, err := xkmssdk.NewFileStorageBackend(keyDir)
+	require.NoError(t, err)
+	certStorage, err := xkmssdk.NewMemoryBackend()
+	require.NoError(t, err)
+
+	swBackend, err := xkmssdk.NewSoftwareBackend(&xkmssdk.SoftwareBackendConfig{
+		KeyStorage: fileStorage,
+	})
+	require.NoError(t, err)
+	ks, err := xkmssdk.NewServiceBackend(&xkmssdk.ServiceBackendConfig{
+		Backend:     swBackend,
+		CertStorage: certStorage,
+	})
+	require.NoError(t, err)
+	require.NoError(t, dbxkms.Initialize(&dbxkms.Config{
+		DefaultBackend: "software",
+		Backends:       map[string]xkmssdk.ServiceBackend{"software": ks},
+		Logger:         &mockLogger{},
+	}))
+
+	require.NoError(t, os.RemoveAll(keyDir))
+
+	marker, err := xkmssdk.NewMemoryBackend()
+	require.NoError(t, err)
+	require.NoError(t, checkXKMSKeyNames(ctx, marker, []string{"software"}),
+		"a removed key directory holds no keys")
+
+	_, err = marker.Get(ctx, xkmsKeyNameMappingMarker)
+	require.NoError(t, err, "a store with no keys is marked clean")
 }

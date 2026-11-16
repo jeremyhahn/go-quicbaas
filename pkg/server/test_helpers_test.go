@@ -15,10 +15,13 @@ package server
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io/fs"
 	"net"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strconv"
 	"strings"
 	"testing"
@@ -82,6 +85,11 @@ func createTestConfig(t *testing.T) *config.Config {
 	// os.MkdirTemp so the testing package reclaims it even if a test mutates
 	// cfg.Storage.DataDir and cleanupTestData's safety guard declines to remove
 	// the mutated path.
+	//
+	// Registered before the first t.TempDir so it runs after the testing
+	// package removes this test's temp dirs: a CA or KMS the test left
+	// running on them is released rather than reused by a later test.
+	t.Cleanup(func() { releaseRemovedXKMSKeyStore(t) })
 	tempDir := t.TempDir()
 
 	// Get free ports for testing to avoid conflicts. Drawn in ONE call so the
@@ -167,25 +175,51 @@ func cleanupTestData(t *testing.T, cfg *config.Config) {
 		t.Logf("Warning: failed to cleanup test data: %v", err)
 	}
 
-	releaseXKMSOnRemovedDir(tempDir)
+	releaseRemovedXKMSKeyStore(t)
 }
 
-// releaseXKMSOnRemovedDir closes the global xkms service when it is bound to
-// a key store under dir, which the caller has just removed. A test that starts
-// the CA or KMS without Shutdown leaves the service on its own data dir, and a
-// later test's KMS key-name scan would list that deleted store. A service
-// bound to another test's live store, which a parallel test may be using, is
-// left open.
-func releaseXKMSOnRemovedDir(dir string) {
-	if !dbxkms.IsInitialized() {
+// releaseRemovedXKMSKeyStore drops the global xkms service when a backend's
+// key store directory no longer exists. A test that starts the CA or KMS
+// without Shutdown leaves the service bound to its own temp dirs, and once
+// those are removed a later test's KMS key-name scan would list the deleted
+// store. A service whose key stores still exist is left alone.
+//
+// Only a sequential test releases it. Sequential tests never overlap another
+// test, while parallel tests share the global: resetting or closing it under
+// one of them makes that test's next xkms call fail.
+func releaseRemovedXKMSKeyStore(t *testing.T) {
+	if testRunsInParallel(t) || !dbxkms.IsInitialized() {
 		return
 	}
 	for _, backend := range dbxkms.Backends() {
-		if _, err := dbxkms.ListKeys(context.Background(), backend); err != nil && strings.Contains(err.Error(), dir) {
-			_ = dbxkms.Close()
+		if _, err := dbxkms.ListKeys(context.Background(), backend); errors.Is(err, fs.ErrNotExist) {
+			dbxkms.Reset()
 			return
 		}
 	}
+}
+
+// testRunsInParallel reports whether t or any test above it called
+// t.Parallel. The testing package keeps that in unexported fields; if a Go
+// release renames them, t is treated as parallel so the shared xkms service
+// is never touched.
+func testRunsInParallel(t *testing.T) bool {
+	c := reflect.ValueOf(t).Elem().FieldByName("common")
+	for c.IsValid() && c.Kind() == reflect.Struct {
+		flag := c.FieldByName("isParallel")
+		parent := c.FieldByName("parent")
+		if !flag.IsValid() || flag.Kind() != reflect.Bool || !parent.IsValid() || parent.Kind() != reflect.Pointer {
+			return true
+		}
+		if flag.Bool() {
+			return true
+		}
+		if parent.IsNil() {
+			return false
+		}
+		c = parent.Elem()
+	}
+	return true
 }
 
 // withTempServer creates a server with test configuration and temp directories.

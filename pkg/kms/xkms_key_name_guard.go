@@ -16,6 +16,7 @@ package kms
 import (
 	"context"
 	"errors"
+	"io/fs"
 	"sort"
 	"strings"
 
@@ -53,7 +54,8 @@ func (e *LegacyXKMSKeyNamesError) Unwrap() error {
 
 // checkXKMSKeyNames refuses a key store that holds a legacy name which reads
 // as an encoded key ID, and marks a clean store so later opens skip the scan.
-// A nil store has nothing persisted to mark and is not checked.
+// A nil store has nothing persisted to mark and is not checked. A backend
+// whose key directory does not exist holds no keys.
 func checkXKMSKeyNames(ctx context.Context, store goxkms.StorageBackend, backends []string) error {
 	if store == nil {
 		return nil
@@ -68,6 +70,10 @@ func checkXKMSKeyNames(ctx context.Context, store goxkms.StorageBackend, backend
 	seen := make(map[string]struct{})
 	for _, backend := range backends {
 		keys, err := xkms.ListKeys(ctx, backend)
+		if errors.Is(err, fs.ErrNotExist) {
+			// A key directory that does not exist holds no keys.
+			continue
+		}
 		if err != nil {
 			return err
 		}
