@@ -305,7 +305,7 @@ func (r *ToolRegistry) registerTools() {
 			"type": "object",
 			"properties": map[string]interface{}{
 				"entityType": map[string]interface{}{"type": "string", "description": "Entity type"},
-				"id":         map[string]interface{}{"type": "integer", "description": "Entity ID"},
+				"id":         map[string]interface{}{"type": "string", "description": "Entity ID as a decimal string"},
 				"expected":   map[string]interface{}{"type": "string", "description": "Base64-encoded (standard) value the entity must hold"},
 				"next":       map[string]interface{}{"type": "string", "description": "Base64-encoded (standard) value stored when it does"},
 			},
@@ -320,7 +320,7 @@ func (r *ToolRegistry) registerTools() {
 			"type": "object",
 			"properties": map[string]interface{}{
 				"entityType": map[string]interface{}{"type": "string", "description": "Entity type"},
-				"id":         map[string]interface{}{"type": "integer", "description": "Entity ID"},
+				"id":         map[string]interface{}{"type": "string", "description": "Entity ID as a decimal string"},
 				"value":      map[string]interface{}{"type": "string", "description": "Base64-encoded (standard) value"},
 			},
 			"required": []string{"entityType", "id", "value"},

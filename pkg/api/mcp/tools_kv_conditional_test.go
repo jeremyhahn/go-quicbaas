@@ -67,6 +67,35 @@ func TestKVConditionalTools_ShareQRDBPutsKeyspace(t *testing.T) {
 	assert.Equal(t, []byte("v2"), store.entries[kvStoreKey("locks", 7)])
 }
 
+// TestKVConditionalTools_DecimalStringIDAbove2To53 proves the conditional
+// tools address an ID above 2^53 exactly when it arrives as a decimal string,
+// as the SDK sends it: 2^53+1 must not round to 2^53.
+func TestKVConditionalTools_DecimalStringIDAbove2To53(t *testing.T) {
+	registry, store := newKVStoreRegistry(t)
+	ctx := context.Background()
+	const id = "9007199254740993"
+
+	_, err := registry.ExecuteTool(ctx, "quicbaas_kv_put", map[string]interface{}{
+		"entity_type": "locks", "id": id, "data": b64("v1"),
+	})
+	require.NoError(t, err)
+
+	out, err := registry.ExecuteTool(ctx, "quicbaas_kv_put_if_absent", map[string]interface{}{
+		"entityType": "locks", "id": id, "value": b64("other"),
+	})
+	require.NoError(t, err)
+	assert.Equal(t, map[string]interface{}{"stored": false}, out)
+
+	out, err = registry.ExecuteTool(ctx, "quicbaas_kv_compare_and_swap", map[string]interface{}{
+		"entityType": "locks", "id": id, "expected": b64("v1"), "next": b64("v2"),
+	})
+	require.NoError(t, err)
+	assert.Equal(t, map[string]interface{}{"swapped": true}, out)
+	assert.Equal(t, []byte("v2"), store.entries[kvStoreKey("locks", 9007199254740993)])
+	_, rounded := store.entries[kvStoreKey("locks", 9007199254740992)]
+	assert.False(t, rounded, "the 2^53 key must not exist")
+}
+
 func TestKVConditionalTools_RefuseNonBase64(t *testing.T) {
 	registry, _ := newKVStoreRegistry(t)
 	_, err := registry.ExecuteTool(context.Background(), "quicbaas_kv_compare_and_swap", map[string]interface{}{

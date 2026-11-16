@@ -103,7 +103,7 @@ func TestTransport_CompareAndSwap(t *testing.T) {
 			}
 
 			args := g.arguments()
-			want := map[string]interface{}{"entityType": "users", "id": float64(42), "expected": b64("old"), "next": b64("new")}
+			want := map[string]interface{}{"entityType": "users", "id": "42", "expected": b64("old"), "next": b64("new")}
 			for k, v := range want {
 				if args[k] != v {
 					t.Errorf("argument %s = %v, want %v", k, args[k], v)
@@ -140,8 +140,37 @@ func TestTransport_PutIfAbsent(t *testing.T) {
 			}
 
 			args := g.arguments()
-			if args["entityType"] != "locks" || args["id"] != float64(7) || args["value"] != b64("owner") {
+			if args["entityType"] != "locks" || args["id"] != "7" || args["value"] != b64("owner") {
 				t.Errorf("arguments = %v, want entityType locks, id 7 and value %q", args, b64("owner"))
+			}
+		})
+	}
+}
+
+// TestTransport_KVConditional_IDAbove2To53 proves an ID above 2^53 reaches the
+// server exact: the guarded server decodes the arguments through mcp-go, where
+// a JSON number would become a float64 and round 2^53+1 down to 2^53.
+func TestTransport_KVConditional_IDAbove2To53(t *testing.T) {
+	const id uint64 = 1<<53 + 1
+	tests := []struct {
+		name, tool, field string
+		req               interface{}
+	}{
+		{"CompareAndSwap", "quicbaas_kv_compare_and_swap", "swapped",
+			&service.CompareAndSwapRequest{EntityType: "locks", ID: id, Expect: []byte("a"), Set: []byte("b")}},
+		{"PutIfAbsent", "quicbaas_kv_put_if_absent", "stored",
+			&service.PutIfAbsentRequest{EntityType: "locks", ID: id, Data: []byte("a")}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var g guardedToolServer
+			tr := g.start(t, tt.tool, tt.field, true)
+			if _, err := tr.Request(context.Background(), "quicbaas.KV", tt.name, tt.req); err != nil {
+				t.Fatalf("Request: %v", err)
+			}
+			got, ok := g.arguments()["id"].(string)
+			if !ok || got != "9007199254740993" {
+				t.Errorf("id = %#v, want string %q", g.arguments()["id"], "9007199254740993")
 			}
 		})
 	}

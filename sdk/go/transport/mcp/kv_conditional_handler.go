@@ -16,6 +16,7 @@ package mcp
 import (
 	"context"
 	"encoding/base64"
+	"strconv"
 
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/errors"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/service"
@@ -38,7 +39,9 @@ var kvConditionalVerbs = map[string]kvConditionalVerb{
 }
 
 // compareAndSwapArguments builds qrdb_compare_and_swap's arguments. Values
-// travel base64-encoded (RFC 4648), as qrdb's tool requires.
+// travel base64-encoded (RFC 4648), as qrdb's tool requires. The ID travels
+// as a decimal string, as kv_handler.go's Put/Get/Delete send it: a JSON
+// number decodes to float64 on the server, which rounds IDs above 2^53.
 func compareAndSwapArguments(req interface{}) (map[string]interface{}, error) {
 	r, ok := req.(*service.CompareAndSwapRequest)
 	if !ok || r == nil {
@@ -50,7 +53,7 @@ func compareAndSwapArguments(req interface{}) (map[string]interface{}, error) {
 	}
 	return map[string]interface{}{
 		"entityType": r.EntityType,
-		"id":         r.ID,
+		"id":         strconv.FormatUint(r.ID, 10),
 		"expected":   base64.StdEncoding.EncodeToString(r.Expect),
 		"next":       base64.StdEncoding.EncodeToString(r.Set),
 	}, nil
@@ -68,7 +71,7 @@ func putIfAbsentArguments(req interface{}) (map[string]interface{}, error) {
 	}
 	return map[string]interface{}{
 		"entityType": r.EntityType,
-		"id":         r.ID,
+		"id":         strconv.FormatUint(r.ID, 10),
 		"value":      base64.StdEncoding.EncodeToString(r.Data),
 	}, nil
 }
