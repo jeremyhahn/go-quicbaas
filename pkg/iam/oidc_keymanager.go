@@ -99,7 +99,7 @@ type SigningKeyManager struct {
 
 	snap atomic.Pointer[keySnapshot]
 
-	rotateMu sync.Mutex
+	rotateMu rotationMutex
 
 	// lastRefresh is when the snapshot was last checked against the key's
 	// version record, in Unix nanoseconds.
@@ -240,6 +240,56 @@ type SigningKeyRefreshTimeoutError struct {
 func (e *SigningKeyRefreshTimeoutError) Error() string {
 	return fmt.Sprintf("iam: routine refresh of signing key %q did not complete within %v", e.CN, e.Timeout)
 }
+
+// rotationMutex is a mutex whose LockContext gives up when its context
+// ends, so a refresh waiting behind a rotation is bounded. Its zero value is
+// an unlocked mutex.
+type rotationMutex struct {
+	once sync.Once
+	sem  chan struct{}
+}
+
+func (l *rotationMutex) slot() chan struct{} {
+	l.once.Do(func() { l.sem = make(chan struct{}, 1) })
+	return l.sem
+}
+
+// Lock locks l, waiting as long as it takes.
+func (l *rotationMutex) Lock() { l.slot() <- struct{}{} }
+
+// LockContext locks l, or returns ctx's error if ctx ends first.
+func (l *rotationMutex) LockContext(ctx context.Context) error {
+	select {
+	case l.slot() <- struct{}{}:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+// TryLock locks l if it is unlocked and reports whether it did.
+func (l *rotationMutex) TryLock() bool {
+	select {
+	case l.slot() <- struct{}{}:
+		return true
+	default:
+		return false
+	}
+}
+
+// Unlock unlocks l; unlocking an unlocked rotationMutex is a bug and panics,
+// as it is a fatal error for sync.Mutex.
+func (l *rotationMutex) Unlock() {
+	select {
+	case <-l.slot():
+	default:
+		panic("iam: unlock of unlocked rotationMutex")
+	}
+}
+
+// unknownKIDWorkerHook is told +1 when an unknown-kid refresh worker starts
+// and -1 when it exits, so a test can count the workers alive at once.
+var unknownKIDWorkerHook = func(delta int) {}
 
 // unknownKIDFlight is one unknown-kid refresh in flight: done is closed when
 // it completes or its bound passes, and err is then its outcome.
@@ -819,12 +869,15 @@ func (m *SigningKeyManager) refreshedPublicForKID(ctx context.Context, kid strin
 // Each waiter, the one that started the refresh included, waits only while
 // its own ctx is live: a canceled request returns ctx's error at once. The
 // refresh runs detached from any one request, so a canceled request does not
-// abort it for the rest, and under unknownKIDRefreshBound, after which its
-// waiters get *UnknownKIDRefreshTimeoutError.
+// abort it for the rest, and under unknownKIDRefreshBound; a waiter still
+// waiting at the bound gets *UnknownKIDRefreshTimeoutError. The refresh
+// stays in flight until its worker exits, so however long a stalled store
+// keeps the worker, no second worker starts beside it.
 func (m *SigningKeyManager) refreshForUnknownKID(ctx context.Context) error {
 	if !m.versioned() {
 		return nil
 	}
+	bound := unknownKIDRefreshBound
 	m.unknownKIDMu.Lock()
 	flight := m.unknownKIDFlight
 	if flight == nil {
@@ -836,50 +889,47 @@ func (m *SigningKeyManager) refreshForUnknownKID(ctx context.Context) error {
 		m.lastUnknownKIDRefresh.Store(now)
 		flight = &unknownKIDFlight{done: make(chan struct{})}
 		m.unknownKIDFlight = flight
-		go m.runUnknownKIDRefresh(context.WithoutCancel(ctx), unknownKIDRefreshBound, flight)
+		rctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), bound)
+		go m.runUnknownKIDRefresh(rctx, cancel, bound, flight)
 	}
 	m.unknownKIDMu.Unlock()
+	timer := time.NewTimer(bound)
+	defer timer.Stop()
 	select {
 	case <-flight.done:
 		return flight.err
 	case <-ctx.Done():
 		return ctx.Err()
+	case <-timer.C:
+		return &UnknownKIDRefreshTimeoutError{CN: m.cn, Timeout: bound}
 	}
 }
 
-// runUnknownKIDRefresh re-reads the version record for flight under bound,
-// then records the outcome and releases flight's waiters. It releases them
-// when the bound passes even if the re-read is still held, by a stalled
-// store or by a rotation holding rotateMu while it waits on a lease; the
-// re-read then gives up once it gets rotateMu, or finishes on its own.
-func (m *SigningKeyManager) runUnknownKIDRefresh(ctx context.Context, bound time.Duration, flight *unknownKIDFlight) {
-	ctx, cancel := context.WithTimeout(ctx, bound)
-	defer cancel()
-	refreshed := make(chan struct{})
-	go func() {
-		defer close(refreshed)
-		// A rotation or refresh holding rotateMu re-reads the record itself;
-		// waiting for it keeps this miss from failing while it runs.
-		m.rotateMu.Lock()
-		defer m.rotateMu.Unlock()
-		if ctx.Err() != nil {
-			return
-		}
-		_ = m.refreshLocked(ctx)
+// runUnknownKIDRefresh is flight's worker: it re-reads the version record
+// under ctx, which ends at bound, then retires flight and releases its
+// waiters, with *UnknownKIDRefreshTimeoutError when the bound passed first.
+// It waits for rotateMu no longer than ctx allows, so a rotation holding
+// rotateMu while it waits on a lease holds the worker no longer than the
+// bound.
+func (m *SigningKeyManager) runUnknownKIDRefresh(ctx context.Context, cancel context.CancelFunc, bound time.Duration, flight *unknownKIDFlight) {
+	unknownKIDWorkerHook(1)
+	defer func() {
+		unknownKIDWorkerHook(-1)
+		m.unknownKIDMu.Lock()
+		m.unknownKIDFlight = nil
+		m.unknownKIDMu.Unlock()
+		close(flight.done)
 	}()
-	var err error
-	select {
-	case <-refreshed:
-	case <-ctx.Done():
+	defer cancel()
+	// A rotation or refresh holding rotateMu re-reads the record itself;
+	// waiting for it keeps this miss from failing while it runs.
+	if err := m.rotateMu.LockContext(ctx); err == nil {
+		_ = m.refreshLocked(ctx)
+		m.rotateMu.Unlock()
 	}
 	if ctx.Err() != nil {
-		err = &UnknownKIDRefreshTimeoutError{CN: m.cn, Timeout: bound}
+		flight.err = &UnknownKIDRefreshTimeoutError{CN: m.cn, Timeout: bound}
 	}
-	m.unknownKIDMu.Lock()
-	m.unknownKIDFlight = nil
-	m.unknownKIDMu.Unlock()
-	flight.err = err
-	close(flight.done)
 }
 
 // publicForKID looks kid up in the manager's snapshot.
