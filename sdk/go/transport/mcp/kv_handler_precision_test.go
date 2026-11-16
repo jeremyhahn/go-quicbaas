@@ -121,6 +121,48 @@ func TestTransport_Request_MapKVIDSentAsDecimalString(t *testing.T) {
 	}
 }
 
+// TestTransport_Request_KVEmptyOrNullReplyIsAnError proves a KV tool reply
+// with no content or a JSON null is a protocol error over the MCP transport,
+// never a zero-valued response that reports an unconfirmed write as done.
+func TestTransport_Request_KVEmptyOrNullReplyIsAnError(t *testing.T) {
+	replies := map[string]func() *mcpgo.CallToolResult{
+		"empty": func() *mcpgo.CallToolResult { return &mcpgo.CallToolResult{} },
+		"null":  func() *mcpgo.CallToolResult { return mcpgo.NewToolResultText("null") },
+	}
+	for name, reply := range replies {
+		reply := reply
+		t.Run(name, func(t *testing.T) {
+			srv := mcpserver.NewMCPServer("TestServer", "1.0.0")
+			for _, verb := range []string{"put", "get", "delete", "list"} {
+				srv.AddTool(mcpgo.NewTool("quicbaas_kv_"+verb), func(context.Context, mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
+					return reply(), nil
+				})
+			}
+			httpSrv := mcpserver.NewTestStreamableHTTPServer(srv)
+			defer httpSrv.Close()
+
+			tr, err := New(&transport.Config{Address: httpSrv.URL, Timeout: 5 * time.Second})
+			if err != nil {
+				t.Fatalf("New: %v", err)
+			}
+			defer tr.Close()
+
+			calls := map[string]map[string]interface{}{
+				"Put":    {"entityType": "users", "id": uint64(1), "data": []byte("v")},
+				"Get":    {"entityType": "users", "id": uint64(1)},
+				"Delete": {"entityType": "users", "id": uint64(1)},
+				"List":   {"entityType": "users"},
+			}
+			for method, req := range calls {
+				resp, err := tr.Request(context.Background(), "quicbaas.KV", method, req)
+				if err == nil {
+					t.Errorf("%s with a %s reply: got %#v and no error", method, name, resp)
+				}
+			}
+		})
+	}
+}
+
 func TestKVIDDecimal(t *testing.T) {
 	cases := []struct {
 		in   interface{}

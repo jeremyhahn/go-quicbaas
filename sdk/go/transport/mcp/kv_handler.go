@@ -136,9 +136,18 @@ func transformKVResponse(method string, result interface{}) (interface{}, error)
 
 // decodeToolResult re-encodes a generic tool result and decodes it into out.
 func decodeToolResult(op string, result, out interface{}) error {
+	// An empty or JSON-null tool reply carries no response: decoding it would
+	// leave out zero-valued and report a write that nothing confirmed as a
+	// success, so it is a protocol error.
+	if result == nil {
+		return errors.New(errors.CodeInternal, op, "tool returned no result")
+	}
 	data, err := json.Marshal(result)
 	if err != nil {
 		return errors.Wrap(err, errors.CodeInternal, op, "failed to re-encode tool result")
+	}
+	if string(data) == "null" {
+		return errors.New(errors.CodeInternal, op, "tool returned no result")
 	}
 	if err := json.Unmarshal(data, out); err != nil {
 		return errors.Wrap(err, errors.CodeInternal, op, "failed to decode tool result")
