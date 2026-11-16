@@ -525,39 +525,60 @@ func (s *Storage) GetJobsDueForExecution(ctx context.Context, before time.Time, 
 	}
 
 	// Tenant jobs live in their tenants' namespaces; the index names them.
-	// The entries are collected first and the jobs read after the scan, so
-	// no read runs inside the store's iteration.
-	type tenantJobRef struct {
-		id       uint64
-		tenantID string
-	}
-	var refs []tenantJobRef
+	// The index is collected first and each tenant's jobs are read after it
+	// in one prefix scan per tenant, so no read runs inside the store's
+	// iteration and a sweep costs one scan per tenant, not one read per
+	// retained job.
+	indexed := make(map[string]map[uint64]struct{})
+	var tenants []string
 	err = s.kv.Scan(ctx, TenantJobIndexPrefix, func(key string, value []byte) error {
 		id, ok := parseTenantJobIndexKey(key)
 		if !ok || len(value) == 0 {
 			return nil
 		}
-		refs = append(refs, tenantJobRef{id: id, tenantID: string(value)})
+		tenantID := string(value)
+		ids, seen := indexed[tenantID]
+		if !seen {
+			ids = make(map[uint64]struct{})
+			indexed[tenantID] = ids
+			tenants = append(tenants, tenantID)
+		}
+		ids[id] = struct{}{}
 		return nil
 	})
 	if err != nil {
 		return nil, &scheduler.ErrStorageError{Op: "GetJobsDueForExecution.index_scan", Cause: err}
 	}
 
-	for _, ref := range refs {
-		job, err := s.GetJob(ctx, ref.id, ref.tenantID)
-		if err != nil {
-			if notFound := (*scheduler.JobNotFoundError)(nil); errors.As(err, &notFound) {
-				// Created index-first and not yet written, or deleted.
-				continue
+	for _, tenantID := range tenants {
+		ids := indexed[tenantID]
+		err := s.kv.Scan(ctx, recordNamespace(tenantID)+"scheduler/jobs/", func(key string, value []byte) error {
+			keyTenant, id, ok := splitTenantJobKey(key)
+			if !ok || keyTenant != tenantID {
+				return nil
 			}
-			return nil, err
+			if _, listed := ids[id]; !listed {
+				return nil
+			}
+			var job scheduler.Job
+			if err := json.Unmarshal(value, &job); err != nil {
+				// A malformed job is skipped, as in the system scan, so
+				// it cannot block other tenants' jobs.
+				return nil
+			}
+			if eligible(&job) {
+				dueJobs = append(dueJobs, &job)
+				if len(dueJobs) >= limit {
+					return ErrLimitReached
+				}
+			}
+			return nil
+		})
+		if err != nil && !errors.Is(err, ErrLimitReached) {
+			return nil, &scheduler.ErrStorageError{Op: "GetJobsDueForExecution.tenant_scan", Cause: err}
 		}
-		if eligible(job) {
-			dueJobs = append(dueJobs, job)
-			if len(dueJobs) >= limit {
-				break
-			}
+		if len(dueJobs) >= limit {
+			break
 		}
 	}
 
