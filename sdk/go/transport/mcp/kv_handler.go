@@ -36,8 +36,8 @@ type kvListToolResult struct {
 
 // kvArguments converts a KV request to the entity tool's arguments. The
 // generic conversion already yields entity_type, id and base64 data, which
-// the tools read; List's paging fields are renamed to the pageSize and
-// pageToken names the list tool reads.
+// the tools read; every verb's shard is renamed to the shardID the entity
+// tools read, and List's paging fields to pageSize and pageToken.
 func (t *Transport) kvArguments(method string, req interface{}) map[string]interface{} {
 	args := toolArguments(req, true)
 	if args == nil {
@@ -48,6 +48,10 @@ func (t *Transport) kvArguments(method string, req interface{}) map[string]inter
 	// entity tools parse a decimal-string id exactly.
 	if id, ok := args["id"].(json.Number); ok {
 		args["id"] = id.String()
+	}
+	if v, ok := args["shard_id"]; ok {
+		args["shardID"] = v
+		delete(args, "shard_id")
 	}
 	if method != "List" {
 		return args
