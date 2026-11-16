@@ -333,6 +333,62 @@ func (b *KVBackend) storeVersion(ctx context.Context, path string, expected *Rea
 	return nextVer, nil
 }
 
+// PruneVersions deletes every version entry of path numbered at or below the
+// current version minus keep. Version numbers come from the current pointer
+// and the highest entry, so a pruned number is never reused, and the gaps it
+// leaves are the ones ListVersions already skips. Deleting only entries older
+// than the pointer this read makes a concurrent write harmless: it adds a
+// newer version, never one this prune removes.
+func (b *KVBackend) PruneVersions(ctx context.Context, path string, keep int) (int, error) {
+	if path == "" {
+		return 0, ErrInvalidPath
+	}
+	if keep < 1 {
+		return 0, ErrVersionMustBePositive
+	}
+
+	lock := b.lockPath(path)
+	lock.Lock()
+	defer lock.Unlock()
+
+	cur, err := b.loadCurrent(ctx, path)
+	if err != nil {
+		return 0, err
+	}
+	if cur.Version == 0 {
+		return 0, ErrSecretNotFound
+	}
+	floor := cur.Version - keep
+	if floor < 1 {
+		return 0, nil
+	}
+	prefix := kvBackendKeyPrefix + path + "/v/"
+	var doomed []int
+	if err := b.store.Scan(ctx, prefix, func(key string, _ []byte) error {
+		rest := strings.TrimPrefix(key, prefix)
+		if rest == "" || strings.ContainsFunc(rest, func(r rune) bool { return r < '0' || r > '9' }) {
+			return nil
+		}
+		if n, convErr := strconv.Atoi(rest); convErr == nil && n <= floor {
+			doomed = append(doomed, n)
+		}
+		return nil
+	}); err != nil {
+		return 0, &SecretsCauseError{Message: "prune versions: enumerate keyspace", Cause: err}
+	}
+	pruned := 0
+	for _, n := range doomed {
+		if err := b.store.Delete(ctx, versionKey(path, n)); err != nil {
+			if qberrors.IsNotFound(err) {
+				continue
+			}
+			return pruned, &SecretsCauseError{Message: "prune version " + strconv.Itoa(n), Cause: err}
+		}
+		pruned++
+	}
+	return pruned, nil
+}
+
 // allocateAndReserve allocates the next version number and reserves its key,
 // retrying past concurrent winners on a guarded store (review 994): each
 // refused reservation means another process took the number after our scan,

@@ -405,6 +405,74 @@ func (eb *EncryptedBackend) storeVersion(ctx context.Context, path string, expec
 	return newVersion, nil
 }
 
+// PruneVersions destroys every version of path older than its newest keep
+// version numbers. Version numbers are list positions here, so a pruned
+// version keeps its slot, emptied of ciphertext, nonce, tag, AAD and metadata
+// and marked destroyed. On a store with compare-and-swap the rewrite holds
+// only while the record is the one read: a write that lands in between wins,
+// and the prune stores nothing and reports nothing pruned (the next write
+// prunes again).
+func (eb *EncryptedBackend) PruneVersions(ctx context.Context, path string, keep int) (int, error) {
+	if path == "" {
+		return 0, ErrInvalidPath
+	}
+	if keep < 1 {
+		return 0, ErrVersionMustBePositive
+	}
+	if ctx.Err() != nil {
+		return 0, ctx.Err()
+	}
+
+	eb.mu.Lock()
+	defer eb.mu.Unlock()
+
+	versions, observedRaw, err := eb.loadVersionsRaw(ctx, path)
+	if err != nil {
+		return 0, err
+	}
+	pruned := 0
+	now := time.Now()
+	for i := 0; i < len(versions.Versions)-keep; i++ {
+		entry := versions.Versions[i]
+		if entry.Deleted && entry.Ciphertext == nil && entry.Metadata == nil {
+			continue
+		}
+		entry.Deleted = true
+		entry.Nonce = nil
+		entry.Ciphertext = nil
+		entry.Tag = nil
+		entry.AAD = nil
+		entry.Metadata = nil
+		if entry.DeletedAt == nil {
+			entry.DeletedAt = &now
+		}
+		pruned++
+	}
+	if pruned == 0 {
+		return 0, nil
+	}
+
+	g, guarded := eb.store.(casKVStore)
+	if !guarded {
+		if err := eb.saveVersions(ctx, path, versions); err != nil {
+			return 0, &SecretsCauseError{Message: "prune versions", Cause: err}
+		}
+		return pruned, nil
+	}
+	raw, err := json.Marshal(versions)
+	if err != nil {
+		return 0, ErrSerializationFailed
+	}
+	stored, err := g.CompareAndSwap(ctx, secretKey(path), observedRaw, raw)
+	if err != nil {
+		return 0, &SecretsCauseError{Message: "prune versions", Cause: err}
+	}
+	if !stored {
+		return 0, nil
+	}
+	return pruned, nil
+}
+
 // Get retrieves a secret from the specified path.
 func (eb *EncryptedBackend) Get(ctx context.Context, path string) (map[string][]byte, map[string]string, error) {
 	if path == "" {

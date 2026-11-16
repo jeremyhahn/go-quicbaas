@@ -145,6 +145,43 @@ func (mb *MemoryBackend) storeVersion(ctx context.Context, path string, expected
 	return newVersion, nil
 }
 
+// PruneVersions destroys every version of path older than its newest keep
+// version numbers. Version numbers are slice positions here, so a pruned
+// version keeps its slot, emptied of data and metadata and marked destroyed.
+func (mb *MemoryBackend) PruneVersions(ctx context.Context, path string, keep int) (int, error) {
+	if err := ctx.Err(); err != nil {
+		return 0, err
+	}
+	if path == "" {
+		return 0, ErrInvalidPath
+	}
+	if keep < 1 {
+		return 0, ErrVersionMustBePositive
+	}
+
+	mb.mu.Lock()
+	defer mb.mu.Unlock()
+
+	store, exists := mb.secrets[path]
+	if !exists || len(store.versions) == 0 {
+		return 0, ErrSecretNotFound
+	}
+	pruned := 0
+	now := time.Now()
+	for i := 0; i < len(store.versions)-keep; i++ {
+		entry := store.versions[i]
+		if entry.Deleted && entry.Data == nil && entry.Metadata == nil {
+			continue
+		}
+		entry.Deleted = true
+		entry.Data = nil
+		entry.Metadata = nil
+		entry.UpdatedAt = now
+		pruned++
+	}
+	return pruned, nil
+}
+
 // Get retrieves a secret from the specified path (current version).
 func (mb *MemoryBackend) Get(ctx context.Context, path string) (map[string][]byte, map[string]string, error) {
 	if err := ctx.Err(); err != nil {

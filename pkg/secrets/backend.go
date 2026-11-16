@@ -88,6 +88,17 @@ type ConditionalVersionedBackend interface {
 	StoreVersionIfCurrent(ctx context.Context, path string, expected ReadVersion, data map[string][]byte, metadata map[string]string) (int, error)
 }
 
+// VersionPruner is a backend that can bound a secret's retained history.
+type VersionPruner interface {
+	// PruneVersions keeps the newest keep version numbers of path and
+	// destroys every older version: its data and metadata are removed and
+	// its number stays retired, never reused, so a read of it returns
+	// ErrVersionNotFound or ErrVersionDestroyed. It returns how many
+	// versions it destroyed; a version already destroyed is not counted.
+	// keep must be at least 1, so the current version is never pruned.
+	PruneVersions(ctx context.Context, path string, keep int) (int, error)
+}
+
 // ReadVersion is the record a conditional write supersedes, as its writer
 // read it. The version number alone does not name a record: Destroy lets a
 // path's versions restart at 1, so a secret destroyed and recreated up to
