@@ -432,18 +432,41 @@ func TestHandler_cleanupLoop(t *testing.T) {
 	config := DefaultConfig()
 	config.CleanupInterval = time.Millisecond
 
-	h, err := NewHandler(newMockEmbedder(), newMockSearcher(), config)
-	require.NoError(t, err)
+	t.Run("removes an expired entry once released", func(t *testing.T) {
+		// Built without NewHandler so the loop does not run until the test
+		// starts it: the expired entry is asserted present before cleanup can
+		// see it.
+		h := &handler{
+			embedder:    newMockEmbedder(),
+			searcher:    newMockSearcher(),
+			cache:       NewCache(config.CacheSize),
+			config:      config,
+			stopCleanup: make(chan struct{}),
+		}
+		t.Cleanup(func() { assert.NoError(t, h.Close()) })
 
-	cache := h.(*handler).cache
-	cache.Set("expired", &Response{Query: "expired"}, -time.Minute)
-	require.Equal(t, 1, cache.Stats().Size)
+		h.cache.Set("expired", &Response{Query: "expired"}, -time.Minute)
+		require.Equal(t, 1, h.cache.Stats().Size)
 
-	require.Eventually(t, func() bool { return cache.Stats().Size == 0 },
-		5*time.Second, time.Millisecond, "cleanup loop never removed the expired entry")
+		h.wg.Add(1)
+		go h.cleanupLoop()
 
-	// Close waits for the loop to return.
-	assert.NoError(t, h.Close())
+		require.Eventually(t, func() bool { return h.cache.Stats().Size == 0 },
+			5*time.Second, time.Millisecond, "cleanup loop never removed the expired entry")
+	})
+
+	t.Run("NewHandler starts the loop", func(t *testing.T) {
+		h, err := NewHandler(newMockEmbedder(), newMockSearcher(), config)
+		require.NoError(t, err)
+		// Close waits for the loop to return.
+		t.Cleanup(func() { assert.NoError(t, h.Close()) })
+
+		cache := h.(*handler).cache
+		cache.Set("expired", &Response{Query: "expired"}, -time.Minute)
+
+		require.Eventually(t, func() bool { return cache.Stats().Size == 0 },
+			5*time.Second, time.Millisecond, "cleanup loop never removed the expired entry")
+	})
 }
 
 // TestHandler_cleanupLoop_WithoutCache tests cleanup loop when cache is disabled.
