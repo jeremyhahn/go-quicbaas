@@ -72,7 +72,7 @@ func builtImageEngine(iid, engineID string) func([]string) (imageCommandResult, 
 		case "image":
 			return imageCommandResult{Stdout: `[{"Id":"` + engineID + `","Config":{"Labels":null}}]`}, nil
 		case "tag":
-			if args[1] != engineID {
+			if args[1] != engineID && !buildRefPattern.MatchString(args[1]) {
 				return imageCommandResult{ExitCode: 1, Stderr: "Error response from daemon: No such image: " + args[1]}, nil
 			}
 		}
@@ -102,8 +102,11 @@ func TestBuildImage_ReturnsTheIDTheEngineTagsBy(t *testing.T) {
 	}
 	ref := buildRefOf(t, engine.calls)
 	n := len(engine.calls)
-	if got := strings.Join(engine.calls[n-2].Args, " "); got != "image inspect "+ref {
+	if got := strings.Join(engine.calls[n-3].Args, " "); got != "image inspect "+ref {
 		t.Fatalf("the ID must be read back from the build's own tag %q, inspect argv %q", ref, got)
+	}
+	if got := strings.Join(engine.calls[n-2].Args, " "); got != "tag "+ref+" w:local" {
+		t.Fatalf("the spec's tag must be applied from the build's own tag %q, argv %q", ref, got)
 	}
 	if got := strings.Join(engine.calls[n-1].Args, " "); got != "image rm "+ref {
 		t.Fatalf("the build's temporary tag %q must be removed last, last argv %q", ref, got)
@@ -191,11 +194,20 @@ func TestBuildImage_PassesDockerfileOnStdinAndReadsTheIIDFile(t *testing.T) {
 		t.Fatalf("the Dockerfile must travel on stdin, got %q", call.Stdin)
 	}
 	joined := strings.Join(call.Args, " ")
-	for _, want := range []string{"build --file -", "--pull", "--tag worker:1-cc2-cx3",
+	for _, want := range []string{"build --file -", "--pull",
 		"--build-arg A=1 --build-arg B=2", "--label io.example.v=1"} {
 		if !strings.Contains(joined, want) {
 			t.Errorf("argv %q lacks %q", joined, want)
 		}
+	}
+	if strings.Contains(joined, "--tag worker:1-cc2-cx3") {
+		t.Errorf("the build must apply only its private tag, argv %q", joined)
+	}
+	ref := buildRefOf(t, engine.calls)
+	if !slices.ContainsFunc(engine.calls, func(c recordedImageCommand) bool {
+		return strings.Join(c.Args, " ") == "tag "+ref+" worker:1-cc2-cx3"
+	}) {
+		t.Errorf("the spec's tag must be applied from %q after the build", ref)
 	}
 }
 

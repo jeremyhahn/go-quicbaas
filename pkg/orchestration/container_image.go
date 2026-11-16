@@ -25,6 +25,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -228,6 +229,14 @@ func (r *ExecContainerRuntime) BuildImage(ctx context.Context, spec *ImageBuildS
 			Cause: &CommandError{Command: r.command, Op: "build", Output: strings.TrimSpace(result.Stderr)},
 		}
 	}
+	// The spec's tags are applied, and the temporary tag removed, under
+	// buildTagMu: the build applied only its private tag, so no build of
+	// this process moves a spec tag between this build tagging its image and
+	// untagging buildRef. buildRef is therefore never the image's last
+	// reference when it is removed, and `image rm` only untags it; the ID
+	// returned stays a local image even after a later build takes the tags.
+	buildTagMu.Lock()
+	defer buildTagMu.Unlock()
 	defer r.removeBuildRef(ctx, buildRef)
 	id, err := os.ReadFile(iidFile) // #nosec G304 -- a path this function created under its own temp dir.
 	if err != nil {
@@ -241,14 +250,22 @@ func (r *ExecContainerRuntime) BuildImage(ctx context.Context, spec *ImageBuildS
 	// config digest while the daemon keys the image by its manifest digest,
 	// so `docker tag <iid> ...` answers "No such image" (#1801). The ID this
 	// function returns is the one the engine resolves, read back from a tag
-	// only this build applied: the spec's tags are mutable, and a concurrent
-	// build of the same tag could move them before the inspect runs.
+	// only this build applied.
 	info, err := r.InspectImage(ctx, buildRef)
 	if err != nil {
 		return "", &ImageBuildError{Tags: spec.Tags, Cause: err}
 	}
+	for _, tag := range spec.Tags {
+		if err := r.TagImage(ctx, buildRef, tag); err != nil {
+			return "", &ImageBuildError{Tags: spec.Tags, Cause: err}
+		}
+	}
 	return info.ID, nil
 }
+
+// buildTagMu serialises, across the process, the step of a build that
+// applies its spec's tags and removes its temporary tag (see BuildImage).
+var buildTagMu sync.Mutex
 
 // errImageBuildNoID reports an engine that succeeded without naming the image
 // it built.
@@ -279,9 +296,9 @@ func buildImageArgs(spec *ImageBuildSpec, iidFile, contextDir, buildRef string) 
 	if spec.Pull {
 		args = append(args, "--pull")
 	}
-	for _, tag := range spec.Tags {
-		args = append(args, "--tag", tag)
-	}
+	// Only the build's private tag: the spec's tags are applied after the
+	// build, under buildTagMu, so a concurrent build cannot move them away
+	// from this image before its private tag is removed.
 	args = append(args, "--tag", buildRef)
 	for _, key := range sortedKeys(spec.BuildArgs) {
 		args = append(args, "--build-arg", key+"="+spec.BuildArgs[key])
@@ -306,8 +323,11 @@ func newBuildRef() (string, error) {
 	return buildTempRepository + ":" + hex.EncodeToString(b[:]), nil
 }
 
-// removeBuildRef untags the temporary reference a build applied. The image
-// keeps the spec's tags; a failure is logged and never fails the build.
+// removeBuildRef untags the temporary reference a build applied. On success
+// the image keeps the spec's tags BuildImage applied under buildTagMu, so the
+// removal only untags; on a failed build the image may go with it, which is
+// what an untagged failed build should do. A failure is logged and never
+// fails the build. The caller holds buildTagMu.
 func (r *ExecContainerRuntime) removeBuildRef(parent context.Context, ref string) {
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(parent), oneShotCleanupTimeout)
 	defer cancel()
