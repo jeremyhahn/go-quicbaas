@@ -16,6 +16,8 @@ package orchestration
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"os"
@@ -209,8 +211,12 @@ func (r *ExecContainerRuntime) BuildImage(ctx context.Context, spec *ImageBuildS
 		return "", &ImageBuildError{Tags: spec.Tags, Cause: err}
 	}
 	iidFile := filepath.Join(workDir, "iid")
+	buildRef, err := newBuildRef()
+	if err != nil {
+		return "", &ImageBuildError{Tags: spec.Tags, Cause: err}
+	}
 
-	args := buildImageArgs(spec, iidFile, contextDir)
+	args := buildImageArgs(spec, iidFile, contextDir, buildRef)
 	r.logger.Infof("container build: %s %s", r.command, strings.Join(spec.Tags, " "))
 	result, err := r.imageRunner()(ctx, r.command, imageCommand{Args: args, Stdin: spec.Dockerfile})
 	if err != nil {
@@ -222,6 +228,7 @@ func (r *ExecContainerRuntime) BuildImage(ctx context.Context, spec *ImageBuildS
 			Cause: &CommandError{Command: r.command, Op: "build", Output: strings.TrimSpace(result.Stderr)},
 		}
 	}
+	defer r.removeBuildRef(ctx, buildRef)
 	id, err := os.ReadFile(iidFile) // #nosec G304 -- a path this function created under its own temp dir.
 	if err != nil {
 		return "", &ImageBuildError{Tags: spec.Tags, Cause: err}
@@ -233,9 +240,10 @@ func (r *ExecContainerRuntime) BuildImage(ctx context.Context, spec *ImageBuildS
 	// the engine's: under docker's containerd image store BuildKit writes the
 	// config digest while the daemon keys the image by its manifest digest,
 	// so `docker tag <iid> ...` answers "No such image" (#1801). The ID this
-	// function returns is the one the engine resolves, read back from the
-	// tag the build just applied.
-	info, err := r.InspectImage(ctx, spec.Tags[0])
+	// function returns is the one the engine resolves, read back from a tag
+	// only this build applied: the spec's tags are mutable, and a concurrent
+	// build of the same tag could move them before the inspect runs.
+	info, err := r.InspectImage(ctx, buildRef)
 	if err != nil {
 		return "", &ImageBuildError{Tags: spec.Tags, Cause: err}
 	}
@@ -266,7 +274,7 @@ func validateImageBuildSpec(spec *ImageBuildSpec) error {
 
 // buildImageArgs is the build's argv, in a stable order so two builds of one
 // spec are the same invocation.
-func buildImageArgs(spec *ImageBuildSpec, iidFile, contextDir string) []string {
+func buildImageArgs(spec *ImageBuildSpec, iidFile, contextDir, buildRef string) []string {
 	args := []string{"build", "--file", "-", "--iidfile", iidFile}
 	if spec.Pull {
 		args = append(args, "--pull")
@@ -274,6 +282,7 @@ func buildImageArgs(spec *ImageBuildSpec, iidFile, contextDir string) []string {
 	for _, tag := range spec.Tags {
 		args = append(args, "--tag", tag)
 	}
+	args = append(args, "--tag", buildRef)
 	for _, key := range sortedKeys(spec.BuildArgs) {
 		args = append(args, "--build-arg", key+"="+spec.BuildArgs[key])
 	}
@@ -281,6 +290,35 @@ func buildImageArgs(spec *ImageBuildSpec, iidFile, contextDir string) []string {
 		args = append(args, "--label", key+"="+spec.Labels[key])
 	}
 	return append(args, contextDir)
+}
+
+// buildTempRepository is the repository of the reference each build applies
+// to its image alone, so the build can read back the ID it produced.
+const buildTempRepository = "quicbaas-build-tmp"
+
+// newBuildRef returns a reference unique to one build:
+// quicbaas-build-tmp:<32 lowercase hex characters from crypto/rand>.
+func newBuildRef() (string, error) {
+	var b [16]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return "", err
+	}
+	return buildTempRepository + ":" + hex.EncodeToString(b[:]), nil
+}
+
+// removeBuildRef untags the temporary reference a build applied. The image
+// keeps the spec's tags; a failure is logged and never fails the build.
+func (r *ExecContainerRuntime) removeBuildRef(parent context.Context, ref string) {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(parent), oneShotCleanupTimeout)
+	defer cancel()
+	result, err := r.imageRunner()(ctx, r.command, imageCommand{Args: []string{"image", "rm", ref}})
+	switch {
+	case err != nil:
+		r.logger.Warnf("container build: remove temporary tag %s: %v", ref, err)
+	case result.ExitCode != 0:
+		r.logger.Warnf("container build: remove temporary tag %s exited %d: %s",
+			ref, result.ExitCode, strings.TrimSpace(result.Stderr))
+	}
 }
 
 // InspectImage reports a local image's ID, labels and repository digests. An
