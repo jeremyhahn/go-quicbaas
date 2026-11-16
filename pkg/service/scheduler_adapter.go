@@ -73,10 +73,15 @@ func (a *SchedulerAdapter) CreateJob(ctx context.Context, req *CreateSchedulerJo
 	}
 	// A tenant caller that names no owner type creates a job its own tenant
 	// owns; only an explicit system or delegated owner names the system
-	// namespace.
+	// namespace. A system caller's job with no owner type stays
+	// system-owned.
 	ownerType := req.OwnerType
-	if ownerType == "" && tenantID != "" {
-		ownerType = SchedulerOwnerTypeTenant
+	if ownerType == "" {
+		if tenantID != "" {
+			ownerType = SchedulerOwnerTypeTenant
+		} else {
+			ownerType = SchedulerOwnerTypeSystem
+		}
 	}
 	// A tenant-owned job is filed in its owner's namespace, so naming an
 	// owner is naming a tenant and is held to the same rule.
