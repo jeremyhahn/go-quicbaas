@@ -386,12 +386,16 @@ func jobContainerConfig(spec *orchestration.ContainerSpec) (*ContainerConfig, er
 		}
 		// On the host's network a container's port is the host's port; a
 		// mapping to another one, or a port of a container with no network,
-		// could not be published.
+		// could not be published. Nor can the host network bind a port to
+		// one address: the service listens on every host interface.
 		if config.NetworkMode != NetworkModeHost {
 			return nil, &orchestration.InputValidationError{Field: field, Message: "a port can be published only on the host network: " + ErrJobSpecUnsupported.Error()}
 		}
 		if port.HostPort != 0 && port.HostPort != port.ContainerPort {
 			return nil, &orchestration.InputValidationError{Field: field, Message: "the host network cannot map a port to another: " + ErrJobSpecUnsupported.Error()}
+		}
+		if port.HostIP != "" {
+			return nil, &orchestration.InputValidationError{Field: field, Message: "the host network cannot bind a port to one address: " + ErrJobSpecUnsupported.Error()}
 		}
 		config.Ports = append(config.Ports, port)
 	}

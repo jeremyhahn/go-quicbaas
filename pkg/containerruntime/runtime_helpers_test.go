@@ -41,7 +41,31 @@ func TestGenerateOCIConfig_UserMounts(t *testing.T) {
 	assert.Equal(t, ociMount{Destination: "/srv/data", Type: "bind", Source: "/data", Options: []string{"rbind"}}, data)
 	config := oci.Mounts[len(oci.Mounts)-1]
 	assert.Equal(t, "/etc/app", config.Destination)
-	assert.Equal(t, []string{"rbind", "ro"}, config.Options, "a bind mount without a bind option would not be bound")
+	assert.Equal(t, []string{"rbind", "ro", "rro"}, config.Options, "a bind mount without a bind option would not be bound")
+}
+
+func TestGenerateOCIConfig_ReadOnlyRbindIsRecursive(t *testing.T) {
+	tests := []struct {
+		name  string
+		mount Mount
+		want  []string
+	}{
+		{"ReadOnlyWithNoOptions", Mount{ReadOnly: true}, []string{"rbind", "ro", "rro"}},
+		{"RoOptionOnAnRbind", Mount{Options: []string{"rbind", "ro"}}, []string{"rbind", "ro", "rro"}},
+		{"ReadOnlyBindIsNotRecursive", Mount{Options: []string{"bind"}, ReadOnly: true}, []string{"bind", "ro"}},
+		{"WritableRbind", Mount{Options: []string{"rbind"}}, []string{"rbind"}},
+	}
+	rt := newTestRuntime(t)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m := tt.mount
+			m.Type = "bind"
+			m.Source = "/srv/data"
+			m.Target = "/data"
+			oci := rt.generateOCIConfig(&ContainerConfig{Mounts: []Mount{m}}, "/rootfs")
+			assert.Equal(t, tt.want, oci.Mounts[len(oci.Mounts)-1].Options)
+		})
+	}
 }
 
 // A job's host mounts reach libcontainer as bind mounts that request MS_BIND:
@@ -63,7 +87,7 @@ func TestJobContainerConfig_HostMountsAreBound(t *testing.T) {
 	mounts := rt.generateOCIConfig(config, "/rootfs").Mounts
 	mounts = mounts[len(mounts)-3:]
 	assert.Equal(t, ociMount{Destination: "/workspace", Type: "bind", Source: "/srv/workspace", Options: []string{"rbind"}}, mounts[0])
-	assert.Equal(t, ociMount{Destination: "/home/agent/.creds", Type: "bind", Source: "/srv/creds", Options: []string{"rbind", "ro"}}, mounts[1])
+	assert.Equal(t, ociMount{Destination: "/home/agent/.creds", Type: "bind", Source: "/srv/creds", Options: []string{"rbind", "ro", "rro"}}, mounts[1])
 	assert.Equal(t, "tmpfs", mounts[2].Type)
 	assert.NotContains(t, mounts[2].Options, "rbind")
 }
@@ -88,7 +112,7 @@ func TestJobContainerConfig_Network(t *testing.T) {
 	})
 
 	t.Run("HostSharesTheHostNetwork", func(t *testing.T) {
-		config, err := jobContainerConfig(&orchestration.ContainerSpec{Network: "host", Image: "alpine:latest", Ports: []string{"8080:8080", "127.0.0.1:53:53/udp"}})
+		config, err := jobContainerConfig(&orchestration.ContainerSpec{Network: "host", Image: "alpine:latest", Ports: []string{"8080:8080", "53:53/udp"}})
 		require.NoError(t, err)
 		oci := newTestRuntime(t).generateOCIConfig(config, "/rootfs")
 		assert.False(t, slices.ContainsFunc(oci.Linux.Namespaces, func(ns ociNamespace) bool { return ns.Type == "network" }))
@@ -110,6 +134,16 @@ func TestJobContainerConfig_Network(t *testing.T) {
 		var invalid *orchestration.InputValidationError
 		require.ErrorAs(t, err, &invalid)
 		assert.Equal(t, "ports[0]", invalid.Field)
+	})
+
+	t.Run("AHostPortCannotBeBoundToAnAddress", func(t *testing.T) {
+		for _, port := range []string{"127.0.0.1:8080:8080", "0.0.0.0:8080:8080"} {
+			_, err := jobContainerConfig(&orchestration.ContainerSpec{Network: "host", Image: "alpine:latest", Ports: []string{port}})
+			var invalid *orchestration.InputValidationError
+			require.ErrorAs(t, err, &invalid, port)
+			assert.Equal(t, "ports[0]", invalid.Field, port)
+			assert.ErrorContains(t, err, ErrJobSpecUnsupported.Error(), port)
+		}
 	})
 }
 

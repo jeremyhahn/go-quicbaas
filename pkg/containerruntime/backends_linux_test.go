@@ -145,6 +145,10 @@ func TestStorageImageStore_PushRoundTrip(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, served.Digest.String(), digest)
 
+	// The tag@digest form the worker-image refresher smokes pulls by its digest.
+	_, err = b.images.Pull(ctx, host+"/o/worker:1@"+digest)
+	require.NoError(t, err)
+
 	_, err = b.images.Push(ctx, host+"/o/missing:1", nil)
 	require.ErrorIs(t, err, ErrImageNotFound)
 }

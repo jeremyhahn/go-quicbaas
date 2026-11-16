@@ -94,7 +94,16 @@ func (s *storageImageStore) Pull(ctx context.Context, ref string) (record imageR
 		return imageRecord{}, err
 	}
 
-	source, err := docker.ParseReference("//" + named.String())
+	// The docker transport refuses a reference with both a tag and a digest,
+	// and the digest alone names the build.
+	var pullRef reference.Named = named
+	if canonical, ok := named.(reference.Canonical); ok {
+		pullRef, err = reference.WithDigest(reference.TrimNamed(named), canonical.Digest())
+		if err != nil {
+			return imageRecord{}, err
+		}
+	}
+	source, err := docker.ParseReference("//" + pullRef.String())
 	if err != nil {
 		return imageRecord{}, err
 	}

@@ -634,6 +634,12 @@ func (r *Runtime) generateOCIConfig(config *ContainerConfig, rootfsPath string) 
 		if m.ReadOnly {
 			opts = append(opts, "ro")
 		}
+		// ro covers only the top of an rbind, so rro makes every submount
+		// read-only too, and runc refuses the container where the kernel
+		// cannot do that.
+		if slices.Contains(opts, "rbind") && slices.Contains(opts, "ro") && !slices.Contains(opts, "rro") {
+			opts = append(opts, "rro")
+		}
 		oci.Mounts = append(oci.Mounts, ociMount{
 			Destination: m.Target,
 			Type:        mountType,
