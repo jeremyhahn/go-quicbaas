@@ -289,15 +289,18 @@ func (r *TenantSigningKeyResolver) JWKS(ctx context.Context) *jose.JSONWebKeySet
 
 // heldPublicForKID returns kid's key from the global manager or a dedicated
 // manager this resolver has built, as each holds it now (an adopted
-// pre-upgrade key past its cutoff is not held), or nil.
+// pre-upgrade key past its cutoff is not held), or nil. Each manager it
+// consults first takes its routine, rate-limited refresh, so a key a peer
+// has rotated out of the overlap is not held for longer than
+// signingKeyRefreshInterval.
 func (r *TenantSigningKeyResolver) heldPublicForKID(kid string) crypto.PublicKey {
-	if pub, err := r.global.publicForKID(kid); err == nil {
+	if pub, err := r.global.refreshedPublicForKID(kid); err == nil {
 		return pub
 	}
 	var found crypto.PublicKey
 	r.managers.Range(func(_, v any) bool {
 		if mgr, ok := v.(*SigningKeyManager); ok {
-			if pub, err := mgr.publicForKID(kid); err == nil {
+			if pub, err := mgr.refreshedPublicForKID(kid); err == nil {
 				found = pub
 				return false
 			}

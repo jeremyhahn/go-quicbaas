@@ -194,6 +194,9 @@ func (e *AdoptionCutoffUnavailableError) Error() string {
 // version record, so a rotation another node made reaches this one.
 const signingKeyRefreshInterval = time.Second
 
+// refreshNow is the clock the routine refresh reads; tests replace it.
+var refreshNow = time.Now
+
 // unknownKIDRefreshInterval is how often a token naming a key ID this manager
 // does not hold may re-read the key's version record.
 const unknownKIDRefreshInterval = 100 * time.Millisecond
@@ -518,7 +521,7 @@ func (m *SigningKeyManager) maybeRefresh(every time.Duration) {
 	if !m.versioned() {
 		return
 	}
-	if time.Since(time.Unix(0, m.lastRefresh.Load())) < every {
+	if refreshNow().Sub(time.Unix(0, m.lastRefresh.Load())) < every {
 		return
 	}
 	if !m.rotateMu.TryLock() {
@@ -530,7 +533,7 @@ func (m *SigningKeyManager) maybeRefresh(every time.Duration) {
 
 // refreshLocked is Refresh with rotateMu held.
 func (m *SigningKeyManager) refreshLocked(ctx context.Context) error {
-	m.lastRefresh.Store(time.Now().UnixNano())
+	m.lastRefresh.Store(refreshNow().UnixNano())
 	prev := m.load()
 	if prev == nil {
 		return &SigningKeyUnavailableError{}
@@ -672,13 +675,22 @@ func (m *SigningKeyManager) SignerForKID(kid string) (crypto.Signer, error) {
 // key and any retained previous keys. It returns UnknownKeyIDError when no key
 // matches.
 func (m *SigningKeyManager) PublicForKID(kid string) (crypto.PublicKey, error) {
-	pub, err := m.publicForKID(kid)
+	pub, err := m.refreshedPublicForKID(kid)
 	if errors.As(err, new(*UnknownKeyIDError)) {
 		// The key may have been rotated on another node sharing the backend.
 		m.refreshForUnknownKID()
 		return m.publicForKID(kid)
 	}
 	return pub, err
+}
+
+// refreshedPublicForKID looks kid up after the routine, rate-limited
+// refresh, so a held key a peer has since rotated out of the overlap stops
+// verifying within signingKeyRefreshInterval even on a node that only
+// verifies.
+func (m *SigningKeyManager) refreshedPublicForKID(kid string) (crypto.PublicKey, error) {
+	m.maybeRefresh(signingKeyRefreshInterval)
+	return m.publicForKID(kid)
 }
 
 // refreshForUnknownKID re-reads the key's version record for a token naming
