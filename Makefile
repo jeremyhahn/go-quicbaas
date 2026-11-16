@@ -5671,11 +5671,39 @@ DEVCONTAINER_COMPOSE = TOOLCHAIN_IMAGE='$(TOOLCHAIN_IMAGE)' \
 	GO_BUILD_PROXY="$${DEVCACHE_GOPROXY:-}" \
 	GOMODAUTH_ENV='$(GOMODAUTH_ENV)' RUN_UID="$$(id -u)" RUN_GID="$$(id -g)" \
 	$(DOCKER) compose -f $(DEVCONTAINER_DIR)/compose.yaml
+# The plain `docker build` arguments compose.yaml's x-build gives every
+# service: the repository root as context, the Dockerfile, the build args and
+# the gomodauth secret (the included integration compose file's).
+DEVCONTAINER_DOCKER_BUILD = DOCKER_BUILDKIT=1 $(DOCKER) build -f $(DEVCONTAINER_DIR)/Dockerfile \
+	--build-arg GO_VERSION='$(GO_VERSION)' --build-arg GO_IMAGE_DIGEST='$(GO_IMAGE_DIGEST)' \
+	--build-arg GO_BUILD_PROXY="$${DEVCACHE_GOPROXY:-}" \
+	--secret id=gomodauth,src='$(GOMODAUTH_ENV)'
 # Builds the named compose services with the module credentials staged for the
-# build only, unless CI handed them over in MODULE_ENV_FILE.
+# build only, unless CI handed them over in MODULE_ENV_FILE. A docker without
+# the compose plugin (#2503) builds each service with plain `docker build`,
+# with the target, build args, secret and tag compose.yaml gives it; the
+# toolchain image is skipped when the daemon already holds its tag.
 DEVCONTAINER_BUILD = $(if $(strip $(MODULE_ENV_FILE)),,trap '$(GOMODAUTH_CLEAR)' EXIT; \
 	$(MAKE) --no-print-directory stage-gomodauth;) \
-	$(DEVCONTAINER_COMPOSE) build
+	devcontainer_build() { \
+		if $(DOCKER) compose version >/dev/null 2>&1; then \
+			$(DEVCONTAINER_COMPOSE) build "$$@"; return; \
+		fi; \
+		for svc in "$$@"; do \
+			case $$svc in \
+			toolchain) \
+				if $(DOCKER) image inspect '$(TOOLCHAIN_IMAGE)' >/dev/null 2>&1; then \
+					echo "the daemon holds $(TOOLCHAIN_IMAGE); no build"; continue; \
+				fi; \
+				$(DEVCONTAINER_DOCKER_BUILD) --target toolchain -t '$(TOOLCHAIN_IMAGE)' . || return 1 ;; \
+			integration) \
+				$(DEVCONTAINER_DOCKER_BUILD) --target integration \
+					--build-arg BUILD_TAGS='$(strip $(INTEGRATION_BUILD_TAGS))' --build-arg COVER="$${COVER:-}" \
+					-t '$(INTEGRATION_IMAGE)' . || return 1 ;; \
+			*) echo "devcontainer build: unknown service $$svc" >&2; return 2 ;; \
+			esac; \
+		done; \
+	}; devcontainer_build
 
 .PHONY: toolchain-image
 toolchain-image: ## Print the toolchain image tag, hashed from the files it is built from
