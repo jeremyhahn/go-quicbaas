@@ -816,7 +816,10 @@ func (f *oidcVersionFence) observeMaterial(key string, value []byte) {
 // present is false, that key is still absent.
 func oidcKeyCompare(key string, value []byte, present bool) transport.Compare {
 	if !present {
-		return transport.Compare{Key: []byte(key), Target: transport.CompareCreateRevision, Result: transport.CompareEqual}
+		// Version 0 is "the key is absent". It is the absence compare
+		// every qrdb engine accepts: the file backend's KVEngine rejects
+		// create- and mod-revision compares.
+		return transport.Compare{Key: []byte(key), Target: transport.CompareVersion, Result: transport.CompareEqual, Version: 0}
 	}
 	return transport.Compare{Key: []byte(key), Target: transport.CompareValue, Result: transport.CompareEqual, Value: value}
 }

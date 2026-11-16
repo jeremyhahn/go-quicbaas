@@ -40,8 +40,20 @@ import (
 // node from production config so it compiles under every build tag.
 func oidcReplicatedKV(t *testing.T) (xkmssdk.StorageBackend, transport.TransactionClient) {
 	t.Helper()
+	return oidcReplicatedKVOn(t, config.StorageBackendMemory)
+}
+
+// oidcRotationBackends are the qrdb storage engines the rotation tests run
+// on: the MVCC memory engine and the file backend's KVEngine, whose
+// transactions support a narrower set of compare targets.
+var oidcRotationBackends = []string{config.StorageBackendMemory, config.StorageBackendFile}
+
+// oidcReplicatedKVOn is oidcReplicatedKV on the given storage backend, with
+// its data directory in a t.TempDir().
+func oidcReplicatedKVOn(t *testing.T, backend string) (xkmssdk.StorageBackend, transport.TransactionClient) {
+	t.Helper()
 	cfg := &config.Config{}
-	cfg.Storage.Backend = config.StorageBackendMemory
+	cfg.Storage.Backend = backend
 	cfg.Storage.DataDir = t.TempDir()
 	qcfg, err := buildQRDBConfig(cfg, false)
 	require.NoError(t, err)
@@ -189,18 +201,22 @@ func TestOIDCSigningStore_PeerNodesShareOneKey(t *testing.T) {
 // the registered replicated backend: the current kid changes and the old kid
 // stays in JWKS through the overlap window.
 func TestOIDCSigningStore_RotateOnReplicatedBackend(t *testing.T) {
-	t.Cleanup(dbxkms.Reset)
+	for _, backend := range oidcRotationBackends {
+		t.Run(backend, func(t *testing.T) {
+			t.Cleanup(dbxkms.Reset)
 
-	kv, tx := oidcReplicatedKV(t)
-	m := bootOIDCSigningNode(t, kv, tx)
-	oldKid, _, _ := m.Current()
+			kv, tx := oidcReplicatedKVOn(t, backend)
+			m := bootOIDCSigningNode(t, kv, tx)
+			oldKid, _, _ := m.Current()
 
-	require.NoError(t, m.Rotate())
+			require.NoError(t, m.Rotate())
 
-	newKid, _, _ := m.Current()
-	require.NotEqual(t, oldKid, newKid)
-	require.Len(t, m.JWKS().Key(oldKid), 1)
-	require.Len(t, m.JWKS().Key(newKid), 1)
+			newKid, _, _ := m.Current()
+			require.NotEqual(t, oldKid, newKid)
+			require.Len(t, m.JWKS().Key(oldKid), 1)
+			require.Len(t, m.JWKS().Key(newKid), 1)
+		})
+	}
 }
 
 // bootOIDCSigningServer boots one node's OIDC signing key the way the server
@@ -223,21 +239,25 @@ func bootOIDCSigningServer(t *testing.T, s *Server, kv xkmssdk.StorageBackend, t
 // with the rotated key, because the key-version record of the replicated
 // OIDC key is replicated with the key.
 func TestOIDCSigningStore_RotationReachesPeerNode(t *testing.T) {
-	t.Cleanup(dbxkms.Reset)
-	kv, tx := oidcReplicatedKV(t)
+	for _, backend := range oidcRotationBackends {
+		t.Run(backend, func(t *testing.T) {
+			t.Cleanup(dbxkms.Reset)
+			kv, tx := oidcReplicatedKVOn(t, backend)
 
-	nodeA := &Server{config: &config.Config{}}
-	a := bootOIDCSigningServer(t, nodeA, kv, tx)
-	oldKid, _, _ := a.Current()
-	require.NoError(t, a.Rotate())
-	rotatedKid, _, _ := a.Current()
-	require.NotEqual(t, oldKid, rotatedKid)
+			nodeA := &Server{config: &config.Config{}}
+			a := bootOIDCSigningServer(t, nodeA, kv, tx)
+			oldKid, _, _ := a.Current()
+			require.NoError(t, a.Rotate())
+			rotatedKid, _, _ := a.Current()
+			require.NotEqual(t, oldKid, rotatedKid)
 
-	nodeB := &Server{config: &config.Config{}}
-	b := bootOIDCSigningServer(t, nodeB, kv, tx)
-	kidB, _, _ := b.Current()
-	require.Equal(t, rotatedKid, kidB)
-	require.Len(t, b.JWKS().Key(rotatedKid), 1)
+			nodeB := &Server{config: &config.Config{}}
+			b := bootOIDCSigningServer(t, nodeB, kv, tx)
+			kidB, _, _ := b.Current()
+			require.Equal(t, rotatedKid, kidB)
+			require.Len(t, b.JWKS().Key(rotatedKid), 1)
+		})
+	}
 }
 
 // TestOIDCSigningStore_TwoNodeRotationRestartAndPeerRotation rotates the
@@ -246,8 +266,16 @@ func TestOIDCSigningStore_RotationReachesPeerNode(t *testing.T) {
 // version before its rotation, B's rotation makes a new version without
 // replacing A's, and A picks B's rotation up without a restart.
 func TestOIDCSigningStore_TwoNodeRotationRestartAndPeerRotation(t *testing.T) {
-	t.Cleanup(dbxkms.Reset)
-	kv, tx := oidcReplicatedKV(t)
+	for _, backend := range oidcRotationBackends {
+		t.Run(backend, func(t *testing.T) {
+			t.Cleanup(dbxkms.Reset)
+			testOIDCTwoNodeRotationRestartAndPeerRotation(t, backend)
+		})
+	}
+}
+
+func testOIDCTwoNodeRotationRestartAndPeerRotation(t *testing.T, backend string) {
+	kv, tx := oidcReplicatedKVOn(t, backend)
 	verifies := func(m *iam.SigningKeyManager, kid string) func() bool {
 		return func() bool {
 			_, err := m.PublicForKID(kid)
