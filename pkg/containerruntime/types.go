@@ -164,6 +164,13 @@ type ContainerConfig struct {
 	// Privileged runs the container in privileged mode
 	Privileged bool `json:"privileged" yaml:"privileged"`
 
+	// AllowNewPrivileges leaves the init process's no_new_privs bit clear,
+	// so a setuid program such as sudo can raise its privileges within the
+	// capability bounding set. Unset, a non-privileged container runs with
+	// no_new_privs. A job sets it as `docker run` does without
+	// `--security-opt no-new-privileges`.
+	AllowNewPrivileges bool `json:"allow_new_privileges,omitempty" yaml:"allow_new_privileges,omitempty"`
+
 	// ReadOnly makes the container root filesystem read-only
 	ReadOnly bool `json:"read_only" yaml:"read_only"`
 

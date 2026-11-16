@@ -353,9 +353,14 @@ func jobContainerConfig(spec *orchestration.ContainerSpec) (*ContainerConfig, er
 		User:        spec.User,
 		WorkDir:     spec.WorkDir,
 		Privileged:  spec.Privileged,
-		AutoRemove:  spec.AutoRemove,
-		CapAdd:      slices.Clone(spec.CapAdd),
-		CapDrop:     slices.Clone(spec.CapDrop),
+		// A job's container runs as `docker run` runs it, without
+		// no-new-privileges: SandboxSecurity keeps it unprivileged with a
+		// small capability set and lets a non-root worker use setuid sudo
+		// within it.
+		AllowNewPrivileges: true,
+		AutoRemove:         spec.AutoRemove,
+		CapAdd:             slices.Clone(spec.CapAdd),
+		CapDrop:            slices.Clone(spec.CapDrop),
 	}
 	if spec.MemoryBytes > 0 || spec.PidsLimit > 0 {
 		config.Resources = &ResourceLimits{MemoryLimit: spec.MemoryBytes, PidsLimit: spec.PidsLimit}

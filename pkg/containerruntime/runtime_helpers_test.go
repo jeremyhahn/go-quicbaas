@@ -23,6 +23,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
 )
 
 func TestGenerateOCIConfig_UserMounts(t *testing.T) {
@@ -220,4 +222,43 @@ func TestWrappedError_Unwrap(t *testing.T) {
 	err := &WrappedError{Msg: "pull", Err: errTestBackend}
 	require.ErrorIs(t, err, errTestBackend)
 	assert.Nil(t, (&WrappedError{Msg: "bare"}).Unwrap())
+}
+
+func TestGenerateOCIConfig_SandboxDropsAllCapabilities(t *testing.T) {
+	spec := &orchestration.ContainerSpec{Image: "alpine:latest", User: "1000:1000"}
+	require.NoError(t, orchestration.SandboxSecurity{}.Apply(spec))
+	config, err := jobContainerConfig(spec)
+	require.NoError(t, err)
+	oci := newTestRuntime(t).generateOCIConfig(config, "/rootfs")
+
+	want := []string{"CAP_CHOWN", "CAP_DAC_OVERRIDE", "CAP_FOWNER", "CAP_SETGID", "CAP_SETUID"}
+	caps := oci.Process.Capabilities
+	require.NotNil(t, caps)
+	assert.ElementsMatch(t, want, caps.Bounding)
+	assert.ElementsMatch(t, want, caps.Effective)
+	assert.ElementsMatch(t, want, caps.Permitted)
+	assert.Empty(t, caps.Inheritable)
+	assert.Empty(t, caps.Ambient)
+	for _, dropped := range []string{"CAP_NET_RAW", "CAP_MKNOD", "CAP_SETFCAP", "CAP_KILL"} {
+		assert.NotContains(t, caps.Bounding, dropped)
+	}
+	assert.False(t, oci.Process.NoNewPrivileges, "no_new_privs would stop a setuid sudo")
+	assert.Equal(t, "1000:1000", config.User)
+}
+
+func TestCapabilitySet(t *testing.T) {
+	defaults := []string{"CAP_CHOWN", "CAP_KILL", "CAP_NET_RAW"}
+	assert.Equal(t, defaults, capabilitySet(defaults, nil, nil))
+	assert.Equal(t, []string{"CAP_SETUID"}, capabilitySet(defaults, []string{"setuid"}, []string{"all"}))
+	assert.Equal(t, []string{"CAP_CHOWN", "CAP_SYS_ADMIN"},
+		capabilitySet(defaults, []string{"SYS_ADMIN", "CAP_CHOWN"}, []string{"KILL", "CAP_NET_RAW"}))
+	assert.Empty(t, capabilitySet(defaults, nil, []string{"ALL"}))
+	assert.Equal(t, []string{"CAP_CHOWN", "CAP_KILL", "CAP_NET_RAW"}, defaults, "the defaults were changed")
+}
+
+func TestGenerateOCIConfig_NoNewPrivilegesIsExplicit(t *testing.T) {
+	rt := newTestRuntime(t)
+	assert.True(t, rt.generateOCIConfig(&ContainerConfig{}, "/rootfs").Process.NoNewPrivileges)
+	assert.False(t, rt.generateOCIConfig(&ContainerConfig{AllowNewPrivileges: true}, "/rootfs").Process.NoNewPrivileges)
+	assert.False(t, rt.generateOCIConfig(&ContainerConfig{Privileged: true}, "/rootfs").Process.NoNewPrivileges)
 }
