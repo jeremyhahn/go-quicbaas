@@ -24,6 +24,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
 )
@@ -31,7 +32,61 @@ import (
 // oneShotNamePrefix names the containers RunImage starts.
 const oneShotNamePrefix = "quicbaas-run-"
 
-var _ orchestration.ContainerOwnerSweeper = (*JobRuntime)(nil)
+var (
+	_ orchestration.ContainerOwnerSweeper = (*JobRuntime)(nil)
+	_ orchestration.OwnedContainerLister  = (*JobRuntime)(nil)
+)
+
+// ListOwned returns every container labelled orchestration.ContainerOwnerLabel
+// = owner, running or exited: this process's own and those an earlier agent
+// left on disk. The running agent's ContainerReaper removes the ones whose
+// session has ended through Remove, which reclaims a leftover as well.
+func (j *JobRuntime) ListOwned(ctx context.Context, owner string) ([]orchestration.OwnedContainer, error) {
+	owner = strings.TrimSpace(owner)
+	if owner == "" {
+		return nil, &orchestration.InputValidationError{Field: "owner", Message: "cannot be empty"}
+	}
+
+	states, err := j.runtime.ListContainers(ctx, true)
+	if err != nil {
+		return nil, err
+	}
+	var owned []orchestration.OwnedContainer
+	for _, state := range states {
+		if state.Config == nil || state.Config.Labels[orchestration.ContainerOwnerLabel] != owner {
+			continue
+		}
+		owned = append(owned, ownedContainer(state.ID, state.Config.Name, state.CreatedAt, state.Config.Labels))
+	}
+
+	leftovers, err := j.runtime.ListLeftovers()
+	if err != nil {
+		return nil, err
+	}
+	for _, leftover := range leftovers {
+		if leftover.Labels[orchestration.ContainerOwnerLabel] != owner {
+			continue
+		}
+		owned = append(owned, ownedContainer(leftover.ID, leftover.Name, leftover.CreatedAt, leftover.Labels))
+	}
+
+	slices.SortFunc(owned, func(a, b orchestration.OwnedContainer) int {
+		return cmp.Or(a.CreatedAt.Compare(b.CreatedAt), strings.Compare(a.ID, b.ID))
+	})
+	return owned, nil
+}
+
+// ownedContainer describes a container for the reaper by its identity labels.
+func ownedContainer(id, name string, createdAt time.Time, labels map[string]string) orchestration.OwnedContainer {
+	return orchestration.OwnedContainer{
+		ID:        id,
+		Name:      name,
+		CreatedAt: createdAt,
+		SessionID: labels[orchestration.ContainerSessionLabel],
+		JobID:     labels[orchestration.ContainerJobLabel],
+		TenantID:  labels[orchestration.ContainerTenantLabel],
+	}
+}
 
 // SweepOwned removes every container labelled orchestration.ContainerOwnerLabel
 // = owner, oldest first, and reports what it removed. A container already gone
