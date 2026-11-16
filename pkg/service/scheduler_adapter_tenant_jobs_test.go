@@ -109,6 +109,45 @@ func TestSchedulerAdapter_TenantCannotEditGraceJobPayload(t *testing.T) {
 	require.Error(t, err, "no caller creates a job of an internal handler")
 }
 
+// A tenant caller cannot create, or turn a job into, a job of a platform
+// sweep's handler: those run with platform authority across every tenant.
+func TestSchedulerAdapter_TenantCannotUsePlatformSweepHandlers(t *testing.T) {
+	a := realStorageSchedulerAdapter(t)
+	ctx := tenantctx.WithTenant(context.Background(), "tenant-a")
+
+	for _, handler := range []string{
+		schedulerhandlers.HandlerKMSRotation,
+		schedulerhandlers.HandlerLedgerPricing,
+	} {
+		_, err := a.CreateJob(ctx, &CreateSchedulerJobRequest{
+			Name:      "forged-" + handler,
+			Type:      SchedulerJobType(scheduler.JobTypeOneShot),
+			ExecuteAt: time.Now().Add(time.Hour),
+			Handler:   handler,
+		})
+		require.Error(t, err, "no tenant creates a %s job", handler)
+		require.Contains(t, err.Error(), "written only by the service that owns it")
+	}
+
+	created, err := a.CreateJob(ctx, &CreateSchedulerJobRequest{
+		Name:      "report",
+		Type:      SchedulerJobType(scheduler.JobTypeOneShot),
+		ExecuteAt: time.Now().Add(time.Hour),
+		Handler:   "noop",
+	})
+	require.NoError(t, err)
+
+	_, err = a.UpdateJob(ctx, &UpdateSchedulerJobRequest{
+		JobID:   created.Job.ID,
+		Handler: schedulerhandlers.HandlerKMSRotation,
+	})
+	require.Error(t, err, "no tenant turns a job into a kms.rotation job")
+
+	got, err := a.GetJob(ctx, &GetSchedulerJobRequest{JobID: created.Job.ID})
+	require.NoError(t, err)
+	require.Equal(t, "noop", got.Job.Handler, "the job's handler is unchanged")
+}
+
 // The grace handler binds a tenant job's key to the tenant by the same
 // prefix the KMS service scopes the tenant's keys under.
 func TestGraceHandlerTenantKeyPrefix_MatchesServiceScope(t *testing.T) {

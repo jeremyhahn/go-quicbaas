@@ -21,6 +21,7 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 	"github.com/jeremyhahn/go-quicbaas/pkg/scheduler"
+	schedulerhandlers "github.com/jeremyhahn/go-quicbaas/pkg/scheduler/handlers"
 	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
@@ -522,7 +523,13 @@ type gracePeriodPayload struct {
 // schedulerInternalHandlers are the handlers whose jobs only their owning
 // service creates and writes (KMSService.RotateKey files kms.grace_period).
 var schedulerInternalHandlers = map[string]bool{
-	"kms.grace_period": true,
+	schedulerhandlers.HandlerKMSGracePeriod: true,
+	// The platform's system sweeps run with platform authority across every
+	// tenant (KMS rotation scans and rotates every tenant's keys; the ledger
+	// pricing sweep prices every tenant's entries). Each runs only as its
+	// reserved system job, whose firing claim lets one node run each sweep.
+	schedulerhandlers.HandlerKMSRotation:   true,
+	schedulerhandlers.HandlerLedgerPricing: true,
 }
 
 // schedulerRefuseInternalHandler refuses a scheduler API write that names, or
