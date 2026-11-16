@@ -102,8 +102,12 @@ func TestBuildImage_ReturnsTheIDTheEngineTagsBy(t *testing.T) {
 	}
 	ref := buildRefOf(t, engine.calls)
 	n := len(engine.calls)
-	if got := strings.Join(engine.calls[n-3].Args, " "); got != "image inspect "+ref {
+	if got := strings.Join(engine.calls[n-4].Args, " "); got != "image inspect "+ref {
 		t.Fatalf("the ID must be read back from the build's own tag %q, inspect argv %q", ref, got)
+	}
+	idRef := "quicbaas-build-id:" + strings.TrimPrefix(engineID, "sha256:")
+	if got := strings.Join(engine.calls[n-3].Args, " "); got != "tag "+ref+" "+idRef {
+		t.Fatalf("the image must be pinned by its ID %q before any other tag, argv %q", idRef, got)
 	}
 	if got := strings.Join(engine.calls[n-2].Args, " "); got != "tag "+ref+" w:local" {
 		t.Fatalf("the spec's tag must be applied from the build's own tag %q, argv %q", ref, got)

@@ -180,8 +180,10 @@ func TestBuildImage_ConcurrentBuildOfTheSameTagKeepsTheReturnedImage(t *testing.
 	}
 
 	// The model deletes an image with its last reference.
-	if _, err := engine.apply([]string{"image", "rm", "w:local"}); err != nil {
-		t.Fatal(err)
+	for _, ref := range []string{"w:local", mustBuildIDRef(t, idB)} {
+		if _, err := engine.apply([]string{"image", "rm", ref}); err != nil {
+			t.Fatal(err)
+		}
 	}
 	if _, _, images := engine.state(); images[idB] {
 		t.Fatalf("removing %s's last tag must delete it in the model", idB)
@@ -229,5 +231,131 @@ func TestBuildImage_FailedBuildAfterTaggingRemovesTheTemporaryTag(t *testing.T) 
 				}
 			}
 		})
+	}
+}
+
+// mustBuildIDRef is the reference BuildImage names an image by its ID.
+func mustBuildIDRef(t *testing.T, id string) string {
+	t.Helper()
+	ref, err := buildIDRef(id)
+	if err != nil {
+		t.Fatalf("buildIDRef(%q): %v", id, err)
+	}
+	return ref
+}
+
+// Two daemons share one engine and build the same candidate tag. Daemon B is
+// a separate runtime that knows nothing of A, and it runs to completion in
+// the window the review names: after A has applied the candidate tag and
+// before A removes its private tag. B moves the candidate tag to its own
+// image, so A's private tag would be its image's last reference; the image A
+// returns must survive A's cleanup all the same. B runs inside A's tag
+// command, so any lock A held across that window would deadlock here: the
+// image is kept alive by a reference in the engine, not by coordination in
+// one process.
+func TestBuildImage_IndependentProcessMovingTheTagKeepsTheReturnedImage(t *testing.T) {
+	engine := newTagStoreEngine()
+	daemonA := &ExecContainerRuntime{command: RuntimeDocker, logger: newContainerTestLogger(t), runImageCommand: engine.run}
+	daemonB := &ExecContainerRuntime{command: RuntimeDocker, logger: newContainerTestLogger(t), runImageCommand: func(_ context.Context, _ string, cmd imageCommand) (imageCommandResult, error) {
+		return engine.apply(cmd.Args) // B's commands do not reach A's hook
+	}}
+	spec := func() *ImageBuildSpec {
+		return &ImageBuildSpec{Dockerfile: []byte("FROM a"), Tags: []string{"w:local"}}
+	}
+
+	var (
+		once sync.Once
+		idB  string
+		errB error
+	)
+	engine.after = func(args []string) {
+		if args[0] == "tag" && args[2] == "w:local" {
+			once.Do(func() {
+				idB, errB = daemonB.BuildImage(context.WithoutCancel(t.Context()), spec())
+			})
+		}
+	}
+
+	idA, errA := daemonA.BuildImage(t.Context(), spec())
+	if errA != nil || errB != nil {
+		t.Fatalf("BuildImage: A %v, B %v", errA, errB)
+	}
+	if idA == idB {
+		t.Fatalf("the two builds must produce two images, both %q", idA)
+	}
+	_, tags, images := engine.state()
+	if tags["w:local"] != idB {
+		t.Fatalf("w:local must name daemon B's later build %s, tags %v", idB, tags)
+	}
+	if !images[idA] {
+		t.Fatalf("daemon A's image %s was deleted with its temporary tag; tags %v", idA, tags)
+	}
+	if tags[mustBuildIDRef(t, idA)] != idA || tags[mustBuildIDRef(t, idB)] != idB {
+		t.Fatalf("each image must keep the reference naming it by ID, tags %v", tags)
+	}
+	for ref := range tags {
+		if strings.HasPrefix(ref, buildTempRepository+":") {
+			t.Errorf("temporary tag %s was left behind", ref)
+		}
+	}
+	if err := daemonA.TagImage(t.Context(), idA, "localhost:32786/it/w:a"); err != nil {
+		t.Fatalf("TagImage of daemon A's ID: %v", err)
+	}
+}
+
+// A cached build gives two builds one image ID. Both pin the same reference,
+// and either one's cleanup leaves the image the other returned.
+func TestBuildImage_TwoBuildsOfOneImageShareItsIDReference(t *testing.T) {
+	const id = "sha256:" + "5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a"
+	engine := newTagStoreEngine()
+	cached := func(ctx context.Context, command string, cmd imageCommand) (imageCommandResult, error) {
+		if cmd.Args[0] == "build" {
+			engine.mu.Lock()
+			engine.images[id] = true
+			engine.tags[argAfter(cmd.Args, "--tag")] = id
+			engine.mu.Unlock()
+			return imageCommandResult{}, os.WriteFile(argAfter(cmd.Args, "--iidfile"), []byte(id+"\n"), 0o600)
+		}
+		return engine.run(ctx, command, cmd)
+	}
+	for _, name := range []string{"A", "B"} {
+		rt := &ExecContainerRuntime{command: RuntimeDocker, logger: newContainerTestLogger(t), runImageCommand: cached}
+		got, err := rt.BuildImage(t.Context(), &ImageBuildSpec{Dockerfile: []byte("FROM a"), Tags: []string{"w:" + name}})
+		if err != nil || got != id {
+			t.Fatalf("build %s: id %q, err %v", name, got, err)
+		}
+	}
+	_, tags, images := engine.state()
+	if !images[id] || tags[mustBuildIDRef(t, id)] != id {
+		t.Fatalf("the shared image must keep its ID reference, tags %v, images %v", tags, images)
+	}
+}
+
+func TestBuildIDRef(t *testing.T) {
+	const hex = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+	for _, id := range []string{"sha256:" + hex, hex} {
+		if got := mustBuildIDRef(t, id); got != "quicbaas-build-id:"+hex {
+			t.Errorf("buildIDRef(%q) = %q", id, got)
+		}
+	}
+	for _, id := range []string{"", "sha256:", "sha256:abc", "sha512:" + hex, "sha256:" + strings.ToUpper(hex), "w:local"} {
+		if _, err := buildIDRef(id); !errors.Is(err, errImageIDNotDigest) {
+			t.Errorf("buildIDRef(%q) err = %v, want errImageIDNotDigest", id, err)
+		}
+	}
+}
+
+// An engine whose inspect answers an ID that names no digest fails the build
+// rather than leave the image with only its temporary tag.
+func TestBuildImage_IDThatIsNoDigestIsABuildError(t *testing.T) {
+	engine := &fakeImageEngine{answer: builtImageEngine("sha256:1", "sha256:1")}
+	rt := newImageTestRuntime(t, RuntimeDocker, engine)
+	_, err := rt.BuildImage(t.Context(), &ImageBuildSpec{Dockerfile: []byte("FROM a"), Tags: []string{"w:local"}})
+	if !errors.Is(err, ErrImageBuild) || !errors.Is(err, errImageIDNotDigest) {
+		t.Fatalf("err = %v, want ErrImageBuild wrapping errImageIDNotDigest", err)
+	}
+	ref := buildRefOf(t, engine.calls)
+	if got := strings.Join(engine.calls[len(engine.calls)-1].Args, " "); got != "image rm "+ref {
+		t.Fatalf("the temporary tag must still be removed, last argv %q", got)
 	}
 }
