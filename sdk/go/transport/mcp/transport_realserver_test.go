@@ -48,8 +48,9 @@ func TestTransport_Request_Success(t *testing.T) {
 	srv := mcpserver.NewMCPServer("TestServer", "1.0.0")
 	srv.AddTool(mcpgo.NewTool("quicbaas_kv_get"), func(_ context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
 		args := req.GetArguments()
-		if args["id"] != float64(123) {
-			t.Errorf("id = %v, want 123", args["id"])
+		// A map-based KV id reaches the tool as its exact decimal string.
+		if args["id"] != "123" {
+			t.Errorf("id = %T %v, want the decimal string \"123\"", args["id"], args["id"])
 		}
 		return mcpgo.NewToolResultText(string(mustMarshalJSON(map[string]interface{}{
 			"id":    123,

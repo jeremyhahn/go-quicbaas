@@ -2,6 +2,7 @@ package mcp
 
 import (
 	"context"
+	"encoding/json"
 	"strconv"
 	"testing"
 	"time"
@@ -89,5 +90,57 @@ func TestTransport_Request_KVIDAbove2To53RoundTrips(t *testing.T) {
 	}
 	if del, ok := result.(*service.DeleteResponse); !ok || !del.Deleted {
 		t.Errorf("Delete answered %T %+v, want deleted", result, result)
+	}
+}
+
+// A map-based KV request carries its id as a Go integer; the tool must
+// receive it as the exact decimal string, never a float64 rounded above 2^53.
+func TestTransport_Request_MapKVIDSentAsDecimalString(t *testing.T) {
+	want := strconv.FormatUint(kvIDAbove2To53, 10)
+	srv := mcpserver.NewMCPServer("TestServer", "1.0.0")
+	srv.AddTool(mcpgo.NewTool("quicbaas_kv_get"), func(_ context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
+		if got, ok := req.GetArguments()["id"].(string); !ok || got != want {
+			t.Errorf("tool read id %T %v, want decimal string %q", req.GetArguments()["id"], req.GetArguments()["id"], want)
+		}
+		return mcpgo.NewToolResultText(`{"id":` + want + `,"found":true}`), nil
+	})
+	httpSrv := mcpserver.NewTestStreamableHTTPServer(srv)
+	defer httpSrv.Close()
+
+	tr, err := New(&transport.Config{Address: httpSrv.URL, Timeout: 5 * time.Second})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer tr.Close()
+
+	for _, id := range []interface{}{uint64(kvIDAbove2To53), int64(kvIDAbove2To53), json.Number(want)} {
+		req := map[string]interface{}{"entityType": "users", "id": id}
+		if _, err := tr.Request(context.Background(), "quicbaas.KV", "Get", req); err != nil {
+			t.Fatalf("Get with %T id: %v", id, err)
+		}
+	}
+}
+
+func TestKVIDDecimal(t *testing.T) {
+	cases := []struct {
+		in   interface{}
+		want string
+		ok   bool
+	}{
+		{uint64(kvIDAbove2To53), strconv.FormatUint(kvIDAbove2To53, 10), true},
+		{int(7), "7", true},
+		{int32(7), "7", true},
+		{uint32(7), "7", true},
+		{json.Number("42"), "42", true},
+		{int64(-1), "", false},
+		{1.5, "", false},
+		{"12", "", false},
+		{nil, "", false},
+	}
+	for _, c := range cases {
+		got, ok := kvIDDecimal(c.in)
+		if got != c.want || ok != c.ok {
+			t.Errorf("kvIDDecimal(%T %v) = %q, %v; want %q, %v", c.in, c.in, got, ok, c.want, c.ok)
+		}
 	}
 }
