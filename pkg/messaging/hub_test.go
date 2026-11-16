@@ -1065,12 +1065,17 @@ func TestNotificationHub_RegisterAlreadyRegisteredClient(t *testing.T) {
 		// Register the same client again - should not increase count
 		hub.RegisterClient(client)
 
-		// Registrations are processed in order, so once a second client is
-		// counted the duplicate ahead of it has been processed too.
-		hub.RegisterClient(NewClient("client-2", 256))
+		// The barrier is an acknowledgment naming client-2, not the count:
+		// a duplicate that wrongly counted would itself make the count 2
+		// while client-2 is still queued. A plain subscribe (no register)
+		// succeeds only once the loop has registered client-2, and the
+		// register queue is FIFO, so the duplicate ahead of it has been
+		// handled by then.
+		client2 := NewClient("client-2", 256)
+		hub.RegisterClient(client2)
 		require.Eventually(t, func() bool {
-			return hub.ClientCount() >= 2
-		}, testTimeout, testPollInterval)
+			return hub.SubscribeToChannel(client2, "duplicate-barrier") == nil
+		}, testTimeout, testPollInterval, "client-2's registration was never acknowledged")
 
 		// The duplicate must not have been counted
 		assert.Equal(t, 2, hub.ClientCount())
