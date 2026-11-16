@@ -306,6 +306,7 @@ func (r *ToolRegistry) registerTools() {
 			"properties": map[string]interface{}{
 				"entityType": map[string]interface{}{"type": "string", "description": "Entity type"},
 				"id":         map[string]interface{}{"type": "string", "description": "Entity ID as a decimal string"},
+				"shard_id":   map[string]interface{}{"type": "string", "description": "Target shard ID as a decimal string (default 0: the service routes)"},
 				"expected":   map[string]interface{}{"type": "string", "description": "Base64-encoded (standard) value the entity must hold"},
 				"next":       map[string]interface{}{"type": "string", "description": "Base64-encoded (standard) value stored when it does"},
 			},
@@ -321,6 +322,7 @@ func (r *ToolRegistry) registerTools() {
 			"properties": map[string]interface{}{
 				"entityType": map[string]interface{}{"type": "string", "description": "Entity type"},
 				"id":         map[string]interface{}{"type": "string", "description": "Entity ID as a decimal string"},
+				"shard_id":   map[string]interface{}{"type": "string", "description": "Target shard ID as a decimal string (default 0: the service routes)"},
 				"value":      map[string]interface{}{"type": "string", "description": "Base64-encoded (standard) value"},
 			},
 			"required": []string{"entityType", "id", "value"},
@@ -1773,6 +1775,10 @@ func (r *ToolRegistry) executePut(ctx context.Context, args map[string]interface
 // entity the same way, so it compares the record qrdb_put wrote.
 func (r *ToolRegistry) executeKVCompareAndSwap(ctx context.Context, args map[string]interface{}) (interface{}, error) {
 	entityType := getStringAlt(args, "entityType", "entity_type")
+	shardID, err := parseDecimalArg(args, "shard_id", false)
+	if err != nil {
+		return nil, err
+	}
 	expect, err := decodeConditionalArg(args, "expected")
 	if err != nil {
 		return nil, err
@@ -1786,6 +1792,7 @@ func (r *ToolRegistry) executeKVCompareAndSwap(ctx context.Context, args map[str
 		ID:         getIDOrHashKey(entityType, args),
 		Expect:     expect,
 		Set:        next,
+		ShardID:    shardID,
 	})
 	if err != nil {
 		return nil, err
@@ -1796,6 +1803,10 @@ func (r *ToolRegistry) executeKVCompareAndSwap(ctx context.Context, args map[str
 // executeKVPutIfAbsent is the conditional form of executePut.
 func (r *ToolRegistry) executeKVPutIfAbsent(ctx context.Context, args map[string]interface{}) (interface{}, error) {
 	entityType := getStringAlt(args, "entityType", "entity_type")
+	shardID, err := parseDecimalArg(args, "shard_id", false)
+	if err != nil {
+		return nil, err
+	}
 	value, err := decodeConditionalArg(args, "value")
 	if err != nil {
 		return nil, err
@@ -1804,6 +1815,7 @@ func (r *ToolRegistry) executeKVPutIfAbsent(ctx context.Context, args map[string
 		EntityType: entityType,
 		ID:         getIDOrHashKey(entityType, args),
 		Data:       value,
+		ShardID:    shardID,
 	})
 	if err != nil {
 		return nil, err

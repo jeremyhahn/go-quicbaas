@@ -18,6 +18,7 @@ import (
 func b64(s string) string { return base64.StdEncoding.EncodeToString([]byte(s)) }
 
 func (s *kvStoreService) CompareAndSwap(_ context.Context, req *service.CompareAndSwapRequest) (*service.ConditionalPutResponse, error) {
+	s.shards = append(s.shards, req.ShardID)
 	key := kvStoreKey(req.EntityType, req.ID)
 	held, ok := s.entries[key]
 	if !ok || !bytes.Equal(held, req.Expect) {
@@ -28,6 +29,7 @@ func (s *kvStoreService) CompareAndSwap(_ context.Context, req *service.CompareA
 }
 
 func (s *kvStoreService) PutIfAbsent(_ context.Context, req *service.PutIfAbsentRequest) (*service.ConditionalPutResponse, error) {
+	s.shards = append(s.shards, req.ShardID)
 	key := kvStoreKey(req.EntityType, req.ID)
 	if _, ok := s.entries[key]; ok {
 		return &service.ConditionalPutResponse{Applied: false}, nil
@@ -94,6 +96,37 @@ func TestKVConditionalTools_DecimalStringIDAbove2To53(t *testing.T) {
 	assert.Equal(t, []byte("v2"), store.entries[kvStoreKey("locks", 9007199254740993)])
 	_, rounded := store.entries[kvStoreKey("locks", 9007199254740992)]
 	assert.False(t, rounded, "the 2^53 key must not exist")
+}
+
+// TestKVConditionalTools_CarryShardID pins that the conditional tools target
+// the shard the caller names, as quicbaas_kv_put does, instead of dropping it.
+func TestKVConditionalTools_CarryShardID(t *testing.T) {
+	registry, store := newKVStoreRegistry(t)
+	ctx := context.Background()
+
+	_, err := registry.ExecuteTool(ctx, "quicbaas_kv_put_if_absent", map[string]interface{}{
+		"entityType": "locks", "id": "7", "shard_id": "3", "value": b64("v1"),
+	})
+	require.NoError(t, err)
+	_, err = registry.ExecuteTool(ctx, "quicbaas_kv_compare_and_swap", map[string]interface{}{
+		"entityType": "locks", "id": "7", "shard_id": "3", "expected": b64("v1"), "next": b64("v2"),
+	})
+	require.NoError(t, err)
+	_, err = registry.ExecuteTool(ctx, "quicbaas_kv_put_if_absent", map[string]interface{}{
+		"entityType": "locks", "id": "8", "value": b64("v1"),
+	})
+	require.NoError(t, err)
+	assert.Equal(t, []uint64{3, 3, 0}, store.shards)
+
+	for _, tool := range []string{"quicbaas_kv_put_if_absent", "quicbaas_kv_compare_and_swap"} {
+		_, err = registry.ExecuteTool(ctx, tool, map[string]interface{}{
+			"entityType": "locks", "id": "7", "shard_id": "-1",
+			"value": b64("v"), "expected": b64("v"), "next": b64("v"),
+		})
+		var argErr *UserToolInvalidArgumentError
+		require.ErrorAs(t, err, &argErr, tool)
+		assert.Equal(t, "shard_id", argErr.Arg, tool)
+	}
 }
 
 func TestKVConditionalTools_RefuseNonBase64(t *testing.T) {

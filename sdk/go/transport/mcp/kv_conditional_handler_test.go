@@ -178,6 +178,35 @@ func TestTransport_KVConditional_IDAbove2To53(t *testing.T) {
 
 // TestTransport_CompareAndSwap_AnswerWithoutDecision rejects a tool answer
 // that lacks the decision field rather than reading it as applied=false.
+// TestTransport_KVConditional_ShardID pins that the request's ShardID reaches
+// the tool as the decimal-string shard_id argument, and that zero is left out.
+func TestTransport_KVConditional_ShardID(t *testing.T) {
+	tests := []struct {
+		name, tool, field string
+		req               interface{}
+		want              interface{}
+	}{
+		{"CompareAndSwap", "quicbaas_kv_compare_and_swap", "swapped",
+			&service.CompareAndSwapRequest{EntityType: "locks", ID: 7, ShardID: 3, Expect: []byte("a"), Set: []byte("b")}, "3"},
+		{"PutIfAbsent", "quicbaas_kv_put_if_absent", "stored",
+			&service.PutIfAbsentRequest{EntityType: "locks", ID: 7, ShardID: 3, Data: []byte("a")}, "3"},
+		{"PutIfAbsent", "quicbaas_kv_put_if_absent", "stored",
+			&service.PutIfAbsentRequest{EntityType: "locks", ID: 7, Data: []byte("a")}, nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var g guardedToolServer
+			tr := g.start(t, tt.tool, tt.field, true)
+			if _, err := tr.Request(context.Background(), "quicbaas.KV", tt.name, tt.req); err != nil {
+				t.Fatalf("Request: %v", err)
+			}
+			if got := g.arguments()["shard_id"]; got != tt.want {
+				t.Errorf("shard_id = %#v, want %#v", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestTransport_CompareAndSwap_AnswerWithoutDecision(t *testing.T) {
 	var g guardedToolServer
 	tr := g.start(t, "quicbaas_kv_compare_and_swap", "unexpected", true)

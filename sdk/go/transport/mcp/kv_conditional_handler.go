@@ -51,12 +51,12 @@ func compareAndSwapArguments(req interface{}) (map[string]interface{}, error) {
 	if r.EntityType == "" {
 		return nil, errors.NewInvalidInput("mcp.kv.CompareAndSwap", "entity type is required")
 	}
-	return map[string]interface{}{
+	return withShardID(map[string]interface{}{
 		"entityType": r.EntityType,
 		"id":         strconv.FormatUint(r.ID, 10),
 		"expected":   base64.StdEncoding.EncodeToString(r.Expect),
 		"next":       base64.StdEncoding.EncodeToString(r.Set),
-	}, nil
+	}, r.ShardID), nil
 }
 
 // putIfAbsentArguments builds qrdb_put_if_absent's arguments.
@@ -69,11 +69,21 @@ func putIfAbsentArguments(req interface{}) (map[string]interface{}, error) {
 	if r.EntityType == "" {
 		return nil, errors.NewInvalidInput("mcp.kv.PutIfAbsent", "entity type is required")
 	}
-	return map[string]interface{}{
+	return withShardID(map[string]interface{}{
 		"entityType": r.EntityType,
 		"id":         strconv.FormatUint(r.ID, 10),
 		"value":      base64.StdEncoding.EncodeToString(r.Data),
-	}, nil
+	}, r.ShardID), nil
+}
+
+// withShardID adds the request's target shard as the tools' decimal-string
+// shard_id argument; zero is left out so the service routes, as on every
+// other transport.
+func withShardID(arguments map[string]interface{}, shardID uint64) map[string]interface{} {
+	if shardID != 0 {
+		arguments["shard_id"] = strconv.FormatUint(shardID, 10)
+	}
+	return arguments
 }
 
 // requestKVConditional calls the guarded tool for a KV conditional write and
