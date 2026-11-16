@@ -17,6 +17,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"regexp"
 	"slices"
 	"strings"
@@ -24,6 +25,7 @@ import (
 	"time"
 
 	"github.com/jeremyhahn/go-qrdb/sdk/go/transport"
+	xkmsstorage "github.com/jeremyhahn/go-xkms/pkg/storage"
 	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/config"
@@ -56,6 +58,11 @@ func newOIDCSigningServiceBackend(kv xkmssdk.StorageBackend, tx transport.Transa
 // oidcSigningKeysPrefix is the prefix of the replicated kv under which the
 // software backend of oidc-replicated keeps its key material.
 const oidcSigningKeysPrefix = "oidc-signing-keys/"
+
+// oidcKeyMetadataPrefix is where go-xkms's PKCS8 backend keeps a key's
+// metadata record within the key store: "meta/" + the key ID, beside the
+// blob at xkmsstorage.KeyPath(key ID).
+const oidcKeyMetadataPrefix = "meta/"
 
 // newOIDCKeyMaterialStore returns the key storage of oidc-replicated: the
 // oidcSigningKeysPrefix of kv, with every write of key material gated by the
@@ -114,7 +121,7 @@ func oidcKeyNamesVersion(key string) bool {
 // passes only as the first creation of a key that is not a rotation version.
 func (s *oidcKeyMaterialStore) Put(ctx context.Context, key string, value []byte) error {
 	if fence, ok := oidcFenceFrom(ctx); ok {
-		return fence.putMaterial(ctx, s.tx, key, oidcSigningKeysPrefix+key, value)
+		return fence.putMaterial(ctx, s.tx, key, oidcSigningKeysPrefix+key, value, s.current(key))
 	}
 	if oidcKeyNamesVersion(key) {
 		return &OIDCRotationUnfencedError{Key: key, Op: "put"}
@@ -127,6 +134,21 @@ func (s *oidcKeyMaterialStore) Put(ctx context.Context, key string, value []byte
 		return &OIDCRotationUnfencedError{Key: key, Op: "put"}
 	}
 	return nil
+}
+
+// current reads key's value as the store holds it now, and whether it is
+// present, without recording it as observed under the fence.
+func (s *oidcKeyMaterialStore) current(key string) func(context.Context) ([]byte, bool, error) {
+	return func(ctx context.Context) ([]byte, bool, error) {
+		value, err := s.oidcGuardedKV.Get(ctx, key)
+		if errors.Is(err, xkmsstorage.ErrNotFound) || xkmssdk.IsNotFound(err) {
+			return nil, false, nil
+		}
+		if err != nil {
+			return nil, false, err
+		}
+		return value, true, nil
+	}
 }
 
 // PutIfAbsent creates key material. Under the rotation fence the creation
@@ -153,8 +175,15 @@ func (s *oidcKeyMaterialStore) Delete(ctx context.Context, key string) error {
 	if !ok {
 		return &OIDCRotationUnfencedError{Key: key, Op: "delete"}
 	}
+	if err := oidcMaterialDeleteHook(key); err != nil {
+		return err
+	}
 	return fence.deleteMaterial(ctx, s.tx, key, oidcSigningKeysPrefix+key)
 }
+
+// oidcMaterialDeleteHook runs before each fenced delete of key material;
+// tests fail it to interrupt a multi-call delete part way.
+var oidcMaterialDeleteHook = func(string) error { return nil }
 
 // Get reads key material; under the rotation fence the bytes read are what
 // a later fenced write or delete of key starts from.
@@ -876,10 +905,22 @@ func (f *oidcVersionFence) holdsLease(ctx context.Context, tx transport.Transact
 // transaction that holds only while the lease is still this holder's and
 // key still holds the bytes this holder observed or wrote under it, or is
 // still absent when it knows none.
-func (f *oidcVersionFence) putMaterial(ctx context.Context, tx transport.TransactionClient, key, storeKey string, value []byte) error {
+func (f *oidcVersionFence) putMaterial(ctx context.Context, tx transport.TransactionClient, key, storeKey string, value []byte, current func(context.Context) ([]byte, bool, error)) error {
 	f.materialMu.Lock()
 	defer f.materialMu.Unlock()
 	known := f.material[key]
+	if !known.present && f.wroteBlobOf(key) {
+		// go-xkms deletes a key's blob and then its metadata in two calls,
+		// so an interrupted delete leaves metadata without a blob. This
+		// holder has written the key's blob in this rotation, so it may
+		// replace that leftover: the write compares the value the store
+		// holds now, read under the lease, as well as the lease itself.
+		held, present, err := current(ctx)
+		if err != nil {
+			return err
+		}
+		known = oidcMaterial{value: held, present: present}
+	}
 	committed, err := f.leasedWrite(ctx, tx,
 		transport.Op{Type: transport.OpPut, Key: []byte(storeKey), Value: value},
 		oidcKeyCompare(storeKey, known.value, known.present))
@@ -891,6 +932,18 @@ func (f *oidcVersionFence) putMaterial(ctx context.Context, tx transport.Transac
 	}
 	f.wroteMaterial(key, value)
 	return nil
+}
+
+// wroteBlobOf reports whether key names a key's metadata record whose blob
+// this holder wrote in this rotation and has not deleted since. The caller
+// holds materialMu.
+func (f *oidcVersionFence) wroteBlobOf(key string) bool {
+	id, ok := strings.CutPrefix(key, oidcKeyMetadataPrefix)
+	if !ok || id == "" {
+		return false
+	}
+	blob := f.material[xkmsstorage.KeyPath(id)]
+	return blob.written && blob.present
 }
 
 // createMaterial creates key, stored as storeKey, in one transaction that
