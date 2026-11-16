@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -65,7 +66,7 @@ const (
 
 	// TenantJobIndexBackfillKey records that the one-time backfill of
 	// TenantJobIndexPrefix has indexed every tenant job stored before the
-	// index existed (see backfillTenantJobIndex).
+	// index existed (see reconcileTenantJobIndex).
 	TenantJobIndexBackfillKey = "__sys:scheduler/meta/tenant_job_index_backfilled"
 )
 
@@ -73,7 +74,17 @@ const (
 type Storage struct {
 	kv  interfaces.KVStore
 	ids jobIDAllocator
+
+	// reconcileMu guards lastReconcile, when the tenant job index was last
+	// reconciled; the due scan reconciles again after reconcileInterval.
+	reconcileMu       sync.Mutex
+	lastReconcile     time.Time
+	reconcileInterval time.Duration
 }
+
+// tenantJobIndexReconcileInterval is how often the due scan reconciles the
+// tenant job index with the tenant job records.
+const tenantJobIndexReconcileInterval = 5 * time.Minute
 
 // ClusteredStorage is a job store for a clustered deployment: a Storage that
 // can also arbitrate firings.
@@ -122,6 +133,10 @@ func NewStorage(kv interfaces.KVStore) *Storage {
 	return &Storage{
 		kv:  kv,
 		ids: &localJobIDs{kv: kv},
+		// Construction counts as a reconcile: InitializeJobIDCounter, the
+		// open, runs the first one.
+		lastReconcile:     time.Now(),
+		reconcileInterval: tenantJobIndexReconcileInterval,
 	}
 }
 
@@ -154,8 +169,10 @@ func NewClusteredStorage(kv interfaces.KVStore, claims ClaimTransactor, marks Cl
 	}
 	return &ClusteredStorage{
 		Storage: &Storage{
-			kv:  kv,
-			ids: &clusterJobIDs{kv: kv, reader: marks, writer: idWriter},
+			kv:                kv,
+			ids:               &clusterJobIDs{kv: kv, reader: marks, writer: idWriter},
+			lastReconcile:     time.Now(),
+			reconcileInterval: tenantJobIndexReconcileInterval,
 		},
 		writer: writer,
 		marks:  marks,
@@ -497,6 +514,16 @@ func (s *Storage) GetJobsDueForExecution(ctx context.Context, before time.Time, 
 		return dueJobs, nil
 	}
 
+	// Older nodes in a rolling upgrade can still write tenant jobs without
+	// an index entry, so the index is reconciled periodically, not only at
+	// open.
+	if s.reconcileDue() {
+		if err := s.reconcileTenantJobIndex(ctx); err != nil {
+			return nil, &scheduler.ErrStorageError{Op: "GetJobsDueForExecution.reconcile", Cause: err}
+		}
+		s.markReconciled()
+	}
+
 	// Tenant jobs live in their tenants' namespaces; the index names them.
 	// The entries are collected first and the jobs read after the scan, so
 	// no read runs inside the store's iteration.
@@ -535,6 +562,21 @@ func (s *Storage) GetJobsDueForExecution(ctx context.Context, before time.Time, 
 	}
 
 	return dueJobs, nil
+}
+
+// reconcileDue reports whether reconcileInterval has passed since the tenant
+// job index was last reconciled.
+func (s *Storage) reconcileDue() bool {
+	s.reconcileMu.Lock()
+	defer s.reconcileMu.Unlock()
+	return time.Since(s.lastReconcile) >= s.reconcileInterval
+}
+
+// markReconciled records that the tenant job index was just reconciled.
+func (s *Storage) markReconciled() {
+	s.reconcileMu.Lock()
+	s.lastReconcile = time.Now()
+	s.reconcileMu.Unlock()
 }
 
 // executionIDAt derives an execution ID from t in Unix nanoseconds. A time
@@ -621,31 +663,27 @@ func (s *Storage) GetExecutions(ctx context.Context, jobID uint64, tenantID stri
 // CreateJob would overwrite it.
 //
 // It is also where the store opens, so it completes the one-time tenant-job
-// index backfill (backfillTenantJobIndex) before the first due scan; a
+// index backfill (reconcileTenantJobIndex) before the first due scan; a
 // backfill that fails stops the engine from starting for the same reason.
 func (s *Storage) InitializeJobIDCounter(ctx context.Context) error {
 	if err := s.ids.initialize(ctx); err != nil {
 		return err
 	}
-	return s.backfillTenantJobIndex(ctx)
+	if err := s.reconcileTenantJobIndex(ctx); err != nil {
+		return err
+	}
+	s.markReconciled()
+	return nil
 }
 
-// backfillTenantJobIndex is the one-time migration that indexes the tenant
-// jobs stored before TenantJobIndexPrefix existed: CreateJob indexes every
-// job it writes, but a job written by an earlier release has no entry, and
-// the due scan reads the index alone. It scans the tenant job records once,
-// writes each one's entry (a Put of the same entry, so a run interrupted
-// before its marker is safely repeated), then writes
-// TenantJobIndexBackfillKey so later opens skip it.
-func (s *Storage) backfillTenantJobIndex(ctx context.Context) error {
-	done, err := s.kv.Exists(ctx, TenantJobIndexBackfillKey)
-	if err != nil {
-		return &scheduler.ErrStorageError{Op: "backfillTenantJobIndex.marker", Cause: err}
-	}
-	if done {
-		return nil
-	}
-
+// reconcileTenantJobIndex indexes every tenant job record that has no
+// TenantJobIndexPrefix entry: CreateJob indexes every job it writes, but a
+// job written by an earlier release, or by an older node still running in a
+// rolling upgrade, has none, and the due scan reads the index alone. So the
+// TenantJobIndexBackfillKey marker no longer ends reconciliation: it runs on
+// every open and periodically from the due scan, Putting only missing
+// entries, and writes the marker when absent.
+func (s *Storage) reconcileTenantJobIndex(ctx context.Context) error {
 	// Entries are collected first and written after the scan, so no write
 	// runs inside the store's iteration.
 	type tenantJobRef struct {
@@ -653,22 +691,36 @@ func (s *Storage) backfillTenantJobIndex(ctx context.Context) error {
 		tenantID string
 	}
 	var refs []tenantJobRef
-	err = s.kv.Scan(ctx, tenantKeyPrefix, func(key string, _ []byte) error {
+	err := s.kv.Scan(ctx, tenantKeyPrefix, func(key string, _ []byte) error {
 		if tenantID, id, ok := splitTenantJobKey(key); ok {
 			refs = append(refs, tenantJobRef{id: id, tenantID: tenantID})
 		}
 		return nil
 	})
 	if err != nil {
-		return &scheduler.ErrStorageError{Op: "backfillTenantJobIndex.scan", Cause: err}
+		return &scheduler.ErrStorageError{Op: "reconcileTenantJobIndex.scan", Cause: err}
 	}
 	for _, ref := range refs {
-		if err := s.kv.Put(ctx, keyForTenantJobIndex(ref.id, ref.tenantID), []byte(ref.tenantID)); err != nil {
-			return &scheduler.ErrStorageError{Op: "backfillTenantJobIndex.index", Cause: err}
+		key := keyForTenantJobIndex(ref.id, ref.tenantID)
+		present, err := s.kv.Exists(ctx, key)
+		if err != nil {
+			return &scheduler.ErrStorageError{Op: "reconcileTenantJobIndex.exists", Cause: err}
+		}
+		if present {
+			continue
+		}
+		if err := s.kv.Put(ctx, key, []byte(ref.tenantID)); err != nil {
+			return &scheduler.ErrStorageError{Op: "reconcileTenantJobIndex.index", Cause: err}
 		}
 	}
-	if err := s.kv.Put(ctx, TenantJobIndexBackfillKey, []byte{1}); err != nil {
-		return &scheduler.ErrStorageError{Op: "backfillTenantJobIndex.marker", Cause: err}
+	done, err := s.kv.Exists(ctx, TenantJobIndexBackfillKey)
+	if err != nil {
+		return &scheduler.ErrStorageError{Op: "reconcileTenantJobIndex.marker", Cause: err}
+	}
+	if !done {
+		if err := s.kv.Put(ctx, TenantJobIndexBackfillKey, []byte{1}); err != nil {
+			return &scheduler.ErrStorageError{Op: "reconcileTenantJobIndex.marker", Cause: err}
+		}
 	}
 	return nil
 }
