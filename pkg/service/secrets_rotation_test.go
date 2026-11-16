@@ -22,6 +22,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/jeremyhahn/go-quicbaas/pkg/auth"
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 	"github.com/jeremyhahn/go-quicbaas/pkg/secrets"
 	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
@@ -101,6 +102,63 @@ func TestSecretsService_RotateDueSecretsPerformsDuePolicies(t *testing.T) {
 	result, err = svc.RotateDueSecrets(context.Background())
 	require.NoError(t, err)
 	assert.Equal(t, 0, result.Due)
+}
+
+// TestSecretsService_RepeatedRotationsStayBounded runs many scheduled
+// rotations of one secret: each adds a version, and the rotation prunes the
+// secret to its policy's retained versions plus the current one (ten when
+// the policy names none), so the versions stay bounded however long the
+// policy runs.
+func TestSecretsService_RepeatedRotationsStayBounded(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name   string
+		retain int
+		want   int
+	}{
+		{name: "policy retention", retain: 2, want: 3},
+		{name: "default retention", retain: 0, want: defaultRotationRetainVersions + 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			svc, mgr := newRotationTestService(t)
+			acme := tenantctx.WithTenant(context.Background(), "acme")
+			start := time.Now().UTC().Truncate(time.Second)
+			storeWithPolicy(t, svc, acme, "db/rotating", &SecretRotationPolicy{
+				Enabled: true, Interval: time.Hour, NextRotation: start.Add(-time.Minute), RetainVersions: tc.retain,
+			})
+			const path = "tenant/acme/db/rotating"
+			sysCtx := secretsRotationWriteContext(auth.NewSystemContext(context.Background()), path)
+
+			valueBefore, _, err := mgr.Get(context.Background(), path)
+			require.NoError(t, err)
+			const rotations = 25
+			for i := 0; i < rotations; i++ {
+				data, meta, err := mgr.Get(context.Background(), path)
+				require.NoError(t, err)
+				require.NoError(t, svc.rotateDueSecret(sysCtx, path, data, meta, start.Add(time.Duration(i)*time.Hour)), "rotation %d", i+1)
+			}
+
+			versions, err := mgr.ListVersions(context.Background(), path)
+			require.NoError(t, err)
+			var live []int
+			for _, v := range versions {
+				if !v.Deleted {
+					live = append(live, v.Version)
+				}
+			}
+			require.Len(t, live, tc.want, "the rotated secret keeps a bounded number of versions")
+			newest := live[len(live)-1]
+			assert.Greater(t, newest, rotations, "every rotation wrote a version")
+			for i, v := range live {
+				assert.Equal(t, newest-len(live)+1+i, v, "the newest versions are the ones kept")
+			}
+			value, meta, err := mgr.Get(context.Background(), path)
+			require.NoError(t, err)
+			assert.Equal(t, valueBefore, value, "the current version keeps the value")
+			assert.Equal(t, "scheduled", meta["rotation_reason"])
+		})
+	}
 }
 
 // A due policy whose interval cannot schedule a next rotation fails and

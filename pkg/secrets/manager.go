@@ -53,6 +53,9 @@ type Manager struct {
 	// ensureMu protects the process-local fallback path inside
 	// EnsureSecret. Keyed by secret path. Only used when locker == nil.
 	ensureMu sync.Map
+
+	// maxVersions is ManagerOptions.MaxVersions; 0 keeps every version.
+	maxVersions int
 }
 
 // ManagerOptions configures the secrets Manager.
@@ -69,6 +72,13 @@ type ManagerOptions struct {
 	// in single-process embedded deployments (e.g. unit tests); see the
 	// Manager.locker field docs for the consequences.
 	Locker qrdbsdk.Locker
+
+	// MaxVersions bounds how many versions of one secret the Manager
+	// keeps (secrets.versioning.max_versions). After every successful
+	// write through the Manager, versions older than the newest
+	// MaxVersions are pruned when the backend implements VersionPruner.
+	// 0 keeps every version.
+	MaxVersions int
 }
 
 // NewManager creates a new secrets Manager with the specified options.
@@ -93,6 +103,9 @@ func NewManager(opts *ManagerOptions) (*Manager, error) {
 		backend: opts.Backend,
 		logger:  opts.Logger,
 		locker:  opts.Locker,
+	}
+	if opts.MaxVersions > 0 {
+		m.maxVersions = opts.MaxVersions
 	}
 
 	if m.logger != nil {
@@ -121,6 +134,8 @@ func (m *Manager) Store(ctx context.Context, path string, data map[string][]byte
 			Err:  err,
 		}
 	}
+
+	m.enforceRetention(ctx, path)
 
 	if m.logger != nil {
 		m.logger.WithField("path", path).Info("Secret stored")
@@ -154,6 +169,8 @@ func (m *Manager) StoreWithOptions(ctx context.Context, path string, data map[st
 				Err:  err,
 			}
 		}
+
+		m.enforceRetention(ctx, path)
 
 		// Log with options if logger exists
 		if m.logger != nil {
@@ -190,6 +207,8 @@ func (m *Manager) StoreWithOptions(ctx context.Context, path string, data map[st
 		}
 	}
 
+	m.enforceRetention(ctx, path)
+
 	if m.logger != nil {
 		m.logger.WithField("path", path).Info("Secret stored (options not supported by backend)")
 	}
@@ -222,6 +241,7 @@ func (m *Manager) StoreVersion(ctx context.Context, path string, data map[string
 			Err:  err,
 		}
 	}
+	m.enforceRetention(ctx, path)
 
 	if m.logger != nil {
 		m.logger.WithFields(map[string]interface{}{
@@ -258,6 +278,7 @@ func (m *Manager) StoreVersionIfCurrent(ctx context.Context, path string, expect
 			Err:  err,
 		}
 	}
+	m.enforceRetention(ctx, path)
 
 	if m.logger != nil {
 		m.logger.WithFields(map[string]interface{}{
@@ -653,8 +674,60 @@ func (m *Manager) Rollback(ctx context.Context, path string, version int) error 
 			"version": version,
 		}).Info("Secret rolled back")
 	}
+	m.enforceRetention(ctx, path)
 
 	return nil
+}
+
+// PruneVersions removes every version of path older than the newest keep
+// versions and reports how many it removed. It fails with
+// ErrPruneUnsupported when the backend does not implement VersionPruner.
+func (m *Manager) PruneVersions(ctx context.Context, path string, keep int) (int, error) {
+	pruner, ok := m.backend.(VersionPruner)
+	if !ok {
+		return 0, &errors.QBError{
+			Code: errors.ErrInternal,
+			Op:   "Manager.PruneVersions",
+			Err:  ErrPruneUnsupported,
+		}
+	}
+	removed, err := pruner.PruneVersions(ctx, path, keep)
+	if err != nil {
+		code := errors.ErrInternal
+		switch {
+		case stderrors.Is(err, ErrSecretNotFound):
+			code = errors.ErrNotFound
+		case stderrors.Is(err, ErrInvalidPath), stderrors.Is(err, ErrVersionMustBePositive):
+			code = errors.ErrInvalidInput
+		}
+		return 0, &errors.QBError{Code: code, Op: "Manager.PruneVersions", Err: err}
+	}
+	if removed > 0 && m.logger != nil {
+		m.logger.WithFields(map[string]interface{}{
+			"path":    path,
+			"removed": removed,
+			"kept":    keep,
+		}).Info("Secret versions pruned")
+	}
+	return removed, nil
+}
+
+// enforceRetention prunes path to the configured MaxVersions after a
+// successful write. The write already succeeded, so a failed prune is
+// logged and retried by the next write rather than reported.
+func (m *Manager) enforceRetention(ctx context.Context, path string) {
+	if m.maxVersions <= 0 {
+		return
+	}
+	if _, ok := m.backend.(VersionPruner); !ok {
+		return
+	}
+	if _, err := m.PruneVersions(ctx, path, m.maxVersions); err != nil && m.logger != nil {
+		m.logger.WithFields(map[string]interface{}{
+			"path":  path,
+			"error": err.Error(),
+		}).Warn("Secret version retention not enforced")
+	}
 }
 
 // GetBackendType returns the backend type.

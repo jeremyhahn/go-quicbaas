@@ -268,8 +268,14 @@ the next scan, which schedules one.
 It is a system job, so a cluster performs each due rotation exactly once. A
 secret that cannot be read (deleted or disabled) is not rotated; a failed
 rotation is counted, logged and stays due for the next scan. The job keeps the
-secret's value: a new value comes from `RotateSecret`. `rotation_retain_versions`
-is stored; version retention is the backend's `max_versions`.
+secret's value: a new value comes from `RotateSecret`. After each rotation the
+secret is pruned to `rotation_retain_versions` older versions plus the current
+one (nine older ones when the policy names none), so a policy that runs for
+years keeps a bounded history. Independently, the Manager prunes every secret
+to `secrets.versioning.max_versions` after each write (0 keeps every version).
+A pruned version reads as destroyed (memory and encrypted backends) or not
+found (KV backend). The scheduler dispatches the handler only for its reserved
+system job: a tenant job that names it is refused before any secret is read.
 
 The tables live in `pkg/api/rest/routes_permissions_generated.go`,
 `pkg/api/grpc/authz_mapping.go` (plus the `(qrdb.v1.permission)` annotations in

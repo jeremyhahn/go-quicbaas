@@ -229,6 +229,10 @@ var (
 	// ConditionalVersionedBackend).
 	ErrConditionalWriteUnsupported = errors.New("secrets: backend cannot condition a write on the current version")
 
+	// ErrPruneUnsupported indicates the backend cannot remove old
+	// versions of a secret (see VersionPruner).
+	ErrPruneUnsupported = errors.New("secrets: backend cannot prune old versions")
+
 	// ErrVersionNotFound indicates the requested version does not exist.
 	ErrVersionNotFound = errors.New("secrets: version not found")
 

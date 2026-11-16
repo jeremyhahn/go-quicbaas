@@ -36,7 +36,28 @@ const (
 	secretRotationLastKey     = "rotation_last"
 	secretRotationReasonKey   = "rotation_reason"
 	secretRotationScheduled   = "scheduled"
+	secretRotationRetainKey   = "rotation_retain_versions"
 )
+
+// defaultRotationRetainVersions is how many versions a scheduled rotation
+// keeps besides the current one when the policy names no retention.
+const defaultRotationRetainVersions = 9
+
+// rotationKeep is how many versions a rotated secret keeps: the current
+// version plus the policy's rotation_retain_versions older ones.
+func rotationKeep(metadata map[string]string) int {
+	retain, err := strconv.Atoi(metadata[secretRotationRetainKey])
+	if err != nil || retain <= 0 {
+		retain = defaultRotationRetainVersions
+	}
+	return retain + 1
+}
+
+// secretsVersionPruner is the Manager surface a rotation uses to bound the
+// versions each scheduled rotation adds.
+type secretsVersionPruner interface {
+	PruneVersions(ctx context.Context, path string, keep int) (int, error)
+}
 
 // SecretsRotationScanError is returned when the secrets rotation scan cannot
 // list the secrets it has to check.
@@ -213,6 +234,17 @@ func (s *secretsService) rotateDueSecret(ctx context.Context, path string, data 
 	}
 	if s.metrics != nil {
 		s.metrics.secretsRotatedTotal.Inc()
+	}
+	// Every interval adds a version, so the rotation bounds what it adds:
+	// the write already holds, so a failed prune is logged and the next
+	// rotation retries it.
+	if pruner, ok := s.secretsManager.(secretsVersionPruner); ok {
+		if _, perr := pruner.PruneVersions(ctx, path, rotationKeep(newMetadata)); perr != nil && !stderrors.Is(perr, secrets.ErrPruneUnsupported) && s.logger != nil {
+			s.logger.WithFields(map[string]interface{}{
+				"secret_id": path,
+				"error":     perr.Error(),
+			}).Warn("Rotated secret's old versions not pruned")
+		}
 	}
 	if s.logger != nil {
 		s.logger.WithFields(map[string]interface{}{
