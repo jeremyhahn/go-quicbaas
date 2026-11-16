@@ -17,6 +17,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"regexp"
 	"slices"
 	"strings"
 	"testing"
@@ -99,17 +100,47 @@ func TestBuildImage_ReturnsTheIDTheEngineTagsBy(t *testing.T) {
 	if id != engineID {
 		t.Fatalf("image ID = %q, want the engine's %q", id, engineID)
 	}
-	if got := strings.Join(engine.calls[len(engine.calls)-1].Args, " "); got != "image inspect w:local" {
-		t.Fatalf("the ID must be read back from the build's tag, last argv %q", got)
+	ref := buildRefOf(t, engine.calls)
+	n := len(engine.calls)
+	if got := strings.Join(engine.calls[n-2].Args, " "); got != "image inspect "+ref {
+		t.Fatalf("the ID must be read back from the build's own tag %q, inspect argv %q", ref, got)
+	}
+	if got := strings.Join(engine.calls[n-1].Args, " "); got != "image rm "+ref {
+		t.Fatalf("the build's temporary tag %q must be removed last, last argv %q", ref, got)
 	}
 	if err := rt.TagImage(t.Context(), id, "localhost:32786/it/w:1"); err != nil {
 		t.Fatalf("TagImage by the returned ID: %v", err)
 	}
 }
 
+// buildRefOf returns the temporary reference the recorded build applied: the
+// last --tag of its argv, of the form quicbaas-build-tmp:<32 hex characters>.
+func buildRefOf(t *testing.T, calls []recordedImageCommand) string {
+	t.Helper()
+	for _, call := range calls {
+		if len(call.Args) == 0 || call.Args[0] != "build" {
+			continue
+		}
+		ref := ""
+		for i, arg := range call.Args {
+			if arg == "--tag" && i+1 < len(call.Args) {
+				ref = call.Args[i+1]
+			}
+		}
+		if !buildRefPattern.MatchString(ref) {
+			t.Fatalf("the build's last --tag %q is not a quicbaas-build-tmp:<32 hex> reference", ref)
+		}
+		return ref
+	}
+	t.Fatal("no build call recorded")
+	return ""
+}
+
+var buildRefPattern = regexp.MustCompile(`^quicbaas-build-tmp:[0-9a-f]{32}$`)
+
 func TestBuildImage_InspectFailureIsABuildError(t *testing.T) {
 	engine := &fakeImageEngine{answer: func(args []string) (imageCommandResult, error) {
-		if args[0] == "image" {
+		if args[0] == "image" && args[1] == "inspect" {
 			return imageCommandResult{ExitCode: 1, Stderr: "Error: No such image: t"}, nil
 		}
 		return builtImageEngine("sha256:1", "sha256:1")(args)
@@ -117,6 +148,23 @@ func TestBuildImage_InspectFailureIsABuildError(t *testing.T) {
 	_, err := newImageTestRuntime(t, RuntimeDocker, engine).BuildImage(t.Context(), &ImageBuildSpec{Dockerfile: []byte("FROM a"), Tags: []string{"t"}})
 	if !errors.Is(err, ErrImageBuild) || !errors.Is(err, ErrImageNotFound) {
 		t.Fatalf("err = %v, want ErrImageBuild wrapping ErrImageNotFound", err)
+	}
+}
+
+func TestBuildImage_InspectFailureStillRemovesTheTemporaryTag(t *testing.T) {
+	engine := &fakeImageEngine{answer: func(args []string) (imageCommandResult, error) {
+		if args[0] == "image" && args[1] == "inspect" {
+			return imageCommandResult{ExitCode: 1, Stderr: "Error: No such image"}, nil
+		}
+		return builtImageEngine("sha256:1", "sha256:1")(args)
+	}}
+	_, err := newImageTestRuntime(t, RuntimeDocker, engine).BuildImage(t.Context(), &ImageBuildSpec{Dockerfile: []byte("FROM a"), Tags: []string{"t"}})
+	if !errors.Is(err, ErrImageBuild) {
+		t.Fatalf("err = %v, want ErrImageBuild", err)
+	}
+	ref := buildRefOf(t, engine.calls)
+	if got := strings.Join(engine.calls[len(engine.calls)-1].Args, " "); got != "image rm "+ref {
+		t.Fatalf("a failed inspect must still remove the temporary tag %q, last argv %q", ref, got)
 	}
 }
 
