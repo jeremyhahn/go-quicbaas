@@ -722,7 +722,9 @@ func (m *Manager) enforceRetention(ctx context.Context, path string) {
 	if _, ok := m.backend.(VersionPruner); !ok {
 		return
 	}
-	if _, err := m.PruneVersions(ctx, path, m.maxVersions); err != nil && m.logger != nil {
+	// A backing store that cannot arbitrate a prune (ErrPruneUnsupported)
+	// keeps its history: retention is not enforceable there, not failing.
+	if _, err := m.PruneVersions(ctx, path, m.maxVersions); err != nil && m.logger != nil && !stderrors.Is(err, ErrPruneUnsupported) {
 		m.logger.WithFields(map[string]interface{}{
 			"path":  path,
 			"error": err.Error(),

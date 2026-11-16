@@ -452,12 +452,15 @@ func (eb *EncryptedBackend) PruneVersions(ctx context.Context, path string, keep
 		return 0, nil
 	}
 
+	// Publication is a compare-and-swap of the exact history this prune
+	// read. eb.mu is per instance: another instance on the same store can
+	// Delete, Destroy or write the secret after the read, and an
+	// unconditional save would revive the deleted secret or drop the
+	// acknowledged write. A store without CAS cannot prune.
 	g, guarded := eb.store.(casKVStore)
 	if !guarded {
-		if err := eb.saveVersions(ctx, path, versions); err != nil {
-			return 0, &SecretsCauseError{Message: "prune versions", Cause: err}
-		}
-		return pruned, nil
+		return 0, &SecretsSentinelCauseError{Sentinel: ErrPruneUnsupported,
+			Cause: errors.New("the backing store has no compare-and-swap to arbitrate the prune")}
 	}
 	raw, err := json.Marshal(versions)
 	if err != nil {

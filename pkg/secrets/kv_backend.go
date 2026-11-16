@@ -14,6 +14,7 @@
 package secrets
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
@@ -347,6 +348,18 @@ func (b *KVBackend) PruneVersions(ctx context.Context, path string, keep int) (i
 		return 0, ErrVersionMustBePositive
 	}
 
+	// EVERY PRUNE DELETE IS A COMPARE-AND-DELETE of the exact record the scan
+	// read. The stripe lock is per process: on another node a Destroy can
+	// remove this history and a Store recreate version 1 between the scan
+	// and the delete, and an unconditional delete would then remove that
+	// acknowledged version while its pointer remains. A store that cannot
+	// arbitrate the delete cannot prune.
+	g, guarded := b.store.(guardedKVStore)
+	if !guarded {
+		return 0, &SecretsSentinelCauseError{Sentinel: ErrPruneUnsupported,
+			Cause: errors.New("the backing store has no compare-and-delete to arbitrate the prune")}
+	}
+
 	lock := b.lockPath(path)
 	lock.Lock()
 	defer lock.Unlock()
@@ -363,28 +376,38 @@ func (b *KVBackend) PruneVersions(ctx context.Context, path string, keep int) (i
 		return 0, nil
 	}
 	prefix := kvBackendKeyPrefix + path + "/v/"
-	var doomed []int
-	if err := b.store.Scan(ctx, prefix, func(key string, _ []byte) error {
+	type scanned struct {
+		version int
+		raw     []byte
+	}
+	var doomed []scanned
+	if err := b.store.Scan(ctx, prefix, func(key string, value []byte) error {
 		rest := strings.TrimPrefix(key, prefix)
 		if rest == "" || strings.ContainsFunc(rest, func(r rune) bool { return r < '0' || r > '9' }) {
 			return nil
 		}
 		if n, convErr := strconv.Atoi(rest); convErr == nil && n <= floor {
-			doomed = append(doomed, n)
+			doomed = append(doomed, scanned{version: n, raw: bytes.Clone(value)})
 		}
 		return nil
 	}); err != nil {
 		return 0, &SecretsCauseError{Message: "prune versions: enumerate keyspace", Cause: err}
 	}
 	pruned := 0
-	for _, n := range doomed {
-		if err := b.store.Delete(ctx, versionKey(path, n)); err != nil {
+	for _, d := range doomed {
+		// A refused delete means the record changed since the scan (a
+		// concurrent destroy and recreate): it is not this prune's record,
+		// so it is left alone.
+		deleted, err := g.CompareAndDelete(ctx, versionKey(path, d.version), d.raw)
+		if err != nil {
 			if qberrors.IsNotFound(err) {
 				continue
 			}
-			return pruned, &SecretsCauseError{Message: "prune version " + strconv.Itoa(n), Cause: err}
+			return pruned, &SecretsCauseError{Message: "prune version " + strconv.Itoa(d.version), Cause: err}
 		}
-		pruned++
+		if deleted {
+			pruned++
+		}
 	}
 	return pruned, nil
 }

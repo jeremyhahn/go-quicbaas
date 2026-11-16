@@ -68,6 +68,10 @@ type secretsVersionedStorer interface {
 // secretVersionKey is the metadata key a read reports its version under.
 const secretVersionKey = "version"
 
+// secretCurrentReadAttempts bounds how often GetSecret re-reads the current
+// version when a concurrent retention prune removed the one it read.
+const secretCurrentReadAttempts = 4
+
 type secretsService struct {
 	secretsManager interfaces.SecretsManager
 	logger         interfaces.Logger
@@ -315,23 +319,81 @@ func (s *secretsService) GetSecret(ctx context.Context, req *GetSecretRequest) (
 		}).Debug("Retrieving secret")
 	}
 
-	// Retrieve secret from secrets manager
-	var data map[string][]byte
-	var metadata map[string]string
-
+	var requested int
 	if req.Version > 0 {
-		// Get specific version
-		version, versionErr := secretVersionArg("secrets.GetSecret", req.Version)
+		v, versionErr := secretVersionArg("secrets.GetSecret", req.Version)
 		if versionErr != nil {
 			if s.metrics != nil {
 				s.metrics.operationErrors.With("get", "invalid_input").Inc()
 			}
 			return nil, versionErr
 		}
-		data, metadata, err = s.secretsManager.GetVersion(ctx, scopedID, version)
-	} else {
-		// Get latest version
-		data, metadata, err = s.secretsManager.Get(ctx, scopedID)
+		requested = v
+	}
+
+	// Retrieve the secret, its reported version and that version's write
+	// time. A latest-version read is a pointer read, a version read and a
+	// history read; a concurrent write's retention prune can remove the
+	// version between them (ErrVersionNotFound from the read, or a history
+	// without its write time). That is not an error for the caller: the
+	// secret exists, so the whole current read is retried and returns the
+	// version that replaced it. A requested version that is gone is gone.
+	var (
+		data      map[string][]byte
+		metadata  map[string]string
+		version   uint64
+		createdAt time.Time
+	)
+	for attempt := 1; ; attempt++ {
+		retry := req.Version == 0 && attempt < secretCurrentReadAttempts
+		if requested > 0 {
+			data, metadata, err = s.secretsManager.GetVersion(ctx, scopedID, requested)
+		} else {
+			data, metadata, err = s.secretsManager.Get(ctx, scopedID)
+		}
+		if err != nil && retry && stderrors.Is(err, secrets.ErrVersionNotFound) {
+			continue
+		}
+		if err != nil {
+			break
+		}
+		// Every backend reports the version it returned, so the write-time
+		// lookup below names the returned data's version even when a write
+		// lands after the read (go-quicbaas#179).
+		version, err = reportedSecretVersion(req.SecretID, metadata)
+		if err != nil {
+			return nil, &errors.QBError{Code: errors.ErrInternal, Op: "secrets.GetSecret", Err: err}
+		}
+		// created_at is when the returned version was written, as the store
+		// recorded it — never the time of this read (go-quicbaas#179).
+		times, timesErr := s.loadSecretWriteTimes(ctx, scopedID)
+		if timesErr != nil {
+			if s.metrics != nil {
+				s.metrics.operationErrors.With("get", "write_times").Inc()
+			}
+			return nil, &errors.QBError{
+				Code: secretLookupCode(timesErr),
+				Op:   "secrets.GetSecret",
+				Err:  &api.OperationFailedError{Operation: "read secret write times", Cause: timesErr},
+			}
+		}
+		backendVersion, versionErr := secretVersionArg("secrets.GetSecret", version)
+		if versionErr != nil {
+			return nil, versionErr
+		}
+		var recorded bool
+		createdAt, recorded = times.byVersion[backendVersion]
+		if recorded {
+			break
+		}
+		if retry {
+			continue
+		}
+		return nil, &errors.QBError{
+			Code: errors.ErrInternal,
+			Op:   "secrets.GetSecret",
+			Err:  &api.NotFoundError{Resource: "secret version write time", ID: req.SecretID},
+		}
 	}
 
 	if err != nil {
@@ -399,40 +461,6 @@ func (s *secretsService) GetSecret(ctx context.Context, req *GetSecretRequest) (
 	keyIdentifier := metadata["encryption_key_id"]
 	if keyIdentifier == "" {
 		keyIdentifier = metadata["encryption_tenant_id"]
-	}
-
-	// Every backend reports the version it returned, so the write-time
-	// lookup below names the returned data's version even when a write
-	// lands after the read (go-quicbaas#179).
-	version, err := reportedSecretVersion(req.SecretID, metadata)
-	if err != nil {
-		return nil, &errors.QBError{Code: errors.ErrInternal, Op: "secrets.GetSecret", Err: err}
-	}
-
-	// created_at is when the returned version was written, as the store
-	// recorded it — never the time of this read (go-quicbaas#179).
-	times, err := s.loadSecretWriteTimes(ctx, scopedID)
-	if err != nil {
-		if s.metrics != nil {
-			s.metrics.operationErrors.With("get", "write_times").Inc()
-		}
-		return nil, &errors.QBError{
-			Code: secretLookupCode(err),
-			Op:   "secrets.GetSecret",
-			Err:  &api.OperationFailedError{Operation: "read secret write times", Cause: err},
-		}
-	}
-	backendVersion, err := secretVersionArg("secrets.GetSecret", version)
-	if err != nil {
-		return nil, err
-	}
-	createdAt, ok := times.byVersion[backendVersion]
-	if !ok {
-		return nil, &errors.QBError{
-			Code: errors.ErrInternal,
-			Op:   "secrets.GetSecret",
-			Err:  &api.NotFoundError{Resource: "secret version write time", ID: req.SecretID},
-		}
 	}
 
 	// Return the original (unscoped) secret ID to callers
