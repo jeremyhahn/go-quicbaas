@@ -199,12 +199,11 @@ func TestModule_RegisterGRPC_RegistersFullGRPCSurface(t *testing.T) {
 		&pb.AgentCatalogService_ServiceDesc,
 		&pb.SDLCService_ServiceDesc,
 		&pb.RegistryService_ServiceDesc,
-		&pb.AttestationService_ServiceDesc,
 		&iampb.FederationService_ServiceDesc,
 		&iampb.SessionService_ServiceDesc,
 	}
 	info := server.GetServiceInfo()
-	require.Len(t, info, len(generated), "exactly the twenty-eight quicbaas-native and broker services must be registered")
+	require.Len(t, info, len(generated), "exactly the twenty-seven quicbaas-native and broker services must be registered")
 
 	for _, desc := range generated {
 		svcInfo, ok := info[desc.ServiceName]
@@ -279,6 +278,7 @@ func TestModule_RegisterGRPC_ExcludesXKMSCanonicalSurface(t *testing.T) {
 	excluded := []string{
 		pb.CertificateService_ServiceDesc.ServiceName,
 		pb.TrustService_ServiceDesc.ServiceName,
+		pb.AttestationService_ServiceDesc.ServiceName,
 		pb.PIVService_ServiceDesc.ServiceName,
 	}
 	for _, name := range excluded {
@@ -286,21 +286,6 @@ func TestModule_RegisterGRPC_ExcludesXKMSCanonicalSurface(t *testing.T) {
 		assert.False(t, ok, "service %s must NOT be registered on the quicbaas module: "+
 			"go-xkms's own ServiceModule now owns this canonical xkms.v1 surface", name)
 	}
-}
-
-// TestModule_RegisterGRPC_ServesAttestationVerifier proves the node's network
-// gRPC port serves quicbaas.attestation.v1: the pinned go-xkms ServiceModule
-// has no endorsement or reference-values RPC, so without this registration
-// the SDK's attestation client gets Unimplemented.
-func TestModule_RegisterGRPC_ServesAttestationVerifier(t *testing.T) {
-	m, err := NewModule(func() service.QuicBaaS { return nil }, testLogger(t))
-	require.NoError(t, err)
-
-	server := grpc.NewServer()
-	m.RegisterGRPC(server)
-	info, ok := server.GetServiceInfo()[pb.AttestationService_ServiceDesc.ServiceName]
-	require.True(t, ok, "AttestationService must be registered on the quicbaas module")
-	assert.Len(t, info.Methods, len(pb.AttestationService_ServiceDesc.Methods))
 }
 
 // startBufconnModule registers the module on a bufconn-backed gRPC server and
