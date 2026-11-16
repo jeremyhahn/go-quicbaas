@@ -320,6 +320,7 @@ func (c *Client) Connect(ctx context.Context) error {
 	}
 	creds := credentials.NewTLS(c.opts.tlsConfig)
 	dialOpts = append(dialOpts, grpc.WithTransportCredentials(creds))
+	dialOpts = append(dialOpts, c.opts.metadataDialOptions()...)
 
 	// Dial the server
 	conn, err := grpc.DialContext(ctx, c.address, dialOpts...)

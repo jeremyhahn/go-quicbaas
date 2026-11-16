@@ -207,6 +207,12 @@ func (e *AuditEventNotFoundError) Error() string {
 	return "audit: event " + e.EventID + " not found"
 }
 
+// Is reports true for iam.ErrAuditEventNotFound, so callers that map the
+// IAM sentinel (the REST audit handler's 404) match the node chain's error.
+func (e *AuditEventNotFoundError) Is(target error) bool {
+	return target == iam.ErrAuditEventNotFound
+}
+
 // --- iam.AuditEvent <-> qrdbsdk.NodeAuditEvent conversion (P3 Option B) ---
 
 // toNodeAuditEvent projects an iam.AuditEvent onto the node chain's fixed

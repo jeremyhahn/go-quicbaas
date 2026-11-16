@@ -169,8 +169,8 @@ func TestCanonicalSurface_LoginFactors(t *testing.T) {
 // The list is a path from the `barrier` group, because two of the three are
 // nested. `tenant barrier unseal-share` is deliberately absent: it submits
 // exactly ONE share toward a quorum accumulated server-side, so a
-// newline-delimited file is the wrong shape for it — its argv exposure is
-// real but wants a different flag (tracked separately).
+// newline-delimited file is the wrong shape for it — it takes the share
+// on stdin with --share-stdin instead (TestTenantBarrierUnsealShare_HasAStdinFlag).
 var shareQuorumVerbs = [][]string{
 	{"unseal-shares"},
 	{"root-token"},
