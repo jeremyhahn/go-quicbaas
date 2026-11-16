@@ -120,6 +120,60 @@ func TestSecretsService_RotateDueSecretsCountsFailures(t *testing.T) {
 	assert.Equal(t, 1, result.Failed)
 }
 
+// TestSecretsService_RotateDueSecretsSkipsDisabled: a disabled secret whose
+// policy is due is not rotated; GetSecret refuses it, and the scan reads
+// beneath that check.
+func TestSecretsService_RotateDueSecretsSkipsDisabled(t *testing.T) {
+	t.Parallel()
+	svc, mgr := newRotationTestService(t)
+	sys := tenantctx.WithSystem(context.Background())
+	past := time.Now().Add(-time.Hour).UTC().Format(time.RFC3339)
+	require.NoError(t, mgr.Store(sys, "sys/off", map[string][]byte{"data": []byte("x")},
+		map[string]string{"status": string(SecretStatusDisabled), "rotation_enabled": "true",
+			"rotation_interval": "1h", "rotation_next": past}))
+
+	result, err := svc.RotateDueSecrets(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, 0, result.Due)
+	assert.Equal(t, 0, result.Rotated)
+	versions, err := mgr.ListVersions(sys, "sys/off")
+	require.NoError(t, err)
+	assert.Len(t, versions, 1, "a disabled secret gets no new version")
+}
+
+// TestSecretsService_RotateDueSecretsCountsUnreadable: a listed secret the
+// scan cannot read is counted, while one deleted since the list is not.
+func TestSecretsService_RotateDueSecretsCountsUnreadable(t *testing.T) {
+	t.Parallel()
+	_, mgr := newRotationTestService(t)
+	sys := tenantctx.WithSystem(context.Background())
+	for _, p := range []string{"sys/broken", "sys/gone"} {
+		require.NoError(t, mgr.Store(sys, p, map[string][]byte{"data": []byte("x")}, nil))
+	}
+	svc := newSecretsService(getFailingSecretsManager{SecretsManager: mgr, fail: map[string]error{
+		"sys/broken": errors.New("storage unavailable"),
+		"sys/gone":   secrets.ErrSecretNotFound,
+	}}, newMockLogger())
+
+	result, err := svc.RotateDueSecrets(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, 1, result.Unreadable)
+	assert.Equal(t, 0, result.Due)
+}
+
+// getFailingSecretsManager fails Get for the paths it names.
+type getFailingSecretsManager struct {
+	interfaces.SecretsManager
+	fail map[string]error
+}
+
+func (m getFailingSecretsManager) Get(ctx context.Context, path string) (map[string][]byte, map[string]string, error) {
+	if err, ok := m.fail[path]; ok {
+		return nil, nil, err
+	}
+	return m.SecretsManager.Get(ctx, path)
+}
+
 // interleavingSecretsManager runs before just ahead of each conditional
 // write: a tenant's write landing between the scan's read and its write.
 type interleavingSecretsManager struct {
