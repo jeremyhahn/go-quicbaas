@@ -491,6 +491,11 @@ func (s *Storage) GetJobsDueForExecution(ctx context.Context, before time.Time, 
 	dueJobs := make([]*scheduler.Job, 0)
 
 	err := s.kv.Scan(ctx, SystemJobsPrefix, func(key string, value []byte) error {
+		// The store does not check ctx between entries: a canceled or
+		// expired sweep stops here rather than at the end of the prefix.
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		var job scheduler.Job
 		if err := json.Unmarshal(value, &job); err != nil {
 			// Skip malformed entries
@@ -532,6 +537,9 @@ func (s *Storage) GetJobsDueForExecution(ctx context.Context, before time.Time, 
 	indexed := make(map[string]map[uint64]struct{})
 	var tenants []string
 	err = s.kv.Scan(ctx, TenantJobIndexPrefix, func(key string, value []byte) error {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		id, ok := parseTenantJobIndexKey(key)
 		if !ok || len(value) == 0 {
 			return nil
@@ -553,6 +561,9 @@ func (s *Storage) GetJobsDueForExecution(ctx context.Context, before time.Time, 
 	for _, tenantID := range tenants {
 		ids := indexed[tenantID]
 		err := s.kv.Scan(ctx, recordNamespace(tenantID)+"scheduler/jobs/", func(key string, value []byte) error {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
 			keyTenant, id, ok := splitTenantJobKey(key)
 			if !ok || keyTenant != tenantID {
 				return nil

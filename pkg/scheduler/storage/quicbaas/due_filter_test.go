@@ -58,6 +58,43 @@ func TestGetJobsDueForExecution_FilteredJobsDoNotFillThePage(t *testing.T) {
 	}
 }
 
+// A sweep canceled mid-scan stops at the next entry: the store does not check
+// the context between entries, so the scan must.
+func TestGetJobsDueForExecution_CanceledSweepStopsScanning(t *testing.T) {
+	ctx := context.Background()
+	kv := &sortedScanKV{mockKVStore: newMockKVStore()}
+	storage := NewStorage(kv)
+	if err := storage.InitializeJobIDCounter(ctx); err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	now := time.Now()
+	for _, tenant := range []string{"t1", "t2", "t3", "t4"} {
+		for _, name := range []string{"a", "b", "c"} {
+			job := createTestJob(tenant+"-"+name, scheduler.OwnerTypeTenant, tenant)
+			job.NextRun = now.Add(-time.Minute)
+			if err := storage.CreateJob(ctx, job); err != nil {
+				t.Fatalf("CreateJob: %v", err)
+			}
+		}
+	}
+
+	sweep, cancel := context.WithCancel(ctx)
+	defer cancel()
+	calls := 0
+	filtered := scheduler.WithDueJobFilter(sweep, func(j *scheduler.Job) bool {
+		calls++
+		cancel() // the sweep's deadline passes while this candidate is checked
+		return false
+	})
+	_, err := storage.GetJobsDueForExecution(filtered, now, 100)
+	if err == nil || !errors.Is(err, context.Canceled) {
+		t.Fatalf("canceled sweep: err = %v, want context.Canceled", err)
+	}
+	if calls != 1 {
+		t.Fatalf("filter ran %d times after the sweep was canceled, want 1", calls)
+	}
+}
+
 // sortedScanKV scans in key order, as the real store does, so the index
 // puts tenant "acme" before tenant "zeta".
 type sortedScanKV struct {
