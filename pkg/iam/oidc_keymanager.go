@@ -113,6 +113,11 @@ type SigningKeyManager struct {
 	// flight (nil when none is).
 	unknownKIDMu     sync.Mutex
 	unknownKIDFlight *unknownKIDFlight
+
+	// routineMu guards routineFlight, the routine refresh in flight (nil
+	// when none is).
+	routineMu     sync.Mutex
+	routineFlight *unknownKIDFlight
 }
 
 // RotationLock serializes rotations of one signing key across every node that
@@ -222,6 +227,18 @@ type UnknownKIDRefreshTimeoutError struct {
 
 func (e *UnknownKIDRefreshTimeoutError) Error() string {
 	return fmt.Sprintf("iam: refresh of signing key %q for an unknown kid did not complete within %v", e.CN, e.Timeout)
+}
+
+// SigningKeyRefreshTimeoutError is returned to a lookup or signer waiting on
+// a routine refresh of a key's version record that did not complete within
+// unknownKIDRefreshBound.
+type SigningKeyRefreshTimeoutError struct {
+	CN      string
+	Timeout time.Duration
+}
+
+func (e *SigningKeyRefreshTimeoutError) Error() string {
+	return fmt.Sprintf("iam: routine refresh of signing key %q did not complete within %v", e.CN, e.Timeout)
 }
 
 // unknownKIDFlight is one unknown-kid refresh in flight: done is closed when
@@ -558,21 +575,66 @@ func (m *SigningKeyManager) Refresh() error {
 	return m.refreshLocked(context.Background())
 }
 
-// maybeRefresh runs Refresh when the record was last read more than every
-// ago and no rotation or refresh is under way. A failed refresh keeps the
-// keys the manager holds.
-func (m *SigningKeyManager) maybeRefresh(every time.Duration) {
+// maybeRefresh re-reads the key's version record when it was last read more
+// than every ago and no rotation is under way (a rotation re-reads the
+// record itself). A failed refresh keeps the keys the manager holds.
+//
+// One routine refresh runs at a time; a caller arriving while it runs
+// waits for it. It runs detached from any one caller, under a context
+// bounded by unknownKIDRefreshBound, and holds rotateMu only while it runs.
+// Each caller waits only while its own ctx is live, returning ctx's error
+// once it is done, and no longer than the bound, returning
+// *SigningKeyRefreshTimeoutError after it.
+func (m *SigningKeyManager) maybeRefresh(ctx context.Context, every time.Duration) error {
 	if !m.versioned() {
-		return
+		return nil
 	}
 	if refreshNow().Sub(time.Unix(0, m.lastRefresh.Load())) < every {
-		return
+		return nil
 	}
-	if !m.rotateMu.TryLock() {
-		return
+	bound := unknownKIDRefreshBound
+	m.routineMu.Lock()
+	flight := m.routineFlight
+	if flight == nil {
+		if !m.rotateMu.TryLock() {
+			m.routineMu.Unlock()
+			return nil
+		}
+		flight = &unknownKIDFlight{done: make(chan struct{})}
+		m.routineFlight = flight
+		rctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), bound)
+		go m.runRoutineRefresh(rctx, cancel, bound, flight)
 	}
+	m.routineMu.Unlock()
+	timer := time.NewTimer(bound)
+	defer timer.Stop()
+	select {
+	case <-flight.done:
+		return flight.err
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return &SigningKeyRefreshTimeoutError{CN: m.cn, Timeout: bound}
+	}
+}
+
+// runRoutineRefresh re-reads the version record under ctx with rotateMu,
+// which its starter took for it, then releases rotateMu, retires flight and
+// releases flight's waiters, with *SigningKeyRefreshTimeoutError when ctx's
+// bound passed before the re-read completed.
+func (m *SigningKeyManager) runRoutineRefresh(ctx context.Context, cancel context.CancelFunc, bound time.Duration, flight *unknownKIDFlight) {
+	defer func() {
+		m.routineMu.Lock()
+		m.routineFlight = nil
+		m.routineMu.Unlock()
+		close(flight.done)
+	}()
 	defer m.rotateMu.Unlock()
-	_ = m.refreshLocked(context.Background())
+	defer cancel()
+	_ = m.refreshLocked(ctx)
+	if ctx.Err() != nil {
+		flight.err = &SigningKeyRefreshTimeoutError{CN: m.cn, Timeout: bound}
+	}
 }
 
 // refreshLocked is Refresh with rotateMu held.
@@ -679,7 +741,8 @@ func (m *SigningKeyManager) load() *keySnapshot {
 // Current returns the kid, signer, and algorithm of the key tokens are
 // currently signed with.
 func (m *SigningKeyManager) Current() (kid string, signer crypto.Signer, alg string) {
-	m.maybeRefresh(signingKeyRefreshInterval)
+	// A refresh that times out leaves the keys the manager holds.
+	_ = m.maybeRefresh(context.Background(), signingKeyRefreshInterval)
 	snap := m.load()
 	if snap == nil {
 		return "", nil, ""
@@ -718,9 +781,10 @@ func (m *SigningKeyManager) SignerForKID(kid string) (crypto.Signer, error) {
 // PublicForKID returns the public key for the given kid, searching the current
 // key and any retained previous keys. It returns UnknownKeyIDError when no key
 // matches. A kid it does not hold waits on the unknown-kid refresh no longer
-// than ctx allows, and no longer than the refresh's own bound.
+// than ctx allows, and no longer than the refresh's own bound; so does a
+// kid it holds on the routine refresh.
 func (m *SigningKeyManager) PublicForKID(ctx context.Context, kid string) (crypto.PublicKey, error) {
-	pub, err := m.refreshedPublicForKID(kid)
+	pub, err := m.refreshedPublicForKID(ctx, kid)
 	if errors.As(err, new(*UnknownKeyIDError)) {
 		// The key may have been rotated on another node sharing the backend.
 		if err := m.refreshForUnknownKID(ctx); err != nil {
@@ -734,9 +798,12 @@ func (m *SigningKeyManager) PublicForKID(ctx context.Context, kid string) (crypt
 // refreshedPublicForKID looks kid up after the routine, rate-limited
 // refresh, so a held key a peer has since rotated out of the overlap stops
 // verifying within signingKeyRefreshInterval even on a node that only
-// verifies.
-func (m *SigningKeyManager) refreshedPublicForKID(kid string) (crypto.PublicKey, error) {
-	m.maybeRefresh(signingKeyRefreshInterval)
+// verifies. It returns the refresh's error when ctx ends or the refresh's
+// bound passes first.
+func (m *SigningKeyManager) refreshedPublicForKID(ctx context.Context, kid string) (crypto.PublicKey, error) {
+	if err := m.maybeRefresh(ctx, signingKeyRefreshInterval); err != nil {
+		return nil, err
+	}
 	return m.publicForKID(kid)
 }
 
@@ -862,7 +929,8 @@ func (m *SigningKeyManager) liveAdopted(adopted []keyEntry) []keyEntry {
 // active kid (current first, then retained previous keys), each with Use "sig",
 // its algorithm, and KeyID set to the derived kid.
 func (m *SigningKeyManager) JWKS() *jose.JSONWebKeySet {
-	m.maybeRefresh(signingKeyRefreshInterval)
+	// A refresh that times out leaves the keys the manager holds.
+	_ = m.maybeRefresh(context.Background(), signingKeyRefreshInterval)
 	snap := m.load()
 	if snap == nil {
 		return &jose.JSONWebKeySet{}

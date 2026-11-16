@@ -289,25 +289,28 @@ func (r *TenantSigningKeyResolver) JWKS(ctx context.Context) *jose.JSONWebKeySet
 
 // heldPublicForKID returns kid's key from the global manager or a dedicated
 // manager this resolver has built, as each holds it now (an adopted
-// pre-upgrade key past its cutoff is not held), or nil. Each manager it
-// consults first takes its routine, rate-limited refresh, so a key a peer
-// has rotated out of the overlap is not held for longer than
-// signingKeyRefreshInterval.
-func (r *TenantSigningKeyResolver) heldPublicForKID(kid string) crypto.PublicKey {
-	if pub, err := r.global.refreshedPublicForKID(kid); err == nil {
-		return pub
-	}
-	var found crypto.PublicKey
+// pre-upgrade key past its cutoff is not held), and whether one holds it.
+// Each manager it consults first takes its routine, rate-limited refresh, so
+// a key a peer has rotated out of the overlap is not held for longer than
+// signingKeyRefreshInterval; that refresh's error, when ctx ends or its
+// bound passes first, is returned.
+func (r *TenantSigningKeyResolver) heldPublicForKID(ctx context.Context, kid string) (crypto.PublicKey, bool, error) {
+	managers := []*SigningKeyManager{r.global}
 	r.managers.Range(func(_, v any) bool {
 		if mgr, ok := v.(*SigningKeyManager); ok {
-			if pub, err := mgr.refreshedPublicForKID(kid); err == nil {
-				found = pub
-				return false
-			}
+			managers = append(managers, mgr)
 		}
 		return true
 	})
-	return found
+	for _, mgr := range managers {
+		if err := mgr.maybeRefresh(ctx, signingKeyRefreshInterval); err != nil {
+			return nil, false, err
+		}
+		if pub, err := mgr.publicForKID(kid); err == nil {
+			return pub, true, nil
+		}
+	}
+	return nil, false, nil
 }
 
 // PublicForKID returns the public key for kid from the aggregated key set

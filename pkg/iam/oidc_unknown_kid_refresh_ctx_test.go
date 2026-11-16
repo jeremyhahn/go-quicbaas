@@ -43,8 +43,8 @@ func await(t *testing.T, r <-chan lookupResult, d time.Duration, what string) lo
 	}
 }
 
-// waitForUnknownKIDRefresh waits until m has no unknown-kid refresh in flight
-// and nothing holds rotateMu, so a test ends with no refresh still reading
+// waitForUnknownKIDRefresh waits until m has no unknown-kid or routine
+// refresh in flight and nothing holds rotateMu, so a test ends with no refresh still reading
 // the store it tears down.
 func waitForUnknownKIDRefresh(m *SigningKeyManager) {
 	for {
@@ -52,6 +52,9 @@ func waitForUnknownKIDRefresh(m *SigningKeyManager) {
 			m.unknownKIDMu.Lock()
 			idle := m.unknownKIDFlight == nil
 			m.unknownKIDMu.Unlock()
+			m.routineMu.Lock()
+			idle = idle && m.routineFlight == nil
+			m.routineMu.Unlock()
 			m.rotateMu.Unlock()
 			if idle {
 				return

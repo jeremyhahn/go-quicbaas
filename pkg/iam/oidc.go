@@ -187,7 +187,11 @@ func (p *OIDCProvider) PublicKeyForKID(ctx context.Context, kid string) (crypto.
 		return nil, &SigningKeyUnavailableError{}
 	}
 	if r != nil {
-		if pub := r.heldPublicForKID(kid); pub != nil {
+		pub, held, err := r.heldPublicForKID(ctx, kid)
+		if err != nil {
+			return nil, err
+		}
+		if held {
 			return pub, nil
 		}
 		// A kid no built manager holds may name a key a peer sharing the
