@@ -38,7 +38,7 @@ func (s stubSecretsRotator) RotateDueSecrets(context.Context) (*SecretsRotationR
 func TestSecretsRotationHandler_ReportsTheScan(t *testing.T) {
 	h := NewSecretsRotationHandler(stubSecretsRotator{result: &SecretsRotationResult{Due: 3, Rotated: 2, Failed: 1, Unreadable: 4}})
 
-	result, err := h.Handler()(context.Background(), &scheduler.Job{ID: SecretsRotationJobID})
+	result, err := h.Handler()(context.Background(), &scheduler.Job{ID: SecretsRotationJobID, OwnerType: scheduler.OwnerTypeSystem})
 
 	require.NoError(t, err)
 	assert.True(t, result.Success)
@@ -50,7 +50,7 @@ func TestSecretsRotationHandler_ScanFailureFailsTheRun(t *testing.T) {
 	cause := errors.New("list secrets: storage unavailable")
 	h := NewSecretsRotationHandler(stubSecretsRotator{err: cause})
 
-	result, err := h.Handle(context.Background(), &scheduler.Job{ID: SecretsRotationJobID})
+	result, err := h.Handle(context.Background(), &scheduler.Job{ID: SecretsRotationJobID, OwnerType: scheduler.OwnerTypeSystem})
 
 	assert.Nil(t, result)
 	var failed *scheduler.HandlerFailedError
@@ -58,6 +58,48 @@ func TestSecretsRotationHandler_ScanFailureFailsTheRun(t *testing.T) {
 	assert.Equal(t, HandlerSecretsRotation, failed.Handler)
 	assert.Equal(t, SecretsRotationJobID, failed.JobID)
 	assert.ErrorIs(t, err, cause)
+}
+
+// countingSecretsRotator records whether the handler reached the rotator.
+type countingSecretsRotator struct{ calls *int }
+
+func (r countingSecretsRotator) RotateDueSecrets(context.Context) (*SecretsRotationResult, error) {
+	*r.calls++
+	return &SecretsRotationResult{}, nil
+}
+
+// A tenant job may name any handler, and the scheduler dispatches it: the
+// rotation handler must refuse every job but the reserved system job before
+// the rotator lists and rewrites secrets across tenants.
+func TestSecretsRotationHandler_RefusesAllButTheSystemJob(t *testing.T) {
+	cases := []struct {
+		name string
+		job  *scheduler.Job
+	}{
+		{"tenant job naming the handler", &scheduler.Job{ID: 42, OwnerType: scheduler.OwnerTypeTenant, OwnerID: "acme", Handler: HandlerSecretsRotation}},
+		{"tenant job claiming the reserved ID", &scheduler.Job{ID: SecretsRotationJobID, OwnerType: scheduler.OwnerTypeTenant, OwnerID: "acme"}},
+		{"system owner on another ID", &scheduler.Job{ID: SecretsRotationJobID + 1, OwnerType: scheduler.OwnerTypeSystem}},
+		{"no job", nil},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			calls := 0
+			h := NewSecretsRotationHandler(countingSecretsRotator{calls: &calls})
+
+			result, err := h.Handle(context.Background(), tc.job)
+
+			assert.Nil(t, result)
+			var failed *scheduler.HandlerFailedError
+			require.ErrorAs(t, err, &failed)
+			assert.Equal(t, HandlerSecretsRotation, failed.Handler)
+			var refused scheduler.UnauthorizedError
+			require.ErrorAs(t, err, &refused)
+			if tc.job != nil {
+				assert.Equal(t, tc.job.OwnerID, refused.TenantID)
+			}
+			assert.Zero(t, calls, "the rotator must not run for a refused job")
+		})
+	}
 }
 
 func TestSecretsRotationJob_Definition(t *testing.T) {

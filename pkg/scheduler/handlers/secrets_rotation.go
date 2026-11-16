@@ -71,6 +71,22 @@ func (h *SecretsRotationHandler) Name() string {
 
 // Handle runs one rotation scan.
 func (h *SecretsRotationHandler) Handle(ctx context.Context, job *scheduler.Job) (*scheduler.JobResult, error) {
+	// The rotator runs as the platform across every tenant's secrets, so only
+	// the reserved system job may invoke it. The scheduler dispatches any
+	// handler name a tenant job carries; a tenant job naming this handler is
+	// refused before it reaches the rotator.
+	if job == nil || job.ID != SecretsRotationJobID || job.OwnerType != scheduler.OwnerTypeSystem {
+		refused := scheduler.UnauthorizedError{Op: "run " + HandlerSecretsRotation + " as"}
+		if job != nil {
+			refused.TenantID = job.OwnerID
+			refused.JobID = job.ID
+		}
+		return nil, &scheduler.HandlerFailedError{
+			Handler: HandlerSecretsRotation,
+			JobID:   refused.JobID,
+			Cause:   refused,
+		}
+	}
 	result, err := h.rotator.RotateDueSecrets(ctx)
 	if err != nil {
 		return nil, &scheduler.HandlerFailedError{
