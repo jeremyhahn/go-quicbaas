@@ -17,7 +17,7 @@ import (
 
 // xkms.rotateKey on the platform OIDC signing backend is refused with the
 // typed error, which the tool answers as permission denied.
-func TestHandleXKMSRotateKey_RefusesOIDCSigningBackend(t *testing.T) {
+func TestHandleXKMSRotateKey_OIDCSigningBackendUnavailableWithoutDelegate(t *testing.T) {
 	log, err := logger.New(logger.LogConfig{Level: "error", Format: "json", Output: "stdout"})
 	require.NoError(t, err)
 	registry := NewToolRegistry(nil, log)
@@ -26,7 +26,7 @@ func TestHandleXKMSRotateKey_RefusesOIDCSigningBackend(t *testing.T) {
 		"key_id":  "oidc-signing",
 		"backend": dbxkms.OIDCSigningBackendName,
 	})
-	var refused *dbxkms.OIDCSigningKeyRotationRefusedError
-	require.ErrorAs(t, err, &refused)
-	require.Equal(t, mcptransport.MCPPermissionDenied, toolErrorCode(err))
+	var unavailable *dbxkms.RotationDelegateUnavailableError
+	require.ErrorAs(t, err, &unavailable)
+	require.Equal(t, mcptransport.MCPServiceUnavailable, toolErrorCode(err))
 }

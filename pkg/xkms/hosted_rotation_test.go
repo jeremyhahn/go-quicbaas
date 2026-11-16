@@ -5,6 +5,7 @@ package xkms
 
 import (
 	"context"
+	"crypto"
 	"errors"
 	"strings"
 	"testing"
@@ -15,32 +16,63 @@ import (
 	dberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 )
 
-// A hosted rotation of a key in the platform OIDC signing backend is refused
-// before anything reaches xkms, whatever the case of the backend segment;
-// other backends and bare key names pass the check.
-func TestCheckHostedRotation_RefusesOIDCSigningBackend(t *testing.T) {
-	for _, kid := range []string{
-		"oidc-replicated:::oidc-signing",
-		"OIDC-Replicated:signing:ecdsa-p256:oidc-signing",
-		"oidc-replicated:::tenant-key",
-	} {
-		err := CheckHostedRotation(kid)
-		var refused *OIDCSigningKeyRotationRefusedError
-		require.True(t, errors.As(err, &refused), kid)
-		assert.Equal(t, kid, refused.KID)
-		assert.Equal(t, dberrors.ErrForbidden, refused.ErrorCode())
+var oidcSigningKIDs = []string{
+	"oidc-replicated:::oidc-signing",
+	"OIDC-Replicated:signing:ecdsa-p256:oidc-signing",
+	"oidc-replicated:::tenant-key",
+}
+
+// A kid in the OIDC signing backend with no delegate registered is
+// unavailable; it never falls back to a direct xkms rotation.
+func TestHostedRotationDelegate_UnavailableWithoutDelegate(t *testing.T) {
+	t.Cleanup(Reset)
+	Reset()
+	for _, kid := range oidcSigningKIDs {
+		d, err := HostedRotationDelegate(kid)
+		require.Nil(t, d, kid)
+		var unavailable *RotationDelegateUnavailableError
+		require.True(t, errors.As(err, &unavailable), kid)
+		assert.Equal(t, kid, unavailable.KID)
+		assert.Equal(t, OIDCSigningBackendName, unavailable.Backend)
+		assert.Equal(t, dberrors.ErrUnavailable, unavailable.ErrorCode())
 		assert.True(t, strings.HasPrefix(err.Error(), "xkms: "), err.Error())
 		assert.Equal(t, strings.ToLower(err.Error()), err.Error())
 	}
 	for _, kid := range []string{"software:::oidc-signing", "oidc-signing", "pkcs11:signing:rsa:k"} {
-		assert.NoError(t, CheckHostedRotation(kid), kid)
+		d, err := HostedRotationDelegate(kid)
+		assert.NoError(t, err, kid)
+		assert.Nil(t, d, kid)
 	}
 }
 
-// RotateKey, the package's hosted rotation entry point, refuses the OIDC
-// signing backend with the typed error.
-func TestRotateKey_RefusesOIDCSigningBackend(t *testing.T) {
-	_, err := RotateKey(context.Background(), OIDCSigningBackendName+":::oidc-signing")
-	var refused *OIDCSigningKeyRotationRefusedError
-	require.ErrorAs(t, err, &refused)
+// RotateKey sends an OIDC signing backend kid to its registered delegate, and
+// with none registered returns the typed error.
+func TestRotateKey_OIDCSigningBackendGoesToDelegate(t *testing.T) {
+	t.Cleanup(Reset)
+	Reset()
+	kid := OIDCSigningBackendName + ":::oidc-signing"
+	_, err := RotateKey(context.Background(), kid)
+	require.ErrorAs(t, err, new(*RotationDelegateUnavailableError))
+
+	type key struct{ crypto.PrivateKey }
+	want := &key{}
+	var got []string
+	RegisterRotationDelegate(OIDCSigningBackendName, func(_ context.Context, k string) (crypto.PrivateKey, error) {
+		got = append(got, k)
+		return want, nil
+	})
+	for _, kid := range oidcSigningKIDs {
+		priv, err := RotateKey(context.Background(), kid)
+		require.NoError(t, err, kid)
+		require.Same(t, want, priv)
+	}
+	require.Equal(t, oidcSigningKIDs, got)
+
+	d, err := HostedRotationDelegate("software:::oidc-signing")
+	require.NoError(t, err)
+	require.Nil(t, d)
+
+	RegisterRotationDelegate(OIDCSigningBackendName, nil)
+	_, err = RotateKey(context.Background(), kid)
+	require.ErrorAs(t, err, new(*RotationDelegateUnavailableError))
 }

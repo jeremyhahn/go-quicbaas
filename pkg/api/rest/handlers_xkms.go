@@ -146,6 +146,16 @@ func respondXKMSError(w http.ResponseWriter, statusCode int, err error) {
 	})
 }
 
+// xkmsErrorCode returns the classification err (or an error it wraps)
+// carries, if any.
+func xkmsErrorCode(err error) (qberrors.ErrorCode, bool) {
+	var coded interface{ ErrorCode() qberrors.ErrorCode }
+	if errors.As(err, &coded) {
+		return coded.ErrorCode(), true
+	}
+	return 0, false
+}
+
 // respondXKMSJSON writes a JSON success response.
 func respondXKMSJSON(w http.ResponseWriter, statusCode int, data interface{}) {
 	w.Header().Set("Content-Type", "application/json")
@@ -436,14 +446,23 @@ func (s *Server) HandleXKMSRotateKey(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Platform OIDC signing keys rotate only through the OIDC signing key
+	// Platform OIDC signing keys rotate only through their signing key
 	// manager, which serialises rotations across the nodes sharing them.
-	if err := dbxkms.CheckHostedRotation(keyID); err != nil {
-		respondXKMSError(w, http.StatusForbidden, err)
+	delegate, err := dbxkms.HostedRotationDelegate(keyID)
+	if err != nil {
+		respondXKMSError(w, http.StatusServiceUnavailable, err)
 		return
 	}
-
-	privKey, err := xkmssdk.ServiceRotateKey(r.Context(), keyID)
+	var privKey crypto.PrivateKey
+	if delegate != nil {
+		privKey, err = delegate(r.Context(), keyID)
+		if code, ok := xkmsErrorCode(err); ok && code == qberrors.ErrForbidden {
+			respondXKMSError(w, http.StatusForbidden, err)
+			return
+		}
+	} else {
+		privKey, err = xkmssdk.ServiceRotateKey(r.Context(), keyID)
+	}
 	if err != nil {
 		respondXKMSError(w, http.StatusInternalServerError, &XKMSOperationError{
 			Op:     "RotateKey",
@@ -1768,6 +1787,9 @@ func marshalPublicKeyPEM(privKey crypto.PrivateKey) string {
 	case *ecdsa.PrivateKey:
 		pubKey = &k.PublicKey
 	case ed25519.PrivateKey:
+		pubKey = k.Public()
+	case crypto.Signer:
+		// A backend handle whose private key never leaves the device.
 		pubKey = k.Public()
 	default:
 		return ""

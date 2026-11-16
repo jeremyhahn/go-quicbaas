@@ -1056,13 +1056,22 @@ func (r *ToolRegistry) handleXKMSRotateKey(ctx context.Context, args map[string]
 	if backend := getString(args, "backend"); backend != "" {
 		kid = backend + ":::" + keyID
 	}
-	// Platform OIDC signing keys rotate only through the OIDC signing key
+	// Platform OIDC signing keys rotate only through their signing key
 	// manager, which serialises rotations across the nodes sharing them.
-	if err := dbxkms.CheckHostedRotation(kid); err != nil {
+	delegate, err := dbxkms.HostedRotationDelegate(kid)
+	if err != nil {
 		return nil, err
 	}
-
-	privKey, err := xkmssdk.ServiceRotateKey(ctx, kid)
+	var privKey crypto.PrivateKey
+	if delegate != nil {
+		// The delegate's errors are typed (a busy or fenced rotation lease,
+		// a tenant with no dedicated key) and reach the caller as they are.
+		if privKey, err = delegate(ctx, kid); err != nil {
+			return nil, err
+		}
+	} else {
+		privKey, err = xkmssdk.ServiceRotateKey(ctx, kid)
+	}
 	if err != nil {
 		return nil, &XKMSOperationError{Operation: "rotateKey", Cause: err}
 	}

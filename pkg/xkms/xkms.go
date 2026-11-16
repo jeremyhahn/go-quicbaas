@@ -223,6 +223,10 @@ func Reset() {
 	initialized = false
 	logger = nil
 	defaultBackend = ""
+
+	rotationDelegatesMu.Lock()
+	rotationDelegates = map[string]RotationDelegate{}
+	rotationDelegatesMu.Unlock()
 }
 
 // checkInitialized is a helper to check initialization status.
@@ -361,8 +365,12 @@ func DeleteKeyByID(ctx context.Context, kid string) error {
 // through Config.KeyVersions; without one it returns
 // xkmssdk.ErrKeyVersionsNotConfigured.
 func RotateKey(ctx context.Context, kid string) (crypto.PrivateKey, error) {
-	if err := CheckHostedRotation(kid); err != nil {
+	delegate, err := HostedRotationDelegate(kid)
+	if err != nil {
 		return nil, err
+	}
+	if delegate != nil {
+		return delegate(ctx, kid)
 	}
 	if err := checkInitialized(); err != nil {
 		return nil, err
@@ -375,39 +383,81 @@ func RotateKey(ctx context.Context, kid string) (crypto.PrivateKey, error) {
 // the platform's cluster-replicated OIDC signing keys.
 const OIDCSigningBackendName = "oidc-replicated"
 
-// OIDCSigningKeyRotationRefusedError reports a hosted rotation (the REST and
-// MCP xkms handlers, or this package's RotateKey) of a key in the platform
-// OIDC signing backend. Those keys rotate only through
-// iam.SigningKeyManager.Rotate, which serialises rotations across the nodes
-// sharing the backend; a hosted rotation would bypass that and could replace
-// a version a peer is signing with.
-type OIDCSigningKeyRotationRefusedError struct {
+// RotationDelegate rotates the key kid names in a backend whose keys must
+// not be rotated by xkms directly, and returns the new current version's
+// private key (a crypto.Signer handle when the material never leaves the
+// backend). The platform OIDC signing backend's delegate is
+// iam.SigningKeyManager.Rotate, which takes the cluster rotation lease.
+type RotationDelegate func(ctx context.Context, kid string) (crypto.PrivateKey, error)
+
+// delegatedRotationBackends are the backends whose hosted rotations go only
+// through a registered RotationDelegate, never to xkms directly.
+var delegatedRotationBackends = map[string]struct{}{
+	OIDCSigningBackendName: {},
+}
+
+var (
+	rotationDelegatesMu sync.RWMutex
+	rotationDelegates   = map[string]RotationDelegate{}
+)
+
+// RegisterRotationDelegate makes d the rotation of every key in backend that
+// a hosted rotation (the REST and MCP xkms rotate handlers, or RotateKey)
+// names. A nil d removes the backend's delegate.
+func RegisterRotationDelegate(backend string, d RotationDelegate) {
+	backend = strings.ToLower(strings.TrimSpace(backend))
+	rotationDelegatesMu.Lock()
+	defer rotationDelegatesMu.Unlock()
+	if d == nil {
+		delete(rotationDelegates, backend)
+		return
+	}
+	rotationDelegates[backend] = d
+}
+
+// RotationDelegateUnavailableError reports a hosted rotation of a key in a
+// backend whose keys rotate only through a delegate, on a node where none is
+// registered (its OIDC signing key manager failed to start).
+type RotationDelegateUnavailableError struct {
 	// KID is the key ID the caller asked to rotate.
 	KID string
+	// Backend is the backend kid names.
+	Backend string
 }
 
 // Error implements error.
-func (e *OIDCSigningKeyRotationRefusedError) Error() string {
-	return "xkms: hosted rotation of " + strings.ToLower(e.KID) + " refused: keys in backend " +
-		OIDCSigningBackendName + " are platform oidc signing keys and rotate only through the oidc signing key manager"
+func (e *RotationDelegateUnavailableError) Error() string {
+	return "xkms: hosted rotation of " + strings.ToLower(e.KID) + " unavailable: keys in backend " +
+		e.Backend + " rotate only through its signing key manager, which this node has not registered"
 }
 
-// ErrorCode classifies the refusal as forbidden, so every transport answers
-// it as permission denied.
-func (e *OIDCSigningKeyRotationRefusedError) ErrorCode() dberrors.ErrorCode {
-	return dberrors.ErrForbidden
+// ErrorCode classifies the error as an unavailable service.
+func (e *RotationDelegateUnavailableError) ErrorCode() dberrors.ErrorCode {
+	return dberrors.ErrUnavailable
 }
 
-// CheckHostedRotation returns *OIDCSigningKeyRotationRefusedError when kid
-// ("backend:type:algo:keyname", or a bare key name for the default backend)
-// names a key in the platform OIDC signing backend, and nil otherwise. Every
-// hosted rotation entry point calls it before it reaches xkms.
-func CheckHostedRotation(kid string) error {
+// HostedRotationDelegate routes a hosted rotation of kid ("backend:type:
+// algo:keyname", or a bare key name for the default backend). For a kid in a
+// backend whose keys rotate only through a delegate it returns that
+// backend's registered delegate, or *RotationDelegateUnavailableError when
+// none is registered; for any other kid it returns nil, nil and the caller
+// rotates through xkms.
+func HostedRotationDelegate(kid string) (RotationDelegate, error) {
 	backend, _, found := strings.Cut(kid, ":")
-	if found && strings.EqualFold(strings.TrimSpace(backend), OIDCSigningBackendName) {
-		return &OIDCSigningKeyRotationRefusedError{KID: kid}
+	if !found {
+		return nil, nil
 	}
-	return nil
+	backend = strings.ToLower(strings.TrimSpace(backend))
+	if _, delegated := delegatedRotationBackends[backend]; !delegated {
+		return nil, nil
+	}
+	rotationDelegatesMu.RLock()
+	d := rotationDelegates[backend]
+	rotationDelegatesMu.RUnlock()
+	if d == nil {
+		return nil, &RotationDelegateUnavailableError{KID: kid, Backend: backend}
+	}
+	return d, nil
 }
 
 // ListKeys lists all keys across all backends or from a specific backend.

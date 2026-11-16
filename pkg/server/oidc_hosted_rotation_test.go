@@ -12,6 +12,7 @@ import (
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/config"
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 	dbxkms "github.com/jeremyhahn/go-quicbaas/pkg/xkms"
 )
 
@@ -61,12 +62,12 @@ func requireManagerRotates(t *testing.T, a, b *iam.SigningKeyManager) {
 // OIDC key through this package's RotateKey on node B is refused with the
 // typed error and leaves the shared version record and key material as they
 // were; SigningKeyManager.Rotate still rotates it.
-func TestOIDCSigningStore_HostedRotationRefusedOnPeer(t *testing.T) {
+func TestOIDCSigningStore_HostedRotationUnavailableWithoutDelegate(t *testing.T) {
 	a, b, kv, before, kid := hostedRotationNodes(t)
 
-	_, err := dbxkms.RotateKey(context.Background(), kid)
-	var refused *dbxkms.OIDCSigningKeyRotationRefusedError
-	require.ErrorAs(t, err, &refused)
+	_, err := dbxkms.RotateKey(tenantctx.WithSystem(context.Background()), kid)
+	var unavailable *dbxkms.RotationDelegateUnavailableError
+	require.ErrorAs(t, err, &unavailable)
 	require.Equal(t, before, snapshotKV(t, kv))
 
 	requireManagerRotates(t, a, b)
