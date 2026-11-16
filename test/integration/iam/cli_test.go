@@ -305,18 +305,51 @@ func provisionRESTBearer(t *testing.T) {
 	bearer, expiresAt, err := helpers.AuthPIVSession(ctx, getRESTEndpointForCLI(), "", "", "")
 	require.NoError(t, err, "PIV login for REST CLI bearer failed")
 
+	require.NoError(t, clitoken.SaveToken(cliTokenPath(t), &clitoken.TokenData{
+		AccessToken: bearer,
+		ExpiresAt:   expiresAt,
+		TokenType:   "Bearer",
+	}), "persist REST CLI bearer")
+}
+
+// cliTokenPath returns the token file the CLI under test reads its bearer from.
+func cliTokenPath(t *testing.T) string {
+	t.Helper()
+
 	path := os.Getenv("QUICBAAS_TEST_TOKEN_PATH")
 	if path == "" {
 		defaultPath, pathErr := clitoken.GetDefaultTokenPath()
 		require.NoError(t, pathErr, "resolve CLI default token path")
 		path = defaultPath
 	}
+	return path
+}
 
-	require.NoError(t, clitoken.SaveToken(path, &clitoken.TokenData{
+// newIAMCLITenantSessionContext provisions tenantID (deleted when t ends) and
+// returns a gRPC CLI context whose token file holds that tenant's admin
+// bearer. The self-service Session API serves only the caller's own sessions
+// in the caller's own tenant, so the CLI derives the caller from this token.
+func newIAMCLITenantSessionContext(t *testing.T, tenantID string) *iamCLITestContext {
+	t.Helper()
+
+	admin := helpers.TenantAdmin(t, getRESTEndpointForCLI(), tenantID)
+
+	proto := getGRPCProtocolConfig()
+	cli := newIAMCLITestContext(t, proto.name, proto.address, tenantID)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	bearer, expiresAt, err := admin.BearerSession(ctx)
+	require.NoError(t, err, "tenant admin login for CLI session tests failed")
+
+	require.NoError(t, clitoken.SaveToken(cliTokenPath(t), &clitoken.TokenData{
 		AccessToken: bearer,
 		ExpiresAt:   expiresAt,
 		TokenType:   "Bearer",
-	}), "persist REST CLI bearer")
+	}), "persist tenant admin CLI bearer")
+
+	return cli
 }
 
 // generateUniqueTenantIDForCLI generates a unique tenant ID for CLI testing.
@@ -429,15 +462,11 @@ func isExpectedNoSessionError(err error) bool {
 
 // TestCLISessionList tests the session list command.
 func TestCLISessionList(t *testing.T) {
-	proto := getGRPCProtocolConfig()
-	tenantID := setupIAMCLITestTenant(t)
-	defer cleanupIAMCLITestTenant(t, tenantID)
-
-	cli := newIAMCLITestContext(t, proto.name, proto.address, tenantID)
+	tenantID := generateUniqueTenantIDForCLI()
+	cli := newIAMCLITenantSessionContext(t, tenantID)
 
 	t.Run("list-sessions", func(t *testing.T) {
-		// Use --user flag to avoid needing a token file
-		output, err := cli.run("iam", "session", "list", "--tenant", tenantID, "--user", "test-user")
+		output, err := cli.run("iam", "session", "list", "--tenant", tenantID)
 		require.NoError(t, err, "session list should succeed")
 
 		// Verify JSON output structure
@@ -452,8 +481,7 @@ func TestCLISessionList(t *testing.T) {
 	})
 
 	t.Run("list-sessions-with-limit", func(t *testing.T) {
-		// Use --user flag to avoid needing a token file
-		output, err := cli.run("iam", "session", "list", "--tenant", tenantID, "--user", "test-user", "--limit", "5")
+		output, err := cli.run("iam", "session", "list", "--tenant", tenantID, "--limit", "5")
 		require.NoError(t, err, "session list with limit should succeed")
 		assert.NotEmpty(t, output)
 	})
@@ -461,16 +489,13 @@ func TestCLISessionList(t *testing.T) {
 
 // TestCLISessionGet tests the session get command.
 func TestCLISessionGet(t *testing.T) {
-	proto := getGRPCProtocolConfig()
-	tenantID := setupIAMCLITestTenant(t)
-	defer cleanupIAMCLITestTenant(t, tenantID)
-
-	cli := newIAMCLITestContext(t, proto.name, proto.address, tenantID)
+	tenantID := generateUniqueTenantIDForCLI()
+	cli := newIAMCLITenantSessionContext(t, tenantID)
 
 	// First, list sessions to get a valid session ID
 	t.Run("get-session", func(t *testing.T) {
 		// Try to list sessions first to get a session ID
-		listOutput, listErr := cli.run("iam", "session", "list", "--tenant", tenantID, "--user", "test-user", "--limit", "1")
+		listOutput, listErr := cli.run("iam", "session", "list", "--tenant", tenantID, "--limit", "1")
 		require.NoError(t, listErr, "session list should succeed")
 
 		var sessionID string
@@ -503,11 +528,8 @@ func TestCLISessionGet(t *testing.T) {
 
 // TestCLISessionRevoke tests the session revoke command.
 func TestCLISessionRevoke(t *testing.T) {
-	proto := getGRPCProtocolConfig()
-	tenantID := setupIAMCLITestTenant(t)
-	defer cleanupIAMCLITestTenant(t, tenantID)
-
-	cli := newIAMCLITestContext(t, proto.name, proto.address, tenantID)
+	tenantID := generateUniqueTenantIDForCLI()
+	cli := newIAMCLITenantSessionContext(t, tenantID)
 
 	t.Run("revoke-session", func(t *testing.T) {
 		// Use a test session ID (in a real scenario, we'd create one first)
@@ -526,14 +548,11 @@ func TestCLISessionRevoke(t *testing.T) {
 
 // TestCLISessionRevokeAll tests the session revoke-all command.
 func TestCLISessionRevokeAll(t *testing.T) {
-	proto := getGRPCProtocolConfig()
-	tenantID := setupIAMCLITestTenant(t)
-	defer cleanupIAMCLITestTenant(t, tenantID)
-
-	cli := newIAMCLITestContext(t, proto.name, proto.address, tenantID)
+	tenantID := generateUniqueTenantIDForCLI()
+	cli := newIAMCLITenantSessionContext(t, tenantID)
 
 	t.Run("revoke-all-sessions", func(t *testing.T) {
-		output, err := cli.run("iam", "session", "revoke-all", "--tenant", tenantID, "--user", "test-user", "--yes")
+		output, err := cli.run("iam", "session", "revoke-all", "--tenant", tenantID, "--yes")
 		require.NoError(t, err, "session revoke-all should succeed")
 		t.Logf("Revoke-all output: %s", output)
 	})
@@ -541,17 +560,11 @@ func TestCLISessionRevokeAll(t *testing.T) {
 
 // TestCLISessionRevokeAllKeepCurrent tests the session revoke-all with keep-current flag.
 func TestCLISessionRevokeAllKeepCurrent(t *testing.T) {
-	proto := getGRPCProtocolConfig()
-	tenantID := setupIAMCLITestTenant(t)
-	defer cleanupIAMCLITestTenant(t, tenantID)
-
-	cli := newIAMCLITestContext(t, proto.name, proto.address, tenantID)
+	tenantID := generateUniqueTenantIDForCLI()
+	cli := newIAMCLITenantSessionContext(t, tenantID)
 
 	t.Run("revoke-all-keep-current", func(t *testing.T) {
 		output, err := cli.run("iam", "session", "revoke-all", "--tenant", tenantID, "--keep-current", "--yes")
-		// The --keep-current flag requires an existing session token to determine
-		// which session to keep. Without an authenticated session (no token file),
-		// this error is expected.
 		if isExpectedNoSessionError(err) {
 			t.Log("No current session token (expected in test environment without login)")
 			return
@@ -1005,18 +1018,19 @@ func TestCLIIAMPEPHelp(t *testing.T) {
 
 // TestCLIIAMOutputFormats tests different output formats for IAM commands.
 func TestCLIIAMOutputFormats(t *testing.T) {
-	proto := getGRPCProtocolConfig()
-	tenantID := setupIAMCLITestTenant(t)
-	defer cleanupIAMCLITestTenant(t, tenantID)
+	tenantID := generateUniqueTenantIDForCLI()
+	// Provision the tenant once in the parent: each subtest's TenantAdmin call
+	// reuses this cached session instead of provisioning the tenant again.
+	helpers.TenantAdmin(t, getRESTEndpointForCLI(), tenantID)
 
 	outputFormats := []string{"json", "table", "yaml"}
 
 	for _, format := range outputFormats {
 		t.Run(fmt.Sprintf("session-list-%s", format), func(t *testing.T) {
-			cli := newIAMCLITestContext(t, proto.name, proto.address, tenantID)
+			cli := newIAMCLITenantSessionContext(t, tenantID)
 			cli.outputFmt = format
 
-			output, err := cli.run("iam", "session", "list", "--tenant", tenantID, "--user", "test-user")
+			output, err := cli.run("iam", "session", "list", "--tenant", tenantID)
 			require.NoError(t, err, "session list with %s output should succeed", format)
 
 			// Verify format-specific content
@@ -1044,22 +1058,19 @@ func TestCLIIAMOutputFormats(t *testing.T) {
 
 // TestCLIIAMSessionWorkflow tests a complete session management workflow.
 func TestCLIIAMSessionWorkflow(t *testing.T) {
-	proto := getGRPCProtocolConfig()
-	tenantID := setupIAMCLITestTenant(t)
-	defer cleanupIAMCLITestTenant(t, tenantID)
-
-	cli := newIAMCLITestContext(t, proto.name, proto.address, tenantID)
+	tenantID := generateUniqueTenantIDForCLI()
+	cli := newIAMCLITenantSessionContext(t, tenantID)
 
 	// Step 1: List sessions
 	t.Run("workflow-list", func(t *testing.T) {
-		output, err := cli.run("iam", "session", "list", "--tenant", tenantID, "--user", "test-user")
+		output, err := cli.run("iam", "session", "list", "--tenant", tenantID)
 		require.NoError(t, err, "session list should succeed")
 		t.Logf("Initial session list: %s", output)
 	})
 
 	// Step 2: Get details of first session (if any)
 	t.Run("workflow-get", func(t *testing.T) {
-		listOutput, err := cli.run("iam", "session", "list", "--tenant", tenantID, "--user", "test-user", "--limit", "1")
+		listOutput, err := cli.run("iam", "session", "list", "--tenant", tenantID, "--limit", "1")
 		require.NoError(t, err, "session list should succeed")
 
 		var sessionID string
@@ -1084,7 +1095,7 @@ func TestCLIIAMSessionWorkflow(t *testing.T) {
 
 	// Step 3: Revoke all (for cleanup)
 	t.Run("workflow-revoke-all", func(t *testing.T) {
-		output, err := cli.run("iam", "session", "revoke-all", "--tenant", tenantID, "--user", "test-user", "--yes")
+		output, err := cli.run("iam", "session", "revoke-all", "--tenant", tenantID, "--yes")
 		require.NoError(t, err, "session revoke-all should succeed")
 		t.Logf("Revoke all result: %s", output)
 	})
