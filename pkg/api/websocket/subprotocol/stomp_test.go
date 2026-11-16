@@ -475,6 +475,26 @@ func TestSTOMPErrorMessages(t *testing.T) {
 }
 
 // buildSTOMPFrame creates a STOMP frame for testing.
+// awaitSTOMPReceipt reads conn until the RECEIPT frame for receiptID. The
+// server writes it after handling the frame that requested it, so a
+// SUBSCRIBE is registered once this returns.
+func awaitSTOMPReceipt(ctx context.Context, t *testing.T, conn *websocket.Conn, receiptID string) {
+	t.Helper()
+	for {
+		_, data, err := conn.Read(ctx)
+		if err != nil {
+			t.Fatalf("waiting for RECEIPT %s: %v", receiptID, err)
+		}
+		if bytes.HasPrefix(data, []byte("ERROR")) {
+			t.Fatalf("waiting for RECEIPT %s, got: %q", receiptID, data)
+		}
+		if bytes.HasPrefix(data, []byte("RECEIPT")) &&
+			bytes.Contains(data, []byte("receipt-id:"+receiptID+"\n")) {
+			return
+		}
+	}
+}
+
 func buildSTOMPFrame(command string, headers map[string]string, body string) []byte {
 	buf := &bytes.Buffer{}
 	buf.WriteString(command)
@@ -1440,12 +1460,14 @@ func TestSTOMPHandler_TransactionSendCommit(t *testing.T) {
 		"id":          "sub-1",
 		"destination": "/queue/tx-test",
 		"ack":         "auto",
+		"receipt":     "sub-1-registered",
 	}, ""))
 	if err != nil {
 		t.Fatalf("Subscriber write SUBSCRIBE failed: %v", err)
 	}
 
-	time.Sleep(50 * time.Millisecond)
+	// The server sends the RECEIPT after it has registered the subscription.
+	awaitSTOMPReceipt(ctx, t, subscriber, "sub-1-registered")
 
 	// Start reading messages in goroutine
 	go func() {
@@ -1576,12 +1598,14 @@ func TestSTOMPHandler_TransactionAbortNoDelivery(t *testing.T) {
 		"id":          "sub-1",
 		"destination": "/queue/abort-test",
 		"ack":         "auto",
+		"receipt":     "sub-1-registered",
 	}, ""))
 	if err != nil {
 		t.Fatalf("Subscriber write SUBSCRIBE failed: %v", err)
 	}
 
-	time.Sleep(50 * time.Millisecond)
+	// The server sends the RECEIPT after it has registered the subscription.
+	awaitSTOMPReceipt(ctx, t, subscriber, "sub-1-registered")
 
 	// Start reading messages in goroutine
 	go func() {
@@ -1704,13 +1728,14 @@ func TestSTOMPHandler_MessageDeliveryBetweenClients(t *testing.T) {
 		"id":          "sub-1",
 		"destination": "/queue/test",
 		"ack":         "auto",
+		"receipt":     "sub-1-registered",
 	}, ""))
 	if err != nil {
 		t.Fatalf("Subscriber write SUBSCRIBE failed: %v", err)
 	}
 
-	// Give subscription time to register
-	time.Sleep(50 * time.Millisecond)
+	// The server sends the RECEIPT after it has registered the subscription.
+	awaitSTOMPReceipt(ctx, t, subscriber, "sub-1-registered")
 
 	// Start reading messages in goroutine
 	go func() {

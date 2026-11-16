@@ -31,6 +31,7 @@ import (
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
+	"github.com/jeremyhahn/go-quicbaas/pkg/testutil/poll"
 )
 
 // ----------------------------------------------------------------------------
@@ -198,7 +199,15 @@ func TestNewPartitionDetector(t *testing.T) {
 // with a healthy peer so that the first completed checks register the peer as
 // reachable before Stop is called.
 func TestPartitionDetector_MonitorLoopTicker(t *testing.T) {
-	srv := newHealthServer(t, http.StatusOK)
+	// The peer counts its health probes: each tick probes it once.
+	var probes atomic.Int64
+	mux := http.NewServeMux()
+	mux.HandleFunc("/health", func(w http.ResponseWriter, _ *http.Request) {
+		probes.Add(1)
+		w.WriteHeader(http.StatusOK)
+	})
+	srv := httptest.NewTLSServer(mux)
+	t.Cleanup(srv.Close)
 
 	mockRaft := newMockRaftNode()
 	mockRaft.setLeader(1, 1)
@@ -218,8 +227,9 @@ func TestPartitionDetector_MonitorLoopTicker(t *testing.T) {
 	err = pd.Start()
 	require.NoError(t, err)
 
-	// Wait for at least 3 ticks to complete.
-	time.Sleep(200 * time.Millisecond)
+	// Wait for at least 3 ticks to have probed the peer.
+	poll.Until(t, 10*time.Second, func() bool { return probes.Load() >= 3 },
+		"the monitor loop never probed the peer three times")
 
 	err = pd.Stop()
 	require.NoError(t, err)
