@@ -702,9 +702,10 @@ func TestFormatSecretsGetResponse(t *testing.T) {
 			expectedText: []string{"Secret ID", "database/prod", "Version", "Data", "password", "username"},
 		},
 		{
-			name:         "default format",
-			format:       "",
-			expectedText: []string{"password=", "username="},
+			name:   "default format",
+			format: "",
+			// raw: the stored bytes verbatim, not key=value lines.
+			expectedText: []string{`{"password":"secret123","username":"admin"}`},
 		},
 	}
 
@@ -2736,6 +2737,7 @@ func TestFormatSecretsGetResponse_RawDataDefaultIsVerbatim(t *testing.T) {
 func TestSecretsGetCommand_DefaultOutputPrintsRawVerbatim(t *testing.T) {
 	raw := []byte("whsec_not-json\n\x00tail")
 	keyValue := []byte(`{"user":"app"}`)
+	authJSON := []byte("{\n  \"token\": \"t0k\",\n  \"nested\": {\"a\": [1, 2]}\n}\n")
 	tests := []struct {
 		name  string
 		data  []byte
@@ -2748,7 +2750,15 @@ func TestSecretsGetCommand_DefaultOutputPrintsRawVerbatim(t *testing.T) {
 		{"raw, --output table", raw, []string{"--output", "table"}, func(t *testing.T, out []byte) {
 			assert.Contains(t, string(out), "Secret ID:")
 		}},
-		{"key-value, no --output", keyValue, nil, func(t *testing.T, out []byte) {
+		// A file that is a JSON object (auth.json) round-trips too: neither
+		// the default nor --output raw reshapes it.
+		{"json object, no --output", authJSON, nil, func(t *testing.T, out []byte) {
+			assert.Equal(t, authJSON, out)
+		}},
+		{"json object, --output raw", authJSON, []string{"--output", "raw"}, func(t *testing.T, out []byte) {
+			assert.Equal(t, authJSON, out)
+		}},
+		{"key-value, --output table", keyValue, []string{"--output", "table"}, func(t *testing.T, out []byte) {
 			assert.Contains(t, string(out), "Secret ID:")
 			assert.Contains(t, string(out), "user:")
 		}},

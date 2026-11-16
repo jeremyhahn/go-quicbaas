@@ -97,6 +97,36 @@ func TestSecretsPutRawFromFile(t *testing.T) {
 	})
 }
 
+// TestSecretsPutRawFromFileJSONObject round-trips a file whose content is a
+// JSON object (an auth.json): `secrets get` prints it byte for byte, both by
+// default and with --output raw, on every transport.
+func TestSecretsPutRawFromFileJSONObject(t *testing.T) {
+	RunForAllTransports(t, "SecretsPutRawFromFileJSONObject", func(t *testing.T, runner *TestRunner) {
+		secretPath := UniqueKey("raw-json-secret")
+		raw := "{\n  \"token\": \"t0k\",\n  \"nested\": {\"a\": [1, 2]}\n}\n"
+		file := filepath.Join(t.TempDir(), "auth.json")
+		require.NoError(t, os.WriteFile(file, []byte(raw), 0o600))
+
+		put := SecretsPutFromFileCommand(secretPath, file)
+		if runner.IsSkipped(put) {
+			return
+		}
+		runner.RunAndAssert(put)
+
+		get := SecretsGetCommand(secretPath, 0)
+		stdout, stderr, err := runner.Run(get)
+		require.NoError(t, err, "secrets get: %s", stderr)
+		assert.Equal(t, raw, stdout, "the JSON file reads back verbatim")
+
+		get.Args = append(get.Args, "--output", "raw")
+		stdout, stderr, err = runner.Run(get)
+		require.NoError(t, err, "secrets get --output raw: %s", stderr)
+		assert.Equal(t, raw, stdout, "--output raw is the file verbatim")
+
+		runner.Run(SecretsDeleteCommand(secretPath, true))
+	})
+}
+
 // TestSecretsVersioning tests secret versioning across all transports.
 func TestSecretsVersioning(t *testing.T) {
 	RunForAllTransports(t, "SecretsVersioning", func(t *testing.T, runner *TestRunner) {

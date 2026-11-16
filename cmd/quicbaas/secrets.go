@@ -251,12 +251,12 @@ func runSecretsGetCommand(cmd *cobra.Command, args []string) error {
 // `secrets put --from-file` or `--from-stdin` stored) prints verbatim, so
 // `secrets get` round-trips the bytes (#143); a key-value secret keeps the
 // flag's table default.
-func secretsGetOutputFormat(resp *service.GetSecretResponse, format string, explicit bool) string {
-	if explicit {
-		return format
-	}
-	var dataMap map[string]interface{}
-	if err := json.Unmarshal(resp.Data, &dataMap); err != nil || dataMap == nil {
+func secretsGetOutputFormat(_ *service.GetSecretResponse, format string, explicit bool) string {
+	// Without --output, get prints the stored bytes as they are, whatever
+	// their shape: a file stored with --from-file (even a JSON object such
+	// as auth.json) round-trips. The REST and QUIC transports return no
+	// metadata on get, so the value's source cannot pick the format.
+	if !explicit {
 		return string(cli.OutputFormatRaw)
 	}
 	return format
@@ -684,6 +684,11 @@ func formatSecretsGetResponse(resp *service.GetSecretResponse, format string, w 
 	}
 
 	var dataMap map[string]interface{}
+	if outputFormat == cli.OutputFormatRaw {
+		// raw is the stored bytes, verbatim, for every value.
+		_, err := w.Write(resp.Data)
+		return err
+	}
 	if err := json.Unmarshal(resp.Data, &dataMap); err != nil || dataMap == nil {
 		return formatRawSecretsGetResponse(resp, outputFormat, w)
 	}
