@@ -328,7 +328,7 @@ func (r *TenantSigningKeyResolver) PublicForKID(ctx context.Context, kid string)
 		return true
 	})
 	for _, mgr := range managers {
-		pub, err := mgr.PublicForKID(kid)
+		pub, err := mgr.PublicForKID(ctx, kid)
 		if err == nil {
 			return pub, nil
 		}

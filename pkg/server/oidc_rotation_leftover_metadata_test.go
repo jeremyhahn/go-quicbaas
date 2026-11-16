@@ -109,7 +109,7 @@ func TestOIDCSigningStore_RotationRecoversLeftoverMetadata(t *testing.T) {
 			require.NoError(t, b.Rotate())
 			v2, _, _ := b.Current()
 			require.NotEqual(t, v1, v2)
-			pubB, err := b.PublicForKID(v2)
+			pubB, err := b.PublicForKID(context.Background(), v2)
 			require.NoError(t, err)
 
 			// The record, the blob and the metadata agree: a node booted now
@@ -120,7 +120,7 @@ func TestOIDCSigningStore_RotationRecoversLeftoverMetadata(t *testing.T) {
 			c := bootOIDCSigningServer(t, &Server{config: &config.Config{}}, kv, tx)
 			kidC, _, _ := c.Current()
 			require.Equal(t, v2, kidC)
-			pubC, err := c.PublicForKID(v2)
+			pubC, err := c.PublicForKID(context.Background(), v2)
 			require.NoError(t, err)
 			require.Equal(t, pubB, pubC)
 			listing, err := newOIDCSigningServiceBackend(kv, tx)
@@ -225,7 +225,7 @@ func requireOIDCRecordAgrees(t *testing.T, kv xkmssdk.StorageBackend, tx transpo
 	n := bootOIDCSigningServer(t, &Server{config: &config.Config{}}, kv, tx)
 	current, _, _ := n.Current()
 	require.Equal(t, kid, current)
-	_, err := n.PublicForKID(kid)
+	_, err := n.PublicForKID(context.Background(), kid)
 	require.NoError(t, err)
 }
 
@@ -275,7 +275,7 @@ func TestOIDCSigningStore_LeftoverMetadataRecoveryIsIdempotent(t *testing.T) {
 			requireOIDCKeysAgree(t, snapshotKV(t, kv))
 			requireOIDCRecordAgrees(t, kv, tx, v3)
 			require.NoError(t, a.Refresh())
-			_, err = a.PublicForKID(v3)
+			_, err = a.PublicForKID(context.Background(), v3)
 			require.NoError(t, err)
 		})
 

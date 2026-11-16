@@ -23,7 +23,7 @@ func requireVerifiesUnder(t *testing.T, m *iam.SigningKeyManager, kid string, si
 	digest := sha256.Sum256([]byte("token signed under " + kid))
 	sig, err := signer.Sign(rand.Reader, digest[:], crypto.SHA256)
 	require.NoError(t, err)
-	pub, err := m.PublicForKID(kid)
+	pub, err := m.PublicForKID(context.Background(), kid)
 	require.NoError(t, err, kid)
 	ecPub, ok := pub.(*ecdsa.PublicKey)
 	require.True(t, ok)

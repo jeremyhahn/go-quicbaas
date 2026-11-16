@@ -53,7 +53,7 @@ func requireManagerRotates(t *testing.T, a, b *iam.SigningKeyManager) {
 	v2, _, _ := b.Current()
 	require.NotEqual(t, v1, v2)
 	require.Eventually(t, func() bool {
-		_, err := a.PublicForKID(v2)
+		_, err := a.PublicForKID(context.Background(), v2)
 		return err == nil
 	}, 5*time.Second, 20*time.Millisecond)
 }

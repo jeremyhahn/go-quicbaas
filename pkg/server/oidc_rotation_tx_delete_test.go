@@ -51,7 +51,7 @@ func TestOIDCSigningStore_StaleHolderDeleteKeepsSuccessorsCommittedKey(t *testin
 	require.NoError(t, b.Rotate())
 	v2, _, _ := b.Current()
 	require.NotEqual(t, v1, v2)
-	pubB, err := b.PublicForKID(v2)
+	pubB, err := b.PublicForKID(context.Background(), v2)
 	require.NoError(t, err)
 	afterB := snapshotKV(t, kv)
 
@@ -74,7 +74,7 @@ func TestOIDCSigningStore_StaleHolderDeleteKeepsSuccessorsCommittedKey(t *testin
 	c := bootOIDCSigningServer(t, &Server{config: &config.Config{}}, kv, tx)
 	kidC, _, _ := c.Current()
 	require.Equal(t, v2, kidC)
-	pubC, err := c.PublicForKID(v2)
+	pubC, err := c.PublicForKID(context.Background(), v2)
 	require.NoError(t, err)
 	require.Equal(t, pubB, pubC)
 }

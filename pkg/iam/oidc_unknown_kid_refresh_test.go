@@ -185,7 +185,7 @@ func TestOIDCProvider_VerifiesPeerRotationAtOnce(t *testing.T) {
 			if aKid, _, _ := mA.Current(); kid != aKid {
 				t.Fatalf("A signed with %q, want its rotated key %q", kid, aKid)
 			}
-			claims, err := b.provider.parseVerifiedAccessTokenClaims(tok)
+			claims, err := b.provider.parseVerifiedAccessTokenClaims(context.Background(), tok)
 			if err != nil {
 				t.Fatalf("B verifying A's freshly rotated token: %v", err)
 			}
@@ -230,7 +230,7 @@ func TestOIDCProvider_UnknownKIDFloodIsRateLimited(t *testing.T) {
 		if err != nil {
 			t.Fatalf("sign: %v", err)
 		}
-		_, err = node.provider.resolveVerificationKey(tok)
+		_, err = node.provider.resolveVerificationKey(context.Background(), tok)
 		var unknown *UnknownKeyIDError
 		if !errors.As(err, &unknown) || unknown.KID != kid {
 			t.Fatalf("kid %q: got %v, want UnknownKeyIDError", kid, err)
@@ -277,7 +277,7 @@ func TestSigningKeyManager_ConcurrentMissesShareTheInFlightRefresh(t *testing.T)
 	for range lookups {
 		go func() {
 			started.Done()
-			_, err := b.global.PublicForKID(kid)
+			_, err := b.global.PublicForKID(context.Background(), kid)
 			errs <- err
 		}()
 	}
@@ -298,7 +298,7 @@ func TestSigningKeyManager_ConcurrentMissesShareTheInFlightRefresh(t *testing.T)
 		t.Fatalf("%d concurrent lookups read the version records %d times, want one refresh's %d", lookups, got, perRefresh)
 	}
 
-	_, err := b.global.PublicForKID("never-issued-kid")
+	_, err := b.global.PublicForKID(context.Background(), "never-issued-kid")
 	var unknown *UnknownKeyIDError
 	if !errors.As(err, &unknown) {
 		t.Fatalf("later miss: got %v, want UnknownKeyIDError", err)

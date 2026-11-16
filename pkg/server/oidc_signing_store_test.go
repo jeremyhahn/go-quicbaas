@@ -188,7 +188,7 @@ func TestOIDCSigningStore_PeerNodesShareOneKey(t *testing.T) {
 			digest := sha256.Sum256([]byte("platform-token-payload"))
 			sig, err := signerA.Sign(rand.Reader, digest[:], crypto.SHA256)
 			require.NoError(t, err)
-			pub, err := b.PublicForKID(kidA)
+			pub, err := b.PublicForKID(context.Background(), kidA)
 			require.NoError(t, err)
 			ecPub, ok := pub.(*ecdsa.PublicKey)
 			require.True(t, ok)
@@ -278,7 +278,7 @@ func testOIDCTwoNodeRotationRestartAndPeerRotation(t *testing.T, backend string)
 	kv, tx := oidcReplicatedKVOn(t, backend)
 	verifies := func(m *iam.SigningKeyManager, kid string) func() bool {
 		return func() bool {
-			_, err := m.PublicForKID(kid)
+			_, err := m.PublicForKID(context.Background(), kid)
 			return err == nil
 		}
 	}
@@ -294,14 +294,14 @@ func testOIDCTwoNodeRotationRestartAndPeerRotation(t *testing.T, backend string)
 	v2, _, _ := a.Current()
 	require.NotEqual(t, v1, v2)
 	require.Eventually(t, verifies(b, v2), 5*time.Second, 20*time.Millisecond)
-	v2Pub, err := a.PublicForKID(v2)
+	v2Pub, err := a.PublicForKID(context.Background(), v2)
 	require.NoError(t, err)
 
 	// A restarts: it signs with v2 and still verifies its v1 tokens.
 	a = bootOIDCSigningServer(t, &Server{config: &config.Config{}}, kv, tx)
 	kidA, _, _ := a.Current()
 	require.Equal(t, v2, kidA)
-	_, err = a.PublicForKID(v1)
+	_, err = a.PublicForKID(context.Background(), v1)
 	require.NoError(t, err)
 	require.Len(t, a.JWKS().Key(v1), 1)
 
@@ -311,7 +311,7 @@ func testOIDCTwoNodeRotationRestartAndPeerRotation(t *testing.T, backend string)
 	require.NotEqual(t, v1, v3)
 	require.NotEqual(t, v2, v3)
 	require.Eventually(t, verifies(a, v3), 5*time.Second, 20*time.Millisecond)
-	pub, err := a.PublicForKID(v2)
+	pub, err := a.PublicForKID(context.Background(), v2)
 	require.NoError(t, err)
 	require.True(t, v2Pub.(*ecdsa.PublicKey).Equal(pub))
 
@@ -319,7 +319,7 @@ func testOIDCTwoNodeRotationRestartAndPeerRotation(t *testing.T, backend string)
 	c := bootOIDCSigningServer(t, &Server{config: &config.Config{}}, kv, tx)
 	kidC, _, _ := c.Current()
 	require.Equal(t, v3, kidC)
-	pub, err = c.PublicForKID(v2)
+	pub, err = c.PublicForKID(context.Background(), v2)
 	require.NoError(t, err)
 	require.True(t, v2Pub.(*ecdsa.PublicKey).Equal(pub))
 }
@@ -433,7 +433,7 @@ func TestOIDCSigningStore_AdoptsExistingDefaultKey(t *testing.T) {
 		digest := sha256.Sum256([]byte("pre-upgrade-token"))
 		sig, err := oldSigner.Sign(rand.Reader, digest[:], crypto.SHA256)
 		require.NoError(t, err)
-		pub, err := m.PublicForKID(oldKid)
+		pub, err := m.PublicForKID(context.Background(), oldKid)
 		require.NoError(t, err)
 		ecPub, ok := pub.(*ecdsa.PublicKey)
 		require.True(t, ok)
@@ -495,7 +495,7 @@ func TestOIDCSigningStore_TenantAdoptsExistingDefaultKey(t *testing.T) {
 	newKid, _, _ := m.Current()
 	require.NotEqual(t, oldKid, newKid)
 
-	pub, err := m.PublicForKID(oldKid)
+	pub, err := m.PublicForKID(context.Background(), oldKid)
 	require.NoError(t, err)
 	ecPub, ok := pub.(*ecdsa.PublicKey)
 	require.True(t, ok)

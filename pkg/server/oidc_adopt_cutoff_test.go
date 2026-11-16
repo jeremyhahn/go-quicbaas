@@ -79,7 +79,7 @@ func TestOIDCSigningStore_AdoptedKeyStopsAtReplicatedCutoff(t *testing.T) {
 			require.NoError(t, a.Rotate())
 			require.NoError(t, peer.Refresh())
 			verify := func(m *iam.SigningKeyManager) error {
-				pub, err := m.PublicForKID(lKid)
+				pub, err := m.PublicForKID(context.Background(), lKid)
 				if err != nil {
 					return err
 				}

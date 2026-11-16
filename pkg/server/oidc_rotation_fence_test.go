@@ -88,7 +88,7 @@ func TestOIDCSigningStore_StaleLeaseHolderCommitIsFenced(t *testing.T) {
 	c := bootOIDCSigningServer(t, &Server{config: &config.Config{}}, kv, tx)
 	kidC, _, _ := c.Current()
 	require.Equal(t, v2, kidC)
-	_, err := c.PublicForKID(v1)
+	_, err := c.PublicForKID(context.Background(), v1)
 	require.NoError(t, err)
 }
 

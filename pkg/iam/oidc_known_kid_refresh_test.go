@@ -35,7 +35,7 @@ func TestOIDCProvider_KnownKIDLookupTakesRoutineRefresh(t *testing.T) {
 			return err
 		},
 		"signing key manager": func(_ *sharedSigningNode, m *SigningKeyManager, kid string) error {
-			_, err := m.PublicForKID(kid)
+			_, err := m.PublicForKID(context.Background(), kid)
 			return err
 		},
 	}
@@ -105,7 +105,7 @@ func TestSigningKeyManager_KnownKIDFloodIsRateLimited(t *testing.T) {
 	for w := range windows {
 		advance(signingKeyRefreshInterval)
 		for range flood {
-			if _, err := m.PublicForKID(kid); err != nil {
+			if _, err := m.PublicForKID(context.Background(), kid); err != nil {
 				t.Fatalf("window %d: PublicForKID: %v", w, err)
 			}
 			if _, err := node.provider.PublicKeyForKID(context.Background(), kid); err != nil {

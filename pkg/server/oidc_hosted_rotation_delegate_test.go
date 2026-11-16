@@ -89,7 +89,7 @@ func requireHostedRotationRotatesThroughLease(t *testing.T, via hostedRotate) {
 		"exp": time.Now().Add(time.Hour).Unix(),
 	}, iam.SigningAlgorithmES256, v2)
 	require.NoError(t, err)
-	pub, err := b.PublicForKID(v2)
+	pub, err := b.PublicForKID(context.Background(), v2)
 	require.NoError(t, err)
 	_, err = dbxkms.JWTVerifyWithKeyAndClaims(tok, pub, iam.SigningAlgorithmES256)
 	require.NoError(t, err)

@@ -109,10 +109,10 @@ type SigningKeyManager struct {
 	// not hold last re-read the version record, in Unix nanoseconds.
 	lastUnknownKIDRefresh atomic.Int64
 
-	// unknownKIDMu guards unknownKIDFlight, which is closed when the
-	// unknown-kid refresh in flight completes (nil when none is).
+	// unknownKIDMu guards unknownKIDFlight, the unknown-kid refresh in
+	// flight (nil when none is).
 	unknownKIDMu     sync.Mutex
-	unknownKIDFlight chan struct{}
+	unknownKIDFlight *unknownKIDFlight
 }
 
 // RotationLock serializes rotations of one signing key across every node that
@@ -202,6 +202,34 @@ var refreshNow = time.Now
 // unknownKIDRefreshInterval is how often a token naming a key ID this manager
 // does not hold may re-read the key's version record.
 const unknownKIDRefreshInterval = 100 * time.Millisecond
+
+// unknownKIDRefreshTimeout bounds the unknown-kid refresh: a stalled store or
+// a rotation waiting on another node's lease holds the lookups waiting on the
+// refresh no longer than this, since the kid is read before the token's
+// signature is verified and an unauthenticated request can wait there.
+const unknownKIDRefreshTimeout = 3 * time.Second
+
+// unknownKIDRefreshBound is the bound a new unknown-kid refresh runs under;
+// tests shorten it.
+var unknownKIDRefreshBound = unknownKIDRefreshTimeout
+
+// UnknownKIDRefreshTimeoutError is returned to the lookups waiting on an
+// unknown-kid refresh that did not complete within its bound.
+type UnknownKIDRefreshTimeoutError struct {
+	CN      string
+	Timeout time.Duration
+}
+
+func (e *UnknownKIDRefreshTimeoutError) Error() string {
+	return fmt.Sprintf("iam: refresh of signing key %q for an unknown kid did not complete within %v", e.CN, e.Timeout)
+}
+
+// unknownKIDFlight is one unknown-kid refresh in flight: done is closed when
+// it completes or its bound passes, and err is then its outcome.
+type unknownKIDFlight struct {
+	done chan struct{}
+	err  error
+}
 
 // UnknownKeyIDError is returned when a token references a kid that is neither
 // the current key nor a retained previous key.
@@ -689,12 +717,15 @@ func (m *SigningKeyManager) SignerForKID(kid string) (crypto.Signer, error) {
 
 // PublicForKID returns the public key for the given kid, searching the current
 // key and any retained previous keys. It returns UnknownKeyIDError when no key
-// matches.
-func (m *SigningKeyManager) PublicForKID(kid string) (crypto.PublicKey, error) {
+// matches. A kid it does not hold waits on the unknown-kid refresh no longer
+// than ctx allows, and no longer than the refresh's own bound.
+func (m *SigningKeyManager) PublicForKID(ctx context.Context, kid string) (crypto.PublicKey, error) {
 	pub, err := m.refreshedPublicForKID(kid)
 	if errors.As(err, new(*UnknownKeyIDError)) {
 		// The key may have been rotated on another node sharing the backend.
-		m.refreshForUnknownKID()
+		if err := m.refreshForUnknownKID(ctx); err != nil {
+			return nil, err
+		}
 		return m.publicForKID(kid)
 	}
 	return pub, err
@@ -717,36 +748,71 @@ func (m *SigningKeyManager) refreshedPublicForKID(kid string) (crypto.PublicKey,
 // costs one read per interval. A miss arriving while that refresh is in
 // flight waits for it to complete, so concurrent tokens under the same new
 // kid all see the re-read version record.
-func (m *SigningKeyManager) refreshForUnknownKID() {
+//
+// Each waiter, the one that started the refresh included, waits only while
+// its own ctx is live: a canceled request returns ctx's error at once. The
+// refresh runs detached from any one request, so a canceled request does not
+// abort it for the rest, and under unknownKIDRefreshBound, after which its
+// waiters get *UnknownKIDRefreshTimeoutError.
+func (m *SigningKeyManager) refreshForUnknownKID(ctx context.Context) error {
 	if !m.versioned() {
-		return
+		return nil
 	}
 	m.unknownKIDMu.Lock()
-	if flight := m.unknownKIDFlight; flight != nil {
-		m.unknownKIDMu.Unlock()
-		<-flight
-		return
+	flight := m.unknownKIDFlight
+	if flight == nil {
+		now := time.Now().UnixNano()
+		if time.Duration(now-m.lastUnknownKIDRefresh.Load()) < unknownKIDRefreshInterval {
+			m.unknownKIDMu.Unlock()
+			return nil
+		}
+		m.lastUnknownKIDRefresh.Store(now)
+		flight = &unknownKIDFlight{done: make(chan struct{})}
+		m.unknownKIDFlight = flight
+		go m.runUnknownKIDRefresh(context.WithoutCancel(ctx), unknownKIDRefreshBound, flight)
 	}
-	now := time.Now().UnixNano()
-	if time.Duration(now-m.lastUnknownKIDRefresh.Load()) < unknownKIDRefreshInterval {
-		m.unknownKIDMu.Unlock()
-		return
-	}
-	m.lastUnknownKIDRefresh.Store(now)
-	flight := make(chan struct{})
-	m.unknownKIDFlight = flight
 	m.unknownKIDMu.Unlock()
-	defer func() {
-		m.unknownKIDMu.Lock()
-		m.unknownKIDFlight = nil
-		m.unknownKIDMu.Unlock()
-		close(flight)
+	select {
+	case <-flight.done:
+		return flight.err
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+// runUnknownKIDRefresh re-reads the version record for flight under bound,
+// then records the outcome and releases flight's waiters. It releases them
+// when the bound passes even if the re-read is still held, by a stalled
+// store or by a rotation holding rotateMu while it waits on a lease; the
+// re-read then gives up once it gets rotateMu, or finishes on its own.
+func (m *SigningKeyManager) runUnknownKIDRefresh(ctx context.Context, bound time.Duration, flight *unknownKIDFlight) {
+	ctx, cancel := context.WithTimeout(ctx, bound)
+	defer cancel()
+	refreshed := make(chan struct{})
+	go func() {
+		defer close(refreshed)
+		// A rotation or refresh holding rotateMu re-reads the record itself;
+		// waiting for it keeps this miss from failing while it runs.
+		m.rotateMu.Lock()
+		defer m.rotateMu.Unlock()
+		if ctx.Err() != nil {
+			return
+		}
+		_ = m.refreshLocked(ctx)
 	}()
-	// A rotation or refresh holding rotateMu re-reads the record itself;
-	// waiting for it keeps this miss from failing while it runs.
-	m.rotateMu.Lock()
-	defer m.rotateMu.Unlock()
-	_ = m.refreshLocked(context.Background())
+	var err error
+	select {
+	case <-refreshed:
+	case <-ctx.Done():
+	}
+	if ctx.Err() != nil {
+		err = &UnknownKIDRefreshTimeoutError{CN: m.cn, Timeout: bound}
+	}
+	m.unknownKIDMu.Lock()
+	m.unknownKIDFlight = nil
+	m.unknownKIDMu.Unlock()
+	flight.err = err
+	close(flight.done)
 }
 
 // publicForKID looks kid up in the manager's snapshot.
