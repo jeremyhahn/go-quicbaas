@@ -301,6 +301,7 @@ func (r *ToolRegistry) registerTools() {
 				"entityType": map[string]interface{}{"type": "string", "description": "Entity type"},
 				"id":         map[string]interface{}{"type": []string{"integer", "string"}, "description": "Entity ID; a decimal string carries an ID above 2^53 exactly"},
 				"shardID":    map[string]interface{}{"type": "integer", "description": "Target shard ID"},
+				"timeout_ms": map[string]interface{}{"type": "integer", "minimum": 0, "description": "Read timeout in milliseconds (0 = the service default)"},
 			},
 			"required": []string{"entityType", "id"},
 		},
@@ -1748,10 +1749,22 @@ func (r *ToolRegistry) executeGet(ctx context.Context, args map[string]interface
 		return nil, err
 	}
 
+	// The requested read timeout (0 = the service's default) reaches the
+	// service; a malformed or negative one is refused.
+	timeoutKey := "timeout_ms"
+	if _, ok := args[timeoutKey]; !ok {
+		timeoutKey = "timeoutMs"
+	}
+	timeoutMs, err := uint64Arg(args, timeoutKey)
+	if err != nil {
+		return nil, newIntArgError(timeoutKey, err)
+	}
+
 	req := &service.GetRequest{
 		EntityType: entityType,
 		ID:         id,
 		ShardID:    getUint64(args, "shardID"),
+		TimeoutMs:  timeoutMs,
 	}
 	resp, err := r.service.Get(ctx, req)
 	if err != nil {
