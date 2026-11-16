@@ -162,7 +162,7 @@ func TestOIDCSigningStore_RequiresGuardedWrites(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			s := &Server{config: &config.Config{}}
-			err := s.useReplicatedOIDCSigningStore(kv)
+			err := s.useReplicatedOIDCSigningStore(kv, nil)
 			var missing *OIDCSigningStoreGuardedWritesError
 			require.ErrorAs(t, err, &missing)
 		})

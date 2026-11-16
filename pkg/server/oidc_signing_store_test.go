@@ -24,6 +24,8 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	qrdbnode "github.com/jeremyhahn/go-qrdb/sdk/go/node"
+	"github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/config"
@@ -32,13 +34,38 @@ import (
 	dbxkms "github.com/jeremyhahn/go-quicbaas/pkg/xkms"
 )
 
+// oidcReplicatedKV is the replicated store the OIDC signing keys live on in
+// a cluster: the xkms qrdb backend over an embedded, listener-less qrdb
+// node's KV client, with the same client's transaction plane. It builds the
+// node from production config so it compiles under every build tag.
+func oidcReplicatedKV(t *testing.T) (xkmssdk.StorageBackend, transport.TransactionClient) {
+	t.Helper()
+	cfg := &config.Config{}
+	cfg.Storage.Backend = config.StorageBackendMemory
+	cfg.Storage.DataDir = t.TempDir()
+	qcfg, err := buildQRDBConfig(cfg, false)
+	require.NoError(t, err)
+	qcfg.Protocols.REST = false
+	qcfg.Protocols.GRPC = false
+	qcfg.Protocols.QUIC = false
+	qcfg.Protocols.Unix = false
+	qcfg.Protocols.MCP = false
+	serverOpts, _, err := buildXKMSCryptoOptions(cfg, nil, nil, nil)
+	require.NoError(t, err)
+	node, err := qrdbnode.NewStandaloneNode(context.Background(), qcfg, serverOpts)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = node.Close() })
+	client := node.Client()
+	return xkmssdk.NewQRDBStorageBackend(client.KV()), client.Transaction()
+}
+
 // bootOIDCSigningNode simulates one node's boot: a fresh process-global xkms
 // with its own node-local (memory) default backend, the OIDC signing backend
 // registered over kv, and the signing key manager built on it.
-func bootOIDCSigningNode(t *testing.T, kv xkmssdk.StorageBackend) *iam.SigningKeyManager {
+func bootOIDCSigningNode(t *testing.T, kv xkmssdk.StorageBackend, tx transport.TransactionClient) *iam.SigningKeyManager {
 	t.Helper()
 	initOIDCSigningDefault(t)
-	registerOIDCSigningBackend(t, kv)
+	registerOIDCSigningBackend(t, kv, tx)
 
 	m, err := iam.NewSigningKeyManagerFromXKMSBackend(iam.OIDCSigningKeyCN, "", oidcSigningBackendName)
 	require.NoError(t, err)
@@ -81,9 +108,15 @@ func initOIDCSigningDefaultWith(t *testing.T, keyVersions *xkmssdk.KeyVersionSto
 
 // registerOIDCSigningBackend registers the replicated OIDC signing backend
 // over kv.
-func registerOIDCSigningBackend(t *testing.T, kv xkmssdk.StorageBackend) {
+func registerFreshOIDCSigningBackend(t *testing.T) {
 	t.Helper()
-	backend, err := newOIDCSigningServiceBackend(kv)
+	kv, tx := oidcReplicatedKV(t)
+	registerOIDCSigningBackend(t, kv, tx)
+}
+
+func registerOIDCSigningBackend(t *testing.T, kv xkmssdk.StorageBackend, tx transport.TransactionClient) {
+	t.Helper()
+	backend, err := newOIDCSigningServiceBackend(kv, tx)
 	require.NoError(t, err)
 	require.NoError(t, dbxkms.RegisterBackend(oidcSigningBackendName, backend))
 	// The backend's key material changes only under the rotation fence, so
@@ -121,15 +154,15 @@ func TestOIDCSigningStore_PeerNodesShareOneKey(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			kv := xkmssdk.NewStorageMemory()
-			a := bootOIDCSigningNode(t, kv)
+			kv, tx := oidcReplicatedKV(t)
+			a := bootOIDCSigningNode(t, kv, tx)
 			kidA, signerA, _ := a.Current()
 
-			kvB := kv
+			kvB, txB := kv, tx
 			if !tc.shared {
-				kvB = xkmssdk.NewStorageMemory()
+				kvB, txB = oidcReplicatedKV(t)
 			}
-			b := bootOIDCSigningNode(t, kvB)
+			b := bootOIDCSigningNode(t, kvB, txB)
 			kidB, _, _ := b.Current()
 
 			if !tc.sameKeys {
@@ -158,7 +191,8 @@ func TestOIDCSigningStore_PeerNodesShareOneKey(t *testing.T) {
 func TestOIDCSigningStore_RotateOnReplicatedBackend(t *testing.T) {
 	t.Cleanup(dbxkms.Reset)
 
-	m := bootOIDCSigningNode(t, xkmssdk.NewStorageMemory())
+	kv, tx := oidcReplicatedKV(t)
+	m := bootOIDCSigningNode(t, kv, tx)
 	oldKid, _, _ := m.Current()
 
 	require.NoError(t, m.Rotate())
@@ -173,12 +207,12 @@ func TestOIDCSigningStore_RotateOnReplicatedBackend(t *testing.T) {
 // wires it: the xkms service gets the node's own key-version store
 // (Server.keyVersionStore, node-local without a data dir) and the
 // "oidc-replicated" backend goes on the shared replicated KV kv.
-func bootOIDCSigningServer(t *testing.T, s *Server, kv xkmssdk.StorageBackend) *iam.SigningKeyManager {
+func bootOIDCSigningServer(t *testing.T, s *Server, kv xkmssdk.StorageBackend, tx transport.TransactionClient) *iam.SigningKeyManager {
 	t.Helper()
 	keyVersions, err := s.keyVersionStore()
 	require.NoError(t, err)
 	initOIDCSigningDefaultWith(t, keyVersions)
-	require.NoError(t, s.useReplicatedOIDCSigningStore(kv))
+	require.NoError(t, s.useReplicatedOIDCSigningStore(kv, tx))
 
 	m, err := iam.NewSigningKeyManagerFromXKMSBackend(iam.OIDCSigningKeyCN, "", oidcSigningBackendName)
 	require.NoError(t, err)
@@ -190,17 +224,17 @@ func bootOIDCSigningServer(t *testing.T, s *Server, kv xkmssdk.StorageBackend) *
 // OIDC key is replicated with the key.
 func TestOIDCSigningStore_RotationReachesPeerNode(t *testing.T) {
 	t.Cleanup(dbxkms.Reset)
-	kv := xkmssdk.NewStorageMemory()
+	kv, tx := oidcReplicatedKV(t)
 
 	nodeA := &Server{config: &config.Config{}}
-	a := bootOIDCSigningServer(t, nodeA, kv)
+	a := bootOIDCSigningServer(t, nodeA, kv, tx)
 	oldKid, _, _ := a.Current()
 	require.NoError(t, a.Rotate())
 	rotatedKid, _, _ := a.Current()
 	require.NotEqual(t, oldKid, rotatedKid)
 
 	nodeB := &Server{config: &config.Config{}}
-	b := bootOIDCSigningServer(t, nodeB, kv)
+	b := bootOIDCSigningServer(t, nodeB, kv, tx)
 	kidB, _, _ := b.Current()
 	require.Equal(t, rotatedKid, kidB)
 	require.Len(t, b.JWKS().Key(rotatedKid), 1)
@@ -213,7 +247,7 @@ func TestOIDCSigningStore_RotationReachesPeerNode(t *testing.T) {
 // replacing A's, and A picks B's rotation up without a restart.
 func TestOIDCSigningStore_TwoNodeRotationRestartAndPeerRotation(t *testing.T) {
 	t.Cleanup(dbxkms.Reset)
-	kv := xkmssdk.NewStorageMemory()
+	kv, tx := oidcReplicatedKV(t)
 	verifies := func(m *iam.SigningKeyManager, kid string) func() bool {
 		return func() bool {
 			_, err := m.PublicForKID(kid)
@@ -221,8 +255,8 @@ func TestOIDCSigningStore_TwoNodeRotationRestartAndPeerRotation(t *testing.T) {
 		}
 	}
 
-	a := bootOIDCSigningServer(t, &Server{config: &config.Config{}}, kv)
-	b := bootOIDCSigningServer(t, &Server{config: &config.Config{}}, kv)
+	a := bootOIDCSigningServer(t, &Server{config: &config.Config{}}, kv, tx)
+	b := bootOIDCSigningServer(t, &Server{config: &config.Config{}}, kv, tx)
 	v1, _, _ := a.Current()
 	kidB, _, _ := b.Current()
 	require.Equal(t, v1, kidB)
@@ -236,7 +270,7 @@ func TestOIDCSigningStore_TwoNodeRotationRestartAndPeerRotation(t *testing.T) {
 	require.NoError(t, err)
 
 	// A restarts: it signs with v2 and still verifies its v1 tokens.
-	a = bootOIDCSigningServer(t, &Server{config: &config.Config{}}, kv)
+	a = bootOIDCSigningServer(t, &Server{config: &config.Config{}}, kv, tx)
 	kidA, _, _ := a.Current()
 	require.Equal(t, v2, kidA)
 	_, err = a.PublicForKID(v1)
@@ -254,7 +288,7 @@ func TestOIDCSigningStore_TwoNodeRotationRestartAndPeerRotation(t *testing.T) {
 	require.True(t, v2Pub.(*ecdsa.PublicKey).Equal(pub))
 
 	// A node booted now loads v3 as current and A's original v2 material.
-	c := bootOIDCSigningServer(t, &Server{config: &config.Config{}}, kv)
+	c := bootOIDCSigningServer(t, &Server{config: &config.Config{}}, kv, tx)
 	kidC, _, _ := c.Current()
 	require.Equal(t, v3, kidC)
 	pub, err = c.PublicForKID(v2)
@@ -359,7 +393,7 @@ func TestOIDCSigningStore_AdoptsExistingDefaultKey(t *testing.T) {
 		require.NoError(t, err)
 		oldKid, oldSigner, _ := old.Current()
 
-		registerOIDCSigningBackend(t, xkmssdk.NewStorageMemory())
+		registerFreshOIDCSigningBackend(t)
 		m, err := newOIDCSigningKeyManager(oidcSigningBackendName)
 		require.NoError(t, err)
 
@@ -380,7 +414,7 @@ func TestOIDCSigningStore_AdoptsExistingDefaultKey(t *testing.T) {
 
 	t.Run("no default key", func(t *testing.T) {
 		initOIDCSigningDefault(t)
-		registerOIDCSigningBackend(t, xkmssdk.NewStorageMemory())
+		registerFreshOIDCSigningBackend(t)
 		m, err := newOIDCSigningKeyManager(oidcSigningBackendName)
 		require.NoError(t, err)
 		require.Len(t, m.JWKS().Keys, 1)
@@ -422,7 +456,7 @@ func TestOIDCSigningStore_TenantAdoptsExistingDefaultKey(t *testing.T) {
 	sig, err := oldSigner.Sign(rand.Reader, digest[:], crypto.SHA256)
 	require.NoError(t, err)
 
-	registerOIDCSigningBackend(t, xkmssdk.NewStorageMemory())
+	registerFreshOIDCSigningBackend(t)
 	global, err := newOIDCSigningKeyManager(oidcSigningBackendName)
 	require.NoError(t, err)
 	resolver, err := iam.NewTenantSigningKeyResolver(global, dedicatedOIDCSettings{tenantID: true})

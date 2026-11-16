@@ -9,7 +9,6 @@ import (
 	"testing"
 
 	"github.com/jeremyhahn/go-xkms/pkg/api/grpc/proto/xkmsv1"
-	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
 	"google.golang.org/protobuf/proto"
@@ -60,10 +59,10 @@ func (c capturedGRPCServices) call(t *testing.T, service, method string, req pro
 // signing key manager's own rotation still works and reaches the peer.
 func TestOIDCSigningStore_ModuleRotateOfReplicatedKeyChangesNothing(t *testing.T) {
 	t.Cleanup(dbxkms.Reset)
-	kv := xkmssdk.NewStorageMemory()
+	kv, tx := oidcReplicatedKV(t)
 	srvA := &Server{config: &config.Config{}}
-	a := bootOIDCSigningServer(t, srvA, kv)
-	b := bootOIDCSigningServer(t, &Server{config: &config.Config{}}, kv)
+	a := bootOIDCSigningServer(t, srvA, kv, tx)
+	b := bootOIDCSigningServer(t, &Server{config: &config.Config{}}, kv, tx)
 	v1, _, _ := a.Current()
 	before := snapshotKV(t, kv)
 

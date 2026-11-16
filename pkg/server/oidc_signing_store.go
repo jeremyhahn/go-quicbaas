@@ -23,6 +23,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/config"
@@ -36,8 +37,8 @@ const oidcSigningBackendName = "oidc-replicated"
 
 // newOIDCSigningServiceBackend builds the xkms software backend for the OIDC
 // signing keys over kv: keys and certificates under their own prefixes.
-func newOIDCSigningServiceBackend(kv xkmssdk.StorageBackend) (xkmssdk.ServiceBackend, error) {
-	keys, err := newOIDCKeyMaterialStore(kv)
+func newOIDCSigningServiceBackend(kv xkmssdk.StorageBackend, tx transport.TransactionClient) (xkmssdk.ServiceBackend, error) {
+	keys, err := newOIDCKeyMaterialStore(kv, tx)
 	if err != nil {
 		return nil, err
 	}
@@ -59,7 +60,7 @@ const oidcSigningKeysPrefix = "oidc-signing-keys/"
 // newOIDCKeyMaterialStore returns the key storage of oidc-replicated: the
 // oidcSigningKeysPrefix of kv, with every write of key material gated by the
 // rotation fence the context carries, whichever entry point started it.
-func newOIDCKeyMaterialStore(kv xkmssdk.StorageBackend) (*oidcKeyMaterialStore, error) {
+func newOIDCKeyMaterialStore(kv xkmssdk.StorageBackend, tx transport.TransactionClient) (*oidcKeyMaterialStore, error) {
 	keys, err := xkmssdk.NewStoragePrefixBackend(kv, oidcSigningKeysPrefix)
 	if err != nil {
 		return nil, err
@@ -68,7 +69,10 @@ func newOIDCKeyMaterialStore(kv xkmssdk.StorageBackend) (*oidcKeyMaterialStore, 
 	if err != nil {
 		return nil, err
 	}
-	return &oidcKeyMaterialStore{oidcGuardedKV: guarded}, nil
+	if tx == nil {
+		return nil, &OIDCSigningStoreTransactionsError{}
+	}
+	return &oidcKeyMaterialStore{oidcGuardedKV: guarded, tx: tx}, nil
 }
 
 // oidcKeyMaterialStore is the key storage of oidc-replicated. Without the
@@ -78,6 +82,10 @@ func newOIDCKeyMaterialStore(kv xkmssdk.StorageBackend) (*oidcKeyMaterialStore, 
 // ("K--v<n>"), and a Delete are refused with *OIDCRotationUnfencedError.
 type oidcKeyMaterialStore struct {
 	oidcGuardedKV
+
+	// tx is the replicated store's transaction plane: a fenced Delete is
+	// one transaction over the lease, the version record and the bytes.
+	tx transport.TransactionClient
 }
 
 // oidcKeyVersionSuffix is the reserved suffix a rotation version adds to a
@@ -139,7 +147,7 @@ func (s *oidcKeyMaterialStore) Delete(ctx context.Context, key string) error {
 	if !ok {
 		return &OIDCRotationUnfencedError{Key: key, Op: "delete"}
 	}
-	return fence.deleteMaterial(ctx, s.oidcGuardedKV, key)
+	return fence.deleteMaterial(ctx, s.tx, key, oidcSigningKeysPrefix+key)
 }
 
 // Get reads key material; under the rotation fence the bytes read are what
@@ -230,7 +238,7 @@ func (s *Server) oidcSigningStoreType() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if err := s.useReplicatedOIDCSigningStore(xkmssdk.NewQRDBStorageBackend(shardClient.KV())); err != nil {
+	if err := s.useReplicatedOIDCSigningStore(xkmssdk.NewQRDBStorageBackend(shardClient.KV()), shardClient.Transaction()); err != nil {
 		return "", err
 	}
 	return oidcSigningBackendName, nil
@@ -240,12 +248,12 @@ func (s *Server) oidcSigningStoreType() (string, error) {
 // shard KV kv: it registers the "oidc-replicated" backend over kv (once per
 // process), and sends that backend's key-version records to kv too, so a
 // rotation on one node is the current version on every node.
-func (s *Server) useReplicatedOIDCSigningStore(kv xkmssdk.StorageBackend) error {
+func (s *Server) useReplicatedOIDCSigningStore(kv xkmssdk.StorageBackend, tx transport.TransactionClient) error {
 	guarded, err := guardedOIDCStore(kv)
 	if err != nil {
 		return err
 	}
-	backend, err := newOIDCSigningServiceBackend(kv)
+	backend, err := newOIDCSigningServiceBackend(kv, tx)
 	if err != nil {
 		return err
 	}
@@ -573,6 +581,18 @@ func (e *OIDCSigningStoreGuardedWritesError) Error() string {
 		"; the rotation lease and the version-record commit need guarded writes"
 }
 
+// OIDCSigningStoreTransactionsError reports a replicated OIDC signing store
+// without a transaction plane. A fenced delete of key material must check
+// the lease, the version record and the bytes in one transaction; a
+// bytes-only delete would let a stale holder remove a successor's key.
+type OIDCSigningStoreTransactionsError struct{}
+
+// Error implements error.
+func (e *OIDCSigningStoreTransactionsError) Error() string {
+	return "server: replicated oidc signing store lacks a transaction client; " +
+		"a fenced key-material delete needs one transaction over the lease, the version record and the bytes"
+}
+
 // guardedOIDCStore returns kv as an oidcGuardedKV, or
 // *OIDCSigningStoreGuardedWritesError naming the first verb it lacks.
 func guardedOIDCStore(kv xkmssdk.StorageBackend) (oidcGuardedKV, error) {
@@ -654,7 +674,13 @@ var oidcRotationLeaseRenewHook = func(context.Context) {}
 // refused, with the release that stops the renewals and removes this
 // holder's own lease value only.
 func holdOIDCRotationLease(ctx context.Context, kv, versions oidcGuardedKV, key, record, owner string, value []byte, ttl time.Duration) (context.Context, func(), error) {
-	fence := &oidcVersionFence{key: record, store: versions}
+	fence := &oidcVersionFence{
+		key:       record,
+		store:     versions,
+		recordKey: oidcSigningVersionsPrefix + record,
+		leaseKey:  key,
+		lease:     value,
+	}
 	current, err := versions.Get(ctx, record)
 	if err == nil {
 		fence.expected, fence.present = current, true
@@ -668,12 +694,7 @@ func holdOIDCRotationLease(ctx context.Context, kv, versions oidcGuardedKV, key,
 	oidcRotationLeaseAcquiredHook()
 
 	leaseCtx, cancel := context.WithCancel(context.WithValue(ctx, oidcVersionFenceKey{}, fence))
-	var (
-		mu      sync.Mutex
-		held    = value
-		stopped bool
-		done    = make(chan struct{})
-	)
+	done := make(chan struct{})
 	go func() {
 		ticker := time.NewTicker(ttl / 3)
 		defer ticker.Stop()
@@ -686,33 +707,33 @@ func holdOIDCRotationLease(ctx context.Context, kv, versions oidcGuardedKV, key,
 			case <-ticker.C:
 			}
 			oidcRotationLeaseRenewHook(leaseCtx)
-			mu.Lock()
-			if stopped {
-				mu.Unlock()
+			fence.leaseMu.Lock()
+			if fence.stopped {
+				fence.leaseMu.Unlock()
 				return
 			}
 			next := oidcRotationLeaseValue(owner, ttl)
 			renewCtx, cancelRenew := context.WithTimeout(leaseCtx, ttl/3)
-			swapped, _, err := kv.CompareAndSwap(renewCtx, key, held, next)
+			swapped, _, err := kv.CompareAndSwap(renewCtx, key, fence.lease, next)
 			cancelRenew()
 			if err != nil || !swapped {
 				cancel()
-				mu.Unlock()
+				fence.leaseMu.Unlock()
 				return
 			}
-			held = next
-			mu.Unlock()
+			fence.lease = next
+			fence.leaseMu.Unlock()
 		}
 	}()
 	var once sync.Once
 	unlock := func() {
 		once.Do(func() {
-			mu.Lock()
-			defer mu.Unlock()
-			stopped = true
+			fence.leaseMu.Lock()
+			defer fence.leaseMu.Unlock()
+			fence.stopped = true
 			close(done)
 			cancel()
-			_, _ = kv.CompareAndDelete(context.Background(), key, held)
+			_, _ = kv.CompareAndDelete(context.Background(), key, fence.lease)
 		})
 	}
 	return leaseCtx, unlock, nil
@@ -730,6 +751,20 @@ type oidcVersionFence struct {
 	mu       sync.Mutex
 	expected []byte
 	present  bool
+
+	// recordKey and leaseKey are the record's and the lease's keys in the
+	// replicated store itself, as a transaction names them: the record
+	// under oidcSigningVersionsPrefix, the lease under its own prefix.
+	recordKey string
+	leaseKey  string
+
+	// leaseMu guards lease, the lease value this holder last wrote, and
+	// stopped, set once the holder released the lease. A renewal and a
+	// material delete both hold it, so a delete compares the value the
+	// store holds.
+	leaseMu sync.Mutex
+	lease   []byte
+	stopped bool
 
 	// materialMu guards material: per key-material name, the bytes this
 	// holder observed or wrote under it in this rotation.
@@ -789,20 +824,53 @@ func (f *oidcVersionFence) putMaterial(ctx context.Context, kv oidcGuardedKV, ke
 	return nil
 }
 
-// deleteMaterial removes key only while it holds the bytes this holder
-// observed or wrote under it (CompareAndDelete).
-func (f *oidcVersionFence) deleteMaterial(ctx context.Context, kv oidcGuardedKV, key string) error {
+// deleteMaterial removes key, stored as storeKey, in one transaction that
+// holds only while the lease still holds this holder's lease value, the
+// version record still holds the value this fence expects (or is still
+// absent), and key still holds the bytes this holder observed or wrote under
+// it. Bytes alone do not fence a delete: a successor's committed version
+// keeps the bytes a stale holder observed before the commit.
+func (f *oidcVersionFence) deleteMaterial(ctx context.Context, tx transport.TransactionClient, key, storeKey string) error {
 	f.materialMu.Lock()
 	defer f.materialMu.Unlock()
 	known := f.material[key]
 	if !known.present {
 		return &OIDCRotationFencedError{Key: key}
 	}
-	ok, err := kv.CompareAndDelete(ctx, key, known.value)
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	record := transport.Compare{
+		Key:    []byte(f.recordKey),
+		Target: transport.CompareCreateRevision,
+		Result: transport.CompareEqual,
+	}
+	if f.present {
+		record = transport.Compare{
+			Key:    []byte(f.recordKey),
+			Target: transport.CompareValue,
+			Result: transport.CompareEqual,
+			Value:  f.expected,
+		}
+	}
+	f.leaseMu.Lock()
+	defer f.leaseMu.Unlock()
+	// A fence that never took a lease, or whose lease has been released,
+	// holds nothing the transaction could compare against.
+	if f.stopped || f.leaseKey == "" || f.recordKey == "" {
+		return &OIDCRotationFencedError{Key: key}
+	}
+	resp, err := tx.ExecuteTransaction(ctx, &transport.TransactionRequest{
+		Compares: []transport.Compare{
+			{Key: []byte(f.leaseKey), Target: transport.CompareValue, Result: transport.CompareEqual, Value: f.lease},
+			record,
+			{Key: []byte(storeKey), Target: transport.CompareValue, Result: transport.CompareEqual, Value: known.value},
+		},
+		SuccessOps: []transport.Op{{Type: transport.OpDelete, Key: []byte(storeKey)}},
+	})
 	if err != nil {
 		return err
 	}
-	if !ok {
+	if resp == nil || !resp.Succeeded {
 		return &OIDCRotationFencedError{Key: key}
 	}
 	f.material[key] = oidcMaterial{written: known.written}

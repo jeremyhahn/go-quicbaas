@@ -18,12 +18,12 @@ import (
 // (first creation) passes.
 func TestOIDCSigningStore_UnfencedWritesAreRefused(t *testing.T) {
 	ctx := context.Background()
-	kv := xkmssdk.NewStorageMemory()
+	kv, tx := oidcReplicatedKV(t)
 	versions, err := xkmssdk.NewStoragePrefixBackend(kv, oidcSigningVersionsPrefix)
 	require.NoError(t, err)
 	router := newKeyVersionRouter(xkmssdk.NewStorageMemory())
 	router.setReplicated(versions)
-	keys, err := newOIDCKeyMaterialStore(kv)
+	keys, err := newOIDCKeyMaterialStore(kv, tx)
 	require.NoError(t, err)
 
 	record := "system" + oidcSigningVersionSegment + iam.OIDCSigningKeyCN

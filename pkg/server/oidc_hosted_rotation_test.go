@@ -37,9 +37,9 @@ func snapshotKV(t *testing.T, kv xkmssdk.StorageBackend) map[string]string {
 func hostedRotationNodes(t *testing.T) (a, b *iam.SigningKeyManager, kv xkmssdk.StorageBackend, before map[string]string, kid string) {
 	t.Helper()
 	t.Cleanup(dbxkms.Reset)
-	kv = xkmssdk.NewStorageMemory()
-	a = bootOIDCSigningServer(t, &Server{config: &config.Config{}}, kv)
-	b = bootOIDCSigningServer(t, &Server{config: &config.Config{}}, kv)
+	kv, tx := oidcReplicatedKV(t)
+	a = bootOIDCSigningServer(t, &Server{config: &config.Config{}}, kv, tx)
+	b = bootOIDCSigningServer(t, &Server{config: &config.Config{}}, kv, tx)
 	return a, b, kv, snapshotKV(t, kv), oidcSigningBackendName + ":::" + iam.OIDCSigningKeyCN
 }
 

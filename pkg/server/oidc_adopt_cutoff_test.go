@@ -6,7 +6,6 @@ import (
 	"testing"
 	"time"
 
-	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/stretchr/testify/require"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/config"
@@ -56,7 +55,7 @@ func TestOIDCSigningStore_AdoptedKeyStopsAtReplicatedCutoff(t *testing.T) {
 			require.NoError(t, err)
 			lKid, lSigner, _ := legacy.Current()
 
-			registerOIDCSigningBackend(t, xkmssdk.NewStorageMemory())
+			registerFreshOIDCSigningBackend(t)
 			node := func(t *testing.T) *iam.SigningKeyManager {
 				t.Helper()
 				global, err := newOIDCSigningKeyManager(oidcSigningBackendName)
@@ -119,7 +118,7 @@ func TestOIDCSigningStore_AdoptionWithoutCutoffIsRefused(t *testing.T) {
 	initOIDCSigningDefault(t)
 	_, err := iam.NewSigningKeyManagerFromXKMS(iam.OIDCSigningKeyCN, "")
 	require.NoError(t, err)
-	registerOIDCSigningBackend(t, xkmssdk.NewStorageMemory())
+	registerFreshOIDCSigningBackend(t)
 	iam.SetAdoptionCutoffs(oidcSigningBackendName, nil)
 
 	_, err = newOIDCSigningKeyManager(oidcSigningBackendName)

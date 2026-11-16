@@ -10,7 +10,6 @@ import (
 	"crypto/sha256"
 	"testing"
 
-	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/stretchr/testify/require"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
@@ -46,7 +45,7 @@ func TestOIDCSigningStore_AdoptedKeyOutlivesRotationAndRestart(t *testing.T) {
 			require.NoError(t, err)
 			lKid, lSigner, _ := legacy.Current()
 
-			registerOIDCSigningBackend(t, xkmssdk.NewStorageMemory())
+			registerFreshOIDCSigningBackend(t)
 			node := func(t *testing.T) *iam.SigningKeyManager {
 				t.Helper()
 				global, err := newOIDCSigningKeyManager(oidcSigningBackendName)

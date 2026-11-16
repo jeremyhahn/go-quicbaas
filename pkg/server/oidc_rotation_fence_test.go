@@ -8,7 +8,6 @@ import (
 	"testing"
 	"time"
 
-	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/stretchr/testify/require"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/config"
@@ -46,9 +45,9 @@ func setLeaseHooks(t *testing.T, acquired func(), renew func(context.Context)) {
 // them, is as B left it.
 func TestOIDCSigningStore_StaleLeaseHolderCommitIsFenced(t *testing.T) {
 	t.Cleanup(dbxkms.Reset)
-	kv := xkmssdk.NewStorageMemory()
-	a := bootOIDCSigningServer(t, &Server{config: &config.Config{}}, kv)
-	b := bootOIDCSigningServer(t, &Server{config: &config.Config{}}, kv)
+	kv, tx := oidcReplicatedKV(t)
+	a := bootOIDCSigningServer(t, &Server{config: &config.Config{}}, kv, tx)
+	b := bootOIDCSigningServer(t, &Server{config: &config.Config{}}, kv, tx)
 	v1, _, _ := a.Current()
 	shortLeaseTTL(t, 300*time.Millisecond)
 
@@ -86,7 +85,7 @@ func TestOIDCSigningStore_StaleLeaseHolderCommitIsFenced(t *testing.T) {
 		require.Equal(t, v, after[k], k)
 	}
 
-	c := bootOIDCSigningServer(t, &Server{config: &config.Config{}}, kv)
+	c := bootOIDCSigningServer(t, &Server{config: &config.Config{}}, kv, tx)
 	kidC, _, _ := c.Current()
 	require.Equal(t, v2, kidC)
 	_, err := c.PublicForKID(v1)
@@ -130,8 +129,8 @@ func TestOIDCRotationLock_LostRenewalCancelsContext(t *testing.T) {
 // rotation whose lease is already lost writes nothing.
 func TestOIDCSigningStore_RotateRunsUnderLeaseContext(t *testing.T) {
 	t.Cleanup(dbxkms.Reset)
-	kv := xkmssdk.NewStorageMemory()
-	a := bootOIDCSigningServer(t, &Server{config: &config.Config{}}, kv)
+	kv, tx := oidcReplicatedKV(t)
+	a := bootOIDCSigningServer(t, &Server{config: &config.Config{}}, kv, tx)
 	before := snapshotKV(t, kv)
 	t.Cleanup(func() { iam.SetRotationLock(oidcSigningBackendName, nil) })
 	iam.SetRotationLock(oidcSigningBackendName, func(ctx context.Context, _, _ string) (context.Context, func(), error) {

@@ -25,9 +25,9 @@ import (
 // loads it, and later rotations from either node succeed.
 func TestOIDCSigningStore_StaleHolderCleanupKeepsPeerKey(t *testing.T) {
 	t.Cleanup(dbxkms.Reset)
-	kv := xkmssdk.NewStorageMemory()
-	a := bootOIDCSigningServer(t, &Server{config: &config.Config{}}, kv)
-	b := bootOIDCSigningServer(t, &Server{config: &config.Config{}}, kv)
+	kv, tx := oidcReplicatedKV(t)
+	a := bootOIDCSigningServer(t, &Server{config: &config.Config{}}, kv, tx)
+	b := bootOIDCSigningServer(t, &Server{config: &config.Config{}}, kv, tx)
 	v1, _, _ := a.Current()
 
 	guarded, err := guardedOIDCStore(kv)
@@ -40,7 +40,7 @@ func TestOIDCSigningStore_StaleHolderCleanupKeepsPeerKey(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(unlockA)
 
-	backendA, err := newOIDCSigningServiceBackend(kv)
+	backendA, err := newOIDCSigningServiceBackend(kv, tx)
 	require.NoError(t, err)
 	listed, err := backendA.ListKeys(ctxA)
 	require.NoError(t, err)
@@ -80,7 +80,7 @@ func TestOIDCSigningStore_StaleHolderCleanupKeepsPeerKey(t *testing.T) {
 	require.ErrorAs(t, backendA.DeleteKey(ctxA, &next), &fenced)
 	require.Equal(t, afterB, snapshotKV(t, kv), "the stale holder's cleanup changed the store")
 
-	c := bootOIDCSigningServer(t, &Server{config: &config.Config{}}, kv)
+	c := bootOIDCSigningServer(t, &Server{config: &config.Config{}}, kv, tx)
 	kidC, _, _ := c.Current()
 	require.Equal(t, v2, kidC)
 	pubC, err := c.PublicForKID(v2)
@@ -103,16 +103,29 @@ func TestOIDCSigningStore_StaleHolderCleanupKeepsPeerKey(t *testing.T) {
 // it, is refused with *OIDCRotationFencedError and left in place.
 func TestOIDCSigningStore_FencedDeleteOfUnseenMaterialIsRefused(t *testing.T) {
 	ctx := context.Background()
-	kv := xkmssdk.NewStorageMemory()
-	keys, err := newOIDCKeyMaterialStore(kv)
+	kv, tx := oidcReplicatedKV(t)
+	keys, err := newOIDCKeyMaterialStore(kv, tx)
 	require.NoError(t, err)
 	_, err = keys.PutIfAbsent(ctx, "unseen", []byte("peer"))
 	require.NoError(t, err)
 	_, err = keys.PutIfAbsent(ctx, "changed", []byte("old"))
 	require.NoError(t, err)
 
-	fenced := context.WithValue(ctx, oidcVersionFenceKey{}, &oidcVersionFence{key: "record"})
 	var refused *OIDCRotationFencedError
+	leaseless := context.WithValue(ctx, oidcVersionFenceKey{}, &oidcVersionFence{key: "record"})
+	_, err = keys.Get(leaseless, "unseen")
+	require.NoError(t, err)
+	require.ErrorAs(t, keys.Delete(leaseless, "unseen"), &refused, "a fence that holds no lease cannot delete")
+
+	guarded, err := guardedOIDCStore(kv)
+	require.NoError(t, err)
+	versions, err := xkmssdk.NewStoragePrefixBackend(kv, oidcSigningVersionsPrefix)
+	require.NoError(t, err)
+	guardedVersions, err := guardedOIDCStore(versions)
+	require.NoError(t, err)
+	fenced, unlock, err := newOIDCRotationLock(guarded, guardedVersions)(ctx, "", iam.OIDCSigningKeyCN)
+	require.NoError(t, err)
+	t.Cleanup(unlock)
 	require.ErrorAs(t, keys.Delete(fenced, "unseen"), &refused)
 	_, err = keys.Get(fenced, "changed")
 	require.NoError(t, err)

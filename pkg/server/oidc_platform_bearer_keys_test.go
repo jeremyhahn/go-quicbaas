@@ -19,7 +19,6 @@ import (
 	"testing"
 	"time"
 
-	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/stretchr/testify/require"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/config"
@@ -117,7 +116,7 @@ func TestPlatformValidator_AdoptedKeyStopsAtCutoff(t *testing.T) {
 			legacy, err := iam.NewSigningKeyManagerFromXKMS(iam.OIDCSigningKeyCN, tenantID)
 			require.NoError(t, err)
 			lKid, lSigner, _ := legacy.Current()
-			registerOIDCSigningBackend(t, xkmssdk.NewStorageMemory())
+			registerFreshOIDCSigningBackend(t)
 
 			a, peer := newPlatformBearerNode(t, tenantID), newPlatformBearerNode(t, tenantID)
 			mintTenant := tenantID
@@ -156,7 +155,7 @@ func TestPlatformValidator_PeerRotationAcceptedAtOnce(t *testing.T) {
 	for name, tenantID := range map[string]string{"global key": "", "dedicated tenant key": "tenant-dedicated"} {
 		t.Run(name, func(t *testing.T) {
 			initOIDCSigningDefault(t)
-			registerOIDCSigningBackend(t, xkmssdk.NewStorageMemory())
+			registerFreshOIDCSigningBackend(t)
 			mintTenant := tenantID
 			if mintTenant == "" {
 				mintTenant = "ordinary-tenant"

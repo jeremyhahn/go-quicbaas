@@ -17,7 +17,6 @@ import (
 	"context"
 	"testing"
 
-	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/stretchr/testify/require"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
@@ -34,7 +33,7 @@ func TestOIDCSigningStore_TenantIDShapedLikeAVersionCreatesItsFirstKey(t *testin
 	t.Cleanup(dbxkms.Reset)
 	const tenantID = "tenant--v2"
 	initOIDCSigningDefault(t)
-	registerOIDCSigningBackend(t, xkmssdk.NewStorageMemory())
+	registerFreshOIDCSigningBackend(t)
 
 	m, err := iam.NewSigningKeyManagerFromXKMSBackend(iam.OIDCSigningKeyCN, tenantID, oidcSigningBackendName)
 	require.NoError(t, err, "the tenant's first signing key")
@@ -46,7 +45,8 @@ func TestOIDCSigningStore_TenantIDShapedLikeAVersionCreatesItsFirstKey(t *testin
 
 	// On the store itself: the version suffix is read from the common-name
 	// segment only, so real version names stay refused without the fence.
-	keys, err := newOIDCKeyMaterialStore(xkmssdk.NewStorageMemory())
+	kv, tx := oidcReplicatedKV(t)
+	keys, err := newOIDCKeyMaterialStore(kv, tx)
 	require.NoError(t, err)
 	ctx := context.Background()
 	ok, err := keys.PutIfAbsent(ctx, "keys/"+tenantID+":software:signing:oidc-signing:ecdsa.key", []byte("m1"))
