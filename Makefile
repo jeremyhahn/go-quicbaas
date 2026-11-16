@@ -1348,7 +1348,7 @@ IAM_TEST_TAGS := $(TEST_TAGS)
 # TEST_CHECKS are the repository validations every unit-test pass runs first.
 # Both `test` and `coverage` (the CI test stage) list this one variable, so
 # CI cannot drop a check that `make test` runs.
-TEST_CHECKS := check-insecure-tls check-build-tags check-coded-sentinels check-local-keygen check-case-collisions check-library-pins check-workspace-script check-package-targets
+TEST_CHECKS := check-insecure-tls check-build-tags check-coded-sentinels check-local-keygen check-case-collisions check-library-pins check-workspace-script check-package-targets check-ci-image-cache
 
 .PHONY: test
 test: $(TEST_CHECKS) ## Run unit tests (excludes integration tests)
@@ -1418,6 +1418,13 @@ check-package-targets: ## Fail if a per-package make target does not reach its n
 	@echo "$(BLUE)Checking per-package make targets resolve nested packages...$(NC)"
 	@TEST_TAGS='$(TEST_TAGS)' IAM_TEST_TAGS='$(IAM_TEST_TAGS)' MAKE='$(MAKE)' sh scripts/resolve-package_test.sh
 	@MAKE='$(MAKE)' sh scripts/package-targets-exit_test.sh
+
+.PHONY: check-ci-image-cache
+# scripts/ci-image-cache_test.sh drives scripts/ci-image-cache.sh against stub
+# docker and make binaries, so the CI_IMAGE_REGISTRY cache path is proven
+# without a daemon or a registry (#2503).
+check-ci-image-cache: ## Prove ci-image-cache.sh's registry cache path against stub docker
+	@bash scripts/ci-image-cache_test.sh
 
 .PHONY: check-local-keygen
 # go-xkms owns keys and certificates for the whole stack; go-quicbaas composes

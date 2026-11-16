@@ -41,6 +41,59 @@ set -euo pipefail
 
 die() { echo "ci-image-cache: $*" >&2; exit 1; }
 
+# v3 (#2503): a plain registry named by CI_IMAGE_REGISTRY (the repository
+# Actions variable, host[:port]) is read first, before any GITHUB_SERVER_URL
+# logic, so the cache works on github.com too. On that path there is no
+# login and no credential: pull and push go through an empty DOCKER_CONFIG.
+# The ref is $CI_IMAGE_REGISTRY/go-quicbaas-toolchain:<hash>, <hash> the part
+# after the colon of `make -s toolchain-image`. pull and push always exit 0
+# there and print one line at most:
+#   pulled <ref> <digest> | miss, built and pushed <ref> | miss, built, push failed
+#
+#   ci-image-cache.sh push                 after `make docker-build`: push the
+#                                          locally built toolchain image to
+#                                          $CI_IMAGE_REGISTRY unless this job
+#                                          pulled it; with no CI_IMAGE_REGISTRY
+#                                          it does nothing
+#
+# publish is unchanged, and with CI_IMAGE_REGISTRY unset pull is unchanged.
+reg=${CI_IMAGE_REGISTRY:-}
+case ${1:-} in
+  pull | push)
+    [ -n "$reg" ] || [ "$1" = pull ] || exit 0
+    if [ -n "$reg" ]; then
+      local_tag=$(make -s toolchain-image 2>/dev/null) || exit 0
+      case $local_tag in
+        *:*) ;;
+        *) exit 0 ;;
+      esac
+      hash=${local_tag##*:}
+      ref="$reg/go-quicbaas-toolchain:$hash"
+      marker="${RUNNER_TEMP:-/tmp}/ci-image-cache-pulled-$hash"
+      cfg=$(mktemp -d) || exit 0
+      trap 'rmdir "$cfg" 2>/dev/null || true' EXIT
+      if [ "$1" = pull ]; then
+        rm -f "$marker"
+        docker image inspect "$local_tag" >/dev/null 2>&1 && exit 0
+        DOCKER_CONFIG=$cfg timeout 300 docker pull -q "$ref" >/dev/null 2>&1 || exit 0
+        docker tag "$ref" "$local_tag" >/dev/null 2>&1 || exit 0
+        digest=$(docker image inspect --format '{{index .RepoDigests 0}}' "$ref" 2>/dev/null) || digest=unknown
+        : > "$marker" 2>/dev/null || true
+        echo "pulled $ref ${digest:-unknown}"
+        exit 0
+      fi
+      [ -e "$marker" ] && exit 0
+      if docker tag "$local_tag" "$ref" >/dev/null 2>&1 \
+        && DOCKER_CONFIG=$cfg timeout 300 docker push -q "$ref" >/dev/null 2>&1; then
+        echo "miss, built and pushed $ref"
+      else
+        echo "miss, built, push failed"
+      fi
+      exit 0
+    fi
+    ;;
+esac
+
 case ${GITHUB_SERVER_URL:-} in
   '' | https://github.com) echo "ci-image-cache: no forge registry on this host; nothing to do"; exit 0 ;;
 esac
