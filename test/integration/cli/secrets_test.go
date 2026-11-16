@@ -89,11 +89,11 @@ func TestSecretsPutRawFromFile(t *testing.T) {
 		}
 		runner.RunAndAssert(put)
 
-		stdout, stderr, err := runner.Run(SecretsGetCommand(secretPath, 0))
+		stdout, stderr, err := runner.Run(SecretsGetOnEveryTransportCommand(secretPath))
 		require.NoError(t, err, "secrets get: %s", stderr)
 		assert.Equal(t, raw, stdout, "the raw bytes read back verbatim")
 
-		runner.Run(SecretsDeleteCommand(secretPath, true))
+		runner.Run(SecretsRoundTripCleanupCommand(runner.transport, secretPath))
 	})
 }
 
@@ -113,7 +113,7 @@ func TestSecretsPutRawFromFileJSONObject(t *testing.T) {
 		}
 		runner.RunAndAssert(put)
 
-		get := SecretsGetCommand(secretPath, 0)
+		get := SecretsGetOnEveryTransportCommand(secretPath)
 		stdout, stderr, err := runner.Run(get)
 		require.NoError(t, err, "secrets get: %s", stderr)
 		assert.Equal(t, raw, stdout, "the JSON file reads back verbatim")
@@ -123,7 +123,7 @@ func TestSecretsPutRawFromFileJSONObject(t *testing.T) {
 		require.NoError(t, err, "secrets get --output raw: %s", stderr)
 		assert.Equal(t, raw, stdout, "--output raw is the file verbatim")
 
-		runner.Run(SecretsDeleteCommand(secretPath, true))
+		runner.Run(SecretsRoundTripCleanupCommand(runner.transport, secretPath))
 	})
 }
 

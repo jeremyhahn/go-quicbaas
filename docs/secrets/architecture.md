@@ -274,7 +274,13 @@ one (nine older ones when the policy names none), so a policy that runs for
 years keeps a bounded history. Independently, the Manager prunes every secret
 to `secrets.versioning.max_versions` after each write (0 keeps every version).
 A pruned version reads as destroyed (memory and encrypted backends) or not
-found (KV backend). The scheduler dispatches the handler only for its reserved
+found (KV backend). Pruning is arbitrated by the backing store: the KV backend
+compare-and-deletes the exact records it scanned, and the encrypted backend
+compare-and-swaps the history it read, so a prune never deletes a version
+another node recreated or revives a secret another instance deleted. A store
+without those verbs keeps every version (`ErrPruneUnsupported`). A latest-version
+read that loses its version to a concurrent prune is retried and returns the
+version that replaced it. The scheduler dispatches the handler only for its reserved
 system job: a tenant job that names it is refused before any secret is read.
 
 The tables live in `pkg/api/rest/routes_permissions_generated.go`,
