@@ -28,6 +28,8 @@ import (
 	"time"
 
 	"github.com/go-jose/go-jose/v4"
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+	"github.com/jeremyhahn/go-xkms/pkg/keyversion"
 	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/jeremyhahn/go-xkms/sdk/go/transport"
 
@@ -232,6 +234,20 @@ func (e *SigningKeyRotationUnsupportedError) Error() string {
 
 // PublicKeyMarshalError is returned when a public key cannot be serialized for
 // kid derivation.
+// SystemRotationAmbiguousError is returned by Rotate for the system key when
+// keys of other tenants share its common name in the same backend. xkms
+// resolves a rotation by common name alone and would take the first such key,
+// which may be a tenant's, so the system key cannot be named exactly and the
+// rotation is refused before anything is written.
+type SystemRotationAmbiguousError struct {
+	CN      string
+	Tenants []string
+}
+
+func (e *SystemRotationAmbiguousError) Error() string {
+	return fmt.Sprintf("iam: system rotation of key %q refused: tenants %v hold keys with the same common name", e.CN, e.Tenants)
+}
+
 type PublicKeyMarshalError struct {
 	Cause error
 }
@@ -833,6 +849,14 @@ func (m *SigningKeyManager) Rotate() error {
 	// the replicated OIDC store), which a parsed key ID string does not.
 	ctx := context.Background()
 
+	// A system rotation must name the system-owned key exactly; it is
+	// checked before the lease is taken, so a refusal writes nothing.
+	if isSystemTenant(m.tenantID) {
+		if err := m.requireExactSystemKey(ctx); err != nil {
+			return err
+		}
+	}
+
 	// Nodes sharing the backend rotate the key one at a time, each from the
 	// version record the last rotation left: a node rotating from a stale
 	// record would take another node's version for an orphan and replace it.
@@ -902,6 +926,50 @@ func (m *SigningKeyManager) Rotate() error {
 		previous: previous,
 		adopted:  prev.adopted,
 	})
+	return nil
+}
+
+// isSystemTenant reports whether tenantID names the system tenant, however
+// spelled.
+func isSystemTenant(tenantID string) bool {
+	return tenantID == "" || qrdbsdk.IsSystemTenant(tenantID)
+}
+
+// requireExactSystemKey refuses a system rotation the xkms common-name lookup
+// could resolve to another tenant's key: RotateKey takes the first key in the
+// backend with the common name, so the system key is named exactly only when
+// no other tenant holds a key, or a version of one, with that name. There is
+// no fallback to the ambiguous lookup.
+func (m *SigningKeyManager) requireExactSystemKey(ctx context.Context) error {
+	svc, err := xkmssdk.Get()
+	if err != nil {
+		return err
+	}
+	name := m.storeType
+	if name == "" {
+		name = svc.DefaultBackendName()
+	}
+	b, err := svc.LookupBackend(name)
+	if err != nil {
+		return err
+	}
+	keys, err := b.ListKeys(ctx)
+	if err != nil {
+		return err
+	}
+	var tenants []string
+	for _, attrs := range keys {
+		if attrs == nil || keyversion.BaseKeyID(attrs.CN) != m.cn || isSystemTenant(attrs.TenantID) {
+			continue
+		}
+		if !slices.Contains(tenants, attrs.TenantID) {
+			tenants = append(tenants, attrs.TenantID)
+		}
+	}
+	if len(tenants) > 0 {
+		slices.Sort(tenants)
+		return &SystemRotationAmbiguousError{CN: m.cn, Tenants: tenants}
+	}
 	return nil
 }
 
