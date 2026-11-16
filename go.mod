@@ -37,7 +37,7 @@ require (
 	github.com/jeremyhahn/go-signal v0.2.0-alpha // held: #1389, the go-qrdb/go-xkms stack pin bump
 	github.com/jeremyhahn/go-xkms v0.49.1-alpha // held: #1389, the go-qrdb/go-xkms stack pin bump
 	github.com/jeremyhahn/go-xkms/sdk/go v0.49.1-alpha // held: #1389, the go-qrdb/go-xkms stack pin bump
-	github.com/klauspost/compress v1.20.3
+	github.com/klauspost/compress v1.20.4
 	github.com/lestrrat-go/jwx/v2 v2.1.7
 	github.com/mark3labs/mcp-go v0.45.0 // held: v1.3.0 released 2026-10-14, under 7 days old (#1704)
 	github.com/minio/blake2b-simd v0.0.0-20160723061019-3f5f724cb5b1
