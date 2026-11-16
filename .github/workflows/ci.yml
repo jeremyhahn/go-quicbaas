@@ -977,6 +977,8 @@ jobs:
       # v1.30 (fix 1): the registry cache first. A miss, or an unreachable
       # registry, falls through to the local build below.
       - name: Pull the toolchain image from the registry cache
+        env:
+          CI_IMAGE_REGISTRY: ${{ vars.CI_IMAGE_REGISTRY }}
         run: scripts/ci-image-cache.sh pull || true
 
       # v1.30: the toolchain image alone (`make docker-build-toolchain`,
@@ -987,6 +989,12 @@ jobs:
           make docker-build-toolchain MODULE_ENV_FILE="$RUNNER_TEMP/gomodauth.env"
           rm -f "$RUNNER_TEMP/gomodauth.env"
           echo "TOOLCHAIN_IMAGE=$(make -s toolchain-image)" >> "$GITHUB_ENV"
+
+      # #2503: a miss pushes the built toolchain image to CI_IMAGE_REGISTRY.
+      - name: Push the toolchain image to the registry cache
+        env:
+          CI_IMAGE_REGISTRY: ${{ vars.CI_IMAGE_REGISTRY }}
+        run: scripts/ci-image-cache.sh push || true
 
       # v1.22: bound this repo's cache volumes. It never fails the job.
       - name: Trim the CI caches
@@ -1224,6 +1232,8 @@ jobs:
       # v1.30 (fix 1): the toolchain image from the registry cache first, so
       # make docker-build builds the integration image alone.
       - name: Pull the toolchain image from the registry cache
+        env:
+          CI_IMAGE_REGISTRY: ${{ vars.CI_IMAGE_REGISTRY }}
         run: scripts/ci-image-cache.sh pull || true
 
       - name: Build the devcontainer images
@@ -1232,6 +1242,12 @@ jobs:
           make docker-build MODULE_ENV_FILE="$RUNNER_TEMP/gomodauth.env" IT_IMAGE="$IT_IMAGE"
           rm -f "$RUNNER_TEMP/gomodauth.env"
           echo "TOOLCHAIN_IMAGE=$(make -s toolchain-image)" >> "$GITHUB_ENV"
+
+      # #2503: a miss pushes the built toolchain image to CI_IMAGE_REGISTRY.
+      - name: Push the toolchain image to the registry cache
+        env:
+          CI_IMAGE_REGISTRY: ${{ vars.CI_IMAGE_REGISTRY }}
+        run: scripts/ci-image-cache.sh push || true
 
       # v1.22: bound this repo's cache volumes on the host before the stages
       # add to them (ci-standard.md §6). It never fails the job.
@@ -1690,6 +1706,8 @@ jobs:
       # integration image.
       - name: Pull the toolchain image from the registry cache
         if: ${{ steps.probe.outputs.has_target == 'true' }}
+        env:
+          CI_IMAGE_REGISTRY: ${{ vars.CI_IMAGE_REGISTRY }}
         run: scripts/ci-image-cache.sh pull || true
 
       - name: Build the toolchain image
@@ -1699,6 +1717,13 @@ jobs:
           make docker-build-toolchain MODULE_ENV_FILE="$RUNNER_TEMP/gomodauth.env"
           rm -f "$RUNNER_TEMP/gomodauth.env"
           echo "TOOLCHAIN_IMAGE=$(make -s toolchain-image)" >> "$GITHUB_ENV"
+
+      # #2503: a miss pushes the built toolchain image to CI_IMAGE_REGISTRY.
+      - name: Push the toolchain image to the registry cache
+        if: ${{ steps.probe.outputs.has_target == 'true' }}
+        env:
+          CI_IMAGE_REGISTRY: ${{ vars.CI_IMAGE_REGISTRY }}
+        run: scripts/ci-image-cache.sh push || true
 
       # v1.22: bound this repo's cache volumes (as in the image job). It never
       # fails the job and keeps every volume a container mounts.
