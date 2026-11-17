@@ -86,9 +86,11 @@ type Storage struct {
 	// here and the pass runs again after reconcileInterval.
 	reconcileErr error
 
-	// tenantCursor is where the due scan starts in the tenant list; each
-	// sweep advances it, so a tenant with more due jobs than the limit
-	// cannot starve the tenants after it.
+	// tenantCursor is where the due scan starts in its rotation over the
+	// system namespace and the tenants; each sweep advances it, so each
+	// namespace, the system one included, is first within len(tenants)+1
+	// sweeps, and neither due system jobs nor a tenant with more due jobs
+	// than the limit can starve the namespaces after it.
 	tenantCursor atomic.Uint64
 }
 
@@ -497,37 +499,7 @@ func (s *Storage) GetJobsDueForExecution(ctx context.Context, before time.Time, 
 			(filter == nil || filter(job))
 	}
 
-	// Scan system jobs prefix for pending jobs
 	dueJobs := make([]*scheduler.Job, 0)
-
-	err := s.kv.Scan(ctx, SystemJobsPrefix, func(key string, value []byte) error {
-		// The store does not check ctx between entries: a canceled or
-		// expired sweep stops here rather than at the end of the prefix.
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-		var job scheduler.Job
-		if err := json.Unmarshal(value, &job); err != nil {
-			// Skip malformed entries
-			return nil
-		}
-
-		if eligible(&job) {
-			dueJobs = append(dueJobs, &job)
-			if len(dueJobs) >= limit {
-				return ErrLimitReached
-			}
-		}
-
-		return nil
-	})
-
-	if err != nil && !errors.Is(err, ErrLimitReached) {
-		return nil, &scheduler.ErrStorageError{Op: "GetJobsDueForExecution.scan", Cause: err}
-	}
-	if len(dueJobs) >= limit {
-		return dueJobs, nil
-	}
 
 	// Older nodes in a rolling upgrade can still write tenant jobs without
 	// an index entry, so the index is reconciled periodically, not only at
@@ -548,7 +520,7 @@ func (s *Storage) GetJobsDueForExecution(ctx context.Context, before time.Time, 
 	// retained job.
 	indexed := make(map[string]map[uint64]struct{})
 	var tenants []string
-	err = s.kv.Scan(ctx, TenantJobIndexPrefix, func(key string, value []byte) error {
+	err := s.kv.Scan(ctx, TenantJobIndexPrefix, func(key string, value []byte) error {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
@@ -570,16 +542,45 @@ func (s *Storage) GetJobsDueForExecution(ctx context.Context, before time.Time, 
 		return nil, &scheduler.ErrStorageError{Op: "GetJobsDueForExecution.index_scan", Cause: err}
 	}
 
-	// The scan starts at a rotating tenant and wraps around, so each tenant
-	// is first within len(tenants) sweeps. The list is sorted so its order
-	// does not depend on the store's iteration order.
+	// The scan walks the system namespace and every tenant as one rotation:
+	// it starts at a rotating entry and wraps around, so each namespace,
+	// the system one included, is first within len(tenants)+1 sweeps, and
+	// recurring system jobs that stay due cannot starve the tenants. The
+	// tenant list is sorted so its order does not depend on the store's
+	// iteration order.
 	slices.Sort(tenants)
-	start := 0
-	if len(tenants) > 0 {
-		start = int((s.tenantCursor.Add(1) - 1) % uint64(len(tenants)))
-	}
-	for i := range tenants {
-		tenantID := tenants[(start+i)%len(tenants)]
+	entries := len(tenants) + 1
+	start := int((s.tenantCursor.Add(1) - 1) % uint64(entries))
+	for i := 0; i < entries && len(dueJobs) < limit; i++ {
+		entry := (start + i) % entries
+		if entry == 0 {
+			err := s.kv.Scan(ctx, SystemJobsPrefix, func(key string, value []byte) error {
+				// The store does not check ctx between entries: a canceled or
+				// expired sweep stops here rather than at the end of the prefix.
+				if err := ctx.Err(); err != nil {
+					return err
+				}
+				var job scheduler.Job
+				if err := json.Unmarshal(value, &job); err != nil {
+					// Skip malformed entries
+					return nil
+				}
+
+				if eligible(&job) {
+					dueJobs = append(dueJobs, &job)
+					if len(dueJobs) >= limit {
+						return ErrLimitReached
+					}
+				}
+
+				return nil
+			})
+			if err != nil && !errors.Is(err, ErrLimitReached) {
+				return nil, &scheduler.ErrStorageError{Op: "GetJobsDueForExecution.scan", Cause: err}
+			}
+			continue
+		}
+		tenantID := tenants[entry-1]
 		ids := indexed[tenantID]
 		err := s.kv.Scan(ctx, recordNamespace(tenantID)+"scheduler/jobs/", func(key string, value []byte) error {
 			if err := ctx.Err(); err != nil {

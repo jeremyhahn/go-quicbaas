@@ -92,7 +92,8 @@ func TestGetJobsDueForExecution_BusyTenantDoesNotStarveOthers(t *testing.T) {
 		t.Fatalf("CreateJob zeta: %v", err)
 	}
 
-	const tenants = 2
+	// The rotation covers the system namespace and both tenants.
+	const tenants = 2 + 1
 	for sweep := 0; sweep < tenants; sweep++ {
 		// acme's jobs stay due: nothing dispatches them between sweeps.
 		due, err := storage.GetJobsDueForExecution(ctx, now, limit)
@@ -109,6 +110,46 @@ func TestGetJobsDueForExecution_BusyTenantDoesNotStarveOthers(t *testing.T) {
 		}
 	}
 	t.Fatalf("zeta's due job was not returned within %d sweeps", tenants)
+}
+
+// A system job that stays due on every sweep must not starve a tenant's
+// job: the system namespace is one entry of the rotation, so with limit 1
+// two sweeps return each job once.
+func TestGetJobsDueForExecution_DueSystemJobDoesNotStarveTenants(t *testing.T) {
+	ctx := context.Background()
+	kv := newMockKVStore()
+	storage := NewStorage(kv)
+	if err := storage.InitializeJobIDCounter(ctx); err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	now := time.Now()
+
+	system := createTestJob("system-due", scheduler.OwnerTypeSystem, "")
+	system.NextRun = now.Add(-time.Minute)
+	if err := storage.CreateJob(ctx, system); err != nil {
+		t.Fatalf("CreateJob system: %v", err)
+	}
+	tenant := createTestJob("acme-grace", scheduler.OwnerTypeTenant, "acme")
+	tenant.NextRun = now.Add(-time.Minute)
+	if err := storage.CreateJob(ctx, tenant); err != nil {
+		t.Fatalf("CreateJob tenant: %v", err)
+	}
+
+	seen := map[string]int{}
+	for sweep := 0; sweep < 2; sweep++ {
+		// Both jobs stay due: nothing dispatches them between sweeps.
+		due, err := storage.GetJobsDueForExecution(ctx, now, 1)
+		if err != nil {
+			t.Fatalf("sweep %d: %v", sweep, err)
+		}
+		if len(due) != 1 {
+			t.Fatalf("sweep %d = %v, want one job", sweep, jobNames(due))
+		}
+		seen[due[0].Name]++
+	}
+	if seen["system-due"] != 1 || seen["acme-grace"] != 1 {
+		t.Fatalf("two sweeps returned %v, want system-due and acme-grace once each", seen)
+	}
 }
 
 // Retained terminal tenant jobs are read in each tenant's prefix scan, not
