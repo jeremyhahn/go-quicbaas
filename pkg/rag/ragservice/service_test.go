@@ -18,6 +18,8 @@ package ragservice
 import (
 	"context"
 	stderrors "errors"
+	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -179,6 +181,52 @@ func TestBuildContext_Assembles(t *testing.T) {
 	assert.Contains(t, resp.Context, "func main() {}")
 	require.NotEmpty(t, resp.Citations)
 	assert.Equal(t, Citation{Index: 1, FilePath: "main.go", StartLine: 1, EndLine: 20, Score: 0.92}, resp.Citations[0])
+}
+
+func countedResults(n int) []ResultInput {
+	in := make([]ResultInput, n)
+	for i := range in {
+		in[i] = ResultInput{
+			Content: fmt.Sprintf("item-%02d holds a few short words of content", i),
+			Score:   0.9 - float32(i)*0.01,
+		}
+	}
+	return in
+}
+
+// ResultCount is the number of results the context kept: the builder
+// caps it at MaxResultsPerChunk (20) however large the budget.
+func TestBuildContext_ResultCountCapsAtMaxResultsPerChunk(t *testing.T) {
+	resp, err := BuildContext(context.Background(), BuildContextRequest{
+		Results:   countedResults(21),
+		MaxTokens: 100000,
+		Template:  "plain",
+	})
+	require.NoError(t, err)
+	assert.Equal(t, 20, resp.ResultCount)
+	assert.Contains(t, resp.Context, "item-19")
+	assert.NotContains(t, resp.Context, "item-20")
+}
+
+// A small token budget drops results: ResultCount counts the ones kept.
+func TestBuildContext_ResultCountAfterTruncation(t *testing.T) {
+	resp, err := BuildContext(context.Background(), BuildContextRequest{
+		Results:            countedResults(10),
+		MaxTokens:          60,
+		Template:           "plain",
+		TruncationStrategy: "hard",
+	})
+	require.NoError(t, err)
+	require.True(t, resp.Truncated)
+	kept := 0
+	for i := 0; i < 10; i++ {
+		if strings.Contains(resp.Context, fmt.Sprintf("item-%02d", i)) {
+			kept++
+		}
+	}
+	assert.Less(t, resp.ResultCount, 10)
+	assert.Positive(t, resp.ResultCount)
+	assert.Equal(t, kept, resp.ResultCount)
 }
 
 func TestBuildContext_EmptyResultsIsInvalidInput(t *testing.T) {

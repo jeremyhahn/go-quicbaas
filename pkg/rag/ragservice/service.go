@@ -248,7 +248,7 @@ func assemble(results []ragctx.Result, maxTokens int, template string, citations
 		Context:     built.Content,
 		Tokens:      built.Tokens,
 		Truncated:   built.Truncated,
-		ResultCount: len(results),
+		ResultCount: len(built.Results), // the results the context kept, not the results sent
 	}
 	if citations && len(built.Citations) > 0 {
 		resp.Citations = make([]Citation, len(built.Citations))
