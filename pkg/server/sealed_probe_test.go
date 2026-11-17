@@ -64,7 +64,9 @@ func TestServerSealedProbe_UninitializedDataPlaneBarrierReportsUnsealed(t *testi
 	require.True(t, status.Sealed, "a fresh barrier is internally sealed")
 	require.True(t, status.InitializedAt.IsZero(), "a fresh barrier is not initialized")
 
-	probe := (&Server{dataPlaneBarrier: barrier}).SealedWindowProbe()
+	server := &Server{}
+	server.dataPlaneBarrier.Store(barrier)
+	probe := server.SealedWindowProbe()
 	assert.False(t, probe.IsSealed(),
 		"an uninitialized data-plane barrier protects nothing and must report unsealed")
 }
@@ -91,7 +93,8 @@ func TestServerSealedProbe_InitializedSealedDataPlaneBarrierReportsSealed(t *tes
 	defer creds.Secret.Destroy()
 	require.NoError(t, barrier.Initialize(ctx, creds), "initialize the data-plane barrier")
 
-	server := &Server{dataPlaneBarrier: barrier}
+	server := &Server{}
+	server.dataPlaneBarrier.Store(barrier)
 	probe := server.SealedWindowProbe()
 
 	// Initialized and unsealed: full enforcement, no sealed window. This is

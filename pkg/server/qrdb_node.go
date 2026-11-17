@@ -764,12 +764,18 @@ func (s *Server) unifiedModuleServerOptions(serverOpts []qrdbsdk.ServerOption, s
 // transport caller's thumbprint for officer share claims, so nothing is
 // overridden. With the seal disabled the node has no barrier servicer, so
 // the proxy serves the direct servicer published on s.barrierServicer
-// (go-quicbaas #2488).
+// (go-quicbaas #2488). The proxy brings the data-plane barrier's sealed
+// window with it: the sealed-window probe makes the native transports
+// answer data RPCs Unavailable once that barrier is sealed, as the
+// node's own servicer does with the seal enabled.
 func (s *Server) nodeBarrierServerOptions(sealEnabled bool) []qrdbsdk.ServerOption {
 	if sealEnabled {
 		return nil
 	}
-	return []qrdbsdk.ServerOption{qrdbserver.WithBarrierService(newQRDBBarrierServicerProxy(s))}
+	return []qrdbsdk.ServerOption{
+		qrdbserver.WithBarrierService(newQRDBBarrierServicerProxy(s)),
+		qrdbserver.WithSealedWindowProbe(s.SealedWindowProbe()),
+	}
 }
 
 // newQuicBaaSModule builds the quicbaas ServiceModule the unified server

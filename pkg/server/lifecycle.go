@@ -1007,7 +1007,7 @@ func (s *Server) initDataPlaneEncryptor() error {
 		s.dataPlaneBarrierCloser = dataPlaneBarrierCloser
 	}
 	if rawBarrier != nil {
-		s.dataPlaneBarrier = rawBarrier
+		s.dataPlaneBarrier.Store(rawBarrier)
 		s.logger.Info("Data-plane StorageBarrier constructed for at-rest encryption")
 	}
 	// Stash the service for later injection into the sharded client
@@ -1990,7 +1990,7 @@ func (s *Server) startService() error {
 			}
 			if dpSvc != nil {
 				bootstrapServices.Barrier = dpSvc
-				s.dataPlaneBarrier = rawBarrier
+				s.dataPlaneBarrier.Store(rawBarrier)
 				s.dataPlaneBarrierCloser = dpCloser
 				// Bind the platform xkms CA to the persistent-barrier ceremony
 				// core too, so officer CSR signing through the data-plane

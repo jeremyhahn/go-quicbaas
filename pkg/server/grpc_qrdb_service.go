@@ -94,7 +94,8 @@ func (s *Server) buildQRDBRegisterOptions() []qrdbsdk.GRPCRegisterOption {
 	return opts
 }
 
-// qrdbSealSOPINInterceptor guards the qrdb.v1 BarrierSeal registered by
+// qrdbSealSOPINInterceptor guards the qrdb.v1 BarrierSeal, BarrierRekey and
+// BarrierRecoveryGenerate registered by
 // registerQRDBService with the SO PIN backend the BarrierService facade
 // verifies against. The qrdb SDK's register options take no PIN backend,
 // so the guard sits on the gRPC server chain, which the Unix socket shares.
