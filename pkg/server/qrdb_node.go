@@ -779,6 +779,13 @@ func (s *Server) nodeBarrierServerOptions(sealEnabled bool) []qrdbsdk.ServerOpti
 		return nil
 	}
 	installComposedRESTSealedAllowlist()
+	// startService builds and publishes the persistent data-plane barrier
+	// only after the native listeners are up. Until it does, the probe fails
+	// closed: on a restart the data dir may already hold an initialized,
+	// sealed barrier that nothing has loaded yet.
+	if s.config != nil && s.config.Storage.DataDir != "" {
+		s.dataPlaneBarrierPending.Store(true)
+	}
 	return []qrdbsdk.ServerOption{
 		qrdbserver.WithBarrierService(newQRDBBarrierServicerProxy(s)),
 		qrdbserver.WithSealedWindowProbe(s.SealedWindowProbe()),

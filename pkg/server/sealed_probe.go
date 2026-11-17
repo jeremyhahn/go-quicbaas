@@ -53,6 +53,12 @@ func (p *serverSealedProbe) IsSealed() bool {
 	// never-initialized barrier reports state "sealed" internally but
 	// protects nothing, and gating it would lock every first boot out of
 	// the full surface.
+	//
+	// Until startService publishes that barrier the probe fails closed (see
+	// dataPlaneBarrierPending).
+	if s.dataPlaneBarrierPending.Load() {
+		return true
+	}
 	if barrier := s.dataPlaneBarrier.Load(); barrier != nil {
 		if st := barrier.Status(); st != nil && st.Sealed && !st.InitializedAt.IsZero() {
 			return true
@@ -71,4 +77,12 @@ var _ qrdbsdk.SealedWindowProbe = (*serverSealedProbe)(nil)
 // atomic loads) and safe to call at any lifecycle phase.
 func (s *Server) SealedWindowProbe() qrdbsdk.SealedWindowProbe {
 	return &serverSealedProbe{server: s}
+}
+
+// publishDataPlaneBarrier stores the persistent data-plane barrier and only
+// then clears dataPlaneBarrierPending, so the probe never observes the window
+// between the two as "no barrier, unsealed".
+func (s *Server) publishDataPlaneBarrier(barrier *qrdbsdk.StorageBarrier) {
+	s.dataPlaneBarrier.Store(barrier)
+	s.dataPlaneBarrierPending.Store(false)
 }

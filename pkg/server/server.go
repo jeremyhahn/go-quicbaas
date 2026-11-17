@@ -472,6 +472,14 @@ type Server struct {
 	// concurrently with that publication.
 	dataPlaneBarrier atomic.Pointer[qrdbsdk.StorageBarrier]
 
+	// dataPlaneBarrierPending is set on a seal-disabled boot with a
+	// persistent DataDir before any native listener starts, and cleared by
+	// publishDataPlaneBarrier once dataPlaneBarrier holds the persistent
+	// barrier. While set the sealed-window probe reports sealed: the native
+	// transports are live before startService builds the barrier, and an
+	// unpublished barrier must not read as "no barrier, unsealed" (#2512).
+	dataPlaneBarrierPending atomic.Bool
+
 	// dataPlaneEncryptor is the single atrest.Encryptor built from
 	// dataPlaneBarrier. It is threaded into every persistent Pebble store
 	// (KV shards, time-series, vector) so their sstable/WAL/manifest files

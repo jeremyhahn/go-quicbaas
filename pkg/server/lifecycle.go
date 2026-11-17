@@ -1990,8 +1990,8 @@ func (s *Server) startService() error {
 			}
 			if dpSvc != nil {
 				bootstrapServices.Barrier = dpSvc
-				s.dataPlaneBarrier.Store(rawBarrier)
 				s.dataPlaneBarrierCloser = dpCloser
+				s.publishDataPlaneBarrier(rawBarrier)
 				// Bind the platform xkms CA to the persistent-barrier ceremony
 				// core too, so officer CSR signing through the data-plane
 				// barrier's officer verbs issues from the same CA as the

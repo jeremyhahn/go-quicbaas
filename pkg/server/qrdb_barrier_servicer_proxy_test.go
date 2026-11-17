@@ -327,7 +327,7 @@ func TestNodeBarrierServerOptions_SealDisabledProbeArmsOnSealedBarrier(t *testin
 		t.Fatalf("build the data-plane barrier: barrier=%v closer=%v err=%v", barrier, closer, err)
 	}
 	t.Cleanup(func() { _ = closer.Close() })
-	srv.dataPlaneBarrier.Store(barrier)
+	srv.publishDataPlaneBarrier(barrier)
 
 	probe := srv.SealedWindowProbe()
 	creds, err := qrdbsdk.CredentialsFor([]byte("seal-disabled-probe-unit-test-passphrase"))
@@ -380,9 +380,6 @@ func TestNodeBarrierServerOptions_NativeGRPCGatedBySealedBarrier(t *testing.T) {
 	if err := barrier.Initialize(t.Context(), creds); err != nil {
 		t.Fatalf("initialize the data-plane barrier: %v", err)
 	}
-	// Publish the barrier exactly as the lifecycle does.
-	srv.dataPlaneBarrier.Store(barrier)
-
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("listen: %v", err)
@@ -403,6 +400,8 @@ func TestNodeBarrierServerOptions_NativeGRPCGatedBySealedBarrier(t *testing.T) {
 		t.Fatalf("start the qrdb gRPC server: %v", err)
 	}
 	t.Cleanup(node.Stop)
+	// Publish the barrier exactly as the lifecycle does.
+	srv.publishDataPlaneBarrier(barrier)
 
 	conn, err := ggrpc.NewClient(listener.Addr().String(),
 		ggrpc.WithTransportCredentials(credentials.NewTLS(clientTLS)))
