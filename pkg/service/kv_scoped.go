@@ -103,12 +103,14 @@ func (k *kvService) dataPlane(ctx context.Context, op string, shardID uint64) (k
 	return kv, nil
 }
 
-// kvDataPlaneError converts a dataPlane error for op: a QBError (fail-closed
-// unavailable) passes through unchanged, anything else is a Raft error as
-// the shared-client path always reported.
+// kvDataPlaneError converts a dataPlane error for op: a QBError with Code
+// ErrUnavailable (the fail-closed registry case) passes through unchanged;
+// anything else, including a QBError with another code (such as the
+// ErrInternal qrdbForShard returns when no client is configured), is a Raft
+// error as the shared-client path always reported.
 func kvDataPlaneError(op string, err error) error {
 	var qbe *errors.QBError
-	if stderrors.As(err, &qbe) {
+	if stderrors.As(err, &qbe) && qbe.Code == errors.ErrUnavailable {
 		return qbe
 	}
 	return &errors.QBError{Code: errors.ErrRaft, Op: op, Err: err}

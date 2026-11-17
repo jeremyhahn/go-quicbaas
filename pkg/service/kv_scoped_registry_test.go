@@ -91,7 +91,8 @@ func runKVOps(t *testing.T, svc QuicBaaS, ctx context.Context) []error {
 	_, delErr := svc.Delete(ctx, &DeleteRequest{EntityType: "User", ID: 42})
 	stream := make(chan *ListResponse, 16)
 	listErr := svc.List(ctx, &ListRequest{EntityType: "User"}, stream)
-	for range stream { //nolint:revive // drain the closed stream
+	for resp := range stream {
+		_ = resp
 	}
 	return []error{putErr, getErr, delErr, listErr}
 }
