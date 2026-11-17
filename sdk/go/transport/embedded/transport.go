@@ -334,6 +334,11 @@ var unaryHandlers = map[string]handlerFunc{
 	"quicbaas.TrustedCA/RevokeCertificate": handleTrustedCARevokeCertificate,
 	"quicbaas.TrustedCA/GenerateCRL":       handleTrustedCAGenerateCRL,
 	"quicbaas.TrustedCA/IsRevoked":         handleTrustedCAIsRevoked,
+	// The re-exported go-xkms TCGCAService (Security().TCGCA()).
+	"quicbaas.TCGCA/IssueEKCertificate": handleTCGCAIssueEKCertificate,
+	"quicbaas.TCGCA/IssueAKCertificate": handleTCGCAIssueAKCertificate,
+	"quicbaas.TCGCA/SignTCGCSR":         handleTCGCASignTCGCSR,
+	"quicbaas.TCGCA/EnrollDevice":       handleTCGCAEnrollDevice,
 
 	// PIV: the backend-scoped go-xkms PIV surface
 	// (Security().Auth().PIV()), xkms wire types verbatim.

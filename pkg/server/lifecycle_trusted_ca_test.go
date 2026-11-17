@@ -19,6 +19,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	xkmstransport "github.com/jeremyhahn/go-xkms/pkg/api/transport"
+
 	"github.com/jeremyhahn/go-quicbaas/pkg/api/caadapter"
 	"github.com/jeremyhahn/go-quicbaas/pkg/config"
 )
@@ -34,4 +36,7 @@ func TestTrustedCAService_ServesTheAdoptedCAWithoutTheRESTTag(t *testing.T) {
 	require.NotNil(t, ca)
 	_, ok := ca.(*caadapter.XKMSCAServicer)
 	assert.True(t, ok, "the adapter is the shared go-xkms CA servicer, not a REST-only type")
+	// The embedded transport's Security().TCGCA() type-asserts the same adapter.
+	_, ok = ca.(xkmstransport.TCGCAService)
+	assert.True(t, ok, "the wired adapter also serves go-xkms's TCGCAService")
 }
