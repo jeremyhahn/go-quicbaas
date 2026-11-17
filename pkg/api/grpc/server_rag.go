@@ -18,6 +18,9 @@ package grpc
 import (
 	"context"
 
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+
 	pb "github.com/jeremyhahn/go-quicbaas/api/proto"
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
 	"github.com/jeremyhahn/go-quicbaas/pkg/rag/ragservice"
@@ -55,7 +58,7 @@ func (s *RAGServer) Query(ctx context.Context, req *pb.RAGQueryRequest) (*pb.RAG
 		Model:            req.GetModel(),
 	})
 	if err != nil {
-		return nil, ToGRPCError(err)
+		return nil, s.ragError("Query", "rag query failed", err)
 	}
 	tokens, resultCount, citations, err := ragCounts(out)
 	if err != nil {
@@ -84,7 +87,7 @@ func (s *RAGServer) BuildContext(ctx context.Context, req *pb.RAGBuildContextReq
 		TruncationStrategy: ragTruncationName(req.GetTruncationStrategy()),
 	})
 	if err != nil {
-		return nil, ToGRPCError(err)
+		return nil, s.ragError("BuildContext", "rag build context failed", err)
 	}
 	tokens, resultCount, citations, err := ragCounts(out)
 	if err != nil {
@@ -97,6 +100,22 @@ func (s *RAGServer) BuildContext(ctx context.Context, req *pb.RAGBuildContextReq
 		ResultCount: resultCount,
 		Citations:   citations,
 	}, nil
+}
+
+// ragError maps a ragservice error to the status ToGRPCError picks. A server
+// side failure (internal, unknown, unavailable) can carry a backend URL or
+// response body, so its cause is logged here and the caller gets msg; a client
+// error (invalid argument, not found, permission denied, unauthenticated)
+// keeps its message.
+func (s *RAGServer) ragError(method, msg string, err error) error {
+	st := status.Convert(ToGRPCError(err))
+	switch st.Code() {
+	case codes.Internal, codes.Unknown, codes.Unavailable:
+		s.logger.WithError(err).Errorf("RAGService.%s failed", method)
+		return status.Error(st.Code(), msg)
+	default:
+		return st.Err()
+	}
 }
 
 // ragTemplateName maps the wire enum to ragservice's template name;

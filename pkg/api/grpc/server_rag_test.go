@@ -17,6 +17,7 @@ package grpc
 
 import (
 	"context"
+	stderrors "errors"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -164,6 +165,45 @@ func TestRAGServer_ErrorCodes(t *testing.T) {
 		require.Error(t, err)
 		assert.Equal(t, codes.Unavailable, status.Code(err))
 	})
+}
+
+// ragLeakMarker stands for what a backend error can carry: the backend's URL
+// and the body it answered with.
+const ragLeakMarker = "http://10.9.9.9:11434 secret-body"
+
+// ragFailing returns backends whose embedder fails with an error carrying
+// ragLeakMarker.
+func ragFailing() ragTestBackends {
+	var search service.SearchSimilarRequest
+	ok := ragWorking(&search)
+	return ragTestBackends{
+		ollama: &mocks.MockOllamaService{
+			EmbedFunc: func(context.Context, *service.OllamaEmbedRequest) (*service.OllamaEmbedResponse, error) {
+				return nil, stderrors.New("POST " + ragLeakMarker)
+			},
+		},
+		vector: ok.vector,
+	}
+}
+
+// TestRAGServer_BackendErrorIsNotReturned checks that a backend failure keeps
+// the code ToGRPCError picks but its message does not reach the caller, while
+// a client error keeps its message.
+func TestRAGServer_BackendErrorIsNotReturned(t *testing.T) {
+	_, err := newTestRAGServer(t, ragFailing()).
+		Query(context.Background(), &pb.RAGQueryRequest{Query: "q", Namespace: "n"})
+	require.Error(t, err)
+	assert.Equal(t, codes.Internal, status.Code(err))
+	assert.NotContains(t, status.Convert(err).Message(), ragLeakMarker)
+	assert.NotContains(t, status.Convert(err).Message(), "secret-body")
+	assert.Equal(t, "rag query failed", status.Convert(err).Message())
+
+	var search service.SearchSimilarRequest
+	_, err = newTestRAGServer(t, ragWorking(&search)).
+		Query(context.Background(), &pb.RAGQueryRequest{Namespace: "n"})
+	require.Error(t, err)
+	assert.Equal(t, codes.InvalidArgument, status.Code(err))
+	assert.Contains(t, status.Convert(err).Message(), "query")
 }
 
 func TestRAGEnumNames(t *testing.T) {
