@@ -269,8 +269,17 @@ func TestSecretsService_GetSurvivesAConcurrentPrune(t *testing.T) {
 		require.Equal(t, uint64(2), got.Version)
 		history, err := svc.ListSecretVersions(ctx, &ListSecretVersionsRequest{SecretID: "db-password"})
 		require.NoError(t, err)
-		require.Len(t, history.Versions, 1, "version 1 was pruned")
-		requireSameInstant(t, history.Versions[0].CreatedAt, got.CreatedAt, "created_at of the returned version")
+		// Version 1 was pruned: at most its timestamp tombstone remains,
+		// and version 2 is the only version with data.
+		var live []*SecretVersion
+		for _, v := range history.Versions {
+			if v.DeletedAt == nil {
+				live = append(live, v)
+			}
+		}
+		require.Len(t, live, 1, "version 1 was pruned")
+		require.Equal(t, uint64(2), live[0].Version)
+		requireSameInstant(t, live[0].CreatedAt, got.CreatedAt, "created_at of the returned version")
 	}
 
 	t.Run("pruned before the write-time read", func(t *testing.T) {
@@ -300,4 +309,48 @@ func TestSecretsService_GetSurvivesAConcurrentPrune(t *testing.T) {
 		require.Error(t, err)
 		require.Equal(t, qberrors.ErrNotFound, qberrors.Code(err))
 	})
+}
+
+// TestSecretsService_CreatedAtSurvivesRetention: with max_versions=1 every
+// write prunes the version before it, the first one included. The secret's
+// created_at is still its first write, on every backend, however many
+// retention-triggering writes follow.
+func TestSecretsService_CreatedAtSurvivesRetention(t *testing.T) {
+	backends := map[string]func() secrets.Backend{
+		"memory": func() secrets.Backend { return secrets.NewMemoryBackend() },
+		"kv":     func() secrets.Backend { return secrets.NewKVBackend(newTenantNamespacedKV()) },
+	}
+	for name, newBackend := range backends {
+		t.Run(name, func(t *testing.T) {
+			mgr, err := secrets.NewManager(&secrets.ManagerOptions{Backend: newBackend(), MaxVersions: 1})
+			require.NoError(t, err)
+			svc := newSecretsService(mgr, newMockLogger())
+			ctx := tenantctx.WithSystem(context.Background())
+
+			_, err = svc.StoreSecret(ctx, &StoreSecretRequest{SecretID: "db-password", Name: "db-password", Data: []byte("one")})
+			require.NoError(t, err)
+			list, err := svc.ListSecrets(ctx, &ListSecretsRequest{})
+			require.NoError(t, err)
+			require.Len(t, list.Secrets, 1)
+			firstWrite := list.Secrets[0].CreatedAt
+
+			for i := 2; i <= 4; i++ {
+				time.Sleep(2 * time.Millisecond) // each write's time is distinct
+				_, err = svc.RotateSecret(ctx, &RotateSecretRequest{SecretID: "db-password", NewData: []byte{byte('0' + i)}})
+				require.NoError(t, err)
+
+				list, err = svc.ListSecrets(ctx, &ListSecretsRequest{})
+				require.NoError(t, err)
+				require.Len(t, list.Secrets, 1)
+				requireSameInstant(t, firstWrite, list.Secrets[0].CreatedAt, "list created_at after a pruning write")
+				require.True(t, list.Secrets[0].UpdatedAt.After(firstWrite), "updated_at moves with the write")
+				require.Equal(t, uint64(i), list.Secrets[0].CurrentVersion)
+
+				got, err := svc.GetSecret(ctx, &GetSecretRequest{SecretID: "db-password"})
+				require.NoError(t, err)
+				require.Equal(t, uint64(i), got.Version)
+				require.Equal(t, []byte{byte('0' + i)}, got.Data)
+			}
+		})
+	}
 }

@@ -818,7 +818,13 @@ func (s *secretsService) loadSecretWriteTimes(ctx context.Context, scopedID stri
 		if vm == nil {
 			continue
 		}
-		times.byVersion[vm.Version] = vm.CreatedAt
+		// A destroyed or pruned version keeps its write time as history (the
+		// secret's created_at can be its tombstone's), but it holds no data:
+		// a read that returned its payload raced the prune, and must find
+		// no write time for it so the read is retried.
+		if !vm.Deleted {
+			times.byVersion[vm.Version] = vm.CreatedAt
+		}
 		if times.created.IsZero() || vm.CreatedAt.Before(times.created) {
 			times.created = vm.CreatedAt
 		}
@@ -956,6 +962,11 @@ func (s *secretsService) ListSecretVersions(ctx context.Context, req *ListSecret
 			Version:   versionNumber,
 			CreatedAt: vm.CreatedAt,
 			CreatedBy: vm.CreatedBy,
+		}
+		// A destroyed or pruned version is listed as history, marked
+		// deleted: its write time stays, its data is gone.
+		if vm.Deleted {
+			version.DeletedAt = vm.DeletedAt
 		}
 		versions = append(versions, version)
 	}

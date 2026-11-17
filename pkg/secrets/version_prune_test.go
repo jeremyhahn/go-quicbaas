@@ -3,7 +3,9 @@ package secrets
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -127,6 +129,69 @@ func TestKVBackend_PruneCountsSparseHistoryByRecord(t *testing.T) {
 	data, _, err = b.Get(ctx, path)
 	require.NoError(t, err)
 	assert.Equal(t, "v3", string(data["k"]))
+}
+
+// getCountingKV counts the point reads of version records.
+type getCountingKV struct {
+	*inMemKV
+	versionGets atomic.Int64
+}
+
+func (s *getCountingKV) Get(ctx context.Context, key string) ([]byte, error) {
+	if strings.Contains(key, "/v/") {
+		s.versionGets.Add(1)
+	}
+	return s.inMemKV.Get(ctx, key)
+}
+
+// TestKVBackend_PruneKeepsTheCreationTimeAndBoundsListing: a prune keeps the
+// secret's first version as a timestamp tombstone, so its creation time
+// survives retention, and listing the history reads only the surviving
+// records, not one per version the path ever had.
+func TestKVBackend_PruneKeepsTheCreationTimeAndBoundsListing(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	store := &getCountingKV{inMemKV: newInMemKV()}
+	b := NewKVBackend(store)
+	const path = "app/rotated"
+
+	require.NoError(t, b.Store(ctx, path, map[string][]byte{"k": []byte("v1")}, nil))
+	first, err := b.ListVersions(ctx, path)
+	require.NoError(t, err)
+	require.Len(t, first, 1)
+	created := first[0].CreatedAt
+
+	const writes = 200
+	for i := 2; i <= writes; i++ {
+		require.NoError(t, b.Store(ctx, path, map[string][]byte{"k": []byte(fmt.Sprintf("v%d", i))}, nil))
+		_, err := b.PruneVersions(ctx, path, 1)
+		require.NoError(t, err)
+	}
+
+	store.versionGets.Store(0)
+	versions, err := b.ListVersions(ctx, path)
+	require.NoError(t, err)
+	assert.LessOrEqual(t, store.versionGets.Load(), int64(2),
+		"listing reads the surviving records, not every retired version number")
+	require.Len(t, versions, 2, "the creation tombstone and the retained version")
+	assert.Equal(t, 1, versions[0].Version)
+	assert.True(t, versions[0].Deleted, "version 1 is pruned to a tombstone")
+	assert.True(t, created.Equal(versions[0].CreatedAt), "the first write's time survives retention")
+	assert.Equal(t, writes, versions[1].Version)
+	assert.False(t, versions[1].Deleted)
+
+	_, _, err = b.GetVersion(ctx, path, 1)
+	require.Error(t, err, "the tombstone holds no payload")
+	data, _, err := b.Get(ctx, path)
+	require.NoError(t, err)
+	assert.Equal(t, fmt.Sprintf("v%d", writes), string(data["k"]))
+	err = b.Rollback(ctx, path, 1)
+	require.Error(t, err, "a tombstone is no rollback target")
+
+	// A further prune finds nothing to remove: the tombstone never counts.
+	removed, err := b.PruneVersions(ctx, path, 1)
+	require.NoError(t, err)
+	assert.Zero(t, removed)
 }
 
 // TestPruneVersions_RefusesAStoreWithoutCAS: a prune on a store that cannot

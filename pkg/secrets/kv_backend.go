@@ -46,6 +46,9 @@ type kvEntry struct {
 	DeletedAt *time.Time        `json:"deleted_at,omitempty"`
 	// CreatedBy is the authenticated principal that minted this version.
 	CreatedBy string `json:"created_by,omitempty"`
+	// Pruned marks a record retention reduced to a tombstone: its payload is
+	// gone and it reads as absent, while its timestamps stay history.
+	Pruned bool `json:"pruned,omitempty"`
 }
 
 // kvCurrentEntry tracks the current version and soft-delete state of a path.
@@ -375,37 +378,47 @@ func (b *KVBackend) PruneVersions(ctx context.Context, path string, keep int) (i
 	if cur.Version <= keep {
 		return 0, nil
 	}
-	prefix := kvBackendKeyPrefix + path + "/v/"
-	type scanned struct {
-		version int
-		raw     []byte
-	}
-	var history []scanned
-	if err := b.store.Scan(ctx, prefix, func(key string, value []byte) error {
-		rest := strings.TrimPrefix(key, prefix)
-		if rest == "" || strings.ContainsFunc(rest, func(r rune) bool { return r < '0' || r > '9' }) {
-			return nil
-		}
-		// Only the published history counts: a record above the pointer is
-		// another writer's reservation in flight, never this prune's.
-		if n, convErr := strconv.Atoi(rest); convErr == nil && n >= 1 && n <= cur.Version {
-			history = append(history, scanned{version: n, raw: bytes.Clone(value)})
-		}
-		return nil
-	}); err != nil {
+	records, err := b.scanVersionRecords(ctx, path, cur.Version)
+	if err != nil {
 		return 0, &SecretsCauseError{Message: "prune versions: enumerate keyspace", Cause: err}
 	}
-	// RETENTION COUNTS RECORDS, NOT VERSION NUMBERS. The history can be
+	// RETENTION COUNTS LIVE RECORDS, NOT VERSION NUMBERS. The history can be
 	// sparse: a writer that loses publication removes its reservation, so
 	// versions 1 and 3 can be the only records under a pointer at 3. A floor
 	// of cur.Version-keep would then delete version 1 with keep=2 and leave
-	// no rollback target. The newest keep records are retained; only the
-	// older ones are pruned.
-	sort.Slice(history, func(i, j int) bool { return history[i].version > history[j].version })
-	if len(history) <= keep {
+	// no rollback target. The newest keep live records are retained; a
+	// tombstone is no rollback target, so it never counts toward keep.
+	var live []kvVersionRecord
+	for _, r := range records {
+		if !r.destroyed {
+			live = append(live, r)
+		}
+	}
+	if len(live) <= keep {
 		return 0, nil
 	}
-	doomed := history[keep:]
+	oldestRetained := live[len(live)-keep].version
+	// THE EARLIEST RECORD IS THE SECRET'S CREATION TIME. Listings derive
+	// created_at from the earliest version's CreatedAt, so deleting that
+	// record would move the creation time forward to the oldest survivor.
+	// It is pruned to a tombstone instead (payload dropped, timestamps
+	// kept), as the memory and encrypted backends prune; every later
+	// record below the retained set is deleted outright, so the history
+	// stays bounded at keep live records plus one tombstone.
+	earliest := records[0].version
+	var doomed []kvVersionRecord
+	for _, r := range records {
+		if r.version >= oldestRetained {
+			break
+		}
+		if r.version == earliest && r.destroyed {
+			continue // already this lifetime's creation tombstone
+		}
+		doomed = append(doomed, r)
+	}
+	// Newest first: a concurrent recreation that this prune loses to is
+	// detected by the first refused delete, as before.
+	sort.Slice(doomed, func(i, j int) bool { return doomed[i].version > doomed[j].version })
 	// THE SCAN MUST BELONG TO THE LIFETIME THE CEILING WAS READ IN. Another
 	// node can destroy the path and recreate version 1 between loadCurrent
 	// and the scan; the scan then captures the new lifetime's records under
@@ -427,7 +440,12 @@ func (b *KVBackend) PruneVersions(ctx context.Context, path string, keep int) (i
 		// A refused delete means the record changed since the scan (a
 		// concurrent destroy and recreate): it is not this prune's record,
 		// so it is left alone.
-		deleted, err := g.CompareAndDelete(ctx, versionKey(path, d.version), d.raw)
+		var deleted bool
+		if d.version == earliest {
+			deleted, err = b.tombstoneVersion(ctx, g, path, d)
+		} else {
+			deleted, err = g.CompareAndDelete(ctx, versionKey(path, d.version), d.raw)
+		}
 		if err != nil {
 			if qberrors.IsNotFound(err) {
 				continue
@@ -439,6 +457,65 @@ func (b *KVBackend) PruneVersions(ctx context.Context, path string, keep int) (i
 		}
 	}
 	return pruned, nil
+}
+
+// kvVersionRecord is one version record a scan read: its number, the exact
+// bytes (for a compare-and-delete or swap) and whether it is a tombstone.
+type kvVersionRecord struct {
+	version   int
+	raw       []byte
+	entry     kvEntry
+	destroyed bool
+}
+
+// scanVersionRecords enumerates the version records that exist for path,
+// numbered 1..ceiling, oldest first. It reads only the surviving records:
+// a history pruned to a handful of versions costs a handful of reads
+// however many versions the path has had. A record above the ceiling is
+// another writer's reservation in flight, not published history, and an
+// unreadable record is skipped as before.
+func (b *KVBackend) scanVersionRecords(ctx context.Context, path string, ceiling int) ([]kvVersionRecord, error) {
+	prefix := kvBackendKeyPrefix + path + "/v/"
+	var records []kvVersionRecord
+	if err := b.store.Scan(ctx, prefix, func(key string, value []byte) error {
+		rest := strings.TrimPrefix(key, prefix)
+		// Only a bare number is this path's version: a deeper key belongs
+		// to a child path such as path+"/v/3".
+		if rest == "" || strings.ContainsFunc(rest, func(r rune) bool { return r < '0' || r > '9' }) {
+			return nil
+		}
+		n, convErr := strconv.Atoi(rest)
+		if convErr != nil || n < 1 || n > ceiling || value == nil {
+			return nil
+		}
+		var entry kvEntry
+		if err := json.Unmarshal(value, &entry); err != nil {
+			return nil
+		}
+		records = append(records, kvVersionRecord{version: n, raw: bytes.Clone(value), entry: entry, destroyed: entry.Destroyed || entry.Pruned})
+		return nil
+	}); err != nil {
+		return nil, err
+	}
+	sort.Slice(records, func(i, j int) bool { return records[i].version < records[j].version })
+	return records, nil
+}
+
+// tombstoneVersion replaces the record r with a tombstone that keeps its
+// timestamps and author and drops its payload, only while the record still
+// holds the bytes the scan read.
+func (b *KVBackend) tombstoneVersion(ctx context.Context, g guardedKVStore, path string, r kvVersionRecord) (bool, error) {
+	now := time.Now().UTC()
+	tomb := r.entry
+	tomb.Data = nil
+	tomb.Metadata = nil
+	tomb.Pruned = true
+	tomb.DeletedAt = &now
+	next, err := json.Marshal(tomb)
+	if err != nil {
+		return false, err
+	}
+	return g.CompareAndSwap(ctx, versionKey(path, r.version), r.raw, next)
 }
 
 // allocateAndReserve allocates the next version number and reserves its key,
@@ -680,30 +757,24 @@ func (b *KVBackend) ListVersions(ctx context.Context, path string) ([]*VersionMe
 	if cur.Version == 0 {
 		return nil, ErrSecretNotFound
 	}
+	// The surviving records are enumerated, not every number up to the
+	// pointer: retention deletes retired versions, and probing each one
+	// would make every read cost the path's lifetime write count. Pruned
+	// and destroyed versions leave gaps; absence is ordinary here. An
+	// OUTAGE is not a gap: a failed scan is returned, never a truncated
+	// history presented as complete (the #109 class, at this seam).
+	records, err := b.scanVersionRecords(ctx, path, cur.Version)
+	if err != nil {
+		return nil, &SecretsCauseError{Message: "list version entry", Cause: err}
+	}
 	var versions []*VersionMetadata
-	for v := 1; v <= cur.Version; v++ {
-		raw, err := b.store.Get(ctx, versionKey(path, v))
-		if err != nil {
-			if qberrors.IsNotFound(err) {
-				continue // destroyed versions leave gaps; absence is ordinary here
-			}
-			// An OUTAGE is not a gap: skipping it silently hands the caller a
-			// truncated history presented as complete — the #109 class, at
-			// this seam.
-			return nil, &SecretsCauseError{Message: "list version entry", Cause: err}
-		}
-		if raw == nil {
-			continue
-		}
-		var entry kvEntry
-		if err := json.Unmarshal(raw, &entry); err != nil {
-			continue
-		}
+	for _, r := range records {
+		entry := r.entry
 		vm := &VersionMetadata{
 			Version:   entry.Version,
 			CreatedAt: entry.CreatedAt,
 			CreatedBy: entry.CreatedBy,
-			Deleted:   entry.Destroyed,
+			Deleted:   entry.Destroyed || entry.Pruned,
 		}
 		if entry.DeletedAt != nil {
 			vm.DeletedAt = entry.DeletedAt
@@ -753,6 +824,9 @@ func (b *KVBackend) Rollback(ctx context.Context, path string, version int) erro
 	var oldEntry kvEntry
 	if err := json.Unmarshal(raw, &oldEntry); err != nil {
 		return &SecretsSentinelCauseError{Sentinel: ErrDeserializationFailed, Cause: err}
+	}
+	if oldEntry.Pruned {
+		return ErrVersionNotFound // retention removed it; its tombstone holds no payload
 	}
 	if oldEntry.Destroyed {
 		return ErrVersionDestroyed
@@ -919,6 +993,10 @@ func (b *KVBackend) getVersion(ctx context.Context, path string, version int) (m
 	var entry kvEntry
 	if err := json.Unmarshal(raw, &entry); err != nil {
 		return nil, nil, &SecretsSentinelCauseError{Sentinel: ErrDeserializationFailed, Cause: err}
+	}
+	if entry.Pruned {
+		// Retention removed this version: absent, as on the other backends.
+		return nil, nil, ErrVersionNotFound
 	}
 	if entry.Destroyed {
 		return nil, nil, ErrVersionDestroyed
