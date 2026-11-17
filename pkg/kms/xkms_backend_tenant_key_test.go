@@ -90,7 +90,10 @@ func TestXKMSKeyName(t *testing.T) {
 		{name: "tenant-scoped ID encoded", keyID: "tenant/alice/k1",
 			want: xkmsEncodedKeyPrefix + hex.EncodeToString([]byte("tenant/alice/k1"))},
 		{name: "encoding is lowercase hex", keyID: "T/A", want: "qbt.542f41"},
-		{name: "reserved prefix refused", keyID: "qbt.6b31", wantErr: true},
+		{name: "legacy prefixed name unchanged", keyID: "qbt.legacy", want: "qbt.legacy"},
+		{name: "legacy hex name without slash unchanged", keyID: "qbt.6b31", want: "qbt.6b31"},
+		{name: "uppercase hex name unchanged", keyID: "qbt.742F6B", want: "qbt.742F6B"},
+		{name: "encoding of a tenant ID refused", keyID: "qbt.742f6b", wantErr: true},
 		{name: "encoded name too long refused", keyID: tooLong, wantErr: true},
 	}
 	for _, tc := range tests {

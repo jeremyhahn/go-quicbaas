@@ -763,15 +763,19 @@ const xkmsEncodedKeyPrefix = "qbt."
 const xkmsMaxKeyNameLen = 255
 
 // xkmsKeyName maps a quicbaas key ID to the go-xkms key name it is stored
-// under. A key ID without "/" is its own name, except that one starting with
-// "qbt." is refused, so no stored name can occupy the encoded space. A key
-// ID with "/" becomes "qbt." + the lowercase hex of the ID; one whose
+// under. A key ID without "/" is its own name, legacy names starting with
+// "qbt." included, except that one which is "qbt." + lowercase hex decoding
+// to a string with "/" is refused: it would alias that encoded tenant key. A
+// key ID with "/" becomes "qbt." + the lowercase hex of the ID; one whose
 // encoding exceeds go-xkms's 255-byte limit is refused.
 func xkmsKeyName(keyID string) (string, error) {
 	if !strings.Contains(keyID, "/") {
-		if strings.HasPrefix(keyID, xkmsEncodedKeyPrefix) {
-			return "", fmt.Errorf("%w: key ID %q may not start with the reserved prefix %q",
-				ErrInvalidKeyID, keyID, xkmsEncodedKeyPrefix)
+		// A "/"-free ID is stored under its own name, including a legacy
+		// name that starts with the prefix, unless the name would read back
+		// as an encoded tenant-scoped ID (it would alias that key).
+		if _, aliases := decodeXKMSKeyName(keyID); aliases {
+			return "", fmt.Errorf("%w: key ID %q is the encoded name of a tenant-scoped key ID",
+				ErrInvalidKeyID, keyID)
 		}
 		return keyID, nil
 	}
@@ -783,18 +787,30 @@ func xkmsKeyName(keyID string) (string, error) {
 	return name, nil
 }
 
-// quicbaasKeyIDFromXKMSName reverses xkmsKeyName for a name go-xkms lists.
-// A name that is not a valid encoding is returned unchanged.
-func quicbaasKeyIDFromXKMSName(name string) string {
+// decodeXKMSKeyName decodes a go-xkms key name that xkmsKeyName encoded from
+// a tenant-scoped ID: the prefix followed by lowercase hex that decodes to a
+// string containing "/". It returns false for every other name.
+func decodeXKMSKeyName(name string) (string, bool) {
 	encoded, ok := strings.CutPrefix(name, xkmsEncodedKeyPrefix)
-	if !ok {
-		return name
+	if !ok || encoded == "" || encoded != strings.ToLower(encoded) {
+		return "", false
 	}
 	raw, err := hex.DecodeString(encoded)
-	if err != nil {
-		return name
+	if err != nil || !strings.Contains(string(raw), "/") {
+		return "", false
 	}
-	return string(raw)
+	return string(raw), true
+}
+
+// quicbaasKeyIDFromXKMSName reverses xkmsKeyName for a name go-xkms lists.
+// Only a name that is "qbt." + lowercase hex decoding to a string with "/"
+// is decoded; every other name, a legacy "qbt." name included, is returned
+// unchanged.
+func quicbaasKeyIDFromXKMSName(name string) string {
+	if keyID, ok := decodeXKMSKeyName(name); ok {
+		return keyID
+	}
+	return name
 }
 
 // buildFullKeyID constructs the full key ID format expected by go-xkms for crypto operations.

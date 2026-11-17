@@ -128,3 +128,60 @@ func TestVersionNameBase(t *testing.T) {
 		assert.Equal(t, tc.base, base, tc.keyID)
 	}
 }
+
+// TestXKMSBackend_LegacyQBTNames checks that "/"-free system keys whose names
+// start with the encoded-name prefix stay usable under their own names, that
+// a system ID equal to the encoding of a tenant-scoped ID is refused, and
+// that tenant keys still round-trip through ListKeys.
+func TestXKMSBackend_LegacyQBTNames(t *testing.T) {
+	cleanup := initXKMSForTest(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	listed := func(b *XKMSBackend) []string {
+		keys, _, err := b.ListKeys(ctx, "", 0)
+		require.NoError(t, err)
+		ids := make([]string, 0, len(keys))
+		for _, k := range keys {
+			ids = append(ids, k.KeyID)
+		}
+		return ids
+	}
+
+	backend := newKeyNameTestBackend(t)
+	const tenantKey = "t1/legacy-k"
+	createKeyNameTestKey(t, backend, tenantKey)
+
+	for _, keyID := range []string{"qbt.legacy", "qbt.6162"} {
+		t.Run(keyID, func(t *testing.T) {
+			createKeyNameTestKey(t, backend, keyID)
+			ciphertext, err := backend.Encrypt(ctx, keyID, []byte("p"), nil)
+			require.NoError(t, err)
+
+			fresh := newKeyNameTestBackend(t)
+			assert.Contains(t, listed(fresh), keyID)
+			plaintext, err := fresh.Decrypt(ctx, keyID, ciphertext, nil)
+			require.NoError(t, err)
+			assert.Equal(t, []byte("p"), plaintext)
+
+			require.NoError(t, backend.DeleteKey(ctx, keyID))
+			assert.NotContains(t, listed(newKeyNameTestBackend(t)), keyID)
+		})
+	}
+
+	encoded, err := xkmsKeyName("t1/k")
+	require.NoError(t, err)
+	_, err = backend.CreateKey(ctx, &xkmssdk.KeyAttributes{
+		CN:                 encoded,
+		StoreType:          xkmssdk.StoreType("software"),
+		KeyType:            xkmssdk.KeyTypeEncryption,
+		SymmetricAlgorithm: xkmssdk.SymmetricAES256GCM,
+	})
+	require.ErrorIs(t, err, ErrInvalidKeyID)
+
+	keys, _, err := newKeyNameTestBackend(t).ListKeys(ctx, "t1/", 0)
+	require.NoError(t, err)
+	require.Len(t, keys, 1)
+	assert.Equal(t, tenantKey, keys[0].KeyID)
+	require.NoError(t, backend.DeleteKey(ctx, tenantKey))
+}
