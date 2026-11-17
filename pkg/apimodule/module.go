@@ -726,7 +726,8 @@ func (m *Module) bind() (*grpcServers, error) {
 	// go-xkms serves no quicbaas.kms.v1 name. It is gated on Crypto() exactly
 	// as pkg/server/lifecycle.go gates it on the legacy transport.
 	// nodeCryptoServer withholds GenerateHMAC/VerifyHMAC: the crypto backend
-	// has no stable MAC key (crypto_server.go).
+	// has no stable MAC key; and Sign/Verify: it does not resolve the signing
+	// key version (crypto_server.go).
 	if c := svc.Crypto(); c != nil {
 		built.crypto = nodeCryptoServer{CryptoServer: grpcapi.NewCryptoServer(c, m.log)}
 	}

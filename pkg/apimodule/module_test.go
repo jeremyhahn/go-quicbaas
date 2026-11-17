@@ -342,6 +342,14 @@ func reversingCryptoService(t *testing.T) *mocks.MockCryptoService {
 			t.Error("VerifyHMAC must not reach the crypto backend on the node")
 			return &service.VerifyHMACResponse{}, nil
 		},
+		SignFunc: func(context.Context, *service.SignRequest) (*service.SignResponse, error) {
+			t.Error("Sign must not reach the crypto backend on the node")
+			return &service.SignResponse{}, nil
+		},
+		VerifyFunc: func(context.Context, *service.VerifyRequest) (*service.VerifyResponse, error) {
+			t.Error("Verify must not reach the crypto backend on the node")
+			return &service.VerifyResponse{}, nil
+		},
 	}
 }
 
@@ -384,6 +392,33 @@ func TestModule_Crypto_HMACUnimplementedOverGRPC(t *testing.T) {
 		KeyId: "k1", Message: []byte("m"), Hmac: []byte("mac"),
 	})
 	assert.Equal(t, codes.Unimplemented, status.Code(err), "VerifyHMAC: got %v", err)
+}
+
+// TestModule_Crypto_SignVerifyUnimplementedOverGRPC proves the node answers
+// Sign and Verify Unimplemented (nodeCryptoServer) without reaching the
+// crypto backend: the backend does not resolve the signing key version, so
+// it would sign with a stale key after RotateKey.
+func TestModule_Crypto_SignVerifyUnimplementedOverGRPC(t *testing.T) {
+	m, err := NewModule(func() service.QuicBaaS {
+		return &mocks.MockQuicBaaS{MockCryptoService: reversingCryptoService(t)}
+	}, testLogger(t))
+	require.NoError(t, err)
+	client := pb.NewCryptoClient(startBufconnModule(t, m))
+	want := status.Convert(errNodeSignUnserved).Message()
+
+	t.Run("Sign", func(t *testing.T) {
+		_, err := client.Sign(context.Background(), &pb.SignRequest{KeyId: "k1", Message: []byte("m")})
+		assert.Equal(t, codes.Unimplemented, status.Code(err), "Sign: got %v", err)
+		assert.Equal(t, want, status.Convert(err).Message())
+	})
+
+	t.Run("Verify", func(t *testing.T) {
+		_, err := client.Verify(context.Background(), &pb.VerifyRequest{
+			KeyId: "k1", Message: []byte("m"), Signature: []byte("sig"), KeyVersion: 1,
+		})
+		assert.Equal(t, codes.Unimplemented, status.Code(err), "Verify: got %v", err)
+		assert.Equal(t, want, status.Convert(err).Message())
+	})
 }
 
 // dataKeyCryptoService is a MockCryptoService that counts the data-key
