@@ -105,7 +105,8 @@ func TestCryptoService_PerKeyAuthz(t *testing.T) {
 		{"DecryptBatch", func(svc *cryptoService, ctx context.Context) error {
 			_, err := svc.DecryptBatch(ctx, &DecryptBatchRequest{
 				KeyID: "authz-key",
-				Items: []BatchDecryptItem{{Ciphertext: []byte("ct")}},
+				// An EncryptedData envelope: the mounted KMS service reads its key version.
+				Items: []BatchDecryptItem{{Ciphertext: []byte("{}")}},
 			})
 			return err
 		}},

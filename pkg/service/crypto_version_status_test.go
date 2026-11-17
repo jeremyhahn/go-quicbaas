@@ -1,0 +1,172 @@
+// Copyright (c) 2025 Jeremy Hahn
+// Copyright (c) 2025 Automate The Things, LLC
+//
+// This file is part of go-quicbaas.
+//
+// go-quicbaas is dual-licensed:
+//
+// 1. GNU Affero General Public License v3.0 (AGPL-3.0)
+//    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
+//
+// 2. Commercial License
+//    Contact licensing@automatethethings.com for commercial licensing options.
+
+package service
+
+import (
+	"context"
+	"encoding/json"
+	stderrors "errors"
+	"fmt"
+	"sync/atomic"
+	"testing"
+	"time"
+
+	kctypes "github.com/jeremyhahn/go-xkms/sdk/go"
+	"github.com/stretchr/testify/require"
+
+	"github.com/jeremyhahn/go-quicbaas/pkg/api"
+)
+
+// versionedCryptoFixture is a crypto service mounted over a KMS service whose
+// crypto manager seals ciphertexts the way XKMSBackend does: JSON
+// EncryptedData carrying the sealing key version in the "kv" metadata entry.
+type versionedCryptoFixture struct {
+	svc     *cryptoService
+	kmsSvc  *kmsServiceImpl
+	scoped  string
+	version *atomic.Uint64
+	decrypt *atomic.Int64
+}
+
+const versionStatusKeyID = "version-status-key"
+
+func newVersionedCryptoFixture(t *testing.T) *versionedCryptoFixture {
+	t.Helper()
+	ctx := systemTenantCtx()
+
+	version := &atomic.Uint64{}
+	version.Store(1)
+	decrypts := &atomic.Int64{}
+
+	kmsMgr := newMockKMSManager()
+	kmsMgr.keys[versionStatusKeyID] = &mockKeyData{
+		keyID:     versionStatusKeyID,
+		algorithm: "AES-256-GCM",
+		version:   1,
+		status:    "enabled",
+		createdAt: time.Now(),
+	}
+
+	open := func(ciphertext []byte) ([]byte, error) {
+		var encrypted kctypes.EncryptedData
+		if err := json.Unmarshal(ciphertext, &encrypted); err != nil {
+			return nil, err
+		}
+		decrypts.Add(1)
+		return encrypted.Ciphertext, nil
+	}
+	cryptoMgr := newMockCryptoManager()
+	cryptoMgr.encryptFn = func(_ context.Context, _ string, plaintext, _ []byte) ([]byte, error) {
+		return json.Marshal(kctypes.EncryptedData{
+			Ciphertext: plaintext,
+			Metadata:   map[string][]byte{"kv": []byte(fmt.Sprintf("%d", version.Load()))},
+		})
+	}
+	cryptoMgr.decryptFn = func(_ context.Context, _ string, ciphertext, _ []byte) ([]byte, error) {
+		return open(ciphertext)
+	}
+	cryptoMgr.decryptBatchFn = func(_ context.Context, _ string, items [][]byte, _ []byte) ([][]byte, error) {
+		out := make([][]byte, len(items))
+		for i, item := range items {
+			pt, err := open(item)
+			if err != nil {
+				return nil, err
+			}
+			out[i] = pt
+		}
+		return out, nil
+	}
+
+	logger := newMockLogger()
+	kmsSvc := newKMSService(kmsMgr, logger)
+	svc := newCryptoService(cryptoMgr, kmsMgr, logger, nil)
+	svc.kmsSvc = kmsSvc
+
+	scoped, err := scopeKeyID(ctx, versionStatusKeyID)
+	require.NoError(t, err)
+
+	return &versionedCryptoFixture{svc: svc, kmsSvc: kmsSvc, scoped: scoped, version: version, decrypt: decrypts}
+}
+
+func (f *versionedCryptoFixture) encrypt(t *testing.T, plaintext string) []byte {
+	t.Helper()
+	resp, err := f.svc.Encrypt(systemTenantCtx(), &EncryptRequest{KeyID: versionStatusKeyID, Plaintext: []byte(plaintext)})
+	require.NoError(t, err)
+	return resp.Ciphertext
+}
+
+// rotateAndDisableV1 moves the key to version 2 and marks version 1 disabled,
+// the state v1's grace-period job leaves behind.
+func (f *versionedCryptoFixture) rotateAndDisableV1() {
+	f.version.Store(2)
+	now := time.Now()
+	f.kmsSvc.setVersionStatus(f.scoped, 1, KeyStatusDisabled, &now)
+}
+
+func requireKeyDisabled(t *testing.T, err error) {
+	t.Helper()
+	require.Error(t, err)
+	var disabled *api.KeyDisabledError
+	require.True(t, stderrors.As(err, &disabled), "want KeyDisabledError, got %v", err)
+}
+
+func TestCryptoService_Decrypt_DisabledKeyVersionIsRefused(t *testing.T) {
+	f := newVersionedCryptoFixture(t)
+	v1 := f.encrypt(t, "sealed under v1")
+
+	resp, err := f.svc.Decrypt(systemTenantCtx(), &DecryptRequest{KeyID: versionStatusKeyID, Ciphertext: v1})
+	require.NoError(t, err)
+	require.Equal(t, "sealed under v1", string(resp.Plaintext))
+
+	f.rotateAndDisableV1()
+	before := f.decrypt.Load()
+
+	_, err = f.svc.Decrypt(systemTenantCtx(), &DecryptRequest{KeyID: versionStatusKeyID, Ciphertext: v1})
+	requireKeyDisabled(t, err)
+	require.Equal(t, before, f.decrypt.Load(), "a disabled version never reaches the crypto manager")
+}
+
+func TestCryptoService_DecryptBatch_DisabledKeyVersionFailsTheBatch(t *testing.T) {
+	f := newVersionedCryptoFixture(t)
+	v1 := f.encrypt(t, "old")
+	f.rotateAndDisableV1()
+	v2a := f.encrypt(t, "new-a")
+	v2b := f.encrypt(t, "new-b")
+	before := f.decrypt.Load()
+
+	_, err := f.svc.DecryptBatch(systemTenantCtx(), &DecryptBatchRequest{
+		KeyID: versionStatusKeyID,
+		Items: []BatchDecryptItem{{Ciphertext: v2a}, {Ciphertext: v1}, {Ciphertext: v2b}},
+	})
+	requireKeyDisabled(t, err)
+	require.Equal(t, before, f.decrypt.Load(), "no item of a refused batch is decrypted")
+}
+
+func TestCryptoService_Decrypt_EnabledKeyVersionStillDecrypts(t *testing.T) {
+	f := newVersionedCryptoFixture(t)
+	f.rotateAndDisableV1()
+	v2 := f.encrypt(t, "sealed under v2")
+
+	resp, err := f.svc.Decrypt(systemTenantCtx(), &DecryptRequest{KeyID: versionStatusKeyID, Ciphertext: v2})
+	require.NoError(t, err)
+	require.Equal(t, "sealed under v2", string(resp.Plaintext))
+
+	batch, err := f.svc.DecryptBatch(systemTenantCtx(), &DecryptBatchRequest{
+		KeyID: versionStatusKeyID,
+		Items: []BatchDecryptItem{{Ciphertext: v2}, {Ciphertext: v2}},
+	})
+	require.NoError(t, err)
+	require.Len(t, batch.Results, 2)
+	require.Equal(t, "sealed under v2", string(batch.Results[1].Plaintext))
+}

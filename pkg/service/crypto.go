@@ -274,6 +274,27 @@ func (t *cryptoService) keyVersion(ctx context.Context, scopedKeyID string) uint
 	return version
 }
 
+// checkVersionUsable refuses a ciphertext whose key version is no longer
+// usable: once a rotated-out version's grace period ends it is disabled, and
+// data sealed under it must not decrypt. A version with no recorded status is
+// in its default (enabled) state, as KMSService treats it.
+func (t *cryptoService) checkVersionUsable(ctx context.Context, scopedKeyID string, ciphertext []byte) error {
+	if t.kmsSvc == nil {
+		return nil
+	}
+	version, err := kms.CiphertextKeyVersion(ciphertext)
+	if err != nil {
+		return err
+	}
+	status, _ := t.kmsSvc.getVersionStatus(ctx, scopedKeyID, version)
+	switch status {
+	case "", KeyStatusEnabled, KeyStatusRotating:
+		return nil
+	default:
+		return api.NewKeyDisabledError("service.Decrypt", scopedKeyID)
+	}
+}
+
 // cryptoItemFunc encrypts or decrypts one item under keyID bound to encContext.
 type cryptoItemFunc func(ctx context.Context, keyID string, data, encContext []byte) ([]byte, error)
 
@@ -341,6 +362,12 @@ func (t *cryptoService) Decrypt(ctx context.Context, req *DecryptRequest) (*Decr
 	if err := t.checkKeyAuthz(ctx, scopedKeyID, "decrypt"); err != nil {
 		t.metrics.decryptOperationsTotal.With(req.KeyID, "authz_denied").Inc()
 		t.metrics.errorsByType.With("authz_error").Inc()
+		return nil, err
+	}
+
+	if err := t.checkVersionUsable(ctx, scopedKeyID, req.Ciphertext); err != nil {
+		t.metrics.decryptOperationsTotal.With(req.KeyID, "version_disabled").Inc()
+		t.metrics.errorsByType.With("key_version_error").Inc()
 		return nil, err
 	}
 
@@ -611,6 +638,15 @@ func (t *cryptoService) DecryptBatch(ctx context.Context, req *DecryptBatchReque
 		t.metrics.decryptOperationsTotal.With(req.KeyID, "authz_denied").Inc()
 		t.metrics.errorsByType.With("authz_error").Inc()
 		return nil, err
+	}
+
+	// A disabled key version on any item fails the whole batch.
+	for _, item := range req.Items {
+		if err := t.checkVersionUsable(ctx, scopedKeyID, item.Ciphertext); err != nil {
+			t.metrics.decryptOperationsTotal.With(req.KeyID, "version_disabled").Inc()
+			t.metrics.errorsByType.With("key_version_error").Inc()
+			return nil, err
+		}
 	}
 
 	// Track key usage for batch operation (if tracker configured)
