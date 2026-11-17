@@ -965,6 +965,9 @@ func (m *Manager) EnsureSecret(ctx context.Context, path string, spec *SecretSpe
 			Err:  storeErr,
 		}
 	}
+	// A regeneration after a soft delete appends a version: max_versions
+	// covers this write like every other Manager write.
+	m.enforceRetention(ctx, path)
 
 	if m.logger != nil {
 		m.logger.WithField("path", path).

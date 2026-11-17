@@ -390,6 +390,37 @@ func TestManager_MaxVersionsBoundsEveryWrite(t *testing.T) {
 	}
 }
 
+// TestManager_MaxVersionsBoundsEnsureSecretRegeneration: every soft delete
+// followed by EnsureSecret regenerates a new version; max_versions bounds
+// that write too, so old generated credentials do not accumulate.
+func TestManager_MaxVersionsBoundsEnsureSecretRegeneration(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	for name, b := range pruneBackends(t) {
+		t.Run(name, func(t *testing.T) {
+			m, err := NewManager(&ManagerOptions{Backend: b, MaxVersions: 2})
+			require.NoError(t, err)
+			spec := &SecretSpec{Length: 8, Encoding: EncodingNumeric}
+
+			for i := 0; i < 5; i++ {
+				_, generated, err := m.EnsureSecret(ctx, "app/ensured", spec)
+				require.NoError(t, err)
+				require.True(t, generated, "cycle %d regenerates after the soft delete", i)
+				if i < 4 {
+					require.NoError(t, m.Delete(ctx, "app/ensured"))
+				}
+			}
+			// Retention already ran on each regeneration: a prune to the
+			// same limit finds nothing left to remove.
+			removed, err := m.PruneVersions(ctx, "app/ensured", 2)
+			require.NoError(t, err)
+			assert.Zero(t, removed, "only the newest max_versions generated values remain")
+			_, _, err = b.GetVersion(ctx, "app/ensured", 5)
+			require.NoError(t, err, "the current generated value is kept")
+		})
+	}
+}
+
 func TestManager_NoMaxVersionsKeepsEveryVersion(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
