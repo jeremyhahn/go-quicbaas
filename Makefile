@@ -4607,6 +4607,7 @@ test-rag: ## Run RAG unit tests (pkg/rag + REST, MCP, gRPC and embedded transpor
 	go test -v -race -count=1 -tags '$(TEST_TAGS)' -run "TestRegisterRAGService" ./pkg/server/
 	# The embedded RAG routes build only under the rag tag (#1611).
 	cd sdk/go && CGO_ENABLED=1 go test -v -race -count=1 -tags rag -run "TestEmbeddedRAG" ./transport/embedded/
+	cd sdk/go && CGO_ENABLED=1 go test -v -race -count=1 -tags rag -run "TestRAGHandler_RoundTrip" ./transport/grpc/
 	@echo "$(GREEN)✓ RAG unit tests passed$(NC)"
 
 .PHONY: test-rag-coverage
