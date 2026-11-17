@@ -1162,6 +1162,12 @@ func (k *kmsServiceImpl) RotateKey(ctx context.Context, req *RotateKeyRequest) (
 		return nil, err
 	}
 
+	// The new version starts with a fresh AEAD budget: clear the usage the
+	// Crypto service counted under the same tenant-scoped key ID.
+	if tracker := k.GetSafetyTracker(); tracker != nil {
+		tracker.ResetKeyUsage(scopedKeyID)
+	}
+
 	resp := &RotateKeyResponse{
 		KeyID:      req.KeyID,
 		OldVersion: oldVersion,
