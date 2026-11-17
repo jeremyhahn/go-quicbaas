@@ -95,6 +95,40 @@ func TestKVBackend_PruneSparesARecreatedSecret(t *testing.T) {
 	}
 }
 
+// TestKVBackend_PruneCountsSparseHistoryByRecord: a writer that loses
+// publication removes its reservation, so the history under a pointer at 3
+// can be versions 1 and 3 only. Retention counts the records: keep=2 keeps
+// both (version 1 is the only rollback target), and keep=1 prunes only it.
+func TestKVBackend_PruneCountsSparseHistoryByRecord(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	store := &pruneHookKV{inMemKV: newInMemKV()}
+	b := NewKVBackend(store)
+	const path = "nodes/sparse"
+	for i := 1; i <= 3; i++ {
+		_, err := b.StoreVersion(ctx, path, map[string][]byte{"k": []byte(fmt.Sprintf("v%d", i))}, nil)
+		require.NoError(t, err)
+	}
+	// The lost reservation's unwind: version 2's record is gone.
+	require.NoError(t, store.Delete(ctx, versionKey(path, 2)))
+
+	removed, err := b.PruneVersions(ctx, path, 2)
+	require.NoError(t, err)
+	assert.Zero(t, removed, "two records exist, so keep=2 deletes nothing")
+	data, _, err := b.GetVersion(ctx, path, 1)
+	require.NoError(t, err, "version 1 is still the rollback target")
+	assert.Equal(t, "v1", string(data["k"]))
+
+	removed, err = b.PruneVersions(ctx, path, 1)
+	require.NoError(t, err)
+	assert.Equal(t, 1, removed, "keep=1 prunes the one older record")
+	_, _, err = b.GetVersion(ctx, path, 1)
+	assert.Error(t, err, "version 1 is pruned")
+	data, _, err = b.Get(ctx, path)
+	require.NoError(t, err)
+	assert.Equal(t, "v3", string(data["k"]))
+}
+
 // TestPruneVersions_RefusesAStoreWithoutCAS: a prune on a store that cannot
 // arbitrate it could delete or overwrite another instance's acknowledged
 // write, so it is refused and the history is untouched.

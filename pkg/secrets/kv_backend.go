@@ -22,6 +22,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -371,8 +372,7 @@ func (b *KVBackend) PruneVersions(ctx context.Context, path string, keep int) (i
 	if cur.Version == 0 {
 		return 0, ErrSecretNotFound
 	}
-	floor := cur.Version - keep
-	if floor < 1 {
+	if cur.Version <= keep {
 		return 0, nil
 	}
 	prefix := kvBackendKeyPrefix + path + "/v/"
@@ -380,19 +380,32 @@ func (b *KVBackend) PruneVersions(ctx context.Context, path string, keep int) (i
 		version int
 		raw     []byte
 	}
-	var doomed []scanned
+	var history []scanned
 	if err := b.store.Scan(ctx, prefix, func(key string, value []byte) error {
 		rest := strings.TrimPrefix(key, prefix)
 		if rest == "" || strings.ContainsFunc(rest, func(r rune) bool { return r < '0' || r > '9' }) {
 			return nil
 		}
-		if n, convErr := strconv.Atoi(rest); convErr == nil && n <= floor {
-			doomed = append(doomed, scanned{version: n, raw: bytes.Clone(value)})
+		// Only the published history counts: a record above the pointer is
+		// another writer's reservation in flight, never this prune's.
+		if n, convErr := strconv.Atoi(rest); convErr == nil && n >= 1 && n <= cur.Version {
+			history = append(history, scanned{version: n, raw: bytes.Clone(value)})
 		}
 		return nil
 	}); err != nil {
 		return 0, &SecretsCauseError{Message: "prune versions: enumerate keyspace", Cause: err}
 	}
+	// RETENTION COUNTS RECORDS, NOT VERSION NUMBERS. The history can be
+	// sparse: a writer that loses publication removes its reservation, so
+	// versions 1 and 3 can be the only records under a pointer at 3. A floor
+	// of cur.Version-keep would then delete version 1 with keep=2 and leave
+	// no rollback target. The newest keep records are retained; only the
+	// older ones are pruned.
+	sort.Slice(history, func(i, j int) bool { return history[i].version > history[j].version })
+	if len(history) <= keep {
+		return 0, nil
+	}
+	doomed := history[keep:]
 	// THE SCAN MUST BELONG TO THE LIFETIME THE CEILING WAS READ IN. Another
 	// node can destroy the path and recreate version 1 between loadCurrent
 	// and the scan; the scan then captures the new lifetime's records under
