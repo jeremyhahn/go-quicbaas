@@ -990,11 +990,27 @@ jobs:
           rm -f "$RUNNER_TEMP/gomodauth.env"
           echo "TOOLCHAIN_IMAGE=$(make -s toolchain-image)" >> "$GITHUB_ENV"
 
-      # #2503: a miss pushes the built toolchain image to CI_IMAGE_REGISTRY.
+      # #2503: on a push to main, a miss pushes the built toolchain image to
+      # CI_IMAGE_REGISTRY, logged in from the CI_IMAGE_REGISTRY_* secrets
+      # (token on stdin); pull requests only pull.
       - name: Push the toolchain image to the registry cache
+        if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
         env:
           CI_IMAGE_REGISTRY: ${{ vars.CI_IMAGE_REGISTRY }}
-        run: scripts/ci-image-cache.sh push || true
+          CI_IMAGE_REGISTRY_USER: ${{ secrets.CI_IMAGE_REGISTRY_USER }}
+          CI_IMAGE_REGISTRY_TOKEN: ${{ secrets.CI_IMAGE_REGISTRY_TOKEN }}
+        run: |
+          if [ -z "$CI_IMAGE_REGISTRY" ] || [ -z "$CI_IMAGE_REGISTRY_USER" ] || [ -z "$CI_IMAGE_REGISTRY_TOKEN" ]; then
+            echo "::notice::CI_IMAGE_REGISTRY, CI_IMAGE_REGISTRY_USER or CI_IMAGE_REGISTRY_TOKEN is empty; no push to the registry cache"
+            exit 0
+          fi
+          cfg=$(mktemp -d "$RUNNER_TEMP/ci-image-docker.XXXXXX")
+          trap 'rm -rf "$cfg"' EXIT
+          if ! printf '%s' "$CI_IMAGE_REGISTRY_TOKEN" | DOCKER_CONFIG=$cfg docker login "$CI_IMAGE_REGISTRY" -u "$CI_IMAGE_REGISTRY_USER" --password-stdin >/dev/null 2>&1; then
+            echo "::notice::login to the registry cache failed; no push"
+            exit 0
+          fi
+          CI_IMAGE_DOCKER_CONFIG=$cfg scripts/ci-image-cache.sh push || true
 
       # v1.22: bound this repo's cache volumes. It never fails the job.
       - name: Trim the CI caches
@@ -1243,11 +1259,27 @@ jobs:
           rm -f "$RUNNER_TEMP/gomodauth.env"
           echo "TOOLCHAIN_IMAGE=$(make -s toolchain-image)" >> "$GITHUB_ENV"
 
-      # #2503: a miss pushes the built toolchain image to CI_IMAGE_REGISTRY.
+      # #2503: on a push to main, a miss pushes the built toolchain image to
+      # CI_IMAGE_REGISTRY, logged in from the CI_IMAGE_REGISTRY_* secrets
+      # (token on stdin); pull requests only pull.
       - name: Push the toolchain image to the registry cache
+        if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
         env:
           CI_IMAGE_REGISTRY: ${{ vars.CI_IMAGE_REGISTRY }}
-        run: scripts/ci-image-cache.sh push || true
+          CI_IMAGE_REGISTRY_USER: ${{ secrets.CI_IMAGE_REGISTRY_USER }}
+          CI_IMAGE_REGISTRY_TOKEN: ${{ secrets.CI_IMAGE_REGISTRY_TOKEN }}
+        run: |
+          if [ -z "$CI_IMAGE_REGISTRY" ] || [ -z "$CI_IMAGE_REGISTRY_USER" ] || [ -z "$CI_IMAGE_REGISTRY_TOKEN" ]; then
+            echo "::notice::CI_IMAGE_REGISTRY, CI_IMAGE_REGISTRY_USER or CI_IMAGE_REGISTRY_TOKEN is empty; no push to the registry cache"
+            exit 0
+          fi
+          cfg=$(mktemp -d "$RUNNER_TEMP/ci-image-docker.XXXXXX")
+          trap 'rm -rf "$cfg"' EXIT
+          if ! printf '%s' "$CI_IMAGE_REGISTRY_TOKEN" | DOCKER_CONFIG=$cfg docker login "$CI_IMAGE_REGISTRY" -u "$CI_IMAGE_REGISTRY_USER" --password-stdin >/dev/null 2>&1; then
+            echo "::notice::login to the registry cache failed; no push"
+            exit 0
+          fi
+          CI_IMAGE_DOCKER_CONFIG=$cfg scripts/ci-image-cache.sh push || true
 
       # v1.22: bound this repo's cache volumes on the host before the stages
       # add to them (ci-standard.md §6). It never fails the job.
@@ -1718,12 +1750,27 @@ jobs:
           rm -f "$RUNNER_TEMP/gomodauth.env"
           echo "TOOLCHAIN_IMAGE=$(make -s toolchain-image)" >> "$GITHUB_ENV"
 
-      # #2503: a miss pushes the built toolchain image to CI_IMAGE_REGISTRY.
+      # #2503: on a push to main, a miss pushes the built toolchain image to
+      # CI_IMAGE_REGISTRY, logged in from the CI_IMAGE_REGISTRY_* secrets
+      # (token on stdin); pull requests only pull.
       - name: Push the toolchain image to the registry cache
-        if: ${{ steps.probe.outputs.has_target == 'true' }}
+        if: ${{ steps.probe.outputs.has_target == 'true' && github.event_name == 'push' && github.ref == 'refs/heads/main' }}
         env:
           CI_IMAGE_REGISTRY: ${{ vars.CI_IMAGE_REGISTRY }}
-        run: scripts/ci-image-cache.sh push || true
+          CI_IMAGE_REGISTRY_USER: ${{ secrets.CI_IMAGE_REGISTRY_USER }}
+          CI_IMAGE_REGISTRY_TOKEN: ${{ secrets.CI_IMAGE_REGISTRY_TOKEN }}
+        run: |
+          if [ -z "$CI_IMAGE_REGISTRY" ] || [ -z "$CI_IMAGE_REGISTRY_USER" ] || [ -z "$CI_IMAGE_REGISTRY_TOKEN" ]; then
+            echo "::notice::CI_IMAGE_REGISTRY, CI_IMAGE_REGISTRY_USER or CI_IMAGE_REGISTRY_TOKEN is empty; no push to the registry cache"
+            exit 0
+          fi
+          cfg=$(mktemp -d "$RUNNER_TEMP/ci-image-docker.XXXXXX")
+          trap 'rm -rf "$cfg"' EXIT
+          if ! printf '%s' "$CI_IMAGE_REGISTRY_TOKEN" | DOCKER_CONFIG=$cfg docker login "$CI_IMAGE_REGISTRY" -u "$CI_IMAGE_REGISTRY_USER" --password-stdin >/dev/null 2>&1; then
+            echo "::notice::login to the registry cache failed; no push"
+            exit 0
+          fi
+          CI_IMAGE_DOCKER_CONFIG=$cfg scripts/ci-image-cache.sh push || true
 
       # v1.22: bound this repo's cache volumes (as in the image job). It never
       # fails the job and keeps every volume a container mounts.

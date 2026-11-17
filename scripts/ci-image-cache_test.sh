@@ -26,7 +26,8 @@ case "$1 ${2:-}" in
     [ "${STUB_HAS_LOCAL:-}" = 1 ] && exit 0
     exit 1 ;;
   "pull "*) [ "${STUB_PULL:-fail}" = ok ] && exit 0; exit 1 ;;
-  "push "*) [ "${STUB_PUSH:-fail}" = ok ] && exit 0; exit 1 ;;
+  "push "*) echo "push-config ${DOCKER_CONFIG:-}" >> "$STUB_LOG"
+    [ "${STUB_PUSH:-fail}" = ok ] && exit 0; exit 1 ;;
   "tag "*) exit 0 ;;
 esac
 exit 0
@@ -45,7 +46,10 @@ newcase() {
   export RUNNER_TEMP="$work/tmp-$1" STUB_LOG="$work/log-$1"
   mkdir -p "$RUNNER_TEMP"
   : > "$STUB_LOG"
-  unset STUB_PULL STUB_PUSH STUB_HAS_LOCAL CI_IMAGE_REGISTRY GITHUB_SERVER_URL CI_IMAGE_NAMESPACE
+  unset STUB_PULL STUB_PUSH STUB_HAS_LOCAL CI_IMAGE_REGISTRY GITHUB_SERVER_URL CI_IMAGE_NAMESPACE \
+    CI_IMAGE_DOCKER_CONFIG
+  # push runs on a push to main only; the refusal cases override these.
+  export GITHUB_EVENT_NAME=push GITHUB_REF=refs/heads/main
 }
 
 ref=127.0.0.1:1/go-quicbaas-toolchain:abc123
@@ -73,11 +77,24 @@ run push
 
 # (b2) a miss whose push succeeds.
 newcase b2
-export CI_IMAGE_REGISTRY=127.0.0.1:1 STUB_PUSH=ok
+export CI_IMAGE_REGISTRY=127.0.0.1:1 STUB_PUSH=ok CI_IMAGE_DOCKER_CONFIG="$work/login-cfg"
 run pull
 run push
 [ "$rc" = 0 ] || fail "(b2) push exited $rc"
 [ "$out" = "miss, built and pushed $ref" ] || fail "(b2) push printed '$out'"
+pushcfg=$(while read -r a b; do [ "$a" != push-config ] || echo "$b"; done < "$STUB_LOG")
+[ "$pushcfg" = "$work/login-cfg" ] || fail "(b2) push used DOCKER_CONFIG '$pushcfg', not the logged-in one"
+
+# (f) push refuses outside a push to main: a pull request, and another ref.
+for ev in "pull_request refs/pull/1/merge" "push refs/heads/feature"; do
+  newcase f
+  export CI_IMAGE_REGISTRY=127.0.0.1:1 STUB_PUSH=ok
+  export GITHUB_EVENT_NAME=${ev% *} GITHUB_REF=${ev#* }
+  run push
+  [ "$rc" = 0 ] || fail "(f $ev) push exited $rc"
+  [ "$out" = "ci-image-cache: push runs on a push to main only; nothing pushed" ] || fail "(f $ev) push printed '$out'"
+  [ ! -s "$STUB_LOG" ] || fail "(f $ev) push called docker: $(tr '\n' ';' < "$STUB_LOG")"
+done
 
 # (c) a hit: pull prints ref and digest, push afterwards pushes nothing.
 newcase c

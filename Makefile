@@ -1422,9 +1422,11 @@ check-package-targets: ## Fail if a per-package make target does not reach its n
 .PHONY: check-ci-image-cache
 # scripts/ci-image-cache_test.sh drives scripts/ci-image-cache.sh against stub
 # docker and make binaries, so the CI_IMAGE_REGISTRY cache path is proven
-# without a daemon or a registry (#2503).
+# without a daemon or a registry (#2503); scripts/devcontainer-build_test.sh
+# runs DEVCONTAINER_BUILD's compose and plain docker build paths the same way.
 check-ci-image-cache: ## Prove ci-image-cache.sh's registry cache path against stub docker
 	@bash scripts/ci-image-cache_test.sh
+	@bash scripts/devcontainer-build_test.sh
 
 .PHONY: check-local-keygen
 # go-xkms owns keys and certificates for the whole stack; go-quicbaas composes
@@ -5656,7 +5658,8 @@ DEVCONTAINER_DIR := build/docker/devcontainer
 DEVCONTAINER_REPO := $(APP_NAME)-devcontainer
 DEVCONTAINER_INPUTS := $(DEVCONTAINER_DIR)/Dockerfile pkg/version/toolchain.mk go.mod go.sum sdk/go/go.mod sdk/go/go.sum \
 	sdk/typescript/package.json sdk/typescript/package-lock.json sdk/typescript/svelte-security/package.json \
-	cmd/quicbaas/frontend/package.json cmd/quicbaas/frontend/package-lock.json
+	cmd/quicbaas/frontend/package.json cmd/quicbaas/frontend/package-lock.json \
+	sdk/javascript/package.json sdk/javascript/package-lock.json
 DEVCONTAINER_HASH = $(shell cat $(DEVCONTAINER_INPUTS) | sha256sum | cut -c1-16)
 TOOLCHAIN_IMAGE = $(DEVCONTAINER_REPO):toolchain-$(DEVCONTAINER_HASH)
 SOURCE_DIRTY = $(shell if [ -n "$$(git status --porcelain)" ]; then \

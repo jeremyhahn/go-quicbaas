@@ -43,8 +43,12 @@ die() { echo "ci-image-cache: $*" >&2; exit 1; }
 
 # v3 (#2503): a plain registry named by CI_IMAGE_REGISTRY (the repository
 # Actions variable, host[:port]) is read first, before any GITHUB_SERVER_URL
-# logic, so the cache works on github.com too. On that path there is no
-# login and no credential: pull and push go through an empty DOCKER_CONFIG.
+# logic, so the cache works on github.com too. pull logs in with nothing,
+# through an empty DOCKER_CONFIG. push runs on a push to main only (it
+# refuses, exit 0, anywhere else) and pushes through CI_IMAGE_DOCKER_CONFIG,
+# the private DOCKER_CONFIG the ci.yml step logged in to from the
+# CI_IMAGE_REGISTRY_USER and CI_IMAGE_REGISTRY_TOKEN secrets; the script
+# itself never reads a credential.
 # The ref is $CI_IMAGE_REGISTRY/go-quicbaas-toolchain:<hash>, <hash> the part
 # after the colon of `make -s toolchain-image`. pull and push always exit 0
 # there and print one line at most:
@@ -61,6 +65,10 @@ reg=${CI_IMAGE_REGISTRY:-}
 case ${1:-} in
   pull | push)
     [ -n "$reg" ] || [ "$1" = pull ] || exit 0
+    if [ "$1" = push ] && ! { [ "${GITHUB_EVENT_NAME:-}" = push ] && [ "${GITHUB_REF:-}" = refs/heads/main ]; }; then
+      echo "ci-image-cache: push runs on a push to main only; nothing pushed"
+      exit 0
+    fi
     if [ -n "$reg" ]; then
       local_tag=$(make -s toolchain-image 2>/dev/null) || exit 0
       case $local_tag in
@@ -84,7 +92,7 @@ case ${1:-} in
       fi
       [ -e "$marker" ] && exit 0
       if docker tag "$local_tag" "$ref" >/dev/null 2>&1 \
-        && DOCKER_CONFIG=$cfg timeout 300 docker push -q "$ref" >/dev/null 2>&1; then
+        && DOCKER_CONFIG=${CI_IMAGE_DOCKER_CONFIG:-$cfg} timeout 300 docker push -q "$ref" >/dev/null 2>&1; then
         echo "miss, built and pushed $ref"
       else
         echo "miss, built, push failed"
