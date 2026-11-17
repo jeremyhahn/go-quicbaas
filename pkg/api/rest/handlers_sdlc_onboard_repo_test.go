@@ -43,7 +43,7 @@ func (p *sdlcRESTProjects) GetProjectByName(_ context.Context, req *service.GetP
 func TestSDLCRepoOnboarding_ReportsEveryStep(t *testing.T) {
 	server, svc := setupSDLCServer(t)
 	sdlcRESTProjectRecords["p1"] = &orchestration.Project{ID: "p1", TenantID: "tenant-a", Name: "p1"}
-	require.NoError(t, svc.Store().PutBinding(tenantctx.WithSystem(context.Background()), "tenant-a", ptr(restBinding("p1"))))
+	require.NoError(t, putErr(svc.Store().PutBinding(tenantctx.WithSystem(context.Background()), "tenant-a", ptr(restBinding("p1")))))
 
 	rec := sdlcCall(t, server, "tenant-a", http.MethodPost, "/api/v1/sdlc/repos/web/onboarding",
 		sdlc.RepoOnboardRequest{Like: "p1", Paused: true})
@@ -61,7 +61,7 @@ func TestSDLCRepoOnboarding_ReportsEveryStep(t *testing.T) {
 func TestSDLCRepoOnboarding_CarriesPreflight(t *testing.T) {
 	server, svc := setupSDLCServer(t)
 	sdlcRESTProjectRecords["p1"] = &orchestration.Project{ID: "p1", TenantID: "tenant-a", Name: "p1"}
-	require.NoError(t, svc.Store().PutBinding(tenantctx.WithSystem(context.Background()), "tenant-a", ptr(restBinding("p1"))))
+	require.NoError(t, putErr(svc.Store().PutBinding(tenantctx.WithSystem(context.Background()), "tenant-a", ptr(restBinding("p1")))))
 
 	rec := sdlcCall(t, server, "tenant-a", http.MethodPost, "/api/v1/sdlc/repos/web/onboarding",
 		sdlc.RepoOnboardRequest{Like: "p1", Preflight: true})

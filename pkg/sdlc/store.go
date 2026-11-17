@@ -116,31 +116,104 @@ func (s *Store) GetBinding(ctx context.Context, tenantID, projectID string) (*Pr
 	return binding, nil
 }
 
-// PutBinding creates or replaces the binding for its project.
-func (s *Store) PutBinding(ctx context.Context, tenantID string, binding *ProjectBinding) error {
+// PutBinding creates or replaces the binding for its project, stamping a
+// fresh WriteToken on it, and returns the record it replaced (nil when it
+// created one). The prior record is read in the same compare-and-swap round
+// that writes, so whether this put created or replaced is decided atomically
+// with the write.
+func (s *Store) PutBinding(ctx context.Context, tenantID string, binding *ProjectBinding) (*ProjectBinding, error) {
 	if err := binding.Validate(); err != nil {
-		return err
+		return nil, err
 	}
 	store, err := s.guardedKV(ctx, "PutBinding", tenantID)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	epoch, err := newNonce()
 	if err != nil {
-		return backendError("PutBinding.epoch", err)
+		return nil, backendError("PutBinding.epoch", err)
+	}
+	token, err := newNonce()
+	if err != nil {
+		return nil, backendError("PutBinding.write_token", err)
 	}
 	binding.ID = entityIDFor(binding.ProjectID)
-	return replaceRecord(ctx, "PutBinding", store, bindingKey(binding.ProjectID), func(held *ProjectBinding) any {
+	key := bindingKey(binding.ProjectID)
+	for {
+		held, raw, err := loadRecord[ProjectBinding](ctx, "PutBinding", store, key)
+		if err != nil {
+			return nil, err
+		}
+		var prior *ProjectBinding
 		now := s.now()
 		binding.UpdatedAt = now
 		binding.CreatedAt = now
 		binding.Epoch = epoch
+		binding.WriteToken = token
 		if held != nil && held.ProjectID == binding.ProjectID {
 			binding.CreatedAt = held.CreatedAt
 			binding.Epoch = held.Epoch
+			prior = held
+			prior.ID = binding.ID
 		}
-		return binding
-	})
+		applied, err := storeRecord(ctx, "PutBinding", store, key, raw, binding)
+		if err != nil {
+			return nil, err
+		}
+		if applied {
+			return prior, nil
+		}
+		if err := ctx.Err(); err != nil {
+			return nil, backendError("PutBinding", err)
+		}
+	}
+}
+
+// WithdrawBinding undoes the PutBinding that stamped writeToken: while the
+// stored record still carries that token, it is swapped back to prior (the
+// record that put replaced) or, when prior is nil, removed. A record carrying
+// another token (a later bind's, or none) is left alone and withdrawn is
+// false; so is an absent record.
+func (s *Store) WithdrawBinding(ctx context.Context, tenantID, projectID, writeToken string, prior *ProjectBinding) (bool, error) {
+	if err := validateKeySegment("project_id", projectID); err != nil {
+		return false, err
+	}
+	if writeToken == "" {
+		return false, &InvalidInputError{Field: "write_token", Message: "a withdrawal needs the token of the write it undoes"}
+	}
+	store, err := s.guardedKV(ctx, "WithdrawBinding", tenantID)
+	if err != nil {
+		return false, err
+	}
+	key := bindingKey(projectID)
+	for attempt := 0; attempt < fenceWriteAttempts; attempt++ {
+		held, raw, err := loadRecord[ProjectBinding](ctx, "WithdrawBinding", store, key)
+		if err != nil {
+			return false, err
+		}
+		if held == nil || held.ProjectID != projectID || held.WriteToken != writeToken {
+			return false, nil
+		}
+		var applied bool
+		if prior == nil {
+			applied, err = store.CompareAndDelete(ctx, key, raw)
+			if err != nil {
+				return false, backendError("WithdrawBinding", err)
+			}
+		} else {
+			applied, err = storeRecord(ctx, "WithdrawBinding", store, key, raw, prior)
+			if err != nil {
+				return false, err
+			}
+		}
+		if applied {
+			return true, nil
+		}
+		if err := ctx.Err(); err != nil {
+			return false, backendError("WithdrawBinding", err)
+		}
+	}
+	return false, &VersionConflictError{Entity: bindingEntityName, TenantID: tenantID, ID: projectID}
 }
 
 // UpdateBinding writes binding only if the stored record is still the one

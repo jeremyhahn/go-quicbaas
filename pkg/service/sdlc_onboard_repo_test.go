@@ -93,7 +93,7 @@ func newOnboardRig(t *testing.T) *onboardRig {
 	rig := &onboardRig{sdlcServiceRig: newSDLCServiceRig(t), web: giteafake.New(t, "acme", onboardTestRepo)}
 	template := rig.binding()
 	template.Forge.BaseURL = rig.web.APIURL()
-	if err := rig.store.PutBinding(context.Background(), sdlcTestTenant, template); err != nil {
+	if _, err := rig.store.PutBinding(context.Background(), sdlcTestTenant, template); err != nil {
 		t.Fatal(err)
 	}
 	rig.sshKeys.keys[onboardTestSigningKey] = true

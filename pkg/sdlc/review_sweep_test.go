@@ -46,7 +46,7 @@ func newSweepRig(t *testing.T) *sweepRig {
 	store := newTestStore(t)
 	binding := testBinding()
 	binding.Reviewer = ReviewerConfig{Agent: testReviewerAgent, Login: fakeReviewerLogin, TokenSecretRef: "reviewer-tok"}
-	if err := store.PutBinding(context.Background(), testTenant, binding); err != nil {
+	if _, err := store.PutBinding(context.Background(), testTenant, binding); err != nil {
 		t.Fatal(err)
 	}
 	forge := newFakeForge()
@@ -72,7 +72,7 @@ func (r *sweepRig) rebind(t *testing.T, mutate func(*ProjectBinding)) {
 		t.Fatal(err)
 	}
 	mutate(binding)
-	if err := r.store.PutBinding(context.Background(), testTenant, binding); err != nil {
+	if _, err := r.store.PutBinding(context.Background(), testTenant, binding); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -379,7 +379,7 @@ func TestReviewSweeper_OneProjectsForgeFailureDoesNotStopTheRest(t *testing.T) {
 	other := testBinding()
 	other.ProjectID = "proj-2"
 	other.Reviewer = ReviewerConfig{Agent: testReviewerAgent, Login: fakeReviewerLogin, TokenSecretRef: "reviewer-tok"}
-	if err := rig.store.PutBinding(context.Background(), testTenant, other); err != nil {
+	if _, err := rig.store.PutBinding(context.Background(), testTenant, other); err != nil {
 		t.Fatal(err)
 	}
 	// One forge serves both bindings, and it refuses the listing for the

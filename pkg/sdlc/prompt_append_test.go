@@ -95,7 +95,7 @@ func TestReviewRunner_TheSeatCarriesItsOwnAppend(t *testing.T) {
 func TestTriageRunner_CarriesTheBindingsAppend(t *testing.T) {
 	rig := newTriageRig(t)
 	rig.binding.TriagePromptAppend = "issues labelled infra are never ready"
-	if err := rig.store.PutBinding(context.Background(), testTenant, rig.binding); err != nil {
+	if _, err := rig.store.PutBinding(context.Background(), testTenant, rig.binding); err != nil {
 		t.Fatal(err)
 	}
 	rig.forge.putIssue(801, "an issue to triage")

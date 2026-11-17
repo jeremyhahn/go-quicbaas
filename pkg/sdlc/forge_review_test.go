@@ -37,7 +37,7 @@ func newReviewRig(t *testing.T) *reviewRig {
 	t.Helper()
 	store := newTestStore(t)
 	ctx := context.Background()
-	if err := store.PutBinding(ctx, testTenant, testBinding()); err != nil {
+	if _, err := store.PutBinding(ctx, testTenant, testBinding()); err != nil {
 		t.Fatal(err)
 	}
 	forge := newFakeForge()
@@ -161,7 +161,7 @@ func TestReviewValidator_IndependentReviewerRule(t *testing.T) {
 	// family is known for is what leaves the author unknown.
 	binding := testBinding()
 	binding.Worker = orchestration.AgentRefTo(testMysteryAgent)
-	if err := rig.store.PutBinding(context.Background(), testTenant, binding); err != nil {
+	if _, err := rig.store.PutBinding(context.Background(), testTenant, binding); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := rig.validator.Validate(context.Background(), testJob(1), rig.criterion); !errors.Is(err, ErrInvalidInput) {

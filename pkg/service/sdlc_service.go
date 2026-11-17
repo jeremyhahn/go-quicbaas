@@ -367,21 +367,17 @@ func (s *SDLCService) Bind(ctx context.Context, tenantID string, binding *sdlc.P
 	if err := s.routes.Record(ctx, binding.ProjectID, tenantID); err != nil {
 		return nil, err
 	}
-	// A REBIND IS NOT FENCED. A binding was held throughout, so a delete's
-	// binding check sees one whatever the interleaving and refuses. Only a
-	// fresh bind can slip behind a delete's check (go-quicbaas#1303).
-	_, priorErr := s.store.GetBinding(ctx, tenantID, binding.ProjectID)
-	fresh := errors.Is(priorErr, sdlc.ErrNotFound)
-	if priorErr != nil && !fresh {
-		return nil, priorErr
-	}
-	if err := s.store.PutBinding(ctx, tenantID, binding); err != nil {
+	// EVERY BIND READS THE DELETE FENCE after its write, fresh bind or rebind
+	// (go-quicbaas#1303). PutBinding reports the record it replaced, decided
+	// in the same compare-and-swap as the write, and stamps the write with a
+	// token, so a withdrawal undoes exactly this write and nothing written
+	// since.
+	prior, err := s.store.PutBinding(ctx, tenantID, binding)
+	if err != nil {
 		return nil, err
 	}
-	if fresh {
-		if err := s.withdrawIfDeleting(ctx, tenantID, binding.ProjectID); err != nil {
-			return nil, err
-		}
+	if err := s.withdrawIfDeleting(ctx, tenantID, binding, prior); err != nil {
+		return nil, err
 	}
 	s.warnSystemTenantBind(tenantID, binding.ProjectID)
 	// PROVISIONED LAST, AND THE ORDER IS DELIBERATE. The route index and the
@@ -400,25 +396,43 @@ func (s *SDLCService) Bind(ctx context.Context, tenantID string, binding *sdlc.P
 	return binding, nil
 }
 
+// bindWithdrawTimeout bounds a bind's withdrawal, which runs detached from
+// the request's cancellation.
+const bindWithdrawTimeout = 30 * time.Second
+
 // withdrawIfDeleting is the bind's half of the delete fence
-// (sdlc.Store.FenceProjectDelete): read only after the fresh binding is
-// written. A fence held means a delete may have checked for a binding before
-// this one landed, so the binding and its route are withdrawn and the bind is
-// refused. If the fence cannot be read, the binding is withdrawn as well: a
-// bind that cannot rule out the delete must not stand behind it.
-func (s *SDLCService) withdrawIfDeleting(ctx context.Context, tenantID, projectID string) error {
-	fenced, err := s.store.ProjectDeleteFenced(ctx, tenantID, projectID)
-	if err == nil && !fenced {
+// (sdlc.Store.FenceProjectDelete): read only after the binding is written. A
+// fence held, or a tombstone, means a delete may have checked for a binding
+// before this one landed, so this write is withdrawn and the bind is refused
+// with *sdlc.ProjectDeletingError. If the fence cannot be read, the write is
+// withdrawn as well and the read error returned: a bind that cannot rule out
+// the delete must not stand behind it.
+//
+// The withdrawal runs detached from the request's cancellation (a canceled
+// request must not leave the binding standing) and undoes only this write:
+// the record goes back to prior, or is removed when the bind created it. A
+// record another bind wrote since is left alone. The route is forgotten only
+// when this bind created the binding and its withdrawal removed it; a rebind
+// keeps the route the prior binding uses.
+func (s *SDLCService) withdrawIfDeleting(ctx context.Context, tenantID string, binding *sdlc.ProjectBinding, prior *sdlc.ProjectBinding) error {
+	projectID := binding.ProjectID
+	fenced, readErr := s.store.ProjectDeleteFenced(ctx, tenantID, projectID)
+	if readErr == nil && !fenced {
 		return nil
 	}
-	if delErr := s.store.DeleteBinding(ctx, tenantID, projectID); delErr != nil {
-		return delErr
-	}
-	if fgErr := s.routes.Forget(ctx, projectID, tenantID); fgErr != nil {
-		return fgErr
+	detached, cancel := context.WithTimeout(context.WithoutCancel(ctx), bindWithdrawTimeout)
+	defer cancel()
+	withdrawn, err := s.store.WithdrawBinding(detached, tenantID, projectID, binding.WriteToken, prior)
+	if err == nil && withdrawn && prior == nil {
+		err = s.routes.Forget(detached, projectID, tenantID)
 	}
 	if err != nil {
-		return err
+		s.logger.Error("sdlc: a bind behind a project delete could not be withdrawn; the binding may stand on a deleted project",
+			"tenant_id", tenantID, "project_id", projectID, "error", err)
+		return &sdlc.BindWithdrawError{TenantID: tenantID, ProjectID: projectID, Cause: err}
+	}
+	if readErr != nil {
+		return readErr
 	}
 	return &sdlc.ProjectDeletingError{TenantID: tenantID, ProjectID: projectID}
 }

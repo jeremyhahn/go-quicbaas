@@ -197,6 +197,41 @@ func (e *ProjectDeletingError) Error() string {
 // Unwrap returns the sentinel for errors.Is support.
 func (e *ProjectDeletingError) Unwrap() error { return ErrVersionConflict }
 
+// DeleteInProgressError refuses a project delete while another delete of the
+// same project holds a live fence (go-quicbaas#1303). It is a version
+// conflict: the caller retries once the other delete settles, and then finds
+// the project gone or deletes it.
+type DeleteInProgressError struct {
+	TenantID  string
+	ProjectID string
+}
+
+// Error implements the error interface.
+func (e *DeleteInProgressError) Error() string {
+	return "sdlc: project " + e.ProjectID + " is already being deleted; retry once that delete settles"
+}
+
+// Unwrap returns the sentinel for errors.Is support.
+func (e *DeleteInProgressError) Unwrap() error { return ErrVersionConflict }
+
+// BindWithdrawError reports a bind that had to withdraw its binding (a delete
+// of the project was in flight, or the fence could not be read) and could not.
+// The binding may still stand on a project that is being deleted; the cause
+// says why the withdrawal failed.
+type BindWithdrawError struct {
+	TenantID  string
+	ProjectID string
+	Cause     error
+}
+
+// Error implements the error interface.
+func (e *BindWithdrawError) Error() string {
+	return "sdlc: bind of project " + e.ProjectID + " could not be withdrawn from a delete in flight: " + e.Cause.Error()
+}
+
+// Unwrap returns the cause for errors.Is and errors.As support.
+func (e *BindWithdrawError) Unwrap() error { return e.Cause }
+
 // InvalidInputError reports a caller-supplied value that was refused.
 type InvalidInputError struct {
 	Field   string

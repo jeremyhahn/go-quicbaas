@@ -67,7 +67,7 @@ type webhookRig struct {
 func newWebhookRig(t *testing.T) *webhookRig {
 	t.Helper()
 	store := newTestStore(t)
-	if err := store.PutBinding(context.Background(), testTenant, testBinding()); err != nil {
+	if _, err := store.PutBinding(context.Background(), testTenant, testBinding()); err != nil {
 		t.Fatal(err)
 	}
 	forge := newFakeForge()
@@ -183,7 +183,7 @@ func TestWebhookIngest_Refusals(t *testing.T) {
 	// A binding with no webhook secret cannot verify anything.
 	binding := testBinding()
 	binding.Forge.WebhookSecretRef = ""
-	if err := rig.store.PutBinding(context.Background(), testTenant, binding); err != nil {
+	if _, err := rig.store.PutBinding(context.Background(), testTenant, binding); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := rig.ingestor.Ingest(context.Background(), delivery()); !errors.Is(err, ErrWebhookSecretMissing) {
@@ -191,7 +191,7 @@ func TestWebhookIngest_Refusals(t *testing.T) {
 	}
 	nilForge, _ := NewWebhookIngestor(&staticRoutes{tenants: map[string]string{testProject: testTenant}}, rig.store, rig.secrets, &fakeForges{}, rig.nudger, nil)
 	binding.Forge.WebhookSecretRef = "wh"
-	if err := rig.store.PutBinding(context.Background(), testTenant, binding); err != nil {
+	if _, err := rig.store.PutBinding(context.Background(), testTenant, binding); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := nilForge.Ingest(context.Background(), delivery()); !errors.Is(err, ErrForgeNotRegistered) {
@@ -307,7 +307,7 @@ func TestWebhookHTTP_AcknowledgesAnIgnoredDelivery(t *testing.T) {
 	rig := newWebhookRig(t)
 	binding := testBinding()
 	binding.Discovery = DiscoveryPoll
-	if err := rig.store.PutBinding(context.Background(), testTenant, binding); err != nil {
+	if _, err := rig.store.PutBinding(context.Background(), testTenant, binding); err != nil {
 		t.Fatal(err)
 	}
 	h, seen := newWebhookHTTP(t, rig, 64)
@@ -509,7 +509,7 @@ func TestWebhookIngest_APollOnlyProjectIgnoresAVerifiedDelivery(t *testing.T) {
 	rig.ingestor.SetRulingReadmitter(rulings)
 	binding := testBinding()
 	binding.Discovery = DiscoveryPoll
-	if err := rig.store.PutBinding(context.Background(), testTenant, binding); err != nil {
+	if _, err := rig.store.PutBinding(context.Background(), testTenant, binding); err != nil {
 		t.Fatal(err)
 	}
 
@@ -556,7 +556,7 @@ func TestWebhookIngest_ADeliveryModeActsOnAVerifiedDelivery(t *testing.T) {
 			rig.ingestor.SetTriageNudger(triage)
 			binding := testBinding()
 			binding.Discovery = mode
-			if err := rig.store.PutBinding(context.Background(), testTenant, binding); err != nil {
+			if _, err := rig.store.PutBinding(context.Background(), testTenant, binding); err != nil {
 				t.Fatal(err)
 			}
 			rig.forge.parseEvent = &ForgeEvent{Kind: EventIssueOpened, Repo: testRepoRef, IssueNumber: 7}

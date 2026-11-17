@@ -191,6 +191,7 @@ func domainErrorClass(err error) (qberrors.ErrorCode, bool) {
 		unresolved    *service.ProjectUnresolvedError
 		alreadyExists *service.ProjectAlreadyExistsError
 		bound         *service.ProjectBoundError
+		deleting      *sdlc.DeleteInProgressError
 		invalid       *service.ProjectInvalidError
 		roleInvalid   *service.ProjectRoleInvalidError
 		forge         *sdlc.ForgeNotRegisteredError
@@ -210,6 +211,9 @@ func domainErrorClass(err error) (qberrors.ErrorCode, bool) {
 	case stderrors.As(err, &bound):
 		// The project still has an SDLC binding: the message names the
 		// unbind remedy, so it must reach the caller. REST answers 409.
+		return qberrors.ErrConflict, true
+	case stderrors.As(err, &deleting):
+		// Another delete of the project is in flight: retry once it settles.
 		return qberrors.ErrConflict, true
 	case stderrors.As(err, &invalid), stderrors.As(err, &roleInvalid),
 		stderrors.As(err, &forge), stderrors.As(err, &strategy),

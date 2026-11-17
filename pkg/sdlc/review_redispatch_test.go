@@ -34,7 +34,7 @@ func (r *dispatchRig) selectBackupSeat(t *testing.T) {
 	}
 	binding.Reviewers = []ReviewerConfig{{Name: "backup", Agent: testBackupReviewerAgent, Login: "backup-bot",
 		TokenSecretRef: "backup-tok", CountsTowardMerge: boolPtr(true)}}
-	if err := r.store.PutBinding(ctx, testTenant, binding); err != nil {
+	if _, err := r.store.PutBinding(ctx, testTenant, binding); err != nil {
 		t.Fatal(err)
 	}
 	override := &ReviewerOverride{ProjectID: testProject, PullRequest: 41, Profile: "backup", BindingEpoch: binding.Epoch}

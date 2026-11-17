@@ -210,6 +210,10 @@ func sdlcCall(t *testing.T, server *Server, tenant, method, path string, body an
 	return rec
 }
 
+// putErr drops the prior record PutBinding returns, for a caller that only
+// checks the write.
+func putErr(_ *sdlc.ProjectBinding, err error) error { return err }
+
 func restBinding(id string) sdlc.ProjectBinding {
 	return sdlc.ProjectBinding{
 		ProjectID: id,
@@ -226,7 +230,7 @@ func restBinding(id string) sdlc.ProjectBinding {
 func TestSDLCBinding_ReadUnbindAndDelivery(t *testing.T) {
 	server, svc := setupSDLCServer(t)
 	ctx := tenantctx.WithSystem(context.Background())
-	require.NoError(t, svc.Store().PutBinding(ctx, "tenant-a", ptr(restBinding("p1"))))
+	require.NoError(t, putErr(svc.Store().PutBinding(ctx, "tenant-a", ptr(restBinding("p1")))))
 	require.NoError(t, svc.Store().PutDelivery(ctx, "tenant-a", &sdlc.Delivery{TaskID: "task-1", ProjectID: "p1", Attempt: 1, Branch: "b",
 		PullRequest: sdlc.DeliveryPullRequest{Number: 9, State: sdlc.PullRequestOpen}}))
 
@@ -289,7 +293,7 @@ func TestSDLCBinding_BindRefusalsAreTyped(t *testing.T) {
 
 func TestSDLCBinding_TenancyIsTheCallersOwn(t *testing.T) {
 	server, svc := setupSDLCServer(t)
-	require.NoError(t, svc.Store().PutBinding(tenantctx.WithSystem(context.Background()), "tenant-a", ptr(restBinding("p1"))))
+	require.NoError(t, putErr(svc.Store().PutBinding(tenantctx.WithSystem(context.Background()), "tenant-a", ptr(restBinding("p1")))))
 	// Bound to tenant-a but asking for tenant-b: refused.
 	rec := sdlcCall(t, server, "tenant-a", http.MethodGet, "/api/v1/sdlc/projects/p1/binding?tenant_id=tenant-b", nil)
 	assert.Equal(t, http.StatusForbidden, rec.Code)
@@ -389,7 +393,7 @@ func TestSDLCOnboarding_ProvisionsAndReportsSeparately(t *testing.T) {
 	server, svc := setupSDLCServer(t)
 	ctx := tenantctx.WithSystem(context.Background())
 	sdlcRESTProjectRecords["p1"] = &orchestration.Project{ID: "p1", TenantID: "tenant-a"}
-	require.NoError(t, svc.Store().PutBinding(ctx, "tenant-a", ptr(restBinding("p1"))))
+	require.NoError(t, putErr(svc.Store().PutBinding(ctx, "tenant-a", ptr(restBinding("p1")))))
 
 	// The read first: not conformant, and it wrote nothing.
 	rec := sdlcCall(t, server, "tenant-a", http.MethodGet, "/api/v1/sdlc/projects/p1/conformance", nil)
@@ -473,7 +477,7 @@ func TestSDLCOpenWork_ListsTheAgentsPullRequestsAndLabelledIssues(t *testing.T) 
 	server, svc := setupSDLCServer(t)
 	ctx := tenantctx.WithSystem(context.Background())
 	sdlcRESTProjectRecords["p1"] = &orchestration.Project{ID: "p1", TenantID: "tenant-a"}
-	require.NoError(t, svc.Store().PutBinding(ctx, "tenant-a", ptr(restBinding("p1"))))
+	require.NoError(t, putErr(svc.Store().PutBinding(ctx, "tenant-a", ptr(restBinding("p1")))))
 	sdlcRESTForge.PutPullRequestRaw(giteafake.PullRequest{Number: 4, Title: "fix", State: "open",
 		User: &giteafake.User{Login: giteafake.DefaultLogin}, Head: giteafake.Commit{Ref: "issue/4-fix", SHA: "h4"}})
 	sdlcRESTForge.PutStatus("h4", "ci", "pending")

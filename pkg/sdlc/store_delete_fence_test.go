@@ -2,6 +2,7 @@ package sdlc
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 )
@@ -37,9 +38,9 @@ func TestDeleteFence_RoundTrip(t *testing.T) {
 	}
 }
 
-// A delete that finishes must not lift the fence of a delete that started
-// after it: the later one is still between its check and its delete.
-func TestDeleteFence_ClearLeavesAnotherDeletesFence(t *testing.T) {
+// A second delete is refused while the first's fence is live: replacing it
+// would let the first's clear drop the fence the second relies on.
+func TestDeleteFence_SecondDeleteRefusedWhileLive(t *testing.T) {
 	store := newTestStore(t)
 	ctx := context.Background()
 
@@ -47,14 +48,96 @@ func TestDeleteFence_ClearLeavesAnotherDeletesFence(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	_, err = store.FenceProjectDelete(ctx, fenceTenant, "p1")
+	var inProgress *DeleteInProgressError
+	if !errors.As(err, &inProgress) || !errors.Is(err, ErrVersionConflict) {
+		t.Fatalf("second FenceProjectDelete = %v, want *DeleteInProgressError (a version conflict)", err)
+	}
+	if inProgress.TenantID != fenceTenant || inProgress.ProjectID != "p1" {
+		t.Fatalf("DeleteInProgressError = %+v", inProgress)
+	}
+	// The first delete's fence is untouched and still clears with its token.
+	if err := store.ClearProjectDeleteFence(ctx, fenceTenant, "p1", first); err != nil {
+		t.Fatal(err)
+	}
+	if fenced, err := store.ProjectDeleteFenced(ctx, fenceTenant, "p1"); err != nil || fenced {
+		t.Fatalf("after the first delete cleared: fenced=%v err=%v", fenced, err)
+	}
+}
+
+// A stale fence (a crashed delete's) is replaced, and the crashed delete's
+// token no longer clears the fence that replaced it.
+func TestDeleteFence_StaleFenceReplaced(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+	base := time.Date(2026, 11, 14, 12, 0, 0, 0, time.UTC)
+	store.now = func() time.Time { return base }
+
+	crashed, err := store.FenceProjectDelete(ctx, fenceTenant, "p1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	store.now = func() time.Time { return base.Add(DeleteFenceTTL) }
+	second, err := store.FenceProjectDelete(ctx, fenceTenant, "p1")
+	if err != nil || second == "" || second == crashed {
+		t.Fatalf("FenceProjectDelete over a stale fence = %q, %v", second, err)
+	}
+	if err := store.ClearProjectDeleteFence(ctx, fenceTenant, "p1", crashed); err != nil {
+		t.Fatal(err)
+	}
+	if fenced, err := store.ProjectDeleteFenced(ctx, fenceTenant, "p1"); err != nil || !fenced {
+		t.Fatalf("the crashed delete's token lifted the live fence: fenced=%v err=%v", fenced, err)
+	}
+}
+
+// A completed delete leaves a tombstone: it holds whatever its age, no clear
+// removes it, and a later fence attempt reports the project gone.
+func TestDeleteFence_TombstoneHoldsForever(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+	base := time.Date(2026, 11, 14, 12, 0, 0, 0, time.UTC)
+	store.now = func() time.Time { return base }
+
+	token, err := store.FenceProjectDelete(ctx, fenceTenant, "p1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.MarkProjectDeleted(ctx, fenceTenant, "p1", token); err != nil {
+		t.Fatalf("MarkProjectDeleted: %v", err)
+	}
+	// Marking again with the same token is a no-op.
+	if err := store.MarkProjectDeleted(ctx, fenceTenant, "p1", token); err != nil {
+		t.Fatalf("second MarkProjectDeleted: %v", err)
+	}
+	if err := store.ClearProjectDeleteFence(ctx, fenceTenant, "p1", token); err != nil {
+		t.Fatal(err)
+	}
+	store.now = func() time.Time { return base.Add(100 * DeleteFenceTTL) }
+	if fenced, err := store.ProjectDeleteFenced(ctx, fenceTenant, "p1"); err != nil || !fenced {
+		t.Fatalf("tombstone: fenced=%v err=%v, want true whatever its age and after a clear", fenced, err)
+	}
+	if _, err := store.FenceProjectDelete(ctx, fenceTenant, "p1"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("FenceProjectDelete over a tombstone = %v, want not found", err)
+	}
+}
+
+// Only the caller's own fence becomes a tombstone.
+func TestDeleteFence_MarkChecksTheToken(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+	if err := store.MarkProjectDeleted(ctx, fenceTenant, "p1", "nobody"); !errors.Is(err, ErrVersionConflict) {
+		t.Fatalf("MarkProjectDeleted with no fence = %v, want a version conflict", err)
+	}
 	if _, err := store.FenceProjectDelete(ctx, fenceTenant, "p1"); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.ClearProjectDeleteFence(ctx, fenceTenant, "p1", first); err != nil {
-		t.Fatalf("clear with the replaced token: %v", err)
+	if err := store.MarkProjectDeleted(ctx, fenceTenant, "p1", "someone-else"); !errors.Is(err, ErrVersionConflict) {
+		t.Fatalf("MarkProjectDeleted with another token = %v, want a version conflict", err)
 	}
-	if fenced, err := store.ProjectDeleteFenced(ctx, fenceTenant, "p1"); err != nil || !fenced {
-		t.Fatalf("the second delete's fence was lifted: fenced=%v err=%v", fenced, err)
+	base := time.Now().UTC()
+	store.now = func() time.Time { return base.Add(DeleteFenceTTL) }
+	if fenced, _ := store.ProjectDeleteFenced(ctx, fenceTenant, "p1"); fenced {
+		t.Fatal("a refused mark wrote a tombstone")
 	}
 }
 

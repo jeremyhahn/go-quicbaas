@@ -32,7 +32,7 @@ import (
 func TestSDLCReviewer_OverrideVerbs(t *testing.T) {
 	server, svc := setupSDLCServer(t)
 	binding := profiledRESTBinding("p1")
-	require.NoError(t, svc.Store().PutBinding(context.Background(), "tenant-a", &binding))
+	require.NoError(t, putErr(svc.Store().PutBinding(context.Background(), "tenant-a", &binding)))
 	const route = "/api/v1/sdlc/projects/p1/pulls/41/reviewer"
 
 	rec := sdlcCall(t, server, "tenant-a", http.MethodGet, route, nil)

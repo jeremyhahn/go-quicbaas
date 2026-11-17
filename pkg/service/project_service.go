@@ -16,6 +16,7 @@ package service
 import (
 	"context"
 	stderrors "errors"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -670,23 +671,49 @@ func (s *projectServiceImpl) refuseBound(ctx context.Context, tenantID, projectI
 type ProjectDeleteFence interface {
 	FenceProjectDelete(ctx context.Context, tenantID, projectID string) (string, error)
 	ClearProjectDeleteFence(ctx context.Context, tenantID, projectID, token string) error
+	MarkProjectDeleted(ctx context.Context, tenantID, projectID, token string) error
 }
 
-// fenceDelete places the delete fence and returns what clears it. A fence
-// that cannot be placed refuses the delete, as an unreadable binding store
-// does. The clear runs detached from the request's cancellation: a fence left
-// behind blocks binds of the project until it goes stale.
-func (s *projectServiceImpl) fenceDelete(ctx context.Context, tenantID, projectID string) (func(), error) {
+// fenceSettleTimeout bounds the detached write that settles a delete's fence.
+const fenceSettleTimeout = 30 * time.Second
+
+// fenceDelete places the delete fence and returns what settles it: called
+// with true once the project is deleted, it turns the fence into a tombstone
+// (a bind whose fence read lands after the delete still sees it); called with
+// false, after a refusal or a failed delete, it clears the fence. A fence that
+// cannot be placed refuses the delete, as an unreadable binding store does;
+// another delete in flight refuses it with *sdlc.DeleteInProgressError. The
+// settle runs detached from the request's cancellation: a fence left behind
+// blocks binds of the project until it goes stale, and a tombstone not written
+// would let a late bind stand on the deleted project.
+func (s *projectServiceImpl) fenceDelete(ctx context.Context, tenantID, projectID string) (func(deleted bool), error) {
 	fence, ok := s.bindings.(ProjectDeleteFence)
 	if !ok || fence == nil {
-		return func() {}, nil
+		return func(bool) {}, nil
 	}
 	token, err := fence.FenceProjectDelete(ctx, tenantID, projectID)
 	if err != nil {
+		var inProgress *sdlc.DeleteInProgressError
+		switch {
+		case stderrors.As(err, &inProgress):
+			return nil, err
+		case stderrors.Is(err, sdlc.ErrNotFound):
+			// A tombstone: the project was deleted under this request.
+			return nil, &ProjectNotFoundError{TenantID: tenantID, ProjectID: projectID}
+		}
 		return nil, &ProjectBindingCheckError{TenantID: tenantID, ProjectID: projectID, Cause: err}
 	}
-	return func() {
-		_ = fence.ClearProjectDeleteFence(context.WithoutCancel(ctx), tenantID, projectID, token)
+	return func(deleted bool) {
+		settleCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), fenceSettleTimeout)
+		defer cancel()
+		if !deleted {
+			_ = fence.ClearProjectDeleteFence(settleCtx, tenantID, projectID, token)
+			return
+		}
+		if err := fence.MarkProjectDeleted(settleCtx, tenantID, projectID, token); err != nil {
+			slog.Default().Error("project: the delete fence could not be turned into a tombstone; a bind racing the delete may stand on the deleted project",
+				"tenant_id", tenantID, "project_id", projectID, "error", err)
+		}
 	}, nil
 }
 
@@ -1272,11 +1299,12 @@ func (s *projectServiceImpl) DeleteProject(ctx context.Context, req *DeleteProje
 
 	// Fenced BEFORE the binding check, so a bind that commits after the check
 	// sees the fence and withdraws (go-quicbaas#1303).
-	release, err := s.fenceDelete(ctx, req.TenantID, req.ProjectID)
+	settle, err := s.fenceDelete(ctx, req.TenantID, req.ProjectID)
 	if err != nil {
 		return nil, err
 	}
-	defer release()
+	deleted := false
+	defer func() { settle(deleted) }()
 
 	// Refused before the teardown, so a refused delete leaves the managed
 	// workspace intact.
@@ -1298,6 +1326,8 @@ func (s *projectServiceImpl) DeleteProject(ctx context.Context, req *DeleteProje
 	if err := s.store.Delete(ctx, req.TenantID, req.ProjectID); err != nil {
 		return nil, s.convertStoreError(err)
 	}
+	// The project is gone: the fence becomes its tombstone.
+	deleted = true
 
 	return &DeleteProjectResponse{
 		ProjectID: req.ProjectID,

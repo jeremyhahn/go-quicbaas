@@ -50,7 +50,7 @@ func newPreflightRig(t *testing.T, verification ...string) *preflightRig {
 	store := newTestStore(t)
 	binding := testBinding()
 	binding.Verification = verification
-	if err := store.PutBinding(context.Background(), testTenant, binding); err != nil {
+	if _, err := store.PutBinding(context.Background(), testTenant, binding); err != nil {
 		t.Fatalf("put binding: %v", err)
 	}
 	container := &fakeContainer{checkout: filepath.Join(orchestration.WorkspaceCheckoutRoot, testOrchProject().Name)}

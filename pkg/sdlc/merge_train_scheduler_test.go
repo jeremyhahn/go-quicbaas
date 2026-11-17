@@ -42,7 +42,7 @@ func newClockedTrainScheduler(t *testing.T, trained bool) (*TrainScheduler, *fak
 	if trained {
 		binding.Reviewer = trainTestReviewer()
 	}
-	if err := store.PutBinding(context.Background(), testTenant, binding); err != nil {
+	if _, err := store.PutBinding(context.Background(), testTenant, binding); err != nil {
 		t.Fatal(err)
 	}
 	starter := &fakeJobStarter{}
@@ -187,7 +187,7 @@ func TestTrainScheduler_FormationIsRateLimitedPerProject(t *testing.T) {
 	other := testBinding()
 	other.ProjectID = "project-2"
 	other.Reviewer = trainTestReviewer()
-	if err := store.PutBinding(context.Background(), testTenant, other); err != nil {
+	if _, err := store.PutBinding(context.Background(), testTenant, other); err != nil {
 		t.Fatal(err)
 	}
 	nudge := func(projectID string) {

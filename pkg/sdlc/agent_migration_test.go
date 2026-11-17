@@ -63,7 +63,7 @@ func storedLegacyBinding(t *testing.T, store *Store, projectID string) {
 	t.Helper()
 	binding := testBinding()
 	binding.ProjectID = projectID
-	if err := store.PutBinding(context.Background(), testTenant, binding); err != nil {
+	if _, err := store.PutBinding(context.Background(), testTenant, binding); err != nil {
 		t.Fatalf("PutBinding: %v", err)
 	}
 	stored, err := store.GetBinding(context.Background(), testTenant, projectID)
@@ -130,7 +130,7 @@ func TestMigrateBindingAgents_LeavesAnUnmigratableBindingForTheOperator(t *testi
 	ctx := context.Background()
 	store := newTestStore(t)
 	binding := testBinding()
-	if err := store.PutBinding(ctx, testTenant, binding); err != nil {
+	if _, err := store.PutBinding(ctx, testTenant, binding); err != nil {
 		t.Fatal(err)
 	}
 	stored, err := store.GetBinding(ctx, testTenant, testProject)

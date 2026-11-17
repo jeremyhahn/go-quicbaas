@@ -1177,7 +1177,7 @@ func TestSDLCService_OnboardRefusesABindingOffTheAllowlist(t *testing.T) {
 		t.Fatal(err)
 	}
 	stale.Verification = []string{"make lint-everything"}
-	if err := rig.store.PutBinding(ctx, sdlcTestTenant, stale); err != nil {
+	if _, err := rig.store.PutBinding(ctx, sdlcTestTenant, stale); err != nil {
 		t.Fatal(err)
 	}
 	_, err = rig.svc.Onboard(ctx, sdlcTestTenant, sdlcTestProject)

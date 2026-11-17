@@ -93,7 +93,7 @@ func newTriageRig(t *testing.T) *triageRig {
 	ctx := context.Background()
 	store := newTestStore(t)
 	binding := testBinding()
-	if err := store.PutBinding(ctx, testTenant, binding); err != nil {
+	if _, err := store.PutBinding(ctx, testTenant, binding); err != nil {
 		t.Fatalf("put binding: %v", err)
 	}
 	forge := newFakeForge()
@@ -137,7 +137,7 @@ func (r *triageRig) onSSH() {
 	project.Git.RepoURL = "ssh://git@forge.test:2022/acme/api.git"
 	r.project = project
 	r.binding.Forge.SSHHostKey = testSSHHostKey
-	if err := r.store.PutBinding(context.Background(), testTenant, r.binding); err != nil {
+	if _, err := r.store.PutBinding(context.Background(), testTenant, r.binding); err != nil {
 		r.t.Fatalf("put binding: %v", err)
 	}
 }
@@ -1999,7 +1999,7 @@ func TestTriageRunner_AVerdictReplacesThePreviousDisposition(t *testing.T) {
 	// dispositions colliding, so it needs both declared — and the runner
 	// reloads the binding from the STORE, so the store is what must change.
 	rig.binding.Forge.Labels[LabelEscalated] = "factory:escalated"
-	if err := rig.store.PutBinding(context.Background(), testTenant, rig.binding); err != nil {
+	if _, err := rig.store.PutBinding(context.Background(), testTenant, rig.binding); err != nil {
 		t.Fatalf("put binding: %v", err)
 	}
 	escalated := rig.binding.Forge.Label(LabelEscalated)
