@@ -458,11 +458,14 @@ func newBuildRef() (string, error) {
 // removal only untags; on a failed build the image may go with it, which is
 // what an untagged failed build should do. Its context is its own, bounded
 // by oneShotCleanupTimeout, so it runs after the caller's is cancelled. A
-// failure is logged and never fails the build.
+// failure is logged and queued for retry; it never fails the build.
 func (r *ExecContainerRuntime) removeBuildRef(parent context.Context, ref string) {
-	// removeRef has logged a failure; the temporary tag names a unique
-	// repository no one else uses, and a later prune reclaims it.
-	_ = r.removeRef(parent, ref, "temporary tag")
+	if err := r.removeRef(parent, ref, "temporary tag"); err != nil {
+		// removeRef has logged it; the next build or ReleaseImage retries it.
+		r.keptMu.Lock()
+		r.pendingRefs = append(r.pendingRefs, ref)
+		r.keptMu.Unlock()
+	}
 }
 
 // removeRef untags ref, a reference this package applied; what names it in

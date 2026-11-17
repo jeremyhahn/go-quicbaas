@@ -608,6 +608,60 @@ func TestReleaseImage_FailedRemovalIsRetriedOnTheNextRelease(t *testing.T) {
 	}
 }
 
+func TestBuildImage_RefusedTemporaryTagRemovalIsRetried(t *testing.T) {
+	for _, next := range []string{"BuildImage", "ReleaseImage"} {
+		t.Run("next "+next, func(t *testing.T) {
+			rec := &imageRmRecorder{engine: newTagStoreEngine()}
+			var refused atomic.Bool
+			var tempRef atomic.Value
+			run := func(ctx context.Context, command string, cmd imageCommand) (imageCommandResult, error) {
+				if cmd.Args[0] == "image" && cmd.Args[1] == "rm" && strings.HasPrefix(cmd.Args[2], buildTempRepository+":") &&
+					refused.CompareAndSwap(false, true) {
+					tempRef.Store(cmd.Args[2])
+					return imageCommandResult{ExitCode: 1, Stderr: "Error response from daemon: busy"}, nil
+				}
+				return rec.run(ctx, command, cmd)
+			}
+			rt := &ExecContainerRuntime{command: RuntimeDocker, logger: newContainerTestLogger(t), runImageCommand: run}
+			spec := &ImageBuildSpec{Dockerfile: []byte("FROM a"), Tags: []string{"w:local"}}
+			id, err := rt.BuildImage(t.Context(), spec)
+			if err != nil {
+				t.Fatalf("first BuildImage: %v", err)
+			}
+			ref, _ := tempRef.Load().(string)
+			if ref == "" {
+				t.Fatal("the temporary tag's removal was never refused")
+			}
+			rt.keptMu.Lock()
+			queued := slices.Contains(rt.pendingRefs, ref)
+			rt.keptMu.Unlock()
+			if !queued {
+				t.Fatalf("the refused temporary tag %s is not queued for retry", ref)
+			}
+			if next == "BuildImage" {
+				if _, err := rt.BuildImage(t.Context(), spec); err != nil {
+					t.Fatalf("second BuildImage: %v", err)
+				}
+			} else {
+				rt.ReleaseImage(t.Context(), id)
+			}
+			if n := rec.removedCount(ref); n != 1 {
+				t.Fatalf("the retry ran %d image rm of %s, want 1", n, ref)
+			}
+			_, tags, _ := rec.engine.state()
+			if _, ok := tags[ref]; ok {
+				t.Fatalf("the retried temporary tag %s is still present, tags %v", ref, tags)
+			}
+			rt.keptMu.Lock()
+			queued = slices.Contains(rt.pendingRefs, ref)
+			rt.keptMu.Unlock()
+			if queued {
+				t.Fatalf("the removed temporary tag %s is still queued", ref)
+			}
+		})
+	}
+}
+
 // An ID the runtime holds no reference for, or one that is not a digest, is
 // a no-op: ReleaseImage runs no engine command.
 func TestReleaseImage_UnknownOrNonDigestIDIsANoOp(t *testing.T) {
