@@ -646,26 +646,76 @@ func (kb *XKMSBackend) DeleteKey(ctx context.Context, keyID string) error {
 
 // formatKeyID returns the key ID as stored.
 // Keys are stored using attrs.CN during generation, so we should use the same ID for lookup.
-func (kb *XKMSBackend) formatKeyID(keyID string) string {
-	// Use keyID directly - it matches the attrs.CN used during key generation.
-	// Do NOT add any prefixes as that would cause key lookup to fail.
-	return keyID
+func (kb *XKMSBackend) formatKeyID(keyID string) (string, error) {
+	// The go-xkms key name for keyID: it matches the attrs.CN used during
+	// key generation. Do NOT add any other prefix, or key lookup fails.
+	return xkmsKeyName(keyID)
+}
+
+// xkmsEncodedKeyPrefix marks a go-xkms key name that hex-encodes a quicbaas
+// key ID go-xkms would refuse as a name (a tenant-scoped ID carries "/").
+const xkmsEncodedKeyPrefix = "qbt."
+
+// xkmsMaxKeyNameLen is go-xkms's limit on a key name (ValidateKeyID).
+const xkmsMaxKeyNameLen = 255
+
+// xkmsKeyName maps a quicbaas key ID to the go-xkms key name it is stored
+// under. A key ID without "/" is its own name, except that one starting with
+// "qbt." is refused, so no stored name can occupy the encoded space. A key
+// ID with "/" becomes "qbt." + the lowercase hex of the ID; one whose
+// encoding exceeds go-xkms's 255-byte limit is refused.
+func xkmsKeyName(keyID string) (string, error) {
+	if !strings.Contains(keyID, "/") {
+		if strings.HasPrefix(keyID, xkmsEncodedKeyPrefix) {
+			return "", fmt.Errorf("%w: key ID %q may not start with the reserved prefix %q",
+				ErrInvalidKeyID, keyID, xkmsEncodedKeyPrefix)
+		}
+		return keyID, nil
+	}
+	name := xkmsEncodedKeyPrefix + hex.EncodeToString([]byte(keyID))
+	if len(name) > xkmsMaxKeyNameLen {
+		return "", fmt.Errorf("%w: key ID %q is too long for the xkms backend (%d-byte encoded name, max %d)",
+			ErrInvalidKeyID, keyID, len(name), xkmsMaxKeyNameLen)
+	}
+	return name, nil
+}
+
+// quicbaasKeyIDFromXKMSName reverses xkmsKeyName for a name go-xkms lists.
+// A name that is not a valid encoding is returned unchanged.
+func quicbaasKeyIDFromXKMSName(name string) string {
+	encoded, ok := strings.CutPrefix(name, xkmsEncodedKeyPrefix)
+	if !ok {
+		return name
+	}
+	raw, err := hex.DecodeString(encoded)
+	if err != nil {
+		return name
+	}
+	return string(raw)
 }
 
 // buildFullKeyID constructs the full key ID format expected by go-xkms for crypto operations.
 // Format: "backend:type:algo:keyname" (e.g., "software:encryption:aes256-gcm:my-key").
-func (kb *XKMSBackend) buildFullKeyID(keyID string, algorithm string) string {
+func (kb *XKMSBackend) buildFullKeyID(keyID string, algorithm string) (string, error) {
+	name, err := xkmsKeyName(keyID)
+	if err != nil {
+		return "", err
+	}
 	// Map algorithm to go-xkms format
 	algoFormat := kb.algorithmToKeyIDFormat(algorithm)
-	return fmt.Sprintf("%s:encryption:%s:%s", kb.backendType, algoFormat, keyID)
+	return fmt.Sprintf("%s:encryption:%s:%s", kb.backendType, algoFormat, name), nil
 }
 
 // buildSigningKeyID constructs the full key ID format for signing operations.
 // Format: "backend:signing:algo:keyname" (e.g., "software:signing:rsa:my-key").
-func (kb *XKMSBackend) buildSigningKeyID(keyID string, algorithm string) string {
+func (kb *XKMSBackend) buildSigningKeyID(keyID string, algorithm string) (string, error) {
+	name, err := xkmsKeyName(keyID)
+	if err != nil {
+		return "", err
+	}
 	// Map algorithm to go-xkms signing format
 	algoFormat := kb.signingAlgorithmToKeyIDFormat(algorithm)
-	return fmt.Sprintf("%s:signing:%s:%s", kb.backendType, algoFormat, keyID)
+	return fmt.Sprintf("%s:signing:%s:%s", kb.backendType, algoFormat, name), nil
 }
 
 // signingAlgorithmToKeyIDFormat converts signing algorithm strings to go-xkms key ID format.
@@ -986,9 +1036,13 @@ func (kb *XKMSBackend) Close() error {
 }
 
 // algorithmToKeyAttributes converts an algorithm string to KeyAttributes.
-func (kb *XKMSBackend) algorithmToKeyAttributes(keyID, algorithm string) *kctypes.KeyAttributes {
+func (kb *XKMSBackend) algorithmToKeyAttributes(keyID, algorithm string) (*kctypes.KeyAttributes, error) {
+	name, err := xkmsKeyName(keyID)
+	if err != nil {
+		return nil, err
+	}
 	attrs := &kctypes.KeyAttributes{
-		CN:        keyID,
+		CN:        name,
 		StoreType: kctypes.StoreType(string(kb.backendType)),
 		KeyType:   kctypes.KeyTypeEncryption,
 	}
