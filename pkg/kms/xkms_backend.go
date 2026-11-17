@@ -195,6 +195,10 @@ func (kb *XKMSBackend) CreateKey(ctx context.Context, attrs *kctypes.KeyAttribut
 		return nil, fmt.Errorf("%w: key ID %q names a version of an existing key", ErrInvalidKeyID, attrs.CN)
 	}
 
+	if err := kb.refuseHidingName(ctx, attrs.CN); err != nil {
+		return nil, err
+	}
+
 	// go-xkms validates key names more strictly than quicbaas key IDs (a
 	// tenant-scoped ID carries "/"), so the backend sees the encoded name
 	// while the caller's attrs and the metadata keep the quicbaas ID.
@@ -264,6 +268,10 @@ func (kb *XKMSBackend) ImportKey(ctx context.Context, keyID string, material []b
 
 	if err := kb.refuseVersionName(ctx, keyID); err != nil {
 		return nil, fmt.Errorf("%w: key ID %q names a version of an existing key", ErrInvalidKeyID, keyID)
+	}
+
+	if err := kb.refuseHidingName(ctx, keyID); err != nil {
+		return nil, err
 	}
 
 	if len(material) == 0 {
@@ -625,6 +633,41 @@ func (kb *XKMSBackend) refuseVersionName(ctx context.Context, keyID string) erro
 		// Fail closed: the lookup could not tell whether base is a key.
 		return err
 	}
+}
+
+// refuseHidingName refuses to create keyID when an ordinary key already
+// exists whose name refuseVersionName would read as a version of keyID: once
+// keyID exists, that key would be unreachable. When keyID itself already
+// exists, the caller's own "already exists" result stands and nothing is
+// checked here.
+func (kb *XKMSBackend) refuseHidingName(ctx context.Context, keyID string) error {
+	if _, err := kb.GetKeyMetadata(ctx, keyID); err == nil {
+		return nil
+	}
+	id, err := kb.conflictingVersionKeys(ctx, keyID)
+	if err != nil {
+		return err
+	}
+	if id != "" {
+		return fmt.Errorf("%w: key ID %q would hide existing key %q", ErrInvalidKeyID, keyID, id)
+	}
+	return nil
+}
+
+// conflictingVersionKeys returns the first existing key whose name reads as a
+// version of keyID (keyID_v<digits>), or "" when there is none. A list error
+// is returned, so the caller fails closed.
+func (kb *XKMSBackend) conflictingVersionKeys(ctx context.Context, keyID string) (string, error) {
+	keys, _, err := kb.ListKeys(ctx, keyID+"_v", 0)
+	if err != nil {
+		return "", err
+	}
+	for _, meta := range keys {
+		if base, ok := versionNameBase(meta.KeyID); ok && base == keyID {
+			return meta.KeyID, nil
+		}
+	}
+	return "", nil
 }
 
 // DisableKey temporarily disables a key.

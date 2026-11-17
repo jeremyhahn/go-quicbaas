@@ -245,3 +245,88 @@ func TestXKMSBackend_DeleteKeyDeletesVersions(t *testing.T) {
 	assert.Error(t, err, "a fresh key must not carry the deleted version's material")
 	require.NoError(t, backend.DeleteKey(ctx, keyID+"_v2"))
 }
+
+// assertKeyRoundTrips checks that Encrypt then Decrypt on keyID still works.
+func assertKeyRoundTrips(t *testing.T, b *XKMSBackend, keyID string) {
+	t.Helper()
+	ctx := context.Background()
+	ciphertext, err := b.Encrypt(ctx, keyID, []byte("p"), nil)
+	require.NoError(t, err)
+	plaintext, err := b.Decrypt(ctx, keyID, ciphertext, nil)
+	require.NoError(t, err)
+	assert.Equal(t, []byte("p"), plaintext)
+}
+
+func TestXKMSBackend_CreateKeyRefusesHidingName(t *testing.T) {
+	cleanup := initXKMSForTest(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	backend := newKeyNameTestBackend(t)
+	createKeyNameTestKey(t, backend, "report_v2026")
+
+	_, err := backend.CreateKey(ctx, &xkmssdk.KeyAttributes{
+		CN:                 "report",
+		StoreType:          xkmssdk.StoreType("software"),
+		KeyType:            xkmssdk.KeyTypeEncryption,
+		SymmetricAlgorithm: xkmssdk.SymmetricAES256GCM,
+	})
+	require.ErrorIs(t, err, ErrInvalidKeyID)
+	assert.Contains(t, err.Error(), "report_v2026")
+
+	assertKeyRoundTrips(t, backend, "report_v2026")
+	require.NoError(t, backend.DeleteKey(ctx, "report_v2026"))
+}
+
+func TestXKMSBackend_ImportKeyRefusesHidingName(t *testing.T) {
+	cleanup := initXKMSForTest(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	backend := newKeyNameTestBackend(t)
+	createKeyNameTestKey(t, backend, "report_v2026")
+
+	_, err := backend.ImportKey(ctx, "report", make([]byte, 32), "AES-256-GCM", nil)
+	require.ErrorIs(t, err, ErrInvalidKeyID)
+	assert.Contains(t, err.Error(), "report_v2026")
+
+	assertKeyRoundTrips(t, backend, "report_v2026")
+	require.NoError(t, backend.DeleteKey(ctx, "report_v2026"))
+}
+
+func TestXKMSBackend_CreateKeyAfterDeletingRotatedKey(t *testing.T) {
+	cleanup := initXKMSForTest(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	backend := newKeyNameTestBackend(t)
+	createKeyNameTestKey(t, backend, "report")
+	_, err := backend.RotateKey(ctx, "report")
+	require.NoError(t, err)
+	require.NoError(t, backend.DeleteKey(ctx, "report"))
+
+	createKeyNameTestKey(t, backend, "report")
+	assertKeyRoundTrips(t, backend, "report")
+	require.NoError(t, backend.DeleteKey(ctx, "report"))
+}
+
+func TestXKMSBackend_CreateExistingRotatedKeyKeepsError(t *testing.T) {
+	cleanup := initXKMSForTest(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	backend := newKeyNameTestBackend(t)
+	createKeyNameTestKey(t, backend, "report")
+	_, err := backend.RotateKey(ctx, "report")
+	require.NoError(t, err)
+
+	_, err = backend.CreateKey(ctx, &xkmssdk.KeyAttributes{
+		CN:                 "report",
+		StoreType:          xkmssdk.StoreType("software"),
+		KeyType:            xkmssdk.KeyTypeEncryption,
+		SymmetricAlgorithm: xkmssdk.SymmetricAES256GCM,
+	})
+	require.Error(t, err)
+	assert.NotErrorIs(t, err, ErrInvalidKeyID)
+	require.NoError(t, backend.DeleteKey(ctx, "report"))
+}
