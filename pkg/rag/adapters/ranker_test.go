@@ -243,7 +243,7 @@ func TestRankerAdapter_Rank(t *testing.T) {
 		assert.Equal(t, 20, results[0].EndLine)
 	})
 
-	t.Run("hybrid enabled with only vector results falls back", func(t *testing.T) {
+	t.Run("hybrid enabled with only vector results fuses them with their keyword scores", func(t *testing.T) {
 		hybridRanker := createTestHybridRanker()
 		adapter, err := NewRankerAdapter(hybridRanker, WithHybridEnabled(true))
 		require.NoError(t, err)
@@ -270,6 +270,68 @@ func TestRankerAdapter_Rank(t *testing.T) {
 		assert.NotNil(t, results)
 		assert.Len(t, results, 2)
 	})
+}
+
+type weightQueryHandler struct{}
+
+func (weightQueryHandler) Process(_ context.Context, q string) (*pipeline.ProcessedQuery, error) {
+	return &pipeline.ProcessedQuery{Original: q, Cleaned: q, Embedding: []float32{0.1}}, nil
+}
+func (weightQueryHandler) Close() error { return nil }
+
+type weightVectorSearcher struct{ results []pipeline.Result }
+
+func (s weightVectorSearcher) Search(context.Context, []float32, pipeline.SearchOptions) ([]pipeline.Result, error) {
+	out := make([]pipeline.Result, len(s.results))
+	copy(out, s.results)
+	return out, nil
+}
+func (weightVectorSearcher) Close() error { return nil }
+
+type weightContextBuilder struct{}
+
+func (weightContextBuilder) Build(_ context.Context, results []pipeline.Result, _ pipeline.ContextOptions) (*pipeline.BuiltContext, error) {
+	return &pipeline.BuiltContext{Content: "ctx", Tokens: len(results)}, nil
+}
+func (weightContextBuilder) Close() error { return nil }
+
+// The pipeline passes the ranker no keyword list, so the hybrid ranker's
+// VectorWeight and KeywordWeight only matter if the adapter BM25-scores the
+// vector results itself. Two weight settings must order the same documents
+// differently.
+func TestRankerAdapter_PipelineQueryHonoursHybridWeights(t *testing.T) {
+	docs := []pipeline.Result{
+		{ID: "vector-best", Content: "alpha beta gamma delta", Score: 0.9},
+		{ID: "keyword-best", Content: "connection pool pool settings", Score: 0.8},
+	}
+	order := func(vectorWeight, keywordWeight float32) []string {
+		cfg := ranking.DefaultConfig()
+		cfg.EnableRerank = false
+		cfg.VectorWeight = vectorWeight
+		cfg.KeywordWeight = keywordWeight
+		adapter, err := NewRankerAdapter(ranking.NewHybridRanker(cfg, nil), WithRankerConfig(&RankerConfig{
+			EnableHybrid: true, VectorWeight: vectorWeight, KeywordWeight: keywordWeight,
+		}))
+		require.NoError(t, err)
+
+		pcfg := pipeline.DefaultConfig()
+		pcfg.EnableCircuitBreaker = false
+		pcfg.EnableMetrics = false
+		p, err := pipeline.NewPipeline(pcfg, weightQueryHandler{}, weightVectorSearcher{results: docs}, adapter, weightContextBuilder{})
+		require.NoError(t, err)
+
+		// RRF scores are small; a tiny MinScore keeps both documents.
+		resp, err := p.Query(context.Background(), "pool", pipeline.QueryOptions{TopK: 10, MinScore: 0.0001})
+		require.NoError(t, err)
+		ids := make([]string, 0, len(resp.Results))
+		for _, r := range resp.Results {
+			ids = append(ids, r.ID)
+		}
+		return ids
+	}
+
+	assert.Equal(t, []string{"vector-best", "keyword-best"}, order(0.75, 0.25))
+	assert.Equal(t, []string{"keyword-best", "vector-best"}, order(0.25, 0.75))
 }
 
 func TestRankerAdapter_Close(t *testing.T) {

@@ -301,6 +301,32 @@ func TestHybridRanker_RankHybridWithoutReranking(t *testing.T) {
 	}
 }
 
+// RRF ranks by list position, so RankHybrid must fuse the keyword list in
+// KeywordScore order, not in the order the caller passed it.
+func TestHybridRanker_RankHybridSortsKeywordListByScore(t *testing.T) {
+	config := DefaultConfig()
+	config.EnableRerank = false
+	config.VectorWeight = 0.25
+	config.KeywordWeight = 0.75
+	ranker := NewHybridRanker(config, nil)
+
+	vectorResults := []Result{
+		{ID: "a", Content: "alpha", VectorScore: 0.9},
+		{ID: "b", Content: "beta", VectorScore: 0.8},
+	}
+	// Passed in ascending keyword order: b is the better keyword match.
+	keywordResults := []Result{
+		{ID: "a", Content: "alpha", KeywordScore: 1},
+		{ID: "b", Content: "beta", KeywordScore: 5},
+	}
+
+	results, err := ranker.RankHybrid(vectorResults, keywordResults, "q")
+	require.NoError(t, err)
+	require.Len(t, results, 2)
+	assert.Equal(t, "b", results[0].ID, "keyword weight dominates, so the best keyword match leads")
+	assert.Equal(t, "a", keywordResults[0].ID, "the caller's slice is not reordered")
+}
+
 func TestHybridRanker_CalculateAvgDocLength(t *testing.T) {
 	config := DefaultConfig()
 	reranker := NewSimpleReranker()
