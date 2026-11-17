@@ -1162,6 +1162,13 @@ func (k *kmsServiceImpl) RotateKey(ctx context.Context, req *RotateKeyRequest) (
 		return nil, err
 	}
 
+	// AEAD usage is counted per key ID and new encryptions use the new
+	// version, so the old version's exhausted counter must not carry over:
+	// start the new version's count from zero, keeping the key's limits.
+	if k.safetyTracker != nil {
+		k.safetyTracker.ResetKeyUsage(scopedKeyID)
+	}
+
 	resp := &RotateKeyResponse{
 		KeyID:      req.KeyID,
 		OldVersion: oldVersion,

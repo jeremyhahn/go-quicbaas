@@ -29,6 +29,7 @@ import (
 	pb "github.com/jeremyhahn/go-quicbaas/api/proto"
 	"github.com/jeremyhahn/go-quicbaas/pkg/auth"
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
+	"github.com/jeremyhahn/go-quicbaas/pkg/kms"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
@@ -127,5 +128,65 @@ func TestModule_Crypto_BatchReservesEveryItem(t *testing.T) {
 	})
 	require.Error(t, err, "a three-item batch reaches MaxOperations=2")
 	assert.NotEqual(t, codes.OK, status.Code(err))
+	assert.Contains(t, status.Convert(err).Message(), "AEAD safety limit exceeded")
+}
+
+// rotatingKMSManager reports a key whose version RotateKey advances, so
+// kmsServiceImpl.RotateKey succeeds.
+type rotatingKMSManager struct {
+	stubKMSManager
+	version *int
+}
+
+func (r rotatingKMSManager) GetKey(context.Context, string) (interface{}, error) {
+	return &kms.KeyMetadata{Version: *r.version}, nil
+}
+
+func (r rotatingKMSManager) RotateKey(context.Context, string) (interface{}, error) {
+	*r.version++
+	return &kms.KeyMetadata{Version: *r.version}, nil
+}
+
+// TestModule_Crypto_RotationRestoresEncryptAfterLimit exhausts a key's
+// MaxOperations through the registered Crypto server, rotates the key, and
+// encrypts again: the new version starts its own count under the same limit.
+func TestModule_Crypto_RotationRestoresEncryptAfterLimit(t *testing.T) {
+	version := 1
+	store := qrdbsdk.NewMemoryKVStore()
+	svc, err := service.NewServiceBuilder().
+		WithConfig(&service.ServiceConfig{NodeID: 1, RequestTimeout: 5 * time.Second}).
+		WithRaftNode(&safetyRaftNode{}).
+		WithKMSManager(rotatingKMSManager{version: &version}).
+		WithCryptoManager(reversingCryptoManager{}).
+		WithKVStoreProvider(func(uint64) interface{} { return store }).
+		Build()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = svc.Close() })
+
+	ctx := safetyContext(context.Background())
+	_, err = svc.KMS().SetKeySafety(ctx, &service.SetKeySafetyRequest{KeyID: "k1", MaxOperations: 2})
+	require.NoError(t, err)
+
+	m, err := NewModule(func() service.QuicBaaS { return svc }, testLogger(t))
+	require.NoError(t, err)
+	withTenant := grpc.UnaryInterceptor(func(ctx context.Context, req any, _ *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
+		return handler(safetyContext(ctx), req)
+	})
+	client := pb.NewCryptoClient(startBufconnModule(t, m, withTenant))
+
+	req := &pb.CryptoEncryptRequest{KeyId: "k1", Plaintext: []byte("p")}
+	_, err = client.Encrypt(context.Background(), req)
+	require.NoError(t, err)
+	_, err = client.Encrypt(context.Background(), req)
+	require.Error(t, err, "second Encrypt reaches MaxOperations=2")
+
+	rot, err := svc.KMS().RotateKey(ctx, &service.RotateKeyRequest{KeyID: "k1"})
+	require.NoError(t, err)
+	assert.Equal(t, 2, int(rot.NewVersion))
+
+	_, err = client.Encrypt(context.Background(), req)
+	require.NoError(t, err, "the rotated version encrypts under its own count")
+	_, err = client.Encrypt(context.Background(), req)
+	require.Error(t, err, "the limit still applies to the new version")
 	assert.Contains(t, status.Convert(err).Message(), "AEAD safety limit exceeded")
 }
