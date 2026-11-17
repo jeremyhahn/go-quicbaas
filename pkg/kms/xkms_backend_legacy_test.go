@@ -16,6 +16,8 @@ package kms
 import (
 	"context"
 	stderrors "errors"
+	"fmt"
+	"os"
 	"strings"
 	"testing"
 
@@ -148,25 +150,43 @@ func TestXKMSBackend_AFailedLegacyLookupRefusesTheWrite(t *testing.T) {
 	_, err = backend.CreateKey(ctx, &xkmssdk.KeyAttributes{CN: "rotating-key", SymmetricAlgorithm: xkmssdk.SymmetricAES256GCM})
 	require.NoError(t, err)
 
-	lookupFault := stderrors.New("storage unavailable")
-	orig := xkmsGetSymmetricKey
-	xkmsGetSymmetricKey = func(ctx context.Context, keyRef string) (xkmssdk.SymmetricKey, error) {
+	// The fault is injected beneath pkg/xkms's classification, where go-xkms
+	// returns it: a storage or permission failure is not an absence.
+	orig := goXKMSGetSymmetricKey
+	t.Cleanup(func() { goXKMSGetSymmetricKey = orig })
+	for _, lookupFault := range []error{
+		stderrors.New("storage unavailable"),
+		fmt.Errorf("open key file: %w", os.ErrPermission),
+	} {
+		goXKMSGetSymmetricKey = func(ctx context.Context, keyRef string) (xkmssdk.SymmetricKey, error) {
+			if strings.HasPrefix(keyRef, "software:encryption:") {
+				return nil, lookupFault
+			}
+			return orig(ctx, keyRef)
+		}
+
+		_, err = backend.CreateKey(ctx, &xkmssdk.KeyAttributes{CN: "flaky-key", SymmetricAlgorithm: xkmssdk.SymmetricAES256GCM})
+		require.ErrorIs(t, err, ErrLegacyKeyLookup, "create must not write on a failed legacy lookup")
+		require.ErrorIs(t, err, lookupFault)
+		require.NotErrorIs(t, err, dbxkms.ErrKeyNotFound, "a failed lookup must not read as absence")
+		_, err = backend.ImportKey(ctx, "flaky-key", make([]byte, 32), "AES-256-GCM", nil)
+		require.ErrorIs(t, err, ErrLegacyKeyLookup, "import must not write on a failed legacy lookup")
+		_, err = backend.RotateKey(ctx, "rotating-key")
+		require.ErrorIs(t, err, ErrLegacyKeyLookup, "rotation must not pick a version on a failed legacy lookup")
+	}
+
+	// go-xkms's own not-found error is the one confirmed absence.
+	goXKMSGetSymmetricKey = func(ctx context.Context, keyRef string) (xkmssdk.SymmetricKey, error) {
 		if strings.HasPrefix(keyRef, "software:encryption:") {
-			return nil, lookupFault
+			return nil, fmt.Errorf("lookup %s: %w", keyRef, xkmssdk.ErrBackendKeyNotFound)
 		}
 		return orig(ctx, keyRef)
 	}
-	t.Cleanup(func() { xkmsGetSymmetricKey = orig })
+	held, err = backend.holdsLegacySymmetricKey(ctx, "flaky-key", "AES-256-GCM")
+	require.NoError(t, err)
+	require.False(t, held)
 
-	_, err = backend.CreateKey(ctx, &xkmssdk.KeyAttributes{CN: "flaky-key", SymmetricAlgorithm: xkmssdk.SymmetricAES256GCM})
-	require.ErrorIs(t, err, ErrLegacyKeyLookup, "create must not write on a failed legacy lookup")
-	require.ErrorIs(t, err, lookupFault)
-	_, err = backend.ImportKey(ctx, "flaky-key", make([]byte, 32), "AES-256-GCM", nil)
-	require.ErrorIs(t, err, ErrLegacyKeyLookup, "import must not write on a failed legacy lookup")
-	_, err = backend.RotateKey(ctx, "rotating-key")
-	require.ErrorIs(t, err, ErrLegacyKeyLookup, "rotation must not pick a version on a failed legacy lookup")
-
-	xkmsGetSymmetricKey = orig
+	goXKMSGetSymmetricKey = orig
 	decrypted, err := backend.Decrypt(ctx, "flaky-key", ciphertext, nil)
 	require.NoError(t, err, "the legacy key must still decrypt its data once the lookup recovers")
 	require.Equal(t, plaintext, decrypted)

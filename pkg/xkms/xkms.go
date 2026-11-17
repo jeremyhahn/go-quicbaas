@@ -568,16 +568,38 @@ func GenerateSymmetricKey(ctx context.Context, backendName string, attrs *xkmssd
 // GetSymmetricKey retrieves an existing symmetric key.
 // The keyRef supports format: "backend:key-id" or just "key-id" (uses default backend).
 func GetSymmetricKey(ctx context.Context, keyRef string) (xkmssdk.SymmetricKey, error) {
+	return GetSymmetricKeyVia(ctx, keyRef, xkmssdk.ServiceGetSymmetricKey)
+}
+
+// ErrKeyLookup is returned when a key lookup failed for a reason other than
+// the key's absence (storage, permission, backend). It never matches
+// ErrKeyNotFound: a caller that treats absence as licence to write must not
+// take a failed lookup for one.
+var ErrKeyLookup = stderrors.New("xkms: key lookup failed")
+
+// GetSymmetricKeyVia is GetSymmetricKey over get, go-xkms's lookup: only
+// go-xkms's own not-found errors become ErrKeyNotFound; every other failure
+// is ErrKeyLookup, wrapping the cause.
+func GetSymmetricKeyVia(ctx context.Context, keyRef string, get func(context.Context, string) (xkmssdk.SymmetricKey, error)) (xkmssdk.SymmetricKey, error) {
 	if err := checkInitialized(); err != nil {
 		return nil, err
 	}
 
-	key, err := xkmssdk.ServiceGetSymmetricKey(ctx, keyRef)
+	key, err := get(ctx, keyRef)
 	if err != nil {
-		return nil, &api.XKMSKeyNotFoundError{Cause: err}
+		if IsGoXKMSKeyNotFound(err) {
+			return nil, &api.XKMSKeyNotFoundError{Cause: err}
+		}
+		return nil, fmt.Errorf("%w: %q: %w", ErrKeyLookup, keyRef, err)
 	}
 
 	return key, nil
+}
+
+// IsGoXKMSKeyNotFound reports whether err is one of go-xkms's not-found
+// errors for a key.
+func IsGoXKMSKeyNotFound(err error) bool {
+	return stderrors.Is(err, xkmssdk.ErrBackendKeyNotFound) || stderrors.Is(err, xkmssdk.ErrKeyNotFound)
 }
 
 // Errors reporting material that does not match the algorithm it is offered

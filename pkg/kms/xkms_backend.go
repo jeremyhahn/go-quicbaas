@@ -757,12 +757,13 @@ func (kb *XKMSBackend) legacySymmetricKeyID(keyID string, algorithm string) stri
 // legacy key is refused rather than allowed on an unconfirmed absence.
 var ErrLegacyKeyLookup = stderrors.New("kms: legacy symmetric key lookup failed")
 
-// xkmsGetSymmetricKey is the legacy-key lookup; tests replace it to inject a
-// lookup failure.
-var xkmsGetSymmetricKey = xkms.GetSymmetricKey
+// goXKMSGetSymmetricKey is go-xkms's own key lookup, beneath the
+// classification xkms.GetSymmetricKeyVia applies; tests replace it to inject
+// the faults go-xkms returns.
+var goXKMSGetSymmetricKey = kctypes.ServiceGetSymmetricKey
 
 func (kb *XKMSBackend) holdsLegacySymmetricKey(ctx context.Context, keyID string, algorithm string) (bool, error) {
-	_, err := xkmsGetSymmetricKey(ctx, kb.legacySymmetricKeyID(keyID, algorithm))
+	_, err := xkms.GetSymmetricKeyVia(ctx, kb.legacySymmetricKeyID(keyID, algorithm), goXKMSGetSymmetricKey)
 	switch {
 	case err == nil:
 		return true, nil
