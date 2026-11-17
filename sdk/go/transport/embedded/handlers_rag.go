@@ -44,6 +44,7 @@ func handleRAGQuery(ctx context.Context, svc service.QuicBaaS, req interface{}) 
 		TopK:             r.TopK,
 		MaxTokens:        r.MaxTokens,
 		MinScore:         r.MinScore,
+		MinScoreSet:      r.MinScoreSet,
 		Template:         r.Template,
 		IncludeCitations: r.IncludeCitations,
 		Model:            r.Model,

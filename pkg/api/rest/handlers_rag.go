@@ -36,14 +36,22 @@ import (
 
 // RAGQueryRequest is the request body for RAG query.
 type RAGQueryRequest struct {
-	Query            string  `json:"query"`
-	Namespace        string  `json:"namespace"`
-	TopK             int     `json:"top_k,omitempty"`
-	MaxTokens        int     `json:"max_tokens,omitempty"`
-	MinScore         float32 `json:"min_score,omitempty"`
-	Template         string  `json:"template,omitempty"`
-	IncludeCitations bool    `json:"include_citations,omitempty"`
-	Model            string  `json:"model,omitempty"`
+	Query            string   `json:"query"`
+	Namespace        string   `json:"namespace"`
+	TopK             int      `json:"top_k,omitempty"`
+	MaxTokens        int      `json:"max_tokens,omitempty"`
+	MinScore         *float32 `json:"min_score,omitempty"` // nil: 0.7; an explicit 0 disables the filter
+	Template         string   `json:"template,omitempty"`
+	IncludeCitations bool     `json:"include_citations,omitempty"`
+	Model            string   `json:"model,omitempty"`
+}
+
+// derefFloat32 is *p, or 0 for nil.
+func derefFloat32(p *float32) float32 {
+	if p == nil {
+		return 0
+	}
+	return *p
 }
 
 // RAGQueryResponse is the response for RAG query.
@@ -107,7 +115,8 @@ func (s *Server) HandleRAGQuery(w http.ResponseWriter, r *http.Request) {
 		Namespace:        req.Namespace,
 		TopK:             req.TopK,
 		MaxTokens:        req.MaxTokens,
-		MinScore:         req.MinScore,
+		MinScore:         derefFloat32(req.MinScore),
+		MinScoreSet:      req.MinScore != nil,
 		Template:         req.Template,
 		IncludeCitations: req.IncludeCitations,
 		Model:            req.Model,

@@ -148,8 +148,9 @@ type RAGQueryRequest struct {
 	TopK int32 `protobuf:"varint,3,opt,name=top_k,json=topK,proto3" json:"top_k,omitempty"`
 	// Maximum tokens for assembled context (default: 4000)
 	MaxTokens int32 `protobuf:"varint,4,opt,name=max_tokens,json=maxTokens,proto3" json:"max_tokens,omitempty"`
-	// Minimum similarity score 0.0-1.0 (default: 0.7)
-	MinScore float32 `protobuf:"fixed32,5,opt,name=min_score,json=minScore,proto3" json:"min_score,omitempty"`
+	// Minimum similarity score 0.0-1.0. Omitted means 0.7; an explicit 0
+	// disables the filter.
+	MinScore *float32 `protobuf:"fixed32,5,opt,name=min_score,json=minScore,proto3,oneof" json:"min_score,omitempty"`
 	// Output format template
 	Template RAGTemplate `protobuf:"varint,6,opt,name=template,proto3,enum=quicbaas.rag.v1.RAGTemplate" json:"template,omitempty"`
 	// Include source citations in context
@@ -219,8 +220,8 @@ func (x *RAGQueryRequest) GetMaxTokens() int32 {
 }
 
 func (x *RAGQueryRequest) GetMinScore() float32 {
-	if x != nil {
-		return x.MinScore
+	if x != nil && x.MinScore != nil {
+		return *x.MinScore
 	}
 	return 0
 }
@@ -642,17 +643,19 @@ var File_api_proto_rag_proto protoreflect.FileDescriptor
 
 const file_api_proto_rag_proto_rawDesc = "" +
 	"\n" +
-	"\x13api/proto/rag.proto\x12\x0fquicbaas.rag.v1\x1a%pkg/api/grpc/proto/qrdbv1/authz.proto\"\x93\x02\n" +
+	"\x13api/proto/rag.proto\x12\x0fquicbaas.rag.v1\x1a%pkg/api/grpc/proto/qrdbv1/authz.proto\"\xa6\x02\n" +
 	"\x0fRAGQueryRequest\x12\x14\n" +
 	"\x05query\x18\x01 \x01(\tR\x05query\x12\x1c\n" +
 	"\tnamespace\x18\x02 \x01(\tR\tnamespace\x12\x13\n" +
 	"\x05top_k\x18\x03 \x01(\x05R\x04topK\x12\x1d\n" +
 	"\n" +
-	"max_tokens\x18\x04 \x01(\x05R\tmaxTokens\x12\x1b\n" +
-	"\tmin_score\x18\x05 \x01(\x02R\bminScore\x128\n" +
+	"max_tokens\x18\x04 \x01(\x05R\tmaxTokens\x12 \n" +
+	"\tmin_score\x18\x05 \x01(\x02H\x00R\bminScore\x88\x01\x01\x128\n" +
 	"\btemplate\x18\x06 \x01(\x0e2\x1c.quicbaas.rag.v1.RAGTemplateR\btemplate\x12+\n" +
 	"\x11include_citations\x18\a \x01(\bR\x10includeCitations\x12\x14\n" +
-	"\x05model\x18\b \x01(\tR\x05model\"\xc1\x01\n" +
+	"\x05model\x18\b \x01(\tR\x05modelB\f\n" +
+	"\n" +
+	"_min_score\"\xc1\x01\n" +
 	"\x10RAGQueryResponse\x12\x18\n" +
 	"\acontext\x18\x01 \x01(\tR\acontext\x12\x16\n" +
 	"\x06tokens\x18\x02 \x01(\x05R\x06tokens\x12\x1c\n" +
@@ -751,6 +754,7 @@ func file_api_proto_rag_proto_init() {
 	if File_api_proto_rag_proto != nil {
 		return
 	}
+	file_api_proto_rag_proto_msgTypes[0].OneofWrappers = []any{}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{

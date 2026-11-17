@@ -48,8 +48,9 @@ message RAGQueryRequest {
   // Maximum tokens for assembled context (default: 4000)
   int32 max_tokens = 4;
 
-  // Minimum similarity score 0.0-1.0 (default: 0.7)
-  float min_score = 5;
+  // Minimum similarity score 0.0-1.0. Omitted means 0.7; an explicit 0
+  // disables the filter.
+  optional float min_score = 5;
 
   // Output format template
   RAGTemplate template = 6;

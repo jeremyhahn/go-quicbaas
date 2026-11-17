@@ -52,7 +52,8 @@ type QueryRequest struct {
 	Namespace        string
 	TopK             int     // <= 0 means DefaultTopK
 	MaxTokens        int     // <= 0 means DefaultMaxTokens
-	MinScore         float32 // <= 0 means DefaultMinScore
+	MinScore         float32 // used as given when MinScoreSet; otherwise <= 0 means DefaultMinScore
+	MinScoreSet      bool    // the caller sent MinScore, so an explicit 0 disables the filter
 	Template         string  // markdown (default), json, xml or plain
 	IncludeCitations bool
 	Model            string // embedding model; empty means the default model
@@ -111,7 +112,7 @@ func Query(ctx context.Context, b Backends, req QueryRequest) (*Response, error)
 		topK = DefaultTopK
 	}
 	minScore := req.MinScore
-	if minScore <= 0 {
+	if !req.MinScoreSet && minScore <= 0 {
 		minScore = DefaultMinScore
 	}
 

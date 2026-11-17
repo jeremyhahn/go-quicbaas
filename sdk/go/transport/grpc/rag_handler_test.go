@@ -15,8 +15,10 @@ package grpc
 
 import (
 	"context"
+	"math"
 	"testing"
 
+	pb "github.com/jeremyhahn/go-quicbaas/api/proto"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/rag"
 )
 
@@ -61,73 +63,73 @@ func TestRAGHandler_HandleBuildContext_InvalidRequestType(t *testing.T) {
 	}
 }
 
-func TestConvertRAGQueryResponse(t *testing.T) {
-	m := map[string]interface{}{
-		"context":      "ctx",
-		"tokens":       float64(42),
-		"truncated":    true,
-		"result_count": float64(3),
-		"citations": []interface{}{
-			map[string]interface{}{"index": float64(0), "file_path": "a.go", "start_line": float64(1), "end_line": float64(5), "score": float64(0.9)},
-		},
-	}
-	resp, err := convertRAGQueryResponse(m)
+func TestRAGQueryRequestToProto_MinScorePresence(t *testing.T) {
+	omitted, err := ragQueryRequestToProto("op", &rag.QueryRequest{Query: "q", Namespace: "n"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if resp.Context != "ctx" || resp.Tokens != 42 || !resp.Truncated || resp.ResultCount != 3 {
-		t.Fatalf("unexpected response: %+v", resp)
+	if omitted.MinScore != nil {
+		t.Fatalf("an unset MinScore must not be sent, got %v", *omitted.MinScore)
 	}
-	if len(resp.Citations) != 1 || resp.Citations[0].FilePath != "a.go" || resp.Citations[0].EndLine != 5 {
-		t.Fatalf("unexpected citations: %+v", resp.Citations)
-	}
-}
 
-func TestConvertRAGQueryResponse_Empty(t *testing.T) {
-	resp, err := convertRAGQueryResponse(map[string]interface{}{})
+	zero, err := ragQueryRequestToProto("op", &rag.QueryRequest{Query: "q", Namespace: "n", MinScoreSet: true})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if resp.Context != "" || resp.Tokens != 0 || len(resp.Citations) != 0 {
-		t.Fatalf("expected zero-value response, got %+v", resp)
+	if zero.MinScore == nil || *zero.MinScore != 0 {
+		t.Fatalf("an explicit 0 must be sent as 0, got %v", zero.MinScore)
 	}
-}
 
-func TestConvertRAGBuildContextResponse(t *testing.T) {
-	m := map[string]interface{}{
-		"context":      "built",
-		"tokens":       float64(10),
-		"truncated":    false,
-		"result_count": float64(2),
-		"citations": []interface{}{
-			map[string]interface{}{"index": float64(1), "file_path": "b.go", "score": float64(0.5)},
-		},
-	}
-	resp, err := convertRAGBuildContextResponse(m)
+	half, err := ragQueryRequestToProto("op", &rag.QueryRequest{Query: "q", Namespace: "n", MinScore: 0.5})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if resp.Context != "built" || resp.Tokens != 10 || resp.ResultCount != 2 {
-		t.Fatalf("unexpected response: %+v", resp)
-	}
-	if len(resp.Citations) != 1 || resp.Citations[0].Index != 1 || resp.Citations[0].Score != 0.5 {
-		t.Fatalf("unexpected citations: %+v", resp.Citations)
+	if half.MinScore == nil || *half.MinScore != 0.5 {
+		t.Fatalf("a non-zero MinScore must be sent, got %v", half.MinScore)
 	}
 }
 
-func TestConvertCitation(t *testing.T) {
-	c := convertCitation(map[string]interface{}{
-		"index": float64(2), "file_path": "c.go", "start_line": float64(3),
-		"end_line": float64(7), "score": float64(0.75),
-	})
-	if c.Index != 2 || c.FilePath != "c.go" || c.StartLine != 3 || c.EndLine != 7 || c.Score != 0.75 {
-		t.Fatalf("unexpected citation: %+v", c)
+func TestRAGTemplateAndTruncationToProto(t *testing.T) {
+	for name, want := range map[string]pb.RAGTemplate{
+		"": pb.RAGTemplate_RAG_TEMPLATE_UNSPECIFIED, "markdown": pb.RAGTemplate_RAG_TEMPLATE_MARKDOWN,
+		"json": pb.RAGTemplate_RAG_TEMPLATE_JSON, "xml": pb.RAGTemplate_RAG_TEMPLATE_XML,
+		"plain": pb.RAGTemplate_RAG_TEMPLATE_PLAIN,
+	} {
+		got, err := ragTemplateToProto("op", name)
+		if err != nil || got != want {
+			t.Fatalf("template %q: got %v, %v; want %v", name, got, err, want)
+		}
+	}
+	if _, err := ragTemplateToProto("op", "yaml"); err == nil {
+		t.Fatal("an unknown template must be refused")
+	}
+	for name, want := range map[string]pb.RAGTruncationStrategy{
+		"": pb.RAGTruncationStrategy_RAG_TRUNCATION_UNSPECIFIED, "smart": pb.RAGTruncationStrategy_RAG_TRUNCATION_SMART,
+		"hard": pb.RAGTruncationStrategy_RAG_TRUNCATION_HARD, "none": pb.RAGTruncationStrategy_RAG_TRUNCATION_NONE,
+	} {
+		got, err := ragTruncationToProto("op", name)
+		if err != nil || got != want {
+			t.Fatalf("truncation %q: got %v, %v; want %v", name, got, err, want)
+		}
+	}
+	if _, err := ragTruncationToProto("op", "drop"); err == nil {
+		t.Fatal("an unknown truncation strategy must be refused")
 	}
 }
 
-func TestConvertCitation_MissingFields(t *testing.T) {
-	c := convertCitation(map[string]interface{}{})
-	if c != (rag.Citation{}) {
-		t.Fatalf("expected zero-value citation, got %+v", c)
+func TestRAGQueryRequestToProto_RefusesOutOfRangeTopK(t *testing.T) {
+	if _, err := ragQueryRequestToProto("op", &rag.QueryRequest{Query: "q", Namespace: "n", TopK: math.MaxInt32 + 1}); err == nil {
+		t.Fatal("a top_k past int32 must be refused")
+	}
+}
+
+func TestRAGCitationsFromProto(t *testing.T) {
+	if got := ragCitationsFromProto(nil); got != nil {
+		t.Fatalf("no citations must map to nil, got %+v", got)
+	}
+	got := ragCitationsFromProto([]*pb.RAGCitation{{Index: 2, FilePath: "c.go", StartLine: 3, EndLine: 7, Score: 0.75}})
+	want := rag.Citation{Index: 2, FilePath: "c.go", StartLine: 3, EndLine: 7, Score: 0.75}
+	if len(got) != 1 || got[0] != want {
+		t.Fatalf("got %+v, want [%+v]", got, want)
 	}
 }

@@ -96,6 +96,18 @@ func TestQuery_EmbedsSearchesAndAssembles(t *testing.T) {
 	assert.Equal(t, Citation{Index: 2, FilePath: "db/open.go", StartLine: 3, EndLine: 8, Score: 0.81}, resp.Citations[1])
 }
 
+// TestQuery_ExplicitZeroMinScoreDisablesTheFilter proves only an omitted
+// threshold takes DefaultMinScore: a caller that sends 0 searches with 0.
+func TestQuery_ExplicitZeroMinScoreDisablesTheFilter(t *testing.T) {
+	var search service.SearchSimilarRequest
+	var model string
+	_, err := Query(context.Background(), working(&search, &model), QueryRequest{
+		Query: "q", Namespace: "n", MinScore: 0, MinScoreSet: true,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, float32(0), search.MinScore)
+}
+
 func TestQuery_PassesKnobsAndModel(t *testing.T) {
 	var search service.SearchSimilarRequest
 	var model string

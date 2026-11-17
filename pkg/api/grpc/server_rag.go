@@ -49,6 +49,7 @@ func (s *RAGServer) Query(ctx context.Context, req *pb.RAGQueryRequest) (*pb.RAG
 		TopK:             int(req.GetTopK()),
 		MaxTokens:        int(req.GetMaxTokens()),
 		MinScore:         req.GetMinScore(),
+		MinScoreSet:      req.MinScore != nil,
 		Template:         ragTemplateName(req.GetTemplate()),
 		IncludeCitations: req.GetIncludeCitations(),
 		Model:            req.GetModel(),

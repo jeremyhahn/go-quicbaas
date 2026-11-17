@@ -13,6 +13,7 @@ import (
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
+	"github.com/jeremyhahn/go-quicbaas/pkg/service/mocks"
 )
 
 func TestGetAllRAGTools(t *testing.T) {
@@ -178,6 +179,46 @@ func TestHandleRAGQuery_OllamaServiceNotConfigured(t *testing.T) {
 	require.Error(t, err)
 	assert.Nil(t, result)
 	assert.Contains(t, err.Error(), "ollama service not configured")
+}
+
+// ragSearchMockService serves an Ollama that embeds every query and a vector
+// store that records the search it is asked for.
+type ragSearchMockService struct {
+	extendedMockService
+	vectorSvc service.VectorService
+}
+
+func (m *ragSearchMockService) Vector() service.VectorService { return m.vectorSvc }
+
+// TestHandleRAGQuery_ExplicitZeroMinScoreReachesSearch proves min_score "0"
+// disables the similarity filter, as quicbaas_rag_query did before #1611:
+// only an omitted min_score takes the default.
+func TestHandleRAGQuery_ExplicitZeroMinScoreReachesSearch(t *testing.T) {
+	var searched *service.SearchSimilarRequest
+	svc := &ragSearchMockService{
+		extendedMockService: extendedMockService{ollamaSvc: &mocks.MockOllamaService{
+			EmbedFunc: func(context.Context, *service.OllamaEmbedRequest) (*service.OllamaEmbedResponse, error) {
+				return &service.OllamaEmbedResponse{Embedding: []float32{0.1, 0.2}}, nil
+			},
+		}},
+		vectorSvc: &mocks.MockVectorService{
+			SearchSimilarFunc: func(_ context.Context, r *service.SearchSimilarRequest) (*service.SearchSimilarResponse, error) {
+				searched = r
+				return &service.SearchSimilarResponse{}, nil
+			},
+		},
+	}
+	log, _ := logger.New(logger.LogConfig{Level: "error", Output: "stdout"})
+	registry := NewToolRegistry(svc, log)
+
+	_, err := registry.ExecuteTool(context.Background(), "quicbaas_rag_query", map[string]interface{}{
+		"query":     "test query",
+		"namespace": "test",
+		"min_score": "0",
+	})
+	require.NoError(t, err)
+	require.NotNil(t, searched)
+	assert.Equal(t, float32(0), searched.MinScore)
 }
 
 func TestExecuteRAGTool_UnknownRAGTool(t *testing.T) {

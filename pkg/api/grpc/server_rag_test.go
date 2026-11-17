@@ -77,8 +77,9 @@ func TestRAGServer_QueryIsTheSharedQuery(t *testing.T) {
 	b := ragWorking(&search)
 	srv := newTestRAGServer(t, b)
 
+	minScore := float32(0.5)
 	got, err := srv.Query(context.Background(), &pb.RAGQueryRequest{
-		Query: "connection pooling", Namespace: "code", TopK: 4, MinScore: 0.5,
+		Query: "connection pooling", Namespace: "code", TopK: 4, MinScore: &minScore,
 		Template: pb.RAGTemplate_RAG_TEMPLATE_JSON, IncludeCitations: true,
 	})
 	require.NoError(t, err)

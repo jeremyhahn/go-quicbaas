@@ -64,6 +64,7 @@ func (r *ToolRegistry) handleRAGQuery(ctx context.Context, args map[string]inter
 	if v, ok := args["min_score"].(string); ok {
 		if f, err := strconv.ParseFloat(v, 32); err == nil {
 			req.MinScore = float32(f)
+			req.MinScoreSet = true
 		}
 	}
 	req.Template, _ = args["template"].(string)
