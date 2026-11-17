@@ -14,6 +14,7 @@
 package iam
 
 import (
+	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -225,7 +226,7 @@ func TestPublicForKIDCurrentAndUnknown(t *testing.T) {
 
 	kid, _, _ := mgr.Current()
 
-	pub, err := mgr.PublicForKID(kid)
+	pub, err := mgr.PublicForKID(context.Background(), kid)
 	if err != nil {
 		t.Fatalf("PublicForKID(current) failed: %v", err)
 	}
@@ -233,7 +234,7 @@ func TestPublicForKIDCurrentAndUnknown(t *testing.T) {
 		t.Fatalf("expected ECDSA public key, got %T", pub)
 	}
 
-	_, err = mgr.PublicForKID("missing")
+	_, err = mgr.PublicForKID(context.Background(), "missing")
 	var unknownErr *UnknownKeyIDError
 	if !errors.As(err, &unknownErr) {
 		t.Fatalf("expected UnknownKeyIDError, got %T", err)
@@ -294,7 +295,7 @@ func TestRotateOverlapAndJWKS(t *testing.T) {
 	if prevSigner == nil {
 		t.Fatal("previous signer is nil after rotation")
 	}
-	if _, err := mgr.PublicForKID(oldKID); err != nil {
+	if _, err := mgr.PublicForKID(context.Background(), oldKID); err != nil {
 		t.Fatalf("previous public key did not resolve after rotation: %v", err)
 	}
 
@@ -364,5 +365,29 @@ func TestRotate_SurvivesARestart(t *testing.T) {
 	}
 	if kid, _, _ := restarted.Current(); kid != rotatedKID {
 		t.Fatalf("restarted manager signs with kid %q, want the rotated %q", kid, rotatedKID)
+	}
+}
+
+// TestNewSigningKeyManagerFromXKMSBackendRequiredFields proves the explicit
+// backend constructor rejects an empty common name and an empty store type
+// with a typed config error.
+func TestNewSigningKeyManagerFromXKMSBackendRequiredFields(t *testing.T) {
+	cases := []struct {
+		name, cn, storeType, field string
+	}{
+		{name: "empty cn", cn: "", storeType: "software", field: "signing key common name"},
+		{name: "empty store type", cn: OIDCSigningKeyCN, storeType: "", field: "signing key store type"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := NewSigningKeyManagerFromXKMSBackend(tc.cn, "", tc.storeType)
+			var cfgErr *OIDCConfigRequiredError
+			if !errors.As(err, &cfgErr) {
+				t.Fatalf("want *OIDCConfigRequiredError, got %v", err)
+			}
+			if cfgErr.Field != tc.field {
+				t.Fatalf("field = %q, want %q", cfgErr.Field, tc.field)
+			}
+		})
 	}
 }
