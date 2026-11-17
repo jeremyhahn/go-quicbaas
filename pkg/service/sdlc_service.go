@@ -367,6 +367,18 @@ func (s *SDLCService) Bind(ctx context.Context, tenantID string, binding *sdlc.P
 		return nil, err
 	}
 	defer release()
+	// A FENCED PROJECT IS REFUSED BEFORE ANYTHING CHANGES. A rebind that
+	// moves the forge coordinates retires the prior delivery first; behind a
+	// fence the withdrawal would restore the prior binding with its delivery
+	// already gone. The fence read after PutBinding still catches a delete
+	// that fences after this check.
+	fenced, err := s.store.ProjectDeleteFenced(ctx, tenantID, binding.ProjectID)
+	if err != nil {
+		return nil, err
+	}
+	if fenced {
+		return nil, &sdlc.ProjectDeletingError{TenantID: tenantID, ProjectID: binding.ProjectID}
+	}
 	if err := s.retirePriorDelivery(ctx, tenantID, binding); err != nil {
 		return nil, err
 	}
@@ -441,6 +453,15 @@ func (s *SDLCService) withdrawIfDeleting(ctx context.Context, tenantID string, b
 		s.logger.Error("sdlc: a bind behind a project delete could not be withdrawn; the binding may stand on a deleted project",
 			"tenant_id", tenantID, "project_id", projectID, "error", err)
 		return &sdlc.BindWithdrawError{TenantID: tenantID, ProjectID: projectID, Cause: err}
+	}
+	// A restored prior binding gets its delivery back: this bind may have
+	// retired it (a rebind to new forge coordinates) before the fence read.
+	if withdrawn && prior != nil {
+		if _, err := s.onboarder.Onboard(detached, tenantID, prior); err != nil {
+			s.logger.Error("sdlc: a restored binding behind a project delete could not be onboarded again; run onboard to restore its delivery",
+				"tenant_id", tenantID, "project_id", projectID, "error", err)
+			return &sdlc.BindWithdrawError{TenantID: tenantID, ProjectID: projectID, Cause: err}
+		}
 	}
 	if readErr != nil {
 		return readErr

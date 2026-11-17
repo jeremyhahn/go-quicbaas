@@ -121,3 +121,78 @@ func TestSDLCService_UnbindRefusedWhileABindHoldsTheLease(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// TestSDLCService_RebindToNewCoordinatesBehindAFenceKeepsItsDelivery: a
+// rebind that moves the forge coordinates while a delete holds the fence is
+// refused before retirePriorDelivery runs, so repository A keeps its webhook
+// and B is never provisioned.
+func TestSDLCService_RebindToNewCoordinatesBehindAFenceKeepsItsDelivery(t *testing.T) {
+	rig := newSDLCServiceRig(t)
+	ctx := context.Background()
+	if _, err := rig.svc.Bind(ctx, sdlcTestTenant, rig.binding(), BindOptions{}); err != nil {
+		t.Fatalf("Bind A: %v", err)
+	}
+	original, err := rig.store.GetBinding(ctx, sdlcTestTenant, sdlcTestProject)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := rig.store.FenceProjectDelete(ctx, sdlcTestTenant, sdlcTestProject); err != nil {
+		t.Fatal(err)
+	}
+	other, rebound := rebindTarget(t, rig)
+
+	_, err = rig.svc.Bind(ctx, sdlcTestTenant, rebound, BindOptions{})
+	assertProjectDeleting(t, err)
+	// An offboard and re-onboard would show as a second webhook creation.
+	if created := rig.forge.Calls("POST /hooks"); created != 1 {
+		t.Fatalf("repo A webhook creations = %d, want 1: the refused rebind touched its delivery", created)
+	}
+	if hooks := rig.forge.HookURLs(); len(hooks) != 1 {
+		t.Fatalf("repo A hooks = %v, want its one webhook kept", hooks)
+	}
+	if hooks := other.HookURLs(); len(hooks) != 0 {
+		t.Fatalf("repo B hooks = %v, want none", hooks)
+	}
+	got, err := rig.store.GetBinding(ctx, sdlcTestTenant, sdlcTestProject)
+	if err != nil || got.WriteToken != original.WriteToken {
+		t.Fatalf("binding after the refused rebind = %+v, %v; want the original untouched", got, err)
+	}
+}
+
+// TestSDLCService_FenceAfterThePreCheckRestoresAndReonboardsThePrior: the
+// fence lands after the pre-check, once the rebind has retired repository
+// A's delivery and put its binding. The withdrawal restores A's binding and
+// onboards it again, so A delivers once more.
+func TestSDLCService_FenceAfterThePreCheckRestoresAndReonboardsThePrior(t *testing.T) {
+	rig := newSDLCServiceRig(t)
+	ctx := context.Background()
+	if _, err := rig.svc.Bind(ctx, sdlcTestTenant, rig.binding(), BindOptions{}); err != nil {
+		t.Fatalf("Bind A: %v", err)
+	}
+	original, err := rig.store.GetBinding(ctx, sdlcTestTenant, sdlcTestProject)
+	if err != nil {
+		t.Fatal(err)
+	}
+	other, rebound := rebindTarget(t, rig)
+	hookAfterBindWrite(t, rig, func() {
+		if hooks := rig.forge.HookURLs(); len(hooks) != 0 {
+			t.Errorf("repo A hooks before the fence = %v, want the rebind to have retired them", hooks)
+		}
+		if _, err := rig.store.FenceProjectDelete(ctx, sdlcTestTenant, sdlcTestProject); err != nil {
+			t.Errorf("FenceProjectDelete: %v", err)
+		}
+	})
+
+	_, err = rig.svc.Bind(ctx, sdlcTestTenant, rebound, BindOptions{})
+	assertProjectDeleting(t, err)
+	got, err := rig.store.GetBinding(ctx, sdlcTestTenant, sdlcTestProject)
+	if err != nil || got.WriteToken != original.WriteToken || got.Forge.Repo != original.Forge.Repo {
+		t.Fatalf("binding after the withdrawn rebind = %+v, %v; want A's restored", got, err)
+	}
+	if hooks := rig.forge.HookURLs(); len(hooks) != 1 || hooks[0] != expectedWebhookURL {
+		t.Fatalf("repo A hooks = %v, want [%s] onboarded again", hooks, expectedWebhookURL)
+	}
+	if hooks := other.HookURLs(); len(hooks) != 0 {
+		t.Fatalf("repo B hooks = %v, want none", hooks)
+	}
+}
