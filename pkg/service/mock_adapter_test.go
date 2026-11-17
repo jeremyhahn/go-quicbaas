@@ -401,6 +401,8 @@ func TestSchedulerAdapter_UpdateJob_Error(t *testing.T) {
 	}
 
 	expectedErr := errors.New("update failed")
+	mockEngine.On("GetJobWithTenant", ctx, uint64(100), "tenant-1").
+		Return(&scheduler.Job{ID: 100, Handler: "noop", TargetTenantID: "tenant-1"}, nil).Once()
 	mockEngine.On("UpdateJob", ctx, uint64(100), "tenant-1", mock.AnythingOfType("*scheduler.JobUpdateParams")).
 		Return(nil, expectedErr).Once()
 

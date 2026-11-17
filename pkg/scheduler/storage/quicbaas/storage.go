@@ -19,6 +19,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -80,6 +81,11 @@ type Storage struct {
 	reconcileMu       sync.Mutex
 	lastReconcile     time.Time
 	reconcileInterval time.Duration
+
+	// tenantCursor is where the due scan starts in the tenant list; each
+	// sweep advances it, so a tenant with more due jobs than the limit
+	// cannot starve the tenants after it.
+	tenantCursor atomic.Uint64
 }
 
 // tenantJobIndexReconcileInterval is how often the due scan reconciles the
@@ -558,7 +564,16 @@ func (s *Storage) GetJobsDueForExecution(ctx context.Context, before time.Time, 
 		return nil, &scheduler.ErrStorageError{Op: "GetJobsDueForExecution.index_scan", Cause: err}
 	}
 
-	for _, tenantID := range tenants {
+	// The scan starts at a rotating tenant and wraps around, so each tenant
+	// is first within len(tenants) sweeps. The list is sorted so its order
+	// does not depend on the store's iteration order.
+	slices.Sort(tenants)
+	start := 0
+	if len(tenants) > 0 {
+		start = int((s.tenantCursor.Add(1) - 1) % uint64(len(tenants)))
+	}
+	for i := range tenants {
+		tenantID := tenants[(start+i)%len(tenants)]
 		ids := indexed[tenantID]
 		err := s.kv.Scan(ctx, recordNamespace(tenantID)+"scheduler/jobs/", func(key string, value []byte) error {
 			if err := ctx.Err(); err != nil {
