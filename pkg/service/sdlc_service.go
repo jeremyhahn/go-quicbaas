@@ -356,6 +356,17 @@ func (s *SDLCService) Bind(ctx context.Context, tenantID string, binding *sdlc.P
 	if err := s.checkRulers(ctx, tenantID, binding); err != nil {
 		return nil, err
 	}
+	// ONE BIND OF A PROJECT AT A TIME (go-quicbaas#1679). From here on a bind
+	// is a sequence of writes (retire the prior delivery, record the route,
+	// put the binding, read the fence and maybe withdraw), and two binds of
+	// one project interleaving them can leave a route with no binding or a
+	// withdrawal that restores a record the other already replaced. The lease
+	// is released on a detached context so a canceled request still frees it.
+	release, err := s.acquireBindLease(ctx, tenantID, binding.ProjectID)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
 	if err := s.retirePriorDelivery(ctx, tenantID, binding); err != nil {
 		return nil, err
 	}
@@ -523,6 +534,13 @@ func (s *SDLCService) Unbind(ctx context.Context, tenantID, projectID string) er
 	if tenantID == "" {
 		return &sdlc.InvalidInputError{Field: "tenant_id", Message: "bindings are tenant-scoped"}
 	}
+	// An unbind holds the project's bind lease like a bind does, so its
+	// binding and route removal never interleave with a bind's writes.
+	release, err := s.acquireBindLease(ctx, tenantID, projectID)
+	if err != nil {
+		return err
+	}
+	defer release()
 	if err := s.offboard(ctx, tenantID, projectID); err != nil {
 		return err
 	}
@@ -535,6 +553,25 @@ func (s *SDLCService) Unbind(ctx context.Context, tenantID, projectID string) er
 		return err
 	}
 	return s.routes.Forget(ctx, projectID, tenantID)
+}
+
+// acquireBindLease takes the project's bind lease and returns the func that
+// releases it. The release runs on a context detached from the request's
+// cancellation, bounded by bindWithdrawTimeout; a release that fails is
+// logged, and the lease goes stale after sdlc.BindLeaseTTL.
+func (s *SDLCService) acquireBindLease(ctx context.Context, tenantID, projectID string) (func(), error) {
+	token, err := s.store.AcquireBindLease(ctx, tenantID, projectID)
+	if err != nil {
+		return nil, err
+	}
+	return func() {
+		detached, cancel := context.WithTimeout(context.WithoutCancel(ctx), bindWithdrawTimeout)
+		defer cancel()
+		if err := s.store.ReleaseBindLease(detached, tenantID, projectID, token); err != nil {
+			s.logger.Warn("sdlc: a bind lease could not be released; it holds until it goes stale",
+				"tenant_id", tenantID, "project_id", projectID, "error", err)
+		}
+	}, nil
 }
 
 // offboard removes the forge webhook the binding provisioned, BEFORE the
