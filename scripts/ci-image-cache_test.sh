@@ -124,6 +124,40 @@ for f in "$work"/log-*; do
   done < "$f"
 done
 
+# check_ci_push_steps (#2503): reads ci.yml as text. Each of the three "Push
+# the toolchain image to the registry cache" steps exits early only on an
+# empty CI_IMAGE_REGISTRY; with the user or token empty it pushes without a
+# login (scripts/ci-image-cache.sh push) before any exit.
+check_ci_push_steps() {
+  local ci="$here/../.github/workflows/ci.yml" l in_step=0 in_anon=0 pushed=0
+  local steps=0 anon=0
+  while IFS= read -r l; do
+    case $l in
+      *'- name: Push the toolchain image to the registry cache'*)
+        in_step=1; steps=$((steps + 1)); in_anon=0; continue ;;
+      '      - name:'*|'  '[a-z]*:) in_step=0; in_anon=0; continue ;;
+    esac
+    [ "$in_step" = 1 ] || continue
+    case $l in
+      *'-z "$CI_IMAGE_REGISTRY" ] ||'*|*'|| [ -z "$CI_IMAGE_REGISTRY" ]'*)
+        fail "(ci.yml step $steps) an empty CI_IMAGE_REGISTRY shares its exit with the credentials: $l" ;;
+      *'if [ -z "$CI_IMAGE_REGISTRY_USER" ] || [ -z "$CI_IMAGE_REGISTRY_TOKEN" ]; then'*)
+        in_anon=1; pushed=0; anon=$((anon + 1)); continue ;;
+    esac
+    [ "$in_anon" = 1 ] || continue
+    case $l in
+      *'scripts/ci-image-cache.sh push'*)
+        case $l in *CI_IMAGE_DOCKER_CONFIG*) fail "(ci.yml step $steps) the anonymous push sets CI_IMAGE_DOCKER_CONFIG" ;; esac
+        pushed=1 ;;
+      *'exit '*) [ "$pushed" = 1 ] || fail "(ci.yml step $steps) exits with only the credentials empty, before a push" ;;
+      '          fi') [ "$pushed" = 1 ] || fail "(ci.yml step $steps) the anonymous branch has no push"; in_anon=0 ;;
+    esac
+  done < "$ci"
+  [ "$steps" = 3 ] || fail "(ci.yml) $steps registry cache push steps, want 3"
+  [ "$anon" = 3 ] || fail "(ci.yml) $anon anonymous push branches, want 3"
+}
+check_ci_push_steps
+
 if [ "$fails" -ne 0 ]; then
   echo "ci-image-cache_test: $fails failure(s)" >&2
   exit 1
