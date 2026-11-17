@@ -179,31 +179,6 @@ func allocBarrierPort(t *testing.T) int {
 	return 0
 }
 
-// allocBarrierUDPPort reserves a free UDP port for the QUIC listener.
-func allocBarrierUDPPort(t *testing.T) int {
-	t.Helper()
-	for attempt := 0; attempt < daemonPortRetries; attempt++ {
-		conn, err := net.ListenPacket("udp", "127.0.0.1:0")
-		if err != nil {
-			continue
-		}
-		port := conn.LocalAddr().(*net.UDPAddr).Port
-		if cerr := conn.Close(); cerr != nil {
-			t.Fatalf("close port-allocation packet conn: %v", cerr)
-		}
-		allocatedBarrierPortsMu.Lock()
-		_, taken := allocatedBarrierPorts[port]
-		if !taken {
-			allocatedBarrierPorts[port] = struct{}{}
-			allocatedBarrierPortsMu.Unlock()
-			return port
-		}
-		allocatedBarrierPortsMu.Unlock()
-	}
-	t.Fatalf("allocBarrierUDPPort: %d retries exhausted", daemonPortRetries)
-	return 0
-}
-
 // allocBarrierPorts reserves the full port set the per-test daemon needs
 // to serve every transport the barrier matrix exercises. Unix socket
 // lives under the data dir so it is removed automatically when t.TempDir
@@ -211,10 +186,12 @@ func allocBarrierUDPPort(t *testing.T) int {
 // AF_UNIX 108-byte limit when t.TempDir prefixes are long.
 func allocBarrierPorts(t *testing.T, dataDir string) barrierDaemonPorts {
 	t.Helper()
+	rest := allocBarrierPort(t)
 	return barrierDaemonPorts{
-		REST: allocBarrierPort(t),
+		REST: rest,
 		GRPC: allocBarrierPort(t),
-		QUIC: allocBarrierUDPPort(t),
+		// QUIC is HTTP/3, served on the REST listener's own port.
+		QUIC: rest,
 		MCP:  allocBarrierPort(t),
 		Unix: filepath.Join(dataDir, "d.sock"),
 	}
@@ -640,9 +617,6 @@ func startBarrierDaemonProcess(t *testing.T, binary, dataDir string, ports barri
 		// Discovery + scheduler do not add coverage to barrier tests; off.
 		"QUICBAAS_DISCOVERY_ENABLED=false",
 		"QUICBAAS_ENABLE_SCHEDULER=false",
-		// QUIC + MCP listeners have no CLI flags; drive via env.
-		"QUICBAAS_SERVER_QUIC_ENABLED=true",
-		fmt.Sprintf("QUICBAAS_SERVER_QUIC_PORT=%d", ports.QUIC),
 		"QUICBAAS_SERVER_MCP_ENABLED=true",
 		fmt.Sprintf("QUICBAAS_SERVER_MCP_PORT=%d", ports.MCP),
 	}

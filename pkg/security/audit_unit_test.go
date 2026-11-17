@@ -20,8 +20,6 @@ import (
 	"compress/gzip"
 	"context"
 	"io"
-	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"testing"
@@ -181,8 +179,12 @@ func TestAuditLogger_RotateWithCompressionEnabled(t *testing.T) {
 
 	assert.NoError(t, err)
 
-	// Give compression goroutine time to run
-	time.Sleep(200 * time.Millisecond)
+	// Close waits for the compression goroutine, so the backup is compressed
+	// before the test's temp dir is removed.
+	require.NoError(t, al.Close())
+	compressed, err := filepath.Glob(logFile + ".*.gz")
+	require.NoError(t, err)
+	assert.Len(t, compressed, 1, "the rotated backup should be compressed")
 }
 
 func TestAuditLogger_CleanupOldBackupsPlaceholder(t *testing.T) {
@@ -238,12 +240,7 @@ func TestAuditLogger_SendToSyslogPlaceholder(t *testing.T) {
 
 func TestAuditLogger_SIEMExporter(t *testing.T) {
 	// Create a test server to receive SIEM events
-	receivedEvents := 0
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		receivedEvents++
-		w.WriteHeader(http.StatusOK)
-	}))
-	defer server.Close()
+	server, requests := newSIEMCaptureServer(t)
 
 	cfg := &AuditConfig{
 		Enabled:      true,
@@ -281,11 +278,9 @@ func TestAuditLogger_SIEMExporter(t *testing.T) {
 	err = al.siemExporter.Send(event)
 	require.NoError(t, err)
 
-	// Wait for flush
-	time.Sleep(200 * time.Millisecond)
-
-	// Verify event was received
-	assert.Greater(t, receivedEvents, 0)
+	// Verify event was received, flushed by Send or by the ticker
+	req := receiveRequest(t, requests)
+	assert.Contains(t, req.body, `"user":"test"`)
 }
 
 func TestAuditLogger_CompressFile(t *testing.T) {
@@ -508,11 +503,9 @@ func TestAuditLogger_CompressFileAsync(t *testing.T) {
 	require.NoError(t, err)
 	defer al.Close()
 
-	// Call compressFileAsync - runs in background
+	// compressFileAsync compresses on the caller's goroutine; rotateIfNeeded
+	// is what runs it in the background.
 	al.compressFileAsync(testFile, gzip.BestSpeed)
-
-	// Wait for async compression to complete
-	time.Sleep(100 * time.Millisecond)
 
 	// Verify compressed file was created
 	assert.FileExists(t, compressedFile)
@@ -570,10 +563,7 @@ func TestCompressFileActual(t *testing.T) {
 
 func TestAuditLogger_LogWithBothSyslogAndSIEM(t *testing.T) {
 	// Create a test server for SIEM
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-	}))
-	defer server.Close()
+	server, requests := newSIEMCaptureServer(t)
 
 	tmpDir := t.TempDir()
 	logFile := filepath.Join(tmpDir, "audit.log")
@@ -611,8 +601,9 @@ func TestAuditLogger_LogWithBothSyslogAndSIEM(t *testing.T) {
 	err = al.Log(ctx, event)
 	require.NoError(t, err)
 
-	// Give goroutines time to execute
-	time.Sleep(200 * time.Millisecond)
+	// Log exports on a goroutine; the SIEM ticker then delivers the batch.
+	req := receiveRequest(t, requests)
+	assert.Contains(t, req.body, `"resource":"data"`)
 }
 
 func TestAuditLogger_VerifySignatureNotEnabled(t *testing.T) {

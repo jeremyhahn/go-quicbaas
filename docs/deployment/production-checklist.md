@@ -34,6 +34,8 @@ A step-by-step checklist for deploying QuicBaaS in production environments.
 - [ ] File descriptor limits increased (see below)
 - [ ] Docker installed if using container deployment
 
+The container image carries the docker CLI and git. A containerised daemon that runs the SDLC pipeline needs the host's docker socket mounted (`-v /var/run/docker.sock:/var/run/docker.sock`) and runs in a group that may use it (`--group-add` with the socket's group ID). Without the mount, worker and train jobs fail to start.
+
 **System Tuning:**
 
 ```bash

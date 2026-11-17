@@ -50,7 +50,7 @@ Layer 4 of the stack, one product in layers: the application-layer framework and
 - **kms** — re-export go-xkms KMS; the own key store and backend router are removed — [#1321](../../pulls/1321) — blocked: held for the owner's word
 - **multi-tenancy** — `tenant barrier unseal-share` takes its share off argv — DC: [#488](../../issues/488) — blocked: see issue
 - **multiprotocol-api** — go-qrdb's tenant and auth chain inherited on every transport — DC: [#1150](../../issues/1150), [#1141](../../issues/1141) — blocked: see issue
-- **object-storage** — an object storage provider per go-objstore backend and its SDK re-export; the Object storage navigation item after Dev complete — DC: [#1945](../../issues/1945); PDC: [#2043](../../issues/2043) — blocked: gates behind lane 1389co, the landing lane that succeeds [#1841](../../pulls/1841)
+- **object-storage** — an object storage provider per go-objstore backend and its SDK re-export; the Object storage navigation item after Dev complete (buckets, files and folders, pre-signed URLs and bucket permissions; ruling 228) — DC: [#1945](../../issues/1945); PDC: [#2043](../../issues/2043) — blocked: gates behind lane 1389co, the landing lane that succeeds [#1841](../../pulls/1841)
 - **projects** — the project record serves the Software Factory on QuicBaaS — [milestone 33](../../milestone/33) — done
 - **rag** — re-export go-qrdb's RAG service; the own pipeline is removed — [#1321](../../pulls/1321) — blocked: held for the owner's word
 - **scheduler** — guarded (CAS) writes for abandoned-run recovery and triage release — DC: [#105](../../issues/105) — open

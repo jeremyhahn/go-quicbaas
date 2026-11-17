@@ -32,7 +32,7 @@ services:
     networks:
       - quicbaas-perf-network
     healthcheck:
-      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:8080/v1/health/live"]
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:8080/api/v1/health/live"]
       interval: 10s
       timeout: 5s
       retries: 3
@@ -68,7 +68,7 @@ services:
     depends_on:
       - quicbaas-perf-node1
     healthcheck:
-      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:8080/v1/health/live"]
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:8080/api/v1/health/live"]
       interval: 10s
       timeout: 5s
       retries: 3
@@ -105,7 +105,7 @@ services:
       - quicbaas-perf-node1
       - quicbaas-perf-node2
     healthcheck:
-      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:8080/v1/health/live"]
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:8080/api/v1/health/live"]
       interval: 10s
       timeout: 5s
       retries: 3
