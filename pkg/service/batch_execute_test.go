@@ -109,6 +109,47 @@ func TestBatchService_BatchExecute_QRDBFailure(t *testing.T) {
 	assert.Len(t, mockQRDB.capturedBatchCalls(), 1)
 }
 
+// A committed batch evicts every key it put or deleted from the local cache,
+// so an eventual Get reads the database, not the stale bytes; other keys stay.
+func TestBatchService_BatchExecute_EvictsWarmedCache(t *testing.T) {
+	mockQRDB := newSvcBoostMockQRDBProvider(nil, nil)
+	svc := createTestService(t, withQRDBClientProvider(mockQRDB))
+	defer svc.Close()
+	cacheMock := newKVAuthCacheMock()
+	svc.(*quicBaaS).cacheManager = cacheMock
+	cacheMock.data["users:7"] = []byte("deleted-by-batch")
+	cacheMock.data["users:user-1"] = []byte("old")
+	cacheMock.data["users:8"] = []byte("untouched")
+
+	_, err := svc.BatchExecute(tenantctx.WithSystem(context.Background()), &BatchExecuteRequest{
+		Operations: []*BatchExecuteOperation{
+			{Type: BatchExecuteDelete, EntityType: "users", Key: "7"},
+			{Type: BatchExecutePut, EntityType: "users", Key: "user-1", Value: []byte("new")},
+		},
+	})
+	require.NoError(t, err)
+
+	assert.NotContains(t, cacheMock.data, "users:7", "a batch delete must evict the cached entity")
+	assert.NotContains(t, cacheMock.data, "users:user-1", "a batch put must evict the previous cached value")
+	assert.Equal(t, []byte("untouched"), cacheMock.data["users:8"])
+}
+
+// A batch that fails to commit changes nothing, so it leaves the cache as is.
+func TestBatchService_BatchExecute_FailureKeepsCache(t *testing.T) {
+	mockQRDB := newSvcBoostMockQRDBProviderWithErrors(nil, nil, stderrors.New("raft proposal failed"))
+	svc := createTestService(t, withQRDBClientProvider(mockQRDB))
+	defer svc.Close()
+	cacheMock := newKVAuthCacheMock()
+	svc.(*quicBaaS).cacheManager = cacheMock
+	cacheMock.data["users:7"] = []byte("still-there")
+
+	_, err := svc.BatchExecute(tenantctx.WithSystem(context.Background()), &BatchExecuteRequest{
+		Operations: []*BatchExecuteOperation{{Type: BatchExecuteDelete, EntityType: "users", Key: "7"}},
+	})
+	require.Error(t, err)
+	assert.Equal(t, []byte("still-there"), cacheMock.data["users:7"])
+}
+
 // TestBatchExecuteResponse checks the per-operation result mapping, including
 // a qrdb response shorter than the request.
 func TestBatchExecuteResponse(t *testing.T) {

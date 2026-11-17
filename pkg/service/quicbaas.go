@@ -2029,6 +2029,7 @@ func (b *batchService) BatchExecute(ctx context.Context, req *BatchExecuteReques
 	if err != nil {
 		return nil, b.batchExecuteFailure(err)
 	}
+	b.evictBatchKeys(ops)
 
 	if b.svc.metrics != nil {
 		b.svc.metrics.requestsTotal.With("BatchExecute", "success").Inc()
@@ -2051,6 +2052,20 @@ func (b *batchService) batchExecuteFailure(err error) error {
 
 // batchExecuteOps validates a BatchExecuteRequest and builds its qrdb
 // operations, each key placed in its entity type's keyspace.
+// evictBatchKeys drops every key a committed batch wrote or deleted from the
+// local cache. The ops carry the tenant-qualified keys the single-key Put and
+// Delete cache under, so an eventual Get after the batch reads the database.
+func (b *batchService) evictBatchKeys(ops []qrdbtransport.Op) {
+	if b.svc.cacheManager == nil {
+		return
+	}
+	for _, op := range ops {
+		if op.Type == qrdbtransport.OpPut || op.Type == qrdbtransport.OpDelete {
+			_ = b.svc.cacheManager.Delete(context.Background(), string(op.Key))
+		}
+	}
+}
+
 func (b *batchService) batchExecuteOps(ctx context.Context, req *BatchExecuteRequest) ([]qrdbtransport.Op, error) {
 	if req == nil {
 		return nil, &errors.QBError{
