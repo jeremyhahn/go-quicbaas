@@ -17,6 +17,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"regexp"
 	"slices"
 	"strings"
 	"testing"
@@ -58,14 +59,125 @@ func argAfter(args []string, flag string) string {
 	return args[i+1]
 }
 
-func TestBuildImage_PassesDockerfileOnStdinAndReadsTheIIDFile(t *testing.T) {
-	const imageID = "sha256:" + "ab12cd34ef56ab12cd34ef56ab12cd34ef56ab12cd34ef56ab12cd34ef56ab12"
-	engine := &fakeImageEngine{answer: func(args []string) (imageCommandResult, error) {
-		if err := os.WriteFile(argAfter(args, "--iidfile"), []byte(imageID+"\n"), 0o600); err != nil {
-			return imageCommandResult{}, err
+// builtImageEngine answers a build by writing iid to its --iidfile and an
+// inspect with engineID, the ID the engine itself keys the image by.
+func builtImageEngine(iid, engineID string) func([]string) (imageCommandResult, error) {
+	return func(args []string) (imageCommandResult, error) {
+		switch args[0] {
+		case "build":
+			if err := os.WriteFile(argAfter(args, "--iidfile"), []byte(iid+"\n"), 0o600); err != nil {
+				return imageCommandResult{}, err
+			}
+			return imageCommandResult{}, nil
+		case "image":
+			return imageCommandResult{Stdout: `[{"Id":"` + engineID + `","Config":{"Labels":null}}]`}, nil
+		case "tag":
+			if args[1] != engineID && !buildRefPattern.MatchString(args[1]) {
+				return imageCommandResult{ExitCode: 1, Stderr: "Error response from daemon: No such image: " + args[1]}, nil
+			}
 		}
 		return imageCommandResult{}, nil
+	}
+}
+
+// TestBuildImage_ReturnsTheIDTheEngineTagsBy reproduces #1801: under docker's
+// containerd image store the iidfile names the config digest, the daemon
+// keys the image by another digest, and tagging by the iidfile's ID answered
+// "No such image". BuildImage returns the engine's ID, which TagImage accepts.
+func TestBuildImage_ReturnsTheIDTheEngineTagsBy(t *testing.T) {
+	const configDigest = "sha256:" + "207b2e88207b2e88207b2e88207b2e88207b2e88207b2e88207b2e88207b2e88"
+	const engineID = "sha256:" + "9f0e1d2c9f0e1d2c9f0e1d2c9f0e1d2c9f0e1d2c9f0e1d2c9f0e1d2c9f0e1d2c"
+	engine := &fakeImageEngine{answer: builtImageEngine(configDigest, engineID)}
+	rt := newImageTestRuntime(t, RuntimeDocker, engine)
+
+	if err := rt.TagImage(t.Context(), configDigest, "localhost:32786/it/w:1"); !errors.Is(err, ErrImageTag) {
+		t.Fatalf("the fake must refuse the builder's ID, got %v", err)
+	}
+	id, err := rt.BuildImage(t.Context(), &ImageBuildSpec{Dockerfile: []byte("FROM a"), Tags: []string{"w:local"}})
+	if err != nil {
+		t.Fatalf("BuildImage: %v", err)
+	}
+	if id != engineID {
+		t.Fatalf("image ID = %q, want the engine's %q", id, engineID)
+	}
+	ref := buildRefOf(t, engine.calls)
+	n := len(engine.calls)
+	if got := strings.Join(engine.calls[n-4].Args, " "); got != "image inspect "+ref {
+		t.Fatalf("the ID must be read back from the build's own tag %q, inspect argv %q", ref, got)
+	}
+	idRef := "quicbaas-build-id:" + strings.TrimPrefix(engineID, "sha256:")
+	if got := strings.Join(engine.calls[n-3].Args, " "); got != "tag "+ref+" "+idRef {
+		t.Fatalf("the image must be pinned by its ID %q before any other tag, argv %q", idRef, got)
+	}
+	if got := strings.Join(engine.calls[n-2].Args, " "); got != "tag "+ref+" w:local" {
+		t.Fatalf("the spec's tag must be applied from the build's own tag %q, argv %q", ref, got)
+	}
+	if got := strings.Join(engine.calls[n-1].Args, " "); got != "image rm "+ref {
+		t.Fatalf("the build's temporary tag %q must be removed last, last argv %q", ref, got)
+	}
+	if err := rt.TagImage(t.Context(), id, "localhost:32786/it/w:1"); err != nil {
+		t.Fatalf("TagImage by the returned ID: %v", err)
+	}
+}
+
+// buildRefOf returns the temporary reference the recorded build applied: the
+// last --tag of its argv, of the form quicbaas-build-tmp:<32 hex characters>.
+func buildRefOf(t *testing.T, calls []recordedImageCommand) string {
+	t.Helper()
+	for _, call := range calls {
+		if len(call.Args) == 0 || call.Args[0] != "build" {
+			continue
+		}
+		ref := ""
+		for i, arg := range call.Args {
+			if arg == "--tag" && i+1 < len(call.Args) {
+				ref = call.Args[i+1]
+			}
+		}
+		if !buildRefPattern.MatchString(ref) {
+			t.Fatalf("the build's last --tag %q is not a quicbaas-build-tmp:<32 hex> reference", ref)
+		}
+		return ref
+	}
+	t.Fatal("no build call recorded")
+	return ""
+}
+
+var buildRefPattern = regexp.MustCompile(`^quicbaas-build-tmp:[0-9a-f]{32}$`)
+
+func TestBuildImage_InspectFailureIsABuildError(t *testing.T) {
+	engine := &fakeImageEngine{answer: func(args []string) (imageCommandResult, error) {
+		if args[0] == "image" && args[1] == "inspect" {
+			return imageCommandResult{ExitCode: 1, Stderr: "Error: No such image: t"}, nil
+		}
+		return builtImageEngine("sha256:1", "sha256:1")(args)
 	}}
+	_, err := newImageTestRuntime(t, RuntimeDocker, engine).BuildImage(t.Context(), &ImageBuildSpec{Dockerfile: []byte("FROM a"), Tags: []string{"t"}})
+	if !errors.Is(err, ErrImageBuild) || !errors.Is(err, ErrImageNotFound) {
+		t.Fatalf("err = %v, want ErrImageBuild wrapping ErrImageNotFound", err)
+	}
+}
+
+func TestBuildImage_InspectFailureStillRemovesTheTemporaryTag(t *testing.T) {
+	engine := &fakeImageEngine{answer: func(args []string) (imageCommandResult, error) {
+		if args[0] == "image" && args[1] == "inspect" {
+			return imageCommandResult{ExitCode: 1, Stderr: "Error: No such image"}, nil
+		}
+		return builtImageEngine("sha256:1", "sha256:1")(args)
+	}}
+	_, err := newImageTestRuntime(t, RuntimeDocker, engine).BuildImage(t.Context(), &ImageBuildSpec{Dockerfile: []byte("FROM a"), Tags: []string{"t"}})
+	if !errors.Is(err, ErrImageBuild) {
+		t.Fatalf("err = %v, want ErrImageBuild", err)
+	}
+	ref := buildRefOf(t, engine.calls)
+	if got := strings.Join(engine.calls[len(engine.calls)-1].Args, " "); got != "image rm "+ref {
+		t.Fatalf("a failed inspect must still remove the temporary tag %q, last argv %q", ref, got)
+	}
+}
+
+func TestBuildImage_PassesDockerfileOnStdinAndReadsTheIIDFile(t *testing.T) {
+	const imageID = "sha256:" + "ab12cd34ef56ab12cd34ef56ab12cd34ef56ab12cd34ef56ab12cd34ef56ab12"
+	engine := &fakeImageEngine{answer: builtImageEngine(imageID, imageID)}
 	rt := newImageTestRuntime(t, RuntimeDocker, engine)
 
 	got, err := rt.BuildImage(t.Context(), &ImageBuildSpec{
@@ -86,11 +198,20 @@ func TestBuildImage_PassesDockerfileOnStdinAndReadsTheIIDFile(t *testing.T) {
 		t.Fatalf("the Dockerfile must travel on stdin, got %q", call.Stdin)
 	}
 	joined := strings.Join(call.Args, " ")
-	for _, want := range []string{"build --file -", "--pull", "--tag worker:1-cc2-cx3",
+	for _, want := range []string{"build --file -", "--pull",
 		"--build-arg A=1 --build-arg B=2", "--label io.example.v=1"} {
 		if !strings.Contains(joined, want) {
 			t.Errorf("argv %q lacks %q", joined, want)
 		}
+	}
+	if strings.Contains(joined, "--tag worker:1-cc2-cx3") {
+		t.Errorf("the build must apply only its private tag, argv %q", joined)
+	}
+	ref := buildRefOf(t, engine.calls)
+	if !slices.ContainsFunc(engine.calls, func(c recordedImageCommand) bool {
+		return strings.Join(c.Args, " ") == "tag "+ref+" worker:1-cc2-cx3"
+	}) {
+		t.Errorf("the spec's tag must be applied from %q after the build", ref)
 	}
 }
 
@@ -235,6 +356,65 @@ func TestTagImage(t *testing.T) {
 	}})
 	if err := failing.TagImage(t.Context(), "s", "t"); !errors.Is(err, ErrImageTag) {
 		t.Fatalf("err = %v, want ErrImageTag", err)
+	}
+}
+
+// TestTagImage_ErrorCarriesTheEnginesClassifiedReason pins that a refused tag
+// says why (#1801 withheld "114 bytes of output") without printing a
+// credential the engine echoed.
+func TestTagImage_ErrorCarriesTheEnginesClassifiedReason(t *testing.T) {
+	const source = "sha256:" + "207b2e88207b2e88207b2e88207b2e88207b2e88207b2e88207b2e88207b2e88"
+	stderr := "Error response from daemon: No such image: " + source
+	rt := newImageTestRuntime(t, RuntimeDocker, &fakeImageEngine{answer: func([]string) (imageCommandResult, error) {
+		return imageCommandResult{ExitCode: 1, Stderr: stderr + "\nBearer abcdefghijklmnopqrstuvwxyz\n"}, nil
+	}})
+	err := rt.TagImage(t.Context(), source, "localhost:32786/it/w:1")
+	var tagErr *ImageTagError
+	if !errors.As(err, &tagErr) || !errors.Is(err, ErrImageTag) {
+		t.Fatalf("err = %v, want an ImageTagError", err)
+	}
+	if !strings.HasSuffix(err.Error(), ": no such image") || tagErr.Reason != "no such image" {
+		t.Fatalf("the error must carry the engine's classified reason, got %q", err.Error())
+	}
+	if strings.Contains(err.Error(), "Error response from daemon") {
+		t.Fatalf("no engine text may be rendered, got %q", err.Error())
+	}
+	if strings.Contains(err.Error(), "abcdefghijklmnopqrstuvwxyz") {
+		t.Fatalf("a credential-shaped string must be redacted, got %q", err.Error())
+	}
+	var cmdErr *CommandError
+	if !errors.As(err, &cmdErr) || !strings.Contains(cmdErr.Output, "abcdefghijklmnopqrstuvwxyz") {
+		t.Fatalf("the raw output must stay on CommandError.Output, got %v", err)
+	}
+}
+
+// TestTagImage_ErrorRendersNoCredentialFromTheEnginesStderr: the engine's
+// stderr can carry any credential shape, so Error() renders none of it; the
+// raw bytes stay on CommandError.Output, which is never rendered.
+func TestTagImage_ErrorRendersNoCredentialFromTheEnginesStderr(t *testing.T) {
+	secrets := []string{"dXNlcjpwYXNz", "user:secret", "secret@registry.example", "hunter2"}
+	stderr := "Error response from daemon: No such image: x\n" +
+		"Authorization: Basic dXNlcjpwYXNz\n" +
+		"pull https://user:secret@registry.example/w:1\n" +
+		"token=hunter2\n"
+	rt := newImageTestRuntime(t, RuntimeDocker, &fakeImageEngine{answer: func([]string) (imageCommandResult, error) {
+		return imageCommandResult{ExitCode: 1, Stderr: stderr}, nil
+	}})
+	err := rt.TagImage(t.Context(), "x", "localhost:32786/it/w:1")
+	if !errors.Is(err, ErrImageTag) {
+		t.Fatalf("err = %v, want ErrImageTag", err)
+	}
+	for _, secret := range secrets {
+		if strings.Contains(err.Error(), secret) {
+			t.Errorf("err.Error() renders %q: %q", secret, err.Error())
+		}
+	}
+	if !strings.Contains(err.Error(), "no such image") {
+		t.Errorf("the error must name the classified reason, got %q", err.Error())
+	}
+	var cmdErr *CommandError
+	if !errors.As(err, &cmdErr) || cmdErr.Output != strings.TrimSpace(stderr) {
+		t.Fatalf("the raw output must stay on CommandError.Output, got %v", err)
 	}
 }
 
