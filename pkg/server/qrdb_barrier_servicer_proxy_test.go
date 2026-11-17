@@ -40,6 +40,7 @@ import (
 	"github.com/jeremyhahn/go-qrdb/pkg/api/grpc/proto/qrdbv1"
 	qrdbconfig "github.com/jeremyhahn/go-qrdb/pkg/config"
 	qrdbdatabase "github.com/jeremyhahn/go-qrdb/pkg/database"
+	"github.com/jeremyhahn/go-qrdb/pkg/seal"
 	qrdbserver "github.com/jeremyhahn/go-qrdb/pkg/server"
 	"github.com/jeremyhahn/go-qrdb/pkg/service"
 	qrdbmemory "github.com/jeremyhahn/go-qrdb/pkg/storage/memory"
@@ -137,6 +138,48 @@ func TestQRDBBarrierServicerProxy_NotConfiguredWhenNothingWired(t *testing.T) {
 	if _, err := newQRDBBarrierServicerProxy(nil).BarrierStatus(ctx); !errors.As(err, new(*service.BarrierManagerNotConfiguredError)) {
 		t.Fatalf("a proxy without a server must answer BarrierManagerNotConfiguredError, got %v", err)
 	}
+}
+
+// initErrBarrier answers BarrierInitialize with a fixed error.
+type initErrBarrier struct {
+	qrdbsdk.BarrierServicer
+	err error
+}
+
+func (b *initErrBarrier) BarrierInitialize(context.Context, []byte) error { return b.err }
+
+// The proxy keeps the idempotent-init contract of the client adapter it
+// replaced: an already-initialised barrier is success, any other error
+// passes through unchanged, and an unwired proxy still answers not-configured.
+func TestQRDBBarrierServicerProxy_BarrierInitializeIdempotent(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("already initialized is success", func(t *testing.T) {
+		s := &Server{logger: buildTestLogger(t)}
+		s.publishBarrierServicer(&initErrBarrier{err: seal.ErrAlreadyInitialized})
+		if err := newQRDBBarrierServicerProxy(s).BarrierInitialize(ctx, []byte("x")); err != nil {
+			t.Fatalf("expected nil for already-initialized, got %v", err)
+		}
+	})
+
+	t.Run("other error passes through", func(t *testing.T) {
+		want := errors.New("boom")
+		s := &Server{logger: buildTestLogger(t)}
+		s.publishBarrierServicer(&initErrBarrier{err: want})
+		if err := newQRDBBarrierServicerProxy(s).BarrierInitialize(ctx, []byte("x")); !errors.Is(err, want) {
+			t.Fatalf("expected %v, got %v", want, err)
+		}
+	})
+
+	t.Run("nil servicer is not configured", func(t *testing.T) {
+		err := newQRDBBarrierServicerProxy(&Server{logger: buildTestLogger(t)}).BarrierInitialize(ctx, []byte("x"))
+		if !errors.As(err, new(*service.BarrierManagerNotConfiguredError)) {
+			t.Fatalf("expected BarrierManagerNotConfiguredError, got %v", err)
+		}
+		if err := newQRDBBarrierServicerProxy(nil).BarrierInitialize(ctx, []byte("x")); !errors.As(err, new(*service.BarrierManagerNotConfiguredError)) {
+			t.Fatalf("a proxy without a server must answer BarrierManagerNotConfiguredError, got %v", err)
+		}
+	})
 }
 
 // serveQRDBBarrierOverTCP serves the qrdb.v1 service on a real loopback TCP
