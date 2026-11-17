@@ -209,6 +209,9 @@ func TestNewModule_RegistersRoleGrants_NewBrokerDataPlaneServices(t *testing.T) 
 // to certificate.proto/piv.proto (grepped api/proto/*.proto to confirm), so
 // their absence is a clean signal.
 // AttestationService is mounted (module.go) because the pinned go-xkms serves no Verifier RPCs.
+// Crypto is mounted (module.go) because the pinned go-xkms serves no
+// quicbaas.kms.v1 name; its keys:* permissions live in kms.proto, which this
+// module already contributed through SecretsManagement.
 func TestNewModule_RegistersRoleGrants_XKMSWireServicesNotDuplicated(t *testing.T) {
 	set := map[string]struct{}{}
 	contributeGRPCPermissions(set)
