@@ -1007,7 +1007,7 @@ func (s *Server) initDataPlaneEncryptor() error {
 		s.dataPlaneBarrierCloser = dataPlaneBarrierCloser
 	}
 	if rawBarrier != nil {
-		s.dataPlaneBarrier = rawBarrier
+		s.dataPlaneBarrier.Store(rawBarrier)
 		s.logger.Info("Data-plane StorageBarrier constructed for at-rest encryption")
 	}
 	// Stash the service for later injection into the sharded client
@@ -1938,6 +1938,7 @@ func (s *Server) startService() error {
 				Credential: svcs.Credential,
 				Ceremony:   svcs.Ceremony,
 			}
+			s.publishBarrierServicer(svcs.Barrier)
 			s.logger.Info("Node barrier/ceremony/credential services wired from qrdb node")
 		} else {
 			// Seal is disabled: the node exposes no seal-layer services and
@@ -1989,8 +1990,8 @@ func (s *Server) startService() error {
 			}
 			if dpSvc != nil {
 				bootstrapServices.Barrier = dpSvc
-				s.dataPlaneBarrier = rawBarrier
 				s.dataPlaneBarrierCloser = dpCloser
+				s.publishDataPlaneBarrier(rawBarrier)
 				// Bind the platform xkms CA to the persistent-barrier ceremony
 				// core too, so officer CSR signing through the data-plane
 				// barrier's officer verbs issues from the same CA as the
@@ -2009,6 +2010,9 @@ func (s *Server) startService() error {
 			}
 			s.ceremonyServices = bootstrapServices
 			s.bootstrapCeremonyClient = bootstrapClient
+			// The proxy serves the direct barrier servicer, which keeps the
+			// verified SO PIN and the Shamir counts the client adapter drops.
+			s.publishBarrierServicer(bootstrapServices.Barrier)
 			s.logger.Info("Bootstrap ceremony services wired (node seal disabled): persistent data-plane barrier + manual credential/ceremony")
 		}
 	}

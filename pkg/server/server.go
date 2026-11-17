@@ -467,7 +467,18 @@ type Server struct {
 	// data-plane stores (KV, time-series, vector). Set during startService()
 	// when buildDataPlaneBarrierService succeeds. Nil when seal is disabled or
 	// the barrier could not be constructed — all stores fall back to plaintext.
-	dataPlaneBarrier *qrdbsdk.StorageBarrier
+	// It is published with Store by the lifecycle and read with one Load by
+	// the sealed-window probe, which native listener goroutines call
+	// concurrently with that publication.
+	dataPlaneBarrier atomic.Pointer[qrdbsdk.StorageBarrier]
+
+	// dataPlaneBarrierPending is set on a seal-disabled boot with a
+	// persistent DataDir before any native listener starts, and cleared by
+	// publishDataPlaneBarrier once dataPlaneBarrier holds the persistent
+	// barrier. While set the sealed-window probe reports sealed: the native
+	// transports are live before startService builds the barrier, and an
+	// unpublished barrier must not read as "no barrier, unsealed" (#2512).
+	dataPlaneBarrierPending atomic.Bool
 
 	// dataPlaneEncryptor is the single atrest.Encryptor built from
 	// dataPlaneBarrier. It is threaded into every persistent Pebble store
@@ -526,6 +537,13 @@ type Server struct {
 	// the exact servicer instances stored in ceremonyServices, keeping all
 	// transports on one barrier with no split-brain state.
 	bootstrapCeremonyClient *qrdbsdk.Client
+
+	// barrierServicer is the direct qrdb.v1 barrier servicer the barrier
+	// proxy (qrdb_barrier_servicer_proxy.go) serves. It is published where
+	// the servicer becomes available (sealed window, node seal services,
+	// bootstrap ceremony stack) while the listeners already run, so it is
+	// read and written atomically. Empty answers not-configured.
+	barrierServicer atomic.Pointer[barrierServicerRef]
 
 	// tenantSDKClient is the in-process qrdb SDK client whose embedded
 	// transport carries the node's TenantServicer. It backs the per-tenant
