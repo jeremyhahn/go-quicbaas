@@ -53,7 +53,7 @@ func (p *serverSealedProbe) IsSealed() bool {
 	// never-initialized barrier reports state "sealed" internally but
 	// protects nothing, and gating it would lock every first boot out of
 	// the full surface.
-	if barrier := s.dataPlaneBarrier; barrier != nil {
+	if barrier := s.dataPlaneBarrier.Load(); barrier != nil {
 		if st := barrier.Status(); st != nil && st.Sealed && !st.InitializedAt.IsZero() {
 			return true
 		}

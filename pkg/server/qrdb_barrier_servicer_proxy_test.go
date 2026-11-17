@@ -15,21 +15,34 @@ package server
 
 import (
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/tls"
+	"crypto/x509"
+	"crypto/x509/pkix"
 	"errors"
+	"math/big"
 	"net"
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	ggrpc "google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/emptypb"
 
 	qrdbgrpc "github.com/jeremyhahn/go-qrdb/pkg/api/grpc"
 	"github.com/jeremyhahn/go-qrdb/pkg/api/grpc/proto/qrdbv1"
+	qrdbconfig "github.com/jeremyhahn/go-qrdb/pkg/config"
+	qrdbdatabase "github.com/jeremyhahn/go-qrdb/pkg/database"
+	qrdbserver "github.com/jeremyhahn/go-qrdb/pkg/server"
 	"github.com/jeremyhahn/go-qrdb/pkg/service"
+	qrdbmemory "github.com/jeremyhahn/go-qrdb/pkg/storage/memory"
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/config"
@@ -314,7 +327,7 @@ func TestNodeBarrierServerOptions_SealDisabledProbeArmsOnSealedBarrier(t *testin
 		t.Fatalf("build the data-plane barrier: barrier=%v closer=%v err=%v", barrier, closer, err)
 	}
 	t.Cleanup(func() { _ = closer.Close() })
-	srv.dataPlaneBarrier = barrier
+	srv.dataPlaneBarrier.Store(barrier)
 
 	probe := srv.SealedWindowProbe()
 	creds, err := qrdbsdk.CredentialsFor([]byte("seal-disabled-probe-unit-test-passphrase"))
@@ -334,4 +347,121 @@ func TestNodeBarrierServerOptions_SealDisabledProbeArmsOnSealedBarrier(t *testin
 	if !probe.IsSealed() {
 		t.Fatal("seal disabled: an initialized, sealed data-plane barrier must arm the sealed window")
 	}
+}
+
+// TestNodeBarrierServerOptions_NativeGRPCGatedBySealedBarrier is the
+// regression test for #2512: a qrdb gRPC server built with the production
+// seal-disabled options (nodeBarrierServerOptions(false)) serves native data
+// RPCs while the published data-plane barrier is unsealed, and refuses them
+// with codes.Unavailable once that barrier is sealed. The refusal comes only
+// from the WithSealedWindowProbe option: with it replaced by a no-op the
+// sealed-barrier Put succeeds and this test fails.
+func TestNodeBarrierServerOptions_NativeGRPCGatedBySealedBarrier(t *testing.T) {
+	cfg := config.Default()
+	cfg.Seal.Enabled = false
+	cfg.Seal.Strategy = "passphrase"
+	cfg.Storage.Backend = config.StorageBackendMemory
+	cfg.Storage.DataDir = t.TempDir()
+	srv, err := NewServer(cfg)
+	if err != nil {
+		t.Fatalf("NewServer(seal disabled): %v", err)
+	}
+
+	_, barrier, _, closer, err := buildDataPlaneBarrierService(cfg, nil)
+	if err != nil || barrier == nil || closer == nil {
+		t.Fatalf("build the data-plane barrier: barrier=%v closer=%v err=%v", barrier, closer, err)
+	}
+	t.Cleanup(func() { _ = closer.Close() })
+	creds, err := qrdbsdk.CredentialsFor([]byte("native-grpc-sealed-gate-unit-test-passphrase"))
+	if err != nil {
+		t.Fatalf("protect the passphrase: %v", err)
+	}
+	defer creds.Secret.Destroy()
+	if err := barrier.Initialize(t.Context(), creds); err != nil {
+		t.Fatalf("initialize the data-plane barrier: %v", err)
+	}
+	// Publish the barrier exactly as the lifecycle does.
+	srv.dataPlaneBarrier.Store(barrier)
+
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	nodeCfg := qrdbconfig.DefaultConfig()
+	nodeCfg.Mode = "standalone"
+	nodeCfg.Server.Host = "127.0.0.1"
+	nodeCfg.Protocols = qrdbconfig.ProtocolsConfig{GRPC: true}
+	nodeCfg.TLS.Enabled = false
+	authOff := false
+	nodeCfg.Auth.Enabled = &authOff
+	serverTLS, clientTLS := loopbackTLSConfigs(t)
+	kv := service.NewBackendKVService(qrdbdatabase.NewStandaloneBackend(qrdbmemory.NewStorage()))
+	opts := append(srv.nodeBarrierServerOptions(false),
+		qrdbserver.WithTLS(serverTLS), qrdbserver.WithGRPCListener(listener))
+	node := qrdbserver.New(nodeCfg, kv, nil, opts...)
+	if err := node.Start(); err != nil {
+		t.Fatalf("start the qrdb gRPC server: %v", err)
+	}
+	t.Cleanup(node.Stop)
+
+	conn, err := ggrpc.NewClient(listener.Addr().String(),
+		ggrpc.WithTransportCredentials(credentials.NewTLS(clientTLS)))
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	t.Cleanup(func() { _ = conn.Close() })
+	client := qrdbv1.NewQRDBServiceClient(conn)
+
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+	if _, err := client.Put(ctx, &qrdbv1.PutRequest{Key: "unsealed", Value: []byte("v")}); err != nil {
+		t.Fatalf("unsealed barrier: native Put must succeed, got %v", err)
+	}
+
+	if err := barrier.Seal(); err != nil {
+		t.Fatalf("seal the data-plane barrier: %v", err)
+	}
+	_, err = client.Put(ctx, &qrdbv1.PutRequest{Key: "sealed", Value: []byte("v")})
+	if got := status.Code(err); got != codes.Unavailable {
+		t.Fatalf("sealed barrier: native Put must return codes.Unavailable, got %v (err=%v)", got, err)
+	}
+}
+
+// loopbackTLSConfigs returns a server TLS config with an in-memory
+// self-signed certificate for 127.0.0.1 and a client config that trusts
+// exactly that certificate.
+func loopbackTLSConfigs(t *testing.T) (*tls.Config, *tls.Config) {
+	t.Helper()
+	priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("generate key: %v", err)
+	}
+	tmpl := &x509.Certificate{
+		SerialNumber:          big.NewInt(1),
+		Subject:               pkix.Name{CommonName: "qrdb-barrier-gate-test"},
+		NotBefore:             time.Now().Add(-time.Hour),
+		NotAfter:              time.Now().Add(time.Hour),
+		KeyUsage:              x509.KeyUsageDigitalSignature | x509.KeyUsageCertSign,
+		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+		IPAddresses:           []net.IP{net.ParseIP("127.0.0.1")},
+		BasicConstraintsValid: true,
+		IsCA:                  true,
+	}
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &priv.PublicKey, priv)
+	if err != nil {
+		t.Fatalf("create certificate: %v", err)
+	}
+	leaf, err := x509.ParseCertificate(der)
+	if err != nil {
+		t.Fatalf("parse certificate: %v", err)
+	}
+	pool := x509.NewCertPool()
+	pool.AddCert(leaf)
+	serverTLS := &tls.Config{
+		Certificates: []tls.Certificate{{Certificate: [][]byte{der}, PrivateKey: priv, Leaf: leaf}},
+		NextProtos:   []string{"h2"},
+		MinVersion:   tls.VersionTLS13,
+	}
+	clientTLS := &tls.Config{RootCAs: pool, MinVersion: tls.VersionTLS13}
+	return serverTLS, clientTLS
 }

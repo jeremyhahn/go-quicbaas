@@ -467,7 +467,10 @@ type Server struct {
 	// data-plane stores (KV, time-series, vector). Set during startService()
 	// when buildDataPlaneBarrierService succeeds. Nil when seal is disabled or
 	// the barrier could not be constructed — all stores fall back to plaintext.
-	dataPlaneBarrier *qrdbsdk.StorageBarrier
+	// It is published with Store by the lifecycle and read with one Load by
+	// the sealed-window probe, which native listener goroutines call
+	// concurrently with that publication.
+	dataPlaneBarrier atomic.Pointer[qrdbsdk.StorageBarrier]
 
 	// dataPlaneEncryptor is the single atrest.Encryptor built from
 	// dataPlaneBarrier. It is threaded into every persistent Pebble store
