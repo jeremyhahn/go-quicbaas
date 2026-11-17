@@ -310,8 +310,80 @@ func TestModule_Crypto_NilGatedOnCryptoService(t *testing.T) {
 	require.NoError(t, err)
 	servers, err = with.bind()
 	require.NoError(t, err)
-	_, ok := servers.crypto.(*grpcapi.CryptoServer)
-	assert.True(t, ok, "Crypto must be bound to a *grpcapi.CryptoServer when the facade has a CryptoService")
+	_, ok := servers.crypto.(nodeCryptoServer)
+	assert.True(t, ok, "Crypto must be bound to a nodeCryptoServer when the facade has a CryptoService")
+}
+
+// reversingCryptoService is a MockCryptoService whose Encrypt reverses the
+// plaintext and whose Decrypt reverses it back, so a round trip through the
+// node's Crypto server can be checked end to end. Its HMAC funcs fail the
+// test: the node must never reach them.
+func reversingCryptoService(t *testing.T) *mocks.MockCryptoService {
+	t.Helper()
+	reverse := func(in []byte) []byte {
+		out := make([]byte, len(in))
+		for i, b := range in {
+			out[len(in)-1-i] = b
+		}
+		return out
+	}
+	return &mocks.MockCryptoService{
+		EncryptFunc: func(_ context.Context, req *service.EncryptRequest) (*service.EncryptResponse, error) {
+			return &service.EncryptResponse{KeyID: req.KeyID, KeyVersion: 1, Ciphertext: reverse(req.Plaintext)}, nil
+		},
+		DecryptFunc: func(_ context.Context, req *service.DecryptRequest) (*service.DecryptResponse, error) {
+			return &service.DecryptResponse{KeyID: req.KeyID, KeyVersion: 1, Plaintext: reverse(req.Ciphertext)}, nil
+		},
+		GenerateHMACFunc: func(context.Context, *service.HMACRequest) (*service.HMACResponse, error) {
+			t.Error("GenerateHMAC must not reach the crypto backend on the node")
+			return &service.HMACResponse{}, nil
+		},
+		VerifyHMACFunc: func(context.Context, *service.VerifyHMACRequest) (*service.VerifyHMACResponse, error) {
+			t.Error("VerifyHMAC must not reach the crypto backend on the node")
+			return &service.VerifyHMACResponse{}, nil
+		},
+	}
+}
+
+// TestModule_Crypto_EncryptDecryptRoundTripsOverGRPC drives the registered
+// node gRPC surface: Encrypt then Decrypt through quicbaas.kms.v1.Crypto
+// returns the original plaintext.
+func TestModule_Crypto_EncryptDecryptRoundTripsOverGRPC(t *testing.T) {
+	m, err := NewModule(func() service.QuicBaaS {
+		return &mocks.MockQuicBaaS{MockCryptoService: reversingCryptoService(t)}
+	}, testLogger(t))
+	require.NoError(t, err)
+	client := pb.NewCryptoClient(startBufconnModule(t, m))
+
+	plaintext := []byte("node crypto round trip")
+	enc, err := client.Encrypt(context.Background(), &pb.CryptoEncryptRequest{KeyId: "k1", Plaintext: plaintext})
+	require.NoError(t, err)
+	require.NotEqual(t, plaintext, enc.Ciphertext)
+
+	dec, err := client.Decrypt(context.Background(), &pb.CryptoDecryptRequest{
+		KeyId: "k1", Ciphertext: enc.Ciphertext, KeyVersion: enc.KeyVersion,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, plaintext, dec.Plaintext)
+}
+
+// TestModule_Crypto_HMACUnimplementedOverGRPC proves the node answers
+// GenerateHMAC and VerifyHMAC Unimplemented (nodeCryptoServer): the crypto
+// backend has no stable MAC key, so a MAC it generated could never verify.
+func TestModule_Crypto_HMACUnimplementedOverGRPC(t *testing.T) {
+	m, err := NewModule(func() service.QuicBaaS {
+		return &mocks.MockQuicBaaS{MockCryptoService: reversingCryptoService(t)}
+	}, testLogger(t))
+	require.NoError(t, err)
+	client := pb.NewCryptoClient(startBufconnModule(t, m))
+
+	_, err = client.GenerateHMAC(context.Background(), &pb.HMACRequest{KeyId: "k1", Message: []byte("m")})
+	assert.Equal(t, codes.Unimplemented, status.Code(err), "GenerateHMAC: got %v", err)
+
+	_, err = client.VerifyHMAC(context.Background(), &pb.VerifyHMACRequest{
+		KeyId: "k1", Message: []byte("m"), Hmac: []byte("mac"),
+	})
+	assert.Equal(t, codes.Unimplemented, status.Code(err), "VerifyHMAC: got %v", err)
 }
 
 // startBufconnModule registers the module on a bufconn-backed gRPC server and

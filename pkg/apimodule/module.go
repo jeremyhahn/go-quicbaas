@@ -725,8 +725,10 @@ func (m *Module) bind() (*grpcServers, error) {
 	// Crypto is quicbaas-native for the same reason (package doc): the pinned
 	// go-xkms serves no quicbaas.kms.v1 name. It is gated on Crypto() exactly
 	// as pkg/server/lifecycle.go gates it on the legacy transport.
+	// nodeCryptoServer withholds GenerateHMAC/VerifyHMAC: the crypto backend
+	// has no stable MAC key (crypto_server.go).
 	if c := svc.Crypto(); c != nil {
-		built.crypto = grpcapi.NewCryptoServer(c, m.log)
+		built.crypto = nodeCryptoServer{CryptoServer: grpcapi.NewCryptoServer(c, m.log)}
 	}
 
 	// VectorDB and VectorAdmin are quicbaas-native here: go-qrdb registers no
