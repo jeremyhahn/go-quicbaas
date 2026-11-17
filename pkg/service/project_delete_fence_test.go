@@ -4,11 +4,13 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
+	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
 	"github.com/jeremyhahn/go-quicbaas/pkg/sdlc"
 )
 
@@ -299,5 +301,96 @@ func TestSDLCService_WithdrawalSurvivesACanceledRequest(t *testing.T) {
 	}
 	if _, err := rig.svc.Routes().Tenant(bg, sdlcTestProject); !errors.Is(err, sdlc.ErrNotFound) {
 		t.Fatalf("route after the canceled bind: %v, want not found", err)
+	}
+}
+
+// failingDeleteStore is a project store whose Delete fails: after removing
+// the record (removeFirst, a failed name release) or without touching it.
+// With failGet, every Get after the Delete fails too.
+type failingDeleteStore struct {
+	orchestration.ProjectStore
+	removeFirst bool
+	failGet     bool
+	deleted     atomic.Bool
+}
+
+func (s *failingDeleteStore) Delete(ctx context.Context, tenantID, projectID string) error {
+	s.deleted.Store(true)
+	if s.removeFirst {
+		if err := s.ProjectStore.Delete(ctx, tenantID, projectID); err != nil {
+			return err
+		}
+	}
+	return errors.New("project store: name release failed")
+}
+
+func (s *failingDeleteStore) Get(ctx context.Context, tenantID, projectID string) (*orchestration.Project, error) {
+	if s.failGet && s.deleted.Load() {
+		return nil, errors.New("project store: unavailable")
+	}
+	return s.ProjectStore.Get(ctx, tenantID, projectID)
+}
+
+// deleteThroughFailingStore creates a project on store, deletes it through a
+// project service fenced by an SDLC store, and returns that SDLC store and
+// the project id. The delete must fail.
+func deleteThroughFailingStore(t *testing.T, store *failingDeleteStore) (*sdlc.Store, string) {
+	t.Helper()
+	ctx := context.Background()
+	bindings := newSDLCServiceRig(t).store
+	svc := NewProjectService(store)
+	svc.(*projectServiceImpl).SetBindingReader(bindings)
+	resp, err := svc.CreateProject(ctx, &CreateProjectRequest{TenantID: sdlcTestTenant, Name: "failing-delete"})
+	if err != nil {
+		t.Fatalf("CreateProject: %v", err)
+	}
+	projectID := resp.Project.ID
+	if _, err := svc.DeleteProject(ctx, &DeleteProjectRequest{TenantID: sdlcTestTenant, ProjectID: projectID}); err == nil {
+		t.Fatal("DeleteProject succeeded through a failing store")
+	}
+	return bindings, projectID
+}
+
+// TestDeleteProject_DeleteThatRemovedThenFailedLeavesATombstone: the store
+// removed the record and then failed. The project is gone, so the fence
+// becomes its tombstone, not cleared for a late bind to land on.
+func TestDeleteProject_DeleteThatRemovedThenFailedLeavesATombstone(t *testing.T) {
+	bindings, projectID := deleteThroughFailingStore(t, &failingDeleteStore{
+		ProjectStore: orchestration.NewInMemoryProjectStore(), removeFirst: true,
+	})
+	ctx := context.Background()
+	if fenced, err := bindings.ProjectDeleteFenced(ctx, sdlcTestTenant, projectID); err != nil || !fenced {
+		t.Fatalf("after the failed delete: fenced=%v err=%v, want a tombstone", fenced, err)
+	}
+	if _, err := bindings.FenceProjectDelete(ctx, sdlcTestTenant, projectID); !errors.Is(err, sdlc.ErrNotFound) {
+		t.Fatalf("FenceProjectDelete after the failed delete = %v, want the tombstone's not found", err)
+	}
+}
+
+// TestDeleteProject_FailedDeleteWithTheProjectInPlaceClearsTheFence: the
+// delete failed and the project is still there, so the fence is cleared.
+func TestDeleteProject_FailedDeleteWithTheProjectInPlaceClearsTheFence(t *testing.T) {
+	bindings, projectID := deleteThroughFailingStore(t, &failingDeleteStore{
+		ProjectStore: orchestration.NewInMemoryProjectStore(),
+	})
+	if fenced, err := bindings.ProjectDeleteFenced(context.Background(), sdlcTestTenant, projectID); err != nil || fenced {
+		t.Fatalf("after the failed delete: fenced=%v err=%v, want the fence cleared", fenced, err)
+	}
+}
+
+// TestDeleteProject_FailedDeleteAndFailedReReadLeaveTheFenceHeld: neither
+// the delete nor the re-read tells whether the project is gone, so the fence
+// is left held: neither cleared nor a tombstone.
+func TestDeleteProject_FailedDeleteAndFailedReReadLeaveTheFenceHeld(t *testing.T) {
+	bindings, projectID := deleteThroughFailingStore(t, &failingDeleteStore{
+		ProjectStore: orchestration.NewInMemoryProjectStore(), failGet: true,
+	})
+	ctx := context.Background()
+	if fenced, err := bindings.ProjectDeleteFenced(ctx, sdlcTestTenant, projectID); err != nil || !fenced {
+		t.Fatalf("after the failed delete: fenced=%v err=%v, want the fence held", fenced, err)
+	}
+	var inProgress *sdlc.DeleteInProgressError
+	if _, err := bindings.FenceProjectDelete(ctx, sdlcTestTenant, projectID); !errors.As(err, &inProgress) {
+		t.Fatalf("FenceProjectDelete after the failed delete = %v, want the live fence, not a tombstone", err)
 	}
 }

@@ -677,19 +677,20 @@ type ProjectDeleteFence interface {
 // fenceSettleTimeout bounds the detached write that settles a delete's fence.
 const fenceSettleTimeout = 30 * time.Second
 
-// fenceDelete places the delete fence and returns what settles it: called
-// with true once the project is deleted, it turns the fence into a tombstone
-// (a bind whose fence read lands after the delete still sees it); called with
-// false, after a refusal or a failed delete, it clears the fence. A fence that
+// fenceDelete places the delete fence and returns what settles it, by
+// fenceOutcome: fenceDeleted once the project is gone turns the fence into a
+// tombstone (a bind whose fence read lands after the delete still sees it);
+// fenceCleared, after a refusal or a failed delete that left the project in
+// place, clears it; fenceLeftHeld leaves it to go stale. A fence that
 // cannot be placed refuses the delete, as an unreadable binding store does;
 // another delete in flight refuses it with *sdlc.DeleteInProgressError. The
 // settle runs detached from the request's cancellation: a fence left behind
 // blocks binds of the project until it goes stale, and a tombstone not written
 // would let a late bind stand on the deleted project.
-func (s *projectServiceImpl) fenceDelete(ctx context.Context, tenantID, projectID string) (func(deleted bool), error) {
+func (s *projectServiceImpl) fenceDelete(ctx context.Context, tenantID, projectID string) (func(fenceOutcome), error) {
 	fence, ok := s.bindings.(ProjectDeleteFence)
 	if !ok || fence == nil {
-		return func(bool) {}, nil
+		return func(fenceOutcome) {}, nil
 	}
 	token, err := fence.FenceProjectDelete(ctx, tenantID, projectID)
 	if err != nil {
@@ -703,18 +704,59 @@ func (s *projectServiceImpl) fenceDelete(ctx context.Context, tenantID, projectI
 		}
 		return nil, &ProjectBindingCheckError{TenantID: tenantID, ProjectID: projectID, Cause: err}
 	}
-	return func(deleted bool) {
+	return func(outcome fenceOutcome) {
 		settleCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), fenceSettleTimeout)
 		defer cancel()
-		if !deleted {
+		switch outcome {
+		case fenceLeftHeld:
+			slog.Default().Warn("project: a failed delete could not tell whether the project is gone; its delete fence is left to go stale",
+				"tenant_id", tenantID, "project_id", projectID, "fence_ttl", sdlc.DeleteFenceTTL)
+		case fenceCleared:
 			_ = fence.ClearProjectDeleteFence(settleCtx, tenantID, projectID, token)
-			return
-		}
-		if err := fence.MarkProjectDeleted(settleCtx, tenantID, projectID, token); err != nil {
-			slog.Default().Error("project: the delete fence could not be turned into a tombstone; a bind racing the delete may stand on the deleted project",
-				"tenant_id", tenantID, "project_id", projectID, "error", err)
+		case fenceDeleted:
+			if err := fence.MarkProjectDeleted(settleCtx, tenantID, projectID, token); err != nil {
+				slog.Default().Error("project: the delete fence could not be turned into a tombstone; a bind racing the delete may stand on the deleted project",
+					"tenant_id", tenantID, "project_id", projectID, "error", err)
+			}
 		}
 	}, nil
+}
+
+// fenceOutcome is how a delete settles its fence.
+type fenceOutcome int
+
+const (
+	// fenceCleared removes the fence: the delete was refused, or failed
+	// with the project still in place.
+	fenceCleared fenceOutcome = iota
+	// fenceDeleted turns the fence into the project's tombstone.
+	fenceDeleted
+	// fenceLeftHeld leaves the fence as it is: whether the project is gone
+	// cannot be told, so it neither clears (a bind could then land on a
+	// deleted project) nor tombstones (a live project could never be bound
+	// again). It goes stale after sdlc.DeleteFenceTTL.
+	fenceLeftHeld
+)
+
+// settleFailedDelete decides a failed delete's fence outcome from what the
+// store now holds. A store delete can fail after removing the record (a
+// failed name release, say), so the project is read again, detached from the
+// request: gone settles a tombstone, present clears the fence, and a read
+// that fails leaves the fence held.
+func (s *projectServiceImpl) settleFailedDelete(ctx context.Context, tenantID, projectID string) fenceOutcome {
+	readCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), fenceSettleTimeout)
+	defer cancel()
+	_, err := s.store.Get(readCtx, tenantID, projectID)
+	if err == nil {
+		return fenceCleared
+	}
+	var notFound *ProjectNotFoundError
+	if stderrors.As(s.convertStoreError(err), &notFound) {
+		return fenceDeleted
+	}
+	slog.Default().Error("project: a failed delete could not re-read the project",
+		"tenant_id", tenantID, "project_id", projectID, "error", err)
+	return fenceLeftHeld
 }
 
 // validateDefaultLead refuses a default lead the tenant does not define, or
@@ -1303,8 +1345,8 @@ func (s *projectServiceImpl) DeleteProject(ctx context.Context, req *DeleteProje
 	if err != nil {
 		return nil, err
 	}
-	deleted := false
-	defer func() { settle(deleted) }()
+	outcome := fenceCleared
+	defer func() { settle(outcome) }()
 
 	// Refused before the teardown, so a refused delete leaves the managed
 	// workspace intact.
@@ -1324,10 +1366,13 @@ func (s *projectServiceImpl) DeleteProject(ctx context.Context, req *DeleteProje
 	}
 
 	if err := s.store.Delete(ctx, req.TenantID, req.ProjectID); err != nil {
+		// The delete may have removed the record before it failed: settle
+		// on what the store now holds, not on the error.
+		outcome = s.settleFailedDelete(ctx, req.TenantID, req.ProjectID)
 		return nil, s.convertStoreError(err)
 	}
 	// The project is gone: the fence becomes its tombstone.
-	deleted = true
+	outcome = fenceDeleted
 
 	return &DeleteProjectResponse{
 		ProjectID: req.ProjectID,
