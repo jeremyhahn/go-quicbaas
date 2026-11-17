@@ -728,19 +728,28 @@ func (kb *XKMSBackend) Encrypt(ctx context.Context, keyID string, plaintext, aad
 		return nil, api.NewKeyMetadataRetrievalError("XKMSBackend.Encrypt", err)
 	}
 
+	// GetKeyMetadata returns the shared cached pointer, which RotateKey
+	// mutates under kb.mu. Copy the version and algorithm once under the
+	// read lock so the key chosen and the version serialized into the blob
+	// always agree.
+	kb.mu.RLock()
+	version := meta.Version
+	algorithm := meta.Algorithm
+	kb.mu.RUnlock()
+
 	// Determine which key to use based on version
 	// Version 1 uses the base key (backward compatible)
 	// Version 2+ uses versioned keys (keyID:v2, keyID:v3, etc.)
 	var actualKeyID string
-	if meta.Version == 1 {
+	if version == 1 {
 		actualKeyID = keyID
 	} else {
-		actualKeyID = kb.buildVersionedKeyID(keyID, meta.Version)
+		actualKeyID = kb.buildVersionedKeyID(keyID, version)
 	}
 
 	// Build the full key ID with algorithm info for go-xkms
 	// Format: "backend:type:algo:keyname"
-	kid := kb.buildFullKeyID(actualKeyID, meta.Algorithm)
+	kid := kb.buildFullKeyID(actualKeyID, algorithm)
 
 	// Use go-xkms encrypt
 	opts := &kctypes.EncryptOptions{
@@ -756,7 +765,7 @@ func (kb *XKMSBackend) Encrypt(ctx context.Context, keyID string, plaintext, aad
 	if encrypted.Metadata == nil {
 		encrypted.Metadata = make(map[string][]byte)
 	}
-	encrypted.Metadata[keyVersionMetadataKey] = []byte(fmt.Sprintf("%d", meta.Version))
+	encrypted.Metadata[keyVersionMetadataKey] = []byte(fmt.Sprintf("%d", version))
 
 	// Serialize encrypted data for storage
 	return kb.serializeEncryptedData(encrypted)
