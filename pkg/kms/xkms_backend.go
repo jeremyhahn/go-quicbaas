@@ -522,7 +522,14 @@ func (kb *XKMSBackend) RotateKey(ctx context.Context, keyID string) (*KeyMetadat
 	// again under the current type: that would shadow it and the data it
 	// encrypted, so rotation moves past every version the legacy type holds.
 	if kb.isSymmetricAlgorithm(meta.Algorithm) {
-		for kb.holdsLegacySymmetricKey(ctx, kb.buildVersionedKeyID(keyID, newVersion), meta.Algorithm) {
+		for {
+			held, err := kb.holdsLegacySymmetricKey(ctx, kb.buildVersionedKeyID(keyID, newVersion), meta.Algorithm)
+			if err != nil {
+				return nil, api.NewKeyVersionGenerationError("XKMSBackend.RotateKey", err)
+			}
+			if !held {
+				break
+			}
 			newVersion++
 		}
 	}
@@ -727,7 +734,9 @@ func (kb *XKMSBackend) resolveSymmetricKeyID(ctx context.Context, keyID string, 
 	if _, err := xkms.GetSymmetricKey(ctx, kid); err == nil {
 		return kid
 	}
-	if kb.holdsLegacySymmetricKey(ctx, keyID, algorithm) {
+	// A read: a failed legacy lookup resolves to the current name, whose use
+	// then fails on its own; nothing is written under it.
+	if held, _ := kb.holdsLegacySymmetricKey(ctx, keyID, algorithm); held {
 		return kb.legacySymmetricKeyID(keyID, algorithm)
 	}
 	return kid
@@ -743,16 +752,39 @@ func (kb *XKMSBackend) legacySymmetricKeyID(keyID string, algorithm string) stri
 // would store a new key of the same name under symmetricKeyType beside it,
 // and resolveSymmetricKeyID, which prefers the current type, would then
 // shadow the legacy key and the data it encrypted.
-func (kb *XKMSBackend) holdsLegacySymmetricKey(ctx context.Context, keyID string, algorithm string) bool {
-	_, err := xkms.GetSymmetricKey(ctx, kb.legacySymmetricKeyID(keyID, algorithm))
-	return err == nil
+// ErrLegacyKeyLookup is returned when the legacy symmetric key lookup fails
+// for a reason other than the key's absence: a write that could shadow a
+// legacy key is refused rather than allowed on an unconfirmed absence.
+var ErrLegacyKeyLookup = stderrors.New("kms: legacy symmetric key lookup failed")
+
+// xkmsGetSymmetricKey is the legacy-key lookup; tests replace it to inject a
+// lookup failure.
+var xkmsGetSymmetricKey = xkms.GetSymmetricKey
+
+func (kb *XKMSBackend) holdsLegacySymmetricKey(ctx context.Context, keyID string, algorithm string) (bool, error) {
+	_, err := xkmsGetSymmetricKey(ctx, kb.legacySymmetricKeyID(keyID, algorithm))
+	switch {
+	case err == nil:
+		return true, nil
+	case stderrors.Is(err, xkms.ErrKeyNotFound):
+		return false, nil
+	default:
+		// A lookup that failed is not an absence: treating it as one would let
+		// a write shadow a legacy key, after which its ciphertext no longer
+		// decrypts through that name.
+		return false, fmt.Errorf("%w: legacy symmetric key lookup for %q: %w", ErrLegacyKeyLookup, keyID, err)
+	}
 }
 
 // refuseLegacySymmetricShadow refuses to write a symmetric key named keyID
 // when go-xkms holds that name under legacySymmetricKeyType, as go-xkms
 // refused a duplicate before the type changed.
 func (kb *XKMSBackend) refuseLegacySymmetricShadow(ctx context.Context, keyID string, algorithm string) error {
-	if kb.holdsLegacySymmetricKey(ctx, keyID, algorithm) {
+	held, err := kb.holdsLegacySymmetricKey(ctx, keyID, algorithm)
+	if err != nil {
+		return err
+	}
+	if held {
 		return fmt.Errorf("%w: %q is held under the legacy symmetric key type", ErrKeyAlreadyExists, keyID)
 	}
 	return nil
