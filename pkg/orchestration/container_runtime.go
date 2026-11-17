@@ -67,10 +67,11 @@ type ExecContainerRuntime struct {
 	runImageCommand imageCommandRunner
 
 	// keptMu guards keptIDRefs: the build-ID references (see BuildImage)
-	// of the images this runtime's builds returned, each counted once per
-	// build that returned it, until ReleaseImage releases them.
+	// of the images this runtime's builds returned, keyed by the image's
+	// buildIDRef: one reference unique to each build that returned it, until
+	// ReleaseImage releases it.
 	keptMu     sync.Mutex
-	keptIDRefs map[string]int
+	keptIDRefs map[string][]string
 }
 
 // inspectFunc runs a docker/podman inspect query and returns its trimmed

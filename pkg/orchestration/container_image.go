@@ -260,8 +260,15 @@ func (r *ExecContainerRuntime) BuildImage(ctx context.Context, spec *ImageBuildS
 	// same tag) may move the spec's tags to another image at any moment, but
 	// no one can point idRef at another image: it names this one by content.
 	// So buildRef is never the image's last reference, and `image rm` only
-	// untags it.
-	idRef, err := buildIDRef(info.ID)
+	// untags it. idRef also carries a nonce unique to this build's lifetime:
+	// another runtime sharing the engine can build the same cached image,
+	// and a reference both held would be removed by whichever released
+	// first, deleting the image the other still needs.
+	idKey, err := buildIDRef(info.ID)
+	if err != nil {
+		return "", &ImageBuildError{Tags: spec.Tags, Cause: err}
+	}
+	idRef, err := newBuildIDRef(idKey)
 	if err != nil {
 		return "", &ImageBuildError{Tags: spec.Tags, Cause: err}
 	}
@@ -277,7 +284,7 @@ func (r *ExecContainerRuntime) BuildImage(ctx context.Context, spec *ImageBuildS
 	}
 	r.removeBuildRef(ctx, buildRef)
 	buildRefRemoved = true
-	r.keepIDRef(idRef)
+	r.keepIDRef(idKey, idRef)
 	return info.ID, nil
 }
 
@@ -287,13 +294,13 @@ func (r *ExecContainerRuntime) BuildImage(ctx context.Context, spec *ImageBuildS
 // returned the ID has been released with ReleaseImage. It is never released
 // by checking the tags first: a tag can move between the check and the
 // removal, deleting the image the caller holds.
-func (r *ExecContainerRuntime) keepIDRef(idRef string) {
+func (r *ExecContainerRuntime) keepIDRef(idKey, idRef string) {
 	r.keptMu.Lock()
 	defer r.keptMu.Unlock()
 	if r.keptIDRefs == nil {
-		r.keptIDRefs = make(map[string]int)
+		r.keptIDRefs = make(map[string][]string)
 	}
-	r.keptIDRefs[idRef]++
+	r.keptIDRefs[idKey] = append(r.keptIDRefs[idKey], idRef)
 }
 
 // ReleaseImage tells the runtime the caller is done with an ID BuildImage
@@ -302,26 +309,26 @@ func (r *ExecContainerRuntime) keepIDRef(idRef string) {
 // deleted with it. An ID this runtime holds no reference for, or one that is
 // not a digest, is a no-op.
 func (r *ExecContainerRuntime) ReleaseImage(ctx context.Context, id string) {
-	idRef, err := buildIDRef(id)
+	idKey, err := buildIDRef(id)
 	if err != nil {
 		return
 	}
 	r.keptMu.Lock()
-	count, ok := r.keptIDRefs[idRef]
-	if !ok {
+	refs := r.keptIDRefs[idKey]
+	if len(refs) == 0 {
 		r.keptMu.Unlock()
 		return
 	}
-	last := count <= 1
-	if last {
-		delete(r.keptIDRefs, idRef)
+	idRef := refs[len(refs)-1]
+	if len(refs) == 1 {
+		delete(r.keptIDRefs, idKey)
 	} else {
-		r.keptIDRefs[idRef] = count - 1
+		r.keptIDRefs[idKey] = refs[:len(refs)-1]
 	}
 	r.keptMu.Unlock()
-	if last {
-		r.removeRef(ctx, idRef, "build-ID tag")
-	}
+	// idRef is this runtime's own reference, held by no one else, so
+	// removing it never untags an image another holder still needs.
+	r.removeRef(ctx, idRef, "build-ID tag")
 }
 
 // buildIDRepository is the repository of the reference that names a built
@@ -344,6 +351,17 @@ func buildIDRef(id string) (string, error) {
 		return "", errImageIDNotDigest
 	}
 	return buildIDRepository + ":" + digest, nil
+}
+
+// newBuildIDRef returns idKey (a buildIDRef) with a nonce unique to one
+// build's lifetime: quicbaas-build-id:<64 hex>-<16 hex>, within the engine's
+// 128-character tag limit.
+func newBuildIDRef(idKey string) (string, error) {
+	var b [8]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return "", err
+	}
+	return idKey + "-" + hex.EncodeToString(b[:]), nil
 }
 
 // errImageBuildNoID reports an engine that succeeded without naming the image
