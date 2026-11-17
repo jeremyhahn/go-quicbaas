@@ -707,6 +707,46 @@ func (kb *XKMSBackend) DeleteKey(ctx context.Context, keyID string) error {
 		return err
 	}
 
+	// Delete every rotated version first. A version left behind would
+	// outlive its base and, once the base is gone, refuseVersionName would
+	// no longer hide it: it would read as an ordinary key without a policy.
+	// Versions are contiguous from 2, so the first one go-xkms does not have
+	// ends the walk. The cached meta.Version is not used: after a restart
+	// the uncached metadata reads Version 1.
+	algorithm := ""
+	if meta != nil {
+		algorithm = meta.Algorithm
+	}
+	for v := 2; ; v++ {
+		versionedID := kb.buildVersionedKeyID(keyID, v)
+		var versionAttrs *kctypes.KeyAttributes
+		if algorithm != "" {
+			versionAttrs, err = kb.algorithmToKeyAttributes(versionedID, algorithm)
+			if err != nil {
+				return err
+			}
+		} else {
+			versionName, err := xkmsKeyName(versionedID)
+			if err != nil {
+				return err
+			}
+			versionAttrs = &kctypes.KeyAttributes{
+				CN:                 versionName,
+				StoreType:          kctypes.StoreType(string(kb.backendType)),
+				KeyType:            kctypes.KeyTypeEncryption,
+				SymmetricAlgorithm: kctypes.SymmetricAES256GCM,
+			}
+		}
+		if err := xkms.DeleteKey(ctx, versionAttrs); err != nil {
+			// The go-xkms backend reports a missing key with its own
+			// sentinel, which pkg/xkms passes through untranslated.
+			if stderrors.Is(err, xkms.ErrKeyNotFound) || stderrors.Is(err, kctypes.ErrBackendKeyNotFound) {
+				break
+			}
+			return api.NewKeyDeletionError("XKMSBackend.DeleteKey", err)
+		}
+	}
+
 	// Build key attributes for deletion
 	// Use DeleteKey(attrs) instead of DeleteKeyByID(kid) to avoid
 	// key ID format validation issues with algorithms like ChaCha20-Poly1305
@@ -754,6 +794,9 @@ func (kb *XKMSBackend) DeleteKey(ctx context.Context, keyID string) error {
 	return nil
 }
 
+// versionKeyDeleteAttributes builds the go-xkms attributes DeleteKey uses to
+// delete a rotated version key: the key's algorithm when it is known, the
+// default AES-256-GCM attributes otherwise.
 // formatKeyID returns the key ID as stored.
 // Keys are stored using attrs.CN during generation, so we should use the same ID for lookup.
 func (kb *XKMSBackend) formatKeyID(keyID string) (string, error) {

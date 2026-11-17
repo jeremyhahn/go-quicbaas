@@ -203,3 +203,45 @@ func TestXKMSBackend_LegacyQBTNames(t *testing.T) {
 	assert.Equal(t, tenantKey, keys[0].KeyID)
 	require.NoError(t, backend.DeleteKey(ctx, tenantKey))
 }
+
+// Deleting a rotated key deletes its version keys too: none is left behind
+// to surface as an ordinary key once the base is gone.
+func TestXKMSBackend_DeleteKeyDeletesVersions(t *testing.T) {
+	cleanup := initXKMSForTest(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	backend := newKeyNameTestBackend(t)
+	const keyID = "dv-k"
+	createKeyNameTestKey(t, backend, keyID)
+
+	_, err := backend.RotateKey(ctx, keyID)
+	require.NoError(t, err)
+	// A ciphertext under the version-2 key, relabelled as version 1 so that
+	// a Decrypt on a key named keyID_v2 uses that key's own material.
+	ciphertext, err := backend.Encrypt(ctx, keyID, []byte("p"), nil)
+	require.NoError(t, err)
+	encrypted, err := backend.deserializeEncryptedData(ciphertext)
+	require.NoError(t, err)
+	encrypted.Metadata[keyVersionMetadataKey] = []byte("1")
+	oldV2Ciphertext, err := backend.serializeEncryptedData(encrypted)
+	require.NoError(t, err)
+
+	_, err = backend.RotateKey(ctx, keyID)
+	require.NoError(t, err)
+	require.NoError(t, backend.DeleteKey(ctx, keyID))
+
+	for _, versionID := range []string{keyID + "_v2", keyID + "_v3"} {
+		_, err = backend.GetKeyMetadata(ctx, versionID)
+		assert.ErrorIs(t, err, ErrKeyNotFound, versionID)
+		_, err = backend.Encrypt(ctx, versionID, []byte("p"), nil)
+		assert.ErrorIs(t, err, ErrKeyNotFound, versionID)
+		_, err = backend.Decrypt(ctx, versionID, ciphertext, nil)
+		assert.ErrorIs(t, err, ErrKeyNotFound, versionID)
+	}
+
+	createKeyNameTestKey(t, backend, keyID+"_v2")
+	_, err = backend.Decrypt(ctx, keyID+"_v2", oldV2Ciphertext, nil)
+	assert.Error(t, err, "a fresh key must not carry the deleted version's material")
+	require.NoError(t, backend.DeleteKey(ctx, keyID+"_v2"))
+}
