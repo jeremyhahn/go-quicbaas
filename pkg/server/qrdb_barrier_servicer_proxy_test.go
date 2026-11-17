@@ -17,6 +17,8 @@ import (
 	"context"
 	"errors"
 	"net"
+	"sync"
+	"sync/atomic"
 	"testing"
 
 	ggrpc "google.golang.org/grpc"
@@ -40,7 +42,33 @@ type statusOnlyBarrier struct {
 
 func (b *statusOnlyBarrier) BarrierStatus(context.Context) (*qrdbsdk.BarrierStatusInfo, error) {
 	b.calls++
-	return &qrdbsdk.BarrierStatusInfo{Sealed: true, Strategy: "proxy-test"}, nil
+	return &qrdbsdk.BarrierStatusInfo{Sealed: true, Strategy: "proxy-test", ShamirThreshold: 3, ShamirTotal: 5}, nil
+}
+
+// adminBarrier records the Shamir administrative calls the proxy forwards.
+type adminBarrier struct {
+	statusOnlyBarrier
+	rekeys, recoveries atomic.Int32
+}
+
+func (b *adminBarrier) BarrierRekey(_ context.Context, threshold, total int) (*qrdbsdk.ShamirInitInfo, error) {
+	b.rekeys.Add(1)
+	return &qrdbsdk.ShamirInitInfo{Threshold: threshold, TotalShares: total, ShareCount: total}, nil
+}
+
+func (b *adminBarrier) BarrierGenerateRecoveryKeys(_ context.Context, threshold, total int) (*qrdbsdk.RecoveryKeysInfo, error) {
+	b.recoveries.Add(1)
+	return &qrdbsdk.RecoveryKeysInfo{Threshold: threshold, Total: total, ShareCount: total}, nil
+}
+
+// concurrentStatusBarrier answers BarrierStatus without shared mutable
+// state, so the -race test sees only the proxy's own synchronization.
+type concurrentStatusBarrier struct {
+	qrdbsdk.BarrierServicer
+}
+
+func (concurrentStatusBarrier) BarrierStatus(context.Context) (*qrdbsdk.BarrierStatusInfo, error) {
+	return &qrdbsdk.BarrierStatusInfo{Strategy: "concurrent"}, nil
 }
 
 // TestQRDBBarrierServicerProxy_ServesBarrierWiredAfterRegistration is the
@@ -55,8 +83,7 @@ func TestQRDBBarrierServicerProxy_ServesBarrierWiredAfterRegistration(t *testing
 	proxy := newQRDBBarrierServicerProxy(s)
 
 	backing := &statusOnlyBarrier{}
-	s.sealedWindowClient = &qrdbsdk.Client{}
-	s.ceremonyServices = &CeremonyServices{Barrier: backing}
+	s.publishBarrierServicer(backing)
 
 	info, err := proxy.BarrierStatus(context.Background())
 	if err != nil {
@@ -134,8 +161,7 @@ func TestQRDBBarrierStatusOverTCP_ServesWiredBarrier(t *testing.T) {
 	client := serveQRDBBarrierOverTCP(t, s)
 
 	backing := &statusOnlyBarrier{}
-	s.sealedWindowClient = &qrdbsdk.Client{}
-	s.ceremonyServices = &CeremonyServices{Barrier: backing}
+	s.publishBarrierServicer(backing)
 
 	resp, err := client.BarrierStatus(context.Background(), &emptypb.Empty{})
 	if err != nil {
@@ -155,5 +181,108 @@ func TestQRDBBarrierStatusOverTCP_UnimplementedWhenNothingWired(t *testing.T) {
 	_, err := client.BarrierStatus(context.Background(), &emptypb.Empty{})
 	if got := status.Code(err); got != codes.Unimplemented {
 		t.Fatalf("BarrierStatus over TCP with nothing wired: expected codes.Unimplemented, got %s (%v)", got, err)
+	}
+}
+
+// The client adapter dropped the Shamir quorum; the published direct
+// servicer's counts reach the qrdb.v1 caller.
+func TestQRDBBarrierStatusOverTCP_CarriesShamirCounts(t *testing.T) {
+	s := &Server{logger: buildTestLogger(t)}
+	client := serveQRDBBarrierOverTCP(t, s)
+	s.publishBarrierServicer(&statusOnlyBarrier{})
+
+	resp, err := client.BarrierStatus(context.Background(), &emptypb.Empty{})
+	if err != nil {
+		t.Fatalf("BarrierStatus over TCP: %v", err)
+	}
+	if resp.GetShamirThreshold() != 3 || resp.GetShamirTotal() != 5 {
+		t.Fatalf("BarrierStatus must carry the Shamir quorum 3/5, got %d/%d", resp.GetShamirThreshold(), resp.GetShamirTotal())
+	}
+}
+
+// Rekey and recovery-generate with an SO PIN reach the published servicer:
+// the PIN is the outer handler's to check, and the proxy must not refuse
+// the call the way the client adapter did.
+func TestQRDBBarrierAdminOverTCP_ReachesPublishedServicer(t *testing.T) {
+	s := &Server{logger: buildTestLogger(t)}
+	client := serveQRDBBarrierOverTCP(t, s)
+	backing := &adminBarrier{}
+	s.publishBarrierServicer(backing)
+	ctx := context.Background()
+
+	if _, err := client.BarrierRekey(ctx, &qrdbv1.BarrierRekeyRequest{Threshold: 3, Total: 5, SoPin: "123456"}); err != nil {
+		t.Fatalf("BarrierRekey with an SO PIN: %v (code %s)", err, status.Code(err))
+	}
+	if _, err := client.BarrierRecoveryGenerate(ctx, &qrdbv1.BarrierRecoveryGenerateRequest{Threshold: 3, Total: 5, SoPin: "123456"}); err != nil {
+		t.Fatalf("BarrierRecoveryGenerate with an SO PIN: %v (code %s)", err, status.Code(err))
+	}
+	if backing.rekeys.Load() != 1 || backing.recoveries.Load() != 1 {
+		t.Fatalf("the published servicer must see one rekey and one recovery-generate, got %d and %d",
+			backing.rekeys.Load(), backing.recoveries.Load())
+	}
+}
+
+// Readers call BarrierStatus while another goroutine publishes and clears
+// the servicer; run under -race.
+func TestQRDBBarrierServicerProxy_ConcurrentPublish(t *testing.T) {
+	s := &Server{logger: buildTestLogger(t)}
+	proxy := newQRDBBarrierServicerProxy(s)
+	ctx := context.Background()
+
+	var wg sync.WaitGroup
+	for range 4 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for range 200 {
+				info, err := proxy.BarrierStatus(ctx)
+				if err == nil && info.Strategy != "concurrent" {
+					t.Errorf("unexpected status %+v", info)
+					return
+				}
+				if err != nil && !errors.As(err, new(*service.BarrierManagerNotConfiguredError)) {
+					t.Errorf("unexpected error %v", err)
+					return
+				}
+			}
+		}()
+	}
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for i := range 200 {
+			if i%2 == 0 {
+				s.publishBarrierServicer(concurrentStatusBarrier{})
+			} else {
+				s.publishBarrierServicer(nil)
+			}
+		}
+	}()
+	wg.Wait()
+}
+
+// With the seal enabled go-qrdb registers the node's own barrier servicer,
+// which the proxy must not override; with it disabled the proxy is the
+// node's only barrier service.
+func TestUnifiedModuleServerOptions_BarrierProxyOnlyWhenSealDisabled(t *testing.T) {
+	s := &Server{logger: buildTestLogger(t)}
+	if got := s.nodeBarrierServerOptions(true); len(got) != 0 {
+		t.Fatalf("seal enabled: expected no barrier option, got %d", len(got))
+	}
+	if got := s.nodeBarrierServerOptions(false); len(got) != 1 {
+		t.Fatalf("seal disabled: expected the barrier proxy option, got %d", len(got))
+	}
+
+	srv := newModuleHostTestServer(t)
+	sealed, err := srv.unifiedModuleServerOptions(nil, true)
+	if err != nil {
+		t.Fatalf("unifiedModuleServerOptions(sealEnabled=true): %v", err)
+	}
+	unsealed, err := srv.unifiedModuleServerOptions(nil, false)
+	if err != nil {
+		t.Fatalf("unifiedModuleServerOptions(sealEnabled=false): %v", err)
+	}
+	if len(unsealed) != len(sealed)+1 {
+		t.Fatalf("seal disabled must add exactly the barrier proxy option: %d options sealed, %d unsealed", len(sealed), len(unsealed))
 	}
 }

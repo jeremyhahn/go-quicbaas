@@ -28,9 +28,10 @@ import (
 var errQRDBBarrierNotConfigured error = &service.BarrierManagerNotConfiguredError{}
 
 // qrdbBarrierServicerProxy is the qrdb.v1 barrier servicer registered on the
-// node's gRPC server. It resolves s.qrdbBarrierServicer() on every call: the
-// node's TCP gRPC server is registered before the qrdb client, the bootstrap
-// ceremony client or the sealed-window services are wired, so a servicer
+// node's transports when its seal is disabled, and on the Unix-socket gRPC
+// server. It loads the direct servicer published on s.barrierServicer on
+// every call: the listeners are registered before the sealed-window
+// services or the bootstrap ceremony stack are wired, so a servicer
 // captured at registration time would be nil and the barrier surface would
 // never come online.
 type qrdbBarrierServicerProxy struct {
@@ -49,10 +50,28 @@ func (p *qrdbBarrierServicerProxy) servicer() (qrdbsdk.BarrierServicer, error) {
 	if p.s == nil {
 		return nil, errQRDBBarrierNotConfigured
 	}
-	if bs := p.s.qrdbBarrierServicer(); bs != nil {
-		return bs, nil
+	if ref := p.s.barrierServicer.Load(); ref != nil && ref.servicer != nil {
+		return ref.servicer, nil
 	}
 	return nil, errQRDBBarrierNotConfigured
+}
+
+// barrierServicerRef boxes the published barrier servicer so it can sit in
+// an atomic.Pointer.
+type barrierServicerRef struct {
+	servicer qrdbsdk.BarrierServicer
+}
+
+// publishBarrierServicer makes bs the servicer the barrier proxy serves; a
+// nil bs clears it. Only a direct servicer is published -- never the
+// newQRDBBarrierClientServicer adapter, which drops the verified SO PIN
+// and the Shamir counts.
+func (s *Server) publishBarrierServicer(bs qrdbsdk.BarrierServicer) {
+	if bs == nil {
+		s.barrierServicer.Store(nil)
+		return
+	}
+	s.barrierServicer.Store(&barrierServicerRef{servicer: bs})
 }
 
 func (p *qrdbBarrierServicerProxy) BarrierInitialize(ctx context.Context, secret []byte) error {
