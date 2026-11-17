@@ -66,11 +66,14 @@ type ExecContainerRuntime struct {
 	// means exec the real engine.
 	runImageCommand imageCommandRunner
 
-	// keptMu guards keptIDRefs: the build-ID references (see BuildImage)
-	// of the images this runtime's builds returned, each counted once per
-	// build that returned it, until ReleaseImage releases them.
-	keptMu     sync.Mutex
-	keptIDRefs map[string]int
+	// keptMu guards keptIDRefs, each image ID this runtime's builds returned
+	// mapped to the build-ID references (see BuildImage) those builds
+	// applied, one per build, until ReleaseImage removes them; and
+	// pendingRefs, the references whose removal the engine refused, retried
+	// by the next BuildImage or ReleaseImage.
+	keptMu      sync.Mutex
+	keptIDRefs  map[string][]string
+	pendingRefs []string
 }
 
 // inspectFunc runs a docker/podman inspect query and returns its trimmed
