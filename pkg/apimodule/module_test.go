@@ -190,6 +190,7 @@ func TestModule_RegisterGRPC_RegistersFullGRPCSurface(t *testing.T) {
 		&pb.ObjectStorageService_ServiceDesc,
 		&pb.ObjectStorageAdmin_ServiceDesc,
 		&pb.OllamaService_ServiceDesc,
+		&pb.RAGService_ServiceDesc,
 		&pb.SecretsManagement_ServiceDesc,
 		&pb.KeyManagement_ServiceDesc,
 		&pb.DEKManagement_ServiceDesc,
@@ -204,7 +205,7 @@ func TestModule_RegisterGRPC_RegistersFullGRPCSurface(t *testing.T) {
 		&iampb.SessionService_ServiceDesc,
 	}
 	info := server.GetServiceInfo()
-	require.Len(t, info, len(generated), "exactly the twenty-seven quicbaas-native and broker services must be registered")
+	require.Len(t, info, len(generated), "exactly the twenty-eight quicbaas-native and broker services must be registered")
 
 	for _, desc := range generated {
 		svcInfo, ok := info[desc.ServiceName]
