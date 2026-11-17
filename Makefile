@@ -1142,7 +1142,13 @@ install: build ## Install the binary
 # silently absent from this gate — a control that appears present but never
 # executes. They are listed here, not in BUILD_TAGS, because they must gate
 # tests without altering a shipped binary.
-TEST_EXTRA_TAGS := canary otel l2_redis rest quic mcp rag tpm_simulator $(CONTAINER_LIB_TAGS)
+#
+# quicbaas_signal compiles the go-signal bridge (pkg/signal and the
+# `quicbaas signalbridge` command group) into the unit gate. While it sat in
+# TAG_GATE_EXEMPT the package stopped compiling against go-signal unnoticed
+# (#2430); a test-only tag keeps it built and tested without putting the
+# bridge in a shipped binary.
+TEST_EXTRA_TAGS := canary otel l2_redis rest quic mcp rag tpm_simulator quicbaas_signal $(CONTAINER_LIB_TAGS)
 
 # Note: Go 1.25+ requires space-separated tags, not comma-separated.
 # The leading !integration is documentation: `integration` is simply absent
@@ -1304,14 +1310,6 @@ LINT_BUILD_TAGS := $(filter-out !integration,$(TEST_TAGS))
 #   awss3 gcpstorage azureblob minio
 #                               need live cloud credentials / endpoints
 #   gpu                         needs an NVIDIA GPU
-#   quicbaas_signal             pkg/signal DOES NOT COMPILE. Its kvAdapter is
-#                               missing DeleteIfPresent, which go-signal's
-#                               store.KVClient requires and which go-qrdb's
-#                               sdk/go/transport.KVClient cannot supply
-#                               atomically. That primitive is what makes
-#                               one-time prekey consumption single-use, so this
-#                               needs a qrdb SDK addition -- the package is
-#                               currently unbuildable, not merely untested.
 # openvino_live drives a REAL OpenVINO Model Server on a REAL NPU
 # (pkg/orchestration/openvino_backend_live_test.go). It is exempt for the
 # reason gpu and swtpm are: no CI runner in this fleet has the accelerator, and
@@ -1323,7 +1321,7 @@ LINT_BUILD_TAGS := $(filter-out !integration,$(TEST_TAGS))
 TAG_GATE_EXEMPT := linux darwin windows unix ignore integration coverage production \
 	pkcs11 swtpm \
 	awskms gcpkms azurekv vault awss3 gcpstorage azureblob minio \
-	gpu quicbaas_signal \
+	gpu \
 	openvino_live
 
 # IAM_TEST_TAGS: retained alias for TEST_TAGS. IAM is now always compiled
