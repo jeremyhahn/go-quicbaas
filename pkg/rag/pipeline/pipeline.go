@@ -200,6 +200,18 @@ func (p *pipelineImpl) executePipeline(ctx context.Context, query string, opts Q
 	}
 	vectorSearchTime := time.Since(vectorStart)
 
+	// The similarity threshold applies to the vector scores, before ranking:
+	// fused ranking scores (RRF) are on another scale.
+	if opts.MinScore > 0 {
+		filtered := make([]Result, 0, len(vectorResults))
+		for _, r := range vectorResults {
+			if r.Score >= opts.MinScore {
+				filtered = append(filtered, r)
+			}
+		}
+		vectorResults = filtered
+	}
+
 	// Handle empty vector search results - return early with empty response
 	if len(vectorResults) == 0 {
 		return &QueryResponse{
@@ -220,17 +232,6 @@ func (p *pipelineImpl) executePipeline(ctx context.Context, query string, opts Q
 		return nil, NewPipelineError(err, "ranker", "rank", nil)
 	}
 	rankTime := time.Since(rankStart)
-
-	// Filter by MinScore after ranking
-	if opts.MinScore > 0 {
-		filteredResults := make([]Result, 0, len(rankedResults))
-		for _, r := range rankedResults {
-			if r.Score >= opts.MinScore {
-				filteredResults = append(filteredResults, r)
-			}
-		}
-		rankedResults = filteredResults
-	}
 
 	// Limit to TopK
 	if len(rankedResults) > opts.TopK {

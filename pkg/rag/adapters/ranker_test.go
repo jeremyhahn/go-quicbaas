@@ -320,8 +320,9 @@ func TestRankerAdapter_PipelineQueryHonoursHybridWeights(t *testing.T) {
 		p, err := pipeline.NewPipeline(pcfg, weightQueryHandler{}, weightVectorSearcher{results: docs}, adapter, weightContextBuilder{})
 		require.NoError(t, err)
 
-		// RRF scores are small; a tiny MinScore keeps both documents.
-		resp, err := p.Query(context.Background(), "pool", pipeline.QueryOptions{TopK: 10, MinScore: 0.0001})
+		// The default MinScore (0.7) applies to the vector scores, so both
+		// documents survive and the fused ranking decides the order.
+		resp, err := p.Query(context.Background(), "pool", pipeline.QueryOptions{TopK: 10})
 		require.NoError(t, err)
 		ids := make([]string, 0, len(resp.Results))
 		for _, r := range resp.Results {
@@ -332,6 +333,31 @@ func TestRankerAdapter_PipelineQueryHonoursHybridWeights(t *testing.T) {
 
 	assert.Equal(t, []string{"vector-best", "keyword-best"}, order(0.75, 0.25))
 	assert.Equal(t, []string{"keyword-best", "vector-best"}, order(0.25, 0.75))
+}
+
+// TestRankerAdapter_PipelineDefaultMinScoreFiltersVectorScores proves the
+// pipeline's default threshold (0.7) applies to the vector similarity scores
+// before ranking, not to the small fused RRF scores: with the default hybrid
+// adapter, a 0.9 match is returned with context and a 0.5 match is dropped.
+func TestRankerAdapter_PipelineDefaultMinScoreFiltersVectorScores(t *testing.T) {
+	docs := []pipeline.Result{
+		{ID: "close", Content: "connection pool settings", Score: 0.9},
+		{ID: "far", Content: "unrelated text about weather", Score: 0.5},
+	}
+	pcfg := pipeline.DefaultConfig()
+	pcfg.EnableCircuitBreaker = false
+	pcfg.EnableMetrics = false
+	require.InDelta(t, 0.7, pcfg.DefaultMinScore, 1e-6)
+
+	p, err := pipeline.NewPipeline(pcfg, weightQueryHandler{}, weightVectorSearcher{results: docs},
+		createTestRankerAdapter(t), weightContextBuilder{})
+	require.NoError(t, err)
+
+	resp, err := p.Query(context.Background(), "pool", pipeline.QueryOptions{TopK: 10})
+	require.NoError(t, err)
+	require.Len(t, resp.Results, 1)
+	assert.Equal(t, "close", resp.Results[0].ID)
+	assert.NotEmpty(t, resp.Context)
 }
 
 func TestRankerAdapter_Close(t *testing.T) {
