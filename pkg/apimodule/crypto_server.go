@@ -28,6 +28,10 @@ import (
 var errNodeHMACUnserved = status.Error(codes.Unimplemented,
 	"HMAC is not served on the node: the crypto backend has no stable MAC key")
 
+// errNodeSignUnserved is what the node answers for Sign and Verify.
+var errNodeSignUnserved = status.Error(codes.Unimplemented,
+	"Sign and Verify are not served on the node: the crypto backend does not resolve the signing key version")
+
 // nodeCryptoServer is the quicbaas.kms.v1.Crypto server the node mounts. It
 // serves every method of the embedded *grpcapi.CryptoServer except
 // GenerateHMAC and VerifyHMAC. The production crypto backend
@@ -45,6 +49,13 @@ var errNodeHMACUnserved = status.Error(codes.Unimplemented,
 // request would not be bound to the context the caller asked for, so until
 // the backend binds it the node answers InvalidArgument instead. Requests
 // with an empty context are served by the embedded server.
+//
+// It does not serve Sign or Verify either. The production crypto backend
+// signs with the key's original version even after RotateKey (it never
+// resolves the key metadata's current Version), and Verify ignores the
+// requested KeyVersion, so serving them would newly expose signing on a
+// stale key. Until the backend resolves the signing key version, the node
+// answers both RPCs Unimplemented.
 type nodeCryptoServer struct {
 	*grpcapi.CryptoServer
 }
@@ -81,4 +92,25 @@ func (nodeCryptoServer) GenerateHMAC(context.Context, *pb.HMACRequest) (*pb.HMAC
 // VerifyHMAC is not served on the node; see nodeCryptoServer.
 func (nodeCryptoServer) VerifyHMAC(context.Context, *pb.VerifyHMACRequest) (*pb.VerifyHMACResponse, error) {
 	return nil, errNodeHMACUnserved
+}
+
+// Sign is not served on the node; see nodeCryptoServer.
+func (nodeCryptoServer) Sign(context.Context, *pb.SignRequest) (*pb.SignResponse, error) {
+	return nil, errNodeSignUnserved
+}
+
+// Verify is not served on the node; see nodeCryptoServer.
+func (nodeCryptoServer) Verify(context.Context, *pb.VerifyRequest) (*pb.VerifyResponse, error) {
+	return nil, errNodeSignUnserved
+}
+
+// errNodeRewrapUnserved is what the node answers for Rewrap.
+var errNodeRewrapUnserved = status.Error(codes.Unimplemented,
+	"Rewrap is not served on the node: the crypto service does not report the key versions it used")
+
+// Rewrap is not served on the node: the crypto service does not report the
+// key versions it decrypted and re-encrypted with, so the response could not
+// name them.
+func (nodeCryptoServer) Rewrap(context.Context, *pb.RewrapRequest) (*pb.RewrapResponse, error) {
+	return nil, errNodeRewrapUnserved
 }
