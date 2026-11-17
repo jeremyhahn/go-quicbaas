@@ -80,7 +80,14 @@ type AEADUsage struct {
 // IncrementUsage atomically increments the usage counters.
 // Returns true if the limits are exceeded after this operation.
 func (u *AEADUsage) IncrementUsage(bytesProcessed uint64) (limitExceeded bool) {
-	u.OperationCount.Add(1)
+	return u.IncrementUsageN(1, bytesProcessed)
+}
+
+// IncrementUsageN records ops operations that together processed
+// bytesProcessed bytes (a batch counts one operation per item) and
+// reports whether a limit has been reached.
+func (u *AEADUsage) IncrementUsageN(ops, bytesProcessed uint64) (limitExceeded bool) {
+	u.OperationCount.Add(ops)
 	u.BytesProcessed.Add(bytesProcessed)
 	u.LastUpdated.Store(time.Now().UnixNano())
 
@@ -317,16 +324,29 @@ func (t *AEADSafetyTracker) initMetrics() {
 
 // RecordKeyEncrypt records an encryption operation for a key.
 func (t *AEADSafetyTracker) RecordKeyEncrypt(ctx context.Context, keyID string, bytesEncrypted uint64) error {
-	return t.recordOperation(ctx, keyID, bytesEncrypted, false)
+	return t.recordOperation(ctx, keyID, 1, bytesEncrypted, false)
+}
+
+// RecordKeyEncryptN records ops encryption operations (one per batch item)
+// that together encrypted bytesEncrypted bytes under a KMS key.
+func (t *AEADSafetyTracker) RecordKeyEncryptN(ctx context.Context, keyID string, ops, bytesEncrypted uint64) error {
+	return t.recordOperation(ctx, keyID, ops, bytesEncrypted, false)
+}
+
+// RecordKeyDecryptN records ops decryption operations (one per batch item)
+// that together processed bytesDecrypted bytes under a KMS key. Decryptions
+// count against the same per-key usage as encryptions.
+func (t *AEADSafetyTracker) RecordKeyDecryptN(ctx context.Context, keyID string, ops, bytesDecrypted uint64) error {
+	return t.recordOperation(ctx, keyID, ops, bytesDecrypted, false)
 }
 
 // RecordDEKEncrypt records an encryption operation for a DEK.
 func (t *AEADSafetyTracker) RecordDEKEncrypt(ctx context.Context, dekPath string, bytesEncrypted uint64) error {
-	return t.recordOperation(ctx, dekPath, bytesEncrypted, true)
+	return t.recordOperation(ctx, dekPath, 1, bytesEncrypted, true)
 }
 
 // recordOperation is the common implementation for recording operations.
-func (t *AEADSafetyTracker) recordOperation(ctx context.Context, id string, bytesProcessed uint64, isDEK bool) error {
+func (t *AEADSafetyTracker) recordOperation(ctx context.Context, id string, ops, bytesProcessed uint64, isDEK bool) error {
 	var usageMap *syncMap[string, *AEADUsage]
 	var keyType string
 
@@ -344,10 +364,10 @@ func (t *AEADSafetyTracker) recordOperation(ctx context.Context, id string, byte
 	})
 
 	// Increment counters
-	limitExceeded := usage.IncrementUsage(bytesProcessed)
+	limitExceeded := usage.IncrementUsageN(ops, bytesProcessed)
 
 	// Record metrics
-	t.metrics.operationsTotal.With(id, keyType).Inc()
+	t.metrics.operationsTotal.With(id, keyType).Add(float64(ops))
 	t.metrics.bytesProcessed.With(id, keyType).Add(float64(bytesProcessed))
 	t.metrics.usagePercent.With(id, keyType).Set(float64(usage.UsagePercent()))
 
