@@ -286,6 +286,11 @@ type Server struct {
 	// and shared by every initXKMS call, so whichever registers the
 	// singleton wires the same store.
 	xkmsKeyVersions *xkmssdk.KeyVersionStore
+	// xkmsKeyVersionRouter is the storage under xkmsKeyVersions: it keeps
+	// every record node-local except the replicated OIDC signing key's,
+	// which it sends to the replicated shard KV once that key's backend is
+	// registered (useReplicatedOIDCSigningStore).
+	xkmsKeyVersionRouter *keyVersionRouter
 
 	// Fleet registry - shared between IAM enrollment (publisher on
 	// redeem) and orchestration (publisher on heartbeat + consumer for

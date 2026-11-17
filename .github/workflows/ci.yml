@@ -1390,6 +1390,15 @@ jobs:
           cache: ${{ runner.environment != 'self-hosted' }}
           go-version: ${{ env.GO_VERSION }}
 
+      # A per-job TMPDIR (go-xkms #2183): the runner's _work/_temp made t.TempDir
+      # Unix socket paths overflow sun_path, and runner units on one host share
+      # /tmp, so each job takes its own /tmp/XXXXXX and removes it in its last step.
+      - name: Per-job short TMPDIR (native)
+        if: ${{ runner.environment == 'self-hosted' }}
+        run: |
+          d="$(mktemp -d /tmp/XXXXXX)"
+          echo "TMPDIR=$d" >> "$GITHUB_ENV"
+
       # The same target natively. It writes coverage/<profile>; the upload
       # below reads the profile at the top level, where the hosted step puts it.
       - name: make coverage-shard (bigdisk pool, native)
@@ -1417,6 +1426,10 @@ jobs:
       - name: Tear down
         if: always()
         run: rm -f "$RUNNER_TEMP/gomodauth.env"
+
+      - name: Remove the per-job TMPDIR (native)
+        if: ${{ always() && runner.environment == 'self-hosted' }}
+        run: case "$TMPDIR" in /tmp/??????) rm -rf "$TMPDIR" ;; esac
 
   # Joins the unit shards' profiles and fails when total coverage is below
   # COVERAGE_THRESHOLD (testing-guidelines.md), with the same generated-code
@@ -1600,6 +1613,15 @@ jobs:
           cache: ${{ runner.environment != 'self-hosted' }}
           go-version: ${{ env.GO_VERSION }}
 
+      # A per-job TMPDIR (go-xkms #2183): the runner's _work/_temp made t.TempDir
+      # Unix socket paths overflow sun_path, and runner units on one host share
+      # /tmp, so each job takes its own /tmp/XXXXXX and removes it in its last step.
+      - name: Per-job short TMPDIR (native)
+        if: ${{ runner.environment == 'self-hosted' }}
+        run: |
+          d="$(mktemp -d /tmp/XXXXXX)"
+          echo "TMPDIR=$d" >> "$GITHUB_ENV"
+
       - name: make coverage-passes (bigdisk pool, native)
         if: ${{ !cancelled() && runner.environment == 'self-hosted' && env.DOCS_ONLY != 'true' }}
         # The toolchain image's module settings (Dockerfile ENV), except that
@@ -1613,6 +1635,10 @@ jobs:
       - name: Tear down
         if: always()
         run: rm -f "$RUNNER_TEMP/gomodauth.env"
+
+      - name: Remove the per-job TMPDIR (native)
+        if: ${{ always() && runner.environment == 'self-hosted' }}
+        run: case "$TMPDIR" in /tmp/??????) rm -rf "$TMPDIR" ;; esac
 
   # v1.27 (Company Agent m1192 (6), item 27): a repository's `make lint-gates`
   # (its own gates beside `make lint`: script, workflow, generated-code and
