@@ -28,9 +28,11 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	qrdbtenant "github.com/jeremyhahn/go-qrdb/pkg/tenant"
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/config"
+	dberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 )
 
@@ -189,6 +191,13 @@ type registrationSession struct {
 	displayName   string
 	isolationMode string
 	expiresAt     time.Time
+
+	// userID is the pending account begin created for the ceremony to enrol.
+	userID uint64
+
+	// reaper discards the tenant and account when the session expires
+	// unfinished; a finish that takes the session stops it.
+	reaper *time.Timer
 }
 
 // registrationSessionStore is a minimal in-memory store for Phase 2.
@@ -219,8 +228,41 @@ func (s *registrationSessionStore) get(sessionID string) (*registrationSession, 
 	return sess, true
 }
 
+// take removes the session and returns it, expired or not, and stops its
+// reaper. Exactly one caller — a finish or the reaper — wins a session, so the
+// discard that follows an expiry runs once.
+func (s *registrationSessionStore) take(sessionID string) (*registrationSession, bool) {
+	v, ok := s.sessions.LoadAndDelete(sessionID)
+	if !ok {
+		return nil, false
+	}
+	sess, ok := v.(*registrationSession)
+	if !ok {
+		return nil, false
+	}
+	if sess.reaper != nil {
+		sess.reaper.Stop()
+	}
+	return sess, true
+}
+
 func (s *registrationSessionStore) delete(sessionID string) {
 	s.sessions.Delete(sessionID)
+}
+
+// holdsTenant reports whether a session begun by this process registers the
+// tenant. That session's own reaper discards it, so the restart sweeper leaves
+// it alone.
+func (s *registrationSessionStore) holdsTenant(tenantID string) bool {
+	held := false
+	s.sessions.Range(func(_, value any) bool {
+		if sess, ok := value.(*registrationSession); ok && sess.tenantID == tenantID {
+			held = true
+			return false
+		}
+		return true
+	})
+	return held
 }
 
 // --------------------------------------------------------------------------
@@ -399,7 +441,14 @@ func (h *IAMHandler) RegisterSelfBegin(w http.ResponseWriter, r *http.Request) {
 
 	// Derive tenant ID (slug + collision suffix).
 	identityStore, _ := h.getIdentityStore(ctx)
+	// retired holds the ids the engine refused as deleted during this begin.
+	// A deleted tenant id is retired for good, and the broker's own record of
+	// it is gone, so only the engine's refusal tells the derivation to move on.
+	retired := map[string]bool{}
 	tenantExists := func(ctx context.Context, id string) (bool, error) {
+		if retired[id] {
+			return true, nil
+		}
 		if identityStore == nil {
 			return false, nil
 		}
@@ -435,22 +484,80 @@ func (h *IAMHandler) RegisterSelfBegin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	options, err := mgr.BeginRegistration(ctx, tenantID, req.Email)
-	if err != nil {
-		h.server.handleServiceError(w, r, err)
+	if identityStore == nil {
+		RespondIAMError(w, r, http.StatusInternalServerError,
+			NewIAMAPIError(ErrInternalError, "identity store not available"))
+		return
+	}
+	tenantMgr, err := h.getTenantManager(ctx)
+	if err != nil || tenantMgr == nil {
+		RespondIAMError(w, r, http.StatusInternalServerError,
+			NewIAMAPIError(ErrInternalError, "tenant manager not available"))
 		return
 	}
 
-	// Stash registration context. SessionID correlates begin→finish.
-	sessionID := uuid.New().String()
-	globalRegSessionStore.put(sessionID, &registrationSession{
+	sess := &registrationSession{
 		tenantID:      tenantID,
 		tenantName:    req.TenantName,
 		email:         req.Email,
 		displayName:   strings.TrimSpace(req.DisplayName),
 		isolationMode: isolationMode,
-		expiresAt:     time.Now().Add(5 * time.Minute),
+		expiresAt:     time.Now().Add(selfRegistrationSessionTTL),
+	}
+
+	// The BROKER creates the account; the ceremony only binds a credential to
+	// it (ruling 189, #482). The ceremony used to be asked to create the
+	// account itself — go-xkms's public-registration path, which files the
+	// email as the username — and the broker's own create at finish then
+	// collided on the email, so no self-registration could complete and each
+	// attempt left an orphan tenant. Now the tenant and a PENDING account with
+	// the broker's derived handle exist before the ceremony opens, and the
+	// ceremony is the invite path, which enrols only an existing pending
+	// account. Every failure from here on removes both again.
+	err = h.provisionRegistration(ctx, tenantMgr, identityStore, sess, cfg.DefaultRole)
+	// An id a discarded registration once held is retired by the engine, so a
+	// retry under the same tenant name advances to the next candidate.
+	for skips := 0; isRetiredTenantID(err) && skips < maxRetiredTenantSkips; skips++ {
+		retired[sess.tenantID] = true
+		next, deriveErr := deriveTenantID(ctx, req.TenantName, tenantExists)
+		if deriveErr != nil {
+			err = deriveErr
+			break
+		}
+		if isReservedTenantID(next) {
+			RespondIAMError(w, r, http.StatusBadRequest,
+				NewIAMAPIError(ErrReservedTenantID,
+					"tenant_name produces a reserved tenant id"))
+			return
+		}
+		sess.tenantID = next
+		err = h.provisionRegistration(ctx, tenantMgr, identityStore, sess, cfg.DefaultRole)
+	}
+	if err != nil {
+		var grantErr *SelfRegistrationRoleGrantError
+		if errors.As(err, &grantErr) {
+			RespondIAMError(w, r, http.StatusInternalServerError,
+				NewIAMAPIError(ErrInternalError, "registration could not grant the tenant's built-in roles"))
+			return
+		}
+		h.server.handleServiceError(w, r, err)
+		return
+	}
+	options, err := mgr.BeginInviteRegistration(ctx, sess.tenantID, req.Email)
+	if err != nil {
+		h.discardRegistration(ctx, sess)
+		h.server.handleServiceError(w, r, err)
+		return
+	}
+
+	// Stash registration context. SessionID correlates begin→finish. A begin
+	// that is never finished is discarded when its session expires, so an
+	// abandoned ceremony leaves no tenant and no account behind.
+	sessionID := uuid.New().String()
+	sess.reaper = time.AfterFunc(selfRegistrationSessionTTL, func() {
+		h.reapRegistration(context.WithoutCancel(ctx), sessionID)
 	})
+	globalRegSessionStore.put(sessionID, sess)
 
 	RespondJSON(w, r, http.StatusOK, &SelfRegisterBeginResponse{
 		PublicKeyCredentialCreationOptions: options,
@@ -503,8 +610,18 @@ func (h *IAMHandler) RegisterSelfFinish(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	sess, ok := globalRegSessionStore.get(req.SessionID)
+	// The session is TAKEN, not read: a finish spends it whatever the outcome,
+	// so a refused ceremony cannot be replayed against an account that has
+	// already been discarded.
+	sess, ok := globalRegSessionStore.take(req.SessionID)
 	if !ok {
+		RespondIAMError(w, r, http.StatusBadRequest,
+			NewIAMAPIError(ErrRegistrationSessionExpired,
+				"registration session not found or expired"))
+		return
+	}
+	if time.Now().After(sess.expiresAt) {
+		h.discardRegistration(ctx, sess)
 		RespondIAMError(w, r, http.StatusBadRequest,
 			NewIAMAPIError(ErrRegistrationSessionExpired,
 				"registration session not found or expired"))
@@ -516,118 +633,72 @@ func (h *IAMHandler) RegisterSelfFinish(w http.ResponseWriter, r *http.Request) 
 		GetWebAuthnManager(ctx context.Context) (WebAuthnManager, error)
 	})
 	if !ok2 {
+		h.discardRegistration(ctx, sess)
 		RespondIAMError(w, r, http.StatusInternalServerError,
 			NewIAMAPIError(ErrInternalError, "WebAuthn manager not available"))
 		return
 	}
 	mgr, err := webAuthnMgr.GetWebAuthnManager(ctx)
 	if err != nil || mgr == nil {
+		h.discardRegistration(ctx, sess)
 		RespondIAMError(w, r, http.StatusInternalServerError,
 			NewIAMAPIError(ErrInternalError, "WebAuthn manager not initialized"))
 		return
 	}
 
-	// The ceremony returns what it PROVED about this authenticator. It is
-	// carried down to token issuance rather than discarded: the registrant is
-	// about to be granted Admin on a brand-new tenant, the gate has just held
-	// them to the hardware bar, and a session that failed to say so would make
-	// a legitimate hardware login look unattested until the operator logged in
+	// The ceremony binds the credential to the pending account begin created,
+	// and returns what it PROVED about this authenticator. It is carried down
+	// to token issuance rather than discarded: the registrant is about to be
+	// granted Admin on a brand-new tenant, the gate has just held them to the
+	// hardware bar, and a session that failed to say so would make a
+	// legitimate hardware login look unattested until the operator logged in
 	// a second time.
-	attestation, err := mgr.FinishRegistration(ctx, sess.tenantID, sess.email, req.Credential)
+	attestation, err := mgr.FinishInviteRegistration(ctx, sess.tenantID, sess.email, req.Credential)
 	if err != nil {
+		h.discardRegistration(ctx, sess)
 		h.server.handleServiceError(w, r, err)
 		return
 	}
-	globalRegSessionStore.delete(req.SessionID)
 
-	// Obtain tenant manager and identity store.
 	identityStore, err := h.getIdentityStore(ctx)
 	if err != nil || identityStore == nil {
+		h.discardRegistration(ctx, sess)
 		RespondIAMError(w, r, http.StatusInternalServerError,
 			NewIAMAPIError(ErrInternalError, "identity store not available"))
 		return
 	}
 	tenantMgr, err := h.getTenantManager(ctx)
 	if err != nil || tenantMgr == nil {
+		h.discardRegistration(ctx, sess)
 		RespondIAMError(w, r, http.StatusInternalServerError,
 			NewIAMAPIError(ErrInternalError, "tenant manager not available"))
 		return
 	}
 
-	// Create the new tenant. The isolation mode is recorded in the attributes;
-	// qrdb's per-tenant barrier path is assigned internally by Phase 2.5b.
-	_, err = tenantMgr.CreateTenant(ctx, iam.CreateTenantOptions{
-		ID:   sess.tenantID,
-		Name: sess.tenantName,
-		Settings: &iam.TenantSettings{
-			DisplayName: sess.tenantName,
-		},
-	})
-	if err != nil {
-		h.server.handleServiceError(w, r, err)
-		return
-	}
-
-	// Determine the initial user state. BOTH gates land on pending, and the
-	// decision has to be made here rather than corrected afterwards: qrdb's
-	// transition table has no active -> pending edge, so an account created
-	// active and then "moved" to pending simply stays active — which, on the
-	// email-verification path, is an account that authenticates without ever
-	// verifying its address.
-	userState := iam.LifecycleActive
+	// The roles were granted at begin, before the ceremony opened, so the
+	// ceremony's attestation gate held this administrator to the hardware bar.
+	// An account a gate holds pending has the tenant's registration record
+	// removed now, so the sweep never discards an account that is held for
+	// admin approval or email verification. An account no gate holds keeps
+	// the record until it is active: a crash before activation leaves a
+	// pending account the sweep still discards, never one nothing recovers.
 	if cfg.RequireAdminApproval || cfg.RequireEmailVerification {
-		userState = iam.LifecyclePending
-	}
-
-	// Create the user in the new tenant, IN the state decided above. It used to
-	// be computed here and applied only on the branch that needed a change, so
-	// the no-approval path created a user that defaulted to pending and then
-	// minted it a session — an account persisted as pending holding an active
-	// bearer. Passing it to the create is what makes the record and the session
-	// agree.
-	// The handle is DERIVED, not the email address. A username may not contain
-	// "@" (iam.validateUsername), so passing the address made every
-	// self-registration fail at this call — after the tenant had been created,
-	// leaving an orphan tenant nobody could enter. The display name is the one
-	// the registrant supplied at begin; the store refuses an email-shaped
-	// display name too, which is why begin now rejects one.
-	createdUser, err := identityStore.CreateUser(ctx, sess.tenantID, iam.CreateUserOptions{
-		Email:       sess.email,
-		Username:    deriveHandle(sess.email),
-		Name:        sess.displayName,
-		AuthMethods: []string{"webauthn"},
-		Lifecycle:   userState,
-		Attributes: map[string]string{
-			"isolation_mode":    sess.isolationMode,
-			"self_registered":   "true",
-			"registration_time": time.Now().UTC().Format(time.RFC3339),
-		},
-	})
-	if err != nil {
-		h.server.handleServiceError(w, r, err)
-		return
-	}
-
-	// Grant roles: Admin@<their-tenant> always, plus the configured default_role.
-	// It FAILS CLOSED. A creator without the Admin role owns a tenant nobody can
-	// administer, so a failed grant leaves no account behind and mints nothing.
-	// The cleanup runs on a context detached from the request, so a client that
-	// disconnects cannot strand a half-provisioned account that blocks a retry.
-	if err := grantSelfRegistrationRoles(ctx, identityStore, sess.tenantID, createdUser.ID, cfg.DefaultRole); err != nil {
-		if delErr := identityStore.DeleteUser(context.WithoutCancel(ctx), sess.tenantID, createdUser.ID); delErr != nil {
-			err = errors.Join(err, delErr)
+		if _, err := tenantMgr.UpdateTenant(ctx, sess.tenantID, iam.UpdateTenantOptions{
+			FinishSelfRegistration: true,
+		}); err != nil {
+			h.discardRegistration(ctx, sess)
+			h.server.logger.WithError(err).Error("iam.self_registration: recording the enrolment failed, registration refused")
+			RespondIAMError(w, r, http.StatusInternalServerError,
+				NewIAMAPIError(ErrInternalError, "registration could not record the enrolled account"))
+			return
 		}
-		h.server.logger.WithError(err).Error("iam.self_registration: role grant failed, registration refused")
-		RespondIAMError(w, r, http.StatusInternalServerError,
-			NewIAMAPIError(ErrInternalError, "registration could not grant the tenant's built-in roles"))
-		return
 	}
 
 	if cfg.RequireAdminApproval {
 		RespondJSON(w, r, http.StatusOK, &SelfRegisterFinishResponse{
 			Status:   "pending",
 			TenantID: sess.tenantID,
-			UserID:   createdUser.ID,
+			UserID:   sess.userID,
 			Message:  "Your account is awaiting admin approval.",
 		})
 		return
@@ -642,10 +713,31 @@ func (h *IAMHandler) RegisterSelfFinish(w http.ResponseWriter, r *http.Request) 
 		RespondJSON(w, r, http.StatusOK, &SelfRegisterFinishResponse{
 			Status:   "verification_required",
 			TenantID: sess.tenantID,
-			UserID:   createdUser.ID,
+			UserID:   sess.userID,
 			Message:  "Please check your email to verify your account before signing in.",
 		})
 		return
+	}
+
+	// Neither gate holds the account, so the credential just bound activates
+	// it. The account was created pending so the ceremony would enrol it; the
+	// pending -> active move is the one qrdb's transition table allows.
+	active := iam.LifecycleActive
+	createdUser, err := identityStore.UpdateUser(ctx, sess.tenantID, sess.userID, iam.UpdateUserOptions{
+		Lifecycle: &active,
+	})
+	if err != nil {
+		h.discardRegistration(ctx, sess)
+		h.server.handleServiceError(w, r, err)
+		return
+	}
+	// The account is active, so the registration is finished whatever happens
+	// to its record: a failure to remove the record is logged, and the sweep
+	// keeps a tenant whose account is active.
+	if _, err := tenantMgr.UpdateTenant(ctx, sess.tenantID, iam.UpdateTenantOptions{
+		FinishSelfRegistration: true,
+	}); err != nil {
+		h.server.logger.WithError(err).Error("iam.self_registration: removing the registration record of an activated account failed")
 	}
 
 	// Mint session tokens via the OIDC provider.
@@ -873,6 +965,140 @@ func grantBuiltInRole(
 		return &SelfRegistrationRoleGrantError{TenantID: tenantID, Role: roleName, Cause: err}
 	}
 	return nil
+}
+
+// selfRegistrationSessionTTL bounds a begin→finish ceremony. A begin that is
+// not finished within it is discarded.
+const selfRegistrationSessionTTL = 5 * time.Minute
+
+// provisionRegistration creates the registrant's tenant and their PENDING
+// account, the one the ceremony then enrols, and records the account id on
+// the session. The account is pending whatever the gates say: the ceremony
+// enrols only a pending account, and finish activates it when no gate holds
+// it. The handle is DERIVED, not the email address — a username may not
+// contain "@" (iam.validateUsername). A failure leaves nothing behind.
+func (h *IAMHandler) provisionRegistration(ctx context.Context, tenants iam.TenantManager, store *iam.IdentityStore, sess *registrationSession, defaultRole string) error {
+	// The isolation mode is recorded in the attributes; qrdb's per-tenant
+	// barrier path is assigned internally by Phase 2.5b. The tenant carries
+	// the broker's record of the unfinished registration, so a restart that
+	// loses the session still finds the tenant to discard at its expiry.
+	if _, err := tenants.CreateTenant(ctx, iam.CreateTenantOptions{
+		ID:   sess.tenantID,
+		Name: sess.tenantName,
+		Settings: &iam.TenantSettings{
+			DisplayName: sess.tenantName,
+		},
+		SelfRegistration: &iam.TenantSelfRegistration{Expires: sess.expiresAt},
+	}); err != nil {
+		return err
+	}
+
+	user, err := store.CreateUser(ctx, sess.tenantID, iam.CreateUserOptions{
+		Email:       sess.email,
+		Username:    deriveHandle(sess.email),
+		Name:        sess.displayName,
+		AuthMethods: []string{"webauthn"},
+		Lifecycle:   iam.LifecyclePending,
+		Attributes: map[string]string{
+			"isolation_mode":    sess.isolationMode,
+			"self_registered":   "true",
+			"registration_time": time.Now().UTC().Format(time.RFC3339),
+		},
+	})
+	if err != nil {
+		h.discardRegistration(ctx, sess)
+		return err
+	}
+	sess.userID = user.ID
+
+	// Grant roles: Admin@<their-tenant> always, plus the configured
+	// default_role. They are granted HERE, before the ceremony opens, because
+	// the ceremony's attestation gate asks whether the account is
+	// administrative: an account with no roles yet reads as a regular user, so
+	// under a permissive tenant assurance a software authenticator would enrol
+	// and only then be made Admin. The account is still PENDING, so the roles
+	// grant nothing until finish activates it. It FAILS CLOSED: a creator
+	// without the Admin role owns a tenant nobody can administer, so a failed
+	// grant leaves no account and no tenant behind.
+	if err := grantSelfRegistrationRoles(ctx, store, sess.tenantID, sess.userID, defaultRole); err != nil {
+		h.discardRegistration(ctx, sess)
+		h.server.logger.WithError(err).Error("iam.self_registration: role grant failed, registration refused")
+		return err
+	}
+	return nil
+}
+
+// discardRegistration removes what provisionRegistration created — the
+// account, then the tenant — so a registration that does not complete leaves
+// no orphan behind to block a retry. It runs on a context detached from the
+// request, so a client that disconnects cannot strand a half-provisioned
+// tenant. A failure to discard is logged; the caller's own error is what the
+// registrant is told.
+func (h *IAMHandler) discardRegistration(ctx context.Context, sess *registrationSession) {
+	store, storeErr := h.getIdentityStore(ctx)
+	tenants, tenantErr := h.getTenantManager(ctx)
+	err := errors.Join(storeErr, tenantErr, discardOwnedRegistration(ctx, tenants, store, sess))
+	if err != nil {
+		h.server.logger.WithError(err).Error("iam.self_registration: discarding an incomplete registration failed")
+	}
+}
+
+// discardOwnedRegistration deletes the registration's account and tenant only
+// while they are still the registration's own: the tenant still records the
+// unfinished registration, and it holds nothing but the registrant's
+// still-pending account. An account an operator approved, or a tenant another
+// user joined, while the ceremony was open is reported and kept.
+func discardOwnedRegistration(ctx context.Context, tenants iam.TenantManager, store *iam.IdentityStore, sess *registrationSession) error {
+	if tenants == nil || store == nil {
+		return removeRegistration(ctx, tenants, store, sess)
+	}
+	ctx = context.WithoutCancel(ctx)
+	tenant, err := tenants.GetTenant(ctx, sess.tenantID)
+	if err != nil {
+		if dberrors.IsNotFound(err) {
+			return nil
+		}
+		return err
+	}
+	if tenant.SelfRegistration == nil {
+		return &SelfRegistrationTenantInUseError{TenantID: sess.tenantID}
+	}
+	return discardUnfinishedTenant(ctx, tenants, store, sess.tenantID, sess.userID)
+}
+
+// isRetiredTenantID reports whether err is the engine's refusal of a tenant id
+// that was used and deleted.
+func isRetiredTenantID(err error) bool {
+	var deleted *qrdbtenant.TenantDeletedError
+	return errors.As(err, &deleted)
+}
+
+// maxRetiredTenantSkips bounds how many retired ids one begin steps past.
+const maxRetiredTenantSkips = 20
+
+// removeRegistration deletes the registration's account and tenant, and
+// returns what failed.
+func removeRegistration(ctx context.Context, tenants iam.TenantManager, store *iam.IdentityStore, sess *registrationSession) error {
+	ctx = context.WithoutCancel(ctx)
+	var err error
+	if sess.userID != 0 && store != nil {
+		err = store.DeleteUser(ctx, sess.tenantID, sess.userID)
+	}
+	// A server without a tenant manager provisioned no tenant to remove.
+	if tenants != nil {
+		err = errors.Join(err, tenants.DeleteTenant(ctx, sess.tenantID))
+	}
+	return err
+}
+
+// reapRegistration discards a registration whose session expired unfinished.
+// It does nothing when a finish has already taken the session.
+func (h *IAMHandler) reapRegistration(ctx context.Context, sessionID string) {
+	sess, ok := globalRegSessionStore.take(sessionID)
+	if !ok {
+		return
+	}
+	h.discardRegistration(ctx, sess)
 }
 
 // getTenantManager retrieves the TenantManager from the service layer.

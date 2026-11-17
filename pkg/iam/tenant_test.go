@@ -730,6 +730,58 @@ func TestUpdateTenant_PartialUpdate(t *testing.T) {
 	}
 }
 
+// The self-registration record is the broker's: it is written at create,
+// survives an unrelated update, and only FinishSelfRegistration removes it.
+func TestUpdateTenant_FinishSelfRegistration(t *testing.T) {
+	mgr := newTestTenantManager()
+	ctx := context.Background()
+	expires := time.Now().Add(5 * time.Minute).UTC()
+
+	_, err := mgr.CreateTenant(ctx, CreateTenantOptions{
+		ID:               "self-reg",
+		Name:             "Self Reg",
+		SelfRegistration: &TenantSelfRegistration{Expires: expires},
+	})
+	if err != nil {
+		t.Fatalf("CreateTenant failed: %v", err)
+	}
+	got, err := mgr.GetTenant(ctx, "self-reg")
+	if err != nil {
+		t.Fatalf("GetTenant failed: %v", err)
+	}
+	if got.SelfRegistration == nil || !got.SelfRegistration.Expires.Equal(expires) {
+		t.Fatalf("Expected the self-registration record to expire at %v, got %+v", expires, got.SelfRegistration)
+	}
+
+	newName := "Renamed"
+	renamed, err := mgr.UpdateTenant(ctx, "self-reg", UpdateTenantOptions{Name: &newName})
+	if err != nil {
+		t.Fatalf("UpdateTenant failed: %v", err)
+	}
+	if renamed.SelfRegistration == nil {
+		t.Error("Expected an unrelated update to keep the self-registration record")
+	}
+
+	finished, err := mgr.UpdateTenant(ctx, "self-reg", UpdateTenantOptions{FinishSelfRegistration: true})
+	if err != nil {
+		t.Fatalf("UpdateTenant failed: %v", err)
+	}
+	if finished.SelfRegistration != nil {
+		t.Errorf("Expected FinishSelfRegistration to remove the record, got %+v", finished.SelfRegistration)
+	}
+}
+
+func TestUpdateTenant_FinishSelfRegistrationNotFound(t *testing.T) {
+	mgr := newTestTenantManager()
+
+	_, err := mgr.UpdateTenant(context.Background(), "nonexistent-tenant", UpdateTenantOptions{
+		FinishSelfRegistration: true,
+	})
+	if !dberrors.IsNotFound(err) {
+		t.Errorf("Expected ErrNotFound, got %v", err)
+	}
+}
+
 // Test DeleteTenant
 
 func TestDeleteTenant_Success(t *testing.T) {

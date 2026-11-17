@@ -134,7 +134,7 @@ func (p *OIDCProvider) IssueSessionRefresh(ctx context.Context, opts SessionRefr
 // contract returns only (bearer, expiry), so the ceremony cannot hand quicbaas
 // a structured identity for the refresh side; instead the provider re-reads the
 // claims of the bearer IT just minted and freezes them into the refresh record.
-// That keeps every token detail — audience, roles, acr/amr, cnf.jkt — inside
+// That keeps every token detail — audience, roles, cnf.jkt — inside
 // the OIDC layer instead of leaking a claims model into the service facade,
 // and guarantees the renewal reproduces exactly the session that was issued.
 func (p *OIDCProvider) IssueRefreshForSessionBearer(ctx context.Context, bearer string) (string, time.Time, error) {
@@ -162,8 +162,6 @@ func (p *OIDCProvider) IssueRefreshForSessionBearer(ctx context.Context, bearer 
 		Name:          claims.Name,
 		AuthMethod:    claims.AuthMethod,
 		MFAVerified:   claims.MFAVerified,
-		AMR:           claims.AMR,
-		ACR:           claims.ACR,
 		AttestLevel:   claims.AttestLevel,
 		AttestAAGUID:  claims.AttestAAGUID,
 	}
@@ -282,8 +280,6 @@ func (p *OIDCProvider) RefreshSession(ctx context.Context, req SessionRefreshReq
 		Scope:         joinScopes(stored.Scopes),
 		AuthMethod:    session.AuthMethod,
 		MFAVerified:   session.MFAVerified,
-		AMR:           session.AMR,
-		ACR:           session.ACR,
 		// Replayed, never re-derived: a refresh does not re-run the ceremony,
 		// so the renewed bearer asserts exactly what the login proved. A
 		// session that proved nothing carries nothing here and renews the same

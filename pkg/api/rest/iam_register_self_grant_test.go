@@ -85,7 +85,7 @@ func TestRegisterSelfFinish_GrantsAdminAndDefaultRoleIDs(t *testing.T) {
 	}
 }
 
-func TestRegisterSelfFinish_RoleGrantFailureRefusesRegistration(t *testing.T) {
+func TestRegisterSelfBegin_RoleGrantFailureRefusesRegistration(t *testing.T) {
 	handler, svc := selfRegFixture(t, config.IAMSelfServiceRegistrationConfig{
 		Enabled:               true,
 		AllowedIsolationModes: []string{config.TenantIsolationKeyspace},
@@ -95,10 +95,11 @@ func TestRegisterSelfFinish_RoleGrantFailureRefusesRegistration(t *testing.T) {
 	// resolved, so the grant fails.
 	svc.tenants.roleSeeder = nil
 
-	sessionID := selfRegBegin(t, handler, "Bare Co", "bob@bare.example")
-	w := selfRegFinish(t, handler, sessionID)
+	// The roles are granted at begin, before the ceremony opens, so begin is
+	// where the registration is refused.
+	w := postSelfRegBegin(handler, `{"tenant_name":"Bare Co","email":"bob@bare.example","display_name":"Bob"}`)
 
-	require.Equal(t, http.StatusInternalServerError, w.Code, "finish body: %s", w.Body.String())
+	require.Equal(t, http.StatusInternalServerError, w.Code, "begin body: %s", w.Body.String())
 	assert.Empty(t, w.Header().Values("Set-Cookie"), "a refused registration must set no session cookie")
 
 	var body map[string]any

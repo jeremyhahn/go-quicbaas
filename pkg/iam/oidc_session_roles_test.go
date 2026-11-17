@@ -183,13 +183,13 @@ func TestIssueSessionToken_RefusesUnresolvableSubject(t *testing.T) {
 	}
 }
 
-// TestIssueSessionToken_UsernameEqualToAnotherUsersIDDoesNotEscalate proves the
-// join resolves by username ONLY. Nothing keeps the id and username namespaces
-// apart — validateUserID accepts any non-empty string and the username charset
-// admits the all-digit shape a qrdb Snowflake renders as — so a join that tried
-// the subject as a user id first would hand a user who named themselves after
-// the admin's id the admin's roles, off a login they authenticated honestly as
-// themselves.
+// TestIssueSessionToken_UsernameEqualToAnotherUsersIDDoesNotEscalate proves a
+// subject is never read as a user id. Nothing keeps the id and username
+// namespaces apart — the username charset admits the all-digit shape a qrdb
+// Snowflake renders as — so a join that tried the subject as a user id would
+// hand a user who named themselves after the admin's id the admin's roles. The
+// id is taken only from SessionIdentity.UserID, and since email is the only
+// subject login key (go-quicbaas#377) the all-digit subject resolves to nobody.
 func TestIssueSessionToken_UsernameEqualToAnotherUsersIDDoesNotEscalate(t *testing.T) {
 	provider, storage := newCeremonyProvider(t, nil)
 	ctx := context.Background()
@@ -229,18 +229,9 @@ func TestIssueSessionToken_UsernameEqualToAnotherUsersIDDoesNotEscalate(t *testi
 		Subject:  attacker.LoginName(),
 		TenantID: burninTenant,
 	})
-	if err != nil {
-		t.Fatalf("IssueSessionToken: %v", err)
-	}
-	claims, err := provider.ValidateAccessToken(ctx, token)
-	if err != nil {
-		t.Fatalf("ValidateAccessToken: %v", err)
-	}
-	if contains(claims.Roles, adminRoleID) {
-		t.Fatalf("the session was joined to the privileged record by id collision: roles = %v", claims.Roles)
-	}
-	if claims.Email != attacker.Email {
-		t.Fatalf("email claim = %q, want the attacker's own %q", claims.Email, attacker.Email)
+	var unresolved *SessionPrincipalUnresolvedError
+	if !errors.As(err, &unresolved) {
+		t.Fatalf("an all-digit subject must resolve to nobody, got token %q err = %v", token, err)
 	}
 }
 
@@ -868,10 +859,12 @@ func TestCeremonyLoginResolvesASubjectKeyedByEmail(t *testing.T) {
 	}
 }
 
-// TestCeremonyLoginStillResolvesANonEmailSubject proves the username lookup
-// survives as the secondary: a subject that is not an email shape cannot be an
-// email lookup, and something must still resolve it.
-func TestCeremonyLoginStillResolvesANonEmailSubject(t *testing.T) {
+// TestCeremonyLoginRefusesANonEmailSubject proves email is the only subject
+// login key (go-quicbaas#377). A subject naming an existing account by its
+// username resolves to nothing rather than falling through to the username
+// index, so a username can never act as a credential; the same account still
+// logs in by its email.
+func TestCeremonyLoginRefusesANonEmailSubject(t *testing.T) {
 	provider, storage := newCeremonyProvider(t, nil)
 	identityStore := NewIdentityStore(IdentityStoreOptions{
 		UserStorage: storage, RoleStorage: storage,
@@ -880,12 +873,35 @@ func TestCeremonyLoginStillResolvesANonEmailSubject(t *testing.T) {
 
 	user := createRESTUser(t, storage, identityStore, burninTenant,
 		"burnin_operator", "burnin-operator@automatethethings.com", []string{operatorRoleID})
+	if _, err := storage.GetUserByUsername(ctx, burninTenant, user.LoginName()); err != nil {
+		t.Fatalf("precondition: the username must resolve through the username index: %v", err)
+	}
 
-	if _, _, err := provider.IssueSessionToken(ctx, SessionIdentity{
-		Subject:  user.Name,
+	_, _, err := provider.IssueSessionToken(ctx, SessionIdentity{
+		Subject:  user.LoginName(),
 		TenantID: burninTenant,
-	}); err != nil {
-		t.Fatalf("ceremony login for a username-shaped subject: %v", err)
+	})
+	var unresolved *SessionPrincipalUnresolvedError
+	if !errors.As(err, &unresolved) {
+		t.Fatalf("a username subject must be unresolvable, got err = %v", err)
+	}
+	if unresolved.Cause != nil {
+		t.Fatalf("a username subject is a miss, not a lookup failure: cause = %v", unresolved.Cause)
+	}
+
+	token, _, err := provider.IssueSessionToken(ctx, SessionIdentity{
+		Subject:  user.Email,
+		TenantID: burninTenant,
+	})
+	if err != nil {
+		t.Fatalf("ceremony login by the burn-in operator's email: %v", err)
+	}
+	claims, err := provider.ValidateAccessToken(ctx, token)
+	if err != nil {
+		t.Fatalf("ValidateAccessToken: %v", err)
+	}
+	if claims.UserID != user.ID {
+		t.Fatalf("uid = %d, want the burn-in operator's %d", claims.UserID, user.ID)
 	}
 }
 
@@ -972,18 +988,94 @@ func TestCeremonyLoginRefusesAnEmailOwnedByAnotherTenant(t *testing.T) {
 	}
 }
 
-// TestEmailShapedDisplayNameIsRefusedAtWrite closes the takeover at its root,
-// and is the reason the guard exists rather than being tidied away.
-//
-// The qrdb username is DERIVED from Name, and a ceremony's subject is that
-// username. So an email-shaped Name lets its holder present a subject that
-// resolveSubject — seeing an email shape — resolves through the EMAIL index, to
-// a DIFFERENT account: the attacker authenticates honestly with their own
-// factor and is handed the victim's id and roles.
-//
-// Barring the shape is the other half of the disjoint-shape rule. That rule is
-// only sound because the two namespaces cannot overlap: qrdb usernames already
-// cannot contain "@", and this keeps display-derived ones from doing so either.
+// A passkey login presents a username subject, which never resolves on its
+// own; the user go-qrdb bound to the verified factor does (ruling 254 option 1).
+func TestPasskeyLoginResolvesTheUserGoQRDBBound(t *testing.T) {
+	provider, storage := newCeremonyProvider(t, nil)
+	identityStore := NewIdentityStore(IdentityStoreOptions{
+		UserStorage: storage, RoleStorage: storage,
+	})
+	ctx := context.Background()
+
+	user := createRESTUser(t, storage, identityStore, burninTenant,
+		"passkey_admin", "passkey-admin@automatethethings.com", []string{adminRoleID})
+
+	token, _, err := provider.IssueSessionToken(ctx, SessionIdentity{
+		Subject:    user.LoginName(),
+		TenantID:   burninTenant,
+		UserID:     user.ID,
+		AuthMethod: "fido2",
+	})
+	if err != nil {
+		t.Fatalf("passkey login by the go-qrdb-bound user id: %v", err)
+	}
+	claims, err := provider.ValidateAccessToken(ctx, token)
+	if err != nil {
+		t.Fatalf("ValidateAccessToken: %v", err)
+	}
+	if claims.UserID != user.ID {
+		t.Fatalf("uid = %d, want the bound user's %d", claims.UserID, user.ID)
+	}
+}
+
+// The bound user id is looked up inside the login's tenant: an id owned by
+// another tenant is a miss, never a cross-tenant principal.
+func TestPasskeyLoginRefusesABoundUserOfAnotherTenant(t *testing.T) {
+	provider, storage := newCeremonyProvider(t, nil)
+	ctx := context.Background()
+
+	const foreignID = 55
+	if err := storage.CreateUser(ctx, &User{
+		ID: foreignID, TenantID: "some-other-tenant",
+		Name: "elsewhere", Email: "elsewhere@automatethethings.com",
+		Roles: []string{adminRoleID}, Lifecycle: LifecycleActive,
+	}); err != nil {
+		t.Fatalf("seed foreign-tenant user: %v", err)
+	}
+
+	_, _, err := provider.IssueSessionToken(ctx, SessionIdentity{
+		Subject:    "elsewhere",
+		TenantID:   burninTenant,
+		UserID:     foreignID,
+		AuthMethod: "fido2",
+	})
+	var unresolved *SessionPrincipalUnresolvedError
+	if !errors.As(err, &unresolved) {
+		t.Fatalf("err = %v, want the login refused: the bound user belongs to another tenant", err)
+	}
+	if unresolved.Cause != nil {
+		t.Fatalf("a foreign-tenant id is a miss, not a lookup failure: cause = %v", unresolved.Cause)
+	}
+}
+
+// Without a go-qrdb-bound user id a passkey login's username subject stays
+// unresolvable: the #377 email rule is not loosened for passkeys.
+func TestPasskeyLoginWithoutABoundUserRefusesAUsernameSubject(t *testing.T) {
+	provider, storage := newCeremonyProvider(t, nil)
+	identityStore := NewIdentityStore(IdentityStoreOptions{
+		UserStorage: storage, RoleStorage: storage,
+	})
+	ctx := context.Background()
+
+	user := createRESTUser(t, storage, identityStore, burninTenant,
+		"passkey_unbound", "passkey-unbound@automatethethings.com", []string{operatorRoleID})
+
+	_, _, err := provider.IssueSessionToken(ctx, SessionIdentity{
+		Subject:    user.LoginName(),
+		TenantID:   burninTenant,
+		AuthMethod: "fido2",
+	})
+	var unresolved *SessionPrincipalUnresolvedError
+	if !errors.As(err, &unresolved) {
+		t.Fatalf("a username subject with no bound user id must be unresolvable, got err = %v", err)
+	}
+}
+
+// TestEmailShapedDisplayNameIsRefusedAtWrite pins validateDisplayName's
+// input-hygiene rule: the qrdb username is derived from Name, and a handle an
+// administrator types for RBAC must not look like another user's email. It is
+// no longer the takeover guard it was, because email is the only subject login
+// key (go-quicbaas#377) and a username never resolves a login.
 func TestEmailShapedDisplayNameIsRefusedAtWrite(t *testing.T) {
 	provider, storage := newCeremonyProvider(t, nil)
 	store := NewIdentityStore(IdentityStoreOptions{

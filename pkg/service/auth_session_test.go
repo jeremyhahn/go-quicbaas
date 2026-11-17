@@ -96,7 +96,7 @@ func issueSession(t *testing.T, provider *iam.OIDCProvider) (accessToken, refres
 	ctx := context.Background()
 
 	accessToken, _, err := provider.IssueSessionToken(ctx, iam.SessionIdentity{
-		Subject:     sessionSubject,
+		Subject:     sessionEmail,
 		TenantID:    sessionTenant,
 		AuthMethod:  "fido2",
 		MFAVerified: true,
@@ -112,6 +112,8 @@ func issueSession(t *testing.T, provider *iam.OIDCProvider) (accessToken, refres
 const (
 	sessionTenant  = "acme"
 	sessionSubject = "user-1"
+	// sessionEmail is the subject login key a ceremony presents.
+	sessionEmail = "user-1@example.test"
 )
 
 // seedSessionUser writes the IAM user record the session subject resolves to.
@@ -124,7 +126,7 @@ func seedSessionUser(t *testing.T, storage *iam.MemoryStorage) {
 		TenantID:  sessionTenant,
 		Username:  sessionSubject,
 		Name:      sessionSubject,
-		Email:     "user-1@example.test",
+		Email:     sessionEmail,
 		Roles:     []string{"admin"},
 		Lifecycle: iam.LifecycleActive,
 	}))
@@ -158,7 +160,7 @@ func TestAuthService_RefreshTokenRenewsSession(t *testing.T) {
 	// The renewed bearer must actually authenticate.
 	claims, err := provider.ValidateAccessToken(context.Background(), resp.AccessToken)
 	require.NoError(t, err)
-	assert.Equal(t, "user-1", claims.Subject)
+	assert.Equal(t, sessionEmail, claims.Subject)
 	assert.Equal(t, "acme", claims.TenantID)
 }
 
@@ -227,7 +229,7 @@ func TestAuthService_ValidateTokenAcceptsIssuedBearer(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, resp)
 	assert.True(t, resp.Valid)
-	assert.Equal(t, "user-1", resp.UserID)
+	assert.Equal(t, sessionEmail, resp.UserID)
 	assert.Equal(t, []string{"admin"}, resp.Roles)
 	// The tenant the bearer was issued into survives validation: an inbound
 	// seam scopes the request by it (go-quicbaas#955).
@@ -291,7 +293,7 @@ func TestAuthService_LogoutWithoutProvider(t *testing.T) {
 func issueAttestedSession(t *testing.T, provider *iam.OIDCProvider) string {
 	t.Helper()
 	accessToken, _, err := provider.IssueSessionToken(context.Background(), iam.SessionIdentity{
-		Subject:      sessionSubject,
+		Subject:      sessionEmail,
 		TenantID:     sessionTenant,
 		AuthMethod:   "fido2",
 		MFAVerified:  true,
@@ -311,7 +313,7 @@ func TestAuthService_IntrospectTokenReportsActiveClaims(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, resp)
 	assert.True(t, resp.Active)
-	assert.Equal(t, sessionSubject, resp.Subject)
+	assert.Equal(t, sessionEmail, resp.Subject)
 	assert.Equal(t, "hardware", resp.AttestLevel)
 	assert.Equal(t, "cb69481e8ff7403993ec0a2729a154a8", resp.AttestAAGUID)
 	assert.Equal(t, "Bearer", resp.TokenType)

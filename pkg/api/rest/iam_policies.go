@@ -35,7 +35,7 @@ func (h *IAMHandler) ListPolicies(w http.ResponseWriter, r *http.Request) {
 			NewIAMAPIError(ErrBadRequest, "tenant ID is required"))
 		return
 	}
-	ctx, tenantID, ok := h.server.urlTenant(w, r, "rest.IAM", "tenant_id")
+	ctx, tenantID, _, ok := h.server.policyRepairTenant(w, r, "rest.IAM", "tenant_id")
 	if !ok {
 		return
 	}
@@ -275,7 +275,7 @@ func (h *IAMHandler) GetPolicy(w http.ResponseWriter, r *http.Request) {
 			NewIAMAPIError(ErrBadRequest, "tenant ID is required"))
 		return
 	}
-	ctx, tenantID, ok := h.server.urlTenant(w, r, "rest.IAM", "tenant_id")
+	ctx, tenantID, _, ok := h.server.policyRepairTenant(w, r, "rest.IAM", "tenant_id")
 	if !ok {
 		return
 	}
@@ -326,7 +326,7 @@ func (h *IAMHandler) UpdatePolicy(w http.ResponseWriter, r *http.Request) {
 			NewIAMAPIError(ErrBadRequest, "tenant ID is required"))
 		return
 	}
-	ctx, tenantID, ok := h.server.urlTenant(w, r, "rest.IAM", "tenant_id")
+	ctx, tenantID, repair, ok := h.server.policyRepairTenant(w, r, "rest.IAM", "tenant_id")
 	if !ok {
 		return
 	}
@@ -395,6 +395,10 @@ func (h *IAMHandler) UpdatePolicy(w http.ResponseWriter, r *http.Request) {
 		h.server.handleServiceError(w, r, err)
 		return
 	}
+	if repair {
+		h.logAuditEvent(ctx, tenantID, iam.AuditEventPolicyChange, iam.AuditCategoryAdministration, "repair_update", iam.AuditOutcomeSuccess,
+			&iam.AuditResource{Type: "policy", Name: policyName}, map[string]interface{}{"held_tenant": true})
+	}
 
 	// Answer with what was stored, not the caller's input.
 	updated, err := engine.GetPolicy(ctx, tenantID, policyName)
@@ -414,7 +418,7 @@ func (h *IAMHandler) DeletePolicy(w http.ResponseWriter, r *http.Request) {
 			NewIAMAPIError(ErrBadRequest, "tenant ID is required"))
 		return
 	}
-	ctx, tenantID, ok := h.server.urlTenant(w, r, "rest.IAM", "tenant_id")
+	ctx, tenantID, repair, ok := h.server.policyRepairTenant(w, r, "rest.IAM", "tenant_id")
 	if !ok {
 		return
 	}
@@ -451,6 +455,10 @@ func (h *IAMHandler) DeletePolicy(w http.ResponseWriter, r *http.Request) {
 	if err := engine.DeletePolicy(ctx, tenantID, policyName); err != nil {
 		h.server.handleServiceError(w, r, err)
 		return
+	}
+	if repair {
+		h.logAuditEvent(ctx, tenantID, iam.AuditEventPolicyChange, iam.AuditCategoryAdministration, "repair_delete", iam.AuditOutcomeSuccess,
+			&iam.AuditResource{Type: "policy", Name: policyName}, map[string]interface{}{"held_tenant": true})
 	}
 
 	RespondNoContent(w, r)

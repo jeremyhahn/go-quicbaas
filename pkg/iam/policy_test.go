@@ -15,11 +15,16 @@ package iam
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
 	dberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 // mockPolicyStorage implements PolicyStorage for testing.
@@ -622,6 +627,203 @@ func TestPolicyEngine_DeletePolicy(t *testing.T) {
 			}
 		})
 	}
+}
+
+// snapshotPolicyStorage is a mockPolicyStorage that implements
+// PolicyWriteSnapshotter and counts its snapshots and restores.
+type snapshotPolicyStorage struct {
+	*mockPolicyStorage
+	snapshotErr error
+	snapshots   int
+	restores    int
+}
+
+func (s *snapshotPolicyStorage) SnapshotPolicy(_ context.Context, _, _ string, _ *Policy) (func(context.Context) error, error) {
+	if s.snapshotErr != nil {
+		return nil, s.snapshotErr
+	}
+	s.snapshots++
+	return func(context.Context) error {
+		s.restores++
+		return nil
+	}, nil
+}
+
+// snapshotTestABACSync is an ABACSync that returns err.
+type snapshotTestABACSync struct{ err error }
+
+func (s snapshotTestABACSync) Sync(context.Context) error { return s.err }
+
+func TestPolicyEngine_WriteSnapshotter(t *testing.T) {
+	ctx := context.Background()
+	syncErr := errors.New("sync failed")
+	writeErr := errors.New("write failed")
+	snapErr := errors.New("snapshot failed")
+
+	setup := func(t *testing.T, syncResult error) (*snapshotPolicyStorage, *PolicyEngine) {
+		t.Helper()
+		storage := &snapshotPolicyStorage{mockPolicyStorage: newMockPolicyStorage()}
+		require.NoError(t, storage.CreatePolicy(ctx, "tenant1", createTestPolicy("tenant1", "p")))
+		engine := NewPolicyEngine(PolicyEngineOptions{Storage: storage, ABACSync: snapshotTestABACSync{err: syncResult}})
+		return storage, engine
+	}
+	update := func(e *PolicyEngine) error {
+		return e.UpdatePolicy(ctx, "tenant1", createTestPolicy("tenant1", "p"))
+	}
+	del := func(e *PolicyEngine) error { return e.DeletePolicy(ctx, "tenant1", "p") }
+
+	for name, write := range map[string]func(*PolicyEngine) error{"update": update, "delete": del} {
+		t.Run(name+" sync failure restores once", func(t *testing.T) {
+			storage, engine := setup(t, syncErr)
+			err := write(engine)
+			assert.ErrorIs(t, err, syncErr)
+			assert.Equal(t, 1, storage.snapshots)
+			assert.Equal(t, 1, storage.restores)
+		})
+		t.Run(name+" storage write error restores once", func(t *testing.T) {
+			storage, engine := setup(t, nil)
+			storage.updateError = writeErr
+			storage.deleteError = writeErr
+			err := write(engine)
+			assert.ErrorIs(t, err, writeErr)
+			assert.Equal(t, 1, storage.restores)
+		})
+		t.Run(name+" snapshot error writes nothing", func(t *testing.T) {
+			storage, engine := setup(t, nil)
+			storage.snapshotErr = snapErr
+			err := write(engine)
+			assert.ErrorIs(t, err, snapErr)
+			assert.Equal(t, 0, storage.restores)
+			got, err := storage.GetPolicy(ctx, "tenant1", "p")
+			require.NoError(t, err)
+			assert.NotNil(t, got)
+		})
+	}
+}
+
+// writeCountingPolicyStorage counts the creates and deletes that reach storage.
+type writeCountingPolicyStorage struct {
+	*snapshotPolicyStorage
+	creates int
+	deletes int
+}
+
+func (s *writeCountingPolicyStorage) CreatePolicy(ctx context.Context, tenantID string, policy *Policy) error {
+	s.creates++
+	return s.mockPolicyStorage.CreatePolicy(ctx, tenantID, policy)
+}
+
+func (s *writeCountingPolicyStorage) DeletePolicy(ctx context.Context, tenantID, name string) error {
+	s.deletes++
+	return s.mockPolicyStorage.DeletePolicy(ctx, tenantID, name)
+}
+
+func TestPolicyEngine_CreateRefusesUndecodableExisting(t *testing.T) {
+	storage := &writeCountingPolicyStorage{snapshotPolicyStorage: &snapshotPolicyStorage{mockPolicyStorage: newMockPolicyStorage()}}
+	storage.getError = &StoredPolicyDecodeError{TenantID: "tenant1", Name: "p", Reason: "bad json"}
+	engine := NewPolicyEngine(PolicyEngineOptions{Storage: storage})
+
+	err := engine.CreatePolicy(context.Background(), "tenant1", createTestPolicy("tenant1", "p"))
+	var exists *PolicyExistsError
+	require.ErrorAs(t, err, &exists)
+	assert.Equal(t, 0, storage.creates)
+	assert.Equal(t, 0, storage.snapshots)
+}
+
+func TestPolicyEngine_CreatePropagatesLookupError(t *testing.T) {
+	lookupErr := errors.New("catalog read failed")
+	storage := &writeCountingPolicyStorage{snapshotPolicyStorage: &snapshotPolicyStorage{mockPolicyStorage: newMockPolicyStorage()}}
+	storage.getError = lookupErr
+	engine := NewPolicyEngine(PolicyEngineOptions{Storage: storage})
+
+	err := engine.CreatePolicy(context.Background(), "tenant1", createTestPolicy("tenant1", "p"))
+	assert.ErrorIs(t, err, lookupErr)
+	assert.Equal(t, 0, storage.creates)
+	assert.Equal(t, 0, storage.deletes)
+	assert.Equal(t, 0, storage.snapshots)
+}
+
+// revertCountingPolicyStorage is a writeCountingPolicyStorage that implements
+// PolicyCreateReverter and counts its reverts.
+type revertCountingPolicyStorage struct {
+	*writeCountingPolicyStorage
+	reverts int
+}
+
+func (s *revertCountingPolicyStorage) RevertCreatedPolicy(ctx context.Context, tenantID string, policy *Policy) error {
+	s.reverts++
+	return s.mockPolicyStorage.DeletePolicy(ctx, tenantID, policy.Metadata.Name)
+}
+
+func newRevertCountingPolicyStorage() *revertCountingPolicyStorage {
+	return &revertCountingPolicyStorage{writeCountingPolicyStorage: &writeCountingPolicyStorage{
+		snapshotPolicyStorage: &snapshotPolicyStorage{mockPolicyStorage: newMockPolicyStorage()},
+	}}
+}
+
+func TestPolicyEngine_RejectedCreateRevertsOwnRecord(t *testing.T) {
+	syncErr := errors.New("sync failed")
+	storage := newRevertCountingPolicyStorage()
+	engine := NewPolicyEngine(PolicyEngineOptions{Storage: storage, ABACSync: snapshotTestABACSync{err: syncErr}})
+
+	err := engine.CreatePolicy(context.Background(), "tenant1", createTestPolicy("tenant1", "p"))
+	assert.ErrorIs(t, err, syncErr)
+	assert.Equal(t, 1, storage.creates)
+	assert.Equal(t, 1, storage.reverts)
+	assert.Equal(t, 0, storage.snapshots, "a create takes no snapshot")
+	assert.Equal(t, 0, storage.restores)
+	assert.Equal(t, 0, storage.deletes, "a rejected create reverts its own record, never deletes")
+}
+
+func TestPolicyEngine_CreateRefusedByStorageNeverCompensates(t *testing.T) {
+	// Another node created the name between the engine's lookup and its write.
+	storage := newRevertCountingPolicyStorage()
+	storage.getError = &dberrors.QBError{Code: dberrors.ErrNotFound, Op: "test.get"}
+	storage.createError = ErrAlreadyExists
+	engine := NewPolicyEngine(PolicyEngineOptions{Storage: storage, ABACSync: snapshotTestABACSync{}})
+
+	err := engine.CreatePolicy(context.Background(), "tenant1", createTestPolicy("tenant1", "p"))
+	assert.ErrorIs(t, err, ErrAlreadyExists)
+	assert.Equal(t, 1, storage.creates)
+	assert.Equal(t, 0, storage.deletes)
+	assert.Equal(t, 0, storage.snapshots)
+	assert.Equal(t, 0, storage.restores)
+	assert.Equal(t, 0, storage.reverts)
+}
+
+// overwritingABACSync fails after another writer replaces key with value.
+type overwritingABACSync struct {
+	kv interface {
+		Put(context.Context, string, []byte) error
+	}
+	key   string
+	value []byte
+	err   error
+}
+
+func (s overwritingABACSync) Sync(ctx context.Context) error {
+	if err := s.kv.Put(ctx, s.key, s.value); err != nil {
+		return err
+	}
+	return s.err
+}
+
+func TestPolicyEngine_RejectedCreateKeepsAnotherWritersRecord(t *testing.T) {
+	ctx := context.Background()
+	syncErr := errors.New("sync failed")
+	kv := newNotFoundMemoryKV()
+	key := policyKey("tenant1", "p")
+	other := []byte(`{"other":"writer"}`)
+	engine := NewPolicyEngine(PolicyEngineOptions{
+		Storage:  NewBackendStorage(kv),
+		ABACSync: overwritingABACSync{kv: kv, key: key, value: other, err: syncErr},
+	})
+
+	err := engine.CreatePolicy(ctx, "tenant1", createTestPolicy("tenant1", "p"))
+	assert.ErrorIs(t, err, syncErr)
+	got, err := kv.Get(ctx, key)
+	require.NoError(t, err)
+	assert.Equal(t, other, got, "a rejected create must keep another writer's record")
 }
 
 func TestPolicyEngine_ListPolicies(t *testing.T) {
@@ -1245,4 +1447,203 @@ func TestPolicyEngine_CacheInvalidation(t *testing.T) {
 	if len(policies) > 0 {
 		t.Errorf("expected cache to be invalidated after delete, got %d policies", len(policies))
 	}
+}
+
+// testPolicyRepair is a PolicyRepair with a fixed held answer and compile
+// result; it counts its compiles.
+type testPolicyRepair struct {
+	held       bool
+	compileErr error
+	compiles   int
+}
+
+func (r *testPolicyRepair) TenantHeld(string) bool { return r.held }
+
+func (r *testPolicyRepair) CompilePolicy(*Policy) error {
+	r.compiles++
+	return r.compileErr
+}
+
+func TestPolicyEngine_HeldTenantRepair(t *testing.T) {
+	ctx := context.Background()
+	syncErr := errors.New("sync failed")
+	compileErr := errors.New("empty expression")
+	repairCtx := tenantctx.WithPolicyRepair(ctx, "tenant1")
+
+	setup := func(t *testing.T, repair PolicyRepair) (*snapshotPolicyStorage, *PolicyEngine) {
+		t.Helper()
+		storage := &snapshotPolicyStorage{mockPolicyStorage: newMockPolicyStorage()}
+		require.NoError(t, storage.CreatePolicy(ctx, "tenant1", createTestPolicy("tenant1", "p")))
+		engine := NewPolicyEngine(PolicyEngineOptions{Storage: storage, ABACSync: snapshotTestABACSync{err: syncErr}, Repair: repair})
+		return storage, engine
+	}
+	repaired := func() *Policy {
+		p := createTestPolicy("tenant1", "p")
+		p.Metadata.Description = "repaired"
+		return p
+	}
+
+	t.Run("a repair update is kept when the sync fails", func(t *testing.T) {
+		repair := &testPolicyRepair{held: true}
+		storage, engine := setup(t, repair)
+		require.NoError(t, engine.UpdatePolicy(repairCtx, "tenant1", repaired()))
+		assert.Equal(t, 1, repair.compiles)
+		assert.Equal(t, 0, storage.restores)
+		got, err := storage.GetPolicy(ctx, "tenant1", "p")
+		require.NoError(t, err)
+		require.NotNil(t, got)
+		assert.Equal(t, "repaired", got.Metadata.Description)
+	})
+
+	t.Run("a repair delete is kept when the sync fails", func(t *testing.T) {
+		repair := &testPolicyRepair{held: true}
+		storage, engine := setup(t, repair)
+		require.NoError(t, engine.DeletePolicy(repairCtx, "tenant1", "p"))
+		assert.Equal(t, 0, storage.restores)
+		_, stored := storage.policies["tenant1"]["p"]
+		assert.False(t, stored, "the deleted policy stays deleted")
+	})
+
+	t.Run("a repair update that does not compile writes nothing", func(t *testing.T) {
+		repair := &testPolicyRepair{held: true, compileErr: compileErr}
+		storage, engine := setup(t, repair)
+		err := engine.UpdatePolicy(repairCtx, "tenant1", repaired())
+		var invalid *InvalidPolicyError
+		require.True(t, errors.As(err, &invalid), "err = %v", err)
+		assert.Contains(t, invalid.Reason, "empty expression")
+		assert.Equal(t, 0, storage.snapshots)
+		assert.Equal(t, 0, storage.restores)
+		got, err := storage.GetPolicy(ctx, "tenant1", "p")
+		require.NoError(t, err)
+		require.NotNil(t, got)
+		assert.NotEqual(t, "repaired", got.Metadata.Description)
+	})
+
+	otherTenantCtx := tenantctx.WithPolicyRepair(ctx, "tenant2")
+	strict := map[string]struct {
+		ctx    context.Context
+		repair PolicyRepair
+	}{
+		"a tenant that is no longer held": {ctx: repairCtx, repair: &testPolicyRepair{}},
+		"no repair mark":                  {ctx: ctx, repair: &testPolicyRepair{held: true}},
+		"a mark for another tenant":       {ctx: otherTenantCtx, repair: &testPolicyRepair{held: true}},
+		"no PolicyRepair wired":           {ctx: repairCtx, repair: nil},
+	}
+	for name, tc := range strict {
+		t.Run(name+": update is rejected by a failed sync", func(t *testing.T) {
+			storage, engine := setup(t, tc.repair)
+			err := engine.UpdatePolicy(tc.ctx, "tenant1", repaired())
+			assert.ErrorIs(t, err, syncErr)
+			assert.Equal(t, 1, storage.restores)
+			if r, ok := tc.repair.(*testPolicyRepair); ok {
+				assert.Equal(t, 0, r.compiles, "a strict write is not compiled as a repair")
+			}
+		})
+		t.Run(name+": delete is rejected by a failed sync", func(t *testing.T) {
+			storage, engine := setup(t, tc.repair)
+			err := engine.DeletePolicy(tc.ctx, "tenant1", "p")
+			assert.ErrorIs(t, err, syncErr)
+			assert.Equal(t, 1, storage.restores)
+		})
+	}
+}
+
+// switchABACSync is an ABACSync whose result the test sets between calls.
+type switchABACSync struct{ err error }
+
+func (s *switchABACSync) Sync(context.Context) error { return s.err }
+
+// restoringPolicyStorage is a snapshotPolicyStorage whose restore also puts
+// the snapshotted record back, so a test can read what a rejected write left
+// stored.
+type restoringPolicyStorage struct{ *snapshotPolicyStorage }
+
+func (s *restoringPolicyStorage) SnapshotPolicy(ctx context.Context, tenantID, name string, next *Policy) (func(context.Context) error, error) {
+	counted, err := s.snapshotPolicyStorage.SnapshotPolicy(ctx, tenantID, name, next)
+	if err != nil {
+		return nil, err
+	}
+	s.mu.RLock()
+	prev, had := s.policies[tenantID][name]
+	s.mu.RUnlock()
+	return func(ctx context.Context) error {
+		s.mu.Lock()
+		if had {
+			s.policies[tenantID][name] = prev
+		} else {
+			delete(s.policies[tenantID], name)
+		}
+		s.mu.Unlock()
+		return counted(ctx)
+	}, nil
+}
+
+// A repair that starts after the tenant's unseal check has loaded its whole
+// policy set is a strict write, although the tenant is still held until the
+// unseal releases it: a failed sync rejects it, so no policy change is
+// acknowledged that the live authorizer never loaded.
+func TestPolicyEngine_RepairAfterUnsealCheckLoadedIsStrict(t *testing.T) {
+	ctx := context.Background()
+	syncErr := errors.New("sync failed")
+	repairCtx := tenantctx.WithPolicyRepair(ctx, "tenant1")
+
+	setup := func(t *testing.T) (*snapshotPolicyStorage, *switchABACSync, *PolicyEngine) {
+		t.Helper()
+		storage := &snapshotPolicyStorage{mockPolicyStorage: newMockPolicyStorage()}
+		require.NoError(t, storage.CreatePolicy(ctx, "tenant1", createTestPolicy("tenant1", "p")))
+		sync := &switchABACSync{}
+		engine := NewPolicyEngine(PolicyEngineOptions{Storage: &restoringPolicyStorage{storage}, ABACSync: sync, Repair: &testPolicyRepair{held: true}})
+		return storage, sync, engine
+	}
+	repaired := func() *Policy {
+		p := createTestPolicy("tenant1", "p")
+		p.Metadata.Description = "repaired"
+		return p
+	}
+
+	t.Run("an update between the check and the release is rejected by a failed sync", func(t *testing.T) {
+		storage, sync, engine := setup(t)
+		prepared := false
+		require.NoError(t, engine.SyncABACAtUnseal(ctx, "tenant1", func(context.Context) { prepared = true }))
+		assert.True(t, prepared, "prepare runs before the reload")
+		sync.err = syncErr
+		err := engine.UpdatePolicy(repairCtx, "tenant1", repaired())
+		assert.ErrorIs(t, err, syncErr)
+		assert.Equal(t, 1, storage.restores)
+		got, err := storage.GetPolicy(ctx, "tenant1", "p")
+		require.NoError(t, err)
+		require.NotNil(t, got)
+		assert.NotEqual(t, "repaired", got.Metadata.Description)
+	})
+
+	t.Run("a delete between the check and the release is rejected by a failed sync", func(t *testing.T) {
+		storage, sync, engine := setup(t)
+		require.NoError(t, engine.SyncABACAtUnseal(ctx, "tenant1", nil))
+		sync.err = syncErr
+		assert.ErrorIs(t, engine.DeletePolicy(repairCtx, "tenant1", "p"), syncErr)
+		assert.Equal(t, 1, storage.restores)
+		_, stored := storage.policies["tenant1"]["p"]
+		assert.True(t, stored, "the deleted policy is put back")
+	})
+
+	t.Run("another tenant's check does not end the exception", func(t *testing.T) {
+		storage, sync, engine := setup(t)
+		require.NoError(t, engine.SyncABACAtUnseal(ctx, "tenant2", nil))
+		sync.err = syncErr
+		require.NoError(t, engine.UpdatePolicy(repairCtx, "tenant1", repaired()))
+		assert.Equal(t, 0, storage.restores)
+	})
+
+	t.Run("a failed check opens the exception again", func(t *testing.T) {
+		storage, sync, engine := setup(t)
+		require.NoError(t, engine.SyncABACAtUnseal(ctx, "tenant1", nil))
+		sync.err = syncErr
+		assert.ErrorIs(t, engine.SyncABACAtUnseal(ctx, "tenant1", nil), syncErr)
+		require.NoError(t, engine.UpdatePolicy(repairCtx, "tenant1", repaired()))
+		assert.Equal(t, 0, storage.restores)
+		got, err := storage.GetPolicy(ctx, "tenant1", "p")
+		require.NoError(t, err)
+		require.NotNil(t, got)
+		assert.Equal(t, "repaired", got.Metadata.Description)
+	})
 }

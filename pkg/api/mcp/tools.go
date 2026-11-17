@@ -84,6 +84,12 @@ type ToolRegistry struct {
 	// embedded-node proxy; nil during early boot and unit tests, in which
 	// case those tools return UserAuthFactorServiceUnavailableError.
 	userAuthFactorSvc qrdbsdk.UserAuthFactorServicer
+
+	// roleAssignAuthz decides roles:assign for the quicbaas_iam_user_create
+	// and quicbaas_iam_user_update tools when they carry roles. Wired
+	// post-construction via SetRoleAssignmentAuthorizer; nil during early boot
+	// and unit tests, in which case a role-bearing call is refused.
+	roleAssignAuthz func() qrdbsdk.Authorizer
 }
 
 // ToolDefinition describes an MCP tool.

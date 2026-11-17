@@ -134,12 +134,13 @@ func (s *Server) buildRESTServer() (*restapi.Server, error) {
 
 	// Create REST server configuration
 	restConfig := &restapi.Config{
-		Address:        fmt.Sprintf("%s:%d", s.config.Server.ResolveBindHost(s.config.Server.REST.BindAddress), s.config.Server.REST.Port),
-		ReadTimeout:    s.config.Server.ReadTimeout,
-		WriteTimeout:   s.config.Server.WriteTimeout,
-		IdleTimeout:    s.config.Server.IdleTimeout,
-		MaxHeaderBytes: 1 << 20, // 1 MB
-		MaxConnections: s.config.Server.MaxConnections,
+		Address:         fmt.Sprintf("%s:%d", s.config.Server.ResolveBindHost(s.config.Server.REST.BindAddress), s.config.Server.REST.Port),
+		TenantAdmission: s.tenantUnsealHooks.Admit,
+		ReadTimeout:     s.config.Server.ReadTimeout,
+		WriteTimeout:    s.config.Server.WriteTimeout,
+		IdleTimeout:     s.config.Server.IdleTimeout,
+		MaxHeaderBytes:  1 << 20, // 1 MB
+		MaxConnections:  s.config.Server.MaxConnections,
 		// RequestTimeout is the maximum time a handler may run before the
 		// middleware cancels its context. It must be less than WriteTimeout
 		// so the server can still flush the timeout response to the client.

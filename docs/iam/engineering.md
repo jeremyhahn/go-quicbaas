@@ -1745,8 +1745,23 @@ registration must prove.
 **`any` never applies to an administrative account.** An account holding `Admin`
 or `SO` is always required to prove hardware, so loosening the tenant policy
 cannot loosen the control that guards the platform. A registrant the server
-cannot identify — including one whose account does not exist yet, which is the
-case during self-service registration — is held to the administrator bar.
+cannot identify is held to the administrator bar.
+
+Self-service registration grants the registrant's roles, `Admin` included, to
+the pending account before the ceremony opens, so the ceremony holds the
+registrant to the administrator bar.
+
+An unfinished registration records its expiry on its tenant
+(`iam.Tenant.SelfRegistration`), not on the account. Only the broker writes
+that record: begin sets it, and finish removes it. No transport maps it, so a
+caller who may update a user or a tenant cannot forge one. A session's own timer
+discards it when the session expires unfinished. A restart loses that timer, so
+at startup the server discards every recorded registration already past its
+expiry. It arms a timer for each one that has not expired yet, and that timer
+discards the registration when it expires. Shutdown cancels the armed timers.
+A tenant is discarded only while it holds nothing but the registrant's pending
+account. A tenant holding more is reported and kept
+(`SelfRegistrationTenantInUseError`).
 
 `insecure-allow-software-administrators` is the one policy that lets a software
 authenticator become an administrator credential. It exists because our own
@@ -2375,16 +2390,38 @@ grants it only once. Each role is looked up by name in the tenant and assigned
 by its role ID, because `User.Roles` holds IDs and the administrator check
 compares IDs. Granting a role the user already holds succeeds without a change.
 
-**Fail-closed.** Registration does not continue unless every grant succeeds. If
-a role cannot be resolved or assigned, finish answers 500 and returns no token
-or session. The new account is deleted on a context detached from the request,
-so a client disconnect cannot leave an account behind that blocks a retry. If
-that deletion fails too, its error is joined to the grant error in the server
-log. The tenant the ceremony created is not removed.
+**Who creates the account.** The broker creates it, and the WebAuthn ceremony
+only binds a credential to it (go-quicbaas#482). go-xkms is always configured
+with `AllowPublicRegistration` set to `false`, on quicbaas's own relying party
+and on the composed xkms module's, so a ceremony never creates an account.
 
-**Status.** go-quicbaas#482 still blocks the flow end to end: who owns account
-creation during self-registration (quicbaas or qrdb's registration primitive)
-is undecided, so the flow is not supported for production use yet.
+1. **Begin** validates the request and derives the tenant ID. It then creates
+   the tenant and a **pending** account in it. The account's username is a
+   handle derived from the email, and its only auth method is `webauthn`.
+   Finally it opens the ceremony through the invite path
+   (`BeginInviteRegistration`). That path enrols only an existing pending
+   account that holds no credential.
+2. **Finish** takes the session, which spends it whatever the outcome. It
+   binds the credential (`FinishInviteRegistration`) and grants the roles.
+   If neither `require_admin_approval` nor `require_email_verification` is
+   set, it moves the account from pending to active and issues tokens.
+   Otherwise the account stays pending.
+
+**Fail-closed.** A registration that does not complete leaves no tenant and no
+account behind. If begin fails after creating the tenant, or a finish is
+refused (bad attestation, a failed role grant, a failed activation), both are
+deleted: the account first, then the tenant. A session that expires
+unfinished (after 5 minutes) is discarded the same way, either by its expiry
+timer or by a late finish, whichever reaches it first. The deletion runs on a
+context detached from the request, so a client disconnect cannot strand a
+half-provisioned tenant. A deletion that fails is logged; the registrant gets
+the error that caused the deletion. A refused finish answers no token or
+session, and its session cannot be replayed.
+
+**Known limit.** qrdb enforces email uniqueness within one tenant only. Each
+registration creates a new tenant, so an email that already has an account in
+another tenant is not refused. Refusing it needs a lookup across tenants that
+go-qrdb does not yet expose.
 
 ---
 

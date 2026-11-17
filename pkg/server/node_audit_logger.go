@@ -15,6 +15,7 @@ package server
 
 import (
 	"context"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -62,23 +63,22 @@ func NewNodeAuditLogger(sink qrdbsdk.NodeAuditLogger) *NodeAuditLogger {
 // Compile-time interface check.
 var _ iam.AuditLogger = (*NodeAuditLogger)(nil)
 
-// Log synchronously emits event onto the node's audit chain.
+// Log synchronously emits event onto the node's audit chain. It returns the
+// sink's *qrdbsdk.NodeAuditWriteError when the event was not recorded.
 func (l *NodeAuditLogger) Log(ctx context.Context, event *iam.AuditEvent) error {
 	if event == nil {
 		return &NilAuditEventError{}
 	}
 	stampAuditEvent(event)
-	// Emit is documented non-blocking and best-effort, so its error is not
-	// the caller's to act on and Log has always returned nil here. Discarding
-	// it explicitly says that is deliberate. Whether Log should surface it
-	// instead is a contract question, not a lint fix.
-	_ = l.sink.Emit(ctx, toNodeAuditEvent(event))
-	return nil
+	// The record is part of the decision the caller is making, so a sink
+	// that did not reach its durability boundary fails the call closed
+	// (*qrdbsdk.NodeAuditWriteError) rather than letting it proceed unrecorded.
+	return l.sink.Emit(ctx, toNodeAuditEvent(event))
 }
 
 // LogAsync emits event onto the node's audit chain without blocking the
-// caller. The qrdbsdk.NodeAuditLogger.Emit contract is itself documented
-// non-blocking and best-effort, so no additional goroutine indirection is
+// caller. It is best-effort: a write the sink refuses is logged, not returned.
+// The qrdbsdk.NodeAuditLogger.Emit contract is itself non-blocking, so no additional goroutine indirection is
 // needed here — unlike the retired DefaultAuditLogger, which needed its own
 // async channel because its synchronous Log wrote through to a KV store.
 func (l *NodeAuditLogger) LogAsync(event *iam.AuditEvent) {
@@ -86,8 +86,13 @@ func (l *NodeAuditLogger) LogAsync(event *iam.AuditEvent) {
 		return
 	}
 	stampAuditEvent(event)
-	// Best-effort by contract, and LogAsync has no way to report anyway.
-	_ = l.sink.Emit(context.Background(), toNodeAuditEvent(event))
+	// Best-effort by contract: LogAsync has no caller to report to, so a
+	// refused write is logged and the operation it records carries on.
+	if err := l.sink.Emit(context.Background(), toNodeAuditEvent(event)); err != nil {
+		slog.Warn("audit event not recorded",
+			slog.String("action", event.Action),
+			slog.String("error", err.Error()))
+	}
 }
 
 // stampAuditEvent assigns event's ID and Timestamp when unset, mirroring

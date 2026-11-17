@@ -30,7 +30,7 @@ import (
 // party must agree with the issuer/banner host and port.
 func TestWebauthnFactoryConfigFromOperator_DerivesFromIssuer(t *testing.T) {
 	got, err := webauthnFactoryConfigFromOperator(
-		config.IAMWebAuthnConfig{}, "localhost", "https://localhost:18080", true)
+		config.IAMWebAuthnConfig{}, "localhost", "https://localhost:18080")
 	if err != nil {
 		t.Fatalf("an empty operator section derives its identity and must resolve: %v", err)
 	}
@@ -62,7 +62,7 @@ func TestWebauthnFactoryConfigFromOperator_PreservesOperatorValues(t *testing.T)
 		AuthenticatorAttachment: "platform",
 		Debug:                   true,
 	}
-	got, err := webauthnFactoryConfigFromOperator(op, "localhost", "https://localhost:18080", true)
+	got, err := webauthnFactoryConfigFromOperator(op, "localhost", "https://localhost:18080")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -97,7 +97,7 @@ func TestWebauthnFactoryConfigFromOperator_InvalidTimeoutRejected(t *testing.T) 
 		RPOrigins:     []string{"https://example.com"},
 		Timeout:       "not-a-duration",
 	}
-	_, err := webauthnFactoryConfigFromOperator(op, "localhost", "https://localhost:18080", true)
+	_, err := webauthnFactoryConfigFromOperator(op, "localhost", "https://localhost:18080")
 	var cve *config.ConfigValidationError
 	if !errors.As(err, &cve) {
 		t.Fatalf("expected *config.ConfigValidationError, got %T: %v", err, err)
@@ -118,7 +118,7 @@ func TestWebauthnFactoryConfigFromOperator_OriginSliceIsCopied(t *testing.T) {
 		RPDisplayName: "Example",
 		RPOrigins:     origins,
 	}
-	got, err := webauthnFactoryConfigFromOperator(op, "localhost", "https://localhost:18080", true)
+	got, err := webauthnFactoryConfigFromOperator(op, "localhost", "https://localhost:18080")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -292,7 +292,7 @@ func TestWebauthnConfig_ThreeValuesAgree(t *testing.T) {
 	if err != nil {
 		t.Fatalf("derivation failed for stock issuer %q: %v", issuer, err)
 	}
-	wa, err := webauthnFactoryConfigFromOperator(cfg.IAM.WebAuthn, rpID, rpOrigin, true)
+	wa, err := webauthnFactoryConfigFromOperator(cfg.IAM.WebAuthn, rpID, rpOrigin)
 	if err != nil {
 		t.Fatalf("resolving the stock dev config failed: %v", err)
 	}
@@ -348,7 +348,7 @@ func TestWebauthnFactoryConfigFromOperator_FailsClosedOnUnresolvableIdentity(t *
 		t.Run(tc.name, func(t *testing.T) {
 			// Empty issuer defaults are what webauthnDefaultsFromIssuer returns
 			// alongside a WebAuthnRPIDFromIPError.
-			_, err := webauthnFactoryConfigFromOperator(tc.op, "", "", true)
+			_, err := webauthnFactoryConfigFromOperator(tc.op, "", "")
 			var cve *config.ConfigValidationError
 			if !errors.As(err, &cve) {
 				t.Fatalf("expected *config.ConfigValidationError, got %T: %v", err, err)
@@ -370,7 +370,7 @@ func TestWebauthnFactoryConfigFromOperator_RejectsMalformedOperatorOrigin(t *tes
 		RPDisplayName: "Example",
 		RPOrigins:     []string{"https://app.example.com", "https://"},
 	}
-	_, err := webauthnFactoryConfigFromOperator(op, "localhost", "https://localhost:18080", true)
+	_, err := webauthnFactoryConfigFromOperator(op, "localhost", "https://localhost:18080")
 	var cve *config.ConfigValidationError
 	if !errors.As(err, &cve) {
 		t.Fatalf("expected *config.ConfigValidationError, got %T: %v", err, err)
@@ -399,12 +399,12 @@ func TestWebauthnFactoryConfigFromOperator_ShippedIntegrationShapeResolves(t *te
 		AttestationPreference: "none",
 		UserVerification:      "discouraged",
 	}
-	if _, err := webauthnFactoryConfigFromOperator(explicit, "localhost", "https://localhost:8080", true); err != nil {
+	if _, err := webauthnFactoryConfigFromOperator(explicit, "localhost", "https://localhost:8080"); err != nil {
 		t.Fatalf("the integration fixture's WebAuthn block must resolve: %v", err)
 	}
 
 	derivedOnly, err := webauthnFactoryConfigFromOperator(
-		config.IAMWebAuthnConfig{}, "localhost", "https://localhost:8080", true)
+		config.IAMWebAuthnConfig{}, "localhost", "https://localhost:8080")
 	if err != nil {
 		t.Fatalf("the derive-everything shape must resolve: %v", err)
 	}

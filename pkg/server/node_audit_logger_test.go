@@ -63,6 +63,48 @@ func TestNodeAuditLogger_LogAsync_NilEventIsNoop(t *testing.T) {
 	l.LogAsync(nil)
 }
 
+// refusingAuditSink is a real ring-buffer sink whose Emit reports that the
+// event never reached its durability boundary, the way a failing chain file
+// does.
+type refusingAuditSink struct {
+	qrdbsdk.NodeAuditLogger
+	emits int
+}
+
+func (s *refusingAuditSink) Emit(context.Context, qrdbsdk.NodeAuditEvent) error {
+	s.emits++
+	return &qrdbsdk.NodeAuditWriteError{Backend: "refusing-test-sink", Err: &diskFullError{}}
+}
+
+// diskFullError is the backend cause the refusing sink reports.
+type diskFullError struct{}
+
+func (*diskFullError) Error() string { return "no space left on device" }
+
+func newRefusingAuditSink() *refusingAuditSink {
+	return &refusingAuditSink{NodeAuditLogger: qrdbsdk.NewAuditRingBuffer(10)}
+}
+
+func TestNodeAuditLogger_Log_PropagatesSinkWriteError(t *testing.T) {
+	sink := newRefusingAuditSink()
+	l := NewNodeAuditLogger(sink)
+
+	err := l.Log(context.Background(), &iam.AuditEvent{Action: "login"})
+
+	var writeErr *qrdbsdk.NodeAuditWriteError
+	require.ErrorAs(t, err, &writeErr)
+	assert.Equal(t, "refusing-test-sink", writeErr.Backend)
+	assert.Equal(t, 1, sink.emits)
+}
+
+func TestNodeAuditLogger_LogAsync_SinkWriteErrorIsBestEffort(t *testing.T) {
+	sink := newRefusingAuditSink()
+	l := NewNodeAuditLogger(sink)
+
+	assert.NotPanics(t, func() { l.LogAsync(&iam.AuditEvent{Action: "login"}) })
+	assert.Equal(t, 1, sink.emits, "LogAsync must still attempt the sink")
+}
+
 // TestNodeAuditLogger_RoundTrip proves an event emitted via LogAsync
 // round-trips through Query with every field (including the fields bucketed
 // into Attributes — P3 Option B) intact.

@@ -127,20 +127,14 @@ func validateUsername(username string) error {
 
 // validateDisplayName rejects a display name shaped like an email address.
 //
-// The guard is load-bearing because the qrdb username is DERIVED from Name
-// (iam.User.LoginName), and a login ceremony's subject is that username. An
-// email-shaped Name therefore lets a principal present a subject that
-// resolveSubject — seeing an email shape — resolves through the EMAIL index, to
-// a different account. The holder of that name authenticates honestly with their
-// own factor and is handed somebody else's id and roles.
-//
-// The disjoint-shape rule in resolveSubject is what makes the two indexes safe
-// to consult, and it only works if the shapes really are disjoint: qrdb usernames
-// cannot contain "@" (validateUsername's charset), so barring the shape here is
-// the other half of that guarantee. It was briefly removed on the reasoning that
-// deriving the username from the canonical email made it unnecessary — true of
-// that derivation, but the derivation was reverted (a username has to stay the
-// name an administrator types), and the guard has to come back with it.
+// This is an input-hygiene rule, not the account-takeover guard it once was. The
+// qrdb username is derived from Name (iam.User.LoginName), and while a login
+// subject could resolve through either the username or the email index, an
+// email-shaped name let its holder resolve as another user's account. Email is
+// now the only subject login key (go-quicbaas#377): resolveSubject has no
+// username branch, so that collision cannot be expressed. The rule stays
+// because a username is the handle an administrator types for RBAC, and a handle
+// that looks like someone else's email misleads whoever reads or types it.
 func validateDisplayName(name string) error {
 	if validateEmail(strings.TrimSpace(name)) == nil {
 		return fieldValidationError("name", "display name must not be an email address")

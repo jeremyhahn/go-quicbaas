@@ -54,7 +54,7 @@ func (s *Server) BindRoute(spec RouteSpec) http.Handler {
 		h = BodyLimitMiddleware(s.config.MaxUploadBodySize)(h)
 	}
 
-	h = s.projectQRDBIdentity(h)
+	h = s.projectQRDBIdentity(h, !spec.TenantRecovery)
 
 	// The global limiter: the SAME instance setupRouter installs, so a
 	// client's budget spans core and module routes rather than doubling
@@ -96,7 +96,10 @@ func (s *Server) RouteEnabled(spec RouteSpec) bool {
 // (auth_support.go) see the SAME nil they already tolerate for an upstream
 // mTLS-authenticated qrdb identity today — this is not a new code path,
 // only the single path every caller now takes.
-func (s *Server) projectQRDBIdentity(next http.Handler) http.Handler {
+//
+// admit false skips the unseal admission for a tenant barrier recovery
+// route (RouteSpec.TenantRecovery), so a held tenant can retry its unseal.
+func (s *Server) projectQRDBIdentity(next http.Handler, admit bool) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		identity := qrdbsdk.IdentityFromContext(r.Context())
 		if identity == nil {
@@ -114,6 +117,9 @@ func (s *Server) projectQRDBIdentity(next http.Handler) http.Handler {
 		// user ID or a username, which an mTLS caller and a bearer caller
 		// cannot otherwise be told apart by.
 		subject := auth.SubjectFromIdentity(identity)
+		if admit && !s.admitTenant(w, r, subject.TenantID) {
+			return
+		}
 		next.ServeHTTP(w, r.WithContext(injectPrincipal(r.Context(), subject, nil)))
 	})
 }

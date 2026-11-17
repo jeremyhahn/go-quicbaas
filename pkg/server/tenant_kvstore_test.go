@@ -18,6 +18,7 @@ package server
 import (
 	"context"
 	"errors"
+	"sync/atomic"
 	"testing"
 
 	qrdbkvstore "github.com/jeremyhahn/go-qrdb/pkg/kvstore"
@@ -25,9 +26,11 @@ import (
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
 	dberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
+	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 	"github.com/jeremyhahn/go-quicbaas/pkg/kvstore"
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
+	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
@@ -54,6 +57,12 @@ func newFakeStoreResolver(shared interfaces.KVStore) *fakeStoreResolver {
 // store and returns that store so the test can assert isolation.
 func (f *fakeStoreResolver) barrierTenant(tenantID string) interfaces.KVStore {
 	st := kvstore.NewMemory()
+	f.stores[tenantID] = st
+	return st
+}
+
+// barrierTenantStore registers st as tenantID's own barrier store.
+func (f *fakeStoreResolver) barrierTenantStore(tenantID string, st interfaces.KVStore) interfaces.KVStore {
 	f.stores[tenantID] = st
 	return st
 }
@@ -160,6 +169,29 @@ func TestTenantRoutingKVStore_PrefixTenantSharedStore(t *testing.T) {
 	// The unrelated barrier tenant's store stays empty.
 	if _, err := resolver.stores["acme"].Get(context.Background(), "__iam:tenant:prefixco:app:c1"); err == nil {
 		t.Fatal("prefix tenant data leaked into a barrier tenant store")
+	}
+}
+
+func TestTenantRoutingKVStore_SharesStore(t *testing.T) {
+	resolver := newFakeStoreResolver(kvstore.NewMemory())
+	resolver.barrierTenant("acme")
+	resolver.sealTenant("sealedco")
+	kv := newTenantRoutingKVStore(resolver)
+	sys := tenantctx.WithSystem(context.Background())
+
+	shares, err := kv.SharesStore(sys, tenantctx.WithTenant(context.Background(), "prefixco"))
+	if err != nil || !shares {
+		t.Fatalf("SharesStore(system, prefix tenant) = %v, %v; want true, nil", shares, err)
+	}
+	shares, err = kv.SharesStore(sys, tenantctx.WithTenant(context.Background(), "acme"))
+	if err != nil || shares {
+		t.Fatalf("SharesStore(system, barrier tenant) = %v, %v; want false, nil", shares, err)
+	}
+	if _, err := kv.SharesStore(tenantctx.WithTenant(context.Background(), "sealedco"), sys); !errors.Is(err, qrdbtenant.ErrTenantSealed) {
+		t.Fatalf("SharesStore(sealed tenant) err = %v, want ErrTenantSealed", err)
+	}
+	if _, err := kv.SharesStore(sys, tenantctx.WithTenant(context.Background(), "sealedco")); !errors.Is(err, qrdbtenant.ErrTenantSealed) {
+		t.Fatalf("SharesStore(system, sealed tenant) err = %v, want ErrTenantSealed", err)
 	}
 }
 
@@ -444,6 +476,123 @@ func TestResolverAdapter_ResolveError(t *testing.T) {
 	}
 	if store != nil {
 		t.Fatalf("Resolve returned non-nil store on error: %v", store)
+	}
+}
+
+// countingQRDBResolver resolves every tenant to an empty store and counts
+// the resolves.
+type countingQRDBResolver struct {
+	calls atomic.Int32
+}
+
+func (r *countingQRDBResolver) Resolve(context.Context, string) (qrdbkvstore.KVStore, error) {
+	r.calls.Add(1)
+	return fakeQRDBStore{}, nil
+}
+
+// TestAdmittedStoreResolver_HeldTenantStaysClosed pins the store barrier: a
+// tenant whose unseal gate refused it resolves to ErrTenantStoreSealed
+// without reaching the inner resolver, and resolves once a later unseal's
+// gates pass.
+func TestAdmittedStoreResolver_HeldTenantStaysClosed(t *testing.T) {
+	s := &Server{}
+	gateErr := errors.New("policy reload failed")
+	var gateFails atomic.Bool
+	gateFails.Store(true)
+	s.tenantUnsealHooks.RegisterGate(service.TenantUnsealGateFunc(func(context.Context, string) error {
+		if gateFails.Load() {
+			return gateErr
+		}
+		return nil
+	}))
+	barrier := service.NewTenantBarrierService(unsealingTenantClient{}, service.WithTenantUnsealHooks(&s.tenantUnsealHooks))
+	inner := &countingQRDBResolver{}
+	resolver := s.admittedStoreResolver(inner)
+
+	if err := barrier.TenantBarrierUnseal(tenantAdminCtx("acme"), "acme", []byte("key")); !errors.Is(err, gateErr) {
+		t.Fatalf("the gate's failure must fail the unseal, got %v", err)
+	}
+	if _, err := resolver.Resolve(context.Background(), "acme"); !errors.Is(err, qrdbsdk.ErrTenantStoreSealed) {
+		t.Fatalf("a held tenant must resolve as sealed, got %v", err)
+	}
+	if n := inner.calls.Load(); n != 0 {
+		t.Fatalf("a held tenant reached the inner resolver %d times", n)
+	}
+	if _, err := resolver.Resolve(context.Background(), "beta"); err != nil {
+		t.Fatalf("the hold covers only its own tenant, got %v", err)
+	}
+
+	gateFails.Store(false)
+	if err := barrier.TenantBarrierUnseal(tenantAdminCtx("acme"), "acme", []byte("key")); err != nil {
+		t.Fatalf("an unseal whose gates pass must open the tenant, got %v", err)
+	}
+	if _, err := resolver.Resolve(context.Background(), "acme"); err != nil {
+		t.Fatalf("a released tenant must resolve, got %v", err)
+	}
+}
+
+func TestAdmittedStoreResolver_HeldTenantServesOnlyItsAuthRecordReads(t *testing.T) {
+	s := &Server{}
+	gateErr := errors.New("policy reload failed")
+	s.tenantUnsealHooks.RegisterGate(service.TenantUnsealGateFunc(func(context.Context, string) error {
+		return gateErr
+	}))
+	barrier := service.NewTenantBarrierService(unsealingTenantClient{}, service.WithTenantUnsealHooks(&s.tenantUnsealHooks))
+	if err := barrier.TenantBarrierUnseal(tenantAdminCtx("acme"), "acme", []byte("key")); !errors.Is(err, gateErr) {
+		t.Fatalf("the gate's failure must fail the unseal, got %v", err)
+	}
+	storage := iam.NewBackendStorage(newTenantRoutingKVStore(&resolverAdapter{
+		inner: s.admittedStoreResolver(fakeQRDBResolver{store: qrdbsdk.NewMemoryKVStore()}),
+	}))
+
+	ctx := tenantctx.WithTenant(context.Background(), "acme")
+	if _, err := storage.IsTokenRevoked(ctx, "jti-1"); !errors.Is(err, qrdbsdk.ErrTenantStoreSealed) {
+		t.Fatalf("an unmarked read of a held tenant must stay sealed, got %v", err)
+	}
+	revoked, err := storage.IsTokenRevoked(tenantctx.WithAuthRecordRead(ctx, "acme"), "jti-1")
+	if err != nil || revoked {
+		t.Fatalf("a held tenant's auth-record read must reach its store, got revoked=%v err=%v", revoked, err)
+	}
+	if _, err := storage.IsTokenRevoked(tenantctx.WithAuthRecordRead(ctx, "beta"), "jti-1"); !errors.Is(err, qrdbsdk.ErrTenantStoreSealed) {
+		t.Fatalf("a marker naming another tenant must not open acme, got %v", err)
+	}
+}
+
+// TestAdmittedStoreResolver_HeldTenantServesItsPolicyRepair: a held tenant's
+// store stays sealed to an unmarked policy read, and opens to the system
+// admin's policy repair only when the marker names that tenant.
+func TestAdmittedStoreResolver_HeldTenantServesItsPolicyRepair(t *testing.T) {
+	s := &Server{}
+	gateErr := errors.New("policy reload failed")
+	s.tenantUnsealHooks.RegisterGate(service.TenantUnsealGateFunc(func(context.Context, string) error {
+		return gateErr
+	}))
+	barrier := service.NewTenantBarrierService(unsealingTenantClient{}, service.WithTenantUnsealHooks(&s.tenantUnsealHooks))
+	if err := barrier.TenantBarrierUnseal(tenantAdminCtx("acme"), "acme", []byte("key")); !errors.Is(err, gateErr) {
+		t.Fatalf("the gate's failure must fail the unseal, got %v", err)
+	}
+	storage := iam.NewBackendStorage(newTenantRoutingKVStore(&resolverAdapter{
+		inner: s.admittedStoreResolver(fakeQRDBResolver{store: qrdbsdk.NewMemoryKVStore()}),
+	}))
+
+	ctx := tenantctx.WithTenant(context.Background(), "acme")
+	if _, err := storage.ListPolicies(ctx, "acme", iam.ListOptions{}); !errors.Is(err, qrdbsdk.ErrTenantStoreSealed) {
+		t.Fatalf("an unmarked policy read of a held tenant must stay sealed, got %v", err)
+	}
+	repair := tenantctx.WithPolicyRepair(ctx, "acme")
+	policy := &iam.Policy{Metadata: iam.PolicyMetadata{Name: "fix", Tenant: "acme"}}
+	if err := storage.CreatePolicy(repair, "acme", policy); err != nil {
+		t.Fatalf("the system admin's repair must write a held tenant's policy, got %v", err)
+	}
+	if err := storage.DeletePolicy(repair, "acme", "fix"); err != nil {
+		t.Fatalf("the system admin's repair must delete a held tenant's policy, got %v", err)
+	}
+	other := tenantctx.WithPolicyRepair(ctx, "beta")
+	if _, err := storage.ListPolicies(other, "acme", iam.ListOptions{}); !errors.Is(err, qrdbsdk.ErrTenantStoreSealed) {
+		t.Fatalf("a repair marker naming another tenant must not open acme, got %v", err)
+	}
+	if err := storage.CreatePolicy(other, "acme", policy); !errors.Is(err, qrdbsdk.ErrTenantStoreSealed) {
+		t.Fatalf("a repair marker naming another tenant must not write acme, got %v", err)
 	}
 }
 

@@ -107,9 +107,9 @@ func iamManagedRouteSpecs() []RouteSpec {
 
 		// ---- Per-tenant barrier lifecycle (Server methods, not IAMHandler) ----
 		{Method: "POST", Pattern: tenants + "/barrier/init", Group: GroupIAM, Handler: func(s *Server) http.HandlerFunc { return s.HandleTenantBarrierInit }},
-		{Method: "POST", Pattern: tenants + "/barrier/unseal", Group: GroupIAM, Handler: func(s *Server) http.HandlerFunc { return s.HandleTenantBarrierUnseal }},
-		{Method: "POST", Pattern: tenants + "/barrier/unseal-share", Group: GroupIAM, Handler: func(s *Server) http.HandlerFunc { return s.HandleTenantBarrierUnsealShare }},
-		{Method: "POST", Pattern: tenants + "/barrier/seal", Group: GroupIAM, Handler: func(s *Server) http.HandlerFunc { return s.HandleTenantBarrierSeal }},
+		{Method: "POST", Pattern: tenants + "/barrier/unseal", Group: GroupIAM, TenantRecovery: true, Handler: func(s *Server) http.HandlerFunc { return s.HandleTenantBarrierUnseal }},
+		{Method: "POST", Pattern: tenants + "/barrier/unseal-share", Group: GroupIAM, TenantRecovery: true, Handler: func(s *Server) http.HandlerFunc { return s.HandleTenantBarrierUnsealShare }},
+		{Method: "POST", Pattern: tenants + "/barrier/seal", Group: GroupIAM, TenantRecovery: true, Handler: func(s *Server) http.HandlerFunc { return s.HandleTenantBarrierSeal }},
 		{Method: "GET", Pattern: tenants + "/barrier/status", Group: GroupIAM, Handler: func(s *Server) http.HandlerFunc { return s.HandleTenantBarrierStatus }},
 		{Method: "POST", Pattern: tenants + "/barrier/enable-encryption", Group: GroupIAM, Handler: func(s *Server) http.HandlerFunc { return s.HandleTenantBarrierEnableEncryption }},
 

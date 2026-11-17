@@ -204,6 +204,12 @@ type RouteSpec struct {
 	Group   RouteGroup
 	Auth    RouteAuth
 
+	// TenantRecovery marks a tenant barrier recovery operation (unseal,
+	// unseal share, seal), which a tenant still held by its unseal checks
+	// must be able to retry. It skips the unseal admission only, never
+	// authentication or authorization.
+	TenantRecovery bool
+
 	// Resource and Action carry the qrdb-canonical RBAC permission for
 	// RouteAuthPermission routes. They are derived from the same REST PEP
 	// mapping the legacy authorization middleware enforces at request time
