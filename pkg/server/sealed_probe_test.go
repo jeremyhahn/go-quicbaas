@@ -14,6 +14,10 @@
 package server
 
 import (
+	"context"
+	"errors"
+	"log/slog"
+	"sync/atomic"
 	"testing"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
@@ -64,7 +68,9 @@ func TestServerSealedProbe_UninitializedDataPlaneBarrierReportsUnsealed(t *testi
 	require.True(t, status.Sealed, "a fresh barrier is internally sealed")
 	require.True(t, status.InitializedAt.IsZero(), "a fresh barrier is not initialized")
 
-	probe := (&Server{dataPlaneBarrier: barrier}).SealedWindowProbe()
+	server := &Server{}
+	server.dataPlaneBarrier.Store(barrier)
+	probe := server.SealedWindowProbe()
 	assert.False(t, probe.IsSealed(),
 		"an uninitialized data-plane barrier protects nothing and must report unsealed")
 }
@@ -91,7 +97,8 @@ func TestServerSealedProbe_InitializedSealedDataPlaneBarrierReportsSealed(t *tes
 	defer creds.Secret.Destroy()
 	require.NoError(t, barrier.Initialize(ctx, creds), "initialize the data-plane barrier")
 
-	server := &Server{dataPlaneBarrier: barrier}
+	server := &Server{}
+	server.dataPlaneBarrier.Store(barrier)
 	probe := server.SealedWindowProbe()
 
 	// Initialized and unsealed: full enforcement, no sealed window. This is
@@ -110,4 +117,53 @@ func TestServerSealedProbe_InitializedSealedDataPlaneBarrierReportsSealed(t *tes
 
 	assert.True(t, probe.IsSealed(),
 		"an initialized barrier that is sealed must arm the sealed window")
+}
+
+// failingMetadataBackend wraps a working seal backend and, once armed, fails
+// every read, so the barrier cannot tell whether it was initialized.
+type failingMetadataBackend struct {
+	qrdbsdk.StorageBackend
+	fail atomic.Bool
+}
+
+var errProbeTestMetadataRead = errors.New("probe test: metadata read failed")
+
+func (b *failingMetadataBackend) Get(ctx context.Context, key string) ([]byte, error) {
+	if b.fail.Load() {
+		return nil, errProbeTestMetadataRead
+	}
+	return b.StorageBackend.Get(ctx, key)
+}
+
+func (b *failingMetadataBackend) Exists(ctx context.Context, key string) (bool, error) {
+	if b.fail.Load() {
+		return false, errProbeTestMetadataRead
+	}
+	return b.StorageBackend.Exists(ctx, key)
+}
+
+// TestServerSealedProbe_InitializedReadErrorReportsSealed: when the barrier
+// cannot read whether it was initialized, the probe must fail closed rather
+// than treat the barrier as fresh and unsealed (#2512).
+func TestServerSealedProbe_InitializedReadErrorReportsSealed(t *testing.T) {
+	backend := &failingMetadataBackend{StorageBackend: qrdbsdk.NewMemoryBackend()}
+	barrier, err := qrdbsdk.NewStorageBarrier(
+		slog.Default(),
+		backend,
+		qrdbsdk.BarrierConfig{RootKeyPath: "test/root-key"},
+		qrdbsdk.NewDeferredSoftwareStrategy(),
+	)
+	require.NoError(t, err)
+
+	server := &Server{}
+	server.publishDataPlaneBarrier(barrier)
+	probe := server.SealedWindowProbe()
+	require.False(t, probe.IsSealed(),
+		"precondition: a readable, uninitialized barrier reports unsealed")
+
+	backend.fail.Store(true)
+	_, initErr := barrier.Initialized(t.Context())
+	require.Error(t, initErr, "precondition: Initialized must surface the read failure")
+	assert.True(t, probe.IsSealed(),
+		"an unreadable initialization state must report sealed")
 }
