@@ -37,6 +37,7 @@ import (
 	xkmsssh "github.com/jeremyhahn/go-xkms/sdk/go/client/ssh"
 	xkmstransport "github.com/jeremyhahn/go-xkms/sdk/go/transport"
 
+	qrdbservice "github.com/jeremyhahn/go-qrdb/pkg/service"
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	qrdbsecret "github.com/jeremyhahn/go-qrdb/sdk/go/secret"
 	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
@@ -145,6 +146,12 @@ type quicBaaS struct {
 
 	// QRDB SDK client provider for type-safe access to core KV operations
 	qrdbClient QRDBClientProvider
+
+	// qrdbServiceRegistry, when set, resolves the tenant-scoped KVServicer
+	// the kv service's Put, Get, Delete and List write through, so a
+	// tenant's isolation backend, barrier and quotas apply. Nil keeps those
+	// operations on qrdbClient.
+	qrdbServiceRegistry qrdbservice.Registry
 
 	// KVStore provider for DAO factory
 	kvStoreProvider func(shardID uint64) interfaces.KVStore
@@ -392,6 +399,9 @@ func newQuicBaaS(b *serviceBuilder) (QuicBaaS, error) {
 		if provider, ok := b.qrdbClient.(QRDBClientProvider); ok {
 			svc.qrdbClient = provider
 		}
+	}
+	if !isNilInterface(b.qrdbServiceRegistry) {
+		svc.qrdbServiceRegistry = b.qrdbServiceRegistry
 	}
 
 	// Initialize KVStore provider for DAO factory
@@ -921,7 +931,7 @@ func (k *kvService) Put(ctx context.Context, req *PutRequest) (*PutResponse, err
 		return nil, err
 	}
 	// Propose to Raft via qrdb SDK
-	client, err := k.svc.qrdbForShard(shardID)
+	kv, err := k.dataPlane(ctx, shardID)
 	if err != nil {
 		if k.svc.metrics != nil {
 			k.svc.metrics.requestsTotal.With("Put", "error").Inc()
@@ -933,7 +943,7 @@ func (k *kvService) Put(ctx context.Context, req *PutRequest) (*PutResponse, err
 			Err:  err,
 		}
 	}
-	if err := client.KV().Put(ctx, string(key), req.Data); err != nil {
+	if err := kv.Put(ctx, string(key), req.Data); err != nil {
 		if k.svc.metrics != nil {
 			k.svc.metrics.requestsTotal.With("Put", "error").Inc()
 			k.svc.metrics.errorsByType.With("raft_error").Inc()
@@ -1045,7 +1055,7 @@ func (k *kvService) Get(ctx context.Context, req *GetRequest) (*GetResponse, err
 	}
 
 	// Read via qrdb SDK
-	client, err := k.svc.qrdbForShard(shardID)
+	kv, err := k.dataPlane(ctx, shardID)
 	if err != nil {
 		if k.svc.metrics != nil {
 			k.svc.metrics.requestsTotal.With("Get", "error").Inc()
@@ -1057,12 +1067,11 @@ func (k *kvService) Get(ctx context.Context, req *GetRequest) (*GetResponse, err
 			Err:  err,
 		}
 	}
-	data, err := client.KV().Get(ctx, string(key))
+	data, err := kv.Get(ctx, string(key))
 	if err != nil {
 		// Key-not-found from the transport is not a Raft error; return the
 		// not-found sentinel so the handler maps it to HTTP 404.
-		var knf *qrdbtransport.KeyNotFoundError
-		if stderrors.As(err, &knf) {
+		if isKVKeyNotFound(err) {
 			if k.svc.metrics != nil {
 				k.svc.metrics.requestsTotal.With("Get", "not_found").Inc()
 			}
@@ -1155,7 +1164,7 @@ func (k *kvService) Delete(ctx context.Context, req *DeleteRequest) (*DeleteResp
 		return nil, err
 	}
 	// Delete via qrdb SDK
-	client, err := k.svc.qrdbForShard(shardID)
+	kv, err := k.dataPlane(ctx, shardID)
 	if err != nil {
 		if k.svc.metrics != nil {
 			k.svc.metrics.requestsTotal.With("Delete", "error").Inc()
@@ -1167,7 +1176,7 @@ func (k *kvService) Delete(ctx context.Context, req *DeleteRequest) (*DeleteResp
 			Err:  err,
 		}
 	}
-	if err := client.KV().Delete(ctx, string(key)); err != nil {
+	if err := kv.Delete(ctx, string(key)); err != nil {
 		if k.svc.metrics != nil {
 			k.svc.metrics.requestsTotal.With("Delete", "error").Inc()
 			k.svc.metrics.errorsByType.With("raft_error").Inc()
@@ -1232,7 +1241,7 @@ func (k *kvService) List(ctx context.Context, req *ListRequest, stream chan<- *L
 	}
 
 	// Scan via qrdb SDK
-	client, err := k.svc.qrdbForShard(shardID)
+	kv, err := k.dataPlane(ctx, shardID)
 	if err != nil {
 		if k.svc.metrics != nil {
 			k.svc.metrics.requestsTotal.With("List", "error").Inc()
@@ -1244,7 +1253,7 @@ func (k *kvService) List(ctx context.Context, req *ListRequest, stream chan<- *L
 			Err:  err,
 		}
 	}
-	scanResult, err := client.KV().Scan(ctx, string(prefix))
+	scanResult, err := kv.Scan(ctx, string(prefix))
 	if err != nil {
 		if k.svc.metrics != nil {
 			k.svc.metrics.requestsTotal.With("List", "error").Inc()

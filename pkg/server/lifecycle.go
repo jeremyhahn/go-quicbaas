@@ -2063,6 +2063,12 @@ func (s *Server) startService() error {
 
 	builder = builder.WithQRDBClient(s.qrdbClient)
 	s.logger.Info("qrdb SDK client attached to service builder")
+	// Route the kv service through the node's tenant/database registry so a
+	// tenant's isolation backend, barrier and quotas apply to its KV data.
+	if reg := s.qrdbClient.ServiceRegistry(); reg != nil {
+		builder = builder.WithQRDBServiceRegistry(reg)
+		s.logger.Info("qrdb service registry attached to service builder")
+	}
 
 	// Thread the trusted-computing seam. The verifier half of
 	// Security().Attestation() composes go-xkms pkg/attestation and is wired

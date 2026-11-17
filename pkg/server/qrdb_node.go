@@ -23,6 +23,7 @@ import (
 	"strings"
 
 	qrdbserver "github.com/jeremyhahn/go-qrdb/pkg/server"
+	qrdbservice "github.com/jeremyhahn/go-qrdb/pkg/service"
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	qrdbnode "github.com/jeremyhahn/go-qrdb/sdk/go/node"
 	xkmslib "github.com/jeremyhahn/go-xkms/pkg/xkms"
@@ -1300,10 +1301,39 @@ func buildRaftMTLSConfig(cfg *config.Config) (*qrdbnode.RaftMTLSConfig, error) {
 func newNodeBackedShardedClient(node *qrdbnode.Node) *ShardedClient {
 	embeddedCfg := &config.QRDBConfig{Transport: config.QRDBTransportEmbedded}
 	return &ShardedClient{
-		factory:    newTransportFactory(embeddedCfg, nil, nil),
-		nodeClient: node.Client(),
-		nodeOwned:  true,
+		factory:         newTransportFactory(embeddedCfg, nil, nil),
+		nodeClient:      node.Client(),
+		nodeOwned:       true,
+		serviceRegistry: nodeServiceRegistry(node),
 	}
+}
+
+// nodeServiceRegistry returns one tenant/database service registry from the
+// node's running server, or nil when the node has no server (sealed) or no
+// registry. ServiceRegistry builds a fresh registry per call, so the caller
+// holds the one returned here instead of resolving it per request.
+func nodeServiceRegistry(node *qrdbnode.Node) qrdbservice.Registry {
+	if node == nil {
+		return nil
+	}
+	srv := node.Server()
+	if srv == nil {
+		return nil
+	}
+	reg := srv.ServiceRegistry()
+	if reg == nil {
+		return nil
+	}
+	return reg
+}
+
+// ServiceRegistry returns the qrdb service registry held by a node-backed
+// client, or nil when there is none.
+func (c *ShardedClient) ServiceRegistry() qrdbservice.Registry {
+	if c == nil {
+		return nil
+	}
+	return c.serviceRegistry
 }
 
 // standaloneQRDBDataDir returns the effective data directory that the
