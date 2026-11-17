@@ -16,8 +16,8 @@
 package server
 
 import (
+	"github.com/jeremyhahn/go-quicbaas/pkg/api/caadapter"
 	mcpapi "github.com/jeremyhahn/go-quicbaas/pkg/api/mcp"
-	restapi "github.com/jeremyhahn/go-quicbaas/pkg/api/rest"
 	qbsealedwindow "github.com/jeremyhahn/go-quicbaas/pkg/api/sealedwindow"
 )
 
@@ -88,7 +88,7 @@ func (s *Server) buildMCPServer() (*mcpapi.Server, error) {
 	// The xkms.ca.* tools serve the same go-xkms CA adapter as the REST
 	// /api/v1/xkms/ca/* routes (#1330).
 	if s.xkmsCA != nil {
-		mcpServer.SetCAService(restapi.NewXKMSCAService(s.xkmsCA, s.config.IAM.SPIFFETrustDomain))
+		mcpServer.SetCAService(caadapter.NewXKMSCAService(s.xkmsCA, s.config.IAM.SPIFFETrustDomain))
 	}
 
 	return mcpServer, nil

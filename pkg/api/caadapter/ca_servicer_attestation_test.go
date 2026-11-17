@@ -1,6 +1,4 @@
-//go:build rest
-
-package rest
+package caadapter
 
 import (
 	"context"
@@ -19,7 +17,7 @@ import (
 // Unix, embedded) reaches this servicer, so each one refuses it.
 func TestXKMSCAServicer_SignCSRRefusesAttestation(t *testing.T) {
 	ca := &countingCA{TrustedCA: testca.New(t, "xkmsca-attest-ca")}
-	a := newXKMSCAServicer(ca, "")
+	a := NewXKMSCAServicer(ca, "")
 	csr := newTestCSR(t, "leaf.example.test")
 
 	proofs := map[string]func(r *xkmstransport.SignCSRRequest){

@@ -1,5 +1,3 @@
-//go:build rest
-
 // Copyright (c) 2026 Jeremy Hahn
 // Copyright (c) 2026 Automate The Things, LLC
 //
@@ -13,7 +11,7 @@
 // 2. Commercial License
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
-package rest
+package caadapter
 
 import (
 	"context"
@@ -32,7 +30,7 @@ import (
 // the other transports reach them through the same adapter (#1330). Like
 // the CA verbs, each method only translates types and delegates to the
 // wired CA's TCGCA methods.
-var _ xkmstransport.TCGCAService = (*xkmsCAServicer)(nil)
+var _ xkmstransport.TCGCAService = (*XKMSCAServicer)(nil)
 
 // ErrXKMSCATCGNotSupported is returned when the wired CA is not a TCGCA.
 var ErrXKMSCATCGNotSupported = errors.New("xkms ca: CA does not support TCG operations")
@@ -53,7 +51,7 @@ var ErrXKMSCAMissingTCGCSR = errors.New("xkms ca: tcg csr is required")
 // /api/v1/xkms/ca/tcg/* routes serve, for the server's other transports.
 // It returns nil when ca is nil.
 func NewXKMSTCGCAService(ca xkmssdk.TrustedCA, spiffeTrustDomain string) xkmstransport.TCGCAService {
-	s := newXKMSCAServicer(ca, spiffeTrustDomain)
+	s := NewXKMSCAServicer(ca, spiffeTrustDomain)
 	if s == nil {
 		return nil
 	}
@@ -62,7 +60,7 @@ func NewXKMSTCGCAService(ca xkmssdk.TrustedCA, spiffeTrustDomain string) xkmstra
 
 // tcgRequest checks the TCG preconditions shared by every TCG verb and
 // builds the CertificateRequest the TCGCA methods take.
-func (a *xkmsCAServicer) tcgRequest(ctx context.Context, op, commonName, organization, tenant string) (xkmssdk.TCGCA, *xkmssdk.TrustedCACertificateRequest, error) {
+func (a *XKMSCAServicer) tcgRequest(ctx context.Context, op, commonName, organization, tenant string) (xkmssdk.TCGCA, *xkmssdk.TrustedCACertificateRequest, error) {
 	tcg, ok := a.ca.(xkmssdk.TCGCA)
 	if !ok {
 		return nil, nil, ErrXKMSCATCGNotSupported
@@ -110,7 +108,7 @@ func issuedKeyCertificate(op string, pubDER []byte, issue func(pub any) (*x509.C
 
 // IssueEKCertificate issues an Endorsement Key certificate for a DER EK
 // public key.
-func (a *xkmsCAServicer) IssueEKCertificate(ctx context.Context, req *xkmstransport.IssueEKCertificateRequest) (*xkmstransport.IssueEKCertificateResponse, error) {
+func (a *XKMSCAServicer) IssueEKCertificate(ctx context.Context, req *xkmstransport.IssueEKCertificateRequest) (*xkmstransport.IssueEKCertificateResponse, error) {
 	if req == nil {
 		return nil, ErrXKMSCANilRequest
 	}
@@ -129,7 +127,7 @@ func (a *xkmsCAServicer) IssueEKCertificate(ctx context.Context, req *xkmstransp
 
 // IssueAKCertificate issues an Attestation Key certificate for a DER AK
 // public key.
-func (a *xkmsCAServicer) IssueAKCertificate(ctx context.Context, req *xkmstransport.IssueAKCertificateRequest) (*xkmstransport.IssueAKCertificateResponse, error) {
+func (a *XKMSCAServicer) IssueAKCertificate(ctx context.Context, req *xkmstransport.IssueAKCertificateRequest) (*xkmstransport.IssueAKCertificateResponse, error) {
 	if req == nil {
 		return nil, ErrXKMSCANilRequest
 	}
@@ -148,7 +146,7 @@ func (a *xkmsCAServicer) IssueAKCertificate(ctx context.Context, req *xkmstransp
 
 // SignTCGCSR signs a packed TCG-CSR-IDEVID and returns the IAK and IDevID
 // certificates.
-func (a *xkmsCAServicer) SignTCGCSR(ctx context.Context, req *xkmstransport.SignTCGCSRRequest) (*xkmstransport.SignTCGCSRResponse, error) {
+func (a *XKMSCAServicer) SignTCGCSR(ctx context.Context, req *xkmstransport.SignTCGCSRRequest) (*xkmstransport.SignTCGCSRResponse, error) {
 	if req == nil {
 		return nil, ErrXKMSCANilRequest
 	}
@@ -172,7 +170,7 @@ func (a *xkmsCAServicer) SignTCGCSR(ctx context.Context, req *xkmstransport.Sign
 
 // EnrollDevice runs TCG device enrollment for a packed TCG-CSR-IDEVID and
 // returns the certificates with the credential-activation challenge.
-func (a *xkmsCAServicer) EnrollDevice(ctx context.Context, req *xkmstransport.EnrollDeviceRequest) (*xkmstransport.EnrollDeviceResponse, error) {
+func (a *XKMSCAServicer) EnrollDevice(ctx context.Context, req *xkmstransport.EnrollDeviceRequest) (*xkmstransport.EnrollDeviceResponse, error) {
 	if req == nil {
 		return nil, ErrXKMSCANilRequest
 	}

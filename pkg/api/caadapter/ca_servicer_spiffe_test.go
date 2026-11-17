@@ -1,5 +1,3 @@
-//go:build rest
-
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
@@ -13,7 +11,7 @@
 // 2. Commercial License
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
-package rest
+package caadapter
 
 import (
 	"testing"
@@ -28,7 +26,7 @@ import (
 // the tenant-scoped SPIFFE URI SAN.
 func TestXKMSCAServicer_SignOptionsWithSPIFFE(t *testing.T) {
 	t.Run("client profile stamps user kind", func(t *testing.T) {
-		a := &xkmsCAServicer{spiffeTrustDomain: "example.com"}
+		a := &XKMSCAServicer{spiffeTrustDomain: "example.com"}
 		opts := a.signOptionsWithSPIFFE("client", 30, "acme-corp", "admin@example.com")
 		if opts.SPIFFETrustDomain != "example.com" {
 			t.Fatalf("SPIFFETrustDomain = %q", opts.SPIFFETrustDomain)
@@ -48,7 +46,7 @@ func TestXKMSCAServicer_SignOptionsWithSPIFFE(t *testing.T) {
 	})
 
 	t.Run("server profile stamps svc kind", func(t *testing.T) {
-		a := &xkmsCAServicer{spiffeTrustDomain: "example.com"}
+		a := &XKMSCAServicer{spiffeTrustDomain: "example.com"}
 		opts := a.signOptionsWithSPIFFE("server", 0, "acme-corp", "admin@example.com")
 		if opts.SPIFFEKind != qrdbspiffe.KindService {
 			t.Fatalf("SPIFFEKind = %q, want svc", opts.SPIFFEKind)
@@ -56,7 +54,7 @@ func TestXKMSCAServicer_SignOptionsWithSPIFFE(t *testing.T) {
 	})
 
 	t.Run("no trust domain omits SPIFFE but records the tenant", func(t *testing.T) {
-		a := &xkmsCAServicer{}
+		a := &XKMSCAServicer{}
 		opts := a.signOptionsWithSPIFFE("client", 0, "acme-corp", "admin@example.com")
 		if opts.SPIFFETrustDomain != "" || opts.SPIFFEKind != "" {
 			t.Fatalf("expected no SPIFFE fields, got %+v", opts)
@@ -67,7 +65,7 @@ func TestXKMSCAServicer_SignOptionsWithSPIFFE(t *testing.T) {
 	})
 
 	t.Run("no tenant omits SPIFFE", func(t *testing.T) {
-		a := &xkmsCAServicer{spiffeTrustDomain: "example.com"}
+		a := &XKMSCAServicer{spiffeTrustDomain: "example.com"}
 		opts := a.signOptionsWithSPIFFE("client", 0, "", "admin@example.com")
 		if opts.SPIFFETrustDomain != "" || opts.TenantID != "" {
 			t.Fatalf("expected no SPIFFE fields without tenant, got %+v", opts)
@@ -82,7 +80,7 @@ func TestXKMSCAServicer_SignOptionsWithSPIFFE(t *testing.T) {
 // symmetric with the CSR-sign path.
 func TestXKMSCAServicer_ApplyKeypairSPIFFE(t *testing.T) {
 	t.Run("client profile stamps user kind", func(t *testing.T) {
-		a := &xkmsCAServicer{spiffeTrustDomain: "example.com"}
+		a := &XKMSCAServicer{spiffeTrustDomain: "example.com"}
 		req := &xkmssdk.TrustedCACertificateRequest{
 			Subject: xkmssdk.TrustedCASubject{CommonName: "admin@example.com"},
 		}
@@ -105,7 +103,7 @@ func TestXKMSCAServicer_ApplyKeypairSPIFFE(t *testing.T) {
 	})
 
 	t.Run("server profile stamps svc kind", func(t *testing.T) {
-		a := &xkmsCAServicer{spiffeTrustDomain: "example.com"}
+		a := &XKMSCAServicer{spiffeTrustDomain: "example.com"}
 		req := &xkmssdk.TrustedCACertificateRequest{}
 		a.applyKeypairSPIFFE(req, "server", "acme-corp")
 		if req.SPIFFEKind != qrdbspiffe.KindService {
@@ -114,7 +112,7 @@ func TestXKMSCAServicer_ApplyKeypairSPIFFE(t *testing.T) {
 	})
 
 	t.Run("no trust domain omits SPIFFE but records the tenant", func(t *testing.T) {
-		a := &xkmsCAServicer{}
+		a := &XKMSCAServicer{}
 		req := &xkmssdk.TrustedCACertificateRequest{}
 		a.applyKeypairSPIFFE(req, "client", "acme-corp")
 		if req.SPIFFETrustDomain != "" || req.SPIFFEKind != "" {
@@ -126,7 +124,7 @@ func TestXKMSCAServicer_ApplyKeypairSPIFFE(t *testing.T) {
 	})
 
 	t.Run("no tenant omits SPIFFE", func(t *testing.T) {
-		a := &xkmsCAServicer{spiffeTrustDomain: "example.com"}
+		a := &XKMSCAServicer{spiffeTrustDomain: "example.com"}
 		req := &xkmssdk.TrustedCACertificateRequest{}
 		a.applyKeypairSPIFFE(req, "client", "")
 		if req.SPIFFETrustDomain != "" || req.TenantID != "" || req.SPIFFEKind != "" {

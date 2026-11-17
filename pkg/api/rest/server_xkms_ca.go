@@ -19,6 +19,8 @@ import (
 	"net/http"
 
 	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
+
+	"github.com/jeremyhahn/go-quicbaas/pkg/api/caadapter"
 )
 
 // caHandlerSet is the minimum interface the xkms CA handler wiring must
@@ -69,7 +71,7 @@ func (s *Server) SetCertificateAuthority(ca xkmssdk.TrustedCA) {
 	// newXKMSCAServicer wraps the TrustedCA so it satisfies go-xkms's
 	// transport CAService interface. go-xkms's CAHandlers then treats
 	// the adapter as a regular servicer.
-	servicer := newXKMSCAServicer(ca, s.config.SPIFFETrustDomain)
+	servicer := caadapter.NewXKMSCAServicer(ca, s.config.SPIFFETrustDomain)
 
 	// nil logger → CAHandlers falls back to slog.Default(), which is
 	// already configured by the server process.

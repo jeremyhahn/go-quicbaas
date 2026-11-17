@@ -63,8 +63,3 @@ func (s *Server) stopRESTServer(ctx context.Context) error {
 func (s *Server) ModuleRESTServer() *restapi.Server {
 	return nil
 }
-
-// trustedCAService returns nil without the rest tag: the go-xkms CA adapter
-// lives in pkg/api/rest, so the embedded transport's TrustedCA stays
-// unconfigured (#1330).
-func (s *Server) trustedCAService() service.TrustedCAService { return nil }

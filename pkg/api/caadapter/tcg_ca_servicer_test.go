@@ -1,5 +1,3 @@
-//go:build rest
-
 // Copyright (c) 2026 Jeremy Hahn
 // Copyright (c) 2026 Automate The Things, LLC
 //
@@ -13,7 +11,7 @@
 // 2. Commercial License
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
-package rest
+package caadapter
 
 import (
 	"context"
@@ -193,7 +191,7 @@ func TestXKMSTCGCAServicer_SystemIssuedEKIsRevocable(t *testing.T) {
 		&xkmstransport.IssueEKCertificateRequest{CommonName: "dev-tenant", EKPublicKey: pubDER})
 	require.ErrorIs(t, err, ErrXKMSCATCGTenantUnsupported)
 
-	revoked, err := newXKMSCAServicer(ca, "").RevokeCertificate(ctx, &xkmstransport.RevokeCertificateRequest{SerialNumber: ek.SerialNumber})
+	revoked, err := NewXKMSCAServicer(ca, "").RevokeCertificate(ctx, &xkmstransport.RevokeCertificateRequest{SerialNumber: ek.SerialNumber})
 	require.NoError(t, err)
 	assert.True(t, revoked.Success)
 }
