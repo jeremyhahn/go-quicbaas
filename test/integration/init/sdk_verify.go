@@ -37,6 +37,7 @@ import (
 	"crypto/x509"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"net"
 	"net/http"
@@ -45,6 +46,7 @@ import (
 	"reflect"
 	"regexp"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -121,23 +123,69 @@ func verifySealedMCPWindow(t *testing.T, ports PortBundle, dataDir string) {
 		t.Fatalf("stat %s: %v", adminCert, err)
 	}
 
-	client, err := newSDKClient("mcp", ports, dataDir, "")
-	if err != nil {
-		t.Fatalf("construct uncredentialed MCP client for the sealed node: %v", err)
+	if err := checkSealedMCPWindow(ports, dataDir); err != nil {
+		t.Fatalf("sealed shamir node: %v", err)
 	}
-	defer func() {
-		if closeErr := client.Close(); closeErr != nil {
-			t.Logf("SDK client Close: %v", closeErr)
-		}
-	}()
+	t.Logf("uncredentialed MCP initialize refused with 401 on the sealed node")
+}
 
+// checkSealedMCPWindow probes the sealed node's MCP endpoint. It first
+// sends the MCP initialize request by itself, with no session and no
+// credentials, and requires HTTP 401 for it: a node that answers that
+// initialize and refuses only a later notifications/initialized or
+// tools/call has served an uncredentialed session, and fails here. Only
+// then does it run the SDK's whole Health.Liveness exchange, which must
+// also be refused with 401.
+func checkSealedMCPWindow(ports PortBundle, dataDir string) error {
+	tlsCfg, err := loadDaemonCATLSConfig(dataDir)
+	if err != nil {
+		return err
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), sdkLivenessTimeout)
 	defer cancel()
-	_, err = client.Transport().Request(ctx, "quicbaas.Health", "Liveness", struct{}{})
-	if verdict := classifySealedMCPRefusal(err); verdict != nil {
-		t.Fatalf("sealed shamir node: %v", verdict)
+
+	endpoint := fmt.Sprintf("https://127.0.0.1:%d/mcp", ports.MCP)
+	if err := probeSealedMCPInitialize(ctx, endpoint, tlsCfg); err != nil {
+		return err
 	}
-	t.Logf("uncredentialed MCP initialize refused with 401 on the sealed node: %v", err)
+
+	client, err := newSDKClient("mcp", ports, dataDir, "")
+	if err != nil {
+		return fmt.Errorf("construct uncredentialed MCP client for the sealed node: %w", err)
+	}
+	defer func() { _ = client.Close() }()
+	_, err = client.Transport().Request(ctx, "quicbaas.Health", "Liveness", struct{}{})
+	return classifySealedMCPRefusal(err)
+}
+
+// sealedMCPInitializeProbe is a bare MCP initialize request: no session id
+// header and no Authorization header go with it.
+const sealedMCPInitializeProbe = `{"jsonrpc":"2.0","id":1,"method":"initialize",` +
+	`"params":{"protocolVersion":"2025-03-26","capabilities":{},` +
+	`"clientInfo":{"name":"sealed-window-probe","version":"0.0.0"}}}`
+
+// probeSealedMCPInitialize posts the bare initialize request to endpoint
+// and returns nil only when it is refused with HTTP 401.
+func probeSealedMCPInitialize(ctx context.Context, endpoint string, tlsCfg *tls.Config) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, strings.NewReader(sealedMCPInitializeProbe))
+	if err != nil {
+		return fmt.Errorf("build the uncredentialed MCP initialize probe: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json, text/event-stream")
+
+	httpClient := &http.Client{Transport: &http.Transport{TLSClientConfig: tlsCfg}}
+	defer httpClient.CloseIdleConnections()
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("the uncredentialed MCP initialize failed without an HTTP 401 refusal: %w", err)
+	}
+	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 1<<16))
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusUnauthorized {
+		return fmt.Errorf("the uncredentialed MCP initialize, sent alone, was answered with HTTP %d, want 401", resp.StatusCode)
+	}
+	return nil
 }
 
 // mcpHTTPStatusPattern matches the status mcp-go's Streamable HTTP client
