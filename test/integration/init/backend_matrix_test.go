@@ -69,7 +69,6 @@ func TestBackendMatrix(t *testing.T) {
 
 	for _, backend := range matrixBackends {
 		for _, transport := range backendTransports {
-			backend, transport := backend, transport
 			t.Run(backend+"_"+transport, func(t *testing.T) {
 				runBackendCell(t, daemonBinary, cliBinary, backend, transport)
 			})
@@ -327,7 +326,6 @@ func TestBackendMatrix_InitHonoursConfiguredBackend(t *testing.T) {
 	binary := resolveDaemonBinary(t)
 
 	for _, backend := range matrixBackends {
-		backend := backend
 		t.Run(backend, func(t *testing.T) {
 			dataDir := t.TempDir()
 			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
