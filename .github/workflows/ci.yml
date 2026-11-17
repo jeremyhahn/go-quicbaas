@@ -1,4 +1,15 @@
-# ci-template: v1.34.1 + v1.42 hermetic gate (customized)
+# ci-template: v1.34.1 + v1.42 hermetic gate + v1.43 hosted first (customized)
+# v1.43 hosted first (Tenant Agent rulings 833 and 834; the owner's 11-07
+# ruling that GitHub-hosted runners are the default): every job but the
+# release-label publish-images runs on the standard GitHub-hosted
+# ubuntu-latest runner, free on this public repository, and so does
+# integration.yml. Each fit one before: this workflow was written for a
+# hosted runner (below: 4 vCPU, 16 GB, the disk freed before an image build),
+# and fork pull requests ran every job there. The steps that test
+# runner.environment (setup-go and native make on a pool, the toolchain image
+# on a hosted runner, the disk cleanup) keep their conditions. A job that
+# cannot fit a standard runner names a self-hosted label with a
+# `# self-hosted: <reason>` line comment; none does today.
 # v1.42 hermetic gate only (owner ruling 742 (1), Tenant Agent ruling 754): the
 # CI Gate's outcome depends only on the tree under test. `make deps-check`,
 # `make security` (gosec, govulncheck, go mod verify, trivy fs) and the trivy
@@ -725,7 +736,7 @@ jobs:
     # Same-repo pull requests and pushes to main run on the self-hosted
     # bigdisk pool; a fork pull request stays on ubuntu-latest. The job needs
     # only bash, git, grep and sed, and the checkout keeps no credentials.
-    runs-on: ${{ ((github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)) && fromJSON('["self-hosted","linux","x64","bigdisk"]') || 'ubuntu-latest' }}
+    runs-on: ubuntu-latest
     # v1.26: a draft PR runs no CI; every job that needs this one skips with it.
     if: ${{ !github.event.pull_request.draft }}
     timeout-minutes: 10       # v1.34: the three jobs had 5 each
@@ -945,7 +956,7 @@ jobs:
   # reads only the tree.
   lint:
     name: Lint [lint, gosec, build tags]
-    runs-on: ${{ ((github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)) && fromJSON('["self-hosted","linux","x64","bigdisk-docker"]') || 'ubuntu-latest' }}
+    runs-on: ubuntu-latest
     needs: preflight   # v1.34
     if: ${{ !github.event.pull_request.draft && needs.preflight.outputs.verdict == 'run' }}
     timeout-minutes: 90       # CUSTOMIZE: a cold toolchain image build, then the lint stages
@@ -1207,7 +1218,7 @@ jobs:
   # unit, unit-passes and coverage jobs below.
   image:
     name: Devcontainer image [build, SDK tests]
-    runs-on: ${{ ((github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)) && fromJSON('["self-hosted","linux","x64","bigdisk-docker"]') || 'ubuntu-latest' }}
+    runs-on: ubuntu-latest
     needs: preflight   # v1.24; v1.29.3; v1.34
     # v1.30: on every event only on `run` (not `refused`, not `proven`), and
     # never on a docs-only PR.
@@ -1365,7 +1376,7 @@ jobs:
     # job runs its make target natively under setup-go (the steps guarded
     # `runner.environment == 'self-hosted'`); on a GitHub-hosted runner it
     # builds the toolchain image and runs the target in it, as before.
-    runs-on: ${{ ((github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)) && fromJSON('["self-hosted","linux","x64","bigdisk"]') || 'ubuntu-latest' }}
+    runs-on: ubuntu-latest
     timeout-minutes: 150      # CUSTOMIZE: a shard is expected to take about an hour
     needs: [preflight]   # v1.34
     if: ${{ needs.preflight.outputs.verdict == 'run' && needs.preflight.outputs.docs_only != 'true' }}
@@ -1441,6 +1452,15 @@ jobs:
           cache: ${{ runner.environment != 'self-hosted' }}
           go-version: ${{ env.GO_VERSION }}
 
+      # A per-job TMPDIR (go-xkms #2183): the runner's _work/_temp made t.TempDir
+      # Unix socket paths overflow sun_path, and runner units on one host share
+      # /tmp, so each job takes its own /tmp/XXXXXX and removes it in its last step.
+      - name: Per-job short TMPDIR (native)
+        if: ${{ runner.environment == 'self-hosted' }}
+        run: |
+          d="$(mktemp -d /tmp/XXXXXX)"
+          echo "TMPDIR=$d" >> "$GITHUB_ENV"
+
       # The same target natively. It writes coverage/<profile>; the upload
       # below reads the profile at the top level, where the hosted step puts it.
       - name: make coverage-shard (bigdisk pool, native)
@@ -1469,6 +1489,10 @@ jobs:
         if: always()
         run: rm -f "$RUNNER_TEMP/gomodauth.env"
 
+      - name: Remove the per-job TMPDIR (native)
+        if: ${{ always() && runner.environment == 'self-hosted' }}
+        run: case "$TMPDIR" in /tmp/??????) rm -rf "$TMPDIR" ;; esac
+
   # Joins the unit shards' profiles and fails when total coverage is below
   # COVERAGE_THRESHOLD (testing-guidelines.md), with the same generated-code
   # exclusions as `make coverage`. It runs only when every shard passed: a
@@ -1482,7 +1506,7 @@ jobs:
     # job runs its make target natively under setup-go (the steps guarded
     # `runner.environment == 'self-hosted'`); on a GitHub-hosted runner it
     # builds the toolchain image and runs the target in it, as before.
-    runs-on: ${{ ((github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)) && fromJSON('["self-hosted","linux","x64","bigdisk"]') || 'ubuntu-latest' }}
+    runs-on: ubuntu-latest
     timeout-minutes: 60
     needs: [preflight, unit]   # v1.34
     if: ${{ needs.preflight.outputs.verdict == 'run' && needs.preflight.outputs.docs_only != 'true' }}
@@ -1584,7 +1608,7 @@ jobs:
     # job runs its make target natively under setup-go (the steps guarded
     # `runner.environment == 'self-hosted'`); on a GitHub-hosted runner it
     # builds the toolchain image and runs the target in it, as before.
-    runs-on: ${{ ((github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)) && fromJSON('["self-hosted","linux","x64","bigdisk"]') || 'ubuntu-latest' }}
+    runs-on: ubuntu-latest
     timeout-minutes: 180
     needs: [preflight]   # v1.34
     if: ${{ needs.preflight.outputs.verdict == 'run' && needs.preflight.outputs.docs_only != 'true' }}
@@ -1651,6 +1675,15 @@ jobs:
           cache: ${{ runner.environment != 'self-hosted' }}
           go-version: ${{ env.GO_VERSION }}
 
+      # A per-job TMPDIR (go-xkms #2183): the runner's _work/_temp made t.TempDir
+      # Unix socket paths overflow sun_path, and runner units on one host share
+      # /tmp, so each job takes its own /tmp/XXXXXX and removes it in its last step.
+      - name: Per-job short TMPDIR (native)
+        if: ${{ runner.environment == 'self-hosted' }}
+        run: |
+          d="$(mktemp -d /tmp/XXXXXX)"
+          echo "TMPDIR=$d" >> "$GITHUB_ENV"
+
       - name: make coverage-passes (bigdisk pool, native)
         if: ${{ !cancelled() && runner.environment == 'self-hosted' && env.DOCS_ONLY != 'true' }}
         # The toolchain image's module settings (Dockerfile ENV), except that
@@ -1664,6 +1697,10 @@ jobs:
       - name: Tear down
         if: always()
         run: rm -f "$RUNNER_TEMP/gomodauth.env"
+
+      - name: Remove the per-job TMPDIR (native)
+        if: ${{ always() && runner.environment == 'self-hosted' }}
+        run: case "$TMPDIR" in /tmp/??????) rm -rf "$TMPDIR" ;; esac
 
   # v1.27 (Company Agent m1192 (6), item 27): a repository's `make lint-gates`
   # (its own gates beside `make lint`: script, workflow, generated-code and
@@ -1682,7 +1719,7 @@ jobs:
   # and the job; the gates after it run on the next push.
   lint-gates:
     name: Lint Gates [toolchain image]
-    runs-on: ${{ ((github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)) && fromJSON('["self-hosted","linux","x64","bigdisk-docker"]') || 'ubuntu-latest' }}
+    runs-on: ubuntu-latest
     needs: preflight     # v1.29.3; v1.30; v1.34
     # v1.26: never on a draft. v1.29.3: on a schedule run, only on the
     # schedule guard's `run`. v1.30: only on `run` on every event, and on a PR
@@ -1812,7 +1849,7 @@ jobs:
   # first (v1.18) and keeps its own teardown last under `if: always()`.
   integration:
     name: Integration [integration image]
-    runs-on: ${{ ((github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)) && fromJSON('["self-hosted","linux","x64","bigdisk-docker"]') || 'ubuntu-latest' }}
+    runs-on: ubuntu-latest
     # CUSTOMIZE (go-quicbaas): the suite runs on every non-docs pull request
     # and does not gate yet (row #1700, header note). v1.26: never on a
     # draft; v1.30: only on the guard's `run`. When it gates, it takes the
@@ -1909,7 +1946,7 @@ jobs:
     # CA m2475 (2h): the gate runs on the self-hosted bigdisk pool (main pushes
     # and same-repo PRs), so it never waits in the hosted queue and always
     # reports; it needs no Docker. Fork PRs stay on ubuntu-latest.
-    runs-on: ${{ ((github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)) && fromJSON('["self-hosted","linux","x64","bigdisk"]') || 'ubuntu-latest' }}
+    runs-on: ubuntu-latest
     # v1.29.3: on a schedule run the schedule guard decides; every other
     # event runs the gate.
     if: ${{ always() && (github.event_name != 'schedule' || needs.preflight.outputs.verdict != 'busy') }}
