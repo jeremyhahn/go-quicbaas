@@ -116,11 +116,15 @@ func (p *softwarePasskey) RegisterWebAuthn(opts fido2.WebAuthnRegistrationOption
 }
 
 // passkeyLogin runs the unified FIDO2 login with the software authenticator.
-func passkeyLogin(ctx context.Context, c quicbaas.Client, adapter *webauthnclient.SoftwareAdapter) (*quicbaas.FinishLoginResponse, error) {
+// The hint is the user's email, the only subject login key (docs/SPEC.md row
+// iam): it is what lets the relying party list the user's non-discoverable
+// credential in allowCredentials. A username hint resolves to no user, and the
+// ceremony falls back to discoverable, which a non-resident passkey cannot answer.
+func passkeyLogin(ctx context.Context, c quicbaas.Client, adapter *webauthnclient.SoftwareAdapter, email string) (*quicbaas.FinishLoginResponse, error) {
 	auth := c.Security().Auth()
 	begin, err := auth.BeginLogin(ctx, qrdbtransport.BeginLoginRequest{
 		Type:     qrdbtransport.FactorTypeFIDO2,
-		Hint:     adminSubject,
+		Hint:     email,
 		TenantID: systemTenantID,
 	})
 	if err != nil {
@@ -184,7 +188,14 @@ func TestAdminFactors_PasskeyEnrollsThenLogsIn(t *testing.T) {
 			credentialID := results[0].Enrollment.Metadata["credential_id"]
 			require.NotEmpty(t, credentialID, "[%s] the server must report the stored credential", tr)
 
-			finish, err := passkeyLogin(ctx, c, adapter)
+			// The login hint is the enrolled admin's email, read from the same
+			// user record the enrollment resolved adminSubject to.
+			admin, err := c.Security().Auth().UserByCertificate(ctx, loadAdminLeaf(t))
+			require.NoError(t, err, "[%s] resolve the enrolled admin", tr)
+			require.Equal(t, adminSubject, admin.Username, "[%s] the admin certificate must resolve the enrolled admin", tr)
+			require.NotEmpty(t, admin.Email, "[%s] the enrolled admin must carry an email login key", tr)
+
+			finish, err := passkeyLogin(ctx, c, adapter, admin.Email)
 			require.NoError(t, err, "[%s] login with the enrolled passkey", tr)
 			require.NotEmpty(t, finish.Bearer, "[%s] login must mint a bearer", tr)
 			require.NotNil(t, finish.Identity, "[%s] login must resolve an identity", tr)
