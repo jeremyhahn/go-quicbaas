@@ -284,7 +284,8 @@ func (t *cryptoService) checkVersionUsable(ctx context.Context, scopedKeyID stri
 	}
 	version, err := kms.CiphertextKeyVersion(ciphertext)
 	if err != nil {
-		return err
+		// A ciphertext that does not decode names no version; the crypto backend rejects ciphertext it cannot decode, so its own error is what the caller sees.
+		return nil
 	}
 	status, _ := t.kmsSvc.getVersionStatus(ctx, scopedKeyID, version)
 	switch status {

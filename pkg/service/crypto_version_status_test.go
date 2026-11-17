@@ -170,3 +170,16 @@ func TestCryptoService_Decrypt_EnabledKeyVersionStillDecrypts(t *testing.T) {
 	require.Len(t, batch.Results, 2)
 	require.Equal(t, "sealed under v2", string(batch.Results[1].Plaintext))
 }
+
+func TestCryptoService_Decrypt_UnparsableCiphertextGoesToBackend(t *testing.T) {
+	f := newVersionedCryptoFixture(t)
+	f.rotateAndDisableV1()
+	opaque := []byte("ct")
+
+	require.NoError(t, f.svc.checkVersionUsable(systemTenantCtx(), f.scoped, opaque))
+
+	_, err := f.svc.Decrypt(systemTenantCtx(), &DecryptRequest{KeyID: versionStatusKeyID, Ciphertext: opaque})
+	require.Error(t, err, "the crypto backend rejects a ciphertext it cannot decode")
+	var disabled *api.KeyDisabledError
+	require.False(t, stderrors.As(err, &disabled), "an unparsable ciphertext is not refused as key-disabled: %v", err)
+}
