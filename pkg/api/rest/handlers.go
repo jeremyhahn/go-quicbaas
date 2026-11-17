@@ -551,6 +551,7 @@ func (s *Server) HandleCompareAndSwap(w http.ResponseWriter, r *http.Request) {
 		ID:         entityID,
 		Expect:     expect,
 		Set:        set,
+		ShardID:    req.ShardID,
 	})
 	if err != nil {
 		s.handleServiceError(w, r, err)
@@ -584,6 +585,7 @@ func (s *Server) HandlePutIfAbsent(w http.ResponseWriter, r *http.Request) {
 		EntityType: entityType,
 		ID:         entityID,
 		Data:       data,
+		ShardID:    req.ShardID,
 	})
 	if err != nil {
 		s.handleServiceError(w, r, err)

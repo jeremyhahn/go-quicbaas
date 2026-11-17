@@ -144,12 +144,12 @@ func (h *kvHandler) handleCompareAndSwap(ctx context.Context, req interface{}) (
 		return nil, errors.NewInvalidInput("kvHandler.handleCompareAndSwap",
 			"invalid request type, expected *service.CompareAndSwapRequest")
 	}
-	body := map[string][]byte{
+	body := map[string]interface{}{
 		"expect": sdkReq.Expect,
 		"set":    sdkReq.Set,
 	}
 	return h.conditionalPut(ctx, "kvHandler.handleCompareAndSwap",
-		sdkReq.EntityType, sdkReq.ID, "compare-and-swap", body)
+		sdkReq.EntityType, sdkReq.ID, sdkReq.ShardID, "compare-and-swap", body)
 }
 
 // handlePutIfAbsent handles PutIfAbsent requests via
@@ -160,18 +160,23 @@ func (h *kvHandler) handlePutIfAbsent(ctx context.Context, req interface{}) (int
 		return nil, errors.NewInvalidInput("kvHandler.handlePutIfAbsent",
 			"invalid request type, expected *service.PutIfAbsentRequest")
 	}
-	body := map[string][]byte{
+	body := map[string]interface{}{
 		"data": sdkReq.Data,
 	}
 	return h.conditionalPut(ctx, "kvHandler.handlePutIfAbsent",
-		sdkReq.EntityType, sdkReq.ID, "put-if-absent", body)
+		sdkReq.EntityType, sdkReq.ID, sdkReq.ShardID, "put-if-absent", body)
 }
 
 // conditionalPut posts a conditional write to an entity's {verb} route and
 // returns the server's {"applied": bool} as a ConditionalPutResponse.
-func (h *kvHandler) conditionalPut(ctx context.Context, op, entityType string, id uint64, verb string, body map[string][]byte) (interface{}, error) {
+func (h *kvHandler) conditionalPut(ctx context.Context, op, entityType string, id, shardID uint64, verb string, body map[string]interface{}) (interface{}, error) {
 	url := h.transport.baseURL + h.transport.basePath +
 		fmt.Sprintf("/api/v1/kv/%s/%d/%s", neturl.PathEscape(entityType), id, verb)
+	// A write that names its shard carries it: the server otherwise targets
+	// the default shard, and the condition would be checked on the wrong record.
+	if shardID != 0 {
+		body["shard_id"] = shardID
+	}
 
 	bodyBytes, err := json.Marshal(body)
 	if err != nil {

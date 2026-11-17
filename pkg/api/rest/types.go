@@ -61,6 +61,9 @@ type CompareAndSwapRequest struct {
 
 	// Set is the value stored when Expect matches
 	Set []byte `json:"set"`
+
+	// ShardID optionally names the shard to target; zero means the default.
+	ShardID uint64 `json:"shard_id,omitempty"`
 }
 
 // PutIfAbsentRequest is the body of POST
@@ -69,6 +72,9 @@ type CompareAndSwapRequest struct {
 type PutIfAbsentRequest struct {
 	// Data is the value stored when the entity is absent
 	Data []byte `json:"data"`
+
+	// ShardID optionally names the shard to target; zero means the default.
+	ShardID uint64 `json:"shard_id,omitempty"`
 }
 
 // ConditionalPutResponse reports whether a conditional write was stored.
