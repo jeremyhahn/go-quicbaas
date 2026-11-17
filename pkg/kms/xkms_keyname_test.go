@@ -8,6 +8,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	dbxkms "github.com/jeremyhahn/go-quicbaas/pkg/xkms"
+
 	"github.com/jeremyhahn/go-quicbaas/pkg/config"
 )
 
@@ -105,6 +107,22 @@ func TestXKMSBackend_VersionLikeNameWithoutBaseIsAKey(t *testing.T) {
 	_, err = newKeyNameTestBackend(t).GetKeyMetadata(ctx, keyID)
 	require.NoError(t, err)
 	require.NoError(t, backend.DeleteKey(ctx, keyID))
+}
+
+// TestXKMSBackend_VersionNameLookupErrorFailsClosed checks that a metadata
+// lookup of the base that fails with an error other than ErrKeyNotFound makes
+// refuseVersionName return that error, not treat keyID as an ordinary key.
+func TestXKMSBackend_VersionNameLookupErrorFailsClosed(t *testing.T) {
+	cleanup := initXKMSForTest(t)
+	defer cleanup()
+
+	backend := newKeyNameTestBackend(t)
+	// With xkms reset, every metadata lookup fails with ErrBackendNotReady.
+	dbxkms.Reset()
+
+	err := backend.refuseVersionName(context.Background(), "vn-fc_v2")
+	require.ErrorIs(t, err, ErrBackendNotReady)
+	assert.NotErrorIs(t, err, ErrKeyNotFound)
 }
 
 func TestVersionNameBase(t *testing.T) {

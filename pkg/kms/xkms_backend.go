@@ -614,10 +614,17 @@ func (kb *XKMSBackend) refuseVersionName(ctx context.Context, keyID string) erro
 	if !ok {
 		return nil
 	}
-	if _, err := kb.GetKeyMetadata(ctx, base); err != nil {
-		return nil //nolint:nilerr // the base is not a key, so keyID is an ordinary key
+	_, err := kb.GetKeyMetadata(ctx, base)
+	switch {
+	case err == nil:
+		return ErrKeyNotFound
+	case stderrors.Is(err, ErrKeyNotFound):
+		// The base is not a key, so keyID is an ordinary key.
+		return nil
+	default:
+		// Fail closed: the lookup could not tell whether base is a key.
+		return err
 	}
-	return ErrKeyNotFound
 }
 
 // DisableKey temporarily disables a key.
