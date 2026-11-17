@@ -5684,20 +5684,26 @@ DEVCONTAINER_DOCKER_BUILD = DOCKER_BUILDKIT=1 $(DOCKER) build -f $(DEVCONTAINER_
 # Builds the named compose services with the module credentials staged for the
 # build only, unless CI handed them over in MODULE_ENV_FILE. A docker without
 # the compose plugin (#2503) builds each service with plain `docker build`,
-# with the target, build args, secret and tag compose.yaml gives it; the
-# toolchain image is skipped when the daemon already holds its tag.
+# with the target, build args, secret and tag compose.yaml gives it. On both
+# paths the toolchain image is skipped when the daemon already holds its tag.
 DEVCONTAINER_BUILD = $(if $(strip $(MODULE_ENV_FILE)),,trap '$(GOMODAUTH_CLEAR)' EXIT; \
 	$(MAKE) --no-print-directory stage-gomodauth;) \
 	devcontainer_build() { \
+		svcs=; \
+		for svc in "$$@"; do \
+			if [ "$$svc" = toolchain ] && $(DOCKER) image inspect '$(TOOLCHAIN_IMAGE)' >/dev/null 2>&1; then \
+				echo "the daemon holds $(TOOLCHAIN_IMAGE); no build"; continue; \
+			fi; \
+			svcs="$$svcs $$svc"; \
+		done; \
+		[ -n "$$svcs" ] || return 0; \
+		set -- $$svcs; \
 		if $(DOCKER) compose version >/dev/null 2>&1; then \
 			$(DEVCONTAINER_COMPOSE) build "$$@"; return; \
 		fi; \
 		for svc in "$$@"; do \
 			case $$svc in \
 			toolchain) \
-				if $(DOCKER) image inspect '$(TOOLCHAIN_IMAGE)' >/dev/null 2>&1; then \
-					echo "the daemon holds $(TOOLCHAIN_IMAGE); no build"; continue; \
-				fi; \
 				$(DEVCONTAINER_DOCKER_BUILD) --target toolchain -t '$(TOOLCHAIN_IMAGE)' . || return 1 ;; \
 			integration) \
 				$(DEVCONTAINER_DOCKER_BUILD) --target integration \

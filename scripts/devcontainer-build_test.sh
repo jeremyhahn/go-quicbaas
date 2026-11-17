@@ -92,6 +92,21 @@ build docker-build-toolchain-image
 [ "$rc" = 0 ] || fail "(3) make exited $rc: $(tail -n 3 "$work/out")"
 [ -z "$(lines 'build *')" ] || fail "(3) docker build ran: $(lines 'build *')"
 
+# (3b) compose available, the daemon holds the toolchain tag: compose builds
+# no toolchain, and builds integration when both are requested.
+newcase compose-skip
+export STUB_COMPOSE=1 STUB_HAS_TAG=1
+build docker-build-toolchain-image
+[ "$rc" = 0 ] || fail "(3b) make exited $rc: $(tail -n 3 "$work/out")"
+[ -z "$(lines 'compose * build*')" ] || fail "(3b) compose build ran: $(lines 'compose * build*')"
+: > "$STUB_LOG"
+build docker-build
+[ "$rc" = 0 ] || fail "(3b) make docker-build exited $rc: $(tail -n 3 "$work/out")"
+[ -z "$(lines 'compose * build*toolchain*')" ] || fail "(3b) compose built toolchain: $(lines 'compose * build*')"
+[ -n "$(lines 'compose -f build/docker/devcontainer/compose.yaml build integration')" ] \
+  || fail "(3b) no compose build of integration: $(tr '\n' ';' < "$STUB_LOG")"
+[ -z "$(lines 'build *')" ] || fail "(3b) plain docker build ran"
+
 # (4) compose missing, the build fails: make fails.
 newcase failing
 export STUB_BUILD_FAIL=1
