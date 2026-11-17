@@ -214,6 +214,22 @@ func (e *DeleteInProgressError) Error() string {
 // Unwrap returns the sentinel for errors.Is support.
 func (e *DeleteInProgressError) Unwrap() error { return ErrVersionConflict }
 
+// BindInProgressError refuses a bind or unbind while another bind or unbind
+// of the same project holds a live bind lease (go-quicbaas#1679). It is a
+// version conflict: the caller retries once the other settles.
+type BindInProgressError struct {
+	TenantID  string
+	ProjectID string
+}
+
+// Error implements the error interface.
+func (e *BindInProgressError) Error() string {
+	return "sdlc: project " + e.ProjectID + " is already being bound or unbound; retry once that settles"
+}
+
+// Unwrap returns the sentinel for errors.Is support.
+func (e *BindInProgressError) Unwrap() error { return ErrVersionConflict }
+
 // BindWithdrawError reports a bind that had to withdraw its binding (a delete
 // of the project was in flight, or the fence could not be read) and could not.
 // The binding may still stand on a project that is being deleted; the cause

@@ -192,6 +192,7 @@ func domainErrorClass(err error) (qberrors.ErrorCode, bool) {
 		alreadyExists *service.ProjectAlreadyExistsError
 		bound         *service.ProjectBoundError
 		deleting      *sdlc.DeleteInProgressError
+		binding       *sdlc.BindInProgressError
 		invalid       *service.ProjectInvalidError
 		roleInvalid   *service.ProjectRoleInvalidError
 		forge         *sdlc.ForgeNotRegisteredError
@@ -214,6 +215,9 @@ func domainErrorClass(err error) (qberrors.ErrorCode, bool) {
 		return qberrors.ErrConflict, true
 	case stderrors.As(err, &deleting):
 		// Another delete of the project is in flight: retry once it settles.
+		return qberrors.ErrConflict, true
+	case stderrors.As(err, &binding):
+		// Another bind or unbind of the project is in flight: retry once it settles.
 		return qberrors.ErrConflict, true
 	case stderrors.As(err, &invalid), stderrors.As(err, &roleInvalid),
 		stderrors.As(err, &forge), stderrors.As(err, &strategy),

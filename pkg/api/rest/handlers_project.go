@@ -847,6 +847,7 @@ func handleProjectError(w http.ResponseWriter, r *http.Request, err error) {
 	var alreadyExists *service.ProjectAlreadyExistsError
 	var bound *service.ProjectBoundError
 	var deleting *sdlc.DeleteInProgressError
+	var binding *sdlc.BindInProgressError
 	var invalid *service.ProjectInvalidError
 	var accessDenied *service.ProjectAccessDeniedError
 	var unresolved *service.ProjectUnresolvedError
@@ -864,6 +865,9 @@ func handleProjectError(w http.ResponseWriter, r *http.Request, err error) {
 		RespondError(w, r, http.StatusConflict, err)
 	case errors.As(err, &deleting):
 		// Another delete of the project is in flight: retry once it settles.
+		RespondError(w, r, http.StatusConflict, err)
+	case errors.As(err, &binding):
+		// Another bind or unbind of the project is in flight: retry once it settles.
 		RespondError(w, r, http.StatusConflict, err)
 	case errors.As(err, &invalid):
 		RespondError(w, r, http.StatusBadRequest, err)
