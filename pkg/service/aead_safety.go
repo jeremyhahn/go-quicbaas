@@ -233,6 +233,35 @@ type AEADSafetyTracker struct {
 
 	// warningCallback is called when warning threshold is reached
 	warningCallback func(ctx context.Context, keyID string, isDEK bool, message string)
+
+	// keyLocksMu guards keyLocks.
+	keyLocksMu sync.Mutex
+
+	// keyLocks maps key IDs to the lock that orders key operations against
+	// rotation (see KeyLock). Entries are created lazily.
+	keyLocks map[string]*sync.RWMutex
+}
+
+// KeyLock returns the lock that orders AEAD operations under keyID against
+// the key's rotation, created on first use. An operation holds the read lock
+// from before it records its usage until the cryptographic call returns;
+// rotation holds the write lock from before the key is rotated until its
+// usage is reset, so a reset can never erase an operation counted against
+// the new version, nor an operation run on the old version be counted
+// against the new one. The rotation and warning callbacks run under the read
+// lock and must not rotate the key synchronously.
+func (t *AEADSafetyTracker) KeyLock(keyID string) *sync.RWMutex {
+	t.keyLocksMu.Lock()
+	defer t.keyLocksMu.Unlock()
+	if t.keyLocks == nil {
+		t.keyLocks = make(map[string]*sync.RWMutex)
+	}
+	lock, ok := t.keyLocks[keyID]
+	if !ok {
+		lock = &sync.RWMutex{}
+		t.keyLocks[keyID] = lock
+	}
+	return lock
 }
 
 // aeadMetrics holds Prometheus metrics for AEAD safety.

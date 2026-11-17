@@ -202,6 +202,11 @@ func (t *cryptoService) Encrypt(ctx context.Context, req *EncryptRequest) (*Encr
 
 	// Track key usage before encryption (if tracker configured)
 	if t.safetyTracker != nil {
+		// Held until the operation returns, so a concurrent rotation cannot
+		// reset the usage this operation records (AEADSafetyTracker.KeyLock).
+		keyLock := t.safetyTracker.KeyLock(scopedKeyID)
+		keyLock.RLock()
+		defer keyLock.RUnlock()
 		if err := t.safetyTracker.RecordKeyEncrypt(ctx, scopedKeyID, uint64(len(req.Plaintext))); err != nil {
 			t.metrics.encryptOperationsTotal.With(req.KeyID, "safety_limit_exceeded").Inc()
 			t.metrics.errorsByType.With("safety_limit_error").Inc()
@@ -342,6 +347,11 @@ func (t *cryptoService) Decrypt(ctx context.Context, req *DecryptRequest) (*Decr
 	// Track key usage before decryption (if tracker configured)
 	// Note: For decryption we track the ciphertext size as an approximation
 	if t.safetyTracker != nil {
+		// Held until the operation returns, so a concurrent rotation cannot
+		// reset the usage this operation records (AEADSafetyTracker.KeyLock).
+		keyLock := t.safetyTracker.KeyLock(scopedKeyID)
+		keyLock.RLock()
+		defer keyLock.RUnlock()
 		if err := t.safetyTracker.RecordKeyEncrypt(ctx, scopedKeyID, uint64(len(req.Ciphertext))); err != nil {
 			t.metrics.decryptOperationsTotal.With(req.KeyID, "safety_limit_exceeded").Inc()
 			t.metrics.errorsByType.With("safety_limit_error").Inc()
@@ -424,6 +434,11 @@ func (t *cryptoService) Rewrap(ctx context.Context, req *RewrapRequest) (*Rewrap
 
 	// Track key usage for rewrap operation (if tracker configured)
 	if t.safetyTracker != nil {
+		// Held until the operation returns, so a concurrent rotation cannot
+		// reset the usage this operation records (AEADSafetyTracker.KeyLock).
+		keyLock := t.safetyTracker.KeyLock(scopedKeyID)
+		keyLock.RLock()
+		defer keyLock.RUnlock()
 		if err := t.safetyTracker.RecordKeyEncrypt(ctx, scopedKeyID, uint64(len(req.Ciphertext))); err != nil {
 			t.metrics.encryptOperationsTotal.With(req.KeyID, "safety_limit_exceeded").Inc()
 			t.metrics.errorsByType.With("safety_limit_error").Inc()
@@ -509,6 +524,11 @@ func (t *cryptoService) EncryptBatch(ctx context.Context, req *EncryptBatchReque
 
 		// Check safety limits before processing batch
 		// Each item is one AEAD operation under the key.
+		// Held until the operation returns, so a concurrent rotation cannot
+		// reset the usage this operation records (AEADSafetyTracker.KeyLock).
+		keyLock := t.safetyTracker.KeyLock(scopedKeyID)
+		keyLock.RLock()
+		defer keyLock.RUnlock()
 		if err := t.safetyTracker.RecordKeyEncryptN(ctx, scopedKeyID, uint64(len(req.Items)), totalBytes); err != nil {
 			t.metrics.encryptOperationsTotal.With(req.KeyID, "safety_limit_exceeded").Inc()
 			t.metrics.errorsByType.With("safety_limit_error").Inc()
@@ -603,6 +623,11 @@ func (t *cryptoService) DecryptBatch(ctx context.Context, req *DecryptBatchReque
 
 		// Check safety limits before processing batch
 		// Each item is one AEAD operation under the key.
+		// Held until the operation returns, so a concurrent rotation cannot
+		// reset the usage this operation records (AEADSafetyTracker.KeyLock).
+		keyLock := t.safetyTracker.KeyLock(scopedKeyID)
+		keyLock.RLock()
+		defer keyLock.RUnlock()
 		if err := t.safetyTracker.RecordKeyDecryptN(ctx, scopedKeyID, uint64(len(req.Items)), totalBytes); err != nil {
 			t.metrics.decryptOperationsTotal.With(req.KeyID, "safety_limit_exceeded").Inc()
 			t.metrics.errorsByType.With("safety_limit_error").Inc()
@@ -696,6 +721,11 @@ func (t *cryptoService) GenerateDataKey(ctx context.Context, req *GenerateDataKe
 	// Track key usage for DEK generation (if tracker configured)
 	// The wrapped DEK is what gets encrypted with the KEK
 	if t.safetyTracker != nil {
+		// Held until the operation returns, so a concurrent rotation cannot
+		// reset the usage this operation records (AEADSafetyTracker.KeyLock).
+		keyLock := t.safetyTracker.KeyLock(scopedKeyID)
+		keyLock.RLock()
+		defer keyLock.RUnlock()
 		if err := t.safetyTracker.RecordKeyEncrypt(ctx, scopedKeyID, conv.ClampIntToUint64(keyBytes)); err != nil {
 			t.metrics.encryptOperationsTotal.With(req.KeyID, "safety_limit_exceeded").Inc()
 			t.metrics.errorsByType.With("safety_limit_error").Inc()
@@ -771,6 +801,11 @@ func (t *cryptoService) GenerateWrappedDataKey(ctx context.Context, req *Generat
 
 	// Track key usage for wrapped DEK generation (if tracker configured)
 	if t.safetyTracker != nil {
+		// Held until the operation returns, so a concurrent rotation cannot
+		// reset the usage this operation records (AEADSafetyTracker.KeyLock).
+		keyLock := t.safetyTracker.KeyLock(scopedKeyID)
+		keyLock.RLock()
+		defer keyLock.RUnlock()
 		if err := t.safetyTracker.RecordKeyEncrypt(ctx, scopedKeyID, conv.ClampIntToUint64(keyBytes)); err != nil {
 			t.metrics.encryptOperationsTotal.With(req.KeyID, "safety_limit_exceeded").Inc()
 			t.metrics.errorsByType.With("safety_limit_error").Inc()

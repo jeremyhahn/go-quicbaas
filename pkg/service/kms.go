@@ -1139,6 +1139,16 @@ func (k *kmsServiceImpl) RotateKey(ctx context.Context, req *RotateKeyRequest) (
 		return nil, err
 	}
 
+	// Hold the key's write lock from before the rotation until its usage is
+	// reset, so no Crypto operation runs, or records usage, in between
+	// (AEADSafetyTracker.KeyLock).
+	tracker := k.GetSafetyTracker()
+	if tracker != nil {
+		keyLock := tracker.KeyLock(scopedKeyID)
+		keyLock.Lock()
+		defer keyLock.Unlock()
+	}
+
 	// Call KMS manager to rotate key
 	newResult, err := k.kmsManager.RotateKey(ctx, scopedKeyID)
 	if err != nil {
@@ -1164,7 +1174,7 @@ func (k *kmsServiceImpl) RotateKey(ctx context.Context, req *RotateKeyRequest) (
 
 	// The new version starts with a fresh AEAD budget: clear the usage the
 	// Crypto service counted under the same tenant-scoped key ID.
-	if tracker := k.GetSafetyTracker(); tracker != nil {
+	if tracker != nil {
 		tracker.ResetKeyUsage(scopedKeyID)
 	}
 
