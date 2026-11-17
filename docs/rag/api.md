@@ -52,38 +52,9 @@ and call it. Its typed errors come back as invalid input (no query, no
 namespace, no results) or unavailable (Ollama or the vector store not
 configured), on every transport.
 
-### go-qrdb's RAG service — `quicbaas.QRDBRAG(c)` (`qrdb_vector` builds)
-
-`sdk/go` re-exports go-qrdb's own RAG client (`sdk/go/qrdb_rag.go`): the
-interface as `QRDBRAGClient`, and its request and response types as
-`QRDBRAGIngestRequest`, `QRDBRAGQueryRequest`, `QRDBRAGDeleteDocumentRequest`,
-`QRDBRAGListDocumentsRequest` and their responses. They are aliases, so they
-are go-qrdb's types and not copies. `quicbaas.QRDBRAG(c)` returns the client.
-It runs over the qrdb sub-client, which uses the same transport and address
-as `c`. It returns an error if that sub-client cannot be built, or if its
-transport does not implement go-qrdb's RAG service.
-
-| Method | Does |
-|---|---|
-| `RAGIngestDocument` | chunks (`fixed`, `sentence`, `paragraph`), embeds and stores a document |
-| `RAGQuery` | embeds the query and returns the nearest passages of a namespace |
-| `RAGDeleteDocument` | removes a document, its chunk vectors and KV entries |
-| `RAGListDocuments` | pages through a namespace's ingested documents |
-
-**Which node serves it.** Over REST the client calls go-qrdb's routes:
-`POST /v1/rag/ingest`, `POST /v1/rag/query`, `POST /v1/rag/documents/delete`
-and `GET /v1/rag/documents` (`TestQRDBRAG_RESTCallsGoQRDBRoutes` pins them).
-A QuicBaaS node serves none of them. Its REST RAG routes are QuicBaaS's own
-`/api/v1/rag/*`, and on gRPC it serves `quicbaas.rag.v1.RAGService`. Its
-`qrdb.v1.QRDBService` gets no RAG servicer, because go-qrdb's SDK exports no
-RAG register option (v0.30.1-alpha). So point `c` at a go-qrdb node's address
-to use `QRDBRAG`. Calls through a QuicBaaS node fail with not found or
-unimplemented. go-qrdb's embedded transport has no RAG service either.
-
-go-qrdb builds its RAG client only under the `qrdb_vector` tag, so the
-re-export does too. `quicbaas.RAG` (above, `Client.RAG()`) is still QuicBaaS's
-own pipeline. It is the parallel implementation the SPEC row keeps until the
-owner retires it.
+`Client.RAG()` is the SDK's RAG surface. The node serves no go-qrdb RAG
+service (its `qrdb.v1.QRDBService` gets no RAG servicer), so the SDK does not
+re-export go-qrdb's RAG client.
 
 ## Overview
 
