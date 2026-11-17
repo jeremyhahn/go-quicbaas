@@ -147,11 +147,17 @@ type quicBaaS struct {
 	// QRDB SDK client provider for type-safe access to core KV operations
 	qrdbClient QRDBClientProvider
 
-	// qrdbServiceRegistry, when set, resolves the tenant-scoped KVServicer
-	// the kv service's Put, Get, Delete and List write through, so a
-	// tenant's isolation backend, barrier and quotas apply. Nil keeps those
-	// operations on qrdbClient.
-	qrdbServiceRegistry qrdbservice.Registry
+	// qrdbServiceRegistry, when set, supplies go-qrdb's tenant/database
+	// service registry, whose tenant-scoped KVServicer the kv service's Put,
+	// Get, Delete and List write through, so a tenant's isolation backend,
+	// barrier and quotas apply. Nil keeps those operations on qrdbClient.
+	// When set but the provider returns nil (the node is sealed), those
+	// operations fail closed; see kvService.dataPlane.
+	qrdbServiceRegistry func() qrdbservice.Registry
+	// qrdbRegistryMu guards qrdbRegistryCached, the first non-nil registry
+	// qrdbServiceRegistry returned.
+	qrdbRegistryMu     sync.Mutex
+	qrdbRegistryCached qrdbservice.Registry
 
 	// KVStore provider for DAO factory
 	kvStoreProvider func(shardID uint64) interfaces.KVStore
@@ -400,7 +406,7 @@ func newQuicBaaS(b *serviceBuilder) (QuicBaaS, error) {
 			svc.qrdbClient = provider
 		}
 	}
-	if !isNilInterface(b.qrdbServiceRegistry) {
+	if b.qrdbServiceRegistry != nil {
 		svc.qrdbServiceRegistry = b.qrdbServiceRegistry
 	}
 
@@ -931,17 +937,13 @@ func (k *kvService) Put(ctx context.Context, req *PutRequest) (*PutResponse, err
 		return nil, err
 	}
 	// Propose to Raft via qrdb SDK
-	kv, err := k.dataPlane(ctx, shardID)
+	kv, err := k.dataPlane(ctx, "service.Put", shardID)
 	if err != nil {
 		if k.svc.metrics != nil {
 			k.svc.metrics.requestsTotal.With("Put", "error").Inc()
 			k.svc.metrics.errorsByType.With("raft_error").Inc()
 		}
-		return nil, &errors.QBError{
-			Code: errors.ErrRaft,
-			Op:   "service.Put",
-			Err:  err,
-		}
+		return nil, kvDataPlaneError("service.Put", err)
 	}
 	if err := kv.Put(ctx, string(key), req.Data); err != nil {
 		if k.svc.metrics != nil {
@@ -1055,17 +1057,13 @@ func (k *kvService) Get(ctx context.Context, req *GetRequest) (*GetResponse, err
 	}
 
 	// Read via qrdb SDK
-	kv, err := k.dataPlane(ctx, shardID)
+	kv, err := k.dataPlane(ctx, "service.Get", shardID)
 	if err != nil {
 		if k.svc.metrics != nil {
 			k.svc.metrics.requestsTotal.With("Get", "error").Inc()
 			k.svc.metrics.errorsByType.With("raft_error").Inc()
 		}
-		return nil, &errors.QBError{
-			Code: errors.ErrRaft,
-			Op:   "service.Get",
-			Err:  err,
-		}
+		return nil, kvDataPlaneError("service.Get", err)
 	}
 	data, err := kv.Get(ctx, string(key))
 	if err != nil {
@@ -1164,17 +1162,13 @@ func (k *kvService) Delete(ctx context.Context, req *DeleteRequest) (*DeleteResp
 		return nil, err
 	}
 	// Delete via qrdb SDK
-	kv, err := k.dataPlane(ctx, shardID)
+	kv, err := k.dataPlane(ctx, "service.Delete", shardID)
 	if err != nil {
 		if k.svc.metrics != nil {
 			k.svc.metrics.requestsTotal.With("Delete", "error").Inc()
 			k.svc.metrics.errorsByType.With("raft_error").Inc()
 		}
-		return nil, &errors.QBError{
-			Code: errors.ErrRaft,
-			Op:   "service.Delete",
-			Err:  err,
-		}
+		return nil, kvDataPlaneError("service.Delete", err)
 	}
 	if err := kv.Delete(ctx, string(key)); err != nil {
 		if k.svc.metrics != nil {
@@ -1241,17 +1235,13 @@ func (k *kvService) List(ctx context.Context, req *ListRequest, stream chan<- *L
 	}
 
 	// Scan via qrdb SDK
-	kv, err := k.dataPlane(ctx, shardID)
+	kv, err := k.dataPlane(ctx, "service.List", shardID)
 	if err != nil {
 		if k.svc.metrics != nil {
 			k.svc.metrics.requestsTotal.With("List", "error").Inc()
 			k.svc.metrics.errorsByType.With("raft_error").Inc()
 		}
-		return &errors.QBError{
-			Code: errors.ErrRaft,
-			Op:   "service.List",
-			Err:  err,
-		}
+		return kvDataPlaneError("service.List", err)
 	}
 	scanResult, err := kv.Scan(ctx, string(prefix))
 	if err != nil {

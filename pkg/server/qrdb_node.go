@@ -1304,32 +1304,35 @@ func newNodeBackedShardedClient(node *qrdbnode.Node) *ShardedClient {
 		factory:         newTransportFactory(embeddedCfg, nil, nil),
 		nodeClient:      node.Client(),
 		nodeOwned:       true,
-		serviceRegistry: nodeServiceRegistry(node),
+		serviceRegistry: nodeServiceRegistryProvider(node),
 	}
 }
 
-// nodeServiceRegistry returns one tenant/database service registry from the
-// node's running server, or nil when the node has no server (sealed) or no
-// registry. ServiceRegistry builds a fresh registry per call, so the caller
-// holds the one returned here instead of resolving it per request.
-func nodeServiceRegistry(node *qrdbnode.Node) qrdbservice.Registry {
-	if node == nil {
-		return nil
+// nodeServiceRegistryProvider returns a provider of the node's
+// tenant/database service registry. The provider resolves node.Server() on
+// every call, so a node that is sealed when the client is built (no server
+// yet) yields a registry once it is unsealed; until then it returns nil and
+// the kv service fails closed instead of using the shared client.
+func nodeServiceRegistryProvider(node *qrdbnode.Node) func() qrdbservice.Registry {
+	return func() qrdbservice.Registry {
+		if node == nil {
+			return nil
+		}
+		srv := node.Server()
+		if srv == nil {
+			return nil
+		}
+		reg := srv.ServiceRegistry()
+		if reg == nil {
+			return nil
+		}
+		return reg
 	}
-	srv := node.Server()
-	if srv == nil {
-		return nil
-	}
-	reg := srv.ServiceRegistry()
-	if reg == nil {
-		return nil
-	}
-	return reg
 }
 
-// ServiceRegistry returns the qrdb service registry held by a node-backed
-// client, or nil when there is none.
-func (c *ShardedClient) ServiceRegistry() qrdbservice.Registry {
+// ServiceRegistryProvider returns the qrdb service registry provider held by
+// a node-backed client, or nil when the client is not node-backed.
+func (c *ShardedClient) ServiceRegistryProvider() func() qrdbservice.Registry {
 	if c == nil {
 		return nil
 	}

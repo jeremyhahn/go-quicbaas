@@ -2065,9 +2065,11 @@ func (s *Server) startService() error {
 	s.logger.Info("qrdb SDK client attached to service builder")
 	// Route the kv service through the node's tenant/database registry so a
 	// tenant's isolation backend, barrier and quotas apply to its KV data.
-	if reg := s.qrdbClient.ServiceRegistry(); reg != nil {
-		builder = builder.WithQRDBServiceRegistry(reg)
-		s.logger.Info("qrdb service registry attached to service builder")
+	// The provider is always injected on the node path and resolved per
+	// operation, so a node still sealed here fails closed until unsealed.
+	if provider := s.qrdbClient.ServiceRegistryProvider(); provider != nil {
+		builder = builder.WithQRDBServiceRegistry(provider)
+		s.logger.Info("qrdb service registry provider attached to service builder")
 	}
 
 	// Thread the trusted-computing seam. The verifier half of
