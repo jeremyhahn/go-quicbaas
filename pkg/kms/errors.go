@@ -20,6 +20,9 @@ var (
 	// ErrKeyIDEmpty indicates a keyID parameter is empty.
 	ErrKeyIDEmpty = errors.New("keyID cannot be empty")
 
+	// ErrInvalidKeyID is returned when a key ID cannot be mapped to a backend key name.
+	ErrInvalidKeyID = errors.New("invalid key ID")
+
 	// ErrKeyAttributesNil indicates key attributes are nil.
 	ErrKeyAttributesNil = errors.New("key attributes cannot be nil")
 

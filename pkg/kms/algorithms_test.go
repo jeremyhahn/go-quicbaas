@@ -6931,7 +6931,8 @@ func TestXKMSBackend_buildFullKeyID_AllAlgorithms(t *testing.T) {
 			backend := &XKMSBackend{
 				backendType: tc.backendType,
 			}
-			result := backend.buildFullKeyID(tc.keyID, tc.algorithm)
+			result, err := backend.buildFullKeyID(tc.keyID, tc.algorithm)
+			require.NoError(t, err)
 			assert.Equal(t, tc.expected, result)
 		})
 	}
@@ -6964,7 +6965,8 @@ func TestXKMSBackend_buildSigningKeyID_AllVariants(t *testing.T) {
 			backend := &XKMSBackend{
 				backendType: tc.backendType,
 			}
-			result := backend.buildSigningKeyID(tc.keyID, tc.algorithm)
+			result, err := backend.buildSigningKeyID(tc.keyID, tc.algorithm)
+			require.NoError(t, err)
 			assert.Equal(t, tc.expected, result)
 		})
 	}
@@ -7107,7 +7109,8 @@ func TestXKMSBackend_algorithmToKeyAttributes_ECVariants(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.algorithm, func(t *testing.T) {
-			attrs := backend.algorithmToKeyAttributes("test", tc.algorithm)
+			attrs, err := backend.algorithmToKeyAttributes("test", tc.algorithm)
+			require.NoError(t, err)
 			require.NotNil(t, attrs.ECCAttributes)
 			require.NotNil(t, attrs.ECCAttributes.Curve)
 			assert.Equal(t, tc.expectedBit, attrs.ECCAttributes.Curve.Params().BitSize)
@@ -7199,7 +7202,8 @@ func TestXKMSBackend_formatKeyID_Passthrough(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc, func(t *testing.T) {
-			result := backend.formatKeyID(tc)
+			result, err := backend.formatKeyID(tc)
+			require.NoError(t, err)
 			// formatKeyID should return the input unchanged
 			assert.Equal(t, tc, result)
 		})
