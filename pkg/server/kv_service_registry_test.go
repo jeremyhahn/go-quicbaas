@@ -68,6 +68,18 @@ func TestKVServiceRegistry_BarrierTenantPutIsScoped(t *testing.T) {
 	ctx := tenantctx.WithTenant(context.Background(), tenantID)
 	data := []byte(`{"name":"scoped"}`)
 	_, err = svc.Put(ctx, &service.PutRequest{EntityType: "User", ID: 42, Data: data})
+	require.Error(t, err, "a put on a still-sealed barrier tenant must fail")
+
+	// Unseal acme's barrier through the per-tenant facade over the node's
+	// own tenant client, as tenant_kvstore_live_resolver_test does.
+	_, err = svcs.Tenant.TenantBarrierInit(context.Background(), tenantID, []byte("key"), 0, 0)
+	require.NoError(t, err)
+	// Init leaves the barrier unsealed; seal it so the unseal below is real.
+	require.NoError(t, svcs.Tenant.TenantBarrierSeal(context.Background(), tenantID))
+	barrier := service.NewTenantBarrierService(node.Client().Tenants())
+	require.NoError(t, barrier.TenantBarrierUnseal(tenantAdminCtx(tenantID), tenantID, []byte("key")))
+
+	_, err = svc.Put(ctx, &service.PutRequest{EntityType: "User", ID: 42, Data: data})
 	require.NoError(t, err)
 
 	// The kv service's tenant key for User 42 (pkg/service keyspace).
