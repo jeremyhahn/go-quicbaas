@@ -36,8 +36,39 @@ var errNodeHMACUnserved = status.Error(codes.Unimplemented,
 // returns false. Until that backend has a stable MAC key, the node answers
 // both RPCs Unimplemented instead of newly exposing a MAC that cannot be
 // verified.
+//
+// It also refuses GenerateDataKey and GenerateWrappedDataKey requests that
+// carry a non-empty context (additional authenticated data). The production
+// path drops that context: pkg/service's crypto service does not pass it to
+// KMSManager.GenerateDataKey, and pkg/kms's xkms backend wraps the data key
+// with Encrypt(ctx, keyID, plaintext, nil). A blob returned for such a
+// request would not be bound to the context the caller asked for, so until
+// the backend binds it the node answers InvalidArgument instead. Requests
+// with an empty context are served by the embedded server.
 type nodeCryptoServer struct {
 	*grpcapi.CryptoServer
+}
+
+// errNodeDataKeyContextUnsupported is what the node answers for
+// GenerateDataKey and GenerateWrappedDataKey when the request carries a
+// non-empty context.
+var errNodeDataKeyContextUnsupported = status.Error(codes.InvalidArgument,
+	"context (additional authenticated data) is not supported for data-key generation on the node")
+
+// GenerateDataKey refuses a non-empty context; see nodeCryptoServer.
+func (s nodeCryptoServer) GenerateDataKey(ctx context.Context, req *pb.GenerateDataKeyRequest) (*pb.GenerateDataKeyResponse, error) {
+	if len(req.GetContext()) > 0 {
+		return nil, errNodeDataKeyContextUnsupported
+	}
+	return s.CryptoServer.GenerateDataKey(ctx, req)
+}
+
+// GenerateWrappedDataKey refuses a non-empty context; see nodeCryptoServer.
+func (s nodeCryptoServer) GenerateWrappedDataKey(ctx context.Context, req *pb.GenerateWrappedDataKeyRequest) (*pb.GenerateWrappedDataKeyResponse, error) {
+	if len(req.GetContext()) > 0 {
+		return nil, errNodeDataKeyContextUnsupported
+	}
+	return s.CryptoServer.GenerateWrappedDataKey(ctx, req)
 }
 
 var _ pb.CryptoServer = nodeCryptoServer{}

@@ -386,6 +386,75 @@ func TestModule_Crypto_HMACUnimplementedOverGRPC(t *testing.T) {
 	assert.Equal(t, codes.Unimplemented, status.Code(err), "VerifyHMAC: got %v", err)
 }
 
+// dataKeyCryptoService is a MockCryptoService that counts the data-key
+// generations reaching the crypto backend.
+func dataKeyCryptoService(dataKeys, wrappedKeys *int) *mocks.MockCryptoService {
+	return &mocks.MockCryptoService{
+		GenerateDataKeyFunc: func(_ context.Context, req *service.GenerateDataKeyRequest) (*service.GenerateDataKeyResponse, error) {
+			*dataKeys++
+			return &service.GenerateDataKeyResponse{
+				KeyID: req.KeyID, Plaintext: []byte("dek"), CiphertextBlob: []byte("wrapped"),
+			}, nil
+		},
+		GenerateWrappedDataKeyFunc: func(_ context.Context, req *service.GenerateWrappedDataKeyRequest) (*service.GenerateWrappedDataKeyResponse, error) {
+			*wrappedKeys++
+			return &service.GenerateWrappedDataKeyResponse{KeyID: req.KeyID, CiphertextBlob: []byte("wrapped")}, nil
+		},
+	}
+}
+
+// TestModule_Crypto_DataKeyContextRejectedOverGRPC proves the node answers
+// GenerateDataKey and GenerateWrappedDataKey InvalidArgument when the request
+// carries a non-empty context (nodeCryptoServer): the backend drops it, so
+// the blob would not be bound to it. The backend is never reached.
+func TestModule_Crypto_DataKeyContextRejectedOverGRPC(t *testing.T) {
+	var dataKeys, wrappedKeys int
+	m, err := NewModule(func() service.QuicBaaS {
+		return &mocks.MockQuicBaaS{MockCryptoService: dataKeyCryptoService(&dataKeys, &wrappedKeys)}
+	}, testLogger(t))
+	require.NoError(t, err)
+	client := pb.NewCryptoClient(startBufconnModule(t, m))
+	spec := &pb.KeySpec{KeySize: 256}
+
+	_, err = client.GenerateDataKey(context.Background(), &pb.GenerateDataKeyRequest{
+		KeyId: "k1", KeySpec: spec, Context: []byte("aad"),
+	})
+	assert.Equal(t, codes.InvalidArgument, status.Code(err), "GenerateDataKey: got %v", err)
+
+	_, err = client.GenerateWrappedDataKey(context.Background(), &pb.GenerateWrappedDataKeyRequest{
+		KeyId: "k1", KeySpec: spec, Context: []byte("aad"),
+	})
+	assert.Equal(t, codes.InvalidArgument, status.Code(err), "GenerateWrappedDataKey: got %v", err)
+
+	assert.Zero(t, dataKeys, "GenerateDataKey with a context must not reach the crypto backend")
+	assert.Zero(t, wrappedKeys, "GenerateWrappedDataKey with a context must not reach the crypto backend")
+}
+
+// TestModule_Crypto_DataKeyWithoutContextServedOverGRPC proves the node still
+// serves GenerateDataKey and GenerateWrappedDataKey when the request carries
+// no context.
+func TestModule_Crypto_DataKeyWithoutContextServedOverGRPC(t *testing.T) {
+	var dataKeys, wrappedKeys int
+	m, err := NewModule(func() service.QuicBaaS {
+		return &mocks.MockQuicBaaS{MockCryptoService: dataKeyCryptoService(&dataKeys, &wrappedKeys)}
+	}, testLogger(t))
+	require.NoError(t, err)
+	client := pb.NewCryptoClient(startBufconnModule(t, m))
+	spec := &pb.KeySpec{KeySize: 256}
+
+	dk, err := client.GenerateDataKey(context.Background(), &pb.GenerateDataKeyRequest{KeyId: "k1", KeySpec: spec})
+	require.NoError(t, err)
+	assert.Equal(t, []byte("dek"), dk.Plaintext)
+	assert.Equal(t, []byte("wrapped"), dk.CiphertextBlob)
+
+	wk, err := client.GenerateWrappedDataKey(context.Background(), &pb.GenerateWrappedDataKeyRequest{KeyId: "k1", KeySpec: spec})
+	require.NoError(t, err)
+	assert.Equal(t, []byte("wrapped"), wk.CiphertextBlob)
+
+	assert.Equal(t, 1, dataKeys)
+	assert.Equal(t, 1, wrappedKeys)
+}
+
 // startBufconnModule registers the module on a bufconn-backed gRPC server and
 // returns the client connection.
 func startBufconnModule(t *testing.T, m *Module, opts ...grpc.ServerOption) *grpc.ClientConn {
