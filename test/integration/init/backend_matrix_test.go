@@ -253,18 +253,31 @@ func verifyDataRoundTrip(
 	}
 
 	getOut, getErr := runCLIAgainst(ctx, t, cliBinary, transport, ports, dataDir,
-		"data", "get", collection, key)
+		"data", "get", collection, key, "--output", "json")
 	if getErr != nil {
 		t.Fatalf("data get on backend %q over %q failed: %v\noutput:\n%s",
 			backend, transport, getErr, getOut)
 	}
 
-	// Match on the payload rather than the exact envelope: the assertion is
-	// that the ENGINE returned what was written, not that a particular output
-	// format was used.
-	if !strings.Contains(getOut, backend) || !strings.Contains(getOut, transport) {
-		t.Errorf("backend %q over %q: round trip lost the value.\nwrote %s\nread back:\n%s",
+	// Compare the exact payload: the assertion is that the ENGINE returned
+	// byte for byte what was written. The JSON object is decoded from its
+	// first '{' to its last '}' so log lines around it do not matter.
+	var got struct {
+		Found bool   `json:"found"`
+		Value []byte `json:"value"`
+	}
+	start, end := strings.Index(getOut, "{"), strings.LastIndex(getOut, "}")
+	if start < 0 || end < start {
+		t.Fatalf("backend %q over %q: data get printed no JSON object.\nwrote %s\nread back:\n%s",
 			backend, transport, value, getOut)
+	}
+	if err := json.Unmarshal([]byte(getOut[start:end+1]), &got); err != nil {
+		t.Fatalf("backend %q over %q: decode data get output: %v\nwrote %s\nread back:\n%s",
+			backend, transport, err, value, getOut)
+	}
+	if !got.Found || string(got.Value) != value {
+		t.Errorf("backend %q over %q: round trip lost the value (found=%v).\nwrote %s\nread back:\n%s",
+			backend, transport, got.Found, value, getOut)
 	}
 }
 
