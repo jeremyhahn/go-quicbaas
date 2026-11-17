@@ -163,30 +163,54 @@ func TestBuildImage_ConcurrentBuildOfTheSameTagKeepsTheReturnedImage(t *testing.
 	if !images[idA] {
 		t.Fatalf("build A's image %s was deleted with its temporary tag; tags %v", idA, tags)
 	}
-	if !images[idB] || tags["w:local"] != idB {
-		t.Fatalf("w:local must name the later build %s, tags %v, images %v", idB, tags, images)
+	// After A leaves once.Do both builds apply w:local in either order: the
+	// tag names whichever wrote last, and the other build keeps its image by
+	// its ID reference.
+	winner, loser := idB, idA
+	if tags["w:local"] == idA {
+		winner, loser = idA, idB
+	}
+	if tags["w:local"] != winner || !images[idA] || !images[idB] {
+		t.Fatalf("w:local must name one of the two builds and both images survive, tags %v, images %v", tags, images)
+	}
+	if tags[mustBuildIDRef(t, idA)] != idA || tags[mustBuildIDRef(t, idB)] != idB {
+		t.Fatalf("each returned image must keep its ID reference while its caller uses it, tags %v", tags)
 	}
 	for ref := range tags {
 		if strings.HasPrefix(ref, buildTempRepository+":") {
 			t.Errorf("temporary tag %s was left behind", ref)
 		}
 	}
-	// The caller's use of the returned ID.
-	if _, err := rt.InspectImage(t.Context(), idA); err != nil {
-		t.Fatalf("InspectImage of build A's ID: %v", err)
-	}
-	if err := rt.TagImage(t.Context(), idA, "localhost:32786/it/w:a"); err != nil {
-		t.Fatalf("TagImage of build A's ID: %v", err)
-	}
-
-	// The model deletes an image with its last reference.
-	for _, ref := range []string{"w:local", mustBuildIDRef(t, idB)} {
-		if _, err := engine.apply([]string{"image", "rm", ref}); err != nil {
-			t.Fatal(err)
+	// The callers' use of the returned IDs.
+	for _, id := range []string{idA, idB} {
+		if _, err := rt.InspectImage(t.Context(), id); err != nil {
+			t.Fatalf("InspectImage of returned ID %s: %v", id, err)
 		}
 	}
-	if _, _, images := engine.state(); images[idB] {
-		t.Fatalf("removing %s's last tag must delete it in the model", idB)
+	if err := rt.TagImage(t.Context(), loser, "localhost:32786/it/w:a"); err != nil {
+		t.Fatalf("TagImage of the overwritten build's ID: %v", err)
+	}
+
+	// The callers are done: the push tag goes, and the runtime's next build
+	// reclaims both ID references, so neither superseded image is retained.
+	if _, err := engine.apply([]string{"image", "rm", "localhost:32786/it/w:a"}); err != nil {
+		t.Fatal(err)
+	}
+	engine.after = nil
+	idNext, err := rt.BuildImage(t.Context(), spec())
+	if err != nil {
+		t.Fatalf("next BuildImage: %v", err)
+	}
+	// Moving w:local leaves the earlier image dangling, as the engine does:
+	// no reference retains either, so dangling-image pruning reclaims them.
+	_, tags, _ = engine.state()
+	for ref, id := range tags {
+		if id == idA || id == idB {
+			t.Fatalf("%s still retains a superseded image %s after the next build, tags %v", ref, id, tags)
+		}
+	}
+	if tags["w:local"] != idNext {
+		t.Fatalf("w:local must name the next build %s, tags %v", idNext, tags)
 	}
 }
 
@@ -231,6 +255,30 @@ func TestBuildImage_FailedBuildAfterTaggingRemovesTheTemporaryTag(t *testing.T) 
 				}
 			}
 		})
+	}
+}
+
+// TestBuildImage_RefusedRequestedTagReleasesTheIDReference: a build that
+// fails applying a requested tag returns no ID, so nothing it applied keeps
+// the image.
+func TestBuildImage_RefusedRequestedTagReleasesTheIDReference(t *testing.T) {
+	engine := newTagStoreEngine()
+	run := func(ctx context.Context, command string, cmd imageCommand) (imageCommandResult, error) {
+		if cmd.Args[0] == "tag" && cmd.Args[2] == "w:refused" {
+			return imageCommandResult{ExitCode: 1, Stderr: "Error response from daemon: refusing to create a tag"}, nil
+		}
+		return engine.run(ctx, command, cmd)
+	}
+	rt := &ExecContainerRuntime{command: RuntimeDocker, logger: newContainerTestLogger(t), runImageCommand: run}
+	_, err := rt.BuildImage(t.Context(), &ImageBuildSpec{Dockerfile: []byte("FROM a"), Tags: []string{"w:local", "w:refused"}})
+	if !errors.Is(err, ErrImageBuild) {
+		t.Fatalf("err = %v, want ErrImageBuild", err)
+	}
+	_, tags, _ := engine.state()
+	for ref := range tags {
+		if strings.HasPrefix(ref, buildIDRepository+":") || strings.HasPrefix(ref, buildTempRepository+":") {
+			t.Errorf("reference %s outlived the failed build, tags %v", ref, tags)
+		}
 	}
 }
 
@@ -290,8 +338,8 @@ func TestBuildImage_IndependentProcessMovingTheTagKeepsTheReturnedImage(t *testi
 	if !images[idA] {
 		t.Fatalf("daemon A's image %s was deleted with its temporary tag; tags %v", idA, tags)
 	}
-	if tags[mustBuildIDRef(t, idA)] != idA || tags[mustBuildIDRef(t, idB)] != idB {
-		t.Fatalf("each image must keep the reference naming it by ID, tags %v", tags)
+	if tags[mustBuildIDRef(t, idA)] != idA {
+		t.Fatalf("daemon A's image, whose tag moved, must keep the reference naming it by ID, tags %v", tags)
 	}
 	for ref := range tags {
 		if strings.HasPrefix(ref, buildTempRepository+":") {
@@ -300,6 +348,28 @@ func TestBuildImage_IndependentProcessMovingTheTagKeepsTheReturnedImage(t *testi
 	}
 	if err := daemonA.TagImage(t.Context(), idA, "localhost:32786/it/w:a"); err != nil {
 		t.Fatalf("TagImage of daemon A's ID: %v", err)
+	}
+
+	// The caller is done with idA: its push tag goes, and daemon A's next
+	// build reclaims the ID reference it kept, so the superseded image is
+	// deleted rather than retained for ever.
+	if _, err := engine.apply([]string{"image", "rm", "localhost:32786/it/w:a"}); err != nil {
+		t.Fatal(err)
+	}
+	engine.after = nil
+	idNext, err := daemonA.BuildImage(t.Context(), spec())
+	if err != nil {
+		t.Fatalf("daemon A's next BuildImage: %v", err)
+	}
+	_, tags, images = engine.state()
+	if images[idA] {
+		t.Fatalf("daemon A's superseded image %s must be reclaimed by its next build, tags %v", idA, tags)
+	}
+	if _, ok := tags[mustBuildIDRef(t, idA)]; ok {
+		t.Fatalf("daemon A's kept ID reference must be removed by its next build, tags %v", tags)
+	}
+	if tags["w:local"] != idNext {
+		t.Fatalf("w:local must name daemon A's next build %s, tags %v", idNext, tags)
 	}
 }
 

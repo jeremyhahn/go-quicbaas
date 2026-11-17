@@ -215,10 +215,19 @@ func (r *ExecContainerRuntime) BuildImage(ctx context.Context, spec *ImageBuildS
 	if err != nil {
 		return "", &ImageBuildError{Tags: spec.Tags, Cause: err}
 	}
+	// The build-ID references earlier builds kept are released first: their
+	// callers were done with those IDs when they started this build.
+	r.reclaimKeptIDRefs(ctx)
 	// The engine can apply buildRef and still fail the command (cancelled
 	// after export, an iidfile it could not write), so the cleanup is
-	// registered before the build runs, and runs on every return.
-	defer r.removeBuildRef(ctx, buildRef)
+	// registered before the build runs, and runs on every return that has
+	// not already removed it.
+	buildRefRemoved := false
+	defer func() {
+		if !buildRefRemoved {
+			r.removeBuildRef(ctx, buildRef)
+		}
+	}()
 
 	args := buildImageArgs(spec, iidFile, contextDir, buildRef)
 	r.logger.Infof("container build: %s %s", r.command, strings.Join(spec.Tags, " "))
@@ -253,9 +262,8 @@ func (r *ExecContainerRuntime) BuildImage(ctx context.Context, spec *ImageBuildS
 	// own ID. Any process sharing the engine (another daemon building the
 	// same tag) may move the spec's tags to another image at any moment, but
 	// no one can point idRef at another image: it names this one by content.
-	// So buildRef is never the image's last reference, `image rm` only
-	// untags it, and the ID returned stays a local image. idRef is never
-	// removed here: a cached build of another process shares it.
+	// So buildRef is never the image's last reference, and `image rm` only
+	// untags it.
 	idRef, err := buildIDRef(info.ID)
 	if err != nil {
 		return "", &ImageBuildError{Tags: spec.Tags, Cause: err}
@@ -265,10 +273,42 @@ func (r *ExecContainerRuntime) BuildImage(ctx context.Context, spec *ImageBuildS
 	}
 	for _, tag := range spec.Tags {
 		if err := r.TagImage(ctx, buildRef, tag); err != nil {
+			// The build failed and returns no ID: nothing needs the image.
+			r.removeRef(ctx, idRef, "build-ID tag")
 			return "", &ImageBuildError{Tags: spec.Tags, Cause: err}
 		}
 	}
+	r.removeBuildRef(ctx, buildRef)
+	buildRefRemoved = true
+	r.keepIDRef(idRef)
 	return info.ID, nil
+}
+
+// keepIDRef records a returned build's idRef. It stays while the caller uses
+// the ID (another process may have moved the requested tags, leaving idRef
+// the image's last reference), and the next BuildImage on this runtime
+// removes it, so an image whose tags move is not retained past that build.
+// It is never released by checking the tags first: a tag can move between
+// the check and the removal, deleting the image the caller holds.
+func (r *ExecContainerRuntime) keepIDRef(idRef string) {
+	r.keptMu.Lock()
+	defer r.keptMu.Unlock()
+	if r.keptIDRefs == nil {
+		r.keptIDRefs = make(map[string]struct{})
+	}
+	r.keptIDRefs[idRef] = struct{}{}
+}
+
+// reclaimKeptIDRefs removes the build-ID references earlier builds on this
+// runtime kept. An image no other reference names is deleted with it.
+func (r *ExecContainerRuntime) reclaimKeptIDRefs(ctx context.Context) {
+	r.keptMu.Lock()
+	kept := r.keptIDRefs
+	r.keptIDRefs = nil
+	r.keptMu.Unlock()
+	for ref := range kept {
+		r.removeRef(ctx, ref, "kept build-ID tag")
+	}
 }
 
 // buildIDRepository is the repository of the reference that names a built
@@ -356,18 +396,24 @@ func newBuildRef() (string, error) {
 // by oneShotCleanupTimeout, so it runs after the caller's is cancelled. A
 // failure is logged and never fails the build.
 func (r *ExecContainerRuntime) removeBuildRef(parent context.Context, ref string) {
+	r.removeRef(parent, ref, "temporary tag")
+}
+
+// removeRef untags ref, a reference this package applied; what names it in
+// the log. A reference already gone is not an error.
+func (r *ExecContainerRuntime) removeRef(parent context.Context, ref, what string) {
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(parent), oneShotCleanupTimeout)
 	defer cancel()
 	result, err := r.imageRunner()(ctx, r.command, imageCommand{Args: []string{"image", "rm", ref}})
 	switch {
 	case err != nil:
-		r.logger.Warnf("container build: remove temporary tag %s: %v", ref, err)
+		r.logger.Warnf("container build: remove %s %s: %v", what, ref, err)
 	case result.ExitCode != 0 && isImageNotFoundOutput(result.Stderr):
-		// A build that failed before it tagged: nothing to remove.
+		// A build that failed before it tagged, or a tag already removed.
 	case result.ExitCode != 0:
 		// The engine's text is not logged: stderr can carry credentials.
-		r.logger.Warnf("container build: remove temporary tag %s exited %d (%d bytes of output withheld)",
-			ref, result.ExitCode, len(result.Stderr))
+		r.logger.Warnf("container build: remove %s %s exited %d (%d bytes of output withheld)",
+			what, ref, result.ExitCode, len(result.Stderr))
 	}
 }
 
