@@ -92,3 +92,40 @@ func TestModule_Crypto_SafetyLimitEnforcedThroughFacade(t *testing.T) {
 	assert.NotEqual(t, codes.OK, status.Code(err))
 	assert.Contains(t, status.Convert(err).Message(), "AEAD safety limit exceeded")
 }
+
+// TestModule_Crypto_BatchReservesEveryItem drives EncryptBatch through the
+// registered Crypto server: a batch counts one AEAD operation per item, so a
+// three-item batch on a fresh key with MaxOperations=2 is refused before any
+// item is encrypted, as three single Encrypt calls would be.
+func TestModule_Crypto_BatchReservesEveryItem(t *testing.T) {
+	store := qrdbsdk.NewMemoryKVStore()
+	svc, err := service.NewServiceBuilder().
+		WithConfig(&service.ServiceConfig{NodeID: 1, RequestTimeout: 5 * time.Second}).
+		WithRaftNode(&safetyRaftNode{}).
+		WithKMSManager(stubKMSManager{}).
+		WithCryptoManager(reversingCryptoManager{}).
+		WithKVStoreProvider(func(uint64) interface{} { return store }).
+		Build()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = svc.Close() })
+
+	_, err = svc.KMS().SetKeySafety(safetyContext(context.Background()), &service.SetKeySafetyRequest{
+		KeyID: "k1", MaxOperations: 2,
+	})
+	require.NoError(t, err)
+
+	m, err := NewModule(func() service.QuicBaaS { return svc }, testLogger(t))
+	require.NoError(t, err)
+	withTenant := grpc.UnaryInterceptor(func(ctx context.Context, req any, _ *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
+		return handler(safetyContext(ctx), req)
+	})
+	client := pb.NewCryptoClient(startBufconnModule(t, m, withTenant))
+
+	item := &pb.BatchEncryptItem{Plaintext: []byte("p")}
+	_, err = client.EncryptBatch(context.Background(), &pb.EncryptBatchRequest{
+		KeyId: "k1", Items: []*pb.BatchEncryptItem{item, item, item},
+	})
+	require.Error(t, err, "a three-item batch reaches MaxOperations=2")
+	assert.NotEqual(t, codes.OK, status.Code(err))
+	assert.Contains(t, status.Convert(err).Message(), "AEAD safety limit exceeded")
+}

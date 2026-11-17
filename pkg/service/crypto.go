@@ -507,8 +507,9 @@ func (t *cryptoService) EncryptBatch(ctx context.Context, req *EncryptBatchReque
 			totalBytes += uint64(len(item.Plaintext))
 		}
 
-		// Check safety limits before processing batch
-		if err := t.safetyTracker.RecordKeyEncrypt(ctx, scopedKeyID, totalBytes); err != nil {
+		// Reserve one operation per item before processing the batch, so a
+		// batch cannot exceed the MaxOperations single calls honour.
+		if err := t.safetyTracker.RecordKeyEncryptBatch(ctx, scopedKeyID, uint64(len(req.Items)), totalBytes); err != nil {
 			t.metrics.encryptOperationsTotal.With(req.KeyID, "safety_limit_exceeded").Inc()
 			t.metrics.errorsByType.With("safety_limit_error").Inc()
 			return nil, &errors.QBError{
@@ -600,8 +601,9 @@ func (t *cryptoService) DecryptBatch(ctx context.Context, req *DecryptBatchReque
 			totalBytes += uint64(len(item.Ciphertext))
 		}
 
-		// Check safety limits before processing batch
-		if err := t.safetyTracker.RecordKeyEncrypt(ctx, scopedKeyID, totalBytes); err != nil {
+		// Reserve one operation per item before processing the batch, so a
+		// batch cannot exceed the MaxOperations single calls honour.
+		if err := t.safetyTracker.RecordKeyEncryptBatch(ctx, scopedKeyID, uint64(len(req.Items)), totalBytes); err != nil {
 			t.metrics.decryptOperationsTotal.With(req.KeyID, "safety_limit_exceeded").Inc()
 			t.metrics.errorsByType.With("safety_limit_error").Inc()
 			return nil, &errors.QBError{

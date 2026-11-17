@@ -80,7 +80,17 @@ type AEADUsage struct {
 // IncrementUsage atomically increments the usage counters.
 // Returns true if the limits are exceeded after this operation.
 func (u *AEADUsage) IncrementUsage(bytesProcessed uint64) (limitExceeded bool) {
-	u.OperationCount.Add(1)
+	return u.IncrementUsageBy(1, bytesProcessed)
+}
+
+// IncrementUsageBy records operations AEAD operations processing
+// bytesProcessed bytes in total. A batch reserves one operation per item so
+// that it cannot bypass MaxOperations.
+func (u *AEADUsage) IncrementUsageBy(operations, bytesProcessed uint64) (limitExceeded bool) {
+	if operations == 0 {
+		operations = 1
+	}
+	u.OperationCount.Add(operations)
 	u.BytesProcessed.Add(bytesProcessed)
 	u.LastUpdated.Store(time.Now().UnixNano())
 
@@ -317,16 +327,23 @@ func (t *AEADSafetyTracker) initMetrics() {
 
 // RecordKeyEncrypt records an encryption operation for a key.
 func (t *AEADSafetyTracker) RecordKeyEncrypt(ctx context.Context, keyID string, bytesEncrypted uint64) error {
-	return t.recordOperation(ctx, keyID, bytesEncrypted, false)
+	return t.recordOperation(ctx, keyID, 1, bytesEncrypted, false)
+}
+
+// RecordKeyEncryptBatch records a batch of operations encryptions under a
+// key, reserving the whole batch against the key's limits before any item is
+// encrypted.
+func (t *AEADSafetyTracker) RecordKeyEncryptBatch(ctx context.Context, keyID string, operations, bytesEncrypted uint64) error {
+	return t.recordOperation(ctx, keyID, operations, bytesEncrypted, false)
 }
 
 // RecordDEKEncrypt records an encryption operation for a DEK.
 func (t *AEADSafetyTracker) RecordDEKEncrypt(ctx context.Context, dekPath string, bytesEncrypted uint64) error {
-	return t.recordOperation(ctx, dekPath, bytesEncrypted, true)
+	return t.recordOperation(ctx, dekPath, 1, bytesEncrypted, true)
 }
 
 // recordOperation is the common implementation for recording operations.
-func (t *AEADSafetyTracker) recordOperation(ctx context.Context, id string, bytesProcessed uint64, isDEK bool) error {
+func (t *AEADSafetyTracker) recordOperation(ctx context.Context, id string, operations, bytesProcessed uint64, isDEK bool) error {
 	var usageMap *syncMap[string, *AEADUsage]
 	var keyType string
 
@@ -344,10 +361,10 @@ func (t *AEADSafetyTracker) recordOperation(ctx context.Context, id string, byte
 	})
 
 	// Increment counters
-	limitExceeded := usage.IncrementUsage(bytesProcessed)
+	limitExceeded := usage.IncrementUsageBy(operations, bytesProcessed)
 
 	// Record metrics
-	t.metrics.operationsTotal.With(id, keyType).Inc()
+	t.metrics.operationsTotal.With(id, keyType).Add(float64(operations))
 	t.metrics.bytesProcessed.With(id, keyType).Add(float64(bytesProcessed))
 	t.metrics.usagePercent.With(id, keyType).Set(float64(usage.UsagePercent()))
 
