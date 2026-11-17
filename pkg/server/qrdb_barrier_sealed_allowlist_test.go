@@ -14,12 +14,17 @@
 package server
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"slices"
 	"testing"
 
+	qrdbgrpc "github.com/jeremyhahn/go-qrdb/pkg/api/grpc"
 	qrdbrest "github.com/jeremyhahn/go-qrdb/pkg/api/rest"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/api/sealedwindow"
 )
@@ -79,5 +84,58 @@ func TestInstallComposedRESTSealedAllowlist_ContainsComposedEntries(t *testing.T
 			t.Errorf("SealedWindowAllowlist has duplicate entry %q", entry)
 		}
 		seen[entry] = true
+	}
+}
+
+// TestInstallComposedGRPCSealedAllowlist_ContainsComposedEntries pins that
+// nodeBarrierServerOptions(false) widens go-qrdb's native gRPC sealed-window
+// allowlist with every composed quicbaas full method (the liveness RPCs
+// included) while keeping every original qrdb entry, without duplicates.
+func TestInstallComposedGRPCSealedAllowlist_ContainsComposedEntries(t *testing.T) {
+	original := slices.Clone(qrdbgrpc.SealedWindowAllowlist)
+	s := &Server{logger: buildTestLogger(t)}
+	s.nodeBarrierServerOptions(false)
+	got := qrdbgrpc.SealedWindowAllowlist
+
+	want := append(sealedwindow.GRPCFullMethodAllowlist(), "/quicbaas.v1.QuicBaaS/Health")
+	for _, entry := range want {
+		if !slices.Contains(got, entry) {
+			t.Errorf("qrdbgrpc.SealedWindowAllowlist missing composed entry %q", entry)
+		}
+	}
+	for _, entry := range original {
+		if !slices.Contains(got, entry) {
+			t.Errorf("qrdbgrpc.SealedWindowAllowlist lost original entry %q", entry)
+		}
+	}
+	seen := make(map[string]bool, len(got))
+	for _, entry := range got {
+		if seen[entry] {
+			t.Errorf("qrdbgrpc.SealedWindowAllowlist has duplicate entry %q", entry)
+		}
+		seen[entry] = true
+	}
+}
+
+// TestNodeBarrierServerOptions_GRPCSealedGateAdmitsQuicBaaSHealth drives a
+// unary call through go-qrdb's native gRPC sealed-window interceptor (default
+// allowlist) after nodeBarrierServerOptions(false): the quicbaas liveness RPC
+// reaches its handler, a data RPC is refused with codes.Unavailable.
+func TestNodeBarrierServerOptions_GRPCSealedGateAdmitsQuicBaaSHealth(t *testing.T) {
+	s := &Server{logger: buildTestLogger(t)}
+	s.nodeBarrierServerOptions(false)
+	icpt := qrdbgrpc.SealedWindowUnaryInterceptor(alwaysSealedProbe{}, nil)
+
+	handler := func(context.Context, any) (any, error) { return "ok", nil }
+	ctx := context.Background()
+
+	resp, err := icpt(ctx, nil, &grpc.UnaryServerInfo{FullMethod: "/quicbaas.v1.QuicBaaS/Health"}, handler)
+	if err != nil || resp != "ok" {
+		t.Errorf("Health while sealed: got (%v, %v), want handler reached", resp, err)
+	}
+
+	_, err = icpt(ctx, nil, &grpc.UnaryServerInfo{FullMethod: "/quicbaas.v1.QuicBaaS/Put"}, handler)
+	if status.Code(err) != codes.Unavailable {
+		t.Errorf("Put while sealed: got code %v (%v), want Unavailable", status.Code(err), err)
 	}
 }

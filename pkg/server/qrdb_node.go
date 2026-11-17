@@ -23,6 +23,7 @@ import (
 	"strings"
 	"sync"
 
+	qrdbgrpc "github.com/jeremyhahn/go-qrdb/pkg/api/grpc"
 	qrdbrest "github.com/jeremyhahn/go-qrdb/pkg/api/rest"
 	qrdbserver "github.com/jeremyhahn/go-qrdb/pkg/server"
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
@@ -779,6 +780,7 @@ func (s *Server) nodeBarrierServerOptions(sealEnabled bool) []qrdbsdk.ServerOpti
 		return nil
 	}
 	installComposedRESTSealedAllowlist()
+	installComposedGRPCSealedAllowlist()
 	// startService builds and publishes the persistent data-plane barrier
 	// only after the native listeners are up. Until it does, the probe fails
 	// closed: on a restart the data dir may already hold an initialized,
@@ -817,6 +819,33 @@ func installComposedRESTSealedAllowlist() {
 			}
 		}
 		qrdbrest.SealedWindowAllowlist = merged
+	})
+}
+
+// composedGRPCSealedAllowlistOnce guards installComposedGRPCSealedAllowlist.
+var composedGRPCSealedAllowlistOnce sync.Once
+
+// installComposedGRPCSealedAllowlist widens go-qrdb's native gRPC sealed-window
+// allowlist, which names only qrdb.v1.QRDBService methods, with the composed
+// quicbaas full methods (sealedwindow.GRPCFullMethodAllowlist), so the quicbaas
+// liveness and unseal-flow RPCs stay reachable while the data-plane barrier is
+// sealed. It runs once per process.
+func installComposedGRPCSealedAllowlist() {
+	composedGRPCSealedAllowlistOnce.Do(func() {
+		current := qrdbgrpc.SealedWindowAllowlist
+		composed := sealedwindow.GRPCFullMethodAllowlist()
+		merged := make([]string, 0, len(current)+len(composed))
+		seen := make(map[string]struct{}, len(current)+len(composed))
+		for _, list := range [][]string{current, composed} {
+			for _, entry := range list {
+				if _, ok := seen[entry]; ok {
+					continue
+				}
+				seen[entry] = struct{}{}
+				merged = append(merged, entry)
+			}
+		}
+		qrdbgrpc.SealedWindowAllowlist = merged
 	})
 }
 
