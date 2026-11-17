@@ -38,11 +38,17 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"net"
+	"net/http"
 	"os"
 	"path/filepath"
 	"reflect"
+	"regexp"
+	"strconv"
 	"testing"
 	"time"
+
+	mcptransport "github.com/mark3labs/mcp-go/client/transport"
 
 	quicbaas "github.com/jeremyhahn/go-quicbaas/sdk/go"
 )
@@ -117,8 +123,7 @@ func verifySealedMCPWindow(t *testing.T, ports PortBundle, dataDir string) {
 
 	client, err := newSDKClient("mcp", ports, dataDir, "")
 	if err != nil {
-		t.Logf("uncredentialed MCP client refused at construction on the sealed node: %v", err)
-		return
+		t.Fatalf("construct uncredentialed MCP client for the sealed node: %v", err)
 	}
 	defer func() {
 		if closeErr := client.Close(); closeErr != nil {
@@ -128,11 +133,54 @@ func verifySealedMCPWindow(t *testing.T, ports PortBundle, dataDir string) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), sdkLivenessTimeout)
 	defer cancel()
-	if _, err := client.Transport().Request(ctx, "quicbaas.Health", "Liveness", struct{}{}); err == nil {
-		t.Fatal("sealed shamir node served an uncredentialed MCP session; MCP must refuse it")
-	} else {
-		t.Logf("uncredentialed MCP call refused on the sealed node: %v", err)
+	_, err = client.Transport().Request(ctx, "quicbaas.Health", "Liveness", struct{}{})
+	if verdict := classifySealedMCPRefusal(err); verdict != nil {
+		t.Fatalf("sealed shamir node: %v", verdict)
 	}
+	t.Logf("uncredentialed MCP initialize refused with 401 on the sealed node: %v", err)
+}
+
+// mcpHTTPStatusPattern matches the status mcp-go's Streamable HTTP client
+// puts in the error of a non-2xx reply it has no sentinel for ("request
+// failed with status 500: ..."); 401 and an initialize 4xx have sentinels.
+var mcpHTTPStatusPattern = regexp.MustCompile(`request failed with status (\d{3})\b`)
+
+// classifySealedMCPRefusal decides whether err, the result of an
+// uncredentialed MCP call against a sealed node, is the authentication
+// refusal the sealed window must produce: HTTP 401 on initialize. It returns
+// nil for a 401 and an error naming what was seen otherwise: a served call, a
+// timeout, or any other status or failure (404, 5xx, unknown tool, ...).
+func classifySealedMCPRefusal(err error) error {
+	if err == nil {
+		return errors.New("an uncredentialed MCP session was served; MCP must refuse it with 401")
+	}
+	var oauthRequired *mcptransport.OAuthAuthorizationRequiredError
+	if errors.Is(err, mcptransport.ErrUnauthorized) || errors.As(err, &oauthRequired) ||
+		errors.Is(err, mcptransport.ErrOAuthAuthorizationRequired) {
+		return nil
+	}
+	if errors.Is(err, mcptransport.ErrLegacySSEServer) || errors.Is(err, mcptransport.ErrSessionTerminated) {
+		return fmt.Errorf("the uncredentialed MCP initialize was answered with a non-401 HTTP 4xx (404 or similar), want 401: %w", err)
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return fmt.Errorf("the uncredentialed MCP call timed out instead of being refused with 401: %w", err)
+	}
+	var netErr net.Error
+	if errors.As(err, &netErr) && netErr.Timeout() {
+		return fmt.Errorf("the uncredentialed MCP call timed out instead of being refused with 401: %w", err)
+	}
+	m := mcpHTTPStatusPattern.FindStringSubmatch(err.Error())
+	if m == nil {
+		return fmt.Errorf("the uncredentialed MCP call failed without an HTTP 401 refusal (%T): %w", err, err)
+	}
+	status, convErr := strconv.Atoi(m[1])
+	if convErr != nil {
+		return fmt.Errorf("the uncredentialed MCP call failed with an unreadable HTTP status %q: %w", m[1], err)
+	}
+	if status != http.StatusUnauthorized {
+		return fmt.Errorf("the uncredentialed MCP call was answered with HTTP %d, want 401: %w", status, err)
+	}
+	return nil
 }
 
 // assertLivenessResponseHealthy normalises the Health.Liveness response
@@ -299,7 +347,7 @@ func isReflectivelyHealthy(v interface{}) bool {
 	if !rv.IsValid() {
 		return false
 	}
-	if rv.Kind() == reflect.Ptr {
+	if rv.Kind() == reflect.Pointer {
 		if rv.IsNil() {
 			return false
 		}
