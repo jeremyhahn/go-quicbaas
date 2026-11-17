@@ -29,16 +29,53 @@ import (
 type stubKMSKeyRotator struct {
 	result *KMSRotationResult
 	err    error
+	calls  *int
 }
 
 func (s stubKMSKeyRotator) RotateDueKeys(context.Context) (*KMSRotationResult, error) {
+	if s.calls != nil {
+		*s.calls++
+	}
 	return s.result, s.err
+}
+
+// A tenant job that names the KMS rotation handler is refused before the
+// rotator runs; the reserved system job still runs it.
+func TestKMSRotationHandler_RefusesAnyJobButTheReservedSystemJob(t *testing.T) {
+	refused := []*scheduler.Job{
+		{ID: 4242, OwnerType: scheduler.OwnerTypeTenant, OwnerID: "tenant-a"},
+		{ID: KMSRotationJobID, OwnerType: scheduler.OwnerTypeTenant, OwnerID: "tenant-a"},
+		{ID: 4242, OwnerType: scheduler.OwnerTypeSystem},
+	}
+	for _, job := range refused {
+		calls := 0
+		h := NewKMSRotationHandler(stubKMSKeyRotator{result: &KMSRotationResult{}, calls: &calls})
+
+		result, err := h.Handle(context.Background(), job)
+
+		require.Error(t, err)
+		assert.Nil(t, result)
+		var failed *scheduler.HandlerFailedError
+		require.ErrorAs(t, err, &failed)
+		assert.Equal(t, HandlerKMSRotation, failed.Handler)
+		assert.Equal(t, job.ID, failed.JobID)
+		assert.Zero(t, calls, "the rotator must not run for job %d owned by %q", job.ID, job.OwnerType)
+	}
+
+	calls := 0
+	h := NewKMSRotationHandler(stubKMSKeyRotator{result: &KMSRotationResult{Due: 1, Rotated: 1}, calls: &calls})
+	system, err := KMSRotationJob(time.Hour)
+	require.NoError(t, err)
+	result, err := h.Handle(context.Background(), system)
+	require.NoError(t, err)
+	assert.True(t, result.Success)
+	assert.Equal(t, 1, calls)
 }
 
 func TestKMSRotationHandler_ReportsTheScan(t *testing.T) {
 	h := NewKMSRotationHandler(stubKMSKeyRotator{result: &KMSRotationResult{Due: 3, Rotated: 2, Failed: 1}})
 
-	result, err := h.Handler()(context.Background(), &scheduler.Job{ID: KMSRotationJobID})
+	result, err := h.Handler()(context.Background(), &scheduler.Job{ID: KMSRotationJobID, OwnerType: scheduler.OwnerTypeSystem})
 
 	require.NoError(t, err)
 	assert.True(t, result.Success)
@@ -50,7 +87,7 @@ func TestKMSRotationHandler_ScanFailureFailsTheRun(t *testing.T) {
 	cause := errors.New("list keys: storage unavailable")
 	h := NewKMSRotationHandler(stubKMSKeyRotator{err: cause})
 
-	result, err := h.Handle(context.Background(), &scheduler.Job{ID: KMSRotationJobID})
+	result, err := h.Handle(context.Background(), &scheduler.Job{ID: KMSRotationJobID, OwnerType: scheduler.OwnerTypeSystem})
 
 	assert.Nil(t, result)
 	var failed *scheduler.HandlerFailedError

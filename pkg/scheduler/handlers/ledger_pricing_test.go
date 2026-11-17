@@ -29,16 +29,53 @@ import (
 type stubLedgerPricer struct {
 	result *LedgerPricingResult
 	err    error
+	calls  *int
 }
 
 func (s stubLedgerPricer) PriceUnpricedEntries(context.Context) (*LedgerPricingResult, error) {
+	if s.calls != nil {
+		*s.calls++
+	}
 	return s.result, s.err
+}
+
+// A tenant job that names the ledger pricing handler is refused before the
+// pricer runs; the reserved system job still runs it.
+func TestLedgerPricingHandler_RefusesAnyJobButTheReservedSystemJob(t *testing.T) {
+	refused := []*scheduler.Job{
+		{ID: 4242, OwnerType: scheduler.OwnerTypeTenant, OwnerID: "tenant-a"},
+		{ID: LedgerPricingJobID, OwnerType: scheduler.OwnerTypeTenant, OwnerID: "tenant-a"},
+		{ID: 4242, OwnerType: scheduler.OwnerTypeSystem},
+	}
+	for _, job := range refused {
+		calls := 0
+		h := NewLedgerPricingHandler(stubLedgerPricer{result: &LedgerPricingResult{}, calls: &calls})
+
+		result, err := h.Handle(context.Background(), job)
+
+		require.Error(t, err)
+		assert.Nil(t, result)
+		var failed *scheduler.HandlerFailedError
+		require.ErrorAs(t, err, &failed)
+		assert.Equal(t, HandlerLedgerPricing, failed.Handler)
+		assert.Equal(t, job.ID, failed.JobID)
+		assert.Zero(t, calls, "the pricer must not run for job %d owned by %q", job.ID, job.OwnerType)
+	}
+
+	calls := 0
+	h := NewLedgerPricingHandler(stubLedgerPricer{result: &LedgerPricingResult{Unpriced: 1, Priced: 1}, calls: &calls})
+	system, err := LedgerPricingJob(time.Hour)
+	require.NoError(t, err)
+	result, err := h.Handle(context.Background(), system)
+	require.NoError(t, err)
+	assert.True(t, result.Success)
+	assert.Equal(t, 1, calls)
 }
 
 func TestLedgerPricingHandler_ReportsTheSweep(t *testing.T) {
 	h := NewLedgerPricingHandler(stubLedgerPricer{result: &LedgerPricingResult{Unpriced: 221, Priced: 219, Failed: 1, TenantsFailed: 1}})
 
-	result, err := h.Handler()(context.Background(), &scheduler.Job{ID: LedgerPricingJobID})
+	result, err := h.Handler()(context.Background(), &scheduler.Job{ID: LedgerPricingJobID, OwnerType: scheduler.OwnerTypeSystem})
 
 	require.NoError(t, err)
 	assert.True(t, result.Success)
@@ -50,7 +87,7 @@ func TestLedgerPricingHandler_SweepFailureFailsTheRun(t *testing.T) {
 	cause := errors.New("ledger not wired")
 	h := NewLedgerPricingHandler(stubLedgerPricer{err: cause})
 
-	result, err := h.Handle(context.Background(), &scheduler.Job{ID: LedgerPricingJobID})
+	result, err := h.Handle(context.Background(), &scheduler.Job{ID: LedgerPricingJobID, OwnerType: scheduler.OwnerTypeSystem})
 
 	assert.Nil(t, result)
 	var failed *scheduler.HandlerFailedError
