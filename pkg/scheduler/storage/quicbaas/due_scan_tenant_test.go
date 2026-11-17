@@ -2,6 +2,7 @@ package quicbaas
 
 import (
 	"context"
+	"fmt"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -63,6 +64,51 @@ func TestGetJobsDueForExecution_MalformedTenantJobDoesNotBlockHealthyJobs(t *tes
 	if len(due) != len(healthy) || !got["acme-ok"] || !got["zeta-ok"] || !got["system-ok"] {
 		t.Fatalf("due = %v, want acme-ok, zeta-ok and system-ok", jobNames(due))
 	}
+}
+
+// A tenant with more always-due jobs than the limit cannot starve the
+// tenants after it: the scan's start rotates, so within one sweep per
+// tenant every tenant's due job is returned.
+func TestGetJobsDueForExecution_BusyTenantDoesNotStarveOthers(t *testing.T) {
+	ctx := context.Background()
+	kv := newMockKVStore()
+	storage := NewStorage(kv)
+	if err := storage.InitializeJobIDCounter(ctx); err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	now := time.Now()
+	const limit = 3
+
+	for i := 0; i < limit+2; i++ {
+		job := createTestJob(fmt.Sprintf("acme-%d", i), scheduler.OwnerTypeTenant, "acme")
+		job.NextRun = now.Add(-time.Minute)
+		if err := storage.CreateJob(ctx, job); err != nil {
+			t.Fatalf("CreateJob acme-%d: %v", i, err)
+		}
+	}
+	zeta := createTestJob("zeta-due", scheduler.OwnerTypeTenant, "zeta")
+	zeta.NextRun = now.Add(-time.Minute)
+	if err := storage.CreateJob(ctx, zeta); err != nil {
+		t.Fatalf("CreateJob zeta: %v", err)
+	}
+
+	const tenants = 2
+	for sweep := 0; sweep < tenants; sweep++ {
+		// acme's jobs stay due: nothing dispatches them between sweeps.
+		due, err := storage.GetJobsDueForExecution(ctx, now, limit)
+		if err != nil {
+			t.Fatalf("sweep %d: %v", sweep, err)
+		}
+		if len(due) > limit {
+			t.Fatalf("sweep %d returned %d jobs, limit %d", sweep, len(due), limit)
+		}
+		for _, j := range due {
+			if j.Name == "zeta-due" {
+				return
+			}
+		}
+	}
+	t.Fatalf("zeta's due job was not returned within %d sweeps", tenants)
 }
 
 // Retained terminal tenant jobs are read in each tenant's prefix scan, not

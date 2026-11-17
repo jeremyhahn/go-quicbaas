@@ -53,8 +53,16 @@ func TestGetJobsDueForExecution_FilteredJobsDoNotFillThePage(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unfiltered scan: %v", err)
 	}
-	if len(due) != 2 || due[0].OwnerID != "acme" || due[1].OwnerID != "acme" {
-		t.Fatalf("unfiltered scan = %v, want two acme jobs", jobNames(due))
+	// Without the filter the ghost jobs count: the page is full, and holds
+	// at least one of them (the tenant the scan starts at rotates).
+	ghosts := 0
+	for _, j := range due {
+		if j.NodeAffinity == "ghost" {
+			ghosts++
+		}
+	}
+	if len(due) != 2 || ghosts == 0 {
+		t.Fatalf("unfiltered scan = %v, want a full page with ghost jobs", jobNames(due))
 	}
 }
 
