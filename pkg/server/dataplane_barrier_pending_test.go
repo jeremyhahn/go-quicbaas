@@ -118,6 +118,11 @@ func TestNativeGRPC_RestartRefusedUntilBarrierPublished(t *testing.T) {
 	if srv.dataPlaneBarrierPending.Load() {
 		t.Fatal("publishing the barrier must clear the pending flag")
 	}
+	// The restarted barrier is initialized on disk and still sealed.
+	_, err = client.Get(ctx, &qrdbv1.GetRequest{Key: "k"})
+	if got := status.Code(err); got != codes.Unavailable {
+		t.Fatalf("published, restarted sealed barrier: native Get must return codes.Unavailable, got %v (err=%v)", got, err)
+	}
 
 	if err := barrier.Unseal(t.Context(), creds); err != nil {
 		t.Fatalf("unseal the data-plane barrier: %v", err)

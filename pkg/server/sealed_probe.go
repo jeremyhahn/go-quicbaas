@@ -14,6 +14,9 @@
 package server
 
 import (
+	"context"
+	"time"
+
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 )
 
@@ -60,8 +63,19 @@ func (p *serverSealedProbe) IsSealed() bool {
 		return true
 	}
 	if barrier := s.dataPlaneBarrier.Load(); barrier != nil {
-		if st := barrier.Status(); st != nil && st.Sealed && !st.InitializedAt.IsZero() {
+		// Initialized reads the persisted metadata, so a restarted barrier
+		// answers correctly; a read error means the state is unknown and
+		// the probe fails closed.
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		initialized, err := barrier.Initialized(ctx)
+		if err != nil {
 			return true
+		}
+		if initialized {
+			if st := barrier.Status(); st == nil || st.Sealed {
+				return true
+			}
 		}
 	}
 
@@ -73,8 +87,8 @@ func (p *serverSealedProbe) IsSealed() bool {
 var _ qrdbsdk.SealedWindowProbe = (*serverSealedProbe)(nil)
 
 // SealedWindowProbe returns the server's canonical sealed-window probe. The
-// same instance is installed on every transport gate; it is cheap (two
-// atomic loads) and safe to call at any lifecycle phase.
+// same instance is installed on every transport gate; it is cheap (atomic
+// loads and a barrier metadata read bounded at two seconds) and safe to call at any lifecycle phase.
 func (s *Server) SealedWindowProbe() qrdbsdk.SealedWindowProbe {
 	return &serverSealedProbe{server: s}
 }
