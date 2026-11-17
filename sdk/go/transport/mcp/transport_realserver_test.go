@@ -106,6 +106,7 @@ func TestTransport_Request_KVPutReachesEntityTool(t *testing.T) {
 		if args["data"] != "dGVzdA==" {
 			t.Errorf("data = %v, want base64 of \"test\"", args["data"])
 		}
+		assertShardArg(t, args, 2)
 		return mcpgo.NewToolResultText(`{"id":7,"version":3,"timestamp":11}`), nil
 	})
 	srv.AddTool(mcpgo.NewTool("quicbaas_kv_list"), func(_ context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
@@ -113,6 +114,7 @@ func TestTransport_Request_KVPutReachesEntityTool(t *testing.T) {
 		if args["pageSize"] != float64(5) || args["pageToken"] != "c1" {
 			t.Errorf("list paging args = %v, want pageSize 5 and pageToken c1", args)
 		}
+		assertShardArg(t, args, 2)
 		return mcpgo.NewToolResultText(`{"entities":[{"entity_type":"users","id":7,"data":"dGVzdA==","version":3}],` +
 			`"count":1,"nextPageToken":"c2","totalCount":9}`), nil
 	})
@@ -125,7 +127,7 @@ func TestTransport_Request_KVPutReachesEntityTool(t *testing.T) {
 	}
 	defer tr.Close()
 
-	req := &service.PutRequest{EntityType: "users", ID: 7, Data: []byte("test")}
+	req := &service.PutRequest{EntityType: "users", ID: 7, Data: []byte("test"), ShardID: 2}
 	result, err := tr.Request(context.Background(), "quicbaas.KV", "Put", req)
 	if err != nil {
 		t.Fatalf("Request: %v", err)
@@ -142,7 +144,7 @@ func TestTransport_Request_KVPutReachesEntityTool(t *testing.T) {
 	}
 
 	listed, err := tr.Request(context.Background(), "quicbaas.KV", "List",
-		&service.ListRequest{EntityType: "users", PageSize: 5, PageToken: "c1"})
+		&service.ListRequest{EntityType: "users", PageSize: 5, PageToken: "c1", ShardID: 2})
 	if err != nil {
 		t.Fatalf("List: %v", err)
 	}
@@ -153,6 +155,55 @@ func TestTransport_Request_KVPutReachesEntityTool(t *testing.T) {
 	if len(page.Entities) != 1 || page.Entities[0].ID != 7 || string(page.Entities[0].Data) != "test" ||
 		page.NextPageToken != "c2" || page.TotalCount != 9 {
 		t.Errorf("ListResponse = %+v, want one entity id 7, next c2, total 9", page)
+	}
+}
+
+// assertShardArg checks that the entity tool received the requested shard
+// under the shardID name it reads, not the SDK's shard_id spelling.
+func assertShardArg(t *testing.T, args map[string]any, want float64) {
+	t.Helper()
+	if args["shardID"] != want {
+		t.Errorf("shardID = %v, want %v (args %v)", args["shardID"], want, args)
+	}
+	if _, ok := args["shard_id"]; ok {
+		t.Errorf("shard_id sent alongside shardID: %v", args)
+	}
+}
+
+// TestTransport_Request_KVGetDeleteCarryShard drives Get and Delete with an
+// explicit shard and checks the entity tools receive it as shardID.
+func TestTransport_Request_KVGetDeleteCarryShard(t *testing.T) {
+	srv := mcpserver.NewMCPServer("TestServer", "1.0.0")
+	var gets, deletes atomic.Int32
+	srv.AddTool(mcpgo.NewTool("quicbaas_kv_get"), func(_ context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
+		gets.Add(1)
+		assertShardArg(t, req.GetArguments(), 3)
+		return mcpgo.NewToolResultText(`{"entity_type":"users","id":7,"data":"dGVzdA==","version":1}`), nil
+	})
+	srv.AddTool(mcpgo.NewTool("quicbaas_kv_delete"), func(_ context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
+		deletes.Add(1)
+		assertShardArg(t, req.GetArguments(), 3)
+		return mcpgo.NewToolResultText(`{"success":true}`), nil
+	})
+	httpSrv := mcpserver.NewTestStreamableHTTPServer(srv)
+	defer httpSrv.Close()
+
+	tr, err := New(&transport.Config{Address: httpSrv.URL, Timeout: 5 * time.Second})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer tr.Close()
+
+	if _, err := tr.Request(context.Background(), "quicbaas.KV", "Get",
+		&service.GetRequest{EntityType: "users", ID: 7, ShardID: 3}); err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if _, err := tr.Request(context.Background(), "quicbaas.KV", "Delete",
+		&service.DeleteRequest{EntityType: "users", ID: 7, ShardID: 3}); err != nil {
+		t.Fatalf("Delete: %v", err)
+	}
+	if gets.Load() != 1 || deletes.Load() != 1 {
+		t.Fatalf("tool calls get=%d delete=%d, want one each", gets.Load(), deletes.Load())
 	}
 }
 

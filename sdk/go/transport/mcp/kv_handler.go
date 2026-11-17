@@ -52,6 +52,12 @@ func (t *Transport) kvArguments(method string, req interface{}) map[string]inter
 	if id, ok := kvIDDecimal(args["id"]); ok {
 		args["id"] = id
 	}
+	// toolArguments spells ShardID as shard_id, but the entity tools read
+	// shardID; without this every verb would fall back to the default shard.
+	if v, ok := args["shard_id"]; ok {
+		args["shardID"] = v
+		delete(args, "shard_id")
+	}
 	if method != "List" {
 		return args
 	}
