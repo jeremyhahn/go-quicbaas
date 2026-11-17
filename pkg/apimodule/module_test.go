@@ -157,8 +157,9 @@ func TestModule_LifecycleNoOps(t *testing.T) {
 // ObjectStorageService, ObjectStorageAdmin, OllamaService), PromptService,
 // SecretsManagement, KeyManagement plus DEKManagement (quicbaas-native
 // because the pinned go-xkms serves no DEK surface and no quicbaas.kms.v1
-// name), and AttestationService (quicbaas-native because the pinned go-xkms
-// serves no Verifier RPCs — Crypto/CertificateService/TrustService/
+// name), AttestationService (quicbaas-native because the pinned go-xkms
+// serves no Verifier RPCs), and Crypto (quicbaas-native because the pinned
+// go-xkms serves no quicbaas.kms.v1 name — CertificateService/TrustService/
 // PIVService moved to go-xkms's own ServiceModule, Phase 3
 // of the login-plane plan; see module.go's package doc and
 // TestModule_RegisterGRPC_ExcludesXKMSCanonicalSurface), each with a method
@@ -194,6 +195,7 @@ func TestModule_RegisterGRPC_RegistersFullGRPCSurface(t *testing.T) {
 		&pb.KeyManagement_ServiceDesc,
 		&pb.DEKManagement_ServiceDesc,
 		&pb.AttestationService_ServiceDesc,
+		&pb.Crypto_ServiceDesc,
 		&pb.VectorDB_ServiceDesc,
 		&pb.VectorAdmin_ServiceDesc,
 		&pb.PromptService_ServiceDesc,
@@ -204,7 +206,7 @@ func TestModule_RegisterGRPC_RegistersFullGRPCSurface(t *testing.T) {
 		&iampb.SessionService_ServiceDesc,
 	}
 	info := server.GetServiceInfo()
-	require.Len(t, info, len(generated), "exactly the twenty-seven quicbaas-native and broker services must be registered")
+	require.Len(t, info, len(generated), "exactly the twenty-eight quicbaas-native and broker services must be registered")
 
 	for _, desc := range generated {
 		svcInfo, ok := info[desc.ServiceName]
@@ -254,7 +256,7 @@ func TestModule_RegisterGRPC_ExcludesProxyPlanes(t *testing.T) {
 	}
 }
 
-// TestModule_RegisterGRPC_ExcludesXKMSCanonicalSurface proves Crypto,
+// TestModule_RegisterGRPC_ExcludesXKMSCanonicalSurface proves
 // CertificateService, TrustService, and PIVService stay
 // OFF the quicbaas module's surface (Phase 3 of the
 // login-plane plan, corrective to the prior design documented in
@@ -263,11 +265,12 @@ func TestModule_RegisterGRPC_ExcludesProxyPlanes(t *testing.T) {
 // as its canonical xkms.v1 KeystoreService surface on this same unified
 // server — registering both would double-register a redundant proto
 // surface, exactly the failure mode go-qrdb's route/service-collision guard
-// exists to catch. SecretsManagement, KeyManagement, DEKManagement, and
-// AttestationService are deliberately absent from this exclusion list: they
-// are quicbaas-native on the node, KeyManagement and DEKManagement because
-// the pinned go-xkms serves no DEK surface and no quicbaas.kms.v1 name, and
-// AttestationService because it serves no Verifier RPCs (see
+// exists to catch. SecretsManagement, KeyManagement, DEKManagement,
+// AttestationService, and Crypto are deliberately absent from this exclusion
+// list: they are quicbaas-native on the node, KeyManagement, DEKManagement
+// and Crypto because the pinned go-xkms serves no DEK surface and no
+// quicbaas.kms.v1 name, and AttestationService because it serves no Verifier
+// RPCs (see
 // TestModule_RegisterGRPC_RegistersFullGRPCSurface).
 func TestModule_RegisterGRPC_ExcludesXKMSCanonicalSurface(t *testing.T) {
 	m, err := NewModule(func() service.QuicBaaS { return nil }, testLogger(t))
@@ -278,7 +281,6 @@ func TestModule_RegisterGRPC_ExcludesXKMSCanonicalSurface(t *testing.T) {
 	info := server.GetServiceInfo()
 
 	excluded := []string{
-		pb.Crypto_ServiceDesc.ServiceName,
 		pb.CertificateService_ServiceDesc.ServiceName,
 		pb.TrustService_ServiceDesc.ServiceName,
 		pb.PIVService_ServiceDesc.ServiceName,
@@ -288,6 +290,28 @@ func TestModule_RegisterGRPC_ExcludesXKMSCanonicalSurface(t *testing.T) {
 		assert.False(t, ok, "service %s must NOT be registered on the quicbaas module: "+
 			"go-xkms's own ServiceModule now owns this canonical xkms.v1 surface", name)
 	}
+}
+
+// TestModule_Crypto_NilGatedOnCryptoService proves bind() builds the
+// quicbaas.kms.v1.Crypto server from the facade's Crypto() exactly when it is
+// configured, the same nil-gating pkg/server/lifecycle.go applies on the
+// legacy transport: the pinned go-xkms serves no quicbaas.kms.v1 name, so
+// the node must serve it itself.
+func TestModule_Crypto_NilGatedOnCryptoService(t *testing.T) {
+	without, err := NewModule(func() service.QuicBaaS { return &mocks.MockQuicBaaS{} }, testLogger(t))
+	require.NoError(t, err)
+	servers, err := without.bind()
+	require.NoError(t, err)
+	assert.Nil(t, servers.crypto, "Crypto must stay unbound while the facade has no CryptoService")
+
+	with, err := NewModule(func() service.QuicBaaS {
+		return &mocks.MockQuicBaaS{MockCryptoService: &mocks.MockCryptoService{}}
+	}, testLogger(t))
+	require.NoError(t, err)
+	servers, err = with.bind()
+	require.NoError(t, err)
+	_, ok := servers.crypto.(*grpcapi.CryptoServer)
+	assert.True(t, ok, "Crypto must be bound to a *grpcapi.CryptoServer when the facade has a CryptoService")
 }
 
 // startBufconnModule registers the module on a bufconn-backed gRPC server and
