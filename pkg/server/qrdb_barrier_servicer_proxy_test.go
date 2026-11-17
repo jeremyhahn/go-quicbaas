@@ -31,6 +31,8 @@ import (
 	"github.com/jeremyhahn/go-qrdb/pkg/api/grpc/proto/qrdbv1"
 	"github.com/jeremyhahn/go-qrdb/pkg/service"
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+
+	"github.com/jeremyhahn/go-quicbaas/pkg/config"
 )
 
 // statusOnlyBarrier is a BarrierServicer double that answers BarrierStatus;
@@ -269,8 +271,8 @@ func TestUnifiedModuleServerOptions_BarrierProxyOnlyWhenSealDisabled(t *testing.
 	if got := s.nodeBarrierServerOptions(true); len(got) != 0 {
 		t.Fatalf("seal enabled: expected no barrier option, got %d", len(got))
 	}
-	if got := s.nodeBarrierServerOptions(false); len(got) != 1 {
-		t.Fatalf("seal disabled: expected the barrier proxy option, got %d", len(got))
+	if got := s.nodeBarrierServerOptions(false); len(got) != 2 {
+		t.Fatalf("seal disabled: expected the barrier proxy and sealed-window probe options, got %d", len(got))
 	}
 
 	srv := newModuleHostTestServer(t)
@@ -282,7 +284,54 @@ func TestUnifiedModuleServerOptions_BarrierProxyOnlyWhenSealDisabled(t *testing.
 	if err != nil {
 		t.Fatalf("unifiedModuleServerOptions(sealEnabled=false): %v", err)
 	}
-	if len(unsealed) != len(sealed)+1 {
-		t.Fatalf("seal disabled must add exactly the barrier proxy option: %d options sealed, %d unsealed", len(sealed), len(unsealed))
+	if len(unsealed) != len(sealed)+2 {
+		t.Fatalf("seal disabled must add exactly the barrier proxy and sealed-window probe options: %d options sealed, %d unsealed", len(sealed), len(unsealed))
+	}
+}
+
+// With the seal disabled the proxy serves the data-plane barrier on the
+// node's native transports, and the sealed-window probe it brings along
+// must arm once that barrier is initialized and sealed, so the native data
+// RPCs answer Unavailable (go-quicbaas #2488). pkg/server has no untagged
+// seal-disabled helper that serves a real node listener, so this checks the
+// probe the option carries.
+func TestNodeBarrierServerOptions_SealDisabledProbeArmsOnSealedBarrier(t *testing.T) {
+	cfg := config.Default()
+	cfg.Seal.Enabled = false
+	cfg.Seal.Strategy = "passphrase"
+	cfg.Storage.Backend = config.StorageBackendMemory
+	cfg.Storage.DataDir = t.TempDir()
+	srv, err := NewServer(cfg)
+	if err != nil {
+		t.Fatalf("NewServer(seal disabled): %v", err)
+	}
+	if got := srv.nodeBarrierServerOptions(false); len(got) != 2 {
+		t.Fatalf("seal disabled: expected the barrier proxy and sealed-window probe options, got %d", len(got))
+	}
+
+	_, barrier, _, closer, err := buildDataPlaneBarrierService(cfg, nil)
+	if err != nil || barrier == nil || closer == nil {
+		t.Fatalf("build the data-plane barrier: barrier=%v closer=%v err=%v", barrier, closer, err)
+	}
+	t.Cleanup(func() { _ = closer.Close() })
+	srv.dataPlaneBarrier = barrier
+
+	probe := srv.SealedWindowProbe()
+	creds, err := qrdbsdk.CredentialsFor([]byte("seal-disabled-probe-unit-test-passphrase"))
+	if err != nil {
+		t.Fatalf("protect the passphrase: %v", err)
+	}
+	defer creds.Secret.Destroy()
+	if err := barrier.Initialize(t.Context(), creds); err != nil {
+		t.Fatalf("initialize the data-plane barrier: %v", err)
+	}
+	if probe.IsSealed() {
+		t.Fatal("an initialized, unsealed barrier must not arm the sealed window")
+	}
+	if err := barrier.Seal(); err != nil {
+		t.Fatalf("seal the data-plane barrier: %v", err)
+	}
+	if !probe.IsSealed() {
+		t.Fatal("seal disabled: an initialized, sealed data-plane barrier must arm the sealed window")
 	}
 }
