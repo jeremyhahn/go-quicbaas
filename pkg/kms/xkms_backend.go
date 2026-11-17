@@ -191,6 +191,10 @@ func (kb *XKMSBackend) CreateKey(ctx context.Context, attrs *kctypes.KeyAttribut
 		return nil, ErrKeyCNEmpty
 	}
 
+	if err := kb.refuseVersionName(ctx, attrs.CN); err != nil {
+		return nil, fmt.Errorf("%w: key ID %q names a version of an existing key", ErrInvalidKeyID, attrs.CN)
+	}
+
 	// go-xkms validates key names more strictly than quicbaas key IDs (a
 	// tenant-scoped ID carries "/"), so the backend sees the encoded name
 	// while the caller's attrs and the metadata keep the quicbaas ID.
@@ -258,6 +262,10 @@ func (kb *XKMSBackend) ImportKey(ctx context.Context, keyID string, material []b
 		return nil, ErrKeyIDEmpty
 	}
 
+	if err := kb.refuseVersionName(ctx, keyID); err != nil {
+		return nil, fmt.Errorf("%w: key ID %q names a version of an existing key", ErrInvalidKeyID, keyID)
+	}
+
 	if len(material) == 0 {
 		return nil, ErrKeyMaterialEmpty
 	}
@@ -319,6 +327,10 @@ func (kb *XKMSBackend) ImportKey(ctx context.Context, keyID string, material []b
 func (kb *XKMSBackend) GetKeyMetadata(ctx context.Context, keyID string) (*KeyMetadata, error) {
 	if !kb.IsAvailable(ctx) {
 		return nil, ErrBackendNotReady
+	}
+
+	if err := kb.refuseVersionName(ctx, keyID); err != nil {
+		return nil, err
 	}
 
 	// Check cache first
@@ -497,6 +509,10 @@ func (kb *XKMSBackend) RotateKey(ctx context.Context, keyID string) (*KeyMetadat
 		return nil, ErrBackendNotReady
 	}
 
+	if err := kb.refuseVersionName(ctx, keyID); err != nil {
+		return nil, err
+	}
+
 	// Get key metadata to retrieve the algorithm (with proper locking)
 	kb.mu.RLock()
 	meta, exists := kb.metadata[keyID]
@@ -563,10 +579,55 @@ func (kb *XKMSBackend) buildVersionedKeyID(keyID string, version int) string {
 	return fmt.Sprintf("%s_v%d", keyID, version)
 }
 
+// versionNameBase returns the base key ID of a name of the form
+// <base>_v<digits> (the name buildVersionedKeyID gives version N of key
+// <base>), and false for any other ID.
+func versionNameBase(keyID string) (string, bool) {
+	idx := strings.LastIndex(keyID, "_v")
+	if idx <= 0 {
+		return "", false
+	}
+	digits := keyID[idx+2:]
+	if digits == "" {
+		return "", false
+	}
+	for _, c := range digits {
+		if c < '0' || c > '9' {
+			return "", false
+		}
+	}
+	base := keyID[:idx]
+	if strings.HasSuffix(base, "/") {
+		return "", false
+	}
+	return base, true
+}
+
+// refuseVersionName returns ErrKeyNotFound when keyID names a version of an
+// existing key (<base>_v<digits> with <base> a key in the same scope). A
+// version is stored by go-xkms under that name, but it is never a public key
+// ID: callers address the parent key, so policy is always checked against
+// the parent key ID. An ID of that form whose base does not exist is an
+// ordinary key.
+func (kb *XKMSBackend) refuseVersionName(ctx context.Context, keyID string) error {
+	base, ok := versionNameBase(keyID)
+	if !ok {
+		return nil
+	}
+	if _, err := kb.GetKeyMetadata(ctx, base); err != nil {
+		return nil //nolint:nilerr // the base is not a key, so keyID is an ordinary key
+	}
+	return ErrKeyNotFound
+}
+
 // DisableKey temporarily disables a key.
 func (kb *XKMSBackend) DisableKey(ctx context.Context, keyID string) error {
 	if !kb.IsAvailable(ctx) {
 		return ErrBackendNotReady
+	}
+
+	if err := kb.refuseVersionName(ctx, keyID); err != nil {
+		return err
 	}
 
 	// Update cached metadata - go-xkms doesn't have native disable
@@ -590,6 +651,10 @@ func (kb *XKMSBackend) EnableKey(ctx context.Context, keyID string) error {
 		return ErrBackendNotReady
 	}
 
+	if err := kb.refuseVersionName(ctx, keyID); err != nil {
+		return err
+	}
+
 	// Update cached metadata - go-xkms doesn't have native enable
 	kb.mu.Lock()
 	defer kb.mu.Unlock()
@@ -609,6 +674,10 @@ func (kb *XKMSBackend) EnableKey(ctx context.Context, keyID string) error {
 func (kb *XKMSBackend) DeleteKey(ctx context.Context, keyID string) error {
 	if !kb.IsAvailable(ctx) {
 		return ErrBackendNotReady
+	}
+
+	if err := kb.refuseVersionName(ctx, keyID); err != nil {
+		return err
 	}
 
 	// First check if key exists in our metadata cache
