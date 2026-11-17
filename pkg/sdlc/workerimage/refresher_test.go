@@ -121,6 +121,27 @@ func TestRefresh_PublishesThenBindsTheDigestPinnedReference(t *testing.T) {
 	}
 }
 
+// A refresh pass releases the candidate's ID once it has pushed it, so the
+// engine's reference keeping the built image can go.
+func TestRefresh_ReleasesTheCandidateIDAfterItsPush(t *testing.T) {
+	cfg := testConfig()
+	cfg.Registry = "198.51.100.50:3000/jeremyhahn/software-factory-worker"
+	cfg.Credential = fakeCredential{}
+	h := newHarness(t, cfg)
+
+	report := h.r.Refresh(t.Context(), TriggerManual)
+
+	if report.Outcome != OutcomePromoted || report.ImageID == "" {
+		t.Fatalf("outcome = %s, image %q (%s)", report.Outcome, report.ImageID, report.Error)
+	}
+	if !slices.Equal(h.engine.released, []string{report.ImageID}) {
+		t.Fatalf("released = %v, want the candidate %s once", h.engine.released, report.ImageID)
+	}
+	if h.engine.pushesAtRelease[0] != len(h.engine.pushes) || len(h.engine.pushes) == 0 {
+		t.Fatalf("the candidate was released after %d of %d pushes", h.engine.pushesAtRelease[0], len(h.engine.pushes))
+	}
+}
+
 func TestRefresh_ARegistryReferenceIsManagedToo(t *testing.T) {
 	cfg := testConfig()
 	cfg.Registry = "reg.example:3000/o/worker"
