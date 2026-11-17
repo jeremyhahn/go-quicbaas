@@ -72,22 +72,21 @@ func (s *Server) buildQRDBRegisterOptions() []qrdbsdk.GRPCRegisterOption {
 		opts = append(opts, qrdbsdk.WithRegisterCeremonyService(cs))
 	}
 
-	// The barrier proxy resolves s.qrdbBarrierServicer() PER CALL (see
-	// qrdb_barrier_servicer_proxy.go): the node's TCP gRPC server registers
-	// before the qrdb client, bootstrap ceremony client or sealed-window
-	// services are wired, so a servicer captured here would be nil. Until one
-	// is wired the proxy answers Unimplemented "barrier service is not
-	// configured", as an unregistered barrier did.
-	opts = append(opts, qrdbsdk.WithRegisterBarrierService(newQRDBBarrierServicerProxy(s)))
-
-	// User + UserAuthFactor services back the qrdb SDK's
-	// Security().Auth().Factors() surface: resolveSubjectUserID reads the
-	// user store and factor enrollment writes the UserAuthFactor store the
-	// unified-login ceremony resolves against. The proxies resolve the
-	// embedded node servicer PER CALL (see qrdb_user_servicers.go) so the
-	// surface comes online after Unseal on the seal-enabled boot path
-	// instead of being captured as nil at registration time.
 	opts = append(opts,
+		// The barrier proxy resolves s.qrdbBarrierServicer() PER CALL (see
+		// qrdb_barrier_servicer_proxy.go): the node's TCP gRPC server registers
+		// before the qrdb client, bootstrap ceremony client or sealed-window
+		// services are wired, so a servicer captured here would be nil. Until one
+		// is wired the proxy answers Unimplemented "barrier service is not
+		// configured", as an unregistered barrier did.
+		qrdbsdk.WithRegisterBarrierService(newQRDBBarrierServicerProxy(s)),
+		// User + UserAuthFactor services back the qrdb SDK's
+		// Security().Auth().Factors() surface: resolveSubjectUserID reads the
+		// user store and factor enrollment writes the UserAuthFactor store the
+		// unified-login ceremony resolves against. The proxies resolve the
+		// embedded node servicer PER CALL (see qrdb_user_servicers.go) so the
+		// surface comes online after Unseal on the seal-enabled boot path
+		// instead of being captured as nil at registration time.
 		qrdbsdk.WithRegisterUserService(newQRDBUserServicerProxy(s)),
 		qrdbsdk.WithRegisterUserAuthFactorService(newQRDBUserAuthFactorServicerProxy(s)),
 	)
