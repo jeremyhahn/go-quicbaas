@@ -22,6 +22,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -629,6 +630,61 @@ func TestHandleRAGQuery_WithModel(t *testing.T) {
 
 	if w.Code != http.StatusOK {
 		t.Errorf("expected status 200, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+// TestHandleRAGQuery_MinScoreReachesSearchSimilar decodes min_score into the
+// request's pointer and checks the threshold SearchSimilar receives: an
+// omitted min_score takes the 0.7 default, an explicit 0 disables the filter,
+// and any other value is used as sent.
+func TestHandleRAGQuery_MinScoreReachesSearchSimilar(t *testing.T) {
+	cases := []struct {
+		name string
+		body string
+		want float32
+	}{
+		{name: "omitted", body: `{"query":"q","namespace":"docs"}`, want: 0.7},
+		{name: "explicit zero", body: `{"query":"q","namespace":"docs","min_score":0}`, want: 0},
+		{name: "explicit 0.42", body: `{"query":"q","namespace":"docs","min_score":0.42}`, want: 0.42},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var got float32
+			calls := 0
+			vectorSvc := &mockVectorServiceForRAG{}
+			vectorSvc.On("SearchSimilar", mock.Anything, mock.Anything).
+				Run(func(args mock.Arguments) {
+					calls++
+					got = args.Get(1).(*service.SearchSimilarRequest).MinScore
+				}).
+				Return(&service.SearchSimilarResponse{}, nil)
+
+			embedResp := &service.OllamaEmbedResponse{Embedding: []float32{0.1, 0.2, 0.3}, Dimensions: 3}
+			ollamaSvc := &mockOllamaServiceForRAG{isAvailable: true}
+			ollamaSvc.On("Embed", mock.Anything, mock.Anything).Return(embedResp, nil).Maybe()
+			ollamaSvc.On("EmbedWithModel", mock.Anything, mock.Anything).Return(embedResp, nil).Maybe()
+
+			mockDB := testutil.NewMockQuicBaaS()
+			mockDB.VectorService = vectorSvc
+			mockDB.OllamaService = ollamaSvc
+			s := &Server{service: mockDB}
+
+			req := httptest.NewRequest(http.MethodPost, "/api/v1/rag/query", strings.NewReader(tc.body))
+			req.Header.Set("Content-Type", "application/json")
+			w := httptest.NewRecorder()
+
+			s.HandleRAGQuery(w, req)
+
+			if w.Code != http.StatusOK {
+				t.Fatalf("expected status 200, got %d: %s", w.Code, w.Body.String())
+			}
+			if calls != 1 {
+				t.Fatalf("SearchSimilar called %d times, want 1", calls)
+			}
+			if got != tc.want {
+				t.Errorf("SearchSimilar MinScore = %v, want %v", got, tc.want)
+			}
+		})
 	}
 }
 
