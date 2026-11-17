@@ -527,6 +527,13 @@ type Server struct {
 	// transports on one barrier with no split-brain state.
 	bootstrapCeremonyClient *qrdbsdk.Client
 
+	// barrierServicer is the direct qrdb.v1 barrier servicer the barrier
+	// proxy (qrdb_barrier_servicer_proxy.go) serves. It is published where
+	// the servicer becomes available (sealed window, node seal services,
+	// bootstrap ceremony stack) while the listeners already run, so it is
+	// read and written atomically. Empty answers not-configured.
+	barrierServicer atomic.Pointer[barrierServicerRef]
+
 	// tenantSDKClient is the in-process qrdb SDK client whose embedded
 	// transport carries the node's TenantServicer. It backs the per-tenant
 	// barrier facade shared by every transport (see tenant_barrier_wiring.go).

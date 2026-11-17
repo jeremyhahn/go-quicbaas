@@ -625,7 +625,7 @@ func (s *Server) newQRDBAuditSink() qrdbsdk.NodeAuditLogger {
 	return qrdbsdk.NewAuditRingBuffer(defaultQRDBAuditRingCapacity)
 }
 
-func (s *Server) unifiedModuleServerOptions(serverOpts []qrdbsdk.ServerOption) ([]qrdbsdk.ServerOption, error) {
+func (s *Server) unifiedModuleServerOptions(serverOpts []qrdbsdk.ServerOption, sealEnabled bool) ([]qrdbsdk.ServerOption, error) {
 	// The ONE audit plane (P5.2): every capability module (quicbaas's own
 	// and go-xkms's) and, over the site-by-site migration, quicbaas's own
 	// IAM/OIDC/federation/orchestration/PIV-login/introspection auditing
@@ -645,6 +645,7 @@ func (s *Server) unifiedModuleServerOptions(serverOpts []qrdbsdk.ServerOption) (
 	// service, never GetQRDBTenantServicer, which returns the router.
 	s.tenantUnsealRouter = newTenantUnsealRouter(s.rawQRDBTenantServicer, s.buildTenantBarrierService)
 	serverOpts = append(serverOpts, qrdbserver.WithTenantService(s.tenantUnsealRouter))
+	serverOpts = append(serverOpts, s.nodeBarrierServerOptions(sealEnabled)...)
 
 	module, err := s.newQuicBaaSModule()
 	if err != nil {
@@ -755,6 +756,20 @@ func (s *Server) unifiedModuleServerOptions(serverOpts []qrdbsdk.ServerOption) (
 		serverOpts = append(serverOpts, qrdbsdk.WithServerTLS(s.unifiedServerTLSConfig()))
 	}
 	return serverOpts, nil
+}
+
+// nodeBarrierServerOptions chooses the qrdb.v1 barrier service the node's
+// REST, gRPC, QUIC, Unix and MCP servers carry. With the seal enabled
+// go-qrdb registers the node's own barrier servicer, which reads the
+// transport caller's thumbprint for officer share claims, so nothing is
+// overridden. With the seal disabled the node has no barrier servicer, so
+// the proxy serves the direct servicer published on s.barrierServicer
+// (go-quicbaas #2488).
+func (s *Server) nodeBarrierServerOptions(sealEnabled bool) []qrdbsdk.ServerOption {
+	if sealEnabled {
+		return nil
+	}
+	return []qrdbsdk.ServerOption{qrdbserver.WithBarrierService(newQRDBBarrierServicerProxy(s))}
 }
 
 // newQuicBaaSModule builds the quicbaas ServiceModule the unified server
@@ -881,7 +896,7 @@ func (s *Server) initStandaloneQRDBNode() error {
 	s.pinBackend = pinBackend
 
 	// Register the quicbaas ServiceModule (and unified TLS when enabled).
-	serverOpts, err = s.unifiedModuleServerOptions(serverOpts)
+	serverOpts, err = s.unifiedModuleServerOptions(serverOpts, qcfg.Seal.Enabled)
 	if err != nil {
 		return err
 	}
@@ -1099,7 +1114,7 @@ func (s *Server) initClusteredQRDBNode() error {
 	s.pinBackend = pinBackend
 
 	// Register the quicbaas ServiceModule (and unified TLS when enabled).
-	serverOpts, err = s.unifiedModuleServerOptions(serverOpts)
+	serverOpts, err = s.unifiedModuleServerOptions(serverOpts, qcfg.Seal.Enabled)
 	if err != nil {
 		return err
 	}
