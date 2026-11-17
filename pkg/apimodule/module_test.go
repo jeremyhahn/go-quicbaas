@@ -419,6 +419,14 @@ func TestModule_Crypto_SignVerifyUnimplementedOverGRPC(t *testing.T) {
 		assert.Equal(t, codes.Unimplemented, status.Code(err), "Verify: got %v", err)
 		assert.Equal(t, want, status.Convert(err).Message())
 	})
+
+	t.Run("Rewrap", func(t *testing.T) {
+		_, err := client.Rewrap(context.Background(), &pb.RewrapRequest{
+			KeyId: "k1", Ciphertext: []byte("ct"),
+		})
+		assert.Equal(t, codes.Unimplemented, status.Code(err), "Rewrap: got %v", err)
+		assert.Equal(t, status.Convert(errNodeRewrapUnserved).Message(), status.Convert(err).Message())
+	})
 }
 
 // dataKeyCryptoService is a MockCryptoService that counts the data-key

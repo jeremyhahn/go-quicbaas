@@ -103,3 +103,14 @@ func (nodeCryptoServer) Sign(context.Context, *pb.SignRequest) (*pb.SignResponse
 func (nodeCryptoServer) Verify(context.Context, *pb.VerifyRequest) (*pb.VerifyResponse, error) {
 	return nil, errNodeSignUnserved
 }
+
+// errNodeRewrapUnserved is what the node answers for Rewrap.
+var errNodeRewrapUnserved = status.Error(codes.Unimplemented,
+	"Rewrap is not served on the node: the crypto service does not report the key versions it used")
+
+// Rewrap is not served on the node: the crypto service does not report the
+// key versions it decrypted and re-encrypted with, so the response could not
+// name them.
+func (nodeCryptoServer) Rewrap(context.Context, *pb.RewrapRequest) (*pb.RewrapResponse, error) {
+	return nil, errNodeRewrapUnserved
+}
