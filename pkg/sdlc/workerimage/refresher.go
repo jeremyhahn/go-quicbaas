@@ -678,8 +678,17 @@ func versionBehind(have, latest string) bool {
 // candidate returns the ID of the image built for build, building it only
 // when this host does not already hold a correctly labelled one under its tag,
 // and proves the labels a later pass will decide by.
-func (r *Refresher) candidate(ctx context.Context, build softwarefactoryworker.Build, localRef string) (string, error) {
+func (r *Refresher) candidate(ctx context.Context, build softwarefactoryworker.Build, localRef string) (_ string, err error) {
 	imageID := ""
+	// A candidate this call built is released on every failing return
+	// below: the caller never sees its ID, so nothing else will. A reused
+	// candidate was never handed out by BuildImage and is not released.
+	fresh := false
+	defer func() {
+		if err != nil && fresh {
+			r.deps.Engine.ReleaseImage(context.WithoutCancel(ctx), imageID)
+		}
+	}()
 	held, err := r.deps.Engine.InspectImage(ctx, localRef)
 	switch {
 	case err == nil && softwarefactoryworker.AgentsFromLabels(held.Labels) == build.Agents:
@@ -698,6 +707,7 @@ func (r *Refresher) candidate(ctx context.Context, build softwarefactoryworker.B
 		if err != nil {
 			return "", err
 		}
+		fresh = true
 	}
 	built, err := r.deps.Engine.InspectImage(ctx, imageID)
 	if err != nil {

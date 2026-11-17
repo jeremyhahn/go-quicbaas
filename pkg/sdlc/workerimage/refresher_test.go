@@ -267,6 +267,44 @@ func TestRefresh_FailuresLeaveBindingsAlone(t *testing.T) {
 	}
 }
 
+func TestRefresh_AFailedCandidateCheckReleasesOnlyABuiltCandidate(t *testing.T) {
+	noLanguages := func() map[string]string {
+		labels := labelsFor("2.1.280", "0.156.0")
+		delete(labels, softwarefactoryworker.LabelLanguages)
+		return labels
+	}
+	cases := map[string]struct {
+		setup func(*harness)
+		want  []string
+	}{
+		"built with wrong labels": {
+			setup: func(h *harness) { h.engine.builtLabels = labelsFor("2.1.280", "0.1.0") },
+			want:  []string{"sha256:built-" + candidateTag},
+		},
+		"built without a languages label": {
+			setup: func(h *harness) { h.engine.builtLabels = noLanguages() },
+			want:  []string{"sha256:built-" + candidateTag},
+		},
+		"reused without a languages label": {
+			setup: func(h *harness) { h.engine.hold(candidateTag, "sha256:earlier-build", noLanguages()) },
+			want:  nil,
+		},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			h := newHarness(t, testConfig())
+			tc.setup(h)
+			report := h.r.Refresh(t.Context(), TriggerManual)
+			if report.Outcome == OutcomePromoted || len(h.engine.pushes) != 0 {
+				t.Fatalf("a candidate that fails its checks must not be promoted, outcome %s", report.Outcome)
+			}
+			if !slices.Equal(h.engine.released, tc.want) {
+				t.Fatalf("released = %v, want %v", h.engine.released, tc.want)
+			}
+		})
+	}
+}
+
 func TestCheckLanguages_AcceptsKnownLanguages(t *testing.T) {
 	labels := map[string]string{softwarefactoryworker.LabelLanguages: "go typescript  yaml"}
 	if err := checkLanguages(candidateTag, labels); err != nil {
