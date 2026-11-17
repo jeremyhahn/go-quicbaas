@@ -52,6 +52,12 @@ func (t *Transport) kvArguments(method string, req interface{}) map[string]inter
 	if id, ok := kvIDDecimal(args["id"]); ok {
 		args["id"] = id
 	}
+	// The entity tools read only shardID; a shard_id key would leave every
+	// KV request on the default shard.
+	if v, ok := args["shard_id"]; ok {
+		args["shardID"] = v
+		delete(args, "shard_id")
+	}
 	if method != "List" {
 		return args
 	}
