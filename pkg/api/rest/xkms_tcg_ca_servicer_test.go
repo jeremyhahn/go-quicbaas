@@ -31,6 +31,9 @@ import (
 	xkmstransport "github.com/jeremyhahn/go-xkms/sdk/go/transport"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
+	testca "github.com/jeremyhahn/go-quicbaas/pkg/testutil/xkmsca"
 )
 
 // fakeTCGCA answers the TCG verbs; every other TCGCA method is the nil
@@ -83,7 +86,7 @@ func TestXKMSTCGCAServicer_DelegatesToTheTCGCA(t *testing.T) {
 	ca := &fakeTCGCA{cert: cert, enrollment: &xkmssdk.TCGEnrollmentResult{IAKCertDER: []byte("IAK"), CredentialBlob: []byte("BLOB")}}
 	svc := NewXKMSTCGCAService(ca, "")
 	require.NotNil(t, svc)
-	ctx := context.Background()
+	ctx := tenantctx.WithTenant(context.Background(), tenantctx.SystemTenantID)
 
 	ek, err := svc.IssueEKCertificate(ctx, &xkmstransport.IssueEKCertificateRequest{CommonName: "dev-1", Organization: "acme", EKPublicKey: pubDER})
 	require.NoError(t, err)
@@ -109,7 +112,7 @@ func TestXKMSTCGCAServicer_DelegatesToTheTCGCA(t *testing.T) {
 // TestXKMSTCGCAServicer_Refusals covers the input checks and a CA that is
 // not a TCGCA.
 func TestXKMSTCGCAServicer_Refusals(t *testing.T) {
-	ctx := context.Background()
+	ctx := tenantctx.WithTenant(context.Background(), tenantctx.SystemTenantID)
 	svc := NewXKMSTCGCAService(&fakeTCGCA{}, "")
 
 	_, err := svc.IssueEKCertificate(ctx, nil)
@@ -131,4 +134,66 @@ func TestXKMSTCGCAServicer_Refusals(t *testing.T) {
 	_, err = NewXKMSTCGCAService(&plainCA{}, "").EnrollDevice(ctx, &xkmstransport.EnrollDeviceRequest{CommonName: "d", PackedCSR: []byte{1}})
 	assert.ErrorIs(t, err, ErrXKMSCATCGNotSupported)
 	assert.Nil(t, NewXKMSTCGCAService(nil, ""))
+}
+
+// TestXKMSTCGCAServicer_RefusesNonSystemTenants pins the safeguard
+// CertificateService.IssueDeviceIdentity already applies: the pinned go-xkms
+// records no issuing tenant on TCG certificates, so a tenant could never
+// revoke one it was issued. Every TCG verb refuses a non-system tenant (and an
+// unbound caller) before the CA is reached.
+func TestXKMSTCGCAServicer_RefusesNonSystemTenants(t *testing.T) {
+	pubDER, cert := tcgTestKeyAndCert(t)
+	for name, ctx := range map[string]context.Context{
+		"tenant":  tenantctx.WithTenant(context.Background(), "tenant-a"),
+		"unbound": context.Background(),
+		"named":   tenantctx.WithTenant(context.Background(), tenantctx.SystemTenantID),
+	} {
+		t.Run(name, func(t *testing.T) {
+			ca := &fakeTCGCA{cert: cert, enrollment: &xkmssdk.TCGEnrollmentResult{}}
+			svc := NewXKMSTCGCAService(ca, "")
+			tenant := ""
+			if name == "named" {
+				tenant = "tenant-a" // the system tenant asks for another tenant's certificate
+			}
+			_, err := svc.IssueEKCertificate(ctx, &xkmstransport.IssueEKCertificateRequest{CommonName: "d", EKPublicKey: pubDER, TenantID: tenant})
+			require.Error(t, err)
+			_, err = svc.IssueAKCertificate(ctx, &xkmstransport.IssueAKCertificateRequest{CommonName: "d", PublicKey: pubDER, TenantID: tenant})
+			require.Error(t, err)
+			_, err = svc.SignTCGCSR(ctx, &xkmstransport.SignTCGCSRRequest{CommonName: "d", TCGCSR: []byte{1}, TenantID: tenant})
+			require.Error(t, err)
+			_, err = svc.EnrollDevice(ctx, &xkmstransport.EnrollDeviceRequest{CommonName: "d", PackedCSR: []byte{1}, TenantID: tenant})
+			require.Error(t, err)
+			if name != "named" {
+				assert.ErrorIs(t, err, ErrXKMSCATCGTenantUnsupported)
+			}
+			assert.Nil(t, ca.gotReq, "the CA was reached for a refused tenant")
+			assert.Nil(t, ca.gotPacked, "the CA was reached for a refused tenant")
+		})
+	}
+}
+
+// TestXKMSTCGCAServicer_SystemIssuedEKIsRevocable issues an EK certificate
+// through the real go-xkms CA as the system tenant and revokes it through the
+// same adapter: the issuance the tenant guard still admits stays revocable.
+func TestXKMSTCGCAServicer_SystemIssuedEKIsRevocable(t *testing.T) {
+	ca := testca.New(t, "xkmsca-tcg-revoke-ca")
+	if _, ok := ca.(xkmssdk.TCGCA); !ok {
+		t.Fatalf("the go-xkms test CA is not a TCGCA (%T)", ca)
+	}
+	svc := NewXKMSTCGCAService(ca, "")
+	require.NotNil(t, svc)
+	ctx := tenantctx.WithTenant(context.Background(), tenantctx.SystemTenantID)
+	pubDER, _ := tcgTestKeyAndCert(t)
+
+	ek, err := svc.IssueEKCertificate(ctx, &xkmstransport.IssueEKCertificateRequest{CommonName: "dev-revoke", EKPublicKey: pubDER})
+	require.NoError(t, err)
+	require.NotEmpty(t, ek.SerialNumber)
+
+	_, err = NewXKMSTCGCAService(ca, "").IssueEKCertificate(tenantctx.WithTenant(context.Background(), "tenant-a"),
+		&xkmstransport.IssueEKCertificateRequest{CommonName: "dev-tenant", EKPublicKey: pubDER})
+	require.ErrorIs(t, err, ErrXKMSCATCGTenantUnsupported)
+
+	revoked, err := newXKMSCAServicer(ca, "").RevokeCertificate(ctx, &xkmstransport.RevokeCertificateRequest{SerialNumber: ek.SerialNumber})
+	require.NoError(t, err)
+	assert.True(t, revoked.Success)
 }

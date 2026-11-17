@@ -23,6 +23,8 @@ import (
 
 	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
 	xkmstransport "github.com/jeremyhahn/go-xkms/sdk/go/transport"
+
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 // The adapter also satisfies go-xkms's TCGCAService, so go-xkms's CAHandlers
@@ -34,6 +36,11 @@ var _ xkmstransport.TCGCAService = (*xkmsCAServicer)(nil)
 
 // ErrXKMSCATCGNotSupported is returned when the wired CA is not a TCGCA.
 var ErrXKMSCATCGNotSupported = errors.New("xkms ca: CA does not support TCG operations")
+
+// ErrXKMSCATCGTenantUnsupported is returned when a tenant other than the
+// system tenant asks for a TCG certificate: the pinned go-xkms records no
+// issuing tenant on it, so that tenant could never revoke it (go-xkms #1764).
+var ErrXKMSCATCGTenantUnsupported = errors.New("xkms ca: TCG certificates are issued in the system tenant only until the CA records the issuing tenant")
 
 // ErrXKMSCAMissingPublicKey is returned when an EK or AK request carries no
 // public key.
@@ -66,6 +73,14 @@ func (a *xkmsCAServicer) tcgRequest(ctx context.Context, op, commonName, organiz
 	tenantID, err := a.resolveTenant(ctx, op, tenant)
 	if err != nil {
 		return nil, nil, err
+	}
+	// The pinned go-xkms TCG issuers record no issuing tenant on EK, AK,
+	// TCG-CSR or IDevID certificates, so BindToIssuingTenant would refuse
+	// the issuing tenant's own revocation. Until go-xkms #1764 is pinned only
+	// the system tenant may issue them, as CertificateService.IssueDeviceIdentity
+	// already requires.
+	if !tenantctx.IsSystem(tenantID) {
+		return nil, nil, ErrXKMSCATCGTenantUnsupported
 	}
 	return tcg, &xkmssdk.TrustedCACertificateRequest{
 		Subject:  xkmssdk.TrustedCASubject{CommonName: commonName, Organization: organization},
