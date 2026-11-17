@@ -3,6 +3,8 @@ package quicbaas
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -193,5 +195,67 @@ func TestGetJobsDueForExecution_ReconcilesPeriodically(t *testing.T) {
 
 	if names := dueJobNames(t, storage, now); !names["older-writer"] {
 		t.Fatalf("after the interval, due jobs = %v, want older-writer", names)
+	}
+}
+
+// reconcileFailingKV fails the reads only the tenant job index reconcile
+// makes: the scan over every tenant's keys and lookups of index entries.
+type reconcileFailingKV struct {
+	*mockKVStore
+}
+
+func (f *reconcileFailingKV) Scan(ctx context.Context, prefix string, fn func(key string, value []byte) error) error {
+	if prefix == tenantKeyPrefix {
+		return context.DeadlineExceeded
+	}
+	return f.mockKVStore.Scan(ctx, prefix, fn)
+}
+
+func (f *reconcileFailingKV) Exists(ctx context.Context, key string) (bool, error) {
+	if strings.HasPrefix(key, TenantJobIndexPrefix) {
+		return false, context.DeadlineExceeded
+	}
+	return f.mockKVStore.Exists(ctx, key)
+}
+
+func TestGetJobsDueForExecution_ReconcileErrorDoesNotFailDueScan(t *testing.T) {
+	ctx := context.Background()
+	kv := newMockKVStore()
+	now := time.Now()
+
+	seed := NewStorage(kv)
+	system := createTestJob("due-system", scheduler.OwnerTypeSystem, "")
+	system.ID = 7
+	system.NextRun = now.Add(-time.Minute)
+	if err := seed.CreateJob(ctx, system); err != nil {
+		t.Fatalf("create system job: %v", err)
+	}
+	tenant := createTestJob("due-tenant", scheduler.OwnerTypeTenant, "acme")
+	tenant.ID = 8
+	tenant.NextRun = now.Add(-time.Minute)
+	if err := seed.CreateJob(ctx, tenant); err != nil {
+		t.Fatalf("create tenant job: %v", err)
+	}
+
+	storage := NewStorage(&reconcileFailingKV{mockKVStore: kv})
+	for i := range 2 {
+		storage.reconcileMu.Lock()
+		storage.lastReconcile = time.Now().Add(-storage.reconcileInterval)
+		storage.reconcileMu.Unlock()
+
+		due, err := storage.GetJobsDueForExecution(ctx, now, 100)
+		if err != nil {
+			t.Fatalf("sweep %d: GetJobsDueForExecution: %v, want nil", i, err)
+		}
+		names := make(map[string]bool, len(due))
+		for _, job := range due {
+			names[job.Name] = true
+		}
+		if len(names) != 2 || !names["due-system"] || !names["due-tenant"] {
+			t.Fatalf("sweep %d: due jobs = %v, want due-system and due-tenant", i, names)
+		}
+		if err := storage.lastReconcileError(); !errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("sweep %d: last reconcile error = %v, want DeadlineExceeded", i, err)
+		}
 	}
 }

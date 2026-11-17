@@ -81,6 +81,10 @@ type Storage struct {
 	reconcileMu       sync.Mutex
 	lastReconcile     time.Time
 	reconcileInterval time.Duration
+	// reconcileErr is the error of the last reconcile pass, nil when it
+	// succeeded. A failed pass never fails a due scan or open; it is kept
+	// here and the pass runs again after reconcileInterval.
+	reconcileErr error
 
 	// tenantCursor is where the due scan starts in the tenant list; each
 	// sweep advances it, so a tenant with more due jobs than the limit
@@ -528,11 +532,13 @@ func (s *Storage) GetJobsDueForExecution(ctx context.Context, before time.Time, 
 	// Older nodes in a rolling upgrade can still write tenant jobs without
 	// an index entry, so the index is reconciled periodically, not only at
 	// open.
+	// The pass is marked before it runs, so a failing pass waits a full
+	// reconcileInterval rather than repeating on every sweep, and its error
+	// is recorded, not returned: the index scan below still dispatches the
+	// jobs already indexed.
 	if s.reconcileDue() {
-		if err := s.reconcileTenantJobIndex(ctx); err != nil {
-			return nil, &scheduler.ErrStorageError{Op: "GetJobsDueForExecution.reconcile", Cause: err}
-		}
 		s.markReconciled()
+		s.recordReconcile(s.reconcileTenantJobIndex(ctx))
 	}
 
 	// Tenant jobs live in their tenants' namespaces; the index names them.
@@ -626,6 +632,22 @@ func (s *Storage) markReconciled() {
 	s.reconcileMu.Unlock()
 }
 
+// recordReconcile keeps the outcome of the last tenant job index reconcile
+// pass (nil when it succeeded).
+func (s *Storage) recordReconcile(err error) {
+	s.reconcileMu.Lock()
+	s.reconcileErr = err
+	s.reconcileMu.Unlock()
+}
+
+// lastReconcileError returns the error of the last tenant job index
+// reconcile pass, nil when it succeeded or none has run.
+func (s *Storage) lastReconcileError() error {
+	s.reconcileMu.Lock()
+	defer s.reconcileMu.Unlock()
+	return s.reconcileErr
+}
+
 // executionIDAt derives an execution ID from t in Unix nanoseconds. A time
 // before the epoch has no unsigned ID and is refused.
 func executionIDAt(t time.Time) (uint64, error) {
@@ -716,10 +738,17 @@ func (s *Storage) InitializeJobIDCounter(ctx context.Context) error {
 	if err := s.ids.initialize(ctx); err != nil {
 		return err
 	}
+	// A failed reconcile does not fail open: it is recorded and lastReconcile
+	// is left zero, so the next due scan runs the pass again.
 	if err := s.reconcileTenantJobIndex(ctx); err != nil {
-		return err
+		s.reconcileMu.Lock()
+		s.lastReconcile = time.Time{}
+		s.reconcileMu.Unlock()
+		s.recordReconcile(err)
+		return nil
 	}
 	s.markReconciled()
+	s.recordReconcile(nil)
 	return nil
 }
 
@@ -747,15 +776,23 @@ func (s *Storage) reconcileTenantJobIndex(ctx context.Context) error {
 	if err != nil {
 		return &scheduler.ErrStorageError{Op: "reconcileTenantJobIndex.scan", Cause: err}
 	}
-	for _, ref := range refs {
-		key := keyForTenantJobIndex(ref.id, ref.tenantID)
-		present, err := s.kv.Exists(ctx, key)
-		if err != nil {
-			return &scheduler.ErrStorageError{Op: "reconcileTenantJobIndex.exists", Cause: err}
+	// The index entries already present are read in one scan, not one
+	// lookup per record, and only the missing ones are written.
+	present := make(map[tenantJobRef]struct{})
+	err = s.kv.Scan(ctx, TenantJobIndexPrefix, func(key string, value []byte) error {
+		if id, ok := parseTenantJobIndexKey(key); ok && len(value) > 0 {
+			present[tenantJobRef{id: id, tenantID: string(value)}] = struct{}{}
 		}
-		if present {
+		return nil
+	})
+	if err != nil {
+		return &scheduler.ErrStorageError{Op: "reconcileTenantJobIndex.index_scan", Cause: err}
+	}
+	for _, ref := range refs {
+		if _, ok := present[ref]; ok {
 			continue
 		}
+		key := keyForTenantJobIndex(ref.id, ref.tenantID)
 		if err := s.kv.Put(ctx, key, []byte(ref.tenantID)); err != nil {
 			return &scheduler.ErrStorageError{Op: "reconcileTenantJobIndex.index", Cause: err}
 		}
