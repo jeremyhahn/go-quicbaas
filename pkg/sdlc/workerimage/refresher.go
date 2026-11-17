@@ -37,6 +37,9 @@ import (
 type Engine interface {
 	ImageRunner
 	BuildImage(ctx context.Context, spec *orchestration.ImageBuildSpec) (string, error)
+	// ReleaseImage tells the engine the caller is done with an ID
+	// BuildImage returned, so the reference that kept it can go.
+	ReleaseImage(ctx context.Context, id string)
 	InspectImage(ctx context.Context, image string) (*orchestration.ImageInfo, error)
 	TagImage(ctx context.Context, source, target string) error
 	PushImage(ctx context.Context, image string, auth *orchestration.RegistryAuth) (string, error)
@@ -392,6 +395,10 @@ func (r *Refresher) refreshStale(ctx context.Context, report *Report, uses []ima
 	imageID, err := r.candidate(ctx, build, localRef)
 	if err != nil {
 		return err
+	}
+	if imageID != "" {
+		// The pass is done with the candidate's ID on every return below.
+		defer r.deps.Engine.ReleaseImage(context.WithoutCancel(ctx), imageID)
 	}
 	report.ImageID = imageID
 	if err := r.gate(ctx, report, build, imageID, localRef, staleUses); err != nil {

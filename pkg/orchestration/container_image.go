@@ -215,9 +215,6 @@ func (r *ExecContainerRuntime) BuildImage(ctx context.Context, spec *ImageBuildS
 	if err != nil {
 		return "", &ImageBuildError{Tags: spec.Tags, Cause: err}
 	}
-	// The build-ID references earlier builds kept are released first: their
-	// callers were done with those IDs when they started this build.
-	r.reclaimKeptIDRefs(ctx)
 	// The engine can apply buildRef and still fail the command (cancelled
 	// after export, an iidfile it could not write), so the cleanup is
 	// registered before the build runs, and runs on every return that has
@@ -284,30 +281,46 @@ func (r *ExecContainerRuntime) BuildImage(ctx context.Context, spec *ImageBuildS
 	return info.ID, nil
 }
 
-// keepIDRef records a returned build's idRef. It stays while the caller uses
-// the ID (another process may have moved the requested tags, leaving idRef
-// the image's last reference), and the next BuildImage on this runtime
-// removes it, so an image whose tags move is not retained past that build.
-// It is never released by checking the tags first: a tag can move between
-// the check and the removal, deleting the image the caller holds.
+// keepIDRef counts one more holder of a returned build's idRef. It stays
+// while any caller uses the ID (another process may have moved the requested
+// tags, leaving idRef the image's last reference), until each build that
+// returned the ID has been released with ReleaseImage. It is never released
+// by checking the tags first: a tag can move between the check and the
+// removal, deleting the image the caller holds.
 func (r *ExecContainerRuntime) keepIDRef(idRef string) {
 	r.keptMu.Lock()
 	defer r.keptMu.Unlock()
 	if r.keptIDRefs == nil {
-		r.keptIDRefs = make(map[string]struct{})
+		r.keptIDRefs = make(map[string]int)
 	}
-	r.keptIDRefs[idRef] = struct{}{}
+	r.keptIDRefs[idRef]++
 }
 
-// reclaimKeptIDRefs removes the build-ID references earlier builds on this
-// runtime kept. An image no other reference names is deleted with it.
-func (r *ExecContainerRuntime) reclaimKeptIDRefs(ctx context.Context) {
+// ReleaseImage tells the runtime the caller is done with an ID BuildImage
+// returned. When every build that returned the ID has been released, its
+// build-ID reference is removed; an image no other reference names is
+// deleted with it. An ID this runtime holds no reference for, or one that is
+// not a digest, is a no-op.
+func (r *ExecContainerRuntime) ReleaseImage(ctx context.Context, id string) {
+	idRef, err := buildIDRef(id)
+	if err != nil {
+		return
+	}
 	r.keptMu.Lock()
-	kept := r.keptIDRefs
-	r.keptIDRefs = nil
+	count, ok := r.keptIDRefs[idRef]
+	if !ok {
+		r.keptMu.Unlock()
+		return
+	}
+	last := count <= 1
+	if last {
+		delete(r.keptIDRefs, idRef)
+	} else {
+		r.keptIDRefs[idRef] = count - 1
+	}
 	r.keptMu.Unlock()
-	for ref := range kept {
-		r.removeRef(ctx, ref, "kept build-ID tag")
+	if last {
+		r.removeRef(ctx, idRef, "build-ID tag")
 	}
 }
 
