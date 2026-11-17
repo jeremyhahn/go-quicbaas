@@ -105,13 +105,26 @@ func (a *kvAdapter) Put(ctx context.Context, key string, value []byte) error {
 // Get retrieves the value stored at the given key, delegating to the inner
 // go-qrdb client without any read options.
 func (a *kvAdapter) Get(ctx context.Context, key string) ([]byte, error) {
-	return a.inner.Get(ctx, key)
+	value, err := a.inner.Get(ctx, key)
+	return value, translateNotFound(key, err)
 }
 
 // Delete removes the value stored at the given key, delegating to the inner
 // go-qrdb client without any write options.
 func (a *kvAdapter) Delete(ctx context.Context, key string) error {
-	return a.inner.Delete(ctx, key)
+	return translateNotFound(key, a.inner.Delete(ctx, key))
+}
+
+// translateNotFound maps go-qrdb's missing-key error to go-signal's
+// store.KeyNotFoundError. go-signal recognises only its own type: TakeEC and
+// TakeKEM skip a listed candidate that a concurrent request deleted before
+// the Get, and anything else is a backend failure.
+func translateNotFound(key string, err error) error {
+	var notFound *qrdbtransport.KeyNotFoundError
+	if errors.As(err, &notFound) {
+		return &signalstore.KeyNotFoundError{Key: key}
+	}
+	return err
 }
 
 // List returns all keys matching the given prefix, delegating to the inner
