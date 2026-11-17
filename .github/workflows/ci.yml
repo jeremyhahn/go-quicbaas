@@ -733,9 +733,8 @@ jobs:
   # are its storage seam (OBJSTORE_SEAMS). Test files are exempt.
   preflight:
     name: Preflight [changed files, schedule guard, architecture gates]
-    # Same-repo pull requests and pushes to main run on the self-hosted
-    # bigdisk pool; a fork pull request stays on ubuntu-latest. The job needs
-    # only bash, git, grep and sed, and the checkout keeps no credentials.
+    # v1.43: GitHub-hosted. The job needs only bash, git, grep and sed, and
+    # the checkout keeps no credentials.
     runs-on: ubuntu-latest
     # v1.26: a draft PR runs no CI; every job that needs this one skips with it.
     if: ${{ !github.event.pull_request.draft }}
@@ -1308,13 +1307,16 @@ jobs:
   # guards.
   unit:
     name: Unit tests -race (shard ${{ matrix.shard }})
-    # Same-repo pull requests and pushes to main run on the self-hosted
-    # bigdisk pool; a fork pull request stays on ubuntu-latest. The pool is
-    # a single-use container with no Docker, no sudo and no apt, so there the
-    # job runs its make target natively under setup-go (the steps guarded
-    # `runner.environment == 'self-hosted'`); on a GitHub-hosted runner it
-    # builds the toolchain image and runs the target in it, as before.
-    runs-on: ubuntu-latest
+    # Ruling 841 (phase 2 option C of ruling 834): the hosted slots fill
+    # while the bigdisk pool has room, so the shards split: shards 0 and 2
+    # run on the pool for a push to main and a same-repository pull request,
+    # shards 1 and 3 (and every shard of a fork's pull request) on
+    # ubuntu-latest. The pool is a single-use container with no Docker, no
+    # sudo and no apt, so there the job runs its make target natively under
+    # setup-go (the steps guarded `runner.environment == 'self-hosted'`); on
+    # a GitHub-hosted runner it builds the toolchain image and runs the
+    # target in it. test/buildgates TestCIRunsHostedFirst holds the split.
+    runs-on: ${{ contains(fromJSON('[0, 2]'), matrix.shard) && ((github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)) && fromJSON('["self-hosted","linux","x64","bigdisk"]') || 'ubuntu-latest' }}  # self-hosted: overflow split, ruling 834
     timeout-minutes: 150      # CUSTOMIZE: a shard is expected to take about an hour
     needs: [preflight]   # v1.34
     if: ${{ needs.preflight.outputs.verdict == 'run' && needs.preflight.outputs.docs_only != 'true' }}
@@ -1438,12 +1440,10 @@ jobs:
   # leaves this job skipped and CI Gate fails on it.
   coverage:
     name: Coverage gate [merged unit shards]
-    # Same-repo pull requests and pushes to main run on the self-hosted
-    # bigdisk pool; a fork pull request stays on ubuntu-latest. The pool is
-    # a single-use container with no Docker, no sudo and no apt, so there the
-    # job runs its make target natively under setup-go (the steps guarded
-    # `runner.environment == 'self-hosted'`); on a GitHub-hosted runner it
-    # builds the toolchain image and runs the target in it, as before.
+    # v1.43: GitHub-hosted. The steps guarded `runner.environment ==
+    # 'self-hosted'` (setup-go and a native make) serve a self-hosted runner
+    # if the job is ever split onto the bigdisk pool as unit is; here the
+    # job builds the toolchain image and runs the target in it.
     runs-on: ubuntu-latest
     timeout-minutes: 60
     needs: [preflight, unit]   # v1.34
@@ -1540,12 +1540,10 @@ jobs:
   # one job holds them; they used to share the unsharded run's hour with it.
   unit-passes:
     name: Unit tests [checks, Go SDK, tag passes, tooling]
-    # Same-repo pull requests and pushes to main run on the self-hosted
-    # bigdisk pool; a fork pull request stays on ubuntu-latest. The pool is
-    # a single-use container with no Docker, no sudo and no apt, so there the
-    # job runs its make target natively under setup-go (the steps guarded
-    # `runner.environment == 'self-hosted'`); on a GitHub-hosted runner it
-    # builds the toolchain image and runs the target in it, as before.
+    # v1.43: GitHub-hosted. The steps guarded `runner.environment ==
+    # 'self-hosted'` (setup-go and a native make) serve a self-hosted runner
+    # if the job is ever split onto the bigdisk pool as unit is; here the
+    # job builds the toolchain image and runs the target in it.
     runs-on: ubuntu-latest
     timeout-minutes: 180
     needs: [preflight]   # v1.34
@@ -1850,9 +1848,8 @@ jobs:
   # nightly.yml (v1.9, devops.md §8a: the alpha regime).
   ci-gate:
     name: CI Gate
-    # CA m2475 (2h): the gate runs on the self-hosted bigdisk pool (main pushes
-    # and same-repo PRs), so it never waits in the hosted queue and always
-    # reports; it needs no Docker. Fork PRs stay on ubuntu-latest.
+    # v1.43: GitHub-hosted, like every job but the unit split; it needs no
+    # Docker.
     runs-on: ubuntu-latest
     # v1.29.3: on a schedule run the schedule guard decides; every other
     # event runs the gate.
