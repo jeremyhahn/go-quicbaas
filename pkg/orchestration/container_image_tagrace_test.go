@@ -288,6 +288,37 @@ func TestBuildImage_RefusedRequestedTagReleasesTheIDReference(t *testing.T) {
 	}
 }
 
+func TestBuildImage_FailedIDTagTheEngineAppliedIsRemoved(t *testing.T) {
+	rec := &imageRmRecorder{engine: newTagStoreEngine()}
+	var idRef string
+	run := func(ctx context.Context, command string, cmd imageCommand) (imageCommandResult, error) {
+		if cmd.Args[0] == "tag" && strings.HasPrefix(cmd.Args[2], buildIDRepository+"/") {
+			// The engine applies the tag, then the command is cancelled.
+			if _, err := rec.run(ctx, command, cmd); err != nil {
+				return imageCommandResult{}, err
+			}
+			idRef = cmd.Args[2]
+			return imageCommandResult{}, context.Canceled
+		}
+		return rec.run(ctx, command, cmd)
+	}
+	rt := &ExecContainerRuntime{command: RuntimeDocker, logger: newContainerTestLogger(t), runImageCommand: run}
+	_, err := rt.BuildImage(t.Context(), &ImageBuildSpec{Dockerfile: []byte("FROM a"), Tags: []string{"w:local"}})
+	if err == nil {
+		t.Fatal("BuildImage succeeded, want the failed ID tag's error")
+	}
+	if idRef == "" {
+		t.Fatal("the build never tagged its ID reference")
+	}
+	if n := rec.removedCount(idRef); n != 1 {
+		t.Fatalf("image rm %s ran %d times, want 1", idRef, n)
+	}
+	_, tags, _ := rec.engine.state()
+	if _, ok := tags[idRef]; ok {
+		t.Fatalf("the applied ID tag %s outlived the failed build, tags %v", idRef, tags)
+	}
+}
+
 // idRefsOf returns the build-ID references (quicbaas-build-id/<nonce>:<hex>)
 // that name id, one per build that still keeps it, sorted.
 func idRefsOf(tags map[string]string, id string) []string {

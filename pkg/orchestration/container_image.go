@@ -274,6 +274,9 @@ func (r *ExecContainerRuntime) BuildImage(ctx context.Context, spec *ImageBuildS
 		return "", &ImageBuildError{Tags: spec.Tags, Cause: err}
 	}
 	if err := r.TagImage(ctx, buildRef, idRef); err != nil {
+		// The engine may have applied idRef before the command failed
+		// (cancelled after the tag landed), so it is removed all the same.
+		r.dropIDRef(ctx, idRef)
 		return "", &ImageBuildError{Tags: spec.Tags, Cause: err}
 	}
 	for _, tag := range spec.Tags {
