@@ -644,7 +644,13 @@ func (s *Server) unifiedModuleServerOptions(serverOpts []qrdbsdk.ServerOption) (
 	// (go-quicbaas 2212). The router's inner servicer is the node's own
 	// service, never GetQRDBTenantServicer, which returns the router.
 	s.tenantUnsealRouter = newTenantUnsealRouter(s.rawQRDBTenantServicer, s.buildTenantBarrierService)
-	serverOpts = append(serverOpts, qrdbserver.WithTenantService(s.tenantUnsealRouter))
+	serverOpts = append(serverOpts,
+		qrdbserver.WithTenantService(s.tenantUnsealRouter),
+		// The barrier surface on the node's REST, gRPC, QUIC, Unix and MCP
+		// servers goes through the lazy proxy, which resolves
+		// s.qrdbBarrierServicer() per call (go-quicbaas #2488).
+		qrdbserver.WithBarrierService(newQRDBBarrierServicerProxy(s)),
+	)
 
 	module, err := s.newQuicBaaSModule()
 	if err != nil {

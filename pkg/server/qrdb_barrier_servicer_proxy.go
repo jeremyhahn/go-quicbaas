@@ -16,16 +16,16 @@ package server
 import (
 	"context"
 
-	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/status"
-
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+
+	"github.com/jeremyhahn/go-qrdb/pkg/service"
 )
 
 // errQRDBBarrierNotConfigured is the answer every barrier RPC gives while the
-// node has no barrier servicer wired: the same Unimplemented status the qrdb
-// gRPC handler returns when no barrier service was registered at all.
-var errQRDBBarrierNotConfigured = status.Error(codes.Unimplemented, "barrier service is not configured")
+// node has no barrier servicer wired. go-qrdb classifies delegate errors
+// (errclass), so a raw gRPC status would come out as Internal; the typed
+// BarrierManagerNotConfiguredError maps to Unimplemented on every transport.
+var errQRDBBarrierNotConfigured error = &service.BarrierManagerNotConfiguredError{}
 
 // qrdbBarrierServicerProxy is the qrdb.v1 barrier servicer registered on the
 // node's gRPC server. It resolves s.qrdbBarrierServicer() on every call: the
