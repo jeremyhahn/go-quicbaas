@@ -202,3 +202,42 @@ func TestQRDBClient_QUIC_ReachesRESTOrigin(t *testing.T) {
 func TestQRDBSubClientAddress_QUICUsesRESTOrigin(t *testing.T) {
 	assert.Equal(t, "https://host:8080", qrdbSubClientAddress(TransportQUIC, "host:8080", true))
 }
+
+// TestQRDBSubClientAddress_QUICUpgradesPlainHTTP verifies that the QUIC
+// transport never yields a plaintext http:// origin for the qrdb sub-client:
+// QUIC always uses TLS, so an explicit http:// scheme is upgraded to https://.
+func TestQRDBSubClientAddress_QUICUpgradesPlainHTTP(t *testing.T) {
+	assert.Equal(t, "https://host:8080", qrdbSubClientAddress(TransportQUIC, "http://host:8080", true))
+	assert.Equal(t, "https://host:8080", qrdbSubClientAddress(TransportQUIC, "http://host:8080", false))
+	assert.Equal(t, "https://host:8080", qrdbSubClientAddress(TransportQUIC, "https://host:8080", true))
+}
+
+// TestQRDBClient_QUIC_NeverSendsPlaintext verifies that a QUIC client built
+// from an http:// address never sends a secret-bearing qrdb call, such as
+// BarrierUnseal, over plaintext HTTP.
+func TestQRDBClient_QUIC_NeverSendsPlaintext(t *testing.T) {
+	var hits atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	defer srv.Close()
+	require.True(t, strings.HasPrefix(srv.URL, "http://"))
+
+	c, err := NewClient(srv.URL, WithQUIC(), WithTLSConfig(&tls.Config{MinVersion: tls.VersionTLS12}), WithTimeout(2*time.Second))
+	if err != nil {
+		assert.Zero(t, hits.Load(), "nothing may reach the server over plaintext HTTP")
+		return
+	}
+	defer func() { _ = c.Close() }()
+
+	qc, err := c.(*client).qrdbClient()
+	if err == nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		_ = qc.Barrier().BarrierUnseal(ctx, &qrdbtransport.BarrierUnsealRequest{})
+	}
+
+	assert.Zero(t, hits.Load(), "a QUIC client's qrdb sub-client must never send plaintext HTTP")
+}
