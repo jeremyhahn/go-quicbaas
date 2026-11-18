@@ -16,10 +16,18 @@ package quicbaas
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
+	"fmt"
+	"net/http"
 	"strings"
+	"sync/atomic"
 	"testing"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	qrdbrest "github.com/jeremyhahn/go-qrdb/sdk/go/transport/rest"
+
+	"github.com/jeremyhahn/go-quicbaas/sdk/go/transport/quic"
 )
 
 // quicbaas's QUIC transport is its REST transport carried over HTTP/3 (ALPN
@@ -74,5 +82,63 @@ func TestBuildQRDBClient_QUICBareHostPort_ReachesBarrierStatus(t *testing.T) {
 	}
 	if !sawStatusPath {
 		t.Fatalf("barrier status never reached the server; paths seen: %v", *paths)
+	}
+}
+
+// An embedded QRDB wins over the QUIC transport's HTTP/3 barrier shortcut:
+// with WithQUIC() and WithEmbeddedQRDB(...) the barrier verbs must reach the
+// in-process servicer, never the remote node (go-quicbaas#2533 review P1).
+func TestBarrier_QUICWithEmbeddedQRDB_UsesEmbedded(t *testing.T) {
+	var remoteHits atomic.Int32
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /health", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+	mux.HandleFunc("/v1/barrier/", func(w http.ResponseWriter, _ *http.Request) {
+		remoteHits.Add(1)
+		w.WriteHeader(http.StatusInternalServerError)
+	})
+	cert := h3BarrierTestCert(t)
+	addr := startUDPOnlyHTTP3Server(t, cert, mux)
+	roots := x509.NewCertPool()
+	roots.AddCert(cert.Leaf)
+
+	want := &qrdbsdk.BarrierStatusInfo{Strategy: "embedded-stub"}
+	c, err := NewClient(addr,
+		WithQUIC(),
+		WithTLSConfig(&tls.Config{RootCAs: roots, MinVersion: tls.VersionTLS13}),
+		WithEmbeddedQRDB(QRDBEmbeddedServicers{
+			KV:      stubKVService{},
+			Admin:   stubAdminService{},
+			Barrier: &stubBarrierService{status: want},
+		}),
+	)
+	if err != nil {
+		t.Fatalf("NewClient over QUIC with an embedded QRDB: %v", err)
+	}
+	t.Cleanup(func() { _ = c.Close() })
+
+	qt, ok := c.(*client).transport.(*quic.Transport)
+	if !ok {
+		t.Fatalf("transport: got %T, want *quic.Transport", c.(*client).transport)
+	}
+
+	barrier, err := c.Security().Barrier()
+	if err != nil {
+		t.Fatalf("Security().Barrier(): %v", err)
+	}
+	if got, quicType := fmt.Sprintf("%T", barrier), fmt.Sprintf("%T", qt.Transport.Barrier()); got == quicType {
+		t.Fatalf("Security().Barrier() returned the QUIC HTTP/3 adapter %s, want the embedded barrier", got)
+	}
+
+	resp, err := barrier.BarrierStatus(context.Background())
+	if err != nil {
+		t.Fatalf("BarrierStatus: %v", err)
+	}
+	if resp.Strategy != want.Strategy {
+		t.Errorf("Strategy: got %q, want %q from the embedded stub", resp.Strategy, want.Strategy)
+	}
+	if n := remoteHits.Load(); n != 0 {
+		t.Errorf("barrier verbs reached the remote node %d times, want 0", n)
 	}
 }
