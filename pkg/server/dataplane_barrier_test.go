@@ -301,7 +301,7 @@ func TestInitDataPlaneEncryptor_WithDataDir(t *testing.T) {
 	if s.dataPlaneEncryptor == nil {
 		t.Fatal("encryptor must be set")
 	}
-	if s.dataPlaneBarrier == nil {
+	if s.dataPlaneBarrier.Load() == nil {
 		t.Fatal("data-plane barrier must be constructed with a data dir")
 	}
 	if s.dataPlaneBarrierCloser != nil {
@@ -321,7 +321,7 @@ func TestInitDataPlaneEncryptor_NoDataDir(t *testing.T) {
 	if s.dataPlaneEncryptor == nil {
 		t.Fatal("a no-op encryptor must still be installed")
 	}
-	if s.dataPlaneBarrier != nil {
+	if s.dataPlaneBarrier.Load() != nil {
 		t.Fatal("no barrier expected without a data dir")
 	}
 }

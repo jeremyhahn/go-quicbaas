@@ -60,7 +60,8 @@ func TestSealedWindowProbe_NoBarrierUnsealed(t *testing.T) {
 //   - unsealed again: unsealed.
 func TestSealedWindowProbe_DataPlaneBarrierStates(t *testing.T) {
 	barrier := newProbeTestBarrier(t)
-	s := &Server{dataPlaneBarrier: barrier}
+	s := &Server{}
+	s.dataPlaneBarrier.Store(barrier)
 	probe := s.SealedWindowProbe()
 
 	// Uninitialized: never gate.
