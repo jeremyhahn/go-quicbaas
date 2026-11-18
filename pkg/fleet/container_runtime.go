@@ -49,7 +49,7 @@ type InProcessContainerRuntime func(root string, logger interfaces.Logger) (orch
 var inProcessContainerRuntime atomic.Pointer[InProcessContainerRuntime]
 
 // SetInProcessContainerRuntime registers the in-process runtime the
-// "libcontainer" and "auto" selectors resolve to. Only the fleet node agent,
+// "libcontainer" selector resolves to; "auto" never takes it. Only the fleet node agent,
 // built for linux with cgo, registers one; nil unregisters it.
 func SetInProcessContainerRuntime(build InProcessContainerRuntime) {
 	if build == nil {
@@ -111,9 +111,10 @@ var execContainerRuntimeFactory = containerRuntimeFactory{
 //     and under "required" NewRuntime refuses to start on the operator's behalf.
 //   - "libcontainer" is the in-process runtime. A binary without one, or one
 //     that cannot start here, is an error: the operator asked for it by name.
-//   - "auto" (and the empty selector) take the in-process runtime when this
-//     binary has one and it starts, then the first engine detection finds,
-//     and resolve to no runtime when the host has none.
+//   - "auto" (and the empty selector) take the first engine detection finds,
+//     and resolve to no runtime when the host has none. They never take the
+//     in-process runtime, which is opt-in by name until it has networking
+//     and seccomp/AppArmor confinement.
 //   - "none" resolves to no runtime without probing anything.
 //
 // ResolveContainerRuntime resolves without a state directory, so its
@@ -178,15 +179,11 @@ func resolveNoContainerRuntime(logger interfaces.Logger, _ containerRuntimeFacto
 
 // resolveDetectedContainerRuntime implements "auto": first engine found wins,
 // none found is a runtime-less daemon rather than a failure.
+//
+// It never takes the in-process runtime: that one has no container networking
+// and no seccomp or AppArmor confinement yet, so an operator opts into it by
+// naming "libcontainer".
 func resolveDetectedContainerRuntime(logger interfaces.Logger, factory containerRuntimeFactory) (orchestration.ContainerRuntime, error) {
-	if factory.inProcess != nil {
-		rt, err := factory.inProcess(logger)
-		if err == nil {
-			logger.Infof("container runtime: libcontainer (in-process)")
-			return rt, nil
-		}
-		logger.Infof("container runtime: libcontainer unavailable, detecting an engine (%v)", err)
-	}
 	rt, err := factory.detect(logger)
 	if err != nil {
 		logger.Infof("container runtime: none (auto-detection found no engine: %v)", err)

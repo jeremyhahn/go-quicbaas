@@ -107,7 +107,10 @@ func TestResolveContainerRuntime_NeverBuildsTheInProcessRuntime(t *testing.T) {
 	}
 }
 
-func TestResolveContainerRuntime_AutoPrefersTheInProcessRuntime(t *testing.T) {
+// The in-process runtime is opt-in by name: it has no container networking
+// and no seccomp or AppArmor confinement yet, so "auto" keeps choosing an
+// engine that has them even when this binary carries the in-process runtime.
+func TestResolveContainerRuntime_AutoNeverTakesTheInProcessRuntime(t *testing.T) {
 	registerInProcess(t, nil)
 	recorder := &recordingRuntimeFactory{available: []string{"docker"}}
 
@@ -115,15 +118,16 @@ func TestResolveContainerRuntime_AutoPrefersTheInProcessRuntime(t *testing.T) {
 	if err != nil {
 		t.Fatalf("resolve auto: %v", err)
 	}
-	if _, ok := rt.(*inProcessRuntime); !ok {
-		t.Fatalf("auto must take the in-process runtime, got %T", rt)
+	if _, ok := rt.(*inProcessRuntime); ok {
+		t.Fatal("auto took the in-process runtime; it must be named to be used")
 	}
-	if recorder.detectCalls != 0 {
-		t.Fatalf("auto probed for an engine %d times with the in-process runtime available", recorder.detectCalls)
+	named, ok := rt.(*namedContainerRuntime)
+	if !ok || named.command != "docker" {
+		t.Fatalf("auto must take the detected engine, got %T %+v", rt, rt)
 	}
 }
 
-func TestResolveContainerRuntime_AutoFallsBackWhenTheInProcessRuntimeCannotStart(t *testing.T) {
+func TestResolveContainerRuntime_AutoWithTheInProcessRuntimeUnstartable(t *testing.T) {
 	registerInProcess(t, errors.New("not root"))
 	recorder := &recordingRuntimeFactory{available: []string{"podman"}}
 
