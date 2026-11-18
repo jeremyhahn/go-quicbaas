@@ -25,7 +25,6 @@ import (
 	qrdbembedded "github.com/jeremyhahn/go-qrdb/sdk/go/transport/embedded"
 	qrdbgrpc "github.com/jeremyhahn/go-qrdb/sdk/go/transport/grpc"
 	qrdbmcp "github.com/jeremyhahn/go-qrdb/sdk/go/transport/mcp"
-	qrdbquic "github.com/jeremyhahn/go-qrdb/sdk/go/transport/quic"
 	qrdbrest "github.com/jeremyhahn/go-qrdb/sdk/go/transport/rest"
 	qrdbunix "github.com/jeremyhahn/go-qrdb/sdk/go/transport/unix"
 
@@ -616,10 +615,13 @@ func (c *client) buildQRDBTransport() (qrdbtransport.Transport, error) {
 	address := qrdbSubClientAddress(c.opts.transportType, c.address, tlsConfigured)
 
 	switch c.opts.transportType {
-	case TransportREST:
+	case TransportREST, TransportQUIC:
+		// quicbaas's QUIC transport is its REST transport over HTTP/3 on
+		// the REST port, and the node serves no native qrdb-quic listener:
+		// go-qrdb's QUIC transport offers wire.ProtocolV2 and is refused
+		// ("tls: no application protocol", go-quicbaas#2533). The QUIC
+		// selection reaches the same qrdb REST API at the same origin.
 		return qrdbrest.New(buildOpts(address)...)
-	case TransportQUIC:
-		return qrdbquic.New(buildOpts(address)...)
 	case TransportUnix:
 		return c.buildQRDBUnixTransport()
 	case TransportMCP:
@@ -632,15 +634,15 @@ func (c *client) buildQRDBTransport() (qrdbtransport.Transport, error) {
 // qrdbSubClientAddress returns the address the go-qrdb sub-client transport
 // dials for the active quicbaas transport selection.
 //
-// gRPC and QUIC dial a bare "host:port" and must not be handed a scheme.
-// REST needs a scheme-qualified origin because go-qrdb's REST transport
+// gRPC dials a bare "host:port" and must not be handed a scheme.
+// REST (and QUIC, whose qrdb sub-client is the REST transport) needs a scheme-qualified origin because go-qrdb's REST transport
 // concatenates its request path onto the address; MCP needs the full
 // Streamable HTTP endpoint URL, path included. Unix is resolved separately by
 // buildQRDBUnixTransport, which chooses between the gRPC and unix transports
 // on TLS posture, so it keeps the socket path verbatim here.
 func qrdbSubClientAddress(transportType TransportType, address string, tlsConfigured bool) string {
 	switch transportType {
-	case TransportREST:
+	case TransportREST, TransportQUIC:
 		return qbtransport.HTTPBaseURL(address, tlsConfigured)
 	case TransportMCP:
 		return qbtransport.HTTPEndpoint(address, tlsConfigured, qbmcp.MCPEndpointPath)
