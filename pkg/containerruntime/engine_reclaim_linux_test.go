@@ -16,7 +16,10 @@
 package containerruntime
 
 import (
+	"bytes"
+	"os/exec"
 	"testing"
+	"time"
 
 	"github.com/opencontainers/cgroups"
 	"github.com/stretchr/testify/require"
@@ -30,6 +33,27 @@ import (
 func TestLibcontainerEngine_RegistersTheCgroupDeviceHandlers(t *testing.T) {
 	require.NotNil(t, cgroups.DevicesSetV1, "cgroup v1 device handler is not registered")
 	require.NotNil(t, cgroups.DevicesSetV2, "cgroup v2 device handler is not registered")
+}
+
+// killProcessTree kills a real shell and the child it backgrounded, so the
+// child no longer holds the shell's output pipe and Wait returns.
+func TestKillProcessTree_KillsAShellAndItsChild(t *testing.T) {
+	cmd := exec.Command("sh", "-c", "sleep 600 & wait")
+	var out bytes.Buffer
+	cmd.Stdout = &out
+	require.NoError(t, cmd.Start())
+	t.Cleanup(func() { _ = cmd.Process.Kill() })
+	require.Eventually(t, func() bool { return len(processChildren(cmd.Process.Pid)) > 0 },
+		5*time.Second, 10*time.Millisecond, "the shell never started its child")
+
+	require.NoError(t, killProcessTree(cmd.Process.Pid))
+	waited := make(chan error, 1)
+	go func() { waited <- cmd.Wait() }()
+	select {
+	case <-waited:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the shell's child still holds its output pipe")
+	}
 }
 
 // A reclaim retried after an earlier one destroyed the engine state, or of a

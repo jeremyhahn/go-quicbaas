@@ -21,6 +21,8 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strconv"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -322,6 +324,56 @@ func (p *libcontainerProcess) Wait() (int, error) {
 // Signal delivers sig to the process.
 func (p *libcontainerProcess) Signal(sig os.Signal) error {
 	return p.process.Signal(sig)
+}
+
+// KillTree kills the process and every descendant it has, so none of them
+// keeps the process's output pipes open after it dies.
+func (p *libcontainerProcess) KillTree() error {
+	pid, err := p.process.Pid()
+	if err != nil {
+		return p.process.Signal(unix.SIGKILL)
+	}
+	return killProcessTree(pid)
+}
+
+// killProcessTree stops pid so it cannot fork again, kills its descendants
+// depth first, then kills it. A process that has already gone is not an error.
+func killProcessTree(pid int) error {
+	if err := unix.Kill(pid, unix.SIGSTOP); err != nil {
+		if errors.Is(err, unix.ESRCH) {
+			return nil
+		}
+		return err
+	}
+	var errs []error
+	for _, child := range processChildren(pid) {
+		errs = append(errs, killProcessTree(child))
+	}
+	if err := unix.Kill(pid, unix.SIGKILL); err != nil && !errors.Is(err, unix.ESRCH) {
+		errs = append(errs, err)
+	}
+	return errors.Join(errs...)
+}
+
+// processChildren lists pid's children from /proc, across all its threads.
+func processChildren(pid int) []int {
+	tasks, err := os.ReadDir(fmt.Sprintf("/proc/%d/task", pid))
+	if err != nil {
+		return nil
+	}
+	var children []int
+	for _, task := range tasks {
+		data, err := os.ReadFile(fmt.Sprintf("/proc/%d/task/%s/children", pid, task.Name()))
+		if err != nil {
+			continue
+		}
+		for _, field := range strings.Fields(string(data)) {
+			if child, err := strconv.Atoi(field); err == nil {
+				children = append(children, child)
+			}
+		}
+	}
+	return children
 }
 
 // Console returns the pseudo-terminal master, or nil for a non-TTY process.

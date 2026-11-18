@@ -54,6 +54,10 @@ type fakeProcess struct {
 	// SIGKILL stops it.
 	ignoreSIGTERM bool
 
+	// outlivesKill keeps Wait blocked after SIGKILL, as a descendant still
+	// holding the process's output pipes does.
+	outlivesKill bool
+
 	mu       sync.Mutex
 	signals  []os.Signal
 	exitCode int
@@ -95,6 +99,9 @@ func (p *fakeProcess) Signal(sig os.Signal) error {
 	p.mu.Unlock()
 
 	if sig == syscall.SIGTERM && p.ignoreSIGTERM {
+		return nil
+	}
+	if sig == syscall.SIGKILL && p.outlivesKill {
 		return nil
 	}
 	if s, ok := sig.(syscall.Signal); ok {
@@ -154,6 +161,8 @@ type fakeEngine struct {
 	// execBlocks makes exec processes run, with a silent terminal, until
 	// signalled.
 	execBlocks bool
+	// execOutlivesKill makes exec processes' Wait outlast SIGKILL.
+	execOutlivesKill bool
 
 	created   map[string]*ociConfig
 	destroyed []string
@@ -215,6 +224,7 @@ func (e *fakeEngine) Exec(id string, spec processSpec) (containerProcess, error)
 	e.execs = append(e.execs, spec)
 
 	process := newFakeProcess(2000 + len(e.execs))
+	process.outlivesKill = e.execOutlivesKill
 	if e.execBlocks {
 		reader, writer := io.Pipe()
 		process.console = &silentConsole{reader: reader, writer: writer}

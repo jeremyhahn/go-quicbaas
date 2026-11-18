@@ -20,7 +20,32 @@ import (
 	"io"
 	"slices"
 	"syscall"
+	"time"
 )
+
+// execCancelGrace bounds how long a cancelled exec waits for its killed
+// process to be reaped. Wait also waits for the copies out of its output
+// pipes, which a descendant that survived the kill can hold open.
+var execCancelGrace = 5 * time.Second
+
+// ErrExecOutlivedItsKill reports a cancelled exec whose process was not
+// reaped within execCancelGrace of its kill.
+var ErrExecOutlivedItsKill = errors.New("exec: the killed process was not reaped within its grace")
+
+// processTreeKiller is a containerProcess that can kill its descendants
+// with it, so none of them keeps its output pipes open.
+type processTreeKiller interface {
+	KillTree() error
+}
+
+// killExec kills a cancelled exec's process, and its descendants when the
+// engine can reach them.
+func killExec(process containerProcess) error {
+	if tree, ok := process.(processTreeKiller); ok {
+		return tree.KillTree()
+	}
+	return process.Signal(syscall.SIGKILL)
+}
 
 // ErrExecCommandRequired is returned when an exec request carries no command.
 var ErrExecCommandRequired = errors.New("exec command is required")
@@ -122,8 +147,16 @@ func (r *Runtime) execBuffered(ctx context.Context, state *containerState, opts 
 	case <-ctx.Done():
 		// A cancelled exec is killed and reaped; its exit status is not the
 		// command's answer, so the cancellation is what is reported.
-		killErr := process.Signal(syscall.SIGKILL)
-		<-done
+		// Its descendants are killed with it; one the kill missed can still
+		// hold the output pipes, so the wait is bounded.
+		killErr := killExec(process)
+		grace := time.NewTimer(execCancelGrace)
+		defer grace.Stop()
+		select {
+		case <-done:
+		case <-grace.C:
+			killErr = errors.Join(killErr, ErrExecOutlivedItsKill)
+		}
 		return nil, errors.Join(ctx.Err(), killErr)
 	}
 	exitCode, err := exited.code, exited.err
