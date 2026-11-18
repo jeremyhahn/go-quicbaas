@@ -25,7 +25,6 @@ import (
 	qrdbembedded "github.com/jeremyhahn/go-qrdb/sdk/go/transport/embedded"
 	qrdbgrpc "github.com/jeremyhahn/go-qrdb/sdk/go/transport/grpc"
 	qrdbmcp "github.com/jeremyhahn/go-qrdb/sdk/go/transport/mcp"
-	qrdbquic "github.com/jeremyhahn/go-qrdb/sdk/go/transport/quic"
 	qrdbrest "github.com/jeremyhahn/go-qrdb/sdk/go/transport/rest"
 	qrdbunix "github.com/jeremyhahn/go-qrdb/sdk/go/transport/unix"
 
@@ -619,7 +618,9 @@ func (c *client) buildQRDBTransport() (qrdbtransport.Transport, error) {
 	case TransportREST:
 		return qrdbrest.New(buildOpts(address)...)
 	case TransportQUIC:
-		return qrdbquic.New(buildOpts(address)...)
+		// A quicbaasd node serves REST over TCP and HTTP/3 on one port and
+		// never offers go-qrdb's frame-protocol ALPN (go-quicbaas#2554).
+		return qrdbrest.New(buildOpts(address)...)
 	case TransportUnix:
 		return c.buildQRDBUnixTransport()
 	case TransportMCP:
@@ -632,15 +633,17 @@ func (c *client) buildQRDBTransport() (qrdbtransport.Transport, error) {
 // qrdbSubClientAddress returns the address the go-qrdb sub-client transport
 // dials for the active quicbaas transport selection.
 //
-// gRPC and QUIC dial a bare "host:port" and must not be handed a scheme.
-// REST needs a scheme-qualified origin because go-qrdb's REST transport
-// concatenates its request path onto the address; MCP needs the full
+// gRPC dials a bare "host:port" and must not be handed a scheme. REST and
+// QUIC need a scheme-qualified origin because both use go-qrdb's REST
+// transport, which concatenates its request path onto the address: a
+// quicbaasd node serves REST and HTTP/3 on its QUIC port and never offers
+// go-qrdb's frame-protocol ALPN (go-quicbaas#2554). MCP needs the full
 // Streamable HTTP endpoint URL, path included. Unix is resolved separately by
 // buildQRDBUnixTransport, which chooses between the gRPC and unix transports
 // on TLS posture, so it keeps the socket path verbatim here.
 func qrdbSubClientAddress(transportType TransportType, address string, tlsConfigured bool) string {
 	switch transportType {
-	case TransportREST:
+	case TransportREST, TransportQUIC:
 		return qbtransport.HTTPBaseURL(address, tlsConfigured)
 	case TransportMCP:
 		return qbtransport.HTTPEndpoint(address, tlsConfigured, qbmcp.MCPEndpointPath)
