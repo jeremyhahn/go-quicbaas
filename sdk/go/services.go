@@ -295,8 +295,11 @@ func (s *securityService) SSH() SSHService {
 // Over the SDK QUIC transport the barrier verbs go through that transport's
 // own HTTP/3 client instead: go-qrdb's REST transport dials TCP, which a node
 // serving only its QUIC (UDP) listener refuses (go-quicbaas#2533).
+//
+// An embedded QRDB (WithEmbeddedQRDB) takes precedence over that shortcut:
+// the barrier verbs then go to the in-process servicer, never the node.
 func (s *securityService) Barrier() (QRDBBarrierClient, error) {
-	if qt, ok := s.c.transport.(*quic.Transport); ok {
+	if qt, ok := s.c.transport.(*quic.Transport); ok && s.c.opts.embeddedQRDB == nil {
 		return qt.Transport.Barrier(), nil
 	}
 	qrdbClient, err := s.c.qrdbClient()
