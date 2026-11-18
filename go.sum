@@ -819,8 +819,8 @@ go.opentelemetry.io/proto/otlp v1.11.0 h1:5rrYs0Ykyj50sdU/JU0x8etU+LubXWb+gED6Tb
 go.opentelemetry.io/proto/otlp v1.11.0/go.mod h1:SmVizdCOAm3XBtG1g1NnOdhW6jtddT72hLMhv8VwA8E=
 go.podman.io/image/v5 v5.41.2 h1:YnVaFrGLPWSBmipKfNvlOsGcBtk5bUxlPxQ+A6CS/uo=
 go.podman.io/image/v5 v5.41.2/go.mod h1:T/bzxEFpdpAzyHabPmcq5K+my3wBsht22sFkFjJSKT4=
-go.podman.io/storage v1.65.0 h1:GgY5VibEw6coVhOGYWuxZ4F7H2AaTfPiwL7E1CJ2dnM=
-go.podman.io/storage v1.65.0/go.mod h1:ZDXsVSzdho+p4fDky+iMVCPwRtjS1kSiHcyhBwUB6M0=
+go.podman.io/storage v1.65.1 h1:tmus7lO5lmo6pPDHECKPrFP/DEWB8QQun96vBuQOKX0=
+go.podman.io/storage v1.65.1/go.mod h1:ZDXsVSzdho+p4fDky+iMVCPwRtjS1kSiHcyhBwUB6M0=
 go.uber.org/atomic v1.6.0/go.mod h1:sABNBOSYdrvTF6hTgEIbc7YasKWGhgEQZyfxyTvoXHQ=
 go.uber.org/atomic v1.12.0 h1:BvcXdFKuviU4fTL/f+SxdQ5qJX/Jix8pAkgdUcb3XOE=
 go.uber.org/atomic v1.12.0/go.mod h1:I6c4cg+6HCxRjfjSsYtApoFILnpc0CGUdGkXVqbYVNk=
