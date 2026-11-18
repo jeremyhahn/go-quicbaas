@@ -19,6 +19,7 @@ import (
 	qrdbsecret "github.com/jeremyhahn/go-qrdb/sdk/go/secret"
 	xkmstransport "github.com/jeremyhahn/go-xkms/sdk/go/transport"
 
+	"github.com/jeremyhahn/go-quicbaas/sdk/go/transport/mcp"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/transport/rest"
 )
 
@@ -295,12 +296,19 @@ func (s *securityService) SSH() SSHService {
 // Over REST the barrier verbs ride the SDK's own REST transport, which
 // sends the platform bearer set by WithAuthToken on every request; go-qrdb's
 // REST sub-client cannot add an Authorization header, so the server's
-// default-deny gate refused it with 401 (go-quicbaas#2538). Every other
-// transport, and a client wired WithEmbeddedQRDB (whose qrdb calls always
-// dispatch in-process), keeps the qrdb sub-client.
+// default-deny gate refused it with 401 (go-quicbaas#2538). Over MCP the
+// barrier verbs likewise ride the SDK's own MCP transport, which sends the
+// bearer set by WithMCPAuthToken (or WithAuthToken); go-qrdb's MCP
+// sub-client cannot, so the node's /mcp gate refused its initialize with 401
+// (go-quicbaas#2556). Every other transport, and a client wired
+// WithEmbeddedQRDB (whose qrdb calls always dispatch in-process), keeps the
+// qrdb sub-client.
 func (s *securityService) Barrier() (QRDBBarrierClient, error) {
 	if rt, ok := s.c.transport.(*rest.Transport); ok && (s.c.opts == nil || s.c.opts.embeddedQRDB == nil) {
 		return rt.Barrier(), nil
+	}
+	if mt, ok := s.c.transport.(*mcp.Transport); ok && (s.c.opts == nil || s.c.opts.embeddedQRDB == nil) {
+		return mt, nil
 	}
 	qrdbClient, err := s.c.qrdbClient()
 	if err != nil {
