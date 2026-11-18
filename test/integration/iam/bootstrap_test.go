@@ -31,6 +31,7 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/hex"
+	"encoding/json"
 	"encoding/pem"
 	"fmt"
 	"io"
@@ -243,6 +244,22 @@ func TestBootstrap_InviteEndpoint_IsPublic(t *testing.T) {
 		"the public invite endpoint must not be forbidden (allowlist regression)")
 	assert.Equalf(t, http.StatusNotFound, resp.StatusCode,
 		"an unknown token must reach the invite handler and get its not-found answer")
+
+	// The router also answers 404 for an unmatched route, so the status alone
+	// does not prove the invite handler ran. Its not-found answer is a JSON
+	// IAM error with a fixed code and description; a 404 without this body
+	// means the route never reached the invite handler.
+	const notInviteHandler = "a 404 without the invite handler's JSON not-found body means the route never reached the invite handler"
+	assert.Contains(t, resp.Header.Get("Content-Type"), "application/json", notInviteHandler)
+	var body struct {
+		Error            string `json:"error"`
+		ErrorDescription string `json:"error_description"`
+	}
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&body), notInviteHandler)
+	// "not_found" is rest.ErrNotFound (pkg/api/rest/iam_errors.go), which is
+	// built only under the rest tag and so cannot be imported here.
+	assert.Equal(t, "not_found", body.Error, notInviteHandler)
+	assert.Equal(t, "invite link is not valid", body.ErrorDescription, notInviteHandler)
 }
 
 // ---------------------------------------------------------------------------
