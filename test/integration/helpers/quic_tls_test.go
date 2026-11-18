@@ -18,13 +18,16 @@ import (
 	"testing"
 )
 
+// retiredALPN is the opcode protocol's ALPN, which the node no longer serves.
+const retiredALPN = `quicbaas-quic`
+
 func TestQUICTLSConfig_LeavesALPNToTheSDK(t *testing.T) {
 	t.Parallel()
 
 	base := &tls.Config{
 		MinVersion: tls.VersionTLS13,
 		ServerName: "node.example",
-		NextProtos: []string{"quicbaas-quic"},
+		NextProtos: []string{retiredALPN},
 	}
 
 	got := QUICTLSConfig(base)
@@ -38,7 +41,7 @@ func TestQUICTLSConfig_LeavesALPNToTheSDK(t *testing.T) {
 	if got.ServerName != base.ServerName {
 		t.Fatalf("ServerName = %q, want %q", got.ServerName, base.ServerName)
 	}
-	if len(base.NextProtos) != 1 || base.NextProtos[0] != "quicbaas-quic" {
+	if len(base.NextProtos) != 1 || base.NextProtos[0] != retiredALPN {
 		t.Fatalf("base.NextProtos = %v, want it unchanged", base.NextProtos)
 	}
 }
