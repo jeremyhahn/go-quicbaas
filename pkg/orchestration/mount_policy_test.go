@@ -321,9 +321,7 @@ type socketsRootFixture struct {
 func newSocketsRootFixture(t *testing.T) socketsRootFixture {
 	t.Helper()
 	base := newMountPolicyFixture(t)
-	// The socket is bound under root, so root is short: t.TempDir carries the
-	// test's name and runs a unix socket address past sun_path.
-	root := filepath.Join(testSigningSocketsRoot(t), "s")
+	root := filepath.Join(shortSocketDir(t), "s")
 	if err := os.Mkdir(root, 0o700); err != nil {
 		t.Fatal(err)
 	}
