@@ -477,7 +477,17 @@ func TestServer_TriggerShutdown(t *testing.T) {
 // started flag raised on initialize's entry reports the server started there
 // (#2555).
 func TestServer_IsStarted_NotWhileComposing(t *testing.T) {
-	saveAndRestoreLifecycleSeams(t)
+	// Save and restore the two seams inline: saveAndRestoreLifecycleSeams
+	// lives in a !integration file, and this file also builds under the
+	// integration tag (make lint's vet-integration).
+	seamMu.Lock()
+	origInitializeCAFn, origInitIAMComponentsFn := initializeCAFn, initIAMComponentsFn
+	seamMu.Unlock()
+	t.Cleanup(func() {
+		seamMu.Lock()
+		initializeCAFn, initIAMComponentsFn = origInitializeCAFn, origInitIAMComponentsFn
+		seamMu.Unlock()
+	})
 
 	cfg := createTestConfig(t)
 	t.Cleanup(func() { cleanupTestData(t, cfg) })
