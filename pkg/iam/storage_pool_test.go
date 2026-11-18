@@ -23,6 +23,7 @@ import (
 
 	dberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
+	"github.com/jeremyhahn/go-quicbaas/pkg/testutil/poll"
 )
 
 // poolMockKVStore is a test implementation of interfaces.KVStore for pool tests.
@@ -447,9 +448,6 @@ func TestPoolConcurrentAccess(t *testing.T) {
 				errors <- err
 			}
 
-			// Small delay to simulate processing
-			time.Sleep(time.Millisecond)
-
 			if err := pool.Put(conn); err != nil {
 				errors <- err
 			}
@@ -655,12 +653,9 @@ func TestPoolHealthCheck(t *testing.T) {
 	}
 	defer pool.Close()
 
-	// Wait for health checks to run
-	time.Sleep(150 * time.Millisecond)
-
-	if healthCheckCalls.Load() == 0 {
-		t.Error("expected health check to be called")
-	}
+	// The health check loop runs on its own ticker; wait for its first call.
+	poll.Until(t, 5*time.Second, func() bool { return healthCheckCalls.Load() > 0 },
+		"the health checker to be called")
 }
 
 // TestPoolHealthCheckFailure tests handling of health check failures.
@@ -698,13 +693,26 @@ func TestPoolHealthCheckFailure(t *testing.T) {
 	// Mark health check to fail
 	healthCheckFails.Store(true)
 
-	// Wait for health check to run
-	time.Sleep(100 * time.Millisecond)
+	// Wait until the health check loop has marked a pooled connection unhealthy.
+	impl := pool.(*storagePool)
+	poll.Until(t, 5*time.Second, func() bool {
+		impl.allConnsMu.RLock()
+		defer impl.allConnsMu.RUnlock()
+		for _, c := range impl.allConns {
+			if !c.healthy.Load() {
+				return true
+			}
+		}
+		return false
+	}, "a connection to be marked unhealthy")
 
 	// We should still be able to get connections (they get replaced)
 	conn, err = pool.Get(ctx)
 	if err != nil {
 		t.Fatalf("failed to get connection after health check failure: %v", err)
+	}
+	if !conn.IsHealthy() {
+		t.Error("expected Get to replace the unhealthy connection with a healthy one")
 	}
 	pool.Put(conn)
 }
@@ -948,8 +956,8 @@ func TestPoolMaxLifetime(t *testing.T) {
 	}
 	pool.Put(conn1)
 
-	// Wait for connection to age past max lifetime
-	time.Sleep(100 * time.Millisecond)
+	// Age the connection past max lifetime
+	pool.(*storagePool).ageSkew.Store(int64(time.Second))
 
 	// Get another connection - should trigger recycling
 	conn2, err := pool.Get(ctx)
@@ -1201,11 +1209,9 @@ func TestPerformMaintenance(t *testing.T) {
 		pool.Put(conn)
 	}
 
-	// Wait for connections to become idle
-	time.Sleep(50 * time.Millisecond)
-
-	// Call performMaintenance directly
+	// Age the connections past max idle time, then run maintenance directly
 	impl := pool.(*storagePool)
+	impl.ageSkew.Store(int64(time.Second))
 	impl.performMaintenance()
 
 	// After maintenance, idle connections exceeding MaxIdleTime should be closed
@@ -1252,9 +1258,7 @@ func TestPerformMaintenanceRefillMinConns(t *testing.T) {
 		conn.Close()
 	}
 
-	// Wait a moment for stats to update
-	time.Sleep(10 * time.Millisecond)
-
+	// Close removes each connection from the pool before it returns.
 	stats := pool.Stats()
 	if stats.TotalConns != 0 {
 		t.Errorf("expected 0 total connections after closing, got %d", stats.TotalConns)
@@ -1303,8 +1307,8 @@ func TestPoolGetRecyclesOnFactoryError(t *testing.T) {
 	}
 	pool.Put(conn)
 
-	// Wait for connection to age
-	time.Sleep(50 * time.Millisecond)
+	// Age the connection past max lifetime
+	pool.(*storagePool).ageSkew.Store(int64(time.Second))
 
 	// Make factory fail
 	failFactory.Store(true)
