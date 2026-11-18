@@ -105,6 +105,11 @@ type Options struct {
 	// to verify its own multi-tenant tokens (covers key rotation and newly added
 	// tenant keys without an HTTP fetch).
 	KeySetFunc func() *jose.JSONWebKeySet
+	// KeyFunc, when set (and JWKS/JWKSURL/KeySetFunc are nil), resolves each
+	// kid through the issuer on every verification, with nothing cached --
+	// used in-process by a token issuer whose own key set is authoritative,
+	// so a key it stops trusting is refused at the next verification.
+	KeyFunc KeyFunc
 	// HTTPClient overrides the client used for JWKS fetches. Inject a test
 	// server client to override TLS trust without touching production code.
 	HTTPClient *http.Client
@@ -165,8 +170,11 @@ func NewValidator(opts Options) (*Validator, error) {
 	if opts.KeySetFunc != nil {
 		sourceCount++
 	}
+	if opts.KeyFunc != nil {
+		sourceCount++
+	}
 	if sourceCount == 0 {
-		return nil, &ConfigError{Detail: "one of JWKS, JWKSURL, or KeySetFunc is required"}
+		return nil, &ConfigError{Detail: "one of JWKS, JWKSURL, KeySetFunc, or KeyFunc is required"}
 	}
 
 	nowFunc := opts.Clock
@@ -184,6 +192,8 @@ func NewValidator(opts Options) (*Validator, error) {
 		src = s
 	case opts.KeySetFunc != nil:
 		src = newInProcessKeySource(opts.KeySetFunc)
+	case opts.KeyFunc != nil:
+		src = liveKeySource{lookup: opts.KeyFunc}
 	default:
 		src = newRemoteKeySource(opts.JWKSURL, opts.HTTPClient, opts.CacheTTL, nowFunc)
 	}
