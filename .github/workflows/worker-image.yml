@@ -201,7 +201,8 @@ jobs:
           fi
           mkdir -p "$work/layers/config"
           cp "$work/image/$config" "$work/layers/config/config.json"
-          trivy fs --scanners secret --exit-code 1 --no-progress "$work/layers"
+          trivy fs --scanners secret --exit-code 0 --format json --output "$work/secrets.json" --no-progress "$work/layers"
+          bash deployments/agents/software-factory-worker/check-secret-findings.sh "$work/secrets.json" "$work/layers"
           echo "scanned ${i} layer tarballs of ${IMAGE}:${TAG} for secrets"
 
       - name: The package is not public before the push
