@@ -621,6 +621,10 @@ func (c *client) buildQRDBTransport() (qrdbtransport.Transport, error) {
 		// go-qrdb's QUIC transport offers wire.ProtocolV2 and is refused
 		// ("tls: no application protocol", go-quicbaas#2533). The QUIC
 		// selection reaches the same qrdb REST API at the same origin.
+		// Barrier verbs go over HTTP/3 through the SDK transport
+		// (Security().Barrier()); the other QRDB verb groups still use
+		// go-qrdb's REST transport over TCP until go-qrdb's REST transport
+		// accepts an HTTP/3 client (#2533).
 		return qrdbrest.New(buildOpts(address)...)
 	case TransportUnix:
 		return c.buildQRDBUnixTransport()

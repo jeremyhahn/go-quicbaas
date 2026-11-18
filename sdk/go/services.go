@@ -18,6 +18,8 @@ import (
 
 	qrdbsecret "github.com/jeremyhahn/go-qrdb/sdk/go/secret"
 	xkmstransport "github.com/jeremyhahn/go-xkms/sdk/go/transport"
+
+	"github.com/jeremyhahn/go-quicbaas/sdk/go/transport/quic"
 )
 
 // =============================================================================
@@ -289,7 +291,14 @@ func (s *securityService) SSH() SSHService {
 
 // Barrier returns the QRDB BarrierClient. The QRDB transport is
 // lazily initialized on first call (delegated to client.qrdbClient).
+//
+// Over the SDK QUIC transport the barrier verbs go through that transport's
+// own HTTP/3 client instead: go-qrdb's REST transport dials TCP, which a node
+// serving only its QUIC (UDP) listener refuses (go-quicbaas#2533).
 func (s *securityService) Barrier() (QRDBBarrierClient, error) {
+	if qt, ok := s.c.transport.(*quic.Transport); ok {
+		return qt.Transport.Barrier(), nil
+	}
 	qrdbClient, err := s.c.qrdbClient()
 	if err != nil {
 		return nil, err
