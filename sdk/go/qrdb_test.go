@@ -15,11 +15,17 @@
 package quicbaas
 
 import (
+	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -157,4 +163,42 @@ func TestDataStore_InvalidTransport(t *testing.T) {
 	// depending on the transport implementation. We just verify it
 	// doesn't panic.
 	_ = err
+}
+
+// TestQRDBClient_QUIC_ReachesRESTOrigin pins go-quicbaas#2554: a quicbaasd
+// node serves REST over TCP and HTTP/3 ("h3") on the same port, and never
+// the go-qrdb frame protocol ALPN. The qrdb sub-client of a WithQUIC()
+// client must therefore speak HTTPS to the node's REST origin; dialing the
+// frame protocol fails with "tls: no application protocol".
+func TestQRDBClient_QUIC_ReachesRESTOrigin(t *testing.T) {
+	var hits atomic.Int32
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.TLS != nil {
+			hits.Add(1)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	defer srv.Close()
+
+	pool := x509.NewCertPool()
+	pool.AddCert(srv.Certificate())
+	address := strings.TrimPrefix(srv.URL, "https://")
+
+	c, err := NewClient(address, WithQUIC(), WithTLSConfig(&tls.Config{RootCAs: pool, MinVersion: tls.VersionTLS12}), WithTimeout(5*time.Second))
+	require.NoError(t, err)
+	defer func() { _ = c.Close() }()
+
+	qc, err := c.(*client).qrdbClient()
+	require.NoError(t, err)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_ = qc.Barrier().BarrierUnseal(ctx, &qrdbtransport.BarrierUnsealRequest{})
+
+	assert.Positive(t, hits.Load(), "the QUIC client's qrdb sub-client must reach the node's REST origin over HTTPS")
+}
+
+func TestQRDBSubClientAddress_QUICUsesRESTOrigin(t *testing.T) {
+	assert.Equal(t, "https://host:8080", qrdbSubClientAddress(TransportQUIC, "host:8080", true))
 }
