@@ -1649,16 +1649,65 @@ func TestPool_ReplaceConnection(t *testing.T) {
 		t.Fatalf("failed to get connection: %v", err)
 	}
 
+	// Record the pool entry Get handed out and every entry present before
+	// Put, so the replacement can be told apart from the original.
+	var original *pooledConn
+	before := make(map[*pooledConn]bool)
+	p.mu.Lock()
+	for _, pc := range p.connections {
+		before[pc] = true
+		if pc.conn == conn {
+			original = pc
+		}
+	}
+	p.mu.Unlock()
+	if original == nil {
+		t.Fatal("connection returned by Get is not in the pool")
+	}
+
 	time.Sleep(5 * time.Millisecond)
 
 	p.Put(conn)
 
+	// Put replaces the expired connection asynchronously. Wait, under the
+	// pool mutex, until the original entry has left the pool and the pool is
+	// back to MinSize, so the replacement has finished before the deferred
+	// p.Close and ts.stop run.
+	var replacement *pooledConn
 	deadline := time.Now().Add(5 * time.Second)
-	for !p.Healthy() {
+	for {
+		p.mu.Lock()
+		stillThere := false
+		replacement = nil
+		for _, pc := range p.connections {
+			if pc == original {
+				stillThere = true
+			}
+			if !before[pc] {
+				replacement = pc
+			}
+		}
+		size := len(p.connections)
+		p.mu.Unlock()
+
+		if !stillThere && size >= cfg.MinSize {
+			break
+		}
 		if time.Now().After(deadline) {
-			t.Fatal("expected pool to be healthy after replacement")
+			t.Fatalf("expired connection not replaced within 5s (still in pool: %v, size %d, min %d)",
+				stillThere, size, cfg.MinSize)
 		}
 		time.Sleep(10 * time.Millisecond)
+	}
+
+	if replacement == nil {
+		t.Fatal("expired connection was removed but no replacement connection was added")
+	}
+	if !p.isHealthy(replacement) {
+		t.Fatalf("replacement connection is not healthy: state %v", replacement.conn.GetState())
+	}
+	if !p.Healthy() {
+		t.Fatal("expected pool to be healthy after replacement")
 	}
 }
 
