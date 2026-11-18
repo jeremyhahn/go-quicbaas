@@ -84,6 +84,45 @@ func TestOrchestrationStartup_TheDispatcherStartsAfterJobRecovery(t *testing.T) 
 	}
 }
 
+// TestOrchestrationStartup_TheBeforeRecoveryHookRunsJustBeforeRecovery pins
+// go-quicbaas#2512: an embedder's WithBeforeJobRecovery hook (where it
+// registers the agent backends a resumed job needs) runs immediately before
+// interrupted jobs are recovered, and without the option nothing changes.
+func TestOrchestrationStartup_TheBeforeRecoveryHookRunsJustBeforeRecovery(t *testing.T) {
+	t.Parallel()
+	cfg := &config.Config{}
+	cfg.SDLC.Enabled = true
+	cfg.Orchestration.Enabled = true
+	without := startupNames(cfg)
+	if slices.Contains(without, startupBeforeRecoverJobs) {
+		t.Fatalf("startup order without the hook = %v, want no %s", without, startupBeforeRecoverJobs)
+	}
+
+	var opts serverOptions
+	WithBeforeJobRecovery(func(*Server) error { return nil })(&opts)
+	var got []string
+	for _, step := range (&Server{config: cfg, opts: opts}).orchestrationStartup() {
+		got = append(got, step.name)
+	}
+	want := slices.Clone(without)
+	at := slices.Index(want, startupRecoverJobs)
+	if at < 0 {
+		t.Fatalf("startup order = %v, want %s", without, startupRecoverJobs)
+	}
+	want = slices.Insert(want, at, startupBeforeRecoverJobs)
+	if !slices.Equal(got, want) {
+		t.Fatalf("startup order with the hook = %v, want %v", got, want)
+	}
+
+	off := &config.Config{}
+	off.SDLC.Enabled = true
+	if names := (&Server{config: off, opts: opts}).orchestrationStartup(); slices.ContainsFunc(names, func(s startupStep) bool {
+		return s.name == startupBeforeRecoverJobs
+	}) {
+		t.Fatalf("hook step ran with orchestration disabled")
+	}
+}
+
 // TestOrchestrationStartup_NoSpawnerStartsNoDispatcher: the dispatcher step
 // with no captured spawner logs and returns without starting anything.
 func TestOrchestrationStartup_NoSpawnerStartsNoDispatcher(t *testing.T) {

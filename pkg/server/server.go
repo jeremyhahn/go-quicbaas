@@ -114,6 +114,11 @@ type serverOptions struct {
 	// go-xkms's, so one node serves all three across gRPC, unix, REST and
 	// MCP under a single authorizer. See module_host.go.
 	hostModules []qrdbsdk.ServiceModule
+
+	// beforeJobRecovery runs during Start, after every module's hooks and
+	// executing host are in place and immediately before interrupted jobs
+	// are recovered. See WithBeforeJobRecovery.
+	beforeJobRecovery func(*Server) error
 }
 
 // ServerOption configures optional behavior on the Server during construction.
@@ -196,6 +201,17 @@ func WithContainerAttestor(attestor service.ContainerAttestor) ServerOption {
 // verify options; these are the deployment-wide defaults.
 func WithAttestationTrustAnchors(anchors []*x509.Certificate) ServerOption {
 	return func(o *serverOptions) { o.attestationTrustAnchors = anchors }
+}
+
+// WithBeforeJobRecovery sets a hook Start runs immediately before it
+// recovers interrupted orchestration jobs. It is the point where an
+// embedder registers the agent backends a recovered job needs: Service()
+// and SDLCService() are already set, but no recovered job has spawned yet,
+// so a resumed attempt finds its backend instead of escalating. An error
+// from the hook fails Start. The hook runs only when Orchestration is
+// enabled.
+func WithBeforeJobRecovery(fn func(*Server) error) ServerOption {
+	return func(o *serverOptions) { o.beforeJobRecovery = fn }
 }
 
 // Server orchestrates all QuicBaaS components.
@@ -2145,6 +2161,7 @@ const (
 	startupOrchestration     = "orchestration"
 	startupEmbeddedFleetNode = "embedded_fleet_node"
 	startupSDLC              = "sdlc"
+	startupBeforeRecoverJobs = "before_recover_jobs"
 	startupRecoverJobs       = "recover_jobs"
 	startupTaskDispatcher    = "task_dispatcher"
 )
@@ -2166,7 +2183,9 @@ const (
 //     runner are built over the engine's services, and its backstop sweepers
 //     dispatch jobs — so it follows the embedded agent too.
 //   - Interrupted jobs are recovered once every module's hooks and every
-//     executing host are in place.
+//     executing host are in place. The WithBeforeJobRecovery hook runs just
+//     before, so an embedder's agent backends are registered before a
+//     recovered job spawns (go-quicbaas#2512).
 //   - The task dispatcher starts LAST, after recovery has re-acquired the
 //     leases of the jobs it resumed. Started with the engine, its first sweep
 //     raced recovery: it saw a task naming a job that "holds no live lease"
@@ -2185,6 +2204,9 @@ func (s *Server) orchestrationStartup() []startupStep {
 	add(s.config.Orchestration.Enabled, startupOrchestration, s.startOrchestration)
 	add(s.config.Server.EmbeddedFleetNode.Enabled, startupEmbeddedFleetNode, s.startEmbeddedFleetNode)
 	add(s.config.SDLC.Enabled, startupSDLC, s.startSDLC)
+	add(s.config.Orchestration.Enabled && s.opts.beforeJobRecovery != nil, startupBeforeRecoverJobs, func() error {
+		return s.opts.beforeJobRecovery(s)
+	})
 	add(s.config.Orchestration.Enabled, startupRecoverJobs, func() error {
 		s.recoverOrchestrationJobs()
 		return nil
