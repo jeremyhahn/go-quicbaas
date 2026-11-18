@@ -39,7 +39,7 @@ import (
 // arbitrates a race. A hand-written double would prove nothing about what
 // ships: it would be free to mirror whatever behaviour the test expected, and
 // the tests that matter most here are the ones that fail when the arbitration
-// is not real. pkg/sdlc and pkg/scheduler's firing-claim tests take the same
+// is not real. pkg/orchestration/sdlc and pkg/scheduler's firing-claim tests take the same
 // fixture for the same reason.
 //
 // The node needs no seal and no barrier — the transaction plane is independent

@@ -26,8 +26,8 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/jeremyhahn/go-quicbaas/pkg/fleet"
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
+	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration/fleet"
 )
 
 // =============================================================================
@@ -183,7 +183,7 @@ func TestE2E_RequiredCLISpawn_RunsInARealContainer(t *testing.T) {
 
 	require.NotEmpty(t, session.ContainerID,
 		"the required spawn produced no container id: the agent ran on the daemon host with the "+
-			"tenant's credential in its environment, and pkg/sdlc refuses the worker as 'runs no container'")
+			"tenant's credential in its environment, and pkg/orchestration/sdlc refuses the worker as 'runs no container'")
 	require.Zero(t, session.PID,
 		"the session reports a host pid: the agent is a child of the daemon, not a container process")
 

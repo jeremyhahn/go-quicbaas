@@ -27,8 +27,8 @@ import (
 
 	"golang.org/x/crypto/ssh"
 
-	"github.com/jeremyhahn/go-quicbaas/pkg/fleet/deploy"
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
+	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration/fleet/deploy"
 	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 	orchestratorSDK "github.com/jeremyhahn/go-quicbaas/sdk/go/client/orchestrator"
 )
@@ -53,13 +53,13 @@ import (
 //      the SDK until the freshly-deployed fleet node reports online.
 //
 // The service depends on narrow interfaces so tests can replace every
-// primitive with fakes. The "real" adapters delegate to pkg/fleet/deploy.
+// primitive with fakes. The "real" adapters delegate to pkg/orchestration/fleet/deploy.
 
 // FleetDeployService installs a QuicBaaS fleet node daemon on a remote host.
 type FleetDeployService interface {
 	// Deploy runs the full deployment workflow described by spec and
 	// returns the resulting *deploy.Result on success. All errors are
-	// typed values from pkg/fleet/deploy so callers can distinguish
+	// typed values from pkg/orchestration/fleet/deploy so callers can distinguish
 	// failure modes without parsing strings.
 	Deploy(ctx context.Context, spec *deploy.Spec) (*deploy.Result, error)
 
@@ -249,7 +249,7 @@ type FleetDeployServiceDeps struct {
 }
 
 // NewFleetDeployService wires the default SSH/SFTP/systemd primitives
-// from pkg/fleet/deploy plus the caller-provided SDK fleet node lister.
+// from pkg/orchestration/fleet/deploy plus the caller-provided SDK fleet node lister.
 func NewFleetDeployService(deps FleetDeployServiceDeps) FleetDeployService {
 	return &fleetDeployService{
 		ssh:         realSSHDialer{},
@@ -1065,7 +1065,7 @@ func (realNohupStarter) Start(ctx context.Context, sess sshSession, scriptConten
 	return deploy.StartBackground(ctx, c, scriptContent, scriptPath)
 }
 
-// realRenderer wraps the template helpers in pkg/fleet/deploy.
+// realRenderer wraps the template helpers in pkg/orchestration/fleet/deploy.
 type realRenderer struct{}
 
 func (realRenderer) RenderUnit(spec *deploy.Spec) string { return deploy.RenderUnit(spec) }

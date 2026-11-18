@@ -35,7 +35,7 @@ export interface ReviewPolicy {
 }
 /**
  * ReviewerConfig is one reviewer profile: the agent that reviews a project's
- * pull requests, as its own forge identity. Mirrors pkg/sdlc/review_config.go.
+ * pull requests, as its own forge identity. Mirrors pkg/orchestration/sdlc/review_config.go.
  *
  * The binding's `reviewer` is the project's DEFAULT profile; `reviewers` are
  * alternates an operator chooses per pull request. Seat order is the failover
@@ -255,7 +255,7 @@ export interface Delivery {
  * OnboardingConfig declares what provisioning writes to the forge and what
  * conformance checks for one bound repository. Every field defaults, so a
  * binding that says nothing about onboarding still onboards correctly.
- * Mirrors pkg/sdlc/onboarding_config.go.
+ * Mirrors pkg/orchestration/sdlc/onboarding_config.go.
  */
 export interface OnboardingConfig {
     webhook_events?: string[];
@@ -269,7 +269,7 @@ export interface OnboardingConfig {
 /**
  * ConformanceFinding is one thing that is wrong, and what to do about it.
  * Every finding carries a remedy: the repairs differ, and "not conformant"
- * without a reason is useless. Mirrors pkg/sdlc/onboarding.go.
+ * without a reason is useless. Mirrors pkg/orchestration/sdlc/onboarding.go.
  */
 export interface ConformanceFinding {
     /**

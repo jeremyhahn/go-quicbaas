@@ -130,7 +130,7 @@ therefore says nothing about why.
 mistake in the change — a go.mod pinned to a tag nobody pushed — and belongs to
 its author. It is a host defect only for a module no host can resolve without
 settings an operator provisions. `cifault.Input.PrivateModuleOwners` names
-those owners, and `pkg/sdlc` supplies the project's own forge owner. Declare no
+those owners, and `pkg/orchestration/sdlc` supplies the project's own forge owner. Declare no
 owners and the rule never fires.
 
 ### `host_eviction` needs the OOM scope
@@ -160,7 +160,7 @@ over-tested relative to the rest on purpose.
 
 ## Wiring: what the gate does with the verdict
 
-`pkg/sdlc` is the seam. `TriageChecksFailure` turns the module's records into
+`pkg/orchestration/sdlc` is the seam. `TriageChecksFailure` turns the module's records into
 the classifier's inputs and keeps the answers beside the checks they are about;
 `ChecksTriage.Aggregate` reduces them to the one action the round takes.
 
@@ -263,12 +263,12 @@ among six would send the whole outage to a coding agent.
 | Runner-infrastructure signatures | `pkg/cifault/infra.go` (`runnerInfraSignatures`) |
 | Typed refusals | `pkg/cifault/errors.go` |
 | Real-log corpus | `pkg/cifault/testdata/*.log` |
-| The seam and the budget constant | `pkg/sdlc/checks_triage.go` |
-| Acting on the verdict | `pkg/sdlc/forge_review.go` (`checksFailed`, `rerunVoid`) |
-| Findings, settle window, log budgets | `pkg/sdlc/gate.go` |
-| Re-run bookkeeping | `pkg/sdlc/delivery.go` (`CIReruns`, `RerunPending`) |
-| Park instead of re-delegate | `pkg/sdlc/runner.go` (`runnerRun.review`) |
-| Forge rerun | `pkg/sdlc/forge.go`, `forge_gitea.go` |
+| The seam and the budget constant | `pkg/orchestration/sdlc/checks_triage.go` |
+| Acting on the verdict | `pkg/orchestration/sdlc/forge_review.go` (`checksFailed`, `rerunVoid`) |
+| Findings, settle window, log budgets | `pkg/orchestration/sdlc/gate.go` |
+| Re-run bookkeeping | `pkg/orchestration/sdlc/delivery.go` (`CIReruns`, `RerunPending`) |
+| Park instead of re-delegate | `pkg/orchestration/sdlc/runner.go` (`runnerRun.review`) |
+| Forge rerun | `pkg/orchestration/sdlc/forge.go`, `forge_gitea.go` |
 
 ## Not built yet
 

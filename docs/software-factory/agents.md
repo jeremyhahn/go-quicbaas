@@ -27,7 +27,7 @@ These are not the fleet's agent daemons, which serve backends; those are
 
 Source: `pkg/orchestration/agent_catalog*.go`, `agent_directory.go`,
 `agent_spawn.go`, `agent_migration.go`, `role_charter.go`,
-`prompt_append.go`; `pkg/sdlc/agents.go`, `agent_migration.go`.
+`prompt_append.go`; `pkg/orchestration/sdlc/agents.go`, `agent_migration.go`.
 
 ## The Agent
 

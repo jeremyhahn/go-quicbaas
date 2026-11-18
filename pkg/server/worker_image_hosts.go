@@ -21,7 +21,7 @@ import (
 	"strings"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
-	"github.com/jeremyhahn/go-quicbaas/pkg/sdlc/workerimage"
+	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration/sdlc/workerimage"
 )
 
 // localFleetNodeHosts resolves, from the fleet registry, the agent registered from

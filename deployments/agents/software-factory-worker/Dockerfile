@@ -15,8 +15,8 @@
 #                  server (the review model on ollama); pinned release binary.
 #   gh             the GitHub CLI; pinned release binary, digest checked.
 #   git            the runner's checkout and publish steps are git commands
-#                  exec'd into this container (pkg/sdlc/checkout.go,
-#                  pkg/sdlc/publish.go).
+#                  exec'd into this container (pkg/orchestration/sdlc/checkout.go,
+#                  pkg/orchestration/sdlc/publish.go).
 #   ssh-keygen     git signs commits with `gpg.format=ssh`, which invokes
 #                  ssh-keygen to talk to the agent on $SSH_AUTH_SOCK. Without
 #                  it every signed commit fails.
@@ -835,7 +835,7 @@ RUN set -eux; \
 # versions passed in, never at @latest: an image that installs @latest cannot
 # be rebuilt to the same bytes, and nobody could say which CLI a bound image
 # carries. Keeping them current is the daemon's job, not the build's — its
-# worker image refresh (pkg/sdlc/workerimage, docs/software-factory/
+# worker image refresh (pkg/orchestration/sdlc/workerimage, docs/software-factory/
 # worker-image.md) reads the npm registry, rebuilds this file with the newer
 # versions, gates the result and only then rebinds projects to it. The
 # versions are recorded as labels below, which is how that refresh knows what

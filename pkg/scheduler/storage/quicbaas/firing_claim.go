@@ -171,7 +171,7 @@ type claimMark struct {
 // property of the high-water mark, expressed in the decide function, rather
 // than a special case in the loop.
 //
-// This is where the claim DIVERGES from pkg/sdlc's leases, which share the same
+// This is where the claim DIVERGES from pkg/orchestration/sdlc's leases, which share the same
 // loop: a lease can move to a generation still below the writer's, so its
 // re-read may legitimately decide to take again. A mark cannot — it only moves
 // forward, and forward is past you.

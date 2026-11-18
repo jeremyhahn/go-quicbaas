@@ -20,10 +20,10 @@ import (
 	"time"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/config"
-	"github.com/jeremyhahn/go-quicbaas/pkg/sdlc"
+	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration/sdlc"
 )
 
-// An EXTERNAL test package, like the surfacing drift test: it imports pkg/sdlc
+// An EXTERNAL test package, like the surfacing drift test: it imports pkg/orchestration/sdlc
 // to pin the two defaults layers, and an in-package test doing so would be a
 // cycle.
 

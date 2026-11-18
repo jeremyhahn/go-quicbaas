@@ -41,7 +41,7 @@ import (
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
-	"github.com/jeremyhahn/go-quicbaas/pkg/sdlc"
+	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration/sdlc"
 	"github.com/jeremyhahn/go-quicbaas/pkg/server"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
@@ -60,7 +60,7 @@ import (
 // The scripted backend plays ONE part: the WORKER, writing the change into
 // the checkout it is prompted about. It does NOT clone — nothing outside the
 // runner does. The clone is a sequence of git commands the runner execs into
-// the container (pkg/sdlc/checkout.go), so what this test exercises is the
+// the container (pkg/orchestration/sdlc/checkout.go), so what this test exercises is the
 // real clone against a real repository, and the daemon's own filesystem is
 // named by nothing.
 

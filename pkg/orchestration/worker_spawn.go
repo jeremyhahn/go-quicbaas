@@ -388,7 +388,7 @@ func WorkerSpawnEnv(backend, configDir string) map[string]string {
 // "acp: transport failed: initialize" — a credential failure wearing a
 // transport error's clothes. Measured on the burn-in node 2026-09-13.
 //
-// The daemon side needs no list change: pkg/fleet's Runtime attaches the
+// The daemon side needs no list change: pkg/orchestration/fleet's Runtime attaches the
 // resolver to EVERY ACP backend it serves, deliberately, to avoid exactly this
 // kind of name-list omission. The server-local path is the one that still
 // disagrees — its codex is a CodexExecBackend, which has no

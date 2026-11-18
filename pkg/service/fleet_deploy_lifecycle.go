@@ -21,8 +21,8 @@ import (
 
 	"golang.org/x/crypto/ssh"
 
-	"github.com/jeremyhahn/go-quicbaas/pkg/fleet/deploy"
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
+	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration/fleet/deploy"
 	orchestratorSDK "github.com/jeremyhahn/go-quicbaas/sdk/go/client/orchestrator"
 	sdkerrors "github.com/jeremyhahn/go-quicbaas/sdk/go/errors"
 )
@@ -48,7 +48,7 @@ type FleetCABundleSource interface {
 
 // nodeOperator is the set of node-side operations the preflight and
 // lifecycle paths run over an SSH session. The production implementation
-// delegates to pkg/fleet/deploy; tests substitute a fake.
+// delegates to pkg/orchestration/fleet/deploy; tests substitute a fake.
 type nodeOperator interface {
 	Preflight(ctx context.Context, sess sshSession, in deploy.PreflightInput) []deploy.PreflightCheck
 	Stop(ctx context.Context, sess sshSession, l deploy.Layout) (deploy.Supervisor, error)
@@ -408,7 +408,7 @@ func (e *FleetCABundleUnavailableError) Error() string {
 // Production adapter
 // =============================================================================
 
-// realNodeOperator delegates to the pkg/fleet/deploy primitives.
+// realNodeOperator delegates to the pkg/orchestration/fleet/deploy primitives.
 type realNodeOperator struct{}
 
 func noClientError() error {
