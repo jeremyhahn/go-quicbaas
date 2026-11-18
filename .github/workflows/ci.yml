@@ -1387,6 +1387,7 @@ jobs:
       matrix:
         shard: [0, 1, 2, 3]   # CUSTOMIZE: 0..UNIT_SHARDS-1
     env:
+      GOFLAGS: -mod=readonly   # ruling 869: modules are never rewritten on the pool
       DOCS_ONLY: ${{ needs.preflight.outputs.docs_only }}
       CI_STACK_PREFIX: ${{ github.event.repository.name }}-ci-
       CI_CACHE_CLASS: ${{ github.event_name == 'push' && 'main' || 'pr' }}
@@ -1458,6 +1459,11 @@ jobs:
       # Unix socket paths overflow sun_path, and runner units on one host share
       # /tmp, so each job takes its own /tmp/XXXXXX and removes it in its last step.
       # GOTMPDIR too: the pool sets it to _work/_temp, and Go 1.27's t.TempDir
+      # Ruling 869: the module-integrity gate of a native Go job on the pool
+      # (checksum database on, no exemptions, -mod=readonly, no direct).
+      - name: Module integrity (ruling 869)
+        if: ${{ runner.environment == 'self-hosted' && env.DOCS_ONLY != 'true' }}
+        run: scripts/ci-go-integrity.sh
       # uses GOTMPDIR whenever it is set, ahead of TMPDIR.
       - name: Per-job short TMPDIR (native)
         if: ${{ runner.environment == 'self-hosted' }}
