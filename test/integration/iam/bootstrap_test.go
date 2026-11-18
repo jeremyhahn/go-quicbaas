@@ -30,6 +30,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/hex"
 	"encoding/pem"
 	"fmt"
 	"io"
@@ -37,7 +38,6 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 
@@ -169,18 +169,19 @@ func TestBootstrap_SecondBoot_Silent(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// TestBootstrap_ActivationEndpoint_ReturnsHTTP200
+// TestBootstrap_InviteEndpoint_IsPublic
 //
-// On first boot, extract the invite token from stderr, then fetch the PUBLIC
-// invite metadata endpoint GET /api/v1/iam/invites/{token} over the REST
-// transport. First boot stores a real invite record for the WebAuthn
-// activation path (pkg/server/iam_init.go firstBootBootstrap), and the
-// /api/v1/iam/invites mount is on the default-deny public allowlist
-// (pkg/api/rest/authz_default_deny.go) — the invitee has no credentials yet,
-// so activation MUST be reachable without a bearer. Asserts 200 (token
-// round-trips), and in particular NOT an auth error: under the default-deny
-// gate, any unmatched or non-public path fails 401 BEFORE routing, so
-// hitting a non-allowlisted path here would mask an allowlist regression.
+// The invite metadata endpoint GET /api/v1/iam/{tenant_id}/invites/{token}
+// is on the default-deny public allowlist (pkg/api/rest/authz_default_deny.go):
+// an invitee has no credentials yet, so activation MUST be reachable without
+// a bearer. Under the default-deny gate any non-public path fails 401/403
+// BEFORE routing, so this test sends an unauthenticated request for a random,
+// unknown token and asserts the invite handler itself answered: its opaque
+// not-found (404, pkg/api/rest/iam_invite.go respondInviteUnusable), and in
+// particular NOT 401 or 403, which would mean an allowlist regression.
+//
+// First boot creates the platform admin with an mTLS certificate and issues
+// no invite, so the token is generated here rather than read from the banner.
 //
 // Unlike the stderr-only tests above, this case needs a real network
 // listener, so it runs with Embedded=false (REST enabled) and discovers the
@@ -188,7 +189,7 @@ func TestBootstrap_SecondBoot_Silent(t *testing.T) {
 // configured REST.Port (which stays 0 once the OS picks the real port).
 // ---------------------------------------------------------------------------
 
-func TestBootstrap_ActivationEndpoint_ReturnsHTTP200(t *testing.T) {
+func TestBootstrap_InviteEndpoint_IsPublic(t *testing.T) {
 	tmpDir := t.TempDir()
 
 	cfg := minimalBootstrapConfig(tmpDir)
@@ -196,16 +197,10 @@ func TestBootstrap_ActivationEndpoint_ReturnsHTTP200(t *testing.T) {
 	cfg.Auth.InsecureDevMode = false
 
 	// Start a real REST listener (not the in-process embedded transport) so
-	// the activation endpoint is reachable over HTTP(S). REST.Port stays 0 so
+	// the invite endpoint is reachable over HTTP(S). REST.Port stays 0 so
 	// the OS assigns a free ephemeral port, avoiding collisions with siblings.
 	cfg.Server.Embedded = false
 	cfg.Server.REST.Enabled = true
-
-	// Capture stderr to get the invite token.
-	rdr, wtr, err := os.Pipe()
-	require.NoError(t, err)
-	origStderr := os.Stderr
-	os.Stderr = wtr
 
 	srv, startErr := startBootstrapServer(t, cfg)
 	require.NoError(t, startErr)
@@ -215,15 +210,11 @@ func TestBootstrap_ActivationEndpoint_ReturnsHTTP200(t *testing.T) {
 		_ = srv.Shutdown(ctx)
 	})
 
-	_ = wtr.Close()
-	os.Stderr = origStderr
-
-	var stderrBuf bytes.Buffer
-	_, _ = io.Copy(&stderrBuf, rdr)
-	stderrOutput := stderrBuf.String()
-
-	token := extractInviteToken(t, stderrOutput)
-	require.NotEmpty(t, token, "invite token must be extractable from the activation URL")
+	// A random token no invite was ever issued for.
+	raw := make([]byte, 32)
+	_, err := rand.Read(raw)
+	require.NoError(t, err)
+	token := hex.EncodeToString(raw)
 
 	// Resolve the REAL bound address. With REST.Port=0 the kernel picks an
 	// ephemeral port; cfg.Server.REST.Port still reads 0, so we must ask the
@@ -239,17 +230,19 @@ func TestBootstrap_ActivationEndpoint_ReturnsHTTP200(t *testing.T) {
 		scheme = "http"
 	}
 	baseURL := fmt.Sprintf("%s://%s", scheme, restAddr.String())
-	inviteURL := baseURL + "/api/v1/iam/invites/" + token
+	inviteURL := baseURL + "/api/v1/iam/" + iam.SystemTenantID + "/invites/" + token
 
+	// No Authorization header: the invitee has no credentials.
 	resp, httpErr := daemonCAHTTPClient(t, srv).Get(inviteURL)
 	require.NoError(t, httpErr)
 	defer resp.Body.Close()
 
-	// The banner token was stored by firstBootBootstrap, so the public
-	// metadata endpoint must return 200 — anything else (especially
-	// 401/403) is a public-allowlist or invite-store regression.
-	assert.Equalf(t, http.StatusOK, resp.StatusCode,
-		"public invite metadata endpoint must return 200 for the first-boot banner token (not an auth error)")
+	assert.NotEqual(t, http.StatusUnauthorized, resp.StatusCode,
+		"the public invite endpoint must not demand authentication (allowlist regression)")
+	assert.NotEqual(t, http.StatusForbidden, resp.StatusCode,
+		"the public invite endpoint must not be forbidden (allowlist regression)")
+	assert.Equalf(t, http.StatusNotFound, resp.StatusCode,
+		"an unknown token must reach the invite handler and get its not-found answer")
 }
 
 // ---------------------------------------------------------------------------
@@ -441,28 +434,6 @@ func waitForStarted(t *testing.T, srv *server.Server, startErrCh <-chan error, r
 			}
 		}
 	}
-}
-
-// extractInviteToken parses the invite token out of an activation URL in the
-// stderr banner. The banner emits the canonical SPA route
-// /ui/#/invite/<token> (pre-v1 stack: there is exactly ONE invite route; the
-// legacy #/activate?token= form is dead and explicitly asserted absent by
-// TestBootstrap_FirstBoot_PrintsAdminCertBanner). Returns empty string if not
-// found.
-func extractInviteToken(t *testing.T, stderr string) string {
-	t.Helper()
-	const marker = "/ui/#/invite/"
-	idx := strings.Index(stderr, marker)
-	if idx < 0 {
-		return ""
-	}
-	rest := stderr[idx+len(marker):]
-	// Token ends at newline, space, or end of string.
-	end := strings.IndexAny(rest, " \n\r\t")
-	if end < 0 {
-		return rest
-	}
-	return rest[:end]
 }
 
 // daemonCAHTTPClient returns an http.Client that trusts the in-process
