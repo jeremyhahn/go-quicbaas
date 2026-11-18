@@ -168,10 +168,18 @@ var sumdbEnv = []string{"GOSUMDB", "GONOSUMDB", "GONOSUMCHECK", "GONOPROXY", "GO
 // goRun matches a script that runs go or make as a command.
 var goRun = regexp.MustCompile(`(^|[\s;&|(` + "`" + `])(go|make)\s`)
 
-// readonlyFlags: GOFLAGS sets -mod=readonly and no other -mod, no -insecure.
+// readonlyFlags: GOFLAGS sets -mod=readonly and no other -mod, no -insecure
+// (--flag counts as -flag), with no quoting, which go parses differently from
+// a split on spaces.
 func readonlyFlags(flags string) bool {
+	if strings.ContainsAny(flags, "'\"\\") {
+		return false
+	}
 	ro := false
 	for _, f := range strings.Fields(flags) {
+		if strings.HasPrefix(f, "--") {
+			f = f[1:]
+		}
 		switch {
 		case f == "-mod=readonly":
 			ro = true
@@ -378,6 +386,9 @@ func TestRunnerProblems_Mutations(t *testing.T) {
 		{"the gate no longer first in the native step", func(b string) string {
 			return strings.Replace(b, "          scripts/ci-go-integrity.sh\n", "", 1)
 		}, "without `scripts/ci-go-integrity.sh` as its first command"},
+		{"a quoted -mod override in the job GOFLAGS", func(b string) string {
+			return strings.Replace(b, "      GOFLAGS: -mod=readonly   # ruling 869", "      GOFLAGS: -mod=readonly '-mod=mod'   # ruling 869", 1)
+		}, "without -mod=readonly"},
 		{"a later -mod in the job GOFLAGS", func(b string) string {
 			return strings.Replace(b, "      GOFLAGS: -mod=readonly   # ruling 869", "      GOFLAGS: -mod=readonly -mod=mod   # ruling 869", 1)
 		}, "without -mod=readonly"},
