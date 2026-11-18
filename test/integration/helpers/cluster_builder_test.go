@@ -100,3 +100,77 @@ func TestFindLeaderReturnsMarkedLeader(t *testing.T) {
 	assert.True(t, node.IsLeader)
 	assert.Same(t, tc.Clients[1], client)
 }
+
+func TestFindLeaderReportsInvalidAndUnknownLeaderIDs(t *testing.T) {
+	tests := []struct {
+		name   string
+		status *quicbaas.ClusterStatus
+		want   string
+	}{
+		{
+			name:   "unparsable member-marked leader",
+			status: &quicbaas.ClusterStatus{Members: []quicbaas.ClusterMember{{ID: "1"}, {ID: "node-x", IsLeader: true}}},
+			want:   `node2: leader member ID "node-x"`,
+		},
+		{
+			name:   "unparsable LeaderID",
+			status: &quicbaas.ClusterStatus{LeaderID: "leader-y", Members: []quicbaas.ClusterMember{{ID: "1"}, {ID: "2"}}},
+			want:   `node2: leader ID "leader-y"`,
+		},
+		{
+			name:   "unknown member-marked leader",
+			status: &quicbaas.ClusterStatus{Members: []quicbaas.ClusterMember{{ID: "1"}, {ID: "9", IsLeader: true}}},
+			want:   "node2: leader member 9 is not a test node",
+		},
+		{
+			name:   "unknown LeaderID",
+			status: &quicbaas.ClusterStatus{LeaderID: "42", Members: []quicbaas.ClusterMember{{ID: "1"}, {ID: "2"}}},
+			want:   "node2: leader ID 42 is not a test node",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tc := newFakeCluster(
+				&fakeClusterClient{err: errors.New("unavailable")},
+				&fakeClusterClient{status: tt.status},
+			)
+
+			node, client, err := tc.FindLeader(context.Background())
+
+			require.Error(t, err)
+			assert.Nil(t, node)
+			assert.Nil(t, client)
+			assert.Contains(t, err.Error(), "node1: unavailable")
+			assert.Contains(t, err.Error(), tt.want)
+		})
+	}
+}
+
+func TestFindLeaderFallsBackToLeaderIDWhenMarkedLeaderUnusable(t *testing.T) {
+	tests := []struct {
+		name     string
+		memberID string
+	}{
+		{name: "unparsable member-marked leader", memberID: "node-x"},
+		{name: "unknown member-marked leader", memberID: "9"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tc := newFakeCluster(
+				&fakeClusterClient{status: &quicbaas.ClusterStatus{
+					LeaderID: "2",
+					Members:  []quicbaas.ClusterMember{{ID: tt.memberID, IsLeader: true}, {ID: "2"}},
+				}},
+				&fakeClusterClient{err: errors.New("unavailable")},
+			)
+
+			node, client, err := tc.FindLeader(context.Background())
+
+			require.NoError(t, err)
+			require.NotNil(t, node)
+			assert.Equal(t, uint64(2), node.ID)
+			assert.True(t, node.IsLeader)
+			assert.Same(t, tc.Clients[1], client)
+		})
+	}
+}
