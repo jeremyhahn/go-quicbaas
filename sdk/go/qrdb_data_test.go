@@ -15,6 +15,14 @@ package quicbaas
 
 import (
 	"context"
+	"net"
+	"time"
+
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/metadata"
+	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/types/known/emptypb"
 	"strings"
 	"sync"
 	"testing"
@@ -89,8 +97,8 @@ func TestQRDBData_ReturnsGoQRDBClients(t *testing.T) {
 	if err != nil {
 		t.Fatalf("qrdbClient(): %v", err)
 	}
-	if got, ok := data.(*QRDBClient); !ok || got != qrdb {
-		t.Fatalf("QRDBData() = %T, want the go-qrdb SDK client the QuicBaaS client carries", data)
+	if got, ok := data.(*preparedQRDBData); !ok || got.inner != QRDBDataService(qrdb) {
+		t.Fatalf("QRDBData() = %T, want the go-qrdb SDK client the QuicBaaS client carries, tenant-guarded", data)
 	}
 
 	checks := []struct {
@@ -259,8 +267,8 @@ func TestQRDBData_EveryAccessorReachesEmbeddedNode(t *testing.T) {
 		if err != nil {
 			t.Fatalf("QRDBData(): %v", err)
 		}
-		if got, ok := data.(*qrdbsdk.Client); !ok || got != node {
-			t.Fatalf("QRDBData() = %T, want the embedded node's own client", data)
+		if got, ok := data.(*preparedQRDBData); !ok || got.inner != QRDBDataService(node) {
+			t.Fatalf("QRDBData() = %T, want the embedded node's own client, tenant-guarded", data)
 		}
 
 		put := qrdbtransport.Op{Type: qrdbtransport.OpPut, Key: []byte("row1652/k"), Value: []byte("v")}
@@ -308,5 +316,147 @@ func TestQRDBData_CollectionsFailClosedWithoutNodeClient(t *testing.T) {
 	}
 	if _, err := data.Collections().ListCollections(context.Background(), "row1652db"); err == nil {
 		t.Fatal("Collections().ListCollections succeeded without the node's client, want an error")
+	}
+}
+
+// TestQRDBData_EmbeddedRefusesTenantBoundCalls proves the embedded data
+// services, which serve the node's system keyspace, refuse a call bound to
+// another tenant before it reaches the node, serve the system tenant, and
+// leave collections (registry-resolved per tenant) to the node.
+func TestQRDBData_EmbeddedRefusesTenantBoundCalls(t *testing.T) {
+	kv := &recordingKVService{}
+	batch := &reachedBatchService{}
+	txn := &reachedTransactionService{}
+	coll := &reachedCollectionService{}
+	idx := &reachedIndexService{}
+	tr, err := qrdbembedded.New(kv, stubAdminService{},
+		qrdbembedded.WithBatchService(batch),
+		qrdbembedded.WithTransactionService(txn),
+		qrdbembedded.WithMVCCService(reachedMVCCService{}),
+		qrdbembedded.WithCollectionService(coll),
+		qrdbembedded.WithIndexService(idx),
+	)
+	if err != nil {
+		t.Fatalf("embedded.New: %v", err)
+	}
+	node, err := qrdbsdk.NewClient(tr)
+	if err != nil {
+		t.Fatalf("qrdbsdk.NewClient: %v", err)
+	}
+	c := buildEmbeddedQRDBClient(t, QRDBEmbeddedServicers{KV: kv, Admin: stubAdminService{}, Data: node})
+	data, err := c.QRDBData()
+	if err != nil {
+		t.Fatalf("QRDBData(): %v", err)
+	}
+
+	if err := data.KV().Put(context.Background(), "row1652/sys", []byte("system")); err != nil {
+		t.Fatalf("system KV().Put: %v", err)
+	}
+	ctxSys := qrdbsdk.ContextWithTenant(context.Background(), qrdbsdk.SystemTenantID)
+	if got, err := data.KV().Get(ctxSys, "row1652/sys"); err != nil || string(got) != "system" {
+		t.Fatalf("system-bound KV().Get = %q, %v, want %q", got, err, "system")
+	}
+
+	ctx := qrdbsdk.ContextWithTenant(context.Background(), "row1652-tenant-b")
+	put := qrdbtransport.Op{Type: qrdbtransport.OpPut, Key: []byte("row1652/sys"), Value: []byte("b")}
+	refused := func(name string, err error) {
+		t.Helper()
+		if !sdkerrors.IsForbidden(err) {
+			t.Errorf("%s bound to another tenant: err %v, want Forbidden", name, err)
+		}
+	}
+	_, err = data.KV().Get(ctx, "row1652/sys")
+	refused("KV().Get", err)
+	refused("KV().Put", data.KV().Put(ctx, "row1652/sys", []byte("b")))
+	refused("KV().Delete", data.KV().Delete(ctx, "row1652/sys"))
+	_, err = data.Batch().ExecuteBatch(ctx, []qrdbtransport.Op{put})
+	refused("Batch().ExecuteBatch", err)
+	_, err = data.Transaction().ExecuteTransaction(ctx, &qrdbtransport.TransactionRequest{SuccessOps: []qrdbtransport.Op{put}})
+	refused("Transaction().ExecuteTransaction", err)
+	_, err = data.MVCC().CurrentRevision(ctx)
+	refused("MVCC().CurrentRevision", err)
+	_, err = data.Index().IndexList(ctx)
+	refused("Index().IndexList", err)
+	if batch.reached || txn.reached || idx.reached {
+		t.Errorf("a refused call reached the node: batch %v, transaction %v, index %v", batch.reached, txn.reached, idx.reached)
+	}
+	if got, err := kv.get("row1652/sys"); err != nil || string(got) != "system" {
+		t.Errorf("system record = %q, %v after refused writes, want %q", got, err, "system")
+	}
+
+	if _, err := data.Collections().ListCollections(ctx, "row1652db"); err != nil || coll.database != "row1652db" {
+		t.Errorf("tenant-bound Collections().ListCollections: err %v, node saw database %q", err, coll.database)
+	}
+}
+
+// TestQRDBData_GRPCCarriesBearerToken proves a client configured with
+// WithAuthToken sends the token on QRDBData() calls over gRPC: a server that
+// refuses calls without "authorization: Bearer <token>" serves them.
+func TestQRDBData_GRPCCarriesBearerToken(t *testing.T) {
+	const token = "row1652-token"
+	var mu sync.Mutex
+	var seen []string
+	srv := grpc.NewServer(grpc.UnknownServiceHandler(func(_ any, stream grpc.ServerStream) error {
+		md, _ := metadata.FromIncomingContext(stream.Context())
+		mu.Lock()
+		seen = append(seen, strings.Join(md.Get("authorization"), ","))
+		mu.Unlock()
+		if got := md.Get("authorization"); len(got) != 1 || got[0] != "Bearer "+token {
+			return status.Error(codes.Unauthenticated, "bearer token required")
+		}
+		var req emptypb.Empty
+		if err := stream.RecvMsg(&req); err != nil {
+			return err
+		}
+		return stream.SendMsg(&emptypb.Empty{})
+	}))
+	lis, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	go func() { _ = srv.Serve(lis) }()
+	t.Cleanup(srv.Stop)
+
+	newData := func(t *testing.T, opts ...Option) QRDBDataService {
+		t.Helper()
+		c := &client{opts: defaultOptions(), address: lis.Addr().String()}
+		for _, o := range opts {
+			o(c.opts)
+		}
+		t.Cleanup(func() { _ = c.Close() })
+		data, err := c.QRDBData()
+		if err != nil {
+			t.Fatalf("QRDBData(): %v", err)
+		}
+		return data
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	if err := newData(t).KV().Put(ctx, "row1652/k", []byte("v")); err == nil {
+		t.Fatal("anonymous KV().Put succeeded against a server that requires a bearer token")
+	}
+	data := newData(t, WithAuthToken(token))
+	if err := data.KV().Put(ctx, "row1652/k", []byte("v")); err != nil {
+		t.Fatalf("bearer-authenticated KV().Put: %v (server saw %q)", err, seen)
+	}
+	if _, err := data.Collections().ListCollections(ctx, "row1652db"); err != nil {
+		t.Fatalf("bearer-authenticated Collections().ListCollections: %v (server saw %q)", err, seen)
+	}
+}
+
+// TestQRDBData_RefusesBearerOnTransportsWithoutSeam proves a client with an
+// auth token on a transport whose go-qrdb client cannot carry it gets an
+// error, not a data service that would call anonymously.
+func TestQRDBData_RefusesBearerOnTransportsWithoutSeam(t *testing.T) {
+	for _, tt := range []TransportType{TransportREST, TransportQUIC, TransportMCP} {
+		c := &client{opts: defaultOptions(), address: "127.0.0.1:1"}
+		c.opts.transportType = tt
+		WithAuthToken("row1652-token")(c.opts)
+		data, err := c.QRDBData()
+		if !sdkerrors.IsUnimplemented(err) || data != nil {
+			t.Errorf("transport %v: QRDBData() = %v, %v, want a nil service and Unimplemented", tt, data, err)
+		}
+		_ = c.Close()
 	}
 }
