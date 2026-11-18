@@ -135,11 +135,7 @@ go-objstore owns all object storage, buckets and multipart included. go-quicbaas
 
 ### Composition clean-up
 
-Configuration left from the withdrawn topology in which go-quicbaas reached a separate go-qrdb daemon. The row is removed when the departure is.
-
-| # | Departure | Where | Replaced by |
-|---|---|---|---|
-| C1 | The dead `qrdb.transport` setting (`QUICBAAS_QRDB_TRANSPORT`) and its `qrdb.address`, `qrdb.unix_socket_path` and `qrdb.tls_*` keys, which offer `grpc`, `rest`, `quic`, `mcp` and `unix` transports to a remote go-qrdb. Nothing reads it to pick a transport: outside tests nothing calls `NewShardedClient`, the one path that hands it to the transport factory, and the server builds its qrdb clients (`newNodeBackedShardedClient`, the sealed-window client) on a fixed embedded config | `pkg/config/config.go` (`QRDBConfig`, the `QRDBTransport*` constants), `pkg/config/defaults.go` (`DefaultQRDBConfig`), `pkg/server/sharded_client.go` (`NewShardedClient`, `WithTransportConfig`), the network branch of `pkg/server/transport_factory.go` | Nothing: removed in a later change ([#1617](../../../issues/1617)) with a release note; no code this week |
+Configuration left from the withdrawn topology in which go-quicbaas reached a separate go-qrdb daemon. Its one row, C1 (the dead `qrdb.transport` setting), has landed ([#1617](../../../issues/1617)): the `qrdb:` block is removed and a config that carries it is refused.
 
 ## Interfaces
 

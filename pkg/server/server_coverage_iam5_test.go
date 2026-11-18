@@ -233,7 +233,7 @@ func TestServer_Shutdown_TraversesMessagingBranch(t *testing.T) {
 
 func TestServer_Shutdown_TraversesQRDBClient(t *testing.T) {
 	srv := withTempServer(t)
-	srv.qrdbClient = NewShardedClient(nil)
+	srv.qrdbClient = newDetachedShardedClient()
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -261,36 +261,6 @@ func TestServer_Shutdown_TraversesEmbeddedDialerRegistry(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	require.NoError(t, srv.Shutdown(ctx))
-}
-
-// =============================================================================
-// transport_factory.go — createNetworkClient validation branches
-// =============================================================================
-
-func TestShardedClient_ForShard_GRPCMissingAddressReturnsTypedError(t *testing.T) {
-	sc := NewShardedClient(nil, WithTransportConfig(&config.QRDBConfig{
-		Transport: "grpc",
-		Address:   "", // explicitly empty to drive the validation error
-	}))
-	t.Cleanup(func() { _ = sc.Close() })
-
-	_, err := sc.ForShard(1)
-	require.Error(t, err)
-	var typedErr *NetworkTransportMissingAddressError
-	assert.ErrorAs(t, err, &typedErr)
-}
-
-func TestShardedClient_ForShard_UnixMissingSocketReturnsTypedError(t *testing.T) {
-	sc := NewShardedClient(nil, WithTransportConfig(&config.QRDBConfig{
-		Transport:      "unix",
-		UnixSocketPath: "",
-	}))
-	t.Cleanup(func() { _ = sc.Close() })
-
-	_, err := sc.ForShard(1)
-	require.Error(t, err)
-	var typedErr *UnixTransportMissingSocketError
-	assert.ErrorAs(t, err, &typedErr)
 }
 
 // =============================================================================
