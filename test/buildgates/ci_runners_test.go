@@ -191,23 +191,75 @@ func readonlyFlags(flags string) bool {
 }
 
 // stepHostedOnly: the step's if: keeps it off the pool, with hostedOnly as a
-// top-level && conjunct of an if: that holds no ||.
+// top-level && conjunct (outside every parenthesis, so not inside a negated
+// or compared group) of an if: that holds no ||.
 func stepHostedOnly(step *yaml.Node) bool {
 	cond := mapValue(step, "if")
 	if cond == nil {
 		return false
 	}
 	c := strings.TrimSpace(cond.Value)
-	c = strings.TrimSuffix(strings.TrimPrefix(c, "${{"), "}}")
+	c = strings.TrimSpace(strings.TrimSuffix(strings.TrimPrefix(c, "${{"), "}}"))
 	if strings.Contains(c, "||") {
 		return false
 	}
-	for _, part := range strings.Split(c, "&&") {
-		if strings.Trim(strings.TrimSpace(part), "() ") == hostedOnly {
+	for _, part := range topLevelAnd(c) {
+		if unwrapParens(part) == hostedOnly {
 			return true
 		}
 	}
 	return false
+}
+
+// topLevelAnd splits an expression at the && outside every parenthesis;
+// unbalanced parentheses yield no parts.
+func topLevelAnd(c string) []string {
+	var parts []string
+	depth, start := 0, 0
+	for i := 0; i < len(c); i++ {
+		switch {
+		case c[i] == '(':
+			depth++
+		case c[i] == ')':
+			depth--
+			if depth < 0 {
+				return nil
+			}
+		case depth == 0 && strings.HasPrefix(c[i:], "&&"):
+			parts = append(parts, c[start:i])
+			start = i + 2
+			i++
+		}
+	}
+	if depth != 0 {
+		return nil
+	}
+	return append(parts, c[start:])
+}
+
+// unwrapParens trims a part and the parentheses that enclose all of it.
+func unwrapParens(p string) string {
+	p = strings.TrimSpace(p)
+	for strings.HasPrefix(p, "(") && strings.HasSuffix(p, ")") {
+		inner := p[1 : len(p)-1]
+		depth, ok := 0, true
+		for _, r := range inner {
+			if r == '(' {
+				depth++
+			} else if r == ')' {
+				depth--
+				if depth < 0 {
+					ok = false
+					break
+				}
+			}
+		}
+		if !ok || depth != 0 {
+			break
+		}
+		p = strings.TrimSpace(inner)
+	}
+	return p
 }
 
 // firstCommand is a script's first line that is not blank, a comment or a
@@ -397,6 +449,9 @@ func TestRunnerProblems_Mutations(t *testing.T) {
 			j := strings.Index(b[i:], "          GOWORK: 'off'\n") + i
 			return b[:j] + "          GONOPROXY: github.com/x\n" + b[j:]
 		}, "sets GONOPROXY"},
+		{"a hosted term inside a negated group does not keep a download off the pool", func(b string) string {
+			return strings.Replace(b, "      - name: make coverage-shard (bigdisk pool, native)\n", "      - name: Fetch\n        if: ${{ !(failure() && runner.environment == 'github-hosted') }}\n        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0\n      - name: make coverage-shard (bigdisk pool, native)\n", 1)
+		}, "downloads from GitHub's storage"},
 		{"a hosted term under || does not keep a download off the pool", func(b string) string {
 			return strings.Replace(b, "      - name: make coverage-shard (bigdisk pool, native)\n", "      - name: Fetch\n        if: runner.environment == 'github-hosted' || true\n        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0\n      - name: make coverage-shard (bigdisk pool, native)\n", 1)
 		}, "downloads from GitHub's storage"},
