@@ -641,10 +641,19 @@ func (c *client) buildQRDBTransport() (qrdbtransport.Transport, error) {
 // Streamable HTTP endpoint URL, path included. Unix is resolved separately by
 // buildQRDBUnixTransport, which chooses between the gRPC and unix transports
 // on TLS posture, so it keeps the socket path verbatim here.
+//
+// QUIC always uses TLS, even for an explicit http:// address: the leading
+// http:// is stripped so the origin is always https://, and a secret-bearing
+// call such as BarrierUnseal never goes out as plaintext HTTP.
 func qrdbSubClientAddress(transportType TransportType, address string, tlsConfigured bool) string {
 	switch transportType {
-	case TransportREST, TransportQUIC:
+	case TransportREST:
 		return qbtransport.HTTPBaseURL(address, tlsConfigured)
+	case TransportQUIC:
+		if len(address) >= len("http://") && strings.EqualFold(address[:len("http://")], "http://") {
+			address = address[len("http://"):]
+		}
+		return qbtransport.HTTPBaseURL(address, true)
 	case TransportMCP:
 		return qbtransport.HTTPEndpoint(address, tlsConfigured, qbmcp.MCPEndpointPath)
 	default:
