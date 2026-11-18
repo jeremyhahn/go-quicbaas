@@ -46,7 +46,12 @@ const (
 	splitTail = `'), matrix.shard) && ` + samePoolEvents + ` && fromJSON('["self-hosted","linux","x64","bigdisk"]') || '` + hostedRunner + `' }}`
 	// splitJob is the matrix job that overflows to the pool.
 	splitJob = "unit"
+	// hostedOnly is the if: term that keeps a step off the pool.
+	hostedOnly = "runner.environment == 'github-hosted'"
 )
+
+// wanActions download from GitHub's artifact and cache storage.
+var wanActions = []string{"actions/download-artifact@", "actions/cache@", "actions/cache/restore@"}
 
 // releaseJobs keep the runner their own workflow names: publish-images runs
 // on Gitea's release label and on hostedRunner on github.com.
@@ -144,6 +149,37 @@ func splitProblems(job *yaml.Node, runsOn, waiver string) []string {
 	if !short {
 		problems = append(problems, where+" has no short per-job temp step that sets both TMPDIR and GOTMPDIR: on the pool, GOTMPDIR (_work/_temp) wins for t.TempDir and Unix socket paths overflow")
 	}
+	problems = append(problems, poolWANProblems(job, where)...)
+	return problems
+}
+
+// poolWANProblems: ruling 862. A pool host's downloads cross the owner's WAN
+// unless they come from the LAN, so a step that can run on the pool (its if:
+// does not keep it to github-hosted) fetches no build artifact or cache from
+// GitHub's storage and keeps the pool's module proxy: the runner sets
+// GOPROXY with the LAN proxy first, and a step that sets its own sends every
+// module download over the WAN.
+func poolWANProblems(job *yaml.Node, where string) []string {
+	var problems []string
+	for _, step := range mapValue(job, "steps").Content {
+		if cond := mapValue(step, "if"); cond != nil && strings.Contains(cond.Value, hostedOnly) {
+			continue
+		}
+		name := "a step"
+		if n := mapValue(step, "name"); n != nil {
+			name = strconv.Quote(n.Value)
+		}
+		if uses := mapValue(step, "uses"); uses != nil {
+			for _, a := range wanActions {
+				if strings.HasPrefix(uses.Value, a) {
+					problems = append(problems, where+"'s "+name+" can run on the pool and uses "+a+", which downloads from GitHub's storage over the WAN (ruling 862)")
+				}
+			}
+		}
+		if mapValue(mapValue(step, "env"), "GOPROXY") != nil {
+			problems = append(problems, where+"'s "+name+" can run on the pool and sets GOPROXY, which replaces the pool's LAN-first module proxy with a WAN one (ruling 862)")
+		}
+	}
 	return problems
 }
 
@@ -222,6 +258,14 @@ func TestRunnerProblems_Mutations(t *testing.T) {
 			return replaceJobRunner(t, b, "coverage", "[self-hosted, linux, x64, bigdisk]")
 		}, "job coverage runs on"},
 		{"native shard step removed", func(b string) string { return dropNativeShardStep(t, b) }, "a pool shard would run nothing"},
+		{"a pool step sets GOPROXY", func(b string) string {
+			i := strings.Index(b, "      - name: make coverage-shard (bigdisk pool, native)\n")
+			j := strings.Index(b[i:], "          GOWORK: 'off'\n") + i
+			return b[:j] + "          GOPROXY: https://proxy.golang.org\n" + b[j:]
+		}, "sets GOPROXY"},
+		{"a pool step downloads an artifact", func(b string) string {
+			return strings.Replace(b, "      - name: make coverage-shard (bigdisk pool, native)\n", "      - name: Fetch\n        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0\n      - name: make coverage-shard (bigdisk pool, native)\n", 1)
+		}, "downloads from GitHub's storage"},
 		{"short temp step leaves GOTMPDIR", func(b string) string {
 			return strings.Replace(b, `echo "GOTMPDIR=$d" >> "$GITHUB_ENV"`+"\n", "", 1)
 		}, "sets both TMPDIR and GOTMPDIR"},

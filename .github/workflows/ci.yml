@@ -1409,11 +1409,12 @@ jobs:
       - name: make coverage-shard (bigdisk pool, native)
         if: ${{ !cancelled() && runner.environment == 'self-hosted' && env.DOCS_ONLY != 'true' }}
         # The toolchain image's module settings (Dockerfile ENV), except that
-        # modules come from proxy.golang.org instead of the image's offline cache.
+        # modules come from the pool's module proxy (the runner's GOPROXY, the LAN
+        # proxy first) instead of the image's offline cache: a public GOPROXY here
+        # sends every module download over the WAN (ruling 862).
         env:
           GOFLAGS: -mod=readonly
           GOWORK: 'off'
-          GOPROXY: https://proxy.golang.org
         run: |
           profile="coverage-shard-$SHARD-of-$UNIT_SHARDS.out"
           make coverage-shard SHARD="$SHARD" SHARDS="$UNIT_SHARDS" RACE_TIMEOUT="$RACE_TIMEOUT" GO_BUILD_TAGS="$GO_BUILD_TAGS"
@@ -1526,11 +1527,12 @@ jobs:
       - name: make coverage-merge (the threshold; bigdisk pool, native)
         if: ${{ !cancelled() && runner.environment == 'self-hosted' && env.DOCS_ONLY != 'true' }}
         # The toolchain image's module settings (Dockerfile ENV), except that
-        # modules come from proxy.golang.org instead of the image's offline cache.
+        # modules come from the pool's module proxy (the runner's GOPROXY, the LAN
+        # proxy first) instead of the image's offline cache: a public GOPROXY here
+        # sends every module download over the WAN (ruling 862).
         env:
           GOFLAGS: -mod=readonly
           GOWORK: 'off'
-          GOPROXY: https://proxy.golang.org
         run: make coverage-merge SHARDS="$UNIT_SHARDS" COVERAGE_THRESHOLD="$COVERAGE_THRESHOLD"
 
       - name: Tear down
@@ -1629,11 +1631,12 @@ jobs:
       - name: make coverage-passes (bigdisk pool, native)
         if: ${{ !cancelled() && runner.environment == 'self-hosted' && env.DOCS_ONLY != 'true' }}
         # The toolchain image's module settings (Dockerfile ENV), except that
-        # modules come from proxy.golang.org instead of the image's offline cache.
+        # modules come from the pool's module proxy (the runner's GOPROXY, the LAN
+        # proxy first) instead of the image's offline cache: a public GOPROXY here
+        # sends every module download over the WAN (ruling 862).
         env:
           GOFLAGS: -mod=readonly
           GOWORK: 'off'
-          GOPROXY: https://proxy.golang.org
         run: make coverage-passes GO_BUILD_TAGS="$GO_BUILD_TAGS"
 
       - name: Tear down
