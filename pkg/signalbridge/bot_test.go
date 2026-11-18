@@ -406,8 +406,13 @@ func TestBot_DoubleRun(t *testing.T) {
 		t.Fatalf("want conflict got %v", err)
 	}
 	_ = bot.Stop()
-	if err := <-firstRun; err != nil {
-		t.Fatalf("first run: %v", err)
+	select {
+	case err := <-firstRun:
+		if err != nil {
+			t.Fatalf("first run: %v", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("first Run did not return after Stop")
 	}
 	close(signal.in)
 }
