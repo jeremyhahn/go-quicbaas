@@ -174,10 +174,26 @@ func TestStorageRootfsStore_CreateFromAMissingImage(t *testing.T) {
 	require.Error(t, err)
 }
 
-func TestStorageRootfsStore_RemoveOfAMissingContainer(t *testing.T) {
+// A reclaim that removed the rootfs and then died before deleting its bundle
+// retries the removal on the next start. The production store reports the
+// container's absence on unmount as an unknown layer, and the retry must read
+// that as done, or the bundle stays forever and every start fails its sweep.
+func TestStorageRootfsStore_RemoveIsRetrySafe(t *testing.T) {
+	ctx := context.Background()
 	b := newStorageBackends(t)
+	require.NoError(t, b.rootfs.Remove("never-created"))
+	if os.Geteuid() != 0 {
+		t.Skip("creating a read-write layer chowns it, which needs root")
+	}
+	images, ok := b.images.(*storageImageStore)
+	require.True(t, ok)
+	stored, err := images.store.CreateImage("", []string{"docker.io/library/empty:latest"}, "", "", nil)
+	require.NoError(t, err)
 
-	require.Error(t, b.rootfs.Remove("no-such-container"))
+	_, err = b.rootfs.Create(ctx, "reclaimed", stored.ID)
+	require.NoError(t, err)
+	require.NoError(t, b.rootfs.Remove("reclaimed"))
+	require.NoError(t, b.rootfs.Remove("reclaimed"), "the retried removal")
 }
 
 func TestNormalizeImageReference(t *testing.T) {

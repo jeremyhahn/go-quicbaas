@@ -45,6 +45,7 @@ require (
 	github.com/moby/sys/user v0.5.0
 	github.com/mochi-mqtt/server/v2 v2.7.9
 	github.com/modelcontextprotocol/go-sdk v1.8.0
+	github.com/opencontainers/cgroups v0.1.0
 	github.com/opencontainers/go-digest v1.0.0
 	github.com/opencontainers/image-spec v1.1.1
 	github.com/opencontainers/runc v1.5.2
@@ -145,6 +146,7 @@ require (
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/checkpoint-restore/go-criu/v8 v8.3.0 // indirect
 	github.com/chewxy/math32 v1.10.1 // indirect
+	github.com/cilium/ebpf v0.17.3 // indirect
 	github.com/clipperhouse/uax29/v2 v2.7.0 // indirect
 	github.com/cloudflare/circl v1.6.3 // indirect
 	github.com/cloudwego/base64x v0.1.7 // indirect
@@ -270,7 +272,6 @@ require (
 	github.com/modern-go/reflect2 v1.0.3-0.20250322232337-35a7c28c31ee // indirect
 	github.com/mrunalp/fileutils v0.5.1 // indirect
 	github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822 // indirect
-	github.com/opencontainers/cgroups v0.1.0 // indirect
 	github.com/opencontainers/selinux v1.15.1 // indirect
 	github.com/philhofer/fwd v1.2.0 // indirect
 	github.com/pingcap/errors v0.11.5-0.20211224045212-9687c2b0f87c // indirect

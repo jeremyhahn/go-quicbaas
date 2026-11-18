@@ -25,6 +25,10 @@ import (
 	"syscall"
 	"time"
 
+	// devices fills the cgroup managers' device hooks in its init. specconv
+	// gives every container default device rules, which both managers refuse
+	// while the hooks are nil.
+	_ "github.com/opencontainers/cgroups/devices"
 	"github.com/opencontainers/runc/libcontainer"
 	"github.com/opencontainers/runc/libcontainer/specconv"
 	"github.com/opencontainers/runc/libcontainer/utils"
