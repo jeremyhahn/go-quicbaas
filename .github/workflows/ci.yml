@@ -1387,6 +1387,7 @@ jobs:
       matrix:
         shard: [0, 1, 2, 3]   # CUSTOMIZE: 0..UNIT_SHARDS-1
     env:
+      GOFLAGS: -mod=readonly   # ruling 869: modules are never rewritten on the pool
       DOCS_ONLY: ${{ needs.preflight.outputs.docs_only }}
       CI_STACK_PREFIX: ${{ github.event.repository.name }}-ci-
       CI_CACHE_CLASS: ${{ github.event_name == 'push' && 'main' || 'pr' }}
@@ -1478,6 +1479,7 @@ jobs:
           GOFLAGS: -mod=readonly
           GOWORK: 'off'
         run: |
+          scripts/ci-go-integrity.sh
           profile="coverage-shard-$SHARD-of-$UNIT_SHARDS.out"
           make coverage-shard SHARD="$SHARD" SHARDS="$UNIT_SHARDS" RACE_TIMEOUT="$RACE_TIMEOUT" GO_BUILD_TAGS="$GO_BUILD_TAGS"
           cp "coverage/$profile" "$profile"
