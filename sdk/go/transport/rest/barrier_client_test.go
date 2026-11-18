@@ -2,6 +2,7 @@ package rest
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"sync"
@@ -161,4 +162,122 @@ func TestBarrierClient_MethodPathAndBearer(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestBarrierClient_EmptyResponseIsAnError checks that every barrier verb
+// that returns a value refuses an empty 200 or 204 body instead of
+// returning a zero value with no error (go-quicbaas#2538): a zero
+// BarrierStatusResponse would report Sealed=false for a server that said
+// nothing. A verb that returns only an error still accepts an empty body.
+func TestBarrierClient_EmptyResponseIsAnError(t *testing.T) {
+	ctx := context.Background()
+
+	valued := []struct {
+		name string
+		call func(b *BarrierClient) error
+	}{
+		{"BarrierStatus", func(b *BarrierClient) error {
+			_, err := b.BarrierStatus(ctx)
+			return err
+		}},
+		{"BarrierInitializeShamir", func(b *BarrierClient) error {
+			_, err := b.BarrierInitializeShamir(ctx, &qrdbtransport.BarrierInitializeShamirRequest{})
+			return err
+		}},
+		{"BarrierUnsealWithShare", func(b *BarrierClient) error {
+			_, err := b.BarrierUnsealWithShare(ctx, &qrdbtransport.BarrierUnsealShareRequest{})
+			return err
+		}},
+		{"BarrierRekey", func(b *BarrierClient) error {
+			_, err := b.BarrierRekey(ctx, &qrdbtransport.BarrierRekeyRequest{})
+			return err
+		}},
+		{"BarrierEnableEncryption", func(b *BarrierClient) error {
+			_, err := b.BarrierEnableEncryption(ctx, &qrdbtransport.BarrierEnableEncryptionRequest{})
+			return err
+		}},
+		{"BarrierGenerateRecoveryKeys", func(b *BarrierClient) error {
+			_, err := b.BarrierGenerateRecoveryKeys(ctx, &qrdbtransport.BarrierGenerateRecoveryKeysRequest{})
+			return err
+		}},
+		{"BarrierHasRecoveryKeys", func(b *BarrierClient) error {
+			_, err := b.BarrierHasRecoveryKeys(ctx)
+			return err
+		}},
+		{"BarrierGenerateRootToken", func(b *BarrierClient) error {
+			_, err := b.BarrierGenerateRootToken(ctx, &qrdbtransport.BarrierGenerateRootTokenRequest{})
+			return err
+		}},
+		{"OfficerRegister", func(b *BarrierClient) error {
+			_, err := b.OfficerRegister(ctx, &qrdbtransport.OfficerRegisterRequest{Username: "so1"})
+			return err
+		}},
+		{"OfficerList", func(b *BarrierClient) error {
+			_, err := b.OfficerList(ctx)
+			return err
+		}},
+		{"OfficerClaimStatus", func(b *BarrierClient) error {
+			_, err := b.OfficerClaimStatus(ctx)
+			return err
+		}},
+		{"ShareClaimBegin", func(b *BarrierClient) error {
+			_, err := b.ShareClaimBegin(ctx, &qrdbtransport.ShareClaimBeginRequest{Username: "so1"})
+			return err
+		}},
+		{"ShareClaimComplete", func(b *BarrierClient) error {
+			_, err := b.ShareClaimComplete(ctx, &qrdbtransport.ShareClaimCompleteRequest{Username: "so1"})
+			return err
+		}},
+		{"ShamirSealVote", func(b *BarrierClient) error {
+			_, err := b.ShamirSealVote(ctx, &qrdbtransport.ShamirSealVoteRequest{})
+			return err
+		}},
+		{"RecoveryOfficerRegister", func(b *BarrierClient) error {
+			_, err := b.RecoveryOfficerRegister(ctx, &qrdbtransport.OfficerRegisterRequest{Username: "ro1"})
+			return err
+		}},
+		{"RecoveryShareClaimBegin", func(b *BarrierClient) error {
+			_, err := b.RecoveryShareClaimBegin(ctx, &qrdbtransport.ShareClaimBeginRequest{Username: "ro1"})
+			return err
+		}},
+		{"RecoveryShareClaimComplete", func(b *BarrierClient) error {
+			_, err := b.RecoveryShareClaimComplete(ctx, &qrdbtransport.ShareClaimCompleteRequest{Username: "ro1"})
+			return err
+		}},
+	}
+
+	emptyBarrier := func(t *testing.T, status int) *BarrierClient {
+		t.Helper()
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path == "/health" {
+				w.WriteHeader(http.StatusOK)
+				return
+			}
+			w.WriteHeader(status)
+		}))
+		t.Cleanup(srv.Close)
+
+		tr, err := New(&transport.Config{Address: srv.URL, MaxRetries: 0})
+		if err != nil {
+			t.Fatalf("New: %v", err)
+		}
+		t.Cleanup(func() { _ = tr.Close() })
+		return tr.Barrier()
+	}
+
+	for _, status := range []int{http.StatusOK, http.StatusNoContent} {
+		for _, tc := range valued {
+			t.Run(fmt.Sprintf("%s/%d", tc.name, status), func(t *testing.T) {
+				if err := tc.call(emptyBarrier(t, status)); err == nil {
+					t.Fatalf("%s on an empty %d body: got nil error, want an error", tc.name, status)
+				}
+			})
+		}
+	}
+
+	t.Run("BarrierUnseal/204", func(t *testing.T) {
+		if err := emptyBarrier(t, http.StatusNoContent).BarrierUnseal(ctx, &qrdbtransport.BarrierUnsealRequest{}); err != nil {
+			t.Fatalf("BarrierUnseal on an empty 204 body: %v", err)
+		}
+	})
 }
