@@ -1653,10 +1653,12 @@ func TestPool_ReplaceConnection(t *testing.T) {
 
 	p.Put(conn)
 
-	time.Sleep(50 * time.Millisecond)
-
-	if !p.Healthy() {
-		t.Error("expected pool to be healthy after replacement")
+	deadline := time.Now().Add(5 * time.Second)
+	for !p.Healthy() {
+		if time.Now().After(deadline) {
+			t.Fatal("expected pool to be healthy after replacement")
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 }
 
