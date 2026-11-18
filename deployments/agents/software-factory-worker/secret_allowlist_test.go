@@ -174,6 +174,30 @@ func TestSecretFindings_TheAllowlistedPathWithOtherContentFails(t *testing.T) {
 	}
 }
 
+// A symlink in a parent directory must not lead the checker outside the scan
+// root: <root>/19/usr points at a directory elsewhere that holds the pinned key,
+// so the target's final component is a regular file, yet it is not under root.
+func TestSecretFindings_ASymlinkedParentDirectoryFails(t *testing.T) {
+	key := goTestKey(t)
+	outside := t.TempDir()
+	placeFile(t, outside, "local/go/src/crypto/x509/platform_root_key.pem", key)
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "19"), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(root, "19", "usr")); err != nil {
+		t.Fatal(err)
+	}
+	target := "19/" + allowedGoTestKeyPath
+	code, out := runSecretFindings(t, writeTrivyReport(t, target), root)
+	if code == 0 {
+		t.Fatalf("a finding reached through a symlinked parent directory exited 0:\n%s", out)
+	}
+	if !strings.Contains(out, "::error::") || !strings.Contains(out, target) {
+		t.Errorf("output has no ::error:: line naming %q:\n%s", target, out)
+	}
+}
+
 func TestSecretFindings_AnyOtherFindingFails(t *testing.T) {
 	root := t.TempDir()
 	placeFile(t, root, "3/etc/key.pem", []byte(otherFindingContent))
