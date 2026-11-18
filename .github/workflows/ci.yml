@@ -1395,11 +1395,14 @@ jobs:
       # A per-job TMPDIR (go-xkms #2183): the runner's _work/_temp made t.TempDir
       # Unix socket paths overflow sun_path, and runner units on one host share
       # /tmp, so each job takes its own /tmp/XXXXXX and removes it in its last step.
+      # GOTMPDIR too: the pool sets it to _work/_temp, and Go 1.27's t.TempDir
+      # uses GOTMPDIR whenever it is set, ahead of TMPDIR.
       - name: Per-job short TMPDIR (native)
         if: ${{ runner.environment == 'self-hosted' }}
         run: |
           d="$(mktemp -d /tmp/XXXXXX)"
           echo "TMPDIR=$d" >> "$GITHUB_ENV"
+          echo "GOTMPDIR=$d" >> "$GITHUB_ENV"
 
       # The same target natively. It writes coverage/<profile>; the upload
       # below reads the profile at the top level, where the hosted step puts it.
@@ -1614,11 +1617,14 @@ jobs:
       # A per-job TMPDIR (go-xkms #2183): the runner's _work/_temp made t.TempDir
       # Unix socket paths overflow sun_path, and runner units on one host share
       # /tmp, so each job takes its own /tmp/XXXXXX and removes it in its last step.
+      # GOTMPDIR too: the pool sets it to _work/_temp, and Go 1.27's t.TempDir
+      # uses GOTMPDIR whenever it is set, ahead of TMPDIR.
       - name: Per-job short TMPDIR (native)
         if: ${{ runner.environment == 'self-hosted' }}
         run: |
           d="$(mktemp -d /tmp/XXXXXX)"
           echo "TMPDIR=$d" >> "$GITHUB_ENV"
+          echo "GOTMPDIR=$d" >> "$GITHUB_ENV"
 
       - name: make coverage-passes (bigdisk pool, native)
         if: ${{ !cancelled() && runner.environment == 'self-hosted' && env.DOCS_ONLY != 'true' }}

@@ -129,6 +129,21 @@ func splitProblems(job *yaml.Node, runsOn, waiver string) []string {
 	if !native {
 		problems = append(problems, where+" has no `make coverage-shard` step for runner.environment == 'self-hosted': a pool shard would run nothing")
 	}
+	// A pool shard's t.TempDir socket paths overflow sun_path under the
+	// runner's _work/_temp, so the job takes a short per-job directory. Go
+	// 1.27's t.TempDir uses GOTMPDIR whenever it is set, and the pool sets
+	// it to _work/_temp, so the step must point both at the short directory.
+	var short bool
+	for _, step := range mapValue(job, "steps").Content {
+		run := mapValue(step, "run")
+		if run != nil && strings.Contains(run.Value, "mktemp -d /tmp/") &&
+			strings.Contains(run.Value, `echo "TMPDIR=$d"`) && strings.Contains(run.Value, `echo "GOTMPDIR=$d"`) {
+			short = true
+		}
+	}
+	if !short {
+		problems = append(problems, where+" has no short per-job temp step that sets both TMPDIR and GOTMPDIR: on the pool, GOTMPDIR (_work/_temp) wins for t.TempDir and Unix socket paths overflow")
+	}
 	return problems
 }
 
@@ -207,6 +222,9 @@ func TestRunnerProblems_Mutations(t *testing.T) {
 			return replaceJobRunner(t, b, "coverage", "[self-hosted, linux, x64, bigdisk]")
 		}, "job coverage runs on"},
 		{"native shard step removed", func(b string) string { return dropNativeShardStep(t, b) }, "a pool shard would run nothing"},
+		{"short temp step leaves GOTMPDIR", func(b string) string {
+			return strings.Replace(b, `echo "GOTMPDIR=$d" >> "$GITHUB_ENV"`+"\n", "", 1)
+		}, "sets both TMPDIR and GOTMPDIR"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			mutated := c.mutate(body)
