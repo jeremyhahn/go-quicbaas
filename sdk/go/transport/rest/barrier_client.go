@@ -2,9 +2,12 @@ package rest
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 
 	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
+
+	"github.com/jeremyhahn/go-quicbaas/sdk/go/errors"
 )
 
 // BarrierClient serves the qrdb barrier verbs over the SDK's own REST
@@ -27,6 +30,37 @@ var _ qrdbtransport.BarrierClient = (*BarrierClient)(nil)
 // Barrier returns the barrier client bound to this transport.
 func (t *Transport) Barrier() *BarrierClient {
 	return &BarrierClient{t: t}
+}
+
+// doJSONResult sends a barrier request whose verb returns a value and
+// decodes the response into result. Unlike Transport.doJSONRequest, which
+// leaves result untouched on an empty body, it refuses an empty response:
+// a zero value (a BarrierStatusResponse with Sealed=false, an empty officer
+// list) would report a state the server never sent (go-quicbaas#2538).
+func (b *BarrierClient) doJSONResult(ctx context.Context, method, path string, reqBody, result any) error {
+	var body []byte
+	if reqBody != nil {
+		data, err := json.Marshal(reqBody)
+		if err != nil {
+			return errors.Wrap(err, errors.CodeInvalidInput, "rest.BarrierClient",
+				"failed to encode request body")
+		}
+		body = data
+	}
+
+	resp, err := b.t.doRawRequest(ctx, method, path, body, nil)
+	if err != nil {
+		return err
+	}
+	if len(resp.Body) == 0 {
+		return errors.New(errors.CodeInternal, "rest.BarrierClient",
+			"empty response from "+path)
+	}
+	if err := json.Unmarshal(resp.Body, result); err != nil {
+		return errors.Wrap(err, errors.CodeInternal, "rest.BarrierClient",
+			"failed to decode response")
+	}
+	return nil
 }
 
 // officerRegisterWireRequest is the REST wire shape of an officer
@@ -87,7 +121,7 @@ func (b *BarrierClient) BarrierSeal(ctx context.Context) error {
 // BarrierStatus maps to GET /v1/barrier/status.
 func (b *BarrierClient) BarrierStatus(ctx context.Context) (*qrdbtransport.BarrierStatusResponse, error) {
 	var resp qrdbtransport.BarrierStatusResponse
-	if err := b.t.doJSONRequest(ctx, http.MethodGet, "/v1/barrier/status", nil, &resp); err != nil {
+	if err := b.doJSONResult(ctx, http.MethodGet, "/v1/barrier/status", nil, &resp); err != nil {
 		return nil, err
 	}
 	return &resp, nil
@@ -103,7 +137,7 @@ func (b *BarrierClient) BarrierInitializeShamir(ctx context.Context, req *qrdbtr
 	body.SOPin = soPIN
 
 	var resp qrdbtransport.BarrierInitializeShamirResponse
-	if err := b.t.doJSONRequest(ctx, http.MethodPost, "/v1/barrier/shamir/initialize", &body, &resp); err != nil {
+	if err := b.doJSONResult(ctx, http.MethodPost, "/v1/barrier/shamir/initialize", &body, &resp); err != nil {
 		return nil, err
 	}
 	return &resp, nil
@@ -112,7 +146,7 @@ func (b *BarrierClient) BarrierInitializeShamir(ctx context.Context, req *qrdbtr
 // BarrierUnsealWithShare maps to POST /v1/barrier/shamir/unseal-share.
 func (b *BarrierClient) BarrierUnsealWithShare(ctx context.Context, req *qrdbtransport.BarrierUnsealShareRequest) (*qrdbtransport.BarrierUnsealShareResponse, error) {
 	var resp qrdbtransport.BarrierUnsealShareResponse
-	if err := b.t.doJSONRequest(ctx, http.MethodPost, "/v1/barrier/shamir/unseal-share", req, &resp); err != nil {
+	if err := b.doJSONResult(ctx, http.MethodPost, "/v1/barrier/shamir/unseal-share", req, &resp); err != nil {
 		return nil, err
 	}
 	return &resp, nil
@@ -133,7 +167,7 @@ func (b *BarrierClient) BarrierRekey(ctx context.Context, req *qrdbtransport.Bar
 	body.SOPin = soPIN
 
 	var resp qrdbtransport.BarrierRekeyResponse
-	if err := b.t.doJSONRequest(ctx, http.MethodPost, "/v1/barrier/rekey", &body, &resp); err != nil {
+	if err := b.doJSONResult(ctx, http.MethodPost, "/v1/barrier/rekey", &body, &resp); err != nil {
 		return nil, err
 	}
 	return &resp, nil
@@ -142,7 +176,7 @@ func (b *BarrierClient) BarrierRekey(ctx context.Context, req *qrdbtransport.Bar
 // BarrierEnableEncryption maps to POST /v1/barrier/enable-encryption.
 func (b *BarrierClient) BarrierEnableEncryption(ctx context.Context, req *qrdbtransport.BarrierEnableEncryptionRequest) (*qrdbtransport.BarrierEnableEncryptionResponse, error) {
 	var resp qrdbtransport.BarrierEnableEncryptionResponse
-	if err := b.t.doJSONRequest(ctx, http.MethodPost, "/v1/barrier/enable-encryption", req, &resp); err != nil {
+	if err := b.doJSONResult(ctx, http.MethodPost, "/v1/barrier/enable-encryption", req, &resp); err != nil {
 		return nil, err
 	}
 	return &resp, nil
@@ -158,7 +192,7 @@ func (b *BarrierClient) BarrierGenerateRecoveryKeys(ctx context.Context, req *qr
 	body.SOPin = soPIN
 
 	var resp qrdbtransport.BarrierRecoveryKeysResponse
-	if err := b.t.doJSONRequest(ctx, http.MethodPost, "/v1/barrier/recovery/generate", &body, &resp); err != nil {
+	if err := b.doJSONResult(ctx, http.MethodPost, "/v1/barrier/recovery/generate", &body, &resp); err != nil {
 		return nil, err
 	}
 	return &resp, nil
@@ -177,7 +211,7 @@ func (b *BarrierClient) BarrierDeleteRecoveryKeys(ctx context.Context) error {
 // BarrierHasRecoveryKeys maps to GET /v1/barrier/recovery/status.
 func (b *BarrierClient) BarrierHasRecoveryKeys(ctx context.Context) (*qrdbtransport.BarrierHasRecoveryKeysResponse, error) {
 	var resp qrdbtransport.BarrierHasRecoveryKeysResponse
-	if err := b.t.doJSONRequest(ctx, http.MethodGet, "/v1/barrier/recovery/status", nil, &resp); err != nil {
+	if err := b.doJSONResult(ctx, http.MethodGet, "/v1/barrier/recovery/status", nil, &resp); err != nil {
 		return nil, err
 	}
 	return &resp, nil
@@ -186,7 +220,7 @@ func (b *BarrierClient) BarrierHasRecoveryKeys(ctx context.Context) (*qrdbtransp
 // BarrierGenerateRootToken maps to POST /v1/barrier/root-token.
 func (b *BarrierClient) BarrierGenerateRootToken(ctx context.Context, req *qrdbtransport.BarrierGenerateRootTokenRequest) (*qrdbtransport.BarrierRootTokenResponse, error) {
 	var resp qrdbtransport.BarrierRootTokenResponse
-	if err := b.t.doJSONRequest(ctx, http.MethodPost, "/v1/barrier/root-token", req, &resp); err != nil {
+	if err := b.doJSONResult(ctx, http.MethodPost, "/v1/barrier/root-token", req, &resp); err != nil {
 		return nil, err
 	}
 	return &resp, nil
@@ -220,7 +254,7 @@ func (b *BarrierClient) ShareClaimComplete(ctx context.Context, req *qrdbtranspo
 // ShamirSealVote maps to POST /v1/barrier/shamir/seal-vote.
 func (b *BarrierClient) ShamirSealVote(ctx context.Context, req *qrdbtransport.ShamirSealVoteRequest) (*qrdbtransport.ShamirSealVoteResponse, error) {
 	var resp qrdbtransport.ShamirSealVoteResponse
-	if err := b.t.doJSONRequest(ctx, http.MethodPost, "/v1/barrier/shamir/seal-vote", req, &resp); err != nil {
+	if err := b.doJSONResult(ctx, http.MethodPost, "/v1/barrier/shamir/seal-vote", req, &resp); err != nil {
 		return nil, err
 	}
 	return &resp, nil
@@ -245,7 +279,7 @@ func (b *BarrierClient) RecoveryShareClaimComplete(ctx context.Context, req *qrd
 
 func (b *BarrierClient) registerOfficer(ctx context.Context, path string, req *qrdbtransport.OfficerRegisterRequest) (*qrdbtransport.OfficerRegisterResponse, error) {
 	var wire officerRegisterWireResponse
-	if err := b.t.doJSONRequest(ctx, http.MethodPost, path, officerRegisterRequestToWire(req), &wire); err != nil {
+	if err := b.doJSONResult(ctx, http.MethodPost, path, officerRegisterRequestToWire(req), &wire); err != nil {
 		return nil, err
 	}
 	return &qrdbtransport.OfficerRegisterResponse{
@@ -256,7 +290,7 @@ func (b *BarrierClient) registerOfficer(ctx context.Context, path string, req *q
 
 func (b *BarrierClient) listOfficers(ctx context.Context, path string) ([]*qrdbtransport.OfficerStatus, error) {
 	var wire officersWireResponse
-	if err := b.t.doJSONRequest(ctx, http.MethodGet, path, nil, &wire); err != nil {
+	if err := b.doJSONResult(ctx, http.MethodGet, path, nil, &wire); err != nil {
 		return nil, err
 	}
 	return wire.Officers, nil
@@ -264,7 +298,7 @@ func (b *BarrierClient) listOfficers(ctx context.Context, path string) ([]*qrdbt
 
 func (b *BarrierClient) claimBegin(ctx context.Context, path string, req *qrdbtransport.ShareClaimBeginRequest) (*qrdbtransport.ShareClaimBeginResponse, error) {
 	var resp qrdbtransport.ShareClaimBeginResponse
-	if err := b.t.doJSONRequest(ctx, http.MethodPost, path, req, &resp); err != nil {
+	if err := b.doJSONResult(ctx, http.MethodPost, path, req, &resp); err != nil {
 		return nil, err
 	}
 	return &resp, nil
@@ -272,7 +306,7 @@ func (b *BarrierClient) claimBegin(ctx context.Context, path string, req *qrdbtr
 
 func (b *BarrierClient) claimComplete(ctx context.Context, path string, req *qrdbtransport.ShareClaimCompleteRequest) (*qrdbtransport.ShareClaimCompleteResponse, error) {
 	var resp qrdbtransport.ShareClaimCompleteResponse
-	if err := b.t.doJSONRequest(ctx, http.MethodPost, path, req, &resp); err != nil {
+	if err := b.doJSONResult(ctx, http.MethodPost, path, req, &resp); err != nil {
 		return nil, err
 	}
 	return &resp, nil
