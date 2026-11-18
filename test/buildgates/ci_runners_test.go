@@ -17,6 +17,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -150,6 +151,122 @@ func splitProblems(job *yaml.Node, runsOn, waiver string) []string {
 		problems = append(problems, where+" has no short per-job temp step that sets both TMPDIR and GOTMPDIR: on the pool, GOTMPDIR (_work/_temp) wins for t.TempDir and Unix socket paths overflow")
 	}
 	problems = append(problems, poolWANProblems(job, where)...)
+	problems = append(problems, poolIntegrityProblems(job, where)...)
+	return problems
+}
+
+// integrityScript is the module-integrity gate a native Go job on the pool
+// runs right after setup-go (ruling 869, pending InfoSec's review of M-8):
+// with the pools' LAN-first GOPROXY, integrity rests on the checksum
+// database, so the job keeps it on and never rewrites go.mod or go.sum.
+const integrityScript = "scripts/ci-go-integrity.sh"
+
+// sumdbEnv are the variables that exempt modules from the checksum database
+// or the proxy, or replace the database.
+var sumdbEnv = []string{"GOSUMDB", "GONOSUMDB", "GONOSUMCHECK", "GONOPROXY", "GOINSECURE", "GOPRIVATE"}
+
+// goRun matches a script that runs go or make as a command.
+var goRun = regexp.MustCompile(`(^|[\s;&|(` + "`" + `])(go|make)\s`)
+
+// readonlyFlags: GOFLAGS sets -mod=readonly and no other -mod, no -insecure
+// (--flag counts as -flag), with no quoting, which go parses differently from
+// a split on spaces.
+func readonlyFlags(flags string) bool {
+	if strings.ContainsAny(flags, "'\"\\") {
+		return false
+	}
+	ro := false
+	for _, f := range strings.Fields(flags) {
+		if strings.HasPrefix(f, "--") {
+			f = f[1:]
+		}
+		switch {
+		case f == "-mod=readonly":
+			ro = true
+		case f == "-mod" || strings.HasPrefix(f, "-mod=") || f == "-insecure" || strings.HasPrefix(f, "-insecure="):
+			return false
+		}
+	}
+	return ro
+}
+
+// stepHostedOnly: the step's if: keeps it off the pool, with hostedOnly as a
+// top-level && conjunct of an if: that holds no ||.
+func stepHostedOnly(step *yaml.Node) bool {
+	cond := mapValue(step, "if")
+	if cond == nil {
+		return false
+	}
+	c := strings.TrimSpace(cond.Value)
+	c = strings.TrimSuffix(strings.TrimPrefix(c, "${{"), "}}")
+	if strings.Contains(c, "||") {
+		return false
+	}
+	for _, part := range strings.Split(c, "&&") {
+		if strings.Trim(strings.TrimSpace(part), "() ") == hostedOnly {
+			return true
+		}
+	}
+	return false
+}
+
+// firstCommand is a script's first line that is not blank, a comment or a
+// `set` of shell options.
+func firstCommand(run string) string {
+	for _, l := range strings.Split(run, "\n") {
+		l = strings.TrimSpace(l)
+		if l == "" || strings.HasPrefix(l, "#") || strings.HasPrefix(l, "set -") {
+			continue
+		}
+		return l
+	}
+	return ""
+}
+
+// poolIntegrityProblems: a job that runs Go on the pool (a setup-go step its
+// if: does not keep to github-hosted) sets -mod=readonly in its job GOFLAGS,
+// every later step of it that can run on the pool and runs go or make calls
+// integrityScript as its first command (so no Go runs unless the gate passed
+// in that step), and no step relaxes either.
+func poolIntegrityProblems(job *yaml.Node, where string) []string {
+	steps := mapValue(job, "steps")
+	if steps == nil {
+		return nil
+	}
+	setup := -1
+	for i, step := range steps.Content {
+		uses := mapValue(step, "uses")
+		if uses != nil && strings.HasPrefix(uses.Value, "actions/setup-go@") && !stepHostedOnly(step) {
+			setup = i
+			break
+		}
+	}
+	if setup < 0 {
+		return nil
+	}
+	var problems []string
+	if f := mapValue(mapValue(job, "env"), "GOFLAGS"); f == nil || !readonlyFlags(f.Value) {
+		problems = append(problems, where+" runs Go on the pool without -mod=readonly (and no other -mod, no -insecure) in its job GOFLAGS (ruling 869)")
+	}
+	for i, step := range steps.Content {
+		if run := mapValue(step, "run"); i > setup && run != nil && !stepHostedOnly(step) &&
+			goRun.MatchString(run.Value) && firstCommand(run.Value) != integrityScript {
+			name := "a step"
+			if n := mapValue(step, "name"); n != nil {
+				name = strconv.Quote(n.Value)
+			}
+			problems = append(problems, where+"'s "+name+" runs go or make on the pool without `"+integrityScript+"` as its first command (ruling 869)")
+		}
+		env := mapValue(step, "env")
+		for _, v := range sumdbEnv {
+			if mapValue(env, v) != nil {
+				problems = append(problems, where+" has a step that sets "+v+", which relaxes the checksum database or the proxy (ruling 869)")
+			}
+		}
+		if f := mapValue(env, "GOFLAGS"); f != nil && !readonlyFlags(f.Value) {
+			problems = append(problems, where+" has a step that sets GOFLAGS without -mod=readonly, or with another -mod or -insecure (ruling 869)")
+		}
+	}
 	return problems
 }
 
@@ -162,7 +279,7 @@ func splitProblems(job *yaml.Node, runsOn, waiver string) []string {
 func poolWANProblems(job *yaml.Node, where string) []string {
 	var problems []string
 	for _, step := range mapValue(job, "steps").Content {
-		if cond := mapValue(step, "if"); cond != nil && strings.Contains(cond.Value, hostedOnly) {
+		if stepHostedOnly(step) {
 			continue
 		}
 		name := "a step"
@@ -263,6 +380,31 @@ func TestRunnerProblems_Mutations(t *testing.T) {
 			j := strings.Index(b[i:], "          GOWORK: 'off'\n") + i
 			return b[:j] + "          GOPROXY: https://proxy.golang.org\n" + b[j:]
 		}, "sets GOPROXY"},
+		{"the pool job's GOFLAGS loses -mod=readonly", func(b string) string {
+			return strings.Replace(b, "      GOFLAGS: -mod=readonly   # ruling 869", "      GOFLAGS: -buildvcs=false   # ruling 869", 1)
+		}, "without -mod=readonly"},
+		{"the gate no longer first in the native step", func(b string) string {
+			return strings.Replace(b, "          scripts/ci-go-integrity.sh\n", "", 1)
+		}, "without `scripts/ci-go-integrity.sh` as its first command"},
+		{"a quoted -mod override in the job GOFLAGS", func(b string) string {
+			return strings.Replace(b, "      GOFLAGS: -mod=readonly   # ruling 869", "      GOFLAGS: -mod=readonly '-mod=mod'   # ruling 869", 1)
+		}, "without -mod=readonly"},
+		{"a later -mod in the job GOFLAGS", func(b string) string {
+			return strings.Replace(b, "      GOFLAGS: -mod=readonly   # ruling 869", "      GOFLAGS: -mod=readonly -mod=mod   # ruling 869", 1)
+		}, "without -mod=readonly"},
+		{"a pool step exempts a module from the proxy", func(b string) string {
+			i := strings.Index(b, "      - name: make coverage-shard (bigdisk pool, native)\n")
+			j := strings.Index(b[i:], "          GOWORK: 'off'\n") + i
+			return b[:j] + "          GONOPROXY: github.com/x\n" + b[j:]
+		}, "sets GONOPROXY"},
+		{"a hosted term under || does not keep a download off the pool", func(b string) string {
+			return strings.Replace(b, "      - name: make coverage-shard (bigdisk pool, native)\n", "      - name: Fetch\n        if: runner.environment == 'github-hosted' || true\n        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0\n      - name: make coverage-shard (bigdisk pool, native)\n", 1)
+		}, "downloads from GitHub's storage"},
+		{"a pool step exempts modules", func(b string) string {
+			i := strings.Index(b, "      - name: make coverage-shard (bigdisk pool, native)\n")
+			j := strings.Index(b[i:], "          GOWORK: 'off'\n") + i
+			return b[:j] + "          GONOSUMDB: github.com/x\n" + b[j:]
+		}, "sets GONOSUMDB"},
 		{"a pool step downloads an artifact", func(b string) string {
 			return strings.Replace(b, "      - name: make coverage-shard (bigdisk pool, native)\n", "      - name: Fetch\n        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0\n      - name: make coverage-shard (bigdisk pool, native)\n", 1)
 		}, "downloads from GitHub's storage"},
