@@ -11,6 +11,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 
@@ -370,6 +371,136 @@ func TestBarrierClient_SOPINRefusesForeignRedirect(t *testing.T) {
 	}
 	if n := hitsB.Load(); n != 0 {
 		t.Fatalf("requests reaching the redirect target: got %d, want 0", n)
+	}
+}
+
+// A transport built WithHTTPClient guards a bound SO PIN too: the call over
+// plaintext http is refused before anything is sent. The QUIC transport
+// builds its REST client this way.
+func TestBarrierClient_SOPINRequiresTLS_SuppliedClient(t *testing.T) {
+	var hits atomic.Int32
+	srv := httptest.NewServer(recordingHandler(&hits))
+	t.Cleanup(srv.Close)
+
+	tr, err := New(&transport.Config{Address: srv.URL, MaxRetries: 0},
+		WithHTTPClient(&http.Client{Timeout: 5 * time.Second}))
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	t.Cleanup(func() { _ = tr.Close() })
+
+	err = tr.Barrier().BarrierSeal(bindSOPIN(t))
+	var tlsErr *qrdbtransport.SOPINRequiresTLSError
+	if !errors.As(err, &tlsErr) {
+		t.Fatalf("BarrierSeal with a bound PIN over http on a supplied client: got %v, want *SOPINRequiresTLSError", err)
+	}
+	if n := hits.Load(); n != 0 {
+		t.Fatalf("requests reaching the plaintext server: got %d, want 0", n)
+	}
+}
+
+// A transport built WithHTTPClient never follows a redirect to another host
+// with a bound SO PIN.
+func TestBarrierClient_SOPINRefusesForeignRedirect_SuppliedClient(t *testing.T) {
+	var hitsB atomic.Int32
+	srvB := httptest.NewTLSServer(recordingHandler(&hitsB))
+	t.Cleanup(srvB.Close)
+
+	srvA := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/health" {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		http.Redirect(w, r, srvB.URL+r.URL.Path, http.StatusTemporaryRedirect)
+	}))
+	t.Cleanup(srvA.Close)
+
+	pool := x509.NewCertPool()
+	pool.AddCert(srvA.Certificate())
+	pool.AddCert(srvB.Certificate())
+
+	client := &http.Client{Transport: &http.Transport{
+		TLSClientConfig: &tls.Config{RootCAs: pool, MinVersion: tls.VersionTLS12},
+	}}
+	tr, err := New(&transport.Config{Address: srvA.URL, MaxRetries: 0}, WithHTTPClient(client))
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	t.Cleanup(func() { _ = tr.Close() })
+
+	err = tr.Barrier().BarrierSeal(bindSOPIN(t))
+	var hostErr *qrdbtransport.SOPINForeignHostError
+	if !errors.As(err, &hostErr) {
+		t.Fatalf("BarrierSeal with a bound PIN redirected to another host on a supplied client: got %v, want *SOPINForeignHostError", err)
+	}
+	if n := hitsB.Load(); n != 0 {
+		t.Fatalf("requests reaching the redirect target: got %d, want 0", n)
+	}
+}
+
+// A transport built WithHTTPClient sends a bound SO PIN in the
+// X-QRDB-SO-PIN header to the host it was configured with.
+func TestTransport_SOPINHeader_SuppliedClient(t *testing.T) {
+	var (
+		mu  sync.Mutex
+		got string
+	)
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/health" {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		mu.Lock()
+		got = r.Header.Get(qrdbtransport.SOPINHeader)
+		mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	pool := x509.NewCertPool()
+	pool.AddCert(srv.Certificate())
+	client := &http.Client{Transport: &http.Transport{
+		TLSClientConfig: &tls.Config{RootCAs: pool, MinVersion: tls.VersionTLS12},
+	}}
+	tr, err := New(&transport.Config{Address: srv.URL, MaxRetries: 0}, WithHTTPClient(client))
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	t.Cleanup(func() { _ = tr.Close() })
+
+	if err := tr.Barrier().BarrierSeal(bindSOPIN(t)); err != nil {
+		t.Fatalf("BarrierSeal with a bound PIN to the configured host: %v", err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if got != "so-pin-2538" {
+		t.Fatalf("%s header: got %q, want the bound PIN", qrdbtransport.SOPINHeader, got)
+	}
+}
+
+// New never mutates the caller's http.Client: the SO PIN guard goes on a
+// copy, so the caller's Transport is the value it set, nil included.
+func TestTransport_SuppliedClientNotMutated(t *testing.T) {
+	custom := &http.Transport{}
+	for _, tc := range []struct {
+		name string
+		rt   http.RoundTripper
+	}{
+		{"nil", nil},
+		{"custom", custom},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			client := &http.Client{Transport: tc.rt}
+			tr, err := New(&transport.Config{Address: "https://127.0.0.1:1", MaxRetries: 0}, WithHTTPClient(client))
+			if err != nil {
+				t.Fatalf("New: %v", err)
+			}
+			t.Cleanup(func() { _ = tr.Close() })
+			if client.Transport != tc.rt {
+				t.Fatalf("caller's client.Transport: got %T %v, want %v", client.Transport, client.Transport, tc.rt)
+			}
+		})
 	}
 }
 
