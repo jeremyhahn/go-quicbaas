@@ -4,10 +4,14 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -521,5 +525,358 @@ func TestBarrierClient_SOPINUnboundPassesThrough(t *testing.T) {
 	}
 	if n := hits.Load(); n != 1 {
 		t.Fatalf("requests reaching the server: got %d, want 1", n)
+	}
+}
+
+// wireCall is one request a wireServer received: its method, path and the
+// JSON body decoded field by field, so a test asserts the exact wire value of
+// each field (a PEM string, not its base64 form).
+type wireCall struct {
+	method string
+	path   string
+	body   map[string]any
+}
+
+// wireServer answers every non-health request with the fixed JSON reply and
+// records what it received. useTLS serves HTTPS, which a bound SO PIN needs.
+type wireServer struct {
+	mu    sync.Mutex
+	calls []wireCall
+}
+
+func (ws *wireServer) recorded() []wireCall {
+	ws.mu.Lock()
+	defer ws.mu.Unlock()
+	return append([]wireCall(nil), ws.calls...)
+}
+
+func newWireServer(t *testing.T, useTLS bool, reply string) (*wireServer, *Transport) {
+	t.Helper()
+	ws := &wireServer{}
+	h := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/health" {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		call := wireCall{method: r.Method, path: r.URL.Path}
+		raw, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Errorf("reading request body: %v", err)
+		}
+		if len(raw) > 0 {
+			if err := json.Unmarshal(raw, &call.body); err != nil {
+				t.Errorf("request body is not a JSON object: %v (%q)", err, raw)
+			}
+		}
+		ws.mu.Lock()
+		ws.calls = append(ws.calls, call)
+		ws.mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(reply))
+	})
+
+	cfg := &transport.Config{MaxRetries: 0}
+	var srv *httptest.Server
+	if useTLS {
+		srv = httptest.NewTLSServer(h)
+		pool := x509.NewCertPool()
+		pool.AddCert(srv.Certificate())
+		cfg.TLSConfig = &tls.Config{RootCAs: pool, MinVersion: tls.VersionTLS12}
+	} else {
+		srv = httptest.NewServer(h)
+	}
+	t.Cleanup(srv.Close)
+	cfg.Address = srv.URL
+
+	tr, err := New(cfg)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	t.Cleanup(func() { _ = tr.Close() })
+	return ws, tr
+}
+
+// onlyCall returns the single request the server received.
+func onlyCall(t *testing.T, ws *wireServer, method, path string) wireCall {
+	t.Helper()
+	calls := ws.recorded()
+	if len(calls) != 1 {
+		t.Fatalf("requests reaching the server: got %d, want 1", len(calls))
+	}
+	if calls[0].method != method || calls[0].path != path {
+		t.Fatalf("request: got %s %s, want %s %s", calls[0].method, calls[0].path, method, path)
+	}
+	return calls[0]
+}
+
+// wantBody asserts the decoded request body equals want exactly: every field
+// present with its wire value, and nothing more.
+func wantBody(t *testing.T, got wireCall, want map[string]any) {
+	t.Helper()
+	if !reflect.DeepEqual(got.body, want) {
+		t.Fatalf("request body on the wire:\n got %#v\nwant %#v", got.body, want)
+	}
+}
+
+const (
+	testCSRPEM  = "-----BEGIN CERTIFICATE REQUEST-----\nMIIBCSRbody2538\n-----END CERTIFICATE REQUEST-----\n"
+	testCertPEM = "-----BEGIN CERTIFICATE-----\nMIIBCertbody2538\n-----END CERTIFICATE-----\n"
+)
+
+// TestBarrierClient_OfficerRegisterWire checks the officer registration
+// request carries the CSR as plain PEM text (the upstream csr_pem contract,
+// never base64) with every other field, and the response's certificate and
+// share index come back as the server sent them.
+func TestBarrierClient_OfficerRegisterWire(t *testing.T) {
+	cases := []struct {
+		name string
+		path string
+		call func(*BarrierClient, *qrdbtransport.OfficerRegisterRequest) (*qrdbtransport.OfficerRegisterResponse, error)
+	}{
+		{"OfficerRegister", "/v1/barrier/officers", func(b *BarrierClient, r *qrdbtransport.OfficerRegisterRequest) (*qrdbtransport.OfficerRegisterResponse, error) {
+			return b.OfficerRegister(context.Background(), r)
+		}},
+		{"RecoveryOfficerRegister", "/v1/barrier/recovery/officers", func(b *BarrierClient, r *qrdbtransport.OfficerRegisterRequest) (*qrdbtransport.OfficerRegisterResponse, error) {
+			return b.RecoveryOfficerRegister(context.Background(), r)
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			reply, err := json.Marshal(map[string]any{"cert_pem": testCertPEM, "share_index": 3})
+			if err != nil {
+				t.Fatal(err)
+			}
+			ws, tr := newWireServer(t, false, string(reply))
+
+			got, err := tc.call(tr.Barrier(), &qrdbtransport.OfficerRegisterRequest{
+				Username:          "officer-a",
+				CSRPEM:            []byte(testCSRPEM),
+				AuthenticatorType: "piv",
+				AuthenticatorRef:  "slot-9a",
+			})
+			if err != nil {
+				t.Fatalf("%s: %v", tc.name, err)
+			}
+			wantBody(t, onlyCall(t, ws, http.MethodPost, tc.path), map[string]any{
+				"username":           "officer-a",
+				"csr_pem":            testCSRPEM,
+				"authenticator_type": "piv",
+				"authenticator_ref":  "slot-9a",
+			})
+			want := &qrdbtransport.OfficerRegisterResponse{CertPEM: []byte(testCertPEM), ShareIndex: 3}
+			if !reflect.DeepEqual(got, want) {
+				t.Fatalf("%s response: got %+v, want %+v", tc.name, got, want)
+			}
+		})
+	}
+}
+
+// TestBarrierClient_OfficerListWire checks a server list of two fully
+// populated officers decodes into equal OfficerStatus values.
+func TestBarrierClient_OfficerListWire(t *testing.T) {
+	enrolledA := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+	claimedA := time.Date(2026, 1, 3, 4, 5, 6, 0, time.UTC)
+	enrolledB := time.Date(2026, 2, 3, 4, 5, 6, 0, time.UTC)
+	claimedB := time.Date(2026, 2, 4, 5, 6, 7, 0, time.UTC)
+	want := []*qrdbtransport.OfficerStatus{
+		{Username: "officer-a", CertThumbprint: "ab12", ShareIndex: 1, AuthFactor: "piv",
+			EnrolledAt: enrolledA, ClaimedAt: claimedA, SharePending: false},
+		{Username: "officer-b", CertThumbprint: "cd34", ShareIndex: 2, AuthFactor: "fido2",
+			EnrolledAt: enrolledB, ClaimedAt: claimedB, SharePending: true},
+	}
+	reply := `{"officers":[` +
+		`{"username":"officer-a","cert_thumbprint":"ab12","share_index":1,"auth_factor":"piv",` +
+		`"enrolled_at":"2026-01-02T03:04:05Z","claimed_at":"2026-01-03T04:05:06Z","share_pending":false},` +
+		`{"username":"officer-b","cert_thumbprint":"cd34","share_index":2,"auth_factor":"fido2",` +
+		`"enrolled_at":"2026-02-03T04:05:06Z","claimed_at":"2026-02-04T05:06:07Z","share_pending":true}]}`
+
+	cases := []struct {
+		name string
+		path string
+		call func(*BarrierClient) ([]*qrdbtransport.OfficerStatus, error)
+	}{
+		{"OfficerList", "/v1/barrier/officers", func(b *BarrierClient) ([]*qrdbtransport.OfficerStatus, error) {
+			return b.OfficerList(context.Background())
+		}},
+		{"OfficerClaimStatus", "/v1/barrier/officers/claim-status", func(b *BarrierClient) ([]*qrdbtransport.OfficerStatus, error) {
+			return b.OfficerClaimStatus(context.Background())
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			ws, tr := newWireServer(t, false, reply)
+			got, err := tc.call(tr.Barrier())
+			if err != nil {
+				t.Fatalf("%s: %v", tc.name, err)
+			}
+			call := onlyCall(t, ws, http.MethodGet, tc.path)
+			if call.body != nil {
+				t.Fatalf("%s sent a body: %#v", tc.name, call.body)
+			}
+			if len(got) != len(want) {
+				t.Fatalf("%s: got %d officers, want %d", tc.name, len(got), len(want))
+			}
+			for i := range want {
+				g, w := *got[i], *want[i]
+				if !g.EnrolledAt.Equal(w.EnrolledAt) || !g.ClaimedAt.Equal(w.ClaimedAt) {
+					t.Fatalf("%s officer %d times: got %v/%v, want %v/%v", tc.name, i,
+						g.EnrolledAt, g.ClaimedAt, w.EnrolledAt, w.ClaimedAt)
+				}
+				g.EnrolledAt, g.ClaimedAt, w.EnrolledAt, w.ClaimedAt = time.Time{}, time.Time{}, time.Time{}, time.Time{}
+				if g != w {
+					t.Fatalf("%s officer %d: got %+v, want %+v", tc.name, i, g, w)
+				}
+			}
+		})
+	}
+}
+
+// TestBarrierClient_ShareClaimWire checks the claim handshake's request
+// fields reach the wire in the upstream encoding (signature as base64 of its
+// bytes, the encoding/json form the upstream client sends) and the response
+// fields come back as the server sent them, for the system and recovery
+// barriers.
+func TestBarrierClient_ShareClaimWire(t *testing.T) {
+	expires := time.Date(2026, 3, 4, 5, 6, 7, 0, time.UTC)
+	signature := []byte{0x01, 0x02, 0xfe, 0xff, 0x25, 0x38}
+	share := []byte{0xde, 0xad, 0xbe, 0xef, 0x00, 0x7f}
+
+	for _, prefix := range []string{"/v1/barrier/officers/", "/v1/barrier/recovery/officers/"} {
+		recovery := prefix != "/v1/barrier/officers/"
+		name := "system"
+		if recovery {
+			name = "recovery"
+		}
+		t.Run(name+"/begin", func(t *testing.T) {
+			ws, tr := newWireServer(t, false, `{"nonce_hex":"a1b2c3","expires_at":"2026-03-04T05:06:07Z"}`)
+			req := &qrdbtransport.ShareClaimBeginRequest{Username: "officer-a"}
+			var got *qrdbtransport.ShareClaimBeginResponse
+			var err error
+			if recovery {
+				got, err = tr.Barrier().RecoveryShareClaimBegin(context.Background(), req)
+			} else {
+				got, err = tr.Barrier().ShareClaimBegin(context.Background(), req)
+			}
+			if err != nil {
+				t.Fatalf("claim begin: %v", err)
+			}
+			wantBody(t, onlyCall(t, ws, http.MethodPost, prefix+"officer-a/claim/begin"),
+				map[string]any{"username": "officer-a"})
+			if got.NonceHex != "a1b2c3" || !got.ExpiresAt.Equal(expires) {
+				t.Fatalf("claim begin response: got %+v, want nonce a1b2c3 expiring %v", got, expires)
+			}
+		})
+		t.Run(name+"/complete", func(t *testing.T) {
+			reply, err := json.Marshal(map[string]any{"share_index": 4, "share_bytes": share})
+			if err != nil {
+				t.Fatal(err)
+			}
+			ws, tr := newWireServer(t, false, string(reply))
+			req := &qrdbtransport.ShareClaimCompleteRequest{Username: "officer-a", NonceHex: "a1b2c3", Signature: signature}
+			var got *qrdbtransport.ShareClaimCompleteResponse
+			if recovery {
+				got, err = tr.Barrier().RecoveryShareClaimComplete(context.Background(), req)
+			} else {
+				got, err = tr.Barrier().ShareClaimComplete(context.Background(), req)
+			}
+			if err != nil {
+				t.Fatalf("claim complete: %v", err)
+			}
+			wantBody(t, onlyCall(t, ws, http.MethodPost, prefix+"officer-a/claim/complete"), map[string]any{
+				"username":  "officer-a",
+				"nonce_hex": "a1b2c3",
+				"signature": base64.StdEncoding.EncodeToString(signature),
+			})
+			want := &qrdbtransport.ShareClaimCompleteResponse{ShareIndex: 4, ShareBytes: share}
+			if !reflect.DeepEqual(got, want) {
+				t.Fatalf("claim complete response: got %+v, want %+v", got, want)
+			}
+		})
+	}
+}
+
+// TestBarrierClient_SOPINInBodyWire checks each SO PIN-carrying barrier call
+// over TLS puts the bound PIN in the body's so_pin field next to the
+// request's own fields, and that a request PIN conflicting with the bound one
+// is refused with the upstream *SOPINConflictError before anything is sent.
+func TestBarrierClient_SOPINInBodyWire(t *testing.T) {
+	const boundPIN = "so-pin-2538"
+	secret := []byte("barrier-secret")
+	cases := []struct {
+		name  string
+		path  string
+		reply string
+		// call runs the method with requestPIN in the request (where it has
+		// one) and returns the decoded response for comparison.
+		call     func(ctx context.Context, b *BarrierClient, requestPIN string) (any, error)
+		wantBody map[string]any
+		wantResp any
+	}{
+		{
+			name: "BarrierSeal", path: "/v1/barrier/seal", reply: `{}`,
+			call: func(ctx context.Context, b *BarrierClient, _ string) (any, error) {
+				return nil, b.BarrierSeal(ctx)
+			},
+			wantBody: map[string]any{"so_pin": boundPIN},
+		},
+		{
+			name: "BarrierInitializeShamir", path: "/v1/barrier/shamir/initialize",
+			reply: `{"threshold":2,"total_shares":3,"share_count":3}`,
+			call: func(ctx context.Context, b *BarrierClient, pin string) (any, error) {
+				return b.BarrierInitializeShamir(ctx, &qrdbtransport.BarrierInitializeShamirRequest{
+					Secret: secret, Threshold: 2, TotalShares: 3, SOPin: pin, UserPin: "user-pin",
+				})
+			},
+			wantBody: map[string]any{
+				"secret": base64.StdEncoding.EncodeToString(secret), "threshold": float64(2),
+				"total_shares": float64(3), "so_pin": boundPIN, "user_pin": "user-pin",
+			},
+			wantResp: &qrdbtransport.BarrierInitializeShamirResponse{Threshold: 2, TotalShares: 3, ShareCount: 3},
+		},
+		{
+			name: "BarrierRekey", path: "/v1/barrier/rekey",
+			reply: `{"threshold":3,"total_shares":5,"share_count":5}`,
+			call: func(ctx context.Context, b *BarrierClient, pin string) (any, error) {
+				return b.BarrierRekey(ctx, &qrdbtransport.BarrierRekeyRequest{SOPin: pin, Threshold: 3, Total: 5})
+			},
+			wantBody: map[string]any{"so_pin": boundPIN, "threshold": float64(3), "total": float64(5)},
+			wantResp: &qrdbtransport.BarrierRekeyResponse{Threshold: 3, TotalShares: 5, ShareCount: 5},
+		},
+		{
+			name: "BarrierGenerateRecoveryKeys", path: "/v1/barrier/recovery/generate",
+			reply: `{"threshold":2,"total":4,"share_count":4}`,
+			call: func(ctx context.Context, b *BarrierClient, pin string) (any, error) {
+				return b.BarrierGenerateRecoveryKeys(ctx, &qrdbtransport.BarrierGenerateRecoveryKeysRequest{Threshold: 2, Total: 4, SOPin: pin})
+			},
+			wantBody: map[string]any{"threshold": float64(2), "total": float64(4), "so_pin": boundPIN},
+			wantResp: &qrdbtransport.BarrierRecoveryKeysResponse{Threshold: 2, Total: 4, ShareCount: 4},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name+"/bound", func(t *testing.T) {
+			ws, tr := newWireServer(t, true, tc.reply)
+			got, err := tc.call(bindSOPIN(t), tr.Barrier(), "")
+			if err != nil {
+				t.Fatalf("%s with a bound PIN over TLS: %v", tc.name, err)
+			}
+			wantBody(t, onlyCall(t, ws, http.MethodPost, tc.path), tc.wantBody)
+			if tc.wantResp != nil && !reflect.DeepEqual(got, tc.wantResp) {
+				t.Fatalf("%s response: got %+v, want %+v", tc.name, got, tc.wantResp)
+			}
+		})
+		if tc.name == "BarrierSeal" {
+			continue // takes no request, so no request PIN can conflict
+		}
+		t.Run(tc.name+"/conflict", func(t *testing.T) {
+			ws, tr := newWireServer(t, true, tc.reply)
+			_, err := tc.call(bindSOPIN(t), tr.Barrier(), "another-pin")
+			var conflict *qrdbtransport.SOPINConflictError
+			if !errors.As(err, &conflict) {
+				t.Fatalf("%s with a conflicting request PIN: got %v, want *SOPINConflictError", tc.name, err)
+			}
+			if n := len(ws.recorded()); n != 0 {
+				t.Fatalf("requests reaching the server: got %d, want 0", n)
+			}
+		})
 	}
 }
