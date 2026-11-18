@@ -858,7 +858,7 @@ func NewQUICClient(endpoint, authToken string) (*QUICClient, error) {
 	if err != nil {
 		return nil, &qberrors.WrappedMessageError{Message: "load integration TLS config", Cause: err}
 	}
-	tlsCfg.NextProtos = []string{"quicbaas-quic"}
+	tlsCfg = helpers.QUICTLSConfig(tlsCfg)
 	cfg := &transport.Config{
 		Address:         endpoint,
 		Timeout:         30 * time.Second,
