@@ -119,6 +119,25 @@ func New(cfg *transport.Config, opts ...Option) (*Transport, error) {
 			return nil, err
 		}
 		t.client = client
+	} else {
+		// A client supplied WithHTTPClient (the QUIC transport builds its
+		// REST client this way) needs the same SO PIN guard as one built
+		// here, or a bound PIN would cross plaintext http, follow a
+		// redirect to another host, and never reach the X-QRDB-SO-PIN
+		// header. Wrap its transport on a shallow copy, keeping its
+		// Timeout, Jar and CheckRedirect and never mutating the caller's
+		// client. Requests without a bound PIN pass through unchanged.
+		c := *t.client
+		base := c.Transport
+		if base == nil {
+			base = http.DefaultTransport
+		} else if httpTransport, ok := base.(*http.Transport); ok {
+			// Close closed a supplied *http.Transport's idle connections
+			// before; it keeps doing so through the guard.
+			t.baseTransport = httpTransport
+		}
+		c.Transport = qrdbtransport.SOPINRoundTripper(base, "rest", qrdbtransport.ConfiguredHost(t.baseURL))
+		t.client = &c
 	}
 
 	// Initialize Auth handler
