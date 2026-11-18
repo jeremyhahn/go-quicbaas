@@ -52,16 +52,19 @@ import (
 )
 
 // ---------------------------------------------------------------------------
-// TestBootstrap_FirstBoot_PrintsActivationURL
+// TestBootstrap_FirstBoot_PrintsAdminCertBanner
 //
 // Boots a real in-process daemon with AllowPasswordAuth=false and
-// InsecureDevMode=false (the production defaults). Asserts that:
-//   1. The activation URL is emitted to stderr exactly once.
-//   2. A pending admin user exists in the identity store.
-//   3. The invite token in the URL resolves in the invite store.
+// InsecureDevMode=false (the production defaults). First boot creates the
+// platform admin with an mTLS certificate (docs/bootstrap/engineering.md:
+// "there are no invite tokens and no activation URL for the platform admin"),
+// so the stderr banner must:
+//   1. Be headed FIRST-BOOT COMPLETE.
+//   2. Name the admin certificate written to <data-dir>/admin/admin.crt.
+//   3. Carry no invite/activation URL and no PEM key or certificate material.
 // ---------------------------------------------------------------------------
 
-func TestBootstrap_FirstBoot_PrintsActivationURL(t *testing.T) {
+func TestBootstrap_FirstBoot_PrintsAdminCertBanner(t *testing.T) {
 	tmpDir := t.TempDir()
 
 	cfg := minimalBootstrapConfig(tmpDir)
@@ -91,14 +94,25 @@ func TestBootstrap_FirstBoot_PrintsActivationURL(t *testing.T) {
 	_, _ = io.Copy(&stderrBuf, rdr)
 	stderrOutput := stderrBuf.String()
 
-	assert.Contains(t, stderrOutput, "FIRST-BOOT BOOTSTRAP",
-		"activation banner must appear on stderr on first boot")
-	assert.Contains(t, stderrOutput, "/ui/#/invite/",
-		"activation URL with invite token must be in the banner using the canonical #/invite/ route")
-	assert.NotContains(t, stderrOutput, "#/activate?token=",
-		"banner must NOT use the dead #/activate?token= route the SPA router does not map")
-	assert.Contains(t, stderrOutput, "Shown ONCE",
-		"banner must warn the invite is shown once")
+	adminCertPath := filepath.Join(cfg.Storage.DataDir, "admin", "admin.crt")
+	assert.Contains(t, stderrOutput, "FIRST-BOOT COMPLETE: platform admin created.",
+		"first-boot banner must appear on stderr on first boot")
+	assert.Contains(t, stderrOutput, "Admin mTLS certificate:",
+		"banner must announce the issued admin certificate")
+	assert.Contains(t, stderrOutput, adminCertPath,
+		"banner must name the admin certificate written under the data dir")
+	assert.FileExists(t, adminCertPath, "the certificate the banner names must exist")
+
+	// The banner names file paths only: no invite route, no token, and no
+	// PEM-encoded key or certificate material.
+	assert.NotContains(t, stderrOutput, "/invite/",
+		"the platform admin is never given an invite URL")
+	assert.NotContains(t, stderrOutput, "#/activate",
+		"the platform admin is never given an activation URL")
+	assert.NotContains(t, stderrOutput, "token=",
+		"banner must not print a token value")
+	assert.NotContains(t, stderrOutput, "-----BEGIN",
+		"banner must not print key or certificate material")
 }
 
 // ---------------------------------------------------------------------------
@@ -433,7 +447,7 @@ func waitForStarted(t *testing.T, srv *server.Server, startErrCh <-chan error, r
 // stderr banner. The banner emits the canonical SPA route
 // /ui/#/invite/<token> (pre-v1 stack: there is exactly ONE invite route; the
 // legacy #/activate?token= form is dead and explicitly asserted absent by
-// TestBootstrap_FirstBoot_PrintsActivationURL). Returns empty string if not
+// TestBootstrap_FirstBoot_PrintsAdminCertBanner). Returns empty string if not
 // found.
 func extractInviteToken(t *testing.T, stderr string) string {
 	t.Helper()
