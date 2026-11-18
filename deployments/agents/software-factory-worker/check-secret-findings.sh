@@ -26,6 +26,10 @@ allowlist="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/secret-allowlist.txt"
 
 [ -f "$report" ] && [ -r "$report" ] || fail "secret findings report ${report} is missing or unreadable"
 [ -d "$root" ] || fail "scan root ${root} is not a directory"
+# The canonical scan root: an allowlisted file is accepted only when its own
+# canonical path is exactly <canonical root>/<rel>, so a symlink in any path
+# component cannot lead the hash outside the scan root.
+real_root="$(realpath -e -- "$root")" || fail "cannot resolve the scan root ${root}"
 [ -f "$allowlist" ] && [ -r "$allowlist" ] || fail "secret allowlist ${allowlist} is missing or unreadable"
 
 # image path -> pinned sha256
@@ -76,6 +80,12 @@ while IFS=$'\t' read -r target rule; do
 	fi
 	file="$root/$rel"
 	if [ -L "$file" ] || [ ! -f "$file" ]; then
+		echo "::error::allowlisted secret finding /${image_path} is not a regular file under the scan root (${rel})"
+		failed=1
+		continue
+	fi
+	real_file=""
+	if ! real_file="$(realpath -e -- "$file")" || [ "$real_file" != "$real_root/$rel" ]; then
 		echo "::error::allowlisted secret finding /${image_path} is not a regular file under the scan root (${rel})"
 		failed=1
 		continue
