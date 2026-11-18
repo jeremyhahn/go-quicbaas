@@ -1163,10 +1163,8 @@ func (s *Server) initialize() error {
 	}
 
 	// The orchestration plane, in the order orchestrationStartup documents.
-	for _, step := range s.orchestrationStartup() {
-		if err := step.run(); err != nil {
-			return err
-		}
+	if err := runStartupSteps(s.orchestrationStartup()); err != nil {
+		return err
 	}
 
 	if err := s.startGRPCServer(); err != nil {
@@ -2220,4 +2218,15 @@ func (s *Server) orchestrationStartup() []startupStep {
 		return nil
 	})
 	return steps
+}
+
+// runStartupSteps runs steps in order and returns the first error unchanged;
+// no step after a failing one runs.
+func runStartupSteps(steps []startupStep) error {
+	for _, step := range steps {
+		if err := step.run(); err != nil {
+			return err
+		}
+	}
+	return nil
 }
