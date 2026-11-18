@@ -2,10 +2,14 @@ package rest
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"sync"
+	"sync/atomic"
 	"testing"
 
 	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
@@ -280,4 +284,111 @@ func TestBarrierClient_EmptyResponseIsAnError(t *testing.T) {
 			t.Fatalf("BarrierUnseal on an empty 204 body: %v", err)
 		}
 	})
+}
+
+// recordingHandler answers every barrier request with an empty JSON object
+// and counts the requests that reached it (the /health probe is not counted).
+func recordingHandler(hits *atomic.Int32) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/health" {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		hits.Add(1)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"sealed":false}`))
+	}
+}
+
+// bindSOPIN returns a context carrying an SO PIN, released at test end.
+func bindSOPIN(t *testing.T) context.Context {
+	t.Helper()
+	bound, release, err := qrdbtransport.WithSOPIN(context.Background(), []byte("so-pin-2538"))
+	if err != nil {
+		t.Fatalf("WithSOPIN: %v", err)
+	}
+	t.Cleanup(release)
+	return bound
+}
+
+// A bound SO PIN never crosses plaintext http: the call is refused before
+// anything is sent, as go-qrdb's own REST transport refuses it.
+func TestBarrierClient_SOPINRequiresTLS(t *testing.T) {
+	var hits atomic.Int32
+	srv := httptest.NewServer(recordingHandler(&hits))
+	t.Cleanup(srv.Close)
+
+	tr, err := New(&transport.Config{Address: srv.URL, MaxRetries: 0})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	t.Cleanup(func() { _ = tr.Close() })
+
+	err = tr.Barrier().BarrierSeal(bindSOPIN(t))
+	var tlsErr *qrdbtransport.SOPINRequiresTLSError
+	if !errors.As(err, &tlsErr) {
+		t.Fatalf("BarrierSeal with a bound PIN over http: got %v, want *SOPINRequiresTLSError", err)
+	}
+	if n := hits.Load(); n != 0 {
+		t.Fatalf("requests reaching the plaintext server: got %d, want 0", n)
+	}
+}
+
+// A redirect never carries a bound SO PIN to a host the caller did not name.
+func TestBarrierClient_SOPINRefusesForeignRedirect(t *testing.T) {
+	var hitsB atomic.Int32
+	srvB := httptest.NewTLSServer(recordingHandler(&hitsB))
+	t.Cleanup(srvB.Close)
+
+	srvA := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/health" {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		http.Redirect(w, r, srvB.URL+r.URL.Path, http.StatusTemporaryRedirect)
+	}))
+	t.Cleanup(srvA.Close)
+
+	pool := x509.NewCertPool()
+	pool.AddCert(srvA.Certificate())
+	pool.AddCert(srvB.Certificate())
+
+	tr, err := New(&transport.Config{
+		Address:    srvA.URL,
+		TLSConfig:  &tls.Config{RootCAs: pool, MinVersion: tls.VersionTLS12},
+		MaxRetries: 0,
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	t.Cleanup(func() { _ = tr.Close() })
+
+	err = tr.Barrier().BarrierSeal(bindSOPIN(t))
+	var hostErr *qrdbtransport.SOPINForeignHostError
+	if !errors.As(err, &hostErr) {
+		t.Fatalf("BarrierSeal with a bound PIN redirected to another host: got %v, want *SOPINForeignHostError", err)
+	}
+	if n := hitsB.Load(); n != 0 {
+		t.Fatalf("requests reaching the redirect target: got %d, want 0", n)
+	}
+}
+
+// A call without a bound PIN passes through over plain http unchanged.
+func TestBarrierClient_SOPINUnboundPassesThrough(t *testing.T) {
+	var hits atomic.Int32
+	srv := httptest.NewServer(recordingHandler(&hits))
+	t.Cleanup(srv.Close)
+
+	tr, err := New(&transport.Config{Address: srv.URL, MaxRetries: 0})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	t.Cleanup(func() { _ = tr.Close() })
+
+	if _, err := tr.Barrier().BarrierStatus(context.Background()); err != nil {
+		t.Fatalf("BarrierStatus without a bound PIN over http: %v", err)
+	}
+	if n := hits.Load(); n != 1 {
+		t.Fatalf("requests reaching the server: got %d, want 1", n)
+	}
 }
