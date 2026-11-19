@@ -304,6 +304,134 @@ func TestSDLCService_WithdrawalSurvivesACanceledRequest(t *testing.T) {
 	}
 }
 
+// lostAckBindWriteKV applies the first binding write and then reports it
+// failed, as a backend does when the response of a committed write is lost.
+// The fence hook runs between the write and the error, so a delete can fence
+// after the bind's pre-check and before its fence read. Other keys and later
+// calls pass through.
+type lostAckBindWriteKV struct {
+	qrdbsdk.AtomicKVStore
+	fence func()
+	lost  bool
+}
+
+func (k *lostAckBindWriteKV) loseAck(key string, applied bool, err error) (bool, error) {
+	if err != nil || !applied || k.lost || !strings.HasPrefix(key, "sdlc_binding/") {
+		return applied, err
+	}
+	k.lost = true
+	if k.fence != nil {
+		k.fence()
+	}
+	return false, errors.New("proposal outcome unknown")
+}
+
+func (k *lostAckBindWriteKV) PutIfAbsent(ctx context.Context, key string, value []byte) (bool, error) {
+	applied, err := k.AtomicKVStore.PutIfAbsent(ctx, key, value)
+	return k.loseAck(key, applied, err)
+}
+
+func (k *lostAckBindWriteKV) CompareAndSwap(ctx context.Context, key string, old, value []byte) (bool, error) {
+	applied, err := k.AtomicKVStore.CompareAndSwap(ctx, key, old, value)
+	return k.loseAck(key, applied, err)
+}
+
+// installLostAckBindWrite wraps the rig's tenant store so its next binding
+// write lands and reports an error, running fence in between.
+func installLostAckBindWrite(t *testing.T, rig *sdlcServiceRig, fence func()) {
+	t.Helper()
+	// Resolve once so the tenant store exists to be wrapped.
+	if _, err := rig.store.ProjectDeleteFenced(context.Background(), sdlcTestTenant, sdlcTestProject); err != nil {
+		t.Fatal(err)
+	}
+	rig.resolver.mu.Lock()
+	defer rig.resolver.mu.Unlock()
+	held, ok := rig.resolver.stores[sdlcTestTenant].(qrdbsdk.AtomicKVStore)
+	if !ok {
+		t.Fatal("the rig's tenant store takes no guarded writes")
+	}
+	rig.resolver.stores[sdlcTestTenant] = &lostAckBindWriteKV{AtomicKVStore: held, fence: fence}
+}
+
+func fenceRigProject(t *testing.T, rig *sdlcServiceRig) func() {
+	return func() {
+		if _, err := rig.store.FenceProjectDelete(context.Background(), sdlcTestTenant, sdlcTestProject); err != nil {
+			t.Errorf("FenceProjectDelete: %v", err)
+		}
+	}
+}
+
+// TestSDLCService_BindWithLostWriteAckBehindADeleteIsWithdrawn: the binding
+// write lands but reports an error, and a delete fences in between. The bind
+// still reads the fence, withdraws its write and forgets its route.
+func TestSDLCService_BindWithLostWriteAckBehindADeleteIsWithdrawn(t *testing.T) {
+	rig := newSDLCServiceRig(t)
+	ctx := context.Background()
+	installLostAckBindWrite(t, rig, fenceRigProject(t, rig))
+
+	_, err := rig.svc.Bind(ctx, sdlcTestTenant, rig.binding(), BindOptions{})
+	assertProjectDeleting(t, err)
+	if _, err := rig.store.GetBinding(ctx, sdlcTestTenant, sdlcTestProject); !errors.Is(err, sdlc.ErrNotFound) {
+		t.Fatalf("binding after the withdrawn bind: %v, want not found", err)
+	}
+	if _, err := rig.svc.Routes().Tenant(ctx, sdlcTestProject); !errors.Is(err, sdlc.ErrNotFound) {
+		t.Fatalf("route after the withdrawn bind: %v, want not found", err)
+	}
+}
+
+// TestSDLCService_RebindWithLostWriteAckBehindADeleteRestoresThePrior: a
+// rebind whose write lands but reports an error behind a delete restores
+// the record it replaced, and keeps that record's route.
+func TestSDLCService_RebindWithLostWriteAckBehindADeleteRestoresThePrior(t *testing.T) {
+	rig := newSDLCServiceRig(t)
+	ctx := context.Background()
+	if _, err := rig.svc.Bind(ctx, sdlcTestTenant, rig.binding(), BindOptions{}); err != nil {
+		t.Fatalf("Bind: %v", err)
+	}
+	original, err := rig.store.GetBinding(ctx, sdlcTestTenant, sdlcTestProject)
+	if err != nil {
+		t.Fatal(err)
+	}
+	installLostAckBindWrite(t, rig, fenceRigProject(t, rig))
+
+	rebind := rig.binding()
+	rebind.MaxReviewRounds = original.MaxReviewRounds + 2
+	_, err = rig.svc.Bind(ctx, sdlcTestTenant, rebind, BindOptions{})
+	assertProjectDeleting(t, err)
+
+	got, err := rig.store.GetBinding(ctx, sdlcTestTenant, sdlcTestProject)
+	if err != nil {
+		t.Fatalf("binding after the withdrawn rebind: %v", err)
+	}
+	if got.WriteToken != original.WriteToken || got.MaxReviewRounds != original.MaxReviewRounds {
+		t.Fatalf("binding after the withdrawn rebind = %+v, want the prior record back", got)
+	}
+	if _, err := rig.svc.Routes().Tenant(ctx, sdlcTestProject); err != nil {
+		t.Fatalf("the withdrawn rebind dropped the prior binding's route: %v", err)
+	}
+}
+
+// TestSDLCService_BindWithLostWriteAckAndNoDeleteReturnsTheWriteError: with
+// no delete in flight, the fence read finds nothing to withdraw for and the
+// bind reports the write's own error.
+func TestSDLCService_BindWithLostWriteAckAndNoDeleteReturnsTheWriteError(t *testing.T) {
+	rig := newSDLCServiceRig(t)
+	installLostAckBindWrite(t, rig, func() {})
+
+	_, err := rig.svc.Bind(context.Background(), sdlcTestTenant, rig.binding(), BindOptions{})
+	if err == nil {
+		t.Fatal("Bind succeeded on a write that reported an error")
+	}
+	var deleting *sdlc.ProjectDeletingError
+	var withdrawErr *sdlc.BindWithdrawError
+	if errors.As(err, &deleting) || errors.As(err, &withdrawErr) {
+		t.Fatalf("Bind = %v, want the write's own error", err)
+	}
+	if !strings.Contains(err.Error(), "proposal outcome unknown") {
+		t.Fatalf("Bind = %v, want the write's own error", err)
+	}
+}
+
 // failingDeleteStore is a project store whose Delete fails: after removing
 // the record (removeFirst, a failed name release) or without touching it.
 // With failGet, every Get after the Delete fails too.

@@ -121,6 +121,12 @@ func (s *Store) GetBinding(ctx context.Context, tenantID, projectID string) (*Pr
 // created one). The prior record is read in the same compare-and-swap round
 // that writes, so whether this put created or replaced is decided atomically
 // with the write.
+//
+// An error from the write itself may mean the write landed: the backend can
+// lose the response of a committed write. In that case PutBinding returns
+// the record that write would have replaced, and binding.WriteToken carries
+// the token stamped on the attempt, so the caller can withdraw exactly that
+// write. Every other error returns a nil record.
 func (s *Store) PutBinding(ctx context.Context, tenantID string, binding *ProjectBinding) (*ProjectBinding, error) {
 	if err := binding.Validate(); err != nil {
 		return nil, err
@@ -158,7 +164,9 @@ func (s *Store) PutBinding(ctx context.Context, tenantID string, binding *Projec
 		}
 		applied, err := storeRecord(ctx, "PutBinding", store, key, raw, binding)
 		if err != nil {
-			return nil, err
+			// The outcome is unknown: report what this write would have
+			// replaced so the caller can withdraw it by its token.
+			return prior, err
 		}
 		if applied {
 			return prior, nil

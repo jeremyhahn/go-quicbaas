@@ -3,7 +3,10 @@ package sdlc
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
+
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 )
 
 // PutBinding stamps a fresh write token on every put and reports the record
@@ -36,6 +39,75 @@ func TestPutBinding_ReportsPriorAndStampsWriteToken(t *testing.T) {
 	}
 	if second.WriteToken == "" || second.WriteToken == "sent-in" || second.WriteToken == first.WriteToken {
 		t.Fatalf("second write token = %q, want a fresh store-drawn one", second.WriteToken)
+	}
+}
+
+// lostAckKV applies the first binding write and then reports it failed, as
+// a backend does when the response of a committed write is lost.
+type lostAckKV struct {
+	qrdbsdk.AtomicKVStore
+	lost bool
+}
+
+func (k *lostAckKV) loseAck(key string, applied bool, err error) (bool, error) {
+	if err != nil || !applied || k.lost || !strings.HasPrefix(key, "sdlc_binding/") {
+		return applied, err
+	}
+	k.lost = true
+	return false, errors.New("proposal outcome unknown")
+}
+
+func (k *lostAckKV) PutIfAbsent(ctx context.Context, key string, value []byte) (bool, error) {
+	applied, err := k.AtomicKVStore.PutIfAbsent(ctx, key, value)
+	return k.loseAck(key, applied, err)
+}
+
+func (k *lostAckKV) CompareAndSwap(ctx context.Context, key string, old, value []byte) (bool, error) {
+	applied, err := k.AtomicKVStore.CompareAndSwap(ctx, key, old, value)
+	return k.loseAck(key, applied, err)
+}
+
+// TestPutBinding_LostWriteAckReportsThePriorAndTheToken: a write that lands
+// but reports an error still returns the record it replaced, and leaves the
+// attempt's token on the binding, so the caller can withdraw exactly it.
+func TestPutBinding_LostWriteAckReportsThePriorAndTheToken(t *testing.T) {
+	resolver := newMemoryResolver()
+	store, err := NewStore(resolver)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	first := testBinding()
+	if _, err := store.PutBinding(ctx, testTenant, first); err != nil {
+		t.Fatal(err)
+	}
+	resolver.mu.Lock()
+	held, ok := resolver.stores[testTenant].(qrdbsdk.AtomicKVStore)
+	if !ok {
+		resolver.mu.Unlock()
+		t.Fatal("the test tenant store takes no guarded writes")
+	}
+	resolver.stores[testTenant] = &lostAckKV{AtomicKVStore: held}
+	resolver.mu.Unlock()
+
+	second := testBinding()
+	second.Strategy = first.Strategy
+	prior, err := store.PutBinding(ctx, testTenant, second)
+	if err == nil || !strings.Contains(err.Error(), "proposal outcome unknown") {
+		t.Fatalf("PutBinding = %v, want the write's error", err)
+	}
+	if prior == nil || prior.WriteToken != first.WriteToken {
+		t.Fatalf("lost-ack put reported prior %+v, want the first write (token %q)", prior, first.WriteToken)
+	}
+	if second.WriteToken == "" || second.WriteToken == first.WriteToken {
+		t.Fatalf("lost-ack write token = %q, want the attempt's fresh token", second.WriteToken)
+	}
+	got, err := store.GetBinding(ctx, testTenant, testProject)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.WriteToken != second.WriteToken {
+		t.Fatalf("stored token = %q, want the landed attempt's %q", got.WriteToken, second.WriteToken)
 	}
 }
 

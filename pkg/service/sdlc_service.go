@@ -395,8 +395,27 @@ func (s *SDLCService) Bind(ctx context.Context, tenantID string, binding *sdlc.P
 	// in the same compare-and-swap as the write, and stamps the write with a
 	// token, so a withdrawal undoes exactly this write and nothing written
 	// since.
+	//
+	// A caller-supplied binding may carry an older record's token; cleared
+	// here, a token after PutBinding is always the one stamped on this write.
+	binding.WriteToken = ""
 	prior, err := s.store.PutBinding(ctx, tenantID, binding)
 	if err != nil {
+		if binding.WriteToken == "" {
+			// No write was attempted.
+			return nil, err
+		}
+		// A WRITE ERROR IS AN UNKNOWN OUTCOME: the backend can lose the
+		// response of a committed write. A bind that may have landed must
+		// not skip the fence, or a delete that fenced after the pre-check
+		// finishes with this binding and its route in place. The withdrawal
+		// is token-checked, so it is a no-op when the write never landed.
+		detached, cancel := context.WithTimeout(context.WithoutCancel(ctx), bindWithdrawTimeout)
+		withdrawErr := s.withdrawIfDeleting(detached, tenantID, binding, prior)
+		cancel()
+		if withdrawErr != nil {
+			return nil, withdrawErr
+		}
 		return nil, err
 	}
 	if err := s.withdrawIfDeleting(ctx, tenantID, binding, prior); err != nil {
