@@ -17,6 +17,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/jeremyhahn/go-quicbaas/pkg/config"
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
 	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/stretchr/testify/require"
@@ -78,6 +79,31 @@ func TestXKMSBackend_NativeSystemKeyNeverResolvesAsTenantKey(t *testing.T) {
 	require.NotContains(t, listedKeyIDs(t, ctx, kb, ""), "tenant/acme/k")
 	require.Empty(t, listedKeyIDs(t, ctx, kb, "tenant/"))
 
+	// Tenant acme now creates its own AES "k". go-xkms keeps it beside the
+	// native Ed25519 key under the same name, and after a restart the
+	// tenant's "k" is its AES key, never the native signing key.
+	_, err = kb.CreateKey(ctx, kb.algorithmToKeyAttributes("tenant/acme/k", AlgAES256GCM))
+	require.NoError(t, err)
+	kbR := newOwnerTestBackend(t, ctx, store)
+	meta, err := kbR.GetKeyMetadata(ctx, "tenant/acme/k")
+	require.NoError(t, err)
+	require.Equal(t, AlgAES256GCM, meta.Algorithm)
+	_, err = kbR.ExportPublicKey(ctx, "tenant/acme/k")
+	require.Error(t, err)
+	_, err = kbR.Sign(ctx, "tenant/acme/k", make([]byte, 32), AlgEd25519)
+	require.Error(t, err)
+	listed := 0
+	for _, id := range listedKeyIDs(t, ctx, kbR, "tenant/") {
+		if id == "tenant/acme/k" {
+			listed++
+		}
+	}
+	require.Equal(t, 1, listed)
+	require.NoError(t, kbR.DeleteKey(ctx, "tenant/acme/k"))
+	kbR2 := newOwnerTestBackend(t, ctx, store)
+	_, err = kbR2.GetKeyMetadata(ctx, "tenant/acme/k")
+	require.ErrorIs(t, err, ErrKeyNotFound)
+
 	// The backend's own encoded key still works, and its record persists
 	// across a restart (a fresh backend with an empty cache).
 	_, err = kb.CreateKey(ctx, kb.algorithmToKeyAttributes("tenant/beta/k", AlgAES256GCM))
@@ -96,4 +122,32 @@ func TestXKMSBackend_NativeSystemKeyNeverResolvesAsTenantKey(t *testing.T) {
 	require.NoError(t, err)
 	_, err = kb2.GetKeyMetadata(ctx, "tenant/beta/k")
 	require.ErrorIs(t, err, ErrKeyNotFound)
+}
+
+// TestXKMSBackend_OwnershipRecordIsPerBackend pins that an ownership record
+// binds the full go-xkms key identity: a record one backend writes never
+// vouches for the same name in another backend sharing the key store.
+func TestXKMSBackend_OwnershipRecordIsPerBackend(t *testing.T) {
+	ctx := context.Background()
+	store := newKeyNameGuardXKMS(t)
+	kb := newOwnerTestBackend(t, ctx, store)
+
+	attrs := kb.xkmsKeyAttributes("tenant/acme/k", AlgAES256GCM)
+	require.NoError(t, kb.claimXKMSKey(ctx, attrs))
+
+	other, err := NewXKMSBackend(&XKMSBackendConfig{
+		BackendType: config.BackendTypePKCS11, Logger: &mockLogger{}, KeyNameStore: store,
+	})
+	require.NoError(t, err)
+
+	owned, err := kb.ownsXKMSKey(ctx, attrs.CN, kb.xkmsKeyIdentity(attrs))
+	require.NoError(t, err)
+	require.True(t, owned)
+	owned, err = other.ownsXKMSKey(ctx, attrs.CN, other.xkmsKeyIdentity(attrs))
+	require.NoError(t, err)
+	require.False(t, owned)
+
+	require.Equal(t, kb.buildFullKeyID("tenant/acme/k", AlgAES256GCM), kb.xkmsKeyIdentity(attrs))
+	signing := kb.xkmsKeyAttributes("tenant/acme/k", AlgEd25519)
+	require.Equal(t, kb.buildSigningKeyID("tenant/acme/k", AlgEd25519), kb.xkmsKeyIdentity(signing))
 }

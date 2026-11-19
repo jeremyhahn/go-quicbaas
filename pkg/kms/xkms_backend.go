@@ -234,7 +234,7 @@ func (kb *XKMSBackend) CreateKey(ctx context.Context, attrs *kctypes.KeyAttribut
 			return nil, api.NewAsymmetricKeyGenerationError("XKMSBackend.CreateKey", err)
 		}
 	}
-	if err := kb.claimXKMSName(ctx, xattrs.CN); err != nil {
+	if err := kb.claimXKMSKey(ctx, &xattrs); err != nil {
 		return nil, err
 	}
 
@@ -294,7 +294,7 @@ func (kb *XKMSBackend) ImportKey(ctx context.Context, keyID string, material []b
 	if err := xkms.ImportKeyMaterial(ctx, string(kb.backendType), attrs, material); err != nil {
 		return nil, api.NewKeyImportError("XKMSBackend.ImportKey", kind, err)
 	}
-	if err := kb.claimXKMSName(ctx, attrs.CN); err != nil {
+	if err := kb.claimXKMSKey(ctx, attrs); err != nil {
 		return nil, err
 	}
 
@@ -342,15 +342,6 @@ func (kb *XKMSBackend) GetKeyMetadata(ctx context.Context, keyID string) (*KeyMe
 	kb.mu.RUnlock()
 
 	xkmsName := xkmsKeyName(keyID)
-	// An encoded name another writer stored (the node's native go-xkms
-	// service) is not this backend's key; only a recorded one resolves.
-	owned, err := kb.ownsXKMSName(ctx, xkmsName)
-	if err != nil {
-		return nil, err
-	}
-	if !owned {
-		return nil, ErrKeyNotFound
-	}
 
 	// Try to verify key exists in xkms using multiple lookup strategies
 	// Since we don't know the algorithm, try common signing key formats first
@@ -372,6 +363,16 @@ func (kb *XKMSBackend) GetKeyMetadata(ctx context.Context, keyID string) (*KeyMe
 	for _, sf := range signingFormats {
 		kid := fmt.Sprintf("%s:signing:%s:%s", kb.backendType, sf.format, xkmsName)
 		if _, err := xkms.SignerByID(ctx, kid); err == nil {
+			// A key under an encoded name that another writer stored (the
+			// node's native go-xkms service) is not this backend's key;
+			// only a recorded identity resolves, so probe the next format.
+			owned, err := kb.ownsXKMSKey(ctx, xkmsName, kid)
+			if err != nil {
+				return nil, err
+			}
+			if !owned {
+				continue
+			}
 			foundAlgorithm = sf.algo
 			break
 		}
@@ -391,9 +392,24 @@ func (kb *XKMSBackend) GetKeyMetadata(ctx context.Context, keyID string) (*KeyMe
 		for _, sf := range symmetricFormats {
 			kid := fmt.Sprintf("%s:encryption:%s:%s", kb.backendType, sf.format, xkmsName)
 			if _, err := xkms.GetSymmetricKey(ctx, kid); err == nil {
+				owned, err := kb.ownsXKMSKey(ctx, xkmsName, kid)
+				if err != nil {
+					return nil, err
+				}
+				if !owned {
+					continue
+				}
 				foundAlgorithm = sf.algo
 				break
 			}
+		}
+	}
+
+	// The legacy lookups by bare name cannot name a key identity, so an
+	// encoded name never resolves through them.
+	if foundAlgorithm == "" {
+		if _, ok := decodeXKMSKeyName(xkmsName); ok {
+			return nil, ErrKeyNotFound
 		}
 	}
 
@@ -452,9 +468,10 @@ func (kb *XKMSBackend) ListKeys(ctx context.Context, prefix string, limit int) (
 
 	// Add keys from xkms
 	for _, attrs := range keys {
-		// Another writer's encoded-shaped name is not this backend's key and
-		// cannot be reached through it, so it is not listed either.
-		owned, err := kb.ownsXKMSName(ctx, attrs.CN)
+		// A key under an encoded name is listed only when its full identity
+		// (backend, type, algorithm, name) is recorded: another writer's key
+		// cannot be reached through this backend, so it is not listed either.
+		owned, err := kb.ownsXKMSKey(ctx, attrs.CN, kb.xkmsKeyIdentity(attrs))
 		if err != nil {
 			return nil, "", err
 		}
@@ -553,7 +570,7 @@ func (kb *XKMSBackend) RotateKey(ctx context.Context, keyID string) (*KeyMetadat
 			return nil, api.NewKeyVersionGenerationError("XKMSBackend.RotateKey", err)
 		}
 	}
-	if err := kb.claimXKMSName(ctx, attrs.CN); err != nil {
+	if err := kb.claimXKMSKey(ctx, attrs); err != nil {
 		return nil, err
 	}
 
@@ -668,7 +685,9 @@ func (kb *XKMSBackend) DeleteKey(ctx context.Context, keyID string) error {
 		}
 	}
 
-	// Delete from go-xkms using attributes
+	// Delete from go-xkms using attributes, tracking the attributes of the
+	// key go-xkms actually deleted.
+	deleted := attrs
 	if err := xkms.DeleteKey(ctx, attrs); err != nil {
 		if stderrors.Is(err, xkms.ErrKeyNotFound) {
 			return ErrKeyNotFound
@@ -686,11 +705,12 @@ func (kb *XKMSBackend) DeleteKey(ctx context.Context, keyID string) error {
 			}
 			return api.NewKeyDeletionError("XKMSBackend.DeleteKey", err)
 		}
+		deleted = defaultAttrs
 	}
 
-	// Drop the ownership record, or a later native key stored under the
-	// same encoded name would resolve as the deleted key.
-	if err := kb.releaseXKMSName(ctx, xkmsKeyName(keyID)); err != nil {
+	// Drop the ownership record of the deleted key's identity, or a later
+	// native key stored under it would resolve as the deleted key.
+	if err := kb.releaseXKMSKey(ctx, deleted); err != nil {
 		return err
 	}
 

@@ -51,8 +51,10 @@ type BackendFactoryConfig struct {
 	// KeyNameStore is the persistent go-xkms key store. When set,
 	// InitializeFromXKMS refuses a store holding a legacy name that reads as
 	// an encoded key ID and marks a clean store; nil skips the check. It also
-	// holds the ownership records of the encoded names the XKMS backends
-	// write (xkms_key_owner.go); nil keeps those in memory per backend.
+	// holds the ownership records of the keys the XKMS backends write under
+	// encoded names, one per full go-xkms key identity (backend, type,
+	// algorithm, name), not per name (xkms_key_owner.go); nil keeps those in
+	// memory per backend.
 	KeyNameStore goxkms.StorageBackend
 }
 
