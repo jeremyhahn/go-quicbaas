@@ -61,7 +61,7 @@ func (h *timeseriesHandler) transformRequest(method string, req interface{}) (ma
 }
 
 // transformResponse transforms MCP tool response to SDK timeseries types.
-func (h *timeseriesHandler) transformResponse(method string, resp interface{}) (interface{}, error) {
+func (h *timeseriesHandler) transformResponse(method string, req, resp interface{}) (interface{}, error) {
 	switch method {
 	case "Write", "TSWritePoint":
 		return h.transformWritePointResponse(resp)
@@ -72,7 +72,7 @@ func (h *timeseriesHandler) transformResponse(method string, resp interface{}) (
 	case "DeleteSeries", "TSDeleteSeries":
 		return h.transformDeleteSeriesResponse(resp)
 	case "GetRetentionPolicy", "TSGetRetentionPolicy":
-		return h.transformGetRetentionPolicyResponse(resp)
+		return h.transformGetRetentionPolicyResponse(req, resp)
 	case "SetRetentionPolicy", "TSSetRetentionPolicy":
 		return h.transformSetRetentionPolicyResponse(resp)
 	case "ListMetrics", "TSListMetrics":
@@ -80,7 +80,7 @@ func (h *timeseriesHandler) transformResponse(method string, resp interface{}) (
 	case "SetRetention":
 		return nil, nil
 	case "GetRetention":
-		return h.transformGetRetentionResponse(resp)
+		return h.transformGetRetentionResponse(req, resp)
 	default:
 		return resp, nil
 	}
@@ -423,7 +423,7 @@ func (h *timeseriesHandler) transformDeleteSeriesResponse(resp interface{}) (int
 	}, nil
 }
 
-func (h *timeseriesHandler) transformGetRetentionPolicyResponse(resp interface{}) (interface{}, error) {
+func (h *timeseriesHandler) transformGetRetentionPolicyResponse(req, resp interface{}) (interface{}, error) {
 	if resp == nil {
 		return nil, nil
 	}
@@ -433,24 +433,23 @@ func (h *timeseriesHandler) transformGetRetentionPolicyResponse(resp interface{}
 		return resp, nil
 	}
 
-	// The server's qrdb_ts_get_retention_policy result is the service's
-	// TSGetRetentionPolicyResponse: a nested policy with durations in
-	// nanoseconds. Older results carried top-level *_seconds fields.
-	duration := tsGetInt64(m, "duration_seconds")
-	resolution := tsGetInt64(m, "resolution_seconds")
-	aggregation := tsGetString(m, "aggregation")
-	if p, ok := m["policy"].(map[string]interface{}); ok {
-		duration = int64(time.Duration(tsGetInt64(p, "duration")) / time.Second)
-		resolution = int64(time.Duration(tsGetInt64(p, "resolution")) / time.Second)
-		aggregation = tsGetString(p, "aggregation")
+	// The result is read by decodeRetentionResult: go-qrdb's native
+	// top-level policy, the nested policy, or the older *_seconds fields.
+	// The native result names no metric, so the request's metric stands in.
+	policy := decodeRetentionResult(m)
+	metric := tsGetString(m, "metric")
+	if metric == "" {
+		if mapReq, ok := req.(map[string]interface{}); ok {
+			metric, _ = mapReq["metric"].(string)
+		}
 	}
 
 	return map[string]interface{}{
-		"metric": tsGetString(m, "metric"),
+		"metric": metric,
 		"policy": map[string]interface{}{
-			"duration":    duration,
-			"resolution":  resolution,
-			"aggregation": aggregation,
+			"duration":    int64(policy.duration / time.Second),
+			"resolution":  int64(policy.resolution / time.Second),
+			"aggregation": policy.aggregation,
 		},
 		"timestamp": tsGetTime(m, "timestamp"),
 	}, nil
@@ -530,20 +529,101 @@ func (h *timeseriesHandler) transformGetRetention(req interface{}) (map[string]i
 }
 
 // transformGetRetentionResponse decodes the qrdb_ts_get_retention_policy
-// result, the server's TSGetRetentionPolicyResponse as JSON:
-// {"metric", "policy": {"duration": <ns>, "resolution": <ns>,
-// "aggregation"}}. A result without a policy has a nil Policy.
-func (h *timeseriesHandler) transformGetRetentionResponse(resp interface{}) (interface{}, error) {
+// result with decodeRetentionResult and always reports the requested
+// metric, since go-qrdb's native result names none. A nil result, or one
+// with no duration, resolution or aggregation, has a nil Policy.
+func (h *timeseriesHandler) transformGetRetentionResponse(req, resp interface{}) (interface{}, error) {
 	m, _ := resp.(map[string]interface{})
 	out := &timeseries.GetRetentionResponse{Metric: tsGetString(m, "metric")}
-	if p, ok := m["policy"].(map[string]interface{}); ok && p != nil {
-		out.Policy = &timeseries.RetentionPolicy{
-			Duration:    time.Duration(tsGetInt64(p, "duration")),
-			Resolution:  time.Duration(tsGetInt64(p, "resolution")),
-			Aggregation: timeseries.ParseAggregateFunction(tsGetString(p, "aggregation")),
-		}
+	if r, ok := req.(*timeseries.GetRetentionRequest); ok && r != nil && r.Metric != "" {
+		out.Metric = r.Metric
+	}
+	if m == nil {
+		return out, nil
+	}
+	policy := decodeRetentionResult(m)
+	if policy.isZero() {
+		return out, nil
+	}
+	out.Policy = &timeseries.RetentionPolicy{
+		Duration:    policy.duration,
+		Resolution:  policy.resolution,
+		Aggregation: timeseries.ParseAggregateFunction(policy.aggregation),
 	}
 	return out, nil
+}
+
+// retentionResult is a decoded qrdb_ts_get_retention_policy result.
+// aggregation is go-qrdb's lower-case aggregation name, empty for none.
+type retentionResult struct {
+	duration    time.Duration
+	resolution  time.Duration
+	aggregation string
+}
+
+func (r retentionResult) isZero() bool {
+	return r.duration == 0 && r.resolution == 0 && r.aggregation == ""
+}
+
+// qrdbAggFuncNames maps go-qrdb's timeseries.AggFunc numbers to their
+// names. go-qrdb orders AggFunc avg, sum, min, max, count, percentile,
+// first, last from 1; the SDK's AggregateFunction is ordered differently,
+// so the number is mapped by name and never cast.
+var qrdbAggFuncNames = map[int64]string{
+	1: "avg", 2: "sum", 3: "min", 4: "max", 5: "count",
+	6: "percentile", 7: "first", 8: "last",
+}
+
+// retentionAggregationName reads an aggregation that is either go-qrdb's
+// AggFunc number or a name string.
+func retentionAggregationName(v interface{}) string {
+	switch a := v.(type) {
+	case string:
+		return strings.ToLower(a)
+	case float64:
+		return qrdbAggFuncNames[int64(a)]
+	case int64:
+		return qrdbAggFuncNames[a]
+	case int:
+		return qrdbAggFuncNames[int64(a)]
+	default:
+		return ""
+	}
+}
+
+// decodeRetentionResult reads the qrdb_ts_get_retention_policy tool result.
+// The unified server serves go-qrdb's own tool, which answers with
+// json.Marshal of *timeseries.RetentionPolicy at the top level:
+// {"duration": <ns>, "resolution": <ns>, "aggregation": <AggFunc number>},
+// no metric, and {"duration":0} for a metric with no policy. It also reads
+// a nested {"policy": {"duration": <ns>, "resolution": <ns>, "aggregation":
+// <name>}} and the older top-level duration_seconds / resolution_seconds.
+//
+// go-qrdb's percentile, first and last aggregations have no SDK
+// AggregateFunction: the typed GetRetention reports them as AggregateNone,
+// while the untyped reader keeps their names.
+func decodeRetentionResult(m map[string]interface{}) retentionResult {
+	if p, ok := m["policy"].(map[string]interface{}); ok && p != nil {
+		return retentionResult{
+			duration:    time.Duration(tsGetInt64(p, "duration")),
+			resolution:  time.Duration(tsGetInt64(p, "resolution")),
+			aggregation: retentionAggregationName(p["aggregation"]),
+		}
+	}
+	_, hasDurationSec := m["duration_seconds"]
+	_, hasResolutionSec := m["resolution_seconds"]
+	if hasDurationSec || hasResolutionSec {
+		return retentionResult{
+			duration:    time.Duration(tsGetInt64(m, "duration_seconds")) * time.Second,
+			resolution:  time.Duration(tsGetInt64(m, "resolution_seconds")) * time.Second,
+			aggregation: retentionAggregationName(m["aggregation"]),
+		}
+	}
+	return retentionResult{
+		duration:    time.Duration(tsGetInt64(m, "duration")),
+		resolution:  time.Duration(tsGetInt64(m, "resolution")),
+		aggregation: retentionAggregationName(m["aggregation"]),
+	}
 }
 
 // Helper functions

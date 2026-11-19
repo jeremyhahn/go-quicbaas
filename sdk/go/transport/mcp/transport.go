@@ -608,7 +608,7 @@ func (t *Transport) doRequest(ctx context.Context, service, method string, reqBo
 	// Transform response for TimeSeries service
 	if isTimeseries {
 		th := newTimeseriesHandler(t)
-		return th.transformResponse(method, result)
+		return th.transformResponse(method, reqBody, result)
 	}
 
 	// Transform response for Auth service
