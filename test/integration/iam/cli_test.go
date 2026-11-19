@@ -485,6 +485,14 @@ func isExpectedNoSessionError(err error) bool {
 // Session CLI Tests
 // =============================================================================
 
+// cliSession is the part of an `iam session list` item or an
+// `iam session get` result these tests read. The CLI prints iam.Session:
+// list prints a JSON array of them, get prints one object.
+type cliSession struct {
+	ID       string `json:"id"`
+	TenantID string `json:"tenant_id"`
+}
+
 // TestCLISessionList tests the session list command.
 func TestCLISessionList(t *testing.T) {
 	proto := getGRPCProtocolConfig()
@@ -498,15 +506,10 @@ func TestCLISessionList(t *testing.T) {
 		output, err := cli.run("iam", "session", "list", "--tenant", tenantID)
 		require.NoError(t, err, "session list should succeed")
 
-		// Verify JSON output structure
-		if cli.outputFmt == "json" {
-			var result struct {
-				Sessions []interface{} `json:"sessions"`
-			}
-			if parseErr := cli.unmarshalJSON(output, &result); parseErr == nil {
-				t.Logf("Found %d sessions", len(result.Sessions))
-			}
-		}
+		var sessions []cliSession
+		require.NoError(t, cli.unmarshalJSON(output, &sessions), "session list prints a JSON array")
+		require.NotEmpty(t, sessions, "the tenant admin's own login session is listed")
+		t.Logf("Found %d sessions", len(sessions))
 	})
 
 	t.Run("list-sessions-with-limit", func(t *testing.T) {
@@ -533,37 +536,27 @@ func TestCLISessionGet(t *testing.T) {
 	cli := newIAMCLITenantAdminContext(t, proto.name, proto.address)
 	tenantID := cli.tenantID
 
-	// First, list sessions to get a valid session ID
+	// get-session lists the caller's own sessions, then gets the first one
+	// by its id: the get must succeed and return that session in the tenant.
 	t.Run("get-session", func(t *testing.T) {
-		// Try to list sessions first to get a session ID
+		// The tenant admin's own login session is listed; take its id.
 		listOutput, listErr := cli.run("iam", "session", "list", "--tenant", tenantID, "--limit", "1")
 		require.NoError(t, listErr, "session list should succeed")
 
-		var sessionID string
-		if cli.outputFmt == "json" {
-			var result struct {
-				Sessions []struct {
-					SessionID string `json:"session_id"`
-				} `json:"sessions"`
-			}
-			if err := cli.unmarshalJSON(listOutput, &result); err == nil && len(result.Sessions) > 0 {
-				sessionID = result.Sessions[0].SessionID
-			}
-		}
-
-		if sessionID == "" {
-			t.Log("No sessions found to test get command, using placeholder")
-			sessionID = "test-session-id"
-		}
+		var sessions []cliSession
+		require.NoError(t, cli.unmarshalJSON(listOutput, &sessions), "session list prints a JSON array")
+		require.NotEmpty(t, sessions, "the tenant admin's own login session is listed")
+		sessionID := sessions[0].ID
+		require.NotEmpty(t, sessionID, "a listed session carries its id")
 
 		output, err := cli.run("iam", "session", "get", sessionID, "--tenant", tenantID)
-		// If no session exists, expect an error
-		if isExpectedNotFoundError(err) {
-			t.Log("Session not found (expected for placeholder ID)")
-			return
-		}
-		require.NoError(t, err, "session get should succeed")
-		assert.NotEmpty(t, output)
+		require.NoError(t, err, "session get of the caller's own session should succeed")
+
+		var got cliSession
+		require.NoError(t, cli.unmarshalJSON(output, &got), "session get prints a JSON object")
+		assert.Equal(t, sessionID, got.ID)
+		assert.Equal(t, tenantID, got.TenantID)
+		t.Logf("Retrieved session %s in tenant %s", got.ID, got.TenantID)
 	})
 }
 
