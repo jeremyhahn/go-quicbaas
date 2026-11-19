@@ -19,6 +19,7 @@ import (
 	"bytes"
 	"context"
 	stderrors "errors"
+	"fmt"
 	"time"
 
 	types "github.com/jeremyhahn/go-xkms/sdk/go"
@@ -410,6 +411,22 @@ func (t *cryptoService) Decrypt(ctx context.Context, req *DecryptRequest) (*Decr
 		return nil, err
 	}
 
+	// The backend decrypts under the version the ciphertext names, so that is
+	// the version reported, and an explicit version that differs is refused.
+	keyVersion := req.KeyVersion
+	if v, verr := kms.CiphertextKeyVersion(req.Ciphertext); verr == nil {
+		if req.KeyVersion != 0 && req.KeyVersion != v {
+			t.metrics.decryptOperationsTotal.With(req.KeyID, "validation_error").Inc()
+			t.metrics.errorsByType.With("validation_error").Inc()
+			return nil, NewError(errors.ErrInvalidInput, "crypto.Decrypt",
+				fmt.Sprintf("key version %d does not match the ciphertext's key version %d", req.KeyVersion, v))
+		}
+		keyVersion = v
+	}
+	if keyVersion == 0 {
+		keyVersion = 1
+	}
+
 	if err := t.checkVersionUsable(ctx, scopedKeyID, req.Ciphertext); err != nil {
 		t.metrics.decryptOperationsTotal.With(req.KeyID, "version_disabled").Inc()
 		t.metrics.errorsByType.With("key_version_error").Inc()
@@ -444,11 +461,6 @@ func (t *cryptoService) Decrypt(ctx context.Context, req *DecryptRequest) (*Decr
 	}
 
 	// Use provided key version or default
-	keyVersion := req.KeyVersion
-	if keyVersion == 0 {
-		keyVersion = 1
-	}
-
 	resp := &DecryptResponse{
 		KeyID:      req.KeyID,
 		KeyVersion: keyVersion,

@@ -26,6 +26,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/api"
+	"github.com/jeremyhahn/go-quicbaas/pkg/errors"
 )
 
 // versionedCryptoFixture is a crypto service mounted over a KMS service whose
@@ -308,4 +309,29 @@ func TestCryptoService_Decrypt_VersionDisabledOnAnotherNodeIsRefused(t *testing.
 		require.NoError(t, err)
 		require.Equal(t, "sealed under v1", string(resp.Plaintext))
 	})
+}
+
+// TestCryptoService_Decrypt_ReportsCiphertextKeyVersion: Decrypt reports the
+// version the ciphertext was sealed under, and refuses an explicit version
+// that conflicts with it before anything is decrypted.
+func TestCryptoService_Decrypt_ReportsCiphertextKeyVersion(t *testing.T) {
+	f := newVersionedCryptoFixture(t)
+	f.version.Store(2)
+	v2 := f.encrypt(t, "sealed under v2")
+
+	resp, err := f.svc.Decrypt(systemTenantCtx(), &DecryptRequest{KeyID: versionStatusKeyID, Ciphertext: v2})
+	require.NoError(t, err)
+	require.Equal(t, uint64(2), resp.KeyVersion)
+
+	resp, err = f.svc.Decrypt(systemTenantCtx(), &DecryptRequest{KeyID: versionStatusKeyID, Ciphertext: v2, KeyVersion: 2})
+	require.NoError(t, err)
+	require.Equal(t, uint64(2), resp.KeyVersion)
+
+	before := f.decrypt.Load()
+	_, err = f.svc.Decrypt(systemTenantCtx(), &DecryptRequest{KeyID: versionStatusKeyID, Ciphertext: v2, KeyVersion: 1})
+	require.Error(t, err)
+	var qbErr *errors.QBError
+	require.True(t, stderrors.As(err, &qbErr), "want QBError, got %v", err)
+	require.Equal(t, errors.ErrInvalidInput, qbErr.Code)
+	require.Equal(t, before, f.decrypt.Load(), "a conflicting version decrypts nothing")
 }
