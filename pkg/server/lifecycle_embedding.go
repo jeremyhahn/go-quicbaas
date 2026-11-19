@@ -19,6 +19,10 @@ import (
 	"context"
 	"time"
 
+	qrdbserver "github.com/jeremyhahn/go-qrdb/pkg/server"
+	qrdbservice "github.com/jeremyhahn/go-qrdb/pkg/service"
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+
 	api "github.com/jeremyhahn/go-quicbaas/pkg/api"
 	"github.com/jeremyhahn/go-quicbaas/pkg/embedding"
 )
@@ -403,5 +407,64 @@ func (s *Server) registerEmbeddingProviders(mgr *embedding.Manager, cfg *embeddi
 		}
 	}
 
+	if s.qrdbEmbeddingSvc != nil {
+		if err := s.qrdbEmbeddingSvc.RegisterProvider(cfg.Provider, &qrdbEmbeddingProvider{p: provider, model: cfg.Model}); err != nil {
+			return &api.OperationFailedError{
+				Operation: "register " + cfg.Provider + " go-qrdb embedding provider",
+				Cause:     err,
+			}
+		}
+	}
+
+	return nil
+}
+
+// qrdbEmbeddingServerOptions composes go-qrdb's embedding service into the
+// node's server options. The service is created once, with the configured
+// provider as its default; providers are registered into it later, when the
+// embedding manager registers them. It returns nil when no embedding
+// configuration resolves.
+func (s *Server) qrdbEmbeddingServerOptions() []qrdbsdk.ServerOption {
+	if s.qrdbEmbeddingSvc == nil {
+		cfg, err := s.buildEmbeddingConfig()
+		if err != nil {
+			s.logger.WithFields(map[string]interface{}{
+				"error": err.Error(),
+			}).Warn("Embedding upstream is not configured, so go-qrdb's embedding routes are not served")
+			return nil
+		}
+		s.qrdbEmbeddingSvc = qrdbservice.NewEmbeddingService(qrdbservice.WithDefaultProvider(cfg.Provider))
+	}
+	return []qrdbsdk.ServerOption{qrdbserver.WithEmbedding(s.qrdbEmbeddingSvc)}
+}
+
+// qrdbEmbeddingProvider adapts a quicbaas embedding provider to go-qrdb's
+// service-layer EmbeddingProvider, so go-qrdb's embedding service serves the
+// providers the quicbaas embedding manager registers.
+type qrdbEmbeddingProvider struct {
+	p     embedding.Provider
+	model string
+}
+
+var _ qrdbservice.EmbeddingProvider = (*qrdbEmbeddingProvider)(nil)
+
+// Embed embeds texts with the wrapped provider. The request model is ignored
+// because the quicbaas provider is bound to its configured model.
+func (a *qrdbEmbeddingProvider) Embed(ctx context.Context, texts []string, _ string) (*qrdbservice.EmbeddingResult, error) {
+	vecs, err := a.p.EmbedBatch(ctx, texts)
+	if err != nil {
+		return nil, err
+	}
+	return &qrdbservice.EmbeddingResult{Embeddings: vecs, Model: a.model}, nil
+}
+
+// Models reports the single model the wrapped provider is configured with.
+func (a *qrdbEmbeddingProvider) Models(_ context.Context) ([]qrdbservice.ModelInfo, error) {
+	return []qrdbservice.ModelInfo{{Name: a.model, Dimensions: a.p.Dimensions(), MaxTokens: a.p.MaxTokens()}}, nil
+}
+
+// Close returns nil: the quicbaas embedding manager owns the provider's
+// lifetime and closes it in stopEmbedding.
+func (a *qrdbEmbeddingProvider) Close() error {
 	return nil
 }

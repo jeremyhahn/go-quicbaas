@@ -27,6 +27,7 @@ import (
 
 	ggrpc "google.golang.org/grpc"
 
+	qrdbservice "github.com/jeremyhahn/go-qrdb/pkg/service"
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	qrdbnode "github.com/jeremyhahn/go-qrdb/sdk/go/node"
 	qrdbsecret "github.com/jeremyhahn/go-qrdb/sdk/go/secret"
@@ -260,6 +261,7 @@ type Server struct {
 
 	// Embedding manager - provides vector embedding generation via configurable providers
 	embeddingManager *embedding.Manager
+	qrdbEmbeddingSvc qrdbservice.EmbeddingServicer
 
 	// Ollama service - provides LLM embedding and model management via Ollama
 	ollamaService service.OllamaService
@@ -1909,6 +1911,12 @@ func (s *Server) GetRAGSystem() *rag.System {
 // GetEmbeddingManager returns the embedding manager (nil if not enabled or not compiled).
 func (s *Server) GetEmbeddingManager() *embedding.Manager {
 	return s.embeddingManager
+}
+
+// GetQRDBEmbeddingServicer returns the go-qrdb embedding service the node
+// serves, or nil when vector support is not compiled.
+func (s *Server) GetQRDBEmbeddingServicer() qrdbservice.EmbeddingServicer {
+	return s.qrdbEmbeddingSvc
 }
 
 // GetWatchBridge returns the WatchBridge (nil if not enabled).
