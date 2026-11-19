@@ -33,16 +33,24 @@ func TestCiphertextKeyVersion(t *testing.T) {
 		name     string
 		metadata map[string][]byte
 		want     uint64
+		wantErr  bool
 	}{
 		{name: "no metadata", metadata: nil, want: 1},
 		{name: "metadata without kv", metadata: map[string][]byte{"other": []byte("x")}, want: 1},
 		{name: "kv 1", metadata: map[string][]byte{keyVersionMetadataKey: []byte("1")}, want: 1},
 		{name: "kv 7", metadata: map[string][]byte{keyVersionMetadataKey: []byte("7")}, want: 7},
-		{name: "kv unparsable", metadata: map[string][]byte{keyVersionMetadataKey: []byte("abc")}, want: 1},
+		{name: "kv unparsable", metadata: map[string][]byte{keyVersionMetadataKey: []byte("abc")}, wantErr: true},
+		{name: "kv negative", metadata: map[string][]byte{keyVersionMetadataKey: []byte("-1")}, wantErr: true},
+		{name: "kv zero", metadata: map[string][]byte{keyVersionMetadataKey: []byte("0")}, wantErr: true},
+		{name: "kv signed", metadata: map[string][]byte{keyVersionMetadataKey: []byte("+2")}, wantErr: true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got, err := CiphertextKeyVersion(encodeCiphertext(t, tt.metadata))
+			if tt.wantErr {
+				require.ErrorIs(t, err, ErrInvalidCiphertextKeyVersion)
+				return
+			}
 			require.NoError(t, err)
 			require.Equal(t, tt.want, got)
 		})

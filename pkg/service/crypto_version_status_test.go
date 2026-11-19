@@ -188,6 +188,35 @@ func TestCryptoService_Decrypt_UnparsableCiphertextGoesToBackend(t *testing.T) {
 	require.False(t, stderrors.As(err, &disabled), "an unparsable ciphertext is not refused as key-disabled: %v", err)
 }
 
+func TestCryptoService_Decrypt_NonpositiveKeyVersionRefused(t *testing.T) {
+	f := newVersionedCryptoFixture(t)
+	blob, err := json.Marshal(kctypes.EncryptedData{
+		Ciphertext: []byte("sealed"),
+		Metadata:   map[string][]byte{"kv": []byte("-1")},
+	})
+	require.NoError(t, err)
+	before := f.decrypt.Load()
+
+	requireInvalidInput := func(err error) {
+		t.Helper()
+		require.Error(t, err)
+		var qbErr *errors.QBError
+		require.True(t, stderrors.As(err, &qbErr), "want QBError, got %v", err)
+		require.Equal(t, errors.ErrInvalidInput, qbErr.Code)
+	}
+
+	_, err = f.svc.Decrypt(systemTenantCtx(), &DecryptRequest{KeyID: versionStatusKeyID, Ciphertext: blob})
+	requireInvalidInput(err)
+
+	_, err = f.svc.DecryptBatch(systemTenantCtx(), &DecryptBatchRequest{
+		KeyID: versionStatusKeyID,
+		Items: []BatchDecryptItem{{Ciphertext: blob}},
+	})
+	requireInvalidInput(err)
+
+	require.Equal(t, before, f.decrypt.Load(), "a ciphertext with an invalid key version decrypts nothing")
+}
+
 // failingGetKVStore is a KVStore whose Get fails with an error that is not not-found.
 type failingGetKVStore struct {
 	*mockKVStoreForKMS

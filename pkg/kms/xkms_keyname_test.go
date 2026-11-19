@@ -258,6 +258,32 @@ func assertKeyRoundTrips(t *testing.T, b *XKMSBackend, keyID string) {
 	assert.Equal(t, []byte("p"), plaintext)
 }
 
+func TestXKMSBackend_DecryptRefusesNonpositiveKeyVersion(t *testing.T) {
+	cleanup := initXKMSForTest(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	backend := newKeyNameTestBackend(t)
+	createKeyNameTestKey(t, backend, "nv-k")
+	createKeyNameTestKey(t, backend, "nv-k_v-1")
+
+	ciphertext, err := backend.Encrypt(ctx, "nv-k_v-1", []byte("p"), nil)
+	require.NoError(t, err)
+
+	for _, kv := range []string{"-1", "0", "+1"} {
+		t.Run("kv "+kv, func(t *testing.T) {
+			encrypted, err := backend.deserializeEncryptedData(ciphertext)
+			require.NoError(t, err)
+			encrypted.Metadata[keyVersionMetadataKey] = []byte(kv)
+			relabelled, err := backend.serializeEncryptedData(encrypted)
+			require.NoError(t, err)
+
+			_, err = backend.Decrypt(ctx, "nv-k", relabelled, nil)
+			require.ErrorIs(t, err, ErrInvalidCiphertextKeyVersion)
+		})
+	}
+}
+
 func TestXKMSBackend_CreateKeyRefusesHidingName(t *testing.T) {
 	cleanup := initXKMSForTest(t)
 	defer cleanup()

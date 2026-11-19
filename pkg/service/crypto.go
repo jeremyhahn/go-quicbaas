@@ -300,6 +300,10 @@ func (t *cryptoService) checkVersionUsable(ctx context.Context, scopedKeyID stri
 		return nil
 	}
 	version, err := kms.CiphertextKeyVersion(ciphertext)
+	if stderrors.Is(err, kms.ErrInvalidCiphertextKeyVersion) {
+		// A version that is not a positive integer names no key version: refuse it rather than check another version's status.
+		return WrapError(err, errors.ErrInvalidInput, "service.Decrypt", "ciphertext key version is invalid")
+	}
 	if err != nil {
 		// A ciphertext that does not decode names no version; the crypto backend rejects ciphertext it cannot decode, so its own error is what the caller sees.
 		return nil

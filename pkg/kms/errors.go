@@ -79,4 +79,7 @@ var (
 
 	// ErrKeyBytesPositive indicates keyBytes must be positive.
 	ErrKeyBytesPositive = errors.New("keyBytes must be positive")
+
+	// ErrInvalidCiphertextKeyVersion indicates a ciphertext's key version metadata is not a positive integer.
+	ErrInvalidCiphertextKeyVersion = errors.New("ciphertext key version is invalid")
 )

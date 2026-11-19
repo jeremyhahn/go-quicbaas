@@ -15,7 +15,7 @@ package kms
 
 import (
 	"encoding/json"
-	"fmt"
+	"strconv"
 
 	kctypes "github.com/jeremyhahn/go-xkms/sdk/go"
 )
@@ -30,13 +30,21 @@ func CiphertextKeyVersion(ciphertext []byte) (uint64, error) {
 	if err := json.Unmarshal(ciphertext, &encrypted); err != nil {
 		return 0, err
 	}
+	return encryptedKeyVersion(&encrypted)
+}
+
+// encryptedKeyVersion returns the key version recorded in encrypted's metadata.
+// A blob without a version entry was sealed before versioning and is version 1.
+// A version entry that is not a positive decimal integer (no sign, no padding,
+// no trailing text) returns ErrInvalidCiphertextKeyVersion.
+func encryptedKeyVersion(encrypted *kctypes.EncryptedData) (uint64, error) {
 	versionBytes, ok := encrypted.Metadata[keyVersionMetadataKey]
 	if !ok {
 		return 1, nil
 	}
-	version := 1
-	if _, err := fmt.Sscanf(string(versionBytes), "%d", &version); err != nil || version < 1 {
-		return 1, nil
+	version, err := strconv.ParseUint(string(versionBytes), 10, 31)
+	if err != nil || version < 1 {
+		return 0, ErrInvalidCiphertextKeyVersion
 	}
-	return uint64(version), nil
+	return version, nil
 }

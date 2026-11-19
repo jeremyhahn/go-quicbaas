@@ -37,6 +37,7 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/pkg/api"
 	"github.com/jeremyhahn/go-quicbaas/pkg/config"
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
+	"github.com/jeremyhahn/go-quicbaas/pkg/util/conv"
 	"github.com/jeremyhahn/go-quicbaas/pkg/xkms"
 )
 
@@ -1128,17 +1129,14 @@ func (kb *XKMSBackend) Decrypt(ctx context.Context, keyID string, ciphertext, aa
 		return nil, api.NewKeyMetadataRetrievalError("XKMSBackend.Decrypt", err)
 	}
 
-	// Read key version from encrypted data metadata
-	// If not present (legacy data), assume version 1
-	version := 1
-	if encrypted.Metadata != nil {
-		if versionBytes, ok := encrypted.Metadata[keyVersionMetadataKey]; ok {
-			if _, err := fmt.Sscanf(string(versionBytes), "%d", &version); err != nil {
-				// If we can't parse the version, fall back to version 1
-				version = 1
-			}
-		}
+	// Read key version from encrypted data metadata. A blob without one
+	// (legacy data) is version 1; one that is not a positive integer is refused,
+	// so no relabelled version can select a key outside keyID's versions.
+	parsedVersion, err := encryptedKeyVersion(encrypted)
+	if err != nil {
+		return nil, api.NewCiphertextDeserializationError("XKMSBackend.Decrypt", err)
 	}
+	version := conv.ClampUint64ToInt(parsedVersion)
 
 	// Determine which key to use based on version
 	// Version 1 uses the base key (backward compatible)
