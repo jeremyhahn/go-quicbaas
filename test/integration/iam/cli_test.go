@@ -24,6 +24,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -93,6 +94,13 @@ type iamCLITestContext struct {
 	tenantID  string
 	timeout   time.Duration
 	outputFmt string
+
+	// The tenant-admin identity, set by actAsTenantAdmin: the admin's
+	// certificate and key, and the HOME whose token file holds the admin's
+	// bearer. Empty means the CLI runs as the system administrator.
+	certPath string
+	keyPath  string
+	home     string
 }
 
 // newIAMCLITestContext creates a new IAM CLI test context.
@@ -119,23 +127,80 @@ func newIAMCLITestContext(t *testing.T, protocol, address, tenantID string) *iam
 	}
 }
 
-// run executes a CLI command with the configured protocol, address, and tenant.
-func (c *iamCLITestContext) run(args ...string) (string, error) {
-	c.t.Helper()
+// newIAMCLITenantAdminContext returns a CLI context that acts as the
+// administrator of a freshly provisioned tenant, in that tenant. The session
+// verbs are self-service: the server refuses a system-tenant caller and a
+// caller acting in another tenant, so the success cases run as the tenant's
+// own administrator.
+func newIAMCLITenantAdminContext(t *testing.T, protocol, address string) *iamCLITestContext {
+	t.Helper()
+	cli := newIAMCLITestContext(t, protocol, address, generateUniqueTenantIDForCLI())
+	cli.actAsTenantAdmin()
+	return cli
+}
 
-	// Build full command with protocol, address, and output format
+// actAsTenantAdmin provisions c.tenantID with its administrator
+// (helpers.TenantAdmin deletes the tenant when the test ends) and makes the
+// CLI run under that administrator's certificate and bearer.
+func (c *iamCLITestContext) actAsTenantAdmin() {
+	t := c.t
+	t.Helper()
+
+	admin := helpers.TenantAdmin(t, getRESTEndpointForCLI(), c.tenantID)
+	tenant := admin.Tenant()
+
+	dir := t.TempDir()
+	certPath := filepath.Join(dir, "tenant-admin.crt")
+	keyPath := filepath.Join(dir, "tenant-admin.key")
+	home := filepath.Join(dir, "home")
+	require.NoError(t, os.WriteFile(certPath, tenant.AdminCertPEM, 0o600), "write tenant admin certificate")
+	require.NoError(t, os.WriteFile(keyPath, tenant.AdminKeyPEM, 0o600), "write tenant admin key")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	bearer, expiresAt, err := admin.BearerSession(ctx)
+	require.NoError(t, err, "tenant admin login failed")
+	require.NoError(t, clitoken.SaveToken(filepath.Join(home, ".quicbaas", "token"), &clitoken.TokenData{
+		AccessToken: bearer,
+		ExpiresAt:   expiresAt,
+		TokenType:   "Bearer",
+	}), "persist tenant admin bearer")
+
+	c.certPath = certPath
+	c.keyPath = keyPath
+	c.home = home
+}
+
+// command builds the CLI command for args, with the global flags and, when
+// the context acts as a tenant admin, that admin's identity.
+func (c *iamCLITestContext) command(ctx context.Context, args []string) (*exec.Cmd, []string) {
 	fullArgs := []string{
 		"--transport", c.protocol,
 		"--address", c.address,
 		"--tls-ca", "/etc/quicbaas/certs/ca.crt",
 		"--output", c.outputFmt,
 	}
+	if c.certPath != "" {
+		fullArgs = append(fullArgs, "--tls-cert", c.certPath, "--tls-key", c.keyPath)
+	}
 	fullArgs = append(fullArgs, args...)
+
+	cmd := exec.CommandContext(ctx, c.binary, fullArgs...)
+	if c.home != "" {
+		cmd.Env = append(os.Environ(), "HOME="+c.home)
+	}
+	return cmd, fullArgs
+}
+
+// run executes a CLI command with the configured protocol, address, and tenant.
+func (c *iamCLITestContext) run(args ...string) (string, error) {
+	c.t.Helper()
 
 	ctx, cancel := context.WithTimeout(context.Background(), c.timeout)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, c.binary, fullArgs...)
+	cmd, fullArgs := c.command(ctx, args)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
@@ -161,19 +226,10 @@ func (c *iamCLITestContext) run(args ...string) (string, error) {
 func (c *iamCLITestContext) runExpectError(args ...string) (string, error) {
 	c.t.Helper()
 
-	// Build full command with protocol, address, and output format
-	fullArgs := []string{
-		"--transport", c.protocol,
-		"--address", c.address,
-		"--tls-ca", "/etc/quicbaas/certs/ca.crt",
-		"--output", c.outputFmt,
-	}
-	fullArgs = append(fullArgs, args...)
-
 	ctx, cancel := context.WithTimeout(context.Background(), c.timeout)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, c.binary, fullArgs...)
+	cmd, fullArgs := c.command(ctx, args)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
@@ -432,16 +488,14 @@ func isExpectedNoSessionError(err error) bool {
 // TestCLISessionList tests the session list command.
 func TestCLISessionList(t *testing.T) {
 	proto := getGRPCProtocolConfig()
-	tenantID := setupIAMCLITestTenant(t)
-	defer cleanupIAMCLITestTenant(t, tenantID)
 
-	// The session verbs are self-service: the caller (the system
-	// administrator) acts in its own tenant, the system tenant.
-	cli := newIAMCLITestContext(t, proto.name, proto.address, qrdbsdk.SystemTenantID)
+	// The session verbs are self-service: the caller (the tenant's own
+	// administrator) acts in its own tenant, and lists its own sessions.
+	cli := newIAMCLITenantAdminContext(t, proto.name, proto.address)
+	tenantID := cli.tenantID
 
 	t.Run("list-sessions", func(t *testing.T) {
-		// Use --user flag to avoid needing a token file
-		output, err := cli.run("iam", "session", "list", "--tenant", qrdbsdk.SystemTenantID, "--user", "test-user")
+		output, err := cli.run("iam", "session", "list", "--tenant", tenantID)
 		require.NoError(t, err, "session list should succeed")
 
 		// Verify JSON output structure
@@ -456,8 +510,7 @@ func TestCLISessionList(t *testing.T) {
 	})
 
 	t.Run("list-sessions-with-limit", func(t *testing.T) {
-		// Use --user flag to avoid needing a token file
-		output, err := cli.run("iam", "session", "list", "--tenant", qrdbsdk.SystemTenantID, "--user", "test-user", "--limit", "5")
+		output, err := cli.run("iam", "session", "list", "--tenant", tenantID, "--limit", "5")
 		require.NoError(t, err, "session list with limit should succeed")
 		assert.NotEmpty(t, output)
 	})
@@ -465,7 +518,8 @@ func TestCLISessionList(t *testing.T) {
 	t.Run("cross-tenant-refused", func(t *testing.T) {
 		// A system caller may not list another tenant's sessions
 		// (tenantctx.Target, go-quicbaas#1150).
-		output, err := cli.runExpectError("iam", "session", "list", "--tenant", tenantID, "--user", "test-user")
+		sys := newIAMCLITestContext(t, proto.name, proto.address, qrdbsdk.SystemTenantID)
+		output, err := sys.runExpectError("iam", "session", "list", "--tenant", tenantID)
 		require.Error(t, err, "session list for another tenant must fail")
 		assert.Contains(t, output+err.Error(), "FORBIDDEN", "cross-tenant session list must be refused as forbidden")
 	})
@@ -474,15 +528,15 @@ func TestCLISessionList(t *testing.T) {
 // TestCLISessionGet tests the session get command.
 func TestCLISessionGet(t *testing.T) {
 	proto := getGRPCProtocolConfig()
-	// The session verbs are self-service: the caller acts in its own tenant.
-	tenantID := qrdbsdk.SystemTenantID
-
-	cli := newIAMCLITestContext(t, proto.name, proto.address, tenantID)
+	// The session verbs are self-service: the caller (the tenant's own
+	// administrator) acts in its own tenant.
+	cli := newIAMCLITenantAdminContext(t, proto.name, proto.address)
+	tenantID := cli.tenantID
 
 	// First, list sessions to get a valid session ID
 	t.Run("get-session", func(t *testing.T) {
 		// Try to list sessions first to get a session ID
-		listOutput, listErr := cli.run("iam", "session", "list", "--tenant", tenantID, "--user", "test-user", "--limit", "1")
+		listOutput, listErr := cli.run("iam", "session", "list", "--tenant", tenantID, "--limit", "1")
 		require.NoError(t, listErr, "session list should succeed")
 
 		var sessionID string
@@ -516,10 +570,10 @@ func TestCLISessionGet(t *testing.T) {
 // TestCLISessionRevoke tests the session revoke command.
 func TestCLISessionRevoke(t *testing.T) {
 	proto := getGRPCProtocolConfig()
-	// The session verbs are self-service: the caller acts in its own tenant.
-	tenantID := qrdbsdk.SystemTenantID
-
-	cli := newIAMCLITestContext(t, proto.name, proto.address, tenantID)
+	// The session verbs are self-service: the caller (the tenant's own
+	// administrator) acts in its own tenant.
+	cli := newIAMCLITenantAdminContext(t, proto.name, proto.address)
+	tenantID := cli.tenantID
 
 	t.Run("revoke-session", func(t *testing.T) {
 		// Use a test session ID (in a real scenario, we'd create one first)
@@ -539,13 +593,13 @@ func TestCLISessionRevoke(t *testing.T) {
 // TestCLISessionRevokeAll tests the session revoke-all command.
 func TestCLISessionRevokeAll(t *testing.T) {
 	proto := getGRPCProtocolConfig()
-	// The session verbs are self-service: the caller acts in its own tenant.
-	tenantID := qrdbsdk.SystemTenantID
-
-	cli := newIAMCLITestContext(t, proto.name, proto.address, tenantID)
+	// The session verbs are self-service: the caller (the tenant's own
+	// administrator) acts in its own tenant.
+	cli := newIAMCLITenantAdminContext(t, proto.name, proto.address)
+	tenantID := cli.tenantID
 
 	t.Run("revoke-all-sessions", func(t *testing.T) {
-		output, err := cli.run("iam", "session", "revoke-all", "--tenant", tenantID, "--user", "test-user", "--yes")
+		output, err := cli.run("iam", "session", "revoke-all", "--tenant", tenantID, "--yes")
 		require.NoError(t, err, "session revoke-all should succeed")
 		t.Logf("Revoke-all output: %s", output)
 	})
@@ -554,10 +608,10 @@ func TestCLISessionRevokeAll(t *testing.T) {
 // TestCLISessionRevokeAllKeepCurrent tests the session revoke-all with keep-current flag.
 func TestCLISessionRevokeAllKeepCurrent(t *testing.T) {
 	proto := getGRPCProtocolConfig()
-	// The session verbs are self-service: the caller acts in its own tenant.
-	tenantID := qrdbsdk.SystemTenantID
-
-	cli := newIAMCLITestContext(t, proto.name, proto.address, tenantID)
+	// The session verbs are self-service: the caller (the tenant's own
+	// administrator) acts in its own tenant.
+	cli := newIAMCLITenantAdminContext(t, proto.name, proto.address)
+	tenantID := cli.tenantID
 
 	t.Run("revoke-all-keep-current", func(t *testing.T) {
 		output, err := cli.run("iam", "session", "revoke-all", "--tenant", tenantID, "--keep-current", "--yes")
@@ -862,13 +916,18 @@ func TestCLISessionErrors(t *testing.T) {
 	proto := getGRPCProtocolConfig()
 	cli := newIAMCLITestContext(t, proto.name, proto.address, "")
 
+	// A nonexistent session is looked up by the tenant's own administrator,
+	// in its own tenant: the server refuses a system-tenant caller outright,
+	// which would not test the session lookup at all.
+	admin := newIAMCLITenantAdminContext(t, proto.name, proto.address)
+
 	t.Run("get-nonexistent-session", func(t *testing.T) {
-		_, err := cli.runExpectError("iam", "session", "get", "nonexistent-session-12345", "--tenant", qrdbsdk.SystemTenantID)
+		_, err := admin.runExpectError("iam", "session", "get", "nonexistent-session-12345", "--tenant", admin.tenantID)
 		assert.Error(t, err, "get should fail for nonexistent session")
 	})
 
 	t.Run("revoke-nonexistent-session", func(t *testing.T) {
-		_, err := cli.runExpectError("iam", "session", "revoke", "nonexistent-session-12345", "--tenant", qrdbsdk.SystemTenantID, "--yes")
+		_, err := admin.runExpectError("iam", "session", "revoke", "nonexistent-session-12345", "--tenant", admin.tenantID, "--yes")
 		// May or may not fail depending on implementation
 		t.Logf("Revoke nonexistent session result: %v", err)
 	})
