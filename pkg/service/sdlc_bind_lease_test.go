@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
@@ -119,6 +120,82 @@ func TestSDLCService_UnbindRefusedWhileABindHoldsTheLease(t *testing.T) {
 	}
 	if err := rig.store.ReleaseBindLease(ctx, sdlcTestTenant, sdlcTestProject, token); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// TestSDLCService_RenewedLeaseRefusesUnbindWhileBindOnboards: the bind
+// renews its lease while it works, so an unbind past the original
+// BindLeaseTTL is still refused, and the bind onboards and keeps its
+// binding, route and webhook.
+func TestSDLCService_RenewedLeaseRefusesUnbindWhileBindOnboards(t *testing.T) {
+	rig := newSDLCServiceRig(t)
+	ctx := context.Background()
+	var clock steppedClock
+	clock.set(renewBase)
+	rig.store.SetClock(clock.now)
+	ticks := make(chan time.Time)
+	rig.svc.bindLeaseTicks = ticks
+	var unbindErr error
+	hookAfterBindWrite(t, rig, func() {
+		clock.set(renewBase.Add(sdlc.BindLeaseTTL - 10*time.Second))
+		sendTick(t, ticks)
+		sendTick(t, ticks)
+		clock.set(renewBase.Add(sdlc.BindLeaseTTL + 30*time.Second))
+		unbindErr = rig.svc.Unbind(ctx, sdlcTestTenant, sdlcTestProject)
+	})
+
+	if _, err := rig.svc.Bind(ctx, sdlcTestTenant, rig.binding(), BindOptions{}); err != nil {
+		t.Fatalf("Bind: %v", err)
+	}
+	var inProgress *sdlc.BindInProgressError
+	if !errors.As(unbindErr, &inProgress) {
+		t.Fatalf("Unbind under a renewed lease = %v, want *sdlc.BindInProgressError", unbindErr)
+	}
+	if _, err := rig.store.GetBinding(ctx, sdlcTestTenant, sdlcTestProject); err != nil {
+		t.Fatalf("binding after the bind: %v", err)
+	}
+	if _, err := rig.svc.Routes().Tenant(ctx, sdlcTestProject); err != nil {
+		t.Fatalf("route after the bind: %v", err)
+	}
+	if hooks := rig.forge.HookURLs(); len(hooks) != 1 || hooks[0] != expectedWebhookURL {
+		t.Fatalf("hooks = %v, want [%s]", hooks, expectedWebhookURL)
+	}
+}
+
+// TestSDLCService_BindThatLostItsLeaseStopsBeforeOnboard: the bind stalled
+// past BindLeaseTTL without renewing, so an unbind took the lease and removed
+// the binding. The bind finds its lease lost and stops before the forge is
+// told to deliver.
+func TestSDLCService_BindThatLostItsLeaseStopsBeforeOnboard(t *testing.T) {
+	rig := newSDLCServiceRig(t)
+	ctx := context.Background()
+	var clock steppedClock
+	clock.set(renewBase)
+	rig.store.SetClock(clock.now)
+	ticks := make(chan time.Time)
+	rig.svc.bindLeaseTicks = ticks
+	var unbindErr error
+	hookAfterBindWrite(t, rig, func() {
+		clock.set(renewBase.Add(sdlc.BindLeaseTTL + time.Second))
+		unbindErr = rig.svc.Unbind(ctx, sdlcTestTenant, sdlcTestProject)
+	})
+
+	_, err := rig.svc.Bind(ctx, sdlcTestTenant, rig.binding(), BindOptions{})
+	if unbindErr != nil {
+		t.Fatalf("Unbind past the stale lease: %v, want nil", unbindErr)
+	}
+	var conflict *sdlc.VersionConflictError
+	if !errors.As(err, &conflict) || !errors.Is(err, sdlc.ErrVersionConflict) {
+		t.Fatalf("Bind after losing its lease = %v, want *sdlc.VersionConflictError", err)
+	}
+	if created := rig.forge.Calls("POST /hooks"); created != 0 {
+		t.Fatalf("hooks created = %d, want 0", created)
+	}
+	if hooks := rig.forge.HookURLs(); len(hooks) != 0 {
+		t.Fatalf("hooks = %v, want none", hooks)
+	}
+	if _, err := rig.store.GetBinding(ctx, sdlcTestTenant, sdlcTestProject); !errors.Is(err, sdlc.ErrNotFound) {
+		t.Fatalf("binding after the unbind: %v, want not found", err)
 	}
 }
 

@@ -19,23 +19,27 @@ import (
 //
 // The lease is built like the delete fence (store_delete_fence.go): a record
 // in the tenant's SDLC KV, placed by compare-and-swap, carrying the token
-// that releases it. A holder that crashes leaves its lease behind; after
-// BindLeaseTTL it is stale and the next bind replaces it.
+// that releases it. A live holder renews it while it works (RenewBindLease)
+// and confirms it before it tells the forge to deliver. A holder that crashes
+// leaves its lease behind; after BindLeaseTTL it is stale and the next bind
+// replaces it. A lease that went stale is never renewed, so its holder stops.
 
 const (
 	bindLeaseEntityType = "sdlc_bind_lease"
 	bindLeaseEntityName = "project bind lease"
 
-	// BindLeaseTTL is how long a lease holds without its holder releasing
-	// it. A bind runs well inside it; a lease older than this belongs to a
-	// crashed bind and is replaced.
+	// BindLeaseTTL is how long a lease holds after it was last placed or
+	// renewed. A live holder renews it well inside this; a lease older than
+	// this belongs to a crashed or stalled holder and is replaced, and is
+	// never renewed, so a holder that stalled past it stops.
 	BindLeaseTTL = 2 * time.Minute
 )
 
 // bindLease is the record a bind or unbind in flight holds on its project.
 type bindLease struct {
-	ProjectID string    `json:"project_id"`
-	Token     string    `json:"token"`
+	ProjectID string `json:"project_id"`
+	Token     string `json:"token"`
+	// CreatedAt is when the lease was last placed or renewed.
 	CreatedAt time.Time `json:"created_at"`
 }
 
@@ -81,6 +85,48 @@ func (s *Store) AcquireBindLease(ctx context.Context, tenantID, projectID string
 		}
 	}
 	return "", &VersionConflictError{Entity: bindLeaseEntityName, TenantID: tenantID, ID: projectID}
+}
+
+// RenewBindLease restamps the lease token holds on projectID, so a bind or
+// unbind that is still working keeps it live. It refuses with
+// *VersionConflictError when the lease is not this holder's any more: absent,
+// held under another token, or stale. A stale lease is never renewed, so one
+// successful renew proves the lease stayed live from its acquisition until
+// now.
+func (s *Store) RenewBindLease(ctx context.Context, tenantID, projectID, token string) error {
+	if err := validateKeySegment("project_id", projectID); err != nil {
+		return err
+	}
+	store, err := s.guardedKV(ctx, "RenewBindLease", tenantID)
+	if err != nil {
+		return err
+	}
+	key := bindLeaseKey(projectID)
+	conflict := &VersionConflictError{Entity: bindLeaseEntityName, TenantID: tenantID, ID: projectID}
+	for attempt := 0; attempt < fenceWriteAttempts; attempt++ {
+		held, raw, err := loadRecord[bindLease](ctx, "RenewBindLease", store, key)
+		if err != nil {
+			return err
+		}
+		now := s.now()
+		if held == nil || held.ProjectID != projectID || held.Token != token ||
+			now.Sub(held.CreatedAt) >= BindLeaseTTL {
+			return conflict
+		}
+		renewed := *held
+		renewed.CreatedAt = now
+		applied, err := storeRecord(ctx, "RenewBindLease", store, key, raw, &renewed)
+		if err != nil {
+			return err
+		}
+		if applied {
+			return nil
+		}
+		if err := ctx.Err(); err != nil {
+			return backendError("RenewBindLease", err)
+		}
+	}
+	return conflict
 }
 
 // ReleaseBindLease removes the lease token took. A lease another caller has

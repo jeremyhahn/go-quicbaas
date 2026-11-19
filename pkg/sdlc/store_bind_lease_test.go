@@ -81,6 +81,44 @@ func TestBindLease_StaleLeaseReplaced(t *testing.T) {
 	}
 }
 
+// TestBindLease_RenewKeepsItLiveAndRefusesALostLease: a renew restamps a
+// live lease, so it holds past the original TTL; a renew under another token
+// or of a stale lease is refused.
+func TestBindLease_RenewKeepsItLiveAndRefusesALostLease(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+	base := time.Date(2026, 11, 19, 12, 0, 0, 0, time.UTC)
+	store.now = func() time.Time { return base }
+
+	token, err := store.AcquireBindLease(ctx, fenceTenant, "p1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	renewed := base.Add(BindLeaseTTL - time.Second)
+	store.now = func() time.Time { return renewed }
+	if err := store.RenewBindLease(ctx, fenceTenant, "p1", token); err != nil {
+		t.Fatalf("renew of a live lease: %v", err)
+	}
+
+	store.now = func() time.Time { return base.Add(BindLeaseTTL + BindLeaseTTL/2) }
+	var inProgress *BindInProgressError
+	if _, err := store.AcquireBindLease(ctx, fenceTenant, "p1"); !errors.As(err, &inProgress) {
+		t.Fatalf("acquire over a renewed lease = %v, want *BindInProgressError", err)
+	}
+	var conflict *VersionConflictError
+	if err := store.RenewBindLease(ctx, fenceTenant, "p1", "not-the-token"); !errors.As(err, &conflict) {
+		t.Fatalf("renew with another token = %v, want *VersionConflictError", err)
+	}
+
+	store.now = func() time.Time { return renewed.Add(BindLeaseTTL) }
+	if err := store.RenewBindLease(ctx, fenceTenant, "p1", token); !errors.As(err, &conflict) {
+		t.Fatalf("renew of a stale lease = %v, want *VersionConflictError", err)
+	}
+	if _, err := store.AcquireBindLease(ctx, fenceTenant, "p1"); err != nil {
+		t.Fatalf("acquire over the stale lease after a refused renew: %v", err)
+	}
+}
+
 func TestBindLease_RefusesABadProjectID(t *testing.T) {
 	store := newTestStore(t)
 	if _, err := store.AcquireBindLease(context.Background(), fenceTenant, ""); err == nil {
