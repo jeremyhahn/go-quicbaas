@@ -156,7 +156,7 @@ func newCertIdentityGRPCAuth(t *testing.T, bound map[string]*qrdbsdk.User, optio
 // socket in a temporary directory.
 func newCertIdentityUnixAuth(t *testing.T, bound map[string]*qrdbsdk.User, options ...Option) AuthService {
 	t.Helper()
-	socket := filepath.Join(t.TempDir(), "qrdb.sock")
+	socket := filepath.Join(shortSocketDir(t), "qrdb.sock")
 	lis, err := net.Listen("unix", socket)
 	if err != nil {
 		t.Fatalf("listen: %v", err)
