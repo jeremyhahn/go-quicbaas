@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	qrdbservice "github.com/jeremyhahn/go-qrdb/pkg/service"
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 	"github.com/stretchr/testify/assert"
@@ -131,3 +132,31 @@ type noEmbeddingTransport struct{ qrdbtransport.Transport }
 
 func (noEmbeddingTransport) Connect(context.Context) error { return nil }
 func (noEmbeddingTransport) Close() error                  { return nil }
+
+// fakeEmbeddingServicer records the request go-qrdb's embedded transport
+// routes to it and answers with a fixed vector.
+type fakeEmbeddingServicer struct {
+	qrdbservice.EmbeddingServicer
+	got *qrdbservice.EmbedRequest
+}
+
+func (f *fakeEmbeddingServicer) Embed(_ context.Context, req *qrdbservice.EmbedRequest) (*qrdbservice.EmbedResponse, error) {
+	f.got = req
+	return &qrdbservice.EmbedResponse{Embeddings: [][]float32{{1, 2}}, Model: "m"}, nil
+}
+
+// An embedded client routes AI().QRDBEmbedding() calls to the injected
+// go-qrdb embedding servicer.
+func TestQRDBEmbedding_EmbeddedRoutesToServicer(t *testing.T) {
+	fake := &fakeEmbeddingServicer{}
+	c := buildEmbeddedQRDBClient(t, QRDBEmbeddedServicers{KV: stubKVService{}, Admin: stubAdminService{}, Embedding: fake})
+
+	ec, err := c.AI().QRDBEmbedding()
+	require.NoError(t, err)
+
+	resp, err := ec.Embed(context.Background(), &QRDBEmbedRequest{Texts: []string{"hi"}})
+	require.NoError(t, err)
+	assert.Equal(t, [][]float32{{1, 2}}, resp.Embeddings)
+	require.NotNil(t, fake.got)
+	assert.Equal(t, []string{"hi"}, fake.got.Texts)
+}
