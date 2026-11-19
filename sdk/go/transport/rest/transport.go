@@ -673,6 +673,8 @@ func (t *Transport) mapToEndpoint(service, method string) (string, string) {
 		return t.mapQueryMethod(method)
 	case "Cluster":
 		return t.mapClusterMethod(method)
+	case "Capabilities":
+		return t.mapCapabilitiesMethod(method)
 	case "Health":
 		return t.mapHealthMethod(method)
 	case "KMS":
@@ -798,6 +800,16 @@ func refuseQueryPaging(service, method string, req interface{}) error {
 }
 
 // mapClusterMethod maps Cluster service methods to REST endpoints.
+// mapCapabilitiesMethod maps Capabilities service methods to REST endpoints.
+func (t *Transport) mapCapabilitiesMethod(method string) (string, string) {
+	switch method {
+	case "Get":
+		return "/api/v1/capabilities", http.MethodGet
+	default:
+		return "/api/v1/capabilities/" + method, http.MethodPost
+	}
+}
+
 func (t *Transport) mapClusterMethod(method string) (string, string) {
 	switch method {
 	case "Status":

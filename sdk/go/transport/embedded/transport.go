@@ -18,9 +18,11 @@ import (
 	"sync/atomic"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/auth"
+	"github.com/jeremyhahn/go-quicbaas/pkg/capabilities"
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
+	sdkcapabilities "github.com/jeremyhahn/go-quicbaas/sdk/go/client/capabilities"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/transport"
 )
 
@@ -52,6 +54,9 @@ var unaryHandlers = map[string]handlerFunc{
 
 	// Transaction operations
 	"quicbaas.Transaction/Execute": handleTransaction,
+
+	// Capabilities report
+	"quicbaas.Capabilities/Get": handleCapabilitiesGet,
 
 	// Cluster operations
 	"quicbaas.Cluster/Status":             handleClusterStatus,
@@ -685,6 +690,18 @@ type Factory struct {
 // NewFactory creates a new embedded transport factory.
 func NewFactory(svc service.QuicBaaS) *Factory {
 	return &Factory{service: svc}
+}
+
+// handleCapabilitiesGet answers quicbaas.Capabilities/Get with the report
+// capabilities.Build makes from the embedded service, the same report every
+// network transport serves. An embedded caller runs no transport server, so
+// the report carries no transport probes.
+func handleCapabilitiesGet(_ context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error) {
+	if _, ok := req.(*sdkcapabilities.GetRequest); !ok {
+		return nil, NewInvalidRequestTypeError(sdkcapabilities.ServiceName, sdkcapabilities.MethodGet, "*capabilities.GetRequest", typeNameOf(req))
+	}
+	report := capabilities.Build(svc, capabilities.Probes{})
+	return &report, nil
 }
 
 // Create creates a new embedded transport.

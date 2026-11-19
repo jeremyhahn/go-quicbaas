@@ -955,6 +955,9 @@ func TestEndpointMapping(t *testing.T) {
 		{"KV", "Transaction", "/api/v1/transaction", http.MethodPost},
 		{"KV", "CustomKV", "/api/v1/kv/customkv", http.MethodPost},
 
+		// Capabilities methods
+		{"Capabilities", "Get", "/api/v1/capabilities", http.MethodGet},
+
 		// Cluster methods
 		{"Cluster", "Status", "/api/v1/cluster/status", http.MethodGet},
 		{"Cluster", "GetLeader", "/api/v1/cluster/leader/{shardID}", http.MethodGet},
