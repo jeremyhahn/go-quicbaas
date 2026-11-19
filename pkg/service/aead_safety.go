@@ -18,6 +18,7 @@ package service
 import (
 	"context"
 	"fmt"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -73,8 +74,59 @@ type AEADUsage struct {
 	// LastUpdated is the timestamp of the last operation
 	LastUpdated atomic.Int64
 
-	// Config is the safety configuration for this key
+	// Config is the safety configuration for this key. It is read and
+	// written only under mu.
 	Config AEADSafetyConfig
+
+	// mu serialises Config reads and writes with the counter add and limit
+	// check of a reservation and with a counter reset, so a reservation never
+	// sees a half-written config and a reset never lands between an add and
+	// its limit check.
+	mu sync.Mutex
+}
+
+// snapshot returns the counters and config of u as one consistent view.
+func (u *AEADUsage) snapshot() (ops, bytes uint64, cfg AEADSafetyConfig) {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	return u.OperationCount.Load(), u.BytesProcessed.Load(), u.Config
+}
+
+// setConfig replaces u's config.
+func (u *AEADUsage) setConfig(cfg AEADSafetyConfig) {
+	u.mu.Lock()
+	u.Config = cfg
+	u.mu.Unlock()
+}
+
+// resetCounters zeroes u's operation and byte counters.
+func (u *AEADUsage) resetCounters() {
+	u.mu.Lock()
+	u.OperationCount.Store(0)
+	u.BytesProcessed.Store(0)
+	u.mu.Unlock()
+}
+
+// usagePercentOf is the highest share of a configured limit that ops and
+// bytes use under cfg.
+func usagePercentOf(ops, bytes uint64, cfg AEADSafetyConfig) uint64 {
+	var maxPercent uint64
+
+	if cfg.MaxOperations > 0 {
+		opsPercent := (ops * 100) / cfg.MaxOperations
+		if opsPercent > maxPercent {
+			maxPercent = opsPercent
+		}
+	}
+
+	if cfg.MaxBytes > 0 {
+		bytesPercent := (bytes * 100) / cfg.MaxBytes
+		if bytesPercent > maxPercent {
+			maxPercent = bytesPercent
+		}
+	}
+
+	return maxPercent
 }
 
 // IncrementUsage atomically increments the usage counters.
@@ -90,6 +142,8 @@ func (u *AEADUsage) IncrementUsageBy(operations, bytesProcessed uint64) (limitEx
 	if operations == 0 {
 		operations = 1
 	}
+	u.mu.Lock()
+	defer u.mu.Unlock()
 	u.OperationCount.Add(operations)
 	u.BytesProcessed.Add(bytesProcessed)
 	u.LastUpdated.Store(time.Now().UnixNano())
@@ -106,6 +160,8 @@ func (u *AEADUsage) IncrementUsageBy(operations, bytesProcessed uint64) (limitEx
 
 // WarningNeeded checks if a warning should be generated.
 func (u *AEADUsage) WarningNeeded() (bool, string) {
+	u.mu.Lock()
+	defer u.mu.Unlock()
 	if u.Config.WarningPercent <= 0 {
 		return false, ""
 	}
@@ -133,6 +189,8 @@ func (u *AEADUsage) WarningNeeded() (bool, string) {
 
 // AutoRotateNeeded checks if automatic rotation should be triggered.
 func (u *AEADUsage) AutoRotateNeeded() bool {
+	u.mu.Lock()
+	defer u.mu.Unlock()
 	if u.Config.AutoRotatePercent <= 0 {
 		return false
 	}
@@ -158,23 +216,8 @@ func (u *AEADUsage) AutoRotateNeeded() bool {
 
 // UsagePercent returns the highest percentage of limit used.
 func (u *AEADUsage) UsagePercent() uint64 {
-	var maxPercent uint64
-
-	if u.Config.MaxOperations > 0 {
-		opsPercent := (u.OperationCount.Load() * 100) / u.Config.MaxOperations
-		if opsPercent > maxPercent {
-			maxPercent = opsPercent
-		}
-	}
-
-	if u.Config.MaxBytes > 0 {
-		bytesPercent := (u.BytesProcessed.Load() * 100) / u.Config.MaxBytes
-		if bytesPercent > maxPercent {
-			maxPercent = bytesPercent
-		}
-	}
-
-	return maxPercent
+	ops, bytes, cfg := u.snapshot()
+	return usagePercentOf(ops, bytes, cfg)
 }
 
 // =============================================================================
@@ -195,6 +238,11 @@ type AEADSafetyTracker struct {
 
 	// dekConfigs stores per-DEK configuration overrides
 	dekConfigs syncMap[string, AEADSafetyConfig]
+
+	// keyGates holds each key's rotation gate: crypto calls hold it for
+	// reading (BeginKeyUse) and a rotation holds it for writing
+	// (RotateKeyUsage).
+	keyGates syncMap[string, *sync.RWMutex]
 
 	// serverConfig is the server-level default configuration
 	serverConfig AEADSafetyConfig
@@ -447,7 +495,7 @@ func (t *AEADSafetyTracker) SetKeyConfig(keyID string, config AEADSafetyConfig) 
 
 	// Also update the existing usage tracker if one exists
 	usage := t.keyUsage.LoadOrStore(keyID, &AEADUsage{})
-	usage.Config = config
+	usage.setConfig(config)
 }
 
 // SetDEKConfig sets the safety configuration for a specific DEK.
@@ -459,7 +507,7 @@ func (t *AEADSafetyTracker) SetDEKConfig(dekPath string, config AEADSafetyConfig
 
 	// Also update the existing usage tracker if one exists
 	usage := t.dekUsage.LoadOrStore(dekPath, &AEADUsage{})
-	usage.Config = config
+	usage.setConfig(config)
 }
 
 // ClearKeyConfig removes per-key configuration (reverts to server defaults).
@@ -470,9 +518,9 @@ func (t *AEADSafetyTracker) ClearKeyConfig(keyID string) {
 	// Update existing usage tracker to use defaults
 	if usage, ok := t.keyUsage.Load(keyID); ok {
 		if t.enforceDefaults {
-			usage.Config = t.serverConfig
+			usage.setConfig(t.serverConfig)
 		} else {
-			usage.Config = AEADSafetyConfig{}
+			usage.setConfig(AEADSafetyConfig{})
 		}
 	}
 }
@@ -485,9 +533,9 @@ func (t *AEADSafetyTracker) ClearDEKConfig(dekPath string) {
 	// Update existing usage tracker to use defaults
 	if usage, ok := t.dekUsage.Load(dekPath); ok {
 		if t.enforceDefaults {
-			usage.Config = t.serverConfig
+			usage.setConfig(t.serverConfig)
 		} else {
-			usage.Config = AEADSafetyConfig{}
+			usage.setConfig(AEADSafetyConfig{})
 		}
 	}
 }
@@ -507,7 +555,8 @@ func (t *AEADSafetyTracker) GetDEKConfig(dekPath string) AEADSafetyConfig {
 // GetKeyUsage returns the current usage for a key.
 func (t *AEADSafetyTracker) GetKeyUsage(keyID string) (operationCount, bytesProcessed uint64, usagePercent int) {
 	if usage, ok := t.keyUsage.Load(keyID); ok {
-		return usage.OperationCount.Load(), usage.BytesProcessed.Load(), conv.ClampUint64ToInt(usage.UsagePercent())
+		ops, bytes, cfg := usage.snapshot()
+		return ops, bytes, conv.ClampUint64ToInt(usagePercentOf(ops, bytes, cfg))
 	}
 	return 0, 0, 0
 }
@@ -536,30 +585,34 @@ func (t *AEADSafetyTracker) SafetyCheck(thresholdPercent int) []SafetyCheckResul
 	var results []SafetyCheckResult
 
 	t.keyUsage.Range(func(keyID string, usage *AEADUsage) bool {
-		if conv.ClampUint64ToInt(usage.UsagePercent()) >= thresholdPercent {
+		ops, bytes, cfg := usage.snapshot()
+		percent := conv.ClampUint64ToInt(usagePercentOf(ops, bytes, cfg))
+		if percent >= thresholdPercent {
 			results = append(results, SafetyCheckResult{
 				ID:             keyID,
 				Type:           "key",
-				OperationCount: usage.OperationCount.Load(),
-				BytesProcessed: usage.BytesProcessed.Load(),
-				UsagePercent:   conv.ClampUint64ToInt(usage.UsagePercent()),
-				MaxOperations:  usage.Config.MaxOperations,
-				MaxBytes:       usage.Config.MaxBytes,
+				OperationCount: ops,
+				BytesProcessed: bytes,
+				UsagePercent:   percent,
+				MaxOperations:  cfg.MaxOperations,
+				MaxBytes:       cfg.MaxBytes,
 			})
 		}
 		return true
 	})
 
 	t.dekUsage.Range(func(dekPath string, usage *AEADUsage) bool {
-		if conv.ClampUint64ToInt(usage.UsagePercent()) >= thresholdPercent {
+		ops, bytes, cfg := usage.snapshot()
+		percent := conv.ClampUint64ToInt(usagePercentOf(ops, bytes, cfg))
+		if percent >= thresholdPercent {
 			results = append(results, SafetyCheckResult{
 				ID:             dekPath,
 				Type:           "dek",
-				OperationCount: usage.OperationCount.Load(),
-				BytesProcessed: usage.BytesProcessed.Load(),
-				UsagePercent:   conv.ClampUint64ToInt(usage.UsagePercent()),
-				MaxOperations:  usage.Config.MaxOperations,
-				MaxBytes:       usage.Config.MaxBytes,
+				OperationCount: ops,
+				BytesProcessed: bytes,
+				UsagePercent:   percent,
+				MaxOperations:  cfg.MaxOperations,
+				MaxBytes:       cfg.MaxBytes,
 			})
 		}
 		return true
@@ -576,15 +629,55 @@ func (t *AEADSafetyTracker) SafetyReport() []SafetyCheckResult {
 // ResetUsage resets the usage counters for a key (called after rotation).
 func (t *AEADSafetyTracker) ResetKeyUsage(keyID string) {
 	if usage, ok := t.keyUsage.Load(keyID); ok {
-		usage.OperationCount.Store(0)
-		usage.BytesProcessed.Store(0)
+		usage.resetCounters()
 	}
 }
 
 // ResetDEKUsage resets the usage counters for a DEK (called after rotation).
 func (t *AEADSafetyTracker) ResetDEKUsage(dekPath string) {
 	if usage, ok := t.dekUsage.Load(dekPath); ok {
-		usage.OperationCount.Store(0)
-		usage.BytesProcessed.Store(0)
+		usage.resetCounters()
 	}
+}
+
+// keyGate returns keyID's rotation gate, creating it on first use.
+func (t *AEADSafetyTracker) keyGate(keyID string) *sync.RWMutex {
+	if gate, ok := t.keyGates.Load(keyID); ok {
+		return gate
+	}
+	return t.keyGates.LoadOrStore(keyID, &sync.RWMutex{})
+}
+
+// BeginKeyUse holds keyID's rotation gate for reading until the returned end
+// is called. A crypto call holds it from its usage reservation through the
+// cryptographic operation, so a key's usage is only ever charged to the
+// version that is current while the gate is held: RotateKeyUsage waits for
+// every in-flight use to end before it publishes a new version and resets the
+// count. The holder must not call RotateKeyUsage or BeginKeyUse on the same
+// key before end, and the tracker's warning and rotation callbacks, which run
+// inside the hold, must not rotate the key synchronously.
+func (t *AEADSafetyTracker) BeginKeyUse(keyID string) (end func()) {
+	gate := t.keyGate(keyID)
+	gate.RLock()
+	return gate.RUnlock
+}
+
+// RotateKeyUsage holds keyID's rotation gate for writing, runs rotate, and
+// resets the key's usage only when rotate returned nil, then releases the
+// gate. No crypto call holding the gate (BeginKeyUse) overlaps rotate, so a
+// key's usage is only ever charged to the version that is current while the
+// gate is held: a use reserved before the rotation is erased with the old
+// version's count, and a use after it is counted against the new version.
+// rotate must not call BeginKeyUse or RotateKeyUsage on the same key, and the
+// tracker's callbacks must not rotate synchronously.
+func (t *AEADSafetyTracker) RotateKeyUsage(keyID string, rotate func() error) error {
+	gate := t.keyGate(keyID)
+	gate.Lock()
+	defer gate.Unlock()
+
+	if err := rotate(); err != nil {
+		return err
+	}
+	t.ResetKeyUsage(keyID)
+	return nil
 }

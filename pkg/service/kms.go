@@ -1139,8 +1139,22 @@ func (k *kmsServiceImpl) RotateKey(ctx context.Context, req *RotateKeyRequest) (
 		return nil, err
 	}
 
-	// Call KMS manager to rotate key
-	newResult, err := k.kmsManager.RotateKey(ctx, scopedKeyID)
+	// Call KMS manager to rotate key. AEAD usage is counted per key ID and
+	// new encryptions use the new version, so the old version's exhausted
+	// counter must not carry over: the tracker runs the rotation under the
+	// key's gate, which waits out in-flight crypto calls, and starts the new
+	// version's count from zero, keeping the key's limits.
+	var newResult interface{}
+	rotate := func() error {
+		var rotateErr error
+		newResult, rotateErr = k.kmsManager.RotateKey(ctx, scopedKeyID)
+		return rotateErr
+	}
+	if k.safetyTracker != nil {
+		err = k.safetyTracker.RotateKeyUsage(scopedKeyID, rotate)
+	} else {
+		err = rotate()
+	}
 	if err != nil {
 		if k.metrics != nil {
 			k.metrics.errorsByType.With("kms_error", "rotate_key").Inc()
@@ -1160,13 +1174,6 @@ func (k *kmsServiceImpl) RotateKey(ctx context.Context, req *RotateKeyRequest) (
 	newVersion, err := kmsKeyVersion("kms.RotateKey", newMetadata.Version)
 	if err != nil {
 		return nil, err
-	}
-
-	// AEAD usage is counted per key ID and new encryptions use the new
-	// version, so the old version's exhausted counter must not carry over:
-	// start the new version's count from zero, keeping the key's limits.
-	if k.safetyTracker != nil {
-		k.safetyTracker.ResetKeyUsage(scopedKeyID)
 	}
 
 	resp := &RotateKeyResponse{
