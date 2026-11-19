@@ -103,6 +103,7 @@ GET /api/v1/barrier/recovery/status permission seal:status
 GET /api/v1/barrier/status permission tenant_barrier:status
 GET /api/v1/cache/config permission admin:status
 GET /api/v1/cache/stats permission admin:status
+GET /api/v1/capabilities session -:-
 GET /api/v1/certificate/ca permission certs:read
 GET /api/v1/certificate/ca/bundle permission certs:read
 GET /api/v1/certificate/ca/info permission certs:read

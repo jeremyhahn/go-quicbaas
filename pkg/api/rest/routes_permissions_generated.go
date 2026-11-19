@@ -53,7 +53,7 @@ package rest
 // frozenRoutePermissions is the one-time codegen snapshot of every raw
 // route's deriveClassification result (routes.go), keyed by "METHOD
 // PATTERN". Routes() (routes.go applyFrozenPermissions) reads this table
-// instead of calling the PEP mapper live. 582 entries.
+// instead of calling the PEP mapper live. 583 entries.
 var frozenRoutePermissions = map[string]frozenPermission{
 	"DELETE /api/v1/admin/assignments/{assignment_id}":                                        {auth: RouteAuthPermission, resource: "roles", action: "unassign"},
 	"DELETE /api/v1/admin/object-backends/{name}":                                             {auth: RouteAuthPermission, resource: "roles", action: "unassign"},
@@ -136,6 +136,7 @@ var frozenRoutePermissions = map[string]frozenPermission{
 	"GET /api/v1/barrier/status":                                                              {auth: RouteAuthPermission, resource: "tenant_barrier", action: "status"},
 	"GET /api/v1/cache/config":                                                                {auth: RouteAuthPermission, resource: "admin", action: "status"},
 	"GET /api/v1/cache/stats":                                                                 {auth: RouteAuthPermission, resource: "admin", action: "status"},
+	"GET /api/v1/capabilities":                                                                {auth: RouteAuthSession, resource: "", action: ""},
 	"GET /api/v1/certificate/ca":                                                              {auth: RouteAuthPermission, resource: "certs", action: "read"},
 	"GET /api/v1/certificate/ca/bundle":                                                       {auth: RouteAuthPermission, resource: "certs", action: "read"},
 	"GET /api/v1/certificate/ca/info":                                                         {auth: RouteAuthPermission, resource: "certs", action: "read"},

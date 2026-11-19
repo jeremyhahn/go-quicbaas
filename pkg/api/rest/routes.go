@@ -683,6 +683,7 @@ func rawRouteSpecs() []RouteSpec {
 		{Method: "PUT", Pattern: "/api/v1/vector/namespaces/{namespace}/vectors/{id}/metadata", Group: GroupAPI, Handler: func(s *Server) http.HandlerFunc { return s.HandleUpdateMetadata }},
 		{Method: "POST", Pattern: "/api/v1/vector/search-by-metadata", Group: GroupAPI, Handler: func(s *Server) http.HandlerFunc { return s.HandleSearchByMetadata }},
 		{Method: "GET", Pattern: "/api/v1/version", Group: GroupAPI, Handler: func(s *Server) http.HandlerFunc { return s.HandleVersion }},
+		{Method: "GET", Pattern: "/api/v1/capabilities", Group: GroupAPI, Handler: func(s *Server) http.HandlerFunc { return s.HandleCapabilities }},
 		{Method: "GET", Pattern: "/api/v1/xkms/backends", Group: GroupAPI, Handler: func(s *Server) http.HandlerFunc { return s.HandleXKMSListBackends }},
 		{Method: "GET", Pattern: "/api/v1/xkms/backends/{id}", Group: GroupAPI, Handler: func(s *Server) http.HandlerFunc { return s.HandleXKMSGetBackend }},
 		{Method: "GET", Pattern: "/api/v1/xkms/ca/bundle", Group: GroupAPI, Handler: func(s *Server) http.HandlerFunc { return s.HandleXKMSGetCABundle }},
