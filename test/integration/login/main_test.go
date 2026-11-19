@@ -346,8 +346,7 @@ func newLoginClient(t *testing.T, tr loginTransport, tlsCfg *tls.Config, extra .
 		if len(endpoints) == 0 {
 			return nil, fmt.Errorf("login-test: no QUIC endpoints")
 		}
-		quicCfg := tlsCfg.Clone()
-		quicCfg.NextProtos = []string{"quicbaas-quic"}
+		quicCfg := helpers.QUICTLSConfig(tlsCfg)
 		return quicbaas.NewClient(endpoints[0],
 			append(opts, quicbaas.WithQUIC(), quicbaas.WithTLSConfig(quicCfg))...)
 	case transportUnix:
