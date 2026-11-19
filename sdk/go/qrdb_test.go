@@ -171,10 +171,17 @@ func TestDataStore_InvalidTransport(t *testing.T) {
 // client must therefore speak HTTPS to the node's REST origin; dialing the
 // frame protocol fails with "tls: no application protocol".
 func TestQRDBClient_QUIC_ReachesRESTOrigin(t *testing.T) {
+	// Only the barrier unseal request is counted: the REST transport's
+	// Connect sends GET /health, which must not satisfy the assertion.
 	var hits atomic.Int32
 	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.TLS != nil {
-			hits.Add(1)
+		if r.Method == http.MethodPost && r.URL.Path == "/v1/barrier/unseal" {
+			if r.TLS != nil {
+				hits.Add(1)
+			}
+			// go-qrdb's REST BarrierUnseal expects 204 No Content.
+			w.WriteHeader(http.StatusNoContent)
+			return
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{}`))
@@ -194,9 +201,9 @@ func TestQRDBClient_QUIC_ReachesRESTOrigin(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	_ = qc.Barrier().BarrierUnseal(ctx, &qrdbtransport.BarrierUnsealRequest{})
+	require.NoError(t, qc.Barrier().BarrierUnseal(ctx, &qrdbtransport.BarrierUnsealRequest{}))
 
-	assert.Positive(t, hits.Load(), "the QUIC client's qrdb sub-client must reach the node's REST origin over HTTPS")
+	assert.Equal(t, int32(1), hits.Load(), "the QUIC client's qrdb sub-client must reach the node's REST origin over HTTPS")
 }
 
 func TestQRDBSubClientAddress_QUICUsesRESTOrigin(t *testing.T) {
