@@ -87,8 +87,8 @@ Registered lines are in `pkg/api/rest/routes.go` unless another file is named.
 | SessionList.svelte:99; sessionStore.ts:374,418; FleetNodeDetailView:51; orchestrator store:959 | orchestrator.listSessions / listSessionsPage | GET `orch/sessions` | :505 | served |
 | SpawnDialog.svelte:178 | orchestrator.spawnSession | POST `orch/sessions` | :506 | served |
 | sessionStore.ts:541 | orchestrator.closeSession | DELETE `orch/sessions/{id}` | :507 | served |
-| sessionStore.ts:557 | orchestrator.getSessionHistory | GET `orch/sessions/{id}/history` | :510 | served |
-| sessionStore.ts:731 | orchestrator.getSessionConversation | pending | pending | pending |
+| sessionStore.ts:557 | orchestrator.getSessionHistory | GET `orch/sessions/{id}/events` (JSON, `follow=0`; `rest.ts:1182`) | :509 | served |
+| sessionStore.ts:731 | orchestrator.getSessionConversation | GET `orch/sessions/{id}/history` (`rest.ts:1211`) | :510 | served |
 | sessionStore.ts:775 | orchestrator.subscribeSession | GET `orch/sessions/{id}/events` | :509 | served |
 | SessionDetail.svelte:210; SpawnDialog:195; PromptComposer:87 | orchestrator.promptSession | POST `orch/sessions/{id}/prompt` | :511 | served |
 | SessionDetail.svelte:173 | orchestrator.rotateSessionAccount | POST `orch/sessions/{id}/rotate-account` | :512 | pending (501 path when no rotation service not yet checked) |
@@ -121,8 +121,8 @@ Registered lines are in `pkg/api/rest/routes.go` unless another file is named.
 | RegisterFleetNodeDialog:85 | orchestrator.registerFleetNode | POST `fleet` | :466 | served |
 | FleetList:185; FleetNodeDetailView:146 | orchestrator.removeFleetNode | DELETE `fleet/{id}` | :467 | served |
 | FleetNodeDetailView:171 / :177 | orchestrator.enable/disableFleetNode | POST `fleet/{id}/enable` / `disable` | :471/:470 | served |
-| DeployFleetNodeDialog:150 | orchestrator.deployFleetNode | pending | pending | pending |
-| ProjectsView:540,564 | orchestrator.grant/revokeFleetNodeRole | pending | pending | pending |
+| DeployFleetNodeDialog:150 | orchestrator.deployFleetNode | none: REST, gRPC-web, MCP, QUIC and Unix throw `DeployNotSupportedError` (`rest.ts:1179`, `grpc_web.ts:270`, `mcp.ts:496`, `quic.ts:279`, `unix.ts:210`) | — | not-configured (Wails transport only; deploy runs over SSH from the desktop app) |
+| ProjectsView:540,564 | projects.grant/revokeFleetNodeRole | PUT / DELETE `/api/v1/projects/{id}/permissions/{node}` (`rest.ts:2708,2717`) | :545/:544 | served |
 | AgentSpendLimitsEditor:57,79; StartJobDialog:62 | agents.getAgent / updateAgent / listAgents | `/api/v1/agents…` | :482-487 | served |
 | StartJobDialog:62 | agents.listPools | GET `/api/v1/agent-pools` | :488 | served |
 | AccountsView:144; providers.ts:246 | accounts.listAccounts / listAccountsPage | GET `/api/v1/agent-accounts` | :290 | served |
@@ -148,7 +148,7 @@ Registered lines are in `pkg/api/rest/routes.go` unless another file is named.
 | InviteActivateView:151 | iam.activatePIV | POST `…/invites/{token}/activate/piv` | `routes_iam.go:224` | served |
 | IAMView:109,347; MainApp:375; TenantBarrierView:172; providers.ts:349 | iam.listTenants | GET `/api/v1/tenants` | `routes_iam.go:99` | served |
 | IAMView:547 | iam.createTenant | POST `/api/v1/tenants` | `routes_iam.go:100` | served |
-| IAMView:581 / :601 | iam.updateTenant / deleteTenant | PUT / DELETE `/api/v1/tenants/{id}` | pending | pending |
+| IAMView:581 / :601 | iam.updateTenant / deleteTenant | PUT / DELETE `/api/v1/tenants/{id}` | `routes_iam.go:102/103` | served |
 | IAMView:318; providers.ts:385 / IAMView:435 | iam.listUsers / createUser | GET / POST `/api/v1/tenants/{t}/users` | `routes_iam.go:117/118` | served |
 | IAMView:485 / :822 | iam.updateUser / deleteUser | PUT / DELETE `/api/v1/tenants/{t}/users/{u}` | pending | pending |
 | IAMView:522 | iam.assignRoleToUser | POST `…/users/{u}/roles` | `routes_iam.go:122` | served |
@@ -157,6 +157,16 @@ Registered lines are in `pkg/api/rest/routes.go` unless another file is named.
 | IAMView:669 / :689 | iam.updateRole / deleteRole | PUT / DELETE `…/roles/{id}` | `routes_iam.go:191/192` | served |
 | IAMView:382 / :747 | iam.listPolicies / createPolicy | GET / POST `…/policies` | `routes_iam.go:203/204` | served |
 | IAMView:782 / :802 | iam.updatePolicy / deletePolicy | PUT / DELETE `…/policies/{name}` | `routes_iam.go:206/207` | served |
+
+### Tenant barrier (standalone `RestTenantBarrierClient`, `TenantBarrierView.svelte:76`)
+
+| Control (file:line) | SDK method | HTTP + route | Registered | Status |
+|---|---|---|---|---|
+| TenantBarrierView:123,200,401 | tenantBarrierStatus | GET `/api/v1/tenants/{t}/barrier/status` | `routes_iam.go:113` | served |
+| TenantBarrierView:128,238 | tenantBarrierInit | POST `…/barrier/init` | `routes_iam.go:109` | served |
+| TenantBarrierView:136 | tenantBarrierUnsealShare | POST `…/barrier/unseal-share` | `routes_iam.go:111` | served |
+| TenantBarrierView:272 | tenantBarrierUnseal | POST `…/barrier/unseal` | `routes_iam.go:110` | served |
+| TenantBarrierView:279 | tenantBarrierSeal | POST `…/barrier/seal` | `routes_iam.go:112` | served |
 
 ### Remaining families
 
@@ -175,7 +185,9 @@ barrier, tenant barrier, ceremony and bootstrap: **incomplete** (being added).
 | Cluster Nodes / Rebalance "no" (`docs/cluster/api.md:42-43`) | cleared for the UI | ClusterDashboard calls only `cluster.status` (`ClusterDashboard.svelte:77`, `routes.go:364`); the Nodes sidebar entry is a placeholder |
 | Liveness / readiness "no" (`docs/observability/api.md:39,41`) | cleared for the UI | the UI fetches `/api/v1/health/live` and `/ready`, `routes.go:392/393` |
 | Ceremony officers | confirmed `not-configured` before init | `CeremonyView.svelte:100` maps 503 to the notice at :335 |
-| rotateSessionAccount, messaging 501s, timeseries no-op build, tenant barrier routes, deployFleetNode | pending | — |
+| Tenant barrier routes | cleared | all five calls registered at `routes_iam.go:109-113` |
+| deployFleetNode | confirmed `not-configured` off Wails | every non-Wails transport throws `DeployNotSupportedError` (`rest.ts:1179`) |
+| rotateSessionAccount, messaging 501s, timeseries no-op build | pending | — |
 
 ## Transports
 
@@ -189,7 +201,8 @@ Proposed rows; none filed.
 2. **Backup view: replace the ComingSoon placeholder with a backups view.** Caller: sidebar "Backup" `MainApp.svelte:271`. Needs: a view and TS SDK methods over the served `/api/v1/admin/backups` routes (`routes.go:765-770`).
 3. **Connection view: replace the ComingSoon placeholder with a connection-settings view.** Caller: sidebar "Connection" `MainApp.svelte:277`. Needs: a client-side view over the SDK's transport/address settings; no server route.
 4. **Ceremony view: explain the pre-init state without a 503 round trip.** Caller: `CeremonyView.svelte:87`. Needs: nothing server-side; the 503 before `quicbaasd init` is by design. Record only.
-5. **Audit rows still pending** (getSessionConversation, deployFleetNode, grant/revokeFleetNodeRole, tenant update/delete, user update/delete, the remaining families, transports, distinct-method count). Needs: this audit to continue.
+5. **Deploy dialog: hide or explain Deploy when the transport is not Wails.** Caller: `DeployFleetNodeDialog.svelte:150`. Needs: a UI-side transport check (capability gating, #2576); no server route.
+6. **Audit rows still pending** (user update/delete, rotateSessionAccount, the remaining families, transports, distinct-method count). Needs: this audit to continue.
 
 ## Audit progress
 
