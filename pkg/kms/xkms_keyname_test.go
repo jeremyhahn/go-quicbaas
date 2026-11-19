@@ -2,6 +2,7 @@ package kms
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
@@ -329,4 +330,101 @@ func TestXKMSBackend_CreateExistingRotatedKeyKeepsError(t *testing.T) {
 	require.Error(t, err)
 	assert.NotErrorIs(t, err, ErrInvalidKeyID)
 	require.NoError(t, backend.DeleteKey(ctx, "report"))
+}
+
+// failXKMSListing makes go-xkms's key listing fail until the test ends.
+func failXKMSListing(t *testing.T, listErr error) {
+	t.Helper()
+	orig := listXKMSKeys
+	listXKMSKeys = func(context.Context, ...string) ([]*xkmssdk.KeyAttributes, error) {
+		return nil, listErr
+	}
+	t.Cleanup(func() { listXKMSKeys = orig })
+}
+
+func TestXKMSBackend_HidingNameCheckFailsClosedOnListingError(t *testing.T) {
+	cleanup := initXKMSForTest(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	createKeyNameTestKey(t, newKeyNameTestBackend(t), "report_v2026")
+
+	// A restarted node: its cache is empty, so only the stored listing can see report_v2026.
+	restarted := newKeyNameTestBackend(t)
+	listErr := errors.New("xkms: listing unavailable")
+	orig := listXKMSKeys
+	failXKMSListing(t, listErr)
+
+	_, err := restarted.CreateKey(ctx, &xkmssdk.KeyAttributes{
+		CN:                 "report",
+		StoreType:          xkmssdk.StoreType("software"),
+		KeyType:            xkmssdk.KeyTypeEncryption,
+		SymmetricAlgorithm: xkmssdk.SymmetricAES256GCM,
+	})
+	require.ErrorIs(t, err, listErr)
+
+	listXKMSKeys = orig
+	assertKeyRoundTrips(t, restarted, "report_v2026")
+	require.NoError(t, restarted.DeleteKey(ctx, "report_v2026"))
+}
+
+func TestXKMSBackend_RestartedNodeEncryptsUnderCurrentVersion(t *testing.T) {
+	for _, keyID := range []string{"rv-sys-k", "tenant/rv-alice/k"} {
+		t.Run(keyID, func(t *testing.T) {
+			cleanup := initXKMSForTest(t)
+			defer cleanup()
+			ctx := context.Background()
+
+			original := newKeyNameTestBackend(t)
+			createKeyNameTestKey(t, original, keyID)
+			_, err := original.RotateKey(ctx, keyID)
+			require.NoError(t, err)
+			meta, err := original.RotateKey(ctx, keyID)
+			require.NoError(t, err)
+			require.Equal(t, 3, int(meta.Version))
+
+			restarted := newKeyNameTestBackend(t)
+			meta, err = restarted.GetKeyMetadata(ctx, keyID)
+			require.NoError(t, err)
+			assert.Equal(t, 3, int(meta.Version))
+
+			ciphertext, err := restarted.Encrypt(ctx, keyID, []byte("p"), nil)
+			require.NoError(t, err)
+			version, err := CiphertextKeyVersion(ciphertext)
+			require.NoError(t, err)
+			assert.Equal(t, uint64(3), version)
+
+			for _, b := range []*XKMSBackend{original, restarted} {
+				plaintext, err := b.Decrypt(ctx, keyID, ciphertext, nil)
+				require.NoError(t, err)
+				assert.Equal(t, []byte("p"), plaintext)
+			}
+
+			meta, err = restarted.RotateKey(ctx, keyID)
+			require.NoError(t, err)
+			assert.Equal(t, 4, int(meta.Version))
+
+			require.NoError(t, restarted.DeleteKey(ctx, keyID))
+		})
+	}
+}
+
+func TestXKMSBackend_VersionRecoveryFailsClosedOnListingError(t *testing.T) {
+	cleanup := initXKMSForTest(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	original := newKeyNameTestBackend(t)
+	createKeyNameTestKey(t, original, "rv-closed-k")
+	_, err := original.RotateKey(ctx, "rv-closed-k")
+	require.NoError(t, err)
+
+	restarted := newKeyNameTestBackend(t)
+	listErr := errors.New("xkms: listing unavailable")
+	failXKMSListing(t, listErr)
+
+	_, err = restarted.GetKeyMetadata(ctx, "rv-closed-k")
+	require.ErrorIs(t, err, listErr)
+	_, err = restarted.Encrypt(ctx, "rv-closed-k", []byte("p"), nil)
+	require.Error(t, err)
 }

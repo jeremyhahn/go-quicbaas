@@ -27,6 +27,7 @@ import (
 	"encoding/json"
 	stderrors "errors"
 	"fmt"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -418,12 +419,27 @@ func (kb *XKMSBackend) GetKeyMetadata(ctx context.Context, keyID string) (*KeyMe
 		}
 	}
 
+	// The current version is the last of the contiguous rotated versions keyID_v2, keyID_v3, ... that go-xkms stores.
+	// Walk up from 2 rather than take the largest suffix: an ordinary key such as report_v2026 is not a version of report.
+	// A listing that fails leaves the version unknown, so nothing is cached and the caller sees the error.
+	stored, err := kb.listStoredKeyIDs(ctx, keyID+"_v")
+	if err != nil {
+		return nil, err
+	}
+	version := 1
+	for {
+		if _, ok := stored[kb.buildVersionedKeyID(keyID, version+1)]; !ok {
+			break
+		}
+		version++
+	}
+
 	// Key exists but we don't have metadata - create minimal metadata
 	meta := &KeyMetadata{
 		KeyID:     keyID,
 		Algorithm: foundAlgorithm,
 		State:     KeyStateEnabled,
-		Version:   1,
+		Version:   version,
 		Created:   time.Now(),
 		Updated:   time.Now(),
 	}
@@ -446,7 +462,7 @@ func (kb *XKMSBackend) ListKeys(ctx context.Context, prefix string, limit int) (
 	var result []*KeyMetadata
 
 	// Get keys from go-xkms
-	keys, err := xkms.ListKeys(ctx, string(kb.backendType))
+	keys, err := listXKMSKeys(ctx, string(kb.backendType))
 	if err != nil {
 		// Log but don't fail - we'll try the cache
 		kb.logger.WithField("error", err.Error()).Warn("failed to list keys from xkms, using cache")
@@ -658,16 +674,47 @@ func (kb *XKMSBackend) refuseHidingName(ctx context.Context, keyID string) error
 // version of keyID (keyID_v<digits>), or "" when there is none. A list error
 // is returned, so the caller fails closed.
 func (kb *XKMSBackend) conflictingVersionKeys(ctx context.Context, keyID string) (string, error) {
-	keys, _, err := kb.ListKeys(ctx, keyID+"_v", 0)
+	// The stored listing, not ListKeys: ListKeys falls back to the cache when go-xkms cannot list, and a restarted node's cache misses keys that exist.
+	ids, err := kb.listStoredKeyIDs(ctx, keyID+"_v")
 	if err != nil {
 		return "", err
 	}
-	for _, meta := range keys {
-		if base, ok := versionNameBase(meta.KeyID); ok && base == keyID {
-			return meta.KeyID, nil
+	conflicts := make([]string, 0, len(ids))
+	for id := range ids {
+		if base, ok := versionNameBase(id); ok && base == keyID {
+			conflicts = append(conflicts, id)
 		}
 	}
-	return "", nil
+	if len(conflicts) == 0 {
+		return "", nil
+	}
+	sort.Strings(conflicts)
+	return conflicts[0], nil
+}
+
+// listXKMSKeys is go-xkms's key listing; a package variable so tests can make it fail.
+var listXKMSKeys = xkms.ListKeys
+
+// listStoredKeyIDs returns the QuicBaaS key IDs go-xkms stores under this backend whose ID starts with prefix.
+// It never consults the metadata cache, and returns go-xkms's listing error unchanged.
+func (kb *XKMSBackend) listStoredKeyIDs(ctx context.Context, prefix string) (map[string]struct{}, error) {
+	keys, err := listXKMSKeys(ctx, string(kb.backendType))
+	if err != nil {
+		return nil, err
+	}
+	ids := make(map[string]struct{}, len(keys))
+	for _, attrs := range keys {
+		if attrs == nil {
+			continue
+		}
+		// Filter on the decoded ID: a tenant-scoped name is stored hex-encoded.
+		keyID := quicbaasKeyIDFromXKMSName(attrs.CN)
+		if prefix != "" && !strings.HasPrefix(keyID, prefix) {
+			continue
+		}
+		ids[keyID] = struct{}{}
+	}
+	return ids, nil
 }
 
 // DisableKey temporarily disables a key.

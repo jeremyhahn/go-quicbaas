@@ -2381,6 +2381,13 @@ func extractKeyMetadata(keyID string, keyData interface{}) (*KeyMetadata, error)
 // Checks in order: local cache, KVStore (best-effort), scheduler storage (Raft-replicated).
 // Returns empty string if no explicit status has been set.
 func (k *kmsServiceImpl) getVersionStatus(ctx context.Context, keyID string, version uint64) (KeyStatus, *time.Time) {
+	status, disabledAt, _ := k.lookupVersionStatus(ctx, keyID, version)
+	return status, disabledAt
+}
+
+// lookupVersionStatus reads a key version's status from the local cache, the KVStore and the scheduler's completed grace-period jobs, in that order.
+// It returns "" with a nil error when no source records a status, and an error, never "", when a source cannot be read: a KVStore read that fails other than not-found, a stored value that does not decode, or a querier failure.
+func (k *kmsServiceImpl) lookupVersionStatus(ctx context.Context, keyID string, version uint64) (KeyStatus, *time.Time, error) {
 	// Ensure we have a valid context with deadline for Raft operations
 	if ctx == nil {
 		ctx = context.Background()
@@ -2394,29 +2401,33 @@ func (k *kmsServiceImpl) getVersionStatus(ctx context.Context, keyID string, ver
 	cacheKey := fmt.Sprintf("%s:%d", keyID, version)
 	if info, ok := k.versionStatus.Load(cacheKey); ok {
 		if vsi, ok := info.(*versionStatusInfo); ok {
-			return vsi.Status, vsi.DisabledAt
+			return vsi.Status, vsi.DisabledAt, nil
 		}
 	}
 
 	// Fall back to persistent KVStore (works when write was on the leader node)
 	if k.kvStore != nil {
 		data, err := k.kvStore.Get(ctx, versionStatusKey(keyID, version))
+		if err != nil && !errors.IsNotFound(err) {
+			return "", nil, WrapError(err, errors.ErrStorage, "kms.lookupVersionStatus", "failed to load key version status")
+		}
 		if err == nil && len(data) > 0 {
 			var ps persistedVersionStatus
-			if err := json.Unmarshal(data, &ps); err == nil {
-				status := KeyStatus(ps.Status)
-				var disabledAt *time.Time
-				if ps.DisabledAt != 0 {
-					t := time.Unix(0, ps.DisabledAt)
-					disabledAt = &t
-				}
-				// Populate local cache to avoid repeated lookups
-				k.versionStatus.Store(cacheKey, &versionStatusInfo{
-					Status:     status,
-					DisabledAt: disabledAt,
-				})
-				return status, disabledAt
+			if err := json.Unmarshal(data, &ps); err != nil {
+				return "", nil, NewError(errors.ErrInternal, "kms.lookupVersionStatus", "failed to unmarshal key version status")
 			}
+			status := KeyStatus(ps.Status)
+			var disabledAt *time.Time
+			if ps.DisabledAt != 0 {
+				t := time.Unix(0, ps.DisabledAt)
+				disabledAt = &t
+			}
+			// Populate local cache to avoid repeated lookups
+			k.versionStatus.Store(cacheKey, &versionStatusInfo{
+				Status:     status,
+				DisabledAt: disabledAt,
+			})
+			return status, disabledAt, nil
 		}
 	}
 
@@ -2424,19 +2435,20 @@ func (k *kmsServiceImpl) getVersionStatus(ctx context.Context, keyID string, ver
 	// are visible on all nodes via SyncRead, regardless of which node executed the job.
 	if querier, ok := k.scheduler.(KMSSchedulerQuerier); ok {
 		versions, err := querier.GetCompletedGracePeriodVersions(ctx, keyID)
-		if err == nil {
-			if completedAt, found := versions[version]; found {
-				// Populate local cache
-				k.versionStatus.Store(cacheKey, &versionStatusInfo{
-					Status:     KeyStatusDisabled,
-					DisabledAt: &completedAt,
-				})
-				return KeyStatusDisabled, &completedAt
-			}
+		if err != nil {
+			return "", nil, WrapError(err, errors.ErrStorage, "kms.lookupVersionStatus", "failed to load completed grace-period versions")
+		}
+		if completedAt, found := versions[version]; found {
+			// Populate local cache
+			k.versionStatus.Store(cacheKey, &versionStatusInfo{
+				Status:     KeyStatusDisabled,
+				DisabledAt: &completedAt,
+			})
+			return KeyStatusDisabled, &completedAt, nil
 		}
 	}
 
-	return "", nil // No explicit status, use default
+	return "", nil, nil // No explicit status, use default
 }
 
 // versionStatusKey returns the KVStore key for a version status entry.

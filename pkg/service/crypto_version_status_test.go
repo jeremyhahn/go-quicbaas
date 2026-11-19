@@ -183,3 +183,89 @@ func TestCryptoService_Decrypt_UnparsableCiphertextGoesToBackend(t *testing.T) {
 	var disabled *api.KeyDisabledError
 	require.False(t, stderrors.As(err, &disabled), "an unparsable ciphertext is not refused as key-disabled: %v", err)
 }
+
+// failingGetKVStore is a KVStore whose Get fails with an error that is not not-found.
+type failingGetKVStore struct {
+	*mockKVStoreForKMS
+	getErr error
+}
+
+func (s *failingGetKVStore) Get(context.Context, string) ([]byte, error) {
+	return nil, s.getErr
+}
+
+// failingQuerierScheduler is a scheduler whose completed grace-period query fails.
+type failingQuerierScheduler struct {
+	queryErr error
+}
+
+func (s *failingQuerierScheduler) ScheduleJob(context.Context, *SchedulerJob) error { return nil }
+
+func (s *failingQuerierScheduler) GetCompletedGracePeriodVersions(context.Context, string) (map[uint64]time.Time, error) {
+	return nil, s.queryErr
+}
+
+// requireStatusUnavailable asserts both Decrypt and DecryptBatch of ciphertext fail, and the crypto manager decrypts nothing.
+func requireStatusUnavailable(t *testing.T, f *versionedCryptoFixture, ciphertext []byte) {
+	t.Helper()
+	before := f.decrypt.Load()
+
+	_, err := f.svc.Decrypt(systemTenantCtx(), &DecryptRequest{KeyID: versionStatusKeyID, Ciphertext: ciphertext})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "service.Decrypt: unavailable")
+
+	_, err = f.svc.DecryptBatch(systemTenantCtx(), &DecryptBatchRequest{
+		KeyID: versionStatusKeyID,
+		Items: []BatchDecryptItem{{Ciphertext: ciphertext}},
+	})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "service.Decrypt: unavailable")
+
+	require.Equal(t, before, f.decrypt.Load(), "a version whose status cannot be read never reaches the crypto manager")
+}
+
+func TestCryptoService_Decrypt_VersionStatusReadErrorFailsClosed(t *testing.T) {
+	f := newVersionedCryptoFixture(t)
+	v1 := f.encrypt(t, "sealed under v1")
+	f.kmsSvc.SetKVStore(&failingGetKVStore{
+		mockKVStoreForKMS: &mockKVStoreForKMS{data: make(map[string][]byte)},
+		getErr:            stderrors.New("raft: no leader"),
+	})
+
+	requireStatusUnavailable(t, f, v1)
+}
+
+func TestCryptoService_Decrypt_VersionStatusUndecodableFailsClosed(t *testing.T) {
+	f := newVersionedCryptoFixture(t)
+	v1 := f.encrypt(t, "sealed under v1")
+	f.kmsSvc.SetKVStore(&mockKVStoreForKMS{data: map[string][]byte{
+		versionStatusKey(f.scoped, 1): []byte("not-json"),
+	}})
+
+	requireStatusUnavailable(t, f, v1)
+}
+
+func TestCryptoService_Decrypt_GracePeriodQueryErrorFailsClosed(t *testing.T) {
+	f := newVersionedCryptoFixture(t)
+	v1 := f.encrypt(t, "sealed under v1")
+	f.kmsSvc.SetScheduler(&failingQuerierScheduler{queryErr: stderrors.New("scheduler: sync read failed")})
+
+	requireStatusUnavailable(t, f, v1)
+}
+
+func TestCryptoService_Decrypt_AbsentVersionStatusStillDecrypts(t *testing.T) {
+	f := newVersionedCryptoFixture(t)
+	v1 := f.encrypt(t, "sealed under v1")
+	f.kmsSvc.SetKVStore(&mockKVStoreForKMS{data: make(map[string][]byte)})
+
+	resp, err := f.svc.Decrypt(systemTenantCtx(), &DecryptRequest{KeyID: versionStatusKeyID, Ciphertext: v1})
+	require.NoError(t, err)
+	require.Equal(t, "sealed under v1", string(resp.Plaintext))
+
+	batch, err := f.svc.DecryptBatch(systemTenantCtx(), &DecryptBatchRequest{
+		KeyID: versionStatusKeyID,
+		Items: []BatchDecryptItem{{Ciphertext: v1}},
+	})
+	require.NoError(t, err)
+	require.NotNil(t, batch)
+}

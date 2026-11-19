@@ -287,7 +287,11 @@ func (t *cryptoService) checkVersionUsable(ctx context.Context, scopedKeyID stri
 		// A ciphertext that does not decode names no version; the crypto backend rejects ciphertext it cannot decode, so its own error is what the caller sees.
 		return nil
 	}
-	status, _ := t.kmsSvc.getVersionStatus(ctx, scopedKeyID, version)
+	status, _, err := t.kmsSvc.lookupVersionStatus(ctx, scopedKeyID, version)
+	if err != nil {
+		// A status that cannot be read may be a disabled one: refuse rather than decrypt under it.
+		return WrapError(err, errors.ErrUnavailable, "service.Decrypt", "key version status unavailable")
+	}
 	switch status {
 	case "", KeyStatusEnabled, KeyStatusRotating:
 		return nil
