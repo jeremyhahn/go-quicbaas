@@ -83,22 +83,28 @@ func waitForReady(t *testing.T) {
 func TestSessionAttachSSE_JSONHistoryReachable(t *testing.T) {
 	waitForReady(t)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-
+	// Enrolment provisions a tenant on first use and can take longer than
+	// the request deadline on a loaded cluster, so it runs before the
+	// deadline starts.
 	// Session history is tenant-scoped: the tenant principal reads it and
 	// may only name its own tenant.
 	baseURL := quicbaasURL()
+	tenantID := helpers.TenantPrincipalID(t, baseURL)
+	bearer := helpers.AuthTenantPrincipal(t, baseURL)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
 	u := fmt.Sprintf(
 		"%s/api/v1/orchestrator/sessions/phase9-integration-probe/events?tenant_id=%s",
-		baseURL, url.QueryEscape(helpers.TenantPrincipalID(t, baseURL)),
+		baseURL, url.QueryEscape(tenantID),
 	)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
 	if err != nil {
 		t.Fatalf("new request: %v", err)
 	}
 	req.Header.Set("Accept", "application/json")
-	req.Header.Set("Authorization", "Bearer "+helpers.AuthTenantPrincipal(t, baseURL))
+	req.Header.Set("Authorization", "Bearer "+bearer)
 
 	resp, err := httpClient().Do(req)
 	if err != nil {
