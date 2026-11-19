@@ -141,7 +141,8 @@ type Client interface {
 // RetentionPolicy is how long a metric's points are kept, and how they are
 // downsampled.
 type RetentionPolicy struct {
-	// Duration is how long points are kept (required, whole seconds).
+	// Duration is how long points are kept, in whole seconds. Zero keeps
+	// points forever (infinite retention).
 	Duration time.Duration
 
 	// Resolution is the bucket size points are downsampled to. Zero keeps
@@ -338,8 +339,8 @@ func validateSetRetentionRequest(req *SetRetentionRequest) error {
 		return errors.NewInvalidInput(op, "metric name is required")
 	}
 	p := req.Policy
-	if p.Duration < time.Second || p.Duration%time.Second != 0 {
-		return errors.NewInvalidInput(op, "duration must be a positive whole number of seconds")
+	if p.Duration < 0 || p.Duration%time.Second != 0 {
+		return errors.NewInvalidInput(op, "duration must be zero (infinite) or a positive whole number of seconds")
 	}
 	if p.Resolution < 0 || p.Resolution%time.Second != 0 {
 		return errors.NewInvalidInput(op, "resolution must be a whole number of seconds")

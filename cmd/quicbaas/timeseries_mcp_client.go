@@ -264,12 +264,20 @@ func (c *MCPTimeSeriesClient) TSSetRetentionPolicy(ctx context.Context, req *cli
 		)
 	}
 
+	// A policy without a resolution does not downsample: the CLI's
+	// --aggregation default (avg) only applies when --resolution is set,
+	// so a duration-only policy is sent with AggregateNone.
+	aggregation := timeseries.AggregateNone
+	if req.Policy.Resolution != 0 {
+		aggregation = timeseries.ParseAggregateFunction(req.Policy.Aggregation)
+	}
+
 	if err := tsClient.SetRetention(ctx, &timeseries.SetRetentionRequest{
 		Metric: req.Metric,
 		Policy: timeseries.RetentionPolicy{
 			Duration:    req.Policy.Duration,
 			Resolution:  req.Policy.Resolution,
-			Aggregation: timeseries.ParseAggregateFunction(req.Policy.Aggregation),
+			Aggregation: aggregation,
 		},
 	}); err != nil {
 		return nil, err

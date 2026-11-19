@@ -44,7 +44,7 @@ func TestClient_SetRetention_Validation(t *testing.T) {
 	cases := map[string]*SetRetentionRequest{
 		"nil":                     nil,
 		"no metric":               {Policy: RetentionPolicy{Duration: time.Hour}},
-		"no duration":             {Metric: "cpu"},
+		"negative duration":       {Metric: "cpu", Policy: RetentionPolicy{Duration: -time.Second}},
 		"sub-second duration":     {Metric: "cpu", Policy: RetentionPolicy{Duration: 1500 * time.Millisecond}},
 		"negative resolution":     {Metric: "cpu", Policy: RetentionPolicy{Duration: time.Hour, Resolution: -time.Second}},
 		"bad aggregate":           {Metric: "cpu", Policy: RetentionPolicy{Duration: time.Hour, Resolution: time.Minute, Aggregation: AggregateFunction(99)}},

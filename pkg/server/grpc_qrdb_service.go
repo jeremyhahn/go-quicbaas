@@ -16,6 +16,7 @@ package server
 import (
 	ggrpc "google.golang.org/grpc"
 
+	qrdbgrpc "github.com/jeremyhahn/go-qrdb/pkg/api/grpc"
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
 	grpcapi "github.com/jeremyhahn/go-quicbaas/pkg/api/grpc"
@@ -89,6 +90,12 @@ func (s *Server) buildQRDBRegisterOptions() []qrdbsdk.GRPCRegisterOption {
 		// instead of being captured as nil at registration time.
 		qrdbsdk.WithRegisterUserService(newQRDBUserServicerProxy(s)),
 		qrdbsdk.WithRegisterUserAuthFactorService(newQRDBUserAuthFactorServicerProxy(s)),
+		// The time-series proxy backs the qrdb.v1 time-series RPCs that the
+		// SDK's Search().QRDBTimeSeries() calls. It resolves the node's
+		// servicer PER CALL for the same reason as the user proxies: the
+		// node's Services().TimeSeries is nil until Unseal on the
+		// seal-enabled boot path.
+		qrdbgrpc.WithRegisterTimeSeries(newQRDBTimeSeriesServicerProxy(s)),
 	)
 
 	return opts

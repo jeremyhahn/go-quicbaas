@@ -76,6 +76,27 @@ func TestMCPTimeSeriesClient_RetentionRoundTrip(t *testing.T) {
 	assert.Equal(t, cli.TSRetentionPolicy{Duration: 24 * time.Hour, Resolution: 5 * time.Minute, Aggregation: "max"}, *resp.Policy)
 }
 
+func TestMCPTimeSeriesClient_DurationOnlyRetentionSendsAggregateNone(t *testing.T) {
+	ts := &retentionTSClient{}
+	client := &MCPTimeSeriesClient{client: &retentionSDKClient{mockClient: &mockClient{}, ts: ts}}
+	ctx := context.Background()
+
+	_, err := client.TSSetRetentionPolicy(ctx, &cli.TSSetRetentionPolicyRequest{
+		Metric: "cpu.usage",
+		Policy: &cli.TSRetentionPolicy{Duration: 24 * time.Hour, Aggregation: "avg"},
+	})
+	require.NoError(t, err)
+	require.NotNil(t, ts.gotSet)
+	assert.Equal(t, timeseries.AggregateNone, ts.gotSet.Policy.Aggregation)
+
+	_, err = client.TSSetRetentionPolicy(ctx, &cli.TSSetRetentionPolicyRequest{
+		Metric: "cpu.usage",
+		Policy: &cli.TSRetentionPolicy{Duration: 24 * time.Hour, Resolution: 300 * time.Second, Aggregation: "avg"},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, timeseries.AggregateAvg, ts.gotSet.Policy.Aggregation)
+}
+
 func TestMCPTimeSeriesClient_RetentionErrorsAreReturned(t *testing.T) {
 	ts := &retentionTSClient{err: assert.AnError}
 	client := &MCPTimeSeriesClient{client: &retentionSDKClient{mockClient: &mockClient{}, ts: ts}}
