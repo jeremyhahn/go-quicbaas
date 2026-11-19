@@ -27,6 +27,27 @@ func TestBuildQRDBConfig_NodeServesUnixSocket(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, qcfg.Protocols.Unix, "the node must serve the Unix socket")
 	require.Equal(t, socket, qcfg.Unix.SocketPath, "the node must listen on server.unix.socket")
+
+	srv := &Server{config: cfg}
+	require.False(t, srv.quicbaasServesUnixSocket(),
+		"quicbaas's own grpcServer must not bind the socket the node serves")
+}
+
+// TestQuicbaasServesUnixSocket_WithoutNetworkServing pins that quicbaas's own
+// Unix listener still runs when the node serves no network protocol.
+func TestQuicbaasServesUnixSocket_WithoutNetworkServing(t *testing.T) {
+	cfg := config.DefaultConfig()
+	cfg.Server.Unix.Socket = filepath.Join(t.TempDir(), "q.sock")
+	cfg.Server.REST.Enabled = false
+	cfg.Server.GRPC.Enabled = false
+	cfg.Server.MCP.Enabled = false
+
+	qcfg, err := buildQRDBConfig(cfg, false)
+	require.NoError(t, err)
+	require.False(t, qcfg.Protocols.Unix)
+
+	srv := &Server{config: cfg}
+	require.True(t, srv.quicbaasServesUnixSocket())
 }
 
 // TestBuildQRDBConfig_NoUnixSocketLeavesNodeUnixOff pins that an empty

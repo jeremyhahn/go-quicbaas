@@ -223,6 +223,14 @@ func buildQRDBConfig(cfg *config.Config, clusterMode bool) (*qrdbsdk.DaemonConfi
 		if qcfg.Protocols.MCP {
 			qcfg.MCP.Port = cfg.Server.MCP.Port
 		}
+		// The local Unix socket is the node's too: its Unix listener serves
+		// the node's services and the capability modules behind the SAME
+		// authentication middleware as its gRPC TCP listener, so a Unix
+		// caller is admitted or refused exactly as over TCP.
+		if cfg.Server.Unix.Socket != "" {
+			qcfg.Protocols.Unix = true
+			qcfg.Unix.SocketPath = cfg.Server.Unix.Socket
+		}
 	}
 
 	if !clusterMode {
