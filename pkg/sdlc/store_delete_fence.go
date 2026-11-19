@@ -38,6 +38,10 @@ import (
 //   - EVERY BIND READS THE FENCE, fresh bind or rebind, and withdraws only its
 //     own write (Store.WithdrawBinding, keyed on the binding's WriteToken),
 //     restoring the record it replaced.
+//   - A LIVE DELETE RENEWS ITS FENCE. The holder renews it while it works
+//     (RenewProjectDeleteFence) and confirms it before each destructive
+//     step. A fence that went stale is never renewed, so a delete that lost
+//     it, and may have let a bind through, stops.
 //
 // The fence lives beside the bindings, in the tenant's SDLC store, so both
 // reads and writes go through the same linearizable KV on every node.
@@ -47,11 +51,13 @@ const (
 	deleteFenceEntityName = "project delete fence"
 	deletedProjectEntity  = "project"
 
-	// DeleteFenceTTL is how long a fence holds without its delete clearing
-	// it. A delete that crashes after fencing leaves its fence behind; after
-	// this long a bind no longer honours it, and another delete may replace
-	// it, so a project that survived a crashed delete can be bound or deleted
-	// again. A tombstone never goes stale.
+	// DeleteFenceTTL is how long a fence holds after it was last placed or
+	// renewed. A live delete renews it well inside this; a delete that
+	// crashes after fencing leaves its fence behind, and after this long a
+	// bind no longer honours it and another delete may replace it, so a
+	// project that survived a crashed delete can be bound or deleted again.
+	// A stale fence is never renewed, so a delete that stalled past it stops.
+	// A tombstone never goes stale.
 	DeleteFenceTTL = 10 * time.Minute
 
 	// fenceWriteAttempts bounds the rounds a fence write retries after losing
@@ -62,8 +68,9 @@ const (
 // deleteFence is the record a delete in flight holds on its project, and,
 // with Deleted set, the tombstone a completed delete leaves behind.
 type deleteFence struct {
-	ProjectID string    `json:"project_id"`
-	Token     string    `json:"token"`
+	ProjectID string `json:"project_id"`
+	Token     string `json:"token"`
+	// CreatedAt is when the holder last placed or renewed the fence.
 	CreatedAt time.Time `json:"created_at"`
 	Deleted   bool      `json:"deleted,omitempty"`
 }
@@ -162,6 +169,48 @@ func (s *Store) MarkProjectDeleted(ctx context.Context, tenantID, projectID, tok
 		}
 		if err := ctx.Err(); err != nil {
 			return backendError("MarkProjectDeleted", err)
+		}
+	}
+	return conflict
+}
+
+// RenewProjectDeleteFence restamps the fence token holds on projectID, so a
+// delete that is still working keeps it live. It refuses with
+// *VersionConflictError when the fence is not this delete's any more: absent,
+// held under another token, a tombstone, or stale. A stale fence is never
+// renewed, so one successful renew proves the fence stayed live from its
+// placement until now.
+func (s *Store) RenewProjectDeleteFence(ctx context.Context, tenantID, projectID, token string) error {
+	if err := validateKeySegment("project_id", projectID); err != nil {
+		return err
+	}
+	store, err := s.guardedKV(ctx, "RenewProjectDeleteFence", tenantID)
+	if err != nil {
+		return err
+	}
+	key := deleteFenceKey(projectID)
+	conflict := &VersionConflictError{Entity: deleteFenceEntityName, TenantID: tenantID, ID: projectID}
+	for attempt := 0; attempt < fenceWriteAttempts; attempt++ {
+		held, raw, err := loadRecord[deleteFence](ctx, "RenewProjectDeleteFence", store, key)
+		if err != nil {
+			return err
+		}
+		now := s.now()
+		if held == nil || held.ProjectID != projectID || held.Token != token || held.Deleted ||
+			now.Sub(held.CreatedAt) >= DeleteFenceTTL {
+			return conflict
+		}
+		renewed := *held
+		renewed.CreatedAt = now
+		applied, err := storeRecord(ctx, "RenewProjectDeleteFence", store, key, raw, &renewed)
+		if err != nil {
+			return err
+		}
+		if applied {
+			return nil
+		}
+		if err := ctx.Err(); err != nil {
+			return backendError("RenewProjectDeleteFence", err)
 		}
 	}
 	return conflict

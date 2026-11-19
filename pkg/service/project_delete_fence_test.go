@@ -131,6 +131,89 @@ func TestDeleteProject_BindAfterTheCheckIsWithdrawn(t *testing.T) {
 	}
 }
 
+// steppedClock is a clock a test moves by hand; it is safe to read from the
+// goroutines a delete or a bind starts.
+type steppedClock struct{ at atomic.Int64 }
+
+func (c *steppedClock) now() time.Time { return time.Unix(0, c.at.Load()).UTC() }
+
+func (c *steppedClock) set(t time.Time) { c.at.Store(t.UnixNano()) }
+
+// sendTick hands one renewal tick to a heartbeat. Two sends in a row on an
+// unbuffered channel prove the first renewal finished.
+func sendTick(t *testing.T, ticks chan time.Time) {
+	t.Helper()
+	select {
+	case ticks <- time.Now():
+	case <-time.After(5 * time.Second):
+		t.Fatalf("no heartbeat took the renewal tick")
+	}
+}
+
+var renewBase = time.Date(2026, 11, 19, 12, 0, 0, 0, time.UTC)
+
+// TestDeleteProject_RenewedFenceRefusesABindAcrossALongTeardown: the hook
+// stands in for a teardown that outlasts DeleteFenceTTL. The delete renews
+// its fence while it works, so a bind past the original TTL still sees it,
+// withdraws and is refused, and the delete completes.
+func TestDeleteProject_RenewedFenceRefusesABindAcrossALongTeardown(t *testing.T) {
+	rig := newBindDeleteRig(t)
+	var clock steppedClock
+	clock.set(renewBase)
+	rig.sdlc.store.SetClock(clock.now)
+	ticks := make(chan time.Time)
+	rig.projects.(*projectServiceImpl).fenceRenewTicks = ticks
+	var bindErr error
+	rig.hookCheck(func() {
+		clock.set(renewBase.Add(sdlc.DeleteFenceTTL - 10*time.Second))
+		sendTick(t, ticks)
+		sendTick(t, ticks)
+		clock.set(renewBase.Add(sdlc.DeleteFenceTTL + time.Minute))
+		bindErr = rig.bind(context.Background())
+	})
+
+	if err := rig.delete(); err != nil {
+		t.Fatalf("DeleteProject: %v", err)
+	}
+	assertProjectDeleting(t, bindErr)
+	rig.assertUnbound(t)
+	if fenced, err := rig.sdlc.store.ProjectDeleteFenced(context.Background(), sdlcTestTenant, rig.projectID); err != nil || !fenced {
+		t.Fatalf("after the delete: fenced=%v err=%v, want the tombstone", fenced, err)
+	}
+}
+
+// TestDeleteProject_ExpiredFenceStopsTheDeleteBeforeTeardown: the holder
+// stalled past DeleteFenceTTL without renewing, so a bind got through. The
+// delete finds its fence lost and stops before it destroys anything.
+func TestDeleteProject_ExpiredFenceStopsTheDeleteBeforeTeardown(t *testing.T) {
+	rig := newBindDeleteRig(t)
+	var clock steppedClock
+	clock.set(renewBase)
+	rig.sdlc.store.SetClock(clock.now)
+	rig.projects.(*projectServiceImpl).fenceRenewTicks = make(chan time.Time)
+	var bindErr error
+	rig.hookCheck(func() {
+		clock.set(renewBase.Add(sdlc.DeleteFenceTTL + time.Second))
+		bindErr = rig.bind(context.Background())
+	})
+
+	err := rig.delete()
+	if bindErr != nil {
+		t.Fatalf("bind past the stale fence: %v, want nil", bindErr)
+	}
+	var checkErr *ProjectBindingCheckError
+	if !errors.Is(err, sdlc.ErrVersionConflict) || !errors.As(err, &checkErr) {
+		t.Fatalf("DeleteProject after losing its fence = %v, want *ProjectBindingCheckError (a version conflict)", err)
+	}
+	ctx := context.Background()
+	if _, err := rig.projects.GetProject(ctx, &GetProjectRequest{TenantID: sdlcTestTenant, ProjectID: rig.projectID}); err != nil {
+		t.Fatalf("GetProject after the stopped delete: %v", err)
+	}
+	if _, err := rig.sdlc.store.GetBinding(ctx, sdlcTestTenant, rig.projectID); err != nil {
+		t.Fatalf("binding after the stopped delete: %v", err)
+	}
+}
+
 // TestBind_AfterACompletedDeleteSeesTheTombstone: the bind read the project
 // before the delete, and its fence read lands after the delete finished. The
 // tombstone refuses it, where a cleared fence would have let it stand.

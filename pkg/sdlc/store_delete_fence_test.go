@@ -90,6 +90,58 @@ func TestDeleteFence_StaleFenceReplaced(t *testing.T) {
 	}
 }
 
+// TestDeleteFence_RenewKeepsItLiveAndRefusesALostFence: a renew restamps a
+// live fence, so it holds past the original TTL; a renew under another
+// token, of a stale fence or of a tombstone is refused.
+func TestDeleteFence_RenewKeepsItLiveAndRefusesALostFence(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+	base := time.Date(2026, 11, 19, 12, 0, 0, 0, time.UTC)
+	store.now = func() time.Time { return base }
+
+	token, err := store.FenceProjectDelete(ctx, fenceTenant, "p1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	renewed := base.Add(DeleteFenceTTL - time.Second)
+	store.now = func() time.Time { return renewed }
+	if err := store.RenewProjectDeleteFence(ctx, fenceTenant, "p1", token); err != nil {
+		t.Fatalf("renew of a live fence: %v", err)
+	}
+
+	store.now = func() time.Time { return base.Add(DeleteFenceTTL + DeleteFenceTTL/2) }
+	if fenced, err := store.ProjectDeleteFenced(ctx, fenceTenant, "p1"); err != nil || !fenced {
+		t.Fatalf("renewed fence past the original TTL: fenced=%v err=%v, want held", fenced, err)
+	}
+	var inProgress *DeleteInProgressError
+	if _, err := store.FenceProjectDelete(ctx, fenceTenant, "p1"); !errors.As(err, &inProgress) {
+		t.Fatalf("second fence over a renewed fence = %v, want *DeleteInProgressError", err)
+	}
+	var conflict *VersionConflictError
+	if err := store.RenewProjectDeleteFence(ctx, fenceTenant, "p1", "not-the-token"); !errors.As(err, &conflict) {
+		t.Fatalf("renew with another token = %v, want *VersionConflictError", err)
+	}
+
+	store.now = func() time.Time { return renewed.Add(DeleteFenceTTL) }
+	if err := store.RenewProjectDeleteFence(ctx, fenceTenant, "p1", token); !errors.As(err, &conflict) {
+		t.Fatalf("renew of a stale fence = %v, want *VersionConflictError", err)
+	}
+	if fenced, err := store.ProjectDeleteFenced(ctx, fenceTenant, "p1"); err != nil || fenced {
+		t.Fatalf("stale fence after a refused renew: fenced=%v err=%v, want absent", fenced, err)
+	}
+
+	tomb, err := store.FenceProjectDelete(ctx, fenceTenant, "p2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.MarkProjectDeleted(ctx, fenceTenant, "p2", tomb); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.RenewProjectDeleteFence(ctx, fenceTenant, "p2", tomb); !errors.As(err, &conflict) {
+		t.Fatalf("renew of a tombstone = %v, want *VersionConflictError", err)
+	}
+}
+
 // A completed delete leaves a tombstone: it holds whatever its age, no clear
 // removes it, and a later fence attempt reports the project gone.
 func TestDeleteFence_TombstoneHoldsForever(t *testing.T) {

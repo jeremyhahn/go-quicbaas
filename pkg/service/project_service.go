@@ -544,6 +544,10 @@ type projectServiceImpl struct {
 
 	// bindings is read by DeleteProject: a bound project is refused.
 	bindings sdlc.BindingReader
+
+	// fenceRenewTicks is a test seam: the ticks a delete renews its fence
+	// on. Nil means a ticker every deleteFenceRenewEvery.
+	fenceRenewTicks <-chan time.Time
 }
 
 // projectStoreContext binds the request's tenant to the context the project
@@ -672,10 +676,14 @@ type ProjectDeleteFence interface {
 	FenceProjectDelete(ctx context.Context, tenantID, projectID string) (string, error)
 	ClearProjectDeleteFence(ctx context.Context, tenantID, projectID, token string) error
 	MarkProjectDeleted(ctx context.Context, tenantID, projectID, token string) error
+	RenewProjectDeleteFence(ctx context.Context, tenantID, projectID, token string) error
 }
 
 // fenceSettleTimeout bounds the detached write that settles a delete's fence.
 const fenceSettleTimeout = 30 * time.Second
+
+// deleteFenceRenewEvery is how often a delete in flight renews its fence.
+const deleteFenceRenewEvery = sdlc.DeleteFenceTTL / 3
 
 // fenceDelete places the delete fence and returns what settles it, by
 // fenceOutcome: fenceDeleted once the project is gone turns the fence into a
@@ -687,24 +695,59 @@ const fenceSettleTimeout = 30 * time.Second
 // settle runs detached from the request's cancellation: a fence left behind
 // blocks binds of the project until it goes stale, and a tombstone not written
 // would let a late bind stand on the deleted project.
-func (s *projectServiceImpl) fenceDelete(ctx context.Context, tenantID, projectID string) (func(fenceOutcome), error) {
+//
+// The fence is renewed while the delete works, every deleteFenceRenewEvery,
+// and check confirms it is still this delete's before a destructive step: a
+// fence that went stale may have let a bind through, and is never renewed.
+func (s *projectServiceImpl) fenceDelete(ctx context.Context, tenantID, projectID string) (settle func(fenceOutcome), check func() error, err error) {
 	fence, ok := s.bindings.(ProjectDeleteFence)
 	if !ok || fence == nil {
-		return func(fenceOutcome) {}, nil
+		return func(fenceOutcome) {}, func() error { return nil }, nil
 	}
 	token, err := fence.FenceProjectDelete(ctx, tenantID, projectID)
 	if err != nil {
 		var inProgress *sdlc.DeleteInProgressError
 		switch {
 		case stderrors.As(err, &inProgress):
-			return nil, err
+			return nil, nil, err
 		case stderrors.Is(err, sdlc.ErrNotFound):
 			// A tombstone: the project was deleted under this request.
-			return nil, &ProjectNotFoundError{TenantID: tenantID, ProjectID: projectID}
+			return nil, nil, &ProjectNotFoundError{TenantID: tenantID, ProjectID: projectID}
 		}
-		return nil, &ProjectBindingCheckError{TenantID: tenantID, ProjectID: projectID, Cause: err}
+		return nil, nil, &ProjectBindingCheckError{TenantID: tenantID, ProjectID: projectID, Cause: err}
+	}
+	stop := make(chan struct{})
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		ticks := s.fenceRenewTicks
+		if ticks == nil {
+			ticker := time.NewTicker(deleteFenceRenewEvery)
+			defer ticker.Stop()
+			ticks = ticker.C
+		}
+		for {
+			select {
+			case <-stop:
+				return
+			case <-ticks:
+				if err := fence.RenewProjectDeleteFence(ctx, tenantID, projectID, token); err != nil {
+					slog.Default().Warn("project: a delete could not renew its fence; it stops before its next step",
+						"tenant_id", tenantID, "project_id", projectID, "error", err)
+					return
+				}
+			}
+		}
+	}()
+	check = func() error {
+		if err := fence.RenewProjectDeleteFence(ctx, tenantID, projectID, token); err != nil {
+			return &ProjectBindingCheckError{TenantID: tenantID, ProjectID: projectID, Cause: err}
+		}
+		return nil
 	}
 	return func(outcome fenceOutcome) {
+		close(stop)
+		<-done
 		settleCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), fenceSettleTimeout)
 		defer cancel()
 		switch outcome {
@@ -719,7 +762,7 @@ func (s *projectServiceImpl) fenceDelete(ctx context.Context, tenantID, projectI
 					"tenant_id", tenantID, "project_id", projectID, "error", err)
 			}
 		}
-	}, nil
+	}, check, nil
 }
 
 // fenceOutcome is how a delete settles its fence.
@@ -1341,7 +1384,7 @@ func (s *projectServiceImpl) DeleteProject(ctx context.Context, req *DeleteProje
 
 	// Fenced BEFORE the binding check, so a bind that commits after the check
 	// sees the fence and withdraws (go-quicbaas#1303).
-	settle, err := s.fenceDelete(ctx, req.TenantID, req.ProjectID)
+	settle, check, err := s.fenceDelete(ctx, req.TenantID, req.ProjectID)
 	if err != nil {
 		return nil, err
 	}
@@ -1354,6 +1397,11 @@ func (s *projectServiceImpl) DeleteProject(ctx context.Context, req *DeleteProje
 		return nil, err
 	}
 
+	// A delete whose fence went stale may have let a bind through, so it
+	// stops before it destroys anything. The outcome stays fenceCleared.
+	if err := check(); err != nil {
+		return nil, err
+	}
 	if project.Provisioning.Managed {
 		if s.provisioner == nil {
 			return nil, &ProjectProvisioningUnavailableError{
@@ -1365,6 +1413,11 @@ func (s *projectServiceImpl) DeleteProject(ctx context.Context, req *DeleteProje
 		}
 	}
 
+	// The teardown may have outlasted the fence: confirm it is still this
+	// delete's before the record goes.
+	if err := check(); err != nil {
+		return nil, err
+	}
 	if err := s.store.Delete(ctx, req.TenantID, req.ProjectID); err != nil {
 		// The delete may have removed the record before it failed: settle
 		// on what the store now holds, not on the error.

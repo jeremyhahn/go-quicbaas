@@ -60,6 +60,13 @@ func NewStore(resolver qrdbsdk.TenantStoreResolver) (*Store, error) {
 	return &Store{resolver: resolver, now: func() time.Time { return time.Now().UTC() }}, nil
 }
 
+// SetClock replaces the clock the store stamps and ages its records with. A nil clock is ignored.
+func (s *Store) SetClock(now func() time.Time) {
+	if now != nil {
+		s.now = now
+	}
+}
+
 // entityDAO resolves the tenant's store and opens the DAO for one entity
 // type on it. A free function because Go methods cannot be generic.
 func entityDAO[E qrdbsdk.Entity](
