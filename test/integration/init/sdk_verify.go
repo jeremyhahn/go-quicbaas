@@ -22,13 +22,20 @@
 //
 // The verification target is Health.Liveness because:
 //
-//   - it is wired across every transport (rest / grpc / quic / mcp /
-//     unix) per sdk/go/transport/<t>;
+//   - it is wired across the rest / grpc / quic / unix transports per
+//     sdk/go/transport/<t>;
 //   - it requires zero authentication so we do not pay the cost of
 //     bootstrapping admin credentials per-cell;
 //   - a 200 / Healthy response proves the SDK's transport handshake +
 //     request envelope + response decoder all line up with the daemon's
 //     listener for this cell.
+//
+// MCP has no anonymous session: go-qrdb gates the whole /mcp endpoint on
+// a bearer, refusing a request without one before the MCP layer parses
+// it. The MCP cell therefore checks that an anonymous initialize is
+// refused with 401 (verifyMCPAnonymousRefused), which proves the MCP
+// listener is up and fail-closed. The authenticated MCP path is covered
+// by phase 4 on durable backends.
 package init
 
 import (
@@ -45,6 +52,7 @@ import (
 	"reflect"
 	"regexp"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -72,6 +80,11 @@ const sdkLivenessTimeout = 10 * time.Second
 // self-signed daemon cert.
 func verifySDKLivenessOverTransport(t *testing.T, transport string, ports PortBundle, dataDir, adminToken string) {
 	t.Helper()
+
+	if transport == "mcp" && adminToken == "" {
+		verifyMCPAnonymousRefused(t, ports, dataDir)
+		return
+	}
 
 	client, err := newSDKClient(transport, ports, dataDir, adminToken)
 	if err != nil {
@@ -181,6 +194,48 @@ func classifySealedMCPRefusal(err error) error {
 		return fmt.Errorf("the uncredentialed MCP call was answered with HTTP %d, want 401: %w", status, err)
 	}
 	return nil
+}
+
+// mcpAnonymousInitialize is the JSON-RPC initialize request
+// verifyMCPAnonymousRefused sends without a bearer.
+const mcpAnonymousInitialize = `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"backend-matrix","version":"0"}}}`
+
+// verifyMCPAnonymousRefused checks the MCP listener's contract for an
+// anonymous caller; verifySDKLivenessOverTransport runs it when no admin
+// token is given. MCP has no anonymous session: go-qrdb gates the whole
+// /mcp endpoint on a bearer, so an initialize without an Authorization
+// header must be refused with 401. A 401 proves the MCP listener is up,
+// speaks TLS with the daemon's CA, and is fail-closed. The authenticated
+// MCP path is covered by phase 4 on durable backends.
+func verifyMCPAnonymousRefused(t *testing.T, ports PortBundle, dataDir string) {
+	t.Helper()
+
+	tlsCfg, err := loadDaemonCATLSConfig(dataDir)
+	if err != nil {
+		t.Fatalf("load daemon CA for transport \"mcp\": %v", err)
+	}
+	httpClient := &http.Client{Transport: &http.Transport{TLSClientConfig: tlsCfg}}
+	defer httpClient.CloseIdleConnections()
+
+	ctx, cancel := context.WithTimeout(context.Background(), sdkLivenessTimeout)
+	defer cancel()
+
+	address := fmt.Sprintf("https://127.0.0.1:%d/mcp", ports.MCP)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, address, strings.NewReader(mcpAnonymousInitialize))
+	if err != nil {
+		t.Fatalf("build anonymous MCP initialize: %v", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json, text/event-stream")
+
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		t.Fatalf("anonymous MCP initialize: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("anonymous MCP initialize: status %d, want %d", resp.StatusCode, http.StatusUnauthorized)
+	}
 }
 
 // assertLivenessResponseHealthy normalises the Health.Liveness response

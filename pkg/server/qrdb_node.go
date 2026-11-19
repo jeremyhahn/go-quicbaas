@@ -21,7 +21,10 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 
+	qrdbgrpc "github.com/jeremyhahn/go-qrdb/pkg/api/grpc"
+	qrdbrest "github.com/jeremyhahn/go-qrdb/pkg/api/rest"
 	qrdbserver "github.com/jeremyhahn/go-qrdb/pkg/server"
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	qrdbnode "github.com/jeremyhahn/go-qrdb/sdk/go/node"
@@ -30,6 +33,7 @@ import (
 
 	mcpapi "github.com/jeremyhahn/go-quicbaas/pkg/api/mcp"
 	restapi "github.com/jeremyhahn/go-quicbaas/pkg/api/rest"
+	"github.com/jeremyhahn/go-quicbaas/pkg/api/sealedwindow"
 	"github.com/jeremyhahn/go-quicbaas/pkg/apimodule"
 	"github.com/jeremyhahn/go-quicbaas/pkg/config"
 	"github.com/jeremyhahn/go-quicbaas/pkg/routing"
@@ -767,15 +771,82 @@ func (s *Server) unifiedModuleServerOptions(serverOpts []qrdbsdk.ServerOption, s
 // (go-quicbaas #2488). The proxy brings the data-plane barrier's sealed
 // window with it: the sealed-window probe makes the native transports
 // answer data RPCs Unavailable once that barrier is sealed, as the
-// node's own servicer does with the seal enabled.
+// node's own servicer does with the seal enabled. The probe also installs
+// go-qrdb's outer REST sealed-window gate with its default allowlist, which
+// admits /v1/barrier/* but not the composed /api/v1/barrier/* routes, so the
+// composed list is merged into that default before the options are returned.
 func (s *Server) nodeBarrierServerOptions(sealEnabled bool) []qrdbsdk.ServerOption {
 	if sealEnabled {
 		return nil
+	}
+	installComposedRESTSealedAllowlist()
+	installComposedGRPCSealedAllowlist()
+	// startService builds and publishes the persistent data-plane barrier
+	// only after the native listeners are up. Until it does, the probe fails
+	// closed: on a restart the data dir may already hold an initialized,
+	// sealed barrier that nothing has loaded yet.
+	if s.config != nil && s.config.Storage.DataDir != "" {
+		s.dataPlaneBarrierPending.Store(true)
 	}
 	return []qrdbsdk.ServerOption{
 		qrdbserver.WithBarrierService(newQRDBBarrierServicerProxy(s)),
 		qrdbserver.WithSealedWindowProbe(s.SealedWindowProbe()),
 	}
+}
+
+// composedRESTSealedAllowlistOnce guards installComposedRESTSealedAllowlist.
+var composedRESTSealedAllowlistOnce sync.Once
+
+// installComposedRESTSealedAllowlist widens go-qrdb's default REST
+// sealed-window allowlist (qrdbrest.SealedWindowAllowlist, used by the outer
+// gate the sealed-window probe installs, which is given a nil allowlist) to
+// the de-duplicated union of its entries and the composed go-quicbaas list
+// (sealedwindow.RESTAllowlist), so the /api/v1/barrier/* routes stay
+// reachable while the data-plane barrier is sealed. It runs once per process.
+func installComposedRESTSealedAllowlist() {
+	composedRESTSealedAllowlistOnce.Do(func() {
+		current := qrdbrest.SealedWindowAllowlist
+		composed := sealedwindow.RESTAllowlist()
+		merged := make([]string, 0, len(current)+len(composed))
+		seen := make(map[string]struct{}, len(current)+len(composed))
+		for _, list := range [][]string{current, composed} {
+			for _, entry := range list {
+				if _, ok := seen[entry]; ok {
+					continue
+				}
+				seen[entry] = struct{}{}
+				merged = append(merged, entry)
+			}
+		}
+		qrdbrest.SealedWindowAllowlist = merged
+	})
+}
+
+// composedGRPCSealedAllowlistOnce guards installComposedGRPCSealedAllowlist.
+var composedGRPCSealedAllowlistOnce sync.Once
+
+// installComposedGRPCSealedAllowlist widens go-qrdb's native gRPC sealed-window
+// allowlist, which names only qrdb.v1.QRDBService methods, with the composed
+// quicbaas full methods (sealedwindow.GRPCFullMethodAllowlist), so the quicbaas
+// liveness and unseal-flow RPCs stay reachable while the data-plane barrier is
+// sealed. It runs once per process.
+func installComposedGRPCSealedAllowlist() {
+	composedGRPCSealedAllowlistOnce.Do(func() {
+		current := qrdbgrpc.SealedWindowAllowlist
+		composed := sealedwindow.GRPCFullMethodAllowlist()
+		merged := make([]string, 0, len(current)+len(composed))
+		seen := make(map[string]struct{}, len(current)+len(composed))
+		for _, list := range [][]string{current, composed} {
+			for _, entry := range list {
+				if _, ok := seen[entry]; ok {
+					continue
+				}
+				seen[entry] = struct{}{}
+				merged = append(merged, entry)
+			}
+		}
+		qrdbgrpc.SealedWindowAllowlist = merged
+	})
 }
 
 // newQuicBaaSModule builds the quicbaas ServiceModule the unified server

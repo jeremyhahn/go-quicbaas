@@ -1990,8 +1990,8 @@ func (s *Server) startService() error {
 			}
 			if dpSvc != nil {
 				bootstrapServices.Barrier = dpSvc
-				s.dataPlaneBarrier.Store(rawBarrier)
 				s.dataPlaneBarrierCloser = dpCloser
+				s.publishDataPlaneBarrier(rawBarrier)
 				// Bind the platform xkms CA to the persistent-barrier ceremony
 				// core too, so officer CSR signing through the data-plane
 				// barrier's officer verbs issues from the same CA as the
@@ -2851,10 +2851,12 @@ func (s *Server) keyVersionStore() (*xkmssdk.KeyVersionStore, error) {
 	if err != nil {
 		return nil, err
 	}
-	store, err := xkmssdk.NewKeyVersionStore(backend)
+	router := newKeyVersionRouter(backend)
+	store, err := xkmssdk.NewKeyVersionStore(router)
 	if err != nil {
 		return nil, err
 	}
+	s.xkmsKeyVersionRouter = router
 	s.xkmsKeyVersions = store
 	return store, nil
 }

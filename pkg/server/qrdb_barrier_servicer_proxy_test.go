@@ -40,6 +40,7 @@ import (
 	"github.com/jeremyhahn/go-qrdb/pkg/api/grpc/proto/qrdbv1"
 	qrdbconfig "github.com/jeremyhahn/go-qrdb/pkg/config"
 	qrdbdatabase "github.com/jeremyhahn/go-qrdb/pkg/database"
+	"github.com/jeremyhahn/go-qrdb/pkg/seal"
 	qrdbserver "github.com/jeremyhahn/go-qrdb/pkg/server"
 	"github.com/jeremyhahn/go-qrdb/pkg/service"
 	qrdbmemory "github.com/jeremyhahn/go-qrdb/pkg/storage/memory"
@@ -137,6 +138,48 @@ func TestQRDBBarrierServicerProxy_NotConfiguredWhenNothingWired(t *testing.T) {
 	if _, err := newQRDBBarrierServicerProxy(nil).BarrierStatus(ctx); !errors.As(err, new(*service.BarrierManagerNotConfiguredError)) {
 		t.Fatalf("a proxy without a server must answer BarrierManagerNotConfiguredError, got %v", err)
 	}
+}
+
+// initErrBarrier answers BarrierInitialize with a fixed error.
+type initErrBarrier struct {
+	qrdbsdk.BarrierServicer
+	err error
+}
+
+func (b *initErrBarrier) BarrierInitialize(context.Context, []byte) error { return b.err }
+
+// The proxy keeps the idempotent-init contract of the client adapter it
+// replaced: an already-initialised barrier is success, any other error
+// passes through unchanged, and an unwired proxy still answers not-configured.
+func TestQRDBBarrierServicerProxy_BarrierInitializeIdempotent(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("already initialized is success", func(t *testing.T) {
+		s := &Server{logger: buildTestLogger(t)}
+		s.publishBarrierServicer(&initErrBarrier{err: seal.ErrAlreadyInitialized})
+		if err := newQRDBBarrierServicerProxy(s).BarrierInitialize(ctx, []byte("x")); err != nil {
+			t.Fatalf("expected nil for already-initialized, got %v", err)
+		}
+	})
+
+	t.Run("other error passes through", func(t *testing.T) {
+		want := errors.New("boom")
+		s := &Server{logger: buildTestLogger(t)}
+		s.publishBarrierServicer(&initErrBarrier{err: want})
+		if err := newQRDBBarrierServicerProxy(s).BarrierInitialize(ctx, []byte("x")); !errors.Is(err, want) {
+			t.Fatalf("expected %v, got %v", want, err)
+		}
+	})
+
+	t.Run("nil servicer is not configured", func(t *testing.T) {
+		err := newQRDBBarrierServicerProxy(&Server{logger: buildTestLogger(t)}).BarrierInitialize(ctx, []byte("x"))
+		if !errors.As(err, new(*service.BarrierManagerNotConfiguredError)) {
+			t.Fatalf("expected BarrierManagerNotConfiguredError, got %v", err)
+		}
+		if err := newQRDBBarrierServicerProxy(nil).BarrierInitialize(ctx, []byte("x")); !errors.As(err, new(*service.BarrierManagerNotConfiguredError)) {
+			t.Fatalf("a proxy without a server must answer BarrierManagerNotConfiguredError, got %v", err)
+		}
+	})
 }
 
 // serveQRDBBarrierOverTCP serves the qrdb.v1 service on a real loopback TCP
@@ -327,7 +370,7 @@ func TestNodeBarrierServerOptions_SealDisabledProbeArmsOnSealedBarrier(t *testin
 		t.Fatalf("build the data-plane barrier: barrier=%v closer=%v err=%v", barrier, closer, err)
 	}
 	t.Cleanup(func() { _ = closer.Close() })
-	srv.dataPlaneBarrier.Store(barrier)
+	srv.publishDataPlaneBarrier(barrier)
 
 	probe := srv.SealedWindowProbe()
 	creds, err := qrdbsdk.CredentialsFor([]byte("seal-disabled-probe-unit-test-passphrase"))
@@ -380,9 +423,6 @@ func TestNodeBarrierServerOptions_NativeGRPCGatedBySealedBarrier(t *testing.T) {
 	if err := barrier.Initialize(t.Context(), creds); err != nil {
 		t.Fatalf("initialize the data-plane barrier: %v", err)
 	}
-	// Publish the barrier exactly as the lifecycle does.
-	srv.dataPlaneBarrier.Store(barrier)
-
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("listen: %v", err)
@@ -403,6 +443,8 @@ func TestNodeBarrierServerOptions_NativeGRPCGatedBySealedBarrier(t *testing.T) {
 		t.Fatalf("start the qrdb gRPC server: %v", err)
 	}
 	t.Cleanup(node.Stop)
+	// Publish the barrier exactly as the lifecycle does.
+	srv.publishDataPlaneBarrier(barrier)
 
 	conn, err := ggrpc.NewClient(listener.Addr().String(),
 		ggrpc.WithTransportCredentials(credentials.NewTLS(clientTLS)))

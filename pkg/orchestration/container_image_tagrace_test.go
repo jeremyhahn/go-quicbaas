@@ -18,9 +18,12 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 )
 
@@ -174,7 +177,7 @@ func TestBuildImage_ConcurrentBuildOfTheSameTagKeepsTheReturnedImage(t *testing.
 	if tags["w:local"] != winner || !images[idA] || !images[idB] {
 		t.Fatalf("w:local must name one of the two builds and both images survive, tags %v, images %v", tags, images)
 	}
-	if len(idRefsOf(t, tags, idA)) != 1 || len(idRefsOf(t, tags, idB)) != 1 {
+	if len(idRefsOf(tags, idA)) != 1 || len(idRefsOf(tags, idB)) != 1 {
 		t.Fatalf("each returned image must keep its ID reference while its caller uses it, tags %v", tags)
 	}
 	for ref := range tags {
@@ -279,30 +282,49 @@ func TestBuildImage_RefusedRequestedTagReleasesTheIDReference(t *testing.T) {
 	}
 	_, tags, _ := engine.state()
 	for ref := range tags {
-		if strings.HasPrefix(ref, buildIDRepository+":") || strings.HasPrefix(ref, buildTempRepository+":") {
+		if strings.HasPrefix(ref, buildIDRepository+"/") || strings.HasPrefix(ref, buildTempRepository+":") {
 			t.Errorf("reference %s outlived the failed build, tags %v", ref, tags)
 		}
 	}
 }
 
-// mustBuildIDRef is the reference BuildImage names an image by its ID.
-func mustBuildIDRef(t *testing.T, id string) string {
-	t.Helper()
-	ref, err := buildIDRef(id)
-	if err != nil {
-		t.Fatalf("buildIDRef(%q): %v", id, err)
+func TestBuildImage_FailedIDTagTheEngineAppliedIsRemoved(t *testing.T) {
+	rec := &imageRmRecorder{engine: newTagStoreEngine()}
+	var idRef string
+	run := func(ctx context.Context, command string, cmd imageCommand) (imageCommandResult, error) {
+		if cmd.Args[0] == "tag" && strings.HasPrefix(cmd.Args[2], buildIDRepository+"/") {
+			// The engine applies the tag, then the command is cancelled.
+			if _, err := rec.run(ctx, command, cmd); err != nil {
+				return imageCommandResult{}, err
+			}
+			idRef = cmd.Args[2]
+			return imageCommandResult{}, context.Canceled
+		}
+		return rec.run(ctx, command, cmd)
 	}
-	return ref
+	rt := &ExecContainerRuntime{command: RuntimeDocker, logger: newContainerTestLogger(t), runImageCommand: run}
+	_, err := rt.BuildImage(t.Context(), &ImageBuildSpec{Dockerfile: []byte("FROM a"), Tags: []string{"w:local"}})
+	if err == nil {
+		t.Fatal("BuildImage succeeded, want the failed ID tag's error")
+	}
+	if idRef == "" {
+		t.Fatal("the build never tagged its ID reference")
+	}
+	if n := rec.removedCount(idRef); n != 1 {
+		t.Fatalf("image rm %s ran %d times, want 1", idRef, n)
+	}
+	_, tags, _ := rec.engine.state()
+	if _, ok := tags[idRef]; ok {
+		t.Fatalf("the applied ID tag %s outlived the failed build, tags %v", idRef, tags)
+	}
 }
 
-// idRefsOf returns the per-build references (quicbaas-build-id:<digest>-<nonce>)
-// in tags that name id, sorted.
-func idRefsOf(t *testing.T, tags map[string]string, id string) []string {
-	t.Helper()
-	prefix := mustBuildIDRef(t, id) + "-"
+// idRefsOf returns the build-ID references (quicbaas-build-id/<nonce>:<hex>)
+// that name id, one per build that still keeps it, sorted.
+func idRefsOf(tags map[string]string, id string) []string {
 	var refs []string
-	for ref, named := range tags {
-		if strings.HasPrefix(ref, prefix) && named == id {
+	for ref, target := range tags {
+		if target == id && strings.HasPrefix(ref, buildIDRepository+"/") {
 			refs = append(refs, ref)
 		}
 	}
@@ -310,27 +332,14 @@ func idRefsOf(t *testing.T, tags map[string]string, id string) []string {
 	return refs
 }
 
-// onlyIDRefOf returns the one per-build reference naming id, failing the
-// test unless there is exactly one.
-func onlyIDRefOf(t *testing.T, tags map[string]string, id string) string {
+// oneIDRef returns the single build-ID reference naming id.
+func oneIDRef(t *testing.T, tags map[string]string, id string) string {
 	t.Helper()
-	refs := idRefsOf(t, tags, id)
+	refs := idRefsOf(tags, id)
 	if len(refs) != 1 {
-		t.Fatalf("want one build-ID reference naming %s, got %v (tags %v)", id, refs, tags)
+		t.Fatalf("want one build-ID reference to %s, got %v (tags %v)", id, refs, tags)
 	}
 	return refs[0]
-}
-
-func (r *imageRmRecorder) removedWithPrefix(prefix string) []string {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	var got []string
-	for _, ref := range r.removed {
-		if strings.HasPrefix(ref, prefix) {
-			got = append(got, ref)
-		}
-	}
-	return got
 }
 
 // Two daemons share one engine and build the same candidate tag. Daemon B is
@@ -379,7 +388,7 @@ func TestBuildImage_IndependentProcessMovingTheTagKeepsTheReturnedImage(t *testi
 	if !images[idA] {
 		t.Fatalf("daemon A's image %s was deleted with its temporary tag; tags %v", idA, tags)
 	}
-	if len(idRefsOf(t, tags, idA)) != 1 {
+	if len(idRefsOf(tags, idA)) != 1 {
 		t.Fatalf("daemon A's image, whose tag moved, must keep the reference naming it by ID, tags %v", tags)
 	}
 	for ref := range tags {
@@ -402,7 +411,7 @@ func TestBuildImage_IndependentProcessMovingTheTagKeepsTheReturnedImage(t *testi
 		t.Fatalf("daemon A's next BuildImage: %v", err)
 	}
 	_, tags, images = engine.state()
-	if !images[idA] || len(idRefsOf(t, tags, idA)) != 1 {
+	if !images[idA] || len(idRefsOf(tags, idA)) != 1 {
 		t.Fatalf("daemon A's next build must not reclaim %s before its caller releases it, tags %v", idA, tags)
 	}
 	if tags["w:local"] != idNext {
@@ -416,7 +425,7 @@ func TestBuildImage_IndependentProcessMovingTheTagKeepsTheReturnedImage(t *testi
 	if images[idA] {
 		t.Fatalf("daemon A's superseded image %s must be deleted once released, tags %v", idA, tags)
 	}
-	if refs := idRefsOf(t, tags, idA); len(refs) != 0 {
+	if refs := idRefsOf(tags, idA); len(refs) != 0 {
 		t.Fatalf("daemon A's kept ID reference must be removed by ReleaseImage, tags %v", tags)
 	}
 }
@@ -468,9 +477,9 @@ func TestBuildImage_NextBuildKeepsEarlierIDUntilReleaseImage(t *testing.T) {
 		t.Fatalf("the two builds must produce two images, both %q", first)
 	}
 	_, tags, images := rec.engine.state()
-	firstRef := onlyIDRefOf(t, tags, first)
-	secondRef := onlyIDRefOf(t, tags, second)
-	if n := rec.removedCount(firstRef); n != 0 || !images[first] {
+	firstRef := oneIDRef(t, tags, first)
+	secondRef := oneIDRef(t, tags, second)
+	if n := rec.removedCount(firstRef); n != 0 || !images[first] || tags[firstRef] != first {
 		t.Fatalf("the second build removed the first ID's reference (%d image rm), tags %v", n, tags)
 	}
 
@@ -487,13 +496,56 @@ func TestBuildImage_NextBuildKeepsEarlierIDUntilReleaseImage(t *testing.T) {
 	}
 }
 
-// Two builds on one runtime that yield the same ID hold its reference twice:
-// the first release leaves it, the second removes it.
-func TestReleaseImage_SameIDFromTwoBuildsNeedsTwoReleases(t *testing.T) {
+// Two builds on one runtime that yield the same ID each apply their own
+// reference: the first release removes only the first build's, so the second
+// build's survives it, and the second release removes that.
+func TestReleaseImage_SameIDFromTwoBuildsReleasesOnlyItsOwnRef(t *testing.T) {
 	const id = "sha256:" + "6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b"
 	rec := &imageRmRecorder{engine: newTagStoreEngine()}
 	engine := rec.engine
-	cached := func(ctx context.Context, command string, cmd imageCommand) (imageCommandResult, error) {
+	rt := &ExecContainerRuntime{command: RuntimeDocker, logger: newContainerTestLogger(t), runImageCommand: cachedBuild(engine, id, rec.run)}
+	var own []string
+	for _, name := range []string{"A", "B"} {
+		got, err := rt.BuildImage(t.Context(), &ImageBuildSpec{Dockerfile: []byte("FROM a"), Tags: []string{"w:" + name}})
+		if err != nil || got != id {
+			t.Fatalf("build %s: id %q, err %v", name, got, err)
+		}
+		_, tags, _ := engine.state()
+		for _, ref := range idRefsOf(tags, id) {
+			if !slices.Contains(own, ref) {
+				own = append(own, ref)
+			}
+		}
+	}
+	if len(own) != 2 {
+		t.Fatalf("each build must apply its own build-ID reference, got %v", own)
+	}
+	firstRef, secondRef := own[0], own[1]
+
+	rt.ReleaseImage(t.Context(), id)
+	_, tags, _ := engine.state()
+	if rec.removedCount(firstRef) != 1 || rec.removedCount(secondRef) != 0 || tags[secondRef] != id {
+		t.Fatalf("the first release must remove only the first build's %s and keep %s, removed %v, tags %v",
+			firstRef, secondRef, rec.removed, tags)
+	}
+	rt.ReleaseImage(t.Context(), id)
+	_, tags, _ = engine.state()
+	if n := rec.removedCount(secondRef); n != 1 {
+		t.Fatalf("the second release ran %d image rm of %s, want 1", n, secondRef)
+	}
+	if refs := idRefsOf(tags, id); len(refs) != 0 {
+		t.Fatalf("both releases must remove both build-ID references, left %v", refs)
+	}
+	rt.ReleaseImage(t.Context(), id)
+	if n := rec.removedCount(firstRef) + rec.removedCount(secondRef); n != 2 {
+		t.Fatalf("a release past the builds ran image rm again (%d)", n)
+	}
+}
+
+// cachedBuild answers every build with the same image id, as a fully cached
+// build does, and passes every other command to next.
+func cachedBuild(engine *tagStoreEngine, id string, next imageCommandRunner) imageCommandRunner {
+	return func(ctx context.Context, command string, cmd imageCommand) (imageCommandResult, error) {
 		if cmd.Args[0] == "build" {
 			engine.mu.Lock()
 			engine.images[id] = true
@@ -501,37 +553,112 @@ func TestReleaseImage_SameIDFromTwoBuildsNeedsTwoReleases(t *testing.T) {
 			engine.mu.Unlock()
 			return imageCommandResult{}, os.WriteFile(argAfter(cmd.Args, "--iidfile"), []byte(id+"\n"), 0o600)
 		}
+		return next(ctx, command, cmd)
+	}
+}
+
+// TestReleaseImage_FailedRemovalIsRetriedOnTheNextRelease: an `image rm` of
+// a build-ID reference the engine refuses is not forgotten: the next
+// ReleaseImage removes it before its own.
+func TestReleaseImage_FailedRemovalIsRetriedOnTheNextRelease(t *testing.T) {
+	rec := &imageRmRecorder{engine: newTagStoreEngine()}
+	var refuse atomic.Bool
+	run := func(ctx context.Context, command string, cmd imageCommand) (imageCommandResult, error) {
+		if cmd.Args[0] == "image" && cmd.Args[1] == "rm" && strings.HasPrefix(cmd.Args[2], buildIDRepository+"/") && refuse.Swap(false) {
+			rec.mu.Lock()
+			rec.removed = append(rec.removed, cmd.Args[2])
+			rec.mu.Unlock()
+			return imageCommandResult{ExitCode: 1, Stderr: "Error response from daemon: busy"}, nil
+		}
 		return rec.run(ctx, command, cmd)
 	}
-	rt := &ExecContainerRuntime{command: RuntimeDocker, logger: newContainerTestLogger(t), runImageCommand: cached}
-	for _, name := range []string{"A", "B"} {
-		got, err := rt.BuildImage(t.Context(), &ImageBuildSpec{Dockerfile: []byte("FROM a"), Tags: []string{"w:" + name}})
-		if err != nil || got != id {
-			t.Fatalf("build %s: id %q, err %v", name, got, err)
-		}
+	rt := &ExecContainerRuntime{command: RuntimeDocker, logger: newContainerTestLogger(t), runImageCommand: run}
+	spec := &ImageBuildSpec{Dockerfile: []byte("FROM a"), Tags: []string{"w:local"}}
+	first, err := rt.BuildImage(t.Context(), spec)
+	if err != nil {
+		t.Fatalf("first BuildImage: %v", err)
 	}
-	prefix := mustBuildIDRef(t, id) + "-"
-	_, tags, _ := engine.state()
-	if refs := idRefsOf(t, tags, id); len(refs) != 2 {
-		t.Fatalf("each build must hold its own ID reference, got %v, tags %v", refs, tags)
+	second, err := rt.BuildImage(t.Context(), spec)
+	if err != nil {
+		t.Fatalf("second BuildImage: %v", err)
 	}
+	_, tags, _ := rec.engine.state()
+	firstRef, secondRef := oneIDRef(t, tags, first), oneIDRef(t, tags, second)
 
-	rt.ReleaseImage(t.Context(), id)
-	_, tags, images := engine.state()
-	if n := len(rec.removedWithPrefix(prefix)); n != 1 || len(idRefsOf(t, tags, id)) != 1 || !images[id] {
-		t.Fatalf("one release of an ID two builds returned must keep the other build's reference (%d image rm), tags %v", n, tags)
+	refuse.Store(true)
+	rt.ReleaseImage(t.Context(), first)
+	_, tags, images := rec.engine.state()
+	if tags[firstRef] != first || !images[first] {
+		t.Fatalf("the refused removal must leave %s in place, tags %v", firstRef, tags)
 	}
-	rt.ReleaseImage(t.Context(), id)
-	_, tags, _ = engine.state()
-	if n := len(rec.removedWithPrefix(prefix)); n != 2 {
-		t.Fatalf("the second release ran %d image rm of %s*, want 2 in all", n, prefix)
+	rt.ReleaseImage(t.Context(), second)
+	_, tags, images = rec.engine.state()
+	if n := rec.removedCount(firstRef); n != 2 {
+		t.Fatalf("the next release ran %d image rm of the refused %s, want 2", n, firstRef)
 	}
-	if refs := idRefsOf(t, tags, id); len(refs) != 0 {
-		t.Fatalf("the second release must remove the last ID reference, tags %v", tags)
+	if _, ok := tags[firstRef]; ok || images[first] {
+		t.Fatalf("the retried %s must be gone with its image, tags %v", firstRef, tags)
 	}
-	rt.ReleaseImage(t.Context(), id)
-	if n := len(rec.removedWithPrefix(prefix)); n != 2 {
-		t.Fatalf("a release past the count ran image rm again (%d)", n)
+	if _, ok := tags[secondRef]; ok {
+		t.Fatalf("the second release must remove its own %s, tags %v", secondRef, tags)
+	}
+	rt.ReleaseImage(t.Context(), second)
+	if n := rec.removedCount(firstRef); n != 2 {
+		t.Fatalf("a removed pending reference was retried again (%d image rm)", n)
+	}
+}
+
+func TestBuildImage_RefusedTemporaryTagRemovalIsRetried(t *testing.T) {
+	for _, next := range []string{"BuildImage", "ReleaseImage"} {
+		t.Run("next "+next, func(t *testing.T) {
+			rec := &imageRmRecorder{engine: newTagStoreEngine()}
+			var refused atomic.Bool
+			var tempRef atomic.Value
+			run := func(ctx context.Context, command string, cmd imageCommand) (imageCommandResult, error) {
+				if cmd.Args[0] == "image" && cmd.Args[1] == "rm" && strings.HasPrefix(cmd.Args[2], buildTempRepository+":") &&
+					refused.CompareAndSwap(false, true) {
+					tempRef.Store(cmd.Args[2])
+					return imageCommandResult{ExitCode: 1, Stderr: "Error response from daemon: busy"}, nil
+				}
+				return rec.run(ctx, command, cmd)
+			}
+			rt := &ExecContainerRuntime{command: RuntimeDocker, logger: newContainerTestLogger(t), runImageCommand: run}
+			spec := &ImageBuildSpec{Dockerfile: []byte("FROM a"), Tags: []string{"w:local"}}
+			id, err := rt.BuildImage(t.Context(), spec)
+			if err != nil {
+				t.Fatalf("first BuildImage: %v", err)
+			}
+			ref, _ := tempRef.Load().(string)
+			if ref == "" {
+				t.Fatal("the temporary tag's removal was never refused")
+			}
+			rt.keptMu.Lock()
+			queued := slices.Contains(rt.pendingRefs, ref)
+			rt.keptMu.Unlock()
+			if !queued {
+				t.Fatalf("the refused temporary tag %s is not queued for retry", ref)
+			}
+			if next == "BuildImage" {
+				if _, err := rt.BuildImage(t.Context(), spec); err != nil {
+					t.Fatalf("second BuildImage: %v", err)
+				}
+			} else {
+				rt.ReleaseImage(t.Context(), id)
+			}
+			if n := rec.removedCount(ref); n != 1 {
+				t.Fatalf("the retry ran %d image rm of %s, want 1", n, ref)
+			}
+			_, tags, _ := rec.engine.state()
+			if _, ok := tags[ref]; ok {
+				t.Fatalf("the retried temporary tag %s is still present, tags %v", ref, tags)
+			}
+			rt.keptMu.Lock()
+			queued = slices.Contains(rt.pendingRefs, ref)
+			rt.keptMu.Unlock()
+			if queued {
+				t.Fatalf("the removed temporary tag %s is still queued", ref)
+			}
+		})
 	}
 }
 
@@ -550,99 +677,62 @@ func TestReleaseImage_UnknownOrNonDigestIDIsANoOp(t *testing.T) {
 	}
 }
 
-// A cached build gives two builds one image ID. Both pin the same reference,
-// and either one's cleanup leaves the image the other returned.
-func TestBuildImage_TwoRuntimesBuildingOneCachedImageEachHoldTheirOwnReference(t *testing.T) {
+// A cached build gives two processes' builds one image ID. Each pins its own
+// reference, so one process's release leaves the image the other returned.
+func TestBuildImage_TwoBuildsOfOneImageEachKeepTheirOwnIDReference(t *testing.T) {
 	const id = "sha256:" + "5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a"
-	rec := &imageRmRecorder{engine: newTagStoreEngine()}
-	engine := rec.engine
-	cached := func(ctx context.Context, command string, cmd imageCommand) (imageCommandResult, error) {
-		if cmd.Args[0] == "build" {
-			engine.mu.Lock()
-			engine.images[id] = true
-			engine.tags[argAfter(cmd.Args, "--tag")] = id
-			engine.mu.Unlock()
-			return imageCommandResult{}, os.WriteFile(argAfter(cmd.Args, "--iidfile"), []byte(id+"\n"), 0o600)
-		}
-		if cmd.Args[0] == "tag" && cmd.Args[2] == "w:refused" {
-			return imageCommandResult{ExitCode: 1, Stderr: "Error response from daemon: refusing to create a tag"}, nil
-		}
-		return rec.run(ctx, command, cmd)
-	}
-	newRuntime := func() *ExecContainerRuntime {
-		return &ExecContainerRuntime{command: RuntimeDocker, logger: newContainerTestLogger(t), runImageCommand: cached}
-	}
-	build := func(rt *ExecContainerRuntime, tag string) (map[string]string, []string) {
-		_, tagsBefore, _ := engine.state()
-		got, err := rt.BuildImage(t.Context(), &ImageBuildSpec{Dockerfile: []byte("FROM a"), Tags: []string{tag}})
+	engine := newTagStoreEngine()
+	cached := cachedBuild(engine, id, engine.run)
+	var runtimes []*ExecContainerRuntime
+	for _, name := range []string{"A", "B"} {
+		rt := &ExecContainerRuntime{command: RuntimeDocker, logger: newContainerTestLogger(t), runImageCommand: cached}
+		got, err := rt.BuildImage(t.Context(), &ImageBuildSpec{Dockerfile: []byte("FROM a"), Tags: []string{"w:" + name}})
 		if err != nil || got != id {
-			t.Fatalf("build %s: id %q, err %v", tag, got, err)
+			t.Fatalf("build %s: id %q, err %v", name, got, err)
 		}
-		_, tagsAfter, _ := engine.state()
-		var added []string
-		for _, ref := range idRefsOf(t, tagsAfter, id) {
-			if _, ok := tagsBefore[ref]; !ok {
-				added = append(added, ref)
-			}
-		}
-		if len(added) != 1 {
-			t.Fatalf("build %s must add one ID reference of its own, added %v", tag, added)
-		}
-		return tagsAfter, added
-	}
-	runtimeA, runtimeB := newRuntime(), newRuntime()
-	_, refA := build(runtimeA, "w:A")
-	tags, refB := build(runtimeB, "w:B")
-	if refA[0] == refB[0] {
-		t.Fatalf("two runtimes building one cached image must not share an ID reference, both %s", refA[0])
-	}
-	if len(idRefsOf(t, tags, id)) != 2 {
-		t.Fatalf("the shared image must carry both runtimes' references, tags %v", tags)
-	}
-
-	// A third runtime builds the same cached image but a requested tag is
-	// refused: its failure cleanup removes only the reference it created.
-	runtimeC := newRuntime()
-	_, err := runtimeC.BuildImage(t.Context(), &ImageBuildSpec{Dockerfile: []byte("FROM a"), Tags: []string{"w:refused"}})
-	if !errors.Is(err, ErrImageBuild) {
-		t.Fatalf("refused tag: err = %v, want ErrImageBuild", err)
+		runtimes = append(runtimes, rt)
 	}
 	_, tags, images := engine.state()
-	if got := idRefsOf(t, tags, id); !images[id] || len(got) != 2 || got[0] != min(refA[0], refB[0]) || got[1] != max(refA[0], refB[0]) {
-		t.Fatalf("a failed build's cleanup must leave the other runtimes' references, got %v, tags %v", got, tags)
+	if !images[id] || len(idRefsOf(tags, id)) != 2 {
+		t.Fatalf("each process's build must keep its own ID reference, tags %v, images %v", tags, images)
 	}
-	if n := rec.removedCount(refA[0]) + rec.removedCount(refB[0]); n != 0 {
-		t.Fatalf("a failed build removed another runtime's reference (%d image rm)", n)
+	// Process A is done, and the requested tags are gone: process B's own
+	// reference still keeps the image it uses.
+	for _, tag := range []string{"w:A", "w:B"} {
+		if _, err := engine.apply([]string{"image", "rm", tag}); err != nil {
+			t.Fatal(err)
+		}
 	}
-
-	// Runtime A releases: only its reference goes, B still holds the image.
-	runtimeA.ReleaseImage(t.Context(), id)
+	runtimes[0].ReleaseImage(t.Context(), id)
 	_, tags, images = engine.state()
-	if rec.removedCount(refA[0]) != 1 || rec.removedCount(refB[0]) != 0 {
-		t.Fatalf("runtime A's release must remove only its own reference, removed %v", rec.removed)
+	if !images[id] || len(idRefsOf(tags, id)) != 1 {
+		t.Fatalf("process A's release must leave process B's reference and image, tags %v", tags)
 	}
-	if got := idRefsOf(t, tags, id); !images[id] || len(got) != 1 || got[0] != refB[0] {
-		t.Fatalf("runtime B's image must survive runtime A's release, refs %v, tags %v", got, tags)
-	}
-	// Runtime B's release removes the last build-ID reference.
-	runtimeB.ReleaseImage(t.Context(), id)
-	_, tags, _ = engine.state()
-	if rec.removedCount(refB[0]) != 1 || len(idRefsOf(t, tags, id)) != 0 {
-		t.Fatalf("runtime B's release must remove its reference, tags %v", tags)
+	runtimes[1].ReleaseImage(t.Context(), id)
+	_, tags, images = engine.state()
+	if images[id] || len(idRefsOf(tags, id)) != 0 {
+		t.Fatalf("both releases must free the image, tags %v", tags)
 	}
 }
 
 func TestBuildIDRef(t *testing.T) {
 	const hex = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+	const nonce = "00112233aabbccdd"
 	for _, id := range []string{"sha256:" + hex, hex} {
-		if got := mustBuildIDRef(t, id); got != "quicbaas-build-id:"+hex {
-			t.Errorf("buildIDRef(%q) = %q", id, got)
+		got, err := buildIDRef(nonce, id)
+		if err != nil || got != "quicbaas-build-id/"+nonce+":"+hex {
+			t.Errorf("buildIDRef(%q) = %q, %v", id, got, err)
 		}
 	}
 	for _, id := range []string{"", "sha256:", "sha256:abc", "sha512:" + hex, "sha256:" + strings.ToUpper(hex), "w:local"} {
-		if _, err := buildIDRef(id); !errors.Is(err, errImageIDNotDigest) {
+		if _, err := buildIDRef(nonce, id); !errors.Is(err, errImageIDNotDigest) {
 			t.Errorf("buildIDRef(%q) err = %v, want errImageIDNotDigest", id, err)
 		}
+	}
+	a, errA := newBuildNonce()
+	b, errB := newBuildNonce()
+	if errA != nil || errB != nil || a == b || !regexp.MustCompile(`^[0-9a-f]{16}$`).MatchString(a) {
+		t.Fatalf("newBuildNonce = %q, %q (%v, %v), want two distinct 16-hex-character nonces", a, b, errA, errB)
 	}
 }
 

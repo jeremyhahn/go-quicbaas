@@ -15,6 +15,7 @@ package server
 
 import (
 	"context"
+	"errors"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
@@ -79,7 +80,17 @@ func (p *qrdbBarrierServicerProxy) BarrierInitialize(ctx context.Context, secret
 	if err != nil {
 		return err
 	}
-	return bs.BarrierInitialize(ctx, secret)
+	// Keep the idempotent-init contract of the client adapter this proxy
+	// replaced (qrdbBarrierClientServicer.BarrierInitialize): hardware and
+	// cloud KMS strategies auto-initialise the barrier on first boot, so an
+	// explicit init afterwards answers ErrAlreadyInitialized, which is success.
+	if err := bs.BarrierInitialize(ctx, secret); err != nil {
+		if errors.Is(err, qrdbsdk.ErrAlreadyInitialized) {
+			return nil
+		}
+		return err
+	}
+	return nil
 }
 
 func (p *qrdbBarrierServicerProxy) BarrierUnseal(ctx context.Context, secret []byte) error {

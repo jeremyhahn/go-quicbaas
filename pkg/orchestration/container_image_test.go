@@ -105,10 +105,10 @@ func TestBuildImage_ReturnsTheIDTheEngineTagsBy(t *testing.T) {
 	if got := strings.Join(engine.calls[n-4].Args, " "); got != "image inspect "+ref {
 		t.Fatalf("the ID must be read back from the build's own tag %q, inspect argv %q", ref, got)
 	}
-	idRef := "quicbaas-build-id:" + strings.TrimPrefix(engineID, "sha256:") + "-"
-	if args := engine.calls[n-3].Args; len(args) != 3 || args[0] != "tag" || args[1] != ref ||
-		!buildIDRefNonce.MatchString(strings.TrimPrefix(args[2], idRef)) || !strings.HasPrefix(args[2], idRef) {
-		t.Fatalf("the image must be pinned by a per-build reference %q<nonce> before any other tag, argv %q", idRef, args)
+	pin := engine.calls[n-3].Args
+	idRefPattern := regexp.MustCompile(`^quicbaas-build-id/[0-9a-f]{16}:` + strings.TrimPrefix(engineID, "sha256:") + `$`)
+	if len(pin) != 3 || pin[0] != "tag" || pin[1] != ref || !idRefPattern.MatchString(pin[2]) {
+		t.Fatalf("the image must be pinned by its own build-ID reference before any other tag, argv %q", pin)
 	}
 	if got := strings.Join(engine.calls[n-2].Args, " "); got != "tag "+ref+" w:local" {
 		t.Fatalf("the spec's tag must be applied from the build's own tag %q, argv %q", ref, got)
@@ -145,9 +145,6 @@ func buildRefOf(t *testing.T, calls []recordedImageCommand) string {
 }
 
 var buildRefPattern = regexp.MustCompile(`^quicbaas-build-tmp:[0-9a-f]{32}$`)
-
-// buildIDRefNonce matches the nonce after quicbaas-build-id:<digest>-.
-var buildIDRefNonce = regexp.MustCompile(`^[0-9a-f]{16}$`)
 
 func TestBuildImage_InspectFailureIsABuildError(t *testing.T) {
 	engine := &fakeImageEngine{answer: func(args []string) (imageCommandResult, error) {

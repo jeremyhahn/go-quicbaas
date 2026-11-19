@@ -197,6 +197,7 @@ func (r *ExecContainerRuntime) BuildImage(ctx context.Context, spec *ImageBuildS
 	if err := validateImageBuildSpec(spec); err != nil {
 		return "", err
 	}
+	r.retryPendingRefs(ctx)
 	workDir, err := os.MkdirTemp("", "quicbaas-image-build-")
 	if err != nil {
 		return "", &ImageBuildError{Tags: spec.Tags, Cause: err}
@@ -260,75 +261,108 @@ func (r *ExecContainerRuntime) BuildImage(ctx context.Context, spec *ImageBuildS
 	// same tag) may move the spec's tags to another image at any moment, but
 	// no one can point idRef at another image: it names this one by content.
 	// So buildRef is never the image's last reference, and `image rm` only
-	// untags it. idRef also carries a nonce unique to this build's lifetime:
-	// another runtime sharing the engine can build the same cached image,
-	// and a reference both held would be removed by whichever released
-	// first, deleting the image the other still needs.
-	idKey, err := buildIDRef(info.ID)
+	// untags it.
+	// The reference is this build's own (a nonce in its repository), so
+	// releasing it never removes the reference of another build, in this
+	// runtime or another process, that returned the same image.
+	nonce, err := newBuildNonce()
 	if err != nil {
 		return "", &ImageBuildError{Tags: spec.Tags, Cause: err}
 	}
-	idRef, err := newBuildIDRef(idKey)
+	idRef, err := buildIDRef(nonce, info.ID)
 	if err != nil {
 		return "", &ImageBuildError{Tags: spec.Tags, Cause: err}
 	}
 	if err := r.TagImage(ctx, buildRef, idRef); err != nil {
+		// The engine may have applied idRef before the command failed
+		// (cancelled after the tag landed), so it is removed all the same.
+		r.dropIDRef(ctx, idRef)
 		return "", &ImageBuildError{Tags: spec.Tags, Cause: err}
 	}
 	for _, tag := range spec.Tags {
 		if err := r.TagImage(ctx, buildRef, tag); err != nil {
 			// The build failed and returns no ID: nothing needs the image.
-			r.removeRef(ctx, idRef, "build-ID tag")
+			r.dropIDRef(ctx, idRef)
 			return "", &ImageBuildError{Tags: spec.Tags, Cause: err}
 		}
 	}
 	r.removeBuildRef(ctx, buildRef)
 	buildRefRemoved = true
-	r.keepIDRef(idKey, idRef)
+	r.keepIDRef(info.ID, idRef)
 	return info.ID, nil
 }
 
-// keepIDRef counts one more holder of a returned build's idRef. It stays
-// while any caller uses the ID (another process may have moved the requested
-// tags, leaving idRef the image's last reference), until each build that
-// returned the ID has been released with ReleaseImage. It is never released
+// keepIDRef records a returned build's own idRef under the image ID. It stays
+// while the caller uses the ID (another process may have moved the requested
+// tags, leaving idRef the image's last reference), until a ReleaseImage of
+// the ID removes it. It is never released
 // by checking the tags first: a tag can move between the check and the
 // removal, deleting the image the caller holds.
-func (r *ExecContainerRuntime) keepIDRef(idKey, idRef string) {
+func (r *ExecContainerRuntime) keepIDRef(id, idRef string) {
 	r.keptMu.Lock()
 	defer r.keptMu.Unlock()
 	if r.keptIDRefs == nil {
 		r.keptIDRefs = make(map[string][]string)
 	}
-	r.keptIDRefs[idKey] = append(r.keptIDRefs[idKey], idRef)
+	r.keptIDRefs[id] = append(r.keptIDRefs[id], idRef)
+}
+
+// dropIDRef removes one build-ID reference this runtime applied. A removal
+// the engine refused is queued in pendingRefs and retried by the next
+// BuildImage or ReleaseImage, so a transient failure does not retain the
+// image for ever.
+func (r *ExecContainerRuntime) dropIDRef(ctx context.Context, idRef string) {
+	if err := r.removeRef(ctx, idRef, "build-ID tag"); err != nil {
+		r.keptMu.Lock()
+		r.pendingRefs = append(r.pendingRefs, idRef)
+		r.keptMu.Unlock()
+	}
+}
+
+// retryPendingRefs retries every queued build-ID reference removal, keeping
+// only those that fail again. A reference the engine no longer has counts as
+// removed.
+func (r *ExecContainerRuntime) retryPendingRefs(ctx context.Context) {
+	r.keptMu.Lock()
+	pending := r.pendingRefs
+	r.pendingRefs = nil
+	r.keptMu.Unlock()
+	var failed []string
+	for _, ref := range pending {
+		if err := r.removeRef(ctx, ref, "build-ID tag"); err != nil {
+			failed = append(failed, ref)
+		}
+	}
+	if len(failed) > 0 {
+		r.keptMu.Lock()
+		r.pendingRefs = append(r.pendingRefs, failed...)
+		r.keptMu.Unlock()
+	}
 }
 
 // ReleaseImage tells the runtime the caller is done with an ID BuildImage
-// returned. When every build that returned the ID has been released, its
-// build-ID reference is removed; an image no other reference names is
-// deleted with it. An ID this runtime holds no reference for, or one that is
+// returned. Each release removes exactly one build-ID reference one of this
+// runtime's builds applied to the ID, never another build's or another
+// process's; an image no other reference names is deleted with it. An ID this runtime holds no reference for, or one that is
 // not a digest, is a no-op.
 func (r *ExecContainerRuntime) ReleaseImage(ctx context.Context, id string) {
-	idKey, err := buildIDRef(id)
-	if err != nil {
-		return
-	}
+	r.retryPendingRefs(ctx)
 	r.keptMu.Lock()
-	refs := r.keptIDRefs[idKey]
+	refs := r.keptIDRefs[id]
 	if len(refs) == 0 {
 		r.keptMu.Unlock()
 		return
 	}
-	idRef := refs[len(refs)-1]
+	// Oldest first: any of the refs is one of this runtime's own, and each
+	// release takes exactly one.
+	idRef := refs[0]
 	if len(refs) == 1 {
-		delete(r.keptIDRefs, idKey)
+		delete(r.keptIDRefs, id)
 	} else {
-		r.keptIDRefs[idKey] = refs[:len(refs)-1]
+		r.keptIDRefs[id] = refs[1:]
 	}
 	r.keptMu.Unlock()
-	// idRef is this runtime's own reference, held by no one else, so
-	// removing it never untags an image another holder still needs.
-	r.removeRef(ctx, idRef, "build-ID tag")
+	r.dropIDRef(ctx, idRef)
 }
 
 // buildIDRepository is the repository of the reference that names a built
@@ -343,25 +377,24 @@ var buildIDPattern = regexp.MustCompile(`^[0-9a-f]{64}$`)
 // something other than a sha256 digest, which no reference can be named by.
 var errImageIDNotDigest = errors.New("the engine named the built image by something other than a sha256 digest")
 
-// buildIDRef returns quicbaas-build-id:<64 hex characters> for an image ID of
-// the form sha256:<hex> (docker) or <hex> (podman).
-func buildIDRef(id string) (string, error) {
+// buildIDRef returns quicbaas-build-id/<nonce>:<64 hex characters> for an
+// image ID of the form sha256:<hex> (docker) or <hex> (podman).
+func buildIDRef(nonce, id string) (string, error) {
 	digest := strings.TrimPrefix(id, "sha256:")
 	if !buildIDPattern.MatchString(digest) {
 		return "", errImageIDNotDigest
 	}
-	return buildIDRepository + ":" + digest, nil
+	return buildIDRepository + "/" + nonce + ":" + digest, nil
 }
 
-// newBuildIDRef returns idKey (a buildIDRef) with a nonce unique to one
-// build's lifetime: quicbaas-build-id:<64 hex>-<16 hex>, within the engine's
-// 128-character tag limit.
-func newBuildIDRef(idKey string) (string, error) {
+// newBuildNonce returns 8 random bytes in lowercase hex: the part of a
+// build-ID reference that makes it this build's own.
+func newBuildNonce() (string, error) {
 	var b [8]byte
 	if _, err := rand.Read(b[:]); err != nil {
 		return "", err
 	}
-	return idKey + "-" + hex.EncodeToString(b[:]), nil
+	return hex.EncodeToString(b[:]), nil
 }
 
 // errImageBuildNoID reports an engine that succeeded without naming the image
@@ -425,27 +458,36 @@ func newBuildRef() (string, error) {
 // removal only untags; on a failed build the image may go with it, which is
 // what an untagged failed build should do. Its context is its own, bounded
 // by oneShotCleanupTimeout, so it runs after the caller's is cancelled. A
-// failure is logged and never fails the build.
+// failure is logged and queued for retry; it never fails the build.
 func (r *ExecContainerRuntime) removeBuildRef(parent context.Context, ref string) {
-	r.removeRef(parent, ref, "temporary tag")
+	if err := r.removeRef(parent, ref, "temporary tag"); err != nil {
+		// removeRef has logged it; the next build or ReleaseImage retries it.
+		r.keptMu.Lock()
+		r.pendingRefs = append(r.pendingRefs, ref)
+		r.keptMu.Unlock()
+	}
 }
 
 // removeRef untags ref, a reference this package applied; what names it in
 // the log. A reference already gone is not an error.
-func (r *ExecContainerRuntime) removeRef(parent context.Context, ref, what string) {
+func (r *ExecContainerRuntime) removeRef(parent context.Context, ref, what string) error {
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(parent), oneShotCleanupTimeout)
 	defer cancel()
 	result, err := r.imageRunner()(ctx, r.command, imageCommand{Args: []string{"image", "rm", ref}})
 	switch {
 	case err != nil:
 		r.logger.Warnf("container build: remove %s %s: %v", what, ref, err)
+		return err
 	case result.ExitCode != 0 && isImageNotFoundOutput(result.Stderr):
 		// A build that failed before it tagged, or a tag already removed.
+		return nil
 	case result.ExitCode != 0:
 		// The engine's text is not logged: stderr can carry credentials.
 		r.logger.Warnf("container build: remove %s %s exited %d (%d bytes of output withheld)",
 			what, ref, result.ExitCode, len(result.Stderr))
+		return &CommandError{Command: r.command, Op: "image rm"}
 	}
+	return nil
 }
 
 // InspectImage reports a local image's ID, labels and repository digests. An
