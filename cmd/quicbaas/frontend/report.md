@@ -178,10 +178,10 @@ Registered lines are in `pkg/api/rest/routes.go` unless another file is named.
 | VectorsView:54 / :106 | vectors.listNamespaces / createNamespace | GET / POST `/api/v1/vector/namespaces` (`rest.ts:1597,1612`) | :666/:667 | served |
 | VectorsView:133 | vectors.deleteNamespace | DELETE `/api/v1/vector/namespaces/{ns}` (`rest.ts:1624`) | :668 | served |
 | VectorsView:169 | vectors.searchSimilar | POST `…/{ns}/search/similar` (`rest.ts:1635`) | :669-683 | served |
-| TimeSeriesView:56 | timeseries.listMetrics | GET `/api/v1/timeseries/metrics` | :647 | not-configured without build tag `timeseries` (`timeseries_handlers_noop.go:1` `!timeseries` → 501 at :57) |
-| TimeSeriesView:100 | timeseries.query | POST `/api/v1/timeseries/query` | :648 | not-configured without build tag `timeseries` (`timeseries_handlers_noop.go:37`) |
-| TimeSeriesView:162 | timeseries.write | POST `/api/v1/timeseries/write` | :652 | not-configured without build tag `timeseries` (`timeseries_handlers_noop.go:27`) |
-| TimeSeriesView:190 | timeseries.deleteSeries | DELETE `/api/v1/timeseries/series` | :651 | not-configured without build tag `timeseries` (`timeseries_handlers_noop.go:42`) |
+| TimeSeriesView:56 | timeseries.listMetrics | GET `/api/v1/timeseries/metrics` | :647 | not-configured without build tag `timeseries` (`timeseries_handlers_noop.go:1` `!timeseries` → 501 at :58) |
+| TimeSeriesView:100 | timeseries.query | POST `/api/v1/timeseries/query` | :648 | not-configured without build tag `timeseries` (`timeseries_handlers_noop.go:38`) |
+| TimeSeriesView:162 | timeseries.write | POST `/api/v1/timeseries/write` | :652 | not-configured without build tag `timeseries` (`timeseries_handlers_noop.go:28`) |
+| TimeSeriesView:190 | timeseries.deleteSeries | DELETE `/api/v1/timeseries/series` | :651 | not-configured without build tag `timeseries` (`timeseries_handlers_noop.go:43`) |
 | ObjectsView:65 / :129 / :151 / :177 | objects.list / put / get / delete | `/api/v1/objects/…` | :775-780 | served |
 | ObjectsView:194; SystemDashboard:112,139,202,305; FleetList:123 | connection.getAddress / getTransport | none (client-local) | — | served (no request) |
 | RAGView:58 / :194 | rag.query / buildContext | POST `/api/v1/rag/query` / `context` (`rest.ts:2200,2208`) | `handlers_rag.go:691-696` | served |
@@ -252,7 +252,48 @@ Registered lines are in `pkg/api/rest/routes.go` unless another file is named.
 
 ## Transports
 
-incomplete — the per-transport `unsupportedClient` mapping (`sdk/typescript/src/unsupported.ts`, `factory.ts`) for REST, gRPC-web, MCP, QUIC, Unix and Wails is not written yet.
+Pattern: `unsupportedClient|from '\./unsupported` on `sdk/typescript/src`.
+`unsupportedClient` (`sdk/typescript/src/unsupported.ts:24`) returns a client
+whose every method rejects with `TransportNotSupportedError`. The transport
+classes assign it directly; `factory.ts` only picks the class. Separately,
+`deployFleetNode` throws `DeployNotSupportedError` on every transport but Wails.
+
+UI users of the three affected families: `projects` — ProjectsView
+(:158,218,243,269,492,540,564), TaskDetailView:156, providers.ts:319,
+referenceOptions.ts:93; `sdlc` — ProjectsView (:359,373,399,417,436,460,497,503),
+SdlcReviewerPicker (:60,63,86,87); `accounts` — AccountsView
+(:144,278,356,384,399,424,452), AccountEditDialog:53, providers.ts:246.
+
+### REST
+
+No family maps to `unsupportedClient`. `deployFleetNode` throws
+(`rest.ts:1179`): DeployFleetNodeDialog:150.
+
+### gRPC-web
+
+`projects`, `sdlc`, `accounts` (`grpc_web.ts:363-365`). Views: ProjectsView,
+TaskDetailView, SdlcReviewerPicker, AccountsView, AccountEditDialog, the
+reference pickers (`providers.ts`, `referenceOptions.ts`). Deploy throws
+(`grpc_web.ts:271`).
+
+### MCP
+
+No family maps to `unsupportedClient`. Deploy throws (`mcp.ts:497`).
+
+### QUIC
+
+`projects`, `sdlc`, `accounts` (`quic.ts:368-370`). Same views as gRPC-web.
+Deploy throws (`quic.ts:280`).
+
+### Unix
+
+`projects`, `sdlc`, `accounts` (`unix.ts:266-268`). Same views as gRPC-web.
+Deploy throws (`unix.ts:211`).
+
+### Wails
+
+`projects`, `sdlc`, `accounts` (`wails.ts:960-962`). Same views as gRPC-web.
+Wails is the only transport that implements `deployFleetNode`.
 
 ## Follow-ups
 
@@ -266,10 +307,10 @@ Proposed rows; none filed.
 6. **Sessions: explain account rotation when the server has no rotation service.** Caller: `SessionDetail.svelte:173`. Needs: the view to show the 501 as "not configured" (capability gating, #2576).
 7. **Messaging view: show "not configured" when the server has no messaging service.** Callers: `MessagingView.svelte:54,104,132,182`. Needs: capability gating (#2576).
 8. **Time series view: show "not enabled" on a build without the `timeseries` tag.** Callers: `TimeSeriesView.svelte:56,100,162,190`. Needs: capability gating (#2576).
-9. **Distinct SDK method count and transport sections.** Needs: this audit to continue.
+9. **Projects, SDLC and accounts views: say the family is unavailable on gRPC-web, QUIC, Unix and Wails.** Callers: the views listed under Transports. Needs: capability gating (#2576); the server routes are served.
+10. **Distinct SDK method count.** Needs: a recount; left `incomplete` here.
 
 ## Audit progress
 
-Commit 1 covers raw fetches, sidebar placeholders, orchestrator/fleet/agents/
-accounts/projects/SDLC and IAM/auth. Rows marked `pending` or `incomplete` are
-added in later commits.
+Every raw fetch, sidebar entry and SDK call row is audited; no row is
+`pending`. Still `incomplete`: the distinct-SDK-method count (Follow-up 10).
