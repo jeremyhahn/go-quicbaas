@@ -158,6 +158,39 @@ func TestQRDBTimeSeriesProxy_ScopesPerTenant(t *testing.T) {
 	}
 }
 
+// TestQRDBTimeSeriesProxy_ContextFormsResolveScope proves the proxy's
+// context forms of the contextless reads resolve the caller's (tenant,
+// database) scope: acme's policy and metric are acme's alone.
+func TestQRDBTimeSeriesProxy_ContextFormsResolveScope(t *testing.T) {
+	srv := newScopedTimeSeriesTestServer(t)
+	proxy := newQRDBTimeSeriesServicerProxy(srv)
+
+	acme := tenantctx.WithTenant(context.Background(), "acme")
+	globex := tenantctx.WithTenant(context.Background(), "globex")
+
+	require.NoError(t, proxy.Write(acme, "m", 1, time.Now(), nil))
+	require.NoError(t, proxy.SetRetentionPolicy(acme, "m", &timeseries.RetentionPolicy{Duration: time.Hour}))
+
+	acmePolicy, err := proxy.GetRetentionPolicyContext(acme, "m")
+	require.NoError(t, err)
+	require.NotNil(t, acmePolicy)
+	require.Equal(t, time.Hour, acmePolicy.Duration, "acme reads its own policy")
+
+	globexPolicy, err := proxy.GetRetentionPolicyContext(globex, "m")
+	require.NoError(t, err)
+	if globexPolicy != nil {
+		require.NotEqual(t, time.Hour, globexPolicy.Duration, "globex must not see acme's policy")
+	}
+
+	acmeMetrics, err := proxy.ListMetricsContext(acme, "", 10)
+	require.NoError(t, err)
+	require.Contains(t, acmeMetrics, "m", "acme lists its own metric")
+
+	globexMetrics, err := proxy.ListMetricsContext(globex, "", 10)
+	require.NoError(t, err)
+	require.NotContains(t, globexMetrics, "m", "globex must not list acme's metric")
+}
+
 // TestQRDBTimeSeriesProxy_ContextlessMethodsFailClosed pins that the two
 // methods with no context are refused rather than served unscoped.
 func TestQRDBTimeSeriesProxy_ContextlessMethodsFailClosed(t *testing.T) {
