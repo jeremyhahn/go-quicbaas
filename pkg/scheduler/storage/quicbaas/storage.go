@@ -82,9 +82,10 @@ type Storage struct {
 	lastReconcile     time.Time
 	reconcileInterval time.Duration
 
-	// tenantCursor is where the due scan starts in the tenant list; each
-	// sweep advances it, so a tenant with more due jobs than the limit
-	// cannot starve the tenants after it.
+	// tenantCursor is where the due scan starts in the rotation of tenant
+	// namespaces plus the system namespace; each sweep advances it, so a
+	// namespace with more due jobs than the limit, system included, cannot
+	// starve the namespaces after it.
 	tenantCursor atomic.Uint64
 }
 
@@ -493,38 +494,6 @@ func (s *Storage) GetJobsDueForExecution(ctx context.Context, before time.Time, 
 			(filter == nil || filter(job))
 	}
 
-	// Scan system jobs prefix for pending jobs
-	dueJobs := make([]*scheduler.Job, 0)
-
-	err := s.kv.Scan(ctx, SystemJobsPrefix, func(key string, value []byte) error {
-		// The store does not check ctx between entries: a canceled or
-		// expired sweep stops here rather than at the end of the prefix.
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-		var job scheduler.Job
-		if err := json.Unmarshal(value, &job); err != nil {
-			// Skip malformed entries
-			return nil
-		}
-
-		if eligible(&job) {
-			dueJobs = append(dueJobs, &job)
-			if len(dueJobs) >= limit {
-				return ErrLimitReached
-			}
-		}
-
-		return nil
-	})
-
-	if err != nil && !errors.Is(err, ErrLimitReached) {
-		return nil, &scheduler.ErrStorageError{Op: "GetJobsDueForExecution.scan", Cause: err}
-	}
-	if len(dueJobs) >= limit {
-		return dueJobs, nil
-	}
-
 	// Older nodes in a rolling upgrade can still write tenant jobs without
 	// an index entry, so the index is reconciled periodically, not only at
 	// open.
@@ -542,7 +511,7 @@ func (s *Storage) GetJobsDueForExecution(ctx context.Context, before time.Time, 
 	// retained job.
 	indexed := make(map[string]map[uint64]struct{})
 	var tenants []string
-	err = s.kv.Scan(ctx, TenantJobIndexPrefix, func(key string, value []byte) error {
+	err := s.kv.Scan(ctx, TenantJobIndexPrefix, func(key string, value []byte) error {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
@@ -564,44 +533,24 @@ func (s *Storage) GetJobsDueForExecution(ctx context.Context, before time.Time, 
 		return nil, &scheduler.ErrStorageError{Op: "GetJobsDueForExecution.index_scan", Cause: err}
 	}
 
-	// The scan starts at a rotating tenant and wraps around, so each tenant
-	// is first within len(tenants) sweeps. The list is sorted so its order
-	// does not depend on the store's iteration order.
+	// The scan starts at a rotating namespace and wraps around. The system
+	// namespace is one slot of the rotation, after the tenants, so each
+	// namespace, system included, is first within len(tenants)+1 sweeps and
+	// a full page of one cannot starve the others. The tenant list is sorted
+	// so its order does not depend on the store's iteration order.
 	slices.Sort(tenants)
-	start := 0
-	if len(tenants) > 0 {
-		start = int((s.tenantCursor.Add(1) - 1) % uint64(len(tenants)))
-	}
-	for i := range tenants {
-		tenantID := tenants[(start+i)%len(tenants)]
-		ids := indexed[tenantID]
-		err := s.kv.Scan(ctx, recordNamespace(tenantID)+"scheduler/jobs/", func(key string, value []byte) error {
-			if err := ctx.Err(); err != nil {
-				return err
-			}
-			keyTenant, id, ok := splitTenantJobKey(key)
-			if !ok || keyTenant != tenantID {
-				return nil
-			}
-			if _, listed := ids[id]; !listed {
-				return nil
-			}
-			var job scheduler.Job
-			if err := json.Unmarshal(value, &job); err != nil {
-				// A malformed job is skipped, as in the system scan, so
-				// it cannot block other tenants' jobs.
-				return nil
-			}
-			if eligible(&job) {
-				dueJobs = append(dueJobs, &job)
-				if len(dueJobs) >= limit {
-					return ErrLimitReached
-				}
-			}
-			return nil
-		})
-		if err != nil && !errors.Is(err, ErrLimitReached) {
-			return nil, &scheduler.ErrStorageError{Op: "GetJobsDueForExecution.tenant_scan", Cause: err}
+	namespaces := append(tenants, systemDueNamespace)
+	start := int((s.tenantCursor.Add(1) - 1) % uint64(len(namespaces)))
+	dueJobs := make([]*scheduler.Job, 0)
+	for i := range namespaces {
+		ns := namespaces[(start+i)%len(namespaces)]
+		if ns == systemDueNamespace {
+			dueJobs, err = s.collectSystemDue(ctx, eligible, dueJobs, limit)
+		} else {
+			dueJobs, err = s.collectTenantDue(ctx, ns, indexed[ns], eligible, dueJobs, limit)
+		}
+		if err != nil {
+			return nil, err
 		}
 		if len(dueJobs) >= limit {
 			break
@@ -609,6 +558,74 @@ func (s *Storage) GetJobsDueForExecution(ctx context.Context, before time.Time, 
 	}
 
 	return dueJobs, nil
+}
+
+// systemDueNamespace marks the system namespace in the due-scan rotation. The
+// empty string is never a tenant ID: the index scan skips empty values.
+const systemDueNamespace = ""
+
+// collectSystemDue appends the eligible system jobs to due until it holds
+// limit jobs.
+func (s *Storage) collectSystemDue(ctx context.Context, eligible func(*scheduler.Job) bool, due []*scheduler.Job, limit int) ([]*scheduler.Job, error) {
+	err := s.kv.Scan(ctx, SystemJobsPrefix, func(key string, value []byte) error {
+		// The store does not check ctx between entries: a canceled or
+		// expired sweep stops here rather than at the end of the prefix.
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		var job scheduler.Job
+		if err := json.Unmarshal(value, &job); err != nil {
+			// Skip malformed entries
+			return nil
+		}
+
+		if eligible(&job) {
+			due = append(due, &job)
+			if len(due) >= limit {
+				return ErrLimitReached
+			}
+		}
+
+		return nil
+	})
+	if err != nil && !errors.Is(err, ErrLimitReached) {
+		return nil, &scheduler.ErrStorageError{Op: "GetJobsDueForExecution.scan", Cause: err}
+	}
+	return due, nil
+}
+
+// collectTenantDue appends the eligible indexed jobs of tenantID to due until
+// it holds limit jobs.
+func (s *Storage) collectTenantDue(ctx context.Context, tenantID string, ids map[uint64]struct{}, eligible func(*scheduler.Job) bool, due []*scheduler.Job, limit int) ([]*scheduler.Job, error) {
+	err := s.kv.Scan(ctx, recordNamespace(tenantID)+"scheduler/jobs/", func(key string, value []byte) error {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		keyTenant, id, ok := splitTenantJobKey(key)
+		if !ok || keyTenant != tenantID {
+			return nil
+		}
+		if _, listed := ids[id]; !listed {
+			return nil
+		}
+		var job scheduler.Job
+		if err := json.Unmarshal(value, &job); err != nil {
+			// A malformed job is skipped, as in the system scan, so
+			// it cannot block other tenants' jobs.
+			return nil
+		}
+		if eligible(&job) {
+			due = append(due, &job)
+			if len(due) >= limit {
+				return ErrLimitReached
+			}
+		}
+		return nil
+	})
+	if err != nil && !errors.Is(err, ErrLimitReached) {
+		return nil, &scheduler.ErrStorageError{Op: "GetJobsDueForExecution.tenant_scan", Cause: err}
+	}
+	return due, nil
 }
 
 // reconcileDue reports whether reconcileInterval has passed since the tenant

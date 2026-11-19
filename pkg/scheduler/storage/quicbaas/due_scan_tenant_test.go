@@ -111,6 +111,85 @@ func TestGetJobsDueForExecution_BusyTenantDoesNotStarveOthers(t *testing.T) {
 	t.Fatalf("zeta's due job was not returned within %d sweeps", tenants)
 }
 
+// TestGetJobsDueForExecution_SystemAndTenantJobsShareTheRotation checks that
+// the system namespace takes its turn in the due-scan rotation: a full page of
+// system jobs cannot hide every tenant job, and a busy tenant cannot hide the
+// system jobs.
+func TestGetJobsDueForExecution_SystemAndTenantJobsShareTheRotation(t *testing.T) {
+	type seed struct {
+		name      string
+		ownerType scheduler.OwnerType
+		ownerID   string
+	}
+	busyTenant := func(n int) []seed {
+		seeds := make([]seed, 0, n)
+		for i := 0; i < n; i++ {
+			seeds = append(seeds, seed{fmt.Sprintf("acme-%d", i), scheduler.OwnerTypeTenant, "acme"})
+		}
+		return seeds
+	}
+	cases := []struct {
+		name   string
+		limit  int
+		sweeps int
+		jobs   []seed
+		want   string
+	}{
+		{
+			name:   "full system page does not starve a tenant job",
+			limit:  1,
+			sweeps: 2,
+			jobs: []seed{
+				{"system-stuck", scheduler.OwnerTypeSystem, ""},
+				{"acme-due", scheduler.OwnerTypeTenant, "acme"},
+			},
+			want: "acme-due",
+		},
+		{
+			name:   "busy tenant does not starve a system job",
+			limit:  3,
+			sweeps: 2,
+			jobs: append(busyTenant(3+2),
+				seed{"system-due", scheduler.OwnerTypeSystem, ""}),
+			want: "system-due",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := context.Background()
+			kv := &sortedScanKV{mockKVStore: newMockKVStore()}
+			storage := NewStorage(kv)
+			if err := storage.InitializeJobIDCounter(ctx); err != nil {
+				t.Fatalf("open: %v", err)
+			}
+			now := time.Now()
+			for _, s := range tc.jobs {
+				job := createTestJob(s.name, s.ownerType, s.ownerID)
+				job.NextRun = now.Add(-time.Minute)
+				if err := storage.CreateJob(ctx, job); err != nil {
+					t.Fatalf("CreateJob %s: %v", s.name, err)
+				}
+			}
+			// Every job stays pending: nothing dispatches between sweeps.
+			for sweep := 0; sweep < tc.sweeps; sweep++ {
+				due, err := storage.GetJobsDueForExecution(ctx, now, tc.limit)
+				if err != nil {
+					t.Fatalf("sweep %d: %v", sweep, err)
+				}
+				if len(due) > tc.limit {
+					t.Fatalf("sweep %d returned %d jobs, limit %d", sweep, len(due), tc.limit)
+				}
+				for _, j := range due {
+					if j.Name == tc.want {
+						return
+					}
+				}
+			}
+			t.Fatalf("%s not returned within %d sweeps", tc.want, tc.sweeps)
+		})
+	}
+}
+
 // Retained terminal tenant jobs are read in each tenant's prefix scan, not
 // by a point read each, so a sweep's cost does not grow with one read per
 // historical job.
