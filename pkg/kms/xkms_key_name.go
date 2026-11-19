@@ -53,6 +53,12 @@ var xkmsEncoding = base64.RawURLEncoding.Strict()
 // (LegacyXKMSKeyNamesError lists the names); the operator re-imports each
 // listed key under a name outside that shape. The first clean open writes the
 // marker, and later opens skip the scan.
+//
+// Ownership: an encoded name resolves, or lists, only when XKMSBackend holds
+// its ownership record (xkms_key_owner.go). The node's native go-xkms service
+// writes the same key store under any valid literal name, including one
+// spelled as an encoded output, so the marker alone cannot keep such a key
+// from reading as the ID it encodes; the record proves this backend wrote it.
 // TestXKMSKeyName_EncodedOutputsAreReserved pins the shape.
 func xkmsKeyName(keyID string) string {
 	if !xkmsNeedsEncoding(keyID) {

@@ -54,6 +54,7 @@ type XKMSBackend struct {
 	backendType config.BackendType
 	logger      interfaces.Logger
 	metadata    map[string]*KeyMetadata // cached metadata
+	keyNames    kctypes.StorageBackend  // ownership records of encoded names
 	mu          sync.RWMutex
 }
 
@@ -65,6 +66,12 @@ type XKMSBackendConfig struct {
 
 	// Logger for operation logging.
 	Logger interfaces.Logger
+
+	// KeyNameStore is the persistent go-xkms key store that holds the
+	// ownership records of the encoded go-xkms names this backend writes
+	// (see xkms_key_owner.go). Nil keeps the records in memory, for this
+	// backend only.
+	KeyNameStore kctypes.StorageBackend
 }
 
 // NewXKMSBackend creates a new backend that wraps go-xkms.
@@ -82,10 +89,20 @@ func NewXKMSBackend(cfg *XKMSBackendConfig) (*XKMSBackend, error) {
 		backendType = config.BackendTypeSoftware
 	}
 
+	keyNames := cfg.KeyNameStore
+	if keyNames == nil {
+		mem, err := kctypes.NewMemoryBackend()
+		if err != nil {
+			return nil, &XKMSKeyOwnershipError{Op: "open", Name: "", Err: err}
+		}
+		keyNames = mem
+	}
+
 	return &XKMSBackend{
 		backendType: backendType,
 		logger:      cfg.Logger,
 		metadata:    make(map[string]*KeyMetadata),
+		keyNames:    keyNames,
 	}, nil
 }
 
@@ -217,6 +234,9 @@ func (kb *XKMSBackend) CreateKey(ctx context.Context, attrs *kctypes.KeyAttribut
 			return nil, api.NewAsymmetricKeyGenerationError("XKMSBackend.CreateKey", err)
 		}
 	}
+	if err := kb.claimXKMSName(ctx, xattrs.CN); err != nil {
+		return nil, err
+	}
 
 	// Build metadata
 	now := time.Now()
@@ -274,6 +294,9 @@ func (kb *XKMSBackend) ImportKey(ctx context.Context, keyID string, material []b
 	if err := xkms.ImportKeyMaterial(ctx, string(kb.backendType), attrs, material); err != nil {
 		return nil, api.NewKeyImportError("XKMSBackend.ImportKey", kind, err)
 	}
+	if err := kb.claimXKMSName(ctx, attrs.CN); err != nil {
+		return nil, err
+	}
 
 	// Build metadata
 	now := time.Now()
@@ -319,6 +342,15 @@ func (kb *XKMSBackend) GetKeyMetadata(ctx context.Context, keyID string) (*KeyMe
 	kb.mu.RUnlock()
 
 	xkmsName := xkmsKeyName(keyID)
+	// An encoded name another writer stored (the node's native go-xkms
+	// service) is not this backend's key; only a recorded one resolves.
+	owned, err := kb.ownsXKMSName(ctx, xkmsName)
+	if err != nil {
+		return nil, err
+	}
+	if !owned {
+		return nil, ErrKeyNotFound
+	}
 
 	// Try to verify key exists in xkms using multiple lookup strategies
 	// Since we don't know the algorithm, try common signing key formats first
@@ -420,6 +452,15 @@ func (kb *XKMSBackend) ListKeys(ctx context.Context, prefix string, limit int) (
 
 	// Add keys from xkms
 	for _, attrs := range keys {
+		// Another writer's encoded-shaped name is not this backend's key and
+		// cannot be reached through it, so it is not listed either.
+		owned, err := kb.ownsXKMSName(ctx, attrs.CN)
+		if err != nil {
+			return nil, "", err
+		}
+		if !owned {
+			continue
+		}
 		keyID := keyIDFromXKMSName(attrs.CN)
 		// Filter by prefix
 		if prefix != "" && !strings.HasPrefix(keyID, prefix) {
@@ -511,6 +552,9 @@ func (kb *XKMSBackend) RotateKey(ctx context.Context, keyID string) (*KeyMetadat
 		if err != nil {
 			return nil, api.NewKeyVersionGenerationError("XKMSBackend.RotateKey", err)
 		}
+	}
+	if err := kb.claimXKMSName(ctx, attrs.CN); err != nil {
+		return nil, err
 	}
 
 	// Update cached metadata
@@ -642,6 +686,12 @@ func (kb *XKMSBackend) DeleteKey(ctx context.Context, keyID string) error {
 			}
 			return api.NewKeyDeletionError("XKMSBackend.DeleteKey", err)
 		}
+	}
+
+	// Drop the ownership record, or a later native key stored under the
+	// same encoded name would resolve as the deleted key.
+	if err := kb.releaseXKMSName(ctx, xkmsKeyName(keyID)); err != nil {
+		return err
 	}
 
 	// Remove from cache

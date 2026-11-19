@@ -50,7 +50,9 @@ type BackendFactoryConfig struct {
 
 	// KeyNameStore is the persistent go-xkms key store. When set,
 	// InitializeFromXKMS refuses a store holding a legacy name that reads as
-	// an encoded key ID and marks a clean store; nil skips the check.
+	// an encoded key ID and marks a clean store; nil skips the check. It also
+	// holds the ownership records of the encoded names the XKMS backends
+	// write (xkms_key_owner.go); nil keeps those in memory per backend.
 	KeyNameStore goxkms.StorageBackend
 }
 
@@ -138,8 +140,9 @@ func (f *BackendFactory) InitializeFromXKMS(ctx context.Context, enabledBackends
 		// Create XKMSBackend wrapper
 		backendType := config.BackendType(backendName)
 		backend, err := NewXKMSBackend(&XKMSBackendConfig{
-			BackendType: backendType,
-			Logger:      f.logger,
+			BackendType:  backendType,
+			Logger:       f.logger,
+			KeyNameStore: f.keyNameStore,
 		})
 		if err != nil {
 			if f.logger != nil {
