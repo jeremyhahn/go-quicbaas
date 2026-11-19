@@ -82,4 +82,7 @@ var (
 
 	// ErrInvalidCiphertextKeyVersion indicates a ciphertext's key version metadata is not a positive integer.
 	ErrInvalidCiphertextKeyVersion = errors.New("ciphertext key version is invalid")
+
+	// ErrVersionNameTaken indicates the name of a key's next version is taken by another key.
+	ErrVersionNameTaken = errors.New("key version name is taken by another key")
 )

@@ -284,6 +284,74 @@ func TestXKMSBackend_DecryptRefusesNonpositiveKeyVersion(t *testing.T) {
 	}
 }
 
+// createRawKeyNameTestKey stores keyID without CreateKey's name checks, the
+// way a key could be created before version names were refused.
+func createRawKeyNameTestKey(t *testing.T, b *XKMSBackend, keyID string) {
+	t.Helper()
+	attrs, err := b.algorithmToKeyAttributes(keyID, "AES-256-GCM")
+	require.NoError(t, err)
+	_, err = dbxkms.GenerateSymmetricKey(context.Background(), string(config.BackendTypeSoftware), attrs)
+	require.NoError(t, err)
+}
+
+func TestXKMSBackend_LegacySuffixKeyIsNotAVersion(t *testing.T) {
+	cleanup := initXKMSForTest(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	backend := newKeyNameTestBackend(t)
+	createKeyNameTestKey(t, backend, "lg-report_v2026")
+	legacyBlob, err := backend.Encrypt(ctx, "lg-report_v2026", []byte("legacy"), nil)
+	require.NoError(t, err)
+	createRawKeyNameTestKey(t, backend, "lg-report")
+
+	fresh := newKeyNameTestBackend(t)
+	meta, err := fresh.GetKeyMetadata(ctx, "lg-report")
+	require.NoError(t, err)
+	require.Equal(t, 1, meta.Version)
+
+	plaintext, err := fresh.Decrypt(ctx, "lg-report_v2026", legacyBlob, nil)
+	require.NoError(t, err, "an independent key outside base's rotated run stays readable")
+	require.Equal(t, []byte("legacy"), plaintext)
+	assertKeyRoundTrips(t, fresh, "lg-report_v2026")
+
+	baseBlob, err := fresh.Encrypt(ctx, "lg-report", []byte("p"), nil)
+	require.NoError(t, err)
+	encrypted, err := fresh.deserializeEncryptedData(baseBlob)
+	require.NoError(t, err)
+	encrypted.Metadata[keyVersionMetadataKey] = []byte("2026")
+	relabelled, err := fresh.serializeEncryptedData(encrypted)
+	require.NoError(t, err)
+	_, err = fresh.Decrypt(ctx, "lg-report", relabelled, nil)
+	require.ErrorIs(t, err, ErrInvalidCiphertextKeyVersion)
+
+	require.NoError(t, fresh.DeleteKey(ctx, "lg-report"))
+	plaintext, err = newKeyNameTestBackend(t).Decrypt(ctx, "lg-report_v2026", legacyBlob, nil)
+	require.NoError(t, err, "deleting the base keeps an independent key")
+	require.Equal(t, []byte("legacy"), plaintext)
+
+	t.Run("rotate does not adopt", func(t *testing.T) {
+		b := newKeyNameTestBackend(t)
+		createKeyNameTestKey(t, b, "lg-adopt_v3")
+		adoptBlob, err := b.Encrypt(ctx, "lg-adopt_v3", []byte("adopt"), nil)
+		require.NoError(t, err)
+		createRawKeyNameTestKey(t, b, "lg-adopt")
+		_, err = b.GetKeyMetadata(ctx, "lg-adopt")
+		require.NoError(t, err)
+
+		_, err = b.RotateKey(ctx, "lg-adopt")
+		require.ErrorIs(t, err, ErrVersionNameTaken)
+
+		stored, err := b.listStoredKeyIDs(ctx, "lg-adopt_v")
+		require.NoError(t, err)
+		require.NotContains(t, stored, "lg-adopt_v2")
+
+		plaintext, err := newKeyNameTestBackend(t).Decrypt(ctx, "lg-adopt_v3", adoptBlob, nil)
+		require.NoError(t, err)
+		require.Equal(t, []byte("adopt"), plaintext)
+	})
+}
+
 func TestXKMSBackend_CreateKeyRefusesHidingName(t *testing.T) {
 	cleanup := initXKMSForTest(t)
 	defer cleanup()
@@ -518,6 +586,11 @@ func TestXKMSBackend_DeleteRotatedKeyRetryAfterPartialFailure(t *testing.T) {
 		require.NoError(t, backend.DeleteKey(ctx, keyID))
 		left, err := newKeyNameTestBackend(t).listStoredKeyIDs(ctx, keyID)
 		require.NoError(t, err)
-		assert.Empty(t, left, "a gap in the versions does not stop DeleteKey")
+		assert.Equal(t, map[string]struct{}{keyID + "_v3": {}}, left,
+			"a version stranded above a gap is outside the contiguous run and is kept as an ordinary key")
+
+		v3Attrs, err := backend.algorithmToKeyAttributes(keyID+"_v3", meta.Algorithm)
+		require.NoError(t, err)
+		require.NoError(t, deleteXKMSKey(ctx, v3Attrs))
 	})
 }

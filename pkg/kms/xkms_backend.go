@@ -28,6 +28,7 @@ import (
 	stderrors "errors"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -427,13 +428,7 @@ func (kb *XKMSBackend) GetKeyMetadata(ctx context.Context, keyID string) (*KeyMe
 	if err != nil {
 		return nil, err
 	}
-	version := 1
-	for {
-		if _, ok := stored[kb.buildVersionedKeyID(keyID, version+1)]; !ok {
-			break
-		}
-		version++
-	}
+	version := kb.highestContiguousVersion(stored, keyID)
 
 	// Key exists but we don't have metadata - create minimal metadata
 	meta := &KeyMetadata{
@@ -551,6 +546,18 @@ func (kb *XKMSBackend) RotateKey(ctx context.Context, keyID string) (*KeyMetadat
 	oldVersion := meta.Version
 	newVersion := oldVersion + 1
 
+	// A key already holding the new version's name, or the next one, would be
+	// overwritten or adopted into the rotated run: refuse the rotation.
+	stored, err := kb.listStoredKeyIDs(ctx, keyID+"_v")
+	if err != nil {
+		return nil, err
+	}
+	for _, taken := range []int{newVersion, newVersion + 1} {
+		if _, ok := stored[kb.buildVersionedKeyID(keyID, taken)]; ok {
+			return nil, ErrVersionNameTaken
+		}
+	}
+
 	// Build attributes for the new versioned key
 	versionedKeyID := kb.buildVersionedKeyID(keyID, newVersion)
 	attrs, err := kb.algorithmToKeyAttributes(versionedKeyID, meta.Algorithm)
@@ -639,16 +646,44 @@ func (kb *XKMSBackend) refuseVersionName(ctx context.Context, keyID string) erro
 	if !ok {
 		return nil
 	}
-	_, err := kb.GetKeyMetadata(ctx, base)
+	n, err := strconv.Atoi(keyID[len(base)+len("_v"):])
+	if err != nil || n < 2 || keyID != kb.buildVersionedKeyID(base, n) {
+		// Rotation writes no such name, so keyID is an ordinary key.
+		return nil
+	}
+	_, err = kb.GetKeyMetadata(ctx, base)
 	switch {
 	case err == nil:
-		return ErrKeyNotFound
 	case stderrors.Is(err, ErrKeyNotFound):
 		// The base is not a key, so keyID is an ordinary key.
 		return nil
 	default:
 		// Fail closed: the lookup could not tell whether base is a key.
 		return err
+	}
+	// Only base's contiguous rotated run base_v2..base_vk is rotation output;
+	// a name above it is an independent key that predates version names.
+	stored, err := kb.listStoredKeyIDs(ctx, base+"_v")
+	if err != nil {
+		return err
+	}
+	if n <= kb.highestContiguousVersion(stored, base) {
+		return ErrKeyNotFound
+	}
+	return nil
+}
+
+// highestContiguousVersion returns the last version of keyID's contiguous
+// rotated run keyID_v2, keyID_v3, ... in stored, or 1 when keyID_v2 is not
+// stored. Walking up from 2 rather than taking the largest suffix keeps an
+// ordinary key such as report_v2026 out of report's versions.
+func (kb *XKMSBackend) highestContiguousVersion(stored map[string]struct{}, keyID string) int {
+	version := 1
+	for {
+		if _, ok := stored[kb.buildVersionedKeyID(keyID, version+1)]; !ok {
+			return version
+		}
+		version++
 	}
 }
 
@@ -804,12 +839,13 @@ func (kb *XKMSBackend) DeleteKey(ctx context.Context, keyID string) error {
 	// Delete every rotated version first. A version left behind would
 	// outlive its base and, once the base is gone, refuseVersionName would
 	// no longer hide it: it would read as an ordinary key without a policy.
-	// The versions are enumerated from go-xkms's stored listing, not walked
-	// up from 2, so a gap left by an earlier partial failure does not end
-	// the search. They are deleted highest first, so a partial failure
-	// leaves a contiguous v2..vk that GetKeyMetadata's version walk still
-	// reads. The cached meta.Version is not used: after a restart the
-	// uncached metadata may not know every version.
+	// The versions are the contiguous run v2..vk read from go-xkms's stored
+	// listing; the cached meta.Version is not used, since after a restart
+	// the uncached metadata may not know every version. A <keyID>_v<N>
+	// outside the run (an independent key, or a version stranded by an
+	// out-of-band gap) is kept as an ordinary key. The run is deleted
+	// highest first, so a partial failure leaves a contiguous v2..vj that
+	// GetKeyMetadata's version walk and a retry still read.
 	algorithm := ""
 	if meta != nil {
 		algorithm = meta.Algorithm
@@ -818,23 +854,8 @@ func (kb *XKMSBackend) DeleteKey(ctx context.Context, keyID string) error {
 	if err != nil {
 		return err
 	}
-	type storedVersion struct {
-		id string
-		n  int
-	}
-	versions := make([]storedVersion, 0, len(stored))
-	for id := range stored {
-		var n int
-		if _, scanErr := fmt.Sscanf(strings.TrimPrefix(id, keyID+"_v"), "%d", &n); scanErr != nil || n < 2 {
-			continue
-		}
-		if id == kb.buildVersionedKeyID(keyID, n) {
-			versions = append(versions, storedVersion{id: id, n: n})
-		}
-	}
-	sort.Slice(versions, func(i, j int) bool { return versions[i].n > versions[j].n })
-	for _, sv := range versions {
-		versionedID := sv.id
+	for n := kb.highestContiguousVersion(stored, keyID); n >= 2; n-- {
+		versionedID := kb.buildVersionedKeyID(keyID, n)
 		var versionAttrs *kctypes.KeyAttributes
 		if algorithm != "" {
 			versionAttrs, err = kb.algorithmToKeyAttributes(versionedID, algorithm)
@@ -1137,6 +1158,18 @@ func (kb *XKMSBackend) Decrypt(ctx context.Context, keyID string, ciphertext, aa
 		return nil, api.NewCiphertextDeserializationError("XKMSBackend.Decrypt", err)
 	}
 	version := conv.ClampUint64ToInt(parsedVersion)
+	if version > meta.Version {
+		// Above the cached version: accept it only inside keyID's stored
+		// rotated run (this node's cache may be stale), never an independent
+		// key that happens to be named keyID_v<N>.
+		stored, err := kb.listStoredKeyIDs(ctx, keyID+"_v")
+		if err != nil {
+			return nil, api.NewKeyMetadataRetrievalError("XKMSBackend.Decrypt", err)
+		}
+		if version > kb.highestContiguousVersion(stored, keyID) {
+			return nil, api.NewCiphertextDeserializationError("XKMSBackend.Decrypt", ErrInvalidCiphertextKeyVersion)
+		}
+	}
 
 	// Determine which key to use based on version
 	// Version 1 uses the base key (backward compatible)
