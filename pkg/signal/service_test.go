@@ -101,7 +101,7 @@ func newEnabledService(t *testing.T) (SignalService, *serviceTestKVClient) {
 	t.Helper()
 	kv := newServiceTestKVClient()
 	log := newTestLogger(t)
-	svc := NewSignalService(kv, log, &SignalConfig{Enabled: true})
+	svc := NewSignalService(kv, newMapTxn(kv.data), log, &SignalConfig{Enabled: true})
 	return svc, kv
 }
 
@@ -125,7 +125,7 @@ func tenantCtx(tenantID string) context.Context {
 func TestNewSignalService(t *testing.T) {
 	kv := newServiceTestKVClient()
 	log := newTestLogger(t)
-	svc := NewSignalService(kv, log, &SignalConfig{Enabled: true})
+	svc := NewSignalService(kv, newMapTxn(kv.data), log, &SignalConfig{Enabled: true})
 	if svc == nil {
 		t.Fatal("expected non-nil service")
 	}
@@ -134,7 +134,7 @@ func TestNewSignalService(t *testing.T) {
 func TestNewSignalService_Disabled(t *testing.T) {
 	kv := newServiceTestKVClient()
 	log := newTestLogger(t)
-	svc := NewSignalService(kv, log, &SignalConfig{Enabled: false})
+	svc := NewSignalService(kv, newMapTxn(kv.data), log, &SignalConfig{Enabled: false})
 	if svc == nil {
 		t.Fatal("expected non-nil service even when disabled")
 	}
@@ -143,7 +143,7 @@ func TestNewSignalService_Disabled(t *testing.T) {
 func TestSignalService_Start_Disabled(t *testing.T) {
 	kv := newServiceTestKVClient()
 	log := newTestLogger(t)
-	svc := NewSignalService(kv, log, &SignalConfig{Enabled: false})
+	svc := NewSignalService(kv, newMapTxn(kv.data), log, &SignalConfig{Enabled: false})
 	if err := svc.Start(context.Background()); err != nil {
 		t.Fatalf("expected Start to succeed when disabled, got: %v", err)
 	}
@@ -167,7 +167,7 @@ func TestSignalService_Start_Enabled(t *testing.T) {
 	key := tenantConfigKeyPrefix + "preloaded-tenant" + tenantConfigKeySuffix
 	kv.data[key] = data
 
-	svc := NewSignalService(kv, log, &SignalConfig{Enabled: true})
+	svc := NewSignalService(kv, newMapTxn(kv.data), log, &SignalConfig{Enabled: true})
 	if err := svc.Start(context.Background()); err != nil {
 		t.Fatalf("Start failed: %v", err)
 	}
@@ -244,7 +244,7 @@ func TestSignalService_ProvisionTenant_EmptyTenantID(t *testing.T) {
 func TestSignalService_ProvisionTenant_Disabled(t *testing.T) {
 	kv := newServiceTestKVClient()
 	log := newTestLogger(t)
-	svc := NewSignalService(kv, log, &SignalConfig{Enabled: false})
+	svc := NewSignalService(kv, newMapTxn(kv.data), log, &SignalConfig{Enabled: false})
 
 	err := svc.ProvisionTenant(context.Background(), "tenant", &SignalTenantConfig{Enabled: true})
 	if err == nil {
@@ -702,7 +702,7 @@ func TestSignalService_DeprovisionTenant_EmptyID(t *testing.T) {
 func TestSignalService_GetTenantStores_DisabledService(t *testing.T) {
 	kv := newServiceTestKVClient()
 	log := newTestLogger(t)
-	svc := NewSignalService(kv, log, &SignalConfig{Enabled: false})
+	svc := NewSignalService(kv, newMapTxn(kv.data), log, &SignalConfig{Enabled: false})
 
 	_, err := svc.GetAccount(tenantCtx("any-tenant"), "some-uuid")
 	if err == nil {
@@ -806,7 +806,7 @@ func TestSignalService_Start_LoadsInvalidConfig(t *testing.T) {
 	key := tenantConfigKeyPrefix + "bad-config-tenant" + tenantConfigKeySuffix
 	kv.data[key] = []byte("not-valid-json")
 
-	svc := NewSignalService(kv, log, &SignalConfig{Enabled: true})
+	svc := NewSignalService(kv, newMapTxn(kv.data), log, &SignalConfig{Enabled: true})
 	// Start should not fail; it logs and skips invalid configs.
 	if err := svc.Start(context.Background()); err != nil {
 		t.Fatalf("Start failed: %v", err)

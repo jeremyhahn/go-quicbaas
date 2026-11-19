@@ -154,9 +154,9 @@ func TestServer_QRDBCredentialServicer_NilWhenCeremonyServicesUnset(t *testing.T
 func TestServer_BuildQRDBRegisterOptions_EmptyWhenNoServices(t *testing.T) {
 	srv := withTempServer(t)
 	opts := srv.buildQRDBRegisterOptions()
-	// The user + user-auth-factor lazy proxies are always registered; the
-	// conditional credential/ceremony/barrier options are absent.
-	assert.Len(t, opts, 2, "only the always-on user-surface options expected when ceremonyServices is nil")
+	// The barrier, user and user-auth-factor lazy proxies are always
+	// registered; the conditional credential/ceremony options are absent.
+	assert.Len(t, opts, 3, "only the always-on barrier/user-surface proxy options expected when ceremonyServices is nil")
 }
 
 func TestServer_RegisterQRDBService_RegistersWithoutPanic(t *testing.T) {
