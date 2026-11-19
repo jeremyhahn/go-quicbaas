@@ -39,6 +39,18 @@ type pruneHookKV struct {
 	// onGet runs once, before the first Get of onGetKey.
 	onGetKey string
 	onGet    func()
+	// onCompareAndSwap runs once, before the first CompareAndSwap of
+	// onCompareAndSwapKey.
+	onCompareAndSwapKey string
+	onCompareAndSwap    func()
+}
+
+func (k *pruneHookKV) CompareAndSwap(ctx context.Context, key string, expected, next []byte) (bool, error) {
+	if hook := k.onCompareAndSwap; hook != nil && key == k.onCompareAndSwapKey {
+		k.onCompareAndSwap, k.onCompareAndSwapKey = nil, ""
+		hook()
+	}
+	return k.inMemKV.CompareAndSwap(ctx, key, expected, next)
 }
 
 func (k *pruneHookKV) Scan(ctx context.Context, prefix string, fn func(key string, value []byte) error) error {
@@ -95,6 +107,43 @@ func TestKVBackend_PruneSparesARecreatedSecret(t *testing.T) {
 		require.NoError(t, err, "node %s reads the recreated secret", name)
 		assert.Equal(t, "new", string(data["k"]))
 	}
+}
+
+// TestKVBackend_PruneSparesTheRollbackTargetBehindAPendingReservation: node
+// A reserves version 2 and pauses before publishing its pointer; node B
+// reserves and publishes version 3 and prunes with keep=2. A's reservation
+// is not history (B's version 3 replaced version 1), so the prune keeps
+// version 1, the rollback target, and A's publication then fails.
+func TestKVBackend_PruneSparesTheRollbackTargetBehindAPendingReservation(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	store := &pruneHookKV{inMemKV: newInMemKV()}
+	nodeA, nodeB := NewKVBackend(store), NewKVBackend(store)
+	nodeA.writeLocks = new([32]sync.Mutex)
+	nodeB.writeLocks = new([32]sync.Mutex)
+	const path = "nodes/pending"
+	require.NoError(t, nodeA.Store(ctx, path, map[string][]byte{"k": []byte("seed")}, nil))
+
+	store.onCompareAndSwapKey = currentKey(path)
+	store.onCompareAndSwap = func() {
+		v, err := nodeB.StoreVersion(ctx, path, map[string][]byte{"k": []byte("b")}, nil)
+		require.NoError(t, err)
+		require.Equal(t, 3, v, "B allocates past A's reserved version 2")
+		removed, err := nodeB.PruneVersions(ctx, path, 2)
+		require.NoError(t, err)
+		assert.Zero(t, removed, "A's unpublished version 2 is not retained history")
+	}
+	_, err := nodeA.StoreVersion(ctx, path, map[string][]byte{"k": []byte("a")}, nil)
+	require.ErrorIs(t, err, ErrWriteConflict)
+
+	assert.Equal(t, []int{1, 3}, liveVersions(t, nodeA, path))
+	data, _, err := nodeA.GetVersion(ctx, path, 1)
+	require.NoError(t, err, "version 1 is still the rollback target")
+	assert.Equal(t, "seed", string(data["k"]))
+	require.NoError(t, nodeA.Rollback(ctx, path, 1))
+	data, _, err = nodeA.Get(ctx, path)
+	require.NoError(t, err)
+	assert.Equal(t, "seed", string(data["k"]))
 }
 
 // TestKVBackend_PruneCountsSparseHistoryByRecord: a writer that loses

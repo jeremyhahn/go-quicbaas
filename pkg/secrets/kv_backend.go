@@ -49,6 +49,11 @@ type kvEntry struct {
 	// Pruned marks a record retention reduced to a tombstone: its payload is
 	// gone and it reads as absent, while its timestamps stay history.
 	Pruned bool `json:"pruned,omitempty"`
+	// Prev is the version the current pointer held when the writer reserved
+	// this record, i.e. the version this record replaces once published. It
+	// is 0 for a lifetime's first record and for records written before the
+	// field existed.
+	Prev int `json:"prev,omitempty"`
 }
 
 // kvCurrentEntry tracks the current version and soft-delete state of a path.
@@ -304,6 +309,7 @@ func (b *KVBackend) storeVersion(ctx context.Context, path string, expected *Rea
 
 	now := time.Now()
 	createdBy := auth.PrincipalFromContext(ctx)
+	prev := cur.Version
 	nextVer, err := b.allocateAndReserve(ctx, path, cur.Version, func(version int) *kvEntry {
 		return &kvEntry{
 			Path:      path,
@@ -313,6 +319,7 @@ func (b *KVBackend) storeVersion(ctx context.Context, path string, expected *Rea
 			CreatedAt: now,
 			UpdatedAt: now,
 			CreatedBy: createdBy,
+			Prev:      prev,
 		}
 	})
 	if err != nil {
@@ -382,19 +389,59 @@ func (b *KVBackend) PruneVersions(ctx context.Context, path string, keep int) (i
 	if err != nil {
 		return 0, &SecretsCauseError{Message: "prune versions: enumerate keyspace", Cause: err}
 	}
-	// RETENTION COUNTS LIVE RECORDS, NOT VERSION NUMBERS. The history can be
-	// sparse: a writer that loses publication removes its reservation, so
-	// versions 1 and 3 can be the only records under a pointer at 3. A floor
-	// of cur.Version-keep would then delete version 1 with keep=2 and leave
-	// no rollback target. The newest keep live records are retained; a
-	// tombstone is no rollback target, so it never counts toward keep.
+	// RETENTION COUNTS COMMITTED LIVE RECORDS, NOT VERSION NUMBERS. The
+	// history can be sparse: a writer that loses publication removes its
+	// reservation, so versions 1 and 3 can be the only records under a
+	// pointer at 3, and a floor of cur.Version-keep would delete version 1
+	// with keep=2 and leave no rollback target. Nor is every record history:
+	// a writer that has reserved a version but not yet published its pointer
+	// holds a record that may still be unwound, and counting it would let
+	// this prune remove the rollback target it displaced. So the committed
+	// records are found by walking the pointer's chain: from cur.Version
+	// through each record's Prev (the version it replaced), following
+	// tombstones too, stopping at an absent record or at a Prev that does not
+	// descend. A record whose Prev is 0 is a lifetime's first record or was
+	// written before Prev existed; every live record below it counts as
+	// committed, the old rule for those records. The newest keep committed
+	// live records are retained; a tombstone is no rollback target, so it
+	// never counts toward keep. Every record below the oldest retained one
+	// is in the delete set, including a reservation never published: its
+	// pointer CAS expects a version the pointer has since moved past, so it
+	// can never publish, and its writer's unwind tolerates NotFound.
+	// Uncommitted records at or above the oldest retained one are neither
+	// counted nor deleted.
+	byVersion := make(map[int]kvVersionRecord, len(records))
+	for _, r := range records {
+		byVersion[r.version] = r
+	}
+	committed := make(map[int]bool, len(records))
+	for step := cur.Version; ; {
+		r, ok := byVersion[step]
+		if !ok {
+			break
+		}
+		committed[step] = true
+		prev := r.entry.Prev
+		if prev == 0 {
+			for _, older := range records {
+				if older.version < step {
+					committed[older.version] = true
+				}
+			}
+			break
+		}
+		if prev >= step {
+			break
+		}
+		step = prev
+	}
 	var live []kvVersionRecord
 	for _, r := range records {
-		if !r.destroyed {
+		if !r.destroyed && committed[r.version] {
 			live = append(live, r)
 		}
 	}
-	if len(live) <= keep {
+	if len(live) < keep {
 		return 0, nil
 	}
 	oldestRetained := live[len(live)-keep].version
@@ -837,6 +884,7 @@ func (b *KVBackend) Rollback(ctx context.Context, path string, version int) erro
 	// exactly as Store reserves (review 994).
 	now := time.Now()
 	createdBy := auth.PrincipalFromContext(ctx)
+	prev := cur.Version
 	nextVer, err := b.allocateAndReserve(ctx, path, cur.Version, func(version int) *kvEntry {
 		return &kvEntry{
 			Path:      path,
@@ -846,6 +894,7 @@ func (b *KVBackend) Rollback(ctx context.Context, path string, version int) erro
 			CreatedAt: now,
 			UpdatedAt: now,
 			CreatedBy: createdBy,
+			Prev:      prev,
 		}
 	})
 	if err != nil {

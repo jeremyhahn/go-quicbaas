@@ -354,3 +354,48 @@ func TestSecretsService_CreatedAtSurvivesRetention(t *testing.T) {
 		})
 	}
 }
+
+// TestSecretsService_ListVersionsMarksPrunedVersionsDeleted: versions that
+// retention pruned are listed with a deletion time, not as available.
+func TestSecretsService_ListVersionsMarksPrunedVersionsDeleted(t *testing.T) {
+	backends := map[string]func() secrets.Backend{
+		"memory": func() secrets.Backend { return secrets.NewMemoryBackend() },
+		"kv":     func() secrets.Backend { return secrets.NewKVBackend(newTenantNamespacedKV()) },
+	}
+	for name, newBackend := range backends {
+		t.Run(name, func(t *testing.T) {
+			mgr, err := secrets.NewManager(&secrets.ManagerOptions{Backend: newBackend(), MaxVersions: 1})
+			require.NoError(t, err)
+			svc := newSecretsService(mgr, newMockLogger())
+			ctx := tenantctx.WithSystem(context.Background())
+
+			_, err = svc.StoreSecret(ctx, &StoreSecretRequest{SecretID: "db-password", Name: "db-password", Data: []byte("one")})
+			require.NoError(t, err)
+			for i := 2; i <= 3; i++ {
+				_, err = svc.RotateSecret(ctx, &RotateSecretRequest{SecretID: "db-password", NewData: []byte{byte('0' + i)}})
+				require.NoError(t, err)
+			}
+
+			resp, err := svc.ListSecretVersions(ctx, &ListSecretVersionsRequest{SecretID: "db-password"})
+			require.NoError(t, err)
+			byVersion := make(map[uint64]*SecretVersion, len(resp.Versions))
+			for _, v := range resp.Versions {
+				byVersion[v.Version] = v
+			}
+			require.Contains(t, byVersion, uint64(3))
+			require.Nil(t, byVersion[3].DeletedAt, "the current version is available")
+			if name == "memory" {
+				for _, v := range []uint64{1, 2} {
+					require.Contains(t, byVersion, v)
+					require.NotNil(t, byVersion[v].DeletedAt, "pruned version %d is listed as deleted", v)
+				}
+				return
+			}
+			for v, sv := range byVersion {
+				if v != 3 {
+					require.NotNil(t, sv.DeletedAt, "pruned version %d is listed as deleted", v)
+				}
+			}
+		})
+	}
+}

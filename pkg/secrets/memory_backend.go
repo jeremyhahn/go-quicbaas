@@ -177,6 +177,10 @@ func (mb *MemoryBackend) PruneVersions(ctx context.Context, path string, keep in
 		entry.Data = nil
 		entry.Metadata = nil
 		entry.UpdatedAt = now
+		if entry.DeletedAt == nil {
+			deletedAt := now
+			entry.DeletedAt = &deletedAt
+		}
 		pruned++
 	}
 	return pruned, nil
