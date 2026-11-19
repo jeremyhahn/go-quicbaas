@@ -90,8 +90,14 @@ func TestNew(t *testing.T) {
 		}
 		defer tr.Close()
 
-		if tr.client != customClient {
-			t.Error("expected custom HTTP client to be set")
+		if tr.client.Timeout != 5*time.Second {
+			t.Errorf("expected the supplied client's timeout to be kept, got %v", tr.client.Timeout)
+		}
+		if customClient.Transport != nil {
+			t.Error("expected the supplied HTTP client not to be mutated")
+		}
+		if tr.client.Transport == nil {
+			t.Error("expected the SO PIN guard transport to be installed")
 		}
 		if tr.baseURL != "http://custom.example.com" {
 			t.Errorf("expected custom base URL, got: %s", tr.baseURL)

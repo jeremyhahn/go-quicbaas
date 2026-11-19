@@ -201,7 +201,8 @@ jobs:
           fi
           mkdir -p "$work/layers/config"
           cp "$work/image/$config" "$work/layers/config/config.json"
-          trivy fs --scanners secret --exit-code 1 --no-progress "$work/layers"
+          trivy fs --scanners secret --exit-code 0 --format json --output "$work/secrets.json" --no-progress "$work/layers"
+          bash deployments/agents/software-factory-worker/check-secret-findings.sh "$work/secrets.json" "$work/layers"
           echo "scanned ${i} layer tarballs of ${IMAGE}:${TAG} for secrets"
 
       - name: The package is not public before the push
@@ -310,6 +311,7 @@ jobs:
             "$CC" "$CC_INT" "$CC" "$CC_X64_INT" "$CX" "$CX_INT" "$CX" "$CX_X64_INT" "$GM" "$GM_INT" "$GO" "$GH")"
           echo "$line"
           echo "$versions"
+          # shellcheck disable=SC2016 # the backticks are a literal Markdown code fence, not a command substitution
           printf '%s\n\n```\n%s\n```\n' "$line" "$versions" >> "$GITHUB_STEP_SUMMARY"
           printf '%s\n%s\n' "$line" "$versions" > "$RUNNER_TEMP/worker-image-digest.txt"
           { echo "ref=$ref"; echo "digest=$digest"; echo "published=$published"; } >> "$GITHUB_OUTPUT"
@@ -384,6 +386,7 @@ jobs:
           echo "$line"
           {
             printf '### Worker image\n\n'
+            # shellcheck disable=SC2016 # the backticks are a literal Markdown code fence, not a command substitution
             printf '```\n%s\ndigest=%s\nclaude-code=%s codex=%s go=%s gh=%s\n```\n' "$line" "$DIGEST" "$CC" "$CX" "$GO" "$GH"
           } >> "$GITHUB_STEP_SUMMARY"
           { echo "ref=$REF"; echo "digest=$DIGEST"; } >> "$GITHUB_OUTPUT"

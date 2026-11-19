@@ -45,6 +45,7 @@ func mcpTestUser() *qrdbsdk.User {
 	return &qrdbsdk.User{
 		ID:        42,
 		Username:  "alice",
+		Email:     "alice@example.com",
 		TenantID:  "tenant-a",
 		RoleIDs:   []string{"role-1"},
 		Lifecycle: qrdbsdk.LifecycleActive,
@@ -273,13 +274,14 @@ func TestQRDBUserLookupTools_HappyPaths_WireShape(t *testing.T) {
 		t.Helper()
 		m, ok := result.(map[string]interface{})
 		require.True(t, ok, "result must be a map")
-		for _, key := range []string{"id", "username", "tenantID", "roleIDs", "lifecycle", "system", "createdAt", "updatedAt"} {
+		for _, key := range []string{"id", "username", "email", "tenantID", "roleIDs", "lifecycle", "system", "createdAt", "updatedAt"} {
 			_, present := m[key]
 			assert.True(t, present, "missing wire key %q", key)
 		}
-		assert.Len(t, m, 8, "unexpected extra keys in user response")
+		assert.Len(t, m, 9, "unexpected extra keys in user response")
 		assert.Equal(t, uint64(42), m["id"])
 		assert.Equal(t, "alice", m["username"])
+		assert.Equal(t, "alice@example.com", m["email"], "the user tools must return the user's email over MCP")
 		assert.Equal(t, "tenant-a", m["tenantID"])
 		assert.Equal(t, "active", m["lifecycle"])
 		assert.Equal(t, "2026-01-02T03:04:05Z", m["createdAt"])
