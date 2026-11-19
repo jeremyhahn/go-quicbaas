@@ -198,7 +198,9 @@ func loginFirstBootAdmin(
 	// Over MCP the login is made on REST, which every cell serves: the MCP
 	// login tools carry no permission registration and an MCP session needs a
 	// credential to begin with, so MCP cannot be where the credential is
-	// obtained. The session the REST login issues is then used over MCP.
+	// obtained (quicbaas_login_begin is deliberately not a public tool and
+	// maps to no permission). The session the REST login issues is then used
+	// over MCP.
 	loginTransport := transport
 	if transport == "mcp" {
 		loginTransport = "rest"
@@ -208,13 +210,13 @@ func loginFirstBootAdmin(
 		"--client-cert", filepath.Join(dataDir, "admin", "admin.crt"),
 		"--username", "admin")
 	if loginErr != nil {
-		t.Fatalf("admin mTLS login (%s) over %q failed: %v\noutput:\n%s",
-			label, transport, loginErr, loginOut)
+		t.Fatalf("admin mTLS login (%s) for the %q cell (login over %q) failed: %v\noutput:\n%s",
+			label, transport, loginTransport, loginErr, loginOut)
 	}
 	// Log the outcome even on success: a login that exits 0 without issuing a
 	// usable token looks identical to a working one until the next call is
 	// refused, which is exactly the failure mode this matrix must not hide.
-	t.Logf("admin login (%s/%s) output:\n%s", label, transport, loginOut)
+	t.Logf("admin login (%s/%s, over %s) output:\n%s", label, transport, loginTransport, loginOut)
 
 	session, err := cli.LoadToken(filepath.Join(dataDir, ".quicbaas", "token"))
 	if err != nil {
