@@ -34,6 +34,7 @@ import (
 type versionedCryptoFixture struct {
 	svc     *cryptoService
 	kmsSvc  *kmsServiceImpl
+	kmsMgr  *mockKMSManager
 	scoped  string
 	version *atomic.Uint64
 	decrypt *atomic.Int64
@@ -96,7 +97,7 @@ func newVersionedCryptoFixture(t *testing.T) *versionedCryptoFixture {
 	scoped, err := scopeKeyID(ctx, versionStatusKeyID)
 	require.NoError(t, err)
 
-	return &versionedCryptoFixture{svc: svc, kmsSvc: kmsSvc, scoped: scoped, version: version, decrypt: decrypts}
+	return &versionedCryptoFixture{svc: svc, kmsSvc: kmsSvc, kmsMgr: kmsMgr, scoped: scoped, version: version, decrypt: decrypts}
 }
 
 func (f *versionedCryptoFixture) encrypt(t *testing.T, plaintext string) []byte {
@@ -110,6 +111,8 @@ func (f *versionedCryptoFixture) encrypt(t *testing.T, plaintext string) []byte 
 // the state v1's grace-period job leaves behind.
 func (f *versionedCryptoFixture) rotateAndDisableV1() {
 	f.version.Store(2)
+	// The key's current version moves to 2 as well: encryption checks it.
+	f.kmsMgr.keys[versionStatusKeyID].version = 2
 	now := time.Now()
 	f.kmsSvc.setVersionStatus(f.scoped, 1, KeyStatusDisabled, &now)
 }

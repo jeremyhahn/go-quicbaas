@@ -59,7 +59,11 @@ func safetyContext(ctx context.Context) context.Context {
 // so with MaxOperations=2 the first Encrypt through the registered node
 // crypto server succeeds and the second fails. Without the shared tracker
 // Crypto counted nothing and both succeeded.
-func TestModule_Crypto_SafetyLimitEnforcedThroughFacade(t *testing.T) {
+// newCryptoFacadeClient builds a service over an in-memory KVStore, mounts the
+// module on bufconn with the safety tenant in every call's context, and returns
+// the service and a Crypto client of it.
+func newCryptoFacadeClient(t *testing.T) (service.QuicBaaS, pb.CryptoClient) {
+	t.Helper()
 	store := qrdbsdk.NewMemoryKVStore()
 	svc, err := service.NewServiceBuilder().
 		WithConfig(&service.ServiceConfig{NodeID: 1, RequestTimeout: 5 * time.Second}).
@@ -71,17 +75,21 @@ func TestModule_Crypto_SafetyLimitEnforcedThroughFacade(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = svc.Close() })
 
-	_, err = svc.KMS().SetKeySafety(safetyContext(context.Background()), &service.SetKeySafetyRequest{
-		KeyID: "k1", MaxOperations: 2,
-	})
-	require.NoError(t, err)
-
 	m, err := NewModule(func() service.QuicBaaS { return svc }, testLogger(t))
 	require.NoError(t, err)
 	withTenant := grpc.UnaryInterceptor(func(ctx context.Context, req any, _ *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
 		return handler(safetyContext(ctx), req)
 	})
-	client := pb.NewCryptoClient(startBufconnModule(t, m, withTenant))
+	return svc, pb.NewCryptoClient(startBufconnModule(t, m, withTenant))
+}
+
+func TestModule_Crypto_SafetyLimitEnforcedThroughFacade(t *testing.T) {
+	svc, client := newCryptoFacadeClient(t)
+
+	_, err := svc.KMS().SetKeySafety(safetyContext(context.Background()), &service.SetKeySafetyRequest{
+		KeyID: "k1", MaxOperations: 2,
+	})
+	require.NoError(t, err)
 
 	req := &pb.CryptoEncryptRequest{KeyId: "k1", Plaintext: []byte("p")}
 	_, err = client.Encrypt(context.Background(), req)
@@ -91,4 +99,45 @@ func TestModule_Crypto_SafetyLimitEnforcedThroughFacade(t *testing.T) {
 	require.Error(t, err, "second Encrypt reaches MaxOperations=2")
 	assert.NotEqual(t, codes.OK, status.Code(err))
 	assert.Contains(t, status.Convert(err).Message(), "AEAD safety limit exceeded")
+}
+
+// TestModule_Crypto_DisabledCurrentVersionRefusesEncryption: once the key's
+// current version is disabled, the mounted Crypto service seals no data and
+// wraps no data key under it.
+func TestModule_Crypto_DisabledCurrentVersionRefusesEncryption(t *testing.T) {
+	svc, client := newCryptoFacadeClient(t)
+	ctx := context.Background()
+
+	_, err := client.Encrypt(ctx, &pb.CryptoEncryptRequest{KeyId: "k1", Plaintext: []byte("p")})
+	require.NoError(t, err)
+
+	_, err = svc.KMS().UpdateKeyStatus(safetyContext(ctx), &service.UpdateKeyStatusRequest{
+		KeyID: "k1", Version: 1, Status: service.KeyStatusDisabled,
+	})
+	require.NoError(t, err)
+
+	requireDisabled := func(t *testing.T, err error) {
+		t.Helper()
+		require.Error(t, err)
+		assert.NotEqual(t, codes.OK, status.Code(err))
+		assert.Contains(t, status.Convert(err).Message(), "k1 is disabled")
+	}
+	t.Run("Encrypt", func(t *testing.T) {
+		_, err := client.Encrypt(ctx, &pb.CryptoEncryptRequest{KeyId: "k1", Plaintext: []byte("p")})
+		requireDisabled(t, err)
+	})
+	t.Run("EncryptBatch", func(t *testing.T) {
+		_, err := client.EncryptBatch(ctx, &pb.EncryptBatchRequest{
+			KeyId: "k1", Items: []*pb.BatchEncryptItem{{Plaintext: []byte("p")}},
+		})
+		requireDisabled(t, err)
+	})
+	t.Run("GenerateDataKey", func(t *testing.T) {
+		_, err := client.GenerateDataKey(ctx, &pb.GenerateDataKeyRequest{KeyId: "k1", KeySpec: &pb.KeySpec{KeySize: 32}})
+		requireDisabled(t, err)
+	})
+	t.Run("GenerateWrappedDataKey", func(t *testing.T) {
+		_, err := client.GenerateWrappedDataKey(ctx, &pb.GenerateWrappedDataKeyRequest{KeyId: "k1", KeySpec: &pb.KeySpec{KeySize: 32}})
+		requireDisabled(t, err)
+	})
 }

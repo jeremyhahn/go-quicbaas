@@ -200,6 +200,12 @@ func (t *cryptoService) Encrypt(ctx context.Context, req *EncryptRequest) (*Encr
 		return nil, err
 	}
 
+	if err := t.checkCurrentVersionUsable(ctx, scopedKeyID, "service.Encrypt"); err != nil {
+		t.metrics.encryptOperationsTotal.With(req.KeyID, "version_disabled").Inc()
+		t.metrics.errorsByType.With("key_version_error").Inc()
+		return nil, err
+	}
+
 	// Track key usage before encryption (if tracker configured)
 	if t.safetyTracker != nil {
 		// Held until the operation returns, so a concurrent rotation cannot
@@ -253,13 +259,23 @@ func (t *cryptoService) Encrypt(ctx context.Context, req *EncryptRequest) (*Encr
 // reports it. It returns 1 when no KMS manager is configured, the lookup
 // fails, or the metadata carries no version.
 func (t *cryptoService) keyVersion(ctx context.Context, scopedKeyID string) uint64 {
+	version, err := t.currentKeyVersion(ctx, scopedKeyID)
+	if err != nil {
+		return 1
+	}
+	return version
+}
+
+// currentKeyVersion returns the key's current version, 1 when the KMS manager
+// records none, and the KMS manager's lookup error.
+func (t *cryptoService) currentKeyVersion(ctx context.Context, scopedKeyID string) (uint64, error) {
 	var version uint64 = 1
 	if t.kmsManager == nil {
-		return version
+		return version, nil
 	}
 	keyInfo, err := t.kmsManager.GetKey(ctx, scopedKeyID)
 	if err != nil {
-		return version
+		return 0, err
 	}
 	switch info := keyInfo.(type) {
 	case *kms.KeyMetadata:
@@ -271,7 +287,7 @@ func (t *cryptoService) keyVersion(ctx context.Context, scopedKeyID string) uint
 			version = v
 		}
 	}
-	return version
+	return version, nil
 }
 
 // checkVersionUsable refuses a ciphertext whose key version is no longer
@@ -297,6 +313,30 @@ func (t *cryptoService) checkVersionUsable(ctx context.Context, scopedKeyID stri
 		return nil
 	default:
 		return api.NewKeyDisabledError("service.Decrypt", scopedKeyID)
+	}
+}
+
+// checkCurrentVersionUsable refuses an operation that would encrypt under the
+// key's current version when that version is not usable, so nothing is sealed
+// or wrapped under a version the Decrypt gate would then refuse. A version
+// whose status cannot be read is refused too.
+func (t *cryptoService) checkCurrentVersionUsable(ctx context.Context, scopedKeyID, op string) error {
+	if t.kmsSvc == nil {
+		return nil
+	}
+	version, err := t.currentKeyVersion(ctx, scopedKeyID)
+	if err != nil {
+		return WrapError(err, errors.ErrUnavailable, op, "key version unavailable")
+	}
+	status, _, err := t.kmsSvc.lookupVersionStatus(ctx, scopedKeyID, version)
+	if err != nil {
+		return WrapError(err, errors.ErrUnavailable, op, "key version status unavailable")
+	}
+	switch status {
+	case "", KeyStatusEnabled, KeyStatusRotating:
+		return nil
+	default:
+		return api.NewKeyDisabledError(op, scopedKeyID)
 	}
 }
 
@@ -464,6 +504,12 @@ func (t *cryptoService) Rewrap(ctx context.Context, req *RewrapRequest) (*Rewrap
 		}
 	}
 
+	if err := t.checkCurrentVersionUsable(ctx, scopedKeyID, "service.Rewrap"); err != nil {
+		t.metrics.encryptOperationsTotal.With(req.KeyID, "version_disabled").Inc()
+		t.metrics.errorsByType.With("key_version_error").Inc()
+		return nil, err
+	}
+
 	// Track key usage for rewrap operation (if tracker configured)
 	if t.safetyTracker != nil {
 		// Held until the operation returns, so a concurrent rotation cannot
@@ -543,6 +589,12 @@ func (t *cryptoService) EncryptBatch(ctx context.Context, req *EncryptBatchReque
 	if err := t.checkKeyAuthz(ctx, scopedKeyID, "encrypt"); err != nil {
 		t.metrics.encryptOperationsTotal.With(req.KeyID, "authz_denied").Inc()
 		t.metrics.errorsByType.With("authz_error").Inc()
+		return nil, err
+	}
+
+	if err := t.checkCurrentVersionUsable(ctx, scopedKeyID, "service.EncryptBatch"); err != nil {
+		t.metrics.encryptOperationsTotal.With(req.KeyID, "version_disabled").Inc()
+		t.metrics.errorsByType.With("key_version_error").Inc()
 		return nil, err
 	}
 
@@ -756,6 +808,12 @@ func (t *cryptoService) GenerateDataKey(ctx context.Context, req *GenerateDataKe
 		return nil, err
 	}
 
+	if err := t.checkCurrentVersionUsable(ctx, scopedKeyID, "service.GenerateDataKey"); err != nil {
+		t.metrics.encryptOperationsTotal.With(req.KeyID, "version_disabled").Inc()
+		t.metrics.errorsByType.With("key_version_error").Inc()
+		return nil, err
+	}
+
 	// Determine key size from KeyAttributes (default to 32 bytes for AES-256)
 	keyBytes := keySizeFromAttributes(req.KeyAttributes)
 
@@ -834,6 +892,12 @@ func (t *cryptoService) GenerateWrappedDataKey(ctx context.Context, req *Generat
 	if err := t.checkKeyAuthz(ctx, scopedKeyID, "generate_data_key"); err != nil {
 		t.metrics.encryptOperationsTotal.With(req.KeyID, "authz_denied").Inc()
 		t.metrics.errorsByType.With("authz_error").Inc()
+		return nil, err
+	}
+
+	if err := t.checkCurrentVersionUsable(ctx, scopedKeyID, "service.GenerateWrappedDataKey"); err != nil {
+		t.metrics.encryptOperationsTotal.With(req.KeyID, "version_disabled").Inc()
+		t.metrics.errorsByType.With("key_version_error").Inc()
 		return nil, err
 	}
 
