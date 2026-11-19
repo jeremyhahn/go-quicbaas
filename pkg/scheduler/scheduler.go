@@ -51,6 +51,14 @@ type JobStorage interface {
 	InitializeJobIDCounter(ctx context.Context) error
 }
 
+// ReconcileErrorReporter is a JobStorage whose due scan reconciles an index in
+// passing and reports a failed pass here instead of failing the scan.
+// TakeReconcileError returns the error of the last failed pass and clears it,
+// so the engine logs and counts each failed pass once.
+type ReconcileErrorReporter interface {
+	TakeReconcileError() error
+}
+
 // FiringClaimer arbitrates which node executes a given firing.
 //
 // It is separate from JobStorage because it is required only in a clustered
@@ -1143,6 +1151,15 @@ func (s *SchedulerEngine) processDueJobs(ctx context.Context) {
 		s.logError(sweepLogPrefix+" failed: component=scheduler error=%q", err.Error())
 		s.storageErrors.Add(1)
 		return
+	}
+
+	// A failed index reconcile does not fail the scan; it is logged and
+	// counted here, and the sweep goes on dispatching what it found.
+	if reporter, ok := s.storage.(ReconcileErrorReporter); ok {
+		if rerr := reporter.TakeReconcileError(); rerr != nil {
+			s.logError(sweepLogPrefix+" tenant job index reconcile failed: component=scheduler error=%q", rerr.Error())
+			s.storageErrors.Add(1)
+		}
 	}
 
 	// A sweep that finds nothing carries no information: the tick runs

@@ -254,8 +254,32 @@ func TestGetJobsDueForExecution_ReconcileErrorDoesNotFailDueScan(t *testing.T) {
 		if len(names) != 2 || !names["due-system"] || !names["due-tenant"] {
 			t.Fatalf("sweep %d: due jobs = %v, want due-system and due-tenant", i, names)
 		}
-		if err := storage.lastReconcileError(); !errors.Is(err, context.DeadlineExceeded) {
+		if err := storage.TakeReconcileError(); !errors.Is(err, context.DeadlineExceeded) {
 			t.Fatalf("sweep %d: last reconcile error = %v, want DeadlineExceeded", i, err)
 		}
+	}
+}
+
+// A backfill that fails at open fails the open, so the engine does not start
+// with tenant jobs the due scan cannot see; a healthy reopen indexes them.
+func TestInitializeJobIDCounter_ReconcileFailureFailsOpen(t *testing.T) {
+	ctx := context.Background()
+	kv := newMockKVStore()
+	legacy := createTestJob("legacy-tenant", scheduler.OwnerTypeTenant, "acme")
+	legacy.ID = 9
+	legacy.NextRun = time.Now().Add(-time.Minute)
+	putUnindexedTenantJob(t, kv, legacy)
+
+	err := NewStorage(&reconcileFailingKV{mockKVStore: kv}).InitializeJobIDCounter(ctx)
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("open with failing reconcile = %v, want DeadlineExceeded", err)
+	}
+
+	storage := NewStorage(kv)
+	if err := storage.InitializeJobIDCounter(ctx); err != nil {
+		t.Fatalf("healthy open: %v", err)
+	}
+	if !dueJobNames(t, storage, time.Now())["legacy-tenant"] {
+		t.Fatalf("legacy tenant job not due after a healthy open")
 	}
 }

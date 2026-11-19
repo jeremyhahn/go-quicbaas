@@ -138,3 +138,42 @@ func TestProcessDueJobs_SweepErrorEmitsRecordNamingError(t *testing.T) {
 	assert.Contains(t, records[0].msg, "component=scheduler")
 	assert.Equal(t, uint64(1), engine.storageErrors.Load())
 }
+
+// reconcileReportingStorage is a mockJobStorage whose due scan reports one
+// failed index reconcile pass through ReconcileErrorReporter.
+type reconcileReportingStorage struct {
+	*mockJobStorage
+	mu  sync.Mutex
+	err error
+}
+
+func (r *reconcileReportingStorage) TakeReconcileError() error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	err := r.err
+	r.err = nil
+	return err
+}
+
+func TestProcessDueJobs_ReconcileErrorEmitsRecordAndCountsOnce(t *testing.T) {
+	storage := &reconcileReportingStorage{
+		mockJobStorage: newMockJobStorage(),
+		err:            errors.New("index scan deadline exceeded"),
+	}
+	engine, logger := newSweepLoggingEngine(storage)
+
+	engine.processDueJobs(context.Background())
+
+	records := logger.sweepRecords()
+	require.Len(t, records, 1)
+	assert.Equal(t, "error", records[0].level)
+	assert.Contains(t, records[0].msg, "tenant job index reconcile failed")
+	assert.Contains(t, records[0].msg, "index scan deadline exceeded")
+	assert.Contains(t, records[0].msg, "component=scheduler")
+	assert.Equal(t, uint64(1), engine.storageErrors.Load())
+
+	// The error was taken: a second sweep reports nothing new.
+	engine.processDueJobs(context.Background())
+	assert.Len(t, logger.sweepRecords(), 1)
+	assert.Equal(t, uint64(1), engine.storageErrors.Load())
+}

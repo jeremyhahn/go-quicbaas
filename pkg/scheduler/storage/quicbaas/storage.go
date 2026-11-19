@@ -82,8 +82,10 @@ type Storage struct {
 	lastReconcile     time.Time
 	reconcileInterval time.Duration
 	// reconcileErr is the error of the last reconcile pass, nil when it
-	// succeeded. A failed pass never fails a due scan or open; it is kept
-	// here and the pass runs again after reconcileInterval.
+	// succeeded or was already taken. A failed pass at open fails the open; a
+	// failed pass in a due scan does not fail the scan: it is kept here until
+	// the engine takes it (TakeReconcileError) to log and count it, and the
+	// pass runs again after reconcileInterval.
 	reconcileErr error
 
 	// tenantCursor is where the due scan starts in its rotation over the
@@ -133,6 +135,8 @@ var (
 	_ scheduler.JobStorage    = (*Storage)(nil)
 	_ scheduler.JobStorage    = (*ClusteredStorage)(nil)
 	_ scheduler.FiringClaimer = (*ClusteredStorage)(nil)
+
+	_ scheduler.ReconcileErrorReporter = (*Storage)(nil)
 )
 
 // NewStorage creates a single-node QuicBaaS-backed job storage.
@@ -641,12 +645,15 @@ func (s *Storage) recordReconcile(err error) {
 	s.reconcileMu.Unlock()
 }
 
-// lastReconcileError returns the error of the last tenant job index
-// reconcile pass, nil when it succeeded or none has run.
-func (s *Storage) lastReconcileError() error {
+// TakeReconcileError returns the error of the last tenant job index
+// reconcile pass and clears it, so each failed pass is reported once. It is
+// nil when the pass succeeded, none has run, or the error was already taken.
+func (s *Storage) TakeReconcileError() error {
 	s.reconcileMu.Lock()
 	defer s.reconcileMu.Unlock()
-	return s.reconcileErr
+	err := s.reconcileErr
+	s.reconcileErr = nil
+	return err
 }
 
 // executionIDAt derives an execution ID from t in Unix nanoseconds. A time
@@ -739,14 +746,15 @@ func (s *Storage) InitializeJobIDCounter(ctx context.Context) error {
 	if err := s.ids.initialize(ctx); err != nil {
 		return err
 	}
-	// A failed reconcile does not fail open: it is recorded and lastReconcile
-	// is left zero, so the next due scan runs the pass again.
+	// A failed reconcile fails open, so the engine does not start with tenant
+	// jobs the due scan cannot see. It is also recorded and lastReconcile is
+	// left zero, so a due scan on this store runs the pass again.
 	if err := s.reconcileTenantJobIndex(ctx); err != nil {
 		s.reconcileMu.Lock()
 		s.lastReconcile = time.Time{}
 		s.reconcileMu.Unlock()
 		s.recordReconcile(err)
-		return nil
+		return &scheduler.ErrStorageError{Op: "InitializeJobIDCounter.reconcileTenantJobIndex", Cause: err}
 	}
 	s.markReconciled()
 	s.recordReconcile(nil)
