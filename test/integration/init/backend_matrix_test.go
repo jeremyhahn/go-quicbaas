@@ -193,7 +193,17 @@ func verifyDataRoundTrip(
 	// resource:action, so a client certificate alone is not enough. Logging in
 	// with the administrator credential first-boot issued caches the token
 	// under HOME, which the harness already points at this cell's data dir.
-	loginOut, loginErr := runCLIAgainst(ctx, t, cliBinary, transport, ports, dataDir,
+	//
+	// MCP has no login ceremony: quicbaas_login_begin is deliberately not a
+	// public tool and maps to no permission, so an MCP login is refused by
+	// design. An MCP cell's session therefore comes from REST, which every
+	// cell serves; the token is saved under the same HOME, so the MCP put/get
+	// below present it. Every other transport logs in over itself.
+	loginTransport := transport
+	if transport == "mcp" {
+		loginTransport = "rest"
+	}
+	loginOut, loginErr := runCLIAgainst(ctx, t, cliBinary, loginTransport, ports, dataDir,
 		"auth", "login", "--method", "mtls",
 		"--client-cert", filepath.Join(dataDir, "admin", "admin.crt"),
 		"--username", "admin",
@@ -202,13 +212,13 @@ func verifyDataRoundTrip(
 		// this cell's data dir, so the session stays isolated per cell.
 		"--save-token")
 	if loginErr != nil {
-		t.Fatalf("admin mTLS login on backend %q over %q failed: %v\noutput:\n%s",
-			backend, transport, loginErr, loginOut)
+		t.Fatalf("admin mTLS login on backend %q for the %q cell (login over %q) failed: %v\noutput:\n%s",
+			backend, transport, loginTransport, loginErr, loginOut)
 	}
 	// Log the outcome even on success: a login that exits 0 without issuing a
 	// usable token looks identical to a working one until the next call is
 	// refused, which is exactly the failure mode this matrix must not hide.
-	t.Logf("admin login (%s/%s) output:\n%s", backend, transport, loginOut)
+	t.Logf("admin login (%s/%s, over %s) output:\n%s", backend, transport, loginTransport, loginOut)
 
 	// data put/get take a COLLECTION and a key, not a single path.
 	collection := "backendmatrix"
