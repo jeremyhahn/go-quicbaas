@@ -17,10 +17,11 @@ import (
 	"context"
 	"testing"
 
-	"github.com/jeremyhahn/go-quicbaas/pkg/config"
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
 	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/stretchr/testify/require"
+
+	"github.com/jeremyhahn/go-quicbaas/pkg/config"
 )
 
 // newOwnerTestBackend boots a backend factory over store the way the
