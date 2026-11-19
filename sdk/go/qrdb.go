@@ -32,6 +32,7 @@ import (
 	sdkerrors "github.com/jeremyhahn/go-quicbaas/sdk/go/errors"
 	qbtransport "github.com/jeremyhahn/go-quicbaas/sdk/go/transport"
 	qbmcp "github.com/jeremyhahn/go-quicbaas/sdk/go/transport/mcp"
+	"github.com/jeremyhahn/go-quicbaas/sdk/go/transport/rest"
 )
 
 // QRDBClient is a re-export of the go-qrdb SDK Client so consumers do not
@@ -788,10 +789,15 @@ func (c *client) DataStore() (QRDBKVStore, error) {
 	return qrdb.KVStore(), nil
 }
 
-// qrdbEmbedding returns go-qrdb's embedding service client from the qrdb
-// sub-client. It errors when the qrdb client cannot be built, or when the
-// active qrdb transport has no embedding surface.
+// qrdbEmbedding returns go-qrdb's embedding service client. Over REST the
+// quicbaas transport carries the call, so the platform bearer is sent; on the
+// other transports it comes from the qrdb sub-client. It errors when the qrdb
+// client cannot be built, or when the active qrdb transport has no embedding
+// surface.
 func (c *client) qrdbEmbedding() (QRDBEmbeddingClient, error) {
+	if rt, ok := c.transport.(*rest.Transport); ok && (c.opts == nil || (c.opts.embeddedQRDB == nil && c.opts.transportType == TransportREST)) {
+		return rt.QRDBEmbedding(), nil
+	}
 	qrdb, err := c.qrdbClient()
 	if err != nil {
 		return nil, err

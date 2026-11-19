@@ -13,6 +13,8 @@ import (
 	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/jeremyhahn/go-quicbaas/sdk/go/transport/rest"
 )
 
 // The re-exported embedding types are go-qrdb's own types: a value of each
@@ -53,6 +55,10 @@ func TestQRDBEmbedding_ReturnsGoQRDBClient(t *testing.T) {
 			require.NoError(t, err)
 			require.NotNil(t, ec)
 
+			if tc.transport == TransportREST {
+				assert.IsType(t, &rest.QRDBEmbeddingClient{}, ec, "over REST the quicbaas transport carries the call, so the bearer is sent")
+				return
+			}
 			qc, err := c.(*client).qrdbClient()
 			require.NoError(t, err)
 			assert.IsType(t, qc.Embedding(), ec, "the accessor hands back go-qrdb's own embedding client")
@@ -85,6 +91,8 @@ func TestQRDBEmbedding_ParallelServicesAreIndependent(t *testing.T) {
 	assert.False(t, ownIsQRDB, "QuicBaaS's own embedding client must not be go-qrdb's")
 
 	cc := c.(*client)
+	// An unmapped transport type takes the qrdb sub-client path, as on gRPC.
+	cc.opts.transportType = TransportType(999)
 	cc.qrdb.once.Do(func() {})
 	cc.qrdb.err = assert.AnError
 
@@ -99,6 +107,8 @@ func TestQRDBEmbedding_PropagatesQRDBClientError(t *testing.T) {
 	require.NoError(t, err)
 
 	cc := c.(*client)
+	// An unmapped transport type takes the qrdb sub-client path, as on gRPC.
+	cc.opts.transportType = TransportType(999)
 	cc.qrdb.once.Do(func() {})
 	cc.qrdb.err = assert.AnError
 
@@ -117,6 +127,8 @@ func TestQRDBEmbedding_TransportWithoutEmbedding(t *testing.T) {
 	require.NoError(t, err)
 
 	cc := c.(*client)
+	// An unmapped transport type takes the qrdb sub-client path, as on gRPC.
+	cc.opts.transportType = TransportType(999)
 	cc.qrdb.once.Do(func() {})
 	cc.qrdb.client = qc
 
