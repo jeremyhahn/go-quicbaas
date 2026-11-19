@@ -258,6 +258,30 @@ type QRDBTenantBarrierUnsealShareRequest = qrdbtransport.TenantBarrierUnsealShar
 // QRDBTenantBarrierUnsealProgress is a re-export of the qrdb TenantBarrierUnsealProgress type.
 type QRDBTenantBarrierUnsealProgress = qrdbtransport.TenantBarrierUnsealProgress
 
+// The rest of the go-qrdb TenantClient surface (#1656): the request and
+// response types of every TenantClient method, re-exported so an sdk/go
+// caller can drive tenants and per-tenant barriers without importing go-qrdb.
+type (
+	QRDBUpdateTenantRequest              = qrdbtransport.UpdateTenantRequest
+	QRDBUpdateTenantResponse             = qrdbtransport.UpdateTenantResponse
+	QRDBUpdateTenantQuotasRequest        = qrdbtransport.UpdateTenantQuotasRequest
+	QRDBUpdateTenantQuotasResponse       = qrdbtransport.UpdateTenantQuotasResponse
+	QRDBUpdateTenantEntitlementsRequest  = qrdbtransport.UpdateTenantEntitlementsRequest
+	QRDBUpdateTenantEntitlementsResponse = qrdbtransport.UpdateTenantEntitlementsResponse
+	QRDBTenantQuotas                     = qrdbtransport.TenantQuotas
+	QRDBTenantEntitlements               = qrdbtransport.TenantEntitlements
+	QRDBListDeletedTenantsRequest        = qrdbtransport.ListDeletedTenantsRequest
+	QRDBListDeletedTenantsResponse       = qrdbtransport.ListDeletedTenantsResponse
+	QRDBDeletedTenant                    = qrdbtransport.DeletedTenant
+	QRDBReconcileDeletedTenantsResponse  = qrdbtransport.ReconcileDeletedTenantsResponse
+	QRDBTenantOfficerRegisterRequest     = qrdbtransport.TenantOfficerRegisterRequest
+	QRDBTenantOfficerClaimStatusRequest  = qrdbtransport.TenantOfficerClaimStatusRequest
+	QRDBTenantShareClaimBeginRequest     = qrdbtransport.TenantShareClaimBeginRequest
+	QRDBTenantShareClaimCompleteRequest  = qrdbtransport.TenantShareClaimCompleteRequest
+	QRDBTenantShamirSealVoteRequest      = qrdbtransport.TenantShamirSealVoteRequest
+	QRDBTenantDatabaseAccessDeniedError  = qrdbtransport.TenantDatabaseAccessDeniedError
+)
+
 // =============================================================================
 // QRDB Barrier Request/Response Re-exports
 // =============================================================================

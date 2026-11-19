@@ -9,6 +9,6 @@
 # Sources: registry.npmjs.org/@anthropic-ai/claude-code/latest,
 # registry.npmjs.org/@openai/codex/latest, registry.npmjs.org/@google/gemini-cli
 # (gemini is held at 0.64.0: it is not a used lane and is not currency-checked).
-CLAUDE_CODE_VERSION=2.1.322
+CLAUDE_CODE_VERSION=2.1.327
 CODEX_VERSION=0.167.0
 GEMINI_CLI_VERSION=0.64.0
