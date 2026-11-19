@@ -127,6 +127,9 @@ func New(cfg *transport.Config, opts ...Option) (*Transport, error) {
 		// header. Wrap its transport on a shallow copy, keeping its
 		// Timeout, Jar and CheckRedirect and never mutating the caller's
 		// client. Requests without a bound PIN pass through unchanged.
+		// The secret-hop guard goes beneath it here too, so a QUIC
+		// client's secret-carrying barrier call refuses every redirect
+		// and every non-https hop.
 		c := *t.client
 		base := c.Transport
 		if base == nil {
@@ -136,7 +139,7 @@ func New(cfg *transport.Config, opts ...Option) (*Transport, error) {
 			// before; it keeps doing so through the guard.
 			t.baseTransport = httpTransport
 		}
-		c.Transport = qrdbtransport.SOPINRoundTripper(base, "rest", qrdbtransport.ConfiguredHost(t.baseURL))
+		c.Transport = qrdbtransport.SOPINRoundTripper(secretHopRoundTripper{base: base}, "rest", qrdbtransport.ConfiguredHost(t.baseURL))
 		t.client = &c
 	}
 
@@ -248,9 +251,12 @@ func (t *Transport) buildHTTPClient() (*http.Client, error) {
 	// REST transport does: a PIN-bound request is refused before it is sent
 	// on any hop, redirects included, that is not https or that names a host
 	// other than the configured one. Requests without a bound PIN pass
-	// through unchanged.
+	// through unchanged. Beneath it, secretHopRoundTripper refuses any
+	// redirect hop and any non-https hop of a barrier call that carries a
+	// secret; it sits on every hop either way, and leaves a bound PIN's
+	// refusals to the SO PIN guard's typed errors.
 	return &http.Client{
-		Transport: qrdbtransport.SOPINRoundTripper(httpTransport, "rest", qrdbtransport.ConfiguredHost(t.baseURL)),
+		Transport: qrdbtransport.SOPINRoundTripper(secretHopRoundTripper{base: httpTransport}, "rest", qrdbtransport.ConfiguredHost(t.baseURL)),
 		Timeout:   timeout,
 	}, nil
 }
@@ -260,6 +266,54 @@ func (t *Transport) buildHTTPClient() (*http.Client, error) {
 func (t *Transport) buildBaseURL() {
 	t.baseURL = transport.HTTPBaseURL(t.cfg.Address, t.cfg.TLSConfig != nil)
 	t.basePath = transport.HTTPPath(t.cfg.Address)
+}
+
+// secretHopKey marks a request context as carrying a barrier secret (a
+// passphrase, Shamir share, recovery key or SO PIN in the request, or
+// shares, recovery keys or a root token in the response).
+type secretHopKey struct{}
+
+// withSecretHop marks ctx so secretHopRoundTripper guards every hop of
+// the request made with it. verb names the call in the refusal error.
+func withSecretHop(ctx context.Context, verb string) context.Context {
+	return context.WithValue(ctx, secretHopKey{}, verb)
+}
+
+// secretHopRoundTripper refuses, before anything is sent, any hop of a
+// request whose context withSecretHop marked when the hop is a redirect
+// (net/http sets Request.Response on every hop it follows) or is not
+// https. A secret must reach the configured https origin and nothing
+// else; go-qrdb's SOPINRoundTripper does the same for a bound SO PIN.
+// Unmarked requests pass through untouched.
+type secretHopRoundTripper struct {
+	base http.RoundTripper
+}
+
+// RoundTrip implements http.RoundTripper.
+func (s secretHopRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
+	verb, ok := req.Context().Value(secretHopKey{}).(string)
+	if !ok {
+		return s.base.RoundTrip(req)
+	}
+	if req.Response != nil {
+		closeRequestBody(req)
+		return nil, errors.New(errors.CodeForbidden, "rest."+verb,
+			"refusing to follow a redirect for "+req.URL.Path+": the request carries a barrier secret")
+	}
+	if req.URL.Scheme != "https" {
+		closeRequestBody(req)
+		return nil, errors.New(errors.CodeForbidden, "rest."+verb,
+			"refusing to send "+req.URL.Path+" over "+req.URL.Scheme+": the request carries a barrier secret and needs https")
+	}
+	return s.base.RoundTrip(req)
+}
+
+// closeRequestBody honours the RoundTripper contract that RoundTrip
+// closes the request body, even on error.
+func closeRequestBody(req *http.Request) {
+	if req.Body != nil {
+		_ = req.Body.Close()
+	}
 }
 
 // Request sends a unary request and returns the response.

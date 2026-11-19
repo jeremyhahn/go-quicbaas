@@ -298,9 +298,18 @@ func (s *securityService) SSH() SSHService {
 // default-deny gate refused it with 401 (go-quicbaas#2538). Every other
 // transport, and a client wired WithEmbeddedQRDB (whose qrdb calls always
 // dispatch in-process), keeps the qrdb sub-client.
+//
+// QUIC takes the SDK's REST barrier client too: *quic.Transport embeds
+// *rest.Transport, and go-qrdb's REST sub-client (which QUIC clients' qrdb
+// calls otherwise ride) follows redirects with net/http's default policy,
+// which the SDK cannot reach. A 307/308 to an http:// Location would resend
+// an unseal passphrase in plaintext. The SDK's REST transport refuses every
+// redirect hop and every non-https hop of a secret-carrying barrier call.
 func (s *securityService) Barrier() (QRDBBarrierClient, error) {
-	if rt, ok := s.c.transport.(*rest.Transport); ok && (s.c.opts == nil || s.c.opts.embeddedQRDB == nil) {
-		return rt.Barrier(), nil
+	if s.c.opts == nil || s.c.opts.embeddedQRDB == nil {
+		if bt, ok := s.c.transport.(interface{ Barrier() *rest.BarrierClient }); ok {
+			return bt.Barrier(), nil
+		}
 	}
 	qrdbClient, err := s.c.qrdbClient()
 	if err != nil {

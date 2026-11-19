@@ -28,6 +28,8 @@ import (
 	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/jeremyhahn/go-quicbaas/sdk/go/transport/rest"
 )
 
 // testTLSConfig builds a minimal tls.Config with an empty (but
@@ -204,6 +206,29 @@ func TestQRDBClient_QUIC_ReachesRESTOrigin(t *testing.T) {
 	require.NoError(t, qc.Barrier().BarrierUnseal(ctx, &qrdbtransport.BarrierUnsealRequest{}))
 
 	assert.Equal(t, int32(1), hits.Load(), "the QUIC client's qrdb sub-client must reach the node's REST origin over HTTPS")
+}
+
+// A QUIC client's Security().Barrier() is the SDK's REST barrier client,
+// whose secret-carrying verbs refuse redirects and plaintext hops; go-qrdb's
+// REST sub-client follows redirects with net/http's default policy.
+func TestSecurityBarrier_QUIC_UsesSDKRESTBarrierClient(t *testing.T) {
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	defer srv.Close()
+
+	pool := x509.NewCertPool()
+	pool.AddCert(srv.Certificate())
+	address := strings.TrimPrefix(srv.URL, "https://")
+
+	c, err := NewClient(address, WithQUIC(), WithTLSConfig(&tls.Config{RootCAs: pool, MinVersion: tls.VersionTLS12}), WithTimeout(5*time.Second))
+	require.NoError(t, err)
+	defer func() { _ = c.Close() }()
+
+	b, err := c.Security().Barrier()
+	require.NoError(t, err)
+	assert.IsType(t, &rest.BarrierClient{}, b, "a QUIC client's barrier calls must ride the SDK's REST barrier client")
 }
 
 func TestQRDBSubClientAddress_QUICUsesRESTOrigin(t *testing.T) {
