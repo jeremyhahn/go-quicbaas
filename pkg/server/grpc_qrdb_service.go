@@ -14,6 +14,9 @@
 package server
 
 import (
+	"context"
+	"strings"
+
 	ggrpc "google.golang.org/grpc"
 
 	qrdbgrpc "github.com/jeremyhahn/go-qrdb/pkg/api/grpc"
@@ -184,6 +187,22 @@ func (r *qrdbTimeSeriesRegistry) LockService(string, string) (qrdbservice.LockSe
 // so the guard sits on the gRPC server chain, which the Unix socket shares.
 func (s *Server) qrdbSealSOPINInterceptor() ggrpc.UnaryServerInterceptor {
 	return grpcapi.UnaryBarrierSealSOPINInterceptor(s.pinBackend)
+}
+
+// qrdbServiceMethodPrefix is the full-method prefix of go-qrdb's
+// qrdb.v1.QRDBService, whose time-series handlers resolve their servicer per
+// (tenant, database).
+const qrdbServiceMethodPrefix = "/qrdb.v1.QRDBService/"
+
+// qrdbDatabaseScopeInterceptor applies go-qrdb's own database-scope
+// interceptor to qrdb.v1.QRDBService calls only, so the x-qrdb-database
+// metadata selects the database the handler resolves through the scoped
+// service registry. Calls to any other service pass through unchanged.
+func qrdbDatabaseScopeInterceptor(ctx context.Context, req any, info *ggrpc.UnaryServerInfo, handler ggrpc.UnaryHandler) (any, error) {
+	if strings.HasPrefix(info.FullMethod, qrdbServiceMethodPrefix) {
+		return qrdbgrpc.DatabaseScopeUnaryInterceptor(ctx, req, info, handler)
+	}
+	return handler(ctx, req)
 }
 
 // qrdbCredentialServicer returns the credential management service used by

@@ -4,14 +4,23 @@ package server
 
 import (
 	"context"
+	"net"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
+	qrdbgrpc "github.com/jeremyhahn/go-qrdb/pkg/api/grpc"
+	"github.com/jeremyhahn/go-qrdb/pkg/api/grpc/proto/qrdbv1"
+	"github.com/jeremyhahn/go-qrdb/pkg/database"
 	"github.com/jeremyhahn/go-qrdb/pkg/tenant"
 	"github.com/jeremyhahn/go-qrdb/pkg/timeseries"
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	qrdbnode "github.com/jeremyhahn/go-qrdb/sdk/go/node"
 	"github.com/stretchr/testify/require"
+	ggrpc "google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/metadata"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
@@ -20,6 +29,15 @@ import (
 // memory "default" database and two prefix-isolated tenants, acme and globex,
 // and returns a server holding it.
 func newScopedTimeSeriesTestServer(t *testing.T) *Server {
+	t.Helper()
+	srv := &Server{}
+	srv.setQRDBNode(startScopedTimeSeriesNode(t))
+	return srv
+}
+
+// startScopedTimeSeriesNode starts a real standalone qrdb node with a pebble
+// "default" database and two prefix-isolated tenants, acme and globex.
+func startScopedTimeSeriesNode(t *testing.T) *qrdbnode.Node {
 	t.Helper()
 	ctx := context.Background()
 	cfg := &qrdbsdk.DaemonConfig{}
@@ -36,10 +54,65 @@ func newScopedTimeSeriesTestServer(t *testing.T) *Server {
 		_, err := node.Services().Tenant.CreateTenant(ctx, id, id, tenant.IsolationPrefix)
 		require.NoError(t, err, "create tenant %s", id)
 	}
+	return node
+}
 
-	srv := &Server{}
+// TestQRDBTimeSeriesGRPC_HonoursDatabaseMetadata drives qrdb.v1 TS RPCs
+// through the broker's own unary interceptor chain over a Unix socket and
+// asserts the x-qrdb-database metadata selects the database: a policy set in
+// alpha is visible in alpha and absent from beta.
+func TestQRDBTimeSeriesGRPC_HonoursDatabaseMetadata(t *testing.T) {
+	srv := withTempServer(t)
+	node := startScopedTimeSeriesNode(t)
 	srv.setQRDBNode(node)
-	return srv
+	acmeCtx := tenant.WithTenantID(context.Background(), "acme")
+	for _, name := range []string{"alpha", "beta"} {
+		_, err := node.Services().Database.CreateForTenant(acmeCtx,
+			database.DatabaseConfig{Name: name, Engine: database.EngineTimeSeries, Backend: database.BackendPebble})
+		require.NoError(t, err, "create database %s", name)
+	}
+
+	unary, _, err := srv.grpcServerInterceptors()
+	require.NoError(t, err)
+	stampAcme := func(ctx context.Context, req any, _ *ggrpc.UnaryServerInfo, handler ggrpc.UnaryHandler) (any, error) {
+		return handler(tenantctx.WithTenant(ctx, "acme"), req)
+	}
+	gs := ggrpc.NewServer(ggrpc.ChainUnaryInterceptor(append([]ggrpc.UnaryServerInterceptor{stampAcme}, unary...)...))
+	srv.registerQRDBService(gs)
+
+	dir, err := os.MkdirTemp("", "qbts")
+	require.NoError(t, err)
+	socket := filepath.Join(dir, "s.sock")
+	lis, err := net.Listen("unix", socket)
+	require.NoError(t, err)
+	go func() { _ = gs.Serve(lis) }()
+
+	conn, err := ggrpc.NewClient("unix://"+socket, ggrpc.WithTransportCredentials(insecure.NewCredentials()))
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		_ = conn.Close()
+		gs.Stop()
+		if err := os.RemoveAll(dir); err != nil {
+			t.Errorf("remove socket dir: %v", err)
+		}
+	})
+	client := qrdbv1.NewQRDBServiceClient(conn)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	alpha := metadata.AppendToOutgoingContext(ctx, qrdbgrpc.MetadataDatabase, "alpha")
+	beta := metadata.AppendToOutgoingContext(ctx, qrdbgrpc.MetadataDatabase, "beta")
+
+	_, err = client.TSSetRetention(alpha, &qrdbv1.TSSetRetentionRequest{Metric: "m", DurationNs: int64(time.Hour)})
+	require.NoError(t, err)
+
+	got, err := client.TSGetRetention(alpha, &qrdbv1.TSGetRetentionRequest{Metric: "m"})
+	require.NoError(t, err)
+	require.Equal(t, int64(time.Hour), got.GetDurationNs(), "alpha must see its own policy")
+
+	other, err := client.TSGetRetention(beta, &qrdbv1.TSGetRetentionRequest{Metric: "m"})
+	require.NoError(t, err)
+	require.Equal(t, int64(0), other.GetDurationNs(), "beta must not see alpha's policy")
 }
 
 // TestQRDBTimeSeriesProxy_ScopesPerTenant pins that the proxy behind the
