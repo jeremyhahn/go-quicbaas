@@ -218,7 +218,8 @@ func (p *qrdbTimeSeriesServicerProxy) DeleteSeries(ctx context.Context, req *tim
 
 // GetRetentionPolicy implements timeseries.TimeSeriesServicer. It carries no
 // context, so it always fails closed with qrdbTimeSeriesUnscopedError; the
-// qrdb.v1 TSGetRetention RPC reads the policy through the scoped registry.
+// qrdb.v1 TSGetRetention RPC reads the policy through the scoped registry,
+// and in-process callers use GetRetentionPolicyContext.
 func (p *qrdbTimeSeriesServicerProxy) GetRetentionPolicy(string) (*timeseries.RetentionPolicy, error) {
 	return nil, &qrdbTimeSeriesUnscopedError{Method: "GetRetentionPolicy"}
 }
@@ -234,7 +235,7 @@ func (p *qrdbTimeSeriesServicerProxy) SetRetentionPolicy(ctx context.Context, me
 
 // ListMetrics implements timeseries.TimeSeriesServicer. It carries no
 // context, so it always fails closed with qrdbTimeSeriesUnscopedError; use
-// ListMetricsWithConsistency.
+// ListMetricsWithConsistency or ListMetricsContext.
 func (p *qrdbTimeSeriesServicerProxy) ListMetrics(string, int) ([]string, error) {
 	return nil, &qrdbTimeSeriesUnscopedError{Method: "ListMetrics"}
 }
@@ -246,4 +247,28 @@ func (p *qrdbTimeSeriesServicerProxy) ListMetricsWithConsistency(ctx context.Con
 		return nil, err
 	}
 	return svc.ListMetricsWithConsistency(ctx, prefix, limit, ropts)
+}
+
+// GetRetentionPolicyContext reads a metric's retention policy in the scope
+// resolved from ctx. It is the context-carrying form of GetRetentionPolicy,
+// which the embedded qrdb transport uses so that an in-process caller reads
+// the policy of its own database; a scope failure is returned unchanged.
+func (p *qrdbTimeSeriesServicerProxy) GetRetentionPolicyContext(ctx context.Context, metric string) (*timeseries.RetentionPolicy, error) {
+	svc, err := p.servicer(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return svc.GetRetentionPolicy(metric)
+}
+
+// ListMetricsContext lists metric names in the scope resolved from ctx. It is
+// the context-carrying form of ListMetrics, which the embedded qrdb transport
+// uses so that an in-process caller lists the metrics of its own database; a
+// scope failure is returned unchanged.
+func (p *qrdbTimeSeriesServicerProxy) ListMetricsContext(ctx context.Context, prefix string, limit int) ([]string, error) {
+	svc, err := p.servicer(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return svc.ListMetrics(prefix, limit)
 }

@@ -144,7 +144,9 @@ type SearchService interface {
 	//
 	// Over REST the verbs ride the SDK's own REST transport, so they carry
 	// the platform bearer set by WithAuthToken; every other transport, and a
-	// client wired WithEmbeddedQRDB, keeps the qrdb sub-client.
+	// client wired WithEmbeddedQRDB, keeps the qrdb sub-client. An embedded
+	// client whose time-series servicer implements
+	// QRDBTimeSeriesContextReader reads retention and lists metrics through it.
 	QRDBTimeSeries() (QRDBTimeSeriesClient, error)
 }
 
@@ -564,7 +566,9 @@ func (c *client) Share() (QRDBShareClient, error) {
 // REST sub-client cannot add an Authorization header, so the server's
 // default-deny gate refused it with 401 (go-quicbaas#2500). Every other
 // transport, and a client wired WithEmbeddedQRDB (whose qrdb calls always
-// dispatch in-process), keeps the qrdb sub-client.
+// dispatch in-process), keeps the qrdb sub-client. An embedded client whose
+// time-series servicer implements QRDBTimeSeriesContextReader reads retention
+// and lists metrics through it, in the caller's scope.
 func (c *client) qrdbTimeSeries() (QRDBTimeSeriesClient, error) {
 	if rt, ok := c.transport.(*rest.Transport); ok && (c.opts == nil || c.opts.embeddedQRDB == nil) {
 		return rt.QRDBTimeSeries(), nil
@@ -573,7 +577,13 @@ func (c *client) qrdbTimeSeries() (QRDBTimeSeriesClient, error) {
 	if err != nil {
 		return nil, err
 	}
-	return qrdbClient.TimeSeries(), nil
+	ts := qrdbClient.TimeSeries()
+	if c.opts != nil && c.opts.embeddedQRDB != nil {
+		if scoped, ok := c.opts.embeddedQRDB.TimeSeries.(QRDBTimeSeriesContextReader); ok {
+			return &embeddedQRDBTimeSeries{QRDBTimeSeriesClient: ts, scoped: scoped}, nil
+		}
+	}
+	return ts, nil
 }
 
 // =============================================================================
