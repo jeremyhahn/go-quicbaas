@@ -1144,9 +1144,16 @@ func (s *SchedulerEngine) processDueJobs(ctx context.Context) {
 	// The scan counts only jobs this node can dispatch, so jobs pinned to
 	// another node, or cluster-wide jobs on a follower, cannot fill the
 	// page and starve the ones this node can run.
-	storageCtx = WithDueJobFilter(storageCtx, s.sweepDueFilter(storageCtx))
+	filter, leaderErr := s.sweepDueFilterReporting(storageCtx)
+	storageCtx = WithDueJobFilter(storageCtx, filter)
 
 	jobs, err := s.storage.GetJobsDueForExecution(storageCtx, now, s.config.MaxConcurrentJobs)
+	// The filter refused the cluster-wide jobs a failed lookup left
+	// undecided, so they never reach shouldExecute: report it here, once
+	// per sweep, even when the scan itself also failed.
+	if lerr := leaderErr(); lerr != nil {
+		s.logWarn(sweepLogPrefix+" "+leaderCheckFailedReason+", cluster-wide jobs not dispatched: component=scheduler error=%q", lerr.Error())
+	}
 	if err != nil {
 		s.logError(sweepLogPrefix+" failed: component=scheduler error=%q", err.Error())
 		s.storageErrors.Add(1)
@@ -1296,7 +1303,8 @@ func (s *SchedulerEngine) shouldExecute(job *Job) bool {
 }
 
 // leaderCheckFailedReason prefixes the canDispatch reason for a failed
-// leadership check, which shouldExecute logs as a warning.
+// leadership check, which shouldExecute logs as a warning. The due sweep
+// also logs it, once per sweep, for the jobs its filter refused.
 const leaderCheckFailedReason = "leader check failed"
 
 // canDispatch reports whether this node can dispatch job and, when it
@@ -1335,12 +1343,24 @@ func (s *SchedulerEngine) canDispatchWith(job *Job, isLeader func() (bool, error
 	return true, ""
 }
 
-// sweepDueFilter returns the due scan's filter for one sweep. Leadership does
-// not depend on the job, so the sweep asks the leader checker at most once,
-// on its first cluster-wide candidate, and reuses the answer (a failed lookup
+// sweepDueFilter returns the due scan's filter for one sweep, as
+// sweepDueFilterReporting does, without the lookup error.
+func (s *SchedulerEngine) sweepDueFilter(ctx context.Context) DueJobFilter {
+	filter, _ := s.sweepDueFilterReporting(ctx)
+	return filter
+}
+
+// sweepDueFilterReporting returns the due scan's filter for one sweep and a
+// func that gives the sweep's failed leadership lookup. Leadership does not
+// depend on the job, so the sweep asks the leader checker at most once, on
+// its first cluster-wide candidate, and reuses the answer (a failed lookup
 // included) for every other candidate: the scan never waits on one lookup per
 // rejected job. Once the sweep's context is done the filter admits nothing.
-func (s *SchedulerEngine) sweepDueFilter(ctx context.Context) DueJobFilter {
+// The filter refuses every cluster-wide job when the lookup fails, so those
+// jobs never reach shouldExecute: the sweep reports the error, which the
+// second func returns (nil when the sweep never asked or the lookup
+// succeeded). Read it only after the scan that calls the filter has returned.
+func (s *SchedulerEngine) sweepDueFilterReporting(ctx context.Context) (DueJobFilter, func() error) {
 	var (
 		asked    bool
 		leads    bool
@@ -1353,13 +1373,14 @@ func (s *SchedulerEngine) sweepDueFilter(ctx context.Context) DueJobFilter {
 		}
 		return leads, leadsErr
 	}
-	return func(j *Job) bool {
+	filter := func(j *Job) bool {
 		if ctx.Err() != nil {
 			return false
 		}
 		ok, _ := s.canDispatchWith(j, once)
 		return ok
 	}
+	return filter, func() error { return leadsErr }
 }
 
 // triggerRequest is one queued manual trigger: the job, the scope it was
