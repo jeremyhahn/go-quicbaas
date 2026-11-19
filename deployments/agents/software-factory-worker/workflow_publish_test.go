@@ -138,10 +138,70 @@ func TestWorkflowBuildPublish_Jobs(t *testing.T) {
 	if regexp.MustCompile(`(?m)^\s*issues:`).MatchString(raw) {
 		t.Errorf("%s has an issues: permission key", workflowPath)
 	}
-	for _, ref := range regexp.MustCompile(`secrets\.[A-Za-z0-9_]*`).FindAllString(raw, -1) {
+	for _, ref := range workflowSecretRefs(raw) {
 		if ref != "secrets.GITHUB_TOKEN" {
 			t.Errorf("%s references %s; only secrets.GITHUB_TOKEN is allowed", workflowPath, ref)
 		}
+	}
+}
+
+// workflowExpr matches a GitHub Actions expression, ${{ ... }}, across lines.
+var workflowExpr = regexp.MustCompile(`(?s)\$\{\{(.*?)\}\}`)
+
+// workflowBareIf matches an if: whose value is a bare expression, which
+// GitHub evaluates without ${{ }}.
+var workflowBareIf = regexp.MustCompile(`(?m)^\s*(?:-\s*)?if:\s*([^$\s].*)$`)
+
+// secretsRef matches a secrets-context reference in an expression,
+// secrets.NAME or secrets[...], but not a property that is named secrets.
+var secretsRef = regexp.MustCompile(`(?:^|[^\w.])(secrets(?:\.[\w-]*|\s*\[))`)
+
+// workflowSecretRefs returns every secrets-context reference in a workflow.
+// Only an expression can read the secrets context, so a shell word in a run:
+// block, such as the layer scan's "$work/secrets.json", is not a reference.
+func workflowSecretRefs(raw string) []string {
+	var exprs []string
+	for _, m := range workflowExpr.FindAllStringSubmatch(raw, -1) {
+		exprs = append(exprs, m[1])
+	}
+	for _, m := range workflowBareIf.FindAllStringSubmatch(raw, -1) {
+		exprs = append(exprs, m[1])
+	}
+	var refs []string
+	for _, e := range exprs {
+		for _, m := range secretsRef.FindAllStringSubmatch(e, -1) {
+			refs = append(refs, strings.Join(strings.Fields(m[1]), ""))
+		}
+	}
+	return refs
+}
+
+// A secrets-context reference counts only inside an expression: a real
+// ${{ secrets.FOO }} is found, and a file named secrets.json in a run: block
+// is not.
+func TestWorkflowSecretRefs(t *testing.T) {
+	cases := []struct {
+		name string
+		raw  string
+		want []string
+	}{
+		{name: "github token", raw: "GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}\n", want: []string{"secrets.GITHUB_TOKEN"}},
+		{name: "another secret", raw: "TOKEN: ${{ secrets.FOO }}\n", want: []string{"secrets.FOO"}},
+		{name: "index form", raw: "TOKEN: ${{ secrets['FOO'] }}\n", want: []string{"secrets["}},
+		{name: "inside a function call", raw: "X: ${{ format('{0}', secrets.FOO) }}\n", want: []string{"secrets.FOO"}},
+		{name: "expression over two lines", raw: "X: ${{\n  secrets.FOO }}\n", want: []string{"secrets.FOO"}},
+		{name: "bare if", raw: "    if: secrets.FOO != ''\n", want: []string{"secrets.FOO"}},
+		{name: "report file in a run block", raw: "run: |\n  trivy fs --output \"$work/secrets.json\" \"$work/layers\"\n", want: nil},
+		{name: "property named secrets", raw: "X: ${{ inputs.secrets.FOO }}\n", want: nil},
+		{name: "word in a step name", raw: "- name: Scan the image for secrets\n", want: nil},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := workflowSecretRefs(tc.raw)
+			if strings.Join(got, ",") != strings.Join(tc.want, ",") {
+				t.Errorf("workflowSecretRefs(%q) = %q, want %q", tc.raw, got, tc.want)
+			}
+		})
 	}
 }
 
