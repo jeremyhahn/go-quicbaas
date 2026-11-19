@@ -31,6 +31,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+
 	clitoken "github.com/jeremyhahn/go-quicbaas/pkg/cli"
 	qberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/test/integration/helpers"
@@ -433,11 +435,13 @@ func TestCLISessionList(t *testing.T) {
 	tenantID := setupIAMCLITestTenant(t)
 	defer cleanupIAMCLITestTenant(t, tenantID)
 
-	cli := newIAMCLITestContext(t, proto.name, proto.address, tenantID)
+	// The session verbs are self-service: the caller (the system
+	// administrator) acts in its own tenant, the system tenant.
+	cli := newIAMCLITestContext(t, proto.name, proto.address, qrdbsdk.SystemTenantID)
 
 	t.Run("list-sessions", func(t *testing.T) {
 		// Use --user flag to avoid needing a token file
-		output, err := cli.run("iam", "session", "list", "--tenant", tenantID, "--user", "test-user")
+		output, err := cli.run("iam", "session", "list", "--tenant", qrdbsdk.SystemTenantID, "--user", "test-user")
 		require.NoError(t, err, "session list should succeed")
 
 		// Verify JSON output structure
@@ -453,17 +457,25 @@ func TestCLISessionList(t *testing.T) {
 
 	t.Run("list-sessions-with-limit", func(t *testing.T) {
 		// Use --user flag to avoid needing a token file
-		output, err := cli.run("iam", "session", "list", "--tenant", tenantID, "--user", "test-user", "--limit", "5")
+		output, err := cli.run("iam", "session", "list", "--tenant", qrdbsdk.SystemTenantID, "--user", "test-user", "--limit", "5")
 		require.NoError(t, err, "session list with limit should succeed")
 		assert.NotEmpty(t, output)
+	})
+
+	t.Run("cross-tenant-refused", func(t *testing.T) {
+		// A system caller may not list another tenant's sessions
+		// (tenantctx.Target, go-quicbaas#1150).
+		output, err := cli.runExpectError("iam", "session", "list", "--tenant", tenantID, "--user", "test-user")
+		require.Error(t, err, "session list for another tenant must fail")
+		assert.Contains(t, output+err.Error(), "FORBIDDEN", "cross-tenant session list must be refused as forbidden")
 	})
 }
 
 // TestCLISessionGet tests the session get command.
 func TestCLISessionGet(t *testing.T) {
 	proto := getGRPCProtocolConfig()
-	tenantID := setupIAMCLITestTenant(t)
-	defer cleanupIAMCLITestTenant(t, tenantID)
+	// The session verbs are self-service: the caller acts in its own tenant.
+	tenantID := qrdbsdk.SystemTenantID
 
 	cli := newIAMCLITestContext(t, proto.name, proto.address, tenantID)
 
@@ -504,8 +516,8 @@ func TestCLISessionGet(t *testing.T) {
 // TestCLISessionRevoke tests the session revoke command.
 func TestCLISessionRevoke(t *testing.T) {
 	proto := getGRPCProtocolConfig()
-	tenantID := setupIAMCLITestTenant(t)
-	defer cleanupIAMCLITestTenant(t, tenantID)
+	// The session verbs are self-service: the caller acts in its own tenant.
+	tenantID := qrdbsdk.SystemTenantID
 
 	cli := newIAMCLITestContext(t, proto.name, proto.address, tenantID)
 
@@ -527,8 +539,8 @@ func TestCLISessionRevoke(t *testing.T) {
 // TestCLISessionRevokeAll tests the session revoke-all command.
 func TestCLISessionRevokeAll(t *testing.T) {
 	proto := getGRPCProtocolConfig()
-	tenantID := setupIAMCLITestTenant(t)
-	defer cleanupIAMCLITestTenant(t, tenantID)
+	// The session verbs are self-service: the caller acts in its own tenant.
+	tenantID := qrdbsdk.SystemTenantID
 
 	cli := newIAMCLITestContext(t, proto.name, proto.address, tenantID)
 
@@ -542,8 +554,8 @@ func TestCLISessionRevokeAll(t *testing.T) {
 // TestCLISessionRevokeAllKeepCurrent tests the session revoke-all with keep-current flag.
 func TestCLISessionRevokeAllKeepCurrent(t *testing.T) {
 	proto := getGRPCProtocolConfig()
-	tenantID := setupIAMCLITestTenant(t)
-	defer cleanupIAMCLITestTenant(t, tenantID)
+	// The session verbs are self-service: the caller acts in its own tenant.
+	tenantID := qrdbsdk.SystemTenantID
 
 	cli := newIAMCLITestContext(t, proto.name, proto.address, tenantID)
 
@@ -851,12 +863,12 @@ func TestCLISessionErrors(t *testing.T) {
 	cli := newIAMCLITestContext(t, proto.name, proto.address, "")
 
 	t.Run("get-nonexistent-session", func(t *testing.T) {
-		_, err := cli.runExpectError("iam", "session", "get", "nonexistent-session-12345", "--tenant", "test-tenant")
+		_, err := cli.runExpectError("iam", "session", "get", "nonexistent-session-12345", "--tenant", qrdbsdk.SystemTenantID)
 		assert.Error(t, err, "get should fail for nonexistent session")
 	})
 
 	t.Run("revoke-nonexistent-session", func(t *testing.T) {
-		_, err := cli.runExpectError("iam", "session", "revoke", "nonexistent-session-12345", "--tenant", "test-tenant", "--yes")
+		_, err := cli.runExpectError("iam", "session", "revoke", "nonexistent-session-12345", "--tenant", qrdbsdk.SystemTenantID, "--yes")
 		// May or may not fail depending on implementation
 		t.Logf("Revoke nonexistent session result: %v", err)
 	})
