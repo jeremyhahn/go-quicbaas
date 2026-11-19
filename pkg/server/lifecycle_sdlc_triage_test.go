@@ -73,7 +73,7 @@ func triageWiringConfig(t *testing.T) sdlc.TriageRunnerConfig {
 		Tokens:      unusedTriageTokens{},
 		Signing:     unusedTriageSigning{},
 		Guard:       guard,
-		SocketsRoot: t.TempDir(),
+		SocketsRoot: shortSocketDir(t),
 	}
 }
 
