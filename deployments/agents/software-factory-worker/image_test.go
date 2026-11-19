@@ -314,6 +314,51 @@ func TestDockerfile_OnlyClaudeCodeRunsAnInstallScript(t *testing.T) {
 	}
 }
 
+// The image is immutable and runs Claude Code as `agent`, which cannot write
+// the root-owned npm prefix, so the self-updater can only fail (#2548). The
+// final stage must turn it off; Claude Code moves only with versions.lock.
+func TestDockerfile_FinalStageDisablesTheClaudeCodeAutoupdater(t *testing.T) {
+	lines := strings.Split(string(Dockerfile), "\n")
+	last := -1
+	for i, line := range lines {
+		if strings.HasPrefix(strings.TrimSpace(line), "FROM ") {
+			last = i
+		}
+	}
+	if last < 0 {
+		t.Fatal("the Dockerfile has no FROM instruction")
+	}
+	found := false
+	inEnv := false
+	for _, line := range lines[last+1:] {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "#") {
+			continue
+		}
+		if strings.HasPrefix(trimmed, "ENV ") {
+			inEnv = true
+		}
+		if inEnv {
+			for _, field := range strings.Fields(strings.TrimSuffix(trimmed, `\`)) {
+				if field == "DISABLE_AUTOUPDATER=1" {
+					found = true
+				}
+			}
+		}
+		inEnv = inEnv && strings.HasSuffix(trimmed, `\`)
+	}
+	if !found {
+		t.Error("the final stage has no ENV DISABLE_AUTOUPDATER=1: Claude Code's self-updater cannot write the root-owned npm prefix")
+	}
+}
+
+func TestProbes_ToolchainProbeAssertsTheAutoupdaterIsDisabled(t *testing.T) {
+	want := `[ "${DISABLE_AUTOUPDATER:-}" = 1 ]`
+	if !strings.Contains(toolchainProbe, want) {
+		t.Errorf("the toolchain probe does not check %s", want)
+	}
+}
+
 func TestToolchainPins_AreTheRepositorysPins(t *testing.T) {
 	pins, err := ToolchainPins()
 	if err != nil {
