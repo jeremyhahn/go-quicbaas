@@ -15,6 +15,8 @@ package server
 
 import (
 	"context"
+	"crypto"
+	"errors"
 	"strings"
 	"sync"
 
@@ -187,8 +189,9 @@ func (s *Server) platformOIDCProviderGetter(_ context.Context) (grpcOIDCProvider
 // buildPlatformValidator constructs a platform-token Validator for the qrdb
 // authenticator and the REST module fallback compatibility path. It wires the
 // IN-PROCESS IAM OIDC provider as both the live key source
-// (GetJWKS, covering key rotation and newly added tenant keys without an HTTP
-// fetch) and the liveness backend (TokenLiveness -> revocation + subject
+// (PublicKeyForKID on every lookup, covering key rotation, newly added tenant
+// keys and the end of an adopted key's trust without an HTTP fetch) and the
+// liveness backend (TokenLiveness -> revocation + subject
 // disablement).
 //
 // The builder is transport-agnostic (no rest/grpc tag): qrdb's central
@@ -240,7 +243,7 @@ func (s *Server) buildPlatformValidator(ctx context.Context) (*platformtoken.Val
 	validator, err := platformtoken.NewValidator(platformtoken.Options{
 		Issuer:           issuer,
 		Audience:         issuer,
-		KeySetFunc:       provider.GetJWKS,
+		KeyFunc:          platformKeyFunc(provider),
 		LivenessChecker:  liveness.NewChecker(provider),
 		ModeResolver:     newTenantModeResolver(provider, deploymentDefault),
 		LivenessCacheTTL: cacheTTL,
@@ -252,6 +255,21 @@ func (s *Server) buildPlatformValidator(ctx context.Context) (*platformtoken.Val
 		return nil, &GRPCAuthzError{Op: "construct platform validator", Cause: err}
 	}
 	return validator, nil
+}
+
+// platformKeyFunc resolves the bearer path's verification keys through the
+// provider on every lookup, so the provider's trust decisions (an adopted
+// legacy key's cutoff) hold there too; the provider's unknown kid becomes the
+// validator's.
+func platformKeyFunc(provider *iam.OIDCProvider) platformtoken.KeyFunc {
+	return func(ctx context.Context, kid string) (crypto.PublicKey, error) {
+		pub, err := provider.PublicKeyForKID(ctx, kid)
+		var unknown *iam.UnknownKeyIDError
+		if errors.As(err, &unknown) {
+			return nil, &platformtoken.UnknownKeyIDError{KID: kid}
+		}
+		return pub, err
+	}
 }
 
 // tenantAuthzModeResolver is the narrow accessor the per-tenant mode resolver
