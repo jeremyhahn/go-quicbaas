@@ -141,6 +141,10 @@ type SearchService interface {
 	// go-qrdb node, over the transport the client was built with. The
 	// go-qrdb client is built lazily on first use; its build error is
 	// returned here.
+	//
+	// Over REST the verbs ride the SDK's own REST transport, so they carry
+	// the platform bearer set by WithAuthToken; every other transport, and a
+	// client wired WithEmbeddedQRDB, keeps the qrdb sub-client.
 	QRDBTimeSeries() (QRDBTimeSeriesClient, error)
 }
 
@@ -554,7 +558,17 @@ func (c *client) Share() (QRDBShareClient, error) {
 
 // qrdbTimeSeries returns go-qrdb's TimeSeriesClient from the lazily built
 // go-qrdb client. Search().QRDBTimeSeries() is its public entry point.
+//
+// Over REST the time-series verbs ride the SDK's own REST transport, which
+// sends the platform bearer set by WithAuthToken on every request; go-qrdb's
+// REST sub-client cannot add an Authorization header, so the server's
+// default-deny gate refused it with 401 (go-quicbaas#2500). Every other
+// transport, and a client wired WithEmbeddedQRDB (whose qrdb calls always
+// dispatch in-process), keeps the qrdb sub-client.
 func (c *client) qrdbTimeSeries() (QRDBTimeSeriesClient, error) {
+	if rt, ok := c.transport.(*rest.Transport); ok && (c.opts == nil || c.opts.embeddedQRDB == nil) {
+		return rt.QRDBTimeSeries(), nil
+	}
 	qrdbClient, err := c.qrdbClient()
 	if err != nil {
 		return nil, err
