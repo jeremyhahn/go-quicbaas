@@ -19,6 +19,7 @@ import (
 	"bytes"
 	"context"
 	stderrors "errors"
+	"strconv"
 	"time"
 
 	types "github.com/jeremyhahn/go-xkms/sdk/go"
@@ -100,6 +101,18 @@ func scopeKeyID(ctx context.Context, keyID string) (string, error) {
 
 // keyOperationError wraps a failed key operation. A key absent from the
 // caller's tenant surfaces as not-found, mirroring the KMS verbs.
+// KeyVersionDisabledError reports a decrypt refused because the
+// ciphertext's key version is disabled.
+type KeyVersionDisabledError struct {
+	KeyID   string
+	Version uint64
+}
+
+// Error implements the error interface.
+func (e *KeyVersionDisabledError) Error() string {
+	return "key " + e.KeyID + " version " + strconv.FormatUint(e.Version, 10) + " is disabled"
+}
+
 func keyOperationError(code errors.ErrorCode, op, operation string, err error) error {
 	if stderrors.Is(err, kms.ErrKeyNotFound) {
 		code = errors.ErrNotFound
@@ -337,6 +350,10 @@ func (t *cryptoService) Decrypt(ctx context.Context, req *DecryptRequest) (*Decr
 	if err := t.checkKeyAuthz(ctx, scopedKeyID, "decrypt"); err != nil {
 		t.metrics.decryptOperationsTotal.With(req.KeyID, "authz_denied").Inc()
 		t.metrics.errorsByType.With("authz_error").Inc()
+		return nil, err
+	}
+
+	if err := t.refuseDisabledVersions(ctx, "crypto.Decrypt", req.KeyID, scopedKeyID, req.Ciphertext); err != nil {
 		return nil, err
 	}
 
@@ -597,6 +614,15 @@ func (t *cryptoService) DecryptBatch(ctx context.Context, req *DecryptBatchReque
 		return nil, err
 	}
 
+	// Any item sealed under a disabled version refuses the whole batch.
+	itemCiphertexts := make([][]byte, len(req.Items))
+	for i, item := range req.Items {
+		itemCiphertexts[i] = item.Ciphertext
+	}
+	if err := t.refuseDisabledVersions(ctx, "crypto.DecryptBatch", req.KeyID, scopedKeyID, itemCiphertexts...); err != nil {
+		return nil, err
+	}
+
 	// Track key usage for batch operation (if tracker configured)
 	if t.safetyTracker != nil {
 		// Calculate total bytes in the batch
@@ -659,6 +685,37 @@ func (t *cryptoService) DecryptBatch(ctx context.Context, req *DecryptBatchReque
 	}
 
 	return resp, nil
+}
+
+// refuseDisabledVersions returns a precondition error when any ciphertext was
+// sealed under a key version the KMS service has disabled. A ciphertext the
+// backend cannot parse is skipped: the backend refuses it anyway.
+func (t *cryptoService) refuseDisabledVersions(ctx context.Context, op, keyID, scopedKeyID string, ciphertexts ...[]byte) error {
+	if t.kmsSvc == nil {
+		return nil
+	}
+	seen := make(map[uint64]struct{})
+	for _, ciphertext := range ciphertexts {
+		version, ok := kms.CiphertextKeyVersion(ciphertext)
+		if !ok {
+			continue
+		}
+		v := conv.ClampIntToUint64(version)
+		if _, done := seen[v]; done {
+			continue
+		}
+		seen[v] = struct{}{}
+		if status, _ := t.kmsSvc.getVersionStatus(ctx, scopedKeyID, v); status == KeyStatusDisabled {
+			t.metrics.decryptOperationsTotal.With(keyID, "version_disabled").Inc()
+			t.metrics.errorsByType.With("version_disabled_error").Inc()
+			return &errors.QBError{
+				Code: errors.ErrPreconditionFailed,
+				Op:   op,
+				Err:  &KeyVersionDisabledError{KeyID: keyID, Version: v},
+			}
+		}
+	}
+	return nil
 }
 
 // =============================================================================

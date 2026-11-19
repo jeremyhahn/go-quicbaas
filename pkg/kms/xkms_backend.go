@@ -792,16 +792,7 @@ func (kb *XKMSBackend) Decrypt(ctx context.Context, keyID string, ciphertext, aa
 	}
 
 	// Read key version from encrypted data metadata
-	// If not present (legacy data), assume version 1
-	version := 1
-	if encrypted.Metadata != nil {
-		if versionBytes, ok := encrypted.Metadata[keyVersionMetadataKey]; ok {
-			if _, err := fmt.Sscanf(string(versionBytes), "%d", &version); err != nil {
-				// If we can't parse the version, fall back to version 1
-				version = 1
-			}
-		}
-	}
+	version := encryptedKeyVersion(encrypted)
 
 	// Determine which key to use based on version
 	// Version 1 uses the base key (backward compatible)
@@ -1174,6 +1165,30 @@ func (kb *XKMSBackend) deserializeEncryptedData(data []byte) (*kctypes.Encrypted
 		return nil, err
 	}
 	return &encrypted, nil
+}
+
+// encryptedKeyVersion reads the key version from the ciphertext's metadata.
+// If not present (legacy data) or unparsable, it assumes version 1.
+func encryptedKeyVersion(encrypted *kctypes.EncryptedData) int {
+	version := 1
+	if encrypted.Metadata != nil {
+		if versionBytes, ok := encrypted.Metadata[keyVersionMetadataKey]; ok {
+			if _, err := fmt.Sscanf(string(versionBytes), "%d", &version); err != nil {
+				// If we can't parse the version, fall back to version 1
+				version = 1
+			}
+		}
+	}
+	return version
+}
+
+// CiphertextKeyVersion returns the key version an XKMSBackend ciphertext was sealed under, the version Decrypt uses. ok is false when ciphertext is not an XKMSBackend blob.
+func CiphertextKeyVersion(ciphertext []byte) (version int, ok bool) {
+	var encrypted kctypes.EncryptedData
+	if err := json.Unmarshal(ciphertext, &encrypted); err != nil {
+		return 0, false
+	}
+	return encryptedKeyVersion(&encrypted), true
 }
 
 // Ensure XKMSBackend implements Backend.
