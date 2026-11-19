@@ -12,7 +12,7 @@ The QuicBaaS IAM module includes comprehensive audit logging capabilities to tra
 - **Event Types**: Authentication, authorization, user/role/policy management, MFA, sessions, tenants, applications
 - **Categories**: Authentication, authorization, administration, security
 - **Outcomes**: Success, failure, denied
-- **Storage**: go-qrdb's audit sink (docs/SPEC.md: "the audit sink is go-qrdb's") — an append-only, hash-chained, tamper-evident chain; no API or administrator deletes an event, and the file sink prunes rotated archives older than 90 days at startup
+- **Storage**: go-qrdb's audit sink (docs/SPEC.md: "the audit sink is go-qrdb's") — an append-only, hash-chained, tamper-evident chain; no event is ever erased
 - **Async Logging**: Non-blocking logging for hot paths
 - **Query Capabilities**: Multi-criteria filtering, time ranges, pagination
 - **Tenant Isolation**: All events are tenant-scoped
@@ -110,13 +110,9 @@ for _, event := range events {
 The audit chain is append-only. The node's logger delegates to go-qrdb's
 chain (`pkg/server/node_audit_logger.go`), and its `DeleteOlderThan` is a
 no-op that returns 0: "the chain is append-only and tamper-evident by
-design". No API call or administrator deletes an individual event.
-
-The node's sink is go-qrdb's chain file logger, opened with its defaults
-(`qrdbsdk.NewAuditFileLogger(path)` in `pkg/server/qrdb_node.go`). That
-logger keeps rotated archive files for 90 days and deletes older archives
-when it opens at startup. Operators who need longer retention export events
-to a SIEM, or archive the rotated files before they age out.
+design". No API call or administrator erases an event. The node's file
+sink does prune rotated files older than its retention period (90 days by
+default) at startup; see Compliance below for archiving.
 
 ```go
 // Always (0, nil): nothing is deleted.
@@ -276,9 +272,8 @@ tenant.Settings.AuditPolicy = &iam.AuditPolicy{
 }
 ```
 
-`retention_days` is policy metadata only: the node's file logger does not
-apply it. The sink's own rotated-archive pruning (90 days) is described under
-[Retention: Append-Only](#retention-append-only).
+`retention_days` is policy metadata only: the chain is append-only, and no
+event is erased when it ages past the setting.
 
 ## Event Types
 
@@ -420,7 +415,14 @@ When limit is reached, oldest events are automatically evicted (FIFO).
 
 ### Compliance
 
-- The sink keeps rotated archives for 90 days; export events for longer retention periods
+- The chain is append-only and no API call deletes events: `Delete` is a
+  no-op that is itself audited. The node's audit file sink
+  (`<data_dir>/audit/node-audit.log`) does rotate its files, though, and when
+  the node starts it deletes rotated files older than its retention period,
+  90 days by default. The node passes the sink no retention option
+  (`pkg/server/qrdb_node.go`), so that default applies. A deployment whose
+  retention requirement is longer must archive rotated audit files (or export
+  events) to durable storage before they age out
 - Authentication events help with SOC 2, ISO 27001 compliance
 - Authorization events support principle of least privilege auditing
 - Administrative actions provide audit trail for governance
@@ -430,18 +432,20 @@ When limit is reached, oldest events are automatically evicted (FIFO).
 
 - Consider encrypting audit events at rest
 - The chain is append-only and hash-chained, so tampering is evident
-- Export to a SIEM for analysis; rotated archives older than 90 days are pruned at startup
+- Export to a SIEM for analysis, and archive rotated audit files to durable
+  storage for long-term retention: the sink deletes rotated files past its
+  retention period (90 days by default) at node startup
 
 ## Best Practices
 
 1. **Log Consistently**: Use helper methods for consistent event structure
 2. **Include Context**: Add relevant details to the Details field
 3. **Use Async for Hot Paths**: Avoid blocking critical paths
-4. **Plan for Growth**: Size storage for 90 days of rotated archives
+4. **Plan for Growth**: Size storage for every event within the sink's retention period (90 days by default)
 5. **Monitor Storage**: Alert on storage growth or dropped events
-6. **No Cleanup Jobs**: No individual event is deleted and there are no cleanup jobs to schedule; the sink prunes its own rotated archives
+6. **No Cleanup Jobs**: No API erases audit events, and the sink prunes its own rotated files; do not schedule another cleanup
 7. **Secure Access**: Restrict audit log access to administrators
-8. **Export for Analysis**: Integrate with SIEM for security monitoring
+8. **Archive and Export**: Archive rotated audit files to durable storage when your retention requirement is longer than the sink's retention, and integrate with a SIEM for security monitoring
 9. **Protect Delete Access**: Only grant `audit:delete` to trusted super admins
 10. **Audit the Auditors**: Monitor who accesses audit logs and who attempts deletes
 

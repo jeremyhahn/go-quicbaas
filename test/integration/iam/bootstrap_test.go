@@ -30,6 +30,8 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/hex"
+	"encoding/json"
 	"encoding/pem"
 	"fmt"
 	"io"
@@ -51,17 +53,19 @@ import (
 )
 
 // ---------------------------------------------------------------------------
-// TestBootstrap_FirstBoot_PrintsAdminBanner
+// TestBootstrap_FirstBoot_PrintsAdminCertBanner
 //
 // Boots a real in-process daemon with AllowPasswordAuth=false and
-// InsecureDevMode=false (the production defaults). Asserts that:
-//   1. go-qrdb's mTLS first-boot admin banner is emitted to stderr, naming
-//      the admin certificate (admin/admin.crt).
-//   2. No invite activation URL is printed: first boot creates the platform
-//      admin with an mTLS certificate, not an invite.
+// InsecureDevMode=false (the production defaults). First boot creates the
+// platform admin with an mTLS certificate (docs/bootstrap/engineering.md:
+// "there are no invite tokens and no activation URL for the platform admin"),
+// so the stderr banner must:
+//   1. Be headed FIRST-BOOT COMPLETE.
+//   2. Name the admin certificate written to <data-dir>/admin/admin.crt.
+//   3. Carry no invite/activation URL and no PEM key or certificate material.
 // ---------------------------------------------------------------------------
 
-func TestBootstrap_FirstBoot_PrintsAdminBanner(t *testing.T) {
+func TestBootstrap_FirstBoot_PrintsAdminCertBanner(t *testing.T) {
 	tmpDir := t.TempDir()
 
 	cfg := minimalBootstrapConfig(tmpDir)
@@ -91,14 +95,25 @@ func TestBootstrap_FirstBoot_PrintsAdminBanner(t *testing.T) {
 	_, _ = io.Copy(&stderrBuf, rdr)
 	stderrOutput := stderrBuf.String()
 
+	adminCertPath := filepath.Join(cfg.Storage.DataDir, "admin", "admin.crt")
 	assert.Contains(t, stderrOutput, "FIRST-BOOT COMPLETE: platform admin created.",
-		"first-boot admin banner must appear on stderr on first boot")
-	assert.Contains(t, stderrOutput, "admin.crt",
-		"banner must name the admin mTLS certificate path")
-	assert.NotContains(t, stderrOutput, "#/activate?token=",
-		"banner must NOT use the dead #/activate?token= route the SPA router does not map")
-	assert.Contains(t, stderrOutput, "This banner appears only on first boot.",
-		"banner must warn it appears only on first boot")
+		"first-boot banner must appear on stderr on first boot")
+	assert.Contains(t, stderrOutput, "Admin mTLS certificate:",
+		"banner must announce the issued admin certificate")
+	assert.Contains(t, stderrOutput, adminCertPath,
+		"banner must name the admin certificate written under the data dir")
+	assert.FileExists(t, adminCertPath, "the certificate the banner names must exist")
+
+	// The banner names file paths only: no invite route, no token, and no
+	// PEM-encoded key or certificate material.
+	assert.NotContains(t, stderrOutput, "/invite/",
+		"the platform admin is never given an invite URL")
+	assert.NotContains(t, stderrOutput, "#/activate",
+		"the platform admin is never given an activation URL")
+	assert.NotContains(t, stderrOutput, "token=",
+		"banner must not print a token value")
+	assert.NotContains(t, stderrOutput, "-----BEGIN",
+		"banner must not print key or certificate material")
 }
 
 // ---------------------------------------------------------------------------
@@ -150,8 +165,101 @@ func TestBootstrap_SecondBoot_Silent(t *testing.T) {
 	_, _ = io.Copy(&stderrBuf, rdr)
 	stderrOutput := stderrBuf.String()
 
-	assert.NotContains(t, stderrOutput, "FIRST-BOOT COMPLETE",
+	assert.NotContains(t, stderrOutput, "FIRST-BOOT BOOTSTRAP",
 		"no bootstrap banner should appear on second boot")
+}
+
+// ---------------------------------------------------------------------------
+// TestBootstrap_InviteEndpoint_IsPublic
+//
+// The invite metadata endpoint GET /api/v1/iam/{tenant_id}/invites/{token}
+// is on the default-deny public allowlist (pkg/api/rest/authz_default_deny.go):
+// an invitee has no credentials yet, so activation MUST be reachable without
+// a bearer. Under the default-deny gate any non-public path fails 401/403
+// BEFORE routing, so this test sends an unauthenticated request for a random,
+// unknown token and asserts the invite handler itself answered: its opaque
+// not-found (404, pkg/api/rest/iam_invite.go respondInviteUnusable), and in
+// particular NOT 401 or 403, which would mean an allowlist regression.
+//
+// First boot creates the platform admin with an mTLS certificate and issues
+// no invite, so the token is generated here rather than read from the banner.
+//
+// Unlike the stderr-only tests above, this case needs a real network
+// listener, so it runs with Embedded=false (REST enabled) and discovers the
+// OS-assigned ephemeral port via srv.RESTAddr() rather than reading the
+// configured REST.Port (which stays 0 once the OS picks the real port).
+// ---------------------------------------------------------------------------
+
+func TestBootstrap_InviteEndpoint_IsPublic(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	cfg := minimalBootstrapConfig(tmpDir)
+	cfg.Auth.AllowPasswordAuth = false
+	cfg.Auth.InsecureDevMode = false
+
+	// Start a real REST listener (not the in-process embedded transport) so
+	// the invite endpoint is reachable over HTTP(S). REST.Port stays 0 so
+	// the OS assigns a free ephemeral port, avoiding collisions with siblings.
+	cfg.Server.Embedded = false
+	cfg.Server.REST.Enabled = true
+
+	srv, startErr := startBootstrapServer(t, cfg)
+	require.NoError(t, startErr)
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_ = srv.Shutdown(ctx)
+	})
+
+	// A random token no invite was ever issued for.
+	raw := make([]byte, 32)
+	_, err := rand.Read(raw)
+	require.NoError(t, err)
+	token := hex.EncodeToString(raw)
+
+	// Resolve the REAL bound address. With REST.Port=0 the kernel picks an
+	// ephemeral port; cfg.Server.REST.Port still reads 0, so we must ask the
+	// running listener for its actual address.
+	restAddr := srv.RESTAddr()
+	require.NotNil(t, restAddr, "REST listener must be bound when Embedded=false and REST is enabled")
+
+	// The daemon enables TLS by default (Security.TLSEnabled), so the REST
+	// transport speaks HTTPS. daemonCAHTTPClient pins the daemon's own
+	// auto-issued CA (it is not a cluster node) and verifies its 127.0.0.1 leaf.
+	scheme := "https"
+	if !cfg.Security.TLSEnabled {
+		scheme = "http"
+	}
+	baseURL := fmt.Sprintf("%s://%s", scheme, restAddr.String())
+	inviteURL := baseURL + "/api/v1/iam/" + iam.SystemTenantID + "/invites/" + token
+
+	// No Authorization header: the invitee has no credentials.
+	resp, httpErr := daemonCAHTTPClient(t, srv).Get(inviteURL)
+	require.NoError(t, httpErr)
+	defer resp.Body.Close()
+
+	assert.NotEqual(t, http.StatusUnauthorized, resp.StatusCode,
+		"the public invite endpoint must not demand authentication (allowlist regression)")
+	assert.NotEqual(t, http.StatusForbidden, resp.StatusCode,
+		"the public invite endpoint must not be forbidden (allowlist regression)")
+	assert.Equalf(t, http.StatusNotFound, resp.StatusCode,
+		"an unknown token must reach the invite handler and get its not-found answer")
+
+	// The router also answers 404 for an unmatched route, so the status alone
+	// does not prove the invite handler ran. Its not-found answer is a JSON
+	// IAM error with a fixed code and description; a 404 without this body
+	// means the route never reached the invite handler.
+	const notInviteHandler = "a 404 without the invite handler's JSON not-found body means the route never reached the invite handler"
+	assert.Contains(t, resp.Header.Get("Content-Type"), "application/json", notInviteHandler)
+	var body struct {
+		Error            string `json:"error"`
+		ErrorDescription string `json:"error_description"`
+	}
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&body), notInviteHandler)
+	// "not_found" is rest.ErrNotFound (pkg/api/rest/iam_errors.go), which is
+	// built only under the rest tag and so cannot be imported here.
+	assert.Equal(t, "not_found", body.Error, notInviteHandler)
+	assert.Equal(t, "invite link is not valid", body.ErrorDescription, notInviteHandler)
 }
 
 // ---------------------------------------------------------------------------
@@ -197,7 +305,7 @@ func TestBootstrap_PIVCertPath_BindsAdmin_NoInviteBanner(t *testing.T) {
 	_, _ = io.Copy(&stderrBuf, rdr)
 	stderrOutput := stderrBuf.String()
 
-	assert.NotContains(t, stderrOutput, "FIRST-BOOT COMPLETE",
+	assert.NotContains(t, stderrOutput, "FIRST-BOOT BOOTSTRAP",
 		"ceremony banner must NOT appear when the bootstrap admin is bound to a PIV cert")
 	assert.NotContains(t, stderrOutput, "/ui/#/invite/",
 		"no activation URL may be printed on the PIV cert-bind bootstrap path")
