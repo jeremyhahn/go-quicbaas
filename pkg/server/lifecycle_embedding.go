@@ -448,14 +448,31 @@ type qrdbEmbeddingProvider struct {
 
 var _ qrdbservice.EmbeddingProvider = (*qrdbEmbeddingProvider)(nil)
 
-// Embed embeds texts with the wrapped provider. The request model is ignored
-// because the quicbaas provider is bound to its configured model.
-func (a *qrdbEmbeddingProvider) Embed(ctx context.Context, texts []string, _ string) (*qrdbservice.EmbeddingResult, error) {
-	vecs, err := a.p.EmbedBatch(ctx, texts)
+// Embed embeds texts with the wrapped provider. An empty model, or the
+// configured one, embeds with the configured model. Another model is passed
+// to a provider that implements embedding.ModelEmbedder; a provider bound to
+// its configured model refuses it with an InvalidInputError rather than
+// answer with the configured model's vectors.
+func (a *qrdbEmbeddingProvider) Embed(ctx context.Context, texts []string, model string) (*qrdbservice.EmbeddingResult, error) {
+	if model == "" || model == a.model {
+		vecs, err := a.p.EmbedBatch(ctx, texts)
+		if err != nil {
+			return nil, err
+		}
+		return &qrdbservice.EmbeddingResult{Embeddings: vecs, Model: a.model}, nil
+	}
+	me, ok := a.p.(embedding.ModelEmbedder)
+	if !ok {
+		return nil, &api.InvalidInputError{Message: "embedding provider " + a.p.Name() + " serves only model " + a.model + ", not " + model}
+	}
+	vecs, used, err := me.EmbedBatchWithModel(ctx, texts, model)
 	if err != nil {
 		return nil, err
 	}
-	return &qrdbservice.EmbeddingResult{Embeddings: vecs, Model: a.model}, nil
+	if used == "" {
+		used = model
+	}
+	return &qrdbservice.EmbeddingResult{Embeddings: vecs, Model: used}, nil
 }
 
 // Models reports the single model the wrapped provider is configured with.

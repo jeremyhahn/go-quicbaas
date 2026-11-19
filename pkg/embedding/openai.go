@@ -26,6 +26,7 @@ import (
 //
 // Compile-time assertion that OpenAIProvider satisfies Provider.
 var _ Provider = (*OpenAIProvider)(nil)
+var _ ModelEmbedder = (*OpenAIProvider)(nil)
 
 // OpenAIProvider wraps qrdbsdk.OpenAIEmbeddingProvider with the single-text Embed API.
 type OpenAIProvider struct {
@@ -60,6 +61,17 @@ func (p *OpenAIProvider) EmbedBatch(ctx context.Context, texts []string) ([][]fl
 		return nil, err
 	}
 	return result.Embeddings, nil
+}
+
+// EmbedBatchWithModel generates embeddings for multiple texts with the named
+// model, or the configured model when model is empty, and returns the model
+// that produced them.
+func (p *OpenAIProvider) EmbedBatchWithModel(ctx context.Context, texts []string, model string) ([][]float32, string, error) {
+	result, err := p.inner.Embed(ctx, texts, model)
+	if err != nil {
+		return nil, "", err
+	}
+	return result.Embeddings, result.Model, nil
 }
 
 // Dimensions returns the embedding vector dimensionality.

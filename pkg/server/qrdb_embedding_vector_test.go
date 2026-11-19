@@ -18,14 +18,19 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 
 	qrdbservice "github.com/jeremyhahn/go-qrdb/pkg/service"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/jeremyhahn/go-quicbaas/pkg/api"
+	"github.com/jeremyhahn/go-quicbaas/pkg/embedding"
 )
 
 // TestUnifiedModuleServerOptions_ComposesQRDBEmbedding checks that the node's
@@ -108,3 +113,134 @@ func TestQRDBEmbedding_ProviderServesGoQRDBEmbed(t *testing.T) {
 	require.Len(t, models.Models, 1)
 	assert.Equal(t, "m", models.Models[0].Name)
 }
+
+// TestQRDBEmbedding_ProviderHonoursRequestedModel checks that a go-qrdb
+// embedding request naming a model reaches the provider with that model, not
+// the configured default.
+func TestQRDBEmbedding_ProviderHonoursRequestedModel(t *testing.T) {
+	var (
+		mu     sync.Mutex
+		models []string
+	)
+	stub := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || !strings.HasSuffix(r.URL.Path, "/embeddings") {
+			http.NotFound(w, r)
+			return
+		}
+		var body struct {
+			Input json.RawMessage `json:"input"`
+			Model string          `json:"model"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		mu.Lock()
+		models = append(models, body.Model)
+		mu.Unlock()
+		var inputs []string
+		if err := json.Unmarshal(body.Input, &inputs); err != nil {
+			var one string
+			if err := json.Unmarshal(body.Input, &one); err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+			inputs = []string{one}
+		}
+		type item struct {
+			Embedding []float32 `json:"embedding"`
+			Index     int       `json:"index"`
+		}
+		data := make([]item, len(inputs))
+		for i := range inputs {
+			data[i] = item{Embedding: []float32{0.1, 0.2, 0.3}, Index: i}
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"data": data, "model": body.Model})
+	}))
+	t.Cleanup(stub.Close)
+	recorded := func() []string {
+		mu.Lock()
+		defer mu.Unlock()
+		return append([]string(nil), models...)
+	}
+
+	srv := newModuleHostTestServer(t)
+	srv.config.RAG.Enabled = true
+	srv.config.RAG.Embedding.Provider = "openai"
+	srv.config.RAG.Embedding.APIURL = stub.URL
+	srv.config.RAG.Embedding.APIKey = "k"
+	srv.config.RAG.Embedding.Model = "m"
+	srv.config.RAG.Embedding.Dimensions = 3
+
+	_, err := srv.unifiedModuleServerOptions(nil, false)
+	require.NoError(t, err)
+	require.NoError(t, srv.startEmbedding())
+	t.Cleanup(func() { _ = srv.stopEmbedding() })
+
+	svc := srv.GetQRDBEmbeddingServicer()
+	require.NotNil(t, svc)
+
+	ctx := context.Background()
+	const large = "text-embedding-3-large"
+	resp, err := svc.Embed(ctx, &qrdbservice.EmbedRequest{Texts: []string{"hi"}, Model: large})
+	require.NoError(t, err)
+	assert.Equal(t, []string{large}, recorded())
+	assert.Equal(t, large, resp.Model)
+
+	batch, err := svc.BatchEmbed(ctx, &qrdbservice.BatchEmbedRequest{Texts: []string{"hi"}, Model: large})
+	require.NoError(t, err)
+	assert.Equal(t, []string{large, large}, recorded())
+	assert.Equal(t, large, batch.Model)
+}
+
+// singleModelProvider is an embedding.Provider without per-call model
+// support; it counts the calls it serves.
+type singleModelProvider struct {
+	calls int
+}
+
+func (p *singleModelProvider) Embed(_ context.Context, _ string) ([]float32, error) {
+	p.calls++
+	return []float32{1}, nil
+}
+
+func (p *singleModelProvider) EmbedBatch(_ context.Context, texts []string) ([][]float32, error) {
+	p.calls++
+	out := make([][]float32, len(texts))
+	for i := range texts {
+		out[i] = []float32{1}
+	}
+	return out, nil
+}
+
+func (p *singleModelProvider) Dimensions() int { return 1 }
+func (p *singleModelProvider) MaxTokens() int  { return 8 }
+func (p *singleModelProvider) Name() string    { return "single" }
+func (p *singleModelProvider) Close() error    { return nil }
+
+// TestQRDBEmbeddingProvider_ModelWithoutPerCallSupport checks that a provider
+// serving one model refuses a request for another model instead of answering
+// with the default model's vectors.
+func TestQRDBEmbeddingProvider_ModelWithoutPerCallSupport(t *testing.T) {
+	fake := &singleModelProvider{}
+	a := &qrdbEmbeddingProvider{p: fake, model: "m"}
+	ctx := context.Background()
+	texts := []string{"hi"}
+
+	for _, model := range []string{"", "m"} {
+		res, err := a.Embed(ctx, texts, model)
+		require.NoError(t, err, "model %q", model)
+		assert.Equal(t, "m", res.Model)
+	}
+	require.Equal(t, 2, fake.calls)
+
+	res, err := a.Embed(ctx, texts, "other")
+	require.Error(t, err)
+	assert.Nil(t, res)
+	var invalid *api.InvalidInputError
+	require.True(t, errors.As(err, &invalid), "want *api.InvalidInputError, got %T", err)
+	assert.Equal(t, 2, fake.calls, "the provider must not be called for another model")
+}
+
+var _ embedding.Provider = (*singleModelProvider)(nil)
