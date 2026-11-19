@@ -179,7 +179,14 @@ func TestWorkflowBuildPublish_SecretScansGateThePush(t *testing.T) {
 		if step.If != job.Steps[push].If {
 			t.Errorf("step %s if = %q, want the push step's %q", id, step.If, job.Steps[push].If)
 		}
-		for _, s := range []string{"--scanners secret", "--exit-code 1"} {
+		// The image scan fails on any finding. The layer scan writes trivy's
+		// JSON report, and check-secret-findings.sh fails the step on any
+		// finding that secret-allowlist.txt does not pin by hash.
+		want := []string{"--scanners secret", "--exit-code 1"}
+		if id == "layer-scan" {
+			want = []string{"--scanners secret", "--format json", "--output ", "check-secret-findings.sh"}
+		}
+		for _, s := range want {
 			if !strings.Contains(step.Run, s) {
 				t.Errorf("step %s run: lacks %q", id, s)
 			}
@@ -420,14 +427,22 @@ cp "$FAKE_IMAGE_TAR" "$4"
 
 // fakeSecretTrivyScript records its argv and, when the last argument is a
 // directory, the files under it (the step's EXIT trap removes them once the
-// step ends), then exits $FAKE_TRIVY_EXIT.
+// step ends). Given --output <file>, it writes $FAKE_TRIVY_REPORT there. Then
+// it exits $FAKE_TRIVY_EXIT.
 const fakeSecretTrivyScript = `#!/bin/sh
 printf '%s\n' "$*" >> "$FAKE_TRIVY_LOG"
 last=
-for arg in "$@"; do last="$arg"; done
+prev=
+out=
+for arg in "$@"; do
+  if [ "$prev" = --output ]; then out="$arg"; fi
+  prev="$arg"
+  last="$arg"
+done
 if [ -n "$last" ] && [ -d "$last" ]; then
   (cd "$last" && find . -type f | sort) >> "$FAKE_TRIVY_LOG"
 fi
+if [ -n "$out" ]; then printf '%s' "$FAKE_TRIVY_REPORT" > "$out"; fi
 exit "${FAKE_TRIVY_EXIT:-0}"
 `
 
@@ -519,15 +534,20 @@ func writeFakes(t *testing.T, dir string, fakes map[string]string) string {
 }
 
 // TestWorkflowBuildPublish_LayerScanScansEveryLayer runs the layer-scan step
-// with a fake docker and trivy: every layer's files and the image config reach
-// the scanner, a scanner failure fails the step, and so does a manifest with
-// no layers or no config.
+// from the repository root with a fake docker and trivy: every layer's files
+// and the image config reach the scanner, and the step fails on a scanner
+// failure, on a finding check-secret-findings.sh does not allow, on a report
+// that is not trivy JSON, and on a manifest with no layers or no config.
 func TestWorkflowBuildPublish_LayerScanScansEveryLayer(t *testing.T) {
 	bash, err := exec.LookPath("bash")
 	if err != nil {
 		t.Skip("bash is not on PATH")
 	}
-	for _, tool := range []string{"tar", "jq"} {
+	root, err := filepath.Abs(filepath.Join("..", "..", ".."))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tool := range []string{"tar", "jq", "realpath"} {
 		if _, err := exec.LookPath(tool); err != nil {
 			t.Skipf("%s is not on PATH", tool)
 		}
@@ -540,18 +560,23 @@ func TestWorkflowBuildPublish_LayerScanScansEveryLayer(t *testing.T) {
 	}
 	const twoLayers = `[{"Config":"cfg.json","Layers":["l1/layer.tar","l2/layer.tar"]}]`
 	const ref = "quicbaas-software-factory-worker:t1"
+	const cleanReport = `{"SchemaVersion":2,"ArtifactType":"filesystem"}`
+	const findingReport = `{"SchemaVersion":2,"ArtifactType":"filesystem","Results":[{"Target":"1/etc/one","Class":"secret","Secrets":[{"RuleID":"private-key","Severity":"HIGH"}]}]}`
 	cases := []struct {
 		name      string
 		manifest  string
+		report    string
 		trivyExit string
 		wantOK    bool
 		wantTrivy bool
 		wantOut   string
 	}{
-		{name: "two layers", manifest: twoLayers, trivyExit: "0", wantOK: true, wantTrivy: true, wantOut: "scanned 2 layer tarballs of " + ref},
-		{name: "scanner finds a secret", manifest: twoLayers, trivyExit: "1", wantTrivy: true},
-		{name: "no layers", manifest: `[{"Config":"cfg.json","Layers":[]}]`, trivyExit: "0", wantOut: "lists no layer tarballs"},
-		{name: "no config", manifest: `[{"Layers":["l1/layer.tar"]}]`, trivyExit: "0", wantOut: "names no image config"},
+		{name: "two layers", manifest: twoLayers, report: cleanReport, trivyExit: "0", wantOK: true, wantTrivy: true, wantOut: "scanned 2 layer tarballs of " + ref},
+		{name: "scanner finds a secret", manifest: twoLayers, report: findingReport, trivyExit: "0", wantTrivy: true, wantOut: "secret finding (private-key) in the image at /etc/one (1/etc/one) is not allowlisted"},
+		{name: "scanner fails", manifest: twoLayers, report: "", trivyExit: "1", wantTrivy: true},
+		{name: "report is not trivy JSON", manifest: twoLayers, report: "not json", trivyExit: "0", wantTrivy: true, wantOut: "is not a trivy JSON report"},
+		{name: "no layers", manifest: `[{"Config":"cfg.json","Layers":[]}]`, report: cleanReport, trivyExit: "0", wantOut: "lists no layer tarballs"},
+		{name: "no config", manifest: `[{"Layers":["l1/layer.tar"]}]`, report: cleanReport, trivyExit: "0", wantOut: "names no image config"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -563,6 +588,9 @@ func TestWorkflowBuildPublish_LayerScanScansEveryLayer(t *testing.T) {
 			dockerLog := filepath.Join(dir, "docker.log")
 			trivyLog := filepath.Join(dir, "trivy.log")
 			cmd := exec.Command(bash, "-c", script)
+			// The step runs check-secret-findings.sh by its path from the
+			// repository root, as the workflow's checkout does.
+			cmd.Dir = root
 			cmd.Env = append(os.Environ(),
 				"PATH="+binDir+string(os.PathListSeparator)+os.Getenv("PATH"),
 				"RUNNER_TEMP="+runnerTemp,
@@ -572,6 +600,7 @@ func TestWorkflowBuildPublish_LayerScanScansEveryLayer(t *testing.T) {
 				"FAKE_IMAGE_TAR="+imageTar,
 				"FAKE_TRIVY_LOG="+trivyLog,
 				"FAKE_TRIVY_EXIT="+tc.trivyExit,
+				"FAKE_TRIVY_REPORT="+tc.report,
 			)
 			combined, runErr := cmd.CombinedOutput()
 			if tc.wantOK && runErr != nil {
@@ -601,7 +630,7 @@ func TestWorkflowBuildPublish_LayerScanScansEveryLayer(t *testing.T) {
 			}
 			lines := strings.Split(strings.TrimRight(string(got), "\n"), "\n")
 			argv := " " + lines[0] + " "
-			for _, want := range []string{" fs ", " --scanners secret ", " --exit-code 1 "} {
+			for _, want := range []string{" fs ", " --scanners secret ", " --exit-code 0 ", " --format json ", " --output "} {
 				if !strings.Contains(argv, want) {
 					t.Errorf("trivy argv %q lacks %q", lines[0], strings.TrimSpace(want))
 				}
