@@ -269,3 +269,40 @@ func TestCryptoService_Decrypt_AbsentVersionStatusStillDecrypts(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, batch)
 }
+
+// TestCryptoService_Decrypt_VersionDisabledOnAnotherNodeIsRefused: node A
+// caches v1 as enabled, node B disables v1 in the shared replicated store,
+// and A's decrypt gate honours B's write instead of its own cache.
+func TestCryptoService_Decrypt_VersionDisabledOnAnotherNodeIsRefused(t *testing.T) {
+	f := newVersionedCryptoFixture(t)
+	shared := &mockKVStoreForKMS{data: map[string][]byte{}}
+	f.kmsSvc.SetKVStore(shared)
+	nodeB := newKMSService(newMockKMSManager(), newMockLogger())
+	nodeB.SetKVStore(shared)
+
+	nodeB.setVersionStatus(f.scoped, 1, KeyStatusEnabled, nil)
+
+	v1 := f.encrypt(t, "sealed under v1")
+	_, err := f.svc.Decrypt(systemTenantCtx(), &DecryptRequest{KeyID: versionStatusKeyID, Ciphertext: v1})
+	require.NoError(t, err, "v1 decrypts while enabled, leaving enabled in node A's cache")
+
+	_, err = nodeB.disableKeyVersion(systemTenantCtx(), f.scoped, 1)
+	require.NoError(t, err)
+
+	before := f.decrypt.Load()
+	_, err = f.svc.Decrypt(systemTenantCtx(), &DecryptRequest{KeyID: versionStatusKeyID, Ciphertext: v1})
+	requireKeyDisabled(t, err)
+	_, err = f.svc.DecryptBatch(systemTenantCtx(), &DecryptBatchRequest{
+		KeyID: versionStatusKeyID,
+		Items: []BatchDecryptItem{{Ciphertext: v1}},
+	})
+	requireKeyDisabled(t, err)
+	require.Equal(t, before, f.decrypt.Load(), "a version disabled on another node releases no plaintext")
+
+	t.Run("re-enabled on another node", func(t *testing.T) {
+		nodeB.setVersionStatus(f.scoped, 1, KeyStatusEnabled, nil)
+		resp, err := f.svc.Decrypt(systemTenantCtx(), &DecryptRequest{KeyID: versionStatusKeyID, Ciphertext: v1})
+		require.NoError(t, err)
+		require.Equal(t, "sealed under v1", string(resp.Plaintext))
+	})
+}

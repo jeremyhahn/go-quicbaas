@@ -2385,7 +2385,9 @@ func (k *kmsServiceImpl) getVersionStatus(ctx context.Context, keyID string, ver
 	return status, disabledAt
 }
 
-// lookupVersionStatus reads a key version's status from the local cache, the KVStore and the scheduler's completed grace-period jobs, in that order.
+// lookupVersionStatus reads a key version's status from the KVStore, the scheduler's completed grace-period jobs and the node-local cache, in that order.
+// The replicated sources are authoritative, so a version another node disabled is seen here; the cache, which nothing invalidates across nodes, is only the last
+// fallback: for a service with no KVStore and no querier, and for a local write whose KVStore Put failed.
 // It returns "" with a nil error when no source records a status, and an error, never "", when a source cannot be read: a KVStore read that fails other than not-found, a stored value that does not decode, or a querier failure.
 func (k *kmsServiceImpl) lookupVersionStatus(ctx context.Context, keyID string, version uint64) (KeyStatus, *time.Time, error) {
 	// Ensure we have a valid context with deadline for Raft operations
@@ -2399,13 +2401,8 @@ func (k *kmsServiceImpl) lookupVersionStatus(ctx context.Context, keyID string, 
 	}
 
 	cacheKey := fmt.Sprintf("%s:%d", keyID, version)
-	if info, ok := k.versionStatus.Load(cacheKey); ok {
-		if vsi, ok := info.(*versionStatusInfo); ok {
-			return vsi.Status, vsi.DisabledAt, nil
-		}
-	}
 
-	// Fall back to persistent KVStore (works when write was on the leader node)
+	// The replicated KVStore is authoritative: it carries writes made on any node.
 	if k.kvStore != nil {
 		data, err := k.kvStore.Get(ctx, versionStatusKey(keyID, version))
 		if err != nil && !errors.IsNotFound(err) {
@@ -2445,6 +2442,13 @@ func (k *kmsServiceImpl) lookupVersionStatus(ctx context.Context, keyID string, 
 				DisabledAt: &completedAt,
 			})
 			return KeyStatusDisabled, &completedAt, nil
+		}
+	}
+
+	// Last fallback: the node-local cache (no replicated source, or a failed local Put).
+	if info, ok := k.versionStatus.Load(cacheKey); ok {
+		if vsi, ok := info.(*versionStatusInfo); ok {
+			return vsi.Status, vsi.DisabledAt, nil
 		}
 	}
 
