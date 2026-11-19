@@ -25,6 +25,13 @@ import (
 // TenantBarrierUnsealShare, TenantBarrierShareClaimComplete (whose response
 // carries a Shamir share) and TenantBarrierShamirSealVote.
 //
+// Every barrier verb, secret-carrying or not (TenantBarrierSeal,
+// TenantBarrierStatus and the officer verbs too), is sent with the headers
+// the transport was built with, so it carries the platform bearer set by
+// WithAuthToken whenever the transport sends it; go-qrdb's REST sub-client
+// cannot add an Authorization header and reached protected routes
+// anonymously. Tenant CRUD stays on the embedded go-qrdb client.
+//
 // Each overridden verb keeps the HTTP method, path, request body and
 // response handling of the matching method in go-qrdb sdk/go transport/rest.
 // The embedded go-qrdb client serves every verb not overridden here.
@@ -194,6 +201,100 @@ func (c *TenantClient) TenantBarrierShamirSealVote(ctx context.Context, req *qrd
 	}
 	ctx = withSecretHop(ctx, "TenantBarrierShamirSealVote")
 	var out qrdbtransport.ShamirSealVoteResponse
+	if err := c.doJSONResult(ctx, http.MethodPost, path, req, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// TenantBarrierSeal maps to POST /v1/tenants/{id}/barrier/seal, with no
+// body. 200 and 204 both succeed.
+func (c *TenantClient) TenantBarrierSeal(ctx context.Context, req *qrdbtransport.TenantBarrierSealRequest) error {
+	var tenantID string
+	if req != nil {
+		tenantID = req.TenantID
+	}
+	path, err := tenantPath("TenantBarrierSeal", req == nil, tenantID, "/seal")
+	if err != nil {
+		return err
+	}
+	return c.t.doJSONRequest(ctx, http.MethodPost, path, nil, nil)
+}
+
+// TenantBarrierStatus maps to GET /v1/tenants/{id}/barrier/status.
+func (c *TenantClient) TenantBarrierStatus(ctx context.Context, req *qrdbtransport.TenantBarrierStatusRequest) (*qrdbtransport.TenantBarrierStatusResponse, error) {
+	var tenantID string
+	if req != nil {
+		tenantID = req.TenantID
+	}
+	path, err := tenantPath("TenantBarrierStatus", req == nil, tenantID, "/status")
+	if err != nil {
+		return nil, err
+	}
+	var out qrdbtransport.TenantBarrierStatusResponse
+	if err := c.doJSONResult(ctx, http.MethodGet, path, nil, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// TenantBarrierOfficerRegister maps to POST /v1/tenants/{id}/barrier/officers.
+// csr_pem and cert_pem travel as plain PEM text.
+func (c *TenantClient) TenantBarrierOfficerRegister(ctx context.Context, req *qrdbtransport.TenantOfficerRegisterRequest) (*qrdbtransport.OfficerRegisterResponse, error) {
+	var tenantID string
+	if req != nil {
+		tenantID = req.TenantID
+	}
+	path, err := tenantPath("TenantBarrierOfficerRegister", req == nil, tenantID, "/officers")
+	if err != nil {
+		return nil, err
+	}
+	var wire officerRegisterWireResponse
+	if err := c.doJSONResult(ctx, http.MethodPost, path, &officerRegisterWireRequest{
+		Username:          req.Username,
+		CSRPEM:            string(req.CSRPEM),
+		AuthenticatorType: req.AuthenticatorType,
+		AuthenticatorRef:  req.AuthenticatorRef,
+	}, &wire); err != nil {
+		return nil, err
+	}
+	return &qrdbtransport.OfficerRegisterResponse{
+		CertPEM:    []byte(wire.CertPEM),
+		ShareIndex: wire.ShareIndex,
+	}, nil
+}
+
+// TenantBarrierOfficerList maps to GET /v1/tenants/{id}/barrier/officers.
+func (c *TenantClient) TenantBarrierOfficerList(ctx context.Context, tenantID string) ([]*qrdbtransport.OfficerStatus, error) {
+	path, err := tenantPath("TenantBarrierOfficerList", false, tenantID, "/officers")
+	if err != nil {
+		return nil, err
+	}
+	return c.t.Barrier().listOfficers(ctx, path)
+}
+
+// TenantBarrierOfficerClaimStatus maps to
+// GET /v1/tenants/{id}/barrier/officers/claim-status.
+func (c *TenantClient) TenantBarrierOfficerClaimStatus(ctx context.Context, tenantID string) ([]*qrdbtransport.OfficerStatus, error) {
+	path, err := tenantPath("TenantBarrierOfficerClaimStatus", false, tenantID, "/officers/claim-status")
+	if err != nil {
+		return nil, err
+	}
+	return c.t.Barrier().listOfficers(ctx, path)
+}
+
+// TenantBarrierShareClaimBegin maps to
+// POST /v1/tenants/{id}/barrier/officers/{username}/claim/begin.
+func (c *TenantClient) TenantBarrierShareClaimBegin(ctx context.Context, req *qrdbtransport.TenantShareClaimBeginRequest) (*qrdbtransport.ShareClaimBeginResponse, error) {
+	if req == nil {
+		_, err := tenantPath("TenantBarrierShareClaimBegin", true, "", "")
+		return nil, err
+	}
+	path, err := officerPath("TenantBarrierShareClaimBegin", req.TenantID, req.Username, "begin")
+	if err != nil {
+		return nil, err
+	}
+	var out qrdbtransport.ShareClaimBeginResponse
 	if err := c.doJSONResult(ctx, http.MethodPost, path, req, &out); err != nil {
 		return nil, err
 	}

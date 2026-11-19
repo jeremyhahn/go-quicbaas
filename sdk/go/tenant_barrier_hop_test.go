@@ -145,3 +145,49 @@ func TestTenantMgmt_QUIC_UsesSDKRESTTenantClient(t *testing.T) {
 	_, isREST := etc.(*rest.TenantClient)
 	assert.False(t, isREST, "a client wired WithEmbeddedQRDB keeps the qrdb sub-client")
 }
+
+// statusRecorder is a TLS server that answers GET
+// /v1/tenants/t1/barrier/status and records, as bools only, whether the
+// route was reached and whether it carried the test bearer.
+func statusRecorder(t *testing.T) (*httptest.Server, *atomic.Bool, *atomic.Bool, *atomic.Bool) {
+	t.Helper()
+	var reached, bearer, anyAuth atomic.Bool
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t1/barrier/status" {
+			reached.Store(true)
+			bearer.Store(r.Header.Get("Authorization") == "Bearer tok-test")
+			anyAuth.Store(r.Header.Get("Authorization") != "")
+			_, _ = w.Write([]byte(`{"tenant_id":"t1","sealed":true,"initialized":true,"strategy":"software"}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	t.Cleanup(srv.Close)
+	return srv, &reached, &bearer, &anyAuth
+}
+
+func TestTenantMgmt_TenantBarrierStatus_CarriesBearer(t *testing.T) {
+	srv, reached, bearer, _ := statusRecorder(t)
+	c := tlsClientFor(t, srv, WithREST(), WithAuthToken("tok-test"))
+
+	tc, err := c.TenantMgmt()
+	require.NoError(t, err)
+	st, err := tc.TenantBarrierStatus(hopTestContext(t), &QRDBTenantBarrierStatusRequest{TenantID: "t1"})
+	require.NoError(t, err)
+	assert.True(t, st.Sealed)
+	assert.True(t, reached.Load(), "the status route must be reached")
+	assert.True(t, bearer.Load(), "a tenant barrier call must carry the platform bearer set by WithAuthToken")
+}
+
+func TestTenantMgmt_TenantBarrierStatus_NoBearerWithoutAuthToken(t *testing.T) {
+	srv, reached, _, anyAuth := statusRecorder(t)
+	c := tlsClientFor(t, srv, WithREST())
+
+	tc, err := c.TenantMgmt()
+	require.NoError(t, err)
+	_, err = tc.TenantBarrierStatus(hopTestContext(t), &QRDBTenantBarrierStatusRequest{TenantID: "t1"})
+	require.NoError(t, err)
+	assert.True(t, reached.Load(), "the status route must be reached")
+	assert.False(t, anyAuth.Load(), "without WithAuthToken no Authorization header is sent")
+}
