@@ -111,8 +111,7 @@ func transports(t *testing.T, bearer string) map[string]func() (quicbaas.Client,
 			return quicbaas.NewClient(first(helpers.GetClusterEndpoints(), "gRPC"), quicbaas.WithTLSConfig(tlsCfg), auth, timeout)
 		},
 		"QUIC": func() (quicbaas.Client, error) {
-			quicCfg := tlsCfg.Clone()
-			quicCfg.NextProtos = []string{"quicbaas-quic"}
+			quicCfg := helpers.QUICTLSConfig(tlsCfg)
 			return quicbaas.NewClient(first(helpers.GetQUICEndpoints(), "QUIC"), quicbaas.WithQUIC(), quicbaas.WithTLSConfig(quicCfg), auth, timeout)
 		},
 		"Unix": func() (quicbaas.Client, error) {
