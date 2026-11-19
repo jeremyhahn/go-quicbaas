@@ -520,10 +520,27 @@ func (c *client) SealStore() (QRDBSealStoreClient, error) {
 // TenantMgmt returns the QRDB TenantClient for managing multi-tenant
 // operations and per-tenant barriers. The QRDB client is lazily
 // initialized on first call.
+//
+// Over REST and QUIC (*quic.Transport embeds *rest.Transport) the per-tenant
+// barrier verbs ride the SDK's own REST transport, and tenant CRUD stays on
+// the qrdb sub-client (go-quicbaas#2554). go-qrdb's REST sub-client follows
+// redirects with net/http's default policy, which the SDK cannot reach: a
+// 307/308 to an http:// Location would resend a tenant unseal key or share
+// in plaintext. The SDK's REST transport refuses every redirect hop and
+// every non-https hop of a secret-carrying barrier call. A client wired
+// WithEmbeddedQRDB (whose qrdb calls always dispatch in-process), and every
+// other transport, keeps the qrdb sub-client for every verb.
 func (c *client) TenantMgmt() (QRDBTenantClient, error) {
 	qrdbClient, err := c.qrdbClient()
 	if err != nil {
 		return nil, err
+	}
+	if c.opts == nil || c.opts.embeddedQRDB == nil {
+		if bt, ok := c.transport.(interface {
+			Tenants(QRDBTenantClient) *rest.TenantClient
+		}); ok {
+			return bt.Tenants(qrdbClient.Tenants()), nil
+		}
 	}
 	return qrdbClient.Tenants(), nil
 }
